@@ -93,26 +93,73 @@ set -e
 DEB_FILE="/usr/local/share/eth-driver/tuxedo-yt6801_1.0.28-1_all.deb"
 LOG_FILE="/var/log/eth-driver-install.log"
 
+# Wait for dpkg locks to be released
+wait_for_dpkg() {
+    echo "Checking package manager locks..." >> $LOG_FILE
+    
+    # Wait for up to 1 minute
+    local timeout=60
+    local start_time=$(date +%s)
+    
+    while true; do
+        # Check if we've exceeded timeout
+        local current_time=$(date +%s)
+        if [ $((current_time - start_time)) -gt $timeout ]; then
+            echo "Timeout waiting for locks to be released. Continuing anyway..." >> $LOG_FILE
+            break
+        fi
+        
+        # Check for dpkg locks
+        if lsof /var/lib/dpkg/lock >/dev/null 2>&1 || \
+           lsof /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+           lsof /var/cache/apt/archives/lock >/dev/null 2>&1 || \
+           lsof /var/cache/debconf/config.dat >/dev/null 2>&1; then
+            echo "Waiting for package manager locks to be released... ($(date))" >> $LOG_FILE
+            sleep 1
+            continue
+        else
+            echo "All package manager locks are available" >> $LOG_FILE
+            break
+        fi
+    done
+}
+
 # Install driver package without internet
 install_driver() {
     echo "Starting driver install" >> $LOG_FILE
+    local max_attempts=3
+    local attempt=1
+    local success=false
     
-    # Install package directly from dpkg
-    dpkg -i $DEB_FILE >> $LOG_FILE 2>&1 || {
-        # If FAIL, install local dependencies with APT
-        echo "Installing local dependencies..." >> $LOG_FILE
-        apt-get -f install --no-download -y >> $LOG_FILE 2>&1
-        # Retry install
-        dpkg -i $DEB_FILE >> $LOG_FILE 2>&1
-    }
+    while [ $attempt -le $max_attempts ]; do
+        echo "Installation attempt $attempt of $max_attempts" >> $LOG_FILE
+        # Always wait for dpkg locks before attempting
+        wait_for_dpkg
+        
+        # Try to install the package
+        if dpkg -i $DEB_FILE >> $LOG_FILE 2>&1; then
+            echo "Installation successful on attempt $attempt" >> $LOG_FILE
+            success=true
+            break
+        else
+            echo "Installation attempt $attempt failed" >> $LOG_FILE
+            sleep 5
+            attempt=$((attempt + 1))
+        fi
+    done
     
-    echo "Ethernet driver installed correctly." >> $LOG_FILE
-    
-    # Clean up files
-    rm -f $DEB_FILE
-    
-    # Disable Ethernet Driver Installer Service
-    systemctl disable eth-driver-firstboot.service
+    if [ "$success" = true ]; then
+        echo "Ethernet driver installed correctly." >> $LOG_FILE
+        # Clean up files
+        rm -f $DEB_FILE
+        # Disable service
+        systemctl disable eth-driver-firstboot.service
+        return 0
+    else
+        echo "Failed to install driver after $max_attempts attempts." >> $LOG_FILE
+        # Don't exit with error to avoid service failure
+        return 0
+    fi
 }
 
 # Execute installation
