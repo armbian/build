@@ -13,7 +13,7 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
-#enable_extension "bcmdhd"
+enable_extension "bcmdhd"
 BCMDHD_TYPE="sdio"
 
 function post_family_tweaks__orangepi5ultra_naming_audios() {
