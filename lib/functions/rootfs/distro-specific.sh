@@ -164,6 +164,9 @@ function create_sources_list_and_deploy_repo_key() {
 	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian-archive-keyring.gpg"
 	gpg --batch --yes --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
 
+	# deploy the qemu binary, no matter where the rootfs came from (built or cached)
+	deploy_qemu_binary_to_chroot "${basedir}" "${when}" # undeployed at end of this function
+
 	# lets link to the old file as armbian-config uses it and we can't set there to new file
 	# we user force linking as some old caches still exists
 	chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
@@ -173,6 +176,9 @@ function create_sources_list_and_deploy_repo_key() {
 		cp "${SRC}"/config/armbian.key "${basedir}"
 		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
 	fi
+
+	# undeploy the qemu binary from the image; we don't want to ship the host's qemu in the target image
+	undeploy_qemu_binary_from_chroot "${basedir}" "${when}"
 
 	# Add Armbian APT repository
 	declare -a components=()
