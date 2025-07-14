@@ -1,0 +1,12 @@
+# Rockchip RK3528 quad core 1/2GB RAM SoC GBe eMMC USB2 USB-C PCIe 2.1
+BOARD_NAME="NanoPi Zero2"
+BOARDFAMILY="rk35xx"
+BOOTCONFIG="hinlink_rk3528_defconfig"
+KERNEL_TARGET="vendor"
+FULL_DESKTOP="no"
+HAS_VIDEO_OUTPUT="no"
+BOOT_FDT_FILE="rockchip/rk3528-nanopi-rev01.dtb"
+BOOT_SCENARIO="spl-blobs"
+IMAGE_PARTITION_TABLE="gpt"
+BOOTFS_TYPE="ext4"
+BOOTSIZE="512"
