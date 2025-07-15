@@ -22,7 +22,7 @@ function artifact_armbian-plymouth-theme_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_bash_deb_artifact "compilation/packages/armbian-plymouth-theme-deb.sh"
+	calculate_hash_for_bash_deb_artifact "compilation/packages/armbian-plymouth-theme-deb.sh" "${SRC}/packages/plymouth-theme-armbian/armbian.plymouth"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
