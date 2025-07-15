@@ -13,16 +13,18 @@
 
 ## Getting started
 
-### Requirements for self hosted
+### Self-Hosted Requirements
 
-- x86_64 / aarch64 / riscv64 machine
-- at least 8GB (less for non-[BTF](https://docs.kernel.org/bpf/btf.html) builds) of memory and ~50GB of disk space for VM, container, or bare-metal installation
-- **Armbian / Ubuntu Jammy 22.04.x** for native building or any Docker capable Linux for containerised
-- **Windows 10/11 with WSL2 subsystem** running Armbian / Ubuntu Jammy 22.04.x
-- Superuser rights (configured sudo or root access).
-- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble
-
-For stable branch use `--branch=v25.05`
+- **Supported Architectures:** `x86_64`, `aarch64`, `riscv64`
+- **System:** VM, container, or bare-metal with:
+  - **≥ 8GB RAM** (less if not using BTF)
+  - **~50GB disk space**
+- **Operating System:**
+  - Armbian / Ubuntu 24.04 (Noble) for native builds
+  - Any Docker-capable Linux for containerized setup
+- **Windows:** Windows 10/11 with WSL2 running Armbian / Ubuntu 24.04
+- **Access:** Superuser rights (`sudo` or `root`)
+- **Important:** Keep your system up-to-date — outdated tools (e.g., Docker) can cause issues.
 
 ```bash
 apt-get -y install git
@@ -30,6 +32,8 @@ git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
+(For stable branch use `--branch=v25.05`)
+
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
@@ -37,62 +41,16 @@ cd build
 - Prepares the workspace by installing the necessary dependencies and sources.
 - It guides the entire process and creates a kernel package or a ready-to-use SD card image.
 
-### Build parameter examples
+## Documentation
 
-Show work-in-progress areas in interactive mode:
+<https://docs.armbian.com/Developer-Guide_Overview/>
 
-```bash
-./compile.sh EXPERT="yes"
-```
+## Download Prebuilt Images
 
-Build minimal CLI Armbian Jammy for Bananapi M5 with LTS kernel:
-
-```bash
-./compile.sh \
-BOARD=bananapim5 \
-BRANCH=current \
-RELEASE=noble \
-BUILD_MINIMAL=yes \
-BUILD_DESKTOP=no \
-KERNEL_CONFIGURE=no
-```
-
-Build with GitHub actions: ([advanced version](https://github.com/armbian/os/blob/main/.github/workflows/complete-artifact-one-by-one.yml))
-
-```
-name: "Build Armbian"
-on:
-  workflow_dispatch:
-jobs:
-  build-armbian:
-    runs-on: ubuntu-24.04-arm # use ubuntu-24.04 when building x86 or riscv64
-    steps:
-      - uses: armbian/build@main
-        with:
-          armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
-          armbian_release:   "noble"                        # userspace
-          armbian_target:    "build"                        # build=image, kernel=kernel
-          armbian_board:     "bananapim5"                   # build target
-```
-Generated image will be uploaded to your repository release. Note: GitHub upload file limit is 2Gb.
-
-## More information:
-
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start)
-- [Build commands](https://docs.armbian.com/Developer-Guide_Build-Commands/) and [switches](https://docs.armbian.com/Developer-Guide_Build-Switches/) (build options)
-- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) (how to add packages, patches, and override sources config)
-- [System config](https://docs.armbian.com/User-Guide_Armbian-Config/) (menu driven utility to setup OS and HW features)
-
-## Download prebuilt images releases
-
-### Point
-
-- [manually released **standard supported** builds](https://www.armbian.com/download/?device_support=Standard%20support) (quarterly)
-
-### Rolling
-
-- [automatically released **staging and standard supported** builds](https://github.com/armbian/os/releases/latest) (daily)
-- [automatically released **community maintained** builds](https://github.com/armbian/community/releases/latest) (weekly)
+| Type    | Description                                                                                      |
+|---------|--------------------------------------------------------------------------------------------------|
+| Point   | Manually released, standard supported builds ([quarterly](https://www.armbian.com/download/?device_support=Standard%20support))                                         |
+| Rolling | Automatically released: staging & standard supported builds ([daily](https://github.com/armbian/os/releases/latest)), community builds ([weekly](https://github.com/armbian/community/releases/latest))   |
 
 ## Compared with industry standards
 
