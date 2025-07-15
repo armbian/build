@@ -1,15 +1,11 @@
 <p align="center">
-  <h3 align=center><a href="#build-framework">
-  <img src=".github/logo.png" alt="Armbian logo" width="218">
-  </a><br>
-  <strong>linux build framework</strong><br>
+  <h3 align=left><a href="#build-framework">
+  <img src=".github/logo.png" alt="Armbian logo" width="555">
+  </a>
 <br>
-<a href=https://github.com/armbian/build/graphs/contributors><img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/armbian/build?logo=stackexchange&label=Contributors&style=for-the-badge&branch=main&logoColor=white"></a>
-<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=dependabot&label=CI%20Build&style=for-the-badge&branch=main&logoColor=white"></a>
-<a href=https://github.com/armbian/build/commits/main><img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/armbian/build/main?logo=github&label=Last%20commit&style=for-the-badge&branch=main&logoColor=white"></a>
-</p></h3>
+</h3>
 
-## What does this project do?
+## What does Armbian linux build framework do?
 
 - Builds custom **kernel**, **image** or a **distribution** optimized for low-resource hardware,
 - Include filesystem generation, low-level control software, kernel image and **bootloader** compilation,
