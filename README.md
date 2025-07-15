@@ -1,19 +1,32 @@
 <p align="center">
   <h3 align=left><a href="#build-framework">
-  <img src=".github/logo.png" alt="Armbian logo" width="555">
+  <img src=".github/logo.png" alt="Armbian logo" width="255">
   </a>
 <br>
 </h3>
 
 ## What does Armbian linux build framework do?
 
-- Builds custom **kernel**, **image** or a **distribution** optimized for low-resource hardware,
-- Include filesystem generation, low-level control software, kernel image and **bootloader** compilation,
-- Provides a **consistent user experience** by keeping system standards across different platforms.
+- Builds a lightweight Linux system derived from **Debian or Ubuntu**, tailored for **low-resource hardware**
+- Includes filesystem generation, low-level control tools, kernel image, and **bootloader** compilation  
+- Provides a **consistent user experience** by maintaining system standards across diverse platforms
+ 
+### Quick Start
 
-## Getting started
+```bash
+git clone https://github.com/armbian/build
+cd build
+./compile.sh
+```
+Documentation: <https://docs.armbian.com/Developer-Guide_Overview/>
 
-### Self-Hosted Requirements
+<a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
+
+- Interactive graphical interface.
+- Prepares the workspace by installing the necessary dependencies and sources.
+- It guides the entire process and creates a kernel package or a ready-to-use SD card image.
+
+### Build Host Requirements
 
 - **Supported Architectures:** `x86_64`, `aarch64`, `riscv64`
 - **System:** VM, container, or bare-metal with:
@@ -26,24 +39,10 @@
 - **Access:** Superuser rights (`sudo` or `root`)
 - **Important:** Keep your system up-to-date — outdated tools (e.g., Docker) can cause issues.
 
-```bash
-apt-get -y install git
-git clone --depth=1 --branch=main https://github.com/armbian/build
-cd build
-./compile.sh
-```
-(For stable branch use `--branch=v25.05`)
-
-
-<a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
-
-- Interactive graphical interface.
-- Prepares the workspace by installing the necessary dependencies and sources.
-- It guides the entire process and creates a kernel package or a ready-to-use SD card image.
 
 ## Documentation
 
-<https://docs.armbian.com/Developer-Guide_Overview/>
+
 
 ## Download Prebuilt Images
 
