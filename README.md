@@ -19,7 +19,7 @@ cd build
 ./compile.sh
 ```
 
-### Project Links
+### Resources
 
 [Documentation](https://docs.armbian.com/Developer-Guide_Overview/) • [Website](https://www.armbian.com) • [Blog](https://blog.armbian.com) • [Community Forums](https://forum.armbian.com)
 
@@ -46,7 +46,7 @@ Prebuilt Armbian OS Images: <https://www.armbian.com/download>
 
 ## Contribute
 
-[CONTRIBUTING.md](CONTRIBUTING.md)
+Learn how to report issues, suggest improvements, or submit code: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Support
 
