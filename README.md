@@ -18,7 +18,12 @@ git clone https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
-Documentation: <https://docs.armbian.com/Developer-Guide_Overview/>
+
+### Project Links
+
+[Documentation](https://docs.armbian.com/Developer-Guide_Overview/) • [Website](https://www.armbian.com) • [Blog](https://blog.armbian.com) • [Community Forums](https://forum.armbian.com)
+
+
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
