@@ -1,6 +1,6 @@
 <p align="center">
   <h3 align=center><a href="#build-framework">
-  <img src=".github/logo.png" alt="Armbian logo" width="555">
+  <img src=".github/logo.png" alt="Armbian logo" width="100%">
   </a>
 <br>
 </h3>
