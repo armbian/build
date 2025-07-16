@@ -1,0 +1,198 @@
+From 110909494f8eeae7470321399978c25d9e3af554 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Subject: [PATCH 1/2] sunxi: h616: dram: Rework size detection
+Date: Sun,  9 Mar 2025 07:31:42 +0100
+
+Since there is quite a few possible DRAM configurations in terms of bus
+width, rank and rows and columns count, size detection algorithm must be
+very careful not to test combination which would be bigger than H616 is
+actually capable of handling.
+
+Ideally, we should always detect memory aliasing, even for 4 GB memory
+size, which is the maximum amount of memory that H616 is capable of
+handling. For this reason, we have to configure minimum amount of
+supported rows when testing for columns and vice versa. This way test
+code will never step out of 4 GB boundary.
+
+While at it, check for 17 rows maximum. This aligns code with BSP DRAM
+driver. There is probably no such configuration which would make sense
+with 4 GB memory.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index b3554cc64bf5..6f84e59e39cd 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1363,7 +1363,7 @@ static void mctl_auto_detect_rank_width(const struct dram_para *para,
+ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 				       struct dram_config *config)
+ {
+-	unsigned int shift;
++	unsigned int shift, cols, rows;
+ 
+ 	/* max. config for columns, but not rows */
+ 	config->cols = 11;
+@@ -1373,23 +1373,27 @@ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 	shift = config->bus_full_width + 1;
+ 
+ 	/* detect column address bits */
+-	for (config->cols = 8; config->cols < 11; config->cols++) {
+-		if (mctl_mem_matches(1ULL << (config->cols + shift)))
++	for (cols = 8; cols < 11; cols++) {
++		if (mctl_mem_matches(1ULL << (cols + shift)))
+ 			break;
+ 	}
+-	debug("detected %u columns\n", config->cols);
++	debug("detected %u columns\n", cols);
+ 
+ 	/* reconfigure to make sure that all active rows are accessible */
+-	config->rows = 18;
++	config->cols = 8;
++	config->rows = 17;
+ 	mctl_core_init(para, config);
+ 
+ 	/* detect row address bits */
+ 	shift = config->bus_full_width + 4 + config->cols;
+-	for (config->rows = 13; config->rows < 18; config->rows++) {
+-		if (mctl_mem_matches(1ULL << (config->rows + shift)))
++	for (rows = 13; rows < 17; rows++) {
++		if (mctl_mem_matches(1ULL << (rows + shift)))
+ 			break;
+ 	}
+-	debug("detected %u rows\n", config->rows);
++	debug("detected %u rows\n", rows);
++
++	config->cols = cols;
++	config->rows = rows;
+ }
+ 
+ static unsigned long mctl_calc_size(const struct dram_config *config)
+-- 
+2.48.1
+
+
+From 110909494f8eeae7470321399978c25d9e3af554 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Subject: [PATCH 2/2] sunxi: H616: dram: Improve address wrapping detection
+Date: Sun,  9 Mar 2025 07:31:43 +0100
+
+It turns out that checking just one write is not enough. Due to
+unexplained reasons scan procedure detected double the size. By making
+16 dword writes and comparisons that never happens.
+
+New procedure is also inverted. Instead of writing two different values
+to base address and some offset and then reading both and comparing
+values, simplify this by writing pattern at the base address and then
+search for this pattern at some offset.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ arch/arm/mach-sunxi/dram_sun50i_h616.c | 58 +++++++++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index 6f84e59e39cd..1e21f5dd451f 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -1360,38 +1360,92 @@ static void mctl_auto_detect_rank_width(const struct dram_para *para,
+ 	panic("This DRAM setup is currently not supported.\n");
+ }
+ 
++static void mctl_write_pattern(void)
++{
++	unsigned int i;
++	u32 *ptr, val;
++
++	ptr = (u32 *)CFG_SYS_SDRAM_BASE;
++	for (i = 0; i < 16; ptr++, i++) {
++		if (i & 1)
++			val = ~(ulong)ptr;
++		else
++			val = (ulong)ptr;
++		writel(val, ptr);
++	}
++}
++
++static bool mctl_check_pattern(ulong offset)
++{
++	unsigned int i;
++	u32 *ptr, val;
++
++	ptr = (u32 *)CFG_SYS_SDRAM_BASE;
++	for (i = 0; i < 16; ptr++, i++) {
++		if (i & 1)
++			val = ~(ulong)ptr;
++		else
++			val = (ulong)ptr;
++		if (val != *(ptr + offset / 4))
++			return false;
++	}
++
++	return true;
++}
++
+ static void mctl_auto_detect_dram_size(const struct dram_para *para,
+ 				       struct dram_config *config)
+ {
+ 	unsigned int shift, cols, rows;
++	u32 buffer[16];
+ 
+ 	/* max. config for columns, but not rows */
+ 	config->cols = 11;
+ 	config->rows = 13;
+ 	mctl_core_init(para, config);
+ 
++	/*
++	 * Store content so it can be restored later. This is important
++	 * if controller was already initialized and holds any data
++	 * which is important for restoring system.
++	 */
++	memcpy(buffer, (u32 *)CFG_SYS_SDRAM_BASE, sizeof(buffer));
++
++	mctl_write_pattern();
++
+ 	shift = config->bus_full_width + 1;
+ 
+ 	/* detect column address bits */
+ 	for (cols = 8; cols < 11; cols++) {
+-		if (mctl_mem_matches(1ULL << (cols + shift)))
++		if (mctl_check_pattern(1ULL << (cols + shift)))
+ 			break;
+ 	}
+ 	debug("detected %u columns\n", cols);
+ 
++	/* restore data */
++	memcpy((u32 *)CFG_SYS_SDRAM_BASE, buffer, sizeof(buffer));
++
+ 	/* reconfigure to make sure that all active rows are accessible */
+ 	config->cols = 8;
+ 	config->rows = 17;
+ 	mctl_core_init(para, config);
+ 
++	/* store data again as it might be moved */
++	memcpy(buffer, (u32 *)CFG_SYS_SDRAM_BASE, sizeof(buffer));
++
++	mctl_write_pattern();
++
+ 	/* detect row address bits */
+ 	shift = config->bus_full_width + 4 + config->cols;
+ 	for (rows = 13; rows < 17; rows++) {
+-		if (mctl_mem_matches(1ULL << (rows + shift)))
++		if (mctl_check_pattern(1ULL << (rows + shift)))
+ 			break;
+ 	}
+ 	debug("detected %u rows\n", rows);
+ 
++	/* restore data again */
++	memcpy((u32 *)CFG_SYS_SDRAM_BASE, buffer, sizeof(buffer));
++
+ 	config->cols = cols;
+ 	config->rows = rows;
+ }
+-- 
+2.48.1
+
