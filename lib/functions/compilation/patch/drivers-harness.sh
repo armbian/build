@@ -103,6 +103,7 @@ function kernel_drivers_prepare_harness() {
 		driver_generic_bring_back_ipx
 		driver_mt7921u_add_pids
 		driver_rtl8152_rtl8153
+		driver_aic8800_sdio
 		driver_rtl8189ES
 		driver_rtl8189FS
 		driver_rtl8192EU
