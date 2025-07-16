@@ -1,15 +1,13 @@
 <p align="center">
-  <h3 align=center><a href="#build-framework">
+  <h2 align=center><a href="#build-framework">
   <img src=".github/logo.png" alt="Armbian logo" width="50%">
   </a>
-<br>
-</h3>
+<br><br>
+</h2>
 
-## What is the Armbian Build Framework?
+### What does Armbian Build do?
 
-- Builds a lightweight Linux system derived from **Debian or Ubuntu**, tailored for **low-resource hardware**
-- Includes filesystem generation, low-level control tools, kernel image, and **bootloader** compilation  
-- Provides a **consistent user experience** by maintaining system standards across diverse platforms
+Builds minimal Debian/Ubuntu-based OS with custom kernel and bootloader for low-resource devices.
  
 ### Quick Start
 
