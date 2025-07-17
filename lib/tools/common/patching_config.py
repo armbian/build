@@ -40,6 +40,15 @@ class PatchingOverlayDirectoryConfig:
 		return f"PatchingOverlayDirectoryConfig(source={self.source}, target={self.target})"
 
 
+class PatchingB4AMConfig:
+	def __init__(self, data: dict):
+		self.prefix: str = data.get("prefix", None)
+		self.lore: str = data.get("lore", None)
+
+	def __str__(self):
+		return f"PatchingB4AMConfig(prefix={self.prefix}, lore={self.lore})"
+
+
 class PatchingToGitConfig:
 	def __init__(self, data: dict):
 		self.do_not_commit_files: list[str] = data.get("do-not-commit-files", [])
@@ -78,6 +87,13 @@ class PatchingConfig:
 			PatchingOverlayDirectoryConfig(data) for data in self.yaml_config.get("overlay-directories", [])
 		]
 		self.has_overlay_directories: bool = len(self.overlay_directories) > 0
+
+		# 'b4' auto 'am' patching config
+		# DTS directories to copy config
+		self.b4_am_configs: list[PatchingB4AMConfig] = [
+			PatchingB4AMConfig(data) for data in self.yaml_config.get("b4-am", [])
+		]
+		self.has_b4_am_configs: bool = len(self.b4_am_configs) > 0
 
 	def read_yaml_config(self, yaml_config_file_path):
 		with open(yaml_config_file_path) as f:
