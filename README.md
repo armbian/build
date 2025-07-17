@@ -7,8 +7,20 @@
 
 ### What does Armbian Build do?
 
-Builds minimal Debian/Ubuntu-based OS with custom kernel and bootloader for low-resource devices.
- 
+The Armbian Build Framework creates minimal, efficient, and fully [customizable operating system images](https://docs.armbian.com/#key-features) based on **Debian** or **Ubuntu**. It is designed specifically for **low-resource single board computers (SBCs)** and other embedded devices.
+
+This toolchain compiles a custom **Linux kernel**, **bootloader**, and **root filesystem**, providing fine-grained control over:
+
+- Kernel versions and configuration
+- Bootloader selection and customization
+- Filesystem layout and compression
+- Additional firmware, overlays, and device trees
+- System optimizations for performance and size
+
+The framework supports **native**, **cross**, and **containerized** builds for multiple architectures (ARMv7, ARM64, AMD64, RISC-V), and is suitable for development, testing, production deployment, or automation pipelines.
+
+It ensures **consistency across devices** while remaining modular and extensible through a variety of configuration files, templates, and user patches.
+
 ### Quick Start
 
 ```bash
