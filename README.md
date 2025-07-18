@@ -1,8 +1,6 @@
-<p align="center">
-  <h2 align=center><a href="#">
-  <img src=".github/logo.png" alt="Armbian logo" width="25%">
-  </a>
-<br><br>
+<h2 align="center">
+  <img src="https://raw.githubusercontent.com/armbian/.github/master/profile/logo.png" alt="Armbian logo" width="25%">
+  <br><br>
 </h2>
 
 ### Purpose of This Repository
