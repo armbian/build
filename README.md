@@ -66,7 +66,7 @@ Armbian offers multiple support channels, depending on your needs:
   Get help from fellow users and contributors on a wide range of topics — from troubleshooting to development.  
   👉 [forum.armbian.com](https://forum.armbian.com)
 
-- **Discord / Matrix Chat**  
+- **Discord / IRC/ Matrix Chat**  
   Join real-time discussions with developers and community members for faster feedback and collaboration.  
   👉 [Community Chat](https://docs.armbian.com/Community_IRC/)
 
