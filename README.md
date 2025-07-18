@@ -5,7 +5,7 @@
 <br><br>
 </h2>
 
-### What does Armbian Build do?
+### Purpose of This Repository
 
 The Armbian Build Framework creates minimal, efficient, and fully [customizable operating system images](https://docs.armbian.com/#key-features) based on **Debian** or **Ubuntu**. It is designed specifically for **low-resource single board computers (SBCs)** and other embedded devices.
 
