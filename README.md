@@ -48,15 +48,15 @@ cd build
 - **Access:** Superuser rights (`sudo` or `root`)
 - **Important:** Keep your system up-to-date — outdated tools (e.g., Docker) can cause issues.
 
-## Download
+### Download
 
 Prebuilt Armbian OS Images: <https://www.armbian.com/download>
 
-## Contribute
+### Contribute
 
 Learn how to report issues, suggest improvements, or submit code: [CONTRIBUTING.md](CONTRIBUTING.md)
 
-## Support
+### Support
 
 Armbian offers multiple support channels, depending on your needs:
 
@@ -72,7 +72,7 @@ Armbian offers multiple support channels, depending on your needs:
   For advanced needs, commercial projects, or guaranteed response times, paid support is available directly from Armbian maintainers.  
   👉 [Contact us](https://www.armbian.com/contact) to discuss consulting options.
 
-## Contributors
+### Contributors
 
 Thank you to all the people who already contributed to Armbian!
 
