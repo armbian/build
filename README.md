@@ -17,7 +17,7 @@ This toolchain compiles a custom **Linux kernel**, **bootloader**, and **root fi
 - Additional firmware, overlays, and device trees
 - System optimizations for performance and size
 
-The framework supports **native**, **cross**, and **containerized** builds for multiple architectures (ARMv7, ARM64, AMD64, RISC-V), and is suitable for development, testing, production deployment, or automation pipelines.
+The framework supports **native**, **cross**, and **containerized** builds for multiple architectures (`x86_64`, `aarch64`, `armhf`, `riscv64`), and is suitable for development, testing, production deployment, or automation pipelines.
 
 It ensures **consistency across devices** while remaining modular and extensible through a variety of configuration files, templates, and user patches.
 
@@ -41,7 +41,7 @@ cd build
 
 - **Supported Architectures:** `x86_64`, `aarch64`, `riscv64`
 - **System:** VM, container, or bare-metal with:
-  - **≥ 8GB RAM** (less if not using BTF)
+  - **≥ 8GB RAM** (less with `KERNEL_BTF=no`)
   - **~50GB disk space**
 - **Operating System:**
   - Armbian / Ubuntu 24.04 (Noble) for native builds
