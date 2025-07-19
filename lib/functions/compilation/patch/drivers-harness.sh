@@ -100,6 +100,7 @@ function kernel_drivers_prepare_harness() {
 	# outer scope variable: target_patch_file
 
 	declare -a all_drivers=(
+		driver_aic8800_sdio
 		driver_generic_bring_back_ipx
 		driver_mt7921u_add_pids
 		driver_rtl8152_rtl8153

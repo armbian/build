@@ -24,6 +24,61 @@
 ### Only 'patch/misc' is hashed to produce drivers hash for the kernel versioning, and using patches that don't
 ### reside there will also lead to problems.
 
+driver_aic8800_sdio() {
+	# Aicsemi aic8800 Wi-Fi driver
+	# https://github.com/radxa-pkg/aic8800
+
+	if linux-version compare "${version}" ge 6.1 && [[ "$LINUXFAMILY" =~ ^(rockchip64)$ ]]; then
+		local aic8800_sdio_ver="commit:fc7cbdd1791416c2457fa27a59e508bf325c9c3f"
+		display_alert "Adding" "Wireless AIC8800 SDIO ${aic8800_sdio_ver}" "info"
+		fetch_from_repo "$GITHUB_SOURCE/radxa-pkg/aic8800.git" "aic8800" "${aic8800_sdio_ver}" "yes"
+		cd "$kerneldir" || exit
+		rm -fdr $kerneldir/drivers/net/wireless/aic8800_sdio
+		cp -fr "${SRC}/cache/sources/aic8800/${aic8800_sdio_ver#*:}/src/SDIO/driver_fw/driver/aic8800" $kerneldir/drivers/net/wireless/aic8800_sdio
+		echo "obj-\$(CONFIG_AIC_WLAN_SUPPORT) += aic8800_sdio/" >> $kerneldir/drivers/net/wireless/Makefile
+		sed -i 's/MAKEFLAGS +=-j$(shell nproc)/#MAKEFLAGS +=-j$(shell nproc)/g' $kerneldir/drivers/net/wireless/aic8800_sdio/Makefile
+		sed -i 's/CONFIG_GPIO_WAKEUP = n/CONFIG_GPIO_WAKEUP = y/g' $kerneldir/drivers/net/wireless/aic8800_sdio/Makefile
+		sed -i 's/CONFIG_SDIO_PWRCTRL := y/CONFIG_SDIO_PWRCTRL := n/g' $kerneldir/drivers/net/wireless/aic8800_sdio/aic8800_bsp/Makefile
+		sed -i '/source "drivers\/net\/wireless\/admtek\/Kconfig"/a source "drivers\/net\/wireless\/aic8800_sdio\/Kconfig"' \
+		"$kerneldir/drivers/net/wireless/Kconfig"
+		# Enable AIC8800 SDIO Modules
+		cat <<EOF > $kerneldir/drivers/net/wireless/aic8800_sdio/Kconfig
+config AIC_WLAN_SUPPORT
+	bool "AIC wireless SDIO Support"
+	default m
+	help
+	  This is support for aic wireless SDIO chips.
+
+config AIC_FW_PATH
+	depends on AIC_WLAN_SUPPORT
+	string "Firmware & config file path"
+	default "/lib/firmware/aic8800_sdio"
+	help
+	  Path to the firmware & config file.
+
+source "drivers/net/wireless/aic8800_sdio/aic8800_fdrv/Kconfig"
+source "drivers/net/wireless/aic8800_sdio/aic8800_btlpm/Kconfig"
+EOF
+		cat <<EOF > $kerneldir/drivers/net/wireless/aic8800_sdio/aic8800_fdrv/Kconfig
+config AIC8800_WLAN_SUPPORT
+	tristate "AIC8800 wlan Support"
+	default m
+	help
+	  This is support for aic wifi driver.
+EOF
+		cat <<EOF > $kerneldir/drivers/net/wireless/aic8800_sdio/aic8800_btlpm/Kconfig
+config AIC8800_BTLPM_SUPPORT
+	tristate "AIC8800 bluetooth Support"
+	default m
+	help
+	  This is support for aic bluetooh driver.
+EOF
+	fi
+	if [[ -f "${SRC}/patch/misc/aic8800_sdio/001-Aicsemi-aic8800-fixups.patch" ]]; then
+		process_patch_file "${SRC}/patch/misc/aic8800_sdio/001-Aicsemi-aic8800-fixups.patch" "applying"
+	fi
+}
+
 function driver_generic_bring_back_ipx() {
 	#
 	# Returning headers needed for some wireless drivers
