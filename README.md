@@ -1,5 +1,5 @@
 <h2 align="center">
-  <img src="https://raw.githubusercontent.com/armbian/.github/master/profile/logo.png" alt="Armbian logo" width="25%">
+  <img src="https://raw.githubusercontent.com/armbian/.github/master/profile/logowithborder.png" alt="Armbian logo" width="25%">
   <br><br>
 </h2>
 
