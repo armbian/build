@@ -54,7 +54,7 @@ function post_family_tweaks_bsp__aic8800_wireless() {
 	display_alert "$BOARD" "Installing AIC8800 Tweaks" "info"
 	mkdir -p "${destination}"/etc/modprobe.d
 	mkdir -p "${destination}"/etc/modules-load.d
-	# Add udev rule
+	# Add wireless conf
 	cat <<EOF > "${destination}"/etc/modprobe.d/aic8800-wireless.conf
 options aic8800_fdrv aicwf_dbg_level=0 custregd=0 ps_on=0
 options aic8800_bsp aic_fw_path=/lib/firmware/aic8800_sdio
