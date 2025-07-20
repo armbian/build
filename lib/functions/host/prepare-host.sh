@@ -270,7 +270,7 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
-		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+		host_dependencies+=("libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
