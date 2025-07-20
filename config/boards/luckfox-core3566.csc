@@ -13,7 +13,6 @@ BOOT_SCENARIO="spl-blobs"
 BOOTFS_TYPE="fat" # Only for vendor/legacy
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
-MODULES=""
 MODULES_BLACKLIST_LEGACY="bcmdhd"
 
 # Override family config for this board; let's avoid conditionals in family config.
