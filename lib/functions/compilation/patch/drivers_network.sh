@@ -174,12 +174,12 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	if linux-version compare "${version}" ge 3.14; then
 
-		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:fd80508096699705ec9eb95c7a5c970fa6c2ecdc" # Commit date: 2025-05-03 (please update when updating commit ref)
+		# Attach to specific commit (is branch:v5.6.4.2_fix_6.15)
+		local rtl8812auver="commit:6e736a32f24605d8625d90f0edabf5a1669c7a74" # Commit date: 2025-06-01 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/domin144/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
+		fetch_from_repo "$GITHUB_SOURCE/domin144/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/domin144/rtl8812au
 		cd "$kerneldir" || exit
 
 		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
@@ -220,7 +220,7 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		# Attach to specific commit (is branch:master)
-		local xradio_xr819_ver="commit:180aafb14191c78c1529d5a28ca58c7c9dcf2c55" # Commit date: Dec 6, 2024 (please update when updating commit ref)
+		local xradio_xr819_ver="commit:506fbc323f1c675d037eaf7ee928939394761aee" # Commit date: Dec 6, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
@@ -254,6 +254,9 @@ driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
 	if linux-version compare "${version}" ge 3.14; then
+
+		# deprecate this driver with 6.12+
+		# https://github.com/morrownr/8821cu-20210916/commit/945c687aa1e62ee0b95b1ddd1dbfdbd513c30152
 
 		# Attach to specific commit (is branch:main)
 		local rtl8811cuver="commit:d74134a1c68f59f2b80cdd6c6afb8c1a8a687cbf" # Commit date: 2025-05-08 (please update when updating commit ref)
@@ -296,6 +299,9 @@ driver_rtl88x2bu() {
 	# Wireless drivers for Realtek 88x2bu chipsets
 
 	if linux-version compare "${version}" ge 5.0; then
+
+		# deprecate this driver with 6.12+
+		# https://github.com/morrownr/88x2bu-20210702/commit/fe48647496798cac77976e310ee95da000b436c9
 
 		# Attach to specific commit (is branch:main)
 		local rtl88x2buver="commit:1ee13286e0b212c22946aa8d51aa7d84cb876cd4" # Commit date: 2025-05-06 (please update when updating commit ref)
