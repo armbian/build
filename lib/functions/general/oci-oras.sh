@@ -52,6 +52,11 @@ function run_tool_oras() {
 			ORAS_ARCH="riscv64"
 			ORAS_VERSION="1.2.0-beta.1" # Only v1.2.0-beta.1+ has risv64 support
 			;;
+		*loongarch64*)
+			ORAS_ARCH="loong64"
+			ORAS_VERSION="1.3.0-beta.3-loong64" # Only v1.3.0-beta.3-loong64+ has loong64 support
+			ORAS_REPO="amazingfate" # This is my fork repo, we can delete it if oras releases official loong64 binary in the future
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
@@ -59,7 +64,7 @@ function run_tool_oras() {
 
 	declare ORAS_FN="oras_${ORAS_VERSION}_${ORAS_OS}_${ORAS_ARCH}"
 	declare ORAS_FN_TARXZ="${ORAS_FN}.tar.gz"
-	declare DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
+	declare DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/${ORAS_REPO:-"oras-project"}/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
 	declare ORAS_BIN="${DIR_ORAS}/${ORAS_FN}"
 	declare ACTUAL_VERSION
 
