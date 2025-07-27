@@ -1,87 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jonas Karlman <jonas@kwiboo.se>
-Date: Sun, 3 May 2020 16:51:31 +0000
-Subject: [PATCH] drm/rockchip: vop: filter modes outside 0.5% pixel clock
- tolerance
-
-Filter modes that require a pixel clock that differ more then 0.5%
-from the requested pixel clock.
-
-This filter is only applied to tmds only connector and/or encoders.
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
-Signed-off-by: Alex Bee <knaerzche@gmail.com>
----
- drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 54 +++++++++++++++++++++
- 1 file changed, 54 insertions(+)
-
-diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-index dbe4d411b30f..fac23d370ee0 100644
---- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-+++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-@@ -1207,6 +1207,59 @@ static void vop_crtc_disable_vblank(struct drm_crtc *crtc)
- 	spin_unlock_irqrestore(&vop->irq_lock, flags);
- }
- 
-+static bool vop_crtc_is_tmds(struct drm_crtc *crtc)
-+{
-+	struct rockchip_crtc_state *s = to_rockchip_crtc_state(crtc->state);
-+	struct drm_encoder *encoder;
-+
-+	switch (s->output_type) {
-+	case DRM_MODE_CONNECTOR_LVDS:
-+	case DRM_MODE_CONNECTOR_DSI:
-+		return false;
-+	case DRM_MODE_CONNECTOR_eDP:
-+	case DRM_MODE_CONNECTOR_HDMIA:
-+	case DRM_MODE_CONNECTOR_DisplayPort:
-+		return true;
-+	}
-+
-+	drm_for_each_encoder_mask(encoder, crtc->dev, crtc->state->encoder_mask)
-+		if (encoder->encoder_type == DRM_MODE_ENCODER_TMDS)
-+			return true;
-+
-+	return false;
-+}
-+
-+/*
-+ * The VESA DMT standard specifies a 0.5% pixel clock frequency tolerance.
-+ * The CVT spec reuses that tolerance in its examples.
-+ */
-+#define	CLOCK_TOLERANCE_PER_MILLE	5
-+
-+static enum drm_mode_status vop_crtc_mode_valid5(struct drm_crtc *crtc,
-+					const struct drm_display_mode *mode)
-+{
-+	struct vop *vop = to_vop(crtc);
-+	long rounded_rate;
-+	long lowest, highest;
-+
-+	if (!vop_crtc_is_tmds(crtc))
-+		return MODE_OK;
-+
-+	rounded_rate = clk_round_rate(vop->dclk, mode->clock * 1000 + 999);
-+	if (rounded_rate < 0)
-+		return MODE_NOCLOCK;
-+
-+	lowest = mode->clock * (1000 - CLOCK_TOLERANCE_PER_MILLE);
-+	if (rounded_rate < lowest)
-+		return MODE_CLOCK_LOW;
-+
-+	highest = mode->clock * (1000 + CLOCK_TOLERANCE_PER_MILLE);
-+	if (rounded_rate > highest)
-+		return MODE_CLOCK_HIGH;
-+
-+	return MODE_OK;
-+}
-+
- static bool vop_crtc_mode_fixup(struct drm_crtc *crtc,
- 				const struct drm_display_mode *mode,
- 				struct drm_display_mode *adjusted_mode)
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
 Date: Mon, 20 Jul 2020 15:15:50 +0000
 Subject: [PATCH] drm/rockchip: vop: filter interlaced modes
 
@@ -98,107 +16,15 @@ index fac23d370ee0..9f7326c5b1f5 100644
 --- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
 +++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
 @@ -1245,6 +1245,9 @@ static enum drm_mode_status vop_crtc_mode_valid(struct drm_crtc *crtc,
- 	if (!vop_crtc_is_tmds(crtc))
- 		return MODE_OK;
+	if (vop->data->max_output.width && mode->hdisplay > vop->data->max_output.width)
+		return MODE_BAD_HVALUE;
  
 +	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
 +		return MODE_NO_INTERLACE;
 +
- 	rounded_rate = clk_round_rate(vop->dclk, mode->clock * 1000 + 999);
- 	if (rounded_rate < 0)
- 		return MODE_NOCLOCK;
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
-Date: Mon, 20 Jul 2020 11:46:16 +0000
-Subject: [PATCH] drm/rockchip: vop: filter modes above max output supported
-
-Filter any mode with a resolution not supported by the VOP.
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
-Signed-off-by: Alex Bee <knaerzche@gmail.com>
----
- drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 48 +++++++++++++++------
- 1 file changed, 34 insertions(+), 14 deletions(-)
-
-diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-index 9f7326c5b1f5..30e252ba7184 100644
---- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-+++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
-@@ -1229,6 +1229,24 @@ static bool vop_crtc_is_tmds(struct drm_crtc *crtc)
- 	return false;
+	return MODE_OK;
  }
- 
-+static enum drm_mode_status vop_crtc_size_valid(struct drm_crtc *crtc,
-+					const struct drm_display_mode *mode)
-+{
-+	struct vop *vop = to_vop(crtc);
-+	const struct vop_rect *max_output = &vop->data->max_output;
-+
-+	if (max_output->width && max_output->height) {
-+		/* only the size of the resulting rect matters */
-+		if(drm_mode_validate_size(mode, max_output->width,
-+					  max_output->height) != MODE_OK) {
-+			return drm_mode_validate_size(mode, max_output->height,
-+						      max_output->width);
-+		}
-+	}
-+
-+	return MODE_OK;
-+}
-+
- /*
-  * The VESA DMT standard specifies a 0.5% pixel clock frequency tolerance.
-  * The CVT spec reuses that tolerance in its examples.
-@@ -1242,25 +1260,24 @@ static enum drm_mode_status vop_crtc_mode_valid(struct drm_crtc *crtc,
- 	long rounded_rate;
- 	long lowest, highest;
- 
--	if (!vop_crtc_is_tmds(crtc))
--		return MODE_OK;
--
- 	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
--		return MODE_NO_INTERLACE;
-+			return MODE_NO_INTERLACE;
- 
--	rounded_rate = clk_round_rate(vop->dclk, mode->clock * 1000 + 999);
--	if (rounded_rate < 0)
--		return MODE_NOCLOCK;
-+	if (vop_crtc_is_tmds(crtc)) {
-+		rounded_rate = clk_round_rate(vop->dclk, mode->clock * 1000 + 999);
-+		if (rounded_rate < 0)
-+			return MODE_NOCLOCK;
- 
--	lowest = mode->clock * (1000 - CLOCK_TOLERANCE_PER_MILLE);
--	if (rounded_rate < lowest)
--		return MODE_CLOCK_LOW;
-+		lowest = mode->clock * (1000 - CLOCK_TOLERANCE_PER_MILLE);
-+		if (rounded_rate < lowest)
-+			return MODE_CLOCK_LOW;
- 
--	highest = mode->clock * (1000 + CLOCK_TOLERANCE_PER_MILLE);
--	if (rounded_rate > highest)
--		return MODE_CLOCK_HIGH;
-+		highest = mode->clock * (1000 + CLOCK_TOLERANCE_PER_MILLE);
-+		if (rounded_rate > highest)
-+			return MODE_CLOCK_HIGH;
-+	}
- 
--	return MODE_OK;
-+	return vop_crtc_size_valid(crtc, mode);
- }
- 
- static bool vop_crtc_mode_fixup(struct drm_crtc *crtc,
-@@ -1270,6 +1287,9 @@ static bool vop_crtc_mode_fixup(struct drm_crtc *crtc,
- 	struct vop *vop = to_vop(crtc);
- 	unsigned long rate;
- 
-+	if (vop_crtc_size_valid(crtc, adjusted_mode) != MODE_OK)
-+		return false;
-+
- 	/*
- 	 * Clock craziness.
- 	 *
+
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jonas Karlman <jonas@kwiboo.se>
