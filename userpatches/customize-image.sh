@@ -72,6 +72,12 @@ systemctl enable rc-local.service
 ## WAN Failover #################################################################################
 # netplan sample configuration with WiFi
 cp /tmp/overlay/wan-failover/10-dhcp-all-interfaces.yaml /etc/netplan/10-dhcp-all-interfaces.yaml
+
+mkdir /opt/web3pi/wan-failover
+chown -R ethereum:ethereum /opt/web3pi/wan-failover
+
+cp /tmp/overlay/wan-failover/wan-failover.sh /opt/web3pi/wan-failover/wan-failover.sh
+chmod +x /opt/web3pi/wan-failover/wan-failover.sh
 #--------------------------------------------------------------------------------------------
 
 ## Add install.sh ###########################################################################
