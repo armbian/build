@@ -333,6 +333,8 @@ else
     set_status "[install.sh] - Preparing $W3P_DRIVE for installation"
     prepare_disk $W3P_DRIVE
 fi
+
+chown ethereum:ethereum /mnt/storage # Set ownership to 'ethereum' user, after mounting the disk
 #--------------------------------------------------------------------------------------------
 
 ## SWAP SPACE CONFIGURATION ###################################################################
