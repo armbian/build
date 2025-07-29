@@ -54,8 +54,8 @@ function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
 	declare -g BOOTCONFIG="orangepi-5-pro-rk3588s_defconfig"
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2024.04"
-	declare -g BOOTPATCHDIR="v2024.04"
+	declare -g BOOTBRANCH="tag:v2025.07"
+	declare -g BOOTPATCHDIR="v2025.07"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	declare -g INSTALL_HEADERS="yes"
