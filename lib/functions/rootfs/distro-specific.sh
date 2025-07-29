@@ -92,7 +92,7 @@ function create_sources_list_and_deploy_repo_key() {
 			declare -a security_suites=("${release}-security")
 			declare -a components=(main contrib non-free)
 
-			if [[ "$release" == "buster" ]]; then
+			if [[ "$release" == "buster" || "$release" == "bullseye" ]]; then
 				security_suites=("${release}/updates")
 			else
 			  suites+=("${release}-backports")
