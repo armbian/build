@@ -69,6 +69,11 @@ cp /tmp/overlay/rc-local.service /etc/systemd/system/rc-local.service
 systemctl enable rc-local.service
 #--------------------------------------------------------------------------------------------
 
+## WAN Failover #################################################################################
+# netplan sample configuration with WiFi
+cp /tmp/overlay/wan-failover/10-dhcp-all-interfaces.yaml /etc/netplan/10-dhcp-all-interfaces.yaml
+#--------------------------------------------------------------------------------------------
+
 ## Add install.sh ###########################################################################
 cp /tmp/overlay/install.sh /opt/web3pi/.install.sh     # Copy the install script to /opt/web3pi
 chmod +x /opt/web3pi/.install.sh
@@ -81,6 +86,7 @@ apt install -y software-properties-common apt-utils chrony avahi-daemon git git-
 apt install -y python3-pip python3-netifaces python3-dev libpython3-dev python3-venv
 apt install -y nvme-cli jq speedtest-cli file vim net-tools telnet apt-transport-https gdisk
 apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figlet neofetch dphys-swapfile
+apt install -y iproute2 iputils-ping dnsutils gawk bsdutils # for Wan Failover script
 #--------------------------------------------------------------------------------------------
 
 ## UFW (firewall) ###########################################################################
