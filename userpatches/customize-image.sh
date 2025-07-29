@@ -78,6 +78,12 @@ chown -R ethereum:ethereum /opt/web3pi/wan-failover
 
 cp /tmp/overlay/wan-failover/wan-failover.sh /opt/web3pi/wan-failover/wan-failover.sh
 chmod +x /opt/web3pi/wan-failover/wan-failover.sh
+
+# Copy the w3p-wan-failover service file
+cp /tmp/overlay/wan-failover/w3p-wan-failover.service /etc/systemd/system/w3p-wan-failover.service
+
+# Enable the WanFailover service
+systemctl enable w3p-wan-failover.service
 #--------------------------------------------------------------------------------------------
 
 ## Add install.sh ###########################################################################
