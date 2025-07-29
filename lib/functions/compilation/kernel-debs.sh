@@ -385,6 +385,7 @@ function kernel_package_callback_linux_headers() {
 	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
 	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
 	[[ "${SRC_ARCH}" == "riscv64" ]] && SRC_ARCH="riscv"
+	[[ "${SRC_ARCH}" == "loong64" ]] && SRC_ARCH="loongarch"
 	# @TODO: added KERNEL_SRC_ARCH to each arch'es .config file; let's make sure they're sane. Just use KERNEL_SRC_ARCH after confirmed.
 	# Lets check and warn if it isn't. If warns don't popup over time we remove and just use ARCHITECTURE later.
 	if [[ "${SRC_ARCH}" != "${KERNEL_SRC_ARCH}" ]]; then

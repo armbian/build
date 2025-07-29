@@ -92,6 +92,11 @@ function run_tool_shellcheck() {
 			display_alert "No RISC-V riscv64 support for SHELLCHECK" "SHELLCHECK will not run" "wrn"
 			return 0
 			;;
+		*loongarch64*)
+			# check https://github.com/koalaman/shellcheck in the future, build might be possible
+			display_alert "No LoongArch support for SHELLCHECK" "SHELLCHECK will not run" "wrn"
+			return 0
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
