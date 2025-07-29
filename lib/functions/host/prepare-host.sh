@@ -203,7 +203,6 @@ function adaptative_prepare_host_dependencies() {
 		udev # causes initramfs rebuild, but is usually pre-installed.
 		uuid-dev
 		zlib1g-dev
-		gcc-arm-linux-gnueabi # necessary for rockchip64 (and maybe other too) ATF compilation
 
 		# by-category below
 		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
@@ -256,7 +255,9 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-aarch64-linux-gnu") # from crossbuild-essential-arm64
+		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64
+		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation
+		host_dependencies+=("gcc-aarch64-linux-gnu" "gcc-arm-linux-gnueabi")
 	fi
 
 	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
@@ -269,7 +270,7 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
-		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+		host_dependencies+=("libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
