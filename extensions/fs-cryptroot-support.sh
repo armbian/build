@@ -74,7 +74,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 }
 
 function post_umount_final_image__export_private_key(){
-	if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
+	if [[ $CRYPTROOT_SSH_UNLOCK == yes && -f "${DROPBEAR_DIR}"/id_ecdsa ]]; then
 		CRYPTROOT_SSH_UNLOCK_KEY_PATH="${DESTIMG}/${version}.key"
 		# copy dropbear ssh key to image output dir for convenience
 		cp "${DROPBEAR_DIR}"/id_ecdsa "${CRYPTROOT_SSH_UNLOCK_KEY_PATH}"
