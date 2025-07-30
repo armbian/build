@@ -32,6 +32,13 @@ driver_aic8800_sdio() {
 		local aic8800_sdio_ver="commit:fc7cbdd1791416c2457fa27a59e508bf325c9c3f"
 		display_alert "Adding" "Wireless AIC8800 SDIO ${aic8800_sdio_ver}" "info"
 		fetch_from_repo "$GITHUB_SOURCE/radxa-pkg/aic8800.git" "aic8800" "${aic8800_sdio_ver}" "yes"
+		# Patch AIC8800 source using series file
+		aic_patch_dir="cache/sources/aic8800/${aic8800_sdio_ver#*:}/debian/patches"
+		if [[ -f "${SRC}/${aic_patch_dir}/series" ]]; then
+			for aic_patch_series in `cat ${SRC}/${aic_patch_dir}/series`
+				do for i in $aic_patch_series; do process_patch_file ${SRC}/${aic_patch_dir}/$i; done
+			done
+		fi
 		cd "$kerneldir" || exit
 		rm -fdr $kerneldir/drivers/net/wireless/aic8800_sdio
 		cp -fr "${SRC}/cache/sources/aic8800/${aic8800_sdio_ver#*:}/src/SDIO/driver_fw/driver/aic8800" $kerneldir/drivers/net/wireless/aic8800_sdio
@@ -70,9 +77,6 @@ config AIC8800_BTLPM_SUPPORT
 	help
 	  This is support for aic bluetooh driver.
 EOF
-	fi
-	if [[ -f "${SRC}/patch/misc/aic8800_sdio/001-Aicsemi-aic8800-fixups.patch" ]]; then
-		process_patch_file "${SRC}/patch/misc/aic8800_sdio/001-Aicsemi-aic8800-fixups.patch" "applying"
 	fi
 }
 
