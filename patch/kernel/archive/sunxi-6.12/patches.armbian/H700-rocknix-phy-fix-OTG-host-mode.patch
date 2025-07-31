@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John Doe <john.doe@somewhere.on.planet>
+Date: Wed, 30 Jul 2025 02:12:45 +0000
+Subject: Patching kernel sunxi64 files drivers/phy/allwinner/phy-sun4i-usb.c
+
+Signed-off-by: John Doe <john.doe@somewhere.on.planet>
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 44 ++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index c9055d05007b..788ce06333b6 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -472,10 +472,14 @@ static bool sun4i_usb_phy0_poll(struct sun4i_usb_phy_data *data)
+ static int sun4i_usb_phy_power_on(struct phy *_phy)
+ {
+ 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
+ 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
+ 	int ret;
++	
++	/* phy0 power is controlled by sun4i_usb_phy0_reroute and id_det state */
++	if (phy->index == 0 && data->cfg->phy0_dual_route)
++		return 0;
+ 
+ 	if (!phy->vbus || phy->regulator_on)
+ 		return 0;
+ 
+ 	/* For phy0 only turn on Vbus if we don't have an ext. Vbus */
+@@ -500,10 +504,14 @@ static int sun4i_usb_phy_power_on(struct phy *_phy)
+ 
+ static int sun4i_usb_phy_power_off(struct phy *_phy)
+ {
+ 	struct sun4i_usb_phy *phy = phy_get_drvdata(_phy);
+ 	struct sun4i_usb_phy_data *data = to_sun4i_usb_phy_data(phy);
++	
++	/* phy0 power is controlled by sun4i_usb_phy0_reroute and id_det state */
++	if (phy->index == 0 && data->cfg->phy0_dual_route)
++		return 0;
+ 
+ 	if (!phy->vbus || !phy->regulator_on)
+ 		return 0;
+ 
+ 	regulator_disable(phy->vbus);
+@@ -543,10 +551,22 @@ static int sun4i_usb_phy_set_mode(struct phy *_phy,
+ 		new_mode = USB_DR_MODE_OTG;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
++	
++	if (data->cfg->phy0_dual_route) {
++		/*
++		 For SoCs with dual route the PHY mode is fully determined by 
++		 the selected mux route (i.e. USB controller to use).
++		 As both host (EHCI/OHCI) and peripheral (MUSB) controllers uses
++		 the same PHY, both drivers can try to set PHY mode.
++		 We need to ignore this requests, but not report error in case
++		 of valid mode values.
++		*/
++		return 0;
++	}
+ 
+ 	if (new_mode != data->dr_mode) {
+ 		dev_info(&_phy->dev, "Changing dr_mode to %d\n", new_mode);
+ 		data->dr_mode = new_mode;
+ 	}
+@@ -575,19 +595,37 @@ static const struct phy_ops sun4i_usb_phy_ops = {
+ 	.owner		= THIS_MODULE,
+ };
+ 
+ static void sun4i_usb_phy0_reroute(struct sun4i_usb_phy_data *data, int id_det)
+ {
++	struct phy *phy0 = data->phys[0].phy;
++	struct sun4i_usb_phy *phy;
+ 	u32 regval;
+ 
++	if (!phy0)
++		return;
++
++	phy = phy_get_drvdata(phy0);
+ 	regval = readl(data->base + REG_PHY_OTGCTL);
+ 	if (id_det == 0) {
+ 		/* Host mode. Route phy0 to EHCI/OHCI */
+ 		regval &= ~OTGCTL_ROUTE_MUSB;
++
++		/* Enable VBUS reg */
++		if (phy->vbus && !phy->regulator_on) {
++			regulator_enable(phy->vbus);
++			phy->regulator_on = true;
++		}
+ 	} else {
+ 		/* Peripheral mode. Route phy0 to MUSB */
+ 		regval |= OTGCTL_ROUTE_MUSB;
++		
++		/* Disable VBUS reg */
++		if (phy->vbus && phy->regulator_on) {
++			regulator_disable(phy->vbus);
++			phy->regulator_on = false;
++		}
+ 	}
+ 	writel(regval, data->base + REG_PHY_OTGCTL);
+ }
+ 
+ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+@@ -610,10 +648,16 @@ static void sun4i_usb_phy0_id_vbus_det_scan(struct work_struct *work)
+ 
+ 	if (!data->phy0_init) {
+ 		mutex_unlock(&phy0->mutex);
+ 		return;
+ 	}
++	
++	/* Disable internal VBUS reg if there is an external VBUS */
++	if (vbus_det != 0 && phy->vbus && phy->regulator_on) {
++		regulator_disable(phy->vbus);
++		phy->regulator_on = false;
++	}
+ 
+ 	force_session_end = data->force_session_end;
+ 	data->force_session_end = false;
+ 
+ 	if (id_det != data->id_det) {
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+

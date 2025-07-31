@@ -1,0 +1,177 @@
+#!/bin/bash
+
+# Anbernic USB OTG Smart Manager
+# Monitors ID pin and automatically switches USB OTG between host and device modes
+# Alternative to kernel PHY driver modifications
+
+# Hardware configuration for H700 Anbernic devices
+ID_GPIO_NUM="260"  # PI4 = 8*32 + 4 = 260
+ID_GPIO="/sys/class/gpio/gpio${ID_GPIO_NUM}"
+VBUS_REGULATOR_PATH="/sys/class/regulator"
+USB_ROLE_PATH="/sys/class/usb_role"
+
+log_message() {
+    echo "$(date): $1" | systemd-cat -t anbernic-usb-otg-manager
+}
+
+setup_gpio() {
+    log_message "Setting up ID detection GPIO${ID_GPIO_NUM}"
+    
+    # Export GPIO if not already exported
+    if [ ! -d "$ID_GPIO" ]; then
+        echo "$ID_GPIO_NUM" > /sys/class/gpio/export 2>/dev/null || {
+            log_message "Warning: Could not export GPIO ${ID_GPIO_NUM}"
+            return 1
+        }
+        sleep 1
+    fi
+    
+    # Set as input with pull-up (matches device tree config)
+    echo "in" > "${ID_GPIO}/direction" 2>/dev/null || {
+        log_message "Warning: Could not set GPIO direction"
+        return 1
+    }
+    
+    log_message "GPIO setup completed successfully"
+    return 0
+}
+
+read_id_pin() {
+    if [ -f "${ID_GPIO}/value" ]; then
+        cat "${ID_GPIO}/value"
+    else
+        log_message "Error: Cannot read ID pin value"
+        echo "1"  # Default to device mode if can't read
+    fi
+}
+
+find_usb_role_switch() {
+    # Find USB role switch control file
+    find "$USB_ROLE_PATH" -name "role" 2>/dev/null | head -1
+}
+
+find_vbus_regulator() {
+    # Find VBUS regulator enable control
+    find "$VBUS_REGULATOR_PATH" -name "name" -exec grep -l "usb.*vbus\|vbus.*usb" {} \; 2>/dev/null | head -1 | sed 's/name$/enable/'
+}
+
+set_host_mode() {
+    local role_file=$(find_usb_role_switch)
+    local vbus_file=$(find_vbus_regulator)
+    
+    if [ -n "$role_file" ]; then
+        echo "host" > "$role_file" 2>/dev/null && {
+            log_message "USB role switched to HOST mode"
+        } || {
+            log_message "Warning: Failed to switch USB role to host"
+        }
+    else
+        log_message "Warning: USB role switching not available"
+    fi
+    
+    # Enable VBUS power for connected devices
+    if [ -n "$vbus_file" ] && [ -f "$vbus_file" ]; then
+        echo "1" > "$vbus_file" 2>/dev/null && {
+            log_message "VBUS power enabled for USB devices"
+        } || {
+            log_message "Warning: Could not enable VBUS power"
+        }
+    else
+        log_message "Info: VBUS regulator control not found"
+    fi
+}
+
+set_device_mode() {
+    local role_file=$(find_usb_role_switch)
+    local vbus_file=$(find_vbus_regulator)
+    
+    if [ -n "$role_file" ]; then
+        echo "device" > "$role_file" 2>/dev/null && {
+            log_message "USB role switched to DEVICE mode"
+        } || {
+            log_message "Warning: Failed to switch USB role to device"
+        }
+    else
+        log_message "Warning: USB role switching not available"
+    fi
+    
+    # Disable VBUS power in device mode
+    if [ -n "$vbus_file" ] && [ -f "$vbus_file" ]; then
+        echo "0" > "$vbus_file" 2>/dev/null && {
+            log_message "VBUS power disabled (device mode)"
+        } || {
+            log_message "Warning: Could not disable VBUS power"
+        }
+    fi
+}
+
+check_otg_cable() {
+    # ID pin LOW (0) = OTG cable connected, switch to host mode
+    # ID pin HIGH (1) = No OTG cable, switch to device mode
+    local id_state=$(read_id_pin)
+    [ "$id_state" = "0" ]
+}
+
+check_system_readiness() {
+    log_message "Checking system readiness for USB OTG management"
+    
+    # Check if USB role switching is available
+    local role_file=$(find_usb_role_switch)
+    if [ -z "$role_file" ]; then
+        log_message "ERROR: USB role switching not available in /sys/class/usb_role/"
+        return 1
+    fi
+    log_message "Found USB role switch at: $role_file"
+    
+    # Check GPIO availability
+    if ! setup_gpio; then
+        log_message "ERROR: GPIO setup failed"
+        return 1
+    fi
+    
+    # Check VBUS regulator (optional but recommended)
+    local vbus_file=$(find_vbus_regulator)
+    if [ -n "$vbus_file" ]; then
+        log_message "Found VBUS regulator at: $vbus_file"
+    else
+        log_message "INFO: VBUS regulator not found (will continue without power control)"
+    fi
+    
+    return 0
+}
+
+smart_otg_switch() {
+    if check_otg_cable; then
+        # OTG cable detected (ID pin low), switch to host mode
+        if [ "$current_mode" != "host" ]; then
+            set_host_mode
+            current_mode="host"
+        fi
+    else
+        # No OTG cable (ID pin high), switch to device mode  
+        if [ "$current_mode" != "device" ]; then
+            set_device_mode
+            current_mode="device"
+        fi
+    fi
+}
+
+# Initialize current mode tracking
+current_mode=""
+
+# Main execution
+log_message "Starting Anbernic USB OTG Smart Manager"
+
+# Verify system is ready
+if ! check_system_readiness; then
+    log_message "FATAL: System not ready for USB OTG management. Exiting."
+    exit 1
+fi
+
+log_message "System ready. Starting USB OTG monitoring loop..."
+
+# Main monitoring loop
+while true; do
+    smart_otg_switch
+    sleep 5  # Check every 5 seconds
+done
