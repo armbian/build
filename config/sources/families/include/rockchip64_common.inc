@@ -176,6 +176,7 @@ prepare_boot_configuration() {
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			[[ $BOOT_SCENARIO == binman-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf;;u-boot-rockchip.bin"
+				# binman builds do not have separate build targets for idbloader.img and u-boot.itb
 			;;
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -213,6 +214,7 @@ uboot_custom_postprocess() {
 
 	case "$BOOT_SCENARIO" in
 		blobless | tpl-spl-blob | binman*)
+			# binman-atf-mainline functions the same as original `binman` after build
 			:
 			;;
 
@@ -283,7 +285,7 @@ write_uboot_platform() {
 	local logging_prelude=""
 	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
 
-	if [ -f $1/u-boot-rockchip.bin ]; then #"$BOOT_SCENARIO" == binman
+	if [ -f $1/u-boot-rockchip.bin ]; then #"$BOOT_SCENARIO" == "binman" or "binman-atf-mainline"
 		${logging_prelude} dd if=$1/u-boot-rockchip.bin of=$2 bs=32k seek=1 conv=notrunc status=none
 	elif [ -f $1/rksd_loader.img ]; then # legacy rk3399 loader
 		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
