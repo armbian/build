@@ -57,6 +57,7 @@ esac
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 # - binman:  u-boot builds full boot image from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
+# - binman-atf-mainline:  u-boot builds full boot image with mainline ATF from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
@@ -160,7 +161,7 @@ prepare_boot_configuration() {
 	ATFSOURCE=''
 	ATF_COMPILE='no'
 	case "$BOOT_SCENARIO" in
-		blobless | tpl-blob-atf-mainline)
+		blobless | tpl-blob-atf-mainline | binman-atf-mainline)
 			UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			ATF_COMPILE=yes
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
@@ -173,6 +174,8 @@ prepare_boot_configuration() {
 
 			[[ $BOOT_SCENARIO == tpl-blob-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+			[[ $BOOT_SCENARIO == binman-atf-mainline ]] &&
+				UBOOT_TARGET_MAP="BL31=bl31.elf;;u-boot-rockchip.bin"
 			;;
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -209,7 +212,7 @@ uboot_custom_postprocess() {
 	display_alert "${BOARD}" "boots with ${BOOT_SCENARIO} scenario" "info"
 
 	case "$BOOT_SCENARIO" in
-		blobless | tpl-spl-blob | binman)
+		blobless | tpl-spl-blob | binman*)
 			:
 			;;
 
