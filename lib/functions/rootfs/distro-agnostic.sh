@@ -296,6 +296,7 @@ function install_distribution_agnostic() {
 
 		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 			if [[ $INSTALL_HEADERS == yes ]]; then # @TODO remove? might be a good idea to always install headers.
+				chroot_sdcard_apt_get_install "pahole"
 				install_artifact_deb_chroot "linux-headers"
 			fi
 		fi
