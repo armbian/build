@@ -202,8 +202,11 @@ function kernel_package_callback_linux_image() {
 
 	# @TODO: we expect _all_ kernels to produce this, which is... not true.
 	declare kernel_pre_package_path="${tmp_kernel_install_dirs[INSTALL_PATH]}"
-	declare kernel_image_pre_package_path="${kernel_pre_package_path}/vmlinuz-${kernel_version_family}"
-	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here for compatibility
+	kernel_image_installed_file_name=$(basename $(ls ${kernel_pre_package_path}/vmlinu*-${kernel_version_family}))
+	kernel_image_name=${kernel_image_installed_file_name%%-*}
+	display_alert "linux-image deb packaging kernel_image_name" "${kernel_image_name}" "info"
+	declare kernel_image_pre_package_path="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
+	declare installed_image_path="boot/${kernel_image_name}-${kernel_version_family}" # using old mkdebian terminology here for compatibility
 
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
 	run_host_command_logged tree -C --du -h "${tmp_kernel_install_dirs[INSTALL_PATH]}"
