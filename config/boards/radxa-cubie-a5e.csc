@@ -13,6 +13,7 @@ BOOTFS_TYPE="fat"
 BOOTSTART="1"
 BOOTSIZE="512"
 ROOTSTART="513"
+EXTRAWIFI="no"
 
 function post_family_tweaks__radxa_cubie-a5e() {
 	display_alert "Applying wifi firmware"
