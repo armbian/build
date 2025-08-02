@@ -593,7 +593,7 @@ function docker_cli_launch() {
 	local -i docker_build_result
 	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
-		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
+		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successful" "info"
 	else
 		docker_build_result=$? # capture exit code of test done 4 lines above.
 		# No use polluting GHA/CI with notices about Docker failure (real failure, inside Docker, generated enough errors already) skip_ci_special="yes"
