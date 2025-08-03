@@ -57,6 +57,11 @@ esac
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 # - binman:  u-boot builds full boot image from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
+# - binman-mainline-atf: like "binman" scenario, but also compiles mainline opensource ATF instead of proprietary blob
+#
+# A note about binman configurations and use of ddrbin blob or u-boot TPL: 
+# - if CONFIG_ROCKCHIP_EXTERNAL_TPL=y, ROCKCHIP_TPL env variable must point to the ddrbin binary blob that will be shipped in the final binary
+# - if CONFIG_ROCKCHIP_EXTERNAL_TPL is unset, then ROCKCHIP_TPL env var is ignored and then u-boot TPL is built and shipped in the final binary
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
@@ -157,19 +162,25 @@ case "$BOOT_SOC" in
 esac
 
 prepare_boot_configuration() {
+
+	# We setup the necessary bits to compile mainline Arm Trusted Firmware
+	# but ATF_COMPILE='no' means that, by default, we don't want to compile it.
+	# Scenarios using mainline ATF just have to set ATF_COMPILE='yes'
+	# to trigger the compilation
 	ATFSOURCE=''
 	ATF_COMPILE='no'
+	ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
+	ATF_COMPILER='aarch64-linux-gnu-'
+	ATFDIR='arm-trusted-firmware'
+	ATFBRANCH='tag:v2.13.0'
+	ATF_USE_GCC='> 6.3'
+	ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
+	ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
+
 	case "$BOOT_SCENARIO" in
 		blobless | tpl-blob-atf-mainline)
 			UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			ATF_COMPILE=yes
-			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
-			ATF_COMPILER='aarch64-linux-gnu-'
-			ATFDIR='arm-trusted-firmware'
-			ATFBRANCH='tag:v2.13.0'
-			ATF_USE_GCC='> 6.3'
-			ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
-			ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
 
 			[[ $BOOT_SCENARIO == tpl-blob-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -185,6 +196,10 @@ prepare_boot_configuration() {
 			;;
 		binman)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
+			;;
+		binman-mainline-atf)
+			ATF_COMPILE='yes'
+			UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 			;;
 	esac
 
@@ -209,7 +224,7 @@ uboot_custom_postprocess() {
 	display_alert "${BOARD}" "boots with ${BOOT_SCENARIO} scenario" "info"
 
 	case "$BOOT_SCENARIO" in
-		blobless | tpl-spl-blob | binman)
+		blobless | tpl-spl-blob | binman | binman-mainline-atf)
 			:
 			;;
 
