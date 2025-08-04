@@ -269,6 +269,11 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=("debian-archive-keyring")
 	fi
 
+	if [[ "${wanted_arch}" == "loong64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-loongarch64-linux-gnu") # crossbuild-essential-loongarch64 is not even available "yet"
+		host_dependencies+=("debian-ports-archive-keyring")
+	fi
+
 	if [[ "${wanted_arch}" != "amd64" ]]; then
 		host_dependencies+=("libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi

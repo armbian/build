@@ -121,13 +121,19 @@ function create_sources_list_and_deploy_repo_key() {
 		sid | unstable)
 			distro="debian"
 
+			if [[ "${ARCH}" == loong64 ]]; then
+				# loong64 is using debian-ports repo, we can change it to default after debian supports it officially
+				keyring_filename=/usr/share/keyrings/debian-ports-archive-keyring.gpg
+			else
+				keyring_filename=/usr/share/keyrings/debian-archive-keyring.gpg
+			fi
 			# sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
 			Types: deb
 			URIs: http://${DEBIAN_MIRROR}
 			Suites: ${release}
 			Components: main contrib non-free non-free-firmware
-			Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+			Signed-By: ${keyring_filename}
 			EOF
 
 			# Required for some packages on riscv64.
