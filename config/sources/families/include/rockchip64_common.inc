@@ -175,8 +175,9 @@ prepare_boot_configuration() {
 			[[ $BOOT_SCENARIO == tpl-blob-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			[[ $BOOT_SCENARIO == binman-atf-mainline ]] &&
-				UBOOT_TARGET_MAP="BL31=bl31.elf;;u-boot-rockchip.bin"
+				UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 				# binman builds do not have separate build targets for idbloader.img and u-boot.itb
+				# ROCKCHIP_TPL needed for boards with CONFIG_ROCKCHIP_EXTERNAL_TPL, ignored for boards without it
 			;;
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
