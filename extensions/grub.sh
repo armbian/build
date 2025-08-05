@@ -38,11 +38,14 @@ function extension_prepare_config__prepare_grub_standard() {
 			else
 				packages+=("grub-efi-${ARCH}")
 			fi
+		else
+			packages+=("grub-efi-${ARCH}")
 		fi
 
 		if [[ "${ARCH}" == "arm64" ]]; then
-			packages+=("grub-efi-${ARCH}")
 			declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		elif [[ "${ARCH}" == "loong64" ]]; then
+			declare -g UEFI_GRUB_TARGET="loongarch64-efi"
 		fi
 	fi
 
