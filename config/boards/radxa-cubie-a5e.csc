@@ -5,7 +5,7 @@ BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
-KERNEL_TARGET="dev,edge"
+KERNEL_TARGET="edge"
 BOOT_FDT_FILE="dtb/allwinner/sun55i-a527-radxa-a5e.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 #IMAGE_PARTITION_TABLE="msdos"
@@ -16,7 +16,7 @@ ROOTSTART="513"
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
-EXTRAWIFI="no"
+EXTRAWIFI="yes"
 # AIC8800
 AIC8800_TYPE="sdio"
 enable_extension "radxa-aic8800"
