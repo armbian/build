@@ -10,11 +10,5 @@ KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399-rock-4se.dtb"
-BOOT_SCENARIO="spl-blobs"
+BOOT_SCENARIO="binman-atf-mainline"
 BOOT_SUPPORT_SPI="yes"
-BL31_BLOB="rk33/rk3399_bl31_v1.36.elf"
-DDR_BLOB="rk33/rk3399_ddr_933MHz_v1.30.bin"
-
-function post_family_config___mainline_uboot() {
-	declare -g UBOOT_TARGET_MAP="ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB} BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl u-boot.bin flash.bin;;idbloader.img u-boot.itb"
-}
