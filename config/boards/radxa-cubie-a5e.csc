@@ -16,7 +16,6 @@ ROOTSTART="513"
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
-EXTRAWIFI="yes"
 # AIC8800
 AIC8800_TYPE="sdio"
 enable_extension "radxa-aic8800"
