@@ -7,6 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 #
+import glob
 import logging
 import os
 
@@ -18,6 +19,7 @@ from git import InvalidGitRepositoryError
 from git import Repo
 
 import common.armbian_utils as armbian_utils
+import common.b4_caller as b4_caller
 import common.dt_makefile_patcher as dt_makefile_patcher
 import common.patching_utils as patching_utils
 from common.md_asset_log import SummarizedMarkdownWriter
@@ -71,7 +73,7 @@ USERPATCHES_PATH = armbian_utils.get_from_env("USERPATCHES_PATH")
 exit_with_exception: "Exception | None" = None
 
 # Some path possibilities
-CONST_PATCH_ROOT_DIRS = []
+CONST_PATCH_ROOT_DIRS: list[patching_utils.PatchRootDir] = []
 
 for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
 	if USERPATCHES_PATH is not None:
@@ -120,6 +122,37 @@ for root_type in CONST_ROOT_TYPES_CONFIG_ORDER:
 
 # load the configs and merge them.
 pconfig: PatchingConfig = PatchingConfig(all_yaml_config_files)
+
+# First of all, process the b4 configuration, which might produce new files on disk.
+if pconfig.has_b4_am_configs:
+	log.info("Processing b4 configuration...")
+	for b4_config in pconfig.b4_am_configs:
+		# Check in all dirs in CONST_PATCH_ROOT_DIRS if a file with the prefix exists. If so, skip it.
+		skip_config = False
+		for one_root_dir in CONST_PATCH_ROOT_DIRS:
+			glob_pattern = f"{one_root_dir.abs_dir}/{b4_config.prefix}*.patch"
+			log.debug(f"Checking for existing b4 patch files with glob: '{glob_pattern}'")
+			if glob.glob(glob_pattern):
+				log.info(f"Skipping b4 configuration '{b4_config.prefix}' as it already exists in '{one_root_dir.abs_dir}'.")
+				skip_config = True
+				break
+		if skip_config:
+			continue
+		# Grab data using b4, and write it to the second directory in CONST_PATCH_ROOT_DIRS (the first would be user patches).
+		log.info(f"Processing b4 configuration: '{b4_config.prefix}' {b4_config.lore}")
+		b4_patch_body_slug = b4_caller.get_patch_via_b4(b4_config.lore)
+		target_dir = CONST_PATCH_ROOT_DIRS[1].abs_dir  # user patches dir
+		target_file = os.path.join(target_dir, f"{b4_config.prefix}-{b4_patch_body_slug['slug']}.patch")
+		log.debug(f"Writing b4 patch to file: '{target_file}'")
+		with open(target_file, 'wb') as f:
+			f.write(b4_patch_body_slug["body"])
+		log.info(f"Written b4 patch to file: '{target_file}'")
+		# if we wrote something, force the patching operation to be a rewrite against the git repo, sans archeology.
+		git_archeology = False
+		apply_patches_to_git = True
+		rewrite_patches_in_place = True
+
+	log.info("Processing b4 configuration... Done.")
 
 PATCH_FILES_FIRST: list[patching_utils.PatchFileInDir] = []
 EXTRA_PATCH_FILES_FIRST: list[str] = armbian_utils.parse_env_for_tokens("EXTRA_PATCH_FILES_FIRST")
@@ -359,7 +392,7 @@ if apply_patches:
 			if one_patch.rewritten_patch is None:
 				log.warning(f"Skipping patch {one_patch} from rewrite because it was not rewritten.")
 				continue
-			
+
 			# Skip the patch if it doesn't need rebasing
 			if rewrite_only_patches_needing_rebase:
 				if "needs_rebase" not in one_patch.problems:
