@@ -1,7 +1,7 @@
 # Allwinner H616 quad core 512MB/1GB RAM SoC WiFi
 BOARD_NAME="BigTreeTech CB1"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER="JohnTheCoolingFan"
+BOARD_MAINTAINER=""
 BOOTCONFIG="bigtreetech_cb1_defconfig"
 SERIALCON="ttyS0"
 KERNEL_TARGET="current,edge"
