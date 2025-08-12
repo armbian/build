@@ -1,0 +1,4042 @@
+From f79f9d05a71e5221dc6e4cb947efa4f3a8547175 Mon Sep 17 00:00:00 2001
+From: caco <caco@126.com>
+Date: Wed, 30 Jul 2025 09:17:00 +0800
+Subject: [PATCH drm/rockchip] drivers/drm/rockchip: Update Hdmi Color in VOP
+ driver 		Fixed incorrect horizontal sync timing in
+ vop_crtc_set_timing. 		Path:
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+
+Signed-off-by: caco <caco@126.com>
+---
+ .../drm/bridge/analogix/analogix_dp_core.c    |  34 +-
+ .../gpu/drm/bridge/analogix/analogix_dp_reg.c |   5 +-
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c  | 108 +--
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c     |  40 +-
+ drivers/gpu/drm/display/drm_dp_mst_topology.c |  15 +-
+ drivers/gpu/drm/panel/panel-simple.c          |   4 +-
+ drivers/gpu/drm/rockchip/dw-dp.c              |  87 +-
+ drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c   | 383 ++------
+ drivers/gpu/drm/rockchip/rk618/rk618_hdmi.c   |  75 +-
+ .../gpu/drm/rockchip/rockchip_drm_debugfs.c   |  46 -
+ .../gpu/drm/rockchip/rockchip_drm_debugfs.h   |   7 -
+ drivers/gpu/drm/rockchip/rockchip_drm_drv.c   | 240 +++--
+ drivers/gpu/drm/rockchip/rockchip_drm_drv.h   |  28 +-
+ drivers/gpu/drm/rockchip/rockchip_drm_fb.c    |   6 +-
+ drivers/gpu/drm/rockchip/rockchip_drm_logo.c  |   5 -
+ drivers/gpu/drm/rockchip/rockchip_drm_tve.c   |   2 -
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c   |   8 +-
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.h   | 101 +--
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.c  | 846 ++----------------
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.h  |   5 +
+ drivers/gpu/drm/rockchip/rockchip_drm_vvop.c  |  14 +-
+ drivers/gpu/drm/rockchip/rockchip_vop2_reg.c  | 142 +--
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c   |   4 +
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.h   |  31 -
+ 24 files changed, 446 insertions(+), 1790 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/analogix/analogix_dp_core.c b/drivers/gpu/drm/bridge/analogix/analogix_dp_core.c
+index 6ac47ad2cc36..586ce30943c2 100644
+--- a/drivers/gpu/drm/bridge/analogix/analogix_dp_core.c
++++ b/drivers/gpu/drm/bridge/analogix/analogix_dp_core.c
+@@ -178,7 +178,7 @@ static int analogix_dp_detect_hpd(struct analogix_dp_device *dp)
+ 		analogix_dp_force_hpd(dp);
+ 
+ 	if (analogix_dp_get_plug_in_status(dp) != 0) {
+-		dev_dbg(dp->dev, "hpd status is detected as disconnected\n");
++		dev_err(dp->dev, "failed to get hpd plug in status\n");
+ 		return -EINVAL;
+ 	}
+ 
+@@ -271,19 +271,37 @@ analogix_dp_enable_rx_to_enhanced_mode(struct analogix_dp_device *dp,
+ 	return ret < 0 ? ret : 0;
+ }
+ 
++static int analogix_dp_is_enhanced_mode_available(struct analogix_dp_device *dp,
++						  u8 *enhanced_mode_support)
++{
++	u8 data;
++	int ret;
++
++	ret = drm_dp_dpcd_readb(&dp->aux, DP_MAX_LANE_COUNT, &data);
++	if (ret != 1) {
++		*enhanced_mode_support = 0;
++		return ret;
++	}
++
++	*enhanced_mode_support = DPCD_ENHANCED_FRAME_CAP(data);
++
++	return 0;
++}
++
+ static int analogix_dp_set_enhanced_mode(struct analogix_dp_device *dp)
+ {
+-	bool enhanced_frame_en;
+ 	u8 data;
+ 	int ret;
+ 
+-	enhanced_frame_en = drm_dp_enhanced_frame_cap(dp->dpcd);
++	ret = analogix_dp_is_enhanced_mode_available(dp, &data);
++	if (ret < 0)
++		return ret;
+ 
+-	ret = analogix_dp_enable_rx_to_enhanced_mode(dp, enhanced_frame_en);
++	ret = analogix_dp_enable_rx_to_enhanced_mode(dp, data);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (!enhanced_frame_en) {
++	if (!data) {
+ 		/*
+ 		 * As the Table 3-4 in eDP v1.2 spec:
+ 		 * DPCD 0000Dh:
+@@ -302,12 +320,12 @@ static int analogix_dp_set_enhanced_mode(struct analogix_dp_device *dp)
+ 		if (ret < 0)
+ 			return ret;
+ 
+-		enhanced_frame_en = !!(data & DP_FRAMING_CHANGE_CAP);
++		data = !!(data & DP_FRAMING_CHANGE_CAP);
+ 	}
+ 
+-	analogix_dp_enable_enhanced_mode(dp, enhanced_frame_en);
++	analogix_dp_enable_enhanced_mode(dp, data);
+ 
+-	dp->link_train.enhanced_framing = enhanced_frame_en;
++	dp->link_train.enhanced_framing = data;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/gpu/drm/bridge/analogix/analogix_dp_reg.c b/drivers/gpu/drm/bridge/analogix/analogix_dp_reg.c
+index e72524eab4c2..8b89e45d2fda 100644
+--- a/drivers/gpu/drm/bridge/analogix/analogix_dp_reg.c
++++ b/drivers/gpu/drm/bridge/analogix/analogix_dp_reg.c
+@@ -1143,6 +1143,7 @@ ssize_t analogix_dp_transfer(struct analogix_dp_device *dp,
+ 	u32 reg;
+ 	u8 *buffer = msg->buffer;
+ 	unsigned int i;
++	int num_transferred = 0;
+ 	int ret;
+ 
+ 	/* Buffer size of AUX CH is 16 bytes */
+@@ -1194,6 +1195,7 @@ ssize_t analogix_dp_transfer(struct analogix_dp_device *dp,
+ 			reg = buffer[i];
+ 			analogix_dp_write(dp, ANALOGIX_DP_BUF_DATA_0 + 4 * i,
+ 					  reg);
++			num_transferred++;
+ 		}
+ 	}
+ 
+@@ -1242,6 +1244,7 @@ ssize_t analogix_dp_transfer(struct analogix_dp_device *dp,
+ 			reg = analogix_dp_read(dp, ANALOGIX_DP_BUF_DATA_0 +
+ 					       4 * i);
+ 			buffer[i] = (unsigned char)reg;
++			num_transferred++;
+ 		}
+ 	}
+ 
+@@ -1258,7 +1261,7 @@ ssize_t analogix_dp_transfer(struct analogix_dp_device *dp,
+ 		 (msg->request & ~DP_AUX_I2C_MOT) == DP_AUX_NATIVE_READ)
+ 		msg->reply = DP_AUX_NATIVE_REPLY_ACK;
+ 
+-	return msg->size;
++	return (num_transferred == msg->size) ? num_transferred : -EBUSY;
+ 
+ aux_error:
+ 	/* if aux err happen, reset aux */
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+index 2648b7e24ef7..f80a90bee93b 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+@@ -276,7 +276,6 @@ struct dw_hdmi_qp {
+ 
+ 	u8 edid[HDMI_EDID_LEN];
+ 	u8 vendor_info[VENDOR_INFO_LEN];
+-	u32 dovi_vsif[DOVI_VSIF_LEN];
+ 
+ 	struct {
+ 		const struct dw_hdmi_qp_phy_ops *ops;
+@@ -574,8 +573,8 @@ static unsigned int hdmi_find_n(struct dw_hdmi_qp *hdmi, unsigned long pixel_clk
+ 	if (n > 0)
+ 		return n;
+ 
+-	dev_dbg(hdmi->dev, "Rate %lu missing; compute N dynamically\n",
+-		pixel_clk);
++	dev_warn(hdmi->dev, "Rate %lu missing; compute N dynamically\n",
++		 pixel_clk);
+ 
+ 	return hdmi_compute_n(hdmi, pixel_clk, sample_rate);
+ }
+@@ -1008,8 +1007,6 @@ static const struct hdmi_quirk *get_hdmi_quirk(u8 *vendor_id)
+ 
+ static void dw_hdmi_i2c_init(struct dw_hdmi_qp *hdmi)
+ {
+-	u32 ddc_i2c_rxfilter;
+-
+ 	u64 scl_high_cnt, scl_low_cnt, val;
+ 
+ 	scl_high_cnt = hdmi->i2c->scl_high_ns;
+@@ -1026,10 +1023,6 @@ static void dw_hdmi_i2c_init(struct dw_hdmi_qp *hdmi)
+ 	/* Software reset */
+ 	hdmi_writel(hdmi, 0x01, I2CM_CONTROL0);
+ 
+-	/* Configure I2CM hold time and rxfilter */
+-	if (device_property_read_u32(hdmi->dev, "ddc-i2c-rxfilter", &ddc_i2c_rxfilter) == 0)
+-		hdmi_writel(hdmi, ddc_i2c_rxfilter, I2CM_CONFIG0);
+-
+ 	hdmi_writel(hdmi, val, I2CM_SM_SCL_CONFIG0);
+ 	hdmi_modb(hdmi, 0, I2CM_FM_EN, I2CM_INTERFACE_CONTROL0);
+ 
+@@ -1590,18 +1583,10 @@ static void hdmi_config_vendor_specific_infoframe(struct dw_hdmi_qp *hdmi,
+ 	struct dw_hdmi_link_config *link_cfg = NULL;
+ 	void *data = hdmi->plat_data->phy_data;
+ 
+-	hdmi_modb(hdmi, 0, PKTSCHED_VSI_TX_EN, PKTSCHED_PKT_EN);
+-
+-	if (hdmi->dovi_vsif[0]) {
+-		for (i = 0; i < 8; i++)
+-			hdmi_writel(hdmi, hdmi->dovi_vsif[i], PKT_VSI_CONTENTS0 + i * 4);
+-
+-		goto out;
+-	}
+-
+ 	if (hdmi->plat_data->get_link_cfg)
+ 		link_cfg = hdmi->plat_data->get_link_cfg(data);
+ 
++	hdmi_modb(hdmi, 0, PKTSCHED_VSI_TX_EN, PKTSCHED_PKT_EN);
+ 	for (i = 0; i <= 7; i++)
+ 		hdmi_writel(hdmi, 0, PKT_VSI_CONTENTS0 + i * 4);
+ 
+@@ -1667,7 +1652,6 @@ static void hdmi_config_vendor_specific_infoframe(struct dw_hdmi_qp *hdmi,
+ 
+ 	hdmi_writel(hdmi, 0, PKT_VSI_CONTENTS7);
+ 
+-out:
+ 	hdmi_modb(hdmi, 0, PKTSCHED_VSI_FIELDRATE, PKTSCHED_PKT_CONFIG1);
+ 	hdmi_modb(hdmi, PKTSCHED_VSI_TX_EN, PKTSCHED_VSI_TX_EN,
+ 		  PKTSCHED_PKT_EN);
+@@ -2751,7 +2735,9 @@ static int dw_hdmi_connector_get_modes(struct drm_connector *connector)
+ 	if (edid_blob_ptr && edid_blob_ptr->length)
+ 		drm_edid = drm_edid_alloc(edid_blob_ptr->data, edid_blob_ptr->length);
+ 	else
+-		drm_edid = drm_edid_read_ddc(connector, hdmi->ddc);
++	{
++		drm_edid = NULL;//@caco 20250623  drm_edid_read_ddc(connector, hdmi->ddc);
++	}
+ 
+ 	if (drm_edid)
+ 		edid = drm_edid_raw(drm_edid);
+@@ -2770,8 +2756,6 @@ static int dw_hdmi_connector_get_modes(struct drm_connector *connector)
+ 			hdmi->plat_data->get_edid_dsc_info(data, edid);
+ 		memcpy(hdmi->vendor_info, &raw_edid[8], VENDOR_INFO_LEN);
+ 		ret = drm_edid_connector_update(connector, drm_edid);
+-		if (hdmi->plat_data->get_dovi_data)
+-			hdmi->plat_data->get_dovi_data(data, edid, connector);
+ 		if (hdmi->plat_data->get_colorimetry)
+ 			hdmi->plat_data->get_colorimetry(data, edid);
+ 		if (hdmi->plat_data->get_yuv422_format)
+@@ -3107,27 +3091,6 @@ static void set_dw_hdmi_hdcp_enable(struct dw_hdmi_qp *hdmi,
+ 	}
+ }
+ 
+-static bool dovi_vsif_equal(struct dw_hdmi_qp *hdmi)
+-{
+-	void *data = hdmi->plat_data->phy_data;
+-	int ret;
+-	u32 vsif[DOVI_VSIF_LEN] = {0};
+-
+-	if (!hdmi->plat_data->get_dovi_vsif)
+-		return true;
+-
+-	hdmi->plat_data->get_dovi_vsif(data, vsif);
+-
+-	ret = memcmp(hdmi->dovi_vsif, vsif, DOVI_VSIF_LEN * 4);
+-
+-	if (ret) {
+-		memcpy(hdmi->dovi_vsif, vsif, DOVI_VSIF_LEN * 4);
+-		return false;
+-	} else {
+-		return true;
+-	}
+-}
+-
+ static int dw_hdmi_connector_atomic_check(struct drm_connector *connector,
+ 					  struct drm_atomic_state *state)
+ {
+@@ -3290,29 +3253,10 @@ static void dw_hdmi_connector_atomic_commit(struct drm_connector *connector,
+ 		hdmi->update = false;
+ 	}
+ 
+-	if (!hdmi->disabled) {
++	if (!hdmi->disabled)
+ 		set_dw_hdmi_hdcp_enable(hdmi, connector, state);
+-		if (!dovi_vsif_equal(hdmi))
+-			hdmi_config_vendor_specific_infoframe(hdmi, hdmi->curr_conn,
+-							      &hdmi->previous_mode);
+-	}
+ }
+ 
+-void dw_hdmi_qp_set_quant_range(struct dw_hdmi_qp *hdmi)
+-{
+-	void *data = hdmi->plat_data->phy_data;
+-
+-	if (hdmi->disabled)
+-		return;
+-
+-	if (hdmi->plat_data->get_quant_range)
+-		hdmi->hdmi_data.quant_range =
+-			hdmi->plat_data->get_quant_range(data);
+-
+-	hdmi_config_AVI(hdmi, hdmi->curr_conn, &hdmi->previous_mode);
+-}
+-EXPORT_SYMBOL_GPL(dw_hdmi_qp_set_quant_range);
+-
+ void dw_hdmi_qp_set_output_type(struct dw_hdmi_qp *hdmi, u64 val)
+ {
+ 	hdmi->force_output = val;
+@@ -3351,25 +3295,8 @@ static void dw_hdmi_connector_force(struct drm_connector *connector)
+ 	mutex_unlock(&hdmi->mutex);
+ }
+ 
+-static int drm_hdmi_probe_single_connector_modes(struct drm_connector *connector,
+-						 uint32_t maxX, uint32_t maxY)
+-{
+-	struct dw_hdmi_qp *hdmi =
+-		container_of(connector, struct dw_hdmi_qp, connector);
+-	struct drm_display_info *info = &connector->display_info;
+-	void *data = hdmi->plat_data->phy_data;
+-	int ret;
+-
+-	ret = drm_helper_probe_single_connector_modes(connector, maxX, maxY);
+-
+-	if (hdmi->plat_data->get_mode_color_caps)
+-		hdmi->plat_data->get_mode_color_caps(connector, info, data);
+-
+-	return ret;
+-}
+-
+ static const struct drm_connector_funcs dw_hdmi_connector_funcs = {
+-	.fill_modes = drm_hdmi_probe_single_connector_modes,
++	.fill_modes = drm_helper_probe_single_connector_modes,
+ 	.detect = dw_hdmi_connector_detect,
+ 	.destroy = drm_connector_cleanup,
+ 	.force = dw_hdmi_connector_force,
+@@ -3502,8 +3429,6 @@ static void dw_hdmi_qp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 
+ 	extcon_set_state_sync(hdmi->extcon, EXTCON_DISP_HDMI, false);
+ 	handle_plugged_change(hdmi, false);
+-	if (hdmi->plat_data->crtc_pre_disable)
+-		hdmi->plat_data->crtc_pre_disable(data, bridge->encoder->crtc);
+ 	mutex_lock(&hdmi->mutex);
+ 
+ 	if (hdmi->dclk_en) {
+@@ -3528,7 +3453,6 @@ static void dw_hdmi_qp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 	}
+ 
+ 	hdmi->curr_conn = NULL;
+-	hdmi->update = false;
+ 	mutex_unlock(&hdmi->mutex);
+ 
+ 	cancel_work_sync(&hdmi->flt_work);
+@@ -3578,9 +3502,6 @@ static void dw_hdmi_qp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 	if (link_cfg && link_cfg->frl_mode)
+ 		queue_work(hdmi->workqueue, &hdmi->flt_work);
+ 
+-	if (hdmi->plat_data->crtc_post_enable)
+-		hdmi->plat_data->crtc_post_enable(data, bridge->encoder->crtc);
+-
+ 	dw_hdmi_qp_init_audio_infoframe(hdmi);
+ 	dw_hdmi_qp_audio_enable(hdmi);
+ 	hdmi_clk_regenerator_update_pixel_clock(hdmi);
+@@ -3821,15 +3742,6 @@ void dw_hdmi_qp_cec_set_hpd(struct dw_hdmi_qp *hdmi, bool plug_in, bool change)
+ 	if (!plug_in)
+ 		cec_notifier_set_phys_addr(hdmi->cec_notifier,
+ 					   CEC_PHYS_ADDR_INVALID);
+-       else if (hdmi->ddc) {
+-               struct edid *edid = drm_get_edid(&hdmi->connector, hdmi->ddc);
+-               if (edid) {
+-                       if (hdmi->cec_notifier)
+-                               cec_notifier_set_phys_addr_from_edid(
+-                                       hdmi->cec_notifier, edid);
+-                       kfree(edid);
+-               }
+-       }
+ 
+ 	if (hdmi->bridge.dev) {
+ #if IS_REACHABLE(CONFIG_DRM_DW_HDMI_CEC)
+@@ -4712,8 +4624,8 @@ void dw_hdmi_qp_suspend(struct device *dev, struct dw_hdmi_qp *hdmi)
+ 		disable_irq(hdmi->earc_irq);
+ 
+ 	pinctrl_pm_select_sleep_state(dev);
+-	if (!hdmi->next_bridge)
+-		drm_connector_update_edid_property(&hdmi->connector, NULL);
++	//if (!hdmi->next_bridge)
++		//drm_connector_update_edid_property(&hdmi->connector, NULL);
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_qp_suspend);
+ 
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index fde4cc23a5e9..619f08947a44 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -363,15 +363,6 @@ static void handle_plugged_change(struct dw_hdmi *hdmi, bool plugged)
+ {
+ 	if (hdmi->plugged_cb && hdmi->codec_dev)
+ 		hdmi->plugged_cb(hdmi->codec_dev, plugged);
+-	if (plugged && hdmi->ddc) {
+-               struct edid *edid = drm_get_edid(&hdmi->connector, hdmi->ddc);
+-               if (edid) {
+-                       if (hdmi->cec_notifier)
+-                               cec_notifier_set_phys_addr_from_edid(
+-                                       hdmi->cec_notifier, edid);
+-                       kfree(edid);
+-               }
+-       }
+ }
+ 
+ int dw_hdmi_set_plugged_cb(struct dw_hdmi *hdmi, hdmi_codec_plugged_cb fn,
+@@ -1682,18 +1673,6 @@ static void hdmi_video_packetize(struct dw_hdmi *hdmi)
+ 		return;
+ 	}
+ 
+-	/*
+-	 * GCP is sent by default after power on.
+-	 * In kernel 4.19/5.10, we did not intentionally
+-	 * disable sending of GCP. The kernel 6.1 upstream
+-	 * code disable GCP transmission in 8bit color depth.
+-	 * Therefore, when you need to use avmute function,
+-	 * it is need to enable GCP transmission.
+-	 */
+-	val = hdmi_readb(hdmi, HDMI_FC_GCP);
+-	if (val & (HDMI_FC_GCP_SET_AVMUTE | HDMI_FC_GCP_CLEAR_AVMUTE))
+-		clear_gcp_auto = 0;
+-
+ 	/* set the packetizer registers */
+ 	val = (color_depth << HDMI_VP_PR_CD_COLOR_DEPTH_OFFSET) &
+ 	      HDMI_VP_PR_CD_COLOR_DEPTH_MASK;
+@@ -3631,25 +3610,8 @@ static void dw_hdmi_connector_force(struct drm_connector *connector)
+ 	mutex_unlock(&hdmi->mutex);
+ }
+ 
+-static int drm_hdmi_probe_single_connector_modes(struct drm_connector *connector,
+-						 uint32_t maxX, uint32_t maxY)
+-{
+-	struct dw_hdmi *hdmi =
+-		container_of(connector, struct dw_hdmi, connector);
+-	struct drm_display_info *info = &connector->display_info;
+-	void *data = hdmi->plat_data->phy_data;
+-	int ret;
+-
+-	ret = drm_helper_probe_single_connector_modes(connector, maxX, maxY);
+-
+-	if (hdmi->plat_data->get_mode_color_caps)
+-		hdmi->plat_data->get_mode_color_caps(connector, info, data);
+-
+-	return ret;
+-}
+-
+ static const struct drm_connector_funcs dw_hdmi_connector_funcs = {
+-	.fill_modes = drm_hdmi_probe_single_connector_modes,
++	.fill_modes = drm_helper_probe_single_connector_modes,
+ 	.detect = dw_hdmi_connector_detect,
+ 	.destroy = drm_connector_cleanup,
+ 	.force = dw_hdmi_connector_force,
+diff --git a/drivers/gpu/drm/display/drm_dp_mst_topology.c b/drivers/gpu/drm/display/drm_dp_mst_topology.c
+index 4204d1f93013..72b2b171e533 100644
+--- a/drivers/gpu/drm/display/drm_dp_mst_topology.c
++++ b/drivers/gpu/drm/display/drm_dp_mst_topology.c
+@@ -2923,7 +2923,7 @@ static int drm_dp_send_link_address(struct drm_dp_mst_topology_mgr *mgr,
+ 
+ 	/* FIXME: Actually do some real error handling here */
+ 	ret = drm_dp_mst_wait_tx_reply(mstb, txmsg);
+-	if (ret < 0) {
++	if (ret <= 0) {
+ 		drm_err(mgr->dev, "Sending link address failed with %d\n", ret);
+ 		goto out;
+ 	}
+@@ -2975,7 +2975,7 @@ static int drm_dp_send_link_address(struct drm_dp_mst_topology_mgr *mgr,
+ 	mutex_unlock(&mgr->lock);
+ 
+ out:
+-	if (ret < 0)
++	if (ret <= 0)
+ 		mstb->link_address_sent = false;
+ 	kfree(txmsg);
+ 	return ret < 0 ? ret : changed;
+@@ -4024,7 +4024,6 @@ static int drm_dp_mst_handle_up_req(struct drm_dp_mst_topology_mgr *mgr)
+ 	if (up_req->msg.req_type == DP_CONNECTION_STATUS_NOTIFY) {
+ 		const struct drm_dp_connection_status_notify *conn_stat =
+ 			&up_req->msg.u.conn_stat;
+-		bool handle_csn;
+ 
+ 		drm_dbg_kms(mgr->dev, "Got CSN: pn: %d ldps:%d ddps: %d mcs: %d ip: %d pdt: %d\n",
+ 			    conn_stat->port_number,
+@@ -4033,16 +4032,6 @@ static int drm_dp_mst_handle_up_req(struct drm_dp_mst_topology_mgr *mgr)
+ 			    conn_stat->message_capability_status,
+ 			    conn_stat->input_port,
+ 			    conn_stat->peer_device_type);
+-
+-		mutex_lock(&mgr->probe_lock);
+-		handle_csn = mgr->mst_primary->link_address_sent;
+-		mutex_unlock(&mgr->probe_lock);
+-
+-		if (!handle_csn) {
+-			drm_dbg_kms(mgr->dev, "Got CSN before finish topology probing. Skip it.");
+-			kfree(up_req);
+-			goto out;
+-		}
+ 	} else if (up_req->msg.req_type == DP_RESOURCE_STATUS_NOTIFY) {
+ 		const struct drm_dp_resource_status_notify *res_stat =
+ 			&up_req->msg.u.resource_stat;
+diff --git a/drivers/gpu/drm/panel/panel-simple.c b/drivers/gpu/drm/panel/panel-simple.c
+index a36e83a0c913..082a795c5ce0 100644
+--- a/drivers/gpu/drm/panel/panel-simple.c
++++ b/drivers/gpu/drm/panel/panel-simple.c
+@@ -612,12 +612,12 @@ static int panel_simple_prepare(struct drm_panel *panel)
+ 	if (p->desc->delay.prepare)
+ 		panel_simple_msleep(p->desc->delay.prepare);
+ 
+-	gpiod_direction_output(p->reset_gpio, 1);
++	gpiod_direction_output(p->reset_gpio, 0);
+ 
+ 	if (p->desc->delay.reset)
+ 		panel_simple_msleep(p->desc->delay.reset);
+ 
+-	gpiod_direction_output(p->reset_gpio, 0);
++	gpiod_direction_output(p->reset_gpio, 1);
+ 
+ 	if (p->desc->delay.init)
+ 		panel_simple_msleep(p->desc->delay.init);
+diff --git a/drivers/gpu/drm/rockchip/dw-dp.c b/drivers/gpu/drm/rockchip/dw-dp.c
+index 2434cb49a0d3..04fd622ab7c6 100644
+--- a/drivers/gpu/drm/rockchip/dw-dp.c
++++ b/drivers/gpu/drm/rockchip/dw-dp.c
+@@ -270,6 +270,48 @@
+ 
+ #define DPTX_MAX_STREAMS			4
+ 
++
++//fox.luo@2024.03.20 set fixed resolution
++static const struct drm_display_mode dw_dp_default_modes[] = {
++     /* 16 - 1920x1080@60Hz 16:9 */
++	{ DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER, 148500, 1920, 2008,
++		   2052, 2200, 0, 1080, 1084, 1089, 1125, 0,
++		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
++	/* 2 - 720x480@60Hz 4:3 */
++	{ DRM_MODE("720x480", DRM_MODE_TYPE_DRIVER, 27000, 720, 736,
++		   798, 858, 0, 480, 489, 495, 525, 0,
++		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_4_3, },
++	/* 4 - 1280x720@60Hz 16:9 */
++	{ DRM_MODE("1280x720", DRM_MODE_TYPE_DRIVER, 74250, 1280, 1390,
++		   1430, 1650, 0, 720, 725, 730, 750, 0,
++		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
++	/* 31 - 1920x1080@50Hz 16:9 */
++	{ DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER, 148500, 1920, 2448,
++		   2492, 2640, 0, 1080, 1084, 1089, 1125, 0,
++		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
++	/* 19 - 1280x720@50Hz 16:9 */
++	{ DRM_MODE("1280x720", DRM_MODE_TYPE_DRIVER, 74250, 1280, 1720,
++		   1760, 1980, 0, 720, 725, 730, 750, 0,
++		   DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9, },
++	/* 17 - 720x576@50Hz 4:3 */
++	{ DRM_MODE("720x576", DRM_MODE_TYPE_DRIVER, 27000, 720, 732,
++		   796, 864, 0, 576, 581, 586, 625, 0,
++		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_4_3, },
++	/* 2 - 720x480@60Hz 4:3 */
++	{ DRM_MODE("720x480", DRM_MODE_TYPE_DRIVER, 27000, 720, 736,
++		   798, 858, 0, 480, 489, 495, 525, 0,
++		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC),
++	  .picture_aspect_ratio = HDMI_PICTURE_ASPECT_4_3, },
++};
++
++
++
+ enum {
+ 	RK3576_DP,
+ 	RK3588_DP,
+@@ -1441,7 +1483,9 @@ static int dw_dp_connector_get_modes(struct drm_connector *connector)
+ 	struct dw_dp *dp = connector_to_dp(connector);
+ 	struct drm_display_info *di = &connector->display_info;
+ 	struct edid *edid;
++	struct drm_display_mode *mode;
+ 	int num_modes = 0;
++	int i;
+ 
+ 	if (dp->right && dp->right->next_bridge) {
+ 		struct drm_bridge *bridge = dp->right->next_bridge;
+@@ -1462,7 +1506,21 @@ static int dw_dp_connector_get_modes(struct drm_connector *connector)
+ 		edid = drm_bridge_get_edid(&dp->bridge, connector);
+ 		if (edid) {
+ 			drm_connector_update_edid_property(connector, edid);
+-			num_modes = drm_add_edid_modes(connector, edid);
++			//fox.luo@2024.03.20 set fixed resolution
++			//num_modes = drm_add_edid_modes(connector, edid);
++			for (i = 0; i < ARRAY_SIZE(dw_dp_default_modes); i++) {
++			       const struct drm_display_mode *ptr =
++			               &dw_dp_default_modes[i];
++
++			       mode = drm_mode_duplicate(connector->dev, ptr);
++			       if (mode) {
++			               if (!i)
++			                       mode->type = DRM_MODE_TYPE_PREFERRED;
++			               drm_mode_probed_add(connector, mode);
++			               num_modes++;
++
++			       }
++			}
+ 			dw_dp_update_hdr_property(connector);
+ 			kfree(edid);
+ 		}
+@@ -2924,25 +2982,20 @@ static void dw_dp_encoder_enable(struct drm_encoder *encoder)
+ 
+ }
+ 
+-static void dw_dp_encoder_atomic_disable(struct drm_encoder *encoder,
+-					 struct drm_atomic_state *state)
++static void dw_dp_encoder_disable(struct drm_encoder *encoder)
+ {
+ 	struct dw_dp *dp = encoder_to_dp(encoder);
+-	struct drm_crtc *old_crtc, *new_crtc;
+-	struct rockchip_crtc_state *s;
+-
+-	old_crtc = rockchip_drm_encoder_get_old_crtc(encoder, state);
+-	new_crtc = rockchip_drm_encoder_get_new_crtc(encoder, state);
++	struct drm_crtc *crtc = encoder->crtc;
++	struct rockchip_crtc_state *s = to_rockchip_crtc_state(crtc->state);
+ 
+-	if (old_crtc && old_crtc != new_crtc) {
+-		s = to_rockchip_crtc_state(old_crtc->state);
++	if (!crtc->state->active_changed)
++		return;
+ 
+-		if (dp->split_mode)
+-			s->output_if &= ~(VOP_OUTPUT_IF_DP0 | VOP_OUTPUT_IF_DP1);
+-		else
+-			s->output_if &= ~(dp->id ? VOP_OUTPUT_IF_DP1 : VOP_OUTPUT_IF_DP0);
+-		s->output_if_left_panel &= ~(dp->id ? VOP_OUTPUT_IF_DP1 : VOP_OUTPUT_IF_DP0);
+-	}
++	if (dp->split_mode)
++		s->output_if &= ~(VOP_OUTPUT_IF_DP0 | VOP_OUTPUT_IF_DP1);
++	else
++		s->output_if &= ~(dp->id ? VOP_OUTPUT_IF_DP1 : VOP_OUTPUT_IF_DP0);
++	s->output_if_left_panel &= ~(dp->id ? VOP_OUTPUT_IF_DP1 : VOP_OUTPUT_IF_DP0);
+ }
+ 
+ static void dw_dp_mode_fixup(struct dw_dp *dp, struct drm_display_mode *adjusted_mode)
+@@ -3075,7 +3128,7 @@ static enum drm_mode_status dw_dp_encoder_mode_valid(struct drm_encoder *encoder
+ 
+ static const struct drm_encoder_helper_funcs dw_dp_encoder_helper_funcs = {
+ 	.enable			= dw_dp_encoder_enable,
+-	.atomic_disable		= dw_dp_encoder_atomic_disable,
++	.disable		= dw_dp_encoder_disable,
+ 	.atomic_check		= dw_dp_encoder_atomic_check,
+ 	.mode_valid		= dw_dp_encoder_mode_valid,
+ };
+diff --git a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+index 1b32ff0b9756..0a73f16d9701 100644
+--- a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+@@ -197,7 +197,6 @@
+ #define HDMI_EARC_MODE			BIT(29)
+ #define DATA_RATE_MASK			0xFFFFFFF
+ 
+-#define HDMI14_MAX_RATE                 340000
+ #define HDMI20_MAX_RATE			600000
+ #define HDMI_8K60_RATE			2376000
+ 
+@@ -239,22 +238,6 @@ enum hdmi_frl_rate_per_lane {
+ 	FRL_3G_PER_LANE = 3,
+ };
+ 
+-enum mode_color_caps_mask {
+-	RGB_8BIT = 0,
+-	RGB_10BIT,
+-	YUV444_8BIT,
+-	YUV444_10BIT,
+-	YUV422_8BIT,
+-	YUV422_10BIT,
+-	YUV420_8BIT,
+-	YUV420_10BIT,
+-};
+-
+-struct mode_color_caps {
+-	struct drm_mode_modeinfo umode;
+-	u64 color_caps;
+-};
+-
+ struct rockchip_hdmi {
+ 	struct device *dev;
+ 	struct regmap *regmap;
+@@ -306,19 +289,15 @@ struct rockchip_hdmi {
+ 	struct drm_property *outputmode_capacity;
+ 	struct drm_property *quant_range;
+ 	struct drm_property *hdr_panel_metadata_property;
++	struct drm_property *next_hdr_sink_data_property;
+ 	struct drm_property *output_hdmi_dvi;
+ 	struct drm_property *output_type_capacity;
+ 	struct drm_property *allm_capacity;
+ 	struct drm_property *allm_enable;
+ 	struct drm_property *hdcp_state_property;
+-	struct drm_property *mode_color_capacity;
+-	struct drm_property *hdr_panel_dovi_vsdb;
+-	struct drm_property *vsif_data;
+ 
+-	struct drm_property_blob *mode_color_caps_ptr;
+ 	struct drm_property_blob *hdr_panel_blob_ptr;
+-	struct drm_property_blob *hdr_panel_dovi_vsdb_ptr;
+-	struct drm_property_blob *vsif_data_ptr;
++	struct drm_property_blob *next_hdr_data_ptr;
+ 
+ 	unsigned int colordepth;
+ 	unsigned int colorimetry;
+@@ -334,8 +313,8 @@ struct rockchip_hdmi {
+ 	u8 add_func;
+ 	u8 edid_colorimetry;
+ 	u8 hdcp_status;
+-	u8 dovi_vsdb[DOVI_VSDB_LEN];
+ 	struct rockchip_drm_dsc_cap dsc_cap;
++	struct next_hdr_sink_data next_hdr_data;
+ 	struct dw_hdmi_link_config link_cfg;
+ 	struct gpio_desc *enable_gpio;
+ 
+@@ -345,7 +324,6 @@ struct rockchip_hdmi {
+ 	struct pinctrl *p;
+ 	struct pinctrl_state *idle_state;
+ 	struct pinctrl_state *default_state;
+-	struct mode_color_caps *mode_color_caps;
+ 	bool timing_force_output;
+ 	struct drm_display_mode force_mode;
+ 	u32 force_bus_format;
+@@ -1014,7 +992,7 @@ static void hdmi_select_link_config(struct rockchip_hdmi *hdmi,
+ 	hdmi->link_cfg.add_func = hdmi->add_func;
+ 
+ 	if (!max_frl_rate || (tmdsclk < HDMI20_MAX_RATE && mode.clock < HDMI20_MAX_RATE)) {
+-		dev_info_once(hdmi->dev, "use tmds mode\n");
++		dev_info(hdmi->dev, "use tmds mode\n");
+ 		hdmi->link_cfg.frl_mode = false;
+ 		return;
+ 	}
+@@ -1935,19 +1913,20 @@ dw_hdmi_rockchip_mode_valid(struct dw_hdmi *dw_hdmi, void *data,
+ 	return status;
+ }
+ 
+-static void dw_hdmi_rockchip_encoder_atomic_disable(struct drm_encoder *encoder,
+-						    struct drm_atomic_state *state)
++static void dw_hdmi_rockchip_encoder_disable(struct drm_encoder *encoder)
+ {
+ 	struct rockchip_hdmi *hdmi = to_rockchip_hdmi(encoder);
+-	struct drm_crtc *old_crtc, *new_crtc;
++	struct drm_crtc *crtc = encoder->crtc;
+ 	struct rockchip_crtc_state *s;
+ 
+-	old_crtc = rockchip_drm_encoder_get_old_crtc(encoder, state);
+-	new_crtc = rockchip_drm_encoder_get_new_crtc(encoder, state);
++	if (!crtc || !crtc->state) {
++		dev_info(hdmi->dev, "%s old crtc state is null\n", __func__);
++		return;
++	}
+ 
+-	if (old_crtc && old_crtc != new_crtc) {
+-		s = to_rockchip_crtc_state(old_crtc->state);
++	s = to_rockchip_crtc_state(crtc->state);
+ 
++	if (crtc->state->active_changed) {
+ 		if (hdmi->plat_data->split_mode) {
+ 			s->output_if &= ~(VOP_OUTPUT_IF_HDMI0 | VOP_OUTPUT_IF_HDMI1);
+ 		} else {
+@@ -2382,12 +2361,12 @@ dw_hdmi_rockchip_select_output(struct drm_connector_state *conn_state,
+ 			*color_format = RK_IF_FORMAT_YCBCR422;
+ 		else if (conn_state->connector->ycbcr_420_allowed &&
+ 			 drm_mode_is_420(info, &mode) &&
+-			 (pixclock > HDMI14_MAX_RATE && !hdmi->is_hdmi_qp))
++			 (pixclock >= 594000 && !hdmi->is_hdmi_qp))
+ 			*color_format = RK_IF_FORMAT_YCBCR420;
+ 		break;
+ 	case RK_IF_FORMAT_YCBCR_LQ:
+ 		if (conn_state->connector->ycbcr_420_allowed &&
+-		    drm_mode_is_420(info, &mode) && pixclock > HDMI14_MAX_RATE)
++		    drm_mode_is_420(info, &mode) && pixclock >= 594000)
+ 			*color_format = RK_IF_FORMAT_YCBCR420;
+ 		else if (info->color_formats & DRM_COLOR_FORMAT_YCBCR422)
+ 			*color_format = RK_IF_FORMAT_YCBCR422;
+@@ -2396,7 +2375,7 @@ dw_hdmi_rockchip_select_output(struct drm_connector_state *conn_state,
+ 		break;
+ 	case RK_IF_FORMAT_YCBCR420:
+ 		if (conn_state->connector->ycbcr_420_allowed &&
+-		    drm_mode_is_420(info, &mode) && pixclock > HDMI14_MAX_RATE)
++		    drm_mode_is_420(info, &mode) && pixclock >= 594000)
+ 			*color_format = RK_IF_FORMAT_YCBCR420;
+ 		break;
+ 	case RK_IF_FORMAT_YCBCR422:
+@@ -2719,10 +2698,21 @@ dw_hdmi_rockchip_encoder_atomic_check(struct drm_encoder *encoder,
+ 
+ 	if (hdmi->plat_data->split_mode) {
+ 		s->output_flags |= ROCKCHIP_OUTPUT_DUAL_CHANNEL_LEFT_RIGHT_MODE;
+-		if (hdmi->plat_data->right && hdmi->id)
+-			s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
++		//@caco 20250625
++		//if (hdmi->plat_data->right && hdmi->id)
++		//	s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
++		if (device_property_read_bool(hdmi->dev, "rockchip,split-right")) {
++            s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
++			s->output_if_left_panel |= hdmi->id ? VOP_OUTPUT_IF_HDMI0 : VOP_OUTPUT_IF_HDMI1;
++            dev_info(hdmi->dev, "split Enabling data swap for right display (hdmi%d)\n", hdmi->id);
++        }
++		else {
++		    s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
++			s->output_if_left_panel |= hdmi->id ? VOP_OUTPUT_IF_HDMI1 : VOP_OUTPUT_IF_HDMI0;
++            dev_info(hdmi->dev, "split Enabling data swap for right display (hdmi%d)\n", hdmi->id);
++		}
+ 		s->output_if |= VOP_OUTPUT_IF_HDMI0 | VOP_OUTPUT_IF_HDMI1;
+-		s->output_if_left_panel |= hdmi->id ? VOP_OUTPUT_IF_HDMI1 : VOP_OUTPUT_IF_HDMI0;
++		
+ 	} else if (hdmi->plat_data->dual_connector_split) {
+ 		s->output_if |= hdmi->id ? VOP_OUTPUT_IF_HDMI1 : VOP_OUTPUT_IF_HDMI0;
+ 		s->output_flags |= ROCKCHIP_OUTPUT_DUAL_CONNECTOR_SPLIT_MODE;
+@@ -2868,25 +2858,26 @@ dw_hdmi_rockchip_get_edid_dsc_info(void *data, const struct edid *edid)
+ }
+ 
+ static int
+-dw_hdmi_rockchip_get_dovi_data(void *data, const struct edid *edid,
+-			       struct drm_connector *connector)
++dw_hdmi_rockchip_get_next_hdr_data(void *data, struct edid *edid,
++				   struct drm_connector *connector)
+ {
+ 	int ret;
+ 	struct rockchip_hdmi *hdmi = (struct rockchip_hdmi *)data;
+-	u8 *sink_data = hdmi->dovi_vsdb;
+-	struct drm_property *property = hdmi->hdr_panel_dovi_vsdb;
++	struct next_hdr_sink_data *sink_data = &hdmi->next_hdr_data;
++	size_t size = sizeof(*sink_data);
++	struct drm_property *property = hdmi->next_hdr_sink_data_property;
++	struct drm_property_blob *blob = hdmi->hdr_panel_blob_ptr;
+ 
+-	if (!edid || !connector)
+-		return -ENOMEM;
++	if (!edid)
++		return -EINVAL;
+ 
+-	rockchip_drm_parse_dovi(sink_data, edid);
++	rockchip_drm_parse_next_hdr(sink_data, edid);
+ 
+-	ret = drm_property_replace_global_blob(connector->dev, &hdmi->hdr_panel_dovi_vsdb_ptr,
+-					       DOVI_VSDB_LEN, sink_data, &connector->base,
+-					       property);
++	ret = drm_property_replace_global_blob(connector->dev, &blob, size, sink_data,
++					       &connector->base, property);
+ 
+ 	return ret;
+-}
++};
+ 
+ static int dw_hdmi_rockchip_get_colorimetry(void *data, const struct edid *edid)
+ {
+@@ -2895,29 +2886,6 @@ static int dw_hdmi_rockchip_get_colorimetry(void *data, const struct edid *edid)
+ 	return rockchip_drm_parse_colorimetry_data_block(&hdmi->edid_colorimetry, edid);
+ }
+ 
+-static void dw_hdmi_rockchip_get_vsif_data(void *data, u32 *buf)
+-{
+-	struct rockchip_hdmi *hdmi = (struct rockchip_hdmi *)data;
+-	struct dovi_vsif_data *vsif;
+-	u8 vsif_db[32] = {0};
+-	int i;
+-
+-	if (!buf)
+-		return;
+-
+-	if (!hdmi->vsif_data_ptr)
+-		return;
+-
+-	vsif = (struct dovi_vsif_data *)hdmi->vsif_data_ptr->data;
+-
+-	for (i = 0; i < 3; i++)
+-		vsif_db[i] = vsif->header[i];
+-	for (i = 0; i < 28; i++)
+-		vsif_db[i + 4] = vsif->pb[i];
+-
+-	memcpy(buf, vsif_db, DOVI_VSIF_LEN * 4);
+-}
+-
+ static
+ struct dw_hdmi_link_config *dw_hdmi_rockchip_get_link_cfg(void *data)
+ {
+@@ -3106,140 +3074,6 @@ static void dw_hdmi_rockchip_force_frl_rate(void *data, u8 rate)
+ 	phy_set_bus_width(hdmi->phy, hdmi->phy_bus_width);
+ }
+ 
+-static u8 mode_color_caps_init(struct drm_connector *connector, struct drm_display_mode *mode,
+-			       struct drm_display_info *info)
+-{
+-	u8 color_caps_mask = BIT(RGB_8BIT);
+-
+-	if (info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30)
+-		color_caps_mask |= BIT(RGB_10BIT);
+-
+-	if (info->color_formats & DRM_COLOR_FORMAT_YCBCR444) {
+-		color_caps_mask |= BIT(YUV444_8BIT);
+-		if (info->edid_hdmi_ycbcr444_dc_modes & DRM_EDID_HDMI_DC_30)
+-			color_caps_mask |= BIT(YUV444_10BIT);
+-	}
+-
+-	/* For hdmi, yuv422 8bit and 10bit are the same format */
+-	if (info->color_formats & DRM_COLOR_FORMAT_YCBCR422) {
+-		color_caps_mask |= BIT(YUV422_8BIT);
+-		color_caps_mask |= BIT(YUV422_10BIT);
+-	}
+-
+-	if (connector->ycbcr_420_allowed && drm_mode_is_420(info, mode)) {
+-		color_caps_mask |= BIT(YUV420_8BIT);
+-		if (info->hdmi.y420_dc_modes & DRM_EDID_YCBCR420_DC_30)
+-			color_caps_mask |= BIT(YUV420_10BIT);
+-	}
+-
+-	return color_caps_mask;
+-}
+-
+-static void dw_hdmi_rockchip_get_mode_color_caps(struct drm_connector *connector,
+-						 struct drm_display_info *info,
+-						 void *data)
+-{
+-	struct rockchip_hdmi *hdmi = (struct rockchip_hdmi *)data;
+-	struct drm_display_mode *mode;
+-	u8 color_caps_mask;
+-	u32 max_tmds_clock = info->max_tmds_clock;
+-	u32 size = 0;
+-	struct mode_color_caps *caps;
+-	struct drm_property *property = hdmi->mode_color_capacity;
+-
+-	if (list_empty(&connector->modes))
+-		return;
+-
+-	list_for_each_entry(mode, &connector->modes, head)
+-		size++;
+-
+-	kfree(hdmi->mode_color_caps);
+-
+-	size = sizeof(struct mode_color_caps) * size;
+-
+-	hdmi->mode_color_caps = kmalloc(size, GFP_KERNEL);
+-	if (!hdmi->mode_color_caps)
+-		return;
+-	caps = hdmi->mode_color_caps;
+-
+-	max_tmds_clock = min(max_tmds_clock, hdmi->max_tmdsclk);
+-
+-	list_for_each_entry(mode, &connector->modes, head) {
+-		color_caps_mask = mode_color_caps_init(connector, mode, info);
+-
+-		drm_mode_convert_to_umode(&caps->umode, mode);
+-		/* hdmi 2.1 frl mode */
+-		if (mode->clock > 600000) {
+-			if (mode->clock > 1188000)
+-				color_caps_mask = BIT(YUV420_8BIT) | BIT(YUV420_10BIT);
+-
+-			caps->color_caps = color_caps_mask;
+-			caps++;
+-			continue;
+-		}
+-
+-		/* RGB/YUV444 10BIT is out of range */
+-		if ((mode->clock * 10 / 8) > max_tmds_clock && mode->clock <= max_tmds_clock) {
+-			color_caps_mask &= ~(BIT(RGB_10BIT) | BIT(YUV444_10BIT));
+-		/* only support YUV420 */
+-		} else if (mode->clock > max_tmds_clock && (mode->clock / 2) <= max_tmds_clock) {
+-			color_caps_mask &= ~(BIT(RGB_10BIT) | BIT(RGB_8BIT) | BIT(YUV444_10BIT) |
+-					     BIT(YUV444_8BIT) | BIT(YUV422_10BIT) |
+-					     BIT(YUV422_8BIT));
+-
+-			/* YUV420 10BIT is out of range */
+-			if ((mode->clock / 2) * 10 / 8 > max_tmds_clock)
+-				color_caps_mask &= ~BIT(YUV420_10BIT);
+-		}
+-
+-		caps->color_caps = color_caps_mask;
+-		caps++;
+-	}
+-
+-	drm_property_replace_global_blob(connector->dev, &hdmi->mode_color_caps_ptr, size,
+-					 hdmi->mode_color_caps, &connector->base, property);
+-}
+-
+-static void dw_hdmi_rockchip_crtc_post_enable(void *data, struct drm_crtc *crtc)
+-{
+-	struct rockchip_hdmi *hdmi = (struct rockchip_hdmi *)data;
+-	int output_if;
+-
+-	switch (hdmi->id) {
+-	case 0:
+-		output_if = VOP_OUTPUT_IF_HDMI0;
+-		break;
+-	case 1:
+-		output_if = VOP_OUTPUT_IF_HDMI1;
+-		break;
+-	default:
+-		dev_err(hdmi->dev, "invalid id:%d\n", hdmi->id);
+-		return;
+-	}
+-
+-	rockchip_drm_crtc_output_post_enable(crtc, output_if);
+-}
+-
+-static void dw_hdmi_rockchip_crtc_pre_disable(void *data, struct drm_crtc *crtc)
+-{
+-	struct rockchip_hdmi *hdmi = (struct rockchip_hdmi *)data;
+-	int output_if;
+-
+-	switch (hdmi->id) {
+-	case 0:
+-		output_if = VOP_OUTPUT_IF_HDMI0;
+-		break;
+-	case 1:
+-		output_if = VOP_OUTPUT_IF_HDMI1;
+-		break;
+-	default:
+-		dev_err(hdmi->dev, "invalid id:%d\n", hdmi->id);
+-		return;
+-	}
+-
+-	rockchip_drm_crtc_output_pre_disable(crtc, output_if);
+-}
+-
+ static const struct drm_prop_enum_list color_depth_enum_list[] = {
+ 	{ 0, "Automatic" }, /* Prefer highest color depth */
+ 	{ 8, "24bit" },
+@@ -3278,40 +3112,6 @@ static const struct drm_prop_enum_list allm_enable_list[] = {
+ 	{ 1, "enable" },
+ };
+ 
+-static int
+-hdmi_atomic_replace_property_blob_from_id(struct drm_device *dev,
+-					  struct drm_property_blob **blob,
+-					  uint64_t blob_id,
+-					  ssize_t expected_size,
+-					  ssize_t expected_elem_size,
+-					  bool *replaced)
+-{
+-	struct drm_property_blob *new_blob = NULL;
+-
+-	if (blob_id != 0) {
+-		new_blob = drm_property_lookup_blob(dev, blob_id);
+-		if (!new_blob)
+-			goto out;
+-
+-		if (expected_size > 0 &&
+-		    new_blob->length != expected_size) {
+-			drm_property_blob_put(new_blob);
+-			return -EINVAL;
+-		}
+-		if (expected_elem_size > 0 &&
+-		    new_blob->length % expected_elem_size != 0) {
+-			drm_property_blob_put(new_blob);
+-			return -EINVAL;
+-		}
+-	}
+-
+-out:
+-	*replaced |= drm_property_replace_blob(blob, new_blob);
+-	drm_property_blob_put(new_blob);
+-
+-	return 0;
+-}
+-
+ static void
+ dw_hdmi_rockchip_attach_properties(struct drm_connector *connector,
+ 				   unsigned int color, int version,
+@@ -3395,9 +3195,9 @@ dw_hdmi_rockchip_attach_properties(struct drm_connector *connector,
+ 	prop = drm_property_create(connector->dev,
+ 				   DRM_MODE_PROP_BLOB |
+ 				   DRM_MODE_PROP_IMMUTABLE,
+-				   "HDR_PANEL_DOVI_VSDB", 0);
++				   "NEXT_HDR_SINK_DATA", 0);
+ 	if (prop) {
+-		hdmi->hdr_panel_dovi_vsdb = prop;
++		hdmi->next_hdr_sink_data_property = prop;
+ 		drm_object_attach_property(&connector->base, prop, 0);
+ 	}
+ 
+@@ -3429,12 +3229,6 @@ dw_hdmi_rockchip_attach_properties(struct drm_connector *connector,
+ 		drm_object_attach_property(&connector->base, prop, 0);
+ 	}
+ 
+-	prop = drm_property_create(connector->dev, DRM_MODE_PROP_BLOB, "VSIF_DATA", 0);
+-	if (prop) {
+-		hdmi->vsif_data = prop;
+-		drm_object_attach_property(&connector->base, hdmi->vsif_data, 0);
+-	}
+-
+ 	prop = drm_property_create_enum(connector->dev, 0,
+ 					"output_type_capacity",
+ 					output_type_cap_list,
+@@ -3444,13 +3238,15 @@ dw_hdmi_rockchip_attach_properties(struct drm_connector *connector,
+ 		drm_object_attach_property(&connector->base, prop, 0);
+ 	}
+ 
+-	prop = drm_property_create_enum(connector->dev, 0,
+-					"quant_range",
+-					quant_range_enum_list,
+-					ARRAY_SIZE(quant_range_enum_list));
+-	if (prop) {
+-		hdmi->quant_range = prop;
+-		drm_object_attach_property(&connector->base, prop, 0);
++	if (!hdmi->is_hdmi_qp) {
++		prop = drm_property_create_enum(connector->dev, 0,
++						"quant_range",
++						quant_range_enum_list,
++						ARRAY_SIZE(quant_range_enum_list));
++		if (prop) {
++			hdmi->quant_range = prop;
++			drm_object_attach_property(&connector->base, prop, 0);
++		}
+ 	}
+ 
+ 	prop = connector->dev->mode_config.hdr_output_metadata_property;
+@@ -3476,13 +3272,6 @@ dw_hdmi_rockchip_attach_properties(struct drm_connector *connector,
+ 	}
+ 	hdmi->hdcp_state_property = prop;
+ 	drm_object_attach_property(&connector->base, prop, RK_IF_HDCP_ENCRYPTED_NONE);
+-
+-	prop = drm_property_create(connector->dev, DRM_MODE_PROP_BLOB | DRM_MODE_PROP_IMMUTABLE,
+-				   "MODE_COLOR_CAPACITY", 0);
+-	if (prop) {
+-		hdmi->mode_color_capacity = prop;
+-		drm_object_attach_property(&connector->base, prop, 0);
+-	}
+ }
+ 
+ static void
+@@ -3527,10 +3316,10 @@ dw_hdmi_rockchip_destroy_properties(struct drm_connector *connector,
+ 		hdmi->hdr_panel_metadata_property = NULL;
+ 	}
+ 
+-	if (hdmi->hdr_panel_dovi_vsdb) {
++	if (hdmi->next_hdr_sink_data_property) {
+ 		drm_property_destroy(connector->dev,
+-				     hdmi->hdr_panel_dovi_vsdb);
+-		hdmi->hdr_panel_dovi_vsdb = NULL;
++				     hdmi->next_hdr_sink_data_property);
++		hdmi->next_hdr_sink_data_property = NULL;
+ 	}
+ 
+ 	if (hdmi->output_hdmi_dvi) {
+@@ -3555,23 +3344,6 @@ dw_hdmi_rockchip_destroy_properties(struct drm_connector *connector,
+ 		drm_property_destroy(connector->dev, hdmi->allm_enable);
+ 		hdmi->allm_enable = NULL;
+ 	}
+-
+-	if (hdmi->mode_color_capacity) {
+-		kfree(hdmi->mode_color_caps);
+-		hdmi->mode_color_caps = NULL;
+-		drm_property_destroy(connector->dev, hdmi->mode_color_capacity);
+-		hdmi->mode_color_capacity = NULL;
+-	}
+-
+-	if (hdmi->hdr_panel_dovi_vsdb) {
+-		drm_property_destroy(connector->dev, hdmi->hdr_panel_dovi_vsdb);
+-		hdmi->hdr_panel_dovi_vsdb = NULL;
+-	}
+-
+-	if (hdmi->vsif_data) {
+-		drm_property_destroy(connector->dev, hdmi->vsif_data);
+-		hdmi->vsif_data = NULL;
+-	}
+ }
+ 
+ static int
+@@ -3603,12 +3375,8 @@ dw_hdmi_rockchip_set_property(struct drm_connector *connector,
+ 		u64 quant_range = hdmi->hdmi_quant_range;
+ 
+ 		hdmi->hdmi_quant_range = val;
+-		if (quant_range != hdmi->hdmi_quant_range) {
+-			if (hdmi->is_hdmi_qp)
+-				dw_hdmi_qp_set_quant_range(hdmi->hdmi_qp);
+-			else
+-				dw_hdmi_set_quant_range(hdmi->hdmi);
+-		}
++		if (quant_range != hdmi->hdmi_quant_range)
++			dw_hdmi_set_quant_range(hdmi->hdmi);
+ 		return 0;
+ 	} else if (property == config->hdr_output_metadata_property) {
+ 		return 0;
+@@ -3640,18 +3408,6 @@ dw_hdmi_rockchip_set_property(struct drm_connector *connector,
+ 		return 0;
+ 	} else if (property == hdmi->hdcp_state_property) {
+ 		return 0;
+-	} else if (property == hdmi->mode_color_capacity) {
+-		return 0;
+-	} else if (property == hdmi->hdr_panel_dovi_vsdb) {
+-		return 0;
+-	} else if (property == hdmi->vsif_data) {
+-		int ret;
+-		bool replaced = false;
+-
+-		ret = hdmi_atomic_replace_property_blob_from_id(connector->dev,
+-								&hdmi->vsif_data_ptr,
+-								val, -1, -1, &replaced);
+-		return ret;
+ 	}
+ 
+ 	DRM_ERROR("Unknown property [PROP:%d:%s]\n",
+@@ -3735,15 +3491,6 @@ dw_hdmi_rockchip_get_property(struct drm_connector *connector,
+ 		else
+ 			*val = RK_IF_HDCP_ENCRYPTED_NONE;
+ 		return 0;
+-	} else if (property == hdmi->mode_color_capacity) {
+-		*val = hdmi->mode_color_caps_ptr ? hdmi->mode_color_caps_ptr->base.id : 0;
+-		return 0;
+-	} else if (property == hdmi->hdr_panel_dovi_vsdb) {
+-		*val = (hdmi->hdr_panel_dovi_vsdb_ptr) ? hdmi->hdr_panel_dovi_vsdb_ptr->base.id : 0;
+-		return 0;
+-	} else if (property == hdmi->vsif_data) {
+-		*val = (hdmi->vsif_data_ptr) ? hdmi->vsif_data_ptr->base.id : 0;
+-		return 0;
+ 	}
+ 
+ 	DRM_ERROR("Unknown property [PROP:%d:%s]\n",
+@@ -3791,7 +3538,7 @@ static void dw_hdmi_rockchip_encoder_mode_set(struct drm_encoder *encoder,
+ 
+ static const struct drm_encoder_helper_funcs dw_hdmi_rockchip_encoder_helper_funcs = {
+ 	.enable     = dw_hdmi_rockchip_encoder_enable,
+-	.atomic_disable = dw_hdmi_rockchip_encoder_atomic_disable,
++	.disable    = dw_hdmi_rockchip_encoder_disable,
+ 	.atomic_check = dw_hdmi_rockchip_encoder_atomic_check,
+ 	.mode_set = dw_hdmi_rockchip_encoder_mode_set,
+ };
+@@ -3906,8 +3653,6 @@ static void dw_hdmi_rk3328_setup_hpd(struct dw_hdmi *dw_hdmi, void *data)
+ 		HIWORD_UPDATE(RK3328_HDMI_SDAIN_MSK | RK3328_HDMI_SCLIN_MSK,
+ 			      RK3328_HDMI_SDAIN_MSK | RK3328_HDMI_SCLIN_MSK |
+ 			      RK3328_HDMI_HPD_IOE));
+-
+-	dw_hdmi_rk3328_read_hpd(dw_hdmi, data);
+ }
+ 
+ static void dw_hdmi_qp_rockchip_phy_disable(struct dw_hdmi_qp *dw_hdmi,
+@@ -4439,12 +4184,10 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 		dw_hdmi_rockchip_get_yuv422_format;
+ 	plat_data->get_edid_dsc_info =
+ 		dw_hdmi_rockchip_get_edid_dsc_info;
+-	plat_data->get_dovi_data =
+-		dw_hdmi_rockchip_get_dovi_data;
++	plat_data->get_next_hdr_data =
++		dw_hdmi_rockchip_get_next_hdr_data;
+ 	plat_data->get_colorimetry =
+ 		dw_hdmi_rockchip_get_colorimetry;
+-	plat_data->get_dovi_vsif =
+-		dw_hdmi_rockchip_get_vsif_data;
+ 	plat_data->get_link_cfg = dw_hdmi_rockchip_get_link_cfg;
+ 	plat_data->set_hdcp2_enable = rockchip_set_hdcp2_enable;
+ 	plat_data->set_hdcp_status = rockchip_set_hdcp_status;
+@@ -4471,12 +4214,6 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 		dw_hdmi_rockchip_get_refclk_rate;
+ 	plat_data->force_frl_rate =
+ 		dw_hdmi_rockchip_force_frl_rate;
+-	plat_data->get_mode_color_caps =
+-		dw_hdmi_rockchip_get_mode_color_caps;
+-	plat_data->crtc_pre_disable =
+-		dw_hdmi_rockchip_crtc_pre_disable;
+-	plat_data->crtc_post_enable =
+-		dw_hdmi_rockchip_crtc_post_enable;
+ 	plat_data->property_ops = &dw_hdmi_rockchip_property_ops;
+ 
+ 	secondary = rockchip_hdmi_find_by_id(dev->driver, !hdmi->id);
+diff --git a/drivers/gpu/drm/rockchip/rk618/rk618_hdmi.c b/drivers/gpu/drm/rockchip/rk618/rk618_hdmi.c
+index ca75ce2ca577..512887f4b274 100644
+--- a/drivers/gpu/drm/rockchip/rk618/rk618_hdmi.c
++++ b/drivers/gpu/drm/rockchip/rk618/rk618_hdmi.c
+@@ -440,9 +440,6 @@ struct rk618_hdmi {
+ 	struct switch_dev switchdev;
+ #endif
+ 	struct rockchip_drm_sub_dev sub_dev;
+-	hdmi_codec_plugged_cb plugged_cb;
+-	struct device *codec_dev;
+-	enum drm_connector_status last_connector_result;
+ };
+ 
+ enum {
+@@ -548,26 +545,6 @@ static inline void hdmi_writeb(struct rk618_hdmi *hdmi, u16 offset, u32 val)
+ 	regmap_write(hdmi->regmap, (RK618_HDMI_BASE + ((offset) << 2)), val);
+ }
+ 
+-static void handle_plugged_change(struct rk618_hdmi *hdmi, bool plugged)
+-{
+-	if (hdmi->plugged_cb && hdmi->codec_dev)
+-		hdmi->plugged_cb(hdmi->codec_dev, plugged);
+-}
+-
+-static int rk618_hdmi_set_plugged_cb(struct rk618_hdmi *hdmi,
+-				     hdmi_codec_plugged_cb fn,
+-				     struct device *codec_dev)
+-{
+-	bool plugged;
+-
+-	hdmi->plugged_cb = fn;
+-	hdmi->codec_dev = codec_dev;
+-	plugged = hdmi->last_connector_result == connector_status_connected;
+-	handle_plugged_change(hdmi, plugged);
+-
+-	return 0;
+-}
+-
+ static void rk618_hdmi_set_polarity(struct rk618_hdmi *hdmi, int vic)
+ {
+ 	u32 val, mask = HDMI_HSYNC_POL_INV | HDMI_VSYNC_POL_INV;
+@@ -969,23 +946,14 @@ rk618_hdmi_connector_detect(struct drm_connector *connector, bool force)
+ {
+ 	struct rk618_hdmi *hdmi = connector_to_hdmi(connector);
+ 	bool status;
+-	enum drm_connector_status result;
+ 
+ 	status = rk618_hdmi_hpd_detect(hdmi);
+ #ifdef CONFIG_SWITCH
+ 	switch_set_state(&hdmi->switchdev, status);
+ #endif
+ 
+-	result = status ? connector_status_connected :
++	return status ? connector_status_connected :
+ 			connector_status_disconnected;
+-	if (result != hdmi->last_connector_result) {
+-		dev_dbg(hdmi->dev, "rk618_hdmi read_hpd result: %d", result);
+-		handle_plugged_change(hdmi,
+-				result == connector_status_connected);
+-		hdmi->last_connector_result = result;
+-	}
+-
+-	return result;
+ }
+ 
+ static int rk618_hdmi_connector_get_modes(struct drm_connector *connector)
+@@ -1165,9 +1133,8 @@ static const struct drm_bridge_funcs rk618_hdmi_bridge_funcs = {
+ 	.disable = rk618_hdmi_bridge_disable,
+ };
+ 
+-static int rk618_hdmi_audio_config_set(struct rk618_hdmi *hdmi,
+-				       struct hdmi_codec_daifmt *daifmt,
+-				       struct audio_info *audio)
++static int
++rk618_hdmi_audio_config_set(struct rk618_hdmi *hdmi, struct audio_info *audio)
+ {
+ 	int rate, N, channel;
+ 
+@@ -1215,19 +1182,14 @@ static int rk618_hdmi_audio_config_set(struct rk618_hdmi *hdmi,
+ 		return -ENOENT;
+ 	}
+ 
+-	if (daifmt->fmt == HDMI_SPDIF) {
+-		/* set_audio source SPDIF */
+-		hdmi_writeb(hdmi, HDMI_AUDIO_CTRL1, 0x09);
+-	} else {
+-		/* set_audio source I2S */
+-		hdmi_writeb(hdmi, HDMI_AUDIO_CTRL1, 0x01);
+-	}
++	/* set_audio source I2S */
++	hdmi_writeb(hdmi, HDMI_AUDIO_CTRL1, 0x01);
+ 	hdmi_writeb(hdmi, AUDIO_SAMPLE_RATE, rate);
+ 	hdmi_writeb(hdmi, AUDIO_I2S_MODE, v_I2S_MODE(I2S_STANDARD) |
+ 		    v_I2S_CHANNEL(channel));
+ 
+ 	hdmi_writeb(hdmi, AUDIO_I2S_MAP, 0x00);
+-	hdmi_writeb(hdmi, AUDIO_I2S_SWAPS_SPDIF, rate);
++	hdmi_writeb(hdmi, AUDIO_I2S_SWAPS_SPDIF, 0);
+ 
+ 	/* Set N value */
+ 	hdmi_writeb(hdmi, AUDIO_N_H, (N >> 16) & 0x0F);
+@@ -1262,14 +1224,12 @@ static int rk618_hdmi_audio_hw_params(struct device *dev, void *d,
+ 	switch (daifmt->fmt) {
+ 	case HDMI_I2S:
+ 		break;
+-	case HDMI_SPDIF:
+-		break;
+ 	default:
+ 		dev_err(dev, "%s: Invalid format %d\n", __func__, daifmt->fmt);
+ 		return -EINVAL;
+ 	}
+ 
+-	return rk618_hdmi_audio_config_set(hdmi, daifmt, &audio);
++	return rk618_hdmi_audio_config_set(hdmi, &audio);
+ }
+ 
+ static void rk618_hdmi_audio_shutdown(struct device *dev, void *d)
+@@ -1319,43 +1279,22 @@ static int rk618_hdmi_audio_get_eld(struct device *dev, void *d,
+ 	return ret;
+ }
+ 
+-static int rk618_hdmi_hook_plugged_cb(struct device *dev, void *data,
+-				      hdmi_codec_plugged_cb fn,
+-				      struct device *codec_dev)
+-{
+-	struct rk618_hdmi *hdmi = dev_get_drvdata(dev);
+-
+-	return rk618_hdmi_set_plugged_cb(hdmi, fn, codec_dev);
+-}
+-
+ static const struct hdmi_codec_ops audio_codec_ops = {
+ 	.hw_params = rk618_hdmi_audio_hw_params,
+ 	.audio_shutdown = rk618_hdmi_audio_shutdown,
+ 	.mute_stream = rk618_hdmi_audio_mute_stream,
+ 	.get_eld = rk618_hdmi_audio_get_eld,
+-	.hook_plugged_cb = rk618_hdmi_hook_plugged_cb,
+ };
+ 
+ static int rk618_hdmi_audio_codec_init(struct rk618_hdmi *hdmi,
+ 				       struct device *dev)
+ {
+-	const char *str = "i2s";
+-	struct device_node *np = dev->of_node;
+ 	struct hdmi_codec_pdata codec_data = {
+ 		.i2s = 1,
+-		.spdif = 0,
+ 		.ops = &audio_codec_ops,
+ 		.max_i2s_channels = 8,
+ 	};
+ 
+-	if (of_property_read_string(np, "rockchip,format", &str))
+-		dev_warn(dev, "can not get rockchip,format\n");
+-
+-	if (strstr(str, "spdif")) {
+-		codec_data.i2s = 0;
+-		codec_data.spdif = 1;
+-	}
+-
+ 	hdmi->audio_enable = false;
+ 	hdmi->audio_pdev = platform_device_register_data(dev,
+ 				HDMI_CODEC_DRV_NAME, PLATFORM_DEVID_NONE,
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.c b/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.c
+index 7b5e3c2bbe2f..8d71df1d4cbf 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.c
+@@ -351,49 +351,3 @@ int rockchip_drm_debugfs_add_regs_write(struct drm_crtc *crtc, struct dentry *ro
+ 
+ 	return 0;
+ }
+-
+-static int rockchip_drm_debugfs_dclk_rate_show(struct seq_file *s, void *data)
+-{
+-	struct drm_crtc *crtc = s->private;
+-	struct rockchip_drm_private *priv = crtc->dev->dev_private;
+-	int pipe = drm_crtc_index(crtc);
+-	unsigned long rate;
+-
+-	if (!priv->crtc_funcs[pipe]->crtc_get_dclk_rate) {
+-		seq_puts(s, "Not support get rate\n");
+-		return 0;
+-	}
+-
+-	rate = priv->crtc_funcs[pipe]->crtc_get_dclk_rate(crtc);
+-
+-	seq_printf(s, "%lu\n", rate);
+-	return 0;
+-}
+-
+-static int rockchip_drm_debugfs_dclk_rate_open(struct inode *inode, struct file *file)
+-{
+-	struct drm_crtc *crtc = inode->i_private;
+-
+-	return single_open(file, rockchip_drm_debugfs_dclk_rate_show, crtc);
+-}
+-
+-static const struct file_operations rockchip_drm_debugfs_dclk_rate_ops = {
+-	.owner = THIS_MODULE,
+-	.open = rockchip_drm_debugfs_dclk_rate_open,
+-	.read = seq_read,
+-	.llseek = seq_lseek,
+-	.release = single_release,
+-};
+-
+-int rockchip_drm_debugfs_add_dclk_rate(struct drm_crtc *crtc, struct dentry *root)
+-{
+-	struct dentry *ent;
+-
+-	ent = debugfs_create_file("calculated_dclk_rate", 0644, root, crtc,
+-				  &rockchip_drm_debugfs_dclk_rate_ops);
+-	if (!ent)
+-		DRM_ERROR("Failed to add dclk_rate for debugfs\n");
+-
+-	return 0;
+-}
+-
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.h b/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.h
+index bb7290146427..2f8ec1677245 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_debugfs.h
+@@ -37,7 +37,6 @@ rockchip_drm_crtc_dump_plane_buffer(struct drm_crtc *crtc)
+ #endif
+ int rockchip_drm_debugfs_add_color_bar(struct drm_crtc *crtc, struct dentry *root);
+ int rockchip_drm_debugfs_add_regs_write(struct drm_crtc *crtc, struct dentry *root);
+-int rockchip_drm_debugfs_add_dclk_rate(struct drm_crtc *crtc, struct dentry *root);
+ #else
+ static inline int
+ rockchip_drm_add_dump_buffer(struct drm_crtc *crtc, struct dentry *root)
+@@ -62,12 +61,6 @@ rockchip_drm_debugfs_add_regs_write(struct drm_crtc *crtc, struct dentry *root)
+ {
+ 	return 0;
+ }
+-
+-static inline int
+-rockchip_drm_debugfs_add_dclk_rate(struct drm_crtc *crtc, struct dentry *root)
+-{
+-	return 0;
+-}
+ #endif
+ 
+ #endif
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_drv.c b/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
+index a08827cd6ead..41b4e9e6e4f1 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
+@@ -473,58 +473,6 @@ void rockchip_drm_te_handle(struct drm_crtc *crtc)
+ }
+ EXPORT_SYMBOL(rockchip_drm_te_handle);
+ 
+-struct drm_crtc *rockchip_drm_encoder_get_old_crtc(struct drm_encoder *encoder,
+-						   struct drm_atomic_state *state)
+-{
+-	struct drm_device *drm_dev = state->dev;
+-	struct drm_connector *connector;
+-	struct drm_connector_list_iter conn_iter;
+-	struct drm_connector_state *conn_state;
+-
+-	drm_connector_list_iter_begin(drm_dev, &conn_iter);
+-	drm_for_each_connector_iter(connector, &conn_iter) {
+-		conn_state = drm_atomic_get_old_connector_state(state, connector);
+-		if (!conn_state)
+-			continue;
+-
+-		if (conn_state->best_encoder != encoder)
+-			continue;
+-
+-		drm_connector_list_iter_end(&conn_iter);
+-		return conn_state->crtc;
+-	}
+-	drm_connector_list_iter_end(&conn_iter);
+-
+-	return NULL;
+-}
+-EXPORT_SYMBOL(rockchip_drm_encoder_get_old_crtc);
+-
+-struct drm_crtc *rockchip_drm_encoder_get_new_crtc(struct drm_encoder *encoder,
+-						   struct drm_atomic_state *state)
+-{
+-	struct drm_device *drm_dev = state->dev;
+-	struct drm_connector *connector;
+-	struct drm_connector_list_iter conn_iter;
+-	struct drm_connector_state *conn_state;
+-
+-	drm_connector_list_iter_begin(drm_dev, &conn_iter);
+-	drm_for_each_connector_iter(connector, &conn_iter) {
+-		conn_state = drm_atomic_get_new_connector_state(state, connector);
+-		if (!conn_state)
+-			continue;
+-
+-		if (conn_state->best_encoder != encoder)
+-			continue;
+-
+-		drm_connector_list_iter_end(&conn_iter);
+-		return conn_state->crtc;
+-	}
+-	drm_connector_list_iter_end(&conn_iter);
+-
+-	return NULL;
+-}
+-EXPORT_SYMBOL(rockchip_drm_encoder_get_new_crtc);
+-
+ static const struct drm_display_mode rockchip_drm_default_modes[] = {
+ 	/* 4 - 1280x720@60Hz 16:9 */
+ 	{ DRM_MODE("1280x720", DRM_MODE_TYPE_DRIVER, 74250, 1280, 1390,
+@@ -632,9 +580,9 @@ cea_db_payload_len(const u8 *db)
+ 	     (i) < (end) && (i) + cea_db_payload_len(&(cea)[(i)]) < (end); \
+ 	     (i) += cea_db_payload_len(&(cea)[(i)]) + 1)
+ 
+-#define HDMI_DOVI_VSDB_OUI 0xd04601
++#define HDMI_NEXT_HDR_VSDB_OUI 0xd04601
+ 
+-static bool cea_db_is_hdmi_dovi_block(const u8 *db)
++static bool cea_db_is_hdmi_next_hdr_block(const u8 *db)
+ {
+ 	unsigned int oui;
+ 
+@@ -645,7 +593,8 @@ static bool cea_db_is_hdmi_dovi_block(const u8 *db)
+ 		return false;
+ 
+ 	oui = db[3] << 16 | db[2] << 8 | db[1];
+-	return oui == HDMI_DOVI_VSDB_OUI;
++
++	return oui == HDMI_NEXT_HDR_VSDB_OUI;
+ }
+ 
+ static bool cea_db_is_hdmi_forum_vsdb(const u8 *db)
+@@ -1060,16 +1009,150 @@ static void parse_hdmi_forum_scds(struct rockchip_drm_dsc_cap *dsc_cap,
+ 	}
+ }
+ 
++enum {
++	VER_26_BYTE_V0,
++	VER_15_BYTE_V1,
++	VER_12_BYTE_V1,
++	VER_12_BYTE_V2,
++};
++
++static int check_next_hdr_version(const u8 *next_hdr_db)
++{
++	u16 ver;
++
++	ver = (next_hdr_db[5] & 0xf0) << 8 | next_hdr_db[0];
++
++	switch (ver) {
++	case 0x00f9:
++		return VER_26_BYTE_V0;
++	case 0x20ee:
++		return VER_15_BYTE_V1;
++	case 0x20eb:
++		return VER_12_BYTE_V1;
++	case 0x40eb:
++		return VER_12_BYTE_V2;
++	default:
++		return -ENOENT;
++	}
++}
++
++static void parse_ver_26_v0_data(struct ver_26_v0 *hdr, const u8 *data)
++{
++	hdr->yuv422_12bit = data[5] & BIT(0);
++	hdr->support_2160p_60 = (data[5] & BIT(1)) >> 1;
++	hdr->global_dimming = (data[5] & BIT(2)) >> 2;
++
++	hdr->dm_major_ver = (data[21] & 0xf0) >> 4;
++	hdr->dm_minor_ver = data[21] & 0xf;
++
++	hdr->t_min_pq = (data[19] << 4) | ((data[18] & 0xf0) >> 4);
++	hdr->t_max_pq = (data[20] << 4) | (data[18] & 0xf);
++
++	hdr->rx = (data[7] << 4) | ((data[6] & 0xf0) >> 4);
++	hdr->ry = (data[8] << 4) | (data[6] & 0xf);
++	hdr->gx = (data[10] << 4) | ((data[9] & 0xf0) >> 4);
++	hdr->gy = (data[11] << 4) | (data[9] & 0xf);
++	hdr->bx = (data[13] << 4) | ((data[12] & 0xf0) >> 4);
++	hdr->by = (data[14] << 4) | (data[12] & 0xf);
++	hdr->wx = (data[16] << 4) | ((data[15] & 0xf0) >> 4);
++	hdr->wy = (data[17] << 4) | (data[15] & 0xf);
++}
++
++static void parse_ver_15_v1_data(struct ver_15_v1 *hdr, const u8 *data)
++{
++	hdr->yuv422_12bit = data[5] & BIT(0);
++	hdr->support_2160p_60 = (data[5] & BIT(1)) >> 1;
++	hdr->global_dimming = data[6] & BIT(0);
++
++	hdr->dm_version = (data[5] & 0x1c) >> 2;
++
++	hdr->colorimetry = data[7] & BIT(0);
++
++	hdr->t_max_lum = (data[6] & 0xfe) >> 1;
++	hdr->t_min_lum = (data[7] & 0xfe) >> 1;
++
++	hdr->rx = data[9];
++	hdr->ry = data[10];
++	hdr->gx = data[11];
++	hdr->gy = data[12];
++	hdr->bx = data[13];
++	hdr->by = data[14];
++}
++
++static void parse_ver_12_v1_data(struct ver_12_v1 *hdr, const u8 *data)
++{
++	hdr->yuv422_12bit = data[5] & BIT(0);
++	hdr->support_2160p_60 = (data[5] & BIT(1)) >> 1;
++	hdr->global_dimming = data[6] & BIT(0);
++
++	hdr->dm_version = (data[5] & 0x1c) >> 2;
++
++	hdr->colorimetry = data[7] & BIT(0);
++
++	hdr->t_max_lum = (data[6] & 0xfe) >> 1;
++	hdr->t_min_lum = (data[7] & 0xfe) >> 1;
++
++	hdr->low_latency = data[8] & 0x3;
++
++	hdr->unique_rx = (data[11] & 0xf8) >> 3;
++	hdr->unique_ry = (data[11] & 0x7) << 2 | (data[10] & BIT(0)) << 1 |
++		(data[9] & BIT(0));
++	hdr->unique_gx = (data[9] & 0xfe) >> 1;
++	hdr->unique_gy = (data[10] & 0xfe) >> 1;
++	hdr->unique_bx = (data[8] & 0xe0) >> 5;
++	hdr->unique_by = (data[8] & 0x1c) >> 2;
++}
++
++static void parse_ver_12_v2_data(struct ver_12_v2 *hdr, const u8 *data)
++{
++	hdr->yuv422_12bit = data[5] & BIT(0);
++	hdr->backlt_ctrl = (data[5] & BIT(1)) >> 1;
++	hdr->global_dimming = (data[6] & BIT(2)) >> 2;
++
++	hdr->dm_version = (data[5] & 0x1c) >> 2;
++	hdr->backlt_min_luma = data[6] & 0x3;
++	hdr->interface = data[7] & 0x3;
++	hdr->yuv444_10b_12b = (data[8] & BIT(0)) << 1 | (data[9] & BIT(0));
++
++	hdr->t_min_pq_v2 = (data[6] & 0xf8) >> 3;
++	hdr->t_max_pq_v2 = (data[7] & 0xf8) >> 3;
++
++	hdr->unique_rx = (data[10] & 0xf8) >> 3;
++	hdr->unique_ry = (data[11] & 0xf8) >> 3;
++	hdr->unique_gx = (data[8] & 0xfe) >> 1;
++	hdr->unique_gy = (data[9] & 0xfe) >> 1;
++	hdr->unique_bx = data[10] & 0x7;
++	hdr->unique_by = data[11] & 0x7;
++}
++
+ static
+-int parse_dovi_block(u8 *sink_data, const u8 *dovi_db)
++void parse_next_hdr_block(struct next_hdr_sink_data *sink_data,
++			  const u8 *next_hdr_db)
+ {
+-	u8 length = (dovi_db[0] & 0x1f) + 1;
++	int version;
+ 
+-	if (length > DOVI_VSDB_LEN)
+-		return -EINVAL;
++	version = check_next_hdr_version(next_hdr_db);
++	if (version < 0)
++		return;
+ 
+-	memcpy(sink_data, dovi_db, length);
+-	return 0;
++	sink_data->version = version;
++
++	switch (version) {
++	case VER_26_BYTE_V0:
++		parse_ver_26_v0_data(&sink_data->ver_26_v0, next_hdr_db);
++		break;
++	case VER_15_BYTE_V1:
++		parse_ver_15_v1_data(&sink_data->ver_15_v1, next_hdr_db);
++		break;
++	case VER_12_BYTE_V1:
++		parse_ver_12_v1_data(&sink_data->ver_12_v1, next_hdr_db);
++		break;
++	case VER_12_BYTE_V2:
++		parse_ver_12_v2_data(&sink_data->ver_12_v2, next_hdr_db);
++		break;
++	default:
++		break;
++	}
+ }
+ 
+ int rockchip_drm_parse_cea_ext(struct rockchip_drm_dsc_cap *dsc_cap,
+@@ -1104,15 +1187,16 @@ int rockchip_drm_parse_cea_ext(struct rockchip_drm_dsc_cap *dsc_cap,
+ }
+ EXPORT_SYMBOL(rockchip_drm_parse_cea_ext);
+ 
+-int rockchip_drm_parse_dovi(u8 *sink_data, const struct edid *edid)
++int rockchip_drm_parse_next_hdr(struct next_hdr_sink_data *sink_data,
++				const struct edid *edid)
+ {
+ 	const u8 *edid_ext;
+-	int i, start, end, ret;
++	int i, start, end;
+ 
+ 	if (!sink_data || !edid)
+ 		return -EINVAL;
+ 
+-	memset(sink_data, 0, DOVI_VSDB_LEN);
++	memset(sink_data, 0, sizeof(struct next_hdr_sink_data));
+ 
+ 	edid_ext = find_cea_extension(edid);
+ 	if (!edid_ext)
+@@ -1124,16 +1208,13 @@ int rockchip_drm_parse_dovi(u8 *sink_data, const struct edid *edid)
+ 	for_each_cea_db(edid_ext, i, start, end) {
+ 		const u8 *db = &edid_ext[i];
+ 
+-		if (cea_db_is_hdmi_dovi_block(db)) {
+-			ret = parse_dovi_block(sink_data, db);
+-			if (ret)
+-				return ret;
+-		}
++		if (cea_db_is_hdmi_next_hdr_block(db))
++			parse_next_hdr_block(sink_data, db);
+ 	}
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(rockchip_drm_parse_dovi);
++EXPORT_SYMBOL(rockchip_drm_parse_next_hdr);
+ 
+ #define COLORIMETRY_DATA_BLOCK		0x5
+ #define USE_EXTENDED_TAG		0x07
+@@ -1386,18 +1467,13 @@ static int rockchip_drm_init_iommu(struct drm_device *drm_dev)
+ 		 */
+ 		ret = iommu_map(private->domain, 0, 0, (size_t)SZ_2G,
+ 				IOMMU_WRITE | IOMMU_READ | IOMMU_PRIV);
+-		if (ret) {
++		if (ret)
+ 			dev_err(drm_dev->dev, "failed to create 0-2G pre mapping\n");
+-			return 0;
+-		}
+ 
+ 		ret = iommu_map(private->domain, SZ_2G, SZ_2G, (size_t)SZ_2G,
+ 				IOMMU_WRITE | IOMMU_READ | IOMMU_PRIV);
+-		if (ret) {
++		if (ret)
+ 			dev_err(drm_dev->dev, "failed to create 2G-4G pre mapping\n");
+-			return 0;
+-		}
+-		dev_info(drm_dev->dev, "Enable iommu reserve map\n");
+ 	}
+ 
+ 	return ret;
+@@ -1532,7 +1608,7 @@ static int rockchip_drm_create_properties(struct drm_device *dev)
+ 	struct rockchip_drm_private *private = dev->dev_private;
+ 
+ 	prop = drm_property_create_range(dev, DRM_MODE_PROP_ATOMIC,
+-					 "EOTF", 0, HDMI_EOTF_DOVI);
++					 "EOTF", 0, 5);
+ 	if (!prop)
+ 		return -ENOMEM;
+ 	private->eotf_prop = prop;
+@@ -1570,12 +1646,6 @@ static int rockchip_drm_create_properties(struct drm_device *dev)
+ 					  "PORT_ID", DRM_MODE_OBJECT_CRTC);
+ 	private->port_id_prop = prop;
+ 
+-	prop = drm_property_create_range(dev, DRM_MODE_PROP_ATOMIC,
+-					 "DOVI_INPUT_TYPE", 0, DOVI_ENHANCE_LAYER);
+-	if (!prop)
+-		return -ENOMEM;
+-	private->dovi_input_type_prop = prop;
+-
+ 	private->aclk_prop = drm_property_create_range(dev, 0, "ACLK", 0, UINT_MAX);
+ 	private->bg_prop = drm_property_create_range(dev, 0, "BACKGROUND", 0, UINT_MAX);
+ 	private->line_flag_prop = drm_property_create_range(dev, 0, "LINE_FLAG1", 0, UINT_MAX);
+@@ -2229,6 +2299,8 @@ static struct drm_driver rockchip_drm_driver = {
+ 	.lastclose		= rockchip_drm_lastclose,
+ 	.open			= rockchip_drm_open,
+ 	.dumb_create		= rockchip_gem_dumb_create,
++	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
++	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
+ 	.gem_prime_import	= rockchip_drm_gem_prime_import,
+ 	.gem_prime_import_sg_table	= rockchip_gem_prime_import_sg_table,
+ 	.gem_prime_mmap		= drm_gem_prime_mmap,
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_drv.h b/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
+index 90e2c4ffd43b..6a07fd285386 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
+@@ -31,7 +31,7 @@
+ #define ROCKCHIP_MAX_CONNECTOR	2
+ #define ROCKCHIP_MAX_CRTC	4
+ #define ROCKCHIP_MAX_LAYER	16
+-#define ROCKCHIP_MAX_DOVI_CORE	3
++
+ 
+ struct drm_device;
+ struct drm_connector;
+@@ -61,21 +61,6 @@ struct iommu_domain;
+ #define RK_IF_PROP_COLOR_FORMAT_CAPS	"color_format_caps"
+ #define RK_IF_PROP_ENCRYPTED		"hdcp_encrypted"
+ 
+-/*
+- * This is extend by rockchip, the other EOTF is defined at hdmi.h
+- *
+- * enum hdmi_eotf {
+- *	HDMI_EOTF_TRADITIONAL_GAMMA_SDR,
+- *	HDMI_EOTF_TRADITIONAL_GAMMA_HDR,
+- *	HDMI_EOTF_SMPTE_ST2084,
+- *	HDMI_EOTF_BT_2100_HLG,
+- *};
+- */
+-#define HDMI_EOTF_HDR10PLUS	0x10
+-#define HDMI_EOTF_HDRVIVID	0x11
+-#define HDMI_EOTF_DOVI		0x12
+-#define DOVI_VSDB_LEN		26
+-
+ enum rockchip_drm_debug_category {
+ 	VOP_DEBUG_PLANE		= BIT(0),
+ 	VOP_DEBUG_OVERLAY	= BIT(1),
+@@ -173,8 +158,6 @@ struct rockchip_bcsh_state {
+ 
+ struct rockchip_crtc {
+ 	struct drm_crtc crtc;
+-	/* @frme_count: the frame num of commit buf */
+-	u32 frame_count;
+ #if defined(CONFIG_ROCKCHIP_DRM_DEBUG)
+ 	/**
+ 	 * @vop_dump_status the status of vop dump control
+@@ -527,7 +510,6 @@ struct rockchip_crtc_funcs {
+ 	void (*crtc_output_post_enable)(struct drm_crtc *crtc, int intf);
+ 	void (*crtc_output_pre_disable)(struct drm_crtc *crtc, int intf);
+ 	int (*crtc_set_color_bar)(struct drm_crtc *crtc, enum rockchip_color_bar_mode mode);
+-	unsigned long (*crtc_get_dclk_rate)(struct drm_crtc *crtc);
+ 	int (*set_aclk)(struct drm_crtc *crtc, enum rockchip_drm_vop_aclk_mode aclk_mode, struct dmcfreq_vop_info *vop_bw_info);
+ 	int (*get_crc)(struct drm_crtc *crtc);
+ 	void (*iommu_fault_handler)(struct drm_crtc *crtc, struct iommu_domain *iommu);
+@@ -571,7 +553,6 @@ struct rockchip_drm_private {
+ 	struct drm_property *eotf_prop;
+ 	struct drm_property *async_commit_prop;
+ 	struct drm_property *share_id_prop;
+-	struct drm_property *dovi_input_type_prop;
+ 
+ 	/* private connector prop */
+ 	struct drm_property *connector_id_prop;
+@@ -634,10 +615,6 @@ void rockchip_drm_unregister_sub_dev(struct rockchip_drm_sub_dev *sub_dev);
+ struct rockchip_drm_sub_dev *rockchip_drm_get_sub_dev(struct device_node *node);
+ int rockchip_drm_add_modes_noedid(struct drm_connector *connector);
+ void rockchip_drm_te_handle(struct drm_crtc *crtc);
+-struct drm_crtc *rockchip_drm_encoder_get_old_crtc(struct drm_encoder *encoder,
+-						   struct drm_atomic_state *state);
+-struct drm_crtc *rockchip_drm_encoder_get_new_crtc(struct drm_encoder *encoder,
+-						   struct drm_atomic_state *state);
+ void drm_mode_convert_to_split_mode(struct drm_display_mode *mode);
+ void drm_mode_convert_to_origin_mode(struct drm_display_mode *mode);
+ const char *rockchip_drm_get_color_encoding_name(enum drm_color_encoding encoding);
+@@ -667,7 +644,8 @@ int rockchip_drm_get_yuv422_format(struct drm_connector *connector,
+ int rockchip_drm_parse_cea_ext(struct rockchip_drm_dsc_cap *dsc_cap,
+ 			       u8 *max_frl_rate_per_lane, u8 *max_lanes, u8 *add_func,
+ 			       const struct edid *edid);
+-int rockchip_drm_parse_dovi(u8 *sink_data, const struct edid *edid);
++int rockchip_drm_parse_next_hdr(struct next_hdr_sink_data *sink_data,
++				const struct edid *edid);
+ int rockchip_drm_parse_colorimetry_data_block(u8 *colorimetry, const struct edid *edid);
+ struct dma_buf *rockchip_drm_gem_prime_export(struct drm_gem_object *obj, int flags);
+ long rockchip_drm_dclk_round_rate(u32 version, struct clk *dclk, unsigned long rate);
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_fb.c b/drivers/gpu/drm/rockchip/rockchip_drm_fb.c
+index b2a6be1c5385..6e4da02f5619 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_fb.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_fb.c
+@@ -199,13 +199,9 @@ static int rockchip_drm_aclk_adjust(struct drm_device *dev,
+ 
+ 		funcs = priv->crtc_funcs[drm_crtc_index(crtc)];
+ 		if (funcs && funcs->set_aclk) {
+-			struct drm_display_mode *mode = &crtc->state->adjusted_mode;
+-			int linedur_ns = div_u64((u64) mode->crtc_htotal * 1000000, mode->crtc_clock);
+-
+ 			if (vop_bw_info->plane_num_4k || crtc_num > 1 ||
+ 			    crtc->state->adjusted_mode.crtc_hdisplay > 2560 ||
+-			    crtc->state->adjusted_mode.crtc_vdisplay > 2560 ||
+-			    linedur_ns < 7500) {/* 4kp60 linedur_ns roughly equal to 7500 ns */
++			    crtc->state->adjusted_mode.crtc_vdisplay > 2560) {
+ 				funcs->set_aclk(crtc, ROCKCHIP_VOP_ACLK_ADVANCED_MODE, vop_bw_info);
+ 				priv->aclk_adjust_frame_num = 2;
+ 			} else {
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_logo.c b/drivers/gpu/drm/rockchip/rockchip_drm_logo.c
+index eafc76bd1079..b33fff364592 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_logo.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_logo.c
+@@ -909,11 +909,6 @@ static int setup_initial_state(struct drm_device *drm_dev,
+ 			primary_state->crtc_y = (vdisplay - fb_height) / 2;
+ 			primary_state->crtc_h = fb_height;
+ 		}
+-
+-		if (set->fb->width > hdisplay) {
+-			primary_state->crtc_h = (set->fb->height * hdisplay) / set->fb->width;
+-			primary_state->crtc_y = (vdisplay - primary_state->crtc_h) / 2;
+-		}
+ 	} else {
+ 		primary_state->crtc_x = 0;
+ 		primary_state->crtc_y = 0;
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_tve.c b/drivers/gpu/drm/rockchip/rockchip_drm_tve.c
+index 8621f8d47baf..9184509fc2ba 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_tve.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_tve.c
+@@ -503,8 +503,6 @@ static void rockchip_tve_encoder_mode_set(struct drm_encoder *encoder,
+ 		tve_set_mode(tve);
+ 		dac_enable(tve, true);
+ 	}
+-
+-	tve->tv_format = tv_format;
+ }
+ 
+ static bool
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index a4b2d187d508..1acd019ddf31 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -4414,8 +4414,8 @@ static void vop_crtc_atomic_flush(struct drm_crtc *crtc,
+ }
+ 
+ static const struct drm_crtc_helper_funcs vop_crtc_helper_funcs = {
+-	.mode_valid = vop_crtc_mode_valid,
+ 	.mode_fixup = vop_crtc_mode_fixup,
++	.mode_valid = vop_crtc_mode_valid,
+ 	.atomic_check = vop_crtc_atomic_check,
+ 	.atomic_flush = vop_crtc_atomic_flush,
+ 	.atomic_enable = vop_crtc_atomic_enable,
+@@ -4966,15 +4966,15 @@ static int vop_crtc_create_feature_property(struct vop *vop, struct drm_crtc *cr
+ 	static const struct drm_prop_enum_list props[] = {
+ 		{ ROCKCHIP_DRM_CRTC_FEATURE_ALPHA_SCALE, "ALPHA_SCALE" },
+ 		{ ROCKCHIP_DRM_CRTC_FEATURE_HDR10, "HDR10" },
+-		{ ROCKCHIP_DRM_CRTC_FEATURE_DOVI, "DOVI" },
++		{ ROCKCHIP_DRM_CRTC_FEATURE_NEXT_HDR, "NEXT_HDR" },
+ 	};
+ 
+ 	if (vop_data->feature & VOP_FEATURE_ALPHA_SCALE)
+ 		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_ALPHA_SCALE);
+ 	if (vop_data->feature & VOP_FEATURE_HDR10)
+ 		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_HDR10);
+-	if (vop_data->feature & VOP_FEATURE_DOVI)
+-		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_DOVI);
++	if (vop_data->feature & VOP_FEATURE_NEXT_HDR)
++		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_NEXT_HDR);
+ 
+ 	prop = drm_property_create_bitmask(vop->drm_dev,
+ 					   DRM_MODE_PROP_IMMUTABLE, "FEATURE",
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+index d0cf023aff7a..cca342094c55 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -70,7 +70,7 @@
+ #define VOP_FEATURE_INTERNAL_RGB	BIT(1)
+ #define VOP_FEATURE_ALPHA_SCALE		BIT(2)
+ #define VOP_FEATURE_HDR10		BIT(3)
+-#define VOP_FEATURE_DOVI		BIT(4)
++#define VOP_FEATURE_NEXT_HDR		BIT(4)
+ /* a feature to splice two windows and two vps to support resolution > 4096 */
+ #define VOP_FEATURE_SPLICE		BIT(5)
+ #define VOP_FEATURE_OVERSCAN		BIT(6)
+@@ -140,10 +140,6 @@ enum vop2_win_dly_mode {
+ 	VOP2_DLY_MODE_DEFAULT,   /**< default mode */
+ 	VOP2_DLY_MODE_HISO_S,    /** HDR in SDR out mode, as a SDR window */
+ 	VOP2_DLY_MODE_HIHO_H,    /** HDR in HDR out mode, as a HDR window */
+-	VOP2_DLY_MODE_DOVI_IN_CORE1,	/*  dovi video input, as dovi core1 */
+-	VOP2_DLY_MODE_DOVI_IN_CORE2,	/*  dovi video input, as dovi core2 */
+-	VOP2_DLY_MODE_NONDOVI_IN_CORE1,	/*  ndovi video input, as dovi core1 */
+-	VOP2_DLY_MODE_NONDOVI_IN_CORE2,	/*  ndovi video input, as dovi core2 */
+ 	VOP2_DLY_MODE_MAX,
+ };
+ 
+@@ -618,40 +614,11 @@ struct hdrvivid_regs {
+ #define RK_HDR_TYPE_MASK 0xff
+ #define RK_HDR_PLAT_MASK (0xff << 8)
+ 
+-/* byte unit */
+-#define VOP2_DOVI_CORE1_LUT_SIZE		5120
+-#define VOP2_DOVI_TONE_SCA_AXI_TAB_SIZE		(2560 * 4)
+-
+-/* word unit */
+-#define DOVI_LUT_SIZE				1280
+-#define DOVI_CORE1_SIZE				242
+-#define DOVI_CORE2_SIZE				43
+-#define DOVI_CORE3_SIZE				256
+-
+-enum vop_dovi_input_type {
+-	COMMON_LAYER = 0,
+-	DOVI_BASE_LAYER = 1,
+-	DOVI_ENHANCE_LAYER = 2,
+-};
+-
+-struct dovi_regs {
+-	uint32_t version;
+-	uint32_t valid;
+-	uint32_t input_mode;
+-	uint32_t output_mode;
+-	uint32_t core1_lut[DOVI_LUT_SIZE];
+-	uint32_t core2_lut[DOVI_LUT_SIZE];
+-	uint32_t core1[DOVI_CORE1_SIZE];
+-	uint32_t core2[DOVI_CORE2_SIZE];
+-	uint32_t core3[DOVI_CORE3_SIZE];
+-};
+-
+ struct hdr_extend {
+ 	uint32_t hdr_type;
+ 	uint32_t length;
+ 	union {
+ 		struct hdrvivid_regs hdrvivid_data;
+-		struct dovi_regs dovi_data;
+ 	};
+ };
+ 
+@@ -682,7 +649,7 @@ enum vop_hdr_format {
+ 	HDR_HDR10PLUS = 8,
+ 	RESERVED9 = 9,		/* reserved for hdr hdr10+ */
+ 	RESERVED10 = 10,	/* reserved for hdr hdr10+ */
+-	HDR_DOVI = 11,
++	HDR_NEXT = 11,
+ 	RESERVED12 = 12,	/* reserved for other dynamic hdr format */
+ 	RESERVED13 = 13,	/* reserved for other dynamic hdr format */
+ 	HDR_FORMAT_MAX,
+@@ -894,7 +861,6 @@ struct vop2_win_regs {
+ 	struct vop_reg global_alpha_val;
+ 	struct vop_reg color_key;
+ 	struct vop_reg color_key_en;
+-	struct vop_reg background;
+ 	struct vop_reg dither_up;
+ 	struct vop_reg axi_id;
+ 	struct vop_reg axi_yrgb_id;
+@@ -915,10 +881,6 @@ struct vop2_video_port_regs {
+ 	struct vop_reg dsp_x_mir_en;
+ 	struct vop_reg post_dsp_out_r2y;
+ 	struct vop_reg pre_scan_htiming;
+-	struct vop_reg dovi_pre_scan_en;
+-	struct vop_reg pre_scan_htiming1;
+-	struct vop_reg pre_scan_htiming2;
+-	struct vop_reg pre_scan_htiming3;
+ 	struct vop_reg htotal_pw;
+ 	struct vop_reg hact_st_end;
+ 	struct vop_reg dsp_vtotal;
+@@ -941,8 +903,6 @@ struct vop2_video_port_regs {
+ 	struct vop_reg dither_frc_2;
+ 	struct vop_reg dither_up_en;
+ 	struct vop_reg bg_dly;
+-	struct vop_reg dp_line_end_mode;
+-	struct vop_reg dp_bg_bottom_disable;
+ 
+ 	struct vop_reg p2i_en;
+ 	struct vop_reg dual_channel_en;
+@@ -1088,37 +1048,6 @@ struct vop2_power_domain_regs {
+ 	struct vop_reg pmu_status;
+ };
+ 
+-struct vop2_dovi_regs {
+-	/* common */
+-	struct vop_reg enable;
+-	struct vop_reg interrupt_enable;
+-	struct vop_reg interrupt_raw;
+-	struct vop_reg metadata_program_st;
+-	struct vop_reg metadata_program_end;
+-	struct vop_reg metadata_copy_finish;
+-
+-	/* core1 */
+-	struct vop_reg bypass_composer;
+-	struct vop_reg bypass_csc;
+-	struct vop_reg bypass_cvm;
+-	struct vop_reg operating_mode;
+-	struct vop_reg pixel_rate;
+-
+-	/* core2 */
+-	struct vop_reg yuv2rgb_en;
+-	struct vop_reg yuv422to444_en;
+-	struct vop_reg yuv_swap;
+-	struct vop_reg yuv422_en;
+-	struct vop_reg dly_en;
+-
+-	/* core1 and core2 */
+-	struct vop_reg lut_mst;
+-	struct vop_reg lut_update;
+-
+-	/* core3 */
+-	struct vop_reg output_mode;
+-};
+-
+ struct vop2_dsc_regs {
+ 	/* DSC SYS CTRL */
+ 	struct vop_reg dsc_port_sel;
+@@ -1253,21 +1182,6 @@ struct vop2_win_data {
+ 	const uint8_t dly[VOP2_DLY_MODE_MAX];
+ };
+ 
+-struct vop2_dovi_core_data {
+-	const uint8_t id;
+-	const uint32_t ctrl_offset;
+-	const uint32_t srange_offset;
+-	const uint32_t srange_offset_from_core;
+-	const struct vop2_dovi_regs *regs;
+-};
+-
+-struct vop2_dovi_data {
+-	const uint8_t nr_dovi_cores;
+-	const uint8_t dovi_max_delay[2];
+-	const uint32_t enhance_layer_phy_id;
+-	const struct vop2_dovi_core_data *dovi_core_data;
+-};
+-
+ struct dsc_error_info {
+ 	u32 dsc_error_val;
+ 	char dsc_error_info[50];
+@@ -1565,10 +1479,6 @@ struct vop2_ctrl {
+ 	struct vop_reg vp_intr_merge_en;
+ 	struct vop_reg reg_done_frm;
+ 	struct vop_reg cfg_done;
+-
+-	struct vop_reg dovi_core1_en;
+-	struct vop_reg dovi_core2_en;
+-	struct vop_reg dovi_core3_en;
+ };
+ 
+ struct vop_dump_regs {
+@@ -1617,7 +1527,6 @@ struct vop2_data {
+ 	const struct vop2_esmart_lb_map *esmart_lb_mode_map;
+ 	const struct vop_intr *axi_intr;
+ 	const struct vop2_ctrl *ctrl;
+-	const struct vop2_dovi_data *dovi;
+ 	const struct vop2_dsc_data *dsc;
+ 	const struct dsc_error_info *dsc_error_ecw;
+ 	const struct dsc_error_info *dsc_error_buffer_flow;
+@@ -1670,9 +1579,6 @@ struct vop2_data {
+ #define WB_YRGB_FIFO_FULL_INTR		BIT(18)
+ #define WB_COMPLETE_INTR		BIT(19)
+ #define MMU_EN_INTR			BIT(20)
+-#define DOLBY_CORE1_INTR		BIT(21)
+-#define DOLBY_CORE2_INTR		BIT(22)
+-#define DOLBY_CORE3_INTR		BIT(23)
+ 
+ #define INTR_MASK			(DSP_HOLD_VALID_INTR | FS_INTR | \
+ 					 LINE_FLAG_INTR | BUS_ERROR_INTR | \
+@@ -1682,8 +1588,7 @@ struct vop2_data {
+ 					 HWC_EMPTY_INTR | \
+ 					 POST_BUF_EMPTY_INTR | \
+ 					 DMA_FINISH_INTR | FS_FIELD_INTR | \
+-					 FE_INTR | WB_COMPLETE_INTR | MMU_EN_INTR | \
+-					 DOLBY_CORE1_INTR | DOLBY_CORE2_INTR | DOLBY_CORE3_INTR)
++					 FE_INTR | WB_COMPLETE_INTR | MMU_EN_INTR)
+ #define DSP_HOLD_VALID_INTR_EN(x)	((x) << 4)
+ #define FS_INTR_EN(x)			((x) << 5)
+ #define LINE_FLAG_INTR_EN(x)		((x) << 6)
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+index fe4c7fe9ba69..25f3879a46b0 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -366,11 +366,9 @@ struct vop2_plane_state {
+ 	int eotf;
+ 	int global_alpha;
+ 	int blend_mode;
+-	uint32_t background;
+ 	uint64_t color_key;
+ 	unsigned long offset;
+ 	int pdaf_data_type;
+-	u8 dovi_input_type;
+ 	bool async_commit;
+ 
+ 	struct drm_property_blob *dci_data;
+@@ -540,12 +538,6 @@ struct vop2_wb {
+ 
+ };
+ 
+-struct vop2_dovi_core {
+-	uint8_t id;
+-	struct vop2 *vop2;
+-	const struct vop2_dovi_regs *regs;
+-};
+-
+ struct vop2_dsc {
+ 	uint8_t id;
+ 	uint8_t max_slice_num;
+@@ -642,19 +634,6 @@ struct vop2_video_port {
+ 	 */
+ 	int hdr_en;
+ 
+-	/**
+-	 * @dovi_hdr_mode: Set when use dovi.
+-	 */
+-	bool dovi_hdr_mode;
+-	/**
+-	 * @dovi_hdr_en: Set when dovi enabled.
+-	 */
+-	bool dovi_hdr_en;
+-	/**
+-	 * @dovi_hdr_in: Set when dovi input.
+-	 */
+-	bool dovi_hdr_in;
+-
+ 	/**
+ 	 * -----------------
+ 	 * |      |       |
+@@ -742,11 +721,6 @@ struct vop2_video_port {
+ 	 */
+ 	struct rockchip_gem_object *hdr_lut_gem_obj;
+ 
+-	/**
+-	 * @dovi_lut_gem_obj: gem obj to store dovi lut
+-	 */
+-	struct rockchip_gem_object *dovi_lut_gem_obj;
+-
+ 	/**
+ 	 * @cubic_lut: cubic look up table
+ 	 */
+@@ -881,7 +855,6 @@ struct vop2 {
+ 	u32 version;
+ 	struct device *dev;
+ 	struct drm_device *drm_dev;
+-	struct vop2_dovi_core dovi_cores[ROCKCHIP_MAX_DOVI_CORE];
+ 	struct vop2_dsc dscs[ROCKCHIP_MAX_CRTC];
+ 	struct vop2_video_port vps[ROCKCHIP_MAX_CRTC];
+ 	struct vop2_wb wb;
+@@ -988,9 +961,6 @@ struct vop2 {
+ 	struct clk *hclk;
+ 	struct clk *aclk;
+ 	struct clk *pclk;
+-	struct clk *aclk_dovi;
+-	struct clk *aclk_div2_src;
+-	struct clk *aclk_root;
+ 	struct reset_control *ahb_rst;
+ 	struct reset_control *axi_rst;
+ 	struct csu_clk *csu_aclk;
+@@ -1070,7 +1040,6 @@ static DRM_ENUM_NAME_FN(drm_get_bus_format_name, drm_bus_format_enum_list)
+ 
+ static inline void vop2_cfg_done(struct drm_crtc *crtc);
+ static void vop2_wait_for_fs_by_done_bit_status(struct vop2_video_port *vp);
+-static int vop2_clk_reset(struct reset_control *rstc);
+ 
+ static inline struct vop2_video_port *to_vop2_video_port(struct drm_crtc *crtc)
+ {
+@@ -1205,11 +1174,6 @@ static inline bool is_vop3(struct vop2 *vop2)
+ 		return true;
+ }
+ 
+-static inline bool vop2_is_dovi_mode(struct vop2_video_port *vp)
+-{
+-	return vp->dovi_hdr_mode;
+-}
+-
+ static bool vop2_soc_is_rk3566(void)
+ {
+ 	return soc_is_rk3566();
+@@ -1268,9 +1232,6 @@ static void vop2_crtc_output_post_enable(struct drm_crtc *crtc, int intf)
+ 		vop2_wait_for_fs_by_done_bit_status(vp);
+ 	}
+ 
+-	if (!vp->loader_protect)
+-		vop2_clk_reset(vp->dclk_rst);
+-
+ 	drm_info(vop2, "vop enable intf:%x\n", intf);
+ }
+ 
+@@ -2164,7 +2125,7 @@ static void vop2_win_disable(struct vop2_win *win, bool skip_splice_win)
+ 		if (win->pd) {
+ 
+ 			/*
+-			 * Don't dynamic turn on/off PD_ESMART at RK3588/RK3576.
++			 * Don't dynamic turn on/off PD_ESMART at RK3588.
+ 			 * (1) There is a design issue for PD_EMSART when attached
+ 			 *     on VP1/2/3, we found it will trigger POST_BUF_EMPTY irq at vp0
+ 			 *     in splice mode.
+@@ -2173,10 +2134,12 @@ static void vop2_win_disable(struct vop2_win *win, bool skip_splice_win)
+ 			 *     maybe lead to PD_ESMART closed at wrong time and display error.
+ 			 * (3) PD_ESMART power up maybe have 4 us delay, this will lead to POST_BUF_EMPTY.
+ 			 */
+-			if (win->pd->data->id != VOP2_PD_ESMART) {
+-				vop2_power_domain_put(win->pd);
+-				win->pd->vp_mask &= ~win->vp_mask;
+-			}
++			if ((win->pd->data->id == VOP2_PD_ESMART && vop2->version == VOP_VERSION_RK3588) ||
++			     vop2->version == VOP_VERSION_RK3576)
++				return;
++
++			vop2_power_domain_put(win->pd);
++			win->pd->vp_mask &= ~win->vp_mask;
+ 		}
+ 	}
+ 
+@@ -2620,7 +2583,7 @@ static bool rockchip_vop2_mod_supported(struct drm_plane *plane, u32 format, u64
+ 	if (!rockchip_afbc(plane, modifier) &&
+ 	    !rockchip_rfbc(plane, modifier) &&
+ 	    !rockchip_tiled(plane, modifier)) {
+-		DRM_DEBUG("%s unsupported format modifier 0x%llx\n", plane->name, modifier);
++		DRM_ERROR("%s unsupported format modifier 0x%llx\n", plane->name, modifier);
+ 
+ 		return false;
+ 	}
+@@ -3340,19 +3303,6 @@ static void vop2_setup_csc_mode(struct vop2_video_port *vp,
+ 	vpstate->r2y_en = 0;
+ 	vpstate->csc_mode = 0;
+ 
+-	/**
+-	 * DOVI core1 input format must YUV422, VOP win will do:
+-	 * [YUV420/422 -> YUV444], [YUV444 -> YUV422] -> core1
+-	 * DOVI core2 input format must RGB
+-	 */
+-	if (vop2_is_dovi_mode(vp)) {
+-		if (vpstate->dovi_input_type && !is_input_yuv)
+-			drm_err(vp->vop2, "DOVI core1 input format must YUV format\n");
+-		if (!vpstate->dovi_input_type && is_input_yuv)
+-			drm_err(vp->vop2, "DOVI core2 input format must RGB format\n");
+-		return;
+-	}
+-
+ 	if (is_vop3(vp->vop2)) {
+ 		if (vpstate->hdr_in) {
+ 			if (is_input_yuv) {
+@@ -4770,379 +4720,6 @@ static void vop2_power_off_all_pd(struct vop2 *vop2)
+ 	}
+ }
+ 
+-static bool vop2_check_dovi_core_enabled(int id, u32 valid)
+-{
+-	if (valid & (BIT(id - 1)))
+-		return true;
+-
+-	return false;
+-}
+-
+-/* The dovi always trigger error interrupt, so it's disabled by default */
+-static void __maybe_unused vop2_enable_dovi_sys_irqs(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	const struct vop2_video_port_data *vp_data = &vop2_data->vp[vp->id];
+-	const struct vop_intr *intr = vp_data->intr;
+-	uint32_t irqs = DOLBY_CORE1_INTR | DOLBY_CORE2_INTR | DOLBY_CORE3_INTR;
+-	struct vop2_dovi_core *dovi_core;
+-	int i = 0;
+-
+-	VOP_INTR_SET_TYPE(vop2, intr, clear, irqs, 1);
+-	VOP_INTR_SET_TYPE(vop2, intr, enable, irqs, 1);
+-
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-		/* enable memtadata program error and unmatched frame detect error */
+-		VOP_MODULE_SET(vop2, dovi_core, interrupt_enable, 3);
+-	}
+-}
+-
+-static int vop2_hdr_get_eotf_by_output_mode(int output_mode)
+-{
+-	switch (output_mode) {
+-	case HDR_HDR10:
+-		return HDMI_EOTF_SMPTE_ST2084;
+-	case HDR_HDRVIVID:
+-		return HDMI_EOTF_HDRVIVID;
+-	case HDR_HDR10PLUS:
+-		return HDMI_EOTF_HDR10PLUS;
+-	case HDR_DOVI:
+-		return HDMI_EOTF_DOVI;
+-	case HDR_NONE:
+-	default:
+-		return HDMI_EOTF_TRADITIONAL_GAMMA_SDR;
+-	}
+-}
+-
+-static void vop2_dovi_enable(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
+-	struct vop2 *vop2 = vp->vop2;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	struct vop2_dovi_core *dovi_core;
+-	struct dovi_regs *dovi_data;
+-	struct hdr_extend *hdr_data;
+-	int i = 0;
+-
+-	if (vp->dovi_hdr_en)
+-		return;
+-
+-	hdr_data = (struct hdr_extend *)vcstate->hdr_ext_data->data;
+-	if (!hdr_data)
+-		return;
+-	dovi_data = &hdr_data->dovi_data;
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-
+-		if (vop2_check_dovi_core_enabled(dovi_core->id, dovi_data->valid))
+-			VOP_MODULE_SET(vop2, dovi_core, enable, 1);
+-	}
+-
+-	vp->dovi_hdr_en = true;
+-	DRM_DEV_INFO(vop2->dev, "vp%d dovi enabled\n", vp->id);
+-}
+-
+-static int vop2_dovi_init(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
+-	struct hdr_extend *hdr_data;
+-	unsigned long aclk_rate;
+-	int ret = 0;
+-
+-	if (!vcstate || !vcstate->hdr_ext_data)
+-		return 0;
+-
+-	hdr_data = (struct hdr_extend *)vcstate->hdr_ext_data->data;
+-	if (!hdr_data || hdr_data->hdr_type != HDR_DOVI)
+-		return 0;
+-
+-	aclk_rate = clk_get_rate(vop2->aclk);
+-	if (!vp->dovi_lut_gem_obj) {
+-		vp->dovi_lut_gem_obj =
+-			rockchip_gem_create_object(vop2->drm_dev,
+-						   VOP2_DOVI_TONE_SCA_AXI_TAB_SIZE * 2,
+-						   true, 0);
+-
+-		if (IS_ERR(vp->dovi_lut_gem_obj)) {
+-			drm_err(vop2, "create dovi lut obj failed\n");
+-			return 0;
+-		}
+-	}
+-
+-	ret = clk_prepare_enable(vop2->aclk_dovi);
+-	if (ret < 0)
+-		drm_err(vop2, "failed to enable aclk_dovi - %d\n", ret);
+-
+-	ret = clk_set_parent(vop2->aclk, vop2->aclk_div2_src);
+-	if (ret < 0) {
+-		drm_err(vop2, "failed to set parent(%s) for %s\n",
+-			__clk_get_name(vop2->aclk_div2_src),
+-			__clk_get_name(vop2->aclk));
+-	}
+-	clk_set_rate(vop2->aclk_dovi, aclk_rate);
+-	/* vop2_enable_dovi_sys_irqs(crtc); */
+-
+-	vp->dovi_hdr_mode = true;
+-	vop2_dovi_enable(crtc);
+-
+-	return 0;
+-}
+-
+-static void vop2_dovi_pre_disable(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	struct vop2_dovi_core *dovi_core;
+-	int i;
+-
+-	if (!vp->dovi_hdr_en)
+-		return;
+-
+-	VOP_MODULE_SET(vop2, vp, dp_line_end_mode, 0);
+-	VOP_MODULE_SET(vop2, vp, dp_bg_bottom_disable, 0);
+-	VOP_MODULE_SET(vop2, vp, dovi_pre_scan_en, 0);
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-		VOP_MODULE_SET(vop2, dovi_core, enable, 0);
+-		VOP_MODULE_SET(vop2, dovi_core, lut_update, 0);
+-		if (dovi_core->id == 2)
+-			VOP_MODULE_SET(vop2, dovi_core, dly_en, 0);
+-	}
+-	VOP_CTRL_SET(vop2, lut_dma_en, 0);
+-}
+-
+-static void vop2_dovi_post_disable(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	int ret;
+-
+-	if (!vp->dovi_hdr_en)
+-		return;
+-
+-	ret = clk_set_parent(vop2->aclk, vop2->aclk_root);
+-	if (ret < 0)
+-		drm_err(vop2,
+-			"failed to set aclk vop parent back to aclk vop root\n");
+-	clk_disable_unprepare(vop2->aclk_dovi);
+-	if (vp->dovi_lut_gem_obj)
+-		rockchip_gem_free_object(&vp->dovi_lut_gem_obj->base);
+-	vp->dovi_lut_gem_obj = NULL;
+-	vp->dovi_hdr_mode = false;
+-	vp->dovi_hdr_en = false;
+-	vp->dovi_hdr_in = false;
+-	drm_info(vop2, "vp%d dovi disabled\n", vp->id);
+-}
+-
+-static u32 vop2_read_dovi_metadata_copy_finish(struct vop2_dovi_core *dovi_core)
+-{
+-	struct vop2 *vop2 = dovi_core->vop2;
+-
+-	return VOP_MODULE_GET(vop2, dovi_core, metadata_copy_finish);
+-}
+-
+-static void vop2_wait_for_dovi_metadata_copy_finish(struct vop2_dovi_core *dovi_core)
+-{
+-	struct vop2 *vop2 = dovi_core->vop2;
+-	bool finish;
+-	int ret;
+-
+-	ret = readx_poll_timeout_atomic(vop2_read_dovi_metadata_copy_finish,
+-					dovi_core, finish, finish == true, 0, 10 * 1000);
+-	if (ret)
+-		DRM_DEV_DEBUG(vop2->dev, "Wait dovi%d metadata copy finish timeout: 0x%x\n",
+-			      dovi_core->id, vop2_readl(vop2, dovi_core->regs->metadata_copy_finish.offset));
+-}
+-
+-
+-static u32 vop2_read_dovi_core_enable(struct vop2_dovi_core *dovi_core)
+-{
+-	struct vop2 *vop2 = dovi_core->vop2;
+-
+-	return VOP_MODULE_GET(vop2, dovi_core, enable);
+-}
+-
+-static void vop2_wait_for_dovi_core_enabled(struct vop2_dovi_core *dovi_core)
+-{
+-	struct vop2 *vop2 = dovi_core->vop2;
+-	bool enable;
+-	int ret;
+-
+-	ret = readx_poll_timeout_atomic(vop2_read_dovi_core_enable,
+-					dovi_core, enable, enable == true, 0, 10 * 1000);
+-	if (ret)
+-		DRM_DEV_DEBUG(vop2->dev, "Wait dovi%d metadata copy finish timeout: 0x%x\n",
+-			      dovi_core->id, vop2_readl(vop2, dovi_core->regs->metadata_copy_finish.offset));
+-}
+-
+-static void vop2_load_dovi_coe_table(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
+-	struct dovi_regs *dovi_reg_data;
+-	struct hdr_extend *hdr_data;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	const struct vop2_dovi_core_data *dovi_core_data;
+-	struct vop2_dovi_core *dovi_core;
+-	u32 *dovi_lut_kvaddr;
+-	u32 dovi_lut_mst;
+-	int i = 0, j = 0;
+-	u32 offset = vp->rockchip_crtc.frame_count % 2 ? 0 : VOP2_DOVI_TONE_SCA_AXI_TAB_SIZE;
+-
+-	if (!vop2_is_dovi_mode(vp))
+-		return;
+-
+-	if (!vcstate->hdr_ext_data)
+-		return;
+-
+-	hdr_data = (struct hdr_extend *)vcstate->hdr_ext_data->data;
+-	dovi_reg_data = &hdr_data->dovi_data;
+-	vcstate->eotf = vop2_hdr_get_eotf_by_output_mode(dovi_reg_data->output_mode);
+-
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-
+-		if (!vop2_check_dovi_core_enabled(dovi_core->id, dovi_reg_data->valid))
+-			continue;
+-
+-		vop2_wait_for_dovi_core_enabled(dovi_core);
+-		/*
+-		 * The metadata_copy_finish maybe cleared by vop2_dovi_hanle_irqs,
+-		 * but vop2_dovi_hanle_irqs is disabled now.
+-		 */
+-		vop2_wait_for_dovi_metadata_copy_finish(dovi_core);
+-		VOP_MODULE_SET(vop2, dovi_core, metadata_copy_finish, 1);
+-	}
+-
+-	dovi_lut_kvaddr = (u32 *)vp->dovi_lut_gem_obj->kvaddr + offset / 4;
+-	memcpy(dovi_lut_kvaddr, &dovi_reg_data->core1_lut, VOP2_DOVI_CORE1_LUT_SIZE);
+-	dovi_lut_kvaddr += VOP2_DOVI_CORE1_LUT_SIZE / 4;
+-	memcpy(dovi_lut_kvaddr, &dovi_reg_data->core2_lut, VOP2_DOVI_CORE1_LUT_SIZE);
+-
+-	dovi_lut_mst = vp->dovi_lut_gem_obj->dma_addr + offset;
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-
+-		if (!vop2_check_dovi_core_enabled(dovi_core->id, dovi_reg_data->valid))
+-			continue;
+-
+-		if (dovi_core->id == 1)
+-			VOP_MODULE_SET(vop2, dovi_core, lut_mst, dovi_lut_mst);
+-
+-		if (dovi_core->id == 2)
+-			VOP_MODULE_SET(vop2, dovi_core, lut_mst, dovi_lut_mst + VOP2_DOVI_CORE1_LUT_SIZE);
+-	}
+-
+-	VOP_CTRL_SET(vop2, lut_dma_en, 1);
+-
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-
+-		if (!vop2_check_dovi_core_enabled(dovi_core->id, dovi_reg_data->valid))
+-			continue;
+-
+-		VOP_MODULE_SET(vop2, dovi_core, lut_update, 1);
+-	}
+-
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		u32 *core_data = NULL;
+-		int size;
+-		int offset;
+-
+-		dovi_core_data = &vop2_data->dovi->dovi_core_data[i];
+-		dovi_core = &vop2->dovi_cores[i];
+-
+-		if (!vop2_check_dovi_core_enabled(dovi_core->id, dovi_reg_data->valid))
+-			continue;
+-
+-		if (dovi_core->id == 1) {
+-			core_data = (u32 *)&dovi_reg_data->core1;
+-			offset = dovi_core_data->srange_offset_from_core >> 2;
+-			size = DOVI_CORE1_SIZE - offset;
+-		} else if (dovi_core->id == 2) {
+-			core_data = (u32 *)&dovi_reg_data->core2;
+-			offset = dovi_core_data->srange_offset_from_core >> 2;
+-			size = DOVI_CORE2_SIZE - offset;
+-			size -= 2; /* core2 last 2 word is reserved */
+-		} else if (dovi_core->id == 3) {
+-			core_data = (u32 *)&dovi_reg_data->core3;
+-			offset = dovi_core_data->srange_offset_from_core >> 2;
+-			size = DOVI_CORE3_SIZE - offset;
+-		}
+-
+-		if (!core_data)
+-			continue;
+-
+-		VOP_MODULE_SET(vop2, dovi_core, metadata_program_st, 1);
+-		vop2_writel(vop2, dovi_core_data->ctrl_offset, core_data[1]);
+-		/* write regs start from SRANGE_REGISTER */
+-		core_data += offset;
+-		for (j = 0; j < size; j++)
+-			vop2_writel(vop2, dovi_core_data->srange_offset + (j << 2), *(core_data++));
+-		VOP_MODULE_SET(vop2, dovi_core, metadata_program_end, 1);
+-
+-		if (dovi_core->id == 2) {
+-			if (dovi_reg_data->input_mode != HDR_DOVI)
+-				VOP_MODULE_SET(vop2, dovi_core, dly_en, 1);
+-			else
+-				VOP_MODULE_SET(vop2, dovi_core, dly_en, 0);
+-		}
+-	}
+-}
+-
+-static void vop2_dovi_mode_config(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
+-	u16 hsync_len = (adjusted_mode->crtc_hsync_end - adjusted_mode->crtc_hsync_start) >> 1;
+-	u16 hdisplay = (adjusted_mode->crtc_hdisplay) >> 1;
+-	u16 hact_st = (adjusted_mode->crtc_htotal - adjusted_mode->crtc_hsync_start) >> 1;
+-	u16 hact_end = hact_st + hdisplay;
+-	u16 hfp = (adjusted_mode->crtc_hsync_start - adjusted_mode->crtc_hdisplay) >> 1;
+-	u16 htotal;
+-
+-	u16 vdisplay = adjusted_mode->crtc_vdisplay;
+-	u16 vtotal = adjusted_mode->crtc_vtotal;
+-	u16 vsync_len = adjusted_mode->crtc_vsync_end - adjusted_mode->crtc_vsync_start;
+-	u16 vact_st = adjusted_mode->crtc_vtotal - adjusted_mode->crtc_vsync_start;
+-	u16 vact_end = vact_st + vdisplay;
+-	u32 val = 0;
+-	int dovi_max_delay = vp->dovi_hdr_in ?
+-			vop2_data->dovi->dovi_max_delay[0] : vop2_data->dovi->dovi_max_delay[1];
+-
+-	if (!vop2_is_dovi_mode(vp)) {
+-		VOP_MODULE_SET(vop2, vp, dovi_pre_scan_en, 0);
+-		return;
+-	}
+-
+-	hact_end = hact_end + dovi_max_delay;
+-	val = hact_st << 16 | hact_end;
+-	VOP_MODULE_SET(vop2, vp, pre_scan_htiming1, val);
+-
+-	hfp = hfp >= 20 ? hfp : 20;
+-	htotal = hact_end + hfp;
+-	val = htotal << 16 | hsync_len;
+-	VOP_MODULE_SET(vop2, vp, pre_scan_htiming, val);
+-
+-	val = vtotal << 16 | vsync_len;
+-	VOP_MODULE_SET(vop2, vp, pre_scan_htiming2, val);
+-
+-	val = vact_st << 16 | vact_end;
+-	VOP_MODULE_SET(vop2, vp, pre_scan_htiming3, val);
+-
+-	VOP_MODULE_SET(vop2, vp, dovi_pre_scan_en, 1);
+-}
+-
+ static void vop2_disable(struct drm_crtc *crtc)
+ {
+ 	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+@@ -5606,9 +5183,7 @@ static void vop2_crtc_atomic_disable(struct drm_crtc *crtc,
+ 
+ 	if (vp_data->feature & VOP_FEATURE_VIVID_HDR)
+ 		VOP_MODULE_SET(vop2, vp, hdr_lut_update_en, 0);
+-	vop2_dovi_pre_disable(crtc);
+ 	vop2_disable_all_planes_for_crtc(crtc);
+-	vop2_dovi_post_disable(crtc);
+ 
+ 	if (vop2->dscs[vcstate->dsc_id].enabled &&
+ 	    vop2->dscs[vcstate->dsc_id].attach_vp_id == vp->id &&
+@@ -5708,7 +5283,6 @@ static void vop2_crtc_atomic_disable(struct drm_crtc *crtc,
+ 	vcstate->output_type = 0;
+ 	vp->splice_mode_right = false;
+ 	vp->loader_protect = false;
+-	vp->enabled_win_mask = 0;
+ 	splice_vp->splice_mode_right = false;
+ 	memset(&vp->active_tv_state, 0, sizeof(vp->active_tv_state));
+ 	vop2_unlock(vop2);
+@@ -6121,10 +5695,9 @@ static int vop2_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_st
+ 
+ 	if (drm_rect_width(src) >> 16 < 4 || drm_rect_height(src) >> 16 < 4 ||
+ 	    drm_rect_width(dest) < 4 || drm_rect_width(dest) < 4) {
+-		if (plane->type != DRM_PLANE_TYPE_CURSOR)
+-			DRM_ERROR("Invalid size: %dx%d->%dx%d, min size is 4x4\n",
+-				  drm_rect_width(src) >> 16, drm_rect_height(src) >> 16,
+-				  drm_rect_width(dest), drm_rect_height(dest));
++		DRM_ERROR("Invalid size: %dx%d->%dx%d, min size is 4x4\n",
++			  drm_rect_width(src) >> 16, drm_rect_height(src) >> 16,
++			  drm_rect_width(dest), drm_rect_height(dest));
+ 		pstate->visible = false;
+ 		return 0;
+ 	}
+@@ -6298,36 +5871,6 @@ static void vop2_plane_atomic_disable(struct drm_plane *plane, struct drm_atomic
+ 	spin_unlock(&vop2->reg_lock);
+ }
+ 
+-/*
+- * The background value is 10 bit, convert from 8 bit to 10 bit here,
+- * and the bit[31] is bg_en control bit.
+- */
+-static void vop2_plane_setup_background(struct drm_plane *plane)
+-{
+-	struct drm_plane_state *pstate = plane->state;
+-	struct vop2_plane_state *vpstate = to_vop2_plane_state(pstate);
+-	struct vop2_win *win = to_vop2_win(plane);
+-	struct vop2 *vop2 = win->vop2;
+-	uint32_t r, g, b, bg_val;
+-
+-	if (win->regs->background.mask == 0)
+-		return;
+-
+-	if (vpstate->background == 0) {
+-		VOP_WIN_SET(vop2, win, background, 0);
+-
+-		return;
+-	}
+-
+-	r = (vpstate->background & 0xff0000) >> 16;
+-	g = (vpstate->background & 0xff00) >> 8;
+-	b = (vpstate->background & 0xff);
+-
+-	bg_val = BIT(31) | (r << 20) | (g << 10) | b;
+-
+-	VOP_WIN_SET(vop2, win, background, bg_val);
+-}
+-
+ /*
+  * The color key is 10 bit, so all format should
+  * convert to 10 bit here.
+@@ -6900,7 +6443,6 @@ static void vop2_win_atomic_update(struct vop2_win *win, struct drm_rect *src, s
+ 		VOP_WIN_SET(vop2, win, yrgb_vir, stride);
+ 
+ 	vop2_setup_scale(vop2, win, actual_w, actual_h, dsp_w, dsp_h, pstate);
+-	vop2_plane_setup_background(&win->base);
+ 	vop2_plane_setup_color_key(&win->base);
+ 	VOP_WIN_SET(vop2, win, act_info, act_info);
+ 	VOP_WIN_SET(vop2, win, dsp_info, dsp_info);
+@@ -7238,11 +6780,6 @@ static int vop2_atomic_plane_set_property(struct drm_plane *plane,
+ 		return 0;
+ 	}
+ 
+-	if (property == private->bg_prop) {
+-		vpstate->background = val;
+-		return 0;
+-	}
+-
+ 	if (property == win->color_key_prop) {
+ 		vpstate->color_key = val;
+ 		return 0;
+@@ -7257,11 +6794,6 @@ static int vop2_atomic_plane_set_property(struct drm_plane *plane,
+ 		return ret;
+ 	}
+ 
+-	if (property == private->dovi_input_type_prop) {
+-		vpstate->dovi_input_type = val;
+-		return 0;
+-	}
+-
+ 	DRM_ERROR("failed to set vop2 plane property id:%d, name:%s\n",
+ 		  property->base.id, property->name);
+ 
+@@ -7299,11 +6831,6 @@ static int vop2_atomic_plane_get_property(struct drm_plane *plane,
+ 		}
+ 	}
+ 
+-	if (property == private->bg_prop) {
+-		*val = vpstate->background;
+-		return 0;
+-	}
+-
+ 	if (property == win->color_key_prop) {
+ 		*val = vpstate->color_key;
+ 		return 0;
+@@ -7314,11 +6841,6 @@ static int vop2_atomic_plane_get_property(struct drm_plane *plane,
+ 		return 0;
+ 	}
+ 
+-	if (property == private->dovi_input_type_prop) {
+-		*val = vpstate->dovi_input_type;
+-		return 0;
+-	}
+-
+ 	DRM_ERROR("failed to get vop2 plane property id:%d, name:%s\n",
+ 		  property->base.id, property->name);
+ 
+@@ -7764,27 +7286,6 @@ static int vop2_crtc_loader_protect(struct drm_crtc *crtc, bool on, void *data)
+ 	return 0;
+ }
+ 
+-static const char *hdr_to_string(int eotf)
+-{
+-	switch (eotf) {
+-	case HDMI_EOTF_TRADITIONAL_GAMMA_HDR:
+-		return "GAMMA HDR";
+-	case HDMI_EOTF_SMPTE_ST2084:
+-		return "HDR10";
+-	case HDMI_EOTF_BT_2100_HLG:
+-		return "HLG";
+-	case HDMI_EOTF_HDR10PLUS:
+-		return "HDR10PLUS";
+-	case HDMI_EOTF_HDRVIVID:
+-		return "HDRVIVID";
+-	case HDMI_EOTF_DOVI:
+-		return "DOVI";
+-	case HDMI_EOTF_TRADITIONAL_GAMMA_SDR:
+-	default:
+-		return "SDR";
+-	}
+-}
+-
+ #define DEBUG_PRINT(args...) \
+ 		do { \
+ 			if (s) \
+@@ -7819,9 +7320,10 @@ static int vop2_plane_info_dump(struct seq_file *s, struct drm_plane *plane)
+ 		    &fb->format->format, rockchip_drm_modifier_to_string(fb->modifier),
+ 		    pstate->pixel_blend_mode, vpstate->global_alpha);
+ 	DEBUG_PRINT("\tcolor: %s[%d] color-encoding[%s] color-range[%s]\n",
+-		    hdr_to_string(vpstate->eotf), vpstate->eotf,
++		    vpstate->eotf ? "HDR" : "SDR", vpstate->eotf,
+ 		    rockchip_drm_get_color_encoding_name(pstate->color_encoding),
+ 		    rockchip_drm_get_color_range_name(pstate->color_range));
++
+ 	DEBUG_PRINT("\trotate: xmirror: %d ymirror: %d rotate_90: %d rotate_270: %d\n",
+ 		    vpstate->xmirror_en, vpstate->ymirror_en, vpstate->rotate_90_en,
+ 		    vpstate->rotate_270_en);
+@@ -7893,7 +7395,7 @@ static int vop2_crtc_debugfs_dump(struct drm_crtc *crtc, struct seq_file *s)
+ 	DEBUG_PRINT("\toverlay_mode[%d] output_mode[%x] ",
+ 		    state->yuv_overlay, state->output_mode);
+ 	DEBUG_PRINT("%s[%d] color-encoding[%s] color-range[%s]\n",
+-		    hdr_to_string(state->eotf), state->eotf,
++		    state->eotf ? "HDR" : "SDR", state->eotf,
+ 		    rockchip_drm_get_color_encoding_name(state->color_encoding),
+ 		    rockchip_drm_get_color_range_name(state->color_range));
+ 	DEBUG_PRINT("    Display mode: %dx%d%s%d\n",
+@@ -10279,8 +9781,6 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_sta
+ 	}
+ 	if (is_vop3(vop2))
+ 		vop3_setup_pipe_dly(vp, NULL);
+-	if (vp_data->feature & VOP_FEATURE_DOVI)
+-		vop2_dovi_init(crtc);
+ 
+ 	vop2_crtc_setup_output_mode(crtc);
+ 
+@@ -10308,6 +9808,8 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_sta
+ 		vop3_mcu_mode_setup(crtc);
+ 	}
+ 
++	if (!vp->loader_protect)
++		vop2_clk_reset(vp->dclk_rst);
+ 	if (vcstate->dsc_enable)
+ 		rk3588_vop2_dsc_cfg_done(crtc);
+ 	drm_crtc_vblank_on(crtc);
+@@ -10422,26 +9924,6 @@ static void vop2_update_post_csc_info(struct vop2_video_port *vp,
+ 		memset(&vp->csc_info, 0, sizeof(struct post_csc));
+ }
+ 
+-/*
+- * Check hdr_ext_data switch from valid to NULL or
+- * NULL to valid.
+- * This is used to check a switch from dynamic HDR2SDR
+- * or SDR2HDR output mode switch.
+- */
+-static bool vop_hdr_ext_data_switch(struct drm_crtc_state *old_state,
+-				   struct drm_crtc_state *new_state)
+-{
+-	struct rockchip_crtc_state *new_vcstate = to_rockchip_crtc_state(new_state);
+-	struct rockchip_crtc_state *old_vcstate = to_rockchip_crtc_state(old_state);
+-	struct drm_property_blob *new_blob = new_vcstate->hdr_ext_data;
+-	struct drm_property_blob *old_blob = old_vcstate->hdr_ext_data;
+-
+-	if ((!old_blob && new_blob) || (!new_blob && old_blob))
+-		return false;
+-
+-	return true;
+-}
+-
+ static int vop2_crtc_atomic_check(struct drm_crtc *crtc,
+ 				  struct drm_atomic_state *state)
+ {
+@@ -10456,7 +9938,6 @@ static int vop2_crtc_atomic_check(struct drm_crtc *crtc,
+ 	struct rockchip_crtc_state *new_vcstate = to_rockchip_crtc_state(new_crtc_state);
+ 	struct rockchip_crtc_state *old_vcstate = to_rockchip_crtc_state(old_crtc_state);
+ 	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
+-	bool hdr_ext_data_change;
+ 
+ 	if (vop2_has_feature(vop2, VOP_FEATURE_SPLICE)) {
+ 		if (adjusted_mode->hdisplay > VOP2_MAX_VP_OUTPUT_WIDTH) {
+@@ -10481,11 +9962,6 @@ static int vop2_crtc_atomic_check(struct drm_crtc *crtc,
+ 	else
+ 		vp->acm_state_changed = false;
+ 
+-	hdr_ext_data_change = !vop_hdr_ext_data_switch(old_crtc_state, new_crtc_state) |
+-					new_crtc_state->active_changed;
+-	if (hdr_ext_data_change)
+-		new_crtc_state->mode_changed = true;
+-
+ 	return 0;
+ }
+ 
+@@ -10719,29 +10195,6 @@ static void vop3_setup_dynamic_hdr(struct vop2_video_port *vp, uint8_t win_phys_
+ 	}
+ }
+ 
+-static void vop2_setup_hdr_dovi(struct drm_crtc *crtc)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	const struct vop2_data *vop2_data = vop2->data;
+-	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
+-	struct dovi_regs *dovi_data;
+-	struct hdr_extend *hdr_data;
+-
+-	if (!vop2_data->dovi->nr_dovi_cores || !vcstate || !vcstate->hdr_ext_data)
+-		return;
+-
+-	hdr_data = (struct hdr_extend *)vcstate->hdr_ext_data->data;
+-	if (!hdr_data || hdr_data->hdr_type != HDR_DOVI)
+-		return;
+-
+-	dovi_data = &hdr_data->dovi_data;
+-	if (dovi_data->input_mode == HDR_DOVI)
+-		vp->dovi_hdr_in = true;
+-	else
+-		vp->dovi_hdr_in = false;
+-}
+-
+ static void vop2_setup_hdr10(struct vop2_video_port *vp, uint8_t win_phys_id)
+ {
+ 	struct vop2 *vop2 = vp->vop2;
+@@ -11009,8 +10462,7 @@ static void vop2_setup_cluster_alpha(struct vop2 *vop2, struct vop2_cluster *clu
+ 		fb = top_win_vpstate->base.fb;
+ 		if (!fb)
+ 			return;
+-		if (top_win_vpstate->base.pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-		    top_win_vpstate->base.pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++		if (top_win_vpstate->base.pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 			premulti_en = true;
+ 		else
+ 			premulti_en = false;
+@@ -11056,7 +10508,7 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 	int mixer_id;
+ 	int phys_id;
+ 	uint32_t offset;
+-	int i, begin_layer = 0;
++	int i;
+ 	bool bottom_layer_alpha_en = false;
+ 	u32 dst_global_alpha = 0xff;
+ 
+@@ -11081,8 +10533,7 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 			 */
+ 			bottom_layer_alpha_en = true;
+ 			dst_global_alpha = vpstate->global_alpha;
+-			if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-			    pstate->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++			if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 				premulti_en = 1;
+ 			else
+ 				premulti_en = 0;
+@@ -11097,24 +10548,8 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 	    vp->hdr10_at_splice_mode && vp->id == 0)
+ 		mixer_id++;/* fixed path for rk3588: layer1 -> hdr10_1 */
+ 
+-	/*
+-	 * vp0 begin from mix0, mix0 input is layer0 and layer1, we need to use
+-	 * layer1 format to config mix0, the layer0 alpha[bottom_layer_alpha_en is true],
+-	 * will use the following formulas: Cd = Cs + (1 - As) * Cd * Agd to do overlay;
+-	 * vp1/2/3 layer0 will enter first mix src layer, so we need to init it.
+-	 *
+-	 * rk3588 hdr splice mode, vp1 hdr layer will be insert to layer1[vp0],
+-	 * so we need to ignore layer0 and begin from layer1 to config mix for vp1.
+-	 */
+-	if (vp->id == 0 || vp->hdr10_at_splice_mode)
+-		begin_layer = 1;
+-
+-	/* dovi core1 base layer and enhance layer no need to do overlay */
+-	if (vop2_is_dovi_mode(vp))
+-		begin_layer = 2;
+-
+ 	alpha_config.dst_pixel_alpha_en = true; /* alpha value need transfer to next mix */
+-	for (i = begin_layer; i < vp->nr_layers; i++) {
++	for (i = 1; i < vp->nr_layers; i++) {
+ 		zpos = &vop2_zpos[i];
+ 		win = vop2_find_win_by_phys_id(vop2, zpos->win_phys_id);
+ 		if (win->splice_mode_right)
+@@ -11124,15 +10559,14 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 
+ 		vpstate = to_vop2_plane_state(pstate);
+ 		fb = pstate->fb;
+-		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-		    pstate->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 			premulti_en = 1;
+ 		else
+ 			premulti_en = 0;
+ 		pixel_alpha_en = is_alpha_support(fb->format->format);
+ 
+ 		alpha_config.src_premulti_en = premulti_en;
+-		if (bottom_layer_alpha_en && i == begin_layer && vp->id == 0) {/* Cd = Cs + (1 - As) * Cd * Agd */
++		if (bottom_layer_alpha_en && i == 1) {
+ 			/**
+ 			 * The data from cluster mix is always premultiplied alpha;
+ 			 * cluster layer or esmart layer[premulti_en = 1]
+@@ -11161,13 +10595,6 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 		}
+ 		vop2_parse_alpha(&alpha_config, &alpha);
+ 
+-		/*
+-		 * The first UI enter dovi core2 no need to do alpha blending, but
+-		 * the alpha value need to transfer to next mix and enter core2.
+-		 */
+-		if (vop2_is_dovi_mode(vp) && i == begin_layer)
+-			alpha.src_color_ctrl.bits.alpha_en = false;
+-
+ 		offset = (mixer_id + i - 1) * 0x10;
+ 		vop2_writel(vop2, src_color_ctrl_offset + offset, alpha.src_color_ctrl.val);
+ 		vop2_writel(vop2, dst_color_ctrl_offset + offset, alpha.dst_color_ctrl.val);
+@@ -11175,7 +10602,7 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 		vop2_writel(vop2, dst_alpha_ctrl_offset + offset, alpha.dst_alpha_ctrl.val);
+ 	}
+ 
+-	if (bottom_layer_alpha_en || vp->hdr_en || (vop2_is_dovi_mode(vp) && vp->nr_layers > 1)) {
++	if (bottom_layer_alpha_en || vp->hdr_en) {
+ 		/* Transfer pixel alpha to hdr mix */
+ 		alpha_config.src_premulti_en = premulti_en;
+ 		alpha_config.dst_premulti_en = true;
+@@ -11183,16 +10610,6 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
+ 		alpha_config.src_glb_alpha_value = 0xff;
+ 		alpha_config.dst_glb_alpha_value = 0xff;
+ 		vop2_parse_alpha(&alpha_config, &alpha);
+-		if (vop2_is_dovi_mode(vp)) {
+-			/* dovi core2 output must be no pre mul alpha
+-			 * color_mode = ALPHA_SRC_NO_PRE_MUL && factor_mode = ALPHA_ONE is
+-			 * roughly equal to color_mode = ALPHA_SRC_PRE_MUL && factor_mode = ALPHA_NO_SATURATION,
+-			 * but the secondary is more correctly.
+-			 */
+-			alpha.src_color_ctrl.bits.color_mode = ALPHA_SRC_PRE_MUL;
+-			alpha.src_color_ctrl.bits.factor_mode = ALPHA_SRC_GLOBAL;
+-			alpha.src_color_ctrl.bits.alpha_cal_mode = ALPHA_NO_SATURATION;
+-		}
+ 
+ 		VOP_MODULE_SET(vop2, vp, hdr_src_color_ctrl,
+ 			       alpha.src_color_ctrl.val);
+@@ -11266,8 +10683,7 @@ static void rk3576_extra_alpha(struct vop2_video_port *vp, const struct vop2_zpo
+ 		pstate = extra_win->base.state;
+ 		vpstate = to_vop2_plane_state(pstate);
+ 		fb = pstate->fb;
+-		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-		    pstate->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 			alpha_config.src_premulti_en = 1;
+ 		else
+ 			alpha_config.src_premulti_en = 0;
+@@ -11369,8 +10785,7 @@ static void vop3_setup_alpha(struct vop2_video_port *vp,
+ 			 */
+ 			bottom_layer_alpha_en = true;
+ 			dst_global_alpha = vpstate->global_alpha;
+-			if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-			    pstate->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++			if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 				premulti_en = 1;
+ 			else
+ 				premulti_en = 0;
+@@ -11386,8 +10801,7 @@ static void vop3_setup_alpha(struct vop2_video_port *vp,
+ 		pstate = win->base.state;
+ 		vpstate = to_vop2_plane_state(pstate);
+ 		fb = pstate->fb;
+-		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ||
+-		    pstate->pixel_blend_mode == DRM_MODE_BLEND_PIXEL_NONE)
++		if (pstate->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 			premulti_en = 1;
+ 		else
+ 			premulti_en = 0;
+@@ -11508,13 +10922,6 @@ static u16 vop2_calc_bg_ovl_and_port_mux(struct vop2_video_port *vp)
+ 				used_layers += 1;
+ 			if (vop2->vps[0].hdr10_at_splice_mode && i == 1)
+ 				used_layers -= 1;
+-			/*
+-			 * At RK3588 dovi mode, layer1 always used by enhance layer,
+-			 * so the used_layers at least 3 layers, include:
+-			 * base layer[video], enhance layer[reserved] and UI layer.
+-			 */
+-			if (vop2_is_dovi_mode(prev_vp) && used_layers < 3)
+-				used_layers++;
+ 		}
+ 		/*
+ 		 * when a window move from vp0 to vp1, or vp0 to vp2,
+@@ -11763,12 +11170,6 @@ static void vop2_setup_dly_for_vp(struct vop2_video_port *vp)
+ 	pre_scan_dly = (pre_scan_dly << 16) | hsync_len;
+ 
+ 	VOP_MODULE_SET(vop2, vp, bg_dly, bg_dly);
+-	/* Disable bg bottom overlay */
+-	if (vop2_is_dovi_mode(vp)) {
+-		VOP_MODULE_SET(vop2, vp, dp_line_end_mode, 1);
+-		VOP_MODULE_SET(vop2, vp, dp_bg_bottom_disable, 1);
+-	}
+-	/* will be rewrite at dovi_mode_config when at dovi mode */
+ 	VOP_MODULE_SET(vop2, vp, pre_scan_htiming, pre_scan_dly);
+ }
+ 
+@@ -11802,18 +11203,6 @@ static void vop2_setup_dly_for_window(struct vop2_video_port *vp, const struct v
+ 		} else if (vp->hdr_in && vp->hdr_out && vpstate->hdr_in) {
+ 			dly = win->dly[VOP2_DLY_MODE_HIHO_H];
+ 			dly -= vp->bg_ovl_dly;
+-		} else if (vop2_is_dovi_mode(vp)) {
+-			if (vp->dovi_hdr_in) {
+-				if (vpstate->dovi_input_type)
+-					dly = win->dly[VOP2_DLY_MODE_DOVI_IN_CORE1];
+-				else
+-					dly = win->dly[VOP2_DLY_MODE_DOVI_IN_CORE2];
+-			} else {
+-				if (vpstate->dovi_input_type)
+-					dly = win->dly[VOP2_DLY_MODE_NONDOVI_IN_CORE1];
+-				else
+-					dly = win->dly[VOP2_DLY_MODE_NONDOVI_IN_CORE2];
+-			}
+ 		} else {
+ 			dly = win->dly[VOP2_DLY_MODE_DEFAULT];
+ 		}
+@@ -12063,33 +11452,6 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_stat
+ 		vp->nr_layers = nr_layers;
+ 
+ 		sort(vop2_zpos, nr_layers, sizeof(vop2_zpos[0]), vop2_zpos_cmp, NULL);
+-		/*
+-		 * At RK3588 dovi mode, the layer0 and layer1 is used for dovi layer,
+-		 * layer0 for base layer, layer1 for enhance layer, the enhance layer
+-		 * is option, but it's always occupy this layer, and the other layer
+-		 * must be assigned from layer2, so copy the other layers to &vop_zpos[2].
+-		 */
+-		if (vop2->version == VOP_VERSION_RK3588 &&
+-		    vop2_is_dovi_mode(vp) && vp->nr_layers > 1) {
+-			const struct vop2_data *vop2_data = vop2->data;
+-			struct vop2_zpos *vop2_zpos_tmp;
+-			int i = 0;
+-
+-			vop2_zpos_tmp = kmalloc_array(nr_layers - 1, sizeof(struct vop2_zpos), GFP_KERNEL);
+-			if (!vop2_zpos_tmp)
+-				goto dovi_err;
+-
+-			/* Insert esmart3 as core1 enhance layer to zpos1 */
+-			memcpy(vop2_zpos_tmp, &vop2_zpos[1], (nr_layers - 1) * sizeof(struct vop2_zpos));
+-			vp->nr_layers++;
+-			vop2_zpos[1].zpos = 1;
+-			vop2_zpos[1].win_phys_id = vop2_data->dovi->enhance_layer_phy_id;
+-			memcpy(&vop2_zpos[2], vop2_zpos_tmp, (nr_layers - 1) * sizeof(struct vop2_zpos));
+-			for (i = 0; i < nr_layers - 1; i++)
+-				vop2_zpos[2 + i].zpos = 2 + i;
+-
+-			kfree(vop2_zpos_tmp);
+-		}
+ 
+ 		if (!vp->hdr10_at_splice_mode) {
+ 			if (is_vop3(vop2)) {
+@@ -12106,10 +11468,7 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_stat
+ 			vop3_setup_alpha(vp, vop2_zpos);
+ 			vop3_setup_pipe_dly(vp, vop2_zpos);
+ 		} else {
+-			if (!vop2_is_dovi_mode(vp))
+-				vop2_setup_hdr10(vp, vop2_zpos[0].win_phys_id);
+-			else
+-				vop2_setup_hdr_dovi(crtc);
++			vop2_setup_hdr10(vp, vop2_zpos[0].win_phys_id);
+ 			vop2_setup_alpha(vp, vop2_zpos);
+ 			vop2_setup_dly_for_vp(vp);
+ 			vop2_setup_dly_for_window(vp, vop2_zpos);
+@@ -12124,8 +11483,7 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_stat
+ 			vop2_setup_port_mux(vp);
+ 			if (!vp->hdr10_at_splice_mode)
+ 				vop2_setup_layer_mixer_for_vp(splice_vp, vop2_zpos_splice);
+-			if (!vop2_is_dovi_mode(vp))
+-				vop2_setup_hdr10(splice_vp, vop2_zpos_splice[0].win_phys_id);
++			vop2_setup_hdr10(splice_vp, vop2_zpos_splice[0].win_phys_id);
+ 			vop2_setup_alpha(splice_vp, vop2_zpos_splice);
+ 			vop2_setup_dly_for_vp(splice_vp);
+ 			vop2_setup_dly_for_window(splice_vp, vop2_zpos_splice);
+@@ -12166,7 +11524,6 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_stat
+ 		}
+ 	}
+ 
+-dovi_err:
+ 	if (vcstate->splice_mode)
+ 		kfree(vop2_zpos_splice);
+ out:
+@@ -12302,8 +11659,8 @@ static void vop3_post_csc_config(struct drm_crtc *crtc, struct post_acm *acm, st
+ 	struct vop2 *vop2 = vp->vop2;
+ 	struct drm_plane *plane;
+ 	struct drm_plane_state *pstate;
+-	struct post_csc_coef csc_coef = {};
+-	struct post_csc_convert_mode convert_mode = {};
++	struct post_csc_coef csc_coef;
++	struct post_csc_convert_mode convert_mode;
+ 	bool acm_enable;
+ 	bool post_r2y_en = false;
+ 	bool post_csc_en = false;
+@@ -12568,11 +11925,6 @@ static void vop2_cfg_update(struct drm_crtc *crtc,
+ 	if (vp_data->feature & VOP_FEATURE_OVERSCAN)
+ 		vop2_post_config(crtc);
+ 
+-	if (vop2_is_dovi_mode(vp) && vp->enabled_win_mask) {
+-		vop2_dovi_mode_config(crtc);
+-		vop2_load_dovi_coe_table(crtc);
+-	}
+-
+ 	spin_unlock(&vop2->reg_lock);
+ 
+ 	if (vp_data->feature & VOP_FEATURE_POST_CSC) {
+@@ -12671,9 +12023,7 @@ static void vop2_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_stat
+ 	struct vop2_wb *wb = &vop2->wb;
+ 	struct drm_writeback_connector *wb_conn = &wb->conn;
+ 	struct drm_connector_state *conn_state = wb_conn->base.state;
+-	bool wb_mode = conn_state && conn_state->writeback_job && conn_state->writeback_job->fb;
+ 	bool wb_oneframe_mode = VOP_MODULE_GET(vop2, wb, one_frame_mode);
+-	bool dovi_mode = vop2_is_dovi_mode(vp) && vp->enabled_win_mask;
+ 
+ #if defined(CONFIG_ROCKCHIP_DRM_DEBUG)
+ 	if (vp->rockchip_crtc.vop_dump_status == DUMP_KEEP ||
+@@ -12683,13 +12033,7 @@ static void vop2_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_stat
+ 	}
+ #endif
+ 
+-	if ((wb_mode && !wb_oneframe_mode) || dovi_mode) {
+-	/**
+-	 * Avoid commit time close to vsync when enable writeback or dovi mode.
+-	 * For writeback may be lost writeback frame when close to vsync,
+-	 * For dovi mode may be appear dovi config and plane config take effect
+-	 * at different frame.
+-	 */
++	if (conn_state && conn_state->writeback_job && conn_state->writeback_job->fb && !wb_oneframe_mode) {
+ 		u16 vtotal = VOP_MODULE_GET(vop2, vp, dsp_vtotal);
+ 		u32 current_line = vop2_read_vcnt(vp);
+ 
+@@ -12766,7 +12110,6 @@ static void vop2_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_stat
+ 	if (vp->mcu_timing.mcu_pix_total)
+ 		VOP_MODULE_SET(vop2, vp, mcu_hold_mode, 0);
+ 
+-	vp->rockchip_crtc.frame_count++;
+ 	spin_unlock_irqrestore(&vop2->irq_lock, flags);
+ 
+ 	/*
+@@ -13341,35 +12684,6 @@ static void vop2_wb_handler(struct vop2_video_port *vp)
+ 	spin_unlock_irqrestore(&wb->job_lock, flags);
+ }
+ 
+-static void vop2_dovi_hanle_irqs(struct drm_crtc *crtc, uint32_t active_irqs)
+-{
+-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+-	struct vop2 *vop2 = vp->vop2;
+-	struct vop2_dovi_core *dovi_core;
+-	u32 val = 0;
+-
+-	if (active_irqs & DOLBY_CORE1_INTR) {
+-		dovi_core = &vop2->dovi_cores[0];
+-		val = VOP_MODULE_GET(vop2, dovi_core, interrupt_raw);
+-		VOP_MODULE_SET(vop2, dovi_core, interrupt_raw, val);
+-		drm_dbg(vop2, "dovi core1 irq: 0x%x\n", val);
+-	}
+-
+-	if (active_irqs & DOLBY_CORE2_INTR) {
+-		dovi_core = &vop2->dovi_cores[1];
+-		val = VOP_MODULE_GET(vop2, dovi_core, interrupt_raw);
+-		VOP_MODULE_SET(vop2, dovi_core, interrupt_raw, val);
+-		drm_dbg(vop2, "dovi core2 irq: 0x%x\n", val);
+-	}
+-
+-	if (active_irqs & DOLBY_CORE3_INTR) {
+-		dovi_core = &vop2->dovi_cores[2];
+-		val = VOP_MODULE_GET(vop2, dovi_core, interrupt_raw);
+-		VOP_MODULE_SET(vop2, dovi_core, interrupt_raw, val);
+-		drm_dbg(vop2, "dovi core3 irq: 0x%x\n", val);
+-	}
+-}
+-
+ static void vop2_dsc_isr(struct vop2 *vop2)
+ {
+ 	const struct vop2_data *vop2_data = vop2->data;
+@@ -13499,12 +12813,6 @@ static irqreturn_t vop2_isr(int irq, void *data)
+ 			ret = IRQ_HANDLED;
+ 		}
+ 
+-		if (active_irqs & (DOLBY_CORE1_INTR | DOLBY_CORE2_INTR | DOLBY_CORE3_INTR)) {
+-			vop2_dovi_hanle_irqs(crtc, active_irqs);
+-			active_irqs &= ~(DOLBY_CORE1_INTR | DOLBY_CORE2_INTR | DOLBY_CORE3_INTR);
+-			ret = IRQ_HANDLED;
+-		}
+-
+ 		if (active_irqs & POST_BUF_EMPTY_INTR) {
+ 			vop2_handle_post_buf_empty(crtc);
+ 			DRM_DEV_ERROR_RATELIMITED(vop2->dev, "POST_BUF_EMPTY irq err at vp%d\n", vp->id);
+@@ -13847,8 +13155,6 @@ static int vop2_plane_init(struct vop2 *vop2, struct vop2_win *win, unsigned lon
+ 					  BIT(DRM_COLOR_YCBCR_FULL_RANGE),
+ 					  DRM_COLOR_YCBCR_BT601,
+ 					  DRM_COLOR_YCBCR_LIMITED_RANGE);
+-	if (win->regs->background.mask && !win->parent)
+-		drm_object_attach_property(&win->base.base, private->bg_prop, 0);
+ 
+ 	drm_object_attach_property(&win->base.base, private->async_commit_prop, 0);
+ 
+@@ -13858,9 +13164,6 @@ static int vop2_plane_init(struct vop2 *vop2, struct vop2_win *win, unsigned lon
+ 	else
+ 		drm_object_attach_property(&win->base.base, private->share_id_prop,
+ 					   win->base.base.id);
+-
+-	drm_object_attach_property(&win->base.base, private->dovi_input_type_prop, 0);
+-
+ 	if (win->supported_rotations)
+ 		drm_plane_create_rotation_property(&win->base, DRM_MODE_ROTATE_0,
+ 						   DRM_MODE_ROTATE_0 | win->supported_rotations);
+@@ -14061,7 +13364,7 @@ static int vop2_crtc_create_feature_property(struct vop2 *vop2, struct drm_crtc
+ 	static const struct drm_prop_enum_list props[] = {
+ 		{ ROCKCHIP_DRM_CRTC_FEATURE_ALPHA_SCALE, "ALPHA_SCALE" },
+ 		{ ROCKCHIP_DRM_CRTC_FEATURE_HDR10, "HDR10" },
+-		{ ROCKCHIP_DRM_CRTC_FEATURE_DOVI, "DOVI" },
++		{ ROCKCHIP_DRM_CRTC_FEATURE_NEXT_HDR, "NEXT_HDR" },
+ 		{ ROCKCHIP_DRM_CRTC_FEATURE_VIVID_HDR, "VIVID_HDR" },
+ 	};
+ 
+@@ -14069,8 +13372,8 @@ static int vop2_crtc_create_feature_property(struct vop2 *vop2, struct drm_crtc
+ 		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_ALPHA_SCALE);
+ 	if (vp_data->feature & VOP_FEATURE_HDR10)
+ 		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_HDR10);
+-	if (vp_data->feature & VOP_FEATURE_DOVI)
+-		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_DOVI);
++	if (vp_data->feature & VOP_FEATURE_NEXT_HDR)
++		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_NEXT_HDR);
+ 	if (vp_data->feature & VOP_FEATURE_VIVID_HDR)
+ 		feature |= BIT(ROCKCHIP_DRM_CRTC_FEATURE_VIVID_HDR);
+ 
+@@ -14466,7 +13769,7 @@ static int vop2_create_crtc(struct vop2 *vop2, uint8_t enabled_vp_mask)
+ 					  "Failed to init %s with SR helpers %d, ignoring\n",
+ 					  crtc->name, ret);
+ 
+-		if (vp_data->feature & (VOP_FEATURE_VIVID_HDR | VOP_FEATURE_DOVI))
++		if (vp_data->feature & VOP_FEATURE_VIVID_HDR)
+ 			vop2_crtc_create_hdr_property(vop2, crtc);
+ 		if (vp_data->feature & VOP_FEATURE_POST_ACM)
+ 			vop2_crtc_create_post_acm_property(vop2, crtc);
+@@ -14599,25 +13902,6 @@ static int vop2_pd_data_init(struct vop2 *vop2)
+ 	return 0;
+ }
+ 
+-static void vop2_dovi_data_init(struct vop2 *vop2)
+-{
+-	const struct vop2_data *vop2_data = vop2->data;
+-	const struct vop2_dovi_core_data *dovi_core_data;
+-	struct vop2_dovi_core *dovi_core;
+-	int i;
+-
+-	if (!vop2_data->dovi)
+-		return;
+-
+-	for (i = 0; i < vop2_data->dovi->nr_dovi_cores; i++) {
+-		dovi_core = &vop2->dovi_cores[i];
+-		dovi_core_data = &vop2_data->dovi->dovi_core_data[i];
+-		dovi_core->id = dovi_core_data->id;
+-		dovi_core->regs = dovi_core_data->regs;
+-		dovi_core->vop2 = vop2;
+-	}
+-}
+-
+ static void vop2_dsc_data_init(struct vop2 *vop2)
+ {
+ 	const struct vop2_data *vop2_data = vop2->data;
+@@ -14855,7 +14139,7 @@ static bool vop2_plane_mask_check(struct vop2 *vop2)
+ 	    plane_mask != vop2_data->plane_mask_base) {
+ 		full_plane = vop2_plane_mask_to_string(vop2_data->plane_mask_base);
+ 		current_plane = vop2_plane_mask_to_string(plane_mask);
+-		DRM_WARN("all windows should be assigned, full plane mask: %s[0x%x], current plane mask: %s[0x%x]\n",
++		DRM_WARN("all windows should be assigned, full plane mask: %s[0x%x], current plane mask: %s[0x%x\n]",
+ 			 full_plane, vop2_data->plane_mask_base, current_plane, plane_mask);
+ 		kfree(full_plane);
+ 		kfree(current_plane);
+@@ -15336,24 +14620,6 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 		return PTR_ERR(vop2->pclk);
+ 	}
+ 
+-	vop2->aclk_dovi = devm_clk_get_optional(vop2->dev, "aclk_dovi");
+-	if (IS_ERR(vop2->aclk_dovi)) {
+-		DRM_DEV_ERROR(vop2->dev, "failed to get aclk dovi source\n");
+-		return PTR_ERR(vop2->aclk_dovi);
+-	}
+-
+-	vop2->aclk_div2_src = devm_clk_get_optional(vop2->dev, "aclk_vop_div2_src");
+-	if (IS_ERR(vop2->aclk_div2_src)) {
+-		DRM_DEV_ERROR(vop2->dev, "failed to get aclk div2 src\n");
+-		return PTR_ERR(vop2->aclk_div2_src);
+-	}
+-
+-	vop2->aclk_root = devm_clk_get_optional(vop2->dev, "aclk_vop_root");
+-	if (IS_ERR(vop2->aclk_root)) {
+-		DRM_DEV_ERROR(vop2->dev, "failed to get aclk vop root\n");
+-		return PTR_ERR(vop2->aclk_root);
+-	}
+-
+ 	vop2->ahb_rst = devm_reset_control_get_optional(vop2->dev, "ahb");
+ 	if (IS_ERR(vop2->ahb_rst)) {
+ 		DRM_DEV_ERROR(vop2->dev, "failed to get ahb reset\n");
+@@ -15455,30 +14721,6 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 		INIT_WORK(&vop2->post_buf_empty_work, post_buf_empty_work_event);
+ 	}
+ 
+-	vop2_dovi_data_init(vop2);
+-	vop2_dsc_data_init(vop2);
+-
+-	registered_num_crtcs = vop2_create_crtc(vop2, enabled_vp_mask);
+-	if (registered_num_crtcs <= 0)
+-		return -ENODEV;
+-
+-	ret = vop2_gamma_init(vop2);
+-	if (ret)
+-		return ret;
+-	vop2_clk_init(vop2);
+-	vop2_cubic_lut_init(vop2);
+-	vop2_wb_connector_init(vop2, registered_num_crtcs);
+-	rockchip_drm_dma_init_device(drm_dev, vop2->dev);
+-	pm_runtime_enable(&pdev->dev);
+-	rockchip_vop2_devfreq_init(vop2);
+-
+-	/**
+-	 * At MOS environment, the irq handle may be triggered immediately
+-	 * after request irq, the irq handle maybe access vop2 memory, e.g.,
+-	 * vop3_vp_isr() -> vop2_wb_handler() access vop2->wb->regs,
+-	 * so move devm_request_irq() to the end of this function to make sure
+-	 * vop2 is initialized.
+-	 */
+ 	if (vop2->merge_irq == false)
+ 		ret = devm_request_irq(dev, vop2->irq, vop3_sys_isr, IRQF_SHARED, dev_name(dev), vop2);
+ 	else
+@@ -15486,6 +14728,12 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 	if (ret)
+ 		return ret;
+ 
++	vop2_dsc_data_init(vop2);
++
++	registered_num_crtcs = vop2_create_crtc(vop2, enabled_vp_mask);
++	if (registered_num_crtcs <= 0)
++		return -ENODEV;
++
+ 	if (vop2->merge_irq == false) {
+ 		struct drm_crtc *crtc;
+ 		char irq_name[12];
+@@ -15509,6 +14757,16 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 		}
+ 	}
+ 
++	ret = vop2_gamma_init(vop2);
++	if (ret)
++		return ret;
++	vop2_clk_init(vop2);
++	vop2_cubic_lut_init(vop2);
++	vop2_wb_connector_init(vop2, registered_num_crtcs);
++	rockchip_drm_dma_init_device(drm_dev, vop2->dev);
++	pm_runtime_enable(&pdev->dev);
++	rockchip_vop2_devfreq_init(vop2);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+index 32e6b90c8d1e..3d7790259907 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+@@ -27,6 +27,11 @@ enum win_dly_mode {
+ 	VOP2_DLY_MODE_MAX,
+ };
+ 
++struct vop_rect {
++	int width;
++	int height;
++};
++
+ enum vop2_scale_up_mode {
+ 	VOP2_SCALE_UP_NRST_NBOR,
+ 	VOP2_SCALE_UP_BIL,
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vvop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vvop.c
+index 4482da16de56..3f4432ad596c 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vvop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vvop.c
+@@ -10,8 +10,6 @@
+ #include <drm/drm_gem.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_crtc_helper.h>
+-#include <drm/drm_edid.h>
+-#include <drm/drm_fourcc.h>
+ #include <drm/drm_gem_framebuffer_helper.h>
+ #include <drm/drm_plane_helper.h>
+ #include <drm/drm_probe_helper.h>
+@@ -72,7 +70,8 @@ static const struct drm_plane_funcs vvop_plane_funcs = {
+ 	.atomic_destroy_state	= drm_atomic_helper_plane_destroy_state,
+ };
+ 
+-static void vvop_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_state *state)
++static void vvop_plane_atomic_update(struct drm_plane *plane,
++				     struct drm_plane_state *old_state)
+ {
+ }
+ 
+@@ -399,12 +398,14 @@ static const struct drm_crtc_funcs vvop_crtc_funcs = {
+ 	.disable_vblank		= vvop_disable_vblank,
+ };
+ 
+-static void vvop_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_state *state)
++static void vvop_crtc_atomic_enable(struct drm_crtc *crtc,
++				    struct drm_crtc_state *old_state)
+ {
+ 	drm_crtc_vblank_on(crtc);
+ }
+ 
+-static void vvop_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_state *state)
++static void vvop_crtc_atomic_disable(struct drm_crtc *crtc,
++				     struct drm_crtc_state *old_state)
+ {
+ 	unsigned long flags;
+ 
+@@ -419,7 +420,8 @@ static void vvop_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_st
+ 
+ }
+ 
+-static void vvop_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_state *state)
++static void vvop_crtc_atomic_flush(struct drm_crtc *crtc,
++				   struct drm_crtc_state *old_crtc_state)
+ {
+ 	unsigned long flags;
+ 
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+index b53d987c09a2..7fe266b500a0 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+@@ -31,6 +31,8 @@
+ 		_VOP_REG(off, _mask, s, true)
+ 
+ static const uint32_t formats_for_cluster[] = {
++	DRM_FORMAT_XRGB2101010,
++	DRM_FORMAT_XBGR2101010,
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_ARGB8888,
+ 	DRM_FORMAT_XBGR8888,
+@@ -678,10 +680,6 @@ static const int rk3568_vop_intrs[] = {
+ 	POST_BUF_EMPTY_INTR,
+ 	FS_FIELD_INTR,
+ 	DSP_HOLD_VALID_INTR,
+-	0, 0, 0, 0, 0,
+-	DOLBY_CORE1_INTR,
+-	DOLBY_CORE2_INTR,
+-	DOLBY_CORE3_INTR,
+ };
+ 
+ static const struct vop_intr rk3568_vp0_intr = {
+@@ -724,88 +722,6 @@ static const struct vop_intr rk3588_vp3_intr = {
+ 	.clear = VOP_REG_MASK(RK3588_VP3_INT_CLR, 0xffff, 0),
+ };
+ 
+-static const struct vop2_dovi_regs rk3588_vop_dovi_core1_regs = {
+-	.enable = VOP_REG(RK3568_OVL_CTRL, 0x1, 8),
+-	.interrupt_raw = VOP_REG(RK3588_DOLBY_CORE1_INTR_RAW_REG, 0xf, 0),
+-	.interrupt_enable = VOP_REG(RK3588_DOLBY_CORE1_INTR_ENABLE_REG, 0xf, 0),
+-	.metadata_program_st = VOP_REG(RK3588_DOLBY_CORE1_METADATA_PROGRAM_ST, 0x1, 0),
+-	.metadata_program_end = VOP_REG(RK3588_DOLBY_CORE1_METADATA_PROGRAM_END, 0x1, 0),
+-	.metadata_copy_finish = VOP_REG(RK3588_DOLBY_CORE1_INTR_RAW_REG, 0x1, 2),
+-
+-	.bypass_composer = VOP_REG(RK3588_DOLBY_CORE1_CONTROL_REG, 0x1, 0),
+-	.bypass_csc = VOP_REG(RK3588_DOLBY_CORE1_CONTROL_REG, 0x1, 1),
+-	.bypass_cvm = VOP_REG(RK3588_DOLBY_CORE1_CONTROL_REG, 0x1, 2),
+-	.operating_mode = VOP_REG(RK3588_DOLBY_CORE1_CONTROL_REG, 0x1, 3),
+-	.pixel_rate = VOP_REG(RK3588_DOLBY_CORE1_CONTROL_REG, 0xf, 4),
+-
+-	.lut_update = VOP_REG(RK3568_OVL_CTRL, 0x1, 11),
+-	.lut_mst = VOP_REG(RK3588_DOLBY_LUT_MST, 0xffffffff, 0),
+-};
+-
+-static const struct vop2_dovi_regs rk3588_vop_dovi_core2_regs = {
+-	.enable = VOP_REG(RK3568_OVL_CTRL, 0x1, 9),
+-	.interrupt_raw = VOP_REG(RK3588_DOLBY_CORE2_INTR_RAW_REG, 0xf, 0),
+-	.interrupt_enable = VOP_REG(RK3588_DOLBY_CORE2_INTR_ENABLE_REG, 0xf, 0),
+-	.metadata_program_st = VOP_REG(RK3588_DOLBY_CORE2_METADATA_PROGRAM_ST, 0x1, 0),
+-	.metadata_program_end = VOP_REG(RK3588_DOLBY_CORE2_METADATA_PROGRAM_END, 0x1, 0),
+-	.metadata_copy_finish = VOP_REG(RK3588_DOLBY_CORE2_INTR_RAW_REG, 0x1, 2),
+-
+-	.bypass_cvm = VOP_REG(RK3588_DOLBY_CORE2_CONTROL_REG, 0x1, 0),
+-	.yuv2rgb_en = VOP_REG(RK3588_DOLBY_CORE2_CONTROL_REG, 0x1, 1),
+-	.yuv422to444_en = VOP_REG(RK3588_DOLBY_CORE2_CONTROL_REG, 0x1, 2),
+-	.yuv_swap = VOP_REG(RK3568_OVL_CTRL, 0x1, 6),
+-	.yuv422_en = VOP_REG(RK3568_OVL_CTRL, 0x1, 7),
+-
+-	.lut_update = VOP_REG(RK3568_OVL_CTRL, 0x1, 12),
+-	.lut_mst = VOP_REG(RK3568_HDR_LUT_MST, 0xffffffff, 0),
+-
+-	.dly_en = VOP_REG(RK3568_OVL_CTRL, 0x1, 13),
+-};
+-
+-static const struct vop2_dovi_regs rk3588_vop_dovi_core3_regs = {
+-	.enable = VOP_REG(RK3568_OVL_CTRL, 0x1, 10),
+-	.interrupt_raw = VOP_REG(RK3588_DOLBY_CORE3_INTR_RAW_REG, 0xf, 0),
+-	.interrupt_enable = VOP_REG(RK3588_DOLBY_CORE3_INTR_ENABLE_REG, 0xf, 0),
+-	.metadata_program_st = VOP_REG(RK3588_DOLBY_CORE3_METADATA_PROGRAM_ST, 0x1, 0),
+-	.metadata_program_end = VOP_REG(RK3588_DOLBY_CORE3_METADATA_PROGRAM_END, 0x1, 0),
+-	.metadata_copy_finish = VOP_REG(RK3588_DOLBY_CORE3_INTR_RAW_REG, 0x1, 2),
+-
+-	.output_mode = VOP_REG(RK3588_DOLBY_CORE3_CONTROL_REG, 0xf, 0),
+-};
+-
+-static const struct vop2_dovi_core_data rk3588_vop_dovi_core_data[3] = {
+-	{
+-	 .id = 1,
+-	 .ctrl_offset = RK3588_DOLBY_CORE1_CONTROL_REG,
+-	 .srange_offset = RK3588_DOLBY_CORE1_SRANGE_REG,
+-	 .srange_offset_from_core = 0x18,
+-	 .regs = &rk3588_vop_dovi_core1_regs,
+-	},
+-
+-	{
+-	 .id = 2,
+-	 .ctrl_offset = RK3588_DOLBY_CORE2_CONTROL_REG,
+-	 .srange_offset = RK3588_DOLBY_CORE2_SRANGE_REG,
+-	 .srange_offset_from_core = 0x18,
+-	 .regs = &rk3588_vop_dovi_core2_regs,
+-	},
+-
+-	{
+-	 .id = 3,
+-	 .ctrl_offset = RK3588_DOLBY_CORE3_CONTROL_REG,
+-	 .srange_offset = RK3588_DOLBY_CORE3_SRANGE_REG,
+-	 .srange_offset_from_core = 0x18,
+-	 .regs = &rk3588_vop_dovi_core3_regs,
+-	},
+-};
+-
+-static const struct vop2_dovi_data rk3588_vop_dovi_data = {
+-	.nr_dovi_cores = ROCKCHIP_MAX_DOVI_CORE,
+-	.dovi_max_delay = { 54, 24 },
+-	.enhance_layer_phy_id = ROCKCHIP_VOP2_ESMART3,
+-	.dovi_core_data = rk3588_vop_dovi_core_data,
+-};
+-
+ static const struct vop2_dsc_regs rk3588_vop_dsc_8k_regs = {
+ 	/* DSC SYS CTRL */
+ 	.dsc_port_sel = VOP_REG(RK3588_DSC_8K_SYS_CTRL, 0x3, 0),
+@@ -1947,13 +1863,11 @@ static const struct vop2_video_port_regs rk3588_vop_vp0_regs = {
+ 	.dclk_core_div = VOP_REG(RK3568_VP0_CLK_CTRL, 0x3, 0),
+ 	.dclk_out_div = VOP_REG(RK3568_VP0_CLK_CTRL, 0x3, 2),
+ 	.pre_scan_htiming = VOP_REG(RK3568_VP0_PRE_SCAN_HTIMING, 0x1fff1fff, 0),
+-	.dovi_pre_scan_en = VOP_REG(RK3568_VP0_PRE_SCAN_HTIMING, 0x1, 15),
+-	.pre_scan_htiming1 = VOP_REG(RK3588_VP0_PRE_SCAN_HTIMING1, 0x1fff1fff, 0),
+-	.pre_scan_htiming2 = VOP_REG(RK3588_VP0_PRE_SCAN_HTIMING2, 0x1fff1fff, 0),
+-	.pre_scan_htiming3 = VOP_REG(RK3588_VP0_PRE_SCAN_HTIMING3, 0x1fff1fff, 0),
+-	.dp_line_end_mode = VOP_REG(RK3568_VP0_BG_MIX_CTRL, 0x1, 4),
+-	.dp_bg_bottom_disable = VOP_REG(RK3568_VP0_BG_MIX_CTRL, 0x1, 5),
+ 	.bg_dly = VOP_REG(RK3568_VP0_BG_MIX_CTRL, 0xff, 24),
++	.hpost_st_end = VOP_REG(RK3568_VP0_POST_DSP_HACT_INFO, 0x1fff1fff, 0),
++	.vpost_st_end = VOP_REG(RK3568_VP0_POST_DSP_VACT_INFO, 0x1fff1fff, 0),
++	.post_scl_factor = VOP_REG(RK3568_VP0_POST_SCL_FACTOR_YRGB, 0xffffffff, 0),
++	.post_scl_ctrl = VOP_REG(RK3568_VP0_POST_SCL_CTRL, 0x3, 0),
+ 	.htotal_pw = VOP_REG(RK3568_VP0_DSP_HTOTAL_HS_END, 0xffffffff, 0),
+ 	.hact_st_end = VOP_REG(RK3568_VP0_DSP_HACT_ST_END, 0xffffffff, 0),
+ 	.dsp_vtotal = VOP_REG(RK3568_VP0_DSP_VTOTAL_VS_END, 0x1fff, 16),
+@@ -2051,6 +1965,10 @@ static const struct vop2_video_port_regs rk3588_vop_vp1_regs = {
+ 	.dclk_out_div = VOP_REG(RK3568_VP1_CLK_CTRL, 0x3, 2),
+ 	.pre_scan_htiming = VOP_REG(RK3568_VP1_PRE_SCAN_HTIMING, 0x1fff1fff, 0),
+ 	.bg_dly = VOP_REG(RK3568_VP1_BG_MIX_CTRL, 0xff, 24),
++	.hpost_st_end = VOP_REG(RK3568_VP1_POST_DSP_HACT_INFO, 0x1fff1fff, 0),
++	.vpost_st_end = VOP_REG(RK3568_VP1_POST_DSP_VACT_INFO, 0x1fff1fff, 0),
++	.post_scl_factor = VOP_REG(RK3568_VP1_POST_SCL_FACTOR_YRGB, 0xffffffff, 0),
++	.post_scl_ctrl = VOP_REG(RK3568_VP1_POST_SCL_CTRL, 0x3, 0),
+ 	.htotal_pw = VOP_REG(RK3568_VP1_DSP_HTOTAL_HS_END, 0x1fff1fff, 0),
+ 	.hact_st_end = VOP_REG(RK3568_VP1_DSP_HACT_ST_END, 0x1fff1fff, 0),
+ 	.dsp_vtotal = VOP_REG(RK3568_VP1_DSP_VTOTAL_VS_END, 0x1fff, 16),
+@@ -2144,6 +2062,10 @@ static const struct vop2_video_port_regs rk3588_vop_vp2_regs = {
+ 	.dclk_out_div = VOP_REG(RK3568_VP2_CLK_CTRL, 0x3, 2),
+ 	.pre_scan_htiming = VOP_REG(RK3568_VP2_PRE_SCAN_HTIMING, 0x1fff1fff, 0),
+ 	.bg_dly = VOP_REG(RK3568_VP2_BG_MIX_CTRL, 0xff, 24),
++	.hpost_st_end = VOP_REG(RK3568_VP2_POST_DSP_HACT_INFO, 0x1fff1fff, 0),
++	.vpost_st_end = VOP_REG(RK3568_VP2_POST_DSP_VACT_INFO, 0x1fff1fff, 0),
++	.post_scl_factor = VOP_REG(RK3568_VP2_POST_SCL_FACTOR_YRGB, 0xffffffff, 0),
++	.post_scl_ctrl = VOP_REG(RK3568_VP2_POST_SCL_CTRL, 0x3, 0),
+ 	.htotal_pw = VOP_REG(RK3568_VP2_DSP_HTOTAL_HS_END, 0x1fff1fff, 0),
+ 	.hact_st_end = VOP_REG(RK3568_VP2_DSP_HACT_ST_END, 0x1fff1fff, 0),
+ 	.dsp_vtotal = VOP_REG(RK3568_VP2_DSP_VTOTAL_VS_END, 0x1fff, 16),
+@@ -2207,6 +2129,10 @@ static const struct vop2_video_port_regs rk3588_vop_vp3_regs = {
+ 	.dclk_out_div = VOP_REG(RK3568_VP3_CLK_CTRL, 0x3, 2),
+ 	.pre_scan_htiming = VOP_REG(RK3588_VP3_PRE_SCAN_HTIMING, 0x1fff1fff, 0),
+ 	.bg_dly = VOP_REG(RK3588_VP3_BG_MIX_CTRL, 0xff, 24),
++	.hpost_st_end = VOP_REG(RK3588_VP3_POST_DSP_HACT_INFO, 0x1fff1fff, 0),
++	.vpost_st_end = VOP_REG(RK3588_VP3_POST_DSP_VACT_INFO, 0x1fff1fff, 0),
++	.post_scl_factor = VOP_REG(RK3588_VP3_POST_SCL_FACTOR_YRGB, 0xffffffff, 0),
++	.post_scl_ctrl = VOP_REG(RK3588_VP3_POST_SCL_CTRL, 0x3, 0),
+ 	.htotal_pw = VOP_REG(RK3588_VP3_DSP_HTOTAL_HS_END, 0x1fff1fff, 0),
+ 	.hact_st_end = VOP_REG(RK3588_VP3_DSP_HACT_ST_END, 0x1fff1fff, 0),
+ 	.dsp_vtotal = VOP_REG(RK3588_VP3_DSP_VTOTAL_VS_END, 0x1fff, 16),
+@@ -2248,7 +2174,7 @@ static const struct vop2_video_port_data rk3588_vop_video_ports[] = {
+ 	 .lut_dma_rid = 0xd,
+ 	 .soc_id = { 0x3588, 0x3588 },
+ 	 .feature = VOP_FEATURE_OUTPUT_10BIT | VOP_FEATURE_ALPHA_SCALE |
+-			VOP_FEATURE_HDR10 | VOP_FEATURE_DOVI,
++			VOP_FEATURE_HDR10 | VOP_FEATURE_NEXT_HDR,
+ 	 .gamma_lut_len = 1024,
+ 	 .cubic_lut_len = 729, /* 9x9x9 */
+ 	 .dclk_max = 2400000000,
+@@ -2953,7 +2879,6 @@ static const struct vop2_win_regs rk3528_cluster0_win_data = {
+ 	.ymirror = VOP_REG(RK3568_CLUSTER0_WIN0_CTRL0, 0x1, 21),
+ 	.axi_yrgb_id = VOP_REG(RK3528_CLUSTER0_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3528_CLUSTER0_WIN0_CTRL2, 0x1f, 5),
+-	.background = VOP_REG(RK3568_CLUSTER0_WIN0_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop2_win_regs rk3568_cluster0_win_data = {
+@@ -2978,7 +2903,6 @@ static const struct vop2_win_regs rk3568_cluster0_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3568_CLUSTER0_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3568_CLUSTER0_WIN0_CTRL2, 0x1f, 5),
+ 	.axi_id = VOP_REG(RK3568_CLUSTER0_CTRL, 0x1, 13),
+-	.background = VOP_REG(RK3568_CLUSTER0_WIN0_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop2_win_regs rk3568_cluster1_win_data = {
+@@ -3003,7 +2927,6 @@ static const struct vop2_win_regs rk3568_cluster1_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL2, 0x1f, 5),
+ 	.axi_id = VOP_REG(RK3568_CLUSTER1_CTRL, 0x1, 13),
+-	.background = VOP_REG(RK3568_CLUSTER1_WIN0_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop2_win_regs rk3588_cluster2_win_data = {
+@@ -3026,7 +2949,6 @@ static const struct vop2_win_regs rk3588_cluster2_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3588_CLUSTER2_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3588_CLUSTER2_WIN0_CTRL2, 0x1f, 5),
+ 	.axi_id = VOP_REG(RK3588_CLUSTER2_CTRL, 0x1, 13),
+-	.background = VOP_REG(RK3588_CLUSTER2_WIN0_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop2_win_regs rk3588_cluster3_win_data = {
+@@ -3049,7 +2971,6 @@ static const struct vop2_win_regs rk3588_cluster3_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3588_CLUSTER3_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3588_CLUSTER3_WIN0_CTRL2, 0x1f, 5),
+ 	.axi_id = VOP_REG(RK3588_CLUSTER3_CTRL, 0x1, 13),
+-	.background = VOP_REG(RK3588_CLUSTER3_WIN0_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop2_win_regs rk3568_esmart_win_data = {
+@@ -3078,7 +2999,6 @@ static const struct vop2_win_regs rk3568_esmart_win_data = {
+ 	.ymirror = VOP_REG(RK3568_ESMART0_CTRL1, 0x1, 31),
+ 	.color_key = VOP_REG(RK3568_ESMART0_COLOR_KEY_CTRL, 0x3fffffff, 0),
+ 	.color_key_en = VOP_REG(RK3568_ESMART0_COLOR_KEY_CTRL, 0x1, 31),
+-	.background = VOP_REG(RK3568_ESMART0_BG_EN, 0xffffffff, 0),
+ 	.scale_engine_num = VOP_REG(RK3568_ESMART0_CTRL0, 0x3, 12),/* supported from vop3 */
+ 	.csc_y2r_path_sel = VOP_REG(RK3568_ESMART0_CTRL0, 0x1, 24),
+ };
+@@ -3659,7 +3579,6 @@ static const struct vop2_win_regs rk3576_cluster0_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3528_CLUSTER0_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3528_CLUSTER0_WIN0_CTRL2, 0x1f, 5),
+ 	.ymirror = VOP_REG(RK3568_CLUSTER0_WIN0_CTRL0, 0x1, 21),
+-	.background = VOP_REG(RK3568_CLUSTER0_WIN0_DSP_BG, 0xffffffff, 0),
+ 	.csc_y2r_path_sel = VOP_REG(RK3568_CLUSTER0_WIN0_CTRL0, 0x1, 24),
+ 	.color_key = VOP_REG(RK3576_CLUSTER0_COLOR_KEY_CTRL, 0x3fffffff, 0),
+ 	.color_key_en = VOP_REG(RK3576_CLUSTER0_COLOR_KEY_CTRL, 0x1, 31),
+@@ -3714,7 +3633,6 @@ static const struct vop2_win_regs rk3576_cluster1_win_data = {
+ 	.axi_yrgb_id = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL2, 0x1f, 0),
+ 	.axi_uv_id = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL2, 0x1f, 5),
+ 	.ymirror = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL0, 0x1, 21),
+-	.background = VOP_REG(RK3568_CLUSTER1_WIN0_DSP_BG, 0xffffffff, 0),
+ 	.csc_y2r_path_sel = VOP_REG(RK3568_CLUSTER1_WIN0_CTRL0, 0x1, 24),
+ 	.color_key = VOP_REG(RK3576_CLUSTER1_COLOR_KEY_CTRL, 0x3fffffff, 0),
+ 	.color_key_en = VOP_REG(RK3576_CLUSTER1_COLOR_KEY_CTRL, 0x1, 31),
+@@ -4277,7 +4195,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 4,
+ 	  .max_downscale_factor = 4,
+-	  .dly = { 4, 26, 29, 4, 35, 3, 5 },
++	  .dly = { 4, 26, 29 },
+ 	  .type = DRM_PLANE_TYPE_OVERLAY,
+ 	  .feature = WIN_FEATURE_AFBDC | WIN_FEATURE_CLUSTER_MAIN | WIN_FEATURE_SPLICE_LEFT,
+ 	},
+@@ -4331,7 +4249,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 4,
+ 	  .max_downscale_factor = 4,
+-	  .dly = { 4, 26, 29, 4, 35, 3, 5 },
++	  .dly = { 4, 26, 29 },
+ 	  .feature = WIN_FEATURE_AFBDC | WIN_FEATURE_CLUSTER_MAIN,
+ 	},
+ 
+@@ -4385,7 +4303,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 4,
+ 	  .max_downscale_factor = 4,
+-	  .dly = { 4, 26, 29, 4, 35, 3, 5 },
++	  .dly = { 4, 26, 29 },
+ 	  .feature = WIN_FEATURE_AFBDC | WIN_FEATURE_CLUSTER_MAIN | WIN_FEATURE_SPLICE_LEFT,
+ 	},
+ 
+@@ -4438,7 +4356,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 4,
+ 	  .max_downscale_factor = 4,
+-	  .dly = { 4, 26, 29, 4, 35, 3, 5 },
++	  .dly = { 4, 26, 29 },
+ 	  .feature = WIN_FEATURE_AFBDC | WIN_FEATURE_CLUSTER_MAIN,
+ 	},
+ 
+@@ -4492,7 +4410,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 8,
+ 	  .max_downscale_factor = 8,
+-	  .dly = { 23, 45, 48, 23, 54, 22, 24 },
++	  .dly = { 23, 45, 48 },
+ 	  .feature = WIN_FEATURE_SPLICE_LEFT | WIN_FEATURE_MULTI_AREA,
+ 	},
+ 
+@@ -4522,7 +4440,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 8,
+ 	  .max_downscale_factor = 8,
+-	  .dly = { 23, 45, 48, 23, 54, 22, 24 },
++	  .dly = { 23, 45, 48 },
+ 	  .feature = WIN_FEATURE_SPLICE_LEFT | WIN_FEATURE_MULTI_AREA,
+ 	},
+ 
+@@ -4551,7 +4469,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 8,
+ 	  .max_downscale_factor = 8,
+-	  .dly = { 23, 45, 48, 23, 54, 22, 24 },
++	  .dly = { 23, 45, 48 },
+ 	  .feature = WIN_FEATURE_MULTI_AREA,
+ 	},
+ 
+@@ -4580,7 +4498,7 @@ static const struct vop2_win_data rk3588_vop_win_data[] = {
+ 			      BIT(ROCKCHIP_VOP_VP2) | BIT(ROCKCHIP_VOP_VP3),
+ 	  .max_upscale_factor = 8,
+ 	  .max_downscale_factor = 8,
+-	  .dly = { 23, 45, 48, 23, 54, 22, 24 },
++	  .dly = { 23, 45, 48 },
+ 	  .feature = WIN_FEATURE_MULTI_AREA,
+ 	},
+ };
+@@ -4826,7 +4744,7 @@ static const struct vop2_ctrl rk3576_vop_ctrl = {
+ 	.rgb_dclk_sel = VOP_REG(RK3576_RGB_IF_CTRL, 0x1, 21),
+ 
+ 	.gamma_port_sel = VOP_REG_MASK(RK3568_LUT_PORT_SEL, 0x3, 12),
+-	.esmart_lb_mode = VOP_REG_MASK(RK3568_SYS_PD_CTRL, 0x3, 6),
++	.esmart_lb_mode = VOP_REG(RK3568_SYS_PD_CTRL, 0x3, 6),
+ 	.vp_intr_merge_en = VOP_REG_MASK(RK3576_SYS_PORT_CTRL_IMD, 0x1, 14),
+ 	.win_vp_id[ROCKCHIP_VOP2_CLUSTER0] = VOP_REG(RK3576_CLUSTER0_PORT_SEL_IMD, 0x3, 0),
+ 	.win_vp_id[ROCKCHIP_VOP2_CLUSTER1] = VOP_REG(RK3576_CLUSTER1_PORT_SEL_IMD, 0x3, 0),
+@@ -4875,9 +4793,6 @@ static const struct vop2_ctrl rk3588_vop_ctrl = {
+ 	.wb_dma_finish_and_en = VOP_REG(RK3588_SYS_VAR_FREQ_CTRL, 0x1, 3),
+ 	.ovl_cfg_done_port = VOP_REG(RK3568_OVL_CTRL, 0x3, 30),
+ 	.ovl_port_mux_cfg_done_imd = VOP_REG(RK3568_OVL_CTRL, 0x1, 28),
+-	.dovi_core3_en = VOP_REG(RK3568_OVL_CTRL, 0x1, 10),
+-	.dovi_core2_en = VOP_REG(RK3568_OVL_CTRL, 0x1, 9),
+-	.dovi_core1_en = VOP_REG(RK3568_OVL_CTRL, 0x1, 8),
+ 	.ovl_port_mux_cfg = VOP_REG(RK3568_OVL_PORT_SEL, 0xffff, 0),
+ 	.if_ctrl_cfg_done_imd = VOP_REG(RK3568_DSP_IF_POL, 0x1, 28),
+ 	.version = VOP_REG(RK3568_VERSION_INFO, 0xffff, 16),
+@@ -5320,7 +5235,6 @@ static const struct vop2_data rk3588_vop = {
+ 	.vo1_grf = &rk3588_vo1_grf_ctrl,
+ 	.axi_intr = rk3568_vop_axi_intr,
+ 	.nr_axi_intr = ARRAY_SIZE(rk3568_vop_axi_intr),
+-	.dovi = &rk3588_vop_dovi_data,
+ 	.dsc = rk3588_vop_dsc_data,
+ 	.dsc_error_ecw = dsc_ecw,
+ 	.dsc_error_buffer_flow = dsc_buffer_flow,
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index 2d28b8b37775..e70b0a745792 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -1910,8 +1910,11 @@ static const struct vop_ctrl rv1106_ctrl_data = {
+ 	.vs_st_end_f1 = VOP_REG(RK3366_LIT_DSP_VS_ST_END_F1, 0x0fff0fff, 0),
+ 	.dsp_interlace = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 0),
+ 	.auto_gate_en = VOP_REG(RK3366_LIT_SYS_CTRL2, 0x1, 0),
++	.overlay_mode = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 4),
+ 	.core_dclk_div = VOP_REG(RK3366_LIT_DSP_CTRL0, 0x1, 13),
++	.dclk_ddr = VOP_REG(RK3366_LIT_DSP_CTRL0, 0x1, 14),
+ 	.rgb_en = VOP_REG(RK3366_LIT_DSP_CTRL0, 0x1, 0),
++	.rgb_dclk_pol = VOP_REG(RK3366_LIT_DSP_CTRL0, 0x1, 1),
+ 	.dither_down_en = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 8),
+ 	.dither_down_sel = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 7),
+ 	.dither_down_mode = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 6),
+@@ -2009,6 +2012,7 @@ static const struct vop_ctrl rk3506_ctrl_data = {
+ 	.dsp_interlace = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 0),
+ 	.dsp_interlace_pol = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 1),
+ 	.dither_up_en = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 2),
++	.overlay_mode = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 4),
+ 	.dsp_lut_en = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 5),
+ 	.dither_down_mode = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 6),
+ 	.dither_down_sel = VOP_REG(RK3366_LIT_DSP_CTRL2, 0x1, 7),
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.h b/drivers/gpu/drm/rockchip/rockchip_vop_reg.h
+index 83d3163cea96..9df6fcaaa0e7 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.h
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.h
+@@ -1142,9 +1142,6 @@
+ #define RK3576_VP0_POST_CRC				0xC28
+ #define RK3568_VP0_DSP_BG				0xC2C
+ #define RK3568_VP0_PRE_SCAN_HTIMING			0xC30
+-#define RK3588_VP0_PRE_SCAN_HTIMING1			0xC34
+-#define RK3588_VP0_PRE_SCAN_HTIMING2			0xC38
+-#define RK3588_VP0_PRE_SCAN_HTIMING3			0xC3c
+ #define RK3568_VP0_POST_DSP_HACT_INFO			0xC34
+ #define RK3568_VP0_POST_DSP_VACT_INFO			0xC38
+ #define RK3568_VP0_POST_SCL_FACTOR_YRGB			0xC3C
+@@ -1329,7 +1326,6 @@
+ #define RK3568_OVL_CTRL				0x600
+ #define RK3568_OVL_LAYER_SEL			0x604
+ #define RK3568_OVL_PORT_SEL			0x608
+-#define RK3588_DOLBY_LUT_MST			0x60c
+ #define RK3568_CLUSTER0_MIX_SRC_COLOR_CTRL	0x610
+ #define RK3568_CLUSTER0_MIX_DST_COLOR_CTRL	0x614
+ #define RK3568_CLUSTER0_MIX_SRC_ALPHA_CTRL	0x618
+@@ -1378,7 +1374,6 @@
+ #define RK3568_CLUSTER0_WIN0_ACT_INFO		0x1020
+ #define RK3568_CLUSTER0_WIN0_DSP_INFO		0x1024
+ #define RK3568_CLUSTER0_WIN0_DSP_ST		0x1028
+-#define RK3568_CLUSTER0_WIN0_DSP_BG		0x102c
+ #define RK3568_CLUSTER0_WIN0_SCL_FACTOR_YRGB	0x1030
+ #define RK3568_CLUSTER0_WIN0_AFBCD_TRANSFORM_OFFSET	0x103C
+ #define RK3576_CLUSTER0_COLOR_KEY_CTRL          0x101C
+@@ -1440,7 +1435,6 @@
+ #define RK3568_CLUSTER1_WIN0_ACT_INFO		0x1220
+ #define RK3568_CLUSTER1_WIN0_DSP_INFO		0x1224
+ #define RK3568_CLUSTER1_WIN0_DSP_ST		0x1228
+-#define RK3568_CLUSTER1_WIN0_DSP_BG		0x122c
+ #define RK3568_CLUSTER1_WIN0_SCL_FACTOR_YRGB	0x1230
+ #define RK3568_CLUSTER1_WIN0_AFBCD_TRANSFORM_OFFSET	0x123C
+ #define RK3576_CLUSTER1_COLOR_KEY_CTRL          0x121C
+@@ -1490,7 +1484,6 @@
+ #define RK3588_CLUSTER2_WIN0_ACT_INFO		0x1420
+ #define RK3588_CLUSTER2_WIN0_DSP_INFO		0x1424
+ #define RK3588_CLUSTER2_WIN0_DSP_ST		0x1428
+-#define RK3588_CLUSTER2_WIN0_DSP_BG		0x142c
+ #define RK3588_CLUSTER2_WIN0_SCL_FACTOR_YRGB	0x1430
+ #define RK3588_CLUSTER2_WIN0_AFBCD_TRANSFORM_OFFSET	0x143C
+ #define RK3588_CLUSTER2_WIN0_AFBCD_OUTPUT_CTRL	0x1450
+@@ -1531,7 +1524,6 @@
+ #define RK3588_CLUSTER3_WIN0_ACT_INFO		0x1620
+ #define RK3588_CLUSTER3_WIN0_DSP_INFO		0x1624
+ #define RK3588_CLUSTER3_WIN0_DSP_ST		0x1628
+-#define RK3588_CLUSTER3_WIN0_DSP_BG		0x162c
+ #define RK3588_CLUSTER3_WIN0_SCL_FACTOR_YRGB	0x1630
+ #define RK3588_CLUSTER3_WIN0_AFBCD_TRANSFORM_OFFSET	0x163C
+ #define RK3588_CLUSTER3_WIN0_AFBCD_OUTPUT_CTRL	0x1650
+@@ -1615,7 +1607,6 @@
+ #define RK3576_ESMART0_ALPHA_MAP		0x18D8
+ #define RK3576_ESMART0_PORT_SEL_IMD		0x18F4
+ #define RK3576_ESMART0_DLY_NUM			0x18F8
+-#define RK3568_ESMART0_BG_EN			0x18D4
+ 
+ #define RK3568_ESMART1_CTRL0			0x1A00
+ #define RK3568_ESMART1_CTRL1			0x1A04
+@@ -1785,28 +1776,6 @@
+ #define RK3568_HDR_OETF_DX_POW1				0x2200
+ #define RK3568_HDR_OETF_XN1				0x2300
+ 
+-/* DOLBY register definition */
+-#define RK3588_DOLBY_CORE1_CONTROL_REG			0x3004
+-#define RK3588_DOLBY_CORE1_METADATA_PROGRAM_ST		0x3008
+-#define RK3588_DOLBY_CORE1_METADATA_PROGRAM_END		0x300C
+-#define RK3588_DOLBY_CORE1_INTR_RAW_REG			0x3010
+-#define RK3588_DOLBY_CORE1_INTR_ENABLE_REG		0x3014
+-#define RK3588_DOLBY_CORE1_SRANGE_REG			0x3018
+-
+-#define RK3588_DOLBY_CORE2_CONTROL_REG			0x3404
+-#define RK3588_DOLBY_CORE2_METADATA_PROGRAM_ST		0x3408
+-#define RK3588_DOLBY_CORE2_METADATA_PROGRAM_END		0x340C
+-#define RK3588_DOLBY_CORE2_INTR_RAW_REG			0x3410
+-#define RK3588_DOLBY_CORE2_INTR_ENABLE_REG		0x3414
+-#define RK3588_DOLBY_CORE2_SRANGE_REG			0x3418
+-
+-#define RK3588_DOLBY_CORE3_CONTROL_REG			0x3504
+-#define RK3588_DOLBY_CORE3_METADATA_PROGRAM_ST		0x3508
+-#define RK3588_DOLBY_CORE3_METADATA_PROGRAM_END		0x350C
+-#define RK3588_DOLBY_CORE3_INTR_RAW_REG			0x3510
+-#define RK3588_DOLBY_CORE3_INTR_ENABLE_REG		0x3514
+-#define RK3588_DOLBY_CORE3_SRANGE_REG			0x3518
+-
+ /* DSC register definition */
+ #define RK3588_DSC_8K_PPS0_3				0x4000
+ #define RK3588_DSC_8K_CTRL0				0x40A0
+-- 
+2.34.1
+
