@@ -41,7 +41,7 @@ function umount_chroot() {
 		umount "${target}"/dev/pts || true
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
-		umount "${target}"/sys || true
+		umount --recursive "${target}"/sys || true
 		umount "${target}"/tmp || true
 		umount "${target}"/var/tmp || true
 		umount "${target}"/run/user/0 || true
