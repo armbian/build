@@ -49,7 +49,6 @@ function post_family_tweaks__enable_aic8800_bluetooth_service() {
 	chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
 }
 
-
 function post_family_config__use_mainline_uboot_except_vendor() {
 	# use mainline u-boot for _current_ and _edge_
 	if [[ "$BRANCH" != "current" && "$BRANCH" != "edge" ]]; then
@@ -59,10 +58,15 @@ function post_family_config__use_mainline_uboot_except_vendor() {
 	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
-	BOOTBRANCH="tag:v2025.04"
-	BOOTPATCHDIR="v2025.04"
+	BOOTBRANCH="branch:master"
+	BOOTPATCHDIR="v2025.10"
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
+	## for binman-atf-mainline: this requires setting it for BOOT_SCENARIO at the top, which breaks branch=vendor
+	# cannot set BOOT_SOC=rk3566 as  has side effects in Armbian scripts, but ATF_TARGET_MAP works
+	# ATF does not separate rk3566 from rk3568
+	#ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3568 bl31;;build/rk3568/release/bl31/bl31.elf:bl31.elf" 
+	#UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
