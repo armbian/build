@@ -13,8 +13,41 @@ BOOT_SCENARIO="spl-blobs"
 BOOTFS_TYPE="fat" # Only for vendor/legacy
 
 
+PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 AIC8800_TYPE="sdio"
 enable_extension "radxa-aic8800"
+
+function post_family_tweaks_bsp__aic8800_wireless() {
+	display_alert "$BOARD" "Installing AIC8800 Tweaks" "info"
+	mkdir -p "${destination}"/etc/modprobe.d
+	mkdir -p "${destination}"/etc/modules-load.d
+	# Add wireless conf
+	cat > "${destination}"/etc/modprobe.d/aic8800-wireless.conf <<- EOT
+	options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
+	#options aic8800_bsp_sdio aic_fw_path=/lib/firmware/aic8800_fw/SDIO/aic8800
+	EOT
+	# Add needed bluetooth modules
+	cat > "${destination}"/etc/modules-load.d/aic8800-btlpm.conf <<- EOT
+	hidp
+	rfcomm
+	bnep
+	aic8800_btlpm_sdio
+	EOT
+	# Add AIC8800 Bluetooth Service and Script
+	if [[ -d "$SRC/packages/bsp/aic8800" ]]; then
+		mkdir -p "${destination}"/etc/systemd/system
+		mkdir -p "${destination}"/usr/bin
+		cp -f "$SRC/packages/bsp/aic8800/aic-bluetooth" "${destination}"/usr/bin
+		chmod +x "${destination}"/usr/bin/aic-bluetooth
+		cp -f "$SRC/packages/bsp/aic8800/aic-bluetooth.service" "${destination}"/etc/systemd/system
+	fi
+}
+
+# Enable AIC8800 Bluetooth Service
+function post_family_tweaks__enable_aic8800_bluetooth_service() {
+	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
+	chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
+}
 
 function post_family_config__use_mainline_uboot_except_vendor() {
 	# use mainline u-boot for _current_ and _edge_
@@ -25,10 +58,15 @@ function post_family_config__use_mainline_uboot_except_vendor() {
 	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
-	BOOTBRANCH="tag:v2025.04"
-	BOOTPATCHDIR="v2025.04"
+	BOOTBRANCH="branch:master"
+	BOOTPATCHDIR="v2025.10"
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
+	## for binman-atf-mainline: this requires setting it for BOOT_SCENARIO at the top, which breaks branch=vendor
+	# cannot set BOOT_SOC=rk3566 as  has side effects in Armbian scripts, but ATF_TARGET_MAP works
+	# ATF does not separate rk3566 from rk3568
+	#ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3568 bl31;;build/rk3568/release/bl31/bl31.elf:bl31.elf" 
+	#UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
