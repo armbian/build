@@ -11,9 +11,10 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 extension
 
 # Vendor u-boot; use the default family (rockchip-rk3588) u-boot. See config/sources/families/rockchip-rk3588.conf
-function post_family_config__vendor_uboot_mekotronics() {
-	if [[ "${BRANCH}" != "vendor" ]]; then
-		display_alert "$BOARD" "Vendor u-boot is only available on vendor branch" "warn"
+function post_family_config__vendor_uboot_blade3() {
+	if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
+		display_alert "$BOARD" "Using vendor u-boot for $BOARD on branch $BRANCH" "info"
+	else
 		return 0
 	fi
 
@@ -28,7 +29,6 @@ function post_family_config__vendor_uboot_mekotronics() {
 
 function post_family_config__meko_use_mainline_uboot() {
 	if [[ "${BRANCH}" != "edge" ]]; then
-		display_alert "$BOARD" "Mainline u-boot is only available on edge branch" "warn"
 		return 0
 	fi
 
