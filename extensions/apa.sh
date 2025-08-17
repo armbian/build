@@ -11,10 +11,11 @@ function custom_apt_repo__add_apa() {
 
 function post_armbian_repo_customize_image__install_from_apa() {
 	# do not install armbian recommends for minimal images
-	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no" || INSTALL_RECOMMENDS="yes"
-	chroot_sdcard_apt_get --install-recommends=$INSTALL_RECOMMENDS install "armbian-common armbian-bsp"
+	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no-install-recommends" || INSTALL_RECOMMENDS="install-recommends"
+	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-common armbian-bsp
+	chroot_sdcard rm -f /etc/apt/sources.list.d/armbian-apa.list.inactive
 
-	# install desktop environmnent if requested
+	# install desktop environment if requested
 	case ${DESKTOP_ENVIRONMENT^^} in
 		XFCE|KDE|GNOME)
 			display_alert "installing ${DESKTOP_ENVIRONMENT^^} desktop environment" "${EXTENSION}: ${DESKTOP_ENVIRONMENT^^}" "info"
