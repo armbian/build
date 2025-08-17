@@ -1,6 +1,3 @@
-# Rockchip RK3308B quad core 512MB SoC WiFi
-# https://www.luckfox.com/Luckfox-Nova
-
 BOARD_NAME="Luckfox Nova W"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="nikvoid"
@@ -8,10 +5,8 @@ BOARD_MAINTAINER="nikvoid"
 BOOT_SOC="rk3308"
 BOOTCONFIG="luckfox-nova-w_rk3308b_defconfig"
 BOOT_FDT_FILE="rockchip/rk3308-luckfox-nova-w.dtb"
-
 # eMMC works properly only in vendor branch
 KERNEL_TARGET="vendor"
-
 KERNELSOURCE='https://github.com/armbian/linux-rockchip.git'
 KERNELBRANCH='branch:rk-6.1-rkr5.1'
 KERNELPATCHDIR='rockchip64-vendor-6.1'
