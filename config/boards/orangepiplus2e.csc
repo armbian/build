@@ -3,7 +3,7 @@ BOARD_NAME="Orange Pi+ 2E"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_plus2e_defconfig"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="legacy"
 FULL_DESKTOP="yes"
 

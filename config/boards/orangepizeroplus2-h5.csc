@@ -8,7 +8,7 @@ MODULES_CURRENT="g_serial"
 DEFAULT_OVERLAYS="gpio-regulator-1.3v usbhost2 usbhost3"
 HAS_VIDEO_OUTPUT="no"
 SERIALCON="ttyS0,ttyGS0"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"
 CRUSTCONFIG="h5_defconfig"
 
