@@ -16,6 +16,7 @@ function mount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
+
 	mkdir -p "${target}/run/user/0"
 
 	# tmpfs size=50% is the Linux default, but we need more.
@@ -26,6 +27,27 @@ function mount_chroot() {
 	mount -t sysfs chsys "${target}"/sys
 	mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
+
+	# ─── Cache bind logic ───────────────────────────────────────────────────────
+    # The build framework relies on a host-side cache at /armbian/cache:
+    # - In Docker: compile.sh mounts './cache' → /armbian/cache automatically.
+    # - On bare-metal: /armbian/cache may not exist.
+    # If /armbian/cache exists on the host:
+    #   • mkdir inside chroot
+    #   • bind-mount host cache → chroot cache
+    #   • touch '/run/user/0/cache_mounted.flag' in tmpfs to signal success.
+    # The flag auto-expires when /run/user/0 unmounts.
+    if [[ -d /armbian/cache ]]; then
+        mkdir -p "${target}/armbian/cache"
+        if mount --bind /armbian/cache "${target}/armbian/cache"; then
+            # leave a temporary marker inside the chroot so processes there can detect it
+            touch "${target}/run/user/0/cache_mounted.flag"
+        else
+            display_alert "cache bind failed" "/armbian/cache → ${target}/armbian/cache" "warn"
+        fi
+    else
+        display_alert "Host /armbian/cache not found — skipping cache mount" "" "warn"
+    fi
 }
 
 # umount_chroot <target>
@@ -36,6 +58,15 @@ function umount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
+
+	# ─── Conditional cache unmount ─────────────────────────────────────────────
+    # Only unmount cache if we previously mounted it (flag file present)
+    if [[ -f "${target}/run/user/0/cache_mounted.flag" ]]; then
+        umount "${target}/armbian/cache" || true
+        rm -f "${target}/run/user/0/cache_mounted.flag" || true
+    fi
+    # ──────────────────────────────────────────────────────────────────────────
+
 	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount "${target}"/dev/pts || true
