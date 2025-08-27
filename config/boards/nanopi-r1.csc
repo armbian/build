@@ -9,7 +9,7 @@ DEFAULT_OVERLAYS="usbhost0 usbhost1 uart1"
 DEFAULT_CONSOLE="serial"
 SERIALCON="ttyS1,ttyGS0"
 HAS_VIDEO_OUTPUT="no"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="sun8i-h3-nanopi-r1.dtb"
 
