@@ -332,7 +332,7 @@ write_uboot_platform_mtd() {
 
 	CHOICE=$(dialog --no-collapse \
   		--title "armbian-install" \
-  		--backtitle $backtitle \
+  		--backtitle "$backtitle" \
   		--radiolist "Choose SPI image:" 0 56 4 \
   		"${MENU_ITEMS[@]}" \
   		3>&1 1>&2 2>&3)
