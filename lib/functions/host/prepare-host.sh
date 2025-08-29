@@ -185,6 +185,7 @@ function adaptative_prepare_host_dependencies() {
 		ca-certificates ccache cpio
 		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		e2fsprogs
 		flex
 		gawk gnupg gpg
 		imagemagick # required for plymouth: converting images / spinners
