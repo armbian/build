@@ -56,37 +56,25 @@ function armbian_kernel_config__netkit() {
 #
 # Globals:
 #   kernel_config_modifying_hashes - Array tracking the configuration option changes.
-#   KERNEL_MAJOR_MINOR            - Kernel version used to apply version-specific configuration updates.
 #
 # Outputs:
 #   Displays alerts to notify about the configuration changes being applied.
 #
 # Description:
-#   This function disables several kernel configuration options such as module compression, module signing,
-#   and automatic versioning to speed up the build process and ensure compatibility with Armbian requirements.
-#   It forces EXPERT mode (EXPERT=y) to ensure hidden configurations are visible and applies different module
-#   compression settings based on the kernel version. All modifications are only performed if the .config file exists.
+#    This function disables several kernel configuration options such as 
+#    module signing and automatic versioning to speed up the build 
+#    process and ensure compatibility with Armbian requirements. 
+#    Additionally, it forces EXPERT mode (EXPERT=y) to ensure otherwise 
+#    hidden configurations are visible. All modifications are only 
+#    performed if the .config file exists.
 #
 function armbian_kernel_config__disable_various_options() {
-	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
+	kernel_config_modifying_hashes+=("CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
 		display_alert "Enable CONFIG_EXPERT=y" "armbian-kernel" "debug"
 		kernel_config_set_y EXPERT # Too many config options are hidden behind EXPERT=y, lets have it always on
 
-		display_alert "Disabling module compression and signing / debug / auto version" "armbian-kernel" "debug"
-		# DONE: Disable: signing, and compression of modules, for speed.
-		kernel_config_set_n CONFIG_MODULE_COMPRESS_XZ # No use double-compressing modules
-		kernel_config_set_n CONFIG_MODULE_COMPRESS_ZSTD
-		kernel_config_set_n CONFIG_MODULE_COMPRESS_GZIP
-
-		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.12; then
-			kernel_config_set_n CONFIG_MODULE_COMPRESS # Introduced in 6.12 (see https://github.com/torvalds/linux/commit/c7ff693fa2094ba0a9d0a20feb4ab1658eff9c33)
-		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.0; then
-			kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE # Introduced in 6.0
-		else
-			kernel_config_set_n CONFIG_MODULE_COMPRESS # Only available up to 5.12
-		fi
-
+		display_alert "Disabling module signing / debug / auto version" "armbian-kernel" "debug"
 		kernel_config_set_n CONFIG_SECURITY_LOCKDOWN_LSM
 		kernel_config_set_n CONFIG_MODULE_SIG     # No use signing modules
 		kernel_config_set_n CONFIG_MODULE_SIG_ALL # No use auto-signing modules
