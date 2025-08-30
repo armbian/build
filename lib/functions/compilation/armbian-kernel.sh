@@ -205,8 +205,10 @@ function armbian_kernel_config__enable_zram_support() {
 function armbian_kernel_config__enable_docker_support() {
 	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
 	if [[ -f .config ]]; then
-		kernel_config_set_y BTRFS_FS                        # Enables the BTRFS file system support
-		kernel_config_set_y BTRFS_FS_POSIX_ACL              # Enables POSIX ACL support for BTRFS
+		if egrep -q 'BTRFS_FS(=n| is not set)' .config; then   # allow BTRFS to be m or y
+			kernel_config_set_y BTRFS_FS                # Enables the BTRFS file system support
+			kernel_config_set_y BTRFS_FS_POSIX_ACL      # Enables POSIX ACL support for BTRFS
+		fi
 		kernel_config_set_y BLK_CGROUP                      # Enables block layer control groups (cgroups)
 		kernel_config_set_y BLK_DEV_THROTTLING              # Enables block device IO throttling
 		kernel_config_set_y BRIDGE_VLAN_FILTERING           # Enables VLAN filtering on network bridges
