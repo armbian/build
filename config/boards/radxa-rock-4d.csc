@@ -1,7 +1,7 @@
 # Rockchip RK3576 SoC octa core 4-16GB SoC GBe eMMC UFS USB3 WIFI
 BOARD_NAME="Radxa Rock 4D"
 BOARDFAMILY="rk35xx"
-BOARD_MAINTAINER="HeyMeco"
+BOARD_MAINTAINER=""
 BOOTCONFIG="rock-4d-spi-rk3576_defconfig"
 KERNEL_TARGET="vendor"
 KERNEL_TEST_TARGET="vendor"
