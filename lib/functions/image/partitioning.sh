@@ -226,24 +226,20 @@ function prepare_partitions() {
 					# gpt: Linux root (or EFI System for Rockchip UFS: For some reason uboot expects it to be EFI System else the SBC crashes)
 					if [[ "$IMAGE_PARTITION_TABLE" != "gpt" ]]; then
 						local type="83"
-					else
+					elif [[ "$BOARDFAMILY" == "rk35xx" && "$SECTOR_SIZE" == "4096" ]]; then
 						# Special case: Use EFI System type for rk35xx with 4096 sector size
-						if [[ "$BOARDFAMILY" == "rk35xx" && "$SECTOR_SIZE" == "4096" ]]; then
-							local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" # EFI System
-						else
-							# Linux root has a different Type-UUID for every architecture
-							# See https://uapi-group.org/specifications/specs/discoverable_partitions_specification/
-							# The ${PARTITION_TYPE_UUID_ROOT} variable is defined in each architecture file (e.g. config/sources/arm64.conf)
-							if [[ -n "${PARTITION_TYPE_UUID_ROOT}" ]]; then
-								local type="${PARTITION_TYPE_UUID_ROOT}"
-							else
-								exit_with_error "Missing 'PARTITION_TYPE_UUID_ROOT' variable while partitioning the root filesystem!"
-							fi
-						fi
+						local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B" # EFI System
+					elif [[ -n "${PARTITION_TYPE_UUID_ROOT}" ]]; then
+						# Linux root has a different Type-UUID for every architecture
+						# See https://uapi-group.org/specifications/specs/discoverable_partitions_specification/
+						# The ${PARTITION_TYPE_UUID_ROOT} variable is defined in each architecture file (e.g. config/sources/arm64.conf)
+						local type="${PARTITION_TYPE_UUID_ROOT}"
+					else
+						exit_with_error "Missing 'PARTITION_TYPE_UUID_ROOT' variable while partitioning the root filesystem!"
 					fi
 					# No 'size' argument means "expand as much as possible"
 					echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
-				fi
+				fi				
 			}
 		)
 		# Output the partitioning options from above to the debug log first and then pipe it into the 'sfdisk' command
