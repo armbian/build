@@ -239,7 +239,7 @@ function prepare_partitions() {
 					fi
 					# No 'size' argument means "expand as much as possible"
 					echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
-				fi				
+				fi
 			}
 		)
 		# Output the partitioning options from above to the debug log first and then pipe it into the 'sfdisk' command
