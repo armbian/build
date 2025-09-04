@@ -27,20 +27,20 @@ function post_family_config__vendor_uboot_blade3() {
 	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
 }
 
-function post_family_config__meko_use_mainline_uboot() {
+function post_family_config__blade3_use_mainline_uboot() {
 	if [[ "${BRANCH}" != "edge" ]]; then
 		return 0
 	fi
 
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="generic-rk3588_defconfig" # MAINLINE U-BOOT OVERRIDE
+	declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # MAINLINE U-BOOT OVERRIDE
 
 	declare -g BOOTDELAY=1 # Wait for UART interrupt
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	BOOTBRANCH="tag:v2025.07"
-	BOOTPATCHDIR="v2025.07-mekotronics" # empty
+	BOOTBRANCH="tag:v2025.10-rc3"
+	BOOTPATCHDIR="v2025.10" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
@@ -51,6 +51,8 @@ function post_family_config__meko_use_mainline_uboot() {
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
+
+	# @TODO: boot order stuff; we want to boot nvme / usb / sd before eMMC
 
 	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
 }
