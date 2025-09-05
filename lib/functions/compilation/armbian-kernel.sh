@@ -211,7 +211,7 @@ function armbian_kernel_config__enable_docker_support() {
 		kernel_config_set_y BLK_DEV_THROTTLING              # Enables block device IO throttling
 		kernel_config_set_y BRIDGE_VLAN_FILTERING           # Enables VLAN filtering on network bridges
 		kernel_config_set_m BRIDGE_NETFILTER                # Enables netfilter support for the bridge
-		kernel_config_set_y BRIDGE                          # Enables support for Ethernet bridges
+		kernel_config_set_m BRIDGE                          # Enables support for Ethernet bridges
 		kernel_config_set_y CFQ_GROUP_IOSCHED               # Enables CFQ (Completely Fair Queueing) I/O scheduler for cgroups
 		kernel_config_set_y CGROUP_BPF                      # Enables BPF-based control groups
 		kernel_config_set_y CGROUP_CPUACCT                  # Enables CPU accounting in cgroups
@@ -232,7 +232,7 @@ function armbian_kernel_config__enable_docker_support() {
 		kernel_config_set_m CRYPTO_SEQIV                    # Enables sequential initialization vector support for cryptographic operations
 		kernel_config_set_y EVENTFD                         # Enables eventfd system calls for event notification
 		kernel_config_set_y BPF_SYSCALL                     # Enables BPF (Berkeley Packet Filter) system call support
-		kernel_config_set_y NF_TABLES                       # Enables nf_tables framework support
+		kernel_config_set_m NF_TABLES                       # Enables nf_tables framework support
 		kernel_config_set_y NF_TABLES_INET                  # Enables IPv4 and IPv6 support for nf_tables
 		kernel_config_set_y NF_TABLES_NETDEV                # Enables netdevice support for nf_tables
 		kernel_config_set_y CFS_BANDWIDTH                   # Enables bandwidth control for CFS (Completely Fair Scheduler)
@@ -252,14 +252,14 @@ function armbian_kernel_config__enable_docker_support() {
 		kernel_config_set_y INET                            # Enables Internet protocol (IPv4) support
 		kernel_config_set_y FAIR_GROUP_SCHED                # Enables fair group scheduling support
 		kernel_config_set_m INET_ESP                        # Enables ESP (Encapsulating Security Payload) for IPv4
-		kernel_config_set_y IP_NF_FILTER                    # Enables IPv4 netfilter filtering support
+		kernel_config_set_m IP_NF_FILTER                    # Enables IPv4 netfilter filtering support
 		kernel_config_set_m IP_NF_TARGET_MASQUERADE         # Enables IPv4 netfilter target for masquerading (NAT)
 		kernel_config_set_m IP_NF_TARGET_NETMAP             # Enables IPv4 netfilter target for netmap
 		kernel_config_set_m IP_NF_TARGET_REDIRECT           # Enables IPv4 netfilter target for redirect
-		kernel_config_set_y IP_NF_IPTABLES                  # Enables iptables for IPv4
+		kernel_config_set_m IP_NF_IPTABLES                  # Enables iptables for IPv4
 		kernel_config_set_m IP_NF_NAT                       # Enables NAT (Network Address Translation) support for IPv4
 		kernel_config_set_m IP_NF_RAW                       # Enables raw support for IPv4 netfilter
-		kernel_config_set_y IP_NF_SECURITY                  # Enables security features for IPv4 netfilter
+		kernel_config_set_m IP_NF_SECURITY                  # Enables security features for IPv4 netfilter
 		kernel_config_set_y IP_VS_NFCT                      # Enables connection tracking for IPVS (IP Virtual Server)
 		kernel_config_set_y IP_VS_PROTO_TCP                 # Enables TCP protocol support for IPVS
 		kernel_config_set_y IP_VS_PROTO_UDP                 # Enables UDP protocol support for IPVS
@@ -284,7 +284,7 @@ function armbian_kernel_config__enable_docker_support() {
 		kernel_config_set_m NFT_FWD_NETDEV                  # Enables forward netdev support in nftables
 		kernel_config_set_m NFT_REJECT_NETDEV               # Enables reject netdev support in nftables
 		kernel_config_set_m NF_CONNMARK_IPV4                # Enables connection mark support for IPv4 netfilter
-		kernel_config_set_y NF_CONNTRACK                    # Enables connection tracking support
+		kernel_config_set_m NF_CONNTRACK                    # Enables connection tracking support
 		kernel_config_set_m NF_CONNTRACK_FTP                # Enables FTP connection tracking support
 		kernel_config_set_m NF_CONNTRACK_IRC                # Enables IRC connection tracking support
 		kernel_config_set_y NF_CONNTRACK_MARK               # Enables connection mark support in netfilter
