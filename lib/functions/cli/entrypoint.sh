@@ -79,6 +79,38 @@ function cli_entrypoint() {
 		armbian_cli_pre_run_command
 	done
 
+	declare -g DOCKER_NICE
+	if [[ "$ARMBIAN_COMMAND" == "docker" ]] || \
+		[[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" && "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" == "yes" ]] || \
+		[[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}" ]]; then
+
+		CURRENT_NICE=$(($(ps -p $$ -o 'nice=')+0))
+		# by default, docker sets up a separate environment that inherits next to nothing.
+		# this detects the current process nice value and attempts to propagate it.
+		if [[ -z "${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}" ]]; then
+		# since it's not been passed to us in our invocation, use our current nice value
+		# this becomes a propagated cmdline parameter in cli-docker.sh
+			DOCKER_NICE=$CURRENT_NICE
+			display_alert "Niceness parameter (DOCKER_NICE)" "$DOCKER_NICE" "debug"
+		else
+			# initialize from passed cmdline arg
+			DOCKER_NICE="${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}"
+			# we cast DOCKER_NICE to integer in case we were handed garbage.
+			DOCKER_NICE=$(("$DOCKER_NICE"+0))
+		fi
+		
+		if [[ $CURRENT_NICE -ne $DOCKER_NICE ]]; then
+		# enforce the niceness
+			if [[ $UID -eq 0 ]]; then # don't bother if we're not root
+				# Given we run as root in docker, we shouldn't worry about lacking permissions.
+				# if it's an invalid integer value, then we can feel secure in letting it fail.
+				renice -n $DOCKER_NICE -p $$ && \
+				display_alert "enforced nice value (DOCKER_NICE)" "$DOCKER_NICE" "debug" || \
+				display_alert "renice failed" "FAILED" "warn"
+			fi
+		fi
+	fi
+
 	# IMPORTANT!!!: it is INVALID to relaunch compile.sh from here. It will cause logging mistakes.
 	# So the last possible moment to relaunch is in xxxxx_pre_run!
 	# Also form here, UUID will be generated, output created, logging enabled, etc.
