@@ -32,6 +32,30 @@ function cli_entrypoint() {
 	declare -a -g ARMBIAN_NON_PARAM_ARGS=()        # An array of all non-param arguments
 	parse_cmdline_params "${@}"                    # which fills the above vars.
 
+	# by default, docker sets up a separate environment that inherits next to nothing
+	# this detects the current process nice value and attempts to propagate it.
+	# Given we run as root, this should always succeed.
+	declare -g DOCKER_NICE_OBSERVED
+	if [[ -z ${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE_OBSERVED"]} ]]; then
+	# since it's not been passed to us in our invocation, detect our current nice value
+	# this becomes a propagated cmdline parameter in cli-docker.sh
+		DOCKER_NICE_OBSERVED=$(($(ps -p $$ -o 'nice=')+0)) # +0 to trim the spaces
+		display_alert "DOCKER_NICE_OBSERVED: $DOCKER_NICE_OBSERVED" "debug"
+	else
+	# initialize from passed cmdline arg
+		DOCKER_NICE_OBSERVED=${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE_OBSERVED"]}
+	fi
+	CURRENT_NICE=$(($(ps -p $$ -o 'nice=')+0))
+	if [[ $CURRENT_NICE -ne $DOCKER_NICE_OBSERVED ]]; then
+	# enforce the niceness
+		if [[ $UID -eq 0 ]]; then # don't bother if we're not root
+			# we cast DOCKER_NICE_OBSERVED to integer in case we were handed garbage.
+			# if it's an invalid integer value, then we can feel secure in letting it fail.
+			renice -n $(("$DOCKER_NICE_OBSERVED"+0)) -p $$ && \
+			display_alert "enforced nice value from DOCKER_NICE_OBSERVED: $DOCKER_NICE_OBSERVED" "debug"
+		fi
+	fi
+
 	# Now load the key=value pairs from cmdline into environment, before loading config or executing commands.
 	# This will be done _again_ later, to make sure cmdline params override config et al.
 	apply_cmdline_params_to_env "early" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
