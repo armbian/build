@@ -11,6 +11,9 @@ display_alert "shared vendor code" "Mekotronics (RK3588) config" "info"
 # enable shared hooks (could be made into an extension)
 source "${SRC}/config/sources/vendors/mekotronics/mekotronics-rk3588.hooks.sh"
 
+# enable audio  (could be made into an extension)
+enable_extension "audio-init"
+
 # hciattach
 declare -g BLUETOOTH_HCIATTACH_PARAMS="-s 115200 /dev/ttyS6 bcm43xx 1500000" # For the bluetooth-hciattach extension
 enable_extension "bluetooth-hciattach"                                       # Enable the bluetooth-hciattach extension
