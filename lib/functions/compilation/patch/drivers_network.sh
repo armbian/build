@@ -366,10 +366,10 @@ driver_rtl8852bs() {
 
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
 
-	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx ]]; then
+	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:b7d94226641ef4687bc7f54ae6fa01b7e30f4b82' # Commit date: July 10, 2024 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:8fa9401084686a645e0a6da359610cc8fce22dc5' # Commit date: July 10, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -411,7 +411,7 @@ driver_rtl8852bs() {
 		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
 		case ${LINUXFAMILY} in
 			# For Rockchip devices, add family name here
-			rk35xx)
+			rk35xx|rockchip64)
 				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 			# For Spacemit devices, add family name here
