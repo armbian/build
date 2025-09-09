@@ -120,7 +120,14 @@ function memoized_git_ref_to_info() {
 
 				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git" | "https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
 					# for mainline kernel source, only the origin source support curl
-					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+					case "${GITHUB_MIRROR}" in
+						"ghproxy")
+							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/torvalds/linux/${sha1}/Makefile"
+							;;
+						*)
+							url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+							;;
+					esac
 					;;
 
 				"https://gitverse.ru/"*)
