@@ -229,18 +229,6 @@ function do_main_configuration() {
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
-	case $UBOOT_MIRROR in
-		gitee)
-			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
-			;;
-		denx)
-			declare -g -r MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
-			;;
-		*)
-			declare -g -r MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
-			;;
-	esac
-
 	case $GITHUB_MIRROR in
 		fastgit)
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
@@ -254,6 +242,18 @@ function do_main_configuration() {
 			;;
 		*)
 			declare -g -r GITHUB_SOURCE='https://github.com'
+			;;
+	esac
+
+	case $UBOOT_MIRROR in
+		gitee)
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
+			;;
+		denx)
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
+			;;
+		*)
+			declare -g -r MAINLINE_UBOOT_SOURCE="${GITHUB_SOURCE}/u-boot/u-boot"
 			;;
 	esac
 
