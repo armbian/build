@@ -2,7 +2,7 @@
 BOARD_NAME="ArmSoM Sige5"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="armsom-sige5-rk3576_defconfig"
-KERNEL_TARGET="vendor|edge"
+KERNEL_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3576-armsom-sige5.dtb"
