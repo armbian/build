@@ -29,6 +29,7 @@ case $BOARD in
 
 			current) # mainline stable kernel
 				KERNEL_MAJOR_MINOR="6.12"
+				KERNELBRANCH="tag:v6.12.45"
 				;;
 
 			edge | default) # use for tests with recent mainline kernels
