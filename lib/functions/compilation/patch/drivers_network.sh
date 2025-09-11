@@ -354,11 +354,12 @@ driver_rtw88() {
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		if [[ -f "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" ]]; then
 			process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
-			if linux-version compare "${version}" eq 6.1; then
-				process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel vendor 6.1.x.
-			fi
 			process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 		fi
+	fi
+	
+	if linux-version compare "${version}" eq 6.1 || linux-version compare "${version}" eq 6.16; then
+		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel 6.1.x/6.16.x.
 	fi
 }
 
