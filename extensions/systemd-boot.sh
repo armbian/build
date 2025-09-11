@@ -412,6 +412,12 @@ function create_systemd_boot_kernel_hook() {
 			cmdline+=" ${SYSTEMD_BOOT_CONSOLE}"
 		fi
 
+		# Add serial console configuration if specified and not tty1 or tty0
+		# This is the new block to add!
+		if [[ -n "${SERIALCON}" && "${SERIALCON}" != "tty1" && "${SERIALCON}" != "tty0" ]]; then
+			cmdline+=" console=${SERIALCON}"
+		fi
+
 		# Add additional kernel command line parameters
 		if [[ -n "${SYSTEMD_BOOT_CMDLINE}" ]]; then
 			cmdline+=" ${SYSTEMD_BOOT_CMDLINE}"
@@ -476,5 +482,6 @@ function configure_systemd_boot_with_uuid() {
 		SYSTEMD_BOOT_CONSOLE="${SYSTEMD_BOOT_CONSOLE}"
 		SYSTEMD_BOOT_CMDLINE="${SYSTEMD_BOOT_CMDLINE}"
 		ROOT_UUID="${root_uuid}"
+		SERIALCON="${SERIALCON}" # Add this line
 	EOD
 }
