@@ -138,7 +138,7 @@ function kernel_prepare_build_and_package() {
 
 	# @TODO: Only combining `install` and `modules_install` enable mixed-build and __build_one_by_one
 	# We should spilt the `build` and `install` into two make steps as the kernel required
-	build_targets+=("install" "${KERNEL_INSTALL_TYPE:-install}")
+	build_targets+=("${KERNEL_INSTALL_TYPE:-install}")
 
 	install_make_params_quoted+=("INSTALL_MOD_STRIP=1") # strip modules during install
 
