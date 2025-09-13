@@ -35,3 +35,11 @@ function custom_apt_repo__install_ti_packages() {
 		display_alert "Valid Options Would Have Been: ${valid_suites[@]}"
 	fi
 }
+
+function post_install_kernel_debs__activate_dkms() {
+    if [[ ${GPU_SUPPORT} == "yes" ]] ; then
+	echo "SDCARD: ${SDCARD}"
+        kernel_version_family="$(ls ${SDCARD}/lib/modules | sort -V | tail -n1)" # $(grab_version "${SRC}/cache/sources/${LINUXSOURCEDIR}")
+        chroot_sdcard "dkms autoinstall --verbose --kernelver ${kernel_version_family}" || display_alert "DKMS build failed for kernel ${kernel_version_family}"
+    fi
+}
