@@ -305,9 +305,8 @@ write_uboot_platform() {
 	fi
 }
 
-# @TODO: this is not ready for BOOT_SCENARIO=binman yet
 write_uboot_platform_mtd() {
-	FILES=$(find "$1" -maxdepth 1 -type f -name "rkspi_loader*.img")
+	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
 	if [ -z "$FILES" ]; then
 		echo "No SPI image found."
 		exit 1
@@ -315,17 +314,23 @@ write_uboot_platform_mtd() {
 
 	MENU_ITEMS=()
 	i=1
+	FILE_ARRAY=()
 
 	# Read the files into an array
 	while IFS= read -r file; do
 		filename=$(basename "$file")
 		MENU_ITEMS+=("$i" "$filename" "")
+		FILE_ARRAY+=("$file")
 		((i++))
 	done <<< "$FILES"
 
-	# If there is only one image or the terminal is not interactive, we can skip the dialog
 	if [[ ! -t 1 || $i -eq 2 ]]; then
-		dd if=$1/${MENU_ITEMS[1]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		first_file="${FILE_ARRAY[0]}"
+		if [[ "$first_file" == *rkspi_loader*.img ]]; then
+			dd if="$first_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$first_file" /dev/mtd0
+		fi
 		return
 	fi
 
@@ -333,15 +338,20 @@ write_uboot_platform_mtd() {
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 
 	CHOICE=$(dialog --no-collapse \
-  		--title "armbian-install" \
-  		--backtitle "$backtitle" \
-  		--radiolist "Choose SPI image:" 0 56 4 \
-  		"${MENU_ITEMS[@]}" \
-  		3>&1 1>&2 2>&3)
+		--title "armbian-install" \
+		--backtitle "$backtitle" \
+		--radiolist "Choose SPI image:" 0 56 4 \
+		"${MENU_ITEMS[@]}" \
+		3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
-		idx=$((CHOICE*3-2))
-		dd if=$1/${MENU_ITEMS[$idx]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		idx=$((CHOICE-1))
+		chosen_file="${FILE_ARRAY[$idx]}"
+		if [[ "$chosen_file" == *rkspi_loader*.img ]]; then
+			dd if="$chosen_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$chosen_file" /dev/mtd0
+		fi
 	else
 		echo "No SPI image chosen."
 		exit 1
