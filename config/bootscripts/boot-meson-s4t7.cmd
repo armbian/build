@@ -36,7 +36,7 @@ else
 	setenv plymouthargs "splash=verbose"
 fi
 
-setenv bootargs "root=${rootdev} ${bootargs} ${consoleargs} partition_type=generic loglevel=${verbosity} ${plymouthargs} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootfstype=${rootfstype} ${bootargs} ${consoleargs} partition_type=generic loglevel=${verbosity} ${plymouthargs} ${extraargs} ${extraboardargs}"
 
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
