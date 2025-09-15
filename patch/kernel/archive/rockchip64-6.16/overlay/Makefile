@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	hinlink-h88k-240x135-lcd.dtbo \
+  rk3308-otg-host.dtbo \
 	rk3308-s0-ext-antenna.dtbo \
 	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
-	rk3308-emmc.dtbo \
 	rk3308-pcm5102a.dtbo \
-	rk3308-sdio@10mhz.dtbo rk3308-sdio@4mhz.dtbo \
 	rockchip-sakurapi-rk3308b-ws2812.dtbo \
 	rockchip-rockpi4cplus-usb-host.dtbo \
 	rockchip-rockpro64-lcd.dtbo \
