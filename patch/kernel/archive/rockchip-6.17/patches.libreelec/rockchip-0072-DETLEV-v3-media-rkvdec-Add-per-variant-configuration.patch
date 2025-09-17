@@ -1,0 +1,142 @@
+From f76fef2efa1a4fe481e10c118870cb54d349c5a2 Mon Sep 17 00:00:00 2001
+From: Detlev Casanova <detlev.casanova@collabora.com>
+Date: Tue, 10 Jun 2025 14:05:08 -0400
+Subject: [PATCH 072/108] DETLEV(v3): media: rkvdec: Add per variant
+ configuration
+
+This is to prepare for adding different variants of the decoder and
+support specific formats and ops.
+
+Signed-off-by: Detlev Casanova <detlev.casanova@collabora.com>
+---
+ .../media/platform/rockchip/rkvdec/rkvdec.c   | 33 +++++++++++++------
+ .../media/platform/rockchip/rkvdec/rkvdec.h   | 11 ++++++-
+ 2 files changed, 33 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec.c b/drivers/media/platform/rockchip/rkvdec/rkvdec.c
+index 540d549ec08d..033c03051f2e 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec.c
+@@ -390,12 +390,13 @@ rkvdec_enum_coded_fmt_desc(struct rkvdec_ctx *ctx, int index)
+ static const struct rkvdec_coded_fmt_desc *
+ rkvdec_find_coded_fmt_desc(struct rkvdec_ctx *ctx, u32 fourcc)
+ {
++	const struct rkvdec_config *cfg = ctx->dev->config;
+ 	unsigned int i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(rkvdec_coded_fmts); i++) {
+-		if (rkvdec_is_capable(ctx, rkvdec_coded_fmts[i].capability) &&
+-		    rkvdec_coded_fmts[i].fourcc == fourcc)
+-			return &rkvdec_coded_fmts[i];
++	for (i = 0; i < cfg->coded_fmts_num; i++) {
++		if (rkvdec_is_capable(ctx, cfg->coded_fmts[i].capability) &&
++		    cfg->coded_fmts[i].fourcc == fourcc)
++			return &cfg->coded_fmts[i];
+ 	}
+ 
+ 	return NULL;
+@@ -1014,18 +1015,19 @@ static int rkvdec_add_ctrls(struct rkvdec_ctx *ctx,
+ 
+ static int rkvdec_init_ctrls(struct rkvdec_ctx *ctx)
+ {
++	const struct rkvdec_config *cfg = ctx->dev->config;
+ 	unsigned int i, nctrls = 0;
+ 	int ret;
+ 
+-	for (i = 0; i < ARRAY_SIZE(rkvdec_coded_fmts); i++)
+-		if (rkvdec_is_capable(ctx, rkvdec_coded_fmts[i].capability))
+-			nctrls += rkvdec_coded_fmts[i].ctrls->num_ctrls;
++	for (i = 0; i < cfg->coded_fmts_num; i++)
++		if (rkvdec_is_capable(ctx, cfg->coded_fmts[i].capability))
++			nctrls += cfg->coded_fmts[i].ctrls->num_ctrls;
+ 
+ 	v4l2_ctrl_handler_init(&ctx->ctrl_hdl, nctrls);
+ 
+-	for (i = 0; i < ARRAY_SIZE(rkvdec_coded_fmts); i++) {
+-		if (rkvdec_is_capable(ctx, rkvdec_coded_fmts[i].capability)) {
+-			ret = rkvdec_add_ctrls(ctx, rkvdec_coded_fmts[i].ctrls);
++	for (i = 0; i < cfg->coded_fmts_num; i++) {
++		if (rkvdec_is_capable(ctx, cfg->coded_fmts[i].capability)) {
++		ret = rkvdec_add_ctrls(ctx, cfg->coded_fmts[i].ctrls);
+ 			if (ret)
+ 				goto err_free_handler;
+ 		}
+@@ -1241,13 +1243,20 @@ static void rkvdec_watchdog_func(struct work_struct *work)
+ 	}
+ }
+ 
++static const struct rkvdec_config config_rkvdec = {
++	.coded_fmts = (struct rkvdec_coded_fmt_desc *)rkvdec_coded_fmts,
++	.coded_fmts_num = ARRAY_SIZE(rkvdec_coded_fmts),
++};
++
+ static const struct rkvdec_variant rk3288_rkvdec_variant = {
+ 	.num_regs = 68,
++	.config = &config_rkvdec,
+ 	.capabilities = RKVDEC_CAPABILITY_HEVC,
+ };
+ 
+ static const struct rkvdec_variant rk3328_rkvdec_variant = {
+ 	.num_regs = 109,
++	.config = &config_rkvdec,
+ 	.capabilities = RKVDEC_CAPABILITY_HEVC |
+ 			RKVDEC_CAPABILITY_H264 |
+ 			RKVDEC_CAPABILITY_VP9,
+@@ -1256,6 +1265,7 @@ static const struct rkvdec_variant rk3328_rkvdec_variant = {
+ 
+ static const struct rkvdec_variant rk3399_rkvdec_variant = {
+ 	.num_regs = 78,
++	.config = &config_rkvdec,
+ 	.capabilities = RKVDEC_CAPABILITY_HEVC |
+ 			RKVDEC_CAPABILITY_H264 |
+ 			RKVDEC_CAPABILITY_VP9,
+@@ -1300,6 +1310,9 @@ static int rkvdec_probe(struct platform_device *pdev)
+ 	platform_set_drvdata(pdev, rkvdec);
+ 	rkvdec->dev = &pdev->dev;
+ 	rkvdec->variant = variant;
++	rkvdec->config = variant->config;
++	rkvdec->capabilities = variant->capabilities;
++	rkvdec->quirks = variant->quirks;
+ 	mutex_init(&rkvdec->vdev_lock);
+ 	INIT_DELAYED_WORK(&rkvdec->watchdog_work, rkvdec_watchdog_func);
+ 
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec.h b/drivers/media/platform/rockchip/rkvdec/rkvdec.h
+index 9ffc3060ce25..d8a1b3e8e0ef 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec.h
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec.h
+@@ -70,8 +70,9 @@ vb2_to_rkvdec_decoded_buf(struct vb2_buffer *buf)
+ }
+ 
+ struct rkvdec_variant {
+-	unsigned int num_regs;
++	const struct rkvdec_config *config;
+ 	unsigned int capabilities;
++	unsigned int num_regs;
+ 	unsigned int quirks;
+ };
+ 
+@@ -113,6 +114,11 @@ struct rkvdec_coded_fmt_desc {
+ 	unsigned int capability;
+ };
+ 
++struct rkvdec_config {
++	struct rkvdec_coded_fmt_desc *coded_fmts;
++	size_t coded_fmts_num;
++};
++
+ struct rkvdec_dev {
+ 	struct v4l2_device v4l2_dev;
+ 	struct media_device mdev;
+@@ -125,6 +131,9 @@ struct rkvdec_dev {
+ 	struct delayed_work watchdog_work;
+ 	struct iommu_domain *empty_domain;
+ 	const struct rkvdec_variant *variant;
++	const struct rkvdec_config *config;
++	unsigned int capabilities;
++	unsigned int quirks;
+ };
+ 
+ struct rkvdec_ctx {
+-- 
+2.34.1
+
