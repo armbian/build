@@ -19,7 +19,7 @@ function extension_prepare_config__prepare_systemd_boot_standard() {
 	declare -g BOOTCONFIG="none"
 	unset BOOTSOURCE
 	declare -g IMAGE_PARTITION_TABLE="gpt"
-	declare -g UEFISIZE=256
+	declare -g UEFISIZE=1024 # Some weird mkfs.vfat bug for <512mb with FAT32 for sector size 4096that the UEFI fat driver cannot handle. Use 1024mb to be safe.
 	declare -g BOOTSIZE=0
 	declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}"
 	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-systemd-boot"
@@ -72,12 +72,12 @@ function pre_umount_final_image__remove_uboot_initramfs_hook_systemd_boot() {
 function pre_umount_final_image__install_systemd_boot() {
 	local chroot_target="${MOUNT}"
 
-	# Get UUID early, after filesystem exists but before any chroot operations
-	local root_uuid=$(blkid -s UUID -o value "${LOOP}p2")
-	display_alert "Extension: ${EXTENSION}: Detected root UUID" "${root_uuid}" "info"
+	# Get PARTUUID early, after filesystem exists but before any chroot operations
+	local root_uuid=$(blkid -s PARTUUID -o value "${LOOP}p2")
+	display_alert "Extension: ${EXTENSION}: Detected root PARTUUID" "${root_uuid}" "info"
 
 	if [[ -z "${root_uuid}" ]]; then
-		exit_with_error "Extension: ${EXTENSION}: Could not detect root filesystem UUID"
+		exit_with_error "Extension: ${EXTENSION}: Could not detect root filesystem PARTUUID"
 	fi
 
 	configure_systemd_boot_with_uuid "${root_uuid}"
@@ -220,7 +220,7 @@ function create_boot_entry_with_uuid() {
 	cp -f "${MOUNT}/boot/initrd.img-${kernel_version}" "${MOUNT}/boot/efi/initrd.img-${kernel_version}"
 
 	# Construct kernel command line
-	local cmdline="root=UUID=${root_uuid} rw"
+	local cmdline="root=PARTUUID=${root_uuid} rw"
 
 	# Add console configuration if specified
 	if [[ -n "${SYSTEMD_BOOT_CONSOLE}" ]]; then
@@ -369,26 +369,26 @@ function create_systemd_boot_kernel_hook() {
 
 		mkdir -p /boot/efi/loader/entries
 
-		# Get root UUID from stored configuration
+		# Get root PARTUUID from stored configuration
 		root_uuid=""
 		if [[ -f /etc/systemd-boot.d/armbian-config ]]; then
 			source /etc/systemd-boot.d/armbian-config
 			if [[ -n "${ROOT_UUID}" ]]; then
 				root_uuid="${ROOT_UUID}"
-				echo "Armbian: Using stored root UUID: ${root_uuid}" >&2
+				echo "Armbian: Using stored root PARTUUID: ${root_uuid}" >&2
 			fi
 		fi
 
-		# Fallback to runtime detection if no stored UUID
+		# Fallback to runtime detection if no stored PARTUUID
 		if [[ -z "${root_uuid}" ]]; then
-			echo "Armbian: No stored UUID found, detecting at runtime" >&2
+			echo "Armbian: No stored PARTUUID found, detecting at runtime" >&2
 			root_partition=$(mount | grep ' on / ' | cut -d' ' -f1 | sed 's/\/dev\///')
-			root_uuid=$(blkid -s UUID -o value "/dev/${root_partition}")
-			echo "Armbian: Runtime detected root UUID: ${root_uuid}" >&2
+			root_uuid=$(blkid -s PARTUUID -o value "/dev/${root_partition}")
+			echo "Armbian: Runtime detected root PARTUUID: ${root_uuid}" >&2
 		fi
 
 		if [[ -z "${root_uuid}" ]]; then
-			echo "Armbian: ERROR - Could not determine root UUID" >&2
+			echo "Armbian: ERROR - Could not determine root PARTUUID" >&2
 			exit 1
 		fi
 
@@ -405,7 +405,7 @@ function create_systemd_boot_kernel_hook() {
 		fi
 
 		# Construct kernel command line
-		cmdline="root=UUID=${root_uuid} rw"
+		cmdline="root=PARTUUID=${root_uuid} rw"
 
 		# Add console configuration if specified
 		if [[ -n "${SYSTEMD_BOOT_CONSOLE}" ]]; then
@@ -448,7 +448,7 @@ function create_systemd_boot_kernel_hook() {
 			if [[ "${existing_entry}" != "${entry_file}" ]] && [[ -f "${existing_entry}" ]]; then
 				# Remove entries that point to /ubuntu/ path or have wrong UUID
 				if grep -q "linux.*/ubuntu/" "${existing_entry}" || \
-				   (grep -q "root=UUID=" "${existing_entry}" && ! grep -q "root=UUID=${root_uuid}" "${existing_entry}"); then
+				   (grep -q "root=PARTUUID=" "${existing_entry}" && ! grep -q "root=PARTUUID=${root_uuid}" "${existing_entry}"); then
 					echo "Armbian: Removing conflicting entry: ${existing_entry}" >&2
 					rm -f "${existing_entry}"
 				fi
@@ -469,7 +469,7 @@ function create_systemd_boot_kernel_hook() {
 
 function configure_systemd_boot_with_uuid() {
 	local root_uuid="$1"
-	display_alert "Extension: ${EXTENSION}: Configuring systemd-boot" "SERIALCON=${SERIALCON} UUID=${root_uuid}" "info"
+	display_alert "Extension: ${EXTENSION}: Configuring systemd-boot" "SERIALCON=${SERIALCON} PARTUUID=${root_uuid}" "info"
 
 	mkdir -p "${MOUNT}/etc/systemd-boot.d"
 
@@ -482,6 +482,6 @@ function configure_systemd_boot_with_uuid() {
 		SYSTEMD_BOOT_CONSOLE="${SYSTEMD_BOOT_CONSOLE}"
 		SYSTEMD_BOOT_CMDLINE="${SYSTEMD_BOOT_CMDLINE}"
 		ROOT_UUID="${root_uuid}"
-		SERIALCON="${SERIALCON}" # Add this line
+		SERIALCON="${SERIALCON}"
 	EOD
 }
