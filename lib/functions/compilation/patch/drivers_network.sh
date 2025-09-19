@@ -38,7 +38,7 @@ driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.16; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8189esver='commit:07f03cf721f5e0317012ece4159834327680ba8b' # Commit date: 2025-06-21 (please update when updating commit ref)
@@ -159,6 +159,9 @@ driver_rtl8192EU() {
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
+
+		# fix compilation for kernels >= 6.17
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-6.16-6.17.patch" "applying"
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
