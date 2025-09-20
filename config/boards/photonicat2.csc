@@ -1,0 +1,14 @@
+# Rockchip RK3576 SoC octa core 4-16GB LPDDR5 RAM SoC 2x GbE eMMC USB3 HDMI WIFI
+
+BOARD_NAME="Photonicat2"
+BOARDFAMILY="rk35xx"
+BOOT_SOC="rk3576"
+BOOTCONFIG="photonicat2-rk3576_defconfig"
+KERNEL_TARGET="edge"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3576-photonicat2.dtb"
+BOOT_SCENARIO="spl-blobs"
+IMAGE_PARTITION_TABLE="gpt"
+ENABLE_EXTENSIONS="radxa-aic8800"
+AIC8800_TYPE="usb"
