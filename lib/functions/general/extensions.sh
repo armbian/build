@@ -577,10 +577,14 @@ function enable_extensions_with_hostdeps_builtin_and_user() {
 
 	# Extensions are files of the format <dir>/extension_name.sh or <dir>/extension_name/extension_name.sh
 	for ext_dir in "${ext_dirs[@]}"; do
+		display_alert "Extension search" "Searching in directory: \"${ext_dir}\"" ""
 		if [[ -d "${ext_dir}" ]]; then
 			declare -a ext_list_dir=()
-			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 grep -l "${grep_args[@]}")
+			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 -r grep -l "${grep_args[@]}" 2>/dev/null || true)
+			display_alert "Extension search result" "Found ${#ext_list_dir[@]} extensions in \"${ext_dir}\"" ""
 			extension_list+=("${ext_list_dir[@]}")
+		else
+			display_alert "Extension search" "Directory does not exist: \"${ext_dir}\"" "wrn"
 		fi
 	done
 
