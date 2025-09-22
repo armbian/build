@@ -1,0 +1,736 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Viken Dadhaniya <viken.dadhaniya@oss.qualcomm.com>
+Date: Tue, 24 Jun 2025 15:20:59 +0530
+Subject: soc: qcom: geni-se: Add support to load QUP SE Firmware via Linux
+ subsystem
+
+In Qualcomm SoCs, firmware loading for Serial Engines (SE) within the QUP
+hardware has traditionally been managed by TrustZone (TZ). This restriction
+poses a significant challenge for developers, as it limits their ability to
+enable various protocols on any of the SEs from the Linux side, reducing
+flexibility.
+
+Load the firmware to QUP SE based on the 'firmware-name' property specified
+in devicetree at bootup time.
+
+Co-developed-by: Mukesh Kumar Savaliya <mukesh.savaliya@oss.qualcomm.com>
+Signed-off-by: Mukesh Kumar Savaliya <mukesh.savaliya@oss.qualcomm.com>
+Signed-off-by: Viken Dadhaniya <viken.dadhaniya@oss.qualcomm.com>
+---
+ drivers/soc/qcom/qcom-geni-se.c      | 407 +++++++++-
+ include/linux/soc/qcom/geni-se.h     |  32 +-
+ include/linux/soc/qcom/qup-fw-load.h |  93 +++
+ 3 files changed, 510 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/soc/qcom/qcom-geni-se.c b/drivers/soc/qcom/qcom-geni-se.c
+index 111111111111..222222222222 100644
+--- a/drivers/soc/qcom/qcom-geni-se.c
++++ b/drivers/soc/qcom/qcom-geni-se.c
+@@ -1,11 +1,15 @@
+ // SPDX-License-Identifier: GPL-2.0
+-// Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
++/*
++ *  Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
++ *  Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
++ */
+ 
+ /* Disable MMIO tracing to prevent excessive logging of unwanted MMIO traces */
+ #define __DISABLE_TRACE_MMIO__
+ 
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
++#include <linux/firmware.h>
+ #include <linux/slab.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/io.h>
+@@ -15,6 +19,7 @@
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/platform_device.h>
+ #include <linux/soc/qcom/geni-se.h>
++#include <linux/soc/qcom/qup-fw-load.h>
+ 
+ /**
+  * DOC: Overview
+@@ -80,9 +85,9 @@
+  * common to all the serial engines and are independent of serial interfaces.
+  */
+ 
+-#define MAX_CLK_PERF_LEVEL 32
+-#define MAX_CLKS 2
+-
++#define MAX_CLK_PERF_LEVEL	32
++#define MAX_CLKS		2
++#define MAX_PROTOCOL		6
+ /**
+  * struct geni_wrapper - Data structure to represent the QUP Wrapper Core
+  * @dev:		Device pointer of the QUP wrapper core
+@@ -110,28 +115,23 @@ struct geni_se_desc {
+ static const char * const icc_path_names[] = {"qup-core", "qup-config",
+ 						"qup-memory"};
+ 
++static const char * const protocol_name[MAX_PROTOCOL] = { "None", "SPI", "UART",
++							  "I2C", "I3C", "SPI SLAVE"};
++
+ #define QUP_HW_VER_REG			0x4
+ 
+ /* Common SE registers */
+-#define GENI_INIT_CFG_REVISION		0x0
+-#define GENI_S_INIT_CFG_REVISION	0x4
+-#define GENI_OUTPUT_CTRL		0x24
+-#define GENI_CGC_CTRL			0x28
+ #define GENI_CLK_CTRL_RO		0x60
+-#define GENI_FW_S_REVISION_RO		0x6c
+ #define SE_GENI_BYTE_GRAN		0x254
+ #define SE_GENI_TX_PACKING_CFG0		0x260
+ #define SE_GENI_TX_PACKING_CFG1		0x264
+ #define SE_GENI_RX_PACKING_CFG0		0x284
+ #define SE_GENI_RX_PACKING_CFG1		0x288
+-#define SE_GENI_M_GP_LENGTH		0x910
+-#define SE_GENI_S_GP_LENGTH		0x914
+ #define SE_DMA_TX_PTR_L			0xc30
+ #define SE_DMA_TX_PTR_H			0xc34
+ #define SE_DMA_TX_ATTR			0xc38
+ #define SE_DMA_TX_LEN			0xc3c
+ #define SE_DMA_TX_IRQ_EN		0xc48
+-#define SE_DMA_TX_IRQ_EN_SET		0xc4c
+ #define SE_DMA_TX_IRQ_EN_CLR		0xc50
+ #define SE_DMA_TX_LEN_IN		0xc54
+ #define SE_DMA_TX_MAX_BURST		0xc5c
+@@ -140,9 +140,7 @@ static const char * const icc_path_names[] = {"qup-core", "qup-config",
+ #define SE_DMA_RX_ATTR			0xd38
+ #define SE_DMA_RX_LEN			0xd3c
+ #define SE_DMA_RX_IRQ_EN		0xd48
+-#define SE_DMA_RX_IRQ_EN_SET		0xd4c
+ #define SE_DMA_RX_IRQ_EN_CLR		0xd50
+-#define SE_DMA_RX_LEN_IN		0xd54
+ #define SE_DMA_RX_MAX_BURST		0xd5c
+ #define SE_DMA_RX_FLUSH			0xd60
+ #define SE_GSI_EVENT_EN			0xe18
+@@ -179,7 +177,7 @@ static const char * const icc_path_names[] = {"qup-core", "qup-config",
+ /* SE_DMA_GENERAL_CFG */
+ #define DMA_RX_CLK_CGC_ON		BIT(0)
+ #define DMA_TX_CLK_CGC_ON		BIT(1)
+-#define DMA_AHB_SLV_CFG_ON		BIT(2)
++#define DMA_AHB_SLV_CLK_CGC_ON		BIT(2)
+ #define AHB_SEC_SLV_CLK_CGC_ON		BIT(3)
+ #define DUMMY_RX_NON_BUFFERABLE		BIT(4)
+ #define RX_DMA_ZERO_PADDING_EN		BIT(5)
+@@ -220,12 +218,12 @@ static void geni_se_io_init(void __iomem *base)
+ {
+ 	u32 val;
+ 
+-	val = readl_relaxed(base + GENI_CGC_CTRL);
++	val = readl_relaxed(base + SE_GENI_CGC_CTRL);
+ 	val |= DEFAULT_CGC_EN;
+-	writel_relaxed(val, base + GENI_CGC_CTRL);
++	writel_relaxed(val, base + SE_GENI_CGC_CTRL);
+ 
+ 	val = readl_relaxed(base + SE_DMA_GENERAL_CFG);
+-	val |= AHB_SEC_SLV_CLK_CGC_ON | DMA_AHB_SLV_CFG_ON;
++	val |= AHB_SEC_SLV_CLK_CGC_ON | DMA_AHB_SLV_CLK_CGC_ON;
+ 	val |= DMA_TX_CLK_CGC_ON | DMA_RX_CLK_CGC_ON;
+ 	writel_relaxed(val, base + SE_DMA_GENERAL_CFG);
+ 
+@@ -891,6 +889,379 @@ int geni_icc_disable(struct geni_se *se)
+ }
+ EXPORT_SYMBOL_GPL(geni_icc_disable);
+ 
++/**
++ * geni_read_elf() - Read an ELF file.
++ * @se: Pointer to the SE resources structure.
++ * @fw: Pointer to the firmware buffer.
++ * @pelfseg: Pointer to the SE-specific ELF header.
++ *
++ * Read the ELF file and output a pointer to the header data, which
++ * contains the firmware data and any other details.
++ *
++ * Return: 0 if successful, otherwise return an error value.
++ */
++static int geni_read_elf(struct geni_se *se, const struct firmware *fw, struct se_fw_hdr **pelfseg)
++{
++	const struct elf32_hdr *ehdr;
++	struct elf32_phdr *phdrs, *phdr;
++	const struct se_fw_hdr *elfseg;
++	const u8 *addr;
++	int i;
++
++	if (!fw || fw->size < sizeof(struct elf32_hdr))
++		return -EINVAL;
++
++	ehdr = (struct elf32_hdr *)fw->data;
++	phdrs = (struct elf32_phdr *)(ehdr + 1);
++
++	if (ehdr->e_phnum < 2)
++		return -EINVAL;
++
++	for (i = 0; i < ehdr->e_phnum; i++) {
++		phdr = &phdrs[i];
++
++		if (fw->size < phdr->p_offset + phdr->p_filesz)
++			return -EINVAL;
++
++		if (phdr->p_type != PT_LOAD || !phdr->p_memsz)
++			continue;
++
++		if (MI_PBT_PAGE_MODE_VALUE(phdr->p_flags) != MI_PBT_NON_PAGED_SEGMENT ||
++		    MI_PBT_SEGMENT_TYPE_VALUE(phdr->p_flags) == MI_PBT_HASH_SEGMENT ||
++		    MI_PBT_ACCESS_TYPE_VALUE(phdr->p_flags) == MI_PBT_NOTUSED_SEGMENT ||
++		    MI_PBT_ACCESS_TYPE_VALUE(phdr->p_flags) == MI_PBT_SHARED_SEGMENT)
++			continue;
++
++		if (phdr->p_filesz < sizeof(struct se_fw_hdr))
++			continue;
++
++		addr = fw->data + phdr->p_offset;
++		elfseg = (const struct se_fw_hdr *)addr;
++
++		if (cpu_to_le32(elfseg->magic) != MAGIC_NUM_SE || elfseg->version != 1)
++			continue;
++
++		if (phdr->p_filesz < elfseg->fw_offset +
++				     elfseg->fw_size_in_items * sizeof(u32) ||
++		    phdr->p_filesz < elfseg->cfg_idx_offset +
++				     elfseg->cfg_size_in_items * sizeof(u8) ||
++		    phdr->p_filesz < elfseg->cfg_val_offset +
++				     elfseg->cfg_size_in_items * sizeof(u32))
++			continue;
++
++		if (elfseg->serial_protocol != se->protocol)
++			continue;
++
++		*pelfseg = (struct se_fw_hdr *)addr;
++		return 0;
++	}
++	return -EINVAL;
++}
++
++/**
++ * geni_configure_xfer_mode() - Set the transfer mode.
++ * @se: Pointer to a structure representing SE-related resources.
++ *
++ * Set the transfer mode to either FIFO or DMA according to the mode specified by the protocol
++ * driver.
++ *
++ * Return: 0 if successful, otherwise return an error value.
++ */
++static int geni_configure_xfer_mode(struct geni_se *se)
++{
++	/* Configure SE FIFO, DMA or GSI mode. */
++	switch (se->mode) {
++	case GENI_GPI_DMA:
++		geni_setbits32(se->base + SE_GENI_DMA_MODE_EN, GENI_DMA_MODE_EN);
++		writel_relaxed(0x0, se->base + SE_IRQ_EN);
++		writel_relaxed(DMA_RX_EVENT_EN | DMA_TX_EVENT_EN |
++			       GENI_M_EVENT_EN | GENI_S_EVENT_EN,
++			       se->base + SE_GSI_EVENT_EN);
++		break;
++
++	case GENI_SE_FIFO:
++		geni_clrbits32(se->base + SE_GENI_DMA_MODE_EN, GENI_DMA_MODE_EN);
++		writel_relaxed(DMA_RX_IRQ_EN | DMA_TX_IRQ_EN | GENI_M_IRQ_EN | GENI_S_IRQ_EN,
++			       se->base + SE_IRQ_EN);
++		writel_relaxed(0x0, se->base + SE_GSI_EVENT_EN);
++		break;
++
++	case GENI_SE_DMA:
++		geni_setbits32(se->base + SE_GENI_DMA_MODE_EN, GENI_DMA_MODE_EN);
++		writel_relaxed(DMA_RX_IRQ_EN | DMA_TX_IRQ_EN | GENI_M_IRQ_EN | GENI_S_IRQ_EN,
++			       se->base + SE_IRQ_EN);
++		writel_relaxed(0x0, se->base + SE_GSI_EVENT_EN);
++		break;
++
++	default:
++		dev_err(se->dev, "Invalid geni-se transfer mode: %d\n", se->mode);
++		return -EINVAL;
++	}
++	return 0;
++}
++
++/**
++ * geni_enable_interrupts() - Enable interrupts.
++ * @se: Pointer to a structure representing SE-related resources.
++ *
++ * Enable the required interrupts during the firmware load process.
++ *
++ */
++static void geni_enable_interrupts(struct geni_se *se)
++{
++	u32 reg_value;
++
++	/* Enable required interrupts. */
++	writel_relaxed(M_COMMON_GENI_M_IRQ_EN, se->base + SE_GENI_M_IRQ_EN);
++
++	reg_value = S_CMD_OVERRUN_EN | S_ILLEGAL_CMD_EN |
++		    S_CMD_CANCEL_EN | S_CMD_ABORT_EN |
++		    S_GP_IRQ_0_EN | S_GP_IRQ_1_EN |
++		    S_GP_IRQ_2_EN | S_GP_IRQ_3_EN |
++		    S_RX_FIFO_WR_ERR_EN | S_RX_FIFO_RD_ERR_EN;
++	writel_relaxed(reg_value, se->base + SE_GENI_S_IRQ_ENABLE);
++
++	/* DMA mode configuration. */
++	reg_value = RESET_DONE_EN | SBE_EN | DMA_DONE_EN;
++	writel_relaxed(reg_value, se->base + SE_DMA_TX_IRQ_EN_SET);
++	reg_value = FLUSH_DONE_EN | RESET_DONE_EN | SBE_EN | DMA_DONE_EN;
++	writel_relaxed(reg_value, se->base + SE_DMA_RX_IRQ_EN_SET);
++}
++
++/**
++ * geni_write_fw_revision() - Write the firmware revision.
++ * @se: Pointer to a structure representing SE-related resources.
++ * @serial_protocol: serial protocol type.
++ * @fw_version: QUP firmware version.
++ *
++ * Write the firmware revision and protocol into the respective register.
++ *
++ * Return: None.
++ */
++static void geni_write_fw_revision(struct geni_se *se, u16 serial_protocol, u16 fw_version)
++{
++	u32 reg_value;
++
++	reg_value = FIELD_PREP(FW_REV_PROTOCOL_MSK, serial_protocol);
++	reg_value |= FIELD_PREP(FW_REV_VERSION_MSK, fw_version);
++
++	writel_relaxed(reg_value, se->base + SE_GENI_FW_REVISION);
++	writel_relaxed(reg_value, se->base + SE_S_FW_REVISION);
++}
++
++/**
++ * geni_load_se_fw() - Load Serial Engine specific firmware.
++ * @se: Pointer to a structure representing SE-related resources.
++ * @fw: Pointer to the firmware structure.
++ *
++ * Load the protocol firmware into the IRAM of the Serial Engine.
++ *
++ * Return: 0 if successful, otherwise return an error value.
++ */
++static int geni_load_se_fw(struct geni_se *se, const struct firmware *fw)
++{
++	const u32 *fw_data, *cfg_val_arr;
++	const u8 *cfg_idx_arr;
++	u32 i, reg_value, ramn_cnt;
++	int ret;
++	struct se_fw_hdr *hdr;
++
++	ret = geni_read_elf(se, fw, &hdr);
++	if (ret) {
++		dev_err(se->dev, "ELF parsing failed ret: %d\n", ret);
++		return ret;
++	}
++
++	ramn_cnt = hdr->fw_size_in_items;
++	if (hdr->fw_size_in_items % 2 != 0)
++		ramn_cnt++;
++
++	if (ramn_cnt >= MAX_GENI_CFG_RAMn_CNT)
++		return -EINVAL;
++
++	ret = geni_icc_set_bw(se);
++	if (ret)
++		return ret;
++
++	ret = geni_icc_enable(se);
++	if (ret)
++		return ret;
++
++	ret = geni_se_resources_on(se);
++	if (ret)
++		goto err;
++
++	ramn_cnt = hdr->fw_size_in_items;
++	if (hdr->fw_size_in_items % 2 != 0)
++		ramn_cnt++;
++
++	if (ramn_cnt >= MAX_GENI_CFG_RAMn_CNT)
++		goto err_resource;
++
++	fw_data = (const u32 *)((u8 *)hdr + hdr->fw_offset);
++	cfg_idx_arr = (const u8 *)hdr + hdr->cfg_idx_offset;
++	cfg_val_arr = (const u32 *)((u8 *)hdr + hdr->cfg_val_offset);
++
++	/* Disable high priority interrupt until current low priority interrupts are handled. */
++	geni_setbits32(se->wrapper->base + QUPV3_COMMON_CFG, FAST_SWITCH_TO_HIGH_DISABLE);
++
++	/* Set AHB_M_CLK_CGC_ON to indicate hardware controls se-wrapper cgc clock. */
++	geni_setbits32(se->wrapper->base + QUPV3_SE_AHB_M_CFG, AHB_M_CLK_CGC_ON);
++
++	/* Let hardware to control common cgc. */
++	geni_setbits32(se->wrapper->base + QUPV3_COMMON_CGC_CTRL, COMMON_CSR_SLV_CLK_CGC_ON);
++
++	/* Allows to drive corresponding data according to hardware value. */
++	writel_relaxed(0x0, se->base + GENI_OUTPUT_CTRL);
++
++	/* Set SCLK and HCLK to program RAM */
++	geni_setbits32(se->base + SE_GENI_CGC_CTRL, PROG_RAM_SCLK_OFF | PROG_RAM_HCLK_OFF);
++	writel_relaxed(0x0, se->base + SE_GENI_CLK_CTRL);
++	geni_clrbits32(se->base + SE_GENI_CGC_CTRL, PROG_RAM_SCLK_OFF | PROG_RAM_HCLK_OFF);
++
++	/* Enable required clocks for DMA CSR, TX and RX. */
++	reg_value = AHB_SEC_SLV_CLK_CGC_ON | DMA_AHB_SLV_CLK_CGC_ON |
++		    DMA_TX_CLK_CGC_ON | DMA_RX_CLK_CGC_ON;
++	geni_setbits32(se->base + SE_DMA_GENERAL_CFG, reg_value);
++
++	/* Let hardware control CGC by default. */
++	writel_relaxed(DEFAULT_CGC_EN, se->base + SE_GENI_CGC_CTRL);
++
++	/* Set version of the configuration register part of firmware. */
++	writel_relaxed(hdr->cfg_version, se->base + SE_GENI_INIT_CFG_REVISION);
++	writel_relaxed(hdr->cfg_version, se->base + SE_GENI_S_INIT_CFG_REVISION);
++
++	/* Configure GENI primitive table. */
++	for (i = 0; i < hdr->cfg_size_in_items; i++)
++		writel_relaxed(cfg_val_arr[i],
++			       se->base + SE_GENI_CFG_REG0 + (cfg_idx_arr[i] * sizeof(u32)));
++
++	/* Configure condition for assertion of RX_RFR_WATERMARK condition. */
++	reg_value = geni_se_get_rx_fifo_depth(se);
++	writel_relaxed(reg_value - 2, se->base + SE_GENI_RX_RFR_WATERMARK_REG);
++
++	/* Let hardware control CGC */
++	geni_setbits32(se->base + GENI_OUTPUT_CTRL, DEFAULT_IO_OUTPUT_CTRL_MSK);
++
++	ret = geni_configure_xfer_mode(se);
++	if (ret)
++		goto err_resource;
++
++	geni_enable_interrupts(se);
++
++	geni_write_fw_revision(se, hdr->serial_protocol, hdr->fw_version);
++
++	ramn_cnt = hdr->fw_size_in_items;
++	if (hdr->fw_size_in_items % 2 != 0)
++		ramn_cnt++;
++
++	if (ramn_cnt >= MAX_GENI_CFG_RAMn_CNT)
++		goto err_resource;
++
++	/* Program RAM address space. */
++	memcpy_toio(se->base + SE_GENI_CFG_RAMN, fw_data, ramn_cnt * sizeof(u32));
++
++	/* Put default values on GENI's output pads. */
++	writel_relaxed(0x1, se->base + GENI_FORCE_DEFAULT_REG);
++
++	/* High to low SCLK and HCLK to finish RAM. */
++	geni_setbits32(se->base + SE_GENI_CGC_CTRL, PROG_RAM_SCLK_OFF | PROG_RAM_HCLK_OFF);
++	geni_setbits32(se->base + SE_GENI_CLK_CTRL, SER_CLK_SEL);
++	geni_clrbits32(se->base + SE_GENI_CGC_CTRL, PROG_RAM_SCLK_OFF | PROG_RAM_HCLK_OFF);
++
++	/* Serial engine DMA interface is enabled. */
++	geni_setbits32(se->base + SE_DMA_IF_EN, DMA_IF_EN);
++
++	/* Enable or disable FIFO interface of the serial engine. */
++	if (se->mode == GENI_SE_FIFO)
++		geni_clrbits32(se->base + SE_FIFO_IF_DISABLE, FIFO_IF_DISABLE);
++	else
++		geni_setbits32(se->base + SE_FIFO_IF_DISABLE, FIFO_IF_DISABLE);
++
++err_resource:
++	geni_se_resources_off(se);
++err:
++	geni_icc_disable(se);
++	return ret;
++}
++
++/**
++ * qup_fw_load() - Initiate firmware load.
++ * @se: Pointer to a structure representing SE-related resources.
++ * @fw_name: Name of the firmware.
++ *
++ * Load the firmware into a specific SE. Read the associated ELF file,
++ * copy the data into a buffer in kernel space using the request_firmware API, write the
++ * data into the SE's IRAM register, and then free the buffers. Handle firmware loading
++ * and parsing for a specific protocol.
++ *
++ * Return: 0 if successful, otherwise return an error value.
++ */
++static int qup_fw_load(struct geni_se *se, const char *fw_name)
++{
++	int ret;
++	const struct firmware *fw;
++	struct device *dev = se->dev;
++
++	ret = request_firmware(&fw, fw_name, dev);
++	if (ret) {
++		dev_err(dev, "request_firmware failed for %d: %d\n", se->protocol, ret);
++		return ret;
++	}
++
++	ret = geni_load_se_fw(se, fw);
++
++	release_firmware(fw);
++
++	return ret;
++}
++
++/**
++ * geni_load_se_firmware() - Initiate firmware loading.
++ * @se: Serial engine details.
++ * @protocol: Protocol (SPI, I2C, or UART) for which the firmware is to be loaded.
++ *
++ * If the device tree properties are configured to load QUP firmware and the firmware
++ * is not already loaded, start the firmware loading process. If the device tree properties
++ * are not defined, skip loading the firmware, assuming it is already loaded by TZ.
++ *
++ * Return: 0 if successful, otherwise return an error value.
++ */
++int geni_load_se_firmware(struct geni_se *se, enum geni_se_protocol_type protocol)
++{
++	const char *fw_name;
++	int ret;
++
++	if (protocol >= MAX_PROTOCOL) {
++		dev_err(se->dev, "Invalid geni-se protocol: %d", protocol);
++		return  -EINVAL;
++	}
++
++	ret = device_property_read_string(se->wrapper->dev, "firmware-name", &fw_name);
++	if (ret)
++		return  -EINVAL;
++
++	se->protocol = protocol;
++
++	if (of_property_read_bool(se->dev->of_node, "qcom,enable-gsi-dma"))
++		se->mode = GENI_GPI_DMA;
++	else
++		se->mode = GENI_SE_FIFO;
++
++	/* GSI mode is not supported by the UART driver; therefore, setting FIFO mode */
++	if (protocol == GENI_SE_UART)
++		se->mode = GENI_SE_FIFO;
++
++	ret = qup_fw_load(se, fw_name);
++	if (ret)
++		return ret;
++
++	dev_dbg(se->dev, "Firmware load for %s protocol is successful for xfer mode %d\n",
++		protocol_name[se->protocol], se->mode);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(geni_load_se_firmware);
++
+ static int geni_se_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+diff --git a/include/linux/soc/qcom/geni-se.h b/include/linux/soc/qcom/geni-se.h
+index 111111111111..222222222222 100644
+--- a/include/linux/soc/qcom/geni-se.h
++++ b/include/linux/soc/qcom/geni-se.h
+@@ -1,11 +1,13 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+ /*
+  * Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
++ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
+ #ifndef _LINUX_QCOM_GENI_SE
+ #define _LINUX_QCOM_GENI_SE
+ 
++#include <linux/bitfield.h>
+ #include <linux/interconnect.h>
+ 
+ /**
+@@ -36,6 +38,7 @@ enum geni_se_protocol_type {
+ 	GENI_SE_I2C,
+ 	GENI_SE_I3C,
+ 	GENI_SE_SPI_SLAVE,
++	GENI_SE_INVALID_PROTO = 255,
+ };
+ 
+ struct geni_wrapper;
+@@ -61,6 +64,8 @@ struct geni_icc_path {
+  * @num_clk_levels:	Number of valid clock levels in clk_perf_tbl
+  * @clk_perf_tbl:	Table of clock frequency input to serial engine clock
+  * @icc_paths:		Array of ICC paths for SE
++ * @mode:		Transfer mode se fifo, dma or gsi.
++ * @protocol:		Protocol spi or i2c or serial.
+  */
+ struct geni_se {
+ 	void __iomem *base;
+@@ -70,24 +75,32 @@ struct geni_se {
+ 	unsigned int num_clk_levels;
+ 	unsigned long *clk_perf_tbl;
+ 	struct geni_icc_path icc_paths[3];
++	enum geni_se_xfer_mode mode;
++	enum geni_se_protocol_type protocol;
+ };
+ 
+ /* Common SE registers */
++#define SE_GENI_INIT_CFG_REVISION	0x0
++#define SE_GENI_S_INIT_CFG_REVISION	0x4
+ #define GENI_FORCE_DEFAULT_REG		0x20
+ #define GENI_OUTPUT_CTRL		0x24
++#define SE_GENI_CGC_CTRL		0x28
+ #define SE_GENI_STATUS			0x40
+ #define GENI_SER_M_CLK_CFG		0x48
+ #define GENI_SER_S_CLK_CFG		0x4c
+ #define GENI_IF_DISABLE_RO		0x64
+-#define GENI_FW_REVISION_RO		0x68
++#define SE_GENI_FW_REVISION_RO		0x68
++#define SE_GENI_S_FW_REVISION_RO	0x6c
+ #define SE_GENI_CLK_SEL			0x7c
+ #define SE_GENI_CFG_SEQ_START		0x84
++#define SE_GENI_CFG_REG0		0x100
+ #define SE_GENI_DMA_MODE_EN		0x258
+ #define SE_GENI_M_CMD0			0x600
+ #define SE_GENI_M_CMD_CTRL_REG		0x604
+ #define SE_GENI_M_IRQ_STATUS		0x610
+ #define SE_GENI_M_IRQ_EN		0x614
+ #define SE_GENI_M_IRQ_CLEAR		0x618
++#define SE_GENI_S_IRQ_ENABLE		0x644
+ #define SE_GENI_M_IRQ_EN_SET		0x61c
+ #define SE_GENI_M_IRQ_EN_CLEAR		0x620
+ #define SE_GENI_S_CMD0			0x630
+@@ -109,13 +122,22 @@ struct geni_se {
+ #define SE_GENI_S_GP_LENGTH		0x914
+ #define SE_DMA_TX_IRQ_STAT		0xc40
+ #define SE_DMA_TX_IRQ_CLR		0xc44
++#define SE_DMA_TX_IRQ_EN_SET		0xc4c
+ #define SE_DMA_TX_FSM_RST		0xc58
+ #define SE_DMA_RX_IRQ_STAT		0xd40
+ #define SE_DMA_RX_IRQ_CLR		0xd44
++#define SE_DMA_RX_IRQ_EN_SET		0xd4c
+ #define SE_DMA_RX_LEN_IN		0xd54
+ #define SE_DMA_RX_FSM_RST		0xd58
+ #define SE_HW_PARAM_0			0xe24
+ #define SE_HW_PARAM_1			0xe28
++#define SE_DMA_GENERAL_CFG		0xe30
++#define SE_GENI_FW_REVISION		0x1000
++#define SE_S_FW_REVISION		0x1004
++#define SE_GENI_CFG_RAMN		0x1010
++#define SE_GENI_CLK_CTRL		0x2000
++#define SE_DMA_IF_EN			0x2004
++#define SE_FIFO_IF_DISABLE		0x2008
+ 
+ /* GENI_FORCE_DEFAULT_REG fields */
+ #define FORCE_DEFAULT	BIT(0)
+@@ -137,7 +159,7 @@ struct geni_se {
+ 
+ /* GENI_FW_REVISION_RO fields */
+ #define FW_REV_PROTOCOL_MSK		GENMASK(15, 8)
+-#define FW_REV_PROTOCOL_SHFT		8
++#define FW_REV_VERSION_MSK		GENMASK(7, 0)
+ 
+ /* GENI_CLK_SEL fields */
+ #define CLK_SEL_MSK			GENMASK(2, 0)
+@@ -325,9 +347,9 @@ static inline u32 geni_se_read_proto(struct geni_se *se)
+ {
+ 	u32 val;
+ 
+-	val = readl_relaxed(se->base + GENI_FW_REVISION_RO);
++	val = readl_relaxed(se->base + SE_GENI_FW_REVISION_RO);
+ 
+-	return (val & FW_REV_PROTOCOL_MSK) >> FW_REV_PROTOCOL_SHFT;
++	return FIELD_GET(FW_REV_PROTOCOL_MSK, val);
+ }
+ 
+ /**
+@@ -531,5 +553,7 @@ void geni_icc_set_tag(struct geni_se *se, u32 tag);
+ int geni_icc_enable(struct geni_se *se);
+ 
+ int geni_icc_disable(struct geni_se *se);
++
++int geni_load_se_firmware(struct geni_se *se, enum geni_se_protocol_type protocol);
+ #endif
+ #endif
+diff --git a/include/linux/soc/qcom/qup-fw-load.h b/include/linux/soc/qcom/qup-fw-load.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/soc/qcom/qup-fw-load.h
+@@ -0,0 +1,93 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
++ */
++#ifndef _LINUX_QCOM_QUP_FW_LOAD
++#define _LINUX_QCOM_QUP_FW_LOAD
++
++#include <linux/kernel.h>
++
++/*Magic numbers*/
++#define MAGIC_NUM_SE			0x57464553
++
++#define MAX_GENI_CFG_RAMn_CNT		455
++
++#define MI_PBT_NON_PAGED_SEGMENT	0x0
++#define MI_PBT_HASH_SEGMENT		0x2
++#define MI_PBT_NOTUSED_SEGMENT		0x3
++#define MI_PBT_SHARED_SEGMENT		0x4
++
++#define MI_PBT_FLAG_PAGE_MODE		BIT(20)
++#define MI_PBT_FLAG_SEGMENT_TYPE	GENMASK(26, 24)
++#define MI_PBT_FLAG_ACCESS_TYPE		GENMASK(23, 21)
++
++#define MI_PBT_PAGE_MODE_VALUE(x) FIELD_GET(MI_PBT_FLAG_PAGE_MODE, x)
++
++#define MI_PBT_SEGMENT_TYPE_VALUE(x) FIELD_GET(MI_PBT_FLAG_SEGMENT_TYPE, x)
++
++#define MI_PBT_ACCESS_TYPE_VALUE(x) FIELD_GET(MI_PBT_FLAG_ACCESS_TYPE, x)
++
++#define M_COMMON_GENI_M_IRQ_EN	(GENMASK(6, 1) | \
++				M_IO_DATA_DEASSERT_EN | \
++				M_IO_DATA_ASSERT_EN | M_RX_FIFO_RD_ERR_EN | \
++				M_RX_FIFO_WR_ERR_EN | M_TX_FIFO_RD_ERR_EN | \
++				M_TX_FIFO_WR_ERR_EN)
++
++/* DMA_TX/RX_IRQ_EN fields */
++#define DMA_DONE_EN		BIT(0)
++#define SBE_EN			BIT(2)
++#define RESET_DONE_EN		BIT(3)
++#define FLUSH_DONE_EN		BIT(4)
++
++/* GENI_CLK_CTRL fields */
++#define SER_CLK_SEL		BIT(0)
++
++/* GENI_DMA_IF_EN fields */
++#define DMA_IF_EN		BIT(0)
++
++#define QUPV3_COMMON_CFG		0x120
++#define FAST_SWITCH_TO_HIGH_DISABLE	BIT(0)
++
++#define QUPV3_SE_AHB_M_CFG		0x118
++#define AHB_M_CLK_CGC_ON		BIT(0)
++
++#define QUPV3_COMMON_CGC_CTRL		0x21C
++#define COMMON_CSR_SLV_CLK_CGC_ON	BIT(0)
++
++/* access ports */
++#define geni_setbits32(_addr, _v) writel_relaxed(readl_relaxed(_addr) |  (_v), _addr)
++#define geni_clrbits32(_addr, _v) writel_relaxed(readl_relaxed(_addr) & ~(_v), _addr)
++
++/**
++ * struct se_fw_hdr - Serial Engine firmware configuration header
++ *
++ * This structure defines metadata for the Serial Engine (SE) firmware
++ * configuration. Although it is embedded within an ELF segment, it is
++ * not part of the ELF format itself.
++ *
++ * @magic: Set to 'SEFW'
++ * @version: Structure version number
++ * @core_version: QUPV3 hardware version
++ * @serial_protocol: Encoded in GENI_FW_REVISION
++ * @fw_version: Firmware version, from GENI_FW_REVISION
++ * @cfg_version: Configuration version, from GENI_INIT_CFG_REVISION
++ * @fw_size_in_items: Number of 32-bit words in GENI_FW_RAM
++ * @fw_offset: Byte offset to GENI_FW_RAM array
++ * @cfg_size_in_items: Number of GENI_FW_CFG index/value pairs
++ * @cfg_idx_offset: Byte offset to GENI_FW_CFG index array
++ * @cfg_val_offset: Byte offset to GENI_FW_CFG values array
++ */
++struct se_fw_hdr {
++	__le32 magic;
++	u32 version;
++	u32 core_version;
++	u16 serial_protocol;
++	u16 fw_version;
++	u16 cfg_version;
++	u16 fw_size_in_items;
++	u16 fw_offset;
++	u16 cfg_size_in_items;
++	u16 cfg_idx_offset;
++	u16 cfg_val_offset;
++};
++#endif /* _LINUX_QCOM_QUP_FW_LOAD */
+-- 
+Armbian
+
