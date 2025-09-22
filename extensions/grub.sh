@@ -19,7 +19,7 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
 		unset BOOTSOURCE                                                                 # To try and convince lib/ to not build or install u-boot.
 		declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		declare -g UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+		declare -g UEFISIZE=260                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
 		declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
 		declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
