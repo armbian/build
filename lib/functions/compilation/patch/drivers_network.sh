@@ -38,10 +38,10 @@ driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.16; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:07f03cf721f5e0317012ece4159834327680ba8b' # Commit date: 2025-06-21 (please update when updating commit ref)
+		local rtl8189esver='commit:0a5d04114fac3c9f48a343cb905fbb6a3f9f5df5' # Commit date: 2025-09-26 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -87,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:d0f15f392570499f3e48f6d157c89cadf393a739' # Commit date: 2025-06-21 (please update when updating commit ref)
+		local rtl8189fsver='commit:876e627a5b6a8021700391b4249a4a31edfebe5c' # Commit date: 2025-09-26 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
