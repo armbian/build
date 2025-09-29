@@ -109,6 +109,12 @@ function install_distribution_agnostic() {
 	# display welcome message at first root login which is ready by /usr/sbin/armbian/armbian-firstlogin
 	touch "${SDCARD}"/root/.not_logged_in_yet
 
+	# use user provided firstboot config
+	if [[ -f "${USERPATCHES_PATH}/firstboot.conf" ]]; then
+		display_alert "Use user provided firstboot config" "" "info"
+		cp "${USERPATCHES_PATH}/firstboot.conf" "${SDCARD}"/root/.not_logged_in_yet
+	fi
+
 	if [[ ${DESKTOP_AUTOLOGIN} == yes ]]; then
 		# set desktop autologin
 		touch "${SDCARD}"/root/.desktop_autologin
