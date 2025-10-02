@@ -1,0 +1,141 @@
+From 0d739925590b4a67db4468920a6288b707b87f7e Mon Sep 17 00:00:00 2001
+From: Vedang Nagar <quic_vnagar@quicinc.com>
+Date: Fri, 7 Feb 2025 13:25:06 +0530
+Subject: [PATCH] media: iris: add check to allow sub states transitions
+
+Based on the design of the state machine, add checks whether the
+transition from one sub-state to another is allowed.
+
+Signed-off-by: Vedang Nagar <quic_vnagar@quicinc.com>
+Tested-by: Stefan Schmidt <stefan.schmidt@linaro.org> # x1e80100 (Dell XPS 13 9345)
+Reviewed-by: Stefan Schmidt <stefan.schmidt@linaro.org>
+Tested-by: Neil Armstrong <neil.armstrong@linaro.org> # on SM8550-QRD
+Tested-by: Neil Armstrong <neil.armstrong@linaro.org> # on SM8550-HDK
+Signed-off-by: Dikshita Agarwal <quic_dikshita@quicinc.com>
+Link: https://lore.kernel.org/r/20250207-qcom-video-iris-v10-26-ab66eeffbd20@quicinc.com
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ .../qcom/iris/iris_hfi_gen1_command.c         | 12 +++++-
+ drivers/media/platform/qcom/iris/iris_state.c | 40 +++++++++++++++++++
+ drivers/media/platform/qcom/iris/iris_state.h |  3 ++
+ 3 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index e1fbbb3c196d..64f887d9a17d 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -135,6 +135,9 @@ static int iris_hfi_gen1_session_start(struct iris_inst *inst, u32 plane)
+ 	if (!V4L2_TYPE_IS_OUTPUT(plane))
+ 		return 0;
+ 
++	if (inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES)
++		return 0;
++
+ 	reinit_completion(&inst->completion);
+ 	iris_hfi_gen1_packet_session_cmd(inst, &packet, HFI_CMD_SESSION_LOAD_RESOURCES);
+ 
+@@ -153,7 +156,11 @@ static int iris_hfi_gen1_session_start(struct iris_inst *inst, u32 plane)
+ 	if (ret)
+ 		return ret;
+ 
+-	return iris_wait_for_session_response(inst, false);
++	ret = iris_wait_for_session_response(inst, false);
++	if (ret)
++		return ret;
++
++	return iris_inst_change_sub_state(inst, 0, IRIS_INST_SUB_LOAD_RESOURCES);
+ }
+ 
+ static int iris_hfi_gen1_session_stop(struct iris_inst *inst, u32 plane)
+@@ -180,6 +187,9 @@ static int iris_hfi_gen1_session_stop(struct iris_inst *inst, u32 plane)
+ 		ret = iris_hfi_queue_cmd_write(core, &pkt, pkt.shdr.hdr.size);
+ 		if (!ret)
+ 			ret = iris_wait_for_session_response(inst, false);
++
++		iris_inst_change_sub_state(inst, IRIS_INST_SUB_LOAD_RESOURCES, 0);
++
+ 		iris_helper_buffers_done(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+ 					 VB2_BUF_STATE_ERROR);
+ 		iris_helper_buffers_done(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
+diff --git a/drivers/media/platform/qcom/iris/iris_state.c b/drivers/media/platform/qcom/iris/iris_state.c
+index f12306e735ec..5976e926c83d 100644
+--- a/drivers/media/platform/qcom/iris/iris_state.c
++++ b/drivers/media/platform/qcom/iris/iris_state.c
+@@ -105,6 +105,43 @@ int iris_inst_state_change_streamoff(struct iris_inst *inst, u32 plane)
+ 	return iris_inst_change_state(inst, new_state);
+ }
+ 
++static bool iris_inst_allow_sub_state(struct iris_inst *inst, enum iris_inst_sub_state sub_state)
++{
++	if (!sub_state)
++		return true;
++
++	switch (inst->state) {
++	case IRIS_INST_INIT:
++		if (sub_state & IRIS_INST_SUB_LOAD_RESOURCES)
++			return true;
++		return false;
++	case IRIS_INST_INPUT_STREAMING:
++		if (sub_state & (IRIS_INST_SUB_FIRST_IPSC | IRIS_INST_SUB_DRC |
++			IRIS_INST_SUB_DRAIN | IRIS_INST_SUB_INPUT_PAUSE))
++			return true;
++		return false;
++	case IRIS_INST_OUTPUT_STREAMING:
++		if (sub_state & (IRIS_INST_SUB_DRC_LAST |
++			IRIS_INST_SUB_DRAIN_LAST | IRIS_INST_SUB_OUTPUT_PAUSE))
++			return true;
++		return false;
++	case IRIS_INST_STREAMING:
++		if (sub_state & (IRIS_INST_SUB_DRC | IRIS_INST_SUB_DRAIN |
++			IRIS_INST_SUB_DRC_LAST | IRIS_INST_SUB_DRAIN_LAST |
++			IRIS_INST_SUB_INPUT_PAUSE | IRIS_INST_SUB_OUTPUT_PAUSE))
++			return true;
++		return false;
++	case IRIS_INST_DEINIT:
++		if (sub_state & (IRIS_INST_SUB_DRC | IRIS_INST_SUB_DRAIN |
++			IRIS_INST_SUB_DRC_LAST | IRIS_INST_SUB_DRAIN_LAST |
++			IRIS_INST_SUB_INPUT_PAUSE | IRIS_INST_SUB_OUTPUT_PAUSE))
++			return true;
++		return false;
++	default:
++		return false;
++	}
++}
++
+ int iris_inst_change_sub_state(struct iris_inst *inst,
+ 			       enum iris_inst_sub_state clear_sub_state,
+ 			       enum iris_inst_sub_state set_sub_state)
+@@ -124,6 +161,9 @@ int iris_inst_change_sub_state(struct iris_inst *inst,
+ 
+ 	prev_sub_state = inst->sub_state;
+ 
++	if (!iris_inst_allow_sub_state(inst, set_sub_state))
++		return -EINVAL;
++
+ 	inst->sub_state |= set_sub_state;
+ 	inst->sub_state &= ~clear_sub_state;
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_state.h b/drivers/media/platform/qcom/iris/iris_state.h
+index a5c0cad4a78c..78c61aac5e7e 100644
+--- a/drivers/media/platform/qcom/iris/iris_state.h
++++ b/drivers/media/platform/qcom/iris/iris_state.h
+@@ -113,6 +113,8 @@ enum iris_inst_state {
+  * @IRIS_INST_SUB_OUTPUT_PAUSE: last buffer is received form firmware as part
+  *                             of drc sequence. This indicates that
+  *                             firmware is paused to process any further output frames.
++ * @IRIS_INST_SUB_LOAD_RESOURCES: indicates all the resources have been loaded by the
++ *                               firmware and it is ready for processing.
+  */
+ enum iris_inst_sub_state {
+ 	IRIS_INST_SUB_FIRST_IPSC	= BIT(0),
+@@ -122,6 +124,7 @@ enum iris_inst_sub_state {
+ 	IRIS_INST_SUB_DRAIN_LAST	= BIT(4),
+ 	IRIS_INST_SUB_INPUT_PAUSE	= BIT(5),
+ 	IRIS_INST_SUB_OUTPUT_PAUSE	= BIT(6),
++	IRIS_INST_SUB_LOAD_RESOURCES	= BIT(7),
+ };
+ 
+ int iris_inst_change_state(struct iris_inst *inst,
+-- 
+2.34.1
+
