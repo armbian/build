@@ -174,8 +174,8 @@ driver_rtl8192EU() {
 driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
-
-	if linux-version compare "${version}" ge 3.14; then
+	# disabled from 6.17 and on.
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.17; then
 
 		# Attach to specific commit (is branch:v5.6.4.2_fix_6.15)
 		local rtl8812auver="commit:6e736a32f24605d8625d90f0edabf5a1669c7a74" # Commit date: 2025-06-01 (please update when updating commit ref)
@@ -259,11 +259,8 @@ driver_xradio_xr819() {
 driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
-	if linux-version compare "${version}" ge 3.14; then
-
-		# deprecate this driver with 6.12+
-		# https://github.com/morrownr/8821cu-20210916/commit/945c687aa1e62ee0b95b1ddd1dbfdbd513c30152
-
+	# disabled from 6.17 and on, see https://github.com/morrownr/8821cu-20210916/commit/945c687aa1e62ee0b95b1ddd1dbfdbd513c30152
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.17; then
 		# Attach to specific commit (is branch:main)
 		local rtl8811cuver="commit:d74134a1c68f59f2b80cdd6c6afb8c1a8a687cbf" # Commit date: 2025-05-08 (please update when updating commit ref)
 
@@ -307,10 +304,8 @@ driver_rtl88x2bu() {
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
-	if linux-version compare "${version}" ge 5.0; then
-
-		# deprecate this driver with 6.12+
-		# https://github.com/morrownr/88x2bu-20210702/commit/fe48647496798cac77976e310ee95da000b436c9
+	# disabled from 6.17 and on, see https://github.com/morrownr/88x2bu-20210702/commit/fe48647496798cac77976e310ee95da000b436c9
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 6.17; then
 
 		# Attach to specific commit (is branch:main)
 		local rtl88x2buver="commit:1ee13286e0b212c22946aa8d51aa7d84cb876cd4" # Commit date: 2025-05-06 (please update when updating commit ref)
@@ -360,7 +355,7 @@ driver_rtw88() {
 			process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 		fi
 	fi
-	
+
 	if linux-version compare "${version}" eq 6.1 || linux-version compare "${version}" eq 6.16; then
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel 6.1.x/6.16.x.
 	fi
