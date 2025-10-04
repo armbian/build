@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: HackingGate <i@hackinggate.com>
-Date: Sat, 4 Oct 2025 12:37:18 +0900
+Date: Sat, 25 Oct 2025 23:05:48 +0900
 Subject: [PATCH] arm64: rockchip: rk3576: add photonicat power manager
 
 ---
@@ -8,38 +8,35 @@ Subject: [PATCH] arm64: rockchip: rk3576: add photonicat power manager
  drivers/staging/Makefile                      |    1 +
  drivers/staging/photonicat-pm/Kconfig         |   13 +
  drivers/staging/photonicat-pm/Makefile        |    1 +
- drivers/staging/photonicat-pm/photonicat-pm.c | 1526 +++++++++++++++++
- 5 files changed, 1543 insertions(+)
+ drivers/staging/photonicat-pm/photonicat-pm.c | 1531 +++++++++++++++++
+ 5 files changed, 1548 insertions(+)
  create mode 100644 drivers/staging/photonicat-pm/Kconfig
  create mode 100644 drivers/staging/photonicat-pm/Makefile
  create mode 100644 drivers/staging/photonicat-pm/photonicat-pm.c
 
 diff --git a/drivers/staging/Kconfig b/drivers/staging/Kconfig
-index 075e775d3868..72901a0be577 100644
+index 075e775d3868..3fe77abdb77c 100644
 --- a/drivers/staging/Kconfig
 +++ b/drivers/staging/Kconfig
-@@ -48,6 +48,8 @@ source "drivers/staging/axis-fifo/Kconfig"
+@@ -50,4 +50,6 @@ source "drivers/staging/vme_user/Kconfig"
  
- source "drivers/staging/vme_user/Kconfig"
+ source "drivers/staging/gpib/Kconfig"
  
 +source "drivers/staging/photonicat-pm/Kconfig"
 +
- source "drivers/staging/gpib/Kconfig"
- 
  endif # STAGING
 diff --git a/drivers/staging/Makefile b/drivers/staging/Makefile
-index e681e403509c..93c86d551601 100644
+index 640c9f994013..dce556962331 100644
 --- a/drivers/staging/Makefile
 +++ b/drivers/staging/Makefile
-@@ -13,4 +13,5 @@ obj-$(CONFIG_MOST)		+= most/
- obj-$(CONFIG_GREYBUS)		+= greybus/
- obj-$(CONFIG_BCM2835_VCHIQ)	+= vc04_services/
+@@ -15,3 +15,4 @@ obj-$(CONFIG_BCM2835_VCHIQ)	+= vc04_services/
  obj-$(CONFIG_XIL_AXIS_FIFO)	+= axis-fifo/
-+obj-$(CONFIG_PHOTONICAT_PM)	+= photonicat-pm/
  obj-$(CONFIG_GPIB)	 	+= gpib/
+ obj-$(CONFIG_RTL8723CS)                += rtl8723cs/
++obj-$(CONFIG_PHOTONICAT_PM)	+= photonicat-pm/
 diff --git a/drivers/staging/photonicat-pm/Kconfig b/drivers/staging/photonicat-pm/Kconfig
 new file mode 100644
-index 000000000000..0563a2e0c7d5
+index 000000000000..f027f18ae4a8
 --- /dev/null
 +++ b/drivers/staging/photonicat-pm/Kconfig
 @@ -0,0 +1,13 @@
@@ -56,7 +53,6 @@ index 000000000000..0563a2e0c7d5
 +	help
 +	  Power manager for photonicat board. Unless you have the platform,
 +	  you will want to say 'N'.
-\ No newline at end of file
 diff --git a/drivers/staging/photonicat-pm/Makefile b/drivers/staging/photonicat-pm/Makefile
 new file mode 100644
 index 000000000000..9e432423428b
@@ -67,10 +63,10 @@ index 000000000000..9e432423428b
 \ No newline at end of file
 diff --git a/drivers/staging/photonicat-pm/photonicat-pm.c b/drivers/staging/photonicat-pm/photonicat-pm.c
 new file mode 100644
-index 000000000000..b6cffa81aaf9
+index 000000000000..f210ffb78e17
 --- /dev/null
 +++ b/drivers/staging/photonicat-pm/photonicat-pm.c
-@@ -0,0 +1,1526 @@
+@@ -0,0 +1,1531 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Copyright (c) 2025, Kyosuke Nekoyashiki <supercatexpert@gmail.com>
@@ -106,7 +102,7 @@ index 000000000000..b6cffa81aaf9
 +#define PCAT_PM_BUFFER_SIZE 4096
 +#define PCAT_PM_WATCHDOG_DEFAULT_INTERVAL 10
 +
-+typedef enum {
++enum pcat_pm_command_type {
 +	PCAT_PM_COMMAND_HEARTBEAT = 0x1,
 +	PCAT_PM_COMMAND_HEARTBEAT_ACK = 0x2,
 +	PCAT_PM_COMMAND_PMU_HW_VERSION_GET = 0x3,
@@ -139,7 +135,7 @@ index 000000000000..b6cffa81aaf9
 +	PCAT_PM_COMMAND_FAN_SET_ACK = 0x94,
 +	PCAT_PM_COMMAND_DEVICE_MOVEMENT = 0x95,
 +	PCAT_PM_COMMAND_DEVICE_MOVEMENT_ACK = 0x96,
-+}PCatPMCommandType;
++};
 +
 +static enum power_supply_property pcat_pm_battery_v1_properties[] = {
 +	POWER_SUPPLY_PROP_STATUS,
@@ -189,24 +185,24 @@ index 000000000000..b6cffa81aaf9
 +	wait_queue_head_t ctl_wait;
 +	struct thermal_cooling_device *cdev;
 +	struct kobject kobject;
-+	
++
 +	u32 pm_version;
 +	bool work_flag;
 +	bool poweroff_ok;
 +	u32 baudrate;
 +	u32 force_poweroff_timeout;
 +	u16 write_framenum;
-+	
++
 +	u8 read_buffer[PCAT_PM_BUFFER_SIZE];
 +	size_t read_buffer_used;
-+	
++
 +	u8 ctl_write_buffer[PCAT_PM_BUFFER_SIZE];
 +	size_t ctl_write_buffer_used;
 +	bool ctl_write_buffer_ready;
-+	
++
 +	u8 ctl_read_buffer[PCAT_PM_BUFFER_SIZE];
 +	size_t ctl_read_buffer_used;
-+	
++
 +	struct mutex mutex;
 +	u64 status_report_timestamp;
 +	u64 status_report_timeout_warn_timestamp;
@@ -228,7 +224,7 @@ index 000000000000..b6cffa81aaf9
 +	int gs_z;
 +	bool gs_ready;
 +	u32 fan_speed;
-+	
++
 +	u16 rtc_year;
 +	u8 rtc_month;
 +	u8 rtc_day;
@@ -236,7 +232,7 @@ index 000000000000..b6cffa81aaf9
 +	u8 rtc_min;
 +	u8 rtc_sec;
 +	u8 rtc_status;
-+	
++
 +	unsigned long fan_ctrl_speed;
 +	u64 movement_timestamp;
 +	bool movement_activated;
@@ -247,15 +243,15 @@ index 000000000000..b6cffa81aaf9
 +	u16 frame_num, u16 command, const u8 *extra_data,
 +	u16 extra_data_len, bool need_ack);
 +
-+static inline u16 pcat_pm_compute_crc16(const u8 *data, size_t len) 
++static inline u16 pcat_pm_compute_crc16(const u8 *data, size_t len)
 +{
 +	u16 crc = 0xFFFF;
 +	size_t i;
 +	unsigned int j;
 +
-+	for (i=0;i<len;i++) {
++	for (i = 0; i < len; i++) {
 +		crc ^= data[i];
-+		for (j=0;j<8;j++) {
++		for (j = 0; j < 8; j++) {
 +			if (crc & 1)
 +				crc = (crc >> 1) ^ 0xA001;
 +			else
@@ -267,7 +263,7 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_uart_write_data(struct pcat_pm_data *pm_data,
-+	u16 command, const u8 *extra_data, u16 extra_data_len,
++				   u16 command, const u8 *extra_data, u16 extra_data_len,
 +	bool need_ack, long timeout)
 +{
 +	u8 data[1024];
@@ -275,75 +271,75 @@ index 000000000000..b6cffa81aaf9
 +	u16 sv;
 +	u16 dp_size;
 +	int ret;
-+	
++
 +	memcpy(data, (const u8 *)"\xA5\x01\x81", 3);
 +	data_size += 3;
-+	
++
 +	mutex_lock(&pm_data->mutex);
 +	data[data_size] = pm_data->write_framenum & 0xFF;
-+	data[data_size+1] = (pm_data->write_framenum >> 8)& 0xFF;
++	data[data_size + 1] = (pm_data->write_framenum >> 8) & 0xFF;
 +	data_size += 2;
 +	pm_data->write_framenum++;
 +	mutex_unlock(&pm_data->mutex);
-+	
-+	if (extra_data!=NULL && extra_data_len > 0 && extra_data_len <= 512) {
++
++	if (extra_data && extra_data_len > 0 && extra_data_len <= 512) {
 +		sv = extra_data_len + 3;
 +		data[data_size] = sv & 0xFF;
-+		data[data_size+1] = (sv >> 8) & 0xFF;
++		data[data_size + 1] = (sv >> 8) & 0xFF;
 +		data_size += 2;
-+		
++
 +		sv = command;
 +		data[data_size] = sv & 0xFF;
-+		data[data_size+1] = (sv >> 8) & 0xFF;
++		data[data_size + 1] = (sv >> 8) & 0xFF;
 +		data_size += 2;
-+		
-+		memcpy(data+data_size, extra_data, extra_data_len);
++
++		memcpy(data + data_size, extra_data, extra_data_len);
 +		data_size += extra_data_len;
 +
 +		dp_size = extra_data_len + 3;
 +	} else {
 +		sv = 3;
 +		data[data_size] = sv & 0xFF;
-+		data[data_size+1] = (sv >> 8) & 0xFF;
++		data[data_size + 1] = (sv >> 8) & 0xFF;
 +		data_size += 2;
-+		
++
 +		sv = command;
 +		data[data_size] = sv & 0xFF;
-+		data[data_size+1] = (sv >> 8) & 0xFF;
++		data[data_size + 1] = (sv >> 8) & 0xFF;
 +		data_size += 2;
-+		
++
 +		dp_size = 3;
 +	}
-+	
++
 +	data[data_size] = need_ack ? 1 : 0;
 +	data_size++;
-+	
++
 +	sv = pcat_pm_compute_crc16(data + 1, dp_size + 6);
 +	data[data_size] = sv & 0xFF;
-+	data[data_size+1] = (sv >> 8) & 0xFF;
++	data[data_size + 1] = (sv >> 8) & 0xFF;
 +	data_size += 2;
-+	
++
 +	data[data_size] = 0x5A;
 +	data_size++;
-+	
++
 +	if (timeout > 0)
 +		ret = serdev_device_write(pm_data->serdev, data, data_size, timeout);
 +	else
 +		ret = serdev_device_write_buf(pm_data->serdev, data, data_size);
-+	
++
 +	if (ret < 0)
 +		dev_err(&pm_data->serdev->dev, "Failed to write serial port: %d\n", ret);
-+	
++
 +	return ret;
 +}
 +
 +static void pcat_pm_watchdog_timeout_set(struct pcat_pm_data *pm_data,
-+	u8 interval, long timeout)
++					 u8 interval, long timeout)
 +{
 +	u8 timeouts[3] = {60, pm_data->force_poweroff_timeout, interval};
 +
 +	pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_WATCHDOG_TIMEOUT_SET,
-+		timeouts, 3, false, timeout);
++				timeouts, 3, false, timeout);
 +}
 +
 +static void pcat_pm_worker_stop(struct pcat_pm_data *pm_data)
@@ -356,10 +352,11 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_battery_get_prop(struct power_supply *ps,
-+		enum power_supply_property prop,
++				    enum power_supply_property prop,
 +		union power_supply_propval *val)
 +{
 +	struct pcat_pm_data *pm_data = power_supply_get_drvdata(ps);
++
 +	switch (prop) {
 +	case POWER_SUPPLY_PROP_TECHNOLOGY:
 +		val->intval = pm_data->battery_technology;
@@ -439,7 +436,7 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_charger_get_prop(struct power_supply *ps,
-+		enum power_supply_property prop,
++				    enum power_supply_property prop,
 +		union power_supply_propval *val)
 +{
 +	struct pcat_pm_data *pm_data = power_supply_get_drvdata(ps);
@@ -460,19 +457,19 @@ index 000000000000..b6cffa81aaf9
 +	return 0;
 +}
 +
-+static const struct power_supply_desc pcat_pm_battery_v1_desc = {   
++static const struct power_supply_desc pcat_pm_battery_v1_desc = {
 +	.name = "battery",
 +	.type = POWER_SUPPLY_TYPE_BATTERY,
 +	.properties = pcat_pm_battery_v1_properties,
-+	.num_properties = ARRAY_SIZE(pcat_pm_battery_v1_properties), 
++	.num_properties = ARRAY_SIZE(pcat_pm_battery_v1_properties),
 +	.get_property = pcat_pm_battery_get_prop,
 +};
 +
-+static const struct power_supply_desc pcat_pm_battery_v2_desc = {   
++static const struct power_supply_desc pcat_pm_battery_v2_desc = {
 +	.name = "battery",
 +	.type = POWER_SUPPLY_TYPE_BATTERY,
 +	.properties = pcat_pm_battery_v2_properties,
-+	.num_properties = ARRAY_SIZE(pcat_pm_battery_v2_properties), 
++	.num_properties = ARRAY_SIZE(pcat_pm_battery_v2_properties),
 +	.get_property = pcat_pm_battery_get_prop,
 +};
 +
@@ -495,14 +492,14 @@ index 000000000000..b6cffa81aaf9
 +	pcat_pm_worker_stop(pm_data);
 +
 +	pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_HOST_REQUEST_SHUTDOWN,
-+		NULL, 0, true, msecs_to_jiffies(1000));
++				NULL, 0, true, msecs_to_jiffies(1000));
 +
-+	for (try_count = 0;try_count < 50;try_count++) {
++	for (try_count = 0; try_count < 50; try_count++) {
 +		if (pm_data->poweroff_ok)
 +			break;
 +		mdelay(100);
 +	}
-+	
++
 +	if (pm_data->poweroff_ok)
 +		dev_info(&pm_data->serdev->dev, "Shutdown request received.\n");
 +	else
@@ -534,23 +531,23 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static void pcat_pm_status_report_parse(struct pcat_pm_data *pm_data,
-+	const u8 *data, size_t data_len)
++					const u8 *data, size_t data_len)
 +{
 +	u16 battery_voltage, charger_voltage;
-+	u16 gpio_input, gpio_output;
++	u16 __maybe_unused gpio_input, __maybe_unused gpio_output;
 +	int temp = 0;
 +	u16 battery_current_raw = 0;
 +	s16 battery_current = 0;
 +	bool on_battery;
 +	int soc;
 +	u32 energy_now = 0, energy_full = 0;
-+	int gs_x = 0, gs_y =0, gs_z = 0;
++	int gs_x = 0, gs_y = 0, gs_z = 0;
 +	bool gs_ready = false;
 +	u32 fan_speed = 0;
 +
 +	if (data_len < 16)
 +		return;
-+		
++
 +	battery_voltage = data[0] | ((u16)data[1] << 8);
 +	charger_voltage = data[2] | ((u16)data[3] << 8);
 +	gpio_input = data[4] | ((u16)data[5] << 8);
@@ -561,11 +558,11 @@ index 000000000000..b6cffa81aaf9
 +		battery_current_raw = data[18] + ((u16)data[19] << 8);
 +		battery_current = (s16)battery_current_raw;
 +		on_battery = (battery_current > 0);
-+		
++
 +	} else {
 +		on_battery = (charger_voltage < 4200);
 +	}
-+	
++
 +	if (data_len >= 31) {
 +		energy_now = data[23] | ((u32)data[24] << 8) |
 +			((u32)data[25] << 16) | ((u32)data[26] << 24);
@@ -577,7 +574,7 @@ index 000000000000..b6cffa81aaf9
 +		soc = power_supply_batinfo_ocv2cap(
 +			pm_data->battery_info, (int)battery_voltage * 1000, 20);
 +	}
-+	
++
 +	if (data_len >= 52) {
 +		gs_x = data[35] | ((u32)data[36] << 8) |
 +			((u32)data[37] << 16) | ((u32)data[38] << 24);
@@ -585,13 +582,13 @@ index 000000000000..b6cffa81aaf9
 +			((u32)data[41] << 16) | ((u32)data[42] << 24);
 +		gs_z = data[43] | ((u32)data[44] << 8) |
 +			((u32)data[45] << 16) | ((u32)data[46] << 24);
-+		gs_ready = (data[47]!=0);
++		gs_ready = (data[47] != 0);
 +		fan_speed = data[48] | ((u32)data[49] << 8) |
 +			((u32)data[50] << 16) | ((u32)data[51] << 24);
 +	}
-+	
++
 +	pm_data->status_report_timestamp = ktime_get_boottime_ns();
-+	
++
 +	mutex_lock(&pm_data->mutex);
 +	pm_data->battery_voltage_now = battery_voltage * 1000;
 +	pm_data->charger_voltage_now = charger_voltage * 1000;
@@ -618,12 +615,12 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static void pcat_pm_uart_cmd_exec(struct pcat_pm_data *pm_data,
-+	const u8 *rawdata, size_t rawdata_len, u8 src, u8 dst, u16 frame_num,
++				  const u8 *rawdata, size_t rawdata_len, u8 src, u8 dst, u16 frame_num,
 +	u16 command, const u8 *extra_data, u16 extra_data_len, bool need_ack)
 +{
 +	size_t overflow_size;
 +
-+	if (dst!=0x1 && dst!=0x80 && dst!=0xFF)
++	if (dst != 0x1 && dst != 0x80 && dst != 0xFF)
 +		return;
 +
 +	switch (command) {
@@ -643,6 +640,13 @@ index 000000000000..b6cffa81aaf9
 +	case PCAT_PM_COMMAND_DEVICE_MOVEMENT:
 +		pm_data->movement_timestamp = ktime_get_boottime_ns();
 +		break;
++	case PCAT_PM_COMMAND_PMU_REQUEST_SHUTDOWN:
++		dev_info(&pm_data->serdev->dev,
++			 "Power button pressed, initiating shutdown\n");
++		/* Trigger graceful system shutdown */
++		orderly_poweroff(true);
++		need_ack = true;
++		break;
 +	default:
 +		mutex_lock(&pm_data->ctl_mutex);
 +		if (pm_data->ctl_write_buffer_used + rawdata_len > PCAT_PM_BUFFER_SIZE) {
@@ -652,30 +656,32 @@ index 000000000000..b6cffa81aaf9
 +				pm_data->ctl_write_buffer + overflow_size,
 +				PCAT_PM_BUFFER_SIZE - overflow_size);
 +			memcpy(pm_data->ctl_write_buffer + PCAT_PM_BUFFER_SIZE - rawdata_len,
-+				rawdata, rawdata_len);
++			       rawdata, rawdata_len);
 +			pm_data->ctl_write_buffer_used = PCAT_PM_BUFFER_SIZE;
 +		} else {
 +			memcpy(pm_data->ctl_write_buffer + pm_data->ctl_write_buffer_used,
-+				rawdata, rawdata_len);
++			       rawdata, rawdata_len);
 +			pm_data->ctl_write_buffer_used += rawdata_len;
 +		}
 +		pm_data->ctl_write_buffer_ready = true;
 +		mutex_unlock(&pm_data->ctl_mutex);
 +		wake_up_interruptible_all(&pm_data->ctl_wait);
-+		
-+		need_ack = false;
++
 +		dev_dbg(&pm_data->serdev->dev,
-+			"Got command %X from %X to %X, frame num %d, "
-+			"need ACK %d.\n", command, src, dst, frame_num, need_ack);		
-+		break;
++			"Got command %X from %X to %X, frame num %d, need ACK %d.\n",
++			command, src, dst, frame_num, need_ack);
++
++		if (need_ack) {
++			pcat_pm_uart_write_data(pm_data, command + 1, NULL, 0, false, 0);
++			dev_dbg(&pm_data->serdev->dev,
++				"Send ACK for command %X.\n", command);
++		}
++	break;
 +	}
-+	
-+	if (need_ack)
-+		pcat_pm_uart_write_data(pm_data, command+1, NULL, 0, false, 0);
 +}
 +
 +static size_t pcat_pm_uart_receive_parse(struct pcat_pm_data *pm_data,
-+	u8 *buffer, size_t *buffer_used, pcat_pm_cmd_exec_func cmd_exec_func)
++				 u8 *buffer, size_t *buffer_used, pcat_pm_cmd_exec_func cmd_exec_func)
 +{
 +	size_t used_size = 0, remaining_size;
 +	size_t i = 0;
@@ -686,7 +692,7 @@ index 000000000000..b6cffa81aaf9
 +	u8 src, dst;
 +	bool need_ack;
 +	u16 frame_num;
-+	
++
 +	if (*buffer_used < 13)
 +		return 0;
 +
@@ -696,7 +702,7 @@ index 000000000000..b6cffa81aaf9
 +			i++;
 +			continue;
 +		}
-+		
++
 +		p = buffer + i;
 +		remaining_size = *buffer_used - i;
 +
@@ -716,49 +722,49 @@ index 000000000000..b6cffa81aaf9
 +			break;
 +		}
 +
-+		if (p[9 + expect_len]!=0x5A) {
++		if (p[9 + expect_len] != 0x5A) {
 +			used_size = i + 1;
 +			i++;
 +			dev_err(&pm_data->serdev->dev,
 +				"Serial port data missing valid tail!");
 +			continue;
 +		}
-+		
-+		checksum = p[7+expect_len] + ((u16)p[8+expect_len] << 8);
-+		rchecksum = pcat_pm_compute_crc16(p+1, 6+expect_len);
-+		
-+		if (checksum!=rchecksum) {
++
++		checksum = p[7 + expect_len] + ((u16)p[8 + expect_len] << 8);
++		rchecksum = pcat_pm_compute_crc16(p + 1, 6 + expect_len);
++
++		if (checksum != rchecksum) {
 +			dev_err(&pm_data->serdev->dev,
-+				"Serial port got incorrect checksum %04X, "
-+				"should be %04X!", checksum, rchecksum);
++				"Serial port got incorrect checksum %04X, should be %04X!",
++				checksum, rchecksum);
 +			i += 10 + expect_len;
 +			used_size = i;
 +			continue;
 +		}
-+		
++
 +		src = p[1];
 +		dst = p[2];
-+		frame_num = p[3] + ((u16)p[4] << 8);			
++		frame_num = p[3] + ((u16)p[4] << 8);
 +		command = p[7] + ((u16)p[8] << 8);
 +		extra_data_len = expect_len - 3;
-+		
++
 +		if (expect_len > 3)
 +			extra_data = p + 9;
 +		else
 +			extra_data = NULL;
-+		need_ack = (p[6 + expect_len]!=0);
-+		
++		need_ack = (p[6 + expect_len] != 0);
++
 +		cmd_exec_func(pm_data, p, 10 + expect_len, src, dst, frame_num,
-+			command, extra_data, extra_data_len, need_ack);
-+		
++			      command, extra_data, extra_data_len, need_ack);
++
 +		i += 10 + expect_len;
-+    		used_size = i;
++		used_size = i;
 +	}
-+	
++
 +	if (used_size > 0) {
-+        	memmove(buffer, buffer + used_size,
-+        		*buffer_used - used_size);
-+        	*buffer_used -= used_size;
++		memmove(buffer, buffer + used_size,
++			*buffer_used - used_size);
++		*buffer_used -= used_size;
 +	}
 +
 +	return used_size;
@@ -774,19 +780,19 @@ index 000000000000..b6cffa81aaf9
 +		if (pm_data->read_buffer_used + count - used_size >
 +			PCAT_PM_BUFFER_SIZE) {
 +			memcpy(pm_data->read_buffer + pm_data->read_buffer_used,
-+				buf + used_size,
++			       buf + used_size,
 +				PCAT_PM_BUFFER_SIZE - pm_data->read_buffer_used);
 +			pm_data->read_buffer_used = PCAT_PM_BUFFER_SIZE;
 +			used_size += PCAT_PM_BUFFER_SIZE - pm_data->read_buffer_used;
 +		} else {
 +			memcpy(pm_data->read_buffer + pm_data->read_buffer_used,
-+				buf + used_size, count - used_size);
++			       buf + used_size, count - used_size);
 +			pm_data->read_buffer_used += count - used_size;
 +			used_size += count - used_size;
 +		}
 +
 +		pcat_pm_uart_receive_parse(pm_data, pm_data->read_buffer,
-+			&pm_data->read_buffer_used, pcat_pm_uart_cmd_exec);
++					   &pm_data->read_buffer_used, pcat_pm_uart_cmd_exec);
 +	}
 +
 +	return count;
@@ -799,30 +805,28 @@ index 000000000000..b6cffa81aaf9
 +
 +static void pcat_pm_check_work(struct kthread_work *work)
 +{
-+        struct pcat_pm_data *pm_data;
-+        u64 now;
++	struct pcat_pm_data *pm_data;
++	u64 now;
 +
-+        pm_data = container_of(work, struct pcat_pm_data, check_work);
-+        
-+        if (pm_data->work_flag)
-+	        pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_HEARTBEAT,
-+	        	NULL, 0, false, 0);
++	pm_data = container_of(work, struct pcat_pm_data, check_work);
++
++	if (pm_data->work_flag)
++		pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_HEARTBEAT,
++					NULL, 0, false, 0);
 +
 +	now = ktime_get_boottime_ns();
-+	
++
 +	if (now >= pm_data->status_report_timestamp + 15000000000UL &&
-+		now >= pm_data->status_report_timeout_warn_timestamp + 15000000000UL) {
++	    now >= pm_data->status_report_timeout_warn_timestamp + 15000000000UL) {
 +		dev_warn(&pm_data->serdev->dev, "Status report timeout!");
 +		pm_data->status_report_timeout_warn_timestamp = now;
 +	}
-+	
++
 +	if (now >= pm_data->movement_timestamp &&
-+		now < pm_data->movement_timestamp + 5000000000UL) {
-+		
++	    now < pm_data->movement_timestamp + 5000000000UL) {
 +		if (!pm_data->movement_activated) {
 +			pm_data->movement_activated = true;
-+			
-+			
++
 +		}
 +	} else {
 +		if (pm_data->movement_activated) {
@@ -833,12 +837,12 @@ index 000000000000..b6cffa81aaf9
 +
 +static enum hrtimer_restart pcat_pm_check_timer_expired(struct hrtimer *timer)
 +{
-+        struct pcat_pm_data *pm_data;
++	struct pcat_pm_data *pm_data;
 +
-+        pm_data = container_of(timer, struct pcat_pm_data, check_timer);
-+        
++	pm_data = container_of(timer, struct pcat_pm_data, check_timer);
++
 +	kthread_queue_work(pm_data->kworker, &pm_data->check_work);
-+	
++
 +	hrtimer_forward_now(timer, ms_to_ktime(1000));
 +
 +	return HRTIMER_RESTART;
@@ -849,11 +853,11 @@ index 000000000000..b6cffa81aaf9
 +	struct serdev_device *serdev = pm_data->serdev;
 +	struct device *dev = &serdev->dev;
 +	int ret;
-+	
++
 +	ret = devm_serdev_device_open(dev, serdev);
 +	if (ret < 0)
 +		return ret;
-+		
++
 +	ret = serdev_device_set_parity(serdev, SERDEV_PARITY_NONE);
 +	if (ret < 0) {
 +		dev_err(dev, "set parity failed\n");
@@ -871,13 +875,12 @@ index 000000000000..b6cffa81aaf9
 +	}
 +
 +	sched_set_fifo(pm_data->kworker->task);
-+		
++
 +	kthread_init_work(&pm_data->check_work, pcat_pm_check_work);
-+	hrtimer_init(&pm_data->check_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_HARD);
-+	pm_data->check_timer.function = pcat_pm_check_timer_expired;
-+	
++	hrtimer_setup(&pm_data->check_timer, pcat_pm_check_timer_expired, CLOCK_MONOTONIC, HRTIMER_MODE_REL_HARD);
++
 +	hrtimer_start(&pm_data->check_timer, ms_to_ktime(1000), HRTIMER_MODE_REL_HARD);
-+	
++
 +	pcat_pm_watchdog_timeout_set(pm_data, PCAT_PM_WATCHDOG_DEFAULT_INTERVAL, 0);
 +
 +	return 0;
@@ -894,10 +897,10 @@ index 000000000000..b6cffa81aaf9
 +	int ret;
 +
 +	if (device_property_read_u32(dev, "pm-version",
-+				&pm_data->pm_version)) {
++				     &pm_data->pm_version)) {
 +		pm_data->pm_version = 1;
 +	}
-+	
++
 +	if (pm_data->pm_version > 1)
 +		battery_psy_desc = &pcat_pm_battery_v2_desc;
 +	else
@@ -908,33 +911,33 @@ index 000000000000..b6cffa81aaf9
 +		dev_err(dev, "Missing charger node!\n");
 +		return -ENODEV;
 +	}
-+	
++
 +	pscfg.drv_data = pm_data;
-+	pscfg.of_node = charger_node;
++	pscfg.fwnode = of_fwnode_handle(charger_node);
 +
 +	pm_data->battery_psy = power_supply_register(dev, battery_psy_desc, &pscfg);
 +	if (IS_ERR(pm_data->battery_psy)) {
 +		ret = PTR_ERR(pm_data->battery_psy);
 +		dev_err(dev, "Failed to register battery power supply: %d\n", ret);
-+		
++
 +		return -EINVAL;
 +	}
-+	
++
 +	pm_data->charger_psy = power_supply_register(dev, &pcat_pm_charger_desc, &pscfg);
 +	if (IS_ERR(pm_data->charger_psy)) {
 +		ret = PTR_ERR(pm_data->charger_psy);
 +		dev_err(dev, "Failed to register battery power supply: %d\n", ret);
-+		
++
 +		return -EINVAL;
 +	}
-+	
++
 +	ret = power_supply_get_battery_info(pm_data->battery_psy, &bat_info);
 +	if (ret) {
 +		dev_err(dev, "Failed to get battery info: %d\n", ret);
 +
 +		return ret;
 +	}
-+	
++
 +	pm_data->battery_technology = bat_info->technology;
 +	pm_data->battery_design_uwh = bat_info->energy_full_design_uwh;
 +	pm_data->battery_design_min_uv = bat_info->voltage_min_design_uv;
@@ -951,7 +954,7 @@ index 000000000000..b6cffa81aaf9
 +{
 +	struct serdev_device *serdev;
 +	struct pcat_pm_data *pm_data;
-+	
++
 +	serdev = container_of(dev, struct serdev_device, dev);
 +	pm_data = serdev_device_get_drvdata(serdev);
 +
@@ -973,7 +976,7 @@ index 000000000000..b6cffa81aaf9
 +	struct pcat_pm_data *pm_data;
 +	u8 date_data[7];
 +	u16 y;
-+	
++
 +	serdev = container_of(dev, struct serdev_device, dev);
 +	pm_data = serdev_device_get_drvdata(serdev);
 +
@@ -985,7 +988,7 @@ index 000000000000..b6cffa81aaf9
 +	date_data[4] = t->tm_hour;
 +	date_data[5] = t->tm_min;
 +	date_data[6] = t->tm_sec;
-+	
++
 +	return pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_DATE_TIME_SYNC,
 +		date_data, 7, true, 0);
 +}
@@ -996,7 +999,7 @@ index 000000000000..b6cffa81aaf9
 +	struct pcat_pm_data *pm_data;
 +	int status;
 +	int flags = 0;
-+	
++
 +	serdev = container_of(dev, struct serdev_device, dev);
 +	pm_data = serdev_device_get_drvdata(serdev);
 +
@@ -1012,7 +1015,7 @@ index 000000000000..b6cffa81aaf9
 +		return put_user(flags, (unsigned int __user *)arg);
 +
 +	default:
-+		return -ENOIOCTLCMD;  
++		return -ENOIOCTLCMD;
 +	}
 +}
 +
@@ -1032,7 +1035,7 @@ index 000000000000..b6cffa81aaf9
 +		dev_err(&pm_data->serdev->dev, "Cannot allocate RTC device: %d\n", ret);
 +		return ret;
 +	}
-+		
++
 +	pm_data->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
 +	pm_data->rtc->range_max = RTC_TIMESTAMP_END_2099;
 +	pm_data->rtc->ops = &pcat_pm_rtcops;
@@ -1048,7 +1051,7 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static umode_t pcat_pm_hwmon_temp_mb_is_visible(const void *data,
-+					enum hwmon_sensor_types type,
++						enum hwmon_sensor_types type,
 +					u32 attr, int channel)
 +{
 +	if (type != hwmon_temp)
@@ -1063,7 +1066,7 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static umode_t pcat_pm_hwmon_speed_fan_is_visible(const void *data,
-+					enum hwmon_sensor_types type,
++						  enum hwmon_sensor_types type,
 +					u32 attr, int channel)
 +{
 +	if (type != hwmon_fan)
@@ -1078,16 +1081,15 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_hwmon_temp_mb_read(struct device *dev,
-+			      enum hwmon_sensor_types type,
++				      enum hwmon_sensor_types type,
 +			      u32 attr, int channel, long *val)
 +{
 +	struct serdev_device *serdev;
 +	struct pcat_pm_data *pm_data;
 +	int err = 0;
-+	
++
 +	serdev = container_of(dev, struct serdev_device, dev);
 +	pm_data = serdev_device_get_drvdata(serdev);
-+
 +
 +	switch (attr) {
 +	case hwmon_temp_input:
@@ -1104,16 +1106,15 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_hwmon_speed_fan_read(struct device *dev,
-+			      enum hwmon_sensor_types type,
++					enum hwmon_sensor_types type,
 +			      u32 attr, int channel, long *val)
 +{
 +	struct serdev_device *serdev;
 +	struct pcat_pm_data *pm_data;
 +	int err = 0;
-+	
++
 +	serdev = container_of(dev, struct serdev_device, dev);
 +	pm_data = serdev_device_get_drvdata(serdev);
-+
 +
 +	switch (attr) {
 +	case hwmon_fan_input:
@@ -1192,7 +1193,7 @@ index 000000000000..b6cffa81aaf9
 +			"Failed to register hwmon for MB temperature: %d\n", err);
 +		ret = err;
 +	}
-+	
++
 +	pm_data->hwmon_speed_fan_dev = devm_hwmon_device_register_with_info(
 +		&pm_data->serdev->dev, "pcat_pm_hwmon_speed_fan", pm_data,
 +		&pcat_pm_hwmon_speed_fan_chip_info, NULL);
@@ -1203,33 +1204,32 @@ index 000000000000..b6cffa81aaf9
 +		if (!ret)
 +			ret = err;
 +	}
-+		
++
 +	return ret;
 +}
 +
 +static ssize_t pcat_pm_ctl_dev_read(struct file *file, char *buffer,
-+	size_t count, loff_t *ppos)
++				    size_t count, loff_t *ppos)
 +{
 +	struct miscdevice *mdev = file->private_data;
 +	struct pcat_pm_data *pm_data;
 +	int ret;
 +	size_t copy_size = count;
-+	
++
 +	pm_data = container_of(mdev, struct pcat_pm_data, ctl_device);
-+	
++
 +	if (!pm_data->ctl_write_buffer_ready) {
 +		if (file->f_flags & O_NONBLOCK)
 +			return -EAGAIN;
 +
 +		ret = wait_event_interruptible(pm_data->ctl_wait,
-+			pm_data->ctl_write_buffer_ready);
++					       pm_data->ctl_write_buffer_ready);
 +		if (ret)
 +			return ret;
 +	}
-+	
++
 +	mutex_lock(&pm_data->ctl_mutex);
 +	if (pm_data->ctl_write_buffer_used > 0) {
-+	
 +		if (copy_size > pm_data->ctl_write_buffer_used)
 +			copy_size = pm_data->ctl_write_buffer_used;
 +		ret = copy_to_user(buffer, pm_data->ctl_write_buffer, copy_size);
@@ -1243,7 +1243,7 @@ index 000000000000..b6cffa81aaf9
 +				pm_data->ctl_write_buffer_used = 0;
 +			}
 +
-+			if(pm_data->ctl_write_buffer_used==0)
++			if (pm_data->ctl_write_buffer_used == 0)
 +				pm_data->ctl_write_buffer_ready = false;
 +		}
 +		mutex_unlock(&pm_data->ctl_mutex);
@@ -1260,13 +1260,13 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static void pcat_pm_ctl_cmd_exec(struct pcat_pm_data *pm_data,
-+	const u8 *rawdata, size_t rawdata_len, u8 src, u8 dst, u16 frame_num,
++				 const u8 *rawdata, size_t rawdata_len, u8 src, u8 dst, u16 frame_num,
 +	u16 command, const u8 *extra_data, u16 extra_data_len, bool need_ack)
 +{
 +	bool forward_cmd = false;
 +	int ret;
 +
-+	switch(command) {
++	switch (command) {
 +	case PCAT_PM_COMMAND_HEARTBEAT:
 +		break;
 +	case PCAT_PM_COMMAND_HEARTBEAT_ACK:
@@ -1295,24 +1295,24 @@ index 000000000000..b6cffa81aaf9
 +		forward_cmd = true;
 +		break;
 +	}
-+	
++
 +	if (!forward_cmd)
 +		return;
 +
 +	ret = serdev_device_write_buf(pm_data->serdev, rawdata, rawdata_len);
-+	
++
 +	if (ret < 0)
 +		dev_err(&pm_data->serdev->dev, "Failed to write serial port: %d\n", ret);
 +}
 +
 +static ssize_t pcat_pm_ctl_dev_write(struct file *file, const char __user *buffer,
-+	size_t count, loff_t *ppos)
++				     size_t count, loff_t *ppos)
 +{
 +	struct miscdevice *mdev = file->private_data;
 +	struct pcat_pm_data *pm_data;
 +	u16 crc;
 +	u16 expect_len;
-+	
++
 +	pm_data = container_of(mdev, struct pcat_pm_data, ctl_device);
 +
 +	if (count > PCAT_PM_BUFFER_SIZE)
@@ -1320,28 +1320,28 @@ index 000000000000..b6cffa81aaf9
 +
 +	if (copy_from_user(pm_data->ctl_read_buffer, buffer, count))
 +		return -EFAULT;
-+	
++
 +	if (count < 13)
 +		return count;
-+	
++
 +	pm_data->ctl_read_buffer_used = count;
 +	expect_len = pm_data->ctl_read_buffer[5] +
 +		((u16)pm_data->ctl_read_buffer[6] << 8);
 +	if (expect_len + 10 > count)
 +		return count;
-+	
++
 +	mutex_lock(&pm_data->mutex);
 +	pm_data->ctl_read_buffer[3] = pm_data->write_framenum & 0xFF;
 +	pm_data->ctl_read_buffer[4] = (pm_data->write_framenum >> 8) & 0xFF;
 +	pm_data->write_framenum++;
 +	mutex_unlock(&pm_data->mutex);
-+	
++
 +	crc = pcat_pm_compute_crc16(pm_data->ctl_read_buffer + 1, 6 + expect_len);
 +	pm_data->ctl_read_buffer[7 + expect_len] = crc & 0xFF;
 +	pm_data->ctl_read_buffer[8 + expect_len] = (crc >> 8) & 0xFF;
-+	
++
 +	pcat_pm_uart_receive_parse(pm_data, pm_data->ctl_read_buffer,
-+		&pm_data->ctl_read_buffer_used, pcat_pm_ctl_cmd_exec);
++				   &pm_data->ctl_read_buffer_used, pcat_pm_ctl_cmd_exec);
 +
 +	return count;
 +}
@@ -1371,8 +1371,8 @@ index 000000000000..b6cffa81aaf9
 +	.poll = pcat_pm_ctl_dev_poll,
 +};
 +
-+static int pcat_pm_fan_get_max_state(struct thermal_cooling_device *cdev, 
-+	unsigned long *state)
++static int pcat_pm_fan_get_max_state(struct thermal_cooling_device *cdev,
++				     unsigned long *state)
 +{
 +	*state = 9;
 +
@@ -1380,7 +1380,7 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_fan_get_cur_state(struct thermal_cooling_device *cdev,
-+	unsigned long *state)
++				     unsigned long *state)
 +{
 +	struct pcat_pm_data *pm_data = cdev->devdata;
 +
@@ -1390,16 +1390,16 @@ index 000000000000..b6cffa81aaf9
 +}
 +
 +static int pcat_pm_fan_set_cur_state(struct thermal_cooling_device *cdev,
-+	unsigned long state)
++				     unsigned long state)
 +{
 +	struct pcat_pm_data *pm_data = cdev->devdata;
 +	u8 speed_raw;
-+	
++
 +	if (state > 9)
 +		return -EINVAL;
 +
 +	pm_data->fan_ctrl_speed = state;
-+	
++
 +	if (state > 0) {
 +		speed_raw = 10 * (state - 1) + 20;
 +	} else {
@@ -1407,7 +1407,7 @@ index 000000000000..b6cffa81aaf9
 +	}
 +
 +	pcat_pm_uart_write_data(pm_data, PCAT_PM_COMMAND_FAN_SET,
-+		&speed_raw, 1, false, 0);
++				&speed_raw, 1, false, 0);
 +
 +	return 0;
 +}
@@ -1424,7 +1424,7 @@ index 000000000000..b6cffa81aaf9
 +	struct device *dev = &serdev->dev;
 +	struct thermal_cooling_device *cdev;
 +	struct device_node *fan_node;
-+	
++
 +	fan_node = of_get_child_by_name(dev->of_node, "fan");
 +	if (!fan_node) {
 +		dev_err(dev, "Missing fan node!\n");
@@ -1432,11 +1432,11 @@ index 000000000000..b6cffa81aaf9
 +	}
 +
 +	cdev = devm_thermal_of_cooling_device_register(dev, fan_node,
-+		"pcat-pm-fan", pm_data, &pcat_pm_fan_cooling_ops);
++						       "pcat-pm-fan", pm_data, &pcat_pm_fan_cooling_ops);
 +
 +	if (IS_ERR(cdev))
 +		return -ENODEV;
-+	
++
 +	pm_data->cdev = cdev;
 +
 +	return 0;
@@ -1447,10 +1447,10 @@ index 000000000000..b6cffa81aaf9
 +};
 +
 +static ssize_t movement_trigger_show(struct kobject *kobj,
-+	struct kobj_attribute *attr, char *buf)
++				     struct kobj_attribute *attr, char *buf)
 +{
 +	struct pcat_pm_data *pm_data;
-+	
++
 +	pm_data = container_of(kobj, struct pcat_pm_data, kobject);
 +
 +	return sprintf(buf, "%u\n", pm_data->movement_activated ? 1 : 0);
@@ -1471,19 +1471,19 @@ index 000000000000..b6cffa81aaf9
 +
 +	pm_data->serdev = serdev;
 +	pm_data->work_flag = true;
-+	
++
 +	mutex_init(&pm_data->mutex);
 +	mutex_init(&pm_data->ctl_mutex);
 +	init_waitqueue_head(&pm_data->ctl_wait);
-+	
++
 +	pm_data->status_report_timestamp = ktime_get_boottime_ns();
 +	pm_data->status_report_timeout_warn_timestamp = pm_data->status_report_timestamp;
-+	
++
 +	ret = kobject_init_and_add(&pm_data->kobject, &pcat_pm_kobj_ktype,
-+		kernel_kobj, "%s", "photonicat-pm");
++				   kernel_kobj, "%s", "photonicat-pm");
 +	if (!ret) {
 +		ret = sysfs_create_file(&pm_data->kobject,
-+			&pcat_pm_sysfs_attribute.attr);
++					&pcat_pm_sysfs_attribute.attr);
 +		if (ret)
 +			dev_err(dev, "Failed to create sysfs file: %d\n", ret);
 +	} else {
@@ -1491,37 +1491,37 @@ index 000000000000..b6cffa81aaf9
 +	}
 +
 +	if (device_property_read_u32(dev, "baudrate",
-+				    &pm_data->baudrate)) {
++				     &pm_data->baudrate)) {
 +		pm_data->baudrate = 115200;
 +	}
-+	
++
 +	if (device_property_read_u32(dev, "force-poweroff-timeout",
-+				    &pm_data->force_poweroff_timeout)) {
++				     &pm_data->force_poweroff_timeout)) {
 +		pm_data->force_poweroff_timeout = 0;
 +	}
 +
 +	serdev_device_set_drvdata(serdev, pm_data);
 +	serdev_device_set_client_ops(serdev, &pcat_pm_serdev_ops);
-+	
++
 +	pm_data->power_gpio = devm_gpiod_get(dev, "power", GPIOD_OUT_HIGH);
 +	if (IS_ERR(pm_data->power_gpio)) {
 +		dev_err(dev, "Failed to setup power GPIO!\n");
 +	}
 +
-+        ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF_PREPARE,
-+		SYS_OFF_PRIO_FIRMWARE, pcat_pm_do_poweroff, pm_data);
-+        if (ret)
-+                dev_err(dev, "Cannot register poweroff handler: %d\n", ret);
++	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF_PREPARE,
++					    SYS_OFF_PRIO_FIRMWARE, pcat_pm_do_poweroff, pm_data);
++	if (ret)
++		dev_err(dev, "Cannot register poweroff handler: %d\n", ret);
 +
-+        ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART,
-+		SYS_OFF_PRIO_HIGH, pcat_pm_do_restart, pm_data);
-+        if (ret)
-+                dev_err(dev, "Cannot register poweroff handler: %d\n", ret);
++	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART,
++					    SYS_OFF_PRIO_HIGH, pcat_pm_do_restart, pm_data);
++	if (ret)
++		dev_err(dev, "Cannot register poweroff handler: %d\n", ret);
 +
 +	ret = pcat_pm_uart_serdev_open(pm_data);
 +	if (ret)
 +		dev_err(dev, "Cannot open serial device: %d\n", ret);
-+	
++
 +	ret = pcat_pm_charger_probe(pm_data);
 +	if (ret)
 +		dev_err(dev, "Failed to probe charger: %d\n", ret);
@@ -1529,7 +1529,7 @@ index 000000000000..b6cffa81aaf9
 +	ret = pcat_pm_rtc_probe(pm_data);
 +	if (ret)
 +		dev_err(dev, "Failed to probe RTC: %d\n", ret);
-+	
++
 +	ret = pcat_pm_hwmon_probe(pm_data);
 +	if (ret)
 +		dev_err(dev, "Failed to probe hwmon: %d\n", ret);
@@ -1541,11 +1541,11 @@ index 000000000000..b6cffa81aaf9
 +	ret = misc_register(&pm_data->ctl_device);
 +	if (ret)
 +		dev_err(dev, "Failed to register control device: %d\n", ret);
-+	
++
 +	ret = pcat_pm_fan_probe(pm_data);
 +	if (ret)
 +		dev_err(dev, "Failed to register cooling device: %d\n", ret);
-+	
++
 +	dev_info(dev, "photonicat power manager initialized OK.\n");
 +
 +	return 0;
@@ -1567,11 +1567,11 @@ index 000000000000..b6cffa81aaf9
 +
 +	pcat_pm_watchdog_timeout_set(pm_data, PCAT_PM_WATCHDOG_DEFAULT_INTERVAL, 0);
 +
-+        return 0;
++	return 0;
 +}
 +#endif
 +
-+static struct of_device_id pcat_pm_of_match[] = {
++static const struct of_device_id pcat_pm_of_match[] = {
 +	{ .compatible = "photonicat-pm" },
 +	{}
 +};
@@ -1585,8 +1585,8 @@ index 000000000000..b6cffa81aaf9
 +	.driver = {
 +		.name = "photonicat-pm",
 +		.owner = THIS_MODULE,
-+	        .of_match_table = of_match_ptr(pcat_pm_of_match),
-+	        .pm = &pcat_pm_pm_ops,
++		.of_match_table = of_match_ptr(pcat_pm_of_match),
++		.pm = &pcat_pm_pm_ops,
 +	},
 +	.probe = pcat_pm_probe,
 +};
@@ -1595,6 +1595,7 @@ index 000000000000..b6cffa81aaf9
 +
 +MODULE_DESCRIPTION("photonicat power manager driver");
 +MODULE_AUTHOR("Kyosuke Nekoyashiki <supercatexpert@gmail.com>");
++MODULE_AUTHOR("HackingGate <i@hackinggate.com>");
 +MODULE_LICENSE("GPL v2");
 +MODULE_ALIAS("platform:photonicat-pm");
 -- 
