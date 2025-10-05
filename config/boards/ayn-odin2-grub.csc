@@ -24,6 +24,7 @@ function ayn-odin2_is_userspace_supported() {
 	[[ "${RELEASE}" == "jammy" ]] && return 0
 	[[ "${RELEASE}" == "trixie" ]] && return 0
 	[[ "${RELEASE}" == "noble" ]] && return 0
+	[[ "${RELEASE}" == "plucky" ]] && return 0
 	return 1
 }
 
@@ -69,7 +70,7 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 		return 0
 	fi
 
-	if [[ "${RELEASE}" == "jammy" ]] || [[ "${RELEASE}" == "noble" ]]; then
+	if [[ "${RELEASE}" == "jammy" ]] || [[ "${RELEASE}" == "noble" ]] || [[ "${RELEASE}" == "plucky" ]]; then
 		display_alert "Adding Mesa PPA For Ubuntu ${BOARD}" "warn"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:kisak/kisak-mesa --yes
 
