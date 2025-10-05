@@ -66,7 +66,12 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 
 	if [[ "${RELEASE}" == "jammy" ]] || [[ "${RELEASE}" == "noble" ]]; then
 		display_alert "Adding Mesa PPA For Ubuntu ${BOARD}" "warn"
-		do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/qcom-mainline --yes --no-update
+		do_with_retries 3 chroot_sdcard add-apt-repository ppa:kisak/kisak-mesa --yes
+
+		do_with_retries 3 chroot_sdcard_apt_get_update
+		display_alert "Installing Mesa Vulkan Drivers"
+		do_with_retries 3 chroot_sdcard_apt_get_install libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools
+
 	fi
 
 	# We need unudhcpd from armbian repo, so enable it
