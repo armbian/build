@@ -53,6 +53,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3568-hk-uart1.dtbo \
 	rockchip-rk3568-rock-3a-disable-uart2.dtbo \
 	rockchip-rk3588-fanctrl.dtbo \
+	rockchip-rk3588-sata0.dtbo \
 	rockchip-rk3588-sata1.dtbo \
 	rockchip-rk3588-sata2.dtbo \
 	rockchip-rk3588-hdmirx.dtbo \

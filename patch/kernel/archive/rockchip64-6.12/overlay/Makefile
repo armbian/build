@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	hinlink-h88k-240x135-lcd.dtbo \
-  rk3308-otg-host.dtbo \
+	rk3308-otg-host.dtbo \
 	rk3308-s0-ext-antenna.dtbo \
 	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
@@ -52,6 +52,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3568-hk-uart1.dtbo \
 	rockchip-rk3568-rock-3a-disable-uart2.dtbo \
 	rockchip-rk3588-fanctrl.dtbo \
+	rockchip-rk3588-sata0.dtbo \
 	rockchip-rk3588-sata1.dtbo \
 	rockchip-rk3588-sata2.dtbo \
 	rockchip-rk3588-hdmirx.dtbo \
