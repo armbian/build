@@ -79,6 +79,17 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 		do_with_retries 3 chroot_sdcard_apt_get_install libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools
 	fi
 
+	if [[ "${RELEASE}" == "trixie" ]]; then
+		# add experimental flags to get bluetooth working
+		display_alert "Fixing bluetooth" "warn"
+		sudo mkdir -p /etc/systemd/system/bluetooth.service.d
+		sudo tee /etc/systemd/system/bluetooth.service.d/override.conf > /dev/null << 'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/bluetoothd --experimental --no-plugin=sap
+EOF
+	fi
+
 	# We need unudhcpd from armbian repo, so enable it
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
 
