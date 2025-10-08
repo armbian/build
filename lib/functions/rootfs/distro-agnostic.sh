@@ -487,7 +487,7 @@ function install_distribution_agnostic() {
 		echo "nameserver $NAMESERVER" > "${SDCARD}"/etc/resolvconf/resolv.conf.d/head
 	fi
 
-	# don't fail if dropbear is used instead of OpenSSH
+	# don't fail if OpenSSH is missing, e.g. if dropbear is installed instead
 	if [[ -f "${SDCARD}"/etc/ssh/sshd_config ]]; then
 		# permit root login via SSH for the first boot
 		sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
