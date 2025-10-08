@@ -488,7 +488,7 @@ function install_distribution_agnostic() {
 	fi
 
 	# don't fail if dropbear is used instead of OpenSSH
-	if [ -a "${SDCARD}"/etc/ssh/sshd_config ]; then
+	if [[ -f "${SDCARD}"/etc/ssh/sshd_config ]]; then
 		# permit root login via SSH for the first boot
 		sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
 		# enable PubkeyAuthentication
