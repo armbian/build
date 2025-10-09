@@ -487,11 +487,13 @@ function install_distribution_agnostic() {
 		echo "nameserver $NAMESERVER" > "${SDCARD}"/etc/resolvconf/resolv.conf.d/head
 	fi
 
-	# permit root login via SSH for the first boot
-	sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
-
-	# enable PubkeyAuthentication
-	sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
+	# don't fail if OpenSSH is missing, e.g. if dropbear is installed instead
+	if [[ -f "${SDCARD}"/etc/ssh/sshd_config ]]; then
+		# permit root login via SSH for the first boot
+		sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
+		# enable PubkeyAuthentication
+		sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
+	fi
 
 	# avahi daemon defaults if exists
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] &&
