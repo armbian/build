@@ -1,0 +1,100 @@
+From 8ba4af5d9c0c85163e6f6b076e22dfc16311d2be Mon Sep 17 00:00:00 2001
+From: Benjamin Gaignard <benjamin.gaignard@collabora.com>
+Date: Mon, 25 Aug 2025 17:34:43 +0200
+Subject: [PATCH 035/108] FROMLIST(v7): media: verisilicon: AV1: Restore IOMMU
+ context before decoding a frame
+
+AV1 is a stateless decoder and multiple AV1 bitstreams could be decoded
+at the same time. Each decoding context got it own iommu domain which
+need to be restored before each frame. To be sure that iommu context is
+correctly set AV1 driver detach and attach before decoding the frame.
+
+Signed-off-by: Benjamin Gaignard <benjamin.gaignard@collabora.com>
+---
+ drivers/media/platform/verisilicon/hantro.h           |  5 +++++
+ drivers/media/platform/verisilicon/hantro_drv.c       | 11 +++++++++++
+ .../platform/verisilicon/rockchip_vpu981_hw_av1_dec.c | 10 ++++++++++
+ 3 files changed, 26 insertions(+)
+
+diff --git a/drivers/media/platform/verisilicon/hantro.h b/drivers/media/platform/verisilicon/hantro.h
+index 81328c63b796..a28a181013b9 100644
+--- a/drivers/media/platform/verisilicon/hantro.h
++++ b/drivers/media/platform/verisilicon/hantro.h
+@@ -12,6 +12,9 @@
+ #ifndef HANTRO_H_
+ #define HANTRO_H_
+ 
++#include <linux/dma-map-ops.h>
++#include <linux/iommu.h>
++#include <linux/iommu-dma.h>
+ #include <linux/platform_device.h>
+ #include <linux/videodev2.h>
+ #include <linux/wait.h>
+@@ -266,6 +269,8 @@ struct hantro_ctx {
+ 	struct hantro_postproc_ctx postproc;
+ 	bool need_postproc;
+ 
++	struct iommu_domain *iommu_domain;
++
+ 	/* Specific for particular codec modes. */
+ 	union {
+ 		struct hantro_h264_dec_hw_ctx h264_dec;
+diff --git a/drivers/media/platform/verisilicon/hantro_drv.c b/drivers/media/platform/verisilicon/hantro_drv.c
+index fa972effd4a2..c31fd75902d4 100644
+--- a/drivers/media/platform/verisilicon/hantro_drv.c
++++ b/drivers/media/platform/verisilicon/hantro_drv.c
+@@ -674,6 +674,13 @@ static int hantro_open(struct file *filp)
+ 	}
+ 	ctx->fh.ctrl_handler = &ctx->ctrl_handler;
+ 
++	if (use_dma_iommu(ctx->dev->v4l2_dev.dev)) {
++		ctx->iommu_domain = iommu_paging_domain_alloc(ctx->dev->v4l2_dev.dev);
++
++		if (!ctx->iommu_domain)
++			vpu_err("cannot alloc new empty domain\n");
++	}
++
+ 	return 0;
+ 
+ err_fh_free:
+@@ -697,6 +704,10 @@ static int hantro_release(struct file *filp)
+ 	v4l2_fh_del(&ctx->fh);
+ 	v4l2_fh_exit(&ctx->fh);
+ 	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
++
++	if (ctx->iommu_domain)
++		iommu_domain_free(ctx->iommu_domain);
++
+ 	kfree(ctx);
+ 
+ 	return 0;
+diff --git a/drivers/media/platform/verisilicon/rockchip_vpu981_hw_av1_dec.c b/drivers/media/platform/verisilicon/rockchip_vpu981_hw_av1_dec.c
+index e4703bb6be7c..b3e52387234f 100644
+--- a/drivers/media/platform/verisilicon/rockchip_vpu981_hw_av1_dec.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu981_hw_av1_dec.c
+@@ -2095,12 +2095,22 @@ rockchip_vpu981_av1_dec_set_output_buffer(struct hantro_ctx *ctx)
+ 	hantro_write_addr(vpu, AV1_TILE_OUT_MV, mv_addr);
+ }
+ 
++static void rockchip_vpu981_av1_restore_iommu(struct hantro_ctx *ctx)
++{
++	if (ctx->iommu_domain) {
++		iommu_attach_device(ctx->iommu_domain, ctx->dev->v4l2_dev.dev);
++		iommu_detach_device(ctx->iommu_domain, ctx->dev->v4l2_dev.dev);
++	}
++}
++
+ int rockchip_vpu981_av1_dec_run(struct hantro_ctx *ctx)
+ {
+ 	struct hantro_dev *vpu = ctx->dev;
+ 	struct vb2_v4l2_buffer *vb2_src;
+ 	int ret;
+ 
++	rockchip_vpu981_av1_restore_iommu(ctx);
++
+ 	hantro_start_prepare_run(ctx);
+ 
+ 	ret = rockchip_vpu981_av1_dec_prepare_run(ctx);
+-- 
+2.34.1
+

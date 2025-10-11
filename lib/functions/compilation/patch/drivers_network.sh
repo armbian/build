@@ -41,7 +41,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:07f03cf721f5e0317012ece4159834327680ba8b' # Commit date: 2025-06-21 (please update when updating commit ref)
+		local rtl8189esver='commit:0a5d04114fac3c9f48a343cb905fbb6a3f9f5df5' # Commit date: 2025-09-26 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -87,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:d0f15f392570499f3e48f6d157c89cadf393a739' # Commit date: 2025-06-21 (please update when updating commit ref)
+		local rtl8189fsver='commit:876e627a5b6a8021700391b4249a4a31edfebe5c' # Commit date: 2025-09-26 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -160,6 +160,9 @@ driver_rtl8192EU() {
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
 
+		# fix compilation for kernels >= 6.17
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-6.16-6.17.patch" "applying"
+
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
 
@@ -171,8 +174,8 @@ driver_rtl8192EU() {
 driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
-
-	if linux-version compare "${version}" ge 3.14; then
+	# disabled from 6.17 and on.
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.17; then
 
 		# Attach to specific commit (is branch:v5.6.4.2_fix_6.15)
 		local rtl8812auver="commit:6e736a32f24605d8625d90f0edabf5a1669c7a74" # Commit date: 2025-06-01 (please update when updating commit ref)
@@ -256,11 +259,8 @@ driver_xradio_xr819() {
 driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
-	if linux-version compare "${version}" ge 3.14; then
-
-		# deprecate this driver with 6.12+
-		# https://github.com/morrownr/8821cu-20210916/commit/945c687aa1e62ee0b95b1ddd1dbfdbd513c30152
-
+	# disabled from 6.17 and on, see https://github.com/morrownr/8821cu-20210916/commit/945c687aa1e62ee0b95b1ddd1dbfdbd513c30152
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.17; then
 		# Attach to specific commit (is branch:main)
 		local rtl8811cuver="commit:d74134a1c68f59f2b80cdd6c6afb8c1a8a687cbf" # Commit date: 2025-05-08 (please update when updating commit ref)
 
@@ -304,10 +304,8 @@ driver_rtl88x2bu() {
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
-	if linux-version compare "${version}" ge 5.0; then
-
-		# deprecate this driver with 6.12+
-		# https://github.com/morrownr/88x2bu-20210702/commit/fe48647496798cac77976e310ee95da000b436c9
+	# disabled from 6.17 and on, see https://github.com/morrownr/88x2bu-20210702/commit/fe48647496798cac77976e310ee95da000b436c9
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 6.17; then
 
 		# Attach to specific commit (is branch:main)
 		local rtl88x2buver="commit:1ee13286e0b212c22946aa8d51aa7d84cb876cd4" # Commit date: 2025-05-06 (please update when updating commit ref)
@@ -357,7 +355,7 @@ driver_rtw88() {
 			process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 		fi
 	fi
-	
+
 	if linux-version compare "${version}" eq 6.1 || linux-version compare "${version}" eq 6.16; then
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel 6.1.x/6.16.x.
 	fi
@@ -370,7 +368,7 @@ driver_rtl8852bs() {
 	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:1515f70506fb4d916323addaf5b410d14ed962e9' # Commit date: Sept 8, 2025 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:15811ffdf575baabbd1cd46a306e9544a7f02846' # Commit date: Oct 2, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -434,7 +432,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
-		local rtl88x2csver='commit:0ef9ddd619d2a386df90fd7c32b65958b0d675ed' # Commit date: Aug 30, 2025 (please update when updating commit ref)
+		local rtl88x2csver='commit:79884dd23267e6e9ec29546476d8f68a1442d180' # Commit date: Oct 09, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
@@ -556,6 +554,11 @@ driver_uwe5622() {
 		if linux-version compare "${version}" ge 6.16; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.16.patch" "applying"
 		fi
+
+		if linux-version compare "${version}" ge 6.17; then
+                        process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
+                fi
+
 	fi
 }
 
@@ -657,7 +660,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:09a2b3e94d14cc2a0012d5b74101c6acf1ef0872' # Commit date: 2025-06-28 (please update when updating commit ref)
+		local rtl8723dsver='commit:39d0eedf4eaedfcf6e133413a389c5f8a70a7d1f' # Commit date: 2025-10-02 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 

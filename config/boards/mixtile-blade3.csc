@@ -11,7 +11,13 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 extension
 
 # Vendor u-boot; use the default family (rockchip-rk3588) u-boot. See config/sources/families/rockchip-rk3588.conf
-function post_family_config__vendor_uboot_mekotronics() {
+function post_family_config__vendor_uboot_blade3() {
+	if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
+		display_alert "$BOARD" "Using vendor u-boot for $BOARD on branch $BRANCH" "info"
+	else
+		return 0
+	fi
+
 	display_alert "$BOARD" "Configuring $BOARD vendor u-boot (using Radxa's older next-dev-v2024.03)" "info"
 	declare -g BOOTDELAY=1 # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
 
@@ -21,7 +27,37 @@ function post_family_config__vendor_uboot_mekotronics() {
 	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
 }
 
+function post_family_config__blade3_use_mainline_uboot() {
+	if [[ "${BRANCH}" != "edge" ]]; then
+		return 0
+	fi
+
+	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
+
+	declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # MAINLINE U-BOOT OVERRIDE
+
+	declare -g BOOTDELAY=1 # Wait for UART interrupt
+
+	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+	BOOTBRANCH="tag:v2025.10-rc3"
+	BOOTPATCHDIR="v2025.10" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
+
+	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
+
+	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin" # NOT u-boot-rockchip-spi.bin
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd                                 # disable stuff from rockchip64_common; we're using binman here which does all the work already
+
+	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
+	function write_uboot_platform() {
+		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
+	}
+
+	# @TODO: boot order stuff; we want to boot nvme / usb / sd before eMMC
+
+	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
+}
+
 function post_family_config_branch_edge__different_dtb_for_edge() {
 	declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb"
-	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "info"
+	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "warn"
 }
