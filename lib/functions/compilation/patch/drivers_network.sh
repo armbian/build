@@ -438,6 +438,8 @@ driver_rtl8852bs() {
 
 driver_rtl88x2cs() {
 
+	return 0 # broken 6.18 meson64: error: conflicting types for 'hmac_sha256'; have 'int(const u8 *, size_t,  const u8 *, size_t,  u8 *)' {aka 'int(const unsigned char *, long unsigned int,  const unsigned char *, long unsigned int,  unsigned char *)'}
+
 	# Wireless drivers for Realtek 88x2cs chipsets
 	# Only used for meson64 family boards, use mainline rtw88 driver for all other boards
 
