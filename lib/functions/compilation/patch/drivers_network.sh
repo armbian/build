@@ -373,6 +373,8 @@ driver_rtw88() {
 
 driver_rtl8852bs() {
 
+	return 0 # broken 6.18: int hmac_sha256(const u8 *key, size_t key_len, const u8 *data
+
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
 
 	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
