@@ -667,6 +667,8 @@ driver_rtl8723cs() {
 ###  the RTW88 driver for the chip configures its RF gains incorrectly
 driver_rtl8723DS() {
 
+	return 0 # TODO: Broken 6.18: static void sha256_init(struct rtl_sha256_state *md)
+
 	# Wireless drivers for Realtek 8723DS chipsets
 
 	if linux-version compare "${version}" ge 5.0; then
