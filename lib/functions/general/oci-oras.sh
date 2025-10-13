@@ -109,7 +109,7 @@ function try_download_oras_tooling() {
 	display_alert "ORAS_BIN: ${ORAS_BIN}" "ORAS" "debug"
 
 	display_alert "Downloading required" "ORAS tooling${RETRY_FMT_MORE_THAN_ONCE}" "info"
-	run_host_command_logged wget --no-verbose --progress=dot:giga -O "${ORAS_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
+	run_host_command_logged curl -fL#o "${ORAS_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
 		return 1
 	}
 	run_host_command_logged mv "${ORAS_BIN}.tar.gz.tmp" "${ORAS_BIN}.tar.gz"

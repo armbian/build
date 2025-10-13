@@ -51,7 +51,11 @@ if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
 	echo "MACHINE: ${MACHINE}"
 	echo "Down URL: ${DOWN_URL}"
 	echo "SHELLCHECK_BIN: ${SHELLCHECK_BIN}"
-	wget -O "${SHELLCHECK_BIN}.tar.xz" "${DOWN_URL}"
+	curl -fLo "${SHELLCHECK_BIN}.tar.xz" "${DOWN_URL}" || {
+		echo "download of shellcheck failed from ${DOWN_URL}";
+		rm -f "${SHELLCHECK_BIN}.tar.xz"
+		exit 1;
+	}
 	tar -xf "${SHELLCHECK_BIN}.tar.xz" -C "${DIR_SHELLCHECK}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 	mv -v "${DIR_SHELLCHECK}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "${SHELLCHECK_BIN}"
 	rm -rf "${DIR_SHELLCHECK}/shellcheck-v${SHELLCHECK_VERSION}" "${SHELLCHECK_BIN}.tar.xz"

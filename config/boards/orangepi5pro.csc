@@ -83,7 +83,7 @@ function pre_customize_image__orangepi5pro_add_phy_driver() {
     
     # Create directory and download .deb (Not installing due to chroot issue with dkms and kernel headers)
     chroot_sdcard mkdir -p /usr/local/share/eth-driver
-    chroot_sdcard wget "https://github.com/dante1613/Motorcomm-YT6801/raw/main/tuxedo-yt6801/${deb_file}" -O "/usr/local/share/eth-driver/${deb_file}"
+    chroot_sdcard curl -fL "https://github.com/dante1613/Motorcomm-YT6801/raw/main/tuxedo-yt6801/${deb_file}" -o "/usr/local/share/eth-driver/${deb_file}"
     
     # Make script to Auto-Install Ethernet Driver Only on first boot
     cat << 'EOF' > "${SDCARD}/usr/local/bin/install-eth-driver.sh"
