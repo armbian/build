@@ -113,7 +113,7 @@ function prepare_partitions() {
 	fi
 	# Check if we need boot partition
 	# Specialized storage extensions like cryptroot or lvm may require a boot partition
-	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes) ]]; then
+	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $BOOTPART_REQUIRED == yes) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
