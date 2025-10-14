@@ -503,7 +503,7 @@ function docker_cli_prepare_launch() {
 				# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
 				# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
 				#                                                         have enough RAM (inside the container) so don't bother.
-				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR},dev,exec")
 				;;
 			bind)
 				display_alert "Mounting" "bind mount for '${MOUNT_DIR}'" "debug"
@@ -512,7 +512,7 @@ function docker_cli_prepare_launch() {
 				;;
 			namedvolume)
 				display_alert "Mounting" "named volume id '${volume_id}' for '${MOUNT_DIR}'" "debug"
-				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR},dev,exec")
 				;;
 			*)
 				display_alert "Unknown Mountpoint Type" "unknown volume type '${docker_kind}' for '${MOUNT_DIR}'" "err"
