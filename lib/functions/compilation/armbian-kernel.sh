@@ -163,6 +163,7 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 #   - Enables in-memory compression for swap or temporary storage (ZRAM).
 #   - Allows write-back of compressed ZRAM data (ZRAM_WRITEBACK).
 #   - Enables memory usage tracking for ZRAM (ZRAM_MEMORY_TRACKING).
+#   - Enables various ZRAM compression backend algorithms (LZ4, LZ4HC, ZSTD, DEFLATE, 842, LZO).
 #
 # Globals:
 #   kernel_config_modifying_hashes - Array used to store configuration changes.
@@ -176,6 +177,25 @@ function armbian_kernel_config__enable_zram_support() {
 		kernel_config_set_m ZRAM                            # Enables in-memory block device compression for swap or temporary storage
 		kernel_config_set_y ZRAM_WRITEBACK                  # Allows write-back of compressed ZRAM data to storage
 		kernel_config_set_y ZRAM_MEMORY_TRACKING            # Enables tracking of memory usage in ZRAM
+		
+		# List of known ZRAM backend config symbols
+		local -a zram_backends=(
+			"ZRAM_BACKEND_LZ4"
+			"ZRAM_BACKEND_LZ4HC"
+			"ZRAM_BACKEND_ZSTD"
+			"ZRAM_BACKEND_DEFLATE"
+			"ZRAM_BACKEND_842"
+			"ZRAM_BACKEND_LZO"
+		)
+
+		for backend in "${zram_backends[@]}"; do
+			# Only try enabling the backend if the symbol exists in the .config
+			if grep -qE "^(# )?CONFIG_${backend}(=| )" .config; then
+				kernel_config_set_y "${backend}"
+			else
+				display_alert "Skipping missing ZRAM backend symbol" "${backend} not found in .config" "debug"
+			fi
+		done
 	fi
 }
 
