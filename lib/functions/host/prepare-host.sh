@@ -210,7 +210,7 @@ function adaptative_prepare_host_dependencies() {
 		colorized-logs                           # for ansi2html, ansi2txt, pipetty
 		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
 		parted gdisk fdisk                       # partition tools @TODO why so many?
-		aria2 curl axel                          # downloaders et al
+		aria2 curl axel wget                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)
