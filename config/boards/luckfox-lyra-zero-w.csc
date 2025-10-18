@@ -2,7 +2,7 @@
 BOARD_NAME="Luckfox Lyra Zero W"
 BOARDFAMILY="rockchip"
 BOOTCONFIG="luckfox-lyra-zero-w-rk3506b_defconfig"
-BOARD_MAINTAINER="vidplace7"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
 BOOT_FDT_FILE="rk3506b-luckfox-lyra-zero-w-sd.dtb"
 BOOT_SCENARIO="spl-blobs"
