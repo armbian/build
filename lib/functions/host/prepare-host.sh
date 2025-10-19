@@ -183,6 +183,7 @@ function adaptative_prepare_host_dependencies() {
 		bsdextrautils
 		libc6-dev make dpkg-dev gcc # build-essential, without g++
 		ca-certificates ccache cpio
+		debootstrap
 		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		e2fsprogs
@@ -210,7 +211,7 @@ function adaptative_prepare_host_dependencies() {
 		colorized-logs                           # for ansi2html, ansi2txt, pipetty
 		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
 		parted gdisk fdisk                       # partition tools @TODO why so many?
-		aria2 curl axel wget                     # downloaders et al
+		aria2 curl axel                          # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)
