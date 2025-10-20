@@ -39,7 +39,7 @@ function post_family_config__blade3_use_mainline_uboot() {
 	declare -g BOOTDELAY=1 # Wait for UART interrupt
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	BOOTBRANCH="tag:v2025.10-rc3"
+	BOOTBRANCH="tag:v2025.10"
 	BOOTPATCHDIR="v2025.10" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
