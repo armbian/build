@@ -45,6 +45,11 @@ function create_new_rootfs_cache_tarball() {
 	display_alert "rootfs cache created" "${cache_fname} [${cache_size}]" "info"
 }
 
+# create_new_rootfs_cache_via_debootstrap populates a root FS into
+# SDCARD using mmdebstrap, configures locales and apt sources, installs
+# additional packages (and optionally desktop packages), performs chroot
+# setup and cleanup (policy diverts, qemu-binfmt handling, resolvconf,
+# machine-id masking), and prepares the rootfs for packaging & caching.
 function create_new_rootfs_cache_via_debootstrap() {
 	[[ ! -d "${SDCARD:?}" ]] && exit_with_error "create_new_rootfs_cache_via_debootstrap: ${SDCARD} is not a directory"
 
@@ -71,80 +76,75 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# @TODO: one day: https://gitlab.mister-muffin.de/josch/mmdebstrap/src/branch/main/mmdebstrap
 
-	# Obtain the latest debootstrap (which is just a shell script) from Debian or Ubuntu's git at the latest development version
+	# Obtain the latest debootstrap (which is just a shell script) from mister-muffin or Ubuntu's git
 	declare debootstrap_bin="" debootstrap_version="" debootstrap_wanted_dir="" debootstrap_default_script=""
 
 	display_alert "Preparing debootstrap" "for ${DISTRIBUTION}'s ${RELEASE}" "info"
 	case "${DISTRIBUTION}" in
 		Ubuntu)
-			GIT_FIXED_WORKDIR="debootstrap-ubuntu-devel" fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "debootstrap-ubuntu-devel" "tag:import/1.0.118ubuntu1.13"
-			debootstrap_wanted_dir="${SRC}/cache/sources/debootstrap-ubuntu-devel"
+			export GIT_FIXED_WORKDIR="mmdebstrap-ubuntu-devel"
+			#FIXME: branch should be a variable eventually
+			fetch_from_repo "https://git.launchpad.net/ubuntu/+source/mmdebstrap" "${GIT_FIXED_WORKDIR}" "branch:ubuntu/noble"
+			debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
 			debootstrap_default_script="gutsy"
+			debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
 			;;
 		Debian)
-			GIT_FIXED_WORKDIR="debootstrap-debian-devel" fetch_from_repo "https://salsa.debian.org/installer-team/debootstrap.git" "debootstrap-debian-devel" "branch:master"
-			debootstrap_wanted_dir="${SRC}/cache/sources/debootstrap-debian-devel"
+			export GIT_FIXED_WORKDIR="mmdebstrap-debian-devel"
+			#FIXME: branch should be a variable eventually
+			fetch_from_repo "https://gitlab.mister-muffin.de/josch/mmdebstrap" "${GIT_FIXED_WORKDIR}" "branch:main"
+			debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
 			debootstrap_default_script="sid"
+			debootstrap_version="$(sed 's/^## \[\([^]]*\)\].*/\1/; q' "${debootstrap_wanted_dir}/CHANGELOG.md")"
 			;;
 		*)
 			exit_with_error "Unknown distribution for debootstrap" "${DISTRIBUTION}"
 			;;
 	esac
 
-	debootstrap_bin="${debootstrap_wanted_dir}/debootstrap"
-	debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
+	debootstrap_bin="${debootstrap_wanted_dir}/mmdebstrap"
 	run_host_command_logged chmod a+x "${debootstrap_bin}"
 	display_alert "Debootstrap version" "'${debootstrap_version}' for ${debootstrap_bin}" "info"
 
-	# check if the debootstrap has the scripts/${RELEASE} script present, otherwise symlink it to debootstrap_default_script
-	if [[ ! -f "${debootstrap_wanted_dir}/scripts/${RELEASE}" ]]; then
-		display_alert "Symlinking" "debootstrap scripts/${RELEASE} to scripts/${debootstrap_default_script}" "info"
-		run_host_command_logged ln -sv "${debootstrap_wanted_dir}/scripts/${debootstrap_default_script}" "${debootstrap_wanted_dir}/scripts/${RELEASE}"
-	fi
-
-	display_alert "Installing base system with ${#AGGREGATED_PACKAGES_DEBOOTSTRAP[@]} packages" "Stage 1/2" "info"
+	display_alert "Installing base system with ${#AGGREGATED_PACKAGES_DEBOOTSTRAP[@]} packages" "Stage 1/1" "info"
 	cd "${SDCARD}" || exit_with_error "cray-cray about SDCARD" "${SDCARD}" # this will prevent error sh: 0: getcwd() failed
 
-	declare -a deboostrap_arguments=(
+	declare -ga debootstrap_arguments=(
 		"--variant=minbase"                                         # minimal base variant. go ask Debian about it.
 		"--arch=${ARCH}"                                            # the arch
 		"'--include=${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}'"      # from aggregation.py
 		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
+		"'--skip=check/empty'"                                      # skips check if the rootfs dir is empty at start
 	)
+	fetch_distro_keyring "$RELEASE"
 
 	# This is necessary to debootstrap from a non-official repo
-	[[ $ARCH == loong64 ]] && deboostrap_arguments+=("--keyring=/usr/share/keyrings/debian-ports-archive-keyring.gpg")
+	[[ $ARCH == loong64 ]] && debootstrap_arguments+=("--keyring=/usr/share/keyrings/debian-ports-archive-keyring.gpg")
 	# Small detour for local apt caching option.
 	local_apt_deb_cache_prepare "before debootstrap" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
-		deboostrap_arguments+=("--cache-dir=${LOCAL_APT_CACHE_INFO[HOST_DEBOOTSTRAP_CACHE_DIR]}") # cache .deb's used
+		debootstrap_arguments+=("--setup-hook='mkdir -p ${LOCAL_APT_CACHE_INFO[HOST_DEBOOTSTRAP_CACHE_DIR]} \"\$1\"/var/cache/apt/archives/'")
+		debootstrap_arguments+=("--setup-hook='sync-in ${LOCAL_APT_CACHE_INFO[HOST_DEBOOTSTRAP_CACHE_DIR]} /var/cache/apt/archives/'")
+		debootstrap_arguments+=("--customize-hook='sync-out /var/cache/apt/archives/ ${LOCAL_APT_CACHE_INFO[HOST_DEBOOTSTRAP_CACHE_DIR]}'")
 	fi
 
-	deboostrap_arguments+=("--foreign") # release name
+	debootstrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
-	deboostrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
-
-	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the second stage will fail
-	run_host_command_logged "DEBOOTSTRAP_DIR='${debootstrap_wanted_dir}'" "${debootstrap_bin}" "${deboostrap_arguments[@]}" || {
-		exit_with_error "Debootstrap first stage failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+	run_host_command_logged "${debootstrap_bin}" "${debootstrap_arguments[@]}" || {
+		exit_with_error "mmdebstrap failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
-	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
-	skip_target_check="yes" local_apt_deb_cache_prepare "after debootstrap first stage" # just for size reference in logs; skip the target check: debootstrap uses it for second stage.
+	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
 
 	deploy_qemu_binary_to_chroot "${SDCARD}" "rootfs" # undeployed near the end of this function
 
-	display_alert "Installing base system" "Stage 2/2" "info"
-	declare -g -a if_error_find_files_sdcard=("debootstrap.log") # if command fails, go look for this file and show it's contents during error processing
-	declare -g if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
-	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
-	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
+	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
 
-	# Done with debootstrap. Clean-up it's litterbox.
-	display_alert "Cleaning up after debootstrap" "debootstrap cleanup" "info"
+	# Done with mmdebstrap. Clean-up its litterbox.
+	display_alert "Cleaning up after mmdebstrap" "mmdebstrap cleanup" "info"
 	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
 
-	local_apt_deb_cache_prepare "after debootstrap second stage" # just for size reference in logs
+	local_apt_deb_cache_prepare "after mmdebstrap cleanup" # just for size reference in logs
 
 	mount_chroot "${SDCARD}" # we mount the chroot here... it's un-mounted below when all is done, or by cleanup handler '' @TODO
 
@@ -271,9 +271,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
 	# Note: As we don't use systemd-firstboot.service functionality, we make it empty to prevent services
-	# from starting up automatically on first boot on system version 2.50+. If someone is using the same,
+	# from starting up automatically on first boot on systemd version 2.50+. If someone is using the same,
 	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
-	# default and that has to be handled in by setting system presets.
+	# default and that has to be handled by setting system presets.
 	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
 	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
 
@@ -285,7 +285,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	undeploy_qemu_binary_from_chroot "${SDCARD}" "rootfs"
 
 	# stage: make rootfs cache archive
-	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
+	display_alert "Ending mmdebstrap process and preparing cache" "$RELEASE" "info"
 	wait_for_disk_sync "before tar rootfs"
 
 	# we're done with using the chroot which we mounted above.
