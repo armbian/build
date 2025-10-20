@@ -66,6 +66,79 @@ function install_distribution_specific() {
 	fi
 }
 
+#fetch_distro_keyring <release>
+#
+# <release>: debian or ubuntu release name
+#
+function fetch_distro_keyring() {
+	declare release="${1}"
+	declare distro=""
+
+	case $release in
+		buster | bullseye | bookworm | trixie | forky | sid)
+			distro="debian"
+			;;
+		focal | jammy | noble | oracular | plucky | raccoon)
+			distro="ubuntu"
+			;;
+		*)
+			exit_with_error "fetch_distro_keyring failed" "unrecognized release: $release"
+	esac
+
+	CACHEDIR="/armbian/cache/keyrings/$distro"
+	mkdir -p "${CACHEDIR}"
+	case $distro in
+		debian)
+			if [ -e "${CACHEDIR}/debian-archive-keyring.gpg" ]; then
+				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
+				/bin/true;
+			else
+				BASEURI='https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/'
+				#FIXME: write something to retrieve newest
+				KEYRING_DEB='debian-archive-keyring_2025.1_all.deb'
+				curl -fLOJ --output-dir "${CACHEDIR}" "${BASEURI}/${KEYRING_DEB}" || \
+					exit_with_error "fetch_distro_keyring failed" "unable to download ${BASEURI}/${KEYRING_DEB}"
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
+					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${KEYRING_DEB} failed"
+				# yes, for 2025.1, the canonical name is .pgp, but our tools expect .gpg.
+				# the package contains the .pgp and a .gpg symlink to it.
+				cp -l "${CACHEDIR}/usr/share/keyrings/debian-archive-keyring.pgp" "${CACHEDIR}/debian-archive-keyring.gpg"
+				display_alert "fetch_distro_keyring($release)" "extracted" "info"
+
+				BASEURI='https://deb.debian.org/debian/pool/main/d/debian-ports-archive-keyring/'
+				#FIXME: write something to retrieve newest
+				KEYRING_DEB='debian-ports-archive-keyring_2025.04.05_all.deb'
+				curl -fLOJ --output-dir "${CACHEDIR}" "${BASEURI}/${KEYRING_DEB}" || \
+					exit_with_error "fetch_distro_keyring failed" "unable to download ${BASEURI}/${KEYRING_DEB}"
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
+					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${KEYRING_DEB} failed"
+				# see above comment about .pgp vs .gpg
+				cp -l "${CACHEDIR}/usr/share/keyrings/debian-ports-archive-keyring.pgp" "${CACHEDIR}/debian-ports-archive-keyring.gpg"
+			fi
+			;;
+		ubuntu)
+			if [ -e "${CACHEDIR}/ubuntu-archive-keyring.gpg" ]; then
+				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
+				/bin/true;
+			else
+				BASEURI='https://archive.ubuntu.com/ubuntu/pool/main/u/ubuntu-keyring/'
+				#FIXME: write something to retrieve newest
+				KEYRING_DEB='ubuntu-keyring_2023.11.28.1_all.deb'
+				curl -fLOJ --output-dir "${CACHEDIR}" "${BASEURI}/${KEYRING_DEB}" || \
+					exit_with_error "fetch_distro_keyring failed" "unable to download ${BASEURI}/${KEYRING_DEB}"
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
+					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${KEYRING_DEB} failed"
+				cp -l "${CACHEDIR}/usr/share/keyrings/ubuntu-archive-keyring.gpg" "${CACHEDIR}/"
+			fi
+			debootstrap_arguments+=("--keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg")
+			;;
+	esac
+	# cp -l may break here if it's cross-filesystem
+	# copy everything to the "host" inside the container
+	cp -r "${CACHEDIR}"/{etc,usr} / || exit_with_error "fetch_distro_keyring" "failed to copy keyrings to host"
+	debootstrap_arguments+=("--setup-hook='copy-in ${CACHEDIR}/usr ${CACHEDIR}/etc /'")
+}
+
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
