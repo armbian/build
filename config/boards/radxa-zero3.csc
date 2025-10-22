@@ -56,16 +56,13 @@ function post_family_tweaks__enable_aic8800_bluetooth_service() {
 	fi
 }
 
-function post_family_config__use_mainline_uboot_except_vendor() {
-	# use mainline u-boot for _current_ and _edge_
-	if [[ "$BRANCH" != "current" && "$BRANCH" != "edge" ]]; then
-		return 0
-	fi
+function post_family_config__use_mainline_uboot() {
+
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
 	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
-	BOOTBRANCH="tag:v2025.10-rc2"
+	BOOTBRANCH="tag:v2025.10"
 	BOOTPATCHDIR="v2025.10"
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
@@ -74,21 +71,6 @@ function post_family_config__use_mainline_uboot_except_vendor() {
 	# ATF does not currently separate rk3566 from rk3568.
 	#ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=rk3568 bl31;;build/rk3568/release/bl31/bl31.elf:bl31.elf"
 	#UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
-
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
-
-	function write_uboot_platform() {
-		dd if=$1/u-boot-rockchip.bin of=$2 seek=64 conv=notrunc status=none
-	}
-}
-
-# Override family config for this board; let's avoid conditionals in family config.
-function post_family_config_branch_vendor__radxa-zero3_use_vendor_uboot() {
-	BOOTSOURCE='https://github.com/radxa/u-boot.git'
-	BOOTBRANCH='branch:rk35xx-2024.01'
-	BOOTPATCHDIR="u-boot-radxa-latest"
-
-	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
