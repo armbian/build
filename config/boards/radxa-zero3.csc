@@ -56,16 +56,14 @@ function post_family_tweaks__enable_aic8800_bluetooth_service() {
 	fi
 }
 
-function post_family_config__use_mainline_uboot_except_vendor() {
-	# use mainline u-boot for _current_ and _edge_
-	if [[ "$BRANCH" != "current" && "$BRANCH" != "edge" ]]; then
-		return 0
-	fi
+function post_family_config__use_mainline_uboot() {
+	[[ "${BRANCH}" == "vendor" ]] && return 0
+
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
 	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
-	BOOTBRANCH="tag:v2025.10-rc2"
+	BOOTBRANCH="tag:v2025.10"
 	BOOTPATCHDIR="v2025.10"
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
