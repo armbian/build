@@ -21,6 +21,9 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g IMAGE_PARTITION_TABLE="gpt"             # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
 		declare -g UEFISIZE=260                            # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
 		declare -g BOOTSIZE=0                              # No separate /boot when using UEFI.
+		if [[ $BOOTPART_REQUIRED == "yes" ]]; then		   # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
+			declare -g UEFI_MOUNT_POINT=/boot
+		fi
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
@@ -162,7 +165,7 @@ pre_umount_final_image__install_grub() {
 		}
 	fi
 
-	local install_grub_cmdline="grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
+	local install_grub_cmdline="grub-install --target=${UEFI_GRUB_TARGET} --efi-directory=${UEFI_MOUNT_POINT} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
 	display_alert "Extension: ${EXTENSION}: Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
 	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
@@ -174,7 +177,12 @@ pre_umount_final_image__install_grub() {
 	# Irony: let's use grub-probe to find out the UUID of the root partition, and then create a symlink to it.
 	# Another: on some systems (eg, not Docker) the thing might already exist due to udev actually working.
 	# shellcheck disable=SC2016 # some wierd escaping going on there.
+	# Root is needed so that UUID of the unlocked /dev/mapper/armbian-root is discovered by grub-update,
+	# UUID is then put into grub.cfg instead of raw /dev/mapper/armbian-root which will fail further sanity check
 	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /)"' "||" true
+	# Include /boot that might point to a separate boot partition in case one exists (lvm, cryptroot)
+	# Even if boot partition doesn't exist - the command will be the same as mkdir for / above
+	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /boot)"' "||" true
 
 	display_alert "Extension: ${EXTENSION}: Creating GRUB config..." "grub-mkconfig" ""
 	chroot_custom "$chroot_target" update-grub || {
@@ -285,6 +293,8 @@ configure_grub() {
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
 		GRUB_GFXPAYLOAD=keep
+		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
+		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
