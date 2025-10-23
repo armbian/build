@@ -4,14 +4,12 @@ BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-zero3-rk3566_defconfig"
 KERNEL_TARGET="vendor,current,edge"
-KERNEL_TEST_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor,current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3566-radxa-zero3.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="spl-blobs"
-BOOTFS_TYPE="fat" # Only for vendor/legacy
-
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 # add for OBEX file transfer:
@@ -56,10 +54,15 @@ function post_family_tweaks__enable_aic8800_bluetooth_service() {
 	fi
 }
 
-function post_family_config__1_use_mainline_uboot() {
+function post_family_config__use_mainline_uboot() {
 
-	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
-	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
+	# boot.scr will use whatever u-boot detects and sets 'fdtfile' to.
+	# This however this doesn't work with Rockchip bsp based kernels since naming differs.
+	# So leave decision to u-boot ONLY when mainline kernel is used.
+	if [[ "${BRANCH}" != "vendor" ]]; then
+		unset BOOT_FDT_FILE
+	fi
+
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2025.10"
@@ -77,9 +80,4 @@ function post_family_config__1_use_mainline_uboot() {
 	function write_uboot_platform() {
 		dd if=$1/u-boot-rockchip.bin of=$2 seek=64 conv=notrunc status=none
 	}
-}
-
-function post_family_config_branch_vendor__2_zero3_different_dtb_for_vendor() {
-	declare -g BOOT_FDT_FILE="rockchip/rk3566-radxa-zero3.dtb"
-	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "warn"
 }
