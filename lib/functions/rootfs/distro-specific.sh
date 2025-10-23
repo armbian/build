@@ -69,7 +69,7 @@ function install_distribution_specific() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bullseye|bookworm|sid|focal|jammy|noble|oracular|plucky
+# <release>: bullseye|bookworm|trixie|forky|sid|focal|jammy|noble|oracular|plucky
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -85,7 +85,7 @@ function create_sources_list_and_deploy_repo_key() {
 
 	# Add upstream (Debian/Ubuntu) APT repository
 	case $release in
-		buster | bullseye | bookworm | trixie)
+		buster | bullseye | bookworm | trixie | forky)
 			distro="debian"
 
 			declare -a suites=("${release}" "${release}-updates")
