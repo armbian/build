@@ -16,14 +16,13 @@ function extension_prepare_config__prepare_grub_standard() {
 
 	if [[ "${UEFI_GRUB}" != "skip" ]]; then
 		# User config overrides for GRUB.
-		declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
-		unset BOOTSOURCE                                                                 # To try and convince lib/ to not build or install u-boot.
-		declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		declare -g UEFISIZE=260                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-		declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
-		declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
-		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-		declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
+		declare -g BOOTCONFIG="none"                       # To try and convince lib/ to not build or install u-boot.
+		unset BOOTSOURCE                                   # To try and convince lib/ to not build or install u-boot.
+		declare -g IMAGE_PARTITION_TABLE="gpt"             # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+		declare -g UEFISIZE=260                            # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+		declare -g BOOTSIZE=0                              # No separate /boot when using UEFI.
+		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
+		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
 		packages+=(efibootmgr efivar cloud-initramfs-growroot busybox) # Use growroot(+busybox for it to work on Bookworm), add some efi-related packages
 		packages+=(os-prober "grub-efi-${ARCH}-bin")                   # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
