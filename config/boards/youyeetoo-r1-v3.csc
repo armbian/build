@@ -17,7 +17,7 @@ function post_family_tweaks__youyeetoo_r1_naming_audios() {
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8323-sound", ENV{SOUND_DESCRIPTION}="ES8323 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 
 	return 0
 }
@@ -35,11 +35,11 @@ function post_family_tweaks__youyeetoo_r1_naming_udev_network_interfaces() {
 function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline (next branch) U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"             # Use generic defconfig which should boot all RK3588 boards
+	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"       # Use generic defconfig which should boot all RK3588 boards
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2025.04"
-	declare -g BOOTPATCHDIR="v2025.04"
+	declare -g BOOTBRANCH="tag:v2025.10"
+	declare -g BOOTPATCHDIR="v2025.10"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
@@ -51,6 +51,13 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
+}
+
+# U-boot 2025.04+ can detect and set fdtfile automatically on youyeetoo r1 v3.
+# So if using mainline u-boot, unset BOOT_FDT_FILE to let u-boot handle it.
+# That way, both variants can boot from the same image; lets keep the -lts board file for vendor kernel/u-boot.
+function post_family_config__youyeetoo-r1-v3_auto_dtb_name_via_uboot_detection() {
+	unset BOOT_FDT_FILE
 }
 
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
