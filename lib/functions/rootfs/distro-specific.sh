@@ -91,7 +91,6 @@ function fetch_distro_keyring() {
 		debian)
 			if [ -e "${CACHEDIR}/debian-archive-keyring.gpg" ]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
-				/bin/true;
 			else
 				BASEURI='https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/'
 				#FIXME: write something to retrieve newest
@@ -119,7 +118,6 @@ function fetch_distro_keyring() {
 		ubuntu)
 			if [ -e "${CACHEDIR}/ubuntu-archive-keyring.gpg" ]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
-				/bin/true;
 			else
 				BASEURI='https://archive.ubuntu.com/ubuntu/pool/main/u/ubuntu-keyring/'
 				#FIXME: write something to retrieve newest
