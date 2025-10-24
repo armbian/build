@@ -85,6 +85,20 @@ function fetch_distro_keyring() {
 			exit_with_error "fetch_distro_keyring failed" "unrecognized release: $release"
 	esac
 
+	declare -a PROXY
+	case "${MANAGE_ACNG}" in
+		yes)
+			PROXY+=('-x' 'http://localhost:3142/')
+			;;
+		no)		;&  #fallthrough
+		"")
+			PROXY+=('') # don't use a proxy
+			;;          # stop falling
+		*)
+			PROXY+=('-x' "${MANAGE_ACNG}")
+			;;
+	esac
+
 	CACHEDIR="/armbian/cache/keyrings/$distro"
 	mkdir -p "${CACHEDIR}"
 	case $distro in
@@ -96,7 +110,7 @@ function fetch_distro_keyring() {
 				PKG_URL=$(curl --compressed -Ls 'https://packages.debian.org/sid/all/debian-archive-keyring/download' | \
 					grep -oP 'http://(deb|ftp)\.debian\.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_[0-9.]*_[a-zA-Z0-9]*\.deb')
 				[[ -z "${PKG_URL}" ]] && exit_with_error "fetch_distro_keyring failed" "unable to find newest debian-archive-keyring package"
-				curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
+				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
 				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
@@ -110,12 +124,11 @@ function fetch_distro_keyring() {
 				else
 					exit_with_error "fetch_distro_keyring" "unable to find debian-archive-keyring.gpg"
 				fi
-				display_alert "fetch_distro_keyring($release)" "extracted" "info"
 
 				PKG_URL=$(curl --compressed -Ls 'https://packages.debian.org/sid/all/debian-ports-archive-keyring/download' | \
 					grep -oP 'http://(deb|ftp)\.debian\.org/debian/pool/main/d/debian-ports-archive-keyring/debian-ports-archive-keyring_[0-9.]*_[a-zA-Z0-9]*\.deb')
 				[[ -z "${PKG_URL}" ]] && exit_with_error "fetch_distro_keyring failed" "unable to find newest debian-ports-archive-keyring package"
-				curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
+				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
 				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
@@ -128,24 +141,26 @@ function fetch_distro_keyring() {
 				else
 					exit_with_error "fetch_distro_keyring" "unable to find debian-ports-archive-keyring.gpg"
 				fi
+				display_alert "fetch_distro_keyring($release)" "extracted" "info"
 			fi
 			;;
 		ubuntu)
 			if [ -e "${CACHEDIR}/ubuntu-archive-keyring.gpg" ]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
 			else
-				NEWEST_SUITE=$(curl --compressed -sv https://changelogs.ubuntu.com/meta-release | grep 'Dist:'|tail -n 1 | awk '{print $NF}')
+				NEWEST_SUITE=$(curl --compressed -Ls https://changelogs.ubuntu.com/meta-release | grep 'Dist:'|tail -n 1 | awk '{print $NF}')
 				PKG_URL=$(curl --compressed -Ls "https://packages.ubuntu.com/${NEWEST_SUITE}/all/ubuntu-keyring/download" | \
 					grep -oP 'http://\S+\.deb' |grep archive.ubuntu.com|tail -n 1)
 				[[ -z "${PKG_URL}" ]] && exit_with_error "fetch_distro_keyring failed" "unable to find newest ubuntu-keyring package"
 				# ubuntu gives a long list of regional mirrors, we want as generic as possible
 				PKG_URL=$(echo "${PKG_URL}" | sed -E 's/[a-z0-9]+\.archive/archive/')
-				curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
+				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
 				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
 					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${CACHEDIR}/${KEYRING_DEB} failed"
 				cp -l "${CACHEDIR}/usr/share/keyrings/ubuntu-archive-keyring.gpg" "${CACHEDIR}/"
+				display_alert "fetch_distro_keyring($release)" "extracted" "info"
 			fi
 			debootstrap_arguments+=("--keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg")
 			;;
