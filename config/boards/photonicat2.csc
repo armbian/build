@@ -13,13 +13,19 @@ BOARD_FIRMWARE_INSTALL="-full"
 ENABLE_EXTENSIONS="radxa-aic8800"
 AIC8800_TYPE="usb"
 
-# Enable Photonicat2 power management driver
+# Enable Photonicat2 power management and USB watchdog driver (requires SERIAL_DEV_BUS)
 function custom_kernel_config__photonicat2_pm() {
 	kernel_config_modifying_hashes+=(
+		"CONFIG_SERIAL_DEV_BUS=y"
+		"CONFIG_SERIAL_DEV_CTRL_TTYPORT=y"
 		"CONFIG_PHOTONICAT_PM=y"
+		"CONFIG_PHOTONICAT_USB_WDT=m"
 	)
 	if [[ -f .config ]]; then
+		kernel_config_set_y SERIAL_DEV_BUS
+		kernel_config_set_y SERIAL_DEV_CTRL_TTYPORT
 		kernel_config_set_y PHOTONICAT_PM
+		kernel_config_set_m PHOTONICAT_USB_WDT
 	fi
 }
 
