@@ -6,6 +6,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
 	rk3308-pcm5102a.dtbo \
+	rk3568-9tripod-x3568-v4-camera-demo.dtbo \
+	rk3568-9tripod-x3568-v4-video-demo.dtbo \
 	rockchip-dusun-010r-rp3328b.dtbo \
 	rockchip-sakurapi-rk3308b-ws2812.dtbo \
 	rockchip-rockpi4cplus-usb-host.dtbo \
