@@ -135,8 +135,7 @@ function fetch_distro_keyring() {
 	esac
 	# cp -l may break here if it's cross-filesystem
 	# copy everything to the "host" inside the container
-	cp -r "${CACHEDIR}/usr/" /
-	cp -r "${CACHEDIR}/etc/" /
+	cp -r "${CACHEDIR}"/{etc,usr} / || exit_with_error "fetch_distro_keyring" "failed to copy keyrings to host"
 	debootstrap_arguments+=("--setup-hook='copy-in ${CACHEDIR}/usr ${CACHEDIR}/etc /'")
 }
 
