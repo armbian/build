@@ -18,7 +18,7 @@ function artifact_rootfs_config_dump() {
 	artifact_input_variables[LEGACY_DEBOOTSTRAP]="${LEGACY_DEBOOTSTRAP:-"no"}"
 	# Hash of the packages added/removed by extensions
 	declare pkgs_hash="undetermined"
-	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE} ${LEGACY_DEBOOTSTRAP}" | sha256sum | cut -d' ' -f1)"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
 	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
 }
 
