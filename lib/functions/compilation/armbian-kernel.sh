@@ -8,6 +8,17 @@
 # https://github.com/armbian/build/
 
 # Forced .config options for all Armbian kernels.
+
+# IMPORTANT:
+#   armbian_kernel_config hooks are called twice: once for obtaining the version via hashing,
+#   and once for actually modifying the kernel .config. They *must* be consistent, and can't depend on
+#   the contents of the .config (which is not available during version calculation).
+#   the convenience `armbian_kernel_config_apply_opts_from_arrays` function lets you simply define
+#   the opts_n/opts_y arrays and/or the opts_val dictionary with the wanted values and it will
+#   hash and apply at the correct moments. Otherwise: check for .config presence.
+#   In both cases: be consistent -- if you're not, you're effectively making Armbian worse.
+#   The exact same also applies to custom_kernel_config hooks.
+
 # Please note: Manually changing options doesn't check the validity of the .config file. This is done at next make time. Check for warnings in build log.
 
 # Enables additional wireless configuration options for Wi-Fi drivers on kernels 6.13 and later.
@@ -189,12 +200,7 @@ function armbian_kernel_config__enable_zram_support() {
 		)
 
 		for backend in "${zram_backends[@]}"; do
-			# Only try enabling the backend if the symbol exists in the .config
-			if grep -qE "^(# )?CONFIG_${backend}(=| )" .config; then
-				kernel_config_set_y "${backend}"
-			else
-				display_alert "Skipping missing ZRAM backend symbol" "${backend} not found in .config" "debug"
-			fi
+			kernel_config_set_y "${backend}"
 		done
 	fi
 }
