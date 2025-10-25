@@ -29,6 +29,44 @@ function custom_kernel_config__photonicat2_pm() {
 	fi
 }
 
+# Enable PWM subsystem for backlight, beeper, voltage regulation, LEDs
+function custom_kernel_config__photonicat2_pwm() {
+	kernel_config_modifying_hashes+=(
+		"CONFIG_PWM=y"
+		"CONFIG_BACKLIGHT_PWM=y"
+		"CONFIG_ROCKCHIP_MFPWM=y"
+		"CONFIG_ROCKCHIP_PWM_CAPTURE=y"
+		"CONFIG_INPUT_PWM_BEEPER=y"
+		"CONFIG_BACKLIGHT_PWM=y"
+		"CONFIG_REGULATOR_PWM=y"
+		"CONFIG_LEDS_PWM=y"
+	)
+	if [[ -f .config ]]; then
+		kernel_config_set_y PWM
+		kernel_config_set_y BACKLIGHT_PWM
+		kernel_config_set_y ROCKCHIP_MFPWM
+		kernel_config_set_y ROCKCHIP_PWM_CAPTURE
+		kernel_config_set_y INPUT_PWM_BEEPER
+		kernel_config_set_y BACKLIGHT_PWM
+		kernel_config_set_y REGULATOR_PWM
+		kernel_config_set_y LEDS_PWM
+	fi
+}
+
+# Enable LCD backlight control (depends on PWM subsystem)
+function custom_kernel_config__photonicat2_backlight() {
+	kernel_config_modifying_hashes+=(
+		"CONFIG_BACKLIGHT_CLASS_DEVICE=y"
+		"CONFIG_BACKLIGHT_PWM=y"
+		"CONFIG_BACKLIGHT_GPIO=y"
+	)
+	if [[ -f .config ]]; then
+		kernel_config_set_y BACKLIGHT_CLASS_DEVICE
+		kernel_config_set_y BACKLIGHT_PWM
+		kernel_config_set_y BACKLIGHT_GPIO
+	fi
+}
+
 # Enable STMMAC ethernet drivers for the 2x RJ45 Gigabit Ethernet ports
 function custom_kernel_config__photonicat2_ethernet() {
 	kernel_config_modifying_hashes+=(
