@@ -13,10 +13,15 @@
 #   armbian_kernel_config hooks are called twice: once for obtaining the version via hashing,
 #   and once for actually modifying the kernel .config. They *must* be consistent, and can't depend on
 #   the contents of the .config (which is not available during version calculation).
-#   the convenience `armbian_kernel_config_apply_opts_from_arrays` function lets you simply define
-#   the opts_n/opts_y arrays and/or the opts_val dictionary with the wanted values and it will
-#   hash and apply at the correct moments. Otherwise: check for .config presence.
-#   In both cases: be consistent -- if you're not, you're effectively making Armbian worse.
+#
+#   To facilitate this, use the arrays opts_n/opts_y/opts_m and/or the opts_val dictionary.
+#   those will be hashed and applied at the correct moments automatically.
+#
+#   Be consistent -- both the versioning/hashing mechanism and the fast-rebuild principles depend on it.
+#
+#   A word on modules or built-in: try use modules if possible. Certain things should be built-in,
+#   specially if they're needed before the initramfs is available.
+#
 #   The exact same also applies to custom_kernel_config hooks.
 
 # Please note: Manually changing options doesn't check the validity of the .config file. This is done at next make time. Check for warnings in build log.
@@ -33,8 +38,6 @@
 #   kernel_config_modifying_hashes - Array accumulating configuration changes.
 #
 function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
 		# Required by many wifi drivers; otherwise "error: 'struct net_device' has no member named 'ieee80211_ptr'"
 		# In 6.13 something changed ref CONFIG_MAC80211 and CONFIG_CFG80211; enable both to preserve wireless drivers
@@ -43,7 +46,6 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 		opts_y+=("CONFIG_MAC80211_MESH")
 		opts_y+=("CONFIG_CFG80211_WEXT")
 	fi
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables the NETKIT kernel configuration option for kernels version 6.7 and above.
@@ -55,12 +57,9 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 # If both conditions are met, it alerts the user about enabling NETKIT and sets the NETKIT option to 'y' in the kernel configuration.
 #
 function armbian_kernel_config__netkit() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.7; then
 		opts_y+=("NETKIT")
 	fi
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Disables various kernel configuration options that conflict with Armbian's kernel build requirements.
@@ -80,8 +79,6 @@ function armbian_kernel_config__netkit() {
 #    performed if the .config file exists.
 #
 function armbian_kernel_config__disable_various_options() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	display_alert "Enable CONFIG_EXPERT=y" "armbian-kernel" "debug"
 	opts_y+=("EXPERT") # Too many config options are hidden behind EXPERT=y, lets have it always on
 
@@ -95,18 +92,13 @@ function armbian_kernel_config__disable_various_options() {
 	# DONE: Disable: version shenanigans
 	opts_n+=("CONFIG_LOCALVERSION_AUTO") # This causes a mismatch between what Armbian wants and what make produces.
 	opts_val["CONFIG_LOCALVERSION"]='""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
-
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	if [[ "${ARCH}" == "arm64" ]]; then
 		opts_y+=("CONFIG_ARM64_VA_BITS_48")
 		opts_val["CONFIG_ARM64_PA_BITS"]="48"
 	fi
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Configures kernel options to enable or disable eBPF and BTF debug information.
@@ -132,9 +124,6 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 #   0 on successful configuration application.
 #
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
-
 	if [[ "${KERNEL_BTF}" == "no" ]]; then # If user is explicit by passing "KERNEL_BTF=no", then actually disable all debug info.
 		display_alert "Disabling eBPF and BTF info for kernel" "as requested by KERNEL_BTF=no" "info"
 		opts_y+=("CONFIG_DEBUG_INFO_NONE")                                                                               # Enable the "none" option
@@ -160,9 +149,6 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 			"CONFIG_DEBUG_INFO" "CONFIG_DEBUG_INFO_DWARF5" "CONFIG_DEBUG_INFO_BTF" "CONFIG_DEBUG_INFO_BTF_MODULES"                            # BTF & CO-RE == off
 		)
 	fi
-	armbian_kernel_config_apply_opts_from_arrays
-
-	return 0
 }
 
 # Enables ZRAM support by configuring the kernel for compressed memory swap.
@@ -181,8 +167,6 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 #   kernel_config_modifying_hashes - Array used to store configuration changes.
 #
 function armbian_kernel_config__enable_zram_support() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	opts_y+=("ZSWAP")                    # Enables compressed swap space in memory
 	opts_y+=("ZSWAP_ZPOOL_DEFAULT_ZBUD") # Sets default compression pool for ZSWAP to ZBUD
 	opts_m+=("ZSMALLOC")                 # Enables compressed memory allocator for better memory usage
@@ -195,7 +179,6 @@ function armbian_kernel_config__enable_zram_support() {
 	opts_y+=("ZRAM_BACKEND_DEFLATE")
 	opts_y+=("ZRAM_BACKEND_842")
 	opts_y+=("ZRAM_BACKEND_LZO")
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables almost all IPTABLES/NFTABLES options as modules [whilst
@@ -205,8 +188,6 @@ function armbian_kernel_config__enable_zram_support() {
 # split in part from armbian_kernel_config__enable_docker_support.
 #
 function armbian_kernel_config__select_nftables() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	opts_m+=("BRIDGE_NETFILTER")         # Enables netfilter support for the bridge
 	opts_m+=("IP6_NF_FILTER")            # Enables IPv6 netfilter filtering support
 	opts_m+=("IP6_NF_IPTABLES")          # IP6 tables support (required for filtering)
@@ -403,7 +384,6 @@ function armbian_kernel_config__select_nftables() {
 	opts_m+=("IP_SET_HASH_IPPORTNET")
 	opts_m+=("IP_SET_BITMAP_IP")
 	opts_m+=("IP_SET_BITMAP_PORT")
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
@@ -418,8 +398,6 @@ function armbian_kernel_config__select_nftables() {
 #   components. These settings ensure that the kernel is properly configured to support containerized environments.
 #
 function armbian_kernel_config__enable_docker_support() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	opts_y+=("BTRFS_FS")                  # Enables the BTRFS file system support
 	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
 	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
@@ -491,7 +469,6 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_y+=("XFRM")                      # Enables transform (XFRM) framework support
 	opts_m+=("XFRM_ALGO")                 # Enables cryptographic algorithm support for XFRM
 	opts_m+=("XFRM_USER")                 # Enables user space XFRM framework support
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables live system access to the kernel configuration via /proc/config.gz.
@@ -505,18 +482,12 @@ function armbian_kernel_config__enable_docker_support() {
 #   kernel_config_modifying_hashes - Array holding pending kernel configuration changes.
 #
 function armbian_kernel_config__enable_config_access_in_live_system() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	opts_y+=("CONFIG_IKCONFIG")      # This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
 	opts_y+=("CONFIG_IKCONFIG_PROC") # This option enables access to the kernel configuration file through /proc/config.gz
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function armbian_kernel_config__restore_enable_gpio_sysfs() {
-	declare -A opts_val=()
-	declare -a opts_y=() opts_n=() opts_m=()
 	opts_y+=("CONFIG_GPIO_SYSFS") # This was a victim of not having EXPERT=y due to some _DEBUG conflicts in old times. Re-enable it forcefully.
-	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # +++++++++++ HELPERS CORNER +++++++++++
