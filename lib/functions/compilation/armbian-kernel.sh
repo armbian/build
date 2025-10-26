@@ -426,7 +426,7 @@ function armbian_kernel_config__select_nftables() {
 function armbian_kernel_config__enable_docker_support() {
 	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
 	if [[ -f .config ]]; then
-		kernel_config_set_m BTRFS_FS                  # Enables the BTRFS file system support
+		kernel_config_set_y BTRFS_FS                  # Enables the BTRFS file system support
 		kernel_config_set_y BTRFS_FS_POSIX_ACL        # Enables POSIX ACL support for BTRFS
 		kernel_config_set_y BLK_CGROUP                # Enables block layer control groups (cgroups)
 		kernel_config_set_y BLK_DEV_THROTTLING        # Enables block device IO throttling
@@ -456,7 +456,7 @@ function armbian_kernel_config__enable_docker_support() {
 		kernel_config_set_m DUMMY                     # Enables dummy network driver module
 		kernel_config_set_y DEVPTS_MULTIPLE_INSTANCES # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
 		kernel_config_set_y ENCRYPTED_KEYS            # Enables support for encrypted keys in the kernel
-		kernel_config_set_m EXT4_FS                   # Enables EXT4 file system support as a module
+		kernel_config_set_y EXT4_FS                   # Enables EXT4 file system support as a module
 		kernel_config_set_y EXT4_FS_POSIX_ACL         # Enables POSIX ACL support for EXT4
 		kernel_config_set_y EXT4_FS_SECURITY          # Enables security extensions for EXT4 file system
 		kernel_config_set_m IPVLAN                    # Enables IPvlan network driver support
