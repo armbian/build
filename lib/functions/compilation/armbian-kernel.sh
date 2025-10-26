@@ -33,17 +33,17 @@
 #   kernel_config_modifying_hashes - Array accumulating configuration changes.
 #
 function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
-		kernel_config_modifying_hashes+=("CONFIG_CFG80211=m" "CONFIG_MAC80211=m" "CONFIG_MAC80211_MESH=y" "CONFIG_CFG80211_WEXT=y")
-		if [[ -f .config ]]; then
-			# Required by many wifi drivers; otherwise "error: 'struct net_device' has no member named 'ieee80211_ptr'"
-			# In 6.13 something changed ref CONFIG_MAC80211 and CONFIG_CFG80211; enable both to preserve wireless drivers
-			kernel_config_set_m CONFIG_CFG80211
-			kernel_config_set_m CONFIG_MAC80211
-			kernel_config_set_y CONFIG_MAC80211_MESH
-			kernel_config_set_y CONFIG_CFG80211_WEXT
-		fi
+		# Required by many wifi drivers; otherwise "error: 'struct net_device' has no member named 'ieee80211_ptr'"
+		# In 6.13 something changed ref CONFIG_MAC80211 and CONFIG_CFG80211; enable both to preserve wireless drivers
+		opts_m+=("CONFIG_CFG80211")
+		opts_m+=("CONFIG_MAC80211")
+		opts_y+=("CONFIG_MAC80211_MESH")
+		opts_y+=("CONFIG_CFG80211_WEXT")
 	fi
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables the NETKIT kernel configuration option for kernels version 6.7 and above.
@@ -55,12 +55,12 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 # If both conditions are met, it alerts the user about enabling NETKIT and sets the NETKIT option to 'y' in the kernel configuration.
 #
 function armbian_kernel_config__netkit() {
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.7; then
-		if [[ -f .config ]]; then
-			display_alert "Enable NETKIT=y" "armbian-kernel" "debug"
-			kernel_config_set_y NETKIT
-		fi
+		opts_y+=("NETKIT")
 	fi
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Disables various kernel configuration options that conflict with Armbian's kernel build requirements.
@@ -80,27 +80,28 @@ function armbian_kernel_config__netkit() {
 #    performed if the .config file exists.
 #
 function armbian_kernel_config__disable_various_options() {
-	kernel_config_modifying_hashes+=("CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
-	if [[ -f .config ]]; then
-		display_alert "Enable CONFIG_EXPERT=y" "armbian-kernel" "debug"
-		kernel_config_set_y EXPERT # Too many config options are hidden behind EXPERT=y, lets have it always on
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	display_alert "Enable CONFIG_EXPERT=y" "armbian-kernel" "debug"
+	opts_y+=("EXPERT") # Too many config options are hidden behind EXPERT=y, lets have it always on
 
-		display_alert "Disabling module signing / debug / auto version" "armbian-kernel" "debug"
-		kernel_config_set_n CONFIG_SECURITY_LOCKDOWN_LSM
-		kernel_config_set_n CONFIG_MODULE_SIG     # No use signing modules
-		kernel_config_set_n CONFIG_MODULE_SIG_ALL # No use auto-signing modules
-		kernel_config_set_n MODULE_SIG_FORCE      # No forcing of module sign verification
-		kernel_config_set_n IMA_APPRAISE_MODSIG   # No appraisal module-style either
+	display_alert "Disabling module signing / debug / auto version" "armbian-kernel" "debug"
+	opts_n+=("CONFIG_SECURITY_LOCKDOWN_LSM")
+	opts_n+=("CONFIG_MODULE_SIG")     # No use signing modules
+	opts_n+=("CONFIG_MODULE_SIG_ALL") # No use auto-signing modules
+	opts_n+=("MODULE_SIG_FORCE")      # No forcing of module sign verification
+	opts_n+=("IMA_APPRAISE_MODSIG")   # No appraisal module-style either
 
-		# DONE: Disable: version shenanigans
-		kernel_config_set_n CONFIG_LOCALVERSION_AUTO      # This causes a mismatch between what Armbian wants and what make produces.
-		kernel_config_set_string CONFIG_LOCALVERSION '""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
-	fi
+	# DONE: Disable: version shenanigans
+	opts_n+=("CONFIG_LOCALVERSION_AUTO") # This causes a mismatch between what Armbian wants and what make produces.
+	opts_val["CONFIG_LOCALVERSION"]='""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
+
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 	declare -A opts_val=()
-	declare -a opts_y=() opts_n=()
+	declare -a opts_y=() opts_n=() opts_m=()
 	if [[ "${ARCH}" == "arm64" ]]; then
 		opts_y+=("CONFIG_ARM64_VA_BITS_48")
 		opts_val["CONFIG_ARM64_PA_BITS"]="48"
@@ -132,7 +133,7 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 #
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	declare -A opts_val=()
-	declare -a opts_y=() opts_n=()
+	declare -a opts_y=() opts_n=() opts_m=()
 
 	if [[ "${KERNEL_BTF}" == "no" ]]; then # If user is explicit by passing "KERNEL_BTF=no", then actually disable all debug info.
 		display_alert "Disabling eBPF and BTF info for kernel" "as requested by KERNEL_BTF=no" "info"
@@ -180,29 +181,21 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 #   kernel_config_modifying_hashes - Array used to store configuration changes.
 #
 function armbian_kernel_config__enable_zram_support() {
-	kernel_config_modifying_hashes+=("CONFIG_ZRAM=y")
-	if [[ -f .config ]]; then
-		kernel_config_set_y ZSWAP                    # Enables compressed swap space in memory
-		kernel_config_set_y ZSWAP_ZPOOL_DEFAULT_ZBUD # Sets default compression pool for ZSWAP to ZBUD
-		kernel_config_set_m ZSMALLOC                 # Enables compressed memory allocator for better memory usage
-		kernel_config_set_m ZRAM                     # Enables in-memory block device compression for swap or temporary storage
-		kernel_config_set_y ZRAM_WRITEBACK           # Allows write-back of compressed ZRAM data to storage
-		kernel_config_set_y ZRAM_MEMORY_TRACKING     # Enables tracking of memory usage in ZRAM
-
-		# List of known ZRAM backend config symbols
-		local -a zram_backends=(
-			"ZRAM_BACKEND_LZ4"
-			"ZRAM_BACKEND_LZ4HC"
-			"ZRAM_BACKEND_ZSTD"
-			"ZRAM_BACKEND_DEFLATE"
-			"ZRAM_BACKEND_842"
-			"ZRAM_BACKEND_LZO"
-		)
-
-		for backend in "${zram_backends[@]}"; do
-			kernel_config_set_y "${backend}"
-		done
-	fi
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	opts_y+=("ZSWAP")                    # Enables compressed swap space in memory
+	opts_y+=("ZSWAP_ZPOOL_DEFAULT_ZBUD") # Sets default compression pool for ZSWAP to ZBUD
+	opts_m+=("ZSMALLOC")                 # Enables compressed memory allocator for better memory usage
+	opts_m+=("ZRAM")                     # Enables in-memory block device compression for swap or temporary storage
+	opts_y+=("ZRAM_WRITEBACK")           # Allows write-back of compressed ZRAM data to storage
+	opts_y+=("ZRAM_MEMORY_TRACKING")     # Enables tracking of memory usage in ZRAM
+	opts_y+=("ZRAM_BACKEND_LZ4")
+	opts_y+=("ZRAM_BACKEND_LZ4HC")
+	opts_y+=("ZRAM_BACKEND_ZSTD")
+	opts_y+=("ZRAM_BACKEND_DEFLATE")
+	opts_y+=("ZRAM_BACKEND_842")
+	opts_y+=("ZRAM_BACKEND_LZO")
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables almost all IPTABLES/NFTABLES options as modules [whilst
@@ -212,204 +205,205 @@ function armbian_kernel_config__enable_zram_support() {
 # split in part from armbian_kernel_config__enable_docker_support.
 #
 function armbian_kernel_config__select_nftables() {
-	if [[ -f .config ]]; then
-		kernel_config_set_m BRIDGE_NETFILTER         # Enables netfilter support for the bridge
-		kernel_config_set_m IP6_NF_FILTER            # Enables IPv6 netfilter filtering support
-		kernel_config_set_m IP6_NF_IPTABLES          # IP6 tables support (required for filtering)
-		kernel_config_set_m IP6_NF_MANGLE            # Enables IPv6 netfilter mangling support
-		kernel_config_set_m IP6_NF_MATCH_AH          # "ah" match support
-		kernel_config_set_m IP6_NF_MATCH_EUI64       # "eui64" address check
-		kernel_config_set_m IP6_NF_MATCH_FRAG        # "frag" Fragmentation header match support
-		kernel_config_set_m IP6_NF_MATCH_HL          # "hl" hoplimit match support
-		kernel_config_set_m IP6_NF_MATCH_IPV6HEADER  # "ipv6header" IPv6 Extension Headers Match
-		kernel_config_set_m IP6_NF_MATCH_MH          # "mh" match support
-		kernel_config_set_m IP6_NF_MATCH_OPTS        # "hbh" hop-by-hop and "dst" opts header match support
-		kernel_config_set_m IP6_NF_MATCH_RPFILTER    # "rpfilter" reverse path filter match support
-		kernel_config_set_m IP6_NF_MATCH_RT          # "rt" Routing header match support
-		kernel_config_set_m IP6_NF_MATCH_SRH         # "srh" Segment Routing header match support
-		kernel_config_set_m IP6_NF_NAT               # Enables IPv6 network address translation support
-		kernel_config_set_m IP6_NF_RAW               # Enables raw support for IPv6 netfilter
-		kernel_config_set_m IP6_NF_SECURITY          # Enables IPv6 netfilter security features
-		kernel_config_set_m IP6_NF_TARGET_HL         # "HL" hoplimit target support
-		kernel_config_set_m IP6_NF_TARGET_MASQUERADE # Enables IPv6 netfilter target for masquerading (NAT)
-		kernel_config_set_m IP6_NF_TARGET_NPT        # NPT (Network Prefix translation) target support
-		kernel_config_set_m IP6_NF_TARGET_REJECT     # REJECT target support
-		kernel_config_set_m IP6_NF_TARGET_SYNPROXY   # SYNPROXY target support
-		kernel_config_set_m IP_NF_IPTABLES           # Enables iptables for IPv4
-		kernel_config_set_m IP_NF_FILTER             # filter table
-		kernel_config_set_m IP_NF_MANGLE             # mangle table
-		kernel_config_set_m IP_NF_TARGET_MASQUERADE  # Enables IPv4 netfilter target for masquerading (NAT)
-		kernel_config_set_m IP_NF_TARGET_NETMAP      # Enables IPv4 netfilter target for netmap
-		kernel_config_set_m IP_NF_TARGET_REDIRECT    # Enables IPv4 netfilter target for redirect
-		kernel_config_set_m IP_NF_NAT                # Enables NAT (Network Address Translation) support for IPv4
-		kernel_config_set_m IP_NF_RAW                # Enables raw support for IPv4 netfilter
-		kernel_config_set_m IP_NF_SECURITY           # Enables security features for IPv4 netfilter
-		kernel_config_set_m NET_ACT_IPT
-		kernel_config_set_m NET_EMATCH_IPT     # IPtables Matches
-		kernel_config_set_y NETFILTER_BPF_LINK # BPF link support for netfilter hooks
-		kernel_config_set_m NETFILTER_CONNCOUNT
-		kernel_config_set_y NETFILTER_EGRESS # Netfilter egress support
-		kernel_config_set_y NETFILTER_FAMILY_ARP
-		kernel_config_set_y NETFILTER_FAMILY_BRIDGE
-		kernel_config_set_y NETFILTER_INGRESS      # Netfilter ingress support
-		kernel_config_set_m NETFILTER_NETLINK_ACCT # Netfilter NFACCT over NFNETLINK interface
-		kernel_config_set_y NETFILTER_NETLINK_GLUE_CT
-		kernel_config_set_m NETFILTER_NETLINK_HOOK # Netfilter base hook dump support
-		kernel_config_set_m NETFILTER_NETLINK_LOG  # Netfilter LOG over NFNETLINK interface
-		kernel_config_set_m NETFILTER_NETLINK
-		kernel_config_set_m NETFILTER_NETLINK_OSF   # Netfilter OSF over NFNETLINK interface
-		kernel_config_set_m NETFILTER_NETLINK_QUEUE # Netfilter NFQUEUE over NFNETLINK interface
-		kernel_config_set_m NETFILTER_SYNPROXY
-		kernel_config_set_y NETFILTER_XTABLES_COMPAT        # Netfilter Xtables 32bit support
-		kernel_config_set_m NETFILTER_XTABLES               # Enables x_tables support in netfilter
-		kernel_config_set_m NETFILTER_XT_CONNMARK           # ctmark target and match support
-		kernel_config_set_m NETFILTER_XT_MARK               # Enables mark matching for netfilter
-		kernel_config_set_m NETFILTER_XT_MATCH_ADDRTYPE     # Enables address type matching for netfilter
-		kernel_config_set_m NETFILTER_XT_MATCH_BPF          # Enables BPF match support in netfilter
-		kernel_config_set_m NETFILTER_XT_MATCH_CGROUP       # "control group" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CLUSTER      # "cluster" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_COMMENT      # "comment" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CONNBYTES    # "connbytes" per-connection counter match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CONNLABEL    # "connlabel" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CONNLIMIT    # "connlimit" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CONNMARK     # "connmark" connection mark match support
-		kernel_config_set_m NETFILTER_XT_MATCH_CONNTRACK    # Enables connection tracking match support in netfilter
-		kernel_config_set_m NETFILTER_XT_MATCH_CPU          # "cpu" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_DCCP         # "dccp" protocol match support
-		kernel_config_set_m NETFILTER_XT_MATCH_DEVGROUP     # "devgroup" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_DSCP         # "dscp" and "tos" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_ECN          # "ecn" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_ESP          # "esp" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_HASHLIMIT    # "hashlimit" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_HELPER       # "helper" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_HL           # "hl" hoplimit/TTL match support
-		kernel_config_set_m NETFILTER_XT_MATCH_IPCOMP       # "ipcomp" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_IPRANGE      # "iprange" address range match support
-		kernel_config_set_m NETFILTER_XT_MATCH_IPVS         # Enables IPVS match support in netfilter
-		kernel_config_set_m NETFILTER_XT_MATCH_L2TP         # "l2tp" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_LENGTH       # "length" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_LIMIT        # "limit" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_MAC          # "mac" address match support
-		kernel_config_set_m NETFILTER_XT_MATCH_MARK         # "mark" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_MULTIPORT    # "multiport" Multiple port match support
-		kernel_config_set_m NETFILTER_XT_MATCH_NFACCT       # "nfacct" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_OSF          # "osf" Passive OS fingerprint match
-		kernel_config_set_m NETFILTER_XT_MATCH_OWNER        # "owner" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_PHYSDEV      # "physdev" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_PKTTYPE      # "pkttype" packet type match support
-		kernel_config_set_m NETFILTER_XT_MATCH_POLICY       # IPsec "policy" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_QUOTA        # "quota" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_RATEEST      # "rateest" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_REALM        # "realm" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_RECENT       # "recent" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_SCTP         # "sctp" protocol match support
-		kernel_config_set_m NETFILTER_XT_MATCH_SOCKET       # "socket" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_STATE        # "state" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_STATISTIC    # "statistic" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_STRING       # "string" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_TCPMSS       # "tcpmss" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_TIME         # "time" match support
-		kernel_config_set_m NETFILTER_XT_MATCH_U32          # "u32" match support
-		kernel_config_set_m NETFILTER_XT_NAT                # "SNAT and DNAT" targets support
-		kernel_config_set_m NETFILTER_XT_SET                # set target and match support
-		kernel_config_set_m NETFILTER_XT_TARGET_AUDIT       # AUDIT target support
-		kernel_config_set_m NETFILTER_XT_TARGET_CHECKSUM    # CHECKSUM target support
-		kernel_config_set_m NETFILTER_XT_TARGET_CLASSIFY    # "CLASSIFY" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_CONNMARK    # "CONNMARK" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_CONNSECMARK # "CONNSECMARK" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_CT          # "CT" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_DSCP        # "DSCP" and "TOS" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_FLOWOFFLOAD
-		kernel_config_set_m NETFILTER_XT_TARGET_HL          # "HL" hoplimit target support
-		kernel_config_set_m NETFILTER_XT_TARGET_HMARK       # "HMARK" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_IDLETIMER   # IDLETIMER target support
-		kernel_config_set_m NETFILTER_XT_TARGET_LED         # "LED" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_LOG         # LOG target support
-		kernel_config_set_m NETFILTER_XT_TARGET_MARK        # "MARK" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_MASQUERADE  # Enables masquerade target for netfilter
-		kernel_config_set_m NETFILTER_XT_TARGET_NETMAP      # "NETMAP" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_NFLOG       # "NFLOG" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_NFQUEUE     # "NFQUEUE" target Support
-		kernel_config_set_m NETFILTER_XT_TARGET_NOTRACK     # "NOTRACK" target support (DEPRECATED)
-		kernel_config_set_m NETFILTER_XT_TARGET_RATEEST     # "RATEEST" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_REDIRECT    # REDIRECT target support
-		kernel_config_set_m NETFILTER_XT_TARGET_SECMARK     # "SECMARK" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_TCPMSS      # "TCPMSS" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_TCPOPTSTRIP # "TCPOPTSTRIP" target support
-		kernel_config_set_m NETFILTER_XT_TARGET_TEE         # "TEE" - packet cloning to alternate destination
-		kernel_config_set_m NETFILTER_XT_TARGET_TPROXY      # "TPROXY" target transparent proxying support
-		kernel_config_set_m NETFILTER_XT_TARGET_TRACE       # "TRACE" target support
-		kernel_config_set_y NETFILTER                       # Enables support for netfilter framework
-		kernel_config_set_y NETFILTER_ADVANCED              # Enables advanced netfilter options
-		kernel_config_set_m NET_IP_TUNNEL
-		kernel_config_set_y NF_TABLES_ARP # ARP nf_tables support
-		kernel_config_set_m NF_TABLES_BRIDGE
-		kernel_config_set_y NF_TABLES_INET # Enables IPv4 and IPv6 support for nf_tables
-		kernel_config_set_y NF_TABLES_IPV4
-		kernel_config_set_y NF_TABLES_IPV6
-		kernel_config_set_m NF_TABLES              # Enables nf_tables framework support
-		kernel_config_set_y NF_TABLES_NETDEV       # Enables netdevice support for nf_tables
-		kernel_config_set_m NF_CONNTRACK           # Enables connection tracking support
-		kernel_config_set_m NF_CONNTRACK_FTP       # Enables FTP connection tracking support
-		kernel_config_set_m NF_CONNTRACK_IRC       # Enables IRC connection tracking support
-		kernel_config_set_y NF_CONNTRACK_MARK      # Enables connection mark support in netfilter
-		kernel_config_set_m NF_CONNTRACK_PPTP      # Enables PPTP connection tracking support
-		kernel_config_set_m NF_CONNTRACK_TFTP      # Enables TFTP connection tracking support
-		kernel_config_set_y NF_CONNTRACK_ZONES     # Enables connection tracking zones support
-		kernel_config_set_y NF_CONNTRACK_EVENTS    # Enables connection tracking events support
-		kernel_config_set_y NF_CONNTRACK_LABELS    # Enables connection tracking labels support
-		kernel_config_set_m NF_NAT                 # Enables NAT support in nf_conntrack
-		kernel_config_set_m NF_NAT_MASQUERADE_IPV4 # Enables IPv4 masquerading for NAT in nf_conntrack
-		kernel_config_set_m NF_NAT_IPV4            # Enables IPv4 NAT support in nf_conntrack
-		kernel_config_set_m NF_NAT_FTP             # Enables FTP NAT support in nf_conntrack
-		kernel_config_set_m NF_NAT_TFTP            # Enables TFTP NAT support in nf_conntrack
-		kernel_config_set_m NFT_BRIDGE_META        # Netfilter nf_table bridge meta support
-		kernel_config_set_m NFT_BRIDGE_REJECT      # Netfilter nf_tables bridge reject support
-		kernel_config_set_m NFT_COMPAT_ARP
-		kernel_config_set_m NFT_COMPAT    # Enables compatibility support for older nftables versions
-		kernel_config_set_m NFT_CONNLIMIT # Netfilter nf_tables connlimit module
-		kernel_config_set_m NFT_COUNTER
-		kernel_config_set_m NFT_CT         # Netfilter nf_tables conntrack module
-		kernel_config_set_m NFT_DUP_IPV4   # IPv4 nf_tables packet duplication support
-		kernel_config_set_m NFT_DUP_IPV6   # IPv6 nf_tables packet duplication support
-		kernel_config_set_m NFT_DUP_NETDEV # Enables duplicate netdev (network device) support in nftables
-		kernel_config_set_m NFT_FIB_INET
-		kernel_config_set_m NFT_FIB_IPV4 # nf_tables fib / ip route lookup support
-		kernel_config_set_m NFT_FIB_IPV6 # nf_tables fib / ipv6 route lookup support
-		kernel_config_set_m NFT_FIB
-		kernel_config_set_m NFT_FIB_NETDEV   # Netfilter nf_tables netdev fib lookups support
-		kernel_config_set_m NFT_FLOW_OFFLOAD # Netfilter nf_tables hardware flow offload module
-		kernel_config_set_m NFT_FWD_NETDEV   # Enables forward netdev support in nftables
-		kernel_config_set_m NFT_HASH         # Enables hash-based set operations support in nftables
-		kernel_config_set_m NFT_LIMIT        # Netfilter nf_tables limit module
-		kernel_config_set_m NFT_LOG          # Netfilter nf_tables log module
-		kernel_config_set_m NFT_MASQ
-		kernel_config_set_m NFT_NAT    # Enables NAT (Network Address Translation) support in nftables
-		kernel_config_set_m NFT_NUMGEN # Netfilter nf_tables number generator module
-		kernel_config_set_m NFT_OBJREF
-		kernel_config_set_m NFT_OSF
-		kernel_config_set_m NFT_QUEUE # Netfilter nf_tables queue module
-		kernel_config_set_m NFT_QUOTA # Enables quota support in nftables
-		kernel_config_set_m NFT_REDIR
-		kernel_config_set_m NFT_REJECT_INET
-		kernel_config_set_m NFT_REJECT_IPV4
-		kernel_config_set_m NFT_REJECT_IPV6
-		kernel_config_set_m NFT_REJECT        # Enables reject target support in nftables
-		kernel_config_set_m NFT_REJECT_NETDEV # Enables reject netdev support in nftables
-		kernel_config_set_m NFT_SOCKET        # Enables socket operations support in nftables
-		kernel_config_set_m NFT_SYNPROXY      # Enables SYN proxy support in nftables
-		kernel_config_set_m NFT_TPROXY        # Enables transparent proxy support in nftables
-		kernel_config_set_m NFT_TUNNEL        # Enables tunneling support in nftables
-		kernel_config_set_m NFT_XFRM          # Enables transformation support in nftables
-		kernel_config_set_m IP_SET            # IP Set core
-		kernel_config_set_m IP_SET_HASH_IP
-		kernel_config_set_m IP_SET_HASH_NET
-		kernel_config_set_m IP_SET_HASH_IPPORT
-		kernel_config_set_m IP_SET_HASH_NETPORT
-		kernel_config_set_m IP_SET_HASH_IPPORTNET
-		kernel_config_set_m IP_SET_BITMAP_IP
-		kernel_config_set_m IP_SET_BITMAP_PORT
-	fi
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	opts_m+=("BRIDGE_NETFILTER")         # Enables netfilter support for the bridge
+	opts_m+=("IP6_NF_FILTER")            # Enables IPv6 netfilter filtering support
+	opts_m+=("IP6_NF_IPTABLES")          # IP6 tables support (required for filtering)
+	opts_m+=("IP6_NF_MANGLE")            # Enables IPv6 netfilter mangling support
+	opts_m+=("IP6_NF_MATCH_AH")          # "ah" match support
+	opts_m+=("IP6_NF_MATCH_EUI64")       # "eui64" address check
+	opts_m+=("IP6_NF_MATCH_FRAG")        # "frag" Fragmentation header match support
+	opts_m+=("IP6_NF_MATCH_HL")          # "hl" hoplimit match support
+	opts_m+=("IP6_NF_MATCH_IPV6HEADER")  # "ipv6header" IPv6 Extension Headers Match
+	opts_m+=("IP6_NF_MATCH_MH")          # "mh" match support
+	opts_m+=("IP6_NF_MATCH_OPTS")        # "hbh" hop-by-hop and "dst" opts header match support
+	opts_m+=("IP6_NF_MATCH_RPFILTER")    # "rpfilter" reverse path filter match support
+	opts_m+=("IP6_NF_MATCH_RT")          # "rt" Routing header match support
+	opts_m+=("IP6_NF_MATCH_SRH")         # "srh" Segment Routing header match support
+	opts_m+=("IP6_NF_NAT")               # Enables IPv6 network address translation support
+	opts_m+=("IP6_NF_RAW")               # Enables raw support for IPv6 netfilter
+	opts_m+=("IP6_NF_SECURITY")          # Enables IPv6 netfilter security features
+	opts_m+=("IP6_NF_TARGET_HL")         # "HL" hoplimit target support
+	opts_m+=("IP6_NF_TARGET_MASQUERADE") # Enables IPv6 netfilter target for masquerading (NAT)
+	opts_m+=("IP6_NF_TARGET_NPT")        # NPT (Network Prefix translation) target support
+	opts_m+=("IP6_NF_TARGET_REJECT")     # REJECT target support
+	opts_m+=("IP6_NF_TARGET_SYNPROXY")   # SYNPROXY target support
+	opts_m+=("IP_NF_IPTABLES")           # Enables iptables for IPv4
+	opts_m+=("IP_NF_FILTER")             # filter table
+	opts_m+=("IP_NF_MANGLE")             # mangle table
+	opts_m+=("IP_NF_TARGET_MASQUERADE")  # Enables IPv4 netfilter target for masquerading (NAT)
+	opts_m+=("IP_NF_TARGET_NETMAP")      # Enables IPv4 netfilter target for netmap
+	opts_m+=("IP_NF_TARGET_REDIRECT")    # Enables IPv4 netfilter target for redirect
+	opts_m+=("IP_NF_NAT")                # Enables NAT (Network Address Translation) support for IPv4
+	opts_m+=("IP_NF_RAW")                # Enables raw support for IPv4 netfilter
+	opts_m+=("IP_NF_SECURITY")           # Enables security features for IPv4 netfilter
+	opts_m+=("NET_ACT_IPT")
+	opts_m+=("NET_EMATCH_IPT")     # IPtables Matches
+	opts_y+=("NETFILTER_BPF_LINK") # BPF link support for netfilter hooks
+	opts_m+=("NETFILTER_CONNCOUNT")
+	opts_y+=("NETFILTER_EGRESS") # Netfilter egress support
+	opts_y+=("NETFILTER_FAMILY_ARP")
+	opts_y+=("NETFILTER_FAMILY_BRIDGE")
+	opts_y+=("NETFILTER_INGRESS")      # Netfilter ingress support
+	opts_m+=("NETFILTER_NETLINK_ACCT") # Netfilter NFACCT over NFNETLINK interface
+	opts_y+=("NETFILTER_NETLINK_GLUE_CT")
+	opts_m+=("NETFILTER_NETLINK_HOOK") # Netfilter base hook dump support
+	opts_m+=("NETFILTER_NETLINK_LOG")  # Netfilter LOG over NFNETLINK interface
+	opts_m+=("NETFILTER_NETLINK")
+	opts_m+=("NETFILTER_NETLINK_OSF")   # Netfilter OSF over NFNETLINK interface
+	opts_m+=("NETFILTER_NETLINK_QUEUE") # Netfilter NFQUEUE over NFNETLINK interface
+	opts_m+=("NETFILTER_SYNPROXY")
+	opts_y+=("NETFILTER_XTABLES_COMPAT")        # Netfilter Xtables 32bit support
+	opts_m+=("NETFILTER_XTABLES")               # Enables x_tables support in netfilter
+	opts_m+=("NETFILTER_XT_CONNMARK")           # ctmark target and match support
+	opts_m+=("NETFILTER_XT_MARK")               # Enables mark matching for netfilter
+	opts_m+=("NETFILTER_XT_MATCH_ADDRTYPE")     # Enables address type matching for netfilter
+	opts_m+=("NETFILTER_XT_MATCH_BPF")          # Enables BPF match support in netfilter
+	opts_m+=("NETFILTER_XT_MATCH_CGROUP")       # "control group" match support
+	opts_m+=("NETFILTER_XT_MATCH_CLUSTER")      # "cluster" match support
+	opts_m+=("NETFILTER_XT_MATCH_COMMENT")      # "comment" match support
+	opts_m+=("NETFILTER_XT_MATCH_CONNBYTES")    # "connbytes" per-connection counter match support
+	opts_m+=("NETFILTER_XT_MATCH_CONNLABEL")    # "connlabel" match support
+	opts_m+=("NETFILTER_XT_MATCH_CONNLIMIT")    # "connlimit" match support
+	opts_m+=("NETFILTER_XT_MATCH_CONNMARK")     # "connmark" connection mark match support
+	opts_m+=("NETFILTER_XT_MATCH_CONNTRACK")    # Enables connection tracking match support in netfilter
+	opts_m+=("NETFILTER_XT_MATCH_CPU")          # "cpu" match support
+	opts_m+=("NETFILTER_XT_MATCH_DCCP")         # "dccp" protocol match support
+	opts_m+=("NETFILTER_XT_MATCH_DEVGROUP")     # "devgroup" match support
+	opts_m+=("NETFILTER_XT_MATCH_DSCP")         # "dscp" and "tos" match support
+	opts_m+=("NETFILTER_XT_MATCH_ECN")          # "ecn" match support
+	opts_m+=("NETFILTER_XT_MATCH_ESP")          # "esp" match support
+	opts_m+=("NETFILTER_XT_MATCH_HASHLIMIT")    # "hashlimit" match support
+	opts_m+=("NETFILTER_XT_MATCH_HELPER")       # "helper" match support
+	opts_m+=("NETFILTER_XT_MATCH_HL")           # "hl" hoplimit/TTL match support
+	opts_m+=("NETFILTER_XT_MATCH_IPCOMP")       # "ipcomp" match support
+	opts_m+=("NETFILTER_XT_MATCH_IPRANGE")      # "iprange" address range match support
+	opts_m+=("NETFILTER_XT_MATCH_IPVS")         # Enables IPVS match support in netfilter
+	opts_m+=("NETFILTER_XT_MATCH_L2TP")         # "l2tp" match support
+	opts_m+=("NETFILTER_XT_MATCH_LENGTH")       # "length" match support
+	opts_m+=("NETFILTER_XT_MATCH_LIMIT")        # "limit" match support
+	opts_m+=("NETFILTER_XT_MATCH_MAC")          # "mac" address match support
+	opts_m+=("NETFILTER_XT_MATCH_MARK")         # "mark" match support
+	opts_m+=("NETFILTER_XT_MATCH_MULTIPORT")    # "multiport" Multiple port match support
+	opts_m+=("NETFILTER_XT_MATCH_NFACCT")       # "nfacct" match support
+	opts_m+=("NETFILTER_XT_MATCH_OSF")          # "osf" Passive OS fingerprint match
+	opts_m+=("NETFILTER_XT_MATCH_OWNER")        # "owner" match support
+	opts_m+=("NETFILTER_XT_MATCH_PHYSDEV")      # "physdev" match support
+	opts_m+=("NETFILTER_XT_MATCH_PKTTYPE")      # "pkttype" packet type match support
+	opts_m+=("NETFILTER_XT_MATCH_POLICY")       # IPsec "policy" match support
+	opts_m+=("NETFILTER_XT_MATCH_QUOTA")        # "quota" match support
+	opts_m+=("NETFILTER_XT_MATCH_RATEEST")      # "rateest" match support
+	opts_m+=("NETFILTER_XT_MATCH_REALM")        # "realm" match support
+	opts_m+=("NETFILTER_XT_MATCH_RECENT")       # "recent" match support
+	opts_m+=("NETFILTER_XT_MATCH_SCTP")         # "sctp" protocol match support
+	opts_m+=("NETFILTER_XT_MATCH_SOCKET")       # "socket" match support
+	opts_m+=("NETFILTER_XT_MATCH_STATE")        # "state" match support
+	opts_m+=("NETFILTER_XT_MATCH_STATISTIC")    # "statistic" match support
+	opts_m+=("NETFILTER_XT_MATCH_STRING")       # "string" match support
+	opts_m+=("NETFILTER_XT_MATCH_TCPMSS")       # "tcpmss" match support
+	opts_m+=("NETFILTER_XT_MATCH_TIME")         # "time" match support
+	opts_m+=("NETFILTER_XT_MATCH_U32")          # "u32" match support
+	opts_m+=("NETFILTER_XT_NAT")                # "SNAT and DNAT" targets support
+	opts_m+=("NETFILTER_XT_SET")                # set target and match support
+	opts_m+=("NETFILTER_XT_TARGET_AUDIT")       # AUDIT target support
+	opts_m+=("NETFILTER_XT_TARGET_CHECKSUM")    # CHECKSUM target support
+	opts_m+=("NETFILTER_XT_TARGET_CLASSIFY")    # "CLASSIFY" target support
+	opts_m+=("NETFILTER_XT_TARGET_CONNMARK")    # "CONNMARK" target support
+	opts_m+=("NETFILTER_XT_TARGET_CONNSECMARK") # "CONNSECMARK" target support
+	opts_m+=("NETFILTER_XT_TARGET_CT")          # "CT" target support
+	opts_m+=("NETFILTER_XT_TARGET_DSCP")        # "DSCP" and "TOS" target support
+	opts_m+=("NETFILTER_XT_TARGET_FLOWOFFLOAD")
+	opts_m+=("NETFILTER_XT_TARGET_HL")          # "HL" hoplimit target support
+	opts_m+=("NETFILTER_XT_TARGET_HMARK")       # "HMARK" target support
+	opts_m+=("NETFILTER_XT_TARGET_IDLETIMER")   # IDLETIMER target support
+	opts_m+=("NETFILTER_XT_TARGET_LED")         # "LED" target support
+	opts_m+=("NETFILTER_XT_TARGET_LOG")         # LOG target support
+	opts_m+=("NETFILTER_XT_TARGET_MARK")        # "MARK" target support
+	opts_m+=("NETFILTER_XT_TARGET_MASQUERADE")  # Enables masquerade target for netfilter
+	opts_m+=("NETFILTER_XT_TARGET_NETMAP")      # "NETMAP" target support
+	opts_m+=("NETFILTER_XT_TARGET_NFLOG")       # "NFLOG" target support
+	opts_m+=("NETFILTER_XT_TARGET_NFQUEUE")     # "NFQUEUE" target Support
+	opts_m+=("NETFILTER_XT_TARGET_NOTRACK")     # "NOTRACK" target support (DEPRECATED)
+	opts_m+=("NETFILTER_XT_TARGET_RATEEST")     # "RATEEST" target support
+	opts_m+=("NETFILTER_XT_TARGET_REDIRECT")    # REDIRECT target support
+	opts_m+=("NETFILTER_XT_TARGET_SECMARK")     # "SECMARK" target support
+	opts_m+=("NETFILTER_XT_TARGET_TCPMSS")      # "TCPMSS" target support
+	opts_m+=("NETFILTER_XT_TARGET_TCPOPTSTRIP") # "TCPOPTSTRIP" target support
+	opts_m+=("NETFILTER_XT_TARGET_TEE")         # "TEE" - packet cloning to alternate destination
+	opts_m+=("NETFILTER_XT_TARGET_TPROXY")      # "TPROXY" target transparent proxying support
+	opts_m+=("NETFILTER_XT_TARGET_TRACE")       # "TRACE" target support
+	opts_y+=("NETFILTER")                       # Enables support for netfilter framework
+	opts_y+=("NETFILTER_ADVANCED")              # Enables advanced netfilter options
+	opts_m+=("NET_IP_TUNNEL")
+	opts_y+=("NF_TABLES_ARP") # ARP nf_tables support
+	opts_m+=("NF_TABLES_BRIDGE")
+	opts_y+=("NF_TABLES_INET") # Enables IPv4 and IPv6 support for nf_tables
+	opts_y+=("NF_TABLES_IPV4")
+	opts_y+=("NF_TABLES_IPV6")
+	opts_m+=("NF_TABLES")              # Enables nf_tables framework support
+	opts_y+=("NF_TABLES_NETDEV")       # Enables netdevice support for nf_tables
+	opts_m+=("NF_CONNTRACK")           # Enables connection tracking support
+	opts_m+=("NF_CONNTRACK_FTP")       # Enables FTP connection tracking support
+	opts_m+=("NF_CONNTRACK_IRC")       # Enables IRC connection tracking support
+	opts_y+=("NF_CONNTRACK_MARK")      # Enables connection mark support in netfilter
+	opts_m+=("NF_CONNTRACK_PPTP")      # Enables PPTP connection tracking support
+	opts_m+=("NF_CONNTRACK_TFTP")      # Enables TFTP connection tracking support
+	opts_y+=("NF_CONNTRACK_ZONES")     # Enables connection tracking zones support
+	opts_y+=("NF_CONNTRACK_EVENTS")    # Enables connection tracking events support
+	opts_y+=("NF_CONNTRACK_LABELS")    # Enables connection tracking labels support
+	opts_m+=("NF_NAT")                 # Enables NAT support in nf_conntrack
+	opts_m+=("NF_NAT_MASQUERADE_IPV4") # Enables IPv4 masquerading for NAT in nf_conntrack
+	opts_m+=("NF_NAT_IPV4")            # Enables IPv4 NAT support in nf_conntrack
+	opts_m+=("NF_NAT_FTP")             # Enables FTP NAT support in nf_conntrack
+	opts_m+=("NF_NAT_TFTP")            # Enables TFTP NAT support in nf_conntrack
+	opts_m+=("NFT_BRIDGE_META")        # Netfilter nf_table bridge meta support
+	opts_m+=("NFT_BRIDGE_REJECT")      # Netfilter nf_tables bridge reject support
+	opts_m+=("NFT_COMPAT_ARP")
+	opts_m+=("NFT_COMPAT")    # Enables compatibility support for older nftables versions
+	opts_m+=("NFT_CONNLIMIT") # Netfilter nf_tables connlimit module
+	opts_m+=("NFT_COUNTER")
+	opts_m+=("NFT_CT")         # Netfilter nf_tables conntrack module
+	opts_m+=("NFT_DUP_IPV4")   # IPv4 nf_tables packet duplication support
+	opts_m+=("NFT_DUP_IPV6")   # IPv6 nf_tables packet duplication support
+	opts_m+=("NFT_DUP_NETDEV") # Enables duplicate netdev (network device) support in nftables
+	opts_m+=("NFT_FIB_INET")
+	opts_m+=("NFT_FIB_IPV4") # nf_tables fib / ip route lookup support
+	opts_m+=("NFT_FIB_IPV6") # nf_tables fib / ipv6 route lookup support
+	opts_m+=("NFT_FIB")
+	opts_m+=("NFT_FIB_NETDEV")   # Netfilter nf_tables netdev fib lookups support
+	opts_m+=("NFT_FLOW_OFFLOAD") # Netfilter nf_tables hardware flow offload module
+	opts_m+=("NFT_FWD_NETDEV")   # Enables forward netdev support in nftables
+	opts_m+=("NFT_HASH")         # Enables hash-based set operations support in nftables
+	opts_m+=("NFT_LIMIT")        # Netfilter nf_tables limit module
+	opts_m+=("NFT_LOG")          # Netfilter nf_tables log module
+	opts_m+=("NFT_MASQ")
+	opts_m+=("NFT_NAT")    # Enables NAT (Network Address Translation) support in nftables
+	opts_m+=("NFT_NUMGEN") # Netfilter nf_tables number generator module
+	opts_m+=("NFT_OBJREF")
+	opts_m+=("NFT_OSF")
+	opts_m+=("NFT_QUEUE") # Netfilter nf_tables queue module
+	opts_m+=("NFT_QUOTA") # Enables quota support in nftables
+	opts_m+=("NFT_REDIR")
+	opts_m+=("NFT_REJECT_INET")
+	opts_m+=("NFT_REJECT_IPV4")
+	opts_m+=("NFT_REJECT_IPV6")
+	opts_m+=("NFT_REJECT")        # Enables reject target support in nftables
+	opts_m+=("NFT_REJECT_NETDEV") # Enables reject netdev support in nftables
+	opts_m+=("NFT_SOCKET")        # Enables socket operations support in nftables
+	opts_m+=("NFT_SYNPROXY")      # Enables SYN proxy support in nftables
+	opts_m+=("NFT_TPROXY")        # Enables transparent proxy support in nftables
+	opts_m+=("NFT_TUNNEL")        # Enables tunneling support in nftables
+	opts_m+=("NFT_XFRM")          # Enables transformation support in nftables
+	opts_m+=("IP_SET")            # IP Set core
+	opts_m+=("IP_SET_HASH_IP")
+	opts_m+=("IP_SET_HASH_NET")
+	opts_m+=("IP_SET_HASH_IPPORT")
+	opts_m+=("IP_SET_HASH_NETPORT")
+	opts_m+=("IP_SET_HASH_IPPORTNET")
+	opts_m+=("IP_SET_BITMAP_IP")
+	opts_m+=("IP_SET_BITMAP_PORT")
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
@@ -424,80 +418,80 @@ function armbian_kernel_config__select_nftables() {
 #   components. These settings ensure that the kernel is properly configured to support containerized environments.
 #
 function armbian_kernel_config__enable_docker_support() {
-	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
-	if [[ -f .config ]]; then
-		kernel_config_set_y BTRFS_FS                  # Enables the BTRFS file system support
-		kernel_config_set_y BTRFS_FS_POSIX_ACL        # Enables POSIX ACL support for BTRFS
-		kernel_config_set_y BLK_CGROUP                # Enables block layer control groups (cgroups)
-		kernel_config_set_y BLK_DEV_THROTTLING        # Enables block device IO throttling
-		kernel_config_set_y BRIDGE_VLAN_FILTERING     # Enables VLAN filtering on network bridges
-		kernel_config_set_y BRIDGE                    # Enables support for Ethernet bridges
-		kernel_config_set_y CFQ_GROUP_IOSCHED         # Enables CFQ (Completely Fair Queueing) I/O scheduler for cgroups
-		kernel_config_set_y CGROUP_BPF                # Enables BPF-based control groups
-		kernel_config_set_y CGROUP_CPUACCT            # Enables CPU accounting in cgroups
-		kernel_config_set_y CGROUP_DEVICE             # Enables device control in cgroups
-		kernel_config_set_y CGROUP_FREEZER            # Enables freezer for suspending tasks in cgroups
-		kernel_config_set_y CGROUP_HUGETLB            # Enables huge page control in cgroups
-		kernel_config_set_y CGROUP_NET_CLASSID        # Enables network classid control in cgroups
-		kernel_config_set_y CGROUP_NET_PRIO           # Enables network priority control in cgroups
-		kernel_config_set_y CGROUP_PERF               # Enables performance counter control in cgroups
-		kernel_config_set_y CGROUP_PIDS               # Enables process ID control in cgroups
-		kernel_config_set_y CGROUP_SCHED              # Enables scheduler control in cgroups
-		kernel_config_set_y CGROUPS                   # Enables general cgroup functionality
-		kernel_config_set_y CPUSETS                   # Enables CPU set support for cgroups
-		kernel_config_set_m CRYPTO                    # Enables cryptographic algorithms support as modules
-		kernel_config_set_m CRYPTO_AEAD               # Enables AEAD (Authenticated Encryption with Associated Data) algorithms support
-		kernel_config_set_m CRYPTO_GCM                # Enables GCM (Galois/Counter Mode) cipher support
-		kernel_config_set_m CRYPTO_GHASH              # Enables GHASH algorithm support
-		kernel_config_set_m CRYPTO_SEQIV              # Enables sequential initialization vector support for cryptographic operations
-		kernel_config_set_y EVENTFD                   # Enables eventfd system calls for event notification
-		kernel_config_set_y BPF_SYSCALL               # Enables BPF (Berkeley Packet Filter) system call support
-		kernel_config_set_y CFS_BANDWIDTH             # Enables bandwidth control for CFS (Completely Fair Scheduler)
-		kernel_config_set_m DUMMY                     # Enables dummy network driver module
-		kernel_config_set_y DEVPTS_MULTIPLE_INSTANCES # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
-		kernel_config_set_y ENCRYPTED_KEYS            # Enables support for encrypted keys in the kernel
-		kernel_config_set_y EXT4_FS                   # Enables EXT4 file system support as a module
-		kernel_config_set_y EXT4_FS_POSIX_ACL         # Enables POSIX ACL support for EXT4
-		kernel_config_set_y EXT4_FS_SECURITY          # Enables security extensions for EXT4 file system
-		kernel_config_set_m IPVLAN                    # Enables IPvlan network driver support
-		kernel_config_set_y INET                      # Enables Internet protocol (IPv4) support
-		kernel_config_set_y FAIR_GROUP_SCHED          # Enables fair group scheduling support
-		kernel_config_set_m INET_ESP                  # Enables ESP (Encapsulating Security Payload) for IPv4
-		kernel_config_set_y IP_VS_NFCT                # Enables connection tracking for IPVS (IP Virtual Server)
-		kernel_config_set_y IP_VS_PROTO_TCP           # Enables TCP protocol support for IPVS
-		kernel_config_set_y IP_VS_PROTO_UDP           # Enables UDP protocol support for IPVS
-		kernel_config_set_m IP_VS                     # Enables IPVS (IP Virtual Server) support as a module
-		kernel_config_set_m IP_VS_RR                  # Enables round-robin scheduling for IPVS
-		kernel_config_set_y KEY_DH_OPERATIONS         # Enables Diffie-Hellman key exchange operations
-		kernel_config_set_y KEYS                      # Enables key management framework support
-		kernel_config_set_m MACVLAN                   # Enables MACVLAN network driver support
-		kernel_config_set_y MEMCG                     # Enables memory controller for cgroups
-		kernel_config_set_y MEMCG_KMEM                # Enables memory controller for kmem (kernel memory) cgroups
-		kernel_config_set_m NET_CLS_CGROUP            # Enables network classification using cgroups
-		kernel_config_set_y NET_CORE                  # Enables core networking stack support
-		kernel_config_set_y NET_L3_MASTER_DEV         # Enables master device support for Layer 3 (L3) networking
-		kernel_config_set_y NET_NS                    # Enables network namespace support
-		kernel_config_set_y NET_SCHED                 # Enables network scheduler support
-		kernel_config_set_y NETDEVICES                # Enables support for network devices
-		kernel_config_set_y NAMESPACES                # Enables support for namespaces (including network namespaces)
-		kernel_config_set_m OVERLAY_FS                # Enables support for OverlayFS
-		kernel_config_set_y PID_NS                    # Enables PID (Process ID) namespace support
-		kernel_config_set_y POSIX_MQUEUE              # Enables POSIX message queues support
-		kernel_config_set_y PROC_PID_CPUSET           # Enables CPU set control for /proc/{pid}/cpuset
-		kernel_config_set_y PERSISTENT_KEYRINGS       # Enables persistent keyring support
-		kernel_config_set_m RESOURCE_COUNTERS         # Enables resource counters support in cgroups
-		kernel_config_set_y RT_GROUP_SCHED            # Enables real-time group scheduling
-		kernel_config_set_y SECURITY_APPARMOR         # Enables AppArmor security module support
-		kernel_config_set_y SECCOMP                   # Enables seccomp (secure computing) support
-		kernel_config_set_y SECCOMP_FILTER            # Enables seccomp filtering
-		kernel_config_set_y USER_NS                   # Enables user namespace support
-		kernel_config_set_m VXLAN                     # Enables VXLAN network driver support
-		kernel_config_set_m VETH                      # Enables Virtual Ethernet (veth) network driver support
-		kernel_config_set_m VLAN_8021Q                # Enables 802.1Q VLAN tagging support
-		kernel_config_set_y XFRM                      # Enables transform (XFRM) framework support
-		kernel_config_set_m XFRM_ALGO                 # Enables cryptographic algorithm support for XFRM
-		kernel_config_set_m XFRM_USER                 # Enables user space XFRM framework support
-	fi
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	opts_y+=("BTRFS_FS")                  # Enables the BTRFS file system support
+	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
+	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
+	opts_y+=("BLK_DEV_THROTTLING")        # Enables block device IO throttling
+	opts_y+=("BRIDGE_VLAN_FILTERING")     # Enables VLAN filtering on network bridges
+	opts_y+=("BRIDGE")                    # Enables support for Ethernet bridges
+	opts_y+=("CFQ_GROUP_IOSCHED")         # Enables CFQ (Completely Fair Queueing) I/O scheduler for cgroups
+	opts_y+=("CGROUP_BPF")                # Enables BPF-based control groups
+	opts_y+=("CGROUP_CPUACCT")            # Enables CPU accounting in cgroups
+	opts_y+=("CGROUP_DEVICE")             # Enables device control in cgroups
+	opts_y+=("CGROUP_FREEZER")            # Enables freezer for suspending tasks in cgroups
+	opts_y+=("CGROUP_HUGETLB")            # Enables huge page control in cgroups
+	opts_y+=("CGROUP_NET_CLASSID")        # Enables network classid control in cgroups
+	opts_y+=("CGROUP_NET_PRIO")           # Enables network priority control in cgroups
+	opts_y+=("CGROUP_PERF")               # Enables performance counter control in cgroups
+	opts_y+=("CGROUP_PIDS")               # Enables process ID control in cgroups
+	opts_y+=("CGROUP_SCHED")              # Enables scheduler control in cgroups
+	opts_y+=("CGROUPS")                   # Enables general cgroup functionality
+	opts_y+=("CPUSETS")                   # Enables CPU set support for cgroups
+	opts_m+=("CRYPTO")                    # Enables cryptographic algorithms support as modules
+	opts_m+=("CRYPTO_AEAD")               # Enables AEAD (Authenticated Encryption with Associated Data) algorithms support
+	opts_m+=("CRYPTO_GCM")                # Enables GCM (Galois/Counter Mode) cipher support
+	opts_m+=("CRYPTO_GHASH")              # Enables GHASH algorithm support
+	opts_m+=("CRYPTO_SEQIV")              # Enables sequential initialization vector support for cryptographic operations
+	opts_y+=("EVENTFD")                   # Enables eventfd system calls for event notification
+	opts_y+=("BPF_SYSCALL")               # Enables BPF (Berkeley Packet Filter) system call support
+	opts_y+=("CFS_BANDWIDTH")             # Enables bandwidth control for CFS (Completely Fair Scheduler)
+	opts_m+=("DUMMY")                     # Enables dummy network driver module
+	opts_y+=("DEVPTS_MULTIPLE_INSTANCES") # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
+	opts_y+=("ENCRYPTED_KEYS")            # Enables support for encrypted keys in the kernel
+	opts_y+=("EXT4_FS")                   # Enables EXT4 file system support as a module
+	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
+	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
+	opts_m+=("IPVLAN")                    # Enables IPvlan network driver support
+	opts_y+=("INET")                      # Enables Internet protocol (IPv4) support
+	opts_y+=("FAIR_GROUP_SCHED")          # Enables fair group scheduling support
+	opts_m+=("INET_ESP")                  # Enables ESP (Encapsulating Security Payload) for IPv4
+	opts_y+=("IP_VS_NFCT")                # Enables connection tracking for IPVS (IP Virtual Server)
+	opts_y+=("IP_VS_PROTO_TCP")           # Enables TCP protocol support for IPVS
+	opts_y+=("IP_VS_PROTO_UDP")           # Enables UDP protocol support for IPVS
+	opts_m+=("IP_VS")                     # Enables IPVS (IP Virtual Server) support as a module
+	opts_m+=("IP_VS_RR")                  # Enables round-robin scheduling for IPVS
+	opts_y+=("KEY_DH_OPERATIONS")         # Enables Diffie-Hellman key exchange operations
+	opts_y+=("KEYS")                      # Enables key management framework support
+	opts_m+=("MACVLAN")                   # Enables MACVLAN network driver support
+	opts_y+=("MEMCG")                     # Enables memory controller for cgroups
+	opts_y+=("MEMCG_KMEM")                # Enables memory controller for kmem (kernel memory) cgroups
+	opts_m+=("NET_CLS_CGROUP")            # Enables network classification using cgroups
+	opts_y+=("NET_CORE")                  # Enables core networking stack support
+	opts_y+=("NET_L3_MASTER_DEV")         # Enables master device support for Layer 3 (L3) networking
+	opts_y+=("NET_NS")                    # Enables network namespace support
+	opts_y+=("NET_SCHED")                 # Enables network scheduler support
+	opts_y+=("NETDEVICES")                # Enables support for network devices
+	opts_y+=("NAMESPACES")                # Enables support for namespaces (including network namespaces)
+	opts_m+=("OVERLAY_FS")                # Enables support for OverlayFS
+	opts_y+=("PID_NS")                    # Enables PID (Process ID) namespace support
+	opts_y+=("POSIX_MQUEUE")              # Enables POSIX message queues support
+	opts_y+=("PROC_PID_CPUSET")           # Enables CPU set control for /proc/{pid}/cpuset
+	opts_y+=("PERSISTENT_KEYRINGS")       # Enables persistent keyring support
+	opts_m+=("RESOURCE_COUNTERS")         # Enables resource counters support in cgroups
+	opts_y+=("RT_GROUP_SCHED")            # Enables real-time group scheduling
+	opts_y+=("SECURITY_APPARMOR")         # Enables AppArmor security module support
+	opts_y+=("SECCOMP")                   # Enables seccomp (secure computing) support
+	opts_y+=("SECCOMP_FILTER")            # Enables seccomp filtering
+	opts_y+=("USER_NS")                   # Enables user namespace support
+	opts_m+=("VXLAN")                     # Enables VXLAN network driver support
+	opts_m+=("VETH")                      # Enables Virtual Ethernet (veth) network driver support
+	opts_m+=("VLAN_8021Q")                # Enables 802.1Q VLAN tagging support
+	opts_y+=("XFRM")                      # Enables transform (XFRM) framework support
+	opts_m+=("XFRM_ALGO")                 # Enables cryptographic algorithm support for XFRM
+	opts_m+=("XFRM_USER")                 # Enables user space XFRM framework support
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # Enables live system access to the kernel configuration via /proc/config.gz.
@@ -511,18 +505,18 @@ function armbian_kernel_config__enable_docker_support() {
 #   kernel_config_modifying_hashes - Array holding pending kernel configuration changes.
 #
 function armbian_kernel_config__enable_config_access_in_live_system() {
-	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
-	if [[ -f .config ]]; then
-		kernel_config_set_y CONFIG_IKCONFIG      # This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
-		kernel_config_set_y CONFIG_IKCONFIG_PROC # This option enables access to the kernel configuration file through /proc/config.gz
-	fi
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	opts_y+=("CONFIG_IKCONFIG")      # This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
+	opts_y+=("CONFIG_IKCONFIG_PROC") # This option enables access to the kernel configuration file through /proc/config.gz
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function armbian_kernel_config__restore_enable_gpio_sysfs() {
-	kernel_config_modifying_hashes+=("CONFIG_GPIO_SYSFS=y")
-	if [[ -f .config ]]; then
-		kernel_config_set_y CONFIG_GPIO_SYSFS # This was a victim of not having EXPERT=y due to some _DEBUG conflicts in old times. Re-enable it forcefully.
-	fi
+	declare -A opts_val=()
+	declare -a opts_y=() opts_n=() opts_m=()
+	opts_y+=("CONFIG_GPIO_SYSFS") # This was a victim of not having EXPERT=y due to some _DEBUG conflicts in old times. Re-enable it forcefully.
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 # +++++++++++ HELPERS CORNER +++++++++++
