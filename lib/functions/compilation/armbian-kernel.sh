@@ -122,6 +122,21 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 			"BPF_JIT" "BPF_JIT_DEFAULT_ON" "FTRACE_SYSCALLS" "PROBE_EVENTS_BTF_ARGS" "BPF_KPROBE_OVERRIDE" # eBPF == on
 			"DEBUG_INFO" "DEBUG_INFO_DWARF5" "DEBUG_INFO_BTF" "DEBUG_INFO_BTF_MODULES"                     # BTF & CO-RE == off
 		)
+
+		# Extra eBPF-related stuff for eBPF tooling like Tetragon
+		opts_y+=(
+			"BLK_CGROUP_IOCOST"
+			"BPF_EVENTS"
+			"BPF_JIT_ALWAYS_ON"
+			"BPF_LSM"
+			"BPF_STREAM_PARSER"
+			"CGROUP_FAVOR_DYNMODS"
+			"CGROUP_MISC"
+			"DYNAMIC_FTRACE"
+			"FTRACE"
+			"FUNCTION_TRACER"
+			"TRACEFS_AUTOMOUNT_DEPRECATED" # This is valid until 2030, needed for some eBPF tools
+		)
 	fi
 }
 
