@@ -531,14 +531,8 @@ function armbian_kernel_config__restore_enable_gpio_sysfs() {
 #
 function kernel_config_set_m() {
 	declare module="$1"
-	state=$(./scripts/config --state "$module")
-
-	if [ "$state" == "y" ]; then
-		display_alert "${module} is already enabled as built-in"
-	else
-		display_alert "Enabling kernel module" "${module}=m" "debug"
-		run_host_command_logged ./scripts/config --module "$module"
-	fi
+	display_alert "Enabling kernel module" "${module}=m" "debug"
+	run_host_command_logged ./scripts/config --module "${module}"
 }
 
 function kernel_config_set_y() {
@@ -550,16 +544,7 @@ function kernel_config_set_y() {
 function kernel_config_set_n() {
 	declare config="$1"
 	display_alert "Disabling kernel config/module" "${config}=n" "debug"
-
-	# Only set to "n" if the config option can be found in the config file.
-	# Otherwise the option would maybe be considered as misconfiguration.
-	if grep -qE "(\b${config}\=|CONFIG_${config}\=)" .config; then
-		run_host_command_logged ./scripts/config --disable "${config}"
-	elif grep -qE "(\b${config} is not set|\bCONFIG_${config} is not set)" .config; then
-		display_alert "Kernel config/module was already disabled" "${config}=n skipped" "debug"
-	else
-		display_alert "Kernel config/module was not found in the config file" "${config}=n was not added to prevent misconfiguration" "debug"
-	fi
+	run_host_command_logged ./scripts/config --disable "${config}"
 
 }
 
@@ -580,13 +565,17 @@ function kernel_config_set_val() {
 # This takes opts_n, opts_y, arrays from parent scope; also the opts_val dictionary;
 # it and applies them to the hashes and to the .config if it exists.
 function armbian_kernel_config_apply_opts_from_arrays() {
-	declare opt_y opt_val opt_n
+	declare opt_y opt_val opt_n opt_m
 	for opt_n in "${opts_n[@]}"; do
 		kernel_config_modifying_hashes+=("${opt_n}=n")
 	done
 
 	for opt_y in "${opts_y[@]}"; do
 		kernel_config_modifying_hashes+=("${opt_y}=y")
+	done
+
+	for opt_m in "${opts_m[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_m}=m")
 	done
 
 	for opt_val in "${!opts_val[@]}"; do
@@ -602,6 +591,11 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 		for opt_y in "${opts_y[@]}"; do
 			display_alert "Enabling kernel opt" "${opt_y}=y" "debug"
 			kernel_config_set_y "${opt_y}"
+		done
+
+		for opt_m in "${opts_m[@]}"; do
+			display_alert "Enabling kernel opt" "${opt_y}=m" "debug"
+			kernel_config_set_m "${opt_m}"
 		done
 
 		for opt_val in "${!opts_val[@]}"; do
