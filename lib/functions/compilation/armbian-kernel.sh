@@ -350,10 +350,11 @@ function armbian_kernel_config__select_nftables() {
 
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
 #   sets a wide range of kernel configuration options necessary for Docker, including support for
-#   filesystems (e.g., BTRFS, EXT4), control groups (cgroups), networking, security, and various netfilter
+#   control groups (cgroups), networking, security, and various netfilter
 #   components. These settings ensure that the kernel is properly configured to support containerized environments.
+# ATTENTION: filesystems like EXT4 and BTRFS are now omitted, so it's each kernel's .config responsibility to enable
+#            them as builtin or modules as each sees fit.
 function armbian_kernel_config__enable_docker_support() {
-	opts_y+=("BTRFS_FS")                  # Enables the BTRFS file system support (built-in)
 	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
 	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
 	opts_y+=("BLK_DEV_THROTTLING")        # Enables block device IO throttling
@@ -383,7 +384,6 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_m+=("DUMMY")                     # Enables dummy network driver module
 	opts_y+=("DEVPTS_MULTIPLE_INSTANCES") # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
 	opts_y+=("ENCRYPTED_KEYS")            # Enables support for encrypted keys in the kernel
-	opts_y+=("EXT4_FS")                   # Enables EXT4 file system support as builtin
 	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
 	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
 	opts_m+=("IPVLAN")                    # Enables IPvlan network driver support
