@@ -4,6 +4,7 @@
 #
 
 setenv load_addr "0x2000000"
+setenv ramdisk_addr_r "0x02800000"
 setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk0p1"
