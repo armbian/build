@@ -156,8 +156,9 @@ function interactive_config_ask_board_list() {
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
 				[[ $SHOW_WARNING == yes ]] && show_developer_warning
-				STATE_DESCRIPTION=' - \Z1(CSC)\Zn - Community Supported Configuration\n - \Z1(WIP)\Zn - Work In Progress
-				\n - \Z1(EOS)\Zn - End Of Support\n - \Z1(TVB)\Zn - TV boxes'
+				STATE_DESCRIPTION=' - \Z1(conf)\Zn - Boards with high level of software maturity
+				\n - \Z1(CSC)\Zn  - Community Supported Configuration\n - \Z1(WIP)\Zn  - Work In Progress
+				\n - \Z1(EOS)\Zn  - End Of Support\n - \Z1(TVB)\Zn  - TV boxes'
 				WIP_STATE=unsupported
 				WIP_BUTTON='matured'
 				EXPERT=yes
