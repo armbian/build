@@ -203,19 +203,20 @@ function compile_uboot_target() {
 		pipetty make "${CTHREADS}" "olddefconfig" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
+		display_alert "Saving pre-config u-boot defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_logged make savedefconfig
+		run_host_command_logged mv -v defconfig defconfig.pre.menuconfig
+
 		display_alert "Configuring u-boot" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_dialog make menuconfig
 		display_alert "Exporting saved config" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_logged make savedefconfig
 		run_host_command_logged cp -v defconfig "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}"
 
-		# check if we can find configs/${BOOTCONFIG}, and if so, output a diff between that and the new saved defconfig
-		if [[ -f "configs/${BOOTCONFIG}" ]]; then
-			display_alert "Diffing ${BOOTCONFIG} and new defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
-			run_host_command_logged diff -u --color=always "configs/${BOOTCONFIG}" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "2>&1" "|| true" # no errors please, all to stdout
-		fi
+		display_alert "Diffing before and after defconfigs" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_logged diff -u --color=always "defconfig.pre.menuconfig" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "2>&1" "|| true" # no errors please, all to stdout
 
-		display_alert "Exporting saved config (experimental)" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "warn"
+		display_alert "Exported saved config (experimental)" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "warn"
 
 		return 0 # exit after this
 	fi
