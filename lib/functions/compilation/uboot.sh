@@ -94,10 +94,6 @@ function compile_uboot_target() {
 		"KCFLAGS=-fdiagnostics-color=always" \
 		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
-	# armbian specifics u-boot settings
-	[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"-armbian-${artifact_version}\"/g" .config
-	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
-
 	# for modern (? 2018-2019?) kernel and non spi targets @TODO: this does not belong here
 	if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
 		display_alert "Hacking ENV stuff in u-boot config 2018-2019" "for ${target}" "debug"
@@ -124,6 +120,9 @@ function compile_uboot_target() {
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
+		# armbian specifics u-boot settings; configure the version so UART boot logs show exactly what's in there
+		[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"_armbian-${artifact_version}\"/g" .config
+		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 	else
 		display_alert "scripts/config found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
 
@@ -142,6 +141,10 @@ function compile_uboot_target() {
 		# Hack, up the log level to 6: "info" (default is 4: "warning")
 		display_alert "Hacking log level in u-boot config" "LOGLEVEL=6 for ${target}" "info"
 		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL 6
+
+		# Include Armbian version so UART bootlogs are drastically more useful
+		run_host_command_logged ./scripts/config --disable "LOCALVERSION_AUTO"
+		run_host_command_logged ./scripts/config --set-str "LOCALVERSION" "_armbian-${artifact_version}" # crazy quotes!
 	fi
 
 	if [[ "${UBOOT_DEBUGGING}" == "yes" ]]; then
