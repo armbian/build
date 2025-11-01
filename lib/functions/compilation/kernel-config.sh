@@ -86,6 +86,13 @@ function kernel_config_initialize() {
 # These kernel config hooks are always called twice, once without being in kernel directory and once with current directory being the kernel work directory.
 # You must check with "if [[ -f .config ]]; then" in which of the two phases you are. Otherwise, functions like "kernel_config_set_y" won't work.
 function call_extensions_kernel_config() {
+	# Prepare arrays and dict for modifications.
+	# Those will be used by the hooks called below.
+	# shellcheck disable=SC2034
+	declare -A opts_val=()
+	# shellcheck disable=SC2034
+	declare -a opts_y=() opts_n=() opts_m=()
+
 	# Run the core-armbian config modifications here, built-in extensions:
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'
 		*Armbian-core default hook point for pre-olddefconfig Kernel config modifications*
@@ -108,6 +115,9 @@ function call_extensions_kernel_config() {
 		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 		Please note: Manually changing options doesn't check the validity of the .config file. Check for warnings in your build log.
 	CUSTOM_KERNEL_CONFIG
+
+	# Apply the modifications set in the arrays/dict
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function kernel_config_finalize() {
