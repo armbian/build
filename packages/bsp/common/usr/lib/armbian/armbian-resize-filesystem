@@ -17,13 +17,13 @@ do_expand_partition()
 	echo -e "\n### [resize2fs] Trying to resize partition $partdev:\n"
 
 	# make sure the target is a partition
-	local parttype=$(lsblk -n -o TYPE $partdev | head -1)
+	local parttype=$(lsblk -n -d -o TYPE $partdev)
 	if [[ "$parttype" != "part" ]]; then
 		echo -e "\n$partdev isn't a partition: $parttype" >&2
 		return 1
 	fi
 
-	local diskdevname=$(lsblk -n -o PKNAME $partdev | head -1) # i.e. mmcblk0 or sda
+	local diskdevname=$(lsblk -n -d -o PKNAME $partdev) # i.e. mmcblk0 or sda
 	# due to the bug in util-linux 2.34 which fails to show device, let's use this failover:
 	[[ -z $diskdevname ]] && diskdevname=$(echo $partdev | sed -e "s/^\/dev\///" | sed "s/p.*//")
 	local diskdev="/dev/$diskdevname" # i.e. /dev/mmcblk0, /dev/sda
@@ -166,7 +166,7 @@ do_expand_partition()
 		touch /var/run/resize2fs-reboot
 	fi
 
-	local partsize=$(lsblk -n -b -o SIZE $partdev | head -1)
+	local partsize=$(lsblk -n -d -b -o SIZE $partdev)
 	local actualsize=$(( $sectorsize * ($lastsector - $partstart + 1) ))
 	if [[ $actualsize -ne $partsize ]]; then
 		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
@@ -183,15 +183,20 @@ do_resize_crypt()
 {
 	local dev=$1
 	local parentdev=$2
-	local name=$(lsblk -n -o NAME $dev | head -1) # i.e. armbian-root
+	local name=$(lsblk -n -d -o NAME $dev) # i.e. armbian-root
 
 	echo -e "\n### [resize2fs] Start resizing LUKS container now\n"
 	# It's probably no need to run 'cryptsetup resize'.
 	# After reboot, it will auto resize to adapte the partition
 	# 'cryptsetup resize' requires passphrase, so it will fail.
-	cryptsetup resize $name
+	# if /etc/rootfs.key is present - it can be done unattended
+	if [ -f /etc/rootfs.key ]; then
+		cryptsetup resize --key-file /etc/rootfs.key "$name"
+	else
+		cryptsetup resize "$name"
+	fi
 
-	local parentsize=$(lsblk -n -b -o SIZE $parentdev | head -1)
+	local parentsize=$(lsblk -n -d -b -o SIZE $parentdev)
 
 	local sectorsize=$(cryptsetup status $name | awk -F':' '/^ *sector size/ {print $2}' | tr -c -d '[:digit:]')
 	local offset=$(cryptsetup status $name | awk -F':' '/^ *offset/ {print $2}' | tr -c -d '[:digit:]')
@@ -238,7 +243,7 @@ do_expand_filesystem()
 	esac
 
 	# check whether reboot is necessary for resize2fs to take effect
-	local devsize=$(lsblk -n -b -o SIZE $partdev | head -1)
+	local devsize=$(lsblk -n -d -b -o SIZE $partdev)
 	local fssize=$(findmnt -n -b -o SIZE --target $mountpoint)
 	if [[ $(( 100 * $fssize / $devsize )) -lt 90 ]]; then
 		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
@@ -267,8 +272,8 @@ main()
 
 	# check for crypt
 	local cryptname=""
-	if [[ "$(lsblk -n -o TYPE $rootdev | head -1)" == "crypt" ]]; then
-		local cryptname=$(lsblk -n -o NAME $rootdev | head -1) # i.e. armbian-root
+	if [[ "$(lsblk -n -d -o TYPE $rootdev)" == "crypt" ]]; then
+		local cryptname=$(lsblk -n -d -o NAME $rootdev) # i.e. armbian-root
 		local parent_uuid=$(cat /etc/crypttab | awk "{if(\$1 == \"$cryptname\"){print \$2}}" | sed 's/UUID=//')
 		local parentdev=$(blkid -U $parent_uuid) # i.e. /dev/mmcblk0p1 or /dev/sda1
 

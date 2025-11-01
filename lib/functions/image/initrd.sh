@@ -62,6 +62,7 @@ update_initramfs() {
 			[[ -d "${chroot_target}/etc/dropbear-initramfs/" ]] && initrd_files_to_hash+=("${chroot_target}/etc/dropbear-initramfs/")
 			[[ -d "${chroot_target}/etc/dropbear/initramfs/" ]] && initrd_files_to_hash+=("${chroot_target}/etc/dropbear/initramfs/")
 		fi
+		initrd_files_to_hash+=("${chroot_target}/etc/crypttab") # for updates to rootdev UUID
 	fi
 
 	# Find all the affected files; parallel md5sum sum them; invert hash and path, and remove chroot prefix.
