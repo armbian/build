@@ -9,24 +9,6 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SOC="rk3588"
 IMAGE_PARTITION_TABLE="gpt"
 
-
-# The kernel config hooks are always called twice, once without being in kernel directory and once with current directory being the kernel work directory.
-# Enable the distributed switch architecture to expose the individual LAN and WAN interfaces.
-function custom_kernel_config__radxa_e54c_enable_ethernet_switch_arch() {
-	if [[ ! -f .config ]]; then
-		# kernel_config_modifying_hashes is only needed during first call of this function to calculate kernel artifact version string. It serves no purpose whatsoever during second call.
-		kernel_config_modifying_hashes+=("CONFIG_NET_DSA=m" "CONFIG_NET_DSA_REALTEK=m" "CONFIG_NET_DSA_REALTEK_MDIO=m" "CONFIG_NET_DSA_REALTEK_SMI=m" "CONFIG_NET_DSA_REALTEK_RTL8365MB=m" "CONFIG_NET_DSA_REALTEK_RTL8366RB=m")
-	else
-		display_alert "$BOARD" "Enable Realtek Distributed Switch" "info"
-		kernel_config_set_m NET_DSA
-		kernel_config_set_m NET_DSA_REALTEK
-		kernel_config_set_m NET_DSA_REALTEK_MDIO
-        kernel_config_set_m NET_DSA_REALTEK_SMI
-        kernel_config_set_m NET_DSA_REALTEK_RTL8365MB
-        kernel_config_set_m NET_DSA_REALTEK_RTL8366RB
-	fi
-}
-
 # Enable system and network LEDs
 function post_family_tweaks_bsp__radxa_e54c_enable_leds() {
 	display_alert "$BOARD" "Creating Board Support LED Config" "info"
