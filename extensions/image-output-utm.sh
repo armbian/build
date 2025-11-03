@@ -9,9 +9,10 @@ function extension_prepare_config__prepare_utm_config() {
 }
 
 function user_config__metadata_cloud_config() {
-	display_alert "Preparing UTM config" "${EXTENSION}" "info"
-	declare -g SERIALCON="ttyS0" # UTM's serial at ttyS0, for x86 @TODO: arm64? ttyAML0?
-	display_alert "Prepared UTM config" "${EXTENSION}: SERIALCON: '${SERIALCON}'" "debug"
+	display_alert "Preparing UTM config for serial console" "${EXTENSION}" "info"
+	declare -g SERIALCON="ttyAMA0"
+	[[ "${ARCH}" == "amd64" ]] && declare -g SERIALCON="ttyS0"
+	display_alert "Prepared UTM config for serial console" "${EXTENSION}: SERIALCON: '${SERIALCON}'" "debug"
 }
 
 #### *custom post build hook*
