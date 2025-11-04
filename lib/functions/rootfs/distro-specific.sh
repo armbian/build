@@ -113,8 +113,8 @@ function fetch_distro_keyring() {
 				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
-				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
-					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${CACHEDIR}/${KEYRING_DEB} failed"
+				# We ignore the failures of unpacking b/c we cannot tell the difference between unpack failures and chmod/chgrp failures
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || /bin/true # ignore failures, we'll check a few lines down
 				if [[ -e "${CACHEDIR}/usr/share/keyrings/debian-archive-keyring.pgp" ]]; then
 					# yes, for 2025.1, the canonical name is .pgp, but our tools expect .gpg.
 					# the package contains the .pgp and a .gpg symlink to it.
@@ -131,8 +131,7 @@ function fetch_distro_keyring() {
 				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
-				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
-					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${CACHEDIR}/${KEYRING_DEB} failed"
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || /bin/true # see above about ignoring errors
 				if [[ -e "${CACHEDIR}/usr/share/keyrings/debian-ports-archive-keyring.pgp" ]]; then
 					# see above comment re .pgp vs .gpg
 					cp -l "${CACHEDIR}/usr/share/keyrings/debian-ports-archive-keyring.pgp" "${CACHEDIR}/debian-ports-archive-keyring.gpg"
@@ -157,8 +156,10 @@ function fetch_distro_keyring() {
 				run_host_command_logged curl "${PROXY[@]}" -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
-				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || \
-					exit_with_error "fetch_distro_keyring" "dpkg-deb -x ${CACHEDIR}/${KEYRING_DEB} failed"
+				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || /bin/true # see above in debian block about ignoring errors
+				if [[ ! -e "${CACHEDIR}/usr/share/keyrings/ubuntu-archive-keyring.gpg" ]]; then
+					exit_with_error "fetch_distro_keyring" "unable to find ubuntu-archive-keyring.gpg"
+				fi
 				cp -l "${CACHEDIR}/usr/share/keyrings/ubuntu-archive-keyring.gpg" "${CACHEDIR}/"
 				display_alert "fetch_distro_keyring($release)" "extracted" "info"
 			fi
