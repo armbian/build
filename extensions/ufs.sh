@@ -1,5 +1,7 @@
 # Create UFS aligned image (requires >= Debian 13 (Trixie) Host)
 declare -g DOCKER_ARMBIAN_BASE_IMAGE=debian:trixie
+# Workaround for mmdebstrap keyring issue
+declare -g LEGACY_DEBOOTSTRAP=yes
 function extension_prepare_config__ufs {
     # Check sfdisk version is >= 2.41 for UFS support
     local sfdisk_version
