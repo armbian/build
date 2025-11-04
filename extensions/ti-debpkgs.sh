@@ -1,6 +1,6 @@
 function extension_prepare_config__add_packages() {
 	if [[ ${#TI_PACKAGES[@]} -gt 0 ]] ; then
-		add_packages_to_rootfs "${TI_PACKAGES[@]}"
+		add_packages_to_image "${TI_PACKAGES[@]}"
 	fi
 }
 
