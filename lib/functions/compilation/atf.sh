@@ -72,12 +72,9 @@ compile_atf() {
 
 	if linux-version compare "${binutils_version}" gt "2.39" && linux-version compare "${binutils_version}" lt "2.42"; then
 		display_alert "Binutils version for ATF" ">= 2.39 and < 2.42, adding -Wl,--no-warn-rwx-segment" "info"
-		binutils_flags_atf="-Wl,--no-warn-rwx-segment"
-	elif linux-version compare "${binutils_version}" ge "2.42"; then
-		display_alert "Binutils version for ATF" ">= 2.42, adding -Wl,--no-warn-rwx-segments" "info"
-		binutils_flags_atf="-Wl,--no-warn-rwx-segments"
+		binutils_flags_atf="--no-warn-rwx-segment"
 	fi
- 
+
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
 	run_host_command_logged "CROSS_COMPILE='ccache ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='ccache ${ATF_COMPILER}gcc'" PATH="${toolchain}:${toolchain2}:${PATH}" \
