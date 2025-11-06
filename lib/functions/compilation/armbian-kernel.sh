@@ -355,6 +355,7 @@ function armbian_kernel_config__select_nftables() {
 # ATTENTION: filesystems like EXT4 and BTRFS are now omitted, so it's each kernel's .config responsibility to enable
 #            them as builtin or modules as each sees fit.
 function armbian_kernel_config__enable_docker_support() {
+	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
 	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
 	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
 	opts_y+=("BLK_DEV_THROTTLING")        # Enables block device IO throttling
@@ -384,6 +385,7 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_m+=("DUMMY")                     # Enables dummy network driver module
 	opts_y+=("DEVPTS_MULTIPLE_INSTANCES") # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
 	opts_y+=("ENCRYPTED_KEYS")            # Enables support for encrypted keys in the kernel
+	opts_m+=("EXT4_FS")                   # Enables EXT4 file system support as a module
 	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
 	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
 	opts_m+=("IPVLAN")                    # Enables IPvlan network driver support
@@ -486,7 +488,15 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 	done
 
 	for opt_m in "${opts_m[@]}"; do
-		kernel_config_modifying_hashes+=("${opt_m}=m")
+		actual_opt_value='m'
+		# NOTE: this isn't perfect, there may be something already
+		# in defconfig, but we can't see it from here.
+		if egrep "(CONFIG_)?${opt_m}=m" "${kernel_config_source_filename}"; then
+			: # do nothing
+		elif egrep "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}"; then
+			actual_opt_value='y'
+		fi
+		kernel_config_modifying_hashes+=("${opt_m}=${actual_opt_value}")
 	done
 
 	for opt_val in "${!opts_val[@]}"; do
@@ -505,8 +515,14 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 		done
 
 		for opt_m in "${opts_m[@]}"; do
-			display_alert "Enabling kernel opt" "${opt_m}=m" "debug"
-			kernel_config_set_m "${opt_m}"
+			actual_opt_value='m'
+			if egrep "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
+				actual_opt_value='y'
+				kernel_config_set_y "${opt_m}"
+			else
+				kernel_config_set_m "${opt_m}"
+			fi
+			display_alert "Enabling kernel opt" "${opt_m}=${actual_opt_value}" "debug"
 		done
 
 		for opt_val in "${!opts_val[@]}"; do
