@@ -9,6 +9,7 @@ BOOT_SOC="rk3568"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3568-9tripod-x3568-v4.dtb"
 IMAGE_PARTITION_TABLE="gpt"
+MODULES="ledtrig_netdev"
 
 OVERLAY_PREFIX="rk3568-9tripod-x3568-v4"
 
