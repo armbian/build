@@ -7,8 +7,13 @@ mkdir -pv "${destination}"/etc/skel
 cp -Rv "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 
 # install wallpapers
-mkdir -pv "${destination}"/usr/share/backgrounds/armbian/
-cp -v "${SRC}"/packages/blobs/desktop/desktop-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian
+mkdir -pv "${destination}"/usr/share/wallpapers/Armbian/contents/images
+cp -v "${SRC}"/packages/blobs/desktop/desktop-wallpapers/armbian-dreox-minum-dark.png "${destination}"/usr/share/wallpapers/Armbian/contents/images
+cp "${SRC}"/packages/blobs/desktop/kde-wallpaper-metadata.json "${destination}"/usr/share/wallpapers/Armbian/metadata.json
+
+# install theme
+mkdir -pv "${destination}"/usr/share/plasma/desktoptheme/armbian
+cp -Rv "${SRC}"/packages/blobs/desktop/kde-plasma-theme/. "${destination}"/usr/share/plasma/desktoptheme/armbian
 
 # install logo for login screen
 mkdir -pv "${destination}"/usr/share/pixmaps/armbian
