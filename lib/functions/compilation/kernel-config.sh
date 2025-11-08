@@ -146,11 +146,12 @@ function kernel_config_export() {
 	# store kernel defconfig in easily reachable place (output dir)
 	mkdir -p "${DEST}"/config
 	display_alert "Exporting new kernel defconfig" "$DEST/config/$LINUXCONFIG.config" "info"
-	run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.config"
+	echo "# File generated with ${KERNEL_MAJOR_MINOR}" > "${DEST}/config/${LINUXCONFIG}.config"
+	run_host_command_logged cat defconfig >> "${DEST}/config/${LINUXCONFIG}.config"
 
 	# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
 	if [[ "${kernel_config_source_filename}" != "" ]]; then
 		display_alert "Exporting new kernel config - git commit pending" "${kernel_config_source_filename}" "info"
-		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}"
+		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" "${kernel_config_source_filename}"
 	fi
 }
