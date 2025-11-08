@@ -2,7 +2,7 @@
 BOARD_NAME="Luckfox Pico Pro / Pico Max"
 BOARDFAMILY="rockchip-rv1106"
 BOOTCONFIG="luckfox_rv1106_uboot_defconfig"
-BOARD_MAINTAINER="vidplace7"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
 BOOT_FDT_FILE="rv1106g-luckfox-pico-pro-max.dtb"
 IMAGE_PARTITION_TABLE="gpt"
