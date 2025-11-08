@@ -146,7 +146,7 @@ function kernel_config_export() {
 	# store kernel defconfig in easily reachable place (output dir)
 	mkdir -p "${DEST}"/config
 	display_alert "Exporting new kernel defconfig" "$DEST/config/$LINUXCONFIG.config" "info"
-	echo "# File generated with ${KERNEL_MAJOR_MINOR}" > "${DEST}/config/${LINUXCONFIG}.config"
+	echo "# Armbian defconfig generated with ${KERNEL_MAJOR_MINOR}" > "${DEST}/config/${LINUXCONFIG}.config"
 	run_host_command_logged cat defconfig >> "${DEST}/config/${LINUXCONFIG}.config"
 
 	# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.

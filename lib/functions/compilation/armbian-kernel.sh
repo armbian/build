@@ -491,9 +491,9 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 		actual_opt_value='m'
 		# NOTE: this isn't perfect, there may be something already
 		# in defconfig, but we can't see it from here.
-		if egrep "(CONFIG_)?${opt_m}=m" "${kernel_config_source_filename}"; then
+		if egrep -q "(CONFIG_)?${opt_m}=m" "${kernel_config_source_filename}"; then
 			: # do nothing
-		elif egrep "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}"; then
+		elif egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}"; then
 			actual_opt_value='y'
 		fi
 		kernel_config_modifying_hashes+=("${opt_m}=${actual_opt_value}")
@@ -516,7 +516,7 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 
 		for opt_m in "${opts_m[@]}"; do
 			actual_opt_value='m'
-			if egrep "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
+			if egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
 				actual_opt_value='y'
 				kernel_config_set_y "${opt_m}"
 			else
