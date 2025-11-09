@@ -128,6 +128,7 @@ function dump_extension_method_sources_body() {
 # to avoid hard coding the list of hook-points (eg: user_config, image_tweaks_pre_customize, etc) we use
 # a marker in the function names, namely "__" (two underscores) to determine the hook point.
 function initialize_extension_manager() {
+	declare -ga extension_optout # do not init here!
 	# before starting, auto-add extensions specified (eg, on the command-line) via the ENABLE_EXTENSIONS or EXT env var. Do it only once.
 	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS:-"${EXT}"}" != "" ]] && {
 		local auto_extension
@@ -232,7 +233,21 @@ function initialize_extension_manager() {
 		hook_point_functions=""
 		declare hook_point_function_sortname
 		for hook_point_function_sortname in ${hook_point_functions_sorted_by_sort_id}; do
-			hook_point_functions="${hook_point_functions} ${hook_point_functions_sortname_to_realname[${hook_point_function_sortname}]}"
+			realname="${hook_point_functions_sortname_to_realname[${hook_point_function_sortname}]}"
+			# If a board/family has defined the global extension_optout array,
+			# skip any hook implementations matching those names exactly.
+			# Format: extension_optout=( "hook_point__impl_name1" "hook_point__impl_name2" )
+			# Example: extension_optout=( "user_config__early_config" ) would skip that hook.
+			if [[ ${#extension_optout[@]} -ne 0 ]]; then
+			# most common case this array is empty/non-existent, so bail out soonest
+				for func in "${extension_optout[@]}"; do
+					if [[ "$func" == "${hook_point}__${realname}" ]]; then
+						continue 2
+					fi
+				done
+			fi
+
+			hook_point_functions="${hook_point_functions} ${realname}"
 		done
 		# shellcheck disable=SC2086
 		hook_point_functions="$(echo -n ${hook_point_functions})"
