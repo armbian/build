@@ -35,6 +35,17 @@ function install_distribution_specific() {
 		truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
 	fi
 
+	# Add power management override
+	# suspend / resume is very fragile on most of those board - lets disable it system wide
+	mkdir -p "${SDCARD}/etc/systemd/sleep.conf.d"
+	cat <<- EOF > "${SDCARD}/etc/systemd/sleep.conf.d/00-disable.conf"
+	[Sleep]
+	AllowSuspend=no
+	AllowHibernation=no
+	AllowHybridSleep=no
+	AllowSuspendThenHibernate=no
+	EOF
+
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
 		install_artifact_deb_chroot "armbian-base-files" "--allow-downgrades"
