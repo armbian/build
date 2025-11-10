@@ -283,6 +283,9 @@ function prepare_partitions() {
 	display_alert "Checking again after partprobe" "${LOOP}" "debug"
 	check_loop_device "${LOOP}" # check again, now it has to have a size! otherwise wait.
 
+        # --- CUSTOM PATCH: force root partition to p3 instead of default p2 ---
+        rootpart=3
+
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
 
