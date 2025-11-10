@@ -7,7 +7,7 @@ There are a number of functional blocks in the generic bootscript:
 1. Load a U-Boot environment (`armbianEnv.txt` in our case).
 1. Prepare kernel commandline parameters based on loaded environment settings.
 1. Process device tree (DT).
-1. Proces the kernel image.
+1. Process the kernel image.
 1. Process the initial ramdisk.
 1. Load the initial ramdisk.
 1. Boot the kernel with locations of the initial ramdisk and device tree.
@@ -15,7 +15,8 @@ There are a number of functional blocks in the generic bootscript:
 The DT is now loaded first, followed by the kernel image with the initial ramdisk last.
 
 ### Templating
-Differences and deviations in the actions or settings performed by these bootscript have been templated, meaning that the generic bootscript needs input for each board. For example, they all have a serial console so all bootscripts contain actions to prepare the kernel to use the serial console. The actual console device is however not always the same.
+Differences and deviations in the actions or settings performed by these bootscript have been extracted and are now rendered as a template. Each board that uses the generic bootscript will have to provide input to fully render the template.
+For example, they all have a serial console so all bootscripts contain actions to prepare the kernel to use the serial console. The actual console device is however not always the same.
 
 The following variables need to be defined on the board configuration to render the generic bootscript template:
 
@@ -60,7 +61,7 @@ BOOTSCRIPT_TEMPLATE__ROOTFS_TYPE="${ROOTFS_TYPE:-ext4}"
 BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE='' # determine later on
 
 function orange_pi_zero_enable_xradio_workarounds() {
-	/usr/bin/systemctl enable xradio_unload.service
+        /usr/bin/systemctl enable xradio_unload.service
 ...
 ```
 
@@ -71,12 +72,12 @@ The bootscript template is rendered in `lib/functions/rootfs/distro-agnostic.sh`
 
 All consoles defined in `SERIALCON`/`DISPLAYCON` and `BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE`/`BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE` will be combined by the generic the bootscript into something that can be passed on to the Linux kernel.
 
-Multiple console devices can be defined by seperating them with a `,` (comma). Standard Linux kernel arguments are allowed:
+Multiple console devices can be defined by separating them with a `,` (comma). Standard Linux kernel arguments are allowed:
 ```
 SERIALCON="ttyS0:115200,ttyGS0"
 ```
 
-See [here](https://www.kernel.org/doc/html/latest/admin-guide/serial-console.html) for more information on the arguments and syntax.
+See [Linux kernel serial-console documentation](https://www.kernel.org/doc/html/latest/admin-guide/serial-console.html) for more information on the arguments and syntax.
 
 ### Calculating the size of the device tree
 For the device tree (DT) it depends on the U-Boot version if the bootscript can determine it's size. The `fdt` shell command has a subcommand `header get` that can return the size of the current DT in-memory. In case the size of the in-memory DT cannot be determined, the filesize of the FDT will be used - aligned to `${align_to}`.
