@@ -9,9 +9,9 @@ DEFAULT_OVERLAYS="usbhost2 usbhost3 tve"
 DEFAULT_CONSOLE="both"
 HAS_VIDEO_OUTPUT="yes"
 SERIALCON="ttyS0,ttyGS0"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"
-CRUSTCONFIG="orangepi_zero_defconfig"
+# CRUSTCONFIG="orangepi_zero_defconfig" # Crust is failing https://github.com/armbian/build/issues/8197
 
 function orange_pi_zero_enable_xradio_workarounds() {
 	/usr/bin/systemctl enable xradio_unload.service

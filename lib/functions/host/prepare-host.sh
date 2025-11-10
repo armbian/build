@@ -185,6 +185,7 @@ function adaptative_prepare_host_dependencies() {
 		ca-certificates ccache cpio
 		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		e2fsprogs
 		flex
 		gawk gettext gnupg gpg
 		imagemagick # required for plymouth: converting images / spinners
@@ -203,14 +204,13 @@ function adaptative_prepare_host_dependencies() {
 		udev # causes initramfs rebuild, but is usually pre-installed.
 		uuid-dev
 		zlib1g-dev
-		gcc-arm-linux-gnueabi # necessary for rockchip64 (and maybe other too) ATF compilation
 
 		# by-category below
 		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
 		colorized-logs                           # for ansi2html, ansi2txt, pipetty
 		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
 		parted gdisk fdisk                       # partition tools @TODO why so many?
-		aria2 curl axel                          # downloaders et al
+		aria2 curl axel wget                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)
@@ -256,7 +256,9 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-aarch64-linux-gnu") # from crossbuild-essential-arm64
+		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64
+		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation
+		host_dependencies+=("gcc-aarch64-linux-gnu" "gcc-arm-linux-gnueabi")
 	fi
 
 	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
@@ -265,11 +267,15 @@ function adaptative_prepare_host_dependencies() {
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
 		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64 is not even available "yet"
-		host_dependencies+=("debian-archive-keyring")
+	fi
+
+	if [[ "${wanted_arch}" == "loong64" ]]; then
+		host_dependencies+=("gcc-loongarch64-linux-gnu") # crossbuild-essential-loongarch64 is not even available "yet"
+		host_dependencies+=("debian-ports-archive-keyring")
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
-		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+		host_dependencies+=("libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then

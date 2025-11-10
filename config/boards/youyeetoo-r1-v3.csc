@@ -7,6 +7,7 @@ BOOT_SOC="rk3588"
 KERNEL_TARGET="vendor,current,edge"
 KERNEL_TEST_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
+ASOUND_STATE="asound.state.youyeetoo-r1"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588s-youyeetoo-r1.dtb"
@@ -17,7 +18,7 @@ function post_family_tweaks__youyeetoo_r1_naming_audios() {
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8323-sound", ENV{SOUND_DESCRIPTION}="ES8323 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 
 	return 0
 }
@@ -35,13 +36,13 @@ function post_family_tweaks__youyeetoo_r1_naming_udev_network_interfaces() {
 function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline (next branch) U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"             # Use generic defconfig which should boot all RK3588 boards
+	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2025.04"
-	declare -g BOOTPATCHDIR="v2025.04"
-	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
+	declare -g BOOTBRANCH="tag:v2025.10"
+	declare -g BOOTPATCHDIR="v2025.10"
 
+	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 
 	# Disable stuff from rockchip64_common; we're using binman here which does all the work already
@@ -53,11 +54,17 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	}
 }
 
+# U-boot 2025.04+ can detect and set fdtfile automatically on Youyeetoo R1.
+# So if using mainline u-boot, unset BOOT_FDT_FILE to let u-boot handle it.
+function post_family_config__youyeetoo-r1-v3_auto_dtb_name_via_uboot_detection() {
+	unset BOOT_FDT_FILE
+}
+
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
 # include/configs/rockchip-common.h
 # -#define BOOT_TARGETS "mmc1 mmc0 nvme scsi usb pxe dhcp"
 # +#define BOOT_TARGETS "mmc0 nvme mmc1 scsi usb pxe dhcp"
-# On youyeetoo R1, mmc0 is the SD card, mmc1 is the eMMC slot
+# On Youyeetoo R1, mmc0 is the SD card, mmc1 is the eMMC slot
 function pre_config_uboot_target__youyeetoo_r1_patch_rockchip_common_boot_order() {
 	declare -a rockchip_uboot_targets=("mmc0" "nvme" "mmc1" "scsi" "usb" "pxe" "dhcp") # for future make-this-generic delight
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
@@ -65,14 +72,17 @@ function pre_config_uboot_target__youyeetoo_r1_patch_rockchip_common_boot_order(
 	regular_git diff -u include/configs/rockchip-common.h || true
 }
 
+# Configure rtw89_8852be Wi-Fi driver to disable ASPM and power-save modes
+# for improved stability on mainline builds; skipped for the 'vendor' branch.
 function post_family_tweaks__youyeetoo_r1 {
-	if [[ "${BRANCH}" != "vendor" ]]; then
-		display_alert "$BOARD" "Adjusting rtw89_8852be module" "info"
-		cat <<- EOF > "${SDCARD}/etc/modprobe.d/rtw8852be.conf"
-			options rtw89_pci disable_aspm_l1=y disable_aspm_l1ss=y
-			options rtw89pci disable_aspm_l1=y disable_aspm_l1ss=y
-			options rtw89_core disable_ps_mode=y
-			options rtw89core disable_ps_mode=y
-		EOF
-	fi
+	[[ "${BRANCH}" == "vendor" ]] && return 0
+
+	display_alert "$BOARD" "Adjusting rtw89_8852be module" "info"
+	
+	cat <<- EOF > "${SDCARD}/etc/modprobe.d/rtw8852be.conf"
+		options rtw89_pci disable_aspm_l1=y disable_aspm_l1ss=y
+		options rtw89pci disable_aspm_l1=y disable_aspm_l1ss=y
+		options rtw89_core disable_ps_mode=y
+		options rtw89core disable_ps_mode=y
+	EOF
 }

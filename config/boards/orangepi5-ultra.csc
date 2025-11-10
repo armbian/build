@@ -4,8 +4,8 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-5-ultra-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
-KERNEL_TARGET="current,edge"
-KERNEL_TEST_TARGET="current,edge"
+KERNEL_TARGET="vendor,current,edge"
+KERNEL_TEST_TARGET="vendor,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-orangepi-5-ultra.dtb"
@@ -13,15 +13,15 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
-#enable_extension "bcmdhd"
+enable_extension "bcmdhd"
 BCMDHD_TYPE="sdio"
 
 function post_family_tweaks__orangepi5ultra_naming_audios() {
 	display_alert "$BOARD" "Renaming orangepi5ultra audios" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi1-sound", ENV{SOUND_DESCRIPTION}="HDMI1 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi1-sound", ENV{SOUND_DESCRIPTION}="HDMI1 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmiin-sound", ENV{SOUND_DESCRIPTION}="HDMI-In Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 
 	return 0

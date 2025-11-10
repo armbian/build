@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.11.0} # https://github.com/mvdan/sh/releases/
+SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.12.0} # https://github.com/mvdan/sh/releases/
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
@@ -47,7 +47,11 @@ echo "SHELLFMT_BIN: ${SHELLFMT_BIN}"
 
 if [[ ! -f "${SHELLFMT_BIN}" ]]; then
 	echo "Cache miss, downloading..."
-	wget -O "${SHELLFMT_BIN}" "${DOWN_URL}"
+	curl -fLo "${SHELLFMT_BIN}" "${DOWN_URL}" || {
+		echo "shellfmt download failed from ${DOWN_URL}"
+		rm -f "${SHELLFMT_BIN}"
+		exit 1;
+	}
 	chmod +x "${SHELLFMT_BIN}"
 fi
 

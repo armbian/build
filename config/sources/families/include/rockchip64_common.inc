@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.15"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -52,11 +52,12 @@ esac
 #
 # Available options for BOOT_SCENARIO are:
 # - only-blobs: proprietary rockchip ddrbin, miniloader and ATF
-# - spl-blobs: proprietary rockchip ddrin and ATF, but uses mainline u-boot SPL in place of rockchip miniloader
+# - spl-blobs: proprietary rockchip ddrbin and ATF, but uses mainline u-boot SPL in place of rockchip miniloader
 # - tpl-spl-blob: uses mainline u-boot TPL and SPL with proprietary rockchip ATF blob
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 # - binman:  u-boot builds full boot image from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
+# - binman-atf-mainline:  u-boot builds full boot image with mainline ATF from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
@@ -142,8 +143,10 @@ case "$BOOT_SOC" in
 
 	rk3576)
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.03.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk35/rk3576_bl31_v1.04.elf"}"
+		# FIXME(rk3576): v1.09 caused boot failures on some boards (see PR #8596, #8600).
+		# Pinning to v1.08 until newer DDR binaries are validated across rk3576 boards.
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.08.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3576_bl31_v1.20.elf"}"
 		;;
 
 	rk3588) #CPUMAX undefined?
@@ -160,7 +163,7 @@ prepare_boot_configuration() {
 	ATFSOURCE=''
 	ATF_COMPILE='no'
 	case "$BOOT_SCENARIO" in
-		blobless | tpl-blob-atf-mainline)
+		blobless | tpl-blob-atf-mainline | binman-atf-mainline)
 			UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			ATF_COMPILE=yes
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
@@ -173,6 +176,10 @@ prepare_boot_configuration() {
 
 			[[ $BOOT_SCENARIO == tpl-blob-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+			[[ $BOOT_SCENARIO == binman-atf-mainline ]] &&
+				UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
+				# binman builds do not have separate build targets for idbloader.img and u-boot.itb
+				# ROCKCHIP_TPL needed for boards with CONFIG_ROCKCHIP_EXTERNAL_TPL, ignored for boards without it
 			;;
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -209,7 +216,8 @@ uboot_custom_postprocess() {
 	display_alert "${BOARD}" "boots with ${BOOT_SCENARIO} scenario" "info"
 
 	case "$BOOT_SCENARIO" in
-		blobless | tpl-spl-blob | binman)
+		blobless | tpl-spl-blob | binman*)
+			# binman-atf-mainline functions the same as original `binman` after build
 			:
 			;;
 
@@ -280,7 +288,7 @@ write_uboot_platform() {
 	local logging_prelude=""
 	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
 
-	if [ -f $1/u-boot-rockchip.bin ]; then #"$BOOT_SCENARIO" == binman
+	if [ -f $1/u-boot-rockchip.bin ]; then #"$BOOT_SCENARIO" == "binman" or "binman-atf-mainline"
 		${logging_prelude} dd if=$1/u-boot-rockchip.bin of=$2 bs=32k seek=1 conv=notrunc status=none
 	elif [ -f $1/rksd_loader.img ]; then # legacy rk3399 loader
 		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
@@ -297,9 +305,8 @@ write_uboot_platform() {
 	fi
 }
 
-# @TODO: this is not ready for BOOT_SCENARIO=binman yet
 write_uboot_platform_mtd() {
-	FILES=$(find "$1" -maxdepth 1 -type f -name "rkspi_loader*.img")
+	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
 	if [ -z "$FILES" ]; then
 		echo "No SPI image found."
 		exit 1
@@ -307,17 +314,23 @@ write_uboot_platform_mtd() {
 
 	MENU_ITEMS=()
 	i=1
+	FILE_ARRAY=()
 
 	# Read the files into an array
 	while IFS= read -r file; do
 		filename=$(basename "$file")
 		MENU_ITEMS+=("$i" "$filename" "")
+		FILE_ARRAY+=("$file")
 		((i++))
 	done <<< "$FILES"
 
-	# If there is only one image, we can skip the dialog
-	if [[ $i -eq 2 ]]; then
-		dd if=$1/${MENU_ITEMS[1]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+	if [[ ! -t 1 || $i -eq 2 ]]; then
+		first_file="${FILE_ARRAY[0]}"
+		if [[ "$first_file" == *rkspi_loader*.img ]]; then
+			dd if="$first_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$first_file" /dev/mtd0
+		fi
 		return
 	fi
 
@@ -325,14 +338,20 @@ write_uboot_platform_mtd() {
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 
 	CHOICE=$(dialog --no-collapse \
-  		--title "armbian-install" \
-  		--backtitle $backtitle \
-  		--radiolist "Choose SPI image:" 0 56 4 \
-  		"${MENU_ITEMS[@]}" \
-  		3>&1 1>&2 2>&3)
+		--title "armbian-install" \
+		--backtitle "$backtitle" \
+		--radiolist "Choose SPI image:" 0 56 4 \
+		"${MENU_ITEMS[@]}" \
+		3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
-		dd if=$1/${MENU_ITEMS[($CHOICE*3)-2]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		idx=$((CHOICE-1))
+		chosen_file="${FILE_ARRAY[$idx]}"
+		if [[ "$chosen_file" == *rkspi_loader*.img ]]; then
+			dd if="$chosen_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$chosen_file" /dev/mtd0
+		fi
 	else
 		echo "No SPI image chosen."
 		exit 1

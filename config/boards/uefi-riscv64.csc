@@ -2,5 +2,5 @@
 declare -g BOARD_NAME="UEFI riscv64"
 declare -g BOARDFAMILY="uefi-riscv64"
 declare -g BOARD_MAINTAINER=""
-declare -g KERNEL_TARGET="legacy,current,edge"
+declare -g KERNEL_TARGET="current,edge,legacy"
 declare -g SERIALCON="ttyS0"

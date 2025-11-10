@@ -1,0 +1,10 @@
+# Rockchip RK3506J triple core 512MB SoC 2x100MBe NAND USB2
+BOARD_NAME="ArmSoM Forge1"
+BOARDFAMILY="rockchip"
+BOOTCONFIG="forge1-rk3506b_defconfig"
+BOARD_MAINTAINER="amazingfate"
+KERNEL_TARGET="vendor"
+BOOT_FDT_FILE="rk3506b-armsom-forge1.dtb"
+IMAGE_PARTITION_TABLE="gpt"
+BOOT_SOC="rk3506"
+DDR_BLOB="rk35/rk3506b_ddr_750MHz_v1.06.bin"
