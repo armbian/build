@@ -47,7 +47,11 @@ echo "SHELLFMT_BIN: ${SHELLFMT_BIN}"
 
 if [[ ! -f "${SHELLFMT_BIN}" ]]; then
 	echo "Cache miss, downloading..."
-	wget -O "${SHELLFMT_BIN}" "${DOWN_URL}"
+	curl -fLo "${SHELLFMT_BIN}" "${DOWN_URL}" || {
+		echo "shellfmt download failed from ${DOWN_URL}"
+		rm -f "${SHELLFMT_BIN}"
+		exit 1;
+	}
 	chmod +x "${SHELLFMT_BIN}"
 fi
 

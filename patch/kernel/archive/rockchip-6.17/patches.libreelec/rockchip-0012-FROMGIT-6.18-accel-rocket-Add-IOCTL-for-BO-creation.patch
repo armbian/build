@@ -1,0 +1,347 @@
+From 020bd1d28e4774d8beccc90bbfdad391d535cedc Mon Sep 17 00:00:00 2001
+From: Tomeu Vizoso <tomeu@tomeuvizoso.net>
+Date: Mon, 21 Jul 2025 11:17:30 +0200
+Subject: [PATCH 012/108] FROMGIT(6.18): accel/rocket: Add IOCTL for BO
+ creation
+
+This uses the SHMEM DRM helpers and we map right away to the CPU and NPU
+sides, as all buffers are expected to be accessed from both.
+
+Reviewed-by: Jeffrey Hugo <quic_jhugo@quicinc.com>
+Tested-by: Heiko Stuebner <heiko@sntech.de>
+Signed-off-by: Tomeu Vizoso <tomeu@tomeuvizoso.net>
+---
+ drivers/accel/rocket/Makefile     |   3 +-
+ drivers/accel/rocket/rocket_drv.c |  15 +++-
+ drivers/accel/rocket/rocket_drv.h |   4 +
+ drivers/accel/rocket/rocket_gem.c | 125 ++++++++++++++++++++++++++++++
+ drivers/accel/rocket/rocket_gem.h |  30 +++++++
+ include/uapi/drm/rocket_accel.h   |  44 +++++++++++
+ 6 files changed, 219 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/accel/rocket/rocket_gem.c
+ create mode 100644 drivers/accel/rocket/rocket_gem.h
+ create mode 100644 include/uapi/drm/rocket_accel.h
+
+diff --git a/drivers/accel/rocket/Makefile b/drivers/accel/rocket/Makefile
+index abdd75f2492e..4deef267f9e1 100644
+--- a/drivers/accel/rocket/Makefile
++++ b/drivers/accel/rocket/Makefile
+@@ -5,4 +5,5 @@ obj-$(CONFIG_DRM_ACCEL_ROCKET) := rocket.o
+ rocket-y := \
+ 	rocket_core.o \
+ 	rocket_device.o \
+-	rocket_drv.o
++	rocket_drv.o \
++	rocket_gem.o
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index a5df94f6b125..8b7fbe9226f4 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -5,6 +5,7 @@
+ #include <drm/drm_drv.h>
+ #include <drm/drm_gem.h>
+ #include <drm/drm_ioctl.h>
++#include <drm/rocket_accel.h>
+ #include <linux/clk.h>
+ #include <linux/err.h>
+ #include <linux/iommu.h>
+@@ -13,6 +14,7 @@
+ #include <linux/pm_runtime.h>
+ 
+ #include "rocket_drv.h"
++#include "rocket_gem.h"
+ 
+ /*
+  * Facade device, used to expose a single DRM device to userspace, that
+@@ -69,6 +71,7 @@ rocket_open(struct drm_device *dev, struct drm_file *file)
+ {
+ 	struct rocket_device *rdev = to_rocket_device(dev);
+ 	struct rocket_file_priv *rocket_priv;
++	u64 start, end;
+ 	int ret;
+ 
+ 	if (!try_module_get(THIS_MODULE))
+@@ -89,6 +92,11 @@ rocket_open(struct drm_device *dev, struct drm_file *file)
+ 
+ 	file->driver_priv = rocket_priv;
+ 
++	start = rocket_priv->domain->domain->geometry.aperture_start;
++	end = rocket_priv->domain->domain->geometry.aperture_end;
++	drm_mm_init(&rocket_priv->mm, start, end - start + 1);
++	mutex_init(&rocket_priv->mm_lock);
++
+ 	return 0;
+ 
+ err_free:
+@@ -103,6 +111,8 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
+ {
+ 	struct rocket_file_priv *rocket_priv = file->driver_priv;
+ 
++	mutex_destroy(&rocket_priv->mm_lock);
++	drm_mm_takedown(&rocket_priv->mm);
+ 	rocket_iommu_domain_put(rocket_priv->domain);
+ 	kfree(rocket_priv);
+ 	module_put(THIS_MODULE);
+@@ -111,6 +121,8 @@ rocket_postclose(struct drm_device *dev, struct drm_file *file)
+ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
+ #define ROCKET_IOCTL(n, func) \
+ 	DRM_IOCTL_DEF_DRV(ROCKET_##n, rocket_ioctl_##func, 0)
++
++	ROCKET_IOCTL(CREATE_BO, create_bo),
+ };
+ 
+ DEFINE_DRM_ACCEL_FOPS(rocket_accel_driver_fops);
+@@ -120,9 +132,10 @@ DEFINE_DRM_ACCEL_FOPS(rocket_accel_driver_fops);
+  * - 1.0 - initial interface
+  */
+ static const struct drm_driver rocket_drm_driver = {
+-	.driver_features	= DRIVER_COMPUTE_ACCEL,
++	.driver_features	= DRIVER_COMPUTE_ACCEL | DRIVER_GEM,
+ 	.open			= rocket_open,
+ 	.postclose		= rocket_postclose,
++	.gem_create_object	= rocket_gem_create_object,
+ 	.ioctls			= rocket_drm_driver_ioctls,
+ 	.num_ioctls		= ARRAY_SIZE(rocket_drm_driver_ioctls),
+ 	.fops			= &rocket_accel_driver_fops,
+diff --git a/drivers/accel/rocket/rocket_drv.h b/drivers/accel/rocket/rocket_drv.h
+index 36b1291b0ead..2944e0136ab9 100644
+--- a/drivers/accel/rocket/rocket_drv.h
++++ b/drivers/accel/rocket/rocket_drv.h
+@@ -4,6 +4,8 @@
+ #ifndef __ROCKET_DRV_H__
+ #define __ROCKET_DRV_H__
+ 
++#include <drm/drm_mm.h>
++
+ #include "rocket_device.h"
+ 
+ struct rocket_iommu_domain {
+@@ -15,6 +17,8 @@ struct rocket_file_priv {
+ 	struct rocket_device *rdev;
+ 
+ 	struct rocket_iommu_domain *domain;
++	struct drm_mm mm;
++	struct mutex mm_lock;
+ };
+ 
+ struct rocket_iommu_domain *rocket_iommu_domain_get(struct rocket_file_priv *rocket_priv);
+diff --git a/drivers/accel/rocket/rocket_gem.c b/drivers/accel/rocket/rocket_gem.c
+new file mode 100644
+index 000000000000..05cf46040865
+--- /dev/null
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -0,0 +1,125 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
++
++#include <drm/drm_device.h>
++#include <drm/drm_utils.h>
++#include <drm/rocket_accel.h>
++#include <linux/dma-mapping.h>
++#include <linux/iommu.h>
++
++#include "rocket_drv.h"
++#include "rocket_gem.h"
++
++static void rocket_gem_bo_free(struct drm_gem_object *obj)
++{
++	struct rocket_gem_object *bo = to_rocket_bo(obj);
++	struct rocket_file_priv *rocket_priv = bo->driver_priv;
++	size_t unmapped;
++
++	drm_WARN_ON(obj->dev, refcount_read(&bo->base.pages_use_count) > 1);
++
++	unmapped = iommu_unmap(bo->domain->domain, bo->mm.start, bo->size);
++	drm_WARN_ON(obj->dev, unmapped != bo->size);
++
++	mutex_lock(&rocket_priv->mm_lock);
++	drm_mm_remove_node(&bo->mm);
++	mutex_unlock(&rocket_priv->mm_lock);
++
++	rocket_iommu_domain_put(bo->domain);
++	bo->domain = NULL;
++
++	drm_gem_shmem_free(&bo->base);
++}
++
++static const struct drm_gem_object_funcs rocket_gem_funcs = {
++	.free = rocket_gem_bo_free,
++	.print_info = drm_gem_shmem_object_print_info,
++	.pin = drm_gem_shmem_object_pin,
++	.unpin = drm_gem_shmem_object_unpin,
++	.get_sg_table = drm_gem_shmem_object_get_sg_table,
++	.vmap = drm_gem_shmem_object_vmap,
++	.vunmap = drm_gem_shmem_object_vunmap,
++	.mmap = drm_gem_shmem_object_mmap,
++	.vm_ops = &drm_gem_shmem_vm_ops,
++};
++
++struct drm_gem_object *rocket_gem_create_object(struct drm_device *dev, size_t size)
++{
++	struct rocket_gem_object *obj;
++
++	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
++	if (!obj)
++		return ERR_PTR(-ENOMEM);
++
++	obj->base.base.funcs = &rocket_gem_funcs;
++
++	return &obj->base.base;
++}
++
++int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
++{
++	struct rocket_file_priv *rocket_priv = file->driver_priv;
++	struct drm_rocket_create_bo *args = data;
++	struct drm_gem_shmem_object *shmem_obj;
++	struct rocket_gem_object *rkt_obj;
++	struct drm_gem_object *gem_obj;
++	struct sg_table *sgt;
++	int ret;
++
++	shmem_obj = drm_gem_shmem_create(dev, args->size);
++	if (IS_ERR(shmem_obj))
++		return PTR_ERR(shmem_obj);
++
++	gem_obj = &shmem_obj->base;
++	rkt_obj = to_rocket_bo(gem_obj);
++
++	rkt_obj->driver_priv = rocket_priv;
++	rkt_obj->domain = rocket_iommu_domain_get(rocket_priv);
++	rkt_obj->size = args->size;
++	rkt_obj->offset = 0;
++
++	ret = drm_gem_handle_create(file, gem_obj, &args->handle);
++	drm_gem_object_put(gem_obj);
++	if (ret)
++		goto err;
++
++	sgt = drm_gem_shmem_get_pages_sgt(shmem_obj);
++	if (IS_ERR(sgt)) {
++		ret = PTR_ERR(sgt);
++		goto err;
++	}
++
++	mutex_lock(&rocket_priv->mm_lock);
++	ret = drm_mm_insert_node_generic(&rocket_priv->mm, &rkt_obj->mm,
++					 rkt_obj->size, PAGE_SIZE,
++					 0, 0);
++	mutex_unlock(&rocket_priv->mm_lock);
++
++	ret = iommu_map_sgtable(rocket_priv->domain->domain,
++				rkt_obj->mm.start,
++				shmem_obj->sgt,
++				IOMMU_READ | IOMMU_WRITE);
++	if (ret < 0 || ret < args->size) {
++		drm_err(dev, "failed to map buffer: size=%d request_size=%u\n",
++			ret, args->size);
++		ret = -ENOMEM;
++		goto err_remove_node;
++	}
++
++	/* iommu_map_sgtable might have aligned the size */
++	rkt_obj->size = ret;
++	args->offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
++	args->dma_address = rkt_obj->mm.start;
++
++	return 0;
++
++err_remove_node:
++	mutex_lock(&rocket_priv->mm_lock);
++	drm_mm_remove_node(&rkt_obj->mm);
++	mutex_unlock(&rocket_priv->mm_lock);
++
++err:
++	drm_gem_shmem_object_free(gem_obj);
++
++	return ret;
++}
+diff --git a/drivers/accel/rocket/rocket_gem.h b/drivers/accel/rocket/rocket_gem.h
+new file mode 100644
+index 000000000000..91a1fc09c56c
+--- /dev/null
++++ b/drivers/accel/rocket/rocket_gem.h
+@@ -0,0 +1,30 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Copyright 2024-2025 Tomeu Vizoso <tomeu@tomeuvizoso.net> */
++
++#ifndef __ROCKET_GEM_H__
++#define __ROCKET_GEM_H__
++
++#include <drm/drm_gem_shmem_helper.h>
++
++struct rocket_gem_object {
++	struct drm_gem_shmem_object base;
++
++	struct rocket_file_priv *driver_priv;
++
++	struct rocket_iommu_domain *domain;
++	struct drm_mm_node mm;
++	size_t size;
++	u32 offset;
++};
++
++struct drm_gem_object *rocket_gem_create_object(struct drm_device *dev, size_t size);
++
++int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *file);
++
++static inline
++struct  rocket_gem_object *to_rocket_bo(struct drm_gem_object *obj)
++{
++	return container_of(to_drm_gem_shmem_obj(obj), struct rocket_gem_object, base);
++}
++
++#endif
+diff --git a/include/uapi/drm/rocket_accel.h b/include/uapi/drm/rocket_accel.h
+new file mode 100644
+index 000000000000..95720702b7c4
+--- /dev/null
++++ b/include/uapi/drm/rocket_accel.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Copyright © 2024 Tomeu Vizoso
++ */
++#ifndef __DRM_UAPI_ROCKET_ACCEL_H__
++#define __DRM_UAPI_ROCKET_ACCEL_H__
++
++#include "drm.h"
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++#define DRM_ROCKET_CREATE_BO			0x00
++
++#define DRM_IOCTL_ROCKET_CREATE_BO		DRM_IOWR(DRM_COMMAND_BASE + DRM_ROCKET_CREATE_BO, struct drm_rocket_create_bo)
++
++/**
++ * struct drm_rocket_create_bo - ioctl argument for creating Rocket BOs.
++ *
++ */
++struct drm_rocket_create_bo {
++	/** Input: Size of the requested BO. */
++	__u32 size;
++
++	/** Output: GEM handle for the BO. */
++	__u32 handle;
++
++	/**
++	 * Output: DMA address for the BO in the NPU address space.  This address
++	 * is private to the DRM fd and is valid for the lifetime of the GEM
++	 * handle.
++	 */
++	__u64 dma_address;
++
++	/** Output: Offset into the drm node to use for subsequent mmap call. */
++	__u64 offset;
++};
++
++#if defined(__cplusplus)
++}
++#endif
++
++#endif /* __DRM_UAPI_ROCKET_ACCEL_H__ */
+-- 
+2.34.1
+

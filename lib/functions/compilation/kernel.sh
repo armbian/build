@@ -117,13 +117,14 @@ function kernel_maybe_clean() {
 }
 
 function kernel_prepare_build_and_package() {
-	declare -a build_targets
+	declare -a build_targets_build
+	declare -a build_targets_install
 	declare kernel_dest_install_dir
 	declare -a install_make_params_quoted
 	declare -A kernel_install_dirs
 
-	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
-	build_targets+=("${KERNEL_IMAGE_TYPE}")
+	build_targets_build=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+	build_targets_build+=("${KERNEL_IMAGE_TYPE}")
 	declare cleanup_id="" kernel_dest_install_dir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "kernel_dest_install_dir" cleanup_id kernel_dest_install_dir # namerefs
 
@@ -137,16 +138,15 @@ function kernel_prepare_build_and_package() {
 	[ -z "${SRC_LOADADDR}" ] || install_make_params_quoted+=("${SRC_LOADADDR}") # For uImage
 
 	# @TODO: Only combining `install` and `modules_install` enable mixed-build and __build_one_by_one
-	# We should spilt the `build` and `install` into two make steps as the kernel required
-	build_targets+=("install" "${KERNEL_INSTALL_TYPE:-install}")
+	build_targets_install=("${KERNEL_INSTALL_TYPE:-install}")
 
 	install_make_params_quoted+=("INSTALL_MOD_STRIP=1") # strip modules during install
 
-	build_targets+=("modules_install")
-	build_targets+=("headers_install") # headers_install for libc headers
+	build_targets_install+=("modules_install")
+	build_targets_install+=("headers_install") # headers_install for libc headers
 	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
 		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
-		build_targets+=("dtbs_install")
+		build_targets_install+=("dtbs_install")
 		kernel_install_dirs+=(["INSTALL_DTBS_PATH"]="${kernel_dest_install_dir}/dtbs") # Used by `make dtbs_install`
 	fi
 
@@ -176,11 +176,8 @@ function kernel_prepare_build_and_package() {
 function kernel_dtb_only_build() {
 	display_alert "Kernel DTB-only for development" "KERNEL_DTB_ONLY: ${KERNEL_DTB_ONLY}" "info"
 	# Do it in two separate steps, first build the dtbs then install them.
-	build_targets=("dtbs")
-	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
-
-	display_alert "Kernel DTB-only for development" "Installing DTBs" "info"
-	build_targets=("dtbs_install")
+	build_targets_build=("dtbs")
+	build_targets_install=("dtbs_install")
 	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
 
 	display_alert "Kernel DTB-only .deb, for development/convenience" "kernel dtb build done" "info"
@@ -243,9 +240,13 @@ function kernel_build() {
 	local ts=${SECONDS}
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
-	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
+	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets_build[*]}" "info"
 	do_with_ccache_statistics \
-		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_build[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
+
+	display_alert "Installing kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets_install[*]}" "info"
+	do_with_ccache_statistics \
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_install[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }

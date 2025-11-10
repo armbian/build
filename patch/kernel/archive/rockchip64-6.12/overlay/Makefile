@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	hinlink-h88k-240x135-lcd.dtbo \
+	rk35xx-radxa-zero-3w-ext-ant.dtbo \
+	rk3308-otg-host.dtbo \
 	rk3308-s0-ext-antenna.dtbo \
 	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
-	rk3308-emmc.dtbo \
-	rk3308-sdio@10mhz.dtbo rk3308-sdio@4mhz.dtbo \
+	rockchip-dusun-010r-rp3328b.dtbo \
 	rockchip-sakurapi-rk3308b-ws2812.dtbo \
 	rockchip-rockpi4cplus-usb-host.dtbo \
 	rockchip-rockpro64-lcd.dtbo \
@@ -17,6 +18,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3318-box-led-conf3.dtbo \
 	rockchip-rk3318-box-led-conf4.dtbo \
 	rockchip-rk3318-box-led-conf5.dtbo \
+	rockchip-rk3318-box-led-conf6.dtbo \
+	rockchip-rk3318-box-led-conf7.dtbo \
 	rockchip-rk3318-box-wlan-ap6330.dtbo \
 	rockchip-rk3318-box-wlan-ap6334.dtbo \
 	rockchip-rk3318-box-wlan-ext.dtbo \
@@ -52,6 +55,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3568-hk-uart1.dtbo \
 	rockchip-rk3568-rock-3a-disable-uart2.dtbo \
 	rockchip-rk3588-fanctrl.dtbo \
+	rockchip-rk3588-sata0.dtbo \
 	rockchip-rk3588-sata1.dtbo \
 	rockchip-rk3588-sata2.dtbo \
 	rockchip-rk3588-hdmirx.dtbo \
@@ -93,7 +97,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-uart7-m2.dtbo \
 	rockchip-rk3588-uart8-m1.dtbo \
 	rockchip-rk3588-rkvenc-overlay.dtbo \
-	rockchip-rk3588-nanopi-m6-spi-nor-flash.dtbo
+	rockchip-rk3588-nanopi-m6-spi-nor-flash.dtbo \
+	rockchip-rk3588-nanopc-t6-mmc-frequency.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr

@@ -9,7 +9,7 @@
 
 function run_tool_oras() {
 	# Default version
-	ORAS_VERSION=${ORAS_VERSION:-1.2.3} # https://github.com/oras-project/oras/releases
+	ORAS_VERSION=${ORAS_VERSION:-1.3.0} # https://github.com/oras-project/oras/releases
 	#ORAS_VERSION=${ORAS_VERSION:-"1.0.0-rc.1"} # https://github.com/oras-project/oras/releases
 
 	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.
@@ -109,7 +109,7 @@ function try_download_oras_tooling() {
 	display_alert "ORAS_BIN: ${ORAS_BIN}" "ORAS" "debug"
 
 	display_alert "Downloading required" "ORAS tooling${RETRY_FMT_MORE_THAN_ONCE}" "info"
-	run_host_command_logged wget --no-verbose --progress=dot:giga -O "${ORAS_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
+	run_host_command_logged curl -fL#o "${ORAS_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
 		return 1
 	}
 	run_host_command_logged mv "${ORAS_BIN}.tar.gz.tmp" "${ORAS_BIN}.tar.gz"
@@ -126,7 +126,7 @@ function oras_push_artifact_file() {
 	declare upload_file_base_path upload_file_name
 	display_alert "Pushing ${upload_file}" "ORAS to ${image_full_oci}" "info"
 
-	declare extra_params=("--verbose")
+	declare extra_params=()
 	oras_add_param_plain_http
 	oras_add_param_insecure
 	extra_params+=("--annotation" "org.opencontainers.image.description=${description}")
@@ -154,7 +154,7 @@ function oras_get_artifact_manifest() {
 	declare image_full_oci="${1}" # Something like "ghcr.io/rpardini/armbian-git-shallow/kernel-git:latest"
 	display_alert "Getting ORAS manifest" "ORAS manifest from ${image_full_oci}" "info"
 
-	declare extra_params=("--verbose")
+	declare extra_params=()
 	oras_add_param_plain_http
 	oras_add_param_insecure
 
@@ -179,7 +179,7 @@ function oras_pull_artifact_file() {
 	declare target_dir="${2}"     # temporary directory we'll use for the download to workaround oras being maniac
 	declare target_fn="${3}"
 
-	declare extra_params=("--verbose")
+	declare extra_params=()
 	oras_add_param_plain_http
 	oras_add_param_insecure
 

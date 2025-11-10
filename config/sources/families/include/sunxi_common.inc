@@ -32,12 +32,12 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.12.43"
+		declare -g KERNELBRANCH="tag:v6.12.51"
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.15" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.15.4"
+		declare -g KERNEL_MAJOR_MINOR="6.16" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.16.8"
 		;;
 esac
 

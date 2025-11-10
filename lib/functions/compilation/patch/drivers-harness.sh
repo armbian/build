@@ -101,6 +101,7 @@ function kernel_drivers_prepare_harness() {
 
 	declare -a all_drivers=(
 		driver_generic_bring_back_ipx
+		driver_wifi_injection
 		driver_mt7921u_add_pids
 		driver_rtl8152_rtl8153
 		driver_rtl8189ES
