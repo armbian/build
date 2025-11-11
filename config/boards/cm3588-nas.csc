@@ -80,7 +80,7 @@ function pre_config_uboot_target__cm3588_patch_rockchip_common_boot_order() {
 function post_config_uboot_target__extra_configs_for_cm3588-nas_uboot() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
-	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led led-1 on; sleep 0.1; led led-1 off'" # double quotes required due to run_host_command_logged's quirks
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led green on; sleep 0.1; led green off'" # double quotes required due to run_host_command_logged's quirks
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
 	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
