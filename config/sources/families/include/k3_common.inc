@@ -27,6 +27,23 @@ fi
 enable_extension "ti-debpkgs"
 enable_extension "apa"
 
+case "${BRANCH}" in
+
+	edge)	# experimental (limited testing): uses latest bleeding-edge upstream mainline version
+
+		# KERNELSOURCE defined in mainline-config.sh
+		# KERNELBRANCH defined in mainline-kernel.conf.sh
+		declare -g KERNEL_MAJOR_MINOR="6.18"							# needs updating with each minor kernel release
+		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
+		declare -g ATFBRANCH="branch:master"
+		declare -g OPTEE_BRANCH="branch:master"
+		declare -g TI_LINUX_FIRMWARE_BRANCH="branch:ti-linux-firmware"
+		declare -g BOOTSOURCE="https://github.com/u-boot/u-boot"
+		declare -g BOOTBRANCH="branch:master"
+		;;
+
+esac
+
 ATF_PLAT="k3"
 ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} bl31;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin"
 
