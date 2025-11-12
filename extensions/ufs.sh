@@ -1,5 +1,5 @@
 # Create UFS aligned image (requires >= Debian 13 (Trixie) Host)
-declare -g DOCKER_ARMBIAN_BASE_IMAGE=debian:trixie
+# declare -g DOCKER_ARMBIAN_BASE_IMAGE=debian:trixie # Use this env variable manually
 function extension_prepare_config__ufs {
     # Skip version check if only generating config definitions
     if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
