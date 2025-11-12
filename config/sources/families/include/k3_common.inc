@@ -9,9 +9,6 @@
 
 declare -g ARCH="arm64"
 declare -g OVERLAY_DIR="/boot/dtb/ti/overlay"
-
-declare -g ATFSOURCE="https://github.com/TexasInstruments/arm-trusted-firmware"
-
 declare -g BOOTSCRIPT="boot-k3.cmd:uEnv.txt"
 declare -g SPD_OPTEED="SPD=opteed"
 
@@ -64,8 +61,8 @@ function compile_k3_bootgen() {
 
 	pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
 
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
+	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
+	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
 
 	popd
 }
