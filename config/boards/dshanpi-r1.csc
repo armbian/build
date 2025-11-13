@@ -13,7 +13,6 @@ IMAGE_PARTITION_TABLE="gpt"
 
 function post_family_config__dshanpi-r1_use_mainline_uboot() {
 	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
-	unset BOOTFS_TYPE # fixes armbian-install and unneeded for modern uboot anyway
 	declare -g BOOTCONFIG="dshanpi-r1-rk3568_defconfig"
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot"
