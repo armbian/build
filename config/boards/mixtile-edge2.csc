@@ -20,8 +20,8 @@ function post_family_config__h96_max_use_mainline_uboot() {
 
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="generic-rk3568_defconfig"             # Use generic defconfig which should boot all RK3568 boards
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
+	declare -g BOOTCONFIG="generic-rk3568_defconfig"
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory

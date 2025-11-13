@@ -16,12 +16,12 @@ BOOT_LOGO="desktop"
 function post_family_config__odroid_m1s_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
+	declare -g BOOTDELAY=1
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2025.10"
 	declare -g BOOTPATCHDIR="v2025.10"
 	declare -g BOOTCONFIG="odroid-m1s-rk3566_defconfig"
-	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
+	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
 

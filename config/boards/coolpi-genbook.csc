@@ -18,7 +18,7 @@ IMAGE_PARTITION_TABLE="gpt"
 function post_family_config__coolpi-genbook_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # Mainline U-Boot
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	unset BOOTBRANCH
 	declare -g BOOTPATCHDIR="v2025.01-rc3-coolpi-cm5"
 	declare -g BOOTBRANCH_BOARD="tag:v2025.04"
