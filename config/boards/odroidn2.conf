@@ -8,6 +8,7 @@ MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="yes"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 BOOT_LOGO="desktop"
+BOOTFS_TYPE="ext4"
 BOOTCONFIG="odroid-n2_defconfig" # For mainline uboot
 
 # Newer u-boot for the N2/N2+, less patches: a single boot order patch
