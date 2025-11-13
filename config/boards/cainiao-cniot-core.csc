@@ -13,7 +13,7 @@ BOOT_FDT_FILE="amlogic/meson-g12b-a311d-cainiao-cniot-core.dtb"
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
 
 BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04" # This has a patch that adds support for CAINIAO CNIoT-CORE.
+BOOTPATCHDIR="v2025.04"
 
 function post_family_config__use_repacked_fip() {
 	declare -g UBOOT_TARGET_MAP="u-boot.bin"
