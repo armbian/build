@@ -42,9 +42,9 @@ case "${BRANCH}" in
 esac
 
 ATF_PLAT="k3"
-ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} bl31;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin"
+ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
 
-UBOOT_TARGET_MAP="BL31=bl31.bin TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
+UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
 
 # To match what our current SDK produces
 BOOT_FS_LABEL="boot"
@@ -59,12 +59,12 @@ function compile_k3_bootgen() {
 	# Source code checkout
 	(fetch_from_repo "https://github.com/TexasInstruments/ti-linux-firmware" "ti-linux-firmware" ${TI_LINUX_FIRMWARE_BRANCH})
 
-	pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
-
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
-
-	popd
+	if [[ "${BOARD_NAME}" != "TMDS62LEVM" ]]; then
+		pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
+		popd
+	fi
 }
 
 function compile_k3_optee() {
@@ -79,8 +79,10 @@ function pre_config_uboot_target__build_first_stage() {
 	compile_k3_optee
 	compile_k3_bootgen
 
-	cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
-	cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+	if [[ "${BOARD_NAME}" != "TMDS62LEVM" ]]; then
+		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
+		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+	fi
 }
 
 function post_uboot_custom_postprocess__update_uboot_names() {
