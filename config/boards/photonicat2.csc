@@ -25,13 +25,15 @@ function custom_kernel_config__photonicat2_pm() {
 	fi
 }
 
-# Enable PWM subsystem for backlight, beeper, voltage regulation, LEDs
+# Enable PWM subsystem for backlight
 function custom_kernel_config__photonicat2_pwm() {
 	kernel_config_modifying_hashes+=(
 		"CONFIG_PWM_ROCKCHIP_V4=y"
+		"CONFIG_ROCKCHIP_MFPWM=y"
 	)
 	if [[ -f .config ]]; then
 		kernel_config_set_y PWM_ROCKCHIP_V4
+		kernel_config_set_y ROCKCHIP_MFPWM
 	fi
 }
 
