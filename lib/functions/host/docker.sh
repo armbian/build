@@ -497,13 +497,21 @@ function docker_cli_prepare_launch() {
 		# shellcheck disable=SC2154 # $docker_kind: the kind of volume to mount on this OS; see mountpoints.sh
 		#display_alert "Handling Docker mountpoint" "${MOUNT_DIR} id: ${volume_id} - docker_kind: ${docker_kind}" "debug"
 
+		if grep -q io.containerd <<< "$DOCKER_INFO"; then
+			#dockerd engine has at least one io.containerd.* runtime available
+			DOCKER_IS_PODMAN=""
+		else
+			DOCKER_IS_PODMAN="yes"
+			#assume podman is emulating docker cli to add needed volume flags
+		fi
+
 		case "${docker_kind}" in
 			anonymous)
 				display_alert "Mounting" "anonymous volume for '${MOUNT_DIR}'" "debug"
 				# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
 				# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
 				#                                                         have enough RAM (inside the container) so don't bother.
-				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR},dev,exec")
+				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_IS_PODMAN:+,exec,dev}")
 				;;
 			bind)
 				display_alert "Mounting" "bind mount for '${MOUNT_DIR}'" "debug"
@@ -512,7 +520,7 @@ function docker_cli_prepare_launch() {
 				;;
 			namedvolume)
 				display_alert "Mounting" "named volume id '${volume_id}' for '${MOUNT_DIR}'" "debug"
-				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR},dev,exec")
+				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_IS_PODMAN:+,exec,dev}")
 				;;
 			*)
 				display_alert "Unknown Mountpoint Type" "unknown volume type '${docker_kind}' for '${MOUNT_DIR}'" "err"
