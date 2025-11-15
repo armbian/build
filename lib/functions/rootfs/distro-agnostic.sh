@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 
 function bootscript_export_display_console() {
-	BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE=''
+	unset BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE
 	typeset ITEM
 	typeset CONSOLEARGS
 
@@ -25,12 +25,13 @@ function bootscript_export_display_console() {
 		fi
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
 	done
+	CONSOLEARGS="$(echo "${CONSOLEARGS:-}" | xargs -n1 | sort -u | xargs)"
 
 	export BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE="${CONSOLEARGS:-}"
 }
 
 function bootscript_export_serial_console() {
-	BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE=''
+	unset BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE
 	typeset ITEM
 	typeset CONSOLEARGS
 
@@ -47,6 +48,7 @@ function bootscript_export_serial_console() {
 		fi
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
 	done
+	CONSOLEARGS="$(echo "${CONSOLEARGS:-}" | xargs -n1 | sort -u | xargs)"
 
 	export BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE="${CONSOLEARGS:-}"
 }
