@@ -9,9 +9,6 @@
 
 declare -g ARCH="arm64"
 declare -g OVERLAY_DIR="/boot/dtb/ti/overlay"
-
-declare -g ATFSOURCE="https://github.com/TexasInstruments/arm-trusted-firmware"
-
 declare -g BOOTSCRIPT="boot-k3.cmd:uEnv.txt"
 declare -g SPD_OPTEED="SPD=opteed"
 
@@ -26,6 +23,23 @@ fi
 
 enable_extension "ti-debpkgs"
 enable_extension "apa"
+
+case "${BRANCH}" in
+
+	edge)	# experimental (limited testing): uses latest bleeding-edge upstream mainline version
+
+		# KERNELSOURCE defined in mainline-config.sh
+		# KERNELBRANCH defined in mainline-kernel.conf.sh
+		declare -g KERNEL_MAJOR_MINOR="6.18"							# needs updating with each minor kernel release
+		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
+		declare -g ATFBRANCH="branch:master"
+		declare -g OPTEE_BRANCH="branch:master"
+		declare -g TI_LINUX_FIRMWARE_BRANCH="branch:ti-linux-firmware"
+		declare -g BOOTSOURCE="https://github.com/u-boot/u-boot"
+		declare -g BOOTBRANCH="branch:master"
+		;;
+
+esac
 
 ATF_PLAT="k3"
 ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} bl31;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin"
@@ -47,8 +61,8 @@ function compile_k3_bootgen() {
 
 	pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
 
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
+	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
+	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
 
 	popd
 }
