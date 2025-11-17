@@ -275,21 +275,11 @@ function fetch_from_repo() {
 				display_alert "Skipping submodules" "GIT_SKIP_SUBMODULES=yes" "debug"
 			else
 				display_alert "Updating submodules" "" "ext"
-				# FML: http://stackoverflow.com/a/17692710
-				for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
-					cd "${git_work_dir}" || exit
-					local surl sref
-					surl=$(git config -f .gitmodules --get "submodule.$i.url")
-					sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
-					if [[ -n $sref ]]; then
-						sref="branch:$sref"
-					else
-						sref="head"
-					fi
-					display_alert "Updating submodule" "$i - $surl - $sref" "git"
-					git_ensure_safe_directory "$workdir/$i"
-					fetch_from_repo "$surl" "$workdir/$i" "$sref"
-				done
+				git submodule update --init --recursive --checkout
+				if [[ $? -ne 0 ]]; then
+					display_alert "Submodule update failed" "" "error"
+					exit 1
+				fi
 			fi
 		fi
 	else
@@ -298,3 +288,4 @@ function fetch_from_repo() {
 
 	return 0
 }
+
