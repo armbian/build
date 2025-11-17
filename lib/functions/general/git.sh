@@ -276,10 +276,6 @@ function fetch_from_repo() {
 			else
 				display_alert "Updating submodules" "" "ext"
 				git submodule update --init --recursive --checkout
-				if [[ $? -ne 0 ]]; then
-					display_alert "Submodule update failed" "" "error"
-					exit 1
-				fi
 			fi
 		fi
 	else
