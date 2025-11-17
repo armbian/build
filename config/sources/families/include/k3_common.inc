@@ -59,7 +59,7 @@ function compile_k3_bootgen() {
 	# Source code checkout
 	(fetch_from_repo "https://github.com/TexasInstruments/ti-linux-firmware" "ti-linux-firmware" ${TI_LINUX_FIRMWARE_BRANCH})
 
-	if [[ "${BOARD_NAME}" != "TMDS62LEVM" ]]; then
+	if [[ "${BOOT_SOC}" != "am62l" ]]; then
 		pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
 		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
 		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
@@ -79,7 +79,7 @@ function pre_config_uboot_target__build_first_stage() {
 	compile_k3_optee
 	compile_k3_bootgen
 
-	if [[ "${BOARD_NAME}" != "TMDS62LEVM" ]]; then
+	if [[ "${BOOT_SOC}" != "am62l" ]]; then
 		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
 		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
 	fi
