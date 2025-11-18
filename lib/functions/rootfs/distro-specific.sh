@@ -35,16 +35,25 @@ function install_distribution_specific() {
 		truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
 	fi
 
-	# Add power management override
-	# suspend / resume is very fragile on most of those board - lets disable it system wide
-	mkdir -p "${SDCARD}/etc/systemd/sleep.conf.d"
-	cat <<- EOF > "${SDCARD}/etc/systemd/sleep.conf.d/00-disable.conf"
-	[Sleep]
-	AllowSuspend=no
-	AllowHibernation=no
-	AllowHybridSleep=no
-	AllowSuspendThenHibernate=no
-	EOF
+	# Add power-management override.
+	# Suspend / hibernate / hybrid-sleep are known to be unreliable or completely
+	# non-functional on the majority of single board computers due to incomplete
+	# vendor kernels, broken device drivers, or lack of proper firmware support.
+	# To avoid random lockups, data loss, or boards failing to wake up, we disable
+	# all systemd sleep modes by default.
+	# Users who understand the risks and have hardware that supports stable sleep
+	# states can re-enable them by setting:
+	#     POWER_MANAGEMENT_FEATURES=yes
+	if [[ "${POWER_MANAGEMENT_FEATURES:-"no"}" != "yes" ]]; then
+		mkdir -p "${SDCARD}/etc/systemd/sleep.conf.d"
+		cat <<- EOF > "${SDCARD}/etc/systemd/sleep.conf.d/00-disable.conf"
+		[Sleep]
+		AllowSuspend=no
+		AllowHibernation=no
+		AllowHybridSleep=no
+		AllowSuspendThenHibernate=no
+		EOF
+	fi
 
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
