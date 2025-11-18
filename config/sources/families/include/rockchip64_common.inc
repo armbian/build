@@ -410,7 +410,7 @@ family_tweaks_bsp() {
 
 }
 
-# A late hook to default SERIALCON based on BRANCH; BOARD and hooks (earlier than 900) can set it to override this.
+# A late hook to default SERIALCON based on BRANCH and SOC; BOARD and hooks (earlier than 900) can set it to override this.
 function post_family_config__900_late_default_serial_console_by_branch() {
 	display_alert "rockchip64_common: defaulting SERIALCON" "initial SERIALCON: '${SERIALCON:-"unset"}'" "debug"
 
@@ -426,10 +426,19 @@ function post_family_config__900_late_default_serial_console_by_branch() {
 			SERIALCON="ttyFIQ0"
 			;;
 		*)
-			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for BRANCH='${BRANCH}'" "info"
-			SERIALCON="ttyS2"
+			# Different Rockchip SoCs use different UART for debug console
+			case $BOOT_SOC in
+				rk3576)
+					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS0 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+					SERIALCON="ttyS0"
+					;;
+				*)
+					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+					SERIALCON="ttyS2"
+					;;
+			esac
 			;;
 	esac
 
-	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}'" "debug"
+	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}' SOC='${BOOT_SOC}'" "debug"
 }

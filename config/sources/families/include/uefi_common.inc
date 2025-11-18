@@ -10,6 +10,7 @@ declare -g SERIALCON="${SERIALCON:-tty1}"            # Consistent serial console
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 declare -g DISTRO_GENERIC_KERNEL=no
+declare -g POWER_MANAGEMENT_FEATURES=yes             # Suspend and resume might work well in UEFI, elsewhere is disabled by default
 
 case "${BRANCH}" in
 

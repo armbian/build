@@ -18,7 +18,7 @@ function post_family_config__9tripod_x3568_v4_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTCONFIG="9tripod-x3568-v4-rk3568_defconfig"
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2025.10"
 	declare -g BOOTPATCHDIR="v2025.10/board_${BOARD}"
 
