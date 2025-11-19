@@ -11,14 +11,14 @@ case $BRANCH in
 	legacy | current | edge)
 
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
-		BOOTBRANCH='tag:v2019.04'
+		BOOTBRANCH='tag:v2025.10'
 		BOOTDIR=$MAINLINE_UBOOT_DIR
-		BOOTPATCHDIR='legacy/u-boot-helios4'
+		#BOOTPATCHDIR='legacy/u-boot-helios4'
 		BOOTSCRIPT='boot-mvebu.cmd:boot.cmd'
 
-		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
-				  ;spi;u-boot-spl.kwb:u-boot.flash
-				  ;uart;u-boot-spl.kwb:u-boot.uart"
+		UBOOT_TARGET_MAP=";sdhc;u-boot-with-spl.kwb:u-boot.mmc
+				  ;spi;u-boot-with-spl.kwb:u-boot.flash
+				  ;uart;u-boot-with-spl.kwb:u-boot.uart"
 
 		UBOOT_USE_GCC='> 7.0'
 
