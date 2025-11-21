@@ -13,7 +13,7 @@ function mount_chroot() {
 		display_alert "mount_chroot called outside of logging section..." "mount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
 	fi
 
-	local target
+	local target cache_src
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
 	mkdir -p "${target}/run/user/0"
@@ -26,6 +26,19 @@ function mount_chroot() {
 	mount -t sysfs chsys "${target}"/sys
 	mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
+
+	# Bind host cache into chroot if present (configurable via ARMBIAN_CACHE_DIR)
+	cache_src="${ARMBIAN_CACHE_DIR:-/armbian/cache}"
+	if [[ -d "${cache_src}" ]]; then
+		mkdir -p "${target}/armbian/cache"
+		if ! mountpoint -q "${target}/armbian/cache" && mount --bind "${cache_src}" "${target}/armbian/cache"; then
+			:
+		else
+			display_alert "cache bind failed or already bound" "${cache_src} -> ${target}/armbian/cache" "warn"
+		fi
+	else
+		display_alert "Host cache not found — skipping cache mount" "${cache_src}" "warn"
+	fi
 }
 
 # umount_chroot <target>
@@ -33,9 +46,15 @@ function umount_chroot() {
 	if [[ "x${LOG_SECTION}x" == "xx" ]]; then
 		display_alert "umount_chroot called outside of logging section..." "umount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
 	fi
-	local target
+	local target cache_src
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
+
+	cache_src="${ARMBIAN_CACHE_DIR:-/armbian/cache}"
+	if mountpoint -q "${target}/armbian/cache"; then
+		umount "${target}/armbian/cache" || true
+	fi
+
 	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount "${target}"/dev/pts || true
