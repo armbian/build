@@ -18,6 +18,7 @@ case $BRANCH in
 
 		UBOOT_TARGET_MAP=";sdhc;u-boot-with-spl.kwb:u-boot.mmc
 				  ;spi;u-boot-with-spl.kwb:u-boot.flash
+				  ;sata;u-boot-with-spl.kwb:u-boot.sata
 				  ;uart;u-boot-with-spl.kwb:u-boot.uart"
 
 		UBOOT_USE_GCC='> 7.0'
