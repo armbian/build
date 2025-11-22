@@ -137,6 +137,9 @@ function docker_cli_prepare() {
 		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${DOCKER_WANTED_RELEASE}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
+	# Make DOCKER_ARMBIAN_BASE_IMAGE readonly; no changes allowed after this point.
+	declare -g -r DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE}"
+
 	#############################################################################################################
 	# Stop here if Docker can't be used at all.
 	if ! is_docker_ready_to_go; then
