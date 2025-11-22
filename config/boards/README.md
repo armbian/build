@@ -63,6 +63,11 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
     - Values:
         - yes: Include (default)
         - no: Do NO include
+- **POWER_MANAGEMENT_FEATURES** (boolean): Controls whether system sleep functionality (suspend, hibernate, hybrid sleep) is allowed on the built image.
+    - Values:
+         - yes: Enable power-management sleep features (allow systemd sleep modes)
+         - no: Disable all sleep modes (default), as suspend/hibernate are unstable
+      on most single-board computers
 - **HAS_VIDEO_OUTPUT** ( boolean ): defines whether the system has video output such as eye candy, bootsplash, etc..
 	- Values:
 		- yes: Enable video-related configuration

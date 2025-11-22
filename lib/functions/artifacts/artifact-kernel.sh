@@ -10,6 +10,8 @@
 function artifact_kernel_config_dump() {
 	# BOARD is NOT included. See explanation below.
 	artifact_input_variables[LINUXFAMILY]="${LINUXFAMILY}"
+	artifact_input_variables[LINUXCONFIG]="${LINUXCONFIG}"
+	artifact_input_variables[ARMBIAN_KERNEL_DEB_NAME]="${LINUXFAMILY}-${BRANCH}"
 	artifact_input_variables[BRANCH]="${BRANCH}"
 	artifact_input_variables[KERNEL_MAJOR_MINOR]="${KERNEL_MAJOR_MINOR}"
 	artifact_input_variables[KERNELSOURCE]="${KERNELSOURCE}"

@@ -7,6 +7,72 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function bootscript_export_display_console() {
+	unset BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE
+	typeset ITEM
+	typeset CONSOLEARGS
+
+	for ITEM in ${DISPLAYCON//,/ } ; do
+		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }console=${ITEM//:/,}"
+	done
+
+	for ITEM in $SRC_CMDLINE ; do
+		if [[ ! 'console' == "${ITEM%%=*}" ]] ; then
+			continue
+		fi
+		if [[ "${ITEM#*=}" =~ 'tty'[AGSU]* ]] ; then
+			continue
+		fi
+		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
+	done
+	CONSOLEARGS="$(echo "${CONSOLEARGS:-}" | xargs -n1 | sort -u | xargs)"
+
+	export BOOTSCRIPT_TEMPLATE__DISPLAY_CONSOLE="${CONSOLEARGS:-}"
+}
+
+function bootscript_export_serial_console() {
+	unset BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE
+	typeset ITEM
+	typeset CONSOLEARGS
+
+	for ITEM in ${SERIALCON//,/ } ; do
+		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }console=${ITEM//:/,}"
+	done
+
+	for ITEM in $SRC_CMDLINE ; do
+		if [[ ! 'console' == "${ITEM%%=*}" ]] ; then
+			continue
+		fi
+		if [[ ! "${ITEM#*=}" =~ 'tty'[AGSU]* ]] ; then
+			continue
+		fi
+		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
+	done
+	CONSOLEARGS="$(echo "${CONSOLEARGS:-}" | xargs -n1 | sort -u | xargs)"
+
+	export BOOTSCRIPT_TEMPLATE__SERIAL_CONSOLE="${CONSOLEARGS:-}"
+}
+
+function render_bootscript_template() { (
+	typeset BOOTSCRIPT_TEMPLATE__CREATE_DATE
+	typeset SHELL_FORMAT
+
+	BOOTSCRIPT_TEMPLATE__CREATE_DATE="$(date -Ru)"
+
+	bootscript_export_display_console
+	bootscript_export_serial_console
+
+	SHELL_FORMAT="$(set | sed -En '/^BOOTSCRIPT_TEMPLATE__/ { s/=.*$//; s/^/$/; p; }')"
+	display_alert "Bootscript template variables to be rendered" "${SHELL_FORMAT:-N/A}" "debug"
+
+	export $(set | sed -En '/^BOOTSCRIPT_TEMPLATE__/s/=.*$//p')
+	envsubst "'${SHELL_FORMAT}'"
+) }
+
+function proof_rendered_bootscript_template() {
+	! egrep '\$\{?BOOTSCRIPT_TEMPLATE__' "${1:?}"
+}
+
 function install_distribution_agnostic() {
 	display_alert "Installing distro-agnostic part of rootfs" "install_distribution_agnostic" "debug"
 
@@ -121,8 +187,15 @@ function install_distribution_agnostic() {
 	fi
 
 	# NOTE: this needs to be executed before family_tweaks
+	local bootscript_src_path
 	local bootscript_src=${BOOTSCRIPT%%:*}
 	local bootscript_dst=${BOOTSCRIPT##*:}
+
+	if [[ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]]; then
+		bootscript_src_path="${USERPATCHES_PATH}/bootscripts"
+	else
+		bootscript_src_path="${SRC}/config/bootscripts"
+	fi
 
 	# create extlinux config file @TODO: refactor into extensions u-boot, extlinux
 	if [[ $SRC_EXTLINUX == yes ]]; then
@@ -159,12 +232,20 @@ function install_distribution_agnostic() {
 	else # ... not extlinux ...
 
 		if [[ -n "${BOOTSCRIPT}" ]]; then # @TODO: && "${BOOTCONFIG}" != "none"
-			display_alert "Deploying boot script" "$bootscript_src" "info"
-			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-				run_host_command_logged cp -pv "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
-			else
-				run_host_command_logged cp -pv "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
-			fi
+			case "${bootscript_src}" in
+			*'.template')
+				display_alert "Rendering boot script template" "${bootscript_src_path}/${bootscript_src}" "info"
+				run_host_command_logged cat "${bootscript_src_path}/${bootscript_src}" | render_bootscript_template > "${SDCARD}/boot/${bootscript_dst}"
+
+				if ! proof_rendered_bootscript_template "${SDCARD}/boot/${bootscript_dst}" ; then
+					exit_with_error "Render of bootscript template was not successful. Inspect '${SDCARD}/boot/${bootscript_dst}' for unrendered variables."
+				fi
+				;;
+			*)
+				display_alert "Deploying boot script" "${bootscript_src_path}/${bootscript_src}" "info"
+				run_host_command_logged cp -pv "${bootscript_src_path}/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+				;;
+			esac
 		fi
 
 		if [[ -n $BOOTENV_FILE ]]; then

@@ -9,9 +9,6 @@
 
 declare -g ARCH="arm64"
 declare -g OVERLAY_DIR="/boot/dtb/ti/overlay"
-
-declare -g ATFSOURCE="https://github.com/TexasInstruments/arm-trusted-firmware"
-
 declare -g BOOTSCRIPT="boot-k3.cmd:uEnv.txt"
 declare -g SPD_OPTEED="SPD=opteed"
 
@@ -27,10 +24,27 @@ fi
 enable_extension "ti-debpkgs"
 enable_extension "apa"
 
-ATF_PLAT="k3"
-ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} bl31;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin"
+case "${BRANCH}" in
 
-UBOOT_TARGET_MAP="BL31=bl31.bin TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
+	edge)	# experimental (limited testing): uses latest bleeding-edge upstream mainline version
+
+		# KERNELSOURCE defined in mainline-config.sh
+		# KERNELBRANCH defined in mainline-kernel.conf.sh
+		declare -g KERNEL_MAJOR_MINOR="6.18"							# needs updating with each minor kernel release
+		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
+		declare -g ATFBRANCH="branch:master"
+		declare -g OPTEE_BRANCH="branch:master"
+		declare -g TI_LINUX_FIRMWARE_BRANCH="branch:ti-linux-firmware"
+		declare -g BOOTSOURCE="https://github.com/u-boot/u-boot"
+		declare -g BOOTBRANCH="branch:master"
+		;;
+
+esac
+
+ATF_PLAT="k3"
+ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
+
+UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
 
 # To match what our current SDK produces
 BOOT_FS_LABEL="boot"
@@ -45,12 +59,12 @@ function compile_k3_bootgen() {
 	# Source code checkout
 	(fetch_from_repo "https://github.com/TexasInstruments/ti-linux-firmware" "ti-linux-firmware" ${TI_LINUX_FIRMWARE_BRANCH})
 
-	pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
-
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
-	run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabihf- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
-
-	popd
+	if [[ "${BOOT_SOC}" != "am62l" ]]; then
+		pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
+		popd
+	fi
 }
 
 function compile_k3_optee() {
@@ -65,8 +79,10 @@ function pre_config_uboot_target__build_first_stage() {
 	compile_k3_optee
 	compile_k3_bootgen
 
-	cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
-	cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+	if [[ "${BOOT_SOC}" != "am62l" ]]; then
+		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
+		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+	fi
 }
 
 function post_uboot_custom_postprocess__update_uboot_names() {
