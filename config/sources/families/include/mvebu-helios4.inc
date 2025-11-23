@@ -13,7 +13,7 @@ case $BRANCH in
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2025.10'
 		BOOTDIR=$MAINLINE_UBOOT_DIR
-		#BOOTPATCHDIR='legacy/u-boot-helios4'
+		BOOTPATCHDIR="${BOOTBRANCH#tag:}/board_${BOARD:?}"
 		BOOTSCRIPT='boot-mvebu.cmd:boot.cmd'
 
 		UBOOT_TARGET_MAP=";sdhc;u-boot-with-spl.kwb:u-boot.mmc
