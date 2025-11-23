@@ -16,25 +16,52 @@ function mount_chroot() {
 	local target cache_src
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
-	mkdir -p "${target}/run/user/0"
+	if ! mkdir -p "${target}/run/user/0"; then
+		display_alert "Failed to prepare chroot runtime directory" "${target}/run/user/0" "err"
+		return 1
+	fi
 
 	# tmpfs size=50% is the Linux default, but we need more.
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/var/tmp"
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"
-	mount -t proc chproc "${target}"/proc
-	mount -t sysfs chsys "${target}"/sys
-	mount --bind /dev "${target}"/dev
-	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
+	if ! mountpoint -q "${target}/tmp" && ! mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"; then
+		display_alert "Failed to mount tmpfs inside chroot" "${target}/tmp" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/var/tmp" && ! mount -t tmpfs -o "size=99%" tmpfs "${target}/var/tmp"; then
+		display_alert "Failed to mount tmpfs inside chroot" "${target}/var/tmp" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/run/user/0" && ! mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"; then
+		display_alert "Failed to mount tmpfs inside chroot" "${target}/run/user/0" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/proc" && ! mount -t proc chproc "${target}/proc"; then
+		display_alert "Failed to mount proc inside chroot" "${target}/proc" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/sys" && ! mount -t sysfs chsys "${target}/sys"; then
+		display_alert "Failed to mount sysfs inside chroot" "${target}/sys" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/dev" && ! mount --bind /dev "${target}/dev"; then
+		display_alert "Failed to bind /dev into chroot" "${target}/dev" "err"
+		return 1
+	fi
+	if ! mountpoint -q "${target}/dev/pts" && ! mount -t devpts chpts "${target}/dev/pts" && ! mount --bind /dev/pts "${target}/dev/pts"; then
+		display_alert "Failed to mount devpts inside chroot" "${target}/dev/pts" "err"
+		return 1
+	fi
 
 	# Bind host cache into chroot if present (configurable via ARMBIAN_CACHE_DIR)
 	cache_src="${ARMBIAN_CACHE_DIR:-/armbian/cache}"
 	if [[ -d "${cache_src}" ]]; then
-		mkdir -p "${target}/armbian/cache"
-		if ! mountpoint -q "${target}/armbian/cache" && mount --bind "${cache_src}" "${target}/armbian/cache"; then
-			:
+		if ! mkdir -p "${target}/armbian/cache"; then
+			display_alert "Failed to create cache mountpoint" "${target}/armbian/cache" "warn"
+		elif mountpoint -q "${target}/armbian/cache"; then
+			display_alert "Cache already mounted — skipping cache bind" "${target}/armbian/cache" "debug"
 		else
-			display_alert "cache bind failed or already bound" "${cache_src} -> ${target}/armbian/cache" "warn"
+			if ! mount --bind "${cache_src}" "${target}/armbian/cache"; then
+				display_alert "Cache bind failed" "${cache_src} -> ${target}/armbian/cache" "warn"
+			fi
 		fi
 	else
 		display_alert "Host cache not found — skipping cache mount" "${cache_src}" "warn"
@@ -46,11 +73,10 @@ function umount_chroot() {
 	if [[ "x${LOG_SECTION}x" == "xx" ]]; then
 		display_alert "umount_chroot called outside of logging section..." "umount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
 	fi
-	local target cache_src
+	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
 
-	cache_src="${ARMBIAN_CACHE_DIR:-/armbian/cache}"
 	if mountpoint -q "${target}/armbian/cache"; then
 		umount "${target}/armbian/cache" || true
 	fi
