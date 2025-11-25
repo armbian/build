@@ -473,6 +473,10 @@ function kernel_package_callback_linux_headers() {
 	[[ -f "${kernel_work_dir}/scripts/module.lds" ]] &&
 		run_host_command_logged cp -v "${kernel_work_dir}/scripts/module.lds" "${headers_target_dir}/scripts/module.lds"
 
+	# Ubuntu Resolute requires that there be a "scripts/mod/modpost" binary during header compilation
+	[[ -f "${kernel_work_dir}/scripts/mod/modpost" ]] &&
+		run_host_command_logged cp -v "${kernel_work_dir}/scripts/mod/modpost" "${headers_target_dir}/scripts/mod/modpost"
+
 	if [[ "${DEBUG}" == "yes" ]]; then
 		# Check that no binaries are included by now. Expensive... @TODO: remove after me make sure.
 		display_alert "Checking for binaries in kernel headers" "${headers_target_dir}" "debug"
