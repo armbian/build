@@ -42,6 +42,7 @@ function get_docker_info_once() {
 	if [[ -z "${DOCKER_INFO}" ]]; then
 		declare -g DOCKER_INFO
 		declare -g DOCKER_IN_PATH="no"
+		declare -g DOCKER_IS_PODMAN
 
 		# if "docker" is in the PATH...
 		if [[ -n "$(command -v docker)" ]]; then
@@ -52,6 +53,15 @@ function get_docker_info_once() {
 		# Shenanigans to go around error control & capture output in the same effort.
 		DOCKER_INFO="$({ docker info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
 		declare -g -r DOCKER_INFO="${DOCKER_INFO}" # readonly
+
+		if docker --version | grep -q podman; then
+			DOCKER_IS_PODMAN="yes"
+			# when `docker` is a shim to `podman`, it will report it's version as "podman version #.#.#"
+		else
+			DOCKER_IS_PODMAN=""
+		fi
+		declare -g -r DOCKER_IS_PODMAN="${DOCKER_IS_PODMAN}" # readonly
+
 
 		declare -g DOCKER_INFO_OK="no"
 		if [[ "${DOCKER_INFO}" =~ "DOCKER_INFO_OK" ]]; then
@@ -496,14 +506,6 @@ function docker_cli_prepare_launch() {
 		local MOUNT_DIR="$1"
 		# shellcheck disable=SC2154 # $docker_kind: the kind of volume to mount on this OS; see mountpoints.sh
 		#display_alert "Handling Docker mountpoint" "${MOUNT_DIR} id: ${volume_id} - docker_kind: ${docker_kind}" "debug"
-
-		if grep -q io.containerd <<< "$DOCKER_INFO"; then
-			#dockerd engine has at least one io.containerd.* runtime available
-			DOCKER_IS_PODMAN=""
-		else
-			DOCKER_IS_PODMAN="yes"
-			#assume podman is emulating docker cli to add needed volume flags
-		fi
 
 		case "${docker_kind}" in
 			anonymous)
