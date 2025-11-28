@@ -16,7 +16,7 @@ enable_extension "uboot-btrfs"
 enable_extension "watchdog"
 
 # Newer u-boot for the N2/N2+
-BOOTBRANCH_BOARD="tag:v2026.01-rc2"
+BOOTBRANCH_BOARD="tag:v2026.01"
 BOOTPATCHDIR="v2026.01"
 
 # Enable writing u-boot to SPI on the N2(+) for current and edge

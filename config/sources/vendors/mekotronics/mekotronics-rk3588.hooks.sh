@@ -31,7 +31,7 @@ if [[ "${MEKO_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]]; then
 		declare -g BOOTDELAY=1                           # Wait for UART interrupt
 
 		declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-		declare -g BOOTBRANCH="tag:v2026.01-rc5"
+		declare -g BOOTBRANCH="tag:v2026.01"
 		declare -g BOOTPATCHDIR="v2026.01"
 
 		BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory

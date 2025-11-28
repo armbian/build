@@ -35,7 +35,7 @@ function post_family_config__core3588e_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01-rc4"
+	declare -g BOOTBRANCH="tag:v2026.01"
 	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
