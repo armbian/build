@@ -40,8 +40,8 @@ function post_family_config__blade3_use_mainline_uboot() {
 	declare -g BOOTDELAY=1
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	BOOTBRANCH="tag:v2025.10"
-	BOOTPATCHDIR="v2025.10" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
+	declare -g BOOTBRANCH="tag:v2026.01"
+	declare -g BOOTPATCHDIR="v2026.01" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}"
 
@@ -53,12 +53,24 @@ function post_family_config__blade3_use_mainline_uboot() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
 
-	# @TODO: boot order stuff; we want to boot nvme / usb / sd before eMMC
-
 	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
 }
 
 function post_family_config_branch_edge__different_dtb_for_edge() {
 	declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb"
 	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "warn"
+}
+
+# "rockchip-common: boot SD card first, then NVMe, then mmc"
+# include/configs/rockchip-common.h
+# On the mixtile-blade3: mmc0 is eMMC; mmc1 is microSD
+# Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
+function pre_config_uboot_target__blade3_patch_rockchip_common_boot_order() {
+	if [[ "${BRANCH}" != "edge" ]]; then
+		return 0
+	fi
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
 }
