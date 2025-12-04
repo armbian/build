@@ -499,7 +499,7 @@ function kernel_package_callback_linux_headers() {
 		Architecture: ${ARCH}
 		Priority: optional
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole
 		Description: Armbian Linux $BRANCH headers ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
