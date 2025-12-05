@@ -438,6 +438,20 @@ function armbian_kernel_config__restore_enable_gpio_sysfs() {
 	opts_y+=("GPIO_SYSFS") # This was a victim of not having EXPERT=y due to some _DEBUG conflicts in old times. Re-enable it forcefully.
 }
 
+# NTSYNC support for Windows NT synchronization primitives (Wine/Proton performance)
+# Available and functional since kernel 6.14 (was marked BROKEN in 6.10-6.13)
+# Skip vendor kernels due to their inconsistent upstream merge status
+function armbian_kernel_config__enable_ntsync() {
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.14; then
+		if [[ "${BRANCH}" =~ 'vendor' ]]; then
+			display_alert "Skipping NTSYNC for vendor kernel" "${BRANCH} branch, ${KERNEL_MAJOR_MINOR} version" "debug"
+		else
+			display_alert "Enabling NTSYNC support" "for Wine/Proton compatibility" "debug"
+			opts_m+=("NTSYNC")
+		fi
+	fi
+}
+
 # +++++++++++ HELPERS CORNER +++++++++++
 #
 # Helpers for manipulating kernel config.
