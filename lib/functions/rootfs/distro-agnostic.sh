@@ -131,11 +131,6 @@ function install_distribution_agnostic() {
 	# add the /dev/urandom path to the rng config file
 	echo "HRNGDEVICE=/dev/urandom" >> "${SDCARD}"/etc/default/rng-tools
 
-	# @TODO: security problem?
-	# ping needs privileged action to be able to create raw network socket
-	# this is working properly but not with (at least) Debian Buster
-	chroot_sdcard chmod u+s /bin/ping
-
 	# change time zone data
 	echo "${TZDATA}" > "${SDCARD}"/etc/timezone
 	chroot_sdcard dpkg-reconfigure -f noninteractive tzdata
