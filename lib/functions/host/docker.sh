@@ -56,7 +56,7 @@ function get_docker_info_once() {
 
 		if docker --version | grep -q podman; then
 			DOCKER_IS_PODMAN="yes"
-			# when `docker` is a shim to `podman`, it will report it's version as "podman version #.#.#"
+		# when `docker` is a shim to `podman`, it will report its version as "podman version #.#.#"
 		else
 			DOCKER_IS_PODMAN=""
 		fi
