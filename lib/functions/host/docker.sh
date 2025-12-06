@@ -42,15 +42,25 @@ function get_docker_info_once() {
 	if [[ -z "${DOCKER_INFO}" ]]; then
 		declare -g DOCKER_INFO
 		declare -g DOCKER_IN_PATH="no"
-
-		# if "docker" is in the PATH...
+		declare -g DOCKER_COMMAND="docker"
+		declare -g DOCKER_NETWORK=""
+		declare -g DOCKER_MOUNT_OPTS=""
+ 
+		# Detect container engine - prefer Docker for compatibility, but support Podman
 		if [[ -n "$(command -v docker)" ]]; then
 			display_alert "Docker is in the path" "Docker in PATH" "debug"
+			DOCKER_COMMAND="docker"
+			display_alert "Docker detected" "Using Docker" "debug"
 			DOCKER_IN_PATH="yes"
+		elif [[ -n "$(command -v podman)" ]]; then
+			DOCKER_COMMAND="sudo podman"
+			DOCKER_NETWORK="--network host"
+			DOCKER_MOUNT_OPTS=",suid,dev"  # Required mount options for Podman
+			display_alert "Podman detected" "Using Podman with sudo (required for Armbian builds)" "info"
 		fi
 
 		# Shenanigans to go around error control & capture output in the same effort.
-		DOCKER_INFO="$({ docker info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
+		DOCKER_INFO="$({ $DOCKER_COMMAND info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
 		declare -g -r DOCKER_INFO="${DOCKER_INFO}" # readonly
 
 		declare -g DOCKER_INFO_OK="no"
@@ -58,6 +68,9 @@ function get_docker_info_once() {
 			DOCKER_INFO_OK="yes"
 		fi
 		declare -g -r DOCKER_INFO_OK="${DOCKER_INFO_OK}" # readonly
+		declare -g -r DOCKER_COMMAND="${DOCKER_COMMAND}"
+		declare -g -r DOCKER_NETWORK="${DOCKER_NETWORK}"
+		declare -g -r DOCKER_MOUNT_OPTS="${DOCKER_MOUNT_OPTS}"
 	fi
 	return 0
 }
@@ -73,8 +86,8 @@ function is_docker_ready_to_go() {
 		display_alert "Can't use Docker" "Actually ALREADY UNDER DOCKER!" "debug"
 		return 1
 	fi
-	if [[ -z "$(command -v docker)" ]]; then
-		display_alert "Can't use Docker" "docker command not found" "debug"
+	if [[ -z "$(command -v docker)" ]] && [[ -z "$(command -v podman)" ]]; then
+		display_alert "Can't use Docker" "docker or podman command not found" "debug"
 		return 1
 	fi
 
@@ -97,11 +110,11 @@ function cli_handle_docker() {
 	# Purge Armbian Docker images
 	if [[ "${1}" == dockerpurge && -f /etc/debian_version ]]; then
 		display_alert "Purging Armbian Docker containers" "" "wrn"
-		docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
-		docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
+		$DOCKER_COMMAND container ls -a | grep armbian | awk '{print $1}' | xargs $DOCKER_COMMAND container rm &> /dev/null
+		$DOCKER_COMMAND image ls | grep armbian | awk '{print $3}' | xargs $DOCKER_COMMAND image rm &> /dev/null
 		# removes "dockerpurge" from $1, thus $2 becomes $1
 		shift
-		set -- "docker" "$@"
+		set -- $DOCKER_COMMAND "$@"
 	fi
 
 	# Docker shell
@@ -109,7 +122,7 @@ function cli_handle_docker() {
 		# this swaps the value of $1 with 'docker', and life continues
 		shift
 		SHELL_ONLY=yes
-		set -- "docker" "$@"
+		set -- $DOCKER_COMMAND "$@"
 	fi
 
 }
@@ -323,7 +336,7 @@ function docker_cli_build_dockerfile() {
 
 	if [[ "${do_force_pull}" == "no" ]]; then
 		# Check if the base image is up to date.
-		local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
+		local_image_sha="$($DOCKER_COMMAND images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
 		display_alert "Checking if base image exists at all" "local_image_sha: '${local_image_sha}'" "debug"
 		if [[ -n "${local_image_sha}" ]]; then
 			display_alert "Armbian docker image" "already exists: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
@@ -336,10 +349,10 @@ function docker_cli_build_dockerfile() {
 	if [[ "${do_force_pull:-yes}" == "yes" ]]; then
 		display_alert "Pulling" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 		local pull_failed="yes"
-		run_host_command_logged docker pull "${DOCKER_ARMBIAN_BASE_IMAGE}" && pull_failed="no"
+		run_host_command_logged $DOCKER_COMMAND pull "${DOCKER_ARMBIAN_BASE_IMAGE}" && pull_failed="no"
 
 		if [[ "${pull_failed}" == "no" ]]; then
-			local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
+			local_image_sha="$($DOCKER_COMMAND images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
 			display_alert "New local image sha after pull" "local_image_sha: ${local_image_sha}" "debug"
 			# print current date and time in epoch format; touches mtime of file
 			echo "${DOCKER_ARMBIAN_BASE_IMAGE}|${local_image_sha}|$(date +%s)" >> "${docker_marker_dir}"/last-pull
@@ -360,7 +373,7 @@ function docker_cli_build_dockerfile() {
 	display_alert "Building" "Dockerfile via '${DOCKER_BUILDX_OR_BUILD[*]}'" "info"
 
 	BUILDKIT_COLORS="run=123,20,245:error=yellow:cancel=blue:warning=white" \
-		run_host_command_logged docker "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
+		run_host_command_logged $DOCKER_COMMAND "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
 }
 
 function docker_cli_prepare_launch() {
@@ -503,16 +516,16 @@ function docker_cli_prepare_launch() {
 				# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
 				# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
 				#                                                         have enough RAM (inside the container) so don't bother.
-				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_MOUNT_OPTS}")
 				;;
 			bind)
 				display_alert "Mounting" "bind mount for '${MOUNT_DIR}'" "debug"
 				mkdir -p "${SRC}/${MOUNT_DIR}"
-				DOCKER_ARGS+=("--mount" "type=bind,source=${SRC}/${MOUNT_DIR},target=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=bind,source=${SRC}/${MOUNT_DIR},target=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_MOUNT_OPTS}")
 				;;
 			namedvolume)
 				display_alert "Mounting" "named volume id '${volume_id}' for '${MOUNT_DIR}'" "debug"
-				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_MOUNT_OPTS}")
 				;;
 			*)
 				display_alert "Unknown Mountpoint Type" "unknown volume type '${docker_kind}' for '${MOUNT_DIR}'" "err"
@@ -585,13 +598,13 @@ function docker_cli_launch() {
 	# The amount of privileges and capabilities given is a bare minimum needed for losetup to work
 	if [[ ! -e /dev/loop0 ]]; then
 		display_alert "Running losetup in a temporary container" "because no loop devices exist" "info"
-		run_host_command_logged docker run --rm --privileged --cap-add=MKNOD "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /usr/sbin/losetup -f
+		run_host_command_logged $DOCKER_COMMAND run $DOCKER_NETWORK --rm --privileged --cap-add=MKNOD "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /usr/sbin/losetup -f
 	fi
 
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
-	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
+	if $DOCKER_COMMAND run $DOCKER_NETWORK "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
 		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successful" "info"
 	else
@@ -623,8 +636,8 @@ function docker_purge_deprecated_volumes() {
 	for mountpoint in "${ARMBIAN_MOUNTPOINTS_DEPRECATED[@]}"; do
 		local volume_id="armbian-${mountpoint//\//-}"
 		display_alert "Purging deprecated Docker volume" "${volume_id}" "info"
-		if docker volume inspect "${volume_id}" &> /dev/null; then
-			run_host_command_logged docker volume rm "${volume_id}"
+		if $DOCKER_COMMAND volume inspect "${volume_id}" &> /dev/null; then
+			run_host_command_logged $DOCKER_COMMAND volume rm "${volume_id}"
 			display_alert "Purged deprecated Docker volume" "${volume_id} OK" "info"
 		else
 			display_alert "Deprecated Docker volume not found" "${volume_id} OK" "info"
