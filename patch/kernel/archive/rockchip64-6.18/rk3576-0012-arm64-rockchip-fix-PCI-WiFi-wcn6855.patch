@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HackingGate <i@hackinggate.com>
+Date: Sun, 26 Oct 2025 23:30:11 +0900
+Subject: [PATCH] arm64: rockchip: fix PCI WiFi on RK3576 with extended reset
+ timing and bus mastering
+
+RK3576 PCIe WiFi cards (QCA wcn6855) fail to initialize due to two issues:
+
+1. Bus mastering is disabled on Rockchip PCIe bridges and endpoints,
+   preventing DMA operations required for MHI firmware loading.
+
+2. Insufficient PERST# timing prevents the WiFi card's PCIe interface
+   from properly initializing before link training begins.
+
+This patch adds:
+- PCI quirk to enable bus mastering on Rockchip root ports and endpoints
+- Extended PERST# hold time (100ms) and post-reset delay (200ms)
+
+This ensures the WiFi card has sufficient time for PCIe interface
+initialization and Data Link Layer activation.
+
+Tested-by: HackingGate <i@hackinggate.com>
+Signed-off-by: HackingGate <i@hackinggate.com>
+---
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c |  7 ++++
+ drivers/pci/quirks.c                          | 35 +++++++++++++++++++
+ 2 files changed, 42 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index 3e2752c7dd09..f475be5dfea5 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -221,6 +221,7 @@ static int rockchip_pcie_start_link(struct dw_pcie *pci)
+ 
+ 	/* Reset device */
+ 	gpiod_set_value_cansleep(rockchip->rst_gpio, 0);
++	msleep(100);  /* Hold reset asserted for 100ms */
+ 
+ 	rockchip_pcie_enable_ltssm(rockchip);
+ 
+@@ -236,6 +237,12 @@ static int rockchip_pcie_start_link(struct dw_pcie *pci)
+ 	msleep(PCIE_T_PVPERL_MS);
+ 	gpiod_set_value_cansleep(rockchip->rst_gpio, 1);
+ 
++	/*
++	 * Extended delay for WiFi cards (wcn6855) that need extra time
++	 * for PCIe interface initialization and Data Link Layer activation.
++	 */
++	msleep(200);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index 214ed060ca1b..86b08c1d6973 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -5654,6 +5654,41 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x145a, quirk_intel_e2000_no_ats);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x145c, quirk_intel_e2000_no_ats);
+ #endif /* CONFIG_PCI_ATS */
+ 
++/*
++ * Rockchip DesignWare PCIe controller doesn't enable bus master for endpoints.
++ * Ensure bus mastering is enabled for root ports and attached endpoints.
++ */
++static void quirk_rockchip_pcie_enable_bus_master(struct pci_dev *dev)
++{
++	struct pci_dev *bridge;
++	u16 vendor;
++
++	/* Rockchip root ports also need BME asserted to forward DMA */
++	if (dev->vendor == PCI_VENDOR_ID_ROCKCHIP) {
++		if (pci_is_bridge(dev)) {
++			pci_info(dev, "Rockchip bridge: enabling bus mastering\n");
++			pci_set_master(dev);
++		}
++		return;
++	}
++
++	if (pci_is_bridge(dev))
++		return;
++
++	bridge = pci_upstream_bridge(dev);
++	if (!bridge)
++		return;
++
++	/* Check if attached to Rockchip PCIe controller */
++	pci_read_config_word(bridge, PCI_VENDOR_ID, &vendor);
++	if (vendor == PCI_VENDOR_ID_ROCKCHIP) {
++		pci_info(dev, "Endpoint behind Rockchip bridge: enabling bus mastering\n");
++		pci_set_master(dev);
++	}
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, quirk_rockchip_pcie_enable_bus_master);
++DECLARE_PCI_FIXUP_ENABLE(PCI_ANY_ID, PCI_ANY_ID, quirk_rockchip_pcie_enable_bus_master);
++
+ /* Freescale PCIe doesn't support MSI in RC mode */
+ static void quirk_fsl_no_msi(struct pci_dev *pdev)
+ {
+-- 
+2.47.3
+
