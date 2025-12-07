@@ -13,15 +13,43 @@ setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "off"
 
+# Set load address for temporary file loading (armbianEnv.txt, overlays, etc)
+# Using address that doesn't conflict with kernel (0x45000000), ramdisk (0x49000000), or fdt (0x44000000)
+setenv load_addr "0x43000000"
 
 test -n "${distro_bootpart}" || distro_bootpart=1
 
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
-if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
-	load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt
-	env import -t ${load_addr} ${filesize}
+# get PARTUUID of first partition on SD/eMMC/UFS the boot script was loaded from
+echo "Detecting PARTUUID for ${devtype} device ${devnum}:${distro_bootpart}..."
+if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
+if test "${devtype}" = "scsi"; then part uuid scsi ${devnum}:${distro_bootpart} partuuid; fi
+
+# Use PARTUUID if available (more reliable), otherwise fall back to rootdev label
+if test -n "${partuuid}"; then
+	echo "PARTUUID detected: ${partuuid}"
+	setenv rootdev "PARTUUID=${partuuid}"
+	echo "Set default rootdev=${rootdev}"
+else
+	echo "PARTUUID not available, keeping fallback rootdev=${rootdev}"
 fi
+
+# Load armbianEnv.txt if it exists - using direct load instead of test -e for better compatibility
+# This happens AFTER PARTUUID detection so user can override rootdev if needed
+echo "Attempting to load ${prefix}armbianEnv.txt from ${devtype} ${devnum}:${distro_bootpart} to ${load_addr}..."
+if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt; then
+	echo "Successfully loaded armbianEnv.txt (${filesize} bytes)"
+	if env import -t ${load_addr} ${filesize}; then
+		echo "Successfully imported environment from armbianEnv.txt"
+	else
+		echo "Warning: Failed to import environment from armbianEnv.txt"
+	fi
+else
+	echo "armbianEnv.txt not found or failed to load - using default environment"
+fi
+
+echo "Final rootdev: ${rootdev}"
 
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
@@ -34,22 +62,17 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-# get PARTUUID of first partition on SD/eMMC/UFS the boot script was loaded from
-if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
-if test "${devtype}" = "scsi"; then part uuid scsi ${devnum}:${distro_bootpart} partuuid; fi
-
-# Use PARTUUID if available (more reliable), otherwise fall back to rootdev label
-if test -n "${partuuid}"; then
-	setenv rootdev "PARTUUID=${partuuid}"
-fi
-
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory"; fi
 
-load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd
-load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
+echo "Final bootargs: ${bootargs}"
 
+echo "Loading kernel image to ${kernel_addr_r}..."
+load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
+echo "Loading initramfs to ${ramdisk_addr_r}..."
+load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd
+echo "Loading device tree ${fdtfile} to ${fdt_addr_r}..."
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
@@ -86,6 +109,8 @@ fi
 
 echo "Trying 'kaslrseed' command... Info: 'Unknown command' can be safely ignored since 'kaslrseed' does not apply to all boards."
 kaslrseed # @TODO: This gives an error (Unknown command ' kaslrseed ' - try 'help') on many devices since CONFIG_CMD_KASLRSEED is not enabled
+
+echo "Booting kernel from ${kernel_addr_r} with initramfs at ${ramdisk_addr_r} and DTB at ${fdt_addr_r}..."
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
