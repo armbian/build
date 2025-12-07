@@ -118,6 +118,7 @@ case "$BOOT_SOC" in
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
 		DDR_BLOB="${DDR_BLOB:-"rk35/rk3528_ddr_1056MHz_v1.09.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3528_bl31_v1.17.elf"}"
+		ROCKUSB_BLOB="rk35/rk3528_spl_loader_v1.07.104.bin"
 		;;
 
 	rk3566)
