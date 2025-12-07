@@ -42,6 +42,7 @@ function get_docker_info_once() {
 	if [[ -z "${DOCKER_INFO}" ]]; then
 		declare -g DOCKER_INFO
 		declare -g DOCKER_IN_PATH="no"
+		declare -g DOCKER_IS_PODMAN
 
 		# if "docker" is in the PATH...
 		if [[ -n "$(command -v docker)" ]]; then
@@ -52,6 +53,15 @@ function get_docker_info_once() {
 		# Shenanigans to go around error control & capture output in the same effort.
 		DOCKER_INFO="$({ docker info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
 		declare -g -r DOCKER_INFO="${DOCKER_INFO}" # readonly
+
+		if docker --version | grep -q podman; then
+			DOCKER_IS_PODMAN="yes"
+		# when `docker` is a shim to `podman`, it will report its version as "podman version #.#.#"
+		else
+			DOCKER_IS_PODMAN=""
+		fi
+		declare -g -r DOCKER_IS_PODMAN="${DOCKER_IS_PODMAN}" # readonly
+
 
 		declare -g DOCKER_INFO_OK="no"
 		if [[ "${DOCKER_INFO}" =~ "DOCKER_INFO_OK" ]]; then
@@ -503,7 +513,7 @@ function docker_cli_prepare_launch() {
 				# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
 				# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
 				#                                                         have enough RAM (inside the container) so don't bother.
-				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_IS_PODMAN:+,exec,dev}")
 				;;
 			bind)
 				display_alert "Mounting" "bind mount for '${MOUNT_DIR}'" "debug"
@@ -512,7 +522,7 @@ function docker_cli_prepare_launch() {
 				;;
 			namedvolume)
 				display_alert "Mounting" "named volume id '${volume_id}' for '${MOUNT_DIR}'" "debug"
-				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}${DOCKER_IS_PODMAN:+,exec,dev}")
 				;;
 			*)
 				display_alert "Unknown Mountpoint Type" "unknown volume type '${docker_kind}' for '${MOUNT_DIR}'" "err"

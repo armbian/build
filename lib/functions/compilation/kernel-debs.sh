@@ -499,7 +499,7 @@ function kernel_package_callback_linux_headers() {
 		Architecture: ${ARCH}
 		Priority: optional
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole
 		Description: Armbian Linux $BRANCH headers ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
@@ -539,6 +539,9 @@ function kernel_package_callback_linux_headers() {
 
 			echo "Compiling kernel-headers scripts/mod (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+
+			echo "Compiling resolve_btfids tools for assigning stable BTF type IDs to kernel symbols"
+			make ARCH="${SRC_ARCH}" -j\$NCPU tools/bpf/resolve_btfids
 
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
 			echo "Done compiling kernel-headers (${kernel_version_family})."
