@@ -366,8 +366,8 @@ driver_rtw88() {
 		fi
 	fi
 
-	if linux-version compare "${version}" eq 6.1 || linux-version compare "${version}" eq 6.16; then
-		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel 6.1.x/6.16.x.
+	if linux-version compare "${version}" eq 6.1; then
+		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch is only for kernel 6.1.x. Not needed for 6.18+ (already upstream)
 	fi
 }
 
