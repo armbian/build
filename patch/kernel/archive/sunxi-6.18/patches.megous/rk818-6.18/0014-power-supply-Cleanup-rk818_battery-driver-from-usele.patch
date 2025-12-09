@@ -1,0 +1,899 @@
+From 5104d446aff70fc1d9dbd75faed1de867bef4205 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 18 Feb 2025 16:01:21 +0100
+Subject: [PATCH 14/16] power: supply: Cleanup rk818_battery driver from
+ useless cruft
+
+---
+ drivers/power/supply/rk818_battery.c | 402 +++++++++++----------------
+ drivers/power/supply/rk818_battery.h | 163 +----------
+ drivers/power/supply/rk818_charger.c |   8 +-
+ 3 files changed, 172 insertions(+), 401 deletions(-)
+
+diff --git a/drivers/power/supply/rk818_battery.c b/drivers/power/supply/rk818_battery.c
+index c3dab11a42e0..13dfbfed544b 100644
+--- a/drivers/power/supply/rk818_battery.c
++++ b/drivers/power/supply/rk818_battery.c
+@@ -29,16 +29,156 @@
+ #include <linux/of_gpio.h>
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+-//#include <linux/power/rk_usbbc.h>
+ #include <linux/regmap.h>
+-//#include <linux/rk_keys.h>
+ #include <linux/rtc.h>
+ #include <linux/time64.h>
+ #include <linux/timer.h>
+-//#include <linux/wakelock.h>
+ #include <linux/workqueue.h>
++
+ #include "rk818_battery.h"
+ 
++/* RK818_INT_STS_MSK_REG2 */
++#define PLUG_IN_MSK		BIT(0)
++#define PLUG_OUT_MSK		BIT(1)
++#define CHRG_CVTLMT_INT_MSK	BIT(6)
++
++/* RK818_TS_CTRL_REG */
++#define GG_EN			BIT(7)
++#define ADC_CUR_EN		BIT(6)
++#define ADC_TS1_EN		BIT(5)
++#define ADC_TS2_EN		BIT(4)
++#define TS1_CUR_MSK		0x03
++
++/* RK818_GGCON */
++#define OCV_SAMP_MIN_MSK	0x0c
++#define OCV_SAMP_8MIN		(0x00 << 2)
++
++#define ADC_CAL_MIN_MSK		0x30
++#define ADC_CAL_8MIN		(0x00 << 4)
++#define ADC_CUR_MODE		BIT(1)
++
++/* RK818_GGSTS */
++#define BAT_CON			BIT(4)
++#define RELAX_VOL1_UPD		BIT(3)
++#define RELAX_VOL2_UPD		BIT(2)
++#define RELAX_VOL12_UPD_MSK	(RELAX_VOL1_UPD | RELAX_VOL2_UPD)
++
++/* RK818_SUP_STS_REG */
++#define CHRG_STATUS_MSK		0x70
++#define BAT_EXS			BIT(7)
++#define CHARGE_OFF		(0x0 << 4)
++#define DEAD_CHARGE		(0x1 << 4)
++#define TRICKLE_CHARGE		(0x2 << 4)
++#define CC_OR_CV		(0x3 << 4)
++#define CHARGE_FINISH		(0x4 << 4)
++#define USB_OVER_VOL		(0x5 << 4)
++#define BAT_TMP_ERR		(0x6 << 4)
++#define TIMER_ERR		(0x7 << 4)
++#define USB_VLIMIT_EN		BIT(3)
++#define USB_CLIMIT_EN		BIT(2)
++#define USB_EXIST		BIT(1)
++#define USB_EFF			BIT(0)
++
++/* RK818_USB_CTRL_REG */
++#define CHRG_CT_EN		BIT(7)
++#define FINISH_CUR_MSK		0xc0
++#define TEMP_105C		(0x02 << 2)
++#define FINISH_100MA		(0x00 << 6)
++#define FINISH_150MA		(0x01 << 6)
++#define FINISH_200MA		(0x02 << 6)
++#define FINISH_250MA		(0x03 << 6)
++
++/* RK818_CHRG_CTRL_REG3 */
++#define CHRG_TERM_MODE_MSK	BIT(5)
++#define CHRG_TERM_ANA_SIGNAL	(0 << 5)
++#define CHRG_TERM_DIG_SIGNAL	BIT(5)
++#define CHRG_TIMER_CCCV_EN	BIT(2)
++#define CHRG_EN			BIT(7)
++
++/* RK818_VB_MON_REG */
++#define	RK818_VBAT_LOW_3V0      0x02
++#define	RK818_VBAT_LOW_3V4      0x06
++#define PLUG_IN_STS		BIT(6)
++
++/* RK818_THERMAL_REG */
++#define FB_TEMP_MSK		0x0c
++#define HOTDIE_STS		BIT(1)
++
++/* RK818_INT_STS_MSK_REG1 */
++#define VB_LOW_INT_EN		BIT(1)
++
++/* RK818_MISC_MARK_REG */
++#define FG_INIT			BIT(5)
++#define ALGO_REST_MODE_MSK	(0xc0)
++#define ALGO_REST_MODE_SHIFT	6
++
++/* bit shift */
++#define FB_TEMP_SHIFT		2
++
++/* parse ocv table param */
++#define TIMER_MS_COUNTS		1000
++#define MAX_PERCENTAGE		100
++#define MAX_INTERPOLATE		1000
++#define MAX_INT			0x7FFF
++
++#define DRIVER_VERSION		"7.1"
++
++struct battery_platform_data {
++	u32 *ocv_table;
++	u32 *zero_table;
++	u32 *ntc_table;
++	u32 ocv_size;
++	u32 max_chrg_voltage;
++	u32 ntc_size;
++	int ntc_degree_from;
++	u32 pwroff_vol;
++	u32 monitor_sec;
++	u32 zero_algorithm_vol;
++	u32 zero_reserve_dsoc;
++	u32 bat_res;
++	u32 design_capacity;
++	u32 design_qmax;
++	u32 sleep_enter_current;
++	u32 sleep_exit_current;
++	u32 max_soc_offset;
++	u32 sample_res;
++	u32 bat_mode;
++	u32 fb_temp;
++	u32 energy_mode;
++	u32 cccv_hour;
++	u32 ntc_uA;
++	u32 ntc_factor;
++};
++
++enum work_mode {
++	MODE_ZERO = 0,
++	MODE_FINISH,
++	MODE_SMOOTH_CHRG,
++	MODE_SMOOTH_DISCHRG,
++	MODE_SMOOTH,
++};
++
++enum bat_mode {
++	MODE_BATTARY = 0,
++	MODE_MISSING,
++};
++
++static const u16 feedback_temp_array[] = {
++	85, 95, 105, 115
++};
++
++static const u16 chrg_vol_sel_array[] = {
++	4050, 4100, 4150, 4200, 4250, 4300, 4350
++};
++
++static const u16 chrg_cur_sel_array[] = {
++	1000, 1200, 1400, 1600, 1800, 2000, 2250, 2400, 2600, 2800, 3000
++};
++
++static const u16 chrg_cur_input_array[] = {
++	450, 80, 850, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000
++};
++
+ static int dbg_enable = 0;
+ module_param_named(dbg_level, dbg_enable, int, 0644);
+ 
+@@ -77,16 +217,8 @@ module_param_named(dbg_level, dbg_enable, int, 0644);
+ #define SAMPLE_RES_DIV1			1
+ #define SAMPLE_RES_DIV2			2
+ 
+-/* virtual params */
+-#define VIRTUAL_CURRENT			1000
+-#define VIRTUAL_VOLTAGE			3888
+-#define VIRTUAL_SOC			66
+-#define VIRTUAL_PRESET			1
+-#define VIRTUAL_TEMPERATURE		188
+-#define VIRTUAL_STATUS			POWER_SUPPLY_STATUS_CHARGING
+-
+ /* charge */
+-#define FINISH_CHRG_CUR1			1000
++#define FINISH_CHRG_CUR1		1000
+ #define FINISH_CHRG_CUR2		1500
+ #define FINISH_MAX_SOC_DELAY		20
+ #define TERM_CHRG_DSOC			88
+@@ -160,23 +292,17 @@ struct rk818_battery {
+ 	struct regmap			*regmap;
+ 	struct device			*dev;
+ 	struct power_supply		*bat;
+-	struct power_supply		*usb_psy;
+-	struct power_supply		*ac_psy;
+ 	struct battery_platform_data	*pdata;
+ 	struct workqueue_struct		*bat_monitor_wq;
+ 	struct delayed_work		bat_delay_work;
+ 	struct delayed_work		calib_delay_work;
+-	// struct wake_lock		wake_lock;
+-	struct notifier_block           fb_nb;
+ 	struct timer_list		caltimer;
+-	time64_t				rtc_base;
++	time64_t			rtc_base;
+ 	int				bat_res;
+ 	int				chrg_status;
+ 	bool				is_initialized;
+ 	bool				is_first_power_on;
+ 	u8				res_div;
+-	int				current_max;
+-	int				voltage_max;
+ 	int				current_avg;
+ 	int				voltage_avg;
+ 	int				voltage_ocv;
+@@ -231,7 +357,6 @@ struct rk818_battery {
+ 	u8				halt_cnt;
+ 	bool				is_halt;
+ 	bool				is_max_soc_offset;
+-	bool				is_sw_reset;
+ 	bool				is_ocv_calib;
+ 	bool				is_first_on;
+ 	bool				is_force_calib;
+@@ -250,19 +375,12 @@ struct rk818_battery {
+ 	int				dbg_meet_soc;
+ 	int				dbg_calc_dsoc;
+ 	int				dbg_calc_rsoc;
+-	u8				ac_in;
+-	u8				usb_in;
+ 	int				is_charging;
+ 	unsigned long			charge_count;
+ };
+ 
+ #define DIV(x)	((x) ? (x) : 1)
+ 
+-static void rk_send_wakeup_key(void)
+-{
+-	// TODO: WHAT TO DO HERE?
+-}
+-
+ static u64 get_boot_sec(void)
+ {
+ 	struct timespec64 ts;
+@@ -364,17 +482,6 @@ static int rk818_bat_set_bits(struct rk818_battery *di, u8 reg, u8 mask, u8 buf)
+ 	return ret;
+ }
+ 
+-static int rk818_bat_clear_bits(struct rk818_battery *di, u8 reg, u8 mask)
+-{
+-	int ret;
+-
+-	ret = regmap_update_bits(di->regmap, reg, mask, 0);
+-	if (ret)
+-		dev_err(di->dev, "clr reg:0x%02x failed\n", reg);
+-
+-	return ret;
+-}
+-
+ static void rk818_bat_dump_regs(struct rk818_battery *di, u8 start, u8 end)
+ {
+ 	int i;
+@@ -416,35 +523,6 @@ static int rk818_bat_get_rsoc(struct rk818_battery *di)
+ 	return (remain_cap + di->fcc / 200) * 100 / DIV(di->fcc);
+ }
+ 
+-static ssize_t bat_info_store(struct device *dev, struct device_attribute *attr,
+-			      const char *buf, size_t count)
+-{
+-	char cmd;
+-	struct rk818_battery *di = dev_get_drvdata(dev);
+-
+-	sscanf(buf, "%c", &cmd);
+-
+-	if (cmd == 'n')
+-		rk818_bat_set_bits(di, RK818_MISC_MARK_REG,
+-				   FG_RESET_NOW, FG_RESET_NOW);
+-	else if (cmd == 'm')
+-		rk818_bat_set_bits(di, RK818_MISC_MARK_REG,
+-				   FG_RESET_LATE, FG_RESET_LATE);
+-	else if (cmd == 'c')
+-		rk818_bat_clear_bits(di, RK818_MISC_MARK_REG,
+-				     FG_RESET_LATE | FG_RESET_NOW);
+-	else if (cmd == 'r')
+-		BAT_INFO("0x%2x\n", rk818_bat_read(di, RK818_MISC_MARK_REG));
+-	else
+-		BAT_INFO("command error\n");
+-
+-	return count;
+-}
+-
+-static struct device_attribute rk818_bat_attr[] = {
+-	__ATTR(bat, 0664, NULL, bat_info_store),
+-};
+-
+ static void rk818_bat_enable_gauge(struct rk818_battery *di)
+ {
+ 	u8 buf;
+@@ -878,20 +956,6 @@ static void rk818_bat_init_age_algorithm(struct rk818_battery *di)
+ 	}
+ }
+ 
+-static enum power_supply_property rk818_bat_props[] = {
+-	POWER_SUPPLY_PROP_CURRENT_NOW,
+-	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+-	POWER_SUPPLY_PROP_PRESENT,
+-	POWER_SUPPLY_PROP_HEALTH,
+-	POWER_SUPPLY_PROP_CAPACITY,
+-	POWER_SUPPLY_PROP_TEMP,
+-	POWER_SUPPLY_PROP_STATUS,
+-	POWER_SUPPLY_PROP_CHARGE_COUNTER,
+-	POWER_SUPPLY_PROP_CHARGE_FULL,
+-	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+-	POWER_SUPPLY_PROP_CURRENT_MAX,
+-};
+-
+ static int rk818_bat_get_charge_state(struct rk818_battery *di)
+ {
+ 	return di->current_avg > 0;
+@@ -904,36 +968,32 @@ int rk818_battery_get_property(struct rk818_battery *di,
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+ 		val->intval = rk818_bat_get_avg_current(di) * 1000;/*uA*/
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_CURRENT * 1000;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = 0;
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		val->intval = rk818_bat_get_avg_voltage(di) * 1000;/*uV*/
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_VOLTAGE * 1000;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = 0;
+ 		break;
+ 	case POWER_SUPPLY_PROP_PRESENT:
+ 		val->intval = is_rk818_bat_exist(di);
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_PRESET;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = 0;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CAPACITY:
+ 		val->intval = di->dsoc;
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_SOC;
+-		DBG("<%s>. report dsoc: %d\n", __func__, val->intval);
+-		break;
+-	case POWER_SUPPLY_PROP_HEALTH:
+-		val->intval = POWER_SUPPLY_HEALTH_GOOD;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = 100;
+ 		break;
+ 	case POWER_SUPPLY_PROP_TEMP:
+ 		val->intval = di->temperature;
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_TEMPERATURE;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = 0;
+ 		break;
+ 	case POWER_SUPPLY_PROP_STATUS:
+-		if (di->pdata->bat_mode == MODE_VIRTUAL)
+-			val->intval = VIRTUAL_STATUS;
++		if (di->pdata->bat_mode == MODE_MISSING)
++			val->intval = POWER_SUPPLY_STATUS_FULL;
+ 		else if (di->dsoc == 100)
+ 			val->intval = POWER_SUPPLY_STATUS_FULL;
+ 		else if (rk818_bat_get_charge_state(di))
+@@ -947,12 +1007,6 @@ int rk818_battery_get_property(struct rk818_battery *di,
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL:
+ 		val->intval = di->pdata->design_capacity * 1000;/* uAh */
+ 		break;
+-	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+-		val->intval = di->voltage_max * 1000;	/* uV */
+-		break;
+-	case POWER_SUPPLY_PROP_CURRENT_MAX:
+-		val->intval = di->current_max * 1000;	/* uA */
+-		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -961,36 +1015,6 @@ int rk818_battery_get_property(struct rk818_battery *di,
+ }
+ EXPORT_SYMBOL_GPL(rk818_battery_get_property);
+ 
+-static int rk818_battery_get_property_psy(struct power_supply *psy,
+-				      enum power_supply_property psp,
+-				      union power_supply_propval *val)
+-{
+-	struct rk818_battery *di = power_supply_get_drvdata(psy);
+-
+-	return rk818_battery_get_property(di, psp, val);
+-}
+-
+-static const struct power_supply_desc rk818_bat_desc = {
+-	.name		= "battery",
+-	.type		= POWER_SUPPLY_TYPE_BATTERY,
+-	.properties	= rk818_bat_props,
+-	.num_properties	= ARRAY_SIZE(rk818_bat_props),
+-	.get_property	= rk818_battery_get_property_psy,
+-};
+-
+-static __maybe_unused int rk818_bat_init_power_supply(struct rk818_battery *di)
+-{
+-	struct power_supply_config psy_cfg = { .drv_data = di, };
+-
+-	di->bat = devm_power_supply_register(di->dev, &rk818_bat_desc, &psy_cfg);
+-	if (IS_ERR(di->bat)) {
+-		dev_err(di->dev, "register bat power supply fail\n");
+-		return PTR_ERR(di->bat);
+-	}
+-
+-	return 0;
+-}
+-
+ static void rk818_bat_save_cap(struct rk818_battery *di, int cap)
+ {
+ 	u8 buf;
+@@ -1216,30 +1240,12 @@ static void rk818_bat_not_first_pwron(struct rk818_battery *di)
+ 		 rk818_bat_get_prev_cap(di));
+ }
+ 
+-static bool rk818_bat_ocv_sw_reset(struct rk818_battery *di)
+-{
+-	u8 buf;
+-
+-	buf = rk818_bat_read(di, RK818_MISC_MARK_REG);
+-	if (((buf & FG_RESET_LATE) && di->pwroff_min >= 30) ||
+-	    (buf & FG_RESET_NOW)) {
+-		buf &= ~FG_RESET_LATE;
+-		buf &= ~FG_RESET_NOW;
+-		rk818_bat_write(di, RK818_MISC_MARK_REG, buf);
+-		BAT_INFO("manual reset fuel gauge\n");
+-		return true;
+-	} else {
+-		return false;
+-	}
+-}
+-
+ static void rk818_bat_init_rsoc(struct rk818_battery *di)
+ {
+ 	di->is_first_power_on = is_rk818_bat_first_pwron(di);
+-	di->is_sw_reset = rk818_bat_ocv_sw_reset(di);
+ 	di->pwroff_min = rk818_bat_get_pwroff_min(di);
+ 
+-	if (di->is_first_power_on || di->is_sw_reset)
++	if (di->is_first_power_on)
+ 		rk818_bat_first_pwron(di);
+ 	else
+ 		rk818_bat_not_first_pwron(di);
+@@ -1862,13 +1868,13 @@ static void rk818_bat_debug_info(struct rk818_battery *di)
+ 	DBG("###############################################################\n"
+ 	    "Dsoc=%d, Rsoc=%d, Vavg=%d, Iavg=%d, Cap=%d, Fcc=%d, d=%d\n"
+ 	    "K=%d, Mode=%s, Oldcap=%d, Is=%d, Ip=%d, Vs=%d\n"
+-	    "fb_temp=%d, bat_temp=%d, sample_res=%d, USB=%d, DC=%d\n"
++	    "fb_temp=%d, bat_temp=%d, sample_res=%d\n"
+ 	    "off:i=0x%x, c=0x%x, p=%d, Rbat=%d, age_ocv_cap=%d, hot=%d\n"
+ 	    "adp:finish=%lu, boot_min=%lu, sleep_min=%lu, adc=%d, Vsys=%d\n"
+ 	    "bat:%s, meet: soc=%d, calc: dsoc=%d, rsoc=%d, Vocv=%d\n"
+ 	    "pwr: dsoc=%d, rsoc=%d, vol=%d, halt: st=%d, cnt=%d, reboot=%d\n"
+ 	    "ocv_c=%d: %d -> %d; max_c=%d: %d -> %d; force_c=%d: %d -> %d\n"
+-	    "min=%d, init=%d, sw=%d, below0=%d, first=%d, changed=%d\n"
++	    "min=%d, init=%d, below0=%d, first=%d, changed=%d\n"
+ 	    "###############################################################\n",
+ 	    di->dsoc, di->rsoc, di->voltage_avg, di->current_avg,
+ 	    di->remain_cap, di->fcc, di->rsoc - di->dsoc,
+@@ -1877,7 +1883,7 @@ static void rk818_bat_debug_info(struct rk818_battery *di)
+ 	    chrg_cur_input_array[usb_ctrl & 0x0f],
+ 	    chrg_vol_sel_array[(chrg_ctrl1 & 0x70) >> 4],
+ 	    feedback_temp_array[(thermal & 0x0c) >> 2], di->temperature,
+-	    di->pdata->sample_res, di->usb_in, di->ac_in,
++	    di->pdata->sample_res,
+ 	    rk818_bat_get_ioffset(di),
+ 	    rk818_bat_get_coffset(di), di->poffset, di->bat_res,
+ 	    di->age_adjust_cap, !!(thermal & HOTDIE_STS),
+@@ -1891,7 +1897,7 @@ static void rk818_bat_debug_info(struct rk818_battery *di)
+ 	    reboot_cnt, di->is_ocv_calib, di->ocv_pre_dsoc, di->ocv_new_dsoc,
+ 	    di->is_max_soc_offset, di->max_pre_dsoc, di->max_new_dsoc,
+ 	    di->is_force_calib, di->force_pre_dsoc, di->force_new_dsoc,
+-	    di->pwroff_min, di->is_initialized, di->is_sw_reset,
++	    di->pwroff_min, di->is_initialized,
+ 	    di->dbg_cap_low0, di->is_first_on, di->last_dsoc
+ 	   );
+ }
+@@ -2390,7 +2396,6 @@ static int rk818_bat_sleep_dischrg(struct rk818_battery *di)
+ 
+ 	if (di->voltage_avg <= pwroff_vol - 70) {
+ 		di->dsoc = 0;
+-		rk_send_wakeup_key();
+ 		BAT_INFO("low power sleeping, shutdown... %d\n", di->dsoc);
+ 	}
+ 
+@@ -2402,7 +2407,6 @@ static int rk818_bat_sleep_dischrg(struct rk818_battery *di)
+ 
+ 	if (di->dsoc <= 0) {
+ 		di->dsoc = 0;
+-		rk_send_wakeup_key();
+ 		BAT_INFO("sleep dsoc is %d...\n", di->dsoc);
+ 	}
+ 
+@@ -2441,10 +2445,10 @@ static void rk818_bat_power_supply_changed(struct rk818_battery *di)
+ 		 !!(thermal & HOTDIE_STS));
+ 
+ 	BAT_INFO("dl=%d, rl=%d, v=%d, halt=%d, halt_n=%d, max=%d, "
+-		 "init=%d, sw=%d, calib=%d, below0=%d, force=%d\n",
++		 "init=%d, calib=%d, below0=%d, force=%d\n",
+ 		 di->dbg_pwr_dsoc, di->dbg_pwr_rsoc, di->dbg_pwr_vol,
+ 		 di->is_halt, di->halt_cnt, di->is_max_soc_offset,
+-		 di->is_initialized, di->is_sw_reset, di->is_ocv_calib,
++		 di->is_initialized, di->is_ocv_calib,
+ 		 di->dbg_cap_low0, di->is_force_calib);
+ }
+ 
+@@ -2514,10 +2518,6 @@ static void rk818_bat_update_info(struct rk818_battery *di)
+ 		if (is_charging)
+ 			di->charge_count++;
+ 	}
+-	if (di->voltage_avg > di->voltage_max)
+-		di->voltage_max = di->voltage_avg;
+-	if (di->current_avg > di->current_max)
+-		di->current_max = di->current_avg;
+ 
+ 	/* smooth charge */
+ 	if (di->remain_cap > di->fcc) {
+@@ -2664,23 +2664,6 @@ static int rk818_bat_get_ntc_res(struct rk818_battery *di)
+ 	return res;
+ }
+ 
+-static BLOCKING_NOTIFIER_HEAD(rk818_bat_notifier_chain);
+-
+-int rk818_bat_temp_notifier_register(struct notifier_block *nb)
+-{
+-	return blocking_notifier_chain_register(&rk818_bat_notifier_chain, nb);
+-}
+-
+-int rk818_bat_temp_notifier_unregister(struct notifier_block *nb)
+-{
+-	return blocking_notifier_chain_unregister(&rk818_bat_notifier_chain, nb);
+-}
+-
+-static void rk818_bat_temp_notifier_callback(int temp)
+-{
+-	blocking_notifier_call_chain(&rk818_bat_notifier_chain, temp, NULL);
+-}
+-
+ static void rk818_bat_update_temperature(struct rk818_battery *di)
+ {
+ 	static int old_temp, first_time = 1;
+@@ -2689,7 +2672,7 @@ static void rk818_bat_update_temperature(struct rk818_battery *di)
+ 
+ 	ntc_table = di->pdata->ntc_table;
+ 	ntc_size = di->pdata->ntc_size;
+-	di->temperature = VIRTUAL_TEMPERATURE;
++	di->temperature = 200;
+ 
+ 	if (ntc_size) {
+ 		res = rk818_bat_get_ntc_res(di);
+@@ -2726,7 +2709,6 @@ static void rk818_bat_update_temperature(struct rk818_battery *di)
+ 			di->temperature = temp;
+ 			DBG("<%s>. temperature = %d\n",
+ 			    __func__, di->temperature);
+-			rk818_bat_temp_notifier_callback(di->temperature / 10);
+ 		}
+ 	}
+ }
+@@ -2930,26 +2912,12 @@ static irqreturn_t rk818_vb_low_irq(int irq, void *bat)
+ {
+ 	struct rk818_battery *di = (struct rk818_battery *)bat;
+ 
+-	rk_send_wakeup_key();
+ 	BAT_INFO("lower power yet, power off system! v=%d, c=%d, dsoc=%d\n",
+ 		 di->voltage_avg, di->current_avg, di->dsoc);
+ 
+ 	return IRQ_HANDLED;
+ }
+ 
+-static void rk818_bat_init_sysfs(struct rk818_battery *di)
+-{
+-	int i, ret;
+-
+-	for (i = 0; i < ARRAY_SIZE(rk818_bat_attr); i++) {
+-		ret = sysfs_create_file(&di->dev->kobj,
+-					&rk818_bat_attr[i].attr);
+-		if (ret)
+-			dev_err(di->dev, "create bat node(%s) error\n",
+-				rk818_bat_attr[i].attr.name);
+-	}
+-}
+-
+ static int rk818_bat_init_irqs(struct rk818_battery *di)
+ {
+ 	struct rk808 *rk818 = di->rk818;
+@@ -3072,7 +3040,6 @@ static void rk818_bat_init_fg(struct rk818_battery *di)
+ 	    di->voltage_relax, di->dsoc, di->rsoc, di->current_avg);
+ }
+ 
+-#ifdef CONFIG_OF
+ static int rk818_bat_parse_dt(struct rk818_battery *di)
+ {
+ 	u32 out_value;
+@@ -3257,12 +3224,6 @@ static int rk818_bat_parse_dt(struct rk818_battery *di)
+ 
+ 	return 0;
+ }
+-#else
+-static int rk818_bat_parse_dt(struct rk818_battery *di)
+-{
+-	return -ENODEV;
+-}
+-#endif
+ 
+ static const struct of_device_id rk818_battery_of_match[] = {
+ 	{ .compatible = "rockchip,rk818-battery", },
+@@ -3279,17 +3240,10 @@ EXPORT_SYMBOL_GPL(rk818_battery_get);
+ 
+ static int rk818_battery_probe(struct platform_device *pdev)
+ {
+-	const struct of_device_id *of_id =
+-			of_match_device(rk818_battery_of_match, &pdev->dev);
+ 	struct rk818_battery *di;
+ 	struct rk808 *rk818 = dev_get_drvdata(pdev->dev.parent);
+ 	int ret;
+ 
+-	if (!of_id) {
+-		dev_err(&pdev->dev, "Failed to find matching dt id\n");
+-		return -ENODEV;
+-	}
+-
+ 	di = devm_kzalloc(&pdev->dev, sizeof(*di), GFP_KERNEL);
+ 	if (!di)
+ 		return -ENOMEM;
+@@ -3307,7 +3261,7 @@ static int rk818_battery_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (!is_rk818_bat_exist(di)) {
+-		di->pdata->bat_mode = MODE_VIRTUAL;
++		di->pdata->bat_mode = MODE_MISSING;
+ 		dev_err(di->dev, "no battery, virtual power mode\n");
+ 	}
+ 
+@@ -3317,26 +3271,14 @@ static int rk818_battery_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
+-	/*
+-	ret = rk818_bat_init_power_supply(di);
+-	if (ret) {
+-		dev_err(di->dev, "rk818 power supply register failed!\n");
+-		return ret;
+-	}
+-	*/
+-
+ 	rk818_bat_init_info(di);
+ 	rk818_bat_init_fg(di);
+-	rk818_bat_init_sysfs(di);
+-	//wake_lock_init(&di->wake_lock, WAKE_LOCK_SUSPEND, "rk818_bat_lock");
+ 	di->bat_monitor_wq = alloc_ordered_workqueue("%s",
+ 			WQ_MEM_RECLAIM | WQ_FREEZABLE, "rk818-bat-monitor-wq");
+ 	INIT_DELAYED_WORK(&di->bat_delay_work, rk818_battery_work);
+ 	queue_delayed_work(di->bat_monitor_wq, &di->bat_delay_work,
+ 			   msecs_to_jiffies(TIMER_MS_COUNTS * 5));
+ 
+-	BAT_INFO("driver version %s\n", DRIVER_VERSION);
+-
+ 	bat = di;
+ 	return ret;
+ }
+@@ -3481,17 +3423,7 @@ static struct platform_driver rk818_battery_driver = {
+ 	},
+ };
+ 
+-static int __init battery_init(void)
+-{
+-	return platform_driver_register(&rk818_battery_driver);
+-}
+-fs_initcall_sync(battery_init);
+-
+-static void __exit battery_exit(void)
+-{
+-	platform_driver_unregister(&rk818_battery_driver);
+-}
+-module_exit(battery_exit);
++module_platform_driver(rk818_battery_driver);
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_ALIAS("platform:rk818-battery");
+diff --git a/drivers/power/supply/rk818_battery.h b/drivers/power/supply/rk818_battery.h
+index 19b810a4db6b..3f2a5f7da35d 100644
+--- a/drivers/power/supply/rk818_battery.h
++++ b/drivers/power/supply/rk818_battery.h
+@@ -1,173 +1,16 @@
+-/*
+- * rk818_battery.h: fuel gauge driver structures
+- *
+- * Copyright (C) 2016 Rockchip Electronics Co., Ltd
+- * Author: chenjh <chenjh@rock-chips.com>
+- *
+- * This program is free software; you can redistribute it and/or modify it
+- * under the terms and conditions of the GNU General Public License,
+- * version 2, as published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+- * more details.
+- */
+-
+ #ifndef RK818_BATTERY
+ #define RK818_BATTERY
+ 
+-/* RK818_INT_STS_MSK_REG2 */
+-#define PLUG_IN_MSK		BIT(0)
+-#define PLUG_OUT_MSK		BIT(1)
+-#define CHRG_CVTLMT_INT_MSK	BIT(6)
+-
+-/* RK818_TS_CTRL_REG */
+-#define GG_EN			BIT(7)
+-#define ADC_CUR_EN		BIT(6)
+-#define ADC_TS1_EN		BIT(5)
+-#define ADC_TS2_EN		BIT(4)
+-#define TS1_CUR_MSK		0x03
+-
+-/* RK818_GGCON */
+-#define OCV_SAMP_MIN_MSK	0x0c
+-#define OCV_SAMP_8MIN		(0x00 << 2)
+-
+-#define ADC_CAL_MIN_MSK		0x30
+-#define ADC_CAL_8MIN		(0x00 << 4)
+-#define ADC_CUR_MODE		BIT(1)
+-
+-/* RK818_GGSTS */
+-#define BAT_CON			BIT(4)
+-#define RELAX_VOL1_UPD		BIT(3)
+-#define RELAX_VOL2_UPD		BIT(2)
+-#define RELAX_VOL12_UPD_MSK	(RELAX_VOL1_UPD | RELAX_VOL2_UPD)
+-
+-/* RK818_SUP_STS_REG */
+-#define CHRG_STATUS_MSK		0x70
+-#define BAT_EXS			BIT(7)
+-#define CHARGE_OFF		(0x0 << 4)
+-#define DEAD_CHARGE		(0x1 << 4)
+-#define TRICKLE_CHARGE		(0x2 << 4)
+-#define CC_OR_CV		(0x3 << 4)
+-#define CHARGE_FINISH		(0x4 << 4)
+-#define USB_OVER_VOL		(0x5 << 4)
+-#define BAT_TMP_ERR		(0x6 << 4)
+-#define TIMER_ERR		(0x7 << 4)
+-#define USB_VLIMIT_EN		BIT(3)
+-#define USB_CLIMIT_EN		BIT(2)
+-#define USB_EXIST		BIT(1)
+-#define USB_EFF			BIT(0)
+-
+-/* RK818_USB_CTRL_REG */
+-#define CHRG_CT_EN		BIT(7)
+-#define FINISH_CUR_MSK		0xc0
+-#define TEMP_105C		(0x02 << 2)
+-#define FINISH_100MA		(0x00 << 6)
+-#define FINISH_150MA		(0x01 << 6)
+-#define FINISH_200MA		(0x02 << 6)
+-#define FINISH_250MA		(0x03 << 6)
+-
+-/* RK818_CHRG_CTRL_REG3 */
+-#define CHRG_TERM_MODE_MSK	BIT(5)
+-#define CHRG_TERM_ANA_SIGNAL	(0 << 5)
+-#define CHRG_TERM_DIG_SIGNAL	BIT(5)
+-#define CHRG_TIMER_CCCV_EN	BIT(2)
+-#define CHRG_EN			BIT(7)
+-
+-/* RK818_VB_MON_REG */
+-#define	RK818_VBAT_LOW_3V0      0x02
+-#define	RK818_VBAT_LOW_3V4      0x06
+-#define PLUG_IN_STS		BIT(6)
+-
+-/* RK818_THERMAL_REG */
+-#define FB_TEMP_MSK		0x0c
+-#define HOTDIE_STS		BIT(1)
+-
+-/* RK818_INT_STS_MSK_REG1 */
+-#define VB_LOW_INT_EN		BIT(1)
+-
+-/* RK818_MISC_MARK_REG */
+-#define FG_INIT			BIT(5)
+-#define FG_RESET_LATE		BIT(4)
+-#define FG_RESET_NOW		BIT(3)
+-#define ALGO_REST_MODE_MSK	(0xc0)
+-#define ALGO_REST_MODE_SHIFT	6
++#include <linux/power_supply.h>
+ 
+-/* bit shift */
+-#define FB_TEMP_SHIFT		2
+-
+-/* parse ocv table param */
+-#define TIMER_MS_COUNTS		1000
+-#define MAX_PERCENTAGE		100
+-#define MAX_INTERPOLATE		1000
+-#define MAX_INT			0x7FFF
+-
+-#define DRIVER_VERSION		"7.1"
+-
+-struct battery_platform_data {
+-	u32 *ocv_table;
+-	u32 *zero_table;
+-	u32 *ntc_table;
+-	u32 ocv_size;
+-	u32 max_chrg_voltage;
+-	u32 ntc_size;
+-	int ntc_degree_from;
+-	u32 pwroff_vol;
+-	u32 monitor_sec;
+-	u32 zero_algorithm_vol;
+-	u32 zero_reserve_dsoc;
+-	u32 bat_res;
+-	u32 design_capacity;
+-	u32 design_qmax;
+-	u32 sleep_enter_current;
+-	u32 sleep_exit_current;
+-	u32 max_soc_offset;
+-	u32 sample_res;
+-	u32 bat_mode;
+-	u32 fb_temp;
+-	u32 energy_mode;
+-	u32 cccv_hour;
+-	u32 ntc_uA;
+-	u32 ntc_factor;
+-};
+-
+-enum work_mode {
+-	MODE_ZERO = 0,
+-	MODE_FINISH,
+-	MODE_SMOOTH_CHRG,
+-	MODE_SMOOTH_DISCHRG,
+-	MODE_SMOOTH,
+-};
+-
+-enum bat_mode {
+-	MODE_BATTARY = 0,
+-	MODE_VIRTUAL,
+-};
+-
+-static const u16 feedback_temp_array[] = {
+-	85, 95, 105, 115
+-};
+-
+-static const u16 chrg_vol_sel_array[] = {
+-	4050, 4100, 4150, 4200, 4250, 4300, 4350
+-};
+-
+-static const u16 chrg_cur_sel_array[] = {
+-	1000, 1200, 1400, 1600, 1800, 2000, 2250, 2400, 2600, 2800, 3000
+-};
+-
+-static const u16 chrg_cur_input_array[] = {
+-	450, 80, 850, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000
+-};
++struct rk818_battery;
+ 
+ struct rk818_battery;
+ 
+-int rk818_bat_temp_notifier_register(struct notifier_block *nb);
+-int rk818_bat_temp_notifier_unregister(struct notifier_block *nb);
+ int rk818_battery_get_property(struct rk818_battery *di,
+ 			       enum power_supply_property psp,
+ 			       union power_supply_propval *val);
+ struct rk818_battery* rk818_battery_get(void);
++struct rk818_battery* rk818_battery_get(void);
+ 
+ #endif
+diff --git a/drivers/power/supply/rk818_charger.c b/drivers/power/supply/rk818_charger.c
+index 982c46c33f24..61ec35146823 100644
+--- a/drivers/power/supply/rk818_charger.c
++++ b/drivers/power/supply/rk818_charger.c
+@@ -15,6 +15,8 @@
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
+ 
++#include "rk818_battery.h"
++
+ #define RK818_CHG_STS_MASK		(7u << 4) /* charger status */
+ #define RK818_CHG_STS_NONE		(0u << 4)
+ #define RK818_CHG_STS_WAKEUP_CUR	(1u << 4)
+@@ -374,12 +376,6 @@ static int rk818_charger_get_voltage_max(struct rk818_charger *cg, int *val)
+ 	return 0;
+ }
+ 
+-struct rk818_battery;
+-struct rk818_battery* rk818_battery_get(void);
+-int rk818_battery_get_property(struct rk818_battery *di,
+-			       enum power_supply_property psp,
+-			       union power_supply_propval *val);
+-
+ static int rk818_charger_get_property(struct power_supply *psy,
+ 				      enum power_supply_property psp,
+ 				      union power_supply_propval *val)
+-- 
+2.43.0
+
