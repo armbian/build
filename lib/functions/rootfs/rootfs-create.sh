@@ -335,7 +335,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
 
 	if [[ $APA_IS_ACTIVE ]]; then
-		post_armbian_repo_customize_image__install_from_apa #FIXME: rename this hook
+		install_apa_hook__rename_me #FIXME: rename this hook
 	fi
 
 	# Purge/clean apt cache in the target. It should _not_ have been used, but if it was, warn & clean.
