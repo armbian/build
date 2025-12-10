@@ -358,7 +358,7 @@ function check_config_userspace_release_and_desktop() {
 		fi
 
 		# Desktop sanity checks, in the same vein.
-		if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
+		if [[ "${DESKTOP_ENVIRONMENT}" != "" && ! $APA_IS_ACTIVE ]]; then
 
 			# If DESKTOP_ENVIRONMENT is set, but BUILD_DESKTOP is not, then we have a problem.
 			if [[ "${BUILD_DESKTOP}" != "yes" ]]; then
