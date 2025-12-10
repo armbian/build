@@ -156,9 +156,19 @@ function create_new_rootfs_cache_via_debootstrap() {
 	declare -ga debootstrap_arguments=(
 		"--variant=minbase"                                         # minimal base variant. go ask Debian about it.
 		"--arch=${ARCH}"                                            # the arch
-		"'--include=${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}'"      # from aggregation.py
-		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
 	)
+	if [[ ! -z "${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}" ]]; then
+		# from aggregation.py
+		debootstrap_arguments+=("'--include=${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}'")
+	else
+		#FIXME: push the locales-gen stuff into extensions/apa.sh ?
+		# if apt isn't part of minbase, the above feels like the wrong solution.
+		debootstrap_arguments+=("'--include=locales,apt'")
+	fi
+	if [[ ! -z "${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}" ]]; then
+		# from aggregation.py
+		debootstrap_arguments+=("'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'")
+	fi
 	if [[ "${LEGACY_DEBOOTSTRAP,,}" == "no" ]]; then
 		debootstrap_arguments+=("'--skip=check/empty'")             # skips check if the rootfs dir is empty at start
 		fetch_distro_keyring "$RELEASE"
@@ -323,6 +333,10 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
 	# don't touch the local cache.
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
+
+	if [[ $APA_IS_ACTIVE ]]; then
+		post_armbian_repo_customize_image__install_from_apa #FIXME: rename this hook
+	fi
 
 	# Purge/clean apt cache in the target. It should _not_ have been used, but if it was, warn & clean.
 	apt_purge_unneeded_packages_and_clean_apt_caches
