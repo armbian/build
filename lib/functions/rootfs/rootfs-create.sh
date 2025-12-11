@@ -310,6 +310,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 	fi
 
+	# APA installs the desktop/CLI environment and dependencies
+	install_apa_hook__rename_me #FIXME: rename this hook
+
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
 	# lets check only for supported targets only unless forced
 	if [[ "${DISTRIBUTION_STATUS}" == "supported" && "${FORCE_CHECK_MD5_PACKAGES:-"no"}" == "yes" ]]; then
@@ -333,10 +336,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
 	# don't touch the local cache.
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
-
-	if [[ $APA_IS_ACTIVE ]]; then
-		install_apa_hook__rename_me #FIXME: rename this hook
-	fi
 
 	# Purge/clean apt cache in the target. It should _not_ have been used, but if it was, warn & clean.
 	apt_purge_unneeded_packages_and_clean_apt_caches
