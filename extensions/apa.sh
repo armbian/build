@@ -9,10 +9,14 @@ function custom_apt_repo__add_apa() {
 	run_host_command_logged echo "deb [signed-by=${APT_SIGNING_KEY_FILE}] http://github.armbian.com/apa current main" "|" tee "${SDCARD}"/etc/apt/sources.list.d/armbian-apa.list
 }
 
+declare -g apa_additional_packages="libpam-systemd dbus-user-session parted curl iw less parted locales fdisk"
 function install_apa_hook__rename_me() { #FIXME: we need a better hook that fits into the extensions system
+	# this variable is a temporary hack, remove as soon as it's not needed
+
 	# do not install armbian recommends for minimal images
 	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no-install-recommends" || INSTALL_RECOMMENDS="install-recommends"
-	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-common
+	display_alert "installing armbian-common and friends" "APA: armbian-common $apa_additional_packages" "info"
+	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-common $apa_additional_packages
 	chroot_sdcard rm -f /etc/apt/sources.list.d/armbian-apa.list.inactive
 
 	# install desktop environment if requested
@@ -27,5 +31,6 @@ function install_apa_hook__rename_me() { #FIXME: we need a better hook that fits
 function post_armbian_repo_customize_image__install_from_apa() {
 	# do not install armbian recommends for minimal images
 	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no-install-recommends" || INSTALL_RECOMMENDS="install-recommends"
+	display_alert "installing armbian-bsp" "APA" "info"
 	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-bsp
 }
