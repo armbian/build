@@ -16,7 +16,8 @@ function post_debootstrap_install_additional_packages__install_from_apa_stage1()
 
 	# do not install armbian recommends for minimal images
 	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no-install-recommends" || INSTALL_RECOMMENDS="install-recommends"
-	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-common
+	display_alert "installing armbian-common and friends" "APA: armbian-common $apa_additional_packages" "info"
+	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-common $apa_additional_packages
 	chroot_sdcard rm -f /etc/apt/sources.list.d/armbian-apa.list.inactive
 
 	# install desktop environment if requested
@@ -31,5 +32,6 @@ function post_debootstrap_install_additional_packages__install_from_apa_stage1()
 function post_armbian_repo_customize_image__install_from_apa_stage2() {
 	# do not install armbian recommends for minimal images
 	[[ "${BUILD_MINIMAL,,}" =~ ^(true|yes)$ ]] && INSTALL_RECOMMENDS="no-install-recommends" || INSTALL_RECOMMENDS="install-recommends"
+	display_alert "installing armbian-bsp" "APA" "info"
 	chroot_sdcard_apt_get install --$INSTALL_RECOMMENDS armbian-bsp
 }

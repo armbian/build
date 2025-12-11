@@ -29,6 +29,9 @@ function calculate_rootfs_cache_id() {
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	declare legacy_debootstrap="${LEGACY_DEBOOTSTRAP:-"no"}"
+	if [[ $APA_IS_ACTIVE ]]; then
+		extension_hooks_hashed+=("${apa_additional_packages}")
+	fi
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" LDB=${legacy_debootstrap,,} | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
