@@ -14,8 +14,13 @@ setenv docker_optimizations "on"
 setenv earlycon "off"
 
 # Set load address for temporary file loading (armbianEnv.txt, overlays, etc)
-# Using address that doesn't conflict with kernel (0x45000000), ramdisk (0x49000000), or fdt (0x44000000)
+# Using address that doesn't conflict with kernel (0x45000000) Note: on Arm64 it has to be 2mb aligned
+# Ramdisk (0x49000000),
+# or fdt (0x44000000)
 setenv load_addr "0x43000000"
+
+# Move ramdisk further away to avoid kernel overwrite (176MB space for kernel)
+setenv ramdisk_addr_r "0x50000000"
 
 test -n "${distro_bootpart}" || distro_bootpart=1
 
@@ -23,16 +28,17 @@ echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
 # get PARTUUID of first partition on SD/eMMC/UFS the boot script was loaded from
 echo "Detecting PARTUUID for ${devtype} device ${devnum}:${distro_bootpart}..."
-if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
-if test "${devtype}" = "scsi"; then part uuid scsi ${devnum}:${distro_bootpart} partuuid; fi
+
+# Explicitly clear partuuid as U-Boot variables set by functions or used in loops may not behave as expected
+setenv partuuid
+
+if test "${devtype}" = "mmc" || test "${devtype}" = "scsi" || test "${devtype}" = "usb"; then
+	part uuid ${devtype} ${devnum}:${distro_bootpart} partuuid
+fi
 
 # Use PARTUUID if available (more reliable), otherwise fall back to rootdev label
 if test -n "${partuuid}"; then
-	echo "PARTUUID detected: ${partuuid}"
-	setenv rootdev "PARTUUID=${partuuid}"
-	echo "Set default rootdev=${rootdev}"
-else
-	echo "PARTUUID not available, keeping fallback rootdev=${rootdev}"
+  setenv rootdev "PARTUUID=${partuuid}"
 fi
 
 # Load armbianEnv.txt if it exists - using direct load instead of test -e for better compatibility
@@ -51,7 +57,11 @@ fi
 
 echo "Final rootdev: ${rootdev}"
 
-if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
+if test "${bootlogo}" = "true" ; then
+	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
+else
+	setenv consoleargs "splash=verbose ${consoleargs}"
+fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,921600 ${consoleargs}"; fi
@@ -107,8 +117,8 @@ else
 	fi
 fi
 
-echo "Trying 'kaslrseed' command... Info: 'Unknown command' can be safely ignored since 'kaslrseed' does not apply to all boards."
-kaslrseed # @TODO: This gives an error (Unknown command ' kaslrseed ' - try 'help') on many devices since CONFIG_CMD_KASLRSEED is not enabled
+# Resize the fdt to the actual size of the final dtb
+fdt resize
 
 echo "Booting kernel from ${kernel_addr_r} with initramfs at ${ramdisk_addr_r} and DTB at ${fdt_addr_r}..."
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
