@@ -318,6 +318,11 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard debsums --silent
 	fi
 
+	# APA installs the desktop/CLI environment
+	if [[ $APA_IS_ACTIVE ]]; then
+		install_apa_hook__rename_me #FIXME: rename this hook
+	fi
+
 	# # Remove packages from packages.uninstall
 	# # @TODO: aggregation.py handling of this... if we wanted it removed in rootfs cache, why did we install it in the first place?
 	# display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
@@ -333,10 +338,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
 	# don't touch the local cache.
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
-
-	if [[ $APA_IS_ACTIVE ]]; then
-		install_apa_hook__rename_me #FIXME: rename this hook
-	fi
 
 	# Purge/clean apt cache in the target. It should _not_ have been used, but if it was, warn & clean.
 	apt_purge_unneeded_packages_and_clean_apt_caches
