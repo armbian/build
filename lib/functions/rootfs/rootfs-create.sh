@@ -282,7 +282,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
 	# Systemd resolver is not working yet
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
@@ -333,7 +333,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
@@ -342,7 +342,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
 	# default and that has to be handled by setting system presets.
 	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
-	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
+	run_host_command_logged rm -fv "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later
