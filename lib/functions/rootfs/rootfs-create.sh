@@ -345,7 +345,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
 	# default and that has to be handled by setting system presets.
 	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
-	run_host_command_logged rm -fv "${SDCARD}/var/lib/dbus/machine-id"
+	schedule_deletion "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later
