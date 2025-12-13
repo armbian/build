@@ -1,6 +1,6 @@
 # Allwinner A10 single core 1Gb SoC
 BOARD_NAME="Mele A1000"
-BOARD_VENDOR="mqmaker"
+BOARD_VENDOR="generic"
 BOARDFAMILY="sun4i"
 BOARD_MAINTAINER=""
 HAS_VIDEO_OUTPUT="no"
