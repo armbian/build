@@ -407,7 +407,7 @@ function install_distribution_agnostic() {
 	install_artifact_deb_chroot "armbian-bsp-cli"
 
 	# install armbian-desktop
-	if [[ $BUILD_DESKTOP == yes ]]; then
+	if [[ ! $APA_IS_ACTIVE && $BUILD_DESKTOP == yes ]]; then
 		install_artifact_deb_chroot "armbian-desktop"
 		install_artifact_deb_chroot "armbian-bsp-desktop"
 		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
