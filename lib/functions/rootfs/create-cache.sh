@@ -122,7 +122,7 @@ function extract_rootfs_artifact() {
 
 	wait_for_disk_sync "after restoring rootfs cache"
 
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
 
 	# all sources etc.
