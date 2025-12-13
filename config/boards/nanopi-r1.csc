@@ -1,5 +1,6 @@
 # Allwinner H3 quad core 512MB/1GB RAM SoC headless 1xGBE 1xETH eMMC WiFi/BT
 BOARD_NAME="NanoPi R1"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_r1_defconfig"

@@ -1,5 +1,6 @@
 # Rockchip RK3576 SoC octa core 8-64GB SoC 2*GBe eMMC USB3 NvME WIFI
 BOARD_NAME="ArmSoM Sige5"
+BOARD_VENDOR="armsom"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="armsom-sige5-rk3576_defconfig"
 KERNEL_TARGET="vendor,edge"
