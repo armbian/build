@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 32GB RAM SoC eMMC NvME 1x USB3 4x USB2 1x GbE
 BOARD_NAME="Youyeetoo R1 v3"
+BOARD_VENDOR="youyeetoo"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="SuperKali"
 BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate

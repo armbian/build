@@ -1,5 +1,6 @@
 # Rockchip RK3588s SoC octa core 4-16GB SoC eMMC USB3
 BOARD_NAME="Radxa CM5 IO"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="amazingfate"
 BOOTCONFIG="radxa-cm5-io-rk3588s_defconfig"

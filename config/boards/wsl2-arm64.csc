@@ -1,5 +1,6 @@
 # aarch64 Windows Subsystem for Linux 2 (Hyper-V)
 declare -g BOARD_NAME="WSL2 arm64"
+declare -g BOARD_VENDOR="generic"
 declare -g BOARDFAMILY="uefi-arm64"
 declare -g BOARD_MAINTAINER="rpardini"
 declare -g KERNEL_TARGET="current,edge"

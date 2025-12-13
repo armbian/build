@@ -1,5 +1,6 @@
 # RISC-V StarFive Visionfive V2
 BOARD_NAME="VisionFive2"
+BOARD_VENDOR="star-five"
 BOARDFAMILY="starfive2"
 BOARD_MAINTAINER="libiunc"
 KERNEL_TARGET="vendor"

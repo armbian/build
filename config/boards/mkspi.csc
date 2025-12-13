@@ -6,6 +6,7 @@
 #
 # These boards and related configuration is very close to Renegade board ("roc-cc-rk3328_defconfig" and "rk3328-roc-cc" DT)
 BOARD_NAME="mkspi"
+BOARD_VENDOR="makerbase"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="redrathnure"
 BOOTCONFIG="mkspi-rk3328_defconfig"

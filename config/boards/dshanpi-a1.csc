@@ -1,5 +1,6 @@
 # Rockchip RK3576 SoC octa core 4-32GB SoC 2*GBe eMMC USB3 NvME WIFI
 BOARD_NAME="100ASK DShanPI A1"
+BOARD_VENDOR="dongshanpi"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="dshanpi-a1-rk3576_defconfig"

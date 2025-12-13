@@ -1,5 +1,6 @@
 # Allwinner H618 quad core 1GB/2GB/4GB RAM
 BOARD_NAME="Longan Pi 3H"
+BOARD_VENDOR="mangopi"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER=""
 BOOTCONFIG="longanpi_3h_defconfig"

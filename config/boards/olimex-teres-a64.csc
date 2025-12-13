@@ -1,5 +1,6 @@
 # Allwinner A64 quad core 2GB SoC Wi-Fi/BT Revision C
 BOARD_NAME="OLIMEX Teres A64"
+BOARD_VENDOR="olimex"
 
 # Specified in https://linux-sunxi.org/Allwinner_SoC_Family
 BOARDFAMILY="sun50iw1"

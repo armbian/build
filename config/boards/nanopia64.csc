@@ -1,5 +1,6 @@
 # Allwinner A64 quad core 1GB RAM SoC GBE
 BOARD_NAME="NanoPi A64"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun50iw1"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_a64_defconfig"

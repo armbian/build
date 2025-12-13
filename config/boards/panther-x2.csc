@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 4GB RAM SoC WIFI/BT eMMC USB2
 BOARD_NAME="panther-x2"
+BOARD_VENDOR="panther"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="rock-3c-rk3566_defconfig"

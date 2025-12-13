@@ -1,5 +1,6 @@
 # Ayn Odin2 Configuration
 declare -g BOARD_NAME="Ayn Odin2"
+declare -g BOARD_VENDOR="ayntec"
 declare -g BOARD_MAINTAINER="FantasyGmm"
 declare -g BOARDFAMILY="sm8550"
 declare -g KERNEL_TARGET="current,edge"

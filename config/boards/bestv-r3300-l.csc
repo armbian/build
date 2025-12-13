@@ -1,5 +1,6 @@
 # Amlogic S905L-B 1GB RAM 8GB eMMC microSD FE USB2 RTL8189FTV WiFi
 BOARD_NAME="BesTV R3300-L"
+BOARD_VENDOR="generic"
 BOARDFAMILY="meson-gxl"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="bestv-r3300-l_defconfig"

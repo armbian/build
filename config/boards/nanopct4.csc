@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 4GB RAM SoC GBE USB3 USB-C WiFi/BT eMMC NVMe
 BOARD_NAME="NanoPC T4"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopc-t4-rk3399_defconfig"

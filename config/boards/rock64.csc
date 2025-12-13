@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB-4GB GBE eMMC USB3 SPI
 BOARD_NAME="Rock 64"
+BOARD_VENDOR="pine64"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="rock64-rk3328_defconfig"

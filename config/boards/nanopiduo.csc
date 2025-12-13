@@ -1,5 +1,6 @@
 # Allwinner H2+ quad core 256/512MB RAM SoC headless WiFi
 BOARD_NAME="NanoPi Duo"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER="sgjava"
 BOOTCONFIG="nanopi_duo_defconfig"

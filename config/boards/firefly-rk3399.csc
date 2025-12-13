@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi
 BOARD_NAME="Firefly RK3399"
+BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="firefly-rk3399_defconfig"

@@ -1,5 +1,6 @@
 # Rockchip RK3588 SoC octa core 4-16GB SoC eMMC USB3 NVME
 BOARD_NAME="CoolPi GenBook"
+BOARD_VENDOR="cool-pi"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="andyshrk"
 BOARD_FIRMWARE_INSTALL="-full"

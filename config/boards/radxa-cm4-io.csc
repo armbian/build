@@ -1,5 +1,6 @@
 # Rockchip RK3576 SoC octa core 8-64GB SoC 2*GBe eMMC USB3 NvME WIFI
 BOARD_NAME="Radxa CM4-IO"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="radxa-cm4-io-rk3576_defconfig"
 KERNEL_TARGET="vendor"

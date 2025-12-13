@@ -1,5 +1,6 @@
 # Rockchip RV1106 single core 128-256MB SoC 1x100MBe NAND USB2
 BOARD_NAME="Luckfox Pico Pro / Pico Max"
+BOARD_VENDOR="luckfox"
 BOARDFAMILY="rockchip-rv1106"
 BOOTCONFIG="luckfox_rv1106_uboot_defconfig"
 BOARD_MAINTAINER=""

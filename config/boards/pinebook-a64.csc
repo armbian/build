@@ -1,5 +1,6 @@
 # Allwinner A64 quad core 2GB RAM SoC WiFi/BT
 BOARD_NAME="Pinebook A64"
+BOARD_VENDOR="pine64"
 BOARDFAMILY="sun50iw1"
 BOARD_MAINTAINER="Qvy-png"
 BOOTCONFIG="pinebook_defconfig"
