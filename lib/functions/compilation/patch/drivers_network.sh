@@ -236,11 +236,11 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sun* ]]; then
 
 		# Attach to specific commit (is branch:master)
-		local xradio_xr819_ver="commit:684a91a3692a964c5886dcf4369874cc7c19c0a4" # Commit date: Aug 7, 2025 (please update when updating commit ref)
+		local xradio_xr819_ver="commit:43992a7e7ed95ff815cf6d8ba81cef1085e50ab9" # Commit date: Oct 11, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/xradio" "xradio" "${xradio_xr819_ver}" "yes" # Forked from https://github.com/fifteenhex/xradio
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -565,7 +565,11 @@ driver_uwe5622() {
 
 		if linux-version compare "${version}" ge 6.17; then
                         process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
-                fi
+        fi
+
+		if linux-version compare "${version}" ge 6.18; then
+                        process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
+        fi
 
 	fi
 }
