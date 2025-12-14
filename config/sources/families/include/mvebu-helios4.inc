@@ -81,12 +81,15 @@ family_tweaks_bsp() {
 	function board_side_helios4_bsp_cli_postinst_mdadm() {
 		### Mdadm tweaks
 		MDADM_CONF=/etc/mdadm/mdadm.conf
-		grep -q "PROGRAM" $MDADM_CONF
-		if [ "$?" -ne 0 ]; then
-			cat <<- EOS >> $MDADM_CONF
-				# Trigger Fault Led script when an event is detected
-				PROGRAM /usr/sbin/mdadm-fault-led.sh
-			EOS
+
+		if [ -f $MDADM_CONF ]; then
+			grep -q "PROGRAM" $MDADM_CONF
+			if [ "$?" -ne 0 ]; then
+				cat <<- EOS >> $MDADM_CONF
+					# Trigger Fault Led script when an event is detected
+					PROGRAM /usr/sbin/mdadm-fault-led.sh
+				EOS
+			fi
 		fi
 
 		# enable helios4-wol.service
