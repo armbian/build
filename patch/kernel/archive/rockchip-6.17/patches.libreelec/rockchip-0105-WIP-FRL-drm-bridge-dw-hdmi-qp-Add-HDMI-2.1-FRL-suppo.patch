@@ -1,0 +1,741 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Thu, 3 Jul 2025 12:42:38 +0300
+Subject: [WIP-FRL] drm/bridge: dw-hdmi-qp: Add HDMI 2.1 FRL support
+
+Implement the link training state machine required to support HDMI 2.1
+FRL display modes.
+
+This has been verified up to 4K@160Hz, although the actual refresh rate
+(as indicated by the display) seems to not exceed 130Hz.  Note the
+RK3588 TRM only mentions the 4K@120Hz and 8K@60Hz modes as being
+supported by the HDMI TX Controller, hence it's not entirely clear what
+is the actual hardware limitation.
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c | 582 +++++++++-
+ include/drm/bridge/dw_hdmi_qp.h              |  11 +
+ 2 files changed, 577 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+@@ -41,9 +41,26 @@
+ 
+ #define HDMI14_MAX_TMDSCLK	340000000
+ #define HDMI20_MAX_TMDSRATE	600000000
++#define HDMI21_MAX_SUPPRATE	4800000000
+ 
+ #define SCRAMB_POLL_DELAY_MS	3000
+ 
++/*
++ * Recommended N and Expected CTS Values in FRL Mode.
++ */
++static const struct dw_hdmi_audio_frl_n {
++	unsigned int r_bit;
++	unsigned int n_32k;
++	unsigned int n_44k1;
++	unsigned int n_48k;
++} common_frl_n_table[] = {
++	{ .r_bit = 3,  .n_32k = 4224, .n_44k1 = 5292, .n_48k = 5760, },
++	{ .r_bit = 6,  .n_32k = 4032, .n_44k1 = 5292, .n_48k = 6048, },
++	{ .r_bit = 8,  .n_32k = 4032, .n_44k1 = 3969, .n_48k = 6048, },
++	{ .r_bit = 10, .n_32k = 3456, .n_44k1 = 3969, .n_48k = 5184, },
++	{ .r_bit = 12, .n_32k = 3072, .n_44k1 = 3969, .n_48k = 4752, },
++};
++
+ /*
+  * Unless otherwise noted, entries in this table are 100% optimization.
+  * Values can be obtained from dw_hdmi_qp_compute_n() but that function is
+@@ -171,9 +188,13 @@ struct dw_hdmi_qp {
+ 	struct delayed_work scramb_work;
+ 	bool scramb_enabled;
+ 
++	struct work_struct flt_work;
++	bool flt_no_timeout;
++
+ 	struct regmap *regm;
+ 
+-	unsigned long tmds_char_rate;
++	//TODO: store tmds_char_rate in struct dw_hdmi_qp_link_config
++	unsigned long long tmds_char_rate;
+ };
+ 
+ static void dw_hdmi_qp_write(struct dw_hdmi_qp *hdmi, unsigned int val,
+@@ -220,6 +241,50 @@ static void dw_hdmi_qp_set_cts_n(struct dw_hdmi_qp *hdmi, unsigned int cts,
+ 		       AUDPKT_ACR_CONTROL1);
+ }
+ 
++static int dw_hdmi_qp_match_frl_n_table(struct dw_hdmi_qp *hdmi,
++					unsigned long r_bit,
++					unsigned long freq)
++{
++	const struct dw_hdmi_audio_frl_n *frl_n = NULL;
++	int i = 0, n = 0;
++
++	for (i = 0; ARRAY_SIZE(common_frl_n_table); i++) {
++		if (r_bit == common_frl_n_table[i].r_bit) {
++			frl_n = &common_frl_n_table[i];
++			break;
++		}
++	}
++
++	if (!frl_n)
++		goto err;
++
++	switch (freq) {
++	case 32000:
++	case 64000:
++	case 128000:
++		n = (freq / 32000) * frl_n->n_32k;
++		break;
++	case 44100:
++	case 88200:
++	case 176400:
++		n = (freq / 44100) * frl_n->n_44k1;
++		break;
++	case 48000:
++	case 96000:
++	case 192000:
++		n = (freq / 48000) * frl_n->n_48k;
++		break;
++	default:
++		goto err;
++	}
++
++	return n;
++err:
++	dev_err(hdmi->dev, "FRL; unexpected Rbit: %lu Gbps\n", r_bit);
++
++	return 0;
++}
++
+ static int dw_hdmi_qp_match_tmds_n_table(struct dw_hdmi_qp *hdmi,
+ 					 unsigned long pixel_clk,
+ 					 unsigned long freq)
+@@ -301,6 +366,15 @@ static unsigned int dw_hdmi_qp_compute_n(struct dw_hdmi_qp *hdmi,
+ static unsigned int dw_hdmi_qp_find_n(struct dw_hdmi_qp *hdmi, unsigned long pixel_clk,
+ 				      unsigned long sample_rate)
+ {
++	if (hdmi->phy.ops->get_link_cfg) {
++		const struct dw_hdmi_qp_link_config *link_cfg;
++		link_cfg = hdmi->phy.ops->get_link_cfg(hdmi, hdmi->phy.data);
++		if (link_cfg->frl_enabled)
++			return dw_hdmi_qp_match_frl_n_table(hdmi,
++							    link_cfg->frl_rate_per_lane,
++							    sample_rate);;
++	}
++
+ 	int n = dw_hdmi_qp_match_tmds_n_table(hdmi, pixel_clk, sample_rate);
+ 
+ 	if (n > 0)
+@@ -775,9 +849,8 @@ static int dw_hdmi_qp_config_avi_infoframe(struct dw_hdmi_qp *hdmi,
+ 	}
+ 
+ 	dw_hdmi_qp_mod(hdmi, 0, PKTSCHED_AVI_FIELDRATE, PKTSCHED_PKT_CONFIG1);
+-
+-	dw_hdmi_qp_mod(hdmi, PKTSCHED_AVI_TX_EN | PKTSCHED_GCP_TX_EN,
+-		       PKTSCHED_AVI_TX_EN | PKTSCHED_GCP_TX_EN, PKTSCHED_PKT_EN);
++	dw_hdmi_qp_mod(hdmi, PKTSCHED_AVI_TX_EN, PKTSCHED_AVI_TX_EN,
++		       PKTSCHED_PKT_EN);
+ 
+ 	return 0;
+ }
+@@ -931,12 +1004,443 @@ static void dw_hdmi_qp_disable_scramb(struct dw_hdmi_qp *hdmi)
+ 	}
+ }
+ 
++enum frl_mask {
++	FRL_3GBPS_3LANE = 1,
++	FRL_6GBPS_3LANE,
++	FRL_6GBPS_4LANE,
++	FRL_8GBPS_4LANE,
++	FRL_10GBPS_4LANE,
++	FRL_12GBPS_4LANE,
++};
++
++static int hdmi_set_frl_mask(int frl_rate)
++{
++	switch (frl_rate) {
++	case 48:
++		return FRL_12GBPS_4LANE;
++	case 40:
++		return FRL_10GBPS_4LANE;
++	case 32:
++		return FRL_8GBPS_4LANE;
++	case 24:
++		return FRL_6GBPS_4LANE;
++	case 18:
++		return FRL_6GBPS_3LANE;
++	case 9:
++		return FRL_3GBPS_3LANE;
++	}
++
++	return 0;
++}
++
++static int hdmi_set_frl_actual(int frl_level)
++{
++	switch (frl_level) {
++	case FRL_12GBPS_4LANE:
++		return 48;
++	case FRL_10GBPS_4LANE:
++		return 40;
++	case FRL_8GBPS_4LANE:
++		return 32;
++	case FRL_6GBPS_4LANE:
++		return 24;
++	case FRL_6GBPS_3LANE:
++		return 18;
++	case FRL_3GBPS_3LANE:
++		return 9;
++	}
++
++	return 0;
++}
++
++enum flt_state {
++	LTS1 = 0,	/* Read edid */
++	LTS2,		/* Prepare for frl */
++	LTS3,		/* Training in progress */
++	LTS4,		/* Update frl_rate */
++	LTSP,		/* Training passed */
++	LTSL,		/* Exit frl mode */
++};
++
++/* FRL training max ffe level: 0..3 */
++#define MAX_FFE_LEVEL			0
++
++#define SCDC_CONFIG_1			0x31
++#define SCDC_SOURCE_TEST_CONFIG		0x35
++#define SCDC_STATUS_FLAGS_2		0x42
++
++static bool dw_hdmi_qp_is_disabled(struct dw_hdmi_qp *hdmi)
++{
++	return hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data) == connector_status_disconnected;
++}
++
++/* check sink version and if flt no timeout mode */
++static int dw_hdmi_qp_flt_lts1(struct dw_hdmi_qp *hdmi)
++{
++	u8 val = 0;
++
++	if (!hdmi->tmds_char_rate) {
++		dev_err(hdmi->dev, "hdmi dclk is disabled, lts1 failed\n");
++		return LTSL;
++	}
++
++	dw_hdmi_qp_mod(hdmi, AVP_DATAPATH_VIDEO_SWDISABLE,
++		       AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
++
++	/* reset avp data path */
++	dw_hdmi_qp_write(hdmi, BIT(6), GLOBAL_SWRESET_REQUEST);
++
++	drm_scdc_readb(hdmi->bridge.ddc, SCDC_SINK_VERSION, &val);
++	if (!val) {
++		dev_err(hdmi->dev, "scdc sink version is zero, lts1 failed\n");
++		return LTSL;
++	}
++
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_SOURCE_VERSION, 1);
++	drm_scdc_readb(hdmi->bridge.ddc, SCDC_SOURCE_TEST_CONFIG, &val);
++	hdmi->flt_no_timeout = !!(val & BIT(5));
++
++	return LTS2;
++}
++
++/* check if sink is ready to training and set source output frl rate/max ffe level */
++static int dw_hdmi_qp_flt_lts2(struct dw_hdmi_qp *hdmi, u8 rate)
++{
++	u8 flt_rate = hdmi_set_frl_mask(rate);
++	u8 val = 0;
++	int i;
++
++	/* FLT_READY & FFE_LEVELS read */
++	for (i = 0; i < 20; i++) {
++		drm_scdc_readb(hdmi->bridge.ddc, SCDC_STATUS_FLAGS_0, &val);
++		if (val & BIT(6))
++			break;
++		msleep(20);
++	}
++
++	if (i == 20) {
++		dev_err(hdmi->dev, "sink flt isn't ready,SCDC_STATUS_FLAGS_0:0x%x\n", val);
++		return LTSL;
++	}
++
++	/* max ffe level 3 */
++	val = MAX_FFE_LEVEL << 4 | flt_rate;
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_CONFIG_1, val);
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_CONFIG_0, 0);
++
++	return LTS3;
++}
++
++static void dw_hdmi_qp_set_ltp(struct dw_hdmi_qp *hdmi, u32 value, bool flt_no_timeout)
++{
++	/* support hfr1-10, send old ltp when all lane is 3 */
++	if (!flt_no_timeout && value == 0x3333f)
++		value = dw_hdmi_qp_read(hdmi, FLT_CONFIG1);
++
++	dw_hdmi_qp_write(hdmi, value, FLT_CONFIG1);
++}
++
++/*
++ * conducts link training for the specified frl rate
++ * send sink request ltp or change ffe level
++ */
++static int dw_hdmi_qp_flt_lts3(struct dw_hdmi_qp *hdmi, u8 rate)
++{
++	u8 val;
++	int i = 0, ret = 0;
++	u8 src_test_cfg = 0;
++	u32 value;
++	u8 ffe_lv = 0;
++
++	/* we set max 2s timeout */
++	i = 4000;
++	while (i > 0 || hdmi->flt_no_timeout) {
++		if (dw_hdmi_qp_is_disabled(hdmi)) {
++			dev_dbg(hdmi->dev, "hdmi dclk is disabled, stop flt\n");
++			break;
++		}
++
++		i--;
++		/* source should poll update flag every 2ms or less */
++		usleep_range(400, 500);
++
++		drm_scdc_readb(hdmi->bridge.ddc, SCDC_UPDATE_0, &val);
++
++		/* SOURCE_TEST_UPDATE */
++		if (val & BIT(3)) {
++			/* quit test mode */
++			drm_scdc_readb(hdmi->bridge.ddc, SCDC_SOURCE_TEST_CONFIG, &src_test_cfg);
++			if (hdmi->flt_no_timeout && !(src_test_cfg & BIT(5))) {
++				dev_dbg(hdmi->dev, "flt get out of test mode\n");
++				hdmi->flt_no_timeout = false;
++			} else if (!hdmi->flt_no_timeout && (src_test_cfg & BIT(5))) {
++				dev_dbg(hdmi->dev, "flt go into test mode\n");
++				hdmi->flt_no_timeout = true;
++			}
++		}
++
++		if (!(val & SCDC_CONFIG_0)) {
++			/* clear SOURCE_TEST_UPDATE flag */
++			if (val & BIT(3))
++				drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, val);
++			continue;
++		}
++
++		/* flt_update */
++		if (val & BIT(5)) {
++			u8 reg_val, ln0, ln1, ln2, ln3;
++
++			drm_scdc_readb(hdmi->bridge.ddc, SCDC_STATUS_FLAGS_1, &reg_val);
++			ln0 = reg_val & 0xf;
++			ln1 = (reg_val >> 4) & 0xf;
++
++			drm_scdc_readb(hdmi->bridge.ddc, SCDC_STATUS_FLAGS_2, &reg_val);
++			ln2 = reg_val & 0xf;
++			ln3 = (reg_val >> 4) & 0xf;
++
++			dev_dbg(hdmi->dev, "ln0:0x%x,ln1:0x%x,ln2:0x%x,ln3:0x%x\n",
++					     ln0, ln1, ln2, ln3);
++
++			if (!ln0 && !ln1 && !ln2 && !ln3) {
++				dev_dbg(hdmi->dev, "Training finish, go to ltsp\n");
++				if (hdmi->tmds_char_rate) {
++					dw_hdmi_qp_write(hdmi, 0, FLT_CONFIG1);
++					ret = LTSP;
++				} else {
++					dev_err(hdmi->dev, "hdmi dclk is disabled, goto ltsp failed\n");
++					ret = LTSL;
++				}
++			} else if ((ln0 == 0xf) | (ln1 == 0xf) | (ln2 == 0xf) | (ln3 == 0xf)) {
++				dev_err(hdmi->dev, "goto lts4\n");
++				ret = LTS4;
++			} else if ((ln0 == 0xe) | (ln1 == 0xe) | (ln2 == 0xe) | (ln3 == 0xe)) {
++				dev_dbg(hdmi->dev, "goto ffe\n");
++				if (ffe_lv < 3) {
++					++ffe_lv;
++					//TODO: set_ffe()
++					/* hdmi->phy.ops->set_ffe(hdmi, hdmi->phy.data, ++ffe_lv); */
++				} else {
++					dev_err(hdmi->dev, "ffe level out of range\n");
++					ret = LTSL;
++				}
++			} else {
++				if (hdmi->tmds_char_rate) {
++					value = (ln3 << 16) | (ln2 << 12) | (ln1 << 8) |
++						(ln0 << 4) | 0xf;
++
++					dw_hdmi_qp_set_ltp(hdmi, value, hdmi->flt_no_timeout);
++				} else {
++					dev_err(hdmi->dev, "hdmi dclk is disabled, set ltp failed\n");
++					ret = LTSL;
++				}
++			}
++
++			/* only clear flt_update */
++			drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, val);
++		}
++
++		if (ret)
++			break;
++	}
++
++	if (!ret) {
++		ret = LTSL;
++		dev_err(hdmi->dev, "lts3 time out, goto ltsl\n");
++	}
++
++	return ret;
++}
++
++/* sink request frl rate change, start training for a new rate. */
++static int dw_hdmi_qp_flt_lts4(struct dw_hdmi_qp *hdmi, u8 *rate)
++{
++	u8 flt_rate = hdmi_set_frl_mask(*rate);
++	void *data = hdmi->phy.data;
++	unsigned long long actual_rate;
++
++	/* we don't use frl rate below 24G */
++	if (flt_rate == FRL_8GBPS_4LANE) {
++		dev_err(hdmi->dev, "goto ltsl\n");
++		return LTSL;
++	}
++
++	/* disable phy */
++	hdmi->phy.ops->disable(hdmi, hdmi->phy.data);
++
++	/* set lower frl rate */
++	flt_rate--;
++	actual_rate = hdmi_set_frl_actual(flt_rate);
++	if (hdmi->phy.ops->force_link_rate) {
++		//TODO: handle error
++		hdmi->phy.ops->force_link_rate(hdmi, data, actual_rate);
++	}
++
++	/* enable phy */
++	//TODO: previous_mode needed?!
++	/* hdmi->phy.ops->init(hdmi, hdmi->phy.data, &hdmi->previous_mode); */
++	hdmi->phy.ops->init(hdmi, hdmi->phy.data);
++
++	*rate = actual_rate;
++	/* set new rate */
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_CONFIG_1, (MAX_FFE_LEVEL << 4 | flt_rate));
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, BIT(5));
++
++	dev_dbg(hdmi->dev, "from lts4 go to lts3\n");
++	return LTS3;
++}
++
++/* training is passed, start poll sink check if sink want to change rate or exit frl mode */
++static int dw_hdmi_qp_flt_ltsp(struct dw_hdmi_qp *hdmi)
++{
++	u8 val = 0;
++	int i = 4000;
++
++	/* wait frl start */
++	while (i--) {
++		if (dw_hdmi_qp_is_disabled(hdmi)) {
++			dev_dbg(hdmi->dev, "hdmi dclk is disabled, quit ltsp\n");
++			return LTSL;
++		}
++
++		/* source should poll update flag every 2ms or less */
++		usleep_range(400, 500);
++
++		drm_scdc_readb(hdmi->bridge.ddc, SCDC_UPDATE_0, &val);
++
++		if (!(val & SCDC_CONFIG_0))
++			continue;
++
++		if (hdmi->tmds_char_rate) {
++			/* flt_start */
++			if (val & BIT(4)) {
++				dw_hdmi_qp_mod(hdmi, 0, AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
++				/* clear flt_start */
++				drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, BIT(4));
++				dw_hdmi_qp_write(hdmi, 2, PKTSCHED_PKT_CONTROL0);
++				dw_hdmi_qp_mod(hdmi, PKTSCHED_GCP_TX_EN, PKTSCHED_GCP_TX_EN,
++					  PKTSCHED_PKT_EN);
++				dev_dbg(hdmi->dev, "flt success\n");
++				break;
++			} else if (val & BIT(5)) {
++				dw_hdmi_qp_mod(hdmi, AVP_DATAPATH_VIDEO_SWDISABLE,
++					  AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
++				drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, BIT(5));
++				return LTS3;
++			}
++		} else {
++			dev_err(hdmi->dev, "hdmi dclk is disabled, wait frl start failed\n");
++			return LTSL;
++		}
++	}
++
++	if (i < 0) {
++		dev_err(hdmi->dev, "wait flt_{start|update} timed out, SCDC_UPDATE_0:0x%x\n",
++			val);
++		return LTSL;
++	}
++
++	i = 5;
++	/* flt success poll flt_update */
++	while (1) {
++		if (dw_hdmi_qp_is_disabled(hdmi)) {
++			dev_dbg(hdmi->dev, "hdmi dclk is disabled, stop poll flt_update\n");
++			return LTSL;
++		}
++
++		if (!i) {
++			i = 5;
++			drm_scdc_readb(hdmi->bridge.ddc, SCDC_UPDATE_0, &val);
++
++			if (hdmi->tmds_char_rate) {
++				if (val & BIT(5)) {
++					dw_hdmi_qp_write(hdmi, 1, PKTSCHED_PKT_CONTROL0);
++					dw_hdmi_qp_mod(hdmi, PKTSCHED_GCP_TX_EN, PKTSCHED_GCP_TX_EN,
++						  PKTSCHED_PKT_EN);
++					msleep(50);
++					dw_hdmi_qp_mod(hdmi, AVP_DATAPATH_VIDEO_SWDISABLE,
++						AVP_DATAPATH_VIDEO_SWDISABLE, GLOBAL_SWDISABLE);
++					drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, BIT(5));
++					return LTS2;
++				}
++			} else {
++				dev_dbg(hdmi->dev,
++					"hdmi is disconnected, stop poll flt update flag\n");
++				return LTSL;
++			}
++		}
++		/* after flt success source should poll update_flag at least once per 250ms */
++		msleep(20);
++		i--;
++	}
++
++	return LTSL;
++}
++
++/* exit frl mode, maybe it was a training failure or hdmi was disabled */
++static int dw_hdmi_qp_flt_ltsl(struct dw_hdmi_qp *hdmi)
++{
++	/* if (hdmi->frl_switch) */
++	/* 	return -EINVAL; */
++
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_CONFIG_1, 0);
++	drm_scdc_writeb(hdmi->bridge.ddc, SCDC_UPDATE_0, BIT(5));
++
++	return -EINVAL;
++}
++
++static void dw_hdmi_qp_flt_work(struct work_struct *work)
++{
++	struct dw_hdmi_qp *hdmi = container_of(work, struct dw_hdmi_qp,
++					       flt_work);
++	const struct dw_hdmi_qp_link_config *link_cfg;
++	u8 frl_rate;
++	int state = LTS1;
++
++	link_cfg = hdmi->phy.ops->get_link_cfg(hdmi, hdmi->phy.data);
++	frl_rate = link_cfg->frl_lanes * link_cfg->frl_rate_per_lane;
++
++	dev_dbg(hdmi->dev, "-> %s tmds_rate=%llu frl_rate=%u\n", __func__,
++		hdmi->tmds_char_rate, frl_rate);
++
++	/* if (hdmi->frl_switch) */
++	/* 	return; */
++
++	while (1) {
++		switch (state) {
++		case LTS1:
++			state = dw_hdmi_qp_flt_lts1(hdmi);
++			break;
++		case LTS2:
++			state = dw_hdmi_qp_flt_lts2(hdmi, frl_rate);
++			break;
++		case LTS3:
++			state = dw_hdmi_qp_flt_lts3(hdmi, frl_rate);
++			break;
++		case LTS4:
++			state = dw_hdmi_qp_flt_lts4(hdmi, &frl_rate);
++			break;
++		case LTSP:
++			state = dw_hdmi_qp_flt_ltsp(hdmi);
++			break;
++		case LTSL:
++			state = dw_hdmi_qp_flt_ltsl(hdmi);
++			break;
++		default:
++			dev_err(hdmi->dev, "flt failed\n");
++		}
++
++		if (state <= 0) {
++			dev_dbg(hdmi->dev, "%s state=%d\n", __func__, state);
++			break;
++		}
++	}
++}
++
+ static void dw_hdmi_qp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 					    struct drm_atomic_state *state)
+ {
+ 	struct dw_hdmi_qp *hdmi = bridge->driver_private;
+ 	struct drm_connector_state *conn_state;
+-	unsigned int op_mode;
+ 
+ 	hdmi->connector = drm_atomic_get_new_connector_for_encoder(state,
+ 								   bridge->encoder);
+@@ -947,26 +1451,71 @@ static void dw_hdmi_qp_bridge_atomic_enable(struct drm_bridge *bridge,
+ 	if (WARN_ON(!conn_state))
+ 		return;
+ 
++	dw_hdmi_qp_mod(hdmi, HDCP2_BYPASS, HDCP2_BYPASS, HDCP2LOGIC_CONFIG0);
++
+ 	if (hdmi->connector->display_info.is_hdmi) {
++		const struct dw_hdmi_qp_link_config *link_cfg;
++
+ 		dev_dbg(hdmi->dev, "%s mode=HDMI %s rate=%llu bpc=%u\n", __func__,
+ 			drm_hdmi_connector_get_output_format_name(conn_state->hdmi.output_format),
+ 			conn_state->hdmi.tmds_char_rate, conn_state->hdmi.output_bpc);
+-		op_mode = 0;
++
++		//TODO: move ops check to bind()
++		if (hdmi->phy.ops->get_link_cfg) {
++			link_cfg = hdmi->phy.ops->get_link_cfg(hdmi, hdmi->phy.data);
++		} else {
++			dev_err(hdmi->dev, "Cannot get link config\n");
++			return;
++		}
++
++		dw_hdmi_qp_mod(hdmi, 0, OPMODE_DVI, LINK_CONFIG0);
++
+ 		hdmi->tmds_char_rate = conn_state->hdmi.tmds_char_rate;
+ 
+-		if (conn_state->hdmi.tmds_char_rate > HDMI14_MAX_TMDSCLK)
+-			dw_hdmi_qp_enable_scramb(hdmi);
++		if (conn_state->hdmi.tmds_char_rate <= HDMI20_MAX_TMDSRATE) {
++			dw_hdmi_qp_mod(hdmi, 0, OPMODE_FRL, LINK_CONFIG0);
++			dw_hdmi_qp_mod(hdmi, 0, OPMODE_FRL_4LANES, LINK_CONFIG0);
++
++			dw_hdmi_qp_write(hdmi, 2, PKTSCHED_PKT_CONTROL0);
++			dw_hdmi_qp_mod(hdmi, PKTSCHED_GCP_TX_EN, PKTSCHED_GCP_TX_EN,
++				       PKTSCHED_PKT_EN);
++
++			if (conn_state->hdmi.tmds_char_rate > HDMI14_MAX_TMDSCLK)
++				dw_hdmi_qp_enable_scramb(hdmi);
++		} else {
++			dev_dbg(hdmi->dev, "%s frl_rate_forced=%u frl_rate_per_lane=%u frl_lanes=%u\n",
++				__func__, link_cfg->frl_rate_forced,
++				link_cfg->frl_rate_per_lane, link_cfg->frl_lanes);
++
++			if (link_cfg->frl_lanes == 4)
++				dw_hdmi_qp_mod(hdmi, OPMODE_FRL_4LANES,
++					       OPMODE_FRL_4LANES, LINK_CONFIG0);
++			else
++				dw_hdmi_qp_mod(hdmi, 0, OPMODE_FRL_4LANES, LINK_CONFIG0);
++
++			dw_hdmi_qp_mod(hdmi, 1, OPMODE_FRL, LINK_CONFIG0);
++		}
+ 	} else {
+ 		dev_dbg(hdmi->dev, "%s mode=DVI\n", __func__);
+-		op_mode = OPMODE_DVI;
++		dw_hdmi_qp_mod(hdmi, OPMODE_DVI, OPMODE_DVI, LINK_CONFIG0);
++		dw_hdmi_qp_write(hdmi, 2, PKTSCHED_PKT_CONTROL0);
++		dw_hdmi_qp_mod(hdmi, PKTSCHED_GCP_TX_EN, PKTSCHED_GCP_TX_EN,
++			       PKTSCHED_PKT_EN);
+ 	}
+ 
++	drm_atomic_helper_connector_hdmi_update_infoframes(hdmi->connector, state);
++
++	//TODO: handle error
+ 	hdmi->phy.ops->init(hdmi, hdmi->phy.data);
+ 
+-	dw_hdmi_qp_mod(hdmi, HDCP2_BYPASS, HDCP2_BYPASS, HDCP2LOGIC_CONFIG0);
+-	dw_hdmi_qp_mod(hdmi, op_mode, OPMODE_DVI, LINK_CONFIG0);
++	if (conn_state->hdmi.tmds_char_rate > HDMI20_MAX_TMDSRATE) {
++		/* wait phy output stable then start flt */
++		msleep(50);
++		schedule_work(&hdmi->flt_work);
++		//TODO: only the flt poll should be handled in workqueue
++	}
+ 
+-	drm_atomic_helper_connector_hdmi_update_infoframes(hdmi->connector, state);
++	/* hdmi->frl_switch = false; */
+ }
+ 
+ static void dw_hdmi_qp_bridge_atomic_disable(struct drm_bridge *bridge,
+@@ -977,6 +1526,7 @@ static void dw_hdmi_qp_bridge_atomic_disable(struct drm_bridge *bridge,
+ 	hdmi->tmds_char_rate = 0;
+ 
+ 	dw_hdmi_qp_disable_scramb(hdmi);
++	cancel_work_sync(&hdmi->flt_work);
+ 
+ 	hdmi->connector = NULL;
+ 	hdmi->phy.ops->disable(hdmi, hdmi->phy.data);
+@@ -1114,8 +1664,8 @@ dw_hdmi_qp_bridge_tmds_char_rate_valid(const struct drm_bridge *bridge,
+ {
+ 	struct dw_hdmi_qp *hdmi = bridge->driver_private;
+ 
+-	if (rate > HDMI20_MAX_TMDSRATE) {
+-		dev_dbg(hdmi->dev, "Unsupported TMDS char rate: %lld\n", rate);
++	if (rate > HDMI21_MAX_SUPPRATE) {
++		dev_dbg(hdmi->dev, "Unsupported HDMI 2.1 link rate: %lld\n", rate);
+ 		return MODE_CLOCK_HIGH;
+ 	}
+ 
+@@ -1129,8 +1679,7 @@ static int dw_hdmi_qp_bridge_clear_infoframe(struct drm_bridge *bridge,
+ 
+ 	switch (type) {
+ 	case HDMI_INFOFRAME_TYPE_AVI:
+-		dw_hdmi_qp_mod(hdmi, 0, PKTSCHED_AVI_TX_EN | PKTSCHED_GCP_TX_EN,
+-			       PKTSCHED_PKT_EN);
++		dw_hdmi_qp_mod(hdmi, 0, PKTSCHED_AVI_TX_EN, PKTSCHED_PKT_EN);
+ 		break;
+ 
+ 	case HDMI_INFOFRAME_TYPE_DRM:
+@@ -1437,6 +1986,7 @@ struct dw_hdmi_qp *dw_hdmi_qp_bind(struct platform_device *pdev,
+ 		return ERR_CAST(hdmi);
+ 
+ 	INIT_DELAYED_WORK(&hdmi->scramb_work, dw_hdmi_qp_scramb_work);
++	INIT_WORK(&hdmi->flt_work, dw_hdmi_qp_flt_work);
+ 
+ 	hdmi->dev = dev;
+ 
+diff --git a/include/drm/bridge/dw_hdmi_qp.h b/include/drm/bridge/dw_hdmi_qp.h
+index 111111111111..222222222222 100644
+--- a/include/drm/bridge/dw_hdmi_qp.h
++++ b/include/drm/bridge/dw_hdmi_qp.h
+@@ -7,16 +7,27 @@
+ #ifndef __DW_HDMI_QP__
+ #define __DW_HDMI_QP__
+ 
++#include <linux/types.h>
++
+ struct device;
+ struct drm_encoder;
+ struct dw_hdmi_qp;
+ struct platform_device;
+ 
++struct dw_hdmi_qp_link_config {
++	bool frl_enabled;
++	u8 frl_rate_forced;
++	u8 frl_rate_per_lane;
++	u8 frl_lanes;
++};
++
+ struct dw_hdmi_qp_phy_ops {
+ 	int (*init)(struct dw_hdmi_qp *hdmi, void *data);
+ 	void (*disable)(struct dw_hdmi_qp *hdmi, void *data);
+ 	enum drm_connector_status (*read_hpd)(struct dw_hdmi_qp *hdmi, void *data);
+ 	void (*setup_hpd)(struct dw_hdmi_qp *hdmi, void *data);
++	struct dw_hdmi_qp_link_config *(*get_link_cfg)(struct dw_hdmi_qp *hdmi, void *data);
++	int (*force_link_rate)(struct dw_hdmi_qp *hdmi, void *data, u8 frl_rate);
+ };
+ 
+ struct dw_hdmi_qp_plat_data {
+-- 
+Armbian
+

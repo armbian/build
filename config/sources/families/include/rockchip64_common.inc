@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.16"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -118,6 +118,7 @@ case "$BOOT_SOC" in
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
 		DDR_BLOB="${DDR_BLOB:-"rk35/rk3528_ddr_1056MHz_v1.09.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3528_bl31_v1.17.elf"}"
+		ROCKUSB_BLOB="rk35/rk3528_spl_loader_v1.07.104.bin"
 		;;
 
 	rk3566)
@@ -305,9 +306,8 @@ write_uboot_platform() {
 	fi
 }
 
-# @TODO: this is not ready for BOOT_SCENARIO=binman yet
 write_uboot_platform_mtd() {
-	FILES=$(find "$1" -maxdepth 1 -type f -name "rkspi_loader*.img")
+	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
 	if [ -z "$FILES" ]; then
 		echo "No SPI image found."
 		exit 1
@@ -315,17 +315,23 @@ write_uboot_platform_mtd() {
 
 	MENU_ITEMS=()
 	i=1
+	FILE_ARRAY=()
 
 	# Read the files into an array
 	while IFS= read -r file; do
 		filename=$(basename "$file")
 		MENU_ITEMS+=("$i" "$filename" "")
+		FILE_ARRAY+=("$file")
 		((i++))
 	done <<< "$FILES"
 
-	# If there is only one image, we can skip the dialog
-	if [[ $i -eq 2 ]]; then
-		dd if=$1/${MENU_ITEMS[1]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+	if [[ ! -t 1 || $i -eq 2 ]]; then
+		first_file="${FILE_ARRAY[0]}"
+		if [[ "$first_file" == *rkspi_loader*.img ]]; then
+			dd if="$first_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$first_file" /dev/mtd0
+		fi
 		return
 	fi
 
@@ -333,14 +339,20 @@ write_uboot_platform_mtd() {
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 
 	CHOICE=$(dialog --no-collapse \
-  		--title "armbian-install" \
-  		--backtitle "$backtitle" \
-  		--radiolist "Choose SPI image:" 0 56 4 \
-  		"${MENU_ITEMS[@]}" \
-  		3>&1 1>&2 2>&3)
+		--title "armbian-install" \
+		--backtitle "$backtitle" \
+		--radiolist "Choose SPI image:" 0 56 4 \
+		"${MENU_ITEMS[@]}" \
+		3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
-		dd if=$1/${MENU_ITEMS[($CHOICE*3)-2]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		idx=$((CHOICE-1))
+		chosen_file="${FILE_ARRAY[$idx]}"
+		if [[ "$chosen_file" == *rkspi_loader*.img ]]; then
+			dd if="$chosen_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		else
+			flashcp -v -p "$chosen_file" /dev/mtd0
+		fi
 	else
 		echo "No SPI image chosen."
 		exit 1
@@ -399,7 +411,7 @@ family_tweaks_bsp() {
 
 }
 
-# A late hook to default SERIALCON based on BRANCH; BOARD and hooks (earlier than 900) can set it to override this.
+# A late hook to default SERIALCON based on BRANCH and SOC; BOARD and hooks (earlier than 900) can set it to override this.
 function post_family_config__900_late_default_serial_console_by_branch() {
 	display_alert "rockchip64_common: defaulting SERIALCON" "initial SERIALCON: '${SERIALCON:-"unset"}'" "debug"
 
@@ -415,10 +427,19 @@ function post_family_config__900_late_default_serial_console_by_branch() {
 			SERIALCON="ttyFIQ0"
 			;;
 		*)
-			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for BRANCH='${BRANCH}'" "info"
-			SERIALCON="ttyS2"
+			# Different Rockchip SoCs use different UART for debug console
+			case $BOOT_SOC in
+				rk3576)
+					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS0 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+					SERIALCON="ttyS0"
+					;;
+				*)
+					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+					SERIALCON="ttyS2"
+					;;
+			esac
 			;;
 	esac
 
-	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}'" "debug"
+	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}' SOC='${BOOT_SOC}'" "debug"
 }

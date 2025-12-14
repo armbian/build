@@ -169,8 +169,8 @@ function do_main_configuration() {
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
-		if [[ -z $CRYPTROOT_PASSPHRASE ]]; then # a passphrase is mandatory if rootfs encryption is enabled
-			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE is not set"
+		if [[ -z $CRYPTROOT_PASSPHRASE ]] && [[ -z $CRYPTROOT_AUTOUNLOCK ]]; then # a passphrase is mandatory if rootfs encryption is enabled, unless CRYPTROOT_AUTOUNLOCK is wanted
+			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE or CRYPTROOT_AUTOUNLOCK is not set"
 		fi
 		[[ -z $CRYPTROOT_MAPPER ]] && CRYPTROOT_MAPPER="armbian-root" # TODO: fixed name can't be used for parallel image building (rpardini: ?)
 		[[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
@@ -321,9 +321,10 @@ function do_main_configuration() {
 			;;
 	esac
 
-        # enable APA extension for Debian Unstable release
-	# loong64 is not supported now
-        [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
+	# enable APA extension for latest Ubuntu and Debian releases
+	# FIXME: drop this paragraph when APA becomes the default
+	# FIXME: loong64 is not supported now
+	[[ "$RELEASE" =~ ^(sid|questing|resolute)$ ]] && [[ "$ARCH" != "loong64" ]] && enable_extension "apa"
 
 	## Extensions: at this point we've sourced all the config files that will be used,
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect
@@ -368,7 +369,7 @@ function do_extra_configuration() {
 	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY" # @TODO move to hook
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|noble|oracular|plucky)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|noble|oracular|plucky|questing|resolute)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"

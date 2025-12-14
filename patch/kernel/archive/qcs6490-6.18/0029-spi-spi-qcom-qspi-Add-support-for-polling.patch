@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xilin Wu <sophon@radxa.com>
+Date: Wed, 16 Jul 2025 19:22:42 +0800
+Subject: spi: spi-qcom-qspi: Add support for polling
+
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+---
+ drivers/spi/spi-qcom-qspi.c | 142 +++++++++-
+ 1 file changed, 138 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/spi/spi-qcom-qspi.c b/drivers/spi/spi-qcom-qspi.c
+index 111111111111..222222222222 100644
+--- a/drivers/spi/spi-qcom-qspi.c
++++ b/drivers/spi/spi-qcom-qspi.c
+@@ -2,6 +2,7 @@
+ // Copyright (c) 2017-2018, The Linux foundation. All rights reserved.
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dmapool.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/interconnect.h>
+@@ -177,6 +178,7 @@ struct qcom_qspi {
+ 	unsigned long last_speed;
+ 	/* Lock to protect data accessed by IRQs */
+ 	spinlock_t lock;
++	bool is_polling;
+ };
+ 
+ static u32 qspi_buswidth_to_iomode(struct qcom_qspi *ctrl,
+@@ -236,11 +238,15 @@ static void qcom_qspi_pio_xfer(struct qcom_qspi *ctrl)
+ 	/* Ack any previous interrupts that might be hanging around */
+ 	writel(QSPI_ALL_IRQS, ctrl->base + MSTR_INT_STATUS);
+ 
++	if (ctrl->is_polling) {
++		ints = 0;
++	} else {
++		if (ctrl->xfer.dir == QSPI_WRITE)
++			ints = QSPI_ERR_IRQS | WR_FIFO_EMPTY;
++		else
++			ints = QSPI_ERR_IRQS | RESP_FIFO_RDY;
++	}
+ 	/* Setup new interrupts */
+-	if (ctrl->xfer.dir == QSPI_WRITE)
+-		ints = QSPI_ERR_IRQS | WR_FIFO_EMPTY;
+-	else
+-		ints = QSPI_ERR_IRQS | RESP_FIFO_RDY;
+ 	writel(ints, ctrl->base + MSTR_INT_EN);
+ 
+ 	/* Kick off the transfer */
+@@ -411,6 +417,112 @@ static bool qcom_qspi_can_dma(struct spi_controller *ctlr,
+ 	return xfer->len > QSPI_MAX_BYTES_FIFO;
+ }
+ 
++static int qcom_qspi_pio_read_polling(struct qcom_qspi *ctrl)
++{
++    while (ctrl->xfer.rem_bytes > 0) {
++        u32 rd_fifo_status;
++        unsigned int wr_cnts;
++
++        int timeout = 1000000;
++        do {
++            rd_fifo_status = readl(ctrl->base + RD_FIFO_STATUS);
++            if (rd_fifo_status & FIFO_RDY)
++                break;
++            udelay(1);
++        } while (--timeout);
++
++        if (timeout == 0) {
++            dev_err(ctrl->dev, "Polling read timed out!\n");
++            return -ETIMEDOUT;
++        }
++
++        wr_cnts = (rd_fifo_status & WR_CNTS_MSK) >> WR_CNTS_SHFT;
++        wr_cnts = min(wr_cnts, ctrl->xfer.rem_bytes);
++
++        if (wr_cnts == 0) {
++            if (ctrl->xfer.rem_bytes > 0) {
++                udelay(1);
++                continue;
++            }
++            break;
++        }
++
++        unsigned int words_to_read = wr_cnts / QSPI_BYTES_PER_WORD;
++        unsigned int bytes_to_read = wr_cnts % QSPI_BYTES_PER_WORD;
++        u32 *word_buf;
++        u8 *byte_buf;
++        int i;
++
++        if (words_to_read) {
++            word_buf = ctrl->xfer.rx_buf;
++            ctrl->xfer.rem_bytes -= words_to_read * QSPI_BYTES_PER_WORD;
++            ioread32_rep(ctrl->base + RD_FIFO, word_buf, words_to_read);
++            ctrl->xfer.rx_buf = word_buf + words_to_read;
++        }
++
++        if (bytes_to_read) {
++            u32 rd_fifo;
++            byte_buf = ctrl->xfer.rx_buf;
++            rd_fifo = readl(ctrl->base + RD_FIFO);
++            ctrl->xfer.rem_bytes -= bytes_to_read;
++            for (i = 0; i < bytes_to_read; i++)
++                *byte_buf++ = rd_fifo >> (i * BITS_PER_BYTE);
++            ctrl->xfer.rx_buf = byte_buf;
++        }
++    }
++    return 0;
++}
++
++static int qcom_qspi_pio_write_polling(struct qcom_qspi *ctrl)
++{
++    while (ctrl->xfer.rem_bytes > 0) {
++        const void *xfer_buf = ctrl->xfer.tx_buf;
++        unsigned int wr_fifo_bytes;
++
++        wr_fifo_bytes = readl(ctrl->base + PIO_XFER_STATUS);
++        wr_fifo_bytes >>= WR_FIFO_BYTES_SHFT;
++
++        if (wr_fifo_bytes == 0) {
++            udelay(1);
++            continue;
++        }
++
++        const int *word_buf;
++        const char *byte_buf;
++        unsigned int wr_size;
++        unsigned int rem_words;
++
++        if (ctrl->xfer.rem_bytes < QSPI_BYTES_PER_WORD) {
++            wr_size = min(wr_fifo_bytes, ctrl->xfer.rem_bytes);
++            ctrl->xfer.rem_bytes -= wr_size;
++            byte_buf = xfer_buf;
++            while (wr_size--)
++                writel(*byte_buf++, ctrl->base + PIO_DATAOUT_1B);
++            ctrl->xfer.tx_buf = byte_buf;
++        } else {
++            rem_words = ctrl->xfer.rem_bytes / QSPI_BYTES_PER_WORD;
++            unsigned int wr_fifo_words = wr_fifo_bytes / QSPI_BYTES_PER_WORD;
++            wr_size = min(rem_words, wr_fifo_words);
++            if (wr_size > 0) {
++                ctrl->xfer.rem_bytes -= wr_size * QSPI_BYTES_PER_WORD;
++                word_buf = xfer_buf;
++                iowrite32_rep(ctrl->base + PIO_DATAOUT_4B, word_buf, wr_size);
++                ctrl->xfer.tx_buf = word_buf + wr_size;
++            }
++        }
++    }
++
++    int timeout = 1000000;
++    while (--timeout) {
++        if (readl(ctrl->base + MSTR_INT_STATUS) & TRANSACTION_DONE)
++            return 0;
++        udelay(1);
++    }
++
++    dev_err(ctrl->dev, "Polling write transaction done timed out!\n");
++    return -ETIMEDOUT;
++}
++
+ static int qcom_qspi_transfer_one(struct spi_controller *host,
+ 				  struct spi_device *slv,
+ 				  struct spi_transfer *xfer)
+@@ -471,6 +583,24 @@ static int qcom_qspi_transfer_one(struct spi_controller *host,
+ 	}
+ 	qcom_qspi_pio_xfer(ctrl);
+ 
++	if (ctrl->is_polling) {
++		if (ctrl->xfer.dir == QSPI_READ) {
++			ret = qcom_qspi_pio_read_polling(ctrl);
++		} else {
++			ret = qcom_qspi_pio_write_polling(ctrl);
++		}
++
++		ctrl->xfer.rem_bytes = 0;
++		spin_unlock_irqrestore(&ctrl->lock, flags);
++
++		if (ret) {
++			spi_finalize_current_transfer(host);
++			return ret;
++		}
++
++		return 0;
++	}
++
+ exit:
+ 	spin_unlock_irqrestore(&ctrl->lock, flags);
+ 
+@@ -773,6 +903,10 @@ static int qcom_qspi_probe(struct platform_device *pdev)
+ 	host->handle_err = qcom_qspi_handle_err;
+ 	if (of_property_present(pdev->dev.of_node, "iommus"))
+ 		host->can_dma = qcom_qspi_can_dma;
++
++	if (of_property_present(pdev->dev.of_node, "use-polling"))
++		ctrl->is_polling = true;
++
+ 	host->auto_runtime_pm = true;
+ 	host->mem_ops = &qcom_qspi_mem_ops;
+ 
+-- 
+Armbian
+

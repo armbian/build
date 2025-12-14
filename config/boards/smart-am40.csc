@@ -1,7 +1,8 @@
 # Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi/BT
 BOARD_NAME="SMART AM40"
+BOARD_VENDOR="generic"
 BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="am40-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"

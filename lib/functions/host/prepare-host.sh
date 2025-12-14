@@ -187,7 +187,7 @@ function adaptative_prepare_host_dependencies() {
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		e2fsprogs
 		flex
-		gawk gnupg gpg
+		gawk gettext gnupg gpg
 		imagemagick # required for plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
 		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
@@ -210,7 +210,7 @@ function adaptative_prepare_host_dependencies() {
 		colorized-logs                           # for ansi2html, ansi2txt, pipetty
 		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
 		parted gdisk fdisk                       # partition tools @TODO why so many?
-		aria2 curl axel                          # downloaders et al
+		aria2 curl axel wget                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)

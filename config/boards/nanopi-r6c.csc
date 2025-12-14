@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 8GB RAM SoC eMMC 1x NVMe 1x USB3 1x USB2 1x 2.5GbE 1x GbE
 BOARD_NAME="NanoPi R6C"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
 BOOTCONFIG="nanopi-r6c-rk3588s_defconfig" # Mainline defconfig, enables booting from NVMe
@@ -37,8 +38,8 @@ function post_family_config__nanopi_r6c_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2025.01"
-	declare -g BOOTPATCHDIR="v2025.01"
+	declare -g BOOTBRANCH="tag:v2026.01-rc2"
+	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
@@ -88,6 +89,9 @@ function post_config_uboot_target__extra_configs_for_r6c_mainline() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
 	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
 	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more filesystems support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_BTRFS
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more compression support" "info"
 	run_host_command_logged scripts/config --enable CONFIG_LZO

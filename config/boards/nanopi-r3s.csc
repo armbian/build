@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 2GB RAM eMMC 2x GbE USB3
 BOARD_NAME="NanoPi R3S"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 HAS_VIDEO_OUTPUT="no"
@@ -12,11 +13,12 @@ BOOT_SCENARIO="spl-blobs"
 
 
 function post_family_config__use_mainline_uboot() {
-	if [[ "$BRANCH" != "current" && "$BRANCH" != "edge" ]]; then
+	if [[ "$BRANCH" == "vendor" ]]; then
     	return 0
 	fi
+
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
-	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
+	unset BOOTFS_TYPE
 	BOOTCONFIG="nanopi-r3s-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2025.04"

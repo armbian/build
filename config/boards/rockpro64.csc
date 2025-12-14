@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 2G/4GB SoC GBe eMMC USB3 WiFi
 BOARD_NAME="RockPro 64"
+BOARD_VENDOR="pine64"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="joekhoobyar"
 BOOTCONFIG="rockpro64-rk3399_defconfig"

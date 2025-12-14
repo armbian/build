@@ -113,7 +113,7 @@ function prepare_partitions() {
 	fi
 	# Check if we need boot partition
 	# Specialized storage extensions like cryptroot or lvm may require a boot partition
-	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes) ]]; then
+	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $BOOTPART_REQUIRED == yes) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -324,9 +324,19 @@ function prepare_partitions() {
 
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			luks_key_file="none"
+			if [[ $CRYPTROOT_AUTOUNLOCK == yes ]]; then
+				luks_key_file="/etc/rootfs.key"
+				display_alert "Saving rootfs.key and configuration for autounlock" "(location=${luks_key_file})"
+				mv ${cryptroot_autounlock_key_file:?} ${SDCARD}${luks_key_file}
+				mkdir -p $SDCARD/etc/initramfs-tools/conf.d/
+				echo "UMASK=0077" > $SDCARD/etc/initramfs-tools/conf.d/key-umask.conf
+				echo "" >> $SDCARD/etc/cryptsetup-initramfs/conf-hook
+				echo "KEYFILE_PATTERN=${luks_key_file}" >> $SDCARD/etc/cryptsetup-initramfs/conf-hook
+			fi
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
 			physical_root_part_uuid="$(blkid -s UUID -o value $physical_rootdevice)"
-			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} none luks" >> $SDCARD/etc/crypttab
+			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks" >> $SDCARD/etc/crypttab
 			run_host_command_logged cat $SDCARD/etc/crypttab
 		fi
 

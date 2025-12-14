@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 4/8/16GB RAM SoC GBE USB3 WiFi/BT NVMe eMMC
 BOARD_NAME="Orange Pi 5 Pro"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_5_pro_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
@@ -83,7 +84,7 @@ function pre_customize_image__orangepi5pro_add_phy_driver() {
     
     # Create directory and download .deb (Not installing due to chroot issue with dkms and kernel headers)
     chroot_sdcard mkdir -p /usr/local/share/eth-driver
-    chroot_sdcard wget "https://github.com/dante1613/Motorcomm-YT6801/raw/main/tuxedo-yt6801/${deb_file}" -O "/usr/local/share/eth-driver/${deb_file}"
+    chroot_sdcard curl -fL "https://github.com/dante1613/Motorcomm-YT6801/raw/main/tuxedo-yt6801/${deb_file}" -o "/usr/local/share/eth-driver/${deb_file}"
     
     # Make script to Auto-Install Ethernet Driver Only on first boot
     cat << 'EOF' > "${SDCARD}/usr/local/bin/install-eth-driver.sh"

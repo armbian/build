@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 1-4GB SoC GBe eMMC USB3 WiFi/BT PoE
 BOARD_NAME="Rockpi 4B"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="rock-pi-4-rk3399_defconfig"

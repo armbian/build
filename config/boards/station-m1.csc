@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB-4GB GBE eMMC USB3 WiFi
 BOARD_NAME="Station M1"
+BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3328"
 BOARD_MAINTAINER="150balbes"
@@ -21,11 +22,9 @@ function post_family_tweaks__station_m1() {
 function post_family_config__station_m1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
-	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
-
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 
 	# Disable stuff from rockchip64_common; we're using binman here which does all the work already

@@ -1,5 +1,6 @@
 # Rockchip RK3588 SoC octa core 4-16GB SoC eMMC USB3 NVME
 BOARD_NAME="CoolPi GenBook"
+BOARD_VENDOR="cool-pi"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="andyshrk"
 BOARD_FIRMWARE_INSTALL="-full"
@@ -18,7 +19,7 @@ IMAGE_PARTITION_TABLE="gpt"
 function post_family_config__coolpi-genbook_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # Mainline U-Boot
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	unset BOOTBRANCH
 	declare -g BOOTPATCHDIR="v2025.01-rc3-coolpi-cm5"
 	declare -g BOOTBRANCH_BOARD="tag:v2025.04"

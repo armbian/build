@@ -1,5 +1,6 @@
 # Rockchip RK3528 quad core 1-8GB SoC GBe eMMC USB3 Wifi Bt
 BOARD_NAME="HinLink HT2"
+BOARD_VENDOR="hinlink"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"
 BOARD_MAINTAINER="hoochiwetech"

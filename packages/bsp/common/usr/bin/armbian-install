@@ -181,7 +181,7 @@ create_armbian()
 
 	# count files is needed for progress bar
 	dialog --title " $title " --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 60
-	TODO=$(rsync -avx --delete --stats --exclude-from=$EX_LIST / "${TempDir}"/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
+	TODO=$(rsync -anvx --delete --stats --exclude-from=$EX_LIST / "${TempDir}"/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 	echo -e "\nCopying ${TODO} files to $2. \c" >> $logfile
 
 	# creating rootfs
@@ -194,15 +194,21 @@ create_armbian()
 	echo 0 >"${nsi_conn_progress}"
 	echo no >"${nsi_conn_done}"
 
-	 # Launch rsync in background
-	{ \
-	rsync -avx --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs | \
-	nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
-	> "${nsi_conn_progress}" ;
-	 # create empty persistent journal directory if it exists before install
-	[ -d /var/log.hdd/journal ] && mkdir "${TempDir}"/rootfs/var/log/journal
-	 # save exit code from rsync
-	echo  ${PIPESTATUS[0]} >"${nsi_conn_done}"
+	# Launch rsync in background and stream progress percentages
+	{
+	rsync -avx --delete --exclude-from="$EX_LIST" / "${TempDir}/rootfs" \
+	| stdbuf -oL awk -v todo="${TODO:-1}" '{
+			pct = int((100 * NR) / (todo == 0 ? 1 : todo));
+			if (pct > 100) pct = 100;
+			print pct;
+			fflush();      # ensure the progress file gets new lines promptly
+		}' > "${nsi_conn_progress}"
+
+	# create empty persistent journal dir if it existed before install
+	[ -d /var/log.hdd/journal ] && mkdir -p "${TempDir}/rootfs/var/log/journal"
+
+	# save rsync exit code (first cmd in the pipe)
+	echo ${PIPESTATUS[0]} > "${nsi_conn_done}"
 	} &
 
 	 # while variables
@@ -241,7 +247,7 @@ create_armbian()
 	 This will take approximately $(( $((USAGE/300)) * 1 )) minutes to finish. Please wait!\n\n" 11 80
 
 	# run rsync again to silently catch outstanding changes between / and "${TempDir}"/rootfs/
-	dialog --title "$title" --backtitle "$backtitle" --infobox "\n               Cleaning up ... Almost done." 5 60
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\n    Finalizing file sync ... Please wait." 5 60
 	rsync -avx --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs >/dev/null 2>&1
 
 	# mark OS as transferred
@@ -465,6 +471,8 @@ create_armbian()
 	if [[ $1 == *mtd* ]]; then
 		if [[ -f "${TempDir}"/rootfs/boot/armbianEnv.txt ]]; then
 			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i "${TempDir}"/rootfs/boot/armbianEnv.txt
+			sed -e 's,rootfstype=.*,rootfstype='$FilesystemChoosen',g' -i "${TempDir}"/rootfs/boot/armbianEnv.txt
+			grep -qE '^rootfstype=' "${TempDir}/rootfs/boot/armbianEnv.txt" || echo "rootfstype=$FilesystemChoosen" >> "${TempDir}/rootfs/boot/armbianEnv.txt"
 		fi
 		if [[ -f "${TempDir}"/rootfs/boot/extlinux/extlinux.conf ]]; then
 			sed -e 's,root='"$root_uuid"',root='"$satauuid"',g' -i "${TempDir}"/rootfs/boot/extlinux/extlinux.conf
@@ -668,6 +676,26 @@ format_disk()
 	[[ $? -ne 0 ]] && exit 10
 	FilesystemChoosen=${FilesystemOptions[(2*$FilesystemChoices)-1]}
 
+	if [[ $FilesystemChoosen == *btrfs* ]] && ! command -v mkfs.btrfs; then
+		dialog --yes-label "Install" --no-label 'Deny' --title "$title" --backtitle "$backtitle" --yesno "\nThe btrfs-progs package is not installed.\n\nIt is required to format the root partition as btrfs. Install it now?" 10 75
+		if [[ $? -eq 0 ]]; then
+			dialog --title "$title" --backtitle "$backtitle" --infobox "\nInstalling btrfs-progs ... please wait." 5 60
+			DEBIAN_FRONTEND=noninteractive apt-get update -o 'Dpkg::Use-pTy=0' >> $logfile 2>&1 &&\
+			DEBIAN_FRONTEND=noninteractive apt-get install -y -o 'Dpkg::Use-pTy=0' btrfs-progs >> $logfile 2>&1
+			if [[ ! $? -eq 0 ]]; then
+				dialog --title "$title" --backtitle "$backtitle" --colors --infobox\
+				"\nFailed to install btrfs-progs\n\nThe log file has been written to $logfile" 5 60
+				exit  15
+			fi
+		fi
+
+		if ! command -v mkfs.btrfs; then
+			dialog --title "$title" --backtitle "$backtitle" --colors\
+			--infobox "\nmkfs.btrfs not found, cannot proceed" 5 60
+			exit 12
+		fi
+	fi
+
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating $1 to $FilesystemChoosen ... please wait." 5 60
 	mkfs.${FilesystemChoosen} ${mkopts[$FilesystemChoosen]} "$1" >> $logfile 2>&1
 }
@@ -834,11 +862,14 @@ main()
 	LANG=C echo -e "$(date): Start ${0##*/}.\n" >> $logfile
 
 	# find real mmcblk device numbered 0, 1, 2 for eMMC, SD
+	# On some devices, the eMMC chip does not have a separate boot0(1) partition.
+	# Use the system interface to determine the SD or eMMC memory type.
 	for ret in $(find /dev -name 'mmcblk[0-2]' -and -type b)
 	do
-		if [ -b ${ret}boot0 ];then
+		if [ -b ${ret}boot0 ] || \
+		   [ "$(cat /sys/block/${ret#/dev/}/device/type 2>/dev/null)" == "MMC" ]; then
 			emmc_dev=$ret
-		else
+		elif [ "$(cat /sys/block/${ret#/dev/}/device/type 2>/dev/null)" == "SD" ]; then
 			sd_dev=$ret
 		fi
 	done
@@ -896,6 +927,14 @@ main()
 
 		[[ -n $mtdcheck && \
 		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on MTD Flash')
+	fi
+
+	# show flasher if there are available block devices
+	if command -v armbian-config >/dev/null && [ -x "$(command -v armbian-config)" ]; then
+		armbian-config --api module_images status >/dev/null
+		if [[ $? -eq 0 ]]; then
+			options+=("8" "Download and flash clean image")
+		fi
 	fi
 
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
@@ -979,6 +1018,10 @@ main()
 				;;
 			7)
 				write_uboot_to_mtd_flash "$DIR" "$mtdcheck"
+				return
+				;;
+			8)
+				armbian-config --cmd FLASH1
 				return
 				;;
 

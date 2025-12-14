@@ -10,6 +10,7 @@ declare -g SERIALCON="${SERIALCON:-tty1}"            # Consistent serial console
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 declare -g DISTRO_GENERIC_KERNEL=no
+declare -g POWER_MANAGEMENT_FEATURES=yes             # Suspend and resume might work well in UEFI, elsewhere is disabled by default
 
 case "${BRANCH}" in
 
@@ -41,7 +42,7 @@ case "${BRANCH}" in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.16"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		;;
 esac
 
@@ -58,7 +59,7 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g ATF_COMPILE="no"
 
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
-	declare -g BOOTBRANCH='tag:v2025.01'
+	declare -g BOOTBRANCH='tag:v2025.10'
 	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot' # Gotta set this again, it is unset by grub extension
 
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"

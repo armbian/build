@@ -1,5 +1,6 @@
 # Mediatek MT7988a quad core Cortex-A73 4/8GB RAM 8GB EMMC mPci USB3.0 4xGBE
 BOARD_NAME="Banana Pi R4"
+BOARD_VENDOR="sinovoip"
 BOARDFAMILY="filogic"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current"
@@ -8,6 +9,7 @@ BOOTCONFIG="mt7988a_bananapi_bpi-r4-sdmmc_defconfig"
 BOOT_FDT_FILE="mediatek/mt7988a-bananapi-bpi-r4-sd.dtb"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n1 earlyprintk loglevel=8 initcall_debug=0 swiotlb=512 cgroup_enable cgroup_memory=1 init=/sbin/init"
+HAS_VIDEO_OUTPUT="no"
 
 function post_family_tweaks__bpi-r4() {
 	display_alert "Applying eth blobs"
