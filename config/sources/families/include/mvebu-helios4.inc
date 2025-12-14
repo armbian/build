@@ -75,7 +75,7 @@ family_tweaks_bsp() {
 		tr ' ' '\n' <<< "$MODULES_LEGACY" > "${destination}"/etc/modules
 	fi
 
-	display_alert "Adding to bsp-cli" "${BOARD}: postinst for bluetooth service" "info"
+	display_alert "Adding to bsp-cli" "${BOARD}: postinst for mdadm and wol service" "info"
 	# Define a function to be run board-side during postinst of the BSP
 	postinst_functions+=("board_side_helios4_bsp_cli_postinst_mdadm") # add to the postinst function list
 	function board_side_helios4_bsp_cli_postinst_mdadm() {
