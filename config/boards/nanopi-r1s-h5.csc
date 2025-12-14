@@ -1,5 +1,6 @@
 # Allwinner H5 quad core 512MB RAM 2 x GBE USB2
 BOARD_NAME="NanoPi R1S H5"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun50iw2"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_r1s_h5_defconfig"

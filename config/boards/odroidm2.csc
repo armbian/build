@@ -1,5 +1,6 @@
 # Rockchip RK3588s SoC octa core 4-16GB SoC eMMC USB3 NvME
 BOARD_NAME="Odroid M2"
+BOARD_VENDOR="hardkernel"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="mlegenovic"
 BOOT_SOC="rk3588"

@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 4/8GB RAM SoC WIFI/BT eMMC USB2 USB3 NVMe PCIe GbE HDMI SPI
 BOARD_NAME="Orange Pi 3B"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-3b-rk3566_defconfig"

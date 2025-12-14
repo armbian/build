@@ -1,5 +1,6 @@
 # Rockchip RK3588 octa core 4/8/16GB RAM SoC SPI NVMe 2x USB2 2x USB3 HDMI HDMI-in
 BOARD_NAME="Orange Pi 5 Ultra"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-5-ultra-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate

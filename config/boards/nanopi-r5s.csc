@@ -1,5 +1,6 @@
 # Rockchip RK3568 quad core 4GB RAM eMMC NVMe 2x USB3 1x GbE 2x 2.5GbE
 BOARD_NAME="NanoPi R5S"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="utlark"
 BOOT_SOC="rk3568"

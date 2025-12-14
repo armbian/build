@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 1/2/4/8GB RAM WiFi/BT or GBE HDMI USB-C
 BOARD_NAME="Radxa ZERO 3"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-zero3-rk3566_defconfig"

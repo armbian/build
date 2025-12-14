@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 2GB RAM eMMC 2x GbE USB3
 BOARD_NAME="NanoPi R3S"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 HAS_VIDEO_OUTPUT="no"

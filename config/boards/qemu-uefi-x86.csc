@@ -12,6 +12,7 @@
 #     should be added here - when it make sense :)
 #
 declare -g BOARD_NAME="UEFI x86 (QEMU)"
+declare -g BOARD_VENDOR="intel-amd"
 declare -g BOARDFAMILY="uefi-x86"
 declare -g BOARD_MAINTAINER=""
 declare -g KERNEL_TARGET="current,edge,legacy"
