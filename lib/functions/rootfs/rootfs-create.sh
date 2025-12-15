@@ -310,8 +310,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 	fi
 
-	# APA installs the desktop/CLI environment and dependencies
-	install_apa_hook__rename_me #FIXME: rename this hook
+	call_extension_method "post_debootstrap_install_additional_packages" <<- 'POST_DEBOOTSTRAP_INSTALL_ADDITIONAL_PACKAGES'
+		*installs packages not handled by aggregation/debootstrap*
+	POST_DEBOOTSTRAP_INSTALL_ADDITIONAL_PACKAGES
 
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
 	# lets check only for supported targets only unless forced
