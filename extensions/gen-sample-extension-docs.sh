@@ -29,12 +29,12 @@ function read_common_data() {
 function loop_over_hook_points_and_call() {
 	local callback="$1"
 	HOOK_POINT_COUNTER=0
+	declare one_hook_point
 	for one_hook_point in ${ALL_HOOK_POINT_CALLS}; do
-		declare -g HOOK_POINT_COUNTER=$((HOOK_POINT_COUNTER + 1))
-		declare -g HOOK_POINT="${one_hook_point}"
-		declare -g MARKDOWN_HEAD="$(head -1 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
-		declare -g MARKDOWN_BODY="$(tail -n +2 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
-		declare -g COMPATIBILITY_NAMES="$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.compat")"
+		declare HOOK_POINT_COUNTER=$((HOOK_POINT_COUNTER + 1))
+		declare MARKDOWN_HEAD="$(head -1 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
+		declare MARKDOWN_BODY="$(tail -n +2 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
+		declare COMPATIBILITY_NAMES="$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.compat")"
 		${callback}
 	done
 }
@@ -117,9 +117,9 @@ generate_bash_sample_for_hook_point() {
 	cat << SAMPLE_BASH_CODE
 ${COMMENT_HEAD}
 ${COMMENT_BODY}
-function ${HOOK_POINT}__be_more_awesome() {
-	# @TODO: Please rename this function to reflect what it does, but preserve the "${HOOK_POINT}__" prefix.
-	display_alert "Being awesome at \${HOOK_POINT}" "\${EXTENSION}" "info"
+function ${one_hook_point}__be_more_awesome() {
+	# @TODO: Please rename this function to reflect what it does, but preserve the "${one_hook_point}__" prefix.
+	display_alert "Being awesome at ${one_hook_point}" "\${EXTENSION}" "info"
 }
 
 SAMPLE_BASH_CODE
