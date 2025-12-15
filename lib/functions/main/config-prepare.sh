@@ -28,8 +28,10 @@ function prep_conf_main_build_single() {
 
 	LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
 
-	interactive_desktop_main_configuration
-	interactive_finish # cleans up vars used for interactive
+	if [[ ! $APA_IS_ACTIVE ]]; then
+		interactive_desktop_main_configuration
+		interactive_finish # cleans up vars used for interactive
+	fi
 
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
@@ -358,7 +360,7 @@ function check_config_userspace_release_and_desktop() {
 		fi
 
 		# Desktop sanity checks, in the same vein.
-		if [[ "${DESKTOP_ENVIRONMENT}" != "" && ! $APA_IS_ACTIVE ]]; then
+		if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
 
 			# If DESKTOP_ENVIRONMENT is set, but BUILD_DESKTOP is not, then we have a problem.
 			if [[ "${BUILD_DESKTOP}" != "yes" ]]; then

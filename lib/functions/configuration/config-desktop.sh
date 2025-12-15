@@ -77,7 +77,6 @@ function desktop_environment_check_if_valid() {
 
 function interactive_desktop_main_configuration() {
 	[[ $BUILD_DESKTOP != "yes" ]] && return 0 # Only for desktops.
-	[[ $APA_IS_ACTIVE ]] || return 0 # APA takes care of installing desktop packages
 
 	DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
 	DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
