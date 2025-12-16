@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sun, 12 Oct 2025 21:23:10 +0200
+Subject: drm/sun4i: mixer: Move layer enabling to atomic_update
+
+Enable or disable layer only in layer atomic update callback. Doing so
+will enable having separate layer driver later for DE33.
+
+There is no fear that enable bit would be set incorrectly, as all
+read-modify-write sequences for that register are now eliminated.
+
+Reviewed-by: Chen-Yu Tsai <wens@kernel.org>
+Tested-by: Ryan Walklin <ryan@testtoast.com>
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c    | 24 ----------
+ drivers/gpu/drm/sun4i/sun8i_ui_layer.c | 13 ++++-
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c | 13 ++++-
+ 3 files changed, 24 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -250,24 +250,6 @@ int sun8i_mixer_drm_format_to_hw(u32 format, u32 *hw_format)
+ 	return -EINVAL;
+ }
+ 
+-static void sun8i_layer_enable(struct sun8i_layer *layer, bool enable)
+-{
+-	u32 ch_base = sun8i_channel_base(layer->mixer, layer->channel);
+-	u32 val, reg, mask;
+-
+-	if (layer->type == SUN8I_LAYER_TYPE_UI) {
+-		val = enable ? SUN8I_MIXER_CHAN_UI_LAYER_ATTR_EN : 0;
+-		mask = SUN8I_MIXER_CHAN_UI_LAYER_ATTR_EN;
+-		reg = SUN8I_MIXER_CHAN_UI_LAYER_ATTR(ch_base, layer->overlay);
+-	} else {
+-		val = enable ? SUN8I_MIXER_CHAN_VI_LAYER_ATTR_EN : 0;
+-		mask = SUN8I_MIXER_CHAN_VI_LAYER_ATTR_EN;
+-		reg = SUN8I_MIXER_CHAN_VI_LAYER_ATTR(ch_base, layer->overlay);
+-	}
+-
+-	regmap_update_bits(layer->mixer->engine.regs, reg, mask, val);
+-}
+-
+ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 			       struct drm_crtc *crtc,
+ 			       struct drm_atomic_state *state)
+@@ -304,12 +286,6 @@ static void sun8i_mixer_commit(struct sunxi_engine *engine,
+ 				 plane->base.id, layer->channel, layer->overlay,
+ 				 enable, zpos, x, y, w, h);
+ 
+-		/*
+-		 * We always update the layer enable bit, because it can clear
+-		 * spontaneously for unknown reasons.
+-		 */
+-		sun8i_layer_enable(layer, enable);
+-
+ 		if (!enable)
+ 			continue;
+ 
+diff --git a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+@@ -25,6 +25,15 @@
+ #include "sun8i_ui_scaler.h"
+ #include "sun8i_vi_scaler.h"
+ 
++static void sun8i_ui_layer_disable(struct sun8i_mixer *mixer,
++				   int channel, int overlay)
++{
++	u32 ch_base = sun8i_channel_base(mixer, channel);
++
++	regmap_write(mixer->engine.regs,
++		     SUN8I_MIXER_CHAN_UI_LAYER_ATTR(ch_base, overlay), 0);
++}
++
+ static void sun8i_ui_layer_update_attributes(struct sun8i_mixer *mixer,
+ 					     int channel, int overlay,
+ 					     struct drm_plane *plane)
+@@ -201,8 +210,10 @@ static void sun8i_ui_layer_atomic_update(struct drm_plane *plane,
+ 	struct sun8i_layer *layer = plane_to_sun8i_layer(plane);
+ 	struct sun8i_mixer *mixer = layer->mixer;
+ 
+-	if (!new_state->crtc || !new_state->visible)
++	if (!new_state->crtc || !new_state->visible) {
++		sun8i_ui_layer_disable(mixer, layer->channel, layer->overlay);
+ 		return;
++	}
+ 
+ 	sun8i_ui_layer_update_attributes(mixer, layer->channel,
+ 					 layer->overlay, plane);
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -18,6 +18,15 @@
+ #include "sun8i_vi_layer.h"
+ #include "sun8i_vi_scaler.h"
+ 
++static void sun8i_vi_layer_disable(struct sun8i_mixer *mixer,
++				   int channel, int overlay)
++{
++	u32 ch_base = sun8i_channel_base(mixer, channel);
++
++	regmap_write(mixer->engine.regs,
++		     SUN8I_MIXER_CHAN_VI_LAYER_ATTR(ch_base, overlay), 0);
++}
++
+ static void sun8i_vi_layer_update_attributes(struct sun8i_mixer *mixer,
+ 					     int channel, int overlay,
+ 					     struct drm_plane *plane)
+@@ -320,8 +329,10 @@ static void sun8i_vi_layer_atomic_update(struct drm_plane *plane,
+ 	struct sun8i_layer *layer = plane_to_sun8i_layer(plane);
+ 	struct sun8i_mixer *mixer = layer->mixer;
+ 
+-	if (!new_state->crtc || !new_state->visible)
++	if (!new_state->crtc || !new_state->visible) {
++		sun8i_vi_layer_disable(mixer, layer->channel, layer->overlay);
+ 		return;
++	}
+ 
+ 	sun8i_vi_layer_update_attributes(mixer, layer->channel,
+ 					 layer->overlay, plane);
+-- 
+Armbian
+

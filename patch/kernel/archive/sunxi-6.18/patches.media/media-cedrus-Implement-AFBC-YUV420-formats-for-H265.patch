@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sun, 8 Oct 2023 12:44:59 +0200
+Subject: media: cedrus: Implement AFBC YUV420 formats for H265
+
+AFBC output formats are more performant, since they are optimized for
+more efficient memory operations and transfers.
+
+Add support for them.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h       | 11 +++
+ drivers/staging/media/sunxi/cedrus/cedrus_h265.c  |  3 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_hw.c    | 16 +++++
+ drivers/staging/media/sunxi/cedrus/cedrus_regs.h  |  6 ++
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 36 ++++++++++
+ 5 files changed, 71 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -273,6 +273,17 @@ cedrus_is_capable(struct cedrus_ctx *ctx, unsigned int capabilities)
+ 	return (ctx->dev->capabilities & capabilities) == capabilities;
+ }
+ 
++static inline bool is_afbc_format(u32 format)
++{
++	switch (format) {
++	case V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT:
++	case V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ void *cedrus_find_control_data(struct cedrus_ctx *ctx, u32 id);
+ u32 cedrus_get_num_of_controls(struct cedrus_ctx *ctx, u32 id);
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -120,7 +120,8 @@ static void cedrus_h265_frame_info_write_single(struct cedrus_ctx *ctx,
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 	dma_addr_t dst_luma_addr = cedrus_dst_buf_addr(ctx, buf, 0);
+-	dma_addr_t dst_chroma_addr = cedrus_dst_buf_addr(ctx, buf, 1);
++	dma_addr_t dst_chroma_addr = is_afbc_format(ctx->dst_fmt.pixelformat) ?
++				     0 : cedrus_dst_buf_addr(ctx, buf, 1);
+ 	dma_addr_t mv_col_buf_addr[2] = {
+ 		cedrus_h265_frame_info_mv_col_buf_addr(buf, 0),
+ 		cedrus_h265_frame_info_mv_col_buf_addr(buf, field_pic ? 1 : 0)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -65,6 +65,18 @@ int cedrus_engine_enable(struct cedrus_ctx *ctx)
+ 		reg |= VE_MODE_PIC_WIDTH_IS_4096;
+ 	if (ctx->src_fmt.width > 2048)
+ 		reg |= VE_MODE_PIC_WIDTH_MORE_2048;
++	/*
++	 * NOTE: Not sure if RGB default color feature is part of official
++	 * AFBC standard or not and if it is, which feature that is. However,
++	 * in order to render it properly with display engine, default color
++	 * has to be set to white there.
++	 */
++	if (is_afbc_format(ctx->dst_fmt.pixelformat))
++		reg |= VE_MODE_COMPRESS_EN |
++		       VE_MODE_MIN_VAL_WRAP_EN |
++		       VE_MODE_RGB_DEF_COLOR_EN |
++		       VE_MODE_BODYBUF_1K_ALIGNED |
++		       VE_MODE_COMPRESS_MODE_AFBC;
+ 
+ 	cedrus_write(ctx->dev, VE_MODE, reg);
+ 
+@@ -85,6 +97,10 @@ void cedrus_dst_format_set(struct cedrus_dev *dev,
+ 	u32 reg;
+ 
+ 	switch (fmt->pixelformat) {
++	case V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT:
++	case V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT:
++		/* format is already set in cedrus_engine_enable() */
++		break;
+ 	case V4L2_PIX_FMT_NV12:
+ 	case V4L2_PIX_FMT_NV21:
+ 	case V4L2_PIX_FMT_YUV420:
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+@@ -35,12 +35,18 @@
+ 
+ #define VE_MODE					0x00
+ 
++#define VE_MODE_COMPRESS_EN			BIT(29)
++#define VE_MODE_MIN_VAL_WRAP_EN			BIT(27)
++#define VE_MODE_RGB_DEF_COLOR_EN		BIT(26)
+ #define VE_MODE_PIC_WIDTH_IS_4096		BIT(22)
+ #define VE_MODE_PIC_WIDTH_MORE_2048		BIT(21)
+ #define VE_MODE_REC_WR_MODE_2MB			(0x01 << 20)
+ #define VE_MODE_REC_WR_MODE_1MB			(0x00 << 20)
+ #define VE_MODE_DDR_MODE_BW_128			(0x03 << 16)
+ #define VE_MODE_DDR_MODE_BW_256			(0x02 << 16)
++#define VE_MODE_BODYBUF_1K_ALIGNED		BIT(12)
++#define VE_MODE_COMPRESS_MODE_LOSSLESS		(0x00 << 4)
++#define VE_MODE_COMPRESS_MODE_AFBC		(0x01 << 4)
+ #define VE_MODE_DISABLED			(0x07 << 0)
+ #define VE_MODE_DEC_H265			(0x04 << 0)
+ #define VE_MODE_DEC_H264			(0x01 << 0)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -55,6 +55,22 @@ static struct cedrus_format cedrus_formats[] = {
+ 		.directions	= CEDRUS_DECODE_SRC,
+ 		.capabilities	= CEDRUS_CAPABILITY_VP8_DEC,
+ 	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
++		.directions	= CEDRUS_DECODE_DST,
++		.capabilities	= CEDRUS_CAPABILITY_UNTILED |
++				  CEDRUS_CAPABILITY_H265_10_DEC,
++		.depth		= 10,
++		.src_format	= V4L2_PIX_FMT_HEVC_SLICE,
++	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT,
++		.directions	= CEDRUS_DECODE_DST,
++		.capabilities	= CEDRUS_CAPABILITY_UNTILED |
++				  CEDRUS_CAPABILITY_H265_10_DEC,
++		.depth		= 8,
++		.src_format	= V4L2_PIX_FMT_HEVC_SLICE,
++	},
+ 	{
+ 		.pixelformat	= V4L2_PIX_FMT_NV12,
+ 		.directions	= CEDRUS_DECODE_DST,
+@@ -173,6 +189,26 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
+ 		sizeimage += bytesperline * height / 2;
+ 
+ 		break;
++
++	case V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT:
++		/* Zero bytes per line for compressed destination. */
++		bytesperline = 0;
++
++		sizeimage = DIV_ROUND_UP(width, 16) *
++			    DIV_ROUND_UP(height + 4, 16) * (512 + 16) +
++			    32 + SZ_1K;
++
++		break;
++
++	case V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT:
++		/* Zero bytes per line for compressed destination. */
++		bytesperline = 0;
++
++		sizeimage = DIV_ROUND_UP(width, 16) *
++			    DIV_ROUND_UP(height + 4, 16) * (384 + 16) +
++			    32 + SZ_1K;
++
++		break;
+ 	}
+ 
+ 	pix_fmt->width = width;
+-- 
+Armbian
+
