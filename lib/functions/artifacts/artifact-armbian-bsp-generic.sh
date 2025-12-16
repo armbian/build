@@ -44,6 +44,7 @@ function artifact_armbian-bsp-generic_prepare_version() {
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common" # common stuff
+		"${SRC}/config/optional/_any_board/_packages/bsp-generic"
 	)
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
@@ -63,7 +64,6 @@ function artifact_armbian-bsp-generic_prepare_version() {
 	declare -a reasons=(
 		"Armbian package armbian-bsp-generic"
 		"BRANCH \"${BRANCH}\""
-		"EXTRA_BSP_NAME \"${EXTRA_BSP_NAME}\""
 		"Packages and config files hash \"${packages_config_hash}\""
 		"Hooks hash \"${hash_hooks}\""
 		"Variables/bootscripts hash \"${vars_config_hash}\""
@@ -113,7 +113,7 @@ function artifact_armbian-bsp-generic_cli_adapter_pre_run() {
 
 function artifact_armbian-bsp-generic_cli_adapter_config_prep() {
 	# there is no need for aggregation here.
-	use_board="no" allow_no_family="no" skip_kernel="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+	use_board="no" allow_no_family="yes" skip_kernel="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_armbian-bsp-generic_get_default_oci_target() {
