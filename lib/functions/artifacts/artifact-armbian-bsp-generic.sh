@@ -25,17 +25,9 @@ function artifact_armbian-bsp-generic_prepare_version() {
 	# Generic package has no board/family hooks
 	declare hash_hooks_short="0000"
 
-	# get the bootscript info...
-	declare -A bootscript_info=()
-	get_bootscript_info # fills in bootscript_info array
-
-	# Hash variables/bootscripts that affect the contents of bsp-generic package.
+	# Hash variables that affect the contents of bsp-generic package.
 	# Those contain /armbian a lot, so don't normalize them.
-	#FIXME: what's a bootscript for bsp-generic?
-	declare -a vars_to_hash_no_normalize=(
-		"bootscript_file_contents: ${bootscript_info[bootscript_file_contents]}"
-		"bootenv_file_contents: ${bootscript_info[bootenv_file_contents]}"
-	)
+	declare -a vars_to_hash_no_normalize=()
 	declare hash_variables="undetermined"                                                     # will be set by calculate_hash_for_variables(), but without normalization
 	do_normalize_src_path="no" calculate_hash_for_variables "${vars_to_hash_no_normalize[@]}" # don't normalize
 	declare hash_vars_no_normalize="${hash_variables}"
