@@ -220,7 +220,7 @@ function install_distribution_agnostic() {
 			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/%/".dtbo"}")
 			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/#/"${bootpart_prefix}dtb/${BOOT_FDT_FILE%%/*}/overlay/${OVERLAY_PREFIX}-"}")
 
-			display_alert "Adding to extlinux.conf" "fdtoverlays=${DEFAULT_OVERLAYS_ARR[*]}" "debug"
+			display_alert "Adding to extlinux.conf" "fdtoverlays=${DEFAULT_OVERLAYS_ARR[*]}" "debug" #"
 			echo "  fdtoverlays ${DEFAULT_OVERLAYS_ARR[*]}" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
 
@@ -403,6 +403,8 @@ function install_distribution_agnostic() {
 		fi
 	fi
 
+	#FIXME: this belongs in rootfs not image
+	install_artifact_deb_chroot "armbian-bsp-generic"
 	# install board support packages
 	install_artifact_deb_chroot "armbian-bsp-cli"
 
