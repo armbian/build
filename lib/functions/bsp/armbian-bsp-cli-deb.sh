@@ -351,16 +351,16 @@ function compile_armbian-bsp-generic() {
 	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
 	### preinst
 	#FIXME: this mentions boards, is this relevant to bsp-generic? see below for postrm & postinst too
-	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst "${preinst_functions[@]}"
-	unset board_side_bsp_cli_preinst
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_generic_preinst "${preinst_functions[@]}"
+	unset board_side_bsp_generic_preinst "${preinst_functions[@]}"
 
 	### postrm
-	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm "${postrm_functions[@]}"
-	unset board_side_bsp_cli_postrm
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_generic_postrm "${postrm_functions[@]}"
+	unset board_side_bsp_generic_postrm "${postrm_functions[@]}"
 
 	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
-	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
-	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
+	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_generic_postinst_base "${postinst_functions[@]}" board_side_bsp_generic_postinst_finish
+	unset board_side_bsp_generic_postinst_base board_side_bsp_generic_postinst_finish "${postinst_functions[@]}"
 
 	# fixing permissions (basic), reference: dh_fixperms
 	find "${destination}" -print0 2> /dev/null | xargs -0r chown --no-dereference 0:0
@@ -480,8 +480,14 @@ function board_side_bsp_cli_postinst_update_uboot_bootscript() {
 		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr > /dev/null 2>&1
 	fi
 }
+function board_side_bsp_generic_postinst_update_uboot_bootscript() {
+/bin/true
+}
 
 function board_side_bsp_cli_preinst() {
+/bin/true
+}
+function board_side_bsp_generic_preinst() {
 	# tell people to reboot at next login
 	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
 
@@ -538,7 +544,11 @@ function board_side_bsp_cli_preinst() {
 	)
 }
 
-function board_side_bsp_cli_postrm() { # not run here
+function board_side_bsp_cli_postrm() {
+/bin/true
+}
+function board_side_bsp_generic_postrm() { # not run here
+#FIXME: if/when zram vs hardware-monitor etc are split, this gets more complicated
 	if [[ remove == "$1" ]] || [[ abort-install == "$1" ]]; then
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
@@ -547,6 +557,9 @@ function board_side_bsp_cli_postrm() { # not run here
 }
 
 function board_side_bsp_cli_postinst_base() {
+/bin/true
+}
+function board_side_bsp_generic_postinst_base() {
 	# Source the armbian-release information file
 	# shellcheck source=/dev/null
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
@@ -570,6 +583,9 @@ function board_side_bsp_cli_postinst_base() {
 }
 
 function board_side_bsp_cli_postinst_finish() {
+/bin/true
+}
+function board_side_bsp_generic_postinst_finish() {
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
