@@ -300,6 +300,11 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 	fi
 
+	# customization hook after debootstrap phase
+	call_extension_method "post_debootstrap_customize" <<- 'POST_DEBOOTSTRAP_CUSTOMIZE'
+		allow customization of rootfs after debootstrap has completed
+	POST_DEBOOTSTRAP_CUSTOMIZE
+
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
 	# lets check only for supported targets only unless forced
 	if [[ "${DISTRIBUTION_STATUS}" == "supported" && "${FORCE_CHECK_MD5_PACKAGES:-"no"}" == "yes" ]]; then
