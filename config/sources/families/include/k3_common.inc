@@ -42,7 +42,7 @@ case "${BRANCH}" in
 esac
 
 ATF_PLAT="k3"
-ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_K3_USART_OFFSET} ${ATF_EXTRA_ARGS[@]} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
+ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_ARGS} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
 
 UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
 
