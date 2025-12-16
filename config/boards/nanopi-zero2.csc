@@ -1,5 +1,6 @@
 # Rockchip RK3528 quad core 1/2GB RAM SoC GBe eMMC USB2 USB-C PCIe 2.1
 BOARD_NAME="NanoPi Zero2"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"
 KERNEL_TARGET="vendor"
