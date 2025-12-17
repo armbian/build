@@ -266,6 +266,7 @@ function kernel_package_callback_linux_image() {
 		Section: kernel
 		Priority: optional
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules
+		Conflicts: linux-image
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
 		 ${artifact_version_reason:-"${kernel_version_family}"}
