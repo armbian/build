@@ -1,7 +1,7 @@
 # SpacemiT M1 octa core RISC-V SoC 8GB/16GB RAM 64GB/128GB eMMC 4x USB3 1x GbE
 BOARD_NAME="SpacemiT MusePi Pro"
 BOARDFAMILY="spacemit"
-BOARD_MAINTAINER="pyavitz"
+BOARD_MAINTAINER=""
 BOARD_VENDOR="spacemit"
 KERNEL_TARGET="current,edge"
 BOOT_FDT_FILE="spacemit/k1-musepi-pro.dtb"
