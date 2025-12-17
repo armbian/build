@@ -83,7 +83,7 @@ function compile_armbian-bsp-cli() {
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Section: kernel
-		Priority: optional
+		Priority: required
 		Recommends: bsdutils, parted, util-linux, toilet
 		Description: Armbian CLI BSP for board '${BOARD}' branch '${BRANCH}' ${extra_description[@]}
 	EOF
