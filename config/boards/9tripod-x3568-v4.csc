@@ -1,6 +1,6 @@
 # Rockchip RK3568 quad core 2GB-8GB RAM SoC 2 x GBE eMMC USB3 WiFi/BT PCIe SATA NVMe
 BOARD_NAME="9Tripod X3568 v4"
-BOARD_VENDOR="generic"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="rbqvq"
 KERNEL_TARGET="current,edge"

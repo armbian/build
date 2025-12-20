@@ -1,6 +1,6 @@
 # Amlogic A311D 2GB RAM 16GB eMMC GBE USB3 RTL8822CS WiFi/BT
 BOARD_NAME="CAINIAO CNIoT-CORE"
-BOARD_VENDOR="generic"
+BOARD_VENDOR="amlogic"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="cainiao-cniot-core_defconfig"
