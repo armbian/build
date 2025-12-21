@@ -7,7 +7,7 @@ declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-core3588e.dtb" # same name vendor and edge
 declare -g BOOT_SCENARIO="spl-blobs"
 declare -g BOOT_SOC="rk3588"
-declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # vendor name
+declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # same name vendor and edge
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does NOT have a UEFI_EDK2_BOARD_ID
 
@@ -47,9 +47,9 @@ function post_family_config__core3588e_use_mainline_uboot() {
 		return 0
 	fi
 
-	display_alert "$BOARD" "mainline (generic) u-boot overrides for $BOARD / $BRANCH" "info"
+	display_alert "$BOARD" "mainline u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="generic-rk3588_defconfig"
+	declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # custom / not mainline yet
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2026.01-rc4"
@@ -65,4 +65,63 @@ function post_family_config__core3588e_use_mainline_uboot() {
 	}
 
 	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
+}
+
+# "rockchip-common: boot SD card first, then NVMe, then mmc"
+# include/configs/rockchip-common.h
+# On the mixtile-core3588e: mmc0 is eMMC; mmc1 is microSD
+# Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
+function pre_config_uboot_target__core3588e_patch_rockchip_common_boot_order() {
+	if [[ "${BRANCH}" != "edge" ]]; then
+		return 0
+	fi
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
+}
+
+function post_config_uboot_target__extra_configs_for_nanopct6_mainline_environment_in_spi() {
+	if [[ "${BRANCH}" != "edge" ]]; then
+		return 0
+	fi
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable board-specific configs" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MISC
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
+	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led sys_led on; sleep 0.1; led sys_led off'" # double quotes required due to run_host_command_logged's quirks
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
+	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
+	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more filesystems support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_BTRFS
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more compression support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LZO
+	run_host_command_logged scripts/config --enable CONFIG_BZIP2
+	run_host_command_logged scripts/config --enable CONFIG_ZSTD
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable gpio LED support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LED
+	run_host_command_logged scripts/config --enable CONFIG_LED_GPIO
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable networking cmds" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_NFS
+	run_host_command_logged scripts/config --enable CONFIG_CMD_WGET
+	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	# UMS, RockUSB, gadget stuff
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	for config in "${enable_configs[@]}"; do
+		run_host_command_logged scripts/config --enable "${config}"
+	done
+	# Auto-enabled by the above, force off...
+	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
 }
