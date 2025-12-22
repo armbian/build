@@ -7,7 +7,7 @@ declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-core3588e.dtb" # same name vendor and edge
 declare -g BOOT_SCENARIO="spl-blobs"
 declare -g BOOT_SOC="rk3588"
-declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # same name vendor and edge
+declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # edge/mainline
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does NOT have a UEFI_EDK2_BOARD_ID
 
@@ -24,42 +24,24 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 #   - Recovery "button" (NOT real "Maskrom"): "jumper cap to connect the FCREC and GND pins"; this depends on u-boot actually working (not bricked)
 #   - OTG/Maskrom port is micro-USB port
 #   - The "real" maskrom is to short two tiny solder-joints near the SoC on the SoM; see https://dh19rycdk230a.cloudfront.net/app/uploads/2023/11/solder-joints.png
-
-# Vendor u-boot; use the default family (rockchip-rk3588) u-boot. See config/sources/families/rockchip-rk3588.conf
-function post_family_config__vendor_uboot_core3588e() {
-	if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
-		display_alert "$BOARD" "Using vendor u-boot for $BOARD on branch $BRANCH" "info"
-	else
-		return 0
-	fi
-
-	display_alert "$BOARD" "Configuring $BOARD vendor u-boot (using Radxa's older next-dev-v2024.03)" "info"
-	declare -g BOOTDELAY=1 # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
-
-	# Override the stuff from rockchip-rk3588 family; a patch for stable MAC address that breaks with Radxa's next-dev-v2024.10+
-	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
-	declare -g BOOTBRANCH='branch:next-dev-v2024.03'     # NOT next-dev-v2024.10
-	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx" # Patches from https://github.com/Joshua-Riek/ubuntu-rockchip/blob/main/packages/u-boot-radxa-rk3588/debian/patches/0002-board-rockchip-Add-the-Mixtile-Core-3588E.patch
-}
+# - Pinout of the LEETOP carrier board: https://www.cnx-software.com/wp-content/uploads/2023/12/Leetop-A206-40-pin-GPIO-header-pintout.png
+#   - pin 1 is 3.3v; pin 6 and 9 and 25 are GND;
+#   - pin 3 is SDA; pin 5 is SCL --> i2c-5 confirmed (mainline kernel) // i2c-1 confirmed (vendor kernel)
+#   - pin 27 is SDA; pin 28 is SCL --> unconfirmed
+#   - pin 8 is UART TX; pin 10 is UART RX --> uart1 unconfirmed
 
 function post_family_config__core3588e_use_mainline_uboot() {
-	if [[ "${BRANCH}" != "edge" ]]; then
-		return 0
-	fi
-
 	display_alert "$BOARD" "mainline u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # custom / not mainline yet
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2026.01-rc4"
 	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
-	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin" # NOT u-boot-rockchip-spi.bin
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd                                 # disable stuff from rockchip64_common; we're using binman here which does all the work already
+	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
-	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
@@ -69,23 +51,15 @@ function post_family_config__core3588e_use_mainline_uboot() {
 
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
 # include/configs/rockchip-common.h
-# On the mixtile-core3588e: mmc0 is eMMC; mmc1 is microSD
-# Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
+# On the mixtile-core3588e: mmc0 is eMMC; mmc1 is microSD (which doesn't really exist/work)
 function pre_config_uboot_target__core3588e_patch_rockchip_common_boot_order() {
-	if [[ "${BRANCH}" != "edge" ]]; then
-		return 0
-	fi
-	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "scsi" "usb" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
 	regular_git diff -u include/configs/rockchip-common.h || true
 }
 
-function post_config_uboot_target__extra_configs_for_nanopct6_mainline_environment_in_spi() {
-	if [[ "${BRANCH}" != "edge" ]]; then
-		return 0
-	fi
-
+function post_config_uboot_target__extra_configs_for_core3588e_mainline_environment_in_spi() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable board-specific configs" "info"
 	run_host_command_logged scripts/config --enable CONFIG_CMD_MISC
 
