@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2025 JetHome
+# This file is a part of the Armbian Build Framework https://github.com/armbian/build/
+#
+
 # Extension: jethub-burn
 # Automatically converts Armbian .img into burn image after build
 
@@ -6,22 +12,18 @@
 function bootstrap_tools() {
   local repo_url="https://github.com/jethome-iot/jethome-tools.git"
   local ref="commit:87be932dceb6135c99dfc5a105a6345eff954f2c"
-  local name="jethub-burn"
-  local base="${SRC}/cache/sources/${name}"
 
   display_alert "jethub-burn" "Fetching jethome-tools (${ref})..." "info"
-  fetch_from_repo "${repo_url}" "${name}" "${ref}"
+  fetch_from_repo "${repo_url}" "jethome-tools" "${ref}"
 
-  local packer_path
-  packer_path="$(find "${base}" -maxdepth 12 -type f -path '*/tools/aml_image_v2_packer_new' -print -quit)"
-  [[ -n "${packer_path}" ]] || exit_with_error "aml_image_v2_packer_new not found under ${base}"
-
-  declare -g TOOLS_DIR="$(dirname "$(dirname "${packer_path}")")"
-  declare -g PACKER="${packer_path}"
+  declare -g TOOLS_DIR="${SRC}/cache/sources/jethome-tools"
+  declare -g PACKER="${TOOLS_DIR}/tools/aml_image_v2_packer_new"
   declare -g BINS_DIR="${TOOLS_DIR}/bins"
   declare -g DTS_DIR="${TOOLS_DIR}/dts"
   declare -g DTBTOOLS_DIR="${TOOLS_DIR}/dtbtools"
   declare -g IMAGE_CFG="${BINS_DIR}/image.armbian.cfg"
+
+  [[ -x "${PACKER}" ]] || exit_with_error "aml_image_v2_packer_new not found at ${PACKER}"
 
   display_alert "jethub-burn" "Tools ready (packer: ${PACKER})" "ok"
 }
@@ -36,8 +38,8 @@ function make_burn__run() {
 
   local -r bins="${BINS_DIR}/${bins_subdir}"
   local tmpdir; tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' RETURN
 
+  [[ -n "${version}" ]] || exit_with_error "version is not set"
   local -r OUT_IMG="${DESTIMG}/${version}.burn.img"
 
   display_alert "make_burn" "Building burn image for ${board}" "info"
@@ -55,19 +57,20 @@ function make_burn__run() {
   "$tmpdir/dtbTool" -o "$tmpdir/_aml_dtb.PARTITION" "$tmpdir"
   display_alert "make_burn" "_aml_dtb.PARTITION built" "info"
 
-  display_alert "make_burn" "Extracting partitions (losetup -P)..." "info"
-  local loopdev
-  loopdev="$(losetup --find --show -P "$input_img")" || exit_with_error "losetup failed for $input_img"
-  trap 'losetup -d "$loopdev" 2>/dev/null || true; rm -rf "$tmpdir"' RETURN
+  display_alert "make_burn" "Extracting partitions..." "info"
 
-  local i=1 found=0
-  for p in $(ls -1 "${loopdev}"p* 2>/dev/null | sort -V); do
-    found=1
-    display_alert "make_burn" "Copying $(basename "$p") → part-$i.img" "info"
-    dd if="$p" of="$tmpdir/part-$i.img" bs=4M status=none || exit_with_error "dd failed for $p"
+  # Extract partitions using sfdisk to get offsets
+  local i=1 start size line
+  while IFS= read -r line; do
+    start=$(echo "$line" | sed 's/.*start= *\([0-9]*\).*/\1/')
+    size=$(echo "$line" | sed 's/.*size= *\([0-9]*\).*/\1/')
+    display_alert "make_burn" "Extracting partition $i (start=$start, size=$size)" "info"
+    dd if="$input_img" of="$tmpdir/part-$i.img" bs=512 skip="$start" count="$size" status=none || exit_with_error "dd failed for partition $i"
     i=$((i+1))
-  done
-  [[ $found -eq 1 ]] || exit_with_error "No partitions detected on $input_img"
+  done < <(sfdisk -d "$input_img" 2>/dev/null | grep 'start=')
+
+  [[ $i -gt 1 ]] || exit_with_error "No partitions found in $input_img"
+  [[ $i -eq 2 ]] || exit_with_error "Expected 1 partition, more than 1 partition is unsupported in $input_img"
 
   cp "$bins/platform.conf" "$tmpdir/"
   cp "$bins/DDR.USB"       "$tmpdir/"
@@ -80,6 +83,8 @@ function make_burn__run() {
 
   [[ -f "$OUT_IMG" ]] || exit_with_error "Burn image not produced"
   display_alert "make_burn" "Burn image created: $(basename "$OUT_IMG")" "ok"
+
+  rm -rf "${tmpdir}"
 }
 
 function post_build_image__900_jethub_burn() {
@@ -88,13 +93,14 @@ function post_build_image__900_jethub_burn() {
   local -r original_image_file="${DESTIMG}/${version}.img"
   [[ -f "$original_image_file" ]] || exit_with_error "Original image not found: $original_image_file"
 
-  local dts_name bins_subdir
+  local dts_name
   case "${BOARD}" in
-    jethubj80)  dts_name="meson-gxl-s905w-jethome-jethub-j80.dts";  bins_subdir="j80"  ;;
-    jethubj100) dts_name="meson-axg-jethome-jethub-j100.dts";       bins_subdir="j100" ;;
-    jethubj200) dts_name="meson-sm1-jethome-jethub-j200.dts";       bins_subdir="j200" ;;
-    *) exit_with_error "Unsupported board: ${BOARD} (supported: j80, j100, j200)";;
+    jethubj80)  dts_name="meson-gxl-s905w-jethome-jethub-j80.dts" ;;
+    jethubj100) dts_name="meson-axg-jethome-jethub-j100.dts" ;;
+    jethubj200) dts_name="meson-sm1-jethome-jethub-j200.dts" ;;
+    *) exit_with_error "Unsupported board: ${BOARD} (supported: j80, j100, j200)" ;;
   esac
+  local -r bins_subdir="${BOARD#jethub}"  # jethubj80 → j80
 
   display_alert "Converting image to Amlogic burn format" "jethub-burn :: ${BOARD}" "info"
 
@@ -105,13 +111,14 @@ function post_build_image__900_jethub_burn() {
   uboot_deb=$(find "${debs_dir}" -maxdepth 1 -type f -name "linux-u-boot-${BOARD}-*.deb" | sort -V | tail -n1)
   [[ -n "${uboot_deb}" ]] || exit_with_error "u-boot deb not found for ${BOARD}"
   local tmp_dir; tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' RETURN
   mkdir -p "${tmp_dir}/deb-uboot"
   dpkg -x "${uboot_deb}" "${tmp_dir}/deb-uboot"
   uboot_bin=$(find "${tmp_dir}/deb-uboot/usr/lib" -type f -name "u-boot.nosd.bin" | head -n1)
   [[ -n "${uboot_bin}" ]] || exit_with_error "u-boot.nosd.bin not found in deb"
 
   make_burn__run "${original_image_file}" "${BOARD}" "${dts_name}" "${bins_subdir}" "${uboot_bin}"
+
+  rm -rf "${tmp_dir}"
 
   display_alert "jethub-burn" "Burn image prepared (pre-checksum stage)" "ok"
 }
