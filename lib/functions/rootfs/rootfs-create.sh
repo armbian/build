@@ -138,6 +138,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 			;;
 	esac
 
+	# Clear GIT_FIXED_WORKDIR after use to prevent it from affecting subsequent fetch_from_repo calls
+	unset GIT_FIXED_WORKDIR
+
 	run_host_command_logged chmod a+x "${debootstrap_bin}"
 	display_alert "${LOG_NAME} version" "'${debootstrap_version}' for ${debootstrap_bin}" "info"
 
