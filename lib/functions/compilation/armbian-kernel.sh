@@ -426,6 +426,7 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_y+=("XFRM")                      # Enables transform (XFRM) framework support
 	opts_m+=("XFRM_ALGO")                 # Enables cryptographic algorithm support for XFRM
 	opts_m+=("XFRM_USER")                 # Enables user space XFRM framework support
+	opts_m+=("EROFS_FS")                  # Extended ReadOnly FS, useful for docker images
 }
 
 # Enables live system access to the kernel configuration via /proc/config.gz.
