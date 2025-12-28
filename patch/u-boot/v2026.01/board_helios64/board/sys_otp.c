@@ -223,7 +223,6 @@ void set_board_info(void)
 int mac_read_from_otp(void)
 {
 	unsigned int i;
-	int ret;
 
 	if (!is_data_valid())
 		return -1;
@@ -245,5 +244,5 @@ int mac_read_from_otp(void)
 			eth_env_set_enetaddr(enetvar, otp.mac_addr[i]);
 	}
 
-	return ret;
+	return 0;
 }
