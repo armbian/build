@@ -528,9 +528,7 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 
 		for opt_m in "${opts_m[@]}"; do
 			actual_opt_value='m'
-			if egrep -q "(CONFIG_)?${opt_m}=m" "${kernel_config_source_filename}"; then
-				: # do nothing
-			elif egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
+			if egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}"; then
 				actual_opt_value='y'
 			fi
 			kernel_config_set_${actual_opt_value} "${opt_m}"
