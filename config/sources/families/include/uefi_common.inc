@@ -22,7 +22,7 @@ case "${BRANCH}" in
 		;;
 	cloud)
 		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
 		declare -g EXTRAWIFI="no"
@@ -34,11 +34,11 @@ case "${BRANCH}" in
 		;;
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		;;
 
 	edge)
