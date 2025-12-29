@@ -36,7 +36,7 @@ GOVERNOR=${GOVERNOR:-ondemand}
 case $BRANCH in
 
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		;;
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="6.19"
