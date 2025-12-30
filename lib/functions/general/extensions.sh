@@ -495,10 +495,10 @@ function enable_extension() {
 		exit 17 # exit, forcibly. no way we can recover from this, and next extensions will get bogus errors as well.
 	fi
 
-	local before_function_list after_function_list new_function_list
+	local -a before_function_list after_function_list new_function_list
 
 	# store a list of existing functions at this point, before sourcing the extension.
-	before_function_list="$(compgen -A function)"
+	mapfile -t before_function_list < <(compgen -A function)
 
 	# shellcheck disable=SC1090
 	source "${extension_file}"
@@ -507,14 +507,21 @@ function enable_extension() {
 	enable_extension_recurse_counter=$((enable_extension_recurse_counter - 1))
 
 	# get a new list of functions after sourcing the extension
-	after_function_list="$(compgen -A function)"
+	mapfile -t after_function_list < <(compgen -A function)
 
-	# compare before and after, thus getting the functions defined by the extension.
-	# comm is oldskool. we like it. go "man comm" to understand -13 below
-	new_function_list="$(comm -13 <(echo "$before_function_list" | sort) <(echo "$after_function_list" | sort))"
+	# compare before and after lists without relying on external sort/comm implementations
+	declare -A before_function_lookup=()
+	for existing_function in "${before_function_list[@]}"; do
+		before_function_lookup["${existing_function}"]=1
+	done
+	for candidate_function in "${after_function_list[@]}"; do
+		[[ -v before_function_lookup["${candidate_function}"] ]] && continue
+		new_function_list+=("${candidate_function}")
+		before_function_lookup["${candidate_function}"]=1
+	done
 
 	# iterate over defined functions, store them in global associative array extension_function_info
-	for newly_defined_function in ${new_function_list}; do
+	for newly_defined_function in "${new_function_list[@]}"; do
 		# Check if "${newly_defined_function}" is already defined in the extension_function_info array, if not, add it
 		# This is to address the recursive case messing up references
 		[[ -v extension_function_info["${newly_defined_function}"] ]] && continue
