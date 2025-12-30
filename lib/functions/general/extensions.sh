@@ -510,8 +510,8 @@ function enable_extension() {
 	after_function_list="$(compgen -A function)"
 
 	# compare before and after, thus getting the functions defined by the extension.
-	# comm is oldskool. we like it. go "man comm" to understand -13 below
-	new_function_list="$(comm -13 <(echo "$before_function_list" | sort) <(echo "$after_function_list" | sort))"
+	# Avoid comm for uutils coreutils compatibility
+	new_function_list="$(grep -vxFf <(echo "$before_function_list") <(echo "$after_function_list") || true)"
 
 	# iterate over defined functions, store them in global associative array extension_function_info
 	for newly_defined_function in ${new_function_list}; do
