@@ -3,12 +3,17 @@
 #
 name: Watchdog (cronjob)
 on:
+  push:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: read
+
 env:
-  GH_TOKEN: ${{ secrets.ACCESS_TOKEN_ARMBIANWORKER }}
+  GH_TOKEN: ${{ github.token }}
 
 concurrency:
   group: watchdog-${{ github.ref }}
@@ -33,14 +38,42 @@ jobs:
         run: |
 
           # Define variables here
-          OWNER_REPO="armbian/build"
+          OWNER_REPO="${{ github.repository }}"
           ATTEMPTS="6"
           SCRIPT="${{ matrix.script }}"
 
-          WORKFLOW=$(gh api "/repos/${OWNER_REPO}/actions/workflows" | jq '.workflows[] | select(.path==".github/workflows/'${{ matrix.script }}'.yml")' | jq -r '.id')
-          read ID STATUS ATTEMPT <<< $(gh api "/repos/${OWNER_REPO}/actions/workflows/${WORKFLOW}/runs" | jq '.workflow_runs[]' | jq -r '.id,.conclusion,.run_attempt' | head -3 | xargs -n3 -d'\n')
+          echo "Looking for workflow: ${SCRIPT}.yml in ${OWNER_REPO}"
 
-          # if attempt is lower then 5 and status is "cancelled" or "failed", rerun failed jobs
-          if [ "${ATTEMPT}" -lt "${ATTEMPTS}" ] && ([ "$STATUS" == "failure" ] || [ "$STATUS" == "failure" ]); then
-          gh api --method POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /repos/${OWNER_REPO}/actions/runs/${ID}/rerun-failed-jobs
+          # Get workflow ID
+          WORKFLOW=$(gh api "/repos/${OWNER_REPO}/actions/workflows" | jq '.workflows[] | select(.path==".github/workflows/'${{ matrix.script }}'.yml")' | jq -r '.id')
+
+          if [[ -z "$WORKFLOW" ]]; then
+            echo "Error: Workflow '${SCRIPT}.yml' not found"
+            exit 1
+          fi
+
+          echo "Found workflow ID: ${WORKFLOW}"
+
+          # Get the most recent run
+          RUN_DATA=$(gh api "/repos/${OWNER_REPO}/actions/workflows/${WORKFLOW}/runs" | jq '.workflow_runs[0]')
+          ID=$(echo "$RUN_DATA" | jq -r '.id')
+          STATUS=$(echo "$RUN_DATA" | jq -r '.conclusion')
+          ATTEMPT=$(echo "$RUN_DATA" | jq -r '.run_attempt')
+
+          if [[ -z "$ID" ]]; then
+            echo "Error: No workflow runs found"
+            exit 1
+          fi
+
+          echo "Run ID: ${ID}, Status: ${STATUS}, Attempt: ${ATTEMPT}/${ATTEMPTS}"
+
+          # if attempt is lower than 6 and status is "failed", rerun failed jobs
+          if [[ "${ATTEMPT}" -lt "${ATTEMPTS}" ]] && [[ "$STATUS" == "failure" ]]; then
+            echo "Rerunning failed jobs for run ${ID}"
+            gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${OWNER_REPO}/actions/runs/${ID}/rerun-failed-jobs"
+          else
+            echo "No rerun needed. Attempt: ${ATTEMPT}, Status: ${STATUS}"
           fi
