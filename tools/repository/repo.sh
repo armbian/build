@@ -222,7 +222,10 @@ process_release() {
 			mkdir -p "${output_folder}/public"
 			# Use rsync to copy published repo files to shared location
 			# NO --delete flag - we want to preserve other releases' files
-			rsync -a "${publish_dir}/public/" "${output_folder}/public/" 2>&1 | logger -t repo-management
+			if ! rsync -a "${publish_dir}/public/" "${output_folder}/public/" 2>&1 | logger -t repo-management; then
+				log "ERROR: Failed to copy published files for $release"
+				return 1
+			fi
 			log "Copied files for $release to ${output_folder}/public/"
 		fi
 	fi
@@ -239,6 +242,18 @@ process_release() {
 	# Get GPG keys from environment or use defaults
 	local gpg_key="${GPG_KEY:-DF00FAF1C577104B50BF1D0093D6889F9F0E78D5}"
 	local gpg_params=("--yes" "--armor" "-u" "$gpg_key")
+
+	# Validate GPG key format (40 hex chars for full fingerprint, 16 for short form)
+	if [[ ! "$gpg_key" =~ ^[0-9A-Fa-f]{40}$ ]] && [[ ! "$gpg_key" =~ ^[0-9A-Fa-f]{16}$ ]]; then
+		log "ERROR: Invalid GPG key format: $gpg_key"
+		return 1
+	fi
+
+	# Check if key exists in keyring
+	if ! gpg --list-secret-keys "$gpg_key" >/dev/null 2>&1; then
+		log "ERROR: GPG key $gpg_key not found in keyring"
+		return 1
+	fi
 
 	# First, create component-level Release files by copying from binary-amd64 Release
 	# This is needed because aptly only creates Release files in binary-* subdirs
@@ -484,6 +499,10 @@ case $3 in
 
 		# Change to public directory and start HTTP server
 		cd "$output/public" || return 1
+		if ! command -v python3 &> /dev/null; then
+			log "ERROR: python3 not found. Install python3 to use serve command."
+			return 1
+		fi
 		python3 -m http.server "${serve_port}" --bind "${serve_ip}"
 		return 0
 	;;
@@ -492,7 +511,7 @@ case $3 in
 		cat tools/repository/header.html
 		for release in "${DISTROS[@]}"; do
 		echo "<thead><tr><td colspan=3><h2>$release</h2></tr><tr><th>Main</th><th>Utils</th><th>Desktop</th></tr></thead>"
-		echo "<tbody><tr><td width=33% valing=top>"
+		echo "<tbody><tr><td width=33% valign=top>"
 		aptly repo show -with-packages -config="${CONFIG}" "${release}-utils" | tail -n +7 | sed 's/.*/&<br>/'
 		echo "</td><td width=33% valign=top>" | sudo tee -a ${filename}
 		aptly repo show -with-packages -config="${CONFIG}" "${release}-desktop" | tail -n +7 | sed 's/.*/&<br>/'
@@ -556,7 +575,7 @@ case $3 in
 			fi
 			aptly db cleanup -config="${CONFIG}" > /dev/null 2>&1
 			# remove empty folders
-			find $2/public -type d -empty -print -exec rm -rf {} \;
+			find "$2/public" -type d -empty -delete
 		done
 		;;
 
@@ -589,7 +608,15 @@ esac
 input="output/debs-beta"
 output="output/repository"
 command="show"
-releases=$(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3 | xargs | sed -e 's/ /,/g')
+if [[ -d "config/distributions" ]]; then
+	releases=$(grep -rw config/distributions/*/support -ve 'eos' 2>/dev/null | cut -d"/" -f3 | xargs | sed -e 's/ /,/g')
+	if [[ -z "$releases" ]]; then
+		log "WARNING: No releases found in config/distributions"
+	fi
+else
+	log "WARNING: config/distributions directory not found"
+	releases=""
+fi
 
 help()
 {
@@ -648,7 +675,10 @@ Common snapshot is created in each worker's isolated DB from root packages.
 
 SHORT=i:,l:,o:,c:,p:,r:,h,j:,d,k,R:
 LONG=input:,list:,output:,command:,password:,releases:,help,parallel-jobs:,dry-run,keep-sources,single-release:
-OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@")
+if ! OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@"); then
+	help
+	exit 1
+fi
 
 # Note: Logging now uses syslog/journalctl - view with: journalctl -t repo-management -f
 

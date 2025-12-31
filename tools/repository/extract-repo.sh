@@ -160,7 +160,7 @@ get_packages_from_component() {
 
     if [[ -n "$packages_file" && -f "$packages_file" ]]; then
         # Extract package filenames from Packages file
-        grep -E '^Filename:' "$packages_file" | sed 's/Filename: //'
+        grep -E '^Filename:' "$packages_file" | sed 's/Filename: //' || true
     fi
 }
 
