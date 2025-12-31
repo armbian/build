@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 
-# Global variables for parallel execution and dry-run modes
+# Global variables for dry-run modes
 DRY_RUN=false              # Full dry-run: don't make any repository changes
 KEEP_SOURCES=false         # Keep source packages when adding to repo (don't delete)
-PARALLEL_JOBS=0
-PARALLEL_MODE=false
 SINGLE_RELEASE=""          # Process only a single release (for parallel GitHub Actions)
 
 # Logging function - uses syslog, view with: journalctl -t repo-management -f
@@ -336,34 +334,15 @@ publishing(){
 		distributions=($(grep -rw config/distributions/*/support -ve '' | cut -d"/" -f3))
 	fi
 
-	# Process releases either in parallel or sequentially
-	if [[ "$PARALLEL_MODE" == true && "$PARALLEL_JOBS" -gt 1 && -z "$SINGLE_RELEASE" ]]; then
-		log "Processing ${#distributions[@]} releases in parallel with $PARALLEL_JOBS jobs"
-
-		# Export functions needed for parallel execution
-		export -f adding_packages
-		export -f log
-		export CONFIG
-		export DRY_RUN
-		export KEEP_SOURCES
-
-		# Use GNU parallel if available, else use xargs
-		if command -v parallel &> /dev/null; then
-			printf "%s\n" "${distributions[@]}" | parallel -j "$PARALLEL_JOBS" process_release {} "$1" "$2" "$4"
-		else
-			# Fallback to xargs for parallel execution
-			printf "%s\n" "${distributions[@]}" | xargs -P "$PARALLEL_JOBS" -I {} bash -c "process_release '{}' '$1' '$2' '$4'"
-		fi
+	# Process releases sequentially
+	if [[ -n "$SINGLE_RELEASE" ]]; then
+		log "Processing single release: ${distributions[0]}"
 	else
-		if [[ -n "$SINGLE_RELEASE" ]]; then
-			log "Processing single release: ${distributions[0]}"
-		else
-			log "Processing ${#distributions[@]} releases sequentially"
-		fi
-		for release in "${distributions[@]}"; do
-			process_release "$release" "$1" "$2" "$4"
-		done
+		log "Processing ${#distributions[@]} releases sequentially"
 	fi
+	for release in "${distributions[@]}"; do
+		process_release "$release" "$1" "$2" "$4"
+	done
 
 # cleanup
 aptly db cleanup -config="${CONFIG}"
@@ -652,8 +631,6 @@ Usage: $0 [ -short | --long ]
                              (implies --keep-sources, shows what would be done)
 -k --keep-sources            keep source packages when adding to repository
                              (generates real repo but doesn't delete input packages)
--j --parallel-jobs [N]       number of parallel jobs for release processing (default: 0=disabled)
-                             requires GNU parallel or will fall back to xargs
 
 GitHub Actions parallel workflow example:
   # Step 1: Build common (main) component once (optional - workers will create it if missing)
@@ -673,8 +650,8 @@ Common snapshot is created in each worker's isolated DB from root packages.
     exit 2
 }
 
-SHORT=i:,l:,o:,c:,p:,r:,h,j:,d,k,R:
-LONG=input:,list:,output:,command:,password:,releases:,help,parallel-jobs:,dry-run,keep-sources,single-release:
+SHORT=i:,l:,o:,c:,p:,r:,h,d,k,R:
+LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,single-release:
 if ! OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@"); then
 	help
 	exit 1
@@ -711,13 +688,6 @@ do
       ;;
     -l | --list )
       list="$2"
-      shift 2
-      ;;
-    -j | --parallel-jobs )
-      PARALLEL_JOBS="$2"
-      if [[ "$PARALLEL_JOBS" -gt 0 ]]; then
-        PARALLEL_MODE=true
-      fi
       shift 2
       ;;
     -k | --keep-sources )
@@ -811,12 +781,6 @@ if [[ -n "$SINGLE_RELEASE" ]]; then
     echo "=========================================="
 fi
 
-if [[ "$PARALLEL_MODE" == true ]]; then
-    echo "=========================================="
-    echo "PARALLEL MODE ENABLED"
-    echo "Number of parallel jobs: $PARALLEL_JOBS"
-    echo "=========================================="
-fi
 
 # main
 repo-manipulate "$input" "$output" "$command" "$password" "$releases" "$list"
