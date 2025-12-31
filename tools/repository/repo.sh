@@ -7,9 +7,9 @@ PARALLEL_JOBS=0
 PARALLEL_MODE=false
 SINGLE_RELEASE=""          # Process only a single release (for parallel GitHub Actions)
 
-# Logging function
+# Logging function - uses syslog, view with: journalctl -t repo-management -f
 log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | sudo tee -a "${DEBUGFILE}"
+    logger -t repo-management "$*"
 }
 
 # Dry-run aware command execution
@@ -128,7 +128,7 @@ update_main() {
 
 	# Create common repo if it doesn't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-		aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 	fi
 
 	# Add packages from main folder
@@ -136,11 +136,11 @@ update_main() {
 
 	# Drop old snapshot
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		aptly -config="${CONFIG}" snapshot drop common | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 	fi
 
 	# Create snapshot
-	aptly -config="${CONFIG}" snapshot create common from repo common | sudo tee -a "${DEBUGFILE}" >/dev/null
+	aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 
 	log "Common component built successfully"
 }
@@ -166,19 +166,19 @@ process_release() {
 
 		# Create empty common repo
 		if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | sudo tee -a "${DEBUGFILE}" >/dev/null
+			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 		fi
 
 		# Create snapshot (will be empty until update-main is run)
-		aptly -config="${CONFIG}" snapshot create common from repo common | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	fi
 
 	# Create repos if they don't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-		aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | logger -t repo-management >/dev/null
 	fi
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-		aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | logger -t repo-management >/dev/null
 	fi
 
 	# Add packages ONLY from release-specific extra folders
@@ -187,15 +187,15 @@ process_release() {
 
 	# Drop old snapshots
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-		aptly -config="${CONFIG}" snapshot drop ${release}-utils | sudo tee -a "${DEBUGFILE}" 2>/dev/null
+		aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
 	fi
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-		aptly -config="${CONFIG}" snapshot drop ${release}-desktop | sudo tee -a "${DEBUGFILE}" 2>/dev/null
+		aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
 	fi
 
 	# Create new snapshots
-	aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | sudo tee -a "${DEBUGFILE}" >/dev/null
-	aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | sudo tee -a "${DEBUGFILE}" >/dev/null
+	aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
+	aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
 
 	# Determine publish directory based on mode
 	local publish_dir="$output_folder"
@@ -222,7 +222,7 @@ process_release() {
 			mkdir -p "${output_folder}/public"
 			# Use rsync to copy published repo files to shared location
 			# NO --delete flag - we want to preserve other releases' files
-			rsync -a "${publish_dir}/public/" "${output_folder}/public/" 2>&1 | sudo tee -a "${DEBUGFILE}"
+			rsync -a "${publish_dir}/public/" "${output_folder}/public/" 2>&1 | logger -t repo-management
 			log "Copied files for $release to ${output_folder}/public/"
 		fi
 	fi
@@ -251,7 +251,7 @@ process_release() {
 
 			if [[ -f "$source_release" && ! -f "$target_release" ]]; then
 				log "Creating component Release file: ${target_release}"
-				cp "$source_release" "$target_release" 2>&1 | sudo tee -a "${DEBUGFILE}"
+				cp "$source_release" "$target_release" 2>&1 | logger -t repo-management
 			fi
 		fi
 	done
@@ -267,8 +267,8 @@ process_release() {
 		log "Signing: ${release_file}"
 		local sign_dir="$(dirname "$release_file")"
 
-		if gpg "${gpg_params[@]}" --clear-sign -o "${sign_dir}/InRelease" "$release_file" 2>&1 | sudo tee -a "${DEBUGFILE}" >/dev/null; then
-			gpg "${gpg_params[@]}" --detach-sign -o "${sign_dir}/Release.gpg" "$release_file" 2>&1 | sudo tee -a "${DEBUGFILE}" >/dev/null
+		if gpg "${gpg_params[@]}" --clear-sign -o "${sign_dir}/InRelease" "$release_file" 2>&1 | logger -t repo-management >/dev/null; then
+			gpg "${gpg_params[@]}" --detach-sign -o "${sign_dir}/Release.gpg" "$release_file" 2>&1 | logger -t repo-management >/dev/null
 			log "Successfully signed: ${release_file}"
 		else
 			log "ERROR: Failed to sign: ${release_file}"
@@ -293,7 +293,7 @@ publishing(){
 	if [[ -z "$SINGLE_RELEASE" ]]; then
 		# this repository contains packages that are the same in all releases.
 		if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | sudo tee -a "${DEBUGFILE}" >/dev/null
+			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 		fi
 
 		# add packages from main folder
@@ -302,9 +302,9 @@ publishing(){
 		# create snapshot
 		UNIQUE_NAME=$(date +%s)
 		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		aptly -config="${CONFIG}" snapshot drop common | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 		fi
-		aptly -config="${CONFIG}" snapshot create common from repo common | sudo tee -a "${DEBUGFILE}" >/dev/null
+		aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	else
 		# Single-release mode: ensure common snapshot exists (should be created by update-main)
 		if [[ -z $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
@@ -331,7 +331,6 @@ publishing(){
 		export CONFIG
 		export DRY_RUN
 		export KEEP_SOURCES
-		export DEBUGFILE
 
 		# Use GNU parallel if available, else use xargs
 		if command -v parallel &> /dev/null; then
@@ -404,7 +403,7 @@ signing() {
         if [[ $slash_count -eq 2 ]]; then
             local distro_path
             distro_path="$(dirname "$release_file")"
-            echo "Signing release at: $distro_path" | sudo tee -a "$DEBUGFILE"
+            echo "Signing release at: $distro_path" | logger -t repo-management
             gpg "${gpg_params[@]}" --clear-sign -o "$distro_path/InRelease" "$release_file"
             gpg "${gpg_params[@]}" --detach-sign -o "$distro_path/Release.gpg" "$release_file"
         fi
@@ -650,7 +649,8 @@ Common snapshot is created in each worker's isolated DB from root packages.
 SHORT=i:,l:,o:,c:,p:,r:,h,j:,d,k,R:
 LONG=input:,list:,output:,command:,password:,releases:,help,parallel-jobs:,dry-run,keep-sources,single-release:
 OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@")
-DEBUGFILE="/var/log/repo-management.log"
+
+# Note: Logging now uses syslog/journalctl - view with: journalctl -t repo-management -f
 
 VALID_ARGUMENTS=$# # Returns the count of arguments that are in short or long options
 
@@ -741,7 +741,7 @@ if [[ -n "$SINGLE_RELEASE" ]]; then
 		# Use rsync with hard links to avoid duplicating package files
 		# -H, --hard-links: hard link files from source
 		# --delete: remove files in target that don't exist in source
-		rsync -aH --delete "${output}/pool/" "${IsolatedRootDir}/pool/" 2>&1 | sudo tee -a "${DEBUGFILE}"
+		rsync -aH --delete "${output}/pool/" "${IsolatedRootDir}/pool/" 2>&1 | logger -t repo-management
 	fi
 
 	# Create temp config file
