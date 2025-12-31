@@ -504,6 +504,10 @@ repo-manipulate() {
 		# Since aptly serve requires published repos in its database, and we use
 		# direct file publishing, we'll use Python's HTTP server instead
 		local serve_ip=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1)
+		if [[ -z "$serve_ip" ]]; then
+			log "WARNING: No external IP found, using 0.0.0.0"
+			serve_ip="0.0.0.0"
+		fi
 		local serve_port="${SERVE_PORT:-8080}"
 
 		if [[ ! -d "$output/public" ]]; then
