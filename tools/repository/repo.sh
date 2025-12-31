@@ -387,7 +387,7 @@ publishing() {
 	cp config/armbian.key "${2}"/public/
 
 	# Write repository sync control file
-	sudo date +%s > ${2}/public/control
+	date +%s > ${2}/public/control
 
 	# Display repository contents
 	showall
