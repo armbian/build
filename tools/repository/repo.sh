@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 
-# Global variables for dry-run modes
+# Global variables
 DRY_RUN=false              # Full dry-run: don't make any repository changes
 KEEP_SOURCES=false         # Keep source packages when adding to repo (don't delete)
-SINGLE_RELEASE=""          # Process only a single release (for parallel GitHub Actions)
+SINGLE_RELEASE=""          # Process only a single release (for GitHub Actions parallel workflow)
 
-# Logging function - uses syslog, view with: journalctl -t repo-management -f
+# Logging function - uses syslog, view logs with: journalctl -t repo-management -f
+# Arguments:
+#   $* - Message to log
 log() {
     logger -t repo-management "$*"
 }
 
-# Dry-run aware command execution
+# Execute a command, respecting dry-run mode
+# In dry-run mode, logs what would be executed without actually running it
+# Arguments:
+#   $* - Command to execute
+# Returns:
+#   Command exit status (0 in dry-run mode)
 run_cmd() {
     local cmd="$*"
     if [[ "$DRY_RUN" == true ]]; then
@@ -23,100 +30,127 @@ run_cmd() {
     fi
 }
 
-# Drop unsupported releases
+# Drop published repositories that are no longer supported
+# Identifies and removes published repositories for releases that are no longer
+# in config/distributions/*/support (excluding 'eos')
+# Arguments:
+#   $1 - "all" to drop all published repositories, otherwise drops only unsupported ones
 drop_unsupported_releases() {
+	local supported_releases=()
+	local published_repos=()
+	local repos_to_drop=()
 
+	# Determine which releases should be kept
 	if [[ "$1" == "all" ]]; then
-		log "Cleanup: dropping published repositories"
-		BUILD_FW=()
+		log "Cleanup: dropping all published repositories"
+		supported_releases=()
 	else
-		log "Cleanup: dropping unsupported"
-		BUILD_FW=($(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3))
+		log "Cleanup: dropping unsupported releases"
+		supported_releases=($(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3))
 	fi
 
-	REPO=($(aptly publish list -config="${CONFIG}" --raw | sed "s/. //g"))
-	DROP=()
-	for i in "${REPO[@]}"; do
-	skip=
-		for j in "${BUILD_FW[@]}"; do
-		[[ $i == $j ]] && { skip=1; break ; }
+	# Get currently published repositories
+	published_repos=($(aptly publish list -config="${CONFIG}" --raw | sed "s/. //g"))
+
+	# Find repos to drop (published but not supported)
+	for repo in "${published_repos[@]}"; do
+		local should_keep=false
+		for supported in "${supported_releases[@]}"; do
+			[[ "$repo" == "$supported" ]] && { should_keep=true; break; }
 		done
-		[[ -n $skip ]] || DROP+=("$i")
+		[[ "$should_keep" == false ]] && repos_to_drop+=("$repo")
 	done
 
-	# drop
-	for i in "${DROP[@]}"; do
-		run_cmd aptly publish drop -config="${CONFIG}" "${i}"
+	# Drop the identified repositories
+	for repo in "${repos_to_drop[@]}"; do
+		run_cmd aptly publish drop -config="${CONFIG}" "${repo}"
+	done
+}
+# Display contents of all repositories
+# Shows packages in the common repository and release-specific repositories (utils, desktop)
+# Uses global DISTROS array for iteration
+showall() {
+	echo "Displaying common repository contents"
+	aptly repo show -with-packages -config="${CONFIG}" common 2>/dev/null | tail -n +7
+
+	for release in "${DISTROS[@]}"; do
+		# Only show if the repo exists
+		if aptly repo show -config="${CONFIG}" "${release}-utils" &>/dev/null; then
+			echo "Displaying repository contents for $release-utils"
+			aptly repo show -with-packages -config="${CONFIG}" "${release}-utils" | tail -n +7
+		fi
+		if aptly repo show -config="${CONFIG}" "${release}-desktop" &>/dev/null; then
+			echo "Displaying repository contents for $release-desktop"
+			aptly repo show -with-packages -config="${CONFIG}" "${release}-desktop" | tail -n +7
+		fi
 	done
 }
 
 
-# Display repository content
-#
-showall(){
-		echo "Displaying common repository contents"
-		aptly repo show -with-packages -config="${CONFIG}" common 2>/dev/null | tail -n +7
-		for release in "${DISTROS[@]}"; do
-			# Only show if the repo exists
-			if aptly repo show -config="${CONFIG}" "${release}-utils" &>/dev/null; then
-				echo "Displaying repository contents for $release-utils"
-				aptly repo show -with-packages -config="${CONFIG}" "${release}-utils" | tail -n +7
-			fi
-			if aptly repo show -config="${CONFIG}" "${release}-desktop" &>/dev/null; then
-				echo "Displaying repository contents for $release-desktop"
-				aptly repo show -with-packages -config="${CONFIG}" "${release}-desktop" | tail -n +7
-			fi
-		done
-}
-
-
-# Adding package
-#
-# @arg $1 string component
-# @arg $2 string incoming folder
-# @arg $3 string description
-# @arg $4 input folder
-#
+# Add packages to an aptly repository component
+# Processes .deb files from a source directory, optionally repacking BSP packages
+# to pin kernel versions, then adds them to the specified repository
+# Arguments:
+#   $1 - Repository component name (e.g., "common", "jammy-utils")
+#   $2 - Subdirectory path relative to input folder (e.g., "", "/extra/jammy-utils")
+#   $3 - Description (unused, for documentation only)
+#   $4 - Base input folder containing packages
 adding_packages() {
-# add deb files to repository if they are not already there
-	if ! find "${4}${2}" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
-	return 0
+	local component="$1"
+	local subdir="$2"
+	local input_folder="$4"
+	local package_dir="${input_folder}${subdir}"
+
+	# Check if any .deb files exist in the directory
+	if ! find "$package_dir" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
+		return 0
 	fi
-	for f in "${4}${2}"/*.deb; do
-			# If we have a list of last known working kernels, repack BSP files to prevent upgrade to kernel that breaks
-			if [[ -f userpatches/last-known-good.map ]]; then
-				PACKAGE_NAME=$(dpkg-deb -W $f | awk '{ print $1 }')
-				for g in $(cat userpatches/last-known-good-kernel-pkg.map); do
-					# Read values from file
-					BOARD=$(echo $g | cut -d"|" -f1);
-					BRANCH=$(echo $g | cut -d"|" -f2);
-					LINUXFAMILY=$(echo $g | cut -d"|" -f3)
-					LASTKERNEL=$(echo $g | cut -d"|" -f4);
-					if [[ ${PACKAGE_NAME} == "armbian-bsp-cli-${BOARD}-${BRANCH}" ]]; then
-					echo "Setting last kernel upgrade for $BOARD to linux-image-$BRANCH-$BOARD=${LASTKERNEL}"
+
+	# Process each .deb file
+	for deb_file in "${package_dir}"/*.deb; do
+		# Repack BSP packages if last-known-good kernel map exists
+		# This prevents upgrading to kernels that may break the board
+		if [[ -f userpatches/last-known-good.map ]]; then
+			local package_name
+			package_name=$(dpkg-deb -W "$deb_file" | awk '{ print $1 }')
+
+			# Read kernel pinning mappings from file
+			while IFS='|' read -r board branch linux_family last_kernel; do
+				if [[ "${package_name}" == "armbian-bsp-cli-${board}-${branch}" ]]; then
+					echo "Setting last kernel upgrade for $board to linux-image-$branch-$board=${last_kernel}"
+
+					# Extract, modify control file, and repackage
+					local tempdir
 					tempdir=$(mktemp -d)
-					dpkg-deb -R $f $tempdir
-					sed -i '/^Replaces:/ s/$/, linux-image-'$BRANCH'-'$LINUXFAMILY' (>> '$LASTKERNEL'), linux-dtb-'$BRANCH'-'$LINUXFAMILY' (>> '$LASTKERNEL')/' $tempdir/DEBIAN/control
-					dpkg-deb -b $tempdir ${f} >/dev/null
-					fi
-				done
-			fi
-			# Determine whether to remove source files after adding to repo
-			# KEEP_SOURCES mode preserves source packages
-			# DRY_RUN mode also preserves sources (and skips all repo modifications)
-			local remove_flag="-remove-files"
-			if [[ "$KEEP_SOURCES" == true ]] || [[ "$DRY_RUN" == true ]]; then
-				remove_flag=""
-			fi
-			aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${1}" "${f}"
+					dpkg-deb -R "$deb_file" "$tempdir"
+					sed -i '/^Replaces:/ s/$/, linux-image-'$branch'-'$linux_family' (>> '$last_kernel'), linux-dtb-'$branch'-'$linux_family' (>> '$last_kernel')/' "$tempdir/DEBIAN/control"
+					dpkg-deb -b "$tempdir" "${deb_file}" >/dev/null
+					rm -rf "$tempdir"
+				fi
+			done < userpatches/last-known-good-kernel-pkg.map
+		fi
+
+		# Determine whether to remove source files after adding to repo
+		# KEEP_SOURCES mode preserves source packages
+		# DRY_RUN mode also preserves sources (and skips all repo modifications)
+		local remove_flag="-remove-files"
+		if [[ "$KEEP_SOURCES" == true ]] || [[ "$DRY_RUN" == true ]]; then
+			remove_flag=""
+		fi
+
+		# Add package to repository
+		aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
 	done
 }
 
 
-# Build common (main) component - runs once before parallel workers
-# $1: input folder
-# $2: output folder
-# $3: gpg password
+# Build the common (main) repository component
+# Creates/updates the common repository that contains packages shared across all releases
+# Should be run once before processing individual releases in parallel
+# Arguments:
+#   $1 - Input folder containing packages
+#   $2 - Output folder for published repository
+#   $3 - GPG password for signing (currently unused, signing is done separately)
 update_main() {
 	local input_folder="$1"
 	local output_folder="$2"
@@ -137,17 +171,20 @@ update_main() {
 		aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 	fi
 
-	# Create snapshot
+	# Create new snapshot
 	aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 
 	log "Common component built successfully"
 }
 
-# Process a single release - can be run in parallel
-# $1: release name
-# $2: input folder
-# $3: output folder
-# $4: gpg password
+# Process a single release distribution
+# Creates/updates release-specific repositories (utils, desktop), publishes them,
+# and signs the Release files. Can be run in parallel for different releases.
+# Arguments:
+#   $1 - Release name (e.g., "jammy", "noble")
+#   $2 - Input folder containing packages
+#   $3 - Output folder for published repository
+#   $4 - GPG password for signing
 process_release() {
 	local release="$1"
 	local input_folder="$2"
@@ -156,7 +193,7 @@ process_release() {
 
 	log "Processing release: $release"
 
-	# In isolated mode, ensure common snapshot exists
+	# In isolated mode (SINGLE_RELEASE), ensure common snapshot exists
 	# It should have been created by 'update-main' command, but if not, create empty common
 	if [[ -n "$SINGLE_RELEASE" && -z $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
 		log "WARNING: Common snapshot not found. Creating empty common snapshot."
@@ -171,7 +208,7 @@ process_release() {
 		aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	fi
 
-	# Create repos if they don't exist
+	# Create release-specific repositories if they don't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 		aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | logger -t repo-management >/dev/null
 	fi
@@ -291,31 +328,29 @@ process_release() {
 	log "Completed processing release: $release"
 }
 
-# publishing repository
-#
-# $1: Input folder
-# $2: Output folder
-# $3: Command
-# $4: GPG password
-# $5: jammy,sid
-
-publishing(){
-
+# Publish repositories for all configured releases
+# Builds common component, processes each release, and finalizes the repository
+# Arguments:
+#   $1 - Input folder containing packages
+#   $2 - Output folder for published repository
+#   $3 - Command name (unused, for compatibility)
+#   $4 - GPG password for signing
+#   $5 - Comma-separated list of releases (unused, determined from config)
+publishing() {
 	# Only build common repo if NOT in single-release mode
 	# In single-release mode, common should be built separately with 'update-main' command
 	if [[ -z "$SINGLE_RELEASE" ]]; then
-		# this repository contains packages that are the same in all releases.
+		# This repository contains packages that are the same in all releases
 		if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
 			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 		fi
 
-		# add packages from main folder
+		# Add packages from main folder
 		adding_packages "common" "" "main" "$1"
 
-		# create snapshot
-		UNIQUE_NAME=$(date +%s)
+		# Create snapshot
 		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+			aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 		fi
 		aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	else
@@ -325,7 +360,7 @@ publishing(){
 		fi
 	fi
 
-	# get all distributions or use single release if specified
+	# Get all distributions or use single release if specified
 	local distributions=()
 	if [[ -n "$SINGLE_RELEASE" ]]; then
 		distributions=("$SINGLE_RELEASE")
@@ -344,21 +379,26 @@ publishing(){
 		process_release "$release" "$1" "$2" "$4"
 	done
 
-# cleanup
-aptly db cleanup -config="${CONFIG}"
-# key
-mkdir -p "${2}"/public/
-cp config/armbian.key "${2}"/public/
-# write repo sync control file
-sudo date +%s > ${2}/public/control
-# display what we have
-showall
+	# Cleanup database
+	aptly db cleanup -config="${CONFIG}"
+
+	# Copy GPG key to repository
+	mkdir -p "${2}"/public/
+	cp config/armbian.key "${2}"/public/
+
+	# Write repository sync control file
+	sudo date +%s > ${2}/public/control
+
+	# Display repository contents
+	showall
 }
 
 
-# Sign repository Release files in the given output folder using provided GPG keys
-# $1: Output folder path
-# $@: GPG key IDs to use for signing
+# Sign repository Release files using GPG
+# Creates InRelease and Release.gpg signature files for component-level Release files
+# Arguments:
+#   $1 - Output folder path containing published repository
+#   $@ - GPG key IDs to use for signing
 signing() {
     local output_folder="$1"
     shift
@@ -369,6 +409,7 @@ signing() {
         return 1
     fi
 
+    # Build GPG parameters with available keys
     local gpg_params=("--yes" "--armor")
     for key in "${gpg_keys[@]}"; do
         if ! gpg --list-secret-keys "$key" >/dev/null 2>&1; then
@@ -405,11 +446,12 @@ signing() {
 }
 
 
-# Merge repositories from multiple parallel runs
-# Used when GitHub Actions generate repos for individual releases in parallel
-# Since workers have already built and signed repos, this just finalizes the output
-# $1: Base input folder (contains package sources)
-# $2: Output folder
+# Finalize repository after parallel GitHub Actions workers have built individual releases
+# Workers have already built and signed repos in isolated databases, so this just
+# ensures the GPG key and control file are in place
+# Arguments:
+#   $1 - Base input folder (contains package sources, for consistency)
+#   $2 - Output folder containing combined repository
 merge_repos() {
 	local input_folder="$1"
 	local output_folder="$2"
@@ -420,43 +462,44 @@ merge_repos() {
 	# Repositories are already built and signed by parallel workers
 	# Just need to ensure the key and control file are in place
 
-	# key
+	# Copy GPG key to repository
 	mkdir -p "${output_folder}"/public/
 	cp config/armbian.key "${output_folder}"/public/
 	log "Copied GPG key to repository"
 
-	# write repo sync control file
+	# Write repository sync control file
 	sudo date +%s > ${output_folder}/public/control
 	log "Updated repository control file"
 
-	# display what we have
+	# Display repository contents
 	showall
 
 	log "Merge complete - repository is ready"
 }
 
 
-#
-# $1: Input folder
-# $2: Output folder
-# $3: Command
-# $4: GPG password
-# $5: jammy,sid
-# $6: list of packages to delete
+# Main repository manipulation dispatcher
+# Routes commands to appropriate repository management functions
+# Arguments:
+#   $1 - Input folder containing packages
+#   $2 - Output folder for published repository
+#   $3 - Command to execute (update-main, serve, html, delete, show, unique, update, merge)
+#   $4 - GPG password for signing
+#   $5 - Comma-separated list of releases (used by some commands)
+#   $6 - List of packages to delete (used by delete command)
 repo-manipulate() {
+	# Read comma-delimited distros into array
+	IFS=', ' read -r -a DISTROS <<< "$5"
 
-# read comma delimited distros into array
-IFS=', ' read -r -a DISTROS <<< "$5"
+	case "$3" in
 
-case $3 in
+		update-main)
+			# Build common (main) component - runs once before parallel workers
+			update_main "$1" "$2" "$4"
+			return 0
+			;;
 
-	update-main)
-		# Build common (main) component - runs once before parallel workers
-		update_main "$1" "$2" "$4"
-		return 0
-		;;
-
-	serve)
+		serve)
 		# Serve the published repository
 		# Since aptly serve requires published repos in its database, and we use
 		# direct file publishing, we'll use Python's HTTP server instead
