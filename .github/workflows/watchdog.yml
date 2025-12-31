@@ -1,0 +1,98 @@
+#
+# This action recreate action for building stable images
+#
+name: Watchdog
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+concurrency:
+  group: watchdog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  gradle:
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+
+        # list scripts you want to watch and execute failed jobs x-times
+        script: ["rewrite-kernel-config-files"]
+
+    name: R
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: "Restart ${{ matrix.script }}.yml"
+        run: |
+
+          set -e  # Exit on any error
+
+          # Configuration
+          OWNER_REPO="${{ github.repository }}"  # Use dynamic repo reference
+          ATTEMPTS="6"                            # Maximum retry attempts
+          SCRIPT="${{ matrix.script }}"           # Workflow name to monitor
+
+          echo "::group::Workflow Lookup"
+          echo "Looking for workflow: ${SCRIPT}.yml in ${OWNER_REPO}"
+
+          # Get the workflow ID by searching for the workflow file path
+          WORKFLOW=$(gh api "/repos/${OWNER_REPO}/actions/workflows" \
+            | jq ".workflows[] | select(.path==\".github/workflows/${SCRIPT}.yml\")" \
+            | jq -r '.id')
+
+          # Validate that we found the workflow
+          if [[ -z "$WORKFLOW" ]]; then
+            echo "::error::Workflow '${SCRIPT}.yml' not found"
+            exit 1
+          fi
+
+          echo "Found workflow ID: ${WORKFLOW}"
+          echo "::endgroup::"
+
+          echo "::group::Run Analysis"
+          # Get the most recent workflow run (latest = first in array)
+          RUN_DATA=$(gh api "/repos/${OWNER_REPO}/actions/workflows/${WORKFLOW}/runs" \
+            | jq '.workflow_runs[0]')
+
+          # Extract run details
+          ID=$(echo "$RUN_DATA" | jq -r '.id')
+          STATUS=$(echo "$RUN_DATA" | jq -r '.conclusion')
+          ATTEMPT=$(echo "$RUN_DATA" | jq -r '.run_attempt')
+
+          # Validate that we have run data
+          if [[ -z "$ID" || "$ID" == "null" ]]; then
+            echo "::error::No workflow runs found"
+            exit 1
+          fi
+
+          echo "Latest run: ${ID}"
+          echo "Status: ${STATUS}"
+          echo "Attempt: ${ATTEMPT} of ${ATTEMPTS}"
+          echo "::endgroup::"
+
+          # Only rerun if:
+          # - We haven't exceeded max attempts (attempt < 6)
+          # - The run failed (not cancelled, success, etc)
+          if [[ "${ATTEMPT}" -lt "${ATTEMPTS}" ]] && [[ "$STATUS" == "failure" ]]; then
+            echo "::notice::Rerunning failed jobs for run ${ID} (attempt ${ATTEMPT})"
+            gh api --method POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${OWNER_REPO}/actions/runs/${ID}/rerun-failed-jobs"
+            echo "Rerun triggered successfully"
+          else
+            echo "No rerun needed:"
+            echo "  - Attempt: ${ATTEMPT}/${ATTEMPTS}"
+            echo "  - Status: ${STATUS}"
+          fi
