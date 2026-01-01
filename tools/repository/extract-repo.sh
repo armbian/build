@@ -131,7 +131,27 @@ detect_releases() {
     log "Detecting releases from repository..."
 
     if [[ -d "$repo_base/dists" ]]; then
-        mapfile -t DETECTED_RELEASES < <(find "$repo_base/dists" -maxdepth 1 -type d -not -name "dists" -exec basename {} \; | sort)
+        # Capture find/basename output and check for errors
+        local releases_output
+        local releases_exit_code
+        releases_output=$(find "$repo_base/dists" -maxdepth 1 -type d -not -name "dists" -exec basename {} \; 2>&1 | sort)
+        releases_exit_code=$?
+
+        if [[ $releases_exit_code -ne 0 ]]; then
+            log "Error: Failed to detect releases (find exit code: $releases_exit_code)" >&2
+            log "Output: $releases_output" >&2
+            DETECTED_RELEASES=()
+            return 1
+        fi
+
+        # Check if output is non-empty before feeding to mapfile
+        if [[ -n "$releases_output" ]]; then
+            mapfile -t DETECTED_RELEASES <<< "$releases_output"
+        else
+            DETECTED_RELEASES=()
+        fi
+    else
+        DETECTED_RELEASES=()
     fi
 
     if [[ ${#DETECTED_RELEASES[@]} -eq 0 ]]; then
