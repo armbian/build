@@ -30,6 +30,23 @@ run_cmd() {
     fi
 }
 
+# Execute aptly command and check for errors
+# Exits with status 1 if the command fails (unless in dry-run mode)
+# Arguments:
+#   $* - Aptly command to execute (without 'aptly' prefix)
+run_aptly() {
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY-RUN] Would execute: aptly $*"
+        return 0
+    fi
+
+    if ! aptly "$@"; then
+        local exit_code=$?
+        log "ERROR: aptly $* failed with exit code $exit_code"
+        exit 1
+    fi
+}
+
 # Drop published repositories that are no longer supported
 # Identifies and removes published repositories for releases that are no longer
 # in config/distributions/*/support (excluding 'eos')
@@ -139,7 +156,7 @@ adding_packages() {
 		fi
 
 		# Add package to repository
-		aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
+		run_aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
 	done
 }
 
@@ -160,7 +177,7 @@ update_main() {
 
 	# Create common repo if it doesn't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-		aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 	fi
 
 	# Add packages from main folder
@@ -168,11 +185,11 @@ update_main() {
 
 	# Drop old snapshot
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 	fi
 
 	# Create new snapshot
-	aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 
 	log "Common component built successfully"
 }
@@ -210,10 +227,10 @@ process_release() {
 
 	# Create release-specific repositories if they don't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-		aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | logger -t repo-management >/dev/null
 	fi
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-		aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | logger -t repo-management >/dev/null
 	fi
 
 	# Add packages ONLY from release-specific extra folders
@@ -222,15 +239,15 @@ process_release() {
 
 	# Drop old snapshots
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-		aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
 	fi
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-		aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
 	fi
 
 	# Create new snapshots
-	aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
-	aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
 
 	# Determine publish directory based on mode
 	local publish_dir="$output_folder"
@@ -240,7 +257,7 @@ process_release() {
 
 	# Publish - include common snapshot for main component
 	log "Publishing $release"
-	aptly publish \
+	run_aptly publish \
 		-skip-signing \
 		-architectures="armhf,arm64,amd64,riscv64,i386,loong64,all" \
 		-passphrase="${gpg_password}" \
@@ -342,7 +359,7 @@ publishing() {
 	if [[ -z "$SINGLE_RELEASE" ]]; then
 		# This repository contains packages that are the same in all releases
 		if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-			aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
+			run_aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 		fi
 
 		# Add packages from main folder
@@ -350,9 +367,9 @@ publishing() {
 
 		# Create snapshot
 		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-			aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+			run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 		fi
-		aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
+		run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	else
 		# Single-release mode: ensure common snapshot exists (should be created by update-main)
 		if [[ -z $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
@@ -380,7 +397,7 @@ publishing() {
 	done
 
 	# Cleanup database
-	aptly db cleanup -config="${CONFIG}"
+	run_aptly db cleanup -config="${CONFIG}"
 
 	# Copy GPG key to repository
 	mkdir -p "${2}"/public/
