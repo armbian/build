@@ -771,24 +771,36 @@ done
 if [[ -n "$SINGLE_RELEASE" ]]; then
 	# Create isolated aptly directory for this release
 	IsolatedRootDir="${output}/aptly-isolated-${SINGLE_RELEASE}"
-	mkdir -p "$IsolatedRootDir"
+	if ! mkdir -p "$IsolatedRootDir"; then
+		log "ERROR: mkdir $IsolatedRootDir: permission denied"
+		exit 1
+	fi
 
 	# Copy database structure from shared DB if it exists
 	if [[ -d "${output}/db" ]]; then
 		log "Copying common database to isolated DB..."
 		# Copy the entire db directory to inherit common snapshot
-		cp -a "${output}/db" "${IsolatedRootDir}/"
+		if ! cp -a "${output}/db" "${IsolatedRootDir}/"; then
+			log "ERROR: cp ${output}/db to ${IsolatedRootDir}/: permission denied"
+			exit 1
+		fi
 	fi
 
 	# Copy pool directory for common packages if it exists
 	# This is needed because the common snapshot references packages in the pool
 	if [[ -d "${output}/pool" ]]; then
 		log "Linking common pool to isolated DB..."
-		mkdir -p "${IsolatedRootDir}/pool"
+		if ! mkdir -p "${IsolatedRootDir}/pool"; then
+			log "ERROR: mkdir ${IsolatedRootDir}/pool: permission denied"
+			exit 1
+		fi
 		# Use rsync with hard links to avoid duplicating package files
 		# -H, --hard-links: hard link files from source
 		# --delete: remove files in target that don't exist in source
-		rsync -aH --delete "${output}/pool/" "${IsolatedRootDir}/pool/" 2>&1 | logger -t repo-management
+		if ! rsync -aH --delete "${output}/pool/" "${IsolatedRootDir}/pool/" 2>&1 | logger -t repo-management; then
+			log "ERROR: rsync pool to ${IsolatedRootDir}/pool: permission denied"
+			exit 1
+		fi
 	fi
 
 	# Create temp config file
