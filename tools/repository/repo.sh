@@ -293,19 +293,26 @@ process_release() {
 
 	# Get GPG keys from environment or use defaults
 	local gpg_key="${GPG_KEY:-DF00FAF1C577104B50BF1D0093D6889F9F0E78D5}"
-	local gpg_params=("--yes" "--armor" "-u" "$gpg_key")
+	local gpg_params=("--yes" "--armor")
 
-	# Validate GPG key format (40 hex chars for full fingerprint, 16 for short form)
-	if [[ ! "$gpg_key" =~ ^[0-9A-Fa-f]{40}$ ]] && [[ ! "$gpg_key" =~ ^[0-9A-Fa-f]{16}$ ]]; then
-		log "ERROR: Invalid GPG key format: $gpg_key"
-		return 1
+	# Try to find the actual key in the keyring
+	# GPG might have the key with a different key ID format
+	local actual_key=""
+	if gpg --list-secret-keys "$gpg_key" >/dev/null 2>&1; then
+		actual_key="$gpg_key"
+	else
+		# Try to find by email or partial match
+		actual_key=$(gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep -B1 "$gpg_key" | grep "sec" | awk '{print $2}' | cut -d'/' -f2 || echo "")
+		if [[ -z "$actual_key" ]]; then
+			log "ERROR: GPG key $gpg_key not found in keyring"
+			log "Available keys:"
+			gpg --list-secret-keys --keyid-format LONG 2>&1 | logger -t repo-management
+			return 1
+		fi
 	fi
 
-	# Check if key exists in keyring
-	if ! gpg --list-secret-keys "$gpg_key" >/dev/null 2>&1; then
-		log "ERROR: GPG key $gpg_key not found in keyring"
-		return 1
-	fi
+	gpg_params+=("-u" "$actual_key")
+	log "Using GPG key: $actual_key"
 
 	# First, create component-level Release files by copying from binary-amd64 Release
 	# This is needed because aptly only creates Release files in binary-* subdirs
@@ -429,11 +436,20 @@ signing() {
     # Build GPG parameters with available keys
     local gpg_params=("--yes" "--armor")
     for key in "${gpg_keys[@]}"; do
-        if ! gpg --list-secret-keys "$key" >/dev/null 2>&1; then
-            echo "Warning: GPG key $key not found on this system." >&2
-			continue
+        # Try to find the actual key in the keyring
+        local actual_key=""
+        if gpg --list-secret-keys "$key" >/dev/null 2>&1; then
+            actual_key="$key"
+        else
+            # Try to find by email or partial match
+            actual_key=$(gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep -B1 "$key" | grep "sec" | awk '{print $2}' | cut -d'/' -f2 || echo "")
+            if [[ -z "$actual_key" ]]; then
+                echo "Warning: GPG key $key not found on this system." >&2
+                continue
+            fi
         fi
-        gpg_params+=("-u" "$key")
+        gpg_params+=("-u" "$actual_key")
+        echo "Using GPG key: $actual_key (requested: $key)" >&2
     done
 
     # Only sign Release files at component level, NOT binary subdirs
@@ -797,7 +813,9 @@ if [[ -n "$SINGLE_RELEASE" ]]; then
 	if [[ -d "${output}/db" ]]; then
 		log "Copying common database to isolated DB..."
 		# Copy the entire db directory to inherit common snapshot
-		if ! cp -a "${output}/db" "${IsolatedRootDir}/"; then
+		# Use -r (recursive) instead of -a to avoid preserving permissions/timestamps
+		# which can fail on files like LOCK that have special attributes
+		if ! cp -r "${output}/db" "${IsolatedRootDir}/"; then
 			log "ERROR: cp ${output}/db to ${IsolatedRootDir}/: permission denied"
 			exit 1
 		fi
