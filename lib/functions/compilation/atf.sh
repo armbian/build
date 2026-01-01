@@ -66,14 +66,38 @@ compile_atf() {
 
 	# - "--no-warn-rwx-segment" is *required* for binutils 2.39 - see https://developer.trustedfirmware.org/T996
 	#   - but *not supported* by 2.38, brilliant...
-	declare binutils_version binutils_flags_atf=""
-	binutils_version=$(env PATH="${toolchain}:${toolchain2}:${PATH}" aarch64-linux-gnu-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
-	display_alert "Binutils version for ATF" "${binutils_version}" "info"
-
-	if linux-version compare "${binutils_version}" gt "2.39" && linux-version compare "${binutils_version}" lt "2.42"; then
-		display_alert "Binutils version for ATF" ">= 2.39 and < 2.42, adding -Wl,--no-warn-rwx-segment" "info"
-		binutils_flags_atf="--no-warn-rwx-segment"
+	# 2026: turns out that *gcc* is the one that takes the flag, and it might or not accept it.
+	#       distros patch binutils and gcc independently, since it's a security-related flag,
+	#       might have been backported to one and not the other. what a freaking life.
+	#       test both -- and only add it if _both_ support it
+	function gcc_accepts_flag() {
+		{ echo 'int main(){}' | "${ATF_COMPILER}gcc" -Wl,"$1" -x c - -o /dev/null > /dev/null 2>&1; } && return 0
+		return 1
+	}
+	function ld_supports_flag() {
+		{ "$("${ATF_COMPILER}gcc" -print-prog-name=ld)" --help 2> /dev/null | grep -q -- "$1"; } && return 0
+		return 1
+	}
+	if gcc_accepts_flag --no-warn-rwx-segment; then
+		display_alert "GCC supports '--no-warn-rwx-segment'" "gcc:yes - ld:tba" "debug"
+		if ld_supports_flag no-warn-rwx-segment; then
+			display_alert "GCC/LD supports '--no-warn-rwx-segment'" "gcc:yes - ld:yes" "debug"
+			if [[ "${ATF_SKIP_LDFLAGS:-"no"}" == "yes" ]]; then # IF ATF_SKIP_LDFLAGS==yes, then skip it completely
+				display_alert "Skip adding LD flag '--no-warn-rwx-segment' to TF-A build" "ATF_SKIP_LDFLAGS=${ATF_SKIP_LDFLAGS}" "info"
+			elif [[ "${ATF_SKIP_LDFLAGS_WL:-"no"}" == "yes" ]]; then # IF ATF_SKIP_LDFLAGS_WL==yes, then don't add the -Wl, prefix
+				display_alert "Skip adding '-Wl,' prefix to LD flag '--no-warn-rwx-segment' for TF-A build" "ATF_SKIP_LDFLAGS_WL=${ATF_SKIP_LDFLAGS_WL}" "info"
+				binutils_flags_atf="--no-warn-rwx-segment"
+			else
+				display_alert "Adding full LD flag '-Wl,--no-warn-rwx-segment' to TF-A build" "normal" "info"
+				binutils_flags_atf="-Wl,--no-warn-rwx-segment"
+			fi
+		else
+			display_alert "LD does not support '--no-warn-rwx-segment'" "gcc: yes - ld:no" "debug"
+		fi
+	else
+		display_alert "GCC does not support '--no-warn-rwx-segment'" "gcc: no - ld: not tested" "debug"
 	fi
+	unset -f gcc_accepts_flag ld_supports_flag
 
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
