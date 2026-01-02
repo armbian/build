@@ -65,7 +65,7 @@ drop_unsupported_releases() {
 		supported_releases=()
 	else
 		log "Cleanup: dropping unsupported releases"
-		supported_releases=($(grep -rw config/distributions/*/support -ve 'eos' 2>/dev/null | cut -d"/" -f3 || true))
+		supported_releases=($(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3))
 	fi
 
 	# Get currently published repositories
@@ -184,7 +184,7 @@ adding_packages() {
 		# This prevents upgrading to kernels that may break the board
 		if [[ -f userpatches/last-known-good.map ]]; then
 			local package_name
-			package_name="$(dpkg-deb -W "$deb_file" | awk '{print $1}')"
+			package_name=$(dpkg-deb -W "$deb_file" | awk '{ print $1 }')
 
 			# Read kernel pinning mappings from file
 			while IFS='|' read -r board branch linux_family last_kernel; do
@@ -193,10 +193,10 @@ adding_packages() {
 
 					# Extract, modify control file, and repackage
 					local tempdir
-					tempdir="$(mktemp -d)"
+					tempdir=$(mktemp -d)
 					dpkg-deb -R "$deb_file" "$tempdir"
-					sed -i "s/^Replaces:.*/&, linux-image-${branch}-${linux_family} (>> ${last_kernel}), linux-dtb-${branch}-${linux_family} (>> ${last_kernel})/" "$tempdir/DEBIAN/control"
-					dpkg-deb -b "$tempdir" "$deb_file" >/dev/null
+					sed -i '/^Replaces:/ s/$/, linux-image-'$branch'-'$linux_family' (>> '$last_kernel'), linux-dtb-'$branch'-'$linux_family' (>> '$last_kernel')/' "$tempdir/DEBIAN/control"
+					dpkg-deb -b "$tempdir" "${deb_file}" >/dev/null
 					rm -rf "$tempdir"
 				fi
 			done < userpatches/last-known-good-kernel-pkg.map
@@ -212,7 +212,7 @@ adding_packages() {
 
 		# Add package to repository
 		log "Adding $deb_name to $component"
-		run_aptly repo add "$remove_flag" -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
+		run_aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
 	done
 }
 
@@ -435,15 +435,10 @@ process_release() {
 			mkdir -p "${output_folder}/public"
 			# Use rsync to copy published repo files to shared location
 			# NO --delete flag - we want to preserve other releases' files
-			# Enable pipefail to catch rsync failures even when piped to logger
-			set -o pipefail
 			if ! rsync -a "${publish_dir}/public/" "${output_folder}/public/" 2>&1 | logger -t repo-management; then
-				local rsync_exit_code=$?
-				log "ERROR: Failed to copy published files for $release (rsync exit code: $rsync_exit_code)"
-				set +o pipefail  # Restore default pipe behavior
+				log "ERROR: Failed to copy published files for $release"
 				return 1
 			fi
-			set +o pipefail  # Restore default pipe behavior
 			log "Copied files for $release to ${output_folder}/public/"
 		fi
 	fi
@@ -597,7 +592,7 @@ publishing() {
 	cp config/armbian.key "${2}"/public/
 
 	# Write repository sync control file
-	date +%s > "${2}/public/control"
+	date +%s > ${2}/public/control
 
 	# Display repository contents
 	showall
@@ -689,7 +684,7 @@ merge_repos() {
 	log "Copied GPG key to repository"
 
 	# Write repository sync control file
-	sudo date +%s > "${output_folder}/public/control"
+	sudo date +%s > ${output_folder}/public/control
 	log "Updated repository control file"
 
 	# Display repository contents
