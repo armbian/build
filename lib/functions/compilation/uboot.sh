@@ -113,6 +113,8 @@ function compile_uboot_target() {
 	# @TODO: why?
 	touch .scmversion
 
+	declare uboot_loglevel="${UBOOT_LOGLEVEL:-"6"}" # default to info
+
 	# use `scripts/config` instead of sed if available. Cleaner results.
 	if [[ ! -f scripts/config ]]; then
 		display_alert "scripts/config not found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
@@ -139,10 +141,10 @@ function compile_uboot_target() {
 		fi
 
 		# Hack, up the log level to 6: "info" (default is 4: "warning")
-		display_alert "Hacking log level in u-boot config" "LOGLEVEL=6 for ${target}" "info"
+		display_alert "Hacking log level in u-boot config" "LOGLEVEL=${uboot_loglevel} for ${target}" "info"
 		run_host_command_logged scripts/config --enable CONFIG_LOG
-		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL 6
-		run_host_command_logged scripts/config --set-val CONFIG_LOG_MAX_LEVEL 6
+		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL ${uboot_loglevel}
+		run_host_command_logged scripts/config --set-val CONFIG_LOG_MAX_LEVEL ${uboot_loglevel}
 
 		# Include Armbian version so UART bootlogs are drastically more useful
 		run_host_command_logged ./scripts/config --disable "LOCALVERSION_AUTO"
@@ -160,14 +162,14 @@ function compile_uboot_target() {
 		# 0 - emergency ; 1 - alert; 2 - critical; 3 - error; 4 - warning; 5 - note; 6 - info; 7 - debug; 8 - debug content; 9 - debug hardware I/O
 		cat <<- EXTRA_UBOOT_DEBUG_CONFIGS >> .config
 			CONFIG_LOG=y
-			CONFIG_LOG_MAX_LEVEL=7
-			CONFIG_LOG_DEFAULT_LEVEL=7
+			CONFIG_LOG_MAX_LEVEL=${uboot_loglevel}
+			CONFIG_LOG_DEFAULT_LEVEL=${uboot_loglevel}
 			CONFIG_LOG_CONSOLE=y
 			CONFIG_SPL_LOG=y
-			CONFIG_SPL_LOG_MAX_LEVEL=6
+			CONFIG_SPL_LOG_MAX_LEVEL=${uboot_loglevel}
 			CONFIG_SPL_LOG_CONSOLE=y
 			CONFIG_TPL_LOG=y
-			CONFIG_TPL_LOG_MAX_LEVEL=6
+			CONFIG_TPL_LOG_MAX_LEVEL=${uboot_loglevel}
 			CONFIG_TPL_LOG_CONSOLE=y
 			# CONFIG_ERRNO_STR is not set
 		EXTRA_UBOOT_DEBUG_CONFIGS
