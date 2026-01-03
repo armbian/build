@@ -7,7 +7,7 @@ BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
 KERNEL_TARGET="edge"
-BOOT_FDT_FILE="sun55i-a527-radxa-a5e.dtb"
+BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 #IMAGE_PARTITION_TABLE="msdos"
 BOOTFS_TYPE="fat"
@@ -58,4 +58,3 @@ function post_family_tweaks__enable_aic8800_bluetooth_service() {
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
 	fi
 }
-
