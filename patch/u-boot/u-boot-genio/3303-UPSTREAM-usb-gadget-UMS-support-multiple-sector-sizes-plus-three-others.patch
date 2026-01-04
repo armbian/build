@@ -1,0 +1,545 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tom Rini <trini@konsulko.com>
+Date: Wed, 5 Apr 2023 19:48:57 -0400
+Subject: UPSTREAM: usb: gadget: UMS: support multiple sector sizes (plus three
+ others)
+
+--> rpardini: this indeed fixes UFS support for UMS. Unfortunately,
+              it seems there's still trouble with USB/OTG impl
+              itself on Mediatek; UMS doesn't really work either
+              with MMC or with UFS. Still, this would be needed
+              when the USB stuff is hopefully fixed.
+
+--> rpardini: This cherry-picks and squashes upstream revisions:
+---> 73b39a76e34a3b88a7a2c58588c9a5a604a51d90
+
+usb: gadget: f_mass_storage: Rework do_request_sense slightly
+
+When building with clang, it notes that sdinfo may be unused
+uninitialized in some cases. This appears to be true from reading the
+code, and we can simply set the variable to zero to start with and be as
+correct as before.
+
+Signed-off-by: Tom Rini <trini@konsulko.com>
+Reviewed-by: Marek Vasut <marex@denx.de>
+
+---> f032260c7c336cf88c1914286fd42a1588080db3
+
+cmd: ums: Use plain udevice for UDC controller interaction
+
+Convert to plain udevice interaction with UDC controller
+device, avoid the use of UDC uclass dev_array .
+
+Reviewed-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+Tested-by: Mattijs Korpershoek <mkorpershoek@baylibre.com> # on khadas vim3
+Signed-off-by: Marek Vasut <marex@denx.de>
+
+---> 1041ee64eb18f7a3af30085765ced149cb4dc7cf
+
+usb: gadget: f_mass_storage: Stop ums on START-STOP UNIT SCSI command
+
+Exit the UMS handler loop in case START-STOP UNIT SCSI command is
+received. This is sent e.g. by the util-linux eject(1) command and
+indicates to the device that it is supposed to spin down the media
+and enter low power state.
+
+This effectively adds support for exitting the 'ums' command from
+host using 'eject /dev/sdN' that is on par with 'dfu-util -e' .
+
+Signed-off-by: Marek Vasut <marex@denx.de>
+Reviewed-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+Link: https://lore.kernel.org/r/20231107001018.55640-1-marex@denx.de
+Signed-off-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+
+---> 304fa0aa445384e5e681a54abf413850591cec10
+
+usb: gadget: UMS: support multiple sector sizes
+
+UFS storage often uses a 4096-byte sector size, add support for dynamic
+sector sizes based loosely on the Linux implementation.
+
+Support for dynamic sector sizes changes the types used in some
+divisions, resulting in the compiler attempting to use
+libgcc helpers (__aeabi_ldivmod).
+Replace these divisions with calls to lldiv() to handle this correctly.
+
+Reviewed-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+Reviewed-by: Neil Armstrong <neil.armstrong@linaro.org>
+Signed-off-by: Caleb Connolly <caleb.connolly@linaro.org>
+Link: https://lore.kernel.org/r/20240320-b4-qcom-usb-v4-4-41be480172e1@linaro.org
+[mkorpershoek: squashed the lldiv() fix from caleb]
+Signed-off-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+---
+ cmd/usb_mass_storage.c              |  14 +-
+ drivers/usb/gadget/f_mass_storage.c | 120 ++++++----
+ drivers/usb/gadget/storage_common.c |  12 +-
+ include/usb_mass_storage.h          |   3 +-
+ 4 files changed, 85 insertions(+), 64 deletions(-)
+
+diff --git a/cmd/usb_mass_storage.c b/cmd/usb_mass_storage.c
+index 111111111111..222222222222 100644
+--- a/cmd/usb_mass_storage.c
++++ b/cmd/usb_mass_storage.c
+@@ -87,10 +87,6 @@ static int ums_init(const char *devtype, const char *devnums_part_str)
+ 		if (!strchr(devnum_part_str, ':'))
+ 			partnum = 0;
+ 
+-		/* f_mass_storage.c assumes SECTOR_SIZE sectors */
+-		if (block_dev->blksz != SECTOR_SIZE)
+-			goto cleanup;
+-
+ 		ums_new = realloc(ums, (ums_count + 1) * sizeof(*ums));
+ 		if (!ums_new)
+ 			goto cleanup;
+@@ -143,6 +139,7 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 	const char *devtype;
+ 	const char *devnum;
+ 	unsigned int controller_index;
++	struct udevice *udc;
+ 	int rc;
+ 	int cable_ready_timeout __maybe_unused;
+ 
+@@ -164,13 +161,14 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 
+ 	controller_index = (unsigned int)(simple_strtoul(
+ 				usb_controller,	NULL, 0));
+-	if (usb_gadget_initialize(controller_index)) {
++	rc = udc_device_get_by_index(controller_index, &udc);
++	if (rc) {
+ 		pr_err("Couldn't init USB controller.\n");
+ 		rc = CMD_RET_FAILURE;
+ 		goto cleanup_ums_init;
+ 	}
+ 
+-	rc = fsg_init(ums, ums_count, controller_index);
++	rc = fsg_init(ums, ums_count, udc);
+ 	if (rc) {
+ 		pr_err("fsg_init failed\n");
+ 		rc = CMD_RET_FAILURE;
+@@ -215,7 +213,7 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 	}
+ 
+ 	while (1) {
+-		usb_gadget_handle_interrupts(controller_index);
++		dm_usb_gadget_handle_interrupts(udc);
+ 
+ 		rc = fsg_main_thread(NULL);
+ 		if (rc) {
+@@ -237,7 +235,7 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ cleanup_register:
+ 	g_dnl_unregister();
+ cleanup_board:
+-	usb_gadget_release(controller_index);
++	udc_device_put(udc);
+ cleanup_ums_init:
+ 	ums_fini();
+ 
+diff --git a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -240,6 +240,7 @@
+ /* #define DUMP_MSGS */
+ 
+ #include <config.h>
++#include <div64.h>
+ #include <hexdump.h>
+ #include <log.h>
+ #include <malloc.h>
+@@ -327,6 +328,7 @@ struct fsg_common {
+ 	unsigned int		short_packet_received:1;
+ 	unsigned int		bad_lun_okay:1;
+ 	unsigned int		running:1;
++	unsigned int		eject:1;
+ 
+ 	int			thread_wakeup_needed;
+ 	struct completion	thread_notifier;
+@@ -435,7 +437,7 @@ static void set_bulk_out_req_length(struct fsg_common *common,
+ static struct ums *ums;
+ static int ums_count;
+ static struct fsg_common *the_fsg_common;
+-static unsigned int controller_index;
++static struct udevice *udcdev;
+ 
+ static int fsg_set_halt(struct fsg_dev *fsg, struct usb_ep *ep)
+ {
+@@ -669,6 +671,10 @@ static int sleep_thread(struct fsg_common *common)
+ 		}
+ 
+ 		if (k == 10) {
++			/* Handle START-STOP UNIT */
++			if (common->eject)
++				return -EPIPE;
++
+ 			/* Handle CTRL+C */
+ 			if (ctrlc())
+ 				return -EPIPE;
+@@ -680,7 +686,7 @@ static int sleep_thread(struct fsg_common *common)
+ 			k = 0;
+ 		}
+ 
+-		usb_gadget_handle_interrupts(controller_index);
++		dm_usb_gadget_handle_interrupts(udcdev);
+ 	}
+ 	common->thread_wakeup_needed = 0;
+ 	return rc;
+@@ -719,12 +725,13 @@ static int do_read(struct fsg_common *common)
+ 		curlun->sense_data = SS_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE;
+ 		return -EINVAL;
+ 	}
+-	file_offset = ((loff_t) lba) << 9;
++	file_offset = ((loff_t)lba) << curlun->blkbits;
+ 
+ 	/* Carry out the file reads */
+ 	amount_left = common->data_size_from_cmnd;
+-	if (unlikely(amount_left == 0))
++	if (unlikely(amount_left == 0)) {
+ 		return -EIO;		/* No default reply */
++	}
+ 
+ 	for (;;) {
+ 
+@@ -763,13 +770,13 @@ static int do_read(struct fsg_common *common)
+ 
+ 		/* Perform the read */
+ 		rc = ums[common->lun].read_sector(&ums[common->lun],
+-				      file_offset / SECTOR_SIZE,
+-				      amount / SECTOR_SIZE,
++				      lldiv(file_offset, curlun->blksize),
++				      lldiv(amount, curlun->blksize),
+ 				      (char __user *)bh->buf);
+ 		if (!rc)
+ 			return -EIO;
+ 
+-		nread = rc * SECTOR_SIZE;
++		nread = rc * curlun->blksize;
+ 
+ 		VLDBG(curlun, "file read %u @ %llu -> %d\n", amount,
+ 				(unsigned long long) file_offset,
+@@ -782,7 +789,7 @@ static int do_read(struct fsg_common *common)
+ 		} else if (nread < amount) {
+ 			LDBG(curlun, "partial file read: %d/%u\n",
+ 					(int) nread, amount);
+-			nread -= (nread & 511);	/* Round down to a block */
++			nread -= (nread & (curlun->blksize - 1));	/* Round down to a block */
+ 		}
+ 		file_offset  += nread;
+ 		amount_left  -= nread;
+@@ -856,7 +863,7 @@ static int do_write(struct fsg_common *common)
+ 
+ 	/* Carry out the file writes */
+ 	get_some_more = 1;
+-	file_offset = usb_offset = ((loff_t) lba) << 9;
++	file_offset = usb_offset = ((loff_t)lba) << curlun->blkbits;
+ 	amount_left_to_req = common->data_size_from_cmnd;
+ 	amount_left_to_write = common->data_size_from_cmnd;
+ 
+@@ -888,7 +895,7 @@ static int do_write(struct fsg_common *common)
+ 				curlun->info_valid = 1;
+ 				continue;
+ 			}
+-			amount -= (amount & 511);
++			amount -= (amount & (curlun->blksize - 1));
+ 			if (amount == 0) {
+ 
+ 				/* Why were we were asked to transfer a
+@@ -937,12 +944,12 @@ static int do_write(struct fsg_common *common)
+ 
+ 			/* Perform the write */
+ 			rc = ums[common->lun].write_sector(&ums[common->lun],
+-					       file_offset / SECTOR_SIZE,
+-					       amount / SECTOR_SIZE,
++					       lldiv(file_offset, curlun->blksize),
++					       lldiv(amount, curlun->blksize),
+ 					       (char __user *)bh->buf);
+ 			if (!rc)
+ 				return -EIO;
+-			nwritten = rc * SECTOR_SIZE;
++			nwritten = rc * curlun->blksize;
+ 
+ 			VLDBG(curlun, "file write %u @ %llu -> %d\n", amount,
+ 					(unsigned long long) file_offset,
+@@ -955,7 +962,7 @@ static int do_write(struct fsg_common *common)
+ 			} else if (nwritten < amount) {
+ 				LDBG(curlun, "partial file write: %d/%u\n",
+ 						(int) nwritten, amount);
+-				nwritten -= (nwritten & 511);
++				nwritten -= (nwritten & (curlun->blksize - 1));
+ 				/* Round down to a block */
+ 			}
+ 			file_offset += nwritten;
+@@ -1029,8 +1036,8 @@ static int do_verify(struct fsg_common *common)
+ 		return -EIO;		/* No default reply */
+ 
+ 	/* Prepare to carry out the file verify */
+-	amount_left = verification_length << 9;
+-	file_offset = ((loff_t) lba) << 9;
++	amount_left = verification_length << curlun->blkbits;
++	file_offset = ((loff_t) lba) << curlun->blkbits;
+ 
+ 	/* Write out all the dirty buffers before invalidating them */
+ 
+@@ -1053,12 +1060,12 @@ static int do_verify(struct fsg_common *common)
+ 
+ 		/* Perform the read */
+ 		rc = ums[common->lun].read_sector(&ums[common->lun],
+-				      file_offset / SECTOR_SIZE,
+-				      amount / SECTOR_SIZE,
++				      lldiv(file_offset, curlun->blksize),
++				      lldiv(amount, curlun->blksize),
+ 				      (char __user *)bh->buf);
+ 		if (!rc)
+ 			return -EIO;
+-		nread = rc * SECTOR_SIZE;
++		nread = rc * curlun->blksize;
+ 
+ 		VLDBG(curlun, "file read %u @ %llu -> %d\n", amount,
+ 				(unsigned long long) file_offset,
+@@ -1070,7 +1077,7 @@ static int do_verify(struct fsg_common *common)
+ 		} else if (nread < amount) {
+ 			LDBG(curlun, "partial file verify: %d/%u\n",
+ 					(int) nread, amount);
+-			nread -= (nread & 511);	/* Round down to a sector */
++			nread -= (nread & (curlun->blksize - 1));	/* Round down to a sector */
+ 		}
+ 		if (nread == 0) {
+ 			curlun->sense_data = SS_UNRECOVERED_READ_ERROR;
+@@ -1117,7 +1124,7 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
+ {
+ 	struct fsg_lun	*curlun = &common->luns[common->lun];
+ 	u8		*buf = (u8 *) bh->buf;
+-	u32		sd, sdinfo;
++	u32		sd, sdinfo = 0;
+ 	int		valid;
+ 
+ 	/*
+@@ -1145,7 +1152,6 @@ static int do_request_sense(struct fsg_common *common, struct fsg_buffhd *bh)
+ 	if (!curlun) {		/* Unsupported LUNs are okay */
+ 		common->bad_lun_okay = 1;
+ 		sd = SS_LOGICAL_UNIT_NOT_SUPPORTED;
+-		sdinfo = 0;
+ 		valid = 0;
+ 	} else {
+ 		sd = curlun->sense_data;
+@@ -1179,7 +1185,7 @@ static int do_read_capacity(struct fsg_common *common, struct fsg_buffhd *bh)
+ 
+ 	put_unaligned_be32(curlun->num_sectors - 1, &buf[0]);
+ 						/* Max logical block */
+-	put_unaligned_be32(512, &buf[4]);	/* Block length */
++	put_unaligned_be32(curlun->blksize, &buf[4]);	/* Block length */
+ 	return 8;
+ }
+ 
+@@ -1326,6 +1332,8 @@ static int do_start_stop(struct fsg_common *common)
+ 		return -EINVAL;
+ 	}
+ 
++	common->eject = 1;
++
+ 	return 0;
+ }
+ 
+@@ -1364,7 +1372,7 @@ static int do_read_format_capacities(struct fsg_common *common,
+ 
+ 	put_unaligned_be32(curlun->num_sectors, &buf[0]);
+ 						/* Number of blocks */
+-	put_unaligned_be32(512, &buf[4]);	/* Block length */
++	put_unaligned_be32(curlun->blksize, &buf[4]);	/* Block length */
+ 	buf[4] = 0x02;				/* Current capacity */
+ 	return 12;
+ }
+@@ -1775,6 +1783,16 @@ static int check_command(struct fsg_common *common, int cmnd_size,
+ 	return 0;
+ }
+ 
++/* wrapper of check_command for data size in blocks handling */
++static int check_command_size_in_blocks(struct fsg_common *common,
++		int cmnd_size, enum data_direction data_dir,
++		unsigned int mask, int needs_medium, const char *name)
++{
++	common->data_size_from_cmnd <<= common->luns[common->lun].blkbits;
++	return check_command(common, cmnd_size, data_dir,
++			mask, needs_medium, name);
++}
++
+ 
+ static int do_scsi_command(struct fsg_common *common)
+ {
+@@ -1859,30 +1877,30 @@ static int do_scsi_command(struct fsg_common *common)
+ 
+ 	case SC_READ_6:
+ 		i = common->cmnd[4];
+-		common->data_size_from_cmnd = (i == 0 ? 256 : i) << 9;
+-		reply = check_command(common, 6, DATA_DIR_TO_HOST,
+-				      (7<<1) | (1<<4), 1,
+-				      "READ(6)");
++		common->data_size_from_cmnd = (i == 0 ? 256 : i);
++		reply = check_command_size_in_blocks(common, 6, DATA_DIR_TO_HOST,
++						     (7<<1) | (1<<4), 1,
++						     "READ(6)");
+ 		if (reply == 0)
+ 			reply = do_read(common);
+ 		break;
+ 
+ 	case SC_READ_10:
+ 		common->data_size_from_cmnd =
+-				get_unaligned_be16(&common->cmnd[7]) << 9;
+-		reply = check_command(common, 10, DATA_DIR_TO_HOST,
+-				      (1<<1) | (0xf<<2) | (3<<7), 1,
+-				      "READ(10)");
++				get_unaligned_be16(&common->cmnd[7]);
++		reply = check_command_size_in_blocks(common, 10, DATA_DIR_TO_HOST,
++						     (1<<1) | (0xf<<2) | (3<<7), 1,
++						     "READ(10)");
+ 		if (reply == 0)
+ 			reply = do_read(common);
+ 		break;
+ 
+ 	case SC_READ_12:
+ 		common->data_size_from_cmnd =
+-				get_unaligned_be32(&common->cmnd[6]) << 9;
+-		reply = check_command(common, 12, DATA_DIR_TO_HOST,
+-				      (1<<1) | (0xf<<2) | (0xf<<6), 1,
+-				      "READ(12)");
++				get_unaligned_be32(&common->cmnd[6]);
++		reply = check_command_size_in_blocks(common, 12, DATA_DIR_TO_HOST,
++						     (1<<1) | (0xf<<2) | (0xf<<6), 1,
++						     "READ(12)");
+ 		if (reply == 0)
+ 			reply = do_read(common);
+ 		break;
+@@ -1977,30 +1995,30 @@ static int do_scsi_command(struct fsg_common *common)
+ 
+ 	case SC_WRITE_6:
+ 		i = common->cmnd[4];
+-		common->data_size_from_cmnd = (i == 0 ? 256 : i) << 9;
+-		reply = check_command(common, 6, DATA_DIR_FROM_HOST,
+-				      (7<<1) | (1<<4), 1,
+-				      "WRITE(6)");
++		common->data_size_from_cmnd = (i == 0 ? 256 : i);
++		reply = check_command_size_in_blocks(common, 6, DATA_DIR_FROM_HOST,
++						     (7<<1) | (1<<4), 1,
++						     "WRITE(6)");
+ 		if (reply == 0)
+ 			reply = do_write(common);
+ 		break;
+ 
+ 	case SC_WRITE_10:
+ 		common->data_size_from_cmnd =
+-				get_unaligned_be16(&common->cmnd[7]) << 9;
+-		reply = check_command(common, 10, DATA_DIR_FROM_HOST,
+-				      (1<<1) | (0xf<<2) | (3<<7), 1,
+-				      "WRITE(10)");
++				get_unaligned_be16(&common->cmnd[7]);
++		reply = check_command_size_in_blocks(common, 10, DATA_DIR_FROM_HOST,
++						     (1<<1) | (0xf<<2) | (3<<7), 1,
++						     "WRITE(10)");
+ 		if (reply == 0)
+ 			reply = do_write(common);
+ 		break;
+ 
+ 	case SC_WRITE_12:
+ 		common->data_size_from_cmnd =
+-				get_unaligned_be32(&common->cmnd[6]) << 9;
+-		reply = check_command(common, 12, DATA_DIR_FROM_HOST,
+-				      (1<<1) | (0xf<<2) | (0xf<<6), 1,
+-				      "WRITE(12)");
++				get_unaligned_be32(&common->cmnd[6]);
++		reply = check_command_size_in_blocks(common, 12, DATA_DIR_FROM_HOST,
++						     (1<<1) | (0xf<<2) | (0xf<<6), 1,
++						     "WRITE(12)");
+ 		if (reply == 0)
+ 			reply = do_write(common);
+ 		break;
+@@ -2491,7 +2509,7 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
+ 	for (i = 0; i < nluns; i++) {
+ 		common->luns[i].removable = 1;
+ 
+-		rc = fsg_lun_open(&common->luns[i], ums[i].num_sectors, "");
++		rc = fsg_lun_open(&common->luns[i], ums[i].num_sectors, ums->block_dev.blksz, "");
+ 		if (rc)
+ 			goto error_luns;
+ 	}
+@@ -2765,11 +2783,11 @@ int fsg_add(struct usb_configuration *c)
+ 	return fsg_bind_config(c->cdev, c, fsg_common);
+ }
+ 
+-int fsg_init(struct ums *ums_devs, int count, unsigned int controller_idx)
++int fsg_init(struct ums *ums_devs, int count, struct udevice *udc)
+ {
+ 	ums = ums_devs;
+ 	ums_count = count;
+-	controller_index = controller_idx;
++	udcdev = udc;
+ 
+ 	return 0;
+ }
+diff --git a/drivers/usb/gadget/storage_common.c b/drivers/usb/gadget/storage_common.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/gadget/storage_common.c
++++ b/drivers/usb/gadget/storage_common.c
+@@ -269,6 +269,7 @@ struct device_attribute { int i; };
+ #define ETOOSMALL	525
+ 
+ #include <log.h>
++#include <linux/log2.h>
+ #include <usb_mass_storage.h>
+ #include <dm/device_compat.h>
+ 
+@@ -290,6 +291,8 @@ struct fsg_lun {
+ 	u32		sense_data;
+ 	u32		sense_data_info;
+ 	u32		unit_attention_data;
++	unsigned int	blkbits;
++	unsigned int	blksize; /* logical block size of bound block device */
+ 
+ 	struct device	dev;
+ };
+@@ -566,7 +569,7 @@ static struct usb_gadget_strings	fsg_stringtab = {
+  */
+ 
+ static int fsg_lun_open(struct fsg_lun *curlun, unsigned int num_sectors,
+-			const char *filename)
++			unsigned int sector_size, const char *filename)
+ {
+ 	int				ro;
+ 
+@@ -574,9 +577,12 @@ static int fsg_lun_open(struct fsg_lun *curlun, unsigned int num_sectors,
+ 	ro = curlun->initially_ro;
+ 
+ 	curlun->ro = ro;
+-	curlun->file_length = num_sectors << 9;
++	curlun->file_length = num_sectors * sector_size;
+ 	curlun->num_sectors = num_sectors;
+-	debug("open backing file: %s\n", filename);
++	curlun->blksize = sector_size;
++	curlun->blkbits = order_base_2(sector_size >> 9) + 9;
++	debug("blksize: %u\n", sector_size);
++	debug("open backing file: '%s'\n", filename);
+ 
+ 	return 0;
+ }
+diff --git a/include/usb_mass_storage.h b/include/usb_mass_storage.h
+index 111111111111..222222222222 100644
+--- a/include/usb_mass_storage.h
++++ b/include/usb_mass_storage.h
+@@ -7,7 +7,6 @@
+ #ifndef __USB_MASS_STORAGE_H__
+ #define __USB_MASS_STORAGE_H__
+ 
+-#define SECTOR_SIZE		0x200
+ #include <part.h>
+ #include <linux/usb/composite.h>
+ 
+@@ -25,7 +24,7 @@ struct ums {
+ 	struct blk_desc block_dev;
+ };
+ 
+-int fsg_init(struct ums *ums_devs, int count, unsigned int controller_idx);
++int fsg_init(struct ums *ums_devs, int count, struct udevice *udc);
+ void fsg_cleanup(void);
+ int fsg_main_thread(void *);
+ int fsg_add(struct usb_configuration *c);
+-- 
+Armbian
+
