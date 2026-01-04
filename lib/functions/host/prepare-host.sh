@@ -45,19 +45,7 @@ function prepare_host_noninteractive() {
 		offline=true
 	fi
 
-	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
-	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
-		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
-			# @TODO: rpardini: this is bull, we're always root here. we've been pre-sudo'd.
-			local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
-			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-			${sudo_prefix} locale-gen
-		fi
-	else
-		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
-	fi
-
-	# Use C.UTF-8 locale which is always available in rootfs from the very first command
+	# Use C.UTF-8 locale for the build environment (no generation required)
 	export LANG="C.UTF-8"
 
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
