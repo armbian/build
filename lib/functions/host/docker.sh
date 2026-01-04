@@ -292,10 +292,9 @@ function docker_cli_prepare_dockerfile() {
 		${c}RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." && \\
 		${c} DEBIAN_FRONTEND=noninteractive apt-get -y update && \\
 		${c} DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
-		${c}RUN sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-		${c}RUN locale-gen
+		${c}# Use C.UTF-8 locale which is available in rootfs from the very first command
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}
-		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes
+		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes LANG=C.UTF-8
 		ADD . ${DOCKER_ARMBIAN_TARGET_PATH}/
 		${c}${c_req}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
 		${c}${c_req} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\

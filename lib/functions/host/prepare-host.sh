@@ -57,11 +57,8 @@ function prepare_host_noninteractive() {
 		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
 	fi
 
-	# Let's try and get all log output in English, overriding the builder's chosen or default language
-	export LANG="en_US.UTF-8"
-	export LANGUAGE="en_US.UTF-8"
-	export LC_ALL="en_US.UTF-8"
-	export LC_MESSAGES="en_US.UTF-8"
+	# Use C.UTF-8 locale which is always available in rootfs from the very first command
+	export LANG="C.UTF-8"
 
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
 	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
