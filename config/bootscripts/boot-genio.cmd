@@ -13,14 +13,35 @@ setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "off"
 
-# Set load address for temporary file loading (armbianEnv.txt, overlays, etc)
-# Using address that doesn't conflict with kernel (0x45000000) Note: on Arm64 it has to be 2mb aligned
-# Ramdisk (0x49000000),
-# or fdt (0x44000000)
+# U-Boot memory layout
+# ATTENTION: all hex references have to be quoted, even in comments, otherwise mkimage produces invalid .scr
+# Note: on arm64 must be 2mb aligned
+# Reserved areas:
+# low RAM "0x43200000" "0x43DFFFFF"
+# mid RAM "0x54600000" "0x547FFFFF"
+# mid RAM "0x60000000" "0x61FFFFFF"
+# Thus addresses using estimated max sizes
+
+# Script/load address (boot scripts, small)
+# "0x43000000" = 1,116,277,120 bytes = ~1 MB
+# Important: the u-boot standard is "loadaddr" (CONFIG_SYS_TEXT_BASE=="0x4c000000"), "not load_addr" - used specifically on below script
 setenv load_addr "0x43000000"
 
-# Move ramdisk further away to avoid kernel overwrite (176MB space for kernel)
-setenv ramdisk_addr_r "0x50000000"
+# FDT address (device tree, small)
+# "0x56000000" = 1,436,207,360 bytes = ~2 MB
+setenv fdt_addr_r "0x56000000"
+
+# Kernel load address (100 MB)
+# "0x40000000" - "0x46400000"
+# 1,073,741,824 - 1,173,637,760 bytes = 100 MB
+setenv kernel_addr_r "0x40000000"
+
+# Initramfs load address (500 MB)
+# "0x64000000" - "0x83800000"
+# 1,677,721,600 - 2,177,441,600 bytes = 500 MB
+# Positioned in high RAM to avoid reserved hole
+setenv ramdisk_addr_r "0x64000000"
+
 
 test -n "${distro_bootpart}" || distro_bootpart=1
 
@@ -56,12 +77,6 @@ else
 fi
 
 echo "Final rootdev: ${rootdev}"
-
-if test "${bootlogo}" = "true" ; then
-	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
-else
-	setenv consoleargs "splash=verbose ${consoleargs}"
-fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,921600 ${consoleargs}"; fi
