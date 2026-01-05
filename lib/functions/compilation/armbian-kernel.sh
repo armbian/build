@@ -348,6 +348,19 @@ function armbian_kernel_config__select_nftables() {
 	opts_m+=("IP_SET_BITMAP_PORT")
 }
 
+# Enables various filesystems that we expect our users to need/demand in boot dependencies.
+# OVERLAY_FS isn't here b/c it's never required for boot [that this author is aware of as of 2026Jan]
+# if you as a kernel family maintainer want to override this, unset -f armbian_kernel_config__enable_various_filesystems
+# and then copy this function to your config/sources/families modified as appropriate.
+function armbian_kernel_config__enable_various_filesystems() {
+	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
+	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
+	opts_y+=("EXT4_FS")                   # Enables EXT4 file system support
+	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
+	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
+	opts_m+=("EROFS_FS")                  # Extended ReadOnly FS, useful for docker images
+}
+
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
 #   sets a wide range of kernel configuration options necessary for Docker, including support for
 #   control groups (cgroups), networking, security, and various netfilter
@@ -355,8 +368,6 @@ function armbian_kernel_config__select_nftables() {
 # ATTENTION: filesystems like EXT4 and BTRFS are now omitted, so it's each kernel's .config responsibility to enable
 #            them as builtin or modules as each sees fit.
 function armbian_kernel_config__enable_docker_support() {
-	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
-	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
 	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
 	opts_y+=("BLK_DEV_THROTTLING")        # Enables block device IO throttling
 	opts_y+=("BRIDGE_VLAN_FILTERING")     # Enables VLAN filtering on network bridges
@@ -385,9 +396,6 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_m+=("DUMMY")                     # Enables dummy network driver module
 	opts_y+=("DEVPTS_MULTIPLE_INSTANCES") # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
 	opts_y+=("ENCRYPTED_KEYS")            # Enables support for encrypted keys in the kernel
-	opts_m+=("EXT4_FS")                   # Enables EXT4 file system support as a module
-	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
-	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
 	opts_m+=("IPVLAN")                    # Enables IPvlan network driver support
 	opts_y+=("INET")                      # Enables Internet protocol (IPv4) support
 	opts_y+=("FAIR_GROUP_SCHED")          # Enables fair group scheduling support
@@ -426,7 +434,6 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_y+=("XFRM")                      # Enables transform (XFRM) framework support
 	opts_m+=("XFRM_ALGO")                 # Enables cryptographic algorithm support for XFRM
 	opts_m+=("XFRM_USER")                 # Enables user space XFRM framework support
-	opts_m+=("EROFS_FS")                  # Extended ReadOnly FS, useful for docker images
 }
 
 # Enables live system access to the kernel configuration via /proc/config.gz.
