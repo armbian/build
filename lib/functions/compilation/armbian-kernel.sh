@@ -527,28 +527,18 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 
 	if [[ -f .config ]]; then
 		for opt_n in "${opts_n[@]}"; do
-			display_alert "Disabling kernel opt" "${opt_n}=n" "debug"
 			kernel_config_set_n "${opt_n}"
 		done
 
 		for opt_y in "${opts_y[@]}"; do
-			display_alert "Enabling kernel opt" "${opt_y}=y" "debug"
 			kernel_config_set_y "${opt_y}"
 		done
 
 		for opt_m in "${opts_m[@]}"; do
-			actual_opt_value='m'
-			if egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
-				actual_opt_value='y'
-				kernel_config_set_y "${opt_m}"
-			else
-				kernel_config_set_m "${opt_m}"
-			fi
-			display_alert "Enabling kernel opt" "${opt_m}=${actual_opt_value}" "debug"
+			kernel_config_set_m "${opt_m}"
 		done
 
 		for opt_val in "${!opts_val[@]}"; do
-			display_alert "Setting kernel opt" "${opt_val}=${opts_val[$opt_val]}" "debug"
 			kernel_config_set_val "${opt_val}" "${opts_val[$opt_val]}"
 		done
 	fi
