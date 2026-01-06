@@ -8,7 +8,7 @@
 function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	[[ -n "${KERNELBRANCH}" ]] && return 0           # if already set, don't touch it; that way other hooks can run in any order
 	if [[ "${KERNEL_MAJOR_MINOR}" == "6.19" ]]; then # @TODO: roll over to next MAJOR.MINOR and MAJOR.MINOR-rc1 when it is released
-		declare -g KERNELBRANCH="tag:v6.19-rc3"
+		declare -g KERNELBRANCH="tag:v6.19-rc4"
 		display_alert "mainline-kernel: upstream release candidate" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
 	fi
 }
