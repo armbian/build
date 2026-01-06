@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hyx0329 <hyx0329@outlook.com>
+Date: Tue, 3 Jun 2025 12:14:37 +0000
+Subject: notify typec dp hpd state through extcon
+
+Signed-off-by: hyx0329 <hyx0329@outlook.com>
+---
+ drivers/usb/typec/altmodes/displayport.c | 57 ++++++++++
+ 1 file changed, 57 insertions(+)
+
+diff --git a/drivers/usb/typec/altmodes/displayport.c b/drivers/usb/typec/altmodes/displayport.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/altmodes/displayport.c
++++ b/drivers/usb/typec/altmodes/displayport.c
+@@ -9,8 +9,11 @@
+  */
+ 
+ #include <linux/delay.h>
++#include <linux/extcon.h>
++#include <linux/extcon-provider.h>
+ #include <linux/mutex.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/property.h>
+ #include <linux/usb/pd_vdo.h>
+ #include <linux/usb/typec_dp.h>
+@@ -81,6 +84,57 @@ struct dp_altmode {
+ 	struct typec_altmode *plug_prime;
+ };
+ 
++/* Notify DP hotplug change via extcon. Current rockchip cdn-dp driver need this signal
++ * to reset DP link. */
++static void dp_altmode_update_extcon_hpd_status(struct dp_altmode *dp, bool new_hpd) {
++	const struct device *dev = &dp->alt->dev;
++	struct extcon_dev* edev = NULL;
++	int ret;
++
++	/* skip if hpd is not changed */
++	if (dp->hpd == new_hpd)
++		return;
++
++	/* find the extcon associated with cdn-dp
++	 * an unrelated extcon might be found, but this is a workaround anyway */
++	while (dev) {
++		/* Case1: dev is the extcon provider */
++		edev = extcon_find_edev_by_node(dev->of_node);
++		if (!IS_ERR(edev)) {
++			break;
++		}
++
++		/* Case2: dev links to one extcon */
++		if (of_property_present(dev->of_node, "extcon")) {
++			edev = extcon_get_edev_by_phandle(dev, 0);
++			if (!IS_ERR(edev)) {
++				break;
++			}
++		}
++
++		dev = dev->parent;
++	}
++
++	if (IS_ERR_OR_NULL(edev)) {
++		dev_info(&dp->alt->dev,
++			"no extcon found for current port, not notifying hpd change");
++		return;
++	}
++
++	ret = extcon_set_property_capability(edev, EXTCON_DISP_DP, EXTCON_PROP_DISP_HPD);
++	if (ret) {
++		dev_info(&dp->alt->dev,
++			"updating hpd on target extcon is not supported(%d)\n", ret);
++		return;
++	}
++
++	dev_info(&dp->alt->dev, "dp-hpd=%d (port=%x alt=%x)\n",
++		(int)new_hpd, dp->port->vdo, dp->alt->vdo);
++	extcon_set_property(edev, EXTCON_DISP_DP, EXTCON_PROP_DISP_HPD,
++		(union extcon_property_value)(int)new_hpd);
++	extcon_sync(edev, EXTCON_DISP_DP);
++}
++
+ static int dp_altmode_notify(struct dp_altmode *dp)
+ {
+ 	unsigned long conf;
+@@ -175,6 +229,7 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
+ 			dp->state = dp->plug_prime ? DP_STATE_CONFIGURE_PRIME :
+ 						     DP_STATE_CONFIGURE;
+ 			if (dp->hpd != hpd) {
++				dp_altmode_update_extcon_hpd_status(dp, hpd);
+ 				dp->hpd = hpd;
+ 				dp->pending_hpd = true;
+ 			}
+@@ -185,6 +240,7 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
+ 		drm_connector_oob_hotplug_event(dp->connector_fwnode,
+ 						hpd ? connector_status_connected :
+ 						      connector_status_disconnected);
++		dp_altmode_update_extcon_hpd_status(dp, hpd);
+ 		dp->hpd = hpd;
+ 		sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
+ 		if (hpd && irq_hpd) {
+@@ -393,6 +449,7 @@ static int dp_altmode_vdm(struct typec_altmode *alt,
+ 			if (dp->hpd) {
+ 				drm_connector_oob_hotplug_event(dp->connector_fwnode,
+ 								connector_status_disconnected);
++				dp_altmode_update_extcon_hpd_status(dp, false);
+ 				dp->hpd = false;
+ 				sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
+ 			}
+-- 
+Armbian
+
