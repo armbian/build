@@ -253,6 +253,27 @@ function compile_uboot_target() {
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
 	)
 
+	# Pass the ccache directories explicitly, since we'll run under "env -i"
+	if [[ -n "${CCACHE_DIR}" ]]; then
+		uboot_make_envs+=("CCACHE_DIR=${CCACHE_DIR@Q}")
+	fi
+	if [[ -n "${CCACHE_TEMPDIR}" ]]; then
+		uboot_make_envs+=("CCACHE_TEMPDIR=${CCACHE_TEMPDIR@Q}")
+	fi
+
+	# workaround when two compilers are needed
+	cross_compile="CROSS_COMPILE=\"${CCACHE:+$CCACHE }$UBOOT_COMPILER\""
+	# When UBOOT_TOOLCHAIN2 is set, the board's uboot_custom_postprocess handles compilers;
+	# pass a harmless dummy env var since empty make parameters cause errors
+	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"
+
+	call_extension_method "uboot_make_config" <<- 'UBOOT_MAKE_CONFIG'
+		*Hook to customize u-boot make environment*
+		Called right before invoking make for u-boot compilation.
+		Available array to modify:
+		  - uboot_make_envs[@]: environment variables passed via "env -i" (e.g., CCACHE_REMOTE_STORAGE)
+	UBOOT_MAKE_CONFIG
+
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
 	do_with_ccache_statistics run_host_command_logged_long_running \
