@@ -40,7 +40,11 @@ function run_kernel_make_internal() {
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
 		llvm_flag="LLVM=1"
 		cc_name="CC"
-		extra_warnings="-Wno-error=unused-command-line-argument -Wno-error=unknown-warning-option" # downgrade errors to warnings
+		# Only suppress unused-command-line-argument errors
+		# Do NOT add -Wno-error=unknown-warning-option here - it breaks cc-option detection
+		# in kernel Makefiles (btrfs, drm, coresight) causing GCC-specific flags to be
+		# incorrectly added when building with clang
+		extra_warnings="-Wno-error=unused-command-line-argument"
 	else
 		cc_name="CROSS_COMPILE"
 		extra_warnings=""
