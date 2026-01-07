@@ -350,7 +350,8 @@ function armbian_kernel_config__select_nftables() {
 
 # Enables various filesystems that we expect our users to need/demand in boot dependencies.
 # OVERLAY_FS isn't here b/c it's never required for boot [that this author is aware of as of 2026Jan]
-# if you as a kernel family maintainer want to override this, unset -f armbian_kernel_config__enable_various_filesystems
+# if you as a kernel family maintainer want to override this, make a function call like below:
+# extension_hook_opt_out "armbian_kernel_config__enable_various_filesystems"
 # and then copy this function to your config/sources/families modified as appropriate.
 function armbian_kernel_config__enable_various_filesystems() {
 	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
