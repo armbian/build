@@ -60,7 +60,7 @@ MULTIPLE_CALLS_WARNING
 
 	cat << PRE_HOOKS_HEADER
 ## Hooks
-- Individual/specific hook functions can be [skipped/ignored/opted-out](/Developer-Guide_Extensions#opt-out-of-individual-hook-functions).
+- Individual/specific hook functions can be [skipped/ignored/opted-out](/Developer-Guide_Extensions#how-to-opt-out-of-a-specific-hook-function).
 - Hooks are listed in the order they are called.
 PRE_HOOKS_HEADER
 
