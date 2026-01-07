@@ -11,7 +11,29 @@
 #   # With explicit Redis server (no Avahi needed):
 #   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_STORAGE="redis://192.168.1.65:6379" BOARD=...
 #
+#   # Disable local cache, use remote only (saves local disk space):
+#   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_ONLY=yes BOARD=...
+#
 # Automatically sets USE_CCACHE=yes
+#
+# Supported ccache environment variables (passed through to builds):
+# See: https://ccache.dev/manual/latest.html#_configuration_options
+#   CCACHE_BASEDIR        - base directory for path normalization (enables cache sharing)
+#   CCACHE_REMOTE_STORAGE - remote storage URL (redis://...)
+#   CCACHE_REMOTE_ONLY    - use only remote storage, disable local cache
+#   CCACHE_READONLY       - read-only mode, don't update cache
+#   CCACHE_RECACHE        - don't use cached results, but update cache
+#   CCACHE_RESHARE        - rewrite cache entries to remote storage
+#   CCACHE_DISABLE        - disable ccache completely
+#   CCACHE_MAXSIZE        - maximum cache size (e.g., "10G")
+#   CCACHE_MAXFILES       - maximum number of files in cache
+#   CCACHE_NAMESPACE      - cache namespace for isolation
+#   CCACHE_SLOPPINESS     - comma-separated list of sloppiness options
+#   CCACHE_UMASK          - umask for cache files
+#   CCACHE_LOGFILE        - path to log file
+#   CCACHE_DEBUGLEVEL     - debug level (1-2)
+#   CCACHE_STATSLOG       - path to stats log file
+#   CCACHE_PCH_EXTSUM     - include PCH extension in hash
 #
 # CCACHE_REMOTE_STORAGE format (ccache 4.4+):
 #   redis://HOST[:PORT][|attribute=value...]
@@ -68,6 +90,30 @@
 #   This is because ccache includes the working directory in the cache key.
 #   Docker builds automatically use consistent paths (/armbian/...).
 
+# Default Redis connection timeout in milliseconds (can be overridden by user)
+declare -g -r CCACHE_REDIS_CONNECT_TIMEOUT="${CCACHE_REDIS_CONNECT_TIMEOUT:-500}"
+
+# List of ccache environment variables to pass through to builds
+declare -g -a CCACHE_PASSTHROUGH_VARS=(
+	CCACHE_REDIS_CONNECT_TIMEOUT
+	CCACHE_BASEDIR
+	CCACHE_REMOTE_STORAGE
+	CCACHE_REMOTE_ONLY
+	CCACHE_READONLY
+	CCACHE_RECACHE
+	CCACHE_RESHARE
+	CCACHE_DISABLE
+	CCACHE_MAXSIZE
+	CCACHE_MAXFILES
+	CCACHE_NAMESPACE
+	CCACHE_SLOPPINESS
+	CCACHE_UMASK
+	CCACHE_LOGFILE
+	CCACHE_DEBUGLEVEL
+	CCACHE_STATSLOG
+	CCACHE_PCH_EXTSUM
+)
+
 # Query Redis stats (keys count and memory usage)
 function get_redis_stats() {
 	local ip="$1"
@@ -76,8 +122,8 @@ function get_redis_stats() {
 
 	if command -v redis-cli &>/dev/null; then
 		local keys mem
-		keys=$(timeout 2 redis-cli -h "$ip" -p "$port" DBSIZE 2>/dev/null | grep -oE '[0-9]+')
-		mem=$(timeout 2 redis-cli -h "$ip" -p "$port" INFO memory 2>/dev/null | grep "used_memory_human" | cut -d: -f2 | tr -d '[:space:]')
+		keys=$(timeout 2 redis-cli -h "$ip" -p "$port" DBSIZE 2>/dev/null | grep -oE '[0-9]+' || true)
+		mem=$(timeout 2 redis-cli -h "$ip" -p "$port" INFO memory 2>/dev/null | grep "used_memory_human" | cut -d: -f2 | tr -d '[:space:]' || true)
 		if [[ -n "$keys" ]]; then
 			stats="keys=${keys:-0}, mem=${mem:-?}"
 		fi
@@ -90,59 +136,66 @@ function get_redis_stats() {
 	echo "$stats"
 }
 
-# This runs on the HOST before Docker is launched.
+# This runs on the HOST just before Docker container is launched.
 # Resolves 'ccache.local' via mDNS (requires Avahi on server publishing this hostname
 # with: avahi-publish-address -R ccache.local <IP>) and passes the resolved IP
 # to Docker container via CCACHE_REMOTE_STORAGE environment variable.
 # mDNS resolution doesn't work inside Docker, so we must resolve on host.
-function add_host_dependencies__setup_remote_ccache_for_docker() {
-	# Skip if already configured explicitly
-	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		display_alert "Remote ccache pre-configured" "${CCACHE_REMOTE_STORAGE}" "info"
-		declare -g -a DOCKER_EXTRA_ARGS+=("--env" "CCACHE_REMOTE_STORAGE=${CCACHE_REMOTE_STORAGE}")
-		return 0
-	fi
+function host_pre_docker_launch__setup_remote_ccache() {
+	# If CCACHE_REMOTE_STORAGE not set, try to resolve ccache.local via mDNS
+	if [[ -z "${CCACHE_REMOTE_STORAGE}" ]]; then
+		local ccache_ip
+		ccache_ip=$(getent hosts ccache.local 2>/dev/null | awk '{print $1; exit}' || true)
 
-	# Try to resolve ccache.local via mDNS on the host
-	local ccache_ip
-	ccache_ip=$(getent hosts ccache.local 2>/dev/null | awk '{print $1; exit}')
+		if [[ -n "${ccache_ip}" ]]; then
+			display_alert "Remote ccache discovered on host" "redis://${ccache_ip}:6379" "info"
 
-	if [[ -n "${ccache_ip}" ]]; then
-		display_alert "Remote ccache discovered on host" "redis://${ccache_ip}:6379" "info"
+			# Show Redis stats
+			local stats
+			stats=$(get_redis_stats "${ccache_ip}" 6379)
+			if [[ -n "$stats" ]]; then
+				display_alert "Remote ccache stats" "${stats}" "info"
+			fi
 
-		# Show Redis stats
-		local stats
-		stats=$(get_redis_stats "${ccache_ip}" 6379)
-		if [[ -n "$stats" ]]; then
-			display_alert "Remote ccache stats" "${stats}" "info"
+			export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+		else
+			display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
 		fi
-
-		# Pass to Docker via DOCKER_EXTRA_ARGS
-		declare -g -a DOCKER_EXTRA_ARGS+=("--env" "CCACHE_REMOTE_STORAGE=redis://${ccache_ip}:6379|connect-timeout=500")
 	else
-		display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
+		display_alert "Remote ccache pre-configured" "${CCACHE_REMOTE_STORAGE}" "info"
 	fi
+
+	# Pass all set CCACHE_* variables to Docker
+	local var val
+	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
+		val="${!var}"
+		if [[ -n "${val}" ]]; then
+			DOCKER_EXTRA_ARGS+=("--env" "${var}=${val}")
+			display_alert "Docker env" "${var}=${val}" "debug"
+		fi
+	done
 }
 
 # Show ccache remote storage statistics at the end of build (success or failure)
 function ccache_remote_show_final_stats() {
 	display_alert "Ccache cleanup handler" "CCACHE_DIR=${CCACHE_DIR:-unset} CCACHE_REMOTE_STORAGE=${CCACHE_REMOTE_STORAGE:-unset}" "debug"
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		local stats_output read_hit read_miss write error total pct
+		local stats_output total pct
+		local read_hit=0 read_miss=0 write=0 error=0
 		# Need to explicitly set CCACHE_DIR when reading stats
 		stats_output=$(CCACHE_DIR="${CCACHE_DIR}" ccache --print-stats 2>&1)
-		display_alert "Ccache raw stats" "$(echo "$stats_output" | grep remote_storage)" "debug"
+		display_alert "Ccache raw stats" "$(echo "$stats_output" | grep remote_storage || true)" "debug"
 		# Use remote_storage_read_hit/miss for actual cache operations
-		read_hit=$(echo "$stats_output" | grep "^remote_storage_read_hit" | cut -f2)
-		read_miss=$(echo "$stats_output" | grep "^remote_storage_read_miss" | cut -f2)
-		write=$(echo "$stats_output" | grep "^remote_storage_write" | cut -f2)
-		error=$(echo "$stats_output" | grep "^remote_storage_error" | cut -f2)
-		total=$((read_hit + read_miss))
+		read_hit=$(echo "$stats_output" | grep "^remote_storage_read_hit" | cut -f2 || true)
+		read_miss=$(echo "$stats_output" | grep "^remote_storage_read_miss" | cut -f2 || true)
+		write=$(echo "$stats_output" | grep "^remote_storage_write" | cut -f2 || true)
+		error=$(echo "$stats_output" | grep "^remote_storage_error" | cut -f2 || true)
+		total=$(( ${read_hit:-0} + ${read_miss:-0} ))
 		pct=0
 		if [[ $total -gt 0 ]]; then
-			pct=$((read_hit * 100 / total))
+			pct=$(( ${read_hit:-0} * 100 / total ))
 		fi
-		display_alert "Remote ccache result" "read_hit=${read_hit:-0} read_miss=${read_miss:-0} write=${write:-0} error=${error:-0} (${pct}% hit rate)" "info"
+		display_alert "Remote ccache result" "read_hit=${read_hit} read_miss=${read_miss} write=${write} error=${error} (${pct}% hit rate)" "info"
 	else
 		display_alert "Ccache cleanup handler" "CCACHE_REMOTE_STORAGE not set" "debug"
 	fi
@@ -180,20 +233,28 @@ function extension_prepare_config__setup_remote_ccache() {
 	return 0
 }
 
-# This hook runs right before kernel make - add CCACHE_REMOTE_STORAGE to make environment.
+# This hook runs right before kernel make - add ccache env vars to make environment.
 # Required because kernel build uses 'env -i' which clears all environment variables.
 function kernel_make_config__add_ccache_remote_storage() {
-	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		common_make_envs+=("CCACHE_REMOTE_STORAGE='${CCACHE_REMOTE_STORAGE}'")
-		display_alert "Kernel make: added remote ccache" "${CCACHE_REMOTE_STORAGE}" "debug"
-	fi
+	local var val
+	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
+		val="${!var}"
+		if [[ -n "${val}" ]]; then
+			common_make_envs+=("${var}=${val@Q}")
+			display_alert "Kernel make: ${var}" "${val}" "debug"
+		fi
+	done
 }
 
-# This hook runs right before u-boot make - add CCACHE_REMOTE_STORAGE to make environment.
+# This hook runs right before u-boot make - add ccache env vars to make environment.
 # Required because u-boot build uses 'env -i' which clears all environment variables.
 function uboot_make_config__add_ccache_remote_storage() {
-	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		uboot_make_envs+=("CCACHE_REMOTE_STORAGE='${CCACHE_REMOTE_STORAGE}'")
-		display_alert "U-boot make: added remote ccache" "${CCACHE_REMOTE_STORAGE}" "debug"
-	fi
+	local var val
+	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
+		val="${!var}"
+		if [[ -n "${val}" ]]; then
+			uboot_make_envs+=("${var}=${val@Q}")
+			display_alert "U-boot make: ${var}" "${val}" "debug"
+		fi
+	done
 }
