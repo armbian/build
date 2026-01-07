@@ -18,6 +18,18 @@ function calculate_rootfs_cache_id() {
 
 	declare -i short_hash_size=6
 
+	call_extension_method "rootfs_customize_package_list" <<- ROOTFS_CUSTOMIZE_PACKAGE_LIST
+		expected to append arbitrary data about package list
+		modifications to /tmp/rootfs_customize_package_list.txt.
+		NOTE: hook implementations that do not write to this
+		file will have no effect on the rootfs hashing.
+	ROOTFS_CUSTOMIZE_PACKAGE_LIST
+	local rootfs_customize_package_list_hash=""
+	if [[ -e '/tmp/rootfs_customize_package_list.txt' ]]; then
+		rootfs_customize_package_list_hash=$(sha256sum /tmp/rootfs_customize_package_list.txt)
+		rm /tmp/rootfs_customize_package_list.txt
+	fi
+
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
 	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/create-cache.sh "${SRC}"/lib/functions/rootfs/rootfs-create.sh
@@ -29,6 +41,7 @@ function calculate_rootfs_cache_id() {
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	declare legacy_debootstrap="${LEGACY_DEBOOTSTRAP:-"no"}"
+	extension_hooks_hashed+=("rootfs_customize_package_list=${rootfs_customize_package_list_hash}")
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" LDB=${legacy_debootstrap,,} | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 

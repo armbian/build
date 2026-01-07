@@ -45,7 +45,7 @@ function determine_artifacts_to_build_for_image() {
 	artifacts_to_build+=("armbian-bsp-cli")
 
 	# Userspace, RELEASE-specific artifacts.
-	if [[ -n "${RELEASE}" ]]; then
+	if [[ -n "${RELEASE}" && ! $APA_IS_ACTIVE ]]; then
 		if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
 			artifacts_to_build+=("armbian-desktop")
 			artifacts_to_build+=("armbian-bsp-desktop")
