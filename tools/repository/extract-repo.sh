@@ -162,26 +162,19 @@ detect_releases() {
     fi
 }
 
-# Get package list from Packages file
-get_packages_from_component() {
-    local repo_base="$1"
-    local release="$2"
-    local component="$3"
+# Copy all .deb files from a directory recursively
+copy_debs_from_dir() {
+    local source_dir="$1"
+    local target_dir="$2"
 
-    # Find Packages file - try different architectures
-    local component_dir="$repo_base/dists/$release/$component"
-
-    if [[ ! -d "$component_dir" ]]; then
+    if [[ ! -d "$source_dir" ]]; then
         return
     fi
 
-    # Find any Packages file in the component directory
-    local packages_file=$(find "$component_dir" -type f -name "Packages" | head -1)
-
-    if [[ -n "$packages_file" && -f "$packages_file" ]]; then
-        # Extract package filenames from Packages file
-        grep -E '^Filename:' "$packages_file" | sed 's/Filename: //' || true
-    fi
+    # Find all .deb files recursively in the source directory
+    while IFS= read -r -d '' deb_file; do
+        echo "$deb_file"
+    done < <(find "$source_dir" -type f -name "*.deb" -print0 2>/dev/null)
 }
 
 # Extract packages from repository
@@ -233,36 +226,43 @@ extract_packages() {
         for component in "${components[@]}"; do
             log_verbose "Processing component: $release/$component"
 
-            # Get package list
-            mapfile -t packages < <(get_packages_from_component "$repo_base" "$release" "$component")
+            # Determine source and target directories
+            local source_dir=""
+            local target_dir=""
 
-            if [[ ${#packages[@]} -eq 0 ]]; then
-                log_verbose "No packages found for $release/$component"
+            if [[ "$component" == "main" ]]; then
+                # Main component packages go to root
+                source_dir="$repo_base/pool/main"
+                target_dir="$output_base"
+            else
+                # Release-specific components go to extra/
+                source_dir="$repo_base/pool/$component"
+                target_dir="$output_base/extra/$component"
+                if [[ "$DRY_RUN" == false ]]; then
+                    mkdir -p "$target_dir"
+                fi
+            fi
+
+            if [[ ! -d "$source_dir" ]]; then
+                log_verbose "Source directory not found: $source_dir"
                 continue
             fi
 
-            log "Found ${#packages[@]} packages in $release/$component"
+            # Get list of all .deb files recursively
+            mapfile -t packages < <(copy_debs_from_dir "$source_dir" "$target_dir")
+
+            if [[ ${#packages[@]} -eq 0 ]]; then
+                log_verbose "No packages found in $source_dir"
+                continue
+            fi
+
+            log "Found ${#packages[@]} packages in $source_dir"
 
             # Process each package
-            for package_path in "${packages[@]}"; do
+            for source_path in "${packages[@]}"; do
                 ((total_packages++)) || true
 
-                local package_name=$(basename "$package_path")
-                local source_path="$repo_base/$package_path"
-
-                # Determine target directory based on component
-                local target_dir=""
-                if [[ "$component" == "main" ]]; then
-                    # Main component packages go to root
-                    target_dir="$output_base"
-                else
-                    # Release-specific components go to extra/
-                    target_dir="$output_base/extra/$component"
-                    if [[ "$DRY_RUN" == false ]]; then
-                        mkdir -p "$target_dir"
-                    fi
-                fi
-
+                local package_name=$(basename "$source_path")
                 local target_path="$target_dir/$package_name"
 
                 # Copy package
