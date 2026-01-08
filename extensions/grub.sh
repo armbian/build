@@ -59,11 +59,6 @@ function extension_prepare_config__prepare_grub_standard() {
 		DISTRO_KERNEL_VER="${ARCH}" # Debian's generic kernel is named like "5.19.0-2-amd64", we can't predict, use the arch
 		DISTRO_KERNEL_PACKAGES="linux-image-${ARCH}"
 		DISTRO_FIRMWARE_PACKAGES="firmware-linux-free"
-		# Debian's prebuilt kernels dont support hvc0, hack.
-		if [[ "${SERIALCON}" == "hvc0" ]]; then
-			display_alert "Debian's kernels don't support hvc0, changing to ttyS0" "${DISTRIBUTION}" "wrn"
-			declare -g SERIALCON="ttyS0"
-		fi
 	fi
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
