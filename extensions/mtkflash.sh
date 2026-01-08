@@ -20,11 +20,8 @@ function add_host_dependencies__mtkflash() {
 function extension_finish_config__900_mtkflash() {
 	display_alert "Preparing mtkflash extension" "${EXTENSION}" "info"
 
-	#declare -g -r MTKFLASH_GIT_REPO="${MTKFLASH_GIT_REPO:-"${GITHUB_SOURCE}/grinn-global/mtk-flash.git"}"
-	#declare -g -r MTKFLASH_GIT_COMMIT="${MTKFLASH_GIT_COMMIT:-"2aa9ce8a0398a5ea67180df9178b0725de9ce259"}"
-	# TODO: Back to upstream when https://github.com/grinn-global/mtk-flash/pull/2 is merged
-	declare -g -r MTKFLASH_GIT_REPO="${MTKFLASH_GIT_REPO:-"${GITHUB_SOURCE}/rpardini/mtk-flash.git"}"
-	declare -g -r MTKFLASH_GIT_COMMIT="${MTKFLASH_GIT_COMMIT:-"b29e79e841513d46b45717a1f6334bc48ae8abd3"}"
+	declare -g -r MTKFLASH_GIT_REPO="${MTKFLASH_GIT_REPO:-"${GITHUB_SOURCE}/grinn-global/mtk-flash.git"}"
+	declare -g -r MTKFLASH_GIT_COMMIT="${MTKFLASH_GIT_COMMIT:-"7a7bc746cce4e8fcdd9ce93e5c9ec9a80fb238ad"}"
 
 	declare -g -r mtkflash_dir="${SRC}/cache/sources/mtk-flash"
 	declare -g -r mtkflash_bin_path="${mtkflash_dir}/target/release/mtk-flash-${MTKFLASH_GIT_COMMIT}"
@@ -92,7 +89,7 @@ function post_build_image_write__mtkflash() {
 	display_alert "mtk-flash using ttyACM device" "${mtkflash_device_path} (customize with MTKFLASH_TTYACM_DEVICE if needed)" "info"
 	mtkflash_cmd_args+=("--dev" "${mtkflash_device_path}")
 
-	mtkflash_cmd_args+=("--no-erase-boot1") # always preserve mmc0boot1 - used for u-boot environment storage
+	mtkflash_cmd_args+=("--preserve-boot1") # always preserve mmc0boot1 - used for u-boot environment storage
 
 	display_alert "mtk-flash command line" "${mtkflash_bin_path} ${mtkflash_cmd_args[*]@Q}" "debug"
 
