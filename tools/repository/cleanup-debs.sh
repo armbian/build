@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# armbian-deb-cleanup.sh
+# cleanup-debs.sh
 #
 # Recursively clean Armbian Debian package artifacts.
 #
@@ -29,7 +29,6 @@
 #     version is kept globally (not per directory).
 #   - Files not matching `armbian-*.deb` are ignored.
 #
-
 set -euo pipefail
 
 ROOT="${1:-.}"
