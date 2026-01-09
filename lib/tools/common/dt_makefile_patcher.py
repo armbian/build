@@ -34,6 +34,7 @@ class AutoPatcherParams:
 		self.apply_patches_to_git = apply_patches_to_git
 		self.git_repo = git_repo
 		self.all_dt_files_copied: list[str] = []
+		self.dir_dt_files_copied: dict[str, list[str]] = {}
 		self.all_overlay_files_copied: list[str] = []
 
 
@@ -233,6 +234,7 @@ def copy_bare_files(autopatcher_params: AutoPatcherParams, type: str) -> list[Au
 	# for each target....
 	for target_dir in dts_dirs_by_target:
 		all_files_to_copy = []
+		autopatcher_params.dir_dt_files_copied[target_dir] = []
 		dts_source_dirs = dts_dirs_by_target[target_dir]
 		full_path_target_dir = os.path.join(autopatcher_params.git_work_dir, target_dir)
 		if not os.path.exists(full_path_target_dir):
@@ -272,6 +274,8 @@ def copy_bare_files(autopatcher_params: AutoPatcherParams, type: str) -> list[Au
 			if type == "dt":
 				if one_file.endswith(".dts"):
 					autopatcher_params.all_dt_files_copied.append(one_file)
+					# add per autopatcher_params.dir_dt_files_copied per target_dir
+					autopatcher_params.dir_dt_files_copied[target_dir].append(one_file)
 			elif type == "overlay":
 				autopatcher_params.all_overlay_files_copied.append(one_file)
 
@@ -306,7 +310,7 @@ def auto_patch_all_dt_makefiles(autopatcher_params: AutoPatcherParams) -> list[A
 		log.warning(f"Autopatching DT Makefile in {one_autopatch_config.directory} with config '{one_autopatch_config.config_var}'...")
 		autopatch_makefile_info = auto_patch_dt_makefile(
 			autopatcher_params.git_work_dir, one_autopatch_config.directory, one_autopatch_config.config_var,
-			autopatcher_params.all_dt_files_copied, one_autopatch_config.incremental, one_autopatch_config.add_only
+			autopatcher_params.dir_dt_files_copied[one_autopatch_config.directory], one_autopatch_config.incremental, one_autopatch_config.add_only
 		)
 
 		desc = AutomaticPatchDescription()
