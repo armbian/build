@@ -63,6 +63,7 @@ function get_docker_info_once() {
 			# Check if 'docker' is actually podman (e.g., podman-docker package)
 			if docker --version | grep -q podman; then
 				DOCKER_IS_PODMAN="yes"
+				DOCKER_NETWORK="--network host"
 				display_alert "Podman detected" "docker command is podman alias" "info"
 			fi
 		elif [[ -n "$(command -v podman)" ]]; then
@@ -391,8 +392,15 @@ function docker_cli_build_dockerfile() {
 
 	display_alert "Building" "Dockerfile via '${DOCKER_BUILDX_OR_BUILD[*]}'" "info"
 
+	# Podman needs --network=host for build to have proper network access
+	declare -a docker_build_network_args=()
+	if [[ "${DOCKER_IS_PODMAN}" == "yes" ]]; then
+		docker_build_network_args=("--network=host")
+		display_alert "Adding host networking to build" "for Podman compatibility" "info"
+	fi
+
 	BUILDKIT_COLORS="run=123,20,245:error=yellow:cancel=blue:warning=white" \
-		run_host_command_logged $DOCKER_COMMAND "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
+		run_host_command_logged $DOCKER_COMMAND "${DOCKER_BUILDX_OR_BUILD[@]}" "${docker_build_network_args[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
 }
 
 function docker_cli_prepare_launch() {
