@@ -17,7 +17,6 @@ OVERLAY_PREFIX="${OVERLAY_PREFIX:-"rockchip"}" # default to 'rockchip' if not se
 OVERLAY_DIR="/boot/dtb/rockchip/overlay"
 # SERIALCON is handled/defaulted in hook post_family_config__900_late_default_serial_console_by_branch at end of this file
 GOVERNOR="ondemand"
-ATFPATCHDIR='atf-rockchip64'
 BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-rockchip64"}"
 PACKAGE_LIST_FAMILY="ethtool"
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
@@ -170,8 +169,9 @@ prepare_boot_configuration() {
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 			ATF_COMPILER='aarch64-linux-gnu-'
 			ATFDIR='arm-trusted-firmware'
-			ATFBRANCH='tag:v2.13.0'
+			ATFBRANCH='tag:v2.13.0' # also adapt ATFPATCHDIR when changing this
 			ATF_USE_GCC='> 6.3'
+			ATFPATCHDIR='atf-rockchip64/v2.13' # there's also v2.14 patches ready
 			ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
 			ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
 
