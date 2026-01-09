@@ -7,7 +7,7 @@
 setenv overlay_error "false"
 # default values
 setenv rootdev "LABEL=armbi_root"
-setenv verbosity "7"
+setenv verbosity "1"
 setenv console "serial"
 setenv bootlogo "false"
 setenv rootfstype "ext4"
@@ -138,6 +138,8 @@ done
 if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	fdt addr ${fdt_addr_r}
+	fdt resize 65536
 fi
 
 # Resize FDT to actual size
