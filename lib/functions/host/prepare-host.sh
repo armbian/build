@@ -97,11 +97,6 @@ function prepare_host_noninteractive() {
 	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
 
-	# If offline, do not try to download/install toolchains.
-	if ! $offline; then
-		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
-	fi
-
 	prepare_host_binfmt_qemu # in qemu-static.sh as most binfmt/qemu logic is there now
 
 	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
