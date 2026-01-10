@@ -47,7 +47,7 @@ function patch_uboot_target() {
 	fi
 }
 
-# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# this receives version  target uboot_name uboottempdir uboot_target_counter as variables.
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
 	: "${artifact_version:?artifact_version is not set}"
@@ -90,7 +90,7 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}Preparing u-boot config '${BOOTCONFIG}'" "${version} ${target_make}" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
 		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
@@ -174,7 +174,7 @@ function compile_uboot_target() {
 			# CONFIG_ERRNO_STR is not set
 		EXTRA_UBOOT_DEBUG_CONFIGS
 
-		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 			"KCFLAGS=-fdiagnostics-color=always" \
 			pipetty make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
@@ -205,7 +205,7 @@ function compile_uboot_target() {
 
 	# make olddefconfig, so changes made in hook above are consolidated
 	display_alert "${uboot_prefix}Updating u-boot config with olddefconfig" "${version} ${target_make}" "info"
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
 		pipetty make "${CTHREADS}" "olddefconfig" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
@@ -240,13 +240,10 @@ function compile_uboot_target() {
 		"CFLAGS='${uboot_cflags}'"
 		"KCFLAGS='${uboot_cflags}'"
 		"CCACHE_BASEDIR=$(pwd)"
-		"PATH=${toolchain}:${toolchain2}:${PATH}"
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
 	)
 
-	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
-	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
@@ -334,7 +331,7 @@ function loop_over_uboot_targets_and_do() {
 		eval "${_old_nullglob}"
 
 		IFS="${_old_ifs}" # restore for the body of loop
-		declare -g target uboot_name uboottempdir toolchain version
+		declare -g target uboot_name uboottempdir version
 		declare -g uboot_prefix="{u-boot:${uboot_target_counter}} "
 		declare -g target_make target_patchdir target_files
 		target_make=$(cut -d';' -f1 <<< "${target}")
@@ -409,26 +406,9 @@ function compile_uboot() {
 
 	display_alert "Compiling u-boot" "$version ${ubootdir}" "info"
 
-	# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-		local toolchain
-		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
-
-		if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
-			local toolchain2_type toolchain2_ver toolchain2
-			toolchain2_type=$(cut -d':' -f1 <<< "${UBOOT_TOOLCHAIN2}")
-			toolchain2_ver=$(cut -d':' -f2 <<< "${UBOOT_TOOLCHAIN2}")
-			toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
-			[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
-		fi
-		# build aarch64
-	fi
-
 	declare gcc_version_main
-	gcc_version_main="$(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
+	gcc_version_main="$(eval env "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
-	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local uboot_name="linux-u-boot-${BRANCH}-${BOARD}"
 

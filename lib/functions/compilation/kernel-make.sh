@@ -101,8 +101,6 @@ function kernel_determine_toolchain() {
 		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
 	else
 		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
-		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
@@ -110,6 +108,6 @@ function kernel_determine_toolchain() {
 	else
 		KERNEL_COMPILER_FULL="${KERNEL_COMPILER}gcc"
 	fi
-	kernel_compiler_version="$(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER_FULL}" -dumpfullversion -dumpversion)"
+	kernel_compiler_version="$(eval env "${KERNEL_COMPILER_FULL}" -dumpfullversion -dumpversion)"
 	display_alert "Compiler version" "${KERNEL_COMPILER_FULL} ${kernel_compiler_version}" "info"
 }
