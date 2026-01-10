@@ -18,13 +18,13 @@ function run_kernel_make_internal() {
 	prepare_distcc_compilation_config
 
 	common_make_envs=(
-		"CCACHE_BASEDIR=\"$(pwd)\""                                   # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
-		"CCACHE_TEMPDIR=\"${CCACHE_TEMPDIR:?}\""                      # Temporary directory for ccache, under WORKDIR
-		"PATH=\"${toolchain}:${PYTHON3_INFO[USERBASE]}/bin:${PATH}\"" # Insert the toolchain and the pip binaries into the PATH
-		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\""  # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed for dtb checks)
-		"DPKG_COLORS=always"                                          # Use colors for dpkg @TODO no dpkg is done anymore, remove?
-		"XZ_OPT='--threads=0'"                                        # Use parallel XZ compression
-		"TERM='${TERM}'"                                              # Pass the terminal type, so that 'make menuconfig' can work.
+		"CCACHE_BASEDIR='$(pwd)'"                                  # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
+		"CCACHE_TEMPDIR='${CCACHE_TEMPDIR:?}'"                     # Temporary directory for ccache, under WORKDIR
+		"PATH='${PYTHON3_INFO[USERBASE]}/bin:${PATH}'"             # Insert the pip binaries into the PATH
+		"PYTHONPATH='${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}'" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed for dtb checks)
+		"DPKG_COLORS=always"                                       # Use colors for dpkg @TODO no dpkg is done anymore, remove?
+		"XZ_OPT='--threads=0'"                                     # Use parallel XZ compression
+		"TERM='${TERM}'"                                           # Pass the terminal type, so that 'make menuconfig' can work.
 		"COLUMNS='${COLUMNS:-160}'"
 		"COLORFGBG='${COLORFGBG}'"
 	)
@@ -96,18 +96,18 @@ function run_kernel_make_long_running() {
 
 function kernel_determine_toolchain() {
 	# compare with the architecture of the current Debian node
-	# if it matches we use the system compiler
 	if dpkg-architecture -e "${ARCH}"; then
 		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
 	else
 		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
 	fi
 
+	declare kernel_compiler_full kernel_compiler_version
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
-		KERNEL_COMPILER_FULL="${KERNEL_COMPILER}"
+		kernel_compiler_full="${KERNEL_COMPILER}"
 	else
-		KERNEL_COMPILER_FULL="${KERNEL_COMPILER}gcc"
+		kernel_compiler_full="${KERNEL_COMPILER}gcc"
 	fi
-	kernel_compiler_version="$(eval env "${KERNEL_COMPILER_FULL}" -dumpfullversion -dumpversion)"
-	display_alert "Compiler version" "${KERNEL_COMPILER_FULL} ${kernel_compiler_version}" "info"
+	kernel_compiler_version="$(eval env "${kernel_compiler_full}" -dumpfullversion -dumpversion)"
+	display_alert "Compiler version" "${kernel_compiler_full} ${kernel_compiler_version}" "info"
 }
