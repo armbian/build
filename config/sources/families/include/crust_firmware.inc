@@ -12,7 +12,6 @@ if [[ -n "${CRUSTCONFIG}" ]]; then
 	[[ -z $CRUSTSOURCE ]] && CRUSTSOURCE='https://github.com/crust-firmware/crust'
 	[[ -z $CRUSTDIR ]] && CRUSTDIR='crust-sunxi-mainline'
 	[[ -z $CRUSTBRANCH ]] && CRUSTBRANCH='tag:v0.6'
-	[[ -z $CRUST_USE_GCC ]] && CRUST_USE_GCC='> 9.1.0'
 	[[ -z $CRUST_COMPILER ]] && CRUST_COMPILER='or1k-elf-'
 
 	# Apply crust patches if crust is enabled
