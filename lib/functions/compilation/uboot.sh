@@ -51,6 +51,15 @@ function patch_uboot_target() {
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
 	: "${artifact_version:?artifact_version is not set}"
+	: "${UBOOT_COMPILER:?UBOOT_COMPILER is not set}"
+
+	# prepare a CROSS_COMPILE stanza, quoted, with $CCACHE (if not empty) and $UBOOT_COMPILER
+	declare cross_compile="undetermined_cross_compile"
+	if [[ -n "${CCACHE}" ]]; then
+		cross_compile="CROSS_COMPILE='${CCACHE} ${UBOOT_COMPILER}'"
+	else
+		cross_compile="CROSS_COMPILE='${UBOOT_COMPILER}'"
+	fi
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' before patching" "debug"
@@ -92,7 +101,7 @@ function compile_uboot_target() {
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
-		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
+		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "${cross_compile}"
 
 	# for modern (? 2018-2019?) kernel and non spi targets @TODO: this does not belong here
 	if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
@@ -176,7 +185,7 @@ function compile_uboot_target() {
 
 		run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 			"KCFLAGS=-fdiagnostics-color=always" \
-			pipetty make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
+			pipetty make "olddefconfig" "${cross_compile}"
 
 	fi
 
@@ -207,7 +216,7 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix}Updating u-boot config with olddefconfig" "${version} ${target_make}" "info"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
-		pipetty make "${CTHREADS}" "olddefconfig" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
+		pipetty make "${CTHREADS}" "olddefconfig" "${cross_compile}"
 
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
 		display_alert "Saving pre-config u-boot defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
@@ -237,13 +246,12 @@ function compile_uboot_target() {
 
 	# Collect make environment variables, similar to 'kernel-make.sh'
 	uboot_make_envs=(
+		"PATH='${PATH}'" # preserve PATH as-is
 		"CFLAGS='${uboot_cflags}'"
 		"KCFLAGS='${uboot_cflags}'"
 		"CCACHE_BASEDIR=$(pwd)"
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
 	)
-
-	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
