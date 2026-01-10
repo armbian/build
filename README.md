@@ -34,6 +34,8 @@ cd build
 - **Native builds:** Armbian or Ubuntu 24.04 (Noble)
 - **Containerized:** Any Docker-capable Linux
 - **Windows:** WSL2 with Armbian/Ubuntu 24.04
+> ⚠️ On WSL2 with Debian/Ubuntu, some packages like `raspi-utils` may not be installable due to missing dependencies. This does not affect Armbian on native Ubuntu or Raspberry Pi OS.
+
 
 ### Software
 - Superuser privileges (`sudo` or root)
