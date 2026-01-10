@@ -93,8 +93,6 @@ function prepare_host_noninteractive() {
 
 	# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}" "${SRC}"/output/info
-
-	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
 
 	prepare_host_binfmt_qemu # in qemu-static.sh as most binfmt/qemu logic is there now
