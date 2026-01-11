@@ -462,7 +462,7 @@ function compile_uboot() {
 	display_alert "Preparing u-boot general packaging" "${version} ${target_make}"
 
 	local -a postinst_functions=()
-	local destination=$uboottempdir
+	local destination="${uboottempdir}"
 
 	call_extension_method "pre_package_uboot_image" <<- 'PRE_PACKAGE_UBOOT_IMAGE'
 		*allow making some last minute changes before u-boot is packaged*
@@ -470,6 +470,21 @@ function compile_uboot() {
 		You can write to `$destination` here and it will be packaged.
 		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
 	PRE_PACKAGE_UBOOT_IMAGE
+
+	# Let's binwalk each file in the resulting package for analysis purposes
+	display_alert "Analyzing u-boot binaries with binwalk" "${uboot_name}" "info"
+	declare binfile base_binfile
+	find "${uboottempdir}" -type f | grep -v -e "u-boot-defconfig-target-" -e "u-boot-config-target-" -e "u-boot-metadata-target" | sort | while read -r binfile; do
+		base_binfile="$(basename "${binfile}")"
+		display_alert "Analyzing u-boot binary with binwalk" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
+		run_host_command_logged file --brief "${binfile}" "||" true ";" binwalk --run-as=root "${binfile}" "||" true # do not fail, ever
+
+		if [[ "${UBOOT_BINS_TO_OUTPUT}" == "yes" ]]; then
+			display_alert "Copying u-boot binary to output for later binwalk inspection" "'${base_binfile}' built on ${HOSTRELEASE}" "warn"
+			declare target="${SRC}/output/uboot-bin-${uboot_name}-${base_binfile}-host-${HOSTRELEASE}.bin"
+			run_host_command_logged cp -v "${binfile}" "${target}"
+		fi
+	done
 
 	artifact_package_hook_helper_board_side_functions "postinst" uboot_postinst_base "${postinst_functions[@]}"
 	unset uboot_postinst_base postinst_functions destination
@@ -539,7 +554,7 @@ function compile_uboot() {
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building u-boot deb" "(version: ${artifact_version})"
-	dpkg_deb_build "$uboottempdir" "uboot"
+	dpkg_deb_build "${uboottempdir}" "uboot"
 
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 

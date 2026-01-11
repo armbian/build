@@ -198,6 +198,7 @@ function adaptative_prepare_host_dependencies() {
 		aria2 curl axel wget                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
+		binwalk                                  # for debugging produced u-boot binaries
 	)
 
 	# @TODO: distcc -- handle in extension?
