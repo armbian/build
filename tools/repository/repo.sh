@@ -284,12 +284,14 @@ update_main() {
 			PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
 			for distro in $PUBLISHED; do
 				log "Checking distribution: $distro"
-				# Check if this distribution uses the common snapshot by examining the publish output
-				if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "common"; then
-					log "Cleaning up leftover publication for $distro (uses common snapshot)"
+				# Check if this distribution uses the common snapshot by looking for [common] in the publish show output
+				if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "\[common\]"; then
+					log "Cleaning up publication for $distro (uses common snapshot)"
 					run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
 				fi
 			done
+			# Add a small delay to ensure aptly processes the publish drops
+			sleep 1
 			# Now try to drop the snapshot again after cleaning up publications
 			log "Retrying snapshot drop after cleanup"
 			if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
@@ -562,16 +564,24 @@ publishing() {
 		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
 			# Try to drop directly first (faster if snapshot isn't published)
 			if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
-				log "Common snapshot is published, cleaning up leftover publications"
-				# Snapshot is published, need to unpublish first
+				log "Common snapshot is published, cleaning up ALL publications that use it"
+				# Snapshot is published, need to unpublish ALL distributions that use it
+				# Get all published distributions
 				PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
 				for distro in $PUBLISHED; do
-					if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "common"; then
-						log "Cleaning up leftover publication for $distro"
+					log "Checking distribution: $distro"
+					# Check if this distribution uses the common snapshot by looking for [common] in the publish show output
+					if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "\[common\]"; then
+						log "Cleaning up publication for $distro (uses common snapshot)"
 						run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
 					fi
 				done
-				run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+				# Now try to drop the snapshot again after cleaning up all publications
+				log "Retrying snapshot drop after cleanup"
+				if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
+					log "ERROR: Failed to drop common snapshot even after cleanup"
+					return 1
+				fi
 			fi
 		fi
 		run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
