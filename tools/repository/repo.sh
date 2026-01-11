@@ -962,12 +962,8 @@ merge_repos() {
 			log "Desktop repo does not exist in main DB"
 		fi
 
-		# Skip publishing if neither utils nor desktop has packages
-		if [[ "$utils_has_packages" == false && "$desktop_has_packages" == false ]]; then
-			log "Skipping $release - no packages in utils or desktop repos"
-			continue
-		fi
-
+		# Always publish - at minimum, the main/common component is included
+		# This handles cases where a release only has main packages (no utils/desktop)
 		log "Publishing $release with components: ${components_to_publish[*]}"
 
 		# Build publish command
