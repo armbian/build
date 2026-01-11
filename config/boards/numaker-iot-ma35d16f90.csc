@@ -11,20 +11,7 @@ BOOT_FDT_FILE="nuvoton/ma35d1-iot-512m.dtb"
 BOOT_SCENARIO="blobless"
 IMAGE_PARTITION_TABLE="msdos"
 DEFAULT_CONSOLE="serial"
+SERIALCON="ttyS0:115200"
 
 # Hardware features
 HAS_VIDEO_OUTPUT="yes"
-
-function post_family_tweaks__numaker_iot_ma35d16f90() {
-	display_alert "$BOARD" "Applying NuMaker IoT MA35D16F90 tweaks" "info"
-
-	# Serial console 115200 baud
-	mkdir -p "$SDCARD/etc/systemd/system/serial-getty@ttyS0.service.d/"
-	cat <<- EOF > "$SDCARD/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf"
-		[Service]
-		ExecStart=
-		ExecStart=-/sbin/agetty -o '-p -- \\u' 115200 ttyS0 linux
-	EOF
-
-	return 0
-}
