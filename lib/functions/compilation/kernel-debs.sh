@@ -537,8 +537,8 @@ function kernel_package_callback_linux_headers() {
 			echo "Compiling kernel-headers scripts (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
 
-			echo "Compiling kernel-headers scripts/mod (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
-			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+			# Note: 'make M=scripts/mod/' was removed - it doesn't work in Ubuntu 25.10+ (Resolute)
+			# and modpost (a hostprog) will be built on first external module compilation if needed
 
 			echo "Compiling resolve_btfids tools for assigning stable BTF type IDs to kernel symbols"
 			make ARCH="${SRC_ARCH}" -j\$NCPU tools/bpf/resolve_btfids
