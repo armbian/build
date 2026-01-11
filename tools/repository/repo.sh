@@ -273,9 +273,25 @@ update_main() {
 
 	# Always drop and recreate the common snapshot to ensure it's up-to-date
 	# This is safe because the snapshot is only used as a reference for publishing
+	# First, unpublish any distributions that might be using this snapshot (leftover from incomplete builds)
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
 		log "Dropping existing common snapshot to create fresh one"
-		run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+		# Try to drop directly first (faster if snapshot isn't published)
+		if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
+			log "Snapshot is published, cleaning up leftover publications"
+			# Snapshot is published, need to unpublish first
+			# Get all published distributions using this snapshot
+			PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
+			for distro in $PUBLISHED; do
+				# Check if this distribution uses the common snapshot
+				if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "common"; then
+					log "Cleaning up leftover publication for $distro"
+					run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
+				fi
+			done
+			# Now try to drop the snapshot again
+			run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+		fi
 	fi
 
 	# Always create a fresh snapshot from the current repo state
@@ -539,7 +555,19 @@ publishing() {
 
 		# Create snapshot
 		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-			run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+			# Try to drop directly first (faster if snapshot isn't published)
+			if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
+				log "Common snapshot is published, cleaning up leftover publications"
+				# Snapshot is published, need to unpublish first
+				PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
+				for distro in $PUBLISHED; do
+					if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "common"; then
+						log "Cleaning up leftover publication for $distro"
+						run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
+					fi
+				done
+				run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
+			fi
 		fi
 		run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 	else
