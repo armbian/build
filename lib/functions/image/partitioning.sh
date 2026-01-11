@@ -366,7 +366,7 @@ function prepare_partitions() {
 			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} ${fscreateopt} $rootdevice $MOUNT/
 		fi
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,relatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 		if [[ $ROOTFS_TYPE == btrfs ]]; then
 			call_extension_method "btrfs_root_add_subvolumes_fstab" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES_FSTAB'
 				run_host_command_logged mkdir -p $MOUNT/home
