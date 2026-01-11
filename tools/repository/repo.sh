@@ -271,24 +271,16 @@ update_main() {
 	# Add packages from main folder
 	adding_packages "common" "" "main" "$input_folder"
 
-	# Drop old snapshot if it exists and is not published
+	# Always drop and recreate the common snapshot to ensure it's up-to-date
+	# This is safe because the snapshot is only used as a reference for publishing
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		# Check if snapshot is published
-		if ! aptly publish list -config="${CONFIG}" 2>/dev/null | grep -q "common"; then
-			run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
-		else
-			log "WARNING: common snapshot is published, cannot drop. Packages added to repo but snapshot not updated."
-			log "Run 'update' command to update all releases with new packages."
-			return 0
-		fi
+		log "Dropping existing common snapshot to create fresh one"
+		run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management >/dev/null
 	fi
 
-	# Create new snapshot if it doesn't exist or was dropped
-	if [[ -z $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
-	else
-		log "common snapshot already exists, skipping creation"
-	fi
+	# Always create a fresh snapshot from the current repo state
+	log "Creating fresh common snapshot"
+	run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
 
 	log "Common component built successfully"
 }
@@ -354,23 +346,18 @@ process_release() {
 		log "Force publish enabled: will publish even with no packages"
 	fi
 
-	# Drop old snapshots if we have new packages to add OR if FORCE_PUBLISH is enabled
-	# This ensures fresh snapshots are created for force-publish scenarios
-	if [[ "$utils_count" -gt 0 || "$FORCE_PUBLISH" == true ]]; then
-		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-			log "Dropping existing ${release}-utils snapshot"
-			run_aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
-		fi
+	# Always drop and recreate snapshots for fresh publish
+	# This ensures that even empty repos are properly published
+	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
+		log "Dropping existing ${release}-utils snapshot"
+		run_aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
 	fi
-	if [[ "$desktop_count" -gt 0 || "$FORCE_PUBLISH" == true ]]; then
-		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-			log "Dropping existing ${release}-desktop snapshot"
-			run_aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
-		fi
+	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
+		log "Dropping existing ${release}-desktop snapshot"
+		run_aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
 	fi
 
-	# Create snapshots only for repos that have packages
-	# OR when FORCE_PUBLISH is enabled (then we publish whatever exists in the DB)
+	# Create snapshots for all repos (even empty ones) to ensure they're included in publish
 	# In isolated mode, do NOT include common snapshot - it will be merged later
 	local components_to_publish=()
 	local snapshots_to_publish=()
@@ -381,51 +368,17 @@ process_release() {
 		snapshots_to_publish=("common")
 	fi
 
-	if [[ "$utils_count" -gt 0 || "$FORCE_PUBLISH" == true ]]; then
-		# Only create snapshot if repo has packages, or if force-publishing
-		if [[ "$utils_count" -gt 0 ]]; then
-			run_aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
-			components_to_publish+=("${release}-utils")
-			snapshots_to_publish+=("${release}-utils")
-		elif [[ "$FORCE_PUBLISH" == true ]]; then
-			log "Force publish: checking for existing ${release}-utils snapshot in DB"
-			# Try to use existing snapshot if it exists
-			if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-				components_to_publish+=("${release}-utils")
-				snapshots_to_publish+=("${release}-utils")
-				log "Using existing ${release}-utils snapshot"
-			else
-				# Create empty snapshot from empty repo
-				run_aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
-				components_to_publish+=("${release}-utils")
-				snapshots_to_publish+=("${release}-utils")
-				log "Created empty ${release}-utils snapshot for force publish"
-			fi
-		fi
-	fi
+	# Always create utils snapshot and include in publish (even if empty)
+	log "Creating ${release}-utils snapshot (packages: $utils_count)"
+	run_aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
+	components_to_publish+=("${release}-utils")
+	snapshots_to_publish+=("${release}-utils")
 
-	if [[ "$desktop_count" -gt 0 || "$FORCE_PUBLISH" == true ]]; then
-		# Only create snapshot if repo has packages, or if force-publishing
-		if [[ "$desktop_count" -gt 0 ]]; then
-			run_aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
-			components_to_publish+=("${release}-desktop")
-			snapshots_to_publish+=("${release}-desktop")
-		elif [[ "$FORCE_PUBLISH" == true ]]; then
-			log "Force publish: checking for existing ${release}-desktop snapshot in DB"
-			# Try to use existing snapshot if it exists
-			if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-				components_to_publish+=("${release}-desktop")
-				snapshots_to_publish+=("${release}-desktop")
-				log "Using existing ${release}-desktop snapshot"
-			else
-				# Create empty snapshot from empty repo
-				run_aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
-				components_to_publish+=("${release}-desktop")
-				snapshots_to_publish+=("${release}-desktop")
-				log "Created empty ${release}-desktop snapshot for force publish"
-			fi
-		fi
-	fi
+	# Always create desktop snapshot and include in publish (even if empty)
+	log "Creating ${release}-desktop snapshot (packages: $desktop_count)"
+	run_aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
+	components_to_publish+=("${release}-desktop")
+	snapshots_to_publish+=("${release}-desktop")
 
 	log "Publishing $release with components: ${components_to_publish[*]}"
 
@@ -922,44 +875,57 @@ merge_repos() {
 		local components_to_publish=("main")
 		local snapshots_to_publish=("common")
 
-		# Check if utils repo has packages
+		# Check if utils repo exists and has packages
 		local utils_has_packages=false
 		if aptly -config="$main_db_config" repo show "${release}-utils" &>/dev/null; then
 			local utils_count=$(aptly -config="$main_db_config" repo show "${release}-utils" 2>/dev/null | grep "Number of packages" | awk '{print $4}' || echo "0")
 			log "Utils repo has $utils_count packages"
-			if [[ "$utils_count" -gt 0 ]]; then
-				utils_has_packages=true
-				# Drop old snapshot if exists
-				if [[ -n $(aptly -config="$main_db_config" snapshot list -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-					run_aptly -config="$main_db_config" snapshot drop "${release}-utils"
-				fi
-				# Create new snapshot
-				run_aptly -config="$main_db_config" snapshot create "${release}-utils" from repo "${release}-utils"
-				components_to_publish+=("${release}-utils")
-				snapshots_to_publish+=("${release}-utils")
+
+			# Always drop old snapshot if exists to ensure fresh publish
+			if [[ -n $(aptly -config="$main_db_config" snapshot list -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
+				log "Dropping existing ${release}-utils snapshot"
+				run_aptly -config="$main_db_config" snapshot drop "${release}-utils"
 			fi
+
+			# Always create a new snapshot for publishing, even if repo is empty
+			# This ensures the component is included in the published repository
+			run_aptly -config="$main_db_config" snapshot create "${release}-utils" from repo "${release}-utils"
+			components_to_publish+=("${release}-utils")
+			snapshots_to_publish+=("${release}-utils")
 		else
-			log "Utils repo does not exist in main DB"
+			log "Utils repo does not exist in main DB - creating it"
+			# Create the repo if it doesn't exist
+			run_aptly -config="$main_db_config" repo create -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils"
+			# Create empty snapshot
+			run_aptly -config="$main_db_config" snapshot create "${release}-utils" from repo "${release}-utils"
+			components_to_publish+=("${release}-utils")
+			snapshots_to_publish+=("${release}-utils")
 		fi
 
-		# Check if desktop repo has packages
+		# Check if desktop repo exists and has packages
 		local desktop_has_packages=false
 		if aptly -config="$main_db_config" repo show "${release}-desktop" &>/dev/null; then
 			local desktop_count=$(aptly -config="$main_db_config" repo show "${release}-desktop" 2>/dev/null | grep "Number of packages" | awk '{print $4}' || echo "0")
 			log "Desktop repo has $desktop_count packages"
-			if [[ "$desktop_count" -gt 0 ]]; then
-				desktop_has_packages=true
-				# Drop old snapshot if exists
-				if [[ -n $(aptly -config="$main_db_config" snapshot list -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-					run_aptly -config="$main_db_config" snapshot drop "${release}-desktop"
-				fi
-				# Create new snapshot
-				run_aptly -config="$main_db_config" snapshot create "${release}-desktop" from repo "${release}-desktop"
-				components_to_publish+=("${release}-desktop")
-				snapshots_to_publish+=("${release}-desktop")
+
+			# Always drop old snapshot if exists to ensure fresh publish
+			if [[ -n $(aptly -config="$main_db_config" snapshot list -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
+				log "Dropping existing ${release}-desktop snapshot"
+				run_aptly -config="$main_db_config" snapshot drop "${release}-desktop"
 			fi
+
+			# Always create a new snapshot for publishing, even if repo is empty
+			run_aptly -config="$main_db_config" snapshot create "${release}-desktop" from repo "${release}-desktop"
+			components_to_publish+=("${release}-desktop")
+			snapshots_to_publish+=("${release}-desktop")
 		else
-			log "Desktop repo does not exist in main DB"
+			log "Desktop repo does not exist in main DB - creating it"
+			# Create the repo if it doesn't exist
+			run_aptly -config="$main_db_config" repo create -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop"
+			# Create empty snapshot
+			run_aptly -config="$main_db_config" snapshot create "${release}-desktop" from repo "${release}-desktop"
+			components_to_publish+=("${release}-desktop")
+			snapshots_to_publish+=("${release}-desktop")
 		fi
 
 		# Always publish - at minimum, the main/common component is included
