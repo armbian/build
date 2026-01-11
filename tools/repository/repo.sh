@@ -271,45 +271,18 @@ update_main() {
 	# Add packages from main folder
 	adding_packages "common" "" "main" "$input_folder"
 
-	# Always drop and recreate the common snapshot to ensure it's up-to-date
-	# This is safe because the snapshot is only used as a reference for publishing
-	# First, unpublish any distributions that might be using this snapshot (leftover from incomplete builds)
-	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-		log "Dropping existing common snapshot to create fresh one"
-		# Try to drop directly first (faster if snapshot isn't published)
-		if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
-			log "Snapshot drop failed, likely published - cleaning up leftover publications"
-			# Snapshot is published, need to unpublish first
-			# Get all published distributions
-			PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
-			log "Found ${#PUBLISHED[@]} published distributions: ${PUBLISHED[*]}"
-			for distro in $PUBLISHED; do
-				log "Checking distribution: $distro"
-				# Check if this distribution uses the common snapshot by looking for [common] in the publish show output
-				if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "\[common\]"; then
-					log "Cleaning up publication for $distro (uses common snapshot)"
-					run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
-				else
-					log "Distribution $distro does not use common snapshot, skipping"
-				fi
-			done
-			# Add a small delay to ensure aptly processes the publish drops
-			sleep 1
-			# Now try to drop the snapshot again after cleaning up publications
-			log "Retrying snapshot drop after cleanup"
-			if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
-				log "ERROR: Failed to drop common snapshot even after cleanup"
-				# Show what's still published
-				log "Current published distributions:"
-				aptly publish list -config="${CONFIG}" 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || true
-				return 1
-			fi
-		fi
-	fi
+	# Create a timestamped snapshot to avoid conflicts with published snapshots
+	# This allows parallel builds to proceed without needing to drop/recreate snapshots
+	local timestamp=$(date +%s)
+	local snapshot_name="common-${timestamp}"
+	log "Creating timestamped snapshot: $snapshot_name"
 
-	# Always create a fresh snapshot from the current repo state
-	log "Creating fresh common snapshot"
-	run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
+	# Create snapshot from the current repo state
+	run_aptly -config="${CONFIG}" snapshot create "$snapshot_name" from repo common | logger -t repo-management >/dev/null
+
+	# Save the snapshot name to a file for use by publish processes
+	echo "$snapshot_name" > "${output_folder}/.common-snapshot"
+	log "Common snapshot name saved: $snapshot_name"
 
 	log "Common component built successfully"
 }
@@ -393,8 +366,19 @@ process_release() {
 
 	# Only add common/main component if NOT in isolated mode
 	if [[ -z "$SINGLE_RELEASE" ]]; then
-		components_to_publish=("main")
-		snapshots_to_publish=("common")
+		# Read the timestamped common snapshot name from file
+		local common_snapshot_file="${output_folder}/.common-snapshot"
+		if [[ -f "$common_snapshot_file" ]]; then
+			local common_snapshot_name=$(cat "$common_snapshot_file")
+			log "Using common snapshot: $common_snapshot_name"
+			components_to_publish=("main")
+			snapshots_to_publish=("$common_snapshot_name")
+		else
+			log "WARNING: .common-snapshot file not found at $common_snapshot_file"
+			log "Falling back to 'common' snapshot name"
+			components_to_publish=("main")
+			snapshots_to_publish=("common")
+		fi
 	fi
 
 	# Always create utils snapshot and include in publish (even if empty)
@@ -566,39 +550,20 @@ publishing() {
 		# Add packages from main folder
 		adding_packages "common" "" "main" "$1"
 
-		# Create snapshot
-		if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "common") ]]; then
-			# Try to drop directly first (faster if snapshot isn't published)
-			if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
-				log "Common snapshot is published, cleaning up ALL publications that use it"
-				# Snapshot is published, need to unpublish ALL distributions that use it
-				# Get all published distributions
-				PUBLISHED=$(aptly publish list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}')
-				log "Found ${#PUBLISHED[@]} published distributions: ${PUBLISHED[*]}"
-				for distro in $PUBLISHED; do
-					log "Checking distribution: $distro"
-					# Check if this distribution uses the common snapshot by looking for [common] in the publish show output
-					if aptly publish show -config="${CONFIG}" "$distro" 2>/dev/null | grep -q "\[common\]"; then
-						log "Cleaning up publication for $distro (uses common snapshot)"
-						run_aptly -config="${CONFIG}" publish drop "$distro" 2>/dev/null || true
-					else
-						log "Distribution $distro does not use common snapshot, skipping"
-					fi
-				done
-				# Add a small delay to ensure aptly processes the publish drops
-				sleep 1
-				# Now try to drop the snapshot again after cleaning up all publications
-				log "Retrying snapshot drop after cleanup"
-				if ! run_aptly -config="${CONFIG}" snapshot drop common 2>/dev/null; then
-					log "ERROR: Failed to drop common snapshot even after cleanup"
-					# Show what's still published
-					log "Current published distributions:"
-					aptly publish list -config="${CONFIG}" 2>/dev/null || true
-					return 1
-				fi
-			fi
-		fi
-		run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
+		# Create a timestamped snapshot to avoid conflicts with published snapshots
+		local timestamp=$(date +%s)
+		local snapshot_name="common-${timestamp}"
+		log "Creating timestamped snapshot: $snapshot_name"
+
+		# Create snapshot from the current repo state
+		run_aptly -config="${CONFIG}" snapshot create "$snapshot_name" from repo common | logger -t repo-management >/dev/null
+
+		# Save the snapshot name to a file for use by publish processes
+		echo "$snapshot_name" > "${2}/.common-snapshot"
+		log "Common snapshot name saved: $snapshot_name"
+
+		# Store in a variable for use later in this function
+		COMMON_SNAPSHOT="$snapshot_name"
 	else
 		# Single-release mode: common component should be built separately with 'update-main'
 		# and will be merged during the 'merge' command
@@ -718,10 +683,26 @@ merge_repos() {
 	sed 's|"rootDir": ".*"|"rootDir": "'$output_folder'"|g' tools/repository/aptly.conf > "$main_db_config"
 
 	# Check if common snapshot exists in main DB
+	# Look for timestamped common snapshots (common-*) or fallback to plain "common"
 	local common_exists=false
-	if [[ -n $(aptly -config="$main_db_config" snapshot list -raw 2>/dev/null | awk '{print $(NF)}' | grep "common") ]]; then
+	local common_snapshot_name=""
+	local common_snapshots=$(aptly -config="$main_db_config" snapshot list -raw 2>/dev/null | awk '{print $(NF)}' | grep "^common-" || true)
+
+	if [[ -n "$common_snapshots" ]]; then
+		# Use the most recent timestamped snapshot (last one listed)
+		common_snapshot_name=$(echo "$common_snapshots" | tail -n 1)
 		common_exists=true
-		log "Found common snapshot in main database"
+		log "Found timestamped common snapshot in main database: $common_snapshot_name"
+	elif [[ -n $(aptly -config="$main_db_config" snapshot list -raw 2>/dev/null | awk '{print $(NF)}' | grep "^common$") ]]; then
+		common_snapshot_name="common"
+		common_exists=true
+		log "Found plain 'common' snapshot in main database (legacy)"
+	fi
+
+	# Save the snapshot name for use in publishing
+	if [[ -n "$common_snapshot_name" ]]; then
+		echo "$common_snapshot_name" > "${output_folder}/.common-snapshot"
+		log "Saved common snapshot name: $common_snapshot_name"
 	fi
 
 	# Get all releases that need to be merged
@@ -929,8 +910,22 @@ merge_repos() {
 		log "Publishing $release with common component..."
 
 		# Determine which components to publish
-		local components_to_publish=("main")
-		local snapshots_to_publish=("common")
+		local components_to_publish=()
+		local snapshots_to_publish=()
+
+		# Read the timestamped common snapshot name from file
+		local common_snapshot_file="${output_folder}/.common-snapshot"
+		if [[ -f "$common_snapshot_file" ]]; then
+			local common_snapshot_name=$(cat "$common_snapshot_file")
+			log "Using common snapshot from file: $common_snapshot_name"
+			components_to_publish=("main")
+			snapshots_to_publish=("$common_snapshot_name")
+		else
+			log "WARNING: .common-snapshot file not found at $common_snapshot_file"
+			log "Falling back to 'common' snapshot name"
+			components_to_publish=("main")
+			snapshots_to_publish=("common")
+		fi
 
 		# Check if utils repo exists and has packages
 		local utils_has_packages=false
