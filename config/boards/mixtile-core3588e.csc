@@ -66,6 +66,9 @@ function post_config_uboot_target__extra_configs_for_core3588e_mainline_environm
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable RAMBoot images" "info"
 	run_host_command_logged scripts/config --enable CONFIG_ROCKCHIP_MASKROM_IMAGE
 
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable stable MAC for GMAC" "info"
+	run_host_command_logged scripts/config --enable CONFIG_ROCKCHIP_RK3588_STABLE_GMAC_OF_FIXUP # See 1000-rockchip-rk3588-stable-MAC-addresses-system-fixup-on-fdt-gmacX.patch
+
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
 	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led sys_led on; sleep 0.1; led sys_led off'" # double quotes required due to run_host_command_logged's quirks
