@@ -2,7 +2,7 @@
 
 # Global variables
 DRY_RUN=false              # Full dry-run: don't make any repository changes
-KEEP_SOURCES=true         # Keep source packages when adding to repo (don't delete)
+KEEP_SOURCES=true          # Keep source packages when adding to repo (don't delete)
 FORCE_ADD=false            # Force re-adding packages even if they already exist in repo
 FORCE_PUBLISH=true         # Force publishing even when no packages to add
 GPG_PARAMS=()              # Global GPG parameters array (set by get_gpg_signing_params)
@@ -149,6 +149,23 @@ adding_packages() {
 
 		log "Checking package: $deb_display"
 
+		# If package with same name+arch but different version exists in repo, remove it first
+		# This prevents "file already exists and is different" errors during publish
+		if [[ "$FORCE_ADD" != true ]]; then
+			for existing_key in "${!repo_packages_map[@]}"; do
+				# existing_key format: name|version|arch
+				local existing_name existing_version existing_arch
+				IFS='|' read -r existing_name existing_version existing_arch <<< "$existing_key"
+				# Check if same name and arch but different version
+				if [[ "$existing_name" == "$deb_name" && "$existing_arch" == "$deb_arch" && "$existing_version" != "$deb_version" ]]; then
+					log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding new version"
+					run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
+					# Remove from map so we don't try to remove it again
+					unset "repo_packages_map[$existing_key]"
+				fi
+			done
+		fi
+
 		# Skip if exact package (name+version+arch) already exists in repo (unless FORCE_ADD is true)
 		if [[ "$FORCE_ADD" != true && -n "${repo_packages_map[$deb_key]}" ]]; then
 			echo "[-] SKIP: $deb_display"
@@ -212,13 +229,19 @@ process_release() {
 		run_aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | logger -t repo-management >/dev/null
 	fi
 
+	# Run db cleanup before adding packages to avoid "file already exists and is different" errors
+	# This removes unreferenced packages from previous runs that may have the same filename
+	log "Running database cleanup before adding release packages"
+	run_aptly db cleanup -config="${CONFIG}"
+
 	# Add packages ONLY from release-specific extra folders
 	adding_packages "${release}-utils" "/extra/${release}-utils" "release utils" "$input_folder"
 	adding_packages "${release}-desktop" "/extra/${release}-desktop" "release desktop" "$input_folder"
 
-	# Run db cleanup before publishing to remove unreferenced packages
-	# This helps avoid "file already exists and is different" errors
-	log "Running database cleanup before publishing"
+	# Run db cleanup again after adding packages to remove any old package files
+	# This is critical after removing old versions of packages to prevent
+	# "file already exists and is different" errors during publish
+	log "Running database cleanup after adding packages"
 	run_aptly db cleanup -config="${CONFIG}"
 
 	# Check if we have any packages to publish
@@ -345,11 +368,17 @@ process_release() {
 		log "Signing: ${release_file}"
 		local sign_dir="$(dirname "$release_file")"
 
-		if gpg "${GPG_PARAMS[@]}" --clear-sign -o "${sign_dir}/InRelease" "$release_file" 2>&1 | logger -t repo-management >/dev/null; then
-			gpg "${GPG_PARAMS[@]}" --detach-sign -o "${sign_dir}/Release.gpg" "$release_file" 2>&1 | logger -t repo-management >/dev/null
-			log "Successfully signed: ${release_file}"
+		# Sign with InRelease (clear-sign) - capture output for logging
+		if gpg "${GPG_PARAMS[@]}" --clear-sign -o "${sign_dir}/InRelease" "$release_file" 2>&1; then
+			log "Created InRelease for: ${release_file}"
+			# Sign with Release.gpg (detach-sign)
+			if gpg "${GPG_PARAMS[@]}" --detach-sign -o "${sign_dir}/Release.gpg" "$release_file" 2>&1; then
+				log "Successfully signed: ${release_file}"
+			else
+				log "ERROR: Failed to create Release.gpg for: ${release_file}"
+			fi
 		else
-			log "ERROR: Failed to sign: ${release_file}"
+			log "ERROR: Failed to create InRelease for: ${release_file}"
 		fi
 	done
 
@@ -369,8 +398,19 @@ publishing() {
 		run_aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
 	fi
 
+	# Run db cleanup before adding packages to avoid "file already exists and is different" errors
+	# This removes unreferenced packages from previous runs that may have the same filename
+	log "Running database cleanup before adding common packages"
+	run_aptly db cleanup -config="${CONFIG}"
+
 	# Add packages from main folder
 	adding_packages "common" "" "main" "$1"
+
+	# Run db cleanup after adding packages to remove any old package files
+	# This is critical after removing old versions of packages to prevent
+	# "file already exists and is different" errors during publish
+	log "Running database cleanup after adding common packages"
+	run_aptly db cleanup -config="${CONFIG}"
 
 	# Create or update the common snapshot
 	# Drop existing snapshot if it exists
