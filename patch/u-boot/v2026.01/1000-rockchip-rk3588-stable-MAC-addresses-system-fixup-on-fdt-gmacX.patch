@@ -1,0 +1,109 @@
+From c9b6e67d31009e75cd6df4248b35f15fe37b5dfe Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 12 Jan 2026 02:12:30 +0100
+Subject: [PATCH] rockchip: rk3588: stable MAC addresses system fixup on fdt
+ gmacX
+
+- Add a generic mechanism to patch MAC addresses from the environment (ethaddr/eth1addr) into gmac0/gmac1 DT nodes (mac-address) for RK3588 boards, skipping nodes not status="okay".
+- Addresses are given to nodes in a first-status-okay-come, first-served basis.
+- If no nodes are found, inject ethaddr into /chosen as a fallback.
+- Logging and a compile-time warning are included for clarity.
+- New Kconfig `ROCKCHIP_RK3588_STABLE_GMAC_OF_FIXUP` implies OF_SYSTEM_SETUP when enabled.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ arch/arm/mach-rockchip/rk3588/Kconfig  |  6 +++
+ arch/arm/mach-rockchip/rk3588/rk3588.c | 65 ++++++++++++++++++++++++++
+ 2 files changed, 71 insertions(+)
+
+diff --git a/arch/arm/mach-rockchip/rk3588/Kconfig b/arch/arm/mach-rockchip/rk3588/Kconfig
+index 60c16d2f32d..44549a96bf5 100644
+--- a/arch/arm/mach-rockchip/rk3588/Kconfig
++++ b/arch/arm/mach-rockchip/rk3588/Kconfig
+@@ -442,4 +442,10 @@ source "board/theobroma-systems/tiger_rk3588/Kconfig"
+ config SYS_CONFIG_NAME
+ 	default "rk3588_common"
+ 
++config ROCKCHIP_RK3588_STABLE_GMAC_OF_FIXUP
++	bool "Inject stable MAC addresses for gmac0/gmac1 into DT"
++	select OF_SYSTEM_SETUP
++	help
++	  Injects MAC addresses from environment (ethaddr/eth1addr) into gmac0/gmac1 DT nodes during of_system_setup().
++
+ endif
+diff --git a/arch/arm/mach-rockchip/rk3588/rk3588.c b/arch/arm/mach-rockchip/rk3588/rk3588.c
+index 55d2caab4fe..dce6876a60f 100644
+--- a/arch/arm/mach-rockchip/rk3588/rk3588.c
++++ b/arch/arm/mach-rockchip/rk3588/rk3588.c
+@@ -258,3 +258,68 @@ int checkboard(void)
+ 
+ 	return 0;
+ }
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_RK3588_STABLE_GMAC_OF_FIXUP) && !defined(CONFIG_SPL_BUILD)
++#include <fdt_support.h>
++#include <linux/libfdt.h>
++#include <env.h>
++#include <net.h>
++#warning "Stable MAC address injection for gmac0/gmac1 is enabled. MAC addresses from ethaddr/eth1addr will be injected into the DT."
++static void rk3588_fdt_fixup_mac(void *blob)
++{
++	log_info("[rk3588] rk3588_fdt_fixup_mac() called\n");
++	uint8_t macs[2][6];
++	int have_mac[2] = {
++		eth_env_get_enetaddr("ethaddr", macs[0]),
++		eth_env_get_enetaddr("eth1addr", macs[1])
++	};
++	int node = -1, patched = 0, total = 0, next_mac_idx = 0;
++
++	log_info("[rk3588] MAC fixup: ethaddr=%s, eth1addr=%s\n",
++		env_get("ethaddr") ? env_get("ethaddr") : "(not set)",
++		env_get("eth1addr") ? env_get("eth1addr") : "(not set)");
++
++	while ((node = fdt_node_offset_by_compatible(blob, node, "rockchip,rk3588-gmac")) >= 0 && next_mac_idx < 2) {
++		total++;
++		const char *status = fdt_getprop(blob, node, "status", NULL);
++		if (status && strcmp(status, "okay") != 0) {
++			log_info("[rk3588] Skipping gmac node at offset %d: status='%s'\n", node, status);
++			continue;
++		}
++		if (have_mac[next_mac_idx]) {
++			log_info("[rk3588] Patching gmac node at offset %d with MAC\n", node);
++			int ret = fdt_setprop(blob, node, "mac-address", macs[next_mac_idx], 6);
++			if (ret)
++				log_info("[rk3588] Failed to set mac-address: %s\n", fdt_strerror(ret));
++			else {
++				log_info("[rk3588] Successfully set mac-address\n");
++				patched++;
++			}
++			next_mac_idx++;
++		} else {
++			log_info("[rk3588] No MAC for gmac node at offset %d\n", node);
++			next_mac_idx++;
++		}
++	}
++	log_info("[rk3588] Total gmac nodes found: %d, patched: %d\n", total, patched);
++	if (patched == 0 && have_mac[0]) {
++		log_info("[rk3588] No gmac nodes patched, injecting ethaddr into /chosen as last resort\n");
++		int chosen = fdt_path_offset(blob, "/chosen");
++		int ret = fdt_setprop(blob, chosen, "mac-address", macs[0], 6);
++		if (ret)
++			log_info("[rk3588] Failed to set mac-address in /chosen: %s\n", fdt_strerror(ret));
++		else
++			log_info("[rk3588] Set mac-address in /chosen\n");
++	}
++}
++#endif
++
++__weak int ft_system_setup(void *blob, struct bd_info *bd)
++{
++	log_info("[rk3588] ft_system_setup() called\n");
++#if IS_ENABLED(CONFIG_ROCKCHIP_RK3588_STABLE_GMAC_OF_FIXUP) && !defined(CONFIG_SPL_BUILD)
++	rk3588_fdt_fixup_mac(blob);
++#endif
++	log_info("[rk3588] ft_system_setup() completed\n");
++	return 0;
++}
+-- 
+2.52.0
+
