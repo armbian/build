@@ -1,0 +1,323 @@
+From 6c5458f87fa327b0b100270d2f9d6465b06bb8c2 Mon Sep 17 00:00:00 2001
+From: map220v <map220v300@gmail.com>
+Date: Wed, 2 Aug 2023 19:15:53 +0300
+Subject: [PATCH 25/62] power: qcom_fg: Add initial pm8150b support
+
+power: qcom_fg: Fix memif address for pm8150b
+
+power: qcom_fg: Fix wrong psy passed to power_supply_put_battery_info()
+
+power: qcom_fg: Add support for temperature data on gen4 fg
+Signed-off-by: Jiali Chen <chenjiali@radxa.com>
+---
+ drivers/power/supply/qcom_fg.c | 116 +++++++++++++++++++++++----------
+ 1 file changed, 81 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_fg.c b/drivers/power/supply/qcom_fg.c
+index f8dd93aa23c7..dd5b2738d553 100644
+--- a/drivers/power/supply/qcom_fg.c
++++ b/drivers/power/supply/qcom_fg.c
+@@ -27,20 +27,23 @@
+ #define PARAM_ADDR_BATT_VOLTAGE		0x1a0
+ #define PARAM_ADDR_BATT_CURRENT		0x1a2
+ 
++/* RRADC */
++#define ADC_RR_BATT_TEMP_LSB		0x288
++
+ /* MEMIF */
+-#define MEM_INTF_STS			0x410
+-#define MEM_INTF_CFG			0x450
+-#define MEM_INTF_CTL			0x451
+-#define MEM_INTF_IMA_CFG		0x452
+-#define MEM_INTF_IMA_EXP_STS		0x455
+-#define MEM_INTF_IMA_HW_STS		0x456
+-#define MEM_INTF_IMA_ERR_STS		0x45f
+-#define MEM_INTF_IMA_BYTE_EN		0x460
+-#define MEM_INTF_ADDR_LSB		0x461
+-#define MEM_INTF_RD_DATA0		0x467
+-#define MEM_INTF_WR_DATA0		0x463
+-#define MEM_IF_DMA_STS			0x470
+-#define MEM_IF_DMA_CTL			0x471
++#define MEM_INTF_STS(chip)			(chip->ops->memif_base + 0x10)
++#define MEM_INTF_CFG(chip)			(chip->ops->memif_base + 0x50)
++#define MEM_INTF_CTL(chip)			(chip->ops->memif_base + 0x51)
++#define MEM_INTF_IMA_CFG(chip)			(chip->ops->memif_base + 0x52)
++#define MEM_INTF_IMA_EXP_STS(chip)		(chip->ops->memif_base + 0x55)
++#define MEM_INTF_IMA_HW_STS(chip)		(chip->ops->memif_base + 0x56)
++#define MEM_INTF_IMA_ERR_STS(chip)		(chip->ops->memif_base + 0x5f)
++#define MEM_INTF_IMA_BYTE_EN(chip)		(chip->ops->memif_base + 0x60)
++#define MEM_INTF_ADDR_LSB(chip)			(chip->ops->memif_base + 0x61)
++#define MEM_INTF_RD_DATA0(chip)			(chip->ops->memif_base + 0x67)
++#define MEM_INTF_WR_DATA0(chip)			(chip->ops->memif_base + 0x63)
++#define MEM_IF_DMA_STS(chip)			(chip->ops->memif_base + 0x70)
++#define MEM_IF_DMA_CTL(chip)			(chip->ops->memif_base + 0x71)
+ 
+ /* SRAM addresses */
+ #define TEMP_THRESHOLD			0x454
+@@ -74,6 +77,8 @@ struct qcom_fg_ops {
+ 			enum power_supply_property psp, int *);
+ 	int (*set_temp_threshold)(struct qcom_fg_chip *chip,
+ 			enum power_supply_property psp, int);
++
++	short memif_base;
+ };
+ 
+ struct qcom_fg_chip {
+@@ -193,13 +198,13 @@ static bool qcom_fg_sram_check_access(struct qcom_fg_chip *chip)
+ 	int ret;
+ 
+ 	ret = qcom_fg_read(chip, &mem_if_status,
+-		MEM_INTF_STS, 1);
++		MEM_INTF_STS(chip), 1);
+ 
+ 	if (ret || !(mem_if_status & MEM_INTF_AVAIL))
+ 		return false;
+ 
+ 	ret = qcom_fg_read(chip, &mem_if_status,
+-		MEM_INTF_CFG, 1);
++		MEM_INTF_CFG(chip), 1);
+ 
+ 	if (ret)
+ 		return false;
+@@ -226,7 +231,7 @@ static int qcom_fg_sram_request_access(struct qcom_fg_chip *chip)
+ 		sram_accessible, chip->sram_requests);
+ 
+ 	if (!sram_accessible && chip->sram_requests == 0) {
+-		ret = qcom_fg_masked_write(chip, MEM_INTF_CFG,
++		ret = qcom_fg_masked_write(chip, MEM_INTF_CFG(chip),
+ 				RIF_MEM_ACCESS_REQ, RIF_MEM_ACCESS_REQ);
+ 		if (ret) {
+ 			dev_err(chip->dev,
+@@ -300,7 +305,7 @@ static void qcom_fg_sram_release_access_worker(struct work_struct *work)
+ 
+ 	/* Request access release if there are still no access requests */
+ 	if(chip->sram_requests == 0) {
+-		qcom_fg_masked_write(chip, MEM_INTF_CFG, RIF_MEM_ACCESS_REQ, 0);
++		qcom_fg_masked_write(chip, MEM_INTF_CFG(chip), RIF_MEM_ACCESS_REQ, 0);
+ 		wait = true;
+ 	}
+ 
+@@ -337,7 +342,7 @@ static int qcom_fg_sram_config_access(struct qcom_fg_chip *chip,
+ 			| (burst ? MEM_INTF_CTL_BURST : 0);
+ 
+ 	ret = qcom_fg_write(chip, &intf_ctl,
+-			MEM_INTF_CTL, 1);
++			MEM_INTF_CTL(chip), 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to configure SRAM access: %d\n", ret);
+ 		return ret;
+@@ -382,14 +387,14 @@ static int qcom_fg_sram_read(struct qcom_fg_chip *chip,
+ 	while(len > 0) {
+ 		/* Set SRAM address register */
+ 		ret = qcom_fg_write(chip, (u8 *) &addr,
+-				MEM_INTF_ADDR_LSB, 2);
++				MEM_INTF_ADDR_LSB(chip), 2);
+ 		if (ret) {
+ 			dev_err(chip->dev, "Failed to set SRAM address: %d", ret);
+ 			goto out;
+ 		}
+ 
+ 		ret = qcom_fg_read(chip, rd_data,
+-				MEM_INTF_RD_DATA0 + offset, len);
++				MEM_INTF_RD_DATA0(chip) + offset, len);
+ 
+ 		addr += 4;
+ 
+@@ -443,14 +448,14 @@ static int qcom_fg_sram_write(struct qcom_fg_chip *chip,
+ 	while(len > 0) {
+ 		/* Set SRAM address register */
+ 		ret = qcom_fg_write(chip, (u8 *) &addr,
+-				MEM_INTF_ADDR_LSB, 2);
++				MEM_INTF_ADDR_LSB(chip), 2);
+ 		if (ret) {
+ 			dev_err(chip->dev, "Failed to set SRAM address: %d", ret);
+ 			goto out;
+ 		}
+ 
+ 		ret = qcom_fg_write(chip, wr_data,
+-				MEM_INTF_WR_DATA0 + offset, len);
++				MEM_INTF_WR_DATA0(chip) + offset, len);
+ 
+ 		addr += 4;
+ 
+@@ -784,6 +789,34 @@ static int qcom_fg_gen3_get_temp_threshold(struct qcom_fg_chip *chip,
+ 	return 0;
+ }
+ 
++/*************************
++ * BATTERY STATUS, GEN4
++ * ***********************/
++
++/**
++ * @brief qcom_fg_gen4_get_temperature() - Get temperature of battery
++ *
++ * @param chip Pointer to chip
++ * @param val Pointer to store value at
++ * @return int 0 on success, negative errno on error
++ */
++static int qcom_fg_gen4_get_temperature(struct qcom_fg_chip *chip, int *val)
++{
++	int temp;
++	u8 readval[2];
++	int ret;
++
++	ret = qcom_fg_read(chip, readval, ADC_RR_BATT_TEMP_LSB, 2);
++	if (ret) {
++		dev_err(chip->dev, "Failed to read temperature: %d", ret);
++		return ret;
++	}
++
++	temp = readval[1] << 8 | readval[0];
++	*val = temp * 10;
++	return 0;
++}
++
+ /************************
+  * BATTERY POWER SUPPLY
+  * **********************/
+@@ -796,6 +829,7 @@ static const struct qcom_fg_ops ops_fg = {
+ 	.get_voltage = qcom_fg_get_voltage,
+ 	.get_temp_threshold = qcom_fg_get_temp_threshold,
+ 	.set_temp_threshold = qcom_fg_set_temp_threshold,
++	.memif_base = 0x400,
+ };
+ 
+ /* Gen3 fuel gauge. PMI8998 and newer */
+@@ -805,6 +839,17 @@ static const struct qcom_fg_ops ops_fg_gen3 = {
+ 	.get_current = qcom_fg_gen3_get_current,
+ 	.get_voltage = qcom_fg_gen3_get_voltage,
+ 	.get_temp_threshold = qcom_fg_gen3_get_temp_threshold,
++	.memif_base = 0x400,
++};
++
++/* Gen4 fuel gauge. PM8150B and newer */
++static const struct qcom_fg_ops ops_fg_gen4 = {
++	.get_capacity = qcom_fg_get_capacity,
++	.get_temperature = qcom_fg_gen4_get_temperature,
++	.get_current = qcom_fg_gen3_get_current,
++	.get_voltage = qcom_fg_gen3_get_voltage,
++	.get_temp_threshold = qcom_fg_gen3_get_temp_threshold,
++	.memif_base = 0x300,
+ };
+ 
+ static enum power_supply_property qcom_fg_props[] = {
+@@ -837,7 +882,7 @@ static int qcom_fg_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_STATUS:
+ 		/* Get status from charger if available */
+ 		if (chip->chg_psy &&
+-		    chip->status != POWER_SUPPLY_STATUS_UNKNOWN) {
++			chip->status != POWER_SUPPLY_STATUS_UNKNOWN) {
+ 			val->intval = chip->status;
+ 			break;
+ 		} else {
+@@ -928,33 +973,33 @@ static int qcom_fg_iacs_clear_sequence(struct qcom_fg_chip *chip)
+ 	int ret;
+ 
+ 	/* clear the error */
+-	ret = qcom_fg_masked_write(chip, MEM_INTF_IMA_CFG, BIT(2), BIT(2));
++	ret = qcom_fg_masked_write(chip, MEM_INTF_IMA_CFG(chip), BIT(2), BIT(2));
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to write IMA_CFG: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+ 	temp = 0x4;
+-	ret = qcom_fg_write(chip, &temp, MEM_INTF_ADDR_LSB + 1, 1);
++	ret = qcom_fg_write(chip, &temp, MEM_INTF_ADDR_LSB(chip) + 1, 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to write MEM_INTF_ADDR_MSB: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+ 	temp = 0x0;
+-	ret = qcom_fg_write(chip, &temp, MEM_INTF_WR_DATA0 + 3, 1);
++	ret = qcom_fg_write(chip, &temp, MEM_INTF_WR_DATA0(chip) + 3, 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to write WR_DATA3: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = qcom_fg_read(chip, &temp, MEM_INTF_RD_DATA0 + 3, 1);
++	ret = qcom_fg_read(chip, &temp, MEM_INTF_RD_DATA0(chip) + 3, 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to write RD_DATA3: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = qcom_fg_masked_write(chip, MEM_INTF_IMA_CFG, BIT(2), 0);
++	ret = qcom_fg_masked_write(chip, MEM_INTF_IMA_CFG(chip), BIT(2), 0);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to write IMA_CFG: %d\n", ret);
+ 		return ret;
+@@ -971,14 +1016,14 @@ static int qcom_fg_clear_ima(struct qcom_fg_chip *chip,
+ 	int ret;
+ 
+ 	ret = qcom_fg_read(chip, &err_sts,
+-			MEM_INTF_IMA_ERR_STS, 1);
++			MEM_INTF_IMA_ERR_STS(chip), 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to read IMA_ERR_STS: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+ 	ret = qcom_fg_read(chip, &exp_sts,
+-			MEM_INTF_IMA_EXP_STS, 1);
++			MEM_INTF_IMA_EXP_STS(chip), 1);
+ 	if (ret) {
+ 		dev_err(chip->dev, "Failed to read IMA_EXP_STS: %d\n", ret);
+ 		return ret;
+@@ -986,7 +1031,7 @@ static int qcom_fg_clear_ima(struct qcom_fg_chip *chip,
+ 
+ 	if (check_hw_sts) {
+ 		ret = qcom_fg_read(chip, &hw_sts,
+-				MEM_INTF_IMA_HW_STS, 1);
++				MEM_INTF_IMA_HW_STS(chip), 1);
+ 		if (ret) {
+ 			dev_err(chip->dev, "Failed to read IMA_HW_STS: %d\n", ret);
+ 			return ret;
+@@ -1127,7 +1172,7 @@ static int qcom_fg_probe(struct platform_device *pdev)
+ 	 * IACS_INTR_SRC_SLCT is BIT(3)
+ 	 */
+ 	ret = qcom_fg_masked_write(chip,
+-		MEM_INTF_IMA_CFG, BIT(3), BIT(3));
++		MEM_INTF_IMA_CFG(chip), BIT(3), BIT(3));
+ 	if (ret) {
+ 		dev_err(chip->dev,
+ 			"Failed to configure interrupt sourete: %d\n", ret);
+@@ -1141,14 +1186,14 @@ static int qcom_fg_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	/* Check and clear DMA errors */
+-	ret = qcom_fg_read(chip, &dma_status, MEM_IF_DMA_STS, 1);
++	ret = qcom_fg_read(chip, &dma_status, MEM_IF_DMA_STS(chip), 1);
+ 	if (ret < 0) {
+ 		dev_err(chip->dev, "Failed to read dma_status: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+ 	error_present = dma_status & (BIT(1) | BIT(2));
+-	ret = qcom_fg_masked_write(chip, MEM_IF_DMA_CTL, BIT(0),
++	ret = qcom_fg_masked_write(chip, MEM_IF_DMA_CTL(chip), BIT(0),
+ 			error_present ? BIT(0) : 0);
+ 	if (ret < 0) {
+ 		dev_err(chip->dev, "Failed to write dma_ctl: %d\n", ret);
+@@ -1287,7 +1332,7 @@ static int qcom_fg_remove(struct platform_device *pdev)
+ {
+ 	struct qcom_fg_chip *chip = platform_get_drvdata(pdev);
+ 
+-	power_supply_put_battery_info(chip->chg_psy, chip->batt_info);
++	power_supply_put_battery_info(chip->batt_psy, chip->batt_info);
+ 
+ 	if(chip->sram_wq)
+ 		destroy_workqueue(chip->sram_wq);
+@@ -1298,6 +1343,7 @@ static int qcom_fg_remove(struct platform_device *pdev)
+ static const struct of_device_id fg_match_id_table[] = {
+ 	{ .compatible = "qcom,pmi8994-fg", .data = &ops_fg },
+ 	{ .compatible = "qcom,pmi8998-fg", .data = &ops_fg_gen3 },
++	{ .compatible = "qcom,pm8150b-fg", .data = &ops_fg_gen4 },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, fg_match_id_table);
+-- 
+2.47.3
+
