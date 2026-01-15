@@ -160,6 +160,7 @@ case "$BOOT_SOC" in
 esac
 
 prepare_boot_configuration() {
+	display_alert "Preparing boot configuration" "rockchip64_common::prepare_boot_configuration()" "info"
 	ATFSOURCE=''
 	ATF_COMPILE='no'
 	case "$BOOT_SCENARIO" in
