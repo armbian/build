@@ -28,6 +28,18 @@ function bootstrap_tools() {
   display_alert "jethub-burn" "Tools ready (packer: ${PACKER})" "ok"
 }
 
+# Cleanup handlers for temporary directories
+declare -g JETHUB_BURN_TMPDIR=""
+declare -g JETHUB_UBOOT_TMPDIR=""
+
+function cleanup_burn_tmpdir() {
+  [[ -d "${JETHUB_BURN_TMPDIR}" ]] && rm -rf "${JETHUB_BURN_TMPDIR}"
+}
+
+function cleanup_uboot_tmpdir() {
+  [[ -d "${JETHUB_UBOOT_TMPDIR}" ]] && rm -rf "${JETHUB_UBOOT_TMPDIR}"
+}
+
 # Build burn image
 function make_burn__run() {
   local -r input_img="$1"
@@ -37,7 +49,9 @@ function make_burn__run() {
   local -r uboot_bin="$5"
 
   local -r bins="${BINS_DIR}/${bins_subdir}"
-  local tmpdir; tmpdir="$(mktemp -d)"
+  JETHUB_BURN_TMPDIR="$(mktemp -d)"
+  local -r tmpdir="${JETHUB_BURN_TMPDIR}"
+  add_cleanup_handler cleanup_burn_tmpdir
 
   [[ -n "${version}" ]] || exit_with_error "version is not set"
   local -r OUT_IMG="${DESTIMG}/${version}.burn.img"
@@ -60,17 +74,24 @@ function make_burn__run() {
   display_alert "make_burn" "Extracting partitions..." "info"
 
   # Extract partitions using sfdisk to get offsets
-  local i=1 start size line
+  local partition_count=0
+  local start size line
   while IFS= read -r line; do
+    partition_count=$((partition_count + 1))
     start=$(echo "$line" | sed 's/.*start= *\([0-9]*\).*/\1/')
     size=$(echo "$line" | sed 's/.*size= *\([0-9]*\).*/\1/')
-    display_alert "make_burn" "Extracting partition $i (start=$start, size=$size)" "info"
-    dd if="$input_img" of="$tmpdir/part-$i.img" bs=512 skip="$start" count="$size" status=none || exit_with_error "dd failed for partition $i"
-    i=$((i+1))
+    # Validate parsed values before dd
+    [[ "$start" =~ ^[0-9]+$ ]] || exit_with_error "Failed to parse partition ${partition_count} start offset from sfdisk"
+    [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 ]] || exit_with_error "Failed to parse partition ${partition_count} size from sfdisk"
+    display_alert "make_burn" "Extracting partition ${partition_count} (start=${start}, size=${size})" "info"
+    dd if="$input_img" of="$tmpdir/part-${partition_count}.img" bs=512 skip="$start" count="$size" status=none || exit_with_error "dd failed for partition ${partition_count}"
   done < <(sfdisk -d "$input_img" 2>/dev/null | grep 'start=')
 
-  [[ $i -gt 1 ]] || exit_with_error "No partitions found in $input_img"
-  [[ $i -eq 2 ]] || exit_with_error "Expected 1 partition, more than 1 partition is unsupported in $input_img"
+  if [[ ${partition_count} -eq 0 ]]; then
+    exit_with_error "No partitions found in $input_img"
+  elif [[ ${partition_count} -gt 1 ]]; then
+    exit_with_error "Expected 1 partition, found ${partition_count}"
+  fi
 
   cp "$bins/platform.conf" "$tmpdir/"
   cp "$bins/DDR.USB"       "$tmpdir/"
@@ -84,7 +105,7 @@ function make_burn__run() {
   [[ -f "$OUT_IMG" ]] || exit_with_error "Burn image not produced"
   display_alert "make_burn" "Burn image created: $(basename "$OUT_IMG")" "ok"
 
-  rm -rf "${tmpdir}"
+  execute_and_remove_cleanup_handler cleanup_burn_tmpdir
 }
 
 function post_build_image__900_jethub_burn() {
@@ -110,7 +131,10 @@ function post_build_image__900_jethub_burn() {
   local uboot_deb uboot_bin
   uboot_deb=$(find "${debs_dir}" -maxdepth 1 -type f -name "linux-u-boot-${BOARD}-*.deb" | sort -V | tail -n1)
   [[ -n "${uboot_deb}" ]] || exit_with_error "u-boot deb not found for ${BOARD}"
-  local tmp_dir; tmp_dir="$(mktemp -d)"
+  JETHUB_UBOOT_TMPDIR="$(mktemp -d)"
+  local -r tmp_dir="${JETHUB_UBOOT_TMPDIR}"
+  add_cleanup_handler cleanup_uboot_tmpdir
+
   mkdir -p "${tmp_dir}/deb-uboot"
   dpkg -x "${uboot_deb}" "${tmp_dir}/deb-uboot"
   uboot_bin=$(find "${tmp_dir}/deb-uboot/usr/lib" -type f -name "u-boot.nosd.bin" | head -n1)
@@ -118,7 +142,7 @@ function post_build_image__900_jethub_burn() {
 
   make_burn__run "${original_image_file}" "${BOARD}" "${dts_name}" "${bins_subdir}" "${uboot_bin}"
 
-  rm -rf "${tmp_dir}"
+  execute_and_remove_cleanup_handler cleanup_uboot_tmpdir
 
   display_alert "jethub-burn" "Burn image prepared (pre-checksum stage)" "ok"
 }
