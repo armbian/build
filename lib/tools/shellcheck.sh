@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.11.0} # https://github.com/koalaman/shellcheck/releases
+SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-null} # https://github.com/koalaman/shellcheck/releases
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
