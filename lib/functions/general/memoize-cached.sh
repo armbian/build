@@ -42,10 +42,39 @@ function run_memoized() {
 
 	declare -i memoize_cache_ttl=${memoize_cache_ttl:-3600} # 1 hour default; can be overriden from outer scope
 
-	# Lock...
-	exec {lock_fd}> "${disk_cache_file}.lock" || exit_with_error "failed to lock"
-	flock "${lock_fd}" || exit_with_error "flock() failed"
-	display_alert "Lock obtained" "${disk_cache_file}.lock" "debug"
+	# Lock with timeout and user feedback
+	exec {lock_fd}> "${disk_cache_file}.lock" || exit_with_error "failed to open lock file"
+
+	# Try non-blocking flock first
+	if ! flock -n "${lock_fd}"; then
+		# Lock is held by another process, inform user and wait with periodic feedback
+		display_alert "Waiting for lock" "another build may be running; check: docker ps -a | grep armbian" "info"
+
+		declare -i lock_wait_interval=${MEMOIZE_FLOCK_WAIT_INTERVAL:-10}  # seconds between retries/messages
+		declare -i lock_max_wait=${MEMOIZE_FLOCK_MAX_WAIT:-0}             # 0 = infinite (default for compatibility)
+		declare -i lock_total_wait=0
+		declare -i lock_acquired=0
+
+		while [[ "${lock_acquired}" -eq 0 ]]; do
+			# Try with timeout
+			if flock -w "${lock_wait_interval}" "${lock_fd}"; then
+				lock_acquired=1
+			else
+				lock_total_wait=$((lock_total_wait + lock_wait_interval))
+				display_alert "Still waiting for lock" "waited ${lock_total_wait}s; Ctrl+C to abort" "warn"
+
+				# Check max wait timeout (0 = infinite)
+				if [[ "${lock_max_wait}" -gt 0 && "${lock_total_wait}" -ge "${lock_max_wait}" ]]; then
+					display_alert "Lock wait timeout" "exceeded ${lock_max_wait}s; check for stale containers: docker ps -a | grep armbian" "err"
+					exit_with_error "flock() timed out after ${lock_total_wait}s - possible stale build process"
+				fi
+			fi
+		done
+
+		display_alert "Lock obtained after waiting" "${lock_total_wait}s" "info"
+	else
+		display_alert "Lock obtained" "${disk_cache_file}.lock" "debug"
+	fi
 
 	if [[ -f "${disk_cache_file}" ]]; then
 		declare disk_cache_file_mtime_seconds
