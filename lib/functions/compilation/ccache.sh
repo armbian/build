@@ -7,6 +7,26 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Helper function to show ccache stats - used as cleanup handler for interruption case
+function ccache_show_compilation_stats() {
+	local stats_output direct_hit=0 direct_miss=0 total pct
+	stats_output=$(ccache --print-stats 2>&1 || true)
+	direct_hit=$(echo "$stats_output" | grep "^direct_cache_hit" | cut -f2 || true)
+	direct_miss=$(echo "$stats_output" | grep "^direct_cache_miss" | cut -f2 || true)
+	total=$(( ${direct_hit:-0} + ${direct_miss:-0} ))
+	pct=0
+	if [[ $total -gt 0 ]]; then
+		pct=$(( ${direct_hit:-0} * 100 / total ))
+	fi
+	display_alert "Ccache result" "hit=${direct_hit:-0} miss=${direct_miss:-0} (${pct}%)" "info"
+
+	# Hook for extensions to show additional stats (e.g., remote storage)
+	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
+		*called after ccache-wrapped compilation completes (success or failure)*
+		Useful for displaying remote cache statistics or other post-build info.
+	CCACHE_POST_COMPILATION
+}
+
 function do_with_ccache_statistics() {
 
 	display_alert "Clearing ccache statistics" "ccache" "ccache"
@@ -35,16 +55,15 @@ function do_with_ccache_statistics() {
 		run_host_command_logged ccache --show-config "&&" sync
 	fi
 
+	# Register cleanup handler to show stats even if build is interrupted
+	add_cleanup_handler ccache_show_compilation_stats
+
 	display_alert "Running ccache'd build..." "ccache" "ccache"
 	local build_exit_code=0
 	"$@" || build_exit_code=$?
 
-	# Hook for extensions to show ccache stats after compilation (called even on failure)
-	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
-		*called after ccache-wrapped compilation completes (success or failure)*
-		Useful for displaying remote cache statistics or other post-build info.
-		Variable build_exit_code contains the compilation exit code.
-	CCACHE_POST_COMPILATION
+	# Show stats and remove from cleanup handlers (so it doesn't run twice on exit)
+	execute_and_remove_cleanup_handler ccache_show_compilation_stats
 
 	# Re-raise the error if the build failed
 	if [[ ${build_exit_code} -ne 0 ]]; then
