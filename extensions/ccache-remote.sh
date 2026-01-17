@@ -176,16 +176,12 @@ function host_pre_docker_launch__setup_remote_ccache() {
 	done
 }
 
-# Show ccache remote storage statistics at the end of build (success or failure)
-function ccache_remote_show_final_stats() {
-	display_alert "Ccache cleanup handler" "CCACHE_DIR=${CCACHE_DIR:-unset} CCACHE_REMOTE_STORAGE=${CCACHE_REMOTE_STORAGE:-unset}" "debug"
+# Hook: Show ccache remote storage statistics after each compilation (kernel, uboot)
+function ccache_post_compilation__show_remote_stats() {
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
 		local stats_output total pct
 		local read_hit=0 read_miss=0 write=0 error=0
-		# Need to explicitly set CCACHE_DIR when reading stats
-		stats_output=$(CCACHE_DIR="${CCACHE_DIR}" ccache --print-stats 2>&1)
-		display_alert "Ccache raw stats" "$(echo "$stats_output" | grep remote_storage || true)" "debug"
-		# Use remote_storage_read_hit/miss for actual cache operations
+		stats_output=$(ccache --print-stats 2>&1 || true)
 		read_hit=$(echo "$stats_output" | grep "^remote_storage_read_hit" | cut -f2 || true)
 		read_miss=$(echo "$stats_output" | grep "^remote_storage_read_miss" | cut -f2 || true)
 		write=$(echo "$stats_output" | grep "^remote_storage_write" | cut -f2 || true)
@@ -195,9 +191,7 @@ function ccache_remote_show_final_stats() {
 		if [[ $total -gt 0 ]]; then
 			pct=$(( ${read_hit:-0} * 100 / total ))
 		fi
-		display_alert "Remote ccache result" "read_hit=${read_hit} read_miss=${read_miss} write=${write} error=${error} (${pct}% hit rate)" "info"
-	else
-		display_alert "Ccache cleanup handler" "CCACHE_REMOTE_STORAGE not set" "debug"
+		display_alert "Remote ccache result" "hit=${read_hit:-0} miss=${read_miss:-0} write=${write:-0} err=${error:-0} (${pct}%)" "info"
 	fi
 }
 
@@ -205,9 +199,6 @@ function ccache_remote_show_final_stats() {
 function extension_prepare_config__setup_remote_ccache() {
 	# Enable ccache
 	declare -g USE_CCACHE=yes
-
-	# Register cleanup handler to show stats at the end of build
-	add_cleanup_handler ccache_remote_show_final_stats
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
