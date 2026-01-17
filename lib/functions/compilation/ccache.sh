@@ -36,7 +36,20 @@ function do_with_ccache_statistics() {
 	fi
 
 	display_alert "Running ccache'd build..." "ccache" "ccache"
-	"$@"
+	local build_exit_code=0
+	"$@" || build_exit_code=$?
+
+	# Hook for extensions to show ccache stats after compilation (called even on failure)
+	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
+		*called after ccache-wrapped compilation completes (success or failure)*
+		Useful for displaying remote cache statistics or other post-build info.
+		Variable build_exit_code contains the compilation exit code.
+	CCACHE_POST_COMPILATION
+
+	# Re-raise the error if the build failed
+	if [[ ${build_exit_code} -ne 0 ]]; then
+		return ${build_exit_code}
+	fi
 
 	if [[ "${SHOW_CCACHE}" == "yes" ]]; then
 		display_alert "Display ccache statistics" "ccache" "ccache"
