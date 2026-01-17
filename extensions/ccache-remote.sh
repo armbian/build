@@ -179,19 +179,15 @@ function host_pre_docker_launch__setup_remote_ccache() {
 # Hook: Show ccache remote storage statistics after each compilation (kernel, uboot)
 function ccache_post_compilation__show_remote_stats() {
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		local stats_output total pct
-		local read_hit=0 read_miss=0 write=0 error=0
+		local stats_output pct
+		local read_hit read_miss write error
 		stats_output=$(ccache --print-stats 2>&1 || true)
-		read_hit=$(echo "$stats_output" | grep "^remote_storage_read_hit" | cut -f2 || true)
-		read_miss=$(echo "$stats_output" | grep "^remote_storage_read_miss" | cut -f2 || true)
-		write=$(echo "$stats_output" | grep "^remote_storage_write" | cut -f2 || true)
-		error=$(echo "$stats_output" | grep "^remote_storage_error" | cut -f2 || true)
-		total=$(( ${read_hit:-0} + ${read_miss:-0} ))
-		pct=0
-		if [[ $total -gt 0 ]]; then
-			pct=$(( ${read_hit:-0} * 100 / total ))
-		fi
-		display_alert "Remote ccache result" "hit=${read_hit:-0} miss=${read_miss:-0} write=${write:-0} err=${error:-0} (${pct}%)" "info"
+		read_hit=$(ccache_get_stat "$stats_output" "remote_storage_read_hit")
+		read_miss=$(ccache_get_stat "$stats_output" "remote_storage_read_miss")
+		write=$(ccache_get_stat "$stats_output" "remote_storage_write")
+		error=$(ccache_get_stat "$stats_output" "remote_storage_error")
+		pct=$(ccache_hit_pct "$read_hit" "$read_miss")
+		display_alert "Remote ccache result" "hit=${read_hit} miss=${read_miss} write=${write} err=${error} (${pct}%)" "info"
 	fi
 }
 
