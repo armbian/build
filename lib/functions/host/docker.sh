@@ -711,6 +711,7 @@ function docker_pull_with_marker() {
 
 # Setup or update system cronjob to automatically pull Docker images
 # This ensures images are always fresh before builds start
+# Controlled by ARMBIAN_DOCKER_AUTO_PULL environment variable (must be explicitly set to "yes" to enable)
 function docker_setup_auto_pull_cronjob() {
 	if [[ ! -d /etc/cron.d ]]; then
 		exit_with_error "Docker auto-pull cronjob" "cron not available; /etc/cron.d does not exist on this system"
@@ -813,7 +814,6 @@ function docker_setup_auto_pull_cronjob() {
 		stored_hash="$(cat "${hash_file}")"
 		if [[ "${stored_hash}" == "${current_hash}" ]]; then
 			needs_update="no"
-			display_alert "Docker auto-pull" "configuration unchanged, no update needed" "debug"
 		else
 			display_alert "Docker auto-pull" "configuration changed, updating" "info"
 		fi
@@ -848,16 +848,39 @@ function docker_setup_auto_pull_cronjob() {
 }
 
 # Check if auto-pull cronjob is installed, and install if not or outdated
+# Controlled by ARMBIAN_DOCKER_AUTO_PULL environment variable (must be explicitly set to "yes" to enable)
 function docker_ensure_auto_pull_cronjob() {
 	declare wrapper_script="/usr/local/bin/armbian-docker-pull"
+	declare cron_file="/etc/cron.d/armbian-docker-pull"
 	declare hash_file="/var/lib/armbian/docker-pull.hash"
 
-	# Always call docker_setup_auto_pull_cronjob - it will check hashes and only update if needed
-	if [[ ! -f "${wrapper_script}" ]] || [[ ! -f "${hash_file}" ]]; then
-		display_alert "Docker auto-pull cronjob" "wrapper or hash file missing, installing now" "info"
-		docker_setup_auto_pull_cronjob
-	else
-		# Still call setup to check for updates via hash comparison
-		docker_setup_auto_pull_cronjob
+	# Only proceed if ARMBIAN_DOCKER_AUTO_PULL is explicitly set to "yes"
+	if [[ "${ARMBIAN_DOCKER_AUTO_PULL}" != "yes" ]]; then
+		# Remove cronjob, wrapper script, and hash file if they exist
+		if [[ -f "${cron_file}" ]] || [[ -f "${wrapper_script}" ]] || [[ -f "${hash_file}" ]]; then
+			display_alert "Docker auto-pull" "removing cronjob and wrapper script" "info"
+
+			if [[ -f "${cron_file}" ]]; then
+				run_host_command_logged sudo rm -f "${cron_file}"
+				display_alert "Removed" "cron file: ${cron_file}" "debug"
+			fi
+
+			if [[ -f "${wrapper_script}" ]]; then
+				run_host_command_logged sudo rm -f "${wrapper_script}"
+				display_alert "Removed" "wrapper script: ${wrapper_script}" "debug"
+			fi
+
+			if [[ -f "${hash_file}" ]]; then
+				run_host_command_logged sudo rm -f "${hash_file}"
+				display_alert "Removed" "hash file: ${hash_file}" "debug"
+			fi
+
+			display_alert "Docker auto-pull" "cronjob and wrapper script removed successfully" "info"
+		fi
+		return 0
 	fi
+
+	# ARMBIAN_DOCKER_AUTO_PULL is explicitly set to "yes", ensure cronjob is installed
+	# Always call docker_setup_auto_pull_cronjob - it will check hashes and only update if needed
+	docker_setup_auto_pull_cronjob
 }
