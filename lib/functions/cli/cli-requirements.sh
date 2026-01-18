@@ -47,10 +47,4 @@ function cli_requirements_run() {
 	fi
 
 	display_alert "Done with" "@host dependencies" "cachehit"
-
-	# Ensure Docker auto-pull cronjob is installed if Docker is available
-	if [[ -n "$(command -v docker)" ]]; then
-		display_alert "Docker" "ensuring auto-pull cronjob is installed" "info"
-		docker_ensure_auto_pull_cronjob
-	fi
 }
