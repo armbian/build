@@ -73,6 +73,11 @@ function trap_handler_cleanup_logging() {
 	produce_repeat_args_array # produces repeat_args
 	declare repeat_args_string="${repeat_args[*]}"
 
+	# Display repeat build options on error or interrupt (successful builds show this in main_default_end_build)
+	if [[ ${cleanup_exit_code:-0} -gt 0 ]]; then
+		display_alert "Repeat Build Options" "${repeat_args_string}" "ext"
+	fi
+
 	## Here -- we need to definitely stop logging, cos we're gonna consolidate and delete the logs.
 	display_alert "End of logging" "STOP LOGGING: CURRENT_LOGFILE: ${CURRENT_LOGFILE}" "debug"
 
