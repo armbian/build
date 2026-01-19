@@ -1,0 +1,116 @@
+From f073829ab784f65a79731a672e490d433d7b3ec8 Mon Sep 17 00:00:00 2001
+From: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
+Date: Tue, 6 May 2025 12:53:37 +0800
+Subject: [PATCH 095/116] net: pcs: mtk-lynxi: add phya tx rx clock path
+
+In NETSYSv3.1, the SGMII hardware introduces a new clock path from PHYA.
+Consequently, users can switch the SGMII PCS to this new clock source
+for better performance on the MT7987.
+
+Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c |  3 +++
+ drivers/net/pcs/pcs-mtk-lynxi.c             | 22 +++++++++++++++++----
+ include/linux/pcs/pcs-mtk-lynxi.h           |  1 +
+ 3 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 45bfffe78718..4676596b5c9f 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -5812,6 +5812,9 @@ static int mtk_sgmii_init(struct mtk_eth *eth)
+ 		else if (of_property_read_bool(np, "mediatek,pnswap-rx"))
+ 			flags |= MTK_SGMII_FLAG_PN_SWAP_RX;
+ 
++		if (of_property_read_bool(np->parent, "mediatek,phya_trx_ck"))
++			flags |= MTK_SGMII_FLAG_PHYA_TRX_CK;
++
+ 		of_node_put(np);
+ 
+ 		if (IS_ERR(regmap))
+diff --git a/drivers/net/pcs/pcs-mtk-lynxi.c b/drivers/net/pcs/pcs-mtk-lynxi.c
+index 53c97b549758..9a2cd086d8f1 100644
+--- a/drivers/net/pcs/pcs-mtk-lynxi.c
++++ b/drivers/net/pcs/pcs-mtk-lynxi.c
+@@ -28,6 +28,7 @@
+ #define SGMSYS_PCS_CONTROL_1		0x0
+ #define SGMII_BMCR			GENMASK(15, 0)
+ #define SGMII_BMSR			GENMASK(31, 16)
++#define SGMII_REF_CK_SEL		BIT(24)
+ 
+ #define SGMSYS_PCS_DEVICE_ID		0x4
+ #define SGMII_LYNXI_DEV_ID		0x4d544950
+@@ -55,6 +56,8 @@
+ #define SGMII_SPEED_1000		FIELD_PREP(SGMII_SPEED_MASK, 2)
+ #define SGMII_DUPLEX_HALF		BIT(4)
+ #define SGMII_REMOTE_FAULT_DIS		BIT(8)
++#define SGMII_TRXBUF_THR_MASK		GENMASK(31, 16)
++#define SGMII_TRXBUF_THR(x)		FIELD_PREP(SGMII_TRXBUF_THR_MASK, (x))
+ 
+ /* Register to reset SGMII design */
+ #define SGMSYS_RESERVED_0		0x34
+@@ -163,7 +166,7 @@ static int mtk_pcs_lynxi_config(struct phylink_pcs *pcs, unsigned int neg_mode,
+ {
+ 	struct mtk_pcs_lynxi *mpcs = pcs_to_mtk_pcs_lynxi(pcs);
+ 	bool mode_changed = false, changed;
+-	unsigned int rgc3, sgm_mode, bmcr;
++	unsigned int rgc3, sgm_mode, bmcr = 0, trxbuf_thr = 0x3112;
+ 	unsigned int pnswap_tx, pnswap_rx;
+ 	int link_timer;
+ 
+@@ -194,6 +197,12 @@ static int mtk_pcs_lynxi_config(struct phylink_pcs *pcs, unsigned int neg_mode,
+ 		bmcr = 0;
+ 	}
+ 
++	/* Configure SGMII PCS clock source */
++	if (mpcs->flags & MTK_SGMII_FLAG_PHYA_TRX_CK) {
++		bmcr |= SGMII_REF_CK_SEL;
++		trxbuf_thr = 0x2111;
++	}
++
+ 	if (mpcs->interface != interface) {
+ 		link_timer = phylink_get_link_timer_ns(interface);
+ 		if (link_timer < 0)
+@@ -243,12 +252,14 @@ static int mtk_pcs_lynxi_config(struct phylink_pcs *pcs, unsigned int neg_mode,
+ 
+ 	/* Update the sgmsys mode register */
+ 	regmap_update_bits(mpcs->regmap, SGMSYS_SGMII_MODE,
+-			   SGMII_REMOTE_FAULT_DIS | SGMII_SPEED_DUPLEX_AN |
+-			   SGMII_IF_MODE_SGMII, sgm_mode);
++			   SGMII_TRXBUF_THR_MASK |
++			   SGMII_REMOTE_FAULT_DIS | SGMII_DUPLEX_HALF |
++			   SGMII_SPEED_DUPLEX_AN | SGMII_IF_MODE_SGMII,
++			   SGMII_TRXBUF_THR(trxbuf_thr) | sgm_mode);
+ 
+ 	/* Update the BMCR */
+ 	regmap_update_bits(mpcs->regmap, SGMSYS_PCS_CONTROL_1,
+-			   BMCR_ANENABLE, bmcr);
++			   SGMII_REF_CK_SEL | BMCR_ANENABLE, bmcr);
+ 
+ 	/* Release PHYA power down state
+ 	 * Only removing bit SGMII_PHYA_PWD isn't enough.
+@@ -445,6 +456,9 @@ static int mtk_pcs_lynxi_probe(struct platform_device *pdev)
+ 	else if (of_property_read_bool(np->parent, "mediatek,pnswap-rx"))
+ 		flags |= MTK_SGMII_FLAG_PN_SWAP_RX;
+ 
++	if (of_property_read_bool(np->parent, "mediatek,phya_trx_ck"))
++		flags |= MTK_SGMII_FLAG_PHYA_TRX_CK;
++
+ 	if (of_parse_phandle(np->parent, "resets", 0)) {
+ 		mpcs->rstc = of_reset_control_get_shared(np->parent, NULL);
+ 		if (IS_ERR(mpcs->rstc))
+diff --git a/include/linux/pcs/pcs-mtk-lynxi.h b/include/linux/pcs/pcs-mtk-lynxi.h
+index e6b58861c845..aacfbd5da4a2 100644
+--- a/include/linux/pcs/pcs-mtk-lynxi.h
++++ b/include/linux/pcs/pcs-mtk-lynxi.h
+@@ -7,6 +7,7 @@
+ 
+ #define MTK_SGMII_FLAG_PN_SWAP_TX BIT(0)
+ #define MTK_SGMII_FLAG_PN_SWAP_RX BIT(1)
++#define MTK_SGMII_FLAG_PHYA_TRX_CK BIT(2)
+ struct phylink_pcs *mtk_pcs_lynxi_create(struct device *dev,
+ 					 struct regmap *regmap,
+ 					 u32 ana_rgc3, u32 flags);
+-- 
+2.39.5
+
