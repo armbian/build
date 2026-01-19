@@ -1,0 +1,485 @@
+From 137683b9d76d710e78377f47a9b65f1eb3e0f712 Mon Sep 17 00:00:00 2001
+From: Daniel Golle <daniel@makrotopia.org>
+Date: Fri, 28 Feb 2025 13:23:35 +0000
+Subject: [PATCH 042/116] net: dsa: add tag formats for MaxLinear switches
+
+The MaxLinear MXL862xx family of switches can either be used with a
+8-byte proprietary special tag or utilizing IEEE 802.1ad (aka. Q-in-Q)
+VLANs to destinguish user ports.
+Add support for both tag formats.
+
+Signed-off-by: Daniel Golle <daniel@makrotopia.org>
+---
+ include/net/dsa.h            |   4 +
+ net/dsa/Kconfig              |  13 +++
+ net/dsa/Makefile             |   2 +
+ net/dsa/tag_mxl862xx.c       | 207 +++++++++++++++++++++++++++++++++++
+ net/dsa/tag_mxl862xx_8021q.c | 183 +++++++++++++++++++++++++++++++
+ 5 files changed, 409 insertions(+)
+ create mode 100644 net/dsa/tag_mxl862xx.c
+ create mode 100644 net/dsa/tag_mxl862xx_8021q.c
+
+diff --git a/include/net/dsa.h b/include/net/dsa.h
+index 5cb456bf4639..336ecb6d35a7 100644
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -55,6 +55,8 @@ struct tc_action;
+ #define DSA_TAG_PROTO_LAN937X_VALUE		27
+ #define DSA_TAG_PROTO_VSC73XX_8021Q_VALUE	28
+ #define DSA_TAG_PROTO_BRCM_LEGACY_FCS_VALUE	29
++#define DSA_TAG_PROTO_MXL862_VALUE		30
++#define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
+ 
+ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
+@@ -87,6 +89,8 @@ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_RZN1_A5PSW	= DSA_TAG_PROTO_RZN1_A5PSW_VALUE,
+ 	DSA_TAG_PROTO_LAN937X		= DSA_TAG_PROTO_LAN937X_VALUE,
+ 	DSA_TAG_PROTO_VSC73XX_8021Q	= DSA_TAG_PROTO_VSC73XX_8021Q_VALUE,
++	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
++	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
+ };
+ 
+ struct dsa_switch;
+diff --git a/net/dsa/Kconfig b/net/dsa/Kconfig
+index 869cbe57162f..a05fe9cf2819 100644
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -137,6 +137,19 @@ config NET_DSA_TAG_QCA
+ 	  Say Y or M if you want to enable support for tagging frames for
+ 	  the Qualcomm Atheros QCA8K switches.
+ 
++config NET_DSA_TAG_MXL862
++	tristate "Tag driver for MxL862xx switches"
++	help
++	  Say Y or M if you want to enable support for tagging frames for the
++	  Maxlinear MxL862xx switches.
++
++config NET_DSA_TAG_MXL862_8021Q
++	tristate "Tag driver for MxL862xx switches, based on VLAN tags"
++	help
++	  Say Y or M if you want to enable support for tagging frames for the
++	  Maxlinear MxL862xx switches. This tagging variant is based on 4-byte wide VLAN
++	  tags
++
+ config NET_DSA_TAG_RTL4_A
+ 	tristate "Tag driver for Realtek 4 byte protocol A tags"
+ 	help
+diff --git a/net/dsa/Makefile b/net/dsa/Makefile
+index 555c07cfeb71..7e774e22d648 100644
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -28,6 +28,8 @@ obj-$(CONFIG_NET_DSA_TAG_HELLCREEK) += tag_hellcreek.o
+ obj-$(CONFIG_NET_DSA_TAG_KSZ) += tag_ksz.o
+ obj-$(CONFIG_NET_DSA_TAG_LAN9303) += tag_lan9303.o
+ obj-$(CONFIG_NET_DSA_TAG_MTK) += tag_mtk.o
++obj-$(CONFIG_NET_DSA_TAG_MXL862) += tag_mxl862xx.o
++obj-$(CONFIG_NET_DSA_TAG_MXL862_8021Q) += tag_mxl862xx_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_NONE) += tag_none.o
+ obj-$(CONFIG_NET_DSA_TAG_OCELOT) += tag_ocelot.o
+ obj-$(CONFIG_NET_DSA_TAG_OCELOT_8021Q) += tag_ocelot_8021q.o
+diff --git a/net/dsa/tag_mxl862xx.c b/net/dsa/tag_mxl862xx.c
+new file mode 100644
+index 000000000000..470c70853bc6
+--- /dev/null
++++ b/net/dsa/tag_mxl862xx.c
+@@ -0,0 +1,207 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * net/dsa/tag_mxl862xx.c - DSA driver Special Tag support for MaxLinear 862xx switch chips
++ *
++ * Copyright (C) 2024 MaxLinear Inc.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ *
++ */
++
++#include <linux/bitops.h>
++#include <linux/etherdevice.h>
++#include <linux/skbuff.h>
++#include <net/dsa.h>
++
++#ifndef LINUX_VERSION_CODE
++#include <linux/version.h>
++#else
++#define KERNEL_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
++#endif
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++#include "dsa_priv.h"
++#else
++#include "tag.h"
++#endif
++
++#define MXL862_NAME	"mxl862xx"
++
++/* To define the outgoing port and to discover the incoming port a special
++ * tag is used by the GSW1xx.
++ *
++ *       Dest MAC       Src MAC    special TAG        EtherType
++ * ...| 1 2 3 4 5 6 | 1 2 3 4 5 6 | 1 2 3 4 5 6 7 8 | 1 2 |...
++ *                                |<--------------->|
++ */
++
++/* special tag in TX path header */
++#define MXL862_TX_HEADER_LEN 8
++
++#define MXL862_RX_HEADER_LEN 8
++
++/* Byte 7 */
++#define MXL862_IGP_EGP_SHIFT 0
++#define MXL862_IGP_EGP_MASK GENMASK(3, 0)
++
++static struct sk_buff *mxl862_tag_xmit(struct sk_buff *skb,
++				       struct net_device *dev)
++{
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
++	int err;
++#endif
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0))
++	struct dsa_port *dp = dsa_slave_to_port(dev);
++#else
++	struct dsa_port *dp = dsa_user_to_port(dev);
++#endif
++	struct dsa_port *cpu_dp = dp->cpu_dp;
++	unsigned int cpu_port = cpu_dp->index + 1;
++	unsigned int usr_port = dp->index + 1;
++
++	u8 *mxl862_tag;
++
++	if (skb == NULL)
++		return skb;
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
++	err = skb_cow_head(skb, MXL862_TX_HEADER_LEN);
++	if (err)
++		return NULL;
++#endif
++
++	/* provide additional space 'MXL862_TX_HEADER_LEN' bytes */
++	skb_push(skb, MXL862_TX_HEADER_LEN);
++
++	/* shift MAC address to the beginnig of the enlarged buffer,
++	 * releasing the space required for DSA tag (between MAC address and Ethertype) */
++	memmove(skb->data, skb->data + MXL862_TX_HEADER_LEN, 2 * ETH_ALEN);
++
++	/* special tag ingress */
++	mxl862_tag = skb->data + 2 * ETH_ALEN;
++	mxl862_tag[0] = 0x88;
++	mxl862_tag[1] = 0xc3;
++	mxl862_tag[2] = 0;
++	mxl862_tag[3] = 0;
++	mxl862_tag[4] = 0;
++	mxl862_tag[5] = usr_port + 16 - cpu_port;
++	mxl862_tag[6] = 0;
++	mxl862_tag[7] = (cpu_port)&MXL862_IGP_EGP_MASK;
++
++	return skb;
++}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
++static struct sk_buff *mxl862_tag_rcv(struct sk_buff *skb,
++				      struct net_device *dev,
++				      struct packet_type *pt)
++#else
++static struct sk_buff *mxl862_tag_rcv(struct sk_buff *skb,
++				      struct net_device *dev)
++#endif
++{
++	int port;
++	u8 *mxl862_tag;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++	struct dsa_port *dp;
++#endif
++
++	if (unlikely(!pskb_may_pull(skb, MXL862_RX_HEADER_LEN))) {
++		dev_warn_ratelimited(&dev->dev,
++				     "Dropping packet, cannot pull SKB\n");
++		return NULL;
++	}
++
++	mxl862_tag = skb->data - 2;
++
++	if ((mxl862_tag[0] != 0x88) && (mxl862_tag[1] != 0xc3)) {
++		dev_warn_ratelimited(
++			&dev->dev,
++			"Dropping packet due to invalid special tag marker\n");
++		dev_warn_ratelimited(
++			&dev->dev,
++			"Rx Packet Tag: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n",
++			mxl862_tag[0], mxl862_tag[1], mxl862_tag[2],
++			mxl862_tag[3], mxl862_tag[4], mxl862_tag[5],
++			mxl862_tag[6], mxl862_tag[7]);
++		return NULL;
++	}
++
++	/* Get source port information */
++	port = (mxl862_tag[7] & MXL862_IGP_EGP_MASK) >> MXL862_IGP_EGP_SHIFT;
++	port = port - 1;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0))
++	skb->dev = dsa_master_find_slave(dev, 0, port);
++#else
++	skb->dev = dsa_conduit_find_user(dev, 0, port);
++#endif
++	if (!skb->dev) {
++		dev_warn_ratelimited(
++			&dev->dev,
++			"Dropping packet due to invalid source port\n");
++		dev_warn_ratelimited(
++			&dev->dev,
++			"Rx Packet Tag: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x\n",
++			mxl862_tag[0], mxl862_tag[1], mxl862_tag[2],
++			mxl862_tag[3], mxl862_tag[4], mxl862_tag[5],
++			mxl862_tag[6], mxl862_tag[7]);
++		return NULL;
++	}
++
++	/* remove the MxL862xx special tag between the MAC addresses and the current ethertype field. */
++	skb_pull_rcsum(skb, MXL862_RX_HEADER_LEN);
++	memmove(skb->data - ETH_HLEN,
++		skb->data - (ETH_HLEN + MXL862_RX_HEADER_LEN), 2 * ETH_ALEN);
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++	dp = dsa_slave_to_port(skb->dev);
++	if (dp->bridge_dev)
++		skb->offload_fwd_mark = 1;
++#else
++	dsa_default_offload_fwd_mark(skb);
++#endif
++
++	return skb;
++}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
++const struct dsa_device_ops mxl862_netdev_ops = {
++	.xmit = mxl862_tag_xmit,
++	.rcv = mxl862_tag_rcv,
++};
++#else
++
++static const struct dsa_device_ops mxl862_netdev_ops = {
++	.name = "mxl862",
++	.proto = DSA_TAG_PROTO_MXL862,
++	.xmit = mxl862_tag_xmit,
++	.rcv = mxl862_tag_rcv,
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
++	.overhead = MXL862_RX_HEADER_LEN,
++#else
++	.needed_headroom = MXL862_RX_HEADER_LEN,
++#endif
++};
++
++MODULE_LICENSE("GPL");
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_MXL862);
++#else
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_MXL862, MXL862_NAME);
++#endif
++
++module_dsa_tag_driver(mxl862_netdev_ops);
++#endif
++
++MODULE_LICENSE("GPL");
+diff --git a/net/dsa/tag_mxl862xx_8021q.c b/net/dsa/tag_mxl862xx_8021q.c
+new file mode 100644
+index 000000000000..dbf48f9b409f
+--- /dev/null
++++ b/net/dsa/tag_mxl862xx_8021q.c
+@@ -0,0 +1,183 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * net/dsa/tag_mxl862xx_8021q.c - DSA driver 802.1q based Special Tag support for MaxLinear 862xx switch chips
++ *
++ * Copyright (C) 2024 MaxLinear Inc.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ *
++ */
++
++#ifndef LINUX_VERSION_CODE
++#include <linux/version.h>
++#else
++#define KERNEL_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
++#endif
++
++#include <linux/dsa/8021q.h>
++#if (LINUX_VERSION_CODE > KERNEL_VERSION(6, 1, 0))
++#include "tag_8021q.h"
++#endif
++#include <net/dsa.h>
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++#include "dsa_priv.h"
++#else
++#include "tag.h"
++#endif
++
++
++#define MXL862_NAME	"mxl862xx"
++
++/* To define the outgoing port and to discover the incoming port
++ * a special 4-byte outer VLAN tag is used by the MxL862xx.
++ *
++ *       Dest MAC       Src MAC    special   optional  EtherType
++ *                                 outer     inner
++ *                                 VLAN tag  tag(s)
++ * ...| 1 2 3 4 5 6 | 1 2 3 4 5 6 | 1 2 3 4 | 1 2 3 4 | 1 2 |...
++ *                                |<------->|
++ */
++
++/* special tag in TX path header */
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION (5, 14, 0))
++static void dsa_8021q_rcv(struct sk_buff *skb, int *source_port, int *switch_id)
++{
++	u16 vid, tci;
++
++	skb_push_rcsum(skb, ETH_HLEN);
++	if (skb_vlan_tag_present(skb)) {
++		tci = skb_vlan_tag_get(skb);
++		__vlan_hwaccel_clear_tag(skb);
++	} else {
++		__skb_vlan_pop(skb, &tci);
++	}
++	skb_pull_rcsum(skb, ETH_HLEN);
++
++	vid = tci & VLAN_VID_MASK;
++
++	*source_port = dsa_8021q_rx_source_port(vid);
++	*switch_id = dsa_8021q_rx_switch_id(vid);
++	skb->priority = (tci & VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT;
++}
++
++/* If the ingress port offloads the bridge, we mark the frame as autonomously
++ * forwarded by hardware, so the software bridge doesn't forward in twice, back
++ * to us, because we already did. However, if we're in fallback mode and we do
++ * software bridging, we are not offloading it, therefore the dp->bridge_dev
++ * pointer is not populated, and flooding needs to be done by software (we are
++ * effectively operating in standalone ports mode).
++ */
++static inline void dsa_default_offload_fwd_mark(struct sk_buff *skb)
++{
++	struct dsa_port *dp = dsa_slave_to_port(skb->dev);
++
++	skb->offload_fwd_mark = !!(dp->bridge_dev);
++}
++#endif
++
++static struct sk_buff *mxl862_8021q_tag_xmit(struct sk_buff *skb,
++				      struct net_device *dev)
++{
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0))
++	struct dsa_port *dp = dsa_slave_to_port(dev);
++#else
++	struct dsa_port *dp = dsa_user_to_port(dev);
++#endif
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
++	u16 tx_vid = dsa_8021q_tx_vid(dp->ds, dp->index);
++#elif (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
++	u16 tx_vid = dsa_tag_8021q_tx_vid(dp);
++#else
++	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
++#endif
++	u16 queue_mapping = skb_get_queue_mapping(skb);
++	u8 pcp = netdev_txq_to_tc(dev, queue_mapping);
++
++	dsa_8021q_xmit(skb, dev, ETH_P_8021Q,
++			      ((pcp << VLAN_PRIO_SHIFT) | tx_vid));
++
++	return skb;
++}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
++static struct sk_buff *mxl862_8021q_tag_rcv(struct sk_buff *skb,
++				      struct net_device *dev,
++				      struct packet_type *pt)
++#else
++static struct sk_buff *mxl862_8021q_tag_rcv(struct sk_buff *skb,
++				      struct net_device *dev)
++#endif
++{
++	int src_port = -1;
++	int switch_id = -1;
++
++	/* removes Outer VLAN tag */
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
++	dsa_8021q_rcv(skb, &src_port, &switch_id);
++#elif (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
++	dsa_8021q_rcv(skb, &src_port, &switch_id, NULL);
++#else
++	dsa_8021q_rcv(skb, &src_port, &switch_id, NULL, NULL);
++#endif
++	if (src_port == -1 || switch_id == -1) {
++		dev_warn_ratelimited(&dev->dev, "Dropping packet due to invalid outer 802.1Q tag: switch %d port %d\n", switch_id, src_port);
++		return NULL;
++	}
++
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0))
++	skb->dev = dsa_master_find_slave(dev, switch_id, src_port);
++#else
++	skb->dev = dsa_conduit_find_user(dev, switch_id, src_port);
++#endif
++	if (!skb->dev) {
++		dev_warn_ratelimited(&dev->dev, "Dropping packet due to invalid source port: %d\n", src_port);
++		return NULL;
++	}
++
++	dsa_default_offload_fwd_mark(skb);
++
++	return skb;
++}
++
++static const struct dsa_device_ops mxl862_8021q_netdev_ops = {
++	.name = "mxl862_8021q",
++	.proto = DSA_TAG_PROTO_MXL862_8021Q,
++	.xmit = mxl862_8021q_tag_xmit,
++	.rcv = mxl862_8021q_tag_rcv,
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0))
++	.overhead = VLAN_HLEN,
++#else
++	.needed_headroom	= VLAN_HLEN,
++#endif
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) && \
++	 LINUX_VERSION_CODE > KERNEL_VERSION(5, 10, 0))
++	.promisc_on_master	= true,
++#elif (LINUX_VERSION_CODE > KERNEL_VERSION(6, 7, 0))
++	.promisc_on_conduit = true,
++#endif
++};
++
++
++MODULE_LICENSE("GPL");
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_MXL862_8021Q);
++#else
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_MXL862_8021Q, MXL862_NAME);
++#endif
++
++module_dsa_tag_driver(mxl862_8021q_netdev_ops);
+-- 
+2.39.5
+

@@ -1,0 +1,141 @@
+From afe641700c1ad97aee3aaf0672bc918f4662975f Mon Sep 17 00:00:00 2001
+From: Daniel Golle <daniel@makrotopia.org>
+Date: Fri, 1 Sep 2023 12:31:38 +0100
+Subject: [PATCH 038/116] net: ethernet: mtk_eth_soc: add more DMA monitor for
+ MT7988
+
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 55 +++++++++++++++++++--
+ drivers/net/ethernet/mediatek/mtk_eth_soc.h | 11 +++++
+ 2 files changed, 61 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 78484f5a7bbf..241d338f0104 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -4323,10 +4323,13 @@ static void mtk_hw_warm_reset(struct mtk_eth *eth)
+ static bool mtk_hw_check_dma_hang(struct mtk_eth *eth)
+ {
+ 	const struct mtk_reg_map *reg_map = eth->soc->reg_map;
+-	bool gmac1_tx, gmac2_tx, gdm1_tx, gdm2_tx;
++	bool gmac1_tx, gmac2_tx, gmac3_tx = false, gdm1_tx, gdm2_tx, gdm3_tx = false;
+ 	bool oq_hang, cdm1_busy, adma_busy;
+ 	bool wtx_busy, cdm_full, oq_free;
+-	u32 wdidx, val, gdm1_fc, gdm2_fc;
++	u32 wdidx, val, gdm1_fc, gdm2_fc, gdm3_fc;
++	u32 tdma_glo_cfg, cur_fsm, ipq10;
++	bool rx_busy, tx_busy, cur_fsm_tx, cur_fsm_rx;
++
+ 	bool qfsm_hang, qfwd_hang;
+ 	bool ret = false;
+ 
+@@ -4362,12 +4365,19 @@ static bool mtk_hw_check_dma_hang(struct mtk_eth *eth)
+ 	gdm2_tx = FIELD_GET(GENMASK(31, 16), mtk_r32(eth, MTK_FE_GDM2_FSM)) > 0;
+ 	gmac1_tx = FIELD_GET(GENMASK(31, 24), mtk_r32(eth, MTK_MAC_FSM(0))) != 1;
+ 	gmac2_tx = FIELD_GET(GENMASK(31, 24), mtk_r32(eth, MTK_MAC_FSM(1))) != 1;
+-	gdm1_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x24);
+-	gdm2_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x64);
++	gdm1_fc = mtk_r32(eth, reg_map->gdm1_cnt + MTK_GDM_RX_FC_OFFSET(eth, 0));
++	gdm2_fc = mtk_r32(eth, reg_map->gdm1_cnt + MTK_GDM_RX_FC_OFFSET(eth, 1));
++
++	if (mtk_is_netsys_v3_or_greater(eth)) {
++		gdm3_tx = FIELD_GET(GENMASK(31, 16), mtk_r32(eth, MTK_FE_GDM3_FSM)) > 0;
++		gmac3_tx = FIELD_GET(GENMASK(31, 24), mtk_r32(eth, MTK_MAC_FSM(2))) != 1;
++		gdm3_fc = mtk_r32(eth, reg_map->gdm1_cnt + MTK_GDM_RX_FC_OFFSET(eth, 2));
++	}
+ 
+ 	if (qfsm_hang && qfwd_hang &&
+ 	    ((gdm1_tx && gmac1_tx && gdm1_fc < 1) ||
+-	     (gdm2_tx && gmac2_tx && gdm2_fc < 1))) {
++	     (gdm2_tx && gmac2_tx && gdm2_fc < 1) ||
++	     (mtk_is_netsys_v3_or_greater(eth) && gdm3_tx && gmac3_tx && gdm3_fc < 1))) {
+ 		if (++eth->reset.qdma_hang_count > 2) {
+ 			eth->reset.qdma_hang_count = 0;
+ 			ret = true;
+@@ -4389,12 +4399,47 @@ static bool mtk_hw_check_dma_hang(struct mtk_eth *eth)
+ 		goto out;
+ 	}
+ 
++	if (mtk_is_netsys_v3_or_greater(eth)) {
++		ipq10 = mtk_r32(eth, reg_map->pse_iq_sta + 24) & GENMASK(23, 0);
++		cur_fsm = mtk_r32(eth, MTK_FE_CDM6_FSM);
++		tdma_glo_cfg = mtk_r32(eth, MTK_TDMA_GLO_CFG);
++		cur_fsm_rx = !(cur_fsm & GENMASK(27, 16));
++		cur_fsm_tx = !(cur_fsm & GENMASK(24, 0));
++		tx_busy = !(tdma_glo_cfg & BIT(1));
++		rx_busy = !(tdma_glo_cfg & BIT(3));
++
++		if (ipq10 && cur_fsm_tx && tx_busy &&
++		    cur_fsm_tx == !!(eth->reset.pre_fsm  & GENMASK(24, 0)) &&
++		    ipq10 == eth->reset.pre_ipq10) {
++			if (++eth->reset.tdma_tx_hang_count > 2) {
++				eth->reset.tdma_tx_hang_count = 0;
++				ret = true;
++			}
++			goto out;
++		}
++
++		if (cur_fsm_rx && rx_busy &&
++		    cur_fsm_rx == (eth->reset.pre_fsm & GENMASK(27, 16))) {
++			if (++eth->reset.tdma_rx_hang_count > 2) {
++				eth->reset.tdma_rx_hang_count = 0;
++				ret = true;
++			}
++			goto out;
++		}
++	}
++
+ 	eth->reset.wdma_hang_count = 0;
+ 	eth->reset.qdma_hang_count = 0;
+ 	eth->reset.adma_hang_count = 0;
++	eth->reset.tdma_tx_hang_count = 0;
++	eth->reset.tdma_rx_hang_count = 0;
+ out:
+ 	eth->reset.wdidx = wdidx;
+ 
++	if (mtk_is_netsys_v3_or_greater(eth)) {
++		eth->reset.pre_fsm = cur_fsm;
++		eth->reset.pre_ipq10 = ipq10;
++	}
+ 	return ret;
+ }
+ 
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+index 1d6e19858d10..ab12ccc1a0a3 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -436,6 +436,8 @@
+ #define RX_DMA_VTAG_V2		BIT(0)
+ #define RX_DMA_L4_VALID_V2	BIT(2)
+ 
++#define MTK_TDMA_GLO_CFG	0x6204
++
+ /* PHY Polling and SMI Master Control registers */
+ #define MTK_PPSC		0x10000
+ #define PPSC_MDC_CFG		GENMASK(29, 24)
+@@ -694,6 +696,11 @@
+ #define MTK_FE_IRQ_RX		1
+ #define MTK_FE_IRQ_NUM		(MTK_FE_IRQ_RX + 1)
+ 
++#define MTK_STAT_OFFSET		0x40
++#define MTK_STAT_OFFSET_V3	0x80
++#define MTK_GDM_RX_FC		0x24
++#define MTK_GDM_RX_FC_OFFSET(eth, i)	(i * (mtk_is_netsys_v3_or_greater(eth) ? MTK_STAT_OFFSET_V3 : MTK_STAT_OFFSET) + MTK_GDM_RX_FC)
++
+ struct mtk_rx_dma {
+ 	unsigned int rxd1;
+ 	unsigned int rxd2;
+@@ -1476,6 +1483,10 @@ struct mtk_eth {
+ 		u8 wdma_hang_count;
+ 		u8 qdma_hang_count;
+ 		u8 adma_hang_count;
++		u8 tdma_rx_hang_count;
++		u8 tdma_tx_hang_count;
++		u32 pre_ipq10;
++		u32 pre_fsm;
+ 	} reset;
+ };
+ 
+-- 
+2.39.5
+
