@@ -153,6 +153,8 @@ pre_umount_final_image__install_grub() {
 		The chroot ($MOUNT) is mounted.
 	GRUB_PRE_INSTALL
 
+	deploy_qemu_binary_to_chroot "$chroot_target" "grub" # undeployed near the end of this function
+
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
 		display_alert "Extension: ${EXTENSION}: Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
 		chroot_custom "$chroot_target" grub-install --target=${UEFI_GRUB_TARGET_BIOS} "${LOOP}" || {
@@ -236,6 +238,7 @@ pre_umount_final_image__install_grub() {
 	# Remove host-side config.
 	rm -f "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
 
+	undeploy_qemu_binary_from_chroot "$chroot_target" "grub"
 	umount_chroot "$chroot_target/"
 
 }
