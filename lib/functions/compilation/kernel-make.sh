@@ -74,6 +74,15 @@ function run_kernel_make_internal() {
 		common_make_params_quoted+=("${llvm_flag}")
 	fi
 
+	# Allow extensions to modify make parameters and environment variables
+	call_extension_method "custom_kernel_make_params" <<- 'CUSTOM_KERNEL_MAKE_PARAMS'
+		*Customize kernel make parameters before compilation*
+		Called after all standard make parameters are set but before invoking make.
+		Extensions can modify the following arrays:
+		- `common_make_params_quoted` - parameters passed to make (e.g., CROSS_COMPILE_COMPAT)
+		- `common_make_envs` - environment variables for make
+	CUSTOM_KERNEL_MAKE_PARAMS
+
 	# last statement, so it passes the result to calling function. "env -i" is used for empty env
 	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "env" "-i" "${common_make_envs[@]}"
 		make "${common_make_params_quoted[@]@Q}" "$@")
