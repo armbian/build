@@ -1,0 +1,336 @@
+From 10e9771131eb5efb1f69c55210c7237604d79b4f Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Wed, 6 Aug 2025 13:27:46 +0200
+Subject: [PATCH 021/121] media: iris: Port firmware loading without TZ/PAS
+ from venus
+
+On Qualcomm compute platforms such as X1E, there is community-maintained
+support for running without the Qualcomm hypervisor (QHEE/Gunyah) in EL2.
+This is enabled by applying the -el2.dtso (here: x1-el2.dtso).
+
+As shown by Mukesh, the reset and IOMMU management for remoteprocs like
+Iris is implemented in the hypervisor for older targets such as X1E [1],
+so this functionality is missing when running in EL2.
+
+To avoid introducing kernel errors for this configuration when adding Iris
+support for X1E, we need to add support for starting Iris without the
+firmware PAS service in the TZ or hypervisor firmware. All the necessary
+code for this already exists in venus/firmware.c, it was just not ported
+over to iris. The "video-firmware" node is even documented in the
+dt-bindings for iris (through qcom,venus-common.yaml), but not currently
+used by the driver.
+
+Port the necessary code for this from venus/firmware.c, but remove the old
+A9SS sequence and do some cleanup to fit better into the new iris driver.
+For now the "non_tz" boot sequence is used when there is a "video-firmware"
+subnode defined in the device tree with the IOMMU for the Iris firmware.
+There is ongoing work for newer platforms to use TZ/PAS for resets and
+perform just the IOMMU management in Linux. The IOMMU code in this commit
+can be reused for that by setting core->use_tz set to true.
+
+[1]: https://resources.linaro.org/en/resource/sF8jXifdb9V1mUefdbfafa
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/iris/iris_core.h  |   6 +
+ .../media/platform/qcom/iris/iris_firmware.c  | 186 ++++++++++++++++--
+ .../media/platform/qcom/iris/iris_firmware.h  |   3 +
+ drivers/media/platform/qcom/iris/iris_probe.c |   7 +
+ 4 files changed, 185 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_core.h b/drivers/media/platform/qcom/iris/iris_core.h
+index fb194c967ad4..81c7b3bd6dac 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.h
++++ b/drivers/media/platform/qcom/iris/iris_core.h
+@@ -117,6 +117,12 @@ struct iris_core {
+ 	/* encoder and decoder have overlapping caps, so two different arrays are required */
+ 	struct platform_inst_fw_cap		inst_fw_caps_dec[INST_FW_CAP_MAX];
+ 	struct platform_inst_fw_cap		inst_fw_caps_enc[INST_FW_CAP_MAX];
++	bool					use_tz;
++	struct video_firmware {
++		struct platform_device		*pdev;
++		struct iommu_domain		*iommu_domain;
++		size_t				mapped_mem_size;
++	} fw;
+ };
+ 
+ int iris_core_init(struct iris_core *core);
+diff --git a/drivers/media/platform/qcom/iris/iris_firmware.c b/drivers/media/platform/qcom/iris/iris_firmware.c
+index 9ab499fad946..f458d34fa922 100644
+--- a/drivers/media/platform/qcom/iris/iris_firmware.c
++++ b/drivers/media/platform/qcom/iris/iris_firmware.c
+@@ -5,7 +5,9 @@
+ 
+ #include <linux/firmware.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
++#include <linux/iommu.h>
+ #include <linux/of_address.h>
++#include <linux/of_device.h>
+ #include <linux/of_reserved_mem.h>
+ #include <linux/soc/qcom/mdt_loader.h>
+ 
+@@ -14,6 +16,45 @@
+ 
+ #define MAX_FIRMWARE_NAME_SIZE	128
+ 
++#define WRAPPER_TZ_BASE_OFFS		0x000C0000
++
++#define WRAPPER_TZ_XTSS_SW_RESET	(WRAPPER_TZ_BASE_OFFS + 0x1000)
++#define WRAPPER_XTSS_SW_RESET_BIT	BIT(0)
++
++#define WRAPPER_CPA_START_ADDR		(WRAPPER_TZ_BASE_OFFS + 0x1020)
++#define WRAPPER_CPA_END_ADDR		(WRAPPER_TZ_BASE_OFFS + 0x1024)
++#define WRAPPER_FW_START_ADDR		(WRAPPER_TZ_BASE_OFFS + 0x1028)
++#define WRAPPER_FW_END_ADDR		(WRAPPER_TZ_BASE_OFFS + 0x102C)
++#define WRAPPER_NONPIX_START_ADDR	(WRAPPER_TZ_BASE_OFFS + 0x1030)
++#define WRAPPER_NONPIX_END_ADDR		(WRAPPER_TZ_BASE_OFFS + 0x1034)
++
++#define IRIS_FW_START_ADDR		0x0
++
++static void iris_reset_cpu_no_tz(struct iris_core *core)
++{
++	u32 fw_size = core->fw.mapped_mem_size;
++
++	writel(0, core->reg_base + WRAPPER_FW_START_ADDR);
++	writel(fw_size, core->reg_base + WRAPPER_FW_END_ADDR);
++	writel(0, core->reg_base + WRAPPER_CPA_START_ADDR);
++	writel(fw_size, core->reg_base + WRAPPER_CPA_END_ADDR);
++	writel(fw_size, core->reg_base + WRAPPER_NONPIX_START_ADDR);
++	writel(fw_size, core->reg_base + WRAPPER_NONPIX_END_ADDR);
++
++	/* Bring XTSS out of reset */
++	writel(0, core->reg_base + WRAPPER_TZ_XTSS_SW_RESET);
++}
++
++static int iris_set_hw_state_no_tz(struct iris_core *core, bool resume)
++{
++	if (resume)
++		iris_reset_cpu_no_tz(core);
++	else
++		writel(WRAPPER_XTSS_SW_RESET_BIT, core->reg_base + WRAPPER_TZ_XTSS_SW_RESET);
++
++	return 0;
++}
++
+ static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
+ {
+ 	u32 pas_id = core->iris_platform_data->pas_id;
+@@ -58,10 +99,29 @@ static int iris_load_fw_to_memory(struct iris_core *core, const char *fw_name)
+ 		goto err_release_fw;
+ 	}
+ 
+-	ret = qcom_mdt_load(dev, firmware, fw_name,
+-			    pas_id, mem_virt, mem_phys, res_size, NULL);
++	if (core->use_tz)
++		ret = qcom_mdt_load(dev, firmware, fw_name,
++				    pas_id, mem_virt, mem_phys, res_size, NULL);
++	else
++		ret = qcom_mdt_load_no_init(dev, firmware, fw_name,
++					    mem_virt, mem_phys, res_size, NULL);
+ 
++	/* Unmap memory on our side before we give firmware access to it */
+ 	memunmap(mem_virt);
++	if (ret)
++		goto err_release_fw;
++
++	if (core->fw.iommu_domain) {
++		ret = iommu_map(core->fw.iommu_domain, IRIS_FW_START_ADDR, mem_phys, res_size,
++				IOMMU_READ | IOMMU_WRITE | IOMMU_PRIV, GFP_KERNEL);
++		if (ret) {
++			dev_err(core->dev, "failed to map firmware in IOMMU: %d\n", ret);
++			goto err_release_fw;
++		}
++
++		core->fw.mapped_mem_size = res_size;
++	}
++
+ err_release_fw:
+ 	release_firmware(firmware);
+ 
+@@ -85,20 +145,24 @@ int iris_fw_load(struct iris_core *core)
+ 		return -ENOMEM;
+ 	}
+ 
+-	ret = qcom_scm_pas_auth_and_reset(core->iris_platform_data->pas_id);
+-	if (ret)  {
+-		dev_err(core->dev, "auth and reset failed: %d\n", ret);
+-		return ret;
+-	}
++	if (core->use_tz) {
++		ret = qcom_scm_pas_auth_and_reset(core->iris_platform_data->pas_id);
++		if (ret)  {
++			dev_err(core->dev, "auth and reset failed: %d\n", ret);
++			return ret;
++		}
+ 
+-	ret = qcom_scm_mem_protect_video_var(cp_config->cp_start,
+-					     cp_config->cp_size,
+-					     cp_config->cp_nonpixel_start,
+-					     cp_config->cp_nonpixel_size);
+-	if (ret) {
+-		dev_err(core->dev, "protect memory failed\n");
+-		qcom_scm_pas_shutdown(core->iris_platform_data->pas_id);
+-		return ret;
++		ret = qcom_scm_mem_protect_video_var(cp_config->cp_start,
++						     cp_config->cp_size,
++						     cp_config->cp_nonpixel_start,
++						     cp_config->cp_nonpixel_size);
++		if (ret) {
++			dev_err(core->dev, "protect memory failed\n");
++			qcom_scm_pas_shutdown(core->iris_platform_data->pas_id);
++			return ret;
++		}
++	} else {
++		iris_reset_cpu_no_tz(core);
+ 	}
+ 
+ 	return ret;
+@@ -106,10 +170,98 @@ int iris_fw_load(struct iris_core *core)
+ 
+ int iris_fw_unload(struct iris_core *core)
+ {
+-	return qcom_scm_pas_shutdown(core->iris_platform_data->pas_id);
++	int ret;
++
++	if (core->use_tz)
++		ret = qcom_scm_pas_shutdown(core->iris_platform_data->pas_id);
++	else
++		ret = iris_set_hw_state_no_tz(core, false);
++
++	if (core->fw.mapped_mem_size) {
++		size_t unmapped = iommu_unmap(core->fw.iommu_domain, IRIS_FW_START_ADDR,
++					      core->fw.mapped_mem_size);
++
++		if (unmapped != core->fw.mapped_mem_size)
++			dev_err(core->dev, "failed to unmap firmware in IOMMU\n");
++
++		core->fw.mapped_mem_size = 0;
++	}
++
++	return ret;
+ }
+ 
+ int iris_set_hw_state(struct iris_core *core, bool resume)
+ {
+-	return qcom_scm_set_remote_state(resume, 0);
++	if (core->use_tz)
++		return qcom_scm_set_remote_state(resume, 0);
++	else
++		return iris_set_hw_state_no_tz(core, resume);
++}
++
++int iris_fw_init(struct iris_core *core)
++{
++	struct iommu_domain *iommu_domain;
++	struct platform_device_info info;
++	struct platform_device *pdev;
++	struct device_node *np;
++	int ret;
++
++	np = of_get_child_by_name(core->dev->of_node, "video-firmware");
++	if (!np) {
++		core->use_tz = true;
++		return 0;
++	}
++
++	memset(&info, 0, sizeof(info));
++	info.parent = core->dev;
++	info.fwnode = &np->fwnode;
++	info.name = np->name;
++	info.dma_mask = DMA_BIT_MASK(32);
++
++	pdev = platform_device_register_full(&info);
++	if (IS_ERR(pdev)) {
++		of_node_put(np);
++		return PTR_ERR(pdev);
++	}
++
++	ret = of_dma_configure(&pdev->dev, np, true);
++	of_node_put(np);
++	if (ret) {
++		dev_err(&pdev->dev, "failed to configure dma: %d\n", ret);
++		goto err_unregister;
++	}
++
++	iommu_domain = iommu_paging_domain_alloc(&pdev->dev);
++	if (IS_ERR(iommu_domain)) {
++		dev_err(&pdev->dev, "failed to allocate iommu domain: %pe\n", iommu_domain);
++		ret = PTR_ERR(iommu_domain);
++		goto err_unregister;
++	}
++
++	ret = iommu_attach_device(iommu_domain, &pdev->dev);
++	if (ret) {
++		dev_err(&pdev->dev, "could not attach device to IOMMU: %d\n", ret);
++		goto err_iommu_free;
++	}
++
++	core->fw.pdev = pdev;
++	core->fw.iommu_domain = iommu_domain;
++
++	return 0;
++
++err_iommu_free:
++	iommu_domain_free(iommu_domain);
++err_unregister:
++	platform_device_unregister(pdev);
++	return ret;
++}
++
++void iris_fw_deinit(struct iris_core *core)
++{
++	if (!core->fw.iommu_domain)
++		return;
++
++	iommu_detach_device(core->fw.iommu_domain, &core->fw.pdev->dev);
++	iommu_domain_free(core->fw.iommu_domain);
++	platform_device_unregister(core->fw.pdev);
+ }
+diff --git a/drivers/media/platform/qcom/iris/iris_firmware.h b/drivers/media/platform/qcom/iris/iris_firmware.h
+index e833ecd34887..1a077a587c80 100644
+--- a/drivers/media/platform/qcom/iris/iris_firmware.h
++++ b/drivers/media/platform/qcom/iris/iris_firmware.h
+@@ -12,4 +12,7 @@ int iris_fw_load(struct iris_core *core);
+ int iris_fw_unload(struct iris_core *core);
+ int iris_set_hw_state(struct iris_core *core, bool resume);
+ 
++int iris_fw_init(struct iris_core *core);
++void iris_fw_deinit(struct iris_core *core);
++
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index 00e99be16e08..19784d03b698 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -13,6 +13,7 @@
+ 
+ #include "iris_core.h"
+ #include "iris_ctrls.h"
++#include "iris_firmware.h"
+ #include "iris_vidc.h"
+ 
+ static int iris_init_icc(struct iris_core *core)
+@@ -203,6 +204,8 @@ static void iris_remove(struct platform_device *pdev)
+ 
+ 	v4l2_device_unregister(&core->v4l2_dev);
+ 
++	iris_fw_deinit(core);
++
+ 	mutex_destroy(&core->lock);
+ }
+ 
+@@ -263,6 +266,10 @@ static int iris_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = iris_fw_init(core);
++	if (ret)
++		return ret;
++
+ 	iris_session_init_caps(core);
+ 
+ 	ret = v4l2_device_register(dev, &core->v4l2_dev);
+-- 
+2.39.5
+

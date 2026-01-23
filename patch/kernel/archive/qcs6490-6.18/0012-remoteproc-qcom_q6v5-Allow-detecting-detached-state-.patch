@@ -1,0 +1,85 @@
+From 174c5648e618f7b2d4191ac976f957d8bbc36549 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Tue, 5 Aug 2025 17:44:32 +0200
+Subject: [PATCH 012/121] remoteproc: qcom_q6v5: Allow detecting detached state
+ during boot
+
+A remoteproc might be already running during boot, e.g. because it was
+already started by the boot firmware. This should be reflected in the
+initial remoteproc state if the remoteproc driver implements the attach()
+callback.
+
+Add a function that allows checking the initial state of the of the
+remoteproc during boot by reading the state of the SMP2P interrupts. If it
+is running, handover already happened, it was not stopped and did not
+crash, then it is likely in a state where we can attach to it and continue
+using its services.
+
+Note that there is a small chance for false-positives when the remoteproc
+was not shutdown cleanly using the SMP2P signals. There is no firmware that
+does that at the moment. If there is in the future, it should provide a
+more reliable way to check if a remoteproc is already running during boot.
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/remoteproc/qcom_q6v5.c | 29 +++++++++++++++++++++++++++++
+ drivers/remoteproc/qcom_q6v5.h |  2 ++
+ 2 files changed, 31 insertions(+)
+
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index 58d5b85e58cd..d4d978cca4ba 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -234,6 +234,35 @@ unsigned long qcom_q6v5_panic(struct qcom_q6v5 *q6v5)
+ }
+ EXPORT_SYMBOL_GPL(qcom_q6v5_panic);
+ 
++/**
++ * qcom_q6v5_read_smp2p_state() - check the initial state during boot using SMP2P
++ * @q6v5:	reference to qcom_q6v5 context
++ *
++ * Read the current state of the SMP2P interrupts and attempt to determine if
++ * the remoteproc is already running. If yes, the remoteproc state is set to
++ * RPROC_DETACHED. Drivers can use this to add support for attaching to
++ * remoteprocs during boot.
++ *
++ * There is a small chance for false-positives, so drivers should combine this
++ * with device-specific status information if possible.
++ */
++void qcom_q6v5_read_smp2p_state(struct qcom_q6v5 *q6v5)
++{
++	bool handover = false;
++	bool ready = false;
++	bool fatal = false;
++	bool stop = false;
++
++	irq_get_irqchip_state(q6v5->handover_irq, IRQCHIP_STATE_LINE_LEVEL, &handover);
++	irq_get_irqchip_state(q6v5->ready_irq, IRQCHIP_STATE_LINE_LEVEL, &ready);
++	irq_get_irqchip_state(q6v5->fatal_irq, IRQCHIP_STATE_LINE_LEVEL, &fatal);
++	irq_get_irqchip_state(q6v5->stop_irq, IRQCHIP_STATE_LINE_LEVEL, &stop);
++
++	if (ready && handover && !stop && !fatal)
++		q6v5->rproc->state = RPROC_DETACHED;
++}
++EXPORT_SYMBOL_GPL(qcom_q6v5_read_smp2p_state);
++
+ /**
+  * qcom_q6v5_init() - initializer of the q6v5 common struct
+  * @q6v5:	handle to be initialized
+diff --git a/drivers/remoteproc/qcom_q6v5.h b/drivers/remoteproc/qcom_q6v5.h
+index 5a859c41896e..59970adb04b1 100644
+--- a/drivers/remoteproc/qcom_q6v5.h
++++ b/drivers/remoteproc/qcom_q6v5.h
+@@ -47,6 +47,8 @@ int qcom_q6v5_init(struct qcom_q6v5 *q6v5, struct platform_device *pdev,
+ 		   void (*handover)(struct qcom_q6v5 *q6v5));
+ void qcom_q6v5_deinit(struct qcom_q6v5 *q6v5);
+ 
++void qcom_q6v5_read_smp2p_state(struct qcom_q6v5 *q6v5);
++
+ int qcom_q6v5_prepare(struct qcom_q6v5 *q6v5);
+ int qcom_q6v5_unprepare(struct qcom_q6v5 *q6v5);
+ int qcom_q6v5_request_stop(struct qcom_q6v5 *q6v5, struct qcom_sysmon *sysmon);
+-- 
+2.39.5
+
