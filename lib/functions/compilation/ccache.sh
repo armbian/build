@@ -7,18 +7,35 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Parse a single numeric field from "ccache --print-stats" tab-separated output
+# Returns 0 if field not found or not numeric
+function ccache_get_stat() {
+	local stats_output="$1" field="$2"
+	local val
+	val=$(echo "$stats_output" | grep "^${field}" | cut -f2 || true)
+	[[ "${val}" =~ ^[0-9]+$ ]] || val=0
+	echo "$val"
+}
+
+# Calculate hit percentage from hit and miss counts
+function ccache_hit_pct() {
+	local hit="$1" miss="$2"
+	local total=$(( hit + miss ))
+	if [[ $total -gt 0 ]]; then
+		echo $(( hit * 100 / total ))
+	else
+		echo 0
+	fi
+}
+
 # Helper function to show ccache stats - used as cleanup handler for interruption case
 function ccache_show_compilation_stats() {
-	local stats_output direct_hit=0 direct_miss=0 total pct
+	local stats_output direct_hit direct_miss pct
 	stats_output=$(ccache --print-stats 2>&1 || true)
-	direct_hit=$(echo "$stats_output" | grep "^direct_cache_hit" | cut -f2 || true)
-	direct_miss=$(echo "$stats_output" | grep "^direct_cache_miss" | cut -f2 || true)
-	total=$(( ${direct_hit:-0} + ${direct_miss:-0} ))
-	pct=0
-	if [[ $total -gt 0 ]]; then
-		pct=$(( ${direct_hit:-0} * 100 / total ))
-	fi
-	display_alert "Ccache result" "hit=${direct_hit:-0} miss=${direct_miss:-0} (${pct}%)" "info"
+	direct_hit=$(ccache_get_stat "$stats_output" "direct_cache_hit")
+	direct_miss=$(ccache_get_stat "$stats_output" "direct_cache_miss")
+	pct=$(ccache_hit_pct "$direct_hit" "$direct_miss")
+	display_alert "Ccache result" "hit=${direct_hit} miss=${direct_miss} (${pct}%)" "info"
 
 	# Hook for extensions to show additional stats (e.g., remote storage)
 	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
