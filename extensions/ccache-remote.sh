@@ -91,6 +91,7 @@
 #   Docker builds automatically use consistent paths (/armbian/...).
 
 # Default Redis connection timeout in milliseconds (can be overridden by user)
+# Note: Must be set before extension loads (e.g., via environment or command line)
 declare -g -r CCACHE_REDIS_CONNECT_TIMEOUT="${CCACHE_REDIS_CONNECT_TIMEOUT:-500}"
 
 # List of ccache environment variables to pass through to builds

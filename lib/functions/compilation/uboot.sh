@@ -263,7 +263,9 @@ function compile_uboot_target() {
 
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
-	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
+	# When UBOOT_TOOLCHAIN2 is set, the board's uboot_custom_postprocess handles compilers;
+	# pass a harmless dummy env var since empty make parameters cause errors
+	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"
 
 	call_extension_method "uboot_make_config" <<- 'UBOOT_MAKE_CONFIG'
 		*Hook to customize u-boot make environment*
