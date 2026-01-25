@@ -180,18 +180,23 @@ function host_pre_docker_launch__setup_remote_ccache() {
 function ccache_post_compilation__show_remote_stats() {
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
 		local stats_output total pct
-		local read_hit=0 read_miss=0 write=0 error=0
+		local read_hit read_miss write error
 		stats_output=$(ccache --print-stats 2>&1 || true)
 		read_hit=$(echo "$stats_output" | grep "^remote_storage_read_hit" | cut -f2 || true)
 		read_miss=$(echo "$stats_output" | grep "^remote_storage_read_miss" | cut -f2 || true)
 		write=$(echo "$stats_output" | grep "^remote_storage_write" | cut -f2 || true)
 		error=$(echo "$stats_output" | grep "^remote_storage_error" | cut -f2 || true)
-		total=$(( ${read_hit:-0} + ${read_miss:-0} ))
+		# Ensure numeric values for arithmetic (grep may return empty string)
+		[[ "${read_hit}" =~ ^[0-9]+$ ]] || read_hit=0
+		[[ "${read_miss}" =~ ^[0-9]+$ ]] || read_miss=0
+		[[ "${write}" =~ ^[0-9]+$ ]] || write=0
+		[[ "${error}" =~ ^[0-9]+$ ]] || error=0
+		total=$(( read_hit + read_miss ))
 		pct=0
 		if [[ $total -gt 0 ]]; then
-			pct=$(( ${read_hit:-0} * 100 / total ))
+			pct=$(( read_hit * 100 / total ))
 		fi
-		display_alert "Remote ccache result" "hit=${read_hit:-0} miss=${read_miss:-0} write=${write:-0} err=${error:-0} (${pct}%)" "info"
+		display_alert "Remote ccache result" "hit=${read_hit} miss=${read_miss} write=${write} err=${error} (${pct}%)" "info"
 	fi
 }
 

@@ -9,16 +9,19 @@
 
 # Helper function to show ccache stats - used as cleanup handler for interruption case
 function ccache_show_compilation_stats() {
-	local stats_output direct_hit=0 direct_miss=0 total pct
+	local stats_output direct_hit direct_miss total pct
 	stats_output=$(ccache --print-stats 2>&1 || true)
 	direct_hit=$(echo "$stats_output" | grep "^direct_cache_hit" | cut -f2 || true)
 	direct_miss=$(echo "$stats_output" | grep "^direct_cache_miss" | cut -f2 || true)
-	total=$(( ${direct_hit:-0} + ${direct_miss:-0} ))
+	# Ensure numeric values for arithmetic (grep may return empty string)
+	[[ "${direct_hit}" =~ ^[0-9]+$ ]] || direct_hit=0
+	[[ "${direct_miss}" =~ ^[0-9]+$ ]] || direct_miss=0
+	total=$(( direct_hit + direct_miss ))
 	pct=0
 	if [[ $total -gt 0 ]]; then
-		pct=$(( ${direct_hit:-0} * 100 / total ))
+		pct=$(( direct_hit * 100 / total ))
 	fi
-	display_alert "Ccache result" "hit=${direct_hit:-0} miss=${direct_miss:-0} (${pct}%)" "info"
+	display_alert "Ccache result" "hit=${direct_hit} miss=${direct_miss} (${pct}%)" "info"
 
 	# Hook for extensions to show additional stats (e.g., remote storage)
 	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
