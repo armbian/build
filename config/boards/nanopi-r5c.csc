@@ -13,8 +13,11 @@ IMAGE_PARTITION_TABLE="gpt"
 FULL_DESKTOP="no"
 BOOT_LOGO="desktop"
 
-BOOTBRANCH_BOARD="tag:v2024.07"
-BOOTPATCHDIR="v2024.07"
+# Enable btrfs support in u-boot
+enable_extension "uboot-btrfs"
+
+BOOTBRANCH_BOARD="tag:v2026.01"
+BOOTPATCHDIR="v2026.01"
 BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
 
 OVERLAY_PREFIX="rockchip-rk3568"

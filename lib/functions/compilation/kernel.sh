@@ -222,13 +222,30 @@ function kernel_dtb_only_build() {
 	run_host_command_logged cp -v "${preprocessed_fdt_source}" "${preprocessed_fdt_dest}"
 
 	# Include a normalization pass through the dtc tool, with DTS as both input and output formats; this introduces phandles, unfortunately
+	# If one has 'dtc' version 1.7.2 or higher, it does not resolve phandles when used in the 'dtc -I dts -O dts ...' mode, so it's much more useful.
+
+	# Lets parse the version of dtc by running 'dtc --version' and grabbing it from the result, eg, "Version: DTC 1.7.2"
+	declare dtc_version
+	dtc_version="$(dtc --version 2>&1 | grep -i 'version' | head -n1 | awk '{print $3}')"
+	display_alert "Kernel DTB-only for development" "Detected dtc version: ${dtc_version}" "info"
+
+	if [[ -z "${dtc_version}" ]]; then
+		display_alert "Kernel DTB-only for development" "Could not determine dtc version; skipping normalization" "warn"
+		return 0
+	fi
+	# Use linux-version compare
+	if ! linux-version compare "${dtc_version}" ge 1.7.2; then
+		display_alert "Kernel DTB-only for development" "dtc version ${dtc_version} is less than 1.7.2; skipping normalization" "warn"
+		return 0
+	fi
+
 	display_alert "Kernel DTB-only for development" "Normalizing (dtc dts-to-dts) preprocessed FDT" "info"
 	declare preprocessed_fdt_normalized="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.dts"
-	run_host_command_logged dtc -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
+	run_host_command_logged dtc -s -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
 
-	# Remove phandles and hex references, probably the worst way possible (grep) -- somehow the diff is reasonable then, but also phandle references are gone. Less useful.
+	# Remove any phandles by grepping them out. This is not accurate and might be misleading, but sometimes useful for basic diffing across very different devices.
 	declare preprocessed_fdt_normalized_nophandles="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.nophandles.dts"
-	grep -v -e "phandle =" -e "connect =" -e '= <0x' "${preprocessed_fdt_normalized}" > "${preprocessed_fdt_normalized_nophandles}"
+	grep -v -e "phandle = " "${preprocessed_fdt_normalized}" > "${preprocessed_fdt_normalized_nophandles}"
 
 	display_alert "Kernel DTB-only for development" "Preprocessed FDT dest: ${preprocessed_fdt_dest}" "info"
 	display_alert "Kernel DTB-only for development" "Preprocessed FDT normalized: ${preprocessed_fdt_normalized}" "info"
