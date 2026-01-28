@@ -1,0 +1,165 @@
+From 64a87ea42152dbe4ae8663ed9fab089cac560a05 Mon Sep 17 00:00:00 2001
+From: fchan <fchan@maxlinear.com>
+Date: Mon, 22 Sep 2025 03:46:01 +0800
+Subject: [PATCH 045/116] net: dsa: mxl862xx: Support cl22-extended and
+ force-isolate option for special purpose.
+
+---
+ drivers/net/dsa/mxl862xx/mxl862xx-host.c | 82 +++++++++++++++++++++++-
+ drivers/net/dsa/mxl862xx/mxl862xx.c      | 15 +++++
+ drivers/net/dsa/mxl862xx/mxl862xx.h      |  2 +
+ 3 files changed, 97 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/dsa/mxl862xx/mxl862xx-host.c b/drivers/net/dsa/mxl862xx/mxl862xx-host.c
+index dc80eaf8925c..4d7db56afbdb 100644
+--- a/drivers/net/dsa/mxl862xx/mxl862xx-host.c
++++ b/drivers/net/dsa/mxl862xx/mxl862xx-host.c
+@@ -28,14 +28,92 @@
+ #define MMD_API_GET_DATA_0 (0x0 + 0x5)
+ #define MMD_API_RST_DATA (0x0 + 0x8)
+ 
++/* Clause 22 extended read/write access */
++#define MXL862XX_MMD_DATA		0xE
++#define MXL862XX_MMD_CTRL		0xD
++#define MXL862XX_ACTYPE_ADDRESS	(0 << 14)
++#define MXL862XX_ACTYPE_DATA	(1 << 14)
++
++/**
++ *  write access to MMD register of PHYs via Clause 22 extended access
++ */
++static int __mxl862xx_c22_ext_mmd_write(const struct mxl862xx_priv *dev, struct mii_bus *bus, int sw_addr, int mmd,
++			    int reg, u16 data)
++{
++	int res;
++
++	/* Set the DevID for Write Command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_CTRL, mmd);
++	if (res < 0)
++		goto error;
++
++	/* Issue the write command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_DATA, reg);
++	if (res < 0)
++		goto error;
++
++	/* Set the DevID for Write Command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_CTRL, MXL862XX_ACTYPE_DATA | mmd);
++	if (res < 0)
++		goto error;
++
++	/* Issue the write command */
++	if (mmd == 0x1e && reg == 0)	/* ctrl register can't write twice */
++		res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_DATA, data);
++	else
++		res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_DATA, data);
++	if (res < 0)
++		goto error;
++
++error:
++	return res;
++}
++
++/**
++ *  read access to MMD register of PHYs via Clause 22 extended access
++ */
++static int __mxl862xx_c22_ext_mmd_read(const struct mxl862xx_priv *dev, struct mii_bus *bus, int sw_addr, int mmd, int reg)
++{
++	int res;
++
++	/* Set the DevID for Write Command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_CTRL, mmd);
++	if (res < 0)
++		goto error;
++
++	/* Issue the write command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_DATA, reg);
++	if (res < 0)
++		goto error;
++
++	/* Set the DevID for Write Command */
++	res = __mdiobus_write(bus, sw_addr, MXL862XX_MMD_CTRL, MXL862XX_ACTYPE_DATA | mmd);
++	if (res < 0)
++		goto error;
++
++	/* Read the data */
++	res = __mdiobus_read(bus, sw_addr, MXL862XX_MMD_DATA);
++	if (res < 0)
++		goto error;
++
++error:
++	return res;
++}
++
+ static int mxl862xx_read(struct mxl862xx_priv *dev, u32 addr)
+ {
+-	return __mdiobus_c45_read(dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr);
++	if (dev->c22_extended)
++		return __mxl862xx_c22_ext_mmd_read(dev, dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr);
++	else
++		return __mdiobus_c45_read(dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr);
+ }
+ 
+ int mxl862xx_write(struct mxl862xx_priv *dev, u32 addr, u16 data)
+ {
+-	return  __mdiobus_c45_write(dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr, data);
++	if (dev->c22_extended)
++		return __mxl862xx_c22_ext_mmd_write(dev, dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr, data);
++	else
++		return __mdiobus_c45_write(dev->bus, dev->sw_addr, MXL862XX_MMD_DEV, addr, data);
+ }
+ 
+ static int mxl862xx_busy_wait(struct mxl862xx_priv *dev)
+diff --git a/drivers/net/dsa/mxl862xx/mxl862xx.c b/drivers/net/dsa/mxl862xx/mxl862xx.c
+index 0ed6c2d7260b..f5289c041b22 100644
+--- a/drivers/net/dsa/mxl862xx/mxl862xx.c
++++ b/drivers/net/dsa/mxl862xx/mxl862xx.c
+@@ -2741,6 +2741,11 @@ static int mxl862xx_port_bridge_join(struct dsa_switch *ds, int port, struct dsa
+ 	int bridge_id;
+ 	int ret;
+ 
++	if (priv->force_isolate) {
++		dev_info(priv->dev, "ignore bridge join due to force isolate\n");
++		return 0;
++	}
++
+ 	mxl862xx_deisolate_port(ds, port);
+ 
+ 	bridge_id = mxl862xx_find_bridge_id(ds, bridge.dev);
+@@ -3489,6 +3494,11 @@ static int mxl862xx_probe(struct mdio_device *mdiodev)
+ 	if (!priv->hw_info)
+ 		return -EINVAL;
+ 
++	if (of_property_read_bool(dev->of_node, "c22-extended")) {
++		priv->c22_extended = true;
++		dev_info(dev, "%s:%u: Enable c22 extended", __func__, __LINE__);
++	}
++
+ 	mutex_init(&priv->pce_table_lock);
+ 
+ 	ds = devm_kzalloc(dev, sizeof(*ds), GFP_KERNEL);
+@@ -3522,6 +3532,11 @@ static int mxl862xx_probe(struct mdio_device *mdiodev)
+ 		 fw_version.iv_major, fw_version.iv_minor,
+ 		 fw_version.iv_revision, fw_version.iv_build_num);
+ 
++	if (of_property_read_bool(dev->of_node, "force-isolate")) {
++		priv->force_isolate = true;
++		dev_info(dev, "%s:%u: Enable force isolate", __func__, __LINE__);
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/dsa/mxl862xx/mxl862xx.h b/drivers/net/dsa/mxl862xx/mxl862xx.h
+index c500793ef976..f737998b39ed 100644
+--- a/drivers/net/dsa/mxl862xx/mxl862xx.h
++++ b/drivers/net/dsa/mxl862xx/mxl862xx.h
+@@ -83,4 +83,6 @@ struct mxl862xx_priv {
+ 	 * might cause dead-locks / hang in previous versions
+ 	 */
+ 	struct mutex pce_table_lock;
++	bool force_isolate;
++	bool c22_extended;
+ };
+-- 
+2.39.5
+

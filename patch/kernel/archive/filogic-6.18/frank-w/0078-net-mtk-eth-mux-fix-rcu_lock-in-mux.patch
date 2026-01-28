@@ -1,0 +1,177 @@
+From 7090622b36af3720cbe5640d1c88a2052a809928 Mon Sep 17 00:00:00 2001
+From: Frank Wunderlich <frank-w@public-files.de>
+Date: Thu, 23 Oct 2025 10:40:27 +0200
+Subject: [PATCH 078/116] net: mtk: eth-mux: fix rcu_lock in mux
+
+rcu lock caused by phy not ready yet when phylink_start is called for it
+switch to sfp works too but switch back causes deadlock (no rcu-stall)
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 86 ++++++++++++++++++---
+ 1 file changed, 76 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index c0e4c47926a1..67c7c79dc024 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -5255,6 +5255,37 @@ static const struct net_device_ops mtk_netdev_ops = {
+ 	.ndo_select_queue	= mtk_select_queue,
+ };
+ 
++static struct phylink *mtk_mux_create_phylink(struct mtk_mux *mux, unsigned int channel)
++{
++	struct mtk_mux_data *data = mux->data[channel];
++	struct mtk_mac *mac = mux->mac;
++	struct mtk_eth *eth = mac->hw;
++	phy_interface_t phy_mode;
++	struct phylink *pl;
++	int err;
++
++	if (!data || !data->of_node)
++		return ERR_PTR(-EINVAL);
++
++	err = of_get_phy_mode(data->of_node, &phy_mode);
++	if (err) {
++		dev_err(eth->dev, "invalid phy-mode for mux channel %u\n", channel);
++		return ERR_PTR(err);
++	}
++
++	pl = phylink_create(&mac->phylink_config,
++			    of_fwnode_handle(data->of_node),
++			    phy_mode, &mtk_phylink_ops);
++	if (IS_ERR(pl)) {
++		dev_err(eth->dev, "failed to create phylink for channel %u\n", channel);
++		return pl;
++	}
++
++	dev_info(eth->dev, "Created phylink for channel %u\n", channel);
++	data->phylink = pl;
++	return pl;
++}
++
+ static void mux_poll(struct work_struct *work)
+ {
+ 	struct mtk_mux *mux = container_of(work, struct mtk_mux, poll.work);
+@@ -5262,8 +5293,10 @@ static void mux_poll(struct work_struct *work)
+ 	struct mtk_eth *eth = mac->hw;
+ 	struct net_device *dev = eth->netdev[mac->id];
+ 	unsigned int new_channel;
++	struct phylink *tmp_pl;
+ 	int sfp_present;
+ 
++	//dev_info(eth->dev, "ethernet mux: %s:%d\n",__func__,__LINE__);
+ 	if (IS_ERR(mux->mod_def0_gpio) || IS_ERR(mux->chan_sel_gpio))
+ 		goto reschedule;
+ 
+@@ -5273,23 +5306,52 @@ static void mux_poll(struct work_struct *work)
+ 	if (mux->channel == new_channel || !netif_running(dev))
+ 		goto reschedule;
+ 
+-	rtnl_lock();
++	dev_info(eth->dev, "ethernet mux: line:%d new channel:%d,sfp:%d\n",__LINE__, new_channel,sfp_present);
+ 
++	rtnl_lock();
+ 	mtk_stop(dev);
++	rtnl_unlock();
+ 
+-	mac->of_node = mux->data[new_channel]->of_node;
+-	mac->phylink = mux->data[new_channel]->phylink;
++	/* Destroy old phylink if it exists */
++	if (mux->data[mux->channel] && mux->data[mux->channel]->phylink) {
++		tmp_pl = mux->data[mux->channel]->phylink;
++		dev_info(eth->dev, "Destroying phylink for channel %u\n", mux->channel);
++	} else {
++		/* phylink was created by mtk_add_mac,
++		   we need to release the reference to available PCS from phylink config
++		*/
++		tmp_pl = mac->phylink;
++	}
++	if (tmp_pl) {
++		phylink_destroy(tmp_pl);
++		mux->data[mux->channel]->phylink = NULL;
++	}
+ 
+ 	dev_info(eth->dev, "ethernet mux: switch to channel%d\n", new_channel);
+ 
+-	gpiod_set_value_cansleep(mux->chan_sel_gpio, new_channel);
++	/* Create new phylink if not yet present */
++	if (!mux->data[new_channel]->phylink) {
++		mux->data[new_channel]->phylink = mtk_mux_create_phylink(mux, new_channel);
++		if (IS_ERR(mux->data[new_channel]->phylink)) {
++			dev_err(eth->dev, "Failed to create new phylink\n");
++			mux->data[new_channel]->phylink=NULL;
++			goto out_unlock;
++		}
++	}
+ 
+-	mtk_open(dev);
++	mac->of_node = mux->data[new_channel]->of_node;
++	mac->phylink = mux->data[new_channel]->phylink;
+ 
++	rtnl_lock();
++	mtk_open(dev);
+ 	rtnl_unlock();
+ 
++	gpiod_set_value_cansleep(mux->chan_sel_gpio, new_channel);
+ 	mux->channel = new_channel;
++	goto reschedule;
+ 
++out_unlock:
++	rtnl_unlock();
+ reschedule:
+ 	mod_delayed_work(system_wq, &mux->poll, msecs_to_jiffies(100));
+ }
+@@ -5300,7 +5362,6 @@ static int mtk_add_mux_channel(struct mtk_mux *mux, struct device_node *np)
+ 	struct mtk_mac *mac = mux->mac;
+ 	struct mtk_eth *eth = mac->hw;
+ 	struct mtk_mux_data *data;
+-	struct phylink *phylink;
+ 	phy_interface_t phy_mode;
+ 	int id, err;
+ 
+@@ -5327,17 +5388,18 @@ static int mtk_add_mux_channel(struct mtk_mux *mux, struct device_node *np)
+ 		goto err_free_data;
+ 	}
+ 
+-	phylink = phylink_create(&mux->mac->phylink_config,
++	/*phylink = phylink_create(&mux->mac->phylink_config,
+ 				 of_fwnode_handle(np),
+ 				 phy_mode, &mtk_phylink_ops);
+ 	if (IS_ERR(phylink)) {
+ 		dev_err(eth->dev, "failed to create phylink structure\n");
+ 		err = PTR_ERR(phylink);
+ 		goto err_free_data;
+-	}
++	}*/
+ 
++	dev_info(eth->dev, "ethernet mux: line:%d added new channel:%d\n",__LINE__,id);
+ 	data->of_node = np;
+-	data->phylink = phylink;
++	data->phylink = NULL;//phylink;
+ 	mux->data[id] = data;
+ 
+ 	return 0;
+@@ -5408,7 +5470,7 @@ static int mtk_add_mux(struct mtk_eth *eth, struct device_node *np)
+ 
+ 	eth->mux[id] = mux;
+ 	mux->mac = eth->mac[id];
+-	mux->channel = 0;
++	mux->channel = 0;//more than channels, just to make current channel invalid for switching the first time the gpio is read
+ 
+ 	mux->mod_def0_gpio = fwnode_gpiod_get_index(of_fwnode_handle(np),
+ 				"mod-def0", 0, GPIOD_IN |
+@@ -5439,8 +5501,12 @@ static int mtk_add_mux(struct mtk_eth *eth, struct device_node *np)
+ 			of_node_put(child);
+ 			goto err_put_chan_sel;
+ 		}
++		//should set initial mux->channel be set if ! mux->sfp_present_channel?
+ 	}
+ 
++	gpiod_set_value_cansleep(mux->chan_sel_gpio, mux->sfp_present_channel ? 0 : 1);
++
++	dev_info(eth->dev, "ethernet mux: line:%d added new mux\n",__LINE__);
+ 	INIT_DELAYED_WORK(&mux->poll, mux_poll);
+ 	mod_delayed_work(system_wq, &mux->poll, msecs_to_jiffies(3000));
+ 
+-- 
+2.39.5
+
