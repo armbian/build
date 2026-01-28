@@ -131,7 +131,7 @@ function artifact_kernel_prepare_version() {
 	# tac reverses order so last becomes first, then sort -uk keeps first occurrence of each key.
 	declare -a kernel_config_modifying_hashes_reduced=()
 	mapfile -t kernel_config_modifying_hashes_reduced < <(
-		printf '%s\n' "${kernel_config_modifying_hashes[@]}" | tac | LC_ALL=C sort -t '=' -uk 1,1
+		printf '%s\n' "${kernel_config_modifying_hashes[@]}" | tac | LC_ALL=C sort -s -t '=' -uk 1,1
 	)
 	kernel_config_modification_hash="$(printf '%s\n' "${kernel_config_modifying_hashes_reduced[@]}" | sha256sum | cut -d' ' -f1)"
 	kernel_config_modification_hash="${kernel_config_modification_hash:0:16}" # "long hash"
