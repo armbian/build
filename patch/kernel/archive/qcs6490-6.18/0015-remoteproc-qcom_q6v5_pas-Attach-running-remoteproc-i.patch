@@ -1,0 +1,173 @@
+From be8faeb2375f50ad022636479fd9917fdd95debb Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Tue, 5 Aug 2025 17:44:32 +0200
+Subject: [PATCH 015/121] remoteproc: qcom_q6v5_pas: Attach running remoteproc
+ if firmware is missing
+
+A remoteproc might be already running during boot, e.g. because it was
+already started by the boot firmware. This is the case for example on X1E,
+where the boot firmware starts a "lite" ADSP firmware that supports
+charging and USB-CC detection, but is missing audio functionality. This
+firmware uses the same interfaces as the full firmware and can be reused in
+case the device-specific firmware is missing (e.g. in generic distro
+installers).
+
+The running remoteproc is currently not modelled at all - it is just killed
+through qcom_scm_pas_shutdown() without even using the SMP2P stop signal
+beforehand.
+
+Model this properly by marking the remoteproc as RPROC_DETACHED based on
+the SMP2P state and use the new RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE
+feature to implement equivalent behavior as before. If the firmware is
+present the "lite" firmware is now stopped more gracefully with the SMP2P
+stop signal. If the firmware is missing, we attach to it and can provide
+battery status and USB-C detection until the full ADSP firmware is copied.
+
+Note that the exact same approach does not just work for the "lite" ADSP
+firmware. Any of the remoteprocs (ADSP, CDSP, SLPI, ...) can be already
+started during boot and attached (or restarted) later.
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 64 +++++++++++++++++++++++++-----
+ 1 file changed, 54 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 672af7336a23..3cf24f2023e5 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -226,10 +226,13 @@ static int qcom_pas_load(struct rproc *rproc, const struct firmware *fw)
+ 	/* Store firmware handle to be used in qcom_pas_start() */
+ 	pas->firmware = fw;
+ 
+-	if (pas->lite_pas_id)
+-		qcom_scm_pas_shutdown(pas->lite_pas_id);
+-	if (pas->lite_dtb_pas_id)
+-		qcom_scm_pas_shutdown(pas->lite_dtb_pas_id);
++	/*
++	 * We don't support loading the "lite" firmware, so we don't need to
++	 * keep trying to shut it down. If it was running, it should have
++	 * already been stopped by adsp_stop().
++	 */
++	pas->lite_pas_id = 0;
++	pas->lite_dtb_pas_id = 0;
+ 
+ 	if (pas->dtb_pas_id) {
+ 		ret = request_firmware(&pas->dtb_firmware, pas->dtb_firmware_name, pas->dev);
+@@ -379,6 +382,28 @@ static void qcom_pas_handover(struct qcom_q6v5 *q6v5)
+ 	qcom_pas_pds_disable(pas, pas->proxy_pds, pas->proxy_pd_count);
+ }
+ 
++static int qcom_pas_shutdown(int pas_id, int lite_pas_id)
++{
++	int ret, lite_ret = -ENODEV;
++
++	/*
++	 * We don't know if the boot firmware started the "full" or "lite"
++	 * firmware, so we don't know if we need to shutdown the lite_pas_id or
++	 * the normal pas_id. Unfortunately, the return codes of the SCM calls
++	 * are also not helpful to figure that out. Since shutting down a
++	 * stopped remoteproc is a no-op, we just shutdown both and if one of
++	 * the calls succeeds, we assume it's okay.
++	 */
++	if (lite_pas_id)
++		lite_ret = qcom_scm_pas_shutdown(lite_pas_id);
++
++	ret = qcom_scm_pas_shutdown(pas_id);
++	if (ret && lite_ret)
++		return ret;
++
++	return 0;
++}
++
+ static int qcom_pas_stop(struct rproc *rproc)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+@@ -389,7 +414,7 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 	if (ret == -ETIMEDOUT)
+ 		dev_err(pas->dev, "timed out on wait\n");
+ 
+-	ret = qcom_scm_pas_shutdown(pas->pas_id);
++	ret = qcom_pas_shutdown(pas->pas_id, pas->lite_pas_id);
+ 	if (ret && pas->decrypt_shutdown)
+ 		ret = qcom_pas_shutdown_poll_decrypt(pas);
+ 
+@@ -397,14 +422,16 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 		dev_err(pas->dev, "failed to shutdown: %d\n", ret);
+ 
+ 	if (pas->dtb_pas_id) {
+-		ret = qcom_scm_pas_shutdown(pas->dtb_pas_id);
++		ret = qcom_pas_shutdown(pas->dtb_pas_id, pas->lite_dtb_pas_id);
+ 		if (ret)
+ 			dev_err(pas->dev, "failed to shutdown dtb: %d\n", ret);
+ 	}
+ 
+-	handover = qcom_q6v5_unprepare(&pas->q6v5);
+-	if (handover)
+-		qcom_pas_handover(&pas->q6v5);
++	if (rproc->state != RPROC_DETACHED) {
++		handover = qcom_q6v5_unprepare(&pas->q6v5);
++		if (handover)
++			qcom_pas_handover(&pas->q6v5);
++	}
+ 
+ 	if (pas->smem_host_id)
+ 		ret = qcom_smem_bust_hwspin_lock_by_host(pas->smem_host_id);
+@@ -412,6 +439,13 @@ static int qcom_pas_stop(struct rproc *rproc)
+ 	return ret;
+ }
+ 
++static int qcom_pas_attach(struct rproc *rproc)
++{
++	struct qcom_pas *pas = rproc->priv;
++
++	return qcom_q6v5_attach(&pas->q6v5);
++}
++
+ static void *qcom_pas_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
+ {
+ 	struct qcom_pas *pas = rproc->priv;
+@@ -438,6 +472,7 @@ static const struct rproc_ops qcom_pas_ops = {
+ 	.unprepare = qcom_pas_unprepare,
+ 	.start = qcom_pas_start,
+ 	.stop = qcom_pas_stop,
++	.attach = qcom_pas_attach,
+ 	.da_to_va = qcom_pas_da_to_va,
+ 	.parse_fw = qcom_register_dump_segments,
+ 	.load = qcom_pas_load,
+@@ -448,6 +483,7 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
+ 	.unprepare = qcom_pas_unprepare,
+ 	.start = qcom_pas_start,
+ 	.stop = qcom_pas_stop,
++	.attach = qcom_pas_attach,
+ 	.da_to_va = qcom_pas_da_to_va,
+ 	.parse_fw = qcom_register_dump_segments,
+ 	.load = qcom_pas_load,
+@@ -717,7 +753,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (desc->auto_boot)
+-		rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++		rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
+ 	else
+ 		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+@@ -772,6 +808,14 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto detach_proxy_pds;
+ 
++	/*
++	 * Unfortunately, the PAS interface does not provide a reliable way to
++	 * check if a certain pas_id is currently running. Reading the smp2p
++	 * state is the best we can do to check if the remoteproc is already
++	 * running during boot.
++	 */
++	qcom_q6v5_read_smp2p_state(&pas->q6v5);
++
+ 	qcom_add_glink_subdev(rproc, &pas->glink_subdev, desc->ssr_name);
+ 	qcom_add_smd_subdev(rproc, &pas->smd_subdev);
+ 	qcom_add_pdm_subdev(rproc, &pas->pdm_subdev);
+-- 
+2.39.5
+

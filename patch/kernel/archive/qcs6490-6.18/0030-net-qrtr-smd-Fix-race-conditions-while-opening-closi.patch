@@ -1,0 +1,181 @@
+From d88e133d9c92761d3edfe0e0254eb19dbd5bfed7 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Sat, 1 Nov 2025 18:33:53 +0100
+Subject: [PATCH 030/121] net: qrtr: smd: Fix race conditions while
+ opening/closing channel
+
+If rpmsg drivers specify a receive callback in the rpmsg_driver struct, the
+rpmsg core creates the endpoint (opens the channel) before calling the
+driver probe() function, and similarly it destroys the endpoint (closes the
+channel) after calling the driver remove() function. The receive callback
+can be invoked from interrupt context any time when the channel is open,
+before (or in parallel) of the probe() function, and after (or in parallel)
+of the remove() function. Only few rpmsg drivers handle that reliably.
+
+The QRTR SMD driver partially attempts to handle one of these edge cases by
+checking if dev_get_drvdata() is already set when the receive callback is
+invoked. If not, it returns -EAGAIN in the hope that the receive callback
+will be repeated at a later point in time. Unfortunately, this can still
+lead to problems:
+
+ - The qcom_smd rpmsg backend (somewhat) handles -EAGAIN because it
+   re-checks the channel status later during announce_create(), but the
+   glink smem backend simply ignores that. The rpmsg backend cannot really
+   know when "again" is supposed to be - during the next incoming
+   interrupt, in a few seconds, or in a few years?
+
+ - There are no memory barriers, so just because the driver data (set at
+   the end of the probe() function) already became visible does not mean
+   the whole struct has already become visible to another CPU.
+
+ - During remove(), the driver data is reset to NULL after the endpoint is
+   already unregistered. Packets could still come inbetween that.
+
+One rare issue that has been reported occasionally over the years is that
+the ADSP on Qualcomm compute platforms (e.g. X13s or X1E laptops) does not
+always come up reliably (depending on kernel configuration and timing). One
+particular symptom is that the ADSP appears to function correctly (e.g.
+charging LED changes state), but no QMI services are exposed via QRTR. This
+can happen when the initial QRTR "hello" packet gets dropped, which is sent
+by the remoteproc immediately upon opening the channel.
+
+In order to fix this issue properly, it is easiest to inverse the startup
+sequence and register the QRTR endpoint before opening the rpmsg channel.
+This is because we can easily block on a mutex lock in the send path, but
+could only use a short-running spin lock in the receive callback:
+
+ - Register the QRTR endpoint before opening the channel (and unregister
+   after closing the channel), so that we can always handle incoming
+   packets.
+
+ - Block the send path with a lock until we have fully initialized.
+
+ - During remove(), start rejecting all further send operations with
+   -ENODEV before we close the rpmsg channel.
+
+ - The startup ordering and the lock implicitly provide the necessary
+   memory barriers.
+
+Use the new rpmsg_dev_open_ept() function to have more control over the
+initialization order and add the necessary locking.
+
+It is difficult to identify a proper Fixes tag. The qcom_smd rpmsg backend
+that this driver was originally intended for (hence the name qrtr/smd.c)
+handles -EAGAIN somewhat, but the newer glink smem backend does not, so
+this is where things started (rarely) breaking.
+
+Cc: stable@vger.kernel.org
+Fixes: caf989c350e8 ("rpmsg: glink: Introduce glink smem based transport")
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ net/qrtr/smd.c | 41 ++++++++++++++++++++++++++++++++---------
+ 1 file changed, 32 insertions(+), 9 deletions(-)
+
+diff --git a/net/qrtr/smd.c b/net/qrtr/smd.c
+index c91bf030fbc7..bd70dcfe499a 100644
+--- a/net/qrtr/smd.c
++++ b/net/qrtr/smd.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/skbuff.h>
+ #include <linux/rpmsg.h>
+ 
+@@ -14,18 +15,18 @@ struct qrtr_smd_dev {
+ 	struct qrtr_endpoint ep;
+ 	struct rpmsg_endpoint *channel;
+ 	struct device *dev;
++
++	/* Protect against channel open/close while sending */
++	struct mutex send_lock;
+ };
+ 
+ /* from smd to qrtr */
+ static int qcom_smd_qrtr_callback(struct rpmsg_device *rpdev,
+ 				  void *data, int len, void *priv, u32 addr)
+ {
+-	struct qrtr_smd_dev *qdev = dev_get_drvdata(&rpdev->dev);
++	struct qrtr_smd_dev *qdev = priv;
+ 	int rc;
+ 
+-	if (!qdev)
+-		return -EAGAIN;
+-
+ 	rc = qrtr_endpoint_post(&qdev->ep, data, len);
+ 	if (rc == -EINVAL) {
+ 		dev_err(qdev->dev, "invalid ipcrouter packet\n");
+@@ -46,7 +47,12 @@ static int qcom_smd_qrtr_send(struct qrtr_endpoint *ep, struct sk_buff *skb)
+ 	if (rc)
+ 		goto out;
+ 
+-	rc = rpmsg_send(qdev->channel, skb->data, skb->len);
++	scoped_guard(mutex, &qdev->send_lock) {
++		if (qdev->channel)
++			rc = rpmsg_send(qdev->channel, skb->data, skb->len);
++		else
++			rc = -ENODEV;
++	}
+ 
+ out:
+ 	if (rc)
+@@ -65,14 +71,26 @@ static int qcom_smd_qrtr_probe(struct rpmsg_device *rpdev)
+ 	if (!qdev)
+ 		return -ENOMEM;
+ 
+-	qdev->channel = rpdev->ept;
+ 	qdev->dev = &rpdev->dev;
+ 	qdev->ep.xmit = qcom_smd_qrtr_send;
+ 
++	rc = devm_mutex_init(&rpdev->dev, &qdev->send_lock);
++	if (rc)
++		return rc;
++
++	/* Block sending until we have fully opened the channel */
++	guard(mutex)(&qdev->send_lock);
++
+ 	rc = qrtr_endpoint_register(&qdev->ep, QRTR_EP_NID_AUTO);
+ 	if (rc)
+ 		return rc;
+ 
++	qdev->channel = rpmsg_dev_open_ept(rpdev, qcom_smd_qrtr_callback, qdev);
++	if (!qdev->channel) {
++		qrtr_endpoint_unregister(&qdev->ep);
++		return -EREMOTEIO;
++	}
++
+ 	dev_set_drvdata(&rpdev->dev, qdev);
+ 
+ 	dev_dbg(&rpdev->dev, "Qualcomm SMD QRTR driver probed\n");
+@@ -83,10 +101,16 @@ static int qcom_smd_qrtr_probe(struct rpmsg_device *rpdev)
+ static void qcom_smd_qrtr_remove(struct rpmsg_device *rpdev)
+ {
+ 	struct qrtr_smd_dev *qdev = dev_get_drvdata(&rpdev->dev);
++	struct rpmsg_endpoint *ept;
+ 
+-	qrtr_endpoint_unregister(&qdev->ep);
++	/* We are about to close the channel, so stop all sending now */
++	scoped_guard(mutex, &qdev->send_lock) {
++		ept = qdev->channel;
++		qdev->channel = NULL;
++	}
+ 
+-	dev_set_drvdata(&rpdev->dev, NULL);
++	rpmsg_destroy_ept(ept);
++	qrtr_endpoint_unregister(&qdev->ep);
+ }
+ 
+ static const struct rpmsg_device_id qcom_smd_qrtr_smd_match[] = {
+@@ -97,7 +121,6 @@ static const struct rpmsg_device_id qcom_smd_qrtr_smd_match[] = {
+ static struct rpmsg_driver qcom_smd_qrtr_driver = {
+ 	.probe = qcom_smd_qrtr_probe,
+ 	.remove = qcom_smd_qrtr_remove,
+-	.callback = qcom_smd_qrtr_callback,
+ 	.id_table = qcom_smd_qrtr_smd_match,
+ 	.drv = {
+ 		.name = "qcom_smd_qrtr",
+-- 
+2.39.5
+

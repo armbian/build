@@ -1,0 +1,111 @@
+From 830c077d9a4d127cf26495599e4050b4d4794019 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Thu, 14 Aug 2025 11:18:07 +0200
+Subject: [PATCH 059/121] drm/msm: dp: Delay applying clock defaults until PHY
+ is fully enabled
+
+On some Qualcomm platforms, we cannot safely reparent clocks when the new
+parent is not already powered up. This problem occurs for the DP and DSI
+controller when we try to reparent the link clocks using the standard
+"assigned-clock-parents" property to the clock source provided by the PHY.
+We often bypass this problem, because the clocks are already assigned to
+the correct parent by the boot firmware. Without that, there is an error
+during boot in the kernel log and DP/DSI is not functional.
+
+For example, the following error occurs on X1E if the &mdss_dp3 controller
+was not initialized by the boot firmware:
+
+  clk: failed to reparent disp_cc_mdss_dptx3_link_clk_src to aec5a00.phy::link_clk: -16
+  disp_cc_mdss_dptx3_link_clk_src: rcg didn't update its configuration.
+  WARNING: CPU: 0 PID: 77 at drivers/clk/qcom/clk-rcg2.c:136 update_config+0xd4/0xe8
+  pc : update_config+0xd4/0xe8
+  Call trace:
+   update_config+0xd4/0xe8 (P)
+   clk_rcg2_set_parent+0x58/0x68
+   __clk_set_parent+0x4c/0x214
+   clk_core_set_parent_nolock+0xe8/0x1f4
+   clk_set_parent+0xa4/0x13c
+   of_clk_set_defaults+0x15c/0x4a8
+   platform_probe+0x3c/0xc4
+   ...
+  clk: failed to reparent disp_cc_mdss_dptx3_pixel0_clk_src to aec5a00.phy::vco_div_clk: -16
+  disp_cc_mdss_dptx3_pixel0_clk_src: rcg didn't update its configuration.
+  WARNING: CPU: 0 PID: 77 at drivers/clk/qcom/clk-rcg2.c:136 update_config+0xd4/0xe8
+  ...
+
+In the current implementation, it is tricky to solve this from any of the
+involved drivers, because the call to clk_set_parent() happens from the
+platform driver core (before the probe() function of the DP driver is
+called). Similarly, the PHY/clock driver cannot solve this alone, because
+it doesn't know which clock rate and configuration to use for the PHY.
+
+For DSI on SM8750, we solved this by avoiding use of assigned-clock-parents
+and calling clk_set_parent() separately from the DSI controller driver (see
+commit 80dd5911cbfd ("drm/msm/dsi: Add support for SM8750")). We could do
+that for the DP controller as well, but this would require changing the
+existing DT bindings for a number of platforms, just to workaround a
+limitation in the Linux driver model. The DT does not specify when to apply
+the assigned-clock-parents, so there is nothing wrong with the current
+hardware description.
+
+Instead, fix this by using the new "driver_managed_clk_defaults" option in
+the platform_driver struct. Delay the call to of_clk_set_defaults() until
+we have set up the PHY to avoid the error shown above.
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c    | 10 ++++++++++
+ drivers/gpu/drm/msm/dp/dp_display.c |  2 ++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index c42fd2c17a32..21249d2b85b3 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/types.h>
+ #include <linux/clk.h>
++#include <linux/clk/clk-conf.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+ #include <linux/iopoll.h>
+@@ -140,6 +141,7 @@ struct msm_dp_ctrl_private {
+ 	bool core_clks_on;
+ 	bool link_clks_on;
+ 	bool stream_clks_on;
++	bool clk_defaults_set;
+ };
+ 
+ static inline u32 msm_dp_read_ahb(const struct msm_dp_ctrl_private *ctrl, u32 offset)
+@@ -1789,6 +1791,14 @@ static int msm_dp_ctrl_enable_mainlink_clocks(struct msm_dp_ctrl_private *ctrl)
+ 	phy_configure(phy, &ctrl->phy_opts);
+ 	phy_power_on(phy);
+ 
++	if (!ctrl->clk_defaults_set) {
++		ret = of_clk_set_defaults(ctrl->dev->of_node, false);
++		if (ret)
++			return ret;
++
++		ctrl->clk_defaults_set = true;
++	}
++
+ 	dev_pm_opp_set_rate(ctrl->dev, ctrl->link->link_params.rate * 1000);
+ 	ret = msm_dp_ctrl_link_clk_enable(&ctrl->msm_dp_ctrl);
+ 	if (ret)
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index d87d47cc7ec3..b8a0e61b806e 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1487,6 +1487,8 @@ static struct platform_driver msm_dp_display_driver = {
+ 		.suppress_bind_attrs = true,
+ 		.pm = &msm_dp_pm_ops,
+ 	},
++	/* Apply clock parents after PHY is fully initialized */
++	.driver_managed_clk_defaults = true,
+ };
+ 
+ int __init msm_dp_register(void)
+-- 
+2.39.5
+

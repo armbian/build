@@ -1,0 +1,183 @@
+From 0959cc909d3fefa4ad7237531b50249e249d8bc1 Mon Sep 17 00:00:00 2001
+From: Jiali Chen <chenjiali@radxa.com>
+Date: Tue, 30 Dec 2025 09:48:22 +0000
+Subject: [PATCH 109/121] arm64: dts: meson: radxa-zero: add USB Type-C support
+ via FUSB302
+
+Enable the FUSB302 USB Type-C controller on the Radxa Zero board.
+The FUSB302 is connected via I2C3 and handles the CC communication.
+
+Since the VBUS on this board is derived from the system 5V and cannot
+be independently switched off or regulated to 0V, we configure the
+node with specific properties to handle this hardware limitation:
+- 'tcpm,skip-vsafe0v-check': To bypass the VSafe0V requirement.
+- 'fcs,force-vbus-toggle': To simulate VBUS toggle for the TCPM state machine.
+
+This patch also:
+- Adds the fixed 5V VBUS regulator.
+- Adds a GPIO-based SBU mux for orientation switching.
+- Links the DWC3 USB controller to the Type-C connector via OF graph.
+- Configures the port as a Source (Power) and Host (Data) by default.
+
+Signed-off-by: Jiali Chen <chenjiali@radxa.com>
+---
+ .../dts/amlogic/meson-g12a-radxa-zero.dts     | 118 ++++++++++++++++++
+ 1 file changed, 118 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/amlogic/meson-g12a-radxa-zero.dts b/arch/arm64/boot/dts/amlogic/meson-g12a-radxa-zero.dts
+index 4353485c6f26..d6a117b49b1b 100644
+--- a/arch/arm64/boot/dts/amlogic/meson-g12a-radxa-zero.dts
++++ b/arch/arm64/boot/dts/amlogic/meson-g12a-radxa-zero.dts
+@@ -8,6 +8,7 @@
+ #include "meson-g12a.dtsi"
+ #include <dt-bindings/gpio/meson-g12a-gpio.h>
+ #include <dt-bindings/sound/meson-g12a-tohdmitx.h>
++#include <dt-bindings/usb/pd.h>
+ 
+ / {
+ 	compatible = "radxa,zero", "amlogic,g12a";
+@@ -129,6 +130,14 @@ vddcpu: regulator-vddcpu {
+ 		regulator-always-on;
+ 	};
+ 
++	typec_vbus: regulator-typec-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "TYPEC_VBUS";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		vin-supply = <&ao_5v>;
++	};
++
+ 	sound {
+ 		compatible = "amlogic,axg-sound-card";
+ 		model = "RADXA-ZERO";
+@@ -186,6 +195,20 @@ codec {
+ 		};
+ 	};
+ 
++	usb-sbu-mux {
++		compatible = "gpio-sbu-mux";
++		select-gpios = <&gpio_ao GPIOAO_6 GPIO_ACTIVE_HIGH>;
++		pinctrl-0 = <&usb_sbu_default>;
++		pinctrl-names = "default";
++		orientation-switch;
++
++		port {
++			usb0_sbu_mux: endpoint {
++				remote-endpoint = <&ucsi0_sbu>;
++			};
++		};
++	};
++
+ 	wifi32k: wifi32k {
+ 		compatible = "pwm-clock";
+ 		#clock-cells = <0>;
+@@ -246,6 +269,81 @@ cvbs_vdac_out: endpoint {
+ 	};
+ };
+ 
++&dwc3 {
++	ports {
++		usb_dwc2_out: endpoint@0 {
++			remote-endpoint = <&ucsi0_hs_in>;
++		};
++
++		usb_dwc3_out: endpoint@1 {
++			remote-endpoint = <&ucsi0_ss_in>;
++		};
++	};
++};
++
++&i2c3 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++	pinctrl-0 = <&i2c3_sda_a_pins>, <&i2c3_sck_a_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	fusb302@22 {
++		compatible = "fcs,fusb302";
++		reg = <0x22>;
++
++		pinctrl-0 = <&fusb302_irq_pins>;
++		pinctrl-names = "default";
++		interrupt-parent = <&gpio_intc>;
++		interrupts = <IRQID_GPIOAO_5 IRQ_TYPE_LEVEL_LOW>;
++		tcpm,skip-vsafe0v-check;
++		fcs,force-vbus-toggle;
++
++		vbus-supply = <&typec_vbus>;
++
++		status = "okay";
++
++		usb_con: connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			data-role = "host";
++			/* fusb302 supports PD Rev 2.0 Ver 1.2 */
++			pd-revision = /bits/ 8 <0x2 0x0 0x1 0x2>;
++			power-role = "source";
++			source-pdos = <PDO_FIXED(5000, 1500, PDO_FIXED_USB_COMM)>;
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					ucsi0_hs_in: endpoint {
++						remote-endpoint = <&usb_dwc2_out>;
++					};
++				};
++
++				port@1 {
++					reg = <1>;
++
++					ucsi0_ss_in: endpoint {
++						remote-endpoint = <&usb_dwc3_out>;
++					};
++				};
++
++				port@2 {
++					reg = <2>;
++
++					ucsi0_sbu: endpoint {
++						remote-endpoint = <&usb0_sbu_mux>;
++					};
++				};
++			};
++		};
++	};
++};
++
+ &frddr_a {
+ 	status = "okay";
+ };
+@@ -397,3 +495,23 @@ &uart_AO {
+ &usb {
+ 	status = "okay";
+ };
++
++&ao_pinctrl {
++	fusb302_irq_pins: fusb302_irq {
++		mux {
++			groups = "GPIOAO_5";
++			function = "gpio_aobus";
++			bias-pull-up;
++			output-disable;
++		};
++	};
++
++	usb_sbu_default: usb0-sbu-state {
++		mux {
++			groups = "GPIOAO_6";
++			function = "gpio_aobus";
++			bias-pull-down;
++			drive-strength-microamp = <4000>;
++		};
++	};
++};
+-- 
+2.39.5
+

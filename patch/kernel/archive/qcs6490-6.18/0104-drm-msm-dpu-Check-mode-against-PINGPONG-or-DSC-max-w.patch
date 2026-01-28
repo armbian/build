@@ -1,0 +1,156 @@
+From ba2c0807c1392173e1386ed5099fff0ab1ec688b Mon Sep 17 00:00:00 2001
+From: Jessica Zhang <jessica.zhang@oss.qualcomm.com>
+Date: Wed, 14 May 2025 16:52:31 -0700
+Subject: [PATCH 104/121] drm/msm/dpu: Check mode against PINGPONG or DSC max
+ width
+
+Validate requested mode and topology based on the PINGPONG or DSC encoder
+max width. In addition, drop MAX_HDISPLAY_SPLIT and base LM reservation
+off of PINGPONG or DSC encoder max width
+
+As noted in the patch, while DPU 8.x+ supports a max linewidth of 8960
+for PINGPONG_0, there is some additional logic that needs to be added to
+the resource manager to specifically try and reserve PINGPONG_0 for
+modes that are greater than 5k.
+
+Since this is out of the scope of this series, add a helper that will
+get the overall minimum PINGPONG max linewidth for a given chipset.
+
+Signed-off-by: Jessica Zhang <jessica.zhang@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 46 ++++++++++++++++++++----
+ 1 file changed, 39 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 2f8156051d9b..416cb6c49811 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -755,6 +755,31 @@ void dpu_crtc_complete_commit(struct drm_crtc *crtc)
+ 	_dpu_crtc_complete_flip(crtc);
+ }
+ 
++static int msm_display_get_max_pingpong_width(struct dpu_kms *dpu_kms)
++{
++	const struct dpu_pingpong_cfg *pingpong;
++	u32 max_pingpong_width = dpu_kms->catalog->pingpong[0].max_linewidth;
++
++	/*
++	 * Find the smallest overall PINGPONG max_linewidth in the catalog since
++	 * max_linewidth can differ between PINGPONGs even within the same
++	 * chipset.
++	 *
++	 * Note: While, for DPU 8.x+, PINGPONG_0 can technically support up to
++	 * 8k resolutions, this requires reworking the RM to try to reserve
++	 * PINGPONG_0 for modes greater than 5k.
++	 *
++	 * Once this additional logic is implemented, we can drop this helper
++	 * and use the reserved PINGPONG's max_linewidth
++	 */
++	for (int i = 1; i < dpu_kms->catalog->pingpong_count; i++) {
++		pingpong = &dpu_kms->catalog->pingpong[i];
++		max_pingpong_width = min(max_pingpong_width, pingpong->max_linewidth);
++	}
++
++	return max_pingpong_width;
++}
++
+ static int _dpu_crtc_check_and_setup_lm_bounds(struct drm_crtc *crtc,
+ 		struct drm_crtc_state *state)
+ {
+@@ -762,13 +787,14 @@ static int _dpu_crtc_check_and_setup_lm_bounds(struct drm_crtc *crtc,
+ 	struct drm_display_mode *adj_mode = &state->adjusted_mode;
+ 	u32 crtc_split_width = adj_mode->hdisplay / cstate->num_mixers;
+ 	struct dpu_kms *dpu_kms = _dpu_crtc_get_kms(crtc);
++	int max_pingpong_width = msm_display_get_max_pingpong_width(dpu_kms);
+ 	int i;
+ 
+ 	/* if we cannot merge 2 LMs (no 3d mux) better to fail earlier
+ 	 * before even checking the width after the split
+ 	 */
+ 	if (!dpu_kms->catalog->caps->has_3d_merge &&
+-	    adj_mode->hdisplay > dpu_kms->catalog->caps->max_mixer_width)
++	    adj_mode->hdisplay > max_pingpong_width)
+ 		return -E2BIG;
+ 
+ 	for (i = 0; i < cstate->num_mixers; i++) {
+@@ -780,7 +806,7 @@ static int _dpu_crtc_check_and_setup_lm_bounds(struct drm_crtc *crtc,
+ 
+ 		trace_dpu_crtc_setup_lm_bounds(DRMID(crtc), i, r);
+ 
+-		if (drm_rect_width(r) > dpu_kms->catalog->caps->max_mixer_width)
++		if (drm_rect_width(r) > max_pingpong_width)
+ 			return -E2BIG;
+ 	}
+ 
+@@ -1311,7 +1337,6 @@ static int dpu_crtc_reassign_planes(struct drm_crtc *crtc, struct drm_crtc_state
+ }
+ 
+ #define MAX_CHANNELS_PER_CRTC 2
+-#define MAX_HDISPLAY_SPLIT 1080
+ 
+ static struct msm_display_topology dpu_crtc_get_topology(
+ 		struct drm_crtc *crtc,
+@@ -1321,12 +1346,18 @@ static struct msm_display_topology dpu_crtc_get_topology(
+ 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
+ 	struct msm_display_topology topology = {0};
+ 	struct drm_encoder *drm_enc;
++	const struct dpu_caps *caps = dpu_kms->catalog->caps;
++	u32 max_hdisplay_split;
+ 
+ 	drm_for_each_encoder_mask(drm_enc, crtc->dev, crtc_state->encoder_mask)
+ 		dpu_encoder_update_topology(drm_enc, &topology, crtc_state->state,
+ 					    &crtc_state->adjusted_mode);
+ 
+ 	topology.cwb_enabled = drm_crtc_in_clone_mode(crtc_state);
++	max_hdisplay_split = msm_display_get_max_pingpong_width(dpu_kms);
++
++	if (topology.num_dsc > 0 && caps->max_dsc_encoder_width > 0)
++		max_hdisplay_split = min(max_hdisplay_split, caps->max_dsc_encoder_width);
+ 
+ 	/*
+ 	 * Datapath topology selection
+@@ -1347,7 +1378,7 @@ static struct msm_display_topology dpu_crtc_get_topology(
+ 	 * count both the WB and real-time phys encoders.
+ 	 *
+ 	 * For non-DSC CWB usecases, have the num_lm be decided by the
+-	 * (mode->hdisplay > MAX_HDISPLAY_SPLIT) check.
++	 * (mode->hdisplay > max_hdisplay_split) check.
+ 	 */
+ 
+ 	if (topology.num_intf == 2 && !topology.cwb_enabled)
+@@ -1355,7 +1386,7 @@ static struct msm_display_topology dpu_crtc_get_topology(
+ 	else if (topology.num_dsc == 2)
+ 		topology.num_lm = 2;
+ 	else if (dpu_kms->catalog->caps->has_3d_merge)
+-		topology.num_lm = (mode->hdisplay > MAX_HDISPLAY_SPLIT) ? 2 : 1;
++		topology.num_lm = (mode->hdisplay > max_hdisplay_split) ? 2 : 1;
+ 	else
+ 		topology.num_lm = 1;
+ 
+@@ -1534,12 +1565,13 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
+ {
+ 	struct dpu_kms *dpu_kms = _dpu_crtc_get_kms(crtc);
+ 	u64 adjusted_mode_clk;
++	int max_pingpong_width = msm_display_get_max_pingpong_width(dpu_kms);
+ 
+ 	/* if there is no 3d_mux block we cannot merge LMs so we cannot
+ 	 * split the large layer into 2 LMs, filter out such modes
+ 	 */
+ 	if (!dpu_kms->catalog->caps->has_3d_merge &&
+-	    mode->hdisplay > dpu_kms->catalog->caps->max_mixer_width)
++	    mode->hdisplay > max_pingpong_width)
+ 		return MODE_BAD_HVALUE;
+ 
+ 	adjusted_mode_clk = dpu_core_perf_adjusted_mode_clk(mode->clock,
+@@ -1559,7 +1591,7 @@ static enum drm_mode_status dpu_crtc_mode_valid(struct drm_crtc *crtc,
+ 	 * max crtc width is equal to the max mixer width * 2 and max height is 4K
+ 	 */
+ 	return drm_mode_validate_size(mode,
+-				      2 * dpu_kms->catalog->caps->max_mixer_width,
++				      2 * max_pingpong_width,
+ 				      4096);
+ }
+ 
+-- 
+2.39.5
+
