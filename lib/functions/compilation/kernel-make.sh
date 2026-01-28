@@ -44,7 +44,7 @@ function run_kernel_make_internal() {
 		# Do NOT add -Wno-error=unknown-warning-option here - it breaks cc-option detection
 		# in kernel Makefiles (btrfs, drm, coresight) causing GCC-specific flags to be
 		# incorrectly added when building with clang
-		extra_warnings="-Wno-error=unused-command-line-argument"
+		extra_warnings="-fcolor-diagnostics -Wno-error=unused-command-line-argument"
 	else
 		cc_name="CROSS_COMPILE"
 		extra_warnings=""
