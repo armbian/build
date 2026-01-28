@@ -48,6 +48,12 @@ function cli_docker_run() {
 
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
+	# Ensure Docker auto-pull cronjob is installed (controlled by ARMBIAN_DOCKER_AUTO_PULL flag)
+	# Only run this when not generating Dockerfile only
+	if [[ "${DOCKERFILE_GENERATE_ONLY}" != "yes" ]]; then
+		docker_ensure_auto_pull_cronjob
+	fi
+
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
 	if [[ "${FAST_DOCKER:-"no"}" != "yes" ]]; then # "no, I want *slow* docker" -- no one, ever
 		LOG_SECTION="docker_cli_prepare_dockerfile" do_with_logging docker_cli_prepare_dockerfile
