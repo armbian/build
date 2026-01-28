@@ -127,7 +127,13 @@ function artifact_kernel_prepare_version() {
 	declare kernel_config_modifying_hashes_hash="undetermined"
 	declare -a kernel_config_modifying_hashes=()
 	call_extensions_kernel_config
-	kernel_config_modification_hash="$(echo "${kernel_config_modifying_hashes[@]}" | sha256sum | cut -d' ' -f1)"
+	# Reduce to last assignment per key to keep hashing stable and ignore overridden options.
+	# tac reverses order so last becomes first, then sort -uk keeps first occurrence of each key.
+	declare -a kernel_config_modifying_hashes_reduced=()
+	mapfile -t kernel_config_modifying_hashes_reduced < <(
+		printf '%s\n' "${kernel_config_modifying_hashes[@]}" | tac | LC_ALL=C sort -t '=' -uk 1,1
+	)
+	kernel_config_modification_hash="$(printf '%s\n' "${kernel_config_modifying_hashes_reduced[@]}" | sha256sum | cut -d' ' -f1)"
 	kernel_config_modification_hash="${kernel_config_modification_hash:0:16}" # "long hash"
 	declare kernel_config_modification_hash_short="${kernel_config_modification_hash:0:${short_hash_size}}"
 
