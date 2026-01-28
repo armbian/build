@@ -157,21 +157,72 @@ function artifact_kernel_prepare_version() {
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
-	# @TODO: include the compiler version? host release?
-
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
 	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
-	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-HK${hash_hooks_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	# Build version parts: associative array for values, indexed array for ordered keys with sort prefixes.
+	# Extensions can modify both arrays via the hook below.
+	declare -A -g artifact_version_parts=(
+		["S"]="${short_sha1}"
+		["D"]="${kernel_drivers_hash_short}"
+		["P"]="${kernel_patches_hash_short}"
+		["C"]="${config_hash_short}"
+		["H"]="${kernel_config_modification_hash_short}"
+		["HK"]="${hash_hooks_short}"
+		["V"]="${var_config_hash_short}"
+		["B"]="${bash_hash_short}"
+	)
+	declare -a -g artifact_version_part_order=(
+		"0010-S" "0020-D" "0030-P" "0040-C" "0050-H" "0060-HK" "0070-V" "0080-B"
+	)
 
-	# outer scope
+	# Allow extensions to add, modify, or remove version parts and change order
+	call_extension_method "artifact_kernel_version_parts" <<- 'ARTIFACT_KERNEL_VERSION_PARTS'
+		*customize kernel artifact version string parts*
+		Called after all built-in version parts are collected.
+		Extensions can modify:
+		- artifact_version_parts: associative array of key=value pairs
+		  - Add: artifact_version_parts["T"]="gcc13.3"
+		  - Remove: unset artifact_version_parts["B"]
+		  - Modify: artifact_version_parts["S"]="custom"
+		- artifact_version_part_order: indexed array with "NNNN-KEY" entries for sortable insertion
+		  - Add: artifact_version_part_order+=("0085-_T")
+		  - Remove: remove entry from array or unset the key in artifact_version_parts
+		  Keys starting with "_" are not included in output (only value is used).
+	ARTIFACT_KERNEL_VERSION_PARTS
+
+	# Sort and validate: keys after stripping numeric prefixes must be unique
+	mapfile -t artifact_version_part_order < <(printf '%s\n' "${artifact_version_part_order[@]}" | LC_ALL=C sort)
+	declare -A _seen_keys=()
+	declare common_version_suffix=""
+	declare entry key
+	for entry in "${artifact_version_part_order[@]}"; do
+		key="${entry#*-}" # "0010-S" -> "S"
+		if [[ -n "${_seen_keys[${key}]:-}" ]]; then
+			exit_with_error "artifact_version_part_order: duplicate key '${key}' in '${_seen_keys[${key}]}' and '${entry}'"
+		fi
+		_seen_keys[${key}]="${entry}"
+		if [[ -z "${artifact_version_parts[${key}]:-}" ]]; then
+			display_alert "Version part key '${key}' from order entry '${entry}' has no value" "skipping" "warn"
+		elif [[ "${key}" == _* ]]; then
+			# Keys starting with "_" are internal-only: value is used without key prefix
+			common_version_suffix+="${artifact_version_parts[${key}]}-"
+		else
+			common_version_suffix+="${key}${artifact_version_parts[${key}]}-"
+		fi
+	done
+	common_version_suffix="${common_version_suffix%-}" # Remove trailing dash
+
+	# outer scope; only append suffix if non-empty (extensions may clear all parts)
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
-		artifact_version="1-${common_version_suffix}" # "1-" prefix, since we need to start with a digit
+		artifact_version="1" # must start with a digit
+		[[ -n "${common_version_suffix}" ]] && artifact_version+="-${common_version_suffix}"
 	else
-		artifact_version="${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
+		artifact_version="${GIT_INFO_KERNEL[MAKEFILE_VERSION]}"
+		[[ -n "${common_version_suffix}" ]] && artifact_version+="-${common_version_suffix}"
 	fi
 
 	declare -a reasons=(
