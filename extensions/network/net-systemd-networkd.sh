@@ -38,11 +38,11 @@ function pre_install_kernel_debs__configure_systemd_networkd() {
 	run_host_command_logged cp -v "${networkd_conf_d_config_src_folder}"* "${networkd_conf_d_config_dst_folder}"
 
 	# wait-online waits for all managed interfaces to become online. We ship DHCP on all interfaces and if all are not connected it will timeout
-	local networkd-wait-online-override_src_folder="${EXTENSION_DIR}/config-networkd/systemd/system/systemd-networkd-wait-online.service.d"
-	local networkd-wait-online-override_dst_folder="${SDCARD}/etc/systemd/system/systemd-networkd-wait-online.service.d"
+	local networkd_wait_online_override_src_folder="${EXTENSION_DIR}/config-networkd/systemd/system/systemd-networkd-wait-online.service.d/"
+	local networkd_wait_online_override_dst_folder="${SDCARD}/etc/systemd/system/systemd-networkd-wait-online.service.d/"
 
-	mkdir -p "${networkd-wait-online-override_dst_folder}" # This doesn't exist by default, create it
-	run_host_command_logged cp -v "${networkd-wait-online-override_src_folder}"* "${networkd-wait-online-override_dst_folder}"
+	mkdir -p "${networkd_wait_online_override_dst_folder}" # This doesn't exist by default, create it
+	run_host_command_logged cp -v "${networkd_wait_online_override_src_folder}"* "${networkd_wait_online_override_dst_folder}"
 
 	# Change the file permissions according to https://netplan.readthedocs.io/en/stable/security/
 	chmod -v 600 "${SDCARD}"/etc/netplan/*
