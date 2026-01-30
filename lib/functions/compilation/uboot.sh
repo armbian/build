@@ -77,14 +77,6 @@ function compile_uboot_target() {
 		return 0
 	fi
 
-	if [[ -n "$BL32_BLOB" ]]; then
-    	cp "${RKBIN_DIR}/${BL32_BLOB}" "tee.bin"
-    	display_alert "Copying over OP-TEE blob from Uboot Dir" "${BL32_BLOB}" "info"
-	else
-		display_alert "OP-TEE blob not found, skipping..." "${BL32_BLOB}" "warn"
-	fi
-
-
 	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
 		display_alert "Copying over bin/elf/itb's from atftempdir" "${atftempdir}" "debug"
