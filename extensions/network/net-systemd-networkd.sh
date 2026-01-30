@@ -44,6 +44,13 @@ function pre_install_kernel_debs__configure_systemd_networkd() {
 	mkdir -p "${networkd_wait_online_override_dst_folder}" # This doesn't exist by default, create it
 	run_host_command_logged cp -v "${networkd_wait_online_override_src_folder}"* "${networkd_wait_online_override_dst_folder}"
 
+	# since daily upgrade is not calling systemd-networkd-wait-online.service (but it should) we need to patch that service too
+	local apt_daily_upgrade_service_override_src_folder="${EXTENSION_DIR}/config-networkd/systemd/system/apt-daily-upgrade.service.d/"
+	local apt_daily_upgrade_service_override_dst_folder="${SDCARD}/etc/systemd/system/apt-daily-upgrade.service.d/"
+
+	mkdir -p "${apt_daily_upgrade_service_override_dst_folder}" # This doesn't exist by default, create it
+	run_host_command_logged cp -v "${apt_daily_upgrade_service_override_src_folder}"* "${apt_daily_upgrade_service_override_dst_folder}"
+
 	# Change the file permissions according to https://netplan.readthedocs.io/en/stable/security/
 	chmod -v 600 "${SDCARD}"/etc/netplan/*
 }
