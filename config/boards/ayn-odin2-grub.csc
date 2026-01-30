@@ -7,10 +7,15 @@ declare -g KERNEL_TARGET="current,edge"
 declare -g KERNEL_TEST_TARGET="edge"
 declare -g EXTRAWIFI="no"
 declare -g BOOTCONFIG="none"
-declare -g BOOTFS_TYPE="fat"
-declare -g BOOTSIZE="256"
-declare -g IMAGE_PARTITION_TABLE="gpt"
-declare -g BOOTIMG_CMDLINE_EXTRA="clk_ignore_unused pd_ignore_unused rw quiet rootwait"
+
+declare -g UEFI_GRUB_TERMINAL="gfxterm" # Use graphics in grub, for the Armbian wallpaper.
+declare -g GRUB_CMDLINE_LINUX_DEFAULT="clk_ignore_unused pd_ignore_unused arm64.nopauth efi=noruntime fbcon=rotate:1 console=ttyMSM0,115200n8"
+declare -g BOOT_FDT_FILE="qcom/qcs8550-ayn-odin2.dtb"
+
+declare -g SERIALCON="${SERIALCON:-tty1}"
+
+enable_extension "grub"
+enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
 
 # Use the full firmware, complete linux-firmware plus Armbian's
 declare -g BOARD_FIRMWARE_INSTALL="-full"
@@ -91,8 +96,8 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 	# Not Any driver support suspend mode
 	chroot_sdcard systemctl mask suspend.target
 
+	chroot_sdcard systemctl enable qbootctl.service
 	chroot_sdcard systemctl enable usbgadget-rndis.service
-	cp $SRC/packages/bsp/ayn-odin2/LinuxLoader.cfg "${SDCARD}"/boot/
 
 	return 0
 }
@@ -121,16 +126,4 @@ function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
 		done
 	FIRMWARE_HOOK
 	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
-}
-
-function pre_umount_final_image__update_ABL_settings() {
-	if [ -z "$BOOTFS_TYPE" ]; then
-		return 0
-	fi
-	display_alert "Update ABL settings for " "${BOARD}" "info"
-	uuid_line=$(head -n 1 "${SDCARD}"/etc/fstab)
-	rootfs_image_uuid=$(echo "${uuid_line}" | awk '{print $1}' | awk -F '=' '{print $2}')
-	initrd_name=$(find "${SDCARD}/boot/" -type f -name "config-*" | sed 's/.*config-//')
-	sed -i "s/UUID_PLACEHOLDER/${rootfs_image_uuid}/g" "${MOUNT}"/boot/LinuxLoader.cfg
-	sed -i "s/INITRD_PLACEHOLDER/${initrd_name}/g" "${MOUNT}"/boot/LinuxLoader.cfg
 }
