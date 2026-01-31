@@ -116,7 +116,7 @@ declare -g -a CCACHE_PASSTHROUGH_VARS=(
 )
 
 # Query Redis stats (keys count and memory usage)
-function get_redis_stats() {
+function ccache_get_redis_stats() {
 	local ip="$1"
 	local port="${2:-6379}"
 	local stats=""
@@ -139,7 +139,7 @@ function get_redis_stats() {
 
 # Mask credentials in storage URLs to avoid leaking secrets into build logs
 # Handles any URI scheme with userinfo component (e.g., redis://user:pass@host)
-function mask_storage_url() {
+function ccache_mask_storage_url() {
 	local url="$1"
 	if [[ "${url}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)([^@/]+)@(.*)$ ]]; then
 		echo "${BASH_REMATCH[1]}****@${BASH_REMATCH[3]}"
@@ -164,7 +164,7 @@ function host_pre_docker_launch__setup_remote_ccache() {
 
 			# Show Redis stats
 			local stats
-			stats=$(get_redis_stats "${ccache_ip}" 6379)
+			stats=$(ccache_get_redis_stats "${ccache_ip}" 6379)
 			if [[ -n "$stats" ]]; then
 				display_alert "Remote ccache stats" "${stats}" "info"
 			fi
@@ -174,7 +174,7 @@ function host_pre_docker_launch__setup_remote_ccache() {
 			display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
 		fi
 	else
-		display_alert "Remote ccache pre-configured" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache pre-configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	fi
 
 	# Pass all set CCACHE_* variables to Docker
@@ -210,7 +210,7 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		display_alert "Remote ccache configured" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 		return 0
 	fi
 
@@ -220,7 +220,7 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	if [[ -n "${ccache_ip}" ]]; then
 		export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
-		display_alert "Remote ccache discovered" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache discovered" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	else
 		if [[ "${CCACHE_REMOTE_ONLY}" == "yes" ]]; then
 			display_alert "Remote ccache not available" "CCACHE_REMOTE_ONLY=yes but no remote found, ccache will be ineffective" "wrn"
