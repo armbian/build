@@ -137,6 +137,17 @@ function get_redis_stats() {
 	echo "$stats"
 }
 
+# Mask credentials in storage URLs to avoid leaking secrets into build logs
+# Handles any URI scheme with userinfo component (e.g., redis://user:pass@host)
+function mask_storage_url() {
+	local url="$1"
+	if [[ "${url}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)([^@/]+)@(.*)$ ]]; then
+		echo "${BASH_REMATCH[1]}****@${BASH_REMATCH[3]}"
+	else
+		echo "${url}"
+	fi
+}
+
 # This runs on the HOST just before Docker container is launched.
 # Resolves 'ccache.local' via mDNS (requires Avahi on server publishing this hostname
 # with: avahi-publish-address -R ccache.local <IP>) and passes the resolved IP
@@ -163,7 +174,7 @@ function host_pre_docker_launch__setup_remote_ccache() {
 			display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
 		fi
 	else
-		display_alert "Remote ccache pre-configured" "${CCACHE_REMOTE_STORAGE}" "info"
+		display_alert "Remote ccache pre-configured" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	fi
 
 	# Pass all set CCACHE_* variables to Docker
