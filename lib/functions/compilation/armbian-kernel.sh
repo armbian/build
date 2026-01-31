@@ -476,6 +476,19 @@ function armbian_kernel_config__enable_ntsync() {
 	fi
 }
 
+# Enables AMD Display Controller (DC) support for AMD GPUs
+# This enables the display engine for AMD Radeon graphics cards,
+# including DCN (Display Core Next) and DSC (Display Stream Compression)
+# Only enabled for UEFI boards (uefi-x86, uefi-arm64, uefi-loong64), excluding cloud branch
+function armbian_kernel_config__enable_amd_dc() {
+	if [[ "${BOARD}" =~ ^uefi-(x86|arm64|loong64)$ ]] && [[ "${BRANCH}" != "cloud" ]]; then
+		display_alert "Enabling AMD DC support" "UEFI board ${BOARD}" "debug"
+		opts_y+=("DRM_AMD_DC")
+		opts_y+=("DRM_AMD_DC_DCN")
+		opts_y+=("DRM_AMD_DC_DSC_SUPPORT")
+	fi
+}
+
 # +++++++++++ HELPERS CORNER +++++++++++
 #
 # Helpers for manipulating kernel config.
