@@ -232,28 +232,29 @@ function extension_prepare_config__setup_remote_ccache() {
 	return 0
 }
 
-# This hook runs right before kernel make - add ccache env vars to make environment.
-# Required because kernel build uses 'env -i' which clears all environment variables.
-function kernel_make_config__add_ccache_remote_storage() {
+# Inject all set CCACHE_PASSTHROUGH_VARS into the given make environment array
+# Uses bash nameref to write into the caller's array variable
+function ccache_inject_envs() {
+	local -n target_array="$1"
+	local label="$2"
 	local var val
 	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
 		val="${!var}"
 		if [[ -n "${val}" ]]; then
-			common_make_envs+=("${var}=${val@Q}")
-			display_alert "Kernel make: ${var}" "${val}" "debug"
+			target_array+=("${var}=${val@Q}")
+			display_alert "${label}: ${var}" "${val}" "debug"
 		fi
 	done
+}
+
+# This hook runs right before kernel make - add ccache env vars to make environment.
+# Required because kernel build uses 'env -i' which clears all environment variables.
+function kernel_make_config__add_ccache_remote_storage() {
+	ccache_inject_envs common_make_envs "Kernel make"
 }
 
 # This hook runs right before u-boot make - add ccache env vars to make environment.
 # Required because u-boot build uses 'env -i' which clears all environment variables.
 function uboot_make_config__add_ccache_remote_storage() {
-	local var val
-	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
-		val="${!var}"
-		if [[ -n "${val}" ]]; then
-			uboot_make_envs+=("${var}=${val@Q}")
-			display_alert "U-boot make: ${var}" "${val}" "debug"
-		fi
-	done
+	ccache_inject_envs uboot_make_envs "U-boot make"
 }
