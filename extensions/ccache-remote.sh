@@ -183,7 +183,9 @@ function host_pre_docker_launch__setup_remote_ccache() {
 		val="${!var}"
 		if [[ -n "${val}" ]]; then
 			DOCKER_EXTRA_ARGS+=("--env" "${var}=${val}")
-			display_alert "Docker env" "${var}=${val}" "debug"
+			local log_val="${val}"
+			[[ "${var}" == "CCACHE_REMOTE_STORAGE" ]] && log_val="$(ccache_mask_storage_url "${val}")"
+			display_alert "Docker env" "${var}=${log_val}" "debug"
 		fi
 	done
 }
@@ -242,7 +244,9 @@ function ccache_inject_envs() {
 		val="${!var}"
 		if [[ -n "${val}" ]]; then
 			target_array+=("${var}=${val@Q}")
-			display_alert "${label}: ${var}" "${val}" "debug"
+			local log_val="${val}"
+			[[ "${var}" == "CCACHE_REMOTE_STORAGE" ]] && log_val="$(ccache_mask_storage_url "${val}")"
+			display_alert "${label}: ${var}" "${log_val}" "debug"
 		fi
 	done
 }
