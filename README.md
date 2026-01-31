@@ -57,7 +57,7 @@ Get help from users and contributors on troubleshooting, configuration, and deve
 👉 [forum.armbian.com](https://forum.armbian.com)
 
 ### Real-time Chat
-Join discussions with developers and community members on IRc or Discord.
+Join discussions with developers and community members on IRC or Discord.
 👉 [Community Chat](https://docs.armbian.com/Community_IRC/)
 
 ### Paid Consultation
