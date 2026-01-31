@@ -116,7 +116,7 @@ declare -g -a CCACHE_PASSTHROUGH_VARS=(
 )
 
 # Query Redis stats (keys count and memory usage)
-function get_redis_stats() {
+function ccache_get_redis_stats() {
 	local ip="$1"
 	local port="${2:-6379}"
 	local stats=""
@@ -139,22 +139,12 @@ function get_redis_stats() {
 
 # Mask credentials in storage URLs to avoid leaking secrets into build logs
 # Handles any URI scheme with userinfo component (e.g., redis://user:pass@host)
-function mask_storage_url() {
+function ccache_mask_storage_url() {
 	local url="$1"
 	if [[ "${url}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)([^@/]+)@(.*)$ ]]; then
 		echo "${BASH_REMATCH[1]}****@${BASH_REMATCH[3]}"
 	else
 		echo "${url}"
-	fi
-}
-
-# Mask sensitive values for logging (keeps non-storage values intact).
-function ccache_mask_env_log_value() {
-	local var="$1" val="$2"
-	if [[ "${var}" == "CCACHE_REMOTE_STORAGE" ]]; then
-		echo "$(mask_storage_url "${val}")"
-	else
-		echo "${val}"
 	fi
 }
 
@@ -174,7 +164,7 @@ function host_pre_docker_launch__setup_remote_ccache() {
 
 			# Show Redis stats
 			local stats
-			stats=$(get_redis_stats "${ccache_ip}" 6379)
+			stats=$(ccache_get_redis_stats "${ccache_ip}" 6379)
 			if [[ -n "$stats" ]]; then
 				display_alert "Remote ccache stats" "${stats}" "info"
 			fi
@@ -184,7 +174,7 @@ function host_pre_docker_launch__setup_remote_ccache() {
 			display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
 		fi
 	else
-		display_alert "Remote ccache pre-configured" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache pre-configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	fi
 
 	# Pass all set CCACHE_* variables to Docker
@@ -193,8 +183,8 @@ function host_pre_docker_launch__setup_remote_ccache() {
 		val="${!var}"
 		if [[ -n "${val}" ]]; then
 			DOCKER_EXTRA_ARGS+=("--env" "${var}=${val}")
-			local log_val
-			log_val="$(ccache_mask_env_log_value "${var}" "${val}")"
+			local log_val="${val}"
+			[[ "${var}" == "CCACHE_REMOTE_STORAGE" ]] && log_val="$(ccache_mask_storage_url "${val}")"
 			display_alert "Docker env" "${var}=${log_val}" "debug"
 		fi
 	done
@@ -222,7 +212,7 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
-		display_alert "Remote ccache configured" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 		return 0
 	fi
 
@@ -232,7 +222,7 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	if [[ -n "${ccache_ip}" ]]; then
 		export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
-		display_alert "Remote ccache discovered" "$(mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		display_alert "Remote ccache discovered" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	else
 		if [[ "${CCACHE_REMOTE_ONLY}" == "yes" ]]; then
 			display_alert "Remote ccache not available" "CCACHE_REMOTE_ONLY=yes but no remote found, ccache will be ineffective" "wrn"
@@ -244,28 +234,31 @@ function extension_prepare_config__setup_remote_ccache() {
 	return 0
 }
 
-# This hook runs right before kernel make - add ccache env vars to make environment.
-# Required because kernel build uses 'env -i' which clears all environment variables.
-function kernel_make_config__add_ccache_remote_storage() {
+# Inject all set CCACHE_PASSTHROUGH_VARS into the given make environment array
+# Uses bash nameref to write into the caller's array variable
+function ccache_inject_envs() {
+	local -n target_array="$1"
+	local label="$2"
 	local var val
 	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
 		val="${!var}"
 		if [[ -n "${val}" ]]; then
-			common_make_envs+=("${var}=${val@Q}")
-			display_alert "Kernel make: ${var}" "${val}" "debug"
+			target_array+=("${var}=${val@Q}")
+			local log_val="${val}"
+			[[ "${var}" == "CCACHE_REMOTE_STORAGE" ]] && log_val="$(ccache_mask_storage_url "${val}")"
+			display_alert "${label}: ${var}" "${log_val}" "debug"
 		fi
 	done
+}
+
+# This hook runs right before kernel make - add ccache env vars to make environment.
+# Required because kernel build uses 'env -i' which clears all environment variables.
+function kernel_make_config__add_ccache_remote_storage() {
+	ccache_inject_envs common_make_envs "Kernel make"
 }
 
 # This hook runs right before u-boot make - add ccache env vars to make environment.
 # Required because u-boot build uses 'env -i' which clears all environment variables.
 function uboot_make_config__add_ccache_remote_storage() {
-	local var val
-	for var in "${CCACHE_PASSTHROUGH_VARS[@]}"; do
-		val="${!var}"
-		if [[ -n "${val}" ]]; then
-			uboot_make_envs+=("${var}=${val@Q}")
-			display_alert "U-boot make: ${var}" "${val}" "debug"
-		fi
-	done
+	ccache_inject_envs uboot_make_envs "U-boot make"
 }
