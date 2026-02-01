@@ -1,0 +1,513 @@
+From 63cf9c45ac695a062d47213b5bc962785b6f9147 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Thu, 20 Feb 2025 14:50:30 +0800
+Subject: [PATCH] input: Add driver for RSInput Gamepad
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/input/joystick/Kconfig   |   4 +
+ drivers/input/joystick/Makefile  |   1 +
+ drivers/input/joystick/rsinput.c | 418 +++++++++++++++++++++++++++++++
+ 3 files changed, 423 insertions(+)
+ create mode 100644 drivers/input/joystick/rsinput.c
+
+diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
+index 7755e5b454d2..0da3c0f44ecf 100644
+--- a/drivers/input/joystick/Kconfig
++++ b/drivers/input/joystick/Kconfig
+@@ -383,6 +383,10 @@ config JOYSTICK_QWIIC
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called qwiic-joystick.
+ 
++config JOYSTICK_RSINPUT
++	tristate "UART Based gamepad driver that found in AYN and Retroid Pocket products"
++	depends on SERIAL_DEV_BUS
++
+ config JOYSTICK_FSIA6B
+ 	tristate "FlySky FS-iA6B RC Receiver"
+ 	select SERIO
+diff --git a/drivers/input/joystick/Makefile b/drivers/input/joystick/Makefile
+index 9976f596a920..3de503e29489 100644
+--- a/drivers/input/joystick/Makefile
++++ b/drivers/input/joystick/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_JOYSTICK_N64)		+= n64joy.o
+ obj-$(CONFIG_JOYSTICK_PSXPAD_SPI)	+= psxpad-spi.o
+ obj-$(CONFIG_JOYSTICK_PXRC)		+= pxrc.o
+ obj-$(CONFIG_JOYSTICK_QWIIC)		+= qwiic-joystick.o
++obj-$(CONFIG_JOYSTICK_RSINPUT)		+= rsinput.o
+ obj-$(CONFIG_JOYSTICK_SEESAW)		+= adafruit-seesaw.o
+ obj-$(CONFIG_JOYSTICK_SENSEHAT)	+= sensehat-joystick.o
+ obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+new file mode 100644
+index 000000000000..4a7096407712
+--- /dev/null
++++ b/drivers/input/joystick/rsinput.c
+@@ -0,0 +1,464 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * RSInput Gamepad Driver
++ *
++ * Copyright (C) 2024 Teguh Sobirin <teguh@sobir.in>
++ *
++ */
++#define DEBUG
++
++#include <linux/errno.h>
++#include <linux/gpio/consumer.h>
++#include <linux/init.h>
++#include <linux/input.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/serdev.h>
++#include <linux/slab.h>
++#include <uapi/linux/sched/types.h>
++
++#define FRAME_HEAD_1              0xA5
++#define FRAME_HEAD_2              0xD3
++#define FRAME_HEAD_3              0x5A
++#define FRAME_HEAD_4              0x3D
++
++#define CMD_COMMOD                0x01
++#define CMD_STATUS                0x02
++
++#define DATA_COMMOD_VERSION       0x02
++#define DATA_COMMOD_SET_PAR       0x05
++
++#define FRAME_POS_SEQ             4
++#define FRAME_POS_CMD             5
++#define FRAME_POS_LEN_L           6
++#define FRAME_POS_LEN_H           7
++#define FRAME_POS_DATA_1          8
++#define FRAME_POS_DATA_2          9
++#define FRAME_POS_DATA_3          10
++#define FRAME_POS_DATA_4          11
++#define FRAME_POS_DATA_5          12
++#define FRAME_POS_DATA_6          13
++#define FRAME_POS_DATA_7          14
++#define FRAME_POS_DATA_8          15
++#define FRAME_POS_DATA_9          16
++#define FRAME_POS_DATA_10         17
++#define FRAME_POS_DATA_11         18
++#define FRAME_POS_DATA_12         19
++#define FRAME_POS_DATA_13         20
++#define FRAME_POS_DATA_14         21
++
++#define MCU_PKT_SIZE_MIN          9
++
++#define MCU_VERSION_MAX_LEN       64
++
++struct rsinput_driver {
++    struct serdev_device *serdev;
++    struct input_dev *input;
++    struct gpio_desc *boot_gpio;
++    struct gpio_desc *enable_gpio;
++    struct gpio_desc *reset_gpio;
++    uint8_t rx_buf[256];
++    uint8_t sequence_number;
++};
++
++static const unsigned int keymap[] = {
++    BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
++    BTN_NORTH,   BTN_WEST,	    BTN_EAST,	   BTN_SOUTH,
++    BTN_TL,	     BTN_TR,	    BTN_SELECT,	   BTN_START,
++    BTN_THUMBL,  BTN_THUMBR,    BTN_MODE,	   BTN_BACK
++};
++
++static uint8_t compute_checksum(const uint8_t *data, size_t len) {
++    uint8_t checksum = 0;
++
++    for (size_t i = FRAME_POS_SEQ; i < len - 1; i++) {
++        checksum ^= data[i];
++    }
++
++    return checksum;
++}
++
++static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const uint8_t *data, size_t len) {
++    uint8_t frame[256];
++    uint8_t checksum = 0;
++    size_t frame_len = 0;
++
++    frame[frame_len++] = FRAME_HEAD_1;
++    frame[frame_len++] = FRAME_HEAD_2;
++    frame[frame_len++] = FRAME_HEAD_3;
++    frame[frame_len++] = FRAME_HEAD_4;
++
++    frame[frame_len++] = drv->sequence_number;
++    drv->sequence_number++;
++
++    frame[frame_len++] = cmd;
++
++    frame[frame_len++] = len & 0xFF;
++    frame[frame_len++] = (len >> 8) & 0xFF;
++
++    if (data && len) {
++        memcpy(&frame[frame_len], data, len);
++        frame_len += len;
++    }
++
++    checksum = compute_checksum(frame, frame_len + 1);
++    frame[frame_len++] = checksum;
++
++    return serdev_device_write_buf(drv->serdev, frame, frame_len);
++}
++
++static int rsinput_init_commands(struct rsinput_driver *drv) {
++    int error;
++
++    msleep(100);
++    uint8_t version_request[] = {DATA_COMMOD_VERSION};
++    error = rsinput_send_command(drv, CMD_COMMOD, version_request, sizeof(version_request));
++    if (error < 0) {
++        dev_err(&drv->serdev->dev, "Failed to request MCU version: %d\n", error);
++        return error;
++    }
++
++    msleep(100);
++    uint8_t mcu_params[] = {
++        DATA_COMMOD_SET_PAR, 
++        0x01,
++        0x00, 0x00, 0x00, 0x28,
++        0x00, 0x00, 0x00, 0x07
++    };
++    error = rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
++    if (error < 0) {
++        dev_err(&drv->serdev->dev, "Failed to set MCU parameters: %d\n", error);
++        return error;
++    }
++
++    return 0;
++}
++
++static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
++    switch (data[FRAME_POS_DATA_1]) {
++        case DATA_COMMOD_VERSION:
++            if (payload_length >= 1) {
++                char mcu_version[MCU_VERSION_MAX_LEN] = {0};
++                size_t version_length = payload_length;
++                if (version_length > MCU_VERSION_MAX_LEN - 1) {
++                    version_length = MCU_VERSION_MAX_LEN - 1;
++                }
++                memcpy(mcu_version, &data[FRAME_POS_DATA_1], version_length);
++                mcu_version[version_length] = '\0';
++                dev_info(&drv->serdev->dev, "MCU Version: %s\n", mcu_version);
++            } else {
++                dev_err(&drv->serdev->dev, "Invalid MCU version response length\n");
++            }
++            break;
++        case DATA_COMMOD_SET_PAR:
++            dev_info(&drv->serdev->dev, "MCU parameters set successfully\n");
++            break;
++        default:
++            dev_warn(&drv->serdev->dev, "Unhandled CMD_COMMOD sub-command: 0x%02x\n", data[FRAME_POS_DATA_1]);
++            break;
++    }
++}
++
++#define GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL 0x755
++#define GAMEPAD_RAW_TRIGGER_MIN 354
++#define GAMEPAD_RAW_TRIGGER_MAX 1845
++
++#ifndef clamp
++#define clamp(val, min, max) ({ \
++	typeof(val) __val = (val); \
++	typeof(min) __min = (min); \
++	typeof(max) __max = (max); \
++	__val = __val < __min ? __min : __val; \
++	__val > __max ? __max : __val; \
++})
++#endif
++
++static inline int scale_trigger_signed_range(unsigned int raw_val, int raw_min, int raw_max) {
++    long scaled;
++    long input_range = raw_max - raw_min;
++    long output_min = -32768L;
++    long output_max = 32767L;
++    long output_range = output_max - output_min;
++
++    if (input_range == 0)
++        return 0;
++ 
++    long val_shifted = raw_val - raw_min;
++ 
++    if (val_shifted < 0) val_shifted = 0;
++    if (val_shifted > input_range) val_shifted = input_range;
++ 
++    scaled = (val_shifted * output_range / input_range) + output_min;
++
++    if (scaled > 32767)
++        scaled = 32767;
++    else if (scaled < -32768)
++        scaled = -32768;
++
++    return (int)scaled;
++}
++
++static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
++    if (payload_length >= 6) {
++    static unsigned long prev_states;
++    unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
++    unsigned long current_states = keys, changes;
++    int i;
++
++    bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
++
++    for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
++        input_report_key(drv->input, keymap[i], (current_states & BIT(i)));
++    }
++
++    int raw_trig_l_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
++    int raw_trig_r_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8));
++
++    int raw_l_clamped = clamp(raw_trig_l_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int raw_r_clamped = clamp(raw_trig_r_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    int scaled_z  = scale_trigger_signed_range(raw_l_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int scaled_rz = scale_trigger_signed_range(raw_r_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    input_report_abs(drv->input, ABS_Z, scaled_z);
++    input_report_abs(drv->input, ABS_RZ, scaled_rz);
++    input_report_abs(drv->input, ABS_X,
++             -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8)));
++    input_report_abs(drv->input, ABS_Y,
++             -(int16_t)(data[FRAME_POS_DATA_9] | (data[FRAME_POS_DATA_10] << 8)));
++    input_report_abs(drv->input, ABS_RX,
++             -(int16_t)(data[FRAME_POS_DATA_11] | (data[FRAME_POS_DATA_12] << 8)));
++    input_report_abs(drv->input, ABS_RY,
++             -(int16_t)(data[FRAME_POS_DATA_13] | (data[FRAME_POS_DATA_14] << 8)));
++
++    input_sync(drv->input);
++    prev_states = keys;
++
++    } else {
++        dev_warn(&drv->serdev->dev, "Invalid CMD_STATUS response length\n");
++    }
++}
++
++static void rsinput_process_data(struct rsinput_driver *drv, const uint8_t *data, size_t len) {
++    while (len >= MCU_PKT_SIZE_MIN) {
++        uint16_t payload_length = data[FRAME_POS_LEN_L] | (data[FRAME_POS_LEN_H] << 8);
++        size_t frame_length = MCU_PKT_SIZE_MIN + payload_length;
++
++        if (len < frame_length) {
++            return;
++        }
++
++        uint8_t received_checksum = data[frame_length - 1];
++        uint8_t computed_checksum = compute_checksum(data, frame_length);
++        if (computed_checksum != received_checksum) {
++            data += frame_length;
++            len -= frame_length;
++            continue;
++        }
++
++        switch (data[FRAME_POS_CMD]) {
++            case CMD_COMMOD:
++                handle_cmd_commod(drv, data, payload_length);
++                break;
++            case CMD_STATUS:
++                handle_cmd_status(drv, data, payload_length);
++                break;
++            default:
++                dev_warn(&drv->serdev->dev, "Unhandled command: 0x%02X\n", data[FRAME_POS_CMD]);
++                break;
++        }
++
++        data += frame_length;
++        len -= frame_length;
++    }
++
++    if (len > 0) {
++        dev_warn(&drv->serdev->dev, "Trailing bytes after processing: %zu\n", len);
++    }
++}
++
++static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t count) {
++    struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
++    uint8_t received_checksum, computed_checksum;
++
++    if (!drv || !data || count == 0) {
++        dev_warn_ratelimited(&serdev->dev, "Invalid RX data\n");
++        goto error;
++    }
++
++    if (count > sizeof(drv->rx_buf)) {
++        dev_warn_ratelimited(&serdev->dev, "RX buffer overflow\n");
++        goto error;
++    }
++
++    memcpy(drv->rx_buf, data, count);
++
++    if (count < MCU_PKT_SIZE_MIN) {
++        dev_warn_ratelimited(&serdev->dev, "Frame too short for checksum validation\n");
++        goto error;
++    }
++
++    received_checksum = drv->rx_buf[count - 1];
++
++    computed_checksum = compute_checksum(drv->rx_buf, count);
++
++    if (computed_checksum != received_checksum) {
++        rsinput_init_commands(drv);
++        goto error;
++    }
++
++    rsinput_process_data(drv, drv->rx_buf, count);
++
++error:
++    return count;
++}
++
++static const struct serdev_device_ops rsinput_rx_ops = {
++    .receive_buf = rsinput_rx,
++};
++
++static int rsinput_probe(struct serdev_device *serdev) {
++    struct rsinput_driver *drv;
++    u32 gamepad_bus = 0;
++    u32 gamepad_vid = 0;
++    u32 gamepad_pid = 0;
++    u32 gamepad_rev = 0;
++    int error;
++
++    drv = devm_kzalloc(&serdev->dev, sizeof(*drv), GFP_KERNEL);
++    if (!drv)
++    return -ENOMEM;
++
++    drv->boot_gpio =
++        devm_gpiod_get_optional(&serdev->dev, "boot", GPIOD_OUT_HIGH);
++    if (IS_ERR(drv->boot_gpio)) {
++        error = PTR_ERR(drv->boot_gpio);
++        dev_warn(&serdev->dev, "Unable to get boot gpio: %d\n", error);
++    }
++
++    drv->enable_gpio =
++        devm_gpiod_get_optional(&serdev->dev, "enable", GPIOD_OUT_HIGH);
++    if (IS_ERR(drv->enable_gpio)) {
++        error = PTR_ERR(drv->enable_gpio);
++        dev_warn(&serdev->dev, "Unable to get enable gpio: %d\n", error);
++    }
++
++    drv->reset_gpio =
++        devm_gpiod_get_optional(&serdev->dev, "reset", GPIOD_OUT_HIGH);
++    if (IS_ERR(drv->reset_gpio)) {
++        error = PTR_ERR(drv->reset_gpio);
++        dev_warn(&serdev->dev, "Unable to get reset gpio: %d\n", error);
++    }
++
++    if (drv->boot_gpio)
++        gpiod_set_value_cansleep(drv->boot_gpio, 0);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++
++    msleep(100);
++
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 1);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 1);
++
++    msleep(100);
++
++    error = serdev_device_open(serdev);
++    if (error)
++        return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
++
++    drv->serdev = serdev;
++    drv->sequence_number = 0;
++    
++    serdev_device_set_drvdata(serdev, drv);
++
++    error = serdev_device_set_baudrate(serdev, 115200);
++    if (error < 0)
++        return dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
++
++    serdev_device_set_flow_control(serdev, false);
++
++    drv->input = devm_input_allocate_device(&serdev->dev);
++    if (!drv->input)
++        return -ENOMEM;
++
++    drv->input->phys = "rsinput-gamepad/input0";
++    
++    error = device_property_read_string(&serdev->dev, "gamepad-name", &drv->input->name);
++    if (error) {
++        drv->input->name = "RSInput Gamepad";
++    }
++
++    device_property_read_u32(&serdev->dev, "gamepad-bus", &gamepad_bus);
++    device_property_read_u32(&serdev->dev, "gamepad-vid", &gamepad_vid);
++    device_property_read_u32(&serdev->dev, "gamepad-pid", &gamepad_pid);
++    device_property_read_u32(&serdev->dev, "gamepad-rev", &gamepad_rev);
++
++    drv->input->id.bustype = (u16)gamepad_bus;
++    drv->input->id.vendor  = (u16)gamepad_vid;
++    drv->input->id.product = (u16)gamepad_pid;
++    drv->input->id.version = (u16)gamepad_rev;
++
++    __set_bit(EV_KEY, drv->input->evbit);
++    for (int i = 0; i < ARRAY_SIZE(keymap); i++)
++        input_set_capability(drv->input, EV_KEY, keymap[i]);
++
++    __set_bit(EV_ABS, drv->input->evbit);
++    for (int i = ABS_X; i <= ABS_RZ; i++)
++        input_set_abs_params(drv->input, i, -0x580, 0x580,
++                     0, 0);
++
++    input_set_abs_params(drv->input, ABS_Z, 0, 1830, 0, 30);
++    input_set_abs_params(drv->input, ABS_RZ, 0, 1830, 0, 30);
++
++    error = input_register_device(drv->input);
++    if (error)
++        return error;
++
++    serdev_device_set_client_ops(serdev, &rsinput_rx_ops);
++
++    error = rsinput_init_commands(drv);
++    if (error < 0) {
++        serdev_device_close(serdev);
++        return error;
++    }
++
++    return 0;
++}
++
++static void rsinput_remove(struct serdev_device *serdev) {
++    struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
++
++    serdev_device_close(serdev);
++    input_unregister_device(drv->input);
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 0);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++}
++
++static const struct of_device_id rsinput_of_match[] = {
++    { .compatible = "gamepad,rsinput" },
++    { /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, rsinput_of_match);
++
++static struct serdev_device_driver rsinput_driver = {
++    .probe = rsinput_probe,
++    .remove = rsinput_remove,
++    .driver = {
++        .name = "rsinput",
++        .of_match_table = rsinput_of_match,
++    },
++};
++
++module_serdev_device_driver(rsinput_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("RSInput Gamepad Driver");
++MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
+-- 
+2.34.1
+
