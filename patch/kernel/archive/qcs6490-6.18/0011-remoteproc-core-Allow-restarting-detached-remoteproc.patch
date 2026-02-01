@@ -1,0 +1,372 @@
+From 307b3701b210284fdd3bc2352f0ae3957ee33459 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Fri, 25 Jul 2025 15:21:40 +0200
+Subject: [PATCH 011/121] remoteproc: core: Allow restarting detached
+ remoteprocs with new firmware
+
+At the moment, the remoteproc core supports only one auto boot "strategy":
+A remoteproc that is already running during boot ("detached") is attached,
+a remoteproc that is offline is started after loading the firmware. This
+works if the firmware loaded during boot is the same that we would start
+later, but it could also be outdated or a reduced size version that is
+missing some functionality. In this case, the best option is to try
+restarting it with new firmware - assuming that it is available while
+booting.
+
+Add support for this alternative behavior by replacing the "auto_boot" bool
+with a more explicit enum rproc_auto_boot.
+
+For RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE, try requesting the firmware
+early and - if successful - perform a clean stop of the remoteproc so that
+it can be restarted with the new firmware afterwards. A remoteproc driver
+making use of this functionality must handle the stop() callback being
+called during the initial detached state.
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/remoteproc/imx_dsp_rproc.c      |  2 +-
+ drivers/remoteproc/imx_rproc.c          |  8 +++--
+ drivers/remoteproc/ingenic_rproc.c      |  5 ++-
+ drivers/remoteproc/pru_rproc.c          |  2 +-
+ drivers/remoteproc/qcom_q6v5_adsp.c     |  5 ++-
+ drivers/remoteproc/qcom_q6v5_mss.c      |  2 +-
+ drivers/remoteproc/qcom_q6v5_pas.c      |  5 ++-
+ drivers/remoteproc/rcar_rproc.c         |  2 +-
+ drivers/remoteproc/remoteproc_core.c    | 47 ++++++++++++++++++-------
+ drivers/remoteproc/stm32_rproc.c        |  8 +++--
+ drivers/remoteproc/wkup_m3_rproc.c      |  2 +-
+ drivers/remoteproc/xlnx_r5_remoteproc.c |  2 +-
+ include/linux/remoteproc.h              | 23 +++++++++++-
+ 13 files changed, 86 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/remoteproc/imx_dsp_rproc.c b/drivers/remoteproc/imx_dsp_rproc.c
+index 6e78a01755c7..9ef174728d64 100644
+--- a/drivers/remoteproc/imx_dsp_rproc.c
++++ b/drivers/remoteproc/imx_dsp_rproc.c
+@@ -1198,7 +1198,7 @@ static int imx_dsp_rproc_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	init_completion(&priv->pm_comp);
+-	rproc->auto_boot = false;
++	rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	ret = rproc_add(rproc);
+ 	if (ret) {
+ 		dev_err(dev, "rproc_add failed\n");
+diff --git a/drivers/remoteproc/imx_rproc.c b/drivers/remoteproc/imx_rproc.c
+index 8424e6ea5569..56922a855f83 100644
+--- a/drivers/remoteproc/imx_rproc.c
++++ b/drivers/remoteproc/imx_rproc.c
+@@ -1097,8 +1097,12 @@ static int imx_rproc_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_put_scu;
+ 
+-	if (rproc->state != RPROC_DETACHED)
+-		rproc->auto_boot = of_property_read_bool(np, "fsl,auto-boot");
++	if (rproc->state != RPROC_DETACHED) {
++		if (of_property_read_bool(np, "fsl,auto-boot"))
++			rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++		else
++			rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
++	}
+ 
+ 	if (dcfg->flags & IMX_RPROC_NEED_SYSTEM_OFF) {
+ 		/*
+diff --git a/drivers/remoteproc/ingenic_rproc.c b/drivers/remoteproc/ingenic_rproc.c
+index 1b78d8ddeacf..351b95297137 100644
+--- a/drivers/remoteproc/ingenic_rproc.c
++++ b/drivers/remoteproc/ingenic_rproc.c
+@@ -177,7 +177,10 @@ static int ingenic_rproc_probe(struct platform_device *pdev)
+ 	if (!rproc)
+ 		return -ENOMEM;
+ 
+-	rproc->auto_boot = auto_boot;
++	if (auto_boot)
++		rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++	else
++		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 
+ 	vpu = rproc->priv;
+ 	vpu->dev = &pdev->dev;
+diff --git a/drivers/remoteproc/pru_rproc.c b/drivers/remoteproc/pru_rproc.c
+index 5e3eb7b86a0e..2ac2d2d5d090 100644
+--- a/drivers/remoteproc/pru_rproc.c
++++ b/drivers/remoteproc/pru_rproc.c
+@@ -1031,7 +1031,7 @@ static int pru_rproc_probe(struct platform_device *pdev)
+ 	 * remote-processor as part of its state machine either through the
+ 	 * remoteproc sysfs interface or through the equivalent kernel API.
+ 	 */
+-	rproc->auto_boot = false;
++	rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 
+ 	pru = rproc->priv;
+ 	pru->dev = dev;
+diff --git a/drivers/remoteproc/qcom_q6v5_adsp.c b/drivers/remoteproc/qcom_q6v5_adsp.c
+index e98b7e03162c..18e8d03e0bea 100644
+--- a/drivers/remoteproc/qcom_q6v5_adsp.c
++++ b/drivers/remoteproc/qcom_q6v5_adsp.c
+@@ -678,7 +678,10 @@ static int adsp_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	}
+ 
+-	rproc->auto_boot = desc->auto_boot;
++	if (desc->auto_boot)
++		rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++	else
++		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	rproc->has_iommu = desc->has_iommu;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+diff --git a/drivers/remoteproc/qcom_q6v5_mss.c b/drivers/remoteproc/qcom_q6v5_mss.c
+index 3087d895b87f..47553acdadd2 100644
+--- a/drivers/remoteproc/qcom_q6v5_mss.c
++++ b/drivers/remoteproc/qcom_q6v5_mss.c
+@@ -2079,7 +2079,7 @@ static int q6v5_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	}
+ 
+-	rproc->auto_boot = false;
++	rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+ 	qproc = rproc->priv;
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 158bcd6cc85c..672af7336a23 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -716,7 +716,10 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	}
+ 
+-	rproc->auto_boot = desc->auto_boot;
++	if (desc->auto_boot)
++		rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++	else
++		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+ 	pas = rproc->priv;
+diff --git a/drivers/remoteproc/rcar_rproc.c b/drivers/remoteproc/rcar_rproc.c
+index 921d853594f4..3ee6d754d605 100644
+--- a/drivers/remoteproc/rcar_rproc.c
++++ b/drivers/remoteproc/rcar_rproc.c
+@@ -182,7 +182,7 @@ static int rcar_rproc_probe(struct platform_device *pdev)
+ 	dev_set_drvdata(dev, rproc);
+ 
+ 	/* Manually start the rproc */
+-	rproc->auto_boot = false;
++	rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 
+ 	ret = devm_rproc_add(dev, rproc);
+ 	if (ret) {
+diff --git a/drivers/remoteproc/remoteproc_core.c b/drivers/remoteproc/remoteproc_core.c
+index 825672100528..f88a53d2b73d 100644
+--- a/drivers/remoteproc/remoteproc_core.c
++++ b/drivers/remoteproc/remoteproc_core.c
+@@ -1688,7 +1688,8 @@ static int rproc_trigger_auto_boot(struct rproc *rproc)
+ 	 * for a firmware image to be loaded, we can simply initiate the process
+ 	 * of attaching to it immediately.
+ 	 */
+-	if (rproc->state == RPROC_DETACHED)
++	if (rproc->state == RPROC_DETACHED &&
++	    rproc->auto_boot != RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE)
+ 		return rproc_boot(rproc);
+ 
+ 	/*
+@@ -1713,8 +1714,9 @@ static int rproc_stop(struct rproc *rproc, bool crashed)
+ 	if (!rproc->ops->stop)
+ 		return -EINVAL;
+ 
+-	/* Stop any subdevices for the remote processor */
+-	rproc_stop_subdevices(rproc, crashed);
++	/* Stop any subdevices for the remote processor if it was attached */
++	if (rproc->state != RPROC_DETACHED)
++		rproc_stop_subdevices(rproc, crashed);
+ 
+ 	/* the installed resource table is no longer accessible */
+ 	ret = rproc_reset_rsc_table_on_stop(rproc);
+@@ -1731,7 +1733,8 @@ static int rproc_stop(struct rproc *rproc, bool crashed)
+ 		return ret;
+ 	}
+ 
+-	rproc_unprepare_subdevices(rproc);
++	if (rproc->state != RPROC_DETACHED)
++		rproc_unprepare_subdevices(rproc);
+ 
+ 	rproc->state = RPROC_OFFLINE;
+ 
+@@ -1908,9 +1911,9 @@ static void rproc_crash_handler_work(struct work_struct *work)
+  */
+ int rproc_boot(struct rproc *rproc)
+ {
+-	const struct firmware *firmware_p;
++	const struct firmware *firmware_p = NULL;
+ 	struct device *dev;
+-	int ret;
++	int ret, fw_ret = 1;
+ 
+ 	if (!rproc) {
+ 		pr_err("invalid rproc handle\n");
+@@ -1937,6 +1940,19 @@ int rproc_boot(struct rproc *rproc)
+ 		goto unlock_mutex;
+ 	}
+ 
++	/* Check early if we have firmware avilable if needed */
++	if (rproc->auto_boot == RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE &&
++	    rproc->state == RPROC_DETACHED) {
++		fw_ret = request_firmware(&firmware_p, rproc->firmware, dev);
++		if (fw_ret == 0) {
++			dev_info(dev, "restarting %s with new firmware\n", rproc->name);
++
++			ret = rproc_stop(rproc, false);
++			if (ret)
++				goto downref_rproc;
++		}
++	}
++
+ 	if (rproc->state == RPROC_DETACHED) {
+ 		dev_info(dev, "attaching to %s\n", rproc->name);
+ 
+@@ -1944,19 +1960,20 @@ int rproc_boot(struct rproc *rproc)
+ 	} else {
+ 		dev_info(dev, "powering up %s\n", rproc->name);
+ 
+-		/* load firmware */
+-		ret = request_firmware(&firmware_p, rproc->firmware, dev);
+-		if (ret < 0) {
+-			dev_err(dev, "request_firmware failed: %d\n", ret);
++		/* load firmware (if not already happened above) */
++		if (fw_ret == 1)
++			fw_ret = request_firmware(&firmware_p, rproc->firmware, dev);
++		if (fw_ret < 0) {
++			dev_err(dev, "request_firmware failed: %d\n", fw_ret);
++			ret = fw_ret;
+ 			goto downref_rproc;
+ 		}
+ 
+ 		ret = rproc_fw_boot(rproc, firmware_p);
+-
+-		release_firmware(firmware_p);
+ 	}
+ 
+ downref_rproc:
++	release_firmware(firmware_p);
+ 	if (ret)
+ 		atomic_dec(&rproc->power);
+ unlock_mutex:
+@@ -2264,6 +2281,10 @@ static int rproc_validate(struct rproc *rproc)
+ 		return -EINVAL;
+ 	}
+ 
++	if (rproc->auto_boot == RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE &&
++	    (!rproc->ops->stop || !rproc->ops->start || !rproc->ops->attach))
++		return -EINVAL;
++
+ 	return 0;
+ }
+ 
+@@ -2475,7 +2496,7 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
+ 		return NULL;
+ 
+ 	rproc->priv = &rproc[1];
+-	rproc->auto_boot = true;
++	rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
+ 	rproc->elf_class = ELFCLASSNONE;
+ 	rproc->elf_machine = EM_NONE;
+ 
+diff --git a/drivers/remoteproc/stm32_rproc.c b/drivers/remoteproc/stm32_rproc.c
+index 431648607d53..6384f2fbd62e 100644
+--- a/drivers/remoteproc/stm32_rproc.c
++++ b/drivers/remoteproc/stm32_rproc.c
+@@ -704,7 +704,8 @@ static int stm32_rproc_get_syscon(struct device_node *np, const char *prop,
+ }
+ 
+ static int stm32_rproc_parse_dt(struct platform_device *pdev,
+-				struct stm32_rproc *ddata, bool *auto_boot)
++				struct stm32_rproc *ddata,
++				enum rproc_auto_boot *auto_boot)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct device_node *np = dev->of_node;
+@@ -785,7 +786,10 @@ static int stm32_rproc_parse_dt(struct platform_device *pdev,
+ 	if (err)
+ 		dev_info(dev, "failed to get pdds\n");
+ 
+-	*auto_boot = of_property_read_bool(np, "st,auto-boot");
++	if (of_property_read_bool(np, "st,auto-boot"))
++		*auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++	else
++		*auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 
+ 	/*
+ 	 * See if we can check the M4 status, i.e if it was started
+diff --git a/drivers/remoteproc/wkup_m3_rproc.c b/drivers/remoteproc/wkup_m3_rproc.c
+index 2d5bfbefcacc..8815648295c8 100644
+--- a/drivers/remoteproc/wkup_m3_rproc.c
++++ b/drivers/remoteproc/wkup_m3_rproc.c
+@@ -170,7 +170,7 @@ static int wkup_m3_rproc_probe(struct platform_device *pdev)
+ 	if (!rproc)
+ 		return -ENOMEM;
+ 
+-	rproc->auto_boot = false;
++	rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	rproc->sysfs_read_only = true;
+ 
+ 	wkupm3 = rproc->priv;
+diff --git a/drivers/remoteproc/xlnx_r5_remoteproc.c b/drivers/remoteproc/xlnx_r5_remoteproc.c
+index 0b7b173d0d26..cc6fad782cd5 100644
+--- a/drivers/remoteproc/xlnx_r5_remoteproc.c
++++ b/drivers/remoteproc/xlnx_r5_remoteproc.c
+@@ -940,7 +940,7 @@ static struct zynqmp_r5_core *zynqmp_r5_add_rproc_core(struct device *cdev)
+ 
+ 	r5_rproc->recovery_disabled = true;
+ 	r5_rproc->has_iommu = false;
+-	r5_rproc->auto_boot = false;
++	r5_rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
+ 	r5_core = r5_rproc->priv;
+ 	r5_core->dev = cdev;
+ 	r5_core->np = dev_of_node(cdev);
+diff --git a/include/linux/remoteproc.h b/include/linux/remoteproc.h
+index b4795698d8c2..c40b18d120ab 100644
+--- a/include/linux/remoteproc.h
++++ b/include/linux/remoteproc.h
+@@ -503,6 +503,27 @@ enum rproc_features {
+ 	RPROC_MAX_FEATURES,
+ };
+ 
++/**
++ * enum rproc_auto_boot - auto boot strategy for remoteproc during initial boot
++ *
++ * @RPROC_AUTO_BOOT_DISABLED: The remoteproc will be left offline (or detached).
++ * @RPROC_AUTO_BOOT_ATTACH_OR_START: The remoteproc will be attached (if it is
++ *				     already running). Otherwise, it will be
++ *				     started with new loaded firmware.
++ * @RPROC_FEAT_REBOOT_IF_FW_AVAILABLE: The remoteproc will be restarted if
++ *				       requesting new firmware succeeds. If
++ *				       the firmware is missing and the
++ *				       remoteproc is already running, it will
++ *				       be attached instead. A remoteproc
++ *				       implementing this must handle stop()
++ *				       being called in detached state.
++ */
++enum rproc_auto_boot {
++	RPROC_AUTO_BOOT_DISABLED,
++	RPROC_AUTO_BOOT_ATTACH_OR_START,
++	RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE,
++};
++
+ /**
+  * struct rproc - represents a physical remote processor device
+  * @node: list node of this rproc object
+@@ -577,7 +598,7 @@ struct rproc {
+ 	struct resource_table *cached_table;
+ 	size_t table_sz;
+ 	bool has_iommu;
+-	bool auto_boot;
++	enum rproc_auto_boot auto_boot;
+ 	bool sysfs_read_only;
+ 	struct list_head dump_segments;
+ 	int nb_vdev;
+-- 
+2.39.5
+
