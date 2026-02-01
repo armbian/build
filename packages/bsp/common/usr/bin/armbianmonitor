@@ -81,13 +81,6 @@
 #
 ############################################################################
 
-# Config:
-declare -a paste_servers=("paste.armbian.com" "paste.next.armbian.com" "paste.armbian.de")
-if [[ "${PASTE_SERVER_HOST}" != "" ]]; then
-	echo "Using custom paste server: '${PASTE_SERVER_HOST}'"
-	paste_servers=("${PASTE_SERVER_HOST}" "${paste_servers[@]}")
-fi
-
 Main() {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -156,52 +149,24 @@ ParseOptions() {
 				NetworkMonitorMode ${OPTARG}
 				exit 0
 				;;
-			u)
-				# Upload /var/log/armbian-hardware-monitor.log with additional support info
-				# NOTE(rpardini): was here. briefly. just because this uses the paste server and I want ANSI dmesgs
-				# check if curl binary is available in path, if not try to install it. use command, not which
-				if ! command -v curl > /dev/null 2>&1; then
-					echo "curl not found in PATH. Trying to install it." >&2
-					apt-get -f -y install curl
+			u | U)
+				# DEPRECATED: Support info collection has been moved to armbian-debug
+				cat << 'EOF'
+
+The -u and -U options are deprecated. This functionality has been moved to the
+dedicated 'armbian-debug' tool.
+
+Launching armbian-debug now...
+EOF
+				# Check if armbian-debug exists
+				if [ -x /usr/bin/armbian-debug ]; then
+					exec /usr/bin/armbian-debug
+				elif [ -x "$(dirname "$0")/armbian-debug" ]; then
+					exec "$(dirname "$0")/armbian-debug"
+				else
+					echo "Error: armbian-debug not found." >&2
+					exit 1
 				fi
-				# loop over the paste_servers; first to work wins.
-				for paste_server in "${paste_servers[@]}"; do # defined at top of file
-					echo "Collecting info and sending to ${paste_server}, wait..."
-					declare -i counter=0
-					{
-						LC_ALL=C date # include timestamp
-						echo "-----------------------------------------------------------------------------------------------------------------------------"
-						dmesg --color=always # output in ANSI color. The paste service handles this.
-						echo "-----------------------------------------------------------------------------------------------------------------------------"
-						CollectSupportInfo || echo "Error collecting support info via CollectSupportInfo"
-					} |
-						# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
-						# in clear since otherwise the log becomes worthless due to randomly generated
-						# addresses here and there that might conflict
-						sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' |
-						curl -s --fail --data-binary @- "https://${paste_server}/log"
-					# Check PIPESTATUS to know if everything worked. Any non-zero exit status means something didn't work.
-					for i in "${PIPESTATUS[@]}"; do
-						counter=$((counter + 1))
-						if [[ $i -ne 0 ]]; then
-							echo "Failed grabbing info (pipe ${counter} result ${i}) and sending to server ${paste_server}."
-							continue 2 # continue the outer loop (paste_servers)
-						fi
-					done
-					echo -e "Please post the URL in the forum where you've been asked for.\n"
-					exit 0
-				done
-
-				;;
-
-			U)
-				# Send support info to stdout to be uploaded manually. Add line numbers to prevent
-				# users being creative and supressing everything that's important
-				CollectSupportInfo |
-					sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' |
-					awk '!NF{$0=" "}1' | nl -
-				echo -e "\nPlease upload the ${BOLD}whole output${NC} above to an online pasteboard service\nand provide the URL in the forum where you have been asked for this.\n"
-				exit 0
 				;;
 			d)
 				# monitors write activity to disk
@@ -266,7 +231,7 @@ DisplayUsage() {
 	#		grep "^#" "$0" | grep -v "^#\!/bin/bash" | sed 's/^#//'
 	#	fi
 	echo
-	echo "Usage: $(basename $0) [-h] [-b] [-c \$path] [-d \$device] [-D] [-m] [-u]"
+	echo "Usage: $(basename $0) [-h] [-c \$path] [-d \$device] [-D] [-m] [-n] [-v] [-z]"
 	echo
 	echo "Options:"
 	echo "  -c /path/to/test   Performs disk health/performance tests"
@@ -276,9 +241,11 @@ DisplayUsage() {
 	echo "  -M                 Provides simple CLI monitoring - fixed-line output"
 	echo "  -n                 Provides simple CLI network monitoring - scrolling output"
 	echo "  -N                 Provides simple CLI network monitoring - fixed-line output"
-	echo "  -u                 Tries to upload armbian-hardware-monitor.log for support purposes"
 	echo "  -v                 Tries to verify installed package integrity"
 	echo "  -z                 Runs a quick 7-zip benchmark to estimate CPU performance"
+	echo
+	echo "Note: The -u/-U options for support info upload are deprecated."
+	echo "      Use the 'armbian-debug' command instead."
 	echo
 
 } # DisplayUsage
@@ -686,67 +653,6 @@ CreateTempDir() {
 	done
 } #CreateTempFiles
 
-CollectSupportInfo() {
-	[[ -s /var/log/armbian-hardware-monitor.log ]] && cat /var/log/armbian-hardware-monitor.log || zcat /var/log/armbian-hardware-monitor.log.1.gz 2> /dev/null
-	[[ -f /boot/armbianEnv.txt ]] && LOGLEVEL=$(awk -F'=' '/^verbosity/ {print $2}' /boot/armbianEnv.txt)
-	LOGLEVEL=${LOGLEVEL:-1}
-	if [ ${LOGLEVEL} -gt 4 ]; then
-		VERBOSE='-v'
-		which lshw > /dev/null 2>&1 && (
-			echo -e "\n### lshw:"
-			lshw -quiet -sanitize -numeric
-		)
-	fi
-	lsusb > /dev/null 2>&1 && (
-		echo -e "\n### lsusb:\n"
-		lsusb ${VERBOSE} 2> /dev/null
-		echo ""
-		lsusb -t 2> /dev/null
-	)
-	lspci > /dev/null 2>&1 && (
-		echo -e "\n### lspci:\n"
-		lspci ${VERBOSE} 2> /dev/null
-	)
-	nvme > /dev/null 2>&1 && (
-		echo -e "\n### nvme:\n"
-		nvme list 2> /dev/null
-	)
-	[ -z $SUDO_USER ] || echo -e "\n### Group membership of $(groups $SUDO_USER)"
-	echo -en "\n### Userland"
-	[[ -f /etc/armbian-release ]] && echo -en " generated with Armbian Build Framework"
-	echo -en ":\n"
-	echo -e "\n$(grep PRETTY_NAME /etc/os-release)"
-	echo -e "\n### Installed packages:\n\n$(dpkg -l | grep -E "openmediavault|armbian| linux-")"
-	KernelVersion=$(awk -F" " '{print $3}' < /proc/version)
-	case ${KernelVersion} in
-		3.*)
-			[[ -e /boot/script.bin ]] && echo -e "\n### fex settings: $(ls -la /boot/script.bin)\n\n$(bin2fex /boot/script.bin 2> /dev/null)"
-			;;
-	esac
-	echo -e "\n### Loaded modules:\n\n$(lsmod)"
-	[[ -f /var/log/nand-sata-install.log ]] && echo -e "\n### nand-sata-install.log:\n\n$(cat /var/log/nand-sata-install.log)"
-	echo -e "\n### Current system health:\n\n$("$0" -s | grep -E "^Time|^[0-9]")"
-	stress -t 3 -c $(grep -c processor /proc/cpuinfo) --backoff 250 > /dev/null 2>&1 &
-	"$0" -s | grep "^[0-9]"
-	# Include name resolving information only if upload is not possible
-	fping ix.io 2> /dev/null | grep -q alive ||
-		[ -f /etc/resolv.conf ] && echo -e "\n### resolv.conf\n\n$(
-		ls -la /etc/resolv.conf
-		cat /etc/resolv.conf
-	)" ||
-		echo -e "\n### resolv.conf does not exist or readable"
-	echo -e "\n### Current sysinfo:\n\n$(command -v iostat >/dev/null 2>&1 && iostat -p ALL | grep -v "^loop")\n\n$(vmstat -w)\n\n$(free -h)\n\n$(zramctl 2> /dev/null)\n\n$(uptime)\n\n$(dmesg | tail -n 250)"
-	echo -e "\n"
-	[[ "$(id -u)" -eq "0" ]] && for sysfsnode in /proc/sys/vm/*; do sysctl $(echo ${sysfsnode} | sed 's|/proc/sys/vm/|vm.|'); done
-	echo -e "\n### interrupts:\n$(cat /proc/interrupts)"
-	ls /tmp/armbianmonitor_checks_* > /dev/null 2>&1 || return
-	for file in /tmp/armbianmonitor_checks_*; do
-		echo -e "\n### \c"
-		ls "${file}" | cut -f1 -d.
-		echo
-		cat "${file}"
-	done
-} # CollectSupportInfo
 
 CheckCard() {
 	if [ "$(id -u)" = "0" ]; then
