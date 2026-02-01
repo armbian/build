@@ -1,15 +1,24 @@
 # Extension: ccache-remote
-# Enables ccache with remote Redis storage for sharing compilation cache across build hosts
+# Enables ccache with remote storage for sharing compilation cache across build hosts.
+# Supports Redis and HTTP/WebDAV backends (ccache 4.4+).
 #
-# Documentation: https://ccache.dev/howto/redis-storage.html
-# See also: https://ccache.dev/manual/4.10.html#config_remote_storage
+# Documentation:
+#   Redis:   https://ccache.dev/howto/redis-storage.html
+#   HTTP:    https://ccache.dev/howto/http-storage.html
+#   General: https://ccache.dev/manual/4.10.html#config_remote_storage
 #
 # Usage:
-#   # With Avahi/mDNS auto-discovery:
+#   # With explicit Redis server:
+#   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_STORAGE="redis://192.168.1.65:6379" BOARD=...
+#
+#   # With HTTP/WebDAV server:
+#   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_STORAGE="http://192.168.1.65:8088/ccache/" BOARD=...
+#
+#   # Auto-discovery via DNS-SD (no URL needed, discovers type/host/port):
 #   ./compile.sh ENABLE_EXTENSIONS=ccache-remote BOARD=...
 #
-#   # With explicit Redis server (no Avahi needed):
-#   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_STORAGE="redis://192.168.1.65:6379" BOARD=...
+#   # DNS SRV discovery for remote build servers:
+#   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_DOMAIN="example.com" BOARD=...
 #
 #   # Disable local cache, use remote only (saves local disk space):
 #   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_ONLY=yes BOARD=...
@@ -19,7 +28,8 @@
 # Supported ccache environment variables (passed through to builds):
 # See: https://ccache.dev/manual/latest.html#_configuration_options
 #   CCACHE_BASEDIR        - base directory for path normalization (enables cache sharing)
-#   CCACHE_REMOTE_STORAGE - remote storage URL (redis://...)
+#   CCACHE_REMOTE_STORAGE - remote storage URL (redis://... or http://...)
+#   CCACHE_REMOTE_DOMAIN  - domain for DNS SRV discovery (e.g., "example.com")
 #   CCACHE_REMOTE_ONLY    - use only remote storage, disable local cache
 #   CCACHE_READONLY       - read-only mode, don't update cache
 #   CCACHE_RECACHE        - don't use cached results, but update cache
@@ -36,17 +46,39 @@
 #   CCACHE_PCH_EXTSUM     - include PCH extension in hash
 #
 # CCACHE_REMOTE_STORAGE format (ccache 4.4+):
-#   redis://HOST[:PORT][|attribute=value...]
+#   Redis: redis://HOST[:PORT][|attribute=value...]
+#   HTTP:  http://HOST[:PORT]/PATH/[|attribute=value...]
 #   Common attributes:
 #     connect-timeout=N   - connection timeout in milliseconds (default: 100)
 #     operation-timeout=N - operation timeout in milliseconds (default: 10000)
-#   Example: "redis://192.168.1.65:6379|connect-timeout=500"
+#   Examples:
+#     "redis://192.168.1.65:6379|connect-timeout=500"
+#     "http://192.168.1.65:8088/ccache/"
 #
-# Avahi/mDNS auto-discovery:
-#   This extension tries to resolve 'ccache.local' hostname via mDNS.
-#   To publish this hostname on Redis server, run:
-#     avahi-publish-address -R ccache.local <SERVER_IP>
-#   Or create a systemd service (see below).
+# Auto-discovery (priority order):
+#   1. Explicit CCACHE_REMOTE_STORAGE - used as-is, no discovery
+#   2. DNS-SD browse for _ccache._tcp on local network (avahi-browse)
+#   3. DNS SRV record _ccache._tcp.DOMAIN (when CCACHE_REMOTE_DOMAIN is set)
+#   4. Legacy mDNS: resolve 'ccache.local' hostname (fallback)
+#
+#   When multiple services are found, Redis is preferred over HTTP.
+#
+#   DNS-SD service publication (on cache server):
+#     # For HTTP/WebDAV:
+#     avahi-publish-service "ccache-webdav" _ccache._tcp 8088 type=http path=/ccache/
+#     # For Redis:
+#     avahi-publish-service "ccache-redis" _ccache._tcp 6379 type=redis
+#
+#   DNS SRV record (for remote/hosted build servers):
+#     Set CCACHE_REMOTE_DOMAIN to your domain, then create DNS records:
+#       _ccache._tcp.example.com.  SRV  0 0 8088 ccache.example.com.
+#       _ccache._tcp.example.com.  TXT  "type=http" "path=/ccache/"
+#     The cache server must be reachable from the build host (e.g., via port forwarding).
+#
+#   Legacy mDNS (backward compatible):
+#     Publish 'ccache.local' hostname via Avahi:
+#       avahi-publish-address -R ccache.local <SERVER_IP>
+#     Or create a systemd service (see below).
 #
 #   Server setup example:
 #     1. Install: apt install redis-server avahi-daemon avahi-utils
@@ -71,6 +103,32 @@
 #          Restart=on-failure
 #          [Install]
 #          WantedBy=redis-server.service
+#
+#   HTTP/WebDAV server setup example (nginx):
+#     1. Install: apt install nginx-extras
+#     2. Create /etc/nginx/sites-available/ccache-webdav:
+#          server {
+#              listen 8088;
+#              server_name _;
+#              root /var/cache/ccache-webdav;
+#              location /ccache/ {
+#                  dav_methods PUT DELETE;
+#                  create_full_put_path on;
+#                  dav_access user:rw group:rw all:r;
+#                  client_max_body_size 100M;
+#                  autoindex on;
+#              }
+#          }
+#     3. Enable and start:
+#          mkdir -p /var/cache/ccache-webdav/ccache
+#          chown -R www-data:www-data /var/cache/ccache-webdav
+#          ln -s /etc/nginx/sites-available/ccache-webdav /etc/nginx/sites-enabled/
+#          systemctl reload nginx
+#     4. Verify: curl -X PUT -d "test" http://localhost:8088/ccache/test.txt
+#        WARNING: This configuration has no authentication.
+#        Use ONLY in a fully trusted private network.
+#        For auth, add auth_basic directives. See nginx WebDAV documentation.
+#     Note: ccache does not support HTTPS directly. Use a reverse proxy for TLS.
 #
 #   Client requirements for mDNS resolution (one of):
 #     - libnss-resolve (systemd-resolved NSS module):
@@ -97,6 +155,7 @@ declare -g -r CCACHE_REDIS_CONNECT_TIMEOUT="${CCACHE_REDIS_CONNECT_TIMEOUT:-500}
 # List of ccache environment variables to pass through to builds
 declare -g -a CCACHE_PASSTHROUGH_VARS=(
 	CCACHE_REDIS_CONNECT_TIMEOUT
+	CCACHE_REMOTE_DOMAIN
 	CCACHE_BASEDIR
 	CCACHE_REMOTE_STORAGE
 	CCACHE_REMOTE_ONLY
@@ -114,6 +173,90 @@ declare -g -a CCACHE_PASSTHROUGH_VARS=(
 	CCACHE_STATSLOG
 	CCACHE_PCH_EXTSUM
 )
+
+# Discover ccache remote storage via DNS-SD (mDNS/Avahi) or DNS SRV records.
+# Looks for _ccache._tcp services with TXT records: type=http|redis, path=/...
+# Prefers Redis over HTTP when multiple services are found.
+# Sets CCACHE_REMOTE_STORAGE on success, returns 1 if nothing found.
+function ccache_discover_remote_storage() {
+	# Method 1: DNS-SD browse on local network (requires avahi-browse)
+	if command -v avahi-browse &>/dev/null; then
+		local browse_output
+		browse_output=$(timeout 5 avahi-browse -rpt _ccache._tcp 2>/dev/null || true)
+		if [[ -n "${browse_output}" ]]; then
+			# Parse resolved lines: =;IFACE;PROTO;NAME;TYPE;DOMAIN;HOSTNAME;ADDRESS;PORT;"txt"...
+			# Prefer IPv4 (proto=IPv4), prefer type=redis over type=http
+			local redis_url="" http_url=""
+			while IFS=';' read -r status iface proto name stype domain hostname address port txt_rest; do
+				[[ "${status}" == "=" && "${proto}" == "IPv4" ]] || continue
+				local svc_type="" svc_path=""
+				# Parse TXT records from remaining fields
+				if [[ "${txt_rest}" =~ \"type=([a-z]+)\" ]]; then
+					svc_type="${BASH_REMATCH[1]}"
+				fi
+				if [[ "${txt_rest}" =~ \"path=([^\"]+)\" ]]; then
+					svc_path="${BASH_REMATCH[1]}"
+				fi
+				if [[ "${svc_type}" == "redis" ]]; then
+					redis_url="redis://${address}:${port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+				elif [[ "${svc_type}" == "http" ]]; then
+					http_url="http://${address}:${port}${svc_path}"
+				fi
+			done <<< "${browse_output}"
+			# Redis preferred over HTTP
+			if [[ -n "${redis_url}" ]]; then
+				export CCACHE_REMOTE_STORAGE="${redis_url}"
+				display_alert "DNS-SD: discovered Redis ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+				return 0
+			elif [[ -n "${http_url}" ]]; then
+				export CCACHE_REMOTE_STORAGE="${http_url}"
+				display_alert "DNS-SD: discovered HTTP ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+				return 0
+			fi
+		fi
+	fi
+
+	# Method 2: DNS SRV record for remote setups (CCACHE_REMOTE_DOMAIN must be set)
+	if [[ -n "${CCACHE_REMOTE_DOMAIN}" ]] && command -v dig &>/dev/null; then
+		local srv_output
+		srv_output=$(dig +short SRV "_ccache._tcp.${CCACHE_REMOTE_DOMAIN}" 2>/dev/null || true)
+		if [[ -n "${srv_output}" ]]; then
+			local srv_port srv_host
+			# SRV format: priority weight port target
+			read -r _ _ srv_port srv_host <<< "${srv_output}"
+			srv_host="${srv_host%.}" # strip trailing dot
+			if [[ -n "${srv_host}" && -n "${srv_port}" ]]; then
+				# Check TXT record for service type and path
+				local txt_output svc_type="redis" svc_path=""
+				txt_output=$(dig +short TXT "_ccache._tcp.${CCACHE_REMOTE_DOMAIN}" 2>/dev/null || true)
+				if [[ "${txt_output}" =~ type=([a-z]+) ]]; then
+					svc_type="${BASH_REMATCH[1]}"
+				fi
+				if [[ "${txt_output}" =~ path=([^\"[:space:]]+) ]]; then
+					svc_path="${BASH_REMATCH[1]}"
+				fi
+				if [[ "${svc_type}" == "http" ]]; then
+					export CCACHE_REMOTE_STORAGE="http://${srv_host}:${srv_port}${svc_path}"
+				else
+					export CCACHE_REMOTE_STORAGE="redis://${srv_host}:${srv_port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+				fi
+				display_alert "DNS SRV: discovered ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+				return 0
+			fi
+		fi
+	fi
+
+	# Method 3: Legacy fallback - resolve ccache.local hostname
+	local ccache_ip
+	ccache_ip=$(getent hosts ccache.local 2>/dev/null | awk '{print $1; exit}' || true)
+	if [[ -n "${ccache_ip}" ]]; then
+		export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+		display_alert "mDNS: discovered ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+		return 0
+	fi
+
+	return 1
+}
 
 # Query Redis stats (keys count and memory usage)
 function ccache_get_redis_stats() {
@@ -137,6 +280,29 @@ function ccache_get_redis_stats() {
 	echo "$stats"
 }
 
+# Check HTTP/WebDAV storage reachability via HEAD request
+function ccache_get_http_stats() {
+	local url="$1"
+	local stats=""
+	local http_code
+	http_code=$(timeout 3 curl -s -o /dev/null -w "%{http_code}" -X HEAD "${url}" 2>/dev/null || true)
+	if [[ -n "${http_code}" && "${http_code}" != "000" ]]; then
+		stats="reachable (HTTP ${http_code})"
+	fi
+	echo "$stats"
+}
+
+# Query remote storage stats based on URL scheme (redis:// or http://)
+function ccache_get_remote_stats() {
+	local url="$1"
+	if [[ "${url}" =~ ^redis://([^:/|]+):?([0-9]*) ]]; then
+		ccache_get_redis_stats "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]:-6379}"
+	elif [[ "${url}" =~ ^https?:// ]]; then
+		# Strip ccache attributes after | for the URL
+		ccache_get_http_stats "${url%%|*}"
+	fi
+}
+
 # Mask credentials in storage URLs to avoid leaking secrets into build logs
 # Handles any URI scheme with userinfo component (e.g., redis://user:pass@host)
 function ccache_mask_storage_url() {
@@ -154,27 +320,19 @@ function ccache_mask_storage_url() {
 # to Docker container via CCACHE_REMOTE_STORAGE environment variable.
 # mDNS resolution doesn't work inside Docker, so we must resolve on host.
 function host_pre_docker_launch__setup_remote_ccache() {
-	# If CCACHE_REMOTE_STORAGE not set, try to resolve ccache.local via mDNS
-	if [[ -z "${CCACHE_REMOTE_STORAGE}" ]]; then
-		local ccache_ip
-		ccache_ip=$(getent hosts ccache.local 2>/dev/null | awk '{print $1; exit}' || true)
-
-		if [[ -n "${ccache_ip}" ]]; then
-			display_alert "Remote ccache discovered on host" "redis://${ccache_ip}:6379" "info"
-
-			# Show Redis stats
-			local stats
-			stats=$(ccache_get_redis_stats "${ccache_ip}" 6379)
-			if [[ -n "$stats" ]]; then
-				display_alert "Remote ccache stats" "${stats}" "info"
-			fi
-
-			export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
-		else
-			display_alert "Remote ccache not found on host" "ccache.local not resolvable via mDNS" "debug"
-		fi
-	else
+	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
 		display_alert "Remote ccache pre-configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+	elif ! ccache_discover_remote_storage; then
+		display_alert "Remote ccache not found on host" "no service discovered" "debug"
+	fi
+
+	# Show backend stats if we have a remote storage URL
+	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
+		local stats
+		stats=$(ccache_get_remote_stats "${CCACHE_REMOTE_STORAGE}")
+		if [[ -n "$stats" ]]; then
+			display_alert "Remote ccache stats" "${stats}" "info"
+		fi
 	fi
 
 	# Pass all set CCACHE_* variables to Docker
@@ -216,19 +374,15 @@ function extension_prepare_config__setup_remote_ccache() {
 		return 0
 	fi
 
-	# For native (non-Docker) builds, try to resolve here
-	local ccache_ip
-	ccache_ip=$(getent hosts ccache.local 2>/dev/null | awk '{print $1; exit}')
+	# For native (non-Docker) builds, try to discover
+	if ccache_discover_remote_storage; then
+		return 0
+	fi
 
-	if [[ -n "${ccache_ip}" ]]; then
-		export CCACHE_REMOTE_STORAGE="redis://${ccache_ip}:6379|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
-		display_alert "Remote ccache discovered" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+	if [[ "${CCACHE_REMOTE_ONLY}" == "yes" ]]; then
+		display_alert "Remote ccache not available" "CCACHE_REMOTE_ONLY=yes but no remote found, ccache will be ineffective" "wrn"
 	else
-		if [[ "${CCACHE_REMOTE_ONLY}" == "yes" ]]; then
-			display_alert "Remote ccache not available" "CCACHE_REMOTE_ONLY=yes but no remote found, ccache will be ineffective" "wrn"
-		else
-			display_alert "Remote ccache not available" "using local cache only" "debug"
-		fi
+		display_alert "Remote ccache not available" "using local cache only" "debug"
 	fi
 
 	return 0
