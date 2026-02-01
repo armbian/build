@@ -76,6 +76,8 @@ function cli_docker_run() {
 	fi
 
 	# Produce the re-launch params.
+	# When relaunching inside docker, run 'build' command, not 'docker' again
+	declare -g ARMBIAN_CLI_RELAUNCH_COMMAND="build"
 	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
 	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
 	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
