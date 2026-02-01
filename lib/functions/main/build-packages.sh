@@ -50,6 +50,7 @@ function determine_artifacts_to_build_for_image() {
 			artifacts_to_build+=("armbian-desktop")
 			artifacts_to_build+=("armbian-bsp-desktop")
 		fi
+		artifacts_to_build+=("armbian-bsp-generic")
 	fi
 
 	# If we're only dumping the config, include the rootfs artifact.
