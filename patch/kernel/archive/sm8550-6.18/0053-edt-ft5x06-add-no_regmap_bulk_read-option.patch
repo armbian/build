@@ -1,0 +1,89 @@
+From e154c5ad47302417a1ef134bb9e8ed3155061c70 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Mon, 27 Oct 2025 18:32:01 +0800
+Subject: [PATCH] Input: edt-ft5x06 - add no_regmap_bulk_read option
+
+AYN SM8550 have problem with regmap_bulk_read under i2c_hub_*
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/input/touchscreen/edt-ft5x06.c | 42 ++++++++++++++++++++++++--
+ 1 file changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/input/touchscreen/edt-ft5x06.c b/drivers/input/touchscreen/edt-ft5x06.c
+index bf498bd4dea9..f8a7e66aee55 100644
+--- a/drivers/input/touchscreen/edt-ft5x06.c
++++ b/drivers/input/touchscreen/edt-ft5x06.c
+@@ -146,6 +146,7 @@ struct edt_ft5x06_ts_data {
+ 	enum edt_ver version;
+ 	unsigned int crc_errors;
+ 	unsigned int header_errors;
++	bool no_regmap_bulk_read;
+ };
+ 
+ struct edt_i2c_chip_data {
+@@ -295,6 +296,36 @@ static const struct regmap_config edt_M06_i2c_regmap_config = {
+ 	.write = edt_M06_i2c_write,
+ };
+ 
++static int edt_bulk_read(struct regmap *map,
++				     unsigned int start,
++				     void *val, size_t len)
++{
++	u8 *dst = val;
++	size_t off = 0;
++
++	while (off < len) {
++		unsigned int v = 0;
++		int ret, tries;
++
++		for (tries = 0; tries < 3; tries++) {
++			ret = regmap_read(map, start + off, &v);
++			if (!ret) {
++				dst[off] = (u8)v;
++				break;
++			}
++			if (ret == -ETIMEDOUT || ret == -EAGAIN)
++				usleep_range(2000, 4000);
++		}
++
++		if (tries == 3)
++			return ret ? ret : -EIO;
++
++		off++;
++	}
++
++	return 0;
++}
++
+ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+ {
+ 	struct edt_ft5x06_ts_data *tsdata = dev_id;
+@@ -304,8 +335,13 @@ static irqreturn_t edt_ft5x06_ts_isr(int irq, void *dev_id)
+ 	int error;
+ 
+ 	memset(rdbuf, 0, sizeof(rdbuf));
+-	error = regmap_bulk_read(tsdata->regmap, tsdata->tdata_cmd, rdbuf,
+-				 tsdata->tdata_len);
++	if(tsdata->no_regmap_bulk_read) {
++		error = edt_bulk_read(tsdata->regmap, tsdata->tdata_cmd, rdbuf,
++					tsdata->tdata_len);
++	} else {
++		error = regmap_bulk_read(tsdata->regmap, tsdata->tdata_cmd, rdbuf,
++					tsdata->tdata_len);
++	}
+ 	if (error) {
+ 		dev_err_ratelimited(dev, "Unable to fetch data, error: %d\n",
+ 				    error);
+@@ -1232,6 +1268,8 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
+ 		return error;
+ 	}
+ 
++	tsdata->no_regmap_bulk_read =
++		device_property_read_bool(&client->dev, "no-regmap-bulk-read");
+ 	/*
+ 	 * Check which sleep modes we can support. Power-off requires the
+ 	 * reset-pin to ensure correct power-down/power-up behaviour. Start with
+-- 
+2.34.1
+

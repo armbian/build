@@ -1,25 +1,25 @@
-From 46a8c2454f5e228718a36f046d0e42156ded57e6 Mon Sep 17 00:00:00 2001
+From 36b977cf1f34d9255d88bac5ac63218a1b2f2ba3 Mon Sep 17 00:00:00 2001
 From: BigfootACA <bigfoot@classfun.cn>
-Date: Sat, 24 Jan 2026 19:45:33 +0800
-Subject: [PATCH 17/18] pwm: Add SI-EN SN3112 PWM support
+Date: Sun, 10 Mar 2024 06:13:55 +0800
+Subject: [PATCH] pwm: Add SI-EN SN3112 PWM support
 
 Add a new driver for the SI-EN SN3112 12-channel 8-bit PWM LED controller.
 
-Signed-off-by: Alex Ling <ling_kasim@hotmail.com>
+Signed-off-by: BigfootACA <bigfoot@classfun.cn>
 ---
  drivers/pwm/Kconfig      |  10 ++
  drivers/pwm/Makefile     |   1 +
- drivers/pwm/pwm-sn3112.c | 350 +++++++++++++++++++++++++++++++++++++++
- 3 files changed, 361 insertions(+)
+ drivers/pwm/pwm-sn3112.c | 336 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 347 insertions(+)
  create mode 100644 drivers/pwm/pwm-sn3112.c
 
 diff --git a/drivers/pwm/Kconfig b/drivers/pwm/Kconfig
-index c2fd3f4b6..c05ac85c4 100644
+index 4b956d661755d..b66ca4e4d01cb 100644
 --- a/drivers/pwm/Kconfig
 +++ b/drivers/pwm/Kconfig
-@@ -658,6 +658,16 @@ config PWM_SOPHGO_SG2042
+@@ -557,6 +557,16 @@ config PWM_SL28CPLD
  	  To compile this driver as a module, choose M here: the module
- 	  will be called pwm_sophgo_sg2042.
+ 	  will be called pwm-sl28cpld.
  
 +config PWM_SN3112
 +	tristate "SI-EN SN3112 PWM driver"
@@ -35,10 +35,10 @@ index c2fd3f4b6..c05ac85c4 100644
  	tristate "STMicroelectronics SPEAr PWM support"
  	depends on PLAT_SPEAR || COMPILE_TEST
 diff --git a/drivers/pwm/Makefile b/drivers/pwm/Makefile
-index dfa8b4966..c507bebf8 100644
+index c5ec9e168ee7c..f46223a7b9a52 100644
 --- a/drivers/pwm/Makefile
 +++ b/drivers/pwm/Makefile
-@@ -58,6 +58,7 @@ obj-$(CONFIG_PWM_ROCKCHIP)	+= pwm-rockchip.o
+@@ -51,6 +51,7 @@ obj-$(CONFIG_PWM_RZ_MTU3)	+= pwm-rz-mtu3.o
  obj-$(CONFIG_PWM_SAMSUNG)	+= pwm-samsung.o
  obj-$(CONFIG_PWM_SIFIVE)	+= pwm-sifive.o
  obj-$(CONFIG_PWM_SL28CPLD)	+= pwm-sl28cpld.o
@@ -48,10 +48,10 @@ index dfa8b4966..c507bebf8 100644
  obj-$(CONFIG_PWM_SPRD)		+= pwm-sprd.o
 diff --git a/drivers/pwm/pwm-sn3112.c b/drivers/pwm/pwm-sn3112.c
 new file mode 100644
-index 000000000..18345b19b
+index 0000000000000..38ef948602a3c
 --- /dev/null
 +++ b/drivers/pwm/pwm-sn3112.c
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,336 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for SN3112 12-channel 8-bit PWM LED controller
@@ -129,9 +129,9 @@ index 000000000..18345b19b
 +	dev_dbg(priv->pdev, "channel %u enabled %u\n", channel, enabled);
 +	dev_dbg(priv->pdev, "reg %u bit %u\n", reg, bit);
 +	if (enabled)
-+		priv->pwm_en_reg[reg] |= BIT(bit);
++		set_bit(bit, (ulong *)&priv->pwm_en_reg[reg]);
 +	else
-+		priv->pwm_en_reg[reg] &= ~BIT(bit);
++		clear_bit(bit, (ulong *)&priv->pwm_en_reg[reg]);
 +	dev_dbg(priv->pdev, "set enable reg %u to %u\n", reg,
 +		priv->pwm_en_reg[reg]);
 +
@@ -217,7 +217,6 @@ index 000000000..18345b19b
 +static int sn3112_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 +			    const struct pwm_state *state)
 +{
-+	int ret;
 +	u64 val = 0;
 +	struct sn3112 *priv = pwmchip_get_drvdata(chip);
 +
@@ -238,18 +237,12 @@ index 000000000..18345b19b
 +		state->enabled);
 +
 +	mutex_lock(&priv->lock);
-+	ret = sn3112_set_en_reg(priv, pwm->hwpwm, state->enabled, true);
-+	if (ret)
-+		goto out;
-+	ret = sn3112_set_val_reg(priv, pwm->hwpwm, val, true);
-+	if (ret)
-+		goto out;
-+	ret = sn3112_write_reg(priv, SN3112_REG_APPLY, 0x66);
-+	if (ret)
-+		goto out;
-+out:
++	sn3112_set_en_reg(priv, pwm->hwpwm, state->enabled, true);
++	sn3112_set_val_reg(priv, pwm->hwpwm, val, true);
++	sn3112_write_reg(priv, SN3112_REG_APPLY, 0x66);
 +	mutex_unlock(&priv->lock);
-+	return ret;
++
++	return 0;
 +}
 +
 +static const struct pwm_ops sn3112_pwm_ops = {
@@ -296,9 +289,8 @@ index 000000000..18345b19b
 +#if IS_ENABLED(CONFIG_GPIOLIB)
 +	/* sn5112 hardware shutdown pin */
 +	priv->sdb = devm_gpiod_get_optional(priv->pdev, "sdb", GPIOD_OUT_LOW);
-+	if (IS_ERR(priv->sdb))
-+		return dev_err_probe(priv->pdev, PTR_ERR(priv->sdb),
-+				"Unable to get sdb gpio\n");;
++	if (PTR_ERR(priv->sdb) == -EPROBE_DEFER)
++		return -EPROBE_DEFER;
 +#endif
 +
 +	/* enable sn5112 power vdd */
@@ -313,7 +305,7 @@ index 000000000..18345b19b
 +		ret = PTR_ERR(priv->regmap);
 +		dev_err(priv->pdev, "Failed to initialize register map: %d\n",
 +			ret);
-+		goto err_disable_vdd;
++		return ret;
 +	}
 +
 +	i2c_set_clientdata(client, chip);
@@ -322,7 +314,7 @@ index 000000000..18345b19b
 +	chip->ops = &sn3112_pwm_ops;
 +	ret = pwmchip_add(chip);
 +	if (ret < 0)
-+		goto err_disable_vdd;
++		return ret;
 +
 +#if IS_ENABLED(CONFIG_GPIOLIB)
 +	/* disable hardware shutdown pin */
@@ -334,18 +326,12 @@ index 000000000..18345b19b
 +	ret = sn3112_write_all(priv);
 +	if (ret != 0) {
 +		dev_err(priv->pdev, "Failed to initialize sn3112: %d\n", ret);
-+		goto err_remove_chip;
++		return ret;
 +	}
 +
 +	dev_info(&client->dev,
 +		 "Found SI-EN SN3112 12-channel 8-bit PWM LED controller\n");
 +	return 0;
-+
-+err_remove_chip:
-+	pwmchip_remove(chip);
-+err_disable_vdd:
-+	regulator_disable(priv->vdd);
-+	return ret;
 +}
 +
 +static void sn3112_pwm_remove(struct i2c_client *client)
@@ -402,6 +388,3 @@ index 000000000..18345b19b
 +MODULE_AUTHOR("BigfootACA <bigfoot@classfun.cn>");
 +MODULE_DESCRIPTION("PWM driver for SI-EN SN3112");
 +MODULE_LICENSE("GPL");
--- 
-2.43.0
-
