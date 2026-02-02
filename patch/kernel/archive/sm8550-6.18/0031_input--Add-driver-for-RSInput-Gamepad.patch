@@ -1,18 +1,18 @@
-From 223437dc502f36021f3131bf8ba3a0b2a3dcee0c Mon Sep 17 00:00:00 2001
+From 63cf9c45ac695a062d47213b5bc962785b6f9147 Mon Sep 17 00:00:00 2001
 From: Teguh Sobirin <teguh@sobir.in>
 Date: Thu, 20 Feb 2025 14:50:30 +0800
-Subject: [PATCH 02/18] input: Add driver for RSInput Gamepad
+Subject: [PATCH] input: Add driver for RSInput Gamepad
 
 Signed-off-by: Teguh Sobirin <teguh@sobir.in>
 ---
  drivers/input/joystick/Kconfig   |   4 +
  drivers/input/joystick/Makefile  |   1 +
- drivers/input/joystick/rsinput.c | 423 +++++++++++++++++++++++++++++++
- 3 files changed, 428 insertions(+)
+ drivers/input/joystick/rsinput.c | 418 +++++++++++++++++++++++++++++++
+ 3 files changed, 423 insertions(+)
  create mode 100644 drivers/input/joystick/rsinput.c
 
 diff --git a/drivers/input/joystick/Kconfig b/drivers/input/joystick/Kconfig
-index 7755e5b45..0da3c0f44 100644
+index 7755e5b454d2..0da3c0f44ecf 100644
 --- a/drivers/input/joystick/Kconfig
 +++ b/drivers/input/joystick/Kconfig
 @@ -383,6 +383,10 @@ config JOYSTICK_QWIIC
@@ -27,7 +27,7 @@ index 7755e5b45..0da3c0f44 100644
  	tristate "FlySky FS-iA6B RC Receiver"
  	select SERIO
 diff --git a/drivers/input/joystick/Makefile b/drivers/input/joystick/Makefile
-index 9976f596a..3de503e29 100644
+index 9976f596a920..3de503e29489 100644
 --- a/drivers/input/joystick/Makefile
 +++ b/drivers/input/joystick/Makefile
 @@ -28,6 +28,7 @@ obj-$(CONFIG_JOYSTICK_N64)		+= n64joy.o
@@ -40,10 +40,10 @@ index 9976f596a..3de503e29 100644
  obj-$(CONFIG_JOYSTICK_SIDEWINDER)	+= sidewinder.o
 diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
 new file mode 100644
-index 000000000..8fc0c6ac3
+index 000000000000..4a7096407712
 --- /dev/null
 +++ b/drivers/input/joystick/rsinput.c
-@@ -0,0 +1,423 @@
+@@ -0,0 +1,464 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * RSInput Gamepad Driver
@@ -206,6 +206,45 @@ index 000000000..8fc0c6ac3
 +    }
 +}
 +
++#define GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL 0x755
++#define GAMEPAD_RAW_TRIGGER_MIN 354
++#define GAMEPAD_RAW_TRIGGER_MAX 1845
++
++#ifndef clamp
++#define clamp(val, min, max) ({ \
++	typeof(val) __val = (val); \
++	typeof(min) __min = (min); \
++	typeof(max) __max = (max); \
++	__val = __val < __min ? __min : __val; \
++	__val > __max ? __max : __val; \
++})
++#endif
++
++static inline int scale_trigger_signed_range(unsigned int raw_val, int raw_min, int raw_max) {
++    long scaled;
++    long input_range = raw_max - raw_min;
++    long output_min = -32768L;
++    long output_max = 32767L;
++    long output_range = output_max - output_min;
++
++    if (input_range == 0)
++        return 0;
++ 
++    long val_shifted = raw_val - raw_min;
++ 
++    if (val_shifted < 0) val_shifted = 0;
++    if (val_shifted > input_range) val_shifted = input_range;
++ 
++    scaled = (val_shifted * output_range / input_range) + output_min;
++
++    if (scaled > 32767)
++        scaled = 32767;
++    else if (scaled < -32768)
++        scaled = -32768;
++
++    return (int)scaled;
++}
++
 +static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
 +    if (payload_length >= 6) {
 +    static unsigned long prev_states;
@@ -219,10 +258,17 @@ index 000000000..8fc0c6ac3
 +        input_report_key(drv->input, keymap[i], (current_states & BIT(i)));
 +    }
 +
-+    input_report_abs(drv->input, ABS_HAT2X,
-+             0x650 - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8)));
-+    input_report_abs(drv->input, ABS_HAT2Y,
-+             0x650 - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8)));
++    int raw_trig_l_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
++    int raw_trig_r_current = GAMEPAD_RAW_SENSOR_FULL_RANGE_VAL - (data[FRAME_POS_DATA_5] | (data[FRAME_POS_DATA_6] << 8));
++
++    int raw_l_clamped = clamp(raw_trig_l_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int raw_r_clamped = clamp(raw_trig_r_current, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    int scaled_z  = scale_trigger_signed_range(raw_l_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++    int scaled_rz = scale_trigger_signed_range(raw_r_clamped, GAMEPAD_RAW_TRIGGER_MIN, GAMEPAD_RAW_TRIGGER_MAX);
++
++    input_report_abs(drv->input, ABS_Z, scaled_z);
++    input_report_abs(drv->input, ABS_RZ, scaled_rz);
 +    input_report_abs(drv->input, ABS_X,
 +             -(int16_t)(data[FRAME_POS_DATA_7] | (data[FRAME_POS_DATA_8] << 8)));
 +    input_report_abs(drv->input, ABS_Y,
@@ -367,7 +413,6 @@ index 000000000..8fc0c6ac3
 +
 +    msleep(100);
 +
-+    serdev_device_set_client_ops(serdev, &rsinput_rx_ops);
 +    error = serdev_device_open(serdev);
 +    if (error)
 +        return dev_err_probe(&serdev->dev, error, "Unable to open UART device\n");
@@ -379,15 +424,13 @@ index 000000000..8fc0c6ac3
 +
 +    error = serdev_device_set_baudrate(serdev, 115200);
 +    if (error < 0)
-+        goto err_close;
++        return dev_err_probe(&serdev->dev, error, "Failed to set up host baud rate\n");
 +
 +    serdev_device_set_flow_control(serdev, false);
 +
 +    drv->input = devm_input_allocate_device(&serdev->dev);
-+    if (!drv->input) {
-+        error = -ENOMEM;
-+        goto err_close;
-+    }
++    if (!drv->input)
++        return -ENOMEM;
 +
 +    drv->input->phys = "rsinput-gamepad/input0";
 +    
@@ -415,24 +458,22 @@ index 000000000..8fc0c6ac3
 +        input_set_abs_params(drv->input, i, -0x580, 0x580,
 +                     0, 0);
 +
-+    input_set_abs_params(drv->input, ABS_HAT2X, 0, 1830, 0, 30);
-+    input_set_abs_params(drv->input, ABS_HAT2Y, 0, 1830, 0, 30);
++    input_set_abs_params(drv->input, ABS_Z, 0, 1830, 0, 30);
++    input_set_abs_params(drv->input, ABS_RZ, 0, 1830, 0, 30);
 +
 +    error = input_register_device(drv->input);
-+    if (error) {
-+        goto err_close;
-+    }
++    if (error)
++        return error;
++
++    serdev_device_set_client_ops(serdev, &rsinput_rx_ops);
 +
 +    error = rsinput_init_commands(drv);
 +    if (error < 0) {
-+        goto err_close;
++        serdev_device_close(serdev);
++        return error;
 +    }
 +
 +    return 0;
-+
-+err_close:
-+    serdev_device_close(serdev);
-+    return error;
 +}
 +
 +static void rsinput_remove(struct serdev_device *serdev) {
@@ -468,5 +509,5 @@ index 000000000..8fc0c6ac3
 +MODULE_DESCRIPTION("RSInput Gamepad Driver");
 +MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
 -- 
-2.43.0
+2.34.1
 
