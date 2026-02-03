@@ -10,7 +10,7 @@ KERNEL_TEST_TARGET="current,edge"
 BOOT_FDT_FILE="rockchip/rk3566-nanopi-r3s.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="spl-blobs"
-
+enable_extension "uboot-btrfs"
 
 function post_family_config__use_mainline_uboot() {
 	if [[ "$BRANCH" == "vendor" ]]; then
@@ -18,7 +18,6 @@ function post_family_config__use_mainline_uboot() {
 	fi
 
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
-	unset BOOTFS_TYPE
 	BOOTCONFIG="nanopi-r3s-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2025.04"
