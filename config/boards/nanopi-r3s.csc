@@ -18,7 +18,15 @@ function post_family_config__use_mainline_uboot() {
 	fi
 
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to
-	unset BOOTFS_TYPE
+	
+	# Mainline U-Boot can read ext4 directly, so no separate boot partition needed for ext4 root
+	# However, for filesystems U-Boot cannot read (btrfs, f2fs, etc.), we need a boot partition
+	if [[ "$ROOTFS_TYPE" =~ btrfs|f2fs|nilfs2|xfs ]]; then
+		BOOTFS_TYPE=${BOOTFS_TYPE:-ext4}
+		BOOTSIZE=${BOOTSIZE:-512}
+	else
+		unset BOOTFS_TYPE  # ext4 root can be read directly by U-Boot
+	fi
 	BOOTCONFIG="nanopi-r3s-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2025.04"
