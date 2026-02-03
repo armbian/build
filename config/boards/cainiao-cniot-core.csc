@@ -12,8 +12,8 @@ SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-g12b-a311d-cainiao-cniot-core.dtb"
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
-BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04"
+BOOTBRANCH_BOARD="tag:v2026.01"
+BOOTPATCHDIR="v2026.01"
 
 enable_extension "gxlimg"
 enable_extension "amlogic-fip-blobs"
