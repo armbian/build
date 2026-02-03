@@ -105,6 +105,12 @@ function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
 		#!/bin/bash
 		[[ "$1" == "prereqs" ]] && exit 0
 		. /usr/share/initramfs-tools/hook-functions
+		for f in /lib/firmware/qcom/sm8550/* ; do
+			add_firmware "${f#/lib/firmware/}"
+		done
+		for f in /lib/firmware/qcom/sm8550/ayn/* ; do
+			add_firmware "${f#/lib/firmware/}"
+		done
 		for f in /lib/firmware/qcom/sm8550/ayn/odin2portal/* ; do
 			add_firmware "${f#/lib/firmware/}"
 		done
