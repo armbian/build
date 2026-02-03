@@ -80,6 +80,12 @@ function post_family_tweaks__ayn-odin2portal_enable_services() {
 		do_with_retries 3 chroot_sdcard_apt_get_install libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools
 	fi
 
+	if [[ "${RELEASE}" == "trixie" ]]; then
+		do_with_retries 3 chroot_sdcard_apt_get_update
+		display_alert "Installing Mesa Vulkan Drivers"
+		do_with_retries 3 chroot_sdcard_apt_get_install libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools
+	fi
+
 	# We need unudhcpd from armbian repo, so enable it
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
 
