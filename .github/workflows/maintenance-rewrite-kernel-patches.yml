@@ -1,0 +1,126 @@
+name: "Maintenance: Rewrite kernel patches"
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "Board name (e.g. bananapim5, khadas-vim3)"
+        required: true
+        type: string
+      branch:
+        description: "Branch to use"
+        required: true
+        type: choice
+        options:
+          - legacy
+          - vendor
+          - current
+          - edge
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rewrite-patches:
+    name: "Rewrite ${{ inputs.board }} (${{ inputs.branch }})"
+    runs-on: rewrite
+    steps:
+      - name: Checkout with caching
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore cached repository
+        uses: actions/cache@v4
+        with:
+          path: .git
+          key: repo-cache-${{ inputs.branch }}
+          restore-keys: |
+            repo-cache-
+
+      - name: Fetch and checkout branch
+        run: |
+          set -euo pipefail
+          git fetch origin ${{ inputs.branch }} || true
+          git checkout ${{ inputs.branch }} || git checkout -b ${{ inputs.branch }} origin/${{ inputs.branch }}
+
+      - name: Run rewrite-kernel-patches
+        env:
+          BOARD: ${{ inputs.board }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          ./compile.sh BOARD=$BOARD BRANCH=$BRANCH rewrite-kernel-patches
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build PR body
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          rm -rf output/info || true
+          mkdir -p output/info
+
+          # Per-file stats
+          git diff --numstat > output/info/numstat.txt || true
+
+          total_add=0; total_del=0; files=0
+          {
+            echo "# Rewrite kernel patches"
+            echo
+            echo "### What this PR does"
+            echo "- Regenerates and **synchronizes kernel patches** for \`${{ inputs.board }}\` on the **${{ inputs.branch }}** branch."
+            echo "- Runs \`./compile.sh rewrite-kernel-patches\` which updates patch series based on current kernel sources."
+            echo
+            echo "### How it was produced"
+            echo
+            echo "This PR is produced from [this](/armbian/build/tree/main/.github/workflows/maintenance-rewrite-kernel-patches.yml) GHA script."
+            echo
+            echo "- Board: \`${{ inputs.board }}\`"
+            echo "- Branch: \`${{ inputs.branch }}\`"
+            echo
+            echo "### Review tips"
+            echo "- Verify that patch reordering and refactors are intentional."
+            echo "- Check for newly added or removed patches."
+            echo
+            echo "### Files changed"
+            echo
+            echo "| File | + | - | Δ |"
+            echo "|---|---:|---:|---:|"
+            while IFS=$'\t' read -r add del path; do
+              [[ -z "${path:-}" ]] && continue
+              [[ "$add" =~ ^[0-9]+$ ]] || add=0
+              [[ "$del" =~ ^[0-9]+$ ]] || del=0
+              delta=$(( add - del ))
+              total_add=$(( total_add + add ))
+              total_del=$(( total_del + del ))
+              files=$(( files + 1 ))
+              path_esc="${path//|/\\|}"
+              printf "| %s | %d | %d | %d |\n" "$path_esc" "$add" "$del" "$delta"
+            done < output/info/numstat.txt
+            echo
+            printf "**Files:** %d  •  **Lines:** +%d / -%d  (Δ %d)\n" "$files" "$total_add" "$total_del" "$(( total_add - total_del ))"
+            echo
+          } > PR_BODY.md
+
+      - name: Open / Update PR
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: rewrite-patches/${{ inputs.board }}-${{ inputs.branch }}
+          delete-branch: true
+          base: main
+          title: "`[${{ inputs.branch }}]` kernel patches rewrite for `${{ inputs.board }}`"
+          commit-message: "[${{ inputs.branch }}] kernel patches rewrite for ${{ inputs.board }}"
+          body-path: PR_BODY.md
+          labels: |
+            Needs review
