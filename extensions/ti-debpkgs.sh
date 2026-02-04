@@ -4,7 +4,7 @@ function extension_prepare_config__add_packages() {
 	fi
 }
 
-function post_armbian_repo_customize_image__install_ti_packages() {
+function post_repo_customize_image__install_ti_packages() {
 	
     # Read JSON array into Bash array safely
 	mapfile -t valid_suites < <(
