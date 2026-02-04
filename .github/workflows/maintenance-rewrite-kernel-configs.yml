@@ -1,0 +1,296 @@
+name: "Maintenance: Rewrite kernel configs"
+
+on:
+  schedule:
+    - cron: "0 0 * * MON"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-matrix:
+    name: Build dynamic matrix
+    runs-on: super
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: "Produce inventory JSON"
+        run: |
+
+          ./compile.sh inventory-boards
+
+      - name: Build matrix from inventory (simple sanitize)
+        id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          JSON="output/info/image-info.json"
+
+          tmp="$(mktemp)"
+
+          jq -c '
+            def norm_branches:
+              if . == null then []
+              elif (type=="string") then ( gsub("[,\\s]+";" ") | split(" ") | map(select(length>0)) )
+              elif (type=="array")  then ( map(tostring) | map(select(length>0)) )
+              else [] end;
+
+            # 1) Expand to rows: (board, linuxfamily, branch)
+            [ .[] 
+              | {
+                  board:       (.out.HOST // .in.inventory.BOARD // ""),
+                  linuxfamily: (.out.LINUXFAMILY // .in.inventory.BOARDFAMILY // ""),
+                  branches:    ((.in.inventory.BOARD_POSSIBLE_BRANCHES
+                                // .in.inventory.BOARD_TOP_LEVEL_VARS.BOARD_POSSIBLE_BRANCHES)
+                                | norm_branches)
+                }
+              | select((.board|length>0) and (.linuxfamily|length>0) and (.branches|length>0))
+              | . as $o
+              | $o.branches[]
+              | { board: $o.board, linuxfamily: $o.linuxfamily, branch: . }
+            ]
+            # 2) Remove exact triplet duplicates
+            | unique_by([.linuxfamily,.branch,.board])
+            # 3) If same (board,branch) appears in multiple families, keep the one with smallest family (lexicographic)
+            | sort_by(.board, .branch, .linuxfamily)
+            | group_by([.board,.branch]) | map(.[0])
+            # 4) If multiple boards share same (family,branch), keep smallest board (lexicographic)
+            | sort_by(.linuxfamily, .branch, .board)
+            | group_by([.linuxfamily,.branch]) | map(.[0])
+          ' "$JSON" > "$tmp"
+
+          echo "count=$(jq 'length' "$tmp")" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(jq -c . "$tmp")" >> "$GITHUB_OUTPUT"
+
+  rewrite-configs:
+    name: "Rewrite ${{ matrix.board }} (${{ matrix.branch }})"
+    needs: build-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run rewrite-kernel-config
+        env:
+          BOARD: ${{ matrix.board }}
+          BRANCH: ${{ matrix.branch }}
+          DOCKER_ARMBIAN_BASE_IMAGE: "debian:trixie"
+        run: |
+
+          set -euo pipefail
+          ./compile.sh rewrite-kernel-config BOARD=$BOARD BRANCH=$BRANCH DOCKER_ARMBIAN_BASE_IMAGE="$DOCKER_ARMBIAN_BASE_IMAGE"
+
+      - name: Collect changes into artifact (added/modified/renamed only) + step summary
+        id: collect
+        shell: bash
+        run: |
+
+          set -euo pipefail
+
+          # Get changed paths, NUL-delimited (safe for spaces)
+          mapfile -d '' -t CHANGED < <(git diff -z --name-only --diff-filter=ACMR || true)
+
+          if [[ ${#CHANGED[@]} -eq 0 ]]; then
+            echo "nothing_to_upload=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### No changes in this job"
+              echo ""
+              echo "- Family: **${{ matrix.linuxfamily }}**"
+              echo "- Branch: **${{ matrix.branch }}**"
+              echo "- Board:  **${{ matrix.board }}**"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          JOB_ID="${{ matrix.linuxfamily }}-${{ matrix.branch }}-${{ matrix.board }}"
+          ROOT="artifact/${JOB_ID}/payload"
+          mkdir -p "$ROOT"
+
+          # Copy files while preserving directory structure
+          printf '%s\0' "${CHANGED[@]}" | xargs -0 -I{} cp --parents -a -- "{}" "$ROOT/"
+
+          # --- Build GitHub Step Summary with numstat (additions/deletions) ---
+          # Note: numstat shows '-' for binary changes; we treat those as 0
+          NUMSTAT="$(mktemp)"
+          git diff --numstat --diff-filter=ACMR > "$NUMSTAT" || true
+
+          total_add=0
+          total_del=0
+          file_count=0
+
+          {
+            echo "### Changes for \`$JOB_ID\`"
+            echo ""
+            echo "| File | + | - | Δ |"
+            echo "|---|---:|---:|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Read tab-delimited: added<TAB>deleted<TAB>path
+          while IFS=$'\t' read -r add del path; do
+            [[ -z "${path:-}" ]] && continue
+
+            # Handle binary markers '-'
+            [[ "$add" =~ ^[0-9]+$ ]] || add=0
+            [[ "$del" =~ ^[0-9]+$ ]] || del=0
+
+            delta=$(( add - del ))
+            total_add=$(( total_add + add ))
+            total_del=$(( total_del + del ))
+            file_count=$(( file_count + 1 ))
+
+            # Escape pipes in path for Markdown safety
+            path_esc="${path//|/\\|}"
+
+            printf '| %s | %d | %d | %d |\n' "$path_esc" "$add" "$del" "$delta" >> "$GITHUB_STEP_SUMMARY"
+          done < "$NUMSTAT"
+
+          {
+            echo ""
+            echo "**Files changed:** $file_count"
+            echo ""
+            printf "**Total lines:** +%d / -%d (Δ %d)\n" "$total_add" "$total_del" "$(( total_add - total_del ))"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact (per job; unique; overwrite safe)
+        if: steps.collect.outputs.nothing_to_upload != 'true'
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: changes-${{ matrix.linuxfamily }}-${{ matrix.branch }}-${{ matrix.board }}-${{ github.run_attempt }}
+          path: artifact/${{ matrix.linuxfamily }}-${{ matrix.branch }}-${{ matrix.board }}
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
+
+  aggregate-pr:
+    name: Aggregate changes & open PR
+    needs: [build-matrix, rewrite-configs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download all change artifacts (no merge)
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          path: _artifacts
+          pattern: changes-*
+
+      - name: Apply all artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # Count artifacts
+          FOUND=0
+          for d in _artifacts/changes-*; do
+            [[ -d "$d" ]] || continue
+            FOUND=$((FOUND+1))
+            # Apply payload files (add/update)
+            if [[ -d "$d/payload" ]]; then
+              # rsync preserves paths; trailing slashes mean "copy contents"
+              rsync -a "$d/payload/" .
+            fi
+            # Accumulate deletions
+            if [[ -f "$d/deletions.txt" ]]; then
+              cat "$d/deletions.txt" >> /tmp/all_deletions.txt
+            fi
+          done
+          echo "Aggregated artifacts: $FOUND"
+
+          # Apply deletions (dedup + ignore non-existent)
+          if [[ -s /tmp/all_deletions.txt ]]; then
+            sort -u /tmp/all_deletions.txt > /tmp/all_deletions_uniq.txt
+            xargs -r -d '\n' git rm -f --ignore-unmatch < /tmp/all_deletions_uniq.txt || true
+          fi
+
+          # Did anything actually change?
+          if git diff --quiet; then
+            echo "NO_CHANGES=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build PR body (summary table)
+        if: env.NO_CHANGES != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _artifacts || true
+          mkdir -p output/info
+
+          # Per-file stats
+          git diff --numstat > output/info/numstat.txt || true
+
+          total_add=0; total_del=0; files=0
+          {
+            echo "# Rewrite kernel configs"
+            echo
+            echo "### What this PR does"
+            echo "- Regenerates and **synchronizes Linux kernel config fragments** across boards/families based on the prepared inventory."
+            echo "- Runs \`./compile.sh rewrite-kernel-config\` for each scheduled (family, branch) and aggregates all changes into **one PR**."
+            echo "- No userspace changes; only **Kconfig option** updates (enable/disable/modules/values) aligned with the targeted kernel branches."
+            echo
+            echo "### How it was produced"
+            echo
+            echo "This PR is produced from [this](/armbian/build/tree/main/.github/workflows/maintenance-rewrite-kernel-configs.yml) GHA script."
+            echo
+            echo "1. Built a matrix: \`./compile.sh inventory-boards\` (deduped, sanitized)."
+            echo "2. Executed \`rewrite-kernel-config\` per matrix."
+            echo "3. Collected only changed files from each job as artifacts; aggregated and committed them here."
+            echo
+            echo "### Review tips"
+            echo "- Skim the table below for big deltas; open those configs to verify intent."
+            echo "- If a particular change is undesirable, comment on that file and we can exclude/adjust and re-run."
+            echo
+            echo "### Files changed"
+            echo
+            echo "| File | + | - | Δ |"
+            echo "|---|---:|---:|---:|"
+            while IFS=$'\t' read -r add del path; do
+              [[ -z "${path:-}" ]] && continue
+              [[ "$add" =~ ^[0-9]+$ ]] || add=0
+              [[ "$del" =~ ^[0-9]+$ ]] || del=0
+              delta=$(( add - del ))
+              total_add=$(( total_add + add ))
+              total_del=$(( total_del + del ))
+              files=$(( files + 1 ))
+              path_esc="${path//|/\\|}"
+              printf "| %s | %d | %d | %d |\n" "$path_esc" "$add" "$del" "$delta"
+            done < output/info/numstat.txt
+            echo
+            printf "**Files:** %d  •  **Lines:** +%d / -%d  (Δ %d)\n" "$files" "$total_add" "$total_del" "$(( total_add - total_del ))"
+            echo
+
+            if compgen -G "output/info/annotated-configs/*.md" > /dev/null; then
+              echo "## Annotated configs"
+              for f in output/info/annotated-configs/*.md; do
+                echo "- ${f}"
+              done
+              echo
+            fi
+          } > PR_BODY.md
+
+      - name: Open / Update PR
+        if: env.NO_CHANGES != 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          add-paths: |
+            config/kernel/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update-kernel-configs
+          delete-branch: true
+          title: "`Automatic` kernel config rewrite"
+          commit-message: "Automatic: kernel config rewrite"
+          body-path: PR_BODY.md
+          labels: |
+            Needs review

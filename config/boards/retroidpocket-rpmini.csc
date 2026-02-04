@@ -1,5 +1,6 @@
 # Retroid Pocket RPMini Configuration
 declare -g BOARD_NAME="Retroid Pocket RPMini"
+declare -g BOARD_VENDOR="retroid"
 declare -g BOARD_MAINTAINER=""
 declare -g BOARDFAMILY="sm8250"
 declare -g KERNEL_TARGET="current"

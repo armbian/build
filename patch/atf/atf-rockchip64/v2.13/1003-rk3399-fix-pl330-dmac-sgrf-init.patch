@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armbian <info@armbian.com>
+Date: Thu, 23 Jan 2026 12:00:00 +0000
+Subject: [PATCH] rk3399: Initialize DMAC SGRF registers and reset for PL330 DMA
+
+Mainline TF-A doesn't initialize SGRF_SOC_CON8-CON15 which control
+DMAC0 and DMAC1 configuration. Without this, the PL330 DMA controllers
+cannot be accessed from Linux and PERIPH_ID reads as 0x0.
+
+Additionally, the SGRF configuration defines the manager thread state
+after reset, so we must pulse the DMAC reset for the new settings to
+take effect.
+
+Based on community reverse-engineering of RK3399 SGRF registers:
+- CON8[2]: DMAC0 manager thread state after reset (1=running)
+- CON8[3]: DMAC0 manager thread security state (1=non-secure)
+- CON8[4:15]: DMAC0 event/IRQ security state (1=non-secure)
+- CON9[0:11]: DMAC0 peripheral security state (1=non-secure)
+- Similar for DMAC1 in CON11-CON15
+
+Signed-off-by: Armbian <info@armbian.com>
+---
+ plat/rockchip/rk3399/drivers/secure/secure.c | 33 ++++++++++++++++++++
+ plat/rockchip/rk3399/drivers/secure/secure.h | 10 ++++++
+ 2 files changed, 43 insertions(+)
+
+diff --git a/plat/rockchip/rk3399/drivers/secure/secure.c b/plat/rockchip/rk3399/drivers/secure/secure.c
+index 13c83ca1f..b195fe940 100644
+--- a/plat/rockchip/rk3399/drivers/secure/secure.c
++++ b/plat/rockchip/rk3399/drivers/secure/secure.c
+@@ -158,6 +158,39 @@ void secure_sgrf_init(void)
+ 		      SGRF_SLV_S_WMSK | SGRF_SLV_S_ALL_NS);
+ 	mmio_write_32(SGRF_BASE + SGRF_SLV_SECURE_CON0_4(4),
+ 		      SGRF_SLV_S_WMSK | SGRF_INTSRAM_S);
++
++	/*
++	 * Configure DMAC0 and DMAC1 SGRF registers.
++	 * Without this configuration, PL330 DMA controllers cannot be
++	 * accessed from Linux and PERIPH_ID reads as 0x0.
++	 */
++	/* DMAC0: manager running, non-secure, all events/IRQs non-secure */
++	mmio_write_32(SGRF_BASE + SGRF_SOC_CON(8),
++		      REG_SOC_WMSK | SGRF_DMAC_CFG_NS);
++	/* DMAC0: all peripherals non-secure */
++	mmio_write_32(SGRF_BASE + SGRF_SOC_CON(9),
++		      REG_SOC_WMSK | SGRF_DMAC_PERIPH_NS);
++
++	/* DMAC1: manager running, non-secure, all events/IRQs non-secure */
++	mmio_write_32(SGRF_BASE + SGRF_SOC_CON(11),
++		      REG_SOC_WMSK | SGRF_DMAC_CFG_NS);
++	/* DMAC1: all peripherals non-secure */
++	mmio_write_32(SGRF_BASE + SGRF_SOC_CON(12),
++		      REG_SOC_WMSK | SGRF_DMAC_PERIPH_NS);
++
++	/*
++	 * Reset DMAC0 and DMAC1 to apply new SGRF configuration.
++	 * The SGRF configuration defines the state after reset, so we
++	 * must pulse the reset for the new settings to take effect.
++	 */
++	/* Assert DMAC0 and DMAC1 reset */
++	mmio_write_32(CRU_BASE + CRU_SOFTRST_CON(10),
++		      CRU_DMAC0_RST | CRU_DMAC1_RST);
++	/* Small delay to ensure reset is recognized */
++	udelay(1);
++	/* Deassert DMAC0 and DMAC1 reset */
++	mmio_write_32(CRU_BASE + CRU_SOFTRST_CON(10),
++		      CRU_DMAC0_RST_RLS | CRU_DMAC1_RST_RLS);
+ }
+
+ void secure_sgrf_ddr_rgn_init(void)
+diff --git a/plat/rockchip/rk3399/drivers/secure/secure.h b/plat/rockchip/rk3399/drivers/secure/secure.h
+index 79997b2f6..91c4b2a30 100644
+--- a/plat/rockchip/rk3399/drivers/secure/secure.h
++++ b/plat/rockchip/rk3399/drivers/secure/secure.h
+@@ -40,6 +40,16 @@
+
+ #define SGRF_INTSRAM_S			BIT(13)
+
++/*
++ * DMAC SGRF configuration:
++ * - bit[2]: manager thread state after reset (1=running, 0=halt)
++ * - bit[3]: manager thread security state (1=non-secure)
++ * - bit[4:15]: event/IRQ security state bits (1=non-secure)
++ * Set all to non-secure and running.
++ */
++#define SGRF_DMAC_CFG_NS		(0xFFFC)  /* bits 2-15 set */
++#define SGRF_DMAC_PERIPH_NS		(0x0FFF)  /* peripheral security bits */
++
+ /* ddr region */
+ #define SGRF_DDR_RGN_0_16_WMSK		0x0fff  /* DDR RGN 0~16 size mask */
+
+--
+2.39.0
+

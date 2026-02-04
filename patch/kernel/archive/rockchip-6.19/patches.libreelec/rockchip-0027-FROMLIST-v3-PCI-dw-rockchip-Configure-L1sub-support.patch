@@ -1,0 +1,114 @@
+From 332a87f09811961924f3ed76a83cfd478fd609e7 Mon Sep 17 00:00:00 2001
+From: Shawn Lin <shawn.lin@rock-chips.com>
+Date: Thu, 23 Oct 2025 10:51:22 +0800
+Subject: [PATCH 027/157] FROMLIST(v3): PCI: dw-rockchip: Configure L1sub
+ support
+
+L1 PM Substates for RC mode require support in the dw-rockchip driver
+including proper handling of the CLKREQ# sideband signal. It is mostly
+handled by hardware, but software still needs to set the clkreq fields
+in the PCIE_CLIENT_POWER_CON register to match the hardware implementation.
+
+For more details, see section '18.6.6.4 L1 Substate' in the RK3658 TRM 1.1
+Part 2, or section '11.6.6.4 L1 Substate' in the RK3588 TRM 1.0 Part2.
+
+Meanwhile, for the EP mode, we haven't prepared enough to actually support
+L1 PM Substates yet. So disable it now until proper support is added later.
+
+Signed-off-by: Shawn Lin <shawn.lin@rock-chips.com>
+---
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c | 43 +++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index 3e2752c7dd09..25d24745bde1 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -62,6 +62,12 @@
+ /* Interrupt Mask Register Related to Miscellaneous Operation */
+ #define PCIE_CLIENT_INTR_MASK_MISC	0x24
+ 
++/* Power Management Control Register */
++#define PCIE_CLIENT_POWER_CON		0x2c
++#define  PCIE_CLKREQ_READY		FIELD_PREP_WM16(BIT(0), 1)
++#define  PCIE_CLKREQ_NOT_READY		FIELD_PREP_WM16(BIT(0), 0)
++#define  PCIE_CLKREQ_PULL_DOWN		FIELD_PREP_WM16(GENMASK(13, 12), 1)
++
+ /* Hot Reset Control Register */
+ #define PCIE_CLIENT_HOT_RESET_CTRL	0x180
+ #define  PCIE_LTSSM_APP_DLY2_EN		BIT(1)
+@@ -85,6 +91,7 @@ struct rockchip_pcie {
+ 	struct regulator *vpcie3v3;
+ 	struct irq_domain *irq_domain;
+ 	const struct rockchip_pcie_of_data *data;
++	bool supports_clkreq;
+ };
+ 
+ struct rockchip_pcie_of_data {
+@@ -200,6 +207,37 @@ static bool rockchip_pcie_link_up(struct dw_pcie *pci)
+ 	return FIELD_GET(PCIE_LINKUP_MASK, val) == PCIE_LINKUP;
+ }
+ 
++/*
++ * See e.g. section '11.6.6.4 L1 Substate' in the RK3588 TRM V1.0 for the steps
++ * needed to support L1 substates. Currently, just enable L1 substates for RC
++ * mode if CLKREQ# is properly connected and supports-clkreq is present in DT.
++ * For EP mode, there are more things should be done to actually save power in
++ * L1 substates, so disable L1 substates until there is proper support.
++ */
++static void rockchip_pcie_configure_l1sub(struct dw_pcie *pci)
++{
++	struct rockchip_pcie *rockchip = to_rockchip_pcie(pci);
++	u32 cap, l1subcap;
++
++	/* Enable L1 substates if CLKREQ# is properly connected */
++	if (rockchip->supports_clkreq && rockchip->data->mode == DW_PCIE_RC_TYPE ) {
++		rockchip_pcie_writel_apb(rockchip, PCIE_CLKREQ_READY, PCIE_CLIENT_POWER_CON);
++		return;
++	}
++
++	/* Otherwise, pull down CLKREQ# and disable L1 PM substates */
++	rockchip_pcie_writel_apb(rockchip, PCIE_CLKREQ_PULL_DOWN | PCIE_CLKREQ_NOT_READY,
++				 PCIE_CLIENT_POWER_CON);
++	cap = dw_pcie_find_ext_capability(pci, PCI_EXT_CAP_ID_L1SS);
++	if (cap) {
++		l1subcap = dw_pcie_readl_dbi(pci, cap + PCI_L1SS_CAP);
++		l1subcap &= ~(PCI_L1SS_CAP_L1_PM_SS | PCI_L1SS_CAP_ASPM_L1_1 |
++			      PCI_L1SS_CAP_ASPM_L1_2 | PCI_L1SS_CAP_PCIPM_L1_1 |
++			      PCI_L1SS_CAP_PCIPM_L1_2);
++		dw_pcie_writel_dbi(pci, cap + PCI_L1SS_CAP, l1subcap);
++	}
++}
++
+ static void rockchip_pcie_enable_l0s(struct dw_pcie *pci)
+ {
+ 	u32 cap, lnkcap;
+@@ -264,6 +302,7 @@ static int rockchip_pcie_host_init(struct dw_pcie_rp *pp)
+ 	irq_set_chained_handler_and_data(irq, rockchip_pcie_intx_handler,
+ 					 rockchip);
+ 
++	rockchip_pcie_configure_l1sub(pci);
+ 	rockchip_pcie_enable_l0s(pci);
+ 
+ 	return 0;
+@@ -301,6 +340,7 @@ static void rockchip_pcie_ep_init(struct dw_pcie_ep *ep)
+ 	struct dw_pcie *pci = to_dw_pcie_from_ep(ep);
+ 	enum pci_barno bar;
+ 
++	rockchip_pcie_configure_l1sub(pci);
+ 	rockchip_pcie_enable_l0s(pci);
+ 	rockchip_pcie_ep_hide_broken_ats_cap_rk3588(ep);
+ 
+@@ -412,6 +452,9 @@ static int rockchip_pcie_resource_get(struct platform_device *pdev,
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(rockchip->rst),
+ 				     "failed to get reset lines\n");
+ 
++	rockchip->supports_clkreq = of_property_read_bool(pdev->dev.of_node,
++							  "supports-clkreq");
++
+ 	return 0;
+ }
+ 
+-- 
+2.34.1
+

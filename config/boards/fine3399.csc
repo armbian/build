@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi
 BOARD_NAME="Fine3399"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="fine3399-rk3399_defconfig"

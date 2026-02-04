@@ -1,0 +1,135 @@
+From f9e7b23ad98367598d950c179e5d29aac07643f5 Mon Sep 17 00:00:00 2001
+From: Jianhua Lu <lujianhua000@gmail.com>
+Date: Mon, 11 Dec 2023 09:23:28 +0800
+Subject: [PATCH 05/62] ASoC: qcom: sm8250: Add tdm support
+
+Signed-off-by: Jiali Chen <chenjiali@radxa.com>
+---
+ sound/soc/qcom/sm8250.c | 83 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 83 insertions(+)
+
+diff --git a/sound/soc/qcom/sm8250.c b/sound/soc/qcom/sm8250.c
+index f5b75a06e5bd..a383f74c5187 100644
+--- a/sound/soc/qcom/sm8250.c
++++ b/sound/soc/qcom/sm8250.c
+@@ -17,6 +17,9 @@
+ #include "sdw.h"
+ 
+ #define MI2S_BCLK_RATE		1536000
++#define TDM_BCLK_RATE		12288000
++
++static unsigned int tdm_slot_offset[8] = {0, 4, 8, 12, 16, 20, 24, 28};
+ 
+ struct sm8250_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
+@@ -56,6 +59,57 @@ static void sm8250_snd_exit(struct snd_soc_pcm_runtime *rtd)
+ 
+ }
+ 
++static int sm8250_tdm_snd_hw_params(struct snd_pcm_substream *substream,
++					struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++
++	int ret = 0;
++	int channels, slots, slot_width;
++
++	channels = params_channels(params);
++	slots = 8;
++	slot_width = 32;
++
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++	  ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, 0x03,
++	                  slots, slot_width);
++	  if (ret < 0) {
++	          dev_err(rtd->dev, "%s: failed to set tdm slot, err:%d\n",
++	                          __func__, ret);
++	          goto end;
++	  }
++
++	  ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
++	                  channels, tdm_slot_offset);
++	  if (ret < 0) {
++	          dev_err(rtd->dev, "%s: failed to set channel map, err:%d\n",
++	                          __func__, ret);
++	          goto end;
++	  }
++	} else {
++	   ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0xf, 0,
++	                    slots, slot_width);
++	   if (ret < 0) {
++	      dev_err(rtd->dev, "%s: failed to set tdm slot, err:%d\n",
++	              __func__, ret);
++	      goto end;
++	    }
++
++	   ret = snd_soc_dai_set_channel_map(cpu_dai, channels,
++	                    tdm_slot_offset, 0, NULL);
++	   if (ret < 0) {
++	      dev_err(rtd->dev, "%s: failed to set channel map, err:%d\n",
++	              __func__, ret);
++	      goto end;
++	   }
++	}
++
++end:
++	return ret;
++}
++
+ static int sm8250_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 				     struct snd_pcm_hw_params *params)
+ {
+@@ -79,6 +133,7 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++	int ret,j;
+ 
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_MI2S_RX:
+@@ -105,6 +160,29 @@ static int sm8250_snd_startup(struct snd_pcm_substream *substream)
+ 		snd_soc_dai_set_fmt(cpu_dai, fmt);
+ 		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
+ 		break;
++	case TERTIARY_TDM_RX_0:
++		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_DSP_A;
++		ret = snd_soc_dai_set_sysclk(cpu_dai,
++			Q6AFE_LPASS_CLK_ID_TER_TDM_IBIT,
++			TDM_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
++		if (ret < 0) {
++			dev_err(rtd->dev, "TDM cpu sysclk err:%d\n", ret);
++			return ret;
++		}
++
++		for_each_rtd_codec_dais(rtd, j, codec_dai) {
++			ret = snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
++			if (ret < 0) {
++				dev_err(rtd->dev, "TDM fmt err:%d\n", ret);
++				return ret;
++			}
++			ret = snd_soc_dai_set_sysclk(codec_dai, 0, TDM_BCLK_RATE, SNDRV_PCM_STREAM_PLAYBACK);
++			if (ret < 0) {
++				dev_err(rtd->dev, "TDM sysclk err:%d\n", ret);
++				return ret;
++			}
++		}
++		break;
+ 	default:
+ 		break;
+ 	}
+@@ -130,6 +208,11 @@ static int sm8250_snd_hw_params(struct snd_pcm_substream *substream,
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct sm8250_snd_data *pdata = snd_soc_card_get_drvdata(rtd->card);
+ 
++	switch (cpu_dai->id) {
++	case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
++		return sm8250_tdm_snd_hw_params(substream, params);
++	}
++
+ 	return qcom_snd_sdw_hw_params(substream, params, &pdata->sruntime[cpu_dai->id]);
+ }
+ 
+-- 
+2.47.3
+

@@ -1,5 +1,6 @@
 # Realtek rtd1619b quad core 4GB Mem/32GB eMMC 1x HDMI 1x USB 3.2 1x USB 2.0
 BOARD_NAME="XpressReal T3"
+BOARD_VENDOR="xpressreal"
 BOARDFAMILY="realtek-rtd1619b"
 BOARD_MAINTAINER="wei633"
 KERNEL_TARGET="vendor"

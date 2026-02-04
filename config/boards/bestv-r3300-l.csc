@@ -1,5 +1,6 @@
 # Amlogic S905L-B 1GB RAM 8GB eMMC microSD FE USB2 RTL8189FTV WiFi
 BOARD_NAME="BesTV R3300-L"
+BOARD_VENDOR="amlogic"
 BOARDFAMILY="meson-gxl"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="bestv-r3300-l_defconfig"
@@ -10,8 +11,8 @@ SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-gxl-s905x-bestv-r3300-l.dtb"
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
-BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04"
+BOOTBRANCH_BOARD="tag:v2026.01"
+BOOTPATCHDIR="v2026.01"
 
 enable_extension "gxlimg"
 enable_extension "amlogic-fip-blobs"

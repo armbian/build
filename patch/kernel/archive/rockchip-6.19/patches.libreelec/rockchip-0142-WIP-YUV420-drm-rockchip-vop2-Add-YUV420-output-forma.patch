@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Wed, 4 Dec 2024 13:26:13 +0200
+Subject: [WIP-YUV420] drm/rockchip: vop2: Add YUV420 output format support
+
+TODO: proper colorspace conversion handling
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_drv.h  |  2 +
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.c | 43 ++++++++++
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.h |  3 +
+ 3 files changed, 48 insertions(+)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_drv.h b/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_drv.h
+@@ -57,6 +57,8 @@ struct rockchip_crtc_state {
+ #define to_rockchip_crtc_state(s) \
+ 		container_of(s, struct rockchip_crtc_state, base)
+ 
++int rockchip_drm_colorimetry_to_v4l_colorspace(int drm_colorspace);
++
+ /*
+  * Rockchip drm private structure.
+  *
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -656,6 +656,39 @@ static void vop2_setup_scale(struct vop2 *vop2, const struct vop2_win *win,
+ 	}
+ }
+ 
++/*
++ * Convert drm_colorspace to v4l2_colorspace.
++ *
++ * TODO: this should be moved to rockchip_drm_drv.c but it requires
++ * including <uapi/linux/videodev2.h> which is not used elsewere.
++ */
++int rockchip_drm_colorimetry_to_v4l_colorspace(int drm_colorspace)
++{
++	switch (drm_colorspace) {
++	case DRM_MODE_COLORIMETRY_SMPTE_170M_YCC:
++	case DRM_MODE_COLORIMETRY_XVYCC_601:
++	case DRM_MODE_COLORIMETRY_SYCC_601:
++	case DRM_MODE_COLORIMETRY_OPYCC_601:
++	case DRM_MODE_COLORIMETRY_BT601_YCC:
++		return V4L2_COLORSPACE_SMPTE170M;
++
++	default:
++	case DRM_MODE_COLORIMETRY_NO_DATA:
++	case DRM_MODE_COLORIMETRY_BT709_YCC:
++	case DRM_MODE_COLORIMETRY_XVYCC_709:
++	case DRM_MODE_COLORIMETRY_RGB_WIDE_FIXED:
++	case DRM_MODE_COLORIMETRY_RGB_WIDE_FLOAT:
++		return V4L2_COLORSPACE_DEFAULT;
++
++	case DRM_MODE_COLORIMETRY_BT2020_CYCC:
++	case DRM_MODE_COLORIMETRY_BT2020_YCC:
++	case DRM_MODE_COLORIMETRY_BT2020_RGB:
++	case DRM_MODE_COLORIMETRY_DCI_P3_RGB_D65:
++	case DRM_MODE_COLORIMETRY_DCI_P3_RGB_THEATER:
++		return V4L2_COLORSPACE_BT2020;
++	}
++}
++
+ static int vop2_convert_csc_mode(int csc_mode)
+ {
+ 	switch (csc_mode) {
+@@ -1598,6 +1631,7 @@ static void vop2_post_config(struct drm_crtc *crtc)
+ 	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+ 	struct vop2 *vop2 = vp->vop2;
+ 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
++	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
+ 	u64 bgcolor = crtc->state->background_color;
+ 	u16 vtotal = mode->crtc_vtotal;
+ 	u16 hdisplay = mode->crtc_hdisplay;
+@@ -1651,6 +1685,15 @@ static void vop2_post_config(struct drm_crtc *crtc)
+ 	vop2_vp_write(vp, RK3568_VP_DSP_BG, val);
+ 
+ 	vop2_bcsh_config(crtc, vp);
++
++	if (vcstate->output_mode == ROCKCHIP_OUT_MODE_YUV420) {
++		val = RK3568_VP_BCSH_CTRL__BCSH_R2Y_EN;
++		u32 csc_mode = vop2_convert_csc_mode(vcstate->color_space);
++		val |= FIELD_PREP(RK3568_VP_BCSH_CTRL__BCSH_R2Y_CSC_MODE, csc_mode);
++	} else {
++		val = 0;
++	}
++	vop2_vp_write(vp, RK3568_VP_BCSH_CTRL, val);
+ }
+ 
+ static int us_to_vertical_line(struct drm_display_mode *mode, int us)
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+@@ -667,6 +667,9 @@ enum dst_factor_mode {
+ #define RK3568_VP_POST_SCL_CTRL__VSCALEDOWN		BIT(1)
+ #define RK3568_VP_POST_SCL_CTRL__HSCALEDOWN		BIT(0)
+ 
++#define RK3568_VP_BCSH_CTRL__BCSH_R2Y_CSC_MODE		GENMASK(7, 6)
++#define RK3568_VP_BCSH_CTRL__BCSH_R2Y_EN		BIT(4)
++
+ #define RK3568_SYS_DSP_INFACE_EN_LVDS1_MUX		GENMASK(26, 25)
+ #define RK3568_SYS_DSP_INFACE_EN_LVDS1			BIT(24)
+ #define RK3568_SYS_DSP_INFACE_EN_MIPI1_MUX		GENMASK(22, 21)
+-- 
+Armbian
+

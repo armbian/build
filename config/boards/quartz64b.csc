@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 4GB-8GB GBE PCIe USB3
 BOARD_NAME="Pine Quartz64 B"
+BOARD_VENDOR="pine64"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOT_SOC="rk3566"

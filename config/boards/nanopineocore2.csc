@@ -1,5 +1,6 @@
 # Allwinner H5 quad core 1GB RAM SoC headless GBE eMMC
 BOARD_NAME="NanoPi Neo Core 2"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun50iw2"
 BOARD_MAINTAINER="AGM1968"
 BOOTCONFIG="nanopi_neo_core2_defconfig"

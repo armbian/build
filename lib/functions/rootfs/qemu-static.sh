@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -132,7 +132,7 @@ function prepare_host_binfmt_qemu_cross() {
 
 	declare host_arch
 	host_arch="$(arch)"
-	declare -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64")
+	declare -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64" "loongarch64")
 	declare -A arch_aliases=(["aarch64"]="arm64" ["x86_64"]="amd64")
 	display_alert "Preparing binfmts for arch" "binfmts: host '${host_arch}', wanted arches '${wanted_arches[*]}'" "debug"
 	declare wanted_arch arch_alias

@@ -1,5 +1,6 @@
 # Rockchip RK3588 octa core 16GB RAM SoC eMMC 4x NVMe 2x USB3 USB2 USB-C 2.5GbE
 BOARD_NAME="FriendlyElec CM3588 NAS"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
 BOOTCONFIG="cm3588-nas-rk3588_defconfig" # Mainline defconfig, enables booting from NVMe
@@ -43,7 +44,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01-rc2"
+	declare -g BOOTBRANCH="tag:v2026.01"
 	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"

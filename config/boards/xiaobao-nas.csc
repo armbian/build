@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 4GB DDR3 SoC TF/PCIE GBE USB3
 BOARD_NAME="xiaobao-nas"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="xiaobao-nas-rk3399_defconfig"

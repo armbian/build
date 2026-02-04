@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -121,6 +121,21 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 		opts_y+=(
 			"BPF_JIT" "BPF_JIT_DEFAULT_ON" "FTRACE_SYSCALLS" "PROBE_EVENTS_BTF_ARGS" "BPF_KPROBE_OVERRIDE" # eBPF == on
 			"DEBUG_INFO" "DEBUG_INFO_DWARF5" "DEBUG_INFO_BTF" "DEBUG_INFO_BTF_MODULES"                     # BTF & CO-RE == off
+		)
+
+		# Extra eBPF-related stuff for eBPF tooling like Tetragon
+		opts_y+=(
+			"BLK_CGROUP_IOCOST"
+			"BPF_EVENTS"
+			"BPF_JIT_ALWAYS_ON"
+			"BPF_LSM"
+			"BPF_STREAM_PARSER"
+			"CGROUP_FAVOR_DYNMODS"
+			"CGROUP_MISC"
+			"DYNAMIC_FTRACE"
+			"FTRACE"
+			"FUNCTION_TRACER"
+			"TRACEFS_AUTOMOUNT_DEPRECATED" # This is valid until 2030, needed for some eBPF tools
 		)
 	fi
 }
@@ -348,6 +363,20 @@ function armbian_kernel_config__select_nftables() {
 	opts_m+=("IP_SET_BITMAP_PORT")
 }
 
+# Enables various filesystems that we expect our users to need/demand in boot dependencies.
+# OVERLAY_FS isn't here b/c it's never required for boot [that this author is aware of as of 2026Jan]
+# if you as a kernel family maintainer want to override this, make a function call like below:
+# extension_hook_opt_out "armbian_kernel_config__enable_various_filesystems"
+# and then copy this function to your config/sources/families modified as appropriate.
+function armbian_kernel_config__enable_various_filesystems() {
+	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
+	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
+	opts_y+=("EXT4_FS")                   # Enables EXT4 file system support
+	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
+	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
+	opts_m+=("EROFS_FS")                  # Extended ReadOnly FS, useful for docker images
+}
+
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
 #   sets a wide range of kernel configuration options necessary for Docker, including support for
 #   control groups (cgroups), networking, security, and various netfilter
@@ -355,8 +384,6 @@ function armbian_kernel_config__select_nftables() {
 # ATTENTION: filesystems like EXT4 and BTRFS are now omitted, so it's each kernel's .config responsibility to enable
 #            them as builtin or modules as each sees fit.
 function armbian_kernel_config__enable_docker_support() {
-	opts_m+=("BTRFS_FS")                  # Enables the BTRFS file system support
-	opts_y+=("BTRFS_FS_POSIX_ACL")        # Enables POSIX ACL support for BTRFS
 	opts_y+=("BLK_CGROUP")                # Enables block layer control groups (cgroups)
 	opts_y+=("BLK_DEV_THROTTLING")        # Enables block device IO throttling
 	opts_y+=("BRIDGE_VLAN_FILTERING")     # Enables VLAN filtering on network bridges
@@ -385,9 +412,6 @@ function armbian_kernel_config__enable_docker_support() {
 	opts_m+=("DUMMY")                     # Enables dummy network driver module
 	opts_y+=("DEVPTS_MULTIPLE_INSTANCES") # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
 	opts_y+=("ENCRYPTED_KEYS")            # Enables support for encrypted keys in the kernel
-	opts_m+=("EXT4_FS")                   # Enables EXT4 file system support as a module
-	opts_y+=("EXT4_FS_POSIX_ACL")         # Enables POSIX ACL support for EXT4
-	opts_y+=("EXT4_FS_SECURITY")          # Enables security extensions for EXT4 file system
 	opts_m+=("IPVLAN")                    # Enables IPvlan network driver support
 	opts_y+=("INET")                      # Enables Internet protocol (IPv4) support
 	opts_y+=("FAIR_GROUP_SCHED")          # Enables fair group scheduling support
@@ -502,15 +526,7 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 	done
 
 	for opt_m in "${opts_m[@]}"; do
-		actual_opt_value='m'
-		# NOTE: this isn't perfect, there may be something already
-		# in defconfig, but we can't see it from here.
-		if egrep -q "(CONFIG_)?${opt_m}=m" "${kernel_config_source_filename}"; then
-			: # do nothing
-		elif egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}"; then
-			actual_opt_value='y'
-		fi
-		kernel_config_modifying_hashes+=("${opt_m}=${actual_opt_value}")
+		kernel_config_modifying_hashes+=("${opt_m}=m")
 	done
 
 	for opt_val in "${!opts_val[@]}"; do
@@ -519,28 +535,18 @@ function armbian_kernel_config_apply_opts_from_arrays() {
 
 	if [[ -f .config ]]; then
 		for opt_n in "${opts_n[@]}"; do
-			display_alert "Disabling kernel opt" "${opt_n}=n" "debug"
 			kernel_config_set_n "${opt_n}"
 		done
 
 		for opt_y in "${opts_y[@]}"; do
-			display_alert "Enabling kernel opt" "${opt_y}=y" "debug"
 			kernel_config_set_y "${opt_y}"
 		done
 
 		for opt_m in "${opts_m[@]}"; do
-			actual_opt_value='m'
-			if egrep -q "(CONFIG_)?${opt_m}=y" "${kernel_config_source_filename}" .config; then
-				actual_opt_value='y'
-				kernel_config_set_y "${opt_m}"
-			else
-				kernel_config_set_m "${opt_m}"
-			fi
-			display_alert "Enabling kernel opt" "${opt_m}=${actual_opt_value}" "debug"
+			kernel_config_set_m "${opt_m}"
 		done
 
 		for opt_val in "${!opts_val[@]}"; do
-			display_alert "Setting kernel opt" "${opt_val}=${opts_val[$opt_val]}" "debug"
 			kernel_config_set_val "${opt_val}" "${opts_val[$opt_val]}"
 		done
 	fi

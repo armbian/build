@@ -1,0 +1,234 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Niklas Cassel <cassel@kernel.org>
+Date: Thu, 27 Nov 2025 14:43:18 +0100
+Subject: PCI: dwc: Make Link Up IRQ logic handle already powered on PCIe
+ switches
+
+The DWC glue drivers always call pci_host_probe() during probe(), which
+will allocate upstream bridge resources and enumerate the bus.
+
+For controllers without Link Up IRQ support, pci_host_probe() is called
+after dw_pcie_wait_for_link(), which will also wait the time required by
+the PCIe specification before performing PCI Configuration Space reads.
+
+For controllers with Link Up IRQ support, the pci_host_probe() call (which
+will perform PCI Configuration Space reads) is done without any of the
+delays mandated by the PCIe specification.
+
+For controllers with Link Up IRQ support, since the pci_host_probe() call
+is done without any delay (link training might still be ongoing), it is
+very unlikely that this scan will find any devices. Once the Link Up IRQ
+triggers, the Link Up IRQ handler will call pci_rescan_bus().
+
+This works fine for PCIe endpoints connected to the Root Port, since they
+don't extend the bus. However, if the pci_rescan_bus() call detects a PCIe
+switch, then there will be a problem when the downstream busses starts
+showing up, because the PCIe controller is not hotplug capable, so we are
+not allowed to extend the subordinate bus number after the initial scan,
+resulting in error messages such as:
+
+pci_bus 0004:43: busn_res: can not insert [bus 43-41] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci_bus 0004:43: busn_res: [bus 43-41] end is updated to 43
+pci_bus 0004:43: busn_res: can not insert [bus 43] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci 0004:42:00.0: devices behind bridge are unusable because [bus 43] cannot be assigned for them
+pci_bus 0004:44: busn_res: can not insert [bus 44-41] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci_bus 0004:44: busn_res: [bus 44-41] end is updated to 44
+pci_bus 0004:44: busn_res: can not insert [bus 44] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci 0004:42:02.0: devices behind bridge are unusable because [bus 44] cannot be assigned for them
+pci_bus 0004:45: busn_res: can not insert [bus 45-41] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci_bus 0004:45: busn_res: [bus 45-41] end is updated to 45
+pci_bus 0004:45: busn_res: can not insert [bus 45] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci 0004:42:06.0: devices behind bridge are unusable because [bus 45] cannot be assigned for them
+pci_bus 0004:46: busn_res: can not insert [bus 46-41] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci_bus 0004:46: busn_res: [bus 46-41] end is updated to 46
+pci_bus 0004:46: busn_res: can not insert [bus 46] under [bus 42-41] (conflicts with (null) [bus 42-41])
+pci 0004:42:0e.0: devices behind bridge are unusable because [bus 46] cannot be assigned for them
+pci_bus 0004:42: busn_res: [bus 42-41] end is updated to 46
+pci_bus 0004:42: busn_res: can not insert [bus 42-46] under [bus 41] (conflicts with (null) [bus 41])
+pci 0004:41:00.0: devices behind bridge are unusable because [bus 42-46] cannot be assigned for them
+pcieport 0004:40:00.0: bridge has subordinate 41 but max busn 46
+
+While we would like to set the is_hotplug_bridge flag
+(quirk_hotplug_bridge()), many embedded SoCs that use the DWC controller
+have synthesized the controller without hot-plug support.
+Thus, the Link Up IRQ logic is only mimicking hot-plug functionality, i.e.
+it is not compliant with the PCI Hot-Plug Specification, so we cannot make
+use of the is_hotplug_bridge flag.
+
+In order to let the Link Up IRQ logic handle PCIe switches that are already
+powered on (PCIe switches that not powered on already need to implement a
+pwrctrl driver), don't perform a pci_host_probe() call during probe()
+(which disregards the delays required by the PCIe specification).
+
+Instead let the first Link Up IRQ call pci_host_probe(). Any follow up
+Link Up IRQ will call pci_rescan_bus().
+
+Fixes: ec9fd499b9c6 ("PCI: dw-rockchip: Don't wait for link since we can detect Link Up")
+Fixes: 0e0b45ab5d77 ("PCI: dw-rockchip: Enumerate endpoints based on dll_link_up IRQ")
+Reported-by: FUKAUMI Naoki <naoki@radxa.com>
+Closes: https://lore.kernel.org/linux-pci/1E8E4DB773970CB5+5a52c9e1-01b8-4872-99b7-021099f04031@radxa.com/
+Signed-off-by: Niklas Cassel <cassel@kernel.org>
+Tested-by: Shawn Lin <shawn.lin@rock-chips.com>
+---
+ drivers/pci/controller/dwc/pcie-designware-host.c | 70 ++++++++--
+ drivers/pci/controller/dwc/pcie-designware.h      |  5 +
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c     |  5 +-
+ drivers/pci/controller/dwc/pcie-qcom.c            |  5 +-
+ 4 files changed, 68 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/pcie-designware-host.c
++++ b/drivers/pci/controller/dwc/pcie-designware-host.c
+@@ -566,6 +566,59 @@ static int dw_pcie_host_get_resources(struct dw_pcie_rp *pp)
+ 	return 0;
+ }
+ 
++static int dw_pcie_host_initial_scan(struct dw_pcie_rp *pp)
++{
++	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
++	struct pci_host_bridge *bridge = pp->bridge;
++	int ret;
++
++	ret = pci_host_probe(bridge);
++	if (ret)
++		return ret;
++
++	if (pp->ops->post_init)
++		pp->ops->post_init(pp);
++
++	dwc_pcie_debugfs_init(pci, DW_PCIE_RC_TYPE);
++
++	return 0;
++}
++
++void dw_pcie_handle_link_up_irq(struct dw_pcie_rp *pp)
++{
++	if (!pp->initial_linkup_irq_done) {
++		int ret;
++
++		ret = dw_pcie_host_initial_scan(pp);
++		if (ret) {
++			struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
++			struct device *dev = pci->dev;
++
++			dev_err(dev, "Initial scan from IRQ failed: %d\n", ret);
++
++			dw_pcie_stop_link(pci);
++
++			dw_pcie_edma_remove(pci);
++
++			if (pp->has_msi_ctrl)
++				dw_pcie_free_msi(pp);
++
++			if (pp->ops->deinit)
++				pp->ops->deinit(pp);
++
++			if (pp->cfg)
++				pci_ecam_free(pp->cfg);
++		} else {
++			pp->initial_linkup_irq_done = true;
++		}
++	} else {
++		/* Rescan the bus to enumerate endpoint devices */
++		pci_lock_rescan_remove();
++		pci_rescan_bus(pp->bridge->bus);
++		pci_unlock_rescan_remove();
++	}
++}
++
+ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ {
+ 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
+@@ -670,18 +723,17 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 	 * If there is no Link Up IRQ, we should not bypass the delay
+ 	 * because that would require users to manually rescan for devices.
+ 	 */
+-	if (!pp->use_linkup_irq)
++	if (!pp->use_linkup_irq) {
+ 		/* Ignore errors, the link may come up later */
+ 		dw_pcie_wait_for_link(pci);
+ 
+-	ret = pci_host_probe(bridge);
+-	if (ret)
+-		goto err_stop_link;
+-
+-	if (pp->ops->post_init)
+-		pp->ops->post_init(pp);
+-
+-	dwc_pcie_debugfs_init(pci, DW_PCIE_RC_TYPE);
++		/*
++		 * For platforms with Link Up IRQ, initial scan will be done
++		 * on first Link Up IRQ.
++		 */
++		if (dw_pcie_host_initial_scan(pp))
++			goto err_stop_link;
++	}
+ 
+ 	return 0;
+ 
+diff --git a/drivers/pci/controller/dwc/pcie-designware.h b/drivers/pci/controller/dwc/pcie-designware.h
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.h
++++ b/drivers/pci/controller/dwc/pcie-designware.h
+@@ -435,6 +435,7 @@ struct dw_pcie_rp {
+ 	int			msg_atu_index;
+ 	struct resource		*msg_res;
+ 	bool			use_linkup_irq;
++	bool			initial_linkup_irq_done;
+ 	struct pci_eq_presets	presets;
+ 	struct pci_config_window *cfg;
+ 	bool			ecam_enabled;
+@@ -826,6 +827,7 @@ void dw_pcie_msi_init(struct dw_pcie_rp *pp);
+ int dw_pcie_msi_host_init(struct dw_pcie_rp *pp);
+ void dw_pcie_free_msi(struct dw_pcie_rp *pp);
+ int dw_pcie_setup_rc(struct dw_pcie_rp *pp);
++void dw_pcie_handle_link_up_irq(struct dw_pcie_rp *pp);
+ int dw_pcie_host_init(struct dw_pcie_rp *pp);
+ void dw_pcie_host_deinit(struct dw_pcie_rp *pp);
+ int dw_pcie_allocate_domains(struct dw_pcie_rp *pp);
+@@ -863,6 +865,9 @@ static inline int dw_pcie_setup_rc(struct dw_pcie_rp *pp)
+ 	return 0;
+ }
+ 
++static inline void dw_pcie_handle_link_up_irq(struct dw_pcie_rp *pp)
++{ }
++
+ static inline int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ {
+ 	return 0;
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -505,10 +505,7 @@ static irqreturn_t rockchip_pcie_rc_sys_irq_thread(int irq, void *arg)
+ 		if (rockchip_pcie_link_up(pci)) {
+ 			msleep(PCIE_RESET_CONFIG_WAIT_MS);
+ 			dev_dbg(dev, "Received Link up event. Starting enumeration!\n");
+-			/* Rescan the bus to enumerate endpoint devices */
+-			pci_lock_rescan_remove();
+-			pci_rescan_bus(pp->bridge->bus);
+-			pci_unlock_rescan_remove();
++			dw_pcie_handle_link_up_irq(pp);
+ 		}
+ 	}
+ 
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -1645,10 +1645,7 @@ static irqreturn_t qcom_pcie_global_irq_thread(int irq, void *data)
+ 	if (FIELD_GET(PARF_INT_ALL_LINK_UP, status)) {
+ 		msleep(PCIE_RESET_CONFIG_WAIT_MS);
+ 		dev_dbg(dev, "Received Link up event. Starting enumeration!\n");
+-		/* Rescan the bus to enumerate endpoint devices */
+-		pci_lock_rescan_remove();
+-		pci_rescan_bus(pp->bridge->bus);
+-		pci_unlock_rescan_remove();
++		dw_pcie_handle_link_up_irq(pp);
+ 
+ 		qcom_pcie_icc_opp_update(pcie);
+ 	} else {
+-- 
+Armbian
+

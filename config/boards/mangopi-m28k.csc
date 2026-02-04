@@ -1,5 +1,6 @@
 # Rockchip RK3528 quad core 1-8GB SoC GBe eMMC PCIE Wifi Bt
 BOARD_NAME="Mangopi M28K"
+BOARD_VENDOR="mangopi"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"
 BOARD_MAINTAINER="sputnik2019"

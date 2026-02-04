@@ -1,5 +1,6 @@
 # Allwinner A10 single core 1Gb SoC 1xSATA
 BOARD_NAME="Cubieboard 1"
+BOARD_VENDOR="cubietech"
 BOARDFAMILY="sun4i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="Cubieboard_config"

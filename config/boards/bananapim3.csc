@@ -1,5 +1,6 @@
 # Allwinner A83T octa core 2Gb SoC Wifi
 BOARD_NAME="Banana Pi M3"
+BOARD_VENDOR="sinovoip"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER="AaronNGray"
 BOOTCONFIG="Sinovoip_BPI_M3_defconfig"

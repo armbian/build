@@ -22,8 +22,6 @@ case $BRANCH in
 			;spi;u-boot-with-spl.kwb:u-boot.flash
 			;uart;u-boot-with-spl.kwb:u-boot.uart"
 
-		UBOOT_USE_GCC='> 7.0'
-
 		OVERLAY_PREFIX='armada-388-helios4'
 		;;
 

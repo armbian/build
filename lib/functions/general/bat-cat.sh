@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
 function run_tool_batcat() {
 	# Default version
-	BATCAT_VERSION=${BATCAT_VERSION:-0.26.0} # https://github.com/sharkdp/bat/releases
+	BATCAT_VERSION=${BATCAT_VERSION:-0.26.1} # https://github.com/sharkdp/bat/releases
 
 	declare non_cache_dir="/armbian-tools/batcat" # To deploy/reuse cached batcat in a Docker image.
 

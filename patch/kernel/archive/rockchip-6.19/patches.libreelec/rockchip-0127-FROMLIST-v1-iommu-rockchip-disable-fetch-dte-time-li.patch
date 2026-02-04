@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Simon Xue <xxm@rock-chips.com>
+Date: Wed, 26 Nov 2025 12:45:08 +0100
+Subject: iommu/rockchip: disable fetch dte time limit
+
+Disable the Bit 31 of the AUTO_GATING iommu register, as it causes
+hangups with the RGA3 (Raster Graphics Acceleration 3) peripheral.
+The RGA3 register description of the TRM already states that the bit
+must be set to 1. The vendor kernel sets the bit unconditionally to
+1 to fix VOP (Video Output Processor) screen black issues. This patch
+squashes the 2 vendor kernel commits with the following commit messages:
+
+Master fetch data and cpu update page table may work in parallel, may
+have the following procedure:
+
+	master                  cpu
+	fetch dte               update page tabl
+	        |                       |
+	(make dte invalid)  <-  zap iotlb entry
+	        |                       |
+	fetch dte again
+	(make dte invalid)  <-  zap iotlb entry
+	        |                       |
+	fetch dte again
+	(make dte invalid)  <-  zap iotlb entry
+	        |                       |
+	fetch dte again
+	(make iommu block)  <-  zap iotlb entry
+
+New iommu version has the above bug, if fetch dte consecutively four
+times, then it will be blocked. Fortunately, we can set bit 31 of
+register MMU_AUTO_GATING to 1 to make it work as old version which does
+not have this issue.
+
+This issue only appears on RV1126 so far, so make a workaround dedicated
+to "rockchip,rv1126" machine type.
+
+iommu/rockchip: fix vop blocked and screen black on RK356X and RK3588
+
+RK3568 and RK3588 has the same issue as RV1126/RV1109 that caused by
+dte fetch time limit, So we can set BIT(31) of register 0x24 default
+to 1 as a workaround.
+
+Signed-off-by: Simon Xue <xxm@rock-chips.com>
+Signed-off-by: Sven Puschel <s.pueschel@pengutronix.de>
+---
+ drivers/iommu/rockchip-iommu.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
+index 111111111111..222222222222 100644
+--- a/drivers/iommu/rockchip-iommu.c
++++ b/drivers/iommu/rockchip-iommu.c
+@@ -76,6 +76,8 @@
+ #define SPAGE_ORDER 12
+ #define SPAGE_SIZE (1 << SPAGE_ORDER)
+ 
++#define DISABLE_FETCH_DTE_TIME_LIMIT BIT(31)
++
+  /*
+   * Support mapping any size that fits in one page table:
+   *   4 KiB to 4 MiB
+@@ -925,6 +927,7 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
+ 	struct iommu_domain *domain = iommu->domain;
+ 	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
+ 	int ret, i;
++	u32 auto_gate;
+ 
+ 	ret = clk_bulk_enable(iommu->num_clocks, iommu->clocks);
+ 	if (ret)
+@@ -943,6 +946,11 @@ static int rk_iommu_enable(struct rk_iommu *iommu)
+ 			       rk_ops->mk_dtentries(rk_domain->dt_dma));
+ 		rk_iommu_base_command(iommu->bases[i], RK_MMU_CMD_ZAP_CACHE);
+ 		rk_iommu_write(iommu->bases[i], RK_MMU_INT_MASK, RK_MMU_IRQ_MASK);
++
++		/* Workaround for iommu blocked, BIT(31) default to 1 */
++		auto_gate = rk_iommu_read(iommu->bases[i], RK_MMU_AUTO_GATING);
++		auto_gate |= DISABLE_FETCH_DTE_TIME_LIMIT;
++		rk_iommu_write(iommu->bases[i], RK_MMU_AUTO_GATING, auto_gate);
+ 	}
+ 
+ 	ret = rk_iommu_enable_paging(iommu);
+-- 
+Armbian
+

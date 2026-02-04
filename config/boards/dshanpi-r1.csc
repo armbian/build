@@ -1,5 +1,6 @@
 # Rockchip RK3568 quad core 1-8GB SoC GBe eMMC USB3
 BOARD_NAME="100ASK DShanPI R1"
+BOARD_VENDOR="dongshanpi"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="dshanpi-r1-rk3568_defconfig"

@@ -1,5 +1,6 @@
 # Allwinner H3 quad core 512MB RAM SoC headless WiFi/BT
 BOARD_NAME="NanoPi Duo2"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_neo_defconfig"

@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Fri, 10 Jan 2025 23:04:23 +0200
+Subject: [WIP-SCRAMB] drm/bridge-connector: Switch from ->detect() to
+ ->detect_ctx()
+
+In preparation to provide scrambling support to the HDMI Connector
+framework, make use of the more flexible ->detect_ctx() bridge connector
+helper hook instead of ->detect().
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ drivers/gpu/drm/display/drm_bridge_connector.c | 77 +++++-----
+ 1 file changed, 42 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -200,39 +200,6 @@ static void drm_bridge_connector_disable_hpd(struct drm_connector *connector)
+  * Bridge Connector Functions
+  */
+ 
+-static enum drm_connector_status
+-drm_bridge_connector_detect(struct drm_connector *connector, bool force)
+-{
+-	struct drm_bridge_connector *bridge_connector =
+-		to_drm_bridge_connector(connector);
+-	struct drm_bridge *detect = bridge_connector->bridge_detect;
+-	struct drm_bridge *hdmi = bridge_connector->bridge_hdmi;
+-	enum drm_connector_status status;
+-
+-	if (detect) {
+-		status = detect->funcs->detect(detect, connector);
+-
+-		if (hdmi)
+-			drm_atomic_helper_connector_hdmi_hotplug(connector, status);
+-
+-		drm_bridge_connector_hpd_notify(connector, status);
+-	} else {
+-		switch (connector->connector_type) {
+-		case DRM_MODE_CONNECTOR_DPI:
+-		case DRM_MODE_CONNECTOR_LVDS:
+-		case DRM_MODE_CONNECTOR_DSI:
+-		case DRM_MODE_CONNECTOR_eDP:
+-			status = connector_status_connected;
+-			break;
+-		default:
+-			status = connector_status_unknown;
+-			break;
+-		}
+-	}
+-
+-	return status;
+-}
+-
+ static void drm_bridge_connector_force(struct drm_connector *connector)
+ {
+ 	struct drm_bridge_connector *bridge_connector =
+@@ -270,7 +237,6 @@ static void drm_bridge_connector_reset(struct drm_connector *connector)
+ 
+ static const struct drm_connector_funcs drm_bridge_connector_funcs = {
+ 	.reset = drm_bridge_connector_reset,
+-	.detect = drm_bridge_connector_detect,
+ 	.force = drm_bridge_connector_force,
+ 	.fill_modes = drm_helper_probe_single_connector_modes,
+ 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+@@ -283,6 +249,46 @@ static const struct drm_connector_funcs drm_bridge_connector_funcs = {
+  * Bridge Connector Helper Functions
+  */
+ 
++static int drm_bridge_connector_detect_ctx(struct drm_connector *connector,
++					   struct drm_modeset_acquire_ctx *ctx,
++					   bool force)
++{
++	struct drm_bridge_connector *bridge_connector =
++		to_drm_bridge_connector(connector);
++	struct drm_bridge *detect = bridge_connector->bridge_detect;
++	struct drm_bridge *hdmi = bridge_connector->bridge_hdmi;
++	int ret;
++
++	if (detect) {
++		if (detect->funcs->detect_ctx) {
++			ret = detect->funcs->detect_ctx(detect, ctx);
++			if (ret < 0)
++				return ret;
++		} else {
++			ret = detect->funcs->detect(detect, connector);
++		}
++
++		if (hdmi)
++			drm_atomic_helper_connector_hdmi_hotplug(connector, ret);
++
++		drm_bridge_connector_hpd_notify(connector, ret);
++	} else {
++		switch (connector->connector_type) {
++		case DRM_MODE_CONNECTOR_DPI:
++		case DRM_MODE_CONNECTOR_LVDS:
++		case DRM_MODE_CONNECTOR_DSI:
++		case DRM_MODE_CONNECTOR_eDP:
++			ret = connector_status_connected;
++			break;
++		default:
++			ret = connector_status_unknown;
++			break;
++		}
++	}
++
++	return ret;
++}
++
+ static int drm_bridge_connector_get_modes_edid(struct drm_connector *connector,
+ 					       struct drm_bridge *bridge)
+ {
+@@ -290,7 +296,7 @@ static int drm_bridge_connector_get_modes_edid(struct drm_connector *connector,
+ 	const struct drm_edid *drm_edid;
+ 	int n;
+ 
+-	status = drm_bridge_connector_detect(connector, false);
++	status = drm_bridge_connector_detect_ctx(connector, NULL, false);
+ 	if (status != connector_status_connected)
+ 		goto no_edid;
+ 
+@@ -376,6 +382,7 @@ static int drm_bridge_connector_atomic_check(struct drm_connector *connector,
+ 
+ static const struct drm_connector_helper_funcs drm_bridge_connector_helper_funcs = {
+ 	.get_modes = drm_bridge_connector_get_modes,
++	.detect_ctx = drm_bridge_connector_detect_ctx,
+ 	.mode_valid = drm_bridge_connector_mode_valid,
+ 	.enable_hpd = drm_bridge_connector_enable_hpd,
+ 	.disable_hpd = drm_bridge_connector_disable_hpd,
+-- 
+Armbian
+

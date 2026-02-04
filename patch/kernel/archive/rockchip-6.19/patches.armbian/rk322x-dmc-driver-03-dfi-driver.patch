@@ -1,0 +1,197 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Thu, 11 Jan 2024 20:42:48 +0100
+Subject: add rk3228/rk3328 to rockchip dfi driver
+
+---
+ arch/arm/boot/dts/rockchip/rk322x.dtsi |  7 +
+ drivers/devfreq/event/rockchip-dfi.c   | 77 +++++++++-
+ include/soc/rockchip/rk3228_grf.h      | 14 ++
+ include/soc/rockchip/rk3328_grf.h      | 14 ++
+ 4 files changed, 105 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/boot/dts/rockchip/rk322x.dtsi b/arch/arm/boot/dts/rockchip/rk322x.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm/boot/dts/rockchip/rk322x.dtsi
++++ b/arch/arm/boot/dts/rockchip/rk322x.dtsi
+@@ -131,6 +131,13 @@ xin24m: oscillator {
+ 		#clock-cells = <0>;
+ 	};
+ 
++	dfi: dfi@11210000 {
++		reg = <0x11210000 0x400>;
++		compatible = "rockchip,rk3228-dfi";
++		rockchip,grf = <&grf>;
++		status = "okay";
++	};
++
+ 	display_subsystem: display-subsystem {
+ 		compatible = "rockchip,display-subsystem";
+ 		ports = <&vop_out>;
+diff --git a/drivers/devfreq/event/rockchip-dfi.c b/drivers/devfreq/event/rockchip-dfi.c
+index 111111111111..222222222222 100644
+--- a/drivers/devfreq/event/rockchip-dfi.c
++++ b/drivers/devfreq/event/rockchip-dfi.c
+@@ -25,6 +25,8 @@
+ #include <linux/perf_event.h>
+ 
+ #include <soc/rockchip/rockchip_grf.h>
++#include <soc/rockchip/rk3228_grf.h>
++#include <soc/rockchip/rk3328_grf.h>
+ #include <soc/rockchip/rk3399_grf.h>
+ #include <soc/rockchip/rk3568_grf.h>
+ #include <soc/rockchip/rk3588_grf.h>
+@@ -97,6 +99,7 @@ struct rockchip_dfi {
+ 
+ 	struct device *dev;
+ 	void __iomem *regs;
++	struct regmap *regmap_grf;
+ 	struct regmap *regmap_pmu;
+ 	struct clk *clk;
+ 	int usecount;
+@@ -711,6 +714,46 @@ static int rockchip_ddr_perf_init(struct rockchip_dfi *dfi)
+ }
+ #endif
+ 
++static int rk3228_dfi_init(struct rockchip_dfi *dfi)
++{
++	u32 val;
++
++	regmap_read(dfi->regmap_grf, RK3228_GRF_OS_REG2, &val);
++	dfi->ddr_type = FIELD_GET(RK3228_GRF_OS_REG2_DDRTYPE, val);
++
++	dfi->channel_mask = GENMASK(0, 0);
++	dfi->max_channels = 1;
++
++	dfi->buswidth[0] = 2;  // 16 bit bus width
++
++	dfi->ddrmon_stride = 0x0;  // single channel controller
++	dfi->ddrmon_ctrl_single = true;
++
++	dfi->clk = NULL;
++
++	return 0;
++}
++
++static int rk3328_dfi_init(struct rockchip_dfi *dfi)
++{
++	u32 val;
++
++	regmap_read(dfi->regmap_grf, RK3328_GRF_OS_REG2, &val);
++	dfi->ddr_type = FIELD_GET(RK3328_GRF_OS_REG2_DDRTYPE, val);
++
++	dfi->channel_mask = GENMASK(0, 0);
++	dfi->max_channels = 1;
++
++	dfi->buswidth[0] = 2;  // 16 bit bus width
++
++	dfi->ddrmon_stride = 0x0;  // single channel controller
++	dfi->ddrmon_ctrl_single = true;
++
++	dfi->clk = NULL;
++
++	return 0;
++}
++
+ static int rk3399_dfi_init(struct rockchip_dfi *dfi)
+ {
+ 	struct regmap *regmap_pmu = dfi->regmap_pmu;
+@@ -808,6 +851,8 @@ static int rk3588_dfi_init(struct rockchip_dfi *dfi)
+ };
+ 
+ static const struct of_device_id rockchip_dfi_id_match[] = {
++	{ .compatible = "rockchip,rk3228-dfi", .data = rk3228_dfi_init },
++	{ .compatible = "rockchip,rk3328-dfi", .data = rk3328_dfi_init },
+ 	{ .compatible = "rockchip,rk3399-dfi", .data = rk3399_dfi_init },
+ 	{ .compatible = "rockchip,rk3568-dfi", .data = rk3568_dfi_init },
+ 	{ .compatible = "rockchip,rk3588-dfi", .data = rk3588_dfi_init },
+@@ -837,14 +882,30 @@ static int rockchip_dfi_probe(struct platform_device *pdev)
+ 	if (IS_ERR(dfi->regs))
+ 		return PTR_ERR(dfi->regs);
+ 
+-	node = of_parse_phandle(np, "rockchip,pmu", 0);
+-	if (!node)
+-		return dev_err_probe(&pdev->dev, -ENODEV, "Can't find pmu_grf registers\n");
++	if (soc_init == rk3228_dfi_init ||
++	    soc_init == rk3328_dfi_init) {
++		node = of_parse_phandle(np, "rockchip,grf", 0);
++		if (!node)
++			return dev_err_probe(&pdev->dev, -ENODEV, "Can't find grf registers");
+ 
+-	dfi->regmap_pmu = syscon_node_to_regmap(node);
+-	of_node_put(node);
+-	if (IS_ERR(dfi->regmap_pmu))
+-		return PTR_ERR(dfi->regmap_pmu);
++		dfi->regmap_grf = syscon_node_to_regmap(node);
++		of_node_put(node);
++		if (IS_ERR(dfi->regmap_grf))
++			return PTR_ERR(dfi->regmap_grf);
++	}
++
++	if (soc_init == rk3399_dfi_init ||
++	    soc_init == rk3568_dfi_init ||
++	    soc_init == rk3588_dfi_init) {
++		node = of_parse_phandle(np, "rockchip,pmu", 0);
++		if (!node)
++			return dev_err_probe(&pdev->dev, -ENODEV, "Can't find pmu_grf registers\n");
++
++		dfi->regmap_pmu = syscon_node_to_regmap(node);
++		of_node_put(node);
++		if (IS_ERR(dfi->regmap_pmu))
++			return PTR_ERR(dfi->regmap_pmu);
++	}
+ 
+ 	dfi->dev = dev;
+ 	mutex_init(&dfi->mutex);
+@@ -869,6 +930,8 @@ static int rockchip_dfi_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	dev_notice(dfi->dev, "dfi initialized, dram type: 0x%x, channels: %d\n", dfi->ddr_type, dfi->max_channels);
++
+ 	platform_set_drvdata(pdev, dfi);
+ 
+ 	return 0;
+diff --git a/include/soc/rockchip/rk3228_grf.h b/include/soc/rockchip/rk3228_grf.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/soc/rockchip/rk3228_grf.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Rockchip General Register Files definitions for RK3228
++ *
++ * Author: Paolo Sabatino <paolo.sabatino@gmail.com>
++ */
++
++#ifndef __SOC_RK3228_GRF_H
++#define __SOC_RK3228_GRF_H
++
++#define RK3228_GRF_OS_REG2		0x5d0
++#define RK3228_GRF_OS_REG2_DDRTYPE	GENMASK(15, 13)
++
++#endif
+diff --git a/include/soc/rockchip/rk3328_grf.h b/include/soc/rockchip/rk3328_grf.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/soc/rockchip/rk3328_grf.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Rockchip General Register Files definitions for RK3328
++ *
++ * Author: Paolo Sabatino <paolo.sabatino@gmail.com>
++ */
++
++#ifndef __SOC_RK3328_GRF_H
++#define __SOC_RK3328_GRF_H
++
++#define RK3328_GRF_OS_REG2		0x5d0
++#define RK3328_GRF_OS_REG2_DDRTYPE	GENMASK(15, 13)
++
++#endif
+-- 
+Armbian
+

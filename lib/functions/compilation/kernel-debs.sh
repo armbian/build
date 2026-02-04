@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -538,7 +538,7 @@ function kernel_package_callback_linux_headers() {
 			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
 
 			echo "Compiling kernel-headers scripts/mod (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
-			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod
 
 			echo "Compiling resolve_btfids tools for assigning stable BTF type IDs to kernel symbols"
 			make ARCH="${SRC_ARCH}" -j\$NCPU tools/bpf/resolve_btfids

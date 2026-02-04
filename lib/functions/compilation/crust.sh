@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -31,15 +31,7 @@ compile_crust() {
 
 	display_alert "Compiling Crust" "" "info"
 
-	# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-		local toolchain
-		toolchain=$(find_toolchain "$CRUST_COMPILER" "$CRUST_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${CRUST_COMPILER}gcc $CRUST_USE_GCC"
-	fi
-
-	display_alert "Compiler version" "${CRUST_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${CRUST_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
+	display_alert "Compiler version" "${CRUST_COMPILER}gcc $(eval env "${CRUST_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local target_make target_patchdir target_files
 	target_make=$(cut -d';' -f1 <<< "${CRUST_TARGET_MAP}")
@@ -55,14 +47,14 @@ compile_crust() {
 	fi
 
 	declare binutils_version binutils_flags_crust=""
-	binutils_version=$(env PATH="${toolchain}:${PATH}" or1k-elf-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
+	binutils_version=$(env or1k-elf-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
 	display_alert "Binutils version for Crust" "${binutils_version}" "info"
 
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
 
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		make $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
 

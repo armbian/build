@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB-4GB 1xFE USB3 [WiFi]
 BOARD_NAME="Dusun DSOM 010R SoM"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="paolosabatino"
 BOOTCONFIG="dusun-dsom-010r-rk3328_defconfig"

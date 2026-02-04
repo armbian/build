@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 2GB SoC GBe eMMC USB3 WiFi/BT
 BOARD_NAME="Tinker Board 2"
+BOARD_VENDOR="asus"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="tinker-2-rk3399_defconfig"

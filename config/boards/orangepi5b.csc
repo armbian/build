@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 4/8/16GB RAM SoC eMMC USB3 USB-C GbE
 BOARD_NAME="Orange Pi 5B"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-5b-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate

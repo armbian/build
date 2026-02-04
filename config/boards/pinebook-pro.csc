@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 2G/4GB SoC Laptop eMMC USB3 WiFi
 BOARD_NAME="Pinebook Pro"
+BOARD_VENDOR="pine64"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="ahoneybun"
 BOOTCONFIG="pinebook-pro-rk3399_defconfig"

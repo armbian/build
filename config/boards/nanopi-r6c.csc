@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 8GB RAM SoC eMMC 1x NVMe 1x USB3 1x USB2 1x 2.5GbE 1x GbE
 BOARD_NAME="NanoPi R6C"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
 BOOTCONFIG="nanopi-r6c-rk3588s_defconfig" # Mainline defconfig, enables booting from NVMe
@@ -37,7 +38,7 @@ function post_family_config__nanopi_r6c_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2026.01-rc2"
+	declare -g BOOTBRANCH="tag:v2026.01"
 	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"

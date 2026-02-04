@@ -1,5 +1,6 @@
 # Mediatek MT7988a quad core Cortex-A73 4/8GB RAM 8GB EMMC mPci USB3.0 4xGBE
 BOARD_NAME="Banana Pi R4"
+BOARD_VENDOR="sinovoip"
 BOARDFAMILY="filogic"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current"

@@ -22,7 +22,7 @@ case "${BRANCH}" in
 		;;
 	cloud)
 		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
 		declare -g EXTRAWIFI="no"
@@ -34,15 +34,15 @@ case "${BRANCH}" in
 		;;
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
-		;;
-
-	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 
-	edge)
+	current)
 		declare -g KERNEL_MAJOR_MINOR="6.18"
+		;;
+
+	edge)
+		declare -g KERNEL_MAJOR_MINOR="6.19"
 		;;
 esac
 
@@ -86,4 +86,17 @@ function pre_customize_image__disable_few_armbian_services() {
 	chroot_sdcard systemctl disable armbian-hardware-monitor.service "||" true
 	chroot_sdcard systemctl disable armbian-hardware-optimize.service "||" true
 	chroot_sdcard systemctl disable armbian-led-state.service "||" true
+}
+
+function custom_kernel_config__enable_amd_dc() {
+	# Enables AMD Display Controller (DC) support for AMD GPUs
+	# This enables the display engine for AMD Radeon graphics cards,
+	# including DCN (Display Core Next) and DSC (Display Stream Compression)
+	# Only enabled for UEFI boards, excluding cloud branch
+	if [[ "${BRANCH}" != "cloud" ]]; then
+		display_alert "Enabling AMD DC support" "UEFI family ${LINUXFAMILY}" "debug"
+		opts_y+=("DRM_AMD_DC")
+		opts_y+=("DRM_AMD_DC_DCN")
+		opts_y+=("DRM_AMD_DC_DSC_SUPPORT")
+	fi
 }

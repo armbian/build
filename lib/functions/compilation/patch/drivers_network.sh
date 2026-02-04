@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2024 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -236,11 +236,11 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sun* ]]; then
 
 		# Attach to specific commit (is branch:master)
-		local xradio_xr819_ver="commit:684a91a3692a964c5886dcf4369874cc7c19c0a4" # Commit date: Aug 7, 2025 (please update when updating commit ref)
+		local xradio_xr819_ver="commit:43992a7e7ed95ff815cf6d8ba81cef1085e50ab9" # Commit date: Oct 11, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/xradio" "xradio" "${xradio_xr819_ver}" "yes" # Forked from https://github.com/fifteenhex/xradio
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -366,8 +366,8 @@ driver_rtw88() {
 		fi
 	fi
 
-	if linux-version compare "${version}" eq 6.1 || linux-version compare "${version}" eq 6.16; then
-		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch has been tested only on kernel 6.1.x/6.16.x.
+	if linux-version compare "${version}" eq 6.1; then
+		process_patch_file "${SRC}/patch/misc/rtw88/hack/004-rtw88-sdio-rf-path-detection-fix.patch" "applying" # This patch is only for kernel 6.1.x. Not needed for 6.18+ (already upstream)
 	fi
 }
 
@@ -565,7 +565,15 @@ driver_uwe5622() {
 
 		if linux-version compare "${version}" ge 6.17; then
                         process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
-                fi
+        fi
+
+		if linux-version compare "${version}" ge 6.18; then
+                        process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
+        fi
+
+		if linux-version compare "${version}" ge 6.19; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.19.patch" "applying"
+		fi
 
 	fi
 }
@@ -578,6 +586,30 @@ driver_rtl8723cs() {
 
 	# It was disabled from d1/bcm2711 as that kernel is not fully in sync with mainline and as its probably not needed there anyway
 	if [[ "$LINUXFAMILY" == bcm2711 || "$LINUXFAMILY" == d1 ]]; then
+		return 0
+	fi
+
+	# -- BLUETOOTH --
+	# these few patches address some issues to let the rtl8723cs/rtl8703b chipsets to be used within the serdev framework
+	# Available only with kernels >= 6.1, because bt driver does not exist in older kernels
+	if linux-version compare "${version}" ge 6.1; then
+
+		if linux-version compare "${version}" ge 6.2 && linux-version compare "${version}" lt 6.3; then # landed in 6.1.30/6.3.4 # keep for 6.2
+			process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/bluetooth-btrtl-quirk-local-ext-features.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/Bluetooth-btrtl-add-support-for-the-RTL8723CS.patch" "applying"
+		fi
+
+		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/Bluetooth-hci_h5-Add-support-for-binding-RTL8723CS-with-device-.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/bluetooth-h5-Don-t-re-initialize-rtl8723cs-on-resume.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/bluetooth-btrtl-add-rtl8703bs.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8723cs/dt-bindings-net-bluetooth-Add-rtl8723bs-bluetooth.patch" "applying"
+
+	fi
+
+	# -- WIFI --
+	# Wireless patches; do note kernels >= 6.19 do not need this because it has been superseded by mainline rtw88 driver.
+	# If we're >= 6.19, we stop here
+	if linux-version compare "${version}" ge 6.19; then
 		return 0
 	fi
 
@@ -615,17 +647,8 @@ driver_rtl8723cs() {
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.0.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.1.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.1-rc1.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/dt-bindings-net-bluetooth-Add-rtl8723bs-bluetooth.patch" "applying"
-
-		if linux-version compare "${version}" ge 6.2 && linux-version compare "${version}" lt 6.3; then # landed in 6.1.30/6.3.4 # keep for 6.2
-			process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-quirk-local-ext-features.patch" "applying"
-			process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/Bluetooth-btrtl-add-support-for-the-RTL8723CS.patch" "applying"
-		fi
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/Bluetooth-hci_h5-Add-support-for-binding-RTL8723CS-with-device-.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-h5-Don-t-re-initialize-rtl8723cs-on-resume.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-add-rtl8703bs.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-symbol-conflicts-with-rtw88-driver.patch" "applying"
+
 	fi
 
 	if linux-version compare "${version}" ge 6.3; then

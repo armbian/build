@@ -1,5 +1,6 @@
 # Rockchip RV1103 single core 64MB SoC 1x100MBe NAND USB2
 BOARD_NAME="Luckfox Pico Mini"
+BOARD_VENDOR="luckfox"
 BOARDFAMILY="rockchip-rv1106"
 BOOTCONFIG="luckfox_rv1106_uboot_defconfig"
 BOARD_MAINTAINER="vidplace7"

@@ -1,0 +1,378 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Muhammed Efe Cetin <efectn@protonmail.com>
+Date: Sun, 17 Aug 2025 14:24:30 +0300
+Subject: drm/panel: Add Yixian YX0345 panel
+
+---
+ drivers/gpu/drm/panel/Kconfig                     |   9 +
+ drivers/gpu/drm/panel/Makefile                    |   1 +
+ drivers/gpu/drm/panel/panel-yixian-yx0345wv00v2.c | 329 ++++++++++
+ 3 files changed, 339 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -1201,6 +1201,15 @@ config DRM_PANEL_WIDECHIPS_WS2401
+ 	  480x800 display controller used in panels such as Samsung LMS380KF01.
+ 	  This display is used in the Samsung Galaxy Ace 2 GT-I8160 (Codina).
+ 
++config DRM_PANEL_YIXIAN_YX0345
++	tristate "Yixian YX0345 DPI panel driver"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	help
++	  Say Y here if you want to enable support for the Yixian YX0345WV00V2
++	  480x800 display controller used in SBCc such as NanoPi M6s.
++
++
+ config DRM_PANEL_XINPENG_XPP055C272
+ 	tristate "Xinpeng XPP055C272 panel driver"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -120,3 +120,4 @@ obj-$(CONFIG_DRM_PANEL_VISIONOX_VTDR6130) += panel-visionox-vtdr6130.o
+ obj-$(CONFIG_DRM_PANEL_VISIONOX_R66451) += panel-visionox-r66451.o
+ obj-$(CONFIG_DRM_PANEL_WIDECHIPS_WS2401) += panel-widechips-ws2401.o
+ obj-$(CONFIG_DRM_PANEL_XINPENG_XPP055C272) += panel-xinpeng-xpp055c272.o
++obj-$(CONFIG_DRM_PANEL_YIXIAN_YX0345) += panel-yixian-yx0345wv00v2.o
+diff --git a/drivers/gpu/drm/panel/panel-yixian-yx0345wv00v2.c b/drivers/gpu/drm/panel/panel-yixian-yx0345wv00v2.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-yixian-yx0345wv00v2.c
+@@ -0,0 +1,329 @@
++// SPDX-License-Identifier: GPL-2.0-only
++// Copyright (c) 2025 Muhammed Efe Cetin <efectn@protonmail.com>
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/property.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_probe_helper.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++
++struct yixian_yx0345_panel_info {
++	struct drm_display_mode mode;
++	const struct regulator_bulk_data *regulators;
++	int num_regulators;
++	struct yixian_yx0345_panel_data *panel_data;
++};
++
++struct yixian_yx0345 {
++	struct drm_panel panel;
++	const struct yixian_yx0345_panel_info *panel_info;
++	struct mipi_dsi_device *dsi;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data *supplies;
++	int num_supplies;
++};
++
++struct yixian_yx0345_cmd {
++	u8 delay;
++	u8 data[32];
++	u8 len;
++};
++
++static const struct yixian_yx0345_cmd yixian_yx0345_init_code[] = {
++	{ 0x0A, { 0x01, 0x00 }, 0x02 },
++	{ 0x7D, { 0x11, 0x00 }, 0x02 },
++	{ 0x00, { 0xFF, 0x77, 0x01, 0x00, 0x00, 0x13 }, 0x06 },
++	{ 0x00, { 0xEF, 0x08 }, 0x02 },
++	{ 0x00, { 0xFF, 0x77, 0x01, 0x00, 0x00, 0x10 }, 0x06 },
++	{ 0x00, { 0xC0, 0x63, 0x00 }, 0x03 },
++	{ 0x00, { 0xC1, 0x14, 0x14 }, 0x03 },
++	{ 0x00, { 0xC2, 0x37, 0x02 }, 0x03 },
++	{ 0x00, { 0xCC, 0x10 }, 0x02 },
++	{ 0x00,
++	  { 0xB0, 0xC5, 0x11, 0x1B, 0x0D, 0x11, 0x07, 0x0A, 0x09, 0x08, 0x24,
++	    0x05, 0x12, 0x10, 0xA9, 0x32, 0xDF },
++	  0x11 },
++	{ 0x00,
++	  { 0xB1, 0xC5, 0x19, 0x21, 0x0B, 0x0E, 0x03, 0x0C, 0x07, 0x07, 0x26,
++	    0x04, 0x12, 0x11, 0xAA, 0x32, 0xDF },
++	  0x11 },
++	{ 0x00, { 0xFF, 0x77, 0x01, 0x00, 0x00, 0x11 }, 0x06 },
++	{ 0x00, { 0xB0, 0x4D }, 0x02 },
++	{ 0x00, { 0xB1, 0x59 }, 0x02 },
++	{ 0x00, { 0xB2, 0x81 }, 0x02 },
++	{ 0x00, { 0xB3, 0x80 }, 0x02 },
++	{ 0x00, { 0xB5, 0x4E }, 0x02 },
++	{ 0x00, { 0xB7, 0x85 }, 0x02 },
++	{ 0x00, { 0xB8, 0x32 }, 0x02 },
++	{ 0x00, { 0xBB, 0x03 }, 0x02 },
++	{ 0x00, { 0xC1, 0x08 }, 0x02 },
++	{ 0x00, { 0xC2, 0x08 }, 0x02 },
++	{ 0x00, { 0xD0, 0x88 }, 0x02 },
++	{ 0x00, { 0xE0, 0x00, 0x00, 0x02 }, 0x04 },
++	{ 0x00,
++	  { 0xE1, 0x06, 0x28, 0x08, 0x28, 0x05, 0x28, 0x07, 0x28, 0x0E, 0x33,
++	    0x33 },
++	  0x0C },
++	{ 0x00,
++	  { 0xE2, 0x30, 0x30, 0x33, 0x33, 0x34, 0x00, 0x00, 0x00, 0x34, 0x00,
++	    0x00, 0x00 },
++	  0x0D },
++	{ 0x00, { 0xE3, 0x00, 0x00, 0x33, 0x33 }, 0x05 },
++	{ 0x00, { 0xE4, 0x44, 0x44 }, 0x03 },
++	{ 0x00,
++	  { 0xE5, 0x09, 0x2F, 0x2C, 0x8C, 0x0B, 0x31, 0x2C, 0x8C, 0x0D, 0x33,
++	    0x2C, 0x8C, 0x0F, 0x35, 0x2C, 0x8C },
++	  0x11 },
++	{ 0x00, { 0xE6, 0x00, 0x00, 0x33, 0x33 }, 0x05 },
++	{ 0x00, { 0xE7, 0x44, 0x44 }, 0x03 },
++	{ 0x00,
++	  { 0xE8, 0x08, 0x2E, 0x2C, 0x8C, 0x0A, 0x30, 0x2C, 0x8C, 0x0C, 0x32,
++	    0x2C, 0x8C, 0x0E, 0x34, 0x2C, 0x8C },
++	  0x11 },
++	{ 0x00, { 0xE9, 0x36, 0x00 }, 0x03 },
++	{ 0x00, { 0xEB, 0x00, 0x01, 0xE4, 0xE4, 0x44, 0x88, 0x40 }, 0x08 },
++	{ 0x00,
++	  { 0xED, 0xFF, 0xFC, 0xB2, 0x45, 0x67, 0xFA, 0x01, 0xFF, 0xFF, 0x10,
++	    0xAF, 0x76, 0x54, 0x2B, 0xCF, 0xFF },
++	  0x11 },
++	{ 0x00, { 0xEF, 0x08, 0x08, 0x08, 0x45, 0x3F, 0x54 }, 0x07 },
++	{ 0x00, { 0xFF, 0x77, 0x01, 0x00, 0x00, 0x13 }, 0x06 },
++	{ 0x00, { 0xE8, 0x00, 0x0E }, 0x03 },
++	{ 0x78, { 0x11, 0x00 }, 0x02 },
++	{ 0x0A, { 0xE8, 0x00, 0x0C }, 0x03 },
++	{ 0x00, { 0xE8, 0x00, 0x00 }, 0x03 },
++	{ 0x00, { 0xFF, 0x77, 0x01, 0x00, 0x00, 0x00 }, 0x06 },
++	{ 0x00, { 0x36, 0x00 }, 0x02 },
++	{ 0x00, { 0x29, 0x00 }, 0x02 },
++};
++
++struct yixian_yx0345_panel_data {
++	struct yixian_yx0345_cmd *init_code;
++	int len;
++};
++
++static struct yixian_yx0345_panel_data yx0345_panel_data = {
++	.init_code = (struct yixian_yx0345_cmd *)yixian_yx0345_init_code,
++	.len = ARRAY_SIZE(yixian_yx0345_init_code)
++};
++
++static inline struct yixian_yx0345 *to_yixian_yx0345(struct drm_panel *panel)
++{
++	return container_of(panel, struct yixian_yx0345, panel);
++}
++
++static void yixian_yx0345_reset(struct yixian_yx0345 *ctx)
++{
++	if (ctx->reset_gpio) {
++		gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++		msleep(60);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		msleep(60);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++		msleep(60);
++	}
++}
++
++static int yixian_yx0345_prepare(struct drm_panel *panel)
++{
++	struct yixian_yx0345 *ctx = to_yixian_yx0345(panel);
++	struct mipi_dsi_multi_context mctx = { .dsi = ctx->dsi };
++	int ret;
++
++	ret = regulator_bulk_enable(ctx->num_supplies, ctx->supplies);
++	if (ret < 0)
++		return ret;
++
++	yixian_yx0345_reset(ctx);
++
++	msleep(60);
++
++	struct yixian_yx0345_panel_data *panel_data =
++		ctx->panel_info->panel_data;
++
++	for (int i = 0; i < panel_data->len; i++) {
++		struct yixian_yx0345_cmd code = panel_data->init_code[i];
++
++		mipi_dsi_dcs_write_buffer_multi(&mctx, &code.data, code.len);
++
++		if (code.delay > 0) {
++			mipi_dsi_msleep(&mctx, code.delay);
++		}
++	}
++
++	mipi_dsi_msleep(&mctx, 10);
++
++	return 0;
++}
++
++static int yixian_yx0345_unprepare(struct drm_panel *panel)
++{
++	struct yixian_yx0345 *ctx = to_yixian_yx0345(panel);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ctx->num_supplies, ctx->supplies);
++
++	msleep(60);
++
++	return 0;
++}
++
++static int yixian_yx0345_disable(struct drm_panel *panel)
++{
++	struct yixian_yx0345 *yx0345 = to_yixian_yx0345(panel);
++	struct mipi_dsi_multi_context ctx = { .dsi = yx0345->dsi };
++	int ret;
++
++	u8 data = 0x00;
++	ret = mipi_dsi_dcs_write(ctx.dsi, 0x28, &data, 1);
++	if (ret < 0)
++		return ret;
++
++	ret = mipi_dsi_dcs_write(ctx.dsi, 0x10, &data, 1);
++	if (ret < 0)
++		return ret;
++
++	mipi_dsi_msleep(&ctx, 70);
++
++	return ctx.accum_err;
++}
++
++static int yixian_yx0345_get_modes(struct drm_panel *panel,
++				   struct drm_connector *connector)
++{
++	struct yixian_yx0345 *ctx = to_yixian_yx0345(panel);
++
++	return drm_connector_helper_get_modes_fixed(connector,
++						    &ctx->panel_info->mode);
++}
++
++static const struct drm_panel_funcs yixian_yx0345_funcs = {
++	.prepare = yixian_yx0345_prepare,
++	.unprepare = yixian_yx0345_unprepare,
++	.get_modes = yixian_yx0345_get_modes,
++	.disable = yixian_yx0345_disable,
++};
++
++static int yixian_yx0345_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct yixian_yx0345 *ctx;
++	int ret = 0;
++
++	ctx = devm_drm_panel_alloc(dev, struct yixian_yx0345, panel,
++				   &yixian_yx0345_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ctx->panel_info = device_get_match_data(dev);
++	if (!ctx->panel_info)
++		return -EINVAL;
++
++	ctx->num_supplies = ctx->panel_info->num_regulators;
++	ret = devm_regulator_bulk_get_const(&dsi->dev,
++					    ctx->panel_info->num_regulators,
++					    ctx->panel_info->regulators,
++					    &ctx->supplies);
++	if (ret < 0)
++		return ret;
++
++	ctx->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 2;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
++			  MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS;
++	ctx->panel.prepare_prev_first = true;
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return ret;
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		dev_err(dev, "Failed to attach to DSI host: %d\n", ret);
++		drm_panel_remove(&ctx->panel);
++	}
++
++	return ret;
++}
++
++static void yixian_yx0345_remove(struct mipi_dsi_device *dsi)
++{
++	struct yixian_yx0345 *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct regulator_bulk_data yx0345_regulators[] = {
++	{
++		.supply = "vcc2v8",
++	}, /*  2.8V */
++	{
++		.supply = "vcc1v8",
++	}, /*  1.8V */
++	{
++		.supply = "vcc3v3",
++	}, /* 3.3v */
++};
++
++static const struct yixian_yx0345_panel_info yx0345_info = {
++	.mode = {
++		.clock = 29700,
++		.hdisplay = 480,
++		.hsync_start = 480 + 40,
++		.hsync_end = 480 + 40 + 30,
++		.htotal = 480 + 40 + 30 + 32,
++		.vdisplay = 800,
++		.vsync_start = 800 + 20,
++		.vsync_end = 800 + 20 + 20,
++		.vtotal = 800 + 20 + 20 + 10,
++		.width_mm = 45,
++		.height_mm = 75,
++		.flags = DRM_MODE_FLAG_NVSYNC | DRM_MODE_FLAG_NHSYNC,
++		.type = DRM_MODE_TYPE_DRIVER,
++	},
++	.regulators = yx0345_regulators,
++	.num_regulators = ARRAY_SIZE(yx0345_regulators),
++	.panel_data = &yx0345_panel_data,
++};
++
++static const struct of_device_id yixian_yx0345_of_match[] = {
++	{ .compatible = "yixian,yx0345wv00v2", .data = &yx0345_info },
++	{ /*sentinel*/ }
++};
++MODULE_DEVICE_TABLE(of, yixian_yx0345_of_match);
++
++static struct mipi_dsi_driver yixian_yx0345_driver = {
++	.probe = yixian_yx0345_probe,
++	.remove = yixian_yx0345_remove,
++	.driver = {
++		.name = "panel-yixian-yx0345wv00v2",
++		.of_match_table = yixian_yx0345_of_match,
++	},
++};
++module_mipi_dsi_driver(yixian_yx0345_driver);
++
++MODULE_AUTHOR("Muhammed Efe Cetin <efectn@protonmail.com>");
++MODULE_DESCRIPTION("DRM driver for Yixian YX0345WV00V2 DSI panels");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+

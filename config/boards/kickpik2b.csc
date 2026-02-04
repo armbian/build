@@ -1,5 +1,6 @@
 # Allwinner H618 quad core 1/2/4GB RAM SoC WiFi SPI USB-C
 BOARD_NAME="KickPi K2B"
+BOARD_VENDOR="allwinner"
 BOARDFAMILY="sun50iw9-bpi"
 BOARD_MAINTAINER="pyavitz"
 BOOTCONFIG="kickpi_k2b_defconfig"
@@ -9,8 +10,8 @@ BOOT_LOGO="desktop"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
-BOOTBRANCH_BOARD="tag:v2025.07"
-BOOTPATCHDIR="v2025.07"
+BOOTBRANCH_BOARD="tag:v2026.01"
+BOOTPATCHDIR="v2026.01"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
 # AIC8800

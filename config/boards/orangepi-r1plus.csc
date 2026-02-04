@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB 2 x GBE USB2 SPI
 BOARD_NAME="Orange Pi R1 Plus"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_r1_plus_rk3328_defconfig"

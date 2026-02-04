@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -47,6 +47,12 @@ function cli_docker_run() {
 	fi
 
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
+
+	# Ensure Docker auto-pull cronjob is installed (controlled by ARMBIAN_DOCKER_AUTO_PULL flag)
+	# Only run this when not generating Dockerfile only
+	if [[ "${DOCKERFILE_GENERATE_ONLY}" != "yes" ]]; then
+		docker_ensure_auto_pull_cronjob
+	fi
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
 	if [[ "${FAST_DOCKER:-"no"}" != "yes" ]]; then # "no, I want *slow* docker" -- no one, ever

@@ -1,5 +1,6 @@
 # Amlogic A311D 2GB RAM 16GB eMMC GBE USB3 RTL8822CS WiFi/BT
 BOARD_NAME="CAINIAO CNIoT-CORE"
+BOARD_VENDOR="amlogic"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="cainiao-cniot-core_defconfig"
@@ -11,8 +12,8 @@ SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-g12b-a311d-cainiao-cniot-core.dtb"
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
-BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04"
+BOOTBRANCH_BOARD="tag:v2026.01"
+BOOTPATCHDIR="v2026.01"
 
 enable_extension "gxlimg"
 enable_extension "amlogic-fip-blobs"

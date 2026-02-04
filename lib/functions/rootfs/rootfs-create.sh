@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -100,35 +100,38 @@ function create_new_rootfs_cache_via_debootstrap() {
 	case "${DISTRIBUTION}" in
 		Ubuntu)
 			if [[ "${LEGACY_DEBOOTSTRAP,,}" == "yes" ]]; then
-				export GIT_FIXED_WORKDIR="debootstrap-ubuntu-devel"
-				fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "debootstrap-ubuntu-devel" "tag:import/1.0.118ubuntu1.13"
-				debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
+				declare debootstrap_name="debootstrap-ubuntu-devel"
+				GIT_FIXED_WORKDIR="${debootstrap_name}" \
+					fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "${debootstrap_name}" "tag:import/1.0.118ubuntu1.13"
+				debootstrap_wanted_dir="${SRC}/cache/sources/${debootstrap_name}"
 				debootstrap_default_script="gutsy"
 				debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
 				debootstrap_bin="${debootstrap_wanted_dir}/debootstrap"
 			else
-				export GIT_FIXED_WORKDIR="mmdebstrap-ubuntu-devel"
+				declare debootstrap_name="mmdebstrap-ubuntu-devel"
 				#FIXME: branch should be a variable eventually
-				fetch_from_repo "https://git.launchpad.net/ubuntu/+source/mmdebstrap" "${GIT_FIXED_WORKDIR}" "branch:ubuntu/noble"
-				debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
+				GIT_FIXED_WORKDIR="${debootstrap_name}" \
+					fetch_from_repo "https://git.launchpad.net/ubuntu/+source/mmdebstrap" "${debootstrap_name}" "branch:ubuntu/noble"
+				debootstrap_wanted_dir="${SRC}/cache/sources/${debootstrap_name}"
 				debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
 				debootstrap_bin="${debootstrap_wanted_dir}/mmdebstrap"
 			fi
 			;;
 		Debian)
 			if [[ "${LEGACY_DEBOOTSTRAP,,}" == "yes" ]]; then
-				export GIT_FIXED_WORKDIR="debootstrap-debian-devel"
-				fetch_from_repo "https://salsa.debian.org/installer-team/debootstrap.git" "debootstrap-debian-devel" "branch:master"
-				debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
+				declare debootstrap_name="debootstrap-debian-devel"
+				GIT_FIXED_WORKDIR="${debootstrap_name}" \
+					fetch_from_repo "https://salsa.debian.org/installer-team/debootstrap.git" "${debootstrap_name}" "branch:master"
+				debootstrap_wanted_dir="${SRC}/cache/sources/${debootstrap_name}"
 				debootstrap_default_script="sid"
 				debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
 				debootstrap_bin="${debootstrap_wanted_dir}/debootstrap"
 			else
-				export GIT_FIXED_WORKDIR="mmdebstrap-debian-devel"
+				declare debootstrap_name="mmdebstrap-debian-devel"
 				#FIXME: branch should be a variable eventually
-				fetch_from_repo "https://gitlab.mister-muffin.de/josch/mmdebstrap" "${GIT_FIXED_WORKDIR}" "branch:main"
-				debootstrap_wanted_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
-				debootstrap_default_script="sid"
+				GIT_FIXED_WORKDIR="${debootstrap_name}" \
+					fetch_from_repo "https://gitlab.mister-muffin.de/josch/mmdebstrap" "${debootstrap_name}" "branch:main"
+				debootstrap_wanted_dir="${SRC}/cache/sources/${debootstrap_name}"
 				debootstrap_version="$(sed 's/^## \[\([^]]*\)\].*/\1/; q' "${debootstrap_wanted_dir}/CHANGELOG.md")"
 				debootstrap_bin="${debootstrap_wanted_dir}/mmdebstrap"
 			fi
@@ -282,7 +285,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
 	# Systemd resolver is not working yet
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
@@ -333,7 +336,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
@@ -342,7 +345,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
 	# default and that has to be handled by setting system presets.
 	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
-	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
+	run_host_command_logged rm -fv "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later

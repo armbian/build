@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB-4GB GBE eMMC USB3 WiFi
 BOARD_NAME="Station M1"
+BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3328"
 BOARD_MAINTAINER="150balbes"

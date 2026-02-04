@@ -1,5 +1,6 @@
 # Rockchip RK3588S octa core 4/8/16GB RAM SoC NVMe USB3 USB-C GbE
 BOARD_NAME="Radxa CM5 on RPi CM4 IO"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-cm5-rpi-cm4-io-rk3588s_defconfig"

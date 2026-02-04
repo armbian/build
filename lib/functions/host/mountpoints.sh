@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -17,7 +17,6 @@ function prepare_armbian_mountpoints_description_dict() {
 		"cache"
 		"cache/git-bare"
 		"cache/git-bundles"
-		"cache/toolchain"
 		"cache/aptcache"
 		"cache/rootfs"
 		"cache/initrd"
@@ -38,7 +37,6 @@ function prepare_armbian_mountpoints_description_dict() {
 		["cache"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                               # catch-all cache, could be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/git-bare"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                      # Git bare repos (kernel/u-boot). On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/git-bundles"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                   # Downloads of git bundles, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/toolchain"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                     # toolchain cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/aptcache"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                      # .deb apt cache, replaces apt-cacher-ng. Can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/rootfs"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                        # rootfs .tar.zst cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/initrd"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                        # initrd.img cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.

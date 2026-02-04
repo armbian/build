@@ -1,0 +1,116 @@
+# Rockchip RK3528 SoC GMAC1 RTL8367RB NVMe
+BOARD_NAME="Radxa E24C"
+BOARD_VENDOR="radxa"
+BOARDFAMILY="rockchip-rk3588"
+BOARD_MAINTAINER="rpardini"
+BOOTCONFIG="radxa-e24c-spi-rk3528_defconfig"       # same name across vendor and mainline
+# edge (6.18+) is still not ready, many patches required. also not in 6.19, and apparently not in 6.20/7.0 either. many patches required.
+KERNEL_TARGET="edge,vendor"
+BOOT_FDT_FILE="rockchip/rk3528-radxa-e24c-spi.dtb" # same name across vendor and mainline; for SPI boards
+#BOOT_FDT_FILE="rockchip/rk3528-radxa-e24c.dtb"    # same name across vendor and mainline; for eMMC boards
+BOOT_SCENARIO="spl-blobs"
+BOOT_SOC="rk3528"
+IMAGE_PARTITION_TABLE="gpt"
+
+# Schematics: https://dl.radxa.com/e/e24c/docs/radxa_e24c_v1200_schematic.pdf
+
+# Mainline U-Boot, only for non-vendor BRANCH
+function post_family_config__e24c_use_mainline_uboot() {
+	if [[ "${BRANCH}" == "vendor" ]]; then
+		return 0
+	fi
+
+	declare -g BOOTCONFIG="radxa-e24c-rk3528_defconfig" # mainline uboot defconfig; Kwiboo's name
+	display_alert "$BOARD" "Using Half-mainline/half-Kwiboo U-Boot for $BOARD / $BRANCH" "info"
+
+	declare -g BOOTDELAY=1
+
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+	declare -g BOOTBRANCH="commit:47b50fb1125c539d80ed3e7f739c02c6486e1b52" # midway after 2026.01-rc4
+	declare -g BOOTPATCHDIR="v2026.01"
+	declare -g BOOTDIR="u-boot-${BOARD}"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot-rockchip-usb471.bin u-boot-rockchip-usb472.bin"
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
+
+	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
+	function write_uboot_platform() {
+		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
+	}
+
+	function write_uboot_platform_mtd() {
+		flashcp -v -p "$1/u-boot-rockchip-spi.bin" /dev/mtd0
+	}
+}
+
+# Mainline U-Boot, only for non-vendor BRANCH
+# "rockchip-common: boot SD card first, then NVMe, then mmc"
+# On radxa-e24c, mmc0 is the eMMC, mmc1 is the SD card slot
+function pre_config_uboot_target__cm3588_patch_rockchip_common_boot_order() {
+	if [[ "${BRANCH}" == "vendor" ]]; then
+		return 0
+	fi
+
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "scsi" "usb" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
+}
+
+# Mainline U-Boot, only for non-vendor BRANCH
+function post_config_uboot_target__extra_configs_for_e24c_uboot() {
+	if [[ "${BRANCH}" == "vendor" ]]; then
+		return 0
+	fi
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable RAMBoot images" "info"
+	run_host_command_logged scripts/config --enable CONFIG_ROCKCHIP_MASKROM_IMAGE
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
+	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led SYS on; sleep 0.1; led SYS off; led LAN1 on; sleep 0.1; led LAN1 off; led LAN2 on; sleep 0.1; led LAN2 off; led LAN3 on; sleep 0.1; led LAN3 off; '" # double quotes required due to run_host_command_logged's quirks
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
+	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
+	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more filesystems support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_BTRFS
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more compression support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LZO
+	run_host_command_logged scripts/config --enable CONFIG_BZIP2
+	run_host_command_logged scripts/config --enable CONFIG_ZSTD
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable gpio LED support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LED
+	run_host_command_logged scripts/config --enable CONFIG_LED_GPIO
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable networking cmds" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_NFS
+	run_host_command_logged scripts/config --enable CONFIG_CMD_WGET
+	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	# UMS, RockUSB, gadget stuff
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	for config in "${enable_configs[@]}"; do
+		run_host_command_logged scripts/config --enable "${config}"
+	done
+	# Auto-enabled by the above, force off...
+	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+	return 0
+}
+
+# When not using vendor, set use ttyS0 as default console in bootscript
+function post_family_config__e24c_set_serial_console_for_edge() {
+	if [[ "${BRANCH}" == vendor ]]; then
+		display_alert "$BOARD" "Using vendor kernel; keeping default console settings" "info"
+	else
+		display_alert "$BOARD" "Setting default console to serial ttyS0 for mainline kernel bootscript" "info"
+		declare -g BOOTSCRIPT="boot-rockchip64-ttyS0.cmd:boot.cmd"
+		declare -g SERIALCON="ttyS0"
+	fi
+}

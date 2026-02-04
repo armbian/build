@@ -175,6 +175,8 @@ handpicked_columns = [
 	'out.BOOTCONFIG',
 	'out.BOOT_SOC',
 	'out.ATF_COMPILE',
+	'out.ATFSOURCE',
+	'out.ATFBRANCH',
 	'out.KERNEL_MAJOR_MINOR',
 	'out.BOOTBRANCH',
 	'out.BOOT_SCENARIO',

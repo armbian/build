@@ -1,5 +1,6 @@
 # Rockchip RK3588 SoC octa core 8-32GB SoC 2.5GBe eMMC USB3 NvME
 BOARD_NAME="ArmSoM AIM7 IO"
+BOARD_VENDOR="armsom"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="armsom-aim7-io-rk3588_defconfig"

@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 4GB RAM SOC 16GB eMMC 2x USB2 1x USB3 1x USB-C HDMI 1x GbE WiFi/BT
 BOARD_NAME="Lenovo Leez P710"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="andyshrk"
 BOOTCONFIG="leez-rk3399_defconfig"
