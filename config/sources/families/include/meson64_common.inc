@@ -35,6 +35,9 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
+	oldlts)
+		declare -g KERNEL_MAJOR_MINOR="6.12"
+		;;
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.18"
 		;;
