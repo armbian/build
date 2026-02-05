@@ -1,0 +1,88 @@
+From 9eb6d6bb9eb01e9767b8ad70bf503c1631d64c71 Mon Sep 17 00:00:00 2001
+From: Saikiran <bjsaikiran@gmail.com>
+Date: Tue, 20 Jan 2026 23:14:15 +0530
+Subject: [PATCH] wifi: ath12k: Remove broken frequency range filtering
+ (PRIMARY FIX)
+
+This is the PRIMARY fix for 5GHz WiFi failure in kernel 6.17+.
+
+ROOT CAUSE:
+===========
+Between 6.16 and 6.17+, ath12k added frequency range filtering in
+ath12k_reg_update_chan_list() that filters channels based on:
+    ar->freq_range.start_freq and ar->freq_range.end_freq
+
+FATAL FLAW:
+===========
+These values are reset to 0 in ath12k_regd_update() line 310-311:
+    ar->freq_range.start_freq = 0;
+    ar->freq_range.end_freq = 0;
+
+When filtering runs with end_freq=0:
+    if (channel_freq < 0 || channel_freq > 0)  // ALWAYS TRUE!
+        continue;  // ALL channels skipped!
+
+RESULT:
+=======
+- num_channels = 0
+- Function returns -EINVAL
+- No channel list sent to firmware
+- Firmware rejects country code "IN"
+- Stays at "00"
+- 5GHz channels disabled
+
+THE FIX:
+========
+Remove the broken frequency range filtering in TWO places:
+1. Channel counting loop (lines 156-161)
+2. Channel setup loop (lines 193-198)
+
+WHY THIS WORKS:
+===============
+Kernel 6.16 didn't have this filtering - it sent ALL regulatory-allowed
+channels to firmware. The firmware itself handles frequency range
+restrictions based on hardware capabilities.
+
+Removing the broken filter restores 6.16 behavior where all channels
+within the regulatory domain are sent to firmware.
+
+Tested-on: WCN7850 hw2.0, Qualcomm X1E80100 laptop
+Fixes: Regression in kernel 6.17+
+---
+ drivers/net/wireless/ath/ath12k/reg.c | 13 -------------
+ 1 file changed, 13 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
+index 2dfcef013277..2d9adc74ac6e 100644
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -153,12 +153,6 @@ int ath12k_reg_update_chan_list(struct ath12k *ar, bool wait)
+ 			if (bands[band]->channels[i].flags &
+ 			    IEEE80211_CHAN_DISABLED)
+ 				continue;
+-			/* Skip Channels that are not in current radio's range */
+-			if (bands[band]->channels[i].center_freq <
+-			    KHZ_TO_MHZ(ar->freq_range.start_freq) ||
+-			    bands[band]->channels[i].center_freq >
+-			    KHZ_TO_MHZ(ar->freq_range.end_freq))
+-				continue;
+ 
+ 			num_channels++;
+ 		}
+@@ -190,13 +184,6 @@ int ath12k_reg_update_chan_list(struct ath12k *ar, bool wait)
+ 			if (channel->flags & IEEE80211_CHAN_DISABLED)
+ 				continue;
+ 
+-			/* Skip Channels that are not in current radio's range */
+-			if (bands[band]->channels[i].center_freq <
+-			    KHZ_TO_MHZ(ar->freq_range.start_freq) ||
+-			    bands[band]->channels[i].center_freq >
+-			    KHZ_TO_MHZ(ar->freq_range.end_freq))
+-				continue;
+-
+ 			/* TODO: Set to true/false based on some condition? */
+ 			ch->allow_ht = true;
+ 			ch->allow_vht = true;
+-- 
+2.51.0
+

@@ -1,0 +1,64 @@
+From 26a6a6263f6c8919ade47f18814335e52384d474 Mon Sep 17 00:00:00 2001
+From: Saikiran <bjsaikiran@gmail.com>
+Date: Mon, 19 Jan 2026 10:12:51 +0530
+Subject: [PATCH] wifi: ath12k: Add fallback regulatory domain for WCN7850
+ without SMBIOS
+
+When SMBIOS doesn't provide country code data (common on some Lenovo
+X Elite laptops), initialize with world domain (00) and skip sending
+it to firmware to let firmware use its default regulatory settings.
+
+Without this, new_alpha2 remains uninitialized and firmware receives
+invalid country code, causing repeated regulatory update failures.
+
+Note: This workaround doesn't fully resolve the regulatory failures
+seen on WCN7850 hw2.0 with firmware WLAN.HMT.1.1.c5-00302. The firmware
+still rejects regulatory settings during early initialization, keeping
+the device in passive-scan-only mode for 5GHz channels. Further firmware
+debugging is needed to resolve the root cause.
+
+Link: https://bugs.launchpad.net/ubuntu-concept/+bug/2138308
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c5-00302 (Lenovo Yoga Slim 7x)
+---
+ drivers/net/wireless/ath/ath12k/core.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+index cc352eef1939..4121dd14bbcc 100644
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -800,6 +800,18 @@ int ath12k_core_check_smbios(struct ath12k_base *ab)
+ 	ab->qmi.target.bdf_ext[0] = '\0';
+ 	dmi_walk(ath12k_core_check_cc_code_bdfext, ab);
+ 
++	/* If SMBIOS doesn't provide country code, initialize with world domain (00)
++	 * to let firmware use its default regulatory settings
++	 */
++	spin_lock_bh(&ab->base_lock);
++	if (ab->new_alpha2[0] == 0 && ab->new_alpha2[1] == 0) {
++		/* Use world domain - let firmware decide */
++		ab->new_alpha2[0] = '0';
++		ab->new_alpha2[1] = '0';
++		ath12k_info(ab, "No SMBIOS country code, using world regulatory domain\n");
++	}
++	spin_unlock_bh(&ab->base_lock);
++
+ 	if (ab->qmi.target.bdf_ext[0] == '\0')
+ 		return -ENODATA;
+ 
+@@ -1522,6 +1534,12 @@ static void ath12k_update_11d(struct work_struct *work)
+ 	memcpy(&arg.alpha2, &ab->new_alpha2, 2);
+ 	spin_unlock_bh(&ab->base_lock);
+ 
++	/* Skip setting country code if it's world domain (00) - let firmware use defaults */
++	if (arg.alpha2[0] == '0' && arg.alpha2[1] == '0') {
++		ath12k_dbg(ab, ATH12K_DBG_WMI, "skip sending world domain to firmware\n");
++		return;
++	}
++
+ 	ath12k_dbg(ab, ATH12K_DBG_WMI, "update 11d new cc %c%c\n",
+ 		   arg.alpha2[0], arg.alpha2[1]);
+ 
+-- 
+2.51.0
+

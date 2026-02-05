@@ -1,0 +1,58 @@
+From 5946e4c0763755535f7f9f89761828b68a8019d1 Mon Sep 17 00:00:00 2001
+From: Saikiran <bjsaikiran@gmail.com>
+Date: Mon, 19 Jan 2026 09:52:58 +0530
+Subject: [PATCH] wifi: ath12k: Fix firmware stats leak on get_txpower error
+ paths
+
+The commits bd6ec8111e65 and 2977567b244f changed firmware stats handling
+to be caller-driven, requiring explicit ath12k_fw_stats_reset() calls
+after using ath12k_mac_get_fw_stats().
+
+However, in ath12k_mac_op_get_txpower(), when ath12k_mac_get_fw_stats()
+succeeds but the pdev stats list is empty, or when the stats request
+fails, the function exits via err_fallback without resetting the stats
+buffer.
+
+This causes the stats buffer to accumulate data, eventually leading to
+firmware communication failures (error -71/EPROTO) during subsequent
+operations, particularly during 5GHz scanning which requires additional
+TX power queries.
+
+Symptoms:
+- "failed to pull fw stats: -71" errors in dmesg  - 5GHz networks not detected despite hardware support
+- 2.4GHz networks work normally
+
+Fix this by calling ath12k_fw_stats_reset() on all error paths after
+ath12k_mac_get_fw_stats() is called, ensuring the stats buffer is
+always freed regardless of the execution path.
+
+Fixes: bd6ec8111e65 ("wifi: ath12k: Make firmware stats reset caller-driven")
+Link: https://bugs.launchpad.net/ubuntu-concept/+bug/2138308
+Tested-on: WCN7850 hw2.0 PCI WLAN.HMT.1.1.c5-00302 (Lenovo Yoga Slim 7x)
+---
+ drivers/net/wireless/ath/ath12k/mac.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index f7a2a544bef2..4195364cb6e3 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5161,6 +5161,7 @@ static int ath12k_mac_op_get_txpower(struct ieee80211_hw *hw,
+ 	ret = ath12k_mac_get_fw_stats(ar, &params);
+ 	if (ret) {
+ 		ath12k_warn(ab, "failed to request fw pdev stats: %d\n", ret);
++		ath12k_fw_stats_reset(ar);
+ 		goto err_fallback;
+ 	}
+ 
+@@ -5169,6 +5170,7 @@ static int ath12k_mac_op_get_txpower(struct ieee80211_hw *hw,
+ 					struct ath12k_fw_stats_pdev, list);
+ 	if (!pdev) {
+ 		spin_unlock_bh(&ar->data_lock);
++		ath12k_fw_stats_reset(ar);
+ 		goto err_fallback;
+ 	}
+ 
+-- 
+2.51.0
+
