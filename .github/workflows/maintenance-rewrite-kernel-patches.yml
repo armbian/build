@@ -26,31 +26,17 @@ jobs:
     name: "Rewrite ${{ inputs.board }} (${{ inputs.branch }})"
     runs-on: rewrite
     steps:
-      - name: Checkout with caching
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Restore cached repository
-        uses: actions/cache@v4
-        with:
-          path: .git
-          key: repo-cache-${{ inputs.branch }}
-          restore-keys: |
-            repo-cache-
-
-      - name: Fetch and checkout branch
-        run: |
-          set -euo pipefail
-          git fetch origin ${{ inputs.branch }} || true
-          git checkout ${{ inputs.branch }} || git checkout -b ${{ inputs.branch }} origin/${{ inputs.branch }}
 
       - name: Run rewrite-kernel-patches
         env:
           BOARD: ${{ inputs.board }}
           BRANCH: ${{ inputs.branch }}
         run: |
-          ./compile.sh BOARD=$BOARD BRANCH=$BRANCH rewrite-kernel-patches
+          ./compile.sh BOARD=$BOARD BRANCH=$BRANCH rewrite-kernel-patches KERNEL_GIT=shallow
 
       - name: Check for changes
         id: check_changes
@@ -58,41 +44,25 @@ jobs:
           set -euo pipefail
           if git diff --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No changes detected after rewrite-kernel-patches"
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Changes detected after rewrite-kernel-patches - PR will be created"
           fi
 
       - name: Build PR body
+        id: build_pr_body
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
           set -euo pipefail
-          rm -rf output/info || true
-          mkdir -p output/info
 
           # Per-file stats
-          git diff --numstat > output/info/numstat.txt || true
+          tmp_stats=$(mktemp)
+          tmp_body=$(mktemp)
+          git diff --numstat > "$tmp_stats" || true
 
           total_add=0; total_del=0; files=0
           {
-            echo "# Rewrite kernel patches"
-            echo
-            echo "### What this PR does"
-            echo "- Regenerates and **synchronizes kernel patches** for \`${{ inputs.board }}\` on the **${{ inputs.branch }}** branch."
-            echo "- Runs \`./compile.sh rewrite-kernel-patches\` which updates patch series based on current kernel sources."
-            echo
-            echo "### How it was produced"
-            echo
-            echo "This PR is produced from [this](/armbian/build/tree/main/.github/workflows/maintenance-rewrite-kernel-patches.yml) GHA script."
-            echo
-            echo "- Board: \`${{ inputs.board }}\`"
-            echo "- Branch: \`${{ inputs.branch }}\`"
-            echo
-            echo "### Review tips"
-            echo "- Verify that patch reordering and refactors are intentional."
-            echo "- Check for newly added or removed patches."
-            echo
-            echo "### Files changed"
-            echo
             echo "| File | + | - | Δ |"
             echo "|---|---:|---:|---:|"
             while IFS=$'\t' read -r add del path; do
@@ -105,13 +75,15 @@ jobs:
               files=$(( files + 1 ))
               path_esc="${path//|/\\|}"
               printf "| %s | %d | %d | %d |\n" "$path_esc" "$add" "$del" "$delta"
-            done < output/info/numstat.txt
+            done < "$tmp_stats"
             echo
             printf "**Files:** %d  •  **Lines:** +%d / -%d  (Δ %d)\n" "$files" "$total_add" "$total_del" "$(( total_add - total_del ))"
-            echo
-          } > PR_BODY.md
+          } > "$tmp_body"
+
+          echo "pr_body_path=$tmp_body" >> "$GITHUB_OUTPUT"
 
       - name: Open / Update PR
+        id: create_pr
         if: steps.check_changes.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
@@ -121,6 +93,23 @@ jobs:
           base: main
           title: "`[${{ inputs.branch }}]` kernel patches rewrite for `${{ inputs.board }}`"
           commit-message: "[${{ inputs.branch }}] kernel patches rewrite for ${{ inputs.board }}"
-          body-path: PR_BODY.md
+          body-path: ${{ steps.build_pr_body.outputs.pr_body_path }}
           labels: |
             Needs review
+
+      - name: Cleanup temp files
+        if: steps.build_pr_body.outputs.pr_body_path != ''
+        run: |
+          rm -f "${{ steps.build_pr_body.outputs.pr_body_path }}" || true
+
+  cleanup:
+    name: "Fix permissions for next run"
+    runs-on: rewrite
+    needs: rewrite-patches
+    if: always()
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R runner:runner /home/runner/actions-runner/_work/build/build 2>/dev/null || true
+          sudo chmod -R u+w /home/runner/actions-runner/_work/build/build 2>/dev/null || true
+          sudo rm -rf /home/runner/actions-runner/_work/build/build/cache/git-bare 2>/dev/null || true
