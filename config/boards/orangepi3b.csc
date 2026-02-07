@@ -5,11 +5,11 @@ BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-3b-rk3566_defconfig"
 BOOT_SOC="rk3566"
-KERNEL_TARGET="vendor,edge"
+KERNEL_TARGET="vendor,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
-BOOT_SCENARIO="spl-blobs"
+BOOT_SCENARIO="binman"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 
@@ -18,29 +18,11 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2024.10"
-	declare -g BOOTPATCHDIR="v2024.10"
+	declare -g BOOTBRANCH="tag:v2026.01"
+	declare -g BOOTPATCHDIR="v2026.01"
 	declare -g BOOTDELAY=1
 
-	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
-
-	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
-	function write_uboot_platform() {
-		dd if=${1}/u-boot-rockchip.bin of=${2} bs=32k seek=1 conv=fsync
-	}
-
-	# Smarter/faster/better to-spi writer using flashcp (hopefully with --partition), using the binman-provided 'u-boot-rockchip-spi.bin'
-	function write_uboot_platform_mtd() {
-		declare -a extra_opts_flashcp=("--verbose")
-		if flashcp -h | grep -q -e '--partition'; then
-			echo "Confirmed flashcp supports --partition -- read and write only changed blocks." >&2
-			extra_opts_flashcp+=("--partition")
-		else
-			echo "flashcp does not support --partition, will write full SPI flash blocks." >&2
-		fi
-		flashcp "${extra_opts_flashcp[@]}" "${1}/u-boot-rockchip-spi.bin" /dev/mtd0
-	}
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 }
 
 function post_family_tweaks_bsp__orangepi3b() {
