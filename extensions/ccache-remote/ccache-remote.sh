@@ -46,12 +46,13 @@
 #   CCACHE_PCH_EXTSUM     - include PCH extension in hash
 #
 # CCACHE_REMOTE_STORAGE format (ccache 4.4+):
-#   Redis: redis://HOST[:PORT][|attribute=value...]
+#   Redis: redis://[[USERNAME:]PASSWORD@]HOST[:PORT][|attribute=value...]
 #   HTTP:  http://HOST[:PORT]/PATH/[|attribute=value...]
 #   Common attributes:
 #     connect-timeout=N   - connection timeout in milliseconds (default: 100)
 #     operation-timeout=N - operation timeout in milliseconds (default: 10000)
 #   Examples:
+#     "redis://default:secretpass@192.168.1.65:6379|connect-timeout=500"
 #     "redis://192.168.1.65:6379|connect-timeout=500"
 #     "http://192.168.1.65:8088/ccache/"
 #
@@ -253,13 +254,31 @@ function ccache_get_remote_stats() {
 
 # Mask credentials in storage URLs to avoid leaking secrets into build logs
 # Handles any URI scheme with userinfo component (e.g., redis://user:pass@host)
+# Uses last @ as delimiter since userinfo may contain special characters
 function ccache_mask_storage_url() {
 	local url="$1"
-	if [[ "${url}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)([^@/]+)@(.*)$ ]]; then
+	if [[ "${url}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*://)(.+)@([^@]+)$ ]]; then
 		echo "${BASH_REMATCH[1]}****@${BASH_REMATCH[3]}"
 	else
 		echo "${url}"
 	fi
+}
+
+# Validate that credentials in storage URL do not contain characters unsafe for URL parsing.
+# Passwords with / + = or spaces break URL parsing in ccache and in our mask function.
+# Returns 1 and displays error if invalid characters are found.
+function ccache_validate_storage_url() {
+	local url="$1"
+	# Extract userinfo (part between :// and last @)
+	if [[ "${url}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://(.+)@[^@]+$ ]]; then
+		local userinfo="${BASH_REMATCH[1]}"
+		if [[ "${userinfo}" =~ [/+=[:space:]] ]]; then
+			display_alert "Password contains URL-unsafe characters (/ + = or spaces)" \
+				"Generate a safe password: openssl rand -hex 24" "err"
+			return 1
+		fi
+	fi
+	return 0
 }
 
 # This runs on the HOST just before Docker container is launched.
@@ -269,6 +288,7 @@ function ccache_mask_storage_url() {
 # mDNS resolution doesn't work inside Docker, so we must resolve on host.
 function host_pre_docker_launch__setup_remote_ccache() {
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
+		ccache_validate_storage_url "${CCACHE_REMOTE_STORAGE}" || return 1
 		display_alert "Remote ccache pre-configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 	elif ! ccache_discover_remote_storage; then
 		display_alert "Remote ccache not found on host" "no service discovered" "debug"
@@ -318,6 +338,7 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
+		ccache_validate_storage_url "${CCACHE_REMOTE_STORAGE}" || return 1
 		display_alert "Remote ccache configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 		return 0
 	fi
