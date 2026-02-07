@@ -7,6 +7,14 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Hook for extensions to show additional stats after compilation
+function ccache_show_compilation_stats() {
+	call_extension_method "ccache_post_compilation" <<- 'CCACHE_POST_COMPILATION'
+		*called after ccache-wrapped compilation completes (success or failure)*
+		Useful for displaying remote cache statistics or other post-build info.
+	CCACHE_POST_COMPILATION
+}
+
 function do_with_ccache_statistics() {
 
 	display_alert "Clearing ccache statistics" "ccache" "ccache"
@@ -35,8 +43,20 @@ function do_with_ccache_statistics() {
 		run_host_command_logged ccache --show-config "&&" sync
 	fi
 
+	# Register cleanup handler to show stats even if build is interrupted
+	add_cleanup_handler ccache_show_compilation_stats
+
 	display_alert "Running ccache'd build..." "ccache" "ccache"
-	"$@"
+	local build_exit_code=0
+	"$@" || build_exit_code=$?
+
+	# Show stats and remove from cleanup handlers (so it doesn't run twice on exit)
+	execute_and_remove_cleanup_handler ccache_show_compilation_stats
+
+	# Re-raise the error if the build failed
+	if [[ ${build_exit_code} -ne 0 ]]; then
+		return ${build_exit_code}
+	fi
 
 	if [[ "${SHOW_CCACHE}" == "yes" ]]; then
 		display_alert "Display ccache statistics" "ccache" "ccache"
