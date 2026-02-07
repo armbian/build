@@ -1,0 +1,121 @@
+From 417db3f2f2b5ccb63c5fd061cfda4e99074f34d3 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan@gerhold.net>
+Date: Wed, 30 Jul 2025 16:35:46 +0200
+Subject: [PATCH 023/121] wip: remoteproc: qcom_q6v5_pas: Avoid using broken
+ reset when running bare-metal
+
+Some firmware versions have a split design where firmware authentication is
+implemented in the TZ firmware, but the remoteproc reset sequence appears
+to be triggered by the hypervisor firmware. When running bare-metal without
+the hypervisor only the firmware authentication functionality is present.
+Without knowledge of the exact hardware reset register sequence, we cannot
+(re)start the remoteproc from Linux.
+
+This does not make the qcom_q6v5_pas driver useless. In case the remoteproc
+is already running during boot, we can attach to it as usual and keep using
+it until it crashes or is manually stopped. Not being able to restart it is
+not ideal, but not a big loss: A remoteproc should rarely (if ever) crash
+during normal use. Also, currently most drivers upstream cannot properly
+handle a remoteproc crash anyway (without full system restart).
+
+Detecting this case automatically is tricky since all the PAS related calls
+still succeed, it will just not release the remoteproc from reset. Also, on
+SC7180, MPSS does always work correctly, only ADSP and CDSP are broken.
+Look for a new "qcom,broken-reset" property so we can check which of the
+remoteprocs are affected.
+
+Signed-off-by: Stephan Gerhold <stephan@gerhold.net>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/remoteproc/qcom_q6v5_pas.c | 32 +++++++++++++++++++++++++++---
+ 1 file changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 3cf24f2023e5..c80af96543e4 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -491,6 +491,13 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
+ 	.coredump = qcom_pas_minidump,
+ };
+ 
++static const struct rproc_ops qcom_pas_ops_no_reset = {
++	.attach = qcom_pas_attach,
++	.da_to_va = qcom_pas_da_to_va,
++	.stop = qcom_pas_stop,
++	.panic = qcom_pas_panic,
++};
++
+ static int qcom_pas_init_clock(struct qcom_pas *pas)
+ {
+ 	pas->xo = devm_clk_get(pas->dev, "xo");
+@@ -745,6 +752,9 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	if (desc->minidump_id)
+ 		ops = &qcom_pas_minidump_ops;
+ 
++	if (device_property_read_bool(&pdev->dev, "qcom,broken-reset"))
++		ops = &qcom_pas_ops_no_reset;
++
+ 	rproc = devm_rproc_alloc(&pdev->dev, desc->sysmon_name, ops, fw_name, sizeof(*pas));
+ 
+ 	if (!rproc) {
+@@ -752,10 +762,14 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	}
+ 
+-	if (desc->auto_boot)
+-		rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
+-	else
++	if (desc->auto_boot) {
++		if (ops->start)
++			rproc->auto_boot = RPROC_AUTO_BOOT_RESTART_IF_FW_AVAILABLE;
++		else
++			rproc->auto_boot = RPROC_AUTO_BOOT_ATTACH_OR_START;
++	} else {
+ 		rproc->auto_boot = RPROC_AUTO_BOOT_DISABLED;
++	}
+ 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
+ 
+ 	pas = rproc->priv;
+@@ -816,6 +830,13 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	 */
+ 	qcom_q6v5_read_smp2p_state(&pas->q6v5);
+ 
++	if (rproc->state == RPROC_OFFLINE && !ops->start) {
++		dev_err(&pdev->dev, "reset broken and remoteproc not running during boot, exiting\n");
++		/* Release all resources, but return 0 so we don't block sync_state() */
++		ret = 0;
++		goto deinit_q6v5;
++	}
++
+ 	qcom_add_glink_subdev(rproc, &pas->glink_subdev, desc->ssr_name);
+ 	qcom_add_smd_subdev(rproc, &pas->smd_subdev);
+ 	qcom_add_pdm_subdev(rproc, &pas->pdm_subdev);
+@@ -839,6 +860,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	qcom_remove_pdm_subdev(rproc, &pas->pdm_subdev);
+ 	qcom_remove_smd_subdev(rproc, &pas->smd_subdev);
+ 	qcom_remove_glink_subdev(rproc, &pas->glink_subdev);
++deinit_q6v5:
+ 	qcom_q6v5_deinit(&pas->q6v5);
+ detach_proxy_pds:
+ 	qcom_pas_pds_detach(pas, pas->proxy_pds, pas->proxy_pd_count);
+@@ -846,6 +868,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
+ 	qcom_pas_unassign_memory_region(pas);
+ free_rproc:
+ 	device_init_wakeup(pas->dev, false);
++	pas->rproc = NULL;
+ 
+ 	return ret;
+ }
+@@ -854,6 +877,9 @@ static void qcom_pas_remove(struct platform_device *pdev)
+ {
+ 	struct qcom_pas *pas = platform_get_drvdata(pdev);
+ 
++	if (!pas->rproc)
++		return;
++
+ 	rproc_del(pas->rproc);
+ 
+ 	qcom_q6v5_deinit(&pas->q6v5);
+-- 
+2.39.5
+
