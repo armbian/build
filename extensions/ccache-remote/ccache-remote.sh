@@ -80,63 +80,11 @@
 #       avahi-publish-address -R ccache.local <SERVER_IP>
 #     Or create a systemd service (see below).
 #
-#   Server setup example:
-#     1. Install: apt install redis-server avahi-daemon avahi-utils
-#     2. Configure Redis (/etc/redis/redis.conf):
-#          bind 0.0.0.0 ::
-#          protected-mode no
-#          maxmemory 4G
-#          maxmemory-policy allkeys-lru
-#        WARNING: This configuration is INSECURE - Redis is open without authentication.
-#        Use ONLY in a fully trusted private network with no internet access.
-#        For secure setup (password, TLS, ACL), see: https://redis.io/docs/management/security/
-#     3. Publish hostname (replace IP_ADDRESS with actual IP):
-#          avahi-publish-address -R ccache.local IP_ADDRESS
-#        Or as systemd service /etc/systemd/system/ccache-hostname.service:
-#          [Unit]
-#          Description=Publish ccache.local hostname via Avahi
-#          After=avahi-daemon.service redis-server.service
-#          BindsTo=redis-server.service
-#          [Service]
-#          Type=simple
-#          ExecStart=/usr/bin/avahi-publish-address -R ccache.local IP_ADDRESS
-#          Restart=on-failure
-#          [Install]
-#          WantedBy=redis-server.service
-#
-#   HTTP/WebDAV server setup example (nginx):
-#     1. Install: apt install nginx-extras
-#     2. Create /etc/nginx/sites-available/ccache-webdav:
-#          server {
-#              listen 8088;
-#              server_name _;
-#              root /var/cache/ccache-webdav;
-#              location /ccache/ {
-#                  dav_methods PUT DELETE;
-#                  create_full_put_path on;
-#                  dav_access user:rw group:rw all:r;
-#                  client_max_body_size 100M;
-#                  autoindex on;
-#              }
-#          }
-#     3. Enable and start:
-#          mkdir -p /var/cache/ccache-webdav/ccache
-#          chown -R www-data:www-data /var/cache/ccache-webdav
-#          ln -s /etc/nginx/sites-available/ccache-webdav /etc/nginx/sites-enabled/
-#          systemctl reload nginx
-#     4. Verify: curl -X PUT -d "test" http://localhost:8088/ccache/test.txt
-#        WARNING: This configuration has no authentication.
-#        Use ONLY in a fully trusted private network.
-#        For auth, add auth_basic directives. See nginx WebDAV documentation.
-#     Note: ccache does not support HTTPS directly. Use a reverse proxy for TLS.
-#
-#   Client requirements for mDNS resolution (one of):
-#     - libnss-resolve (systemd-resolved NSS module):
-#         apt install libnss-resolve
-#         /etc/nsswitch.conf: hosts: files resolve [!UNAVAIL=return] dns myhostname
-#     - libnss-mdns (standalone mDNS NSS module):
-#         apt install libnss-mdns
-#         /etc/nsswitch.conf: hosts: files mdns4_minimal [NOTFOUND=return] dns myhostname
+#   Server setup: see README.server-setup.md and config files in misc/
+#     - misc/redis/redis-ccache.conf   — Redis configuration example
+#     - misc/nginx/ccache-webdav.conf  — nginx WebDAV configuration example
+#     - misc/avahi/ccache-*.service    — Avahi DNS-SD service files (static, always announce)
+#     - misc/systemd/ccache-avahi-*.service — systemd units (announce only while service runs)
 #
 # Fallback behavior:
 #   If CCACHE_REMOTE_STORAGE is not set and ccache.local is not resolvable,
