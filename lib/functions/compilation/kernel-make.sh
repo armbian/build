@@ -74,6 +74,8 @@ function run_kernel_make_internal() {
 		common_make_params_quoted+=("${llvm_flag}")
 	fi
 
+	# Hook order: kernel_make_config runs first (generic extension config),
+	# then custom_kernel_make_params (user/board overrides can take precedence).
 	call_extension_method "kernel_make_config" <<- 'KERNEL_MAKE_CONFIG'
 		*Hook to customize kernel make environment and parameters*
 		Called right before invoking make for kernel compilation.
@@ -84,7 +86,7 @@ function run_kernel_make_internal() {
 		  - KERNEL_COMPILER, ARCHITECTURE, BRANCH, LINUXFAMILY
 	KERNEL_MAKE_CONFIG
 
-	# Allow extensions to modify make parameters and environment variables
+	# Runs after kernel_make_config — allows user/board overrides to take precedence
 	call_extension_method "custom_kernel_make_params" <<- 'CUSTOM_KERNEL_MAKE_PARAMS'
 		*Customize kernel make parameters before compilation*
 		Called after all standard make parameters are set but before invoking make.
