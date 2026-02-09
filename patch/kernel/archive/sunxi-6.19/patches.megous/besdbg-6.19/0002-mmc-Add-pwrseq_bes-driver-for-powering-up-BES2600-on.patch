@@ -1,0 +1,169 @@
+From ec76d484336a573908fb76f6ae61e209632112bf Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 29 Apr 2024 14:22:36 +0200
+Subject: [PATCH 2/2] mmc: Add pwrseq_bes driver for powering up BES2600 on
+ PineTab2
+
+This is Pinetab2 specific driver that deals with intricacies of
+powering up BES2600 chip on PT2.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/mmc/core/Makefile     |   1 +
+ drivers/mmc/core/pwrseq_bes.c | 132 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 133 insertions(+)
+ create mode 100644 drivers/mmc/core/pwrseq_bes.c
+
+diff --git a/drivers/mmc/core/Makefile b/drivers/mmc/core/Makefile
+index 15b067e8b0d1..a077cfbc5e1a 100644
+--- a/drivers/mmc/core/Makefile
++++ b/drivers/mmc/core/Makefile
+@@ -13,6 +13,7 @@ mmc_core-$(CONFIG_OF)		+= pwrseq.o
+ obj-$(CONFIG_PWRSEQ_SIMPLE)	+= pwrseq_simple.o
+ obj-$(CONFIG_PWRSEQ_SD8787)	+= pwrseq_sd8787.o
+ obj-$(CONFIG_PWRSEQ_EMMC)	+= pwrseq_emmc.o
++obj-y				+= pwrseq_bes.o
+ mmc_core-$(CONFIG_DEBUG_FS)	+= debugfs.o
+ obj-$(CONFIG_MMC_BLOCK)		+= mmc_block.o
+ mmc_block-objs			:= block.o queue.o
+diff --git a/drivers/mmc/core/pwrseq_bes.c b/drivers/mmc/core/pwrseq_bes.c
+new file mode 100644
+index 000000000000..90974a7b01bc
+--- /dev/null
++++ b/drivers/mmc/core/pwrseq_bes.c
+@@ -0,0 +1,132 @@
++// SPDX-License-Identifier: GPL-2.0-only
++// Written by Ondrej Jirman <megi@xff.cz> 2024
++
++#include <linux/clk.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/platform_device.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/gpio/consumer.h>
++#include <linux/delay.h>
++#include <linux/property.h>
++
++#include <linux/mmc/host.h>
++
++#include "pwrseq.h"
++
++struct mmc_pwrseq_bes {
++	struct mmc_pwrseq pwrseq;
++	bool clk_enabled;
++	struct clk *ext_clk;
++	struct gpio_desc *pwrkey_gpio;
++	struct gpio_desc *reset_gpio;
++	struct gpio_desc *pwren_gpio;
++};
++
++#define to_pwrseq_bes(p) container_of(p, struct mmc_pwrseq_bes, pwrseq)
++
++static void mmc_pwrseq_bes_pre_power_on(struct mmc_host *host)
++{
++	struct mmc_pwrseq_bes *pwrseq = to_pwrseq_bes(host->pwrseq);
++
++	if (!pwrseq->clk_enabled) {
++		clk_prepare_enable(pwrseq->ext_clk);
++		pwrseq->clk_enabled = true;
++	}
++
++	gpiod_set_value_cansleep(pwrseq->pwrkey_gpio, 0);
++	gpiod_set_value_cansleep(pwrseq->reset_gpio, 0);
++	gpiod_set_value_cansleep(pwrseq->pwren_gpio, 1);
++	usleep_range(10000, 12000);
++}
++
++static void mmc_pwrseq_bes_post_power_on(struct mmc_host *host)
++{
++	struct mmc_pwrseq_bes *pwrseq = to_pwrseq_bes(host->pwrseq);
++
++	gpiod_set_value_cansleep(pwrseq->pwrkey_gpio, 1);
++	usleep_range(15000, 16000); // this is the minimum that works
++	gpiod_set_value_cansleep(pwrseq->pwrkey_gpio, 0);
++	usleep_range(10000, 12000); // works
++}
++
++static void mmc_pwrseq_bes_power_off(struct mmc_host *host)
++{
++	struct mmc_pwrseq_bes *pwrseq = to_pwrseq_bes(host->pwrseq);
++
++
++	if (pwrseq->clk_enabled) {
++		clk_disable_unprepare(pwrseq->ext_clk);
++		pwrseq->clk_enabled = false;
++	}
++
++	gpiod_set_value_cansleep(pwrseq->pwren_gpio, 0);
++	msleep(100);
++}
++
++static const struct mmc_pwrseq_ops mmc_pwrseq_bes_ops = {
++	.pre_power_on = mmc_pwrseq_bes_pre_power_on,
++	.post_power_on = mmc_pwrseq_bes_post_power_on,
++	.power_off = mmc_pwrseq_bes_power_off,
++};
++
++static const struct of_device_id mmc_pwrseq_bes_of_match[] = {
++	{ .compatible = "mmc-pwrseq-bes",},
++	{/* sentinel */},
++};
++MODULE_DEVICE_TABLE(of, mmc_pwrseq_bes_of_match);
++
++static int mmc_pwrseq_bes_probe(struct platform_device *pdev)
++{
++	struct mmc_pwrseq_bes *pwrseq;
++	struct device *dev = &pdev->dev;
++
++	pwrseq = devm_kzalloc(dev, sizeof(*pwrseq), GFP_KERNEL);
++	if (!pwrseq)
++		return -ENOMEM;
++
++	pwrseq->ext_clk = devm_clk_get(dev, "ext_clock");
++	if (IS_ERR(pwrseq->ext_clk))
++		return dev_err_probe(dev, PTR_ERR(pwrseq->ext_clk), "can't get ext_clock\n");
++
++	pwrseq->pwrkey_gpio = devm_gpiod_get(dev, "pwrkey", GPIOD_OUT_LOW);
++	if (IS_ERR(pwrseq->pwrkey_gpio))
++		return dev_err_probe(dev, PTR_ERR(pwrseq->pwrkey_gpio), "can't get pwrkey gpio\n");
++
++	pwrseq->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(pwrseq->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(pwrseq->reset_gpio), "can't get reset gpio\n");
++
++	pwrseq->pwren_gpio = devm_gpiod_get(dev, "pwren", GPIOD_OUT_LOW);
++	if (IS_ERR(pwrseq->pwren_gpio))
++		return dev_err_probe(dev, PTR_ERR(pwrseq->pwren_gpio), "can't get pwren gpio\n");
++
++	pwrseq->pwrseq.dev = dev;
++	pwrseq->pwrseq.ops = &mmc_pwrseq_bes_ops;
++	pwrseq->pwrseq.owner = THIS_MODULE;
++	platform_set_drvdata(pdev, pwrseq);
++
++	return mmc_pwrseq_register(&pwrseq->pwrseq);
++}
++
++static void mmc_pwrseq_bes_remove(struct platform_device *pdev)
++{
++	struct mmc_pwrseq_bes *pwrseq = platform_get_drvdata(pdev);
++
++	mmc_pwrseq_unregister(&pwrseq->pwrseq);
++}
++
++static struct platform_driver mmc_pwrseq_bes_driver = {
++	.probe = mmc_pwrseq_bes_probe,
++	.remove = mmc_pwrseq_bes_remove,
++	.driver = {
++		.name = "pwrseq_bes",
++		.of_match_table = mmc_pwrseq_bes_of_match,
++	},
++};
++
++module_platform_driver(mmc_pwrseq_bes_driver);
++MODULE_LICENSE("GPL v2");
+-- 
+2.43.0
+

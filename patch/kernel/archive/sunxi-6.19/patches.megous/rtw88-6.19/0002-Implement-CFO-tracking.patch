@@ -1,0 +1,237 @@
+From 8970025ced24fc451e4c7099fde11872d5e193a8 Mon Sep 17 00:00:00 2001
+From: Fiona Klute <fiona.klute@gmx.de>
+Date: Fri, 2 Feb 2024 22:29:41 +0100
+Subject: [PATCH 2/2] Implement CFO tracking
+
+This makes RX a lot more stable in my network. The chip still doesn't
+really go beyond MCS 1.
+
+Signed-off-by: Fiona Klute <fiona.klute@gmx.de>
+---
+ drivers/net/wireless/realtek/rtw88/main.h     |   1 +
+ drivers/net/wireless/realtek/rtw88/rtw8703b.c | 148 +++++++++++++++++-
+ drivers/net/wireless/realtek/rtw88/rtw8703b.h |   3 +
+ drivers/net/wireless/realtek/rtw88/rtw8723x.h |   1 +
+ 4 files changed, 150 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+index 43ed6d6b4291..51ffe5676d74 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.h
++++ b/drivers/net/wireless/realtek/rtw88/main.h
+@@ -1686,6 +1686,7 @@ enum rtw_edcca_mode {
+ 
+ struct rtw_cfo_track {
+ 	bool is_adjust;
++	bool atc_enable;
+ 	u8 crystal_cap;
+ 	s32 cfo_tail[RTW_RF_PATH_MAX];
+ 	s32 cfo_cnt[RTW_RF_PATH_MAX];
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8703b.c b/drivers/net/wireless/realtek/rtw88/rtw8703b.c
+index b39f6e1a6d30..52771e2e0d89 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8703b.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8703b.c
+@@ -577,7 +577,7 @@ static void rtw8703b_pwrtrack_init(struct rtw_dev *rtwdev)
+ 
+ static void rtw8703b_phy_set_param(struct rtw_dev *rtwdev)
+ {
+-	u8 xtal_cap = rtwdev->efuse.crystal_cap & 0x3F;
++	u8 xtal_cap = rtwdev->efuse.crystal_cap & XCAP_MASK_8703B;
+ 
+ 	/* power on BB/RF domain */
+ 	rtw_write16_set(rtwdev, REG_SYS_FUNC_EN,
+@@ -953,6 +953,8 @@ static void query_phy_status_ofdm(struct rtw_dev *rtwdev, u8 *phy_raw,
+ 	val_s8 = clamp_t(s8, -val_s8 >> 1, 0, 64);
+ 	val_s8 &= 0x3F; /* 64->0: second path of 1SS rate is 64 */
+ 	dm_info->rx_evm_dbm[RF_PATH_A] = val_s8;
++
++	rtw_phy_parsing_cfo(rtwdev, pkt_stat);
+ }
+ 
+ static void query_phy_status(struct rtw_dev *rtwdev, u8 *phy_status,
+@@ -1727,6 +1729,146 @@ static void rtw8703b_adaptivity(struct rtw_dev *rtwdev)
+ 	rtw_phy_set_edcca_th(rtwdev, l2h, h2l);
+ }
+ 
++static void rtw8703b_cfo_init(struct rtw_dev *rtwdev)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++
++	cfo->crystal_cap = rtwdev->efuse.crystal_cap;
++	cfo->is_adjust = true;
++	cfo->atc_enable = rtw_read32_mask(rtwdev, REG_OFDM1_CFOTRK, BIT_EN_ATC);
++}
++
++#define XCAP_EXTEND(val) ({typeof(val) _v = (val); _v | _v << 6; })
++static void rtw8703b_set_crystal_cap_reg(struct rtw_dev *rtwdev, u8 crystal_cap)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++	u32 val = 0;
++
++	val = XCAP_EXTEND(crystal_cap);
++	cfo->crystal_cap = crystal_cap;
++	rtw_write32_mask(rtwdev, REG_AFE_CTRL3, BIT_MASK_XTAL, val);
++}
++
++static void rtw8703b_set_crystal_cap(struct rtw_dev *rtwdev, u8 crystal_cap)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++
++	if (cfo->crystal_cap == crystal_cap)
++		return;
++
++	rtw8703b_set_crystal_cap_reg(rtwdev, crystal_cap);
++	rtw_dbg(rtwdev, RTW_DBG_CFO, "[CFO] XTAL=0x%x\n", crystal_cap);
++}
++
++static void rtw8703b_cfo_tracking_reset(struct rtw_dev *rtwdev)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++
++	cfo->is_adjust = true;
++
++	if (cfo->crystal_cap > rtwdev->efuse.crystal_cap)
++		rtw8703b_set_crystal_cap(rtwdev, cfo->crystal_cap - 1);
++	else if (cfo->crystal_cap < rtwdev->efuse.crystal_cap)
++		rtw8703b_set_crystal_cap(rtwdev, cfo->crystal_cap + 1);
++}
++
++#define REPORT_TO_KHZ(val) ({typeof(val) _v = (val); (_v << 1) + (_v >> 1); })
++static s32 rtw8703b_cfo_calc_avg(struct rtw_dev *rtwdev)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++	s32 cfo_avg, cfo_rpt_sum;
++
++	cfo_rpt_sum = REPORT_TO_KHZ(cfo->cfo_tail[0]);
++
++	if (cfo->cfo_cnt[0])
++		cfo_avg = cfo_rpt_sum / cfo->cfo_cnt[0];
++	else
++		cfo_avg = 0;
++
++	cfo->cfo_tail[0] = 0;
++	cfo->cfo_cnt[0] = 0;
++
++	return cfo_avg;
++}
++
++#define CFO_TRK_ENABLE_TH 20
++#define CFO_TRK_STOP_TH 10
++#define CFO_TRK_ADJ_TH 10
++#define CFO_ATC_TH 80
++
++static void rtw8703b_cfo_need_adjust(struct rtw_dev *rtwdev, s32 cfo_avg)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++
++	if (!cfo->is_adjust) {
++		if (abs(cfo_avg) > CFO_TRK_ENABLE_TH)
++			cfo->is_adjust = true;
++	} else {
++		if (abs(cfo_avg) <= CFO_TRK_STOP_TH)
++			cfo->is_adjust = false;
++	}
++
++	if (!rtw_coex_disabled(rtwdev)) {
++		cfo->is_adjust = false;
++		rtw8703b_set_crystal_cap(rtwdev, rtwdev->efuse.crystal_cap);
++	}
++}
++
++static void rtw8703b_cfo_set_atc(struct rtw_dev *rtwdev, bool enable)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++
++	if (cfo->atc_enable == enable)
++		return;
++
++	rtw_write32_mask(rtwdev, REG_OFDM1_CFOTRK, BIT_EN_ATC, enable);
++	cfo->atc_enable = enable;
++	rtw_dbg(rtwdev, RTW_DBG_CFO, "[CFO] ATC: %s\n",
++		enable ? "enabled" : "disabled");
++}
++
++static void rtw8703b_cfo_track(struct rtw_dev *rtwdev)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	struct rtw_cfo_track *cfo = &dm_info->cfo_track;
++	s8 crystal_cap = cfo->crystal_cap;
++	s32 cfo_avg = 0;
++
++	if (rtwdev->sta_cnt != 1) {
++		rtw8703b_cfo_tracking_reset(rtwdev);
++		return;
++	}
++
++	if (cfo->packet_count == cfo->packet_count_pre)
++		return;
++
++	cfo->packet_count_pre = cfo->packet_count;
++	cfo_avg = rtw8703b_cfo_calc_avg(rtwdev);
++	rtw8703b_cfo_need_adjust(rtwdev, cfo_avg);
++
++	if (cfo->is_adjust) {
++		if (cfo_avg > CFO_TRK_ADJ_TH)
++			crystal_cap++;
++		else if (cfo_avg < -CFO_TRK_ADJ_TH)
++			crystal_cap--;
++
++		crystal_cap = clamp_t(s8, crystal_cap, 0, XCAP_MASK_8703B);
++		rtw8703b_set_crystal_cap(rtwdev, (u8)crystal_cap);
++	}
++
++	if (abs(cfo_avg) > CFO_ATC_TH)
++		rtw8703b_cfo_set_atc(rtwdev, true);
++	else
++		rtw8703b_cfo_set_atc(rtwdev, false);
++}
++
+ static const u8 rtw8703b_pwrtrk_2gb_n[] = {
+ 	0, 0, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6, 6,
+ 	7, 7, 7, 7, 8, 8, 9, 9, 10, 10, 10, 11, 11, 11, 11
+@@ -1908,8 +2050,8 @@ static const struct rtw_chip_ops rtw8703b_ops = {
+ 	.cfg_csi_rate		= NULL,
+ 	.adaptivity_init	= rtw8703b_adaptivity_init,
+ 	.adaptivity		= rtw8703b_adaptivity,
+-	.cfo_init		= NULL,
+-	.cfo_track		= NULL,
++	.cfo_init		= rtw8703b_cfo_init,
++	.cfo_track		= rtw8703b_cfo_track,
+ 	.config_tx_path		= NULL,
+ 	.config_txrx_mode	= NULL,
+ 	.fill_txdesc_checksum	= rtw8723x_fill_txdesc_checksum,
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8703b.h b/drivers/net/wireless/realtek/rtw88/rtw8703b.h
+index 10d29282b25e..ab5d25dbe5a9 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8703b.h
++++ b/drivers/net/wireless/realtek/rtw88/rtw8703b.h
+@@ -70,6 +70,9 @@ struct phy_status_8703b {
+ #endif
+ } __packed;
+ 
++/* value mask (and maximum) for crystal cap setting */
++#define XCAP_MASK_8703B 0x3f
++
+ /* Baseband registers */
+ #define REG_BB_PWR_SAV5_11N 0x0818
+ /* BIT(11) should be 1 for 8703B *and* 8723D, which means LNA uses 4
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8723x.h b/drivers/net/wireless/realtek/rtw88/rtw8723x.h
+index 0fc70dfdfc8b..2ad3f7dbfebe 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723x.h
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723x.h
+@@ -285,6 +285,7 @@ extern const struct rtw8723x_common rtw8723x_common;
+ #define REG_CTX			0x0d03
+ #define BIT_MASK_CTX_TYPE	GENMASK(6, 4)
+ #define REG_OFDM1_CFOTRK	0x0d2c
++#define BIT_EN_ATC		BIT(11)
+ #define BIT_EN_CFOTRK		BIT(28)
+ #define REG_OFDM1_CSI1		0x0d40
+ #define REG_OFDM1_CSI2		0x0d44
+-- 
+2.43.0
+

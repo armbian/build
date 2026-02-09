@@ -1,0 +1,57 @@
+From 28a514e482f43d7be3af54f585f93ef3b6822712 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Sat, 2 Nov 2019 15:09:01 +0100
+Subject: [PATCH 1/8] mailbox: Allow to run mailbox while timekeeping is
+ suspended
+
+This makes it possible to send messages from CPU suspend finisher.
+
+We simply implement cl->tx_block using a busywait loop when
+timekeeping is suspended, instead of using hrtimer.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/mailbox/mailbox.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mailbox/mailbox.c b/drivers/mailbox/mailbox.c
+index 2acc6ec229a4..9fca3668d4cf 100644
+--- a/drivers/mailbox/mailbox.c
++++ b/drivers/mailbox/mailbox.c
+@@ -74,7 +74,7 @@ static void msg_submit(struct mbox_chan *chan)
+ 		}
+ 	}
+ 
+-	if (!err && (chan->txdone_method & TXDONE_BY_POLL)) {
++	if (!err && (chan->txdone_method & TXDONE_BY_POLL) && !timekeeping_suspended) {
+ 		/* kick start the timer immediately to avoid delays */
+ 		scoped_guard(spinlock_irqsave, &chan->mbox->poll_hrt_lock)
+ 			hrtimer_start(&chan->mbox->poll_hrt, 0, HRTIMER_MODE_REL);
+@@ -257,6 +257,24 @@ int mbox_send_message(struct mbox_chan *chan, void *mssg)
+ 
+ 	msg_submit(chan);
+ 
++	if (chan->cl->tx_block && timekeeping_suspended) {
++		int i = chan->cl->tx_tout * 10;
++		bool txdone;
++
++		while (i--) {
++			txdone = chan->mbox->ops->last_tx_done(chan);
++			if (txdone) {
++				tx_tick(chan, 0);
++				return 0;
++			}
++
++			udelay(100);
++		}
++
++		tx_tick(chan, -ETIME);
++		return -ETIME;
++	}
++
+ 	if (chan->cl->tx_block) {
+ 		unsigned long wait;
+ 		int ret;
+-- 
+2.43.0
+

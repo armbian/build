@@ -1,0 +1,628 @@
+From 3af6aab34c19676782114de8ee532360b6c9ecf9 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 14 Aug 2023 08:22:40 +0200
+Subject: [PATCH 1/2] besdbg: Add a debug driver for controlling the wifi chip
+
+With this driver, it's possible to perform any test of the wifi
+firmware from userspace without having to recompile the kernel.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/net/wireless/st/cw1200/Makefile |   2 +
+ drivers/net/wireless/st/cw1200/besdbg.c | 594 ++++++++++++++++++++++++
+ 2 files changed, 596 insertions(+)
+ create mode 100644 drivers/net/wireless/st/cw1200/besdbg.c
+
+diff --git a/drivers/net/wireless/st/cw1200/Makefile b/drivers/net/wireless/st/cw1200/Makefile
+index 386a484e0707..f643ac18ffc2 100644
+--- a/drivers/net/wireless/st/cw1200/Makefile
++++ b/drivers/net/wireless/st/cw1200/Makefile
+@@ -20,3 +20,5 @@ cw1200_wlan_spi-y := cw1200_spi.o
+ obj-$(CONFIG_CW1200) += cw1200_core.o
+ obj-$(CONFIG_CW1200_WLAN_SDIO) += cw1200_wlan_sdio.o
+ obj-$(CONFIG_CW1200_WLAN_SPI) += cw1200_wlan_spi.o
++
++obj-m += besdbg.o
+diff --git a/drivers/net/wireless/st/cw1200/besdbg.c b/drivers/net/wireless/st/cw1200/besdbg.c
+new file mode 100644
+index 000000000000..4f4860e8aaaf
+--- /dev/null
++++ b/drivers/net/wireless/st/cw1200/besdbg.c
+@@ -0,0 +1,594 @@
++// SPDX-License-Identifier: GPL-2.0-only
++// Written by Ondrej Jirman <megi@xff.cz> 2023-2024
++
++#include <linux/module.h>
++#include <linux/interrupt.h>
++#include <linux/gpio.h>
++#include <linux/delay.h>
++#include <linux/mmc/host.h>
++#include <linux/mmc/sdio_func.h>
++#include <linux/mmc/card.h>
++#include <linux/mmc/sdio.h>
++#include <linux/mmc/sdio_ids.h>
++#include <linux/wait.h>
++#include <linux/poll.h>
++#include <linux/cdev.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/of_net.h>
++#include <linux/regulator/consumer.h>
++#include <net/mac80211.h>
++
++#include "cw1200.h"
++#include "hwbus.h"
++#include "hwio.h"
++
++#include <linux/types.h>
++#include <linux/ioctl.h>
++
++struct besdbg_data {
++	__u32 reg;
++	__u32 len;
++	__u64 data;
++};
++
++struct besdbg_gpio {
++	__u32 gpio;
++	__u32 val;
++};
++
++#define BESDBG_MAGIC 0xEE
++
++#define BESDBG_GPIO_WAKEUP_DEV	1
++#define BESDBG_GPIO_WAKEUP_HOST 2
++#define BESDBG_GPIO_REGON	3
++
++#define BESDBG_IOCTL_RESET	_IO(BESDBG_MAGIC, 0x10)
++#define BESDBG_IOCTL_REG_READ	_IOR(BESDBG_MAGIC, 0x11, struct besdbg_data)
++#define BESDBG_IOCTL_REG_WRITE	_IOW(BESDBG_MAGIC, 0x12, struct besdbg_data)
++#define BESDBG_IOCTL_MEM_READ	_IOR(BESDBG_MAGIC, 0x13, struct besdbg_data)
++#define BESDBG_IOCTL_MEM_WRITE	_IOW(BESDBG_MAGIC, 0x14, struct besdbg_data)
++#define BESDBG_IOCTL_GPIO	_IOR(BESDBG_MAGIC, 0x15, struct besdbg_gpio)
++
++#define SDIO_BLOCK_SIZE (512)
++
++static struct class *besdbg_class;
++
++struct besdbg_priv {
++	struct sdio_func	*func;
++	struct gpio_desc	*wakeup_device_gpio;
++	struct gpio_desc	*wakeup_host_gpio;
++	struct gpio_desc	*regon_gpio;
++	struct cdev		cdev;
++	dev_t			major;
++	int			irq;
++
++	spinlock_t		lock;
++	int			interrupted;
++	wait_queue_head_t	poll_wait;
++};
++
++/* bes sdio slave regs can only be accessed by command52
++ * if a WORD or DWORD reg wants to be accessed,
++ * please combine the results of multiple command52
++ */
++static int bes2600_sdio_reg_read(struct besdbg_priv *self, u32 reg,
++				 void *dst, int count)
++{
++	int ret = 0;
++	if (count <= 0 || !dst)
++		return -EINVAL;
++
++	while (count && !ret) {
++		*(u8 *)dst = sdio_readb(self->func, reg, &ret);
++
++		dst++;
++		reg++;
++		count--;
++	}
++
++	return ret;
++}
++
++static int bes2600_sdio_reg_write(struct besdbg_priv *self, u32 reg,
++				  const void *src, int count)
++{
++	int ret = 0;
++	if (count <= 0 || !src)
++		return -EINVAL;
++
++	while (count && !ret) {
++		sdio_writeb(self->func, *(u8 *)src, reg, &ret);
++
++		src++;
++		reg++;
++		count--;
++	}
++
++	return ret;
++}
++
++#if 0
++static int bes2600_sdio_mem_helper(struct besdbg_priv *self, u8 *data, int count, int write)
++{
++	int off = 0;
++	int ret;
++
++	while (off < count) {
++		int block = min(count - off, );
++
++		if (write)
++			ret = sdio_memcpy_toio(func, block, data + off, block);
++		else
++			ret = sdio_memcpy_fromio(func, data + off, block, block);
++		if (ret)
++			return ret;
++
++		off += size;
++	}
++
++	return 0;
++}
++#endif
++
++static __poll_t besdbg_poll(struct file *fp, struct poll_table_struct *wait)
++{
++	struct besdbg_priv* self = fp->private_data;
++	unsigned long flags;
++	__poll_t mask = 0;
++
++	poll_wait(fp, &self->poll_wait, wait);
++
++	spin_lock_irqsave(&self->lock, flags);
++	if (self->interrupted)
++		mask = EPOLLIN | EPOLLRDNORM;
++	self->interrupted = false;
++	spin_unlock_irqrestore(&self->lock, flags);
++
++	return mask;
++}
++
++static int besdbg_open(struct inode *ip, struct file *fp)
++{
++	struct besdbg_priv* self = container_of(ip->i_cdev,
++						  struct besdbg_priv, cdev);
++
++	fp->private_data = self;
++
++	nonseekable_open(ip, fp);
++	return 0;
++}
++
++static int besdbg_release(struct inode *ip, struct file *fp)
++{
++//	struct besdbg_priv* self = fp->private_data;
++
++	return 0;
++}
++
++static long besdbg_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
++{
++	struct besdbg_priv* self = fp->private_data;
++	struct device *dev = &self->func->dev;
++	void __user *argp = (void __user *)arg;
++	long ret;
++
++	switch (cmd) {
++	case BESDBG_IOCTL_GPIO: {
++		struct besdbg_gpio r;
++
++		if (copy_from_user(&r, argp, sizeof(r)))
++			return -EFAULT;
++
++		switch (r.gpio) {
++		case BESDBG_GPIO_WAKEUP_DEV:
++			gpiod_set_value(self->wakeup_device_gpio, r.val);
++			break;
++		case BESDBG_GPIO_REGON:
++			gpiod_set_value(self->regon_gpio, r.val);
++			break;
++		case BESDBG_GPIO_WAKEUP_HOST:
++			r.val = gpiod_get_value(self->wakeup_host_gpio);
++
++			if (copy_to_user(argp, &r, sizeof(r)))
++				return -EFAULT;
++
++			break;
++		default:
++			return -EINVAL;
++		}
++		return 0;
++	}
++
++	case BESDBG_IOCTL_REG_READ: {
++		struct besdbg_data r;
++
++		if (copy_from_user(&r, argp, sizeof(r)))
++			return -EFAULT;
++
++		if (r.len > 32 || r.len == 0 || !r.data)
++			return -EINVAL;
++
++		u8 *data = kmalloc(r.len, GFP_KERNEL);
++		if (!data)
++			return -ENOMEM;
++
++		sdio_claim_host(self->func);
++		ret = bes2600_sdio_reg_read(self, r.reg, data, r.len);
++		sdio_release_host(self->func);
++
++		if (ret) {
++			dev_err(dev, "read failed\n");
++			kfree(data);
++			return ret;
++		}
++
++		if (copy_to_user((void __user *)r.data, data, r.len)) {
++			kfree(data);
++			return -EFAULT;
++		}
++
++		kfree(data);
++		return 0;
++	}
++
++	case BESDBG_IOCTL_REG_WRITE: {
++		struct besdbg_data r;
++
++		if (copy_from_user(&r, argp, sizeof(r)))
++			return -EFAULT;
++
++		if (r.len > 64 * 1024 || r.len == 0 || !r.data)
++			return -EINVAL;
++
++		u8 *data = kmalloc(r.len, GFP_KERNEL);
++		if (!data)
++			return -ENOMEM;
++
++		if (copy_from_user(data, (void __user *)r.data, r.len))
++			return -EFAULT;
++
++		sdio_claim_host(self->func);
++		ret = bes2600_sdio_reg_write(self, r.reg, data, r.len);
++		sdio_release_host(self->func);
++
++		kfree(data);
++
++		if (ret) {
++			dev_err(dev, "read failed\n");
++			return ret;
++		}
++
++		return 0;
++	}
++
++	case BESDBG_IOCTL_MEM_READ: {
++		struct besdbg_data r;
++
++		if (copy_from_user(&r, argp, sizeof(r)))
++			return -EFAULT;
++
++		if (r.len > 1024 * 64 || r.len == 0 || !r.data)
++			return -EINVAL;
++
++		u8 *data = kmalloc(r.len, GFP_KERNEL);
++		if (!data)
++			return -ENOMEM;
++
++		sdio_claim_host(self->func);
++		ret = sdio_memcpy_fromio(self->func, data, r.reg, r.len);
++		sdio_release_host(self->func);
++
++		if (ret) {
++			dev_err(dev, "read failed\n");
++			kfree(data);
++			return ret;
++		}
++
++		if (copy_to_user((void __user *)r.data, data, r.len)) {
++			kfree(data);
++			return -EFAULT;
++		}
++
++		kfree(data);
++		return 0;
++	}
++
++	case BESDBG_IOCTL_MEM_WRITE: {
++		struct besdbg_data r;
++
++		if (copy_from_user(&r, argp, sizeof(r)))
++			return -EFAULT;
++
++		if (r.len > 64 * 1024 || r.len == 0 || !r.data)
++			return -EINVAL;
++
++		u8 *data = kmalloc(r.len, GFP_KERNEL);
++		if (!data)
++			return -ENOMEM;
++
++		if (copy_from_user(data, (void __user *)r.data, r.len))
++			return -EFAULT;
++
++		sdio_claim_host(self->func);
++		ret = sdio_memcpy_toio(self->func, r.reg, data, r.len);
++		sdio_release_host(self->func);
++
++		kfree(data);
++
++		if (ret) {
++			dev_err(dev, "read failed\n");
++			return ret;
++		}
++
++		return 0;
++	}
++	}
++
++	return -EINVAL;
++}
++
++static const struct file_operations besdbg_fops = {
++	.owner		= THIS_MODULE,
++	.open		= besdbg_open,
++	.release	= besdbg_release,
++	.unlocked_ioctl	= besdbg_ioctl,
++	.llseek		= noop_llseek,
++	//.read		= besdbg_read,
++	.poll		= besdbg_poll,
++};
++
++static void besdbg_irq_handler(struct besdbg_priv *self)
++{
++	struct device *dev = &self->func->dev;
++	unsigned long flags;
++
++	spin_lock_irqsave(&self->lock, flags);
++	self->interrupted = true;
++	spin_unlock_irqrestore(&self->lock, flags);
++
++	dev_err(dev, "interrupt\n");
++	wake_up_interruptible(&self->poll_wait);
++}
++
++static irqreturn_t besdbg_gpio_irq(int irq, void *dev_id)
++{
++	struct besdbg_priv *self = dev_id;
++
++	sdio_claim_host(self->func);
++	besdbg_irq_handler(self);
++	sdio_release_host(self->func);
++
++	return IRQ_HANDLED;
++}
++
++static int besdbg_request_irq(struct besdbg_priv *self)
++{
++	int ret;
++	u8 cccr;
++
++	cccr = sdio_f0_readb(self->func, SDIO_CCCR_IENx, &ret);
++	if (ret)
++		return ret;
++
++	cccr |= BIT(0) | BIT(self->func->num);
++
++	sdio_f0_writeb(self->func, cccr, SDIO_CCCR_IENx, &ret);
++	if (ret)
++		return ret;
++
++	return request_threaded_irq(self->irq, NULL, besdbg_gpio_irq,
++				    IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++				    "besdbg_gpio_irq", self);
++}
++
++static void besdbg_sdio_irq_handler(struct sdio_func *func)
++{
++	struct besdbg_priv *self = sdio_get_drvdata(func);
++
++	besdbg_irq_handler(self);
++}
++
++static int besdbg_sdio_irq_subscribe(struct besdbg_priv *self)
++{
++	int ret = 0;
++
++	sdio_claim_host(self->func);
++	if (self->irq >= 0)
++		ret = besdbg_request_irq(self);
++	else
++		ret = sdio_claim_irq(self->func, besdbg_sdio_irq_handler);
++	sdio_release_host(self->func);
++
++	return ret;
++}
++
++static int besdbg_sdio_irq_unsubscribe(struct besdbg_priv *self)
++{
++	int ret = 0;
++
++	if (self->irq >= 0) {
++		free_irq(self->irq, self);
++	} else {
++		sdio_claim_host(self->func);
++		ret = sdio_release_irq(self->func);
++		sdio_release_host(self->func);
++	}
++
++	return ret;
++}
++
++static int besdbg_probe(struct sdio_func *func, const struct sdio_device_id *id)
++{
++	struct device *dev = &func->dev;
++	struct besdbg_priv *self;
++	int ret;
++
++	if (func->num != 0x01)
++		return -ENODEV;
++
++	if (!of_device_is_compatible(dev->of_node, "bestechnic,bes2600")) {
++		dev_err(dev, "OF node for function 1 is missing\n");
++		return -ENODEV;
++	}
++
++	dev_info(dev, "probe start %d\n", func->num);
++
++	self = devm_kzalloc(dev, sizeof(*self), GFP_KERNEL);
++	if (!self)
++		return -ENOMEM;
++
++	self->func = func;
++	init_waitqueue_head(&self->poll_wait);
++	spin_lock_init(&self->lock);
++
++	func->card->quirks |= MMC_QUIRK_LENIENT_FN0;
++	//func->card->quirks |= MMC_QUIRK_BROKEN_BYTE_MODE_512;
++
++	self->wakeup_device_gpio = devm_gpiod_get(dev, "device-wakeup", GPIOD_OUT_LOW);
++	if (IS_ERR(self->wakeup_device_gpio))
++		return dev_err_probe(dev, PTR_ERR(self->wakeup_device_gpio),
++				     "can't get device-wakeup gpio\n");
++/*
++	self->wakeup_host_gpio = devm_gpiod_get(dev, "host-wakeup", GPIOD_IN);
++	if (IS_ERR(self->wakeup_host_gpio))
++		return dev_err_probe(dev, PTR_ERR(self->wakeup_host_gpio),
++				     "can't get host-wakeup gpio\n");
++*/
++	self->regon_gpio = devm_gpiod_get(dev, "regon", GPIOD_OUT_LOW);
++	if (IS_ERR(self->regon_gpio))
++		return dev_err_probe(dev, PTR_ERR(self->regon_gpio),
++				     "can't get regon gpio\n");
++
++/*
++	self->irq = gpiod_to_irq(self->wakeup_host_gpio);
++        if (self->irq < 0) {
++                dev_err(dev, "Could not get host wakeup irq\n");
++                return self->irq;
++        }
++*/
++	//self->irq = -1;
++
++	self->irq = irq_of_parse_and_map(dev->of_node, 0);
++	if (!self->irq) {
++		dev_warn(dev, "No irq in platform data\n");
++		self->irq = -1;
++	}
++
++	ret = alloc_chrdev_region(&self->major, 0, 1, "besdbg");
++	if (ret) {
++		dev_err(dev, "can't allocate chrdev region");
++		return ret;
++	}
++
++	cdev_init(&self->cdev, &besdbg_fops);
++	self->cdev.owner = THIS_MODULE;
++	ret = cdev_add(&self->cdev, self->major, 1);
++	if (ret) {
++		dev_err(dev, "can't add cdev");
++		goto err_unreg_chrev_region;
++	}
++
++	struct device *sdev = device_create(besdbg_class, dev, self->major, self, "besdbg");
++	if (IS_ERR(sdev)) {
++		ret = PTR_ERR(sdev);
++		goto err_cdev;
++	}
++
++	sdio_set_drvdata(func, self);
++
++	sdio_claim_host(func);
++	ret = sdio_enable_func(func);
++	if (ret)
++		dev_warn(dev, "can't enable func %d\n", ret);
++	sdio_release_host(func);
++
++	ret = besdbg_sdio_irq_subscribe(self);
++	if (ret)
++		dev_warn(dev, "can't subscribe to irq %d\n", ret);
++
++	dev_info(dev, "probe success\n");
++
++	return 0;
++
++err_cdev:
++	cdev_del(&self->cdev);
++err_unreg_chrev_region:
++	unregister_chrdev_region(self->major, 0);
++	return ret;
++}
++
++static void besdbg_remove(struct sdio_func *func)
++{
++	struct besdbg_priv *self = sdio_get_drvdata(func);
++	struct device *dev = &func->dev;
++
++	if (!self)
++		return;
++
++	dev_info(dev, "remove\n");
++
++	cdev_del(&self->cdev);
++	unregister_chrdev_region(self->major, 1);
++	device_destroy(besdbg_class, self->major);
++
++	besdbg_sdio_irq_unsubscribe(self);
++
++	sdio_claim_host(func);
++	sdio_disable_func(func);
++	sdio_release_host(func);
++
++	sdio_set_drvdata(func, NULL);
++
++	gpiod_set_value(self->wakeup_device_gpio, 0);
++	gpiod_set_value(self->regon_gpio, 0);
++}
++
++static const struct sdio_device_id besdbg_ids[] = {
++	{ SDIO_DEVICE(0xbe57, 0x2002), },
++	{ },
++};
++MODULE_DEVICE_TABLE(sdio, besdbg_ids);
++
++static struct sdio_driver besdbg_sdio_driver = {
++	.name		= "besdbg_sdio",
++	.id_table	= besdbg_ids,
++	.probe		= besdbg_probe,
++	.remove		= besdbg_remove,
++};
++
++//module_sdio_driver(besdbg_sdio_driver);
++
++static int __init besdbg_driver_init(void)
++{
++	int ret;
++
++	pr_err("besdbg init\n");
++
++	besdbg_class = class_create("besdbg");
++	if (IS_ERR(besdbg_class))
++		return PTR_ERR(besdbg_class);
++
++	ret = sdio_register_driver(&besdbg_sdio_driver);
++	if (ret) {
++		class_destroy(besdbg_class);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void __exit besdbg_driver_exit(void)
++{
++	pr_err("besdbg exit\n");
++
++	sdio_unregister_driver(&besdbg_sdio_driver);
++	class_destroy(besdbg_class);
++}
++
++module_init(besdbg_driver_init);
++module_exit(besdbg_driver_exit);
++
++MODULE_AUTHOR("Ondrej Jirman <megi@xff.cz>");
++MODULE_DESCRIPTION("BES2600 SDIO debug driver");
++MODULE_LICENSE("GPL");
+-- 
+2.43.0
+

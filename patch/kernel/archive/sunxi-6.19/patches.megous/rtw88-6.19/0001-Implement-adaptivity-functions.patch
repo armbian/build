@@ -1,0 +1,114 @@
+From cce806c353265544588b245f3cefb7073e4c51fb Mon Sep 17 00:00:00 2001
+From: Fiona Klute <fiona.klute@gmx.de>
+Date: Fri, 2 Feb 2024 20:38:57 +0100
+Subject: [PATCH 1/2] Implement adaptivity functions
+
+Doesn't make much difference in my network, unfortunately.
+
+Signed-off-by: Fiona Klute <fiona.klute@gmx.de>
+---
+ drivers/net/wireless/realtek/rtw88/rtw8703b.c | 53 ++++++++++++++++++-
+ drivers/net/wireless/realtek/rtw88/rtw8703b.h |  2 +
+ 2 files changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8703b.c b/drivers/net/wireless/realtek/rtw88/rtw8703b.c
+index 821c28d9cb5d..b39f6e1a6d30 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8703b.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8703b.c
+@@ -1690,6 +1690,43 @@ static void rtw8703b_coex_set_wl_rx_gain(struct rtw_dev *rtwdev, bool low_gain)
+ {
+ }
+ 
++#define RTW8703B_EDCCA_INIT 0x7f
++static void rtw8703b_adaptivity_init(struct rtw_dev *rtwdev)
++{
++	rtw_phy_set_edcca_th(rtwdev, RTW8703B_EDCCA_INIT, RTW8703B_EDCCA_INIT);
++
++	/* mac edcca state settings: enable EDCCA, EDCCA count down */
++	rtw_write32_clr(rtwdev, REG_TX_PTCL_CTRL, BIT_DIS_EDCCA);
++	rtw_write32_set(rtwdev, REG_RD_CTRL, BIT_EDCCA_MSK_CNTDOWN_EN);
++
++	rtw_write32_mask(rtwdev, REG_EDCCA_DCNF, BIT(21) | BIT(20), 0x1);
++}
++
++#define IGI_TARGET 0x32
++static void rtw8703b_adaptivity(struct rtw_dev *rtwdev)
++{
++	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
++	s8 l2h, h2l;
++	u8 igi;
++	u8 l2h_dyn_min;
++
++	igi = dm_info->igi_history[0];
++	if (dm_info->edcca_mode == RTW_EDCCA_NORMAL) {
++		l2h = max_t(s8, igi + EDCCA_IGI_L2H_DIFF, EDCCA_TH_L2H_LB);
++		h2l = l2h - EDCCA_L2H_H2L_DIFF_NORMAL;
++	} else {
++		l2h_dyn_min = (u8)(dm_info->l2h_th_ini + IGI_TARGET);
++		if (igi < l2h_dyn_min)
++			l2h = igi;
++		else
++			l2h = l2h_dyn_min;
++		h2l = l2h - EDCCA_L2H_H2L_DIFF;
++	}
++
++	rtw_dbg(rtwdev, RTW_DBG_ADAPTIVITY, "l2h=%d, h2l=%d", l2h, h2l);
++	rtw_phy_set_edcca_th(rtwdev, l2h, h2l);
++}
++
+ static const u8 rtw8703b_pwrtrk_2gb_n[] = {
+ 	0, 0, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6, 6,
+ 	7, 7, 7, 7, 8, 8, 9, 9, 10, 10, 10, 11, 11, 11, 11
+@@ -1828,6 +1865,15 @@ static const struct coex_tdma_para tdma_sant_8703b[] = {
+ 	{ {0x61, 0x08, 0x03, 0x11, 0x11} },
+ };
+ 
++static const struct rtw_hw_reg_offset rtw8703b_edcca_th[] = {
++	[EDCCA_TH_L2H_IDX] = {
++		{.addr = 0xc4c, .mask = MASKBYTE0}, .offset = 0
++	},
++	[EDCCA_TH_H2L_IDX] = {
++		{.addr = 0xc4c, .mask = MASKBYTE2}, .offset = 0
++	},
++};
++
+ static const struct rtw_chip_ops rtw8703b_ops = {
+ 	.power_on		= rtw_power_on,
+ 	.power_off		= rtw_power_off,
+@@ -1860,8 +1906,8 @@ static const struct rtw_chip_ops rtw8703b_ops = {
+ 	.config_bfee		= NULL,
+ 	.set_gid_table		= NULL,
+ 	.cfg_csi_rate		= NULL,
+-	.adaptivity_init	= NULL,
+-	.adaptivity		= NULL,
++	.adaptivity_init	= rtw8703b_adaptivity_init,
++	.adaptivity		= rtw8703b_adaptivity,
+ 	.cfo_init		= NULL,
+ 	.cfo_track		= NULL,
+ 	.config_tx_path		= NULL,
+@@ -1903,6 +1949,9 @@ const struct rtw_chip_info rtw8703b_hw_spec = {
+ 	.rx_ldpc = false,
+ 	.tx_stbc = false,
+ 	.max_power_index = 0x3f,
++	.edcca_th = rtw8703b_edcca_th,
++	.l2h_th_ini_cs = 10, /* -50 dBm */
++	.l2h_th_ini_ad = -11,
+ 	.ampdu_density = IEEE80211_HT_MPDU_DENSITY_16,
+ 	.usb_tx_agg_desc_num = 1, /* Not sure if this chip has USB interface */
+ 	.hw_feature_report = true,
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8703b.h b/drivers/net/wireless/realtek/rtw88/rtw8703b.h
+index 3e2da2e6739d..10d29282b25e 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8703b.h
++++ b/drivers/net/wireless/realtek/rtw88/rtw8703b.h
+@@ -91,6 +91,8 @@ struct phy_status_8703b {
+ #define REG_OFDM0_TX_PSD_NOISE 0x0ce4  /* TX pseudo noise weighting */
+ #define REG_IQK_RDY 0x0e90  /* is != 0 when IQK is done */
+ 
++#define	REG_EDCCA_DCNF 0x0e24
++
+ /* RF registers */
+ #define RF_RCK1 0x1E
+ 
+-- 
+2.43.0
+
