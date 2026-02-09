@@ -120,6 +120,7 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 		opts_n+=("DEBUG_INFO_NONE") # Make sure the "none" option is disabled
 		opts_y+=(
 			"BPF_JIT" "BPF_JIT_DEFAULT_ON" "FTRACE_SYSCALLS" "PROBE_EVENTS_BTF_ARGS" "BPF_KPROBE_OVERRIDE" # eBPF == on
+			"BPF_UNPRIV_DEFAULT_OFF"
 			"DEBUG_INFO" "DEBUG_INFO_DWARF5" "DEBUG_INFO_BTF" "DEBUG_INFO_BTF_MODULES"                     # BTF & CO-RE == off
 		)
 
