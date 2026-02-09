@@ -1,0 +1,125 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sat, 27 Sep 2025 09:53:01 +0200
+Subject: drm/sun4i: Add support for DE33 CSC
+
+DE33 has channel CSC units (for each plane separately) so pipeline can
+be configured to output in desired colorspace.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/gpu/drm/sun4i/sun8i_csc.c | 71 ++++++++++
+ drivers/gpu/drm/sun4i/sun8i_csc.h |  5 +
+ 2 files changed, 76 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_csc.c b/drivers/gpu/drm/sun4i/sun8i_csc.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_csc.c
++++ b/drivers/gpu/drm/sun4i/sun8i_csc.c
+@@ -205,6 +205,72 @@ static void sun8i_de3_ccsc_setup(struct regmap *map, int layer,
+ 			   mask, val);
+ }
+ 
++/* extract constant from high word and invert sign if necessary */
++static u32 sun8i_de33_ccsc_get_constant(u32 value)
++{
++	value >>= 16;
++
++	if (value & BIT(15))
++		return 0x400 - (value & 0x3ff);
++
++	return value;
++}
++
++static void sun8i_de33_convert_table(const u32 *src, u32 *dst)
++{
++	dst[0] = sun8i_de33_ccsc_get_constant(src[3]);
++	dst[1] = sun8i_de33_ccsc_get_constant(src[7]);
++	dst[2] = sun8i_de33_ccsc_get_constant(src[11]);
++	memcpy(&dst[3], src, sizeof(u32) * 12);
++	dst[6] &= 0xffff;
++	dst[10] &= 0xffff;
++	dst[14] &= 0xffff;
++}
++
++static void sun8i_de33_ccsc_setup(struct regmap *map, int layer,
++				  enum sun8i_csc_mode mode,
++				  enum drm_color_encoding encoding,
++				  enum drm_color_range range)
++{
++	u32 addr, val, base, csc[15];
++	const u32 *table;
++	int i;
++
++	table = yuv2rgb_de3[range][encoding];
++	base = DE33_CCSC_BASE + layer * DE33_CH_SIZE;
++
++	switch (mode) {
++	case SUN8I_CSC_MODE_OFF:
++		val = 0;
++		break;
++	case SUN8I_CSC_MODE_YUV2RGB:
++		val = SUN8I_CSC_CTRL_EN;
++		sun8i_de33_convert_table(table, csc);
++		regmap_bulk_write(map, SUN50I_CSC_COEFF(base, 0), csc, 15);
++		break;
++	case SUN8I_CSC_MODE_YVU2RGB:
++		val = SUN8I_CSC_CTRL_EN;
++		sun8i_de33_convert_table(table, csc);
++		for (i = 0; i < 15; i++) {
++			addr = SUN50I_CSC_COEFF(base, i);
++			if (i > 3) {
++				if (((i - 3) & 3) == 1)
++					addr = SUN50I_CSC_COEFF(base, i + 1);
++				else if (((i - 3) & 3) == 2)
++					addr = SUN50I_CSC_COEFF(base, i - 1);
++			}
++			regmap_write(map, addr, csc[i]);
++		}
++		break;
++	default:
++		val = 0;
++		DRM_WARN("Wrong CSC mode specified.\n");
++		return;
++	}
++
++	regmap_write(map, SUN8I_CSC_CTRL(base), val);
++}
++
+ static u32 sun8i_csc_get_mode(struct drm_plane_state *state)
+ {
+ 	const struct drm_format_info *format;
+@@ -238,6 +304,11 @@ void sun8i_csc_config(struct sun8i_layer *layer,
+ 				     mode, state->color_encoding,
+ 				     state->color_range);
+ 		return;
++	} else if (layer->cfg->de_type == SUN8I_MIXER_DE33) {
++		sun8i_de33_ccsc_setup(layer->regs, layer->channel,
++				      mode, state->color_encoding,
++				      state->color_range);
++		return;
+ 	}
+ 
+ 	base = ccsc_base[layer->cfg->ccsc][layer->channel];
+diff --git a/drivers/gpu/drm/sun4i/sun8i_csc.h b/drivers/gpu/drm/sun4i/sun8i_csc.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_csc.h
++++ b/drivers/gpu/drm/sun4i/sun8i_csc.h
+@@ -18,9 +18,14 @@ struct sun8i_layer;
+ #define CCSC10_OFFSET 0xA0000
+ #define CCSC11_OFFSET 0xF0000
+ 
++#define DE33_CCSC_BASE 0x800
++
+ #define SUN8I_CSC_CTRL(base)		((base) + 0x0)
+ #define SUN8I_CSC_COEFF(base, i)	((base) + 0x10 + 4 * (i))
+ 
++#define SUN50I_CSC_COEFF(base, i)	((base) + 0x04 + 4 * (i))
++#define SUN50I_CSC_ALPHA(base)		((base) + 0x40)
++
+ #define SUN8I_CSC_CTRL_EN		BIT(0)
+ 
+ void sun8i_csc_config(struct sun8i_layer *layer,
+-- 
+Armbian
+
