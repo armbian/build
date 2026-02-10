@@ -26,6 +26,42 @@ RUST_APT_VERSION="1.85"
 #   https://launchpad.net/ubuntu/noble/arm64/bindgen-0.71
 BINDGEN_APT_VERSION="0.71"
 
+# LLVM/Clang version must match the libclang that bindgen links against.
+# Auto-detect by resolving the dependency chain:
+#   bindgen-0.71 → libclang-20-dev          (versioned, Ubuntu 24.04)
+#   bindgen      → libclang-dev → libclang-NN-dev  (unversioned, Debian/newer Ubuntu)
+# Using mismatched versions (e.g. clang-18 + libclang-20) triggers a kernel
+# warning at "make rustavailable" time.
+_detect_llvm_version() {
+	local bindgen_pkg ver candidate
+	# Try versioned bindgen first (Ubuntu 24.04), then unversioned.
+	# Only query real (installable) packages — virtual packages like
+	# bindgen-0.71 on Trixie return provider lists that contain
+	# "testing-only-libclang-16" strings, producing false matches.
+	for bindgen_pkg in "bindgen-${BINDGEN_APT_VERSION}" "bindgen"; do
+		candidate="$(apt-cache policy "${bindgen_pkg}" 2> /dev/null \
+			| sed -n 's/.*Candidate: *//p')"
+		[[ -n "${candidate}" && "${candidate}" != "(none)" ]] || continue
+		# Parse only "Depends:" lines, not virtual package providers
+		ver="$(apt-cache depends "${bindgen_pkg}" 2> /dev/null \
+			| sed -n 's/^[[:space:]]*Depends:.*libclang-\([0-9]\+\)-dev.*/\1/p' | head -1)"
+		if [[ -n "${ver}" ]]; then
+			echo "${ver}"
+			return
+		fi
+	done
+	# Unversioned libclang-dev → resolve to libclang-NN-dev
+	ver="$(apt-cache depends libclang-dev 2> /dev/null \
+		| sed -n 's/^[[:space:]]*Depends:.*libclang-\([0-9]\+\)-dev.*/\1/p' | head -1)"
+	if [[ -n "${ver}" ]]; then
+		echo "${ver}"
+		return
+	fi
+}
+LLVM_APT_VERSION="$(_detect_llvm_version)" || true
+LLVM_APT_VERSION="${LLVM_APT_VERSION:-20}" # fallback if apt-cache unavailable
+unset -f _detect_llvm_version
+
 # Enable Rust sample kernel modules for toolchain smoke testing.
 # Set to "yes" to build rust_minimal, rust_print, rust_driver_faux as modules.
 # Can also be set via command line: RUST_KERNEL_SAMPLES=yes
@@ -39,18 +75,34 @@ declare -g RUST_TOOL_BINDGEN=""
 function add_host_dependencies__add_rust_compiler() {
 	display_alert "Adding Rust kernel build dependencies" "${EXTENSION}" "info"
 
-	# --- Method 1: APT versioned packages (noble-security/noble-updates) ---
-	# Versioned packages install binaries under /usr/lib/rust-X.YY/bin/ or
-	# /usr/bin/tool-X.YY; we locate them via _find_rust_tool and pass
-	# explicit paths to make via custom_kernel_make_params.
-	EXTRA_BUILD_DEPS+=" rustc-${RUST_APT_VERSION} cargo-${RUST_APT_VERSION} "
-	EXTRA_BUILD_DEPS+=" rust-${RUST_APT_VERSION}-src rustfmt-${RUST_APT_VERSION} "
-	EXTRA_BUILD_DEPS+=" bindgen-${BINDGEN_APT_VERSION} "
-	EXTRA_BUILD_DEPS+=" libclang-dev clang lld llvm "
+	# Rust packages: try versioned first (Ubuntu 24.04), fall back to unversioned
+	# (Debian trixie, Ubuntu >= 25.10). _apt_pick outputs the first available.
+	local pkg
+	for pkg in rustc cargo rustfmt; do
+		EXTRA_BUILD_DEPS+=" $(_apt_pick "${pkg}-${RUST_APT_VERSION}" "${pkg}") "
+	done
+	EXTRA_BUILD_DEPS+=" $(_apt_pick "rust-${RUST_APT_VERSION}-src" rust-src) "
+	EXTRA_BUILD_DEPS+=" $(_apt_pick "bindgen-${BINDGEN_APT_VERSION}" bindgen) "
 
-	# --- Method 2: Rustup (commented out) ---
-	# Only libclang/llvm needed; rustc/cargo/bindgen come from rustup/cargo.
-	#EXTRA_BUILD_DEPS+=" libclang-dev clang lld llvm "
+	# LLVM toolchain: versioned to match libclang used by bindgen
+	EXTRA_BUILD_DEPS+=" clang-${LLVM_APT_VERSION} lld-${LLVM_APT_VERSION} llvm-${LLVM_APT_VERSION} "
+}
+
+# Pick first installable APT package from candidates.
+# Uses apt-cache policy to distinguish real packages from virtual ones
+# (apt-cache show returns 0 for virtual packages like bindgen-0.71 on Trixie).
+_apt_pick() {
+	local pkg candidate
+	for pkg in "$@"; do
+		candidate="$(apt-cache policy "${pkg}" 2> /dev/null \
+			| sed -n 's/.*Candidate: *//p' | head -1)"
+		if [[ -n "${candidate}" && "${candidate}" != "(none)" ]]; then
+			echo "${pkg}"
+			return
+		fi
+	done
+	# None found — return first candidate and let apt fail with a clear error
+	echo "$1"
 }
 
 # Find a versioned tool binary, returning its full path.
@@ -62,17 +114,15 @@ _find_rust_tool() {
 	local tool_path=""
 	# 1. Try versioned command in PATH (e.g. rustc-1.85)
 	if [[ -n "${version}" ]]; then
-		tool_path="$(command -v "${base}-${version}" 2> /dev/null || true)"
+		local versioned="${base}-${version}"
+		tool_path="$(command -v "${versioned}" 2> /dev/null || true)"
 		if [[ -n "${tool_path}" ]]; then
 			echo "${tool_path}"
 			return
 		fi
-	fi
-	# 2. Locate binary via dpkg package file list
-	if [[ -n "${version}" ]]; then
-		local pkg_name="${base}-${version}"
-		if dpkg -s "${pkg_name}" > /dev/null 2>&1; then
-			tool_path="$(dpkg -L "${pkg_name}" 2> /dev/null | grep "/bin/${base}" | head -1 || true)"
+		# 2. Locate binary via dpkg package file list
+		if dpkg -s "${versioned}" > /dev/null 2>&1; then
+			tool_path="$(dpkg -L "${versioned}" 2> /dev/null | grep "/bin/${base}" | head -1 || true)"
 			if [[ -n "${tool_path}" && -x "${tool_path}" ]]; then
 				display_alert "Found ${base} via dpkg" "${tool_path}" "info"
 				echo "${tool_path}"
@@ -97,16 +147,7 @@ function host_dependencies_ready__add_rust_compiler() {
 	local tool_name tool_path
 	for tool_name in RUST_TOOL_RUSTC RUST_TOOL_RUSTFMT RUST_TOOL_BINDGEN; do
 		tool_path="${!tool_name}"
-		if [[ -z "${tool_path}" ]]; then
-			display_alert "PATH" "${PATH}" "wrn"
-			display_alert "dpkg -L rustfmt-${RUST_APT_VERSION}" \
-				"$(dpkg -L "rustfmt-${RUST_APT_VERSION}" 2>&1 | grep bin || echo 'N/A')" "wrn"
-			display_alert "dpkg -L rustc-${RUST_APT_VERSION}" \
-				"$(dpkg -L "rustc-${RUST_APT_VERSION}" 2>&1 | grep bin || echo 'N/A')" "wrn"
-			display_alert "dpkg -L bindgen-${BINDGEN_APT_VERSION}" \
-				"$(dpkg -L "bindgen-${BINDGEN_APT_VERSION}" 2>&1 | grep bin || echo 'N/A')" "wrn"
-			exit_with_error "Required Rust tool '${tool_name}' not found" "${EXTENSION}"
-		fi
+		[[ -n "${tool_path}" ]] || _missing_rust_tool_abort "${tool_name}"
 	done
 
 	display_alert "Rust toolchain ready" \
@@ -154,6 +195,47 @@ function host_dependencies_ready__add_rust_compiler() {
 	#	"rustc $(rustc --version | awk '{print $2}'), bindgen $(bindgen --version 2>&1 | awk '{print $2}')" "info"
 }
 
+_show_dpkg_bins() {
+	local pkg
+	for pkg in "$@"; do
+		display_alert "dpkg -L ${pkg}" \
+			"$(dpkg -L "${pkg}" 2>&1 | grep bin || echo 'N/A')" "wrn"
+	done
+}
+
+_missing_rust_tool_abort() {
+	local tool_name="$1"
+	display_alert "PATH" "${PATH}" "wrn"
+	_show_dpkg_bins "rustfmt-${RUST_APT_VERSION}" "rustc-${RUST_APT_VERSION}" "bindgen-${BINDGEN_APT_VERSION}"
+	exit_with_error "Required Rust tool '${tool_name}' not found" "${EXTENSION}"
+}
+
+# Override the compiler version in artifact hash when using versioned clang.
+# kernel-version-toolchain (if enabled) sets _T from unversioned "clang" in PATH,
+# but this extension redirects the build to clang-VER via LLVM=-VER.
+# Runs after add_toolchain (alphabetically: "override" > "add").
+function artifact_kernel_version_parts__override_toolchain_version() {
+	[[ "${KERNEL_COMPILER}" == "clang" && -n "${LLVM_APT_VERSION}" ]] || return 0
+	local clang_bin="clang-${LLVM_APT_VERSION}"
+	command -v "${clang_bin}" &> /dev/null || return 0
+
+	local full_version short_version
+	full_version="$("${clang_bin}" -dumpfullversion -dumpversion 2> /dev/null || echo "")"
+	[[ -n "${full_version}" ]] || return 0
+	short_version="$(echo "${full_version}" | cut -d'.' -f1-2)"
+
+	artifact_version_parts["_T"]="clang${short_version}"
+	# Ensure the key is in the order array (kernel-version-toolchain may have added it,
+	# but if that extension is not enabled, we need to add it ourselves)
+	local found=0 entry
+	for entry in "${artifact_version_part_order[@]}"; do
+		[[ "${entry}" == *"-_T" ]] && found=1 && break
+	done
+	if [[ "${found}" -eq 0 ]]; then
+		artifact_version_part_order+=("0085-_T")
+	fi
+}
+
 function custom_kernel_config__add_rust_compiler() {
 	# https://docs.kernel.org/rust/quick-start.html
 	opts_y+=("RUST")
@@ -161,6 +243,7 @@ function custom_kernel_config__add_rust_compiler() {
 	# Build sample Rust modules for toolchain smoke testing
 	if [[ "${RUST_KERNEL_SAMPLES}" == "yes" ]]; then
 		display_alert "Enabling Rust sample modules" "${EXTENSION}" "info"
+		opts_y+=("SAMPLES")        # Parent menu for all kernel samples
 		opts_y+=("SAMPLES_RUST")
 		opts_m+=("SAMPLE_RUST_MINIMAL")
 		opts_m+=("SAMPLE_RUST_PRINT")
@@ -171,6 +254,30 @@ function custom_kernel_config__add_rust_compiler() {
 function custom_kernel_make_params__add_rust_compiler() {
 	# run_kernel_make_internal uses "env -i" which clears all environment
 	# variables, so we must pass Rust paths explicitly.
+
+	# When building with clang, replace LLVM=1 with LLVM=-VER so that the
+	# kernel uses versioned LLVM tools (clang-20, ld.lld-20, llvm-ar-20, …)
+	# matching the libclang version that bindgen links against.
+	# Also update CC= to use versioned clang, because kernel-make.sh sets
+	# CC=ccache clang (unversioned) which overrides the CC that LLVM=-VER
+	# would derive in the kernel Makefile.
+	# See: https://docs.kernel.org/kbuild/llvm.html#llvm-utility
+	if [[ "${KERNEL_COMPILER}" == "clang" && -n "${LLVM_APT_VERSION}" ]]; then
+		local i
+		for i in "${!common_make_params_quoted[@]}"; do
+			case "${common_make_params_quoted[${i}]}" in
+				LLVM=1)
+					common_make_params_quoted[${i}]="LLVM=-${LLVM_APT_VERSION}"
+					display_alert "Using versioned LLVM toolchain" "LLVM=-${LLVM_APT_VERSION}" "info"
+					;;
+				CC=*clang)
+					# Replace "CC=ccache clang" → "CC=ccache clang-20"
+					common_make_params_quoted[${i}]="${common_make_params_quoted[${i}]/%clang/clang-${LLVM_APT_VERSION}}"
+					display_alert "Using versioned clang" "clang-${LLVM_APT_VERSION}" "info"
+					;;
+			esac
+		done
+	fi
 
 	# --- Method 1: APT versioned packages ---
 	# Tell the kernel build system to use the discovered tool names.
