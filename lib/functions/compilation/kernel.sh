@@ -241,7 +241,7 @@ function kernel_dtb_only_build() {
 
 	display_alert "Kernel DTB-only for development" "Normalizing (dtc dts-to-dts) preprocessed FDT" "info"
 	declare preprocessed_fdt_normalized="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.dts"
-	run_host_command_logged dtc -s -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
+	run_host_command_logged dtc -@ -s -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
 
 	# Remove any phandles by grepping them out. This is not accurate and might be misleading, but sometimes useful for basic diffing across very different devices.
 	declare preprocessed_fdt_normalized_nophandles="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.nophandles.dts"
