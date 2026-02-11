@@ -174,6 +174,7 @@ function host_apt_get() {
 # Determine if we're building on non-amd64, and if so, which qemu binary to use.
 function run_host_x86_binary_logged() {
 	local -a qemu_invocation target_bin_arch
+	# unset any possible specified CPUs to emulate, as in config/sources/arm64.conf
 	target_bin_arch="unknown - file util missing"
 	if [[ -f /usr/bin/file ]]; then
 		target_bin_arch="$(file -b "$1" | cut -d "," -f 1,2 | xargs echo -n)" # obtain the ELF name from the binary using 'file'
@@ -192,7 +193,7 @@ function run_host_x86_binary_logged() {
 	else
 		display_alert "Not using qemu for running x86 binary on $(uname -m)" "$1 (${target_bin_arch})" "debug"
 	fi
-	run_host_command_logged "${qemu_invocation[@]}" # Exit with this result code
+	run_host_command_logged env -u QEMU_CPU "${qemu_invocation[@]}" # Exit with this result code
 }
 
 # Run simple and exit with it's code. Exactly the same as run_host_command_logged(). Used to have pv pipe, but that causes chaos.
