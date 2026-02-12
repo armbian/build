@@ -1,11 +1,5 @@
-function extension_prepare_config__add_packages() {
-	if [[ ${#TI_PACKAGES[@]} -gt 0 ]] ; then
-		add_packages_to_image "${TI_PACKAGES[@]}"
-	fi
-}
-
 function post_repo_customize_image__install_ti_packages() {
-	
+
     # Read JSON array into Bash array safely
 	mapfile -t valid_suites < <(
 		curl -s https://api.github.com/repos/TexasInstruments/ti-debpkgs/contents/dists |
@@ -29,6 +23,12 @@ function post_repo_customize_image__install_ti_packages() {
 
 		chroot_sdcard "mkdir -p /etc/apt/preferences.d/"
 		run_host_command_logged "cp \"$SRC/packages/bsp/ti/ti-debpkgs/ti-debpkgs\" \"$SDCARD/etc/apt/preferences.d/\""
+
+		# Install packages
+		if [[ ${#TI_PACKAGES[@]} -gt 0 ]] ; then
+			do_with_retries 3 chroot_sdcard_apt_get_update
+			do_with_retries 3 chroot_sdcard_apt_get_install "${TI_PACKAGES[@]}"
+		fi
 
 	else
 		# Error if suite is not valid but continue building image anyway
