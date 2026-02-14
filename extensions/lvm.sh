@@ -33,9 +33,9 @@ function extension_prepare_config__prepare_lvm() {
 
 function post_create_partitions__setup_lvm() {
 	# Setup LVM on the partition, ROOTFS
-	parted -s ${SDCARD}.raw -- set ${rootpart} lvm on
+	parted -s "${SDCARD}.raw" -- set "${rootpart}" lvm on
 	display_alert "LVM Partition table created" "${EXTENSION}" "info"
-	parted -s ${SDCARD}.raw -- print >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
+	parted -s "${SDCARD}.raw" -- print >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
 }
 
 function prepare_root_device__create_volume_group() {
@@ -52,25 +52,25 @@ function prepare_root_device__create_volume_group() {
 
 	# Create the PV VG and VOL
 	display_alert "LVM Creating VG" "${rootdevice}" "info"
-	check_loop_device ${rootdevice}
-	pvcreate ${rootdevice}
+	check_loop_device "${rootdevice}"
+	pvcreate "${rootdevice}"
 	wait_for_disk_sync "wait for pvcreate to sync"
-	vgcreate ${LVM_VG_NAME} ${rootdevice}
+	vgcreate "${LVM_VG_NAME}" "${rootdevice}"
 	add_cleanup_handler cleanup_lvm
 	wait_for_disk_sync "wait for vgcreate to sync"
 	# Note that devices wont come up automatically inside docker
-	lvcreate -Zn --name root --size ${volsize}M ${LVM_VG_NAME}
+	lvcreate -Zn --name root --size "${volsize}M" "${LVM_VG_NAME}"
 	vgmknodes
-	lvs >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
-	
-	rootdevice=/dev/mapper/${LVM_VG_NAME}-root
+	lvs >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
+
+	rootdevice="/dev/mapper/${LVM_VG_NAME}-root"
 	display_alert "LVM created volume group - root device ${rootdevice}" "${EXTENSION}" "info"
 }
 
 function format_partitions__format_lvm() {
 	# Label the root volume
-	e2label /dev/mapper/${LVM_VG_NAME}-root armbi_root
-	blkid | grep ${LVM_VG_NAME} >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
+	e2label "/dev/mapper/${LVM_VG_NAME}-root" armbi_root
+	blkid | grep "${LVM_VG_NAME}" >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
 	display_alert "LVM labeled partitions" "${EXTENSION}" "info"
 }
 
@@ -79,6 +79,6 @@ function post_umount_final_image__cleanup_lvm(){
 }
 
 function cleanup_lvm() {
-	vgchange -a n ${LVM_VG_NAME} >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1 || true
+	vgchange -a n "${LVM_VG_NAME}" >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1 || true
 	display_alert "LVM deactivated volume group" "${EXTENSION}" "info"
 }
