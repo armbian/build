@@ -284,7 +284,7 @@ function prepare_partitions() {
 	check_loop_device "${LOOP}" # check again, now it has to have a size! otherwise wait.
 
 	# stage: create fs, mount partitions, create fstab
-	rm -f $SDCARD/etc/fstab
+	rm -f "${SDCARD}/etc/fstab"
 
 	declare root_part_uuid="uninitialized"
 
@@ -316,11 +316,12 @@ function prepare_partitions() {
 		wait_for_disk_sync "after mkfs" # force writes to be really flushed
 
 		# store in readonly global for usage in later hooks
-		root_part_uuid="$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+		root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"
 		declare -g -r ROOT_PART_UUID="${root_part_uuid}"
 
 		display_alert "Mounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
-		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
+		# shellcheck disable=SC2086 # fscreateopt must word-split ("-o" and "compress-force=..." as two args) or be empty
+		run_host_command_logged mount ${fscreateopt} "$rootdevice" "$MOUNT"/
 
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
@@ -328,26 +329,26 @@ function prepare_partitions() {
 			if [[ $CRYPTROOT_AUTOUNLOCK == yes ]]; then
 				luks_key_file="/etc/rootfs.key"
 				display_alert "Saving rootfs.key and configuration for autounlock" "(location=${luks_key_file})"
-				mv ${cryptroot_autounlock_key_file:?} ${SDCARD}${luks_key_file}
-				mkdir -p $SDCARD/etc/initramfs-tools/conf.d/
-				echo "UMASK=0077" > $SDCARD/etc/initramfs-tools/conf.d/key-umask.conf
-				echo "" >> $SDCARD/etc/cryptsetup-initramfs/conf-hook
-				echo "KEYFILE_PATTERN=${luks_key_file}" >> $SDCARD/etc/cryptsetup-initramfs/conf-hook
+				mv "${cryptroot_autounlock_key_file:?}" "${SDCARD}${luks_key_file}"
+				mkdir -p "${SDCARD}/etc/initramfs-tools/conf.d/"
+				echo "UMASK=0077" > "${SDCARD}/etc/initramfs-tools/conf.d/key-umask.conf"
+				echo "" >> "${SDCARD}/etc/cryptsetup-initramfs/conf-hook"
+				echo "KEYFILE_PATTERN=${luks_key_file}" >> "${SDCARD}/etc/cryptsetup-initramfs/conf-hook"
 			fi
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
-			physical_root_part_uuid="$(blkid -s UUID -o value $physical_rootdevice)"
-			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks" >> $SDCARD/etc/crypttab
-			run_host_command_logged cat $SDCARD/etc/crypttab
+			physical_root_part_uuid="$(blkid -s UUID -o value "$physical_rootdevice")"
+			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} ${luks_key_file} luks" >> "${SDCARD}/etc/crypttab"
+			run_host_command_logged cat "${SDCARD}/etc/crypttab"
 		fi
 
 		if [[ $ROOTFS_TYPE == btrfs ]]; then
 			btrfs_root_subvolume="${BTRFS_ROOT_SUBVOLUME:-@}"
 			mountopts[$ROOTFS_TYPE]='commit=120'
-			run_host_command_logged btrfs subvolume create $MOUNT/$btrfs_root_subvolume
+			run_host_command_logged btrfs subvolume create "$MOUNT/$btrfs_root_subvolume"
 			# getting the subvolume id of the newly created volume @ to install it
 			# as the default volume for mounting without explicit reference
 
-			run_host_command_logged "btrfs subvolume set-default $MOUNT/$btrfs_root_subvolume"
+			run_host_command_logged btrfs subvolume set-default "$MOUNT/$btrfs_root_subvolume"
 
 			call_extension_method "btrfs_root_add_subvolumes" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES'
 				# *custom post btrfs rootfs creation hook*
@@ -361,12 +362,13 @@ function prepare_partitions() {
 				run_host_command_logged btrfs subvolume create $MOUNT/@srv
 			BTRFS_ROOT_ADD_SUBVOLUMES
 
-			run_host_command_logged umount $rootdevice
+			run_host_command_logged umount "$rootdevice"
 			display_alert "Remounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
-			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} ${fscreateopt} $rootdevice $MOUNT/
+			# shellcheck disable=SC2086 # fscreateopt must word-split ("-o" and "compress-force=..." as two args) or be empty
+			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} ${fscreateopt} "$rootdevice" "$MOUNT"/
 		fi
-		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		rootfs="UUID=$(blkid -s UUID -o value "$rootdevice")"
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> "${SDCARD}/etc/fstab"
 		if [[ $ROOTFS_TYPE == btrfs ]]; then
 			call_extension_method "btrfs_root_add_subvolumes_fstab" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES_FSTAB'
 				run_host_command_logged mkdir -p $MOUNT/home
@@ -387,12 +389,12 @@ function prepare_partitions() {
 			BTRFS_ROOT_ADD_SUBVOLUMES_FSTAB
 		fi
 
-		run_host_command_logged cat $SDCARD/etc/fstab
+		run_host_command_logged cat "${SDCARD}/etc/fstab"
 
 	else
 		# update_initramfs will fail if /lib/modules/ doesn't exist
-		mount --bind --make-private $SDCARD $MOUNT/
-		echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
+		mount --bind --make-private "$SDCARD" "$MOUNT"/
+		echo "/dev/nfs / nfs defaults 0 0" >> "${SDCARD}/etc/fstab"
 	fi
 
 	##
@@ -401,10 +403,11 @@ function prepare_partitions() {
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		run_host_command_logged mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart}
-		mkdir -p $MOUNT/boot/
-		run_host_command_logged mount ${LOOP}p${bootpart} $MOUNT/boot/
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
+		# shellcheck disable=SC2086 # mkopts must word-split into separate arguments (e.g. "-q -m 2" → two args)
+		run_host_command_logged "mkfs.${mkfs[$bootfs]}" ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} "${LOOP}p${bootpart}"
+		mkdir -p "$MOUNT/boot/"
+		run_host_command_logged mount "${LOOP}p${bootpart}" "$MOUNT/boot/"
+		echo "UUID=$(blkid -s UUID -o value "${LOOP}p${bootpart}") /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> "${SDCARD}/etc/fstab"
 	fi
 
 	##
@@ -413,17 +416,17 @@ function prepare_partitions() {
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
+		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" "${LOOP}p${uefipart}" 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
-		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
+		run_host_command_logged mount "${LOOP}p${uefipart}" "${MOUNT}${UEFI_MOUNT_POINT}"
 
 		# Allow skipping the fstab entry for the EFI partition if UEFI_MOUNT_POINT_SKIP_FSTAB=yes; add comments instead if so
 		if [[ "${UEFI_MOUNT_POINT_SKIP_FSTAB:-"no"}" == "yes" ]]; then
 			display_alert "Skipping EFI partition in fstab" "UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}" "debug"
 			echo "# /boot/efi fstab commented out due to UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}"
-			echo "# UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+			echo "# UUID=$(blkid -s UUID -o value "${LOOP}p${uefipart}") ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> "${SDCARD}/etc/fstab"
 		else
-			echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+			echo "UUID=$(blkid -s UUID -o value "${LOOP}p${uefipart}") ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> "${SDCARD}/etc/fstab"
 		fi
 	fi
 	##
@@ -431,7 +434,7 @@ function prepare_partitions() {
 	##
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
-	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
+	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> "${SDCARD}/etc/fstab"
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
 		*if you created your own partitions, this would be a good time to format them*
@@ -446,43 +449,43 @@ function prepare_partitions() {
 		else
 			echo "rootdev=$rootfs" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
-		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
+		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
 	elif [[ $rootpart != 1 ]] && [[ $SRC_EXTLINUX != yes ]]; then
 		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
 	elif [[ $rootpart != 1 && $SRC_EXTLINUX != yes && -f "${SDCARD}/boot/${bootscript_dst}" ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
-		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
+		sed -i 's/mmcblk0p1/mmcblk0p2/' "${SDCARD}/boot/${bootscript_dst}"
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
-			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
+			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" "${SDCARD}/boot/${bootscript_dst}"
 	fi
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
 		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
-		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
+		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" "${SDCARD}/boot/boot.ini"
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			rootpart="UUID=${physical_root_part_uuid}"
-			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$CRYPTROOT_MAPPER' cryptdevice='$rootpart':'$CRYPTROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+			sed -i 's#^setenv rootdev .*#setenv rootdev "/dev/mapper/'$CRYPTROOT_MAPPER' cryptdevice='$rootpart':'$CRYPTROOT_MAPPER'"#' "${SDCARD}/boot/boot.ini"
 		else
-			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' "${SDCARD}/boot/boot.ini"
 		fi
 		if [[ $LINUXFAMILY != meson64 ]]; then # @TODO: why only for meson64?
-			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+			[[ -f "${SDCARD}/boot/armbianEnv.txt" ]] && rm "${SDCARD}/boot/armbianEnv.txt"
 		fi
 	fi
 
 	# if we have a headless device, set console to DEFAULT_CONSOLE
-	if [[ -n $DEFAULT_CONSOLE && -f $SDCARD/boot/armbianEnv.txt ]]; then
-		if grep -lq "^console=" $SDCARD/boot/armbianEnv.txt; then
-			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
+	if [[ -n $DEFAULT_CONSOLE && -f "${SDCARD}/boot/armbianEnv.txt" ]]; then
+		if grep -lq "^console=" "${SDCARD}/boot/armbianEnv.txt"; then
+			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" "${SDCARD}/boot/armbianEnv.txt"
 		else
-			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
+			echo "console=$DEFAULT_CONSOLE" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
 	if [[ -f "${SDCARD}/boot/boot.cmd" ]]; then
-		if [ -z ${BOOTSCRIPT_OUTPUT} ]; then
+		if [[ -z "${BOOTSCRIPT_OUTPUT}" ]]; then
 			BOOTSCRIPT_OUTPUT=boot.scr
 		fi
 		case ${LINUXFAMILY} in
@@ -500,10 +503,10 @@ function prepare_partitions() {
 	fi
 
 	# complement extlinux config if it exists; remove armbianEnv in this case.
-	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
-		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+	if [[ -f "${SDCARD}/boot/extlinux/extlinux.conf" ]]; then
+		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> "${SDCARD}/boot/extlinux/extlinux.conf"
 		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
+		[[ -f "${SDCARD}/boot/armbianEnv.txt" ]] && run_host_command_logged rm -v "${SDCARD}/boot/armbianEnv.txt"
 	fi
 
 	if [[ $SRC_EXTLINUX != yes && -f $SDCARD/boot/armbianEnv.txt ]]; then
