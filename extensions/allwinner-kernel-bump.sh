@@ -35,11 +35,11 @@ function extension_finish_config__prepare_megous_patches() {
 		patch_dir_megous="${patch_dir_base}/patches.megous"
 		patch_dir_tmp="${patch_dir_base}/patches.megi"
 
-		if [[ -d ${patch_dir_base} ]]; then
+		if [[ -d "${patch_dir_base}" ]]; then
 			display_alert "allwinner-kernel-bump" "Found existing kernel patch directory" "info"
 			if [[ "${OVERWRITE_PATCHDIR:-no}" == "yes" ]]; then
 				display_alert "allwinner-kernel-bump" "Removing as requested. Any manual changes will get overwritten" "info"
-				rm -rf ${patch_dir_base}
+				rm -rf "${patch_dir_base}"
 			else
 				display_alert "allwinner-kernel-bump" "Skipping kernel patch directory creation" "info"
 				return 0
@@ -59,38 +59,38 @@ function extension_finish_config__prepare_megous_patches() {
 		run_host_command_logged mkdir -pv "${git_bundles_dir}"
 		run_host_command_logged rm "${bundle_file}" || true
 		do_with_retries 5 axel "--output=${bundle_file}" "${bundle_url}"
-		run_host_command_logged git -C ${kernel_work_dir} fetch ${bundle_file} '+refs/heads/*:refs/remotes/megous/*'
+		run_host_command_logged git -C "${kernel_work_dir}" fetch "${bundle_file}" '+refs/heads/*:refs/remotes/megous/*'
 
 		display_alert "allwinner-kernel-bump" "Initializing kernel patch directory using previous kernel patch dir" "info"
-		run_host_command_logged cp -aR ${PREV_KERNEL_PATCH_DIR} ${patch_dir_base}
+		run_host_command_logged cp -aR "${PREV_KERNEL_PATCH_DIR}" "${patch_dir_base}"
 
 		# Removing older copy of megous patches and series.conf file
-		run_host_command_logged rm -rf ${patch_dir_base}/patches.megous/*
-		run_host_command_logged rm -f ${patch_dir_base}/series.{conf,megous}
+		run_host_command_logged rm -rf "${patch_dir_base}"/patches.megous/*
+		run_host_command_logged rm -f "${patch_dir_base}"/series.{conf,megous}
 
 		display_alert "allwinner-kernel-bump" "Extracting latest Megous patches" "info"
 		megous_trees=("a83t-suspend" "af8133j" "anx" "audio" "axp" "cam" "drm"
 			"err" "fixes" "mbus" "modem" "opi3" "pb" "pinetab" "pp" "ppkb" "samuel"
 			"speed" "tbs-a711" "ths")
 
-		run_host_command_logged mkdir -p ${patch_dir_megous} ${patch_dir_tmp}
+		run_host_command_logged mkdir -p "${patch_dir_megous}" "${patch_dir_tmp}"
 
-		for tree in ${megous_trees[@]}; do
-			run_host_command_logged "${SRC}"/tools/mk_format_patch ${kernel_work_dir} master..megous/${tree}-${KERNEL_MAJOR_MINOR} ${patch_dir_megous} sufix=megi
-			run_host_command_logged cp ${patch_dir_megous}/* ${patch_dir_tmp}
-			run_host_command_logged cat ${patch_dir_base}/series.megous ">>" ${patch_dir_base}/series.megi
+		for tree in "${megous_trees[@]}"; do
+			run_host_command_logged "${SRC}"/tools/mk_format_patch "${kernel_work_dir}" "master..megous/${tree}-${KERNEL_MAJOR_MINOR}" "${patch_dir_megous}" sufix=megi
+			run_host_command_logged cp "${patch_dir_megous}"/* "${patch_dir_tmp}"
+			run_host_command_logged cat "${patch_dir_base}/series.megous" ">>" "${patch_dir_base}/series.megi"
 		done
 
-		run_host_command_logged cp ${patch_dir_tmp}/* ${patch_dir_megous}
-		run_host_command_logged mv ${patch_dir_base}/series.megi ${patch_dir_base}/series.megous
-		run_host_command_logged rm -rf ${patch_dir_tmp} ${patch_dir_base}/series.megi
+		run_host_command_logged cp "${patch_dir_tmp}"/* "${patch_dir_megous}"
+		run_host_command_logged mv "${patch_dir_base}/series.megi" "${patch_dir_base}/series.megous"
+		run_host_command_logged rm -rf "${patch_dir_tmp}" "${patch_dir_base}/series.megi"
 
 		# Disable previously disabled patches
-		grep '^-' ${PREV_KERNEL_PATCH_DIR}/series.megous | awk -F / '{print $NF}' | xargs -I {} sed -i "/\/{}/s/^/-/g" ${patch_dir_base}/series.megous
+		grep '^-' "${PREV_KERNEL_PATCH_DIR}/series.megous" | awk -F / '{print $NF}' | xargs -I {} sed -i "/\/{}/s/^/-/g" "${patch_dir_base}/series.megous"
 
 		display_alert "allwinner-kernel-bump" "Generating series.conf file" "info"
-		run_host_command_logged cat ${patch_dir_base}/series.megous ">>" ${patch_dir_base}/series.conf
-		run_host_command_logged cat ${patch_dir_base}/series.fixes ">>" ${patch_dir_base}/series.conf
-		run_host_command_logged cat ${patch_dir_base}/series.armbian ">>" ${patch_dir_base}/series.conf
+		run_host_command_logged cat "${patch_dir_base}/series.megous" ">>" "${patch_dir_base}/series.conf"
+		run_host_command_logged cat "${patch_dir_base}/series.fixes" ">>" "${patch_dir_base}/series.conf"
+		run_host_command_logged cat "${patch_dir_base}/series.armbian" ">>" "${patch_dir_base}/series.conf"
 	fi
 }
