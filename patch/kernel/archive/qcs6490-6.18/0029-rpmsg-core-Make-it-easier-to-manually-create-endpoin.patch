@@ -1,0 +1,175 @@
+From 55bd496a4e2bbe31bc9bfda7c19edbd075b3c975 Mon Sep 17 00:00:00 2001
+From: Stephan Gerhold <stephan.gerhold@linaro.org>
+Date: Sat, 1 Nov 2025 18:33:26 +0100
+Subject: [PATCH 029/121] rpmsg: core: Make it easier to manually create
+ endpoint during probe()
+
+Currently, the rpmsg core automatically creates an endpoint for rpmsg
+drivers that specify a receive callback. This works "somewhat" in most
+simple cases, but it is often prone to race conditions: The receive
+callback can be called as soon and as long as the endpoint is open, so
+drivers must be prepared to handle calls to the receive callback:
+
+ - Before their probe() function is called
+   (after the endpoint was created)
+ - In parallel to their probe() function
+ - In parallel to their remove() function
+ - After their remove() function is called
+   (before the endpoint is destroyed)
+
+It is difficult for drivers to handle this without being able to run code
+before endpoint creation and after endpoint destruction. Also, they may
+need to hold locks while creating/destroying the endpoint to handle edge
+cases reliably.
+
+Drivers can already create endpoints manually by omitting the receive
+callback in rpmsg_driver, but for most simple cases where there is only
+a single channel, the boilerplate required for that is a bit cumbersome.
+
+Add a rpmsg_dev_open_ept() function that can be called by drivers during
+the probe() function. It results in effectively the same that the rpmsg
+core would normally do if the receive callback is specified.
+announce_create() and announce_destroy() are still handled by the rpmsg
+core. During remove(), the drivers can directly call rpmsg_destroy_ept().
+
+Signed-off-by: Stephan Gerhold <stephan.gerhold@linaro.org>
+Signed-off-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+---
+ drivers/rpmsg/rpmsg_core.c | 51 +++++++++++++++++++++++++++-----------
+ include/linux/rpmsg.h      | 12 +++++++++
+ 2 files changed, 49 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/rpmsg/rpmsg_core.c b/drivers/rpmsg/rpmsg_core.c
+index fb444dc2fbaa..223e63c76e1b 100644
+--- a/drivers/rpmsg/rpmsg_core.c
++++ b/drivers/rpmsg/rpmsg_core.c
+@@ -95,6 +95,14 @@ EXPORT_SYMBOL(rpmsg_release_channel);
+  * equals to the src address of their rpmsg channel), the driver's handler
+  * is invoked to process it.
+  *
++ * Note that the endpoint for simple rpmsg drivers is created before calling
++ * probe() and closed after calling remove(), so special care must be taken
++ * to handle calls to the rx callback before/in parallel of probe() and
++ * after/in parallel of remove(). If more control over the endpoint creation
++ * is required to avoid race conditions, drivers can omit the callback and
++ * explicitly call rpmsg_dev_open_ept() in probe() and rpmsg_destroy_ept() in
++ * remove(), together with locks as needed.
++ *
+  * That said, more complicated drivers might need to allocate
+  * additional rpmsg addresses, and bind them to different rx callbacks.
+  * To accomplish that, those drivers need to call this function.
+@@ -463,6 +471,32 @@ static int rpmsg_uevent(const struct device *dev, struct kobj_uevent_env *env)
+ 					rpdev->id.name);
+ }
+ 
++struct rpmsg_endpoint *rpmsg_dev_open_ept(struct rpmsg_device *rpdev,
++					  rpmsg_rx_cb_t cb, void *priv)
++{
++	struct rpmsg_driver *rpdrv = to_rpmsg_driver(rpdev->dev.driver);
++	struct rpmsg_channel_info chinfo = {
++		.src = rpdev->src,
++		.dst = RPMSG_ADDR_ANY,
++	};
++	struct rpmsg_endpoint *ept;
++
++	strscpy(chinfo.name, rpdev->id.name, sizeof(chinfo.name));
++
++	ept = rpmsg_create_ept(rpdev, cb, priv, chinfo);
++	if (!ept) {
++		dev_err(&rpdev->dev, "failed to create endpoint\n");
++		return NULL;
++	}
++
++	rpdev->ept = ept;
++	rpdev->src = ept->addr;
++
++	ept->flow_cb = rpdrv->flowcontrol;
++	return ept;
++}
++EXPORT_SYMBOL(rpmsg_dev_open_ept);
++
+ /*
+  * when an rpmsg driver is probed with a channel, we seamlessly create
+  * it an endpoint, binding its rx callback to a unique local rpmsg
+@@ -475,7 +509,6 @@ static int rpmsg_dev_probe(struct device *dev)
+ {
+ 	struct rpmsg_device *rpdev = to_rpmsg_device(dev);
+ 	struct rpmsg_driver *rpdrv = to_rpmsg_driver(rpdev->dev.driver);
+-	struct rpmsg_channel_info chinfo = {};
+ 	struct rpmsg_endpoint *ept = NULL;
+ 	int err;
+ 
+@@ -485,21 +518,11 @@ static int rpmsg_dev_probe(struct device *dev)
+ 		goto out;
+ 
+ 	if (rpdrv->callback) {
+-		strscpy(chinfo.name, rpdev->id.name, sizeof(chinfo.name));
+-		chinfo.src = rpdev->src;
+-		chinfo.dst = RPMSG_ADDR_ANY;
+-
+-		ept = rpmsg_create_ept(rpdev, rpdrv->callback, NULL, chinfo);
++		ept = rpmsg_dev_open_ept(rpdev, rpdrv->callback, NULL);
+ 		if (!ept) {
+-			dev_err(dev, "failed to create endpoint\n");
+ 			err = -ENOMEM;
+ 			goto out;
+ 		}
+-
+-		rpdev->ept = ept;
+-		rpdev->src = ept->addr;
+-
+-		ept->flow_cb = rpdrv->flowcontrol;
+ 	}
+ 
+ 	err = rpdrv->probe(rpdev);
+@@ -508,7 +531,7 @@ static int rpmsg_dev_probe(struct device *dev)
+ 		goto destroy_ept;
+ 	}
+ 
+-	if (ept && rpdev->ops->announce_create) {
++	if (rpdev->ept && rpdev->ops->announce_create) {
+ 		err = rpdev->ops->announce_create(rpdev);
+ 		if (err) {
+ 			dev_err(dev, "failed to announce creation\n");
+@@ -539,7 +562,7 @@ static void rpmsg_dev_remove(struct device *dev)
+ 	if (rpdrv->remove)
+ 		rpdrv->remove(rpdev);
+ 
+-	if (rpdev->ept)
++	if (rpdrv->callback && rpdev->ept)
+ 		rpmsg_destroy_ept(rpdev->ept);
+ }
+ 
+diff --git a/include/linux/rpmsg.h b/include/linux/rpmsg.h
+index fb7ab9165645..8cf3fa83fa95 100644
+--- a/include/linux/rpmsg.h
++++ b/include/linux/rpmsg.h
+@@ -181,6 +181,8 @@ void rpmsg_destroy_ept(struct rpmsg_endpoint *);
+ struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_device *,
+ 					rpmsg_rx_cb_t cb, void *priv,
+ 					struct rpmsg_channel_info chinfo);
++struct rpmsg_endpoint *rpmsg_dev_open_ept(struct rpmsg_device *rpdev,
++					  rpmsg_rx_cb_t cb, void *priv);
+ 
+ int rpmsg_send(struct rpmsg_endpoint *ept, void *data, int len);
+ int rpmsg_sendto(struct rpmsg_endpoint *ept, void *data, int len, u32 dst);
+@@ -249,6 +251,16 @@ static inline struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_device *rpdev
+ 	return NULL;
+ }
+ 
++static inline struct rpmsg_endpoint *rpmsg_dev_open_ept(struct rpmsg_device *rpdev,
++							rpmsg_rx_cb_t cb,
++							void *priv)
++{
++	/* This shouldn't be possible */
++	WARN_ON(1);
++
++	return NULL;
++}
++
+ static inline int rpmsg_send(struct rpmsg_endpoint *ept, void *data, int len)
+ {
+ 	/* This shouldn't be possible */
+-- 
+2.39.5
+

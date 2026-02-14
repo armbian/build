@@ -1,0 +1,104 @@
+From 10c0e723ea6187151f1e4eb06c3e3185801db673 Mon Sep 17 00:00:00 2001
+From: Qiang Yu <qiang.yu@oss.qualcomm.com>
+Date: Sun, 9 Nov 2025 22:59:41 -0800
+Subject: [PATCH 079/121] PCI: dwc: Add new APIs to remove standard and
+ extended Capability
+
+On some platforms, certain PCIe Capabilities may be present in hardware
+but are not fully implemented as defined in PCIe spec. These incomplete
+capabilities should be hidden from the PCI framework to prevent unexpected
+behavior.
+
+Introduce two APIs to remove a specific PCIe Capability and Extended
+Capability by updating the previous capability's next offset field to skip
+over the unwanted capability. These APIs allow RC drivers to easily hide
+unsupported or partially implemented capabilities from software.
+
+Co-developed-by: Wenbin Yao <wenbin.yao@oss.qualcomm.com>
+Signed-off-by: Wenbin Yao <wenbin.yao@oss.qualcomm.com>
+Signed-off-by: Qiang Yu <qiang.yu@oss.qualcomm.com>
+---
+ drivers/pci/controller/dwc/pcie-designware.c | 53 ++++++++++++++++++++
+ drivers/pci/controller/dwc/pcie-designware.h |  2 +
+ 2 files changed, 55 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware.c b/drivers/pci/controller/dwc/pcie-designware.c
+index 5585d3ed7431..24f8e9959cb8 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.c
++++ b/drivers/pci/controller/dwc/pcie-designware.c
+@@ -234,6 +234,59 @@ u16 dw_pcie_find_ext_capability(struct dw_pcie *pci, u8 cap)
+ }
+ EXPORT_SYMBOL_GPL(dw_pcie_find_ext_capability);
+ 
++void dw_pcie_remove_capability(struct dw_pcie *pci, u8 cap)
++{
++	u8 cap_pos, pre_pos, next_pos;
++	u16 reg;
++
++	cap_pos = PCI_FIND_NEXT_CAP(dw_pcie_read_cfg, PCI_CAPABILITY_LIST, cap,
++				 &pre_pos, pci);
++	if (!cap_pos)
++		return;
++
++	reg = dw_pcie_readw_dbi(pci, cap_pos);
++	next_pos = (reg & 0xff00) >> 8;
++
++	dw_pcie_dbi_ro_wr_en(pci);
++	if (pre_pos == PCI_CAPABILITY_LIST)
++		dw_pcie_writeb_dbi(pci, PCI_CAPABILITY_LIST, next_pos);
++	else
++		dw_pcie_writeb_dbi(pci, pre_pos + 1, next_pos);
++	dw_pcie_dbi_ro_wr_dis(pci);
++}
++EXPORT_SYMBOL_GPL(dw_pcie_remove_capability);
++
++void dw_pcie_remove_ext_capability(struct dw_pcie *pci, u8 cap)
++{
++	int cap_pos, next_pos, pre_pos;
++	u32 pre_header, header;
++
++	cap_pos = PCI_FIND_NEXT_EXT_CAP(dw_pcie_read_cfg, 0, cap, &pre_pos, pci);
++	if (!cap_pos)
++		return;
++
++	header = dw_pcie_readl_dbi(pci, cap_pos);
++	/*
++	 * If the first cap at offset PCI_CFG_SPACE_SIZE is removed,
++	 * only set it's capid to zero as it cannot be skipped.
++	 */
++	if (cap_pos == PCI_CFG_SPACE_SIZE) {
++		dw_pcie_dbi_ro_wr_en(pci);
++		dw_pcie_writel_dbi(pci, cap_pos, header & 0xffff0000);
++		dw_pcie_dbi_ro_wr_dis(pci);
++		return;
++	}
++
++	pre_header = dw_pcie_readl_dbi(pci, pre_pos);
++	next_pos = PCI_EXT_CAP_NEXT(header);
++
++	dw_pcie_dbi_ro_wr_en(pci);
++	dw_pcie_writel_dbi(pci, pre_pos,
++			  (pre_header & 0xfffff) | (next_pos << 20));
++	dw_pcie_dbi_ro_wr_dis(pci);
++}
++EXPORT_SYMBOL_GPL(dw_pcie_remove_ext_capability);
++
+ static u16 __dw_pcie_find_vsec_capability(struct dw_pcie *pci, u16 vendor_id,
+ 					  u16 vsec_id)
+ {
+diff --git a/drivers/pci/controller/dwc/pcie-designware.h b/drivers/pci/controller/dwc/pcie-designware.h
+index 24bfa5231923..7f0d128cbc61 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.h
++++ b/drivers/pci/controller/dwc/pcie-designware.h
+@@ -552,6 +552,8 @@ void dw_pcie_version_detect(struct dw_pcie *pci);
+ 
+ u8 dw_pcie_find_capability(struct dw_pcie *pci, u8 cap);
+ u16 dw_pcie_find_ext_capability(struct dw_pcie *pci, u8 cap);
++void dw_pcie_remove_capability(struct dw_pcie *pci, u8 cap);
++void dw_pcie_remove_ext_capability(struct dw_pcie *pci, u8 cap);
+ u16 dw_pcie_find_rasdes_capability(struct dw_pcie *pci);
+ u16 dw_pcie_find_ptm_capability(struct dw_pcie *pci);
+ 
+-- 
+2.39.5
+
