@@ -114,7 +114,7 @@ function compile_armbian-base-files() {
 		Version: ${artifact_version}
 	EOD
 	# Keep everything else from original
-	cat "${destination}/DEBIAN/control" | grep -vP '^(Maintainer|Version):' >> "${destination}/DEBIAN/control.new"
+	grep -vP '^(Maintainer|Version):' < "${destination}/DEBIAN/control" >> "${destination}/DEBIAN/control.new"
 
 	# Replace 'Debian' with 'Armbian'.
 	sed -i "s/Debian/${VENDOR}/g" "${destination}/DEBIAN/control.new"
