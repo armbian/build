@@ -2,7 +2,7 @@
 BOARD_NAME="Orange Pi 3 LTS"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun50iw6"
-BOARD_MAINTAINER="pyavitz"
+BOARD_MAINTAINER=""
 BOOT_FDT_FILE="allwinner/sun50i-h6-orangepi-3-lts.dtb"
 BOOTCONFIG="orangepi_3_lts_defconfig"
 BOOT_LOGO="desktop"
