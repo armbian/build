@@ -1,0 +1,200 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 12 Jan 2026 18:26:25 +0100
+Subject: fdt_fixup_ethernet: add logs
+
+---
+ boot/fdt_support.c | 57 +++++++---
+ boot/image-fdt.c   | 25 ++++
+ 2 files changed, 67 insertions(+), 15 deletions(-)
+
+diff --git a/boot/fdt_support.c b/boot/fdt_support.c
+index 111111111111..222222222222 100644
+--- a/boot/fdt_support.c
++++ b/boot/fdt_support.c
+@@ -630,29 +630,34 @@ int fdt_fixup_memory(void *blob, u64 start, u64 size)
+ 	return fdt_fixup_memory_banks(blob, &start, &size, 1);
+ }
+ 
++#warning "Compiling fdt_fixup_ethernet() for MAC debugging."
+ void fdt_fixup_ethernet(void *fdt)
+ {
++	log_info("[fdt_fixup_ethernet] called\n");
+ 	int i = 0, j, prop;
+ 	char *tmp, *end;
+ 	char mac[16];
+ 	const char *path;
+ 	unsigned char mac_addr[ARP_HLEN];
+ 	int offset;
++	int total_aliases = 0, total_attempted = 0, total_skipped = 0, total_patched = 0;
+ #ifdef FDT_SEQ_MACADDR_FROM_ENV
+ 	int nodeoff;
+ 	const struct fdt_property *fdt_prop;
+ #endif
+ 
+-	if (fdt_path_offset(fdt, "/aliases") < 0)
++	int aliases_off = fdt_path_offset(fdt, "/aliases");
++	if (aliases_off < 0) {
++		log_info("[fdt_fixup_ethernet] /aliases node not found\n");
+ 		return;
++	}
+ 
+ 	/* Cycle through all aliases */
+ 	for (prop = 0; ; prop++) {
+ 		const char *name;
+ 
+ 		/* FDT might have been edited, recompute the offset */
+-		offset = fdt_first_property_offset(fdt,
+-			fdt_path_offset(fdt, "/aliases"));
++		offset = fdt_first_property_offset(fdt, aliases_off);
+ 		/* Select property number 'prop' */
+ 		for (j = 0; j < prop; j++)
+ 			offset = fdt_next_property_offset(fdt, offset);
+@@ -660,7 +665,10 @@ void fdt_fixup_ethernet(void *fdt)
+ 		if (offset < 0)
+ 			break;
+ 
++		total_aliases++;
+ 		path = fdt_getprop_by_offset(fdt, offset, &name, NULL);
++		log_info("[fdt_fixup_ethernet] alias #%d: name='%s', path='%s'\n", prop, name, path ? path : "<null>");
++
+ 		if (!strncmp(name, "ethernet", 8)) {
+ 			/* Treat plain "ethernet" same as "ethernet0". */
+ 			if (!strcmp(name, "ethernet")
+@@ -679,33 +687,52 @@ void fdt_fixup_ethernet(void *fdt)
+ 				else
+ 					sprintf(mac, "eth%daddr", i);
+ 			} else {
++				log_info("[fdt_fixup_ethernet] Skipping alias '%s' (invalid index)\n", name);
++				total_skipped++;
+ 				continue;
+ 			}
+ #ifdef FDT_SEQ_MACADDR_FROM_ENV
+ 			nodeoff = fdt_path_offset(fdt, path);
+-			fdt_prop = fdt_get_property(fdt, nodeoff, "status",
+-						    NULL);
+-			if (fdt_prop && !strcmp(fdt_prop->data, "disabled"))
++			fdt_prop = fdt_get_property(fdt, nodeoff, "status", NULL);
++			if (fdt_prop && !strcmp(fdt_prop->data, "disabled")) {
++				log_info("[fdt_fixup_ethernet] Node '%s' is disabled, skipping\n", path);
++				total_skipped++;
+ 				continue;
++			}
+ 			i++;
+ #endif
++			total_attempted++;
+ 			tmp = env_get(mac);
+-			if (!tmp)
++			log_info("[fdt_fixup_ethernet] env var for alias '%s' is '%s', value='%s'\n", name, mac, tmp ? tmp : "<not set>");
++			if (!tmp) {
++				log_info("[fdt_fixup_ethernet] env var '%s' not set, skipping\n", mac);
++				total_skipped++;
+ 				continue;
+-
++			}
++			int nodeoff = fdt_path_offset(fdt, path);
++			if (nodeoff < 0) {
++				log_info("[fdt_fixup_ethernet] Node path '%s' not found, skipping\n", path);
++				total_skipped++;
++				continue;
++			}
++			const struct fdt_property *status_prop = fdt_get_property(fdt, nodeoff, "status", NULL);
++			if (status_prop && strcmp((const char *)status_prop->data, "okay")) {
++				log_info("[fdt_fixup_ethernet] Node '%s' status is '%s', skipping\n", path, (const char *)status_prop->data);
++				total_skipped++;
++				continue;
++			}
+ 			for (j = 0; j < 6; j++) {
+-				mac_addr[j] = tmp ?
+-					      hextoul(tmp, &end) : 0;
++				mac_addr[j] = tmp ? hextoul(tmp, &end) : 0;
+ 				if (tmp)
+ 					tmp = (*end) ? end + 1 : end;
+ 			}
+-
+-			do_fixup_by_path(fdt, path, "mac-address",
+-					 &mac_addr, 6, 0);
+-			do_fixup_by_path(fdt, path, "local-mac-address",
+-					 &mac_addr, 6, 1);
++			log_info("[fdt_fixup_ethernet] Patching node '%s' (offset %d) with MAC %02x:%02x:%02x:%02x:%02x:%02x\n", path, nodeoff, mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
++			do_fixup_by_path(fdt, path, "mac-address", &mac_addr, 6, 0);
++			do_fixup_by_path(fdt, path, "local-mac-address", &mac_addr, 6, 1);
++			total_patched++;
+ 		}
+ 	}
++	log_info("[fdt_fixup_ethernet] SUMMARY: aliases found=%d, attempted=%d, skipped=%d, patched=%d\n", total_aliases, total_attempted, total_skipped, total_patched);
+ }
+ 
+ int fdt_record_loadable(void *blob, u32 index, const char *name,
+diff --git a/boot/image-fdt.c b/boot/image-fdt.c
+index 111111111111..222222222222 100644
+--- a/boot/image-fdt.c
++++ b/boot/image-fdt.c
+@@ -1,3 +1,4 @@
++#warning "Building image-fdt.c: fdt fixup call chain instrumented for MAC debugging."
+ // SPDX-License-Identifier: GPL-2.0+
+ /*
+  * Copyright (c) 2013, Google Inc.
+@@ -578,13 +579,31 @@ __weak int ft_verify_fdt(void *fdt)
+ 	return 1;
+ }
+ 
++#warning "Compiling arch_fixup_fdt() weak stub for MAC debugging."
+ __weak int arch_fixup_fdt(void *blob)
+ {
++	log_info("[arch_fixup_fdt] called (weak stub)\n");
+ 	return 0;
+ }
+ 
++#warning "Compiling ft_board_setup() weak stub for MAC debugging."
++__weak int ft_board_setup(void *blob, struct bd_info *bd)
++{
++	log_info("[ft_board_setup] called (weak stub)\n");
++	return 0;
++}
++
++#warning "Compiling ft_system_setup() weak stub for MAC debugging."
++__weak int ft_system_setup(void *blob, struct bd_info *bd)
++{
++	log_info("[ft_system_setup] called (weak stub)\n");
++	return 0;
++}
++
++#warning "Compiling image_setup_libfdt()"
+ int image_setup_libfdt(struct bootm_headers *images, void *blob, bool lmb)
+ {
++	log_info("[image_setup_libfdt] called\n");
+ 	ulong *initrd_start = &images->initrd_start;
+ 	ulong *initrd_end = &images->initrd_end;
+ 	bool skip_board_fixup = false;
+@@ -632,6 +651,8 @@ int image_setup_libfdt(struct bootm_headers *images, void *blob, bool lmb)
+ 					strlen(images->fit_uname_cfg) + 1, 1);
+ 
+ 	/* Update ethernet nodes */
++	#warning "Compiling fdt_fixup_ethernet() call site in image_setup_libfdt()"
++	log_info("[image_setup_libfdt] calling fdt_fixup_ethernet\n");
+ 	fdt_fixup_ethernet(blob);
+ #if IS_ENABLED(CONFIG_CMD_PSTORE)
+ 	/* Append PStore configuration */
+@@ -645,6 +666,8 @@ int image_setup_libfdt(struct bootm_headers *images, void *blob, bool lmb)
+ 	}
+ 
+ 	if (IS_ENABLED(CONFIG_OF_BOARD_SETUP) && !skip_board_fixup) {
++		#warning "Compiling ft_board_setup() call site in image_setup_libfdt()"
++		log_info("[image_setup_libfdt] calling ft_board_setup\n");
+ 		fdt_ret = ft_board_setup(blob, gd->bd);
+ 		if (fdt_ret) {
+ 			printf("ERROR: board-specific fdt fixup failed: %s\n",
+@@ -652,7 +675,9 @@ int image_setup_libfdt(struct bootm_headers *images, void *blob, bool lmb)
+ 			goto err;
+ 		}
+ 	}
++	#warning "Compiling ft_system_setup() call site in image_setup_libfdt()"
+ 	if (IS_ENABLED(CONFIG_OF_SYSTEM_SETUP)) {
++		log_info("[image_setup_libfdt] calling ft_system_setup\n");
+ 		fdt_ret = ft_system_setup(blob, gd->bd);
+ 		if (fdt_ret) {
+ 			printf("ERROR: system-specific fdt fixup failed: %s\n",
+-- 
+Armbian
+
