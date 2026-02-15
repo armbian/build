@@ -43,7 +43,7 @@ function post_build_image__900_convert_to_abl_img() {
 		for dtb_name in "${ABL_DTB_LIST[@]}"; do
 			display_alert "Creatng abl kernel boot image with dtb ${dtb_name} and cmdline ${bootimg_cmdline} " "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
-			/usr/bin/mkbootimg \
+			/armbian/tools/mkbootimg \
 				--kernel ${DESTIMG}/Image.gz-${dtb_name} \
 				--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 				--base 0x0 \
@@ -57,7 +57,7 @@ function post_build_image__900_convert_to_abl_img() {
 		done
 		display_alert "Creatng abl kernel boot recovery image with dtb ${ABL_DTB_LIST[0]}" "${EXTENSION}" "info"
 		cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
-		/usr/bin/mkbootimg \
+		/armbian/tools/mkbootimg \
 			--kernel ${DESTIMG}/Image.gz-${ABL_DTB_LIST[0]} \
 			--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 			--base 0x0 \

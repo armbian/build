@@ -26,16 +26,19 @@ cd build
 ## Build Host Requirements
 
 ### Hardware
+
 - **RAM:** ≥8GB (less with `KERNEL_BTF=no`)
 - **Disk:** ~50GB free space
 - **Architecture:** x86_64, aarch64, or riscv64
 
 ### Operating System
+
 - **Native builds:** Armbian or Ubuntu 24.04 (Noble)
 - **Containerized:** Any Docker-capable Linux
 - **Windows:** WSL2 with Armbian/Ubuntu 24.04
 
 ### Software
+
 - Superuser privileges (`sudo` or root)
 - Up-to-date system (outdated Docker or other tools can cause failures)
 
@@ -53,14 +56,17 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines 
 ## Support
 
 ### Community Forums
+
 Get help from users and contributors on troubleshooting, configuration, and development.
 👉 [forum.armbian.com](https://forum.armbian.com)
 
 ### Real-time Chat
+
 Join discussions with developers and community members on IRC or Discord.
 👉 [Community Chat](https://docs.armbian.com/Community_IRC/)
 
 ### Paid Consultation
+
 For commercial projects, guaranteed response times, or advanced needs, paid support is available from Armbian maintainers.
 👉 [Contact us](https://www.armbian.com/contact)
 
