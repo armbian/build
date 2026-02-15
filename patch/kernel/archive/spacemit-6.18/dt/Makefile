@@ -13,5 +13,7 @@ obj-$(CONFIG_BUILTIN_DTB) += $(addsuffix .o, $(dtb-y))
 
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-bananapi-f3.dtb
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-musepi-pro.dtb
+dtb-$(CONFIG_SOC_SPACEMIT_K1X) += x1_orangepi-r2s.dtb
+dtb-$(CONFIG_SOC_SPACEMIT_K1X) += x1_orangepi-rv2.dtb
 
 subdir-y += overlay
