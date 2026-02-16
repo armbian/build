@@ -48,30 +48,28 @@ Now let’s continue partitioning:
 Here the size of `userdata` can be decided by yourself. In this guide we take 30G as the example.
 
 ```bash
-(parted) resizepart 34
+(parted) resizepart 28
 # 34 is the partition number for userdata
-End? [122GB]? 32GB
+End? [253GB]? 22GB
 ```
 
-32GB is the End value for the new userdata partition.
-
-Since the starting point for userdata is 2048MB = 2GB, the new size would be 32G - 2G = 30G.
+22GB is the End value for the new userdata partition to set it to 10gb in size.
 
 Then create the linux and esp partitions:
 
 ```bash
 # esp partition for booting
-(parted) mkpart esp fat32 32GB 32.5GB
+(parted) mkpart esp fat32 22GB 22.5GB
 # set the esp partition as `EFI system partition type`
-# replace 35 with the count of your esp partition if different
-(parted) set 35 esp on
+# replace 29 with the count of your esp partition if different
+(parted) set 29 esp on
 # partition for installing Linux
-(parted) mkpart linux ext4 32.5GB 100%
+(parted) mkpart linux ext4 22.5GB 100%
 # print your partition table and confirm everything looks right
 (parted) print
 # Troubleshooting, may not be required but name the linux partition
-# replace 36 with the partition number of your linux partition if different
-(parted) name 36 linux
+# replace 30 with the partition number of your linux partition if different
+(parted) name 30 linux
 # print your partition table and confirm everything looks right, should see a new esp partition and one named linux
 (parted) print
 (parted) quit
