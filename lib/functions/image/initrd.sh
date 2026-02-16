@@ -70,7 +70,7 @@ update_initramfs() {
 		awk '{print $2 " - " $1}' |
 		sed -e "s|^${chroot_target}||g" | LC_ALL=C sort > "${initrd_cache_current_manifest_filepath}"
 
-	initrd_hash="$(cat "${initrd_cache_current_manifest_filepath}" | md5sum | cut -d ' ' -f 1)" # hash of the hashes.
+	initrd_hash="$(md5sum "${initrd_cache_current_manifest_filepath}" | cut -d ' ' -f 1)" # hash of the hashes.
 	initrd_cache_key="initrd.img-${initrd_kern_ver}-${initrd_hash}"
 	initrd_cache_file_path="${SRC}/cache/initrd/${initrd_cache_key}"
 	display_alert "initrd cache hash" "${initrd_hash}" "debug"
