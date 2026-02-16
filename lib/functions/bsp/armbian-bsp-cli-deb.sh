@@ -143,19 +143,19 @@ function compile_armbian-bsp-cli() {
 		# Using bootscript, copy it to /usr/share/armbian
 
 		case "${bootscript_info[bootscript_src]}" in
-		*'.template')
-			display_alert "Rendering boot script template" "${bootscript_info[bootscript_file_fullpath]} -> ${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}" "info"
-			run_host_command_logged cat "${bootscript_info[bootscript_file_fullpath]}" |
-				render_bootscript_template > "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}"
+			*'.template')
+				display_alert "Rendering boot script template" "${bootscript_info[bootscript_file_fullpath]} -> ${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}" "info"
+				run_host_command_logged cat "${bootscript_info[bootscript_file_fullpath]}" |
+					render_bootscript_template > "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}"
 
-			if ! proof_rendered_bootscript_template "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}" ; then
-				exit_with_error "Render of bootscript template was not successful. Inspect '${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}' for unrendered variables."
-			fi
-			;;
-		*)
-			display_alert "Deploying boot script" "${bootscript_info[bootscript_file_fullpath]} -> ${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}" "info"
-			run_host_command_logged cp -pv "${bootscript_info[bootscript_file_fullpath]}" "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}"
-			;;
+				if ! proof_rendered_bootscript_template "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}"; then
+					exit_with_error "Render of bootscript template was not successful. Inspect '${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}' for unrendered variables."
+				fi
+				;;
+			*)
+				display_alert "Deploying boot script" "${bootscript_info[bootscript_file_fullpath]} -> ${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}" "info"
+				run_host_command_logged cp -pv "${bootscript_info[bootscript_file_fullpath]}" "${destination}/usr/share/armbian/${bootscript_info[bootscript_dst]}"
+				;;
 		esac
 
 		if [[ "${bootscript_info[has_bootenv]}" == "yes" ]]; then
@@ -233,7 +233,7 @@ function compile_armbian-bsp-cli() {
 	# if freeze variable is removed, upgrade becomes possible again
 	if [[ "${BETA}" != "yes" ]]; then
 		for pin_variants in $(echo $KERNEL_UPGRADE_FREEZE | sed "s/,/ /g"); do
-			extracted_pins=(${pin_variants//@/ })
+			IFS=' ' read -ra extracted_pins <<< "${pin_variants//@/ }"
 			if [[ "${BRANCH}-${LINUXFAMILY}" == "${extracted_pins[0]}" ]]; then
 				cat <<- EOF >> "${destination}"/etc/apt/preferences.d/frozen-armbian
 					Package: linux-*-${extracted_pins[0]}
