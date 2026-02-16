@@ -304,6 +304,19 @@ function create_sources_list_and_deploy_repo_key() {
 	elif [[ $BETA == "yes" ]]; then
 		armbian_mirror="beta.armbian.com"
 	fi
+
+	if [[ "${RELEASE}" == "questing" ]]; then
+		declare -a components_fix=()
+		components_fix+=("plucky-utils")
+		components_fix+=("plucky-desktop")
+	cat <<- EOF > "${basedir}"/etc/apt/sources.list.d/armbian.sources
+	Types: deb
+	URIs: http://${armbian_mirror}
+	Suites: plucky
+	Components: ${components_fix[*]}
+	Signed-By: ${APT_SIGNING_KEY_FILE}
+	EOF
+	else
 	cat <<- EOF > "${basedir}"/etc/apt/sources.list.d/armbian.sources
 	Types: deb
 	URIs: http://${armbian_mirror}
@@ -311,6 +324,8 @@ function create_sources_list_and_deploy_repo_key() {
 	Components: ${components[*]}
 	Signed-By: ${APT_SIGNING_KEY_FILE}
 	EOF
+	fi
+
 
 	# disable repo if DISTRIBUTION_STATUS==eos, or if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
 	if [[ "${when}" == "image-early" ||
