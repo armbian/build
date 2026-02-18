@@ -54,6 +54,20 @@ function pre_config_uboot_target__mekor58x_4g_patch_rockchip_common_boot_order()
 	regular_git diff -u include/configs/rockchip-common.h || true
 }
 
+function pre_config_uboot_target__ekor58x_4g_patch_uboot_dtsi_for_ums() {
+	[[ "${BRANCH}" == "vendor" ]] && return 0 # Not for 'vendor' branch, which uses 2017.09 vendor u-boot from Radxa
+
+	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
+	# Append to the t6 u-boot dtsi file with stuff for enabling gadget/otg/peripheral mode
+	cat <<- EOD >> arch/arm/dts/rk3588-blueberry-edge-v12-linux-u-boot.dtsi
+		#include "rk3588-generic-u-boot.dtsi"
+		&u2phy0 { status = "okay"; };
+		&u2phy0_otg { status = "okay"; };
+		&usbdp_phy0 { status = "okay"; };
+		&usb_host0_xhci { dr_mode = "peripheral";  maximum-speed = "high-speed";  status = "okay"; };
+	EOD
+}
+
 function post_config_uboot_target__extra_configs_for_mekor58x_4g_mainline_environment_in_spi() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable board-specific configs" "info"
 	run_host_command_logged scripts/config --enable CONFIG_CMD_MISC
