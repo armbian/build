@@ -13,24 +13,20 @@ declare -g BOARD_FIRMWARE_INSTALL="-full"
 declare -g DESKTOP_AUTOLOGIN="yes"
 
 # Check to make sure variants are supported
-declare -g BOARD_VARIANT="${BOARD_VARIANT:-odin2}"
-declare -g VALID_BOARDS=("odin2" "odin2-grub" "odin2portal" "odin2portal-grub" "thor")
-BOARD_VARIANT_WITHOUT_GRUB="${BOARD_VARIANT//-grub/}"
+declare -g VALID_BOARDS=("ayn-odin2" "ayn-odin2portal" "ayn-thor")
 
-if [[ -z "${BOARD_VARIANT:-}" ]]; then
-	exit_with_error "BOARD_VARIANT not set"
-fi
+declare -g WITH_GRUB="no"
 
-if [[ ! " ${VALID_BOARDS[*]} " =~ " ${BOARD_VARIANT} " ]]; then
-	exit_with_error "Error: Invalid board_variant '$BOARD_VARIANT'. Valid options are: ${VALID_BOARDS[*]}" >&2
+if [[ ! " ${VALID_BOARDS[*]} " =~ " ${BOARD} " ]]; then
+	exit_with_error "Error: Invalid board '$BOARD'. Valid options are: ${VALID_BOARDS[*]}" >&2
 fi
 
 # set grub
-if [[ "${BOARD_VARIANT}" == *"-grub"* ]]; then
+if [[ "${WITH_GRUB}" == "yes" ]]; then
 	display_alert "GRUB DETECTED"
 	declare -g UEFI_GRUB_TERMINAL="gfxterm" # Use graphics in grub, for the Armbian wallpaper.
 	declare -g GRUB_CMDLINE_LINUX_DEFAULT="clk_ignore_unused pd_ignore_unused arm64.nopauth efi=noruntime fbcon=rotate:1 console=ttyMSM0,115200n8"
-	declare -g BOOT_FDT_FILE="qcom/qcs8550-ayn-${BOARD_VARIANT_WITHOUT_GRUB}.dtb"
+	declare -g BOOT_FDT_FILE="qcom/qcs8550-${BOARD}.dtb"
 	declare -g SERIALCON="${SERIALCON:-tty1}"
 
 	enable_extension "grub"
@@ -98,7 +94,7 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 	chroot_sdcard systemctl mask suspend.target
 
 	chroot_sdcard systemctl enable usbgadget-rndis.service
-	cp "${SRC}/packages/bsp/ayn-${BOARD_VARIANT_WITHOUT_GRUB}/LinuxLoader.cfg" "${SDCARD}"/boot/
+	cp "${SRC}/packages/bsp/${BOARD}/LinuxLoader.cfg" "${SDCARD}"/boot/
 
 	return 0
 }
