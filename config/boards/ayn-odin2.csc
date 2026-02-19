@@ -13,9 +13,9 @@ declare -g BOARD_FIRMWARE_INSTALL="-full"
 declare -g DESKTOP_AUTOLOGIN="yes"
 
 # Check to make sure variants are supported
-declare -g VALID_BOARDS=("ayn-odin2" "ayn-odin2portal" "ayn-thor")
+declare -g VALID_BOARDS=("ayn-odin2" "ayn-odin2portal" "ayn-odin2mini" "ayn-thor")
 
-declare -g WITH_GRUB="no"
+declare -g WITH_GRUB="${WITH_GRUB:-no}"
 
 if [[ ! " ${VALID_BOARDS[*]} " =~ " ${BOARD} " ]]; then
 	exit_with_error "Error: Invalid board '$BOARD'. Valid options are: ${VALID_BOARDS[*]}" >&2
