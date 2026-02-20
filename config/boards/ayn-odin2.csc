@@ -67,7 +67,7 @@ function post_family_tweaks_bsp__ayn-odin2_firmware() {
 	display_alert "Install firmwares for ${BOARD}" "${RELEASE}" "warn"
 
 	# USB Gadget Network service
-	mkdir -p $destination/usr/local/bin/mkdir
+	mkdir -p $destination/usr/local/bin/
 	mkdir -p $destination/usr/lib/systemd/system/
 	mkdir -p $destination/etc/initramfs-tools/scripts/init-bottom/
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/setup-usbgadget-network.sh $destination/usr/local/bin/
