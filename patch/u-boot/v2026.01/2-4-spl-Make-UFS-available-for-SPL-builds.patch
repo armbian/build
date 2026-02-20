@@ -1,0 +1,154 @@
+diff --git a/MAINTAINERS b/MAINTAINERS
+index c9853f409920..c58805a724b9 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -1860,6 +1860,7 @@ M:	Neil Armstrong <neil.armstrong@linaro.org>
+ M:	Bhupesh Sharma <bhupesh.linux@gmail.com>
+ M:	Neha Malcom Francis <n-francis@ti.com>
+ S:	Maintained
++F:	common/spl/spl_ufs.c
+ F:	drivers/ufs/
+ 
+ UPL
+diff --git a/arch/arm/include/asm/spl.h b/arch/arm/include/asm/spl.h
+index ee79a19c05c9..dd462ea6ad82 100644
+--- a/arch/arm/include/asm/spl.h
++++ b/arch/arm/include/asm/spl.h
+@@ -30,6 +30,7 @@ enum {
+ 	BOOT_DEVICE_XIP,
+ 	BOOT_DEVICE_BOOTROM,
+ 	BOOT_DEVICE_SMH,
++	BOOT_DEVICE_UFS,
+ 	BOOT_DEVICE_NONE
+ };
+ #endif
+diff --git a/common/spl/Kconfig b/common/spl/Kconfig
+index a43271671648..aa198ee44a3f 100644
+--- a/common/spl/Kconfig
++++ b/common/spl/Kconfig
+@@ -1608,6 +1608,22 @@ config SPL_THERMAL
+ 	  automatic power-off when the temperature gets too high or low. Other
+ 	  devices may be discrete but connected on a suitable bus.
+ 
++config SPL_UFS_SUPPORT
++	bool "Support loading from UFS"
++	select SPL_LOAD_BLOCK
++	help
++	  Enable support for UFS in SPL. This allows
++	  use of UFS devices such as hard drives and flash drivers for
++	  loading U-Boot.
++
++config SPL_UFS_RAW_U_BOOT_SECTOR
++	hex "Address on the UFS to load U-Boot from"
++	depends on SPL_UFS_SUPPORT
++	default 0x800 if ARCH_ROCKCHIP
++	help
++	  Address on the block device to load U-Boot from，
++	  Units: UFS sectors (1 sector = 4096 bytes).
++
+ config SPL_WATCHDOG
+ 	bool "Support watchdog drivers"
+ 	imply SPL_WDT if !HW_WATCHDOG
+diff --git a/common/spl/Makefile b/common/spl/Makefile
+index 4c9482bd3096..e18f3cf09484 100644
+--- a/common/spl/Makefile
++++ b/common/spl/Makefile
+@@ -37,6 +37,7 @@ obj-$(CONFIG_$(PHASE_)DFU) += spl_dfu.o
+ obj-$(CONFIG_$(PHASE_)SPI_LOAD) += spl_spi.o
+ obj-$(CONFIG_$(PHASE_)RAM_SUPPORT) += spl_ram.o
+ obj-$(CONFIG_$(PHASE_)USB_SDP_SUPPORT) += spl_sdp.o
++obj-$(CONFIG_$(PHASE_)UFS_SUPPORT) += spl_ufs.o
+ endif
+ 
+ obj-$(CONFIG_$(PHASE_)UPL) += spl_upl.o
+diff --git a/common/spl/spl_ufs.c b/common/spl/spl_ufs.c
+new file mode 100644
+index 000000000000..3a5fcd4ed7a8
+--- /dev/null
++++ b/common/spl/spl_ufs.c
+@@ -0,0 +1,49 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2025 Alexey Charkov <alchark@gmail.com>
++ */
++
++#include <spl.h>
++#include <spl_load.h>
++#include <scsi.h>
++#include <errno.h>
++#include <image.h>
++#include <linux/compiler.h>
++#include <log.h>
++
++static ulong h_spl_load_read(struct spl_load_info *load, ulong off,
++			     ulong size, void *buf)
++{
++	struct blk_desc *bd = load->priv;
++	lbaint_t sector = off >> bd->log2blksz;
++	lbaint_t count = size >> bd->log2blksz;
++
++	return blk_dread(bd, sector, count, buf) << bd->log2blksz;
++}
++
++static int spl_ufs_load_image(struct spl_image_info *spl_image,
++			      struct spl_boot_device *bootdev)
++{
++	int err = -ENOSYS;
++	struct blk_desc *bd;
++	struct spl_load_info load;
++	unsigned long sector = CONFIG_SPL_UFS_RAW_U_BOOT_SECTOR;
++
++	/* try to recognize storage devices immediately */
++	scsi_scan(false);
++	bd = blk_get_devnum_by_uclass_id(UCLASS_SCSI, 0);
++	if (!bd)
++		return -ENODEV;
++
++	spl_load_init(&load, h_spl_load_read, bd, bd->blksz);
++	err = spl_load(spl_image, bootdev, &load, 0, sector << bd->log2blksz);
++	if (err) {
++		puts("spl_ufs_load_image: ufs block read error\n");
++		log_debug("(error=%d)\n", err);
++		return err;
++	}
++
++	return 0;
++}
++
++SPL_LOAD_IMAGE_METHOD("UFS", 0, BOOT_DEVICE_UFS, spl_ufs_load_image);
+diff --git a/drivers/Makefile b/drivers/Makefile
+index de993ae42ac7..43d0ba332818 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -73,6 +73,7 @@ obj-$(CONFIG_SPL_USB_HOST) += usb/host/
+ obj-$(CONFIG_SPL_SATA) += ata/ scsi/
+ obj-$(CONFIG_SPL_LEGACY_BLOCK) += block/
+ obj-$(CONFIG_SPL_THERMAL) += thermal/
++obj-$(CONFIG_SPL_UFS_SUPPORT) += scsi/ ufs/
+ 
+ endif
+ endif
+diff --git a/drivers/scsi/Makefile b/drivers/scsi/Makefile
+index b76de1b22a8b..c9af60d5d03c 100644
+--- a/drivers/scsi/Makefile
++++ b/drivers/scsi/Makefile
+@@ -16,4 +16,7 @@ ifdef CONFIG_XPL_BUILD
+ ifdef CONFIG_SPL_SATA
+ obj-$(CONFIG_SCSI) += scsi.o scsi-uclass.o
+ endif
++ifdef CONFIG_SPL_UFS_SUPPORT
++obj-$(CONFIG_SCSI) += scsi.o scsi-uclass.o
++endif
+ endif
+diff --git a/lib/Makefile b/lib/Makefile
+index 70667f3728c2..d0ffabc2b476 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -147,6 +147,7 @@ else
+ obj-$(CONFIG_$(PHASE_)SPRINTF) += vsprintf.o
+ endif
+ obj-$(CONFIG_$(PHASE_)STRTO) += strto.o
++obj-$(CONFIG_$(PHASE_)UFS_SUPPORT) += charset.o
+ else
+ # Main U-Boot always uses the full printf support
+ obj-y += vsprintf.o strto.o
