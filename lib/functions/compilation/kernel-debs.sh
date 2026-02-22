@@ -473,12 +473,31 @@ function kernel_package_callback_linux_headers() {
 	[[ -f "${kernel_work_dir}/scripts/module.lds" ]] &&
 		run_host_command_logged cp -v "${kernel_work_dir}/scripts/module.lds" "${headers_target_dir}/scripts/module.lds"
 
+	# Preserve build-time kernel config as a sidecar tarball.
+	# postinst runs `make olddefconfig` which re-evaluates toolchain availability on the target host
+	# and may silently disable CONFIG_* options that were active at kernel build time
+	# (e.g. CONFIG_CC_IS_CLANG, CONFIG_LTO_CLANG, CONFIG_DEBUG_INFO_BTF).
+	# This affects both include/generated/autoconf.h (used by the C preprocessor) and
+	# include/config/auto.conf + include/config/ marker files (used by kbuild make rules), as well as
+	# include/generated/rustc_cfg (used by Rust builds).
+	# All of these are build artifacts and must describe the compiled kernel, not the target host.
+	# See: https://github.com/armbian/build/issues/9425
+	if [[ -f "${kernel_work_dir}/include/config/auto.conf" ]]; then
+		run_host_command_logged mkdir -p "${headers_target_dir}/include/generated"
+		local _sidecar_paths=("include/config")
+		[[ -f "${kernel_work_dir}/include/generated/autoconf.h" ]] && _sidecar_paths+=("include/generated/autoconf.h")
+		[[ -f "${kernel_work_dir}/include/generated/rustc_cfg" ]] && _sidecar_paths+=("include/generated/rustc_cfg")
+		run_host_command_logged tar -C "${kernel_work_dir}" -czf \
+			"${headers_target_dir}/include/generated/.armbian-build.tar.gz" \
+			"${_sidecar_paths[@]}"
+	fi
+
 	if [[ "${DEBUG}" == "yes" ]]; then
 		# Check that no binaries are included by now. Expensive... @TODO: remove after me make sure.
 		display_alert "Checking for binaries in kernel headers" "${headers_target_dir}" "debug"
 		(
 			cd "${headers_target_dir}" || exit 33
-			find . -type f | grep -v -e "include/config/" -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$" | xargs file | grep -v -e "ASCII" -e "script text" -e "empty" -e "Unicode text" -e "symbolic link" -e "CSV text" -e "SAS 7+" || true
+			find . -type f | grep -v -e "include/config/" -e "include/generated/\.armbian-build\.tar\.gz" -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$" | xargs file | grep -v -e "ASCII" -e "script text" -e "empty" -e "Unicode text" -e "symbolic link" -e "CSV text" -e "SAS 7+" || true
 		)
 	fi
 
@@ -545,6 +564,7 @@ function kernel_package_callback_linux_headers() {
 
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
 			echo "Done compiling kernel-headers (${kernel_version_family})."
+
 		EOT_POSTINST
 
 		if [[ "${ARCH}" == "amd64" ]]; then # This really only works on x86/amd64; @TODO revisit later
@@ -557,6 +577,12 @@ function kernel_package_callback_linux_headers() {
 
 		cat <<- EOT_POSTINST_FINISH
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+
+			# Restore build-time config after all make steps. See: https://github.com/armbian/build/issues/9425
+			if [[ -f include/generated/.armbian-build.tar.gz ]]; then
+				tar -C . -xzf include/generated/.armbian-build.tar.gz
+				rm -f include/generated/.armbian-build.tar.gz
+			fi
 		EOT_POSTINST_FINISH
 	)
 }
