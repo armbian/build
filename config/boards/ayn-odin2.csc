@@ -118,7 +118,7 @@ function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
 		for f in /lib/firmware/qcom/sm8550/ayn/* ; do
 			add_firmware "${f#/lib/firmware/}"
 		done
-		for f in /lib/firmware/qcom/sm8550/ayn/odin2portal/* ; do
+		for f in /lib/firmware/qcom/sm8550/ayn/odin2/* ; do
 			add_firmware "${f#/lib/firmware/}"
 		done
 		add_firmware "qcom/a740_sqe.fw" # Extra one for dpu
