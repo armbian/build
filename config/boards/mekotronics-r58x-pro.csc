@@ -75,7 +75,7 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
-	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led 4G on; sleep 0.1; led LAN on; sleep 0.1; led PWR on; sleep 0.1; led 4G off; sleep 0.1; led LAN off; sleep 0.1;'" # double quotes required due to run_host_command_logged's quirks
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led WIFI on; sleep 0.1; led LAN on; sleep 0.1; led PWR on; sleep 0.1; led WIFI off; sleep 0.1; led LAN off; sleep 0.1;'" # double quotes required due to run_host_command_logged's quirks
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
 	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
