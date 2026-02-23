@@ -68,9 +68,9 @@ function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 	mkdir -p $destination/etc/udev/rules.d/
 	cat <<-EOF > $destination/etc/udev/rules.d/99-ap6611s-bluetooth.rules
 		# Stop service on rfkill block
-		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="0", RUN+="/usr/bin/systemctl stop ap6611s-bluetooth.service"
+		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="0", RUN+="/usr/bin/systemctl stop --no-block ap6611s-bluetooth.service"
 		# Restart service to reload firmware on rfkill unblock
-		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="1", RUN+="/usr/bin/systemctl restart --no-block ap6611s-bluetooth.service"
+		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="1", RUN+="/bin/sh -c 'sleep 2 && systemctl restart --no-block ap6611s-bluetooth.service'"
 	EOF
 
 	return 0
