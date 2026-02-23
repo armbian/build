@@ -109,3 +109,39 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 	# Auto-enabled by the above, force off...
 	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
 }
+
+# Small systemd service and timer to drive the LCD display with the hour-minute of the current time.
+# Deploy the script and the systemd service in the BSP. It'll be enabled below in the image.
+function post_family_tweaks_bsp__meko_r58x_pro_lcd_clock_add_systemd_service() {
+	display_alert "Extension: ${EXTENSION}: ${BOARD}" "adding LCD clock service and timer to BSP" "info"
+	: "${destination:?destination is not set}"
+
+	cat <<- 'LCD_CLOCK_SYSTEMD_SERVICE' > "$destination"/lib/systemd/system/lcd-clock.service
+		[Unit]
+		Description=Update segment LCD clock display
+		ConditionPathExists=/sys/devices/platform/lcd_vk2c21/display
+		[Service]
+		Type=oneshot
+		ExecStart=bash -c 'echo " $(date +%%H)-$(date +%%M) " > /sys/devices/platform/lcd_vk2c21/display'
+	LCD_CLOCK_SYSTEMD_SERVICE
+
+	cat <<- 'LCD_CLOCK_SYSTEMD_TIMER' > "$destination"/lib/systemd/system/lcd-clock.timer
+		[Unit]
+		Description=Update segment LCD clock every minute
+		[Timer]
+		OnBootSec=5
+		OnCalendar=*-*-* *:*:00
+		AccuracySec=1s
+		[Install]
+		WantedBy=timers.target
+	LCD_CLOCK_SYSTEMD_TIMER
+
+	return 0
+}
+
+# Enable the service created in the BSP above.
+function post_family_tweaks__meko_r58x_pro_lcd_clock_service_in_image() {
+	display_alert "Extension: ${EXTENSION}: ${BOARD}" "LCD clock timer in the image" "info"
+	chroot_sdcard systemctl --no-reload enable "lcd-clock.timer"
+	return 0
+}
