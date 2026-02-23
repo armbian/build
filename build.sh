@@ -10,22 +10,10 @@ sudo find .tmp -name "rootfs-*" -maxdepth 1 -type d 2>/dev/null | while read -r 
 done
 sudo rm -fv cache/aptcache/noble-arm64/lock cache/aptcache/lists/noble-arm64/lock
 
-# Generate firstboot preset config
-cat > userpatches/firstboot.conf << 'EOF'
-PRESET_ROOT_PASSWORD=12345678
-PRESET_USER_NAME=orangepi
-PRESET_USER_PASSWORD=12345678
-PRESET_DEFAULT_REALNAME=OrangePi
-PRESET_USER_SHELL=bash
-PRESET_LOCALE=en_US.UTF-8
-PRESET_TIMEZONE=Etc/UTC
-SET_LANG_BASED_ON_LOCATION=n
-PRESET_NET_CHANGE_DEFAULTS=0
-PRESET_CONNECT_WIRELESS=n
-EOF
-`1`
-# Build
+# Build (unset COLUMNS to avoid ValueError in patching.py)
+unset COLUMNS
 ./compile.sh build \
+  PREFER_DOCKER=no \
   BOARD=orangepi5-ultra  \
   BRANCH=vendor \
   BUILD_DESKTOP=yes \
@@ -34,6 +22,8 @@ EOF
   DESKTOP_ENVIRONMENT=gnome \
   DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base \
   KERNEL_CONFIGURE=no \
+  INSTALL_HEADERS=yes \
+  INCLUDE_HOME_DIR=yes \
   RELEASE=noble
 
 # Flash the latest image to /dev/sda
