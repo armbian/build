@@ -52,7 +52,7 @@ function post_family_tweaks__orangepi5max_naming_audios() {
 }
 
 function post_family_tweaks_bsp__orangepi5max_bluetooth() {
-	display_alert "$BOARD" "Installing ap6611s-bluetooth.service" "info"
+	display_alert "$BOARD" "Installing ap6611s-bluetooth.service and udev rules" "info"
 
 	# Bluetooth on this board is handled by a Broadcom (AP6611S) chip and requires
 	# a custom brcm_patchram_plus binary, plus a systemd service to run it at boot time
@@ -62,11 +62,16 @@ function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 	# Reuse the service file, ttyS0 -> ttyS7; BCM4345C5.hcd -> SYN43711A0.hcd
 	sed -i 's/ttyS0/ttyS7/g' $destination/lib/systemd/system/ap6611s-bluetooth.service
 	sed -i 's/BCM4345C5.hcd/SYN43711A0.hcd/g' $destination/lib/systemd/system/ap6611s-bluetooth.service
-	return 0
-}
 
-function post_family_tweaks__orangepi5max_enable_bluetooth_service() {
-	display_alert "$BOARD" "Enabling ap6611s-bluetooth.service" "info"
-	chroot_sdcard systemctl enable ap6611s-bluetooth.service
+	# Bind UART Bluetooth service lifecycle to rfkill events.
+	# This prevents firmware loss by dynamically reloading patchram upon rfkill unblock.
+	mkdir -p $destination/etc/udev/rules.d/
+	cat <<-EOF > $destination/etc/udev/rules.d/99-ap6611s-bluetooth.rules
+		# Stop service on rfkill block
+		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="0", RUN+="/usr/bin/systemctl stop ap6611s-bluetooth.service"
+		# Restart service to reload firmware on rfkill unblock
+		ACTION=="add|change", SUBSYSTEM=="rfkill", ENV{RFKILL_NAME}=="bt_default", ENV{RFKILL_TYPE}=="bluetooth", ENV{RFKILL_STATE}=="1", RUN+="/usr/bin/systemctl restart --no-block ap6611s-bluetooth.service"
+	EOF
+
 	return 0
 }
