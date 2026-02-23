@@ -110,9 +110,9 @@ ConfigureBootOverlays() {
 
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam2-imx415/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam2-imx415' >> /boot/armbianEnv.txt
 		fi
 	fi
 }
@@ -190,16 +190,6 @@ InstallCameraPackages() {
 		libv4l-rkmpp \
 		camera-engine-rkaiq-rk3588 \
 		|| echo "WARNING: Some camera packages failed to install"
-
-	# rkaiq_3A_server crashes on ISP instances with no sensor attached
-	# because it looks for FakeCamera0.json. Provide a dummy IQ file so it
-	# skips gracefully and the 3A pipeline runs for the real cameras.
-	local IQ_SRC="/etc/iqfiles/imx415_CMK-OT2022-PX1_IR0147-50IRC-8M-F20.json"
-	local IQ_FAKE="/etc/iqfiles/FakeCamera0.json"
-	if [[ -f "$IQ_SRC" && ! -f "$IQ_FAKE" ]]; then
-		cp "$IQ_SRC" "$IQ_FAKE"
-		echo "  Created FakeCamera0.json for unused ISP instances"
-	fi
 }
 
 CreateMplaneSymlink() {
@@ -381,7 +371,8 @@ CloneOpenpilot() {
 	cat > /data/continue.sh << 'EOF'
 #!/bin/bash
 cd /data/openpilot
-exec tmux new-session -d -s comma ./launch_openpilot.sh \; wait-for comma
+tmux kill-session -t comma 2>/dev/null
+exec tmux new-session -d -s comma ./launch_openpilot.sh
 EOF
 	chmod 755 /data/continue.sh
 	chown $USERNAME:$USERNAME /data/continue.sh
@@ -427,8 +418,10 @@ After=network.target gdm.service asius-firstboot.service rkaiq_3A.service
 Wants=network.target
 
 [Service]
-Type=exec
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/local/bin/asius-launcher.sh
+ExecStop=/usr/bin/tmux kill-session -t comma
 User=root
 Restart=on-failure
 RestartSec=5
