@@ -26,10 +26,12 @@ Main() {
 	SetupDesktopAutologin
 	SkipFirstboot
 	ConfigureBootOverlays
+	InstallMaliGPU
 	CompileCameraOverlays
 	InstallCameraPackages
 	CreateMplaneSymlink
 	InstallCamScript
+	InstallModelScript
 
 	echo ">>> Asius: Customization complete"
 }
@@ -125,15 +127,38 @@ SkipFirstboot() {
 ConfigureBootOverlays() {
 	echo ">>> Configuring boot overlays"
 
-	# Panthor GPU for Mesa hw accel + IMX415 on CAM0
+	# IMX415 on CAM0 — no panthor-gpu overlay so the built-in mali_bifrost driver claims the GPU
 	# Only enable 1 camera overlay — multiple create extra media devices that break rkaiq 3A
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=panthor-gpu orangepi-5-ultra-cam0-imx415/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=panthor-gpu orangepi-5-ultra-cam0-imx415' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415' >> /boot/armbianEnv.txt
 		fi
 	fi
+}
+
+InstallMaliGPU() {
+	echo ">>> Installing proprietary Mali G610 GPU driver"
+
+	export DEBIAN_FRONTEND=noninteractive
+
+	# panfork PPA has mali-g610-firmware + libmali-g610-x11 for Noble
+	add-apt-repository -y ppa:jjriek/panfork-mesa --no-update
+	apt-get update -q
+
+	apt-get install -y -q \
+		mali-g610-firmware \
+		libmali-g610-x11 \
+		|| { echo "ERROR: Failed to install Mali GPU packages"; return 1; }
+
+	# blacklist panthor (open-source driver) so it doesn't race with mali_bifrost
+	echo "blacklist panthor" > /etc/modprobe.d/blacklist-panthor.conf
+
+	# remove rusticl ICD if present — we only want the Mali blob's OpenCL
+	rm -f /etc/OpenCL/vendors/rusticl.icd
+
+	echo "  OK: Mali G610 blob installed, panthor blacklisted"
 }
 
 CompileCameraOverlays() {
@@ -233,6 +258,29 @@ ffplay -f v4l2 -video_size ${W}x${H} -input_format nv12 $CAM
 CAMEOF
 	chmod 755 /home/$USERNAME/cam.sh
 	chown $USERNAME:$USERNAME /home/$USERNAME/cam.sh
+}
+
+InstallModelScript() {
+	echo ">>> Installing ~/model.sh"
+
+	cat > /home/$USERNAME/model.sh << 'MODELEOF'
+#!/bin/bash
+# Usage: ./model.sh [vision|policy|both]
+# Compiles and benchmarks openpilot models on Mali G610 via tinygrad compile3.py
+# Requires: ~/openpilot with tinygrad_repo submodule and LFS model files
+set -e
+OP="${OPENPILOT_DIR:-$HOME/openpilot}"
+export PYTHONPATH="$OP/tinygrad_repo"
+C="$OP/tinygrad_repo/examples/openpilot/compile3.py"
+M="$OP/selfdrive/modeld/models"
+[ -f "$C" ] || { echo "Missing tinygrad. Run: git clone --depth 1 -b orangepi https://github.com/asiusai/openpilot.git ~/openpilot && cd ~/openpilot && git submodule update --init --depth 1 tinygrad_repo"; exit 1; }
+python3 -c "import onnx" 2>/dev/null || pip3 install onnx --break-system-packages -q
+what="${1:-both}"
+[ "$what" = "both" -o "$what" = "vision" ] && { echo "=== driving_vision ==="; python3 "$C" "$M/driving_vision.onnx" /tmp/driving_vision.pkl; }
+[ "$what" = "both" -o "$what" = "policy" ] && { echo "=== driving_policy ==="; python3 "$C" "$M/driving_policy.onnx" /tmp/driving_policy.pkl; }
+MODELEOF
+	chmod 755 /home/$USERNAME/model.sh
+	chown $USERNAME:$USERNAME /home/$USERNAME/model.sh
 }
 
 Main "$@"
