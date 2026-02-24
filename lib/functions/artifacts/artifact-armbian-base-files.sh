@@ -56,7 +56,7 @@ function artifact_armbian-base-files_prepare_version() {
 	artifact_name="armbian-base-files-${RELEASE}-${ARCH}"
 	artifact_type="deb"
 	artifact_deb_repo="extra/${RELEASE}-utils" # release-specific repo (jammy etc)
-	artifact_deb_arch="${ARCH}"    # arch-specific packages (arm64 etc)
+	artifact_deb_arch="${ARCH}"                # arch-specific packages (arm64 etc)
 	artifact_map_packages=(["armbian-base-files"]="base-files")
 
 	# Important. Force the final reversioned version to contain the release name.
@@ -114,7 +114,7 @@ function compile_armbian-base-files() {
 		Version: ${artifact_version}
 	EOD
 	# Keep everything else from original
-	cat "${destination}/DEBIAN/control" | grep -vP '^(Maintainer|Version):' >> "${destination}/DEBIAN/control.new"
+	grep -vP '^(Maintainer|Version):' "${destination}/DEBIAN/control" >> "${destination}/DEBIAN/control.new"
 
 	# Replace 'Debian' with 'Armbian'.
 	sed -i "s/Debian/${VENDOR}/g" "${destination}/DEBIAN/control.new"

@@ -29,8 +29,8 @@ function post_family_config__mekor58x_4g_use_mainline_uboot() {
 	declare -g BOOTCONFIG="mekotronics-r58x-4g-rk3588_defconfig" # mainline
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01"
+	declare -g BOOTBRANCH="tag:v2026.04-rc2"
+	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
 	declare -g UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
@@ -52,6 +52,20 @@ function pre_config_uboot_target__mekor58x_4g_patch_rockchip_common_boot_order()
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
 	regular_git diff -u include/configs/rockchip-common.h || true
+}
+
+function pre_config_uboot_target__ekor58x_4g_patch_uboot_dtsi_for_ums() {
+	[[ "${BRANCH}" == "vendor" ]] && return 0 # Not for 'vendor' branch, which uses 2017.09 vendor u-boot from Radxa
+
+	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
+	# Append to the t6 u-boot dtsi file with stuff for enabling gadget/otg/peripheral mode
+	cat <<- EOD >> arch/arm/dts/rk3588-blueberry-edge-v12-linux-u-boot.dtsi
+		#include "rk3588-generic-u-boot.dtsi"
+		&u2phy0 { status = "okay"; };
+		&u2phy0_otg { status = "okay"; };
+		&usbdp_phy0 { status = "okay"; };
+		&usb_host0_xhci { dr_mode = "peripheral";  maximum-speed = "high-speed";  status = "okay"; };
+	EOD
 }
 
 function post_config_uboot_target__extra_configs_for_mekor58x_4g_mainline_environment_in_spi() {

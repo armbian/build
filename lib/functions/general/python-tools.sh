@@ -62,7 +62,7 @@ function prepare_python_and_pip() {
 	display_alert "pip3 version" "${pip3_version_number}" "info"
 
 	# Calculate the hash for the Pip requirements
-	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version_number}" "$(cat "${python3_pip_dependencies_path}")" | sha256sum | cut -d' ' -f1)"
+	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version_number}" "$(< "${python3_pip_dependencies_path}")" | sha256sum | cut -d' ' -f1)"
 
 	declare non_cache_dir="/armbian-pip"
 	declare python_pip_cache="${SRC}/cache/pip"

@@ -58,8 +58,7 @@ function trap_handler_cleanup_logging() {
 				zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
 				reset_uid_owner "${target_archive_path}/${old_logfile_fn}.zst"
 			else
-				# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
-				cat "${one_old_logfile}" | gzip > "${target_archive_path}/${old_logfile_fn}.gz"
+				gzip -c "${one_old_logfile}" > "${target_archive_path}/${old_logfile_fn}.gz"
 				reset_uid_owner "${target_archive_path}/${old_logfile_fn}.gz"
 			fi
 			rm -f "${one_old_logfile}"
@@ -97,8 +96,7 @@ function trap_handler_cleanup_logging() {
 	# ASCII logs, via ansi2txt, if available.
 	local ascii_log_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log"
 	if [[ -n "$(command -v ansi2txt)" ]]; then
-		# shellcheck disable=SC2002 # gotta pipe, man. I know.
-		cat "${ansi_log_file}" | ansi2txt >> "${ascii_log_file}"
+		ansi2txt < "${ansi_log_file}" >> "${ascii_log_file}"
 	fi
 
 	# Export Markdown assets, but not if in GHA and GHA_EXPORT_MD_SUMMARY != yes

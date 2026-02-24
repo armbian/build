@@ -95,8 +95,7 @@ function logging_error_show_log() {
 			local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 			CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 
-			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+			grep -v -e "^$" "${logfile_to_show}" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 
 			CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
 		else
