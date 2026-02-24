@@ -110,9 +110,9 @@ ConfigureBootOverlays() {
 
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam2-imx415/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam2-imx415' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415' >> /boot/armbianEnv.txt
 		fi
 	fi
 }
@@ -454,12 +454,29 @@ echo -n 1 > /data/params/d/SshEnabled
 
 chown -R asius:asius /data/openpilot /data/params /data/persist /data/media /data/ssh /data/tmp
 chown root:root /data/etc /data/etc/ssh
-ln -sf /data/openpilot /data/pythonpath
+ln -sfn /data/openpilot /data/pythonpath
+
+# wait for DNS to be ready (NetworkManager may not be up yet at boot)
+echo "asius-firstboot: waiting for network..."
+for i in $(seq 1 60); do
+    if getent hosts pypi.org >/dev/null 2>&1; then
+        echo "asius-firstboot: network ready after ${i}s"
+        break
+    fi
+    sleep 1
+done
+if ! getent hosts pypi.org >/dev/null 2>&1; then
+    echo "ERROR: asius-firstboot: no network after 60s, aborting (will retry next boot)"
+    exit 1
+fi
 
 # create venv + install openpilot python deps (must run on real hardware, not cross-arch chroot)
 if [ ! -f /usr/local/venv/bin/python3 ]; then
     echo "asius-firstboot: creating python venv"
-    uv venv /usr/local/venv --seed --python-preference only-system --python=3.12
+    uv venv /usr/local/venv --seed --python-preference only-system --python=3.12 || {
+        echo "ERROR: asius-firstboot: venv creation failed, aborting"
+        exit 1
+    }
     chown -R asius:asius /usr/local/venv
 fi
 
@@ -468,8 +485,12 @@ if [ -f /data/openpilot/pyproject.toml ]; then
     source /usr/local/venv/bin/activate
     cd /data/openpilot
     MAKEFLAGS="-j$(nproc)" UV_NO_CACHE=1 UV_PROJECT_ENVIRONMENT=/usr/local/venv \
-        uv pip install -e ".[dev]" --compile-bytecode \
-        || echo "WARNING: some python deps failed"
+        uv pip install -e ".[dev]" --compile-bytecode || {
+        echo "ERROR: asius-firstboot: pip install failed, aborting (will retry next boot)"
+        exit 1
+    }
+    # install extra deps not in pyproject.toml
+    uv pip install Pillow opencv-python-headless || true
 fi
 
 touch "$MARKER"
@@ -482,8 +503,9 @@ FBEOF
 	cat > /etc/systemd/system/asius-firstboot.service << 'EOF'
 [Unit]
 Description=Asius first-boot initialization
-After=local-fs.target
-Before=ssh.service asius.service
+After=local-fs.target network-online.target
+Wants=network-online.target
+Before=asius.service
 ConditionPathExists=!/data/.asius_initialized
 
 [Service]
