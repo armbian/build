@@ -23,6 +23,7 @@ Main() {
 	SetupLocaleTimezone
 	SetupDesktopAutologin
 	SkipFirstboot
+	SetupI2CPermissions
 	ConfigureBootOverlays
 	InstallMaliGPU
 	CompileCameraOverlays
@@ -47,10 +48,10 @@ SetupUser() {
 	echo "$USERNAME:$PASSWD" | chpasswd
 	echo "root:$PASSWD" | chpasswd
 
-	for grp in gpio gpu; do
+	for grp in gpio gpu i2c; do
 		groupadd -f $grp
 	done
-	for grp in root video gpio adm gpu audio disk dialout systemd-journal netdev; do
+	for grp in root video gpio adm gpu audio disk dialout systemd-journal netdev i2c; do
 		adduser $USERNAME $grp 2>/dev/null || true
 	done
 
@@ -111,14 +112,21 @@ SkipFirstboot() {
 	chmod +x /etc/update-motd.d/* 2>/dev/null || true
 }
 
+SetupI2CPermissions() {
+	echo ">>> Setting up I2C device permissions"
+
+	# udev rule so /dev/i2c-* is accessible to i2c group without sudo
+	echo 'KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"' > /etc/udev/rules.d/99-i2c.rules
+}
+
 ConfigureBootOverlays() {
 	echo ">>> Configuring boot overlays"
 
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 rk3588-i2c2-m0/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=orangepi-5-ultra-cam0-imx415' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415 rk3588-i2c2-m0' >> /boot/armbianEnv.txt
 		fi
 	fi
 }
