@@ -91,6 +91,12 @@ AutomaticLoginEnable = true
 AutomaticLogin = $USERNAME
 EOF
 
+	# Disable screen lock and idle
+	mkdir -p /home/$USERNAME/.config/dconf
+	su -c "dbus-launch gsettings set org.gnome.desktop.screensaver lock-enabled false" $USERNAME 2>/dev/null || true
+	su -c "dbus-launch gsettings set org.gnome.desktop.session idle-delay 0" $USERNAME 2>/dev/null || true
+	su -c "dbus-launch gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing" $USERNAME 2>/dev/null || true
+
 	# Armbian disables display managers during build, re-enable since we skip firstlogin
 	if [[ -f /lib/systemd/system/gdm.service ]]; then
 		ln -sf /lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
