@@ -23,6 +23,7 @@ Main() {
 	SetupLocaleTimezone
 	SkipFirstboot
 	SetupI2CPermissions
+	FixRealtimeScheduling
 	ConfigureBootOverlays
 	AddPPAs
 	InstallMaliGPU
@@ -93,6 +94,25 @@ SetupI2CPermissions() {
 
 	# udev rule so /dev/i2c-* is accessible to i2c group without sudo
 	echo 'KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"' > /etc/udev/rules.d/99-i2c.rules
+}
+
+FixRealtimeScheduling() {
+	echo ">>> Fixing RT scheduling for rkaiq 3A engine"
+
+	# Armbian enables CONFIG_RT_GROUP_SCHED=y in the kernel, which combined with
+	# cgroup v2 makes sched_setscheduler(SCHED_RR) return EPERM even for root.
+	# rkaiq's stats polling thread calls sched_setscheduler(SCHED_RR, prio=20),
+	# gets EPERM, and exit(0)s -- killing 3A auto-exposure and leaving camera dark.
+	# Setting sched_rt_runtime_us=-1 disables the RT bandwidth throttling,
+	# allowing SCHED_RR to work. This matches ubuntu-rockchip's behavior
+	# (which simply doesn't set CONFIG_RT_GROUP_SCHED).
+	cat > /etc/sysctl.d/99-rkaiq-rt-scheduling.conf << 'EOF'
+# Allow SCHED_RR/SCHED_FIFO for rkaiq 3A stats thread
+# Without this, CONFIG_RT_GROUP_SCHED + cgroup v2 blocks RT scheduling
+kernel.sched_rt_runtime_us = -1
+EOF
+
+	echo "  OK: sysctl kernel.sched_rt_runtime_us=-1 will persist across reboots"
 }
 
 ConfigureBootOverlays() {

@@ -10,8 +10,8 @@ sudo find .tmp -name "rootfs-*" -maxdepth 1 -type d 2>/dev/null | while read -r 
 done
 sudo rm -fv cache/aptcache/noble-arm64/lock cache/aptcache/lists/noble-arm64/lock
 
-# Build (unset COLUMNS to avoid ValueError in patching.py)
-unset COLUMNS
+# Build (set COLUMNS to avoid ValueError in patching.py)
+export COLUMNS=160
 ./compile.sh build \
   PREFER_DOCKER=no \
   BOARD=orangepi5-ultra  \
