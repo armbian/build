@@ -120,9 +120,9 @@ ConfigureBootOverlays() {
 
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 rk3588-i2c2-m0/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=orangepi-5-ultra-cam0-imx415 rk3588-i2c2-m0' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0' >> /boot/armbianEnv.txt
 		fi
 	fi
 }
@@ -222,6 +222,18 @@ InstallCameraPackages() {
 		libv4l-rkmpp \
 		camera-engine-rkaiq-rk3588 \
 		|| echo "WARNING: Some camera packages failed to install"
+
+	# rkaiq crashes if an ISP instance has no sensor and FakeCamera0 files are missing.
+	# This happens when camera overlays are enabled but a camera isn't plugged in.
+	# Providing these files lets rkaiq skip the unused ISP gracefully.
+	if [[ -d /etc/iqfiles ]]; then
+		local IQ="/etc/iqfiles/imx415_CMK-OT2022-PX1_IR0147-50IRC-8M-F20.json"
+		if [[ -f "$IQ" ]]; then
+			cp "$IQ" /etc/iqfiles/FakeCamera0.json
+			touch /etc/iqfiles/FakeCamera0.bin
+			echo "  OK: FakeCamera0 files created"
+		fi
+	fi
 }
 
 CreateMplaneSymlink() {
