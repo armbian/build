@@ -16,15 +16,11 @@ unset COLUMNS
   PREFER_DOCKER=no \
   BOARD=orangepi5-ultra  \
   BRANCH=vendor \
-  BUILD_DESKTOP=yes \
-  BUILD_MINIMAL=no \
-  DESKTOP_APPGROUPS_SELECTED='' \
-  DESKTOP_ENVIRONMENT=gnome \
-  DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base \
+  BUILD_MINIMAL=yes \
   KERNEL_CONFIGURE=no \
   INSTALL_HEADERS=yes \
   INCLUDE_HOME_DIR=yes \
   RELEASE=noble
 
 # Flash the latest image to /dev/sda
-# sudo dd if="output/images/Armbian-unofficial_26.02.0-trunk_Orangepi5-ultra_noble_vendor_6.1.115_gnome_desktop.img" of=/dev/sda bs=4M status=progress conv=fsync && sudo sync
+# sudo dd if="output/images/Armbian-unofficial_26.02.0-trunk_Orangepi5-ultra_noble_vendor_6.1.115_minimal.img" of=/dev/sda bs=4M status=progress conv=fsync && sudo sync

@@ -21,10 +21,10 @@ Main() {
 
 	SetupUser
 	SetupLocaleTimezone
-	SetupDesktopAutologin
 	SkipFirstboot
 	SetupI2CPermissions
 	ConfigureBootOverlays
+	AddPPAs
 	InstallMaliGPU
 	CompileCameraOverlays
 	InstallCameraPackages
@@ -51,7 +51,7 @@ SetupUser() {
 	for grp in gpio gpu i2c; do
 		groupadd -f $grp
 	done
-	for grp in root video gpio adm gpu audio disk dialout systemd-journal netdev i2c; do
+	for grp in root video gpio adm gpu audio disk dialout systemd-journal netdev i2c input; do
 		adduser $USERNAME $grp 2>/dev/null || true
 	done
 
@@ -82,40 +82,6 @@ SetupLocaleTimezone() {
 	sed -i 's|^DSHELL=.*|DSHELL=/bin/bash|' /etc/adduser.conf 2>/dev/null || true
 }
 
-SetupDesktopAutologin() {
-	echo ">>> Configuring GDM autologin for $USERNAME"
-
-	mkdir -p /etc/gdm3
-	cat > /etc/gdm3/custom.conf << EOF
-[daemon]
-AutomaticLoginEnable = true
-AutomaticLogin = $USERNAME
-EOF
-
-	# Disable screen lock and idle (write dconf db directly, no dbus needed)
-	mkdir -p /home/$USERNAME/.config/dconf
-	cat > /tmp/asius-dconf-defaults << 'DCONF'
-[org/gnome/desktop/screensaver]
-lock-enabled=false
-
-[org/gnome/desktop/session]
-idle-delay=uint32 0
-
-[org/gnome/settings-daemon/plugins/power]
-sleep-inactive-ac-type='nothing'
-DCONF
-	dconf compile /home/$USERNAME/.config/dconf/user /tmp/asius-dconf-defaults
-	chown -R $USERNAME:$USERNAME /home/$USERNAME/.config/dconf
-	rm -f /tmp/asius-dconf-defaults
-
-	# Armbian disables display managers during build, re-enable since we skip firstlogin
-	if [[ -f /lib/systemd/system/gdm.service ]]; then
-		ln -sf /lib/systemd/system/gdm.service /etc/systemd/system/display-manager.service
-	elif [[ -f /lib/systemd/system/gdm3.service ]]; then
-		ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
-	fi
-}
-
 SkipFirstboot() {
 	echo ">>> Skipping Armbian first-boot wizard"
 	rm -f /root/.not_logged_in_yet
@@ -141,18 +107,44 @@ ConfigureBootOverlays() {
 	fi
 }
 
+AddPPAs() {
+	echo ">>> Adding third-party PPAs"
+
+	# Write PPA sources directly (add-apt-repository requires software-properties-common which isn't in minimal chroot)
+	mkdir -p /etc/apt/keyrings
+
+	# jjriek (panfork-mesa + rockchip-multimedia) - key 3CC0D9D1F3F0354B50D24F51F02122ECF25FB4D7
+	curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x3CC0D9D1F3F0354B50D24F51F02122ECF25FB4D7" | \
+		gpg --dearmor -o /etc/apt/keyrings/jjriek.gpg 2>/dev/null
+	echo "deb [signed-by=/etc/apt/keyrings/jjriek.gpg] https://ppa.launchpadcontent.net/jjriek/panfork-mesa/ubuntu noble main" \
+		> /etc/apt/sources.list.d/jjriek-panfork-mesa.list
+	echo "deb [signed-by=/etc/apt/keyrings/jjriek.gpg] https://ppa.launchpadcontent.net/jjriek/rockchip-multimedia/ubuntu noble main" \
+		> /etc/apt/sources.list.d/jjriek-rockchip-multimedia.list
+
+	# liujianfeng1994/rockchip-multimedia - key 0B2F0747E3BD546820A639B68065BE1FC67AABDE
+	curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x0B2F0747E3BD546820A639B68065BE1FC67AABDE" | \
+		gpg --dearmor -o /etc/apt/keyrings/liujianfeng1994.gpg 2>/dev/null
+	echo "deb [signed-by=/etc/apt/keyrings/liujianfeng1994.gpg] https://ppa.launchpadcontent.net/liujianfeng1994/rockchip-multimedia/ubuntu noble main" \
+		> /etc/apt/sources.list.d/liujianfeng1994-rockchip-multimedia.list
+
+	apt-get update -q
+}
+
 InstallMaliGPU() {
 	echo ">>> Installing proprietary Mali G610 GPU driver"
 
 	export DEBIAN_FRONTEND=noninteractive
 
-	add-apt-repository -y ppa:jjriek/panfork-mesa --no-update
-	apt-get update -q
-
 	apt-get install -y -q \
 		mali-g610-firmware \
 		libmali-g610-x11 \
 		|| { echo "ERROR: Failed to install Mali GPU packages"; return 1; }
+
+	# GPU rendering libs for DRM/GBM/EGL (raylib PLATFORM_COMMA)
+	apt-get install -y -q \
+		libgles2-mesa-dev libegl1-mesa-dev libgbm-dev libdrm-dev \
+		libwayland-dev \
+		|| echo "WARNING: Some GPU dev packages failed to install"
 
 	# blacklist panthor so it doesn't race with mali_bifrost
 	echo "blacklist panthor" > /etc/modprobe.d/blacklist-panthor.conf
@@ -203,10 +195,6 @@ InstallCameraPackages() {
 	echo ">>> Installing camera packages"
 
 	export DEBIAN_FRONTEND=noninteractive
-
-	add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia --no-update
-	add-apt-repository -y ppa:jjriek/rockchip-multimedia --no-update
-	apt-get update -q
 
 	apt-get install -y -q \
 		ffmpeg \
@@ -320,6 +308,7 @@ SetupPython() {
 
 	apt-get install -y -q \
 		python3 python3-dev python3-venv \
+		network-manager \
 		build-essential cmake clang curl pkg-config git git-lfs \
 		libssl-dev libffi-dev libsqlite3-dev zlib1g-dev libbz2-dev liblzma-dev \
 		libzmq3-dev libczmq-dev libeigen3-dev libusb-1.0-0-dev libsystemd-dev \
@@ -420,12 +409,6 @@ rm -rf /data/tmp
 mkdir -p /data/tmp
 chown asius:asius /data/tmp
 
-# wait for Xwayland to be ready (needed for UI)
-for i in $(seq 1 30); do
-    ls /run/user/1000/.mutter-Xwaylandauth.* >/dev/null 2>&1 && break
-    sleep 1
-done
-
 if [ -f "$CONTINUE" ]; then
     chmod +x "$CONTINUE"
     exec su -l asius -c "exec $CONTINUE"
@@ -438,7 +421,7 @@ LAUNCHEOF
 	cat > /etc/systemd/system/asius.service << 'EOF'
 [Unit]
 Description=Asius openpilot launcher
-After=network.target gdm.service asius-firstboot.service rkaiq_3A.service
+After=network.target asius-firstboot.service rkaiq_3A.service
 Wants=network.target
 
 [Service]
@@ -515,6 +498,36 @@ if [ -f /data/openpilot/pyproject.toml ]; then
     }
     # install extra deps not in pyproject.toml
     uv pip install Pillow opencv-python-headless || true
+fi
+
+# build and install PLATFORM_COMMA raylib Python wheel (must run on real aarch64 hardware)
+RAYLIB_DIR="/data/openpilot/third_party/raylib"
+if [ -f "$RAYLIB_DIR/larch64/libraylib.a" ] && [ -f "$RAYLIB_DIR/include/raylib.h" ]; then
+    echo "asius-firstboot: building raylib PLATFORM_COMMA Python wheel"
+    source /usr/local/venv/bin/activate
+
+    # clone raylib-python-cffi if not present
+    if [ ! -d "$RAYLIB_DIR/raylib_python_repo" ]; then
+        git clone --depth=1 https://github.com/electronstudio/raylib-python-cffi.git "$RAYLIB_DIR/raylib_python_repo"
+        chown -R asius:asius "$RAYLIB_DIR/raylib_python_repo"
+    fi
+
+    cd "$RAYLIB_DIR/raylib_python_repo"
+    rm -rf build dist
+    RAYLIB_PLATFORM=PLATFORM_COMMA \
+        RAYLIB_INCLUDE_PATH="$RAYLIB_DIR/include" \
+        RAYGUI_INCLUDE_PATH="$RAYLIB_DIR/include" \
+        RAYLIB_LINK_ARGS="$RAYLIB_DIR/larch64/libraylib.a -lGLESv2 -lEGL -lgbm -ldrm -lm -lpthread -lrt -ldl -latomic" \
+        python3 setup.py bdist_wheel || {
+        echo "ERROR: asius-firstboot: raylib wheel build failed"
+    }
+
+    WHEEL=$(ls dist/raylib-*.whl 2>/dev/null | head -1)
+    if [ -n "$WHEEL" ]; then
+        pip install --force-reinstall "$WHEEL" || echo "ERROR: raylib wheel install failed"
+        echo "asius-firstboot: raylib PLATFORM_COMMA wheel installed"
+    fi
+    cd /data/openpilot
 fi
 
 touch "$MARKER"
