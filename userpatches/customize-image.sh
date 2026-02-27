@@ -33,6 +33,8 @@ Main() {
 	SetupDataFilesystem
 	SetupSSHPersistence
 	SetupNetworkPersistence
+	SetupPowerLimits
+	SetupPersistentJournal
 	SetupPython
 	SetupTmux
 	CloneOpenpilot
@@ -265,10 +267,16 @@ SetupDataFilesystem() {
 	mkdir -p /data
 	chown $USERNAME:$USERNAME /data
 
-	mkdir -p /data/openpilot /data/params/d /data/persist /data/media /data/ssh /data/tmp
-	chown -R $USERNAME:$USERNAME /data/openpilot /data/params /data/persist /data/media /data/ssh /data/tmp
+	mkdir -p /data/openpilot /data/params/d /data/persist/comma /data/media/0/realdata /data/log /data/stats /data/ssh /data/tmp
+	chown -R $USERNAME:$USERNAME /data/openpilot /data/params /data/persist /data/media /data/log /data/stats /data/ssh /data/tmp
 
 	ln -sf /data/openpilot /data/pythonpath
+
+	# /persist symlink for openpilot compatibility (expects /persist/ on device)
+	ln -sfn /data/persist /persist
+
+	# marker file so openpilot knows this is an asius device (like /TICI for comma)
+	touch /ASIUS
 
 	mkdir -p /data/etc/ssh /data/etc/NetworkManager/system-connections
 	chown root:root /data/etc
@@ -330,6 +338,67 @@ NETEOF
 	cat > /etc/systemd/system/NetworkManager.service.d/persist.conf << 'EOF'
 [Service]
 ExecStartPre=/usr/local/bin/asius-network-persist.sh
+EOF
+
+	# Allow netdev group to manage NetworkManager from remote (SSH) sessions.
+	# Default polkit rule requires subject.local which is false over SSH/Tailscale.
+	mkdir -p /etc/polkit-1/rules.d
+	cat > /etc/polkit-1/rules.d/50-networkmanager.rules << 'PKEOF'
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 &&
+        subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});
+PKEOF
+}
+
+SetupPowerLimits() {
+	echo ">>> Setting up CPU/GPU power limits"
+
+	# Cap frequencies to reduce peak power draw (~5W savings).
+	# Prevents brown-out crashes on USB power sources.
+	# RK3588 at full clocks (2.35GHz big + 1GHz GPU) draws ~15-20W,
+	# which exceeds most USB-C sources under camera + model load.
+	cat > /usr/local/bin/asius-power-limit.sh << 'EOF'
+#!/bin/bash
+# Big cores (A76): cap to 1.8GHz (from 2.35GHz)
+echo 1800000 > /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq
+echo 1800000 > /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq
+# Little cores (A55): cap to 1.2GHz (from 1.8GHz)
+echo 1200000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq
+# GPU: cap to 700MHz (from 1GHz)
+echo 700000000 > /sys/class/devfreq/fb000000.gpu/max_freq 2>/dev/null || true
+EOF
+	chmod 755 /usr/local/bin/asius-power-limit.sh
+
+	cat > /etc/systemd/system/asius-power-limit.service << 'EOF'
+[Unit]
+Description=Asius CPU/GPU power limits
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/asius-power-limit.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+	systemctl enable asius-power-limit.service 2>/dev/null || true
+}
+
+SetupPersistentJournal() {
+	echo ">>> Enabling persistent journal"
+
+	mkdir -p /var/log/journal
+	mkdir -p /etc/systemd/journald.conf.d
+	cat > /etc/systemd/journald.conf.d/persistent.conf << 'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=50M
+SystemMaxFileSize=10M
 EOF
 }
 
@@ -450,7 +519,7 @@ echo "asius-launcher: no /data/continue.sh found"
 LAUNCHEOF
 	chmod 755 /usr/local/bin/asius-launcher.sh
 
-	cat > /etc/systemd/system/asius.service << 'EOF'
+	cat > /etc/systemd/system/openpilot.service << 'EOF'
 [Unit]
 Description=Asius openpilot launcher
 After=network.target asius-firstboot.service rkaiq_3A.service
@@ -469,7 +538,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-	systemctl enable asius.service 2>/dev/null || true
+	systemctl enable openpilot.service 2>/dev/null || true
 }
 
 SetupFirstBoot() {
@@ -482,11 +551,19 @@ MARKER="/data/.asius_initialized"
 
 echo "asius-firstboot: initializing /data"
 
-mkdir -p /data/openpilot /data/params/d /data/persist /data/media /data/ssh /data/etc/ssh /data/tmp
+mkdir -p /data/openpilot /data/params/d /data/persist/comma /data/media/0/realdata /data/log /data/stats /data/ssh /data/etc/ssh /data/tmp
 
 if [ ! -f /data/ssh/id_ed25519 ]; then
     ssh-keygen -t ed25519 -f /data/ssh/id_ed25519 -N "" -C "asius@$(hostname)"
     chown asius:asius /data/ssh/id_ed25519 /data/ssh/id_ed25519.pub
+fi
+
+# generate RSA keypair for openpilot device registration (pilotauth API)
+if [ ! -f /data/persist/comma/id_rsa ]; then
+    openssl genrsa -out /data/persist/comma/id_rsa 2048
+    openssl rsa -in /data/persist/comma/id_rsa -pubout -out /data/persist/comma/id_rsa.pub
+    chmod 600 /data/persist/comma/id_rsa
+    chown asius:asius /data/persist/comma/id_rsa /data/persist/comma/id_rsa.pub
 fi
 
 echo -n 1 > /data/params/d/SshEnabled
@@ -574,7 +651,7 @@ FBEOF
 Description=Asius first-boot initialization
 After=local-fs.target network-online.target
 Wants=network-online.target
-Before=asius.service
+Before=openpilot.service
 ConditionPathExists=!/data/.asius_initialized
 
 [Service]
