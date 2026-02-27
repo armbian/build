@@ -485,8 +485,8 @@ CloneOpenpilot() {
 	cat > /data/continue.sh << 'EOF'
 #!/bin/bash
 cd /data/openpilot
-tmux kill-session -t comma 2>/dev/null
-exec tmux new-session -d -s comma ./launch_openpilot.sh
+tmux kill-session -t openpilot 2>/dev/null
+exec tmux new-session -d -s openpilot ./launch_openpilot.sh
 EOF
 	chmod 755 /data/continue.sh
 	chown $USERNAME:$USERNAME /data/continue.sh
@@ -521,7 +521,7 @@ LAUNCHEOF
 
 	cat > /etc/systemd/system/openpilot.service << 'EOF'
 [Unit]
-Description=Asius openpilot launcher
+Description=Openpilot launcher
 After=network.target asius-firstboot.service rkaiq_3A.service
 Wants=network.target
 
@@ -529,7 +529,7 @@ Wants=network.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/asius-launcher.sh
-ExecStop=/usr/bin/tmux kill-session -t comma
+ExecStop=/usr/bin/tmux kill-session -t openpilot
 User=root
 Restart=on-failure
 RestartSec=5
