@@ -367,8 +367,9 @@ echo 1800000 > /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq
 echo 1800000 > /sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq
 # Little cores (A55): cap to 1.2GHz (from 1.8GHz)
 echo 1200000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq
-# GPU: cap to 700MHz (from 1GHz)
-echo 700000000 > /sys/class/devfreq/fb000000.gpu/max_freq 2>/dev/null || true
+# GPU: performance governor, 900MHz (safe cap, 44ms exec with 6ms headroom)
+echo performance > /sys/devices/platform/fb000000.gpu/devfreq/fb000000.gpu/governor 2>/dev/null || true
+echo 900000000 > /sys/devices/platform/fb000000.gpu/devfreq/fb000000.gpu/max_freq 2>/dev/null || true
 EOF
 	chmod 755 /usr/local/bin/asius-power-limit.sh
 
