@@ -96,6 +96,9 @@ SetupI2CPermissions() {
 
 	# udev rule so /dev/i2c-* is accessible to i2c group without sudo
 	echo 'KERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"' > /etc/udev/rules.d/99-i2c.rules
+
+	# udev rule so /dev/mpp_service is accessible without sudo (needed for rkmpp hardware encoding)
+	echo 'KERNEL=="mpp_service", MODE="0666"' > /etc/udev/rules.d/99-mpp.rules
 }
 
 FixRealtimeScheduling() {
