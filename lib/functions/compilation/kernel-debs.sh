@@ -289,21 +289,14 @@ function kernel_package_callback_linux_image() {
 				test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
 			KERNEL_HOOK_DELEGATION
 
-			if [[ "${script}" == "preinst" ]]; then
-				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
-					if is_boot_dev_vfat; then
-						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
-					fi
-				HOOK_FOR_REMOVE_VFAT_BOOT_FILES
-			fi
-
 			# @TODO: only if u-boot, only for postinst. Gotta find a hook scheme for these...
 			if [[ "${script}" == "postinst" ]]; then
 				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
 					touch /boot/.next
 					if is_boot_dev_vfat; then
-						echo "Armbian: FAT32 /boot: move last-installed kernel to '$image_name'..."
-						mv -v /${installed_image_path} /boot/${image_name}
+						echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
+						cp -vf "/${installed_image_path}" "/boot/${image_name}.new"
+						mv -vf "/boot/${image_name}.new" "/boot/${image_name}"
 					else
 						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 						ln -sfv $(basename "${installed_image_path}") /boot/$image_name
@@ -362,8 +355,10 @@ function kernel_package_callback_linux_dtb() {
 				echo "Armbian: DTB: symlinking /boot/dtb to /boot/dtb-${kernel_version_family}..."
 				ln -sfTv "dtb-${kernel_version_family}" dtb
 			else
-				echo "Armbian: DTB: FAT32: moving /boot/dtb-${kernel_version_family} to /boot/dtb ..."
-				mv -v "dtb-${kernel_version_family}" dtb
+				echo "Armbian: DTB: FAT32: copying /boot/dtb-${kernel_version_family} to /boot/dtb ..."
+				rm -rf "dtb.new"
+				cp -r "dtb-${kernel_version_family}" "dtb.new"
+				mv "dtb.new" "dtb"
 			fi
 		EOT
 	)
