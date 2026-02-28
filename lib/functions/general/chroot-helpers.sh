@@ -13,19 +13,95 @@ function mount_chroot() {
 		display_alert "mount_chroot called outside of logging section..." "mount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
 	fi
 
-	local target
+	local target cache_src
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
-	mkdir -p "${target}/run/user/0"
+	# Track mounts we create so we can unwind on failure.
+	local -a mounted_points=()
+	cleanup_mounted_points() {
+		local -i i
+		for (( i=${#mounted_points[@]}-1; i>=0; i-- )); do
+			umount --recursive "${mounted_points[i]}" &> /dev/null || true
+		done
+	}
+	if ! mkdir -p "${target}/run/user/0"; then
+		display_alert "Failed to prepare chroot runtime directory" "${target}/run/user/0" "err"
+		return 1
+	fi
 
 	# tmpfs size=50% is the Linux default, but we need more.
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/var/tmp"
-	mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"
-	mount -t proc chproc "${target}"/proc
-	mount -t sysfs chsys "${target}"/sys
-	mount --bind /dev "${target}"/dev
-	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
+	if ! mountpoint -q "${target}/tmp"; then
+		if ! mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"; then
+			display_alert "Failed to mount tmpfs inside chroot" "${target}/tmp" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/tmp")
+	fi
+	if ! mountpoint -q "${target}/var/tmp"; then
+		if ! mount -t tmpfs -o "size=99%" tmpfs "${target}/var/tmp"; then
+			display_alert "Failed to mount tmpfs inside chroot" "${target}/var/tmp" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/var/tmp")
+	fi
+	if ! mountpoint -q "${target}/run/user/0"; then
+		if ! mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"; then
+			display_alert "Failed to mount tmpfs inside chroot" "${target}/run/user/0" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/run/user/0")
+	fi
+	if ! mountpoint -q "${target}/proc"; then
+		if ! mount -t proc chproc "${target}/proc"; then
+			display_alert "Failed to mount proc inside chroot" "${target}/proc" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/proc")
+	fi
+	if ! mountpoint -q "${target}/sys"; then
+		if ! mount -t sysfs chsys "${target}/sys"; then
+			display_alert "Failed to mount sysfs inside chroot" "${target}/sys" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/sys")
+	fi
+	if ! mountpoint -q "${target}/dev"; then
+		if ! mount --bind /dev "${target}/dev"; then
+			display_alert "Failed to bind /dev into chroot" "${target}/dev" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/dev")
+	fi
+	if ! mountpoint -q "${target}/dev/pts"; then
+		if ! mount -t devpts chpts "${target}/dev/pts" && ! mount --bind /dev/pts "${target}/dev/pts"; then
+			display_alert "Failed to mount devpts inside chroot" "${target}/dev/pts" "err"
+			cleanup_mounted_points
+			return 1
+		fi
+		mounted_points+=("${target}/dev/pts")
+	fi
+
+	# Bind host cache into chroot if present (configurable via ARMBIAN_CACHE_DIR)
+	cache_src="${ARMBIAN_CACHE_DIR:-/armbian/cache}"
+	if [[ -d "${cache_src}" ]]; then
+		if ! mkdir -p "${target}/armbian/cache"; then
+			display_alert "Failed to create cache mountpoint" "${target}/armbian/cache" "warn"
+		elif mountpoint -q "${target}/armbian/cache"; then
+			display_alert "Cache already mounted — skipping cache bind" "${target}/armbian/cache" "debug"
+		else
+			if ! mount --bind "${cache_src}" "${target}/armbian/cache"; then
+				display_alert "Cache bind failed" "${cache_src} -> ${target}/armbian/cache" "warn"
+			fi
+		fi
+	else
+		display_alert "Host cache not found — skipping cache mount" "${cache_src}" "warn"
+	fi
 }
 
 # umount_chroot <target>
@@ -36,6 +112,11 @@ function umount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
+
+	if mountpoint -q "${target}/armbian/cache"; then
+		umount "${target}/armbian/cache" || true
+	fi
+
 	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount "${target}"/dev/pts || true
