@@ -54,6 +54,20 @@ function reversion_armbian-bsp-cli-transitional_deb_contents() {
 
 }
 
+function reversion_armbian-bsp-generic-transitional_deb_contents() {
+	if [[ "${1}" != "armbian-bsp-generic-transitional" ]]; then
+		return 0 # Not our deb, nothing to do.
+	fi
+	display_alert "Reversion" "reversion_armbian-bsp-generic-transitional_deb_contents: '$*'" "debug"
+
+	# Depends on the new package
+	cat <<- EOF >> "${control_file_new}"
+		Depends: ${artifact_name} (= ${REVISION})
+	EOF
+
+}
+
+
 function compile_armbian-bsp-cli() {
 	: "${artifact_version:?artifact_version is not set}"
 	: "${artifact_name:?artifact_name is not set}"
@@ -121,12 +135,6 @@ function compile_armbian-bsp-cli() {
 	# in practice: packages/bsp-cli and variations of config/optional/...
 	copy_all_packages_files_for "bsp-cli"
 
-	# copy common files from a premade directory structure
-	# @TODO this includes systemd config, assumes things about serial console, etc, that need dynamism or just to not exist with modern systemd
-	display_alert "Copying common bsp files" "packages/bsp/common" "info"
-	run_host_command_logged rsync -av "${SRC}"/packages/bsp/common/* "${destination}"
-	wait_for_disk_sync "after rsync'ing package/bsp/common for bsp-cli"
-
 	mkdir -p "${destination}"/usr/share/armbian/
 
 	# get bootscript information.
@@ -179,24 +187,24 @@ function compile_armbian-bsp-cli() {
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
-	cat <<- EOF > "${destination}"/DEBIAN/conffiles
-		/usr/lib/armbian/armbian-apt-updates
-		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
-	EOF
+	#cat <<- EOF > "${destination}"/DEBIAN/conffiles
+	#	/usr/lib/armbian/armbian-apt-updates
+	#	/etc/X11/xorg.conf.d/01-armbian-defaults.conf
+	#EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
-	cat <<- EOF > "${destination}"/DEBIAN/triggers
-		activate update-initramfs
-	EOF
+	#cat <<- EOF > "${destination}"/DEBIAN/triggers
+	#	activate update-initramfs
+	#EOF
 
 	# copy distribution support and upgrade status
 	# this information is used in motd to show status and within armbian-config to perform upgrades
-	declare -a releases=()
-	mapfile -t releases < <(for relorder in "${SRC}"/config/distributions/*/order; do echo "${relorder} $(xargs echo < "${relorder}")"; done | sort -nk2 | sed "s/\/order.*//g")
-	for i in "${releases[@]}"; do
-		echo "$(echo "$i" | sed 's/.*\///')=$(cat "$i"/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat "$i"/upgrade)" >> "${destination}"/etc/armbian-distribution-status
-	done
+	#declare -a releases=()
+	#mapfile -t releases < <(for relorder in "${SRC}"/config/distributions/*/order; do echo "${relorder} $(xargs echo < "${relorder}")"; done | sort -nk2 | sed "s/\/order.*//g")
+	#for i in "${releases[@]}"; do
+	#	echo "$(echo "$i" | sed 's/.*\///')=$(cat "$i"/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat "$i"/upgrade)" >> "${destination}"/etc/armbian-distribution-status
+	#done
 
 	# execute $LINUXFAMILY-specific tweaks
 	if [[ $(type -t family_tweaks_bsp) == function ]]; then
@@ -205,6 +213,13 @@ function compile_armbian-bsp-cli() {
 		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
 	fi
 
+	#FIXME: this is just the dir structure from packages/bsp/common. Likely that many of these directories are unneeded.
+	# we add them because of the below hook that may want to add contents.
+	#FIXME: it may be better to make those hooks add the directories instead.
+	mkdir -p "${destination}/lib/systemd/system" "${destination}/lib/udev"
+	mkdir -p "${destination}"/etc/{NetworkManager/conf.d,X11/xorg.conf.d,apt/apt.conf.d,apt/preferences.d}
+	mkdir -p "${destination}"/etc/{cron.d,cron.daily,default,initramfs/post-update.d}
+	mkdir -p "${destination}"/etc/kernel/{postinst.d,postrm.d} "${destination}"/etc/{modprobe.d,profile.d,systemd/system,udev/rules.d,update-motd.d,skel}
 	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
 		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
 		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
@@ -248,6 +263,100 @@ function compile_armbian-bsp-cli() {
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
 }
 
+function compile_armbian-bsp-generic() {
+	: "${artifact_version:?artifact_version is not set}"
+	: "${artifact_name:?artifact_name is not set}"
+	: "${BRANCH:?BRANCH is not set}"
+
+	display_alert "Creating bsp-generic on branch '${BRANCH}'" "${artifact_name} :: ${artifact_version}" "info"
+
+	# "destination" is used a lot in hooks already. keep this name, even if only for compatibility.
+	declare cleanup_id="" destination=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-bsp-generic" cleanup_id destination # namerefs
+
+	mkdir -p "${destination}"/DEBIAN
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
+
+	# array of code to be included in preinst, postinst, prerm and postrm scripts (more than default code)
+	declare -a preinst_functions=()
+	declare -a postinst_functions=()
+	declare -a postrm_functions=()
+
+	declare -a extra_description=()
+	[[ "${EXTRA_BSP_NAME}" != "" ]] && extra_description+=("(variant '${EXTRA_BSP_NAME}')")
+
+	# armbianmonitor needs curl, but if it's not there it will install it.
+	# armbian-resize-filesystem needs parted and fdisk
+	cat <<- EOF > "${destination}"/DEBIAN/control
+		Package: ${artifact_name}
+		Version: ${artifact_version}
+		Architecture: all
+		Maintainer: Armbian
+		Section: kernel
+		Priority: optional
+		Depends: bash, linux-base, parted, fdisk, bc, u-boot-tools, initramfs-tools, lsb-release, fping
+		Recommends: bsdutils, util-linux, toilet, curl
+		Provides: armbian-ramlog, armbian-resize-filesystem, armbian-zram-config, armbian-allwinner-battery, armbian-firstrun, armbian-hardware-monitor, armbian-hardware-optimization, armbian-led-state
+		Description: Armbian Generic BSP for branch '${BRANCH}' ${extra_description[@]}
+	EOF
+
+	# armhwinfo, firstrun, armbianmonitor, etc. config file; also sourced in postinst
+	mkdir -p "${destination}"/etc
+
+	# copy general overlay from packages/bsp-cli
+	# in practice: packages/bsp-cli and variations of config/optional/...
+	copy_all_packages_files_for "bsp-generic"
+
+	# copy common files from a premade directory structure
+	# @TODO this includes systemd config, assumes things about serial console, etc, that need dynamism or just to not exist with modern systemd
+	display_alert "Copying common bsp files" "packages/bsp/common" "info"
+	run_host_command_logged rsync -av "${SRC}"/packages/bsp/common/* "${destination}"
+	wait_for_disk_sync "after rsync'ing package/bsp/common for bsp-cli"
+
+	mkdir -p "${destination}"/usr/share/armbian/
+
+	# get bootscript information.
+	#declare -A bootscript_info=()
+	#get_bootscript_info
+
+	# won't recreate files if they were removed by user
+	# TODO: Add proper handling for updated conffiles
+	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
+	# Keeping armbian-apt-updates as a configuration, solve the problem
+	cat <<- EOF > "${destination}"/DEBIAN/conffiles
+		/usr/lib/armbian/armbian-apt-updates
+		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
+	EOF
+
+	# Render the postinst/postrm/etc
+	# set up pre install script; use inline functions
+	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
+	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
+	### preinst
+	#FIXME: this mentions boards, is this relevant to bsp-generic? see below for postrm & postinst too
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_generic_preinst "${preinst_functions[@]}"
+	unset board_side_bsp_generic_preinst "${preinst_functions[@]}"
+
+	### postrm
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_generic_postrm "${postrm_functions[@]}"
+	unset board_side_bsp_generic_postrm "${postrm_functions[@]}"
+
+	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
+	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_generic_postinst_base "${postinst_functions[@]}" board_side_bsp_generic_postinst_finish
+	unset board_side_bsp_generic_postinst_base board_side_bsp_generic_postinst_finish "${postinst_functions[@]}"
+
+	# fixing permissions (basic), reference: dh_fixperms
+	find "${destination}" -print0 2> /dev/null | xargs -0r chown --no-dereference 0:0
+	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
+
+	# Build / close the package. This will run shellcheck / show the generated files if debugging
+	dpkg_deb_build "${destination}" "armbian-bsp-generic"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+
+	display_alert "Done building BSP Generic package" "${destination}" "debug"
+}
+
 # Reversion function is called with the following parameters:
 # ${1} == deb_id
 function reversion_armbian-bsp-cli_deb_contents() {
@@ -265,7 +374,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		depends_base_files=""
 	fi
 	cat <<- EOF >> "${control_file_new}"
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}
+		Depends: armbian-bsp-generic-${BRANCH}, bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Provides: armbian-bsp-cli
@@ -354,8 +463,14 @@ function board_side_bsp_cli_postinst_update_uboot_bootscript() {
 		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr > /dev/null 2>&1
 	fi
 }
+function board_side_bsp_generic_postinst_update_uboot_bootscript() {
+/bin/true
+}
 
 function board_side_bsp_cli_preinst() {
+/bin/true
+}
+function board_side_bsp_generic_preinst() {
 	# tell people to reboot at next login
 	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
 
@@ -412,7 +527,11 @@ function board_side_bsp_cli_preinst() {
 	)
 }
 
-function board_side_bsp_cli_postrm() { # not run here
+function board_side_bsp_cli_postrm() {
+/bin/true
+}
+function board_side_bsp_generic_postrm() { # not run here
+#FIXME: if/when zram vs hardware-monitor etc are split, this gets more complicated
 	if [[ remove == "$1" ]] || [[ abort-install == "$1" ]]; then
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
@@ -421,6 +540,9 @@ function board_side_bsp_cli_postrm() { # not run here
 }
 
 function board_side_bsp_cli_postinst_base() {
+/bin/true
+}
+function board_side_bsp_generic_postinst_base() {
 	# Source the armbian-release information file
 	# shellcheck source=/dev/null
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
@@ -444,6 +566,9 @@ function board_side_bsp_cli_postinst_base() {
 }
 
 function board_side_bsp_cli_postinst_finish() {
+/bin/true
+}
+function board_side_bsp_generic_postinst_finish() {
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
