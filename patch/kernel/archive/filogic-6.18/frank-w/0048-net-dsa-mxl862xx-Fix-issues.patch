@@ -1,0 +1,211 @@
+From deac8aa5cf6f031629b8862bd10d29fc121ec2c9 Mon Sep 17 00:00:00 2001
+From: fchan <fchan@maxlinear.com>
+Date: Mon, 22 Sep 2025 04:20:28 +0800
+Subject: [PATCH 048/116] net: dsa: mxl862xx: Fix issues
+
+1. Packets fail to hit the FDB table when adding an FDB entry in mxl862_8021q mode.
+2. VLAN add-delete operations cause the exVlan entries too low problem in mxl862 mode.
+---
+ drivers/net/dsa/mxl862xx/mxl862xx.c | 61 +++++++++++++++++------------
+ 1 file changed, 36 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/net/dsa/mxl862xx/mxl862xx.c b/drivers/net/dsa/mxl862xx/mxl862xx.c
+index d7b2ec476896..bd4e38545cd4 100644
+--- a/drivers/net/dsa/mxl862xx/mxl862xx.c
++++ b/drivers/net/dsa/mxl862xx/mxl862xx.c
+@@ -1151,9 +1151,9 @@ static int prepare_vlan_ingress_filters_off(struct mxl862xx_priv *priv, uint8_t
+ 	if (port == priv->cpu_port)
+ 		vlan_cfg.entry_index =  priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 1;
+ 	else {
+-		vlan_cfg.entry_index =
+-			priv->port_info[port]
+-				.vlan.ingress_vlan_block_info.final_filters_idx--;
++		/* for vlan filter off, this entry is fixed and always put at the end of the block */
++		vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 1;
++		priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
+ 	}
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+@@ -1242,7 +1242,7 @@ static int prepare_vlan_egress_filters(struct dsa_switch *ds, uint8_t port, uint
+ 	//Entry 4: no outer/inner tag, no PVID  DISCARD
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id = block_info->block_id;
+-	vlan_cfg.entry_index = block_info->final_filters_idx--;
++	vlan_cfg.entry_index = block_info->filters_max - 1;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.treatment.remove_tag =
+@@ -1252,10 +1252,12 @@ static int prepare_vlan_egress_filters(struct dsa_switch *ds, uint8_t port, uint
+ 	if (ret)
+ 		return ret;
+ 
++	block_info->final_filters_idx = vlan_cfg.entry_index;
++
+ 	//Entry 3: Only Outer tag present. Discard if VID is not matching the previous rules
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id = block_info->block_id;
+-	vlan_cfg.entry_index = block_info->final_filters_idx--;
++	vlan_cfg.entry_index = block_info->filters_max - 2;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.treatment.remove_tag =
+@@ -1265,10 +1267,12 @@ static int prepare_vlan_egress_filters(struct dsa_switch *ds, uint8_t port, uint
+ 	if (ret)
+ 		return ret;
+ 
++	block_info->final_filters_idx = vlan_cfg.entry_index;
++
+ 	//Entry 2: Outer and Inner tags are present. Discard if VID is not matching the previous rules
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id = block_info->block_id;
+-	vlan_cfg.entry_index = block_info->final_filters_idx--;
++	vlan_cfg.entry_index = block_info->filters_max - 3;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.treatment.remove_tag =
+@@ -1278,6 +1282,8 @@ static int prepare_vlan_egress_filters(struct dsa_switch *ds, uint8_t port, uint
+ 	if (ret)
+ 		return ret;
+ 
++	block_info->final_filters_idx = vlan_cfg.entry_index;
++
+ 	/* VID specific entries must be processed before the final entries,
+ 	 * so putting them at the beginnig of the block */
+ 	ret = get_vlan_vid_filters_idx(priv, port, false, vid, &filter_0, &filter_1, &idx);
+@@ -1982,9 +1988,7 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id =
+ 		priv->port_info[port].vlan.ingress_vlan_block_info.block_id;
+-	vlan_cfg.entry_index =
+-		priv->port_info[port]
+-			.vlan.ingress_vlan_block_info.final_filters_idx--;
++	vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 1;
+ 	vlan_cfg.filter.outer_vlan.type =
+ 		MXL862XX_EXTENDEDVLAN_FILTER_TYPE_DEFAULT;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+@@ -2000,13 +2004,13 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 		return ret;
+ 	}
+ 
++	priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
++
+ 	//Entry 5 no other rule applies Outer tag default Inner tag  present DISCARD
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id =
+ 		priv->port_info[port].vlan.ingress_vlan_block_info.block_id;
+-	vlan_cfg.entry_index =
+-		priv->port_info[port]
+-			.vlan.ingress_vlan_block_info.final_filters_idx--;
++	vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 2;
+ 	vlan_cfg.filter.outer_vlan.type =
+ 		MXL862XX_EXTENDEDVLAN_FILTER_TYPE_DEFAULT;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+@@ -2022,13 +2026,13 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 		return ret;
+ 	}
+ 
++	priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
++
+ 	// Entry 4  untagged pkts. If there's PVID accept and add PVID tag, otherwise reject
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id =
+ 		priv->port_info[port].vlan.ingress_vlan_block_info.block_id;
+-	vlan_cfg.entry_index =
+-		priv->port_info[port]
+-			.vlan.ingress_vlan_block_info.final_filters_idx--;
++	vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 3;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	if (!priv->port_info[port].vlan.pvid) {
+@@ -2053,13 +2057,13 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 	if (ret)
+ 		return ret;
+ 
++	priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
++
+ 	// Entry 3 : Only Outer tag present : not matching  DISCARD
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id =
+ 		priv->port_info[port].vlan.ingress_vlan_block_info.block_id;
+-	vlan_cfg.entry_index =
+-		priv->port_info[port]
+-			.vlan.ingress_vlan_block_info.final_filters_idx--;
++	vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 4;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NO_TAG;
+ 	vlan_cfg.treatment.remove_tag =
+@@ -2069,14 +2073,13 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 	if (ret)
+ 		return ret;
+ 
++	priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
++
+ 	// Entry 2 : Outer and Inner VLAN tag present : not matching  DISCARD
+ 	memset(&vlan_cfg, 0, sizeof(vlan_cfg));
+ 	vlan_cfg.extended_vlan_block_id =
+ 		priv->port_info[port].vlan.ingress_vlan_block_info.block_id;
+-	vlan_cfg.entry_index =
+-		priv->port_info[port]
+-			.vlan.ingress_vlan_block_info.final_filters_idx--;
+-
++	vlan_cfg.entry_index = priv->port_info[port].vlan.ingress_vlan_block_info.filters_max - 5;
+ 	vlan_cfg.filter.outer_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.filter.inner_vlan.type = MXL862XX_EXTENDEDVLAN_FILTER_TYPE_NORMAL;
+ 	vlan_cfg.treatment.remove_tag =
+@@ -2086,6 +2089,8 @@ static int prepare_vlan_ingress_filters(struct dsa_switch *ds, uint8_t port, uin
+ 	if (ret)
+ 		return ret;
+ 
++	priv->port_info[port].vlan.ingress_vlan_block_info.final_filters_idx = vlan_cfg.entry_index;
++
+ 	/* VID specific filtering rules which should be executed first before final ones.
+ 	 * Storing starts at the beginning of the block. */
+ 
+@@ -3226,7 +3231,7 @@ static void mxl862xx_phylink_get_caps(struct dsa_switch *ds, int port,
+ 		__set_bit(PHY_INTERFACE_MODE_2500BASEX, config->supported_interfaces);
+ 		__set_bit(PHY_INTERFACE_MODE_10GBASER, config->supported_interfaces);
+ 		__set_bit(PHY_INTERFACE_MODE_USXGMII, config->supported_interfaces);
+-		config->mac_capabilities |= MAC_5000FD | MAC_10000FD;
++		config->mac_capabilities |= MAC_10000FD;
+ 	} else {
+ 		__set_bit(PHY_INTERFACE_MODE_NA, config->supported_interfaces);
+ 	}
+@@ -3484,7 +3489,7 @@ static int mxl862xx_port_fdb_add(struct dsa_switch *ds, int port,
+ {
+ 	struct mxl862xx_mac_table_add param = {
+ 		.port_id = DSA_MXL_PORT(port),
+-		.tci = vid & 0xFFF,
++		.tci = 0,
+ 		.static_entry = true,
+ 	};
+ 	struct mxl862xx_priv *priv = ds->priv;
+@@ -3503,6 +3508,9 @@ static int mxl862xx_port_fdb_add(struct dsa_switch *ds, int port,
+ 			continue;
+ 
+ 		param.fid = priv->port_info[i].bridge_id;
++		if (priv->port_info[priv->cpu_port].tag_protocol == DSA_TAG_PROTO_MXL862) {
++			param.tci = (vid & 0xFFF);
++		}
+ 		ret = MXL862XX_API_READ(ds->priv, MXL862XX_MAC_TABLEENTRYADD, param);
+ 		if (ret) {
+ 			dev_err(ds->dev, "failed to add FDB entry on port %d / fid %d\n",
+@@ -3518,12 +3526,15 @@ static int mxl862xx_port_fdb_del(struct dsa_switch *ds, int port,
+ 				 const unsigned char *addr, u16 vid, struct dsa_db db)
+ {
+ 	struct mxl862xx_mac_table_remove param = {
+-		.tci = vid & 0xFFF,
++		.tci = 0,
+ 	};
+ 	struct mxl862xx_priv *priv = ds->priv;
+ 	int ret, i;
+ 
+ 	memcpy(param.mac, addr, ETH_ALEN);
++	if (priv->port_info[priv->cpu_port].tag_protocol == DSA_TAG_PROTO_MXL862) {
++		param.tci = (vid & 0xFFF);
++	}
+ 
+ 	for (i = 0; i < priv->hw_info->max_ports; i++) {
+ 		if (dsa_is_unused_port(ds, i))
+-- 
+2.39.5
+
