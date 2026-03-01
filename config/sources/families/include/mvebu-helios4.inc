@@ -73,27 +73,22 @@ family_tweaks_bsp() {
 		tr ' ' '\n' <<< "$MODULES_LEGACY" > "${destination}"/etc/modules
 	fi
 
-	display_alert "Adding to bsp-cli" "${BOARD}: postinst for bluetooth service" "info"
+	display_alert "Adding to bsp-cli" "${BOARD}: postinst for mdadm and wol service" "info"
 	# Define a function to be run board-side during postinst of the BSP
+	# FIXME: this is a big no-no.  postinst should never unilaterally muck around with config files in /etc
 	postinst_functions+=("board_side_helios4_bsp_cli_postinst_mdadm") # add to the postinst function list
 	function board_side_helios4_bsp_cli_postinst_mdadm() {
 		### Mdadm tweaks
 		MDADM_CONF=/etc/mdadm/mdadm.conf
-		MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
-		grep -q "PROGRAM" $MDADM_CONF
-		if [ "$?" -ne 0 ]; then
-			cat <<- EOS >> $MDADM_CONF
-				# Trigger Fault Led script when an event is detected
-				PROGRAM /usr/sbin/mdadm-fault-led.sh
-			EOS
-		fi
 
-		# Fix for "mdadm: initramfs boot message: /scripts/local-bottom/mdadm: rm: not found"
-		# Refer to https://wiki.kobol.io/helios4/mdadm/#fix-mdadm
-		grep -q "^[[:blank:]]*copy_exec /bin/rm /bin" $MDADM_HOOK
-		if [ "$?" -ne 0 ]; then
-			sed -i '/copy_exec \/sbin\/mdmon \/sbin/ a\copy_exec /bin/rm /bin' $MDADM_HOOK
-			update-initramfs -u
+		if [ -f $MDADM_CONF ]; then
+			grep -q "PROGRAM" $MDADM_CONF
+			if [ "$?" -ne 0 ]; then
+				cat <<- EOS >> $MDADM_CONF
+					# Trigger Fault Led script when an event is detected
+					PROGRAM /usr/sbin/mdadm-fault-led.sh
+				EOS
+			fi
 		fi
 
 		# enable helios4-wol.service
