@@ -15,7 +15,7 @@ BOOTBRANCH_BOARD="tag:v2026.01"
 BOOTPATCHDIR="v2026.01"
 BOOT_SCENARIO="binman"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS2,1500000 console=tty0"
+SRC_CMDLINE="console=ttyS2,1500000 console=tty0 rk3399_pcie_ignore_serror"
 
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
 
