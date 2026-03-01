@@ -1,0 +1,108 @@
+From 2ad2c11dad315482917ac0e27863f12d5c44bfee Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Wed, 25 Feb 2026 05:18:04 +0800
+Subject: [PATCH] HACK: Ignore SError to enable rk3399 PCIe bus enumeration
+
+---
+ arch/arm64/kernel/traps.c                   | 19 ++++++++
+ drivers/pci/controller/pcie-rockchip-host.c | 50 +++++++++++++++++++++
+ 2 files changed, 69 insertions(+)
+
+diff --git a/arch/arm64/kernel/traps.c b/arch/arm64/kernel/traps.c
+index 681939ef5..a48ec5dac 100644
+--- a/arch/arm64/kernel/traps.c
++++ b/arch/arm64/kernel/traps.c
+@@ -976,8 +976,27 @@ bool arm64_is_fatal_ras_serror(struct pt_regs *regs, unsigned long esr)
+ 	}
+ }
+ 
++bool rk3399_pcie_ignore_serror_enabled __read_mostly = false;
++EXPORT_SYMBOL(rk3399_pcie_ignore_serror_enabled);
++
++static int __init setup_rk3399_pcie_serror_handling(char *str)
++{
++	rk3399_pcie_ignore_serror_enabled = true;
++	pr_info("HACK: Ignore SError to enable rk3399 PCIe bus enumeration\n");
++	return 1;
++}
++__setup("rk3399_pcie_ignore_serror", setup_rk3399_pcie_serror_handling);
++
+ void do_serror(struct pt_regs *regs, unsigned long esr)
+ {
++	if(rk3399_pcie_ignore_serror_enabled) {
++		if (esr >> ESR_ELx_EC_SHIFT == ESR_ELx_EC_SERROR) {
++			pr_debug("Ignoring SError Interrupt on CPU%d\n",
++				smp_processor_id());
++			return;
++		}
++	}
++
+ 	/* non-RAS errors are not containable */
+ 	if (!arm64_is_ras_serror(esr) || arm64_is_fatal_ras_serror(regs, esr))
+ 		arm64_serror_panic(regs, esr);
+diff --git a/drivers/pci/controller/pcie-rockchip-host.c b/drivers/pci/controller/pcie-rockchip-host.c
+index ee1822ca0..0944aa9a2 100644
+--- a/drivers/pci/controller/pcie-rockchip-host.c
++++ b/drivers/pci/controller/pcie-rockchip-host.c
+@@ -923,8 +923,58 @@ static int rockchip_pcie_resume_noirq(struct device *dev)
+ 	return err;
+ }
+ 
++extern bool rk3399_pcie_ignore_serror_enabled;
+ static int rockchip_pcie_probe(struct platform_device *pdev)
+ {
++	/*
++	 * When a PCIe device sends an unknown message,
++	 * the RK3399 triggers either a synchronous error or an SError.
++	 * If triggered by the A72 (via memory-mapped I/O), it results in an SError,
++	 * whereas the A53 results in a synchronous error.
++	 * To allow the RK3399 to continue PCIe enumeration, we can hijack and ignore these errors.
++	 * Since hijacking SErrors is simpler—requiring only a modification to the do_serror function,
++	 * we should pin the PCIe probe process to CPU4 (A72).
++	 * More detail, see:
++	 * https://forum.pine64.org/showthread.php?tid=6329&pid=65064
++	 * https://lore.kernel.org/linux-pci/CAMdYzYoTwjKz4EN8PtD5pZfu3+SX+68JL+dfvmCrSnLL=K6Few@mail.gmail.com/
++	 * https://lkml.org/lkml/2020/4/27/1041
++	 */
++	if (rk3399_pcie_ignore_serror_enabled) {
++		int try_count = 0;
++		unsigned long start_jiffies = jiffies;
++		int max_retries = 50; // Wait for a maximum of 50 × 10 = 500ms
++
++		dev_info(&pdev->dev, "Checking CPU4 availability...\n");
++
++		while (!cpu_online(4) && try_count < max_retries) {
++			try_count++;
++			dev_info(&pdev->dev,
++				 "Wait CPU4: try=%d, elapsed=%u ms\n",
++				 try_count,
++				 jiffies_to_msecs(jiffies - start_jiffies));
++			msleep(10);
++		}
++
++		if (cpu_online(4)) {
++			struct cpumask mask;
++			cpumask_clear(&mask);
++			cpumask_set_cpu(4, &mask);
++
++			if (set_cpus_allowed_ptr(current, &mask) == 0) {
++				dev_info(
++					&pdev->dev,
++					"Success: Probe migrated to CPU4 at try %d (%u ms)\n",
++					try_count,
++					jiffies_to_msecs(jiffies -
++							 start_jiffies));
++			}
++		} else {
++			dev_err(&pdev->dev,
++				"Fail: CPU4 timeout after %d tries. Probing on CPU%d\n",
++				try_count, smp_processor_id());
++		}
++	}
++
+ 	struct rockchip_pcie *rockchip;
+ 	struct device *dev = &pdev->dev;
+ 	struct pci_host_bridge *bridge;
+-- 
+2.53.0
+
