@@ -2,7 +2,7 @@
 BOARD_NAME="xiaobao-nas"
 BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="Lemon1151"
 BOOTCONFIG="xiaobao-nas-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"

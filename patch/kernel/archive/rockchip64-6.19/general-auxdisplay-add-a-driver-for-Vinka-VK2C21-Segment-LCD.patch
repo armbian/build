@@ -1,0 +1,651 @@
+From 8c7c8e1220f9ba4fecaba698bab176cd6ecca164 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sun, 22 Feb 2026 21:48:32 -0300
+Subject: [PATCH] auxdisplay: add a driver for Vinka VK2C21 Segment LCD
+ Controller
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Vinka VK2C21 (and pin-compatible VK2C21A/VK2C21B) is a memory-mapping
+segment LCD controller that communicates over I2C.  It can drive up to
+128 segments (e.g. 32 SEG × 4 COM in 1/3 bias mode).
+Some SBCs wire this chip to GPIO pins without I2C pull-up
+resistors, making the standard i2c-gpio (open-drain) driver unusable.
+This driver therefore bit-bangs I2C in push-pull mode directly via GPIO,
+requiring no external pull-ups.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ .../bindings/auxdisplay/vinka,vk2c21.yaml     |  59 ++
+ drivers/auxdisplay/Kconfig                    |  13 +
+ drivers/auxdisplay/Makefile                   |   1 +
+ drivers/auxdisplay/lcd-vk2c21.c               | 517 ++++++++++++++++++
+ 4 files changed, 590 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/auxdisplay/vinka,vk2c21.yaml
+ create mode 100644 drivers/auxdisplay/lcd-vk2c21.c
+
+diff --git a/Documentation/devicetree/bindings/auxdisplay/vinka,vk2c21.yaml b/Documentation/devicetree/bindings/auxdisplay/vinka,vk2c21.yaml
+new file mode 100644
+index 0000000000000..bdaeb1bd634d6
+--- /dev/null
++++ b/Documentation/devicetree/bindings/auxdisplay/vinka,vk2c21.yaml
+@@ -0,0 +1,59 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/auxdisplay/vinka,vk2c21.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Vinka VK2C21 Segment LCD Controller
++
++maintainers:
++  - Ricardo Pardini <ricardo@pardini.net>
++
++description: |
++  The Vinka VK2C21 (and pin-compatible VK2C21A/VK2C21B) is a memory-mapping
++  segment LCD controller that communicates over I2C.  It can drive up to
++  128 segments (e.g. 32 SEG × 4 COM in 1/3 bias mode).
++
++  Many low-cost SBCs wire this chip to GPIO pins without I2C pull-up
++  resistors, making the standard i2c-gpio (open-drain) driver unusable.
++  This driver therefore bit-bangs I2C in push-pull mode directly via GPIO,
++  requiring no external pull-ups.
++
++properties:
++  compatible:
++    const: vinka,vk2c21
++
++  sda-gpios:
++    description: GPIO line used for I2C SDA (data).
++    maxItems: 1
++
++  scl-gpios:
++    description: GPIO line used for I2C SCL (clock).
++    maxItems: 1
++
++  clock-frequency:
++    description: Desired I2C clock frequency in Hz.
++    default: 100000
++    minimum: 1000
++    maximum: 400000
++
++required:
++  - compatible
++  - sda-gpios
++  - scl-gpios
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/pinctrl/rockchip.h>
++
++    / {
++        segment-lcd {
++            compatible = "vinka,vk2c21";
++            sda-gpios = <&gpio0 RK_PC4 GPIO_ACTIVE_HIGH>;
++            scl-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
++            clock-frequency = <100000>;
++        };
++    };
+diff --git a/drivers/auxdisplay/Kconfig b/drivers/auxdisplay/Kconfig
+index bedc6133f970a..bc37fca63bcc9 100644
+--- a/drivers/auxdisplay/Kconfig
++++ b/drivers/auxdisplay/Kconfig
+@@ -526,6 +526,19 @@ config SEG_LED_GPIO
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called seg-led-gpio.
+ 
++config LCD_VK2C21
++	tristate "Vinka VK2C21 segment LCD controller"
++	depends on GPIOLIB
++	depends on OF
++	help
++	  Say Y or M here to add support for the Vinka VK2C21 segment LCD
++	  controller found on various Rockchip-based SBCs (e.g. Mekotronics
++	  R58X).  The chip communicates via I2C but is often wired without
++	  pull-up resistors, so this driver bit-bangs I2C in push-pull mode
++	  directly via GPIO.
++
++	  The display text is controlled via sysfs.
++
+ #
+ # Character LCD with non-conforming interface section
+ #
+diff --git a/drivers/auxdisplay/Makefile b/drivers/auxdisplay/Makefile
+index f5c13ed1cd4f5..28f6c587e1caa 100644
+--- a/drivers/auxdisplay/Makefile
++++ b/drivers/auxdisplay/Makefile
+@@ -16,3 +16,4 @@ obj-$(CONFIG_LINEDISP)		+= line-display.o
+ obj-$(CONFIG_MAX6959)		+= max6959.o
+ obj-$(CONFIG_PARPORT_PANEL)	+= panel.o
+ obj-$(CONFIG_SEG_LED_GPIO)	+= seg-led-gpio.o
++obj-$(CONFIG_LCD_VK2C21)	+= lcd-vk2c21.o
+diff --git a/drivers/auxdisplay/lcd-vk2c21.c b/drivers/auxdisplay/lcd-vk2c21.c
+new file mode 100644
+index 0000000000000..dfc57a7534ca6
+--- /dev/null
++++ b/drivers/auxdisplay/lcd-vk2c21.c
+@@ -0,0 +1,517 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Driver for Vinka VK2C21 segment LCD controller
++ *
++ * The VK2C21 is accessed via I2C but many boards (especially Rockchip-based
++ * SBCs) wire it without pull-up resistors, so the standard i2c-gpio driver
++ * (open-drain) cannot communicate with it. This driver therefore bit-bangs
++ * I2C in push-pull mode directly via GPIO.
++ *
++ * Datasheet: https://www.lcsc.com/datasheet/lcsc_datasheet_2302080930_VINKA-VK2C21A_C5358619.pdf
++ *
++ * Copyright (C) 2025 Ricardo Pardini <ricardo@pardini.net>
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/gpio/consumer.h>
++#include <linux/delay.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++
++/*
++ * VK2C21 I2C address.  The chip has a single fixed address whose 8-bit
++ * write form is 0x70 (7-bit: 0x38).  We bit-bang the 8-bit value directly.
++ */
++#define VK2C21_ADDR_W		0x70
++
++/* VK2C21 command bytes (directly from the datasheet) */
++#define VK2C21_RWRAM		0x80
++#define VK2C21_MODESET		0x82
++#define VK2C21_SYSSET		0x84
++#define VK2C21_FRAMESET		0x86
++#define VK2C21_BLINKSET		0x88
++#define VK2C21_IVASET		0x8A
++
++/* Register values */
++#define VK2C21_BIAS_1_3_4COM	0x00	/* 1/3 bias, 4 COM  */
++#define VK2C21_SYS_ON_LCD_ON	0x03	/* System + LCD on  */
++#define VK2C21_SYS_OFF_LCD_OFF	0x00	/* System + LCD off */
++#define VK2C21_FRAME_80HZ	0x00	/* 80 Hz frame rate */
++#define VK2C21_BLINK_OFF	0x00	/* Blinking off     */
++#define VK2C21_IVA_DEFAULT	0x0F	/* VLCD selected, IVA off, R1 */
++
++/* Display RAM has 10 addressable bytes (SEG/COM matrix) */
++#define VK2C21_RAM_SIZE		10
++
++/* We support a 6-digit display */
++#define VK2C21_MAX_DIGITS	6
++
++/*
++ * Segment encoding table.
++ * Maps digit positions (0..5, left to right) to VK2C21 RAM addresses.
++ * This table is board-specific; the values below match the common Mekotronics
++ * and similar Rockchip SBC wiring.
++ */
++static const u8 vk2c21_digit_to_ram[] = { 8, 7, 6, 5, 4, 3 };
++
++/*
++ * 7-segment bit mapping for this hardware:
++ *
++ *        ─── a ───
++ *       │         │          bit 7 = a (top)
++ *       f         b          bit 6 = f (upper-left)
++ *       │         │          bit 5 = e (lower-left)
++ *        ─── g ───           bit 4 = d (bottom)
++ *       │         │          bit 2 = b (upper-right)
++ *       e         c          bit 1 = g (middle)
++ *       │         │          bit 0 = c (lower-right)
++ *        ─── d ───           bit 3 = unused (DP on some boards)
++ */
++#define SEG_A	0x80
++#define SEG_B	0x04
++#define SEG_C	0x01
++#define SEG_D	0x10
++#define SEG_E	0x20
++#define SEG_F	0x40
++#define SEG_G	0x02
++
++#define VK2C21_FONT_BLANK	0x00
++
++/*
++ * Full 7-segment ASCII font table.
++ * 0x00 = character cannot be meaningfully represented → blank.
++ * Lowercase letters use the conventional 7-segment representations.
++ *
++ * Characters that are indistinguishable from digits or other letters
++ * on a 7-segment display (e.g. 'S' vs '5', 'Z' vs '2') are still
++ * included so that arbitrary text can be displayed.
++ */
++static const u8 vk2c21_ascii_font[128] = {
++	/* 0x20 ' ' */ [' ']  = VK2C21_FONT_BLANK,
++	/* 0x21 '!' */ ['!']  = SEG_B | SEG_C,                                  /* same as 1 */
++	/* 0x22 '"' */ ['"']  = SEG_B | SEG_F,
++	/* 0x27 ''' */ ['\''] = SEG_F,
++	/* 0x28 '(' */ ['(']  = SEG_A | SEG_D | SEG_E | SEG_F,                  /* same as [ */
++	/* 0x29 ')' */ [')']  = SEG_A | SEG_B | SEG_C | SEG_D,                  /* same as ] */
++	/* 0x2c ',' */ [',']  = SEG_C,
++	/* 0x2d '-' */ ['-']  = SEG_G,
++	/* 0x2f '/' */ ['/']  = SEG_B | SEG_E | SEG_G,
++	/* 0x30-0x39: digits */
++	['0'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,
++	['1'] = SEG_B | SEG_C,
++	['2'] = SEG_A | SEG_B | SEG_D | SEG_E | SEG_G,
++	['3'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_G,
++	['4'] = SEG_B | SEG_C | SEG_F | SEG_G,
++	['5'] = SEG_A | SEG_C | SEG_D | SEG_F | SEG_G,
++	['6'] = SEG_A | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G,
++	['7'] = SEG_A | SEG_B | SEG_C,
++	['8'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G,
++	['9'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_F | SEG_G,
++	/* 0x3d '=' */ ['=']  = SEG_D | SEG_G,
++	/* 0x3f '?' */ ['?']  = SEG_A | SEG_B | SEG_E | SEG_G,
++	/* Uppercase letters */
++	['A'] = SEG_A | SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,
++	['B'] = SEG_C | SEG_D | SEG_E | SEG_F | SEG_G,                         /* same as b */
++	['C'] = SEG_A | SEG_D | SEG_E | SEG_F,
++	['D'] = SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,                         /* same as d */
++	['E'] = SEG_A | SEG_D | SEG_E | SEG_F | SEG_G,
++	['F'] = SEG_A | SEG_E | SEG_F | SEG_G,
++	['G'] = SEG_A | SEG_C | SEG_D | SEG_E | SEG_F,
++	['H'] = SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,
++	['I'] = SEG_E | SEG_F,
++	['J'] = SEG_B | SEG_C | SEG_D | SEG_E,
++	/* K: not cleanly representable, approximate as H */
++	['K'] = SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,
++	['L'] = SEG_D | SEG_E | SEG_F,
++	/* M: not representable on 7-seg, skip (will show blank) */
++	['N'] = SEG_C | SEG_E | SEG_G,                                          /* same as n */
++	['O'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,                 /* same as 0 */
++	['P'] = SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,
++	['Q'] = SEG_A | SEG_B | SEG_C | SEG_F | SEG_G,
++	['R'] = SEG_E | SEG_G,                                                  /* same as r */
++	['S'] = SEG_A | SEG_C | SEG_D | SEG_F | SEG_G,                         /* same as 5 */
++	['T'] = SEG_D | SEG_E | SEG_F | SEG_G,                                 /* same as t */
++	['U'] = SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,
++	['V'] = SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,                         /* same as U */
++	/* W: not representable on 7-seg, skip */
++	/* X: not cleanly representable, approximate as H */
++	['X'] = SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,
++	['Y'] = SEG_B | SEG_C | SEG_D | SEG_F | SEG_G,
++	['Z'] = SEG_A | SEG_B | SEG_D | SEG_E | SEG_G,                         /* same as 2 */
++	['['] = SEG_A | SEG_D | SEG_E | SEG_F,
++	[']'] = SEG_A | SEG_B | SEG_C | SEG_D,
++	['_'] = SEG_D,
++	/* Lowercase letters */
++	['a'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,
++	['b'] = SEG_C | SEG_D | SEG_E | SEG_F | SEG_G,
++	['c'] = SEG_D | SEG_E | SEG_G,
++	['d'] = SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,
++	['e'] = SEG_A | SEG_B | SEG_D | SEG_E | SEG_F | SEG_G,
++	['f'] = SEG_A | SEG_E | SEG_F | SEG_G,                                 /* same as F */
++	['g'] = SEG_A | SEG_B | SEG_C | SEG_D | SEG_F | SEG_G,                 /* same as 9 */
++	['h'] = SEG_C | SEG_E | SEG_F | SEG_G,
++	['i'] = SEG_C,
++	['j'] = SEG_B | SEG_C | SEG_D,
++	/* k: approximate as h */
++	['k'] = SEG_C | SEG_E | SEG_F | SEG_G,
++	['l'] = SEG_E | SEG_F,
++	/* m: not representable on 7-seg, skip */
++	['n'] = SEG_C | SEG_E | SEG_G,
++	['o'] = SEG_C | SEG_D | SEG_E | SEG_G,
++	['p'] = SEG_A | SEG_B | SEG_E | SEG_F | SEG_G,                         /* same as P */
++	['q'] = SEG_A | SEG_B | SEG_C | SEG_F | SEG_G,                         /* same as Q */
++	['r'] = SEG_E | SEG_G,
++	['s'] = SEG_A | SEG_C | SEG_D | SEG_F | SEG_G,                         /* same as 5 */
++	['t'] = SEG_D | SEG_E | SEG_F | SEG_G,
++	['u'] = SEG_C | SEG_D | SEG_E,
++	['v'] = SEG_C | SEG_D | SEG_E,                                          /* same as u */
++	/* w: not representable */
++	/* x: approximate as H */
++	['x'] = SEG_B | SEG_C | SEG_E | SEG_F | SEG_G,
++	['y'] = SEG_B | SEG_C | SEG_D | SEG_F | SEG_G,                         /* same as Y */
++	['z'] = SEG_A | SEG_B | SEG_D | SEG_E | SEG_G,                         /* same as 2 */
++	/* 0x7c '|' */ ['|']  = SEG_E | SEG_F,
++	/* 0x7e '~' */ ['~']  = SEG_A,
++};
++
++struct vk2c21_data {
++	struct device		*dev;
++	struct gpio_desc	*sda;
++	struct gpio_desc	*scl;
++	struct mutex		lock;		/* serialises I2C access */
++	unsigned int		half_period_ns;
++	u8			dispram[VK2C21_RAM_SIZE];
++	char			display_text[VK2C21_MAX_DIGITS + 1];
++};
++
++/* ------------------------------------------------------------------ */
++/*  Low-level push-pull bit-bang I2C                                   */
++/* ------------------------------------------------------------------ */
++
++static inline void sda_high(struct vk2c21_data *d)
++{
++	gpiod_direction_output(d->sda, 1);
++}
++
++static inline void sda_low(struct vk2c21_data *d)
++{
++	gpiod_direction_output(d->sda, 0);
++}
++
++static inline void scl_high(struct vk2c21_data *d)
++{
++	gpiod_set_value(d->scl, 1);
++}
++
++static inline void scl_low(struct vk2c21_data *d)
++{
++	gpiod_set_value(d->scl, 0);
++}
++
++static inline int sda_read(struct vk2c21_data *d)
++{
++	gpiod_direction_input(d->sda);
++	return gpiod_get_value(d->sda);
++}
++
++static inline void bb_delay(struct vk2c21_data *d)
++{
++	ndelay(d->half_period_ns);
++}
++
++static void bb_start(struct vk2c21_data *d)
++{
++	scl_high(d);
++	sda_high(d);
++	bb_delay(d);
++	sda_low(d);
++	bb_delay(d);
++}
++
++static void bb_stop(struct vk2c21_data *d)
++{
++	scl_high(d);
++	sda_low(d);
++	bb_delay(d);
++	sda_high(d);
++	bb_delay(d);
++}
++
++/* Write one byte MSB-first; returns 0 on ACK, 1 on NACK */
++static int bb_write_byte(struct vk2c21_data *d, u8 byte)
++{
++	int i, ack;
++
++	for (i = 7; i >= 0; i--) {
++		scl_low(d);
++		if (byte & BIT(i))
++			sda_high(d);
++		else
++			sda_low(d);
++		bb_delay(d);
++		scl_high(d);
++		bb_delay(d);
++	}
++
++	/* Clock the ACK/NACK bit */
++	scl_low(d);
++	ack = sda_read(d);
++	bb_delay(d);
++	scl_high(d);
++	bb_delay(d);
++	scl_low(d);
++	sda_high(d);
++
++	return ack;
++}
++
++/* Send a two-byte command: [ADDR_W] [cmd] [data] */
++static int vk2c21_send_cmd(struct vk2c21_data *d, u8 cmd, u8 data)
++{
++	int ret = 0;
++
++	bb_start(d);
++	if (bb_write_byte(d, VK2C21_ADDR_W)) { ret = -EIO; goto out; }
++	if (bb_write_byte(d, cmd))            { ret = -EIO; goto out; }
++	if (bb_write_byte(d, data))           { ret = -EIO; goto out; }
++out:
++	bb_stop(d);
++	if (ret)
++		dev_err(d->dev, "command 0x%02x 0x%02x failed (no ACK)\n",
++			cmd, data);
++	return ret;
++}
++
++/* Write one byte to display RAM: [ADDR_W] [0x80] [addr] [data] */
++static int vk2c21_write_ram(struct vk2c21_data *d, u8 addr, u8 data)
++{
++	int ret = 0;
++
++	bb_start(d);
++	if (bb_write_byte(d, VK2C21_ADDR_W)) { ret = -EIO; goto out; }
++	if (bb_write_byte(d, VK2C21_RWRAM))  { ret = -EIO; goto out; }
++	if (bb_write_byte(d, addr))           { ret = -EIO; goto out; }
++	if (bb_write_byte(d, data))           { ret = -EIO; goto out; }
++out:
++	bb_stop(d);
++	if (ret)
++		dev_err(d->dev, "write RAM[%u]=0x%02x failed\n", addr, data);
++	return ret;
++}
++
++/* ------------------------------------------------------------------ */
++/*  Display helpers                                                    */
++/* ------------------------------------------------------------------ */
++
++static int vk2c21_clear(struct vk2c21_data *d)
++{
++	int i, ret;
++
++	memset(d->dispram, 0, sizeof(d->dispram));
++	for (i = 0; i < VK2C21_RAM_SIZE; i++) {
++		ret = vk2c21_write_ram(d, i, 0x00);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static int vk2c21_init_hw(struct vk2c21_data *d)
++{
++	int ret;
++
++	ret = vk2c21_send_cmd(d, VK2C21_MODESET,  VK2C21_BIAS_1_3_4COM);
++	if (ret) return ret;
++	ret = vk2c21_send_cmd(d, VK2C21_SYSSET,   VK2C21_SYS_ON_LCD_ON);
++	if (ret) return ret;
++	ret = vk2c21_send_cmd(d, VK2C21_FRAMESET,  VK2C21_FRAME_80HZ);
++	if (ret) return ret;
++	ret = vk2c21_send_cmd(d, VK2C21_BLINKSET,  VK2C21_BLINK_OFF);
++	if (ret) return ret;
++	ret = vk2c21_send_cmd(d, VK2C21_IVASET,    VK2C21_IVA_DEFAULT);
++	if (ret) return ret;
++
++	return vk2c21_clear(d);
++}
++
++static u8 vk2c21_char_to_glyph(char c)
++{
++	if (c >= 0 && c < 128)
++		return vk2c21_ascii_font[(unsigned char)c];
++	return VK2C21_FONT_BLANK;
++}
++
++static int vk2c21_display_string(struct vk2c21_data *d, const char *str)
++{
++	int i, ret, len;
++
++	len = strlen(str);
++	for (i = 0; i < VK2C21_MAX_DIGITS; i++) {
++		char c = (i < len) ? str[i] : ' ';
++		u8 glyph = vk2c21_char_to_glyph(c);
++
++		ret = vk2c21_write_ram(d, vk2c21_digit_to_ram[i], glyph);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/*  sysfs interface                                                    */
++/* ------------------------------------------------------------------ */
++
++static ssize_t display_show(struct device *dev,
++			     struct device_attribute *attr, char *buf)
++{
++	struct vk2c21_data *d = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%s\n", d->display_text);
++}
++
++static ssize_t display_store(struct device *dev,
++			      struct device_attribute *attr,
++			      const char *buf, size_t count)
++{
++	struct vk2c21_data *d = dev_get_drvdata(dev);
++	char text[VK2C21_MAX_DIGITS + 1] = {};
++	int ret, len;
++
++	len = min_t(int, count, VK2C21_MAX_DIGITS);
++	if (len > 0 && buf[len - 1] == '\n')
++		len--;
++	memcpy(text, buf, len);
++
++	mutex_lock(&d->lock);
++	ret = vk2c21_display_string(d, text);
++	if (!ret) {
++		memcpy(d->display_text, text, len);
++		d->display_text[len] = '\0';
++	}
++	mutex_unlock(&d->lock);
++
++	return ret ? ret : count;
++}
++static DEVICE_ATTR_RW(display);
++
++static ssize_t clear_store(struct device *dev,
++			    struct device_attribute *attr,
++			    const char *buf, size_t count)
++{
++	struct vk2c21_data *d = dev_get_drvdata(dev);
++	int ret;
++
++	mutex_lock(&d->lock);
++	ret = vk2c21_clear(d);
++	if (!ret)
++		d->display_text[0] = '\0';
++	mutex_unlock(&d->lock);
++
++	return ret ? ret : count;
++}
++static DEVICE_ATTR_WO(clear);
++
++static struct attribute *vk2c21_sysfs_attrs[] = {
++	&dev_attr_display.attr,
++	&dev_attr_clear.attr,
++	NULL,
++};
++
++static const struct attribute_group vk2c21_sysfs_group = {
++	.attrs = vk2c21_sysfs_attrs,
++};
++
++static const struct attribute_group *vk2c21_sysfs_groups[] = {
++	&vk2c21_sysfs_group,
++	NULL,
++};
++
++/* ------------------------------------------------------------------ */
++/*  Platform driver                                                    */
++/* ------------------------------------------------------------------ */
++
++static int vk2c21_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct vk2c21_data *d;
++	u32 freq = 100000;
++	int ret;
++
++	d = devm_kzalloc(dev, sizeof(*d), GFP_KERNEL);
++	if (!d)
++		return -ENOMEM;
++
++	d->dev = dev;
++	mutex_init(&d->lock);
++	platform_set_drvdata(pdev, d);
++
++	d->sda = devm_gpiod_get(dev, "sda", GPIOD_OUT_HIGH);
++	if (IS_ERR(d->sda))
++		return dev_err_probe(dev, PTR_ERR(d->sda),
++				     "failed to get SDA GPIO\n");
++
++	d->scl = devm_gpiod_get(dev, "scl", GPIOD_OUT_HIGH);
++	if (IS_ERR(d->scl))
++		return dev_err_probe(dev, PTR_ERR(d->scl),
++				     "failed to get SCL GPIO\n");
++
++	of_property_read_u32(dev->of_node, "clock-frequency", &freq);
++	if (!freq)
++		freq = 100000;
++	d->half_period_ns = 500000000U / freq;
++
++	dev_info(dev, "I2C bitbang @ ~%u Hz, half-period %u ns\n",
++		 freq, d->half_period_ns);
++
++	mutex_lock(&d->lock);
++	ret = vk2c21_init_hw(d);
++	mutex_unlock(&d->lock);
++	if (ret)
++		return dev_err_probe(dev, ret, "hardware init failed\n");
++
++	dev_info(dev, "VK2C21 segment LCD ready\n");
++	return 0;
++}
++
++static void vk2c21_remove(struct platform_device *pdev)
++{
++	struct vk2c21_data *d = platform_get_drvdata(pdev);
++
++	mutex_lock(&d->lock);
++	vk2c21_send_cmd(d, VK2C21_SYSSET, VK2C21_SYS_OFF_LCD_OFF);
++	mutex_unlock(&d->lock);
++}
++
++static void vk2c21_shutdown(struct platform_device *pdev)
++{
++	struct vk2c21_data *d = platform_get_drvdata(pdev);
++
++	mutex_lock(&d->lock);
++	vk2c21_send_cmd(d, VK2C21_SYSSET, VK2C21_SYS_OFF_LCD_OFF);
++	mutex_unlock(&d->lock);
++}
++
++static const struct of_device_id vk2c21_of_match[] = {
++	{ .compatible = "vinka,vk2c21" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, vk2c21_of_match);
++
++static struct platform_driver vk2c21_driver = {
++	.probe    = vk2c21_probe,
++	.remove   = vk2c21_remove,
++	.shutdown = vk2c21_shutdown,
++	.driver   = {
++		.name           = "lcd-vk2c21",
++		.of_match_table = vk2c21_of_match,
++		.dev_groups     = vk2c21_sysfs_groups,
++	},
++};
++module_platform_driver(vk2c21_driver);
++
++MODULE_AUTHOR("Ricardo Pardini <ricardo@pardini.net>");
++MODULE_DESCRIPTION("Vinka VK2C21 segment LCD controller driver (push-pull bitbang I2C)");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

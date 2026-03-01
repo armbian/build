@@ -17,6 +17,11 @@ function prepare_compilation_vars() {
 		# private ccache directory to avoid permission issues when using build script with "sudo"
 		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
 		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache # actual export
+
+		# Set default umask for ccache to allow write access for all users (enables cache sharing)
+		# CCACHE_UMASK=000 creates files with permissions 666 (rw-rw-rw-) and dirs with 777 (rwxrwxrwx)
+		# Only set this for shared cache, not for private cache
+		[[ -z "${CCACHE_UMASK}" && "${PRIVATE_CCACHE}" != "yes" ]] && export CCACHE_UMASK=000
 	else
 		CCACHE=""
 	fi

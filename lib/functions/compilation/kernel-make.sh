@@ -31,7 +31,7 @@ function run_kernel_make_internal() {
 
 	# If CCACHE_DIR is set, pass it to the kernel build; Pass the ccache dir explicitly, since we'll run under "env -i"
 	if [[ -n "${CCACHE_DIR}" ]]; then
-		common_make_envs+=("CCACHE_DIR='${CCACHE_DIR}'")
+		common_make_envs+=("CCACHE_DIR=${CCACHE_DIR@Q}")
 	fi
 
 	# Add the distcc envs, if any.
@@ -74,7 +74,19 @@ function run_kernel_make_internal() {
 		common_make_params_quoted+=("${llvm_flag}")
 	fi
 
-	# Allow extensions to modify make parameters and environment variables
+	# Hook order: kernel_make_config runs first (generic extension config),
+	# then custom_kernel_make_params (user/board overrides can take precedence).
+	call_extension_method "kernel_make_config" <<- 'KERNEL_MAKE_CONFIG'
+		*Hook to customize kernel make environment and parameters*
+		Called right before invoking make for kernel compilation.
+		Available arrays to modify:
+		  - common_make_envs[@]: environment variables passed via "env -i" (e.g., CCACHE_REMOTE_STORAGE)
+		  - common_make_params_quoted[@]: make command parameters (e.g., custom flags)
+		Available read-only variables:
+		  - KERNEL_COMPILER, ARCHITECTURE, BRANCH, LINUXFAMILY
+	KERNEL_MAKE_CONFIG
+
+	# Runs after kernel_make_config — allows user/board overrides to take precedence
 	call_extension_method "custom_kernel_make_params" <<- 'CUSTOM_KERNEL_MAKE_PARAMS'
 		*Customize kernel make parameters before compilation*
 		Called after all standard make parameters are set but before invoking make.
