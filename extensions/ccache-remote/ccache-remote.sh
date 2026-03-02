@@ -396,8 +396,14 @@ function host_pre_docker_launch__setup_remote_ccache() {
 					[[ -z "${_resolved_ip}" ]] && _resolved_ip=$(getent hosts "${_host}" 2>/dev/null | awk '{print $1; exit}' || true)
 				fi
 				if [[ -n "${_resolved_ip}" ]]; then
-					DOCKER_EXTRA_ARGS+=("--add-host=${_host}:${_resolved_ip}")
-					display_alert "Docker --add-host" "${_host}:${_resolved_ip}" "info"
+					# Hostname resolves to loopback on host — service runs locally, use host-gateway for Docker
+					if [[ "${_resolved_ip}" == "127."* || "${_resolved_ip}" == "::1" ]]; then
+						DOCKER_EXTRA_ARGS+=("--add-host=${_host}:host-gateway")
+						display_alert "Docker --add-host (loopback→host-gateway)" "${_host}:${_resolved_ip} → host-gateway" "debug"
+					else
+						DOCKER_EXTRA_ARGS+=("--add-host=${_host}:${_resolved_ip}")
+						display_alert "Docker --add-host" "${_host}:${_resolved_ip}" "debug"
+					fi
 				else
 					display_alert "Cannot resolve hostname for Docker" "${_host}" "wrn"
 				fi
