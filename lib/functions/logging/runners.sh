@@ -174,11 +174,12 @@ function host_apt_get() {
 # Determine if we're building on non-amd64, and if so, which qemu binary to use.
 function run_host_x86_binary_logged() {
 	local -a qemu_invocation
-	local target_bin_arch qemu_arch qemu_bin qemu_ld_prefix invoked_bin
+	local target_bin_arch target_bin_desc qemu_arch qemu_bin qemu_ld_prefix invoked_bin
 	target_bin_arch="unknown - file util missing"
 	invoked_bin="$1"
 	if [[ -f /usr/bin/file ]]; then
-		target_bin_arch="$(file -b "${invoked_bin}" | cut -d ',' -f 1,2 | tr -d '\n')" # obtain the ELF name from the binary using 'file'
+		target_bin_desc="$(file -b "${invoked_bin}")"
+		target_bin_arch="$(echo $target_bin_desc | cut -d ',' -f 1,2 | tr -d '\n')" # obtain the ELF name from the binary using 'file'
 	else
 		exit_with_error "file util missing"
 	fi
@@ -203,7 +204,13 @@ function run_host_x86_binary_logged() {
 			exit_with_error "Can't find appropriate qemu binary for running '$1' on $(uname -m), missing packages?"
 		fi
 		display_alert "Using $qemu_bin for running on $(uname -m)" "$1 (${target_bin_arch})" "debug"
-		qemu_invocation=("$qemu_bin" "-L" "${qemu_ld_prefix}" "$@")
+		if [[ "${target_bin_desc}" == *"statically linked"* ]]; then
+			qemu_invocation=("$qemu_bin" "$@")
+		elif [[ -d "${qemu_ld_prefix}" ]]; then
+			qemu_invocation=("$qemu_bin" "-L" "${qemu_ld_prefix}" "$@")
+		else
+			exit_with_error "Missing cross-libs at ${qemu_ld_prefix}"
+		fi
 	else
 		display_alert "Not using qemu for running x86 binary on $(uname -m)" "$1 (${target_bin_arch})" "debug"
 	fi
