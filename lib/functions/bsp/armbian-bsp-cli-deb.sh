@@ -305,7 +305,7 @@ function get_bootscript_info() {
 		bootscript_info[bootscript_file_contents]=""
 
 		bootscript_info[bootscript_file_fullpath]="${SRC}/config/bootscripts/${bootscript_source}"
-		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_source}" ]; then
+		if [[ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_source}" ]]; then
 			bootscript_info[bootscript_file_fullpath]="${USERPATCHES_PATH}/bootscripts/${bootscript_source}"
 		fi
 		bootscript_info[bootscript_file_contents]="$(cat "${bootscript_info[bootscript_file_fullpath]}")"
@@ -329,8 +329,8 @@ function get_bootscript_info() {
 function board_side_bsp_cli_postinst_update_uboot_bootscript() {
 	if [[ ${BOOTSCRIPT_FORCE_UPDATE} == yes || ! -f /boot/${BOOTSCRIPT_DST} ]]; then
 
-		[ -z ${BOOTSCRIPT_BACKUP_VERSION} ] && BOOTSCRIPT_BACKUP_VERSION="$(date +%s)"
-		if [ -f /boot/${BOOTSCRIPT_DST} ]; then
+		[[ -z "${BOOTSCRIPT_BACKUP_VERSION}" ]] && BOOTSCRIPT_BACKUP_VERSION="$(date +%s)"
+		if [[ -f "/boot/${BOOTSCRIPT_DST}" ]]; then
 			cp -v /boot/${BOOTSCRIPT_DST} /usr/share/armbian/${BOOTSCRIPT_DST}-${BOOTSCRIPT_BACKUP_VERSION}
 			echo "NOTE: You can find previous bootscript versions in /usr/share/armbian !"
 		fi
@@ -341,23 +341,23 @@ function board_side_bsp_cli_postinst_update_uboot_bootscript() {
 		rootfstype=$(sed -e 's/^.*rootfstype=//' -e 's/ .*$//' < /proc/cmdline)
 
 		# recreate armbianEnv.txt if it and extlinux does not exists
-		if [ ! -f /boot/armbianEnv.txt ] && [ ! -f /boot/extlinux/extlinux.conf ]; then
+		if [[ ! -f /boot/armbianEnv.txt && ! -f /boot/extlinux/extlinux.conf ]]; then
 			cp -v /usr/share/armbian/armbianEnv.txt /boot
 			echo "rootdev="\$rootdev >> /boot/armbianEnv.txt
 			echo "rootfstype="\$rootfstype >> /boot/armbianEnv.txt
 		fi
 
 		# update boot.ini if it exists? @TODO: why? who uses this?
-		[ -f /boot/boot.ini ] && sed -i "s/setenv rootdev.*/setenv rootdev \\"$rootdev\\"/" /boot/boot.ini
-		[ -f /boot/boot.ini ] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"$rootfstype\\"/" /boot/boot.ini
+		[[ -f /boot/boot.ini ]] && sed -i "s/setenv rootdev.*/setenv rootdev \\"$rootdev\\"/" /boot/boot.ini
+		[[ -f /boot/boot.ini ]] && sed -i "s/setenv rootfstype.*/setenv rootfstype \\"$rootfstype\\"/" /boot/boot.ini
 
-		[ -f /boot/boot.cmd ] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr > /dev/null 2>&1
+		[[ -f /boot/boot.cmd ]] && mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr > /dev/null 2>&1
 	fi
 }
 
 function board_side_bsp_cli_preinst() {
 	# tell people to reboot at next login
-	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
+	[[ "$1" == "upgrade" ]] && touch /var/run/.reboot_required
 
 	# fixing ramdisk corruption when using lz4 compression method
 	sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" /etc/initramfs-tools/initramfs.conf
@@ -374,39 +374,39 @@ function board_side_bsp_cli_preinst() {
 	esac
 	sysctl -p > /dev/null 2>&1
 	# replace canonical advertisement
-	if [ -d "/var/lib/ubuntu-advantage/messages/" ]; then
+	if [[ -d "/var/lib/ubuntu-advantage/messages/" ]]; then
 		echo -e "\nSupport Armbian! \nLearn more at https://armbian.com/donate" > /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status
 		cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-no-packages-apps.tmpl
 		cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-packages-apps
 		cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-packages-apps.tmpl
 	fi
 	# disable deprecated services
-	[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
-	[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
-	[ -f "/etc/profile.d/check_first_login_reboot.sh" ] && rm /etc/profile.d/check_first_login_reboot.sh
-	[ -f "/etc/profile.d/ssh-title.sh" ] && rm /etc/profile.d/ssh-title.sh
-	[ -f "/etc/update-motd.d/10-header" ] && rm /etc/update-motd.d/10-header
-	[ -f "/etc/update-motd.d/30-sysinfo" ] && rm /etc/update-motd.d/30-sysinfo
-	[ -f "/etc/update-motd.d/35-tips" ] && rm /etc/update-motd.d/35-tips
-	[ -f "/etc/update-motd.d/40-updates" ] && rm /etc/update-motd.d/40-updates
-	[ -f "/etc/update-motd.d/98-autoreboot-warn" ] && rm /etc/update-motd.d/98-autoreboot-warn
-	[ -f "/etc/update-motd.d/99-point-to-faq" ] && rm /etc/update-motd.d/99-point-to-faq
-	[ -f "/etc/update-motd.d/80-esm" ] && rm /etc/update-motd.d/80-esm
-	[ -f "/etc/update-motd.d/80-livepatch" ] && rm /etc/update-motd.d/80-livepatch
-	[ -f "/etc/apt/apt.conf.d/02compress-indexes" ] && rm /etc/apt/apt.conf.d/02compress-indexes
-	[ -f "/etc/apt/apt.conf.d/02periodic" ] && rm /etc/apt/apt.conf.d/02periodic
-	[ -f "/etc/apt/apt.conf.d/no-languages" ] && rm /etc/apt/apt.conf.d/no-languages
-	[ -f "/etc/init.d/armhwinfo" ] && rm /etc/init.d/armhwinfo
-	[ -f "/etc/logrotate.d/armhwinfo" ] && rm /etc/logrotate.d/armhwinfo
-	[ -f "/etc/init.d/firstrun" ] && rm /etc/init.d/firstrun
-	[ -f "/etc/init.d/resize2fs" ] && rm /etc/init.d/resize2fs
-	[ -f "/lib/systemd/system/firstrun-config.service" ] && rm /lib/systemd/system/firstrun-config.service
-	[ -f "/lib/systemd/system/firstrun.service" ] && rm /lib/systemd/system/firstrun.service
-	[ -f "/lib/systemd/system/resize2fs.service" ] && rm /lib/systemd/system/resize2fs.service
-	[ -f "/usr/lib/armbian/apt-updates" ] && rm /usr/lib/armbian/apt-updates
-	[ -f "/usr/lib/armbian/firstrun-config.sh" ] && rm /usr/lib/armbian/firstrun-config.sh
+	[[ -f "/etc/profile.d/activate_psd_user.sh" ]] && rm /etc/profile.d/activate_psd_user.sh
+	[[ -f "/etc/profile.d/check_first_login.sh" ]] && rm /etc/profile.d/check_first_login.sh
+	[[ -f "/etc/profile.d/check_first_login_reboot.sh" ]] && rm /etc/profile.d/check_first_login_reboot.sh
+	[[ -f "/etc/profile.d/ssh-title.sh" ]] && rm /etc/profile.d/ssh-title.sh
+	[[ -f "/etc/update-motd.d/10-header" ]] && rm /etc/update-motd.d/10-header
+	[[ -f "/etc/update-motd.d/30-sysinfo" ]] && rm /etc/update-motd.d/30-sysinfo
+	[[ -f "/etc/update-motd.d/35-tips" ]] && rm /etc/update-motd.d/35-tips
+	[[ -f "/etc/update-motd.d/40-updates" ]] && rm /etc/update-motd.d/40-updates
+	[[ -f "/etc/update-motd.d/98-autoreboot-warn" ]] && rm /etc/update-motd.d/98-autoreboot-warn
+	[[ -f "/etc/update-motd.d/99-point-to-faq" ]] && rm /etc/update-motd.d/99-point-to-faq
+	[[ -f "/etc/update-motd.d/80-esm" ]] && rm /etc/update-motd.d/80-esm
+	[[ -f "/etc/update-motd.d/80-livepatch" ]] && rm /etc/update-motd.d/80-livepatch
+	[[ -f "/etc/apt/apt.conf.d/02compress-indexes" ]] && rm /etc/apt/apt.conf.d/02compress-indexes
+	[[ -f "/etc/apt/apt.conf.d/02periodic" ]] && rm /etc/apt/apt.conf.d/02periodic
+	[[ -f "/etc/apt/apt.conf.d/no-languages" ]] && rm /etc/apt/apt.conf.d/no-languages
+	[[ -f "/etc/init.d/armhwinfo" ]] && rm /etc/init.d/armhwinfo
+	[[ -f "/etc/logrotate.d/armhwinfo" ]] && rm /etc/logrotate.d/armhwinfo
+	[[ -f "/etc/init.d/firstrun" ]] && rm /etc/init.d/firstrun
+	[[ -f "/etc/init.d/resize2fs" ]] && rm /etc/init.d/resize2fs
+	[[ -f "/lib/systemd/system/firstrun-config.service" ]] && rm /lib/systemd/system/firstrun-config.service
+	[[ -f "/lib/systemd/system/firstrun.service" ]] && rm /lib/systemd/system/firstrun.service
+	[[ -f "/lib/systemd/system/resize2fs.service" ]] && rm /lib/systemd/system/resize2fs.service
+	[[ -f "/usr/lib/armbian/apt-updates" ]] && rm /usr/lib/armbian/apt-updates
+	[[ -f "/usr/lib/armbian/firstrun-config.sh" ]] && rm /usr/lib/armbian/firstrun-config.sh
 	# fix for https://bugs.launchpad.net/ubuntu/+source/lightdm-gtk-greeter/+bug/1897491
-	[ -d "/var/lib/lightdm" ] && (
+	[[ -d "/var/lib/lightdm" ]] && (
 		chown -R lightdm:lightdm /var/lib/lightdm
 		chmod 0750 /var/lib/lightdm
 	)
@@ -423,20 +423,20 @@ function board_side_bsp_cli_postrm() { # not run here
 function board_side_bsp_cli_postinst_base() {
 	# Source the armbian-release information file
 	# shellcheck source=/dev/null
-	[ -f /etc/armbian-release ] && . /etc/armbian-release
+	[[ -f /etc/armbian-release ]] && . /etc/armbian-release
 
 	# ARMBIAN_PRETTY_NAME is now set in armbian-base-files.
 
 	# Force ramlog to be enabled if it exists. @TODO: why?
-	[ -f /etc/lib/systemd/system/armbian-ramlog.service ] && systemctl --no-reload enable armbian-ramlog.service
+	[[ -f /etc/lib/systemd/system/armbian-ramlog.service ]] && systemctl --no-reload enable armbian-ramlog.service
 
 	# check if it was disabled in config and disable in new service
-	if [ -n "$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
+	if [[ -n "$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]]; then
 		sed -i "s/^ENABLED=.*/ENABLED=false/" /etc/default/armbian-ramlog
 	fi
 
 	# fix boot delay "waiting for suspend/resume device"
-	if [ -f "/etc/initramfs-tools/initramfs.conf" ]; then
+	if [[ -f "/etc/initramfs-tools/initramfs.conf" ]]; then
 		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 			echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 		fi
@@ -447,20 +447,20 @@ function board_side_bsp_cli_postinst_finish() {
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
-	if [ ! -f "/etc/default/armbian-motd" ]; then
+	if [[ ! -f "/etc/default/armbian-motd" ]]; then
 		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
-	if [ ! -f "/etc/default/armbian-ramlog" ] && [ -f /etc/default/armbian-ramlog.dpkg-dist ]; then
+	if [[ ! -f "/etc/default/armbian-ramlog" && -f /etc/default/armbian-ramlog.dpkg-dist ]]; then
 		mv /etc/default/armbian-ramlog.dpkg-dist /etc/default/armbian-ramlog
 	fi
-	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
+	if [[ ! -f "/etc/default/armbian-zram-config" && -f /etc/default/armbian-zram-config.dpkg-dist ]]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
-	if [ ! -f "/etc/default/armbian-firstrun" ]; then
+	if [[ ! -f "/etc/default/armbian-firstrun" ]]; then
 		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
 
-	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
+	if [[ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]]; then
 		mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
 	fi
 
