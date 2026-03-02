@@ -28,7 +28,7 @@ function fingerprint_image() {
 		Support:        ${VENDORSUPPORT}
 	EOF
 
-	if [ -n "$2" ]; then
+	if [[ -n "$2" ]]; then
 		cat <<- EOF >> "${1}"
 			---------------------------------------------------------------------------
 			Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
