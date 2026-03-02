@@ -79,7 +79,7 @@ function install_distribution_specific() {
 	install_rclocal
 
 	# use list modules INITRAMFS
-	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then
+	if [[ -f "${SRC}/config/modules/${MODULES_INITRD}" ]]; then
 		display_alert "Use file list modules MODULES_INITRD" "${MODULES_INITRD}"
 		sed -i "s/^MODULES=.*/MODULES=list/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 		cat "${SRC}"/config/modules/"${MODULES_INITRD}" >> "${SDCARD}"/etc/initramfs-tools/modules
@@ -111,7 +111,7 @@ function fetch_distro_keyring() {
 		#FIXME: there may be a point where we need an *older* keyring pkg
 		# NOTE: this will be most likely an unsupported case like a user wanting to build using an ancient debian/ubuntu release
 		debian)
-			if [ -e "${CACHEDIR}/debian-archive-keyring.gpg" ]; then
+			if [[ -e "${CACHEDIR}/debian-archive-keyring.gpg" ]]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
 			else
 			# for details of how this gets into this mirror, see
@@ -138,7 +138,7 @@ function fetch_distro_keyring() {
 			fi
 			;;
 		ubuntu)
-			if [ -e "${CACHEDIR}/ubuntu-archive-keyring.gpg" ]; then
+			if [[ -e "${CACHEDIR}/ubuntu-archive-keyring.gpg" ]]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
 			else
 				PKG_URL="https://github.armbian.com/keyrings/latest-ubuntu-keyring.deb"
@@ -203,7 +203,7 @@ function create_sources_list_and_deploy_repo_key() {
 			Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 			EOF
 
-			if [ ${#security_suites[@]} -gt 0 ]; then
+			if [[ ${#security_suites[@]} -gt 0 ]]; then
 				echo "" >> "${basedir}/etc/apt/sources.list.d/${distro}.sources" # it breaks if there is no line space in between
 				cat <<- EOF >> "${basedir}/etc/apt/sources.list.d/${distro}.sources"
 				Types: deb
