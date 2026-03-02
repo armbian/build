@@ -41,7 +41,7 @@ function prepare_host_noninteractive() {
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	declare offline=false
-	if [ "$OFFLINE_WORK" == "yes" ]; then
+	if [[ "$OFFLINE_WORK" == "yes" ]]; then
 		offline=true
 	fi
 

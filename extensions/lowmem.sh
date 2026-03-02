@@ -13,7 +13,7 @@ function post_family_tweaks_bsp__initramfs() {
 	display_alert "${EXTENSION}" "Set initramfs config for low memory" "debug"
 
 	# Create /etc/initramfs-tools/conf.d/armbian-lowmem.conf configuration file
-	if [ ! -f "$destination/etc/initramfs-tools/conf.d/armbian-lowmem.conf" ]; then
+	if [[ ! -f "$destination/etc/initramfs-tools/conf.d/armbian-lowmem.conf" ]]; then
 		mkdir -p "$destination/etc/initramfs-tools/conf.d"
 		install -m 644 /dev/null "$destination/etc/initramfs-tools/conf.d/armbian-lowmem.conf"
 
@@ -35,7 +35,7 @@ function post_family_tweaks_bsp__copy_lowmem_config() {
 
 	# Copy /etc/default/armbian-lowmem configuration file
 	# Allows user to customize swapfile size / location
-	if [ ! -f "$destination/etc/default/armbian-lowmem" ]; then
+	if [[ ! -f "$destination/etc/default/armbian-lowmem" ]]; then
 		install -m 664 "$SRC/packages/bsp/armbian-lowmem/etc/default/armbian-lowmem.dpkg-dist" "$destination/etc/default/armbian-lowmem"
 	fi
 

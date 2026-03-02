@@ -34,7 +34,7 @@ is_enabled() {
 if_enabled_echo() {
 	if is_enabled "$1"; then
 		echo -n "$2"
-	elif [ $# -ge 3 ]; then
+	elif [[ $# -ge 3 ]]; then
 		echo -n "$3"
 	fi
 }

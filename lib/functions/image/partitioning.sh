@@ -248,7 +248,7 @@ function prepare_partitions() {
 		# Check sfdisk version to determine if --sector-size is supported
 		sfdisk_version=$(sfdisk --version | awk '/util-linux/ {print $NF}')
 		sfdisk_version_num=$(echo "$sfdisk_version" | awk -F. '{printf "%d%02d%02d\n", $1, $2, $3}')
-		if [ "$sfdisk_version_num" -ge "24100" ]; then
+		if [[ "$sfdisk_version_num" -ge "24100" ]]; then
 			echo "${partition_script_output}" | run_host_command_logged sfdisk --sector-size "$SECTOR_SIZE" "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 		else
 			echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
@@ -267,7 +267,7 @@ function prepare_partitions() {
 
 	declare -g LOOP
 	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
-	if [ "$sfdisk_version_num" -ge "24100" ]; then
+	if [[ "$sfdisk_version_num" -ge "24100" ]]; then
 		LOOP=$(losetup --show --partscan --find -b "$SECTOR_SIZE" "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
 	else
 		LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
@@ -482,7 +482,7 @@ function prepare_partitions() {
 
 	# recompile .cmd to .scr if boot.cmd exists
 	if [[ -f "${SDCARD}/boot/boot.cmd" ]]; then
-		if [ -z ${BOOTSCRIPT_OUTPUT} ]; then
+		if [[ -z "${BOOTSCRIPT_OUTPUT}" ]]; then
 			BOOTSCRIPT_OUTPUT=boot.scr
 		fi
 		case ${LINUXFAMILY} in
