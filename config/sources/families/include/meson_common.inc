@@ -25,6 +25,7 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNELBRANCH="tag:v6.12.28" # frozen on this version
 		;;
 esac
 
