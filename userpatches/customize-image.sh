@@ -27,6 +27,7 @@ Main() {
 	ConfigureBootOverlays
 	AddPPAs
 	InstallMaliGPU
+	SetupRKNPU
 	CompileCameraOverlays
 	InstallCameraPackages
 	CreateMplaneSymlink
@@ -174,6 +175,92 @@ InstallMaliGPU() {
 	# blacklist panthor so it doesn't race with mali_bifrost
 	echo "blacklist panthor" > /etc/modprobe.d/blacklist-panthor.conf
 	rm -f /etc/OpenCL/vendors/rusticl.icd
+}
+
+SetupRKNPU() {
+	echo ">>> Setting up RKNPU2 runtime + NPU performance tuning"
+
+	# The kernel RKNPU driver is built-in (CONFIG_ROCKCHIP_RKNPU=y, v0.9.8).
+	# Building it as a module (=m) fails due to unexported iommu symbols.
+	#
+	# For CPU fallback on unsupported ops (needed for fp16 attention accuracy),
+	# we use the updated librknnrt.so from airockchip which supports the
+	# RKNN_FLAG_EXECUTE_FALLBACK_PRIOR_DEVICE_GPU flag. This lets the runtime
+	# handle mixed NPU+CPU execution without needing a newer kernel driver.
+	#
+	# See: logs/2026-03-05-model_benchmarks.md
+	# See: logs/2026-03-06-bukapilot-rk3588-analysis.md (rknnmodel.cc)
+
+	local RKNPU2_VERSION="2.3.0"
+	local RKNPU2_URL="https://github.com/airockchip/rknn-toolkit2/raw/v${RKNPU2_VERSION}/rknpu2"
+
+	# Install RKNN runtime library (librknnrt.so) - needed for NPU inference
+	local RKNN_LIB_DIR="/usr/lib"
+	echo "  Installing librknnrt.so from airockchip/rknn-toolkit2"
+
+	curl -fsSL "${RKNPU2_URL}/runtime/Linux/librknn_api/aarch64/librknnrt.so" \
+		-o "${RKNN_LIB_DIR}/librknnrt.so" || {
+		echo "WARNING: Failed to download librknnrt.so, trying alternative URL"
+		curl -fsSL "https://github.com/airockchip/rknn-toolkit2/raw/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so" \
+			-o "${RKNN_LIB_DIR}/librknnrt.so" || {
+			echo "ERROR: Failed to download librknnrt.so"
+			return 1
+		}
+	}
+	chmod 755 "${RKNN_LIB_DIR}/librknnrt.so"
+
+	# Install RKNN API headers for openpilot C++ build (bukapilot's rknnmodel.cc)
+	mkdir -p /usr/include/rockchip /usr/local/include/rockchip
+	curl -fsSL "${RKNPU2_URL}/runtime/Linux/librknn_api/include/rknn_api.h" \
+		-o /usr/include/rockchip/rknn_api.h 2>/dev/null || true
+	curl -fsSL "${RKNPU2_URL}/runtime/Linux/librknn_api/include/rknn_matmul_api.h" \
+		-o /usr/include/rockchip/rknn_matmul_api.h 2>/dev/null || true
+	cp /usr/include/rockchip/rknn_api.h /usr/local/include/rockchip/ 2>/dev/null || true
+	cp /usr/include/rockchip/rknn_matmul_api.h /usr/local/include/rockchip/ 2>/dev/null || true
+
+	ldconfig
+
+	# Create systemd service for NPU + DDR frequency setup on boot
+	cat > /usr/local/bin/asius-npu-setup.sh << 'NPUEOF'
+#!/bin/bash
+# Configure NPU and DDR for max performance on boot.
+# The kernel RKNPU driver is built-in so no module loading needed.
+# librknnrt.so handles CPU fallback for ops the NPU can't run in fp16.
+
+# Fix NPU governor to max frequency (1GHz) for consistent inference latency
+if [ -d /sys/class/devfreq/fdab0000.npu ]; then
+	echo userspace > /sys/class/devfreq/fdab0000.npu/governor
+	echo 1000000000 > /sys/class/devfreq/fdab0000.npu/userspace/set_freq
+	echo "asius-npu: NPU fixed at 1GHz"
+fi
+
+# Fix DDR governor to max frequency for NPU memory bandwidth
+if [ -d /sys/class/devfreq/dmc ]; then
+	echo userspace > /sys/class/devfreq/dmc/governor
+	echo 2112000000 > /sys/class/devfreq/dmc/userspace/set_freq
+	echo "asius-npu: DDR fixed at 2112MHz"
+fi
+NPUEOF
+	chmod 755 /usr/local/bin/asius-npu-setup.sh
+
+	cat > /etc/systemd/system/asius-npu.service << 'EOF'
+[Unit]
+Description=Asius RKNPU frequency setup
+After=local-fs.target
+Before=openpilot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/asius-npu-setup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+	systemctl enable asius-npu.service 2>/dev/null || true
+
+	echo "  OK: RKNPU2 runtime installed, NPU setup service enabled"
 }
 
 CompileCameraOverlays() {
@@ -526,7 +613,7 @@ LAUNCHEOF
 	cat > /etc/systemd/system/openpilot.service << 'EOF'
 [Unit]
 Description=Openpilot launcher
-After=network.target asius-firstboot.service rkaiq_3A.service
+After=network.target asius-firstboot.service asius-npu.service rkaiq_3A.service
 Wants=network.target
 
 [Service]
