@@ -23,6 +23,7 @@ Main() {
 	SetupLocaleTimezone
 	SkipFirstboot
 	SetupI2CPermissions
+	SetupSPIPermissions
 	FixRealtimeScheduling
 	ConfigureBootOverlays
 	AddPPAs
@@ -102,6 +103,13 @@ SetupI2CPermissions() {
 	echo 'KERNEL=="mpp_service", MODE="0666"' > /etc/udev/rules.d/99-mpp.rules
 }
 
+SetupSPIPermissions() {
+	echo ">>> Setting up SPI device permissions"
+
+	# udev rule so /dev/spidev* is accessible without sudo (needed for panda SPI communication)
+	echo 'SUBSYSTEM=="spidev", MODE="0666"' > /etc/udev/rules.d/99-spidev.rules
+}
+
 FixRealtimeScheduling() {
 	echo ">>> Fixing RT scheduling for rkaiq 3A engine"
 
@@ -126,9 +134,9 @@ ConfigureBootOverlays() {
 
 	if [[ -f /boot/armbianEnv.txt ]]; then
 		if grep -q '^overlays=' /boot/armbianEnv.txt; then
-			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0/' /boot/armbianEnv.txt
+			sed -i 's/^overlays=.*/overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0 rk3588-spi0-m2-cs0-spidev/' /boot/armbianEnv.txt
 		else
-			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0' >> /boot/armbianEnv.txt
+			echo 'overlays=orangepi-5-ultra-cam0-imx415 orangepi-5-ultra-cam1-imx415 orangepi-5-ultra-cam2-imx415 rk3588-i2c2-m0 rk3588-spi0-m2-cs0-spidev' >> /boot/armbianEnv.txt
 		fi
 	fi
 }
