@@ -56,7 +56,7 @@ function pre_customize_image__ayn-odin2_alsa_ucm_conf() {
 	(
 		(
 		cd "${SDCARD}/usr/share/alsa" || exit 6
-		curl -L -o temp.zip "https://github.com/AYNTechnologies/alsa-ucm-conf/archive/refs/heads/ayn/v1.2.13.zip"
+		curl -L -o temp.zip "${GITHUB_SOURCE}/AYNTechnologies/alsa-ucm-conf/archive/refs/heads/ayn/v1.2.13.zip"
 		unzip -o temp.zip
 		unzip_dir=$(unzip -Z1 temp.zip | head -n1 | cut -d/ -f1)
 		cp -rf "${unzip_dir}/"* .
