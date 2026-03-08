@@ -228,14 +228,15 @@ family_tweaks_bsp() {
 				    Driver "modesetting"
 				    Option "PrimaryGPU" "true"
 				EndSection
+
 				Section "Screen"
 				    Identifier      "Default Screen"
 				    Device          "Meson"
 				    Monitor         "foo"
 				    DefaultDepth  24
 				    SubSection "Display"
-				       Depth    24
-				       Modes    "1920x1080" "1440x900" "1280x720" "1280x1024" "1280x960" "1024x768" "800x600" "640x480" "720x400"
+				        Depth    24
+				        Modes    "1920x1080" "1440x900" "1280x720" "1280x1024" "1280x960" "1024x768" "800x600" "640x480" "720x400"
 				    EndSubSection
 				EndSection
 			EOF
@@ -246,21 +247,21 @@ family_tweaks_bsp() {
 				    Identifier  "DRM Graphics Acclerated"
 
 				    ## Use modesetting and glamor
-				        Driver      "modesetting"
-				        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
-				        Option      "DRI"            "2"
-				        Option      "Dri2Vsync"      "true"
-				        Option      "TripleBuffer"   "True"
+				    Driver      "modesetting"
+				    Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
+				    Option      "DRI"            "2"
+				    Option      "Dri2Vsync"      "true"
+				    Option      "TripleBuffer"   "True"
 				    ## End glamor configuration
 
-				    EndSection
+				EndSection
 
-				    Section "Screen"
-				        Identifier "Default Screen"
-				            SubSection "Display"
-				                Depth 24
-				            EndSubSection
-				        EndSection
+				Section "Screen"
+				    Identifier "Default Screen"
+				    SubSection "Display"
+				        Depth 24
+				    EndSubSection
+				EndSection
 			EOF
 			;;
 	esac
