@@ -1,0 +1,147 @@
+From ec207c3abbd1bba31c55e46387d6da59278e96c3 Mon Sep 17 00:00:00 2001
+From: Sugar Zhang <sugar.zhang@rock-chips.com>
+Date: Tue, 3 Feb 2026 17:46:31 +0100
+Subject: [PATCH 158/187] FROMLIST(v2): ASoC: rockchip: spdif: Fill IEC958 CS
+ info per params
+
+Add support to fill IEC958 channel status information.
+
+Signed-off-by: Sugar Zhang <sugar.zhang@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ sound/soc/rockchip/Kconfig          |  1 +
+ sound/soc/rockchip/rockchip_spdif.c | 45 ++++++++++++++++++++++++++---
+ sound/soc/rockchip/rockchip_spdif.h |  8 +++++
+ 3 files changed, 50 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/rockchip/Kconfig b/sound/soc/rockchip/Kconfig
+index bd210fafe9fe..391ce2225fde 100644
+--- a/sound/soc/rockchip/Kconfig
++++ b/sound/soc/rockchip/Kconfig
+@@ -41,6 +41,7 @@ config SND_SOC_ROCKCHIP_SAI
+ 
+ config SND_SOC_ROCKCHIP_SPDIF
+ 	tristate "Rockchip SPDIF Device Driver"
++	select SND_PCM_IEC958
+ 	select SND_SOC_GENERIC_DMAENGINE_PCM
+ 	help
+ 	  Say Y or M if you want to add support for SPDIF driver for
+diff --git a/sound/soc/rockchip/rockchip_spdif.c b/sound/soc/rockchip/rockchip_spdif.c
+index d06573f22805..e64c24897f29 100644
+--- a/sound/soc/rockchip/rockchip_spdif.c
++++ b/sound/soc/rockchip/rockchip_spdif.c
+@@ -16,6 +16,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/regmap.h>
+ #include <sound/pcm_params.h>
++#include <sound/pcm_iec958.h>
+ #include <sound/dmaengine_pcm.h>
+ 
+ #include "rockchip_spdif.h"
+@@ -27,7 +28,25 @@ enum rk_spdif_type {
+ 	RK_SPDIF_RK3366,
+ };
+ 
+-#define RK3288_GRF_SOC_CON2 0x24c
++/*
++ *      |  7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  |
++ * CS0: |   Mode    |        d        |  c  |  b  |  a  |
++ * CS1: |               Category Code                   |
++ * CS2: |    Channel Number     |     Source Number     |
++ * CS3: |    Clock Accuracy     |     Sample Freq       |
++ * CS4: |    Ori Sample Freq    |     Word Length       |
++ * CS5: |                                   |   CGMS-A  |
++ * CS6~CS23: Reserved
++ *
++ * a: use of channel status block
++ * b: linear PCM identification: 0 for lpcm, 1 for nlpcm
++ * c: copyright information
++ * d: additional format information
++ */
++#define CS_BYTE			6
++#define CS_FRAME(c)		((c) << 16 | (c))
++
++#define RK3288_GRF_SOC_CON2	0x24c
+ 
+ struct rk_spdif_dev {
+ 	struct device *dev;
+@@ -88,8 +107,20 @@ static int rk_spdif_hw_params(struct snd_pcm_substream *substream,
+ 	struct rk_spdif_dev *spdif = snd_soc_dai_get_drvdata(dai);
+ 	unsigned int mclk_rate = clk_get_rate(spdif->mclk);
+ 	unsigned int val = SPDIF_CFGR_HALFWORD_ENABLE;
+-	int bmc, div;
+-	int ret;
++	int bmc, div, ret, i;
++	u16 *fc;
++	u8 cs[CS_BYTE];
++
++	ret = snd_pcm_create_iec958_consumer_hw_params(params, cs, sizeof(cs));
++	if (ret < 0)
++		return ret;
++
++	fc = (u16 *)cs;
++	for (i = 0; i < CS_BYTE / 2; i++)
++		regmap_write(spdif->regmap, SPDIF_CHNSRn(i), CS_FRAME(fc[i]));
++
++	regmap_update_bits(spdif->regmap, SPDIF_CFGR, SPDIF_CFGR_CSE_MASK,
++			   SPDIF_CFGR_CSE_EN);
+ 
+ 	/* bmc = 128fs */
+ 	bmc = 128 * params_rate(params);
+@@ -239,6 +270,9 @@ static bool rk_spdif_wr_reg(struct device *dev, unsigned int reg)
+ 	case SPDIF_INTCR:
+ 	case SPDIF_XFER:
+ 	case SPDIF_SMPDR:
++	case SPDIF_VLDFRn(0) ... SPDIF_VLDFRn(11):
++	case SPDIF_USRDRn(0) ... SPDIF_USRDRn(11):
++	case SPDIF_CHNSRn(0) ... SPDIF_CHNSRn(11):
+ 		return true;
+ 	default:
+ 		return false;
+@@ -254,6 +288,9 @@ static bool rk_spdif_rd_reg(struct device *dev, unsigned int reg)
+ 	case SPDIF_INTSR:
+ 	case SPDIF_XFER:
+ 	case SPDIF_SMPDR:
++	case SPDIF_VLDFRn(0) ... SPDIF_VLDFRn(11):
++	case SPDIF_USRDRn(0) ... SPDIF_USRDRn(11):
++	case SPDIF_CHNSRn(0) ... SPDIF_CHNSRn(11):
+ 		return true;
+ 	default:
+ 		return false;
+@@ -276,7 +313,7 @@ static const struct regmap_config rk_spdif_regmap_config = {
+ 	.reg_bits = 32,
+ 	.reg_stride = 4,
+ 	.val_bits = 32,
+-	.max_register = SPDIF_SMPDR,
++	.max_register = SPDIF_VERSION,
+ 	.writeable_reg = rk_spdif_wr_reg,
+ 	.readable_reg = rk_spdif_rd_reg,
+ 	.volatile_reg = rk_spdif_volatile_reg,
+diff --git a/sound/soc/rockchip/rockchip_spdif.h b/sound/soc/rockchip/rockchip_spdif.h
+index acf64986a2e0..b837b1f8d57f 100644
+--- a/sound/soc/rockchip/rockchip_spdif.h
++++ b/sound/soc/rockchip/rockchip_spdif.h
+@@ -21,6 +21,10 @@
+ #define SPDIF_CFGR_CLR_EN		BIT(7)
+ #define SPDIF_CFGR_CLR_DIS		0
+ 
++#define SPDIF_CFGR_CSE_MASK		BIT(6)
++#define SPDIF_CFGR_CSE_EN		BIT(6)
++#define SPDIF_CFGR_CSE_DIS		0
++
+ #define SPDIF_CFGR_ADJ_MASK		BIT(3)
+ #define SPDIF_CFGR_ADJ_LEFT_J		BIT(3)
+ #define SPDIF_CFGR_ADJ_RIGHT_J		0
+@@ -64,5 +68,9 @@
+ #define SPDIF_INTSR	(0x0010)
+ #define SPDIF_XFER	(0x0018)
+ #define SPDIF_SMPDR	(0x0020)
++#define SPDIF_VLDFRn(x)	(0x0060 + (x) * 4)
++#define SPDIF_USRDRn(x)	(0x0090 + (x) * 4)
++#define SPDIF_CHNSRn(x)	(0x00c0 + (x) * 4)
++#define SPDIF_VERSION	(0x01c0)
+ 
+ #endif /* _ROCKCHIP_SPDIF_H */
+-- 
+2.43.0
+

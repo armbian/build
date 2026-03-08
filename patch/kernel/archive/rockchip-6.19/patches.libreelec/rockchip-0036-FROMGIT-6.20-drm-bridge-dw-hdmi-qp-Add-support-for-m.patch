@@ -1,0 +1,108 @@
+From 5c38b346501a65f638bf025206987df229548c8b Mon Sep 17 00:00:00 2001
+From: Chris Morgan <macromorgan@hotmail.com>
+Date: Wed, 19 Nov 2025 16:55:25 -0600
+Subject: [PATCH 036/187] FROMGIT(6.20): drm/bridge: dw-hdmi-qp: Add support
+ for missing HPD
+
+Add support for the dw-hdmi-qp driver to handle devices with missing
+HPD pins.
+
+Since in this situation we are now polling for the EDID data via i2c
+change the error message to a rate limited debug message when we are
+unable to complete an i2c read, as a disconnected device would
+otherwise fill dmesg with i2c read errors.
+
+Reviewed-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Signed-off-by: Chris Morgan <macromorgan@hotmail.com>
+Signed-off-by: Heiko Stuebner <heiko@sntech.de>
+Link: https://patch.msgid.link/20251119225526.70588-3-macroalpha82@gmail.com
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c | 34 +++++++++++++++++---
+ 1 file changed, 30 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+index 60166919c5b5..e1755dc78f9c 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+@@ -166,6 +166,7 @@ struct dw_hdmi_qp {
+ 	int main_irq;
+ 
+ 	unsigned long tmds_char_rate;
++	bool no_hpd;
+ };
+ 
+ static void dw_hdmi_qp_write(struct dw_hdmi_qp *hdmi, unsigned int val,
+@@ -556,14 +557,22 @@ static int dw_hdmi_qp_i2c_read(struct dw_hdmi_qp *hdmi,
+ 
+ 		stat = wait_for_completion_timeout(&i2c->cmp, HZ / 10);
+ 		if (!stat) {
+-			dev_err(hdmi->dev, "i2c read timed out\n");
++			if (hdmi->no_hpd)
++				dev_dbg_ratelimited(hdmi->dev,
++						    "i2c read timed out\n");
++			else
++				dev_err(hdmi->dev, "i2c read timed out\n");
+ 			dw_hdmi_qp_write(hdmi, 0x01, I2CM_CONTROL0);
+ 			return -EAGAIN;
+ 		}
+ 
+ 		/* Check for error condition on the bus */
+ 		if (i2c->stat & I2CM_NACK_RCVD_IRQ) {
+-			dev_err(hdmi->dev, "i2c read error\n");
++			if (hdmi->no_hpd)
++				dev_dbg_ratelimited(hdmi->dev,
++						    "i2c read error\n");
++			else
++				dev_err(hdmi->dev, "i2c read error\n");
+ 			dw_hdmi_qp_write(hdmi, 0x01, I2CM_CONTROL0);
+ 			return -EIO;
+ 		}
+@@ -901,6 +910,15 @@ static enum drm_connector_status
+ dw_hdmi_qp_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
+ {
+ 	struct dw_hdmi_qp *hdmi = bridge->driver_private;
++	const struct drm_edid *drm_edid;
++
++	if (hdmi->no_hpd) {
++		drm_edid = drm_edid_read_ddc(connector, bridge->ddc);
++		if (drm_edid)
++			return connector_status_connected;
++		else
++			return connector_status_disconnected;
++	}
+ 
+ 	return hdmi->phy.ops->read_hpd(hdmi, hdmi->phy.data);
+ }
+@@ -926,6 +944,11 @@ dw_hdmi_qp_bridge_tmds_char_rate_valid(const struct drm_bridge *bridge,
+ {
+ 	struct dw_hdmi_qp *hdmi = bridge->driver_private;
+ 
++	/*
++	 * TODO: when hdmi->no_hpd is 1 we must not support modes that
++	 * require scrambling, including every mode with a clock above
++	 * HDMI14_MAX_TMDSCLK.
++	 */
+ 	if (rate > HDMI14_MAX_TMDSCLK) {
+ 		dev_dbg(hdmi->dev, "Unsupported TMDS char rate: %lld\n", rate);
+ 		return MODE_CLOCK_HIGH;
+@@ -1279,12 +1302,15 @@ struct dw_hdmi_qp *dw_hdmi_qp_bind(struct platform_device *pdev,
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
++	hdmi->no_hpd = device_property_read_bool(dev, "no-hpd");
++
+ 	hdmi->bridge.driver_private = hdmi;
+ 	hdmi->bridge.ops = DRM_BRIDGE_OP_DETECT |
+ 			   DRM_BRIDGE_OP_EDID |
+ 			   DRM_BRIDGE_OP_HDMI |
+-			   DRM_BRIDGE_OP_HDMI_AUDIO |
+-			   DRM_BRIDGE_OP_HPD;
++			   DRM_BRIDGE_OP_HDMI_AUDIO;
++	if (!hdmi->no_hpd)
++		hdmi->bridge.ops |= DRM_BRIDGE_OP_HPD;
+ 	hdmi->bridge.of_node = pdev->dev.of_node;
+ 	hdmi->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
+ 	hdmi->bridge.vendor = "Synopsys";
+-- 
+2.43.0
+

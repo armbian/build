@@ -1,0 +1,141 @@
+From 5b59e5c5ba71dca4138d0fb9ae8270a16c187eb8 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Mon, 19 Jan 2026 15:25:57 +0200
+Subject: [PATCH 110/187] FROMLIST(v3): drm/bridge: Add ->detect_ctx hook and
+ drm_bridge_detect_ctx()
+
+Add an atomic variant of the ->detect callback and a new helper to call
+the hook while passing an optional drm_modeset_acquire_ctx reference.
+
+When both ->detect_ctx and ->detect are defined, the latter is ignored.
+If acquire_ctx is unset, the function takes care of the locking,
+while also handling EDEADLK.
+
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>
+Tested-by: Maud Spierings <maud_spierings@hotmail.com>
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ drivers/gpu/drm/drm_bridge.c | 58 ++++++++++++++++++++++++++++++++++++
+ include/drm/drm_bridge.h     | 30 +++++++++++++++++++
+ 2 files changed, 88 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_bridge.c b/drivers/gpu/drm/drm_bridge.c
+index 77ce77a4e8f3..4abc37b73d32 100644
+--- a/drivers/gpu/drm/drm_bridge.c
++++ b/drivers/gpu/drm/drm_bridge.c
+@@ -1396,6 +1396,64 @@ drm_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
+ }
+ EXPORT_SYMBOL_GPL(drm_bridge_detect);
+ 
++/**
++ * drm_bridge_detect_ctx - check if anything is attached to the bridge output
++ * @bridge: bridge control structure
++ * @connector: attached connector
++ * @ctx: acquire_ctx, or NULL to let this function handle locking
++ *
++ * If the bridge supports output detection, as reported by the
++ * DRM_BRIDGE_OP_DETECT bridge ops flag, call &drm_bridge_funcs.detect_ctx
++ * or &drm_bridge_funcs.detect for the bridge and return the connection status.
++ * Otherwise return connector_status_unknown.
++ *
++ * When both @ctx and &drm_bridge_funcs.detect_ctx are not set, this helper
++ * function is equivalent to drm_bridge_detect() above.
++ *
++ * RETURNS:
++ * The detection status on success, or connector_status_unknown if the bridge
++ * doesn't support output detection.
++ * If @ctx is set, it might also return -EDEADLK.
++ */
++int drm_bridge_detect_ctx(struct drm_bridge *bridge,
++			  struct drm_connector *connector,
++			  struct drm_modeset_acquire_ctx *ctx)
++{
++	if (!(bridge->ops & DRM_BRIDGE_OP_DETECT))
++		return connector_status_unknown;
++
++	if (bridge->funcs->detect_ctx) {
++		struct drm_modeset_acquire_ctx br_ctx;
++		int ret;
++
++		if (ctx)
++			return bridge->funcs->detect_ctx(bridge, connector, ctx);
++
++		drm_modeset_acquire_init(&br_ctx, 0);
++retry:
++		ret = drm_modeset_lock(&connector->dev->mode_config.connection_mutex,
++				       &br_ctx);
++		if (!ret)
++			ret = bridge->funcs->detect_ctx(bridge, connector, &br_ctx);
++
++		if (ret == -EDEADLK) {
++			drm_modeset_backoff(&br_ctx);
++			goto retry;
++		}
++
++		if (ret < 0)
++			ret = connector_status_unknown;
++
++		drm_modeset_drop_locks(&br_ctx);
++		drm_modeset_acquire_fini(&br_ctx);
++
++		return ret;
++	}
++
++	return bridge->funcs->detect(bridge, connector);
++}
++EXPORT_SYMBOL_GPL(drm_bridge_detect_ctx);
++
+ /**
+  * drm_bridge_get_modes - fill all modes currently valid for the sink into the
+  * @connector
+diff --git a/include/drm/drm_bridge.h b/include/drm/drm_bridge.h
+index baf347ddf407..eb2e20e69060 100644
+--- a/include/drm/drm_bridge.h
++++ b/include/drm/drm_bridge.h
+@@ -547,6 +547,33 @@ struct drm_bridge_funcs {
+ 	enum drm_connector_status (*detect)(struct drm_bridge *bridge,
+ 					    struct drm_connector *connector);
+ 
++	/**
++	 * @detect_ctx:
++	 *
++	 * Check if anything is attached to the bridge output.
++	 *
++	 * This callback is optional, if not implemented the bridge will be
++	 * considered as always having a component attached to its output.
++	 * Bridges that implement this callback shall set the
++	 * DRM_BRIDGE_OP_DETECT flag in their &drm_bridge->ops.
++	 *
++	 * This is the atomic version of &drm_bridge_funcs.detect.
++	 *
++	 * To avoid races against concurrent connector state updates, the
++	 * helper libraries always call this with ctx set to a valid context,
++	 * and &drm_mode_config.connection_mutex will always be locked with
++	 * the ctx parameter set to this ctx. This allows taking additional
++	 * locks as required.
++	 *
++	 * RETURNS:
++	 *
++	 * &drm_connector_status indicating the bridge output status,
++	 * or the error code returned by drm_modeset_lock(), -EDEADLK.
++	 */
++	int (*detect_ctx)(struct drm_bridge *bridge,
++			  struct drm_connector *connector,
++			  struct drm_modeset_acquire_ctx *ctx);
++
+ 	/**
+ 	 * @get_modes:
+ 	 *
+@@ -1513,6 +1540,9 @@ drm_atomic_helper_bridge_propagate_bus_fmt(struct drm_bridge *bridge,
+ 
+ enum drm_connector_status
+ drm_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector);
++int drm_bridge_detect_ctx(struct drm_bridge *bridge,
++			  struct drm_connector *connector,
++			  struct drm_modeset_acquire_ctx *ctx);
+ int drm_bridge_get_modes(struct drm_bridge *bridge,
+ 			 struct drm_connector *connector);
+ const struct drm_edid *drm_bridge_edid_read(struct drm_bridge *bridge,
+-- 
+2.43.0
+
