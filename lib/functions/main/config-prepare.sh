@@ -167,7 +167,7 @@ function config_early_init() {
 	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
 
 	# Do not initialize an empty array if it exists.
-	if [ "${KERNEL_DRIVERS_SKIP[*]}" == "" ]; then
+	if [[ "${KERNEL_DRIVERS_SKIP[*]}" == "" ]]; then
 		# Prepare array to be filled in by board/family/extensions
 		declare -g -a KERNEL_DRIVERS_SKIP=()
 	fi

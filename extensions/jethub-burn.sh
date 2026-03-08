@@ -100,7 +100,7 @@ function make_burn__run() {
   cp "$uboot_bin"          "$tmpdir/u-boot.bin"
 
   display_alert "make_burn" "Packing burn image..." "info"
-  "$PACKER" -r "$tmpdir/image.cfg" "$tmpdir" "$OUT_IMG" || exit_with_error "Image pack FAILED"
+  env -u QEMU_CPU "$PACKER" -r "$tmpdir/image.cfg" "$tmpdir" "$OUT_IMG" || exit_with_error "Image pack FAILED"
 
   [[ -f "$OUT_IMG" ]] || exit_with_error "Burn image not produced"
   display_alert "make_burn" "Burn image created: $(basename "$OUT_IMG")" "ok"

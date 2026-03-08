@@ -1,0 +1,608 @@
+From 4c5e76e974db7cca853619ca138eecd8f004622f Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Mon, 27 Oct 2025 16:51:01 +0800
+Subject: [PATCH] drm/panel: Add panel driver for Chipone ICNA35XX based panels
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/gpu/drm/panel/Kconfig                 |  11 +
+ drivers/gpu/drm/panel/Makefile                |   1 +
+ .../gpu/drm/panel/panel-chipone-icna35xx.c    | 551 ++++++++++++++++++
+ 3 files changed, 563 insertions(+)
+ create mode 100644 drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 3bcf710414dd..cc2b93322628 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -115,6 +115,17 @@ config DRM_PANEL_BOE_XM91080G
+ 	  Say Y if you want to enable support for panels based on the
+ 	  Xm-Plus XM91080G controller.
+ 
++config DRM_PANEL_CHIPONE_ICNA35XX
++	tristate "Chipone ICNA35XX panel driver"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	select DRM_DISPLAY_HELPER
++	help
++	  Say Y here if you want to enable support for the panels built
++	  around the Chipone ICNA3512 and ICNA3520 display controllers,
++	  such as some Tianma panels used in AYN Odin2 Portal and Thor.
++
+ config DRM_PANEL_EBBG_FT8719
+ 	tristate "EBBG FT8719 panel driver"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 4b64459f88b5..339a5cb9f31b 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_TH101MB31UIG002_28A) += panel-boe-th101mb31ig002-28a.
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_LL2) += panel-boe-tv101wum-ll2.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
+ obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
++obj-$(CONFIG_DRM_PANEL_CHIPONE_ICNA35XX) += panel-chipone-icna35xx.o
+ obj-$(CONFIG_DRM_PANEL_DSI_CM) += panel-dsi-cm.o
+ obj-$(CONFIG_DRM_PANEL_LVDS) += panel-lvds.o
+ obj-$(CONFIG_DRM_PANEL_SIMPLE) += panel-simple.o
+diff --git a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+new file mode 100644
+index 000000000000..fe4742678c00
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -0,0 +1,551 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Chipone ICNA35XX Driver IC panels driver
++ *
++ * Copyright (c) 2025 Teguh Sobirin <teguh@sobir.in>
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_graph.h>
++#include <linux/regulator/consumer.h>
++
++#include <video/mipi_display.h>
++
++#include <drm/display/drm_dsc.h>
++#include <drm/display/drm_dsc_helper.h>
++#include <drm/drm_connector.h>
++#include <drm/drm_crtc.h>
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++
++struct panel_info {
++	struct drm_panel panel;
++	struct drm_connector *connector;
++	struct mipi_dsi_device *dsi;
++	struct panel_desc *desc;
++	enum drm_panel_orientation orientation;
++
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data *supplies;
++};
++
++struct panel_desc {
++	unsigned int width_mm;
++	unsigned int height_mm;
++
++	unsigned int bpc;
++	unsigned int lanes;
++	unsigned long mode_flags;
++	enum mipi_dsi_pixel_format format;
++
++	const struct drm_display_mode *modes;
++	unsigned int num_modes;
++	int (*init_sequence)(struct panel_info *pinfo);
++
++	struct drm_dsc_config dsc;
++};
++
++static const struct regulator_bulk_data panel_supplies[] = {
++	{ .supply = "vdd" },
++	{ .supply = "vddio" },
++	{ .supply = "vci" },
++	{ .supply = "disp" },
++	{ .supply = "blvdd" },
++};
++
++static inline struct panel_info *to_panel_info(struct drm_panel *panel)
++{
++	return container_of(panel, struct panel_info, panel);
++}
++
++static int icna35xx_get_current_mode(struct panel_info *pinfo)
++{
++	struct drm_connector *connector = pinfo->connector;
++	struct drm_crtc_state *crtc_state;
++	int i;
++
++	/* Return the default (first) mode if no info available yet */
++	if (!connector->state || !connector->state->crtc)
++		return 0;
++
++	crtc_state = connector->state->crtc->state;
++
++	for (i = 0; i < pinfo->desc->num_modes; i++) {
++		if (drm_mode_match(&crtc_state->mode,
++				   &pinfo->desc->modes[i],
++				   DRM_MODE_MATCH_TIMINGS | DRM_MODE_MATCH_CLOCK))
++			return i;
++	}
++
++	return 0;
++}
++
++static int icna3512_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++
++	int cur_mode = icna35xx_get_current_mode(pinfo);
++	int cur_vrefresh = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]);
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9C, 0xA5, 0xA5);
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFD, 0x5A, 0x5A);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x53, 0xE0);
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0F);
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE, 0x22);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
++	if (cur_vrefresh == 120) {
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
++                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00, 0x02, 0x83, 
++                0x00, 0x10, 0x14, 0x00, 0x00, 0xC3, 0x00, 0x10, 
++                0x14, 0x00, 0x00, 0xE0, 0x10, 0x10, 0x9C, 0x00, 
++                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x22, 0x18, 0x18, 
++                0x18, 0x18, 0x18);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB5,
++                0x04, 0x0C, 0x08, 0x0C, 0x04, 0x00, 0xC4);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD9,
++                0x88, 0x40, 0x40, 0x88, 0x40, 0x40, 0x00, 0xEB,
++                0x11, 0xFF);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCE,
++                0x01, 0x01, 0x01, 0x01, 0x04, 0x09, 0x2C);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++	}
++	else {
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
++                0x00, 0xE0, 0xA0, 0x10, 0xC8, 0x00);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x07);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2,
++                0x04, 0x18, 0x08, 0x0C, 0x02, 0x00, 0xC4);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xD3,
++                0x88, 0x4A, 0x4A, 0x88, 0x4A, 0x4A, 0x00, 0xEB, 
++                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xCB,
++                0x01, 0x01, 0x01, 0x01, 0x04, 0x2C);
++        mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++	}
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++
++	return dsi_ctx.accum_err;
++}
++
++static int icna3520_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++
++	int cur_mode = icna35xx_get_current_mode(pinfo);
++	int cur_vrefresh = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]);
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9C, 0xA5, 0xA5);
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xFD, 0x5A, 0x5A);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x53, 0xE0);
++    mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	if (cur_vrefresh == 120) {
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
++                0x00, 0xD8, 0x00, 0x1C, 0x00, 0x4C);
++	}
++	else {
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x48, 0x10);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x00);
++		mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB3, 
++                0x00, 0xDB, 0x00, 0x1C, 0x00, 0x1C, 0x00, 0x00,
++				0xDB, 0x00, 0x1C, 0x07, 0xD6, 0x00);
++	}
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x00);
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x0D);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x27);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB6, 0x03);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xBB, 0x01);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x24);
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++	
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++
++	return dsi_ctx.accum_err;
++}
++
++static const struct drm_display_mode icna3512_modes[] = {
++	{
++		/* 120Hz */
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 412 + 1 + 15) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 412,
++		.vsync_end = 1920 + 412 + 1,
++		.vtotal = 1920 + 412 + 1 + 15,
++	},
++	{
++		/* 60Hz */
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 2760 + 1 + 15) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 2760,
++		.vsync_end = 1920 + 2760 + 1,
++		.vtotal = 1920 + 2760 + 1 + 15,
++	}
++};
++
++static const struct drm_display_mode icna3520_modes[] = {
++	{
++		/* 120Hz */
++		.clock = (1080 + 24 + 1 + 24) * (1920 + 28 + 1 + 28) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 24,
++		.hsync_end = 1080 + 24 + 1,
++		.htotal = 1080 + 24 + 1 + 24,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 28,
++		.vsync_end = 1920 + 28 + 1,
++		.vtotal = 1920 + 28 + 1 + 28,
++	},
++	{
++		/* 60Hz */
++		.clock = (1080 + 24 + 1 + 24) * (1920 + 2006 + 1 + 28) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 24,
++		.hsync_end = 1080 + 24 + 1,
++		.htotal = 1080 + 24 + 1 + 24,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 2006,
++		.vsync_end = 1920 + 2006 + 1,
++		.vtotal = 1920 + 2006 + 1 + 28,
++	}
++};
++
++static struct panel_desc icna3512_desc = {
++	.modes = icna3512_modes,
++	.num_modes = ARRAY_SIZE(icna3512_modes),
++	.width_mm = 160,
++	.height_mm = 89,
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = icna3512_init_sequence,
++	.dsc = {
++		.dsc_version_major = 0x1,
++		.dsc_version_minor = 0x1,
++		.slice_height = 20,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++};
++
++static struct panel_desc icna3520_desc = {
++	.modes = icna3520_modes,
++	.num_modes = ARRAY_SIZE(icna3520_modes),
++	.width_mm = 136,
++	.height_mm = 68,
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = icna3520_init_sequence,
++	.dsc = {
++		.dsc_version_major = 0x1,
++		.dsc_version_minor = 0x1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++};
++
++static void icna35xx_reset(struct panel_info *pinfo)
++{
++	gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
++	usleep_range(20000, 21000);
++	gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++	usleep_range(20000, 21000);
++	gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
++	usleep_range(20000, 21000);
++}
++
++static int icna35xx_prepare(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++	int ret;
++
++    ret = regulator_bulk_enable(ARRAY_SIZE(panel_supplies), pinfo->supplies);
++	if (ret < 0) {
++		dev_err(panel->dev, "failed to enable regulators: %d\n", ret);
++		return ret;
++	}
++
++	icna35xx_reset(pinfo);
++
++	ret = pinfo->desc->init_sequence(pinfo);
++	if (ret < 0) {
++        regulator_bulk_disable(ARRAY_SIZE(panel_supplies), pinfo->supplies);
++		dev_err(panel->dev, "failed to initialize panel: %d\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int icna35xx_disable(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++
++	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 50);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	return dsi_ctx.accum_err;
++}
++
++static int icna35xx_unprepare(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++
++	gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++    regulator_bulk_disable(ARRAY_SIZE(panel_supplies), pinfo->supplies);
++
++	return 0;
++}
++
++static void icna35xx_remove(struct mipi_dsi_device *dsi)
++{
++	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(pinfo->dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&pinfo->panel);
++}
++
++static int icna35xx_get_modes(struct drm_panel *panel,
++			       struct drm_connector *connector)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++	int i;
++
++	for (i = 0; i < pinfo->desc->num_modes; i++) {
++		const struct drm_display_mode *m = &pinfo->desc->modes[i];
++		struct drm_display_mode *mode;
++
++		mode = drm_mode_duplicate(connector->dev, m);
++		if (!mode) {
++			dev_err(panel->dev, "failed to add mode %ux%u@%u\n",
++				m->hdisplay, m->vdisplay, drm_mode_vrefresh(m));
++			return -ENOMEM;
++		}
++
++		mode->type = DRM_MODE_TYPE_DRIVER;
++		if (i == 0)
++			mode->type |= DRM_MODE_TYPE_PREFERRED;
++
++		drm_mode_set_name(mode);
++		drm_mode_probed_add(connector, mode);
++	}
++
++	connector->display_info.width_mm = pinfo->desc->width_mm;
++	connector->display_info.height_mm = pinfo->desc->height_mm;
++	connector->display_info.bpc = pinfo->desc->bpc;
++	pinfo->connector = connector;
++
++	return pinfo->desc->num_modes;
++}
++
++static enum drm_panel_orientation icna35xx_get_orientation(struct drm_panel *panel)
++{
++	struct panel_info *pinfo = to_panel_info(panel);
++
++	return pinfo->orientation;
++}
++
++static const struct drm_panel_funcs icna35xx_panel_funcs = {
++	.disable = icna35xx_disable,
++	.prepare = icna35xx_prepare,
++	.unprepare = icna35xx_unprepare,
++	.get_modes = icna35xx_get_modes,
++	.get_orientation = icna35xx_get_orientation,
++};
++
++static int icna35xx_bl_update_status(struct backlight_device *bl)
++{
++	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	u16 brightness = backlight_get_brightness(bl);
++	int ret;
++
++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++	if (ret < 0)
++		return ret;
++
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	return 0;
++}
++
++static int icna35xx_bl_get_brightness(struct backlight_device *bl)
++{
++	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	u16 brightness;
++	int ret;
++
++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	ret = mipi_dsi_dcs_get_display_brightness_large(dsi, &brightness);
++	if (ret < 0)
++		return ret;
++
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	return brightness;
++}
++
++static const struct backlight_ops icna35xx_bl_ops = {
++	.update_status = icna35xx_bl_update_status,
++	.get_brightness = icna35xx_bl_get_brightness,
++};
++
++static struct backlight_device *icna35xx_create_backlight(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	const struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		.brightness = 4096,
++		.max_brightness = 4096,
++	};
++
++	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++					      &icna35xx_bl_ops, &props);
++}
++
++static int icna35xx_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct panel_info *pinfo;
++	int ret;
++
++	pinfo = devm_kzalloc(dev, sizeof(*pinfo), GFP_KERNEL);
++	if (!pinfo)
++		return -ENOMEM;
++
++	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(panel_supplies),
++	panel_supplies, &pinfo->supplies);
++	if (ret < 0){
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++	}
++
++	pinfo->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(pinfo->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(pinfo->reset_gpio), "failed to get reset gpio\n");
++
++	pinfo->desc = (struct panel_desc *)of_device_get_match_data(dev);
++	if (!pinfo->desc)
++		return -ENODEV;
++
++	pinfo->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, pinfo);
++	drm_panel_init(&pinfo->panel, dev, &icna35xx_panel_funcs, DRM_MODE_CONNECTOR_DSI);
++
++	ret = of_drm_get_panel_orientation(dev->of_node, &pinfo->orientation);
++	if (ret < 0) {
++		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
++		return ret;
++	}
++
++	pinfo->panel.prepare_prev_first = true;
++
++    pinfo->panel.backlight = icna35xx_create_backlight(dsi);
++	if (IS_ERR(pinfo->panel.backlight))
++		return dev_err_probe(dev, PTR_ERR(pinfo->panel.backlight),
++				     "Failed to create backlight\n");
++
++	drm_panel_add(&pinfo->panel);
++
++    pinfo->dsi->lanes = pinfo->desc->lanes;
++    pinfo->dsi->format = pinfo->desc->format;
++    pinfo->dsi->mode_flags = pinfo->desc->mode_flags;
++    pinfo->dsi->dsc = &pinfo->desc->dsc;
++
++    ret = mipi_dsi_attach(pinfo->dsi);
++    if (ret < 0){
++		dev_err_probe(dev, ret, "Failed to attach to DSI host\n");
++		drm_panel_remove(&pinfo->panel);
++        return ret;
++    }
++
++	return 0;
++}
++
++static const struct of_device_id icna35xx_of_match[] = {
++	{ .compatible = "chipone,icna3512", .data = &icna3512_desc },
++	{ .compatible = "chipone,icna3520", .data = &icna3520_desc },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, icna35xx_of_match);
++
++static struct mipi_dsi_driver icna35xx_driver = {
++	.probe = icna35xx_probe,
++	.remove = icna35xx_remove,
++	.driver = {
++		.name = "panel-chipone-icna35xx",
++		.of_match_table = icna35xx_of_match,
++	},
++};
++module_mipi_dsi_driver(icna35xx_driver);
++
++MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
++MODULE_DESCRIPTION("DRM driver for Chipone ICNA35XX based MIPI DSI panels");
++MODULE_LICENSE("GPL");
+\ No newline at end of file
+-- 
+2.34.1
+

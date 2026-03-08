@@ -364,6 +364,21 @@ function armbian_kernel_config__select_nftables() {
 	opts_m+=("IP_SET_BITMAP_PORT")
 }
 
+# Enables netfilter legacy xtables and ebtables support for kernels 6.18+.
+# Linux 6.18 removed legacy xtables support by default, which breaks Docker
+# and Proxmox firewall functionality that still relies on iptables-legacy.
+function armbian_kernel_config__enable_netfilter_xtables_legacy() {
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.18; then
+		display_alert "Enabling netfilter xtables legacy support" "kernel >= 6.18" "debug"
+		opts_y+=("NETFILTER_XTABLES_LEGACY")
+		opts_m+=("BRIDGE_NF_EBTABLES")              # Parent for ebtables modules
+		opts_m+=("BRIDGE_NF_EBTABLES_LEGACY")
+		opts_m+=("BRIDGE_EBT_BROUTE")              # Bridge ebtables broute table
+		opts_m+=("BRIDGE_EBT_T_FILTER")            # Bridge ebtables filter table
+		opts_m+=("BRIDGE_EBT_T_NAT")               # Bridge ebtables NAT table
+	fi
+}
+
 # Enables various filesystems that we expect our users to need/demand in boot dependencies.
 # OVERLAY_FS isn't here b/c it's never required for boot [that this author is aware of as of 2026Jan]
 # if you as a kernel family maintainer want to override this, make a function call like below:

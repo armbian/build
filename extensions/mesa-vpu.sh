@@ -46,9 +46,17 @@ function post_install_kernel_debs__3d() {
 	declare -a pkgs=("libgl1-mesa-dri")
 
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		pkgs+=("libglx-mesa0") # x11 stuff all the way
-		pkgs+=("mesa-utils" "mesa-utils-extra")
-		pkgs+=("glmark2" "glmark2-wayland" "glmark2-es2-wayland" "glmark2-es2" "glmark2-x11" "glmark2-es2-x11")
+		pkgs+=("libglx-mesa0") # Mesa OpenGL extension library for X11
+		pkgs+=("mesa-utils") # Mesa utilities for OpenGL information and testing
+		pkgs+=("mesa-utils-extra") # Additional Mesa demonstration programs
+		pkgs+=("glmark2") # OpenGL 2.0/3.0 benchmark suite
+		pkgs+=("glmark2-wayland") # Glmark2 Wayland backend for benchmarking
+		pkgs+=("glmark2-es2-wayland") # Glmark2 OpenGL ES 2.0 Wayland backend
+		pkgs+=("glmark2-es2") # Glmark2 OpenGL ES 2.0 benchmark support
+		pkgs+=("glmark2-x11") # Glmark2 X11 backend for benchmarking
+		pkgs+=("glmark2-es2-x11") # Glmark2 OpenGL ES 2.0 X11 backend
+		pkgs+=("vulkan-tools") # Vulkan utilities for testing and debugging (vulkaninfo, etc.)
+		pkgs+=("mesa-vulkan-drivers") # Vulkan drivers for Mesa GPUs (Panfrost, Lima, Radeon, Intel, etc.)
 	fi
 
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then # if desktop, add amazingfated's multimedia PPAs and rockchip-multimedia-config utility, chromium, gstreamer, etc

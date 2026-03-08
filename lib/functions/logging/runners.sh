@@ -192,7 +192,8 @@ function run_host_x86_binary_logged() {
 	else
 		display_alert "Not using qemu for running x86 binary on $(uname -m)" "$1 (${target_bin_arch})" "debug"
 	fi
-	run_host_command_logged "${qemu_invocation[@]}" # Exit with this result code
+	# `env -u QEMU_CPU` will unset any possible specified CPUs to emulate, as in config/sources/arm64.conf
+	run_host_command_logged env -u QEMU_CPU "${qemu_invocation[@]}" # Exit with this result code
 }
 
 # Run simple and exit with it's code. Exactly the same as run_host_command_logged(). Used to have pv pipe, but that causes chaos.

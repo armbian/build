@@ -32,7 +32,7 @@ update_initramfs() {
 		# disabled; if debugging, we want the full output, even if it is huge.
 		# logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
 	fi
-	if [ "$target_dir" != "" ]; then
+	if [[ "$target_dir" != "" ]]; then
 		initrd_kern_ver="$(basename "$target_dir")"
 		initrd_file="${chroot_target}/boot/initrd.img-${initrd_kern_ver}"
 		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -u${initrd_debug} -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp
@@ -70,7 +70,7 @@ update_initramfs() {
 		awk '{print $2 " - " $1}' |
 		sed -e "s|^${chroot_target}||g" | LC_ALL=C sort > "${initrd_cache_current_manifest_filepath}"
 
-	initrd_hash="$(cat "${initrd_cache_current_manifest_filepath}" | md5sum | cut -d ' ' -f 1)" # hash of the hashes.
+	initrd_hash="$(md5sum "${initrd_cache_current_manifest_filepath}" | cut -d ' ' -f 1)" # hash of the hashes.
 	initrd_cache_key="initrd.img-${initrd_kern_ver}-${initrd_hash}"
 	initrd_cache_file_path="${SRC}/cache/initrd/${initrd_cache_key}"
 	display_alert "initrd cache hash" "${initrd_hash}" "debug"
