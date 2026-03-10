@@ -104,15 +104,18 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 		opts_n+=("DEBUG_INFO" "DEBUG_INFO_DWARF5" "DEBUG_INFO_BTF" "DEBUG_INFO_BTF_MODULES") # BTF & CO-RE == off
 		# We don't disable the eBPF options, as eBPF itself doesn't require BTF (debug info) and doesnt' consume as much memory during build as BTF debug info does.
 	else
+		declare -i needed_physical_memory_mib
+		needed_physical_memory_mib=6451	#	6451 MiB is currently required for BTF build
+
 		declare -i available_physical_memory_mib
 		available_physical_memory_mib=$(($(awk '/MemAvailable/ {print $2}' /proc/meminfo) / 1024)) # MiB
-		display_alert "Considering available RAM for BTF build" "${available_physical_memory_mib} MiB" "info"
+		display_alert "Considering available RAM for BTF build" "${available_physical_memory_mib}/${needed_physical_memory_mib} MiB" "info"
 
-		if [[ ${available_physical_memory_mib} -lt 6451 ]]; then # If less than 6451 MiB of RAM is available, then exit with an error, telling the user to avoid pain and set KERNEL_BTF=no ...
+		if [[ ${available_physical_memory_mib} -lt ${needed_physical_memory_mib} ]]; then # If less than needed RAM is available, then exit with an error, telling the user to avoid pain and set KERNEL_BTF=no ...
 			if [[ "${KERNEL_BTF}" == "yes" ]]; then                 # ... except if the user knows better, and has set KERNEL_BTF=yes, then we'll just warn.
-				display_alert "Not enough RAM available (${available_physical_memory_mib}Mib) for BTF build" "but KERNEL_BTF=yes is set; enabling BTF" "warn"
+				display_alert "Not enough RAM available (${available_physical_memory_mib}/${needed_physical_memory_mib} MiB) for BTF build" "but KERNEL_BTF=yes is set; enabling BTF" "warn"
 			else
-				exit_with_error "Not enough RAM available (${available_physical_memory_mib}Mib) for BTF build. Please set 'KERNEL_BTF=no' to avoid running out of memory during the kernel LD/BTF build step; or ignore this check by setting 'KERNEL_BTF=yes' -- that might put a lot of load on your swap disk, if any."
+				exit_with_error "Not enough RAM available (${available_physical_memory_mib}/${needed_physical_memory_mib} MiB) for BTF build. Please set 'KERNEL_BTF=no' to avoid running out of memory during the kernel LD/BTF build step; or ignore this check by setting 'KERNEL_BTF=yes' -- that might put a lot of load on your swap disk, if any."
 			fi
 		fi
 
