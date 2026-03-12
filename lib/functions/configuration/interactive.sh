@@ -30,8 +30,8 @@ function interactive_config_prepare_terminal() {
 # $1: variable name
 # $2: variable value
 function set_interactive_config_value() {
-	eval "$1"='$2'
-	eval "ARMBIAN_INTERACTIVE_CONFIGS[${1}]"='$2'
+	declare -g "${1}=${2}"
+	ARMBIAN_INTERACTIVE_CONFIGS["${1}"]="${2}"
 }
 
 function interactive_finish() {
