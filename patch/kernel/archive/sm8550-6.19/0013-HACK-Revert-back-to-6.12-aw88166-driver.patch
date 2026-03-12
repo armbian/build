@@ -1,0 +1,711 @@
+From 316c62d8757409a30a4de22d3410e014fcca695e Mon Sep 17 00:00:00 2001
+From: Alex Ling <ling_kasim@hotmail.com>
+Date: Sun, 18 Jan 2026 20:37:39 +0800
+Subject: [PATCH 13/15] HACK: Revert back to 6.12 aw88166 driver
+
+Signed-off-by: Alex Ling <ling_kasim@hotmail.com>
+---
+ sound/soc/codecs/aw88166.c | 509 ++++++++++++++++---------------------
+ sound/soc/codecs/aw88166.h |   7 +-
+ 2 files changed, 232 insertions(+), 284 deletions(-)
+
+diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
+index daee4de9e3b0..1a289f60a07d 100644
+--- a/sound/soc/codecs/aw88166.c
++++ b/sound/soc/codecs/aw88166.c
+@@ -11,8 +11,8 @@
+ #include <linux/firmware.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+-#include <linux/minmax.h>
+ #include <linux/regmap.h>
++#include <sound/pcm_params.h>
+ #include <sound/soc.h>
+ #include "aw88166.h"
+ #include "aw88395/aw88395_device.h"
+@@ -41,6 +41,111 @@ static const struct regmap_config aw88166_remap_config = {
+ 	.val_format_endian = REGMAP_ENDIAN_BIG,
+ };
+ 
++static int aw_dev_dsp_write_16bit(struct aw_device *aw_dev,
++		unsigned short dsp_addr, unsigned int dsp_data)
++{
++	int ret;
++
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, dsp_addr);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s write addr error, ret=%d", __func__, ret);
++		return ret;
++	}
++
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMDAT_REG, (u16)dsp_data);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s write data error, ret=%d", __func__, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int aw_dev_dsp_read_16bit(struct aw_device *aw_dev,
++		unsigned short dsp_addr, unsigned int *dsp_data)
++{
++	unsigned int temp_data;
++	int ret;
++
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, dsp_addr);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s write error, ret=%d", __func__, ret);
++		return ret;
++	}
++
++	ret = regmap_read(aw_dev->regmap, AW88166_DSPMDAT_REG, &temp_data);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s read error, ret=%d", __func__, ret);
++		return ret;
++	}
++	*dsp_data = temp_data;
++
++	return 0;
++}
++
++static int aw_dev_dsp_read_32bit(struct aw_device *aw_dev,
++		unsigned short dsp_addr, unsigned int *dsp_data)
++{
++	unsigned int temp_data;
++	int ret;
++
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, dsp_addr);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s write error, ret=%d", __func__, ret);
++		return ret;
++	}
++
++	ret = regmap_read(aw_dev->regmap, AW88166_DSPMDAT_REG, &temp_data);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s read error, ret=%d", __func__, ret);
++		return ret;
++	}
++	*dsp_data = temp_data;
++
++	ret = regmap_read(aw_dev->regmap, AW88166_DSPMDAT_REG, &temp_data);
++	if (ret) {
++		dev_err(aw_dev->dev, "%s read error, ret=%d", __func__, ret);
++		return ret;
++	}
++	*dsp_data |= (temp_data << 16);
++
++	return 0;
++}
++
++static int __aw_dev_dsp_read(struct aw_device *aw_dev,
++		unsigned short dsp_addr, unsigned int *dsp_data, unsigned char data_type)
++{
++	u32 reg_value;
++	int ret;
++
++	mutex_lock(&aw_dev->dsp_lock);
++	switch (data_type) {
++	case AW88166_DSP_16_DATA:
++		ret = aw_dev_dsp_read_16bit(aw_dev, dsp_addr, dsp_data);
++		if (ret)
++			dev_err(aw_dev->dev, "read dsp_addr[0x%x] 16-bit dsp_data[0x%x] failed",
++					(u32)dsp_addr, *dsp_data);
++		break;
++	case AW88166_DSP_32_DATA:
++		ret = aw_dev_dsp_read_32bit(aw_dev, dsp_addr, dsp_data);
++		if (ret)
++			dev_err(aw_dev->dev, "read dsp_addr[0x%x] 32r-bit dsp_data[0x%x] failed",
++					(u32)dsp_addr, *dsp_data);
++		break;
++	default:
++		dev_err(aw_dev->dev, "data type[%d] unsupported", data_type);
++		ret = -EINVAL;
++		break;
++	}
++
++	/* clear dsp chip select state */
++	if (regmap_read(aw_dev->regmap, AW88166_ID_REG, &reg_value))
++		dev_err(aw_dev->dev, "%s fail to clear chip state. ret=%d\n", __func__, ret);
++	mutex_unlock(&aw_dev->dsp_lock);
++
++	return ret;
++}
++
+ static void aw_dev_pwd(struct aw_device *aw_dev, bool pwd)
+ {
+ 	int ret;
+@@ -798,22 +903,51 @@ static int aw88166_dev_start(struct aw88166 *aw88166)
+ static int aw_dev_dsp_update_container(struct aw_device *aw_dev,
+ 			unsigned char *data, unsigned int len, unsigned short base)
+ {
+-	u32 tmp_len;
+ 	int i, ret;
+ 
++#ifdef AW88166_DSP_I2C_WRITES
++	u32 tmp_len;
++
++	mutex_lock(&aw_dev->dsp_lock);
+ 	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, base);
+ 	if (ret)
+-		return ret;
++		goto error_operation;
+ 
+ 	for (i = 0; i < len; i += AW88166_MAX_RAM_WRITE_BYTE_SIZE) {
+-		tmp_len = min(len - i, AW88166_MAX_RAM_WRITE_BYTE_SIZE);
++		if ((len - i) < AW88166_MAX_RAM_WRITE_BYTE_SIZE)
++			tmp_len = len - i;
++		else
++			tmp_len = AW88166_MAX_RAM_WRITE_BYTE_SIZE;
++
+ 		ret = regmap_raw_write(aw_dev->regmap, AW88166_DSPMDAT_REG,
+ 					&data[i], tmp_len);
+ 		if (ret)
+-			return ret;
++			goto error_operation;
+ 	}
++	mutex_unlock(&aw_dev->dsp_lock);
++#else
++	__be16 reg_val;
++
++	mutex_lock(&aw_dev->dsp_lock);
++	/* i2c write */
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, base);
++	if (ret)
++		goto error_operation;
++	for (i = 0; i < len; i += 2) {
++		reg_val = cpu_to_be16p((u16 *)(data + i));
++		ret = regmap_write(aw_dev->regmap, AW88166_DSPMDAT_REG,
++					(u16)reg_val);
++		if (ret)
++			goto error_operation;
++	}
++	mutex_unlock(&aw_dev->dsp_lock);
++#endif
+ 
+ 	return 0;
++
++error_operation:
++	mutex_unlock(&aw_dev->dsp_lock);
++	return ret;
+ }
+ 
+ static int aw_dev_get_ra(struct aw_cali_desc *cali_desc)
+@@ -823,8 +957,8 @@ static int aw_dev_get_ra(struct aw_cali_desc *cali_desc)
+ 	u32 dsp_ra;
+ 	int ret;
+ 
+-	ret = aw_dev_dsp_read(aw_dev, AW88166_DSP_REG_CFG_ADPZ_RA,
+-				&dsp_ra, AW_DSP_32_DATA);
++	ret = __aw_dev_dsp_read(aw_dev, AW88166_DSP_REG_CFG_ADPZ_RA,
++				&dsp_ra, AW88166_DSP_32_DATA);
+ 	if (ret) {
+ 		dev_err(aw_dev->dev, "read ra error\n");
+ 		return ret;
+@@ -881,25 +1015,29 @@ static int aw_dev_check_sram(struct aw_device *aw_dev)
+ {
+ 	unsigned int reg_val;
+ 
++	mutex_lock(&aw_dev->dsp_lock);
+ 	/* read dsp_rom_check_reg */
+-	aw_dev_dsp_read(aw_dev, AW88166_DSP_ROM_CHECK_ADDR, &reg_val, AW_DSP_16_DATA);
++	aw_dev_dsp_read_16bit(aw_dev, AW88166_DSP_ROM_CHECK_ADDR, &reg_val);
+ 	if (reg_val != AW88166_DSP_ROM_CHECK_DATA) {
+ 		dev_err(aw_dev->dev, "check dsp rom failed, read[0x%x] != check[0x%x]\n",
+ 						reg_val, AW88166_DSP_ROM_CHECK_DATA);
+-		return -EPERM;
++		goto error;
+ 	}
+ 
+ 	/* check dsp_cfg_base_addr */
+-	aw_dev_dsp_write(aw_dev, AW88166_DSP_CFG_ADDR,
+-				AW88166_DSP_ODD_NUM_BIT_TEST, AW_DSP_16_DATA);
+-	aw_dev_dsp_read(aw_dev, AW88166_DSP_CFG_ADDR, &reg_val, AW_DSP_16_DATA);
++	aw_dev_dsp_write_16bit(aw_dev, AW88166_DSP_CFG_ADDR, AW88166_DSP_ODD_NUM_BIT_TEST);
++	aw_dev_dsp_read_16bit(aw_dev, AW88166_DSP_CFG_ADDR, &reg_val);
+ 	if (reg_val != AW88166_DSP_ODD_NUM_BIT_TEST) {
+ 		dev_err(aw_dev->dev, "check dsp cfg failed, read[0x%x] != write[0x%x]\n",
+ 						reg_val, AW88166_DSP_ODD_NUM_BIT_TEST);
+-		return -EPERM;
++		goto error;
+ 	}
++	mutex_unlock(&aw_dev->dsp_lock);
+ 
+ 	return 0;
++error:
++	mutex_unlock(&aw_dev->dsp_lock);
++	return -EPERM;
+ }
+ 
+ static void aw_dev_select_memclk(struct aw_device *aw_dev, unsigned char flag)
+@@ -1197,7 +1335,7 @@ static void aw88166_start(struct aw88166 *aw88166, bool sync_start)
+ 	if (sync_start == AW88166_SYNC_START)
+ 		aw88166_start_pa(aw88166);
+ 	else
+-		queue_delayed_work(system_dfl_wq,
++		queue_delayed_work(system_wq,
+ 			&aw88166->start_work,
+ 			AW88166_START_WORK_DELAY_MS);
+ }
+@@ -1208,7 +1346,7 @@ static int aw_dev_check_sysint(struct aw_device *aw_dev)
+ 
+ 	aw_dev_get_int_status(aw_dev, &reg_val);
+ 	if (reg_val & AW88166_BIT_SYSINT_CHECK) {
+-		dev_err(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
++		dev_dbg(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1254,284 +1392,97 @@ static int aw88166_stop(struct aw_device *aw_dev)
+ 	return 0;
+ }
+ 
+-static struct snd_soc_dai_driver aw88166_dai[] = {
+-	{
+-		.name = "aw88166-aif",
+-		.id = 1,
+-		.playback = {
+-			.stream_name = "Speaker_Playback",
+-			.channels_min = 1,
+-			.channels_max = 2,
+-			.rates = AW88166_RATES,
+-			.formats = AW88166_FORMATS,
+-		},
+-		.capture = {
+-			.stream_name = "Speaker_Capture",
+-			.channels_min = 1,
+-			.channels_max = 2,
+-			.rates = AW88166_RATES,
+-			.formats = AW88166_FORMATS,
+-		},
+-	},
+-};
+-
+-static int aw88166_get_fade_in_time(struct snd_kcontrol *kcontrol,
+-	struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-
+-	ucontrol->value.integer.value[0] = aw_dev->fade_in_time;
+-
+-	return 0;
+-}
+-
+-static int aw88166_set_fade_in_time(struct snd_kcontrol *kcontrol,
+-	struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
+-	struct soc_mixer_control *mc =
+-		(struct soc_mixer_control *)kcontrol->private_value;
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-	int time;
+-
+-	time = ucontrol->value.integer.value[0];
+-
+-	if (time < mc->min || time > mc->max)
+-		return -EINVAL;
+-
+-	if (time != aw_dev->fade_in_time) {
+-		aw_dev->fade_in_time = time;
+-		return 1;
+-	}
+-
+-	return 0;
+-}
+-
+-static int aw88166_get_fade_out_time(struct snd_kcontrol *kcontrol,
+-	struct snd_ctl_elem_value *ucontrol)
++static int aw88166_startup(struct snd_pcm_substream *substream,
++			struct snd_soc_dai *dai)
+ {
+-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-
+-	ucontrol->value.integer.value[0] = aw_dev->fade_out_time;
+-
+-	return 0;
+-}
+-
+-static int aw88166_set_fade_out_time(struct snd_kcontrol *kcontrol,
+-	struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(component);
+-	struct soc_mixer_control *mc =
+-		(struct soc_mixer_control *)kcontrol->private_value;
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-	int time;
+-
+-	time = ucontrol->value.integer.value[0];
+-	if (time < mc->min || time > mc->max)
+-		return -EINVAL;
+-
+-	if (time != aw_dev->fade_out_time) {
+-		aw_dev->fade_out_time = time;
+-		return 1;
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		dev_dbg(dai->dev, "STREAM_PLAYBACK start");
++	} else {
++		dev_dbg(dai->dev, "STREAM_CAPTURE start");
+ 	}
+-
+ 	return 0;
+ }
+ 
+-static int aw88166_dev_set_profile_index(struct aw_device *aw_dev, int index)
++static int aw88166_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
+ {
+-	/* check the index whether is valid */
+-	if ((index >= aw_dev->prof_info.count) || (index < 0))
+-		return -EINVAL;
+-	/* check the index whether change */
+-	if (aw_dev->prof_index == index)
+-		return -EINVAL;
+-
+-	aw_dev->prof_index = index;
+-	dev_dbg(aw_dev->dev, "set prof[%s]",
+-		aw_dev->prof_info.prof_name_list[aw_dev->prof_info.prof_desc[index].id]);
++	dev_dbg(dai->dev, "fmt=0x%x", fmt);
+ 
+ 	return 0;
+ }
+ 
+-static int aw88166_profile_info(struct snd_kcontrol *kcontrol,
+-			 struct snd_ctl_elem_info *uinfo)
++static int aw88166_set_dai_sysclk(struct snd_soc_dai *dai,
++				int clk_id, unsigned int freq, int dir)
+ {
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	char *prof_name;
+-	int count, ret;
+-
+-	uinfo->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+-	uinfo->count = 1;
+-
+-	count = aw88166->aw_pa->prof_info.count;
+-	if (count <= 0) {
+-		uinfo->value.enumerated.items = 0;
+-		return 0;
+-	}
+-
+-	uinfo->value.enumerated.items = count;
+-
+-	if (uinfo->value.enumerated.item >= count)
+-		uinfo->value.enumerated.item = count - 1;
+-
+-	count = uinfo->value.enumerated.item;
+-
+-	ret = aw88166_dev_get_prof_name(aw88166->aw_pa, count, &prof_name);
+-	if (ret) {
+-		strscpy(uinfo->value.enumerated.name, "null");
+-		return 0;
+-	}
+-
+-	strscpy(uinfo->value.enumerated.name, prof_name);
+-
++	dev_dbg(dai->dev, "freq=%d", freq);
+ 	return 0;
+ }
+ 
+-static int aw88166_profile_get(struct snd_kcontrol *kcontrol,
+-			struct snd_ctl_elem_value *ucontrol)
++static int aw88166_hw_params(struct snd_pcm_substream *substream,
++				struct snd_pcm_hw_params *params,
++				struct snd_soc_dai *dai)
+ {
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-
+-	ucontrol->value.integer.value[0] = aw88166->aw_pa->prof_index;
+-
+-	return 0;
+-}
+-
+-static int aw88166_profile_set(struct snd_kcontrol *kcontrol,
+-		struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	int ret;
+-
+-	mutex_lock(&aw88166->lock);
+-	ret = aw88166_dev_set_profile_index(aw88166->aw_pa, ucontrol->value.integer.value[0]);
+-	if (ret) {
+-		dev_dbg(codec->dev, "profile index does not change");
+-		mutex_unlock(&aw88166->lock);
+-		return 0;
++	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
++		dev_dbg(dai->dev,
++			"STREAM_CAPTURE requested rate: %d, width = %d",
++			params_rate(params), params_width(params));
+ 	}
+ 
+-	if (aw88166->aw_pa->status) {
+-		aw88166_stop(aw88166->aw_pa);
+-		aw88166_start(aw88166, AW88166_SYNC_START);
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		dev_dbg(dai->dev,
++			"STREAM_PLAYBACK requested rate: %d, width = %d",
++			params_rate(params), params_width(params));
+ 	}
+ 
+-	mutex_unlock(&aw88166->lock);
+-
+-	return 1;
+-}
+-
+-static int aw88166_volume_get(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	struct aw_volume_desc *vol_desc = &aw88166->aw_pa->volume_desc;
+-
+-	ucontrol->value.integer.value[0] = vol_desc->ctl_volume;
+-
+ 	return 0;
+ }
+ 
+-static int aw88166_volume_set(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
++static int aw88166_mute(struct snd_soc_dai *dai, int mute, int stream)
+ {
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	struct aw_volume_desc *vol_desc = &aw88166->aw_pa->volume_desc;
+-	struct soc_mixer_control *mc =
+-		(struct soc_mixer_control *)kcontrol->private_value;
+-	int value;
+-
+-	value = ucontrol->value.integer.value[0];
+-	if (value < mc->min || value > mc->max)
+-		return -EINVAL;
+-
+-	if (vol_desc->ctl_volume != value) {
+-		vol_desc->ctl_volume = value;
+-		aw_dev_set_volume(aw88166->aw_pa, vol_desc->ctl_volume);
+-
+-		return 1;
+-	}
+-
+-	return 0;
+-}
+-
+-static int aw88166_get_fade_step(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-
+-	ucontrol->value.integer.value[0] = aw88166->aw_pa->fade_step;
++	dev_dbg(dai->dev, "mute state=%d", mute);
+ 
+ 	return 0;
+ }
+ 
+-static int aw88166_set_fade_step(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
++static void aw88166_shutdown(struct snd_pcm_substream *substream,
++				struct snd_soc_dai *dai)
+ {
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	struct soc_mixer_control *mc =
+-		(struct soc_mixer_control *)kcontrol->private_value;
+-	int value;
+-
+-	value = ucontrol->value.integer.value[0];
+-	if (value < mc->min || value > mc->max)
+-		return -EINVAL;
+-
+-	if (aw88166->aw_pa->fade_step != value) {
+-		aw88166->aw_pa->fade_step = value;
+-		return 1;
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK){
++		dev_dbg(dai->dev, "STREAM_PLAYBACK stop");
++	} else {
++		dev_dbg(dai->dev, "STREAM_CAPTURE stop");
+ 	}
+-
+-	return 0;
+ }
+ 
+-static int aw88166_re_get(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-
+-	ucontrol->value.integer.value[0] = aw_dev->cali_desc.cali_re;
+-
+-	return 0;
+-}
+-
+-static int aw88166_re_set(struct snd_kcontrol *kcontrol,
+-				struct snd_ctl_elem_value *ucontrol)
+-{
+-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+-	struct aw88166 *aw88166 = snd_soc_component_get_drvdata(codec);
+-	struct soc_mixer_control *mc =
+-		(struct soc_mixer_control *)kcontrol->private_value;
+-	struct aw_device *aw_dev = aw88166->aw_pa;
+-	int value;
+-
+-	value = ucontrol->value.integer.value[0];
+-	if (value < mc->min || value > mc->max)
+-		return -EINVAL;
+-
+-	if (aw_dev->cali_desc.cali_re != value) {
+-		aw_dev->cali_desc.cali_re = value;
+-		return 1;
+-	}
++static const struct snd_soc_dai_ops aw88166_dai_ops = {
++	.startup = aw88166_startup,
++	.set_fmt = aw88166_set_fmt,
++	.set_sysclk = aw88166_set_dai_sysclk,
++	.hw_params = aw88166_hw_params,
++	.mute_stream = aw88166_mute,
++	.shutdown = aw88166_shutdown,
++};
+ 
+-	return 0;
+-}
++static struct snd_soc_dai_driver aw88166_dai[] = {
++	{
++		.name = "aw88166-aif",
++		.id = 1,
++		.playback = {
++			.stream_name = "Speaker_Playback",
++			.channels_min = 1,
++			.channels_max = 2,
++			.rates = AW88166_RATES,
++			.formats = AW88166_FORMATS,
++		},
++		.capture = {
++			.stream_name = "Speaker_Capture",
++			.channels_min = 1,
++			.channels_max = 2,
++			.rates = AW88166_RATES,
++			.formats = AW88166_FORMATS,
++		},
++		.ops = &aw88166_dai_ops,
++	},
++};
+ 
+ static int aw88166_dev_init(struct aw88166 *aw88166, struct aw_container *aw_cfg)
+ {
+@@ -1573,19 +1524,27 @@ static int aw88166_dev_init(struct aw88166 *aw88166, struct aw_container *aw_cfg
+ 
+ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+ {
++	struct aw_device *aw_dev = aw88166->aw_pa;
++	struct device_node *np = aw_dev->dev->of_node;
+ 	const struct firmware *cont = NULL;
++	const char *fw_name;
+ 	int ret;
+ 
+ 	aw88166->aw_pa->fw_status = AW88166_DEV_FW_FAILED;
+ 
+-	ret = request_firmware(&cont, AW88166_ACF_FILE, aw88166->aw_pa->dev);
++	ret = of_property_read_string(np, "firmware-name", &fw_name);
++	if (ret < 0) {
++		fw_name = AW88166_ACF_FILE;
++	}
++
++	ret = request_firmware(&cont, fw_name, aw88166->aw_pa->dev);
+ 	if (ret) {
+-		dev_err(aw88166->aw_pa->dev, "request [%s] failed!\n", AW88166_ACF_FILE);
++		dev_err(aw88166->aw_pa->dev, "request [%s] failed!\n", fw_name);
+ 		return ret;
+ 	}
+ 
+ 	dev_dbg(aw88166->aw_pa->dev, "loaded %s - size: %zu\n",
+-			AW88166_ACF_FILE, cont ? cont->size : 0);
++			fw_name, cont ? cont->size : 0);
+ 
+ 	aw88166->aw_cfg = devm_kzalloc(aw88166->aw_pa->dev,
+ 			struct_size(aw88166->aw_cfg, data, cont->size), GFP_KERNEL);
+@@ -1599,7 +1558,7 @@ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+ 
+ 	ret = aw88395_dev_load_acf_check(aw88166->aw_pa, aw88166->aw_cfg);
+ 	if (ret) {
+-		dev_err(aw88166->aw_pa->dev, "load [%s] failed!\n", AW88166_ACF_FILE);
++		dev_err(aw88166->aw_pa->dev, "load [%s] failed!\n", fw_name);
+ 		return ret;
+ 	}
+ 
+@@ -1613,22 +1572,6 @@ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+ 	return ret;
+ }
+ 
+-static const struct snd_kcontrol_new aw88166_controls[] = {
+-	SOC_SINGLE_EXT("PCM Playback Volume", AW88166_SYSCTRL2_REG,
+-		6, AW88166_MUTE_VOL, 0, aw88166_volume_get,
+-		aw88166_volume_set),
+-	SOC_SINGLE_EXT("Fade Step", 0, 0, AW88166_MUTE_VOL, 0,
+-		aw88166_get_fade_step, aw88166_set_fade_step),
+-	SOC_SINGLE_EXT("Volume Ramp Up Step", 0, 0, FADE_TIME_MAX, FADE_TIME_MIN,
+-		aw88166_get_fade_in_time, aw88166_set_fade_in_time),
+-	SOC_SINGLE_EXT("Volume Ramp Down Step", 0, 0, FADE_TIME_MAX, FADE_TIME_MIN,
+-		aw88166_get_fade_out_time, aw88166_set_fade_out_time),
+-	SOC_SINGLE_EXT("Calib", 0, 0, AW88166_CALI_RE_MAX, 0,
+-		aw88166_re_get, aw88166_re_set),
+-	AW88166_PROFILE_EXT("AW88166 Profile Set", aw88166_profile_info,
+-		aw88166_profile_get, aw88166_profile_set),
+-};
+-
+ static int aw88166_playback_event(struct snd_soc_dapm_widget *w,
+ 				struct snd_kcontrol *k, int event)
+ {
+@@ -1696,8 +1639,6 @@ static const struct snd_soc_component_driver soc_codec_dev_aw88166 = {
+ 	.num_dapm_widgets = ARRAY_SIZE(aw88166_dapm_widgets),
+ 	.dapm_routes = aw88166_audio_map,
+ 	.num_dapm_routes = ARRAY_SIZE(aw88166_audio_map),
+-	.controls = aw88166_controls,
+-	.num_controls = ARRAY_SIZE(aw88166_controls),
+ };
+ 
+ static void aw88166_hw_reset(struct aw88166 *aw88166)
+@@ -1707,6 +1648,8 @@ static void aw88166_hw_reset(struct aw88166 *aw88166)
+ 		usleep_range(AW88166_1000_US, AW88166_1000_US + 10);
+ 		gpiod_set_value_cansleep(aw88166->reset_gpio, 0);
+ 		usleep_range(AW88166_1000_US, AW88166_1000_US + 10);
++		gpiod_set_value_cansleep(aw88166->reset_gpio, 1);
++		usleep_range(AW88166_1000_US, AW88166_1000_US + 10);
+ 	}
+ }
+ 
+diff --git a/sound/soc/codecs/aw88166.h b/sound/soc/codecs/aw88166.h
+index 9f3f47a7003e..8b5c83a48d6e 100644
+--- a/sound/soc/codecs/aw88166.h
++++ b/sound/soc/codecs/aw88166.h
+@@ -387,7 +387,7 @@
+ 
+ #define AW88166_NOISE_GATE_EN_START_BIT	(13)
+ #define AW88166_NOISE_GATE_EN_BITS_LEN		(1)
+-#define AW88166_NOISE_GATE_EN_MASK		\
++#define AW88166_NOISE_GATE_EN_MASK	\
+ 	(~(((1<<AW88166_NOISE_GATE_EN_BITS_LEN)-1) << AW88166_NOISE_GATE_EN_START_BIT))
+ 
+ #define AW88166_WDT_CNT_START_BIT		(0)
+@@ -516,6 +516,11 @@ enum AW88166_DEV_DSP_CFG {
+ 	AW88166_DEV_DSP_BYPASS = 1,
+ };
+ 
++enum {
++	AW88166_DSP_16_DATA = 0,
++	AW88166_DSP_32_DATA = 1,
++};
++
+ enum {
+ 	AW88166_SYNC_START = 0,
+ 	AW88166_ASYNC_START,
+-- 
+2.43.0
+
