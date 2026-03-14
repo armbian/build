@@ -399,9 +399,9 @@ HostKey /data/etc/ssh/ssh_host_rsa_key
 HostKey /data/etc/ssh/ssh_host_ecdsa_key
 HostKey /data/etc/ssh/ssh_host_ed25519_key
 
-AuthorizedKeysFile /data/params/d/GithubSshKeys %h/.ssh/authorized_keys
+AuthorizedKeysFile /data/params/d/GithubSshKeys
 
-PasswordAuthentication yes
+PasswordAuthentication no
 PermitRootLogin no
 StrictModes no
 AcceptEnv LANG LC_*
