@@ -11,15 +11,190 @@ index 00000000..236f2468
 + */
 +
 +#include "meson-g12-common-u-boot.dtsi"
+diff --git a/board/amlogic/cniot-core/Makefile b/board/amlogic/cniot-core/Makefile
+new file mode 100644
+index 00000000..c4135658
+--- /dev/null
++++ b/board/amlogic/cniot-core/Makefile
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0+
++#
++# Author: retro98boy <retro98boy@qq.com>
++
++obj-y	:= cniot-core.o
+diff --git a/board/amlogic/cniot-core/cniot-core.c b/board/amlogic/cniot-core/cniot-core.c
+new file mode 100644
+index 00000000..325e39f9
+--- /dev/null
++++ b/board/amlogic/cniot-core/cniot-core.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Author: retro98boy <retro98boy@qq.com>
++ */
++
++#include <asm-generic/gpio.h>
++#include <linux/delay.h>
++#include <dm.h>
++#include <env_internal.h>
++#include <init.h>
++#include <net.h>
++#include <asm/io.h>
++#include <asm/arch/eth.h>
++#include <stdbool.h>
++
++static struct gpio_desc pwrbtn_gpio[1] = { 0 };
++static bool pwrbtn_valid = false;
++
++static int request_gpios(void)
++{
++	int node = -1;
++	int rc = -1;
++
++	node = fdt_path_offset(gd->fdt_blob, "/gpio-keys-polled/pwr-btn");
++	if (node < 0)
++		return -ENODEV;
++
++	rc = gpio_request_list_by_name_nodev(offset_to_ofnode(node), "gpios",
++					     pwrbtn_gpio,
++					     ARRAY_SIZE(pwrbtn_gpio),
++					     GPIOD_IS_IN);
++	if (rc < 0)
++		return -ENODEV;
++
++	pwrbtn_valid = true;
++
++	return 0;
++}
++
++static void free_gpios(void)
++{
++	if (pwrbtn_valid) {
++		gpio_free_list_nodev(pwrbtn_gpio, ARRAY_SIZE(pwrbtn_gpio));
++		pwrbtn_valid = false;
++	}
++}
++
++static bool is_pwrbtn_really_released(void)
++{
++	const int check_ms = 300;
++	const int step_ms = 50;
++
++	for (int i = 0; i < check_ms / step_ms; i++) {
++		mdelay(step_ms);
++		if (dm_gpio_get_value(&pwrbtn_gpio[0]) == 1)
++			return false;
++	}
++
++	return true;
++}
++
++/*
++ * The UART pads on this device are deeply recessed,
++ * and disassembling the hardware is a major hassle.
++ * Once U-Boot and the OS are installed on the eMMC,
++ * rescuing data or recovering the system becomes difficult
++ * if a failure occurs (such as a kernel panic or rootfs corruption),
++ * because U-Boot prioritizes booting from eMMC over USB.
++ * To address this, here is a workaround:
++ * by holding the power button for 5 seconds during boot-up,
++ * U-Boot will be forced to retain only the USB boot target.
++ * This prevents U-Boot from loading a corrupted kernel image from the eMMC
++ * and getting stuck in a boot loop. Additionally,
++ * it is recommended that the OS image flashed to the USB drive
++ * be different from the one on the eMMC to avoid partition UUID conflicts.
++ */
++static void handle_usb_boot_detection(void)
++{
++	const int target_seconds = 5;
++	ulong start_time = get_timer(0);
++	ulong last_print_time = 0;
++
++	printf("Check USB boot: Hold Power Button for %ds\n", target_seconds);
++
++	while (get_timer(start_time) < (target_seconds * 1000)) {
++		if (dm_gpio_get_value(&pwrbtn_gpio[0]) == 0) {
++			if (is_pwrbtn_really_released()) {
++				printf("[Normal Boot] Button released early.\n");
++				return;
++			}
++		}
++
++		ulong current_elapsed = get_timer(start_time) / 1000;
++		if (current_elapsed > last_print_time) {
++			/*
++			 * It would be even better if this device had an integrated LED.
++			 * We could toggle the LED status here as a visual indicator.
++			 */
++			printf("Power button holding... %ld/%ds\r",
++			       current_elapsed, target_seconds);
++			last_print_time = current_elapsed;
++		}
++
++		mdelay(10);
++	}
++
++	printf("\n[USB Boot] Trigger matched!\n");
++	env_set("boot_targets", "usb0");
++
++	/*
++	 * We must wait for the user to release the power button
++	 * before proceeding with the kernel boot.
++	 * Otherwise, an extended press (since the user cannot perceive the boot progress)
++	 * might trigger a reset once the kernel is running.
++	 * A timeout should also be implemented:
++	 * if the button is stuck due to hardware damage,
++	 * the system shouldn't hang in U-Boot indefinitely.
++	 * This is crucial because U-Boot is fixed in eMMC,
++	 * whereas the kernel and DTB are easily modifiable on a USB drive,
++	 * making it simpler to disable the power button later if needed.
++	 */
++	const ulong release_timeout_ms = 30000;
++	ulong release_start = get_timer(0);
++	while (!is_pwrbtn_really_released()) {
++		if (get_timer(release_start) > release_timeout_ms) {
++			printf("\nRelease timeout reached. Continuing boot.\n");
++			break;
++		}
++		printf("Waiting for button release to continue...\r");
++	}
++
++	printf("\nButton released safely. Proceeding...\n");
++}
++
++int misc_init_r(void)
++{
++	meson_generate_serial_ethaddr();
++
++	return 0;
++}
++
++int meson_board_late_init(void)
++{
++#if defined(CONFIG_WATCHDOG)
++	printf("Watchdog set, skip USB boot detection.\n");
++	return 0;
++#else
++	if (request_gpios()) {
++		printf("Failed to request gpios for USB boot detection.\n");
++		return 0;
++	}
++
++	handle_usb_boot_detection();
++	free_gpios();
++
++	return 0;
++#endif
++}
 diff --git a/configs/cainiao-cniot-core_defconfig b/configs/cainiao-cniot-core_defconfig
 new file mode 100644
-index 00000000..0ee30015
+index 00000000..27000ab4
 --- /dev/null
 +++ b/configs/cainiao-cniot-core_defconfig
 @@ -0,0 +1,110 @@
 +# Reference from khadas-vim3_defconfig
 +CONFIG_ARM=y
-+CONFIG_SYS_BOARD="w400"
++CONFIG_SYS_BOARD="cniot-core"
 +CONFIG_ARCH_MESON=y
 +CONFIG_TEXT_BASE=0x01000000
 +CONFIG_NR_DRAM_BANKS=1
@@ -129,14 +304,14 @@ index 00000000..0ee30015
 +CONFIG_ZSTD=y
 diff --git a/dts/upstream/src/arm64/amlogic/meson-g12b-a311d-cainiao-cniot-core.dts b/dts/upstream/src/arm64/amlogic/meson-g12b-a311d-cainiao-cniot-core.dts
 new file mode 100644
-index 00000000..1907347f
+index 00000000..85ea1c4a
 --- /dev/null
 +++ b/dts/upstream/src/arm64/amlogic/meson-g12b-a311d-cainiao-cniot-core.dts
 @@ -0,0 +1,600 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 BayLibre, SAS
-+ * Author: Neil Armstrong <narmstrong@baylibre.com>
++ * Copyright (c) 2019 Neil Armstrong <narmstrong@baylibre.com>
 + * Copyright (c) 2019 Christian Hewitt <christianshewitt@gmail.com>
 + * Copyright (c) 2025 retro98boy <retro98boy@qq.com>
 + */
@@ -156,7 +331,7 @@ index 00000000..1907347f
 +	aliases {
 +		serial0 = &uart_AO;
 +		ethernet0 = &ethmac;
-+		rtc99 = &vrtc;
++		rtc1 = &vrtc;
 +	};
 +
 +	chosen {
@@ -173,7 +348,7 @@ index 00000000..1907347f
 +		#cooling-cells = <2>;
 +		cooling-levels = <0 120 170 220>;
 +		pwms = <&pwm_cd 1 40000 1>;
-+		tach-gpio = <&gpio GPIOA_4 GPIO_ACTIVE_HIGH>;
++		tach-gpio = <&gpio GPIOA_3 GPIO_ACTIVE_HIGH>;
 +	};
 +
 +	gpio-keys-polled {
@@ -217,12 +392,11 @@ index 00000000..1907347f
 +		};
 +	};
 +
-+	ht6872: ht6872 {
++	ht6872: speaker-amplifier {
 +		compatible = "simple-audio-amplifier";
 +		enable-gpios = <&gpio_ao GPIOAO_2 GPIO_ACTIVE_HIGH>;
 +		VCC-supply = <&vdd_amp>;
-+		sound-name-prefix = "HT6872";
-+		status = "okay";
++		sound-name-prefix = "Speaker Amplifier";
 +	};
 +
 +	sdio_pwrseq: sdio-pwrseq {
@@ -340,7 +514,7 @@ index 00000000..1907347f
 +
 +	sound {
 +		compatible = "amlogic,axg-sound-card";
-+		model = "cainiao-cniot-core";
++		model = "cniot-core";
 +		audio-widgets = "Speaker", "Internal Speaker";
 +		audio-aux-devs = <&tdmout_a>, <&tdmout_b>, <&ht6872>;
 +		audio-routing = "TDMOUT_A IN 0", "FRDDR_A OUT 0",
@@ -351,10 +525,10 @@ index 00000000..1907347f
 +				"TDMOUT_B IN 1", "FRDDR_B OUT 1",
 +				"TDMOUT_B IN 2", "FRDDR_C OUT 1",
 +				"TDM_B Playback", "TDMOUT_B OUT",
-+				"HT6872 INL", "ACODEC LOLP",
-+				"HT6872 INR", "ACODEC LORP",
-+				"Internal Speaker", "HT6872 OUTL",
-+				"Internal Speaker", "HT6872 OUTR";
++				"Speaker Amplifier INL", "ACODEC LOLP",
++				"Speaker Amplifier INR", "ACODEC LORP",
++				"Internal Speaker", "Speaker Amplifier OUTL",
++				"Internal Speaker", "Speaker Amplifier OUTR";
 +
 +		clocks = <&clkc CLKID_MPLL2>,
 +			 <&clkc CLKID_MPLL0>,
@@ -503,7 +677,7 @@ index 00000000..1907347f
 +&cpu_thermal {
 +	trips {
 +		cpu_active: cpu-active {
-+			temperature = <60000>; /* millicelsius */
++			temperature = <55000>; /* millicelsius */
 +			hysteresis = <5000>; /* millicelsius */
 +			type = "active";
 +		};
@@ -527,7 +701,7 @@ index 00000000..1907347f
 +};
 +
 +&ext_mdio {
-+	rtl8211f: rtl8211f@0 {
++	rtl8211f: ethernet-phy@0 {
 +		reg = <0>;
 +		max-speed = <1000>;
 +
@@ -652,7 +826,8 @@ index 00000000..1907347f
 +
 +/*
 + * GPIOH_4 is connected to 6 WS2812 LEDs.
-+ * Reusing GPIOH_4 as SPI MOSI to control the WS2812 offers superior performance compared to the GPIO method.
++ * Reusing GPIOH_4 as SPI MOSI to control the WS2812
++ * offers superior performance compared to the GPIO method.
 + */
 +&spicc1_pins {
 +	mux {
