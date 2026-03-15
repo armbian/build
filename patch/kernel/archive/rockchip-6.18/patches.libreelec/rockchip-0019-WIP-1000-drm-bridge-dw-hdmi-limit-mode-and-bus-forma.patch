@@ -1,0 +1,148 @@
+From 29d2e827b617cf73f445ad75d20298f482c42b3d Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Fri, 20 Dec 2019 08:12:43 +0000
+Subject: [PATCH 19/59] WIP/1000: drm/bridge: dw-hdmi: limit mode and bus
+ format to max_tmds_clock
+
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 74 ++++++++++++++---------
+ 1 file changed, 46 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 6cc5410b26f5..d3227ba79977 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -1986,6 +1986,21 @@ static void hdmi_config_drm_infoframe(struct dw_hdmi *hdmi,
+ 		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
+ }
+ 
++static unsigned int
++hdmi_get_tmdsclock(unsigned int bus_format, unsigned int pixelclock)
++{
++	int color_depth = hdmi_bus_fmt_color_depth(bus_format);
++	unsigned int tmdsclock = pixelclock;
++
++	if (!hdmi_bus_fmt_is_yuv422(bus_format) && color_depth > 8)
++		tmdsclock = (u64)pixelclock * color_depth / 8;
++
++	if (hdmi_bus_fmt_is_yuv420(bus_format))
++		tmdsclock /= 2;
++
++	return tmdsclock;
++}
++
+ static void hdmi_av_composer(struct dw_hdmi *hdmi,
+ 			     const struct drm_display_info *display,
+ 			     const struct drm_display_mode *mode)
+@@ -1997,29 +2012,12 @@ static void hdmi_av_composer(struct dw_hdmi *hdmi,
+ 	unsigned int vdisplay, hdisplay;
+ 
+ 	vmode->mpixelclock = mode->clock * 1000;
++	vmode->mtmdsclock =
++		hdmi_get_tmdsclock(hdmi->hdmi_data.enc_out_bus_format,
++				   vmode->mpixelclock);
+ 
+ 	dev_dbg(hdmi->dev, "final pixclk = %d\n", vmode->mpixelclock);
+ 
+-	vmode->mtmdsclock = vmode->mpixelclock;
+-
+-	if (!hdmi_bus_fmt_is_yuv422(hdmi->hdmi_data.enc_out_bus_format)) {
+-		switch (hdmi_bus_fmt_color_depth(
+-				hdmi->hdmi_data.enc_out_bus_format)) {
+-		case 16:
+-			vmode->mtmdsclock = vmode->mpixelclock * 2;
+-			break;
+-		case 12:
+-			vmode->mtmdsclock = vmode->mpixelclock * 3 / 2;
+-			break;
+-		case 10:
+-			vmode->mtmdsclock = vmode->mpixelclock * 5 / 4;
+-			break;
+-		}
+-	}
+-
+-	if (hdmi_bus_fmt_is_yuv420(hdmi->hdmi_data.enc_out_bus_format))
+-		vmode->mtmdsclock /= 2;
+-
+ 	dev_dbg(hdmi->dev, "final tmdsclock = %d\n", vmode->mtmdsclock);
+ 
+ 	/* Set up HDMI_FC_INVIDCONF */
+@@ -2645,8 +2643,21 @@ static int dw_hdmi_connector_create(struct dw_hdmi *hdmi)
+  * - MEDIA_BUS_FMT_YUV8_1X24,
+  */
+ 
+-/* Can return a maximum of 11 possible output formats for a mode/connector */
+-#define MAX_OUTPUT_SEL_FORMATS	11
++/* Can return a maximum of 15 possible output formats for a mode/connector */
++#define MAX_OUTPUT_SEL_FORMATS	15
++
++static bool is_tmds_allowed(struct drm_display_info *info,
++			    struct drm_display_mode *mode,
++			    u32 bus_format)
++{
++	unsigned long tmdsclock = hdmi_get_tmdsclock(bus_format, mode->clock);
++	int max_tmds_clock = info->max_tmds_clock ? info->max_tmds_clock : 340000;
++
++	if (max_tmds_clock >= tmdsclock)
++		return true;
++
++	return false;
++}
+ 
+ static u32 *dw_hdmi_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 					struct drm_bridge_state *bridge_state,
+@@ -2658,8 +2669,6 @@ static u32 *dw_hdmi_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 	struct drm_display_info *info = &conn->display_info;
+ 	struct drm_display_mode *mode = &crtc_state->mode;
+ 	u8 max_bpc = conn_state->max_requested_bpc;
+-	bool is_hdmi2_sink = info->hdmi.scdc.supported ||
+-			     (info->color_formats & DRM_COLOR_FORMAT_YCBCR420);
+ 	u32 *output_fmts;
+ 	unsigned int i = 0;
+ 
+@@ -2683,9 +2692,8 @@ static u32 *dw_hdmi_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 	 * If the current mode enforces 4:2:0, force the output bus format
+ 	 * to 4:2:0 and do not add the YUV422/444/RGB formats
+ 	 */
+-	if (conn->ycbcr_420_allowed &&
+-	    (drm_mode_is_420_only(info, mode) ||
+-	     (is_hdmi2_sink && drm_mode_is_420_also(info, mode)))) {
++	if (conn->ycbcr_420_allowed && drm_mode_is_420(info, mode) &&
++	    (info->color_formats & DRM_COLOR_FORMAT_YCBCR420)) {
+ 
+ 		/* Order bus formats from 16bit to 8bit if supported */
+ 		if (max_bpc >= 16 && info->bpc == 16 &&
+@@ -2715,7 +2723,8 @@ static u32 *dw_hdmi_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
+ 	 */
+ 
+ 	/* Default 8bit RGB fallback */
+-	output_fmts[i++] = MEDIA_BUS_FMT_RGB888_1X24;
++	if (is_tmds_allowed(info, mode, MEDIA_BUS_FMT_RGB888_1X24))
++		output_fmts[i++] = MEDIA_BUS_FMT_RGB888_1X24;
+ 
+ 	if (max_bpc >= 16 && info->bpc == 16) {
+ 		if (info->color_formats & DRM_COLOR_FORMAT_YCBCR444)
+@@ -2930,11 +2939,20 @@ dw_hdmi_bridge_mode_valid(struct drm_bridge *bridge,
+ 	struct dw_hdmi *hdmi = bridge->driver_private;
+ 	const struct dw_hdmi_plat_data *pdata = hdmi->plat_data;
+ 	enum drm_mode_status mode_status = MODE_OK;
++	int max_tmds_clock = info->max_tmds_clock ? info->max_tmds_clock : 340000;
++	int clock = mode->clock;
+ 
+ 	/* We don't support double-clocked modes */
+ 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
+ 		return MODE_BAD;
+ 
++	if (pdata->ycbcr_420_allowed && drm_mode_is_420(info, mode) &&
++	    (info->color_formats & DRM_COLOR_FORMAT_YCBCR420))
++		clock /= 2;
++
++	if (clock > max_tmds_clock)
++		return MODE_CLOCK_HIGH;
++
+ 	if (pdata->mode_valid)
+ 		mode_status = pdata->mode_valid(hdmi, pdata->priv_data, info,
+ 						mode);
+-- 
+2.34.1
+
