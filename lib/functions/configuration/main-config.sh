@@ -65,6 +65,9 @@ function do_main_configuration() {
 	# Armbian config is central tool used in all builds. As its build externally, we have moved it to extension. Enable it here.
 	enable_extension "armbian-config"
 
+	# Fix binman pkg_resources removal in setuptools >= 82. Can be removed when all U-Boot versions are >= v2025.10.
+	enable_extension "uboot-binman-fix-pkg-resources"
+
 	# Network stack to use, default to network-manager; configuration can override this.
 	# Will be made read-only further down.
 	declare -g NETWORKING_STACK="${NETWORKING_STACK}"
