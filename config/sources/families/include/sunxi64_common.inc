@@ -25,16 +25,15 @@ source "${BASH_SOURCE%/*}/crust_firmware.inc"
 case $BRANCH in
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.6.75" # frozen on this version
-		;;
-
-	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12" # Major and minor versions of this kernel.
 		;;
 
-	edge)
+	current)
 		declare -g KERNEL_MAJOR_MINOR="6.18" # Major and minor versions of this kernel.
+		;;
+
+	edge)
+		declare -g KERNEL_MAJOR_MINOR="6.19" # Major and minor versions of this kernel.
 		;;
 esac
 
