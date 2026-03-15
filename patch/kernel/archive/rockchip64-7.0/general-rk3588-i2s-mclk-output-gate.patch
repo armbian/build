@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Sun, 16 Mar 2026 02:30:00 +0100
+Subject: clk: rockchip: rk3588: add GATE_GRF for I2S MCLK output to IO
+
+The I2S MCLK output on RK3588 is gated by SYS_GRF_SOC_CON6 (offset
+0x318, bit 0) in the SYS_GRF block. This gate controls whether the
+internal CRU clock I2S0_8CH_MCLKOUT reaches the external IO pin (ball
+F30 / GPIO1_C2) connected to the audio codec.
+
+On RK3588S this gate defaults to open after reset, but on RK3588 it
+defaults to closed, which prevents the MCLK from reaching the codec
+and results in no audio output despite the CRU clock being active and
+all other I2S signals being correctly configured.
+
+The Rockchip vendor BSP kernel handles this through a dedicated
+"rockchip,clk-out" DT node (mclkout_i2s0) that wraps the GRF bit as
+a clock gate. The mainline kernel already has equivalent infrastructure
+via the GATE_GRF mechanism introduced for the RK3576 SAI controller by
+Nicolas Frattaroli (Collabora) [1].
+
+Add a GATE_GRF clock (I2S0_8CH_MCLKOUT_TO_IO) that sits between
+I2S0_8CH_MCLKOUT and the physical pin. Register the SYS_GRF as an
+auxiliary GRF in the early clock init using grf_type_ioc as the lookup
+key, since the default ctx->grf for the RK3588 CRU already points to
+the PHP_GRF.
+
+Board DTS files that need MCLK on the IO pin can now reference this
+clock in their codec node:
+
+    clocks = <&cru I2S0_8CH_MCLKOUT_TO_IO>;
+    assigned-clocks = <&cru I2S0_8CH_MCLKOUT_TO_IO>;
+    assigned-clock-rates = <12288000>;
+
+Tested on the Youyeetoo YY3588 (RK3588) with an ES8388 codec.
+
+[1] https://patchew.org/linux/20250502-rk3576-sai-v3-0-376cef19dd7c@collabora.com/
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/clk/rockchip/clk-rk3588.c              | 19 ++++++++++++++++++-
+ include/dt-bindings/clock/rockchip,rk3588-cru.h |  2 ++
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/rockchip/clk-rk3588.c b/drivers/clk/rockchip/clk-rk3588.c
+index 1694223f4f84..fa05f147a124 100644
+--- a/drivers/clk/rockchip/clk-rk3588.c
++++ b/drivers/clk/rockchip/clk-rk3588.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/clk-provider.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/platform_device.h>
+@@ -935,6 +936,8 @@ static struct rockchip_clk_branch rk3588_early_clk_branches[] __initdata = {
+ 			RK3588_CLKGATE_CON(7), 10, GFLAGS),
+ 	MUX(I2S0_8CH_MCLKOUT, "i2s0_8ch_mclkout", i2s0_8ch_mclkout_p, CLK_SET_RATE_PARENT,
+ 			RK3588_CLKSEL_CON(28), 2, 2, MFLAGS),
++	GATE_GRF(I2S0_8CH_MCLKOUT_TO_IO, "i2s0_8ch_mclkout_to_io", "i2s0_8ch_mclkout",
++			0, 0x0318, 0, CLK_GATE_SET_TO_DISABLE | CLK_GATE_HIWORD_MASK, grf_type_ioc),
+ 
+ 	GATE(HCLK_PDM1, "hclk_pdm1", "hclk_audio_root", 0,
+ 			RK3588_CLKGATE_CON(9), 6, GFLAGS),
+@@ -2479,6 +2482,22 @@ static void __init rk3588_clk_early_init(struct device_node *np)
+ 			&rk3588_cpub1clk_data, rk3588_cpub1clk_rates,
+ 			ARRAY_SIZE(rk3588_cpub1clk_rates));
+ 
++	/* Register SYS_GRF for I2S MCLK output gate clocks (GATE_GRF) */
++	{
++		struct regmap *sys_grf;
++		struct rockchip_aux_grf *sys_grf_e;
++
++		sys_grf = syscon_regmap_lookup_by_compatible("rockchip,rk3588-sys-grf");
++		if (!IS_ERR(sys_grf)) {
++			sys_grf_e = kzalloc(sizeof(*sys_grf_e), GFP_KERNEL);
++			if (sys_grf_e) {
++				sys_grf_e->grf = sys_grf;
++				sys_grf_e->type = grf_type_ioc;
++				hash_add(ctx->aux_grf_table, &sys_grf_e->node, grf_type_ioc);
++			}
++		}
++	}
++
+ 	rockchip_clk_register_branches(ctx, rk3588_early_clk_branches,
+ 				       ARRAY_SIZE(rk3588_early_clk_branches));
+ 
+diff --git a/include/dt-bindings/clock/rockchip,rk3588-cru.h b/include/dt-bindings/clock/rockchip,rk3588-cru.h
+index 0c7d3ca2d5bc..fbf683f29ed8 100644
+--- a/include/dt-bindings/clock/rockchip,rk3588-cru.h
++++ b/include/dt-bindings/clock/rockchip,rk3588-cru.h
+@@ -762,4 +762,6 @@
+ #define SCMI_SPLL			22
+ #define SCMI_HCLK_SD			23
+ 
++#define I2S0_8CH_MCLKOUT_TO_IO		722
++
+ #endif
+-- 
+Armbian
