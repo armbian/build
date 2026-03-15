@@ -6,6 +6,7 @@ KEEP_SOURCES=true          # Keep source packages when adding to repo (don't del
 FORCE_ADD=false            # Force re-adding packages even if they already exist in repo
 FORCE_PUBLISH=true         # Force publishing even when no packages to add
 GPG_PARAMS=()              # Global GPG parameters array (set by get_gpg_signing_params)
+KEEP_MULTIPLE_VERSIONS=true # Keep multiple versions for kernel/dtb/u-boot packages
 
 # Log message to syslog (view with: journalctl -t repo-management -f)
 log() {
@@ -151,6 +152,7 @@ adding_packages() {
 
 		# If package with same name+arch but different version exists in repo, remove it first
 		# This prevents "file already exists and is different" errors during publish
+		# Skip removal for kernel, dtb, u-boot, headers, and libc packages if KEEP_MULTIPLE_VERSIONS is enabled
 		if [[ "$FORCE_ADD" != true ]]; then
 			for existing_key in "${!repo_packages_map[@]}"; do
 				# existing_key format: name|version|arch
@@ -158,10 +160,27 @@ adding_packages() {
 				IFS='|' read -r existing_name existing_version existing_arch <<< "$existing_key"
 				# Check if same name and arch but different version
 				if [[ "$existing_name" == "$deb_name" && "$existing_arch" == "$deb_arch" && "$existing_version" != "$deb_version" ]]; then
-					log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding new version"
-					run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
-					# Remove from map so we don't try to remove it again
-					unset "repo_packages_map[$existing_key]"
+					# Check if this package should keep multiple versions
+					local keep_multiple=false
+					if [[ "$KEEP_MULTIPLE_VERSIONS" == true ]]; then
+						# Keep multiple versions for critical boot/low-level packages
+						if [[ "$deb_name" =~ ^linux-image- ]] || \
+						   [[ "$deb_name" =~ ^linux-dtb- ]] || \
+						   [[ "$deb_name" =~ ^linux-headers- ]] || \
+						   [[ "$deb_name" =~ ^u-boot- ]] || \
+						   [[ "$deb_name" =~ ^libc6 ]] || \
+						   [[ "$deb_name" =~ ^libc-dev ]]; then
+							keep_multiple=true
+							log "Keeping multiple versions for ${existing_name}_${existing_version}_${existing_arch}"
+						fi
+					fi
+
+					if [[ "$keep_multiple" == false ]]; then
+						log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding new version"
+						run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
+						# Remove from map so we don't try to remove it again
+						unset "repo_packages_map[$existing_key]"
+					fi
 				fi
 			done
 		fi
@@ -705,12 +724,14 @@ Usage: $0 [ -short | --long ]
                              (by default, skips packages that are already in the repo)
 -P --force-publish           force publishing even when there are no packages to add
                              (by default, skips publishing empty releases)
+-m --multiple-versions       keep multiple versions of critical packages (kernel, dtb, u-boot, headers, libc)
+                             (enabled by default)
 	"
     exit 2
 }
 
-SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F:,P:
-LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add:,force-publish:
+SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F:,P:,m
+LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add:,force-publish:,multiple-versions
 if ! OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@"); then
 	help
 	exit 1
@@ -761,6 +782,10 @@ do
       FORCE_PUBLISH=true
       shift
       ;;
+    -m | --multiple-versions )
+      KEEP_MULTIPLE_VERSIONS=true
+      shift
+      ;;
     -d | --dry-run )
       DRY_RUN=true
       # Dry-run implies keep-sources
@@ -789,13 +814,14 @@ CONFIG="${TempDir}/aptly.conf"
 # Display configuration status
 echo "=========================================="
 echo "Configuration Status:"
-echo "  DRY-RUN:       $([ "$DRY_RUN" == true ] && echo 'ENABLED' || echo 'disabled')"
-echo "  KEEP-SOURCES:  $([ "$KEEP_SOURCES" == true ] && echo 'ENABLED' || echo 'disabled')"
-echo "  FORCE-ADD:     $([ "$FORCE_ADD" == true ] && echo 'ENABLED' || echo 'disabled')"
-echo "  FORCE-PUBLISH: $([ "$FORCE_PUBLISH" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  DRY-RUN:            $([ "$DRY_RUN" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  KEEP-SOURCES:       $([ "$KEEP_SOURCES" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  FORCE-ADD:          $([ "$FORCE_ADD" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  FORCE-PUBLISH:      $([ "$FORCE_PUBLISH" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  KEEP-MULTI-VERSION: $([ "$KEEP_MULTIPLE_VERSIONS" == true ] && echo 'ENABLED' || echo 'disabled')"
 echo "=========================================="
 
-log "Configuration: DRY_RUN=$DRY_RUN, KEEP_SOURCES=$KEEP_SOURCES, FORCE_ADD=$FORCE_ADD, FORCE_PUBLISH=$FORCE_PUBLISH"
+log "Configuration: DRY_RUN=$DRY_RUN, KEEP_SOURCES=$KEEP_SOURCES, FORCE_ADD=$FORCE_ADD, FORCE_PUBLISH=$FORCE_PUBLISH, KEEP_MULTIPLE_VERSIONS=$KEEP_MULTIPLE_VERSIONS"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "=========================================="
@@ -815,6 +841,14 @@ if [[ "$FORCE_ADD" == true ]]; then
     echo "=========================================="
     echo "FORCE-ADD MODE ENABLED"
     echo "All packages will be re-added even if already in repo"
+    echo "=========================================="
+fi
+
+if [[ "$KEEP_MULTIPLE_VERSIONS" == true ]]; then
+    echo "=========================================="
+    echo "KEEP-MULTIPLE-VERSIONS MODE ENABLED"
+    echo "Multiple versions of kernel, dtb, u-boot, headers, and libc packages will be preserved"
+    echo "Note: armbian-bsp packages will still use single version (old versions removed)"
     echo "=========================================="
 fi
 
