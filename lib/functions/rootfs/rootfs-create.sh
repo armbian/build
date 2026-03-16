@@ -114,13 +114,15 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	debootstrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
+	mkdir -p "${SDCARD}/usr/bin"
+	deploy_qemu_binary_to_chroot "${SDCARD}" "rootfs" # undeployed near the end of this function
+
 	run_host_command_logged "${debootstrap_bin}" "${debootstrap_arguments[@]}" || {
 		exit_with_error "mmdebstrap failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
 
-	deploy_qemu_binary_to_chroot "${SDCARD}" "rootfs" # undeployed near the end of this function
 
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
 
