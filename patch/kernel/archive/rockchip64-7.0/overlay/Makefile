@@ -111,7 +111,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-rkvenc-overlay.dtbo \
 	rockchip-rk3588-nanopi-m6-spi-nor-flash.dtbo \
 	rockchip-rk3588-nanopi-m6-display-dsi1-yx35.dtbo \
-	rockchip-rk3588-nanopc-t6-mmc-frequency.dtbo
+	rockchip-rk3588-nanopc-t6-mmc-frequency.dtbo \
+	rockchip-rk3588-odroidm2-weather-board-zero.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr
@@ -122,4 +123,3 @@ dtbotxt-$(CONFIG_ARCH_ROCKCHIP) += \
 dtb-y += $(dtbo-y) $(scr-y) $(dtbotxt-y)
 
 clean-files    := *.dtbo *.scr
-

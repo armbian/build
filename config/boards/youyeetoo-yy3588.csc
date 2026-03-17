@@ -1,18 +1,18 @@
-# Rockchip RK3588 octa core 4-32GB RAM SoC eMMC NVMe SATA USB3 GbE 2x HDMI DP
+# Rockchip RK3588 octa core 4-32GB RAM SoC eMMC NVMe SATA USB3 1x GbE 1x 2.5GbE HDMI DP
 BOARD_NAME="Youyeetoo YY3588"
 BOARD_VENDOR="youyeetoo"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="SuperKali"
 BOOTCONFIG="youyeetoo-yy3588-rk3588_defconfig"
 BOOT_SOC="rk3588"
-KERNEL_TARGET="vendor,edge"
+KERNEL_TARGET="vendor,current,edge"
+KERNEL_TEST_TARGET="vendor,current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588-youyeetoo-yy3588.dtb"
 BOOT_SCENARIO="spl-blobs"
-BOOT_SUPPORT_SPI="yes"
-BOOT_SPI_RKSPI_LOADER="yes"
+ASOUND_STATE="asound.state.youyeetoo-yy3588"
 
 function post_family_tweaks__youyeetoo_yy3588_naming_audios() {
 	display_alert "$BOARD" "Renaming Youyeetoo YY3588 audios" "info"

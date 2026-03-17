@@ -1,6 +1,6 @@
 # Amlogic A311D 2GB RAM 16GB eMMC GBE USB3 RTL8822CS WiFi/BT
 BOARD_NAME="CAINIAO CNIoT-CORE"
-BOARD_VENDOR="amlogic"
+BOARD_VENDOR="cainiao"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="cainiao-cniot-core_defconfig"
@@ -36,18 +36,19 @@ function post_uboot_custom_postprocess__repack_vendor_fip_with_mainline_uboot() 
 function post_family_tweaks_bsp__cainiao-cniot-core() {
 	display_alert "${BOARD}" "Installing ALSA UCM configuration files" "info"
 
-	# Use ALSA UCM via CLI: alsactl init && alsaucm set _verb "HiFi" set _enadev "HDMI" set _enadev "Speaker"
-	# playback via HDMI: aplay -D plughw:cainiaocniotcor,0 /usr/share/sounds/alsa/Front_Center.wav
-	# playback via internal speaker: aplay -D plughw:cainiaocniotcor,1 /usr/share/sounds/alsa/Front_Center.wav
+	# Use ALSA UCM via CLI:
+	# alsactl init hw:cniotcore && alsaucm -c hw:cniotcore set _verb "HiFi" set _enadev "HDMI" set _enadev "Speaker"
+	# aplay -D plughw:cniotcore,0 path-to-hdmi-sound.wav
+	# aplay -D plughw:cniotcore,1 path-to-speaker-sound.wav
 
-	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cainiao-cniot-core-HiFi.conf" \
-		"${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core-HiFi.conf"
-	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cainiao-cniot-core.conf" \
-		"${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core.conf"
+	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cniot-core-HiFi.conf" \
+		"${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cniot-core-HiFi.conf"
+	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cniot-core.conf" \
+		"${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cniot-core.conf"
 
 	if [ ! -d "${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card" ]; then
 		mkdir -p "${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card"
 	fi
-	ln -sfv /usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core.conf \
-		"${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card/cainiao-cniot-core.conf"
+	ln -sfv /usr/share/alsa/ucm2/Amlogic/axg-sound-card/cniot-core.conf \
+		"${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card/cniot-core.conf"
 }

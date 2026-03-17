@@ -1,0 +1,84 @@
+From 57b57ee7fbfca3ed448c15804cbdde80d3ad7bc6 Mon Sep 17 00:00:00 2001
+From: Nicolas Dufresne <nicolas.dufresne@collabora.com>
+Date: Tue, 10 May 2022 14:37:29 -0400
+Subject: [PATCH 52/59] WIP/2000: media: rkvdec: Fix HEVC RPS bit offsets
+
+The offsets from the uAPI need to be extended to include some bits
+that can be calculated from the parameters. This has been compared
+to match with the vendor bit sizes (which simply parse again the
+data to calcualte it).
+
+Fixed by this change:
+- LTRPSPS_A_Qualcomm_1
+- RPS_C_ericsson_5
+- RPS_D_ericsson_6
+- RPS_E_qualcomm_5
+
+Signed-off-by: Nicolas Dufresne <nicolas.dufresne@collabora.com>
+---
+ drivers/media/platform/rockchip/rkvdec/rkvdec-hevc.c | 26 +++++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec-hevc.c b/drivers/media/platform/rockchip/rkvdec/rkvdec-hevc.c
+index 5454d2d5e147..39b656d3e101 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec-hevc.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec-hevc.c
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <media/v4l2-mem2mem.h>
++#include <linux/bitops.h>
+ 
+ #include "rkvdec.h"
+ #include "rkvdec-regs.h"
+@@ -2175,6 +2176,7 @@ static void assemble_hw_rps(struct rkvdec_ctx *ctx,
+ 			    struct rkvdec_hevc_run *run)
+ {
+ 	const struct v4l2_ctrl_hevc_decode_params *decode_params = run->decode_params;
++	const struct v4l2_ctrl_hevc_sps *sps = run->sps;
+ 	const struct v4l2_ctrl_hevc_slice_params *sl_params;
+ 	const struct v4l2_hevc_dpb_entry *dpb;
+ 	struct rkvdec_hevc_ctx *hevc_ctx = ctx->priv;
+@@ -2196,9 +2198,21 @@ static void assemble_hw_rps(struct rkvdec_ctx *ctx,
+ #define NUM_RPS_POC				PS_FIELD(202, 4)
+ 
+ 	for (j = 0; j < run->num_slices; j++) {
++		uint st_bit_offset = 0;
++
+ 		sl_params = &run->slices_params[j];
+ 		dpb = decode_params->dpb;
+-		lowdelay = (sl_params->slice_type == V4L2_HEVC_SLICE_TYPE_I) ? 0 : 1;
++
++		if (sl_params->slice_type != V4L2_HEVC_SLICE_TYPE_I) {
++			num_l0_refs = sl_params->num_ref_idx_l0_active_minus1 + 1;
++
++			if (sl_params->slice_type == V4L2_HEVC_SLICE_TYPE_B)
++				num_l1_refs = sl_params->num_ref_idx_l1_active_minus1 + 1;
++
++			lowdelay = 1;
++		} else {
++			lowdelay = 0;
++		}
+ 
+ 		hw_ps = &priv_tbl->rps[j];
+ 		memset(hw_ps, 0, sizeof(*hw_ps));
+@@ -2224,8 +2238,14 @@ static void assemble_hw_rps(struct rkvdec_ctx *ctx,
+ 
+ 		WRITE_RPS(lowdelay, LOWDELAY);
+ 
+-		WRITE_RPS(sl_params->long_term_ref_pic_set_size +
+-			  sl_params->short_term_ref_pic_set_size,
++		if (!(decode_params->flags & V4L2_HEVC_DECODE_PARAM_FLAG_IDR_PIC)) {
++			if (sl_params->short_term_ref_pic_set_size)
++				st_bit_offset = sl_params->short_term_ref_pic_set_size;
++			else if (sps->num_short_term_ref_pic_sets > 1)
++				st_bit_offset = fls(sps->num_short_term_ref_pic_sets - 1);
++		}
++
++		WRITE_RPS(st_bit_offset + sl_params->long_term_ref_pic_set_size,
+ 			  LONG_TERM_RPS_BIT_OFFSET);
+ 		WRITE_RPS(sl_params->short_term_ref_pic_set_size,
+ 			  SHORT_TERM_RPS_BIT_OFFSET);
+-- 
+2.34.1
+

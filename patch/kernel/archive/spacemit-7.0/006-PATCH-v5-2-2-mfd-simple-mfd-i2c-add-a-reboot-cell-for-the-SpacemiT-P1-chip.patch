@@ -27,3 +27,77 @@ index 0a607a1e3ca1d..542d378cdcd1f 100644
 -- 
 2.47.2
 
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Troy Mitchell <troy.mitchell@linux.dev>
+Date: Wed, 11 Mar 2026 10:51:55 +0800
+Subject: [PATCH RFC] riscv: disable local interrupts and stop other CPUs
+ before restart
+
+Currently, the RISC-V implementation of machine_restart() directly calls
+do_kernel_restart() without disabling local interrupts or stopping other
+CPUs. This missing architectural setup causes fatal issues for systems
+that rely on external peripherals (e.g., I2C PMICs) to execute the system
+restart when CONFIG_PREEMPT_RCU is enabled.
+
+When a restart handler relies on the I2C subsystem, the I2C core checks
+i2c_in_atomic_xfer_mode() to decide whether to use the sleepable xfer
+or the polling atomic_xfer. This check evaluates to true if
+(!preemptible() || irqs_disabled()).
+
+During do_kernel_restart(), the restart handlers are invoked via
+atomic_notifier_call_chain(), which holds an RCU read lock.
+The behavior diverges based on the preemption model:
+1. Under CONFIG_PREEMPT_VOLUNTARY or CONFIG_PREEMPT_NONE, rcu_read_lock()
+   implicitly disables preemption. preemptible() evaluates to false, and
+   the I2C core correctly routes to the atomic, polling transfer path.
+2. Under CONFIG_PREEMPT_RCU, rcu_read_lock() does NOT disable preemption.
+   Since machine_restart() left local interrupts enabled, irqs_disabled()
+   is false, and preempt_count is 0. Consequently, preemptible() evaluates
+   to true.
+
+As a result, the I2C core falsely assumes a sleepable context and routes
+the transfer to the standard master_xfer path. This inevitably triggers a
+schedule() call while holding the RCU read lock, resulting in a fatal splat:
+"Voluntary context switch within RCU read-side critical section!" and
+a system hang.
+
+Align RISC-V with other major architectures (e.g., ARM64) by adding
+local_irq_disable() and smp_send_stop() to machine_restart().
+- local_irq_disable() guarantees a strict atomic context, forcing sub-
+  systems like I2C to always fall back to polling mode.
+- smp_send_stop() ensures exclusive hardware access by quiescing other
+  CPUs, preventing them from holding bus locks (e.g., I2C spinlocks)
+  during the final restart phase.
+
+Signed-off-by: Troy Mitchell <troy.mitchell@linux.dev>
+---
+ arch/riscv/kernel/reset.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/riscv/kernel/reset.c b/arch/riscv/kernel/reset.c
+index 912288572226..7a5dcfdc3674 100644
+--- a/arch/riscv/kernel/reset.c
++++ b/arch/riscv/kernel/reset.c
+@@ -5,6 +5,7 @@
+ 
+ #include <linux/reboot.h>
+ #include <linux/pm.h>
++#include <linux/smp.h>
+ 
+ static void default_power_off(void)
+ {
+@@ -17,6 +18,10 @@ EXPORT_SYMBOL(pm_power_off);
+ 
+ void machine_restart(char *cmd)
+ {
++	/* Disable interrupts first */
++	local_irq_disable();
++	smp_send_stop();
++
+ 	do_kernel_restart(cmd);
+ 	while (1);
+ }
+
+-- 
+2.52.0
+
