@@ -12,7 +12,7 @@ KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 #No need to build Desktop images, minimal set will be installed together with KlipperScreen
 HAS_VIDEO_OUTPUT="no"
-BOOT_LOGO="desktop"
+BOOT_LOGO="none"
 MODULES="ads7846 spidev"
 BOOTFS_TYPE="fat"
 PACKAGE_LIST_BOARD="build-essential usb-modeswitch eject"
