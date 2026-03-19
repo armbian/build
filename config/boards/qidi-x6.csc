@@ -1,6 +1,6 @@
 # Rockchip RK3328 quad core 1GB RAM, 1x100M Ethernet, eMMC, USB3, USB2
 # Supported boards:
-# - QIDI X-4, X-6, X-9-3 (made by Makerbase for 'X-Plus 3', 'X-Smart 3', 'X-Max 3', 'Plus 4' and 'Q1' 3D printers)
+# - QIDI X-6, X-7 (made by Makerbase for 'X-Plus 3', 'X-Smart 3', 'X-Max 3', 'Plus 4' and 'Q1' 3D printers)
 #
 # These boards and related configuration is very close to Renegade board ("roc-cc-rk3328_defconfig" and "rk3328-roc-cc" DT)
 BOARD_NAME="Qidi-x6"
