@@ -10,7 +10,6 @@ BOARD_MAINTAINER="Shadowrom2020"
 BOOTCONFIG="qidi-x6-rk3328_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
-#No need to build Desktop images, minimal set will be installed together with KlipperScreen
 HAS_VIDEO_OUTPUT="no"
 BOOT_LOGO="none"
 MODULES="ads7846 spidev"
