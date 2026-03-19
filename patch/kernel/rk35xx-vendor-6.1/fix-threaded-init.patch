@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlomeProg <alomeprog@gmail.com>
+Date: Thu, 19 Mar 2026 13:43:51 +0000
+Subject: Patching kernel rk35xx files
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c
+
+Signed-off-by: AlomeProg <alomeprog@gmail.com>
+---
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c | 49 ++++++----
+ 1 file changed, 29 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index dff4373b5824..086329211e61 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -23,10 +23,11 @@
+ #include <linux/reset.h>
+ #include <linux/regulator/driver.h>
+ #include <linux/regulator/machine.h>
+ #include <linux/rfkill-wlan.h>
+ #include <linux/aspm_ext.h>
++#include <linux/completion.h>
+ 
+ #include "pcie-designware.h"
+ #include "../../pci.h"
+ #include "../rockchip-pcie-dma.h"
+ #include "pcie-dw-dmatest.h"
+@@ -140,11 +141,12 @@ struct rk_pcie {
+ 	bool				slot_pluggable;
+ 	struct gpio_hotplug_slot	hp_slot;
+ 	bool				hp_no_link;
+ 	bool				is_lpbk;
+ 	bool				is_comp;
+-	bool				finish_probe;
++	bool				probe_ok;
++    struct completion	probe_done;
+ 	bool				keep_power_in_suspend;
+ 	struct regulator		*vpcie3v3;
+ 	struct irq_domain		*irq_domain;
+ 	raw_spinlock_t			intx_lock;
+ 	u16				aspm;
+@@ -1623,10 +1625,12 @@ static int rk_pcie_really_probe(void *p)
+ 	if (!rk_pcie) {
+ 		ret = -ENOMEM;
+ 		goto release_driver;
+ 	}
+ 
++    init_completion(&rk_pcie->probe_done);
++
+ 	pci = devm_kzalloc(dev, sizeof(*pci), GFP_KERNEL);
+ 	if (!pci) {
+ 		ret = -ENOMEM;
+ 		goto release_driver;
+ 	}
+@@ -1708,11 +1712,13 @@ static int rk_pcie_really_probe(void *p)
+ 	dw_pcie_dbi_ro_wr_dis(pci);
+ 
+ 	/* 7. framework misc settings */
+ 	device_init_wakeup(dev, true);
+ 	device_enable_async_suspend(dev); /* Enable async system PM for multiports SoC */
+-	rk_pcie->finish_probe = true;
++	rk_pcie->probe_ok = true;
++
++	complete_all(&rk_pcie->probe_done);
+ 
+ 	return 0;
+ 
+ deinit_irq_and_wq:
+ 	destroy_workqueue(rk_pcie->hot_rst_wq);
+@@ -1723,12 +1729,15 @@ static int rk_pcie_really_probe(void *p)
+ unconfig_hardware_io:
+ 	pm_runtime_put(dev);
+ 	pm_runtime_disable(dev);
+ 	rk_pcie_hardware_io_unconfig(rk_pcie);
+ release_driver:
+-	if (rk_pcie)
+-		rk_pcie->finish_probe = true;
++	if (rk_pcie) {
++		rk_pcie->probe_ok = false;
++
++		complete_all(&rk_pcie->probe_done);
++	}
+ 	if (IS_ENABLED(CONFIG_PCIE_RK_THREADED_INIT))
+ 		device_release_driver(dev);
+ 
+ 	return ret;
+ }
+@@ -1754,28 +1763,28 @@ static int rk_pcie_remove(struct platform_device *pdev)
+ 	struct rk_pcie *rk_pcie = dev_get_drvdata(dev);
+ 	unsigned long timeout = msecs_to_jiffies(10000), start = jiffies;
+ 
+ 	if (IS_ENABLED(CONFIG_PCIE_RK_THREADED_INIT)) {
+ 		/* rk_pcie_really_probe hasn't been called yet, trying to get drvdata */
+-		while (!rk_pcie && time_before(start, start + timeout)) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(msecs_to_jiffies(200));
+-			rk_pcie = dev_get_drvdata(dev);
++		while (!rk_pcie && time_before(jiffies, start + timeout)) {
++ 			set_current_state(TASK_INTERRUPTIBLE);
++ 			schedule_timeout(msecs_to_jiffies(200));
++ 			rk_pcie = dev_get_drvdata(dev);
++ 		}
++ 
++		if (!rk_pcie) {
++			dev_dbg(dev, "%s: rk_pcie is NULL after timeout\n", __func__);
++			return 0;
++		}
++ 
++		if (!wait_for_completion_timeout(&rk_pcie->probe_done, timeout)) {
++			dev_warn(dev, "%s: timeout waiting for threaded probe\n", __func__);
++			return 0;
+ 		}
+ 
+-		/* check again to see if probe path fails or hasn't been finished */
+-		start = jiffies;
+-		while ((rk_pcie && !rk_pcie->finish_probe) && time_before(start, start + timeout)) {
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(msecs_to_jiffies(200));
+-		};
+-
+-		/*
+-		 * Timeout should not happen as it's longer than regular probe actually.
+-		 * But probe maybe fail, so need to double check bridge bus.
+-		 */
+-		if (!rk_pcie || !rk_pcie->finish_probe || !rk_pcie->pci->pp.bridge->bus) {
++		if (!rk_pcie->probe_ok || !rk_pcie->pci || !rk_pcie->pci->pp.bridge ||
++		    !rk_pcie->pci->pp.bridge->bus) {
+ 			dev_dbg(dev, "%s return early due to failure in threaded init\n", __func__);
+ 			return 0;
+ 		}
+ 	}
+ 
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
