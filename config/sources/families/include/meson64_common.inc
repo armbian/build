@@ -220,7 +220,8 @@ family_tweaks_bsp() {
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | "aml-c400-plus" | "aml-s9xx-box")
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | \
+		"aml-c400-plus" | "aml-s9xx-box" | "bestv-r3300-l")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 				Section "OutputClass"
 				    Identifier "Amlogic"
