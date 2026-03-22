@@ -40,6 +40,7 @@ Main() {
 	SetupPython
 	SetupTmux
 	CloneOpenpilot
+	DownloadPythonWheels
 	SetupBootLauncher
 	SetupFirstBoot
 
@@ -56,7 +57,7 @@ SetupUser() {
 	for grp in gpio gpu i2c; do
 		groupadd -f $grp
 	done
-	for grp in root video gpio adm gpu audio disk dialout systemd-journal netdev i2c input; do
+	for grp in root video render gpio adm gpu audio disk dialout systemd-journal netdev i2c input; do
 		adduser $USERNAME $grp 2>/dev/null || true
 	done
 
@@ -521,9 +522,6 @@ SetupPython() {
 
 	curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-	# venv + pip install happens on first boot (asius-firstboot.service)
-	# chroot can't compile native C extensions for aarch64
-
 	cat > /etc/profile.d/asius-python.sh << 'EOF'
 export PYTHONPATH="/data/pythonpath"
 export UV_PYTHON_INSTALL_DIR="/usr/local/uv/python"
@@ -566,7 +564,7 @@ setw -g window-status-format ' #I#[fg=colour237]:#[fg=colour250]#W#[fg=colour244
 
 setw -g window-status-bell-style fg=colour255,bg=colour1,bold
 
-set -g mouse off
+set -g mouse on
 TMUXEOF
 	chown $USERNAME:$USERNAME /home/$USERNAME/.tmux.conf
 }
@@ -591,6 +589,30 @@ EOF
 	chown $USERNAME:$USERNAME /data/continue.sh
 
 	echo "  OK: openpilot cloned and continue.sh written"
+}
+
+DownloadPythonWheels() {
+	echo ">>> Pre-downloading python wheels for offline firstboot"
+
+	mkdir -p /usr/local/share/asius-wheels
+	if [ -f /data/openpilot/pyproject.toml ]; then
+		# Install pip if not available, then download wheels for offline install
+		python3 -m ensurepip 2>/dev/null || apt-get install -y -q python3-pip 2>/dev/null || true
+		# Download all deps (wheels + sdists). On firstboot, uv will use these
+		# as a local cache and only fetch what's missing.
+		cd /data/openpilot
+		python3 -m pip download \
+			--dest /usr/local/share/asius-wheels \
+			".[dev]" 2>&1 || \
+		echo "  WARNING: some wheels failed to download (will fall back to network on firstboot)"
+		# extra deps not in pyproject.toml
+		python3 -m pip download \
+			--dest /usr/local/share/asius-wheels \
+			Pillow opencv-python-headless 2>/dev/null || true
+		echo "  OK: $(ls /usr/local/share/asius-wheels/ 2>/dev/null | wc -l) wheels cached"
+	else
+		echo "  WARNING: /data/openpilot/pyproject.toml not found, skipping"
+	fi
 }
 
 SetupBootLauncher() {
@@ -648,10 +670,9 @@ SetupFirstBoot() {
 MARKER="/data/.asius_initialized"
 [ -f "$MARKER" ] && exit 0
 
-echo "asius-firstboot: initializing /data"
+echo "asius-firstboot: initializing"
 
-mkdir -p /data/openpilot /data/params/d /data/persist/comma /data/media/0/realdata /data/log /data/stats /data/ssh /data/etc/ssh /data/tmp
-
+# generate SSH keypair for device identity
 if [ ! -f /data/ssh/id_ed25519 ]; then
     ssh-keygen -t ed25519 -f /data/ssh/id_ed25519 -N "" -C "asius@$(hostname)"
     chown asius:asius /data/ssh/id_ed25519 /data/ssh/id_ed25519.pub
@@ -667,25 +688,12 @@ fi
 
 echo -n 1 > /data/params/d/SshEnabled
 
-chown -R asius:asius /data/openpilot /data/params /data/persist /data/media /data/ssh /data/tmp
-chown root:root /data/etc /data/etc/ssh
-ln -sfn /data/openpilot /data/pythonpath
+# auto-accept terms and skip onboarding guide
+echo -n 2 > /data/params/d/HasAcceptedTerms
+echo -n "0.2.0" > /data/params/d/CompletedTrainingVersion
 
-# wait for DNS to be ready (NetworkManager may not be up yet at boot)
-echo "asius-firstboot: waiting for network..."
-for i in $(seq 1 60); do
-    if getent hosts pypi.org >/dev/null 2>&1; then
-        echo "asius-firstboot: network ready after ${i}s"
-        break
-    fi
-    sleep 1
-done
-if ! getent hosts pypi.org >/dev/null 2>&1; then
-    echo "ERROR: asius-firstboot: no network after 60s, aborting (will retry next boot)"
-    exit 1
-fi
-
-# create venv + install openpilot python deps (must run on real hardware, not cross-arch chroot)
+# create venv + install openpilot python deps from pre-downloaded wheels
+# (wheels downloaded at image build time, no network needed)
 if [ ! -f /usr/local/venv/bin/python3 ]; then
     echo "asius-firstboot: creating python venv"
     uv venv /usr/local/venv --seed --python-preference only-system --python=3.12 || {
@@ -699,13 +707,21 @@ if [ -f /data/openpilot/pyproject.toml ]; then
     echo "asius-firstboot: installing openpilot python dependencies"
     source /usr/local/venv/bin/activate
     cd /data/openpilot
-    MAKEFLAGS="-j$(nproc)" UV_NO_CACHE=1 UV_PROJECT_ENVIRONMENT=/usr/local/venv \
-        uv pip install -e ".[dev]" --compile-bytecode || {
-        echo "ERROR: asius-firstboot: pip install failed, aborting (will retry next boot)"
-        exit 1
+    MAKEFLAGS="-j$(nproc)" UV_PROJECT_ENVIRONMENT=/usr/local/venv \
+        uv pip install -e ".[dev]" --compile-bytecode \
+        --find-links /usr/local/share/asius-wheels --no-index || {
+        # fallback to network if local wheels are missing/incomplete
+        echo "asius-firstboot: local wheel install failed, trying network..."
+        MAKEFLAGS="-j$(nproc)" UV_NO_CACHE=1 UV_PROJECT_ENVIRONMENT=/usr/local/venv \
+            uv pip install -e ".[dev]" --compile-bytecode || {
+            echo "ERROR: asius-firstboot: pip install failed, aborting (will retry next boot)"
+            exit 1
+        }
     }
     # install extra deps not in pyproject.toml
-    uv pip install Pillow opencv-python-headless || true
+    uv pip install Pillow opencv-python-headless \
+        --find-links /usr/local/share/asius-wheels --no-index 2>/dev/null || \
+        uv pip install Pillow opencv-python-headless || true
 fi
 
 # build and install PLATFORM_COMMA raylib Python wheel (must run on real aarch64 hardware)
@@ -748,8 +764,7 @@ FBEOF
 	cat > /etc/systemd/system/asius-firstboot.service << 'EOF'
 [Unit]
 Description=Asius first-boot initialization
-After=local-fs.target network-online.target
-Wants=network-online.target
+After=local-fs.target
 Before=openpilot.service
 ConditionPathExists=!/data/.asius_initialized
 
