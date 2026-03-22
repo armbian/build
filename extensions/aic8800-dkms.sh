@@ -35,7 +35,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		aic8800_dkms_url="${aic8800_dkms_url/https:\/\/github.com\//${ghproxy_header}github.com/}"
 	fi
 
-	use_clean_environment="yes" chroot_sdcard "wget ${aic8800_dkms_url} -P /tmp"
+	use_clean_environment="yes" chroot_sdcard "wget \"${aic8800_dkms_url}\" -P /tmp"
 	display_alert "Installing aic8800 package, will build kernel module in chroot" "${EXTENSION}" "info"
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/aic8800*/*/build/*.log")
 	# eject is needed by the aic8800-dkms package/DKMS workflow to safely unmount
