@@ -9,7 +9,6 @@ function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 }
 
 function post_install_kernel_debs__install_aic8800_dkms_package() {
-	display_alert "Installing aic8800 package" "info"
 	if [[ "${INSTALL_HEADERS}" != "yes" || "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		return 0
 	fi
