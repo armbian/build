@@ -16,4 +16,4 @@ MODULES="ads7846 spidev"
 BOOTFS_TYPE="fat"
 PACKAGE_LIST_BOARD="build-essential usb-modeswitch eject"
 
-enable_extension "aic8800-dkms"
+enable_extension "brostrend-aic8800-dkms"
