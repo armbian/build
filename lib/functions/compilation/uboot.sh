@@ -152,8 +152,12 @@ function compile_uboot_target() {
 		# Hack, up the log level to 6: "info" (default is 4: "warning")
 		display_alert "Hacking log level in u-boot config" "LOGLEVEL=${uboot_loglevel} for ${target}" "info"
 		run_host_command_logged scripts/config --enable CONFIG_LOG
-		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL ${uboot_loglevel}
-		run_host_command_logged scripts/config --set-val CONFIG_LOG_MAX_LEVEL ${uboot_loglevel}
+
+		# Skip setting log level for sunxi and sunxi64 families
+		if [[ $LINUXFAMILY != "sunxi" && $LINUXFAMILY != "sunxi64" ]]; then
+			run_host_command_logged scripts/config --set-val CONFIG_LOG_MAX_LEVEL ${uboot_loglevel}
+			run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL ${uboot_loglevel}
+		fi
 
 		# Include Armbian version so UART bootlogs are drastically more useful
 		run_host_command_logged ./scripts/config --disable "LOCALVERSION_AUTO"
