@@ -1,0 +1,447 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: c127dev <contact@c127.dev>
+Date: Mon, 9 Mar 2026 07:22:26 +0000
+Subject: [PATCH 2/4] net: dwc_eth_qos: Add support for Motorcomm YT6801
+
+This patch adds a new glue driver for the Motorcomm YT6801 PCIe
+Ethernet controller, which uses the Synopsys DesignWare Ethernet QOS
+IP block (DWMAC4).
+
+The driver includes support for:
+- Mapping PCI BAR0 and adjusting for GMAC register offset.
+- Reading the MAC address from the integrated eFuse. (Works on uboot)
+- Proper reset and deassertion of the MDIO/PHY reset.
+- Disabling OOB WOL for normal operation.
+
+This work is based on the Linux kernel dwmac-motorcomm driver
+authored by Yao Zi <me@ziyao.cc>.
+
+Signed-off-by: c127dev <contact@c127.dev>
+---
+ configs/orangepi-5-pro-rk3588s_defconfig |   2 +
+ drivers/net/Kconfig                      |  12 +
+ drivers/net/Makefile                     |   1 +
+ drivers/net/dwc_eth_qos_motorcomm.c      | 340 +++++++++++++++++++++++
+ drivers/net/phy/motorcomm.c              |   4 +
+ 5 files changed, 359 insertions(+)
+ create mode 100644 drivers/net/dwc_eth_qos_motorcomm.c
+
+diff --git a/configs/orangepi-5-pro-rk3588s_defconfig b/configs/orangepi-5-pro-rk3588s_defconfig
+index 45370df6..39354491 100644
+--- a/configs/orangepi-5-pro-rk3588s_defconfig
++++ b/configs/orangepi-5-pro-rk3588s_defconfig
+@@ -16,6 +16,7 @@ CONFIG_DEBUG_UART_CLOCK=24000000
+ CONFIG_SPL_SPI_FLASH_SUPPORT=y
+ CONFIG_SPL_SPI=y
+ CONFIG_PCI=y
++CONFIG_PCI_INIT_R=y
+ CONFIG_DEBUG_UART=y
+ CONFIG_AHCI=y
+ CONFIG_FIT=y
+@@ -62,6 +63,7 @@ CONFIG_SPI_FLASH_SFDP_SUPPORT=y
+ CONFIG_SPI_FLASH_XMC=y
+ CONFIG_PHY_MOTORCOMM=y
+ CONFIG_DWC_ETH_QOS=y
++CONFIG_DWC_ETH_QOS_MOTORCOMM=y
+ CONFIG_DWC_ETH_QOS_ROCKCHIP=y
+ CONFIG_NVME_PCI=y
+ CONFIG_PCIE_DW_ROCKCHIP=y
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 7ae28c4e..1852e4d0 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -241,6 +241,18 @@ config DWC_ETH_QOS_INTEL
+ 	help
+ 	  The Synopsys Designware Ethernet QOS IP block with the specific
+ 	  configuration used in the Intel Elkhart-Lake soc.
++	  Cannot be enabled together with DWC_ETH_QOS_MOTORCOMM.
++
++config DWC_ETH_QOS_MOTORCOMM
++	bool "Synopsys DWC Ethernet QOS device support for Motorcomm YT6801"
++	depends on DWC_ETH_QOS && PCI
++	select PHY_MOTORCOMM
++	help
++	  The Synopsys Designware Ethernet QOS IP block with the specific
++	  configuration used in the Motorcomm YT6801 PCI Ethernet controller.
++	  The YT6801 contains a GMAC4 core with an integrated YT8531S PHY
++	  connected via GMII interface.
++	  Cannot be enabled together with DWC_ETH_QOS_INTEL.
+ 
+ config DWC_ETH_QOS_ROCKCHIP
+ 	bool "Synopsys DWC Ethernet QOS device support for Rockchip SoCs"
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index f8f9a71f..c6be9ba0 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_DWC_ETH_QOS) += dwc_eth_qos.o
+ obj-$(CONFIG_DWC_ETH_QOS_ADI) += dwc_eth_qos_adi.o
+ obj-$(CONFIG_DWC_ETH_QOS_IMX) += dwc_eth_qos_imx.o
+ obj-$(CONFIG_DWC_ETH_QOS_INTEL) += dwc_eth_qos_intel.o
++obj-$(CONFIG_DWC_ETH_QOS_MOTORCOMM) += dwc_eth_qos_motorcomm.o
+ obj-$(CONFIG_DWC_ETH_QOS_ROCKCHIP) += dwc_eth_qos_rockchip.o
+ obj-$(CONFIG_DWC_ETH_QOS_QCOM) += dwc_eth_qos_qcom.o
+ obj-$(CONFIG_DWC_ETH_XGMAC) += dwc_eth_xgmac.o
+diff --git a/drivers/net/dwc_eth_qos_motorcomm.c b/drivers/net/dwc_eth_qos_motorcomm.c
+new file mode 100644
+index 00000000..85f93c76
+--- /dev/null
++++ b/drivers/net/dwc_eth_qos_motorcomm.c
+@@ -0,0 +1,340 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * DWC ETH QOS glue driver for Motorcomm PCI Ethernet controllers.
++ *
++ * Adapted from Linux dwmac-motorcomm.c by Yao Zi <me@ziyao.cc>
++ * U-Boot port for YT6801 support.
++ */
++
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <errno.h>
++#include <log.h>
++#include <net.h>
++#include <pci.h>
++#include <asm/io.h>
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++
++#include "dwc_eth_qos.h"
++
++/* Motorcomm-specific register offsets relative to PCI BAR0 */
++#define MOT_EPHY_CTRL			0x1004
++#define  MOT_EPHY_MDIO_PHY_RESET	BIT(0)
++#define MOT_OOB_WOL_CTRL		0x1010
++#define  MOT_OOB_WOL_CTRL_DIS		BIT(0)
++#define MOT_MGMT_INT_CTRL0		0x1100
++#define MOT_INT_MODERATION		0x1108
++#define  MOT_INT_MODERATION_RX		GENMASK(11, 0)
++#define  MOT_INT_MODERATION_TX		GENMASK(27, 16)
++#define MOT_EFUSE_OP_CTRL_0		0x1500
++#define  MOT_EFUSE_OP_MODE		GENMASK(1, 0)
++#define   MOT_EFUSE_OP_ROW_READ	0x1
++#define  MOT_EFUSE_OP_START		BIT(2)
++#define  MOT_EFUSE_OP_ADDR		GENMASK(15, 8)
++#define MOT_EFUSE_OP_CTRL_1		0x1504
++#define  MOT_EFUSE_OP_DONE		BIT(1)
++#define  MOT_EFUSE_OP_RD_DATA		GENMASK(31, 24)
++#define MOT_SYS_RESET			0x152c
++#define  MOT_SYS_RESET_RESET		BIT(31)
++#define MOT_GMAC_OFFSET			0x2000
++
++/* eFuse constants */
++#define MOT_EFUSE_READ_TIMEOUT_US	20000
++#define MOT_EFUSE_PATCH_REGION_OFFSET	18
++#define MOT_EFUSE_PATCH_MAX_NUM		39
++#define MOT_EFUSE_PATCH_SIZE		6
++#define MOT_EFUSE_ADDR_MACA0LR		0x1520
++#define MOT_EFUSE_ADDR_MACA0HR		0x1524
++
++#define PCI_VENDOR_ID_MOTORCOMM		0x1f0a
++#define PCI_DEVICE_ID_MOT_YT6801	0x6801
++
++/*
++ * Helper to access Motorcomm-specific registers via BAR0 base.
++ * eqos->regs points to BAR0 + MOT_GMAC_OFFSET, so subtract to get BAR0.
++ */
++static inline void __iomem *mot_reg(struct eqos_priv *eqos, u32 offset)
++{
++	return (void __iomem *)(eqos->regs - MOT_GMAC_OFFSET + offset);
++}
++
++static int mot_efuse_read_byte(struct eqos_priv *eqos, u8 offset, u8 *byte)
++{
++	u32 reg;
++	int timeout = MOT_EFUSE_READ_TIMEOUT_US;
++
++	writel(FIELD_PREP(MOT_EFUSE_OP_MODE, MOT_EFUSE_OP_ROW_READ) |
++	       FIELD_PREP(MOT_EFUSE_OP_ADDR, offset) |
++	       MOT_EFUSE_OP_START,
++	       mot_reg(eqos, MOT_EFUSE_OP_CTRL_0));
++
++	while (timeout > 0) {
++		reg = readl(mot_reg(eqos, MOT_EFUSE_OP_CTRL_1));
++		if (reg & MOT_EFUSE_OP_DONE) {
++			*byte = FIELD_GET(MOT_EFUSE_OP_RD_DATA, reg);
++			return 0;
++		}
++		udelay(2);
++		timeout -= 2;
++	}
++
++	return -ETIMEDOUT;
++}
++
++/*
++ * Read an eFuse patch entry. Each patch is 6 bytes: 2-byte LE address +
++ * 4-byte LE data. Returns the 16-bit address and 32-bit data value.
++ */
++static int mot_efuse_read_patch(struct eqos_priv *eqos, u8 index,
++				u16 *addr, u32 *data)
++{
++	u8 buf[MOT_EFUSE_PATCH_SIZE];
++	u8 offset;
++	int i, ret;
++
++	for (i = 0; i < MOT_EFUSE_PATCH_SIZE; i++) {
++		offset = MOT_EFUSE_PATCH_REGION_OFFSET +
++			 MOT_EFUSE_PATCH_SIZE * index + i;
++		ret = mot_efuse_read_byte(eqos, offset, &buf[i]);
++		if (ret)
++			return ret;
++	}
++
++	/* Little-endian: addr is bytes 0-1, data is bytes 2-5 */
++	*addr = buf[0] | ((u16)buf[1] << 8);
++	*data = buf[2] | ((u32)buf[3] << 8) |
++		((u32)buf[4] << 16) | ((u32)buf[5] << 24);
++
++	return 0;
++}
++
++static int mot_efuse_get_patch_value(struct eqos_priv *eqos,
++				     u16 target_addr, u32 *value)
++{
++	u16 addr;
++	u32 data;
++	int i, ret;
++
++	for (i = 0; i < MOT_EFUSE_PATCH_MAX_NUM; i++) {
++		ret = mot_efuse_read_patch(eqos, i, &addr, &data);
++		if (ret)
++			return ret;
++
++		if (addr == 0)
++			return -ENOENT;
++
++		if (addr == target_addr) {
++			*value = data;
++			return 0;
++		}
++	}
++
++	return -ENOENT;
++}
++
++static int mot_efuse_read_mac(struct udevice *dev, struct eqos_priv *eqos,
++			      u8 *mac)
++{
++	u32 maca0lr, maca0hr;
++	int ret;
++
++	ret = mot_efuse_get_patch_value(eqos, MOT_EFUSE_ADDR_MACA0LR,
++					&maca0lr);
++	if (ret) {
++		dev_dbg(dev, "failed to read maca0lr from eFuse: %d\n", ret);
++		return ret;
++	}
++
++	ret = mot_efuse_get_patch_value(eqos, MOT_EFUSE_ADDR_MACA0HR,
++					&maca0hr);
++	if (ret) {
++		dev_dbg(dev, "failed to read maca0hr from eFuse: %d\n", ret);
++		return ret;
++	}
++
++	mac[0] = (maca0hr >> 8) & 0xff;
++	mac[1] = maca0hr & 0xff;
++	mac[2] = (maca0lr >> 24) & 0xff;
++	mac[3] = (maca0lr >> 16) & 0xff;
++	mac[4] = (maca0lr >> 8) & 0xff;
++	mac[5] = maca0lr & 0xff;
++
++	return 0;
++}
++
++static void mot_deassert_mdio_phy_reset(struct eqos_priv *eqos)
++{
++	u32 reg = readl(mot_reg(eqos, MOT_EPHY_CTRL));
++
++	reg |= MOT_EPHY_MDIO_PHY_RESET;
++	writel(reg, mot_reg(eqos, MOT_EPHY_CTRL));
++}
++
++static void mot_reset(struct eqos_priv *eqos)
++{
++	u32 reg = readl(mot_reg(eqos, MOT_SYS_RESET));
++
++	reg &= ~MOT_SYS_RESET_RESET;
++	writel(reg, mot_reg(eqos, MOT_SYS_RESET));
++
++	reg |= MOT_SYS_RESET_RESET;
++	writel(reg, mot_reg(eqos, MOT_SYS_RESET));
++
++	mot_deassert_mdio_phy_reset(eqos);
++}
++
++static void mot_init(struct eqos_priv *eqos)
++{
++	writel(0x0, mot_reg(eqos, MOT_MGMT_INT_CTRL0));
++
++	writel(FIELD_PREP(MOT_INT_MODERATION_RX, 200) |
++	       FIELD_PREP(MOT_INT_MODERATION_TX, 200),
++	       mot_reg(eqos, MOT_INT_MODERATION));
++
++	/*
++	 * OOB WOL must be disabled during normal operation, or DMA
++	 * cannot function properly.
++	 */
++	writel(MOT_OOB_WOL_CTRL_DIS, mot_reg(eqos, MOT_OOB_WOL_CTRL));
++}
++
++static int eqos_probe_resources_motorcomm(struct udevice *dev)
++{
++	struct eqos_priv *eqos = dev_get_priv(dev);
++	u16 cmd;
++	int ret;
++
++	/* Map PCI BAR0 - sets eqos->regs to BAR0 base */
++	ret = eqos_get_base_addr_pci(dev);
++	if (ret) {
++		dev_err(dev, "failed to map PCI BAR0: %d\n", ret);
++		return ret;
++	}
++
++	/*
++	 * Adjust register base for GMAC offset. The YT6801 has its GMAC4
++	 * core registers at BAR0 + 0x2000. The Motorcomm-specific registers
++	 * remain accessible via mot_reg() which subtracts this offset.
++	 */
++	eqos->regs += MOT_GMAC_OFFSET;
++	eqos->mac_regs = (void *)((ulong)eqos->mac_regs + MOT_GMAC_OFFSET);
++	eqos->mtl_regs = (void *)((ulong)eqos->mtl_regs + MOT_GMAC_OFFSET);
++	eqos->dma_regs = (void *)((ulong)eqos->dma_regs + MOT_GMAC_OFFSET);
++
++	/* Enable PCI memory access and bus mastering */
++	dm_pci_read_config16(dev, PCI_COMMAND, &cmd);
++	cmd |= PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER;
++	dm_pci_write_config16(dev, PCI_COMMAND, cmd);
++
++	/* Reset the controller and deassert MDIO/PHY reset */
++	mot_reset(eqos);
++
++	return 0;
++}
++
++static int eqos_start_resets_motorcomm(struct udevice *dev)
++{
++	struct eqos_priv *eqos = dev_get_priv(dev);
++
++	/*
++	 * Re-initialize Motorcomm-specific registers. The MDIO/PHY reset
++	 * must be deasserted and OOB WOL disabled for normal operation.
++	 */
++	mot_deassert_mdio_phy_reset(eqos);
++	mot_init(eqos);
++
++	return 0;
++}
++
++static int eqos_get_enetaddr_motorcomm(struct udevice *dev)
++{
++	struct eqos_priv *eqos = dev_get_priv(dev);
++	struct eth_pdata *plat = dev_get_plat(dev);
++	int ret;
++
++	ret = mot_efuse_read_mac(dev, eqos, plat->enetaddr);
++	if (ret) {
++		dev_warn(dev, "eFuse contains no valid MAC, using random\n");
++		net_random_ethaddr(plat->enetaddr);
++	}
++
++	return 0;
++}
++
++static phy_interface_t eqos_get_interface_motorcomm(const struct udevice *dev)
++{
++	return PHY_INTERFACE_MODE_GMII;
++}
++
++static ulong eqos_get_tick_clk_rate_motorcomm(struct udevice *dev)
++{
++	return 25000000; /* 25 MHz CSR clock */
++}
++
++static struct eqos_ops eqos_motorcomm_ops = {
++	.eqos_inval_desc = eqos_inval_desc_generic,
++	.eqos_flush_desc = eqos_flush_desc_generic,
++	.eqos_inval_buffer = eqos_inval_buffer_generic,
++	.eqos_flush_buffer = eqos_flush_buffer_generic,
++	.eqos_probe_resources = eqos_probe_resources_motorcomm,
++	.eqos_remove_resources = eqos_null_ops,
++	.eqos_stop_resets = eqos_null_ops,
++	.eqos_start_resets = eqos_start_resets_motorcomm,
++	.eqos_stop_clks = eqos_null_ops,
++	.eqos_start_clks = eqos_null_ops,
++	.eqos_calibrate_pads = eqos_null_ops,
++	.eqos_disable_calibration = eqos_null_ops,
++	.eqos_set_tx_clk_speed = eqos_null_ops,
++	.eqos_get_enetaddr = eqos_get_enetaddr_motorcomm,
++	.eqos_get_tick_clk_rate = eqos_get_tick_clk_rate_motorcomm,
++};
++
++struct eqos_config eqos_motorcomm_config = {
++	.reg_access_always_ok = false,
++	.mdio_wait = 10,
++	.swr_wait = 50,
++	.config_mac = EQOS_MAC_RXQ_CTRL0_RXQ0EN_ENABLED_DCB,
++	.config_mac_mdio = EQOS_MAC_MDIO_ADDRESS_CR_20_35,
++	.axi_bus_width = EQOS_AXI_WIDTH_64,
++	.interface = eqos_get_interface_motorcomm,
++	.ops = &eqos_motorcomm_ops,
++};
++
++/* PCI device ID table with driver_data pointing to our config */
++static struct pci_device_id motorcomm_pci_ids[] = {
++	{ PCI_DEVICE(PCI_VENDOR_ID_MOTORCOMM, PCI_DEVICE_ID_MOT_YT6801),
++	  .driver_data = (ulong)&eqos_motorcomm_config },
++	{}
++};
++
++/*
++ * Override the weak eqos_get_driver_data to return our config for
++ * Motorcomm PCI devices. For PCI devices, dev_get_driver_data() returns
++ * the driver_data from the matched pci_device_id entry.
++ */
++void *eqos_get_driver_data(struct udevice *dev)
++{
++	const struct pci_child_plat *plat;
++	const struct pci_device_id *id;
++
++	/* For DT-based (non-PCI) devices, use DT driver data */
++	if (ofnode_valid(dev_ofnode(dev)))
++		return (void *)dev_get_driver_data(dev);
++
++	/* For PCI devices, match our ID table */
++	plat = dev_get_parent_plat(dev);
++	if (!plat)
++		return NULL;
++
++	for (id = motorcomm_pci_ids; id->vendor != 0; id++) {
++		if (id->vendor == plat->vendor &&
++		    id->device == plat->device)
++			return &eqos_motorcomm_config;
++	}
++
++	return NULL;
++}
++
++extern U_BOOT_DRIVER(eth_eqos);
++U_BOOT_PCI_DEVICE(eth_eqos, motorcomm_pci_ids);
+diff --git a/drivers/net/phy/motorcomm.c b/drivers/net/phy/motorcomm.c
+index e1630e1c..c460a02e 100644
+--- a/drivers/net/phy/motorcomm.c
++++ b/drivers/net/phy/motorcomm.c
+@@ -376,6 +376,10 @@ static int ytphy_rgmii_clk_delay_config(struct phy_device *phydev)
+ 		val |= FIELD_PREP(YT8531_RC1R_RX_DELAY_MASK, rx_reg) |
+ 		       FIELD_PREP(YT8531_RC1R_GE_TX_DELAY_MASK, tx_reg);
+ 		break;
++	case PHY_INTERFACE_MODE_GMII:
++		if (phydev->drv->uid != PHY_ID_YT8531S)
++			return -EOPNOTSUPP;
++		return 0;
+ 	default: /* do not support other modes */
+ 		return -EOPNOTSUPP;
+ 	}
+-- 
+2.53.0
+
