@@ -48,7 +48,9 @@ function post_uboot_custom_postprocess__create_sata_spi_image() {
 	dd if=u-boot.itb of=rkspi_loader_sata.img seek=16384 conv=notrunc
 }
 
-function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
+function post_family_config__orangepi5pro_use_mainline_uboot() {
+	[[ "${BRANCH}" == "vendor" ]] && return 0 # skip for vendor branch
+
 	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
 	declare -g BOOTCONFIG="orangepi-5-pro-rk3588s_defconfig"
 	declare -g BOOTDELAY=1
@@ -60,7 +62,7 @@ function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
 }
 
 # Override family config for this board; let's avoid conditionals in family config.
-function post_family_config__orangepi5pro_use_vendor_uboot() {
+function post_family_config_branch_vendor__orangepi5pro_use_vendor_uboot() {
 	BOOTSOURCE='https://github.com/orangepi-xunlong/u-boot-orangepi.git'
 	BOOTBRANCH='branch:v2017.09-rk3588'
 	BOOTPATCHDIR="legacy"
@@ -79,4 +81,16 @@ function post_family_tweaks__orangepi5pro_naming_audios() {
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 
 	return 0
+}
+
+function custom_kernel_config__orangepi5pro_motorcomm_phy() {
+	if [[ $BRANCH == "edge" || $BRANCH == "current" ]]; then
+		display_alert "$BOARD" "Enabling MOTORCOMM PHY for $BRANCH kernel" "info"
+		opts_y+=(
+			DWMAC_MOTORCOMM
+			MOTORCOMM_PHY
+			STMMAC_ETH
+			STMMAC_PLATFORM
+		)
+	fi
 }

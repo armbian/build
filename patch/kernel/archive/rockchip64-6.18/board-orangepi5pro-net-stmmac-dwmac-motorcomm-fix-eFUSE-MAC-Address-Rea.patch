@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: c127dev <contact@c127.dev>
+Date: Sun, 15 Mar 2026 01:06:19 +0000
+Subject: [PATCH 4/5] net: stmmac: dwmac-motorcomm: fix eFUSE MAC Address Read
+ Failure
+
+This patch fixes an issue where reading the MAC address from the eFUSE
+fails due to a race condition.
+
+The problem was identified by comparing the behavior with a U-Boot
+backport of the driver. In U-Boot, the correct MAC address was successfully
+read because the driver was loaded after the eFUSE had already been fully
+initialized over a certain period of time. This indicated that the root
+cause was a race condition during early initialization.
+
+To resolve this, we ensure that the Motorcomm-specific registers are
+initialized before reading the eFUSE, and add a required delay for the
+eFUSE controller to load its internal data before returning valid reads.
+
+Signed-off-by: c127dev <contact@c127.dev>
+---
+ .../ethernet/stmicro/stmmac/dwmac-motorcomm.c | 23 +++++++++++++++----
+ 1 file changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-motorcomm.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-motorcomm.c
+index 8b45b9cf7202..61a197cd34ab 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-motorcomm.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-motorcomm.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/bits.h>
++#include <linux/delay.h>
+ #include <linux/dev_printk.h>
+ #include <linux/io.h>
+ #include <linux/iopoll.h>
+@@ -70,9 +71,9 @@ static int motorcomm_efuse_read_byte(struct dwmac_motorcomm_priv *priv,
+ 	       FIELD_PREP(EFUSE_OP_ADDR, offset)		|
+ 	       EFUSE_OP_START, priv->base + EFUSE_OP_CTRL_0);
+ 
+-	ret = readl_poll_timeout(priv->base + EFUSE_OP_CTRL_1,
+-				 reg, reg & EFUSE_OP_DONE, 2000,
+-				 EFUSE_READ_TIMEOUT_US);
++	ret = readl_poll_timeout_atomic(priv->base + EFUSE_OP_CTRL_1,
++					reg, reg & EFUSE_OP_DONE, 2,
++					EFUSE_READ_TIMEOUT_US);
+ 
+ 	*byte = FIELD_GET(EFUSE_OP_RD_DATA, reg);
+ 
+@@ -334,6 +335,20 @@ static int motorcomm_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	motorcomm_reset(priv);
+ 
++	/*
++	 * Initialize Motorcomm-specific registers before reading eFuse.
++	 * OOB WOL must be disabled and interrupt moderation configured
++	 * for the eFuse controller to return valid data.
++	 */
++	motorcomm_init(priv);
++
++	/*
++	 * After system reset, the eFuse controller needs time to load
++	 * its internal data. Without this delay, eFuse reads return
++	 * all zeros, causing MAC address detection to fail.
++	 */
++	usleep_range(15000, 20000);
++
+ 	ret = motorcomm_efuse_read_mac(&pdev->dev, priv, res.mac);
+ 	if (ret == -ENOENT) {
+ 		dev_warn(&pdev->dev, "eFuse contains no valid MAC address\n");
+@@ -349,8 +364,6 @@ static int motorcomm_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	if (ret)
+ 		return dev_err_probe(&pdev->dev, ret, "failed to setup IRQ\n");
+ 
+-	motorcomm_init(priv);
+-
+ 	res.addr = priv->base + GMAC_OFFSET;
+ 
+ 	return stmmac_dvr_probe(&pdev->dev, plat, &res);
+-- 
+2.53.0
+
