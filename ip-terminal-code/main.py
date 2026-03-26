@@ -214,14 +214,23 @@ def run_hardware():
     global subnet_prefix, use_dhcp
 
     import RPi.GPIO as GPIO
-    from RPLCD.i2c import CharLCD
+    from PIL import Image, ImageDraw, ImageFont
+    from lcd_driver import ST7735
 
-    # Pin assignments
-    CLK = 17
-    DT  = 27
-    SW  = 22
+    # Pin assignments (Waveshare 1.44inch LCD HAT)
+    # Joystick
+    UP_PIN    = 6
+    DOWN_PIN  = 19
+    LEFT_PIN  = 5
+    RIGHT_PIN = 26
+    PRESS_PIN = 13
+    # Buttons
+    KEY1_PIN  = 21
+    KEY2_PIN  = 20
+    KEY3_PIN  = 16
 
-    lcd = CharLCD("PCF8574", 0x27, cols=16, rows=2)
+    lcd = ST7735()
+    font = ImageFont.load_default()
 
     HW_MENU       = ["IP address", "Subnet prefix", "Gateway", "DNS", "Apply"]
     HW_MENU_COUNT = len(HW_MENU)
@@ -235,181 +244,202 @@ def run_hardware():
     ip_mode_index    = 0
     live_ip          = [""]
     edit_return_mode = "menu"
-    encoder_pulses   = 0
-    PULSES_PER_STEP  = 2
+
+    # Color palette
+    COLOR_BG      = (0, 0, 0)
+    COLOR_TEXT    = (255, 255, 255)
+    COLOR_HIGHLIGHT = (0, 0, 255) # Blue
+    COLOR_ACCENT  = (0, 255, 255) # Cyan
 
     # ---- LCD helpers ----
 
-    def write_row(row, text):
-        lcd.cursor_pos = (row, 0)
-        lcd.write_string(f"{text:<16}")
-
     def update_display():
-        lcd.clear()
-        time.sleep(0.002)  # HD44780 needs ~1.52 ms after clear
+        image = Image.new("RGB", (128, 128), COLOR_BG)
+        draw = ImageDraw.Draw(image)
+
         if mode == "menu":
-            write_row(0, "Select:")
-            write_row(1, f"> {HW_MENU[menu_index]}")
+            draw.text((10, 10), "Main Menu:", font=font, fill=COLOR_ACCENT)
+            for i, item in enumerate(HW_MENU):
+                y = 30 + i * 18
+                prefix = "> " if i == menu_index else "  "
+                color = COLOR_HIGHLIGHT if i == menu_index else COLOR_TEXT
+                draw.text((10, y), f"{prefix}{item}", font=font, fill=color)
+
         elif mode == "ip_mode":
-            write_row(0, "IP address:")
-            write_row(1, f"> {IP_SUBMENU[ip_mode_index]}")
+            draw.text((10, 10), "IP Address:", font=font, fill=COLOR_ACCENT)
+            for i, item in enumerate(IP_SUBMENU):
+                y = 30 + i * 18
+                prefix = "> " if i == ip_mode_index else "  "
+                color = COLOR_HIGHLIGHT if i == ip_mode_index else COLOR_TEXT
+                draw.text((10, y), f"{prefix}{item}", font=font, fill=color)
+
         elif mode == "view_ip":
-            write_row(0, "Current IP:")
-            write_row(1, live_ip[0][:16])
-        else:  # edit
+            draw.text((10, 10), "Current IP:", font=font, fill=COLOR_ACCENT)
+            draw.text((10, 40), live_ip[0], font=font, fill=COLOR_TEXT)
+            draw.text((10, 100), "Press any key", font=font, fill=COLOR_HIGHLIGHT)
+
+        elif mode == "edit":
             labels = {0: "Edit IP", 1: "Edit prefix", 2: "Edit GW", 3: "Edit DNS"}
-            write_row(0, labels[edit_field])
+            draw.text((10, 10), labels[edit_field], font=font, fill=COLOR_ACCENT)
+
             if edit_field == 1:
-                write_row(1, f"/{subnet_prefix}")
+                draw.text((10, 50), f"Value: /{subnet_prefix}", font=font, fill=COLOR_TEXT)
             else:
-                parts = [str(o) for o in field_octets(edit_field)]
-                parts[state_index] = f">{parts[state_index]}"
-                write_row(1, ".".join(parts))
+                octs = field_octets(edit_field)
+                val_str = ""
+                for i, o in enumerate(octs):
+                    if i == state_index:
+                        val_str += f"[{o}] "
+                    else:
+                        val_str += f"{o} "
+                draw.text((10, 50), val_str.strip(), font=font, fill=COLOR_TEXT)
+
+            draw.text((10, 100), "Press JS to confirm", font=font, fill=COLOR_HIGHLIGHT)
+
+        lcd.display(image)
 
     def do_apply_all():
-        lcd.clear()
-        lcd.write_string("Applying...     ")
+        image = Image.new("RGB", (128, 128), COLOR_BG)
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 50), "Applying...", font=font, fill=COLOR_ACCENT)
+        lcd.display(image)
+
         try:
             apply_all_settings()
-            lcd.clear()
-            lcd.write_string("Done!           ")
+            draw.text((10, 80), "Done!", font=font, fill=(0, 255, 0))
+            lcd.display(image)
             time.sleep(2)
         except subprocess.CalledProcessError as exc:
             print(f"apply error: {exc}")
-            lcd.clear()
-            lcd.write_string("Error!          ")
+            draw.text((10, 80), "Error!", font=font, fill=(255, 0, 0))
+            lcd.display(image)
             time.sleep(3)
 
     # ---- GPIO setup ----
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(CLK, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(DT,  GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(SW,  GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-    last_A        = GPIO.input(CLK)
-    last_B        = GPIO.input(DT)
-    last_sw_state = GPIO.input(SW)
+    for pin in [UP_PIN, DOWN_PIN, LEFT_PIN, RIGHT_PIN, PRESS_PIN, KEY1_PIN, KEY2_PIN, KEY3_PIN]:
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
     get_network_settings()
     update_display()
-    print("IP configurator ready. Turn to navigate, press to select.")
+    print("IP configurator ready. Joystick to navigate, KEY1/Press to select.")
 
     display_dirty    = False
     last_change_time = 0.0
-    DISPLAY_DELAY    = 0.05  # 50 ms – let encoder settle before refreshing LCD
+
+    def get_input_state():
+        return {
+            "up": GPIO.input(UP_PIN) == 0,
+            "down": GPIO.input(DOWN_PIN) == 0,
+            "left": GPIO.input(LEFT_PIN) == 0,
+            "right": GPIO.input(RIGHT_PIN) == 0,
+            "press": GPIO.input(PRESS_PIN) == 0,
+            "key1": GPIO.input(KEY1_PIN) == 0,
+            "key2": GPIO.input(KEY2_PIN) == 0,
+            "key3": GPIO.input(KEY3_PIN) == 0,
+        }
+
+    last_input = get_input_state()
 
     try:
         while True:
-            current_A = GPIO.input(CLK)
-            current_B = GPIO.input(DT)
-            sw_state  = GPIO.input(SW)
+            current_input = get_input_state()
 
-            # Full quadrature decoding (A_RISE/FALL, B_RISE/FALL)
-            if current_A == 1 and last_A == 0:
-                encoder_pulses += 1 if current_B == 0 else -1
-            elif current_A == 0 and last_A == 1:
-                encoder_pulses += 1 if current_B == 1 else -1
+            # Detect edge (button press)
+            press_detected = False
+            direction = 0
+            back_detected = False
 
-            if current_B == 1 and last_B == 0:
-                encoder_pulses += 1 if current_A == 1 else -1
-            elif current_B == 0 and last_B == 1:
-                encoder_pulses += 1 if current_A == 0 else -1
+            if current_input["up"] and not last_input["up"]: direction = -1
+            if current_input["down"] and not last_input["down"]: direction = 1
+            if (current_input["press"] and not last_input["press"]) or \
+               (current_input["key1"] and not last_input["key1"]): press_detected = True
+            if current_input["key2"] and not last_input["key2"]: back_detected = True
 
-            if abs(encoder_pulses) >= PULSES_PER_STEP:
-                direction      = 1 if encoder_pulses > 0 else -1
-                encoder_pulses = 0
-
+            # Action logic
+            if direction != 0:
                 if mode == "menu":
                     menu_index = (menu_index + direction) % HW_MENU_COUNT
-                    print(f"Menu: {HW_MENU[menu_index]}")
                 elif mode == "ip_mode":
                     ip_mode_index = (ip_mode_index + direction) % len(IP_SUBMENU)
-                    print(f"IP submenu: {IP_SUBMENU[ip_mode_index]}")
-                else:  # edit
+                elif mode == "edit":
                     if edit_field == 1:
-                        subnet_prefix = max(0, min(32, subnet_prefix + direction))
-                        print(f"Subnet prefix: /{subnet_prefix}")
+                        subnet_prefix = max(0, min(32, subnet_prefix - direction)) # UP increments prefix (direction -1)
                     else:
                         octs = field_octets(edit_field)
-                        octs[state_index] = (octs[state_index] + direction) % 256
-                        print(f"Octet {state_index + 1}: {octs[state_index]}")
+                        octs[state_index] = (octs[state_index] - direction) % 256
+                display_dirty = True
 
-                display_dirty    = True
-                last_change_time = time.monotonic()
-
-            # Button press (active-low)
-            if sw_state != last_sw_state and sw_state == 0:
+            if press_detected:
                 if mode == "menu":
-                    if menu_index == HW_MENU_COUNT - 1:  # Apply
-                        print("Applying all settings")
+                    if menu_index == HW_MENU_COUNT - 1: # Apply
                         do_apply_all()
                     else:
                         edit_field = menu_index
-                        if edit_field == 0:  # IP address → show DHCP/Static submenu
+                        if edit_field == 0:
                             ip_mode_index = 0 if use_dhcp else 1
                             mode = "ip_mode"
-                            print("IP mode submenu")
                         elif edit_field in (1, 2) and use_dhcp:
-                            print(f"{HW_MENU[edit_field]} disabled in DHCP mode")
-                            write_row(0, "Disabled in")
-                            write_row(1, "DHCP mode")
-                            time.sleep(2)
+                            print("Disabled in DHCP mode")
+                            # Show temporary message
+                            image = Image.new("RGB", (128, 128), COLOR_BG)
+                            draw = ImageDraw.Draw(image)
+                            draw.text((10, 50), "Disabled in", font=font, fill=(255, 0, 0))
+                            draw.text((10, 70), "DHCP mode", font=font, fill=(255, 0, 0))
+                            lcd.display(image)
+                            time.sleep(1.5)
                         else:
                             state_index = 0
                             edit_return_mode = "menu"
                             mode = "edit"
-                            print(f"Editing: {MENU_OPTIONS[edit_field]}")
                 elif mode == "ip_mode":
-                    if ip_mode_index == 0:  # Enable DHCP
+                    if ip_mode_index == 0: # Enable DHCP
                         use_dhcp = True
                         mode = "menu"
-                        print("DHCP selected — back to main menu")
-                    elif ip_mode_index == 1:  # View IP
+                    elif ip_mode_index == 1: # View IP
                         live_ip[0] = get_live_ip()
-                        print(f"Current IP: {live_ip[0]}")
                         mode = "view_ip"
-                    elif ip_mode_index == 2:  # Set static IP
+                    elif ip_mode_index == 2: # Set static IP
                         use_dhcp = False
                         state_index = 0
                         edit_return_mode = "ip_mode"
                         mode = "edit"
-                        print("Static IP — editing octets")
-                    else:  # ← Back
+                    else: # Back
                         mode = "menu"
-                        print("Back to main menu")
                 elif mode == "view_ip":
-                    mode = "ip_mode"  # any press returns to submenu
-                    print("Back to IP submenu")
-                else:  # edit
+                    mode = "ip_mode"
+                elif mode == "edit":
                     if edit_field == 1 or state_index == 3:
                         if edit_field in (0, 1):
                             auto_gateway_from_ip()
-                            print(f"Auto-gateway set to: {octets_str(gateway_octets)}")
                         mode = edit_return_mode
-                        edit_return_mode = "menu"
-                        print(f"Back to {mode}")
                     else:
                         state_index += 1
-                        print(f"Editing octet {state_index + 1}")
+                display_dirty = True
 
-                display_dirty    = True
-                last_change_time = time.monotonic()
+            if back_detected:
+                if mode == "ip_mode":
+                    mode = "menu"
+                elif mode == "view_ip":
+                    mode = "ip_mode"
+                elif mode == "edit":
+                    if state_index > 0:
+                        state_index -= 1
+                    else:
+                        mode = edit_return_mode
+                display_dirty = True
 
-            # Deferred display refresh
-            if display_dirty and (time.monotonic() - last_change_time) >= DISPLAY_DELAY:
+            if display_dirty:
                 update_display()
                 display_dirty = False
 
-            last_A        = current_A
-            last_B        = current_B
-            last_sw_state = sw_state
-            time.sleep(0.001)
+            last_input = current_input
+            time.sleep(0.01)
 
     except KeyboardInterrupt:
         print("\nExiting.")
     finally:
-        GPIO.cleanup()
-        lcd.clear()
+        lcd.cleanup()
 
 
 # ---------------------------------------------------------------------------
