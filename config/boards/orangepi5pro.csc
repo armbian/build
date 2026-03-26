@@ -82,12 +82,3 @@ function post_family_tweaks__orangepi5pro_naming_audios() {
 
 	return 0
 }
-
-function custom_kernel_config__orangepi5pro_motorcomm_dwmac_driver() {
-	if [[ $BRANCH == "edge" || $BRANCH == "current" ]]; then
-		display_alert "$BOARD" "Enabling MOTORCOMM PHY for $BRANCH kernel" "info"
-		opts_y+=(
-			DWMAC_MOTORCOMM
-		)
-	fi
-}
