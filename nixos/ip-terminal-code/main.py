@@ -141,20 +141,35 @@ def get_network_settings():
         sys.stderr.write(f"Error in get_network_settings (ipv4.method): {e}\n")
 
 
-def get_live_ip():
-    """Return the currently active IPv4 v4 address (DHCP lease or configured static)."""
-    try:
-        result = subprocess.run(
-            ["nmcli", "-g", "IP4.ADDRESS", "connection", "show", CONNECTION_NAME],
-            capture_output=True, text=True, check=True,
-        )
-        addr = result.stdout.strip().split("\n")[0]
-        if addr and "/" in addr:
-            return addr.split("/")[0]
-        return addr or "No IP assigned"
-    except Exception as e:
-        sys.stderr.write(f"Error in get_live_ip: {e}\n")
-        return "Unknown"
+def get_live_ips():
+    """Return a list of lines representing currently active IPv4 and IPv6 addresses."""
+    lines = []
+    for family, field in (("IPv4", "IP4.ADDRESS"), ("IPv6", "IP6.ADDRESS")):
+        try:
+            result = subprocess.run(
+                ["nmcli", "-g", field, "connection", "show", CONNECTION_NAME],
+                capture_output=True, text=True, check=True,
+            )
+            output = result.stdout.strip()
+            if not output or output == "--":
+                lines.append(f"{family}: (none)")
+                continue
+
+            # nmcli may return multiple addresses on multiple lines or separated by |
+            raw_addrs = []
+            for line in output.splitlines():
+                raw_addrs.extend(line.split(" | "))
+
+            addrs = [a.strip().replace("\\:", ":") for a in raw_addrs if a.strip()]
+            if addrs:
+                lines.append(f"{family}:")
+                for a in addrs:
+                    lines.append(f" - {a}")
+            else:
+                lines.append(f"{family}: (none)")
+        except Exception:
+            lines.append(f"{family}: error")
+    return lines
 
 
 def apply_all_settings():
@@ -281,9 +296,9 @@ def run_hardware():
     else:
         print("DEBUG: Could not load any TTF font, falling back to default.")
 
-    HW_MENU       = ["IP address", "Subnet prefix", "Gateway", "DNS", "Apply"]
+    HW_MENU       = ["IP settings", "DNS settings", "View IPs"]
     HW_MENU_COUNT = len(HW_MENU)
-    IP_SUBMENU    = ["Enable DHCP", "View IP", "Set static IP", "<- Back"]
+    IP_SUBMENU    = ["Mode", "IP Address", "Prefix", "Gateway", "Apply", "<- Back"]
 
     # Local UI state
     mode             = "menu"   # "menu" | "ip_mode" | "view_ip" | "edit"
@@ -291,7 +306,8 @@ def run_hardware():
     edit_field       = 0        # field index into MENU_OPTIONS (0-3)
     state_index      = 0        # octet being edited (0-3)
     ip_mode_index    = 0
-    live_ip          = ["Initializing..."]
+    live_ip          = []       # List of (text, color) tuples
+    view_ip_scroll   = 0
     edit_return_mode = "menu"
 
     # Color palette
@@ -299,6 +315,7 @@ def run_hardware():
     COLOR_TEXT    = (255, 255, 255)
     COLOR_HIGHLIGHT = (0, 0, 255) # Blue
     COLOR_ACCENT  = (0, 255, 255) # Cyan
+    COLOR_YELLOW  = (255, 255, 0) # Yellow
 
     # ---- LCD helpers ----
 
@@ -319,16 +336,32 @@ def run_hardware():
             draw.text((5, 5), "IP Config", font=title_font, fill=COLOR_ACCENT)
             draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
             for i, item in enumerate(IP_SUBMENU):
-                y = 28 + i * 20
+                y = 28 + i * 16
                 prefix = "> " if i == ip_mode_index else "  "
                 color = COLOR_HIGHLIGHT if i == ip_mode_index else COLOR_TEXT
-                draw.text((5, y), f"{prefix}{item}", font=font, fill=color)
+
+                display_text = item
+                if i == 0: # Mode
+                    display_text = f"Mode: {'DHCP' if use_dhcp else 'Manual'}"
+                elif i in (1, 2, 3) and use_dhcp:
+                    color = (100, 100, 100) # Grayed out
+
+                draw.text((5, y), f"{prefix}{display_text}", font=font, fill=color)
 
         elif mode == "view_ip":
-            draw.text((5, 5), "Current IP", font=title_font, fill=COLOR_ACCENT)
+            draw.text((5, 5), "IP Addresses", font=title_font, fill=COLOR_ACCENT)
             draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
-            draw.text((5, 50), live_ip[0], font=font, fill=COLOR_TEXT)
-            draw.text((5, 105), "Press any key to exit", font=header_font, fill=COLOR_HIGHLIGHT)
+
+            # Draw up to 7 lines from the scroll position
+            for i in range(7):
+                idx = view_ip_scroll + i
+                if idx >= len(live_ip):
+                    break
+                line, color = live_ip[idx]
+                y = 28 + i * 12
+                draw.text((5, y), line, font=header_font, fill=color)
+
+            draw.text((5, 115), "Press=Exit, +/-=Scroll", font=header_font, fill=COLOR_HIGHLIGHT)
 
         elif mode == "edit":
             labels = {0: "Edit IP", 1: "Edit prefix", 2: "Edit GW", 3: "Edit DNS"}
@@ -347,7 +380,7 @@ def run_hardware():
                         val_str += f"{o} "
                 draw.text((5, 50), val_str.strip(), font=font, fill=COLOR_TEXT)
 
-            draw.text((5, 105), "Press JS to confirm", font=header_font, fill=COLOR_HIGHLIGHT)
+            draw.text((5, 105), "Press to confirm", font=header_font, fill=COLOR_HIGHLIGHT)
 
         print(f"DEBUG: update_display (mode={mode}, menu={menu_index}, edit={edit_field})")
         lcd.display(image)
@@ -492,6 +525,9 @@ def run_hardware():
                     menu_index = (menu_index + direction) % HW_MENU_COUNT
                 elif mode == "ip_mode":
                     ip_mode_index = (ip_mode_index + direction) % len(IP_SUBMENU)
+                elif mode == "view_ip":
+                    max_scroll = max(0, len(live_ip) - 7)
+                    view_ip_scroll = max(0, min(max_scroll, view_ip_scroll + direction))
                 elif mode == "edit":
                     if edit_field == 1:
                         subnet_prefix = max(0, min(32, subnet_prefix - direction))
@@ -519,54 +555,67 @@ def run_hardware():
             if press_detected:
                 if mode == "menu":
                     print(f"DEBUG: Menu Select index={menu_index}")
-                    if menu_index == HW_MENU_COUNT - 1: # Apply
-                        do_apply_all()
-                    else:
-                        edit_field = menu_index
+                    if menu_index == 0: # IP settings
                         get_network_settings()
-                        if edit_field == 0:
-                            ip_mode_index = 0 if use_dhcp else 1
-                            mode = "ip_mode"
-                            print("DEBUG: Submenu entering...")
-                        elif edit_field in (1, 2) and use_dhcp:
-                            print("DEBUG: Action blocked (DHCP mode)")
-                            image = Image.new("RGB", (128, 128), COLOR_BG)
-                            draw = ImageDraw.Draw(image)
-                            draw.text((5, 50), "Disabled in", font=font, fill=(255, 0, 0))
-                            draw.text((5, 75), "DHCP mode", font=font, fill=(255, 0, 0))
-                            lcd.display(image)
-                            time.sleep(1.5)
-                        else:
-                            state_index = 0
-                            edit_return_mode = "menu"
-                            mode = "edit"
+                        ip_mode_index = 0
+                        mode = "ip_mode"
+                    elif menu_index == 1: # DNS settings
+                        get_network_settings()
+                        edit_field = 3
+                        state_index = 0
+                        edit_return_mode = "menu"
+                        mode = "edit"
+                    elif menu_index == 2: # View IPs
+                        get_network_settings()
+                        raw_list = get_live_ips()
+                        import textwrap
+                        live_ip[:] = []
+                        for entry in raw_list:
+                            # Default color
+                            base_color = COLOR_TEXT
+                            if entry.endswith(":") or "(none)" in entry:
+                                base_color = COLOR_ACCENT
+
+                            # Wrap for LCD width, subsequent lines indented
+                            wrapped = textwrap.wrap(entry, width=20, subsequent_indent="   ")
+                            for w_line in wrapped:
+                                live_ip.append((w_line, base_color))
+
+                        view_ip_scroll = 0
+                        mode = "view_ip"
                 elif mode == "ip_mode":
                     print(f"DEBUG: IP Submenu index={ip_mode_index}")
-                    if ip_mode_index == 0: # Enable DHCP
-                        use_dhcp = True
-                        # When switching to DHCP, we also want to transition back to DHCP DNS
-                        # unless the user specifically overrides it again.
-                        # For now, we'll keep the current DNS in the UI but apply_all_settings
-                        # should probably have a way to 'unset' it.
-                        # But for this task, the goal is to make sure EDITING works.
-                        mode = "menu"
-                    elif ip_mode_index == 1: # View IP
-                        live_ip[0] = get_live_ip()
-                        mode = "view_ip"
-                    elif ip_mode_index == 2: # Set static IP
-                        get_network_settings()
-                        use_dhcp = False
-                        state_index = 0
-                        edit_return_mode = "ip_mode"
-                        mode = "edit"
+                    if ip_mode_index == 0: # Mode (Manual / DHCP toggle)
+                        use_dhcp = not use_dhcp
+                    elif ip_mode_index == 1: # IP Address
+                        if not use_dhcp:
+                            edit_field = 0
+                            state_index = 0
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 2: # Prefix
+                        if not use_dhcp:
+                            edit_field = 1
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 3: # Gateway
+                        if not use_dhcp:
+                            edit_field = 2
+                            state_index = 0
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 4: # Apply
+                        do_apply_all()
                     else: # Back
                         mode = "menu"
                 elif mode == "view_ip":
-                    mode = "ip_mode"
+                    mode = "menu"
                 elif mode == "edit":
                     if edit_field == 1 or state_index == 3:
                         if edit_field in (0, 1):
                             auto_gateway_from_ip()
+                        if edit_field == 3: # DNS applied immediately
+                            do_apply_all()
                         mode = edit_return_mode
                     else:
                         state_index += 1
@@ -576,7 +625,7 @@ def run_hardware():
                 if mode == "ip_mode":
                     mode = "menu"
                 elif mode == "view_ip":
-                    mode = "ip_mode"
+                    mode = "menu"
                 elif mode == "edit":
                     if state_index > 0:
                         state_index -= 1
