@@ -328,7 +328,7 @@ def run_hardware():
             draw.text((5, 5), "Current IP", font=title_font, fill=COLOR_ACCENT)
             draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
             draw.text((5, 50), live_ip[0], font=font, fill=COLOR_TEXT)
-            draw.text((5, 105), "Press any key", font=header_font, fill=COLOR_HIGHLIGHT)
+            draw.text((5, 105), "Press any key to exit", font=header_font, fill=COLOR_HIGHLIGHT)
 
         elif mode == "edit":
             labels = {0: "Edit IP", 1: "Edit prefix", 2: "Edit GW", 3: "Edit DNS"}
@@ -425,7 +425,7 @@ def run_hardware():
                 elif now - up_hold_start > REPEAT_DELAY:
                     hold_duration = now - up_hold_start
                     # Accelerate interval and step
-                    if hold_duration > 0.5:
+                    if hold_duration > 1.5:
                         current_interval = 0.05
                         direction = -20
                     elif hold_duration > 0.2:
