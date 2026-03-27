@@ -108,18 +108,28 @@ def get_network_settings():
         sys.stderr.write(f"Error in get_network_settings (IP4.GATEWAY): {e}\n")
 
     try:
+        # First try to get the configured static DNS
         result = subprocess.run(
-            ["nmcli", "-g", "IP4.DNS", "connection", "show", CONNECTION_NAME],
+            ["nmcli", "-g", "ipv4.dns", "connection", "show", CONNECTION_NAME],
             capture_output=True, text=True, check=True,
         )
-        # nmcli may return multiple DNS servers separated by commas or spaces
         dns_output = result.stdout.strip()
+
+        # If no static DNS, try the active runtime DNS (from DHCP)
+        if not dns_output or dns_output == "--":
+            result = subprocess.run(
+                ["nmcli", "-g", "IP4.DNS", "connection", "show", CONNECTION_NAME],
+                capture_output=True, text=True, check=True,
+            )
+            dns_output = result.stdout.strip()
+
         if dns_output and dns_output != "--":
-            # For simplicity, we take the first DNS server found
+            # nmcli may return multiple DNS servers separated by commas or spaces
             dns_str = dns_output.replace(",", " ").split()[0]
-            dns_octets[:] = [int(x) for x in dns_str.split(".")]
+            if dns_str and "." in dns_str:
+                dns_octets[:] = [int(x) for x in dns_str.split(".")]
     except Exception as e:
-        sys.stderr.write(f"Error in get_network_settings (IP4.DNS): {e}\n")
+        sys.stderr.write(f"Error in get_network_settings (DNS recovery): {e}\n")
 
     try:
         result = subprocess.run(
@@ -149,11 +159,19 @@ def get_live_ip():
 
 def apply_all_settings():
     """Apply IP/prefix, gateway and DNS all at once."""
-    # 1. IP address + prefix (or DHCP)
     if use_dhcp:
+        # In DHCP mode, we clear addresses/gateway.
+        # For DNS, we respect the current dns_octets if we want a static override.
+        # If we want pure DHCP, we'd clear ipv4.dns and set ignore-auto-dns no.
+        # But our UI always has a DNS value. We'll set it as an override if ignore-auto-dns is yes.
+        dns_str = octets_str(dns_octets)
         subprocess.run(
             ["nmcli", "connection", "modify", CONNECTION_NAME,
-             "ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", "", "ipv4.ignore-auto-dns", "no"],
+             "ipv4.method", "auto",
+             "ipv4.addresses", "",
+             "ipv4.gateway", "",
+             "ipv4.dns", dns_str,
+             "ipv4.ignore-auto-dns", "yes"],
             check=True, capture_output=True,
         )
     else:
@@ -169,9 +187,6 @@ def apply_all_settings():
             check=True, capture_output=True,
         )
     subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
-
-    # 2. DNS is now handled in apply_all_settings via nmcli
-    pass
 
 
 def apply_settings(field):
@@ -201,15 +216,14 @@ def apply_settings(field):
             )
             subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
 
-    else:  # DNS
-        if not use_dhcp:
-            dns_str = octets_str(dns_octets)
-            subprocess.run(
-                ["nmcli", "connection", "modify", CONNECTION_NAME,
-                 "ipv4.dns", dns_str, "ipv4.ignore-auto-dns", "yes"],
-                check=True, capture_output=True,
-            )
-            subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
+    else:  # DNS (field 3)
+        dns_str = octets_str(dns_octets)
+        subprocess.run(
+            ["nmcli", "connection", "modify", CONNECTION_NAME,
+             "ipv4.dns", dns_str, "ipv4.ignore-auto-dns", "yes"],
+            check=True, capture_output=True,
+        )
+        subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
 
 
 # ---------------------------------------------------------------------------
@@ -439,12 +453,12 @@ def run_hardware():
                 elif now - down_hold_start > REPEAT_DELAY:
                     hold_duration = now - down_hold_start
                     # Accelerate interval and step
-                    if hold_duration > 2.5:
+                    if hold_duration > 3:
                         current_interval = 0.05
-                        direction = 5
-                    elif hold_duration > 1.0:
+                        direction = 10
+                    elif hold_duration > 1.5:
                         current_interval = 0.04
-                        direction = 1
+                        direction = 5
                     else:
                         current_interval = 0.1
                         direction = 1
@@ -509,6 +523,7 @@ def run_hardware():
                         do_apply_all()
                     else:
                         edit_field = menu_index
+                        get_network_settings()
                         if edit_field == 0:
                             ip_mode_index = 0 if use_dhcp else 1
                             mode = "ip_mode"
@@ -529,11 +544,17 @@ def run_hardware():
                     print(f"DEBUG: IP Submenu index={ip_mode_index}")
                     if ip_mode_index == 0: # Enable DHCP
                         use_dhcp = True
+                        # When switching to DHCP, we also want to transition back to DHCP DNS
+                        # unless the user specifically overrides it again.
+                        # For now, we'll keep the current DNS in the UI but apply_all_settings
+                        # should probably have a way to 'unset' it.
+                        # But for this task, the goal is to make sure EDITING works.
                         mode = "menu"
                     elif ip_mode_index == 1: # View IP
                         live_ip[0] = get_live_ip()
                         mode = "view_ip"
                     elif ip_mode_index == 2: # Set static IP
+                        get_network_settings()
                         use_dhcp = False
                         state_index = 0
                         edit_return_mode = "ip_mode"
@@ -663,16 +684,17 @@ def run_tui():
                 msgbox("Error", f"Error applying DNS:\n{exc}")
                 return
 
-    get_network_settings()
     while True:
+        get_network_settings()
         rc, choice = dialog(
             "--title", "IP Terminal Configurator",
-            "--menu", "Select an option:", "13", "50", "3",
+            "--menu", "Select an option:", "15", "50", "4",
             "1", "Edit IP settings",
             "2", "Edit DNS settings",
             "3", "View IPs",
+            "4", "Quit",
         )
-        if rc != 0:
+        if rc != 0 or choice == "4":
             break
         if choice == "1":
             run_ip_settings()
