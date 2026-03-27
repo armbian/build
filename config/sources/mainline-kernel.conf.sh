@@ -8,7 +8,7 @@
 function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	[[ -n "${KERNELBRANCH}" ]] && return 0           # if already set, don't touch it; that way other hooks can run in any order
 	if [[ "${KERNEL_MAJOR_MINOR}" == "7.0" ]]; then # @TODO: roll over to next MAJOR.MINOR and MAJOR.MINOR-rc1 when it is released
-		declare -g KERNELBRANCH="tag:v7.0-rc4"
+		declare -g KERNELBRANCH="tag:v7.0-rc5"
 		display_alert "mainline-kernel: upstream release candidate" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
 	fi
 }
@@ -24,15 +24,15 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 
 ### Later-than-usual hooks, for changing parameters after the hooks above have run. use mainline_kernel_decide_version__750 or higher.
 
-# # Example: 6.7-rc7 was released by Linus, but kernel.org git and google git mirrors took a while to catch up; change the source to pull directly from Linus.
-# # This was necessary for a few days in late December 2023, but no longer; tag was pushed on 28/Dec/2023.
-# function mainline_kernel_decide_version__750_use_torvalds_for_6.7-rc7() {
-# 	if [[ "${KERNELBRANCH}" == 'tag:v7.0-rc4' ]]; then
-# 		display_alert "Using Linus kernel repo for 6.7-rc7" "${KERNELBRANCH}" "warn"
-# 		declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
-# 		display_alert "mainline-kernel: missing torvalds tag on 6.7-rc7" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "info"
-# 	fi
-# }
+ # Example: 6.7-rc7 was released by Linus, but kernel.org git and google git mirrors took a while to catch up; change the source to pull directly from Linus.
+ # This was necessary for a few days in late December 2023, but no longer; tag was pushed on 28/Dec/2023.
+ function mainline_kernel_decide_version__750_use_torvalds_for_7.0-rc5() {
+ 	if [[ "${KERNELBRANCH}" == 'tag:v7.0-rc5' ]]; then
+ 		display_alert "Using Linus kernel repo for 7.0-rc5" "${KERNELBRANCH}" "warn"
+ 		declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
+ 		display_alert "mainline-kernel: missing torvalds tag on 7.0-rc5" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "info"
+ 	fi
+ }
 
 ### Last hooks, defaults to branch if not set by previous hooks. Use mainline_kernel_decide_version__900 or higher.
 function mainline_kernel_decide_version__900_defaults() {

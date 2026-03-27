@@ -9,7 +9,7 @@
 enable_extension "sunxi-tools"
 declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
-declare -g ATFBRANCH="tag:lts-v2.12.4"
+declare -g ATFBRANCH="tag:lts-v2.12.9"
 declare -g BOOTDELAY=1
 declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
 declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2024.01"}"
@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.19" # Major and minor versions of this kernel.
+		declare -g KERNEL_MAJOR_MINOR="7.0" # Major and minor versions of this kernel.
 		;;
 esac
 
@@ -46,8 +46,7 @@ family_tweaks() {
 }
 
 write_uboot_platform() {
-	dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1
-	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=8 status=noxfer > /dev/null 2>&1
+	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 conv=fsync bs=1024 seek=8
 }
 
 setup_write_uboot_platform() {

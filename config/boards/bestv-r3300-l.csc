@@ -1,6 +1,6 @@
 # Amlogic S905L-B 1GB RAM 8GB eMMC microSD FE USB2 RTL8189FTV WiFi
 BOARD_NAME="BesTV R3300-L"
-BOARD_VENDOR="amlogic"
+BOARD_VENDOR="bestv"
 BOARDFAMILY="meson-gxl"
 BOARD_MAINTAINER="retro98boy"
 BOOTCONFIG="bestv-r3300-l_defconfig"
@@ -36,9 +36,9 @@ function post_family_tweaks_bsp__bestv-r3300-l() {
 	display_alert "${BOARD}" "Installing ALSA UCM configuration files" "info"
 
 	# Use ALSA UCM via CLI:
-	# alsactl init && alsaucm set _verb "HiFi" set _enadev "HDMI"
+	# alsactl init hw:S905XP212 && alsaucm -c hw:S905XP212 set _verb "HiFi" set _enadev "HDMI"
 	# or
-	# alsactl init && alsaucm set _verb "HiFi" set _enadev "Lineout"
+	# alsactl init hw:S905XP212 && alsaucm -c hw:S905XP212 set _verb "HiFi" set _enadev "Lineout"
 	# playback: aplay -D plughw:S905XP212,0 /usr/share/sounds/alsa/Front_Center.wav
 
 	install -Dm644 "${SRC}/packages/bsp/S905X-P212/S905X-P212-HiFi.conf" \

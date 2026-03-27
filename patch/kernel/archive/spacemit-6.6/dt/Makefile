@@ -12,6 +12,7 @@ dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-x_fpga.dtb k1-x_fpga_1x4.dtb k1-x_fpga_2x2.
 obj-$(CONFIG_BUILTIN_DTB) += $(addsuffix .o, $(dtb-y))
 
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-bananapi-f3.dtb
+dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-musebook.dtb
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-musepi-pro.dtb
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-orangepi-r2s.dtb
 dtb-$(CONFIG_SOC_SPACEMIT_K1X) += k1-orangepi-rv2.dtb
