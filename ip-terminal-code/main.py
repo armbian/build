@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import ipaddress
+import os
 import subprocess
 import sys
 import time
@@ -92,8 +93,8 @@ def get_network_settings():
             ip_part, prefix_part = addr.split("/")
             ip_octets[:]  = [int(x) for x in ip_part.split(".")]
             subnet_prefix = int(prefix_part)
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"Error in get_network_settings (IP4.ADDRESS): {e}\n")
 
     try:
         result = subprocess.run(
@@ -103,19 +104,32 @@ def get_network_settings():
         gw = result.stdout.strip()
         if gw and gw != "--":
             gateway_octets[:] = [int(x) for x in gw.split(".")]
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"Error in get_network_settings (IP4.GATEWAY): {e}\n")
 
     try:
-        with open("/etc/systemd/resolved.conf") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("DNS="):
-                    dns_str = line.split("=", 1)[1].split()[0]
-                    dns_octets[:] = [int(x) for x in dns_str.split(".")]
-                    break
-    except Exception:
-        pass
+        # First try to get the configured static DNS
+        result = subprocess.run(
+            ["nmcli", "-g", "ipv4.dns", "connection", "show", CONNECTION_NAME],
+            capture_output=True, text=True, check=True,
+        )
+        dns_output = result.stdout.strip()
+
+        # If no static DNS, try the active runtime DNS (from DHCP)
+        if not dns_output or dns_output == "--":
+            result = subprocess.run(
+                ["nmcli", "-g", "IP4.DNS", "connection", "show", CONNECTION_NAME],
+                capture_output=True, text=True, check=True,
+            )
+            dns_output = result.stdout.strip()
+
+        if dns_output and dns_output != "--":
+            # nmcli may return multiple DNS servers separated by commas or spaces
+            dns_str = dns_output.replace(",", " ").split()[0]
+            if dns_str and "." in dns_str:
+                dns_octets[:] = [int(x) for x in dns_str.split(".")]
+    except Exception as e:
+        sys.stderr.write(f"Error in get_network_settings (DNS recovery): {e}\n")
 
     try:
         result = subprocess.run(
@@ -123,60 +137,80 @@ def get_network_settings():
             capture_output=True, text=True, check=True,
         )
         use_dhcp = result.stdout.strip() == "auto"
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"Error in get_network_settings (ipv4.method): {e}\n")
 
 
-def get_live_ip():
-    """Return the currently active IPv4 address (DHCP lease or configured static)."""
-    try:
-        result = subprocess.run(
-            ["nmcli", "-g", "IP4.ADDRESS", "connection", "show", CONNECTION_NAME],
-            capture_output=True, text=True, check=True,
-        )
-        addr = result.stdout.strip().split("\n")[0]
-        if addr and "/" in addr:
-            return addr.split("/")[0]
-        return addr or "No IP assigned"
-    except Exception:
-        return "Unknown"
+def get_live_ips():
+    """Return a list of lines representing currently active IPv4 and IPv6 addresses."""
+    lines = []
+    for family, field in (("IPv4", "IP4.ADDRESS"), ("IPv6", "IP6.ADDRESS")):
+        try:
+            result = subprocess.run(
+                ["nmcli", "-g", field, "connection", "show", CONNECTION_NAME],
+                capture_output=True, text=True, check=True,
+            )
+            output = result.stdout.strip()
+            if not output or output == "--":
+                lines.append(f"{family}: (none)")
+                continue
+
+            # nmcli may return multiple addresses on multiple lines or separated by |
+            raw_addrs = []
+            for line in output.splitlines():
+                raw_addrs.extend(line.split(" | "))
+
+            addrs = [a.strip().replace("\\:", ":") for a in raw_addrs if a.strip()]
+            if addrs:
+                lines.append(f"{family}:")
+                for a in addrs:
+                    lines.append(f" - {a}")
+            else:
+                lines.append(f"{family}: (none)")
+        except Exception:
+            lines.append(f"{family}: error")
+    return lines
 
 
 def apply_all_settings():
     """Apply IP/prefix, gateway and DNS all at once."""
-    # 1. IP address + prefix (or DHCP)
     if use_dhcp:
+        # In DHCP mode, we clear addresses/gateway.
+        # For DNS, we respect the current dns_octets if we want a static override.
+        # If we want pure DHCP, we'd clear ipv4.dns and set ignore-auto-dns no.
+        # But our UI always has a DNS value. We'll set it as an override if ignore-auto-dns is yes.
+        dns_str = octets_str(dns_octets)
         subprocess.run(
             ["nmcli", "connection", "modify", CONNECTION_NAME,
-             "ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", ""],
+             "ipv4.method", "auto",
+             "ipv4.addresses", "",
+             "ipv4.gateway", "",
+             "ipv4.dns", dns_str,
+             "ipv4.ignore-auto-dns", "yes"],
             check=True, capture_output=True,
         )
     else:
         cidr = f"{octets_str(ip_octets)}/{subnet_prefix}"
+        dns_str = octets_str(dns_octets)
         subprocess.run(
             ["nmcli", "connection", "modify", CONNECTION_NAME,
              "ipv4.method", "manual",
              "ipv4.addresses", cidr,
-             "ipv4.gateway", octets_str(gateway_octets)],
+             "ipv4.gateway", octets_str(gateway_octets),
+             "ipv4.dns", dns_str,
+             "ipv4.ignore-auto-dns", "yes"],
             check=True, capture_output=True,
         )
     subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
 
-    # 2. DNS
-    dns_str = octets_str(dns_octets)
-    subprocess.run(
-        ["sudo", "/usr/local/sbin/set-dns.sh", dns_str],
-        check=True, capture_output=True,
-    )
-
 
 def apply_settings(field):
-    """Apply the current value of *field* via nmcli / systemd-resolved."""
+    """Apply the current value of *field* via nmcli."""
     if field in (0, 1):
         if use_dhcp:
             subprocess.run(
                 ["nmcli", "connection", "modify", CONNECTION_NAME,
-                 "ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", ""],
+                 "ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", "", "ipv4.ignore-auto-dns", "no"],
                 check=True, capture_output=True,
             )
         else:
@@ -197,18 +231,20 @@ def apply_settings(field):
             )
             subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
 
-    else:  # DNS
+    else:  # DNS (field 3)
         dns_str = octets_str(dns_octets)
         subprocess.run(
-            ["sudo", "/usr/local/sbin/set-dns.sh", dns_str],
+            ["nmcli", "connection", "modify", CONNECTION_NAME,
+             "ipv4.dns", dns_str, "ipv4.ignore-auto-dns", "yes"],
             check=True, capture_output=True,
         )
+        subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
 
 
 # ---------------------------------------------------------------------------
 # Hardware mode  –  rotary encoder + I2C LCD
 # ---------------------------------------------------------------------------
-
+# ABCD
 def run_hardware():
     """Main loop for the physical rotary-encoder + I2C-LCD interface."""
     global subnet_prefix, use_dhcp
@@ -218,23 +254,51 @@ def run_hardware():
     from lcd_driver import ST7735
 
     # Pin assignments (Waveshare 1.44inch LCD HAT)
-    # Joystick
     UP_PIN    = 6
     DOWN_PIN  = 19
     LEFT_PIN  = 5
     RIGHT_PIN = 26
     PRESS_PIN = 13
-    # Buttons
     KEY1_PIN  = 21
     KEY2_PIN  = 20
     KEY3_PIN  = 16
 
     lcd = ST7735()
-    font = ImageFont.load_default()
 
-    HW_MENU       = ["IP address", "Subnet prefix", "Gateway", "DNS", "Apply"]
+    # Load fonts (try environment variable first, then standard paths)
+    font_paths = []
+    env_font = os.environ.get("FONT_PATH")
+    if env_font:
+        font_paths.append(env_font)
+
+    font_paths.extend([
+        "/run/current-system/sw/share/fonts/truetype/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ])
+
+    font = ImageFont.load_default()
+    title_font = font
+    header_font = font
+
+    for path in font_paths:
+        try:
+            # Main font for menu items (increased from default ~8 to 13)
+            font = ImageFont.truetype(path, 13)
+            # Bold/Larger font for titles (15)
+            title_font = ImageFont.truetype(path, 15)
+            # Smaller header/footer if needed
+            header_font = ImageFont.truetype(path, 11)
+            print(f"DEBUG: Successfully loaded font: {path}")
+            break
+        except Exception as e:
+            continue
+    else:
+        print("DEBUG: Could not load any TTF font, falling back to default.")
+
+    HW_MENU       = ["IP settings", "DNS settings", "View IPs"]
     HW_MENU_COUNT = len(HW_MENU)
-    IP_SUBMENU    = ["Enable DHCP", "View IP", "Set static IP", "<- Back"]
+    IP_SUBMENU    = ["Mode", "IP Address", "Prefix", "Gateway", "Apply", "<- Back"]
 
     # Local UI state
     mode             = "menu"   # "menu" | "ip_mode" | "view_ip" | "edit"
@@ -242,7 +306,8 @@ def run_hardware():
     edit_field       = 0        # field index into MENU_OPTIONS (0-3)
     state_index      = 0        # octet being edited (0-3)
     ip_mode_index    = 0
-    live_ip          = [""]
+    live_ip          = []       # List of (text, color) tuples
+    view_ip_scroll   = 0
     edit_return_mode = "menu"
 
     # Color palette
@@ -250,6 +315,7 @@ def run_hardware():
     COLOR_TEXT    = (255, 255, 255)
     COLOR_HIGHLIGHT = (0, 0, 255) # Blue
     COLOR_ACCENT  = (0, 255, 255) # Cyan
+    COLOR_YELLOW  = (255, 255, 0) # Yellow
 
     # ---- LCD helpers ----
 
@@ -258,32 +324,52 @@ def run_hardware():
         draw = ImageDraw.Draw(image)
 
         if mode == "menu":
-            draw.text((10, 10), "Main Menu:", font=font, fill=COLOR_ACCENT)
+            draw.text((5, 5), "Main Menu", font=title_font, fill=COLOR_ACCENT)
+            draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
             for i, item in enumerate(HW_MENU):
-                y = 30 + i * 18
+                y = 28 + i * 20
                 prefix = "> " if i == menu_index else "  "
                 color = COLOR_HIGHLIGHT if i == menu_index else COLOR_TEXT
-                draw.text((10, y), f"{prefix}{item}", font=font, fill=color)
+                draw.text((5, y), f"{prefix}{item}", font=font, fill=color)
 
         elif mode == "ip_mode":
-            draw.text((10, 10), "IP Address:", font=font, fill=COLOR_ACCENT)
+            draw.text((5, 5), "IP Config", font=title_font, fill=COLOR_ACCENT)
+            draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
             for i, item in enumerate(IP_SUBMENU):
-                y = 30 + i * 18
+                y = 28 + i * 16
                 prefix = "> " if i == ip_mode_index else "  "
                 color = COLOR_HIGHLIGHT if i == ip_mode_index else COLOR_TEXT
-                draw.text((10, y), f"{prefix}{item}", font=font, fill=color)
+
+                display_text = item
+                if i == 0: # Mode
+                    display_text = f"Mode: {'DHCP' if use_dhcp else 'Manual'}"
+                elif i in (1, 2, 3) and use_dhcp:
+                    color = (100, 100, 100) # Grayed out
+
+                draw.text((5, y), f"{prefix}{display_text}", font=font, fill=color)
 
         elif mode == "view_ip":
-            draw.text((10, 10), "Current IP:", font=font, fill=COLOR_ACCENT)
-            draw.text((10, 40), live_ip[0], font=font, fill=COLOR_TEXT)
-            draw.text((10, 100), "Press any key", font=font, fill=COLOR_HIGHLIGHT)
+            draw.text((5, 5), "IP Addresses", font=title_font, fill=COLOR_ACCENT)
+            draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
+
+            # Draw up to 7 lines from the scroll position
+            for i in range(7):
+                idx = view_ip_scroll + i
+                if idx >= len(live_ip):
+                    break
+                line, color = live_ip[idx]
+                y = 28 + i * 12
+                draw.text((5, y), line, font=header_font, fill=color)
+
+            draw.text((5, 115), "Press=Exit, +/-=Scroll", font=header_font, fill=COLOR_HIGHLIGHT)
 
         elif mode == "edit":
             labels = {0: "Edit IP", 1: "Edit prefix", 2: "Edit GW", 3: "Edit DNS"}
-            draw.text((10, 10), labels[edit_field], font=font, fill=COLOR_ACCENT)
+            draw.text((5, 5), labels[edit_field], font=title_font, fill=COLOR_ACCENT)
+            draw.line((5, 23, 123, 23), fill=COLOR_ACCENT)
 
             if edit_field == 1:
-                draw.text((10, 50), f"Value: /{subnet_prefix}", font=font, fill=COLOR_TEXT)
+                draw.text((5, 50), f"Value: /{subnet_prefix}", font=font, fill=COLOR_TEXT)
             else:
                 octs = field_octets(edit_field)
                 val_str = ""
@@ -292,26 +378,29 @@ def run_hardware():
                         val_str += f"[{o}] "
                     else:
                         val_str += f"{o} "
-                draw.text((10, 50), val_str.strip(), font=font, fill=COLOR_TEXT)
+                draw.text((5, 50), val_str.strip(), font=font, fill=COLOR_TEXT)
 
-            draw.text((10, 100), "Press JS to confirm", font=font, fill=COLOR_HIGHLIGHT)
+            draw.text((5, 105), "Press to confirm", font=header_font, fill=COLOR_HIGHLIGHT)
 
+        print(f"DEBUG: update_display (mode={mode}, menu={menu_index}, edit={edit_field})")
         lcd.display(image)
 
     def do_apply_all():
         image = Image.new("RGB", (128, 128), COLOR_BG)
         draw = ImageDraw.Draw(image)
-        draw.text((10, 50), "Applying...", font=font, fill=COLOR_ACCENT)
+        draw.text((5, 50), "Applying...", font=font, fill=COLOR_ACCENT)
         lcd.display(image)
 
         try:
             apply_all_settings()
-            draw.text((10, 80), "Done!", font=font, fill=(0, 255, 0))
+            draw.text((5, 80), "Done!", font=font, fill=(0, 255, 0))
             lcd.display(image)
             time.sleep(2)
-        except subprocess.CalledProcessError as exc:
+        except Exception as exc:
             print(f"apply error: {exc}")
-            draw.text((10, 80), "Error!", font=font, fill=(255, 0, 0))
+            draw.text((5, 75), "Error!", font=font, fill=(255, 0, 0))
+            err_msg = str(exc)[:22]
+            draw.text((5, 95), err_msg, font=header_font, fill=(255, 0, 0))
             lcd.display(image)
             time.sleep(3)
 
@@ -325,7 +414,6 @@ def run_hardware():
     print("IP configurator ready. Joystick to navigate, KEY1/Press to select.")
 
     display_dirty    = False
-    last_change_time = 0.0
 
     def get_input_state():
         return {
@@ -341,20 +429,95 @@ def run_hardware():
 
     last_input = get_input_state()
 
+    up_hold_start = 0
+    up_last_repeat = 0
+    down_hold_start = 0
+    down_last_repeat = 0
+
+    REPEAT_DELAY = 0.4
+
     try:
         while True:
             current_input = get_input_state()
+            now = time.time()
 
             # Detect edge (button press)
             press_detected = False
             direction = 0
             back_detected = False
+            left_detected = False
+            right_detected = False
 
-            if current_input["up"] and not last_input["up"]: direction = -1
-            if current_input["down"] and not last_input["down"]: direction = 1
+            # UP with repeat and acceleration
+            if current_input["up"]:
+                if not last_input["up"]:
+                    direction = -1
+                    up_hold_start = now
+                    up_last_repeat = now
+                    print("DEBUG: Joystick UP (press)")
+                elif now - up_hold_start > REPEAT_DELAY:
+                    hold_duration = now - up_hold_start
+                    # Accelerate interval and step
+                    if hold_duration > 1.5:
+                        current_interval = 0.05
+                        direction = -20
+                    elif hold_duration > 0.2:
+                        current_interval = 0.04
+                        direction = -5
+                    else:
+                        current_interval = 0.1
+                        direction = -1
+
+                    if now - up_last_repeat > current_interval:
+                        up_last_repeat = now
+                        # direction is already set
+                    else:
+                        direction = 0 # Don't act if interval not reached
+            else:
+                up_hold_start = 0
+
+            # DOWN with repeat and acceleration
+            if current_input["down"]:
+                if not last_input["down"]:
+                    direction = 1
+                    down_hold_start = now
+                    down_last_repeat = now
+                    print("DEBUG: Joystick DOWN (press)")
+                elif now - down_hold_start > REPEAT_DELAY:
+                    hold_duration = now - down_hold_start
+                    # Accelerate interval and step
+                    if hold_duration > 3:
+                        current_interval = 0.05
+                        direction = 10
+                    elif hold_duration > 1.5:
+                        current_interval = 0.04
+                        direction = 5
+                    else:
+                        current_interval = 0.1
+                        direction = 1
+
+                    if now - down_last_repeat > current_interval:
+                        down_last_repeat = now
+                        # direction is already set
+                    else:
+                        direction = 0 # Don't act if interval not reached
+            else:
+                down_hold_start = 0
+
+            if current_input["left"] and not last_input["left"]:
+                left_detected = True
+                print("DEBUG: Joystick LEFT")
+            if current_input["right"] and not last_input["right"]:
+                right_detected = True
+                print("DEBUG: Joystick RIGHT")
+
             if (current_input["press"] and not last_input["press"]) or \
-               (current_input["key1"] and not last_input["key1"]): press_detected = True
-            if current_input["key2"] and not last_input["key2"]: back_detected = True
+               (current_input["key1"] and not last_input["key1"]):
+                press_detected = True
+                print("DEBUG: Joystick PRESS / KEY1")
+            if current_input["key2"] and not last_input["key2"]:
+                back_detected = True
+                print("DEBUG: KEY2 (Back)")
 
             # Action logic
             if direction != 0:
@@ -362,56 +525,97 @@ def run_hardware():
                     menu_index = (menu_index + direction) % HW_MENU_COUNT
                 elif mode == "ip_mode":
                     ip_mode_index = (ip_mode_index + direction) % len(IP_SUBMENU)
+                elif mode == "view_ip":
+                    max_scroll = max(0, len(live_ip) - 7)
+                    view_ip_scroll = max(0, min(max_scroll, view_ip_scroll + direction))
                 elif mode == "edit":
                     if edit_field == 1:
-                        subnet_prefix = max(0, min(32, subnet_prefix - direction)) # UP increments prefix (direction -1)
+                        subnet_prefix = max(0, min(32, subnet_prefix - direction))
                     else:
                         octs = field_octets(edit_field)
                         octs[state_index] = (octs[state_index] - direction) % 256
                 display_dirty = True
 
+            if left_detected:
+                if mode == "edit" and edit_field != 1:
+                    if state_index > 0:
+                        state_index -= 1
+                        display_dirty = True
+                elif mode in ("edit", "ip_mode", "view_ip"):
+                    back_detected = True
+
+            if right_detected:
+                if mode == "edit" and edit_field != 1:
+                    if state_index < 3:
+                        state_index += 1
+                        display_dirty = True
+                elif mode == "menu":
+                    press_detected = True
+
             if press_detected:
                 if mode == "menu":
-                    if menu_index == HW_MENU_COUNT - 1: # Apply
-                        do_apply_all()
-                    else:
-                        edit_field = menu_index
-                        if edit_field == 0:
-                            ip_mode_index = 0 if use_dhcp else 1
-                            mode = "ip_mode"
-                        elif edit_field in (1, 2) and use_dhcp:
-                            print("Disabled in DHCP mode")
-                            # Show temporary message
-                            image = Image.new("RGB", (128, 128), COLOR_BG)
-                            draw = ImageDraw.Draw(image)
-                            draw.text((10, 50), "Disabled in", font=font, fill=(255, 0, 0))
-                            draw.text((10, 70), "DHCP mode", font=font, fill=(255, 0, 0))
-                            lcd.display(image)
-                            time.sleep(1.5)
-                        else:
-                            state_index = 0
-                            edit_return_mode = "menu"
-                            mode = "edit"
-                elif mode == "ip_mode":
-                    if ip_mode_index == 0: # Enable DHCP
-                        use_dhcp = True
-                        mode = "menu"
-                    elif ip_mode_index == 1: # View IP
-                        live_ip[0] = get_live_ip()
-                        mode = "view_ip"
-                    elif ip_mode_index == 2: # Set static IP
-                        use_dhcp = False
+                    print(f"DEBUG: Menu Select index={menu_index}")
+                    if menu_index == 0: # IP settings
+                        get_network_settings()
+                        ip_mode_index = 0
+                        mode = "ip_mode"
+                    elif menu_index == 1: # DNS settings
+                        get_network_settings()
+                        edit_field = 3
                         state_index = 0
-                        edit_return_mode = "ip_mode"
+                        edit_return_mode = "menu"
                         mode = "edit"
+                    elif menu_index == 2: # View IPs
+                        get_network_settings()
+                        raw_list = get_live_ips()
+                        import textwrap
+                        live_ip[:] = []
+                        for entry in raw_list:
+                            # Default color
+                            base_color = COLOR_TEXT
+                            if entry.endswith(":") or "(none)" in entry:
+                                base_color = COLOR_ACCENT
+
+                            # Wrap for LCD width, subsequent lines indented
+                            wrapped = textwrap.wrap(entry, width=20, subsequent_indent="   ")
+                            for w_line in wrapped:
+                                live_ip.append((w_line, base_color))
+
+                        view_ip_scroll = 0
+                        mode = "view_ip"
+                elif mode == "ip_mode":
+                    print(f"DEBUG: IP Submenu index={ip_mode_index}")
+                    if ip_mode_index == 0: # Mode (Manual / DHCP toggle)
+                        use_dhcp = not use_dhcp
+                    elif ip_mode_index == 1: # IP Address
+                        if not use_dhcp:
+                            edit_field = 0
+                            state_index = 0
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 2: # Prefix
+                        if not use_dhcp:
+                            edit_field = 1
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 3: # Gateway
+                        if not use_dhcp:
+                            edit_field = 2
+                            state_index = 0
+                            edit_return_mode = "ip_mode"
+                            mode = "edit"
+                    elif ip_mode_index == 4: # Apply
+                        do_apply_all()
                     else: # Back
                         mode = "menu"
                 elif mode == "view_ip":
-                    mode = "ip_mode"
+                    mode = "menu"
                 elif mode == "edit":
                     if edit_field == 1 or state_index == 3:
                         if edit_field in (0, 1):
                             auto_gateway_from_ip()
+                        if edit_field == 3: # DNS applied immediately
+                            do_apply_all()
                         mode = edit_return_mode
                     else:
                         state_index += 1
@@ -421,7 +625,7 @@ def run_hardware():
                 if mode == "ip_mode":
                     mode = "menu"
                 elif mode == "view_ip":
-                    mode = "ip_mode"
+                    mode = "menu"
                 elif mode == "edit":
                     if state_index > 0:
                         state_index -= 1
@@ -430,15 +634,23 @@ def run_hardware():
                 display_dirty = True
 
             if display_dirty:
+                print("DEBUG: Display dirty, updating...")
                 update_display()
                 display_dirty = False
 
             last_input = current_input
             time.sleep(0.01)
 
-    except KeyboardInterrupt:
-        print("\nExiting.")
+    except BaseException as e:
+        import traceback
+        if isinstance(e, KeyboardInterrupt):
+            print("\nExiting via KeyboardInterrupt.")
+        else:
+            print(f"\nHARDWARE LOOP ERROR ({type(e).__name__}): {e}")
+            traceback.print_exc()
+        raise e
     finally:
+        print("DEBUG: Performing LCD cleanup...")
         lcd.cleanup()
 
 
@@ -507,9 +719,11 @@ def run_tui():
                     raise ValueError
                 dns_octets[:] = values
                 subprocess.run(
-                    ["sudo", "/usr/local/sbin/set-dns.sh", text],
+                    ["nmcli", "connection", "modify", CONNECTION_NAME,
+                     "ipv4.dns", text, "ipv4.ignore-auto-dns", "yes"],
                     check=True, capture_output=True,
                 )
+                subprocess.run(["nmcli", "con", "up", CONNECTION_NAME], check=True, capture_output=True)
                 msgbox("DNS", f"DNS set to {text}")
                 return
             except ValueError:
@@ -519,16 +733,17 @@ def run_tui():
                 msgbox("Error", f"Error applying DNS:\n{exc}")
                 return
 
-    get_network_settings()
     while True:
+        get_network_settings()
         rc, choice = dialog(
             "--title", "IP Terminal Configurator",
-            "--menu", "Select an option:", "13", "50", "3",
+            "--menu", "Select an option:", "15", "50", "4",
             "1", "Edit IP settings",
             "2", "Edit DNS settings",
             "3", "View IPs",
+            "4", "Quit",
         )
-        if rc != 0:
+        if rc != 0 or choice == "4":
             break
         if choice == "1":
             run_ip_settings()

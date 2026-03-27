@@ -8,9 +8,11 @@ LCD_DC_PIN = 25
 LCD_BL_PIN = 24
 
 class ST7735:
-    def __init__(self):
+    def __init__(self, x_offset=2, y_offset=3):
         self.width = 128
         self.height = 128
+        self.x_offset = x_offset
+        self.y_offset = y_offset
 
         # GPIO Setup
         GPIO.setmode(GPIO.BCM)
@@ -22,7 +24,7 @@ class ST7735:
         # SPI Setup
         self.spi = spidev.SpiDev()
         self.spi.open(0, 0)
-        self.spi.max_speed_hz = 9000000
+        self.spi.max_speed_hz = 4000000 # Lowered from 9MHz for better stability
         self.spi.mode = 0b00
 
         self.init_display()
@@ -78,7 +80,7 @@ class ST7735:
         self.data(0x0E)
 
         self.command(0x36) # Memory access control (Direction)
-        self.data(0xC0) # Row address order, Column address order, BGR
+        self.data(0x60) # Row address order, Column address order, MV=1, BGR=0 (Rotated 180 deg from 0xA0)
 
         self.command(0xE0) # Gamma adjustment (+ polarity)
         self.data(0x0F); self.data(0x1A); self.data(0x0F); self.data(0x18)
@@ -108,10 +110,18 @@ class ST7735:
 
         self.command(0x29) # Display on
 
+        # Clear full controller memory to pulse out any garbage
+        self.clear_full_buffer()
+
         # Turn on backlight
         GPIO.output(LCD_BL_PIN, GPIO.HIGH)
 
     def set_window(self, x_start, y_start, x_end, y_end):
+        x_start += self.x_offset
+        x_end += self.x_offset
+        y_start += self.y_offset
+        y_end += self.y_offset
+
         self.command(0x2A)
         self.data(0x00); self.data(x_start & 0xFF)
         self.data(0x00); self.data(x_end & 0xFF)
@@ -122,29 +132,59 @@ class ST7735:
 
         self.command(0x2C) # Write to RAM
 
+    def set_window_direct(self, x_start, y_start, x_end, y_end):
+        """Set window without adding offsets."""
+        self.command(0x2A)
+        self.data(0x00); self.data(x_start & 0xFF)
+        self.data(0x00); self.data(x_end & 0xFF)
+
+        self.command(0x2B)
+        self.data(0x00); self.data(y_start & 0xFF)
+        self.data(0x00); self.data(y_end & 0xFF)
+
+        self.command(0x2C) # Write to RAM
+
+    def clear_full_buffer(self):
+        """Clear the entire internal memory of the controller (132x162)."""
+        self.set_window_direct(0, 0, 131, 161)
+        GPIO.output(LCD_DC_PIN, GPIO.HIGH)
+        # 132 * 162 * 2 bytes of zeros
+        chunk_size = 4096
+        zero_chunk = bytearray([0] * chunk_size)
+        total_bytes = 132 * 162 * 2
+        for i in range(0, total_bytes, chunk_size):
+            remaining = total_bytes - i
+            if remaining < chunk_size:
+                self.spi.writebytes2(zero_chunk[:remaining])
+            else:
+                self.spi.writebytes2(zero_chunk)
+
     def display(self, image):
         """Prepare image and send to LCD."""
         # The LCD is 128x128, 16-bit color (RGB565)
-        # Pillow image should be RGB
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
         im_width, im_height = image.size
         if im_width != self.width or im_height != self.height:
             image = image.resize((self.width, self.height))
 
-        data = image.getdata()
-
-        # Convert RGB888 to RGB565 (16-bit)
-        # Big-endian: High byte (RRRRRGGG), Low byte (GGGBBBBB)
-        buf = []
-        for r, g, b in data:
+        # Optimization: use bytearray for much faster buffer creation
+        buf = bytearray(self.width * self.height * 2)
+        idx = 0
+        for r, g, b in image.getdata():
+            # RGB565: RRRRRGGG GGGBBBBB
             color = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-            buf.append((color >> 8) & 0xFF)
-            buf.append(color & 0xFF)
+            buf[idx] = (color >> 8) & 0xFF
+            buf[idx+1] = color & 0xFF
+            idx += 2
 
         self.set_window(0, 0, self.width - 1, self.height - 1)
         GPIO.output(LCD_DC_PIN, GPIO.HIGH)
-        # SPI send in chunks if necessary, spidev handles large transfers but speed might be an issue
-        # max_speed_hz is set to 9MHz, which is safe for ST7735
-        self.spi.writebytes2(buf)
+        # Split into chunks to avoid kernel buffer limits (usually 4096 bytes)
+        chunk_size = 4096
+        for i in range(0, len(buf), chunk_size):
+            self.spi.writebytes2(buf[i:i+chunk_size])
 
     def clear(self, color=(0, 0, 0)):
         from PIL import Image
