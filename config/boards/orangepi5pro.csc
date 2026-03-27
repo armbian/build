@@ -7,6 +7,7 @@ BOOTCONFIG="orangepi_5_pro_defconfig" # vendor name, not standard, see hook belo
 BOOTCONFIG_SATA="orangepi_5_pro_sata_defconfig"
 BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"
+KERNEL_TEST_TARGET="vendor,current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-orangepi-5-pro.dtb"
@@ -14,8 +15,6 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
-# Now current kernel is stable
-# KERNEL_UPGRADE_FREEZE="vendor-rk35xx@24.8.1"
 
 function post_family_tweaks__orangepi5pro_fix() {
 	display_alert "$BOARD" "Kernel fix to find the driver" "info"
