@@ -31,7 +31,7 @@ function post_family_config__meko_r58x_pro_use_mainline_uboot() {
 	declare -g BOOTCONFIG="mekotronics-r58x-pro-rk3588_defconfig" # mainline
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.04-rc2"
+	declare -g BOOTBRANCH="tag:v2026.04-rc5"
 	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
@@ -101,9 +101,13 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
 
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
+	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
+
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
-	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB")
 	for config in "${enable_configs[@]}"; do
 		run_host_command_logged scripts/config --enable "${config}"
 	done
