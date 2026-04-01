@@ -22,7 +22,7 @@ function post_build_image__900_convert_to_arduino_img() {
 
 	rm -rf arduino-images
 	mkdir -p arduino-images/flash
-	cp -r "${QCOMBIN_DIR}/Agatti/"* arduino-images/flash/
+	cp -r "${QCOMBIN_DIR}/Agatti/arduino-uno-q/"* arduino-images/flash/
 
 	mkdir -p rootfs_mount
 	local rootfs_loop=$(losetup -f --show "${ROOTFS_IMAGE_FILE}")
