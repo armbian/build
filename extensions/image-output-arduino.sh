@@ -21,13 +21,13 @@ function post_build_image__900_convert_to_arduino_img() {
 	dd if="${img}" of="${ROOTFS_IMAGE_FILE}" bs=${sector_size} skip=${p2_start} count=${p2_sectors} status=progress
 
 	rm -rf arduino-images
-	mkdir -p arduino-images
-	cp -r ${SRC}/packages/blobs/arduino/flash arduino-images
+	mkdir -p arduino-images/flash
+	cp -r "${QCOMBIN_DIR}/Agatti/"* arduino-images/flash/
 
 	mkdir -p rootfs_mount
 	local rootfs_loop=$(losetup -f --show "${ROOTFS_IMAGE_FILE}")
 	mount ${rootfs_loop} rootfs_mount
-	cp rootfs_mount/usr/lib/linux-u-boot-edge-arduino-uno-q/boot.img arduino-images/flash
+	cp rootfs_mount/usr/lib/linux-u-boot-${BRANCH}-${BOARD}/boot.img arduino-images/flash/
 	umount rootfs_mount
 	losetup -d ${rootfs_loop}
 
