@@ -10,23 +10,8 @@ SERIALCON="ttyMSM0"
 BOOTFS_TYPE="fat"
 BOOTSIZE="512"
 
-declare -g BOARD_FIRMWARE_INSTALL=""
-
 function post_family_tweaks__arduino-uno-q() {
-	display_alert "Installing firmware and packages" "${BOARD}" "info"
-
-	# Qualcomm SoC firmware (GPU, DSP, modem, video)
-	cp -rv "$SRC/packages/blobs/arduino/firmware/qcom/qcm2290" "$SDCARD/lib/firmware/qcom/"
-	cp -rv "$SRC/packages/blobs/arduino/firmware/qcom/venus-6.0" "$SDCARD/lib/firmware/qcom/"
-	cp -v "$SRC/packages/blobs/arduino/firmware/qcom/a702_sqe.fw" "$SDCARD/lib/firmware/qcom/"
-
-	# Bluetooth firmware
-	mkdir -p "$SDCARD/lib/firmware/qca/"
-	cp -v "$SRC/packages/blobs/arduino/firmware/qca/"* "$SDCARD/lib/firmware/qca/"
-
-	# WiFi ath10k firmware
-	mkdir -p "$SDCARD/lib/firmware/ath10k/WCN3990/hw1.0/"
-	cp -rv "$SRC/packages/blobs/arduino/firmware/ath10k/WCN3990/hw1.0/"* "$SDCARD/lib/firmware/ath10k/WCN3990/hw1.0/"
+	display_alert "Installing packages" "${BOARD}" "info"
 
 	# Install packages
 	do_with_retries 3 chroot_sdcard_apt_get_update
