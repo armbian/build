@@ -1,5 +1,6 @@
 # Rockchip RK3568 quad core 2GB-4GB GBE eMMC NVMe SATA USB3 WiFi
 BOARD_NAME="Station P2"
+BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3568"
 BOOTCONFIG="roc-pc-rk3568_defconfig"

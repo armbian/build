@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -27,15 +27,16 @@ function armbian_register_commands() {
 		["config-dump-json"]="config_dump_json"    # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 		["config-dump-no-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["inventory"]="json_info"         # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets"]="json_info"           # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets-dashboard"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
-		["inventory-boards"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets-composed"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
-		["debs-to-repo-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-matrix"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-workflow"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-template"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info"           # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"             # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets-dashboard"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory-boards"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory-artifacts"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets-composed"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["debs-to-repo-json"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"          # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		# These probably should be in their own separate CLI commands file, but for now they're together in jsoninfo.
 		["debs-to-repo-download"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
@@ -118,6 +119,7 @@ function armbian_register_commands() {
 
 		# inventory
 		["inventory-boards"]="TARGETS_FILE='something_that_does_not_exist_so_defaults_are_used'"
+		["inventory-artifacts"]="TARGETS_FILE='something_that_does_not_exist_so_defaults_are_used'"
 
 		# patching
 		["rewrite-kernel-patches"]="REWRITE_PATCHES='yes'" # rewrite the patches after round-tripping to git: "rebase patches"

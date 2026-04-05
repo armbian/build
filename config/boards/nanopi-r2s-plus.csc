@@ -1,5 +1,6 @@
 # Rockchip RK3328 quad core 1GB 2 x GBE USB2
 BOARD_NAME="Nanopi R2S Plus"
+BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTBRANCH="tag:v2025.01"

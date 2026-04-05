@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -214,7 +214,7 @@ function userpatch_create() {
 
 		# If Git is configured, create proper patch and ask for a name
 		display_alert "Add / change patch name" "${patch_commit_message}" "wrn"
-		read -e -p "Patch Subject: " -i "${patch_commit_message}" patch_commit_message
+		read -r -e -p "Patch Subject: " -i "${patch_commit_message}" patch_commit_message
 		[[ -z "${patch_commit_message}" ]] && patch_commit_message="Patching something unknown and mysterious"
 		run_host_command_logged git "${common_git_params[@]}" commit -s -m "'${patch_commit_message}'"
 		run_host_command_logged git "${common_git_params[@]}" format-patch "${formatpatch_params[@]}" ">" "${patch}"

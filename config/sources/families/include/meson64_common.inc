@@ -35,24 +35,22 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	current)
+	oldlts)
 		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.18"
+		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.15"
+		declare -g KERNEL_MAJOR_MINOR="7.0"
 		;;
 
 esac
 
 # Use custom vendor driver for wireless rtl88x2cs
 # See https://github.com/armbian/build/pull/6227
-# @TODO Only use for BOARDFAMILY="jethub" devices?
 function custom_kernel_config__enable_rtl88x2cs_driver() {
-	kernel_config_modifying_hashes+=("CONFIG_RTL8822CS=m")
-	if [[ -f .config ]]; then
-		display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
-		kernel_config_set_m CONFIG_RTL8822CS
-	fi
+	opts_m+=("CONFIG_RTL8822CS")
 }
 
 # this helper function includes postprocess for s400 and its variants.
@@ -222,7 +220,8 @@ family_tweaks_bsp() {
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | "aml-c400-plus" | "aml-s9xx-box")
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | \
+		"aml-c400-plus" | "aml-s9xx-box" | "bestv-r3300-l")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 				Section "OutputClass"
 				    Identifier "Amlogic"
@@ -230,39 +229,48 @@ family_tweaks_bsp() {
 				    Driver "modesetting"
 				    Option "PrimaryGPU" "true"
 				EndSection
+
 				Section "Screen"
 				    Identifier      "Default Screen"
 				    Device          "Meson"
 				    Monitor         "foo"
 				    DefaultDepth  24
 				    SubSection "Display"
-				       Depth    24
-				       Modes    "1920x1080" "1440x900" "1280x720" "1280x1024" "1280x960" "1024x768" "800x600" "640x480" "720x400"
+				        Depth    24
+				        Modes    "1920x1080" "1440x900" "1280x720" "1280x1024" "1280x960" "1024x768" "800x600" "640x480" "720x400"
 				    EndSubSection
 				EndSection
 			EOF
 			;;
-		"jethubj200" | "odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
+		"jethubj200" | "odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | \
+		"radxa-zero" | "radxa-zero2" | "bananapi-m2s" | "cainiao-cniot-core")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"
 
 				    ## Use modesetting and glamor
-				        Driver      "modesetting"
-				        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
-				        Option      "DRI"            "2"
-				        Option      "Dri2Vsync"      "true"
-				        Option      "TripleBuffer"   "True"
+				    Driver      "modesetting"
+				    Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
+				    Option      "DRI"            "2"
+				    Option      "Dri2Vsync"      "true"
+				    Option      "TripleBuffer"   "True"
 				    ## End glamor configuration
 
-				    EndSection
+				EndSection
 
-				    Section "Screen"
-				        Identifier "Default Screen"
-				            SubSection "Display"
-				                Depth 24
-				            EndSubSection
-				        EndSection
+				Section "OutputClass"
+				    Identifier "Amlogic"
+				    MatchDriver "meson"
+				    Driver "modesetting"
+				    Option "PrimaryGPU" "true"
+				EndSection
+
+				Section "Screen"
+				    Identifier "Default Screen"
+				    SubSection "Display"
+				        Depth 24
+				    EndSubSection
+				EndSection
 			EOF
 			;;
 	esac

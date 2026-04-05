@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
+# Copyright (c) 2023-2026 Ricardo Pardini <ricardo@pardini.net>
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 #
 
@@ -29,7 +29,7 @@ function artifact_armbian-base-files_prepare_version() {
 	sleep_seconds="15" do_with_retries 10 apt_find_upstream_package_version_and_download_url "base-files"
 
 	# download the file, but write it to /dev/null (just for testing it is correct)
-	# wget --timeout=15 --output-document=/dev/null "${found_package_down_url}" || exit_with_error "Could not download '${found_package_down_url}'"
+	# curl -fLo /dev/null "${found_package_down_url}" || exit_with_error "Could not download '${found_package_down_url}'"
 
 	# Set readonly globals with the wanted info; will be used during the actual build of this artifact
 	declare -g -r base_files_wanted_upstream_version="${found_package_version}"
@@ -56,7 +56,7 @@ function artifact_armbian-base-files_prepare_version() {
 	artifact_name="armbian-base-files-${RELEASE}-${ARCH}"
 	artifact_type="deb"
 	artifact_deb_repo="extra/${RELEASE}-utils" # release-specific repo (jammy etc)
-	artifact_deb_arch="${ARCH}"    # arch-specific packages (arm64 etc)
+	artifact_deb_arch="${ARCH}"                # arch-specific packages (arm64 etc)
 	artifact_map_packages=(["armbian-base-files"]="base-files")
 
 	# Important. Force the final reversioned version to contain the release name.
@@ -88,7 +88,7 @@ function compile_armbian-base-files() {
 
 	# Download the deb file
 	declare deb_file="${destination}/${base_files_wanted_upstream_filename}"
-	run_host_command_logged wget --no-verbose --timeout=60 --output-document="${deb_file}" "${base_files_wanted_deb_down_url}" || exit_with_error "Could not download '${base_files_wanted_deb_down_url}'"
+	run_host_command_logged curl -fLo "${deb_file}" "${base_files_wanted_deb_down_url}" || exit_with_error "Could not download '${base_files_wanted_deb_down_url}'"
 
 	# Raw-Extract (with DEBIAN dir) the contents of the deb file into "${destination}"
 	run_host_command_logged dpkg-deb --raw-extract "${deb_file}" "${destination}" || exit_with_error "Could not raw-extract '${deb_file}'"
@@ -114,7 +114,7 @@ function compile_armbian-base-files() {
 		Version: ${artifact_version}
 	EOD
 	# Keep everything else from original
-	cat "${destination}/DEBIAN/control" | grep -vP '^(Maintainer|Version):' >> "${destination}/DEBIAN/control.new"
+	grep -vP '^(Maintainer|Version):' "${destination}/DEBIAN/control" >> "${destination}/DEBIAN/control.new"
 
 	# Replace 'Debian' with 'Armbian'.
 	sed -i "s/Debian/${VENDOR}/g" "${destination}/DEBIAN/control.new"

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -101,12 +101,14 @@ function kernel_drivers_prepare_harness() {
 
 	declare -a all_drivers=(
 		driver_generic_bring_back_ipx
+		driver_wifi_injection
 		driver_mt7921u_add_pids
 		driver_rtl8152_rtl8153
 		driver_rtl8189ES
 		driver_rtl8189FS
 		driver_rtl8192EU
 		driver_rtl8811_rtl8812_rtl8814_rtl8821
+		driver_rtl8812EU_rtl8822EU
 		driver_xradio_xr819
 		driver_rtl8811CU_rtl8821C
 		driver_rtl8188EU_rtl8188ETV

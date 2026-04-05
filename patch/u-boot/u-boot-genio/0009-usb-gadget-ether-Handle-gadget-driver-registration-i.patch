@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marek Vasut <marex@denx.de>
+Date: Fri, 4 Aug 2023 17:41:11 +0200
+Subject: usb: gadget: ether: Handle gadget driver registration in probe and
+ remove
+
+Move the ethernet gadget driver registration and removal from ethernet
+bind and unbind callbacks into driver DM probe and remove callbacks.
+This way, when the driver is bound, which is triggered deliberately
+using 'bind' command, the USB ethernet gadget driver is instantiated
+and bound to the matching UDC. In reverse, when the driver is unbound,
+which is again triggered deliberately using 'unbind' command, the USB
+ethernet gadget driver instance is removed.
+
+Effectively, this now behaves like running either 'ums' or 'dfu' or
+any other commands utilizing USB gadget functionality.
+
+This also drops use of usb_gadget_release() and moves the use of
+usb_gadget_initialize() into usb_ether_init() used only by legacy
+platforms that do not use 'bind' command properly yet. Those have
+no place in drivers.
+
+Signed-off-by: Marek Vasut <marex@denx.de>
+Tested-by: Tom Rini <trini@konsulko.com>
+Reviewed-by: Tom Rini <trini@konsulko.com>
+---
+ drivers/usb/gadget/ether.c | 97 +++++-----
+ 1 file changed, 52 insertions(+), 45 deletions(-)
+
+diff --git a/drivers/usb/gadget/ether.c b/drivers/usb/gadget/ether.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/gadget/ether.c
++++ b/drivers/usb/gadget/ether.c
+@@ -2281,49 +2281,8 @@ static int usb_eth_start(struct udevice *udev)
+ 	struct eth_dev *dev = &priv->ethdev;
+ 	struct usb_gadget *gadget;
+ 	unsigned long ts;
+-	int ret;
+ 	unsigned long timeout = USB_CONNECT_TIMEOUT;
+ 
+-	ret = usb_gadget_initialize(0);
+-	if (ret)
+-		return ret;
+-
+-	/* Configure default mac-addresses for the USB ethernet device */
+-#ifdef CONFIG_USBNET_DEV_ADDR
+-	strlcpy(dev_addr, CONFIG_USBNET_DEV_ADDR, sizeof(dev_addr));
+-#endif
+-#ifdef CONFIG_USBNET_HOST_ADDR
+-	strlcpy(host_addr, CONFIG_USBNET_HOST_ADDR, sizeof(host_addr));
+-#endif
+-	/* Check if the user overruled the MAC addresses */
+-	if (env_get("usbnet_devaddr"))
+-		strlcpy(dev_addr, env_get("usbnet_devaddr"),
+-			sizeof(dev_addr));
+-
+-	if (env_get("usbnet_hostaddr"))
+-		strlcpy(host_addr, env_get("usbnet_hostaddr"),
+-			sizeof(host_addr));
+-
+-	if (!is_eth_addr_valid(dev_addr)) {
+-		pr_err("Need valid 'usbnet_devaddr' to be set");
+-		goto fail;
+-	}
+-	if (!is_eth_addr_valid(host_addr)) {
+-		pr_err("Need valid 'usbnet_hostaddr' to be set");
+-		goto fail;
+-	}
+-
+-	priv->eth_driver.speed		= DEVSPEED;
+-	priv->eth_driver.bind		= eth_bind;
+-	priv->eth_driver.unbind		= eth_unbind;
+-	priv->eth_driver.setup		= eth_setup;
+-	priv->eth_driver.reset		= eth_disconnect;
+-	priv->eth_driver.disconnect	= eth_disconnect;
+-	priv->eth_driver.suspend	= eth_suspend;
+-	priv->eth_driver.resume		= eth_resume;
+-	if (usb_gadget_register_driver(&priv->eth_driver) < 0)
+-		goto fail;
+-
+ 	dev->network_started = 0;
+ 
+ 	packet_received = 0;
+@@ -2450,9 +2409,6 @@ static void usb_eth_stop(struct udevice *udev)
+ 		usb_gadget_handle_interrupts(0);
+ 		dev->network_started = 0;
+ 	}
+-
+-	usb_gadget_unregister_driver(&priv->eth_driver);
+-	usb_gadget_release(0);
+ }
+ 
+ static int usb_eth_recv(struct udevice *dev, int flags, uchar **packetp)
+@@ -2511,7 +2467,7 @@ int usb_ether_init(void)
+ 		return ret;
+ 	}
+ 
+-	return 0;
++	return usb_gadget_initialize(0);
+ }
+ 
+ static int usb_eth_probe(struct udevice *dev)
+@@ -2525,6 +2481,55 @@ static int usb_eth_probe(struct udevice *dev)
+ 	get_ether_addr(CONFIG_USBNET_DEV_ADDR, pdata->enetaddr);
+ 	eth_env_set_enetaddr("usbnet_devaddr", pdata->enetaddr);
+ 
++	/* Configure default mac-addresses for the USB ethernet device */
++#ifdef CONFIG_USBNET_DEV_ADDR
++	strlcpy(dev_addr, CONFIG_USBNET_DEV_ADDR, sizeof(dev_addr));
++#endif
++#ifdef CONFIG_USBNET_HOST_ADDR
++	strlcpy(host_addr, CONFIG_USBNET_HOST_ADDR, sizeof(host_addr));
++#endif
++	/* Check if the user overruled the MAC addresses */
++	if (env_get("usbnet_devaddr"))
++		strlcpy(dev_addr, env_get("usbnet_devaddr"),
++			sizeof(dev_addr));
++
++	if (env_get("usbnet_hostaddr"))
++		strlcpy(host_addr, env_get("usbnet_hostaddr"),
++			sizeof(host_addr));
++
++	if (!is_eth_addr_valid(dev_addr)) {
++		pr_err("Need valid 'usbnet_devaddr' to be set");
++		return -EINVAL;
++	}
++	if (!is_eth_addr_valid(host_addr)) {
++		pr_err("Need valid 'usbnet_hostaddr' to be set");
++		return -EINVAL;
++	}
++
++	priv->eth_driver.speed		= DEVSPEED;
++	priv->eth_driver.bind		= eth_bind;
++	priv->eth_driver.unbind		= eth_unbind;
++	priv->eth_driver.setup		= eth_setup;
++	priv->eth_driver.reset		= eth_disconnect;
++	priv->eth_driver.disconnect	= eth_disconnect;
++	priv->eth_driver.suspend	= eth_suspend;
++	priv->eth_driver.resume		= eth_resume;
++	return usb_gadget_register_driver(&priv->eth_driver);
++}
++
++static int usb_eth_remove(struct udevice *dev)
++{
++	struct ether_priv *priv = dev_get_priv(dev);
++
++	usb_gadget_unregister_driver(&priv->eth_driver);
++
++	return 0;
++}
++
++static int usb_eth_unbind(struct udevice *dev)
++{
++	usb_gadget_release(0);
++
+ 	return 0;
+ }
+ 
+@@ -2532,6 +2537,8 @@ U_BOOT_DRIVER(eth_usb) = {
+ 	.name	= "usb_ether",
+ 	.id	= UCLASS_ETH,
+ 	.probe	= usb_eth_probe,
++	.remove	= usb_eth_remove,
++	.unbind	= usb_eth_unbind,
+ 	.ops	= &usb_eth_ops,
+ 	.priv_auto	= sizeof(struct ether_priv),
+ 	.plat_auto	= sizeof(struct eth_pdata),
+-- 
+Armbian
+

@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
 function run_tool_batcat() {
 	# Default version
-	BATCAT_VERSION=${BATCAT_VERSION:-0.25.0} # https://github.com/sharkdp/bat/releases
+	BATCAT_VERSION=${BATCAT_VERSION:-0.26.1} # https://github.com/sharkdp/bat/releases
 
 	declare non_cache_dir="/armbian-tools/batcat" # To deploy/reuse cached batcat in a Docker image.
 
@@ -117,7 +117,7 @@ function try_download_batcat_tooling() {
 	display_alert "BATCAT_FN: ${BATCAT_FN}" "batcat" "debug"
 
 	display_alert "Downloading required" "batcat tooling${RETRY_FMT_MORE_THAN_ONCE}" "info"
-	run_host_command_logged wget --no-verbose --progress=dot:giga -O "${BATCAT_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
+	run_host_command_logged curl -L#o "${BATCAT_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
 		return 1
 	}
 	run_host_command_logged mv "${BATCAT_BIN}.tar.gz.tmp" "${BATCAT_BIN}.tar.gz"
@@ -125,7 +125,7 @@ function try_download_batcat_tooling() {
 	run_host_command_logged rm -rf "${BATCAT_BIN}.tar.gz"
 
 	# EXTRA: get more syntaxes for batcat. We need Debian syntax for CONTROL files, etc.
-	run_host_command_logged wget --no-verbose --progress=dot:giga -O "${DIR_BATCAT}/sublime-debian.tar.gz.tmp" "${GITHUB_SOURCE:-"https://github.com"}/barnumbirr/sublime-debian/archive/refs/heads/master.tar.gz"
+	run_host_command_logged curl -L#o "${DIR_BATCAT}/sublime-debian.tar.gz.tmp" "${GITHUB_SOURCE:-"https://github.com"}/barnumbirr/sublime-debian/archive/refs/heads/master.tar.gz"
 	run_host_command_logged mkdir -p "${DIR_BATCAT}/temp-debian-syntax"
 	run_host_command_logged tar -xzf "${DIR_BATCAT}/sublime-debian.tar.gz.tmp" -C "${DIR_BATCAT}/temp-debian-syntax" sublime-debian-master/Syntaxes
 

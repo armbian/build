@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -62,7 +62,7 @@ function prepare_python_and_pip() {
 	display_alert "pip3 version" "${pip3_version_number}" "info"
 
 	# Calculate the hash for the Pip requirements
-	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version_number}" "$(cat "${python3_pip_dependencies_path}")" | sha256sum | cut -d' ' -f1)"
+	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version_number}" "$(< "${python3_pip_dependencies_path}")" | sha256sum | cut -d' ' -f1)"
 
 	declare non_cache_dir="/armbian-pip"
 	declare python_pip_cache="${SRC}/cache/pip"
@@ -107,7 +107,7 @@ function prepare_python_and_pip() {
 		"PYTHONUSERBASE=${PYTHON3_INFO[USERBASE]}"
 		"PYTHONUNBUFFERED=yes"
 		"PYTHONPYCACHEPREFIX=${PYTHON3_INFO[PYCACHEPREFIX]}"
-		"PATH=\"${toolchain}:${PYTHON3_INFO[USERBASE]}/bin:${PATH}\"" # add toolchain to PATH to make building wheels work
+		"PATH='${PYTHON3_INFO[USERBASE]}/bin:${PATH}'"
 	)
 
 	# If the hash file exists, we're done.

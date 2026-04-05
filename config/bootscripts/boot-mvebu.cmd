@@ -380,7 +380,7 @@ if test "${spi_workaround}" = "on"; then
 	fdt set /soc/internal-regs/sata@e0000 status "disabled"
 	fdt set /soc/internal-regs/sata@a8000 status "disabled"
 	fdt set /soc/spi@10680 status "okay"
-	fdt set /soc/spi@10680/spi-flash@0 status "okay"
+	fdt set /soc/spi@10680/flash@0 status "okay"
 fi
 
 # resize (trim) device tree after all overlays have been applied and fixup scripts have been run

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -17,8 +17,7 @@ function write_image_to_device() {
 			# create sha256sum if it does not exist. we need it for comparison, later.
 			local if_sha=""
 			if [[ -f "${image_file}.img.sha" ]]; then
-				# shellcheck disable=SC2002 # cat most definitely is useful. she purrs.
-				if_sha=$(cat "${image_file}.sha" | awk '{print $1}')
+				if_sha=$(awk '{print $1}' "${image_file}.sha")
 			else
 				if_sha=$(sha256sum -b "${image_file}" | awk '{print $1}')
 			fi

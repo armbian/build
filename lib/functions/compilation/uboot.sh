@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -47,10 +47,19 @@ function patch_uboot_target() {
 	fi
 }
 
-# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# this receives version  target uboot_name uboottempdir uboot_target_counter as variables.
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
 	: "${artifact_version:?artifact_version is not set}"
+	: "${UBOOT_COMPILER:?UBOOT_COMPILER is not set}"
+
+	# prepare a CROSS_COMPILE stanza, quoted, with $CCACHE (if not empty) and $UBOOT_COMPILER
+	declare cross_compile="undetermined_cross_compile"
+	if [[ -n "${CCACHE}" ]]; then
+		cross_compile="CROSS_COMPILE='${CCACHE} ${UBOOT_COMPILER}'"
+	else
+		cross_compile="CROSS_COMPILE='${UBOOT_COMPILER}'"
+	fi
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' before patching" "debug"
@@ -90,13 +99,9 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}Preparing u-boot config '${BOOTCONFIG}'" "${version} ${target_make}" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
-		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
-
-	# armbian specifics u-boot settings
-	[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"-armbian-${artifact_version}\"/g" .config
-	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
+		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "${cross_compile}"
 
 	# for modern (? 2018-2019?) kernel and non spi targets @TODO: this does not belong here
 	if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
@@ -117,6 +122,8 @@ function compile_uboot_target() {
 	# @TODO: why?
 	touch .scmversion
 
+	declare uboot_loglevel="${UBOOT_LOGLEVEL:-"6"}" # default to info
+
 	# use `scripts/config` instead of sed if available. Cleaner results.
 	if [[ ! -f scripts/config ]]; then
 		display_alert "scripts/config not found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
@@ -124,6 +131,9 @@ function compile_uboot_target() {
 		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
 		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
+		# armbian specifics u-boot settings; configure the version so UART boot logs show exactly what's in there
+		[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"_armbian-${artifact_version}\"/g" .config
+		[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 	else
 		display_alert "scripts/config found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
 
@@ -139,9 +149,9 @@ function compile_uboot_target() {
 			run_host_command_logged scripts/config --set-val CONFIG_BOOTDELAY "${BOOTDELAY}"
 		fi
 
-		# Hack, up the log level to 6: "info" (default is 4: "warning")
-		display_alert "Hacking log level in u-boot config" "LOGLEVEL=6 for ${target}" "info"
-		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL 6
+		# Include Armbian version so UART bootlogs are drastically more useful
+		run_host_command_logged ./scripts/config --disable "LOCALVERSION_AUTO"
+		run_host_command_logged ./scripts/config --set-str "LOCALVERSION" "_armbian-${artifact_version}" # crazy quotes!
 	fi
 
 	if [[ "${UBOOT_DEBUGGING}" == "yes" ]]; then
@@ -155,21 +165,21 @@ function compile_uboot_target() {
 		# 0 - emergency ; 1 - alert; 2 - critical; 3 - error; 4 - warning; 5 - note; 6 - info; 7 - debug; 8 - debug content; 9 - debug hardware I/O
 		cat <<- EXTRA_UBOOT_DEBUG_CONFIGS >> .config
 			CONFIG_LOG=y
-			CONFIG_LOG_MAX_LEVEL=7
-			CONFIG_LOG_DEFAULT_LEVEL=7
+			CONFIG_LOG_MAX_LEVEL=${uboot_loglevel}
+			CONFIG_LOG_DEFAULT_LEVEL=${uboot_loglevel}
 			CONFIG_LOG_CONSOLE=y
 			CONFIG_SPL_LOG=y
-			CONFIG_SPL_LOG_MAX_LEVEL=6
+			CONFIG_SPL_LOG_MAX_LEVEL=${uboot_loglevel}
 			CONFIG_SPL_LOG_CONSOLE=y
 			CONFIG_TPL_LOG=y
-			CONFIG_TPL_LOG_MAX_LEVEL=6
+			CONFIG_TPL_LOG_MAX_LEVEL=${uboot_loglevel}
 			CONFIG_TPL_LOG_CONSOLE=y
 			# CONFIG_ERRNO_STR is not set
 		EXTRA_UBOOT_DEBUG_CONFIGS
 
-		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 			"KCFLAGS=-fdiagnostics-color=always" \
-			pipetty make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
+			pipetty make "olddefconfig" "${cross_compile}"
 
 	fi
 
@@ -198,24 +208,25 @@ function compile_uboot_target() {
 
 	# make olddefconfig, so changes made in hook above are consolidated
 	display_alert "${uboot_prefix}Updating u-boot config with olddefconfig" "${version} ${target_make}" "info"
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"KCFLAGS=-fdiagnostics-color=always" \
-		pipetty make "${CTHREADS}" "olddefconfig" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
+		pipetty make "${CTHREADS}" "olddefconfig" "${cross_compile}"
 
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
+		display_alert "Saving pre-config u-boot defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_logged make savedefconfig
+		run_host_command_logged mv -v defconfig defconfig.pre.menuconfig
+
 		display_alert "Configuring u-boot" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_dialog make menuconfig
 		display_alert "Exporting saved config" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_logged make savedefconfig
 		run_host_command_logged cp -v defconfig "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}"
 
-		# check if we can find configs/${BOOTCONFIG}, and if so, output a diff between that and the new saved defconfig
-		if [[ -f "configs/${BOOTCONFIG}" ]]; then
-			display_alert "Diffing ${BOOTCONFIG} and new defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
-			run_host_command_logged diff -u --color=always "configs/${BOOTCONFIG}" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "2>&1" "|| true" # no errors please, all to stdout
-		fi
+		display_alert "Diffing before and after defconfigs" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_logged diff -u --color=always "defconfig.pre.menuconfig" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "2>&1" "|| true" # no errors please, all to stdout
 
-		display_alert "Exporting saved config (experimental)" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "warn"
+		display_alert "Exported saved config (experimental)" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "warn"
 
 		return 0 # exit after this
 	fi
@@ -229,16 +240,33 @@ function compile_uboot_target() {
 
 	# Collect make environment variables, similar to 'kernel-make.sh'
 	uboot_make_envs=(
+		"PATH='${PATH}'" # preserve PATH as-is
 		"CFLAGS='${uboot_cflags}'"
 		"KCFLAGS='${uboot_cflags}'"
 		"CCACHE_BASEDIR=$(pwd)"
-		"PATH=${toolchain}:${toolchain2}:${PATH}"
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
 	)
 
+	# Pass the ccache directories explicitly, since we'll run under "env -i"
+	if [[ -n "${CCACHE_DIR}" ]]; then
+		uboot_make_envs+=("CCACHE_DIR=${CCACHE_DIR@Q}")
+	fi
+	if [[ -n "${CCACHE_TEMPDIR}" ]]; then
+		uboot_make_envs+=("CCACHE_TEMPDIR=${CCACHE_TEMPDIR@Q}")
+	fi
+
 	# workaround when two compilers are needed
-	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
-	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
+	cross_compile="CROSS_COMPILE=\"${CCACHE:+$CCACHE }$UBOOT_COMPILER\""
+	# When UBOOT_TOOLCHAIN2 is set, the board's uboot_custom_postprocess handles compilers;
+	# pass a harmless dummy env var since empty make parameters cause errors
+	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe"
+
+	call_extension_method "uboot_make_config" <<- 'UBOOT_MAKE_CONFIG'
+		*Hook to customize u-boot make environment*
+		Called right before invoking make for u-boot compilation.
+		Available array to modify:
+		  - uboot_make_envs[@]: environment variables passed via "env -i" (e.g., CCACHE_REMOTE_STORAGE)
+	UBOOT_MAKE_CONFIG
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
@@ -326,7 +354,7 @@ function loop_over_uboot_targets_and_do() {
 		eval "${_old_nullglob}"
 
 		IFS="${_old_ifs}" # restore for the body of loop
-		declare -g target uboot_name uboottempdir toolchain version
+		declare -g target uboot_name uboottempdir version
 		declare -g uboot_prefix="{u-boot:${uboot_target_counter}} "
 		declare -g target_make target_patchdir target_files
 		target_make=$(cut -d';' -f1 <<< "${target}")
@@ -401,26 +429,9 @@ function compile_uboot() {
 
 	display_alert "Compiling u-boot" "$version ${ubootdir}" "info"
 
-	# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-		local toolchain
-		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
-
-		if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
-			local toolchain2_type toolchain2_ver toolchain2
-			toolchain2_type=$(cut -d':' -f1 <<< "${UBOOT_TOOLCHAIN2}")
-			toolchain2_ver=$(cut -d':' -f2 <<< "${UBOOT_TOOLCHAIN2}")
-			toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
-			[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
-		fi
-		# build aarch64
-	fi
-
 	declare gcc_version_main
-	gcc_version_main="$(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
+	gcc_version_main="$(eval env "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
-	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local uboot_name="linux-u-boot-${BRANCH}-${BOARD}"
 
@@ -454,7 +465,7 @@ function compile_uboot() {
 	display_alert "Preparing u-boot general packaging" "${version} ${target_make}"
 
 	local -a postinst_functions=()
-	local destination=$uboottempdir
+	local destination="${uboottempdir}"
 
 	call_extension_method "pre_package_uboot_image" <<- 'PRE_PACKAGE_UBOOT_IMAGE'
 		*allow making some last minute changes before u-boot is packaged*
@@ -462,6 +473,21 @@ function compile_uboot() {
 		You can write to `$destination` here and it will be packaged.
 		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
 	PRE_PACKAGE_UBOOT_IMAGE
+
+	# Let's binwalk each file in the resulting package for analysis purposes
+	display_alert "Analyzing u-boot binaries with binwalk" "${uboot_name}" "info"
+	declare binfile base_binfile
+	find "${uboottempdir}" -type f | grep -v -e "u-boot-defconfig-target-" -e "u-boot-config-target-" -e "u-boot-metadata-target" | sort | while read -r binfile; do
+		base_binfile="$(basename "${binfile}")"
+		display_alert "Analyzing u-boot binary with binwalk" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
+		run_host_command_logged file --brief "${binfile}" "||" true ";" binwalk --run-as=root "${binfile}" "||" true # do not fail, ever
+
+		if [[ "${UBOOT_BINS_TO_OUTPUT}" == "yes" ]]; then
+			display_alert "Copying u-boot binary to output for later binwalk inspection" "'${base_binfile}' built on ${HOSTRELEASE}" "warn"
+			declare target="${SRC}/output/uboot-bin-${uboot_name}-${base_binfile}-host-${HOSTRELEASE}.bin"
+			run_host_command_logged cp -v "${binfile}" "${target}"
+		fi
+	done
 
 	artifact_package_hook_helper_board_side_functions "postinst" uboot_postinst_base "${postinst_functions[@]}"
 	unset uboot_postinst_base postinst_functions destination
@@ -531,7 +557,7 @@ function compile_uboot() {
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building u-boot deb" "(version: ${artifact_version})"
-	dpkg_deb_build "$uboottempdir" "uboot"
+	dpkg_deb_build "${uboottempdir}" "uboot"
 
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 

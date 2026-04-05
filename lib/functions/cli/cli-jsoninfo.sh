@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -17,10 +17,12 @@ function cli_json_info_run() {
 
 	prep_conf_main_minimal_ni
 
+	# shellcheck disable=SC2317
 	function json_info_logged() { # logging wrapper
 		LOG_SECTION="json_info" do_with_logging json_info_only
 	}
 
+	# shellcheck disable=SC2317
 	function json_info_only() {
 		prepare_python_and_pip # requires HOSTRELEASE
 
@@ -113,6 +115,9 @@ function cli_json_info_run() {
 		declare IMAGE_INFO_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.csv"
 		declare INVENTORY_BOARDS_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/boards-inventory.csv"
 		declare REDUCED_ARTIFACTS_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-reduced.json"
+		declare REDUCED_KERNELS_FILE="${BASE_INFO_OUTPUT_DIR}/kernels.ndjson"
+		declare REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE="${BASE_INFO_OUTPUT_DIR}/kernels-duplicate-config.json"
+		declare REDUCED_UBOOTS_FILE="${BASE_INFO_OUTPUT_DIR}/uboots.ndjson"
 		declare ARTIFACTS_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info.json"
 		declare ARTIFACTS_INFO_UPTODATE_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info-uptodate.json"
 		declare OUTDATED_ARTIFACTS_IMAGES_FILE="${BASE_INFO_OUTPUT_DIR}/outdated-artifacts-images.json"
@@ -199,6 +204,29 @@ function cli_json_info_run() {
 		if [[ ! -f "${REDUCED_ARTIFACTS_FILE}" ]]; then
 			display_alert "Reducing info into artifacts" "artifact-reducer" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/artifact-reducer.py "${IMAGE_INFO_FILE}" ">" "${REDUCED_ARTIFACTS_FILE}"
+
+			# Simple jq to get reduced kernels, with board and branch coordinates and number of images for each; NDJSON (newline-delimited JSON) format.
+			jq -c '.[] | select(.artifact_name == "kernel") | {"vars": .original_inputs.vars,"kernel":.inputs.LINUXFAMILY,"needed_by":.needed_by,"ARMBIAN_KERNEL_DEB_NAME":.inputs.ARMBIAN_KERNEL_DEB_NAME,"LINUXCONFIG":.inputs.LINUXCONFIG,"KERNELSOURCE":.inputs.KERNELSOURCE,"KERNELBRANCH":.inputs.KERNELBRANCH} | {"BOARD":.vars.BOARD,"BRANCH":.vars.BRANCH,"kernel":.kernel,"needed_by":.needed_by,"ARMBIAN_KERNEL_DEB_NAME":.ARMBIAN_KERNEL_DEB_NAME,"LINUXCONFIG":.LINUXCONFIG,"KERNELSOURCE":.KERNELSOURCE,"KERNELBRANCH":.KERNELBRANCH}' < "${REDUCED_ARTIFACTS_FILE}" > "${REDUCED_KERNELS_FILE}"
+
+			# Similar, but for u-boot's.
+			jq -c '.[] | select(.artifact_name == "uboot") | {"vars": .original_inputs.vars,"needed_by":.needed_by} | {"BOARD":.vars.BOARD,"BRANCH":.vars.BRANCH,"needed_by":.needed_by}' < "${REDUCED_ARTIFACTS_FILE}" > "${REDUCED_UBOOTS_FILE}"
+
+			# Kernels: find duplicate LINUXCONFIG's across the kernels, which is a mistake. Each LINUXFAMILY should have its own LINUXCONFIG, otherwise rewrites will go insane.
+			display_alert "Checking for duplicate LINUXCONFIG's across kernels" "kernel-dup-linuxconfig-check" "info"
+			jq -s 'to_entries | map(.value) | group_by(.LINUXCONFIG) | map(select(length > 1)) | map({LINUXCONFIG: .[0].LINUXCONFIG,duplicates: map({BOARD, ARMBIAN_KERNEL_DEB_NAME, BRANCH, KERNELSOURCE, KERNELBRANCH})})' "${REDUCED_KERNELS_FILE}" > "${REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE}"
+
+			# if "${REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE}" is larger than 3 bytes, we have duplicates; spit an error (don't exit)
+			if [[ $(stat -c%s "${REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE}") -gt 3 ]]; then
+				display_alert "Duplicate LINUXCONFIG's found!" "See ${REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE} for details" "err"
+				run_host_command_logged jq -C '.' "${REDUCED_KERNELS_DUPLICATE_LINUXCONFIG_FILE}"
+			else
+				display_alert "No duplicate LINUXCONFIG's found" "all good" "info"
+			fi
+		fi
+
+		if [[ "${ARMBIAN_COMMAND}" == "inventory-artifacts" ]]; then
+			display_alert "Done with" "inventory-artifacts" "info"
+			return 0
 		fi
 
 		# The artifact info extractor.

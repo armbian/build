@@ -1,5 +1,6 @@
 # Rockchip RK3588s 2GB-16GB GBE eMMC NVMe SATA USB3 WiFi
 BOARD_NAME="Station M3"
+BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="chainsx"
 KERNEL_TARGET="vendor,current"

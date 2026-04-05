@@ -1,0 +1,908 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Muhammed Efe Cetin <efectn@protonmail.com>
+Date: Wed, 22 Oct 2025 12:44:49 +0200
+Subject: khadas-edge2: add support for KBI and apply some patches from BSP
+ uboot
+
+---
+ arch/arm/dts/rk3588-khadas-edge2-u-boot.dtsi             |   3 +
+ board/khadas/khadas-edge2-rk3588s/Makefile               |   3 +
+ board/khadas/khadas-edge2-rk3588s/khadas-edge2-rk3588s.c |  95 ++
+ cmd/Kconfig                                              |   6 +
+ cmd/Makefile                                             |   1 +
+ cmd/kbi.c                                                | 710 ++++++++++
+ configs/khadas-edge2-rk3588s_defconfig                   |   6 +
+ 7 files changed, 824 insertions(+)
+
+diff --git a/arch/arm/dts/rk3588-khadas-edge2-u-boot.dtsi b/arch/arm/dts/rk3588-khadas-edge2-u-boot.dtsi
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/arm/dts/rk3588-khadas-edge2-u-boot.dtsi
+@@ -0,0 +1,3 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++
++#include "rk3588s-u-boot.dtsi"
+\ No newline at end of file
+diff --git a/board/khadas/khadas-edge2-rk3588s/Makefile b/board/khadas/khadas-edge2-rk3588s/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/khadas/khadas-edge2-rk3588s/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0+
++
++obj-y += khadas-edge2-rk3588s.o
+diff --git a/board/khadas/khadas-edge2-rk3588s/khadas-edge2-rk3588s.c b/board/khadas/khadas-edge2-rk3588s/khadas-edge2-rk3588s.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/khadas/khadas-edge2-rk3588s/khadas-edge2-rk3588s.c
+@@ -0,0 +1,95 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2022 Wesion Technology Co., Ltd
++ */
++
++#include <dm.h>
++#include <adc.h>
++#include <env.h>
++#include <i2c.h>
++#include <dm/uclass.h>
++#include <asm/gpio.h>
++#include <linux/delay.h>
++#include <linux/kernel.h>
++#include <log.h>
++#include <stdlib.h>
++#include <power/regulator.h>
++#include <command.h>
++
++#define HW_VERSION_ADC_VALUE_TOLERANCE  0x28
++#define HW_VERSION_ADC_VAL_EDGE2_V11    0x2b3
++#define HW_VERSION_ADC_VAL_EDGE2_V12    0x56d
++#define HW_VERSION_ADC_VAL_EDGE2_V13    0x807
++
++static int set_hw_version(void)
++{
++	unsigned int val = 0;
++	int ret;
++	struct udevice *dev;
++	int current_channel = 5;
++
++	ret = uclass_get_device_by_name(UCLASS_ADC, "adc@fec10000", &dev);
++	if (ret) {
++		printf("%s uclass_get_device_by_name fail! ret=%d\n", __func__, ret);
++		return 0;
++    }
++
++	udelay(100);
++
++	ret = adc_start_channel(dev, current_channel);
++	if (ret) {
++		printf("%s adc_start_channel fail! ret=%d\n", __func__, ret);
++		return 0;
++    }
++
++	ret = adc_channel_data(dev, current_channel, &val);
++	if (ret) {
++		printf("%s adc_channel_data fail! ret=%d\n", __func__, ret);
++		return 0;
++    }
++
++	if ((val >= HW_VERSION_ADC_VAL_EDGE2_V11 - HW_VERSION_ADC_VALUE_TOLERANCE) &&
++	    (val <= HW_VERSION_ADC_VAL_EDGE2_V11 + HW_VERSION_ADC_VALUE_TOLERANCE)) {
++		env_set("hwver", "EDGE2.V11");
++	} else if ((val >= HW_VERSION_ADC_VAL_EDGE2_V12 - HW_VERSION_ADC_VALUE_TOLERANCE) &&
++		   (val <= HW_VERSION_ADC_VAL_EDGE2_V12 + HW_VERSION_ADC_VALUE_TOLERANCE)) {
++		env_set("hwver", "EDGE2.V12");
++	} else if ((val >= HW_VERSION_ADC_VAL_EDGE2_V13 - HW_VERSION_ADC_VALUE_TOLERANCE) &&
++		   (val <= HW_VERSION_ADC_VAL_EDGE2_V13 + HW_VERSION_ADC_VALUE_TOLERANCE)) {
++		env_set("hwver", "EDGE2.V13");
++	} else {
++		env_set("hwver", "Unknown");
++	}
++
++	return 0;
++}
++
++int rk_board_late_init(void)
++{
++    unsigned int val;
++	u8 linebuf[1];
++
++	/* Set FAN test */
++	run_command("i2c dev 2; i2c mw 18 96 1", 0);
++
++	/* Set Green LED on */
++	run_command("gpio set 138; gpio clear 139; gpio clear 140", 0);
++
++	/* GPIO4_A2 vcc 5v */
++	run_command("gpio set 130", 0);
++
++    /* Enable Pogo power */
++    int ret = adc_channel_single_shot("adc@fec10000", 2, &val);
++	if (ret) {
++		printf("%s adc_channel_single_shot fail! ret=%d\n", __func__, ret);
++		return 0;
++	}
++
++	if (!ret && val < 50) {
++		run_command("gpio set 105", 1); /* pogo_power_enable */
++	}
++
++	set_hw_version();
++
++	return 0;
++}
+\ No newline at end of file
+diff --git a/cmd/Kconfig b/cmd/Kconfig
+index 111111111111..222222222222 100644
+--- a/cmd/Kconfig
++++ b/cmd/Kconfig
+@@ -190,6 +190,12 @@ config CMD_FWU_METADATA
+ 	help
+ 	  Command to read the metadata and dump it's contents
+ 
++config CMD_KHADAS_KBI
++	bool "khadas_kbi"
++	default y
++	help
++	  Command to show KBI instructions.
++
+ config CMD_HELP
+ 	bool "help"
+ 	default y
+diff --git a/cmd/Makefile b/cmd/Makefile
+index 111111111111..222222222222 100644
+--- a/cmd/Makefile
++++ b/cmd/Makefile
+@@ -12,6 +12,7 @@ obj-y += panic.o
+ obj-y += version.o
+ 
+ # command
++obj-$(CONFIG_CMD_KHADAS_KBI) += kbi.o
+ obj-$(CONFIG_CMD_ARMFFA) += armffa.o
+ obj-$(CONFIG_CMD_2048) += 2048.o
+ obj-$(CONFIG_CMD_ACPI) += acpi.o
+diff --git a/cmd/kbi.c b/cmd/kbi.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/cmd/kbi.c
+@@ -0,0 +1,710 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * KBI (Khadas Bootloader Instructions) driver
++ * 
++ * Copyright (C) 2025 Khadas
++ */
++
++#include <dm.h>
++#include <dm/uclass.h>
++#include <adc.h>
++#include <env.h>
++#include <i2c.h>
++#include <asm/gpio.h>
++#include <linux/delay.h>
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <log.h>
++#include <command.h>
++
++/* MCU I2C Configuration */
++#define KBI_MCU_ADDR			0x18
++#define KBI_I2C_BUS_NUM			2
++
++/* Register Map */
++#define REG_PASSWD_VENDOR		0x00
++#define REG_USID			0x06
++#define REG_VERSION			0x12
++
++#define REG_BOOT_MODE			0x20
++#define REG_BOOT_EN_DCIN		0x21
++#define REG_BOOT_EN_RTC			0x22
++#define REG_LED_ON			0x23
++#define REG_LED_OFF			0x24
++#define REG_LED_RGB_ON_R		0x25
++#define REG_LED_RGB_ON_G		0x26
++#define REG_LED_RGB_ON_B		0x27
++#define REG_LED_RGB_OFF_R		0x28
++#define REG_LED_RGB_OFF_G		0x29
++#define REG_LED_RGB_OFF_B		0x2A
++#define REG_REST_CONF			0x2C
++#define REG_SLEEP_EN			0x2E
++
++#define REG_PWD_WRITE			0x81
++#define REG_PWD_DATA			0x82
++#define REG_LED_ON_RAM			0x89
++#define REG_FAN_CTRL			0x8A
++#define REG_WDT_EN			0x8B
++
++#define REG_SYS_RST			0x91
++#define REG_BOOT_FLAG			0x92
++#define REG_FAN_TEST			0x96
++
++/* Configuration Constants */
++#define VERSION_LENGTH			2
++#define USID_LENGTH			7
++
++#define HW_VERSION_ADC_CHANNEL		5
++#define HW_VERSION_ADC_TOLERANCE	0x28
++#define HW_VERSION_ADC_VAL_V11		0x2b3
++#define HW_VERSION_ADC_VAL_V12		0x56d
++#define HW_VERSION_ADC_VAL_V13		0x807
++
++/* LED Modes */
++enum led_mode {
++	LED_MODE_OFF = 0,
++	LED_MODE_ON,
++	LED_MODE_R_BREATHE,
++	LED_MODE_G_BREATHE,
++	LED_MODE_B_BREATHE,
++	LED_MODE_RG_BREATHE,
++	LED_MODE_RB_BREATHE,
++	LED_MODE_GB_BREATHE,
++	LED_MODE_RGB_BREATHE,
++	LED_MODE_R_HEARTBEAT,
++	LED_MODE_G_HEARTBEAT,
++	LED_MODE_B_HEARTBEAT,
++	LED_MODE_RG_HEARTBEAT,
++	LED_MODE_RB_HEARTBEAT,
++	LED_MODE_GB_HEARTBEAT,
++	LED_MODE_RGB_HEARTBEAT,
++	LED_MODE_MAX
++};
++
++enum led_system_state {
++	LED_SYSTEM_OFF = 0,
++	LED_SYSTEM_ON
++};
++
++enum boot_trigger {
++	BOOT_TRIGGER_RTC = 1,
++	BOOT_TRIGGER_DCIN
++};
++
++/* LED mode string mapping */
++static const char * const led_mode_str[] = {
++	[LED_MODE_OFF]			= "off",
++	[LED_MODE_ON]			= "on",
++	[LED_MODE_R_BREATHE]		= "r_breathe",
++	[LED_MODE_G_BREATHE]		= "g_breathe",
++	[LED_MODE_B_BREATHE]		= "b_breathe",
++	[LED_MODE_RG_BREATHE]		= "rg_breathe",
++	[LED_MODE_RB_BREATHE]		= "rb_breathe",
++	[LED_MODE_GB_BREATHE]		= "gb_breathe",
++	[LED_MODE_RGB_BREATHE]		= "rgb_breathe",
++	[LED_MODE_R_HEARTBEAT]		= "r_heartbeat",
++	[LED_MODE_G_HEARTBEAT]		= "g_heartbeat",
++	[LED_MODE_B_HEARTBEAT]		= "b_heartbeat",
++	[LED_MODE_RG_HEARTBEAT]		= "rg_heartbeat",
++	[LED_MODE_RB_HEARTBEAT]		= "rb_heartbeat",
++	[LED_MODE_GB_HEARTBEAT]		= "gb_heartbeat",
++	[LED_MODE_RGB_HEARTBEAT]	= "rgb_heartbeat",
++};
++
++/**
++ * struct kbi_mcu - KBI MCU instance data
++ * @i2c_dev: I2C device for MCU communication
++ */
++struct kbi_mcu {
++	struct udevice *i2c_dev;
++};
++
++static struct kbi_mcu g_kbi;
++
++/**
++ * kbi_i2c_init() - Initialize I2C communication with MCU
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_i2c_init(void)
++{
++	struct udevice *bus;
++	int ret;
++
++	if (g_kbi.i2c_dev)
++		return 0;
++
++	ret = uclass_get_device_by_seq(UCLASS_I2C, KBI_I2C_BUS_NUM, &bus);
++	if (ret) {
++		printf("KBI: Failed to get I2C bus %d: %d\n", 
++		       KBI_I2C_BUS_NUM, ret);
++		return ret;
++	}
++
++	ret = i2c_get_chip(bus, KBI_MCU_ADDR, 1, &g_kbi.i2c_dev);
++	if (ret) {
++		printf("KBI: Failed to get I2C chip 0x%x: %d\n",
++		       KBI_MCU_ADDR, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++/**
++ * kbi_i2c_read_reg() - Read a single register from MCU
++ * @reg: Register address
++ * @val: Pointer to store read value
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_i2c_read_reg(u8 reg, u8 *val)
++{
++	int ret;
++
++	ret = kbi_i2c_init();
++	if (ret)
++		return ret;
++
++	ret = dm_i2c_read(g_kbi.i2c_dev, reg, val, 1);
++	if (ret) {
++		printf("KBI: Failed to read reg 0x%02x: %d\n", reg, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++/**
++ * kbi_i2c_write_reg() - Write a single register to MCU
++ * @reg: Register address
++ * @val: Value to write
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_i2c_write_reg(u8 reg, u8 val)
++{
++	int ret;
++
++	ret = kbi_i2c_init();
++	if (ret)
++		return ret;
++
++	ret = dm_i2c_write(g_kbi.i2c_dev, reg, &val, 1);
++	if (ret) {
++		printf("KBI: Failed to write reg 0x%02x: %d\n", reg, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++/**
++ * kbi_i2c_read_block() - Read multiple consecutive registers
++ * @start_reg: Starting register address
++ * @buf: Buffer to store read data
++ * @len: Number of bytes to read
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_i2c_read_block(u8 start_reg, u8 *buf, size_t len)
++{
++	int ret;
++
++	if (!buf || len == 0)
++		return -EINVAL;
++
++	ret = kbi_i2c_init();
++	if (ret)
++		return ret;
++
++	ret = dm_i2c_read(g_kbi.i2c_dev, start_reg, buf, len);
++	if (ret) {
++		printf("KBI: Failed to read block at 0x%02x: %d\n",
++		       start_reg, ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++/**
++ * kbi_get_version() - Read and display MCU firmware version
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_get_version(void)
++{
++	u8 version[VERSION_LENGTH];
++	int ret;
++	int i;
++
++	ret = kbi_i2c_read_block(REG_VERSION, version, VERSION_LENGTH);
++	if (ret)
++		return ret;
++
++	printf("MCU firmware version: ");
++	for (i = 0; i < VERSION_LENGTH; i++)
++		printf("%02x ", version[i]);
++	printf("\n");
++
++	return 0;
++}
++
++/**
++ * kbi_get_usid() - Read USID and store in environment
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_get_usid(void)
++{
++	u8 usid[USID_LENGTH];
++	char serial[USID_LENGTH * 2 + 1];
++	int ret;
++	int i;
++
++	ret = kbi_i2c_read_block(REG_USID, usid, USID_LENGTH);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < USID_LENGTH; i++)
++		sprintf(serial + i * 2, "%02X", usid[i]);
++
++	printf("USID: %s\n", serial);
++	env_set("usid", serial);
++
++	return 0;
++}
++
++/**
++ * kbi_get_hw_version() - Detect hardware version via ADC
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_get_hw_version(void)
++{
++	struct udevice *dev;
++	unsigned int adc_val;
++	const char *hw_ver_str;
++	int ret;
++
++	ret = uclass_get_device_by_driver(UCLASS_ADC,
++					   DM_DRIVER_GET(rockchip_saradc),
++					   &dev);
++	if (ret) {
++		printf("KBI: Failed to get ADC device: %d\n", ret);
++		return ret;
++	}
++
++	ret = adc_channel_single_shot(dev->name, HW_VERSION_ADC_CHANNEL, &adc_val);
++	if (ret) {
++		printf("KBI: Failed to read ADC: %d\n", ret);
++		return ret;
++	}
++
++	printf("ADC channel %d value: 0x%x (%u)\n",
++	       HW_VERSION_ADC_CHANNEL, adc_val, adc_val);
++
++	/* Determine hardware version based on ADC value */
++	if (adc_val >= HW_VERSION_ADC_VAL_V11 - HW_VERSION_ADC_TOLERANCE &&
++	    adc_val <= HW_VERSION_ADC_VAL_V11 + HW_VERSION_ADC_TOLERANCE) {
++		hw_ver_str = "EDGE2.V11";
++	} else if (adc_val >= HW_VERSION_ADC_VAL_V12 - HW_VERSION_ADC_TOLERANCE &&
++		   adc_val <= HW_VERSION_ADC_VAL_V12 + HW_VERSION_ADC_TOLERANCE) {
++		hw_ver_str = "EDGE2.V12";
++	} else if (adc_val >= HW_VERSION_ADC_VAL_V13 - HW_VERSION_ADC_TOLERANCE &&
++		   adc_val <= HW_VERSION_ADC_VAL_V13 + HW_VERSION_ADC_TOLERANCE) {
++		hw_ver_str = "EDGE2.V13";
++	} else {
++		hw_ver_str = "Unknown";
++	}
++
++	printf("Hardware version: %s\n", hw_ver_str);
++	env_set("hwver", hw_ver_str);
++
++	return 0;
++}
++
++/**
++ * led_str_to_mode() - Convert LED mode string to enum value
++ * @str: LED mode string
++ *
++ * Return: LED mode enum value, or -EINVAL if invalid
++ */
++static int led_str_to_mode(const char *str)
++{
++	int i;
++
++	if (!str)
++		return -EINVAL;
++
++	for (i = 0; i < ARRAY_SIZE(led_mode_str); i++) {
++		if (strcmp(str, led_mode_str[i]) == 0)
++			return i;
++	}
++
++	return -EINVAL;
++}
++
++/**
++ * kbi_get_led_mode() - Read and display current LED mode
++ * @state: LED_SYSTEM_OFF or LED_SYSTEM_ON
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_get_led_mode(enum led_system_state state)
++{
++	u8 mode, r, g, b;
++	u8 mode_reg, r_reg, g_reg, b_reg;
++	int ret;
++	const char *state_str;
++
++	if (state == LED_SYSTEM_OFF) {
++		mode_reg = REG_LED_OFF;
++		r_reg = REG_LED_RGB_OFF_R;
++		g_reg = REG_LED_RGB_OFF_G;
++		b_reg = REG_LED_RGB_OFF_B;
++		state_str = "systemoff";
++	} else {
++		mode_reg = REG_LED_ON;
++		r_reg = REG_LED_RGB_ON_R;
++		g_reg = REG_LED_RGB_ON_G;
++		b_reg = REG_LED_RGB_ON_B;
++		state_str = "systemon";
++	}
++
++	ret = kbi_i2c_read_reg(mode_reg, &mode);
++	if (ret)
++		return ret;
++
++	if (mode >= LED_MODE_MAX) {
++		printf("Invalid LED mode: 0x%02x\n", mode);
++		return -EINVAL;
++	}
++
++	printf("[%s] LED mode: %s", state_str, led_mode_str[mode]);
++
++	/* For static on/off modes, also display RGB values */
++	if (mode == LED_MODE_ON || mode == LED_MODE_OFF) {
++		ret = kbi_i2c_read_reg(r_reg, &r);
++		if (ret)
++			return ret;
++		ret = kbi_i2c_read_reg(g_reg, &g);
++		if (ret)
++			return ret;
++		ret = kbi_i2c_read_reg(b_reg, &b);
++		if (ret)
++			return ret;
++
++		printf(" [R:0x%02x G:0x%02x B:0x%02x]", r, g, b);
++	}
++
++	printf("\n");
++	return 0;
++}
++
++/**
++ * kbi_set_led_rgb() - Set RGB LED color values
++ * @state: LED_SYSTEM_OFF or LED_SYSTEM_ON
++ * @r: Red value (0-255)
++ * @g: Green value (0-255)
++ * @b: Blue value (0-255)
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_set_led_rgb(enum led_system_state state, u8 r, u8 g, u8 b)
++{
++	u8 r_reg, g_reg, b_reg;
++	int ret;
++
++	if (state == LED_SYSTEM_OFF) {
++		r_reg = REG_LED_RGB_OFF_R;
++		g_reg = REG_LED_RGB_OFF_G;
++		b_reg = REG_LED_RGB_OFF_B;
++	} else {
++		r_reg = REG_LED_RGB_ON_R;
++		g_reg = REG_LED_RGB_ON_G;
++		b_reg = REG_LED_RGB_ON_B;
++	}
++
++	ret = kbi_i2c_write_reg(r_reg, r);
++	if (ret)
++		return ret;
++
++	ret = kbi_i2c_write_reg(g_reg, g);
++	if (ret)
++		return ret;
++
++	ret = kbi_i2c_write_reg(b_reg, b);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++/**
++ * kbi_set_led_mode() - Set LED mode
++ * @state: LED_SYSTEM_OFF or LED_SYSTEM_ON
++ * @color: Color string ("r", "g", "b", "rg", "rb", "gb", "rgb")
++ * @mode_str: Mode string (see led_mode_str array)
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_set_led_mode(enum led_system_state state,
++			     const char *color, const char *mode_str)
++{
++	char full_mode_str[32];
++	int mode;
++	u8 mode_reg;
++	u8 r = 0, g = 0, b = 0;
++	int ret;
++
++	if (!color || !mode_str)
++		return -EINVAL;
++
++	/* Handle on/off modes with color specification */
++	if (strcmp(mode_str, "on") == 0 || strcmp(mode_str, "off") == 0) {
++		/* Validate color string */
++		if (strcmp(color, "r") != 0 && strcmp(color, "g") != 0 &&
++		    strcmp(color, "b") != 0 && strcmp(color, "rg") != 0 &&
++		    strcmp(color, "rb") != 0 && strcmp(color, "gb") != 0 &&
++		    strcmp(color, "rgb") != 0) {
++			printf("Invalid color: %s\n", color);
++			return -EINVAL;
++		}
++
++		mode = (strcmp(mode_str, "on") == 0) ? LED_MODE_ON : LED_MODE_OFF;
++
++		/* Set RGB values based on color and mode */
++		if (mode == LED_MODE_ON) {
++			if (strchr(color, 'r'))
++				r = 0xff;
++			if (strchr(color, 'g'))
++				g = 0xff;
++			if (strchr(color, 'b'))
++				b = 0xff;
++		}
++	} else {
++		/* Combine color and mode for other modes (e.g., "r_breathe") */
++		snprintf(full_mode_str, sizeof(full_mode_str), "%s_%s",
++			 color, mode_str);
++		mode = led_str_to_mode(full_mode_str);
++		if (mode < 0) {
++			printf("Invalid LED mode: %s\n", full_mode_str);
++			return -EINVAL;
++		}
++	}
++
++	mode_reg = (state == LED_SYSTEM_OFF) ? REG_LED_OFF : REG_LED_ON;
++
++	/* Set LED mode first */
++	ret = kbi_i2c_write_reg(mode_reg, mode);
++	if (ret)
++		return ret;
++
++	/* For on/off modes, set RGB values */
++	if (mode == LED_MODE_ON || mode == LED_MODE_OFF) {
++		ret = kbi_set_led_rgb(state, r, g, b);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++/**
++ * kbi_get_boot_trigger() - Read boot trigger enable state
++ * @trigger: BOOT_TRIGGER_RTC or BOOT_TRIGGER_DCIN
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_get_boot_trigger(enum boot_trigger trigger)
++{
++	u8 enable;
++	u8 reg;
++	const char *name;
++	int ret;
++
++	if (trigger == BOOT_TRIGGER_RTC) {
++		reg = REG_BOOT_EN_RTC;
++		name = "RTC";
++	} else if (trigger == BOOT_TRIGGER_DCIN) {
++		reg = REG_BOOT_EN_DCIN;
++		name = "DCIN";
++	} else {
++		return -EINVAL;
++	}
++
++	ret = kbi_i2c_read_reg(reg, &enable);
++	if (ret)
++		return ret;
++
++	printf("Boot trigger %s: %s\n", name,
++	       enable ? "enabled" : "disabled");
++
++	return 0;
++}
++
++/**
++ * kbi_set_boot_trigger() - Set boot trigger enable state
++ * @trigger: BOOT_TRIGGER_RTC or BOOT_TRIGGER_DCIN
++ * @enable: 1 to enable, 0 to disable
++ *
++ * Return: 0 on success, negative error code on failure
++ */
++static int kbi_set_boot_trigger(enum boot_trigger trigger, bool enable)
++{
++	u8 reg;
++
++	if (trigger == BOOT_TRIGGER_RTC) {
++		reg = REG_BOOT_EN_RTC;
++	} else if (trigger == BOOT_TRIGGER_DCIN) {
++		reg = REG_BOOT_EN_DCIN;
++	} else {
++		return -EINVAL;
++	}
++
++	return kbi_i2c_write_reg(reg, enable ? 1 : 0);
++}
++
++/* Command implementations */
++
++static int do_kbi_version(struct cmd_tbl *cmdtp, int flag, int argc,
++			  char *const argv[])
++{
++	return kbi_get_version();
++}
++
++static int do_kbi_usid(struct cmd_tbl *cmdtp, int flag, int argc,
++		       char *const argv[])
++{
++	return kbi_get_usid();
++}
++
++static int do_kbi_hwver(struct cmd_tbl *cmdtp, int flag, int argc,
++			char *const argv[])
++{
++	return kbi_get_hw_version();
++}
++
++static int do_kbi_led(struct cmd_tbl *cmdtp, int flag, int argc,
++		      char *const argv[])
++{
++	enum led_system_state state;
++	const char *op;
++	const char *color;
++	const char *mode;
++
++	if (argc < 3)
++		return CMD_RET_USAGE;
++
++	/* Parse system state */
++	if (strcmp(argv[1], "systemoff") == 0) {
++		state = LED_SYSTEM_OFF;
++	} else if (strcmp(argv[1], "systemon") == 0) {
++		state = LED_SYSTEM_ON;
++	} else {
++		return CMD_RET_USAGE;
++	}
++
++	op = argv[2];
++
++	if (strcmp(op, "r") == 0) {
++		/* Read LED mode */
++		return kbi_get_led_mode(state);
++	} else if (strcmp(op, "w") == 0) {
++		/* Write LED mode */
++		if (argc < 5)
++			return CMD_RET_USAGE;
++
++		color = argv[3];
++		mode = argv[4];
++
++		return kbi_set_led_mode(state, color, mode);
++	}
++
++	return CMD_RET_USAGE;
++}
++
++static int do_kbi_trigger(struct cmd_tbl *cmdtp, int flag, int argc,
++			  char *const argv[])
++{
++	enum boot_trigger trigger;
++	const char *op;
++	int enable;
++
++	if (argc < 3)
++		return CMD_RET_USAGE;
++
++	/* Parse trigger type */
++	if (strcmp(argv[1], "rtc") == 0) {
++		trigger = BOOT_TRIGGER_RTC;
++	} else if (strcmp(argv[1], "dcin") == 0) {
++		trigger = BOOT_TRIGGER_DCIN;
++	} else {
++		return CMD_RET_USAGE;
++	}
++
++	op = argv[2];
++
++	if (strcmp(op, "r") == 0) {
++		/* Read trigger state */
++		return kbi_get_boot_trigger(trigger);
++	} else if (strcmp(op, "w") == 0) {
++		/* Write trigger state */
++		if (argc < 4)
++			return CMD_RET_USAGE;
++
++		enable = simple_strtoul(argv[3], NULL, 10);
++		if (enable != 0 && enable != 1) {
++			printf("Invalid value: %s (must be 0 or 1)\n", argv[3]);
++			return CMD_RET_USAGE;
++		}
++
++		return kbi_set_boot_trigger(trigger, enable);
++	}
++
++	return CMD_RET_USAGE;
++}
++
++static struct cmd_tbl cmd_kbi_sub[] = {
++	U_BOOT_CMD_MKENT(version, 1, 1, do_kbi_version, "", ""),
++	U_BOOT_CMD_MKENT(usid, 1, 1, do_kbi_usid, "", ""),
++	U_BOOT_CMD_MKENT(hwver, 1, 1, do_kbi_hwver, "", ""),
++	U_BOOT_CMD_MKENT(led, 5, 1, do_kbi_led, "", ""),
++	U_BOOT_CMD_MKENT(trigger, 4, 1, do_kbi_trigger, "", ""),
++};
++
++static int do_kbi(struct cmd_tbl *cmdtp, int flag, int argc,
++		  char *const argv[])
++{
++	struct cmd_tbl *c;
++
++	if (argc < 2)
++		return CMD_RET_USAGE;
++
++	/* Strip off leading 'kbi' command argument */
++	argc--;
++	argv++;
++
++	c = find_cmd_tbl(argv[0], cmd_kbi_sub, ARRAY_SIZE(cmd_kbi_sub));
++
++	if (c)
++		return c->cmd(cmdtp, flag, argc, argv);
++	else
++		return CMD_RET_USAGE;
++}
++
++U_BOOT_CMD(
++	kbi, 6, 1, do_kbi,
++	"KBI (Khadas Bootloader Instructions)",
++	"version                                    - Read MCU firmware version\n"
++	"kbi usid                                       - Read unique serial ID\n"
++	"kbi hwver                                      - Read hardware version\n"
++	"kbi led [systemoff|systemon] r                 - Read LED mode\n"
++	"kbi led [systemoff|systemon] w <color> <mode>  - Set LED mode\n"
++	"    color: r, g, b, rg, rb, gb, rgb\n"
++	"    mode:  off, on, breathe, heartbeat\n"
++	"kbi trigger [rtc|dcin] r                       - Read boot trigger state\n"
++	"kbi trigger [rtc|dcin] w <0|1>                 - Set boot trigger (0=disable, 1=enable)"
++);
+\ No newline at end of file
+diff --git a/configs/khadas-edge2-rk3588s_defconfig b/configs/khadas-edge2-rk3588s_defconfig
+index 111111111111..222222222222 100644
+--- a/configs/khadas-edge2-rk3588s_defconfig
++++ b/configs/khadas-edge2-rk3588s_defconfig
+@@ -38,6 +38,7 @@ CONFIG_CMD_I2C=y
+ CONFIG_CMD_MMC=y
+ CONFIG_CMD_SPI=y
+ CONFIG_CMD_USB=y
++CONFIG_CMD_KHADAS_KBI=y
+ CONFIG_CMD_USB_MASS_STORAGE=y
+ # CONFIG_CMD_SETEXPR is not set
+ CONFIG_CMD_TFTPPUT=y
+@@ -104,3 +105,8 @@ CONFIG_USB_GADGET=y
+ CONFIG_USB_GADGET_PRODUCT_NUM=0x350a
+ CONFIG_SPL_TINY_MEMSET=y
+ CONFIG_ERRNO_STR=y
++CONFIG_SPL_ADC=y
++CONFIG_CMD_ADC=y
++CONFIG_BUTTON_ADC=y
++CONFIG_PMIC_RK8XX=y
++CONFIG_REGULATOR_RK8XX=y
+\ No newline at end of file
+-- 
+Armbian
+

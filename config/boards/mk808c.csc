@@ -1,8 +1,9 @@
 # Allwinner A20 dual core 1Gb SoC
 BOARD_NAME="MK808C"
+BOARD_VENDOR="allwinner"
 BOARDFAMILY="sun7i"
 BOARD_MAINTAINER=""
 HAS_VIDEO_OUTPUT="no"
 BOOTCONFIG="MK808C_defconfig"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"

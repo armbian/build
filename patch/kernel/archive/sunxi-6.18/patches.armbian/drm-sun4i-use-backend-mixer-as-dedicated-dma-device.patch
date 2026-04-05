@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chen-Yu Tsai <wenst@chromium.org>
+Date: Wed, 11 Mar 2026 17:49:28 +0800
+Subject: drm/sun4i: Use backend/mixer as dedicated DMA device
+
+The sun4i DRM driver deals with DMA constraints in a peculiar way.
+Instead of using the actual DMA device in various helpers, it justs
+reconfigures the DMA constraints of the virtual display device using
+the DMA device's device tree node by calling of_dma_configure().
+
+Turns out of_dma_configure() should only be called from bus code.
+Lately this also triggers a big warning through of_iommu_configure()
+and ultimately __iommu_probe_device():
+
+    late IOMMU probe at driver bind, something fishy here!
+
+Now that the GEM DMA helpers have proper support for allocating
+and mapping buffers with a dedicated DMA device, switch over to
+it as the proper solution.
+
+The mixer change was tested on a Pine H64 model B. The backend change
+was only compile tested. Though I don't expect any issues, help testing
+on an older device would be appreciated.
+
+Signed-off-by: Chen-Yu Tsai <wenst@chromium.org>
+Acked-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/gpu/drm/sun4i/sun4i_backend.c | 27 +++++-----
+ drivers/gpu/drm/sun4i/sun8i_mixer.c   | 27 +++++-----
+ 2 files changed, 30 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_backend.c b/drivers/gpu/drm/sun4i/sun4i_backend.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_backend.c
++++ b/drivers/gpu/drm/sun4i/sun4i_backend.c
+@@ -794,18 +794,21 @@ static int sun4i_backend_bind(struct device *dev, struct device *master,
+ 	dev_set_drvdata(dev, backend);
+ 	spin_lock_init(&backend->frontend_lock);
+ 
+-	if (of_property_present(dev->of_node, "interconnects")) {
+-		/*
+-		 * This assume we have the same DMA constraints for all our the
+-		 * devices in our pipeline (all the backends, but also the
+-		 * frontends). This sounds bad, but it has always been the case
+-		 * for us, and DRM doesn't do per-device allocation either, so
+-		 * we would need to fix DRM first...
+-		 */
+-		ret = of_dma_configure(drm->dev, dev->of_node, true);
+-		if (ret)
+-			return ret;
+-	}
++	/*
++	 * This assume we have the same DMA constraints for all our the
++	 * devices in our pipeline (all the backends, but also the
++	 * frontends). This sounds bad, but it has always been the case
++	 * for us, and DRM doesn't do per-device allocation either, so
++	 * we would need to fix DRM first...
++	 *
++	 * Always use the first bound backend as the DMA device. While
++	 * our device trees always have all backends enabled, some in
++	 * the wild may actually have the first one disabled. If both
++	 * are enabled, the order in which they are bound is guaranteed
++	 * since the driver adds components in order.
++	 */
++	if (drm_dev_dma_dev(drm) == drm->dev)
++		drm_dev_set_dma_dev(drm, dev);
+ 
+ 	backend->engine.node = dev->of_node;
+ 	backend->engine.ops = &sun4i_backend_engine_ops;
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -530,18 +530,21 @@ static int sun8i_mixer_bind(struct device *dev, struct device *master,
+ 	dev_set_drvdata(dev, mixer);
+ 	mixer->engine.node = dev->of_node;
+ 
+-	if (of_property_present(dev->of_node, "iommus")) {
+-		/*
+-		 * This assume we have the same DMA constraints for
+-		 * all our the mixers in our pipeline. This sounds
+-		 * bad, but it has always been the case for us, and
+-		 * DRM doesn't do per-device allocation either, so we
+-		 * would need to fix DRM first...
+-		 */
+-		ret = of_dma_configure(drm->dev, dev->of_node, true);
+-		if (ret)
+-			return ret;
+-	}
++	/*
++	 * This assume we have the same DMA constraints for all our the
++	 * devices in our pipeline (all the backends, but also the
++	 * frontends). This sounds bad, but it has always been the case
++	 * for us, and DRM doesn't do per-device allocation either, so
++	 * we would need to fix DRM first...
++	 *
++	 * Always use the first bound backend as the DMA device. While
++	 * our device trees always have all backends enabled, some in
++	 * the wild may actually have the first one disabled. If both
++	 * are enabled, the order in which they are bound is guaranteed
++	 * since the driver adds components in order.
++	 */
++	if (drm_dev_dma_dev(drm) == drm->dev)
++		drm_dev_set_dma_dev(drm, dev);
+ 
+ 	/*
+ 	 * While this function can fail, we shouldn't do anything
+-- 
+Armbian
+

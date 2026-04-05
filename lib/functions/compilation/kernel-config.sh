@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -86,6 +86,13 @@ function kernel_config_initialize() {
 # These kernel config hooks are always called twice, once without being in kernel directory and once with current directory being the kernel work directory.
 # You must check with "if [[ -f .config ]]; then" in which of the two phases you are. Otherwise, functions like "kernel_config_set_y" won't work.
 function call_extensions_kernel_config() {
+	# Prepare arrays and dict for modifications.
+	# Those will be used by the hooks called below.
+	# shellcheck disable=SC2034
+	declare -A opts_val=()
+	# shellcheck disable=SC2034
+	declare -a opts_y=() opts_n=() opts_m=()
+
 	# Run the core-armbian config modifications here, built-in extensions:
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'
 		*Armbian-core default hook point for pre-olddefconfig Kernel config modifications*
@@ -108,6 +115,9 @@ function call_extensions_kernel_config() {
 		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 		Please note: Manually changing options doesn't check the validity of the .config file. Check for warnings in your build log.
 	CUSTOM_KERNEL_CONFIG
+
+	# Apply the modifications set in the arrays/dict
+	armbian_kernel_config_apply_opts_from_arrays
 }
 
 function kernel_config_finalize() {
@@ -136,11 +146,12 @@ function kernel_config_export() {
 	# store kernel defconfig in easily reachable place (output dir)
 	mkdir -p "${DEST}"/config
 	display_alert "Exporting new kernel defconfig" "$DEST/config/$LINUXCONFIG.config" "info"
-	run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.config"
+	echo "# Armbian defconfig generated with ${KERNEL_MAJOR_MINOR}" > "${DEST}/config/${LINUXCONFIG}.config"
+	run_host_command_logged cat defconfig >> "${DEST}/config/${LINUXCONFIG}.config"
 
 	# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
 	if [[ "${kernel_config_source_filename}" != "" ]]; then
 		display_alert "Exporting new kernel config - git commit pending" "${kernel_config_source_filename}" "info"
-		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}"
+		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" "${kernel_config_source_filename}"
 	fi
 }

@@ -1,5 +1,6 @@
 # Allwinner H2+ quad core 256MB/512MB RAM SoC WiFi SPI 2xETH
 BOARD_NAME="Orange Pi R1"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_r1_defconfig"
@@ -9,5 +10,5 @@ MODULES_BLACKLIST="lima sunxi_cedrus"
 HAS_VIDEO_OUTPUT="no"
 DEFAULT_CONSOLE="serial"
 SERIALCON="ttyS0,ttyGS0"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"

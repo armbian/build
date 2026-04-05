@@ -34,6 +34,7 @@ class AutoPatcherParams:
 		self.apply_patches_to_git = apply_patches_to_git
 		self.git_repo = git_repo
 		self.all_dt_files_copied: list[str] = []
+		self.dir_dt_files_copied: dict[str, list[str]] = {}
 		self.all_overlay_files_copied: list[str] = []
 
 
@@ -65,7 +66,8 @@ class AutomaticPatchDescription:
 		return f"Armbian Autopatcher: {self.description}"
 
 
-def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, dt_files_to_add: list[str], incremental: bool) -> dict[str, str]:
+def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, dt_files_to_add: list[str], incremental: bool, add_only: bool) -> \
+	dict[str, str]:
 	ret: dict[str, str] = {}
 	dt_path = os.path.join(git_work_dir, dt_rel_dir)
 	# Bomb if it does not exist or is not a directory
@@ -83,6 +85,23 @@ def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, 
 		makefile_contents = f.read()
 	log.info(f"Read {len(makefile_contents)} bytes from {makefile_path}")
 	log.debug(f"Contents:\n{makefile_contents}")
+
+	if add_only:
+		# much simpler. just add individual -y lines for each dt file to add directly to the end of the Makefile and hope for the best
+		log.info(f"Add-only mode: will just add {len(dt_files_to_add)} dt files to the end of the Makefile")
+		with open(makefile_path, "a") as f:
+			f.write("\n\n# Added by Armbian autopatcher in add-only:true mode\n")
+			for one_dt_file in dt_files_to_add:
+				f.write(f"\ndtb-$({config_var}) += {one_dt_file[:-4]}.dtb\n")  # replace .dts suffix with .dtb
+			overlay_lines = []
+			add_overlay_lines(dt_path, incremental, overlay_lines, ret)
+			if len(overlay_lines) > 0:
+				f.write("\n")
+				f.write("\n".join(overlay_lines))
+		log.info(f"Wrote add-only entries to {makefile_path}")
+		ret["extra_desc"] = "add-only mode"
+		return ret
+
 	# Parse it into a list of lines
 	makefile_lines = makefile_contents.splitlines()
 	log.info(f"Read {len(makefile_lines)} lines from {makefile_path}")
@@ -166,17 +185,7 @@ def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, 
 
 	# Late to the game: if DT_DIR/overlay/Makefile exists, add it.
 	overlay_lines = []
-	DT_OVERLAY_PATH = os.path.join(dt_path, "overlay")
-	DT_OVERLAY_MAKEFILE_PATH = os.path.join(DT_OVERLAY_PATH, "Makefile")
-	overlay_lines.append("")
-	if os.path.isfile(DT_OVERLAY_MAKEFILE_PATH):
-		if incremental:
-			overlay_lines.append("# Armbian: Incremental: assuming overlay targets are already in the Makefile")
-		else:
-			ret["DT_OVERLAY_MAKEFILE_PATH"] = DT_OVERLAY_MAKEFILE_PATH
-			ret["DT_OVERLAY_PATH"] = DT_OVERLAY_PATH
-			overlay_lines.append("# Added by Armbian autopatcher for DT overlay")
-			overlay_lines.append("subdir-y       := $(dts-dirs) overlay")
+	add_overlay_lines(dt_path, incremental, overlay_lines, ret)
 
 	# Now join the preambles, midamble, postamble and overlay stuff into a single list
 	new_makefile_lines = preamble_lines + midamble_lines + postamble_lines + overlay_lines
@@ -189,6 +198,20 @@ def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, 
 		ret["extra_desc"] += " (incremental)"
 
 	return ret
+
+
+def add_overlay_lines(dt_path: str, incremental: bool, overlay_lines: list[str], ret: dict[str, str]):
+	DT_OVERLAY_PATH = os.path.join(dt_path, "overlay")
+	DT_OVERLAY_MAKEFILE_PATH = os.path.join(DT_OVERLAY_PATH, "Makefile")
+	overlay_lines.append("")
+	if os.path.isfile(DT_OVERLAY_MAKEFILE_PATH):
+		if incremental:
+			overlay_lines.append("# Armbian: Incremental: assuming overlay targets are already in the Makefile")
+		else:
+			ret["DT_OVERLAY_MAKEFILE_PATH"] = DT_OVERLAY_MAKEFILE_PATH
+			ret["DT_OVERLAY_PATH"] = DT_OVERLAY_PATH
+			overlay_lines.append("# Added by Armbian autopatcher for DT overlay")
+			overlay_lines.append("subdir-y       := $(dts-dirs) overlay")
 
 
 def copy_bare_files(autopatcher_params: AutoPatcherParams, type: str) -> list[AutomaticPatchDescription]:
@@ -211,6 +234,7 @@ def copy_bare_files(autopatcher_params: AutoPatcherParams, type: str) -> list[Au
 	# for each target....
 	for target_dir in dts_dirs_by_target:
 		all_files_to_copy = []
+		autopatcher_params.dir_dt_files_copied[target_dir] = []
 		dts_source_dirs = dts_dirs_by_target[target_dir]
 		full_path_target_dir = os.path.join(autopatcher_params.git_work_dir, target_dir)
 		if not os.path.exists(full_path_target_dir):
@@ -250,6 +274,8 @@ def copy_bare_files(autopatcher_params: AutoPatcherParams, type: str) -> list[Au
 			if type == "dt":
 				if one_file.endswith(".dts"):
 					autopatcher_params.all_dt_files_copied.append(one_file)
+					# add per autopatcher_params.dir_dt_files_copied per target_dir
+					autopatcher_params.dir_dt_files_copied[target_dir].append(one_file)
 			elif type == "overlay":
 				autopatcher_params.all_overlay_files_copied.append(one_file)
 
@@ -284,7 +310,7 @@ def auto_patch_all_dt_makefiles(autopatcher_params: AutoPatcherParams) -> list[A
 		log.warning(f"Autopatching DT Makefile in {one_autopatch_config.directory} with config '{one_autopatch_config.config_var}'...")
 		autopatch_makefile_info = auto_patch_dt_makefile(
 			autopatcher_params.git_work_dir, one_autopatch_config.directory, one_autopatch_config.config_var,
-			autopatcher_params.all_dt_files_copied, one_autopatch_config.incremental
+			autopatcher_params.dir_dt_files_copied[one_autopatch_config.directory], one_autopatch_config.incremental, one_autopatch_config.add_only
 		)
 
 		desc = AutomaticPatchDescription()

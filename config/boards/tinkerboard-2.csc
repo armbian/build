@@ -1,5 +1,6 @@
 # Rockchip RK3399 hexa core 2GB SoC GBe eMMC USB3 WiFi/BT
 BOARD_NAME="Tinker Board 2"
+BOARD_VENDOR="asus"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="tinker-2-rk3399_defconfig"
@@ -11,6 +12,6 @@ BOOT_FDT_FILE="rockchip/rk3399-tinker-2.dtb"
 SERIALCON="ttyS2"
 BOOT_SCENARIO="binman"                      # 'blobless' also works; but some RAM issues found; see rk33/rk3399_ddr_800MHz_v1.27.bin in rockchip64_common.inc
 BOARD_FIRMWARE_INSTALL="-full"              # Install full firmware, for rtl8822ce firmware and others
-BOOTBRANCH="tag:v2025.04"                   # v2025.04 ...
+BOOTBRANCH="tag:v2025.04"
 BOOTPATCHDIR='legacy/u-boot-tinkerboard2'   # ...  with _only_ the patches we need for TB2, not the default rockchip64
 DDR_BLOB="rk33/rk3399_ddr_800MHz_v1.27.bin" # Different blob for TB2

@@ -10,6 +10,7 @@ declare -g SERIALCON="${SERIALCON:-tty1}"            # Consistent serial console
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 declare -g DISTRO_GENERIC_KERNEL=no
+declare -g POWER_MANAGEMENT_FEATURES=yes             # Suspend and resume might work well in UEFI, elsewhere is disabled by default
 
 case "${BRANCH}" in
 
@@ -21,7 +22,7 @@ case "${BRANCH}" in
 		;;
 	cloud)
 		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
 		declare -g EXTRAWIFI="no"
@@ -33,15 +34,15 @@ case "${BRANCH}" in
 		;;
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
-		;;
-
-	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.18"
+		;;
+
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.16"
+		declare -g KERNEL_MAJOR_MINOR="7.0"
 		;;
 esac
 
@@ -58,7 +59,7 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g ATF_COMPILE="no"
 
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
-	declare -g BOOTBRANCH='tag:v2025.01'
+	declare -g BOOTBRANCH='tag:v2025.10'
 	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot' # Gotta set this again, it is unset by grub extension
 
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"
@@ -85,4 +86,17 @@ function pre_customize_image__disable_few_armbian_services() {
 	chroot_sdcard systemctl disable armbian-hardware-monitor.service "||" true
 	chroot_sdcard systemctl disable armbian-hardware-optimize.service "||" true
 	chroot_sdcard systemctl disable armbian-led-state.service "||" true
+}
+
+function custom_kernel_config__enable_amd_dc() {
+	# Enables AMD Display Controller (DC) support for AMD GPUs
+	# This enables the display engine for AMD Radeon graphics cards,
+	# including DCN (Display Core Next) and DSC (Display Stream Compression)
+	# Only enabled for UEFI boards, excluding cloud branch
+	if [[ "${BRANCH}" != "cloud" ]]; then
+		display_alert "Enabling AMD DC support" "UEFI family ${LINUXFAMILY}" "debug"
+		opts_y+=("DRM_AMD_DC")
+		opts_y+=("DRM_AMD_DC_DCN")
+		opts_y+=("DRM_AMD_DC_DSC_SUPPORT")
+	fi
 }

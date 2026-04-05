@@ -1,0 +1,171 @@
+From ccf3cb07ac5ceedc2ef1f1e847c79c1e5004c7d6 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sun, 27 Jul 2025 08:45:50 +0000
+Subject: [PATCH 9001/9006] WIP: net: rockchip: Allow use of rx/tx delayline
+ for rgmii-id modes
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/net/dwc_eth_qos_rockchip.c | 24 +++++++---
+ drivers/net/gmac_rockchip.c        | 74 +++++++++---------------------
+ 2 files changed, 39 insertions(+), 59 deletions(-)
+
+diff --git a/drivers/net/dwc_eth_qos_rockchip.c b/drivers/net/dwc_eth_qos_rockchip.c
+index d646d3ebac8..3780d0f79a6 100644
+--- a/drivers/net/dwc_eth_qos_rockchip.c
++++ b/drivers/net/dwc_eth_qos_rockchip.c
+@@ -764,18 +764,30 @@ static int eqos_start_clks_rk(struct udevice *dev)
+ 	if (data->ops->set_clock_selection)
+ 		data->ops->set_clock_selection(dev, true);
+ 
+-	tx_delay = dev_read_u32_default(dev, "tx_delay", 0x30);
+-	rx_delay = dev_read_u32_default(dev, "rx_delay", 0x10);
++	tx_delay = dev_read_u32_default(dev, "tx_delay", -ENOENT);
++	if (tx_delay == -ENOENT) {
++		if (pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_ID ||
++		    pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_TXID)
++			tx_delay = 0;
++		else
++			tx_delay = 0x30;
++	}
++
++	rx_delay = dev_read_u32_default(dev, "rx_delay", -ENOENT);
++	if (rx_delay == -ENOENT) {
++		if (pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_ID ||
++		    pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_RXID)
++			rx_delay = 0;
++		else
++			rx_delay = 0x10;
++	}
+ 
+ 	switch (pdata->phy_interface) {
+ 	case PHY_INTERFACE_MODE_RGMII:
+-		return data->ops->set_to_rgmii(dev, tx_delay, rx_delay);
+ 	case PHY_INTERFACE_MODE_RGMII_ID:
+-		return data->ops->set_to_rgmii(dev, 0, 0);
+ 	case PHY_INTERFACE_MODE_RGMII_RXID:
+-		return data->ops->set_to_rgmii(dev, tx_delay, 0);
+ 	case PHY_INTERFACE_MODE_RGMII_TXID:
+-		return data->ops->set_to_rgmii(dev, 0, rx_delay);
++		return data->ops->set_to_rgmii(dev, tx_delay, rx_delay);
+ 	case PHY_INTERFACE_MODE_RMII:
+ 		return data->ops->set_to_rmii(dev);
+ 	}
+diff --git a/drivers/net/gmac_rockchip.c b/drivers/net/gmac_rockchip.c
+index c8cfe7448d4..fa246ec374b 100644
+--- a/drivers/net/gmac_rockchip.c
++++ b/drivers/net/gmac_rockchip.c
+@@ -54,6 +54,7 @@ struct rk_gmac_ops {
+ static int gmac_rockchip_of_to_plat(struct udevice *dev)
+ {
+ 	struct gmac_rockchip_plat *pdata = dev_get_plat(dev);
++	struct eth_pdata *eth_pdata = &pdata->dw_eth_pdata.eth_pdata;
+ 	const char *string;
+ 
+ 	string = dev_read_string(dev, "clock_in_out");
+@@ -62,15 +63,25 @@ static int gmac_rockchip_of_to_plat(struct udevice *dev)
+ 	else
+ 		pdata->clock_input = false;
+ 
+-	/* Check the new naming-style first... */
++	eth_pdata->phy_interface = dev_read_phy_mode(dev);
++
+ 	pdata->tx_delay = dev_read_u32_default(dev, "tx_delay", -ENOENT);
+-	pdata->rx_delay = dev_read_u32_default(dev, "rx_delay", -ENOENT);
++	if (pdata->tx_delay == -ENOENT) {
++		if (eth_pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_ID ||
++		    eth_pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_TXID)
++			pdata->tx_delay = 0;
++		else
++			pdata->tx_delay = 0x30;
++	}
+ 
+-	/* ... and fall back to the old naming style or default, if necessary */
+-	if (pdata->tx_delay == -ENOENT)
+-		pdata->tx_delay = dev_read_u32_default(dev, "tx-delay", 0x30);
+-	if (pdata->rx_delay == -ENOENT)
+-		pdata->rx_delay = dev_read_u32_default(dev, "rx-delay", 0x10);
++	pdata->rx_delay = dev_read_u32_default(dev, "rx_delay", -ENOENT);
++	if (pdata->rx_delay == -ENOENT) {
++		if (eth_pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_ID ||
++		    eth_pdata->phy_interface == PHY_INTERFACE_MODE_RGMII_RXID)
++			pdata->rx_delay = 0;
++		else
++			pdata->rx_delay = 0x10;
++	}
+ 
+ 	return designware_eth_of_to_plat(dev);
+ }
+@@ -608,6 +619,9 @@ static int gmac_rockchip_probe(struct udevice *dev)
+ 
+ 	switch (eth_pdata->phy_interface) {
+ 	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
+ 		/* Set to RGMII mode */
+ 		if (ops->set_to_rgmii)
+ 			ops->set_to_rgmii(pdata);
+@@ -628,22 +642,6 @@ static int gmac_rockchip_probe(struct udevice *dev)
+ 		}
+ 		break;
+ 
+-	case PHY_INTERFACE_MODE_RGMII_ID:
+-		/* Set to RGMII mode */
+-		if (ops->set_to_rgmii) {
+-			pdata->tx_delay = 0;
+-			pdata->rx_delay = 0;
+-			ops->set_to_rgmii(pdata);
+-		} else
+-			return -EPERM;
+-
+-		if (!pdata->clock_input) {
+-			rate = clk_set_rate(&clk, 125000000);
+-			if (rate != 125000000)
+-				return -EINVAL;
+-		}
+-		break;
+-
+ 	case PHY_INTERFACE_MODE_RMII:
+ 		/* Set to RMII mode */
+ 		if (ops->set_to_rmii)
+@@ -658,36 +656,6 @@ static int gmac_rockchip_probe(struct udevice *dev)
+ 		}
+ 		break;
+ 
+-	case PHY_INTERFACE_MODE_RGMII_RXID:
+-		 /* Set to RGMII_RXID mode */
+-		if (ops->set_to_rgmii) {
+-			pdata->tx_delay = 0;
+-			ops->set_to_rgmii(pdata);
+-		} else
+-			return -EPERM;
+-
+-		if (!pdata->clock_input) {
+-			rate = clk_set_rate(&clk, 125000000);
+-			if (rate != 125000000)
+-				return -EINVAL;
+-		}
+-		break;
+-
+-	case PHY_INTERFACE_MODE_RGMII_TXID:
+-		/* Set to RGMII_TXID mode */
+-		if (ops->set_to_rgmii) {
+-			pdata->rx_delay = 0;
+-			ops->set_to_rgmii(pdata);
+-		} else
+-			return -EPERM;
+-
+-		if (!pdata->clock_input) {
+-			rate = clk_set_rate(&clk, 125000000);
+-			if (rate != 125000000)
+-				return -EINVAL;
+-		}
+-		break;
+-
+ 	default:
+ 		debug("NO interface defined!\n");
+ 		return -ENXIO;
+-- 
+2.52.0
+

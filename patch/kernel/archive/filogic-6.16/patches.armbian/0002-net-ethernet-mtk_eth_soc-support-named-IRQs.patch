@@ -1,0 +1,99 @@
+From ad319b24f3eae33c753c406611d49032333b25da Mon Sep 17 00:00:00 2001
+From: Frank Wunderlich <frank-w@public-files.de>
+Date: Fri, 13 Jun 2025 16:06:37 +0200
+Subject: [PATCH 02/84] net: ethernet: mtk_eth_soc: support named IRQs
+
+Add named interrupts and keep index based fallback for existing
+devicetrees.
+
+Currently only rx and tx IRQs are defined to be used with mt7988, but
+later extended with RSS/LRO support.
+
+Signed-off-by: Frank Wunderlich <frank-w@public-files.de>
+Reviewed-by: Simon Horman <horms@kernel.org>
+---
+v6:
+- change irq names from tx/rx to fe1/fe2 because reserved irqs
+  are usable and not bound to specific function
+- dropped Simons RB because of this
+v5:
+- fix typo in description
+- add comments from previous patch #3 with changes suggested by simon
+
+v2:
+- move irqs loading part into own helper function
+- reduce indentation
+- place mtk_get_irqs helper before the irq_handler (note for simon)
+
+net: mtk_eth_soc: change irq name back to fe1 + fe2
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 46 ++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 880f27ca84d4..1de594a93146 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -3344,6 +3344,37 @@ static void mtk_tx_timeout(struct net_device *dev, unsigned int txqueue)
+ 	schedule_work(&eth->pending_work);
+ }
+ 
++static int mtk_get_irqs(struct platform_device *pdev, struct mtk_eth *eth)
++{
++	int i;
++
++	/* future SoCs beginning with MT7988 should use named IRQs in dts */
++	eth->irq[1] = platform_get_irq_byname(pdev, "fe1");
++	eth->irq[2] = platform_get_irq_byname(pdev, "fe2");
++	if (eth->irq[1] >= 0 && eth->irq[2] >= 0)
++		return 0;
++
++	/* legacy way:
++	 * On MTK_SHARED_INT SoCs (MT7621 + MT7628) the first IRQ is taken
++	 * from devicetree and used for both RX and TX - it is shared.
++	 * On SoCs with non-shared IRQs the first entry is not used,
++	 * the second is for TX, and the third is for RX.
++	 */
++	for (i = 0; i < 3; i++) {
++		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_INT) && i > 0)
++			eth->irq[i] = eth->irq[0];
++		else
++			eth->irq[i] = platform_get_irq(pdev, i);
++
++		if (eth->irq[i] < 0) {
++			dev_err(&pdev->dev, "no IRQ%d resource found\n", i);
++			return -ENXIO;
++		}
++	}
++
++	return 0;
++}
++
+ static irqreturn_t mtk_handle_irq_rx(int irq, void *_eth)
+ {
+ 	struct mtk_eth *eth = _eth;
+@@ -5113,17 +5144,10 @@ static int mtk_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
+-	for (i = 0; i < 3; i++) {
+-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_INT) && i > 0)
+-			eth->irq[i] = eth->irq[0];
+-		else
+-			eth->irq[i] = platform_get_irq(pdev, i);
+-		if (eth->irq[i] < 0) {
+-			dev_err(&pdev->dev, "no IRQ%d resource found\n", i);
+-			err = -ENXIO;
+-			goto err_wed_exit;
+-		}
+-	}
++	err = mtk_get_irqs(pdev, eth);
++	if (err)
++		goto err_wed_exit;
++
+ 	for (i = 0; i < ARRAY_SIZE(eth->clks); i++) {
+ 		eth->clks[i] = devm_clk_get(eth->dev,
+ 					    mtk_clks_source_name[i]);
+-- 
+2.30.2
+

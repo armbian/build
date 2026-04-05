@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marek Vasut <marex@denx.de>
+Date: Fri, 1 Sep 2023 11:49:47 +0200
+Subject: dm: usb: udc: Factor out plain udevice handler functions
+
+Pull the functionality of UDC uclass that operates on plain udevice
+and does not use this dev_array array into separate functions and
+expose those functions, so that as much code as possible can be
+switched over to these functions and the dev_array can be dropped.
+
+Reviewed-by: Mattijs Korpershoek <mkorpershoek@baylibre.com>
+Signed-off-by: Marek Vasut <marex@denx.de>
+[Backport to mediatek mtk-v2022.10]
+Signed-off-by: Ariel D'Alessandro <ariel.dalessandro@collabora.com>
+---
+ drivers/usb/gadget/udc/Makefile     |  2 +-
+ drivers/usb/gadget/udc/udc-uclass.c | 55 +++++++++-
+ include/linux/usb/gadget.h          | 17 +++
+ 3 files changed, 67 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/gadget/udc/Makefile b/drivers/usb/gadget/udc/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/usb/gadget/udc/Makefile
++++ b/drivers/usb/gadget/udc/Makefile
+@@ -7,4 +7,4 @@ obj-$(CONFIG_USB_DWC3_GADGET)	+= udc-core.o
+ endif
+ 
+ obj-$(CONFIG_$(SPL_)DM_USB_GADGET)	+= udc-core.o
+-obj-$(CONFIG_$(SPL_)DM) += udc-uclass.o
++obj-y += udc-uclass.o
+diff --git a/drivers/usb/gadget/udc/udc-uclass.c b/drivers/usb/gadget/udc/udc-uclass.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/gadget/udc/udc-uclass.c
++++ b/drivers/usb/gadget/udc/udc-uclass.c
+@@ -14,6 +14,37 @@
+ #if CONFIG_IS_ENABLED(DM_USB_GADGET)
+ #define MAX_UDC_DEVICES 4
+ static struct udevice *dev_array[MAX_UDC_DEVICES];
++
++int udc_device_get_by_index(int index, struct udevice **udev)
++{
++	struct udevice *dev = NULL;
++	int ret;
++
++	ret = uclass_get_device_by_seq(UCLASS_USB_GADGET_GENERIC, index, &dev);
++	if (!ret && dev) {
++		*udev = dev;
++		return 0;
++	}
++
++	ret = uclass_get_device(UCLASS_USB_GADGET_GENERIC, index, &dev);
++	if (!ret && dev) {
++		*udev = dev;
++		return 0;
++	}
++
++	pr_err("No USB device found\n");
++	return -ENODEV;
++}
++
++int udc_device_put(struct udevice *udev)
++{
++#if CONFIG_IS_ENABLED(DM_DEVICE_REMOVE)
++	return device_remove(udev, DM_REMOVE_NORMAL);
++#else
++	return -ENOSYS;
++#endif
++}
++
+ int usb_gadget_initialize(int index)
+ {
+ 	int ret;
+@@ -23,13 +54,10 @@ int usb_gadget_initialize(int index)
+ 		return -EINVAL;
+ 	if (dev_array[index])
+ 		return 0;
+-	ret = uclass_get_device_by_seq(UCLASS_USB_GADGET_GENERIC, index, &dev);
++	ret = udc_device_get_by_index(index, &dev);
+ 	if (!dev || ret) {
+-		ret = uclass_get_device(UCLASS_USB_GADGET_GENERIC, index, &dev);
+-		if (!dev || ret) {
+-			pr_err("No USB device found\n");
+-			return -ENODEV;
+-		}
++		pr_err("No USB device found\n");
++		return -ENODEV;
+ 	}
+ 	dev_array[index] = dev;
+ 	return 0;
+@@ -57,10 +85,25 @@ int usb_gadget_handle_interrupts(int index)
+ 		return -EINVAL;
+ 	return dm_usb_gadget_handle_interrupts(dev_array[index]);
+ }
++#else
++/* Backwards hardware compatibility -- switch to DM_USB_GADGET */
++static int legacy_index;
++int udc_device_get_by_index(int index, struct udevice **udev)
++{
++	legacy_index = index;
++	return board_usb_init(index, USB_INIT_DEVICE);
++}
++
++int udc_device_put(struct udevice *udev)
++{
++	return board_usb_cleanup(legacy_index, USB_INIT_DEVICE);
++}
+ #endif
+ 
++#if CONFIG_IS_ENABLED(DM)
+ UCLASS_DRIVER(usb_gadget_generic) = {
+ 	.id		= UCLASS_USB_GADGET_GENERIC,
+ 	.name		= "usb",
+ 	.flags		= DM_UC_FLAG_SEQ_ALIAS,
+ };
++#endif
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 111111111111..222222222222 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -970,6 +970,23 @@ extern void usb_ep_autoconfig_reset(struct usb_gadget *);
+ 
+ extern int usb_gadget_handle_interrupts(int index);
+ 
++/**
++ * udc_device_get_by_index() - Get UDC udevice by index
++ * @index: UDC device index
++ * @udev: UDC udevice matching the index (if found)
++ *
++ * Return: 0 if Ok, -ve on error
++ */
++int udc_device_get_by_index(int index, struct udevice **udev);
++
++/**
++ * udc_device_put() - Put UDC udevice
++ * @udev: UDC udevice
++ *
++ * Return: 0 if Ok, -ve on error
++ */
++int udc_device_put(struct udevice *udev);
++
+ #if CONFIG_IS_ENABLED(DM_USB_GADGET)
+ int usb_gadget_initialize(int index);
+ int usb_gadget_release(int index);
+-- 
+Armbian
+

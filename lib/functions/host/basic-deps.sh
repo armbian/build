@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -26,7 +26,6 @@ function prepare_host_basic() {
 		"linux-version:linux-base"
 		"locale-gen:locales"
 		"git:git"
-		"wget:wget"
 	)
 
 	for check_pack in "${checklist[@]}"; do

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -155,10 +155,9 @@ function export_ansi_logs() {
 		# shellcheck disable=SC2001 # I saw, and I can't
 		logfile_title="$(echo "${logfile_base}" | sed -e 's/^[^.]*\.[^.]*\.//')"
 
-		# shellcheck disable=SC2002 # cats, not useless, I like.
 		cat <<- ANSI_ONE_LOGFILE >> "${target_file}"
 			$(echo -e -n "${bright_blue_color}")### ${logfile_title} $(echo -e -n "${ansi_reset_color}")
-			$(cat "${logfile_full}" | sed -e "${prefix_sed_cmd}")
+			$(sed -e "${prefix_sed_cmd}" "${logfile_full}")
 			${dim_line_separator}
 		ANSI_ONE_LOGFILE
 	done

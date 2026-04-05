@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -41,6 +41,11 @@ function output_images_compress_and_checksum() {
 			display_alert "Compressing with xz" "${uncompressed_file_basename}.xz" "info"
 			xz -T 0 "-${xz_compression_ratio_image}" "${uncompressed_file}" # "If xz is provided with input but no output, it will delete the input"
 			compression_type=".xz"
+		elif [[ $COMPRESS_OUTPUTIMAGE == *zst* ]]; then
+			display_alert "Compressing with zstd" "${uncompressed_file_basename}.zst" "info"
+			zstdmt "-${ZSTD_COMPRESSION_LEVEL:-9}" "${uncompressed_file}" -o "${uncompressed_file}.zst"
+			rm -f "${uncompressed_file}"
+			compression_type=".zst"
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then

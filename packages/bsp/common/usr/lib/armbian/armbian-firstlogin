@@ -51,8 +51,6 @@ createYAML() {
    local YAML="network:\n"
     YAML+="  $DEVTYPE:\n"
     YAML+="    $DEVICE_NAME:\n"
-	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp4: yes\n";fi
-	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp6: yes\n";fi
 	if [[ "${PRESET_NET_USE_STATIC}" == 1 ]]; then
 		YAML+="      addresses:\n"
 		YAML+="        - $PRESET_NET_STATIC_IP/$PRESET_NET_STATIC_MASK\n"
@@ -61,6 +59,9 @@ createYAML() {
 		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="          via: ${PRESET_NET_STATIC_GATEWAY}\n";fi
 		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="      nameservers:\n"; fi
 		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="        addresses: [$PRESET_NET_STATIC_DNS]\n"; fi
+	else
+		YAML+="      dhcp4: yes\n"
+		YAML+="      dhcp6: yes\n"
 	fi
 	if [[ "${PRESET_NET_WIFI_ENABLED}" == 1 ]]; then
 		if [[ -n "${PRESET_NET_WIFI_COUNTRYCODE}" ]]; then YAML+="      regulatory-domain: $PRESET_NET_WIFI_COUNTRYCODE\n"; fi
@@ -551,6 +552,9 @@ add_user() {
 		if ! id "$RealUserName" > /dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
 	done
 
+	# Set default user login icon
+	set_user_icon "$RealUserName"
+
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		if [ -z "$PRESET_USER_PASSWORD" ];then
 			read_password "Create user ($username)"
@@ -599,7 +603,16 @@ add_user() {
 			else
 				passwd -d "$RealUserName" > /dev/null 2>&1
 			fi
-			for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render; do
+
+			# Pre-create docker group to ensure user membership is set up before Docker installation.
+			# (docker-ce package creates this group automatically during postinst, but we create it early
+			# to guarantee group membership is ready immediately after user creation.)
+			if ! getent group docker >/dev/null; then
+				if ! addgroup --system --quiet docker 2>/dev/null; then
+					echo "Warning: Failed to create docker group" >&2
+				fi
+			fi
+			for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render docker; do
 				usermod -aG "${additionalgroup}" "${RealUserName}" 2> /dev/null
 			done
 
@@ -626,6 +639,31 @@ add_user() {
 	done
 
 }
+
+set_user_icon() {
+    local U="$1"
+    local ICON_SRC="/usr/share/armbian/armbian-user-icon.png"
+    local ICON_DST="/var/lib/AccountsService/icons/$U"
+    local META="/var/lib/AccountsService/users/$U"
+
+    # If the icon doesn't exist, do nothing.
+    [ -f "$ICON_SRC" ] || return 0
+
+    mkdir -p /var/lib/AccountsService/icons /var/lib/AccountsService/users
+
+    # Copy icon
+    install -m 0644 "$ICON_SRC" "$ICON_DST"
+
+    # Write AccountsService metadata
+	cat <<- EOF > "$META"
+	[User]
+	Icon=$ICON_DST
+	SystemAccount=false
+	EOF
+    chown root:root "$ICON_DST" "$META"
+    chmod 0644 "$ICON_DST" "$META"
+}
+
 
 if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
@@ -803,12 +841,11 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		fi
 	else
 
-		echo -e "\e[0;31m\nWARNING!\x1B[0m\n\nYou are using an \e[0;31mautomated build\x1B[0m meant only for developers to provide"
-		echo -e "constructive feedback to improve build system, OS settings or UX.\n"
-
-		echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m  Especially don't use this "
-		echo -e "image for production since things might not work as expected or at "
-		echo -e "all. They may  break anytime with next update."
+		echo -e "\e[0;31m\nDeveloper Preview Build\x1B[0m\n"
+		echo -e "This Armbian image was generated automatically for development and testing purpose."
+		echo -e "It may include unfinished features or unstable components.\n"
+		echo -e "If you are not here to report issues or just test it, \e[0;31mplease do not use this image in production.\x1B[0m"
+		echo -e "Expect things to change — or even break — as improvements are made."
 
 	fi
 
@@ -954,12 +991,15 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 		# create default sddm config
 		mkdir -p /etc/sddm.conf.d
-		cat <<- EOF > /etc/sddm.conf.d/armbian.conf
-			[Theme]
-			Current=breeze
-			[General]
-			InputMethod=none
-		EOF
+
+		if [ ! -e "/etc/sddm.conf.d/armbian.conf" ]; then
+			cat <<- EOF > /etc/sddm.conf.d/armbian.conf
+				[Theme]
+				Current=breeze
+				[General]
+				InputMethod=none
+			EOF
+		fi
 
 		# 1st run goes without login
 		cat <<- EOF > /etc/sddm.conf.d/autologin.conf
@@ -980,6 +1020,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	else
 		# no display manager detected -> clear screen and show motd
 		clear
+		run-parts --lsbsysinit /etc/cron.daily
 		run-parts --lsbsysinit /etc/update-motd.d
 
 		# Display reboot recommendation if necessary

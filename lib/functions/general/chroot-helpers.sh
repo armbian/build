@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -41,7 +41,7 @@ function umount_chroot() {
 		umount "${target}"/dev/pts || true
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
-		umount "${target}"/sys || true
+		umount --recursive "${target}"/sys || true
 		umount "${target}"/tmp || true
 		umount "${target}"/var/tmp || true
 		umount "${target}"/run/user/0 || true

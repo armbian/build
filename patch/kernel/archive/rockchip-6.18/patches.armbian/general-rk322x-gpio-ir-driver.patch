@@ -1,0 +1,786 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Tue, 10 Oct 2023 21:54:51 +0200
+Subject: rockchip gpio IR driver
+
+---
+ drivers/media/rc/Kconfig       |  10 +
+ drivers/media/rc/Makefile      |   1 +
+ drivers/media/rc/rockchip-ir.c | 733 ++++++++++
+ 3 files changed, 744 insertions(+)
+
+diff --git a/drivers/media/rc/Kconfig b/drivers/media/rc/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/media/rc/Kconfig
++++ b/drivers/media/rc/Kconfig
+@@ -340,6 +340,16 @@ config IR_REDRAT3
+ 	   To compile this driver as a module, choose M here: the
+ 	   module will be called redrat3.
+ 
++config IR_ROCKCHIP_CIR
++	tristate "Rockchip GPIO IR receiver"
++	depends on (OF && GPIOLIB) || COMPILE_TEST
++	help
++	   Say Y here if you want to use the Rockchip IR receiver with
++	   virtual poweroff features provided by rockchip Trust OS
++
++	   To compile this driver as a module, choose M here: the
++	   module will be called rockchip-ir
++
+ config IR_SERIAL
+ 	tristate "Homebrew Serial Port Receiver"
+ 	depends on HAS_IOPORT
+diff --git a/drivers/media/rc/Makefile b/drivers/media/rc/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/media/rc/Makefile
++++ b/drivers/media/rc/Makefile
+@@ -43,6 +43,7 @@ obj-$(CONFIG_IR_MTK) += mtk-cir.o
+ obj-$(CONFIG_IR_NUVOTON) += nuvoton-cir.o
+ obj-$(CONFIG_IR_PWM_TX) += pwm-ir-tx.o
+ obj-$(CONFIG_IR_REDRAT3) += redrat3.o
++obj-$(CONFIG_IR_ROCKCHIP_CIR) += rockchip-ir.o
+ obj-$(CONFIG_IR_SERIAL) += serial_ir.o
+ obj-$(CONFIG_IR_SPI) += ir-spi.o
+ obj-$(CONFIG_IR_STREAMZAP) += streamzap.o
+diff --git a/drivers/media/rc/rockchip-ir.c b/drivers/media/rc/rockchip-ir.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/rc/rockchip-ir.c
+@@ -0,0 +1,733 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
++*/
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/interrupt.h>
++#include <linux/gpio/consumer.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/of_gpio.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/pm_qos.h>
++#include <linux/irq.h>
++#include <linux/arm-smccc.h>
++#include <linux/clk.h>
++#include <linux/reboot.h>
++#include <uapi/linux/psci.h>
++#include <media/rc-core.h>
++#include <soc/rockchip/rockchip_sip.h>
++
++#define ROCKCHIP_IR_DEVICE_NAME	"rockchip_ir_recv"
++
++#ifdef CONFIG_64BIT
++#define PSCI_FN_NATIVE(version, name)	PSCI_##version##_FN64_##name
++#else
++#define PSCI_FN_NATIVE(version, name)	PSCI_##version##_FN_##name
++#endif
++
++/*
++* SIP/TEE constants for remote calls
++*/
++#define SIP_REMOTECTL_CFG				0x8200000b
++#define SIP_SUSPEND_MODE		0x82000003
++#define SIP_REMOTECTL_CFG		0x8200000b
++#define SUSPEND_MODE_CONFIG	0x01
++#define WKUP_SOURCE_CONFIG		0x02
++#define PWM_REGULATOR_CONFIG	0x03
++#define GPIO_POWER_CONFIG		0x04
++#define SUSPEND_DEBUG_ENABLE	0x05
++#define APIOS_SUSPEND_CONFIG	0x06
++#define VIRTUAL_POWEROFF		0x07
++
++#define REMOTECTL_SET_IRQ				0xf0
++#define REMOTECTL_SET_PWM_CH			0xf1
++#define REMOTECTL_SET_PWRKEY			0xf2
++#define REMOTECTL_GET_WAKEUP_STATE		0xf3
++#define REMOTECTL_ENABLE				0xf4
++#define REMOTECTL_PWRKEY_WAKEUP			0xdeadbeaf /* wakeup state */
++
++/*
++* PWM Registers
++* Each PWM has its own control registers
++*/
++#define PWM_REG_CNTR	0x00  /* Counter Register */
++#define PWM_REG_HPR		0x04  /* Period Register */
++#define PWM_REG_LPR		0x08  /* Duty Cycle Register */
++#define PWM_REG_CTRL	0x0c  /* Control Register */
++
++/*
++* PWM General registers
++* Registers shared among PWMs
++*/
++#define PWM_REG_INT_EN  0x44
++
++/*REG_CTRL bits definitions*/
++#define PWM_ENABLE		(1 << 0)
++#define PWM_DISABLE		(0 << 0)
++
++/*operation mode*/
++#define PWM_MODE_ONESHOT		(0x00 << 1)
++#define PWM_MODE_CONTINUMOUS	(0x01 << 1)
++#define PWM_MODE_CAPTURE		(0x02 << 1)
++
++/* Channel interrupt enable bit */
++#define PWM_CH_INT_ENABLE(n)		BIT(n)
++
++enum pwm_div {
++	PWM_DIV1	= (0x0 << 12),
++	PWM_DIV2	= (0x1 << 12),
++	PWM_DIV4	= (0x2 << 12),
++	PWM_DIV8	= (0x3 << 12),
++	PWM_DIV16	= (0x4 << 12),
++	PWM_DIV32	= (0x5 << 12),
++	PWM_DIV64	= (0x6 << 12),
++	PWM_DIV128	= (0x7 << 12),
++};
++
++#define PWM_INT_ENABLE		1
++#define PWM_INT_DISABLE		0
++
++struct rockchip_rc_dev {
++	struct rc_dev *rcdev;
++	struct gpio_desc *gpiod;
++	int irq;
++	struct device *pmdev;
++	struct pm_qos_request qos;
++	void __iomem *pwm_base;
++	int pwm_wake_irq;
++	int pwm_id;
++	bool use_shutdown_handler; // if true, installs a shutdown handler and triggers virtual poweroff
++	bool use_suspend_handler; // if true, virtual poweroff is used as suspend mode otherwise use as regular suspend
++	struct pinctrl *pinctrl;
++	struct pinctrl_state *pinctrl_state_default;
++	struct pinctrl_state *pinctrl_state_suspend;
++};
++
++static struct arm_smccc_res __invoke_sip_fn_smc(unsigned long function_id,
++												unsigned long arg0,
++												unsigned long arg1,
++												unsigned long arg2)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(function_id, arg0, arg1, arg2, 0, 0, 0, 0, &res);
++	
++	return res;
++}
++
++int sip_smc_remotectl_config(u32 func, u32 data)
++{
++	struct arm_smccc_res res;
++	
++	res = __invoke_sip_fn_smc(SIP_REMOTECTL_CFG, func, data, 0);
++	
++	return res.a0;
++}
++
++int sip_smc_set_suspend_mode(u32 ctrl, u32 config1, u32 config2)
++{
++	struct arm_smccc_res res;
++
++	res = __invoke_sip_fn_smc(SIP_SUSPEND_MODE, ctrl, config1, config2);
++	return res.a0;
++}
++
++int sip_smc_virtual_poweroff(void)
++{
++	struct arm_smccc_res res;
++
++	res = __invoke_sip_fn_smc(PSCI_FN_NATIVE(1_0, SYSTEM_SUSPEND), 0, 0, 0);
++	return res.a0;
++}
++
++static irqreturn_t rockchip_ir_recv_irq(int irq, void *dev_id)
++{
++	int val;
++	struct rockchip_rc_dev *gpio_dev = dev_id;
++	struct device *pmdev = gpio_dev->pmdev;
++
++	/*
++	* For some cpuidle systems, not all:
++	* Respond to interrupt taking more latency when cpu in idle.
++	* Invoke asynchronous pm runtime get from interrupt context,
++	* this may introduce a millisecond delay to call resume callback,
++	* where to disable cpuilde.
++	*
++	* Two issues lead to fail to decode first frame, one is latency to
++	* respond to interrupt, another is delay introduced by async api.
++	*/
++	if (pmdev)
++		pm_runtime_get(pmdev);
++
++	val = gpiod_get_value(gpio_dev->gpiod);
++	if (val >= 0)
++		ir_raw_event_store_edge(gpio_dev->rcdev, val == 1);
++
++	if (pmdev) {
++		pm_runtime_mark_last_busy(pmdev);
++		pm_runtime_put_autosuspend(pmdev);
++	}
++
++	return IRQ_HANDLED;
++}
++
++static void rockchip_pwm_int_ctrl(struct rockchip_rc_dev *gpio_dev, bool enable)
++{
++	
++	void __iomem *pwm_base = gpio_dev->pwm_base;
++	struct device *dev = &gpio_dev->rcdev->dev;
++	int pwm_id = gpio_dev->pwm_id;
++	
++	void __iomem *reg_int_ctrl;
++	int val;
++	
++	reg_int_ctrl= pwm_base - (0x10 * pwm_id) + PWM_REG_INT_EN;
++
++	val = readl_relaxed(reg_int_ctrl);
++	
++	if (enable) {
++		val |= PWM_CH_INT_ENABLE(pwm_id);
++		dev_info(dev, "PWM interrupt enabled, register value %x\n", val);
++	} else {
++		val &= ~PWM_CH_INT_ENABLE(pwm_id);
++		dev_info(dev, "PWM interrupt disabled, register value %x\n", val);
++	}
++	
++	writel_relaxed(val, reg_int_ctrl);
++	
++}
++
++static int rockchip_pwm_hw_init(struct rockchip_rc_dev *gpio_dev)
++{
++	
++	void __iomem *pwm_base = gpio_dev->pwm_base;
++	int val;
++
++	//1. disabled pwm
++	val = readl_relaxed(pwm_base + PWM_REG_CTRL);
++	val = (val & 0xFFFFFFFE) | PWM_DISABLE;
++	writel_relaxed(val, pwm_base + PWM_REG_CTRL);
++	
++	//2. capture mode
++	val = readl_relaxed(pwm_base + PWM_REG_CTRL);
++	val = (val & 0xFFFFFFF9) | PWM_MODE_CAPTURE;
++	writel_relaxed(val, pwm_base + PWM_REG_CTRL);
++	
++	//set clk div, clk div to 64
++	val = readl_relaxed(pwm_base + PWM_REG_CTRL);
++	val = (val & 0xFF0001FF) | PWM_DIV64;
++	writel_relaxed(val, pwm_base + PWM_REG_CTRL);
++	
++	//4. enabled pwm int
++	rockchip_pwm_int_ctrl(gpio_dev, true);
++	
++	//5. enabled pwm
++	val = readl_relaxed(pwm_base + PWM_REG_CTRL);
++	val = (val & 0xFFFFFFFE) | PWM_ENABLE;
++	writel_relaxed(val, pwm_base + PWM_REG_CTRL);
++	
++	return 0;
++	
++}
++
++static int rockchip_pwm_hw_stop(struct rockchip_rc_dev *gpio_dev)
++{
++	
++	void __iomem *pwm_base = gpio_dev->pwm_base;
++	int val;
++	
++	//disable pwm interrupt
++	rockchip_pwm_int_ctrl(gpio_dev, false);
++
++	//disable pwm
++	val = readl_relaxed(pwm_base + PWM_REG_CTRL);
++	val = (val & 0xFFFFFFFE) | PWM_DISABLE;
++	writel_relaxed(val, pwm_base + PWM_REG_CTRL);
++	
++	return 0;
++	
++}
++
++static int rockchip_pwm_sip_wakeup_init(struct rockchip_rc_dev *gpio_dev)
++{
++	
++	struct device *dev = &gpio_dev->rcdev->dev;
++	
++	struct irq_data *irq_data;
++	long hwirq;
++	int ret;
++
++	irq_data = irq_get_irq_data(gpio_dev->pwm_wake_irq);
++	if (!irq_data) {
++		dev_err(dev, "could not get irq data\n");
++		return -1;
++	}
++	
++	hwirq = irq_data->hwirq;
++	dev_info(dev, "use hwirq %ld, pwm chip id %d for PWM SIP wakeup\n", hwirq, gpio_dev->pwm_id);
++	
++	ret = 0;
++	
++	ret |= sip_smc_remotectl_config(REMOTECTL_SET_IRQ, (int)hwirq);
++	ret |= sip_smc_remotectl_config(REMOTECTL_SET_PWM_CH, gpio_dev->pwm_id);
++	ret |= sip_smc_remotectl_config(REMOTECTL_ENABLE, 1);
++	
++	if (ret) {
++		dev_err(dev, "SIP remote controller mode, TEE does not support feature\n");
++		return ret;
++	}
++	
++	sip_smc_set_suspend_mode(SUSPEND_MODE_CONFIG, 0x10042, 0);
++	sip_smc_set_suspend_mode(WKUP_SOURCE_CONFIG, 0x0, 0);
++	sip_smc_set_suspend_mode(PWM_REGULATOR_CONFIG, 0x0, 0);
++	//sip_smc_set_suspend_mode(GPIO_POWER_CONFIG, i, gpio_temp[i]);
++	sip_smc_set_suspend_mode(SUSPEND_DEBUG_ENABLE, 0x1, 0);
++	sip_smc_set_suspend_mode(APIOS_SUSPEND_CONFIG, 0x0, 0);
++	sip_smc_set_suspend_mode(VIRTUAL_POWEROFF, 0, 1);
++	
++	dev_info(dev, "TEE remote controller wakeup installed\n");
++	
++	return 0;
++	
++}
++
++static void rockchip_ir_recv_remove(struct platform_device *pdev)
++{
++	struct rockchip_rc_dev *gpio_dev = platform_get_drvdata(pdev);
++	struct device *pmdev = gpio_dev->pmdev;
++
++	if (pmdev) {
++		pm_runtime_get_sync(pmdev);
++		cpu_latency_qos_remove_request(&gpio_dev->qos);
++
++		pm_runtime_disable(pmdev);
++		pm_runtime_put_noidle(pmdev);
++		pm_runtime_set_suspended(pmdev);
++	}
++	
++	// Disable the remote controller handling of the Trust OS
++	sip_smc_remotectl_config(REMOTECTL_ENABLE, 0);
++	
++	// Disable the virtual poweroff of the Trust OS
++	sip_smc_set_suspend_mode(VIRTUAL_POWEROFF, 0, 0);	
++
++	return;
++}
++
++static int rockchip_ir_register_power_key(struct device *dev)
++{
++	
++	struct rockchip_rc_dev *gpio_dev = dev_get_drvdata(dev);
++	
++	struct rc_map *key_map;
++	struct rc_map_table *key;
++	int idx, key_scancode, rev_scancode;
++	int tee_scancode;
++	
++	key_map = &gpio_dev->rcdev->rc_map;
++	
++	dev_info(dev, "remote key table %s, key map of %d items\n", key_map->name, key_map->len);
++	
++	for (idx = 0; idx < key_map->len; idx++) {
++		
++		key = &key_map->scan[idx];
++		
++		if (key->keycode != KEY_POWER)
++			continue;
++
++		key_scancode = key->scancode;
++		rev_scancode = ~key_scancode;
++
++		// If key_scancode has higher 16 bits set to 0, then the scancode is NEC protocol, otherwise it is NECX/NEC32
++		if ((key_scancode & 0xffff) == key_scancode)
++			tee_scancode = (key_scancode & 0xff00) | ((rev_scancode & 0xff00) << 8); // NEC protocol
++		else
++			tee_scancode = ((key_scancode & 0xff0000) >> 8) | ((key_scancode & 0xff00) << 8); // NECX/NEC32 protocol
++
++		tee_scancode |= rev_scancode & 0xff;
++		tee_scancode <<= 8;
++	
++		sip_smc_remotectl_config(REMOTECTL_SET_PWRKEY, tee_scancode);
++		
++		dev_info(dev, "registered scancode %08x (SIP: %8x)\n", key_scancode, tee_scancode);
++		
++	}
++	
++	return 0;
++	
++}
++
++static int rockchip_ir_recv_suspend_prepare(struct device *dev)
++{
++	struct rockchip_rc_dev *gpio_dev = dev_get_drvdata(dev);
++	int ret;
++	
++	dev_info(dev, "initialize rockchip SIP virtual poweroff\n");
++	ret = rockchip_pwm_sip_wakeup_init(gpio_dev);
++	
++	if (ret)
++		return ret;
++	
++	rockchip_ir_register_power_key(dev);
++	
++	disable_irq(gpio_dev->irq);
++	dev_info(dev, "GPIO IRQ disabled\n");
++
++	ret = pinctrl_select_state(gpio_dev->pinctrl, gpio_dev->pinctrl_state_suspend);
++	if (ret) {
++		dev_err(dev, "unable to set pin in PWM mode\n");
++		return ret;
++	}
++	
++	dev_info(dev, "set pin configuration to PWM mode\n");
++	
++	rockchip_pwm_hw_init(gpio_dev);
++	dev_info(dev, "started pin PWM mode\n");
++	
++	return 0;
++	
++}
++
++#ifdef CONFIG_PM
++static int rockchip_ir_recv_suspend(struct device *dev)
++{
++	struct rockchip_rc_dev *gpio_dev = dev_get_drvdata(dev);
++	
++	/*
++	 * if property suspend-is-virtual-poweroff is set, we can disable
++	 * the regular gpio wakeup and enable the PWM mode for the Trust OS
++	 * to take control and react to remote control.
++	 * If the property is not set, we instead enable the wake up for the
++	 * regular gpio.
++	 */
++	if (gpio_dev->use_suspend_handler) {
++		
++		rockchip_ir_recv_suspend_prepare(dev);
++		
++	} else {
++		
++		if (device_may_wakeup(dev))
++			enable_irq_wake(gpio_dev->irq);
++		else
++			disable_irq(gpio_dev->irq);
++		
++	}
++
++	return 0;
++}
++
++static int rockchip_ir_recv_resume(struct device *dev)
++{
++	struct rockchip_rc_dev *gpio_dev = dev_get_drvdata(dev);
++	int ret;
++	
++	/*
++	 * In case suspend-is-virtual-poweroff property is set,
++	 * restore the pin from PWM mode to regular GPIO configuration
++	 * and stop the PWM function.
++	 * Otherwise, just enable the regular GPIO irq
++	 */
++	if (gpio_dev->use_suspend_handler) {
++	
++		rockchip_pwm_hw_stop(gpio_dev);
++		dev_info(dev, "stopped pin PWM mode\n");
++		
++		ret = pinctrl_select_state(gpio_dev->pinctrl, gpio_dev->pinctrl_state_default);
++		if (ret) {
++			dev_err(dev, "unable to restore pin in GPIO mode\n");
++			return ret;
++		}
++		dev_info(dev, "restored pin configuration di GPIO\n");
++		
++		enable_irq(gpio_dev->irq);
++		dev_info(dev, "restored GPIO IRQ\n");
++		
++	} else {
++		
++		if (device_may_wakeup(dev))
++			disable_irq_wake(gpio_dev->irq);
++		else
++			enable_irq(gpio_dev->irq);
++	
++	}
++
++	return 0;
++}
++
++static void rockchip_ir_recv_shutdown(struct platform_device *pdev)
++{
++	
++	struct device *dev = &pdev->dev;
++	struct rockchip_rc_dev *gpio_dev = dev_get_drvdata(dev);
++	
++	if (gpio_dev->use_shutdown_handler)
++		rockchip_ir_recv_suspend_prepare(dev);
++	
++	return;
++	
++}
++
++static int rockchip_ir_recv_sys_off(struct sys_off_data *data)
++{
++	
++	sip_smc_virtual_poweroff();
++	
++	return 0;
++	
++}
++
++static int rockchip_ir_recv_init_sip(void)
++{
++	struct arm_smccc_res res;
++	
++	arm_smccc_smc(ROCKCHIP_SIP_SIP_VERSION, ROCKCHIP_SIP_IMPLEMENT_V2, SECURE_REG_WR, 0, 0, 0, 0, 0, &res);
++	
++	if (res.a0)
++		return 0;
++		
++	return res.a1;
++	
++}
++
++static int rockchip_ir_recv_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct rockchip_rc_dev *gpio_dev;
++	struct rc_dev *rcdev;
++	struct clk *clk;
++	struct clk *p_clk;
++	struct resource *res;
++	u32 period = 0;
++	int rc;
++	int ret;
++	int pwm_wake_irq;
++	int clocks;
++
++	if (!np)
++		return -ENODEV;
++
++	gpio_dev = devm_kzalloc(dev, sizeof(*gpio_dev), GFP_KERNEL);
++	if (!gpio_dev)
++		return -ENOMEM;
++
++	gpio_dev->gpiod = devm_gpiod_get(dev, NULL, GPIOD_IN);
++	if (IS_ERR(gpio_dev->gpiod)) {
++		rc = PTR_ERR(gpio_dev->gpiod);
++		/* Just try again if this happens */
++		if (rc != -EPROBE_DEFER)
++			dev_err(dev, "error getting gpio (%d)\n", rc);
++		return rc;
++	}
++	gpio_dev->irq = gpiod_to_irq(gpio_dev->gpiod);
++	if (gpio_dev->irq < 0)
++		return gpio_dev->irq;
++
++	rcdev = devm_rc_allocate_device(dev, RC_DRIVER_IR_RAW);
++	if (!rcdev)
++		return -ENOMEM;
++
++	rcdev->priv = gpio_dev;
++	rcdev->device_name = ROCKCHIP_IR_DEVICE_NAME;
++	rcdev->input_phys = ROCKCHIP_IR_DEVICE_NAME "/input0";
++	rcdev->input_id.bustype = BUS_HOST;
++	rcdev->input_id.vendor = 0x0001;
++	rcdev->input_id.product = 0x0001;
++	rcdev->input_id.version = 0x0100;
++	rcdev->dev.parent = dev;
++	rcdev->driver_name = KBUILD_MODNAME;
++	rcdev->min_timeout = 1;
++	rcdev->timeout = IR_DEFAULT_TIMEOUT;
++	rcdev->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
++	rcdev->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
++	rcdev->map_name = of_get_property(np, "linux,rc-map-name", NULL);
++	if (!rcdev->map_name)
++		rcdev->map_name = RC_MAP_EMPTY;
++
++	gpio_dev->rcdev = rcdev;
++	if (of_property_read_bool(np, "wakeup-source")) {
++		
++		ret = device_init_wakeup(dev, true);
++		
++		if (ret)
++			dev_err(dev, "could not init wakeup device\n");
++		
++	}
++
++	rc = devm_rc_register_device(dev, rcdev);
++	if (rc < 0) {
++		dev_err(dev, "failed to register rc device (%d)\n", rc);
++		return rc;
++	}
++
++	of_property_read_u32(np, "linux,autosuspend-period", &period);
++	if (period) {
++		gpio_dev->pmdev = dev;
++		pm_runtime_set_autosuspend_delay(dev, period);
++		pm_runtime_use_autosuspend(dev);
++		pm_runtime_set_suspended(dev);
++		pm_runtime_enable(dev);
++	}
++	
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res) {
++		dev_err(dev, "no memory resources defined\n");
++		return -ENODEV;
++	}
++	
++	gpio_dev->pwm_base = devm_ioremap_resource(dev, res);
++	if (IS_ERR(gpio_dev->pwm_base))
++		return PTR_ERR(gpio_dev->pwm_base);
++	
++	clocks = of_property_count_strings(np, "clock-names");
++	if (clocks == 2) {
++		clk = devm_clk_get(dev, "pwm");
++		p_clk = devm_clk_get(dev, "pclk");
++	} else {
++		clk = devm_clk_get(dev, NULL);
++		p_clk = clk;
++	}
++	
++	if (IS_ERR(clk)) {
++		ret = PTR_ERR(clk);
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "Can't get bus clock: %d\n", ret);
++		return ret;
++	}
++	
++	if (IS_ERR(p_clk)) {
++		ret = PTR_ERR(p_clk);
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "Can't get peripheral clock: %d\n", ret);
++		return ret;
++	}
++	
++	ret = clk_prepare_enable(clk);
++	if (ret) {
++		dev_err(dev, "Can't enable bus clk: %d\n", ret);
++		return ret;
++	}
++	
++	ret = clk_prepare_enable(p_clk);
++	if (ret) {
++		dev_err(dev, "Can't enable peripheral clk: %d\n", ret);
++		goto error_clk;
++	}
++	
++	pwm_wake_irq = platform_get_irq(pdev, 0);
++	if (pwm_wake_irq < 0) {
++		dev_err(&pdev->dev, "cannot find PWM wake interrupt\n");
++		goto error_pclk;
++	}
++	
++	gpio_dev->pwm_wake_irq = pwm_wake_irq;
++	ret = enable_irq_wake(pwm_wake_irq);
++	if (ret) {
++		dev_err(dev, "could not enable IRQ wakeup\n");
++	}
++	
++	ret = of_property_read_u32(np, "pwm-id", &gpio_dev->pwm_id);
++	if (ret) {
++		dev_err(dev, "missing pwm-id property\n");
++		goto error_pclk;
++	}
++	
++	if (gpio_dev->pwm_id > 3) {
++		dev_err(dev, "invalid pwm-id property\n");
++		goto error_pclk;
++	}
++	
++	gpio_dev->use_shutdown_handler = of_property_read_bool(np, "shutdown-is-virtual-poweroff");
++	gpio_dev->use_suspend_handler = of_property_read_bool(np, "suspend-is-virtual-poweroff");
++	
++	gpio_dev->pinctrl = devm_pinctrl_get(dev);
++	if (IS_ERR(gpio_dev->pinctrl)) {
++		dev_err(dev, "Unable to get pinctrl\n");
++		goto error_pclk;
++	}
++	
++	gpio_dev->pinctrl_state_default = pinctrl_lookup_state(gpio_dev->pinctrl, "default");
++	if (IS_ERR(gpio_dev->pinctrl_state_default)) {
++		dev_err(dev, "Unable to get default pinctrl state\n");
++		goto error_pclk;
++	}
++	
++	gpio_dev->pinctrl_state_suspend = pinctrl_lookup_state(gpio_dev->pinctrl, "suspend");
++	if (IS_ERR(gpio_dev->pinctrl_state_suspend)) {
++		dev_err(dev, "Unable to get suspend pinctrl state\n");
++		goto error_pclk;
++	}
++	
++	platform_set_drvdata(pdev, gpio_dev);
++
++	ret = devm_request_irq(dev, gpio_dev->irq, rockchip_ir_recv_irq,
++				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
++				"gpio-ir-recv-irq", gpio_dev);
++	if (ret) {
++		dev_err(dev, "Can't request GPIO interrupt\n");
++		goto error_pclk;
++	}
++	
++	if (gpio_dev->use_shutdown_handler) {
++		
++		ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_POWER_OFF, 
++			SYS_OFF_PRIO_FIRMWARE, rockchip_ir_recv_sys_off, NULL);
++		
++		if (ret)
++			dev_err(dev, "could not register sys_off handler\n");
++		
++	}
++	
++	ret = rockchip_ir_recv_init_sip();
++	if (!ret) {
++		dev_err(dev, "Unable to initialize Rockchip SIP v2, virtual poweroff unavailable\n");
++		gpio_dev->use_shutdown_handler = false;
++		gpio_dev->use_suspend_handler = false;
++	} else {
++		dev_info(dev, "rockchip SIP initialized, version 0x%x\n", ret);
++	}
++		
++	return 0;
++
++error_pclk:
++	clk_unprepare(p_clk);	
++error_clk:
++	clk_unprepare(clk);
++	
++	return -ENODEV;
++	
++}
++
++static const struct dev_pm_ops rockchip_ir_recv_pm_ops = {
++	.suspend        = rockchip_ir_recv_suspend,
++	.resume         = rockchip_ir_recv_resume,
++};
++#endif
++
++static const struct of_device_id rockchip_ir_recv_of_match[] = {
++	{ .compatible = "rockchip-ir-receiver", },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, rockchip_ir_recv_of_match);
++
++static struct platform_driver rockchip_ir_recv_driver = {
++	.probe  = rockchip_ir_recv_probe,
++	.remove = rockchip_ir_recv_remove,
++	.shutdown = rockchip_ir_recv_shutdown,
++	.driver = {
++		.name   = KBUILD_MODNAME,
++		.of_match_table = of_match_ptr(rockchip_ir_recv_of_match),
++#ifdef CONFIG_PM
++		.pm	= &rockchip_ir_recv_pm_ops,
++#endif
++	},
++};
++module_platform_driver(rockchip_ir_recv_driver);
++
++MODULE_DESCRIPTION("Rockchip IR Receiver driver");
++MODULE_LICENSE("GPL v2");
+-- 
+Armbian
+

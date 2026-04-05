@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 function extension_finish_config__build_nvidia_kernel_module() {
+	# Deny on minimal CLI images
+	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
+		display_alert "Extension: ${EXTENSION}" "skip installation in minimal images" "warn"
+		return 0
+	fi
+
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping nVidia for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
 	fi
+	declare -g MODULES_BLACKLIST="nouveau"
 	declare -g INSTALL_HEADERS="yes"
-	declare -g NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-"510"}" # @TODO: this might vary per-release and Debian/Ubuntu
+	declare -g NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-"580"}" # @TODO: this might vary per-release and Debian/Ubuntu
 	display_alert "Forcing INSTALL_HEADERS=yes; using nVidia driver version ${NVIDIA_DRIVER_VERSION}" "${EXTENSION}" "debug"
 }
 
@@ -16,5 +23,5 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	# chroot_sdcard_apt_get_install() -> chroot_sdcard_apt_get() -> chroot_sdcard() -> run_host_command_logged_raw()
 	# it handles bash-specific quoting issues, apt proxies, logging, and errors.
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
-	chroot_sdcard_apt_get_install "nvidia-dkms-${NVIDIA_DRIVER_VERSION}" "nvidia-driver-${NVIDIA_DRIVER_VERSION}" nvidia-settings
+	chroot_sdcard_apt_get_install "nvidia-dkms-${NVIDIA_DRIVER_VERSION}" "nvidia-driver-${NVIDIA_DRIVER_VERSION}"
 }

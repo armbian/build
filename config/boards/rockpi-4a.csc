@@ -1,7 +1,8 @@
 # Rockchip RK3399 hexa core 1-4GB SoC GBe eMMC USB3
 BOARD_NAME="Rockpi 4A"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER="clee"
+BOARD_MAINTAINER=""
 BOOTCONFIG="rock-pi-4-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"

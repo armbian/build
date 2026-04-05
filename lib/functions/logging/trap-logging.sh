@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -58,8 +58,7 @@ function trap_handler_cleanup_logging() {
 				zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
 				reset_uid_owner "${target_archive_path}/${old_logfile_fn}.zst"
 			else
-				# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
-				cat "${one_old_logfile}" | gzip > "${target_archive_path}/${old_logfile_fn}.gz"
+				gzip -c "${one_old_logfile}" > "${target_archive_path}/${old_logfile_fn}.gz"
 				reset_uid_owner "${target_archive_path}/${old_logfile_fn}.gz"
 			fi
 			rm -f "${one_old_logfile}"
@@ -72,6 +71,11 @@ function trap_handler_cleanup_logging() {
 	declare -g repeat_args=()
 	produce_repeat_args_array # produces repeat_args
 	declare repeat_args_string="${repeat_args[*]}"
+
+	# Display repeat build options on error or interrupt (successful builds show this in main_default_end_build)
+	if [[ ${cleanup_exit_code:-0} -gt 0 ]]; then
+		display_alert "Repeat Build Options" "${repeat_args_string}" "ext"
+	fi
 
 	## Here -- we need to definitely stop logging, cos we're gonna consolidate and delete the logs.
 	display_alert "End of logging" "STOP LOGGING: CURRENT_LOGFILE: ${CURRENT_LOGFILE}" "debug"
@@ -92,8 +96,7 @@ function trap_handler_cleanup_logging() {
 	# ASCII logs, via ansi2txt, if available.
 	local ascii_log_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log"
 	if [[ -n "$(command -v ansi2txt)" ]]; then
-		# shellcheck disable=SC2002 # gotta pipe, man. I know.
-		cat "${ansi_log_file}" | ansi2txt >> "${ascii_log_file}"
+		ansi2txt < "${ansi_log_file}" >> "${ascii_log_file}"
 	fi
 
 	# Export Markdown assets, but not if in GHA and GHA_EXPORT_MD_SUMMARY != yes

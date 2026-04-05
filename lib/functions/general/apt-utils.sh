@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
+# Copyright (c) 2023-2026 Ricardo Pardini <ricardo@pardini.net>
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 #
 
@@ -57,6 +57,16 @@ function apt_find_upstream_package_version_and_download_url() {
 		jq -r --arg release "${package_download_release}" --arg arch "${ARCH}" \
 			'.[$release][$arch]' $package_info_download_url_file
 	)
+
+	# Fallback for Ubuntu LTS releases: if not found with -updates suffix, try without it
+	if [[ "${found_package_filename}" != "${sought_package_name}_"* ]] && [[ "${DISTRIBUTION}" == "Ubuntu" ]] && [[ "${package_download_release}" == *"-updates" ]]; then
+		display_alert "Package not found with '-updates' suffix, trying without it" "${package_download_release} -> ${RELEASE}" "wrn"
+		package_download_release="${RELEASE}"
+		found_package_filename=$(
+			jq -r --arg release "${package_download_release}" --arg arch "${ARCH}" \
+				'.[$release][$arch]' $package_info_download_url_file
+		)
+	fi
 
 	if [[ "${found_package_filename}" == "${sought_package_name}_"* ]]; then
 		display_alert "Found upstream base-files package filename" "${found_package_filename}" "info"

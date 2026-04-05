@@ -1,12 +1,13 @@
 # Allwinner Cortex-A55 octa core 1/2/4GB RAM SoC
 BOARD_NAME="radxa cubie a5e"
+BOARD_VENDOR="radxa"
 BOARDFAMILY="sun55iw3"
 BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
 KERNEL_TARGET="edge"
-BOOT_FDT_FILE="dtb/allwinner/sun55i-a527-radxa-a5e.dtb"
+BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 #IMAGE_PARTITION_TABLE="msdos"
 BOOTFS_TYPE="fat"
@@ -39,17 +40,21 @@ function post_family_tweaks_bsp__aic8800_wireless() {
 	EOT
 	# Add AIC8800 Bluetooth Service and Script
 	if [[ -d "$SRC/packages/bsp/aic8800" ]]; then
-		mkdir -p "${destination}"/etc/systemd/system
-		mkdir -p "${destination}"/usr/bin
-		cp -f "$SRC/packages/bsp/aic8800/aic-bluetooth" "${destination}"/usr/bin
-		chmod +x "${destination}"/usr/bin/aic-bluetooth
-		cp -f "$SRC/packages/bsp/aic8800/aic-bluetooth.service" "${destination}"/etc/systemd/system
+		install -d -m 0755 "${destination}/usr/bin"
+		install -m 0755 "$SRC/packages/bsp/aic8800/aic-bluetooth" "${destination}/usr/bin/aic-bluetooth"
+		install -d -m 0755 "${destination}/usr/lib/systemd/system"
+		install -m 0644 "$SRC/packages/bsp/aic8800/aic-bluetooth.service" "${destination}/usr/lib/systemd/system/aic-bluetooth.service"
+	else
+		display_alert "$BOARD" "Skipping AIC8800 BT assets (packages/bsp/aic8800 not found)" "warn"
 	fi
 }
 
 # Enable AIC8800 Bluetooth Service
 function post_family_tweaks__enable_aic8800_bluetooth_service() {
 	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
-	chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
+	if chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service || chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
+		chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
+	else
+		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
+	fi
 }
-

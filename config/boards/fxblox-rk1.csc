@@ -1,5 +1,6 @@
 # Rockchip RK3588 SoC octa core 8-32GB SoC eMMC USB-C DP NvME SATA M2
 BOARD_NAME="FxBlox RK1"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="mahdichi"
 BOOTCONFIG="fxblox-rk1-rk3588_defconfig"

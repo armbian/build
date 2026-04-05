@@ -1,0 +1,518 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qu Wenruo <wqu@suse.com>
+Date: Fri, 30 Dec 2022 09:07:05 +0800
+Subject: UPSTREAM: multiple fixes for btrfs
+
+fs: btrfs: Do not free multi when guaranteed to be NULL
+
+multi is guaranteed to be NULL in the first two error exit paths so the
+attempt to free it is not needed. Remove those calls.
+
+This issue found by Smatch.
+
+Signed-off-by: Andrew Goodbody <andrew.goodbody@linaro.org>
+(cherry picked from commit 9204cae0937c0e26fcff1ee08e51ef37f59844fe)
+
+fs: btrfs: hide duplicate 'Cannot lookup file' error on 'load'
+
+Running commands such as 'load mmc 2:1 $addr $path' when path does not
+exists will print an error twice if the file does not exist, e.g.:
+```
+Cannot lookup file boot/boot.scr
+Failed to load 'boot/boot.scr'
+```
+(where the first line is printed by btrfs and the second by common fs
+code)
+
+Historically other filesystems such as ext4 or fat have not been
+printing a message here, so do the same here to avoid duplicate.
+
+The other error messages in this function are also somewhat redundant,
+but bring useful diagnostics if they happen somewhere, so have been left
+as printf.
+
+Note that if a user wants no message to be printed for optional file
+loads, they have to check for file existence first with other commands
+such as 'size'.
+
+Signed-off-by: Dominique Martinet <dominique.martinet@atmark-techno.com>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit 6e988fde65b0a89d49c20553d47a8ec1e5461c12)
+
+fs: btrfs: fix out of bounds write
+
+Fix btrfs_read/read_and_truncate_page write out of bounds of destination
+buffer. Old behavior break bootstd malloc'd buffers of exact file size.
+Previously this OOB write have not been noticed because distroboot usually
+read files into huge static memory areas.
+
+Signed-off-by: Alex Shumsky <alexthreed@gmail.com>
+Fixes: e342718 ("fs: btrfs: Implement btrfs_file_read()")
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit ee1941e4fec601a8444f49c7dad04ad700d501a6)
+
+fs: btrfs: fix reading when length specified
+
+The btrfs read function limits the read length to ensure that it
+and the read offset do not together exceed the size of the file.
+However, this size was only being queried if the read length was
+passed a value of zero (meaning "whole file"), and the size is
+defaulted to 0 otherwise. This means the clamp will just zero out
+the length if one is specified, preventing reading of the file.
+
+Fix this by checking the file size unconditionally, and unifying
+the default length and clamping logic as a single range check instead.
+
+This bug was discovered when trying to boot Linux with initrd= via
+'bootefi' from a btrfs partition. The EFI stub entered an infinite
+loop of zero-length reads while trying to read the initrd, and the
+boot process stalled indefinitely.
+
+Signed-off-by: Sam Edwards <CFSworks@gmail.com>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit 6d6ea52b629c384fb8605678b9003d2a077f9148)
+
+btrfs: fix some error checking for btrfs_decompress()
+
+The btrfs_decompress() function mostly (u32)-1 on error but it can
+also return -EPERM or other kernel error codes from zstd_decompress().
+The "ret" variable is an int, so we could just check for negatives.
+
+Signed-off-by: Dan Carpenter <dan.carpenter@linaro.org>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit 08404fa2087946bb370430d466fe5011f18ef072)
+
+fs: btrfs: Prevent error pointer dereference in list_subvolums()
+
+If btrfs_read_fs_root() fails with -ENOENT, then we go to the next
+entry.  Fine.  But if it fails for a different reason then we need
+to clean up and return an error code.  In the current code it
+doesn't clean up but instead dereferences "root" and crashes.
+
+Signed-off-by: Dan Carpenter <dan.carpenter@linaro.org>
+Reviewed-by: Marek Behun <kabel@kernel.org>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit c331efd08766aa610aa14c957856ef5b0fa915df)
+
+fs/btrfs: use asm/unaligned.h
+
+Use asm/unaligned.h instead of linux/unaligned/access_ok.h for unaligned
+access. This is needed on architectures that doesn't handle unaligned
+accesses directly.
+
+Signed-off-by: Jens Wiklander <jens.wiklander@linaro.org>
+Reviewed-by: Ilias Apalodimas <ilias.apalodimas@linaro.org>
+(cherry picked from commit 6ba08b3f56c93d2e97e5be3e9deccadd1e8c0796)
+
+btrfs: fix offset when reading compressed extents
+
+btrfs_read_extent_reg correctly computed the extent offset in the
+BTRFS_COMPRESS_NONE case, but did not account for the 'offset - key.offset'
+part correctly in the compressed case, making the function read
+incorrect data.
+
+In the case I examined, the last 4k of a file was corrupted and
+contained data from a few blocks prior, e.g. reading a 10k file with a
+single extent:
+btrfs_file_read()
+ -> btrfs_read_extent_reg
+    (aligned part loop, until 8k)
+ -> read_and_truncate_page
+   -> btrfs_read_extent_reg
+      (re-reads the last extent from 8k to the end,
+      incorrectly reading the first 2k of data)
+
+This can be reproduced as follow:
+$ truncate -s 200M btr
+$ mount btr -o compress /mnt
+$ pat() { dd if=/dev/zero bs=1M count=$1 iflag=count_bytes status=none | tr '\0' "\\$2"; }
+$ { pat 4K 1; pat 4K 2; pat 2K 3; }  > /mnt/file
+$ sync
+$ filefrag -v /mnt/file
+File size of /mnt/file is 10240 (3 blocks of 4096 bytes)
+ ext:     logical_offset:        physical_offset: length:   expected: flags:
+   0:        0..       2:       3328..      3330:      3:             last,encoded,eof
+$ umount /mnt
+
+Then in u-boot:
+=> load scsi 0 2000000 file
+10240 bytes read in 3 ms (3.3 MiB/s)
+=> md 2001ff0
+02001ff0: 02020202 02020202 02020202 02020202  ................
+02002000: 01010101 01010101 01010101 01010101  ................
+02002010: 01010101 01010101 01010101 01010101  ................
+
+(02002000 onwards should contain '03' pattern but went back to 01,
+start of the extent)
+
+After patch, data is read properly:
+=> md 2001ff0
+02001ff0: 02020202 02020202 02020202 02020202  ................
+02002000: 03030303 03030303 03030303 03030303  ................
+02002010: 03030303 03030303 03030303 03030303  ................
+
+Note that the code previously (before commit e3427184f38a ("fs: btrfs:
+Implement btrfs_file_read()")) did not split that read in two, so
+this is a regression even if the previous code might not have been
+handling offsets correctly either (something that booted now fails to
+boot)
+
+Fixes: a26a6bedafcf ("fs: btrfs: Introduce btrfs_read_extent_inline() and btrfs_read_extent_reg()")
+Signed-off-by: Dominique Martinet <dominique.martinet@atmark-techno.com>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit b1d3013d024086c042dbae4ddd99db56bb55b5e7)
+
+fs: btrfs: limit the mapped length to the original length
+
+[BUG]
+There is a bug report that btrfs driver caused hang during file read:
+
+  This breaks btrfs on the HiFive Unmatched.
+
+  => pci enum
+  PCIE-0: Link up (Gen1-x8, Bus0)
+  => nvme scan
+  => load nvme 0:2 0x8c000000 /boot/dtb/sifive/hifive-unmatched-a00.dtb
+  [hangs]
+
+[CAUSE]
+The reporter provided some debug output:
+
+  read_extent_data: cur=615817216, orig_len=16384, cur_len=16384
+  read_extent_data: btrfs_map_block: cur_len=479944704; ret=0
+  read_extent_data: ret=0
+  read_extent_data: cur=615833600, orig_len=4096, cur_len=4096
+  read_extent_data: btrfs_map_block: cur_len=479928320; ret=0
+
+Note the second and the last line, the @cur_len is 450+MiB, which is
+almost a chunk size.
+
+And inside __btrfs_map_block(), we limits the returned value to stripe
+length, but that's depending on the chunk type:
+
+	if (map->type & (BTRFS_BLOCK_GROUP_RAID0 | BTRFS_BLOCK_GROUP_RAID1 |
+			 BTRFS_BLOCK_GROUP_RAID1C3 | BTRFS_BLOCK_GROUP_RAID1C4 |
+			 BTRFS_BLOCK_GROUP_RAID5 | BTRFS_BLOCK_GROUP_RAID6 |
+			 BTRFS_BLOCK_GROUP_RAID10 |
+			 BTRFS_BLOCK_GROUP_DUP)) {
+		/* we limit the length of each bio to what fits in a stripe */
+		*length = min_t(u64, ce->size - offset,
+			      map->stripe_len - stripe_offset);
+	} else {
+		*length = ce->size - offset;
+	}
+
+This means, if the chunk is SINGLE profile, then we don't limit the
+returned length at all, and even for other profiles, we can still return
+a length much larger than the requested one.
+
+[FIX]
+Properly clamp the returned length, preventing it from returning a much
+larger range than expected.
+
+Reported-by: Andreas Schwab <schwab@linux-m68k.org>
+Signed-off-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit 511a1303c9cf9663c7d4312e3a0693319f41095b)
+
+fs/btrfs: handle data extents, which crosss stripe boundaries, correctly
+
+[BUG]
+Since btrfs supports single device RAID0 at mkfs time after btrfs-progs
+v5.14, if we create a single device raid0 btrfs, and created a file
+crossing stripe boundary:
+
+  # mkfs.btrfs -m dup -d raid0 test.img
+  # mount test.img mnt
+  # xfs_io -f -c "pwrite 0 128K" mnt/file
+  # umount mnt
+
+Since btrfs is using 64K as stripe length, above 128K data write is
+definitely going to cross at least one stripe boundary.
+
+Then u-boot would fail to read above 128K file:
+
+ => host bind 0 /home/adam/test.img
+ => ls host 0
+ <   >     131072  Fri Dec 30 00:18:25 2022  file
+ => load host 0 0 file
+ BTRFS: An error occurred while reading file file
+ Failed to load 'file'
+
+[CAUSE]
+Unlike tree blocks read, data extent reads doesn't consider cases in which
+one data extent can cross stripe boundary.
+
+In read_data_extent(), we just call btrfs_map_block() once and read the
+first mapped range.
+
+And if the first mapped range is smaller than the desired range, it
+would return error.
+
+But since even single device btrfs can utilize RAID0 profiles, the first
+mapped range can only be at most 64K for RAID0 profiles, and cause false
+error.
+
+[FIX]
+Just like read_whole_eb(), we should call btrfs_map_block() in a loop
+until we read all data.
+
+Since we're here, also add extra error messages for the following cases:
+
+- btrfs_map_block() failure
+  We already have the error message for it.
+
+- Missing device
+  This should not happen, as we only support single device for now.
+
+- __btrfs_devread() failure
+
+With this bug fixed, btrfs driver of u-boot can properly read the above
+128K file, and have the correct content:
+
+ => host bind 0 /home/adam/test.img
+ => ls host 0
+ <   >     131072  Fri Dec 30 00:18:25 2022  file
+ => load host 0 0 file
+ 131072 bytes read in 0 ms
+ => md5sum 0 0x20000
+ md5 for 00000000 ... 0001ffff ==> d48858312a922db7eb86377f638dbc9f
+ ^^^ Above md5sum also matches.
+
+Reported-by: Sam Winchenbach <swichenbach@tethers.com>
+Signed-off-by: Qu Wenruo <wqu@suse.com>
+(cherry picked from commit 11d567012558fab7da9d1189948cb6005c081ccd)
+---
+ fs/btrfs/btrfs.c       | 17 ++--
+ fs/btrfs/crypto/hash.c |  2 +-
+ fs/btrfs/disk-io.c     | 49 +++++-----
+ fs/btrfs/inode.c       | 16 ++-
+ fs/btrfs/subvolume.c   |  1 +
+ fs/btrfs/volumes.c     |  4 +-
+ 6 files changed, 49 insertions(+), 40 deletions(-)
+
+diff --git a/fs/btrfs/btrfs.c b/fs/btrfs/btrfs.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/btrfs.c
++++ b/fs/btrfs/btrfs.c
+@@ -193,7 +193,7 @@ int btrfs_size(const char *file, loff_t *size)
+ 	ret = btrfs_lookup_path(fs_info->fs_root, BTRFS_FIRST_FREE_OBJECTID,
+ 				file, &root, &ino, &type, 40);
+ 	if (ret < 0) {
+-		printf("Cannot lookup file %s\n", file);
++		debug("Cannot lookup file %s\n", file);
+ 		return ret;
+ 	}
+ 	if (type != BTRFS_FT_REG_FILE) {
+@@ -228,7 +228,7 @@ int btrfs_read(const char *file, void *buf, loff_t offset, loff_t len,
+ {
+ 	struct btrfs_fs_info *fs_info = current_fs_info;
+ 	struct btrfs_root *root;
+-	loff_t real_size = 0;
++	loff_t real_size;
+ 	u64 ino;
+ 	u8 type;
+ 	int ret;
+@@ -246,16 +246,13 @@ int btrfs_read(const char *file, void *buf, loff_t offset, loff_t len,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (!len) {
+-		ret = btrfs_size(file, &real_size);
+-		if (ret < 0) {
+-			error("Failed to get inode size: %s", file);
+-			return ret;
+-		}
+-		len = real_size;
++	ret = btrfs_size(file, &real_size);
++	if (ret < 0) {
++		error("Failed to get inode size: %s", file);
++		return ret;
+ 	}
+ 
+-	if (len > real_size - offset)
++	if (!len || len > real_size - offset)
+ 		len = real_size - offset;
+ 
+ 	ret = btrfs_file_read(root, ino, offset, len, buf);
+diff --git a/fs/btrfs/crypto/hash.c b/fs/btrfs/crypto/hash.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/crypto/hash.c
++++ b/fs/btrfs/crypto/hash.c
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ 
++#include <asm/unaligned.h>
+ #include <linux/xxhash.h>
+-#include <linux/unaligned/access_ok.h>
+ #include <linux/types.h>
+ #include <u-boot/sha256.h>
+ #include <u-boot/blake2.h>
+diff --git a/fs/btrfs/disk-io.c b/fs/btrfs/disk-io.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/disk-io.c
++++ b/fs/btrfs/disk-io.c
+@@ -540,34 +540,39 @@ struct extent_buffer* read_tree_block(struct btrfs_fs_info *fs_info, u64 bytenr,
+ int read_extent_data(struct btrfs_fs_info *fs_info, char *data, u64 logical,
+ 		     u64 *len, int mirror)
+ {
+-	u64 offset = 0;
++	u64 orig_len = *len;
++	u64 cur = logical;
+ 	struct btrfs_multi_bio *multi = NULL;
+ 	struct btrfs_device *device;
+ 	int ret = 0;
+-	u64 max_len = *len;
+ 
+-	ret = btrfs_map_block(fs_info, READ, logical, len, &multi, mirror,
+-			      NULL);
+-	if (ret) {
+-		fprintf(stderr, "Couldn't map the block %llu\n",
+-				logical + offset);
+-		goto err;
+-	}
+-	device = multi->stripes[0].dev;
+-
+-	if (*len > max_len)
+-		*len = max_len;
+-	if (!device->desc || !device->part) {
+-		ret = -EIO;
+-		goto err;
+-	}
++	while (cur < logical + orig_len) {
++		u64 cur_len = logical + orig_len - cur;
+ 
+-	ret = __btrfs_devread(device->desc, device->part, data, *len,
+-			      multi->stripes[0].physical);
+-	if (ret != *len)
+-		ret = -EIO;
+-	else
++		ret = btrfs_map_block(fs_info, READ, cur, &cur_len, &multi,
++				      mirror, NULL);
++		if (ret) {
++			error("Couldn't map the block %llu", cur);
++			goto err;
++		}
++		device = multi->stripes[0].dev;
++		if (!device->desc || !device->part) {
++			error("devid %llu is missing", device->devid);
++			ret = -EIO;
++			goto err;
++		}
++		ret = __btrfs_devread(device->desc, device->part,
++				data + (cur - logical), cur_len,
++				multi->stripes[0].physical);
++		if (ret != cur_len) {
++			error("read failed on devid %llu physical %llu",
++			      device->devid, multi->stripes[0].physical);
++			ret = -EIO;
++			goto err;
++		}
++		cur += cur_len;
+ 		ret = 0;
++	}
+ err:
+ 	kfree(multi);
+ 	return ret;
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -390,7 +390,7 @@ int btrfs_read_extent_inline(struct btrfs_path *path,
+ 			   csize);
+ 	ret = btrfs_decompress(btrfs_file_extent_compression(leaf, fi),
+ 			       cbuf, csize, dbuf, dsize);
+-	if (ret == (u32)-1) {
++	if (ret < 0) {
+ 		ret = -EIO;
+ 		goto out;
+ 	}
+@@ -500,7 +500,7 @@ int btrfs_read_extent_reg(struct btrfs_path *path,
+ 
+ 	ret = btrfs_decompress(btrfs_file_extent_compression(leaf, fi), cbuf,
+ 			       csize, dbuf, dsize);
+-	if (ret == (u32)-1) {
++	if (ret < 0) {
+ 		ret = -EIO;
+ 		goto out;
+ 	}
+@@ -511,7 +511,9 @@ int btrfs_read_extent_reg(struct btrfs_path *path,
+ 	if (ret < dsize)
+ 		memset(dbuf + ret, 0, dsize - ret);
+ 	/* Then copy the needed part */
+-	memcpy(dest, dbuf + btrfs_file_extent_offset(leaf, fi), len);
++	memcpy(dest,
++	       dbuf + btrfs_file_extent_offset(leaf, fi) + offset - key.offset,
++	       len);
+ 	ret = len;
+ out:
+ 	free(cbuf);
+@@ -638,7 +640,11 @@ static int read_and_truncate_page(struct btrfs_path *path,
+ 	extent_type = btrfs_file_extent_type(leaf, fi);
+ 	if (extent_type == BTRFS_FILE_EXTENT_INLINE) {
+ 		ret = btrfs_read_extent_inline(path, fi, buf);
+-		memcpy(dest, buf + page_off, min(page_len, ret));
++		if (ret < 0) {
++			free(buf);
++			return ret;
++		}
++		memcpy(dest, buf + page_off, min3(page_len, ret, len));
+ 		free(buf);
+ 		return len;
+ 	}
+@@ -650,7 +656,7 @@ static int read_and_truncate_page(struct btrfs_path *path,
+ 		free(buf);
+ 		return ret;
+ 	}
+-	memcpy(dest, buf + page_off, page_len);
++	memcpy(dest, buf + page_off, min(page_len, len));
+ 	free(buf);
+ 	return len;
+ }
+diff --git a/fs/btrfs/subvolume.c b/fs/btrfs/subvolume.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/subvolume.c
++++ b/fs/btrfs/subvolume.c
+@@ -199,6 +199,7 @@ static int list_subvolums(struct btrfs_fs_info *fs_info)
+ 			ret = PTR_ERR(root);
+ 			if (ret == -ENOENT)
+ 				goto next;
++			goto out;
+ 		}
+ 		ret = list_one_subvol(root, result);
+ 		if (ret < 0)
+diff --git a/fs/btrfs/volumes.c b/fs/btrfs/volumes.c
+index 111111111111..222222222222 100644
+--- a/fs/btrfs/volumes.c
++++ b/fs/btrfs/volumes.c
+@@ -956,6 +956,7 @@ int __btrfs_map_block(struct btrfs_fs_info *fs_info, int rw,
+ 	struct btrfs_mapping_tree *map_tree = &fs_info->mapping_tree;
+ 	struct cache_extent *ce;
+ 	struct map_lookup *map;
++	u64 orig_len = *length;
+ 	u64 offset;
+ 	u64 stripe_offset;
+ 	u64 *raid_map = NULL;
+@@ -972,12 +973,10 @@ int __btrfs_map_block(struct btrfs_fs_info *fs_info, int rw,
+ again:
+ 	ce = search_cache_extent(&map_tree->cache_tree, logical);
+ 	if (!ce) {
+-		kfree(multi);
+ 		*length = (u64)-1;
+ 		return -ENOENT;
+ 	}
+ 	if (ce->start > logical) {
+-		kfree(multi);
+ 		*length = ce->start - logical;
+ 		return -ENOENT;
+ 	}
+@@ -1047,6 +1046,7 @@ again:
+ 	} else {
+ 		*length = ce->size - offset;
+ 	}
++	*length = min_t(u64, *length, orig_len);
+ 
+ 	if (!multi_ret)
+ 		goto out;
+-- 
+Armbian
+

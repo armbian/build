@@ -1,5 +1,6 @@
 # Rockchip RK3566 quad core 1GB-2GB GBE eMMC USB3 WiFi
 BOARD_NAME="LCKFB Taishan Pi"
+BOARD_VENDOR="rockchip"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="lckfb-tspi-rk3566_defconfig"
@@ -17,7 +18,7 @@ function post_family_config__tspi_use_radxa_vendor() {
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2025.04"
 	BOOTPATCHDIR="v2025.04"
-	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
+	BOOTDIR="u-boot-${BOARD}"
 	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
 

@@ -1,11 +1,12 @@
 # Allwinner H3 quad core 512MB RAM WiFi
 BOARD_NAME="Orange Pi Lite"
+BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_lite_defconfig"
 MODULES_LEGACY="g_serial"
 MODULES_CURRENT="g_serial"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"
 
 function post_config_uboot_target__extra_configs_for_orangepi_lite() {

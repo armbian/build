@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -48,6 +48,12 @@ function cli_docker_run() {
 
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
+	# Ensure Docker auto-pull cronjob is installed (controlled by ARMBIAN_DOCKER_AUTO_PULL flag)
+	# Only run this when not generating Dockerfile only
+	if [[ "${DOCKERFILE_GENERATE_ONLY}" != "yes" ]]; then
+		docker_ensure_auto_pull_cronjob
+	fi
+
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
 	if [[ "${FAST_DOCKER:-"no"}" != "yes" ]]; then # "no, I want *slow* docker" -- no one, ever
 		LOG_SECTION="docker_cli_prepare_dockerfile" do_with_logging docker_cli_prepare_dockerfile
@@ -65,6 +71,9 @@ function cli_docker_run() {
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SET_OWNER_TO_UID"]="${EUID}")                 # fix the owner of files to our UID
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["ARMBIAN_BUILD_UUID"]="${ARMBIAN_BUILD_UUID}") # pass down our uuid to the docker instance
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SKIP_LOG_ARCHIVE"]="yes")                     # launched docker instance will not cleanup logs.
+	if [[ -n "${DOCKER_NICE:-}" ]]; then
+		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["DOCKER_NICE"]="${DOCKER_NICE}") # propagated `nice` value
+	fi
 
 	# Produce the re-launch params.
 	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()

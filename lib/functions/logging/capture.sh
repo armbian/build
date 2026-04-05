@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -18,7 +18,8 @@ function do_capturing_defs() {
 
 	post_exec_vars="$(compgen -A variable)"
 
-	new_vars_list="$(comm -13 <(echo "$pre_exec_vars" | grep -E '[[:upper:]]+' | grep -v -e "^BASH_" | sort) <(echo "${post_exec_vars}" | grep -E '[[:upper:]]+' | grep -v -e "^BASH_" | sort))"
+	# Avoid comm for uutils coreutils compatibility
+	new_vars_list="$(grep -vxFf <(echo "$pre_exec_vars" | grep -E '[[:upper:]]+' | grep -v -e "^BASH_") <(echo "${post_exec_vars}" | grep -E '[[:upper:]]+' | grep -v -e "^BASH_") || true)"
 
 	for onevar in ${new_vars_list}; do
 		all_vars_array+=("$(declare -p "${onevar}")")
