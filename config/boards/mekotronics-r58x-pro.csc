@@ -3,6 +3,7 @@ declare -g BOARD_NAME="Mekotronics R58X-Pro"
 declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""
+declare -g INTRODUCED="2024"
 declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mekotronics-r58x-pro.dtb" # mainline name; see below for vendor
 declare -g DISPLAY_MANAGER="wayland"

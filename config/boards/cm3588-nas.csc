@@ -3,6 +3,7 @@ BOARD_NAME="FriendlyElec CM3588 NAS"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
+INTRODUCED="2023"
 BOOTCONFIG="cm3588-nas-rk3588_defconfig" # Mainline defconfig, enables booting from NVMe
 BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"

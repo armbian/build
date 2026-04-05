@@ -3,6 +3,7 @@ BOARD_NAME="Orange Pi 5 Pro"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
+INTRODUCED="2024"
 BOOTCONFIG="orangepi_5_pro_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOTCONFIG_SATA="orangepi_5_pro_sata_defconfig"
 BOOT_SOC="rk3588"

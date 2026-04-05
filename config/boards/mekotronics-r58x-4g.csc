@@ -3,6 +3,7 @@ declare -g BOARD_NAME="Mekotronics R58X-4G"
 declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""
+declare -g INTRODUCED="2024"
 declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-blueberry-edge-v12-linux.dtb" # same name for mainline and vendor
 declare -g DISPLAY_MANAGER="wayland"

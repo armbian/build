@@ -3,6 +3,7 @@ BOARD_NAME="Orange Pi R2S"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="spacemit"
 BOARD_MAINTAINER="sven-ola"
+INTRODUCED="2022"
 KERNEL_TARGET="legacy,current"
 BOOT_FDT_FILE="spacemit/k1-orangepi-r2s.dtb"
 BOOTDELAY=1
