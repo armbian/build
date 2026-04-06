@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="branch:master"
+declare -g ASK_BRANCH="branch:mt-6.12.y"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
@@ -101,6 +101,7 @@ function post_install_kernel_debs__build_ask_modules() {
 	[[ -d "${ksrc}" ]] || exit_with_error "Kernel source tree not found at ${ksrc}"
 
 	local cross="${KERNEL_COMPILER}"
+	local bsp_dir="${SRC}/packages/bsp/gateway-dk"
 	local builddir="/tmp/ask-build-$$"
 	mkdir -p "${builddir}"
 
@@ -134,17 +135,17 @@ function post_install_kernel_debs__build_ask_modules() {
 		# SFP-LED: GPIO-based SFP port LED control
 		display_alert "ASK extension" "building SFP-LED kernel module" "info"
 		mkdir -p "${builddir}/sfp-led"
-		cp "${SRC}/packages/bsp/gateway-dk/sfp-led.c" "${builddir}/sfp-led/"
-		cp "${SRC}/packages/bsp/gateway-dk/sfp-led.mk" "${builddir}/sfp-led/Makefile"
+		cp "${bsp_dir}/sfp-led.c" "${builddir}/sfp-led/"
+		cp "${bsp_dir}/sfp-led.mk" "${builddir}/sfp-led/Makefile"
 		make -C "${builddir}/sfp-led" KERNEL_SRC="${ksrc}" ARCH=arm64 CROSS_COMPILE="${cross}" \
 			|| exit_with_error "SFP-LED module build failed"
 
 		# LP5812: TI 4x3 LED matrix controller (not yet in mainline, targeting 6.19+)
 		display_alert "ASK extension" "building LP5812 LED driver" "info"
 		mkdir -p "${builddir}/lp5812"
-		cp "${SRC}/packages/bsp/gateway-dk/leds-lp5812.c" "${builddir}/lp5812/"
-		cp "${SRC}/packages/bsp/gateway-dk/leds-lp5812.h" "${builddir}/lp5812/"
-		cp "${SRC}/packages/bsp/gateway-dk/leds-lp5812.mk" "${builddir}/lp5812/Makefile"
+		cp "${bsp_dir}/leds-lp5812.c" "${builddir}/lp5812/"
+		cp "${bsp_dir}/leds-lp5812.h" "${builddir}/lp5812/"
+		cp "${bsp_dir}/leds-lp5812.mk" "${builddir}/lp5812/Makefile"
 		pushd "${builddir}/lp5812"
 		make KERNEL_SRC="${ksrc}" ARCH=arm64 CROSS_COMPILE="${cross}" \
 			|| exit_with_error "LP5812 module build failed"
@@ -168,7 +169,7 @@ function post_install_kernel_debs__build_ask_modules() {
 	cp "${ask_dir}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
 
 	# Clean up build dir
-	rm -rf "${builddir}/cdx" "${builddir}/fci" "${builddir}/auto-bridge" "${builddir}/sfp-led" "${builddir}/lp5812"
+	rm -rf "${builddir}"
 
 	display_alert "ASK extension" "kernel modules built and installed" "info"
 }
@@ -179,7 +180,7 @@ function pre_customize_image__000_prepare_ask_patches() {
 	ask_dir=$(ask_ensure_cached)
 
 	mkdir -p "${SDCARD}/tmp/ask-patches"
-	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink" "iptables" "iproute2")
+	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink" "iptables")
 	for pdir in "${patch_dirs[@]}"; do
 		[[ -d "${ask_dir}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ask_dir}/patches/${pdir}"
 		cp "${ask_dir}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
@@ -241,7 +242,6 @@ function pre_customize_image__001_build_ask_userspace() {
 	cp "${ask_dir}/patches/fmc/"*.patch "${SDCARD}/tmp/ask-userspace/"
 
 	chroot_sdcard "cd /tmp/ask-userspace/fmc && \
-		find source -name '*.cpp' -o -name '*.h' -o -name '*.c' | xargs sed -i 's/\r\$//' && \
 		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
 		make MACHINE=ls1043 \
 			FMD_USPACE_HEADER_PATH=/usr/include/fmd \
@@ -328,7 +328,7 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	# Pin patched packages to prevent apt upgrade from overwriting
 	display_alert "ASK extension" "pinning patched packages" "info"
-	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables iproute2"
+	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables"
 
 	# Install sysctl tuning for conntrack
 	cat > "${SDCARD}/etc/sysctl.d/99-ls1046a-conntrack.conf" << 'EOF'
@@ -351,7 +351,7 @@ function build_ask_patched_libraries() {
 	# Install all build dependencies upfront
 	display_alert "ASK extension" "installing build deps for patched libraries" "info"
 	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -y build-dep \
-		libnetfilter-conntrack libnfnetlink iptables iproute2"
+		libnetfilter-conntrack libnfnetlink iptables"
 
 	# Rebuild each patched library in an isolated directory
 	rebuild_patched_deb "libnetfilter-conntrack" \
@@ -366,9 +366,6 @@ function build_ask_patched_libraries() {
 		"001-qosmark-extensions.patch" \
 		"libip4tc2_*.deb libip6tc2_*.deb libxtables12_*.deb iptables_*.deb"
 
-	rebuild_patched_deb "iproute2" \
-		"01-nxp-ask-etherip-4rd.patch" \
-		"iproute2_*.deb"
 }
 
 # Helper: rebuild a Debian package with an ASK patch in an isolated chroot directory
