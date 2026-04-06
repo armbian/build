@@ -42,21 +42,17 @@ function host_pre_docker_launch__mount_local_ask() {
 	fi
 }
 
-# Helper: ensure ASK repo is cloned and cached
-function ask_ensure_cached() {
-	local ask_cache="${SRC}/cache/sources/ask-repo/checkout"
-	if [[ ! -d "${ask_cache}/.git" ]]; then
-		display_alert "ASK extension" "cloning ASK repo" "info" >&2
-		rm -rf "${ask_cache}"
-		# For local file:// repos in Docker, safe.directory is needed (container runs as root)
-		if [[ "${ASK_REPO}" == file://* ]]; then
-			local local_path="${ASK_REPO#file://}"
-			git config --global --add safe.directory "${local_path}" 2>/dev/null
-			git config --global --add safe.directory "${local_path}/.git" 2>/dev/null
-		fi
-		git clone --depth 1 --branch "${ASK_BRANCH##*:}" "${ASK_REPO}" "${ask_cache}" >&2
+# Fetch ASK repo (sets ASK_CACHE_DIR for all later build phases)
+# Uses post_family_config because the kernel patch staging hook needs it before fetch_sources_tools runs
+function post_family_config__ask_fetch_repo() {
+	# For local file:// repos in Docker, safe.directory is needed (container runs as root)
+	if [[ "${ASK_REPO}" == file://* ]]; then
+		local local_path="${ASK_REPO#file://}"
+		git config --global --add safe.directory "${local_path}" 2>/dev/null
+		git config --global --add safe.directory "${local_path}/.git" 2>/dev/null
 	fi
-	echo "${ask_cache}"
+	fetch_from_repo "${ASK_REPO}" "ask-repo" "${ASK_BRANCH}"
+	declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"
 }
 
 # Ensure kernel headers are available for module builds
@@ -73,9 +69,7 @@ function add_host_dependencies__ask_deps() {
 
 # Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build
 function post_family_config__ask_kernel_patch() {
-	local ask_dir
-	ask_dir=$(ask_ensure_cached)
-	local patch_src="${ask_dir}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
+	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
 	local patch_dst="${SRC}/userpatches/kernel/archive/ls1046a-${KERNEL_MAJOR_MINOR}"
 	mkdir -p "${patch_dst}"
@@ -89,9 +83,6 @@ function post_install_kernel_debs__build_ask_modules() {
 
 	display_alert "ASK extension" "building kernel modules (host cross-compile)" "info"
 
-	local ask_dir
-	ask_dir=$(ask_ensure_cached)
-
 	local kernel_ver
 	kernel_ver=$(ls -1v "${SDCARD}/lib/modules/" | tail -1)
 	[[ -z "${kernel_ver}" ]] && exit_with_error "No kernel version found in ${SDCARD}/lib/modules/"
@@ -102,16 +93,17 @@ function post_install_kernel_debs__build_ask_modules() {
 
 	local cross="${KERNEL_COMPILER}"
 	local bsp_dir="${SRC}/packages/bsp/gateway-dk"
-	local builddir="/tmp/ask-build-$$"
-	mkdir -p "${builddir}"
+	local builddir
+	builddir=$(mktemp -d)
 	trap "rm -rf '${builddir}'" EXIT
 
 	# Copy ASK module sources to build dir
-	cp -a "${ask_dir}/${ASK_CDX_DIR}" "${builddir}/cdx"
-	cp -a "${ask_dir}/${ASK_FCI_DIR}" "${builddir}/fci"
-	cp -a "${ask_dir}/${ASK_AUTOBRIDGE_DIR}" "${builddir}/auto-bridge"
+	cp -a "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${builddir}/cdx"
+	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${builddir}/fci"
+	cp -a "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${builddir}/auto-bridge"
 
 	# Build CDX module (cross-compile on host against full kernel source)
+	# NXP ASK uses LS1043A as the DPAA1 platform ID for all DPAA1 SoCs (LS1043A/LS1046A)
 	display_alert "ASK extension" "building CDX kernel module" "info"
 	make -C "${builddir}/cdx" \
 		KERNELDIR="${ksrc}" ARCH=arm64 CROSS_COMPILE="${cross}" PLATFORM=LS1043A \
@@ -167,7 +159,7 @@ function post_install_kernel_debs__build_ask_modules() {
 	chroot_sdcard "depmod -a ${kernel_ver}"
 
 	# Install module load order config (from ASK repo)
-	cp "${ask_dir}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
+	cp "${ASK_CACHE_DIR}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
 
 	# Clean up build dir (also handled by EXIT trap on failure)
 	rm -rf "${builddir}"
@@ -178,14 +170,11 @@ function post_install_kernel_debs__build_ask_modules() {
 
 # Copy patches into chroot before patched library builds (runs before build_ask_userspace)
 function pre_customize_image__000_prepare_ask_patches() {
-	local ask_dir
-	ask_dir=$(ask_ensure_cached)
-
 	mkdir -p "${SDCARD}/tmp/ask-patches"
 	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink" "iptables")
 	for pdir in "${patch_dirs[@]}"; do
-		[[ -d "${ask_dir}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ask_dir}/patches/${pdir}"
-		cp "${ask_dir}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
+		[[ -d "${ASK_CACHE_DIR}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ASK_CACHE_DIR}/patches/${pdir}"
+		cp "${ASK_CACHE_DIR}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
 	done
 
 	# Enable deb-src for apt-get source
@@ -201,8 +190,6 @@ function pre_customize_image__000_prepare_ask_patches() {
 function pre_customize_image__001_build_ask_userspace() {
 	display_alert "ASK extension" "building userspace components" "info"
 
-	local ask_dir
-	ask_dir=$(ask_ensure_cached)
 	local kernel_ver
 	kernel_ver=$(ls -1v "${SDCARD}/lib/modules/" | tail -1)
 	local kdir="/usr/src/linux-headers-${kernel_ver}"
@@ -224,7 +211,7 @@ function pre_customize_image__001_build_ask_userspace() {
 		popd
 	fi
 	cp -a "${SRC}/cache/sources/fmlib" "${SDCARD}/tmp/ask-userspace/fmlib"
-	cp "${ask_dir}/patches/fmlib/"*.patch "${SDCARD}/tmp/ask-userspace/"
+	cp "${ASK_CACHE_DIR}/patches/fmlib/"*.patch "${SDCARD}/tmp/ask-userspace/"
 
 	chroot_sdcard "cd /tmp/ask-userspace/fmlib && \
 		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
@@ -241,7 +228,7 @@ function pre_customize_image__001_build_ask_userspace() {
 		popd
 	fi
 	cp -a "${SRC}/cache/sources/fmc" "${SDCARD}/tmp/ask-userspace/fmc"
-	cp "${ask_dir}/patches/fmc/"*.patch "${SDCARD}/tmp/ask-userspace/"
+	cp "${ASK_CACHE_DIR}/patches/fmc/"*.patch "${SDCARD}/tmp/ask-userspace/"
 
 	chroot_sdcard "cd /tmp/ask-userspace/fmc && \
 		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
@@ -274,7 +261,7 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	# --- libfci ---
 	display_alert "ASK extension" "building libfci" "info"
-	cp -a "${ask_dir}/${ASK_FCI_DIR}/lib" "${SDCARD}/tmp/ask-userspace/libfci"
+	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}/lib" "${SDCARD}/tmp/ask-userspace/libfci"
 
 	chroot_sdcard "cd /tmp/ask-userspace/libfci && \
 		touch README && \
@@ -285,10 +272,10 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	# --- dpa-app ---
 	display_alert "ASK extension" "building dpa-app" "info"
-	cp -a "${ask_dir}/${ASK_DPA_APP_DIR}" "${SDCARD}/tmp/ask-userspace/dpa-app"
+	cp -a "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}" "${SDCARD}/tmp/ask-userspace/dpa-app"
 	# Copy CDX header
 	mkdir -p "${SDCARD}/usr/include/cdx"
-	cp "${ask_dir}/${ASK_CDX_DIR}/cdx_ioctl.h" "${SDCARD}/usr/include/cdx/"
+	cp "${ASK_CACHE_DIR}/${ASK_CDX_DIR}/cdx_ioctl.h" "${SDCARD}/usr/include/cdx/"
 
 	chroot_sdcard "cd /tmp/ask-userspace/dpa-app && \
 		make CC=gcc \
@@ -299,18 +286,18 @@ function pre_customize_image__001_build_ask_userspace() {
 		install -m 755 dpa_app /usr/bin/"
 
 	# Install DPA-App config files (from ASK repo)
-	cp "${ask_dir}/config/gateway-dk/cdx_cfg.xml" "${SDCARD}/etc/"
-	cp "${ask_dir}/${ASK_DPA_APP_DIR}/files/etc/cdx_pcd.xml" "${SDCARD}/etc/"
-	cp "${ask_dir}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/" 2>/dev/null || true
+	cp "${ASK_CACHE_DIR}/config/gateway-dk/cdx_cfg.xml" "${SDCARD}/etc/"
+	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_pcd.xml" "${SDCARD}/etc/"
+	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/" 2>/dev/null || true
 
 	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
 	build_ask_patched_libraries
 
 	# --- cmm ---
 	display_alert "ASK extension" "building cmm" "info"
-	cp -a "${ask_dir}/${ASK_CMM_DIR}" "${SDCARD}/tmp/ask-userspace/cmm"
+	cp -a "${ASK_CACHE_DIR}/${ASK_CMM_DIR}" "${SDCARD}/tmp/ask-userspace/cmm"
 	# Copy auto-bridge header for CMM
-	cp "${ask_dir}/${ASK_AUTOBRIDGE_DIR}/include/auto_bridge.h" "${SDCARD}/usr/include/"
+	cp "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}/include/auto_bridge.h" "${SDCARD}/usr/include/"
 
 	chroot_sdcard "cd /tmp/ask-userspace/cmm && \
 		make distclean || true && \
@@ -323,12 +310,15 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	# Install and enable CMM service (from ASK repo)
 	# Guarded by ConditionPathExists=/dev/cdx_ctrl — won't start without ASK FMAN ucode on NOR
-	cp "${ask_dir}/config/cmm.service" "${SDCARD}/etc/systemd/system/"
+	cp "${ASK_CACHE_DIR}/config/cmm.service" "${SDCARD}/etc/systemd/system/"
 	mkdir -p "${SDCARD}/etc/config"
-	cp "${ask_dir}/config/fastforward" "${SDCARD}/etc/config/"
+	cp "${ASK_CACHE_DIR}/config/fastforward" "${SDCARD}/etc/config/"
 	chroot_sdcard "systemctl enable cmm.service"
 
-	# Pin patched packages to prevent apt upgrade from overwriting
+	# Pin patched packages — ASK patches add kernel offloading hooks (comcerto-fp,
+	# QOSMARK/QOSCONNMARK) that don't exist upstream.  An apt upgrade would replace
+	# them with vanilla Debian builds and break CMM/CDX data-plane acceleration.
+	# Security updates for these packages must be tracked and re-patched manually.
 	display_alert "ASK extension" "pinning patched packages" "info"
 	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables"
 
