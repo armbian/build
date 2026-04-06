@@ -1,4 +1,7 @@
 #!/bin/bash
+set -e
 # Mono Gateway DK — switch from U-Boot green LED to white (Linux booted)
-echo 0 > /sys/class/leds/status:green/brightness
-echo 32 > /sys/class/leds/status:white/brightness
+GREEN="/sys/class/leds/status:green/brightness"
+WHITE="/sys/class/leds/status:white/brightness"
+[[ -w "$GREEN" ]] && echo 0 > "$GREEN"
+[[ -w "$WHITE" ]] && echo 32 > "$WHITE"

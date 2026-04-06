@@ -104,6 +104,7 @@ function post_install_kernel_debs__build_ask_modules() {
 	local bsp_dir="${SRC}/packages/bsp/gateway-dk"
 	local builddir="/tmp/ask-build-$$"
 	mkdir -p "${builddir}"
+	trap "rm -rf '${builddir}'" EXIT
 
 	# Copy ASK module sources to build dir
 	cp -a "${ask_dir}/${ASK_CDX_DIR}" "${builddir}/cdx"
@@ -168,8 +169,9 @@ function post_install_kernel_debs__build_ask_modules() {
 	# Install module load order config (from ASK repo)
 	cp "${ask_dir}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
 
-	# Clean up build dir
+	# Clean up build dir (also handled by EXIT trap on failure)
 	rm -rf "${builddir}"
+	trap - EXIT
 
 	display_alert "ASK extension" "kernel modules built and installed" "info"
 }
