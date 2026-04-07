@@ -64,7 +64,7 @@ function extension_finish_config__ask_enable_headers() {
 # Add host build dependencies
 function add_host_dependencies__ask_deps() {
 	display_alert "Adding ASK host dependencies" "${EXTENSION}" "debug"
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} libxml2-dev libtclap-dev libpcap-dev autoconf automake libtool pkg-config"
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} libxml2-dev libtclap-dev libpcap-dev pkg-config"
 }
 
 # Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build
@@ -145,27 +145,29 @@ function post_install_kernel_debs__build_ask_modules() {
 		popd
 	fi
 
-	# Install modules into rootfs
+	# Stage built modules for the combined .deb (packaged later in userspace phase)
+	display_alert "ASK extension" "staging kernel modules for packaging" "info"
+	declare -g ASK_MODULE_STAGING="${SRC}/cache/sources/ask-module-staging"
+	rm -rf "${ASK_MODULE_STAGING}"
+	mkdir -p "${ASK_MODULE_STAGING}"
+
+	cp "${builddir}/cdx/cdx.ko" "${ASK_MODULE_STAGING}/"
+	cp "${builddir}/fci/fci.ko" "${ASK_MODULE_STAGING}/"
+	cp "${builddir}/auto-bridge/auto_bridge.ko" "${ASK_MODULE_STAGING}/"
+	[[ -f "${builddir}/sfp-led/sfp-led.ko" ]] && cp "${builddir}/sfp-led/sfp-led.ko" "${ASK_MODULE_STAGING}/"
+	[[ -f "${builddir}/lp5812/leds-lp5812.ko" ]] && cp "${builddir}/lp5812/leds-lp5812.ko" "${ASK_MODULE_STAGING}/"
+
+	# Also install directly into rootfs so they're available during the rest of the build
 	mkdir -p "${SDCARD}/lib/modules/${kernel_ver}/extra"
-	cp "${builddir}/cdx/cdx.ko" "${SDCARD}/lib/modules/${kernel_ver}/extra/"
-	cp "${builddir}/fci/fci.ko" "${SDCARD}/lib/modules/${kernel_ver}/extra/"
-	cp "${builddir}/auto-bridge/auto_bridge.ko" "${SDCARD}/lib/modules/${kernel_ver}/extra/"
-	[[ -f "${builddir}/sfp-led/sfp-led.ko" ]] && \
-		cp "${builddir}/sfp-led/sfp-led.ko" "${SDCARD}/lib/modules/${kernel_ver}/extra/"
-	[[ -f "${builddir}/lp5812/leds-lp5812.ko" ]] && \
-		cp "${builddir}/lp5812/leds-lp5812.ko" "${SDCARD}/lib/modules/${kernel_ver}/extra/"
-
-	# Update module dependencies
+	cp "${ASK_MODULE_STAGING}"/*.ko "${SDCARD}/lib/modules/${kernel_ver}/extra/"
 	chroot_sdcard "depmod -a ${kernel_ver}"
-
-	# Install module load order config (from ASK repo)
 	cp "${ASK_CACHE_DIR}/config/ask-modules.conf" "${SDCARD}/etc/modules-load.d/"
 
 	# Clean up build dir (also handled by EXIT trap on failure)
 	rm -rf "${builddir}"
 	trap - EXIT
 
-	display_alert "ASK extension" "kernel modules built and installed" "info"
+	display_alert "ASK extension" "kernel modules built and staged" "info"
 }
 
 # Copy patches into chroot before patched library builds (runs before build_ask_userspace)
@@ -196,7 +198,7 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	# Install build dependencies in chroot
 	display_alert "ASK extension" "installing build dependencies" "info"
-	chroot_sdcard_apt_get_install build-essential autoconf automake libtool \
+	chroot_sdcard_apt_get_install build-essential \
 		pkg-config libxml2-dev libpcap-dev libcrypt-dev libtclap-dev
 
 	# Copy sources into chroot
@@ -264,10 +266,8 @@ function pre_customize_image__001_build_ask_userspace() {
 	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}/lib" "${SDCARD}/tmp/ask-userspace/libfci"
 
 	chroot_sdcard "cd /tmp/ask-userspace/libfci && \
-		touch README && \
-		autoreconf -fi && \
-		./configure --prefix=/usr --host=${ASK_HOST_TRIPLET} && \
-		make && make install && \
+		make && \
+		install -m 644 libfci.a /usr/lib/${ASK_HOST_TRIPLET}/ && \
 		install -m 644 include/libfci.h /usr/include/"
 
 	# --- dpa-app ---
@@ -288,7 +288,7 @@ function pre_customize_image__001_build_ask_userspace() {
 	# Install DPA-App config files (from ASK repo)
 	cp "${ASK_CACHE_DIR}/config/gateway-dk/cdx_cfg.xml" "${SDCARD}/etc/"
 	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_pcd.xml" "${SDCARD}/etc/"
-	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/" 2>/dev/null || true
+	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/"
 
 	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
 	build_ask_patched_libraries
@@ -299,14 +299,18 @@ function pre_customize_image__001_build_ask_userspace() {
 	# Copy auto-bridge header for CMM
 	cp "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}/include/auto_bridge.h" "${SDCARD}/usr/include/"
 
+	# CMM's Makefile sets base CFLAGS (with +=) internally and uses pkg-config for
+	# libnetfilter_conntrack. auto_bridge.h already at /usr/include, libfci built in-tree.
+	# Extra defines passed as env var so Makefile's += appends to them (not overrides).
 	chroot_sdcard "cd /tmp/ask-userspace/cmm && \
-		make distclean || true && \
-		rm -f config.log config.status && \
-		autoreconf -fi && \
-		CFLAGS='-DLS1043 -DFLOW_STATS -DWIFI_ENABLE -DSEC_PROFILE_SUPPORT -DUSE_QOSCONNMARK \
-			-DENABLE_INGRESS_QOS -DIPSEC_NO_FLOW_CACHE -DVLAN_FILTER -DAUTO_BRIDGE' \
-		./configure --prefix=/usr --host=${ASK_HOST_TRIPLET} && \
-		make && make install"
+		make clean || true && \
+		CFLAGS='-DFLOW_STATS -DSEC_PROFILE_SUPPORT -DUSE_QOSCONNMARK \
+			-DENABLE_INGRESS_QOS -DIPSEC_NO_FLOW_CACHE -DVLAN_FILTER' \
+		make \
+			LIBFCI_DIR=/tmp/ask-userspace/libfci \
+			ABM_DIR=/usr \
+			SYSROOT=/ && \
+		install -m 755 src/cmm /usr/bin/"
 
 	# Install and enable CMM service (from ASK repo)
 	# Guarded by ConditionPathExists=/dev/cdx_ctrl — won't start without ASK FMAN ucode on NOR
@@ -332,10 +336,110 @@ net.netfilter.nf_conntrack_udp_timeout=60
 net.netfilter.nf_conntrack_udp_timeout_stream=180
 EOF
 
-	# Cleanup
+	# Cleanup build sources
 	rm -rf "${SDCARD}/tmp/ask-userspace" "${SDCARD}/tmp/ask-patches"
 
-	display_alert "ASK extension" "all userspace components built and installed" "info"
+	# --- Package everything as a single gateway-dk-ask .deb ---
+	display_alert "ASK extension" "packaging combined ASK .deb" "info"
+	local pkgname="gateway-dk-ask"
+	local kernel_ver
+	kernel_ver=$(ls -1v "${SDCARD}/lib/modules/" | tail -1)
+	local pkgdir
+	pkgdir=$(mktemp -d)
+	mkdir -p "${pkgdir}/DEBIAN"
+
+	# Kernel modules (staged during post_install_kernel_debs phase)
+	local moddir="${pkgdir}/lib/modules/${kernel_ver}/extra"
+	mkdir -p "${moddir}" "${pkgdir}/etc/modules-load.d"
+	cp "${ASK_MODULE_STAGING}"/*.ko "${moddir}/"
+	cp "${ASK_CACHE_DIR}/config/ask-modules.conf" "${pkgdir}/etc/modules-load.d/"
+	rm -rf "${ASK_MODULE_STAGING}"
+
+	# Snapshot userspace files into package tree
+	local -a ask_files=(
+		usr/bin/fmc
+		usr/bin/dpa_app
+		usr/bin/cmm
+		etc/fmc
+		etc/cdx_cfg.xml
+		etc/cdx_pcd.xml
+		etc/cdx_sp.xml
+		etc/systemd/system/cmm.service
+		etc/config/fastforward
+		etc/sysctl.d/99-ls1046a-conntrack.conf
+		usr/include/fmc
+		usr/include/fmd
+		usr/include/libfci.h
+		usr/include/cdx
+		usr/include/auto_bridge.h
+	)
+	for f in "${ask_files[@]}"; do
+		if [[ -e "${SDCARD}/${f}" ]]; then
+			mkdir -p "$(dirname "${pkgdir}/${f}")"
+			cp -a "${SDCARD}/${f}" "${pkgdir}/${f}"
+		fi
+	done
+	# Libraries — snapshot all ASK-installed libs from chroot
+	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}"
+	for lib in libfm-arm.a libfmc.a; do
+		[[ -f "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" ]] && \
+			cp -a "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/"
+	done
+	for pattern in libcli libfci; do
+		for f in "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/"${pattern}*; do
+			[[ -f "$f" ]] && cp -a "$f" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/"
+		done
+	done
+
+	# Get kernel deb version for exact dependency
+	local kernel_deb_ver
+	kernel_deb_ver=$(chroot_sdcard "dpkg-query -W -f '\${Version}' linux-image-current-ls1046a" | tr -d '\n')
+	[[ -z "${kernel_deb_ver}" ]] && exit_with_error "Failed to get kernel deb version for dependency"
+
+	cat > "${pkgdir}/DEBIAN/control" << EOF
+Package: ${pkgname}
+Version: ${kernel_ver}-1
+Architecture: arm64
+Section: net
+Priority: optional
+Maintainer: Mono Technologies <support@mono.si>
+Depends: linux-image-current-ls1046a (= ${kernel_deb_ver}), libxml2, libpcap0.8
+Description: NXP ASK hardware offloading for Mono Gateway DK
+ Kernel modules (CDX, FCI, auto-bridge, sfp-led, leds-lp5812) and
+ userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) for
+ NXP ASK data-plane acceleration on the LS1046A Gateway DK.
+EOF
+
+	cat > "${pkgdir}/DEBIAN/postinst" << EOF
+#!/bin/bash
+depmod -a ${kernel_ver}
+systemctl daemon-reload || true
+ldconfig || true
+# Re-pin patched ASK libraries — vanilla Debian versions break CMM/CDX offloading
+apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables 2>/dev/null || true
+EOF
+	chmod 755 "${pkgdir}/DEBIAN/postinst"
+
+	cat > "${pkgdir}/DEBIAN/conffiles" << 'CONFFILES'
+/etc/cdx_cfg.xml
+/etc/cdx_pcd.xml
+/etc/cdx_sp.xml
+/etc/config/fastforward
+/etc/sysctl.d/99-ls1046a-conntrack.conf
+CONFFILES
+
+	# Build .deb once, install in chroot and save to output
+	local debfile="${pkgname}_${kernel_ver}-1_arm64.deb"
+	mkdir -p "${SRC}/output/debs"
+	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" \
+		|| exit_with_error "dpkg-deb failed for ${debfile}"
+	cp "${SRC}/output/debs/${debfile}" "${SDCARD}/root/"
+	chroot_sdcard "dpkg -i /root/${debfile}" || exit_with_error "dpkg -i failed for ${debfile}"
+	rm -f "${SDCARD}/root/${debfile}"
+
+	rm -rf "${pkgdir}"
+
+	display_alert "ASK extension" "ASK packaged and installed: ${debfile}" "info"
 }
 
 # Build patched versions of system libraries
@@ -344,6 +448,9 @@ function build_ask_patched_libraries() {
 	display_alert "ASK extension" "installing build deps for patched libraries" "info"
 	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -y build-dep \
 		libnetfilter-conntrack libnfnetlink iptables"
+
+	# Staging dir for patched .debs (saved to output later)
+	mkdir -p "${SDCARD}/tmp/ask-patched-debs"
 
 	# Rebuild each patched library in an isolated directory
 	rebuild_patched_deb "libnetfilter-conntrack" \
@@ -358,6 +465,10 @@ function build_ask_patched_libraries() {
 		"001-qosmark-extensions.patch" \
 		"libip4tc2_*.deb libip6tc2_*.deb libxtables12_*.deb iptables_*.deb"
 
+	# Copy patched .debs to output for distribution
+	mkdir -p "${SRC}/output/debs"
+	cp "${SDCARD}"/tmp/ask-patched-debs/*.deb "${SRC}/output/debs/" 2>/dev/null || true
+	rm -rf "${SDCARD}/tmp/ask-patched-debs"
 }
 
 # Helper: rebuild a Debian package with an ASK patch in an isolated chroot directory
@@ -374,5 +485,6 @@ function rebuild_patched_deb() {
 		patch -p1 < /tmp/ask-patches/${patch} && \
 		DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
 		cd ${workdir} && dpkg -i ${debs} && \
+		cp ${debs} /tmp/ask-patched-debs/ && \
 		rm -rf ${workdir}"
 }
