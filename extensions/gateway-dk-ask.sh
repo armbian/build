@@ -67,7 +67,10 @@ function extension_finish_config__ask_enable_headers() {
 # Host build dependencies — kernel module cross-compilation only needs the kernel source tree
 # (libxml2-dev, libtclap-dev, libpcap-dev, pkg-config are installed in-chroot for userspace builds)
 
-# Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build
+# Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build.
+# userpatches/ is the Armbian-standard location for extension-provided patches — the build
+# framework merges them with patches from patch/kernel/ at build time. The directory is
+# gitignored and ephemeral; it does not persist across clean builds.
 function post_family_config__ask_kernel_patch() {
 	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
@@ -319,7 +322,10 @@ function pre_customize_image__001_build_ask_userspace() {
 	# Pin patched packages — ASK patches add kernel offloading hooks (comcerto-fp,
 	# QOSMARK/QOSCONNMARK) that don't exist upstream.  An apt upgrade would replace
 	# them with vanilla Debian builds and break CMM/CDX data-plane acceleration.
-	# Security updates for these packages must be tracked and re-patched manually.
+	# These are shipped as separate .debs (not bundled into gateway-dk-ask) because
+	# they replace system packages and must be managed by dpkg as proper overrides.
+	# The postinst re-applies holds on every upgrade. Security updates must be
+	# tracked and re-patched manually.
 	display_alert "ASK extension" "pinning patched packages" "info"
 	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables"
 
@@ -403,6 +409,10 @@ EOF
 depmod -a ${kernel_ver}
 systemctl daemon-reload || true
 ldconfig || true
+# Enable CMM service on OTA install (guarded by ConditionPathExists=/dev/cdx_ctrl at runtime)
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable cmm.service 2>/dev/null || true
+fi
 # Re-pin patched ASK libraries — vanilla Debian versions break CMM/CDX offloading
 apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables 2>/dev/null || true
 EOF
