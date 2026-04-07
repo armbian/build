@@ -7,6 +7,7 @@
 # https://github.com/armbian/build/
 #
 enable_extension "rkbin-tools"
+enable_extension "rk-loader-bin"
 ARCH=arm64
 OFFSET=16
 BOOTSCRIPT='boot-rockchip64.cmd:boot.cmd'
@@ -174,6 +175,7 @@ prepare_boot_configuration() {
 	display_alert "Preparing boot configuration" "rockchip64_common::prepare_boot_configuration()" "info"
 	ATFSOURCE=''
 	ATF_COMPILE='no'
+	RK_LOADER_BIN="idbloader.img"
 	case "$BOOT_SCENARIO" in
 		blobless | tpl-blob-atf-mainline | binman-atf-mainline)
 			UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -212,6 +214,7 @@ prepare_boot_configuration() {
 			;;
 		only-blobs)
 			UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
+			RK_LOADER_BIN="idbloader.bin"
 			;;
 		binman)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
