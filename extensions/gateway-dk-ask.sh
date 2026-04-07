@@ -23,9 +23,6 @@ declare -g FMC_COMMIT="5b9f4b16a864e9dfa58cdcc860be278a7f66ac18"
 declare -g LIBCLI_REPO="https://github.com/dparrish/libcli.git"
 declare -g LIBCLI_COMMIT="6a3b2f96c4f0916e2603a96bf24d704f6a904e7a"
 
-# Target architecture triplet (Debian multiarch) — derived from KERNEL_COMPILER (e.g. "aarch64-linux-gnu-")
-declare -g ASK_HOST_TRIPLET="${KERNEL_COMPILER%-}"
-
 # ASK component directories
 declare -g ASK_CDX_DIR="cdx"
 declare -g ASK_FCI_DIR="fci"
@@ -61,6 +58,8 @@ function post_family_config__ask_fetch_repo() {
 # Ensure kernel headers are available for module builds
 function extension_finish_config__ask_enable_headers() {
 	declare -g INSTALL_HEADERS="yes"
+	# Derive multiarch triplet here (not at source time) — KERNEL_COMPILER is set by arch config
+	declare -g ASK_HOST_TRIPLET="${KERNEL_COMPILER%-}"
 	display_alert "ASK extension" "enabling kernel headers for module builds" "info"
 }
 
