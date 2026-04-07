@@ -83,7 +83,7 @@ function extension_finish_config__ask_enable_headers() {
 function post_family_config__ask_kernel_patch() {
 	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
-	local patch_dst="${SRC}/userpatches/kernel/archive/ls1046a-${KERNEL_MAJOR_MINOR}"
+	local patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
 	mkdir -p "${patch_dst}"
 	# Renamed to 003- to apply after 001-ina234 and 002-device-tree in the Armbian patch dir
 	cp "${patch_src}" "${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
@@ -398,7 +398,11 @@ function pre_customize_image__001_build_ask_userspace() {
 	# Version: kernel version + build date — allows bugfix rebuilds without kernel change
 	local ask_version="${kernel_ver}+$(date +%Y%m%d)"
 
-	# Depends uses >= (not =) so ASK can be updated independently without rebuilding the kernel
+	# Depends uses >= (not =): this is intentional. The kernel may receive minor version bumps
+	# without ASK changes. Using = would require rebuilding ASK for every kernel point release
+	# even when the modules are unchanged. The modules are ABI-compatible within the same
+	# LINUXFAMILY and BRANCH. DKMS is not used — this is a controlled appliance where both
+	# packages are built and validated together.
 	cat > "${pkgdir}/DEBIAN/control" << EOF
 Package: ${pkgname}
 Version: ${ask_version}
