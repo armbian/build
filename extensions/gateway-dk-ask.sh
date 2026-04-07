@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="branch:mt-6.12.y"
+declare -g ASK_BRANCH="tag:mt-6.12.49-2.2.0"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
