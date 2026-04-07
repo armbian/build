@@ -1,6 +1,6 @@
 obj-m := sfp-led.o
 
-SRC := $(shell pwd)
+SRC := $(PWD)
 
 all:
 	$(MAKE) -C $(KERNEL_SRC) M=$(SRC) modules
