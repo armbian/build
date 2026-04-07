@@ -39,6 +39,15 @@ function host_pre_docker_launch__mount_local_ask() {
 	fi
 }
 
+# Override LINUXFAMILY so ASK-enabled kernels get distinct .deb names.
+# Without this, ASK and non-ASK kernels both produce linux-image-current-ls1046a,
+# colliding in the apt repo despite having different content (the ASK kernel patch).
+function post_family_config__000_ask_override_family() {
+	declare -g LINUXFAMILY="${LINUXFAMILY}-ask"
+	declare -g LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
+	display_alert "ASK extension" "LINUXFAMILY=${LINUXFAMILY}, LINUXCONFIG=${LINUXCONFIG}" "info"
+}
+
 # Fetch ASK repo (sets ASK_CACHE_DIR for all later build phases)
 # Uses post_family_config because the kernel patch staging hook needs it before fetch_sources_tools runs
 function post_family_config__ask_fetch_repo() {
@@ -81,7 +90,7 @@ function post_family_config__ask_kernel_patch() {
 }
 
 function cleanup_ask_module_builddir() {
-	[[ -n "${ASK_MODULE_BUILDDIR}" && -d "${ASK_MODULE_BUILDDIR}" ]] && rm -rf "${ASK_MODULE_BUILDDIR}"
+	[[ -n "${ASK_MODULE_BUILDDIR}" && -d "${ASK_MODULE_BUILDDIR}" ]] && rm -rf "${ASK_MODULE_BUILDDIR}" || true
 }
 
 # Build kernel modules after kernel debs are installed in chroot
@@ -396,7 +405,7 @@ Architecture: arm64
 Section: net
 Priority: optional
 Maintainer: Mono Technologies <support@mono.si>
-Depends: linux-image-current-ls1046a (>= ${kernel_ver}), libxml2, libpcap0.8
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2, libpcap0.8
 Description: NXP ASK hardware offloading for Mono Gateway DK
  Kernel modules (CDX, FCI, auto-bridge, sfp-led, leds-lp5812) and
  userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) for
