@@ -391,19 +391,17 @@ EOF
 		done
 	done
 
-	# Get kernel deb version for exact dependency
-	local kernel_deb_ver
-	kernel_deb_ver=$(chroot_sdcard "dpkg-query -W -f '\${Version}' linux-image-current-ls1046a" | tr -d '\n')
-	[[ -z "${kernel_deb_ver}" ]] && exit_with_error "Failed to get kernel deb version for dependency"
+	# Version: kernel version + build date — allows bugfix rebuilds without kernel change
+	local ask_version="${kernel_ver}+$(date +%Y%m%d)"
 
 	cat > "${pkgdir}/DEBIAN/control" << EOF
 Package: ${pkgname}
-Version: ${kernel_ver}-1
+Version: ${ask_version}
 Architecture: arm64
 Section: net
 Priority: optional
 Maintainer: Mono Technologies <support@mono.si>
-Depends: linux-image-current-ls1046a (= ${kernel_deb_ver}), libxml2, libpcap0.8
+Depends: linux-image-current-ls1046a (>= ${kernel_ver}), libxml2, libpcap0.8
 Description: NXP ASK hardware offloading for Mono Gateway DK
  Kernel modules (CDX, FCI, auto-bridge, sfp-led, leds-lp5812) and
  userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) for
@@ -429,7 +427,7 @@ EOF
 CONFFILES
 
 	# Build .deb once, install in chroot and save to output
-	local debfile="${pkgname}_${kernel_ver}-1_arm64.deb"
+	local debfile="${pkgname}_${ask_version}_arm64.deb"
 	mkdir -p "${SRC}/output/debs"
 	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" \
 		|| exit_with_error "dpkg-deb failed for ${debfile}"
