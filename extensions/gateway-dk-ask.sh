@@ -68,6 +68,7 @@ function post_family_config__ask_fetch_repo() {
 function extension_finish_config__ask_enable_headers() {
 	declare -g INSTALL_HEADERS="yes"
 	# Derive multiarch triplet here (not at source time) — KERNEL_COMPILER is set by arch config
+	[[ -z "${KERNEL_COMPILER}" ]] && exit_with_error "ASK extension: KERNEL_COMPILER is not set, cannot derive host triplet"
 	declare -g ASK_HOST_TRIPLET="${KERNEL_COMPILER%-}"
 	display_alert "ASK extension" "enabling kernel headers for module builds" "info"
 }
