@@ -10,7 +10,7 @@
 declare -g ARCH="arm64"
 declare -g OVERLAY_DIR="/boot/dtb/ti/overlay"
 declare -g BOOTSCRIPT="boot-k3.cmd:uEnv.txt"
-declare -g SPD_OPTEED="SPD=opteed"
+declare -g CLEAN_LEVEL="make-atf,make-uboot"
 
 declare -g INSTALL_HEADERS="yes"
 
@@ -41,10 +41,9 @@ case "${BRANCH}" in
 
 esac
 
-ATF_PLAT="k3"
-ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_ARGS} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
+ATF_TARGET_MAP="PLAT=${ATF_PLAT} TARGET_BOARD=${ATF_BOARD} SPD=opteed ${ATF_ARGS} all;;build/${ATF_PLAT}/${ATF_BOARD}/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
 
-UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
+UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-pager_v2.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
 
 # To match what our current SDK produces
 BOOT_FS_LABEL="boot"
