@@ -17,7 +17,7 @@ function post_family_tweaks__arduino-uno-q() {
 	do_with_retries 3 chroot_sdcard_apt_get_update
 	do_with_retries 3 chroot_sdcard_apt_get_install \
 		rmtfs qrtr-tools protection-domain-mapper tqftpserv \
-		bluetooth bluez gdisk adbd
+		bluetooth bluez gdisk adbd qbootctl
 
 	# ADB branding
 	chroot_sdcard sed -i 's/"Debian"/"Armbian"/' /usr/lib/android-sdk/platform-tools/adbd-usb-gadget
@@ -25,6 +25,7 @@ function post_family_tweaks__arduino-uno-q() {
 
 	# Enable services
 	chroot_sdcard systemctl enable adbd.service
+	chroot_sdcard systemctl enable qbootctl.service
 	chroot_sdcard systemctl enable armbian-resize-filesystem-qcom.service
 }
 
