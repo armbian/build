@@ -17,16 +17,35 @@ function post_family_tweaks__arduino-uno-q() {
 	do_with_retries 3 chroot_sdcard_apt_get_update
 	do_with_retries 3 chroot_sdcard_apt_get_install \
 		rmtfs qrtr-tools protection-domain-mapper tqftpserv \
-		bluetooth bluez gdisk adbd qbootctl
+		bluetooth bluez gdisk qbootctl
 
-	# ADB branding
-	chroot_sdcard sed -i 's/"Debian"/"Armbian"/' /usr/lib/android-sdk/platform-tools/adbd-usb-gadget
-	chroot_sdcard sed -i 's/"ADB device"/"Arduino UNO Q"/' /usr/lib/android-sdk/platform-tools/adbd-usb-gadget
+	# USB access: adbd on Debian, USB gadget network on Ubuntu (adbd not available)
+	if [[ "${DISTRIBUTION}" == "Debian" ]]; then
+		do_with_retries 3 chroot_sdcard_apt_get_install adbd
+		chroot_sdcard sed -i 's/"Debian"/"Armbian"/' /usr/lib/android-sdk/platform-tools/adbd-usb-gadget
+		chroot_sdcard sed -i 's/"ADB device"/"Arduino UNO Q"/' /usr/lib/android-sdk/platform-tools/adbd-usb-gadget
+		chroot_sdcard systemctl enable adbd.service
+	else
+		# unudhcpd is in the Armbian repo
+		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
+		do_with_retries 3 chroot_sdcard_apt_get_update
+		do_with_retries 3 chroot_sdcard_apt_get_install unudhcpd
+		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled
+		do_with_retries 3 chroot_sdcard_apt_get_update
+		chroot_sdcard systemctl enable usbgadget-rndis.service
+	fi
 
 	# Enable services
-	chroot_sdcard systemctl enable adbd.service
 	chroot_sdcard systemctl enable qbootctl.service
 	chroot_sdcard systemctl enable armbian-resize-filesystem-qcom.service
+}
+
+function post_family_tweaks_bsp__arduino-uno-q_usb_gadget() {
+	[[ "${DISTRIBUTION}" != "Ubuntu" ]] && return 0
+	display_alert "Installing USB gadget network scripts" "${BOARD}" "info"
+	install -Dm755 "$SRC/packages/bsp/usb-gadget-network/setup-usbgadget-network.sh" "$destination/usr/local/bin/setup-usbgadget-network.sh"
+	install -Dm755 "$SRC/packages/bsp/usb-gadget-network/remove-usbgadget-network.sh" "$destination/usr/local/bin/remove-usbgadget-network.sh"
+	install -Dm644 "$SRC/packages/bsp/usb-gadget-network/usbgadget-rndis.service" "$destination/usr/lib/systemd/system/usbgadget-rndis.service"
 }
 
 function post_family_tweaks_bsp__arduino-uno-q_resize_rootfs() {
