@@ -1,44 +1,70 @@
+#!/usr/bin/env bash
+
+# Fetch Qualcomm flash binaries early in the build
+function post_family_config__fetch_qcombin() {
+	display_alert "Fetching qcombin" "${BOARD}" "info"
+	fetch_from_repo "https://github.com/armbian/qcombin" "qcombin" "branch:main"
+}
+
+declare -g ARDUINO_ROOTFS_LOOP=""
+declare -g ARDUINO_ROOTFS_MOUNT=""
+
+# Convert standard Armbian image into a QDL-flashable archive for Arduino UNO Q
 function post_build_image__900_convert_to_arduino_img() {
 	[[ -z $version ]] && exit_with_error "version is not set"
 
-	display_alert "Converting image $version" "${EXTENSION}" "info"
-	declare -g BOOTFS_IMAGE_FILE="${DESTIMG}/${version}.bootfs.img"
-	declare -g ROOTFS_IMAGE_FILE="${DESTIMG}/${version}.rootfs.img"
+	display_alert "Creating QDL flash archive" "${version}" "info"
 
-	# Extract partition offsets from the image using fdisk
 	local img="${DESTIMG}/${version}.img"
-	local sector_size=512
+	local bootfs_img="${DESTIMG}/${version}.bootfs.img"
+	local rootfs_img="${DESTIMG}/${version}.rootfs.img"
+	local outdir="${DESTIMG}/arduino-images"
+	ARDUINO_ROOTFS_MOUNT="${DESTIMG}/rootfs_mount"
 
-	local p1_start=$(fdisk -l "${img}" | grep "${img}1" | awk '{print $2}')
-	local p1_sectors=$(fdisk -l "${img}" | grep "${img}1" | awk '{print $4}')
-	local p2_start=$(fdisk -l "${img}" | grep "${img}2" | awk '{print $2}')
-	local p2_sectors=$(fdisk -l "${img}" | grep "${img}2" | awk '{print $4}')
+	# Extract partition offsets using sfdisk JSON output
+	local p1_start p1_size p2_start p2_size
+	p1_start=$(sfdisk -J "${img}" | python3 -c "import sys,json; p=json.load(sys.stdin)['partitiontable']['partitions']; print(p[0]['start'])")
+	p1_size=$(sfdisk -J "${img}" | python3 -c "import sys,json; p=json.load(sys.stdin)['partitiontable']['partitions']; print(p[0]['size'])")
+	p2_start=$(sfdisk -J "${img}" | python3 -c "import sys,json; p=json.load(sys.stdin)['partitiontable']['partitions']; print(p[1]['start'])")
+	p2_size=$(sfdisk -J "${img}" | python3 -c "import sys,json; p=json.load(sys.stdin)['partitiontable']['partitions']; print(p[1]['size'])")
 
-	display_alert "Extracting boot partition" "offset=${p1_start} sectors=${p1_sectors}" "info"
-	dd if="${img}" of="${BOOTFS_IMAGE_FILE}" bs=${sector_size} skip=${p1_start} count=${p1_sectors} status=progress
+	display_alert "Extracting boot partition" "offset=${p1_start} sectors=${p1_size}" "info"
+	run_host_command_logged dd if="${img}" of="${bootfs_img}" bs=512 skip="${p1_start}" count="${p1_size}" status=progress
 
-	display_alert "Extracting rootfs partition" "offset=${p2_start} sectors=${p2_sectors}" "info"
-	dd if="${img}" of="${ROOTFS_IMAGE_FILE}" bs=${sector_size} skip=${p2_start} count=${p2_sectors} status=progress
+	display_alert "Extracting rootfs partition" "offset=${p2_start} sectors=${p2_size}" "info"
+	run_host_command_logged dd if="${img}" of="${rootfs_img}" bs=512 skip="${p2_start}" count="${p2_size}" status=progress
 
-	rm -rf arduino-images
-	mkdir -p arduino-images/flash
-	cp -r "${QCOMBIN_DIR}/Agatti/arduino-uno-q/"* arduino-images/flash/
-	cp "${QCOMBIN_DIR}/Agatti/prog_firehose_ddr.elf" arduino-images/flash/
+	# Assemble flash directory with qcombin binaries
+	rm -rf "${outdir}"
+	mkdir -p "${outdir}/flash"
+	run_host_command_logged cp -r "${QCOMBIN_DIR}/Agatti/arduino-uno-q/"* "${outdir}/flash/"
+	run_host_command_logged cp "${QCOMBIN_DIR}/Agatti/prog_firehose_ddr.elf" "${outdir}/flash/"
 
-	mkdir -p rootfs_mount
-	local rootfs_loop=$(losetup -f --show "${ROOTFS_IMAGE_FILE}")
-	mount ${rootfs_loop} rootfs_mount
-	cp rootfs_mount/usr/lib/linux-u-boot-${BRANCH}-${BOARD}/boot.img arduino-images/flash/
-	umount rootfs_mount
-	losetup -d ${rootfs_loop}
+	# Extract boot.img (U-Boot) from rootfs
+	mkdir -p "${ARDUINO_ROOTFS_MOUNT}"
+	ARDUINO_ROOTFS_LOOP=$(losetup -f --show "${rootfs_img}")
+	add_cleanup_handler "image_output_arduino_cleanup"
+	mount "${ARDUINO_ROOTFS_LOOP}" "${ARDUINO_ROOTFS_MOUNT}"
+	run_host_command_logged cp "${ARDUINO_ROOTFS_MOUNT}/usr/lib/linux-u-boot-${BRANCH}-${BOARD}/boot.img" "${outdir}/flash/"
+	umount "${ARDUINO_ROOTFS_MOUNT}"
+	losetup -d "${ARDUINO_ROOTFS_LOOP}"
+	ARDUINO_ROOTFS_LOOP=""
 
+	# Replace raw image with flash archive
 	rm "${img}"
+	mv "${bootfs_img}" "${outdir}/disk-sdcard.img.esp"
+	mv "${rootfs_img}" "${outdir}/disk-sdcard.img.root"
 
-	mv ${BOOTFS_IMAGE_FILE} arduino-images/disk-sdcard.img.esp
-	mv ${ROOTFS_IMAGE_FILE} arduino-images/disk-sdcard.img.root
-
-	tar -cvf ${DESTIMG}/${version}.tar arduino-images
-	rm -rf arduino-images
+	display_alert "Creating archive" "${version}.tar" "info"
+	tar -cf "${DESTIMG}/${version}.tar" -C "${DESTIMG}" arduino-images
+	rm -rf "${outdir}"
 
 	return 0
+}
+
+function image_output_arduino_cleanup() {
+	if [[ -n "${ARDUINO_ROOTFS_LOOP}" ]]; then
+		umount "${ARDUINO_ROOTFS_MOUNT}" 2>/dev/null
+		losetup -d "${ARDUINO_ROOTFS_LOOP}" 2>/dev/null
+	fi
 }
