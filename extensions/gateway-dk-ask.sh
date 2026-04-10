@@ -51,6 +51,8 @@ function post_family_config__000_ask_override_family() {
 # Fetch ASK repo (sets ASK_CACHE_DIR for all later build phases)
 # Uses post_family_config because the kernel patch staging hook needs it before fetch_sources_tools runs
 function post_family_config__ask_fetch_repo() {
+	# Skip during config-dump-json: no $HOME is set, fetch_from_repo would fail in git_ensure_safe_directory
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && { declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"; return 0; }
 	# For local file:// repos in Docker, safe.directory is needed (container runs as root)
 	# Use env vars instead of git config --global to avoid persistent side effects
 	if [[ "${ASK_REPO}" == file://* ]]; then
@@ -81,6 +83,7 @@ function extension_finish_config__ask_enable_headers() {
 # framework merges them with patches from patch/kernel/ at build time. The directory is
 # gitignored and ephemeral; it does not persist across clean builds.
 function post_family_config__ask_kernel_patch() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache wasn't populated during config-dump-json
 	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
 	local patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"

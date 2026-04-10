@@ -2,6 +2,7 @@
 
 # Fetch Qualcomm flash binaries early in the build
 function post_family_config__fetch_qcombin() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # skip fetch during config-dump-json (no $HOME, no network needed)
 	display_alert "Fetching qcombin" "${BOARD}" "info"
 	fetch_from_repo "https://github.com/armbian/qcombin" "qcombin" "branch:main"
 }
