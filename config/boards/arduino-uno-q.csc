@@ -41,7 +41,8 @@ function post_family_tweaks__arduino-uno-q() {
 }
 
 function post_family_tweaks_bsp__arduino-uno-q_usb_gadget() {
-	[[ "${DISTRIBUTION}" != "Ubuntu" ]] && return 0
+	# BSP is built once and cached across distros, so install files unconditionally.
+	# The usbgadget-rndis service is enabled in post_family_tweaks__ only when adbd is unavailable.
 	display_alert "Installing USB gadget network scripts" "${BOARD}" "info"
 	install -Dm755 "$SRC/packages/bsp/usb-gadget-network/setup-usbgadget-network.sh" "$destination/usr/local/bin/setup-usbgadget-network.sh"
 	install -Dm755 "$SRC/packages/bsp/usb-gadget-network/remove-usbgadget-network.sh" "$destination/usr/local/bin/remove-usbgadget-network.sh"
