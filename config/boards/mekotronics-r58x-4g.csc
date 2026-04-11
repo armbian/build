@@ -30,7 +30,7 @@ function post_family_config__mekor58x_4g_use_mainline_uboot() {
 	declare -g BOOTCONFIG="mekotronics-r58x-4g-rk3588_defconfig" # mainline
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.04-rc2"
+	declare -g BOOTBRANCH="tag:v2026.04"
 	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
