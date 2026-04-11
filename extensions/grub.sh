@@ -310,10 +310,9 @@ configure_grub() {
 		GRUB_DISABLE_SUBMENU=y                                   # Do not put all kernel options into a submenu, instead, list them all on the main menu.
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
-		GRUB_GFXPAYLOAD=keep
+		GRUB_GFXPAYLOAD_LINUX=text                               # Note the correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD (the latter is silently ignored). The 'text' value disables Ubuntu's vt.handoff=7 injection: Ubuntu's grub2 10_linux only expands 'vt.handoff=7' inside grub.cfg's gfxmode function when the gfxpayload arg is exactly 'keep'. Setting it to 'text' makes the runtime check fail and the framebuffer console stays bound to fbcon for the entire userspace lifetime — which is what we want, otherwise after Plymouth quits on a CLI install (or after the user uninstalls the desktop), the kernel hands the framebuffer to VT7 waiting for an X server, nothing ever claims it, and the local console goes black even though getty@tty1 is running.
 		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
-		GRUB_DISABLE_VT_HANDOFF=true                             # Ubuntu's 10_linux grub generator auto-appends 'vt.handoff=7' whenever 'splash' is in the cmdline. That arg tells the kernel to hand the framebuffer to whatever userspace owns VT7 (the X server / display manager). On a CLI install, or after the user uninstalls the desktop, nothing claims VT7, fbcon never gets the framebuffer back, and the local console stays blank even though getty@tty1 is happily running. Disable the auto-injection so the framebuffer console keeps working regardless of whether a DM is installed.
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then

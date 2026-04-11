@@ -143,10 +143,9 @@ configure_grub() {
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_GFXMODE=1024x768
-		GRUB_GFXPAYLOAD=keep
+		GRUB_GFXPAYLOAD_LINUX=text                               # See extensions/grub.sh — correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD, and 'text' disables Ubuntu's vt.handoff=7 injection.
 		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
-		GRUB_DISABLE_VT_HANDOFF=true                             # See extensions/grub.sh — Ubuntu's 10_linux generator auto-appends 'vt.handoff=7' whenever 'splash' is in the cmdline, which leaves the framebuffer console blank on CLI installs and after desktop uninstalls.
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
