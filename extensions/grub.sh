@@ -313,6 +313,7 @@ configure_grub() {
 		GRUB_GFXPAYLOAD=keep
 		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
+		GRUB_DISABLE_VT_HANDOFF=true                             # Ubuntu's 10_linux grub generator auto-appends 'vt.handoff=7' whenever 'splash' is in the cmdline. That arg tells the kernel to hand the framebuffer to whatever userspace owns VT7 (the X server / display manager). On a CLI install, or after the user uninstalls the desktop, nothing claims VT7, fbcon never gets the framebuffer back, and the local console stays blank even though getty@tty1 is happily running. Disable the auto-injection so the framebuffer console keeps working regardless of whether a DM is installed.
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then

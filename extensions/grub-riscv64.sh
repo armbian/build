@@ -146,6 +146,7 @@ configure_grub() {
 		GRUB_GFXPAYLOAD=keep
 		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
+		GRUB_DISABLE_VT_HANDOFF=true                             # See extensions/grub.sh — Ubuntu's 10_linux generator auto-appends 'vt.handoff=7' whenever 'splash' is in the cmdline, which leaves the framebuffer console blank on CLI installs and after desktop uninstalls.
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
