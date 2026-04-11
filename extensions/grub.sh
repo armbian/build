@@ -266,7 +266,7 @@ configure_grub() {
 		GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
 	# Kernel cmdline. We always pass the graphical-Plymouth flags
-	# (quiet splash plymouth.ignore-serial-consoles) on UEFI x86,
+	# (splash plymouth.ignore-serial-consoles) on UEFI x86,
 	# regardless of whether this image is being built as CLI or
 	# desktop. Two reasons:
 	#   1. Users routinely add a desktop later via armbian-config
@@ -281,7 +281,13 @@ configure_grub() {
 	#      in dmesg) AND interpreted by Plymouth as "render the
 	#      verbose/text theme", so a desktop installed later still
 	#      booted to a black/text screen.
-	GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3"
+	#
+	# Deliberately NO 'quiet' and NO 'loglevel=3' here. Plymouth
+	# still draws the splash on top of the kernel boot messages,
+	# but the messages remain visible underneath so users can see
+	# what their system is doing. Press Esc during boot to drop
+	# the splash and read the messages directly.
+	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles i915.force_probe=*"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
