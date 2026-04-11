@@ -265,9 +265,23 @@ configure_grub() {
 	[[ -n "$SERIALCON" ]] &&
 		GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
-	[[ "$BOOT_LOGO" == "yes" || "$BOOT_LOGO" == "desktop" && "$BUILD_DESKTOP" == "yes" ]] &&
-		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3" ||
-		GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose i915.force_probe=*"
+	# Kernel cmdline. We always pass the graphical-Plymouth flags
+	# (quiet splash plymouth.ignore-serial-consoles) on UEFI x86,
+	# regardless of whether this image is being built as CLI or
+	# desktop. Two reasons:
+	#   1. Users routinely add a desktop later via armbian-config
+	#      and we don't want that to require regenerating grub.cfg.
+	#      The .cfg is baked once at image-build time and stays
+	#      put across desktop installs.
+	#   2. Plymouth handles the "no theme installed" / "no DRM"
+	#      cases gracefully — the flags are harmless on a CLI
+	#      install. They are NOT harmless when wrong: the previous
+	#      'splash=verbose' value was rejected by the kernel
+	#      ("Unknown kernel command line parameters splash=verbose"
+	#      in dmesg) AND interpreted by Plymouth as "render the
+	#      verbose/text theme", so a desktop installed later still
+	#      booted to a black/text screen.
+	GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then

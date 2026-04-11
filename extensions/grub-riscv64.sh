@@ -112,9 +112,15 @@ configure_grub() {
 	[[ -n "$SERIALCON" ]] &&
 		GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
-	[[ "$BOOT_LOGO" == "yes" || "$BOOT_LOGO" == "desktop" && "$BUILD_DESKTOP" == "yes" ]] &&
-		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3" ||
-		GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose i915.force_probe=*"
+	# Kernel cmdline. Always pass the graphical-Plymouth flags
+	# regardless of whether this image is being built as CLI or
+	# desktop — same reasoning as in extensions/grub.sh: users
+	# add a desktop later via armbian-config and we can't
+	# regenerate grub.cfg from there. Plymouth handles the
+	# "no theme installed" / "no DRM" cases gracefully.
+	# (No i915.force_probe here — that's an x86 Intel-graphics
+	# driver knob and is meaningless on riscv64.)
+	GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles loglevel=3"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
