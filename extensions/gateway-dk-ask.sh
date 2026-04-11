@@ -398,7 +398,7 @@ Architecture: arm64
 Section: net
 Priority: optional
 Maintainer: Mono Technologies <support@mono.si>
-Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2, libpcap0.8
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2, libpcap0.8, iptables
 Description: NXP ASK hardware offloading userspace for Mono Gateway DK
  Userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) and configuration
  for NXP ASK data-plane acceleration on the LS1046A Gateway DK.
