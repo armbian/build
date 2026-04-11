@@ -3,6 +3,7 @@ BOARD_NAME="NanoPi R6C"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
+INTRODUCED="2023"
 BOOTCONFIG="nanopi-r6c-rk3588s_defconfig" # Mainline defconfig, enables booting from NVMe
 BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"

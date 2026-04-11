@@ -10,6 +10,8 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 	- Refer to [sources table](https://github.com/armbian/build/blob/master/config/sources/README.md)
 	- Example: `sun50iw1`
 - **BOARD_MAINTAINER** ( space-separated list of Github login ): Declares the maintainer of the board
+- **INTRODUCED** ( year ): When the board first came to market
+	- Example: `2022`
 - **BOOTCONFIG** ( u-boot identifier ): declares the name of the u-boot configuration for the build without the '\_defconifig' suffix
 	- Refer to the [u-boot source tree](https://github.com/u-boot/u-boot/tree/master/configs) to find configuration for the board
 	- Example: `teres-i`
@@ -80,7 +82,6 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- [branch]: Use specified [branch] kernel
 		- [none]: Exits with error
 - **KERNEL_TEST_TARGET** ( comma-separated list of kernel releases or branches ): if test targets are different for testings. Also applies to build list generation. (internal switch)
-- **KERNEL_UPGRADE_FREEZE** ( comma-separated list of kernels with versions obove which they stop updating, example: KERNEL_UPGRADE_FREEZE="vendor-rk35xx@24.8.1,current-rockchip-rk3588@24.8.2" )
 - **FULL_DESKTOP** ( boolean ): defines whether to install desktop stack of applications such as office, thunderbird, etc..
 	- Values:
 		- yes: install desktop stack

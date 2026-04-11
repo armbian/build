@@ -1,0 +1,200 @@
+From 9dbdd074423d970a9dec9a60f8bb99f8cfafd6a1 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Mon, 27 Oct 2025 17:10:56 +0800
+Subject: [PATCH] ASoC: codecs: aw88166: AYN SM8550 Specific modification
+
+- AYN SM8550 have problem with regmap_raw_write under i2c_hub_*
+- Add .ops in aw88166_dai
+- Add firmware-name support in device tree
+- Add device match table, so can be loaded as module
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ sound/soc/codecs/aw88166.c | 100 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 94 insertions(+), 6 deletions(-)
+
+diff --git a/sound/soc/codecs/aw88166.c b/sound/soc/codecs/aw88166.c
+index 28f62b991ef2..ea6f8a768f4e 100644
+--- a/sound/soc/codecs/aw88166.c
++++ b/sound/soc/codecs/aw88166.c
+@@ -12,7 +12,10 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/minmax.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
+ #include <linux/regmap.h>
++#include <sound/pcm_params.h>
+ #include <sound/soc.h>
+ #include "aw88166.h"
+ #include "aw88395/aw88395_device.h"
+@@ -901,8 +904,9 @@ static int aw88166_dev_start(struct aw88166 *aw88166)
+ static int aw_dev_dsp_update_container(struct aw_device *aw_dev,
+ 			unsigned char *data, unsigned int len, unsigned short base)
+ {
+-	u32 tmp_len;
+ 	int i, ret;
++#ifdef AW88166_DSP_I2C_WRITES
++	u32 tmp_len;
+ 
+ 	mutex_lock(&aw_dev->dsp_lock);
+ 	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, base);
+@@ -917,6 +921,23 @@ static int aw_dev_dsp_update_container(struct aw_device *aw_dev,
+ 			goto error_operation;
+ 	}
+ 	mutex_unlock(&aw_dev->dsp_lock);
++#else
++	__be16 reg_val;
++
++	mutex_lock(&aw_dev->dsp_lock);
++	/* i2c write */
++	ret = regmap_write(aw_dev->regmap, AW88166_DSPMADD_REG, base);
++	if (ret)
++		goto error_operation;
++	for (i = 0; i < len; i += 2) {
++		reg_val = cpu_to_be16p((u16 *)(data + i));
++		ret = regmap_write(aw_dev->regmap, AW88166_DSPMDAT_REG,
++					(u16)reg_val);
++		if (ret)
++			goto error_operation;
++	}
++	mutex_unlock(&aw_dev->dsp_lock);
++#endif
+ 
+ 	return 0;
+ 
+@@ -1321,7 +1342,7 @@ static int aw_dev_check_sysint(struct aw_device *aw_dev)
+ 
+ 	aw_dev_get_int_status(aw_dev, &reg_val);
+ 	if (reg_val & AW88166_BIT_SYSINT_CHECK) {
+-		dev_err(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
++		dev_dbg(aw_dev->dev, "pa stop check fail:0x%04x\n", reg_val);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1367,6 +1388,57 @@ static int aw88166_stop(struct aw_device *aw_dev)
+ 	return 0;
+ }
+ 
++static int aw88166_startup(struct snd_pcm_substream *substream,
++			   struct snd_soc_dai *dai)
++{
++	dev_dbg(dai->dev, "startup stream=%d", substream->stream);
++	return 0;
++}
++
++static int aw88166_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	dev_dbg(dai->dev, "set_fmt: 0x%x", fmt);
++	return 0;
++}
++
++static int aw88166_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
++				  unsigned int freq, int dir)
++{
++	dev_dbg(dai->dev, "set_sysclk: id=%d freq=%u dir=%d", clk_id, freq, dir);
++	return 0;
++}
++
++static int aw88166_hw_params(struct snd_pcm_substream *substream,
++			     struct snd_pcm_hw_params *params,
++			     struct snd_soc_dai *dai)
++{
++	dev_dbg(dai->dev, "hw_params: rate=%u width=%u ch=%u",
++		params_rate(params), snd_pcm_format_width(params_format(params)),
++		params_channels(params));
++	return 0;
++}
++
++static int aw88166_mute(struct snd_soc_dai *dai, int mute, int stream)
++{
++	dev_dbg(dai->dev, "mute state=%d stream=%d", mute, stream);
++	return 0;
++}
++
++static void aw88166_shutdown(struct snd_pcm_substream *substream,
++			     struct snd_soc_dai *dai)
++{
++	dev_dbg(dai->dev, "shutdown stream=%d", substream->stream);
++}
++
++static const struct snd_soc_dai_ops aw88166_dai_ops = {
++	.startup = aw88166_startup,
++	.set_fmt = aw88166_set_fmt,
++	.set_sysclk = aw88166_set_dai_sysclk,
++	.hw_params = aw88166_hw_params,
++	.mute_stream = aw88166_mute,
++	.shutdown = aw88166_shutdown,
++};
++
+ static struct snd_soc_dai_driver aw88166_dai[] = {
+ 	{
+ 		.name = "aw88166-aif",
+@@ -1385,6 +1457,7 @@ static struct snd_soc_dai_driver aw88166_dai[] = {
+ 			.rates = AW88166_RATES,
+ 			.formats = AW88166_FORMATS,
+ 		},
++		.ops = &aw88166_dai_ops,
+ 	},
+ };
+ 
+@@ -1686,19 +1759,27 @@ static int aw88166_dev_init(struct aw88166 *aw88166, struct aw_container *aw_cfg
+ 
+ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+ {
++	struct aw_device *aw_dev = aw88166->aw_pa;
++	struct device_node *np = aw_dev->dev->of_node;
+ 	const struct firmware *cont = NULL;
++	const char *fw_name;
+ 	int ret;
+ 
+ 	aw88166->aw_pa->fw_status = AW88166_DEV_FW_FAILED;
+ 
+-	ret = request_firmware(&cont, AW88166_ACF_FILE, aw88166->aw_pa->dev);
++	ret = of_property_read_string(np, "firmware-name", &fw_name);
++	if (ret < 0) {
++		fw_name = AW88166_ACF_FILE;
++	}
++
++	ret = request_firmware(&cont, fw_name, aw88166->aw_pa->dev);
+ 	if (ret) {
+-		dev_err(aw88166->aw_pa->dev, "request [%s] failed!\n", AW88166_ACF_FILE);
++		dev_err(aw88166->aw_pa->dev, "request [%s] failed!\n", fw_name);
+ 		return ret;
+ 	}
+ 
+ 	dev_dbg(aw88166->aw_pa->dev, "loaded %s - size: %zu\n",
+-			AW88166_ACF_FILE, cont ? cont->size : 0);
++			fw_name, cont ? cont->size : 0);
+ 
+ 	aw88166->aw_cfg = devm_kzalloc(aw88166->aw_pa->dev,
+ 			struct_size(aw88166->aw_cfg, data, cont->size), GFP_KERNEL);
+@@ -1712,7 +1793,7 @@ static int aw88166_request_firmware_file(struct aw88166 *aw88166)
+ 
+ 	ret = aw88395_dev_load_acf_check(aw88166->aw_pa, aw88166->aw_cfg);
+ 	if (ret) {
+-		dev_err(aw88166->aw_pa->dev, "load [%s] failed!\n", AW88166_ACF_FILE);
++		dev_err(aw88166->aw_pa->dev, "load [%s] failed!\n", fw_name);
+ 		return ret;
+ 	}
+ 
+@@ -1915,9 +1996,16 @@ static const struct i2c_device_id aw88166_i2c_id[] = {
+ };
+ MODULE_DEVICE_TABLE(i2c, aw88166_i2c_id);
+ 
++static const struct of_device_id aw88166_of_match[] = {
++	{ .compatible = "awinic,aw88166" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, aw88166_of_match);
++
+ static struct i2c_driver aw88166_i2c_driver = {
+ 	.driver = {
+ 		.name = AW88166_I2C_NAME,
++		.of_match_table = aw88166_of_match,
+ 	},
+ 	.probe = aw88166_i2c_probe,
+ 	.id_table = aw88166_i2c_id,
+-- 
+2.34.1
+

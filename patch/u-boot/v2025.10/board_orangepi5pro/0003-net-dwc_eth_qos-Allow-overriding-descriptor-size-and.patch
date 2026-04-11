@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: c127dev <contact@c127.dev>
+Date: Sat, 14 Mar 2026 21:29:32 +0000
+Subject: [PATCH 3/4] net: dwc_eth_qos: Allow overriding descriptor size and
+ skip length
+
+The Motorcomm YT6801 requires a specific descriptor configuration where
+each descriptor is 32 bytes long and the Descriptor Skip Length (DSL)
+in the DMA Channel Control register must be set to 1.
+
+This patch introduces `override_desc_size` and `ch0_control_dsl_override`
+in `struct eqos_config` to allow individual glue drivers to specify
+these parameters, and applies the necessary values for the Motorcomm
+YT6801.
+
+Signed-off-by: c127dev <contact@c127.dev>
+---
+ drivers/net/dwc_eth_qos.c           | 36 ++++++++++++++++++-----------
+ drivers/net/dwc_eth_qos.h           |  3 +++
+ drivers/net/dwc_eth_qos_motorcomm.c |  3 +++
+ 3 files changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/dwc_eth_qos.c b/drivers/net/dwc_eth_qos.c
+index 551ee0ea..e6fd10b5 100644
+--- a/drivers/net/dwc_eth_qos.c
++++ b/drivers/net/dwc_eth_qos.c
+@@ -938,8 +938,12 @@ static int eqos_start(struct udevice *dev)
+ 			EQOS_MAX_PACKET_SIZE <<
+ 			EQOS_DMA_CH0_RX_CONTROL_RBSZ_SHIFT);
+ 
+-	desc_pad = (eqos->desc_size - sizeof(struct eqos_desc)) /
+-		   eqos->config->axi_bus_width;
++	if (eqos->config->has_ch0_control_dsl_override) {
++		desc_pad = eqos->config->ch0_control_dsl_override;
++	} else {
++		desc_pad = (eqos->desc_size - sizeof(struct eqos_desc)) /
++			   eqos->config->axi_bus_width;
++	}
+ 
+ 	setbits_le32(&eqos->dma_regs->ch0_control,
+ 		     EQOS_DMA_CH0_CONTROL_PBLX8 |
+@@ -1215,19 +1219,23 @@ static int eqos_probe_resources_core(struct udevice *dev)
+ 
+ 	debug("%s(dev=%p):\n", __func__, dev);
+ 
+-	/* Maximum distance between neighboring descriptors, in Bytes. */
+-	desc_step = sizeof(struct eqos_desc) +
+-		    EQOS_DMA_CH0_CONTROL_DSL_MASK * eqos->config->axi_bus_width;
+-	if (desc_step < ARCH_DMA_MINALIGN) {
+-		/*
+-		 * The EQoS hardware implementation cannot place one descriptor
+-		 * per cacheline, it is necessary to place multiple descriptors
+-		 * per cacheline in memory and do cache management carefully.
+-		 */
+-		eqos->desc_size = BIT(fls(desc_step) - 1);
++	if (eqos->config->override_desc_size) {
++		eqos->desc_size = eqos->config->override_desc_size;
+ 	} else {
+-		eqos->desc_size = ALIGN(sizeof(struct eqos_desc),
+-					(unsigned int)ARCH_DMA_MINALIGN);
++		/* Maximum distance between neighboring descriptors, in Bytes. */
++		desc_step = sizeof(struct eqos_desc) +
++			    EQOS_DMA_CH0_CONTROL_DSL_MASK * eqos->config->axi_bus_width;
++		if (desc_step < ARCH_DMA_MINALIGN) {
++			/*
++			 * The EQoS hardware implementation cannot place one descriptor
++			 * per cacheline, it is necessary to place multiple descriptors
++			 * per cacheline in memory and do cache management carefully.
++			 */
++			eqos->desc_size = BIT(fls(desc_step) - 1);
++		} else {
++			eqos->desc_size = ALIGN(sizeof(struct eqos_desc),
++						(unsigned int)ARCH_DMA_MINALIGN);
++		}
+ 	}
+ 	eqos->desc_per_cacheline = ARCH_DMA_MINALIGN / eqos->desc_size;
+ 
+diff --git a/drivers/net/dwc_eth_qos.h b/drivers/net/dwc_eth_qos.h
+index c239a5c7..12273fe8 100644
+--- a/drivers/net/dwc_eth_qos.h
++++ b/drivers/net/dwc_eth_qos.h
+@@ -229,6 +229,9 @@ struct eqos_config {
+ 	int config_mac;
+ 	int config_mac_mdio;
+ 	unsigned int axi_bus_width;
++	unsigned int override_desc_size;
++	bool has_ch0_control_dsl_override;
++	unsigned int ch0_control_dsl_override;
+ 	phy_interface_t (*interface)(const struct udevice *dev);
+ 	struct eqos_ops *ops;
+ };
+diff --git a/drivers/net/dwc_eth_qos_motorcomm.c b/drivers/net/dwc_eth_qos_motorcomm.c
+index 85f93c76..ce8004e4 100644
+--- a/drivers/net/dwc_eth_qos_motorcomm.c
++++ b/drivers/net/dwc_eth_qos_motorcomm.c
+@@ -297,6 +297,9 @@ struct eqos_config eqos_motorcomm_config = {
+ 	.config_mac = EQOS_MAC_RXQ_CTRL0_RXQ0EN_ENABLED_DCB,
+ 	.config_mac_mdio = EQOS_MAC_MDIO_ADDRESS_CR_20_35,
+ 	.axi_bus_width = EQOS_AXI_WIDTH_64,
++	.override_desc_size = 32,
++	.has_ch0_control_dsl_override = true,
++	.ch0_control_dsl_override = 1,
+ 	.interface = eqos_get_interface_motorcomm,
+ 	.ops = &eqos_motorcomm_ops,
+ };
+-- 
+2.53.0
+

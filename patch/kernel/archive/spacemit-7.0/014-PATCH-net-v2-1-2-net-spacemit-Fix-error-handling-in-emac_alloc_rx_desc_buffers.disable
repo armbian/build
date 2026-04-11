@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vivian Wang <wangruikang@iscas.ac.cn>
+Date: Thu, 05 Mar 2026 14:39:38 +0800
+Subject: [PATCH net v2 1/2] net: spacemit: Fix error handling in
+ emac_alloc_rx_desc_buffers()
+
+Even if we get a dma_mapping_error() while mapping an RX buffer, we
+should still update rx_ring->head to ensure that the buffers we were
+able to allocate and map are used. Fix this by breaking out to the
+existing code after the loop, analogous to the existing handling for skb
+allocation failure.
+
+Fixes: bfec6d7f2001 ("net: spacemit: Add K1 Ethernet MAC")
+Signed-off-by: Vivian Wang <wangruikang@iscas.ac.cn>
+---
+ drivers/net/ethernet/spacemit/k1_emac.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/ethernet/spacemit/k1_emac.c b/drivers/net/ethernet/spacemit/k1_emac.c
+index 338a2637b1da..5a5cb61be08c 100644
+--- a/drivers/net/ethernet/spacemit/k1_emac.c
++++ b/drivers/net/ethernet/spacemit/k1_emac.c
+@@ -565,7 +565,9 @@ static void emac_alloc_rx_desc_buffers(struct emac_priv *priv)
+ 						  DMA_FROM_DEVICE);
+ 		if (dma_mapping_error(&priv->pdev->dev, rx_buf->dma_addr)) {
+ 			dev_err_ratelimited(&ndev->dev, "Mapping skb failed\n");
+-			goto err_free_skb;
++			dev_kfree_skb_any(skb);
++			rx_buf->skb = NULL;
++			break;
+ 		}
+ 
+ 		rx_desc_addr = &((struct emac_desc *)rx_ring->desc_addr)[i];
+@@ -590,10 +592,6 @@ static void emac_alloc_rx_desc_buffers(struct emac_priv *priv)
+ 
+ 	rx_ring->head = i;
+ 	return;
+-
+-err_free_skb:
+-	dev_kfree_skb_any(skb);
+-	rx_buf->skb = NULL;
+ }
+ 
+ /* Returns number of packets received */
+
+-- 
+2.53.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vivian Wang <wangruikang@iscas.ac.cn>
+Date: Thu, 05 Mar 2026 14:39:39 +0800
+Subject: [PATCH net v2 2/2] net: spacemit: Fix error handling in
+ emac_tx_mem_map()
+
+The DMA mappings were leaked on mapping error. Free them with the
+existing emac_free_tx_buf() function.
+
+Fixes: bfec6d7f2001 ("net: spacemit: Add K1 Ethernet MAC")
+Signed-off-by: Vivian Wang <wangruikang@iscas.ac.cn>
+---
+ drivers/net/ethernet/spacemit/k1_emac.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/spacemit/k1_emac.c b/drivers/net/ethernet/spacemit/k1_emac.c
+index 5a5cb61be08c..15d43e4a748b 100644
+--- a/drivers/net/ethernet/spacemit/k1_emac.c
++++ b/drivers/net/ethernet/spacemit/k1_emac.c
+@@ -733,7 +733,7 @@ static void emac_tx_mem_map(struct emac_priv *priv, struct sk_buff *skb)
+ 	struct emac_desc tx_desc, *tx_desc_addr;
+ 	struct device *dev = &priv->pdev->dev;
+ 	struct emac_tx_desc_buffer *tx_buf;
+-	u32 head, old_head, frag_num, f;
++	u32 head, old_head, frag_num, f, i;
+ 	bool buf_idx;
+ 
+ 	frag_num = skb_shinfo(skb)->nr_frags;
+@@ -801,6 +801,15 @@ static void emac_tx_mem_map(struct emac_priv *priv, struct sk_buff *skb)
+ 
+ err_free_skb:
+ 	dev_dstats_tx_dropped(priv->ndev);
++
++	i = old_head;
++	while (i != head) {
++		emac_free_tx_buf(priv, i);
++
++		if (++i == tx_ring->total_cnt)
++			i = 0;
++	}
++
+ 	dev_kfree_skb_any(skb);
+ }
+ 
+
+-- 
+2.53.0
+

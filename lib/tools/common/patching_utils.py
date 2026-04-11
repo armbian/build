@@ -760,10 +760,13 @@ class PatchInPatchFile:
 			files_to_touch = [f for f in files_to_touch if f not in self.deleted_file_names]
 
 		for file_name in files_to_touch:
-			# log.debug(f"Setting mtime of '{file_name}' to '{final_mtime}'.")
 			file_path = os.path.join(working_dir, file_name)
 			try:
-				os.utime(file_path, (final_mtime, final_mtime))
+				# Only bump mtime; never lower it. Multiple patches may touch the same file,
+				# and a later patch with an older timestamp must not override the timestamp
+				# set by an earlier patch with a newer one (#9028).
+				if final_mtime > os.path.getmtime(file_path):
+					os.utime(file_path, (final_mtime, final_mtime))
 			except FileNotFoundError:
 				log.warning(f"File '{file_path}' not found in patch {self}, can't set mtime.")
 

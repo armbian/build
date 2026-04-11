@@ -3,6 +3,7 @@ BOARD_NAME="Orange Pi 5 Ultra"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
+INTRODUCED="2024"
 BOOTCONFIG="orangepi-5-ultra-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="vendor,current,edge"

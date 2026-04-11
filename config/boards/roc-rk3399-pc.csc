@@ -3,6 +3,7 @@ BOARD_NAME="Renegade Elite"
 BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64" # Used to be rk3399
 BOARD_MAINTAINER=""
+INTRODUCED="2018"
 BOOTCONFIG="roc-pc-mezzanine-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"

@@ -572,8 +572,23 @@ function docker_cli_prepare_launch() {
 		display_alert "Not running in a terminal" "not passing through stdin to Docker" "debug"
 	fi
 
-	# if DOCKER_EXTRA_ARGS is an array and has more than zero elements, add its contents to the DOCKER_ARGS array
-	if [[ "${DOCKER_EXTRA_ARGS[*]+isset}" == "isset" && "${#DOCKER_EXTRA_ARGS[@]}" -gt 0 ]]; then
+	# Preserve any pre-existing DOCKER_EXTRA_ARGS (e.g., from user environment) and let extensions append
+	declare -g -a DOCKER_EXTRA_ARGS=("${DOCKER_EXTRA_ARGS[@]+"${DOCKER_EXTRA_ARGS[@]}"}")
+
+	# Hook for extensions to add Docker arguments before launch
+	call_extension_method "host_pre_docker_launch" <<- 'HOST_PRE_DOCKER_LAUNCH'
+		*run on host just before Docker container is launched*
+		Extensions can add Docker arguments by appending to DOCKER_EXTRA_ARGS array.
+		Each array element should be a complete argument (e.g., "--env", "MY_VAR=value" as separate elements).
+		Example: DOCKER_EXTRA_ARGS+=("--env" "MY_VAR=value" "--mount" "type=bind,src=/a,dst=/b")
+		Available variables:
+		  - DOCKER_ARGS[@]: current Docker arguments (do not modify directly)
+		  - DOCKER_EXTRA_ARGS[@]: array to append extra arguments for docker run
+		  - DOCKER_ARMBIAN_TARGET_PATH: path inside container (/armbian)
+	HOST_PRE_DOCKER_LAUNCH
+
+	# Add DOCKER_EXTRA_ARGS to DOCKER_ARGS if any were added by extensions
+	if [[ "${#DOCKER_EXTRA_ARGS[@]}" -gt 0 ]]; then
 		display_alert "Adding extra Docker arguments" "${DOCKER_EXTRA_ARGS[*]}" "debug"
 		DOCKER_ARGS+=("${DOCKER_EXTRA_ARGS[@]}")
 	fi

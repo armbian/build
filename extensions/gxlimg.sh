@@ -60,7 +60,7 @@ function gxlimg_repack_fip_with_new_uboot() {
 				-s raw-u-boot.bin \
 				"${EXTRACT_DIR}/bl33.enc"
 
-			if [ -e "${EXTRACT_DIR}/lpddr3_1d.fw" ]; then
+			if [[ -e "${EXTRACT_DIR}/lpddr3_1d.fw" ]]; then
 				run_host_command_logged gxlimg \
 					-t fip \
 					--bl2 "${EXTRACT_DIR}/bl2.sign" \
@@ -101,7 +101,7 @@ function gxlimg_repack_fip_with_new_uboot() {
 			;;
 	esac
 
-	if [ ! -s u-boot.bin ]; then
+	if [[ ! -s u-boot.bin ]]; then
 		exit_with_error "FIP repack produced empty u-boot.bin"
 	fi
 }

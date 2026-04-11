@@ -10,6 +10,7 @@ BOOT_FDT_FILE="rockchip/rk3576-armsom-sige5.dtb"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 BOARD_MAINTAINER=""
+INTRODUCED="2024"
 
 function post_family_tweaks__armsom-sige7_naming_audios() {
 	display_alert "$BOARD" "Renaming armsom-sige7 audios" "info"

@@ -41,7 +41,7 @@ function prepare_host_noninteractive() {
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	declare offline=false
-	if [ "$OFFLINE_WORK" == "yes" ]; then
+	if [[ "$OFFLINE_WORK" == "yes" ]]; then
 		offline=true
 	fi
 
@@ -245,7 +245,8 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64 is not even available "yet"
+		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64
+		host_dependencies+=("libc6-dev-riscv64-cross") # Support for compiling riscv64 binaries
 	fi
 
 	if [[ "${wanted_arch}" == "loong64" ]]; then

@@ -10,7 +10,7 @@ function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
 function post_install_kernel_debs__install_aic8800_dkms_package() {
 
-	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.19; then
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.20; then
 		display_alert "Kernel version is too recent" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
 	fi

@@ -3,6 +3,7 @@ BOARD_NAME="Orange Pi 5B"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
+INTRODUCED="2023"
 BOOTCONFIG="orangepi-5b-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="edge,vendor"

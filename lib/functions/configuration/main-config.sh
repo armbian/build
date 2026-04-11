@@ -23,7 +23,7 @@ function do_main_configuration() {
 	# common options
 	declare revision_from="set in env or command-line parameter"
 	if [[ "${REVISION}" == "" ]]; then
-		if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+		if [[ -f "${USERPATCHES_PATH}/VERSION" ]]; then
 			REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
 			revision_from="userpatches VERSION file"
 		else
@@ -598,13 +598,13 @@ function check_filesystem_compatibility_on_host() {
 		fi
 
 		# For f2fs, check if support for extended attributes is enabled in kernel config (otherwise will fail later when using rsync)
-		if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+		if [[ "$ROOTFS_TYPE" == "f2fs" ]]; then
 			local build_host_kernel_config=""
 
 			# Try to find kernel config in different places
-			if [ -f "/boot/config-$(uname -r)" ]; then
+			if [[ -f "/boot/config-$(uname -r)" ]]; then
 				build_host_kernel_config="/boot/config-$(uname -r)"
-			elif [ -f "/proc/config.gz" ]; then
+			elif [[ -f "/proc/config.gz" ]]; then
 				# Try to extract kernel config from /proc/config.gz
 				if command -v gzip &> /dev/null; then
 					gzip -dc /proc/config.gz > /tmp/build_host_kernel_config
@@ -617,7 +617,7 @@ function check_filesystem_compatibility_on_host() {
 			fi
 
 			# Check if required configurations are set
-			if [ -n "$build_host_kernel_config" ]; then
+			if [[ -n "$build_host_kernel_config" ]]; then
 				if ! grep -q '^CONFIG_F2FS_FS_XATTR=y$' "$build_host_kernel_config" ||
 					! grep -q '^CONFIG_F2FS_FS_SECURITY=y$' "$build_host_kernel_config"; then
 					exit_with_error "Required kernel configurations for f2fs filesystem not enabled." "Please enable CONFIG_F2FS_FS_XATTR and CONFIG_F2FS_FS_SECURITY in your host kernel configuration." "err"
@@ -638,7 +638,7 @@ function pre_install_distribution_specific__disable_cnf_apt_hook() {
 }
 
 function post_post_debootstrap_tweaks__restore_cnf_apt_hook() {
-	if [ -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled ]; then # (re-enable command-not-found after building rootfs if it's been disabled)
+	if [[ -f "${SDCARD}/etc/apt/apt.conf.d/50command-not-found.disabled" ]]; then # (re-enable command-not-found after building rootfs if it's been disabled)
 		display_alert "Enabling command-not-found after build-time " "${BOARD}:${RELEASE}-${BRANCH}" "info"
 		run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found
 	fi
