@@ -272,18 +272,25 @@ function pre_customize_image__001_build_ask_userspace() {
 	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/"
 
 	# --- xtables extensions (standalone .so files, not patching iptables) ---
+	# Note: we don't use pkg-config for libxtables here. These are dlopen()-loaded
+	# extensions — they don't link against libxtables.so, they use symbols resolved
+	# from the iptables process that loads them. The -I./include picks up our local
+	# xt_QOSMARK.h etc. UAPI headers which aren't in libxtables-dev (they're our
+	# additions). Adding -lxtables would cause duplicate symbol issues at load time.
+	local ask_xtables_modules=(libxt_qosmark libxt_QOSMARK libxt_qosconnmark libxt_QOSCONNMARK)
 	display_alert "ASK extension" "building xtables extensions" "info"
 	cp -a "${ASK_CACHE_DIR}/iptables-extensions" "${SDCARD}/tmp/ask-userspace/iptables-extensions"
 	chroot_sdcard "cd /tmp/ask-userspace/iptables-extensions && \
-		for src in libxt_*.c; do \
-			name=\"\${src%.c}\"; \
+		for name in ${ask_xtables_modules[*]}; do \
 			gcc -shared -fPIC -O2 \
 				-D_init=\${name}_init \
 				-I./include \
-				-o \"\${name}.so\" \"\${src}\" || exit 1; \
+				-o \"\${name}.so\" \"\${name}.c\" || exit 1; \
 		done && \
 		install -d /usr/lib/${ASK_HOST_TRIPLET}/xtables && \
-		install -m 644 libxt_*.so /usr/lib/${ASK_HOST_TRIPLET}/xtables/" \
+		for name in ${ask_xtables_modules[*]}; do \
+			install -m 644 \"\${name}.so\" /usr/lib/${ASK_HOST_TRIPLET}/xtables/ || exit 1; \
+		done" \
 		|| exit_with_error "xtables extensions build failed"
 
 	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
@@ -376,11 +383,13 @@ function pre_customize_image__001_build_ask_userspace() {
 		done
 	done
 
-	# xtables extensions (QOSMARK/QOSCONNMARK)
+	# xtables extensions — use the same explicit list as the build step
+	local ask_xtables_modules=(libxt_qosmark libxt_QOSMARK libxt_qosconnmark libxt_QOSCONNMARK)
 	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables"
-	for f in "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"libxt_qos*.so \
-	         "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"libxt_QOS*.so; do
-		[[ -f "$f" ]] && cp -a "$f" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"
+	for name in "${ask_xtables_modules[@]}"; do
+		local src="${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/${name}.so"
+		[[ -f "${src}" ]] || exit_with_error "xtables extension missing" "${name}.so"
+		cp -a "${src}" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"
 	done
 
 	# Version: kernel version + build date — allows bugfix rebuilds without kernel change
