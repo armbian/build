@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:44883f88b26478fa2c9beea81702023cbc057f94"
+declare -g ASK_BRANCH="commit:8ba7807b15834ae6c0d5a82dddc71dcc367c1f4e"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
@@ -162,7 +162,7 @@ function post_install_kernel_debs__ask_module_autoload() {
 # Copy patches into chroot before patched library builds (runs before build_ask_userspace)
 function pre_customize_image__000_prepare_ask_patches() {
 	mkdir -p "${SDCARD}/tmp/ask-patches"
-	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink" "iptables")
+	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink")
 	for pdir in "${patch_dirs[@]}"; do
 		[[ -d "${ASK_CACHE_DIR}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ASK_CACHE_DIR}/patches/${pdir}"
 		cp "${ASK_CACHE_DIR}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
@@ -186,10 +186,12 @@ function pre_customize_image__001_build_ask_userspace() {
 	[[ -z "${kernel_ver}" ]] && exit_with_error "No kernel version found in ${SDCARD}/lib/modules/"
 	local kdir="/usr/src/linux-headers-${kernel_ver}"
 
-	# Install build dependencies in chroot
+	# Install build dependencies and runtime packages in chroot
+	# iptables is a runtime dep — CMM uses QOSMARK rules via our xtables extensions
 	display_alert "ASK extension" "installing build dependencies" "info"
 	chroot_sdcard_apt_get_install build-essential \
-		pkg-config libxml2-dev libpcap-dev libcrypt-dev libtclap-dev
+		pkg-config libxml2-dev libpcap-dev libcrypt-dev libtclap-dev libxtables-dev \
+		iptables
 
 	# Copy sources into chroot
 	mkdir -p "${SDCARD}/tmp/ask-userspace"
@@ -269,6 +271,21 @@ function pre_customize_image__001_build_ask_userspace() {
 	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_pcd.xml" "${SDCARD}/etc/"
 	cp "${ASK_CACHE_DIR}/${ASK_DPA_APP_DIR}/files/etc/cdx_sp.xml" "${SDCARD}/etc/"
 
+	# --- xtables extensions (standalone .so files, not patching iptables) ---
+	display_alert "ASK extension" "building xtables extensions" "info"
+	cp -a "${ASK_CACHE_DIR}/iptables-extensions" "${SDCARD}/tmp/ask-userspace/iptables-extensions"
+	chroot_sdcard "cd /tmp/ask-userspace/iptables-extensions && \
+		for src in libxt_*.c; do \
+			name=\"\${src%.c}\"; \
+			gcc -shared -fPIC -O2 \
+				-D_init=\${name}_init \
+				-I./include \
+				-o \"\${name}.so\" \"\${src}\" || exit 1; \
+		done && \
+		install -d /usr/lib/${ASK_HOST_TRIPLET}/xtables && \
+		install -m 644 libxt_*.so /usr/lib/${ASK_HOST_TRIPLET}/xtables/" \
+		|| exit_with_error "xtables extensions build failed"
+
 	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
 	build_ask_patched_libraries
 
@@ -307,7 +324,7 @@ function pre_customize_image__001_build_ask_userspace() {
 	# The postinst re-applies holds on every upgrade. Security updates must be
 	# tracked and re-patched manually.
 	display_alert "ASK extension" "pinning patched packages" "info"
-	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables"
+	chroot_sdcard "apt-mark hold libnetfilter-conntrack3 libnfnetlink0"
 
 	# Install sysctl tuning for conntrack
 	install -Dm 644 "${SRC}/packages/bsp/gateway-dk/99-ls1046a-conntrack.conf" \
@@ -359,6 +376,13 @@ function pre_customize_image__001_build_ask_userspace() {
 		done
 	done
 
+	# xtables extensions (QOSMARK/QOSCONNMARK)
+	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables"
+	for f in "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"libxt_qos*.so \
+	         "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"libxt_QOS*.so; do
+		[[ -f "$f" ]] && cp -a "$f" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/xtables/"
+	done
+
 	# Version: kernel version + build date — allows bugfix rebuilds without kernel change
 	local ask_version="${kernel_ver}+$(date +%Y%m%d)"
 
@@ -391,7 +415,7 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl enable cmm.service 2>/dev/null || true
 fi
 # Re-pin patched ASK libraries — vanilla Debian versions break CMM/CDX offloading
-apt-mark hold libnetfilter-conntrack3 libnfnetlink0 iptables 2>/dev/null || true
+apt-mark hold libnetfilter-conntrack3 libnfnetlink0 2>/dev/null || true
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postinst"
 
@@ -406,7 +430,7 @@ EOF
 ldconfig || true
 systemctl daemon-reload || true
 if [ "\$1" = "remove" ] || [ "\$1" = "purge" ]; then
-    apt-mark unhold libnetfilter-conntrack3 libnfnetlink0 iptables 2>/dev/null || true
+    apt-mark unhold libnetfilter-conntrack3 libnfnetlink0 2>/dev/null || true
 fi
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postrm"
@@ -438,7 +462,7 @@ function build_ask_patched_libraries() {
 	# Install all build dependencies upfront
 	display_alert "ASK extension" "installing build deps for patched libraries" "info"
 	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -y build-dep \
-		libnetfilter-conntrack libnfnetlink iptables"
+		libnetfilter-conntrack libnfnetlink"
 
 	# Staging dir for patched .debs (saved to output later)
 	mkdir -p "${SDCARD}/tmp/ask-patched-debs"
@@ -452,9 +476,6 @@ function build_ask_patched_libraries() {
 		"01-nxp-ask-nonblocking-heap-buffer.patch" \
 		"libnfnetlink0_*.deb libnfnetlink-dev_*.deb"
 
-	rebuild_patched_deb "iptables" \
-		"001-qosmark-extensions.patch" \
-		"libip4tc2_*.deb libip6tc2_*.deb libxtables12_*.deb iptables_*.deb"
 
 	# Copy patched .debs to output for distribution
 	mkdir -p "${SRC}/output/debs"
