@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:6a30ee0adf0d66056b245d9d91ad7cdde083296c"
+declare -g ASK_BRANCH="commit:4e73c4b467edb4508adaa4faa024ef5670132d47"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
@@ -283,7 +283,6 @@ function pre_customize_image__001_build_ask_userspace() {
 	chroot_sdcard "cd /tmp/ask-userspace/iptables-extensions && \
 		for name in ${ask_xtables_modules[*]}; do \
 			gcc -shared -fPIC -O2 \
-				-D_INIT=\${name}_init \
 				-I./include \
 				-o \"\${name}.so\" \"\${name}.c\" || exit 1; \
 		done && \
