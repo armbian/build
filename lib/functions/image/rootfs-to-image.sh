@@ -104,7 +104,7 @@ function create_image_from_sdcard_rootfs() {
 		Called before unmounting both `/root` and `/boot`.
 	PRE_UMOUNT_FINAL_IMAGE
 
-	if [[ $ROOTFS_TYPE == nfs ]]; then
+	if [[ $ROOTFS_TYPE == nfs || $ROOTFS_TYPE == nfs-root ]]; then
 		# ROOTFS_COMPRESSION: zstd (default, .tar.zst) | gzip (.tar.gz) | none (skip archive)
 		declare rootfs_compression="${ROOTFS_COMPRESSION:-zstd}"
 		declare archive_ext="" archive_filter=""
@@ -210,6 +210,17 @@ function create_image_from_sdcard_rootfs() {
 	# We're done with ${MOUNT} by now, remove it.
 	rm -rf --one-file-system "${MOUNT}"
 	# unset MOUNT # don't unset, it's readonly now
+
+	# nfs-root: no local storage image. Kernel/DTB/initrd are already staged for TFTP
+	# by the netboot extension (pre_umount_final_image hook). Rootfs lands in the
+	# archive under ${FINALDEST} (when ROOTFS_COMPRESSION != none) and/or in the
+	# user-selected ${ROOTFS_EXPORT_DIR}, which may live outside ${FINALDEST}.
+	# Drop SDCARD.raw and skip the .img pipeline (write-to-SD, fingerprint, compress).
+	if [[ "${ROOTFS_TYPE}" == "nfs-root" ]]; then
+		display_alert "nfs-root" "no local storage image produced" "info"
+		rm -f "${SDCARD}.raw"
+		return 0
+	fi
 
 	mkdir -p "${DESTIMG}"
 	# @TODO: misterious cwd, who sets it?
