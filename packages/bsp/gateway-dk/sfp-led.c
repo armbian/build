@@ -34,12 +34,19 @@
  *   sfp0: sfp-0 {
  *       compatible = "sff,sfp";
  *       i2c-bus = <&sfp0_i2c>;
- *       leds = <&led_sfp0_link>, <&led_sfp0_activity>;
  *   };
  *
  *   sfp-led-controller {
  *       compatible = "mono,sfp-led";
- *       sfp-ports = <&sfp0>, <&sfp1>;
+ *
+ *       port@0 {
+ *           sfp = <&sfp0>;
+ *           leds = <&led_sfp0_link>, <&led_sfp0_activity>;
+ *       };
+ *       port@1 {
+ *           sfp = <&sfp1>;
+ *           leds = <&led_sfp1_link>, <&led_sfp1_activity>;
+ *       };
  *   };
  *
  *   // MAC node must reference SFP for netdev association
@@ -483,14 +490,21 @@ reschedule:
 }
 
 static int sfp_led_register_port(struct sfp_led_priv *priv,
-				 struct device_node *sfp_np, int index)
+				 struct device_node *port_np, int index)
 {
 	struct sfp_led_port *port = &priv->ports[index];
-	struct device_node *i2c_np;
+	struct device_node *sfp_np, *i2c_np;
+
+	/* Parse SFP node from port child node */
+	sfp_np = of_parse_phandle(port_np, "sfp", 0);
+	if (!sfp_np) {
+		dev_err(priv->dev, "port %d: missing sfp phandle\n", index);
+		return -ENODEV;
+	}
 
 	port->priv = priv;
 	port->sfp_np = sfp_np;
-	of_node_get(sfp_np);
+	/* sfp_np has ref from of_parse_phandle — don't add of_node_get */
 
 	/* Get I2C adapter for module detection */
 	i2c_np = of_parse_phandle(sfp_np, "i2c-bus", 0);
@@ -510,15 +524,15 @@ static int sfp_led_register_port(struct sfp_led_priv *priv,
 		return ret ? ret : -ENODEV;
 	}
 
-	/* Get LEDs */
-	port->link_led = of_led_get(sfp_np, 0);
+	/* Get LEDs from port child node */
+	port->link_led = of_led_get(port_np, 0);
 	if (IS_ERR(port->link_led)) {
 		dev_dbg(priv->dev, "port %d: link LED not in DT: %ld\n",
 			index, PTR_ERR(port->link_led));
 		port->link_led = NULL;
 	}
 
-	port->activity_led = of_led_get(sfp_np, 1);
+	port->activity_led = of_led_get(port_np, 1);
 	if (IS_ERR(port->activity_led)) {
 		dev_dbg(priv->dev, "port %d: activity LED not in DT: %ld\n",
 			index, PTR_ERR(port->activity_led));
@@ -589,7 +603,7 @@ static void sfp_led_cleanup_port(struct sfp_led_port *port)
 static int sfp_led_probe(struct platform_device *pdev)
 {
 	struct sfp_led_priv *priv;
-	struct device_node *np;
+	struct device_node *child;
 	int count, i, registered = 0;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
@@ -599,9 +613,9 @@ static int sfp_led_probe(struct platform_device *pdev)
 	priv->dev = &pdev->dev;
 	platform_set_drvdata(pdev, priv);
 
-	count = of_count_phandle_with_args(pdev->dev.of_node, "sfp-ports", NULL);
-	if (count <= 0) {
-		dev_err(&pdev->dev, "no sfp-ports specified\n");
+	count = of_get_child_count(pdev->dev.of_node);
+	if (count == 0) {
+		dev_err(&pdev->dev, "no port child nodes specified\n");
 		return -ENODEV;
 	}
 
@@ -612,17 +626,11 @@ static int sfp_led_probe(struct platform_device *pdev)
 
 	priv->num_ports = count;
 
-	for (i = 0; i < count; i++) {
-		np = of_parse_phandle(pdev->dev.of_node, "sfp-ports", i);
-		if (!np) {
-			dev_warn(&pdev->dev, "failed to parse sfp-ports[%d]\n", i);
-			continue;
-		}
-
-		if (sfp_led_register_port(priv, np, i) == 0)
+	i = 0;
+	for_each_child_of_node(pdev->dev.of_node, child) {
+		if (sfp_led_register_port(priv, child, i) == 0)
 			registered++;
-
-		of_node_put(np);
+		i++;
 	}
 
 	if (registered == 0) {
