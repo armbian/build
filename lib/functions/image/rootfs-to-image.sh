@@ -20,6 +20,7 @@ function calculate_image_version() {
 	[[ $BUILD_DESKTOP == yes ]] && calculated_image_version=${calculated_image_version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && calculated_image_version=${calculated_image_version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && calculated_image_version=${calculated_image_version}_nfsboot
+	[[ $ROOTFS_TYPE == nfs-root ]] && calculated_image_version=${calculated_image_version}_nfsroot
 	display_alert "Calculated image version" "${calculated_image_version}" "debug"
 }
 
@@ -40,7 +41,7 @@ function create_image_from_sdcard_rootfs() {
 	if [[ ${INCLUDE_HOME_DIR:-no} == yes ]]; then exclude_home=""; fi
 	# nilfs2 fs does not have extended attributes support, and have to be ignored on copy
 	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=""; fi
-	if [[ $ROOTFS_TYPE != nfs ]]; then
+	if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
 		run_host_command_logged rsync -aHWh $rsync_ea \
 			--exclude="/boot" \
@@ -51,13 +52,6 @@ function create_image_from_sdcard_rootfs() {
 			--exclude="/sys/*" \
 			$exclude_home \
 			--info=progress0,stats1 $SDCARD/ $MOUNT/
-	else
-		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
-		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' $exclude_home . |
-			pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
-				-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.tgz" |
-			gzip -c > "$DEST/images/${version}-rootfs.tgz"
 	fi
 
 	# stage: rsync /boot
@@ -109,6 +103,91 @@ function create_image_from_sdcard_rootfs() {
 		*allow config to hack into the image before the unmount*
 		Called before unmounting both `/root` and `/boot`.
 	PRE_UMOUNT_FINAL_IMAGE
+
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		# ROOTFS_COMPRESSION: zstd (default, .tar.zst) | gzip (.tar.gz) | none (skip archive)
+		declare rootfs_compression="${ROOTFS_COMPRESSION:-zstd}"
+		declare archive_ext="" archive_filter=""
+		case "${rootfs_compression}" in
+			gzip)
+				archive_ext="tar.gz"
+				archive_filter="gzip -c"
+				;;
+			zstd | zst)
+				archive_ext="tar.zst"
+				archive_filter="zstd -T0 -c"
+				;;
+			none) ;;
+			*) exit_with_error "Unknown ROOTFS_COMPRESSION: '${rootfs_compression}' (expected: gzip|zstd|none)" ;;
+		esac
+		if [[ "${rootfs_compression}" == "none" && -z "${ROOTFS_EXPORT_DIR}" ]]; then
+			exit_with_error "ROOTFS_COMPRESSION=none requires ROOTFS_EXPORT_DIR (otherwise nothing is produced)"
+		fi
+
+		declare -g ROOTFS_ARCHIVE_PATH=""
+		if [[ "${rootfs_compression}" != "none" ]]; then
+			ROOTFS_ARCHIVE_PATH="${FINALDEST}/${version}-rootfs.${archive_ext}"
+			# Write to a hidden temp file in FINALDEST and rename in place on success —
+			# keeps the publish atomic even when DESTIMG and FINALDEST are on different
+			# filesystems. A failed tar/pv/compressor stage leaves only the hidden tmp,
+			# never a truncated ${version}-rootfs.${archive_ext} that looks valid.
+			run_host_command_logged mkdir -pv "${FINALDEST}"
+			declare rootfs_archive_tmp="${FINALDEST}/.${version}-rootfs.${archive_ext}.tmp"
+			display_alert "Creating rootfs archive" "${version}-rootfs.${archive_ext}" "info"
+			# Subshell with pipefail so failures in tar/pv propagate (otherwise the
+			# exit code of the final compressor stage hides truncation mid-archive).
+			declare -a tar_excludes=(--exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' --exclude='./sys/*')
+			[[ "${INCLUDE_HOME_DIR:-no}" != "yes" ]] && tar_excludes+=(--exclude='./home/*')
+			rm -f "${rootfs_archive_tmp}"
+			(
+				set -o pipefail
+				tar cp --xattrs --directory="$SDCARD/" "${tar_excludes[@]}" . |
+					pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
+						-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.${archive_ext}" |
+					${archive_filter} > "${rootfs_archive_tmp}"
+			)
+			run_host_command_logged mv -v "${rootfs_archive_tmp}" "${ROOTFS_ARCHIVE_PATH}"
+		fi
+
+		# ROOTFS_EXPORT_DIR: when set, also rsync rootfs tree into this directory.
+		# Useful when the build host is the NFS server, or has the NFS export mounted,
+		# so netboot deployment is a single build step with no unpack/transport phase.
+		if [[ -n "${ROOTFS_EXPORT_DIR}" ]]; then
+			# Hard guard: the netboot extension confines the path to ${SRC}/output/
+			# netboot-export/ when active, but plain ROOTFS_TYPE=nfs reaches this block
+			# with the raw user value. A typo like / or ${SDCARD} would turn the
+			# rsync --delete below into a destructive wipe.
+			declare _export_resolved _sdcard_resolved
+			_export_resolved="$(realpath -m "${ROOTFS_EXPORT_DIR}")"
+			_sdcard_resolved="$(realpath -m "${SDCARD}")"
+			if [[ -z "${_export_resolved}" || "${_export_resolved}" == "/" || "${_export_resolved}" == "${_sdcard_resolved}" ]]; then
+				exit_with_error "Refusing rsync --delete to unsafe ROOTFS_EXPORT_DIR" "${ROOTFS_EXPORT_DIR}"
+			fi
+			display_alert "Exporting rootfs tree" "${ROOTFS_EXPORT_DIR}" "info"
+			run_host_command_logged mkdir -pv "${ROOTFS_EXPORT_DIR}"
+			# --delete so files removed from the source rootfs don't survive in a
+			# reused export tree (otherwise the NFS root silently drifts from the image).
+			# --delete-excluded additionally purges receiver-side files that match our
+			# excludes (e.g. stale /home/* left over from a prior INCLUDE_HOME_DIR=yes build).
+			run_host_command_logged rsync -aHWh --delete --delete-excluded $rsync_ea \
+				--exclude="/boot/*" \
+				--exclude="/dev/*" \
+				--exclude="/proc/*" \
+				--exclude="/run/*" \
+				--exclude="/tmp/*" \
+				--exclude="/sys/*" \
+				$exclude_home \
+				--info=progress0,stats1 "$SDCARD/" "${ROOTFS_EXPORT_DIR}/"
+		fi
+	fi
+
+	call_extension_method "post_create_rootfs_archive" <<- 'POST_CREATE_ROOTFS_ARCHIVE'
+		*called after the rootfs archive / export tree is produced*
+		Runs after pre_umount_final_image and after the archive step, so any
+		path the archive step sets (e.g. ROOTFS_ARCHIVE_PATH) is populated.
+		Use this instead of pre_umount_final_image when you need the final
+		archive path — deploy hooks that ship the archive belong here.
+	POST_CREATE_ROOTFS_ARCHIVE
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		# Check the partition table after the uboot code has been written
