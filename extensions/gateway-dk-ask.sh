@@ -283,7 +283,7 @@ function pre_customize_image__001_build_ask_userspace() {
 	chroot_sdcard "cd /tmp/ask-userspace/iptables-extensions && \
 		for name in ${ask_xtables_modules[*]}; do \
 			gcc -shared -fPIC -O2 \
-				-D_init=\${name}_init \
+				-D_INIT=\${name}_init \
 				-I./include \
 				-o \"\${name}.so\" \"\${name}.c\" || exit 1; \
 		done && \
