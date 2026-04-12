@@ -20,7 +20,7 @@ function prepare_partitions() {
 
 	# possible partition combinations
 	# /boot: none, ext4, ext2, fat (BOOTFS_TYPE)
-	# root: ext4, btrfs, f2fs, nilfs2, nfs (ROOTFS_TYPE)
+	# root: ext4, btrfs, f2fs, nilfs2, nfs, nfs-root (ROOTFS_TYPE)
 
 	# declare makes local variables by default if used inside a function
 	# NOTE: mountopts string should always start with comma if not empty
@@ -121,7 +121,7 @@ function prepare_partitions() {
 		BOOTSIZE=0
 	fi
 	# Check if we need root partition
-	[[ $ROOTFS_TYPE != nfs ]] &&
+	[[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root ]] &&
 		local rootpart=$((next++))
 
 	display_alert "calculated rootpart" "rootpart: ${rootpart}" "debug"
@@ -144,7 +144,7 @@ function prepare_partitions() {
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
-		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs && $sdsize -lt $rootfs_size ]]; then
+		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root && $ROOTFS_TYPE != btrfs && $sdsize -lt $rootfs_size ]]; then
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else

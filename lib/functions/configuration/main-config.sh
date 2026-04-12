@@ -144,6 +144,13 @@ function do_main_configuration() {
 		nfs)
 			FIXED_IMAGE_SIZE=256 # small SD card with kernel, boot script and .dtb/.bin files
 			;;
+		nfs-root)
+			# Full netboot: no local storage in the early boot path at all. Kernel,
+			# DTB and extlinux go to TFTP, rootfs is mounted over NFS. The netboot
+			# extension owns artifact staging and PXE config generation.
+			FIXED_IMAGE_SIZE=256
+			enable_extension "netboot"
+			;;
 		f2fs)
 			enable_extension "fs-f2fs-support"
 			# Fixed image size is in 1M dd blocks (MiB)
