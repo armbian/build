@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:4e73c4b467edb4508adaa4faa024ef5670132d47"
+declare -g ASK_BRANCH="commit:252b6db5a274383917c7a7688c931d61409978c2"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
@@ -168,12 +168,16 @@ function pre_customize_image__000_prepare_ask_patches() {
 		cp "${ASK_CACHE_DIR}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
 	done
 
-	# Enable deb-src for apt-get source
-	chroot_sdcard "if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-		sed -i 's/^Types: deb\$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources; \
-	elif [ -f /etc/apt/sources.list ]; then \
-		sed -i 's/^#\\s*deb-src/deb-src/' /etc/apt/sources.list; \
-	fi && apt-get update -qq"
+	# Enable deb-src for apt-get source (handles both Debian and Ubuntu)
+	# deb822 format: *.sources files (Debian bookworm+, Ubuntu noble+)
+	# Legacy format: sources.list (older Debian/Ubuntu)
+	chroot_sdcard "shopt -s nullglob; \
+		for f in /etc/apt/sources.list.d/*.sources; do \
+			sed -i 's/^Types: deb\$/Types: deb deb-src/' \"\$f\"; \
+		done; \
+		if [ -f /etc/apt/sources.list ]; then \
+			sed -i 's/^#\\s*deb-src/deb-src/' /etc/apt/sources.list; \
+		fi && apt-get update -qq"
 	chroot_sdcard_apt_get_install dpkg-dev devscripts
 }
 
