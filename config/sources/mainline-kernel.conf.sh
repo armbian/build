@@ -7,8 +7,8 @@
 # Shared versioning logic for Armbian mainline kernels.
 function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	[[ -n "${KERNELBRANCH}" ]] && return 0           # if already set, don't touch it; that way other hooks can run in any order
-	if [[ "${KERNEL_MAJOR_MINOR}" == "7.0" ]]; then # @TODO: roll over to next MAJOR.MINOR and MAJOR.MINOR-rc1 when it is released
-		declare -g KERNELBRANCH="tag:v7.0-rc7"
+	if [[ "${KERNEL_MAJOR_MINOR}" == "7.1" ]]; then # @TODO: roll over to next MAJOR.MINOR and MAJOR.MINOR-rc1 when it is released
+		declare -g KERNELBRANCH="tag:v7.1-rc1"
 		display_alert "mainline-kernel: upstream release candidate" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
 	fi
 }
@@ -26,11 +26,11 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 
  # Example: 6.7-rc7 was released by Linus, but kernel.org git and google git mirrors took a while to catch up; change the source to pull directly from Linus.
  # This was necessary for a few days in late December 2023, but no longer; tag was pushed on 28/Dec/2023.
- function mainline_kernel_decide_version__750_use_torvalds_for_7.0-rc6() {
- 	if [[ "${KERNELBRANCH}" == 'tag:v7.0-rc7' ]]; then
- 		display_alert "Using Linus kernel repo for 7.0-rc7" "${KERNELBRANCH}" "warn"
+ function mainline_kernel_decide_version__750_use_torvalds_for_7.1-rc1() {
+ 	if [[ "${KERNELBRANCH}" == 'tag:v7.1-rc1' ]]; then
+ 		display_alert "Using Linus kernel repo for 7.1-rc1" "${KERNELBRANCH}" "warn"
  		declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
- 		display_alert "mainline-kernel: missing torvalds tag on 7.0-rc7" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "info"
+ 		display_alert "mainline-kernel: missing torvalds tag on 7.1-rc1" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "info"
  	fi
  }
 
