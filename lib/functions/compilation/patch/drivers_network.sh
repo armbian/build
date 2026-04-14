@@ -933,3 +933,20 @@ driver_rtl8152_rtl8153() {
 			"$kerneldir/drivers/net/usb/"
 	fi
 }
+
+driver_fgh100m() {
+
+    if linux-version compare "${version}" ge 6.1; then
+        display_alert "Adding" "MorseMicro FG-H100M WiFi (MORSE) driver patch for kernel ${version}" "info"
+
+        process_patch_file "${SRC}/patch/misc/wireless-fgh100m.patch" "applying"
+
+        # Add to section Makefile (append, like other drivers)
+        echo "obj-\$(CONFIG_WLAN_VENDOR_MORSE) += fgh100m/" >> "$kerneldir/drivers/net/wireless/Makefile"
+
+        # Add to wireless Kconfig (insert after a stable anchor, like other drivers)
+        sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/fgh100m\/Kconfig"' \
+            "$kerneldir/drivers/net/wireless/Kconfig"
+    fi
+}
+
