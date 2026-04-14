@@ -121,6 +121,7 @@ function kernel_drivers_prepare_harness() {
 		driver_rtl8723DU
 		driver_uwe5622
 		driver_rtl8723cs
+		driver_fgh100m
 	)
 
 	declare -a skip_drivers=("${KERNEL_DRIVERS_SKIP[@]}")
