@@ -10,15 +10,41 @@
 declare -g ARCH="arm64"
 declare -g OVERLAY_DIR="/boot/dtb/ti/overlay"
 declare -g BOOTSCRIPT="boot-k3.cmd:uEnv.txt"
-declare -g SPD_OPTEED="SPD=opteed"
+declare -g CLEAN_LEVEL="make-atf,make-uboot"
 
 declare -g INSTALL_HEADERS="yes"
 
-declare -g TI_PACKAGES=()
+declare -g TI_PACKAGES=("vim" "network-manager" "k3conf")
 if [[ "${CC33XX_SUPPORT}" == "yes" ]] ; then
 	if [[ "${RELEASE}" == "trixie" || "${RELEASE}" == "noble" ]] ; then
 		TI_PACKAGES+=("cc33xx-fw" "cc33xx-target-scripts" "cc33conf" "cc33calibrator")
 	fi
+fi
+
+if [[ "${GPU_SUPPORT}" == "yes" ]] ; then
+	TI_PACKAGES+=("ti-img-rogue-driver-${SOC_ID}-dkms" "ti-img-rogue-umlibs-${SOC_ID}" "ti-img-rogue-tools-${SOC_ID}" "ti-img-rogue-firmware-${SOC_ID}")
+	TI_PACKAGES+=("mesa-pvr-vulkan-drivers" "libgl1-mesa-pvr-dri")
+    TI_PACKAGES+=("gstreamer1.0-tools" "gstreamer1.0-plugins-good" "gstreamer1.0-plugins-bad" "gstreamer1.0-plugins-base")
+
+	if [[ "${CHROMIUM_SUPPORT}" == "yes" ]] ; then
+		TI_PACKAGES+=("chromium")
+	fi
+fi
+
+if [[ "${DISPLAY_SUPPORT}" == "yes" ]] ; then
+    TI_PACKAGES+=("weston" "seatd")
+fi
+
+if [[ "${BOOT_SOC}" != "am62l" ]]; then
+	TI_PACKAGES+=("firmware-ti-ipc-${SOC_ID}")
+else
+	TI_PACKAGES+=("ti-lvgl-demo")
+fi
+
+TI_PACKAGES+=("firmware-cnm-wave")
+
+if [[ ! -z ${EXTRA_BOARD_PACKAGES} ]] ; then
+	TI_PACKAGES+=("${EXTRA_BOARD_PACKAGES[@]}")
 fi
 
 enable_extension "ti-debpkgs"
@@ -42,9 +68,12 @@ case "${BRANCH}" in
 esac
 
 ATF_PLAT="k3"
-ATF_TARGET_MAP="PLAT=$ATF_PLAT TARGET_BOARD=$ATF_BOARD ${SPD_OPTEED} ${ATF_ARGS} all;;build/$ATF_PLAT/$ATF_BOARD/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
+if [[ "${BOOT_SOC}" == "am62l" ]]; then
+	ATF_PLAT="k3low"
+fi
+ATF_TARGET_MAP="PLAT=${ATF_PLAT} TARGET_BOARD=${ATF_BOARD} SPD=opteed ${ATF_ARGS} all;;build/${ATF_PLAT}/${ATF_BOARD}/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
 
-UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-raw.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
+UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-pager_v2.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
 
 # To match what our current SDK produces
 BOOT_FS_LABEL="boot"
