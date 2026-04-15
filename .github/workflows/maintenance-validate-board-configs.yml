@@ -1,0 +1,72 @@
+name: "Validate board configs"
+
+# Runs on PRs that touch config/boards/*. Validates only the changed
+# files (not all 500+) via tools/validate-board-config.py and emits
+# GitHub Actions annotations on the PR diff. Blocks merge on errors.
+
+on:
+  pull_request:
+    paths:
+      - "config/boards/**"
+      - "tools/validate-board-config.py"
+      - ".github/workflows/maintenance-validate-board-configs.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: "Validate changed board configs"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout PR"
+        uses: actions/checkout@v4
+        with:
+          # Need the merge-base to compute changed files; depth 0 is
+          # heaviest but bulletproof. Most PRs are small enough this
+          # is fine; switch to fetch-depth: 2 + explicit base ref if
+          # repo size becomes a problem.
+          fetch-depth: 0
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "Collect changed board configs"
+        id: changed
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+
+          # Limit to known config-bearing extensions to avoid wasting CI
+          # cycles on README.md or other non-config files in the dir.
+          mapfile -t files < <(
+            git diff --name-only --diff-filter=ACMR "${base}" "${head}" -- 'config/boards/*.conf' 'config/boards/*.csc' 'config/boards/*.tvb' 'config/boards/*.wip' 'config/boards/*.eos'
+          )
+
+          echo "Changed board configs: ${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+
+          # Output the list as a space-joined string for the next step.
+          # If empty, set a marker so we can short-circuit.
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+          else
+            echo "files=${files[*]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "Run validator"
+        if: steps.changed.outputs.files != ''
+        env:
+          FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          python3 tools/validate-board-config.py --github ${FILES}
+
+      - name: "No board configs changed"
+        if: steps.changed.outputs.files == ''
+        run: echo "No config/boards/*.{conf,csc,tvb,wip,eos} changes in this PR — nothing to validate."
