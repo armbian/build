@@ -15,6 +15,6 @@ HAS_VIDEO_OUTPUT="no"
 BOOT_LOGO="none"
 MODULES="ads7846 spidev"
 BOOTFS_TYPE="fat"
-PACKAGE_LIST_BOARD="build-essential usb-modeswitch eject"
+PACKAGE_LIST_BOARD="build-essential usb-modeswitch eject network-manager git"
 
 enable_extension "brostrend-aic8800-dkms"
