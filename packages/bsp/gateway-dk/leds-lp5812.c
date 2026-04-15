@@ -609,7 +609,6 @@ static int lp5812_probe(struct i2c_client *client)
 
 err_out:
 	lp5812_deinit_device(chip);
-	mutex_destroy(&chip->lock);
 	return ret;
 }
 
@@ -618,7 +617,6 @@ static void lp5812_remove(struct i2c_client *client)
 	struct lp5812_led *led = i2c_get_clientdata(client);
 
 	lp5812_deinit_device(led->chip);
-	mutex_destroy(&led->chip->lock);
 }
 
 /* Chip specific configurations */
