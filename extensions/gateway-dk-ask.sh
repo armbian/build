@@ -15,7 +15,7 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:9ea9bda759de70f75fc994fdc8bfa83a54f66f67"
+declare -g ASK_BRANCH="commit:9f5a37ea90bb99e0fadd8d85944f4a9ff40037fd"
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
@@ -161,11 +161,13 @@ function post_install_kernel_debs__ask_module_autoload() {
 
 # Copy patches into chroot before patched library builds (runs before build_ask_userspace)
 function pre_customize_image__000_prepare_ask_patches() {
-	mkdir -p "${SDCARD}/tmp/ask-patches"
+	# Stage per-package trees (version subdirs preserved) so rebuild_patched_deb
+	# can pick the patch matching the upstream source version.
 	local patch_dirs=("libnetfilter-conntrack" "libnfnetlink")
 	for pdir in "${patch_dirs[@]}"; do
 		[[ -d "${ASK_CACHE_DIR}/patches/${pdir}" ]] || exit_with_error "ASK patch directory missing" "${ASK_CACHE_DIR}/patches/${pdir}"
-		cp "${ASK_CACHE_DIR}/patches/${pdir}/"*.patch "${SDCARD}/tmp/ask-patches/"
+		mkdir -p "${SDCARD}/tmp/ask-patches/${pdir}"
+		cp -a "${ASK_CACHE_DIR}/patches/${pdir}/." "${SDCARD}/tmp/ask-patches/${pdir}/"
 	done
 
 	# Enable deb-src for apt-get source (handles both Debian and Ubuntu)
@@ -409,8 +411,8 @@ Version: ${ask_version}
 Architecture: arm64
 Section: net
 Priority: optional
-Maintainer: Mono Technologies <support@mono.si>
-Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2, libpcap0.8, iptables
+Maintainer: Tomaz Zaman <tomaz@mono.si>
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2 | libxml2-16, libpcap0.8, iptables
 Description: NXP ASK hardware offloading userspace for Mono Gateway DK
  Userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) and configuration
  for NXP ASK data-plane acceleration on the LS1046A Gateway DK.
@@ -452,6 +454,9 @@ EOF
 /etc/cdx_pcd.xml
 /etc/cdx_sp.xml
 /etc/config/fastforward
+/etc/fmc/config/cfgdata.xsd
+/etc/fmc/config/hxs_pdl_v3.xml
+/etc/fmc/config/netpcd.xsd
 /etc/sysctl.d/99-ls1046a-conntrack.conf
 CONFFILES
 
@@ -461,7 +466,8 @@ CONFFILES
 	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" \
 		|| exit_with_error "dpkg-deb failed for ${debfile}"
 	cp "${SRC}/output/debs/${debfile}" "${SDCARD}/root/"
-	chroot_sdcard "dpkg -i /root/${debfile}" || exit_with_error "dpkg -i failed for ${debfile}"
+	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /root/${debfile}" \
+		|| exit_with_error "apt install failed for ${debfile}"
 	rm -f "${SDCARD}/root/${debfile}"
 
 	rm -rf "${pkgdir}"
@@ -495,8 +501,12 @@ function build_ask_patched_libraries() {
 	rm -rf "${SDCARD}/tmp/ask-patched-debs"
 }
 
-# Helper: rebuild a Debian package with an ASK patch in an isolated chroot directory
+# Helper: rebuild a Debian package with an ASK patch in an isolated chroot directory.
 # Usage: rebuild_patched_deb <pkg_name> <patch_file> <deb_globs>
+# The patch is resolved under /tmp/ask-patches/<pkg>/<upstream_version>/<patch_file>,
+# where <upstream_version> is parsed from the source tree's debian/changelog after
+# apt-get source. This lets a single ASK repo cover multiple target distros whose
+# upstream library versions differ (e.g. Trixie/Noble 1.1.0 vs Resolute 1.1.1).
 function rebuild_patched_deb() {
 	local pkg="$1" patch="$2" debs="$3"
 	local workdir="/tmp/ask-rebuild-${pkg}"
@@ -507,7 +517,14 @@ function rebuild_patched_deb() {
 		rm -rf '${workdir}' && mkdir -p '${workdir}' && cd '${workdir}' && \
 		apt-get source '${pkg}' && \
 		cd \$(ls -d ${pkg}-*/ | head -1) && \
-		patch -p1 < '/tmp/ask-patches/${patch}' && \
+		upstream_ver=\$(dpkg-parsechangelog -l debian/changelog -S Version \
+			| sed -E 's/^[0-9]+://; s/-[^-]+\$//; s/^([0-9]+\\.[0-9]+\\.[0-9]+).*/\\1/') && \
+		patch_path=\"/tmp/ask-patches/${pkg}/\${upstream_ver}/${patch}\" && \
+		if [ ! -f \"\${patch_path}\" ]; then \
+			echo \"ERROR: no ASK patch for ${pkg} upstream \${upstream_ver} (looked for \${patch_path})\" >&2; \
+			exit 1; \
+		fi && \
+		patch -p1 < \"\${patch_path}\" && \
 		DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
 		cd '${workdir}' && dpkg -i ${debs} && \
 		cp ${debs} /tmp/ask-patched-debs/ && \
