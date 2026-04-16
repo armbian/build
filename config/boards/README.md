@@ -10,6 +10,8 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 	- Refer to [sources table](https://github.com/armbian/build/blob/master/config/sources/README.md)
 	- Example: `sun50iw1`
 - **BOARD_MAINTAINER** ( space-separated list of Github login ): Declares the maintainer of the board
+- **INTRODUCED** ( year ): When the board first came to market
+	- Example: `2022`
 - **BOOTCONFIG** ( u-boot identifier ): declares the name of the u-boot configuration for the build without the '\_defconifig' suffix
 	- Refer to the [u-boot source tree](https://github.com/u-boot/u-boot/tree/master/configs) to find configuration for the board
 	- Example: `teres-i`

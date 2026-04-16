@@ -3,6 +3,7 @@ BOARD_NAME="NanoPi M4"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip64" # Used to be rk3399
 BOARD_MAINTAINER=""
+INTRODUCED="2018"
 BOOTCONFIG="nanopi-m4-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"

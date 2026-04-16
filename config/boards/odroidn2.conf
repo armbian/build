@@ -3,6 +3,7 @@ BOARD_NAME="Odroid N2"
 BOARD_VENDOR="hardkernel"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER="NicoD-SBC"
+INTRODUCED="2019"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
@@ -16,7 +17,7 @@ enable_extension "uboot-btrfs"
 enable_extension "watchdog"
 
 # Newer u-boot for the N2/N2+
-BOOTBRANCH_BOARD="tag:v2026.04-rc3"
+BOOTBRANCH_BOARD="tag:v2026.04"
 BOOTPATCHDIR="v2026.04"
 
 # Enable writing u-boot to SPI on the N2(+) for current and edge

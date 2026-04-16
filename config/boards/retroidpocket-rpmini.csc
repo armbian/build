@@ -2,6 +2,7 @@
 declare -g BOARD_NAME="Retroid Pocket RPMini"
 declare -g BOARD_VENDOR="retroid"
 declare -g BOARD_MAINTAINER=""
+declare -g INTRODUCED="2024"
 declare -g BOARDFAMILY="sm8250"
 declare -g KERNEL_TARGET="current"
 declare -g EXTRAWIFI="no"

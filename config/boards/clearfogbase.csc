@@ -3,6 +3,7 @@ BOARD_NAME="Clearfog Base"
 BOARD_VENDOR="solidrun"
 BOARDFAMILY="mvebu"
 BOARD_MAINTAINER=""
+INTRODUCED="2016"
 BOOTCONFIG="clearfog_defconfig"
 #BOOTCONFIG_EDGE="clearfogbase_defconfig"  # This had to be disabled because the clearfog is not yet ready for mainline uboot
 HAS_VIDEO_OUTPUT="no"

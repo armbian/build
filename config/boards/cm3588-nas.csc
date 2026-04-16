@@ -3,6 +3,7 @@ BOARD_NAME="FriendlyElec CM3588 NAS"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"
+INTRODUCED="2023"
 BOOTCONFIG="cm3588-nas-rk3588_defconfig" # Mainline defconfig, enables booting from NVMe
 BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"
@@ -44,8 +45,8 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01"
+	declare -g BOOTBRANCH="tag:v2026.04"
+	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # Disable stuff from rockchip64_common; we're using binman here which does all the work
@@ -105,6 +106,10 @@ function post_config_uboot_target__extra_configs_for_cm3588-nas_uboot() {
 	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
+	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
 
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"

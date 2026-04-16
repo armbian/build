@@ -3,6 +3,7 @@
 BOARD_NAME="Photonicat2"
 BOARD_VENDOR="ariaboard"
 BOARDFAMILY="rk35xx"
+INTRODUCED="2025"
 BOOT_SOC="rk3576"
 BOOTCONFIG="photonicat2-rk3576_defconfig"
 KERNEL_TARGET="current"

@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+# Generate /etc/fancontrol with correct hwmon numbers for Mono Gateway DK
+# EMC2305 fan controller driven by cluster_thermal CPU temperature
+# Retries for up to 30s in case hwmon devices aren't ready at boot
+
+# Remove stale config from previous boot (hwmon numbers may have changed)
+rm -f /etc/fancontrol
+
+FAN_HWMON=""
+TEMP_HWMON=""
+
+for attempt in $(seq 1 6); do
+    for h in /sys/class/hwmon/hwmon*; do
+        name=$(cat "$h/name" 2>/dev/null)
+        case "$name" in
+            emc2305) FAN_HWMON=$(basename "$h") ;;
+            cluster_thermal) TEMP_HWMON=$(basename "$h") ;;
+        esac
+    done
+    [ -n "$FAN_HWMON" ] && [ -n "$TEMP_HWMON" ] && break
+    sleep 5
+done
+
+if [ -z "$FAN_HWMON" ] || [ -z "$TEMP_HWMON" ]; then
+    echo "ERROR: Could not find emc2305 or cluster_thermal hwmon devices after 30s" >&2
+    exit 1
+fi
+
+FAN_DEV=$(readlink -f "/sys/class/hwmon/$FAN_HWMON/device" | sed 's|/sys/||')
+TEMP_DEV=$(readlink -f "/sys/class/hwmon/$TEMP_HWMON/device" | sed 's|/sys/||')
+
+cat > /etc/fancontrol << EOF
+INTERVAL=10
+DEVPATH=${TEMP_HWMON}=${TEMP_DEV} ${FAN_HWMON}=${FAN_DEV}
+DEVNAME=${TEMP_HWMON}=cluster_thermal ${FAN_HWMON}=emc2305
+FCTEMPS=${FAN_HWMON}/pwm1=${TEMP_HWMON}/temp1_input
+FCFANS=${FAN_HWMON}/pwm1=${FAN_HWMON}/fan1_input
+MINTEMP=${FAN_HWMON}/pwm1=40
+MAXTEMP=${FAN_HWMON}/pwm1=80
+MINSTART=${FAN_HWMON}/pwm1=51
+MINSTOP=${FAN_HWMON}/pwm1=34
+EOF
