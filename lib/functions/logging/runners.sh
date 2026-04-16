@@ -156,13 +156,13 @@ function chroot_sdcard_with_stdout() {
 function chroot_custom_long_running() { # any pipe causes the left-hand side to subshell and caos ensues. it's just like chroot_custom()
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
