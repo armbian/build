@@ -160,7 +160,20 @@ function oras_get_artifact_manifest() {
 
 	oras_has_manifest="no"
 	# Gotta capture the output & if it failed...
-	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}")" && oras_has_manifest="yes" || oras_has_manifest="no"
+	# Capture stderr: a 404 (cache miss) is normal for fresh artifacts —
+	# suppress oras's "Error response from registry: failed to fetch"
+	# dump. The caller (artifacts-obtain.sh) already reports the miss
+	# with a clean display_alert. Any OTHER error (auth, network) is
+	# still printed so real problems aren't hidden.
+	local oras_stderr_file
+	oras_stderr_file=$(mktemp)
+	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}" 2>"${oras_stderr_file}")" && oras_has_manifest="yes" || oras_has_manifest="no"
+	local oras_stderr
+	oras_stderr=$(<"${oras_stderr_file}")
+	rm -f "${oras_stderr_file}"
+	if [[ "${oras_has_manifest}" == "no" && -n "${oras_stderr}" && "${oras_stderr}" != *"not found"* ]]; then
+		display_alert "ORAS manifest fetch error" "${oras_stderr}" "wrn"
+	fi
 	display_alert "oras_has_manifest after: ${oras_has_manifest}" "ORAS manifest yes/no" "debug"
 	display_alert "oras_manifest_json after: ${oras_manifest_json}" "ORAS manifest json" "debug"
 
