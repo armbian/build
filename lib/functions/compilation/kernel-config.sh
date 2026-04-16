@@ -97,6 +97,13 @@ function call_extensions_kernel_config() {
 	# shellcheck disable=SC2034
 	declare -a opts_y=() opts_n=() opts_m=()
 
+	# kernel_config_set_* append to this array; ensure it exists globally so their
+	# changes survive for artifact versioning even when no caller pre-declared it.
+	if ! declare -p kernel_config_modifying_hashes >/dev/null 2>&1; then
+		# shellcheck disable=SC2034
+		declare -ga kernel_config_modifying_hashes=()
+	fi
+
 	# Run the core-armbian config modifications here, built-in extensions:
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'
 		*Armbian-core default hook point for pre-olddefconfig Kernel config modifications*
