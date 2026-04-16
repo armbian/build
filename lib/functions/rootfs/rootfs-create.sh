@@ -115,6 +115,15 @@ function create_new_rootfs_cache_via_debootstrap() {
 	debootstrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
 	mkdir -p "${SDCARD}/usr/bin"
+
+	# Suppress "Download is performed unsandboxed as root" — the _apt
+	# user may not exist yet in a fresh rootfs. Pre-create an apt config
+	# drop-in on the HOST side before mmdebstrap runs; --skip=check/empty
+	# allows pre-populated rootfs dirs, and mmdebstrap preserves files
+	# that don't belong to any extracted package.
+	mkdir -p "${SDCARD}/etc/apt/apt.conf.d"
+	echo 'APT::Sandbox::User "root";' > "${SDCARD}/etc/apt/apt.conf.d/99-armbian-sandbox"
+
 	deploy_qemu_binary_to_chroot "${SDCARD}" "rootfs" # undeployed near the end of this function
 
 	run_host_command_logged "${debootstrap_bin}" "${debootstrap_arguments[@]}" || {
@@ -129,6 +138,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# Done with mmdebstrap. Clean-up its litterbox.
 	display_alert "Cleaning up after mmdebstrap" "mmdebstrap cleanup" "info"
 	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
+	rm -f "${SDCARD}/etc/apt/apt.conf.d/99-armbian-sandbox" # build-time only; don't ship in the image
 
 	local_apt_deb_cache_prepare "after mmdebstrap cleanup" # just for size reference in logs
 
@@ -158,7 +168,10 @@ function create_new_rootfs_cache_via_debootstrap() {
 		# @TODO: Should be configurable.
 		sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
 			-e 's/CODESET=.*/CODESET="guess"/' -i "$SDCARD/etc/default/console-setup"
-		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
+		# setupcon triggers setfont which fails with KDGETMODE errors
+		# when there's no real console (chroot has no tty). The config
+		# is saved correctly regardless — suppress the noise.
+		chroot_sdcard "LC_ALL=C LANG=C setupcon --save --force 2>/dev/null || true"
 	fi
 
 	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS).
