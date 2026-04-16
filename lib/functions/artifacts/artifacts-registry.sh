@@ -23,8 +23,6 @@ function armbian_register_artifacts() {
 		["armbian-plymouth-theme"]="armbian-plymouth-theme"
 		["armbian-base-files"]="armbian-base-files"
 		["armbian-bsp-cli"]="armbian-bsp-cli"
-		["armbian-bsp-desktop"]="armbian-bsp-desktop"
-		["armbian-desktop"]="armbian-desktop"
 
 		# tar.zst
 		["rootfs"]="rootfs"

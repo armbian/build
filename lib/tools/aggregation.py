@@ -41,7 +41,7 @@ BUILD_MINIMAL = armbian_utils.yes_or_no_or_bomb(armbian_utils.get_from_env_or_bo
 INCLUDE_EXTERNAL_PACKAGES = True
 ARCH = armbian_utils.get_from_env_or_bomb("ARCH")
 DESKTOP_ENVIRONMENT = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT")
-DESKTOP_ENVIRONMENT_CONFIG_NAME = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT_CONFIG_NAME")
+DESKTOP_TIER = armbian_utils.get_from_env("DESKTOP_TIER")
 RELEASE = armbian_utils.get_from_env_or_bomb("RELEASE")  # "kinetic"
 USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 
@@ -49,7 +49,6 @@ USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 armbian_utils.show_incoming_environment()
 
 util.SELECTED_CONFIGURATION = armbian_utils.get_from_env_or_bomb("SELECTED_CONFIGURATION")  # "cli_standard"
-util.DESKTOP_APPGROUPS_SELECTED = armbian_utils.parse_env_for_tokens("DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
 util.SRC = armbian_build_directory
 
 util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
@@ -62,19 +61,11 @@ util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
 util.DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/debootstrap", f"cli/{RELEASE}/debootstrap"]
 util.CLI_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/main", f"cli/{RELEASE}/main"]
 
-util.DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS = [
-	f"desktop/_all_distributions/environments/_all_environments",
-	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}",
-	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}/{DESKTOP_ENVIRONMENT_CONFIG_NAME}",
-	f"desktop/{RELEASE}/environments/_all_environments",
-	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}",
-	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}/{DESKTOP_ENVIRONMENT_CONFIG_NAME}"]
-
-util.DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS = [
-	f"desktop/_all_distributions/appgroups",
-	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}/appgroups",
-	f"desktop/{RELEASE}/appgroups",
-	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}/appgroups"]
+# Desktop search dirs removed — desktop packages are now owned by
+# armbian-config's YAML-driven module_desktops pipeline. The
+# DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS and
+# DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS that lived here scanned
+# the now-deleted config/desktop/ tree.
 
 # Debootstrap.
 debootstrap_packages = util.aggregate_all_debootstrap("packages")
@@ -90,13 +81,8 @@ if not BUILD_MINIMAL:
 	rootfs_packages_additional = util.aggregate_all_cli("packages.additional")
 	rootfs_packages_all = util.merge_lists(rootfs_packages_all, rootfs_packages_additional, "add")
 
-# Desktop environment packages; packages + packages.external
-desktop_packages_main = util.aggregate_all_desktop("packages")
-desktop_packages_external = util.aggregate_all_desktop("packages.external")
-desktop_packages_additional = util.aggregate_all_desktop("packages.additional")
-desktop_packages_all = util.merge_lists(desktop_packages_main, desktop_packages_external, "add")
-desktop_packages_all = util.merge_lists(desktop_packages_all, desktop_packages_additional, "add")
-desktop_packages_remove = util.aggregate_all_desktop("packages.remove")
+# Desktop packages removed — armbian-config's module_desktops install
+# now owns the entire desktop package set (YAML-driven).
 
 env_list_remove = util.parse_env_for_list("REMOVE_PACKAGES")
 env_list_extra_rootfs = util.parse_env_for_list("EXTRA_PACKAGES_ROOTFS")
@@ -127,11 +113,7 @@ AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_pa
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_package_list_family_remove, "remove")
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_list_remove, "remove")
 
-# The desktop list.
-AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(desktop_packages_all, desktop_packages_remove, "remove")
-AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_package_list_board_remove, "remove")
-AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_package_list_family_remove, "remove")
-AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_list_remove, "remove")
+# Desktop list removed — armbian-config module_desktops owns it.
 
 # the image list; this comes from env only; apply the removals.
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(env_list_extra_image, env_package_list_board, "add")
@@ -145,7 +127,8 @@ AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_list
 all_packages_in_cache = []
 all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_DEBOOTSTRAP))
 all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_ROOTFS))
-all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_DESKTOP))
+# Desktop packages no longer aggregated here — armbian-config installs
+# them in distro-agnostic.sh after rootfs cache is created.
 all_packages_in_cache_unique_sorted = sorted(set(all_packages_in_cache))
 # @TODO: remove the package.uninstalls? (debsums case? also some gnome stuff)
 
@@ -155,25 +138,17 @@ log.debug(f"<AGGREGATED_ROOTFS_HASH_TEXT>\n{AGGREGATED_ROOTFS_HASH_TEXT}\n</AGGR
 
 AGGREGATED_ROOTFS_HASH = hashlib.md5(AGGREGATED_ROOTFS_HASH_TEXT.encode("utf-8")).hexdigest()
 
-# We need to aggregate some desktop stuff, which are not package lists, postinst contents and such.
-# For this case just find the potentials, and for each found, take the whole contents and join via newlines.
-AGGREGATED_DESKTOP_POSTINST = util.aggregate_all_desktop(
-	"debian/postinst", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE = util.aggregate_all_desktop(
-	"armbian/create_desktop_package.sh", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_BSP_POSTINST = util.aggregate_all_desktop(
-	"debian/armbian-bsp-desktop/postinst", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_BSP_PREPARE = util.aggregate_all_desktop(
-	"debian/armbian-bsp-desktop/prepare.sh", util.aggregate_simple_contents_potential)
+# Desktop postinst / create_desktop_package / BSP desktop aggregation removed —
+# armbian-config's module_desktops handles all desktop setup now.
 
-# Aggregate the apt-sources; only done if BUILD_DESKTOP is True, otherwise empty.
+# Aggregate the apt-sources. Desktop-specific apt sources (KDE Neon PPA etc.)
+# are now handled by armbian-config's module_desktop_repo at install time,
+# so only debootstrap + CLI sources remain here.
 AGGREGATED_APT_SOURCES = {}
 if BUILD_DESKTOP:
 	apt_sources_debootstrap = util.aggregate_all_debootstrap("sources/apt", util.aggregate_apt_sources)
 	apt_sources_cli = util.aggregate_all_cli("sources/apt", util.aggregate_apt_sources)
-	apt_sources_desktop = util.aggregate_all_desktop("sources/apt", util.aggregate_apt_sources)
 	AGGREGATED_APT_SOURCES = util.merge_lists(apt_sources_debootstrap, apt_sources_cli, "add")
-	AGGREGATED_APT_SOURCES = util.merge_lists(AGGREGATED_APT_SOURCES, apt_sources_desktop, "add")
 
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -182,7 +157,6 @@ output_lists: list[tuple[str, str, object, object]] = [
 	("debootstrap", "AGGREGATED_PACKAGES_DEBOOTSTRAP", AGGREGATED_PACKAGES_DEBOOTSTRAP, None),
 	("rootfs", "AGGREGATED_PACKAGES_ROOTFS", AGGREGATED_PACKAGES_ROOTFS, None),
 	("image", "AGGREGATED_PACKAGES_IMAGE", AGGREGATED_PACKAGES_IMAGE, None),
-	("desktop", "AGGREGATED_PACKAGES_DESKTOP", AGGREGATED_PACKAGES_DESKTOP, None),
 	("apt-sources", "AGGREGATED_APT_SOURCES", AGGREGATED_APT_SOURCES, util.encode_source_base_path_extra)
 ]
 
@@ -194,9 +168,7 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 		stats = util.prepare_bash_output_array_for_list(bash, md, name, value, extra_func)
 		md.add_summary(f"{id}: {stats['number_items']}")
 
-	# extra: if DESKTOP, add number of DESKTOP_APPGROUPS_SELECTED to the summary
-	if BUILD_DESKTOP:
-		md.add_summary(f"desktop_appgroups: {len(util.DESKTOP_APPGROUPS_SELECTED)}")
+	# Desktop appgroup summary removed — armbian-config YAML tiers replaced appgroups.
 
 	# The rootfs hash (md5) is used as a cache key.
 	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")  # (this done simply cos it has no newlines)
@@ -208,15 +180,7 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 	bash.write(
 		f"declare -g -r AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA='{AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'\n")
 
-	# Single string stuff for desktop packages postinst's and preparation. @TODO use functions instead of eval.
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_POSTINST", AGGREGATED_DESKTOP_POSTINST))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE", AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_BSP_POSTINST", AGGREGATED_DESKTOP_BSP_POSTINST))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
+	# Desktop postinst/create/BSP aggregation removed — armbian-config handles all desktop setup.
 	bash.write("\n## End of aggregation output\n");
 
 	# 2) @TODO: Some removals... uninstall-inside-cache and such. (debsums case? also some gnome stuff)

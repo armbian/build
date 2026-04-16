@@ -24,18 +24,14 @@ source "${SRC}"/lib/functions/artifacts/artifact-armbian-bsp-cli.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/artifacts/artifact-armbian-bsp-desktop.sh
-# shellcheck source=lib/functions/artifacts/artifact-armbian-bsp-desktop.sh
-source "${SRC}"/lib/functions/artifacts/artifact-armbian-bsp-desktop.sh
+### lib/functions/artifacts/artifact-armbian-bsp-desktop.sh — removed (desktop via armbian-config now)
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/artifacts/artifact-armbian-desktop.sh
-# shellcheck source=lib/functions/artifacts/artifact-armbian-desktop.sh
-source "${SRC}"/lib/functions/artifacts/artifact-armbian-desktop.sh
+### lib/functions/artifacts/artifact-armbian-desktop.sh — removed (desktop via armbian-config now)
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -150,9 +146,7 @@ source "${SRC}"/lib/functions/bsp/armbian-bsp-cli-deb.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/bsp/armbian-bsp-desktop-deb.sh
-# shellcheck source=lib/functions/bsp/armbian-bsp-desktop-deb.sh
-source "${SRC}"/lib/functions/bsp/armbian-bsp-desktop-deb.sh
+### lib/functions/bsp/armbian-bsp-desktop-deb.sh — removed (desktop via armbian-config now)
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -420,9 +414,7 @@ source "${SRC}"/lib/functions/compilation/kernel.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/compilation/packages/armbian-desktop-deb.sh
-# shellcheck source=lib/functions/compilation/packages/armbian-desktop-deb.sh
-source "${SRC}"/lib/functions/compilation/packages/armbian-desktop-deb.sh
+### lib/functions/compilation/packages/armbian-desktop-deb.sh — removed (desktop via armbian-config now)
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -1131,9 +1123,7 @@ source "${SRC}"/lib/functions/rootfs/rootfs-create.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/rootfs/rootfs-desktop.sh
-# shellcheck source=lib/functions/rootfs/rootfs-desktop.sh
-source "${SRC}"/lib/functions/rootfs/rootfs-desktop.sh
+### lib/functions/rootfs/rootfs-desktop.sh — removed (desktop via armbian-config now)
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"

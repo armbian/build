@@ -406,12 +406,14 @@ function install_distribution_agnostic() {
 	# install board support packages
 	install_artifact_deb_chroot "armbian-bsp-cli"
 
-	# install armbian-desktop
+	# Desktop packages are installed in rootfs-create.sh (before cache
+	# is saved) so they're included in the rootfs cache. Only the DM
+	# disable needs to run here — after cache restore, the DM units
+	# exist but should stay off until armbian-firstrun enables them.
 	if [[ $BUILD_DESKTOP == yes ]]; then
-		install_artifact_deb_chroot "armbian-desktop"
-		install_artifact_deb_chroot "armbian-bsp-desktop"
-		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-		desktop_postinstall
+		disable_systemd_service_sdcard lightdm.service
+		disable_systemd_service_sdcard gdm3.service
+		disable_systemd_service_sdcard sddm.service
 	fi
 
 	# install armbian-zsh
@@ -421,11 +423,12 @@ function install_distribution_agnostic() {
 		fi
 	fi
 
-	# install armbian-plymouth-theme
-	if [[ $PLYMOUTH == yes ]]; then
-		install_artifact_deb_chroot "armbian-plymouth-theme"
-	else
-		chroot_sdcard_apt_get_remove --auto-remove plymouth
+	# armbian-plymouth-theme is now installed in rootfs-create.sh (before
+	# cache) so it's available when module_desktops install runs. The
+	# non-plymouth path (remove plymouth) still runs here since it only
+	# matters on cached images that had plymouth pulled in transitively.
+	if [[ $PLYMOUTH != yes ]]; then
+		chroot_sdcard_apt_get_remove --auto-remove plymouth 2>/dev/null || true
 	fi
 
 	# freeze armbian packages
