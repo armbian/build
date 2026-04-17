@@ -128,6 +128,13 @@ def get_userspace_inventory(opts: dict):
 					}})
 
 			if opts["desktops"]:
+				# TODO: `userspace["desktops"]` comes from the deleted
+				# config/desktop/ tree and is always [] under the new
+				# armbian-config-driven pipeline. Rewrite by invoking
+				# configng's parse_desktop_yaml.py --list-json against
+				# a fetched configng checkout, and translate the JSON
+				# into the {id, support, arches} shape this loop consumes.
+				# Until then the desktop build matrix emits no targets.
 				# loop over the desktops in userspace; skip any that are eos, or that don't have the wanted arch
 				for desktop in userspace["desktops"]:
 					if desktop["support"] == "eos":

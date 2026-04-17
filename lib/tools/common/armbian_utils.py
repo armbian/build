@@ -221,11 +221,18 @@ def find_armbian_src_path():
 	if not os.path.exists(core_distributions_path):
 		raise Exception("Can't find config/distributions")
 
+	# config/desktop/ was removed when desktops moved to armbian-config's
+	# YAML-driven pipeline. Keep the key in the dict for call-site
+	# compatibility but set it to None when the directory is absent —
+	# get_desktop_inventory_for_distro short-circuits on None and
+	# returns []. TODO: replace this inventory source with a call to
+	# configng's parse_desktop_yaml.py --list-json.
 	core_desktop_path = os.path.realpath(os.path.join(armbian_src_path, "config", "desktop"))
-	log.debug(f"Real path to core desktop '{core_desktop_path}'")
-	# Make sure it exists
 	if not os.path.exists(core_desktop_path):
-		raise Exception("Can't find config/desktop")
+		log.debug(f"No core desktop dir at '{core_desktop_path}' — desktop inventory will be empty")
+		core_desktop_path = None
+	else:
+		log.debug(f"Real path to core desktop '{core_desktop_path}'")
 
 	userpatches_boards_path = os.path.realpath(os.path.join(armbian_src_path, "userpatches", "config", "boards"))
 	log.debug(f"Real path to userpatches boards '{userpatches_boards_path}'")
@@ -257,6 +264,12 @@ def split_commas_and_clean_into_list(string):
 def get_desktop_inventory_for_distro(distro, armbian_paths):
 	ret = []
 	desktops_path = armbian_paths["core_desktop_path"]
+	if desktops_path is None:
+		# Legacy config/desktop/ tree is gone — desktops moved to
+		# armbian-config's YAML-driven pipeline. Until the targets
+		# compositor learns to read configng YAMLs, no desktop
+		# inventory is emitted and the desktop build matrix is empty.
+		return ret
 	envs_path_for_distro = os.path.join(desktops_path, distro, "environments")
 	if not os.path.exists(envs_path_for_distro):
 		log.warning(f"Can't find desktop environments for distro '{distro}' at '{envs_path_for_distro}'")
