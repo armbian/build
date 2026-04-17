@@ -406,16 +406,6 @@ function install_distribution_agnostic() {
 	# install board support packages
 	install_artifact_deb_chroot "armbian-bsp-cli"
 
-	# Desktop packages are installed in rootfs-create.sh (before cache
-	# is saved) so they're included in the rootfs cache. Only the DM
-	# disable needs to run here — after cache restore, the DM units
-	# exist but should stay off until armbian-firstrun enables them.
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		disable_systemd_service_sdcard lightdm.service
-		disable_systemd_service_sdcard gdm3.service
-		disable_systemd_service_sdcard sddm.service
-	fi
-
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
 		if [[ $BUILD_MINIMAL != yes ]]; then
