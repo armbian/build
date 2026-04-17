@@ -100,8 +100,15 @@ function create_new_rootfs_cache_via_debootstrap() {
 		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
 		"'--skip=check/empty'"                                      # skips check if the rootfs dir is empty at start
 	)
-	# Show per-package download/install progress when DEBUG is on.
-	[[ "${DEBUG}" == "yes" ]] && debootstrap_arguments+=("--verbose")
+	# Verbosity: always show per-package download/install progress via
+	# --verbose. With DEBUG=yes escalate to --debug (superset of
+	# --verbose) which also adds mmdebstrap's own debug messages and
+	# bash xtrace on every --setup-hook/--customize-hook.
+	if [[ "${DEBUG}" == "yes" ]]; then
+		debootstrap_arguments+=("--debug")
+	else
+		debootstrap_arguments+=("--verbose")
+	fi
 	fetch_distro_keyring "$RELEASE"
 
 	# This is necessary to debootstrap from a non-official repo
