@@ -46,29 +46,41 @@ function interactive_desktop_main_configuration() {
 				"armbian-config clone may be incomplete"
 		fi
 
+		# EXPERT mode controls which editorial `status:` values are
+		# surfaced in the dialog:
+		#   default: `status: supported` only
+		#   EXPERT:  `status: supported` + `status: community` (CSC)
+		# `status: unsupported` DEs are never offered from the build
+		# dialog — they're vendor-specific (e.g. bianbu on riscv64)
+		# and only reachable via `armbian-config --api` on a running
+		# system, not baked into an image.
+		local status_filter="supported"
+		[[ "${EXPERT}" == "yes" ]] && status_filter="supported,community"
+
 		local de_json
-		de_json=$(python3 "${parser}" "${yaml_dir}" --list-json "${RELEASE}" "${ARCH}" 2>/dev/null)
-		if [[ -z "${de_json}" ]]; then
+		de_json=$(python3 "${parser}" "${yaml_dir}" --list-json \
+			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2>/dev/null)
+		if [[ -z "${de_json}" || "${de_json}" == "[]" ]]; then
 			exit_with_error "No desktop environments available for ${RELEASE}/${ARCH}" \
 				"Parser returned an empty list"
 		fi
 
-		# Build dialog options from the JSON output. Only show
-		# `status: supported` DEs unless EXPERT mode is on.
+		# Build dialog options from the JSON output. Server-side
+		# `--filter available` (the parser default) guarantees only
+		# DEs whose YAML declares this (release, arch) reach us, and
+		# `--status` above handles the editorial filter. Append a
+		# " [CSC]" marker to community DEs so the user can tell them
+		# apart from first-class supported ones at a glance.
 		local -a options=()
 		while IFS=$'\t' read -r de_name de_desc de_status; do
 			[[ -z "${de_name}" ]] && continue
-			if [[ "${de_status}" != "supported" && "${EXPERT}" != "yes" ]]; then
-				continue
-			fi
 			local label="${de_desc}"
-			[[ "${de_status}" != "supported" ]] && label="${de_desc} [${de_status}]"
+			[[ "${de_status}" == "community" ]] && label="${de_desc} [CSC]"
 			options+=("${de_name}" "${label}")
 		done < <(echo "${de_json}" | python3 -c "
 import sys, json
 for de in json.load(sys.stdin):
-    if de.get('supported'):
-        print(de.get('name','') + '\t' + de.get('description','') + '\t' + de.get('status',''))
+    print(de.get('name','') + '\t' + de.get('description','') + '\t' + de.get('status',''))
 " 2>/dev/null)
 
 		if [[ "${#options[@]}" -eq 0 ]]; then
