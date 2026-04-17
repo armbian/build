@@ -61,12 +61,6 @@ util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
 util.DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/debootstrap", f"cli/{RELEASE}/debootstrap"]
 util.CLI_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/main", f"cli/{RELEASE}/main"]
 
-# Desktop search dirs removed — desktop packages are now owned by
-# armbian-config's YAML-driven module_desktops pipeline. The
-# DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS and
-# DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS that lived here scanned
-# the now-deleted config/desktop/ tree.
-
 # Debootstrap.
 debootstrap_packages = util.aggregate_all_debootstrap("packages")
 debootstrap_packages_remove = util.aggregate_all_debootstrap("packages.remove")
@@ -80,9 +74,6 @@ rootfs_packages_remove = util.aggregate_all_cli("packages.remove")
 if not BUILD_MINIMAL:
 	rootfs_packages_additional = util.aggregate_all_cli("packages.additional")
 	rootfs_packages_all = util.merge_lists(rootfs_packages_all, rootfs_packages_additional, "add")
-
-# Desktop packages removed — armbian-config's module_desktops install
-# now owns the entire desktop package set (YAML-driven).
 
 env_list_remove = util.parse_env_for_list("REMOVE_PACKAGES")
 env_list_extra_rootfs = util.parse_env_for_list("EXTRA_PACKAGES_ROOTFS")
@@ -113,8 +104,6 @@ AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_pa
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_package_list_family_remove, "remove")
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_list_remove, "remove")
 
-# Desktop list removed — armbian-config module_desktops owns it.
-
 # the image list; this comes from env only; apply the removals.
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(env_list_extra_image, env_package_list_board, "add")
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_package_list_family, "add")
@@ -127,8 +116,6 @@ AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_list
 all_packages_in_cache = []
 all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_DEBOOTSTRAP))
 all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_ROOTFS))
-# Desktop packages no longer aggregated here — armbian-config installs
-# them in distro-agnostic.sh after rootfs cache is created.
 all_packages_in_cache_unique_sorted = sorted(set(all_packages_in_cache))
 # @TODO: remove the package.uninstalls? (debsums case? also some gnome stuff)
 
@@ -138,12 +125,7 @@ log.debug(f"<AGGREGATED_ROOTFS_HASH_TEXT>\n{AGGREGATED_ROOTFS_HASH_TEXT}\n</AGGR
 
 AGGREGATED_ROOTFS_HASH = hashlib.md5(AGGREGATED_ROOTFS_HASH_TEXT.encode("utf-8")).hexdigest()
 
-# Desktop postinst / create_desktop_package / BSP desktop aggregation removed —
-# armbian-config's module_desktops handles all desktop setup now.
-
-# Aggregate the apt-sources. Desktop-specific apt sources (KDE Neon PPA etc.)
-# are now handled by armbian-config's module_desktop_repo at install time,
-# so only debootstrap + CLI sources remain here.
+# Aggregate the apt-sources from the debootstrap and CLI search dirs.
 AGGREGATED_APT_SOURCES = {}
 if BUILD_DESKTOP:
 	apt_sources_debootstrap = util.aggregate_all_debootstrap("sources/apt", util.aggregate_apt_sources)
@@ -168,8 +150,6 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 		stats = util.prepare_bash_output_array_for_list(bash, md, name, value, extra_func)
 		md.add_summary(f"{id}: {stats['number_items']}")
 
-	# Desktop appgroup summary removed — armbian-config YAML tiers replaced appgroups.
-
 	# The rootfs hash (md5) is used as a cache key.
 	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")  # (this done simply cos it has no newlines)
 	bash.write(util.bash_string_multiline("AGGREGATED_ROOTFS_HASH_TEXT", AGGREGATED_ROOTFS_HASH_TEXT))
@@ -180,15 +160,7 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 	bash.write(
 		f"declare -g -r AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA='{AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'\n")
 
-	# Desktop postinst/create/BSP aggregation removed — armbian-config handles all desktop setup.
 	bash.write("\n## End of aggregation output\n");
-
-	# 2) @TODO: Some removals... uninstall-inside-cache and such. (debsums case? also some gnome stuff)
-
-	#    aggregate_all_cli "packages.uninstall" " "
-	#    aggregate_all_desktop "packages.uninstall" " "
-	#    PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
-	#    unset aggregated_content
 
 	# Debug potential paths:
 	all_potentials = util.get_all_potential_paths_packages()
