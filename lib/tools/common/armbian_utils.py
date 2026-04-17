@@ -265,13 +265,14 @@ def split_commas_and_clean_into_list(string):
 
 
 def get_desktop_inventory_for_distro(distro, armbian_paths):
-	"""Return [{id, support, arches}, ...] for every DE declaring a release
-	block for `distro` in configng's YAML matrix.
+	"""Return [{id, support, arches}, ...] for every first-tier supported
+	DE that declares a release block for `distro` in configng's YAML
+	matrix.
 
-	Drops DEs whose editorial `status:` is `unsupported` — those are
-	vendor-specific (e.g. bianbu on riscv64) and shouldn't produce build
-	matrix targets. `supported` and `community` DEs are both included;
-	the compositor doesn't yet treat community specially."""
+	Only `status: supported` DEs participate in the auto-generated build
+	matrix. `community` DEs are reachable interactively (EXPERT mode
+	dialog) or explicitly (DESKTOP_ENVIRONMENT=...) but are not enumerated
+	here. `unsupported` DEs are vendor-specific and never enumerated."""
 	ret = []
 	yaml_dir = armbian_paths.get("configng_yaml_dir")
 	parser = armbian_paths.get("configng_parser")
@@ -304,7 +305,12 @@ def get_desktop_inventory_for_distro(distro, armbian_paths):
 
 	for entry in entries:
 		status = entry.get("status", "unsupported")
-		if status == "unsupported":
+		# Only first-tier supported DEs participate in the auto-
+		# generated build matrix. `community` DEs are still installable
+		# end-to-end (dialog EXPERT mode, CLI with DESKTOP_ENVIRONMENT=…)
+		# but shouldn't generate CI targets by default — leave that
+		# choice to the operator.
+		if status != "supported":
 			continue
 		arches = entry.get("architectures") or []
 		if not arches:
