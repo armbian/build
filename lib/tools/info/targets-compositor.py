@@ -197,9 +197,10 @@ for target_name in targets["targets"]:
 	if "items-from-inventory" in target_obj:
 		# loop over the keys, for regular board vs branches inventory
 		for key in target_obj["items-from-inventory"]:
+			cfg = target_obj["items-from-inventory"][key]
 			to_add = []
 			if key == "userspace":
-				to_add.extend(get_userspace_inventory(target_obj["items-from-inventory"][key]))
+				to_add.extend(get_userspace_inventory(cfg))
 			elif key == "all":
 				to_add.extend(all_boards_all_branches)
 			elif key == "not-eos":
@@ -208,6 +209,43 @@ for target_name in targets["targets"]:
 				to_add.extend(not_eos_with_video_boards_all_branches)
 			else:
 				to_add.extend(boards_by_support_level_and_branches[key])
+
+			# For non-userspace inventory sources, honour optional
+			# skip-arches / only-arches filters declared on the
+			# inventory key. Example:
+			#   items-from-inventory:
+			#     not-eos-with-video:
+			#       skip-arches: [loong64, riscv64]
+			# Drops board entries whose ARCH matches skip-arches, or
+			# doesn't match only-arches. Board ARCH comes from the
+			# board/family conf (see armbian_utils.armbian_get_all_boards_inventory).
+			# userspace inventory has its own internal arch filtering
+			# via the `arches:` key and is not touched here.
+			if key != "userspace" and isinstance(cfg, dict):
+				skip_arches = set(cfg.get("skip-arches") or [])
+				only_arches_raw = cfg.get("only-arches")
+				only_arches = set(only_arches_raw) if only_arches_raw else None
+				if skip_arches or only_arches is not None:
+					before = len(to_add)
+					filtered = []
+					for bb in to_add:
+						board = bb.get("BOARD")
+						arch = board_inventory.get(board, {}).get("ARCH")
+						if arch is None:
+							log.warning(f"Cannot resolve ARCH for board '{board}'; keeping it")
+							filtered.append(bb)
+							continue
+						if only_arches is not None and arch not in only_arches:
+							continue
+						if arch in skip_arches:
+							continue
+						filtered.append(bb)
+					to_add = filtered
+					log.info(
+						f"Arch filter on '{key}' (skip={sorted(skip_arches)}, "
+						f"only={sorted(only_arches) if only_arches else None}): "
+						f"{before} → {len(to_add)}")
+
 			log.info(f"Adding '{key}' from inventory to target '{target_name}': {len(to_add)} targets")
 			all_items.extend(to_add)
 
