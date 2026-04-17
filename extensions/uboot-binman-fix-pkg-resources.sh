@@ -34,11 +34,15 @@ with open(control_py, "r") as f:
 content = re.sub(r'^import pkg_resources\b[^\n]*\n', '', content, flags=re.MULTILINE)
 
 # 2. Ensure importlib_resources alias is available
-has_importlib_alias = 'importlib_resources' in content
+#    Use regex to detect a real alias import, not just the name appearing in an except clause
+has_importlib_alias = bool(re.search(
+    r'^import importlib\.resources\s+as\s+importlib_resources\b',
+    content, flags=re.MULTILINE
+))
 has_importlib_dotted = re.search(r'^import importlib\.resources\s*$', content, flags=re.MULTILINE)
 
 if not has_importlib_alias and has_importlib_dotted:
-    # New U-Boot (v2024.01+): has "import importlib.resources" without alias
+    # "import importlib.resources" exists at top level but without alias — add alias
     content = re.sub(
         r'^import importlib\.resources\s*$',
         'import importlib.resources as importlib_resources',
@@ -47,7 +51,8 @@ if not has_importlib_alias and has_importlib_dotted:
     # Update existing dotted usage to use the alias
     content = re.sub(r'\bimportlib\.resources\.', 'importlib_resources.', content)
 elif not has_importlib_alias:
-    # Old U-Boot (<=v2023.x): no importlib.resources at all
+    # No top-level importlib.resources import (absent or only inside a try/except block)
+    # — add our own alias block
     import_block = (
         'try:\n'
         '    import importlib.resources as importlib_resources\n'
