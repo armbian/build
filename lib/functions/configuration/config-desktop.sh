@@ -105,8 +105,9 @@ for de in json.load(sys.stdin):
 	# `full` includes everything the old appgroups provided. If a
 	# userpatch or board config still sets DESKTOP_APPGROUPS_SELECTED and
 	# hasn't opted into a tier explicitly, assume `full` to preserve the
-	# old behaviour.
-	if [[ -z $DESKTOP_TIER && -n $DESKTOP_APPGROUPS_SELECTED ]]; then
+	# old behaviour. Treat "none" (the old sentinel meaning no appgroups
+	# at all) as empty — the operator didn't actually pick any extras.
+	if [[ -z $DESKTOP_TIER && -n $DESKTOP_APPGROUPS_SELECTED && "$DESKTOP_APPGROUPS_SELECTED" != "none" ]]; then
 		display_alert "desktop-config" "legacy DESKTOP_APPGROUPS_SELECTED='${DESKTOP_APPGROUPS_SELECTED}' → selecting tier=full" "wrn"
 		DESKTOP_TIER="full"
 	fi
