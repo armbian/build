@@ -155,6 +155,8 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 			"DYNAMIC_FTRACE"                         # Dynamic ftrace support
 			"FTRACE"                                 # Ftrace (function tracer) support
 			"FUNCTION_TRACER"                        # Function tracer support
+			"KPROBES"                                # Kprobes support for dynamic kernel instrumentation
+			"KPROBE_EVENTS"                          # Kprobe events support
 			"TRACEFS_AUTOMOUNT_DEPRECATED"           # This is valid until 2030, needed for some eBPF tools
 		)
 	fi
