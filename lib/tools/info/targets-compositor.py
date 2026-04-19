@@ -85,8 +85,16 @@ def get_userspace_inventory(opts: dict):
 		opts["cloud"] = False
 	if "desktops" not in opts:
 		opts["desktops"] = False
-	if "desktop_variations" not in opts:
-		opts["desktop_variations"] = [[]]
+	# Desktop tiers to emit for each matched (release, arch, desktop).
+	# armbian-config's module_desktops defines three tiers: minimal, mid,
+	# full (see tools/modules/desktops/yaml/*.yaml and common.yaml tiers).
+	# Default to mid-only so pre-existing targets that don't care about
+	# tiers keep producing exactly one userspace per desktop, same as
+	# before this knob was introduced. Targets that want the full
+	# minimal/mid/full fan-out should set `tiers: [minimal, mid, full]`
+	# explicitly in their items-from-inventory.userspace block.
+	if "tiers" not in opts:
+		opts["tiers"] = ["mid"]
 
 	# loop over the userspace inventory
 	for userspace in userspace_inventory:
@@ -148,12 +156,16 @@ def get_userspace_inventory(opts: dict):
 							f"Skipping userspace inventory desktop: '{desktop['id']}' does not support wanted_arch '{wanted_arch}' for userspace '{userspace['id']}'")
 						continue
 
-					# loop over the variants... desktop_variations is a list of lists
-					for variant in opts["desktop_variations"]:
+					# Emit one entry per requested tier. module_desktops
+					# treats minimal/mid/full as separate install targets
+					# with different package sets, so they need separate
+					# rootfs artifacts — they are not interchangeable at
+					# build time.
+					for tier in opts["tiers"]:
 						for bb in wanted_bbs_for_arch:
 							ret.append({**bb, **{
 								"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "yes",
-								"DESKTOP_TIER": "mid",
+								"DESKTOP_TIER": tier,
 								"DESKTOP_ENVIRONMENT": desktop["id"]}})
 
 	return ret
