@@ -40,8 +40,14 @@ function artifact_uboot_prepare_version() {
 
 	declare short_hash_size=4
 
+	declare -i uboot_git_cache_ttl_seconds=3600 # by default
+	if [[ "${UBOOT_GIT_CACHE_TTL}" != "" ]]; then
+		uboot_git_cache_ttl_seconds="${UBOOT_GIT_CACHE_TTL}"
+		display_alert "Setting u-boot git cache TTL to" "${uboot_git_cache_ttl_seconds}" "info"
+	fi
+
 	declare -A GIT_INFO_UBOOT=([GIT_SOURCE]="${BOOTSOURCE}" [GIT_REF]="${BOOTBRANCH}")
-	run_memoized GIT_INFO_UBOOT "git2info" memoized_git_ref_to_info "include_makefile_body"
+	memoize_cache_ttl=$uboot_git_cache_ttl_seconds run_memoized GIT_INFO_UBOOT "git2info" memoized_git_ref_to_info "include_makefile_body"
 	debug_dict GIT_INFO_UBOOT
 
 	# Sanity check, the SHA1 gotta be sane.
