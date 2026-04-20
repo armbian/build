@@ -99,6 +99,19 @@ for de in json.load(sys.stdin):
 
 	display_alert "desktop-config" "DESKTOP_ENVIRONMENT selected: ${DESKTOP_ENVIRONMENT}" "debug"
 
+	# Backwards-compat: the legacy DESKTOP_APPGROUPS_SELECTED variable
+	# used to pick extra package groups (office, multimedia, programming,
+	# …) on top of a base desktop. The tier model subsumes those groups —
+	# `full` includes everything the old appgroups provided. If a
+	# userpatch or board config still sets DESKTOP_APPGROUPS_SELECTED and
+	# hasn't opted into a tier explicitly, assume `full` to preserve the
+	# old behaviour. Treat "none" (the old sentinel meaning no appgroups
+	# at all) as empty — the operator didn't actually pick any extras.
+	if [[ -z $DESKTOP_TIER && -n $DESKTOP_APPGROUPS_SELECTED && "$DESKTOP_APPGROUPS_SELECTED" != "none" ]]; then
+		display_alert "desktop-config" "legacy DESKTOP_APPGROUPS_SELECTED='${DESKTOP_APPGROUPS_SELECTED}' → selecting tier=full" "wrn"
+		DESKTOP_TIER="full"
+	fi
+
 	# --- Tier selection ---
 	if [[ -z $DESKTOP_TIER ]]; then
 		local -a options=(
