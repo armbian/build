@@ -224,13 +224,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
-	# Install plymouth theme BEFORE the desktop install so module_desktops
-	# finds it already present (armbian-plymouth-theme is a build artifact,
-	# not an apt.armbian.com package — module_desktops would 404 on it).
-	if [[ $PLYMOUTH == yes ]]; then
-		install_artifact_deb_chroot "armbian-plymouth-theme"
-	fi
-
 	# Install desktop via armbian-config INSIDE rootfs-create (before the
 	# cache tarball is saved) so desktop packages are included in the
 	# rootfs cache. The Armbian apt repo was configured above by
