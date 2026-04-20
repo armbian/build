@@ -413,11 +413,10 @@ function install_distribution_agnostic() {
 		fi
 	fi
 
-	# armbian-plymouth-theme is now installed in rootfs-create.sh (before
-	# cache) so it's available when module_desktops install runs. The
-	# non-plymouth path (remove plymouth) still runs here since it only
-	# matters on cached images that had plymouth pulled in transitively.
-	if [[ $PLYMOUTH != yes ]]; then
+	# install armbian-plymouth-theme
+	if [[ $PLYMOUTH == yes ]]; then
+		install_artifact_deb_chroot "armbian-plymouth-theme"
+	else
 		chroot_sdcard_apt_get_remove --auto-remove plymouth 2>/dev/null || true
 	fi
 
