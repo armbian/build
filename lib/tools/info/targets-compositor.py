@@ -155,8 +155,7 @@ def get_userspace_inventory(opts: dict):
 						for bb in wanted_bbs_for_arch:
 							ret.append({**bb, **{
 								"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "yes",
-								"DESKTOP_ENVIRONMENT_CONFIG_NAME": "config_base",  # yeah, config_base is hardcoded.
-								"DESKTOP_APPGROUPS_SELECTED": appgroups_comma,  # hopefully empty works
+								"DESKTOP_TIER": "mid",
 								"DESKTOP_ENVIRONMENT": desktop["id"]}})
 
 	return ret

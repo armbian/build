@@ -521,7 +521,7 @@ function write_config_summary_output_file() {
 		Minimal: $BUILD_MINIMAL
 		Desktop: $BUILD_DESKTOP
 		Desktop Environment: $DESKTOP_ENVIRONMENT
-		Software groups: $DESKTOP_APPGROUPS_SELECTED
+		Desktop Tier: $DESKTOP_TIER
 
 		Kernel configuration:
 		Repository: $KERNELSOURCE

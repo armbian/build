@@ -89,11 +89,11 @@ function aggregate_all_packages_python() {
 		"EXTRA_PACKAGES_IMAGE=${EXTRA_PACKAGES_IMAGE[*]}"
 		"EXTRA_PACKAGES_IMAGE_REFS=${EXTRA_PACKAGES_IMAGE_REFS[*]}"
 
-		# Desktop stuff; results are not mixed into main packages. Results in AGGREGATED_PACKAGES_DESKTOP.
+		# Desktop: armbian-config owns package lists now; only the
+		# flag and DE name are needed for cache-key computation.
 		"BUILD_DESKTOP=${BUILD_DESKTOP}"
 		"DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}"
-		"DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
-		"DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}"
+		"DESKTOP_TIER=${DESKTOP_TIER}"
 
 		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_INSTALL
 		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
