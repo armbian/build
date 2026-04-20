@@ -15,6 +15,7 @@ import logging
 import multiprocessing
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -350,6 +351,47 @@ def armbian_get_all_userspace_inventory():
 	return all_distros
 
 
+# ARCH is declared per-family in config/sources/families/<BOARDFAMILY>.conf —
+# but many families delegate to a shared include (e.g. meson-g12b.conf sources
+# meson64_common.inc which then sets ARCH=arm64). Rather than hand-write a
+# mini-bash to follow `source` directives, just bash-source the family file
+# in a throwaway subshell and print ARCH. Cache results per family — there
+# are ~60 unique families across ~370 boards.
+_family_arch_cache: dict = {}
+
+
+def armbian_get_arch_for_family(family_name, armbian_src_path):
+	"""Return the ARCH declared by config/sources/families/<family>.conf
+	(after resolving any `source` includes), or None if the file or the
+	ARCH declaration is missing. Result is cached per family."""
+	if not family_name:
+		return None
+	if family_name in _family_arch_cache:
+		return _family_arch_cache[family_name]
+	family_file = os.path.join(armbian_src_path, "config", "sources", "families", f"{family_name}.conf")
+	arch = None
+	if os.path.isfile(family_file):
+		# Set ARCH via the EXIT trap so we still capture it even if the
+		# family conf aborts mid-source via `${FOO:?error}` on a required
+		# var that wouldn't be set in this minimal context (ls1046a, etc).
+		bash_code = (
+			"( trap 'printf \"%s\" \"${ARCH:-}\"; exit 0' EXIT; "
+			"source " + shlex.quote(family_file) + " >/dev/null 2>&1 )"
+		)
+		try:
+			proc = subprocess.run(
+				["bash", "-c", bash_code],
+				capture_output=True, text=True, timeout=5, check=False,
+			)
+			value = (proc.stdout or "").strip()
+			if value and re.match(r"^[a-zA-Z0-9_]+$", value):
+				arch = value
+		except (subprocess.TimeoutExpired, OSError) as e:
+			log.debug(f"Could not resolve ARCH for family '{family_name}': {e}")
+	_family_arch_cache[family_name] = arch
+	return arch
+
+
 def armbian_get_all_boards_inventory():
 	armbian_paths = find_armbian_src_path()
 	core_boards = armbian_get_all_boards_list(armbian_paths["core_boards_path"])
@@ -378,6 +420,27 @@ def armbian_get_all_boards_inventory():
 			else:
 				log.debug(f"Userpatched Board {uboard_name} is already in core boards")
 				info_for_board[uboard_name] = {**info_for_board[uboard_name], **uboard}
+
+	# Resolve ARCH per-board. Prefer an explicit board-level ARCH
+	# declaration (picked up by the generic board-file regex into
+	# BOARD_TOP_LEVEL_VARS); fall back to the family conf so boards
+	# that inherit their arch transitively (most of them) don't need
+	# the redundant declaration. Targets compositors use this to drop
+	# matrix invocations where board arch doesn't match the requested
+	# release's arch list (e.g. noble without loong64) instead of
+	# relying on compile.sh to reject the combo downstream.
+	for board, info in info_for_board.items():
+		top_vars = info.get("BOARD_TOP_LEVEL_VARS", {})
+		arch = top_vars.get("ARCH")
+		if not arch:
+			family = top_vars.get("BOARDFAMILY")
+			arch = armbian_get_arch_for_family(family, armbian_paths["armbian_src_path"])
+			if arch:
+				top_vars["ARCH"] = arch
+		if arch:
+			info["ARCH"] = arch
+		else:
+			log.warning(f"Could not resolve ARCH for board '{board}' (family '{top_vars.get('BOARDFAMILY')}')")
 
 	return info_for_board
 
