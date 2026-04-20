@@ -151,9 +151,15 @@ function artifact_rootfs_cli_adapter_config_prep() {
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
 	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
-	if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then # if not set to yes, force it to yes.
-		declare -g SKIP_ARMBIAN_REPO="yes"            # Using the repo during rootfs build causes insanity, so don't. Make readonly to ensure.
-	fi
+	# Don't force SKIP_ARMBIAN_REPO=yes for rootfs artifact builds anymore.
+	# The new desktop install path (module_desktops install mode=build,
+	# invoked from rootfs-create.sh) needs apt.armbian.com's
+	# <release>-utils (armbian-config itself) and <release>-desktop
+	# (firefox, chromium, gnome-branded bits) components to be reachable
+	# while the rootfs is being assembled. Default to "no" (repo ON)
+	# and let boards/userpatches opt out explicitly if they still need
+	# the repo-free rootfs behaviour for whatever reason.
+	declare -g SKIP_ARMBIAN_REPO="${SKIP_ARMBIAN_REPO:-no}"
 	declare -g -r SKIP_ARMBIAN_REPO # make it readonly to ensure sanity if hooks try to change it
 
 	track_general_config_variables "in artifact_rootfs_cli_adapter_config_prep"
