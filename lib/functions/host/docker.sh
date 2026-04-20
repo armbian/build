@@ -155,8 +155,27 @@ function docker_cli_prepare() {
 	fi
 
 	#############################################################################################################
-	# Cleanup old Docker images to free disk space
-	docker_cleanup_old_images
+	# Optionally clean up old Docker images to free disk space. Off by
+	# default — set DOCKER_PRUNE=yes to opt in.
+	#
+	# The cleanup enumerates `docker images` and calls `docker rmi` on
+	# "old" ones. On hosts where several build invocations share one
+	# dockerd (the usual setup when multiple self-hosted GH Actions
+	# runners live on the same machine) two concurrent invocations
+	# race: runner A's cleanup can rmi an image runner B just
+	# committed between `Successfully built <sha>` and the daemon
+	# writing the imagedb digest file, surfacing as:
+	#   failed to get digest sha256:…: open …/imagedb/content/sha256/…:
+	#   no such file or directory
+	# which aborts runner B's build. Default-off keeps shared-daemon
+	# setups safe; single-host users who want automatic reclaim set
+	# DOCKER_PRUNE=yes and either accept the race risk or run builds
+	# serially.
+	if [[ "${DOCKER_PRUNE:-no}" == "yes" ]]; then
+		docker_cleanup_old_images
+	else
+		display_alert "Skipping Docker image cleanup" "set DOCKER_PRUNE=yes to enable" "debug"
+	fi
 
 	#############################################################################################################
 	# Detect some docker info; use cached.
