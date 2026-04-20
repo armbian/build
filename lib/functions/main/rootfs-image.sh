@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 
 function build_rootfs_and_image() {
-	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
+	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_ENVIRONMENT:-cli} ${DESKTOP_TIER:-none} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
 	# get a basic rootfs, either from cache or from scratch
 	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections

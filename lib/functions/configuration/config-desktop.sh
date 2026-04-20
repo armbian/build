@@ -7,146 +7,114 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-function desktop_element_available_for_arch() {
-	local desktop_element_path="${1}"
-	local targeted_arch="${2}"
-	local arch_limitation_file="${1}/architectures"
-	if [[ -f "${arch_limitation_file}" ]]; then
-		if ! grep -- "${targeted_arch}" "${arch_limitation_file}" &> /dev/null; then
-			return 1
-		fi
-	fi
-	return 0
-}
-
-function desktop_element_supported() {
-	local desktop_element_path="${1}"
-	local support_level_filepath="${desktop_element_path}/support"
-	declare -g desktop_element_supported_result=0
-	if [[ -f "${support_level_filepath}" ]]; then
-		local support_level
-		support_level="$(cat "${support_level_filepath}")"
-		if [[ "${support_level}" != "supported" && "${EXPERT}" != "yes" ]]; then
-			desktop_element_supported_result=65
-			return 0
-		fi
-		if ! desktop_element_available_for_arch "${desktop_element_path}" "${ARCH}"; then
-			desktop_element_supported_result=66
-			return 0
-		fi
-	else
-		desktop_element_supported_result=64
-		return 0
-	fi
-	return 0
-}
-
-function desktop_environments_prepare_menu() {
-	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
-		local desktop_env_name expert_infos="" desktop_element_supported_result=0
-		desktop_env_name="$(basename "${desktop_env_dir}")"
-		[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support" 2> /dev/null)]"
-		desktop_element_supported "${desktop_env_dir}" "${ARCH}"
-		[[ ${desktop_element_supported_result} == 0 ]] && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")
-	done
-	return 0
-}
-
-function desktop_environment_check_if_valid() {
-	local error_msg="" desktop_element_supported_result=0
-	desktop_element_supported "${DESKTOP_ENVIRONMENT_DIRPATH}" "${ARCH}"
-
-	if [[ ${desktop_element_supported_result} == 0 ]]; then
-		return
-	elif [[ ${desktop_element_supported_result} == 64 ]]; then
-		error_msg+="Either the desktop environment ${DESKTOP_ENVIRONMENT} does not exist "
-		error_msg+="or the file ${DESKTOP_ENVIRONMENT_DIRPATH}/support is missing"
-	elif [[ ${desktop_element_supported_result} == 65 ]]; then
-		error_msg+="Only experts can build an image with the desktop environment \"${DESKTOP_ENVIRONMENT}\", since the Armbian team won't offer any support for it (EXPERT=${EXPERT})"
-	elif [[ ${desktop_element_supported_result} == 66 ]]; then
-		error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
-		error_msg+="The supported boards architectures are : "
-		error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/architectures")"
-	fi
-
-	# supress error when cache is rebuilding
-	[[ -n "$ROOT_FS_CREATE_ONLY" ]] && exit 0
-
-	exit_with_error "${error_msg}"
-}
+# Interactive desktop configuration: DE selection + tier selection.
+# Desktop packages are installed by armbian-config's module_desktops
+# at image-build time (see distro-agnostic.sh). This file collects
+# the two user-facing choices: which DE and which tier.
+#
+# The available DEs are queried from armbian-config's YAML-driven
+# desktop definitions. The configng repo is cloned into cache/sources/
+# via the build framework's standard fetch_from_repo, then the
+# standalone Python parser runs on the host (no chroot, no root).
+#
+# Variables set:
+#   DESKTOP_ENVIRONMENT   — xfce, gnome, kde-plasma, mate, cinnamon, ...
+#   DESKTOP_TIER          — minimal, mid, full
+#
+# Legacy variables (removed — armbian-config YAML tiers subsume them):
+#   DESKTOP_ENVIRONMENT_CONFIG_NAME
+#   DESKTOP_APPGROUPS_SELECTED
 
 function interactive_desktop_main_configuration() {
-	[[ $BUILD_DESKTOP != "yes" ]] && return 0 # Only for desktops.
-
-	DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
-	DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
-	DESKTOP_CONFIG_PREFIX="config_"
-	DESKTOP_APPGROUPS_DIR="${DESKTOP_ELEMENTS_DIR}/appgroups"
+	[[ $BUILD_DESKTOP != "yes" ]] && return 0
 
 	display_alert "desktop-config" "DESKTOP_ENVIRONMENT entry: ${DESKTOP_ENVIRONMENT}" "debug"
 
+	# --- DE selection ---
 	if [[ -z $DESKTOP_ENVIRONMENT ]]; then
-		options=()
-		desktop_environments_prepare_menu
-		if [[ "${options[0]}" == "" ]]; then
-			exit_with_error "No desktop environment seems to be available for your board ${BOARD} (ARCH : ${ARCH} - EXPERT : ${EXPERT})"
+
+		# Fetch armbian-config (configng) to get the YAML desktop
+		# definitions and the standalone Python parser.
+		fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "branch:main"
+
+		local configng_dir="${SRC}/cache/sources/armbian-configng"
+		local yaml_dir="${configng_dir}/tools/modules/desktops/yaml"
+		local parser="${configng_dir}/tools/modules/desktops/scripts/parse_desktop_yaml.py"
+
+		if [[ ! -f "${parser}" ]]; then
+			exit_with_error "Desktop parser not found at ${parser}" \
+				"armbian-config clone may be incomplete"
 		fi
 
-		display_alert "Desktops available" "${options[*]}" "debug"
-		dialog_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}"
+		# EXPERT mode controls which editorial `status:` values are
+		# surfaced in the dialog:
+		#   default: `status: supported` only
+		#   EXPERT:  `status: supported` + `status: community` (CSC)
+		# `status: unsupported` DEs are never offered from the build
+		# dialog — they're vendor-specific (e.g. bianbu on riscv64)
+		# and only reachable via `armbian-config --api` on a running
+		# system, not baked into an image.
+		local status_filter="supported"
+		[[ "${EXPERT}" == "yes" ]] && status_filter="supported,community"
+
+		local de_json
+		de_json=$(python3 "${parser}" "${yaml_dir}" --list-json \
+			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2>/dev/null)
+		if [[ -z "${de_json}" || "${de_json}" == "[]" ]]; then
+			exit_with_error "No desktop environments available for ${RELEASE}/${ARCH}" \
+				"Parser returned an empty list"
+		fi
+
+		# Build dialog options from the JSON output. Server-side
+		# `--filter available` (the parser default) guarantees only
+		# DEs whose YAML declares this (release, arch) reach us, and
+		# `--status` above handles the editorial filter. Append a
+		# " [CSC]" marker to community DEs so the user can tell them
+		# apart from first-class supported ones at a glance.
+		local -a options=()
+		while IFS=$'\t' read -r de_name de_desc de_status; do
+			[[ -z "${de_name}" ]] && continue
+			local label="${de_desc}"
+			[[ "${de_status}" == "community" ]] && label="${de_desc} [CSC]"
+			options+=("${de_name}" "${label}")
+		done < <(echo "${de_json}" | python3 -c "
+import sys, json
+for de in json.load(sys.stdin):
+    print(de.get('name','') + '\t' + de.get('description','') + '\t' + de.get('status',''))
+" 2>/dev/null)
+
+		if [[ "${#options[@]}" -eq 0 ]]; then
+			exit_with_error "No desktop environments available for ${RELEASE}/${ARCH}"
+		fi
+
+		dialog_menu "Choose a desktop environment" "$backtitle" \
+			"Select the default desktop environment to bundle with this image" \
+			"${options[@]}"
 		set_interactive_config_value DESKTOP_ENVIRONMENT "${DIALOG_MENU_RESULT}"
 
-		unset options
 		if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
-			exit_with_error "No desktop environment selected..."
+			exit_with_error "No desktop environment selected"
 		fi
 	fi
 
 	display_alert "desktop-config" "DESKTOP_ENVIRONMENT selected: ${DESKTOP_ENVIRONMENT}" "debug"
 
-	DESKTOP_ENVIRONMENT_DIRPATH="${DESKTOP_CONFIGS_DIR}/${DESKTOP_ENVIRONMENT}"
-	desktop_environment_check_if_valid # Make sure desktop config is sane.
+	# --- Tier selection ---
+	if [[ -z $DESKTOP_TIER ]]; then
+		local -a options=(
+			"minimal" "DE + display manager (~500 MB)"
+			"mid" "Browser, file manager, media apps (~1 GB)"
+			"full" "Office, creative, dev tools (~2.5 GB)"
+		)
+		dialog_menu "Choose desktop tier" "$backtitle" \
+			"Select which package set to install with this desktop.\nTiers can be upgraded or downgraded at any time\nusing armbian-config on the running system." \
+			"${options[@]}"
+		set_interactive_config_value DESKTOP_TIER "${DIALOG_MENU_RESULT}"
 
-	display_alert "desktop-config" "DESKTOP_ENVIRONMENT_CONFIG_NAME entry: ${DESKTOP_ENVIRONMENT_CONFIG_NAME}" "debug"
-
-	if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
-		# @FIXME: Myy: Check for empty folders, just in case the current maintainer messed up
-		# Note, we could also ignore it and don't show anything in the previous	 menu, but that hides information and make debugging harder, which I
-		# don't like. Adding desktop environments as a maintainer is not a trivial nor common task.
-		options=()
-		for configuration in "${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_CONFIG_PREFIX}"*; do
-			config_filename=$(basename ${configuration})
-			config_name=${config_filename#"${DESKTOP_CONFIG_PREFIX}"}
-			options+=("${config_filename}" "${config_name} configuration")
-		done
-
-		dialog_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment." "${options[@]}"
-		set_interactive_config_value DESKTOP_ENVIRONMENT_CONFIG_NAME "${DIALOG_MENU_RESULT}"
-		unset options
-
-		if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
-			exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
+		if [[ -z "${DESKTOP_TIER}" ]]; then
+			DESKTOP_TIER="mid"
 		fi
 	fi
-	display_alert "desktop-config" "DESKTOP_ENVIRONMENT_CONFIG_NAME exit: ${DESKTOP_ENVIRONMENT_CONFIG_NAME}" "debug"
 
-	declare -g DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
-	declare -g DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
-
-	display_alert "desktop-config" "DESKTOP_APPGROUPS_SELECTED+x entry: ${DESKTOP_APPGROUPS_SELECTED+x}" "debug"
-	# "-z ${VAR+x}" allows to check for unset variable
-	# Technically, someone might want to build a desktop with no additional
-	# appgroups.
-	if [[ -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
-		options=()
-		for appgroup_path in "${DESKTOP_APPGROUPS_DIR}/"*; do
-			appgroup="$(basename "${appgroup_path}")"
-			options+=("${appgroup}" "${appgroup^}" off)
-		done
-
-		dialog_checklist "Choose desktop softwares to add" "$backtitle" "Select which kind of softwares you'd like to add to your build" "${options[@]}"
-		set_interactive_config_value DESKTOP_APPGROUPS_SELECTED "${DIALOG_CHECKLIST_RESULT}"
-		unset options
-	fi
-	display_alert "desktop-config" "DESKTOP_APPGROUPS_SELECTED exit: ${DESKTOP_APPGROUPS_SELECTED}" "debug"
+	display_alert "desktop-config" "DESKTOP_TIER selected: ${DESKTOP_TIER}" "debug"
 }
