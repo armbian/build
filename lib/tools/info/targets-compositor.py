@@ -150,8 +150,6 @@ def get_userspace_inventory(opts: dict):
 
 					# loop over the variants... desktop_variations is a list of lists
 					for variant in opts["desktop_variations"]:
-						appgroups_comma = ",".join(variant)
-
 						for bb in wanted_bbs_for_arch:
 							ret.append({**bb, **{
 								"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "yes",
