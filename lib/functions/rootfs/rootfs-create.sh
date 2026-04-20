@@ -100,6 +100,13 @@ function create_new_rootfs_cache_via_debootstrap() {
 		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
 		"'--skip=check/empty'"                                      # skips check if the rootfs dir is empty at start
 	)
+
+	# Show mmdebstrap's per-package download/install progress when
+	# DEBUG=yes. Default (no flag) keeps the terse log; DEBUG builds
+	# get the solver + fetch lines that are usually needed to
+	# diagnose a bootstrap failure.
+	[[ "${DEBUG}" == "yes" ]] && debootstrap_arguments+=("--verbose")
+
 	fetch_distro_keyring "$RELEASE"
 
 	# This is necessary to debootstrap from a non-official repo
