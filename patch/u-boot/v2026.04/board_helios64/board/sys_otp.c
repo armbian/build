@@ -4,6 +4,7 @@
 #include <log.h>
 #include <env.h>
 #include <net.h>
+#include <string.h>
 #include <u-boot/crc.h>
 
 #include "sys_otp.h"
@@ -42,16 +43,44 @@ static inline int is_data_valid(void)
 	return data_valid;
 }
 
+/*
+ * Ensure OTP data is cached and valid. If a previous read failed (for example
+ * on a transient SPI error during board_early_init_r()), retry here so
+ * consumers don't silently skip using OTP-provided values for the whole boot.
+ */
+static int ensure_otp_data_ready(void)
+{
+	if (is_data_valid())
+		return 0;
+
+	return read_otp_data();
+}
+
+/*
+ * Decode the 6-byte serial number into a u64. Doing a casted *(uint64_t *)
+ * read on otp.serial_num would over-read into otp.mfg_year and is unaligned
+ * inside the packed struct (UB per the C standard).
+ */
+static inline u64 otp_serial(void)
+{
+	return  ((u64)otp.serial_num[0])       |
+		((u64)otp.serial_num[1] << 8)  |
+		((u64)otp.serial_num[2] << 16) |
+		((u64)otp.serial_num[3] << 24) |
+		((u64)otp.serial_num[4] << 32) |
+		((u64)otp.serial_num[5] << 40);
+}
+
+static inline u16 otp_mfg_year(void)
+{
+	return otp.mfg_year[0] | ((u16)otp.mfg_year[1] << 8);
+}
+
 static inline int is_valid_header(void)
 {
-	if ((otp.magic[0] == 'H') || (otp.magic[1] == '6') ||
-		(otp.magic[2] == '4') || (otp.magic[3] == 'N') ||
-		(otp.magic[4] == 'P') || (otp.magic[5] == 'V') ||
-		(otp.magic[6] == '1') || (otp.magic[7] == 0))
+	static const u8 expected_magic[8] = { 'H', '6', '4', 'N', 'P', 'V', '1', 0 };
 
-		return 1;
-
-	return 0;
+	return memcmp(otp.magic, expected_magic, sizeof(expected_magic)) == 0;
 }
 
 static int init_system_otp(int bus, int cs)
@@ -97,13 +126,16 @@ static void show_otp_data(void)
 	if (!is_valid_header())
 		return;
 
-	printf("Part Number: %s\n", otp.part_num);
-	printf("Variant: %s\n", var_str[otp.variant]);
+	printf("Part Number: %.*s\n",
+		(int)strnlen((const char *)otp.part_num, sizeof(otp.part_num)),
+		otp.part_num);
+	printf("Variant: %s\n",
+		(otp.variant < BOARD_VARIANT_MAX) ? var_str[otp.variant]
+						  : var_str[BOARD_VARIANT_INVALID]);
 	printf("Revision: %x.%x\n", (otp.revision & 0xf0) >> 4, otp.revision & 0x0f);
-	printf("Serial Number: %012llx\n", *((uint64_t*) otp.serial_num) &
-		0xFFFFFFFFFFFF);
+	printf("Serial Number: %012llx\n", otp_serial());
 	printf("Manufacturing Date: %02X-%02X-%04X (DD-MM-YYYY)\n", otp.mfg_day,
-		otp.mfg_month, *(u16*) otp.mfg_year);
+		otp.mfg_month, otp_mfg_year());
 
 	printf("1GbE MAC Address:   %02X:%02X:%02X:%02X:%02X:%02X\n",
 		otp.mac_addr[0][0], otp.mac_addr[0][1], otp.mac_addr[0][2],
@@ -160,7 +192,13 @@ int read_otp_data(void)
 	show_otp_data();
 #endif
 
-	has_been_read = (ret == 0) ? 1 : 0;
+	if (ret) {
+		debug("SPI: Failed to read OTP: %d\n", ret);
+		/* Leave has_been_read = 0 so a later call can retry. */
+		return ret;
+	}
+	has_been_read = 1;
+
 	if (!is_valid_header())
 		goto data_invalid;
 
@@ -180,7 +218,7 @@ data_invalid:
 
 int get_revision(int *major, int *minor)
 {
-	if (!is_data_valid())
+	if (ensure_otp_data_ready())
 		return -1;
 
 	*major = (otp.revision & 0xf0) >> 4;
@@ -191,15 +229,18 @@ int get_revision(int *major, int *minor)
 
 const char *get_variant(void)
 {
-	const char* var_str[BOARD_VARIANT_MAX] = {
+	static const char * const var_str[BOARD_VARIANT_MAX] = {
 		"Unknown",
 		"Engineering Sample",
 		"4GB non ECC"
 	};
 
+	if (ensure_otp_data_ready())
+		return var_str[BOARD_VARIANT_INVALID];
+
 	if ((otp.variant < BOARD_VARIANT_ENG_SAMPLE) ||
 		(otp.variant >= BOARD_VARIANT_MAX))
-		return var_str[0];
+		return var_str[BOARD_VARIANT_INVALID];
 
 	return var_str[otp.variant];
 }
@@ -208,14 +249,13 @@ void set_board_info(void)
 {
 	char env_str[13];
 
-	if (!is_data_valid())
+	if (ensure_otp_data_ready())
 		return;
 
 	snprintf(env_str, sizeof(env_str), "%i.%i", (otp.revision & 0xf0) >> 4, otp.revision & 0x0f);
 	env_set("board_rev", env_str);
 
-	sprintf(env_str, "%012llx", *((uint64_t*) otp.serial_num) &
-		0xFFFFFFFFFFFF);
+	snprintf(env_str, sizeof(env_str), "%012llx", otp_serial());
 
 	env_set("serial#", env_str);
 }
@@ -224,7 +264,7 @@ int mac_read_from_otp(void)
 {
 	unsigned int i;
 
-	if (!is_data_valid())
+	if (ensure_otp_data_ready())
 		return -1;
 
 	for (i = 0; i < MAX_NUM_PORTS; i++) {

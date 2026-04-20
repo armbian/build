@@ -180,8 +180,14 @@ static int setup_boottargets(void)
 static void setup_leds(void)
 {
 	struct udevice *dev;
+	int ret;
 
-	led_get_by_label("helios64::status", &dev);
+	ret = led_get_by_label("helios64::status", &dev);
+	if (ret) {
+		debug("%s: failed to get status LED: %d\n", __func__, ret);
+		return;
+	}
+
 	led_set_state(dev, LEDST_OFF);
 	mdelay(250);
 	led_set_state(dev, LEDST_ON);
@@ -274,8 +280,12 @@ static void sata_power_enable(void)
 	}
 
 	ret = regulator_get_by_platname("hdd_b_power", &rail_b);
-	if (!ret)
+	if (!ret) {
 		ret = regulator_set_enable(rail_b, true);
+		if (!ret)
+			/* Wait for HDD spinup before SCSI scan */
+			mdelay(10000);
+	}
 
 }
 
