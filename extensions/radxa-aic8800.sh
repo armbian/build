@@ -48,6 +48,11 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	esac
 	use_clean_environment="yes" chroot_sdcard "wget ${aic8800_firmware_url} -P /tmp"
 	display_alert "Install aic8800 packages, will build kernel module in chroot" "${EXTENSION}" "info"
+	if [[ "${RELEASE}" == "noble" ]]; then
+		display_alert "Installing gcc-14 for DKMS build" "${EXTENSION}" "info"
+		use_clean_environment="yes" chroot_sdcard_apt_get_install "gcc-14"
+		use_clean_environment="yes" chroot_sdcard "update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100"
+	fi
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/aic8800*/*/build/*.log")
 	use_clean_environment="yes" chroot_sdcard_apt_get_install "/tmp/${aic8800_dkms_file_name} /tmp/aic8800-firmware_${latest_version}_all.deb"
 	use_clean_environment="yes" chroot_sdcard "rm -f /tmp/aic8800*.deb"
