@@ -1,0 +1,124 @@
+From f9bedf2f6a3ebca6cdc42f0dab8292de1029f63c Mon Sep 17 00:00:00 2001
+From: Sergio Lopez <slp@redhat.com>
+Date: Tue, 21 Apr 2026 10:47:00 +0800
+Subject: [PATCH 42/49] Enable 64 bit processes to use compat input syscalls
+
+The compat variant of input syscalls is only enabled for 32 bit
+tasks, but in some cases, such as userspace emulation, it's useful to
+enable that variant for 64 bit processes.
+
+Here we introduce the PR_[GET|SET]_COMPAT_INPUT prctl to allow 64 bit
+tasks to opt-in for compat input syscalls.
+
+Signed-off-by: Sergio Lopez <slp@redhat.com>
+---
+ drivers/input/input-compat.c |  6 +++---
+ drivers/input/input-compat.h |  2 +-
+ include/linux/sched.h        |  5 +++++
+ include/uapi/linux/prctl.h   |  5 +++++
+ kernel/sys.c                 | 15 +++++++++++++++
+ 5 files changed, 29 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/input/input-compat.c b/drivers/input/input-compat.c
+index a5043193ead8..c571f2c82887 100644
+--- a/drivers/input/input-compat.c
++++ b/drivers/input/input-compat.c
+@@ -15,7 +15,7 @@
+ int input_event_from_user(const char __user *buffer,
+ 			  struct input_event *event)
+ {
+-	if (in_compat_syscall() && !COMPAT_USE_64BIT_TIME) {
++	if (current->compat_input || (in_compat_syscall() && !COMPAT_USE_64BIT_TIME)) {
+ 		struct input_event_compat compat_event;
+ 
+ 		if (copy_from_user(&compat_event, buffer,
+@@ -39,7 +39,7 @@ int input_event_from_user(const char __user *buffer,
+ int input_event_to_user(char __user *buffer,
+ 			const struct input_event *event)
+ {
+-	if (in_compat_syscall() && !COMPAT_USE_64BIT_TIME) {
++	if (current->compat_input || (in_compat_syscall() && !COMPAT_USE_64BIT_TIME)) {
+ 		struct input_event_compat compat_event;
+ 
+ 		compat_event.sec = event->input_event_sec;
+@@ -63,7 +63,7 @@ int input_event_to_user(char __user *buffer,
+ int input_ff_effect_from_user(const char __user *buffer, size_t size,
+ 			      struct ff_effect *effect)
+ {
+-	if (in_compat_syscall()) {
++	if (current->compat_input || (in_compat_syscall())) {
+ 		struct ff_effect_compat *compat_effect;
+ 
+ 		if (size != sizeof(struct ff_effect_compat))
+diff --git a/drivers/input/input-compat.h b/drivers/input/input-compat.h
+index 99c87ceb923d..e0e078306b1b 100644
+--- a/drivers/input/input-compat.h
++++ b/drivers/input/input-compat.h
+@@ -53,7 +53,7 @@ struct ff_effect_compat {
+ 
+ static inline size_t input_event_size(void)
+ {
+-	return (in_compat_syscall() && !COMPAT_USE_64BIT_TIME) ?
++	return (current->compat_input || (in_compat_syscall() && !COMPAT_USE_64BIT_TIME)) ?
+ 		sizeof(struct input_event_compat) : sizeof(struct input_event);
+ }
+ 
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index d41e7a8f9c85..2f53bcc748bd 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1539,6 +1539,11 @@ struct task_struct {
+ 	/* Cache for current->cgroups->memcg->objcg lookups: */
+ 	struct obj_cgroup		*objcg;
+ #endif
++	/*
++	 * Whether the task wants to use compat input syscalls even if it's
++	 * a 64-bit process.
++	 */
++	bool compat_input;
+ 
+ #ifdef CONFIG_BLK_CGROUP
+ 	struct gendisk			*throttle_disk;
+diff --git a/include/uapi/linux/prctl.h b/include/uapi/linux/prctl.h
+index b6ec6f693719..55ca31b522fc 100644
+--- a/include/uapi/linux/prctl.h
++++ b/include/uapi/linux/prctl.h
+@@ -416,4 +416,9 @@ struct prctl_mm_map {
+ # define PR_CFI_DISABLE		_BITUL(1)
+ # define PR_CFI_LOCK		_BITUL(2)
+ 
++#define PR_GET_COMPAT_INPUT    0x63494e50
++#define PR_SET_COMPAT_INPUT    0x43494e50
++# define PR_SET_COMPAT_INPUT_DISABLE  0
++# define PR_SET_COMPAT_INPUT_ENABLE   1
++
+ #endif /* _LINUX_PRCTL_H */
+diff --git a/kernel/sys.c b/kernel/sys.c
+index 62e842055cc9..6b2c92de2b2f 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -2907,6 +2907,21 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
+ 		if (arg3 & PR_CFI_LOCK && !(arg3 & PR_CFI_DISABLE))
+ 			error = arch_prctl_lock_branch_landing_pad_state(me);
+ 		break;
++	case PR_GET_COMPAT_INPUT:
++		if (arg2 || arg3 || arg4 || arg5)
++			return -EINVAL;
++		error = current->compat_input;
++		break;
++	case PR_SET_COMPAT_INPUT:
++		if (arg3 || arg4 || arg5)
++			return -EINVAL;
++		if (arg2 == PR_SET_COMPAT_INPUT_DISABLE)
++			current->compat_input = false;
++		else if (arg2 == PR_SET_COMPAT_INPUT_ENABLE)
++			current->compat_input = true;
++		else
++			return -EINVAL;
++		break;
+ 	default:
+ 		trace_task_prctl_unknown(option, arg2, arg3, arg4, arg5);
+ 		error = -EINVAL;
+-- 
+2.43.0
+
