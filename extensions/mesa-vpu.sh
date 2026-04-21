@@ -5,30 +5,6 @@
 # Enables 3D and multimedia, 4K VPU with Chromium, acceleration for Ubuntu. Debian only 3D
 #
 
-function extension_prepare_config__3d() {
-	# Silently deny old releases which are not supported but are still in the system
-	[[ "${RELEASE}" =~ ^(bookworm|bullseye|buster|focal|jammy)$ ]] && return 0
-
-	# Deny on minimal CLI images
-	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
-		display_alert "Extension: ${EXTENSION}" "skip installation in minimal images" "warn"
-		return 0
-	fi
-
-	# some desktops doesn't support wayland
-	[[ "${DESKTOP_ENVIRONMENT}" == "xfce" || "${DESKTOP_ENVIRONMENT}" == "i3-wm" ]] && return 0
-
-	# This should be enabled on all for rk3588 distributions where mesa and vendor kernel is present
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" == vendor ]]; then
-		if [[ -n $DEFAULT_OVERLAYS ]]; then
-			DEFAULT_OVERLAYS+=" panthor-gpu"
-		else
-			declare -g DEFAULT_OVERLAYS="panthor-gpu"
-		fi
-	fi
-
-}
-
 function post_install_kernel_debs__3d() {
 	# Silently deny old releases which are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bookworm|bullseye|buster|focal|jammy)$ ]] && return 0
@@ -108,26 +84,3 @@ function post_install_kernel_debs__3d() {
 	return 0
 }
 
-function post_armbian_repo_customize_image__browser() {
-	# Silently deny old releases which are not supported but are still in the system
-	[[ "${RELEASE}" =~ ^(bookworm|bullseye|buster|focal|jammy)$ ]] && return 0
-
-	# Add browser if building a desktop - architecture dependent
-	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
-
-	if [[ "${ARCH}" == "amd64" ]]; then
-		# amd64: prefer google-chrome
-		pkgs=("google-chrome-stable")
-	elif [[ "${ARCH}" =~ ^(arm64|armhf)$ ]]; then
-		# arm64/armhf: use chromium
-		pkgs=("chromium")
-	else
-		# other architectures: fallback to firefox
-		pkgs=("firefox")
-	fi
-
-	display_alert "Installing browser" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
-
-	return 0
-}
