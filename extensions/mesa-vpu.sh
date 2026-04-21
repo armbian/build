@@ -18,24 +18,16 @@ function post_install_kernel_debs__3d() {
 	# some desktops doesn't support wayland
 	[[ "${DESKTOP_ENVIRONMENT}" == "xfce" || "${DESKTOP_ENVIRONMENT}" == "i3-wm" ]] && return 0
 
-	# Packages that are going to be installed, always, both for cli and desktop
-	declare -a pkgs=("libgl1-mesa-dri")
+	# Mesa runtime + Vulkan drivers + glmark2/vulkan-tools moved to
+	# armbian-configng's common.yaml mid tier — configng installs
+	# them as part of `module_desktops install mode=build` before
+	# this extension hook runs. The list remaining here is just
+	# the board-conditional rockchip-multimedia stack that configng
+	# can't express (configng only knows RELEASE × ARCH, not
+	# LINUXFAMILY × BRANCH).
+	declare -a pkgs=()
 
-	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		pkgs+=("libglx-mesa0") # Mesa OpenGL extension library for X11
-		pkgs+=("mesa-utils") # Mesa utilities for OpenGL information and testing
-		pkgs+=("mesa-utils-extra") # Additional Mesa demonstration programs
-		pkgs+=("glmark2") # OpenGL 2.0/3.0 benchmark suite
-		pkgs+=("glmark2-wayland") # Glmark2 Wayland backend for benchmarking
-		pkgs+=("glmark2-es2-wayland") # Glmark2 OpenGL ES 2.0 Wayland backend
-		pkgs+=("glmark2-es2") # Glmark2 OpenGL ES 2.0 benchmark support
-		pkgs+=("glmark2-x11") # Glmark2 X11 backend for benchmarking
-		pkgs+=("glmark2-es2-x11") # Glmark2 OpenGL ES 2.0 X11 backend
-		pkgs+=("vulkan-tools") # Vulkan utilities for testing and debugging (vulkaninfo, etc.)
-		pkgs+=("mesa-vulkan-drivers") # Vulkan drivers for Mesa GPUs (Panfrost, Lima, Radeon, Intel, etc.)
-	fi
-
-	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then # if desktop, add amazingfated's multimedia PPAs and rockchip-multimedia-config utility, chromium, gstreamer, etc
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then # if desktop, add amazingfated's multimedia PPAs and rockchip-multimedia-config utility, gstreamer, etc
 		if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(noble)$ && "${BRANCH}" =~ ^(vendor)$ ]]; then
 			pkgs+=("rockchip-multimedia-config" "libv4l-rkmpp" "gstreamer1.0-rockchip" "libwidevinecdm0")
 			display_alert "Adding amazingfated's multimedia PPAs" "${EXTENSION}" "info"
@@ -59,8 +51,12 @@ function post_install_kernel_debs__3d() {
 		do_with_retries 3 chroot_sdcard_apt_get_install libv4l-0
 	fi
 
-	display_alert "Installing 3D extension packages" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
+	# Install only runs when we collected rockchip-specific packages above.
+	# Mesa/vulkan/glmark2/mesa-utils moved to configng common.yaml mid tier.
+	if [[ "${#pkgs[@]}" -gt 0 ]]; then
+		display_alert "Installing rockchip multimedia packages" "${EXTENSION}" "info"
+		do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
+	fi
 
 	# This library gets downgraded
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
