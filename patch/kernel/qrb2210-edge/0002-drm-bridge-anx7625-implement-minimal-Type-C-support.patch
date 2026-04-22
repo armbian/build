@@ -1,0 +1,334 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Wed, 21 Jan 2026 12:15:46 +0200
+Subject: [PATCH 02/48] drm: bridge: anx7625: implement minimal Type-C support
+
+ANX7625 can be used as a USB-C controller, handling USB and DP data
+streams. Provide minimal Type-C support necessary for ANX7625 to
+register the Type-C port device and properly respond to data / power
+role events from the Type-C partner.
+
+While ANX7625 provides TCPCI interface, using it would circumvent the
+on-chip running firmware. Analogix recommended using the higher-level
+interface instead of TCPCI.
+
+Reviewed-by: Xin Ji <xji@analogixsemi.com>
+Reviewed-by: Heikki Krogerus <heikki.krogerus@linux.intel.com>
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Link: https://lore.kernel.org/r/20260121-anx7625-typec-v2-2-d14f31256a17@oss.qualcomm.com
+---
+ drivers/gpu/drm/bridge/analogix/Kconfig   |   1 +
+ drivers/gpu/drm/bridge/analogix/anx7625.c | 155 ++++++++++++++++++++--
+ drivers/gpu/drm/bridge/analogix/anx7625.h |  22 ++-
+ 3 files changed, 168 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/analogix/Kconfig b/drivers/gpu/drm/bridge/analogix/Kconfig
+index 4846b2e9be7c..f3448b0631fe 100644
+--- a/drivers/gpu/drm/bridge/analogix/Kconfig
++++ b/drivers/gpu/drm/bridge/analogix/Kconfig
+@@ -34,6 +34,7 @@ config DRM_ANALOGIX_ANX7625
+ 	tristate "Analogix Anx7625 MIPI to DP interface support"
+ 	depends on DRM
+ 	depends on OF
++	depends on TYPEC || !TYPEC
+ 	select DRM_DISPLAY_DP_HELPER
+ 	select DRM_DISPLAY_HDCP_HELPER
+ 	select DRM_DISPLAY_HELPER
+diff --git a/drivers/gpu/drm/bridge/analogix/anx7625.c b/drivers/gpu/drm/bridge/analogix/anx7625.c
+index 4e49e4f28d55..8dc6e3b16968 100644
+--- a/drivers/gpu/drm/bridge/analogix/anx7625.c
++++ b/drivers/gpu/drm/bridge/analogix/anx7625.c
+@@ -3,6 +3,7 @@
+  * Copyright(c) 2020, Analogix Semiconductor. All rights reserved.
+  *
+  */
++#include <linux/cleanup.h>
+ #include <linux/gcd.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+@@ -15,6 +16,9 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/slab.h>
+ #include <linux/types.h>
++#include <linux/usb.h>
++#include <linux/usb/pd.h>
++#include <linux/usb/role.h>
+ #include <linux/workqueue.h>
+ 
+ #include <linux/of_graph.h>
+@@ -1325,7 +1329,7 @@ static int anx7625_read_hpd_gpio_config_status(struct anx7625_data *ctx)
+ static void anx7625_disable_pd_protocol(struct anx7625_data *ctx)
+ {
+ 	struct device *dev = ctx->dev;
+-	int ret, val;
++	int ret;
+ 
+ 	/* Reset main ocm */
+ 	ret = anx7625_reg_write(ctx, ctx->i2c.rx_p0_client, 0x88, 0x40);
+@@ -1339,6 +1343,11 @@ static void anx7625_disable_pd_protocol(struct anx7625_data *ctx)
+ 		DRM_DEV_DEBUG_DRIVER(dev, "disable PD feature fail.\n");
+ 	else
+ 		DRM_DEV_DEBUG_DRIVER(dev, "disable PD feature succeeded.\n");
++}
++
++static void anx7625_configure_hpd(struct anx7625_data *ctx)
++{
++	int val;
+ 
+ 	/*
+ 	 * Make sure the HPD GPIO already be configured after OCM release before
+@@ -1369,7 +1378,9 @@ static int anx7625_ocm_loading_check(struct anx7625_data *ctx)
+ 	if ((ret & FLASH_LOAD_STA_CHK) != FLASH_LOAD_STA_CHK)
+ 		return -ENODEV;
+ 
+-	anx7625_disable_pd_protocol(ctx);
++	if (!ctx->typec_port)
++		anx7625_disable_pd_protocol(ctx);
++	anx7625_configure_hpd(ctx);
+ 
+ 	DRM_DEV_DEBUG_DRIVER(dev, "Firmware ver %02x%02x,",
+ 			     anx7625_reg_read(ctx,
+@@ -1472,6 +1483,107 @@ static void anx7625_start_dp_work(struct anx7625_data *ctx)
+ 	DRM_DEV_DEBUG_DRIVER(dev, "Secure OCM version=%02x\n", ret);
+ }
+ 
++#if IS_REACHABLE(CONFIG_TYPEC)
++static void anx7625_typec_set_orientation(struct anx7625_data *ctx)
++{
++	u32 val = anx7625_reg_read(ctx, ctx->i2c.rx_p0_client, SYSTEM_STSTUS);
++
++	if (val & (CC1_RP | CC1_RD))
++		typec_set_orientation(ctx->typec_port, TYPEC_ORIENTATION_NORMAL);
++	else if (val & (CC2_RP | CC2_RD))
++		typec_set_orientation(ctx->typec_port, TYPEC_ORIENTATION_REVERSE);
++	else
++		typec_set_orientation(ctx->typec_port, TYPEC_ORIENTATION_NONE);
++}
++
++static void anx7625_typec_set_status(struct anx7625_data *ctx,
++				     unsigned int intr_status,
++				     unsigned int intr_vector)
++{
++	if (intr_vector & CC_STATUS)
++		anx7625_typec_set_orientation(ctx);
++	if (intr_vector & DATA_ROLE_STATUS) {
++		enum typec_data_role data_role = (intr_status & DATA_ROLE_STATUS) ?
++			TYPEC_HOST : TYPEC_DEVICE;
++		usb_role_switch_set_role(ctx->role_sw,
++					 (intr_status & DATA_ROLE_STATUS) ?
++					 USB_ROLE_HOST : USB_ROLE_DEVICE);
++		typec_set_data_role(ctx->typec_port, data_role);
++		ctx->typec_data_role = data_role;
++	}
++	if (intr_vector & VBUS_STATUS)
++		typec_set_pwr_role(ctx->typec_port,
++				   (intr_status & VBUS_STATUS) ?
++				   TYPEC_SOURCE : TYPEC_SINK);
++	if (intr_vector & VCONN_STATUS)
++		typec_set_vconn_role(ctx->typec_port,
++				     (intr_status & VCONN_STATUS) ?
++				     TYPEC_SOURCE : TYPEC_SINK);
++}
++
++static int anx7625_typec_register(struct anx7625_data *ctx)
++{
++	struct typec_capability typec_cap = { };
++	struct fwnode_handle *fwnode __free(fwnode_handle) =
++		device_get_named_child_node(ctx->dev, "connector");
++	u32 val;
++	int ret;
++
++	if (!fwnode)
++		return 0;
++
++	ret = typec_get_fw_cap(&typec_cap, fwnode);
++	if (ret < 0)
++		return ret;
++
++	typec_cap.revision = 0x0120;
++	typec_cap.pd_revision = 0x0300;
++	typec_cap.usb_capability = USB_CAPABILITY_USB2 | USB_CAPABILITY_USB3;
++	typec_cap.orientation_aware = true;
++
++	typec_cap.driver_data = ctx;
++
++	ctx->typec_port = typec_register_port(ctx->dev, &typec_cap);
++	if (IS_ERR(ctx->typec_port))
++		return PTR_ERR(ctx->typec_port);
++
++	ctx->role_sw = fwnode_usb_role_switch_get(fwnode);
++	if (IS_ERR(ctx->role_sw)) {
++		typec_unregister_port(ctx->typec_port);
++		return PTR_ERR(ctx->role_sw);
++	}
++
++	val = anx7625_reg_read(ctx, ctx->i2c.rx_p0_client, SYSTEM_STSTUS);
++
++	anx7625_typec_set_status(ctx, val,
++				 CC_STATUS | DATA_ROLE_STATUS |
++				 VBUS_STATUS | VCONN_STATUS);
++
++	return 0;
++}
++
++static void anx7625_typec_unregister(struct anx7625_data *ctx)
++{
++	usb_role_switch_put(ctx->role_sw);
++	typec_unregister_port(ctx->typec_port);
++}
++#else
++static void anx7625_typec_set_status(struct anx7625_data *ctx,
++				     unsigned int intr_status,
++				     unsigned int intr_vector)
++{
++}
++
++static int anx7625_typec_register(struct anx7625_data *ctx)
++{
++	return 0;
++}
++
++static void anx7625_typec_unregister(struct anx7625_data *ctx)
++{
++}
++#endif
++
+ static int anx7625_read_hpd_status_p0(struct anx7625_data *ctx)
+ {
+ 	return anx7625_reg_read(ctx, ctx->i2c.rx_p0_client, SYSTEM_STSTUS);
+@@ -1566,7 +1678,7 @@ static void dp_hpd_change_handler(struct anx7625_data *ctx, bool on)
+ 	}
+ }
+ 
+-static int anx7625_hpd_change_detect(struct anx7625_data *ctx)
++static int anx7625_intr_status(struct anx7625_data *ctx)
+ {
+ 	int intr_vector, status;
+ 	struct device *dev = ctx->dev;
+@@ -1593,9 +1705,6 @@ static int anx7625_hpd_change_detect(struct anx7625_data *ctx)
+ 		return status;
+ 	}
+ 
+-	if (!(intr_vector & HPD_STATUS_CHANGE))
+-		return -ENOENT;
+-
+ 	status = anx7625_reg_read(ctx, ctx->i2c.rx_p0_client,
+ 				  SYSTEM_STSTUS);
+ 	if (status < 0) {
+@@ -1604,6 +1713,12 @@ static int anx7625_hpd_change_detect(struct anx7625_data *ctx)
+ 	}
+ 
+ 	DRM_DEV_DEBUG_DRIVER(dev, "0x7e:0x45=%x\n", status);
++
++	anx7625_typec_set_status(ctx, status, intr_vector);
++
++	if (!(intr_vector & HPD_STATUS))
++		return -ENOENT;
++
+ 	dp_hpd_change_handler(ctx, status & HPD_STATUS);
+ 
+ 	return 0;
+@@ -1622,7 +1737,7 @@ static void anx7625_work_func(struct work_struct *work)
+ 		return;
+ 	}
+ 
+-	event = anx7625_hpd_change_detect(ctx);
++	event = anx7625_intr_status(ctx);
+ 
+ 	mutex_unlock(&ctx->lock);
+ 
+@@ -2741,11 +2856,29 @@ static int anx7625_i2c_probe(struct i2c_client *client)
+ 	}
+ 
+ 	if (!platform->pdata.low_power_mode) {
+-		anx7625_disable_pd_protocol(platform);
++		struct fwnode_handle *fwnode;
++
++		fwnode = device_get_named_child_node(dev, "connector");
++		if (fwnode)
++			fwnode_handle_put(fwnode);
++		else
++			anx7625_disable_pd_protocol(platform);
++
++		anx7625_configure_hpd(platform);
++
+ 		pm_runtime_get_sync(dev);
+ 		_anx7625_hpd_polling(platform, 5000 * 100);
+ 	}
+ 
++	if (platform->pdata.intp_irq)
++		anx7625_reg_write(platform, platform->i2c.rx_p0_client,
++				  INTERFACE_CHANGE_INT_MASK, 0);
++
++	/* After getting runtime handle */
++	ret = anx7625_typec_register(platform);
++	if (ret)
++		goto pm_suspend;
++
+ 	/* Add work function */
+ 	if (platform->pdata.intp_irq) {
+ 		enable_irq(platform->pdata.intp_irq);
+@@ -2759,6 +2892,10 @@ static int anx7625_i2c_probe(struct i2c_client *client)
+ 
+ 	return 0;
+ 
++pm_suspend:
++	if (!platform->pdata.low_power_mode)
++		pm_runtime_put_sync_suspend(&client->dev);
++
+ free_wq:
+ 	if (platform->workqueue)
+ 		destroy_workqueue(platform->workqueue);
+@@ -2774,6 +2911,8 @@ static void anx7625_i2c_remove(struct i2c_client *client)
+ {
+ 	struct anx7625_data *platform = i2c_get_clientdata(client);
+ 
++	anx7625_typec_unregister(platform);
++
+ 	drm_bridge_remove(&platform->bridge);
+ 
+ 	if (platform->pdata.intp_irq)
+diff --git a/drivers/gpu/drm/bridge/analogix/anx7625.h b/drivers/gpu/drm/bridge/analogix/anx7625.h
+index eb5580f1ab2f..a18561c213af 100644
+--- a/drivers/gpu/drm/bridge/analogix/anx7625.h
++++ b/drivers/gpu/drm/bridge/analogix/anx7625.h
+@@ -51,9 +51,21 @@
+ #define INTR_RECEIVED_MSG BIT(5)
+ 
+ #define SYSTEM_STSTUS 0x45
++#define INTERFACE_CHANGE_INT_MASK 0x43
+ #define INTERFACE_CHANGE_INT 0x44
+-#define HPD_STATUS_CHANGE 0x80
+-#define HPD_STATUS 0x80
++#define VCONN_STATUS	BIT(2)
++#define VBUS_STATUS	BIT(3)
++#define CC_STATUS	BIT(4)
++#define DATA_ROLE_STATUS	BIT(5)
++#define HPD_STATUS	BIT(7)
++
++#define NEW_CC_STATUS 0x46
++#define CC1_RD                  BIT(0)
++#define CC1_RA                  BIT(1)
++#define CC1_RP			(BIT(2) | BIT(3))
++#define CC2_RD                  BIT(4)
++#define CC2_RA                  BIT(5)
++#define CC2_RP			(BIT(6) | BIT(7))
+ 
+ /******** END of I2C Address 0x58 ********/
+ 
+@@ -447,9 +459,15 @@ struct anx7625_i2c_client {
+ 	struct i2c_client *tcpc_client;
+ };
+ 
++struct typec_port;
++struct usb_role_switch;
++
+ struct anx7625_data {
+ 	struct anx7625_platform_data pdata;
+ 	struct platform_device *audio_pdev;
++	struct typec_port *typec_port;
++	struct usb_role_switch *role_sw;
++	int typec_data_role;
+ 	int hpd_status;
+ 	int hpd_high_cnt;
+ 	int dp_en;
