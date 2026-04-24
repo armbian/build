@@ -190,6 +190,10 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		[Unit]
 		After=usbdevice.service
 		Wants=usbdevice.service
+
+		[Service]
+		Restart=on-failure
+		RestartSec=3
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
@@ -211,6 +215,10 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		[Unit]
 		After=usbdevice.service
 		Wants=usbdevice.service
+
+		[Service]
+		Restart=on-failure
+		RestartSec=3
 		[Service]
 		Restart=on-failure
 		RestartSec=5
