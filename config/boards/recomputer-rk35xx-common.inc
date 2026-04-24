@@ -184,15 +184,17 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		dhcp-option=option:dns-server
 	EOF
 
-	# serial-getty@ttyGS0 ordering: wait for usbdevice to create the device node
+	# serial-getty@ttyGS0: clear BindsTo=dev-ttyGS0.device from base unit
+	# (ttyGS0 is a USB gadget, not present at boot → BindsTo causes dependency failure).
+	# Keep Restart=always from base unit (not on-failure, else normal logout kills the getty).
 	mkdir -p "${SDCARD}/etc/systemd/system/serial-getty@ttyGS0.service.d"
 	cat > "${SDCARD}/etc/systemd/system/serial-getty@ttyGS0.service.d/after-usbdevice.conf" <<- EOF
 		[Unit]
+		BindsTo=
 		After=usbdevice.service
 		Wants=usbdevice.service
 
 		[Service]
-		Restart=on-failure
 		RestartSec=3
 	EOF
 
@@ -286,7 +288,6 @@ EOF
 
 	chmod +x $SDCARD/etc/profile.d/custom-path.sh
 }
-
 
 # Enable Seeed RK extension (clone/pull + enable_extension)
 if [[ "${ENABLE_SEEED_RK_EXTENSION}" == "yes" ]]; then
