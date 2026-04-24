@@ -100,13 +100,7 @@ EOT
 		install -m 0755 "$SRC/packages/bsp/aic8800/aic-bluetooth" "${destination}/usr/bin/aic-bluetooth"
 
 		# BT UART differs between boards
-		local bt_uart
-		case "${BOOT_SOC}" in
-			rk3576) bt_uart="/dev/ttyS4" ;;
-			rk3588) bt_uart="/dev/ttyS6" ;;
-			*)      bt_uart="/dev/ttyS1" ;;
-		esac
-		sed -i "s|/dev/ttyS1|${bt_uart}|g" "${destination}/usr/bin/aic-bluetooth"
+		sed -i "s|/dev/ttyS1|${BT_UART}|g" "${destination}/usr/bin/aic-bluetooth"
 
 		install -d -m 0755 "${destination}/usr/lib/systemd/system"
 		install -m 0644 "$SRC/packages/bsp/aic8800/aic-bluetooth.service" "${destination}/usr/lib/systemd/system/aic-bluetooth.service"
