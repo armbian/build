@@ -177,7 +177,7 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 	mkdir -p "${SDCARD}/etc/dnsmasq.d"
 	cat > "${SDCARD}/etc/dnsmasq.d/usb0-dhcp.conf" <<- EOF
 		interface=usb0
-		bind-interfaces
+		bind-dynamic
 		port=0
 		dhcp-range=192.168.42.100,192.168.42.150,255.255.255.0,12h
 		dhcp-option=option:router
@@ -209,20 +209,6 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		ExecStartPost=/sbin/ip link set usb0 up
 	EOF
 
-	# dnsmasq: wait for usbdevice + retry if usb0 not ready yet
-	mkdir -p "${SDCARD}/etc/systemd/system/dnsmasq.service.d"
-	cat > "${SDCARD}/etc/systemd/system/dnsmasq.service.d/10-usb-gadget.conf" <<- EOF
-		[Unit]
-		After=usbdevice.service
-		Wants=usbdevice.service
-
-		[Service]
-		Restart=on-failure
-		RestartSec=3
-		[Service]
-		Restart=on-failure
-		RestartSec=5
-	EOF
 }
 
 # Auto-mount USB storage under /media/seeed/ (DE-agnostic)
