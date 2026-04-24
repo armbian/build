@@ -883,7 +883,9 @@ order:
   on TFTP from before this extension landed). For a quick check,
   unpack the deployed `uInitrd` and confirm `option root_path` is
   in `/etc/dhcpcd.conf` and `71-netboot-rootpath` exists under
-  `/usr/libexec/dhcpcd-hooks/`. If you can't fix the router, set
+  `/usr/libexec/dhcpcd-hooks/` or `/usr/lib/dhcpcd/dhcpcd-hooks/` (the
+  initramfs hook copies into whichever the upstream dhcpcd hook used).
+  If you can't fix the router, set
   `NETBOOT_SERVER=<ip>` at build time and rebuild — that path skips
   option 17 entirely.
 
