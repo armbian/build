@@ -99,7 +99,7 @@ EOT
 		install -d -m 0755 "${destination}/usr/bin"
 		install -m 0755 "$SRC/packages/bsp/aic8800/aic-bluetooth" "${destination}/usr/bin/aic-bluetooth"
 
-		# BT UART differs between SoCs
+		# BT UART differs between boards
 		local bt_uart
 		case "${BOOT_SOC}" in
 			rk3576) bt_uart="/dev/ttyS4" ;;
