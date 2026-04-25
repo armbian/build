@@ -51,13 +51,14 @@ function pre_install_distribution_specific__recomputer_install_usbdevice_gadget(
 }
 
 # Install Morse Wireless tools (FGH100M support)
-# Note: Extract and copy files directly without deb installation
+# Uses dpkg --force-depends because hostapd/wpa-supplicant tools depend on
+# libssl1.1 which is not available in Noble (ships libssl3).
+# The tools still work at runtime against libssl3.
 function pre_install_distribution_specific__recomputer_install_morse_tools() {
 	display_alert "Installing Morse wireless tools for FGH100M" "morse-tools" "info"
 
 	local cache_dir="${SRC}/cache/download"
-	local extract_dir="${SRC}/cache/morse-tools-extract"
-	mkdir -p "${cache_dir}" "${extract_dir}"
+	mkdir -p "${cache_dir}"
 
 	declare -A packages=(
 		["wpa-supplicant-morse-tools"]="https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/wpa-supplicant-morse-tools_1.0-1_arm64.deb"
@@ -80,13 +81,13 @@ function pre_install_distribution_specific__recomputer_install_morse_tools() {
 			mv "${tmp_file}" "${pkg_file}"
 		fi
 
-		display_alert "Extracting ${pkg_name}" "morse-tools" "info"
-		rm -rf "${extract_dir}/${pkg_name}"
-		mkdir -p "${extract_dir}/${pkg_name}"
-		dpkg-deb -x "${pkg_file}" "${extract_dir}/${pkg_name}"
-
-		display_alert "Copying ${pkg_name} files" "morse-tools" "info"
-		cp -r "${extract_dir}/${pkg_name}"/* "${SDCARD}/"
+		display_alert "Installing ${pkg_name} via dpkg" "morse-tools" "info"
+		local chroot_deb="/root/${pkg_name}_1.0-1_arm64.deb"
+		run_host_command_logged cp -pv "${pkg_file}" "${SDCARD}${chroot_deb}"
+		chroot_sdcard dpkg --force-depends -i "${chroot_deb}" || {
+			display_alert "Failed to install ${pkg_name}" "morse-tools" "err"
+		}
+		run_host_command_logged rm -f "${SDCARD}${chroot_deb}"
 	done
 
 	display_alert "Morse wireless tools installed successfully" "morse-tools" "info"
