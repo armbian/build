@@ -300,16 +300,21 @@ EOF
 }
 
 # Enable Seeed RK extension (clone/pull + enable_extension)
-if [[ "${ENABLE_SEEED_RK_EXTENSION}" == "yes" ]]; then
+function post_family_config__seeed_rk_extension_clone_and_enable() {
+	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
+		return 0
+	fi
+
 	if [[ ! -d "${SRC}/extensions/seeed_armbian_extension" ]]; then
-		echo "[${BOARD_NAME}] Cloning Seeed extensions from GitHub..."
+		display_alert "Cloning Seeed extensions from GitHub" "$BOARD_NAME" "info"
 		git clone https://github.com/Seeed-Studio/seeed_armbian_extension.git "${SRC}/extensions/seeed_armbian_extension" || {
-			echo "[${BOARD_NAME}] Warning: Failed to clone Seeed extensions"
+			display_alert "Failed to clone Seeed extensions" "$BOARD_NAME" "warn"
+			return 1
 		}
 	else
-		echo "[${BOARD_NAME}] Seeed extensions already exists, pulling updates..."
-		git -C "${SRC}/extensions/seeed_armbian_extension" pull || echo "[${BOARD_NAME}] Warning: Failed to pull updates"
+		display_alert "Seeed extensions already exists, pulling updates" "$BOARD_NAME" "info"
+		git -C "${SRC}/extensions/seeed_armbian_extension" pull || display_alert "Failed to pull updates" "$BOARD_NAME" "warn"
 	fi
 
 	enable_extension "seeed_armbian_extension"
-fi
+}
