@@ -2,21 +2,32 @@
 # Source this file from individual board configs.
 
 # Helper: download a deb if not cached, then install into chroot
-# Usage: seeed_recomputer_download_and_install_deb <url> <cache_filename> <display_name>
+# Usage: seeed_recomputer_download_and_install_deb <url> <cache_filename> <display_name> [expected_sha256]
 function seeed_recomputer_download_and_install_deb() {
 	local url="$1"
 	local cache_filename="$2"
 	local display_name="$3"
+	local expected_sha256="${4:-}"
 
 	local deb_file="${SRC}/cache/download/${cache_filename}"
 	mkdir -p "${SRC}/cache/download"
 
 	if [[ ! -f "${deb_file}" ]]; then
 		display_alert "Downloading ${display_name}" "${url}" "info"
-		wget "${url}" -O "${deb_file}" || {
+		local tmp_file="${deb_file}.tmp"
+		if ! curl --connect-timeout 30 --retry 3 --retry-delay 5 -fsSL -o "${tmp_file}" "${url}"; then
+			rm -f "${tmp_file}"
 			display_alert "Failed to download ${display_name}" "${display_name}" "err"
 			return 1
-		}
+		fi
+		if [[ -n "${expected_sha256}" ]]; then
+			if ! echo "${expected_sha256}  ${tmp_file}" | sha256sum -c -; then
+				rm -f "${tmp_file}"
+				display_alert "Checksum mismatch for ${display_name}" "${display_name}" "err"
+				return 1
+			fi
+		fi
+		mv "${tmp_file}" "${deb_file}"
 	fi
 
 	install_deb_chroot "${deb_file}" "" "" ""
@@ -60,10 +71,13 @@ function pre_install_distribution_specific__recomputer_install_morse_tools() {
 
 		if [[ ! -f "${pkg_file}" ]]; then
 			display_alert "Downloading ${pkg_name}" "${pkg_url}" "info"
-			wget "${pkg_url}" -O "${pkg_file}" || {
+			local tmp_file="${pkg_file}.tmp"
+			if ! curl --connect-timeout 30 --retry 3 --retry-delay 5 -fsSL -o "${tmp_file}" "${pkg_url}"; then
+				rm -f "${tmp_file}"
 				display_alert "Failed to download ${pkg_name}" "${pkg_name}" "err"
 				continue
-			}
+			fi
+			mv "${tmp_file}" "${pkg_file}"
 		fi
 
 		display_alert "Extracting ${pkg_name}" "morse-tools" "info"
@@ -219,9 +233,11 @@ function post_family_tweaks__recomputer_usb_auto_mount() {
 		DEV="$2"
 		BASE="/media/seeed"
 
-		eval "$(udevadm info --query=property --name="$DEV" 2>/dev/null | grep -E '^ID_FS_LABEL_ENC=|^ID_MODEL=')"
+		ID_FS_LABEL_ENC=$(udevadm info --query=property --name="$DEV" --property=ID_FS_LABEL_ENC --value 2>/dev/null)
+		ID_MODEL=$(udevadm info --query=property --name="$DEV" --property=ID_MODEL --value 2>/dev/null)
 		LABEL="${ID_FS_LABEL_ENC:-${ID_MODEL:-$(basename "$DEV")}}"
-		LABEL=$(echo "$LABEL" | sed 's/^ *//;s/ *$//' | tr -s ' ')
+		# Sanitize: keep only safe characters for path component
+		LABEL=$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
 
 		case "$ACTION" in
 		    add)
