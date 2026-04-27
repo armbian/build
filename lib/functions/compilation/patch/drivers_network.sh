@@ -529,8 +529,9 @@ driver_rtl88x2cs() {
 driver_uwe5622() {
 
 	# Wireless drivers for Unisoc uwe5622 wireless
+	# Disabled for 7.1+ due to cfg80211 API changes (net_device* -> wireless_dev*)
 
-	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
+	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.1 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
