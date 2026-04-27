@@ -47,8 +47,9 @@ driver_wifi_injection() {
 driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
+	# Disabled for 7.1+ due to pppoe_hdr/pppoe_tag API changes
 
-	if linux-version compare "${version}" ge 3.14; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.1; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8189esver='commit:0a5d04114fac3c9f48a343cb905fbb6a3f9f5df5' # Commit date: 2025-09-26 (please update when updating commit ref)
