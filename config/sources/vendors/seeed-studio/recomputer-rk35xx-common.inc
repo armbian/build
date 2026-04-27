@@ -300,7 +300,7 @@ EOF
 	chmod +x $SDCARD/etc/profile.d/custom-path.sh
 }
 
-# Enable Seeed RK extension (clone/pull + enable_extension)
+# Clone/pull Seeed RK extension in hook (network I/O deferred to proper phase)
 function post_family_config__seeed_rk_extension_clone_and_enable() {
 	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
 		return 0
@@ -316,6 +316,9 @@ function post_family_config__seeed_rk_extension_clone_and_enable() {
 		display_alert "Seeed extensions already exists, pulling updates" "$BOARD_NAME" "info"
 		git -C "${SRC}/extensions/seeed_armbian_extension" pull || display_alert "Failed to pull updates" "$BOARD_NAME" "warn"
 	fi
-
-	enable_extension "seeed_armbian_extension"
 }
+
+# enable_extension must be called at top-level, not inside a hook function
+if [[ "${ENABLE_SEEED_RK_EXTENSION}" == "yes" ]]; then
+	enable_extension "seeed_armbian_extension"
+fi
