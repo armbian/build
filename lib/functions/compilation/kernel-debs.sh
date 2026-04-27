@@ -265,7 +265,7 @@ function kernel_package_callback_linux_image() {
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Priority: optional
-		Depends: initramfs-tools
+		Depends: initramfs-tools | linux-initramfs-tool
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
