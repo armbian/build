@@ -442,12 +442,24 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
 
 		# Pass proxy args
- 		"--env" "http_proxy=${http_proxy:-${HTTP_PROXY}}"
- 		"--env" "https_proxy=${https_proxy:-${HTTPS_PROXY}}"
- 		"--env" "HTTP_PROXY=${HTTP_PROXY}"
-		"--env" "HTTPS_PROXY=${HTTPS_PROXY}"
-		"--env" "APT_PROXY_ADDR=${APT_PROXY_ADDR}"
+		"--env" "http_proxy=${http_proxy:-${HTTP_PROXY:-}}"
+		"--env" "https_proxy=${https_proxy:-${HTTPS_PROXY:-}}"
+		"--env" "HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}"
+		"--env" "HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}}"
+		"--env" "ftp_proxy=${ftp_proxy:-${FTP_PROXY:-}}"
+		"--env" "FTP_PROXY=${FTP_PROXY:-${ftp_proxy:-}}"
+		"--env" "no_proxy=${no_proxy:-${NO_PROXY:-}}"
+		"--env" "NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
+		"--env" "APT_PROXY_ADDR=${APT_PROXY_ADDR:-}"
 	)
+
+	# Pass in host DNS server so container can resolve hostnames on proxy
+	declare _dns_resolv_file="/etc/resolv.conf"
+	[[ -f "/run/systemd/resolve/resolv.conf" ]] && _dns_resolv_file="/run/systemd/resolve/resolv.conf"
+	while IFS= read -r _dns_server; do
+		[[ "${_dns_server}" =~ ^127\. || "${_dns_server}" == "::1" || "${_dns_server}" =~ ^fe80: ]] && continue
+		DOCKER_ARGS+=("--dns" "${_dns_server}")
+	done < <(awk '/^nameserver/ {print $2}' "${_dns_resolv_file}" 2>/dev/null)
 
 	# DOCKER_PRIVILEGED=no switches to a narrow capability set.
 	if [[ "${DOCKER_PRIVILEGED:-yes}" == "yes" ]]; then

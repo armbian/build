@@ -455,12 +455,23 @@ function do_extra_configuration() {
 		APT_MIRROR=$UBUNTU_MIRROR
 	fi
 
-	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR}" "info"
+	# Derive APT_PROXY_ADDR from proxy env vars if unset, which runners.sh uses inside chroot.
+	# Skip if MANAGE_ACNG is active to prevent conflicting behavior.
+	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && ( -z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no" ) ]]; then
+		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
+		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
+	fi
+	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR##*@}" "info"
 
 	# @TODO: allow to run aggregation, for CONFIG_DEFS_ONLY? rootfs_aggregate_packages
 
-	# Give the option to configure DNS server used in the chroot during the build process
-	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+	# Derive host DNS server so chroot can resolve hostnames on proxy; else, use cloudflare
+	if [[ -z "${NAMESERVER}" ]]; then
+		declare _dns_resolv_file="/etc/resolv.conf"
+		[[ -f "/run/systemd/resolve/resolv.conf" ]] && _dns_resolv_file="/run/systemd/resolve/resolv.conf"
+		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2>/dev/null)"
+		NAMESERVER="${NAMESERVER:-1.0.0.1}"
+	fi
 
 	# Consolidate the extra image suffix. loop and add.
 	declare EXTRA_IMAGE_SUFFIX=""
