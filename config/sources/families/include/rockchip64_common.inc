@@ -36,6 +36,12 @@ case $BRANCH in
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
+
+	bleedingedge)
+		declare -g KERNEL_MAJOR_MINOR="7.1"
+		declare -g LINUXFAMILY=rockchip64
+		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
+		;;
 esac
 
 # rockchip64 (used mainly for RK3399) legacy kernel 4.4 is dead code
