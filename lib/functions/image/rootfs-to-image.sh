@@ -35,14 +35,32 @@ function create_image_from_sdcard_rootfs() {
 	declare calculated_image_version="undetermined"
 	calculate_image_version
 	declare -r -g version="${calculated_image_version}" # global readonly from here
-	declare rsync_ea=" -X "
-	declare exclude_home="--exclude=\"/home/*\""
-	# Some usecase requires home directory to be included
-	if [[ ${INCLUDE_HOME_DIR:-no} == yes ]]; then exclude_home=""; fi
+	# -A: POSIX ACLs.  -X: xattrs (incl. security.*, e.g. file capabilities).
+	# -S: sparse files preserved as such on destination.  --numeric-ids: skip
+	# user/group name lookups on receiver, so files written into a foreign
+	# rootfs keep their numeric uid/gid (the rootfs's own /etc/passwd is what
+	# matters at boot, not the host's). Without -A and proper -X handling,
+	# `setcap cap_net_raw+ep /usr/bin/ping` set by iputils-ping's postinst
+	# inside the build chroot is silently dropped between SDCARD and the
+	# packaged image.
+	declare rsync_ea="${ROOTFS_RSYNC_XATTR_FLAGS:- -AXS --numeric-ids }"
+	# Carry a single-quoted shell token in the variable's value so it
+	# survives `run_host_command_logged`'s `bash -c "$*"` re-parse. The
+	# previous form `--exclude="/home/*"` failed because the value was
+	# `--exclude="/home/*"` *with literal double-quotes*, which rsync
+	# treated as part of the pattern and never excluded /home. A bare
+	# array (`(--exclude=/home/*)`) doesn't help here either: the helper
+	# re-parses argv via `bash -c "$*"`, which restores the `*` as a
+	# live glob char. Single-quoted form below hides `*` from globbing
+	# at the bash -c re-parse step.
+	declare exclude_home=""
+	# shellcheck disable=SC2089 # embedded single-quotes are intentional — survive run_host_command_logged's bash -c "$*" re-parse
+	[[ "${INCLUDE_HOME_DIR:-no}" != "yes" ]] && exclude_home="'--exclude=/home/*'"
 	# nilfs2 fs does not have extended attributes support, and have to be ignored on copy
-	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=""; fi
+	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=" --numeric-ids "; fi
 	if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
+		# shellcheck disable=SC2090 # embedded single-quotes in $exclude_home are intentional — see declaration above
 		run_host_command_logged rsync -aHWh $rsync_ea \
 			--exclude="/boot" \
 			--exclude="/dev/*" \
@@ -105,7 +123,7 @@ function create_image_from_sdcard_rootfs() {
 	PRE_UMOUNT_FINAL_IMAGE
 
 	if [[ $ROOTFS_TYPE == nfs || $ROOTFS_TYPE == nfs-root ]]; then
-		# ROOTFS_COMPRESSION: zstd (default, .tar.zst) | gzip (.tar.gz) | none (skip archive)
+		# ROOTFS_COMPRESSION: zstd/zst (default, .tar.zst) | gzip (.tar.gz) | none (skip archive)
 		declare rootfs_compression="${ROOTFS_COMPRESSION:-zstd}"
 		declare archive_ext="" archive_filter=""
 		case "${rootfs_compression}" in
@@ -118,7 +136,7 @@ function create_image_from_sdcard_rootfs() {
 				archive_filter="zstd -T0 -c"
 				;;
 			none) ;;
-			*) exit_with_error "Unknown ROOTFS_COMPRESSION: '${rootfs_compression}' (expected: gzip|zstd|none)" ;;
+			*) exit_with_error "Unknown ROOTFS_COMPRESSION: '${rootfs_compression}' (expected: gzip|zstd|zst|none)" ;;
 		esac
 		if [[ "${rootfs_compression}" == "none" && -z "${ROOTFS_EXPORT_DIR}" ]]; then
 			exit_with_error "ROOTFS_COMPRESSION=none requires ROOTFS_EXPORT_DIR (otherwise nothing is produced)"
@@ -138,10 +156,26 @@ function create_image_from_sdcard_rootfs() {
 			# exit code of the final compressor stage hides truncation mid-archive).
 			declare -a tar_excludes=(--exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' --exclude='./sys/*')
 			[[ "${INCLUDE_HOME_DIR:-no}" != "yes" ]] && tar_excludes+=(--exclude='./home/*')
+			# Default 'security.*' covers file capabilities (setcap, e.g.
+			# /usr/bin/ping) and SELinux contexts. Anything broader (e.g. '*')
+			# also captures source-fs internals like bcachefs_effective.* /
+			# btrfs.* / zfs.* from the build host that have no meaning on the
+			# target and produce noisy "Operation not supported" errors at
+			# extract time. Override via ROOTFS_TAR_XATTR_INCLUDE if needed.
+			declare -g ROOTFS_TAR_XATTR_INCLUDE="${ROOTFS_TAR_XATTR_INCLUDE:-security.*}"
+			declare -ga ROOTFS_TAR_EXTRA_FLAGS=("${ROOTFS_TAR_EXTRA_FLAGS[@]}")
+			call_extension_method "pre_create_rootfs_archive" <<- 'PRE_CREATE_ROOTFS_ARCHIVE'
+				*called before tar packs the rootfs into ${ROOTFS_ARCHIVE_PATH}*
+				Only fires for `ROOTFS_TYPE=nfs` and `ROOTFS_TYPE=nfs-root`.
+				Override `ROOTFS_TAR_XATTR_INCLUDE` (default `security.*`) or
+				append to `ROOTFS_TAR_EXTRA_FLAGS` to customise tar invocation
+				(e.g. add `--xattrs-include='user.foo.*'` for app-specific xattrs).
+			PRE_CREATE_ROOTFS_ARCHIVE
 			rm -f "${rootfs_archive_tmp}"
 			(
 				set -o pipefail
-				tar cp --xattrs --directory="$SDCARD/" "${tar_excludes[@]}" . |
+				tar cp --numeric-owner --xattrs --xattrs-include="${ROOTFS_TAR_XATTR_INCLUDE}" --acls --selinux --sparse "${ROOTFS_TAR_EXTRA_FLAGS[@]}" \
+					--directory="$SDCARD/" "${tar_excludes[@]}" . |
 					pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
 						-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.${archive_ext}" |
 					${archive_filter} > "${rootfs_archive_tmp}"
@@ -169,6 +203,7 @@ function create_image_from_sdcard_rootfs() {
 			# reused export tree (otherwise the NFS root silently drifts from the image).
 			# --delete-excluded additionally purges receiver-side files that match our
 			# excludes (e.g. stale /home/* left over from a prior INCLUDE_HOME_DIR=yes build).
+			# shellcheck disable=SC2090 # embedded single-quotes in $exclude_home are intentional — see declaration above
 			run_host_command_logged rsync -aHWh --delete --delete-excluded $rsync_ea \
 				--exclude="/boot/*" \
 				--exclude="/dev/*" \
@@ -179,15 +214,17 @@ function create_image_from_sdcard_rootfs() {
 				$exclude_home \
 				--info=progress0,stats1 "$SDCARD/" "${ROOTFS_EXPORT_DIR}/"
 		fi
-	fi
 
-	call_extension_method "post_create_rootfs_archive" <<- 'POST_CREATE_ROOTFS_ARCHIVE'
-		*called after the rootfs archive / export tree is produced*
-		Runs after pre_umount_final_image and after the archive step, so any
-		path the archive step sets (e.g. ROOTFS_ARCHIVE_PATH) is populated.
-		Use this instead of pre_umount_final_image when you need the final
-		archive path — deploy hooks that ship the archive belong here.
-	POST_CREATE_ROOTFS_ARCHIVE
+		call_extension_method "post_create_rootfs_archive" <<- 'POST_CREATE_ROOTFS_ARCHIVE'
+			*called after the rootfs archive / export tree is produced*
+			Only fires for `ROOTFS_TYPE=nfs` and `ROOTFS_TYPE=nfs-root`, since
+			other rootfs types do not produce a standalone archive. Runs after
+			`pre_umount_final_image` and after the archive step, so any path
+			the archive step sets (e.g. `ROOTFS_ARCHIVE_PATH`) is populated.
+			Use this instead of `pre_umount_final_image` when you need the
+			final archive path — deploy hooks that ship the archive belong here.
+		POST_CREATE_ROOTFS_ARCHIVE
+	fi
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		# Check the partition table after the uboot code has been written
