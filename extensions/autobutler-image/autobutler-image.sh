@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+enable_extension "appliance-image"
+
+function extension_prepare_config__400_autobutler_image_defaults() {
+	: "${AUTOBUTLER_IMAGE_ENABLE_SSH:=no}"
+	: "${AUTOBUTLER_IMAGE_LOGIN_PASSWORD:=}"
+	: "${AUTOBUTLER_IMAGE_LOGIN_USER:=autobutler}"
+	: "${AUTOBUTLER_IMAGE_HOSTNAME:=autobutler}"
+	: "${AUTOBUTLER_IMAGE_PORT:=80}"
+
+	declare -g APPLIANCE_IMAGE_SERVICE_NAME="autobutler"
+	declare -g APPLIANCE_IMAGE_SERVICE_DESCRIPTION="AutoButler Service"
+	declare -g APPLIANCE_IMAGE_HOSTNAME="${AUTOBUTLER_IMAGE_HOSTNAME}"
+	declare -g APPLIANCE_IMAGE_SERVICE_USER="autobutler"
+	declare -g APPLIANCE_IMAGE_SERVICE_GROUP="autobutler"
+	declare -g APPLIANCE_IMAGE_LOGIN_USER="${AUTOBUTLER_IMAGE_LOGIN_USER}"
+	declare -g APPLIANCE_IMAGE_LOGIN_PASSWORD="${AUTOBUTLER_IMAGE_LOGIN_PASSWORD}"
+	declare -g APPLIANCE_IMAGE_CREATE_LOGIN_USER="yes"
+	declare -g APPLIANCE_IMAGE_BINARY_URL="https://github.com/autobutler-org/autobutler/releases/latest/download/autobutler_Linux_arm64.tar.gz"
+	declare -g APPLIANCE_IMAGE_BINARY_URL_EXTRACT_MODE="targz"
+	declare -g APPLIANCE_IMAGE_BINARY_ARCHIVE_MEMBER="autobutler"
+	declare -g APPLIANCE_IMAGE_BINARY_INSTALL_PATH="/usr/local/bin/autobutler"
+	declare -g APPLIANCE_IMAGE_EXEC_START="/usr/local/bin/autobutler serve"
+	declare -g APPLIANCE_IMAGE_WORKING_DIR="/var/lib/autobutler"
+	declare -g APPLIANCE_IMAGE_DATA_DIR="/var/lib/autobutler/data"
+	declare -g APPLIANCE_IMAGE_EXTRA_DIRECTORIES="/var/lib/autobutler/mounts"
+	declare -g APPLIANCE_IMAGE_PACKAGES="avahi-daemon ufw udisks2"
+	declare -g APPLIANCE_IMAGE_SYSTEMD_ENVIRONMENT="PORT=${AUTOBUTLER_IMAGE_PORT} GIN_MODE=release"
+	declare -g APPLIANCE_IMAGE_SYSTEMD_STANDARD_OUTPUT="append:/var/log/autobutler.app"
+	declare -g APPLIANCE_IMAGE_SYSTEMD_STANDARD_ERROR="append:/var/log/autobutler.err"
+	declare -g APPLIANCE_IMAGE_AVAHI_SERVICE_NAME="Autobutler on %h"
+	declare -g APPLIANCE_IMAGE_AVAHI_SERVICE_PORT="${AUTOBUTLER_IMAGE_PORT}"
+	declare -g APPLIANCE_IMAGE_OPEN_PORTS="${AUTOBUTLER_IMAGE_PORT}/tcp"
+	declare -g APPLIANCE_IMAGE_ENABLE_SSH="${AUTOBUTLER_IMAGE_ENABLE_SSH}"
+	declare -g APPLIANCE_IMAGE_SUDOERS_FILENAME="autobutler"
+	declare -g APPLIANCE_IMAGE_SUDOERS_CONTENT="autobutler ALL=(root) NOPASSWD: /bin/mount * /var/lib/autobutler/mounts/*, /bin/umount /var/lib/autobutler/mounts/*"
+}
