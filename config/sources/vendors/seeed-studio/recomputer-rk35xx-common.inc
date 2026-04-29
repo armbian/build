@@ -90,6 +90,11 @@ function pre_install_distribution_specific__recomputer_install_morse_tools() {
 		run_host_command_logged rm -f "${SDCARD}${chroot_deb}"
 	done
 
+	# Fix apt state after --force-depends broke dependency tracking
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 --fix-broken install || {
+		display_alert "apt --fix-broken install failed" "morse-tools" "warn"
+	}
+
 	display_alert "Morse wireless tools installed successfully" "morse-tools" "info"
 }
 
