@@ -23,7 +23,8 @@ function create_new_rootfs_cache_tarball() {
 	declare compression_ratio_rootfs="${ROOTFS_COMPRESSION_RATIO:-"5"}"
 
 	display_alert "zstd tarball of rootfs" "${RELEASE}:: ${cache_name} :: compression ${compression_ratio_rootfs}" "info"
-	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
+	tar cp --numeric-owner --xattrs --xattrs-include="${ROOTFS_TAR_XATTR_INCLUDE:-security.*}" --acls --selinux --sparse \
+		--directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
 		--exclude='./tmp/*' --exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . |
 		pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" |
 		zstdmt "-${compression_ratio_rootfs}" -c > "${cache_fname}"
@@ -61,7 +62,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 			local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
 			acng_check_status_or_restart
 			;;
-		no)     ;& # do nothing, fallthrough
+		no) ;& # do nothing, fallthrough
 		"")
 			:  # still do nothing
 			;; # stop falling
@@ -150,7 +151,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	}
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
-
 
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
 
