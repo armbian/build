@@ -3,6 +3,7 @@
 This extension provisions an appliance-style image directly at build time.
 
 Features:
+
 - installs appliance packages into the image
 - copies an application binary from a local path or download URL
 - can extract a `.tar.gz` release asset before installing the binary
@@ -13,10 +14,12 @@ Features:
 - disables Armbian first-run prompts so the image boots in its final state
 
 Enable it in your build config with `ENABLE_EXTENSIONS="appliance-image"` and set at least one of:
+
 - `APPLIANCE_IMAGE_BINARY_SOURCE_PATH`
 - `APPLIANCE_IMAGE_BINARY_URL`
 
 Useful settings:
+
 - `APPLIANCE_IMAGE_SERVICE_NAME`
 - `APPLIANCE_IMAGE_LOGIN_USER`
 - `APPLIANCE_IMAGE_LOGIN_PASSWORD`
