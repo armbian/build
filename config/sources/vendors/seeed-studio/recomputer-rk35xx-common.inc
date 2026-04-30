@@ -1,101 +1,38 @@
 # Common configuration for reComputer RK3576/RK3588 DevKit
 # Source this file from individual board configs.
 
-# Helper: download a deb if not cached, then install into chroot
-# Usage: seeed_recomputer_download_and_install_deb <url> <cache_filename> <display_name> [expected_sha256]
-function seeed_recomputer_download_and_install_deb() {
-	local url="$1"
-	local cache_filename="$2"
-	local display_name="$3"
-	local expected_sha256="${4:-}"
+# Seeed APT repository configuration
+SEEED_APT_REPO_URL="https://seeed-studio.github.io/seeed_armbian_extension"
 
-	local deb_file="${SRC}/cache/download/${cache_filename}"
-	mkdir -p "${SRC}/cache/download"
+# Helper: install packages from Seeed APT repo.
+# Armbian's chroot_sdcard_apt_get_install bind-mounts cached apt lists,
+# which overwrites the Seeed repo index. Use chroot_sdcard directly instead.
+# Usage: seeed_recomputer_install_from_apt <package> [<package> ...]
+function seeed_recomputer_install_from_apt() {
+	(($#)) || return 0
 
-	if [[ ! -f "${deb_file}" ]]; then
-		display_alert "Downloading ${display_name}" "${url}" "info"
-		local tmp_file="${deb_file}.tmp"
-		if ! curl --connect-timeout 30 --retry 3 --retry-delay 5 -fsSL -o "${tmp_file}" "${url}"; then
-			rm -f "${tmp_file}"
-			display_alert "Failed to download ${display_name}" "${display_name}" "err"
-			return 1
-		fi
-		if [[ -n "${expected_sha256}" ]]; then
-			if ! echo "${expected_sha256}  ${tmp_file}" | sha256sum -c -; then
-				rm -f "${tmp_file}"
-				display_alert "Checksum mismatch for ${display_name}" "${display_name}" "err"
-				return 1
-			fi
-		fi
-		mv "${tmp_file}" "${deb_file}"
-	fi
-
-	install_deb_chroot "${deb_file}" "" "" ""
-	display_alert "${display_name} installed successfully" "${display_name}" "info"
+	cat > "${SDCARD}/etc/apt/sources.list.d/seeed.list" <<- EOF
+		deb [trusted=yes] ${SEEED_APT_REPO_URL} stable main
+	EOF
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
+	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
+		--no-install-recommends install "$@"
+	rm -f "${SDCARD}/etc/apt/sources.list.d/seeed.list"
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
 }
 
-# Install custom bluez package for FCS960K support
-function pre_install_distribution_specific__recomputer_install_custom_bluez() {
-	seeed_recomputer_download_and_install_deb \
-		"https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/fcs960k-aic-bluez_5.66-1_arm64.deb" \
-		"fcs960k-aic-bluez_5.66-1_arm64.deb" \
-		"fcs960k-aic-bluez"
-}
+# Install Seeed common packages (bluez, USB gadget, Morse tools)
+function pre_install_distribution_specific__recomputer_install_seeed_packages() {
+	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
-# Install USB gadget package
-function pre_install_distribution_specific__recomputer_install_usbdevice_gadget() {
-	seeed_recomputer_download_and_install_deb \
-		"https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/usbdevice-gadget-rk3588_1.0.1_arm64.deb" \
-		"usbdevice-gadget-rk3588_1.0.1_arm64.deb" \
-		"usbdevice-gadget"
-}
+	seeed_recomputer_install_from_apt \
+		fcs960k-aic-bluez \
+		usbdevice-gadget-rk3588 \
+		wpa-supplicant-morse-tools \
+		morsectrl-tools \
+		hostapd-morse-tools
 
-# Install Morse Wireless tools (FGH100M support)
-# Uses dpkg --force-depends because hostapd/wpa-supplicant tools depend on
-# libssl1.1 which is not available in Noble (ships libssl3).
-# The tools still work at runtime against libssl3.
-function pre_install_distribution_specific__recomputer_install_morse_tools() {
-	display_alert "Installing Morse wireless tools for FGH100M" "morse-tools" "info"
-
-	local cache_dir="${SRC}/cache/download"
-	mkdir -p "${cache_dir}"
-
-	declare -A packages=(
-		["wpa-supplicant-morse-tools"]="https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/wpa-supplicant-morse-tools_1.0-1_arm64.deb"
-		["morsectrl-tools"]="https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/morsectrl-tools_1.0-1_arm64.deb"
-		["hostapd-morse-tools"]="https://github.com/Seeed-Studio/seeed_armbian_extension/releases/download/v1.0/hostapd-morse-tools_1.0-1_arm64.deb"
-	)
-
-	for pkg_name in "${!packages[@]}"; do
-		local pkg_url="${packages[$pkg_name]}"
-		local pkg_file="${cache_dir}/${pkg_name}_1.0-1_arm64.deb"
-
-		if [[ ! -f "${pkg_file}" ]]; then
-			display_alert "Downloading ${pkg_name}" "${pkg_url}" "info"
-			local tmp_file="${pkg_file}.tmp"
-			if ! curl --connect-timeout 30 --retry 3 --retry-delay 5 -fsSL -o "${tmp_file}" "${pkg_url}"; then
-				rm -f "${tmp_file}"
-				display_alert "Failed to download ${pkg_name}" "${pkg_name}" "err"
-				continue
-			fi
-			mv "${tmp_file}" "${pkg_file}"
-		fi
-
-		display_alert "Installing ${pkg_name} via dpkg" "morse-tools" "info"
-		local chroot_deb="/root/${pkg_name}_1.0-1_arm64.deb"
-		run_host_command_logged cp -pv "${pkg_file}" "${SDCARD}${chroot_deb}"
-		chroot_sdcard dpkg --force-depends -i "${chroot_deb}" || {
-			display_alert "Failed to install ${pkg_name}" "morse-tools" "err"
-		}
-		run_host_command_logged rm -f "${SDCARD}${chroot_deb}"
-	done
-
-	# Fix apt state after --force-depends broke dependency tracking
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 --fix-broken install || {
-		display_alert "apt --fix-broken install failed" "morse-tools" "warn"
-	}
-
-	display_alert "Morse wireless tools installed successfully" "morse-tools" "info"
+	display_alert "Seeed packages installed successfully" "seeed-apt" "info"
 }
 
 # AIC8800 wireless tweaks (BSP-level)
@@ -105,15 +42,15 @@ function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
 	mkdir -p "${destination}"/etc/modules-load.d
 
 	cat > "${destination}"/etc/modprobe.d/aic8800-wireless.conf <<- EOT
-	options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
-EOT
+		options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
+	EOT
 
 	cat > "${destination}"/etc/modules-load.d/aic8800-btlpm.conf <<- EOT
-	hidp
-	rfcomm
-	bnep
-	aic8800_btlpm_sdio
-EOT
+		hidp
+		rfcomm
+		bnep
+		aic8800_btlpm_sdio
+	EOT
 
 	if [[ -d "$SRC/packages/bsp/aic8800" ]]; then
 		install -d -m 0755 "${destination}/usr/bin"
@@ -292,15 +229,15 @@ function post_family_tweaks__recomputer_add_sbin_to_path() {
 
 	mkdir -p $SDCARD/etc/profile.d
 	cat > $SDCARD/etc/profile.d/custom-path.sh <<-'EOF'
-# Add sbin directories to PATH for ifconfig and other admin tools
-if [ -d /usr/sbin ] && [[ ":$PATH:" != *":/usr/sbin:"* ]]; then
-    PATH="/usr/sbin:$PATH"
-fi
-if [ -d /sbin ] && [[ ":$PATH:" != *":/sbin:"* ]]; then
-    PATH="/sbin:$PATH"
-fi
-export PATH
-EOF
+	# Add sbin directories to PATH for ifconfig and other admin tools
+	if [ -d /usr/sbin ] && [[ ":$PATH:" != *":/usr/sbin:"* ]]; then
+	    PATH="/usr/sbin:$PATH"
+	fi
+	if [ -d /sbin ] && [[ ":$PATH:" != *":/sbin:"* ]]; then
+	    PATH="/sbin:$PATH"
+	fi
+	export PATH
+	EOF
 
 	chmod +x $SDCARD/etc/profile.d/custom-path.sh
 }
