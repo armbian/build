@@ -876,18 +876,15 @@ order:
 - `nfsroot=` is using a hostname the client can't resolve yet (DNS
   isn't up during early mount). Use an IP, not a hostname — the
   extension does this by default when `NETBOOT_SERVER` is set.
-- `nfsmount: need a path` retried forever — the image has
-  `nfsroot=auto` but `ROOTPATH` ended up empty. Either the router
-  doesn't advertise DHCP option 17 (`uci add_list dhcp.lan.dhcp_option='17,<server>:<path>'`),
-  or the build skipped the initramfs plumbing (e.g. an older `uInitrd`
-  on TFTP from before this extension landed). For a quick check,
-  unpack the deployed `uInitrd` and confirm `option root_path` is
-  in `/etc/dhcpcd.conf` and `71-netboot-rootpath` exists under
-  `/usr/libexec/dhcpcd-hooks/` or `/usr/lib/dhcpcd/dhcpcd-hooks/` (the
-  initramfs hook copies into whichever the upstream dhcpcd hook used).
-  If you can't fix the router, set
-  `NETBOOT_SERVER=<ip>` at build time and rebuild — that path skips
-  option 17 entirely.
+- `NFS over TCP not available from <gateway-ip>` — the initramfs is
+  trying to mount from the default gateway instead of the NFS server.
+  The DHCP boot-server (`siaddr`) is not set or points to the wrong
+  host. Set `dhcp-boot=default,nfsserver,<nfs-server-ip>` in dnsmasq
+  (or `uci set dhcp.@dnsmasq[0].dhcp_boot='default,nfsserver,<ip>'`
+  in OpenWRT) so the router announces the NFS server as siaddr. Check
+  `/proc/net/pnp` on a booted client — `bootserver` must match your
+  NFS server IP. If you can't configure the router, set
+  `NETBOOT_SERVER=<ip>` at build time and rebuild.
 
 **`MODULE FAILURE` from initramfs** — the kernel is loading an
 initramfs and trying to run `/init` that doesn't understand NFS root.
