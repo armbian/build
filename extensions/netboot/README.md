@@ -28,6 +28,7 @@ setup, network configuration, troubleshooting, end-to-end examples.
 - [Multi-board / multi-host deployments](#multi-board--multi-host-deployments)
 - [First boot and `armbian-firstrun`](#first-boot-and-armbian-firstrun)
 - [End-to-end example: helios64](#end-to-end-example-helios64)
+- [Initramfs NFS-mount watchdog](#initramfs-nfs-mount-watchdog)
 - [Troubleshooting](#troubleshooting)
 
 ## Why this exists
@@ -841,6 +842,47 @@ skips it. Pick one before the first boot on an untrusted LAN:
 
 The `armbian-firstrun.service` line in the boot log means SSH host keys
 have been regenerated on this boot — they'll persist in the NFS rootfs.
+
+## Initramfs NFS-mount watchdog
+
+A hardware watchdog does not help when the boot hangs before userspace —
+`watchdog.service` only starts after `systemd`, so a stall in initramfs
+(no DHCP lease, server unreachable, `nfsroot=` resolves but mount keeps
+retrying) leaves the board sitting forever with no one to kick the dog.
+For unattended netboot fleets the only safe behaviour is to reboot and
+let DHCP/TFTP/NFS retry from scratch.
+
+The extension installs two initramfs scripts for `ROOTFS_TYPE=nfs-root`
+images (`scripts/init-premount/zz-netboot-watchdog`,
+`scripts/nfs-bottom/zz-netboot-watchdog-cancel`):
+
+- arms only when kernel cmdline contains `root=/dev/nfs` (any other
+  rootfs is left alone, even if the scripts somehow ended up in the
+  initramfs);
+- 10 minutes after `init-premount`, if the NFS root has not been
+  mounted, triggers an immediate reboot via SysRq-B (`echo b >
+  /proc/sysrq-trigger`). On arm64 this goes through PSCI, not a kernel
+  panic — no crashdump, no `panic=N` interaction;
+- force-enables SysRq right before the trigger (`echo 1 >
+  /proc/sys/kernel/sysrq`), so the watchdog still works on hardened
+  images that set `kernel.sysrq=0`;
+- gets cancelled in the `nfs-bottom` hook the moment NFS root mounts
+  successfully (background PID is read from `/run/netboot-watchdog.pid`
+  and killed).
+
+The timeout is hard-coded at 600 seconds. It is deliberately longer than
+the kernel's own `Waiting up to 180 secs for end0 ... done` netdev poll
+plus a few NFS retries, so a slow PXE server or a momentary network
+blip does not cause a needless reboot. Edit
+`/etc/initramfs-tools/scripts/init-premount/zz-netboot-watchdog` and
+`update-initramfs -u` if you need a different value.
+
+To disable the watchdog on a per-image basis, drop both scripts from
+the rootfs before the build packages the initramfs (e.g. in a
+`netboot_artifacts_ready` consumer, or via `userpatches/customize-image.sh`
+followed by `update-initramfs -u` in the chroot). There is no build-time
+variable for this — silent hangs without a watchdog are essentially never
+what you want on a diskless fleet.
 
 ## Troubleshooting
 
