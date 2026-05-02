@@ -42,6 +42,16 @@ _ASSIGN_RE = re.compile(
     re.MULTILINE,
 )
 
+# Top-level `source ${SRC}/config/boards/<foo>.csc` (or .conf/.tvb/.wip).
+# Anchored to start-of-line so a `source` call inside a function body
+# (which is always indented) doesn't get followed. Captures the relative
+# path under config/boards/ so the validator can resolve it next to the
+# child file being validated.
+_SOURCE_RE = re.compile(
+    r'^source\s+["\']?\$\{?SRC\}?/config/boards/([^"\'\s]+\.(?:conf|csc|tvb|wip))["\']?',
+    re.MULTILINE,
+)
+
 
 
 @dataclass
@@ -83,6 +93,56 @@ def parse_assignments(text: str) -> dict[str, str]:
     return out
 
 
+def collect_inherited_assignments(path: Path, _visited: set[Path] | None = None) -> dict[str, str]:
+    """Resolve fields a board inherits via `source ${SRC}/config/boards/<foo>`.
+
+    Some boards (e.g. ayn-odin2{mini,portal}.csc, ayn-thor.csc) consist
+    of one `source` line pointing at a base .csc plus a handful of
+    overrides for the fields they actually change. Fields the child
+    doesn't redeclare — BOARDFAMILY, KERNEL_TARGET, KERNEL_TEST_TARGET
+    in the typical case — live in the sourced parent.
+
+    Returns a flat dict of effective fields the parent chain provides,
+    in the same shape parse_assignments() returns. Caller merges this
+    behind the child's own dict so the child's explicit values still
+    win.
+
+    Cycles (a sources b sources a) are guarded by the _visited set;
+    missing or unresolvable source targets are silently skipped — the
+    main validator will still flag any field that ends up unset.
+    """
+    if _visited is None:
+        _visited = set()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return {}
+    if resolved in _visited:
+        return {}
+    _visited.add(resolved)
+
+    text = path.read_text(errors="replace")
+    inherited: dict[str, str] = {}
+    for m in _SOURCE_RE.finditer(text):
+        sourced = path.parent / m.group(1)
+        if not sourced.is_file():
+            continue
+        # Recurse first so transitive parents are merged behind the
+        # immediate parent's fields. Within a single chain, nearest
+        # parent's value should win over a more distant ancestor's,
+        # which falls out naturally from setdefault's "skip if set".
+        ancestors = collect_inherited_assignments(sourced, _visited)
+        parent_fields = parse_assignments(sourced.read_text(errors="replace"))
+        # Parent's own assignments win over its ancestors; merge in
+        # that order, then those become the inheritance pool the
+        # caller will lay behind the child.
+        for k, v in parent_fields.items():
+            inherited.setdefault(k, v)
+        for k, v in ancestors.items():
+            inherited.setdefault(k, v)
+    return inherited
+
+
 def validate(path: Path) -> list[Finding]:
     ext = path.suffix.lstrip(".")
     if ext == "eos":
@@ -90,6 +150,10 @@ def validate(path: Path) -> list[Finding]:
 
     text = path.read_text(errors="replace")
     fields = parse_assignments(text)
+    # Layer fields the child inherits via `source ${SRC}/config/boards/<...>`
+    # behind its own — child's explicit value wins, parent fills the gaps.
+    for k, v in collect_inherited_assignments(path).items():
+        fields.setdefault(k, v)
 
     findings: list[Finding] = []
     fname = str(path)
