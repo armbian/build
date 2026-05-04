@@ -163,8 +163,11 @@ function do_main_configuration() {
 			;;
 	esac
 
-	# Check if the filesystem type is supported by the build host
-	if [[ $CONFIG_DEFS_ONLY != yes ]]; then # don't waste time if only gathering config defs
+	# Check if the filesystem type is supported by the build host.
+	# Skipped for nfs / nfs-root: these rootfs types produce a tarball on the
+	# host (rootfs-to-image.sh `tar | gzip`) and never mount NFS locally — the
+	# target's kernel mounts it at boot time, so host FS support is irrelevant.
+	if [[ $CONFIG_DEFS_ONLY != yes && $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root ]]; then # don't waste time if only gathering config defs
 		check_filesystem_compatibility_on_host
 	fi
 
