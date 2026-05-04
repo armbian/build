@@ -23,7 +23,7 @@ UBOOT_TARGET_MAP="flash.bin;;flash.bin"
 # linux releated
 case $BOARD in
 
-	mba8mpxl*)
+	mba8mpxl* | tq-smarc2-*)
 		LINUXCONFIG='linux-tqma-'$BRANCH # one config for "tq arm modules"
 		case $BRANCH in
 
