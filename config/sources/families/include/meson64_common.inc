@@ -44,6 +44,9 @@ case $BRANCH in
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="7.0"
 		;;
+	bleedingedge)
+		declare -g KERNEL_MAJOR_MINOR="7.1"
+		;;
 
 esac
 
