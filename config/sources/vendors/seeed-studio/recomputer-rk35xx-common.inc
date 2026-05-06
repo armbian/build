@@ -4,35 +4,76 @@
 # Seeed APT repository configuration
 SEEED_APT_REPO_URL="https://seeed-studio.github.io/seeed_armbian_extension"
 
+# Configure Seeed APT repository in the image (persists for apt upgrade)
+function post_family_tweaks_bsp__seeed_configure_apt_source() {
+	display_alert "$BOARD" "Configuring Seeed APT repository" "info"
+
+	install -d -m 0755 "${destination}/usr/share/keyrings"
+	install -d -m 0755 "${destination}/etc/apt/sources.list.d"
+	curl -fsSL --connect-timeout 30 --retry 3 \
+		"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
+		| gpg --dearmor > "${destination}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
+
+	cat > "${destination}/etc/apt/sources.list.d/seeed.list" <<- EOF
+		deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} stable main
+	EOF
+}
+
 # Helper: install packages from Seeed APT repo.
-# Armbian's chroot_sdcard_apt_get_install bind-mounts cached apt lists,
-# which overwrites the Seeed repo index. Use chroot_sdcard directly instead.
+# Imports GPG key, writes source, updates only Seeed index, installs packages.
+# The persistent apt source is configured by post_family_tweaks_bsp__seeed_configure_apt_source.
 # Usage: seeed_recomputer_install_from_apt <package> [<package> ...]
 function seeed_recomputer_install_from_apt() {
 	(($#)) || return 0
 
-	cat > "${SDCARD}/etc/apt/sources.list.d/seeed.list" <<- EOF
-		deb [trusted=yes] ${SEEED_APT_REPO_URL} stable main
-	EOF
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
+	# Import GPG key if not already present (dearmor to binary format for signed-by)
+	if [[ ! -f "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
+		install -d -m 0755 "${SDCARD}/usr/share/keyrings"
+		curl -fsSL --connect-timeout 30 --retry 3 \
+			"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
+			| gpg --dearmor > "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
+	fi
+
+	# Write Seeed source if not present
+	if [[ ! -f "${SDCARD}/etc/apt/sources.list.d/seeed.list" ]]; then
+		cat > "${SDCARD}/etc/apt/sources.list.d/seeed.list" <<- EOF
+			deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} stable main
+		EOF
+	fi
+
+	# Only update the Seeed source, not all sources
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 \
+		-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/seeed.list \
+		-o Dir::Etc::sourceparts=/dev/null \
+		update
+
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
 		--no-install-recommends install "$@"
-	rm -f "${SDCARD}/etc/apt/sources.list.d/seeed.list"
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
 }
 
-# Install Seeed common packages (bluez, USB gadget, Morse tools)
+# Install Seeed common packages (USB gadget, Morse tools)
+# Note: fcs960k-aic-bluez is NOT installed here — it conflicts with bluez,
+# which gets pulled in later by desktop packages. It's installed in
+# post_repo_customize_image instead, after all desktop/extension packages.
 function pre_install_distribution_specific__recomputer_install_seeed_packages() {
 	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
 	seeed_recomputer_install_from_apt \
-		fcs960k-aic-bluez \
 		usbdevice-gadget-rk3588 \
 		wpa-supplicant-morse-tools \
 		morsectrl-tools \
 		hostapd-morse-tools
 
 	display_alert "Seeed packages installed successfully" "seeed-apt" "info"
+}
+
+# Install fcs960k-aic-bluez AFTER all desktop/extension packages.
+# This package conflicts with bluez; desktop pulls in bluez during
+# install_distribution_agnostic, so we must install fcs960k last to replace it.
+function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
+	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
+
+	seeed_recomputer_install_from_apt fcs960k-aic-bluez
 }
 
 # AIC8800 wireless tweaks (BSP-level)
