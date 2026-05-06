@@ -59,7 +59,7 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
 	seeed_recomputer_install_from_apt \
-		usbdevice-gadget-rk3588 \
+		usbdevice-gadget-rk \
 		wpa-supplicant-morse-tools \
 		morsectrl-tools \
 		hostapd-morse-tools
