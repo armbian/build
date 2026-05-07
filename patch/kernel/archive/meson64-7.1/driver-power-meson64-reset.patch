@@ -1,0 +1,236 @@
+From 231f63640fdd07e9d5af150a07852f9518451f50 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@gmail.com>
+Date: Thu, 7 May 2026 08:19:57 -0400
+Subject: [PATCH] meson64 reboot power off driver
+
+Driver supports restart / power off for amlogic g12a, g12b and
+sm1 SoCs.
+
+Original source: https://github.com/tobetter/linux
+Updated by: https://deepai.org/
+
+Signed-off-by: Patrick Yavitz <pyavitz@gmail.com>
+---
+ drivers/power/reset/Kconfig          |   7 ++
+ drivers/power/reset/Makefile         |   1 +
+ drivers/power/reset/meson64-reboot.c | 181 +++++++++++++++++++++++++++
+ 3 files changed, 189 insertions(+)
+ create mode 100644 drivers/power/reset/meson64-reboot.c
+
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index 124afb99febe..b9a17898e236 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -9,6 +9,13 @@ menuconfig POWER_RESET
+ 
+ if POWER_RESET
+ 
++config POWER_RESET_MESON64
++	bool "Meson64 reboot/power-off driver"
++	depends on ARCH_MESON
++	help
++	  The driver supports restart / power off for amlogic
++	  g12a, g12b and sm1 SoCs
++
+ config POWER_RESET_AS3722
+ 	bool "ams AS3722 power-off driver"
+ 	depends on MFD_AS3722
+diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
+index d7ae97241a83..8e95f8e2e6c0 100644
+--- a/drivers/power/reset/Makefile
++++ b/drivers/power/reset/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_POWER_RESET_MESON64) += meson64-reboot.o
+ obj-$(CONFIG_POWER_RESET_AS3722) += as3722-poweroff.o
+ obj-$(CONFIG_POWER_RESET_AT91_POWEROFF) += at91-poweroff.o
+ obj-$(CONFIG_POWER_RESET_AT91_RESET) += at91-reset.o
+diff --git a/drivers/power/reset/meson64-reboot.c b/drivers/power/reset/meson64-reboot.c
+new file mode 100644
+index 000000000000..48c6575b8cca
+--- /dev/null
++++ b/drivers/power/reset/meson64-reboot.c
+@@ -0,0 +1,181 @@
++/*
++ * drivers/power/reset/meson64-reboot.c
++ *
++ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
++ * Updated for Linux 7.1
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ */
++
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/module.h>
++#include <linux/reboot.h>
++#include <linux/gpio/consumer.h>
++#include <asm/system_misc.h>
++#include <asm/compiler.h>
++#include <linux/kdebug.h>
++#include <linux/arm-smccc.h>
++
++static struct gpio_desc *sd_vqsw_desc;
++static struct gpio_desc *sd_vmmc_desc;
++static struct gpio_desc *sd_vqen_desc;
++
++static u32 psci_function_id_restart;
++static u32 psci_function_id_poweroff;
++
++#define CHECK_RET(ret) { \
++    if (ret) \
++    pr_err("[%s] gpio op failed(%d) at line %d\n",\
++            __func__, ret, __LINE__); \
++}
++
++static noinline int __invoke_psci_fn_smc(u64 function_id, u64 arg0, u64 arg1,
++                     u64 arg2)
++{
++    struct arm_smccc_res res;
++
++    arm_smccc_smc((unsigned long)function_id,
++            (unsigned long)arg0,
++            (unsigned long)arg1,
++            (unsigned long)arg2,
++            0, 0, 0, 0, &res);
++    return res.a0;
++}
++
++void meson64_card_reset(void)
++{
++    int ret = 0;
++
++    if (!sd_vqsw_desc && !sd_vmmc_desc)
++        return;
++
++    if (!sd_vqen_desc) {
++        // Use gpiod API for GPIO control
++        if (sd_vqsw_desc) {
++            ret = gpiod_direction_output(sd_vqsw_desc, 0);
++            CHECK_RET(ret);
++            mdelay(10);
++            ret = gpiod_direction_output(sd_vqsw_desc, 1);
++            CHECK_RET(ret);
++        }
++
++        if (sd_vmmc_desc) {
++            ret = gpiod_direction_output(sd_vmmc_desc, 1);
++            CHECK_RET(ret);
++        }
++        mdelay(5);
++    } else {
++        // Alternative control with vqen
++        if (sd_vqsw_desc) {
++            ret = gpiod_direction_output(sd_vqsw_desc, 0);
++            CHECK_RET(ret);
++        }
++        if (sd_vqen_desc) {
++            ret = gpiod_direction_output(sd_vqen_desc, 0);
++            CHECK_RET(ret);
++        }
++        if (sd_vmmc_desc) {
++            ret = gpiod_direction_output(sd_vmmc_desc, 0);
++            CHECK_RET(ret);
++        }
++        mdelay(100);
++        if (sd_vqen_desc) {
++            ret = gpiod_direction_input(sd_vqen_desc);
++            CHECK_RET(ret);
++        }
++        if (sd_vmmc_desc) {
++            ret = gpiod_direction_input(sd_vmmc_desc);
++            CHECK_RET(ret);
++        }
++        if (sd_vqsw_desc) {
++            ret = gpiod_direction_input(sd_vqsw_desc);
++            CHECK_RET(ret);
++        }
++        mdelay(5);
++    }
++}
++
++static int do_meson64_restart(struct notifier_block *this, unsigned long mode, void *cmd)
++{
++    meson64_card_reset();
++    __invoke_psci_fn_smc(psci_function_id_restart,
++                0, 0, 0);
++    return 0;
++}
++
++static struct notifier_block meson64_restart_handler = {
++    .notifier_call = do_meson64_restart,
++    .priority = 127,
++};
++
++static void do_meson64_poweroff(void)
++{
++    meson64_card_reset();
++
++    __invoke_psci_fn_smc(0x82000042, 1, 0, 0);
++    __invoke_psci_fn_smc(psci_function_id_poweroff,
++                0, 0, 0);
++}
++
++static int meson64_restart_probe(struct platform_device *pdev)
++{
++    struct device_node *of_node;
++    u32 id;
++    int ret;
++
++    of_node = pdev->dev.of_node;
++
++    if (!of_property_read_u32(of_node, "sys_reset", &id)) {
++        psci_function_id_restart = id;
++        register_restart_handler(&meson64_restart_handler);
++    }
++
++    if (!of_property_read_u32(of_node, "sys_poweroff", &id)) {
++        psci_function_id_poweroff = id;
++        pm_power_off = do_meson64_poweroff;
++    }
++
++    sd_vqsw_desc = gpiod_get(&pdev->dev, "sd-vqsw", GPIOD_OUT_LOW);
++    if (IS_ERR(sd_vqsw_desc))
++        sd_vqsw_desc = NULL;
++
++    sd_vmmc_desc = gpiod_get(&pdev->dev, "sd-vmmc", GPIOD_OUT_LOW);
++    if (IS_ERR(sd_vmmc_desc))
++        sd_vmmc_desc = NULL;
++
++    sd_vqen_desc = gpiod_get(&pdev->dev, "sd-vqen", GPIOD_OUT_LOW);
++    if (IS_ERR(sd_vqen_desc))
++        sd_vqen_desc = NULL;
++
++    return 0;
++}
++
++static const struct of_device_id of_meson64_restart_match[] = {
++    { .compatible = "meson64,reboot", },
++    {},
++};
++MODULE_DEVICE_TABLE(of, of_meson64_restart_match);
++
++static struct platform_driver meson64_restart_driver = {
++    .probe = meson64_restart_probe,
++    .driver = {
++        .name = "meson64-restart",
++        .of_match_table = of_match_ptr(of_meson64_restart_match),
++    },
++};
++
++static int __init meson64_restart_init(void)
++{
++    return platform_driver_register(&meson64_restart_driver);
++}
++device_initcall(meson64_restart_init);
+-- 
+2.53.0
