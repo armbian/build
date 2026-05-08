@@ -17,9 +17,27 @@ function deploy_qemu_binary_to_chroot() {
 		return 0
 	fi
 
-	declare src_host="/usr/bin/${QEMU_BINARY}"
+	# Source: try the historical name first (qemu-<arch>-static), fall back
+	# to the bare name shipped by Ubuntu resolute's qemu-user-binfmt package
+	# (e.g. /usr/bin/qemu-aarch64).
+	declare qemu_no_suffix="${QEMU_BINARY%-static}"
+	declare src_host=""
+	if [[ -f "/usr/bin/${QEMU_BINARY}" ]]; then
+		src_host="/usr/bin/${QEMU_BINARY}"
+	elif [[ -f "/usr/bin/${qemu_no_suffix}" ]]; then
+		src_host="/usr/bin/${qemu_no_suffix}"
+	else
+		exit_with_error "Missing qemu binary on host: tried /usr/bin/${QEMU_BINARY} and /usr/bin/${qemu_no_suffix}"
+	fi
+
+	# Destination: deploy under both names so the chroot resolves whichever
+	# path the host's binfmt registration points at — the older qemu-user-
+	# static package registers /usr/bin/qemu-<arch>-static, while resolute's
+	# qemu-user-binfmt registers /usr/bin/qemu-<arch>.
 	declare dst_target="${chroot_target}/usr/bin/${QEMU_BINARY}"
+	declare dst_target_alt="${chroot_target}/usr/bin/${qemu_no_suffix}"
 	declare dst_target_bkp="${dst_target}.armbian.orig"
+	declare dst_target_alt_bkp="${dst_target_alt}.armbian.orig"
 
 	# Assume we're getting a clean base to work with. Namely, we count on the rootfs cache to _not_ have left a dangling binary.
 	# If the dst_target already exists, it means the target actually has the qemu-static package installed.
@@ -28,9 +46,16 @@ function deploy_qemu_binary_to_chroot() {
 		display_alert "Preserving existing qemu binary" "${QEMU_BINARY} during ${caller}" "info"
 		run_host_command_logged mv -v "${dst_target}" "${dst_target_bkp}"
 	fi
+	if [[ "${dst_target}" != "${dst_target_alt}" && -f "${dst_target_alt}" ]]; then
+		display_alert "Preserving existing qemu binary" "${qemu_no_suffix} during ${caller}" "info"
+		run_host_command_logged mv -v "${dst_target_alt}" "${dst_target_alt_bkp}"
+	fi
 
-	display_alert "Deploying qemu-user-static binary to chroot" "${QEMU_BINARY} during ${caller}" "info"
+	display_alert "Deploying qemu-user-static binary to chroot" "${QEMU_BINARY} during ${caller} (from ${src_host})" "info"
 	run_host_command_logged cp -pv "${src_host}" "${dst_target}"
+	if [[ "${dst_target}" != "${dst_target_alt}" ]]; then
+		run_host_command_logged cp -pv "${src_host}" "${dst_target_alt}"
+	fi
 
 	return 0
 }
@@ -45,8 +70,11 @@ function undeploy_qemu_binary_from_chroot() {
 		return 0
 	fi
 
+	declare qemu_no_suffix="${QEMU_BINARY%-static}"
 	declare dst_target="${chroot_target}/usr/bin/${QEMU_BINARY}"
+	declare dst_target_alt="${chroot_target}/usr/bin/${qemu_no_suffix}"
 	declare dst_target_bkp="${dst_target}.armbian.orig"
+	declare dst_target_alt_bkp="${dst_target_alt}.armbian.orig"
 
 	# Check the binary we deployed is there. If not, panic, as we've lost control.
 	if [[ ! -f "${dst_target}" ]]; then
@@ -56,10 +84,17 @@ function undeploy_qemu_binary_from_chroot() {
 	# Remove the binary we deployed, and restore the original if we had to preserve it.
 	display_alert "Removing qemu-user-static binary from chroot" "${QEMU_BINARY} during ${caller}" "info"
 	run_host_command_logged rm -fv "${dst_target}"
+	if [[ "${dst_target}" != "${dst_target_alt}" && -f "${dst_target_alt}" ]]; then
+		run_host_command_logged rm -fv "${dst_target_alt}"
+	fi
 
 	if [[ -f "${dst_target_bkp}" ]]; then
 		display_alert "Restoring original qemu binary" "${QEMU_BINARY} during ${caller}" "info"
 		run_host_command_logged mv -v "${dst_target_bkp}" "${dst_target}"
+	fi
+	if [[ "${dst_target}" != "${dst_target_alt}" && -f "${dst_target_alt_bkp}" ]]; then
+		display_alert "Restoring original qemu binary" "${qemu_no_suffix} during ${caller}" "info"
+		run_host_command_logged mv -v "${dst_target_alt_bkp}" "${dst_target_alt}"
 	fi
 
 	return 0
