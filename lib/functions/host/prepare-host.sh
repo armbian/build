@@ -175,7 +175,7 @@ function adaptative_prepare_host_dependencies() {
 		ncurses-base ncurses-term # for `make menuconfig`
 		ntpsec-ntpdate #this is a more secure ntpdate
 		patchutils pkg-config pv
-		"qemu-user-static" "arch-test"
+		"arch-test"
 		rsync
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools
@@ -212,6 +212,19 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Adding package to 'host_dependencies'" "python3-setuptools" "info"
 		host_dependencies+=("python3-setuptools")
 	fi
+
+	# qemu binfmt + chrooted user emulation.
+	# Up to and including Ubuntu noble / Debian trixie this is the
+	# `qemu-user-static` package (real package shipping the static
+	# /usr/libexec/qemu-binfmt/<arch>-static binaries). Ubuntu resolute
+	# (26.04) splits that into `qemu-user-binfmt` + `qemu-user-binfmt-hwe`
+	# and turns `qemu-user-static` into a virtual package — apt then
+	# refuses to auto-pick a provider, so install the non-HWE concrete
+	# name explicitly there.
+	case "${host_release}" in
+		resolute) host_dependencies+=("qemu-user-binfmt") ;;
+		*)        host_dependencies+=("qemu-user-static") ;;
+	esac
 
 	### Python2 -- required for some older u-boot builds
 	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.
