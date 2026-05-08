@@ -58,6 +58,80 @@ root_partition_device=/dev/$root_partition_device_name
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 diskcheck=$(lsblk -Al | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot)
+
+# UFS detection. UFS-capable boards (RK3576 variants, Qualcomm, Tegra, …)
+# expose multiple SCSI LUNs on a single UFS controller. The JEDEC UFS spec fixes
+# the LUN-id-to-role mapping (sizes are vendor-provisioned and vary 4/16/32 MiB):
+#   LUN 0          = General LUN (rootfs target)
+#   LUN 1          = Boot LUN A   (BootROM idblock target when bBootLunEn=1, factory default)
+#   LUN 2          = Boot LUN B   (BootROM idblock target when bBootLunEn=2)
+#   LUN 3..255     = additional General/vendor LUNs (excluded from install targets)
+#   LUN >= 49152   = Well-known LUNs (REPORT_LUNS, BOOT, RPMB, UFS_DEVICE) — no block device
+# Classify by walking sysfs from each scsi_host whose proc_name == "ufshcd".
+# Reference: JEDEC UFS spec §13.2 (Boot logical units), Toshiba UFS Ver.2.0 App Note.
+is_ufs_block() {
+	local dev_name="$1" sys_path
+	[[ -e "/sys/block/${dev_name}/device" ]] || return 1
+	sys_path=$(readlink -f "/sys/block/${dev_name}/device" 2>/dev/null) || return 1
+	[[ "$sys_path" == *ufshc* || "$sys_path" == *ufs* ]]
+}
+
+UFS_GENERAL_LUN=""
+UFS_BOOT_LUN_A=""
+UFS_BOOT_LUN_B=""
+UFS_AUX_LUNS=""   # space-separated block device names to filter out of diskcheck
+
+for _ufs_host in /sys/class/scsi_host/host*; do
+	[[ -r "${_ufs_host}/proc_name" ]] || continue
+	[[ "$(cat "${_ufs_host}/proc_name" 2>/dev/null)" == "ufshcd" ]] || continue
+	_ufs_host_id="${_ufs_host##*/host}"
+	for _scsi_dev in /sys/class/scsi_device/${_ufs_host_id}:*; do
+		[[ -d "$_scsi_dev" ]] || continue
+		# Path format: /sys/class/scsi_device/H:C:T:L — last colon-separated field is LUN id.
+		_lun=${_scsi_dev##*:}
+		# Skip well-known LUNs (id >= 0xC000) — they expose no /sys/block entry anyway.
+		[[ "$_lun" =~ ^[0-9]+$ ]] || continue
+		(( _lun >= 49152 )) && continue
+		_blk=$(ls "$_scsi_dev/device/block" 2>/dev/null | head -1)
+		[[ -n "$_blk" ]] || continue
+		_sz=$(cat "/sys/block/$_blk/size" 2>/dev/null)
+		[[ -n "$_sz" ]] || continue
+		_bytes=$(( _sz * 512 ))
+		case "$_lun" in
+			0)
+				# General LUN. Require >=1 GiB to filter out unprovisioned/empty devices.
+				if (( _bytes >= 1*1024*1024*1024 )); then
+					UFS_GENERAL_LUN="/dev/$_blk"
+				fi
+				;;
+			1)
+				UFS_BOOT_LUN_A="/dev/$_blk"
+				UFS_AUX_LUNS="${UFS_AUX_LUNS} $_blk"
+				;;
+			2)
+				UFS_BOOT_LUN_B="/dev/$_blk"
+				UFS_AUX_LUNS="${UFS_AUX_LUNS} $_blk"
+				;;
+			*)
+				# LUN 3..255: vendor-extra (e.g. Biwin BWU3AKC46C256G LUN 3 = 8 MiB
+				# config area). Not a valid install target, hide from diskcheck.
+				UFS_AUX_LUNS="${UFS_AUX_LUNS} $_blk"
+				;;
+		esac
+	done
+done
+
+# Strip Boot LUN A/B + RPMB from diskcheck (they aren't valid install targets).
+if [[ -n "$UFS_AUX_LUNS" ]]; then
+	for _aux in $UFS_AUX_LUNS; do
+		diskcheck=$(echo "$diskcheck" | grep -vw "$_aux" || true)
+	done
+fi
+# Strip the UFS General LUN — only valid via case 9, which sets diskcheck explicitly.
+if [[ -n "$UFS_GENERAL_LUN" ]]; then
+	diskcheck=$(echo "$diskcheck" | grep -vw "${UFS_GENERAL_LUN##*/}" || true)
+fi
+unset _ufs_host _ufs_host_id _scsi_dev _blk _sz _bytes _aux
 # Start mtdcheck with probable MTD block device partitions:
 mtdcheck=$(grep 'mtdblock' /proc/partitions | awk '{print $NF}' | xargs)
 # Append mtdcheck with probable MTD char devices filtered for partition name(s)
@@ -707,7 +781,15 @@ check_partitions()
 	IFS=" "
 	[[ -n "$1" ]] && EXCLUDE=" | grep -v $1"
 	[[ -n "$2" ]] && INCLUDE=" | grep $2" && diskcheck=$2
-	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
+	# Hide UFS partitions from the picker when no explicit disk was requested.
+	local UFS_EXCLUDE=""
+	if [[ -z "$2" ]]; then
+		[[ -n "$UFS_GENERAL_LUN" ]] && UFS_EXCLUDE="${UFS_EXCLUDE} | grep -vE '^${UFS_GENERAL_LUN##*/}'"
+		for _aux in $UFS_AUX_LUNS; do
+			UFS_EXCLUDE="${UFS_EXCLUDE} | grep -vE '^${_aux}'"
+		done
+	fi
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE $UFS_EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
 	AvailablePartitions=$(eval $CMD)
 
 	FREE_SPACE=$(sfdisk --list-free /dev/$diskcheck | grep G | tail -1 | awk '{print $4}' | sed "s/G//")
@@ -782,7 +864,7 @@ check_partitions()
 			} | fdisk /dev/$diskcheck &> /dev/null || true
 		fi
 	fi
-	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT,PARTTYPENAME | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep Linux | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT,PARTTYPENAME | grep -v -w $root_partition_name $INCLUDE $EXCLUDE $UFS_EXCLUDE | grep Linux | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
 	partprobe
 	AvailablePartitions=$(eval $CMD)
 	PartitionOptions=($AvailablePartitions)
@@ -927,6 +1009,13 @@ main()
 
 		[[ -n $mtdcheck && \
 		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on MTD Flash')
+
+		# UFS install: requires General LUN + Boot LUN A on a UFS controller AND
+		# board-side write_uboot_platform_ufs (provided by BSP for boards that
+		# support UFS boot; absent boards skip the option silently).
+		[[ -n "$UFS_GENERAL_LUN" && -n "$UFS_BOOT_LUN_A" && \
+		   $(type -t write_uboot_platform_ufs) == function ]] && \
+		   options+=(9 "Boot from UFS - system on UFS (${UFS_GENERAL_LUN##*/} + idblock on ${UFS_BOOT_LUN_A##*/})")
 	fi
 
 	# show flasher if there are available block devices
@@ -1023,6 +1112,52 @@ main()
 			8)
 				armbian-config --cmd FLASH1
 				return
+				;;
+			9)
+				# Boot from UFS — system on UFS.
+				# General LUN holds rootfs + u-boot.itb; Boot LUN A holds idblock.
+				title='UFS boot | UFS root install'
+				command='Power off'
+				_ufs_disk_name="${UFS_GENERAL_LUN##*/}"
+				diskcheck="$_ufs_disk_name"
+				DISK_ROOT_PART="${UFS_GENERAL_LUN}1"
+				show_warning "This script will erase the UFS storage:\n  General LUN: ${UFS_GENERAL_LUN}\n  Boot LUN A : ${UFS_BOOT_LUN_A}\n\nContinue?"
+				# /boot must be copied to the UFS rootfs (no separate boot partition):
+				# remove '/boot' from rsync exclude list (same as option 4 for MTD).
+				sed -i '/boot/d' $EX_LIST
+				umount_device "${UFS_GENERAL_LUN}"
+				wipefs -aq "${UFS_BOOT_LUN_A}" 2>/dev/null || true
+				# Scope the partition picker to the UFS General LUN only.
+				check_partitions "$root_partition_device_name" "$_ufs_disk_name"
+				format_disk "$DISK_ROOT_PART"
+				create_armbian "" "$DISK_ROOT_PART"
+				# write_uboot_platform_ufs is provided by the BSP for boards that
+				# can boot from UFS; it knows how to lay idblock on Boot LUN A
+				# and u-boot.itb on the General LUN.
+				write_uboot_platform_ufs "$DIR" "$UFS_BOOT_LUN_A" "$UFS_GENERAL_LUN"
+				# create_armbian's "SD boot, SATA root" branch (line ~442) updates
+				# /boot/armbianEnv.txt on the *running SD* and writes /media/mmcboot
+				# bind-mount stanzas into the target /etc/fstab — both wrong for
+				# UFS-only boot (no SD at runtime). Remount the new UFS rootfs and
+				# point armbianEnv.txt at the freshly-mkfs'd partition's UUID +
+				# scrub the SD-bind stanzas from fstab.
+				_ufs_fix_mp=$(mktemp -d /mnt/ufs-fix.XXXXXX)
+				if mount -t "$FilesystemChoosen" "$DISK_ROOT_PART" "$_ufs_fix_mp"; then
+					_new_uuid="UUID=$(blkid -s UUID -o value "$DISK_ROOT_PART")"
+					if [[ -n "${_new_uuid#UUID=}" && -f "$_ufs_fix_mp/boot/armbianEnv.txt" ]]; then
+						sed -e "s|^rootdev=.*|rootdev=${_new_uuid}|" -i "$_ufs_fix_mp/boot/armbianEnv.txt"
+						grep -q '^rootdev' "$_ufs_fix_mp/boot/armbianEnv.txt" || echo "rootdev=${_new_uuid}" >> "$_ufs_fix_mp/boot/armbianEnv.txt"
+						sed -e "s|^rootfstype=.*|rootfstype=${FilesystemChoosen}|" -i "$_ufs_fix_mp/boot/armbianEnv.txt"
+						grep -q '^rootfstype' "$_ufs_fix_mp/boot/armbianEnv.txt" || echo "rootfstype=${FilesystemChoosen}" >> "$_ufs_fix_mp/boot/armbianEnv.txt"
+					fi
+					if [[ -f "$_ufs_fix_mp/etc/fstab" ]]; then
+						sed -i -e '\|/media/mmcboot|d' -e '\|/media/mmcroot|d' "$_ufs_fix_mp/etc/fstab"
+					fi
+					sync
+					umount "$_ufs_fix_mp"
+				fi
+				rmdir "$_ufs_fix_mp" 2>/dev/null
+				sync
 				;;
 
 			*)
