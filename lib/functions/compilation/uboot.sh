@@ -499,6 +499,7 @@ function compile_uboot() {
 		DIR=/usr/lib/$uboot_name
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
+		$(declare -f write_uboot_platform_ufs || true)
 		$(declare -f setup_write_uboot_platform || true)
 	EOF
 
