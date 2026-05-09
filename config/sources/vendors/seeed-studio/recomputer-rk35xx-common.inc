@@ -51,10 +51,10 @@ function seeed_recomputer_install_from_apt() {
 		--no-install-recommends install "$@"
 }
 
-# Install Seeed common packages (USB gadget, Morse tools)
-# Note: fcs960k-aic-bluez is NOT installed here — it conflicts with bluez,
-# which gets pulled in later by desktop packages. It's installed in
-# post_repo_customize_image instead, after all desktop/extension packages.
+# Install Seeed common packages (USB gadget, Morse tools).
+# fcs960k-aic-bluez is NOT installed here — it conflicts with bluez,
+# which is pulled in by desktop packages. It is installed in a separate
+# post_repo_customize_image hook after all desktop/extension packages.
 function pre_install_distribution_specific__recomputer_install_seeed_packages() {
 	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
@@ -69,11 +69,44 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 
 # Install fcs960k-aic-bluez AFTER all desktop/extension packages.
 # This package conflicts with bluez; desktop pulls in bluez during
-# install_distribution_agnostic, so we must install fcs960k last to replace it.
+# install_distribution_agnostic, so we install fcs960k last to replace it.
+# apt's conflict resolution removes packages that depend on bluez
+# (e.g. gnome-session, gnome-control-center, gdm3).
+# We perform snapshot and diff entirely inside chroot to avoid
+# pipe/process-substitution issues with dpkg-query across chroot boundary.
 function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
 
+	# Snapshot installed packages (only "ii" status, excluding rc/unpacked)
+	# dpkg-query -W lists ALL packages including rc-status (removed, config-files),
+	# which would make comm diff miss packages that were removed but left config files.
+	local snapshot_before snapshot_after
+	snapshot_before=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-before.XXXXXX)
+	snapshot_after=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-after.XXXXXX)
+	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' \
+		| grep "^ii " | awk '{print $2}' | sort > "${snapshot_before}"
+
 	seeed_recomputer_install_from_apt fcs960k-aic-bluez
+
+	# Diff to detect removed packages
+	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' \
+		| grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
+	local removed_pkgs
+	removed_pkgs=$(comm -23 "${snapshot_before}" "${snapshot_after}")
+	rm -f "${snapshot_before}" "${snapshot_after}"
+
+	if [[ -n "${removed_pkgs}" ]]; then
+		display_alert "Reinstalling packages removed by bluez conflict" "${removed_pkgs}" "warn"
+		chroot_sdcard_apt_get_install ${removed_pkgs}
+	fi
+
+	# Re-disable display managers: reinstalling gdm3 triggers its postinst
+	# which re-enables display-manager.service, undoing desktop_postinstall()'s
+	# disable. Without this the system boots into GDM instead of console,
+	# skipping armbian-firstlogin's user/password setup prompt.
+	disable_systemd_service_sdcard gdm3.service
+	disable_systemd_service_sdcard lightdm.service
+	disable_systemd_service_sdcard sddm.service
 }
 
 # AIC8800 wireless tweaks (BSP-level)
@@ -281,6 +314,16 @@ function post_family_tweaks__recomputer_add_sbin_to_path() {
 	EOF
 
 	chmod +x $SDCARD/etc/profile.d/custom-path.sh
+}
+
+# Patch armbian-firstlogin: disable GDM auto-login.
+# Upstream sets AutomaticLoginEnable=true and relies on a background
+# (sleep 20; sed) to disable it, which is unreliable and gets killed.
+# Force AutomaticLoginEnable=false so GDM always prompts for password.
+function post_family_tweaks__recomputer_disable_gdm_autologin() {
+	display_alert "$BOARD" "Disabling GDM auto-login in armbian-firstlogin" "info"
+	sed -i 's/AutomaticLoginEnable = true/AutomaticLoginEnable = false/' \
+		"${SDCARD}/usr/lib/armbian/armbian-firstlogin"
 }
 
 # Clone/pull Seeed RK extension at top-level before enable_extension
