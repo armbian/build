@@ -73,9 +73,25 @@ function interactive_desktop_main_configuration() {
 		local status_filter="supported"
 		[[ "${EXPERT}" == "yes" ]] && status_filter="supported,community"
 
-		local de_json
+		# Capture stdout and stderr separately and check the exit code
+		# explicitly. Previously stderr was redirected to /dev/null and
+		# only stdout was captured, so a non-zero exit (missing python3
+		# yaml module, malformed YAML, parser-side argparse change, …)
+		# left the SUBSHELL ERR trap firing at this line with no
+		# diagnostic — see the build hang at config-desktop.sh:78
+		# referenced from production logs.
+		local de_json de_stderr de_rc=0
+		de_stderr=$(mktemp)
 		de_json=$(python3 "${parser}" "${yaml_dir}" --list-json \
-			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2>/dev/null)
+			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2>"${de_stderr}") || de_rc=$?
+		if [[ "${de_rc}" -ne 0 ]]; then
+			local err_text
+			err_text=$(cat "${de_stderr}" 2> /dev/null || true)
+			rm -f "${de_stderr}"
+			exit_with_error "Desktop parser failed (exit ${de_rc}) for ${RELEASE}/${ARCH}" \
+				"stderr: ${err_text:-<empty>}"
+		fi
+		rm -f "${de_stderr}"
 		if [[ -z "${de_json}" || "${de_json}" == "[]" ]]; then
 			exit_with_error "No desktop environments available for ${RELEASE}/${ARCH}" \
 				"Parser returned an empty list"

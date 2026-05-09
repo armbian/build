@@ -202,7 +202,9 @@ function adaptative_prepare_host_dependencies() {
 	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
 	### 'python3-setuptools' and 'python3-pyelftools' moved to requirements.txt to make sure build hosts use the same/latest versions of these tools.
 	### 'python3-dev' depends on distutils, so instead depend on libpython3-dev which doesn't.
-	host_dependencies+=("python3" "libpython3-dev" "libffi-dev")
+	### 'python3-yaml' is needed by configng's parse_desktop_yaml.py during
+	###   BUILD_DESKTOP=yes (config-desktop.sh::interactive_desktop_main_configuration).
+	host_dependencies+=("python3" "libpython3-dev" "libffi-dev" "python3-yaml")
 
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
