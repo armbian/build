@@ -86,11 +86,43 @@ function artifact_uboot_prepare_version() {
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
 
+	# Diagnostic: per-hook body hashes, so a planner-vs-builder divergence
+	# in `hash_hooks` can be located to the specific hook whose dumped body
+	# differs between contexts. Always emitted (info level) so the CI logs
+	# capture it without requiring SHOW_DEBUG=yes.
+	# TODO: remove once the artifact-cache divergence on armbian/os is
+	# pinned down and fixed.
+	declare _per_hook _per_hook_body _per_hook_hash _per_hook_len
+	for _per_hook in "${extension_hooks_to_hash[@]}"; do
+		_per_hook_body="$(dump_extension_method_sources_functions "${_per_hook}")"
+		_per_hook_len="${#_per_hook_body}"
+		_per_hook_hash="$(echo "${_per_hook_body}" | sha256sum | cut -d' ' -f1)"
+		display_alert "uboot hook hash" "${_per_hook}: ${_per_hook_hash} (body ${_per_hook_len} bytes)" "info"
+	done
+
 	# Hash the old-timey hooks and regular core functions (atf code, used by u-boot build process)
 	declare hash_functions="undetermined"
 	calculate_hash_for_function_bodies "uboot_custom_postprocess" "write_uboot_platform" "write_uboot_platform_mtd" \
 		"setup_write_uboot_platform" "compile_atf"
 	declare hash_uboot_functions="${hash_functions}"
+
+	# Diagnostic: per-function body length + presence flag. Same purpose
+	# as the per-hook block above — locate which function's body differs
+	# across contexts. compile_atf is the most-recently-added entry and
+	# the most likely culprit (added in 0562e3a79f).
+	declare _per_func
+	for _per_func in "uboot_custom_postprocess" "write_uboot_platform" "write_uboot_platform_mtd" \
+		"setup_write_uboot_platform" "compile_atf"; do
+		if [[ "$(type -t "${_per_func}" 2> /dev/null)" == "function" ]]; then
+			declare _per_func_body
+			_per_func_body="$(declare -f "${_per_func}")"
+			declare _per_func_hash
+			_per_func_hash="$(echo "${_per_func_body}" | sha256sum | cut -d' ' -f1)"
+			display_alert "uboot function hash" "${_per_func}: ${_per_func_hash} (body ${#_per_func_body} bytes)" "info"
+		else
+			display_alert "uboot function MISSING" "${_per_func}: NOT DEFINED in this process" "wrn"
+		fi
+	done
 
 	# Hash those two together
 	declare hash_hooks_and_functions="undetermined"
