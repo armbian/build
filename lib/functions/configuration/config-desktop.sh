@@ -120,7 +120,7 @@ for de in json.load(sys.stdin):
 		fi
 
 		dialog_menu "Choose a desktop environment" "$backtitle" \
-			"Select the default desktop environment to bundle with this image" \
+			"Select the default desktop environment to bundle with this image.\nDocs: https://docs.armbian.com/Developer-Guide_Desktops/" \
 			"${options[@]}"
 		set_interactive_config_value DESKTOP_ENVIRONMENT "${DIALOG_MENU_RESULT}"
 
@@ -152,7 +152,7 @@ for de in json.load(sys.stdin):
 			"full" "Office, creative, dev tools (~2.5 GB)"
 		)
 		dialog_menu "Choose desktop tier" "$backtitle" \
-			"Select which package set to install with this desktop.\nTiers can be upgraded or downgraded at any time\nusing armbian-config on the running system." \
+			"Select which package set to install with this desktop.\nTiers can be upgraded or downgraded at any time\nusing armbian-config on the running system.\nDocs: https://docs.armbian.com/Developer-Guide_Desktops/" \
 			"${options[@]}"
 		set_interactive_config_value DESKTOP_TIER "${DIALOG_MENU_RESULT}"
 
