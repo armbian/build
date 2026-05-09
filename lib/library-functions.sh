@@ -33,6 +33,15 @@ source "${SRC}"/lib/functions/artifacts/artifact-armbian-bsp-desktop.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/artifacts/artifact-armbian-bsp-generic.sh
+# shellcheck source=lib/functions/artifacts/artifact-armbian-bsp-generic.sh
+source "${SRC}"/lib/functions/artifacts/artifact-armbian-bsp-generic.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/artifacts/artifact-armbian-desktop.sh
 # shellcheck source=lib/functions/artifacts/artifact-armbian-desktop.sh
 source "${SRC}"/lib/functions/artifacts/artifact-armbian-desktop.sh

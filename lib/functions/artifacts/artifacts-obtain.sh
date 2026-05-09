@@ -61,7 +61,7 @@ function initialize_artifact() {
 	[[ "${chosen_artifact}" == *","* ]] && exit_with_error "Artifact name cannot contain commas"
 
 	armbian_register_artifacts
-	declare -g chosen_artifact_impl="${ARMBIAN_ARTIFACTS_TO_HANDLERS_DICT["${chosen_artifact}"]}"
+	declare -g chosen_artifact_impl="${ARMBIAN_ARTIFACTS_TO_HANDLERS_DICT["${chosen_artifact}"]}" #"
 	[[ "x${chosen_artifact_impl}x" == "xx" ]] && exit_with_error "Unknown artifact '${chosen_artifact}'"
 	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "info"
 	create_artifact_functions
