@@ -13,6 +13,11 @@ function build_rootfs_and_image() {
 	# get a basic rootfs, either from cache or from scratch
 	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections
 
+	# Cache-hit path also benefits — the extracted rootfs has libc/ld-linux, so kernel
+	# binfmt_elf can run 32-bit ARM ELF natively. Idempotent on cache-miss path where
+	# create_new_rootfs_cache_via_debootstrap already activated this.
+	_native_armhf_setup_binfmt_elf || true
+
 	# deploy the qemu binary, no matter where the rootfs came from (built or cached)
 	LOG_SECTION="deploy_qemu_binary_to_chroot_image" do_with_logging deploy_qemu_binary_to_chroot "${SDCARD}" "image" # undeployed at end of this function
 

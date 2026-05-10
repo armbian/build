@@ -61,7 +61,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 			local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
 			acng_check_status_or_restart
 			;;
-		no)     ;& # do nothing, fallthrough
+		no) ;& # do nothing, fallthrough
 		"")
 			:  # still do nothing
 			;; # stop falling
@@ -139,8 +139,13 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
 
-
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
+
+	# mmdebstrap done, libc/ld-linux are in ${SDCARD}. Disable qemu-arm in binfmt_misc
+	# so subsequent chroot apt-get/dpkg/customize calls fall through to kernel binfmt_elf
+	# and run 32-bit ARM ELF natively via CONFIG_COMPAT. mmdebstrap above used qemu-arm
+	# because its cross-arch path requires that registration to be present.
+	_native_armhf_setup_binfmt_elf || true
 
 	# Done with mmdebstrap. Clean-up its litterbox.
 	display_alert "Cleaning up after mmdebstrap" "mmdebstrap cleanup" "info"
