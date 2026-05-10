@@ -140,6 +140,25 @@ function add_cleanup_handler() {
 	trap_manager_cleanup_handlers=("${callback}" "${trap_manager_cleanup_handlers[@]}")
 }
 
+# Like add_cleanup_handler but appends to the tail of the list, so the
+# registered callback runs AFTER everything added with add_cleanup_handler
+# at the time run_cleanup_handlers fires. Use this when a handler needs to
+# observe a fully-torn-down state — e.g. it can't safely re-mutate a
+# kernel-global resource while subshells of the build are still alive and
+# may have inherited the resource's fd.
+function add_cleanup_handler_last() {
+	if [[ $# -gt 1 ]]; then
+		exit_with_error "add_cleanup_handler_last: too many params"
+	fi
+	local callback="$1"
+	if [[ -z "${callback}" ]]; then
+		exit_with_error "add_cleanup_handler_last: no callback specified"
+	fi
+
+	display_alert "Add callback as last cleanup handler" "${callback}" "cleanup"
+	trap_manager_cleanup_handlers+=("${callback}")
+}
+
 function execute_and_remove_cleanup_handler() {
 	local callback="$1"
 	display_alert "Execute and remove cleanup handler" "${callback}" "cleanup"
