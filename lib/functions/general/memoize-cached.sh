@@ -79,8 +79,17 @@ function run_memoized() {
 	if [[ -f "${disk_cache_file}" ]]; then
 		declare disk_cache_file_mtime_seconds
 		disk_cache_file_mtime_seconds="$(stat -c %Y "${disk_cache_file}")"
-		# if disk_cache_file is older than the ttl, delete it and continue.
+		declare cache_is_stale="no"
 		if [[ "${disk_cache_file_mtime_seconds}" -lt "$(($(date +%s) - memoize_cache_ttl))" ]]; then
+			cache_is_stale="yes"
+		fi
+		# OFFLINE_WORK: serve any cached entry regardless of TTL — the alternative is
+		# a network call that will fail (#6439). Surface that we're using a stale entry.
+		if [[ "${cache_is_stale}" == "yes" && "${OFFLINE_WORK}" == "yes" ]]; then
+			display_alert "OFFLINE_WORK: using stale cache" "${var_n}" "info"
+			cache_is_stale="no"
+		fi
+		if [[ "${cache_is_stale}" == "yes" ]]; then
 			display_alert "Deleting stale cache file" "${disk_cache_file}" "debug"
 			rm -f "${disk_cache_file}"
 		else
