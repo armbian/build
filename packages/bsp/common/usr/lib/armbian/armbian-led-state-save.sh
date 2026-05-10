@@ -24,7 +24,7 @@ function store_led() {
 	TRIGGER_PATH="$1/trigger"
 	DESTINATION="$2"
 
-	TRIGGER_CONTENT=$(<$TRIGGER_PATH)
+	TRIGGER_CONTENT=$(< $TRIGGER_PATH)
 
 	[[ "$TRIGGER_CONTENT" =~ $REGEX ]]
 
@@ -40,15 +40,48 @@ function store_led() {
 	COMMAND_PARAMS="$CMD_FIND $PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
 	PARAMS=$($COMMAND_PARAMS)
 
-	# In case trigger is representing link-state for any network, use
-	# bash substitution to remove the brightness parameter and avoid
-	# ghost wan/lan/etc (led up while cable unplugged)
-	[[ "$TRIGGER_VALUE" == *":link" ]] && PARAMS=${PARAMS//"brightness"/}
+	# brightness semantics depend on the trigger:
+	#   trigger=none           → brightness is plain config (static value).
+	#   trigger=netdev/pattern → brightness is a "ceiling" the trigger may
+	#                            scale to (kernel LED ABI: writing non-zero
+	#                            brightness while a trigger is active sets
+	#                            the top brightness for the trigger's
+	#                            output). Board configs use this on purpose
+	#                            (e.g. radxa-e52c.conf has brightness=1
+	#                            under trigger=netdev to dim the blink).
+	#   noisy triggers below   → brightness is the trigger's instantaneous
+	#                            output (link-up/down boolean, tpt blink
+	#                            state). Capturing it on shutdown produces
+	#                            ghost-LED bugs on restore (":link" showed
+	#                            cable-up while unplugged) and constant
+	#                            churn in /etc/armbian-leds.conf (rtw88
+	#                            phy0tpt flapped 0/1 every shutdown).
+	# Strip brightness only for the noisy set; keep it for everything else
+	# so legitimate dim ceilings survive the save/restore cycle.
+	# Pattern history: ":link"-only strip was the original workaround in
+	# commit 2960ffaff; "phy*tpt" extends it to the rtw88 forum case.
+	# Forum thread: https://forum.armbian.com/topic/57284-regular-changes-in-file-etcarmbian-ledsconf-on-odroid-n2/
+	#
+	# Token-safe whole-word filter: the simpler ${PARAMS//brightness/}
+	# substring substitution would also corrupt sibling files like
+	# `max_brightness` → `max_`, breaking the read loop below under set -e.
+	# Bash-only (no `awk` etc.) because store_led() reassigns PATH to the
+	# sysfs led path, so external commands aren't on PATH here.
+	case "$TRIGGER_VALUE" in
+		*:link | phy*tpt)
+			declare _filtered=""
+			for _p in $PARAMS; do
+				[[ "$_p" == "brightness" ]] && continue
+				_filtered+="$_p"$'\n'
+			done
+			PARAMS="$_filtered"
+			;;
+	esac
 
 	for PARAM in $PARAMS; do
 
 		PARAM_PATH="$PATH/$PARAM"
-		VALUE=$(<$PARAM_PATH)
+		VALUE=$(< $PARAM_PATH)
 
 		# If the variable contains non-printable characters
 		# suppose it contains binary and skip it
