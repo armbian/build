@@ -238,17 +238,18 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 }
 
-# Auto-mount USB storage under /media/seeed/ (DE-agnostic)
+# Auto-mount USB storage under /media/<first-user>/ (DE-agnostic)
 function post_family_tweaks__recomputer_usb_auto_mount() {
 	display_alert "$BOARD" "Installing USB auto-mount" "info"
 
-	# Helper script: mount/unmount USB device under /media/seeed/LABEL
+	# Helper script: mount/unmount USB device under /media/<first-user>/LABEL
 	install -d -m 0755 "${SDCARD}/usr/local/bin"
 	cat > "${SDCARD}/usr/local/bin/usb-automount" <<- 'SCRIPT'
 		#!/bin/sh
 		ACTION="$1"
 		DEV="$2"
-		BASE="/media/seeed"
+		FIRST_USER=$(id -nu 1000 2>/dev/null || echo user)
+		BASE="/media/${FIRST_USER}"
 
 		ID_FS_LABEL_ENC=$(udevadm info --query=property --name="$DEV" --property=ID_FS_LABEL_ENC --value 2>/dev/null)
 		ID_MODEL=$(udevadm info --query=property --name="$DEV" --property=ID_MODEL --value 2>/dev/null)
@@ -262,7 +263,7 @@ function post_family_tweaks__recomputer_usb_auto_mount() {
 		        mkdir -p "$MPOINT"
 		        if mount -o noatime "$DEV" "$MPOINT" 2>/dev/null || \
 		           mount -o noatime,uid=1000,gid=1000,umask=002 "$DEV" "$MPOINT" 2>/dev/null; then
-		            chown seeed:seeed "$MPOINT" 2>/dev/null
+		            chown "${FIRST_USER}:${FIRST_USER}" "$MPOINT" 2>/dev/null
 		        else
 		            rmdir "$MPOINT" 2>/dev/null
 		        fi
@@ -293,7 +294,7 @@ function post_family_tweaks__recomputer_usb_auto_mount() {
 	# Udev rule: trigger systemd service when USB partition appears
 	mkdir -p "${SDCARD}/etc/udev/rules.d"
 	cat > "${SDCARD}/etc/udev/rules.d/80-udisks-auto-mount.rules" <<- EOF
-		ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="?*", ENV{ID_BUS}=="usb", ENV{ID_PART_ENTRY_NUMBER}=="?*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="usb-automount@%k.service"
+		ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="?*", ENV{ID_BUS}=="usb", ENV{ID_PART_ENTRY_NUMBER}=="?*", ENV{UDISKS_IGNORE}="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="usb-automount@%k.service"
 	EOF
 }
 
