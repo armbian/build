@@ -65,7 +65,7 @@ function main_default_build_packages() {
 	if [[ "${IGNORE_UPDATES}" != "yes" ]]; then
 		LOG_SECTION="clean_deprecated_mountpoints" do_with_logging clean_deprecated_mountpoints
 
-		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
+		for cleaning_fragment in ${CLEAN_LEVEL//,/ }; do
 			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != none ]] && [[ $cleaning_fragment != make* ]]; then
 				LOG_SECTION="cleaning_${cleaning_fragment}" do_with_logging general_cleaning "${cleaning_fragment}"
 			fi
