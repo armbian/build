@@ -141,7 +141,8 @@ function initialize_extension_manager() {
 	# before starting, auto-add extensions specified (eg, on the command-line) via the ENABLE_EXTENSIONS or EXT env var. Do it only once.
 	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS:-"${EXT}"}" != "" ]] && {
 		local auto_extension
-		for auto_extension in $(echo "${ENABLE_EXTENSIONS:-"${EXT}"}" | tr "," " "); do
+		local _enable_csv="${ENABLE_EXTENSIONS:-"${EXT}"}"
+		for auto_extension in ${_enable_csv//,/ }; do
 			ENABLE_EXTENSION_TRACE_HINT="ENABLE_EXTENSIONS/EXT -> " enable_extension "${auto_extension}"
 		done
 	}
