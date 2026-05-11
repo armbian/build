@@ -282,7 +282,7 @@ function interactive_config_ask_branch() {
 	declare -a options=()
 	declare one_kernel_target
 
-	for one_kernel_target in $(echo "${KERNEL_TARGET}" | tr "," "\n"); do
+	for one_kernel_target in ${KERNEL_TARGET//,/ }; do
 
 		local version=""
 		local description=""
