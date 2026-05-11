@@ -48,7 +48,7 @@ driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14 && [[ "$BRANCH" != bleedingedge ]]; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8189esver='commit:0a5d04114fac3c9f48a343cb905fbb6a3f9f5df5' # Commit date: 2025-09-26 (please update when updating commit ref)
@@ -87,6 +87,11 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
+
+		# fix compilation for kernels >= 7.1
+		if linux-version compare "${version}" ge 7.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-7.1-kernel.patch" "applying"
+		fi
 	fi
 }
 
