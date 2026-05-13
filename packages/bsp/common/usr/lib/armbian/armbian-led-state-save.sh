@@ -34,8 +34,15 @@ function store_led() {
 	echo "trigger=$TRIGGER_VALUE" >> $DESTINATION
 
 	# In case the trigger is any of the kbd-*, don't store any other parameter
-	# This avoids num/scroll/capslock from being restored at startup
-	[[ "$TRIGGER_VALUE" =~ kbd-* ]] && return
+	# This avoids num/scroll/capslock from being restored at startup.
+	# Use shell glob (anchored at start of string) rather than bash regex —
+	# `=~ kbd-*` is regex where `*` is "0+ of preceding `-`" and the match
+	# is not anchored, so any trigger containing `kbd` could match. The
+	# `case kbd-*)` form is anchored and matches only triggers that
+	# literally start with `kbd-`.
+	case "$TRIGGER_VALUE" in
+		kbd-*) return ;;
+	esac
 
 	COMMAND_PARAMS="$CMD_FIND $PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
 	PARAMS=$($COMMAND_PARAMS)
