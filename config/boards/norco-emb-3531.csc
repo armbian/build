@@ -1,4 +1,4 @@
-# Rockchip RK3399 2GB DDR3 16GB eMMC GBE USB3 RTL8188ETV WiFi PCIe x4 slot
+# Rockchip RK3399 DDR3/LPDDR4X eMMC GBE USB3 USB-WiFi PCIe x4 slot
 BOARD_NAME="NORCO EMB-3531"
 BOARD_VENDOR="norco"
 BOARDFAMILY="rockchip64"
@@ -14,11 +14,17 @@ BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399-emb-3531.dtb"
 BOOTBRANCH_BOARD="tag:v2026.01"
 BOOTPATCHDIR="v2026.01"
-BOOT_SCENARIO="binman"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS2,1500000 console=tty0 rk3399_pcie_ignore_serror"
 
 PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
+
+function post_family_config__norco-emb-3531() {
+	declare -g BOOT_SCENARIO="spl-blobs"
+	declare -g DDR_BLOB="rk33/rk3399_ddr_800MHz_v1.27.bin"
+	declare -g BL31_BLOB="rk33/rk3399_bl31_v1.36.elf"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
+}
 
 function post_family_tweaks_bsp__norco-emb-3531() {
 	display_alert "${BOARD}" "Installing ALSA UCM configuration files" "info"
