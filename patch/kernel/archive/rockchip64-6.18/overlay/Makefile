@@ -37,6 +37,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3399-dwc3-0-host.dtbo \
 	rockchip-rk3399-i2c7.dtbo \
 	rockchip-rk3399-i2c8.dtbo \
+	rockchip-rk3399-helios64-cpu-stability.dtbo \
 	rockchip-rk3399-opp-2ghz.dtbo \
 	rockchip-rk3399-pcie-gen2.dtbo \
 	rockchip-rk3399-spi-jedec-nor.dtbo \
