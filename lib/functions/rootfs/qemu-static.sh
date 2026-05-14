@@ -193,35 +193,89 @@ function prepare_host_binfmt_qemu_cross() {
 }
 
 function prepare_host_binfmt_qemu_cross_arm64_host_armhf_target() {
-	display_alert "Trying to update binfmts - aarch64 mostly does 32-bit sans emulation, but Apple said no" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-	run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" "||" "true" # don't fail nor produce output, which can be misleading.
+	declare armhf_probe="/usr/arm-linux-gnueabihf/lib/ld-linux-armhf.so.3"
+
+	# If qemu-arm is already enabled in the kernel, the native probe
+	# below would route through qemu and lie about COMPAT. Trust the
+	# existing setup — admin or packaged service intended it.
+	if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] &&
+		[[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
+		display_alert "qemu-arm already enabled in binfmt_misc" "trusting existing setup" "debug"
+		return 0
+	fi
+
+	# No active qemu-arm route. Probe CONFIG_COMPAT directly. `arch-test
+	# arm` is unreliable here (probes ARMv5 EABI; COMPAT runs armhf —
+	# EABI v5+; empirically broken on Ubuntu Noble / Ampere CAX). Direct
+	# exec of ld-linux-armhf (from gcc-arm-linux-gnueabihf, an armbian
+	# host build dep when target_arch=armhf|all) is authoritative.
+	if [[ -x "${armhf_probe}" ]] && "${armhf_probe}" --help > /dev/null 2>&1; then
+		display_alert "Host kernel can run armhf natively (CONFIG_COMPAT)" "no qemu-arm setup needed" "debug"
+		return 0
+	fi
+
+	# ld-linux-armhf may be absent on cross builds whose target isn't
+	# armhf (gcc-arm-linux-gnueabihf isn't pulled in then). Fall back to
+	# arch-test to avoid degraded host-capability detection on those
+	# flows; on Ampere CAX it reports false-negative but the probe above
+	# already covered the armhf-target case where it matters most.
+	if [[ ! -x "${armhf_probe}" ]] && command -v arch-test > /dev/null 2>&1 && arch-test arm > /dev/null 2>&1; then
+		display_alert "Host can run armhf (arch-test fallback)" "no qemu-arm setup needed" "debug"
+		return 0
+	fi
+
+	# No native COMPAT — need qemu-arm. Prefer a packaged descriptor
+	# (qemu-user-binfmt on resolute installs `/usr/bin/qemu-arm`;
+	# qemu-user-static elsewhere uses the -static suffix). Overwriting
+	# it would break the resolute interpreter path.
+	if [[ -f /usr/share/binfmts/qemu-arm ]]; then
+		# Three-step recovery: re-import the descriptor into binfmt-support's
+		# admin DB (handles stale/empty DB where --enable would fail with
+		# "not in database"); --enable activates the format; force-sync via
+		# /proc afterwards if the kernel entry was externally toggled to 0.
+		run_host_command_logged update-binfmts --import qemu-arm 2> /dev/null || true
+		run_host_command_logged update-binfmts --enable qemu-arm || true
+		[[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] && echo 1 > /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null || true
+		if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] &&
+			[[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
+			display_alert "qemu-arm enabled via packaged descriptor" "leaving package-provided setup intact" "debug"
+			return 0
+		fi
+		exit_with_error "/usr/share/binfmts/qemu-arm exists but qemu-arm could not be enabled — packaged interpreter likely missing. Reinstall qemu-user-binfmt (resolute) / qemu-user-static, or remove the descriptor and retry."
+	fi
+
+	# Kernel entry exists but disabled, no descriptor on host. The kernel
+	# keeps the magic/mask in memory once registered; only the enabled
+	# flag toggles. Try `echo 1 > /proc/...` before giving up — that
+	# repairs the common "someone toggled it off" state without needing
+	# the descriptor file back.
+	if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
+		echo 1 > /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null || true
+		if [[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
+			display_alert "qemu-arm re-enabled via /proc" "kernel state restored without descriptor" "debug"
+			return 0
+		fi
+		exit_with_error "qemu-arm kernel entry present but cannot be re-enabled and no descriptor to re-register from. Reinstall qemu-user-binfmt / qemu-user-static and retry."
+	fi
+
+	# Apple-Silicon-like (no COMPAT, no qemu pkg): hand-roll the descriptor.
+	display_alert "arm64 host can't run armhf natively (no CONFIG_COMPAT?)" "importing+enabling qemu-arm" "debug"
+	cat <<- BINFMT_ARM_MAGIC > /usr/share/binfmts/qemu-arm
+		package qemu-user-static
+		interpreter /usr/bin/qemu-arm-static
+		magic \x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00
+		offset 0
+		mask \xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff
+		credentials yes
+		fix_binary no
+		preserve yes
+	BINFMT_ARM_MAGIC
+	run_host_command_logged update-binfmts --import qemu-arm
+	run_host_command_logged update-binfmts --enable qemu-arm
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		display_alert "Debugging arch-test" "full output" "debug"
-		run_host_command_logged arch-test "||" true
+		run_host_command_logged arch-test || true
 	fi
-
-	# to check, we use arch-test; if will return 0 if _either_ the host can natively run armhf, or if qemu-arm is correctly working.
-	if arch-test arm; then
-		display_alert "Host can run armhf natively or emulation is correctly setup already" "no need to enable qemu-arm" "debug"
-	else
-		display_alert "arm64 host can't run armhf natively" "importing enabling qemu-arm" "debug"
-		cat <<-BINFMT_ARM_MAGIC >/usr/share/binfmts/qemu-arm
-			package qemu-user-static
-			interpreter /usr/bin/qemu-arm-static
-			magic \x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00
-			offset 0
-			mask \xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff
-			credentials yes
-			fix_binary no
-			preserve yes
-		BINFMT_ARM_MAGIC
-		run_host_command_logged update-binfmts --import "qemu-${wanted_arch}"
-		run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}"
-
-		# Test again using arch-test.
-		display_alert "Checking if arm 32-bit emulation on arm64 works after enabling" "qemu-arm emulation" "info"
-		run_host_command_logged arch-test arm
-		display_alert "arm 32-bit emulation on arm64" "has been correctly setup" "cachehit"
-	fi
+	display_alert "arm 32-bit emulation on arm64" "has been set up via qemu-arm" "cachehit"
 }
