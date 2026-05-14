@@ -41,11 +41,11 @@ function seeed_recomputer_install_from_apt() {
 		EOF
 	fi
 
-	# Only update the Seeed source, not all sources
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 \
-		-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/seeed.list \
-		-o Dir::Etc::sourceparts=/dev/null \
-		update
+	# Update all apt sources (Ubuntu + Seeed) so apt can resolve
+	# dependencies that live in the Ubuntu repo (e.g. libxcb-dri2-0).
+	# Updating only the Seeed index leaves the Ubuntu cache empty after
+	# rootfs extraction, which breaks dependency resolution.
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
 
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
 		--no-install-recommends install "$@"
@@ -380,6 +380,32 @@ function custom_kernel_config__recomputer_rk35xx_customizations() {
 		# Goodix touchscreen
 		kernel_config_set_y CONFIG_TOUCHSCREEN_GOODIX
 	fi
+}
+
+# Stage kernel patches from Seeed extension into userpatches so the
+# Armbian framework applies them during kernel build. Uses the same
+# pattern as gateway-dk-ask.sh: copy to userpatches/kernel/${KERNELPATCHDIR}/.
+function post_family_config__recomputer_stage_kernel_patches() {
+	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
+		return 0
+	fi
+
+	local ext_patch_dir="${SRC}/extensions/seeed_armbian_extension/patches/kernel"
+	local user_patch_dir="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+
+	if [[ ! -d "${ext_patch_dir}" ]]; then
+		display_alert "Seeed kernel patches" "Directory not found: ${ext_patch_dir}" "warn"
+		return 0
+	fi
+
+	install -d -m 0755 "${user_patch_dir}"
+
+	local patch_file
+	for patch_file in "${ext_patch_dir}"/*.patch; do
+		[[ -f "${patch_file}" ]] || continue
+		cp "${patch_file}" "${user_patch_dir}/"
+		display_alert "Seeed kernel patch staged" "$(basename "${patch_file}")" "info"
+	done
 }
 
 # Clone/pull Seeed RK extension at top-level before enable_extension
