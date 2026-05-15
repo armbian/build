@@ -1,0 +1,12 @@
+# Rockchip RK3506G triple core 128MB SoC 2x100MBe NAND SD USB2 WIFI
+BOARD_NAME="Vanxoak HD-RK3506G-EVB"
+BOARD_VENDOR="vanxoak"
+BOARDFAMILY="rockchip"
+BOOTCONFIG="rk3506g-evb1-v10_defconfig"
+BOARD_MAINTAINER=""
+KERNEL_TARGET="vendor"
+BOOT_FDT_FILE="rk3506g-vanxoak-hd-rk3506g-evb.dtb"
+IMAGE_PARTITION_TABLE="gpt"
+SERIALCON="ttyFIQ0"
+BOOT_SOC="rk3506"
+DDR_BLOB="rk35/rk3506_ddr_750MHz_v1.06.bin"
