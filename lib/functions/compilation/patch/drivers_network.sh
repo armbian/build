@@ -425,10 +425,10 @@ driver_rtw88() {
 
 driver_rtl8852bs() {
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
-	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]] && [[ "$BRANCH" != bleedingedge ]]; then
+	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:72c75150d7422eda3f0b3f543cce65114efcb4fe' # Commit date: Oct 18, 2025 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:e1f97d72dfc692e86269e836516162b793395289' # Commit date: May 15, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
