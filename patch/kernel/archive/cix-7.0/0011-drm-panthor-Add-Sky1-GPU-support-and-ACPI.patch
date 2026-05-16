@@ -1,0 +1,1337 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:40:21 +1100
+Subject: [PATCH] drm/panthor: Add Sky1 GPU support and ACPI
+
+Add CIX Sky1 GPU support including SCMI perf domain DVFS,
+ACE-Lite coherency with NC memattr fallback, RCSU core
+harvesting, and ACPI power-on and device frequency scaling.
+---
+ drivers/gpu/drm/panthor/panthor_devfreq.c | 324 +++++++++++++++++-
+ drivers/gpu/drm/panthor/panthor_device.c  | 389 ++++++++++++++++++++--
+ drivers/gpu/drm/panthor/panthor_device.h  |  41 ++-
+ drivers/gpu/drm/panthor/panthor_drv.c     |  10 +
+ drivers/gpu/drm/panthor/panthor_fw.c      |  10 +-
+ drivers/gpu/drm/panthor/panthor_gem.c     |   9 +-
+ drivers/gpu/drm/panthor/panthor_gpu.c     |  43 ++-
+ drivers/gpu/drm/panthor/panthor_hw.c      |  23 +-
+ drivers/gpu/drm/panthor/panthor_mmu.c     |  44 ++-
+ drivers/gpu/drm/panthor/panthor_regs.h    |   5 +
+ 10 files changed, 829 insertions(+), 69 deletions(-)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_devfreq.c b/drivers/gpu/drm/panthor/panthor_devfreq.c
+index 2249b41ca4afe..494d608a987fb 100644
+--- a/drivers/gpu/drm/panthor/panthor_devfreq.c
++++ b/drivers/gpu/drm/panthor/panthor_devfreq.c
+@@ -4,7 +4,9 @@
+ #include <linux/clk.h>
+ #include <linux/devfreq.h>
+ #include <linux/devfreq_cooling.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
+ 
+ #include <drm/drm_managed.h>
+@@ -13,6 +15,23 @@
+ #include "panthor_devfreq.h"
+ #include "panthor_device.h"
+ 
++/*
++ * SCMI rate limiting for GPU DVFS.
++ *
++ * The SCP firmware on Sky1 processes SCMI perf_level_set messages through a
++ * shared mailbox channel used by all 12 performance domains. Under sustained
++ * devfreq load (governor polling every 50-100ms), the firmware falls behind,
++ * responds out of order, and the SCMI transport locks up — blocking all SCMI
++ * users including networking.
++ *
++ * Fast channels are advertised by firmware but return -EOPNOTSUPP for all
++ * DESCRIBE_FASTCHANNEL requests, so we must rate-limit at the driver level.
++ */
++#define PANTHOR_SCMI_RATE_LIMIT_US	100000		/* 100ms min between SCMI calls */
++#define PANTHOR_SCMI_MAX_ERRORS		3		/* errors before safe-freq boost */
++#define PANTHOR_SCMI_BACKOFF_BASE_US	500000		/* 500ms base backoff */
++#define PANTHOR_SCMI_BACKOFF_MAX_US	4000000		/* 4s max backoff */
++
+ /**
+  * struct panthor_devfreq - Device frequency management
+  */
+@@ -23,6 +42,17 @@ struct panthor_devfreq {
+ 	/** @gov_data: Governor data. */
+ 	struct devfreq_simple_ondemand_data gov_data;
+ 
++	/**
++	 * @opp_dev: Virtual device for SCMI perf domain OPP control.
++	 *
++	 * On platforms with a named "perf" power domain (e.g. SCMI DVFS),
++	 * frequency changes must go through this virtual device rather than
++	 * the main GPU device, so the OPP framework routes through the SCMI
++	 * performance state (which manages both frequency and voltage).
++	 * NULL if not using SCMI perf domain.
++	 */
++	struct device *opp_dev;
++
+ 	/** @busy_time: Busy time. */
+ 	ktime_t busy_time;
+ 
+@@ -36,13 +66,28 @@ struct panthor_devfreq {
+ 	bool last_busy_state;
+ 
+ 	/**
+-	 * @lock: Lock used to protect busy_time, idle_time, time_last_update and
+-	 * last_busy_state.
++	 * @lock: Lock used to protect busy_time, idle_time, time_last_update,
++	 * last_busy_state, and the SCMI rate-limiting fields below.
+ 	 *
+ 	 * These fields can be accessed concurrently by panthor_devfreq_get_dev_status()
+ 	 * and panthor_devfreq_record_{busy,idle}().
+ 	 */
+ 	spinlock_t lock;
++
++	/** @last_set_freq: Last frequency successfully sent to SCMI. */
++	unsigned long last_set_freq;
++
++	/** @last_set_time: ktime of the last actual SCMI frequency change. */
++	ktime_t last_set_time;
++
++	/** @scmi_err_count: Consecutive SCMI error count for backoff. */
++	unsigned int scmi_err_count;
++
++	/** @backoff_until: ktime before which SCMI calls are suppressed. */
++	ktime_t backoff_until;
++
++	/** @safe_freq: Mid-range OPP for error recovery (computed at init). */
++	unsigned long safe_freq;
+ };
+ 
+ static void panthor_devfreq_update_utilization(struct panthor_devfreq *pdevfreq)
+@@ -60,20 +105,118 @@ static void panthor_devfreq_update_utilization(struct panthor_devfreq *pdevfreq)
+ 	pdevfreq->time_last_update = now;
+ }
+ 
++/*
++ * Set GPU frequency via the SCMI perf domain's performance state.
++ * Unlike dev_pm_opp_set_rate(), this does not require a clock — the genpd's
++ * set_performance_state callback handles the SCMI call.
++ */
++static int panthor_devfreq_scmi_set_freq(struct device *dev, unsigned long freq)
++{
++	struct dev_pm_opp *opp;
++	int ret;
++
++	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++
++	ret = dev_pm_opp_set_opp(dev, opp);
++	dev_pm_opp_put(opp);
++	return ret;
++}
++
+ static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
+ 				  u32 flags)
+ {
++	struct panthor_device *ptdev = dev_get_drvdata(dev);
++	struct panthor_devfreq *pdevfreq = ptdev->devfreq;
+ 	struct dev_pm_opp *opp;
++	unsigned long target_freq;
++	unsigned long irqflags;
++	ktime_t now;
+ 	int err;
+ 
+ 	opp = devfreq_recommended_opp(dev, freq, flags);
+ 	if (IS_ERR(opp))
+ 		return PTR_ERR(opp);
++	target_freq = *freq;
+ 	dev_pm_opp_put(opp);
+ 
+-	err = dev_pm_opp_set_rate(dev, *freq);
++	/* Non-SCMI platforms: pass through unchanged */
++	if (!pdevfreq->opp_dev)
++		return dev_pm_opp_set_rate(dev, target_freq);
++
++	now = ktime_get();
++	spin_lock_irqsave(&pdevfreq->lock, irqflags);
++
++	/* Suppress calls during error backoff */
++	if (ktime_before(now, pdevfreq->backoff_until)) {
++		spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++		return 0;
++	}
++
++	/* Skip if already at the requested frequency */
++	if (target_freq == pdevfreq->last_set_freq) {
++		spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++		return 0;
++	}
++
++	/* Rate limit: enforce minimum interval between SCMI calls */
++	if (ktime_us_delta(now, pdevfreq->last_set_time) <
++	    PANTHOR_SCMI_RATE_LIMIT_US) {
++		spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++		return 0;
++	}
++
++	spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++
++	/* Actual SCMI frequency change (may sleep on mailbox) */
++	err = panthor_devfreq_scmi_set_freq(dev, target_freq);
++
++	spin_lock_irqsave(&pdevfreq->lock, irqflags);
++
++	if (!err) {
++		pdevfreq->last_set_freq = target_freq;
++		pdevfreq->last_set_time = now;
++		pdevfreq->scmi_err_count = 0;
++		pdevfreq->backoff_until = 0;
++	} else {
++		unsigned int errcnt = ++pdevfreq->scmi_err_count;
++		unsigned long backoff_us;
++
++		/* Exponential backoff: 500ms, 1s, 2s, capped at 4s */
++		backoff_us = PANTHOR_SCMI_BACKOFF_BASE_US <<
++			     min(errcnt - 1, 3u);
++		if (backoff_us > PANTHOR_SCMI_BACKOFF_MAX_US)
++			backoff_us = PANTHOR_SCMI_BACKOFF_MAX_US;
++		pdevfreq->backoff_until = ktime_add_us(now, backoff_us);
++
++		drm_warn(&ptdev->base,
++			 "GPU DVFS: SCMI error %d (count=%u), backoff %lu ms\n",
++			 err, errcnt, backoff_us / 1000);
++
++		/* After repeated errors, boost to safe mid-range frequency */
++		if (errcnt >= PANTHOR_SCMI_MAX_ERRORS && pdevfreq->safe_freq &&
++		    pdevfreq->last_set_freq != pdevfreq->safe_freq) {
++			spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++
++			drm_info(&ptdev->base,
++				 "GPU DVFS: boosting to safe freq %lu MHz\n",
++				 pdevfreq->safe_freq / 1000000);
++			err = panthor_devfreq_scmi_set_freq(dev,
++						       pdevfreq->safe_freq);
++
++			spin_lock_irqsave(&pdevfreq->lock, irqflags);
++			if (!err) {
++				pdevfreq->last_set_freq = pdevfreq->safe_freq;
++				pdevfreq->last_set_time = ktime_get();
++			}
++		}
++	}
+ 
+-	return err;
++	spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
++
++	/* Always return 0 — errors cause devfreq to spam retries */
++	return 0;
+ }
+ 
+ static void panthor_devfreq_reset(struct panthor_devfreq *pdevfreq)
+@@ -130,6 +273,112 @@ static struct devfreq_dev_profile panthor_devfreq_profile = {
+ 	.get_cur_freq = panthor_devfreq_get_cur_freq,
+ };
+ 
++/**
++ * panthor_devfreq_scmi_init() - Try to set up DVFS via SCMI perf domain.
++ * @ptdev: Panthor device
++ * @pdevfreq: Panthor devfreq state
++ *
++ * On platforms with multiple power domains (e.g. Sky1 with pd_gpu + perf),
++ * the SCMI firmware provides an OPP table via the perf domain's attach_dev
++ * callback.
++ *
++ * Under DT: panthor_pm_domain_init() already created virtual devices for each
++ * domain.  Find the "perf" domain's virtual device, read OPPs from it, and
++ * copy them to the main device.  Frequency changes route through the virtual
++ * device so the SCMI firmware manages both frequency and voltage.
++ *
++ * Under ACPI: attach the GPU device directly to the SCMI perf genpd (looked
++ * up by firmware name).  The attach_dev callback populates OPPs on the main
++ * device.  Frequency changes go through the genpd's set_performance_state.
++ *
++ * Return: number of OPPs added, 0 if no perf domain found, negative on error.
++ */
++static int panthor_devfreq_scmi_init(struct panthor_device *ptdev,
++				     struct panthor_devfreq *pdevfreq)
++{
++	struct device *dev = ptdev->base.dev;
++	struct device *opp_dev;
++	struct dev_pm_opp *opp;
++	unsigned long freq;
++	int count, i, ret;
++
++	if (dev->of_node) {
++		int index;
++
++		/* DT: find "perf" power domain virtual device */
++		index = of_property_match_string(dev->of_node,
++						 "power-domain-names", "perf");
++		if (index < 0 || index >= ARRAY_SIZE(ptdev->pm_domain_devs))
++			return 0;
++
++		opp_dev = ptdev->pm_domain_devs[index];
++		if (!opp_dev)
++			return 0;
++
++		/* Copy OPPs from virtual device to main device */
++		count = dev_pm_opp_get_opp_count(opp_dev);
++		if (count <= 0)
++			return 0;
++
++		for (i = 0, freq = 0; ; i++, freq++) {
++			opp = dev_pm_opp_find_freq_ceil(opp_dev, &freq);
++			if (IS_ERR(opp))
++				break;
++			dev_pm_opp_put(opp);
++
++			ret = dev_pm_opp_add(dev, freq, 0);
++			if (ret) {
++				drm_warn(&ptdev->base,
++					 "Failed to add OPP %lu Hz: %d\n",
++					 freq, ret);
++				break;
++			}
++		}
++
++		if (i == 0)
++			return 0;
++	} else {
++		/*
++		 * ACPI: attach directly to the SCMI perf genpd.  The
++		 * genpd's attach_dev callback populates OPPs on the
++		 * main device.  No virtual device or OPP copy needed.
++		 */
++		struct generic_pm_domain *perf_genpd;
++
++		perf_genpd = pm_genpd_lookup_by_name("gpu_core");
++		if (!perf_genpd) {
++			drm_dbg(&ptdev->base,
++				"GPU DVFS: gpu_core genpd not found\n");
++			return 0;
++		}
++
++		ret = pm_genpd_add_device(perf_genpd, dev);
++		if (ret) {
++			drm_warn(&ptdev->base,
++				 "Failed to attach SCMI perf domain: %d\n",
++				 ret);
++			return 0;
++		}
++
++		count = dev_pm_opp_get_opp_count(dev);
++		if (count <= 0) {
++			pm_genpd_remove_device(dev);
++			return 0;
++		}
++
++		/* Main device IS the OPP device under ACPI */
++		opp_dev = dev;
++	}
++
++	pdevfreq->opp_dev = opp_dev;
++
++	drm_dbg(&ptdev->base,
++		"GPU DVFS: %d OPPs from SCMI perf domain\n",
++		dev_pm_opp_get_opp_count(dev));
++
++	return dev_pm_opp_get_opp_count(dev);
++}
++
+ int panthor_devfreq_init(struct panthor_device *ptdev)
+ {
+ 	/* There's actually 2 regulators (mali and sram), but the OPP core only
+@@ -154,6 +403,15 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
+ 
+ 	ptdev->devfreq = pdevfreq;
+ 
++	/*
++	 * On platforms with a named "perf" power domain (SCMI DVFS), the
++	 * platform bus won't auto-attach it when multiple power domains are
++	 * present. Try to attach explicitly and populate OPPs from firmware.
++	 */
++	ret = panthor_devfreq_scmi_init(ptdev, pdevfreq);
++	if (ret < 0)
++		return ret;
++
+ 	/*
+ 	 * The power domain associated with the GPU may have already added an
+ 	 * OPP table, complete with OPPs, as part of the platform bus
+@@ -165,15 +423,22 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
+ 	table = dev_pm_opp_get_opp_table(dev);
+ 	if (IS_ERR_OR_NULL(table)) {
+ 		ret = devm_pm_opp_set_regulators(dev, reg_names);
+-		if (ret && ret != -ENODEV) {
+-			if (ret != -EPROBE_DEFER)
+-				DRM_DEV_ERROR(dev, "Couldn't set OPP regulators\n");
+-			return ret;
++		if (ret) {
++			/* Continue if the optional regulator is missing */
++			if (ret != -ENODEV) {
++				if (ret != -EPROBE_DEFER)
++					DRM_DEV_ERROR(dev, "Couldn't set OPP regulators\n");
++				return ret;
++			}
+ 		}
+ 
+ 		ret = devm_pm_opp_of_add_table(dev);
+-		if (ret)
++		if (ret) {
++			/* Optional, continue without devfreq */
++			if (ret == -ENODEV)
++				ret = 0;
+ 			return ret;
++		}
+ 	} else {
+ 		dev_pm_opp_put_opp_table(table);
+ 	}
+@@ -221,8 +486,12 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
+ 	panthor_devfreq_profile.initial_freq = cur_freq;
+ 
+ 	/*
+-	 * Set the recommend OPP this will enable and configure the regulator
+-	 * if any and will avoid a switch off by regulator_late_cleanup()
++	 * Set the recommended OPP. This will enable and configure the regulator
++	 * if any and will avoid a switch off by regulator_late_cleanup().
++	 *
++	 * Use dev_pm_opp_set_opp() (not dev_pm_opp_set_rate) so this works
++	 * both with regulators and with SCMI perf domains (which have no
++	 * clock — frequency changes go through the genpd performance state).
+ 	 */
+ 	ret = dev_pm_opp_set_opp(dev, opp);
+ 	dev_pm_opp_put(opp);
+@@ -239,6 +508,33 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
+ 
+ 	dev_pm_opp_put(opp);
+ 
++	/*
++	 * For SCMI platforms, compute a safe mid-range frequency for error
++	 * recovery and increase the polling interval to match our rate limit.
++	 */
++	if (pdevfreq->opp_dev) {
++		unsigned long min_f = 0, max_f = ULONG_MAX, mid, safe;
++		struct dev_pm_opp *opp_tmp;
++
++		opp_tmp = dev_pm_opp_find_freq_ceil(dev, &min_f);
++		if (!IS_ERR(opp_tmp)) {
++			dev_pm_opp_put(opp_tmp);
++			opp_tmp = dev_pm_opp_find_freq_floor(dev, &max_f);
++			if (!IS_ERR(opp_tmp)) {
++				dev_pm_opp_put(opp_tmp);
++				mid = min_f + (max_f - min_f) / 2;
++				safe = mid;
++				opp_tmp = dev_pm_opp_find_freq_ceil(dev, &safe);
++				if (!IS_ERR(opp_tmp)) {
++					pdevfreq->safe_freq = safe;
++					dev_pm_opp_put(opp_tmp);
++				}
++			}
++		}
++
++		panthor_devfreq_profile.polling_ms = 100;
++	}
++
+ 	/*
+ 	 * Setup default thresholds for the simple_ondemand governor.
+ 	 * The values are chosen based on experiments.
+@@ -272,6 +568,12 @@ void panthor_devfreq_resume(struct panthor_device *ptdev)
+ 
+ 	panthor_devfreq_reset(pdevfreq);
+ 
++	/* Clear SCMI rate-limiting state on resume */
++	pdevfreq->last_set_freq = 0;
++	pdevfreq->last_set_time = 0;
++	pdevfreq->scmi_err_count = 0;
++	pdevfreq->backoff_until = 0;
++
+ 	drm_WARN_ON(&ptdev->base, devfreq_resume_device(pdevfreq->devfreq));
+ }
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_device.c b/drivers/gpu/drm/panthor/panthor_device.c
+index 54fbb1aa07c52..ac89a4a20a0f9 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.c
++++ b/drivers/gpu/drm/panthor/panthor_device.c
+@@ -4,10 +4,16 @@
+ /* Copyright 2023 Collabora ltd. */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/iommu.h>
+ #include <linux/mm.h>
++#include <linux/moduleparam.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
++#include <linux/property.h>
+ #include <linux/pm_runtime.h>
++#include <linux/arm-smccc.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+ 
+@@ -26,45 +32,177 @@
+ #include "panthor_regs.h"
+ #include "panthor_sched.h"
+ 
++static bool panthor_is_sky1(struct panthor_device *ptdev)
++{
++	struct device *dev = ptdev->base.dev;
++
++	if (of_device_is_compatible(dev->of_node, "arm,mali-valhall"))
++		return true;
++
++	return acpi_dev_hid_uid_match(ACPI_COMPANION(dev), "CIXH5000", NULL);
++}
++
++/*
++ * Sky1 GPU power-on via raw SMC SCMI call to TFA (Trusted Firmware-A).
++ *
++ * Under DT, smc_devpd (arm,scmi-smc) sends SCMI POWER_STATE_SET to TFA
++ * via SMC function 0xc2000001 with shared memory at 0x84380000.
++ * Under ACPI, there's no smc_devpd, so we make the raw SMC call directly.
++ *
++ * TFA not only powers the GPU domain but also configures the IDM
++ * (Interconnect Domain Manager) to allow non-secure (Linux) access
++ * to GPU registers.  Without this, any GPU register read causes an
++ * unrecoverable SError.
++ */
++#define SKY1_SMC_SCMI_FUNC_ID		0xc2000001
++#define SKY1_SMC_SCMI_SHMEM_PHYS	0x84380000UL
++#define SKY1_SMC_SCMI_SHMEM_SIZE	0x80
++#define SKY1_PD_GPU			21
++
++/* SCMI shared memory offsets */
++#define SCMI_SHMEM_CHAN_STATUS		0x04
++#define SCMI_SHMEM_FLAGS		0x10
++#define SCMI_SHMEM_LENGTH		0x14
++#define SCMI_SHMEM_MSG_HEADER		0x18
++#define SCMI_SHMEM_MSG_PAYLOAD		0x1c
++
++static int sky1_smc_scmi_power_set(struct device *dev, u32 domain, u32 state)
++{
++	void __iomem *shmem;
++	struct arm_smccc_res res;
++	u32 msg_header, resp_status;
++	int timeout = 1000;
++
++	shmem = ioremap(SKY1_SMC_SCMI_SHMEM_PHYS, SKY1_SMC_SCMI_SHMEM_SIZE);
++	if (!shmem)
++		return -ENOMEM;
++
++	/* Wait for channel free */
++	while (!(ioread32(shmem + SCMI_SHMEM_CHAN_STATUS) & BIT(0))) {
++		if (--timeout <= 0) {
++			dev_err(dev, "SCMI SMC channel busy timeout\n");
++			iounmap(shmem);
++			return -ETIMEDOUT;
++		}
++		udelay(10);
++	}
++
++	/* Clear channel status */
++	iowrite32(0, shmem + SCMI_SHMEM_CHAN_STATUS);
++
++	/* Polling mode (no interrupt) */
++	iowrite32(0, shmem + SCMI_SHMEM_FLAGS);
++
++	/*
++	 * Message header:
++	 *   Bits  0-7:  MSG_ID = 0x04 (POWER_STATE_SET)
++	 *   Bits  8-9:  MSG_TYPE = 0 (command)
++	 *   Bits 10-17: PROTOCOL_ID = 0x11 (POWER)
++	 *   Bits 18-27: TOKEN = 0
++	 */
++	msg_header = 0x04 | (0x11 << 10);
++	iowrite32(msg_header, shmem + SCMI_SHMEM_MSG_HEADER);
++
++	/* Payload: flags(4) + domain(4) + state(4) = 12 bytes */
++	iowrite32(0, shmem + SCMI_SHMEM_MSG_PAYLOAD);		/* flags: sync */
++	iowrite32(domain, shmem + SCMI_SHMEM_MSG_PAYLOAD + 4);	/* domain_id */
++	iowrite32(state, shmem + SCMI_SHMEM_MSG_PAYLOAD + 8);	/* power_state */
++
++	/* Length = msg_header(4) + payload(12) = 16 */
++	iowrite32(16, shmem + SCMI_SHMEM_LENGTH);
++
++	/* SMC call: param_page = phys >> 12, param_offset = phys & 0xFFF */
++	arm_smccc_smc(SKY1_SMC_SCMI_FUNC_ID,
++		      SKY1_SMC_SCMI_SHMEM_PHYS >> 12,
++		      SKY1_SMC_SCMI_SHMEM_PHYS & 0xFFF,
++		      0, 0, 0, 0, 0, &res);
++
++	if (res.a0) {
++		dev_err(dev, "SCMI SMC returned error: 0x%lx\n", res.a0);
++		iounmap(shmem);
++		return -EIO;
++	}
++
++	/* Response: first word of payload is SCMI status */
++	resp_status = ioread32(shmem + SCMI_SHMEM_MSG_PAYLOAD);
++	iounmap(shmem);
++
++	if (resp_status != 0) {
++		dev_err(dev, "SCMI POWER_STATE_SET domain %u failed: %d\n",
++			domain, resp_status);
++		return -EIO;
++	}
++
++	dev_info(dev, "GPU power domain %u powered on via SMC SCMI\n", domain);
++	return 0;
++}
++
++static bool panthor_force_noncoherent;
++module_param_named(force_noncoherent, panthor_force_noncoherent, bool, 0444);
++MODULE_PARM_DESC(force_noncoherent,
++	"Force GPU to non-coherent mode even when firmware reports coherent");
++
+ static int panthor_gpu_coherency_init(struct panthor_device *ptdev)
+ {
+-	BUILD_BUG_ON(GPU_COHERENCY_NONE != DRM_PANTHOR_GPU_COHERENCY_NONE);
+-	BUILD_BUG_ON(GPU_COHERENCY_ACE_LITE != DRM_PANTHOR_GPU_COHERENCY_ACE_LITE);
+-	BUILD_BUG_ON(GPU_COHERENCY_ACE != DRM_PANTHOR_GPU_COHERENCY_ACE);
++	bool dma_coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
+ 
+-	/* Start with no coherency, and update it if the device is flagged coherent. */
+-	ptdev->gpu_info.selected_coherency = GPU_COHERENCY_NONE;
+-	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
++	/*
++	 * Sky1 SoC: The GPU hardware supports full ACE (128/256-bit AMBA 4
++	 * ACE master), but the platform uses ACE-Lite (DT system-coherency=0).
++	 * The DPU is non-snooping and reads from SLC/DRAM, so ACE-Lite is the
++	 * correct choice: GPU L2 evictions route through HN-F and are absorbed
++	 * into the SLC, making WB data visible to the DPU without NC memattr.
++	 */
++	if (panthor_is_sky1(ptdev)) {
++		ptdev->coherency_mode = PANTHOR_COHERENCY_ACE_LITE;
++		drm_info(&ptdev->base, "Using ACE-Lite bus coherency (Sky1)\n");
++	} else if (panthor_force_noncoherent || !dma_coherent) {
++		ptdev->coherency_mode = PANTHOR_COHERENCY_NONE;
++	} else {
++		ptdev->coherency_mode = PANTHOR_COHERENCY_ACE_LITE;
++	}
+ 
+-	if (!ptdev->coherent)
++	if (ptdev->coherency_mode == PANTHOR_COHERENCY_NONE)
+ 		return 0;
+ 
+-	/* Check if the ACE-Lite coherency protocol is actually supported by the GPU.
+-	 * ACE protocol has never been supported for command stream frontend GPUs.
+-	 */
+-	if ((gpu_read(ptdev, GPU_COHERENCY_FEATURES) &
+-		      GPU_COHERENCY_PROT_BIT(ACE_LITE))) {
+-		ptdev->gpu_info.selected_coherency = GPU_COHERENCY_ACE_LITE;
++	/* Verify hardware supports the selected protocol. */
++	if (gpu_read(ptdev, GPU_COHERENCY_FEATURES) &
++	    GPU_COHERENCY_PROT_BIT(ACE_LITE))
+ 		return 0;
+-	}
+ 
+-	drm_err(&ptdev->base, "Coherency not supported by the device");
++	drm_err(&ptdev->base, "ACE-Lite not supported by hardware");
+ 	return -ENOTSUPP;
+ }
+ 
+ static int panthor_clk_init(struct panthor_device *ptdev)
+ {
+-	ptdev->clks.core = devm_clk_get(ptdev->base.dev, NULL);
++	/* Try vendor name first (gpu_clk_core), then unnamed default */
++	ptdev->clks.core = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_core");
+ 	if (IS_ERR(ptdev->clks.core))
+ 		return dev_err_probe(ptdev->base.dev,
+ 				     PTR_ERR(ptdev->clks.core),
+-				     "get 'core' clock failed");
++				     "get 'gpu_clk_core' clock failed");
++	if (!ptdev->clks.core) {
++		ptdev->clks.core = devm_clk_get(ptdev->base.dev, NULL);
++		if (IS_ERR(ptdev->clks.core))
++			return dev_err_probe(ptdev->base.dev,
++					     PTR_ERR(ptdev->clks.core),
++					     "get 'core' clock failed");
++	}
+ 
+-	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
++	/* Try vendor name first (gpu_clk_stacks), then mainline name (stacks) */
++	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_stacks");
+ 	if (IS_ERR(ptdev->clks.stacks))
+ 		return dev_err_probe(ptdev->base.dev,
+ 				     PTR_ERR(ptdev->clks.stacks),
+-				     "get 'stacks' clock failed");
++				     "get 'gpu_clk_stacks' clock failed");
++	if (!ptdev->clks.stacks) {
++		ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
++		if (IS_ERR(ptdev->clks.stacks))
++			return dev_err_probe(ptdev->base.dev,
++					     PTR_ERR(ptdev->clks.stacks),
++					     "get 'stacks' clock failed");
++	}
+ 
+ 	ptdev->clks.coregroup = devm_clk_get_optional(ptdev->base.dev, "coregroup");
+ 	if (IS_ERR(ptdev->clks.coregroup))
+@@ -72,18 +210,128 @@ static int panthor_clk_init(struct panthor_device *ptdev)
+ 				     PTR_ERR(ptdev->clks.coregroup),
+ 				     "get 'coregroup' clock failed");
+ 
+-	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
++	/* CIX Sky1 needs additional backup clocks */
++	if (panthor_is_sky1(ptdev)) {
++		ptdev->clks.backup[0] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_200M");
++		if (IS_ERR(ptdev->clks.backup[0]))
++			return dev_err_probe(ptdev->base.dev,
++					     PTR_ERR(ptdev->clks.backup[0]),
++					     "get 'gpu_clk_200M' clock failed");
++
++		ptdev->clks.backup[1] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_400M");
++		if (IS_ERR(ptdev->clks.backup[1]))
++			return dev_err_probe(ptdev->base.dev,
++					     PTR_ERR(ptdev->clks.backup[1]),
++					     "get 'gpu_clk_400M' clock failed");
++	}
++
++	drm_dbg(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
+ 	return 0;
+ }
+ 
+-static int panthor_init_power(struct device *dev)
++static void panthor_pm_domain_fini(struct panthor_device *ptdev)
+ {
+-	struct dev_pm_domain_list  *pd_list = NULL;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(ptdev->pm_domain_devs); i++) {
++		if (!ptdev->pm_domain_devs[i])
++			break;
++
++		if (ptdev->pm_domain_links[i])
++			device_link_del(ptdev->pm_domain_links[i]);
++
++		dev_pm_domain_detach(ptdev->pm_domain_devs[i], true);
++	}
++}
++
++static int panthor_pm_domain_init(struct panthor_device *ptdev)
++{
++	int err;
++	int i, num_domains;
++
++	/*
++	 * Under ACPI, power on the GPU domain via raw SMC SCMI to TFA.
++	 * This replicates what smc_devpd does under DT: sends
++	 * POWER_STATE_SET for SKY1_PD_GPU, which powers the domain
++	 * and configures IDM non-secure access permissions.
++	 */
++	if (!ptdev->base.dev->of_node) {
++		if (panthor_is_sky1(ptdev)) {
++			err = sky1_smc_scmi_power_set(ptdev->base.dev,
++						      SKY1_PD_GPU, 0);
++			if (err)
++				return err;
++		}
++		return 0;
++	}
++
++	num_domains = of_count_phandle_with_args(ptdev->base.dev->of_node,
++						 "power-domains",
++						 "#power-domain-cells");
+ 
+-	if (dev->pm_domain)
++	/*
++	 * Single domain is handled by the core, and, if only a single power
++	 * the power domain is requested, the property is optional.
++	 */
++	if (num_domains < 2)
+ 		return 0;
+ 
+-	return devm_pm_domain_attach_list(dev, NULL, &pd_list);
++	if (WARN(num_domains > ARRAY_SIZE(ptdev->pm_domain_devs),
++			"Too many supplies in compatible structure.\n"))
++		return -EINVAL;
++
++	for (i = 0; i < num_domains; i++) {
++		ptdev->pm_domain_devs[i] =
++			dev_pm_domain_attach_by_id(ptdev->base.dev, i);
++		if (IS_ERR_OR_NULL(ptdev->pm_domain_devs[i])) {
++			err = PTR_ERR(ptdev->pm_domain_devs[i]) ? : -ENODATA;
++			ptdev->pm_domain_devs[i] = NULL;
++			dev_err(ptdev->base.dev,
++				"failed to get pm-domain %d: %d\n",
++				i, err);
++			goto err;
++		}
++		dev_dbg(ptdev->base.dev, "attached pm-domain %d: %s\n",
++			i, dev_name(ptdev->pm_domain_devs[i]));
++
++		ptdev->pm_domain_links[i] = device_link_add(ptdev->base.dev,
++				ptdev->pm_domain_devs[i], DL_FLAG_PM_RUNTIME |
++				DL_FLAG_STATELESS | DL_FLAG_RPM_ACTIVE);
++		if (!ptdev->pm_domain_links[i]) {
++			dev_err(ptdev->pm_domain_devs[i],
++				"adding device link failed!\n");
++			err = -ENODEV;
++			goto err;
++		}
++		dev_dbg(ptdev->base.dev, "pm-domain device link %d created\n", i);
++	}
++
++	dev_dbg(ptdev->base.dev, "pm_domain_init completed\n");
++	return 0;
++
++err:
++	panthor_pm_domain_fini(ptdev);
++	return err;
++}
++
++static int panthor_resets_init(struct panthor_device *ptdev)
++{
++	/*
++	 * Under ACPI, the reset framework has no DT bindings to look up.
++	 * Use optional variant so NULL is returned instead of -ENOENT.
++	 * reset_control_assert/deassert(NULL) are no-ops.
++	 */
++	if (!ptdev->base.dev->of_node)
++		ptdev->gpu_reset = devm_reset_control_get_optional_exclusive(
++					ptdev->base.dev, "gpu_reset");
++	else
++		ptdev->gpu_reset = devm_reset_control_get_optional(ptdev->base.dev,
++								   "gpu_reset");
++	if (IS_ERR(ptdev->gpu_reset))
++		return dev_err_probe(ptdev->base.dev, PTR_ERR(ptdev->gpu_reset),
++				     "failed to get gpu_reset\n");
++
++	return 0;
+ }
+ 
+ void panthor_device_unplug(struct panthor_device *ptdev)
+@@ -195,6 +443,7 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 	int ret;
+ 
+ 	ptdev->soc_data = of_device_get_match_data(ptdev->base.dev);
++	dev_dbg(ptdev->base.dev, "probe starting\n");
+ 
+ 	init_completion(&ptdev->unplug.done);
+ 	ret = drmm_mutex_init(&ptdev->base, &ptdev->unplug.lock);
+@@ -243,36 +492,96 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = panthor_init_power(ptdev->base.dev);
+-	if (ret < 0) {
+-		drm_err(&ptdev->base, "init power domains failed, ret=%d", ret);
++	ret = panthor_pm_domain_init(ptdev);
++	if (ret)
+ 		return ret;
+-	}
+ 
+ 	ret = panthor_devfreq_init(ptdev);
+ 	if (ret)
+-		return ret;
++		goto err_release_pm_domains;
+ 
+-	ptdev->iomem = devm_platform_get_and_ioremap_resource(to_platform_device(ptdev->base.dev),
+-							      0, &res);
+-	if (IS_ERR(ptdev->iomem))
+-		return PTR_ERR(ptdev->iomem);
++	ret = panthor_resets_init(ptdev);
++	if (ret)
++		goto err_release_pm_domains;
++
++	/* Sky1 uses resource 0 for RCSU, resource 1 for GPU registers.
++	 * Other platforms use resource 0 for GPU registers.
++	 */
++	if (panthor_is_sky1(ptdev)) {
++		ptdev->iomem = devm_platform_get_and_ioremap_resource(
++				to_platform_device(ptdev->base.dev), 1, &res);
++		if (IS_ERR(ptdev->iomem)) {
++			ret = PTR_ERR(ptdev->iomem);
++			goto err_release_pm_domains;
++		}
++
++		ptdev->sky1_rcsu_reg = devm_platform_ioremap_resource(
++				to_platform_device(ptdev->base.dev), 0);
++		if (IS_ERR(ptdev->sky1_rcsu_reg)) {
++			ret = PTR_ERR(ptdev->sky1_rcsu_reg);
++			goto err_release_pm_domains;
++		}
++	} else {
++		ptdev->iomem = devm_platform_get_and_ioremap_resource(
++				to_platform_device(ptdev->base.dev), 0, &res);
++		if (IS_ERR(ptdev->iomem)) {
++			ret = PTR_ERR(ptdev->iomem);
++			goto err_release_pm_domains;
++		}
++	}
+ 
+ 	ptdev->phys_addr = res->start;
+ 
+ 	ret = devm_pm_runtime_enable(ptdev->base.dev);
+ 	if (ret)
+-		return ret;
++		goto err_release_pm_domains;
+ 
+ 	ret = pm_runtime_resume_and_get(ptdev->base.dev);
+ 	if (ret)
+-		return ret;
++		goto err_release_pm_domains;
+ 
+ 	/* If PM is disabled, we need to call panthor_device_resume() manually. */
+ 	if (!IS_ENABLED(CONFIG_PM)) {
+ 		ret = panthor_device_resume(ptdev->base.dev);
+ 		if (ret)
+-			return ret;
++			goto err_rpm_put;
++	}
++
++	/*
++	 * Sky1 GPU power-on sequence (from CIX GPU Development Guide):
++	 * 1. Power domain on  (done in panthor_pm_domain_init)
++	 * 2. Clock enable      (done in panthor_device_resume via pm_runtime)
++	 * 3. IP Reset assert
++	 * 4. IP Reset de-assert
++	 * 5. Qchannel clock gating enable
++	 */
++	if (panthor_is_sky1(ptdev)) {
++		if (ptdev->gpu_reset) {
++			ret = reset_control_assert(ptdev->gpu_reset);
++			if (ret) {
++				dev_err(ptdev->base.dev, "GPU reset assert failed: %d\n", ret);
++				goto err_rpm_put;
++			}
++
++			usleep_range(10, 20);
++
++			ret = reset_control_deassert(ptdev->gpu_reset);
++			if (ret) {
++				dev_err(ptdev->base.dev, "GPU reset deassert failed: %d\n", ret);
++				goto err_rpm_put;
++			}
++
++		}
++
++		if (ptdev->sky1_rcsu_reg) {
++			u32 pgctrl;
++
++			pgctrl = readl(ptdev->sky1_rcsu_reg + 0x218);
++			pgctrl |= BIT(0);  /* QCHANNEL_CLOCK_GATE_ENABLE */
++			writel(pgctrl, ptdev->sky1_rcsu_reg + 0x218);
++
++			dev_dbg(ptdev->base.dev, "qchannel clock gating enabled\n");
++		}
+ 	}
+ 
+ 	ret = panthor_hw_init(ptdev);
+@@ -291,6 +600,11 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 	if (ret)
+ 		goto err_unplug_gpu;
+ 
++	if (ptdev->coherency_mode == PANTHOR_COHERENCY_NONE &&
++	    !device_iommu_mapped(ptdev->base.dev))
++		drm_info(&ptdev->base,
++			 "GPU not behind IOMMU; using non-cacheable memory attributes\n");
++
+ 	ret = panthor_mmu_init(ptdev);
+ 	if (ret)
+ 		goto err_unplug_gpu;
+@@ -334,6 +648,9 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 
+ err_rpm_put:
+ 	pm_runtime_put_sync_suspend(ptdev->base.dev);
++
++err_release_pm_domains:
++	panthor_pm_domain_fini(ptdev);
+ 	return ret;
+ }
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_device.h b/drivers/gpu/drm/panthor/panthor_device.h
+index f35e52b9546ac..d07b4968f4961 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.h
++++ b/drivers/gpu/drm/panthor/panthor_device.h
+@@ -6,6 +6,7 @@
+ #ifndef __PANTHOR_DEVICE_H__
+ #define __PANTHOR_DEVICE_H__
+ 
++#include <linux/acpi.h>
+ #include <linux/atomic.h>
+ #include <linux/io-pgtable.h>
+ #include <linux/regulator/consumer.h>
+@@ -18,6 +19,27 @@
+ #include <drm/gpu_scheduler.h>
+ #include <drm/panthor_drm.h>
+ 
++/**
++ * enum panthor_coherency_mode - GPU bus coherency protocol
++ *
++ * Determines how the GPU participates in the system coherency fabric.
++ * Values match the GPU_COHERENCY_PROTOCOL register encoding.
++ */
++enum panthor_coherency_mode {
++	/** @PANTHOR_COHERENCY_ACE_LITE: GPU is RN-I on CHI fabric.
++	 * L2 evictions route through HN-F/SLC, making WB data visible
++	 * to non-snooping masters. No NC memattr needed. */
++	PANTHOR_COHERENCY_ACE_LITE = 0,
++
++	/** @PANTHOR_COHERENCY_ACE: Full CPU-GPU coherency via snooping.
++	 * Page table walks use outer-shareable, GEM uses cached mappings. */
++	PANTHOR_COHERENCY_ACE = 1,
++
++	/** @PANTHOR_COHERENCY_NONE: GPU outside coherency domain.
++	 * Requires NC memattr when no IOMMU is present. */
++	PANTHOR_COHERENCY_NONE = 31,
++};
++
+ struct panthor_csf;
+ struct panthor_csf_ctx;
+ struct panthor_device;
+@@ -115,6 +137,18 @@ struct panthor_device {
+ 	/** @iomem: CPU mapping of the IOMEM region. */
+ 	void __iomem *iomem;
+ 
++	/** @sky1_rcsu_reg: Sky1 RCSU register mapping (optional). */
++	void __iomem *sky1_rcsu_reg;
++
++	/** @pm_domain_devs: PM domain device instances for devices with more than one PM domain. */
++	struct device *pm_domain_devs[2];
++
++	/** @pm_domain_links: PM domain device links for devices with more than one PM domain. */
++	struct device_link *pm_domain_links[2];
++
++	/** @gpu_reset: Reset control for GPU (optional, Sky1). */
++	struct reset_control *gpu_reset;
++
+ 	/** @clks: GPU clocks. */
+ 	struct {
+ 		/** @core: Core clock. */
+@@ -125,10 +159,13 @@ struct panthor_device {
+ 
+ 		/** @coregroup: Core group clock. This clock is optional. */
+ 		struct clk *coregroup;
++
++		/** @backup: Sky1 backup clocks. These clocks are optional. */
++		struct clk *backup[2];
+ 	} clks;
+ 
+-	/** @coherent: True if the CPU/GPU are memory coherent. */
+-	bool coherent;
++	/** @coherency_mode: GPU bus coherency protocol. */
++	enum panthor_coherency_mode coherency_mode;
+ 
+ 	/** @gpu_info: GPU information. */
+ 	struct drm_panthor_gpu_info gpu_info;
+diff --git a/drivers/gpu/drm/panthor/panthor_drv.c b/drivers/gpu/drm/panthor/panthor_drv.c
+index 1bcec6a2e3e04..ee75249dd7207 100644
+--- a/drivers/gpu/drm/panthor/panthor_drv.c
++++ b/drivers/gpu/drm/panthor/panthor_drv.c
+@@ -1776,11 +1776,20 @@ static const struct panthor_soc_data soc_data_mediatek_mt8196 = {
+ static const struct of_device_id dt_match[] = {
+ 	{ .compatible = "mediatek,mt8196-mali", .data = &soc_data_mediatek_mt8196, },
+ 	{ .compatible = "rockchip,rk3588-mali" },
++	{ .compatible = "arm,mali-valhall" },
+ 	{ .compatible = "arm,mali-valhall-csf" },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id panthor_acpi_match[] = {
++	{ "CIXH5000", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, panthor_acpi_match);
++#endif
++
+ static DEFINE_RUNTIME_DEV_PM_OPS(panthor_pm_ops,
+ 				 panthor_device_suspend,
+ 				 panthor_device_resume,
+@@ -1793,6 +1802,7 @@ static struct platform_driver panthor_driver = {
+ 		.name = "panthor",
+ 		.pm = pm_ptr(&panthor_pm_ops),
+ 		.of_match_table = dt_match,
++		.acpi_match_table = ACPI_PTR(panthor_acpi_match),
+ 		.dev_groups = panthor_groups,
+ 	},
+ };
+diff --git a/drivers/gpu/drm/panthor/panthor_fw.c b/drivers/gpu/drm/panthor/panthor_fw.c
+index a64ec8756bed2..c83ead20c537a 100644
+--- a/drivers/gpu/drm/panthor/panthor_fw.c
++++ b/drivers/gpu/drm/panthor/panthor_fw.c
+@@ -1445,7 +1445,15 @@ int panthor_fw_init(struct panthor_device *ptdev)
+ 	INIT_LIST_HEAD(&fw->sections);
+ 	INIT_DELAYED_WORK(&fw->watchdog.ping_work, panthor_fw_ping_work);
+ 
+-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "job");
++	if (has_acpi_companion(ptdev->base.dev)) {
++		irq = platform_get_irq(to_platform_device(ptdev->base.dev), 0);
++	} else {
++		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "JOB");
++		if (irq <= 0) {
++			/* Try lowercase for non-Sky1 platforms */
++			irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "job");
++		}
++	}
+ 	if (irq <= 0)
+ 		return -ENODEV;
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_gem.c b/drivers/gpu/drm/panthor/panthor_gem.c
+index 4b4575dd6e908..84b27c023bd77 100644
+--- a/drivers/gpu/drm/panthor/panthor_gem.c
++++ b/drivers/gpu/drm/panthor/panthor_gem.c
+@@ -99,8 +99,12 @@ should_map_wc(struct panthor_gem_object *bo, struct panthor_vm *exclusive_vm)
+ 	 * CPU cache maintenance regardless of whether the device is coherent
+ 	 * or not.
+ 	 */
+-	if (ptdev->coherent)
+-		return false;
++	if (bo->base.base.dev) {
++		struct panthor_device *ptdev =
++			container_of(bo->base.base.dev, struct panthor_device, base);
++		if (ptdev->coherency_mode == PANTHOR_COHERENCY_ACE)
++			return false;
++	}
+ 
+ 	/* Cached mappings are explicitly requested, so no write-combine. */
+ 	if (bo->flags & DRM_PANTHOR_BO_WB_MMAP)
+@@ -404,6 +408,7 @@ struct drm_gem_object *panthor_gem_create_object(struct drm_device *ddev, size_t
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	obj->base.base.funcs = &panthor_gem_funcs;
++	/* map_wc is set later via should_map_wc() in panthor_gem_create_with_handle() */
+ 	mutex_init(&obj->label.lock);
+ 
+ 	panthor_gem_debugfs_bo_init(obj);
+diff --git a/drivers/gpu/drm/panthor/panthor_gpu.c b/drivers/gpu/drm/panthor/panthor_gpu.c
+index 057e167468d03..26b589d2f5e12 100644
+--- a/drivers/gpu/drm/panthor/panthor_gpu.c
++++ b/drivers/gpu/drm/panthor/panthor_gpu.c
+@@ -6,6 +6,7 @@
+ #include <linux/bitfield.h>
+ #include <linux/bitmap.h>
+ #include <linux/delay.h>
++#include <linux/of.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+@@ -50,8 +51,16 @@ struct panthor_gpu {
+ 
+ static void panthor_gpu_coherency_set(struct panthor_device *ptdev)
+ {
+-	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL,
+-		  ptdev->gpu_info.selected_coherency);
++	u32 val = ptdev->coherency_mode;
++
++	if (val != PANTHOR_COHERENCY_NONE) {
++		u32 features = gpu_read(ptdev, GPU_COHERENCY_FEATURES);
++
++		if (features & GPU_COHERENCY_SHAREABLE_CACHE)
++			val |= GPU_COHERENCY_SHAREABLE_CACHE;
++	}
++
++	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, val);
+ }
+ 
+ static void panthor_gpu_l2_config_set(struct panthor_device *ptdev)
+@@ -146,7 +155,15 @@ int panthor_gpu_init(struct panthor_device *ptdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "gpu");
++	if (has_acpi_companion(ptdev->base.dev)) {
++		irq = platform_get_irq(to_platform_device(ptdev->base.dev), 2);
++	} else {
++		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "GPU");
++		if (irq < 0) {
++			/* Try lowercase for non-Sky1 platforms */
++			irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "gpu");
++		}
++	}
+ 	if (irq < 0)
+ 		return irq;
+ 
+@@ -274,6 +291,26 @@ int panthor_gpu_l2_power_on(struct panthor_device *ptdev)
+ 	panthor_gpu_coherency_set(ptdev);
+ 	panthor_gpu_l2_config_set(ptdev);
+ 
++	/* CIX Sky1 needs special PHBA setup before L2 activation */
++	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
++		gpu_write(ptdev, GPU_SYSC_PBHA_OVERRIDE(3), 0x22000000);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(0), 0x00230000);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(1), 0x00000023);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(2), 0x00000000);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(3), 0x00000000);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(4), 0x00523222);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(5), 0x00523200);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(6), 0x00000022);
++		gpu_write(ptdev, GPU_SYSC_ALLOC(7), 0x00000032);
++
++		/* Required for LS_MEM_* related counters */
++		gpu_write(ptdev, 0x306C, 0xFFFFFFFF);
++		gpu_write(ptdev, 0x3070, 0xFFFFFFFF);
++		gpu_write(ptdev, 0x307C, 0xFFFFFFFF);
++		gpu_write(ptdev, 0x3074, 0xFFFFFFFF);
++		gpu_write(ptdev, 0x3068, 0x1);
++	}
++
+ 	return panthor_gpu_power_on(ptdev, L2, 1, 20000);
+ }
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_hw.c b/drivers/gpu/drm/panthor/panthor_hw.c
+index 80c521784cd37..d5f5f0ea7f781 100644
+--- a/drivers/gpu/drm/panthor/panthor_hw.c
++++ b/drivers/gpu/drm/panthor/panthor_hw.c
+@@ -2,6 +2,8 @@
+ /* Copyright 2025 ARM Limited. All rights reserved. */
+ 
+ #include <linux/nvmem-consumer.h>
++#include <linux/of.h>
++
+ #include <drm/drm_print.h>
+ 
+ #include "panthor_device.h"
+@@ -131,7 +133,9 @@ static int overload_shader_present(struct panthor_device *ptdev)
+ static int panthor_gpu_info_init(struct panthor_device *ptdev)
+ {
+ 	unsigned int i;
++	int ret;
+ 
++	ptdev->gpu_info.gpu_id = gpu_read(ptdev, GPU_ID);
+ 	ptdev->gpu_info.csf_id = gpu_read(ptdev, GPU_CSF_ID);
+ 	ptdev->gpu_info.gpu_rev = gpu_read(ptdev, GPU_REVID);
+ 	ptdev->gpu_info.core_features = gpu_read(ptdev, GPU_CORE_FEATURES);
+@@ -163,7 +167,24 @@ static int panthor_gpu_info_init(struct panthor_device *ptdev)
+ 		ptdev->gpu_info.l2_present = gpu_read64(ptdev, GPU_L2_PRESENT);
+ 	}
+ 
+-	return overload_shader_present(ptdev);
++	ret = overload_shader_present(ptdev);
++	if (ret)
++		return ret;
++
++	/* On CIX Sky1 SoC some shader cores can be disabled via RCSU */
++	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall") &&
++	    ptdev->sky1_rcsu_reg) {
++		u32 sky1_harvesting_reg_val = readl(ptdev->sky1_rcsu_reg + 0x304);
++		u64 sky1_harvesting_core_mask = ~((sky1_harvesting_reg_val & 0xFFFFFF0) >> 4) & 0x550555;
++
++		ptdev->gpu_info.shader_present &= sky1_harvesting_core_mask;
++
++		drm_info(&ptdev->base,
++			 "sky1 harvesting: reg=0x%x core_mask=0x%llx",
++			 sky1_harvesting_reg_val, sky1_harvesting_core_mask);
++	}
++
++	return 0;
+ }
+ 
+ static int panthor_hw_info_init(struct panthor_device *ptdev)
+diff --git a/drivers/gpu/drm/panthor/panthor_mmu.c b/drivers/gpu/drm/panthor/panthor_mmu.c
+index 41604a7aaf853..acd8fcb228ab2 100644
+--- a/drivers/gpu/drm/panthor/panthor_mmu.c
++++ b/drivers/gpu/drm/panthor/panthor_mmu.c
+@@ -737,7 +737,7 @@ int panthor_vm_active(struct panthor_vm *vm)
+ 		   AS_TRANSCFG_PTW_RA |
+ 		   AS_TRANSCFG_ADRMODE_AARCH64_4K |
+ 		   AS_TRANSCFG_INA_BITS(55 - va_bits);
+-	if (ptdev->coherent)
++	if (ptdev->coherency_mode == PANTHOR_COHERENCY_ACE)
+ 		transcfg |= AS_TRANSCFG_PTW_SH_OS;
+ 
+ 	/* If the VM is re-activated, we clear the fault. */
+@@ -2003,7 +2003,8 @@ void panthor_vm_heaps_sizes(struct panthor_file *pfile, struct drm_memory_stats
+ 	xa_unlock(&pfile->vms->xa);
+ }
+ 
+-static u64 mair_to_memattr(u64 mair, bool coherent)
++static u64 mair_to_memattr(u64 mair, enum panthor_coherency_mode mode,
++			   bool has_iommu)
+ {
+ 	u64 memattr = 0;
+ 	u32 i;
+@@ -2021,19 +2022,27 @@ static u64 mair_to_memattr(u64 mair, bool coherent)
+ 			out_attr = AS_MEMATTR_AARCH64_INNER_OUTER_NC |
+ 				   AS_MEMATTR_AARCH64_SH_MIDGARD_INNER |
+ 				   AS_MEMATTR_AARCH64_INNER_ALLOC_EXPL(false, false);
++		} else if (mode != PANTHOR_COHERENCY_ACE && !has_iommu) {
++			/* GPU not fully coherent and no IOMMU to override
++			 * memory attributes at the bus level. Even with
++			 * ACE-Lite, GPU L2 may not evict to SLC in time
++			 * for non-snooping masters like the DPU.
++			 * Force NC to guarantee DRAM visibility.
++			 */
++			out_attr = AS_MEMATTR_AARCH64_INNER_OUTER_NC |
++				   AS_MEMATTR_AARCH64_SH_MIDGARD_INNER |
++				   AS_MEMATTR_AARCH64_INNER_ALLOC_EXPL(false, false);
+ 		} else {
+ 			out_attr = AS_MEMATTR_AARCH64_INNER_OUTER_WB |
+ 				   AS_MEMATTR_AARCH64_INNER_ALLOC_EXPL(inner & 1, inner & 2);
+-			/* Use SH_MIDGARD_INNER mode when device isn't coherent,
+-			 * so SH_IS, which is used when IOMMU_CACHE is set, maps
+-			 * to Mali's internal-shareable mode. As per the Mali
+-			 * Spec, inner and outer-shareable modes aren't allowed
+-			 * for WB memory when coherency is disabled.
++			/* Use SH_MIDGARD_INNER mode when device isn't fully
++			 * coherent, so SH_IS, which is used when IOMMU_CACHE
++			 * is set, maps to Mali's internal-shareable mode.
+ 			 * Use SH_CPU_INNER mode when coherency is enabled, so
+-			 * that SH_IS actually maps to the standard definition of
+-			 * inner-shareable.
++			 * that SH_IS actually maps to the standard definition
++			 * of inner-shareable.
+ 			 */
+-			if (!coherent)
++			if (mode != PANTHOR_COHERENCY_ACE)
+ 				out_attr |= AS_MEMATTR_AARCH64_SH_MIDGARD_INNER;
+ 			else
+ 				out_attr |= AS_MEMATTR_AARCH64_SH_CPU_INNER;
+@@ -2463,7 +2472,7 @@ panthor_vm_create(struct panthor_device *ptdev, bool for_mcu,
+ 		.pgsize_bitmap	= SZ_4K | SZ_2M,
+ 		.ias		= va_bits,
+ 		.oas		= pa_bits,
+-		.coherent_walk	= ptdev->coherent,
++		.coherent_walk	= ptdev->coherency_mode == PANTHOR_COHERENCY_ACE,
+ 		.tlb		= &mmu_tlb_ops,
+ 		.iommu_dev	= ptdev->base.dev,
+ 		.alloc		= alloc_pt,
+@@ -2486,7 +2495,8 @@ panthor_vm_create(struct panthor_device *ptdev, bool for_mcu,
+ 		goto err_sched_fini;
+ 
+ 	mair = io_pgtable_ops_to_pgtable(vm->pgtbl_ops)->cfg.arm_lpae_s1_cfg.mair;
+-	vm->memattr = mair_to_memattr(mair, ptdev->coherent);
++	vm->memattr = mair_to_memattr(mair, ptdev->coherency_mode,
++				      device_iommu_mapped(ptdev->base.dev));
+ 
+ 	mutex_lock(&ptdev->mmu->vm.lock);
+ 	list_add_tail(&vm->node, &ptdev->mmu->vm.list);
+@@ -2863,7 +2873,15 @@ int panthor_mmu_init(struct panthor_device *ptdev)
+ 
+ 	ptdev->mmu = mmu;
+ 
+-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "mmu");
++	if (has_acpi_companion(ptdev->base.dev)) {
++		irq = platform_get_irq(to_platform_device(ptdev->base.dev), 1);
++	} else {
++		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "MMU");
++		if (irq <= 0) {
++			/* Try lowercase for non-Sky1 platforms */
++			irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "mmu");
++		}
++	}
+ 	if (irq <= 0)
+ 		return -ENODEV;
+ 
+diff --git a/drivers/gpu/drm/panthor/panthor_regs.h b/drivers/gpu/drm/panthor/panthor_regs.h
+index 08bf06c452d69..77add31facd68 100644
+--- a/drivers/gpu/drm/panthor/panthor_regs.h
++++ b/drivers/gpu/drm/panthor/panthor_regs.h
+@@ -122,6 +122,7 @@
+ #define   GPU_COHERENCY_ACE_LITE			0
+ #define   GPU_COHERENCY_ACE				1
+ #define   GPU_COHERENCY_NONE				31
++#define   GPU_COHERENCY_SHAREABLE_CACHE			BIT(5)
+ 
+ #define MCU_CONTROL					0x700
+ #define MCU_CONTROL_ENABLE				1
+@@ -205,6 +206,10 @@
+ #define   AS_TRANSCFG_XREADABLE				BIT(36)
+ #define AS_FAULTEXTRA(as)				(MMU_AS(as) + 0x38)
+ 
++/* Sky1 PHBA (Page-Based Hardware Attribute) registers */
++#define GPU_SYSC_PBHA_OVERRIDE(n)			(0x320 + ((n) * 4))
++#define GPU_SYSC_ALLOC(n)				(0x340 + ((n) * 4))
++
+ #define CSF_GPU_LATEST_FLUSH_ID				0x10000
+ 
+ #define CSF_DOORBELL(i)					(0x80000 + ((i) * 0x10000))

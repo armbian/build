@@ -1,0 +1,4378 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:48:25 +1100
+Subject: [PATCH] arm64: cix: Add Sky1 miscellaneous peripheral drivers
+
+Add GPT timer, fan controller (hwmon), GPIO cadence edge IRQ
+and PM/wake/ACPI support, RTC wake-up, PWM controller, watchdog,
+DMA-350 ACPI fix, CMA heap, SPI/I2C/I3C cadence fixes, backlight,
+bluetooth crash fix, pstore ACPI, SMMUv3 ATS override, SPE fix,
+and kernel DMA coherent helper.
+---
+ drivers/acpi/property.c                     |   16 +
+ drivers/bluetooth/btrtl.c                   |    5 +-
+ drivers/clocksource/Kconfig                 |    9 +
+ drivers/clocksource/Makefile                |    1 +
+ drivers/clocksource/timer-sky1-gpt.c        |  299 ++++++
+ drivers/dma-buf/heaps/Kconfig               |   19 +
+ drivers/dma-buf/heaps/Makefile              |    1 +
+ drivers/dma-buf/heaps/dsp_heap.c            |  174 ++++
+ drivers/dma/arm-dma350.c                    | 1040 ++++++++++++++++++-
+ drivers/gpio/gpio-cadence.c                 |  342 ++++--
+ drivers/hwmon/Kconfig                       |   13 +
+ drivers/hwmon/Makefile                      |    1 +
+ drivers/hwmon/cix-fan.c                     |  171 +++
+ drivers/i2c/busses/i2c-cadence.c            |   10 +
+ drivers/i3c/master/i3c-master-cdns.c        |   10 +
+ drivers/input/keyboard/gpio_keys.c          |   16 +-
+ drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c |   91 +-
+ drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.h |   11 +
+ drivers/perf/arm_spe_pmu.c                  |   17 +
+ drivers/pwm/Kconfig                         |   11 +-
+ drivers/pwm/Makefile                        |    1 +
+ drivers/pwm/pwm-sky1.c                      |  249 +++++
+ drivers/regulator/fixed.c                   |   59 +-
+ drivers/rtc/rtc-hym8563.c                   |  139 ++-
+ drivers/spi/spi-cadence-quadspi.c           |   10 +
+ drivers/spi/spi-cadence.c                   |   10 +
+ drivers/video/backlight/pwm_bl.c            |   48 +-
+ drivers/watchdog/Kconfig                    |   10 +
+ drivers/watchdog/Makefile                   |    1 +
+ drivers/watchdog/sky1_wdt.c                 |  431 ++++++++
+ fs/pstore/ram.c                             |   58 +-
+ kernel/dma/coherent.c                       |   10 +-
+ 32 files changed, 3068 insertions(+), 215 deletions(-)
+ create mode 100644 drivers/clocksource/timer-sky1-gpt.c
+ create mode 100644 drivers/dma-buf/heaps/dsp_heap.c
+ create mode 100644 drivers/hwmon/cix-fan.c
+ create mode 100644 drivers/pwm/pwm-sky1.c
+ create mode 100644 drivers/watchdog/sky1_wdt.c
+
+diff --git a/drivers/acpi/property.c b/drivers/acpi/property.c
+index 8ee5a1f0eb486..2a0fc928ee0ae 100644
+--- a/drivers/acpi/property.c
++++ b/drivers/acpi/property.c
+@@ -873,6 +873,22 @@ static int acpi_get_ref_args(struct fwnode_reference_args *args,
+ 	if (nargs_prop)
+ 		num_args = acpi_fwnode_get_args_count(ref_fwnode, nargs_prop);
+ 
++	/*
++	 * Consume consecutive string elements as hierarchical _DSD data node
++	 * path components.  ACPI graph references encode the path to a remote
++	 * endpoint as: Package { DEV, "port@N", "endpoint@N" }
++	 * Each string names a child data node under the preceding reference.
++	 */
++	for (; *element < end && (*element)->type == ACPI_TYPE_STRING;
++	     (*element)++) {
++		const char *child_name = (*element)->string.pointer;
++
++		ref_fwnode = acpi_fwnode_get_named_child_node(ref_fwnode,
++							      child_name);
++		if (!ref_fwnode)
++			return -EINVAL;
++	}
++
+ 	/*
+ 	 * Assume the following integer elements are all args. Stop counting on
+ 	 * the first reference (possibly represented as a string) or end of the
+diff --git a/drivers/bluetooth/btrtl.c b/drivers/bluetooth/btrtl.c
+index 62f9d4df3a4f8..eb6fdf8592c22 100644
+--- a/drivers/bluetooth/btrtl.c
++++ b/drivers/bluetooth/btrtl.c
+@@ -1073,7 +1073,6 @@ struct btrtl_device_info *btrtl_initialize(struct hci_dev *hdev,
+ 	u16 hci_rev, lmp_subver;
+ 	u8 hci_ver, lmp_ver, chip_type = 0;
+ 	int ret;
+-	int rc;
+ 	u8 key_id;
+ 	u8 reg_val[2];
+ 
+@@ -1185,8 +1184,8 @@ struct btrtl_device_info *btrtl_initialize(struct hci_dev *hdev,
+ 		goto err_free;
+ 	}
+ 
+-	rc = btrtl_vendor_read_reg16(hdev, RTL_SEC_PROJ, reg_val);
+-	if (rc < 0)
++	ret = btrtl_vendor_read_reg16(hdev, RTL_SEC_PROJ, reg_val);
++	if (ret < 0)
+ 		goto err_free;
+ 
+ 	key_id = reg_val[0];
+diff --git a/drivers/clocksource/Kconfig b/drivers/clocksource/Kconfig
+index fd91127065454..6831e6571a01d 100644
+--- a/drivers/clocksource/Kconfig
++++ b/drivers/clocksource/Kconfig
+@@ -513,6 +513,15 @@ config SPRD_TIMER
+ 	help
+ 	  Enables support for the Spreadtrum timer driver.
+ 
++config SKY1_GPT_TIMER
++	tristate "CIX Sky1 GPT timer driver"
++	depends on HAS_IOMEM
++	depends on (ARCH_CIX || COMPILE_TEST)
++	select CLKSRC_MMIO
++	help
++	  Enables support for the CIX Sky1 General Purpose Timer,
++	  providing clocksource and clock event functionality.
++
+ config SYS_SUPPORTS_SH_MTU2
+ 	bool
+ 
+diff --git a/drivers/clocksource/Makefile b/drivers/clocksource/Makefile
+index b46376af6b490..c1f541576e6b7 100644
+--- a/drivers/clocksource/Makefile
++++ b/drivers/clocksource/Makefile
+@@ -58,6 +58,7 @@ obj-$(CONFIG_CLKSRC_TI_32K)	+= timer-ti-32k.o
+ obj-$(CONFIG_OWL_TIMER)		+= timer-owl.o
+ obj-$(CONFIG_MILBEAUT_TIMER)	+= timer-milbeaut.o
+ obj-$(CONFIG_SPRD_TIMER)	+= timer-sprd.o
++obj-$(CONFIG_SKY1_GPT_TIMER)	+= timer-sky1-gpt.o
+ obj-$(CONFIG_NPCM7XX_TIMER)	+= timer-npcm7xx.o
+ obj-$(CONFIG_RDA_TIMER)		+= timer-rda.o
+ obj-$(CONFIG_REALTEK_OTTO_TIMER)	+= timer-rtl-otto.o
+diff --git a/drivers/clocksource/timer-sky1-gpt.c b/drivers/clocksource/timer-sky1-gpt.c
+new file mode 100644
+index 0000000000000..df9db89ff087b
+--- /dev/null
++++ b/drivers/clocksource/timer-sky1-gpt.c
+@@ -0,0 +1,299 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CIX Sky1 General Purpose Timer
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/clockchips.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/sched_clock.h>
++
++#define TIMER_NAME "sky1_timer"
++
++/* Timer registers */
++#define LDINIT_RW	0x0000	/* Initial value to load */
++#define FREE_CNT	0x001C	/* Free-running counter (low 32-bit) */
++#define COMP		0x0020	/* Compare value */
++#define TCTL		0x0024	/* Control register */
++#define INTSTAT		0x0030	/* Interrupt status */
++#define INTCLR		0x0034	/* Interrupt clear */
++
++/* Timer modes */
++#define FREERUN_MODE	0x2
++
++/* TCTL register bits */
++#define TCTL_ENABLE		BIT(17)
++#define TCTL_FREEENABLE		BIT(15)
++#define TCTL_TWID_64BIT		BIT(12)
++#define TCTL_INTENABLE		BIT(6)
++
++/* Interrupt bits */
++#define FREE_INTCLEAR		BIT(5)
++
++/* Offset between odd/even timer pair for 64-bit mode */
++#define TIMER_OFFSET		0x1000
++
++struct sky1_timer {
++	void __iomem *base;
++	int irq;
++	struct clock_event_device ced;
++	struct clk *pclk;
++	struct clk *tclk;
++};
++
++static void __iomem *sched_clock_reg;
++
++static inline struct sky1_timer *to_sky1_timer(struct clock_event_device *ced)
++{
++	return container_of(ced, struct sky1_timer, ced);
++}
++
++/*
++ * Read 64-bit counter using two 32-bit registers.
++ * Upper register may change during read, so re-read if necessary.
++ */
++static u64 notrace sky1_counter_read(void)
++{
++	u32 lower, upper, old_upper;
++	u64 counter;
++
++	upper = readl_relaxed(sched_clock_reg + TIMER_OFFSET);
++	do {
++		old_upper = upper;
++		lower = readl_relaxed(sched_clock_reg);
++		upper = readl_relaxed(sched_clock_reg + TIMER_OFFSET);
++	} while (upper != old_upper);
++
++	counter = (u64)upper << 32 | lower;
++	return counter;
++}
++
++static u64 notrace sky1_read_sched_clock(void)
++{
++	return sched_clock_reg ? sky1_counter_read() : 0;
++}
++
++static u64 sky1_clocksource_read(struct clocksource *cs)
++{
++	return sky1_counter_read();
++}
++
++static struct clocksource sky1_clocksource = {
++	.name	= "sky1_counter",
++	.rating	= 200,
++	.read	= sky1_clocksource_read,
++	.mask	= CLOCKSOURCE_MASK(64),
++	.flags	= CLOCK_SOURCE_IS_CONTINUOUS,
++};
++
++static void sky1_gpt_irq_enable(struct sky1_timer *sky1tm)
++{
++	u32 val = readl_relaxed(sky1tm->base + TIMER_OFFSET + TCTL);
++
++	writel_relaxed(val | TCTL_INTENABLE, sky1tm->base + TIMER_OFFSET + TCTL);
++}
++
++static void sky1_gpt_irq_disable(struct sky1_timer *sky1tm)
++{
++	u32 val = readl_relaxed(sky1tm->base + TIMER_OFFSET + TCTL);
++
++	writel_relaxed(val & ~TCTL_INTENABLE, sky1tm->base + TIMER_OFFSET + TCTL);
++}
++
++static void sky1_gpt_irq_ack(struct sky1_timer *sky1tm)
++{
++	writel_relaxed(FREE_INTCLEAR, sky1tm->base + TIMER_OFFSET + INTCLR);
++}
++
++static void sky1_gpt_setup(struct sky1_timer *sky1tm)
++{
++	u32 val;
++
++	/* Configure even timer (low 32-bit) */
++	val = TCTL_FREEENABLE | FREERUN_MODE | TCTL_INTENABLE;
++	writel_relaxed(val, sky1tm->base + TCTL);
++
++	/* Configure odd timer (high 32-bit) with 64-bit mode */
++	val = TCTL_FREEENABLE | TCTL_TWID_64BIT | FREERUN_MODE | TCTL_INTENABLE;
++	writel_relaxed(val, sky1tm->base + TIMER_OFFSET + TCTL);
++
++	/* Enable both timers (enable bit must be set last) */
++	val = TCTL_ENABLE | TCTL_FREEENABLE | FREERUN_MODE | TCTL_INTENABLE;
++	writel_relaxed(val, sky1tm->base + TCTL);
++
++	val = TCTL_ENABLE | TCTL_FREEENABLE | TCTL_TWID_64BIT | FREERUN_MODE | TCTL_INTENABLE;
++	writel_relaxed(val, sky1tm->base + TIMER_OFFSET + TCTL);
++}
++
++static int sky1_set_next_event(unsigned long evt, struct clock_event_device *ced)
++{
++	struct sky1_timer *sky1tm = to_sky1_timer(ced);
++	u64 tcn = sky1_counter_read() + evt;
++
++	/* Write compare value (high word first) */
++	writel_relaxed(tcn >> 32, sky1tm->base + COMP + TIMER_OFFSET);
++	writel_relaxed((u32)tcn, sky1tm->base + COMP);
++
++	return tcn < sky1_counter_read() ? -ETIME : 0;
++}
++
++static int sky1_shutdown(struct clock_event_device *ced)
++{
++	struct sky1_timer *sky1tm = to_sky1_timer(ced);
++	u64 tcn = sky1_counter_read();
++
++	sky1_gpt_irq_disable(sky1tm);
++
++	/* Set compare to past value to prevent spurious interrupts */
++	writel_relaxed((tcn - 3) >> 32, sky1tm->base + COMP + TIMER_OFFSET);
++	writel_relaxed((u32)(tcn - 3), sky1tm->base + COMP);
++
++	sky1_gpt_irq_ack(sky1tm);
++
++	return 0;
++}
++
++static int sky1_set_oneshot(struct clock_event_device *ced)
++{
++	struct sky1_timer *sky1tm = to_sky1_timer(ced);
++
++	sky1_gpt_irq_disable(sky1tm);
++
++	if (!clockevent_state_oneshot(ced)) {
++		u64 tcn = sky1_counter_read();
++
++		writel_relaxed((tcn - 3) >> 32, sky1tm->base + COMP + TIMER_OFFSET);
++		writel_relaxed((u32)(tcn - 3), sky1tm->base + COMP);
++		sky1_gpt_irq_ack(sky1tm);
++	}
++
++	sky1_gpt_irq_enable(sky1tm);
++	return 0;
++}
++
++static int sky1_tick_resume(struct clock_event_device *ced)
++{
++	struct sky1_timer *sky1tm = to_sky1_timer(ced);
++
++	sky1_gpt_setup(sky1tm);
++	return sky1_shutdown(ced);
++}
++
++static irqreturn_t sky1_timer_interrupt(int irq, void *dev_id)
++{
++	struct clock_event_device *ced = dev_id;
++	struct sky1_timer *sky1tm = to_sky1_timer(ced);
++
++	sky1_gpt_irq_ack(sky1tm);
++	ced->event_handler(ced);
++
++	return IRQ_HANDLED;
++}
++
++static int sky1_timer_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sky1_timer *sky1tm;
++	unsigned long rate;
++	int ret;
++
++	sky1tm = devm_kzalloc(dev, sizeof(*sky1tm), GFP_KERNEL);
++	if (!sky1tm)
++		return -ENOMEM;
++
++	sky1tm->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(sky1tm->base))
++		return PTR_ERR(sky1tm->base);
++
++	sky1tm->irq = platform_get_irq(pdev, 0);
++	if (sky1tm->irq < 0)
++		return sky1tm->irq;
++
++	sky1tm->pclk = devm_clk_get_optional_enabled(dev, "apb");
++	if (IS_ERR(sky1tm->pclk) && has_acpi_companion(dev))
++		sky1tm->pclk = devm_clk_get_optional_enabled(dev,
++							"fch_timer_apb_clk");
++	if (IS_ERR(sky1tm->pclk))
++		return dev_err_probe(dev, PTR_ERR(sky1tm->pclk),
++				     "failed to get apb clock\n");
++
++	sky1tm->tclk = devm_clk_get_enabled(dev, "func");
++	if (IS_ERR(sky1tm->tclk) && has_acpi_companion(dev))
++		sky1tm->tclk = devm_clk_get_enabled(dev,
++						     "fch_timer_func_clk");
++	if (IS_ERR(sky1tm->tclk))
++		return dev_err_probe(dev, PTR_ERR(sky1tm->tclk),
++				     "failed to get func clock\n");
++
++	rate = clk_get_rate(sky1tm->tclk);
++	if (!rate)
++		return dev_err_probe(dev, -EINVAL, "invalid clock rate\n");
++
++	sky1_gpt_setup(sky1tm);
++	platform_set_drvdata(pdev, sky1tm);
++
++	/* Register clocksource */
++	sched_clock_reg = sky1tm->base + FREE_CNT;
++	sched_clock_register(sky1_read_sched_clock, 64, rate);
++	ret = clocksource_register_hz(&sky1_clocksource, rate);
++	if (ret)
++		return ret;
++
++	/* Register clock event device */
++	sky1tm->ced.name = TIMER_NAME;
++	sky1tm->ced.features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_DYNIRQ;
++	sky1tm->ced.set_next_event = sky1_set_next_event;
++	sky1tm->ced.set_state_shutdown = sky1_shutdown;
++	sky1tm->ced.set_state_oneshot = sky1_set_oneshot;
++	sky1tm->ced.set_state_oneshot_stopped = sky1_shutdown;
++	sky1tm->ced.tick_resume = sky1_tick_resume;
++	sky1tm->ced.rating = 200;
++	sky1tm->ced.cpumask = cpu_possible_mask;
++	sky1tm->ced.irq = sky1tm->irq;
++
++	clockevents_config_and_register(&sky1tm->ced, rate, 1, UINT_MAX);
++
++	ret = request_irq(sky1tm->irq, sky1_timer_interrupt,
++			  IRQF_TIMER, TIMER_NAME, &sky1tm->ced);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "Sky1 GPT timer initialized at %lu Hz\n", rate);
++
++	return 0;
++}
++
++static const struct of_device_id sky1_timer_of_match[] = {
++	{ .compatible = "cix,sky1-gpt" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sky1_timer_of_match);
++
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id sky1_timer_acpi_match[] = {
++	{ "CIXH1007", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_timer_acpi_match);
++#endif
++
++static struct platform_driver sky1_timer_driver = {
++	.probe = sky1_timer_probe,
++	.driver = {
++		.name = TIMER_NAME,
++		.of_match_table = sky1_timer_of_match,
++		.acpi_match_table = ACPI_PTR(sky1_timer_acpi_match),
++	},
++};
++module_platform_driver(sky1_timer_driver);
++
++MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
++MODULE_DESCRIPTION("CIX Sky1 General Purpose Timer");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/dma-buf/heaps/Kconfig b/drivers/dma-buf/heaps/Kconfig
+index a5eef06c42264..c7c1cf41cafb8 100644
+--- a/drivers/dma-buf/heaps/Kconfig
++++ b/drivers/dma-buf/heaps/Kconfig
+@@ -12,3 +12,22 @@ config DMABUF_HEAPS_CMA
+ 	  Choose this option to enable dma-buf CMA heap. This heap is backed
+ 	  by the Contiguous Memory Allocator (CMA). If your system has these
+ 	  regions, you should say Y here.
++
++config DMABUF_HEAPS_DSP
++	tristate "DMA-BUF DSP Heap"
++	depends on DMABUF_HEAPS && OF_RESERVED_MEM
++	help
++	  Choose this option to enable the DSP dma-buf heap. This heap is
++	  backed by a reserved memory region named "dsp_reserved_heap" in
++	  the device tree. It provides a simple shared memory buffer for
++	  communication between the host CPU and an audio DSP.
++
++config DMABUF_HEAPS_CMA_LEGACY
++	bool "Legacy DMA-BUF CMA Heap"
++	default y
++	depends on DMABUF_HEAPS_CMA
++	help
++	  Add a duplicate CMA-backed dma-buf heap with legacy naming derived
++	  from the CMA area's devicetree node, or "reserved" if the area is not
++	  defined in the devicetree. This uses the same underlying allocator as
++	  CONFIG_DMABUF_HEAPS_CMA.
+diff --git a/drivers/dma-buf/heaps/Makefile b/drivers/dma-buf/heaps/Makefile
+index 974467791032f..169c5de454540 100644
+--- a/drivers/dma-buf/heaps/Makefile
++++ b/drivers/dma-buf/heaps/Makefile
+@@ -1,3 +1,4 @@
+ # SPDX-License-Identifier: GPL-2.0
+ obj-$(CONFIG_DMABUF_HEAPS_SYSTEM)	+= system_heap.o
+ obj-$(CONFIG_DMABUF_HEAPS_CMA)		+= cma_heap.o
++obj-$(CONFIG_DMABUF_HEAPS_DSP)		+= dsp_heap.o
+diff --git a/drivers/dma-buf/heaps/dsp_heap.c b/drivers/dma-buf/heaps/dsp_heap.c
+new file mode 100644
+index 0000000000000..e3bb0bc4c750f
+--- /dev/null
++++ b/drivers/dma-buf/heaps/dsp_heap.c
+@@ -0,0 +1,174 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * DMABUF DSP heap exporter
++ *
++ * Provides a dma_heap backed by a reserved memory region for DSP
++ * communication buffers. The heap exports the entire reserved memory
++ * region as a single contiguous DMA buffer.
++ *
++ * Copyright 2021 NXP.
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/dma-buf.h>
++#include <linux/dma-heap.h>
++#include <linux/err.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/slab.h>
++
++struct dsp_heap_buffer {
++	struct dma_heap *heap;
++};
++
++struct dsp_heap {
++	struct dma_heap *heap;
++	phys_addr_t base;
++	size_t size;
++};
++
++static int dsp_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
++{
++	struct dsp_heap_buffer *buffer = dmabuf->priv;
++	struct dsp_heap *dsp_heap = dma_heap_get_drvdata(buffer->heap);
++
++	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
++
++	return remap_pfn_range(vma, vma->vm_start,
++			       dsp_heap->base >> PAGE_SHIFT,
++			       dmabuf->size, vma->vm_page_prot);
++}
++
++static void dsp_heap_dma_buf_release(struct dma_buf *dmabuf)
++{
++	struct dsp_heap_buffer *buffer = dmabuf->priv;
++
++	kfree(buffer);
++}
++
++static struct sg_table *dsp_heap_map_dma_buf(struct dma_buf_attachment *attachment,
++					     enum dma_data_direction direction)
++{
++	struct dsp_heap_buffer *buffer = attachment->dmabuf->priv;
++	struct dsp_heap *dsp_heap = dma_heap_get_drvdata(buffer->heap);
++	struct sg_table *table;
++	int ret;
++
++	table = kmalloc(sizeof(*table), GFP_KERNEL);
++	if (!table)
++		return ERR_PTR(-ENOMEM);
++
++	ret = sg_alloc_table(table, 1, GFP_KERNEL);
++	if (ret) {
++		kfree(table);
++		return ERR_PTR(ret);
++	}
++
++	sg_set_page(table->sgl, pfn_to_page(dsp_heap->base >> PAGE_SHIFT),
++		    attachment->dmabuf->size, 0);
++
++	return table;
++}
++
++static void dsp_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
++				   struct sg_table *table,
++				   enum dma_data_direction direction)
++{
++	sg_free_table(table);
++	kfree(table);
++}
++
++static const struct dma_buf_ops dsp_heap_buf_ops = {
++	.mmap = dsp_heap_mmap,
++	.map_dma_buf = dsp_heap_map_dma_buf,
++	.unmap_dma_buf = dsp_heap_unmap_dma_buf,
++	.release = dsp_heap_dma_buf_release,
++};
++
++static struct dma_buf *dsp_heap_allocate(struct dma_heap *heap,
++					 unsigned long len,
++					 u32 fd_flags,
++					 u64 heap_flags)
++{
++	struct dsp_heap *dsp_heap = dma_heap_get_drvdata(heap);
++	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
++	struct dsp_heap_buffer *buffer;
++	struct dma_buf *dmabuf;
++
++	if (len > dsp_heap->size)
++		return ERR_PTR(-ENOMEM);
++
++	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
++	if (!buffer)
++		return ERR_PTR(-ENOMEM);
++
++	buffer->heap = heap;
++
++	exp_info.ops = &dsp_heap_buf_ops;
++	exp_info.size = len;
++	exp_info.flags = fd_flags;
++	exp_info.priv = buffer;
++
++	dmabuf = dma_buf_export(&exp_info);
++	if (IS_ERR(dmabuf))
++		kfree(buffer);
++
++	return dmabuf;
++}
++
++static const struct dma_heap_ops dsp_heap_ops = {
++	.allocate = dsp_heap_allocate,
++};
++
++static int __init dsp_heap_init(void)
++{
++	struct dma_heap_export_info exp_info;
++	struct dsp_heap *dsp_heap;
++	struct reserved_mem *rmem;
++	struct device_node np;
++
++	np.full_name = "dsp_reserved_heap";
++	np.name = "dsp_reserved_heap";
++
++	rmem = of_reserved_mem_lookup(&np);
++	if (!rmem) {
++		pr_debug("dsp_heap: no dsp_reserved_heap in device tree\n");
++		return 0;
++	}
++
++	if (!rmem->base || !rmem->size) {
++		pr_err("dsp_heap: invalid reserved memory region\n");
++		return -EINVAL;
++	}
++
++	dsp_heap = kzalloc(sizeof(*dsp_heap), GFP_KERNEL);
++	if (!dsp_heap)
++		return -ENOMEM;
++
++	dsp_heap->base = rmem->base;
++	dsp_heap->size = rmem->size;
++
++	exp_info.name = "dsp";
++	exp_info.ops = &dsp_heap_ops;
++	exp_info.priv = dsp_heap;
++
++	dsp_heap->heap = dma_heap_add(&exp_info);
++	if (IS_ERR(dsp_heap->heap)) {
++		int ret = PTR_ERR(dsp_heap->heap);
++
++		kfree(dsp_heap);
++		return ret;
++	}
++
++	pr_info("dsp_heap: registered at 0x%llx, size 0x%zx\n",
++		(u64)dsp_heap->base, dsp_heap->size);
++
++	return 0;
++}
++module_init(dsp_heap_init);
++
++MODULE_IMPORT_NS("DMA_BUF");
++MODULE_IMPORT_NS("DMA_BUF_HEAP");
++MODULE_DESCRIPTION("DMABUF DSP heap exporter");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/dma/arm-dma350.c b/drivers/dma/arm-dma350.c
+index 84220fa83029d..fbc502d1c3b10 100644
+--- a/drivers/dma/arm-dma350.c
++++ b/drivers/dma/arm-dma350.c
+@@ -2,13 +2,25 @@
+ // Copyright (C) 2024-2025 Arm Limited
+ // Arm DMA-350 driver
+ 
++#include <linux/acpi.h>
++#include <linux/acpi_dma.h>
+ #include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dmaengine.h>
++#include <linux/scatterlist.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/io.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/of.h>
++#include <linux/of_dma.h>
++#include <linux/of_reserved_mem.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
+ 
+ #include "dmaengine.h"
+ #include "virt-dma.h"
+@@ -51,6 +63,7 @@
+ #define CH_STAT_DONE		BIT(16)
+ #define CH_STAT_INTR_ERR	BIT(1)
+ #define CH_STAT_INTR_DONE	BIT(0)
++#define CH_STAT_INTR_MASK	GENMASK(10, 0)	/* All interrupt flag bits */
+ 
+ #define CH_INTREN		0x08
+ #define CH_INTREN_ERR		BIT(1)
+@@ -107,6 +120,25 @@
+ 
+ #define CH_LINKADDRHI		0x7c
+ #define CH_ERRINFO		0x90
++
++/*
++ * Trigger configuration register fields (for peripheral DMA)
++ * Same layout for both SRCTRIGINCFG and DESTRIGINCFG
++ */
++#define CH_TRIGINCFG_SEL	GENMASK(7, 0)	/* Request line select */
++#define CH_TRIGINCFG_TYPE	GENMASK(9, 8)	/* Trigger type */
++#define CH_TRIGINCFG_MODE	GENMASK(11, 10)	/* Trigger mode */
++#define CH_TRIGINCFG_BLKSIZE	GENMASK(23, 16)	/* Block size */
++
++/* Trigger type values */
++#define TRIGIN_TYPE_SW		0	/* Software only */
++#define TRIGIN_TYPE_HW		2	/* Hardware trigger */
++#define TRIGIN_TYPE_INTERNAL	3	/* Internal trigger */
++
++/* Trigger mode values */
++#define TRIGIN_MODE_CMD			0	/* CMD mode */
++#define TRIGIN_MODE_DMA_FLOW		2	/* DMA flow control */
++#define TRIGIN_MODE_PERIPH_FLOW		3	/* Peripheral flow control */
+ #define CH_ERRINFO_AXIRDPOISERR BIT(18)
+ #define CH_ERRINFO_AXIWRRESPERR BIT(17)
+ #define CH_ERRINFO_AXIRDRESPERR BIT(16)
+@@ -122,6 +154,13 @@
+ #define CH_CFG_HAS_TRIGIN	BIT(5)
+ #define CH_CFG_HAS_WRAP		BIT(1)
+ 
++/* Global interrupt control registers */
++#define DMA_CHINTRSTATUS0	0x200	/* Collated channel interrupt flags */
++#define DMA_NSEC_INTREN		0x20c	/* Non-secure interrupt enable */
++#define DMA_NSEC_INTREN_ANY	BIT(0)	/* Enable any channel interrupt */
++
++/* AUDSS CRU register for interrupt routing to AP (Sky1 specific) */
++#define AUDSS_CRU_AP_IRQ	0x54	/* Bit N enables channel N IRQ to AP */
+ 
+ #define LINK_REGCLEAR		BIT(0)
+ #define LINK_INTREN		BIT(2)
+@@ -174,6 +213,26 @@ struct d350_desc {
+ 	u16 xsize;
+ 	u16 xsizehi;
+ 	u8 tsz;
++
++	/* Transfer type flags */
++	bool cyclic;
++	bool scatter_gather;
++
++	/* Cyclic transfer state */
++	size_t num_periods;
++	size_t period_len;
++
++	/* Scatter-gather state */
++	unsigned int sg_len;
++	size_t total_len;
++
++	/* Common fields */
++	enum dma_transfer_direction dir;
++
++	/* DMA-coherent command link array (cyclic and scatter-gather) */
++	u32 *cmdlink_virt;
++	dma_addr_t cmdlink_phys;
++	size_t cmdlink_size;
+ };
+ 
+ struct d350_chan {
+@@ -188,10 +247,32 @@ struct d350_chan {
+ 	bool has_trig;
+ 	bool has_wrap;
+ 	bool coherent;
++	/* Slave DMA configuration */
++	struct dma_slave_config slave_cfg;
++	u32 req_line;		/* DMA request/trigger line */
++	dma_addr_t dev_addr;	/* Peripheral address */
++	enum dma_transfer_direction dir;
++	/* Cyclic state tracking */
++	size_t period_idx;	/* Current period for residue calc */
+ };
+ 
+ struct d350 {
+ 	struct dma_device dma;
++	struct clk *clk;
++	struct reset_control *rst;
++	void __iomem *base;
++
++	/* Address translation (optional, parsed from DT) */
++	struct {
++		u64 reg_cpu;	/* CPU address of peripheral registers */
++		u64 reg_dma;	/* DMA view of peripheral registers */
++		u64 ram_cpu;	/* CPU address of RAM base */
++		u64 ram_dma;	/* DMA view of RAM base */
++	} addr_xlat;
++
++	/* Remote control regmap (e.g., AUDSS CRU for interrupt routing) */
++	struct regmap *remote_ctrl;
++
+ 	int nchan;
+ 	int nreq;
+ 	struct d350_chan channels[] __counted_by(nchan);
+@@ -207,9 +288,192 @@ static inline struct d350_desc *to_d350_desc(struct virt_dma_desc *vd)
+ 	return container_of(vd, struct d350_desc, vd);
+ }
+ 
++static inline struct d350 *to_d350(struct dma_device *dma)
++{
++	return container_of(dma, struct d350, dma);
++}
++
++/* Translate CPU address to DMA-350 view */
++static inline dma_addr_t d350_translate_addr(struct d350 *dmac, dma_addr_t addr)
++{
++	/* Translate RAM addresses (e.g., 0xc0000000+ -> 0x30000000+) */
++	if (dmac->addr_xlat.ram_cpu && addr >= dmac->addr_xlat.ram_cpu)
++		return addr - dmac->addr_xlat.ram_cpu + dmac->addr_xlat.ram_dma;
++
++	/* Translate register/peripheral addresses using base offset */
++	if (dmac->addr_xlat.reg_cpu && dmac->addr_xlat.reg_dma)
++		return addr - dmac->addr_xlat.reg_cpu + dmac->addr_xlat.reg_dma;
++
++	return addr;
++}
++
++/* Build trigger configuration word for peripheral DMA */
++static inline u32 d350_build_trigincfg(u32 req_line)
++{
++	return FIELD_PREP(CH_TRIGINCFG_SEL, req_line) |
++	       FIELD_PREP(CH_TRIGINCFG_TYPE, TRIGIN_TYPE_HW) |
++	       FIELD_PREP(CH_TRIGINCFG_MODE, TRIGIN_MODE_PERIPH_FLOW);
++}
++
++/*
++ * Command link word count per transfer entry.
++ * Fields: header, intren, ctrl, srcaddr, srcaddrhi, desaddr, desaddrhi,
++ *         xsize, xsizehi, srctranscfg, destranscfg, xaddrinc, trigincfg,
++ *         linkaddr, linkaddrhi, padding
++ */
++#define CMDLINK_WORDS_PER_ENTRY		16
++
++/**
++ * d350_build_slave_command - Build a slave DMA command link entry
++ * @dmac: DMA controller
++ * @dch: DMA channel
++ * @cmd: Command buffer (CMDLINK_WORDS_PER_ENTRY words)
++ * @mem_addr: Memory address (CPU view, will be translated)
++ * @dev_addr: Device address (already translated)
++ * @len: Transfer length in bytes
++ * @transize: Transfer size (0=byte, 1=halfword, 2=word, 3=dword)
++ * @dir: Transfer direction
++ * @enable_irq: Enable completion interrupt for this command
++ * @next_cmd_phys: Physical address of next command (0 = no link, stop after)
++ * @first_cmd: True for first command in chain (clears registers)
++ */
++static void d350_build_slave_command(struct d350 *dmac, struct d350_chan *dch,
++				     u32 *cmd, dma_addr_t mem_addr,
++				     dma_addr_t dev_addr, size_t len,
++				     u8 transize, enum dma_transfer_direction dir,
++				     bool enable_irq, dma_addr_t next_cmd_phys,
++				     bool first_cmd)
++{
++	dma_addr_t src_addr, dst_addr;
++	u32 header, ctrl, xaddrinc, trigincfg;
++	u32 srctranscfg, destranscfg;
++	u32 xsize;
++	int idx;
++
++	/* Set addresses based on direction */
++	if (dir == DMA_MEM_TO_DEV) {
++		src_addr = d350_translate_addr(dmac, mem_addr);
++		dst_addr = dev_addr;
++	} else {
++		src_addr = dev_addr;
++		dst_addr = d350_translate_addr(dmac, mem_addr);
++	}
++
++	/* Transfer count in units of transize */
++	xsize = len >> transize;
++
++	/*
++	 * First command: Full configuration with REGCLEAR to initialize all
++	 * DMA registers. Includes CTRL, INTREN, TRANSCFG, XADDRINC, TRIGINCFG.
++	 *
++	 * Subsequent commands: Minimal format with only addresses, size, and
++	 * link. Other registers are inherited from the first command, ensuring
++	 * seamless transitions without glitches at command boundaries.
++	 */
++	if (first_cmd) {
++		/* Set direction-specific attributes */
++		if (dir == DMA_MEM_TO_DEV) {
++			xaddrinc = FIELD_PREP(CH_XY_SRC, 1) | FIELD_PREP(CH_XY_DES, 0);
++			srctranscfg = TRANSCFG_NC;
++			destranscfg = TRANSCFG_DEVICE;
++		} else {
++			xaddrinc = FIELD_PREP(CH_XY_SRC, 0) | FIELD_PREP(CH_XY_DES, 1);
++			srctranscfg = TRANSCFG_DEVICE;
++			destranscfg = TRANSCFG_NC;
++		}
++
++		/* Full header with all configuration fields */
++		header = LINK_REGCLEAR | LINK_INTREN | LINK_CTRL |
++			 LINK_SRCADDR | LINK_SRCADDRHI |
++			 LINK_DESADDR | LINK_DESADDRHI |
++			 LINK_XSIZE | LINK_XSIZEHI |
++			 LINK_SRCTRANSCFG | LINK_DESTRANSCFG |
++			 LINK_XADDRINC |
++			 LINK_LINKADDR | LINK_LINKADDRHI;
++
++		/* Add trigger config based on direction */
++		if (dir == DMA_MEM_TO_DEV)
++			header |= LINK_DESTRIGINCFG;
++		else
++			header |= LINK_SRCTRIGINCFG;
++
++		/* Build control word */
++		ctrl = FIELD_PREP(CH_CTRL_TRANSIZE, transize) |
++		       FIELD_PREP(CH_CTRL_XTYPE, CH_CTRL_XTYPE_CONTINUE) |
++		       FIELD_PREP(CH_CTRL_DONETYPE,
++				  next_cmd_phys ? CH_CTRL_DONETYPE_CMD : CH_CTRL_DONETYPE_NONE);
++
++		/* Enable trigger in control */
++		if (dir == DMA_MEM_TO_DEV)
++			ctrl |= CH_CTRL_USEDESTRIGIN;
++		else
++			ctrl |= CH_CTRL_USESRCTRIGIN;
++
++		/* Build trigger configuration */
++		trigincfg = d350_build_trigincfg(dch->req_line);
++
++		/* Write full command - fields in order of LINK_* bit positions */
++		idx = 0;
++		cmd[idx++] = header;
++		cmd[idx++] = enable_irq ? (CH_INTREN_DONE | CH_INTREN_ERR) : 0;
++		cmd[idx++] = ctrl;
++		cmd[idx++] = lower_32_bits(src_addr);
++		cmd[idx++] = upper_32_bits(src_addr);
++		cmd[idx++] = lower_32_bits(dst_addr);
++		cmd[idx++] = upper_32_bits(dst_addr);
++		cmd[idx++] = FIELD_PREP(CH_XY_SRC, xsize) | FIELD_PREP(CH_XY_DES, xsize);
++		cmd[idx++] = 0;  /* XSIZEHI - for transfers > 4GB */
++		cmd[idx++] = srctranscfg;
++		cmd[idx++] = destranscfg;
++		cmd[idx++] = xaddrinc;
++		cmd[idx++] = trigincfg;
++		if (next_cmd_phys) {
++			cmd[idx++] = lower_32_bits(next_cmd_phys) | CH_LINKADDR_EN;
++			cmd[idx++] = upper_32_bits(next_cmd_phys);
++		} else {
++			cmd[idx++] = 0;
++			cmd[idx++] = 0;
++		}
++	} else {
++		/*
++		 * Minimal continuation command - only addresses, size, and link.
++		 * All other configuration inherited from first command.
++		 */
++		header = LINK_SRCADDR | LINK_SRCADDRHI |
++			 LINK_DESADDR | LINK_DESADDRHI |
++			 LINK_XSIZE | LINK_XSIZEHI |
++			 LINK_LINKADDR | LINK_LINKADDRHI;
++
++		/* Write minimal command - packed format */
++		idx = 0;
++		cmd[idx++] = header;
++		cmd[idx++] = lower_32_bits(src_addr);
++		cmd[idx++] = upper_32_bits(src_addr);
++		cmd[idx++] = lower_32_bits(dst_addr);
++		cmd[idx++] = upper_32_bits(dst_addr);
++		cmd[idx++] = FIELD_PREP(CH_XY_SRC, xsize) | FIELD_PREP(CH_XY_DES, xsize);
++		cmd[idx++] = 0;  /* XSIZEHI */
++		if (next_cmd_phys) {
++			cmd[idx++] = lower_32_bits(next_cmd_phys) | CH_LINKADDR_EN;
++			cmd[idx++] = upper_32_bits(next_cmd_phys);
++		} else {
++			cmd[idx++] = 0;
++			cmd[idx++] = 0;
++		}
++	}
++}
++
+ static void d350_desc_free(struct virt_dma_desc *vd)
+ {
+-	kfree(to_d350_desc(vd));
++	struct d350_desc *desc = to_d350_desc(vd);
++	struct dma_chan *chan = vd->tx.chan;
++	struct device *dev = chan->device->dev;
++
++	if (desc->cmdlink_virt) {
++		dma_free_coherent(dev, desc->cmdlink_size,
++				  desc->cmdlink_virt, desc->cmdlink_phys);
++	}
++	kfree(desc);
+ }
+ 
+ static struct dma_async_tx_descriptor *d350_prep_memcpy(struct dma_chan *chan,
+@@ -341,13 +605,22 @@ static int d350_terminate_all(struct dma_chan *chan)
+ 	LIST_HEAD(list);
+ 
+ 	spin_lock_irqsave(&dch->vc.lock, flags);
++
++	/* Stop the channel */
+ 	writel_relaxed(CH_CMD_STOP, dch->base + CH_CMD);
++
++	/* Disable command linking for cyclic transfers */
++	writel_relaxed(0, dch->base + CH_LINKADDR);
++	writel_relaxed(0, dch->base + CH_LINKADDRHI);
++
+ 	if (dch->desc) {
+ 		if (dch->status != DMA_ERROR)
+ 			vchan_terminate_vdesc(&dch->desc->vd);
+ 		dch->desc = NULL;
+ 		dch->status = DMA_COMPLETE;
+ 	}
++	dch->period_idx = 0;
++
+ 	vchan_get_all_descriptors(&dch->vc, &list);
+ 	list_splice_tail(&list, &dch->vc.desc_terminated);
+ 	spin_unlock_irqrestore(&dch->vc.lock, flags);
+@@ -381,11 +654,31 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
+ 	spin_lock_irqsave(&dch->vc.lock, flags);
+ 	if (cookie == dch->cookie) {
+ 		status = dch->status;
+-		if (status == DMA_IN_PROGRESS || status == DMA_PAUSED)
+-			dch->residue = d350_get_residue(dch);
+-		residue = dch->residue;
++		if (dch->desc && dch->desc->cyclic) {
++			/*
++			 * For cyclic DMA, residue is the position within
++			 * the buffer. We track this via period_idx updated
++			 * in the IRQ handler.
++			 */
++			size_t total = dch->desc->num_periods * dch->desc->period_len;
++			size_t completed = dch->period_idx * dch->desc->period_len;
++
++			residue = total - completed;
++			/* Cyclic is always in progress unless error */
++			if (status != DMA_ERROR)
++				status = DMA_IN_PROGRESS;
++		} else {
++			if (status == DMA_IN_PROGRESS || status == DMA_PAUSED)
++				dch->residue = d350_get_residue(dch);
++			residue = dch->residue;
++		}
+ 	} else if ((vd = vchan_find_desc(&dch->vc, cookie))) {
+-		residue = d350_desc_bytes(to_d350_desc(vd));
++		struct d350_desc *desc = to_d350_desc(vd);
++
++		if (desc->cyclic)
++			residue = desc->num_periods * desc->period_len;
++		else
++			residue = d350_desc_bytes(desc);
+ 	} else if (status == DMA_IN_PROGRESS) {
+ 		/* Somebody else terminated it? */
+ 		status = DMA_ERROR;
+@@ -396,6 +689,86 @@ static enum dma_status d350_tx_status(struct dma_chan *chan, dma_cookie_t cookie
+ 	return status;
+ }
+ 
++static void d350_start_cyclic(struct d350_chan *dch)
++{
++	struct d350 *dmac = to_d350(dch->vc.chan.device);
++	dma_addr_t cmdlink_dma;
++
++	/*
++	 * For cyclic DMA, we use hardware command linking.
++	 * The DMA controller fetches commands from memory and
++	 * automatically cycles through them.
++	 */
++	dch->period_idx = 0;
++
++	/* Calculate initial residue as full buffer */
++	dch->residue = dch->desc->num_periods * dch->desc->period_len;
++
++	/* Clear channel state */
++	writel_relaxed(CH_CMD_CLEAR, dch->base + CH_CMD);
++
++	/* Set XSIZE to 0 - command link will provide the actual size */
++	writel_relaxed(0, dch->base + CH_XSIZE);
++	writel_relaxed(0, dch->base + CH_XSIZEHI);
++
++	/*
++	 * For cyclic DMA, disable register-based INTREN.
++	 * Let the command link entries control interrupts.
++	 * This matches vendor behavior and avoids potential issues
++	 * with both register and command link enabling interrupts.
++	 */
++	writel_relaxed(0, dch->base + CH_INTREN);
++
++	/* Enable channel first */
++	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
++
++	/* Set up and enable hardware command linking */
++	cmdlink_dma = d350_translate_addr(dmac, dch->desc->cmdlink_phys);
++
++	writel_relaxed(lower_32_bits(cmdlink_dma) | CH_LINKADDR_EN,
++		       dch->base + CH_LINKADDR);
++	writel_relaxed(upper_32_bits(cmdlink_dma), dch->base + CH_LINKADDRHI);
++
++	/* Re-enable to start command fetch */
++	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
++}
++
++static void d350_start_sg(struct d350_chan *dch)
++{
++	struct d350 *dmac = to_d350(dch->vc.chan.device);
++	dma_addr_t cmdlink_dma;
++
++	/*
++	 * For scatter-gather DMA, we use hardware command linking
++	 * similar to cyclic, but with linear linking (no loop back).
++	 * The last command has no link address and stops automatically.
++	 */
++	dch->residue = dch->desc->total_len;
++
++	/* Clear channel state */
++	writel_relaxed(CH_CMD_CLEAR, dch->base + CH_CMD);
++
++	/* Set XSIZE to 0 - command link will provide the actual size */
++	writel_relaxed(0, dch->base + CH_XSIZE);
++	writel_relaxed(0, dch->base + CH_XSIZEHI);
++
++	/* Enable interrupts */
++	writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
++
++	/* Enable channel first */
++	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
++
++	/* Set up and enable hardware command linking */
++	cmdlink_dma = d350_translate_addr(dmac, dch->desc->cmdlink_phys);
++
++	writel_relaxed(lower_32_bits(cmdlink_dma) | CH_LINKADDR_EN,
++		       dch->base + CH_LINKADDR);
++	writel_relaxed(upper_32_bits(cmdlink_dma), dch->base + CH_LINKADDRHI);
++
++	/* Re-enable to start command fetch */
++	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
++}
++
+ static void d350_start_next(struct d350_chan *dch)
+ {
+ 	u32 hdr, *reg;
+@@ -404,9 +777,25 @@ static void d350_start_next(struct d350_chan *dch)
+ 	if (!dch->desc)
+ 		return;
+ 
+-	list_del(&dch->desc->vd.node);
+ 	dch->status = DMA_IN_PROGRESS;
+ 	dch->cookie = dch->desc->vd.tx.cookie;
++
++	/* Handle cyclic transfers specially */
++	if (dch->desc->cyclic) {
++		/* Don't remove from list - we need it for callbacks */
++		d350_start_cyclic(dch);
++		return;
++	}
++
++	/* Handle scatter-gather transfers with command linking */
++	if (dch->desc->scatter_gather) {
++		/* Don't remove from list until complete */
++		d350_start_sg(dch);
++		return;
++	}
++
++	/* Simple transfer: remove from list and program directly */
++	list_del(&dch->desc->vd.node);
+ 	dch->residue = d350_desc_bytes(dch->desc);
+ 
+ 	hdr = dch->desc->command[0];
+@@ -464,17 +853,39 @@ static void d350_issue_pending(struct dma_chan *chan)
+ static irqreturn_t d350_irq(int irq, void *data)
+ {
+ 	struct d350_chan *dch = data;
+-	struct device *dev = dch->vc.chan.device->dev;
+-	struct virt_dma_desc *vd = &dch->desc->vd;
+-	u32 ch_status;
++	struct virt_dma_desc *vd;
++	u32 ch_status, intr_flags;
+ 
+ 	ch_status = readl(dch->base + CH_STATUS);
+-	if (!ch_status)
++
++	/*
++	 * CH_STATUS contains both interrupt flags (bits 0-10) and status
++	 * flags (bits 16-26). The INTR bits are read-only indicators.
++	 * To clear an interrupt, write-1 to the corresponding STAT bit.
++	 * STAT bits are at (INTR bit position + 16).
++	 */
++	intr_flags = ch_status & CH_STAT_INTR_MASK;
++	if (!intr_flags)
+ 		return IRQ_NONE;
+ 
+-	if (ch_status & CH_STAT_INTR_ERR) {
++	/* Clear status flags to acknowledge interrupts (STAT = INTR << 16) */
++	writel_relaxed(intr_flags << 16, dch->base + CH_STATUS);
++
++	spin_lock(&dch->vc.lock);
++
++	if (!dch->desc) {
++		spin_unlock(&dch->vc.lock);
++		return IRQ_HANDLED;
++	}
++
++	vd = &dch->desc->vd;
++
++	if (intr_flags & CH_STAT_INTR_ERR) {
+ 		u32 errinfo = readl_relaxed(dch->base + CH_ERRINFO);
+ 
++		dev_err(dch->vc.chan.device->dev,
++			"DMA error on channel, errinfo=0x%08x\n", errinfo);
++
+ 		if (errinfo & (CH_ERRINFO_AXIRDPOISERR | CH_ERRINFO_AXIRDRESPERR))
+ 			vd->tx_result.result = DMA_TRANS_READ_FAILED;
+ 		else if (errinfo & CH_ERRINFO_AXIWRRESPERR)
+@@ -483,21 +894,48 @@ static irqreturn_t d350_irq(int irq, void *data)
+ 			vd->tx_result.result = DMA_TRANS_ABORTED;
+ 
+ 		vd->tx_result.residue = d350_get_residue(dch);
+-	} else if (!(ch_status & CH_STAT_INTR_DONE)) {
+-		dev_warn(dev, "Unexpected IRQ source? 0x%08x\n", ch_status);
+-	}
+-	writel_relaxed(ch_status, dch->base + CH_STATUS);
+-
+-	spin_lock(&dch->vc.lock);
+-	vchan_cookie_complete(vd);
+-	if (ch_status & CH_STAT_INTR_DONE) {
+-		dch->status = DMA_COMPLETE;
+-		dch->residue = 0;
+-		d350_start_next(dch);
+-	} else {
+ 		dch->status = DMA_ERROR;
+ 		dch->residue = vd->tx_result.residue;
++
++		/* Stop the channel on error */
++		writel_relaxed(CH_CMD_STOP, dch->base + CH_CMD);
++	} else if (intr_flags & CH_STAT_INTR_DONE) {
++		if (dch->desc->cyclic) {
++			static ktime_t last_irq;
++			ktime_t now = ktime_get();
++			s64 delta_us = ktime_to_us(ktime_sub(now, last_irq));
++
++			if (delta_us > 1000) /* Only log if > 1ms gap */
++				pr_debug("dma350: period %zu, delta %lld us\n",
++					 dch->period_idx, delta_us);
++			last_irq = now;
++
++			/*
++			 * Cyclic DMA: notify each period completion.
++			 * The DMA continues to run automatically.
++			 */
++			dch->period_idx++;
++			if (dch->period_idx >= dch->desc->num_periods)
++				dch->period_idx = 0;
++
++			/* Update residue for position tracking */
++			dch->residue = (dch->desc->num_periods - dch->period_idx) *
++				       dch->desc->period_len;
++
++			vchan_cyclic_callback(vd);
++		} else {
++			/* Non-cyclic: mark complete and start next */
++			vchan_cookie_complete(vd);
++			dch->status = DMA_COMPLETE;
++			dch->residue = 0;
++			d350_start_next(dch);
++		}
++	} else {
++		dev_warn(dch->vc.chan.device->dev,
++			 "Unexpected IRQ flags: 0x%03x (status: 0x%08x)\n",
++			 intr_flags, ch_status);
+ 	}
++
+ 	spin_unlock(&dch->vc.lock);
+ 
+ 	return IRQ_HANDLED;
+@@ -506,12 +944,30 @@ static irqreturn_t d350_irq(int irq, void *data)
+ static int d350_alloc_chan_resources(struct dma_chan *chan)
+ {
+ 	struct d350_chan *dch = to_d350_chan(chan);
+-	int ret = request_irq(dch->irq, d350_irq, IRQF_SHARED,
+-			      dev_name(&dch->vc.chan.dev->device), dch);
+-	if (!ret)
+-		writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
++	struct d350 *dmac = to_d350(chan->device);
++	int chan_id = dch->vc.chan.chan_id;
++	int ret;
+ 
+-	return ret;
++	ret = request_irq(dch->irq, d350_irq, IRQF_SHARED,
++			  dev_name(&dch->vc.chan.dev->device), dch);
++	if (ret)
++		return ret;
++
++	writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
++
++	/*
++	 * Enable interrupt routing to AP via remote control regmap.
++	 * On Sky1, this sets bit N in AUDSS_CRU_AP_IRQ to route channel N
++	 * interrupts to the application processor.
++	 */
++	if (dmac->remote_ctrl) {
++		regmap_update_bits(dmac->remote_ctrl, AUDSS_CRU_AP_IRQ,
++				   BIT(chan_id), BIT(chan_id));
++		dev_dbg(chan->device->dev, "Enabled IRQ routing for channel %d\n",
++			chan_id);
++	}
++
++	return 0;
+ }
+ 
+ static void d350_free_chan_resources(struct dma_chan *chan)
+@@ -523,10 +979,271 @@ static void d350_free_chan_resources(struct dma_chan *chan)
+ 	vchan_free_chan_resources(&dch->vc);
+ }
+ 
++/*
++ * Slave DMA support
++ */
++static int d350_device_config(struct dma_chan *chan,
++			      struct dma_slave_config *config)
++{
++	struct d350_chan *dch = to_d350_chan(chan);
++
++	memcpy(&dch->slave_cfg, config, sizeof(*config));
++
++	if (config->direction == DMA_MEM_TO_DEV) {
++		dch->dev_addr = config->dst_addr;
++		dch->dir = DMA_MEM_TO_DEV;
++	} else if (config->direction == DMA_DEV_TO_MEM) {
++		dch->dev_addr = config->src_addr;
++		dch->dir = DMA_DEV_TO_MEM;
++	}
++
++	return 0;
++}
++
++static struct dma_chan *d350_of_xlate(struct of_phandle_args *dma_spec,
++				      struct of_dma *ofdma)
++{
++	struct d350 *dmac = ofdma->of_dma_data;
++	struct dma_chan *chan;
++	struct d350_chan *dch;
++	u32 request = 0;
++	u32 channel_id = 0;
++
++	if (dma_spec->args_count >= 1)
++		request = dma_spec->args[0];
++	if (dma_spec->args_count >= 2)
++		channel_id = dma_spec->args[1];
++
++	/* Channel 0xFF means dynamic allocation */
++	if (channel_id == 0xFF) {
++		chan = dma_get_any_slave_channel(&dmac->dma);
++	} else {
++		if (channel_id >= dmac->nchan)
++			return NULL;
++		chan = dma_get_slave_channel(&dmac->channels[channel_id].vc.chan);
++	}
++
++	if (!chan)
++		return NULL;
++
++	dch = to_d350_chan(chan);
++	dch->req_line = request;
++
++	return chan;
++}
++
++static struct dma_chan *d350_acpi_xlate(struct acpi_dma_spec *dma_spec,
++				       struct acpi_dma *adma)
++{
++	struct d350 *dmac = adma->data;
++	struct dma_chan *chan;
++	struct d350_chan *dch;
++	u32 request = dma_spec->slave_id;
++	u32 channel_id = dma_spec->chan_id;
++
++	if (channel_id == 0xFF)
++		chan = dma_get_any_slave_channel(&dmac->dma);
++	else if (channel_id < dmac->nchan)
++		chan = dma_get_slave_channel(&dmac->channels[channel_id].vc.chan);
++	else
++		return NULL;
++
++	if (!chan)
++		return NULL;
++
++	dch = to_d350_chan(chan);
++	dch->req_line = request;
++
++	return chan;
++}
++
++static struct dma_async_tx_descriptor *d350_prep_slave_sg(
++	struct dma_chan *chan, struct scatterlist *sgl, unsigned int sg_len,
++	enum dma_transfer_direction dir, unsigned long flags, void *context)
++{
++	struct d350_chan *dch = to_d350_chan(chan);
++	struct d350 *dmac = to_d350(chan->device);
++	struct device *dev = chan->device->dev;
++	struct d350_desc *desc;
++	struct scatterlist *sg;
++	dma_addr_t dev_addr;
++	size_t cmdlink_size, total_len = 0;
++	u8 transize;
++	u32 *cmd;
++	unsigned int i;
++
++	/* Validate inputs */
++	if (!sgl || !sg_len)
++		return NULL;
++
++	if (dir != DMA_MEM_TO_DEV && dir != DMA_DEV_TO_MEM)
++		return NULL;
++
++	dev_dbg(dev, "prep_slave_sg: chan=%d dir=%d sg_len=%u\n",
++		dch->vc.chan.chan_id, dir, sg_len);
++
++	/* Get device address and transfer size from slave config */
++	if (dir == DMA_MEM_TO_DEV) {
++		dev_addr = d350_translate_addr(dmac, dch->slave_cfg.dst_addr);
++		transize = ffs(dch->slave_cfg.dst_addr_width) - 1;
++	} else {
++		dev_addr = d350_translate_addr(dmac, dch->slave_cfg.src_addr);
++		transize = ffs(dch->slave_cfg.src_addr_width) - 1;
++	}
++
++	/* Allocate descriptor */
++	desc = kzalloc(sizeof(*desc), GFP_NOWAIT);
++	if (!desc)
++		return NULL;
++
++	desc->scatter_gather = true;
++	desc->sg_len = sg_len;
++	desc->dir = dir;
++	desc->tsz = transize;
++
++	/* Allocate DMA coherent memory for command link array */
++	cmdlink_size = sg_len * CMDLINK_WORDS_PER_ENTRY * sizeof(u32);
++	desc->cmdlink_virt = dma_alloc_coherent(dev, cmdlink_size,
++						&desc->cmdlink_phys, GFP_NOWAIT);
++	if (!desc->cmdlink_virt) {
++		dev_err(dev, "slave_sg: failed to alloc cmdlink buffer\n");
++		kfree(desc);
++		return NULL;
++	}
++	desc->cmdlink_size = cmdlink_size;
++
++	/* Build command for each sg entry */
++	for_each_sg(sgl, sg, sg_len, i) {
++		dma_addr_t mem_addr = sg_dma_address(sg);
++		size_t len = sg_dma_len(sg);
++		dma_addr_t next_cmd_phys;
++		bool last_entry = (i == sg_len - 1);
++		bool enable_irq = last_entry;  /* IRQ only on last entry */
++
++		total_len += len;
++
++		/* Get command buffer pointer */
++		cmd = &desc->cmdlink_virt[i * CMDLINK_WORDS_PER_ENTRY];
++
++		/* Calculate next command address (0 for last = stop) */
++		if (!last_entry) {
++			next_cmd_phys = desc->cmdlink_phys +
++					(i + 1) * CMDLINK_WORDS_PER_ENTRY * sizeof(u32);
++			next_cmd_phys = d350_translate_addr(dmac, next_cmd_phys);
++		} else {
++			next_cmd_phys = 0;
++		}
++
++		/* Build the command using shared helper */
++		d350_build_slave_command(dmac, dch, cmd, mem_addr, dev_addr,
++					 len, transize, dir, enable_irq,
++					 next_cmd_phys, i == 0);
++	}
++
++	desc->total_len = total_len;
++
++	dev_dbg(dev, "slave_sg: prepared %u entries, total %zu bytes\n",
++		sg_len, total_len);
++
++	return vchan_tx_prep(&dch->vc, &desc->vd, flags);
++}
++
++static struct dma_async_tx_descriptor *d350_prep_dma_cyclic(
++	struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
++	size_t period_len, enum dma_transfer_direction dir,
++	unsigned long flags)
++{
++	struct d350_chan *dch = to_d350_chan(chan);
++	struct d350 *dmac = to_d350(chan->device);
++	struct device *dev = chan->device->dev;
++	struct d350_desc *desc;
++	size_t num_periods, cmdlink_size;
++	dma_addr_t dev_addr;
++	u8 transize;
++	u32 *cmd;
++	size_t i;
++
++	/* Validate direction */
++	if (dir != DMA_MEM_TO_DEV && dir != DMA_DEV_TO_MEM) {
++		dev_err(dev, "cyclic: invalid direction %d\n", dir);
++		return NULL;
++	}
++
++	/* Validate lengths */
++	if (!buf_len || !period_len || buf_len % period_len) {
++		dev_err(dev, "cyclic: invalid lengths buf=%zu period=%zu\n",
++			buf_len, period_len);
++		return NULL;
++	}
++
++	num_periods = buf_len / period_len;
++
++	dev_dbg(dev, "prep_dma_cyclic: chan=%d dir=%d buf=%pad len=%zu period=%zu periods=%zu\n",
++		dch->vc.chan.chan_id, dir, &buf_addr, buf_len, period_len, num_periods);
++
++	/* Get device address and transfer size from slave config */
++	if (dir == DMA_MEM_TO_DEV) {
++		dev_addr = d350_translate_addr(dmac, dch->slave_cfg.dst_addr);
++		transize = ffs(dch->slave_cfg.dst_addr_width) - 1;
++	} else {
++		dev_addr = d350_translate_addr(dmac, dch->slave_cfg.src_addr);
++		transize = ffs(dch->slave_cfg.src_addr_width) - 1;
++	}
++
++	/* Allocate descriptor */
++	desc = kzalloc(sizeof(*desc), GFP_NOWAIT);
++	if (!desc)
++		return NULL;
++
++	desc->cyclic = true;
++	desc->num_periods = num_periods;
++	desc->period_len = period_len;
++	desc->dir = dir;
++	desc->tsz = transize;
++
++	/* Allocate DMA coherent memory for command link array */
++	cmdlink_size = num_periods * CMDLINK_WORDS_PER_ENTRY * sizeof(u32);
++	desc->cmdlink_virt = dma_alloc_coherent(dev, cmdlink_size,
++						&desc->cmdlink_phys, GFP_NOWAIT);
++	if (!desc->cmdlink_virt) {
++		dev_err(dev, "cyclic: failed to alloc cmdlink buffer\n");
++		kfree(desc);
++		return NULL;
++	}
++	desc->cmdlink_size = cmdlink_size;
++
++	dev_dbg(dev, "cyclic: cmdlink alloc %zu bytes at phys=%pad virt=%px\n",
++		cmdlink_size, &desc->cmdlink_phys, desc->cmdlink_virt);
++
++	/* Generate command link for each period using shared helper */
++	for (i = 0; i < num_periods; i++) {
++		dma_addr_t mem_addr = buf_addr + i * period_len;
++		dma_addr_t next_cmd_phys;
++
++		cmd = &desc->cmdlink_virt[i * CMDLINK_WORDS_PER_ENTRY];
++
++		/* Calculate next command address (circular: last links to first) */
++		if (i == num_periods - 1)
++			next_cmd_phys = desc->cmdlink_phys;
++		else
++			next_cmd_phys = desc->cmdlink_phys +
++					(i + 1) * CMDLINK_WORDS_PER_ENTRY * sizeof(u32);
++		next_cmd_phys = d350_translate_addr(dmac, next_cmd_phys);
++
++		/* Build command using shared helper - IRQ on every period */
++		d350_build_slave_command(dmac, dch, cmd, mem_addr, dev_addr,
++					 period_len, transize, dir,
++					 true, next_cmd_phys, i == 0);
++	}
++
++	return vchan_tx_prep(&dch->vc, &desc->vd, flags);
++}
++
+ static int d350_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct d350 *dmac;
++	struct clk *clk;
+ 	void __iomem *base;
+ 	u32 reg;
+ 	int ret, nchan, dw, aw, r, p;
+@@ -536,12 +1253,89 @@ static int d350_probe(struct platform_device *pdev)
+ 	if (IS_ERR(base))
+ 		return PTR_ERR(base);
+ 
++	/* Get clock (optional - some platforms may not have one) */
++	clk = devm_clk_get_optional(dev, "axiclk");
++	if (IS_ERR(clk))
++		return dev_err_probe(dev, PTR_ERR(clk), "Failed to get clock\n");
++
++	/* Fallback to unnamed clock if axiclk not found */
++	if (!clk) {
++		clk = devm_clk_get_optional(dev, NULL);
++		if (IS_ERR(clk))
++			return dev_err_probe(dev, PTR_ERR(clk), "Failed to get clock\n");
++	}
++
++	/*
++	 * Under ACPI, the audio clock controller (CIXH6061) provides clocks
++	 * via clkdev and also activates the audio power domain during its
++	 * probe.  If we got no clock, the clock controller hasn't probed
++	 * yet — defer until it registers its clkdev entries.
++	 */
++	if (!clk && has_acpi_companion(dev))
++		return dev_err_probe(dev, -EPROBE_DEFER,
++				     "waiting for audio clock controller\n");
++
++	/*
++	 * Enable runtime PM to activate power domain. The runtime_resume
++	 * callback handles NULL dmac gracefully during this initial call.
++	 * We then manually enable the clock since dmac isn't set up yet.
++	 */
++	pm_runtime_enable(dev);
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0) {
++		pm_runtime_disable(dev);
++		return dev_err_probe(dev, ret, "Failed to power on device\n");
++	}
++
++	/* Manually enable clock for initial probe (runtime_resume skipped it) */
++	ret = clk_prepare_enable(clk);
++	if (ret) {
++		pm_runtime_put(dev);
++		pm_runtime_disable(dev);
++		return dev_err_probe(dev, ret, "Failed to enable clock\n");
++	}
++
++	/* Get and deassert reset (optional - some platforms may not have one) */
++	{
++		struct reset_control *rst;
++
++		rst = devm_reset_control_get_optional_exclusive(dev, "dma_reset");
++		if (IS_ERR(rst)) {
++			ret = PTR_ERR(rst);
++			dev_err(dev, "Failed to get reset: %d\n", ret);
++			goto err_pm_put;
++		}
++		/*
++		 * Under ACPI, the audio reset controller (CIXH6062)
++		 * registers lookup entries during its probe.  If we
++		 * got NULL, it hasn't probed yet — defer.
++		 */
++		if (!rst && has_acpi_companion(dev)) {
++			dev_info(dev, "waiting for audio reset controller\n");
++			ret = -EPROBE_DEFER;
++			goto err_pm_put;
++		}
++		if (rst) {
++			dev_dbg(dev, "DMA-350 probe: deasserting reset\n");
++			ret = reset_control_deassert(rst);
++			if (ret) {
++				dev_err(dev, "Failed to deassert reset: %d\n", ret);
++				goto err_pm_put;
++			}
++			/* Small delay after reset deassert */
++			usleep_range(10, 20);
++		}
++	}
++
+ 	reg = readl_relaxed(base + DMAINFO + IIDR);
+ 	r = FIELD_GET(IIDR_VARIANT, reg);
+ 	p = FIELD_GET(IIDR_REVISION, reg);
+ 	if (FIELD_GET(IIDR_IMPLEMENTER, reg) != IMPLEMENTER_ARM ||
+-	    FIELD_GET(IIDR_PRODUCTID, reg) != PRODUCTID_DMA350)
+-		return dev_err_probe(dev, -ENODEV, "Not a DMA-350!");
++	    FIELD_GET(IIDR_PRODUCTID, reg) != PRODUCTID_DMA350) {
++		ret = -ENODEV;
++		dev_err(dev, "Not a DMA-350!");
++		goto err_pm_put;
++	}
+ 
+ 	reg = readl_relaxed(base + DMAINFO + DMA_BUILDCFG0);
+ 	nchan = FIELD_GET(DMA_CFG_NUM_CHANNELS, reg) + 1;
+@@ -552,14 +1346,87 @@ static int d350_probe(struct platform_device *pdev)
+ 	coherent = device_get_dma_attr(dev) == DEV_DMA_COHERENT;
+ 
+ 	dmac = devm_kzalloc(dev, struct_size(dmac, channels, nchan), GFP_KERNEL);
+-	if (!dmac)
+-		return -ENOMEM;
++	if (!dmac) {
++		ret = -ENOMEM;
++		goto err_pm_put;
++	}
+ 
+ 	dmac->nchan = nchan;
++	dmac->clk = clk;
++	dmac->base = base;
++	platform_set_drvdata(pdev, dmac);
++
++	/* Initialize reserved memory region if specified in DT */
++	ret = of_reserved_mem_device_init(dev);
++	if (ret && ret != -ENODEV && ret != -EINVAL) {
++		dev_err(dev, "Failed to initialize reserved memory: %d\n", ret);
++		goto err_pm_put;
++	}
+ 
+ 	reg = readl_relaxed(base + DMAINFO + DMA_BUILDCFG1);
+ 	dmac->nreq = FIELD_GET(DMA_CFG_NUM_TRIGGER_IN, reg);
+ 
++	/*
++	 * Parse optional address translation for DMA-350 controllers
++	 * that have a different memory map view than the CPU.
++	 * Format: <cpu_addr dma_addr>
++	 */
++	{
++		u32 reg_map[2], ram_map[2];
++
++		if (device_property_read_u32_array(dev, "arm,reg-map",
++						   reg_map, 2) == 0) {
++			dmac->addr_xlat.reg_cpu = reg_map[0];
++			dmac->addr_xlat.reg_dma = reg_map[1];
++			dev_info(dev, "Address translation: reg 0x%llx -> 0x%llx\n",
++				 dmac->addr_xlat.reg_cpu, dmac->addr_xlat.reg_dma);
++		}
++
++		if (device_property_read_u32_array(dev, "arm,ram-map",
++						   ram_map, 2) == 0) {
++			dmac->addr_xlat.ram_cpu = ram_map[0];
++			dmac->addr_xlat.ram_dma = ram_map[1];
++			dev_info(dev, "Address translation: ram 0x%llx -> 0x%llx\n",
++				 dmac->addr_xlat.ram_cpu, dmac->addr_xlat.ram_dma);
++		}
++	}
++
++	/*
++	 * Parse optional remote control regmap (e.g., AUDSS CRU).
++	 * On Sky1, this is used to route DMA interrupts to the AP.
++	 */
++	dmac->remote_ctrl = syscon_regmap_lookup_by_phandle(dev->of_node,
++							    "arm,remote-ctrl");
++	if (IS_ERR(dmac->remote_ctrl) && has_acpi_companion(dev)) {
++		struct fwnode_handle *fw;
++		struct device *syscon_dev;
++
++		fw = fwnode_find_reference(dev_fwnode(dev),
++					  "arm,remote-ctrl", 0);
++		if (!IS_ERR(fw)) {
++			syscon_dev = bus_find_device_by_fwnode(
++					&platform_bus_type, fw);
++			fwnode_handle_put(fw);
++			if (syscon_dev) {
++				dmac->remote_ctrl = dev_get_regmap(
++							syscon_dev, NULL);
++				put_device(syscon_dev);
++				if (!dmac->remote_ctrl)
++					dmac->remote_ctrl = ERR_PTR(-EPROBE_DEFER);
++			}
++		}
++	}
++	if (IS_ERR(dmac->remote_ctrl)) {
++		if (PTR_ERR(dmac->remote_ctrl) == -ENODEV)
++			dmac->remote_ctrl = NULL;  /* Optional */
++		else
++			dev_dbg(dev, "No remote control regmap: %ld\n",
++				PTR_ERR(dmac->remote_ctrl));
++		dmac->remote_ctrl = NULL;
++	}
++	if (dmac->remote_ctrl)
++		dev_info(dev, "Using remote control regmap for interrupt routing\n");
++
+ 	dev_dbg(dev, "DMA-350 r%dp%d with %d channels, %d requests\n", r, p, dmac->nchan, dmac->nreq);
+ 
+ 	dmac->dma.dev = dev;
+@@ -567,13 +1434,19 @@ static int d350_probe(struct platform_device *pdev)
+ 		dmac->dma.src_addr_widths |= BIT(i);
+ 		dmac->dma.dst_addr_widths |= BIT(i);
+ 	}
+-	dmac->dma.directions = BIT(DMA_MEM_TO_MEM);
++	dmac->dma.directions = BIT(DMA_MEM_TO_MEM) | BIT(DMA_MEM_TO_DEV) | BIT(DMA_DEV_TO_MEM);
+ 	dmac->dma.descriptor_reuse = true;
+ 	dmac->dma.residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
+ 	dmac->dma.device_alloc_chan_resources = d350_alloc_chan_resources;
+ 	dmac->dma.device_free_chan_resources = d350_free_chan_resources;
++	dmac->dma.device_config = d350_device_config;
+ 	dma_cap_set(DMA_MEMCPY, dmac->dma.cap_mask);
++	dma_cap_set(DMA_SLAVE, dmac->dma.cap_mask);
++	dma_cap_set(DMA_CYCLIC, dmac->dma.cap_mask);
++	dma_cap_set(DMA_PRIVATE, dmac->dma.cap_mask);
+ 	dmac->dma.device_prep_dma_memcpy = d350_prep_memcpy;
++	dmac->dma.device_prep_slave_sg = d350_prep_slave_sg;
++	dmac->dma.device_prep_dma_cyclic = d350_prep_dma_cyclic;
+ 	dmac->dma.device_pause = d350_pause;
+ 	dmac->dma.device_resume = d350_resume;
+ 	dmac->dma.device_terminate_all = d350_terminate_all;
+@@ -595,10 +1468,21 @@ static int d350_probe(struct platform_device *pdev)
+ 			dev_warn(dev, "No command link support on channel %d\n", i);
+ 			continue;
+ 		}
+-		dch->irq = platform_get_irq(pdev, i);
+-		if (dch->irq < 0)
+-			return dev_err_probe(dev, dch->irq,
+-					     "Failed to get IRQ for channel %d\n", i);
++		dch->irq = platform_get_irq_optional(pdev, i);
++		if (dch->irq < 0) {
++			/*
++			 * Some platforms (e.g., Sky1 AUDSS) provide only a single
++			 * shared interrupt for all channels. Fall back to IRQ 0.
++			 */
++			if (i > 0) {
++				dch->irq = dmac->channels[0].irq;
++				dev_dbg(dev, "Channel %d using shared IRQ %d\n",
++					i, dch->irq);
++			} else {
++				return dev_err_probe(dev, dch->irq,
++						     "Failed to get IRQ for channel %d\n", i);
++			}
++		}
+ 
+ 		dch->has_wrap = FIELD_GET(CH_CFG_HAS_WRAP, reg);
+ 		dch->has_trig = FIELD_GET(CH_CFG_HAS_TRIGIN, reg) &
+@@ -623,32 +1507,108 @@ static int d350_probe(struct platform_device *pdev)
+ 		dmac->dma.device_prep_dma_memset = d350_prep_memset;
+ 	}
+ 
+-	platform_set_drvdata(pdev, dmac);
++	/*
++	 * Enable global non-secure interrupt propagation.
++	 * Without this, per-channel INTREN settings have no effect.
++	 */
++	writel_relaxed(DMA_NSEC_INTREN_ANY, base + DMA_NSEC_INTREN);
+ 
+ 	ret = dma_async_device_register(&dmac->dma);
+-	if (ret)
+-		return dev_err_probe(dev, ret, "Failed to register DMA device\n");
++	if (ret) {
++		dev_err(dev, "Failed to register DMA device: %d\n", ret);
++		goto err_pm_put;
++	}
+ 
++	/* Register for device tree DMA channel requests */
++	if (dev->of_node) {
++		ret = of_dma_controller_register(dev->of_node, d350_of_xlate, dmac);
++		if (ret) {
++			dev_err(dev, "Failed to register OF DMA controller: %d\n", ret);
++			goto err_dma_unregister;
++		}
++	}
++
++	/* Register for ACPI DMA channel requests */
++	if (has_acpi_companion(dev)) {
++		ret = acpi_dma_controller_register(dev, d350_acpi_xlate, dmac);
++		if (ret) {
++			dev_err(dev, "Failed to register ACPI DMA controller: %d\n", ret);
++			goto err_dma_unregister;
++		}
++		acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
++	}
++
++	dev_info(dev, "DMA-350 r%dp%d initialized with %d channels\n",
++		 r, p, dmac->nchan);
+ 	return 0;
++
++err_dma_unregister:
++	dma_async_device_unregister(&dmac->dma);
++
++err_pm_put:
++	clk_disable_unprepare(clk);
++	pm_runtime_put(dev);
++	pm_runtime_disable(dev);
++	return ret;
+ }
+ 
+ static void d350_remove(struct platform_device *pdev)
+ {
+ 	struct d350 *dmac = platform_get_drvdata(pdev);
+ 
++	if (has_acpi_companion(&pdev->dev))
++		acpi_dma_controller_free(&pdev->dev);
++	of_dma_controller_free(pdev->dev.of_node);
+ 	dma_async_device_unregister(&dmac->dma);
++	of_reserved_mem_device_release(&pdev->dev);
++	pm_runtime_put_sync(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++}
++
++static int __maybe_unused d350_runtime_suspend(struct device *dev)
++{
++	struct d350 *dmac = dev_get_drvdata(dev);
++
++	if (dmac && dmac->clk)
++		clk_disable_unprepare(dmac->clk);
++	return 0;
+ }
+ 
++static int __maybe_unused d350_runtime_resume(struct device *dev)
++{
++	struct d350 *dmac = dev_get_drvdata(dev);
++
++	if (dmac && dmac->clk)
++		return clk_prepare_enable(dmac->clk);
++	return 0;
++}
++
++static const struct dev_pm_ops d350_pm_ops = {
++	SET_RUNTIME_PM_OPS(d350_runtime_suspend, d350_runtime_resume, NULL)
++};
++
+ static const struct of_device_id d350_of_match[] __maybe_unused = {
+ 	{ .compatible = "arm,dma-350" },
++	{ .compatible = "arm,dma350-no-pause" },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, d350_of_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id d350_acpi_match[] = {
++	{ "CIXH1006", 0 },
++	{ "CIXHA014", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, d350_acpi_match);
++#endif
++
+ static struct platform_driver d350_driver = {
+ 	.driver = {
+ 		.name = "arm-dma350",
+ 		.of_match_table = of_match_ptr(d350_of_match),
++		.acpi_match_table = ACPI_PTR(d350_acpi_match),
++		.pm = &d350_pm_ops,
+ 	},
+ 	.probe = d350_probe,
+ 	.remove = d350_remove,
+diff --git a/drivers/gpio/gpio-cadence.c b/drivers/gpio/gpio-cadence.c
+index d7790fc35c224..5c11aceedeb82 100644
+--- a/drivers/gpio/gpio-cadence.c
++++ b/drivers/gpio/gpio-cadence.c
+@@ -2,21 +2,25 @@
+ 
+ /*
+  * Copyright 2017-2018 Cadence
+- * Copyright (C) 2025 Axiado Corporation.
+  *
+  * Authors:
+  *  Jan Kotas <jank@cadence.com>
+  *  Boris Brezillon <boris.brezillon@free-electrons.com>
+  */
+ 
++#include <linux/acpi.h>
++#include <linux/arm-smccc.h>
+ #include <linux/cleanup.h>
+ #include <linux/clk.h>
+ #include <linux/gpio/driver.h>
+-#include <linux/interrupt.h>
+ #include <linux/gpio/generic.h>
++#include <linux/interrupt.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/pm.h>
++#include <linux/property.h>
++#include <linux/reset.h>
+ #include <linux/spinlock.h>
+ 
+ #define CDNS_GPIO_BYPASS_MODE		0x00
+@@ -32,23 +36,31 @@
+ #define CDNS_GPIO_IRQ_VALUE		0x28
+ #define CDNS_GPIO_IRQ_ANY_EDGE		0x2c
+ 
+-struct cdns_gpio_quirks {
+-	bool skip_init;
++/* Sky1 Power Domain Controller SMC interface */
++#define SKY1_SIP_GPIO_PDC		0xC2000009
++#define SKY1_SIP_GPIO_PDC_SET_WAKE	0x02
++
++struct cdns_gpio_saved_regs {
++	u32 bypass_mode;
++	u32 direction_mode;
++	u32 output_en;
++	u32 output_value;
++	u32 irq_en;
++	u32 irq_type;
++	u32 irq_value;
++	u32 irq_any_edge;
+ };
+ 
+ struct cdns_gpio_chip {
+ 	struct gpio_generic_chip gen_gc;
+ 	void __iomem *regs;
+ 	u32 bypass_orig;
+-	const struct cdns_gpio_quirks *quirks;
+-};
+-
+-static const struct cdns_gpio_quirks cdns_default_quirks = {
+-	.skip_init = false,
+-};
+-
+-static const struct cdns_gpio_quirks ax3000_gpio_quirks = {
+-	.skip_init = true,
++	struct clk *pclk;
++	struct reset_control *rst;
++	u32 wake_active;
++	u32 hw_irq;
++	bool has_sky1_pdc;
++	struct cdns_gpio_saved_regs saved_regs;
+ };
+ 
+ static int cdns_gpio_request(struct gpio_chip *chip, unsigned int offset)
+@@ -83,6 +95,14 @@ static void cdns_gpio_irq_mask(struct irq_data *d)
+ 	gpiochip_disable_irq(chip, irqd_to_hwirq(d));
+ }
+ 
++static void cdns_gpio_irq_ack(struct irq_data *d)
++{
++	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
++	struct cdns_gpio_chip *cgpio = gpiochip_get_data(chip);
++
++	iowrite32(BIT(d->hwirq), cgpio->regs + CDNS_GPIO_IRQ_STATUS);
++}
++
+ static void cdns_gpio_irq_unmask(struct irq_data *d)
+ {
+ 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
+@@ -96,47 +116,64 @@ static int cdns_gpio_irq_set_type(struct irq_data *d, unsigned int type)
+ {
+ 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
+ 	struct cdns_gpio_chip *cgpio = gpiochip_get_data(chip);
+-	u32 int_value;
+-	u32 int_type;
+-	u32 int_any;
+ 	u32 mask = BIT(d->hwirq);
+-	int ret = 0;
++	u32 int_value, int_type, int_any_edge;
+ 
+ 	guard(gpio_generic_lock)(&cgpio->gen_gc);
+ 
+ 	int_value = ioread32(cgpio->regs + CDNS_GPIO_IRQ_VALUE) & ~mask;
+ 	int_type = ioread32(cgpio->regs + CDNS_GPIO_IRQ_TYPE) & ~mask;
+-	/*
+-	 * Interrupt polarity and trigger behaviour is configured like this:
+-	 *
+-	 * (type, value)
+-	 * (0, 0) = Falling edge triggered
+-	 * (0, 1) = Rising edge triggered
+-	 * (1, 0) = Low level triggered
+-	 * (1, 1) = High level triggered
+-	 */
+-	int_any = ioread32(cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE) & ~mask;
++	int_any_edge = ioread32(cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE) & ~mask;
+ 
+-	if (type == IRQ_TYPE_LEVEL_HIGH) {
+-		int_type |= mask;
++	switch (type) {
++	case IRQ_TYPE_EDGE_RISING:
+ 		int_value |= mask;
+-	} else if (type == IRQ_TYPE_LEVEL_LOW) {
++		irq_set_handler_locked(d, handle_edge_irq);
++		break;
++	case IRQ_TYPE_EDGE_FALLING:
++		irq_set_handler_locked(d, handle_edge_irq);
++		break;
++	case IRQ_TYPE_EDGE_BOTH:
++		int_any_edge |= mask;
++		irq_set_handler_locked(d, handle_edge_irq);
++		break;
++	case IRQ_TYPE_LEVEL_HIGH:
+ 		int_type |= mask;
+-	} else if (type == IRQ_TYPE_EDGE_RISING) {
+ 		int_value |= mask;
+-	} else if (type == IRQ_TYPE_EDGE_FALLING) {
+-		/* edge trigger, int_value remains cleared for falling */
+-	} else if (type == IRQ_TYPE_EDGE_BOTH) {
+-		int_any |= mask;
+-	} else {
++		irq_set_handler_locked(d, handle_level_irq);
++		break;
++	case IRQ_TYPE_LEVEL_LOW:
++		int_type |= mask;
++		irq_set_handler_locked(d, handle_level_irq);
++		break;
++	default:
+ 		return -EINVAL;
+ 	}
+ 
+ 	iowrite32(int_value, cgpio->regs + CDNS_GPIO_IRQ_VALUE);
+ 	iowrite32(int_type, cgpio->regs + CDNS_GPIO_IRQ_TYPE);
+-	iowrite32(int_any, cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE);
++	iowrite32(int_any_edge, cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE);
+ 
+-	return ret;
++	return 0;
++}
++
++/*
++ * Called under irq_desc lock; wake_active is only consumed during
++ * suspend/shutdown after all wake setup is complete, so no additional
++ * locking is needed for this u32.
++ */
++static int cdns_gpio_irq_set_wake(struct irq_data *d, unsigned int enable)
++{
++	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
++	struct cdns_gpio_chip *cgpio = gpiochip_get_data(chip);
++	irq_hw_number_t hwirq = irqd_to_hwirq(d);
++
++	if (enable)
++		cgpio->wake_active |= BIT(hwirq);
++	else
++		cgpio->wake_active &= ~BIT(hwirq);
++
++	return 0;
+ }
+ 
+ static void cdns_gpio_irq_handler(struct irq_desc *desc)
+@@ -160,25 +197,114 @@ static void cdns_gpio_irq_handler(struct irq_desc *desc)
+ 
+ static const struct irq_chip cdns_gpio_irqchip = {
+ 	.name		= "cdns-gpio",
++	.irq_ack	= cdns_gpio_irq_ack,
+ 	.irq_mask	= cdns_gpio_irq_mask,
+ 	.irq_unmask	= cdns_gpio_irq_unmask,
+ 	.irq_set_type	= cdns_gpio_irq_set_type,
+-	.flags		= IRQCHIP_IMMUTABLE,
++	.irq_set_wake	= cdns_gpio_irq_set_wake,
++	.flags		= IRQCHIP_IMMUTABLE | IRQCHIP_MASK_ON_SUSPEND,
+ 	GPIOCHIP_IRQ_RESOURCE_HELPERS,
+ };
+ 
+-static const struct of_device_id cdns_of_ids[] = {
+-	{
+-		.compatible = "axiado,ax3000-gpio",
+-		.data = &ax3000_gpio_quirks
+-	},
+-	{
+-		.compatible = "cdns,gpio-r1p02",
+-		.data = &cdns_default_quirks
+-	},
+-	{ /* sentinel */ },
++#ifdef CONFIG_PM_SLEEP
++static void cdns_gpio_save_regs(struct cdns_gpio_chip *cgpio)
++{
++	cgpio->saved_regs.bypass_mode = ioread32(cgpio->regs + CDNS_GPIO_BYPASS_MODE);
++	cgpio->saved_regs.direction_mode = ioread32(cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
++	cgpio->saved_regs.output_en = ioread32(cgpio->regs + CDNS_GPIO_OUTPUT_EN);
++	cgpio->saved_regs.output_value = ioread32(cgpio->regs + CDNS_GPIO_OUTPUT_VALUE);
++	cgpio->saved_regs.irq_en = ioread32(cgpio->regs + CDNS_GPIO_IRQ_MASK);
++	cgpio->saved_regs.irq_type = ioread32(cgpio->regs + CDNS_GPIO_IRQ_TYPE);
++	cgpio->saved_regs.irq_value = ioread32(cgpio->regs + CDNS_GPIO_IRQ_VALUE);
++	cgpio->saved_regs.irq_any_edge = ioread32(cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE);
++}
++
++static void cdns_gpio_restore_regs(struct cdns_gpio_chip *cgpio)
++{
++	/* Disable all IRQs before restore to prevent spurious firing */
++	iowrite32(GENMASK(cgpio->gen_gc.gc.ngpio - 1, 0),
++		  cgpio->regs + CDNS_GPIO_IRQ_DIS);
++
++	iowrite32(cgpio->saved_regs.bypass_mode, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
++	iowrite32(cgpio->saved_regs.direction_mode, cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
++	iowrite32(cgpio->saved_regs.output_en, cgpio->regs + CDNS_GPIO_OUTPUT_EN);
++	iowrite32(cgpio->saved_regs.output_value, cgpio->regs + CDNS_GPIO_OUTPUT_VALUE);
++	iowrite32(cgpio->saved_regs.irq_type, cgpio->regs + CDNS_GPIO_IRQ_TYPE);
++	iowrite32(cgpio->saved_regs.irq_value, cgpio->regs + CDNS_GPIO_IRQ_VALUE);
++	iowrite32(cgpio->saved_regs.irq_any_edge, cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE);
++	/* IRQ_EN is write-to-set: re-enable only previously enabled IRQs */
++	iowrite32(~cgpio->saved_regs.irq_en, cgpio->regs + CDNS_GPIO_IRQ_EN);
++}
++
++static void cdns_gpio_sky1_set_wake(struct cdns_gpio_chip *cgpio, bool suspend)
++{
++	struct arm_smccc_res res;
++
++	if (!cgpio->has_sky1_pdc)
++		return;
++
++	arm_smccc_smc(SKY1_SIP_GPIO_PDC, SKY1_SIP_GPIO_PDC_SET_WAKE,
++		      cgpio->hw_irq - 32, suspend ? 1 : 0,
++		      cgpio->wake_active, 0, 0, 0, &res);
++}
++
++static int cdns_gpio_suspend(struct device *dev)
++{
++	struct cdns_gpio_chip *cgpio = dev_get_drvdata(dev);
++
++	cdns_gpio_save_regs(cgpio);
++
++	/* Mask non-wake interrupts */
++	iowrite32(~cgpio->wake_active, cgpio->regs + CDNS_GPIO_IRQ_DIS);
++
++	cdns_gpio_sky1_set_wake(cgpio, true);
++
++	if (cgpio->pclk)
++		clk_disable_unprepare(cgpio->pclk);
++
++	return 0;
++}
++
++static int cdns_gpio_resume(struct device *dev)
++{
++	struct cdns_gpio_chip *cgpio = dev_get_drvdata(dev);
++	int ret;
++
++	if (cgpio->pclk) {
++		ret = clk_prepare_enable(cgpio->pclk);
++		if (ret) {
++			dev_err(dev, "Failed to enable clock: %d\n", ret);
++			return ret;
++		}
++	}
++
++	if (cgpio->rst)
++		reset_control_reset(cgpio->rst);
++
++	cdns_gpio_restore_regs(cgpio);
++
++	return 0;
++}
++
++static void cdns_gpio_shutdown(struct platform_device *pdev)
++{
++	struct cdns_gpio_chip *cgpio = platform_get_drvdata(pdev);
++
++	/* Mask non-wake interrupts */
++	iowrite32(~cgpio->wake_active, cgpio->regs + CDNS_GPIO_IRQ_DIS);
++
++	cdns_gpio_sky1_set_wake(cgpio, true);
++
++	if (cgpio->pclk)
++		clk_disable_unprepare(cgpio->pclk);
++}
++#else
++static void cdns_gpio_shutdown(struct platform_device *pdev) {}
++#endif
++
++static const struct dev_pm_ops cdns_gpio_pm_ops = {
++	LATE_SYSTEM_SLEEP_PM_OPS(cdns_gpio_suspend, cdns_gpio_resume)
+ };
+-MODULE_DEVICE_TABLE(of, cdns_of_ids);
+ 
+ static int cdns_gpio_probe(struct platform_device *pdev)
+ {
+@@ -187,7 +313,7 @@ static int cdns_gpio_probe(struct platform_device *pdev)
+ 	int ret, irq;
+ 	u32 dir_prev;
+ 	u32 num_gpios = 32;
+-	struct clk *clk;
++	u32 io_mask = 0;
+ 
+ 	cgpio = devm_kzalloc(&pdev->dev, sizeof(*cgpio), GFP_KERNEL);
+ 	if (!cgpio)
+@@ -197,16 +323,19 @@ static int cdns_gpio_probe(struct platform_device *pdev)
+ 	if (IS_ERR(cgpio->regs))
+ 		return PTR_ERR(cgpio->regs);
+ 
+-	of_property_read_u32(pdev->dev.of_node, "ngpios", &num_gpios);
++	/* Use device_property for DT/ACPI compatibility */
++	device_property_read_u32(&pdev->dev, "ngpios", &num_gpios);
+ 
+ 	if (num_gpios > 32) {
+ 		dev_err(&pdev->dev, "ngpios must be less or equal 32\n");
+ 		return -EINVAL;
+ 	}
+ 
+-	cgpio->quirks = device_get_match_data(&pdev->dev);
+-	if (!cgpio->quirks)
+-		cgpio->quirks = &cdns_default_quirks;
++	/* Optional mask of pins that should remain inputs (hardware safety) */
++	device_property_read_u32(&pdev->dev, "gpio-io-mask", &io_mask);
++
++	/* Detect Sky1 platform for PDC wake integration */
++	cgpio->has_sky1_pdc = !!device_get_match_data(&pdev->dev);
+ 
+ 	/*
+ 	 * Set all pins as inputs by default, otherwise:
+@@ -214,17 +343,11 @@ static int cdns_gpio_probe(struct platform_device *pdev)
+ 	 * tried to flag a GPIO set as output for IRQ
+ 	 * Generic GPIO driver stores the direction value internally,
+ 	 * so it needs to be changed before gpio_generic_chip_init() is called.
++	 * Apply io_mask to force certain pins as inputs (hardware safety).
+ 	 */
+ 	dir_prev = ioread32(cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
+-
+-	/*
+-	 * The AX3000 platform performs the required configuration at boot time
+-	 * before Linux boots, so this quirk disables pinmux initialization.
+-	 */
+-	if (!cgpio->quirks->skip_init) {
+-		iowrite32(GENMASK(num_gpios - 1, 0),
+-			cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
+-	}
++	iowrite32(GENMASK(num_gpios - 1, 0) & ~io_mask,
++		  cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
+ 
+ 	config.dev = &pdev->dev;
+ 	config.sz = 4;
+@@ -248,20 +371,40 @@ static int cdns_gpio_probe(struct platform_device *pdev)
+ 	cgpio->gen_gc.gc.request = cdns_gpio_request;
+ 	cgpio->gen_gc.gc.free = cdns_gpio_free;
+ 
+-	clk = devm_clk_get_enabled(&pdev->dev, NULL);
+-	if (IS_ERR(clk)) {
+-		ret = PTR_ERR(clk);
+-		dev_err(&pdev->dev,
+-			"Failed to retrieve peripheral clock, %d\n", ret);
++	/* Clock - use optional for manual PM control */
++	cgpio->pclk = devm_clk_get_optional(&pdev->dev, NULL);
++	if (IS_ERR(cgpio->pclk)) {
++		ret = PTR_ERR(cgpio->pclk);
++		dev_err(&pdev->dev, "Failed to get clock: %d\n", ret);
+ 		goto err_revert_dir;
+ 	}
+ 
+-	/*
+-	 * Optional irq_chip support
+-	 */
+-	irq = platform_get_irq(pdev, 0);
+-	if (irq >= 0) {
++	if (cgpio->pclk) {
++		ret = clk_prepare_enable(cgpio->pclk);
++		if (ret) {
++			dev_err(&pdev->dev, "Failed to enable clock: %d\n", ret);
++			goto err_revert_dir;
++		}
++	}
++
++	/* Optional reset control */
++	cgpio->rst = devm_reset_control_get_optional_shared(&pdev->dev, NULL);
++	if (IS_ERR(cgpio->rst)) {
++		ret = PTR_ERR(cgpio->rst);
++		dev_err(&pdev->dev, "Failed to get reset: %d\n", ret);
++		goto err_disable_clk;
++	}
++
++	/* Optional irq_chip support */
++	irq = platform_get_irq_optional(pdev, 0);
++	if (irq > 0) {
+ 		struct gpio_irq_chip *girq;
++		struct irq_data *irq_data;
++
++		/* Store GIC hardware IRQ for PDC wake SMC calls */
++		irq_data = irq_get_irq_data(irq);
++		if (irq_data)
++			cgpio->hw_irq = irq_data->hwirq;
+ 
+ 		girq = &cgpio->gen_gc.gc.irq;
+ 		gpio_irq_chip_set_chip(girq, &cdns_gpio_irqchip);
+@@ -272,33 +415,40 @@ static int cdns_gpio_probe(struct platform_device *pdev)
+ 					     GFP_KERNEL);
+ 		if (!girq->parents) {
+ 			ret = -ENOMEM;
+-			goto err_revert_dir;
++			goto err_disable_clk;
+ 		}
+ 		girq->parents[0] = irq;
+ 		girq->default_type = IRQ_TYPE_NONE;
+-		girq->handler = handle_level_irq;
++		girq->handler = handle_bad_irq;
+ 	}
+ 
++	/*
++	 * Disable all IRQs and clear pending status before registering
++	 * the chip, to prevent IRQ storms through handle_bad_irq before
++	 * consumers have configured their IRQ types.
++	 */
++	iowrite32(GENMASK(num_gpios - 1, 0), cgpio->regs + CDNS_GPIO_IRQ_DIS);
++	ioread32(cgpio->regs + CDNS_GPIO_IRQ_STATUS);
++
+ 	ret = devm_gpiochip_add_data(&pdev->dev, &cgpio->gen_gc.gc, cgpio);
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "Could not register gpiochip, %d\n", ret);
+-		goto err_revert_dir;
++		goto err_disable_clk;
+ 	}
+ 
+ 	cgpio->bypass_orig = ioread32(cgpio->regs + CDNS_GPIO_BYPASS_MODE);
+ 
+-	/*
+-	 * Enable gpio outputs, ignored for input direction
+-	 */
+-	if (!cgpio->quirks->skip_init) {
+-		iowrite32(GENMASK(num_gpios - 1, 0),
+-			cgpio->regs + CDNS_GPIO_OUTPUT_EN);
+-		iowrite32(0, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
+-	}
++	/* Enable gpio outputs, ignored for input direction */
++	iowrite32(GENMASK(num_gpios - 1, 0),
++		  cgpio->regs + CDNS_GPIO_OUTPUT_EN);
++	iowrite32(0, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
+ 
+ 	platform_set_drvdata(pdev, cgpio);
+ 	return 0;
+ 
++err_disable_clk:
++	if (cgpio->pclk)
++		clk_disable_unprepare(cgpio->pclk);
+ err_revert_dir:
+ 	iowrite32(dir_prev, cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
+ 
+@@ -310,15 +460,37 @@ static void cdns_gpio_remove(struct platform_device *pdev)
+ 	struct cdns_gpio_chip *cgpio = platform_get_drvdata(pdev);
+ 
+ 	iowrite32(cgpio->bypass_orig, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
++
++	if (cgpio->pclk)
++		clk_disable_unprepare(cgpio->pclk);
+ }
+ 
++static const struct of_device_id cdns_of_ids[] = {
++	{ .compatible = "cdns,gpio-r1p02" },
++	{ .compatible = "cix,sky1-gpio", .data = (void *)1 },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, cdns_of_ids);
++
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id cdns_acpi_ids[] = {
++	{ "CIXH1002", 1 },
++	{ "CIXH1003", 1 },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(acpi, cdns_acpi_ids);
++#endif
++
+ static struct platform_driver cdns_gpio_driver = {
+ 	.driver = {
+ 		.name = "cdns-gpio",
+ 		.of_match_table = cdns_of_ids,
++		.acpi_match_table = ACPI_PTR(cdns_acpi_ids),
++		.pm = pm_ptr(&cdns_gpio_pm_ops),
+ 	},
+ 	.probe = cdns_gpio_probe,
+ 	.remove = cdns_gpio_remove,
++	.shutdown = cdns_gpio_shutdown,
+ };
+ module_platform_driver(cdns_gpio_driver);
+ 
+diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
+index 41c381764c2bc..d190888bf74bb 100644
+--- a/drivers/hwmon/Kconfig
++++ b/drivers/hwmon/Kconfig
+@@ -503,6 +503,19 @@ config SENSORS_CHIPCAP2
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called chipcap2.
+ 
++config SENSORS_CIX_FAN
++	tristate "CIX Sky1 fan control"
++	depends on ACPI
++	help
++	  If you say yes here you get support for fan mode control on
++	  CIX Sky1 based systems (such as Radxa Orion O6) via ACPI.
++
++	  Supports mute (off), auto (thermal controlled), and performance
++	  (full speed) modes through standard hwmon pwm_enable interface.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called cix-fan.
++
+ config SENSORS_CORSAIR_CPRO
+ 	tristate "Corsair Commander Pro controller"
+ 	depends on HID
+diff --git a/drivers/hwmon/Makefile b/drivers/hwmon/Makefile
+index eade8e3b1bde4..0177a69077aa5 100644
+--- a/drivers/hwmon/Makefile
++++ b/drivers/hwmon/Makefile
+@@ -61,6 +61,7 @@ obj-$(CONFIG_SENSORS_AXI_FAN_CONTROL) += axi-fan-control.o
+ obj-$(CONFIG_SENSORS_BT1_PVT)	+= bt1-pvt.o
+ obj-$(CONFIG_SENSORS_CGBC)	+= cgbc-hwmon.o
+ obj-$(CONFIG_SENSORS_CHIPCAP2) += chipcap2.o
++obj-$(CONFIG_SENSORS_CIX_FAN)	+= cix-fan.o
+ obj-$(CONFIG_SENSORS_CORETEMP)	+= coretemp.o
+ obj-$(CONFIG_SENSORS_CORSAIR_CPRO) += corsair-cpro.o
+ obj-$(CONFIG_SENSORS_CORSAIR_PSU) += corsair-psu.o
+diff --git a/drivers/hwmon/cix-fan.c b/drivers/hwmon/cix-fan.c
+new file mode 100644
+index 0000000000000..3b6766f893b25
+--- /dev/null
++++ b/drivers/hwmon/cix-fan.c
+@@ -0,0 +1,171 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX Sky1 fan control driver
++ *
++ * Copyright (C) 2024 CIX Technology Group Co., Ltd.
++ *
++ * Fan control via ACPI methods on \_SB.HWMN device (CIXHA024):
++ *   SFMT - Set mute mode (fan off)
++ *   SFAT - Set auto mode (thermal controlled)
++ *   SFPF - Set performance mode (max speed)
++ *
++ * These methods delegate to \_SB.EC0 embedded controller.
++ */
++
++#include <linux/acpi.h>
++#include <linux/hwmon.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++/* Fan mode maps to pwm_enable values */
++enum cix_fan_mode {
++	CIX_FAN_MODE_OFF = 0,	/* SFMT - mute/off */
++	CIX_FAN_MODE_FULL = 1,	/* SFPF - performance/full speed */
++	CIX_FAN_MODE_AUTO = 2,	/* SFAT - auto/thermal controlled */
++};
++
++struct cix_fan_data {
++	struct device *dev;
++	acpi_handle handle;
++	struct mutex lock;
++	int pwm_enable;		/* 0=off, 1=full, 2=auto */
++};
++
++static int cix_fan_set_mode(struct cix_fan_data *data, int mode)
++{
++	const char *method;
++	acpi_status status;
++
++	switch (mode) {
++	case CIX_FAN_MODE_OFF:
++		method = "SFMT";
++		break;
++	case CIX_FAN_MODE_FULL:
++		method = "SFPF";
++		break;
++	case CIX_FAN_MODE_AUTO:
++		method = "SFAT";
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	status = acpi_evaluate_object(data->handle, (char *)method, NULL, NULL);
++	if (ACPI_FAILURE(status)) {
++		dev_dbg(data->dev, "ACPI method %s failed: %s\n",
++			method, acpi_format_exception(status));
++		return -EIO;
++	}
++
++	data->pwm_enable = mode;
++	return 0;
++}
++
++static int cix_fan_read(struct device *dev, enum hwmon_sensor_types type,
++			u32 attr, int channel, long *val)
++{
++	struct cix_fan_data *data = dev_get_drvdata(dev);
++
++	if (type != hwmon_pwm || attr != hwmon_pwm_enable)
++		return -EOPNOTSUPP;
++
++	mutex_lock(&data->lock);
++	*val = data->pwm_enable;
++	mutex_unlock(&data->lock);
++
++	return 0;
++}
++
++static int cix_fan_write(struct device *dev, enum hwmon_sensor_types type,
++			 u32 attr, int channel, long val)
++{
++	struct cix_fan_data *data = dev_get_drvdata(dev);
++	int ret;
++
++	if (type != hwmon_pwm || attr != hwmon_pwm_enable)
++		return -EOPNOTSUPP;
++
++	if (val < 0 || val > 2)
++		return -EINVAL;
++
++	mutex_lock(&data->lock);
++	ret = cix_fan_set_mode(data, val);
++	mutex_unlock(&data->lock);
++
++	return ret;
++}
++
++static umode_t cix_fan_is_visible(const void *drvdata,
++				  enum hwmon_sensor_types type,
++				  u32 attr, int channel)
++{
++	if (type == hwmon_pwm && attr == hwmon_pwm_enable)
++		return 0644;
++
++	return 0;
++}
++
++static const struct hwmon_channel_info * const cix_fan_info[] = {
++	HWMON_CHANNEL_INFO(pwm, HWMON_PWM_ENABLE),
++	NULL
++};
++
++static const struct hwmon_ops cix_fan_hwmon_ops = {
++	.is_visible = cix_fan_is_visible,
++	.read = cix_fan_read,
++	.write = cix_fan_write,
++};
++
++static const struct hwmon_chip_info cix_fan_chip_info = {
++	.ops = &cix_fan_hwmon_ops,
++	.info = cix_fan_info,
++};
++
++static int cix_fan_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cix_fan_data *data;
++	struct device *hwmon_dev;
++	acpi_handle handle;
++
++	handle = ACPI_HANDLE(dev);
++	if (!handle)
++		return -ENODEV;
++
++	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	data->dev = dev;
++	data->handle = handle;
++	data->pwm_enable = CIX_FAN_MODE_AUTO;
++	mutex_init(&data->lock);
++
++	hwmon_dev = devm_hwmon_device_register_with_info(dev, "cix_fan", data,
++							 &cix_fan_chip_info,
++							 NULL);
++	if (IS_ERR(hwmon_dev))
++		return PTR_ERR(hwmon_dev);
++
++	dev_info(dev, "CIX fan control initialized\n");
++	return 0;
++}
++
++static const struct acpi_device_id cix_fan_acpi_match[] = {
++	{ "CIXHA024", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, cix_fan_acpi_match);
++
++static struct platform_driver cix_fan_driver = {
++	.probe = cix_fan_probe,
++	.driver = {
++		.name = "cix-fan",
++		.acpi_match_table = cix_fan_acpi_match,
++	},
++};
++module_platform_driver(cix_fan_driver);
++
++MODULE_AUTHOR("CIX Technology Group Co., Ltd.");
++MODULE_DESCRIPTION("CIX Sky1 fan control driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/i2c/busses/i2c-cadence.c b/drivers/i2c/busses/i2c-cadence.c
+index 0fb728ade92e4..2f200cdf678d8 100644
+--- a/drivers/i2c/busses/i2c-cadence.c
++++ b/drivers/i2c/busses/i2c-cadence.c
+@@ -5,6 +5,7 @@
+  * Copyright (C) 2009 - 2014 Xilinx, Inc.
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/i2c.h>
+@@ -1449,6 +1450,14 @@ static const struct of_device_id cdns_i2c_of_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, cdns_i2c_of_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id cdns_i2c_acpi_match[] = {
++	{ "CIXH200B", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, cdns_i2c_acpi_match);
++#endif
++
+ /**
+  * cdns_i2c_detect_transfer_size - Detect the maximum transfer size supported
+  * @id: Device private data structure
+@@ -1639,6 +1648,7 @@ static struct platform_driver cdns_i2c_drv = {
+ 	.driver = {
+ 		.name  = DRIVER_NAME,
+ 		.of_match_table = cdns_i2c_of_match,
++		.acpi_match_table = ACPI_PTR(cdns_i2c_acpi_match),
+ 		.pm = &cdns_i2c_dev_pm_ops,
+ 	},
+ 	.probe  = cdns_i2c_probe,
+diff --git a/drivers/i3c/master/i3c-master-cdns.c b/drivers/i3c/master/i3c-master-cdns.c
+index b78aebf6b2ca4..f5c6f179c41a2 100644
+--- a/drivers/i3c/master/i3c-master-cdns.c
++++ b/drivers/i3c/master/i3c-master-cdns.c
+@@ -5,6 +5,7 @@
+  * Author: Boris Brezillon <boris.brezillon@bootlin.com>
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/bitops.h>
+ #include <linux/clk.h>
+ #include <linux/err.h>
+@@ -1547,6 +1548,14 @@ static const struct of_device_id cdns_i3c_master_of_ids[] = {
+ };
+ MODULE_DEVICE_TABLE(of, cdns_i3c_master_of_ids);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id cdns_i3c_master_acpi_ids[] = {
++	{ "CIXH200C", (kernel_ulong_t)&cdns_i3c_devdata },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, cdns_i3c_master_acpi_ids);
++#endif
++
+ static int cdns_i3c_master_probe(struct platform_device *pdev)
+ {
+ 	struct cdns_i3c_master *master;
+@@ -1637,6 +1646,7 @@ static struct platform_driver cdns_i3c_master = {
+ 	.driver = {
+ 		.name = "cdns-i3c-master",
+ 		.of_match_table = cdns_i3c_master_of_ids,
++		.acpi_match_table = ACPI_PTR(cdns_i3c_master_acpi_ids),
+ 	},
+ };
+ module_platform_driver(cdns_i3c_master);
+diff --git a/drivers/input/keyboard/gpio_keys.c b/drivers/input/keyboard/gpio_keys.c
+index e196174856796..ba031efc72671 100644
+--- a/drivers/input/keyboard/gpio_keys.c
++++ b/drivers/input/keyboard/gpio_keys.c
+@@ -596,7 +596,21 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
+ 			      CLOCK_REALTIME, HRTIMER_MODE_REL);
+ 
+ 		isr = gpio_keys_gpio_isr;
+-		irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
++
++		/*
++		 * If an explicit interrupt was specified in the device tree,
++		 * use its configured trigger type instead of defaulting to
++		 * edge-both. This allows using level-triggered interrupts
++		 * on GPIO controllers that don't support edge triggers
++		 * (e.g., Cadence GPIO).
++		 */
++		if (button->irq) {
++			irqflags = irq_get_trigger_type(bdata->irq);
++			if (!irqflags)
++				irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
++		} else {
++			irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
++		}
+ 
+ 		switch (button->wakeup_event_action) {
+ 		case EV_ACT_ASSERTED:
+diff --git a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+index 4d00d796f0783..9eb9464b46909 100644
+--- a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
++++ b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+@@ -81,6 +81,7 @@ DEFINE_MUTEX(arm_smmu_asid_lock);
+ static struct arm_smmu_option_prop arm_smmu_options[] = {
+ 	{ ARM_SMMU_OPT_SKIP_PREFETCH, "hisilicon,broken-prefetch-cmd" },
+ 	{ ARM_SMMU_OPT_PAGE0_REGS_ONLY, "cavium,cn9900-broken-page1-regspace"},
++	{ ARM_SMMU_OPT_PCIE_ATS_OVERRIDE, "cix,pcie-ats-override" },
+ 	{ 0, NULL},
+ };
+ 
+@@ -88,7 +89,9 @@ static const char * const event_str[] = {
+ 	[EVT_ID_BAD_STREAMID_CONFIG] = "C_BAD_STREAMID",
+ 	[EVT_ID_STE_FETCH_FAULT] = "F_STE_FETCH",
+ 	[EVT_ID_BAD_STE_CONFIG] = "C_BAD_STE",
++	[EVT_ID_BAD_ATS_TREQ] = "C_BAD_ATS_TREQ",
+ 	[EVT_ID_STREAM_DISABLED_FAULT] = "F_STREAM_DISABLED",
++	[EVT_ID_TRANSL_FORBIDDEN] = "F_TRANSL_FORBIDDEN",
+ 	[EVT_ID_BAD_SUBSTREAMID_CONFIG] = "C_BAD_SUBSTREAMID",
+ 	[EVT_ID_CD_FETCH_FAULT] = "F_CD_FETCH",
+ 	[EVT_ID_BAD_CD_CONFIG] = "C_BAD_CD",
+@@ -1682,7 +1685,10 @@ void arm_smmu_make_cdtable_ste(struct arm_smmu_ste *target,
+ 			 STRTAB_STE_1_S1STALLD :
+ 			 0) |
+ 		FIELD_PREP(STRTAB_STE_1_EATS,
+-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
++			   (ats_enabled ||
++			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
++			     dev_is_pci(master->dev))) ?
++				STRTAB_STE_1_EATS_TRANS : 0));
+ 
+ 	if ((smmu->features & ARM_SMMU_FEAT_ATTR_TYPES_OVR) &&
+ 	    s1dss == STRTAB_STE_1_S1DSS_BYPASS)
+@@ -1734,7 +1740,10 @@ void arm_smmu_make_s2_domain_ste(struct arm_smmu_ste *target,
+ 
+ 	target->data[1] = cpu_to_le64(
+ 		FIELD_PREP(STRTAB_STE_1_EATS,
+-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
++			   (ats_enabled ||
++			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
++			     dev_is_pci(master->dev))) ?
++				STRTAB_STE_1_EATS_TRANS : 0));
+ 
+ 	if (pgtbl_cfg->quirks & IO_PGTABLE_QUIRK_ARM_S2FWB)
+ 		target->data[1] |= cpu_to_le64(STRTAB_STE_1_S2FWB);
+@@ -1885,6 +1894,7 @@ static int arm_smmu_handle_event(struct arm_smmu_device *smmu, u64 *evt,
+ 	switch (event->id) {
+ 	case EVT_ID_BAD_STE_CONFIG:
+ 	case EVT_ID_STREAM_DISABLED_FAULT:
++	case EVT_ID_TRANSL_FORBIDDEN:
+ 	case EVT_ID_BAD_SUBSTREAMID_CONFIG:
+ 	case EVT_ID_BAD_CD_CONFIG:
+ 	case EVT_ID_TRANSLATION_FAULT:
+@@ -1999,6 +2009,39 @@ static void arm_smmu_dump_event(struct arm_smmu_device *smmu, u64 *raw,
+ 	}
+ }
+ 
++/*
++ * Per-SID event auto-suppression.  After SMMU_EVT_SUPPRESS_THRESHOLD events
++ * from the same stream ID, further events are silently dropped.  This handles
++ * hardware that generates continuous faults on SIDs that software cannot
++ * control (e.g. PCIe DTI ATS masters with secure-only registers).
++ *
++ * Returns true if the event should be suppressed.
++ */
++static bool arm_smmu_evt_suppressed(struct arm_smmu_device *smmu, u32 sid)
++{
++	int i, free_slot = -1;
++
++	for (i = 0; i < SMMU_EVT_SUPPRESS_SLOTS; i++) {
++		if (smmu->evt_suppress[i].count && smmu->evt_suppress[i].sid == sid) {
++			if (++smmu->evt_suppress[i].count == SMMU_EVT_SUPPRESS_THRESHOLD) {
++				dev_warn(smmu->dev,
++					 "auto-suppressing events for sid %#x (%u seen)\n",
++					 sid, smmu->evt_suppress[i].count);
++			}
++			return smmu->evt_suppress[i].count >= SMMU_EVT_SUPPRESS_THRESHOLD;
++		}
++		if (!smmu->evt_suppress[i].count && free_slot < 0)
++			free_slot = i;
++	}
++
++	/* New SID — start tracking */
++	if (free_slot >= 0) {
++		smmu->evt_suppress[free_slot].sid = sid;
++		smmu->evt_suppress[free_slot].count = 1;
++	}
++	return false;
++}
++
+ static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
+ {
+ 	u64 evt[EVTQ_ENT_DWORDS];
+@@ -2012,9 +2055,11 @@ static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
+ 	do {
+ 		while (!queue_remove_raw(q, evt)) {
+ 			arm_smmu_decode_event(smmu, evt, &event);
++			if (arm_smmu_evt_suppressed(smmu, event.sid))
++				goto evt_next;
+ 			if (arm_smmu_handle_event(smmu, evt, &event))
+ 				arm_smmu_dump_event(smmu, evt, &event, &rs);
+-
++evt_next:
+ 			put_device(event.dev);
+ 			cond_resched();
+ 		}
+@@ -4738,6 +4783,43 @@ static void __iomem *arm_smmu_ioremap(struct device *dev, resource_size_t start,
+ 	return devm_ioremap_resource(dev, &res);
+ }
+ 
++/*
++ * Install bypass STEs for stream IDs specified in device tree.
++ * This handles devices that are already active at boot (e.g., display
++ * controllers left running by bootloader) before the kernel driver
++ * has attached them to the IOMMU.
++ */
++static void arm_smmu_dt_install_bypass_ste(struct arm_smmu_device *smmu)
++{
++	struct device_node *np = smmu->dev->of_node;
++	int count, i;
++	u32 sid;
++
++	if (!np)
++		return;
++
++	count = of_property_count_u32_elems(np, "arm,boot-active-sids");
++	if (count <= 0)
++		return;
++
++	for (i = 0; i < count; i++) {
++		if (of_property_read_u32_index(np, "arm,boot-active-sids",
++					       i, &sid))
++			continue;
++
++		if (arm_smmu_init_sid_strtab(smmu, sid)) {
++			dev_err(smmu->dev,
++				"boot-active SID(0x%x) bypass failed\n", sid);
++			continue;
++		}
++
++		arm_smmu_make_bypass_ste(smmu,
++			arm_smmu_get_step_for_sid(smmu, sid));
++		dev_dbg(smmu->dev,
++			"installed bypass STE for boot-active SID 0x%x\n", sid);
++	}
++}
++
+ static void arm_smmu_rmr_install_bypass_ste(struct arm_smmu_device *smmu)
+ {
+ 	struct list_head rmr_list;
+@@ -4904,6 +4986,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
+ 	/* Check for RMRs and install bypass STEs if any */
+ 	arm_smmu_rmr_install_bypass_ste(smmu);
+ 
++	/* Install bypass STEs for boot-active devices from DT */
++	arm_smmu_dt_install_bypass_ste(smmu);
++
+ 	/* Reset the device */
+ 	ret = arm_smmu_device_reset(smmu);
+ 	if (ret)
+diff --git a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.h b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.h
+index 3c6d65d36164f..b28a2dfac969f 100644
+--- a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.h
++++ b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.h
+@@ -457,7 +457,9 @@ static inline unsigned int arm_smmu_cdtab_l2_idx(unsigned int ssid)
+ #define EVT_ID_BAD_STREAMID_CONFIG	0x02
+ #define EVT_ID_STE_FETCH_FAULT		0x03
+ #define EVT_ID_BAD_STE_CONFIG		0x04
++#define EVT_ID_BAD_ATS_TREQ		0x05
+ #define EVT_ID_STREAM_DISABLED_FAULT	0x06
++#define EVT_ID_TRANSL_FORBIDDEN		0x07
+ #define EVT_ID_BAD_SUBSTREAMID_CONFIG	0x08
+ #define EVT_ID_CD_FETCH_FAULT		0x09
+ #define EVT_ID_BAD_CD_CONFIG		0x0a
+@@ -774,6 +776,7 @@ struct arm_smmu_device {
+ #define ARM_SMMU_OPT_MSIPOLL		(1 << 2)
+ #define ARM_SMMU_OPT_CMDQ_FORCE_SYNC	(1 << 3)
+ #define ARM_SMMU_OPT_TEGRA241_CMDQV	(1 << 4)
++#define ARM_SMMU_OPT_PCIE_ATS_OVERRIDE	(1 << 5)
+ 	u32				options;
+ 
+ 	struct arm_smmu_cmdq		cmdq;
+@@ -803,6 +806,14 @@ struct arm_smmu_device {
+ 
+ 	struct rb_root			streams;
+ 	struct mutex			streams_mutex;
++
++	/* Per-SID event suppression for noisy streams (e.g. PCIe DTI ATS) */
++#define SMMU_EVT_SUPPRESS_SLOTS		8
++#define SMMU_EVT_SUPPRESS_THRESHOLD	3
++	struct {
++		u32			sid;
++		u32			count;
++	} evt_suppress[SMMU_EVT_SUPPRESS_SLOTS];
+ };
+ 
+ struct arm_smmu_stream {
+diff --git a/drivers/perf/arm_spe_pmu.c b/drivers/perf/arm_spe_pmu.c
+index dbd0da1116390..ae738ef181cfa 100644
+--- a/drivers/perf/arm_spe_pmu.c
++++ b/drivers/perf/arm_spe_pmu.c
+@@ -1234,6 +1234,15 @@ static void __arm_spe_pmu_dev_probe(void *info)
+ 	spe_pmu->features |= SPE_PMU_FEAT_DEV_PROBED;
+ }
+ 
++/* Check if current CPU supports SPE (for heterogeneous big.LITTLE systems) */
++static bool arm_spe_pmu_cpu_supported(void)
++{
++	u64 dfr0 = read_sysreg(id_aa64dfr0_el1);
++	int pmsver = cpuid_feature_extract_unsigned_field(dfr0,
++					ID_AA64DFR0_EL1_PMSVer_SHIFT);
++	return pmsver != 0;
++}
++
+ static void __arm_spe_pmu_reset_local(void)
+ {
+ 	/*
+@@ -1255,6 +1264,10 @@ static void __arm_spe_pmu_setup_one(void *info)
+ {
+ 	struct arm_spe_pmu *spe_pmu = info;
+ 
++	/* Skip CPUs that don't support SPE (e.g., A520 in big.LITTLE) */
++	if (!arm_spe_pmu_cpu_supported())
++		return;
++
+ 	__arm_spe_pmu_reset_local();
+ 	enable_percpu_irq(spe_pmu->irq, IRQ_TYPE_NONE);
+ }
+@@ -1263,6 +1276,10 @@ static void __arm_spe_pmu_stop_one(void *info)
+ {
+ 	struct arm_spe_pmu *spe_pmu = info;
+ 
++	/* Skip CPUs that don't support SPE */
++	if (!arm_spe_pmu_cpu_supported())
++		return;
++
+ 	disable_percpu_irq(spe_pmu->irq);
+ 	__arm_spe_pmu_reset_local();
+ }
+diff --git a/drivers/pwm/Kconfig b/drivers/pwm/Kconfig
+index 6f3147518376a..1176d4bc2b7d9 100644
+--- a/drivers/pwm/Kconfig
++++ b/drivers/pwm/Kconfig
+@@ -842,7 +842,16 @@ config PWM_XILINX
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called pwm-xilinx.
+ 
+- config RUST_PWM_ABSTRACTIONS
++config PWM_SKY1
++	tristate "CIX Sky1 PWM support"
++	depends on ARCH_CIX || COMPILE_TEST
++	help
++	  PWM driver support for CIX Sky1 SoCs.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called pwm-sky1.
++
++config RUST_PWM_ABSTRACTIONS
+ 	bool
+ 	depends on RUST
+ 	help
+diff --git a/drivers/pwm/Makefile b/drivers/pwm/Makefile
+index 0dc0d2b69025d..3ef9cf1995274 100644
+--- a/drivers/pwm/Makefile
++++ b/drivers/pwm/Makefile
+@@ -77,3 +77,4 @@ obj-$(CONFIG_PWM_TWL_LED)	+= pwm-twl-led.o
+ obj-$(CONFIG_PWM_VISCONTI)	+= pwm-visconti.o
+ obj-$(CONFIG_PWM_VT8500)	+= pwm-vt8500.o
+ obj-$(CONFIG_PWM_XILINX)	+= pwm-xilinx.o
++obj-$(CONFIG_PWM_SKY1) += pwm-sky1.o
+diff --git a/drivers/pwm/pwm-sky1.c b/drivers/pwm/pwm-sky1.c
+new file mode 100644
+index 0000000000000..7e071547c40b6
+--- /dev/null
++++ b/drivers/pwm/pwm-sky1.c
+@@ -0,0 +1,249 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * simple driver for PWM (Pulse Width Modulator) controller
++ * Ported to mainline 6.18+ PWM API
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pwm.h>
++#include <linux/sysfb.h>
++#include <linux/slab.h>
++#include <linux/acpi.h>
++#include <linux/reset.h>
++#include <linux/pm_runtime.h>
++#include <linux/pm.h>
++#include <linux/pinctrl/consumer.h>
++
++/* PWM registers */
++#define TCTL		0x0024	/* Control register for PWM */
++#define PWMH_RW		0x0028	/* Contains PWM_HIGH_TIME value */
++#define PWMPRD_RW	0x002C	/* Contains PWM_PERIOD value */
++
++/* Timer function mode */
++#define PWM_MODE	0x3	/* PWM mode */
++
++/* TCTL register bits */
++#define ENABLE		(1 << 17)	/* Enable PWM */
++#define ENPWM		(1 << 14)	/* Enable PWM output */
++
++struct pwm_sky1_chip {
++	struct clk *pclk;
++	struct clk *tclk;
++	void __iomem *mmio_base;
++	struct reset_control *func_reset;
++};
++
++static inline struct pwm_sky1_chip *to_pwm_sky1_chip(struct pwm_chip *chip)
++{
++	return pwmchip_get_drvdata(chip);
++}
++
++static int pwm_sky1_clk_prepare_enable(struct pwm_sky1_chip *sky1)
++{
++	int ret;
++
++	ret = clk_prepare_enable(sky1->pclk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(sky1->tclk);
++	if (ret) {
++		clk_disable_unprepare(sky1->pclk);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void pwm_sky1_clk_disable_unprepare(struct pwm_sky1_chip *sky1)
++{
++	clk_disable_unprepare(sky1->tclk);
++	clk_disable_unprepare(sky1->pclk);
++}
++
++static int pwm_sky1_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
++			      struct pwm_state *state)
++{
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	u64 clk_rate;
++	u32 cr, pwmh, pwmprd;
++
++	cr = readl(sky1->mmio_base + TCTL);
++	pwmh = readl(sky1->mmio_base + PWMH_RW);
++	pwmprd = readl(sky1->mmio_base + PWMPRD_RW);
++
++	clk_rate = clk_get_rate(sky1->tclk);
++
++	if (clk_rate)
++		state->period = DIV_ROUND_UP_ULL(1000000000ULL * pwmprd, clk_rate);
++	else
++		state->period = 0;
++
++	if (clk_rate)
++		state->duty_cycle = DIV_ROUND_UP_ULL(1000000000ULL * pwmh, clk_rate);
++	else
++		state->duty_cycle = 0;
++
++	state->enabled = (cr & ENABLE) && (cr & ENPWM);
++	state->polarity = PWM_POLARITY_NORMAL;
++
++	return 0;
++}
++
++static int pwm_sky1_apply(struct pwm_chip *chip, struct pwm_device *pwm,
++			  const struct pwm_state *state)
++{
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	u64 clk_rate;
++	unsigned long pwmh, pwmprd;
++	u32 cr;
++
++	clk_rate = clk_get_rate(sky1->tclk);
++	if (!clk_rate)
++		return -EINVAL;
++
++	/* Disable PWM for configure */
++	cr = readl(sky1->mmio_base + TCTL);
++	cr &= ~(ENPWM | ENABLE);
++	writel(cr, sky1->mmio_base + TCTL);
++
++	pwmprd = DIV_ROUND_UP_ULL(clk_rate * state->period, 1000000000ULL);
++	pwmh = DIV_ROUND_UP_ULL(clk_rate * state->duty_cycle, 1000000000ULL);
++
++	writel(pwmprd, sky1->mmio_base + PWMPRD_RW);
++	writel(pwmh, sky1->mmio_base + PWMH_RW);
++
++	if (state->enabled) {
++		cr = readl(sky1->mmio_base + TCTL);
++		cr |= PWM_MODE | ENPWM | ENABLE;
++		writel(cr, sky1->mmio_base + TCTL);
++	}
++
++	return 0;
++}
++
++static const struct pwm_ops pwm_sky1_ops = {
++	.apply = pwm_sky1_apply,
++	.get_state = pwm_sky1_get_state,
++};
++
++static int __maybe_unused sky1_pwm_suspend(struct device *dev)
++{
++	struct pwm_chip *chip = dev_get_drvdata(dev);
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++
++	pwm_sky1_clk_disable_unprepare(sky1);
++	pinctrl_pm_select_sleep_state(dev);
++
++	return 0;
++}
++
++static int __maybe_unused sky1_pwm_resume(struct device *dev)
++{
++	struct pwm_chip *chip = dev_get_drvdata(dev);
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	int ret;
++
++	ret = pwm_sky1_clk_prepare_enable(sky1);
++	if (ret)
++		return ret;
++
++	pinctrl_pm_select_default_state(dev);
++
++	return 0;
++}
++
++static SIMPLE_DEV_PM_OPS(sky1_pwm_dev_ops, sky1_pwm_suspend, sky1_pwm_resume);
++
++static const struct of_device_id pwm_sky1_dt_ids[] = {
++	{ .compatible = "cix,sky1-pwm", },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, pwm_sky1_dt_ids);
++
++static const struct acpi_device_id pwm_sky1_acpi_match[] = {
++	{ "CIXH2011", 0 },
++	{ },
++};
++MODULE_DEVICE_TABLE(acpi, pwm_sky1_acpi_match);
++
++static int pwm_sky1_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct pwm_sky1_chip *sky1;
++	struct pwm_chip *chip;
++	int ret;
++	u32 pwmcr;
++
++	chip = devm_pwmchip_alloc(dev, 1, sizeof(*sky1));
++	if (IS_ERR(chip))
++		return PTR_ERR(chip);
++
++	sky1 = to_pwm_sky1_chip(chip);
++
++	sky1->pclk = devm_clk_get(dev, "fch_pwm_apb_clk");
++	if (IS_ERR(sky1->pclk))
++		return dev_err_probe(dev, PTR_ERR(sky1->pclk),
++				     "failed to get apb clock\n");
++
++	sky1->tclk = devm_clk_get(dev, "fch_pwm_func_clk");
++	if (IS_ERR(sky1->tclk))
++		return dev_err_probe(dev, PTR_ERR(sky1->tclk),
++				     "failed to get func clock\n");
++
++	sky1->func_reset = devm_reset_control_get_optional_shared(dev, "func_reset");
++	if (IS_ERR(sky1->func_reset))
++		return dev_err_probe(dev, PTR_ERR(sky1->func_reset),
++				     "failed to get reset\n");
++
++	sky1->mmio_base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(sky1->mmio_base))
++		return PTR_ERR(sky1->mmio_base);
++
++	chip->ops = &pwm_sky1_ops;
++
++	ret = pwm_sky1_clk_prepare_enable(sky1);
++	if (ret)
++		return ret;
++
++	pwmcr = readl(sky1->mmio_base + TCTL);
++
++	/* Check if PWM was already initialized by UEFI */
++	if (sysfb_primary_display.screen.lfb_linelength && (pwmcr & (PWM_MODE | ENABLE | ENPWM)))
++		return devm_pwmchip_add(dev, chip);
++
++	/* Configure timer to PWM mode */
++	writel(PWM_MODE, sky1->mmio_base + TCTL);
++
++	return devm_pwmchip_add(dev, chip);
++}
++
++static void pwm_sky1_remove(struct platform_device *pdev)
++{
++	/* devm handles cleanup */
++}
++
++static struct platform_driver sky1_pwm_driver = {
++	.driver = {
++		.name = "pwm-sky1",
++		.of_match_table = pwm_sky1_dt_ids,
++		.acpi_match_table = ACPI_PTR(pwm_sky1_acpi_match),
++		.pm = &sky1_pwm_dev_ops,
++	},
++	.probe = pwm_sky1_probe,
++	.remove = pwm_sky1_remove,
++};
++module_platform_driver(sky1_pwm_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Jerry Zhu <jerry.zhu@cixtech.com>");
++MODULE_DESCRIPTION("CIX Sky1 PWM driver");
+diff --git a/drivers/regulator/fixed.c b/drivers/regulator/fixed.c
+index 254c0a8a45559..61917ea611ed3 100644
+--- a/drivers/regulator/fixed.c
++++ b/drivers/regulator/fixed.c
+@@ -29,6 +29,7 @@
+ #include <linux/regulator/of_regulator.h>
+ #include <linux/regulator/machine.h>
+ #include <linux/clk.h>
++#include <linux/property.h>
+ 
+ /* Default time in millisecond to wait for emergency shutdown */
+ #define FV_DEF_EMERG_SHUTDWN_TMO	10
+@@ -207,6 +208,57 @@ of_get_fixed_voltage_config(struct device *dev,
+ static const struct regulator_ops fixed_voltage_ops = {
+ };
+ 
++/**
++ * fwnode_get_fixed_voltage_config - extract config from fwnode properties
++ * @dev: device requesting for fixed_voltage_config
++ * @desc: regulator description
++ *
++ * Populates fixed_voltage_config from generic device properties (fwnode),
++ * enabling ACPI PRP0001 devices with compatible = "regulator-fixed" to
++ * probe via the same driver as their DT counterparts.
++ *
++ * Return: Pointer to a populated &struct fixed_voltage_config or ERR_PTR()
++ *	   on failure.
++ */
++static struct fixed_voltage_config *
++fwnode_get_fixed_voltage_config(struct device *dev,
++				const struct regulator_desc *desc)
++{
++	struct fixed_voltage_config *config;
++	u32 uv_min = 0, uv_max = 0;
++
++	config = devm_kzalloc(dev, sizeof(*config), GFP_KERNEL);
++	if (!config)
++		return ERR_PTR(-ENOMEM);
++
++	device_property_read_string(dev, "regulator-name",
++				    &config->supply_name);
++	if (!config->supply_name)
++		config->supply_name = dev_name(dev);
++
++	device_property_read_u32(dev, "regulator-min-microvolt", &uv_min);
++	device_property_read_u32(dev, "regulator-max-microvolt", &uv_max);
++	if (uv_min && uv_min == uv_max)
++		config->microvolts = uv_min;
++
++	device_property_read_u32(dev, "startup-delay-us",
++				 &config->startup_delay);
++	device_property_read_u32(dev, "off-on-delay-us",
++				 &config->off_on_delay);
++
++	if (device_property_present(dev, "vin-supply"))
++		config->input_supply = "vin";
++
++	/*
++	 * Firmware-described fixed regulators are typically already enabled
++	 * by firmware at boot.  Default to enabled to avoid glitching
++	 * supply rails during probe.
++	 */
++	config->enabled_at_boot = true;
++
++	return config;
++}
++
+ static const struct regulator_ops fixed_voltage_clkenabled_ops = {
+ 	.enable = reg_clock_enable,
+ 	.disable = reg_clock_disable,
+@@ -239,12 +291,17 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
+ 						     &drvdata->desc);
+ 		if (IS_ERR(config))
+ 			return PTR_ERR(config);
++	} else if (dev_fwnode(&pdev->dev)) {
++		config = fwnode_get_fixed_voltage_config(&pdev->dev,
++							 &drvdata->desc);
++		if (IS_ERR(config))
++			return PTR_ERR(config);
+ 	} else {
+ 		config = dev_get_platdata(&pdev->dev);
+ 	}
+ 
+ 	if (!config)
+-		return -ENOMEM;
++		return -ENODEV;
+ 
+ 	drvdata->desc.name = devm_kstrdup(&pdev->dev,
+ 					  config->supply_name,
+diff --git a/drivers/rtc/rtc-hym8563.c b/drivers/rtc/rtc-hym8563.c
+index 7a170c0f97109..dfb01448c67ed 100644
+--- a/drivers/rtc/rtc-hym8563.c
++++ b/drivers/rtc/rtc-hym8563.c
+@@ -162,19 +162,28 @@ static int hym8563_rtc_alarm_irq_enable(struct device *dev,
+ 					unsigned int enabled)
+ {
+ 	struct i2c_client *client = to_i2c_client(dev);
+-	int data;
++	int data, tmr_ctl;
+ 
+ 	data = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
+ 	if (data < 0)
+ 		return data;
+ 
+-	if (enabled)
+-		data |= HYM8563_CTL2_AIE;
+-	else
+-		data &= ~HYM8563_CTL2_AIE;
++	if (enabled) {
++		/* Check if timer is active - use TIE, otherwise AIE */
++		tmr_ctl = i2c_smbus_read_byte_data(client, HYM8563_TMR_CTL);
++		if (tmr_ctl >= 0 && (tmr_ctl & HYM8563_TMR_CTL_ENABLE)) {
++			data |= HYM8563_CTL2_TIE;
++			data &= ~HYM8563_CTL2_AIE;
++		} else {
++			data |= HYM8563_CTL2_AIE;
++			data &= ~HYM8563_CTL2_TIE;
++		}
++	} else {
++		data &= ~(HYM8563_CTL2_AIE | HYM8563_CTL2_TIE);
++	}
+ 
+ 	return i2c_smbus_write_byte_data(client, HYM8563_CTL2, data);
+-};
++}
+ 
+ static int hym8563_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alm)
+ {
+@@ -207,46 +216,104 @@ static int hym8563_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alm)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (ret & HYM8563_CTL2_AIE)
+-		alm->enabled = 1;
++	alm->enabled = !!(ret & (HYM8563_CTL2_AIE | HYM8563_CTL2_TIE));
+ 
+ 	return 0;
+ }
+ 
++/*
++ * For short delays (< 256 seconds), use the timer function which provides
++ * second-level precision. For longer delays, use the traditional alarm
++ * function which has minute-level precision.
++ */
+ static int hym8563_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
+ {
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct rtc_time *alm_tm = &alm->time;
++	struct rtc_time now_tm;
++	time64_t now_secs, alm_secs, diff_secs;
+ 	u8 buf[4];
+ 	int ret;
+ 
+-	ret = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
++	ret = hym8563_rtc_read_time(dev, &now_tm);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret &= ~HYM8563_CTL2_AIE;
++	now_secs = rtc_tm_to_time64(&now_tm);
++	alm_secs = rtc_tm_to_time64(alm_tm);
++	diff_secs = alm_secs - now_secs;
+ 
++	if (diff_secs <= 0)
++		return -EINVAL;
++
++	/* Minimum 3 seconds to avoid race with sleep entry */
++	if (diff_secs < 3)
++		diff_secs = 3;
++
++	/* Disable all alarm/timer interrupts first */
++	ret = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
++	if (ret < 0)
++		return ret;
++
++	ret &= ~(HYM8563_CTL2_AIE | HYM8563_CTL2_TIE);
+ 	ret = i2c_smbus_write_byte_data(client, HYM8563_CTL2, ret);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	buf[0] = (alm_tm->tm_min < 60 && alm_tm->tm_min >= 0) ?
+-			bin2bcd(alm_tm->tm_min) : HYM8563_ALM_BIT_DISABLE;
++	if (diff_secs < 256) {
++		/* Use timer function for second-level precision */
++		ret = i2c_smbus_write_byte_data(client, HYM8563_TMR_CTL, 0);
++		if (ret < 0)
++			return ret;
+ 
+-	buf[1] = (alm_tm->tm_hour < 24 && alm_tm->tm_hour >= 0) ?
+-			bin2bcd(alm_tm->tm_hour) : HYM8563_ALM_BIT_DISABLE;
++		ret = i2c_smbus_write_byte_data(client, HYM8563_TMR_CNT,
++						(u8)diff_secs);
++		if (ret < 0)
++			return ret;
+ 
+-	buf[2] = (alm_tm->tm_mday <= 31 && alm_tm->tm_mday >= 1) ?
+-			bin2bcd(alm_tm->tm_mday) : HYM8563_ALM_BIT_DISABLE;
++		/* Enable timer with 1Hz clock source */
++		ret = i2c_smbus_write_byte_data(client, HYM8563_TMR_CTL,
++						HYM8563_TMR_CTL_ENABLE |
++						HYM8563_TMR_CTL_1);
++		if (ret < 0)
++			return ret;
+ 
+-	buf[3] = (alm_tm->tm_wday < 7 && alm_tm->tm_wday >= 0) ?
+-			bin2bcd(alm_tm->tm_wday) : HYM8563_ALM_BIT_DISABLE;
++		if (alm->enabled) {
++			ret = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
++			if (ret < 0)
++				return ret;
+ 
+-	ret = i2c_smbus_write_i2c_block_data(client, HYM8563_ALM_MIN, 4, buf);
+-	if (ret < 0)
+-		return ret;
++			ret |= HYM8563_CTL2_TIE;
++			return i2c_smbus_write_byte_data(client,
++							 HYM8563_CTL2, ret);
++		}
++	} else {
++		/* Use alarm function for longer delays */
++		buf[0] = (alm_tm->tm_min < 60 && alm_tm->tm_min >= 0) ?
++				bin2bcd(alm_tm->tm_min) : HYM8563_ALM_BIT_DISABLE;
++		buf[1] = (alm_tm->tm_hour < 24 && alm_tm->tm_hour >= 0) ?
++				bin2bcd(alm_tm->tm_hour) : HYM8563_ALM_BIT_DISABLE;
++		buf[2] = (alm_tm->tm_mday <= 31 && alm_tm->tm_mday >= 1) ?
++				bin2bcd(alm_tm->tm_mday) : HYM8563_ALM_BIT_DISABLE;
++		buf[3] = HYM8563_ALM_BIT_DISABLE; /* weekday not used */
++
++		ret = i2c_smbus_write_i2c_block_data(client, HYM8563_ALM_MIN,
++						     4, buf);
++		if (ret < 0)
++			return ret;
++
++		if (alm->enabled) {
++			ret = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
++			if (ret < 0)
++				return ret;
+ 
+-	return hym8563_rtc_alarm_irq_enable(dev, alm->enabled);
++			ret |= HYM8563_CTL2_AIE;
++			return i2c_smbus_write_byte_data(client,
++							 HYM8563_CTL2, ret);
++		}
++	}
++
++	return 0;
+ }
+ 
+ static const struct rtc_class_ops hym8563_rtc_ops = {
+@@ -406,10 +473,8 @@ static struct clk *hym8563_clkout_register_clk(struct hym8563 *hym8563)
+ #endif
+ 
+ /*
+- * The alarm interrupt is implemented as a level-low interrupt in the
+- * hym8563, while the timer interrupt uses a falling edge.
+- * We don't use the timer at all, so the interrupt is requested to
+- * use the level-low trigger.
++ * Handle both alarm and timer interrupts. The timer interrupt is used
++ * for second-level precision wake-up (delays < 256 seconds).
+  */
+ static irqreturn_t hym8563_irq(int irq, void *dev_id)
+ {
+@@ -419,22 +484,29 @@ static irqreturn_t hym8563_irq(int irq, void *dev_id)
+ 
+ 	rtc_lock(hym8563->rtc);
+ 
+-	/* Clear the alarm flag */
+-
+ 	data = i2c_smbus_read_byte_data(client, HYM8563_CTL2);
+ 	if (data < 0) {
+-		dev_err(&client->dev, "%s: error reading i2c data %d\n",
++		dev_err(&client->dev, "%s: error reading CTL2: %d\n",
+ 			__func__, data);
+ 		goto out;
+ 	}
+ 
+-	data &= ~HYM8563_CTL2_AF;
++	/* Handle timer interrupt - disable timer after firing */
++	if (data & HYM8563_CTL2_TF) {
++		ret = i2c_smbus_write_byte_data(client, HYM8563_TMR_CTL, 0);
++		if (ret < 0)
++			dev_err(&client->dev, "failed to disable timer\n");
++		data &= ~HYM8563_CTL2_TF;
++	}
++
++	/* Handle alarm interrupt */
++	if (data & HYM8563_CTL2_AF)
++		data &= ~HYM8563_CTL2_AF;
+ 
+ 	ret = i2c_smbus_write_byte_data(client, HYM8563_CTL2, data);
+-	if (ret < 0) {
+-		dev_err(&client->dev, "%s: error writing i2c data %d\n",
++	if (ret < 0)
++		dev_err(&client->dev, "%s: error writing CTL2: %d\n",
+ 			__func__, ret);
+-	}
+ 
+ out:
+ 	rtc_unlock(hym8563->rtc);
+@@ -553,7 +625,6 @@ static int hym8563_probe(struct i2c_client *client)
+ 		(ret & HYM8563_SEC_VL) ? "invalid" : "valid");
+ 
+ 	hym8563->rtc->ops = &hym8563_rtc_ops;
+-	set_bit(RTC_FEATURE_ALARM_RES_MINUTE, hym8563->rtc->features);
+ 	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, hym8563->rtc->features);
+ 
+ #ifdef CONFIG_COMMON_CLK
+diff --git a/drivers/spi/spi-cadence-quadspi.c b/drivers/spi/spi-cadence-quadspi.c
+index 649ff55333f05..212d879aae335 100644
+--- a/drivers/spi/spi-cadence-quadspi.c
++++ b/drivers/spi/spi-cadence-quadspi.c
+@@ -6,6 +6,7 @@
+ // Copyright Intel Corporation (C) 2019-2020. All rights reserved.
+ // Copyright (C) 2020 Texas Instruments Incorporated - http://www.ti.com
+ 
++#include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/completion.h>
+ #include <linux/delay.h>
+@@ -2206,6 +2207,14 @@ static const struct of_device_id cqspi_dt_ids[] = {
+ 
+ MODULE_DEVICE_TABLE(of, cqspi_dt_ids);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id cqspi_acpi_ids[] = {
++	{ "CIXH2002", (kernel_ulong_t)&cdns_qspi },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, cqspi_acpi_ids);
++#endif
++
+ static struct platform_driver cqspi_platform_driver = {
+ 	.probe = cqspi_probe,
+ 	.remove = cqspi_remove,
+@@ -2213,6 +2222,7 @@ static struct platform_driver cqspi_platform_driver = {
+ 		.name = CQSPI_NAME,
+ 		.pm = pm_ptr(&cqspi_dev_pm_ops),
+ 		.of_match_table = cqspi_dt_ids,
++		.acpi_match_table = ACPI_PTR(cqspi_acpi_ids),
+ 	},
+ };
+ 
+diff --git a/drivers/spi/spi-cadence.c b/drivers/spi/spi-cadence.c
+index caa7a57e6d27b..8ebd44db51d49 100644
+--- a/drivers/spi/spi-cadence.c
++++ b/drivers/spi/spi-cadence.c
+@@ -7,6 +7,7 @@
+  * based on Blackfin On-Chip SPI Driver (spi_bfin5xx.c)
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+@@ -882,6 +883,14 @@ static const struct of_device_id cdns_spi_of_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, cdns_spi_of_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id cdns_spi_acpi_match[] = {
++	{ "CIXH2001", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, cdns_spi_acpi_match);
++#endif
++
+ /* cdns_spi_driver - This structure defines the SPI subsystem platform driver */
+ static struct platform_driver cdns_spi_driver = {
+ 	.probe	= cdns_spi_probe,
+@@ -889,6 +898,7 @@ static struct platform_driver cdns_spi_driver = {
+ 	.driver = {
+ 		.name = CDNS_SPI_NAME,
+ 		.of_match_table = cdns_spi_of_match,
++		.acpi_match_table = ACPI_PTR(cdns_spi_acpi_match),
+ 		.pm = &cdns_spi_dev_pm_ops,
+ 	},
+ };
+diff --git a/drivers/video/backlight/pwm_bl.c b/drivers/video/backlight/pwm_bl.c
+index 237d3d3f3bb1a..440f65a396129 100644
+--- a/drivers/video/backlight/pwm_bl.c
++++ b/drivers/video/backlight/pwm_bl.c
+@@ -5,12 +5,14 @@
+  * 2) platform_data being correctly configured
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/backlight.h>
+ #include <linux/err.h>
+ #include <linux/pwm.h>
+@@ -221,13 +223,11 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 	struct device_node *node = dev->of_node;
+ 	unsigned int num_levels;
+ 	unsigned int num_steps = 0;
+-	struct property *prop;
+ 	unsigned int *table;
+-	int length;
+ 	u32 value;
+ 	int ret;
+ 
+-	if (!node)
++	if (!node && !dev->fwnode)
+ 		return -ENODEV;
+ 
+ 	memset(data, 0, sizeof(*data));
+@@ -236,35 +236,39 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 	 * These values are optional and set as 0 by default, the out values
+ 	 * are modified only if a valid u32 value can be decoded.
+ 	 */
+-	of_property_read_u32(node, "post-pwm-on-delay-ms",
+-			     &data->post_pwm_on_delay);
+-	of_property_read_u32(node, "pwm-off-delay-ms", &data->pwm_off_delay);
++	device_property_read_u32(dev, "post-pwm-on-delay-ms",
++				 &data->post_pwm_on_delay);
++	device_property_read_u32(dev, "pwm-off-delay-ms",
++				 &data->pwm_off_delay);
+ 
+ 	/*
+ 	 * Determine the number of brightness levels, if this property is not
+ 	 * set a default table of brightness levels will be used.
+ 	 */
+-	prop = of_find_property(node, "brightness-levels", &length);
+-	if (!prop)
++	if (!device_property_present(dev, "brightness-levels"))
+ 		return 0;
+ 
+-	num_levels = length / sizeof(u32);
++	ret = device_property_count_u32(dev, "brightness-levels");
++	if (ret < 0)
++		return ret;
++	num_levels = ret;
+ 
+-	/* read brightness levels from DT property */
++	/* read brightness levels from DT/ACPI property */
+ 	if (num_levels > 0) {
+ 		data->levels = devm_kcalloc(dev, num_levels,
+ 					    sizeof(*data->levels), GFP_KERNEL);
+ 		if (!data->levels)
+ 			return -ENOMEM;
+ 
+-		ret = of_property_read_u32_array(node, "brightness-levels",
+-						 data->levels,
+-						 num_levels);
++		ret = device_property_read_u32_array(dev, "brightness-levels",
++						     data->levels,
++						     num_levels);
+ 		if (ret < 0)
+ 			return ret;
+ 
+-		ret = of_property_read_u32(node, "default-brightness-level",
+-					   &value);
++		ret = device_property_read_u32(dev,
++					       "default-brightness-level",
++					       &value);
+ 		if (ret < 0)
+ 			return ret;
+ 
+@@ -275,8 +279,8 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 		 * interpolation between each of the values of brightness levels
+ 		 * and creates a new pre-computed table.
+ 		 */
+-		of_property_read_u32(node, "num-interpolated-steps",
+-				     &num_steps);
++		device_property_read_u32(dev, "num-interpolated-steps",
++					 &num_steps);
+ 
+ 		/*
+ 		 * Make sure that there is at least two entries in the
+@@ -351,8 +355,15 @@ static const struct of_device_id pwm_backlight_of_match[] = {
+ 	{ .compatible = "pwm-backlight" },
+ 	{ }
+ };
+-
+ MODULE_DEVICE_TABLE(of, pwm_backlight_of_match);
++
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id pwm_backlight_acpi_match[] = {
++	{ "CIXH5041", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, pwm_backlight_acpi_match);
++#endif
+ #else
+ static int pwm_backlight_parse_dt(struct device *dev,
+ 				  struct platform_pwm_backlight_data *data)
+@@ -695,6 +706,7 @@ static struct platform_driver pwm_backlight_driver = {
+ 		.name		= "pwm-backlight",
+ 		.pm		= &pwm_backlight_pm_ops,
+ 		.of_match_table	= of_match_ptr(pwm_backlight_of_match),
++		.acpi_match_table = ACPI_PTR(pwm_backlight_acpi_match),
+ 	},
+ 	.probe		= pwm_backlight_probe,
+ 	.remove		= pwm_backlight_remove,
+diff --git a/drivers/watchdog/Kconfig b/drivers/watchdog/Kconfig
+index dc78729ba2a5d..ce732c685115d 100644
+--- a/drivers/watchdog/Kconfig
++++ b/drivers/watchdog/Kconfig
+@@ -2354,4 +2354,14 @@ config KEEMBAY_WATCHDOG
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called keembay_wdt.
+ 
++config SKY1_WATCHDOG
++	tristate "CIX Sky1 SoC watchdog"
++	depends on ARCH_CIX || (ARM64 && COMPILE_TEST)
++	select WATCHDOG_CORE
++	help
++	  This option enables support for the watchdog timer on CIX Sky1 SoCs.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called sky1_wdt.
++
+ endif # WATCHDOG
+diff --git a/drivers/watchdog/Makefile b/drivers/watchdog/Makefile
+index d2fb16b9f9ce7..c298cb480b414 100644
+--- a/drivers/watchdog/Makefile
++++ b/drivers/watchdog/Makefile
+@@ -241,3 +241,4 @@ obj-$(CONFIG_MENZ069_WATCHDOG) += menz69_wdt.o
+ obj-$(CONFIG_RAVE_SP_WATCHDOG) += rave-sp-wdt.o
+ obj-$(CONFIG_STPMIC1_WATCHDOG) += stpmic1_wdt.o
+ obj-$(CONFIG_SL28CPLD_WATCHDOG) += sl28cpld_wdt.o
++obj-$(CONFIG_SKY1_WATCHDOG) += sky1_wdt.o
+diff --git a/drivers/watchdog/sky1_wdt.c b/drivers/watchdog/sky1_wdt.c
+new file mode 100644
+index 0000000000000..0c40e2b5c787c
+--- /dev/null
++++ b/drivers/watchdog/sky1_wdt.c
+@@ -0,0 +1,431 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/sched.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/watchdog.h>
++#include <linux/acpi.h>
++#ifdef CONFIG_CIX_DST
++#include <mntn_public_interface.h>
++#include <linux/soc/cix/util.h>
++#endif
++
++#define DRIVER_NAME "sky1-wdt"
++
++/* Control frame registers */
++#define SKY1_WDT_WCS_RW         0x000   /* Watchdog control and status register */
++#define SKY1_WDT_WCS_ENABLE     BIT(0)  /* Watchdog Enable */
++#define SKY1_WDT_WCS_WS0        BIT(1)  /* Watchdog Signal0 */
++#define SKY1_WDT_WCS_WS1        BIT(2)  /* Watchdog Signal1 */
++
++#define SKY1_WDT_WOR_LOW_RW     0x008   /* Watchdog offset register */
++#define SKY1_WDT_WOR_HIGH_RW    0x00C   /* Watchdog offset register */
++#define SKY1_WDT_WCV_LOW_RW     0x010   /* Watchdog compare value */
++#define SKY1_WDT_WCV_HIGH_RW    0x014   /* Watchdog compare value */
++
++/* Refresh frame registers */
++#define SKY1_WDT_WRR_RW         0x000  /* Watchdog refresh register */
++#define SKY1_WDT_WRR_REFRESH    BIT(0)  /* Explicit watchdog refresh ocurrs */
++#define SKY1_WDT_W_IID_RO       0xFCC   /* W_IIDR is a 32-bit read-only register */
++
++#define SKY1_WDT_MAX_TIME       0x44B82
++#define SKY1_WDT_DEFAULT_TIME   60      /* in seconds */
++#define WDG_FEED_MOMENT_ADJUST  1
++
++#define MSECS_TO_JIFFIES	1000
++#define WDOG_SEC_TO_COUNT	1000000000 /* sky1 global watchdog frequency 1G */
++
++struct sky1_wdt_device {
++	struct watchdog_device wdd;
++	struct regmap *regmap_ctrl;
++	struct regmap *regmap_fresh;
++	unsigned int kick_time;
++	struct delayed_work sky1_wdt_delayed_work;
++	struct workqueue_struct *sky1_wdt_wq;
++};
++
++static bool nowayout = WATCHDOG_NOWAYOUT;
++module_param(nowayout, bool, 0);
++MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
++			__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
++
++static unsigned int timeout;
++module_param(timeout, uint, 0);
++MODULE_PARM_DESC(timeout, "Watchdog timeout in seconds (default="
++			__MODULE_STRING(SKY1_WDT_DEFAULT_TIME) ")");
++
++static const struct watchdog_info sky1_wdt_info = {
++	.options  = WDIOF_SETTIMEOUT | WDIOF_MAGICCLOSE | WDIOF_KEEPALIVEPING,
++	.identity = "sky1, watchdog",
++};
++
++static int sky1_wdt_restart(struct watchdog_device *wdd,
++			  unsigned long action, void *data)
++{
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++	u32 wcs_val;
++
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &wcs_val);
++	if (!wcs_val & SKY1_WDT_WCS_ENABLE) {
++		wcs_val |= SKY1_WDT_WCS_ENABLE;
++		regmap_write(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, wcs_val);
++	}
++
++	/*
++	 * CompareValue = SystemCounter[63:0] + ZeroExtend(WatchdogOffsetValue)
++	 * TimeoutRefresh = SystemCounter > CompareValue.
++	 */
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_LOW_RW, 0);
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_HIGH_RW, 0);
++
++	/* wait for reset to assert... */
++	mdelay(500);
++
++	return 0;
++}
++
++static void __sky1_wdt_set_timeout(struct watchdog_device *wdd, unsigned int timeout)
++{
++	u32 wor_low_val, wor_high_val;
++	u64 wor_val;
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WOR_LOW_RW, &wor_low_val);
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WOR_HIGH_RW, &wor_high_val);
++	wor_val = wor_high_val;
++	wor_val = wor_val << 32 | wor_low_val;
++
++	wor_val +=(u64)(timeout) * WDOG_SEC_TO_COUNT;
++	wor_low_val = (u32)wor_val;
++	wor_high_val = wor_val >> 32;
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_LOW_RW, wor_low_val);
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_HIGH_RW, wor_high_val);
++}
++
++static inline void sky1_wdt_setup(struct watchdog_device *wdd)
++{
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++	u32 wcs_val;
++
++	/* Keep Watchdog Disabled */
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &wcs_val);
++	wcs_val &= ~(SKY1_WDT_WCS_ENABLE|SKY1_WDT_WCS_WS0|SKY1_WDT_WCS_WS1);
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, wcs_val);
++
++	/* Strip the old watchdog Time-Out value */
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_LOW_RW, 0);
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WOR_HIGH_RW, 0);
++
++	/* Set the watchdog's Time-Out value */
++	__sky1_wdt_set_timeout(wdd, wdd->timeout);
++
++	/* enable the watchdog */
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &wcs_val);
++	wcs_val |= SKY1_WDT_WCS_ENABLE;
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, wcs_val);
++}
++
++static inline bool sky1_wdt_is_running(struct sky1_wdt_device *wdt)
++{
++	u32 val;
++
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &val);
++
++	return val & SKY1_WDT_WCS_ENABLE;
++}
++
++static int sky1_wdt_ping(struct watchdog_device *wdd)
++{
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	dev_dbg(wdd->parent, "%s\n", __func__);
++
++	/*
++	 * An explicit watchdog refresh occurs :
++	 * 1. Watchdog Refresh Register is written.
++	 * 2. Watchdog Offset Register is written.
++	 * 3. Watchdog Control and Status register is written.
++	 */
++	regmap_write(wdt->regmap_fresh, SKY1_WDT_WRR_RW, SKY1_WDT_WRR_REFRESH);
++
++	return 0;
++}
++
++static int sky1_wdt_set_timeout(struct watchdog_device *wdd,
++				  unsigned int timeout)
++{
++	unsigned int actual;
++
++	dev_dbg(wdd->parent, "%s timeout: %d sec\n", __func__, timeout);
++
++	actual = min(timeout, (unsigned int)(SKY1_WDT_MAX_TIME));
++	__sky1_wdt_set_timeout(wdd, actual);
++	wdd->timeout = actual;
++	return 0;
++}
++
++/* disable watchdog timers reset */
++static int wdt_disable(struct watchdog_device *wdd)
++{
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++	u32 wcs_val;
++
++	/* Keep Watchdog Disabled */
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &wcs_val);
++	wcs_val &= ~SKY1_WDT_WCS_ENABLE;
++	regmap_write(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, wcs_val);
++
++	return 0;
++}
++
++static void sky1_wdt_mond(struct work_struct *work)
++{
++	struct sky1_wdt_device *wdt = NULL;
++
++	wdt = container_of(work, struct sky1_wdt_device, sky1_wdt_delayed_work.work);
++	sky1_wdt_ping(&wdt->wdd);
++
++	if (cpu_online(0))
++		queue_delayed_work_on(0, wdt->sky1_wdt_wq,
++					&wdt->sky1_wdt_delayed_work,
++					msecs_to_jiffies(wdt->kick_time * MSECS_TO_JIFFIES));
++	else
++		queue_delayed_work(wdt->sky1_wdt_wq,
++					&wdt->sky1_wdt_delayed_work,
++					msecs_to_jiffies(wdt->kick_time * MSECS_TO_JIFFIES));
++}
++
++static int sky1_wdt_start(struct watchdog_device *wdd)
++{
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	dev_dbg(wdd->parent, "%s\n", __func__);
++	if (sky1_wdt_is_running(wdt))
++		return sky1_wdt_set_timeout(wdd, wdd->timeout);
++
++	sky1_wdt_setup(wdd);
++	set_bit(WDOG_HW_RUNNING, &wdd->status);
++
++	return sky1_wdt_ping(wdd);
++}
++
++static const struct watchdog_ops sky1_wdt_ops = {
++	.owner = THIS_MODULE,
++	.start = sky1_wdt_start,
++	.ping  = sky1_wdt_ping,
++	.set_timeout = sky1_wdt_set_timeout,
++	.restart = sky1_wdt_restart,
++};
++
++static const struct regmap_config sky1_wdt_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++};
++
++static int sky1_wdt_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sky1_wdt_device *wdt;
++	struct watchdog_device *wdd;
++	void __iomem *base_ctrl, *base_fresh;
++	u32 val;
++	int ret;
++
++#ifdef CONFIG_CIX_DST
++	if (check_himntn(HIMNTN_AP_WDT) == 0) {
++		dev_err(dev, "ap watchdog is closed in nv!!!\n");
++		return -1;
++	}
++#endif
++	wdt = devm_kzalloc(dev, sizeof(*wdt), GFP_KERNEL);
++	if (!wdt)
++		return -ENOMEM;
++
++	/* This is the watchdog control base.*/
++	base_ctrl = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(base_ctrl))
++		return PTR_ERR(base_ctrl);
++
++	wdt->regmap_ctrl = devm_regmap_init_mmio_clk(dev, NULL,
++			base_ctrl, &sky1_wdt_regmap_config);
++	if (IS_ERR(wdt->regmap_ctrl)) {
++		dev_err(dev, "regmap ctrl init failed\n");
++		return PTR_ERR(wdt->regmap_ctrl);
++	}
++
++	/* This is the watchdog refresh base.*/
++	base_fresh = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(base_fresh))
++		return PTR_ERR(base_fresh);
++
++	wdt->regmap_fresh = devm_regmap_init_mmio_clk(dev, NULL,
++			base_fresh, &sky1_wdt_regmap_config);
++	if (IS_ERR(wdt->regmap_fresh)) {
++		dev_err(dev, "regmap fresh init failed\n");
++		return PTR_ERR(wdt->regmap_fresh);
++	}
++
++	/* Initialize struct watchdog_device. */
++	wdd = &wdt->wdd;
++	wdd->parent = dev;
++	wdd->info = &sky1_wdt_info;
++	wdd->ops = &sky1_wdt_ops;
++	wdd->min_timeout = 1;
++	wdd->timeout = SKY1_WDT_DEFAULT_TIME;
++	wdd->max_hw_heartbeat_ms = SKY1_WDT_MAX_TIME;
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &val);
++	wdd->bootstatus = val & SKY1_WDT_WCS_WS0 ? WDIOF_CARDRESET : 0;
++
++	platform_set_drvdata(pdev, wdd);
++	watchdog_set_drvdata(wdd, wdt);
++	watchdog_set_nowayout(wdd, nowayout);
++	watchdog_set_restart_priority(wdd, 128);
++	watchdog_init_timeout(wdd, timeout, dev);
++
++	if ((wdd->timeout >> 1) < WDG_FEED_MOMENT_ADJUST)
++		wdt->kick_time = (wdd->timeout >> 1) - 1;
++	else
++		wdt->kick_time = ((wdd->timeout >> 1) - 1) / WDG_FEED_MOMENT_ADJUST; /* minus 1 from the total */
++
++	INIT_DELAYED_WORK(&wdt->sky1_wdt_delayed_work, sky1_wdt_mond);
++	wdt->sky1_wdt_wq = alloc_workqueue("wdt_wq", WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
++	if (wdt->sky1_wdt_wq == NULL) {
++		dev_err(dev, "alloc workqueue failed\n");
++		ret = -ENOMEM;
++		goto probe_fail;
++	}
++
++	ret = devm_watchdog_register_device(dev, wdd);
++	if (ret) {
++		dev_err(dev, "watchdog_register_device() failed: %d\n", ret);
++		goto workqueue_destroy;
++	}
++
++	if (cpu_online(0))
++		queue_delayed_work_on(0, wdt->sky1_wdt_wq, &wdt->sky1_wdt_delayed_work, 0);
++	else
++		queue_delayed_work(wdt->sky1_wdt_wq, &wdt->sky1_wdt_delayed_work, 0);
++
++	ret = sky1_wdt_start(wdd);
++	if (ret)
++		return ret;
++	regmap_read(wdt->regmap_ctrl, SKY1_WDT_WCS_RW, &val);
++
++	dev_info(dev, "registeration successful\n");
++
++	return 0;
++
++workqueue_destroy:
++	if (wdt->sky1_wdt_wq != NULL) {
++		destroy_workqueue(wdt->sky1_wdt_wq);
++		wdt->sky1_wdt_wq = NULL;
++	}
++probe_fail:
++	dev_err(dev, "Probe Failled!!!\n");
++	return ret;
++}
++
++static void sky1_wdt_shutdown(struct platform_device *pdev)
++{
++	struct watchdog_device *wdd = platform_get_drvdata(pdev);
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	if (sky1_wdt_is_running(wdt)) {
++		/*
++		 * We are running, configure max timeout before reboot
++		 * will take place.
++		 */
++		__sky1_wdt_set_timeout(wdd, SKY1_WDT_MAX_TIME);
++		sky1_wdt_ping(wdd);
++		dev_crit(&pdev->dev, "Device shutdown: Expect reboot!\n");
++	}
++}
++
++/* Disable watchdog if it is active */
++static int sky1_wdt_suspend(struct device *dev)
++{
++	struct watchdog_device *wdd = dev_get_drvdata(dev);
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	/* The watchdog IP block is running */
++	if (sky1_wdt_is_running(wdt)) {
++		/*
++		 * Don't update wdd->timeout, we'll restore the current value
++		 * during resume.
++		 */
++		__sky1_wdt_set_timeout(wdd, SKY1_WDT_MAX_TIME);
++		sky1_wdt_ping(wdd);
++		cancel_delayed_work(&wdt->sky1_wdt_delayed_work);
++		wdt_disable(wdd);
++	}
++
++	dev_dbg(dev,"%s-\n", __func__);
++
++	return 0;
++}
++
++static int sky1_wdt_resume(struct device *dev)
++{
++	struct watchdog_device *wdd = dev_get_drvdata(dev);
++	struct sky1_wdt_device *wdt = watchdog_get_drvdata(wdd);
++
++	if (watchdog_active(wdd) && !sky1_wdt_is_running(wdt)) {
++		/*
++		 * If the watchdog is still active and resumes
++		 * from deep sleep state, need to restart the
++		 * watchdog again.
++		 */
++
++		sky1_wdt_setup(wdd);
++
++		if (cpu_online(0))
++			queue_delayed_work_on(0, wdt->sky1_wdt_wq, &wdt->sky1_wdt_delayed_work, 0);
++		else
++			queue_delayed_work(wdt->sky1_wdt_wq, &wdt->sky1_wdt_delayed_work, 0);
++
++	}
++	dev_dbg(dev,"%s-\n", __func__);
++	return 0;
++}
++
++static SIMPLE_DEV_PM_OPS(sky1_wdt_pm_ops, sky1_wdt_suspend,
++		sky1_wdt_resume);
++
++static const struct of_device_id sky1_wdt_device_of_match[] = {
++	{ .compatible = "cix,sky1-wdt", .data = NULL },
++	{ /* end node */ }
++};
++MODULE_DEVICE_TABLE(of, sky1_wdt_device_of_match);
++
++static const struct acpi_device_id sky1_wdt_acpi_match[] = {
++        { "CIXH1005", 0 },
++        { }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_wdt_acpi_match);
++
++static struct platform_driver sky1_wdt_driver = {
++	.shutdown       = sky1_wdt_shutdown,
++	.probe          = sky1_wdt_probe,
++	.driver         = {
++		.name   = DRIVER_NAME,
++		.pm	= &sky1_wdt_pm_ops,
++		.of_match_table = of_match_ptr(sky1_wdt_device_of_match),
++		.acpi_match_table = ACPI_PTR(sky1_wdt_acpi_match),
++	},
++};
++module_platform_driver(sky1_wdt_driver);
++
++MODULE_AUTHOR("Jerry Zhu <Jerry.Zhu@cixtech.com>");
++MODULE_DESCRIPTION("Watchdog driver for SKY1 and later");
++MODULE_LICENSE("GPL v2");
++MODULE_ALIAS("platform:" DRIVER_NAME);
+diff --git a/fs/pstore/ram.c b/fs/pstore/ram.c
+index d1f895e57a95a..b76a25be1dc35 100644
+--- a/fs/pstore/ram.c
++++ b/fs/pstore/ram.c
+@@ -20,6 +20,7 @@
+ #include <linux/compiler.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
++#include <linux/property.h>
+ #include <linux/mm.h>
+ 
+ #include "internal.h"
+@@ -615,15 +616,15 @@ static int ramoops_init_prz(const char *name,
+ 	return 0;
+ }
+ 
+-/* Read a u32 from a dt property and make sure it's safe for an int. */
+-static int ramoops_parse_dt_u32(struct platform_device *pdev,
+-				const char *propname,
+-				u32 default_value, u32 *value)
++/* Read a u32 from a device property and make sure it's safe for an int. */
++static int ramoops_parse_prop_u32(struct platform_device *pdev,
++				  const char *propname,
++				  u32 default_value, u32 *value)
+ {
+ 	u32 val32 = 0;
+ 	int ret;
+ 
+-	ret = of_property_read_u32(pdev->dev.of_node, propname, &val32);
++	ret = device_property_read_u32(&pdev->dev, propname, &val32);
+ 	if (ret == -EINVAL) {
+ 		/* field is missing, use default value. */
+ 		val32 = default_value;
+@@ -643,21 +644,19 @@ static int ramoops_parse_dt_u32(struct platform_device *pdev,
+ 	return 0;
+ }
+ 
+-static int ramoops_parse_dt(struct platform_device *pdev,
+-			    struct ramoops_platform_data *pdata)
++static int ramoops_parse_properties(struct platform_device *pdev,
++				    struct ramoops_platform_data *pdata)
+ {
+-	struct device_node *of_node = pdev->dev.of_node;
+-	struct device_node *parent_node;
++	struct device *dev = &pdev->dev;
+ 	struct resource *res;
+ 	u32 value;
+ 	int ret;
+ 
+-	dev_dbg(&pdev->dev, "using Device Tree\n");
++	dev_dbg(dev, "using device properties\n");
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res) {
+-		dev_err(&pdev->dev,
+-			"failed to locate DT /reserved-memory resource\n");
++		dev_err(dev, "failed to locate memory resource\n");
+ 		return -EINVAL;
+ 	}
+ 
+@@ -667,19 +666,19 @@ static int ramoops_parse_dt(struct platform_device *pdev,
+ 	 * Setting "unbuffered" is deprecated and will be ignored if
+ 	 * "mem_type" is also specified.
+ 	 */
+-	pdata->mem_type = of_property_read_bool(of_node, "unbuffered");
++	pdata->mem_type = device_property_read_bool(dev, "unbuffered");
+ 	/*
+ 	 * Setting "no-dump-oops" is deprecated and will be ignored if
+ 	 * "max_reason" is also specified.
+ 	 */
+-	if (of_property_read_bool(of_node, "no-dump-oops"))
++	if (device_property_read_bool(dev, "no-dump-oops"))
+ 		pdata->max_reason = KMSG_DUMP_PANIC;
+ 	else
+ 		pdata->max_reason = KMSG_DUMP_OOPS;
+ 
+ #define parse_u32(name, field, default_value) {				\
+-		ret = ramoops_parse_dt_u32(pdev, name, default_value,	\
+-					    &value);			\
++		ret = ramoops_parse_prop_u32(pdev, name, default_value,	\
++					     &value);			\
+ 		if (ret < 0)						\
+ 			return ret;					\
+ 		field = value;						\
+@@ -707,14 +706,18 @@ static int ramoops_parse_dt(struct platform_device *pdev,
+ 	 * we're not a child of "reserved-memory" and mimicking the
+ 	 * expected behavior.
+ 	 */
+-	parent_node = of_get_parent(of_node);
+-	if (!of_node_name_eq(parent_node, "reserved-memory") &&
+-	    !pdata->console_size && !pdata->ftrace_size &&
+-	    !pdata->pmsg_size && !pdata->ecc_info.ecc_size) {
+-		pdata->console_size = pdata->record_size;
+-		pdata->pmsg_size = pdata->record_size;
++	if (dev_of_node(dev)) {
++		struct device_node *parent_node;
++
++		parent_node = of_get_parent(dev->of_node);
++		if (!of_node_name_eq(parent_node, "reserved-memory") &&
++		    !pdata->console_size && !pdata->ftrace_size &&
++		    !pdata->pmsg_size && !pdata->ecc_info.ecc_size) {
++			pdata->console_size = pdata->record_size;
++			pdata->pmsg_size = pdata->record_size;
++		}
++		of_node_put(parent_node);
+ 	}
+-	of_node_put(parent_node);
+ 
+ 	return 0;
+ }
+@@ -738,20 +741,19 @@ static int ramoops_probe(struct platform_device *pdev)
+ 		goto fail_out;
+ 	}
+ 
+-	if (dev_of_node(dev) && !pdata) {
++	if (dev_fwnode(dev) && !pdata) {
+ 		pdata = &pdata_local;
+ 		memset(pdata, 0, sizeof(*pdata));
+ 
+-		err = ramoops_parse_dt(pdev, pdata);
++		err = ramoops_parse_properties(pdev, pdata);
+ 		if (err < 0)
+ 			goto fail_out;
+ 	}
+ 
+ 	/* Make sure we didn't get bogus platform data pointer. */
+ 	if (!pdata) {
+-		pr_err("NULL platform data\n");
+-		err = -EINVAL;
+-		goto fail_out;
++		dev_dbg(dev, "no platform data, skipping\n");
++		return -ENODEV;
+ 	}
+ 
+ 	if (!pdata->mem_size || (!pdata->record_size && !pdata->console_size &&
+diff --git a/kernel/dma/coherent.c b/kernel/dma/coherent.c
+index 1147497bc512c..629e612c7c214 100644
+--- a/kernel/dma/coherent.c
++++ b/kernel/dma/coherent.c
+@@ -45,7 +45,14 @@ static struct dma_coherent_mem *dma_init_coherent_memory(phys_addr_t phys_addr,
+ 	if (!size)
+ 		return ERR_PTR(-EINVAL);
+ 
+-	mem_base = memremap(phys_addr, size, MEMREMAP_WC);
++	/*
++	 * Try write-combining first for non-cacheable DMA access.
++	 * Fall back to write-back if the region is System RAM (e.g.
++	 * firmware-reserved memory not removed from the linear map).
++	 * On architectures with hardware cache coherency (e.g. ARM64),
++	 * write-back is safe for DMA-coherent allocations.
++	 */
++	mem_base = memremap(phys_addr, size, MEMREMAP_WC | MEMREMAP_WB);
+ 	if (!mem_base)
+ 		return ERR_PTR(-EINVAL);
+ 
+@@ -129,6 +136,7 @@ int dma_declare_coherent_memory(struct device *dev, phys_addr_t phys_addr,
+ 		_dma_release_coherent_memory(mem);
+ 	return ret;
+ }
++EXPORT_SYMBOL_GPL(dma_declare_coherent_memory);
+ 
+ void dma_release_coherent_memory(struct device *dev)
+ {

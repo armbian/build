@@ -1,0 +1,1276 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:28:44 +1100
+Subject: [PATCH] clk: cix: Add ACPI clock infrastructure for CIX Sky1
+
+Add Sky1 audio subsystem clock controller and ACPI clock
+infrastructure including:
+- sky1-audss: Audio subsystem clock and gate controller
+- sky1-acpi: ACPI clock provider using CLKT consumer references
+- clk-scmi ACPI enablement
+- clkdev registration fix for ACPI consumers
+---
+ drivers/clk/Kconfig              |   1 +
+ drivers/clk/Makefile             |   1 +
+ drivers/clk/cix/Kconfig          |  22 +
+ drivers/clk/cix/Makefile         |   4 +
+ drivers/clk/cix/clk-sky1-acpi.c  | 196 +++++++
+ drivers/clk/cix/clk-sky1-audss.c | 926 +++++++++++++++++++++++++++++++
+ drivers/clk/clk-scmi.c           |  23 +-
+ drivers/clk/clkdev.c             |   2 +-
+ 8 files changed, 1172 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/clk/cix/Kconfig
+ create mode 100644 drivers/clk/cix/Makefile
+ create mode 100644 drivers/clk/cix/clk-sky1-acpi.c
+ create mode 100644 drivers/clk/cix/clk-sky1-audss.c
+
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+index 3d803b4cf5c13..8fcd020a0a2b2 100644
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -504,6 +504,7 @@ source "drivers/clk/analogbits/Kconfig"
+ source "drivers/clk/aspeed/Kconfig"
+ source "drivers/clk/baikal-t1/Kconfig"
+ source "drivers/clk/bcm/Kconfig"
++source "drivers/clk/cix/Kconfig"
+ source "drivers/clk/hisilicon/Kconfig"
+ source "drivers/clk/imgtec/Kconfig"
+ source "drivers/clk/imx/Kconfig"
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index f7bce3951a30d..8928f3fc1c143 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -118,6 +118,7 @@ obj-$(CONFIG_ARCH_ARTPEC)		+= axis/
+ obj-$(CONFIG_ARC_PLAT_AXS10X)		+= axs10x/
+ obj-$(CONFIG_CLK_BAIKAL_T1)		+= baikal-t1/
+ obj-y					+= bcm/
++obj-$(CONFIG_ARCH_CIX)			+= cix/
+ obj-$(CONFIG_ARCH_BERLIN)		+= berlin/
+ obj-$(CONFIG_ARCH_DAVINCI)		+= davinci/
+ obj-$(CONFIG_ARCH_HISI)			+= hisilicon/
+diff --git a/drivers/clk/cix/Kconfig b/drivers/clk/cix/Kconfig
+new file mode 100644
+index 0000000000000..76934ca4330d5
+--- /dev/null
++++ b/drivers/clk/cix/Kconfig
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++config CLK_SKY1_ACPI
++	tristate "CIX Sky1 ACPI clock lookup table support"
++	depends on ACPI && COMMON_CLK_SCMI
++	depends on ARM64
++	default ARCH_CIX
++	help
++	  Parses CLKT tables in the CIX Sky1 DSDT to connect ACPI
++	  consumer devices with SCMI-provided clocks. Required for
++	  ACPI boot on Sky1 SoCs.
++
++config CLK_SKY1_AUDSS
++	bool "CIX Sky1 Audio Subsystem Clock Controller"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on MFD_SYSCON
++	depends on COMMON_CLK
++	default ARCH_CIX
++	help
++	  This enables the audio subsystem clock controller for CIX Sky1
++	  SoCs. This is required for the audio subsystem including I2S
++	  controllers and DSP.
+diff --git a/drivers/clk/cix/Makefile b/drivers/clk/cix/Makefile
+new file mode 100644
+index 0000000000000..32375c335b7ec
+--- /dev/null
++++ b/drivers/clk/cix/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++obj-$(CONFIG_CLK_SKY1_ACPI) += clk-sky1-acpi.o
++obj-$(CONFIG_CLK_SKY1_AUDSS) += clk-sky1-audss.o
+diff --git a/drivers/clk/cix/clk-sky1-acpi.c b/drivers/clk/cix/clk-sky1-acpi.c
+new file mode 100644
+index 0000000000000..4c5ca954da000
+--- /dev/null
++++ b/drivers/clk/cix/clk-sky1-acpi.c
+@@ -0,0 +1,196 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX Sky1 ACPI clock lookup table (CLKT) driver
++ *
++ * Parses vendor CLKT tables in the ACPI namespace to bridge
++ * SCMI-provided clocks to consumer devices via clkdev lookups.
++ *
++ * The vendor DSDT defines per-device CLKT Name objects:
++ *   Name (CLKT, Package (N) {
++ *       Package (3) { clock_id, con_name, consumer_ref },
++ *       ...
++ *   })
++ *
++ * This driver walks the ACPI namespace, evaluates each CLKT,
++ * looks up the corresponding SCMI clock (registered by clk-scmi
++ * as "scmi-clk-<id>"), and creates clkdev entries so consumer
++ * drivers find clocks via standard clk_get().
++ */
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/clkdev.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++struct sky1_acpi_clk {
++	struct device *dev;
++	int mapped;
++};
++
++static void sky1_clkdev_drop(void *data)
++{
++	clkdev_drop(data);
++}
++
++static int sky1_parse_clkt_entry(struct sky1_acpi_clk *priv,
++				 const char *consumer_name,
++				 union acpi_object *entry)
++{
++	union acpi_object *elems;
++	u64 clock_id;
++	const char *con_id;
++	char scmi_id[20];
++	struct clk *clk;
++	struct clk_lookup *cl;
++	int ret;
++
++	if (entry->type != ACPI_TYPE_PACKAGE || entry->package.count < 2)
++		return -EINVAL;
++
++	elems = entry->package.elements;
++
++	/* Element 0: SCMI clock ID (integer) */
++	if (elems[0].type != ACPI_TYPE_INTEGER)
++		return -EINVAL;
++	clock_id = elems[0].integer.value;
++
++	/* Element 1: connection name (string, empty = unnamed) */
++	if (elems[1].type != ACPI_TYPE_STRING)
++		return -EINVAL;
++	con_id = elems[1].string.pointer;
++	if (con_id[0] == '\0')
++		con_id = NULL;
++
++	/* Look up the SCMI clock by its clkdev registration name */
++	snprintf(scmi_id, sizeof(scmi_id), "scmi-clk-%llu", clock_id);
++	clk = clk_get(NULL, scmi_id);
++	if (IS_ERR(clk)) {
++		dev_dbg(priv->dev, "SCMI clock %llu not available for %s\n",
++			clock_id, consumer_name);
++		return PTR_ERR(clk);
++	}
++
++	/* Register consumer lookup */
++	cl = clkdev_create(clk, con_id, "%s", consumer_name);
++	clk_put(clk);
++	if (!cl) {
++		dev_warn(priv->dev,
++			 "Failed to create clkdev for %s clock %llu\n",
++			 consumer_name, clock_id);
++		return -ENOMEM;
++	}
++
++	/* Auto-cleanup on device removal */
++	ret = devm_add_action_or_reset(priv->dev, sky1_clkdev_drop, cl);
++	if (ret)
++		return ret;
++
++	dev_dbg(priv->dev, "Mapped SCMI clock %llu -> %s:%s\n",
++		clock_id, consumer_name, con_id ?: "(unnamed)");
++	priv->mapped++;
++
++	return 0;
++}
++
++static acpi_status sky1_clkt_walk_cb(acpi_handle handle, u32 level,
++				     void *context, void **ret_val)
++{
++	struct sky1_acpi_clk *priv = context;
++	struct acpi_device *adev;
++	struct acpi_buffer buf = { ACPI_ALLOCATE_BUFFER, NULL };
++	union acpi_object *obj;
++	const char *consumer_name;
++	acpi_status status;
++	int i;
++
++	status = acpi_evaluate_object(handle, "CLKT", NULL, &buf);
++	if (ACPI_FAILURE(status))
++		return AE_OK;
++
++	obj = buf.pointer;
++	if (!obj || obj->type != ACPI_TYPE_PACKAGE || obj->package.count == 0)
++		goto out;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev)
++		goto out;
++
++	for (i = 0; i < obj->package.count; i++) {
++		union acpi_object *e = &obj->package.elements[i];
++		union acpi_object *ref;
++
++		/*
++		 * Element 2 (if present) is the actual consumer device
++		 * reference.  Use it instead of the CLKT-owning device.
++		 * Most entries are self-references (consumer == owner),
++		 * but some cross-reference a different device (e.g.,
++		 * DMA1's CLKT registers a clock for DMA0).
++		 */
++		if (e->type == ACPI_TYPE_PACKAGE &&
++		    e->package.count >= 3) {
++			struct acpi_device *cdev;
++
++			ref = &e->package.elements[2];
++			if (ref->type == ACPI_TYPE_LOCAL_REFERENCE) {
++				cdev = acpi_fetch_acpi_dev(ref->reference.handle);
++				if (cdev) {
++					consumer_name = acpi_dev_name(cdev);
++					goto parse;
++				}
++			}
++		}
++		consumer_name = acpi_dev_name(adev);
++parse:
++		sky1_parse_clkt_entry(priv, consumer_name, e);
++	}
++
++out:
++	kfree(buf.pointer);
++	return AE_OK;
++}
++
++static int sky1_acpi_clk_probe(struct platform_device *pdev)
++{
++	struct sky1_acpi_clk *priv;
++	acpi_status status;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->dev = &pdev->dev;
++
++	status = acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
++				     ACPI_UINT32_MAX, sky1_clkt_walk_cb,
++				     NULL, priv, NULL);
++	if (ACPI_FAILURE(status))
++		return dev_err_probe(&pdev->dev, -ENODEV,
++				     "ACPI namespace walk failed\n");
++
++	if (priv->mapped == 0)
++		return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
++				     "No SCMI clocks mapped yet\n");
++
++	dev_info(&pdev->dev, "Mapped %d ACPI clock lookup entries\n",
++		 priv->mapped);
++	return 0;
++}
++
++static const struct acpi_device_id sky1_acpi_clk_ids[] = {
++	{ "CIXHA010", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_acpi_clk_ids);
++
++static struct platform_driver sky1_acpi_clk_driver = {
++	.driver = {
++		.name = "clk-sky1-acpi",
++		.acpi_match_table = sky1_acpi_clk_ids,
++	},
++	.probe = sky1_acpi_clk_probe,
++};
++module_platform_driver(sky1_acpi_clk_driver);
++
++MODULE_DESCRIPTION("CIX Sky1 ACPI clock lookup table driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/clk/cix/clk-sky1-audss.c b/drivers/clk/cix/clk-sky1-audss.c
+new file mode 100644
+index 0000000000000..174058167d562
+--- /dev/null
++++ b/drivers/clk/cix/clk-sky1-audss.c
+@@ -0,0 +1,926 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CIX Sky1 Audio Subsystem Clock Controller
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/clkdev.h>
++#include <linux/device/bus.h>
++#include <linux/io.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++
++#include <dt-bindings/clock/sky1-audss.h>
++
++/* Register offsets within AUDSS CRU */
++#define INFO_HIFI0		0x00
++#define INFO_CLK_GATE		0x10
++#define INFO_CLK_DIV		0x14
++#define INFO_CLK_MUX		0x18
++#define INFO_MCLK		0x70
++
++/* RCSU registers for DSP initialization */
++#define SKY1_AUDSS_RCSU_ADDR		0x07000000
++#define SKY1_AUDSS_RCSU_LEN		0x10000
++#define SKY1_AUDSS_RCSU_REMAP		0x34
++#define SKY1_AUDSS_RCSU_REMAP_VAL	0x20000000
++#define SKY1_AUDSS_RCSU_TIMEOUT		0x1000
++#define SKY1_AUDSS_RCSU_TIMEOUT_EN	BIT(31)
++#define SKY1_AUDSS_RCSU_TIMEOUT_VAL	0x78
++
++#define SKY1_AUDSS_CLKS_NUM		6
++
++static DEFINE_SPINLOCK(sky1_audss_lock);
++
++static const char * const sky1_audss_clk_names[SKY1_AUDSS_CLKS_NUM] = {
++	"audio_clk0", "audio_clk1", "audio_clk2",
++	"audio_clk3", "audio_clk4", "audio_clk5",
++};
++
++static const u32 sky1_audss_clk_rates[SKY1_AUDSS_CLKS_NUM] = {
++	SKY1_AUDSS_AUDIO_CLK0_RATE,
++	SKY1_AUDSS_AUDIO_CLK1_RATE,
++	SKY1_AUDSS_AUDIO_CLK2_RATE,
++	SKY1_AUDSS_AUDIO_CLK3_RATE,
++	SKY1_AUDSS_AUDIO_CLK4_RATE,
++	SKY1_AUDSS_AUDIO_CLK5_RATE,
++};
++
++struct sky1_audss_priv {
++	struct device *dev;
++	struct regmap *regmap;
++	void __iomem *rcsu_base;
++	struct clk *parent_clks[SKY1_AUDSS_CLKS_NUM];
++	struct reset_control *rst_noc;
++	struct clk_hw_onecell_data *clk_data;
++};
++
++/* Clock configuration structures */
++struct muxdiv_cfg {
++	int offset;
++	u8 shift;
++	u8 width;
++	u8 flags;
++};
++
++struct gate_cfg {
++	int offset;
++	u8 shift;
++	u8 flags;
++};
++
++struct composite_clk_cfg {
++	u32 id;
++	const char *name;
++	const char * const *parent_names;
++	int num_parents;
++	struct muxdiv_cfg *mux_cfg;
++	struct muxdiv_cfg *div_cfg;
++	struct gate_cfg *gate_cfg;
++	unsigned long flags;
++};
++
++/* Custom clock structures with regmap support */
++struct sky1_clk_mux {
++	struct clk_mux mux;
++	struct regmap *regmap;
++	int offset;
++};
++
++struct sky1_clk_divider {
++	struct clk_divider div;
++	struct regmap *regmap;
++	int offset;
++};
++
++struct sky1_clk_gate {
++	struct clk_gate gate;
++	struct regmap *regmap;
++	struct device *dev;
++	int offset;
++};
++
++/* Registers to save/restore during suspend/resume */
++static u32 sky1_audss_reg_save[][2] = {
++	{ INFO_HIFI0, 0 },
++	{ INFO_CLK_GATE, 0 },
++	{ INFO_CLK_DIV, 0 },
++	{ INFO_CLK_MUX, 0 },
++	{ INFO_MCLK, 0 },
++};
++
++/* Parent clock arrays */
++static const char * const dsp_clk_parent[] = { "audio_clk4" };
++static const char * const dsp_bclk_parent[] = { "audio_clk4_div2" };
++static const char * const dsp_pbclk_parent[] = { "audio_clk4_div4" };
++static const char * const sram_axi_parent[] = { "audio_clk4_div2" };
++static const char * const hda_sys_parent[] = { "audio_clk4_div2" };
++static const char * const hda_hda_parent[] = { "audio_clk5" };
++static const char * const dmac_axi_parent[] = { "audio_clk4_div2" };
++static const char * const wdg_parent[] = { "audio_clk5_div2" };
++static const char * const timer_apb_parent[] = { "audio_clk4_div4" };
++static const char * const timer_timer_parent[] = { "audio_clk5_div2" };
++static const char * const mailbox_apb_parent[] = { "audio_clk4_div4" };
++static const char * const i2s_apb_parent[] = { "audio_clk4_div4" };
++static const char * const i2s_sc_parents[] = { "audio_clk0", "audio_clk2" };
++static const char * const i2s_mc_parents[] = { "audio_clk0", "audio_clk1", "audio_clk2", "audio_clk3" };
++static const char * const mclk_parents[] = { "audio_clk0", "audio_clk2" };
++
++/* Configuration macro */
++#define CFG(_id, _name, _parents, \
++	    _mux_off, _mux_sh, _mux_w, _mux_fl, \
++	    _div_off, _div_sh, _div_w, _div_fl, \
++	    _gate_off, _gate_sh, _gate_fl, \
++	    _flags) \
++{ \
++	.id = _id, \
++	.name = _name, \
++	.parent_names = _parents, \
++	.num_parents = ARRAY_SIZE(_parents), \
++	.mux_cfg = &(struct muxdiv_cfg){ _mux_off, _mux_sh, _mux_w, _mux_fl }, \
++	.div_cfg = &(struct muxdiv_cfg){ _div_off, _div_sh, _div_w, _div_fl }, \
++	.gate_cfg = &(struct gate_cfg){ _gate_off, _gate_sh, _gate_fl }, \
++	.flags = _flags, \
++}
++
++static const struct composite_clk_cfg audss_clks[] = {
++	/* DSP clocks */
++	CFG(CLK_DSP_CLK, "audss_dsp_clk", dsp_clk_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_HIFI0, 0, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_DSP_BCLK, "audss_dsp_bclk", dsp_bclk_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, -1, 0, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_DSP_PBCLK, "audss_dsp_pbclk", dsp_pbclk_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, -1, 0, 0, CLK_GET_RATE_NOCACHE),
++	/* SRAM */
++	CFG(CLK_SRAM_AXI, "audss_sram_axi", sram_axi_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 16, 0, CLK_GET_RATE_NOCACHE),
++	/* HDA */
++	CFG(CLK_HDA_SYS, "audss_hda_sys", hda_sys_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 14, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_HDA_HDA, "audss_hda_hda", hda_hda_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 14, 0, CLK_GET_RATE_NOCACHE),
++	/* DMAC */
++	CFG(CLK_DMAC_AXI, "audss_dmac_axi", dmac_axi_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 15, 0, CLK_GET_RATE_NOCACHE),
++	/* Watchdog */
++	CFG(CLK_WDG_APB, "audss_wdg_apb", wdg_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 10, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_WDG_WDG, "audss_wdg_wdg", wdg_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 10, 0, CLK_GET_RATE_NOCACHE),
++	/* Timer */
++	CFG(CLK_TIMER_APB, "audss_timer_apb", timer_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 11, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_TIMER_TIMER, "audss_timer_timer", timer_timer_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 11, 0, CLK_GET_RATE_NOCACHE),
++	/* Mailbox */
++	CFG(CLK_MB_0_APB, "audss_mb_0_apb", mailbox_apb_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 12, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_MB_1_APB, "audss_mb_1_apb", mailbox_apb_parent,
++	    -1, 0, 0, 0, -1, 0, 0, 0, INFO_CLK_GATE, 13, 0, CLK_GET_RATE_NOCACHE),
++	/* I2S APB clocks */
++	CFG(CLK_I2S0_APB, "audss_i2s0_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 0, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S1_APB, "audss_i2s1_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 1, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S2_APB, "audss_i2s2_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 2, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S3_APB, "audss_i2s3_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 3, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S4_APB, "audss_i2s4_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 4, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S5_APB, "audss_i2s5_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 5, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S6_APB, "audss_i2s6_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 6, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S7_APB, "audss_i2s7_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 7, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S8_APB, "audss_i2s8_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 8, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S9_APB, "audss_i2s9_apb", i2s_apb_parent,
++	    -1, 0, 0, 0, INFO_CLK_DIV, 0, 2, 0, INFO_CLK_GATE, 9, 0, CLK_GET_RATE_NOCACHE),
++	/* I2S core clocks (SC: 2 parents, MC: 4 parents) */
++	CFG(CLK_I2S0, "audss_i2s0", i2s_sc_parents,
++	    INFO_CLK_MUX, 0, 2, 0, INFO_CLK_DIV, 2, 2, 0, INFO_CLK_GATE, 0, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S1, "audss_i2s1", i2s_sc_parents,
++	    INFO_CLK_MUX, 2, 2, 0, INFO_CLK_DIV, 4, 2, 0, INFO_CLK_GATE, 1, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S2, "audss_i2s2", i2s_sc_parents,
++	    INFO_CLK_MUX, 4, 2, 0, INFO_CLK_DIV, 6, 2, 0, INFO_CLK_GATE, 2, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S3, "audss_i2s3", i2s_mc_parents,
++	    INFO_CLK_MUX, 6, 2, 0, INFO_CLK_DIV, 8, 2, 0, INFO_CLK_GATE, 3, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S4, "audss_i2s4", i2s_mc_parents,
++	    INFO_CLK_MUX, 8, 2, 0, INFO_CLK_DIV, 10, 2, 0, INFO_CLK_GATE, 4, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S5, "audss_i2s5", i2s_sc_parents,
++	    INFO_CLK_MUX, 10, 2, 0, INFO_CLK_DIV, 12, 2, 0, INFO_CLK_GATE, 5, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S6, "audss_i2s6", i2s_sc_parents,
++	    INFO_CLK_MUX, 12, 2, 0, INFO_CLK_DIV, 14, 2, 0, INFO_CLK_GATE, 6, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S7, "audss_i2s7", i2s_sc_parents,
++	    INFO_CLK_MUX, 14, 2, 0, INFO_CLK_DIV, 16, 2, 0, INFO_CLK_GATE, 7, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S8, "audss_i2s8", i2s_sc_parents,
++	    INFO_CLK_MUX, 16, 2, 0, INFO_CLK_DIV, 18, 2, 0, INFO_CLK_GATE, 8, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_I2S9, "audss_i2s9", i2s_sc_parents,
++	    INFO_CLK_MUX, 18, 2, 0, INFO_CLK_DIV, 20, 2, 0, INFO_CLK_GATE, 9, 0, CLK_GET_RATE_NOCACHE),
++	/* MCLK outputs */
++	CFG(CLK_MCLK0, "audss_mclk0", mclk_parents,
++	    INFO_MCLK, 5, 1, 0, -1, 0, 0, 0, INFO_MCLK, 0, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_MCLK1, "audss_mclk1", mclk_parents,
++	    INFO_MCLK, 6, 1, 0, -1, 0, 0, 0, INFO_MCLK, 1, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_MCLK2, "audss_mclk2", mclk_parents,
++	    INFO_MCLK, 7, 1, 0, -1, 0, 0, 0, INFO_MCLK, 2, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_MCLK3, "audss_mclk3", mclk_parents,
++	    INFO_MCLK, 8, 1, 0, -1, 0, 0, 0, INFO_MCLK, 3, 0, CLK_GET_RATE_NOCACHE),
++	CFG(CLK_MCLK4, "audss_mclk4", mclk_parents,
++	    INFO_MCLK, 9, 1, 0, -1, 0, 0, 0, INFO_MCLK, 4, 0, CLK_GET_RATE_NOCACHE),
++};
++
++/* Regmap-based mux operations */
++static u8 sky1_audss_mux_get_parent(struct clk_hw *hw)
++{
++	struct clk_mux *mux = to_clk_mux(hw);
++	struct sky1_clk_mux *sky1_mux = container_of(mux, struct sky1_clk_mux, mux);
++	u32 val;
++
++	regmap_read(sky1_mux->regmap, sky1_mux->offset, &val);
++	val = (val >> mux->shift) & mux->mask;
++
++	return clk_mux_val_to_index(hw, mux->table, mux->flags, val);
++}
++
++static int sky1_audss_mux_set_parent(struct clk_hw *hw, u8 index)
++{
++	struct clk_mux *mux = to_clk_mux(hw);
++	struct sky1_clk_mux *sky1_mux = container_of(mux, struct sky1_clk_mux, mux);
++	u32 val = clk_mux_index_to_val(mux->table, mux->flags, index);
++	unsigned long flags = 0;
++
++	if (mux->lock)
++		spin_lock_irqsave(mux->lock, flags);
++
++	regmap_update_bits(sky1_mux->regmap, sky1_mux->offset,
++			   mux->mask << mux->shift, val << mux->shift);
++
++	if (mux->lock)
++		spin_unlock_irqrestore(mux->lock, flags);
++
++	return 0;
++}
++
++static int sky1_audss_mux_determine_rate(struct clk_hw *hw,
++					 struct clk_rate_request *req)
++{
++	struct clk_mux *mux = to_clk_mux(hw);
++
++	return clk_mux_determine_rate_flags(hw, req, mux->flags);
++}
++
++static const struct clk_ops sky1_audss_mux_ops = {
++	.get_parent = sky1_audss_mux_get_parent,
++	.set_parent = sky1_audss_mux_set_parent,
++	.determine_rate = sky1_audss_mux_determine_rate,
++};
++
++/* Regmap-based divider operations */
++static unsigned long sky1_audss_div_recalc_rate(struct clk_hw *hw,
++						unsigned long parent_rate)
++{
++	struct clk_divider *div = to_clk_divider(hw);
++	struct sky1_clk_divider *sky1_div = container_of(div, struct sky1_clk_divider, div);
++	u32 val;
++
++	regmap_read(sky1_div->regmap, sky1_div->offset, &val);
++	val = (val >> div->shift) & clk_div_mask(div->width);
++
++	return divider_recalc_rate(hw, parent_rate, val, div->table,
++				   div->flags, div->width);
++}
++
++static long sky1_audss_div_round_rate(struct clk_hw *hw, unsigned long rate,
++				      unsigned long *prate)
++{
++	struct clk_divider *div = to_clk_divider(hw);
++
++	return divider_round_rate(hw, rate, prate, div->table,
++				  div->width, div->flags);
++}
++
++static int sky1_audss_div_set_rate(struct clk_hw *hw, unsigned long rate,
++				   unsigned long parent_rate)
++{
++	struct clk_divider *div = to_clk_divider(hw);
++	struct sky1_clk_divider *sky1_div = container_of(div, struct sky1_clk_divider, div);
++	unsigned long flags = 0;
++	int value;
++
++	value = divider_get_val(rate, parent_rate, div->table,
++				div->width, div->flags);
++	if (value < 0)
++		return value;
++
++	if (div->lock)
++		spin_lock_irqsave(div->lock, flags);
++
++	regmap_update_bits(sky1_div->regmap, sky1_div->offset,
++			   clk_div_mask(div->width) << div->shift,
++			   (u32)value << div->shift);
++
++	if (div->lock)
++		spin_unlock_irqrestore(div->lock, flags);
++
++	return 0;
++}
++
++static const struct clk_ops sky1_audss_div_ops = {
++	.recalc_rate = sky1_audss_div_recalc_rate,
++	.round_rate = sky1_audss_div_round_rate,
++	.set_rate = sky1_audss_div_set_rate,
++};
++
++/* Regmap-based gate operations with pm_runtime for power domain management */
++static void sky1_audss_gate_endisable(struct clk_hw *hw, int enable)
++{
++	struct clk_gate *gate = to_clk_gate(hw);
++	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
++	int set = gate->flags & CLK_GATE_SET_TO_DISABLE ? 1 : 0;
++	unsigned long flags;
++	u32 reg;
++
++	set ^= enable;
++
++	if (gate->lock)
++		spin_lock_irqsave(gate->lock, flags);
++
++	regmap_read(sky1_gate->regmap, sky1_gate->offset, &reg);
++
++	if (set)
++		reg |= BIT(gate->bit_idx);
++	else
++		reg &= ~BIT(gate->bit_idx);
++
++	regmap_write(sky1_gate->regmap, sky1_gate->offset, reg);
++
++	if (gate->lock)
++		spin_unlock_irqrestore(gate->lock, flags);
++}
++
++/*
++ * Gate prepare: Resume AUDSS clock controller if suspended.
++ * Called from process context, so pm_runtime_get_sync() is safe.
++ */
++static int sky1_audss_gate_prepare(struct clk_hw *hw)
++{
++	struct clk_gate *gate = to_clk_gate(hw);
++	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
++	int ret;
++
++	ret = pm_runtime_get_sync(sky1_gate->dev);
++	if (ret < 0) {
++		pm_runtime_put_noidle(sky1_gate->dev);
++		dev_err(sky1_gate->dev, "failed to resume for clock prepare: %d\n", ret);
++		return ret;
++	}
++	return 0;
++}
++
++/*
++ * Gate unprepare: Allow AUDSS clock controller to suspend.
++ * Called from process context, so pm_runtime_put() is safe.
++ */
++static void sky1_audss_gate_unprepare(struct clk_hw *hw)
++{
++	struct clk_gate *gate = to_clk_gate(hw);
++	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
++
++	pm_runtime_put(sky1_gate->dev);
++}
++
++/*
++ * Gate enable: Toggle the clock gate. Device is already active from prepare().
++ * Called from atomic context, no sleeping allowed.
++ */
++static int sky1_audss_gate_enable(struct clk_hw *hw)
++{
++	struct clk_gate *gate = to_clk_gate(hw);
++	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
++
++	dev_dbg(sky1_gate->dev, "gate_enable: bit %d\n", gate->bit_idx);
++	sky1_audss_gate_endisable(hw, 1);
++	return 0;
++}
++
++/*
++ * Gate disable: Toggle the clock gate. Device stays active until unprepare().
++ * Called from atomic context, no sleeping allowed.
++ */
++static void sky1_audss_gate_disable(struct clk_hw *hw)
++{
++	sky1_audss_gate_endisable(hw, 0);
++}
++
++static int sky1_audss_gate_is_enabled(struct clk_hw *hw)
++{
++	struct clk_gate *gate = to_clk_gate(hw);
++	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
++	u32 val;
++
++	regmap_read(sky1_gate->regmap, sky1_gate->offset, &val);
++
++	if (gate->flags & CLK_GATE_SET_TO_DISABLE)
++		val ^= BIT(gate->bit_idx);
++
++	return !!(val & BIT(gate->bit_idx));
++}
++
++static const struct clk_ops sky1_audss_gate_ops = {
++	.prepare = sky1_audss_gate_prepare,
++	.unprepare = sky1_audss_gate_unprepare,
++	.enable = sky1_audss_gate_enable,
++	.disable = sky1_audss_gate_disable,
++	.is_enabled = sky1_audss_gate_is_enabled,
++};
++
++static struct clk_hw *sky1_audss_clk_register(struct device *dev,
++					      const char *name,
++					      const char * const *parent_names,
++					      int num_parents,
++					      struct regmap *regmap,
++					      struct muxdiv_cfg *mux_cfg,
++					      struct muxdiv_cfg *div_cfg,
++					      struct gate_cfg *gate_cfg,
++					      unsigned long flags)
++{
++	struct sky1_clk_mux *sky1_mux = NULL;
++	struct sky1_clk_divider *sky1_div = NULL;
++	struct sky1_clk_gate *sky1_gate = NULL;
++	const struct clk_ops *mux_ops = NULL;
++	const struct clk_ops *div_ops = NULL;
++	const struct clk_ops *gate_ops = NULL;
++	struct clk_parent_data *pdata;
++	struct clk_hw *hw;
++	int i;
++
++	pdata = devm_kcalloc(dev, num_parents, sizeof(*pdata), GFP_KERNEL);
++	if (!pdata)
++		return ERR_PTR(-ENOMEM);
++
++	for (i = 0; i < num_parents; i++)
++		pdata[i].fw_name = parent_names[i];
++
++	if (mux_cfg->offset >= 0) {
++		sky1_mux = devm_kzalloc(dev, sizeof(*sky1_mux), GFP_KERNEL);
++		if (!sky1_mux)
++			return ERR_PTR(-ENOMEM);
++
++		sky1_mux->mux.shift = mux_cfg->shift;
++		sky1_mux->mux.mask = BIT(mux_cfg->width) - 1;
++		sky1_mux->mux.flags = mux_cfg->flags;
++		sky1_mux->mux.lock = &sky1_audss_lock;
++		sky1_mux->regmap = regmap;
++		sky1_mux->offset = mux_cfg->offset;
++		mux_ops = &sky1_audss_mux_ops;
++	}
++
++	if (div_cfg->offset >= 0) {
++		sky1_div = devm_kzalloc(dev, sizeof(*sky1_div), GFP_KERNEL);
++		if (!sky1_div)
++			return ERR_PTR(-ENOMEM);
++
++		sky1_div->div.shift = div_cfg->shift;
++		sky1_div->div.width = div_cfg->width;
++		sky1_div->div.flags = div_cfg->flags | CLK_DIVIDER_POWER_OF_TWO;
++		sky1_div->div.lock = &sky1_audss_lock;
++		sky1_div->regmap = regmap;
++		sky1_div->offset = div_cfg->offset;
++		div_ops = &sky1_audss_div_ops;
++	}
++
++	if (gate_cfg->offset >= 0) {
++		sky1_gate = devm_kzalloc(dev, sizeof(*sky1_gate), GFP_KERNEL);
++		if (!sky1_gate)
++			return ERR_PTR(-ENOMEM);
++
++		sky1_gate->gate.bit_idx = gate_cfg->shift;
++		sky1_gate->gate.flags = gate_cfg->flags;
++		sky1_gate->gate.lock = &sky1_audss_lock;
++		sky1_gate->regmap = regmap;
++		sky1_gate->offset = gate_cfg->offset;
++		sky1_gate->dev = dev;
++		gate_ops = &sky1_audss_gate_ops;
++	}
++
++	hw = devm_clk_hw_register_composite_pdata(dev, name,
++			pdata, num_parents,
++			sky1_mux ? &sky1_mux->mux.hw : NULL, mux_ops,
++			sky1_div ? &sky1_div->div.hw : NULL, div_ops,
++			sky1_gate ? &sky1_gate->gate.hw : NULL, gate_ops,
++			flags);
++	if (IS_ERR(hw))
++		dev_err(dev, "failed to register %s: %ld\n", name, PTR_ERR(hw));
++
++	return hw;
++}
++
++/* Helper functions for parent clock management */
++static int sky1_audss_clks_enable(struct sky1_audss_priv *priv)
++{
++	int i, ret;
++
++	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		ret = clk_prepare_enable(priv->parent_clks[i]);
++		if (ret) {
++			dev_err(priv->dev, "failed to enable %s\n",
++				sky1_audss_clk_names[i]);
++			goto err_clks;
++		}
++	}
++	return 0;
++
++err_clks:
++	while (--i >= 0)
++		clk_disable_unprepare(priv->parent_clks[i]);
++	return ret;
++}
++
++static void sky1_audss_clks_disable(struct sky1_audss_priv *priv)
++{
++	int i;
++
++	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++)
++		clk_disable_unprepare(priv->parent_clks[i]);
++}
++
++/* Runtime PM callbacks */
++static int __maybe_unused sky1_audss_clk_runtime_suspend(struct device *dev)
++{
++	struct sky1_audss_priv *priv = dev_get_drvdata(dev);
++	int i;
++
++	/* Save register state before power down */
++	for (i = 0; i < ARRAY_SIZE(sky1_audss_reg_save); i++)
++		regmap_read(priv->regmap, sky1_audss_reg_save[i][0],
++			    &sky1_audss_reg_save[i][1]);
++
++	sky1_audss_clks_disable(priv);
++
++	return 0;
++}
++
++static int __maybe_unused sky1_audss_clk_runtime_resume(struct device *dev)
++{
++	struct sky1_audss_priv *priv = dev_get_drvdata(dev);
++	int i, ret;
++
++	ret = sky1_audss_clks_enable(priv);
++	if (ret) {
++		dev_err(dev, "failed to enable clocks\n");
++		return ret;
++	}
++
++	/* Release NOC reset */
++	reset_control_deassert(priv->rst_noc);
++
++	/* Restore RCSU remap */
++	writel(SKY1_AUDSS_RCSU_REMAP_VAL, priv->rcsu_base + SKY1_AUDSS_RCSU_REMAP);
++
++	/* Restore register state */
++	for (i = 0; i < ARRAY_SIZE(sky1_audss_reg_save); i++)
++		regmap_write(priv->regmap, sky1_audss_reg_save[i][0],
++			     sky1_audss_reg_save[i][1]);
++
++	return 0;
++}
++
++static const struct dev_pm_ops sky1_audss_clk_pm_ops = {
++	SET_RUNTIME_PM_OPS(sky1_audss_clk_runtime_suspend,
++			   sky1_audss_clk_runtime_resume, NULL)
++	SET_LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
++				     pm_runtime_force_resume)
++};
++
++/*
++ * Parse the CLKA ACPI table to create clkdev entries mapping audss internal
++ * clocks to their consumer devices. Under ACPI, DT phandle-based clock lookup
++ * isn't available, so consumers (HDA, I2S, DMA, etc.) find their clocks via
++ * clkdev entries instead. The CLKA table is a package of {clk_id, con_id,
++ * consumer_device_ref} entries defined in the DSDT on this device's ACPI node.
++ */
++#ifdef CONFIG_ACPI
++static int sky1_audss_parse_clka(struct device *dev,
++				 struct clk_hw_onecell_data *clk_data)
++{
++	acpi_handle handle = ACPI_HANDLE(dev);
++	struct acpi_buffer output = {ACPI_ALLOCATE_BUFFER, NULL};
++	union acpi_object *out_obj, *entry, *el;
++	acpi_status status;
++	int i, count, registered = 0;
++
++	status = acpi_evaluate_object_typed(handle, "CLKA", NULL, &output,
++					    ACPI_TYPE_PACKAGE);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	out_obj = output.pointer;
++	count = out_obj->package.count;
++
++	for (i = 0; i < count; i++) {
++		struct acpi_device *adev;
++		struct clk_hw *hw;
++		unsigned int clk_id;
++		const char *con_id;
++		int ret;
++
++		entry = &out_obj->package.elements[i];
++		if (entry->type != ACPI_TYPE_PACKAGE || entry->package.count < 3)
++			continue;
++
++		el = &entry->package.elements[0];
++		if (el->type != ACPI_TYPE_INTEGER)
++			continue;
++		clk_id = el->integer.value;
++
++		el = &entry->package.elements[1];
++		if (el->type != ACPI_TYPE_STRING)
++			continue;
++		con_id = el->string.pointer;
++		if (!con_id || !con_id[0])
++			con_id = NULL;
++
++		el = &entry->package.elements[2];
++		if (el->type == ACPI_TYPE_LOCAL_REFERENCE)
++			adev = acpi_fetch_acpi_dev(el->reference.handle);
++		else
++			adev = NULL;
++		if (!adev)
++			continue;
++
++		if (clk_id >= clk_data->num)
++			continue;
++		hw = clk_data->hws[clk_id];
++		if (!hw || IS_ERR(hw))
++			continue;
++
++		ret = devm_clk_hw_register_clkdev(dev, hw, con_id,
++						  dev_name(&adev->dev));
++		if (ret) {
++			dev_warn(dev, "CLKA: failed to register %s:%s (clk %u): %d\n",
++				 dev_name(&adev->dev), con_id ?: "", clk_id, ret);
++			continue;
++		}
++
++		dev_dbg(dev, "CLKA: clk %u -> %s:%s\n",
++			clk_id, dev_name(&adev->dev), con_id ?: "");
++		registered++;
++	}
++
++	kfree(output.pointer);
++	dev_info(dev, "CLKA: registered %d clkdev entries\n", registered);
++	return 0;
++}
++#endif
++
++static int sky1_audss_clk_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *parent_np;
++	struct sky1_audss_priv *priv;
++	struct clk_hw **clk_table;
++	int i, ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->dev = dev;
++
++	/* Get regmap from parent syscon */
++	parent_np = of_get_parent(dev->of_node);
++	priv->regmap = syscon_node_to_regmap(parent_np);
++	of_node_put(parent_np);
++
++	if (IS_ERR(priv->regmap) && has_acpi_companion(dev)) {
++		struct fwnode_handle *fw;
++		struct device *syscon_dev;
++
++		fw = fwnode_find_reference(dev_fwnode(dev), "audss_cru", 0);
++		if (!IS_ERR(fw)) {
++			syscon_dev = bus_find_device_by_fwnode(
++					&platform_bus_type, fw);
++			fwnode_handle_put(fw);
++			if (syscon_dev) {
++				priv->regmap = dev_get_regmap(syscon_dev, NULL);
++				put_device(syscon_dev);
++				if (!priv->regmap)
++					priv->regmap = ERR_PTR(-EPROBE_DEFER);
++			}
++		}
++	}
++
++	if (IS_ERR(priv->regmap))
++		return dev_err_probe(dev, PTR_ERR(priv->regmap),
++				     "failed to get parent regmap\n");
++
++	/* Get parent clocks from SCMI */
++	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		priv->parent_clks[i] = devm_clk_get(dev, sky1_audss_clk_names[i]);
++		if (IS_ERR(priv->parent_clks[i]))
++			return dev_err_probe(dev, PTR_ERR(priv->parent_clks[i]),
++					     "failed to get %s\n", sky1_audss_clk_names[i]);
++	}
++
++	/* Allocate clock data */
++	priv->clk_data = devm_kzalloc(dev, struct_size(priv->clk_data, hws, AUDSS_MAX_CLKS),
++				      GFP_KERNEL);
++	if (!priv->clk_data)
++		return -ENOMEM;
++
++	priv->clk_data->num = AUDSS_MAX_CLKS;
++	clk_table = priv->clk_data->hws;
++
++	platform_set_drvdata(pdev, priv);
++
++	/*
++	 * Enable runtime PM to allow the clock core to use runtime PM
++	 * for the registered clocks. Mark device as active before
++	 * enabling clocks.
++	 */
++	pm_runtime_get_noresume(dev);
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++
++	/*
++	 * Under ACPI, explicitly transition to D0 to invoke the PPRS
++	 * power resource _ON method.  PPRS enables the audio subsystem
++	 * power gates (RCSU PD_CTRL) and triggers memory repair via
++	 * DMRP.  This must happen before any audio subsystem register
++	 * access (CRU, reset controller, DMA, I2S, etc).
++	 */
++	if (has_acpi_companion(dev)) {
++		ret = acpi_device_set_power(ACPI_COMPANION(dev),
++					    ACPI_STATE_D0);
++		if (ret)
++			dev_warn(dev, "ACPI D0 transition failed: %d\n", ret);
++	}
++
++	/* Enable parent clocks and set default rates */
++	ret = sky1_audss_clks_enable(priv);
++	if (ret) {
++		dev_err(dev, "failed to enable clocks\n");
++		goto err_pm;
++	}
++
++	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		ret = clk_set_rate(priv->parent_clks[i], sky1_audss_clk_rates[i]);
++		if (ret)
++			dev_warn(dev, "failed to set rate for %s\n", sky1_audss_clk_names[i]);
++	}
++
++	/* Get and deassert NOC reset */
++	priv->rst_noc = devm_reset_control_get(dev, "noc");
++	if (IS_ERR(priv->rst_noc)) {
++		ret = dev_err_probe(dev, PTR_ERR(priv->rst_noc),
++				    "failed to get noc reset\n");
++		goto err_clks;
++	}
++
++	reset_control_assert(priv->rst_noc);
++	usleep_range(1, 2);
++	reset_control_deassert(priv->rst_noc);
++
++	/* Map RCSU for DSP initialization */
++	priv->rcsu_base = ioremap(SKY1_AUDSS_RCSU_ADDR, SKY1_AUDSS_RCSU_LEN);
++	if (!priv->rcsu_base) {
++		ret = -ENOMEM;
++		goto err_clks;
++	}
++
++	/* Configure RCSU address remap and timeout */
++	writel(SKY1_AUDSS_RCSU_REMAP_VAL, priv->rcsu_base + SKY1_AUDSS_RCSU_REMAP);
++	writel(SKY1_AUDSS_RCSU_TIMEOUT_EN |
++	       FIELD_PREP(GENMASK(15, 0), SKY1_AUDSS_RCSU_TIMEOUT_VAL),
++	       priv->rcsu_base + SKY1_AUDSS_RCSU_TIMEOUT);
++
++	/* Register fixed divider clocks */
++	clk_table[CLK_AUD_CLK4_DIV2] =
++		devm_clk_hw_register_fixed_factor(dev, "audio_clk4_div2",
++						  "audio_clk4", CLK_GET_RATE_NOCACHE, 1, 2);
++	clk_table[CLK_AUD_CLK4_DIV4] =
++		devm_clk_hw_register_fixed_factor(dev, "audio_clk4_div4",
++						  "audio_clk4", CLK_GET_RATE_NOCACHE, 1, 4);
++	clk_table[CLK_AUD_CLK5_DIV2] =
++		devm_clk_hw_register_fixed_factor(dev, "audio_clk5_div2",
++						  "audio_clk5", CLK_GET_RATE_NOCACHE, 1, 2);
++
++	/* Register composite clocks */
++	for (i = 0; i < ARRAY_SIZE(audss_clks); i++) {
++		clk_table[audss_clks[i].id] = sky1_audss_clk_register(dev,
++			audss_clks[i].name,
++			audss_clks[i].parent_names,
++			audss_clks[i].num_parents,
++			priv->regmap,
++			audss_clks[i].mux_cfg,
++			audss_clks[i].div_cfg,
++			audss_clks[i].gate_cfg,
++			audss_clks[i].flags);
++	}
++
++	/* Check all clocks registered successfully */
++	for (i = 0; i < AUDSS_MAX_CLKS; i++) {
++		if (IS_ERR(clk_table[i])) {
++			ret = PTR_ERR(clk_table[i]);
++			dev_err(dev, "failed to register clock %d: %d\n", i, ret);
++			goto err_rcsu;
++		}
++	}
++
++	if (has_acpi_companion(dev)) {
++#ifdef CONFIG_ACPI
++		ret = sky1_audss_parse_clka(dev, priv->clk_data);
++#else
++		ret = 0;
++#endif
++	} else {
++		ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
++						  priv->clk_data);
++	}
++	if (ret) {
++		dev_err(dev, "failed to add clock provider: %d\n", ret);
++		goto err_rcsu;
++	}
++
++	/*
++	 * Keep AUDSS active after probe. Consumers like DMA-350 need the
++	 * clock controller to be powered when they enable clocks during
++	 * their probe. We rely on the gate prepare/unprepare callbacks
++	 * to manage runtime PM reference counting during normal operation.
++	 *
++	 * The initial pm_runtime_get_noresume() reference is kept - we
++	 * don't call pm_runtime_put_sync() here.
++	 */
++	/* Allow DLKL consumers (DMA, I2S, etc.) to enumerate now */
++	if (has_acpi_companion(dev))
++		acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
++
++	dev_info(dev, "registered %d clocks\n", AUDSS_MAX_CLKS);
++	return 0;
++
++err_rcsu:
++	iounmap(priv->rcsu_base);
++err_clks:
++	sky1_audss_clks_disable(priv);
++err_pm:
++	pm_runtime_put_sync(dev);
++	pm_runtime_disable(dev);
++	return ret;
++}
++
++static void sky1_audss_clk_remove(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sky1_audss_priv *priv = platform_get_drvdata(pdev);
++
++	iounmap(priv->rcsu_base);
++
++	/* Force suspend if not already suspended */
++	if (!pm_runtime_status_suspended(dev))
++		pm_runtime_force_suspend(dev);
++
++	pm_runtime_disable(dev);
++}
++
++static const struct of_device_id sky1_audss_clk_of_match[] = {
++	{ .compatible = "cix,sky1-audss-clock" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sky1_audss_clk_of_match);
++
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id sky1_audss_clk_acpi_match[] = {
++	{ "CIXH6061", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_audss_clk_acpi_match);
++#endif
++
++static struct platform_driver sky1_audss_clk_driver = {
++	.probe = sky1_audss_clk_probe,
++	.remove = sky1_audss_clk_remove,
++	.driver = {
++		.name = "sky1-audss-clk",
++		.of_match_table = sky1_audss_clk_of_match,
++		.acpi_match_table = ACPI_PTR(sky1_audss_clk_acpi_match),
++		.pm = &sky1_audss_clk_pm_ops,
++	},
++};
++module_platform_driver(sky1_audss_clk_driver);
++
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
++MODULE_DESCRIPTION("CIX Sky1 Audio Subsystem Clock Controller");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/clk/clk-scmi.c b/drivers/clk/clk-scmi.c
+index 6b286ea6f1218..0f125c450e76e 100644
+--- a/drivers/clk/clk-scmi.c
++++ b/drivers/clk/clk-scmi.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/bits.h>
+ #include <linux/clk-provider.h>
++#include <linux/clkdev.h>
+ #include <linux/device.h>
+ #include <linux/err.h>
+ #include <linux/of.h>
+@@ -495,8 +496,26 @@ static int scmi_clocks_probe(struct scmi_device *sdev)
+ 		}
+ 	}
+ 
+-	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
+-					   clk_data);
++	if (np)
++		return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
++						   clk_data);
++
++	/* ACPI: register each clock via clkdev for global lookup */
++	for (idx = 0; idx < count; idx++) {
++		char con_id[20];
++
++		if (!hws[idx])
++			continue;
++
++		snprintf(con_id, sizeof(con_id), "scmi-clk-%d", idx);
++		err = devm_clk_hw_register_clkdev(dev, hws[idx], con_id, NULL);
++		if (err)
++			dev_warn(dev,
++				 "Failed to register clkdev for clock %d\n",
++				 idx);
++	}
++
++	return 0;
+ }
+ 
+ static const struct scmi_device_id scmi_id_table[] = {
+diff --git a/drivers/clk/clkdev.c b/drivers/clk/clkdev.c
+index abaa0f9e00831..6fbcdbc849e5b 100644
+--- a/drivers/clk/clkdev.c
++++ b/drivers/clk/clkdev.c
+@@ -145,7 +145,7 @@ void clkdev_add_table(struct clk_lookup *cl, size_t num)
+ }
+ 
+ #define MAX_DEV_ID	24
+-#define MAX_CON_ID	16
++#define MAX_CON_ID	32
+ 
+ struct clk_lookup_alloc {
+ 	struct clk_lookup cl;

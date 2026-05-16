@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Sat, 28 Feb 2026 13:46:33 +1100
+Subject: [PATCH] drm/trilin-dptx: retry AUX on cold-plug timeout
+
+When a display is connected after boot (cold-plug), the sink may not
+be ready for AUX transactions immediately.  The DP spec allows up to
+500ms for sink power-up, and some bridges need longer.
+
+The driver was attempting a single DPCD read with no retry, causing
+-ETIMEDOUT on first connect while subsequent unplug/replug cycles
+worked fine (the sink was already powered).
+
+Add a retry loop (5 attempts, 100ms apart) in handle_connect() when
+read_sink_caps() returns -ETIMEDOUT, giving the sink up to 500ms
+to become responsive.
+
+Reported-by: coffnix (GitHub issue #10)
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index 20a26ec845a17..c00ebf20ffe57 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2590,6 +2590,21 @@ int trilin_dp_handle_connect(struct trilin_dp *dp, bool send_notification)
+ 	dp->state |= DP_STATE_CONNECTED;
+ 
+ 	rc = trinlin_dp_panel_read_sink_caps(dp);
++	/*
++	 * On cold-plug (display connected after boot), the sink may not be
++	 * ready for AUX transactions immediately.  The DP spec allows up to
++	 * 500ms for a sink to power up, but some bridges/monitors need more.
++	 * Retry with increasing delays before giving up.
++	 */
++	if (rc == -ETIMEDOUT) {
++		int retries;
++
++		for (retries = 0; retries < 5 && rc == -ETIMEDOUT; retries++) {
++			DP_INFO("sink not ready, retry %d/5\n", retries + 1);
++			msleep(100);
++			rc = trinlin_dp_panel_read_sink_caps(dp);
++		}
++	}
+ 	/*
+ 	 * ETIMEDOUT --> cable may have been removed
+ 	 * ENOTCONN --> no downstream device connected

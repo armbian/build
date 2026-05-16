@@ -1,0 +1,582 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Sat, 28 Feb 2026 21:06:15 +1100
+Subject: [PATCH] cix: remove pre-silicon EMU/FPGA dead code from vendor
+ patches
+
+CIX vendor kernel patches carry dead code for internal development
+platforms (emulators, FPGAs, evaluation boards) that will never run on
+shipping hardware. Remove it to reduce complexity and maintenance burden.
+
+Changes:
+- pci-sky1: remove PCIE_PLAT_FPGA/EMU enum values, plat field,
+  sky1_pcie_parse_plat(), EMU early-returns in GPIO parsers, conditional
+  PHY power-on, and FPGA debug early-return in RC probe. Hardcode
+  production lane enable masks (x2=0x4, x1_0=0x1, x1_1=0x2).
+- phy-cix-pcie/usb3/usbdp: remove #if CONFIG_ARCH_CIX_EMU_FPGA guards
+  around regmap read/write (keep the bodies).
+- cdnsp-sky1: remove #ifdef CONFIG_ARCH_CIX_FPGA APB timeout block.
+- trilin_dptx: remove CIX_PLATFORM_EMU/FPGA/INVALID defines and
+  platform_id field. Always negotiate TPS4/3/2, always call phy_ready,
+  always validate AUX replies, always enable stream clocks, always
+  register PHY, always read EDID.
+- sky1.dtsi: remove EMU/FPGA always-on timer property and GIC
+  redistributor #ifdef (keep production 12-region config).
+- armchina_aipu.h: fix emum -> enum typos.
+---
+ arch/arm64/boot/dts/cix/sky1.dtsi             |  9 ---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c        | 71 ++++++-------------
+ drivers/gpu/drm/cix/dptx/trilin_dptx.h        |  7 --
+ drivers/gpu/drm/cix/dptx/trilin_drm.c         | 65 ++++++++---------
+ .../misc/armchina-npu/include/armchina_aipu.h |  4 +-
+ drivers/pci/controller/cadence/pci-sky1.c     | 45 +++---------
+ drivers/pci/controller/cadence/pci-sky1.h     |  4 --
+ drivers/phy/cix/phy-cix-pcie.c                |  4 --
+ drivers/phy/cix/phy-cix-usb3.c                |  4 --
+ drivers/phy/cix/phy-cix-usbdp.c               |  4 --
+ drivers/usb/cdns3/cdnsp-sky1.c                |  4 --
+ 11 files changed, 61 insertions(+), 160 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/cix/sky1.dtsi b/arch/arm64/boot/dts/cix/sky1.dtsi
+index cb33685f4ce8f..b5017fe65a623 100644
+--- a/arch/arm64/boot/dts/cix/sky1.dtsi
++++ b/arch/arm64/boot/dts/cix/sky1.dtsi
+@@ -749,9 +749,6 @@ arch_timer: timer {
+ 		clock-frequency = <1000000000>;
+ 		interrupt-parent = <&gic>;
+ 		arm,no-tick-in-suspend;
+-#ifdef CONFIG_ARCH_CIX_EMU_FPGA
+-		always-on; /* only on EMU/FPGA */
+-#endif
+ 	};
+ 
+ 	sky1_fixed_clocks: fixed-clocks {
+@@ -2559,7 +2556,6 @@ gic: interrupt-controller@0e001000 {
+ 			single-redist;
+ 			ranges;
+ 			interrupt-controller;
+-#ifndef CONFIG_ARCH_CIX_EMU_FPGA
+ 			#redistributor-regions = <12>;
+ 			reg = <0x0 0x0e010000 0 0x10000>,	/* GICD */
+ 			      <0x0 0x0e090000 0 0x40000>,	/* GICR */
+@@ -2574,11 +2570,6 @@ gic: interrupt-controller@0e001000 {
+ 			      <0x0 0x0e2d0000 0 0x40000>,       /* GICR9 */
+ 			      <0x0 0x0e310000 0 0x40000>,       /* GICR10 */
+ 			      <0x0 0x0e350000 0 0x40000>;       /* GICR11 */
+-#else
+-			#redistributor-regions = <1>;
+-			reg = <0x0 0x0e010000 0 0x10000>,       /* GICD */
+-			      <0x0 0x0e090000 0 0x40000>;       /* GICR */
+-#endif
+ 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_LOW 0>;
+ 			interrupt-parent = <&gic>;
+ 
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index f8ff7823d0536..9a728dc1c2eac 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -377,16 +377,12 @@ static int trilin_dp_link_set_pattern(struct trilin_dp *dp, int link_train_proce
+ 		pat = DP_TRAINING_PATTERN_1;
+ 		break;
+ 	case LINK_TRAIN_CHANNEL_EQUALIZATION:
+-		if (dp->platform_id != CIX_PLATFORM_SOC) {
++		if (dp->caps.tps4_supported)
++			pat = DP_TRAINING_PATTERN_4;
++		else if (dp->caps.tps3_supported)
++			pat = DP_TRAINING_PATTERN_3;
++		else
+ 			pat = DP_TRAINING_PATTERN_2;
+-		} else {
+-			if (dp->caps.tps4_supported)
+-				pat = DP_TRAINING_PATTERN_4;
+-			else if (dp->caps.tps3_supported)
+-				pat = DP_TRAINING_PATTERN_3;
+-			else
+-				pat = DP_TRAINING_PATTERN_2;
+-		}
+ 		break;
+ 	default:
+ 		DP_ERR("no this train patten.");
+@@ -511,15 +507,12 @@ static int trilin_dp_link_train_ce(struct trilin_dp *dp)
+ 		if (ce_done)
+ 			break;
+ 
+-		if (dp->platform_id == CIX_PLATFORM_EMU) // skip CE
+-			goto end;
+-
+ 		trilin_dp_adjust_train(dp, link_status);
+ 	}
+ 
+ 	if (!ce_done)
+ 		return -EIO;
+-end:
++
+ 	dp->train_ce_done = true;
+ 	return 0;
+ }
+@@ -641,11 +634,10 @@ static int trilin_dp_link_configure(struct trilin_dp *dp)
+ 
+ 	trilin_link_rate_update(dp, bw_code);
+ 
+-	if (dp->platform_id == CIX_PLATFORM_SOC) {
+-		ret = trilin_dp_phy_ready(dp);
+-		if (ret < 0)
+-			return ret;
+-	}
++	ret = trilin_dp_phy_ready(dp);
++	if (ret < 0)
++		return ret;
++
+ 	return ret;
+ }
+ 
+@@ -809,26 +801,14 @@ static int trilin_dp_aux_cmd_submit(struct trilin_dp *dp, u32 cmd, u32 addr,
+ 	if (reply)
+ 		*reply = reg;
+ 
+-	if (dp->platform_id != CIX_PLATFORM_EMU) {
+-		if (is_read && (reg == TRILIN_DPTX_AUX_REPLY_CODE_AUX_ACK ||
+-				reg == TRILIN_DPTX_AUX_REPLY_CODE_I2C_ACK)) {
+-			reg = trilin_dp_read(dp,
+-					     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
+-			if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
+-			    bytes) {
+-				DP_ERR("TRILIN_DPTX_REPLY_DATA_COUNT_MASK\n");
+-				return -EIO;
+-			}
+-		}
+-	} else {
+-		if (is_read) {
+-			reg = trilin_dp_read(dp,
+-					     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
+-			if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
+-			    bytes) {
+-				DP_ERR("TRILIN_DPTX_AUX_REPLY_DATA_COUNT\n");
+-				return -EIO;
+-			}
++	if (is_read && (reg == TRILIN_DPTX_AUX_REPLY_CODE_AUX_ACK ||
++			reg == TRILIN_DPTX_AUX_REPLY_CODE_I2C_ACK)) {
++		reg = trilin_dp_read(dp,
++				     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
++		if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
++		    bytes) {
++			DP_ERR("TRILIN_DPTX_REPLY_DATA_COUNT_MASK\n");
++			return -EIO;
+ 		}
+ 	}
+ 
+@@ -1819,9 +1799,6 @@ static int trilin_dp_ctrl_enable_stream_clocks(struct trilin_dp *dp,
+ 	int rc = 0;
+ 	struct clk *vid_clk;
+ 
+-	if (dp->platform_id != CIX_PLATFORM_SOC)
+-		return rc;
+-
+ 	if (dp_panel->stream_id == DP_STREAM_0) {
+ 		vid_clk = dp->dpsub->vid_clk0;
+ 	} else if (dp_panel->stream_id == DP_STREAM_1) {
+@@ -2104,9 +2081,8 @@ static int trilin_dp_core_on(struct trilin_dp *dp, bool shallow)
+ 		DP_DEBUG("train failed but GO ON");
+ 	}
+ 
+-	DP_DEBUG("Trilinear DPTX %x with %u lanes, platform id %d\n",
+-		trilin_dp_read(dp, TRILIN_DPTX_CORE_REVISION), dp->num_lanes,
+-		dp->platform_id);
++	DP_DEBUG("Trilinear DPTX %x with %u lanes\n",
++		trilin_dp_read(dp, TRILIN_DPTX_CORE_REVISION), dp->num_lanes);
+ 
+ 	if (dp->edp_panel)
+ 		drm_panel_enable(dp->edp_panel);
+@@ -2343,7 +2319,7 @@ static void trilin_dp_register_phy(struct trilin_dp *dp)
+ 	struct fwnode_handle *fwnode;
+ 
+ 	/* register phy here that need power init*/
+-	if (!phy->phy_ops && dp->platform_id == CIX_PLATFORM_SOC) {
++	if (!phy->phy_ops) {
+ 		if (has_acpi_companion(dp->dev)) {
+ 			fwnode = fwnode_find_reference(dp->dev->fwnode, "dp_phy", 0);
+ 			if (!IS_ERR(fwnode)) {
+@@ -3405,10 +3381,6 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 	dp->max_rate = DP_HIGH_BIT_RATE3;
+ 	dp->max_streams = 2;
+ 	dp->state = DP_STATE_DISCONNECTED;
+-	dp->platform_id = CIX_PLATFORM_SOC;
+-#ifdef CONFIG_ARCH_CIX_EMU_FPGA
+-	dp->platform_id = CIX_PLATFORM_FPGA;
+-#endif
+ 	dp->force_pixel_per_cycle = 0;
+ 	dp->pixel_per_cycle = 1;
+ 	dp->edp_panel = edp_panel;
+@@ -3449,7 +3421,6 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 	if (dp->irq < 0)
+ 		return dp->irq;
+ 
+-	device_property_read_u32(dev, "cix,platform-id", &dp->platform_id);
+ 	device_property_read_u32(dev, "cix,dp-lane-number", &dp->num_lanes);
+ 	device_property_read_u32(dev, "cix,dp-max-rate", &dp->max_rate);
+ 	device_property_read_u32(dev, "cix,aux-clock-divider",
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.h b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
+index 398b6d8bd8d73..87987eedf3fb4 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.h
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
+@@ -159,12 +159,6 @@ union phy_configure_opts;
+ #define TRILIN_DPTX_INTERRUPT_MASK_ALL 0x3f
+ #define TRILIN_DPTX_INTERRUPT_CFG 0x1c
+ 
+-/* PLATFORM define */
+-#define CIX_PLATFORM_SOC 0
+-#define CIX_PLATFORM_EMU 1
+-#define CIX_PLATFORM_FPGA 2
+-#define CIX_PLATFORM_INVALID -1
+-
+ #define TRILIN_DPTX_MAX_LANES 4
+ #define TRILIN_DPTX_AUX_DIVIDER 200
+ 
+@@ -468,7 +462,6 @@ struct trilin_dp {
+ 
+ 	struct trilin_phy_t phy;
+ 	enum trilin_dptx_state state;
+-	int platform_id;
+ 
+ 	struct drm_display_mode *adjusted_mode;
+ 	struct dptx_audio dp_audio;
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm.c b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+index 9341485488c5e..80aaa2ff8b78d 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_drm.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+@@ -320,46 +320,41 @@ static int trilin_dp_connector_get_modes(struct drm_connector *connector)
+ 
+ 	DP_DEBUG("enter\n");
+ 
+-	if (dp->platform_id != CIX_PLATFORM_EMU) {
+-		edid = drm_get_edid(connector, &dp->aux.ddc);
+-		if (!edid) { /* try once again */
+-			for (int count = 0; count < GET_EDID_RETRY_MAX;
+-			     count++) {
+-				msleep(20);
+-				edid = drm_get_edid(connector, &dp->aux.ddc);
+-				if (edid)
+-					break;
+-			}
++	edid = drm_get_edid(connector, &dp->aux.ddc);
++	if (!edid) { /* try once again */
++		for (int count = 0; count < GET_EDID_RETRY_MAX;
++		     count++) {
++			msleep(20);
++			edid = drm_get_edid(connector, &dp->aux.ddc);
++			if (edid)
++				break;
+ 		}
++	}
+ 
+-		if (!edid) {
+-			mode = drm_dp_downstream_mode(connector->dev, dp->dpcd,
+-						      dp->downstream_ports);
+-			if (mode) {
+-				drm_mode_probed_add(connector, mode);
+-				ret++;
+-			}
+-			if (ret == 0) {
+-				/* fall back to be 1080p */
+-				ret = drm_add_modes_noedid(connector, 1920,
+-							   1080);
+-				drm_set_preferred_mode(connector, 1920, 1080);
+-				DP_INFO("edid is null and read downstream: count=%d",
+-					ret);
+-			}
+-			return ret;
++	if (!edid) {
++		mode = drm_dp_downstream_mode(connector->dev, dp->dpcd,
++					      dp->downstream_ports);
++		if (mode) {
++			drm_mode_probed_add(connector, mode);
++			ret++;
++		}
++		if (ret == 0) {
++			/* fall back to be 1080p */
++			ret = drm_add_modes_noedid(connector, 1920,
++						   1080);
++			drm_set_preferred_mode(connector, 1920, 1080);
++			DP_INFO("edid is null and read downstream: count=%d",
++				ret);
+ 		}
++		return ret;
++	}
+ 
+-		drm_dp_cec_set_edid(&dp->aux, edid);
+-		ret = trilin_connector_update_modes(connector, edid);
+-		kfree(edid);
++	drm_dp_cec_set_edid(&dp->aux, edid);
++	ret = trilin_connector_update_modes(connector, edid);
++	kfree(edid);
+ 
+-		if (connector->connector_type == DRM_MODE_CONNECTOR_eDP)
+-			ret += trilin_dp_add_virtual_modes_noedid(connector);
+-	} else {
+-		ret = drm_add_modes_noedid(connector, 4096, 4096);
+-		drm_set_preferred_mode(connector, 640, 480);
+-	}
++	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP)
++		ret += trilin_dp_add_virtual_modes_noedid(connector);
+ 
+ 	DP_DEBUG("mode count = %d bpc=%d\n", ret, info->bpc);
+ 	return ret;
+diff --git a/drivers/misc/armchina-npu/include/armchina_aipu.h b/drivers/misc/armchina-npu/include/armchina_aipu.h
+index 4c456bee2694b..852dc9cc2c3f0 100755
+--- a/drivers/misc/armchina-npu/include/armchina_aipu.h
++++ b/drivers/misc/armchina-npu/include/armchina_aipu.h
+@@ -24,7 +24,7 @@
+  */
+ 
+ /**
+- * emum aipu_arch - AIPU architecture number
++ * enum aipu_arch - AIPU architecture number
+  * @AIPU_ARCH_ZHOUYI: AIPU architecture is Zhouyi.
+  *
+  * This enum is used to indicate the architecture of an AIPU core in the system.
+@@ -34,7 +34,7 @@ enum aipu_arch {
+ };
+ 
+ /**
+- * emum aipu_isa_version - AIPU ISA version number
++ * enum aipu_isa_version - AIPU ISA version number
+  * @AIPU_ISA_VERSION_ZHOUYI_V1:   AIPU ISA version is Zhouyi V1.
+  * @AIPU_ISA_VERSION_ZHOUYI_V2_0: AIPU ISA version is Zhouyi V2 (Z2).
+  * @AIPU_ISA_VERSION_ZHOUYI_V2_1: AIPU ISA version is Zhouyi V2 (Z3).
+diff --git a/drivers/pci/controller/cadence/pci-sky1.c b/drivers/pci/controller/cadence/pci-sky1.c
+index ca2b86d916192..b5cb57493fe59 100644
+--- a/drivers/pci/controller/cadence/pci-sky1.c
++++ b/drivers/pci/controller/cadence/pci-sky1.c
+@@ -1082,17 +1082,17 @@ static int sky1_pcie_set_phy_pnn_rst_n(struct sky1_pcie *pcie, int en)
+ 	case PCIE_ID_x2:
+ 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
+ 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
+-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x4 : 0x1;
++		en_msk = 0x4;
+ 		break;
+ 	case PCIE_ID_x1_0:
+ 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
+ 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
+-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x1 : 0x2;
++		en_msk = 0x1;
+ 		break;
+ 	case PCIE_ID_x1_1:
+ 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
+ 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
+-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x2 : 0x4;
++		en_msk = 0x2;
+ 		break;
+ 	default:
+ 		ret = -EINVAL;
+@@ -1389,20 +1389,6 @@ static int sky1_pcie_parse_clocks(struct sky1_pcie *pcie)
+ 	return 0;
+ }
+ 
+-static int sky1_pcie_parse_plat(struct sky1_pcie *pcie)
+-{
+-	int ret = 0;
+-
+-	if (device_property_read_bool(pcie->dev, "plat-emu"))
+-		pcie->plat = PCIE_PLAT_EMU;
+-	else if (device_property_read_bool(pcie->dev, "plat-fpga"))
+-		pcie->plat = PCIE_PLAT_FPGA;
+-	else
+-		pcie->plat = PCIE_PLAT_EVK;
+-
+-	return ret;
+-}
+-
+ static void sky1_pcie_parse_ep_pwr_supply(struct sky1_pcie *pcie)
+ {
+ 	struct device *dev = pcie->dev;
+@@ -1451,9 +1437,6 @@ static int sky1_pcie_parse_reset_gpio(struct sky1_pcie *pcie)
+ 	struct gpio_desc *gpiodesc;
+ 	int ret = 0;
+ 
+-	if (pcie->plat == PCIE_PLAT_EMU)
+-		return ret;
+-
+ 	if (ACPI_COMPANION(dev))
+ 		acpi_dev_add_driver_gpios(ACPI_COMPANION(dev),
+ 					  sky1_gpio_mappings);
+@@ -1474,9 +1457,6 @@ static int sky1_pcie_parse_wake_gpio(struct sky1_pcie *pcie)
+ 	struct gpio_desc *gpiodesc;
+ 	int ret = 0;
+ 
+-	if (pcie->plat == PCIE_PLAT_EMU)
+-		return ret;
+-
+ 	gpiodesc = devm_gpiod_get_optional(dev, "wake", GPIOD_IN);
+ 	if (IS_ERR(gpiodesc)) {
+ 		dev_err(dev, "Failed to get wake gpio\n");
+@@ -1676,9 +1656,6 @@ static int sky1_pcie_parse_property(struct platform_device *pdev,
+ 	int ret = 0;
+ 
+ 	sky1_pcie_parse_ep_pwr_supply(pcie);
+-	ret = sky1_pcie_parse_plat(pcie);
+-	if (ret < 0)
+-		return ret;
+ 
+ 	ret = sky1_pcie_parse_ctrl_id(pcie);
+ 	if (ret < 0)
+@@ -1772,8 +1749,7 @@ static int sky1_pcie_phy_rst(struct sky1_pcie *pcie, int en)
+ 	if (ret)
+ 		return ret;
+ 
+-	if ((pcie->plat != PCIE_PLAT_EMU) || (en != 0))
+-		ret = sky1_pcie_set_phy_rst_n(pcie, en);
++	ret = sky1_pcie_set_phy_rst_n(pcie, en);
+ 
+ 	dev_dbg(pcie->dev, "%s en:%d\n", __func__, en);
+ 	return ret;
+@@ -2121,12 +2097,10 @@ static int sky1_pcie_reset(struct sky1_pcie *pcie)
+ 	if (ret < 0)
+ 		goto err_pcie_reset;
+ 
+-	if ((pcie->plat != PCIE_PLAT_FPGA) && (pcie->plat != PCIE_PLAT_EMU)) {
+-		ret = phy_power_on(pcie->pcie_phy);
+-		if (ret < 0) {
+-			phy_exit(pcie->pcie_phy);
+-			goto err_pcie_reset;
+-		}
++	ret = phy_power_on(pcie->pcie_phy);
++	if (ret < 0) {
++		phy_exit(pcie->pcie_phy);
++		goto err_pcie_reset;
+ 	}
+ 
+ 	ret = sky1_pcie_phy_rst(pcie, 0x1);
+@@ -2719,9 +2693,6 @@ static int sky1_pcie_probe(struct platform_device *pdev)
+ 	pcie->cfg_base = rc->cfg_base;
+ 
+ 	bridge->sysdata = pcie->cfg;
+-	//DEBUG
+-	if ((pcie->desc->id != PCIE_ID_x4) && (pcie->plat == PCIE_PLAT_FPGA))
+-		return 0;
+ 
+ 	ret = sky1_pcie_ctrl_set_axi_clk_en(pcie, true);
+ 	if (ret < 0)
+diff --git a/drivers/pci/controller/cadence/pci-sky1.h b/drivers/pci/controller/cadence/pci-sky1.h
+index 368d359dba78c..409be5b9292f3 100644
+--- a/drivers/pci/controller/cadence/pci-sky1.h
++++ b/drivers/pci/controller/cadence/pci-sky1.h
+@@ -40,8 +40,6 @@ enum sky1_pcie_mode {
+ };
+ 
+ enum sky1_pcie_plat {
+-	PCIE_PLAT_FPGA,
+-	PCIE_PLAT_EMU,
+ 	PCIE_PLAT_EVK,
+ 	PCIE_PLAT_NIO,
+ };
+@@ -128,8 +126,6 @@ struct sky1_pcie {
+ 	struct regulator *vsupply;
+ 	struct regulator *epsupply;
+ 
+-	u32 plat;
+-
+ #ifdef CONFIG_DEBUG_FS
+ 	struct dentry *debugfs;
+ 	struct pci_dev *rc_pdev;
+diff --git a/drivers/phy/cix/phy-cix-pcie.c b/drivers/phy/cix/phy-cix-pcie.c
+index f0f5eba470cac..d55a434f76653 100644
+--- a/drivers/phy/cix/phy-cix-pcie.c
++++ b/drivers/phy/cix/phy-cix-pcie.c
+@@ -320,24 +320,20 @@ struct cix_pcie_phy {
+ 
+ static int pcie_phy_regmap_write(void *context, unsigned int reg, unsigned int val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_pcie_phy *pcie_phy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	writel(val, pcie_phy->base + offset);
+-#endif
+ 
+ 	return 0;
+ }
+ 
+ static int pcie_phy_regmap_read(void *context, unsigned int reg, unsigned int *val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_pcie_phy *pcie_phy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	*val = readl(pcie_phy->base + offset);
+-#endif
+ 
+ 	return 0;
+ }
+diff --git a/drivers/phy/cix/phy-cix-usb3.c b/drivers/phy/cix/phy-cix-usb3.c
+index adec9bb4438cb..87f43fef4bc64 100644
+--- a/drivers/phy/cix/phy-cix-usb3.c
++++ b/drivers/phy/cix/phy-cix-usb3.c
+@@ -245,24 +245,20 @@ static const struct cix_u3phy_cfg sky1_u3phy_cfg = {
+ };
+ static int u3phy_regmap_write(void *context, unsigned int reg, unsigned int val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_u3phy *u3phy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	writel(val, u3phy->base + offset);
+-#endif
+ 
+ 	return 0;
+ }
+ 
+ static int u3phy_regmap_read(void *context, unsigned int reg, unsigned int *val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_u3phy *u3phy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	*val = readl(u3phy->base + offset);
+-#endif
+ 	return 0;
+ }
+ 
+diff --git a/drivers/phy/cix/phy-cix-usbdp.c b/drivers/phy/cix/phy-cix-usbdp.c
+index a9b192265db27..8ba032dc230ce 100644
+--- a/drivers/phy/cix/phy-cix-usbdp.c
++++ b/drivers/phy/cix/phy-cix-usbdp.c
+@@ -764,24 +764,20 @@ static const struct cix_udphy_cfg sky1_udphy_cfg = {
+ 
+ static int udphy_regmap_write(void *context, unsigned int reg, unsigned int val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_udphy *udphy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	writel(val, udphy->base + offset);
+-#endif
+ 
+ 	return 0;
+ }
+ 
+ static int udphy_regmap_read(void *context, unsigned int reg, unsigned int *val)
+ {
+-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
+ 	struct cix_udphy *udphy = context;
+ 	u32 offset = reg << 2;
+ 
+ 	*val = readl(udphy->base + offset);
+-#endif
+ 
+ 	return 0;
+ }
+diff --git a/drivers/usb/cdns3/cdnsp-sky1.c b/drivers/usb/cdns3/cdnsp-sky1.c
+index c43b07d51a850..2c42db17f4d92 100644
+--- a/drivers/usb/cdns3/cdnsp-sky1.c
++++ b/drivers/usb/cdns3/cdnsp-sky1.c
+@@ -375,10 +375,6 @@ static int cdnsp_sky1_drd_init(struct cdnsp_sky1 *data)
+ 
+ 
+ 	v0 = readl((void *)data->xhci_base + XEC_USBSSP_CHICKEN_BITS_3);
+-#ifdef CONFIG_ARCH_CIX_FPGA
+-	v0 &= APB_TIMEOUT_MASK;
+-	v0 |= APB_TIMEOUT_VALUE_50MS_FREQ_200M;
+-#endif
+ 	v0 &= ~(CFG_APB_TIMEOUT_PSLVERR_EN | CFG_APB_PSLVERR_EN);
+ 	writel(v0, (void *)data->xhci_base + XEC_USBSSP_CHICKEN_BITS_3);
+ 	if (data->u3_disable) {

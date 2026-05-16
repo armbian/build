@@ -1,0 +1,2529 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:28:43 +1100
+Subject: [PATCH] arm64: cix: Add Sky1 SoC infrastructure drivers
+
+Add core SoC support for CIX Sky1 including:
+- SoC info, bus performance monitor, DDR low-power driver
+- ACPI resource lookup and scan handlers (GPU, USB)
+- Sky1 PDC wake interrupt controller
+- GIC-v3 errata workaround for Sky1
+- Sky1 nvmem and hwspinlock drivers
+- syscon ACPI platform driver support
+- arch_topology CPC/CPPC performance scale helpers
+---
+ drivers/base/arch_topology.c               |  20 +
+ drivers/hwspinlock/Kconfig                 |  10 +
+ drivers/hwspinlock/Makefile                |   1 +
+ drivers/hwspinlock/sky1_hwspinlock.c       | 169 ++++++++
+ drivers/irqchip/Kconfig                    |   8 +
+ drivers/irqchip/Makefile                   |   3 +-
+ drivers/irqchip/irq-gic-v3.c               |   5 +
+ drivers/irqchip/irq-sky1-pdc.c             | 274 ++++++++++++
+ drivers/mfd/syscon.c                       |  66 +++
+ drivers/nvmem/Kconfig                      |  11 +
+ drivers/nvmem/Makefile                     |   2 +
+ drivers/nvmem/sky1-nvmem.c                 |  93 ++++
+ drivers/soc/Kconfig                        |   1 +
+ drivers/soc/Makefile                       |   1 +
+ drivers/soc/cix/Kconfig                    |  87 ++++
+ drivers/soc/cix/Makefile                   |   7 +
+ drivers/soc/cix/cix-acpi-gpu-scan.c        |  78 ++++
+ drivers/soc/cix/cix-acpi-resource-lookup.c | 394 +++++++++++++++++
+ drivers/soc/cix/cix-acpi-usb-scan.c        |  68 +++
+ drivers/soc/cix/cix-bus-perf.c             | 202 +++++++++
+ drivers/soc/cix/cix-ddr-lp.c               | 172 ++++++++
+ drivers/soc/cix/sky1-socinfo.c             | 478 +++++++++++++++++++++
+ include/linux/arch_topology.h              |  10 +-
+ include/linux/firmware/cix/dsp.h           |  86 ++++
+ 24 files changed, 2244 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/hwspinlock/sky1_hwspinlock.c
+ create mode 100644 drivers/irqchip/irq-sky1-pdc.c
+ create mode 100644 drivers/nvmem/sky1-nvmem.c
+ create mode 100644 drivers/soc/cix/Kconfig
+ create mode 100644 drivers/soc/cix/Makefile
+ create mode 100644 drivers/soc/cix/cix-acpi-gpu-scan.c
+ create mode 100644 drivers/soc/cix/cix-acpi-resource-lookup.c
+ create mode 100644 drivers/soc/cix/cix-acpi-usb-scan.c
+ create mode 100644 drivers/soc/cix/cix-bus-perf.c
+ create mode 100644 drivers/soc/cix/cix-ddr-lp.c
+ create mode 100644 drivers/soc/cix/sky1-socinfo.c
+ create mode 100644 include/linux/firmware/cix/dsp.h
+
+diff --git a/drivers/base/arch_topology.c b/drivers/base/arch_topology.c
+index 8c5e47c28d9a3..ee74e22dddc8a 100644
+--- a/drivers/base/arch_topology.c
++++ b/drivers/base/arch_topology.c
+@@ -422,6 +422,26 @@ init_cpu_capacity_callback(struct notifier_block *nb,
+ 	return 0;
+ }
+ 
++/**
++ * topology_update_freq_ref - Update capacity_freq_ref when max frequency changes
++ * @policy: cpufreq policy whose max frequency has changed
++ *
++ * This should be called when boost frequencies are enabled/disabled to ensure
++ * that schedutil and other users of capacity_freq_ref see the correct max
++ * frequency for capacity calculations.
++ */
++void topology_update_freq_ref(struct cpufreq_policy *policy)
++{
++	int cpu;
++
++	for_each_cpu(cpu, policy->related_cpus) {
++		per_cpu(capacity_freq_ref, cpu) = policy->cpuinfo.max_freq;
++		freq_inv_set_max_ratio(cpu,
++				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
++	}
++}
++EXPORT_SYMBOL_GPL(topology_update_freq_ref);
++
+ static struct notifier_block init_cpu_capacity_notifier = {
+ 	.notifier_call = init_cpu_capacity_callback,
+ };
+diff --git a/drivers/hwspinlock/Kconfig b/drivers/hwspinlock/Kconfig
+index 3874d15b0e9b7..b84c892e18031 100644
+--- a/drivers/hwspinlock/Kconfig
++++ b/drivers/hwspinlock/Kconfig
+@@ -53,6 +53,16 @@ config HWSPINLOCK_SUN6I
+ 
+ 	  If unsure, say N.
+ 
++config HWSPINLOCK_SKY1
++	bool "Sky1 Hardware Spinlock device"
++	depends on ARCH_CIX || COMPILE_TEST
++	help
++	  Say y here to support the Sky1 Hardware Spinlock device which provides
++	  hardware-assisted synchronization between the various processors on
++	  the SoC.
++
++	  If unsure, say N.
++
+ config HSEM_U8500
+ 	tristate "STE Hardware Semaphore functionality"
+ 	depends on ARCH_U8500 || COMPILE_TEST
+diff --git a/drivers/hwspinlock/Makefile b/drivers/hwspinlock/Makefile
+index a0f16c9aaa821..1cef7cf04377a 100644
+--- a/drivers/hwspinlock/Makefile
++++ b/drivers/hwspinlock/Makefile
+@@ -8,5 +8,6 @@ obj-$(CONFIG_HWSPINLOCK_OMAP)		+= omap_hwspinlock.o
+ obj-$(CONFIG_HWSPINLOCK_QCOM)		+= qcom_hwspinlock.o
+ obj-$(CONFIG_HWSPINLOCK_SPRD)		+= sprd_hwspinlock.o
+ obj-$(CONFIG_HWSPINLOCK_STM32)		+= stm32_hwspinlock.o
++obj-$(CONFIG_HWSPINLOCK_SKY1)		+= sky1_hwspinlock.o
+ obj-$(CONFIG_HWSPINLOCK_SUN6I)		+= sun6i_hwspinlock.o
+ obj-$(CONFIG_HSEM_U8500)		+= u8500_hsem.o
+diff --git a/drivers/hwspinlock/sky1_hwspinlock.c b/drivers/hwspinlock/sky1_hwspinlock.c
+new file mode 100644
+index 0000000000000..c73ca035def8c
+--- /dev/null
++++ b/drivers/hwspinlock/sky1_hwspinlock.c
+@@ -0,0 +1,169 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sky1 Hardware Spinlock driver
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/debugfs.h>
++#include <linux/device.h>
++#include <linux/io.h>
++#include <linux/pm_runtime.h>
++#include <linux/hwspinlock.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++
++#include "hwspinlock_internal.h"
++
++/* Number of Hardware Spinlocks */
++#define SKY1_HWSPINLOCK_NUM	100
++
++/* Hardware spinlock register offsets */
++#define SKY1_HWSPINLOCK_OFFSET(x)	(0x900 + 0x4 * (x))
++
++#define SKY1_HWSPINLOCK_OWNER_ID	0x01
++
++struct sky1_hwspinlock_data {
++	void __iomem *io_base;
++	struct dentry *debugfs;
++};
++
++#ifdef CONFIG_DEBUG_FS
++
++static int sky1_hwspinlock_status_show(struct seq_file *seqf, void *unused)
++{
++	struct sky1_hwspinlock_data *priv = seqf->private;
++	int i;
++	u32 val;
++
++	seq_printf(seqf, "Sky1 Hardware Spinlock Status\n");
++	seq_printf(seqf, "Number of locks: %d\n\n", SKY1_HWSPINLOCK_NUM);
++
++	for (i = 0; i < SKY1_HWSPINLOCK_NUM; i++) {
++		val = readl(priv->io_base + SKY1_HWSPINLOCK_OFFSET(i));
++		if (val & 0xFF)
++			seq_printf(seqf, "  lock[%02d]: owner=0x%02x\n", i, val & 0xFF);
++	}
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(sky1_hwspinlock_status);
++
++static void sky1_hwspinlock_debugfs_init(struct platform_device *pdev,
++					 struct sky1_hwspinlock_data *priv)
++{
++	priv->debugfs = debugfs_create_dir("sky1_hwspinlock", NULL);
++	debugfs_create_file("status", 0444, priv->debugfs, priv,
++			    &sky1_hwspinlock_status_fops);
++}
++
++static void sky1_hwspinlock_debugfs_exit(struct sky1_hwspinlock_data *priv)
++{
++	debugfs_remove_recursive(priv->debugfs);
++}
++
++#else
++
++static void sky1_hwspinlock_debugfs_init(struct platform_device *pdev,
++					 struct sky1_hwspinlock_data *priv) { }
++static void sky1_hwspinlock_debugfs_exit(struct sky1_hwspinlock_data *priv) { }
++
++#endif
++
++static int sky1_hwspinlock_trylock(struct hwspinlock *lock)
++{
++	void __iomem *lock_addr = lock->priv;
++
++	/* Check if already owned by us */
++	if (SKY1_HWSPINLOCK_OWNER_ID == (readl(lock_addr) & 0xFF))
++		return 0;
++
++	/* Attempt to acquire the lock */
++	writel(SKY1_HWSPINLOCK_OWNER_ID, lock_addr);
++
++	/* Read back to check if we got it */
++	return (SKY1_HWSPINLOCK_OWNER_ID == (readl(lock_addr) & 0xFF)) ? 1 : 0;
++}
++
++static void sky1_hwspinlock_unlock(struct hwspinlock *lock)
++{
++	void __iomem *lock_addr = lock->priv;
++
++	/* Release the lock by writing owner ID */
++	writel(SKY1_HWSPINLOCK_OWNER_ID, lock_addr);
++}
++
++static const struct hwspinlock_ops sky1_hwspinlock_ops = {
++	.trylock = sky1_hwspinlock_trylock,
++	.unlock = sky1_hwspinlock_unlock,
++};
++
++static int sky1_hwspinlock_probe(struct platform_device *pdev)
++{
++	struct sky1_hwspinlock_data *priv;
++	struct hwspinlock_device *bank;
++	struct hwspinlock *hwlock;
++	int idx, ret;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->io_base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(priv->io_base))
++		return PTR_ERR(priv->io_base);
++
++	bank = devm_kzalloc(&pdev->dev, struct_size(bank, lock, SKY1_HWSPINLOCK_NUM),
++			    GFP_KERNEL);
++	if (!bank)
++		return -ENOMEM;
++
++	for (idx = 0; idx < SKY1_HWSPINLOCK_NUM; idx++) {
++		hwlock = &bank->lock[idx];
++		hwlock->priv = priv->io_base + SKY1_HWSPINLOCK_OFFSET(idx);
++	}
++
++	platform_set_drvdata(pdev, priv);
++	pm_runtime_enable(&pdev->dev);
++
++	ret = devm_hwspin_lock_register(&pdev->dev, bank, &sky1_hwspinlock_ops,
++					0, SKY1_HWSPINLOCK_NUM);
++	if (ret) {
++		pm_runtime_disable(&pdev->dev);
++		return ret;
++	}
++
++	sky1_hwspinlock_debugfs_init(pdev, priv);
++
++	return 0;
++}
++
++static void sky1_hwspinlock_remove(struct platform_device *pdev)
++{
++	struct sky1_hwspinlock_data *priv = platform_get_drvdata(pdev);
++
++	sky1_hwspinlock_debugfs_exit(priv);
++	pm_runtime_disable(&pdev->dev);
++}
++
++static const struct of_device_id sky1_hwspinlock_of_match[] = {
++	{ .compatible = "sky1,hwspinlock", },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, sky1_hwspinlock_of_match);
++
++static struct platform_driver sky1_hwspinlock_driver = {
++	.probe = sky1_hwspinlock_probe,
++	.remove = sky1_hwspinlock_remove,
++	.driver = {
++		.name = "sky1-hwspinlock",
++		.of_match_table = sky1_hwspinlock_of_match,
++	},
++};
++module_platform_driver(sky1_hwspinlock_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Sky1 Hardware Spinlock driver");
++MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
+diff --git a/drivers/irqchip/Kconfig b/drivers/irqchip/Kconfig
+index f07b00d7fef90..6d2f4be7a7663 100644
+--- a/drivers/irqchip/Kconfig
++++ b/drivers/irqchip/Kconfig
+@@ -420,6 +420,14 @@ config IMX_GPCV2
+ 	help
+ 	  Enables the wakeup IRQs for IMX platforms with GPCv2 block
+ 
++config SKY1_PDC
++	bool
++	depends on ARM_GIC
++	default y
++	select IRQ_DOMAIN
++	help
++	  Enables the wakeup IRQs for SKY1 platforms with PDC block
++
+ config IRQ_MXS
+ 	def_bool y if MACH_ASM9260 || ARCH_MXS
+ 	select IRQ_DOMAIN
+diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
+index 26aa3b6ec99fd..37a5051c1d86f 100644
+--- a/drivers/irqchip/Makefile
++++ b/drivers/irqchip/Makefile
+@@ -86,7 +86,8 @@ obj-$(CONFIG_MVEBU_GICP)		+= irq-mvebu-gicp.o
+ obj-$(CONFIG_MVEBU_ICU)			+= irq-mvebu-icu.o
+ obj-$(CONFIG_MVEBU_ODMI)		+= irq-mvebu-odmi.o
+ obj-$(CONFIG_MVEBU_PIC)			+= irq-mvebu-pic.o
+-obj-$(CONFIG_MVEBU_SEI)			+= irq-mvebu-sei.o
++obj-$(CONFIG_MVEBU_SEI)		+= irq-mvebu-sei.o
++obj-$(CONFIG_SKY1_PDC)			+= irq-sky1-pdc.o
+ obj-$(CONFIG_LS_EXTIRQ)			+= irq-ls-extirq.o
+ obj-$(CONFIG_LS_SCFG_MSI)		+= irq-ls-scfg-msi.o
+ obj-$(CONFIG_ARCH_ASPEED)		+= irq-aspeed-vic.o irq-aspeed-i2c-ic.o irq-aspeed-scu-ic.o
+diff --git a/drivers/irqchip/irq-gic-v3.c b/drivers/irqchip/irq-gic-v3.c
+index 20f13b686ab22..49d87d913c60e 100644
+--- a/drivers/irqchip/irq-gic-v3.c
++++ b/drivers/irqchip/irq-gic-v3.c
+@@ -2200,6 +2200,7 @@ static int __init gic_of_init(struct device_node *node, struct device_node *pare
+ 	u64 redist_stride;
+ 	u32 nr_redist_regions;
+ 	int err, i;
++	bool single_redist = false;
+ 
+ 	dist_base = gic_of_iomap(node, 0, "GICD", &res);
+ 	if (IS_ERR(dist_base)) {
+@@ -2224,6 +2225,9 @@ static int __init gic_of_init(struct device_node *node, struct device_node *pare
+ 		goto out_unmap_dist;
+ 	}
+ 
++	if (of_property_read_bool(node, "single-redist"))
++		single_redist = true;
++
+ 	for (i = 0; i < nr_redist_regions; i++) {
+ 		rdist_regs[i].redist_base = gic_of_iomap(node, 1 + i, "GICR", &res);
+ 		if (IS_ERR(rdist_regs[i].redist_base)) {
+@@ -2232,6 +2236,7 @@ static int __init gic_of_init(struct device_node *node, struct device_node *pare
+ 			goto out_unmap_rdist;
+ 		}
+ 		rdist_regs[i].phys_base = res.start;
++		rdist_regs[i].single_redist = single_redist;
+ 	}
+ 
+ 	if (of_property_read_u64(node, "redistributor-stride", &redist_stride))
+diff --git a/drivers/irqchip/irq-sky1-pdc.c b/drivers/irqchip/irq-sky1-pdc.c
+new file mode 100644
+index 0000000000000..ed14b3309989c
+--- /dev/null
++++ b/drivers/irqchip/irq-sky1-pdc.c
+@@ -0,0 +1,274 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/slab.h>
++#include <linux/irqchip.h>
++#include <linux/syscore_ops.h>
++#include <linux/arm-smccc.h>
++
++#define SKY1_SIP_PDC                     0xC2000009
++#define SKY1_SIP_CONFIG_PDC_SET_WAKE     0x02
++
++#define PDC_MAX_IRQS            1000
++
++struct irq_domain *cix_domain;
++
++struct pdcv1_irqchip_data {
++	struct raw_spinlock     rlock;
++	void __iomem            *pdc_base;
++};
++
++static int pdcv1_wakeup_source_save(void *data)
++{
++	return 0;
++}
++
++static void pdcv1_wakeup_source_restore(void *data)
++{
++}
++
++static const struct syscore_ops sky1_pdc_syscore_ops = {
++	.suspend        = pdcv1_wakeup_source_save,
++	.resume         = pdcv1_wakeup_source_restore,
++};
++
++static struct syscore sky1_pdc_syscore = {
++	.ops = &sky1_pdc_syscore_ops,
++};
++
++static int sky1_pdc_irq_set_wake(struct irq_data *d, unsigned int on)
++{
++	struct pdcv1_irqchip_data *cd = d->chip_data;
++	struct arm_smccc_res res;
++	unsigned long flags;
++
++	raw_spin_lock_irqsave(&cd->rlock, flags);
++	arm_smccc_smc(SKY1_SIP_PDC, SKY1_SIP_CONFIG_PDC_SET_WAKE,
++		d->hwirq - 32, on, 0, 0, 0, 0, &res);
++	raw_spin_unlock_irqrestore(&cd->rlock, flags);
++
++	return 0;
++}
++
++static struct irq_chip pdcv1_irqchip_data_chip = {
++	.name                   = "PDCv1",
++	.irq_eoi                = irq_chip_eoi_parent,
++	.irq_mask               = irq_chip_mask_parent,
++	.irq_unmask             = irq_chip_unmask_parent,
++	.irq_set_wake           = sky1_pdc_irq_set_wake,
++	.irq_retrigger          = irq_chip_retrigger_hierarchy,
++	.irq_set_type           = irq_chip_set_type_parent,
++#ifdef CONFIG_SMP
++	.irq_set_affinity       = irq_chip_set_affinity_parent,
++#endif
++};
++
++static int sky1_pdc_domain_translate(struct irq_domain *d,
++				      struct irq_fwspec *fwspec,
++				      unsigned long *hwirq,
++				      unsigned int *type)
++{
++	if (is_of_node(fwspec->fwnode)) {
++		/* Accept both 3-cell and 4-cell GIC format */
++		if (fwspec->param_count < 3 || fwspec->param_count > 4)
++			return -EINVAL;
++
++		/* No PPI should point to this domain (param[0] must be GIC_SPI=0) */
++		if (fwspec->param[0] != 0)
++			return -EINVAL;
++
++		*hwirq = fwspec->param[1] + 32;
++		*type = fwspec->param[2];
++		return 0;
++	} else if (is_acpi_device_node(fwspec->fwnode)) {
++		if(fwspec->param_count != 2)
++			return -EINVAL;
++
++		if (fwspec->param[0] < 32) {
++			pr_err(FW_BUG "Illegal GSI%d translation request\n",
++			       fwspec->param[0]);
++			return -EINVAL;
++		}
++		*hwirq = fwspec->param[0];
++		*type = fwspec->param[1];
++
++		WARN_ON(*type == IRQ_TYPE_NONE);
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int sky1_pdc_domain_alloc(struct irq_domain *domain,
++				  unsigned int irq, unsigned int nr_irqs,
++				  void *data)
++{
++	struct irq_fwspec *fwspec = data;
++	struct irq_fwspec parent_fwspec;
++	irq_hw_number_t hwirq;
++	unsigned int type;
++	int err;
++	int i;
++
++	err = sky1_pdc_domain_translate(domain, fwspec, &hwirq, &type);
++	if (err)
++		return err;
++
++	if (hwirq >= PDC_MAX_IRQS)
++		return -EINVAL;
++
++	for (i = 0; i < nr_irqs; i++) {
++		irq_domain_set_hwirq_and_chip(domain, irq + i, hwirq + i,
++				&pdcv1_irqchip_data_chip, domain->host_data);
++	}
++
++	parent_fwspec = *fwspec;
++	parent_fwspec.fwnode = domain->parent->fwnode;
++
++	return irq_domain_alloc_irqs_parent(domain, irq, nr_irqs,
++					    &parent_fwspec);
++}
++
++static const struct irq_domain_ops pdcv1_irqchip_data_domain_ops = {
++	.translate      = sky1_pdc_domain_translate,
++	.alloc          = sky1_pdc_domain_alloc,
++	.free           = irq_domain_free_irqs_common,
++};
++
++static const struct of_device_id pdcv1_of_match[] = {
++	{ .compatible = "cix,sky1-pdc",  .data = (const void *) 2 },
++	{ /* END */ }
++};
++
++static int __init sky1_pdc_irqchip_init(struct device_node *node,
++			       struct device_node *parent)
++{
++	struct irq_domain *parent_domain, *domain;
++	struct pdcv1_irqchip_data *cd;
++	const struct of_device_id *id;
++
++	pr_info("sky1_pdc: init called for %pOF, parent=%pOF\n", node, parent);
++
++	if (!parent) {
++		pr_err("%pOF: no parent, giving up\n", node);
++		return -ENODEV;
++	}
++
++	id = of_match_node(pdcv1_of_match, node);
++	if (!id) {
++		pr_err("%pOF: unknown compatibility string\n", node);
++		return -ENODEV;
++	}
++
++	parent_domain = irq_find_host(parent);
++	if (!parent_domain) {
++		pr_err("%pOF: unable to get parent domain\n", node);
++		return -ENXIO;
++	}
++
++	cd = kzalloc(sizeof(struct pdcv1_irqchip_data), GFP_KERNEL);
++	if (!cd) {
++		pr_err("%pOF: kzalloc failed!\n", node);
++		return -ENOMEM;
++	}
++
++	raw_spin_lock_init(&cd->rlock);
++
++	cd->pdc_base = of_iomap(node, 0);
++	if (!cd->pdc_base) {
++		pr_err("%pOF: unable to map pdc registers\n", node);
++		kfree(cd);
++		return -ENOMEM;
++	}
++
++	domain = irq_domain_create_hierarchy(parent_domain, 0, PDC_MAX_IRQS,
++					of_fwnode_handle(node), &pdcv1_irqchip_data_domain_ops, cd);
++	if (!domain) {
++		iounmap(cd->pdc_base);
++		kfree(cd);
++		return -ENOMEM;
++	}
++	irq_set_default_domain(domain);
++
++	cix_domain = domain;
++	pr_info("sky1_pdc: domain created successfully for %pOF\n", node);
++
++	register_syscore(&sky1_pdc_syscore);
++
++	/*
++	 * Clear the OF_POPULATED flag set in of_irq_init so that
++	 * later the pdc power domain driver will not be skipped.
++	 */
++	of_node_clear_flag(node, OF_POPULATED);
++
++	return 0;
++}
++
++#ifdef CONFIG_ACPI
++static int __init sky1_acpi_pdc_irqchip_init(struct platform_device *pdev)
++{
++	struct irq_domain *domain;
++	struct pdcv1_irqchip_data *cd;
++
++	cd = kzalloc(sizeof(struct pdcv1_irqchip_data), GFP_KERNEL);
++	if (!cd) {
++		pr_err("%pACPI: kzalloc failed!\n", pdev);
++		return -ENOMEM;
++	}
++
++	raw_spin_lock_init(&cd->rlock);
++	struct resource *res_dp = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	cd->pdc_base = devm_ioremap_resource(&pdev->dev, res_dp);
++	if (!cd->pdc_base) {
++		pr_err("%pACPI: unable to map pdc registers\n", pdev);
++		kfree(cd);
++		return -ENOMEM;
++	}
++
++	domain = acpi_irq_create_hierarchy(0, PDC_MAX_IRQS, pdev->dev.fwnode,
++					   &pdcv1_irqchip_data_domain_ops, cd);
++
++	if (!domain) {
++		iounmap(cd->pdc_base);
++		kfree(cd);
++		return -ENOMEM;
++	}
++
++	irq_set_default_domain(domain);
++	cix_domain = domain;
++
++	register_syscore(&sky1_pdc_syscore);
++
++	return 0;
++}
++
++static const struct acpi_device_id pdcv1_acpi_match[] = {
++	{ .id = "CIXHA019", .driver_data = 0 },
++	{ /* END */ },
++};
++
++static int pdc_probe(struct platform_device *p_dev)
++{
++	return sky1_acpi_pdc_irqchip_init(p_dev);
++}
++
++static struct platform_driver pdc_platform_driver = {
++	.probe = pdc_probe,
++	.driver = { .name = "sky1-pdc",
++		    .owner = THIS_MODULE,
++		    .acpi_match_table = ACPI_PTR(pdcv1_acpi_match) },
++};
++
++static int __init sky1_pdc_init(void) {
++	return platform_driver_register(&pdc_platform_driver);
++}
++
++core_initcall(sky1_pdc_init);
++#endif
++
++IRQCHIP_DECLARE(sky1_pdc, "cix,sky1-pdc", sky1_pdc_irqchip_init);
++
++MODULE_AUTHOR("Copyright 2024 Cix Technology Group Co., Ltd.");
++MODULE_DESCRIPTION("Cix Sky1 irq pdc driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/mfd/syscon.c b/drivers/mfd/syscon.c
+index 21a7fcdd27379..1932b6fed5558 100644
+--- a/drivers/mfd/syscon.c
++++ b/drivers/mfd/syscon.c
+@@ -8,6 +8,7 @@
+  * Author: Dong Aisheng <dong.aisheng@linaro.org>
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/cleanup.h>
+ #include <linux/clk.h>
+ #include <linux/err.h>
+@@ -16,6 +17,7 @@
+ #include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
++#include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/mfd/syscon.h>
+@@ -360,3 +362,67 @@ struct regmap *syscon_regmap_lookup_by_phandle_optional(struct device_node *np,
+ 	return regmap;
+ }
+ EXPORT_SYMBOL_GPL(syscon_regmap_lookup_by_phandle_optional);
++
++#ifdef CONFIG_ACPI
++struct syscon_platform_data {
++	const char *label;
++};
++
++static int syscon_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct syscon_platform_data *pdata = dev_get_platdata(dev);
++	struct syscon *syscon;
++	struct regmap_config syscon_config = syscon_regmap_config;
++	struct resource *res;
++	void __iomem *base;
++
++	syscon = devm_kzalloc(dev, sizeof(*syscon), GFP_KERNEL);
++	if (!syscon)
++		return -ENOMEM;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return -ENOENT;
++
++	base = devm_ioremap(dev, res->start, resource_size(res));
++	if (!base)
++		return -ENOMEM;
++
++	syscon_config.max_register = resource_size(res) - 4;
++	if (pdata)
++		syscon_config.name = pdata->label;
++
++	syscon->regmap = devm_regmap_init_mmio(dev, base, &syscon_config);
++	if (IS_ERR(syscon->regmap)) {
++		dev_err(dev, "regmap init failed\n");
++		return PTR_ERR(syscon->regmap);
++	}
++
++	platform_set_drvdata(pdev, syscon);
++
++	dev_dbg(dev, "regmap %pR registered\n", res);
++
++	return 0;
++}
++
++static const struct acpi_device_id syscon_acpi_match[] = {
++	{ "CIXHA018", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, syscon_acpi_match);
++
++static struct platform_driver syscon_driver = {
++	.driver = {
++		.name = "syscon",
++		.acpi_match_table = ACPI_PTR(syscon_acpi_match),
++	},
++	.probe = syscon_probe,
++};
++
++static int __init syscon_init(void)
++{
++	return platform_driver_register(&syscon_driver);
++}
++postcore_initcall(syscon_init);
++#endif
+diff --git a/drivers/nvmem/Kconfig b/drivers/nvmem/Kconfig
+index 74ddbd0f79b0e..b6008ecb2f3f0 100644
+--- a/drivers/nvmem/Kconfig
++++ b/drivers/nvmem/Kconfig
+@@ -373,6 +373,17 @@ config NVMEM_SPMI_SDAM
+ 	  Qualcomm Technologies, Inc. PMICs. It provides the clients
+ 	  an interface to read/write to the SDAM module's shared memory.
+ 
++config NVMEM_SKY1
++	tristate "CIX Sky1 eFuse support"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on HAVE_ARM_SMCCC
++	help
++	  This driver provides read support for the eFuse on CIX Sky1 SoCs.
++	  The efuse data is accessed via ARM SMCCC firmware calls.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called nvmem-sky1.
++
+ config NVMEM_SPRD_EFUSE
+ 	tristate "Spreadtrum SoC eFuse Support"
+ 	depends on ARCH_SPRD || COMPILE_TEST
+diff --git a/drivers/nvmem/Makefile b/drivers/nvmem/Makefile
+index 7252b8ec88d46..3fd681d80f550 100644
+--- a/drivers/nvmem/Makefile
++++ b/drivers/nvmem/Makefile
+@@ -74,6 +74,8 @@ obj-$(CONFIG_NVMEM_SNVS_LPGPR)		+= nvmem_snvs_lpgpr.o
+ nvmem_snvs_lpgpr-y			:= snvs_lpgpr.o
+ obj-$(CONFIG_NVMEM_SPMI_SDAM)		+= nvmem_qcom-spmi-sdam.o
+ nvmem_qcom-spmi-sdam-y			+= qcom-spmi-sdam.o
++obj-$(CONFIG_NVMEM_SKY1)		+= nvmem-sky1.o
++nvmem-sky1-y				:= sky1-nvmem.o
+ obj-$(CONFIG_NVMEM_SPRD_EFUSE)		+= nvmem_sprd_efuse.o
+ nvmem_sprd_efuse-y			:= sprd-efuse.o
+ obj-$(CONFIG_NVMEM_STM32_ROMEM)		+= nvmem_stm32_romem.o
+diff --git a/drivers/nvmem/sky1-nvmem.c b/drivers/nvmem/sky1-nvmem.c
+new file mode 100644
+index 0000000000000..aaf55aa4db236
+--- /dev/null
++++ b/drivers/nvmem/sky1-nvmem.c
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sky1 NVMEM (eFuse) driver
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ *
++ * Reads efuse data via ARM SMCCC firmware interface.
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/module.h>
++#include <linux/nvmem-provider.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++/* SMC function ID for fuse read request */
++#define SKY1_SIP_FUSE_READ	\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, \
++			   62, 9)
++
++struct sky1_nvmem {
++	struct device *dev;
++};
++
++static int sky1_nvmem_read(void *context, unsigned int offset,
++			   void *val, size_t bytes)
++{
++	struct sky1_nvmem *priv = context;
++	struct arm_smccc_res res;
++	u8 *buf = val;
++	size_t i;
++
++	for (i = 0; i < bytes; i++) {
++		arm_smccc_smc(SKY1_SIP_FUSE_READ, offset + i, 1,
++			      0, 0, 0, 0, 0, &res);
++		if (res.a0 == 0) {
++			dev_err(priv->dev, "Failed to read fuse at offset %u\n",
++				offset + (unsigned int)i);
++			return -EIO;
++		}
++		buf[i] = res.a1 & 0xff;
++	}
++
++	return 0;
++}
++
++static int sky1_nvmem_probe(struct platform_device *pdev)
++{
++	struct nvmem_config config = {
++		.name = "sky1-efuse",
++		.dev = &pdev->dev,
++		.owner = THIS_MODULE,
++		.word_size = 1,
++		.size = 0x500,  /* Total efuse size - OPN at 0x4dc needs 0x4e4 */
++		.read_only = true,
++		.reg_read = sky1_nvmem_read,
++		.add_legacy_fixed_of_cells = true,
++	};
++	struct sky1_nvmem *priv;
++	struct nvmem_device *nvmem;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->dev = &pdev->dev;
++	config.priv = priv;
++
++	nvmem = devm_nvmem_register(&pdev->dev, &config);
++	if (IS_ERR(nvmem))
++		return PTR_ERR(nvmem);
++
++	return 0;
++}
++
++static const struct of_device_id sky1_nvmem_of_match[] = {
++	{ .compatible = "cix,sky1-nvmem-fw" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sky1_nvmem_of_match);
++
++static struct platform_driver sky1_nvmem_driver = {
++	.probe = sky1_nvmem_probe,
++	.driver = {
++		.name = "sky1-nvmem",
++		.of_match_table = sky1_nvmem_of_match,
++	},
++};
++module_platform_driver(sky1_nvmem_driver);
++
++MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
++MODULE_DESCRIPTION("Sky1 NVMEM (eFuse) driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/Kconfig b/drivers/soc/Kconfig
+index a2d65adffb805..a17223668ffe1 100644
+--- a/drivers/soc/Kconfig
++++ b/drivers/soc/Kconfig
+@@ -7,6 +7,7 @@ source "drivers/soc/aspeed/Kconfig"
+ source "drivers/soc/atmel/Kconfig"
+ source "drivers/soc/bcm/Kconfig"
+ source "drivers/soc/canaan/Kconfig"
++source "drivers/soc/cix/Kconfig"
+ source "drivers/soc/cirrus/Kconfig"
+ source "drivers/soc/fsl/Kconfig"
+ source "drivers/soc/fujitsu/Kconfig"
+diff --git a/drivers/soc/Makefile b/drivers/soc/Makefile
+index c9e689080ceb7..22aac89ba0b12 100644
+--- a/drivers/soc/Makefile
++++ b/drivers/soc/Makefile
+@@ -8,6 +8,7 @@ obj-y				+= aspeed/
+ obj-$(CONFIG_ARCH_AT91)		+= atmel/
+ obj-y				+= bcm/
+ obj-$(CONFIG_ARCH_CANAAN)	+= canaan/
++obj-$(CONFIG_ARCH_CIX)		+= cix/
+ obj-$(CONFIG_EP93XX_SOC)        += cirrus/
+ obj-$(CONFIG_ARCH_DOVE)		+= dove/
+ obj-$(CONFIG_MACH_DOVE)		+= dove/
+diff --git a/drivers/soc/cix/Kconfig b/drivers/soc/cix/Kconfig
+new file mode 100644
+index 0000000000000..01acdfdebd33d
+--- /dev/null
++++ b/drivers/soc/cix/Kconfig
+@@ -0,0 +1,87 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++config CIX_SKY1_SOCINFO
++	tristate "CIX Sky1 SoC information driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on NVMEM
++	default ARCH_CIX
++	help
++	  Say yes here to enable support for the CIX Sky1 SoC information
++	  driver. This provides SoC identification, firmware version
++	  information, and board details via sysfs.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called sky1-socinfo.
++
++config CIX_DDR_LP
++	tristate "CIX DDR Low Power control driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on HAVE_ARM_SMCCC
++	default ARCH_CIX
++	help
++	  Say yes here to enable support for the CIX DDR low power control
++	  driver. This allows enabling/disabling DDR self-refresh and power-down
++	  states via SMC calls to TF-A firmware.
++
++	  The driver exposes a sysfs interface at /sys/devices/.../on to control
++	  DDR low power mode (1=enabled, 0=disabled).
++
++	  This driver can also be built as a module. If so, the module
++	  will be called cix-ddr-lp.
++
++config CIX_ACPI_RESOURCE_LOOKUP
++	bool "CIX ACPI resource lookup driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on ACPI
++	depends on RESET_CONTROLLER
++	default ARCH_CIX
++	help
++	  Processes custom CIX DSDT tables (RSTL, RSNL, DLKL) to register
++	  reset control lookups, assign names to platform resources, and
++	  create device link dependencies. This bridges CIX's ACPI firmware
++	  with the Linux kernel's standard resource lookup mechanisms.
++
++	  Required for CIX Sky1 ACPI boot with drivers that use
++	  platform_get_resource_byname() or devm_reset_control_get().
++
++config CIX_ACPI_USB_SCAN
++	bool "CIX ACPI USB scan handler"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on ACPI
++	default ARCH_CIX
++	help
++	  Block PNP0D10 (generic xHCI) platform device creation on CIX Sky1
++	  so the vendor USB driver chain (cdnsp-sky1 + cdnsp-plat) can own
++	  the hardware instead of xhci-plat.
++
++	  Required for proper USB controller initialization under ACPI boot.
++
++config CIX_ACPI_GPU_SCAN
++	bool "CIX ACPI GPU coherency scan handler"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on ACPI
++	default ARCH_CIX
++	help
++	  Override _CCA (Cache Coherency Attribute) for the CIX Sky1 GPU
++	  (CIXH5000) from coherent to non-coherent during ACPI enumeration.
++
++	  The Sky1 DSDT declares the GPU as coherent (_CCA=1) but the SoC
++	  was designed for non-coherent GPU operation.  Without this fix,
++	  the GPU enables ACE-Lite coherency causing stale framebuffer
++	  reads by the non-coherent DPU (display corruption).
++
++config CIX_BUS_PERF
++	tristate "CIX Bus Performance State Control driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on PM_GENERIC_DOMAINS
++	depends on PM_OPP
++	default ARCH_CIX
++	help
++	  Say yes here to enable support for the CIX CI700/NI700 bus frequency
++	  control driver. This allows controlling memory interconnect frequency
++	  via SCMI performance domains.
++
++	  The driver exposes a sysfs interface for setting bus frequency.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called cix-bus-perf.
+diff --git a/drivers/soc/cix/Makefile b/drivers/soc/cix/Makefile
+new file mode 100644
+index 0000000000000..c7e56f72ce087
+--- /dev/null
++++ b/drivers/soc/cix/Makefile
+@@ -0,0 +1,7 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_CIX_SKY1_SOCINFO)	+= sky1-socinfo.o
++obj-$(CONFIG_CIX_DDR_LP)	+= cix-ddr-lp.o
++obj-$(CONFIG_CIX_BUS_PERF)	+= cix-bus-perf.o
++obj-$(CONFIG_CIX_ACPI_RESOURCE_LOOKUP)	+= cix-acpi-resource-lookup.o
++obj-$(CONFIG_CIX_ACPI_USB_SCAN)		+= cix-acpi-usb-scan.o
++obj-$(CONFIG_CIX_ACPI_GPU_SCAN)		+= cix-acpi-gpu-scan.o
+diff --git a/drivers/soc/cix/cix-acpi-gpu-scan.c b/drivers/soc/cix/cix-acpi-gpu-scan.c
+new file mode 100644
+index 0000000000000..b971828d18410
+--- /dev/null
++++ b/drivers/soc/cix/cix-acpi-gpu-scan.c
+@@ -0,0 +1,78 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * ACPI scan handler to override GPU _CCA on CIX Sky1.
++ *
++ * The Sky1 DSDT declares the GPU (CIXH5000) with _CCA=1 (coherent),
++ * but the SoC was designed for non-coherent GPU operation:
++ *
++ *   - Device Tree has system-coherency=0 and no dma-coherent on the GPU
++ *   - The GPU shares framebuffer memory with the DPU which is non-coherent
++ *   - When the GPU enables ACE-Lite coherency (from _CCA=1) while the DPU
++ *     reads non-coherently from DRAM, the DPU sees stale data causing
++ *     visible rendering artefacts (interleaved patches filling in slowly)
++ *
++ * This scan handler intercepts CIXH5000 during ACPI device enumeration
++ * and clears the coherent_dma flag BEFORE the platform device and its
++ * DMA/IOMMU domain are configured.  This ensures the entire DMA path
++ * (allocations, mappings, cache maintenance) matches DT behaviour.
++ *
++ * The Panthor driver also has a Sky1-specific quirk that sets the GPU
++ * coherency protocol to NONE, but without this scan handler the kernel
++ * DMA layer still treats the device as coherent.
++ */
++
++#ifdef CONFIG_ACPI
++
++#include <linux/acpi.h>
++#include <linux/init.h>
++
++static bool sky1_gpu_acpi_detected;
++
++static int sky1_gpu_scan_attach(struct acpi_device *adev,
++				const struct acpi_device_id *id)
++{
++	if (!sky1_gpu_acpi_detected)
++		return 0;
++
++	dev_info(&adev->dev,
++		 "Sky1: overriding GPU _CCA to non-coherent (DT parity)\n");
++	adev->flags.coherent_dma = 0;
++
++	/* Return 0 to allow normal platform device creation to proceed */
++	return 0;
++}
++
++static const struct acpi_device_id sky1_gpu_scan_ids[] = {
++	{ "CIXH5000", 0 },
++	{ },
++};
++
++static struct acpi_scan_handler sky1_gpu_scan_handler = {
++	.ids = sky1_gpu_scan_ids,
++	.attach = sky1_gpu_scan_attach,
++};
++
++static int __init sky1_gpu_acpi_init(void)
++{
++	struct acpi_table_header *header;
++
++	if (acpi_disabled)
++		return 0;
++
++	/* Use MCFG OEM ID to identify Sky1, same as PCIe and USB handlers */
++	if (ACPI_FAILURE(acpi_get_table(ACPI_SIG_MCFG, 0, &header)))
++		return 0;
++
++	sky1_gpu_acpi_detected = !memcmp(header->oem_id, "CIXTEK", 6) &&
++				  !memcmp(header->oem_table_id, "SKY1EDK2", 8);
++	acpi_put_table(header);
++
++	if (!sky1_gpu_acpi_detected)
++		return 0;
++
++	pr_info("Sky1 GPU: registering CIXH5000 scan handler\n");
++	return acpi_scan_add_handler(&sky1_gpu_scan_handler);
++}
++arch_initcall(sky1_gpu_acpi_init);
++
++#endif /* CONFIG_ACPI */
+diff --git a/drivers/soc/cix/cix-acpi-resource-lookup.c b/drivers/soc/cix/cix-acpi-resource-lookup.c
+new file mode 100644
+index 0000000000000..0abe62febd504
+--- /dev/null
++++ b/drivers/soc/cix/cix-acpi-resource-lookup.c
+@@ -0,0 +1,394 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX ACPI Resource Lookup driver
++ *
++ * Processes custom DSDT tables (RSTL, RSNL, DLKL) attached to CIX ACPI
++ * devices to bridge the gap between CIX's ACPI firmware and the Linux
++ * kernel's standard resource lookup mechanisms.
++ *
++ * RSTL (Reset Lookup):   Registers reset_control_lookup entries so that
++ *                        devm_reset_control_get() works under ACPI.
++ * RSNL (Resource Names): Assigns names to platform_device resources by
++ *                        index so platform_get_resource_byname() works.
++ * DLKL (Device Links):   Creates device_link dependencies between
++ *                        supplier and consumer devices.
++ * CLKT (Clock Table):    Creates device_link from each CLKT consumer to
++ *                        the ACPI clock provider (CIXHA010) so that
++ *                        clk-sky1-acpi probes before its consumers.
++ *
++ * Based on vendor driver by Zichar Zhang <zichar.zhang@cixtech.com>
++ */
++
++#include <linux/acpi.h>
++#include <linux/device.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/reset-controller.h>
++
++static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
++{
++	struct acpi_device *adev;
++
++	if (!obj)
++		return NULL;
++
++	if (obj->type == ACPI_TYPE_LOCAL_REFERENCE) {
++		adev = acpi_fetch_acpi_dev(obj->reference.handle);
++	} else if (obj->type == ACPI_TYPE_STRING) {
++		acpi_handle handle;
++		acpi_status status;
++
++		status = acpi_get_handle(NULL, obj->string.pointer, &handle);
++		if (ACPI_FAILURE(status))
++			return NULL;
++		adev = acpi_fetch_acpi_dev(handle);
++	} else {
++		return NULL;
++	}
++
++	if (!adev)
++		return NULL;
++
++	return bus_find_device_by_acpi_dev(&platform_bus_type, adev);
++}
++
++static const char *acpi_obj_to_devname(const union acpi_object *obj)
++{
++	struct device *dev;
++
++	dev = acpi_obj_to_platform_device(obj);
++	if (!dev)
++		return NULL;
++
++	return dev_name(dev);
++}
++
++/*
++ * RSTL — Reset Lookup Table
++ *
++ * Each entry: { <provider_ref>, <index>, <consumer_ref>, [<con_id>] }
++ * Registers a reset_control_lookup so devm_reset_control_get() can find
++ * the reset line by consumer device name and optional connection ID.
++ */
++static int reset_lookup_handle(acpi_handle handle,
++			       const union acpi_object *obj, void *data)
++{
++	struct device *dev = data;
++	const union acpi_object *child, *el;
++	struct reset_control_lookup *lookup;
++	int i, pcnt, count = 0;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt < 3)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    el[1].type != ACPI_TYPE_INTEGER ||
++		    (el[2].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[2].type != ACPI_TYPE_STRING) ||
++		    (pcnt > 3 && el[3].type != ACPI_TYPE_STRING))
++			continue;
++
++		lookup = devm_kzalloc(dev, sizeof(*lookup), GFP_KERNEL);
++		if (!lookup)
++			return -ENOMEM;
++		INIT_LIST_HEAD(&lookup->list);
++		lookup->provider = acpi_obj_to_devname(&el[0]);
++		lookup->index = el[1].integer.value;
++		lookup->dev_id = acpi_obj_to_devname(&el[2]);
++		lookup->con_id = pcnt > 3 ?
++			devm_kstrdup(dev, el[3].string.pointer, GFP_KERNEL)
++			: NULL;
++
++		if (!lookup->provider || (!lookup->dev_id && !lookup->con_id))
++			continue;
++
++		reset_controller_add_lookup(lookup, 1);
++
++		dev_dbg(&adev->dev,
++			"rst lookup: prov[%s] idx[%llu] dev[%s] con[%s]\n",
++			lookup->provider, el[1].integer.value,
++			lookup->dev_id, lookup->con_id);
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "reset lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * RSNL — Resource Name Lookup Table
++ *
++ * Each entry: { <device_ref>, <type>, <index>, <name> }
++ * Assigns a name to the device's platform resource at <type>/<index>,
++ * so platform_get_resource_byname() can find it.
++ */
++static int resource_name_lookup_handle(acpi_handle handle,
++				       const union acpi_object *obj, void *data)
++{
++	struct device *rdev, *dev = data;
++	const union acpi_object *child, *el;
++	int i, pcnt, count = 0, index;
++	unsigned int type;
++	struct resource *res;
++	const char *name;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt != 4)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    el[1].type != ACPI_TYPE_INTEGER ||
++		    el[2].type != ACPI_TYPE_INTEGER ||
++		    el[3].type != ACPI_TYPE_STRING)
++			continue;
++
++		rdev = acpi_obj_to_platform_device(&el[0]);
++		type = el[1].integer.value;
++		index = el[2].integer.value;
++		name = devm_kstrdup(dev, el[3].string.pointer, GFP_KERNEL);
++		if (!rdev || !name)
++			continue;
++
++		res = platform_get_resource(to_platform_device(rdev),
++					    type, index);
++		if (!res)
++			continue;
++		res->name = name;
++
++		if ((res->flags & IORESOURCE_IRQ) &&
++		    (res->flags & IORESOURCE_DISABLED))
++			acpi_irq_get(ACPI_HANDLE(rdev), index, res);
++
++		dev_dbg(&adev->dev, "resource name [%s][0x%x][%d]->[%s]\n",
++			dev_name(rdev), type, index, name);
++
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "resource name lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * DLKL — Device Link Lookup Table
++ *
++ * Each entry: { <supplier_ref>, <consumer_ref>, <flags> }
++ * Creates a device_link between supplier and consumer with given flags.
++ */
++static int device_link_lookup_handle(acpi_handle handle,
++				     const union acpi_object *obj, void *data)
++{
++	struct device *consumer, *supplier;
++	const union acpi_object *child, *el;
++	int i, pcnt, count = 0;
++	u32 flags;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt != 3)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    (el[1].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[1].type != ACPI_TYPE_STRING) ||
++		    el[2].type != ACPI_TYPE_INTEGER)
++			continue;
++
++		supplier = acpi_obj_to_platform_device(&el[0]);
++		consumer = acpi_obj_to_platform_device(&el[1]);
++		flags = (u32)el[2].integer.value;
++
++		if (!supplier || !consumer)
++			continue;
++
++		device_link_add(consumer, supplier, flags);
++
++		dev_dbg(&adev->dev, "device link [%s]->[%s] flags[%u]\n",
++			dev_name(consumer), dev_name(supplier), flags);
++
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "device link lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * CLKT — Clock Table
++ *
++ * Devices with CLKT tables depend on the ACPI clock provider
++ * (CIXHA010 / clk-sky1-acpi) to register clkdev lookups before
++ * they can probe.  Create a device_link to enforce this ordering
++ * so consumers don't need to rely on deferred probe.
++ */
++static int clock_dependency_handle(acpi_handle handle,
++				   const union acpi_object *obj, void *data)
++{
++	struct acpi_device *adev;
++	struct device *consumer, *supplier;
++
++	if (!obj || obj->package.count == 0)
++		return 0;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	consumer = bus_find_device_by_acpi_dev(&platform_bus_type, adev);
++	if (!consumer)
++		return 0;
++
++	supplier = bus_find_device_by_name(&platform_bus_type, NULL,
++					   "CIXHA010:00");
++	if (!supplier || supplier == consumer)
++		return 0;
++
++	device_link_add(consumer, supplier, DL_FLAG_AUTOREMOVE_CONSUMER);
++
++	dev_dbg(data, "clock link [%s]->[CIXHA010:00]\n", dev_name(consumer));
++
++	return 1;
++}
++
++static int acpi_res_lookup_eval(acpi_handle handle, const char *name,
++		int (*func)(acpi_handle, const union acpi_object *, void *),
++		void *data)
++{
++	struct acpi_buffer output = {ACPI_ALLOCATE_BUFFER, NULL};
++	acpi_status status;
++	int ret;
++
++	status = acpi_evaluate_object_typed(handle, (acpi_string)name,
++					    NULL, &output, ACPI_TYPE_PACKAGE);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	ret = func(handle, (const union acpi_object *)output.pointer, data);
++	kfree(output.pointer);
++
++	return ret;
++}
++
++static int acpi_resource_lookup_device(acpi_handle handle, void *data)
++{
++	struct device *dev = data;
++	int ret;
++
++	ret = acpi_res_lookup_eval(handle, "RSTL", reset_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "reset lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "RSNL",
++				   resource_name_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "resource name lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "DLKL",
++				   device_link_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "device link lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "CLKT",
++				   clock_dependency_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "clock dependency handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	return 0;
++}
++
++static acpi_status acpi_bus_res_scan(acpi_handle handle, u32 level,
++				     void *context, void **ret_p)
++{
++	struct device *dev = context;
++	acpi_object_type acpi_type;
++
++	if (!dev)
++		return AE_OK;
++
++	if (ACPI_FAILURE(acpi_get_type(handle, &acpi_type)))
++		return AE_OK;
++
++	if (acpi_type != ACPI_TYPE_DEVICE)
++		return AE_OK;
++
++	acpi_resource_lookup_device(handle, dev);
++
++	return AE_OK;
++}
++
++static int acpi_resource_lookup_probe(struct platform_device *pdev)
++{
++	acpi_walk_namespace(ACPI_TYPE_ANY, ACPI_ROOT_OBJECT,
++			    ACPI_UINT32_MAX, acpi_bus_res_scan, NULL,
++			    &pdev->dev, NULL);
++
++	dev_info(&pdev->dev, "ACPI resource lookup complete\n");
++	return 0;
++}
++
++static const struct acpi_device_id acpi_resource_lookup_match[] = {
++	{ "CIXA1019" },
++	{},
++};
++MODULE_DEVICE_TABLE(acpi, acpi_resource_lookup_match);
++
++static struct platform_driver acpi_resource_lookup_driver = {
++	.driver = {
++		.name = "cix-acpi-resource-lookup",
++		.acpi_match_table = ACPI_PTR(acpi_resource_lookup_match),
++	},
++	.probe = acpi_resource_lookup_probe,
++};
++
++static int __init acpi_resource_lookup_init(void)
++{
++	if (acpi_disabled)
++		return -ENODEV;
++
++	return platform_driver_register(&acpi_resource_lookup_driver);
++}
++subsys_initcall(acpi_resource_lookup_init);
++
++MODULE_DESCRIPTION("CIX ACPI resource lookup driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/cix/cix-acpi-usb-scan.c b/drivers/soc/cix/cix-acpi-usb-scan.c
+new file mode 100644
+index 0000000000000..36767c4feb60f
+--- /dev/null
++++ b/drivers/soc/cix/cix-acpi-usb-scan.c
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * ACPI scan handler to block PNP0D10 (generic xHCI) on CIX Sky1.
++ *
++ * The Sky1 DSDT defines both PNP0D10 (generic xHCI) and CIXH2030/CIXH2031
++ * (vendor USB wrapper/controller) for each USB port, with overlapping MMIO
++ * on the xHCI register block.  The vendor driver chain (cdnsp-sky1 for
++ * CIXH2030 wrapper → cdnsp-plat for CIXH2031 controller) must own the
++ * hardware for proper initialization including timing prescalers, APB
++ * timeout chicken bits, and PHY lifecycle management.
++ *
++ * Block PNP0D10 platform device creation so xhci-plat doesn't race for
++ * the same MMIO region.  Same pattern as pci-sky1-acpi.c blocking PNP0A08.
++ */
++
++#ifdef CONFIG_ACPI
++
++#include <linux/acpi.h>
++#include <linux/init.h>
++
++static bool sky1_usb_acpi_detected;
++
++static int sky1_usb_scan_attach(struct acpi_device *adev,
++				const struct acpi_device_id *id)
++{
++	if (!sky1_usb_acpi_detected)
++		return 0;
++
++	dev_info(&adev->dev,
++		 "Sky1: blocking PNP0D10, CIXH2030/CIXH2031 will handle USB\n");
++	return 1;
++}
++
++static const struct acpi_device_id sky1_usb_scan_ids[] = {
++	{ "PNP0D10", 0 },
++	{ },
++};
++
++static struct acpi_scan_handler sky1_usb_scan_handler = {
++	.ids = sky1_usb_scan_ids,
++	.attach = sky1_usb_scan_attach,
++};
++
++static int __init sky1_usb_acpi_init(void)
++{
++	struct acpi_table_header *header;
++
++	if (acpi_disabled)
++		return 0;
++
++	/* Use MCFG OEM ID to identify Sky1, same as PCIe scan handler */
++	if (ACPI_FAILURE(acpi_get_table(ACPI_SIG_MCFG, 0, &header)))
++		return 0;
++
++	sky1_usb_acpi_detected = !memcmp(header->oem_id, "CIXTEK", 6) &&
++				  !memcmp(header->oem_table_id, "SKY1EDK2", 8);
++	acpi_put_table(header);
++
++	if (!sky1_usb_acpi_detected)
++		return 0;
++
++	pr_info("Sky1 USB: registering PNP0D10 scan handler\n");
++	return acpi_scan_add_handler(&sky1_usb_scan_handler);
++}
++/* Must run before subsys_initcall(acpi_init) which creates platform devices */
++arch_initcall(sky1_usb_acpi_init);
++
++#endif /* CONFIG_ACPI */
+diff --git a/drivers/soc/cix/cix-bus-perf.c b/drivers/soc/cix/cix-bus-perf.c
+new file mode 100644
+index 0000000000000..ec82a485dea5d
+--- /dev/null
++++ b/drivers/soc/cix/cix-bus-perf.c
+@@ -0,0 +1,202 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX Bus Performance State Control driver
++ *
++ * Minimal driver for controlling CI700/NI700 bus frequency via SCMI
++ * performance domains. Provides sysfs interface for testing bus DVFS.
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/pm_domain.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_runtime.h>
++
++struct cix_bus_perf {
++	struct device *dev;
++	unsigned long cur_freq;
++	unsigned long min_freq;
++	unsigned long max_freq;
++};
++
++static int cix_bus_set_freq(struct device *dev, unsigned long freq)
++{
++	struct dev_pm_opp *opp;
++	unsigned int level;
++	int ret;
++
++	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++
++	level = dev_pm_opp_get_level(opp);
++	dev_pm_opp_put(opp);
++
++	ret = dev_pm_genpd_set_performance_state(dev, level);
++	if (ret)
++		dev_err(dev, "failed to set perf state %u: %d\n", level, ret);
++
++	return ret;
++}
++
++static ssize_t cur_freq_show(struct device *dev,
++			     struct device_attribute *attr, char *buf)
++{
++	struct cix_bus_perf *bp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%lu\n", bp->cur_freq);
++}
++
++static ssize_t cur_freq_store(struct device *dev, struct device_attribute *attr,
++			      const char *buf, size_t count)
++{
++	struct cix_bus_perf *bp = dev_get_drvdata(dev);
++	unsigned long freq;
++	struct dev_pm_opp *opp;
++	int ret;
++
++	ret = kstrtoul(buf, 0, &freq);
++	if (ret)
++		return ret;
++
++	/* Find nearest OPP */
++	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++	if (IS_ERR(opp)) {
++		freq = bp->max_freq;
++		opp = dev_pm_opp_find_freq_floor(dev, &freq);
++		if (IS_ERR(opp))
++			return PTR_ERR(opp);
++	}
++	dev_pm_opp_put(opp);
++
++	ret = cix_bus_set_freq(dev, freq);
++	if (ret)
++		return ret;
++
++	bp->cur_freq = freq;
++	dev_info(dev, "Set frequency to %lu Hz\n", freq);
++	return count;
++}
++static DEVICE_ATTR_RW(cur_freq);
++
++static ssize_t available_frequencies_show(struct device *dev,
++					  struct device_attribute *attr,
++					  char *buf)
++{
++	struct dev_pm_opp *opp;
++	unsigned long freq = 0;
++	int len = 0;
++
++	while (1) {
++		opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++		if (IS_ERR(opp))
++			break;
++		len += sysfs_emit_at(buf, len, "%lu ", freq);
++		dev_pm_opp_put(opp);
++		freq++;
++	}
++
++	if (len > 0)
++		buf[len - 1] = '\n';
++
++	return len;
++}
++static DEVICE_ATTR_RO(available_frequencies);
++
++static struct attribute *bus_perf_attrs[] = {
++	&dev_attr_cur_freq.attr,
++	&dev_attr_available_frequencies.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(bus_perf);
++
++static int cix_bus_perf_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cix_bus_perf *bp;
++	struct dev_pm_opp *opp;
++	unsigned long freq;
++	int ret;
++
++	bp = devm_kzalloc(dev, sizeof(*bp), GFP_KERNEL);
++	if (!bp)
++		return -ENOMEM;
++
++	bp->dev = dev;
++	platform_set_drvdata(pdev, bp);
++
++	/* Enable runtime PM to attach to genpd */
++	pm_runtime_enable(dev);
++	pm_runtime_get_sync(dev);
++
++	/* Check if OPPs were added by genpd attach */
++	ret = dev_pm_opp_get_opp_count(dev);
++	if (ret <= 0) {
++		dev_info(dev, "No OPPs available from power domain\n");
++		pm_runtime_put(dev);
++		pm_runtime_disable(dev);
++		return ret < 0 ? ret : -ENODEV;
++	}
++
++	dev_info(dev, "Found %d OPPs\n", ret);
++
++	/* Get frequency range */
++	freq = 0;
++	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
++	if (!IS_ERR(opp)) {
++		bp->min_freq = freq;
++		dev_pm_opp_put(opp);
++	}
++
++	freq = ULONG_MAX;
++	opp = dev_pm_opp_find_freq_floor(dev, &freq);
++	if (!IS_ERR(opp)) {
++		bp->max_freq = freq;
++		dev_pm_opp_put(opp);
++	}
++
++	/* Pin to max frequency on boot */
++	ret = cix_bus_set_freq(dev, bp->max_freq);
++	if (ret) {
++		dev_err(dev, "failed to set max frequency: %d\n", ret);
++		pm_runtime_put(dev);
++		pm_runtime_disable(dev);
++		return ret;
++	}
++	bp->cur_freq = bp->max_freq;
++
++	dev_info(dev, "Frequency range: %lu - %lu Hz (pinned to max)\n",
++		 bp->min_freq, bp->max_freq);
++
++	return 0;
++}
++
++static void cix_bus_perf_remove(struct platform_device *pdev)
++{
++	pm_runtime_put(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++}
++
++static const struct of_device_id cix_bus_perf_match[] = {
++	{ .compatible = "cix,bus-ci700" },
++	{ .compatible = "cix,bus-ni700" },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cix_bus_perf_match);
++
++static struct platform_driver cix_bus_perf_driver = {
++	.probe = cix_bus_perf_probe,
++	.remove = cix_bus_perf_remove,
++	.driver = {
++		.name = "cix-bus-perf",
++		.of_match_table = cix_bus_perf_match,
++		.dev_groups = bus_perf_groups,
++	},
++};
++module_platform_driver(cix_bus_perf_driver);
++
++MODULE_DESCRIPTION("CIX Bus Performance State Control Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/cix/cix-ddr-lp.c b/drivers/soc/cix/cix-ddr-lp.c
+new file mode 100644
+index 0000000000000..09076f37a11c9
+--- /dev/null
++++ b/drivers/soc/cix/cix-ddr-lp.c
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX DDR Low Power driver
++ *
++ * Controls DDR self-refresh and power-down states via SMC call to TF-A.
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/arm-smccc.h>
++
++#define CIX_SIP_SET_DDRLP	0xc2000010
++
++struct cix_ddrlp_data {
++	int value;
++	int disable_depth;
++	struct mutex lock;
++};
++
++static struct cix_ddrlp_data *gdd;
++
++static int cix_disable_ddrlp(struct cix_ddrlp_data *dd)
++{
++	struct arm_smccc_res res;
++
++	mutex_lock(&dd->lock);
++	if (dd->disable_depth != 0) {
++		dd->disable_depth++;
++		mutex_unlock(&dd->lock);
++		return 0;
++	}
++
++	arm_smccc_smc(CIX_SIP_SET_DDRLP, 0, 0, 0, 0, 0, 0, 0, &res);
++	if (res.a0) {
++		mutex_unlock(&dd->lock);
++		return -EIO;
++	}
++	dd->disable_depth++;
++	dd->value = 0;
++	mutex_unlock(&dd->lock);
++	return 0;
++}
++
++static int cix_enable_ddrlp(struct cix_ddrlp_data *dd)
++{
++	struct arm_smccc_res res;
++
++	mutex_lock(&dd->lock);
++	if (dd->disable_depth == 0) {
++		mutex_unlock(&dd->lock);
++		return 0;
++	}
++	dd->disable_depth--;
++	if (dd->disable_depth == 0) {
++		arm_smccc_smc(CIX_SIP_SET_DDRLP, 1, 0, 0, 0, 0, 0, 0, &res);
++		if (res.a0) {
++			mutex_unlock(&dd->lock);
++			return -EIO;
++		}
++		dd->value = 1;
++	}
++	mutex_unlock(&dd->lock);
++	return 0;
++}
++
++int cix_set_ddrlp(int on)
++{
++	if (!gdd)
++		return -ENODEV;
++
++	if (on)
++		return cix_enable_ddrlp(gdd);
++	else
++		return cix_disable_ddrlp(gdd);
++}
++EXPORT_SYMBOL(cix_set_ddrlp);
++
++static ssize_t on_show(struct device *dev,
++		       struct device_attribute *attr, char *buf)
++{
++	struct cix_ddrlp_data *dd = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%d\n", dd->value);
++}
++
++static ssize_t on_store(struct device *dev, struct device_attribute *attr,
++			const char *buf, size_t count)
++{
++	int ret;
++	int value;
++	struct cix_ddrlp_data *dd = dev_get_drvdata(dev);
++
++	ret = kstrtoint(buf, 0, &value);
++	if (ret)
++		return -EINVAL;
++
++	if (value != 0 && value != 1)
++		return -EINVAL;
++
++	if (value == dd->value)
++		return count;
++
++	ret = cix_set_ddrlp(value);
++	if (ret < 0) {
++		dev_err(dev, "failed to set DDR LP: %d\n", ret);
++		return ret;
++	}
++	return count;
++}
++static DEVICE_ATTR_RW(on);
++
++static struct attribute *ddrlp_attrs[] = {
++	&dev_attr_on.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(ddrlp);
++
++static int cix_ddrlp_probe(struct platform_device *pdev)
++{
++	struct cix_ddrlp_data *cix_ddrlp;
++	struct arm_smccc_res res;
++
++	cix_ddrlp = devm_kzalloc(&pdev->dev, sizeof(*cix_ddrlp), GFP_KERNEL);
++	if (!cix_ddrlp)
++		return -ENOMEM;
++
++	gdd = cix_ddrlp;
++	cix_ddrlp->disable_depth = 0;
++	mutex_init(&cix_ddrlp->lock);
++	platform_set_drvdata(pdev, cix_ddrlp);
++
++	/*
++	 * TF-A's DDR LP handler saves register state on disable and restores
++	 * on enable. We must cycle through disable->enable on init to capture
++	 * the proper boot-time register values, otherwise the first enable
++	 * would restore zeros.
++	 */
++	arm_smccc_smc(CIX_SIP_SET_DDRLP, 0, 0, 0, 0, 0, 0, 0, &res);
++	if (res.a0) {
++		dev_warn(&pdev->dev, "DDR LP disable failed: %ld\n", res.a0);
++	}
++	arm_smccc_smc(CIX_SIP_SET_DDRLP, 1, 0, 0, 0, 0, 0, 0, &res);
++	if (res.a0) {
++		dev_warn(&pdev->dev, "DDR LP enable failed: %ld\n", res.a0);
++	}
++	cix_ddrlp->value = 1;
++
++	dev_info(&pdev->dev, "DDR low power control initialized\n");
++	return 0;
++}
++
++static const struct of_device_id cix_ddrlp_of_match[] = {
++	{ .compatible = "cix,ddr-lp" },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cix_ddrlp_of_match);
++
++static struct platform_driver cix_ddrlp_driver = {
++	.probe = cix_ddrlp_probe,
++	.driver = {
++		.name = "cix-ddr-lp",
++		.of_match_table = cix_ddrlp_of_match,
++		.dev_groups = ddrlp_groups,
++	},
++};
++module_platform_driver(cix_ddrlp_driver);
++
++MODULE_DESCRIPTION("CIX DDR Low Power Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/cix/sky1-socinfo.c b/drivers/soc/cix/sky1-socinfo.c
+new file mode 100644
+index 0000000000000..6e7dd9a7f036d
+--- /dev/null
++++ b/drivers/soc/cix/sky1-socinfo.c
+@@ -0,0 +1,478 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX Sky1 SoC information driver
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ *
++ * Provides SoC identification, firmware version reporting, and board
++ * information via sysfs attributes.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/sys_soc.h>
++
++/* OPN (Ordering Part Number) field masks */
++#define OPN_REVISION_MASK		GENMASK_ULL(13, 8)
++#define OPN_ROADMAP_MASK		GENMASK_ULL(35, 24)
++#define OPN_MODEL_MASK			GENMASK_ULL(51, 36)
++#define OPN_SEGMENT_MASK		GENMASK_ULL(56, 52)
++
++/* Revision codes */
++#define REVISION_A0			0x08
++#define REVISION_A1			0x09
++#define REVISION_B0			0x10
++#define REVISION_B1			0x11
++
++/* Roadmap codes */
++#define ROADMAP_A11			0x111
++#define ROADMAP_A12			0x112
++#define ROADMAP_B11			0x211
++#define ROADMAP_B12			0x212
++#define ROADMAP_C11			0x311
++#define ROADMAP_C12			0x312
++
++/* Model codes */
++#define MODEL_8180			0x3100
++#define MODEL_2100			0x2100
++#define MODEL_1100			0x1100
++#define MODEL_0100			0x0100
++
++/* Segment codes */
++#define SEGMENT_A			0x01
++#define SEGMENT_P			0x02
++#define SEGMENT_E			0x03
++#define SEGMENT_F			0x04
++#define SEGMENT_H			0x05
++#define SEGMENT_G			0x06
++#define SEGMENT_D			0x07
++#define SEGMENT_S			0x08
++#define SEGMENT_X			0x09
++#define SEGMENT_W			0x10
++#define SEGMENT_C			0x11
++
++/* Firmware version offsets in SRAM */
++#define FW_SE_OFFSET			0x000
++#define FW_PBL_OFFSET			0x080
++#define FW_ATF_OFFSET			0x100
++#define FW_PM_OFFSET			0x180
++#define FW_TEE_OFFSET			0x200
++#define FW_UEFI_OFFSET			0x280
++#define FW_EC_OFFSET			0x300
++#define FW_BOARD_ID_OFFSET		0x380
++#define FW_PD_OFFSET			0x400
++
++#define FW_VERSION_MAX_LEN		0x7f
++
++/* Board ID field masks */
++#define BOARD_ID_PCB_SKU_MASK		(BIT(0) | BIT(1) | BIT(2) | BIT(6))
++#define BOARD_ID_MEM_TYPE_MASK		(BIT(3) | BIT(4) | BIT(5) | BIT(7))
++#define BOARD_ID_REVISION_MASK		GENMASK(9, 8)
++
++/* PCB SKU codes */
++#define PCB_SKU_MERAK			0x0
++#define PCB_SKU_MIZAR			0x1
++#define PCB_SKU_MERAK_DAP		0x2
++#define PCB_SKU_PHECDA_SLT		0x3
++#define PCB_SKU_PHECDA			0x4
++#define PCB_SKU_MEGREZ			0x5
++#define PCB_SKU_PHECDA_DAP		0x6
++
++/* Memory type codes */
++#define MEM_SAMSUNG_LP5_315B_4G_SR	0x0
++#define MEM_HYNIX_LP4X_200B_4G_DR	0x1
++#define MEM_SAMSUNG_LP5X_315B_8G_DR	0x2
++#define MEM_SAMSUNG_LP5_315B_8G_DR	0x3
++#define MEM_SAMSUNG_LP5X_441B_8G_SR_OLD	0x4
++#define MEM_SAMSUNG_LP5_441B_4G_SR	0x5
++#define MEM_SAMSUNG_LP5X_441B_8G_SR_NEW	0x6
++
++struct sky1_socinfo {
++	struct device *dev;
++	void __iomem *sram_base;
++	struct soc_device *soc_dev;
++	u64 opn;
++
++	/* Firmware versions */
++	char *fw_se;
++	char *fw_pbl;
++	char *fw_atf;
++	char *fw_pm;
++	char *fw_tee;
++	char *fw_uefi;
++	char *fw_ec;
++	char *fw_pd;
++
++	/* Board info */
++	u16 board_id_raw;
++	char *pcb_sku;
++	char *pmic;
++	char *memory_type;
++	char *board_revision;
++
++	/* OPN info */
++	char *opn_string;
++};
++
++static const char *sky1_revision_str(u32 rev)
++{
++	switch (rev) {
++	case REVISION_A0:	return "A0";
++	case REVISION_A1:	return "A1";
++	case REVISION_B0:	return "B0";
++	case REVISION_B1:	return "B1";
++	default:		return "Unknown";
++	}
++}
++
++static const char *sky1_roadmap_str(u32 roadmap)
++{
++	switch (roadmap) {
++	case ROADMAP_A11:	return "A11";
++	case ROADMAP_A12:	return "A12";
++	case ROADMAP_B11:	return "B11";
++	case ROADMAP_B12:	return "B12";
++	case ROADMAP_C11:	return "C11";
++	case ROADMAP_C12:	return "C12";
++	default:		return "Unknown";
++	}
++}
++
++static const char *sky1_model_str(u32 model)
++{
++	switch (model) {
++	case MODEL_8180:	return "8180";
++	case MODEL_2100:	return "2100";
++	case MODEL_1100:	return "1100";
++	case MODEL_0100:	return "0100";
++	default:		return "Unknown";
++	}
++}
++
++static const char *sky1_segment_str(u32 segment)
++{
++	switch (segment) {
++	case SEGMENT_A:		return "A";
++	case SEGMENT_P:		return "P";
++	case SEGMENT_E:		return "E";
++	case SEGMENT_F:		return "F";
++	case SEGMENT_H:		return "H";
++	case SEGMENT_G:		return "G";
++	case SEGMENT_D:		return "D";
++	case SEGMENT_S:		return "S";
++	case SEGMENT_X:		return "X";
++	case SEGMENT_W:		return "W";
++	case SEGMENT_C:		return "C";
++	default:		return "Unknown";
++	}
++}
++
++static char *sky1_read_fw_version(struct device *dev, void __iomem *base)
++{
++	char buf[FW_VERSION_MAX_LEN + 1];
++	int i;
++
++	for (i = 0; i < FW_VERSION_MAX_LEN; i++) {
++		buf[i] = readb(base + i);
++		if (!buf[i])
++			break;
++	}
++	buf[i] = '\0';
++
++	if (i > 0 && i < FW_VERSION_MAX_LEN)
++		return devm_kasprintf(dev, GFP_KERNEL, "Version %s", buf);
++
++	return devm_kstrdup(dev, "Unknown", GFP_KERNEL);
++}
++
++static char *sky1_read_pd_version(struct device *dev, void __iomem *base)
++{
++	u8 pd1_maj, pd1_min, pd2_maj, pd2_min;
++
++	pd1_maj = readb(base);
++	pd1_min = readb(base + 1);
++	pd2_maj = readb(base + 2);
++	pd2_min = readb(base + 3);
++
++	return devm_kasprintf(dev, GFP_KERNEL,
++			      "PD1 major: 0x%x minor: 0x%x; PD2 major: 0x%x minor: 0x%x",
++			      pd1_maj, pd1_min, pd2_maj, pd2_min);
++}
++
++static void sky1_parse_board_id(struct sky1_socinfo *info)
++{
++	u16 board_id = info->board_id_raw;
++	u32 pcb_sku, mem_type, board_rev;
++
++	/* Extract PCB SKU: bits 0-2, 6 -> remap bit 6 to bit 3 */
++	pcb_sku = (board_id & 0x7) | ((board_id & BIT(6)) >> 3);
++
++	switch (pcb_sku) {
++	case PCB_SKU_MERAK:
++		info->pcb_sku = "MERAK";
++		info->pmic = "MPS5475x3";
++		break;
++	case PCB_SKU_MIZAR:
++		info->pcb_sku = "MIZAR";
++		info->pmic = "MPS5475x3";
++		break;
++	case PCB_SKU_MERAK_DAP:
++		info->pcb_sku = "MERAK_DAP";
++		info->pmic = "MPS5475x3";
++		break;
++	case PCB_SKU_PHECDA_SLT:
++		info->pcb_sku = "PHECDA_SLT";
++		info->pmic = "MP2845x2+DRMOS";
++		break;
++	case PCB_SKU_PHECDA:
++		info->pcb_sku = "PHECDA";
++		info->pmic = "MP2845x2+DRMOS";
++		break;
++	case PCB_SKU_MEGREZ:
++		info->pcb_sku = "MEGREZ";
++		info->pmic = "MPS5475x2+Buckx1";
++		break;
++	case PCB_SKU_PHECDA_DAP:
++		info->pcb_sku = "PHECDA_DAP";
++		info->pmic = "MP2845x2+DRMOS";
++		break;
++	default:
++		info->pcb_sku = "Reserved";
++		info->pmic = "Reserved";
++		break;
++	}
++
++	/* Extract memory type: bits 3-5, 7 -> remap bit 7 to bit 3 */
++	mem_type = ((board_id >> 3) & 0x7) | ((board_id & BIT(7)) >> 4);
++
++	switch (mem_type) {
++	case MEM_SAMSUNG_LP5_315B_4G_SR:
++		info->memory_type = "Samsung LP5 315b 4G Single Rank (K3LKBKB0BM-MGCP)";
++		break;
++	case MEM_HYNIX_LP4X_200B_4G_DR:
++		info->memory_type = "Hynix LP4x 200b 4G Dual Rank (H9HCNNNCPMMLXR-NEE)";
++		break;
++	case MEM_SAMSUNG_LP5X_315B_8G_DR:
++		info->memory_type = "Samsung LP5x 315b 8G Dual Rank (K3KL9L90QM-MGCT)";
++		break;
++	case MEM_SAMSUNG_LP5_315B_8G_DR:
++		info->memory_type = "Samsung LP5 315b 8G Dual Rank (K3LKCKC0BM-MGCP)";
++		break;
++	case MEM_SAMSUNG_LP5X_441B_8G_SR_OLD:
++		info->memory_type = "Samsung LP5x 441b 8G Single Rank (K3KL3L30QM-JGCT 1z nm)";
++		break;
++	case MEM_SAMSUNG_LP5_441B_4G_SR:
++		info->memory_type = "Samsung LP5 441b 4G Single Rank (K3KL1L10GM-JGCT 1a nm)";
++		break;
++	case MEM_SAMSUNG_LP5X_441B_8G_SR_NEW:
++		info->memory_type = "Samsung LP5x 441b 8G Single Rank (K3KL3L30QM-JGCT 1a nm)";
++		break;
++	default:
++		info->memory_type = "Reserved";
++		break;
++	}
++
++	/* Extract board revision: bits 8-9 */
++	board_rev = FIELD_GET(BOARD_ID_REVISION_MASK, board_id);
++
++	switch (board_rev) {
++	case 0:
++		info->board_revision = "Rev A";
++		break;
++	case 1:
++		info->board_revision = "Rev B";
++		break;
++	case 2:
++		info->board_revision = "Rev C";
++		break;
++	case 3:
++		info->board_revision = "Rev D";
++		break;
++	default:
++		info->board_revision = "Unknown";
++		break;
++	}
++}
++
++static void sky1_parse_opn(struct sky1_socinfo *info)
++{
++	u32 revision = FIELD_GET(OPN_REVISION_MASK, info->opn);
++	u32 roadmap = FIELD_GET(OPN_ROADMAP_MASK, info->opn);
++	u32 model = FIELD_GET(OPN_MODEL_MASK, info->opn);
++	u32 segment = FIELD_GET(OPN_SEGMENT_MASK, info->opn);
++
++	info->opn_string = devm_kasprintf(info->dev, GFP_KERNEL, "%s%s%s%s",
++					  sky1_segment_str(segment),
++					  sky1_model_str(model),
++					  sky1_roadmap_str(roadmap),
++					  sky1_revision_str(revision));
++}
++
++static ssize_t firmware_version_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
++{
++	struct sky1_socinfo *info = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf,
++			  "SE Version: %s\n"
++			  "PBL Version: %s\n"
++			  "ATF Version: %s\n"
++			  "PM Version: %s\n"
++			  "TEE Version: %s\n"
++			  "UEFI Version: %s\n"
++			  "EC Version: %s\n"
++			  "PD Version: %s\n",
++			  info->fw_se, info->fw_pbl, info->fw_atf,
++			  info->fw_pm, info->fw_tee, info->fw_uefi,
++			  info->fw_ec, info->fw_pd);
++}
++static DEVICE_ATTR_RO(firmware_version);
++
++static ssize_t board_info_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct sky1_socinfo *info = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf,
++			  "Board ID: 0x%x\n"
++			  "PCB SKU: %s\n"
++			  "PMIC: %s\n"
++			  "Memory: %s\n"
++			  "Board Revision: %s\n",
++			  info->board_id_raw, info->pcb_sku, info->pmic,
++			  info->memory_type, info->board_revision);
++}
++static DEVICE_ATTR_RO(board_info);
++
++static ssize_t cix_opn_info_show(struct device *dev,
++				 struct device_attribute *attr, char *buf)
++{
++	struct sky1_socinfo *info = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%s\n", info->opn_string);
++}
++static DEVICE_ATTR_RO(cix_opn_info);
++
++static struct attribute *sky1_socinfo_attrs[] = {
++	&dev_attr_firmware_version.attr,
++	&dev_attr_board_info.attr,
++	&dev_attr_cix_opn_info.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(sky1_socinfo);
++
++static int sky1_socinfo_probe(struct platform_device *pdev)
++{
++	struct soc_device_attribute *soc_attr;
++	struct device_node *root;
++	struct sky1_socinfo *info;
++	const char *machine = NULL;
++	int ret;
++
++	info = devm_kzalloc(&pdev->dev, sizeof(*info), GFP_KERNEL);
++	if (!info)
++		return -ENOMEM;
++
++	info->dev = &pdev->dev;
++	platform_set_drvdata(pdev, info);
++
++	/* Map SRAM region containing firmware versions and board info */
++	info->sram_base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(info->sram_base))
++		return PTR_ERR(info->sram_base);
++
++	/* Read firmware versions from SRAM */
++	info->fw_se = sky1_read_fw_version(&pdev->dev,
++					   info->sram_base + FW_SE_OFFSET);
++	info->fw_pbl = sky1_read_fw_version(&pdev->dev,
++					    info->sram_base + FW_PBL_OFFSET);
++	info->fw_atf = sky1_read_fw_version(&pdev->dev,
++					    info->sram_base + FW_ATF_OFFSET);
++	info->fw_pm = sky1_read_fw_version(&pdev->dev,
++					   info->sram_base + FW_PM_OFFSET);
++	info->fw_tee = sky1_read_fw_version(&pdev->dev,
++					    info->sram_base + FW_TEE_OFFSET);
++	info->fw_uefi = sky1_read_fw_version(&pdev->dev,
++					     info->sram_base + FW_UEFI_OFFSET);
++	info->fw_ec = sky1_read_fw_version(&pdev->dev,
++					   info->sram_base + FW_EC_OFFSET);
++	info->fw_pd = sky1_read_pd_version(&pdev->dev,
++					   info->sram_base + FW_PD_OFFSET);
++
++	/* Read and parse board ID */
++	info->board_id_raw = readw(info->sram_base + FW_BOARD_ID_OFFSET);
++	sky1_parse_board_id(info);
++
++	/* Read OPN from NVMEM */
++	ret = nvmem_cell_read_u64(&pdev->dev, "opn", &info->opn);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "Failed to read OPN\n");
++
++	sky1_parse_opn(info);
++
++	/* Set up soc_device attributes */
++	soc_attr = devm_kzalloc(&pdev->dev, sizeof(*soc_attr), GFP_KERNEL);
++	if (!soc_attr)
++		return -ENOMEM;
++
++	soc_attr->family = "CIX Sky1";
++
++	/* Get machine name from root DT node */
++	root = of_find_node_by_path("/");
++	if (root) {
++		of_property_read_string(root, "model", &machine);
++		of_node_put(root);
++	}
++	if (machine)
++		soc_attr->machine = devm_kstrdup(&pdev->dev, machine, GFP_KERNEL);
++
++	soc_attr->soc_id = info->opn_string;
++	soc_attr->revision = sky1_revision_str(FIELD_GET(OPN_REVISION_MASK, info->opn));
++	soc_attr->custom_attr_group = sky1_socinfo_groups[0];
++
++	info->soc_dev = soc_device_register(soc_attr);
++	if (IS_ERR(info->soc_dev))
++		return dev_err_probe(&pdev->dev, PTR_ERR(info->soc_dev),
++				     "Failed to register SoC device\n");
++
++	/* Store info pointer for sysfs attribute access */
++	dev_set_drvdata(soc_device_to_device(info->soc_dev), info);
++
++	dev_info(&pdev->dev, "CIX Sky1 %s detected (%s, %s)\n",
++		 info->opn_string, info->pcb_sku, info->board_revision);
++
++	return 0;
++}
++
++static void sky1_socinfo_remove(struct platform_device *pdev)
++{
++	struct sky1_socinfo *info = platform_get_drvdata(pdev);
++
++	soc_device_unregister(info->soc_dev);
++}
++
++static const struct of_device_id sky1_socinfo_of_match[] = {
++	{ .compatible = "cix,sky1-socinfo" },
++	{ .compatible = "cix,sky1-top" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sky1_socinfo_of_match);
++
++static struct platform_driver sky1_socinfo_driver = {
++	.probe = sky1_socinfo_probe,
++	.remove = sky1_socinfo_remove,
++	.driver = {
++		.name = "sky1-socinfo",
++		.of_match_table = sky1_socinfo_of_match,
++	},
++};
++module_platform_driver(sky1_socinfo_driver);
++
++MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
++MODULE_DESCRIPTION("CIX Sky1 SoC information driver");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/arch_topology.h b/include/linux/arch_topology.h
+index ebd7f8935f969..ead7f7e3705a4 100644
+--- a/include/linux/arch_topology.h
++++ b/include/linux/arch_topology.h
+@@ -105,10 +105,18 @@ static inline bool topology_core_has_smt(int cpu)
+ 	return cpu_topology[cpu].thread_id != -1;
+ }
+ 
+-#else
++#ifdef CONFIG_CPU_FREQ
++struct cpufreq_policy;
++void topology_update_freq_ref(struct cpufreq_policy *policy);
++#endif
++#else /* !CONFIG_GENERIC_ARCH_TOPOLOGY */
+ 
+ static inline bool topology_core_has_smt(int cpu) { return false; }
+ 
++#ifdef CONFIG_CPU_FREQ
++struct cpufreq_policy;
++static inline void topology_update_freq_ref(struct cpufreq_policy *policy) { }
++#endif
+ #endif /* CONFIG_GENERIC_ARCH_TOPOLOGY */
+ 
+ #endif /* _LINUX_ARCH_TOPOLOGY_H_ */
+diff --git a/include/linux/firmware/cix/dsp.h b/include/linux/firmware/cix/dsp.h
+new file mode 100644
+index 0000000000000..a4f8d5d4a52f9
+--- /dev/null
++++ b/include/linux/firmware/cix/dsp.h
+@@ -0,0 +1,86 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Header file for the CIX DSP IPC implementation
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#ifndef _CIX_DSP_IPC_H_
++#define _CIX_DSP_IPC_H_
++
++#include <linux/device.h>
++#include <linux/types.h>
++#include <linux/mailbox_client.h>
++
++#define CIX_DSP_IPC_REQ		0
++#define CIX_DSP_IPC_REP		1
++#define CIX_DSP_IPC_OP_REQ	BIT(0)
++#define CIX_DSP_IPC_OP_REP	BIT(1)
++
++enum {
++	CIX_DSP_MBOX_REPLY,
++	CIX_DSP_MBOX_REQUEST,
++	CIX_DSP_MBOX_NUM,
++};
++
++struct cix_dsp_ipc;
++
++struct cix_dsp_ops {
++	void (*handle_reply)(struct cix_dsp_ipc *dsp_ipc);
++	void (*handle_request)(struct cix_dsp_ipc *dsp_ipc);
++};
++
++struct cix_dsp_chan {
++	struct cix_dsp_ipc *ipc;
++	struct mbox_client cl;
++	struct mbox_chan *ch;
++	int idx;
++};
++
++struct cix_dsp_ipc {
++	struct device *dev;
++	struct cix_dsp_ops *ops;
++	struct cix_dsp_chan chans[CIX_DSP_MBOX_NUM];
++	void *private_data;
++};
++
++static inline void cix_dsp_set_data(struct cix_dsp_ipc *dsp_ipc, void *data)
++{
++	if (!dsp_ipc)
++		return;
++
++	dsp_ipc->private_data = data;
++}
++
++static inline void *cix_dsp_get_data(struct cix_dsp_ipc *dsp_ipc)
++{
++	if (!dsp_ipc)
++		return NULL;
++
++	return dsp_ipc->private_data;
++}
++
++#if IS_ENABLED(CONFIG_CIX_DSP)
++
++int cix_dsp_ipc_send(struct cix_dsp_ipc *ipc, unsigned int idx, u32 op);
++int cix_dsp_request_mbox(struct cix_dsp_ipc *dsp_ipc);
++void cix_dsp_free_mbox(struct cix_dsp_ipc *dsp_ipc);
++
++#else
++
++static inline int cix_dsp_ipc_send(struct cix_dsp_ipc *ipc, unsigned int idx,
++				   u32 op)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int cix_dsp_request_mbox(struct cix_dsp_ipc *dsp_ipc)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline void cix_dsp_free_mbox(struct cix_dsp_ipc *dsp_ipc) {}
++
++#endif
++
++#endif /* _CIX_DSP_IPC_H */

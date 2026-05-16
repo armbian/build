@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Fri, 27 Feb 2026 17:18:33 +1100
+Subject: [PATCH] drm/trilin-dptx: tear down DP core on HPD disconnect for
+ clean replug
+
+trilin_dp_handle_disconnect() only cleared DP_STATE_CONNECTED,
+leaving DP_STATE_READY and DP_STATE_ENABLED set.  The full PHY
+teardown (trilin_dp_core_off) only ran when the compositor issued
+an atomic commit through the encoder_disable path.
+
+On a USB-C unplug/replug cycle, the compositor may not process
+the disconnect uevent before the replug arrives.  With stale
+state bits, trilin_dp_prepare() returns early ("already enabled")
+and trilin_dp_core_on() skips PHY reinitialization, causing link
+training to fail (clock_recovery_ok=NO, channel_eq_ok=NO).
+
+Call trilin_dp_core_off() directly from handle_disconnect so the
+PHY is torn down and DP_STATE_READY is cleared immediately on HPD
+low, regardless of compositor timing.  core_off is idempotent, so
+the subsequent encoder_disable from KMS harmlessly no-ops.
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index ff2049532396f..f03762da0defe 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2600,6 +2600,26 @@ int trilin_dp_handle_disconnect(struct trilin_dp *dp, bool send_notification)
+ 	}
+ 
+ 	dp->state &= ~DP_STATE_CONNECTED;
++
++	/*
++	 * Tear down DP core and PHY immediately on disconnect.
++	 *
++	 * The normal shutdown path (encoder_disable -> trilin_dp_unprepare ->
++	 * trilin_dp_core_off) is asynchronous — it depends on the compositor
++	 * processing the hotplug uevent and issuing an atomic commit.  On a
++	 * quick unplug/replug cycle this may not have happened yet, leaving
++	 * DP_STATE_READY and DP_STATE_ENABLED set.  trilin_dp_prepare() then
++	 * returns early ("already enabled") and trilin_dp_core_on() skips PHY
++	 * reinitialization, so link training fails with stale PHY state.
++	 *
++	 * Calling core_off here ensures the PHY is powered down and
++	 * DP_STATE_READY is cleared regardless of compositor timing.
++	 * core_off is idempotent (checks DP_STATE_READY), so the later
++	 * encoder_disable path harmlessly no-ops.
++	 */
++	trilin_dp_core_off(dp);
++	dp->state &= ~DP_STATE_ENABLED;
++
+ 	if (dp->mst.mst_active) {
+ 		/* user mode should active power off to disable encoder */
+ 		trilin_dp_set_mst_mgr_state(dp, false);

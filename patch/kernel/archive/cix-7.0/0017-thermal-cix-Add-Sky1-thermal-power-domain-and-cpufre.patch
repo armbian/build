@@ -1,0 +1,1041 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:46:33 +1100
+Subject: [PATCH] thermal: cix: Add Sky1 thermal, power domain, and cpufreq
+ support
+
+Add CIX thermal zone driver, IPA power integration for
+cpufreq_cooling, pmdomain ACPI genpd provider for SCMI
+power and perf domains, and cpufreq CPPC fixes.
+---
+ drivers/cpufreq/cppc_cpufreq.c          |  10 +-
+ drivers/cpufreq/cpufreq.c               |   4 +
+ drivers/pmdomain/arm/scmi_perf_domain.c |  99 ++++++++-
+ drivers/pmdomain/arm/scmi_pm_domain.c   |  64 +++++-
+ drivers/pmdomain/core.c                 | 272 ++++++++++++++++++++++--
+ drivers/thermal/Kconfig                 |  14 ++
+ drivers/thermal/Makefile                |   1 +
+ drivers/thermal/cix/Makefile            |   2 +
+ drivers/thermal/cix/cix_cpu_ipa.c       | 171 +++++++++++++++
+ drivers/thermal/cpufreq_cooling.c       |  29 ++-
+ include/linux/cix/cix_cpu_ipa.h         |  32 +++
+ include/linux/pm_domain.h               |  17 ++
+ 12 files changed, 682 insertions(+), 33 deletions(-)
+ create mode 100644 drivers/thermal/cix/Makefile
+ create mode 100644 drivers/thermal/cix/cix_cpu_ipa.c
+ create mode 100644 include/linux/cix/cix_cpu_ipa.h
+
+diff --git a/drivers/cpufreq/cppc_cpufreq.c b/drivers/cpufreq/cppc_cpufreq.c
+index 011f35cb47b94..37f1a3a3c6b86 100644
+--- a/drivers/cpufreq/cppc_cpufreq.c
++++ b/drivers/cpufreq/cppc_cpufreq.c
+@@ -294,10 +294,16 @@ static int cppc_cpufreq_set_target(struct cpufreq_policy *policy,
+ 	struct cppc_cpudata *cpu_data = policy->driver_data;
+ 	unsigned int cpu = policy->cpu;
+ 	struct cpufreq_freqs freqs;
++	u32 desired_perf;
+ 	int ret = 0;
+ 
+-	cpu_data->perf_ctrls.desired_perf =
+-			cppc_khz_to_perf(&cpu_data->perf_caps, target_freq);
++	desired_perf = cppc_khz_to_perf(&cpu_data->perf_caps, target_freq);
++
++	/* Return early if already at the requested performance level */
++	if (desired_perf == cpu_data->perf_ctrls.desired_perf)
++		return 0;
++
++	cpu_data->perf_ctrls.desired_perf = desired_perf;
+ 	freqs.old = policy->cur;
+ 	freqs.new = target_freq;
+ 
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 277884d91913c..d2bb204a01598 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -14,6 +14,7 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/arch_topology.h>
+ #include <linux/cpu.h>
+ #include <linux/cpufreq.h>
+ #include <linux/cpu_cooling.h>
+@@ -2797,6 +2798,9 @@ int cpufreq_boost_set_sw(struct cpufreq_policy *policy, int state)
+ 		return ret;
+ 	}
+ 
++	/* Update capacity_freq_ref so schedutil uses the new max frequency */
++	topology_update_freq_ref(policy);
++
+ 	ret = freq_qos_update_request(policy->max_freq_req, policy->max);
+ 	if (ret < 0)
+ 		return ret;
+diff --git a/drivers/pmdomain/arm/scmi_perf_domain.c b/drivers/pmdomain/arm/scmi_perf_domain.c
+index 3693423459c9c..db4e49bb2f2cf 100644
+--- a/drivers/pmdomain/arm/scmi_perf_domain.c
++++ b/drivers/pmdomain/arm/scmi_perf_domain.c
+@@ -5,11 +5,13 @@
+  * Copyright (C) 2023 Linaro Ltd.
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/err.h>
+ #include <linux/device.h>
+ #include <linux/module.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_opp.h>
++#include <linux/property.h>
+ #include <linux/scmi_protocol.h>
+ #include <linux/slab.h>
+ 
+@@ -74,6 +76,57 @@ scmi_pd_detach_dev(struct generic_pm_domain *genpd, struct device *dev)
+ 	dev_pm_opp_remove_all_dynamic(dev);
+ }
+ 
++struct proto_fwnode_match {
++	u8 protocol_id;
++	struct fwnode_handle *result;
++};
++
++static int match_proto_reg(struct acpi_device *adev, void *data)
++{
++	struct proto_fwnode_match *match = data;
++	u32 reg;
++
++	if (fwnode_property_read_u32(acpi_fwnode_handle(adev), "reg", &reg) == 0 &&
++	    reg == match->protocol_id) {
++		match->result = acpi_fwnode_handle(adev);
++		return 1;
++	}
++	return 0;
++}
++
++/**
++ * scmi_perf_find_proto_fwnode() - Find the protocol-specific ACPI fwnode
++ * @sdev: SCMI device (inherits parent fwnode under ACPI)
++ *
++ * Under ACPI, the SCMI device's fwnode points to the parent controller
++ * (e.g. \_SB_.SCMI).  Consumers reference protocol-specific children
++ * (e.g. \_SB_.SCMI.DVFS) which have a "reg" property matching the
++ * protocol_id.  These children may have _STA=0 (namespace-only stubs),
++ * so we must use acpi_dev_for_each_child() which iterates all children
++ * including non-present ones, rather than fwnode_for_each_child_node()
++ * which skips them.
++ *
++ * Returns the protocol fwnode, or NULL if not found.
++ */
++static struct fwnode_handle *scmi_perf_find_proto_fwnode(struct scmi_device *sdev)
++{
++	struct acpi_device *parent_adev;
++	struct proto_fwnode_match match = {
++		.protocol_id = sdev->protocol_id,
++		.result = NULL,
++	};
++
++	if (sdev->dev.of_node)
++		return NULL;
++
++	parent_adev = to_acpi_device_node(dev_fwnode(&sdev->dev));
++	if (!parent_adev)
++		return NULL;
++
++	acpi_dev_for_each_child(parent_adev, match_proto_reg, &match);
++	return match.result;
++}
++
+ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ {
+ 	struct device *dev = &sdev->dev;
+@@ -88,8 +141,13 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ 	if (!handle)
+ 		return -ENODEV;
+ 
+-	/* The OF node must specify us as a power-domain provider. */
+-	if (!of_find_property(dev->of_node, "#power-domain-cells", NULL))
++	/*
++	 * Under DT, the OF node must specify us as a power-domain provider.
++	 * Under ACPI, there's no of_node — proceed unconditionally and
++	 * register genpds globally for lookup by name.
++	 */
++	if (dev->of_node &&
++	    !of_find_property(dev->of_node, "#power-domain-cells", NULL))
+ 		return 0;
+ 
+ 	perf_ops = handle->devm_protocol_get(sdev, SCMI_PROTOCOL_PERF, &ph);
+@@ -141,12 +199,30 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ 	scmi_pd_data->domains = domains;
+ 	scmi_pd_data->num_domains = num_domains;
+ 
+-	ret = of_genpd_add_provider_onecell(dev->of_node, scmi_pd_data);
+-	if (ret)
+-		goto err;
++	if (dev->of_node) {
++		ret = of_genpd_add_provider_onecell(dev->of_node, scmi_pd_data);
++		if (ret)
++			goto err;
++	} else {
++		/*
++		 * Under ACPI, register a fwnode-based provider so consumers
++		 * can resolve power-domains _DSD references.  The provider
++		 * fwnode is the protocol-specific ACPI child (e.g. DVFS)
++		 * that consumers reference, not the parent SCMI device.
++		 */
++		struct fwnode_handle *proto_fw;
++
++		proto_fw = scmi_perf_find_proto_fwnode(sdev);
++		if (proto_fw) {
++			ret = genpd_add_fwnode_provider_onecell(proto_fw,
++								scmi_pd_data);
++			if (ret)
++				goto err;
++		}
++	}
+ 
+ 	dev_set_drvdata(dev, scmi_pd_data);
+-	dev_info(dev, "Initialized %d performance domains", num_domains);
++	dev_info(dev, "SCMI perf domains registered (%d domains)\n", num_domains);
+ 	return 0;
+ err:
+ 	for (i--; i >= 0; i--)
+@@ -163,7 +239,16 @@ static void scmi_perf_domain_remove(struct scmi_device *sdev)
+ 	if (!scmi_pd_data)
+ 		return;
+ 
+-	of_genpd_del_provider(dev->of_node);
++	if (dev->of_node) {
++		of_genpd_del_provider(dev->of_node);
++	} else {
++		struct scmi_device *sdev = to_scmi_dev(dev);
++		struct fwnode_handle *proto_fw;
++
++		proto_fw = scmi_perf_find_proto_fwnode(sdev);
++		if (proto_fw)
++			genpd_del_fwnode_provider(proto_fw);
++	}
+ 
+ 	for (i = 0; i < scmi_pd_data->num_domains; i++)
+ 		pm_genpd_remove(scmi_pd_data->domains[i]);
+diff --git a/drivers/pmdomain/arm/scmi_pm_domain.c b/drivers/pmdomain/arm/scmi_pm_domain.c
+index b5e2ffd5ea64c..0e16898abb5e8 100644
+--- a/drivers/pmdomain/arm/scmi_pm_domain.c
++++ b/drivers/pmdomain/arm/scmi_pm_domain.c
+@@ -24,9 +24,35 @@ struct scmi_pm_domain {
+ 
+ static int scmi_pd_power(struct generic_pm_domain *domain, u32 state)
+ {
++	int ret;
++	u32 ret_state;
+ 	struct scmi_pm_domain *pd = to_scmi_pd(domain);
+ 
+-	return power_ops->state_set(pd->ph, pd->domain, state);
++	pr_debug("scmi_pd_power: domain %s (%d) -> state 0x%x\n",
++		 pd->name, pd->domain, state);
++
++	ret = power_ops->state_set(pd->ph, pd->domain, state);
++	if (ret) {
++		pr_err("scmi_pd_power: state_set failed: %d\n", ret);
++		return ret;
++	}
++
++	/* Verify state was actually set (like vendor kernel does) */
++	ret = power_ops->state_get(pd->ph, pd->domain, &ret_state);
++	if (ret) {
++		pr_err("scmi_pd_power: state_get failed: %d\n", ret);
++		return ret;
++	}
++
++	if (state != ret_state) {
++		pr_err("scmi_pd_power: state mismatch! requested 0x%x, got 0x%x\n",
++		       state, ret_state);
++		return -EIO;
++	}
++
++	pr_debug("scmi_pd_power: domain %s state verified: 0x%x\n",
++		 pd->name, ret_state);
++	return 0;
+ }
+ 
+ static int scmi_pd_power_on(struct generic_pm_domain *domain)
+@@ -108,16 +134,26 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
+ 	scmi_pd_data->domains = domains;
+ 	scmi_pd_data->num_domains = num_domains;
+ 
+-	ret = of_genpd_add_provider_onecell(np, scmi_pd_data);
+-	if (ret)
+-		goto err_rm_genpds;
++	/* Register DT provider if a device tree node is available.
++	 * Under ACPI, domains are still globally registered by
++	 * pm_genpd_init() and consumers attach by name.
++	 */
++	if (np) {
++		ret = of_genpd_add_provider_onecell(np, scmi_pd_data);
++		if (ret)
++			goto err_rm_genpds;
++	}
+ 
+ 	dev_set_drvdata(dev, scmi_pd_data);
++	dev_info(dev, "SCMI power domains registered (%d domains)\n",
++		 num_domains);
+ 
+ 	return 0;
+ err_rm_genpds:
+-	for (i = num_domains - 1; i >= 0; i--)
+-		pm_genpd_remove(domains[i]);
++	for (i = num_domains - 1; i >= 0; i--) {
++		if (domains[i])
++			pm_genpd_remove(domains[i]);
++	}
+ 
+ 	return ret;
+ }
+@@ -129,7 +165,8 @@ static void scmi_pm_domain_remove(struct scmi_device *sdev)
+ 	struct device *dev = &sdev->dev;
+ 	struct device_node *np = dev->of_node;
+ 
+-	of_genpd_del_provider(np);
++	if (np)
++		of_genpd_del_provider(np);
+ 
+ 	scmi_pd_data = dev_get_drvdata(dev);
+ 	for (i = 0; i < scmi_pd_data->num_domains; i++) {
+@@ -151,7 +188,20 @@ static struct scmi_driver scmi_power_domain_driver = {
+ 	.remove = scmi_pm_domain_remove,
+ 	.id_table = scmi_id_table,
+ };
++
++/* CIX Sky1 needs early SCMI power domain init so GPU access permissions
++ * are configured before other drivers probe. Vendor kernel uses
++ * subsys_initcall_sync for this purpose.
++ */
++#ifdef CONFIG_ARCH_CIX
++static int __init scmi_power_domain_init(void)
++{
++	return scmi_register(&scmi_power_domain_driver);
++}
++subsys_initcall_sync(scmi_power_domain_init);
++#else
+ module_scmi_driver(scmi_power_domain_driver);
++#endif
+ 
+ MODULE_AUTHOR("Sudeep Holla <sudeep.holla@arm.com>");
+ MODULE_DESCRIPTION("ARM SCMI power domain driver");
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 52ea84e548ff6..b1b6b46cb06fa 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -23,6 +23,7 @@
+ #include <linux/export.h>
+ #include <linux/cpu.h>
+ #include <linux/debugfs.h>
++#include <linux/property.h>
+ 
+ /* Provides a unique ID for each genpd device */
+ static DEFINE_IDA(genpd_ida);
+@@ -2462,6 +2463,33 @@ int pm_genpd_init(struct generic_pm_domain *genpd,
+ }
+ EXPORT_SYMBOL_GPL(pm_genpd_init);
+ 
++/**
++ * pm_genpd_lookup_by_name() - Find a power domain by name.
++ * @name: Name of the power domain to find.
++ *
++ * Returns the generic_pm_domain with the matching name, or NULL if not found.
++ * Useful for ACPI platforms where consumers cannot use DT phandles.
++ */
++struct generic_pm_domain *pm_genpd_lookup_by_name(const char *name)
++{
++	struct generic_pm_domain *genpd;
++
++	if (!name)
++		return NULL;
++
++	mutex_lock(&gpd_list_lock);
++	list_for_each_entry(genpd, &gpd_list, gpd_list_node) {
++		if (genpd->name && !strcmp(genpd->name, name)) {
++			mutex_unlock(&gpd_list_lock);
++			return genpd;
++		}
++	}
++	mutex_unlock(&gpd_list_lock);
++
++	return NULL;
++}
++EXPORT_SYMBOL_GPL(pm_genpd_lookup_by_name);
++
+ static int genpd_remove(struct generic_pm_domain *genpd)
+ {
+ 	struct gpd_link *l, *link;
+@@ -2565,6 +2593,21 @@ static DEFINE_MUTEX(of_genpd_mutex);
+ /* Used to prevent registering devices before the bus. */
+ static bool genpd_bus_registered;
+ 
++/**
++ * struct fwnode_genpd_provider - Fwnode-based PM domain provider (for ACPI)
++ * @link: Entry in the global list of fwnode genpd providers
++ * @fwnode: The firmware node this provider is associated with
++ * @data: Onecell data containing the domain array
++ */
++struct fwnode_genpd_provider {
++	struct list_head link;
++	struct fwnode_handle *fwnode;
++	struct genpd_onecell_data *data;
++};
++
++/* List of fwnode-based PM domain providers, protected by of_genpd_mutex. */
++static LIST_HEAD(fwnode_genpd_providers);
++
+ /**
+  * genpd_xlate_simple() - Xlate function for direct node-domain mapping
+  * @genpdspec: OF phandle args to map into a PM domain
+@@ -2882,6 +2925,100 @@ void of_genpd_del_provider(struct device_node *np)
+ }
+ EXPORT_SYMBOL_GPL(of_genpd_del_provider);
+ 
++/**
++ * genpd_add_fwnode_provider_onecell() - Register a fwnode-based PM domain provider
++ * @fwnode: Firmware node to associate with this provider
++ * @data: Onecell data with domain array indexed by domain specifier
++ *
++ * Registers a fwnode-based PM domain provider for ACPI platforms where
++ * consumers reference power domains via _DSD properties rather than DT
++ * phandles.  Consumers call fwnode_property_get_reference_args() on their
++ * "power-domains" property and the resulting fwnode + args[0] index are
++ * used to look up the provider and select the domain.
++ *
++ * Returns 0 on success, negative errno on failure.
++ */
++int genpd_add_fwnode_provider_onecell(struct fwnode_handle *fwnode,
++				      struct genpd_onecell_data *data)
++{
++	struct fwnode_genpd_provider *p;
++
++	if (!fwnode || !data)
++		return -EINVAL;
++
++	p = kzalloc(sizeof(*p), GFP_KERNEL);
++	if (!p)
++		return -ENOMEM;
++
++	p->fwnode = fwnode;
++	p->data = data;
++
++	mutex_lock(&of_genpd_mutex);
++	list_add(&p->link, &fwnode_genpd_providers);
++	mutex_unlock(&of_genpd_mutex);
++
++	pr_debug("Added fwnode domain provider %pfwf\n", fwnode);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(genpd_add_fwnode_provider_onecell);
++
++/**
++ * genpd_del_fwnode_provider() - Remove a fwnode-based PM domain provider
++ * @fwnode: The firmware node whose provider to remove
++ */
++void genpd_del_fwnode_provider(struct fwnode_handle *fwnode)
++{
++	struct fwnode_genpd_provider *p, *tmp;
++
++	mutex_lock(&of_genpd_mutex);
++	list_for_each_entry_safe(p, tmp, &fwnode_genpd_providers, link) {
++		if (p->fwnode == fwnode) {
++			list_del(&p->link);
++			kfree(p);
++			break;
++		}
++	}
++	mutex_unlock(&of_genpd_mutex);
++}
++EXPORT_SYMBOL_GPL(genpd_del_fwnode_provider);
++
++/**
++ * genpd_get_from_fwnode_provider() - Look up a PM domain from fwnode providers
++ * @fwnode: Firmware node of the provider (from consumer's reference)
++ * @index: Domain index within the provider's onecell data
++ *
++ * Must be called with gpd_list_lock held (same as genpd_get_from_provider).
++ * Takes of_genpd_mutex internally.
++ *
++ * Returns a valid pointer to struct generic_pm_domain on success, or ERR_PTR()
++ * on failure.
++ */
++static struct generic_pm_domain *genpd_get_from_fwnode_provider(
++		struct fwnode_handle *fwnode, unsigned int index)
++{
++	struct generic_pm_domain *genpd = ERR_PTR(-ENOENT);
++	struct fwnode_genpd_provider *p;
++
++	if (!fwnode)
++		return ERR_PTR(-EINVAL);
++
++	mutex_lock(&of_genpd_mutex);
++	list_for_each_entry(p, &fwnode_genpd_providers, link) {
++		if (p->fwnode == fwnode) {
++			if (index < p->data->num_domains &&
++			    p->data->domains[index])
++				genpd = p->data->domains[index];
++			else
++				genpd = ERR_PTR(-EINVAL);
++			break;
++		}
++	}
++	mutex_unlock(&of_genpd_mutex);
++
++	return genpd;
++}
++
+ /**
+  * genpd_get_from_provider() - Look-up PM domain
+  * @genpdspec: OF phandle args to use for look-up
+@@ -3250,6 +3387,86 @@ static int __genpd_dev_pm_attach(struct device *dev, struct device *base_dev,
+ 	return ret;
+ }
+ 
++/**
++ * __genpd_dev_pm_attach_acpi - ACPI variant of __genpd_dev_pm_attach
++ *
++ * Uses fwnode_property_get_reference_args() on the base device's "power-domains"
++ * property to resolve the PM domain provider and index, then attaches @dev to
++ * the corresponding generic PM domain.  Mirrors the OF path but works with
++ * ACPI _DSD references and fwnode-based providers.
++ */
++static int __genpd_dev_pm_attach_acpi(struct device *dev,
++				      struct device *base_dev,
++				      unsigned int index,
++				      unsigned int num_domains,
++				      bool power_on)
++{
++	struct fwnode_reference_args pd_args = {};
++	struct generic_pm_domain *pd;
++	int ret;
++
++	ret = fwnode_property_get_reference_args(dev_fwnode(base_dev),
++			"power-domains", "#power-domain-cells",
++			0, index, &pd_args);
++	if (ret < 0)
++		return ret;
++
++	mutex_lock(&gpd_list_lock);
++	pd = genpd_get_from_fwnode_provider(pd_args.fwnode,
++			pd_args.nargs > 0 ? pd_args.args[0] : 0);
++	fwnode_handle_put(pd_args.fwnode);
++	if (IS_ERR(pd)) {
++		mutex_unlock(&gpd_list_lock);
++		dev_dbg(dev, "%s() failed to find PM domain: %ld\n",
++			__func__, PTR_ERR(pd));
++		return driver_deferred_probe_check_state(base_dev);
++	}
++
++	dev_dbg(dev, "adding to PM domain %s\n", pd->name);
++
++	ret = genpd_add_device(pd, dev, base_dev);
++	mutex_unlock(&gpd_list_lock);
++
++	if (ret < 0)
++		return dev_err_probe(dev, ret,
++			"failed to add to PM domain %s\n", pd->name);
++
++	dev->pm_domain->detach = genpd_dev_pm_detach;
++	dev->pm_domain->sync = genpd_dev_pm_sync;
++
++	if (num_domains == 1) {
++		ret = genpd_set_required_opp_dev(dev, base_dev);
++		if (ret)
++			goto err;
++	}
++
++	ret = genpd_set_required_opp(dev, index);
++	if (ret)
++		goto err;
++
++	if (power_on) {
++		genpd_lock(pd);
++		ret = genpd_power_on(pd, 0);
++		genpd_unlock(pd);
++	}
++
++	if (ret) {
++		if (dev_gpd_data(dev)->default_pstate) {
++			dev_pm_genpd_set_performance_state(dev, 0);
++			dev_gpd_data(dev)->default_pstate = 0;
++		}
++
++		genpd_remove_device(pd, dev);
++		return -EPROBE_DEFER;
++	}
++
++	return 1;
++
++err:
++	genpd_remove_device(pd, dev);
++	return ret;
++}
++
+ /**
+  * genpd_dev_pm_attach - Attach a device to its PM domain using DT.
+  * @dev: Device to attach.
+@@ -3301,16 +3518,32 @@ struct device *genpd_dev_pm_attach_by_id(struct device *dev,
+ {
+ 	struct device *virt_dev;
+ 	int num_domains;
++	bool use_acpi = false;
+ 	int ret;
+ 
+-	if (!dev->of_node)
+-		return NULL;
+-
+-	/* Verify that the index is within a valid range. */
+-	num_domains = of_count_phandle_with_args(dev->of_node, "power-domains",
+-						 "#power-domain-cells");
+-	if (num_domains < 0 || index >= num_domains)
++	if (dev->of_node) {
++		/* DT path: count power-domains phandles */
++		num_domains = of_count_phandle_with_args(dev->of_node,
++				"power-domains", "#power-domain-cells");
++		if (num_domains < 0 || index >= num_domains)
++			return NULL;
++	} else if (dev_fwnode(dev)) {
++		/* ACPI path: count power-domains fwnode references */
++		struct fwnode_reference_args args;
++
++		num_domains = 0;
++		while (!fwnode_property_get_reference_args(dev_fwnode(dev),
++				"power-domains", "#power-domain-cells",
++				0, num_domains, &args)) {
++			fwnode_handle_put(args.fwnode);
++			num_domains++;
++		}
++		if (num_domains <= 0 || index >= (unsigned int)num_domains)
++			return NULL;
++		use_acpi = true;
++	} else {
+ 		return NULL;
++	}
+ 
+ 	if (!genpd_bus_registered)
+ 		return ERR_PTR(-ENODEV);
+@@ -3323,7 +3556,8 @@ struct device *genpd_dev_pm_attach_by_id(struct device *dev,
+ 	dev_set_name(virt_dev, "genpd:%u:%s", index, dev_name(dev));
+ 	virt_dev->bus = &genpd_bus_type;
+ 	virt_dev->release = genpd_release_dev;
+-	virt_dev->of_node = of_node_get(dev->of_node);
++	if (dev->of_node)
++		virt_dev->of_node = of_node_get(dev->of_node);
+ 
+ 	ret = device_register(virt_dev);
+ 	if (ret) {
+@@ -3332,7 +3566,12 @@ struct device *genpd_dev_pm_attach_by_id(struct device *dev,
+ 	}
+ 
+ 	/* Try to attach the device to the PM domain at the specified index. */
+-	ret = __genpd_dev_pm_attach(virt_dev, dev, index, num_domains, false);
++	if (use_acpi)
++		ret = __genpd_dev_pm_attach_acpi(virt_dev, dev, index,
++						 num_domains, false);
++	else
++		ret = __genpd_dev_pm_attach(virt_dev, dev, index,
++					    num_domains, false);
+ 	if (ret < 1) {
+ 		device_unregister(virt_dev);
+ 		return ret ? ERR_PTR(ret) : NULL;
+@@ -3350,19 +3589,24 @@ EXPORT_SYMBOL_GPL(genpd_dev_pm_attach_by_id);
+  * @dev: The device used to lookup the PM domain.
+  * @name: The name of the PM domain.
+  *
+- * Parse device's OF node to find a PM domain specifier using the
+- * power-domain-names DT property. For further description see
++ * Parse device's OF node (or ACPI _DSD) to find a PM domain specifier using
++ * the power-domain-names property.  For further description see
+  * genpd_dev_pm_attach_by_id().
+  */
+ struct device *genpd_dev_pm_attach_by_name(struct device *dev, const char *name)
+ {
+ 	int index;
+ 
+-	if (!dev->of_node)
++	if (dev->of_node) {
++		index = of_property_match_string(dev->of_node,
++						 "power-domain-names", name);
++	} else if (dev_fwnode(dev)) {
++		index = fwnode_property_match_string(dev_fwnode(dev),
++						    "power-domain-names", name);
++	} else {
+ 		return NULL;
++	}
+ 
+-	index = of_property_match_string(dev->of_node, "power-domain-names",
+-					 name);
+ 	if (index < 0)
+ 		return NULL;
+ 
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index b10080d618604..76a6ccdec5b31 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -527,4 +527,18 @@ config LOONGSON2_THERMAL
+ 	  is higher than the high temperature threshold or lower than the low
+ 	  temperature threshold, the interrupt will occur.
+ 
++config CIX_CPU_IPA
++	tristate "CIX CPU IPA power monitoring driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	help
++	  Say yes here to enable support for the CIX CPU IPA (Intelligent
++	  Power Allocation) driver. This reads per-CPU power measurements
++	  from firmware-populated memory and exposes them via sysfs.
++
++	  The driver provides static (leakage) and dynamic power readings
++	  per CPU at /sys/devices/platform/cix_cpu_ipa/power.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called cix_cpu_ipa.
++
+ endif
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index bb21e7ea7fc6b..ad59bbf3403b5 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -68,4 +68,5 @@ obj-$(CONFIG_AMLOGIC_THERMAL)     += amlogic_thermal.o
+ obj-$(CONFIG_SPRD_THERMAL)	+= sprd_thermal.o
+ obj-$(CONFIG_KHADAS_MCU_FAN_THERMAL)	+= khadas_mcu_fan.o
+ obj-$(CONFIG_LOONGSON2_THERMAL)	+= loongson2_thermal.o
++obj-$(CONFIG_CIX_CPU_IPA)	+= cix/
+ obj-$(CONFIG_THERMAL_CORE_TESTING)	+= testing/
+diff --git a/drivers/thermal/cix/Makefile b/drivers/thermal/cix/Makefile
+new file mode 100644
+index 0000000000000..4f6d776b4c536
+--- /dev/null
++++ b/drivers/thermal/cix/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_CIX_CPU_IPA)	+= cix_cpu_ipa.o
+diff --git a/drivers/thermal/cix/cix_cpu_ipa.c b/drivers/thermal/cix/cix_cpu_ipa.c
+new file mode 100644
+index 0000000000000..10979593d97c6
+--- /dev/null
++++ b/drivers/thermal/cix/cix_cpu_ipa.c
+@@ -0,0 +1,171 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CIX CPU IPA (Intelligent Power Allocation) driver
++ *
++ * Reads per-CPU power measurements from a memory-mapped region populated
++ * by firmware. Provides static (leakage) and dynamic power per CPU.
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/cpumask.h>
++#include <linux/device.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/cix/cix_cpu_ipa.h>
++#include <asm/cpu.h>
++
++#define REG_OFFSET 0x40
++
++struct cpu_ipa_info {
++	u32 off_cnt;
++	u32 rsvd[13];
++	s32 dynamic_power;
++	s32 static_power;
++};
++
++struct cix_cpu_ipa {
++	struct device *dev;
++	void __iomem *regs;
++};
++
++static struct cix_cpu_ipa *cix_ipa;
++
++static int cix_get_static_power(int cpu)
++{
++	int pcpu;
++	struct cpu_ipa_info __iomem *info;
++
++	if (!cix_ipa || !cix_ipa->regs)
++		return 0;
++
++	pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
++	info = cix_ipa->regs + pcpu * REG_OFFSET;
++
++	return readl(&info->static_power);
++}
++
++static int cix_get_dynamic_power(int cpu)
++{
++	int pcpu;
++	struct cpu_ipa_info __iomem *info;
++
++	if (!cix_ipa || !cix_ipa->regs)
++		return 0;
++
++	pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
++	info = cix_ipa->regs + pcpu * REG_OFFSET;
++
++	return readl(&info->dynamic_power);
++}
++
++/**
++ * cix_get_static_power_cpus - Get total static power for a set of CPUs
++ * @cpus: CPU mask
++ *
++ * Returns total static (leakage) power in milliwatts for the specified CPUs.
++ * Used by cpufreq_cooling for accurate power accounting.
++ */
++int cix_get_static_power_cpus(const struct cpumask *cpus)
++{
++	int cpu;
++	int total_power = 0;
++
++	for_each_cpu(cpu, cpus)
++		total_power += cix_get_static_power(cpu);
++
++	return total_power;
++}
++EXPORT_SYMBOL_GPL(cix_get_static_power_cpus);
++
++/**
++ * cix_get_dynamic_power_cpus - Get total dynamic power for a set of CPUs
++ * @cpus: CPU mask
++ *
++ * Returns total dynamic power in milliwatts for the specified CPUs.
++ * Used by cpufreq_cooling for accurate power accounting.
++ */
++int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
++{
++	int cpu;
++	int total_power = 0;
++
++	for_each_cpu(cpu, cpus)
++		total_power += cix_get_dynamic_power(cpu);
++
++	return total_power;
++}
++EXPORT_SYMBOL_GPL(cix_get_dynamic_power_cpus);
++
++/* Sysfs interface for power monitoring */
++static ssize_t cpu_power_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	int cpu;
++	int len = 0;
++	int total_static = 0, total_dynamic = 0;
++
++	len += sysfs_emit_at(buf, len, "CPU\tStatic(mW)\tDynamic(mW)\n");
++
++	for_each_online_cpu(cpu) {
++		int s = cix_get_static_power(cpu);
++		int d = cix_get_dynamic_power(cpu);
++
++		len += sysfs_emit_at(buf, len, "%d\t%d\t\t%d\n", cpu, s, d);
++		total_static += s;
++		total_dynamic += d;
++	}
++
++	len += sysfs_emit_at(buf, len, "Total\t%d\t\t%d\n",
++			     total_static, total_dynamic);
++
++	return len;
++}
++static DEVICE_ATTR_RO(cpu_power);
++
++static struct attribute *cpu_ipa_attrs[] = {
++	&dev_attr_cpu_power.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(cpu_ipa);
++
++static int cpu_ipa_probe(struct platform_device *pdev)
++{
++	struct cix_cpu_ipa *ipa;
++
++	ipa = devm_kzalloc(&pdev->dev, sizeof(*ipa), GFP_KERNEL);
++	if (!ipa)
++		return -ENOMEM;
++
++	ipa->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ipa->regs))
++		return PTR_ERR(ipa->regs);
++
++	ipa->dev = &pdev->dev;
++	platform_set_drvdata(pdev, ipa);
++	cix_ipa = ipa;
++
++	dev_info(&pdev->dev, "CPU power monitoring initialized\n");
++	return 0;
++}
++
++static const struct of_device_id cpu_ipa_of_match[] = {
++	{ .compatible = "cix,cpu-ipa" },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, cpu_ipa_of_match);
++
++static struct platform_driver cpu_ipa_driver = {
++	.probe = cpu_ipa_probe,
++	.driver = {
++		.name = "cix-cpu-ipa",
++		.of_match_table = cpu_ipa_of_match,
++		.dev_groups = cpu_ipa_groups,
++	},
++};
++module_platform_driver(cpu_ipa_driver);
++
++MODULE_DESCRIPTION("CIX CPU IPA Power Monitoring Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/thermal/cpufreq_cooling.c b/drivers/thermal/cpufreq_cooling.c
+index 32bf5ab44f4a2..a1a6fd29ec5b9 100644
+--- a/drivers/thermal/cpufreq_cooling.c
++++ b/drivers/thermal/cpufreq_cooling.c
+@@ -23,6 +23,8 @@
+ #include <linux/thermal.h>
+ #include <linux/units.h>
+ 
++#include <linux/cix/cix_cpu_ipa.h>
++
+ #include "thermal_trace.h"
+ 
+ /*
+@@ -251,7 +253,13 @@ static int cpufreq_get_requested_power(struct thermal_cooling_device *cdev,
+ 
+ 	cpufreq_cdev->last_load = total_load;
+ 
+-	*power = get_dynamic_power(cpufreq_cdev, freq);
++	if (IS_ENABLED(CONFIG_CIX_CPU_IPA)) {
++		/* Use real measured power from CIX IPA hardware */
++		*power = cix_get_static_power_cpus(policy->cpus) +
++			 cix_get_dynamic_power_cpus(policy->cpus);
++	} else {
++		*power = get_dynamic_power(cpufreq_cdev, freq);
++	}
+ 
+ 	trace_thermal_power_cpu_get_power_simple(policy->cpu, *power);
+ 
+@@ -293,6 +301,9 @@ static int cpufreq_state2power(struct thermal_cooling_device *cdev,
+ 
+ 	*power = cpu_freq_to_power(cpufreq_cdev, freq) * num_cpus;
+ 
++	if (IS_ENABLED(CONFIG_CIX_CPU_IPA))
++		*power += cix_get_static_power_cpus(cpufreq_cdev->policy->cpus);
++
+ 	return 0;
+ }
+ 
+@@ -315,12 +326,24 @@ static int cpufreq_power2state(struct thermal_cooling_device *cdev,
+ 			       u32 power, unsigned long *state)
+ {
+ 	unsigned int target_freq;
+-	u32 last_load, normalised_power;
++	u32 last_load, normalised_power, dynamic_power;
+ 	struct cpufreq_cooling_device *cpufreq_cdev = cdev->devdata;
+ 	struct cpufreq_policy *policy = cpufreq_cdev->policy;
+ 
++	/*
++	 * When using real IPA power, subtract static power from the budget
++	 * since only dynamic power can be controlled via frequency scaling.
++	 */
++	if (IS_ENABLED(CONFIG_CIX_CPU_IPA)) {
++		u32 static_power = cix_get_static_power_cpus(policy->cpus);
++
++		dynamic_power = (power > static_power) ? power - static_power : 0;
++	} else {
++		dynamic_power = power;
++	}
++
+ 	last_load = cpufreq_cdev->last_load ?: 1;
+-	normalised_power = (power * 100) / last_load;
++	normalised_power = (dynamic_power * 100) / last_load;
+ 	target_freq = cpu_power_to_freq(cpufreq_cdev, normalised_power);
+ 
+ 	*state = get_level(cpufreq_cdev, target_freq);
+diff --git a/include/linux/cix/cix_cpu_ipa.h b/include/linux/cix/cix_cpu_ipa.h
+new file mode 100644
+index 0000000000000..7b7850ba0e953
+--- /dev/null
++++ b/include/linux/cix/cix_cpu_ipa.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * CIX CPU IPA power monitoring interface
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#ifndef __LINUX_CIX_CPU_IPA_H
++#define __LINUX_CIX_CPU_IPA_H
++
++#include <linux/cpumask.h>
++
++#if IS_ENABLED(CONFIG_CIX_CPU_IPA)
++
++int cix_get_static_power_cpus(const struct cpumask *cpus);
++int cix_get_dynamic_power_cpus(const struct cpumask *cpus);
++
++#else
++
++static inline int cix_get_static_power_cpus(const struct cpumask *cpus)
++{
++	return 0;
++}
++
++static inline int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
++{
++	return 0;
++}
++
++#endif /* CONFIG_CIX_CPU_IPA */
++
++#endif /* __LINUX_CIX_CPU_IPA_H */
+diff --git a/include/linux/pm_domain.h b/include/linux/pm_domain.h
+index 93ba0143ca476..1e7cb9df90f9d 100644
+--- a/include/linux/pm_domain.h
++++ b/include/linux/pm_domain.h
+@@ -317,6 +317,7 @@ int pm_genpd_remove_subdomain(struct generic_pm_domain *genpd,
+ int pm_genpd_init(struct generic_pm_domain *genpd,
+ 		  struct dev_power_governor *gov, bool is_off);
+ int pm_genpd_remove(struct generic_pm_domain *genpd);
++struct generic_pm_domain *pm_genpd_lookup_by_name(const char *name);
+ void pm_genpd_inc_rejected(struct generic_pm_domain *genpd,
+ 			   unsigned int state_idx);
+ struct device *dev_to_genpd_dev(struct device *dev);
+@@ -370,6 +371,11 @@ static inline int pm_genpd_remove(struct generic_pm_domain *genpd)
+ {
+ 	return -EOPNOTSUPP;
+ }
++static inline
++struct generic_pm_domain *pm_genpd_lookup_by_name(const char *name)
++{
++	return NULL;
++}
+ 
+ static inline void pm_genpd_inc_rejected(struct generic_pm_domain *genpd,
+ 					 unsigned int state_idx)
+@@ -457,6 +463,9 @@ int of_genpd_add_provider_simple(struct device_node *np,
+ int of_genpd_add_provider_onecell(struct device_node *np,
+ 				  struct genpd_onecell_data *data);
+ void of_genpd_del_provider(struct device_node *np);
++int genpd_add_fwnode_provider_onecell(struct fwnode_handle *fwnode,
++				      struct genpd_onecell_data *data);
++void genpd_del_fwnode_provider(struct fwnode_handle *fwnode);
+ int of_genpd_add_device(const struct of_phandle_args *args, struct device *dev);
+ int of_genpd_add_subdomain(const struct of_phandle_args *parent_spec,
+ 			   const struct of_phandle_args *subdomain_spec);
+@@ -487,6 +496,14 @@ static inline int of_genpd_add_provider_onecell(struct device_node *np,
+ 
+ static inline void of_genpd_del_provider(struct device_node *np) {}
+ 
++static inline int genpd_add_fwnode_provider_onecell(struct fwnode_handle *fwnode,
++					struct genpd_onecell_data *data)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline void genpd_del_fwnode_provider(struct fwnode_handle *fwnode) {}
++
+ static inline int of_genpd_add_device(const struct of_phandle_args *args,
+ 				      struct device *dev)
+ {

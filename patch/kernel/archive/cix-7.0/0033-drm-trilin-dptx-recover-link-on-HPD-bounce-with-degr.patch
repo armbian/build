@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Sat, 28 Feb 2026 01:24:34 +1100
+Subject: [PATCH] drm/trilin-dptx: recover link on HPD bounce with degraded
+ DPCD status
+
+When a cable is unplugged and replugged faster than the HPD work queue
+fires, the driver sees only a single HPD-high event.  handle_connect()
+returns early because DP_STATE_CONNECTED is still set, and since
+dp->plugin already matches the detected state, the event is suppressed
+entirely.  If the bridge or sink was power-cycled during the bounce,
+the link is dead but the driver doesn't know.
+
+Fix this by checking live DPCD link status (clock recovery + channel
+equalization) when an HPD event arrives on an already-connected port.
+If the link has degraded, force a disconnect/reconnect cycle to tear
+down stale PHY state and re-establish the link from scratch.
+
+This follows the i915 pattern of reading DPCD link status on
+already-connected HPD events rather than trusting cached state.
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 44 ++++++++++++++++++++++++--
+ 1 file changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index c36690fb6c71c..20a26ec845a17 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2537,6 +2537,29 @@ static bool trilin_dp_is_sink_count_zero(struct trilin_dp *dp)
+ 	       (drm_dp_read_sink_count(&dp->aux) == 0);
+ }
+ 
++/*
++ * Check if the DP link is healthy by reading DPCD link status.
++ * Returns true if clock recovery and channel equalization are both OK,
++ * or if the link isn't in a state where checking makes sense.
++ * Returns false if the link has degraded and needs retraining.
++ */
++static bool trilin_dp_link_is_healthy(struct trilin_dp *dp)
++{
++	u8 status[DP_LINK_STATUS_SIZE + 2];
++	int ret;
++
++	if (!(dp->state & DP_STATE_READY))
++		return true;
++
++	ret = drm_dp_dpcd_read(&dp->aux, DP_SINK_COUNT, status,
++			       DP_LINK_STATUS_SIZE + 2);
++	if (ret < 0)
++		return false;
++
++	return drm_dp_clock_recovery_ok(&status[2], dp->mode.lane_cnt) &&
++	       drm_dp_channel_eq_ok(&status[2], dp->mode.lane_cnt);
++}
++
+ static bool trilin_dp_is_ready(struct trilin_dp *dp)
+ {
+ 	DP_DEBUG("hpd=%d state=%d sink count:%d is_sink_count_zero=%d\n",
+@@ -2692,8 +2715,25 @@ static void trilin_dp_hpd_event_work_func(struct work_struct *work)
+ 	drm_helper_probe_detect(&dp->connector.base, NULL, false);
+ 
+ 	connected = (dp->status == connector_status_connected);
+-	if (dp->plugin == connected)
+-		return;
++	if (dp->plugin == connected) {
++		/*
++		 * HPD bounce recovery: if we think we're already connected but
++		 * the link has degraded (e.g., bridge/sink was power-cycled
++		 * during a fast unplug/replug that we never saw as a
++		 * disconnect), force a full disconnect/reconnect cycle to
++		 * re-establish the link.  This follows the i915 pattern of
++		 * checking live DPCD link status on "already connected" HPD.
++		 */
++		if (connected && !trilin_dp_link_is_healthy(dp)) {
++			DP_INFO("HPD bounce: link degraded, forcing reconnect\n");
++			trilin_dp_handle_disconnect(dp, false);
++			dp->plugin = false;
++			drm_helper_probe_detect(&dp->connector.base, NULL, false);
++			connected = (dp->status == connector_status_connected);
++		} else {
++			return;
++		}
++	}
+ 
+ 	dp->plugin = connected;
+ 

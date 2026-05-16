@@ -1,0 +1,502 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:34:32 +1100
+Subject: [PATCH] firmware: arm_scmi: Add ACPI boot support for CIX Sky1
+
+Add ACPI shared memory discovery, mailbox channel validation,
+and ACPI boot support for the SCMI firmware transport on Sky1.
+---
+ drivers/firmware/Kconfig                      |  1 +
+ drivers/firmware/Makefile                     |  1 +
+ drivers/firmware/arm_scmi/bus.c               |  3 +
+ drivers/firmware/arm_scmi/common.h            | 10 +-
+ drivers/firmware/arm_scmi/driver.c            | 52 +++++++++-
+ drivers/firmware/arm_scmi/shmem.c             | 98 ++++++++++++++++++-
+ .../firmware/arm_scmi/transports/mailbox.c    | 58 +++++++++--
+ drivers/firmware/arm_scmi/transports/optee.c  |  2 +-
+ drivers/firmware/arm_scmi/transports/smc.c    | 16 ++-
+ drivers/firmware/arm_scmi/transports/virtio.c |  2 +-
+ 10 files changed, 227 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/firmware/Kconfig b/drivers/firmware/Kconfig
+index bbd2155d84838..97058977baff4 100644
+--- a/drivers/firmware/Kconfig
++++ b/drivers/firmware/Kconfig
+@@ -298,5 +298,6 @@ source "drivers/firmware/samsung/Kconfig"
+ source "drivers/firmware/smccc/Kconfig"
+ source "drivers/firmware/tegra/Kconfig"
+ source "drivers/firmware/xilinx/Kconfig"
++source "drivers/firmware/cix/Kconfig"
+ 
+ endmenu
+diff --git a/drivers/firmware/Makefile b/drivers/firmware/Makefile
+index 4ddec2820c96f..3309f2f1f9c56 100644
+--- a/drivers/firmware/Makefile
++++ b/drivers/firmware/Makefile
+@@ -38,3 +38,4 @@ obj-y				+= samsung/
+ obj-y				+= smccc/
+ obj-y				+= tegra/
+ obj-y				+= xilinx/
++obj-y				+= cix/
+diff --git a/drivers/firmware/arm_scmi/bus.c b/drivers/firmware/arm_scmi/bus.c
+index 793be9eabaedd..90248eabd0c74 100644
+--- a/drivers/firmware/arm_scmi/bus.c
++++ b/drivers/firmware/arm_scmi/bus.c
+@@ -466,6 +466,9 @@ __scmi_device_create(struct device_node *np, struct device *parent,
+ 	scmi_dev->protocol_id = protocol;
+ 	scmi_dev->dev.parent = parent;
+ 	device_set_node(&scmi_dev->dev, of_fwnode_handle(np));
++	/* ACPI: inherit parent fwnode when no DT node */
++	if (!np && parent)
++		scmi_dev->dev.fwnode = dev_fwnode(parent);
+ 	scmi_dev->dev.bus = &scmi_bus_type;
+ 	scmi_dev->dev.release = scmi_device_release;
+ 	dev_set_name(&scmi_dev->dev, "scmi_dev.%d", id);
+diff --git a/drivers/firmware/arm_scmi/common.h b/drivers/firmware/arm_scmi/common.h
+index 7c35c95fddbaf..8f37e66c772ca 100644
+--- a/drivers/firmware/arm_scmi/common.h
++++ b/drivers/firmware/arm_scmi/common.h
+@@ -9,6 +9,7 @@
+ #ifndef _SCMI_COMMON_H
+ #define _SCMI_COMMON_H
+ 
++#include <linux/acpi.h>
+ #include <linux/bitfield.h>
+ #include <linux/completion.h>
+ #include <linux/device.h>
+@@ -473,7 +474,8 @@ struct scmi_transport {
+ 	struct scmi_transport_core_operations **core_ops;
+ };
+ 
+-#define DEFINE_SCMI_TRANSPORT_DRIVER(__tag, __drv, __desc, __match, __core_ops)\
++#define DEFINE_SCMI_TRANSPORT_DRIVER(__tag, __drv, __desc, __of_match,	       \
++				     __acpi_match, __core_ops)		       \
+ static void __tag##_dev_free(void *data)				       \
+ {									       \
+ 	struct platform_device *spdev = data;				       \
+@@ -493,6 +495,9 @@ static int __tag##_probe(struct platform_device *pdev)			       \
+ 		return -ENOMEM;						       \
+ 									       \
+ 	device_set_of_node_from_dev(&spdev->dev, dev);			       \
++	/* ACPI: propagate fwnode when no DT node is present */		       \
++	if (!spdev->dev.fwnode)						       \
++		spdev->dev.fwnode = dev_fwnode(dev);			       \
+ 									       \
+ 	strans.supplier = dev;						       \
+ 	memcpy(&strans.desc, &(__desc), sizeof(strans.desc));		       \
+@@ -517,7 +522,8 @@ err:									       \
+ static struct platform_driver __drv = {					       \
+ 	.driver = {							       \
+ 		   .name = #__tag "_transport",				       \
+-		   .of_match_table = __match,				       \
++		   .of_match_table = __of_match,			       \
++		   .acpi_match_table = ACPI_PTR(__acpi_match),		       \
+ 		   },							       \
+ 	.probe = __tag##_probe,						       \
+ }
+diff --git a/drivers/firmware/arm_scmi/driver.c b/drivers/firmware/arm_scmi/driver.c
+index 3e76a3204ba4f..620c365e2b8da 100644
+--- a/drivers/firmware/arm_scmi/driver.c
++++ b/drivers/firmware/arm_scmi/driver.c
+@@ -174,6 +174,9 @@ struct scmi_info {
+ };
+ 
+ #define handle_to_scmi_info(h)	container_of(h, struct scmi_info, handle)
++
++/* Sentinel stored in active_protocols IDR for ACPI-enumerated protocols */
++#define SCMI_NO_DT_NODE		((struct device_node *)0x1)
+ #define tx_minfo_to_scmi_info(h) container_of(h, struct scmi_info, tx_minfo)
+ #define bus_nb_to_scmi_info(nb)	container_of(nb, struct scmi_info, bus_nb)
+ #define req_nb_to_scmi_info(nb)	container_of(nb, struct scmi_info, dev_req_nb)
+@@ -2721,6 +2724,18 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
+ 	idx = tx ? 0 : 1;
+ 	idr = tx ? &info->tx_idr : &info->rx_idr;
+ 
++	/*
++	 * ACPI: no DT children describe per-protocol channels.
++	 * All non-base protocols share the base transport channel,
++	 * mirroring the DT fallback when children lack own mboxes.
++	 */
++	if (!of_node && prot_id != SCMI_PROTOCOL_BASE) {
++		cinfo = idr_find(idr, SCMI_PROTOCOL_BASE);
++		if (unlikely(!cinfo))
++			return -EINVAL;
++		goto idr_alloc;
++	}
++
+ 	if (!info->desc->ops->chan_available(of_node, idx)) {
+ 		cinfo = idr_find(idr, SCMI_PROTOCOL_BASE);
+ 		if (unlikely(!cinfo)) /* Possible only if platform has no Rx */
+@@ -2929,6 +2944,8 @@ static int scmi_device_request_notifier(struct notifier_block *nb,
+ 	np = idr_find(&info->active_protocols, id_table->protocol_id);
+ 	if (!np)
+ 		return NOTIFY_DONE;
++	if (np == SCMI_NO_DT_NODE)
++		np = NULL;
+ 
+ 	dev_dbg(info->dev, "%sRequested device (%s) for protocol 0x%x\n",
+ 		action == SCMI_BUS_NOTIFY_DEVICE_REQUEST ? "" : "UN-",
+@@ -3331,6 +3348,38 @@ static int scmi_probe(struct platform_device *pdev)
+ 		scmi_create_protocol_devices(child, info, prot_id, NULL);
+ 	}
+ 
++	/*
++	 * ACPI fallback: no DT children to iterate. Enumerate all
++	 * protocols reported by firmware via base protocol discovery.
++	 */
++	if (!np) {
++		int i;
++
++		for (i = 0; i < info->version.num_protocols; i++) {
++			u8 prot_id = info->protocols_imp[i];
++
++			if (!FIELD_FIT(MSG_PROTOCOL_ID_MASK, prot_id))
++				continue;
++
++			ret = scmi_txrx_setup(info, NULL, prot_id);
++			if (ret)
++				continue;
++
++			ret = idr_alloc(&info->active_protocols,
++					SCMI_NO_DT_NODE,
++					prot_id, prot_id + 1, GFP_KERNEL);
++			if (ret != prot_id) {
++				dev_err(dev,
++					"SCMI protocol %d already activated. Skip\n",
++					prot_id);
++				continue;
++			}
++
++			scmi_create_protocol_devices(NULL, info, prot_id,
++						     NULL);
++		}
++	}
++
+ 	return 0;
+ 
+ notification_exit:
+@@ -3374,7 +3423,8 @@ static void scmi_remove(struct platform_device *pdev)
+ 	mutex_unlock(&info->protocols_mtx);
+ 
+ 	idr_for_each_entry(&info->active_protocols, child, id)
+-		of_node_put(child);
++		if (child != SCMI_NO_DT_NODE)
++			of_node_put(child);
+ 	idr_destroy(&info->active_protocols);
+ 
+ 	blocking_notifier_chain_unregister(&scmi_requested_devices_nh,
+diff --git a/drivers/firmware/arm_scmi/shmem.c b/drivers/firmware/arm_scmi/shmem.c
+index dadb37557f8ae..544c80f109382 100644
+--- a/drivers/firmware/arm_scmi/shmem.c
++++ b/drivers/firmware/arm_scmi/shmem.c
+@@ -5,11 +5,13 @@
+  * Copyright (C) 2019-2024 ARM Ltd.
+  */
+ 
++#include <linux/acpi.h>
+ #include <linux/ktime.h>
+ #include <linux/io.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/processor.h>
++#include <linux/property.h>
+ #include <linux/types.h>
+ 
+ #include <linux/bug.h>
+@@ -191,6 +193,93 @@ static bool shmem_channel_intr_enabled(struct scmi_shared_mem __iomem *shmem)
+ 	return ioread32(&shmem->flags) & SCMI_SHMEM_FLAG_INTR_ENABLED;
+ }
+ 
++#ifdef CONFIG_ACPI
++static void __iomem *shmem_acpi_setup_iomap(struct scmi_chan_info *cinfo,
++					     struct device *dev, bool tx,
++					     struct resource *res,
++					     struct scmi_shmem_io_ops **ops)
++{
++	struct fwnode_reference_args args;
++	struct resource_entry *rentry;
++	const char *desc = tx ? "Tx" : "Rx";
++	int idx = tx ? 0 : 1;
++	struct acpi_device *adev;
++	struct resource lres = {};
++	resource_size_t size;
++	void __iomem *addr;
++	LIST_HEAD(res_list);
++	int ret;
++
++	if (!res)
++		res = &lres;
++
++	ret = fwnode_property_get_reference_args(dev_fwnode(cinfo->dev),
++						 "shmem", NULL, 0, idx, &args);
++	if (ret) {
++		dev_err(cinfo->dev,
++			"failed to get SCMI %s shmem reference\n", desc);
++		return IOMEM_ERR_PTR(ret);
++	}
++
++	if (!is_acpi_device_node(args.fwnode)) {
++		fwnode_handle_put(args.fwnode);
++		return IOMEM_ERR_PTR(-EINVAL);
++	}
++
++	adev = to_acpi_device_node(args.fwnode);
++
++	ret = acpi_dev_get_resources(adev, &res_list, NULL, NULL);
++	if (ret <= 0) {
++		fwnode_handle_put(args.fwnode);
++		return IOMEM_ERR_PTR(ret ? ret : -EINVAL);
++	}
++
++	addr = IOMEM_ERR_PTR(-ENODEV);
++	list_for_each_entry(rentry, &res_list, node) {
++		if (resource_type(rentry->res) != IORESOURCE_MEM)
++			continue;
++
++		*res = *rentry->res;
++		size = resource_size(res);
++		if (cinfo->max_msg_size + SCMI_SHMEM_LAYOUT_OVERHEAD > size) {
++			dev_err(dev, "misconfigured SCMI shared memory\n");
++			addr = IOMEM_ERR_PTR(-ENOSPC);
++			break;
++		}
++
++		addr = devm_ioremap(dev, res->start, size);
++		if (!addr) {
++			dev_err(dev,
++				"failed to ioremap SCMI %s shared memory\n",
++				desc);
++			addr = IOMEM_ERR_PTR(-EADDRNOTAVAIL);
++		}
++		break;
++	}
++
++	acpi_dev_free_resource_list(&res_list);
++
++	if (!IS_ERR(addr)) {
++		u32 reg_io_width = 4;
++
++		fwnode_property_read_u32(args.fwnode,
++					"reg-io-width", &reg_io_width);
++		switch (reg_io_width) {
++		case 4:
++			*ops = &shmem_io_ops32;
++			break;
++		default:
++			*ops = &shmem_io_ops_default;
++			break;
++		}
++	}
++
++	fwnode_handle_put(args.fwnode);
++
++	return addr;
++}
++#endif
++
+ static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
+ 				       struct device *dev, bool tx,
+ 				       struct resource *res,
+@@ -204,9 +293,16 @@ static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
+ 	void __iomem *addr;
+ 	u32 reg_io_width;
+ 
++	if (!cdev->of_node) {
++#ifdef CONFIG_ACPI
++		return shmem_acpi_setup_iomap(cinfo, dev, tx, res, ops);
++#else
++		return IOMEM_ERR_PTR(-ENODEV);
++#endif
++	}
++
+ 	struct device_node *shmem __free(device_node) = of_parse_phandle(cdev->of_node,
+ 		"shmem", idx);
+-
+ 	if (!shmem)
+ 		return IOMEM_ERR_PTR(-ENODEV);
+ 
+diff --git a/drivers/firmware/arm_scmi/transports/mailbox.c b/drivers/firmware/arm_scmi/transports/mailbox.c
+index ae0f67e6cc45f..0502edd332b9f 100644
+--- a/drivers/firmware/arm_scmi/transports/mailbox.c
++++ b/drivers/firmware/arm_scmi/transports/mailbox.c
+@@ -12,6 +12,7 @@
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/slab.h>
+ 
+ #include "../common.h"
+@@ -81,6 +82,9 @@ static bool mailbox_chan_available(struct device_node *of_node, int idx)
+ {
+ 	int num_mb;
+ 
++	if (!of_node)
++		return true;
++
+ 	/*
+ 	 * Just check if bidirrectional channels are involved, and check the
+ 	 * index accordingly; proper full validation will be made later
+@@ -112,14 +116,42 @@ static bool mailbox_chan_available(struct device_node *of_node, int idx)
+  *
+  * Return: 0 on Success or error
+  */
++static int fwnode_count_references(struct fwnode_handle *fwnode,
++				   const char *prop, unsigned int nargs)
++{
++	struct fwnode_reference_args args;
++	int count = 0;
++
++	while (!fwnode_property_get_reference_args(fwnode, prop, NULL,
++						   nargs, count, &args)) {
++		fwnode_handle_put(args.fwnode);
++		count++;
++	}
++	return count;
++}
++
+ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
+ 				 int *p2a_chan, int *p2a_rx_chan)
+ {
+ 	int num_mb, num_sh, ret = 0;
+ 	struct device_node *np = cdev->of_node;
+ 
+-	num_mb = of_count_phandle_with_args(np, "mboxes", "#mbox-cells");
+-	num_sh = of_count_phandle_with_args(np, "shmem", NULL);
++	if (np) {
++		num_mb = of_count_phandle_with_args(np, "mboxes",
++						    "#mbox-cells");
++		num_sh = of_count_phandle_with_args(np, "shmem", NULL);
++	} else {
++		struct fwnode_handle *fwnode = dev_fwnode(cdev);
++
++		/*
++		 * In ACPI mode, count mailbox and shmem references from
++		 * _DSD properties.  Each mbox reference has one integer
++		 * argument (the channel index), shmem references are bare.
++		 */
++		num_mb = fwnode_count_references(fwnode, "mboxes", 1);
++		num_sh = fwnode_count_references(fwnode, "shmem", 0);
++	}
++
+ 	dev_dbg(cdev, "Found %d mboxes and %d shmems !\n", num_mb, num_sh);
+ 
+ 	/* Bail out if mboxes and shmem descriptors are inconsistent */
+@@ -127,20 +159,21 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
+ 	    (num_mb == 1 && num_sh != 1) || (num_mb == 3 && num_sh != 2) ||
+ 	    (num_mb == 4 && num_sh != 2)) {
+ 		dev_warn(cdev,
+-			 "Invalid channel descriptor for '%pOF' - mbs:%d  shm:%d\n",
+-			 np, num_mb, num_sh);
++			 "Invalid channel descriptor - mbs:%d  shm:%d\n",
++			 num_mb, num_sh);
+ 		return -EINVAL;
+ 	}
+ 
+ 	/* Bail out if provided shmem descriptors do not refer distinct areas  */
+-	if (num_sh > 1) {
++	if (np && num_sh > 1) {
+ 		struct device_node *np_tx __free(device_node) =
+ 					of_parse_phandle(np, "shmem", 0);
+ 		struct device_node *np_rx __free(device_node) =
+ 					of_parse_phandle(np, "shmem", 1);
+ 
+ 		if (!np_tx || !np_rx || np_tx == np_rx) {
+-			dev_warn(cdev, "Invalid shmem descriptor for '%pOF'\n", np);
++			dev_warn(cdev, "Invalid shmem descriptor for '%pOF'\n",
++				 np);
+ 			ret = -EINVAL;
+ 		}
+ 	}
+@@ -379,8 +412,19 @@ static const struct of_device_id scmi_of_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, scmi_of_match);
+ 
++#ifdef CONFIG_ACPI
++static const struct acpi_device_id scmi_acpi_match[] = {
++	{ "CIXHA006", 0 },
++	{ /* Sentinel */ },
++};
++MODULE_DEVICE_TABLE(acpi, scmi_acpi_match);
++#else
++#define scmi_acpi_match NULL
++#endif
++
+ DEFINE_SCMI_TRANSPORT_DRIVER(scmi_mailbox, scmi_mailbox_driver,
+-			     scmi_mailbox_desc, scmi_of_match, core);
++			     scmi_mailbox_desc, scmi_of_match,
++			     scmi_acpi_match, core);
+ module_platform_driver(scmi_mailbox_driver);
+ 
+ MODULE_AUTHOR("Sudeep Holla <sudeep.holla@arm.com>");
+diff --git a/drivers/firmware/arm_scmi/transports/optee.c b/drivers/firmware/arm_scmi/transports/optee.c
+index 07ae18d5279d9..d93c3b665d271 100644
+--- a/drivers/firmware/arm_scmi/transports/optee.c
++++ b/drivers/firmware/arm_scmi/transports/optee.c
+@@ -527,7 +527,7 @@ static const struct of_device_id scmi_of_match[] = {
+ };
+ 
+ DEFINE_SCMI_TRANSPORT_DRIVER(scmi_optee, scmi_optee_driver, scmi_optee_desc,
+-			     scmi_of_match, core);
++			     scmi_of_match, NULL, core);
+ 
+ static int scmi_optee_service_probe(struct tee_client_device *scmi_pta)
+ {
+diff --git a/drivers/firmware/arm_scmi/transports/smc.c b/drivers/firmware/arm_scmi/transports/smc.c
+index 21abb571e4f2f..cdd3e86d5a174 100644
+--- a/drivers/firmware/arm_scmi/transports/smc.c
++++ b/drivers/firmware/arm_scmi/transports/smc.c
+@@ -139,6 +139,11 @@ static int smc_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
+ 	u32 func_id;
+ 	int ret;
+ 
++	pr_info("smc_chan_setup: tx=%d dev=%s cdev=%s\n", tx,
++		dev_name(dev), dev_name(cdev));
++	pr_info("smc_chan_setup: dev->of_node=%pOF cdev->of_node=%pOF\n",
++		dev->of_node, cdev->of_node);
++
+ 	if (!tx)
+ 		return -ENODEV;
+ 
+@@ -148,12 +153,17 @@ static int smc_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
+ 
+ 	scmi_info->shmem = core->shmem->setup_iomap(cinfo, dev, tx, &res,
+ 						    &scmi_info->io_ops);
+-	if (IS_ERR(scmi_info->shmem))
++	if (IS_ERR(scmi_info->shmem)) {
++		pr_err("smc_chan_setup: setup_iomap failed: %ld\n",
++		       PTR_ERR(scmi_info->shmem));
+ 		return PTR_ERR(scmi_info->shmem);
++	}
+ 
+ 	ret = of_property_read_u32(dev->of_node, "arm,smc-id", &func_id);
+-	if (ret < 0)
++	if (ret < 0) {
++		pr_err("smc_chan_setup: arm,smc-id read failed: %d\n", ret);
+ 		return ret;
++	}
+ 
+ 	if (of_device_is_compatible(dev->of_node, "qcom,scmi-smc")) {
+ 		resource_size_t size = resource_size(&res);
+@@ -304,7 +314,7 @@ static const struct of_device_id scmi_of_match[] = {
+ MODULE_DEVICE_TABLE(of, scmi_of_match);
+ 
+ DEFINE_SCMI_TRANSPORT_DRIVER(scmi_smc, scmi_smc_driver, scmi_smc_desc,
+-			     scmi_of_match, core);
++			     scmi_of_match, NULL, core);
+ module_platform_driver(scmi_smc_driver);
+ 
+ MODULE_AUTHOR("Peng Fan <peng.fan@nxp.com>");
+diff --git a/drivers/firmware/arm_scmi/transports/virtio.c b/drivers/firmware/arm_scmi/transports/virtio.c
+index 326c4a93e44b9..bd806e79ccff6 100644
+--- a/drivers/firmware/arm_scmi/transports/virtio.c
++++ b/drivers/firmware/arm_scmi/transports/virtio.c
+@@ -806,7 +806,7 @@ static const struct of_device_id scmi_of_match[] = {
+ };
+ 
+ DEFINE_SCMI_TRANSPORT_DRIVER(scmi_virtio, scmi_virtio_driver, scmi_virtio_desc,
+-			     scmi_of_match, core);
++			     scmi_of_match, NULL, core);
+ 
+ static int scmi_vio_probe(struct virtio_device *vdev)
+ {

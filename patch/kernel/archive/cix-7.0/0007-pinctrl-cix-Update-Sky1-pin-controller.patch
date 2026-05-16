@@ -1,0 +1,2167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Mon, 16 Feb 2026 17:34:45 +1100
+Subject: [PATCH] pinctrl: cix: Update Sky1 pin controller
+
+Update Sky1 pinctrl driver with fixes and improvements.
+---
+ drivers/pinctrl/Makefile                |   1 +
+ drivers/pinctrl/cix/Kconfig             |   6 +-
+ drivers/pinctrl/cix/pinctrl-sky1-base.c | 835 +++++++++++----------
+ drivers/pinctrl/cix/pinctrl-sky1.c      | 957 ++++++++++++------------
+ drivers/pinctrl/cix/pinctrl-sky1.h      |  54 +-
+ 5 files changed, 954 insertions(+), 899 deletions(-)
+
+diff --git a/drivers/pinctrl/Makefile b/drivers/pinctrl/Makefile
+index f7d5d5f76d0c8..d00b08473fbac 100644
+--- a/drivers/pinctrl/Makefile
++++ b/drivers/pinctrl/Makefile
+@@ -68,6 +68,7 @@ obj-$(CONFIG_PINCTRL_ZYNQ)	+= pinctrl-zynq.o
+ obj-y				+= actions/
+ obj-$(CONFIG_ARCH_ASPEED)	+= aspeed/
+ obj-y				+= bcm/
++obj-$(CONFIG_PINCTRL_SKY1)	+= cix/
+ obj-$(CONFIG_PINCTRL_BERLIN)	+= berlin/
+ obj-y				+= cirrus/
+ obj-y				+= cix/
+diff --git a/drivers/pinctrl/cix/Kconfig b/drivers/pinctrl/cix/Kconfig
+index 1529b1af63886..64593fe0121c7 100644
+--- a/drivers/pinctrl/cix/Kconfig
++++ b/drivers/pinctrl/cix/Kconfig
+@@ -1,15 +1,13 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ config PINCTRL_SKY1_BASE
+-	tristate
++	bool
+ 	select GENERIC_PINCTRL_GROUPS
+ 	select GENERIC_PINMUX_FUNCTIONS
+ 	select GENERIC_PINCONF
+ 	select REGMAP
+ 
+ config PINCTRL_SKY1
+-	tristate "Cix Sky1 pinctrl driver"
+-	depends on ARCH_CIX || COMPILE_TEST
+-	depends on HAS_IOMEM
++	bool "Sky1 pinctrl driver"
+ 	select PINCTRL_SKY1_BASE
+ 	help
+ 	  Say Y here to enable the sky1 pinctrl driver
+diff --git a/drivers/pinctrl/cix/pinctrl-sky1-base.c b/drivers/pinctrl/cix/pinctrl-sky1-base.c
+index a5b583f10441e..e2c2a7cb816bd 100644
+--- a/drivers/pinctrl/cix/pinctrl-sky1-base.c
++++ b/drivers/pinctrl/cix/pinctrl-sky1-base.c
+@@ -1,503 +1,541 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ //
++// CIX Sky1 Pin Controller base driver
++// Ported to mainline 6.18+ API
++//
+ // Author: Jerry Zhu <Jerry.Zhu@cixtech.com>
+-// Author: Gary Yang <gary.yang@cixtech.com>
+-
+-#include <linux/device.h>
++//
++#include <linux/acpi.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+ #include <linux/io.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/of_address.h>
++#include <linux/pinctrl/machine.h>
+ #include <linux/pinctrl/pinconf.h>
+-#include <linux/pinctrl/pinconf-generic.h>
+ #include <linux/pinctrl/pinctrl.h>
+ #include <linux/pinctrl/pinmux.h>
+ #include <linux/platform_device.h>
+ #include <linux/seq_file.h>
+ #include <linux/slab.h>
++#include <linux/regmap.h>
+ 
+ #include "../core.h"
+ #include "../pinconf.h"
+-#include "../pinctrl-utils.h"
+ #include "../pinmux.h"
+ #include "pinctrl-sky1.h"
+ 
+-#define SKY1_PIN_SIZE		(4)
+-#define SKY1_MUX_MASK		GENMASK(8, 7)
+-#define SKY1_MUX_SHIFT		(7)
+-#define SKY1_PULLCONF_MASK	GENMASK(6, 5)
+-#define SKY1_PULLUP_BIT		(6)
+-#define SKY1_PULLDN_BIT		(5)
+-#define SKY1_DS_MASK		GENMASK(3, 0)
+-
+-#define CIX_PIN_NO_SHIFT	(8)
+-#define CIX_PIN_FUN_MASK	GENMASK(1, 0)
+-#define CIX_GET_PIN_NO(x)	((x) >> CIX_PIN_NO_SHIFT)
+-#define CIX_GET_PIN_FUNC(x)	((x) & CIX_PIN_FUN_MASK)
+-#define SKY1_DEFAULT_DS_VAL	(4)
+-
+-static const char * const sky1_gpio_functions[] = {
+-	"func0", "func1", "func2", "func3",
+-};
+-
+-static unsigned char sky1_ds_table[] = {
+-	2, 3, 5, 6, 8, 9, 11, 12, 13, 14, 17, 18, 20, 21, 23, 24,
+-};
++#define SKY1_PIN_SIZE		(0xc)
++#define SKY1_MUX_MASK		(0x180L)
++#define SKY1_CONF_MASK		(0x7fL)
++#define PADS_FUNCS_MASK		(0x3)
++#define PADS_FUNCS_BITS		(0x7)
++#define PADS_CONFS_MASK		(0x7f)
+ 
+-static bool sky1_pctrl_is_function_valid(struct sky1_pinctrl *spctl,
+-		u32 pin_num, u32 fnum)
++static inline const struct group_desc *sky1_pinctrl_find_group_by_name(
++				struct pinctrl_dev *pctldev,
++				const char *name)
+ {
++	const struct group_desc *grp = NULL;
+ 	int i;
+ 
+-	for (i = 0; i < spctl->info->npins; i++) {
+-		const struct sky1_pin_desc *pin = spctl->info->pins + i;
+-
+-		if (pin->pin.number == pin_num) {
+-			if (fnum < pin->nfunc)
+-				return true;
+-
++	for (i = 0; i < pctldev->num_groups; i++) {
++		grp = pinctrl_generic_get_group(pctldev, i);
++		if (grp && !strcmp(grp->grp.name, name))
+ 			break;
+-		}
+-	}
+-
+-	return false;
+-}
+-
+-static int sky1_pctrl_dt_node_to_map_func(struct sky1_pinctrl *spctl,
+-		u32 pin, u32 fnum, struct sky1_pinctrl_group *grp,
+-		struct pinctrl_map **map, unsigned int *reserved_maps,
+-		unsigned int *num_maps)
+-{
+-	bool ret;
+-
+-	if (*num_maps == *reserved_maps)
+-		return -ENOSPC;
+-
+-	(*map)[*num_maps].type = PIN_MAP_TYPE_MUX_GROUP;
+-	(*map)[*num_maps].data.mux.group = grp->name;
+-
+-	ret = sky1_pctrl_is_function_valid(spctl, pin, fnum);
+-	if (!ret) {
+-		dev_err(spctl->dev, "invalid function %d on pin %d .\n",
+-				fnum, pin);
+-		return -EINVAL;
+ 	}
+ 
+-	(*map)[*num_maps].data.mux.function = sky1_gpio_functions[fnum];
+-	(*num_maps)++;
+-
+-	return 0;
++	return grp;
+ }
+ 
+-static struct sky1_pinctrl_group *
+-sky1_pctrl_find_group_by_pin(struct sky1_pinctrl *spctl, u32 pin)
++static void sky1_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_file *s,
++		   unsigned offset)
+ {
+-	int i;
+-
+-	for (i = 0; i < spctl->info->npins; i++) {
+-		struct sky1_pinctrl_group *grp =
+-			(struct sky1_pinctrl_group *)spctl->groups + i;
+-
+-		if (grp->pin == pin)
+-			return grp;
+-	}
+-
+-	return NULL;
++	seq_printf(s, "%s", dev_name(pctldev->dev));
+ }
+ 
+-static int sky1_pctrl_dt_subnode_to_map(struct pinctrl_dev *pctldev,
+-				      struct device_node *node,
+-				      struct pinctrl_map **map,
+-				      unsigned int *reserved_maps,
+-				      unsigned int *num_maps)
++static int sky1_dt_node_to_map(struct pinctrl_dev *pctldev,
++			struct device_node *np,
++			struct pinctrl_map **map, unsigned *num_maps)
+ {
+-	struct property *pins;
+-	u32 pinfunc, pin, func;
+-	int num_pins, num_funcs, maps_per_pin;
+-	unsigned long *configs;
+-	unsigned int num_configs;
+-	bool has_config = false;
+-	int i, err;
+-	unsigned int reserve = 0;
+-	struct sky1_pinctrl_group *grp;
+ 	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
++	const struct group_desc *grp;
++	struct pinctrl_map *new_map;
++	struct device_node *parent;
++	struct sky1_pin *pin;
++	int map_num = 1;
++	int i, j;
+ 
+-	pins = of_find_property(node, "pinmux", NULL);
+-	if (!pins) {
+-		dev_err(spctl->dev, "missing pins property in node %pOFn .\n",
+-				node);
++	/*
++	 * first find the group of this node and check if we need create
++	 * config maps for pins
++	 */
++	grp = sky1_pinctrl_find_group_by_name(pctldev, np->name);
++	if (!grp) {
++		dev_err(spctl->dev, "unable to find group for node %pOFn\n", np);
+ 		return -EINVAL;
+ 	}
+ 
+-	err = pinconf_generic_parse_dt_config(node, pctldev, &configs,
+-		&num_configs);
+-	if (err)
+-		return err;
+-
+-	if (num_configs)
+-		has_config = true;
+-
+-	num_pins = pins->length / sizeof(u32);
+-	num_funcs = num_pins;
+-	maps_per_pin = 0;
+-	if (num_funcs)
+-		maps_per_pin++;
+-	if (has_config && num_pins >= 1)
+-		maps_per_pin++;
+-
+-	if (!num_pins || !maps_per_pin) {
+-		err = -EINVAL;
+-		goto exit;
+-	}
+-
+-	reserve = num_pins * maps_per_pin;
+-
+-	err = pinctrl_utils_reserve_map(pctldev, map,
+-			reserved_maps, num_maps, reserve);
+-	if (err < 0)
+-		goto exit;
+-
+-	for (i = 0; i < num_pins; i++) {
+-		err = of_property_read_u32_index(node, "pinmux",
+-				i, &pinfunc);
+-		if (err)
+-			goto exit;
+-
+-		pin = CIX_GET_PIN_NO(pinfunc);
+-		func = CIX_GET_PIN_FUNC(pinfunc);
+-		pctldev->num_functions = ARRAY_SIZE(sky1_gpio_functions);
++	map_num += grp->grp.npins;
+ 
+-		if (pin >= pctldev->desc->npins ||
+-			func >= pctldev->num_functions) {
+-			dev_err(spctl->dev, "invalid pins value.\n");
+-			err = -EINVAL;
+-			goto exit;
+-		}
++	new_map = kmalloc_array(map_num, sizeof(struct pinctrl_map),
++				GFP_KERNEL);
++	if (!new_map)
++		return -ENOMEM;
+ 
+-		grp = sky1_pctrl_find_group_by_pin(spctl, pin);
+-		if (!grp) {
+-			dev_err(spctl->dev, "unable to match pin %d to group\n",
+-					pin);
+-			err = -EINVAL;
+-			goto exit;
+-		}
++	*map = new_map;
++	*num_maps = map_num;
+ 
+-		err = sky1_pctrl_dt_node_to_map_func(spctl, pin, func, grp,
+-				map, reserved_maps, num_maps);
+-		if (err < 0)
+-			goto exit;
+-
+-		if (has_config) {
+-			err = pinctrl_utils_add_map_configs(pctldev, map,
+-					reserved_maps, num_maps, grp->name,
+-					configs, num_configs,
+-					PIN_MAP_TYPE_CONFIGS_GROUP);
+-			if (err < 0)
+-				goto exit;
+-		}
++	/* create mux map */
++	parent = of_get_parent(np);
++	if (!parent) {
++		kfree(new_map);
++		return -EINVAL;
+ 	}
+-
+-	err = 0;
+-
+-exit:
+-	kfree(configs);
+-	return err;
+-}
+-
+-static int sky1_pctrl_dt_node_to_map(struct pinctrl_dev *pctldev,
+-				 struct device_node *np_config,
+-				 struct pinctrl_map **map, unsigned int *num_maps)
+-{
+-	unsigned int reserved_maps;
+-	int ret;
+-
+-	*map = NULL;
+-	*num_maps = 0;
+-	reserved_maps = 0;
+-
+-	for_each_child_of_node_scoped(np_config, np) {
+-		ret = sky1_pctrl_dt_subnode_to_map(pctldev, np, map,
+-				&reserved_maps, num_maps);
+-		if (ret < 0) {
+-			pinctrl_utils_free_map(pctldev, *map, *num_maps);
+-			return ret;
+-		}
++	new_map[0].type = PIN_MAP_TYPE_MUX_GROUP;
++	new_map[0].data.mux.function = parent->name;
++	new_map[0].data.mux.group = np->name;
++	of_node_put(parent);
++
++	/* create config map */
++	new_map++;
++	for (i = j = 0; i < grp->grp.npins; i++) {
++		pin = &((struct sky1_pin *)(grp->data))[i];
++
++		new_map[j].type = PIN_MAP_TYPE_CONFIGS_PIN;
++		new_map[j].data.configs.group_or_pin =
++			pin_get_name(pctldev, pin->offset/4);
++		new_map[j].data.configs.configs = &pin->configs;
++		new_map[j].data.configs.num_configs = 1;
++
++		j++;
+ 	}
+ 
++	dev_dbg(pctldev->dev, "maps: function %s group %s num %d\n",
++		(*map)->data.mux.function, (*map)->data.mux.group, map_num);
++
+ 	return 0;
+ }
+ 
+ static void sky1_dt_free_map(struct pinctrl_dev *pctldev,
+ 			     struct pinctrl_map *map,
+-			     unsigned int num_maps)
++			     unsigned num_maps)
+ {
+ 	kfree(map);
+ }
+ 
+-static int sky1_pctrl_get_groups_count(struct pinctrl_dev *pctldev)
+-{
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-
+-	return spctl->info->npins;
+-}
+-
+-static const char *sky1_pctrl_get_group_name(struct pinctrl_dev *pctldev,
+-					      unsigned int group)
+-{
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-
+-	return spctl->groups[group].name;
+-}
+-
+-static int sky1_pctrl_get_group_pins(struct pinctrl_dev *pctldev,
+-				      unsigned int group,
+-				      const unsigned int **pins,
+-				      unsigned int *num_pins)
+-{
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-
+-	*pins = (unsigned int *)&spctl->groups[group].pin;
+-	*num_pins = 1;
+-
+-	return 0;
+-}
+-
+-static void sky1_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_file *s,
+-		   unsigned int offset)
+-{
+-	seq_printf(s, "%s", dev_name(pctldev->dev));
+-}
+-
+ static const struct pinctrl_ops sky1_pctrl_ops = {
+-	.dt_node_to_map = sky1_pctrl_dt_node_to_map,
+-	.dt_free_map = sky1_dt_free_map,
+-	.get_groups_count = sky1_pctrl_get_groups_count,
+-	.get_group_name = sky1_pctrl_get_group_name,
+-	.get_group_pins = sky1_pctrl_get_group_pins,
++	.get_groups_count = pinctrl_generic_get_group_count,
++	.get_group_name = pinctrl_generic_get_group_name,
++	.get_group_pins = pinctrl_generic_get_group_pins,
+ 	.pin_dbg_show = sky1_pin_dbg_show,
++	.dt_node_to_map = sky1_dt_node_to_map,
++	.dt_free_map = sky1_dt_free_map,
+ };
+ 
+ static int sky1_pmx_set_one_pin(struct sky1_pinctrl *spctl,
+-				    unsigned int pin, unsigned char muxval)
++				    struct sky1_pin *pin)
+ {
+ 	u32 reg_val;
+-	void __iomem *pin_reg;
++	u32 *pin_reg;
+ 
+-	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
++	pin_reg = spctl->base + pin->offset;
+ 	reg_val = readl(pin_reg);
+ 	reg_val &= ~SKY1_MUX_MASK;
+-	reg_val |= muxval << SKY1_MUX_SHIFT;
++	reg_val |= pin->configs & SKY1_MUX_MASK;
+ 	writel(reg_val, pin_reg);
+ 
+ 	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
+-		pin * SKY1_PIN_SIZE, reg_val);
++		pin->offset, reg_val);
+ 	return 0;
+ }
+ 
+-static int sky1_pmx_set_mux(struct pinctrl_dev *pctldev,
+-			    unsigned int function,
+-			    unsigned int group)
++static int sky1_pmx_set(struct pinctrl_dev *pctldev, unsigned selector,
++		       unsigned group)
+ {
+-	bool ret;
+ 	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	struct sky1_pinctrl_group *g =
+-		(struct sky1_pinctrl_group *)spctl->groups + group;
++	const struct function_desc *func;
++	struct group_desc *grp;
++	struct sky1_pin *pin;
++	unsigned int npins;
++	int i, err;
++
++	/*
++	 * Configure the mux mode for each pin in the group for a specific
++	 * function.
++	 */
++	grp = pinctrl_generic_get_group(pctldev, group);
++	if (!grp)
++		return -EINVAL;
+ 
+-	ret = sky1_pctrl_is_function_valid(spctl, g->pin, function);
+-	if (!ret) {
+-		dev_err(spctl->dev, "invalid function %d on group %d .\n",
+-				function, group);
++	func = pinmux_generic_get_function(pctldev, selector);
++	if (!func)
+ 		return -EINVAL;
++
++	npins = grp->grp.npins;
++
++	dev_dbg(spctl->dev, "enable function %s group %s\n",
++		func->func->name, grp->grp.name);
++
++	for (i = 0; i < npins; i++) {
++		/*
++		 * Config for Sky1 one pin
++		 */
++		pin = &((struct sky1_pin *)(grp->data))[i];
++		err = sky1_pmx_set_one_pin(spctl, pin);
++		if (err)
++			return err;
+ 	}
+ 
+-	sky1_pmx_set_one_pin(spctl, g->pin, function);
+ 	return 0;
+ }
+ 
+-static int sky1_pmx_get_funcs_cnt(struct pinctrl_dev *pctldev)
++static const struct pinmux_ops sky1_pmx_ops = {
++	.get_functions_count = pinmux_generic_get_function_count,
++	.get_function_name = pinmux_generic_get_function_name,
++	.get_function_groups = pinmux_generic_get_function_groups,
++	.set_mux = sky1_pmx_set,
++};
++
++static int sky1_pinconf_get(struct pinctrl_dev *pctldev,
++			   unsigned pin_id, unsigned long *config)
+ {
+-	return ARRAY_SIZE(sky1_gpio_functions);
++	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
++	*config = readl(spctl->base + spctl->pin_regs[pin_id]);
++
++	return 0;
+ }
+ 
+-static const char *sky1_pmx_get_func_name(struct pinctrl_dev *pctldev,
+-					   unsigned int selector)
++static int sky1_pinconf_set(struct pinctrl_dev *pctldev,
++			   unsigned pin_id, unsigned long *configs,
++			   unsigned num_configs)
+ {
+-	return sky1_gpio_functions[selector];
++	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
++	u32 reg_val;
++	u32 *pin_reg;
++	int i;
++
++	pin_reg = spctl->base + spctl->pin_regs[pin_id];
++
++	for (i = 0; i < num_configs; i++) {
++		reg_val = readl(pin_reg);
++		reg_val &= ~SKY1_CONF_MASK;
++		reg_val |= (configs[i] & SKY1_CONF_MASK);
++		writel(reg_val, pin_reg);
++
++		dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
++			spctl->pin_regs[pin_id], reg_val);
++	}
++
++	return 0;
+ }
+ 
+-static int sky1_pmx_get_func_groups(struct pinctrl_dev *pctldev,
+-				     unsigned int function,
+-				     const char * const **groups,
+-				     unsigned int * const num_groups)
++static void sky1_pinconf_dbg_show(struct pinctrl_dev *pctldev,
++				   struct seq_file *s, unsigned pin_id)
+ {
+ 	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	const struct sky1_pinctrl_soc_info *info = spctl->info;
++	u32 config;
++	u32 *pin_reg;
++
++	if (spctl->pin_regs[pin_id] == -1) {
++		seq_puts(s, "N/A");
++		return;
++	}
+ 
+-	*groups = spctl->grp_names;
+-	*num_groups = info->npins;
++	pin_reg = spctl->base + spctl->pin_regs[pin_id];
++	config = readl(pin_reg) & SKY1_CONF_MASK;
+ 
+-	return 0;
++	seq_printf(s, "0x%x", config);
+ }
+ 
+-static const struct pinmux_ops sky1_pmx_ops = {
+-	.get_functions_count = sky1_pmx_get_funcs_cnt,
+-	.get_function_groups = sky1_pmx_get_func_groups,
+-	.get_function_name = sky1_pmx_get_func_name,
+-	.set_mux = sky1_pmx_set_mux,
++static void sky1_pinconf_group_dbg_show(struct pinctrl_dev *pctldev,
++					 struct seq_file *s, unsigned group)
++{
++	struct group_desc *grp;
++	unsigned long config;
++	const char *name;
++	int i, pin_id, ret;
++
++	if (group >= pctldev->num_groups)
++		return;
++
++	seq_puts(s, "\n");
++	grp = pinctrl_generic_get_group(pctldev, group);
++	if (!grp)
++		return;
++
++	for (i = 0; i < grp->grp.npins; i++) {
++		struct sky1_pin *pin = &(((struct sky1_pin *)(grp->data))[i]);
++		pin_id = pin->offset / 4;
++
++		name = pin_get_name(pctldev, pin_id);
++		ret = sky1_pinconf_get(pctldev, pin_id, &config);
++		if (ret)
++			return;
++		seq_printf(s, "  %s: 0x%lx\n", name, config);
++	}
++}
++
++static const struct pinconf_ops sky1_pinconf_ops = {
++	.pin_config_get = sky1_pinconf_get,
++	.pin_config_set = sky1_pinconf_set,
++	.pin_config_dbg_show = sky1_pinconf_dbg_show,
++	.pin_config_group_dbg_show = sky1_pinconf_group_dbg_show,
+ };
+ 
+-static int sky1_pconf_set_pull_select(struct sky1_pinctrl *spctl,
+-		unsigned int pin, bool enable, bool isup)
++/*
++ * Each pin represented in sky1,pins consists of
++ * a number of u32 OFFSET and a number of u32 CONFIGS,
++ * the total size is OFFSET + CONFIGS for each pin.
++ *
++ * Default:
++ *     <offset, configs>
++ *     <4byte,  4byte>
++ */
++
++static void sky1_pinctrl_parse_pin(struct sky1_pinctrl *spctl,
++				       unsigned int *pin_id,
++				       struct sky1_pin *pin,
++				       const __be32 **list_p,
++				       struct device_node *np)
+ {
+-	u32 reg_val, reg_pullsel = 0;
+-	void __iomem *pin_reg;
+-
+-	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
+-	reg_val = readl(pin_reg);
+-	reg_val &= ~SKY1_PULLCONF_MASK;
++	const __be32 *list = *list_p;
++	unsigned int configs0, configs1;
++	const struct sky1_pinctrl_soc_info *info = spctl->info;
+ 
+-	if (!enable)
+-		goto update;
++	pin->offset = be32_to_cpu(*list++);
++	*pin_id = pin->offset / 4;
++	pin->pin_id = *pin_id;
+ 
+-	if (isup)
+-		reg_pullsel = BIT(SKY1_PULLUP_BIT);
+-	else
+-		reg_pullsel = BIT(SKY1_PULLDN_BIT);
++	configs0 = be32_to_cpu(*list++);
++	configs1 = be32_to_cpu(*list++);
++	pin->configs = (((configs0 & PADS_FUNCS_MASK) << PADS_FUNCS_BITS) | (configs1 & PADS_CONFS_MASK));
++	spctl->pin_regs[*pin_id] = pin->offset;
+ 
+-update:
+-	reg_val |= reg_pullsel;
+-	writel(reg_val, pin_reg);
++	*list_p = list;
+ 
+-	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
+-		pin * SKY1_PIN_SIZE, reg_val);
+-	return 0;
++	dev_dbg(spctl->dev, "%s: 0x%x 0x%08lx", info->pins[*pin_id].name,
++		pin->offset, pin->configs);
+ }
+ 
+-static int sky1_ds_to_index(unsigned char driving)
++static int sky1_pinctrl_parse_groups(struct device_node *np,
++				    struct group_desc *grp,
++				    struct sky1_pinctrl *spctl,
++				    u32 index)
+ {
++	struct sky1_pin *pin;
++	unsigned int *pins;
++	int size;
++	const __be32 *list;
+ 	int i;
+ 
+-	for (i = 0; i < sizeof(sky1_ds_table); i++)
+-		if (driving == sky1_ds_table[i])
+-			return i;
+-	return SKY1_DEFAULT_DS_VAL;
+-}
++	dev_dbg(spctl->dev, "group(%d): %pOFn\n", index, np);
+ 
+-static int sky1_pconf_set_driving(struct sky1_pinctrl *spctl,
+-		unsigned int pin, unsigned char driving)
+-{
+-	unsigned int reg_val, val;
+-	void __iomem *pin_reg;
++	/*
++	 * the binding format is sky1,pins = <PIN_FUNC_ID CONFIG ...>,
++	 * do sanity check and calculate pins number
++	 *
++	 * First try legacy 'sky1,pins' property, then fall back to the
++	 * generic 'pinmux'.
++	 *
++	 * Note: for generic 'pinmux' case, there's no CONFIG part in
++	 * the binding format.
++	 */
++	list = of_get_property(np, "sky1,pins", &size);
++	if (!list) {
++		list = of_get_property(np, "pinmux", &size);
++		if (!list) {
++			dev_err(spctl->dev,
++				"no sky1,pins and pins property in node %pOF\n", np);
++			return -EINVAL;
++		}
++	}
+ 
+-	if (pin >= spctl->info->npins)
++	/* we do not check return since it's safe node passed down */
++	if (!size || size % SKY1_PIN_SIZE) {
++		dev_err(spctl->dev, "Invalid sky1,pins or pins property in node %pOF\n", np);
+ 		return -EINVAL;
++	}
+ 
+-	pin_reg = spctl->base + pin * SKY1_PIN_SIZE;
+-	reg_val = readl(pin_reg);
+-	reg_val &= ~SKY1_DS_MASK;
+-	val = sky1_ds_to_index(driving);
+-	reg_val |= (val & SKY1_DS_MASK);
+-	writel(reg_val, pin_reg);
++	/* Allocate pins array for pingroup */
++	pins = devm_kcalloc(spctl->dev, size / SKY1_PIN_SIZE,
++			    sizeof(unsigned int), GFP_KERNEL);
++	if (!pins)
++		return -ENOMEM;
+ 
+-	dev_dbg(spctl->dev, "write: offset 0x%x val 0x%x\n",
+-		pin * SKY1_PIN_SIZE, reg_val);
++	grp->data = devm_kcalloc(spctl->dev,
++				 size / SKY1_PIN_SIZE, sizeof(struct sky1_pin),
++				 GFP_KERNEL);
++	if (!grp->data)
++		return -ENOMEM;
++
++	for (i = 0; i < size / SKY1_PIN_SIZE; i++) {
++		pin = &((struct sky1_pin *)(grp->data))[i];
++		sky1_pinctrl_parse_pin(spctl, &pins[i], pin, &list, np);
++	}
++
++	/* Initialize the pingroup using mainline API */
++	grp->grp.name = np->name;
++	grp->grp.pins = pins;
++	grp->grp.npins = size / SKY1_PIN_SIZE;
+ 
+ 	return 0;
+ }
+ 
+-static int sky1_pconf_parse_conf(struct pinctrl_dev *pctldev,
+-		unsigned int pin, enum pin_config_param param,
+-		enum pin_config_param arg)
++static int sky1_pinctrl_parse_functions(struct device_node *np,
++				       struct sky1_pinctrl *spctl,
++				       u32 index)
+ {
+-	int ret = 0;
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
++	struct pinctrl_dev *pctl = spctl->pctl;
++	struct device_node *child;
++	struct function_desc *func;
++	struct group_desc *grp;
++	const char **group_names;
++	struct pinfunction *pf;
++	u32 i = 0;
++
++	dev_dbg(pctl->dev, "parse function(%d): %pOFn\n", index, np);
++
++	/* Cast away const - we need to modify func->func during setup */
++	func = (struct function_desc *)pinmux_generic_get_function(pctl, index);
++	if (!func)
++		return -EINVAL;
++
++	/* Allocate pinfunction structure */
++	pf = devm_kzalloc(spctl->dev, sizeof(*pf), GFP_KERNEL);
++	if (!pf)
++		return -ENOMEM;
+ 
+-	switch (param) {
+-	case PIN_CONFIG_BIAS_DISABLE:
+-		ret = sky1_pconf_set_pull_select(spctl, pin, false, false);
+-		break;
+-	case PIN_CONFIG_BIAS_PULL_UP:
+-		ret = sky1_pconf_set_pull_select(spctl, pin, true, true);
+-		break;
+-	case PIN_CONFIG_BIAS_PULL_DOWN:
+-		ret = sky1_pconf_set_pull_select(spctl, pin, true, false);
+-		break;
+-	case PIN_CONFIG_DRIVE_STRENGTH:
+-		ret = sky1_pconf_set_driving(spctl, pin, arg);
+-		break;
+-	default:
+-		ret = -EINVAL;
++	/* Initialise function */
++	pf->name = np->name;
++	pf->ngroups = of_get_child_count(np);
++	if (pf->ngroups == 0) {
++		dev_err(spctl->dev, "no groups defined in %pOF\n", np);
++		return -EINVAL;
+ 	}
+ 
+-	return ret;
+-}
++	group_names = devm_kcalloc(spctl->dev, pf->ngroups,
++				   sizeof(char *), GFP_KERNEL);
++	if (!group_names)
++		return -ENOMEM;
+ 
+-static int sky1_pconf_group_get(struct pinctrl_dev *pctldev,
+-				 unsigned int group,
+-				 unsigned long *config)
+-{
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	struct sky1_pinctrl_group *g = &spctl->groups[group];
++	for_each_child_of_node(np, child)
++		group_names[i++] = child->name;
+ 
+-	*config = g->config;
++	pf->groups = group_names;
++	func->func = pf;
++
++	i = 0;
++	for_each_child_of_node(np, child) {
++		grp = devm_kzalloc(spctl->dev, sizeof(struct group_desc),
++				   GFP_KERNEL);
++		if (!grp) {
++			of_node_put(child);
++			return -ENOMEM;
++		}
++
++		mutex_lock(&spctl->mutex);
++		radix_tree_insert(&pctl->pin_group_tree,
++				  spctl->group_index++, grp);
++		mutex_unlock(&spctl->mutex);
++
++		sky1_pinctrl_parse_groups(child, grp, spctl, i++);
++	}
+ 
+ 	return 0;
+ }
+ 
+-static int sky1_pconf_group_set(struct pinctrl_dev *pctldev, unsigned int group,
+-				 unsigned long *configs, unsigned int num_configs)
++/*
++ * Check if the DT contains pins in the direct child nodes. This indicates the
++ * newer DT format to store pins. This function returns true if the first found
++ * sky1,pins property is in a child of np. Otherwise false is returned.
++ */
++static bool sky1_pinctrl_dt_is_flat_functions(struct device_node *np)
+ {
+-	struct sky1_pinctrl *spctl = pinctrl_dev_get_drvdata(pctldev);
+-	struct sky1_pinctrl_group *g = &spctl->groups[group];
+-	int i, ret;
++	struct device_node *function_np;
++	struct device_node *pinctrl_np;
+ 
+-	for (i = 0; i < num_configs; i++) {
+-		ret = sky1_pconf_parse_conf(pctldev, g->pin,
+-			pinconf_to_config_param(configs[i]),
+-			pinconf_to_config_argument(configs[i]));
+-		if (ret < 0)
+-			return ret;
++	for_each_child_of_node(np, function_np) {
++		if (of_property_read_bool(function_np, "sky1,pins")) {
++			of_node_put(function_np);
++			return true;
++		}
+ 
+-		g->config = configs[i];
++		for_each_child_of_node(function_np, pinctrl_np) {
++			if (of_property_read_bool(pinctrl_np, "sky1,pins")) {
++				of_node_put(pinctrl_np);
++				of_node_put(function_np);
++				return false;
++			}
++		}
+ 	}
+ 
+-	return 0;
++	return true;
+ }
+ 
+-static const struct pinconf_ops sky1_pinconf_ops = {
+-	.pin_config_group_get	= sky1_pconf_group_get,
+-	.pin_config_group_set	= sky1_pconf_group_set,
+-};
+-
+-static int sky1_pctrl_build_state(struct platform_device *pdev)
++static int sky1_pinctrl_probe_dt(struct platform_device *pdev,
++				struct sky1_pinctrl *spctl)
+ {
+-	struct sky1_pinctrl *spctl = platform_get_drvdata(pdev);
+-	const struct sky1_pinctrl_soc_info *info = spctl->info;
+-	int i;
+-
+-	/* Allocate groups */
+-	spctl->groups = devm_kcalloc(&pdev->dev, info->npins,
+-				    sizeof(*spctl->groups), GFP_KERNEL);
+-	if (!spctl->groups)
+-		return -ENOMEM;
++	struct device_node *np = pdev->dev.of_node;
++	struct device_node *child;
++	struct pinctrl_dev *pctl = spctl->pctl;
++	struct pinfunction *pf;
++	u32 nfuncs = 0;
++	u32 i = 0;
++	bool flat_funcs;
++
++	if (!np)
++		return -ENODEV;
++
++	flat_funcs = sky1_pinctrl_dt_is_flat_functions(np);
++	if (flat_funcs) {
++		nfuncs = 1;
++	} else {
++		nfuncs = of_get_child_count(np);
++		if (nfuncs == 0) {
++			dev_err(&pdev->dev, "no functions defined\n");
++			return -EINVAL;
++		}
++	}
+ 
+-	/* We assume that one pin is one group, use pin name as group name. */
+-	spctl->grp_names = devm_kcalloc(&pdev->dev, info->npins,
+-				       sizeof(*spctl->grp_names), GFP_KERNEL);
+-	if (!spctl->grp_names)
+-		return -ENOMEM;
++	for (i = 0; i < nfuncs; i++) {
++		struct function_desc *function;
+ 
+-	for (i = 0; i < info->npins; i++) {
+-		const struct sky1_pin_desc *pin = spctl->info->pins + i;
+-		struct sky1_pinctrl_group *group =
+-			(struct sky1_pinctrl_group *)spctl->groups + i;
++		function = devm_kzalloc(&pdev->dev, sizeof(*function),
++					GFP_KERNEL);
++		if (!function)
++			return -ENOMEM;
++
++		/* Allocate pinfunction for this function_desc */
++		pf = devm_kzalloc(&pdev->dev, sizeof(*pf), GFP_KERNEL);
++		if (!pf)
++			return -ENOMEM;
++		function->func = pf;
++
++		mutex_lock(&spctl->mutex);
++		radix_tree_insert(&pctl->pin_function_tree, i, function);
++		mutex_unlock(&spctl->mutex);
++	}
++	pctl->num_functions = nfuncs;
++
++	spctl->group_index = 0;
++	if (flat_funcs) {
++		pctl->num_groups = of_get_child_count(np);
++	} else {
++		pctl->num_groups = 0;
++		for_each_child_of_node(np, child)
++			pctl->num_groups += of_get_child_count(child);
++	}
+ 
+-		group->name = pin->pin.name;
+-		group->pin = pin->pin.number;
+-		spctl->grp_names[i] = pin->pin.name;
++	if (flat_funcs) {
++		sky1_pinctrl_parse_functions(np, spctl, 0);
++	} else {
++		i = 0;
++		for_each_child_of_node(np, child)
++			sky1_pinctrl_parse_functions(child, spctl, i++);
+ 	}
+ 
+ 	return 0;
+@@ -508,7 +546,6 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+ {
+ 	struct pinctrl_desc *sky1_pinctrl_desc;
+ 	struct sky1_pinctrl *spctl;
+-	struct pinctrl_pin_desc *pins;
+ 	int ret, i;
+ 
+ 	if (!info || !info->pins || !info->npins) {
+@@ -521,8 +558,14 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+ 	if (!spctl)
+ 		return -ENOMEM;
+ 
+-	spctl->info = info;
+-	platform_set_drvdata(pdev, spctl);
++	spctl->pin_regs = devm_kmalloc_array(&pdev->dev, info->npins,
++					    sizeof(*spctl->pin_regs),
++					    GFP_KERNEL);
++	if (!spctl->pin_regs)
++		return -ENOMEM;
++
++	for (i = 0; i < info->npins; i++)
++		spctl->pin_regs[i] = -1;
+ 
+ 	spctl->base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(spctl->base))
+@@ -533,25 +576,19 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+ 	if (!sky1_pinctrl_desc)
+ 		return -ENOMEM;
+ 
+-	pins = devm_kcalloc(&pdev->dev, info->npins, sizeof(*pins),
+-			    GFP_KERNEL);
+-	if (!pins)
+-		return -ENOMEM;
+-	for (i = 0; i < info->npins; i++)
+-		pins[i] = info->pins[i].pin;
+-
+-	ret = sky1_pctrl_build_state(pdev);
+-	if (ret)
+-		return ret;
+-
+ 	sky1_pinctrl_desc->name = dev_name(&pdev->dev);
+-	sky1_pinctrl_desc->pins = pins;
++	sky1_pinctrl_desc->pins = info->pins;
+ 	sky1_pinctrl_desc->npins = info->npins;
+ 	sky1_pinctrl_desc->pctlops = &sky1_pctrl_ops;
+ 	sky1_pinctrl_desc->pmxops = &sky1_pmx_ops;
+ 	sky1_pinctrl_desc->confops = &sky1_pinconf_ops;
+ 	sky1_pinctrl_desc->owner = THIS_MODULE;
++
++	mutex_init(&spctl->mutex);
++
++	spctl->info = info;
+ 	spctl->dev = &pdev->dev;
++	platform_set_drvdata(pdev, spctl);
+ 	ret = devm_pinctrl_register_and_init(&pdev->dev,
+ 					     sky1_pinctrl_desc, spctl,
+ 					     &spctl->pctl);
+@@ -560,22 +597,26 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+ 		return ret;
+ 	}
+ 
+-	/*
+-	 * The SKY1 SoC has two pin controllers: one for normal working state
+-	 * and one for sleep state. Since one controller only has working
+-	 * states and the other only sleep states, it will seem to the
+-	 * controller is always in the first configured state, so no
+-	 * transitions between default->sleep->default are detected and no
+-	 * new pin states are applied when we go in and out of sleep state.
+-	 *
+-	 * To counter this, provide dummies, so that the sleep-only pin
+-	 * controller still get some default states, and the working state pin
+-	 * controller get some sleep states, so that state transitions occur
+-	 * and we re-configure pins for default and sleep states.
+-	 */
+-	pinctrl_provide_dummies();
++	if (pdev->dev.of_node) {
++		ret = sky1_pinctrl_probe_dt(pdev, spctl);
++		if (ret) {
++			dev_err(&pdev->dev, "fail to probe dt properties\n");
++			return ret;
++		}
++	} else if (has_acpi_companion(&pdev->dev)) {
++		/*
++		 * Under ACPI, firmware already configured pin muxing.
++		 * Register the controller with no groups/functions so
++		 * GPIO consumers and pin clients can probe successfully.
++		 */
++		dev_info(&pdev->dev, "ACPI mode, using firmware pin configuration\n");
++	} else {
++		dev_err(&pdev->dev, "no firmware data available\n");
++		return -ENODEV;
++	}
+ 
+-	dev_dbg(&pdev->dev, "initialized SKY1 pinctrl driver\n");
++	pinctrl_provide_dummies();
++	dev_info(&pdev->dev, "initialized SKY1 pinctrl driver\n");
+ 
+ 	return pinctrl_enable(spctl->pctl);
+ }
+@@ -583,5 +624,5 @@ EXPORT_SYMBOL_GPL(sky1_base_pinctrl_probe);
+ 
+ 
+ MODULE_AUTHOR("Jerry Zhu <Jerry.Zhu@cixtech.com>");
+-MODULE_DESCRIPTION("Cix SKy1 pinctrl base driver");
++MODULE_DESCRIPTION("Cix Sky1 common pinctrl driver");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/pinctrl/cix/pinctrl-sky1.c b/drivers/pinctrl/cix/pinctrl-sky1.c
+index 5d0d8be815b2b..c0649e283fdf2 100644
+--- a/drivers/pinctrl/cix/pinctrl-sky1.c
++++ b/drivers/pinctrl/cix/pinctrl-sky1.c
+@@ -1,494 +1,443 @@
+ // SPDX-License-Identifier: GPL-2.0
+ //
+-// Author: Jerry Zhu <Jerry.Zhu@cixtech.com>
+-// Author: Gary Yang <gary.yang@cixtech.com>
++// CIX Sky1 Pin Controller driver
++// Ported to mainline 6.18+ API
+ 
++#include <linux/acpi.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
++#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
+ #include <linux/platform_device.h>
+-#include "linux/stddef.h"
+ 
+ #include "../core.h"
+ #include "pinctrl-sky1.h"
+ 
++#define SKY1_CONF_MASK		(0x7fL)
++
++enum sky1_pads_s5 {
++	SKY1_IOMUXC_GPIO1 =	0,
++	SKY1_IOMUXC_GPIO2 =	1,
++	SKY1_IOMUXC_GPIO3 =	2,
++	SKY1_IOMUXC_GPIO4 =	3,
++	SKY1_IOMUXC_GPIO5 =	4,
++	SKY1_IOMUXC_GPIO6 =	5,
++	SKY1_IOMUXC_GPIO7 =	6,
++	SKY1_IOMUXC_GPIO8 =	7,
++	SKY1_IOMUXC_GPIO9 =	8,
++	SKY1_IOMUXC_GPIO10 =	9,
++	SKY1_IOMUXC_GPIO11 =	10,
++	SKY1_IOMUXC_GPIO12 =	11,
++	SKY1_IOMUXC_GPIO13 =	12,
++	SKY1_IOMUXC_GPIO14 =	13,
++	SKY1_IOMUXC_RSMRST_L =	14,
++	SKY1_IOMUXC_SRST_L =	15,
++	SKY1_IOMUXC_SLP_S3_L =	16,
++	SKY1_IOMUXC_SLP_S5_L =	17,
++	SKY1_IOMUXC_PWRGD =	18,
++	SKY1_IOMUXC_PWROK =	19,
++	SKY1_IOMUXC_PWRBTN_L =	20,
++	SKY1_IOMUXC_VDD_DDRIO_GATE =	21,
++	SKY1_IOMUXC_JTAG_GPIO_L =	22,
++	SKY1_IOMUXC_JTAG_TCK =		23,
++	SKY1_IOMUXC_JTAG_TDI =		24,
++	SKY1_IOMUXC_JTAG_TDO =		25,
++	SKY1_IOMUXC_TMS =		26,
++	SKY1_IOMUXC_TRST_L  =		27,
++	SKY1_IOMUXC_SFI_I2C0_SCL = 28,
++	SKY1_IOMUXC_SFI_I2C0_SDA = 29,
++	SKY1_IOMUXC_SFI_I2C1_SCL = 30,
++	SKY1_IOMUXC_SFI_I2C1_SDA = 31,
++	SKY1_IOMUXC_SFI_GPIO0	 = 32,
++	SKY1_IOMUXC_SFI_GPIO1	 = 33,
++	SKY1_IOMUXC_SFI_GPIO2	 = 34,
++	SKY1_IOMUXC_SFI_GPIO3	 = 35,
++	SKY1_IOMUXC_SFI_GPIO4	 = 36,
++	SKY1_IOMUXC_SFI_GPIO5	 = 37,
++	SKY1_IOMUXC_SFI_GPIO6	 = 38,
++	SKY1_IOMUXC_SFI_GPIO7	 = 39,
++	SKY1_IOMUXC_SFI_GPIO8	 = 40,
++	SKY1_IOMUXC_SFI_GPIO9	 = 41,
++	SKY1_IOMUXC_SPI1_MISO	 = 42,
++	SKY1_IOMUXC_SPI1_CS0	 = 43,
++	SKY1_IOMUXC_SPI1_CS1	 = 44,
++	SKY1_IOMUXC_SPI1_MOSI	 = 45,
++	SKY1_IOMUXC_SPI1_CLK	 = 46,
++	SKY1_IOMUXC_USB_OC0_L	 = 47,
++	SKY1_IOMUXC_USB_OC1_L	 = 48,
++	SKY1_IOMUXC_USB_OC2_L	 = 49,
++	SKY1_IOMUXC_USB_OC3_L	 = 50,
++	SKY1_IOMUXC_USB_OC4_L	 = 51,
++	SKY1_IOMUXC_USB_OC5_L	 = 52,
++	SKY1_IOMUXC_USB_OC6_L	 = 53,
++	SKY1_IOMUXC_USB_OC7_L	 = 54,
++	SKY1_IOMUXC_USB_OC8_L	 = 55,
++	SKY1_IOMUXC_USB_OC9_L	 = 56,
++	SKY1_IOMUXC_DRIVE_VBUS0	 = 57,
++	SKY1_IOMUXC_DRIVE_VBUS4	 = 58,
++	SKY1_IOMUXC_DRIVE_VBUS5  = 59,
++	SKY1_IOMUXC_SE_QSPI_CLK =  60,
++	SKY1_IOMUXC_SE_QSPI_CS_L = 61,
++	SKY1_IOMUXC_SE_QSPI_DATA0 = 62,
++	SKY1_IOMUXC_SE_QSPI_DATA1 = 63,
++	SKY1_IOMUXC_SE_QSPI_DATA2 = 64,
++	SKY1_IOMUXC_SE_QSPI_DATA3 = 65,
++};
++
++enum sky1_pads {
++	SKY1_IOMUXC_GPIO43	  = 0,
++	SKY1_IOMUXC_GPIO44	  = 1,
++	SKY1_IOMUXC_GPIO45	  = 2,
++	SKY1_IOMUXC_GPIO46	  = 3,
++	SKY1_IOMUXC_RESET_IN_L	  = 4,
++	SKY1_IOMUXC_PLT_RESET_L	  = 5,
++	SKY1_IOMUXC_THERMRIP_L	  = 6,
++	SKY1_IOMUXC_PROCHOT_L	  = 7,
++	SKY1_IOMUXC_PM_I2C0_CLK	  = 8,
++	SKY1_IOMUXC_PM_I2C0_DATA  = 9,
++	SKY1_IOMUXC_PM_I2C1_CLK	  = 10,
++	SKY1_IOMUXC_PM_I2C1_DATA  = 11,
++	SKY1_IOMUXC_PM_I2C2_CLK	  = 12,
++	SKY1_IOMUXC_PM_I2C2_DATA  = 13,
++	SKY1_IOMUXC_PM_I2C3_CLK	  = 14,
++	SKY1_IOMUXC_PM_I2C3_DATA  = 15,
++	SKY1_IOMUXC_STRAP0	  = 16,
++	SKY1_IOMUXC_STRAP1	  = 17,
++	SKY1_IOMUXC_DP2_DIGON	  = 18,
++	SKY1_IOMUXC_DP2_BLON	  = 19,
++	SKY1_IOMUXC_DP2_VARY_BL	  = 20,
++	SKY1_IOMUXC_I2C7_SCL	  = 21,
++	SKY1_IOMUXC_I2C7_SDA	  = 22,
++	SKY1_IOMUXC_UART6_CSU_SE_TXD = 23,
++	SKY1_IOMUXC_CLK_REQ1_L	  = 24,
++	SKY1_IOMUXC_CLK_REQ3_L	  = 25,
++	SKY1_IOMUXC_I2C5_SCL	  = 26,
++	SKY1_IOMUXC_I2C5_SDA	  = 27,
++	SKY1_IOMUXC_I2C6_SCL	  = 28,
++	SKY1_IOMUXC_I2C6_SDA	  = 29,
++	SKY1_IOMUXC_I2C0_CLK	  = 30,
++	SKY1_IOMUXC_I2C0_SDA	  = 31,
++	SKY1_IOMUXC_I2C1_CLK	  = 32,
++	SKY1_IOMUXC_I2C1_SDA	  = 33,
++	SKY1_IOMUXC_I2C2_SCL	  = 34,
++	SKY1_IOMUXC_I2C2_SDA	  = 35,
++	SKY1_IOMUXC_I3C0_PUR_EN_L = 36,
++	SKY1_IOMUXC_I2C3_CLK	  = 37,
++	SKY1_IOMUXC_I2C3_SDA	  = 38,
++	SKY1_IOMUXC_I3C1_PUR_EN_L = 39,
++	SKY1_IOMUXC_I2C4_CLK	  = 40,
++	SKY1_IOMUXC_I2C4_SDA	  = 41,
++	SKY1_IOMUXC_HDA_BITCLK	  = 42,
++	SKY1_IOMUXC_HDA_RST_L	  = 43,
++	SKY1_IOMUXC_HDA_SDIN0	  = 44,
++	SKY1_IOMUXC_HDA_SDOUT0	  = 45,
++	SKY1_IOMUXC_HDA_SYNC	  = 46,
++	SKY1_IOMUXC_HDA_SDIN1	  = 47,
++	SKY1_IOMUXC_HDA_SDOUT1	  = 48,
++	SKY1_IOMUXC_I2S1_MCLK	  = 49,
++	SKY1_IOMUXC_I2S1_SCK	  = 50,
++	SKY1_IOMUXC_I2S1_WS	  = 51,
++	SKY1_IOMUXC_I2S1_DATA_IN  = 52,
++	SKY1_IOMUXC_I2S1_DATA_OUT = 53,
++	SKY1_IOMUXC_I2S2_MCLK	  = 54,
++	SKY1_IOMUXC_I2S2_RSCK	  = 55,
++	SKY1_IOMUXC_I2S2_RWS	  = 56,
++	SKY1_IOMUXC_I2S2_TSCK	  = 57,
++	SKY1_IOMUXC_I2S2_TWS	  = 58,
++	SKY1_IOMUXC_I2S2_DATA_IN0  = 59,
++	SKY1_IOMUXC_I2S2_DATA_IN1  = 60,
++	SKY1_IOMUXC_I2S2_DATA_OUT0 = 61,
++	SKY1_IOMUXC_I2S2_DATA_OUT1 = 62,
++	SKY1_IOMUXC_I2S2_DATA_OUT2 = 63,
++	SKY1_IOMUXC_I2S2_DATA_OUT3 = 64,
++	SKY1_IOMUXC_I2S3_MCLK	  = 65,
++	SKY1_IOMUXC_I2S3_RSCK	  = 66,
++	SKY1_IOMUXC_I2S3_RWS	  = 67,
++	SKY1_IOMUXC_I2S3_TSCK	  = 68,
++	SKY1_IOMUXC_I2S3_TWS	  = 69,
++	SKY1_IOMUXC_I2S3_DATA_IN0  = 70,
++	SKY1_IOMUXC_I2S3_DATA_IN1  = 71,
++	SKY1_IOMUXC_I2S3_DATA_OUT0 = 72,
++	SKY1_IOMUXC_I2S3_DATA_OUT1 = 73,
++	SKY1_IOMUXC_I2S4_MCLK_LB  = 74,
++	SKY1_IOMUXC_I2S4_SCK_LB	  = 75,
++	SKY1_IOMUXC_I2S4_WS_LB	  = 76,
++	SKY1_IOMUXC_I2S4_DATA_IN_LB  = 77,
++	SKY1_IOMUXC_I2S4_DATA_OUT_LB = 78,
++	SKY1_IOMUXC_UART0_TXD	  = 79,
++	SKY1_IOMUXC_UART0_RXD	  = 80,
++	SKY1_IOMUXC_UART0_CTS	  = 81,
++	SKY1_IOMUXC_UART0_RTS	  = 82,
++	SKY1_IOMUXC_UART1_TXD	  = 83,
++	SKY1_IOMUXC_UART1_RXD	  = 84,
++	SKY1_IOMUXC_UART1_CTS	  = 85,
++	SKY1_IOMUXC_UART1_RTS	  = 86,
++	SKY1_IOMUXC_UART2_TXD	  = 87,
++	SKY1_IOMUXC_UART2_RXD	  = 88,
++	SKY1_IOMUXC_UART3_TXD	  = 89,
++	SKY1_IOMUXC_UART3_RXD	  = 90,
++	SKY1_IOMUXC_UART3_CTS	  = 91,
++	SKY1_IOMUXC_UART3_RTS	  = 92,
++	SKY1_IOMUXC_UART4_CSU_PM_TXD = 93,
++	SKY1_IOMUXC_UART4_CSU_PM_RXD = 94,
++	SKY1_IOMUXC_UART5_CSU_SE_TXD = 95,
++	SKY1_IOMUXC_UART5_CSU_SE_RXD = 96,
++	SKY1_IOMUXC_UART6_CSU_SE_RXD = 97,
++	SKY1_IOMUXC_CLK_REQ0_L	     = 98,
++	SKY1_IOMUXC_CLK_REQ2_L	     = 99,
++	SKY1_IOMUXC_CLK_REQ4_L	     = 100,
++	SKY1_IOMUXC_CSI0_MCLK0	     = 101,
++	SKY1_IOMUXC_CSI0_MCLK1	     = 102,
++	SKY1_IOMUXC_CSI1_MCLK0	     = 103,
++	SKY1_IOMUXC_CSI1_MCLK1	     = 104,
++	SKY1_IOMUXC_GMAC0_REFCLK_25M = 105,
++	SKY1_IOMUXC_GMAC0_TX_CTL     = 106,
++	SKY1_IOMUXC_GMAC0_TXD0	     = 107,
++	SKY1_IOMUXC_GMAC0_TXD1	     = 108,
++	SKY1_IOMUXC_GMAC0_TXD2	     = 109,
++	SKY1_IOMUXC_GMAC0_TXD3	     = 110,
++	SKY1_IOMUXC_GMAC0_TX_CLK     = 111,
++	SKY1_IOMUXC_GMAC0_RX_CTL     = 112,
++	SKY1_IOMUXC_GMAC0_RXD0	     = 113,
++	SKY1_IOMUXC_GMAC0_RXD1	     = 114,
++	SKY1_IOMUXC_GMAC0_RXD2	     = 115,
++	SKY1_IOMUXC_GMAC0_RXD3	     = 116,
++	SKY1_IOMUXC_GMAC0_RX_CLK     = 117,
++	SKY1_IOMUXC_GMAC0_MDC	     = 118,
++	SKY1_IOMUXC_GMAC0_MDIO	     = 119,
++	SKY1_IOMUXC_GMAC1_REFCLK_25M = 120,
++	SKY1_IOMUXC_GMAC1_TX_CTL     = 121,
++	SKY1_IOMUXC_GMAC1_TXD0	     = 122,
++	SKY1_IOMUXC_GMAC1_TXD1	     = 123,
++	SKY1_IOMUXC_GMAC1_TXD2	     = 124,
++	SKY1_IOMUXC_GMAC1_TXD3	     = 125,
++	SKY1_IOMUXC_GMAC1_TX_CLK     = 126,
++	SKY1_IOMUXC_GMAC1_RX_CTL     = 127,
++	SKY1_IOMUXC_GMAC1_RXD0	     = 128,
++	SKY1_IOMUXC_GMAC1_RXD1	     = 129,
++	SKY1_IOMUXC_GMAC1_RXD2	     = 130,
++	SKY1_IOMUXC_GMAC1_RXD3	     = 131,
++	SKY1_IOMUXC_GMAC1_RX_CLK     = 132,
++	SKY1_IOMUXC_GMAC1_MDC	     = 133,
++	SKY1_IOMUXC_GMAC1_MDIO	     = 134,
++	SKY1_IOMUXC_PM_GPIO0	     = 135,
++	SKY1_IOMUXC_PM_GPIO1	     = 136,
++	SKY1_IOMUXC_PM_GPIO2	     = 137,
++};
++
+ /* Pad names for the s5 domain pinmux subsystem */
+-static const char * const gpio1_group[] = {"GPIO1"};
+-static const char * const gpio2_group[] = {"GPIO2"};
+-static const char * const gpio3_group[] = {"GPIO3"};
+-static const char * const gpio4_group[] = {"GPIO4"};
+-static const char * const gpio5_group[] = {"GPIO5"};
+-static const char * const gpio6_group[] = {"GPIO6"};
+-static const char * const gpio7_group[] = {"GPIO7"};
+-static const char * const gpio8_group[] = {"GPIO8"};
+-static const char * const gpio9_group[] = {"GPIO9"};
+-static const char * const gpio10_group[] = {"GPIO10"};
+-static const char * const gpio11_group[] = {"GPIO11"};
+-static const char * const gpio12_group[] = {"GPIO12"};
+-static const char * const gpio13_group[] = {"GPIO13"};
+-static const char * const gpio14_group[] = {"GPIO14"};
+-static const char * const rsmrst_group[] = { };
+-static const char * const srst_group[] = { };
+-static const char * const slp_s3_group[] = { };
+-static const char * const slp_s5_group[] = { };
+-static const char * const pwrgd_group[] = { };
+-static const char * const pwrok_group[] = { };
+-static const char * const pwrbtn_group[] = { };
+-static const char * const ddrio_gate_group[] = { };
+-static const char * const jtag_gpio_group[] = { };
+-static const char * const jtag_tck_group[] = { };
+-static const char * const jtag_tdi_group[] = { };
+-static const char * const jtag_tdo_group[] = { };
+-static const char * const tms_group[] = { };
+-static const char * const trsl_group[] = { };
+-static const char * const sfi_i2c0_scl_group[] = {"SFI_I2C0_SCL",
+-					"SFI_I3C0_SCL"};
+-static const char * const sfi_i2c0_sda_group[] = {"SFI_I2C0_SDA",
+-					"SFI_I3C0_SDA"};
+-static const char * const sfi_i2c1_scl_group[] = {"SFI_I2C1_SCL",
+-					"SFI_I3C1_SCL", "SFI_SPI_CS0"};
+-static const char * const sfi_i2c1_sda_group[] = {"SFI_I2C1_SDA",
+-					"SFI_I3C1_SDA", "SFI_SPI_CS1"};
+-static const char * const sfi_gpio0_group[] = {"GPIO15", "SFI_SPI_SCK",
+-					"SFI_GPIO0"};
+-static const char * const sfi_gpio1_group[] = {"GPIO16", "SFI_SPI_MOSI",
+-					"SFI_GPIO1"};
+-static const char * const sfi_gpio2_group[] = {"GPIO17", "SFI_SPI_MISO",
+-					"SFI_GPIO2"};
+-static const char * const gpio18_group[] = {"SFI_GPIO3", "GPIO18"};
+-static const char * const gpio19_group[] = {"SFI_GPIO4", "GPIO19"};
+-static const char * const gpio20_group[] = {"SFI_GPIO5", "GPIO20"};
+-static const char * const gpio21_group[] = {"SFI_GPIO6", "GPIO21"};
+-static const char * const gpio22_group[] = {"SFI_GPIO7", "GPIO22"};
+-static const char * const gpio23_group[] = {"SFI_GPIO8", "GPIO23",
+-				"SFI_I3C0_PUR_EN_L"};
+-static const char * const gpio24_group[] = {"SFI_GPIO9", "GPIO24",
+-				"SFI_I3C1_PUR_EN_L"};
+-static const char * const spi1_miso_group[] = {"SPI1_MISO", "GPIO25"};
+-static const char * const spi1_cs0_group[] = {"SPI1_CS0", "GPIO26"};
+-static const char * const spi1_cs1_group[] = {"SPI1_CS1", "GPIO27"};
+-static const char * const spi1_mosi_group[] = {"SPI1_MOSI", "GPIO28"};
+-static const char * const spi1_clk_group[] = {"SPI1_CLK", "GPIO29"};
+-static const char * const gpio30_group[] = {"GPIO30", "USB_0C0_L"};
+-static const char * const gpio31_group[] = {"GPIO31", "USB_0C1_L"};
+-static const char * const gpio32_group[] = {"GPIO32", "USB_0C2_L"};
+-static const char * const gpio33_group[] = {"GPIO33", "USB_0C3_L"};
+-static const char * const gpio34_group[] = {"GPIO34", "USB_0C4_L"};
+-static const char * const gpio35_group[] = {"GPIO35", "USB_0C5_L"};
+-static const char * const gpio36_group[] = {"GPIO36", "USB_0C6_L"};
+-static const char * const gpio37_group[] = {"GPIO37", "USB_0C7_L"};
+-static const char * const gpio38_group[] = {"GPIO38", "USB_0C8_L"};
+-static const char * const gpio39_group[] = {"GPIO39", "USB_0C9_L"};
+-static const char * const gpio40_group[] = {"GPIO40", "USB_DRIVE_VBUS0"};
+-static const char * const gpio41_group[] = {"GPIO41", "USB_DRIVE_VBUS4"};
+-static const char * const gpio42_group[] = {"GPIO42", "USB_DRIVE_VBUS5"};
+-static const char * const se_qspi_clk_group[] = {"SE_QSPI_CLK", "QSPI_CLK"};
+-static const char * const se_qspi_cs_group[] = {"SE_QSPI_CS_L", "QSPI_CS_L"};
+-static const char * const se_qspi_data0_group[] = {"SE_QSPI_DATA0",
+-					"QSPI_DATA0"};
+-static const char * const se_qspi_data1_group[] = {"SE_QSPI_DATA1",
+-					"QSPI_DATA1"};
+-static const char * const se_qspi_data2_group[] = {"SE_QSPI_DATA2",
+-					"QSPI_DATA2"};
+-static const char * const se_qspi_data3_group[] = {"SE_QSPI_DATA3",
+-					"QSPI_DATA3"};
+-static const struct sky1_pin_desc sky1_pinctrl_s5_pads[] = {
+-	SKY_PINFUNCTION(PINCTRL_PIN(0, "GPIO1"), gpio1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(1, "GPIO2"), gpio2),
+-	SKY_PINFUNCTION(PINCTRL_PIN(2, "GPIO3"), gpio3),
+-	SKY_PINFUNCTION(PINCTRL_PIN(3, "GPIO4"), gpio4),
+-	SKY_PINFUNCTION(PINCTRL_PIN(4, "GPIO5"), gpio5),
+-	SKY_PINFUNCTION(PINCTRL_PIN(5, "GPIO6"), gpio6),
+-	SKY_PINFUNCTION(PINCTRL_PIN(6, "GPIO7"), gpio7),
+-	SKY_PINFUNCTION(PINCTRL_PIN(7, "GPIO8"), gpio8),
+-	SKY_PINFUNCTION(PINCTRL_PIN(8, "GPIO9"), gpio9),
+-	SKY_PINFUNCTION(PINCTRL_PIN(9, "GPIO10"), gpio10),
+-	SKY_PINFUNCTION(PINCTRL_PIN(10, "GPIO11"), gpio11),
+-	SKY_PINFUNCTION(PINCTRL_PIN(11, "GPIO12"), gpio12),
+-	SKY_PINFUNCTION(PINCTRL_PIN(12, "GPIO13"), gpio13),
+-	SKY_PINFUNCTION(PINCTRL_PIN(13, "GPIO14"), gpio14),
+-	SKY_PINFUNCTION(PINCTRL_PIN(14, "RSMRST_L"), rsmrst),
+-	SKY_PINFUNCTION(PINCTRL_PIN(15, "SRST_L"), srst),
+-	SKY_PINFUNCTION(PINCTRL_PIN(16, "SLP_S3_L"), slp_s3),
+-	SKY_PINFUNCTION(PINCTRL_PIN(17, "SLP_S5_L"), slp_s5),
+-	SKY_PINFUNCTION(PINCTRL_PIN(18, "PWRGD"), pwrgd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(19, "PWROK"), pwrok),
+-	SKY_PINFUNCTION(PINCTRL_PIN(20, "PWRBTN_L"), pwrbtn),
+-	SKY_PINFUNCTION(PINCTRL_PIN(21, "VDD_DDRIO_GATE"), ddrio_gate),
+-	SKY_PINFUNCTION(PINCTRL_PIN(22, "JTAG_GPIO_L"), jtag_gpio),
+-	SKY_PINFUNCTION(PINCTRL_PIN(23, "JTAG_TCK"), jtag_tck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(24, "JTAG_TDI"), jtag_tdi),
+-	SKY_PINFUNCTION(PINCTRL_PIN(25, "JTAG_TDO"), jtag_tdo),
+-	SKY_PINFUNCTION(PINCTRL_PIN(26, "TMS"), tms),
+-	SKY_PINFUNCTION(PINCTRL_PIN(27, "TRSL_L"), trsl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(28, "SFI_I2C0_SCL"), sfi_i2c0_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(29, "SFI_I2C0_SDA"), sfi_i2c0_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(30, "SFI_I2C1_SCL"), sfi_i2c1_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(31, "SFI_I2C1_SDA"), sfi_i2c1_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(32, "SFI_GPIO0"), sfi_gpio0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(33, "SFI_GPIO1"), sfi_gpio1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(34, "SFI_GPIO2"), sfi_gpio2),
+-	SKY_PINFUNCTION(PINCTRL_PIN(35, "GPIO18"), gpio18),
+-	SKY_PINFUNCTION(PINCTRL_PIN(36, "GPIO19"), gpio19),
+-	SKY_PINFUNCTION(PINCTRL_PIN(37, "GPIO20"), gpio20),
+-	SKY_PINFUNCTION(PINCTRL_PIN(38, "GPIO21"), gpio21),
+-	SKY_PINFUNCTION(PINCTRL_PIN(39, "GPIO22"), gpio22),
+-	SKY_PINFUNCTION(PINCTRL_PIN(40, "GPIO23"), gpio23),
+-	SKY_PINFUNCTION(PINCTRL_PIN(41, "GPIO24"), gpio24),
+-	SKY_PINFUNCTION(PINCTRL_PIN(42, "SPI1_MISO"), spi1_miso),
+-	SKY_PINFUNCTION(PINCTRL_PIN(43, "SPI1_CS0"), spi1_cs0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(44, "SPI1_CS1"), spi1_cs1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(45, "SPI1_MOSI"), spi1_mosi),
+-	SKY_PINFUNCTION(PINCTRL_PIN(46, "SPI1_CLK"), spi1_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(47, "GPIO30"), gpio30),
+-	SKY_PINFUNCTION(PINCTRL_PIN(48, "GPIO31"), gpio31),
+-	SKY_PINFUNCTION(PINCTRL_PIN(49, "GPIO32"), gpio32),
+-	SKY_PINFUNCTION(PINCTRL_PIN(50, "GPIO33"), gpio33),
+-	SKY_PINFUNCTION(PINCTRL_PIN(51, "GPIO34"), gpio34),
+-	SKY_PINFUNCTION(PINCTRL_PIN(52, "GPIO35"), gpio35),
+-	SKY_PINFUNCTION(PINCTRL_PIN(53, "GPIO36"), gpio36),
+-	SKY_PINFUNCTION(PINCTRL_PIN(54, "GPIO37"), gpio37),
+-	SKY_PINFUNCTION(PINCTRL_PIN(55, "GPIO38"), gpio38),
+-	SKY_PINFUNCTION(PINCTRL_PIN(56, "GPIO39"), gpio39),
+-	SKY_PINFUNCTION(PINCTRL_PIN(57, "GPIO40"), gpio40),
+-	SKY_PINFUNCTION(PINCTRL_PIN(58, "GPIO41"), gpio41),
+-	SKY_PINFUNCTION(PINCTRL_PIN(59, "GPIO42"), gpio42),
+-	SKY_PINFUNCTION(PINCTRL_PIN(60, "SE_QSPI_CLK"), se_qspi_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(61, "SE_QSPI_CS_L"), se_qspi_cs),
+-	SKY_PINFUNCTION(PINCTRL_PIN(62, "SE_QSPI_DATA0"), se_qspi_data0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(63, "SE_QSPI_DATA1"), se_qspi_data1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(64, "SE_QSPI_DATA2"), se_qspi_data2),
+-	SKY_PINFUNCTION(PINCTRL_PIN(65, "SE_QSPI_DATA3"), se_qspi_data3),
++static const struct pinctrl_pin_desc sky1_pinctrl_s5_pads[] = {
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO4),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO5),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO6),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO7),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO8),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO9),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO10),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO11),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO12),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO13),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO14),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_RSMRST_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SRST_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SLP_S3_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SLP_S5_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PWRGD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PWROK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PWRBTN_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_VDD_DDRIO_GATE),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_JTAG_GPIO_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_JTAG_TCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_JTAG_TDI),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_JTAG_TDO),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_TMS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_TRST_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_I2C0_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_I2C0_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_I2C1_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_I2C1_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO4),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO5),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO6),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO7),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO8),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SFI_GPIO9),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SPI1_MISO),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SPI1_CS0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SPI1_CS1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SPI1_MOSI),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SPI1_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC0_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC1_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC2_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC3_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC4_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC5_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC6_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC7_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC8_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_USB_OC9_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DRIVE_VBUS0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DRIVE_VBUS4),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DRIVE_VBUS5),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_CS_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_DATA0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_DATA1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_DATA2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_SE_QSPI_DATA3),
+ };
+ 
+ /* Pad names for the s0 domain pinmux subsystem */
+-static const char * const gpio43_group[] = {"GPIO43"};
+-static const char * const gpio44_group[] = {"GPIO44"};
+-static const char * const gpio45_group[] = {"GPIO45"};
+-static const char * const gpio46_group[] = {"GPIO46"};
+-static const char * const reset_in_group[] = { };
+-static const char * const plt_reset_group[] = { };
+-static const char * const thermtrip_group[] = { };
+-static const char * const prochot_group[] = { };
+-static const char * const pm_i2c0_clk_group[] = { };
+-static const char * const pm_i2c0_data_group[] = { };
+-static const char * const pm_i2c1_clk_group[] = { };
+-static const char * const pm_i2c1_data_group[] = { };
+-static const char * const pm_i2c2_clk_group[] = { };
+-static const char * const pm_i2c2_data_group[] = { };
+-static const char * const pm_i2c3_clk_group[] = { };
+-static const char * const pm_i2c3_data_group[] = { };
+-static const char * const strap0_group[] = { };
+-static const char * const strap1_group[] = { };
+-static const char * const dp2_digon_group[] = {"DP2_DIGON"};
+-static const char * const dp2_blon_group[] = {"DP2_BLON"};
+-static const char * const dp2_vary_bl_group[] = {"DP2_VARY_BL"};
+-static const char * const i2c7_scl_group[] = {"I2C7_SCL"};
+-static const char * const i2c7_sda_group[] = {"I2C7_SDA"};
+-static const char * const uart6_csu_se_txd_group[] = { };
+-static const char * const clk_req1_group[] = { };
+-static const char * const clk_req3_group[] = { };
+-static const char * const i2c5_scl_group[] = {"I2C5_SCL", "GPIO47"};
+-static const char * const i2c5_sda_group[] = {"I2C5_SDA", "GPIO48"};
+-static const char * const i2c6_scl_group[] = {"I2C6_SCL", "GPIO49"};
+-static const char * const i2c6_sda_group[] = {"I2C6_SDA", "GPIO50"};
+-static const char * const i2c0_scl_group[] = {"I2C0_SCL", "GPIO51"};
+-static const char * const i2c0_sda_group[] = {"I2C0_SDA", "GPIO52"};
+-static const char * const i2c1_scl_group[] = {"I2C1_SCL", "GPIO53"};
+-static const char * const i2c1_sda_group[] = {"I2C1_SDA", "GPIO54"};
+-static const char * const i2c2_scl_group[] = {"I2C2_SCL", "I3C0_SCL",
+-					"GPIO55"};
+-static const char * const i2c2_sda_group[] = {"I2C2_SDA", "I3C0_SDA",
+-					"GPIO56"};
+-static const char * const gpio57_group[] = {"GPIO57", "I3C0_PUR_EN_L"};
+-static const char * const i2c3_scl_group[] = {"I2C3_SCL", "I3C1_SCL",
+-					"GPIO58"};
+-static const char * const i2c3_sda_group[] = {"I2C3_SDA", "I3C1_SDA",
+-					"GPIO59"};
+-static const char * const gpio60_group[] = {"GPIO60", "I3C1_PUR_EN_L"};
+-static const char * const i2c4_scl_group[] = {"I2C4_SCL", "GPIO61"};
+-static const char * const i2c4_sda_group[] = {"I2C4_SDA", "GPIO62"};
+-static const char * const hda_bitclk_group[] = {"HDA_BITCLK", "I2S0_SCK",
+-				"I2S9_RSCK_DBG"};
+-static const char * const hda_rst_group[] = {"HDA_RST_L", "I2S0_DATA_IN",
+-				"I2S9_DATA_IN_DBG"};
+-static const char * const hda_sdin0_group[] = {"HDA_SDIN0", "I2S0_MCLK",
+-				"I2S9_TSCK_DBG"};
+-static const char * const hda_sdout0_group[] = {"HDA_SDOUT0", "I2S0_DATA_OUT",
+-				"I2S9_TWS_DBG"};
+-static const char * const hda_sync_group[] = {"HDA_SYNC", "I2S0_WS",
+-				"I2S9_RWS_DBG"};
+-static const char * const hda_sdin1_group[] = {"HDA_SDIN1", "GPIO63",
+-				"I2S9_DATA_IN1_DBG"};
+-static const char * const hda_sdout1_group[] = {"HDA_SDOUT1", "GPIO64",
+-				"I2S9_DATA_OUT0_DBG"};
+-static const char * const i2s1_mclk_group[] = {"I2S1_MCLK", "GPIO65"};
+-static const char * const i2s1_sck_group[] = {"I2S1_SCK", "GPIO66"};
+-static const char * const i2s1_ws_group[] = {"I2S1_WS", "GPIO67"};
+-static const char * const i2s1_data_in_group[] = {"I2S1_DATA_IN", "GPIO68"};
+-static const char * const i2s1_data_out_group[] = {"I2S1_DATA_OUT", "GPIO69"};
+-static const char * const i2s2_mck_group[] = {"I2S2_MCLK", "GPIO70"};
+-static const char * const i2s2_rsck_group[] = {"I2S2_RSCK", "GPIO71",
+-				"I2S5_RSCK_DBG", "I2S6_RSCK_DBG"};
+-static const char * const i2s2_rws_group[] = {"I2S2_RWS", "GPIO72",
+-				"I2S5_RWS_DBG", "I2S6_RWS_DBG"};
+-static const char * const i2s2_tsck_group[] = {"I2S2_TSCK", "GPIO73",
+-				"I2S5_TSCK_DBG", "I2S6_TSCK_DBG"};
+-static const char * const i2s2_tws_group[] = {"I2S2_TWS", "GPIO74",
+-				"I2S5_TWS_DBG", "I2S6_TWS_DBG"};
+-static const char * const i2s2_data_in0_group[] = {"I2S2_DATA_IN0", "GPIO75",
+-				"I2S5_DATA_IN0_DBG", "I2S6_DATA_IN0_DBG"};
+-static const char * const i2s2_data_in1_group[] = {"I2S2_DATA_IN1", "GPIO76",
+-				"I2S5_DATA_IN1_DBG", "I2S6_DATA_IN1_DBG"};
+-static const char * const i2s2_data_out0_group[] = {"I2S2_DATA_OUT0", "GPIO77",
+-				"I2S5_DATA_OUT0_DBG", "I2S6_DATA_OUT0_DBG"};
+-static const char * const i2s2_data_out1_group[] = {"I2S2_DATA_OUT1", "GPIO78",
+-				"I2S5_DATA_OUT1_DBG", "I2S6_DATA_OUT1_DBG"};
+-static const char * const i2s2_data_out2_group[] = {"I2S2_DATA_OUT2",
+-				"GPIO79"};
+-static const char * const i2s2_data_out3_group[] = {"I2S2_DATA_OUT3", "GPIO80",
+-				"I2S9_DATA_OUT1_DBG"};
+-static const char * const i2s3_mclk_group[] = {"I2S3_MCLK", "GPIO81"};
+-static const char * const i2s3_rsck_group[] = {"I2S3_RSCK", "GPIO82",
+-				"I2S7_RSCK_DBG", "I2S8_RSCK_DBG"};
+-static const char * const i2s3_rws_group[] = {"I2S3_RWS", "GPIO83",
+-				"I2S7_RWS_DBG", "I2S8_RWS_DBG"};
+-static const char * const i2s3_tsck_group[] = {"I2S3_TSCK", "GPIO84",
+-				"I2S7_TSCK_DBG", "I2S8_TSCK_DBG"};
+-static const char * const i2s3_tws_group[] = {"I2S3_TWS", "GPIO85",
+-				"I2S7_TWS_DBG", "I2S8_TWS_DBG"};
+-static const char * const i2s3_data_in0_group[] = {"I2S3_DATA_IN0", "GPIO86",
+-				"I2S7_DATA_IN0_DBG", "I2S8_DATA_IN0_DBG"};
+-static const char * const i2s3_data_in1_group[] = {"I2S3_DATA_IN1", "GPIO87",
+-				"I2S7_DATA_IN1_DBG", "I2S8_DATA_IN1_DBG"};
+-static const char * const i2s3_data_out0_group[] = {"I2S3_DATA_OUT0", "GPIO88",
+-				"I2S7_DATA_OUT0_DBG", "I2S8_DATA_OUT0_DBG"};
+-static const char * const i2s3_data_out1_group[] = {"I2S3_DATA_OUT1", "GPIO89",
+-				"I2S7_DATA_OUT1_DBG", "I2S8_DATA_OUT1_DBG"};
+-static const char * const gpio90_group[] = {"GPIO90", "I2S4_MCLK_LB"};
+-static const char * const gpio91_group[] = {"GPIO91", "I2S4_SCK_LB"};
+-static const char * const gpio92_group[] = {"GPIO92", "I2S4_WS_LB"};
+-static const char * const gpio93_group[] = {"GPIO93", "I2S4_DATA_IN_LB"};
+-static const char * const gpio94_group[] = {"GPIO94", "I2S4_DATA_OUT_LB"};
+-static const char * const uart0_txd_group[] = {"UART0_TXD", "PWM0", "GPIO95"};
+-static const char * const uart0_rxd_group[] = {"UART0_RXD", "PWM1", "GPIO96"};
+-static const char * const uart0_cts_group[] = {"UART0_CTS", "FAN_OUT2",
+-				"GPIO97"};
+-static const char * const uart0_rts_group[] = {"UART0_RTS", "FAN_TACH2",
+-				"GPIO98"};
+-static const char * const uart1_txd_group[] = {"UART1_TXD", "FAN_OUT0",
+-				"GPIO99"};
+-static const char * const uart1_rxd_group[] = {"UART1_RXD", "FAN_TACH0",
+-				"GPIO100"};
+-static const char * const uart1_cts_group[] = {"UART1_CTS", "FAN_OUT1",
+-				"GPIO101"};
+-static const char * const uart1_rts_group[] = {"UART1_RTS", "FAN_TACH1",
+-				"GPIO102"};
+-static const char * const uart2_txd_group[] = {"UART2_TXD", "GPIO103"};
+-static const char * const uart2_rxd_group[] = {"UART2_RXD", "GPIO104"};
+-static const char * const uart3_txd_group[] = {"UART3_TXD", "GPIO105"};
+-static const char * const uart3_rxd_group[] = {"UART3_RXD", "GPIO106"};
+-static const char * const uart3_cts_group[] = {"UART3_CTS", "GPIO107",
+-				"TRIGIN0"};
+-static const char * const uart3_rts_group[] = {"UART3_RTS", "GPIO108",
+-				"TRIGIN1"};
+-static const char * const uart4_csu_pm_txd_group[] = {"UART4_CSU_PM_TXD",
+-				"GPIO109"};
+-static const char * const uart4_csu_pm_rxd_group[] = {"UART4_CSU_PM_RXD",
+-				"GPIO110"};
+-static const char * const uart5_csu_se_txd_group[] = {"UART5_CSU_SE_TXD",
+-				"GPIO111"};
+-static const char * const uart5_csu_se_rxd_group[] = {"UART5_CSU_SE_RXD",
+-				"GPIO112"};
+-static const char * const uart6_csu_se_rxd_group[] = {"UART6_CSU_SE_RXD",
+-				"GPIO113"};
+-static const char * const clk_req0_group[] = {"CLK_REQ0_L", "GPIO114"};
+-static const char * const clk_req2_group[] = {"CLK_REQ2_L", "GPIO115"};
+-static const char * const clk_req4_group[] = {"CLK_REQ4_L", "GPIO116"};
+-static const char * const csi0_mclk0_group[] = {"CSI0_MCLK0", "GPIO117"};
+-static const char * const csi0_mclk1_group[] = {"CSI0_MCLK1", "GPIO118"};
+-static const char * const csi1_mclk0_group[] = {"CSI1_MCLK0", "GPIO119"};
+-static const char * const csi1_mclk1_group[] = {"CSI1_MCLK1", "GPIO120"};
+-static const char * const gpio121_group[] = {"GPIO121", "GMAC0_REFCLK_25M"};
+-static const char * const gpio122_group[] = {"GPIO122", "GMAC0_TX_CTL"};
+-static const char * const gpio123_group[] = {"GPIO123", "GMAC0_TXD0"};
+-static const char * const gpio124_group[] = {"GPIO124", "GMAC0_TXD1"};
+-static const char * const gpio125_group[] = {"GPIO125", "GMAC0_TXD2"};
+-static const char * const gpio126_group[] = {"GPIO126", "GMAC0_TXD3"};
+-static const char * const gpio127_group[] = {"GPIO127", "GMAC0_TX_CLK"};
+-static const char * const gpio128_group[] = {"GPIO128", "GMAC0_RX_CTL"};
+-static const char * const gpio129_group[] = {"GPIO129", "GMAC0_RXD0"};
+-static const char * const gpio130_group[] = {"GPIO130", "GMAC0_RXD1"};
+-static const char * const gpio131_group[] = {"GPIO131", "GMAC0_RXD2"};
+-static const char * const gpio132_group[] = {"GPIO132", "GMAC0_RXD3"};
+-static const char * const gpio133_group[] = {"GPIO133", "GMAC0_RX_CLK"};
+-static const char * const gpio134_group[] = {"GPIO134", "GMAC0_MDC"};
+-static const char * const gpio135_group[] = {"GPIO135", "GMAC0_MDIO"};
+-static const char * const gpio136_group[] = {"GPIO136", "GMAC1_REFCLK_25M"};
+-static const char * const gpio137_group[] = {"GPIO137", "GMAC1_TX_CTL"};
+-static const char * const gpio138_group[] = {"GPIO138", "GMAC1_TXD0",
+-				"SPI2_MISO"};
+-static const char * const gpio139_group[] = {"GPIO139", "GMAC1_TXD1",
+-				"SPI2_CS0"};
+-static const char * const gpio140_group[] = {"GPIO140", "GMAC1_TXD2",
+-				"SPI2_CS1"};
+-static const char * const gpio141_group[] = {"GPIO141", "GMAC1_TXD3",
+-				"SPI2_MOSI"};
+-static const char * const gpio142_group[] = {"GPIO142", "GMAC1_TX_CLK",
+-				"SPI2_CLK"};
+-static const char * const gpio143_group[] = {"GPIO143", "GMAC1_RX_CTL"};
+-static const char * const gpio144_group[] = {"GPIO144", "GMAC1_RXD0"};
+-static const char * const gpio145_group[] = {"GPIO145", "GMAC1_RXD1"};
+-static const char * const gpio146_group[] = {"GPIO146", "GMAC1_RXD2"};
+-static const char * const gpio147_group[] = {"GPIO147", "GMAC1_RXD3"};
+-static const char * const gpio148_group[] = {"GPIO148", "GMAC1_RX_CLK"};
+-static const char * const gpio149_group[] = {"GPIO149", "GMAC1_MDC"};
+-static const char * const gpio150_group[] = {"GPIO150", "GMAC1_MDIO"};
+-static const char * const gpio151_group[] = {"GPIO151", "PM_GPIO0"};
+-static const char * const gpio152_group[] = {"GPIO152", "PM_GPIO1"};
+-static const char * const gpio153_group[] = {"GPIO153", "PM_GPIO2"};
+-static const struct sky1_pin_desc sky1_pinctrl_pads[] = {
+-	SKY_PINFUNCTION(PINCTRL_PIN(0, "GPIO43"), gpio43),
+-	SKY_PINFUNCTION(PINCTRL_PIN(1, "GPIO44"), gpio44),
+-	SKY_PINFUNCTION(PINCTRL_PIN(2, "GPIO45"), gpio45),
+-	SKY_PINFUNCTION(PINCTRL_PIN(3, "GPIO46"), gpio46),
+-	SKY_PINFUNCTION(PINCTRL_PIN(4, "RESET_IN_L"), reset_in),
+-	SKY_PINFUNCTION(PINCTRL_PIN(5, "PLT_RESET_L"), plt_reset),
+-	SKY_PINFUNCTION(PINCTRL_PIN(6, "THERMTRIP_L"), thermtrip),
+-	SKY_PINFUNCTION(PINCTRL_PIN(7, "PROCHOT_L"), prochot),
+-	SKY_PINFUNCTION(PINCTRL_PIN(8, "PM_I2C0_CLK"), pm_i2c0_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(9, "PM_I2C0_DATA"), pm_i2c0_data),
+-	SKY_PINFUNCTION(PINCTRL_PIN(10, "PM_I2C1_CLK"), pm_i2c1_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(11, "PM_I2C1_DATA"), pm_i2c1_data),
+-	SKY_PINFUNCTION(PINCTRL_PIN(12, "PM_I2C2_CLK"), pm_i2c2_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(13, "PM_I2C2_DATA"), pm_i2c2_data),
+-	SKY_PINFUNCTION(PINCTRL_PIN(14, "PM_I2C3_CLK"), pm_i2c3_clk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(15, "PM_I2C3_DATA"), pm_i2c3_data),
+-	SKY_PINFUNCTION(PINCTRL_PIN(16, "STRAP0"), strap0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(17, "STRAP1"), strap1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(18, "DP2_DIGON"), dp2_digon),
+-	SKY_PINFUNCTION(PINCTRL_PIN(19, "DP2_BLON"), dp2_blon),
+-	SKY_PINFUNCTION(PINCTRL_PIN(20, "DP2_VARY_BL"), dp2_vary_bl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(21, "I2C7_SCL"), i2c7_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(22, "I2C7_SDA"), i2c7_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(23, "UART6_CSU_SE_TXD"), uart6_csu_se_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(24, "CLK_REQ1_L"), clk_req1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(25, "CLK_REQ3_L"), clk_req3),
+-	SKY_PINFUNCTION(PINCTRL_PIN(26, "I2C5_SCL"), i2c5_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(27, "I2C5_SDA"), i2c5_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(28, "I2C6_SCL"), i2c6_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(29, "I2C6_SDA"), i2c6_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(30, "I2C0_CLK"), i2c0_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(31, "I2C0_SDA"), i2c0_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(32, "I2C1_CLK"), i2c1_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(33, "I2C1_SDA"), i2c1_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(34, "I2C2_SCL"), i2c2_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(35, "I2C2_SDA"), i2c2_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(36, "GPIO57"), gpio57),
+-	SKY_PINFUNCTION(PINCTRL_PIN(37, "I2C3_SCL"), i2c3_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(38, "I2C3_SDA"), i2c3_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(39, "GPIO60"), gpio60),
+-	SKY_PINFUNCTION(PINCTRL_PIN(40, "I2C4_SCL"), i2c4_scl),
+-	SKY_PINFUNCTION(PINCTRL_PIN(41, "I2C4_SDA"), i2c4_sda),
+-	SKY_PINFUNCTION(PINCTRL_PIN(42, "HDA_BITCLK"), hda_bitclk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(43, "HDA_RST_L"), hda_rst),
+-	SKY_PINFUNCTION(PINCTRL_PIN(44, "HDA_SDIN0"), hda_sdin0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(45, "HDA_SDOUT0"), hda_sdout0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(46, "HDA_SYNC"), hda_sync),
+-	SKY_PINFUNCTION(PINCTRL_PIN(47, "HDA_SDIN1"), hda_sdin1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(48, "HDA_SDOUT1"), hda_sdout1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(49, "I2S1_MCLK"), i2s1_mclk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(50, "I2S1_SCK"), i2s1_sck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(51, "I2S1_WS"), i2s1_ws),
+-	SKY_PINFUNCTION(PINCTRL_PIN(52, "I2S1_DATA_IN"), i2s1_data_in),
+-	SKY_PINFUNCTION(PINCTRL_PIN(53, "I2S1_DATA_OUT"), i2s1_data_out),
+-	SKY_PINFUNCTION(PINCTRL_PIN(54, "I2S2_MCLK"), i2s2_mck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(55, "I2S2_RSCK"), i2s2_rsck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(56, "I2S2_RWS"), i2s2_rws),
+-	SKY_PINFUNCTION(PINCTRL_PIN(57, "I2S2_TSCK"), i2s2_tsck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(58, "I2S2_TWS"), i2s2_tws),
+-	SKY_PINFUNCTION(PINCTRL_PIN(59, "I2S2_DATA_IN0"), i2s2_data_in0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(60, "I2S2_DATA_IN1"), i2s2_data_in1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(61, "I2S2_DATA_OUT0"), i2s2_data_out0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(62, "I2S2_DATA_OUT1"), i2s2_data_out1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(63, "I2S2_DATA_OUT2"), i2s2_data_out2),
+-	SKY_PINFUNCTION(PINCTRL_PIN(64, "I2S2_DATA_OUT3"), i2s2_data_out3),
+-	SKY_PINFUNCTION(PINCTRL_PIN(65, "I2S3_MCLK"), i2s3_mclk),
+-	SKY_PINFUNCTION(PINCTRL_PIN(66, "I2S3_RSCK"), i2s3_rsck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(67, "I2S3_RWS"), i2s3_rws),
+-	SKY_PINFUNCTION(PINCTRL_PIN(68, "I2S3_TSCK"), i2s3_tsck),
+-	SKY_PINFUNCTION(PINCTRL_PIN(69, "I2S3_TWS"), i2s3_tws),
+-	SKY_PINFUNCTION(PINCTRL_PIN(70, "I2S3_DATA_IN0"), i2s3_data_in0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(71, "I2S3_DATA_IN1"), i2s3_data_in1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(72, "I2S3_DATA_OUT0"), i2s3_data_out0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(73, "I2S3_DATA_OUT1"), i2s3_data_out1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(74, "GPIO90"), gpio90),
+-	SKY_PINFUNCTION(PINCTRL_PIN(75, "GPIO91"), gpio91),
+-	SKY_PINFUNCTION(PINCTRL_PIN(76, "GPIO92"), gpio92),
+-	SKY_PINFUNCTION(PINCTRL_PIN(77, "GPIO93"), gpio93),
+-	SKY_PINFUNCTION(PINCTRL_PIN(78, "GPIO94"), gpio94),
+-	SKY_PINFUNCTION(PINCTRL_PIN(79, "UART0_TXD"), uart0_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(80, "UART0_RXD"), uart0_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(81, "UART0_CTS"), uart0_cts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(82, "UART0_RTS"), uart0_rts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(83, "UART1_TXD"), uart1_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(84, "UART1_RXD"), uart1_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(85, "UART1_CTS"), uart1_cts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(86, "UART1_RTS"), uart1_rts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(87, "UART2_TXD"), uart2_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(88, "UART2_RXD"), uart2_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(89, "UART3_TXD"), uart3_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(90, "UART3_RXD"), uart3_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(91, "UART3_CTS"), uart3_cts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(92, "UART3_RTS"), uart3_rts),
+-	SKY_PINFUNCTION(PINCTRL_PIN(93, "UART4_CSU_PM_TXD"), uart4_csu_pm_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(94, "UART4_CSU_PM_RXD"), uart4_csu_pm_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(95, "UART5_CSU_SE_TXD"), uart5_csu_se_txd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(96, "UART5_CSU_SE_RXD"), uart5_csu_se_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(97, "UART6_CSU_SE_RXD"), uart6_csu_se_rxd),
+-	SKY_PINFUNCTION(PINCTRL_PIN(98, "CLK_REQ0_L"), clk_req0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(99, "CLK_REQ2_L"), clk_req2),
+-	SKY_PINFUNCTION(PINCTRL_PIN(100, "CLK_REQ4_L"), clk_req4),
+-	SKY_PINFUNCTION(PINCTRL_PIN(101, "CSI0_MCLK0"), csi0_mclk0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(102, "CSI0_MCLK1"), csi0_mclk1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(103, "CSI1_MCLK0"), csi1_mclk0),
+-	SKY_PINFUNCTION(PINCTRL_PIN(104, "CSI1_MCLK1"), csi1_mclk1),
+-	SKY_PINFUNCTION(PINCTRL_PIN(105, "GPIO121"), gpio121),
+-	SKY_PINFUNCTION(PINCTRL_PIN(106, "GPIO122"), gpio122),
+-	SKY_PINFUNCTION(PINCTRL_PIN(107, "GPIO123"), gpio123),
+-	SKY_PINFUNCTION(PINCTRL_PIN(108, "GPIO124"), gpio124),
+-	SKY_PINFUNCTION(PINCTRL_PIN(109, "GPIO125"), gpio125),
+-	SKY_PINFUNCTION(PINCTRL_PIN(110, "GPIO126"), gpio126),
+-	SKY_PINFUNCTION(PINCTRL_PIN(111, "GPIO127"), gpio127),
+-	SKY_PINFUNCTION(PINCTRL_PIN(112, "GPIO128"), gpio128),
+-	SKY_PINFUNCTION(PINCTRL_PIN(113, "GPIO129"), gpio129),
+-	SKY_PINFUNCTION(PINCTRL_PIN(114, "GPIO130"), gpio130),
+-	SKY_PINFUNCTION(PINCTRL_PIN(115, "GPIO131"), gpio131),
+-	SKY_PINFUNCTION(PINCTRL_PIN(116, "GPIO132"), gpio132),
+-	SKY_PINFUNCTION(PINCTRL_PIN(117, "GPIO133"), gpio133),
+-	SKY_PINFUNCTION(PINCTRL_PIN(118, "GPIO134"), gpio134),
+-	SKY_PINFUNCTION(PINCTRL_PIN(119, "GPIO135"), gpio135),
+-	SKY_PINFUNCTION(PINCTRL_PIN(120, "GPIO136"), gpio136),
+-	SKY_PINFUNCTION(PINCTRL_PIN(121, "GPIO137"), gpio137),
+-	SKY_PINFUNCTION(PINCTRL_PIN(122, "GPIO138"), gpio138),
+-	SKY_PINFUNCTION(PINCTRL_PIN(123, "GPIO139"), gpio139),
+-	SKY_PINFUNCTION(PINCTRL_PIN(124, "GPIO140"), gpio140),
+-	SKY_PINFUNCTION(PINCTRL_PIN(125, "GPIO141"), gpio141),
+-	SKY_PINFUNCTION(PINCTRL_PIN(126, "GPIO142"), gpio142),
+-	SKY_PINFUNCTION(PINCTRL_PIN(127, "GPIO143"), gpio143),
+-	SKY_PINFUNCTION(PINCTRL_PIN(128, "GPIO144"), gpio144),
+-	SKY_PINFUNCTION(PINCTRL_PIN(129, "GPIO145"), gpio145),
+-	SKY_PINFUNCTION(PINCTRL_PIN(130, "GPIO146"), gpio146),
+-	SKY_PINFUNCTION(PINCTRL_PIN(131, "GPIO147"), gpio147),
+-	SKY_PINFUNCTION(PINCTRL_PIN(132, "GPIO148"), gpio148),
+-	SKY_PINFUNCTION(PINCTRL_PIN(133, "GPIO149"), gpio149),
+-	SKY_PINFUNCTION(PINCTRL_PIN(134, "GPIO150"), gpio150),
+-	SKY_PINFUNCTION(PINCTRL_PIN(135, "GPIO151"), gpio151),
+-	SKY_PINFUNCTION(PINCTRL_PIN(136, "GPIO152"), gpio152),
+-	SKY_PINFUNCTION(PINCTRL_PIN(137, "GPIO153"), gpio153),
++static const struct pinctrl_pin_desc sky1_pinctrl_pads[] = {
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO43),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO44),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO45),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GPIO46),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_RESET_IN_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PLT_RESET_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_THERMRIP_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PROCHOT_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C0_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C0_DATA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C1_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C1_DATA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C2_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C2_DATA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C3_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_I2C3_DATA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_STRAP0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_STRAP1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DP2_DIGON),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DP2_BLON),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_DP2_VARY_BL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C7_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C7_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART6_CSU_SE_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CLK_REQ1_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CLK_REQ3_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C5_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C5_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C6_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C6_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C0_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C0_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C1_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C1_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C2_SCL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C2_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I3C0_PUR_EN_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C3_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C3_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I3C1_PUR_EN_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C4_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2C4_SDA),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_BITCLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_RST_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_SDIN0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_SDOUT0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_SYNC),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_SDIN1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_HDA_SDOUT1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S1_MCLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S1_SCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S1_WS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S1_DATA_IN),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S1_DATA_OUT),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_MCLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_RSCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_RWS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_TSCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_TWS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_IN0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_IN1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_OUT0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_OUT1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_OUT2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S2_DATA_OUT3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_MCLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_RSCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_RWS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_TSCK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_TWS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_DATA_IN0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_DATA_IN1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_DATA_OUT0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S3_DATA_OUT1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S4_MCLK_LB),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S4_SCK_LB),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S4_WS_LB),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S4_DATA_IN_LB),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_I2S4_DATA_OUT_LB),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART0_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART0_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART0_CTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART0_RTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART1_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART1_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART1_CTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART1_RTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART2_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART2_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART3_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART3_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART3_CTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART3_RTS),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART4_CSU_PM_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART4_CSU_PM_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART5_CSU_SE_TXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART5_CSU_SE_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_UART6_CSU_SE_RXD),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CLK_REQ0_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CLK_REQ2_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CLK_REQ4_L),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CSI0_MCLK0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CSI0_MCLK1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CSI1_MCLK0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_CSI1_MCLK1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_REFCLK_25M),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TX_CTL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TXD0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TXD1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TXD2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TXD3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_TX_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RX_CTL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RXD0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RXD1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RXD2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RXD3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_RX_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_MDC),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC0_MDIO),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_REFCLK_25M),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TX_CTL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TXD0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TXD1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TXD2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TXD3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_TX_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RX_CTL),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RXD0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RXD1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RXD2),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RXD3),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_RX_CLK),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_MDC),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_GMAC1_MDIO),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_GPIO0),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_GPIO1),
++	SKY1_PINCTRL_PIN(SKY1_IOMUXC_PM_GPIO2),
+ };
+ 
+ static const struct sky1_pinctrl_soc_info sky1_pinctrl_s5_info = {
+@@ -497,20 +446,61 @@ static const struct sky1_pinctrl_soc_info sky1_pinctrl_s5_info = {
+ };
+ 
+ static const struct sky1_pinctrl_soc_info sky1_pinctrl_info = {
++	.flags = SKY1_PINCTRL_CONTEXT_LOSS_OFF,
+ 	.pins = sky1_pinctrl_pads,
+ 	.npins = ARRAY_SIZE(sky1_pinctrl_pads),
+ };
+ 
+ static const struct of_device_id sky1_pinctrl_of_match[] = {
+-	{ .compatible = "cix,sky1-pinctrl-s5", .data = &sky1_pinctrl_s5_info, },
+-	{ .compatible = "cix,sky1-pinctrl", .data = &sky1_pinctrl_info, },
++	{ .compatible = "cix,sky1-iomuxc-s5", .data = &sky1_pinctrl_s5_info, },
++	{ .compatible = "cix,sky1-iomuxc", .data = &sky1_pinctrl_info, },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, sky1_pinctrl_of_match);
+ 
++static int pinctrl_save_context(struct device *dev, struct sky1_pinctrl *spctl)
++{
++	int i;
++	unsigned long *reg;
++
++	if (!spctl->saved_vals) {
++		spctl->saved_vals = devm_kmalloc_array(dev, spctl->info->npins,
++					    sizeof(*reg),
++					    GFP_ATOMIC);
++		if (!spctl->saved_vals)
++			return -ENOMEM;
++	}
++
++	reg = spctl->saved_vals;
++	for (i = 0; i < spctl->info->npins; i++)
++		*reg++ = readl(spctl->base + spctl->pin_regs[i]) & ~SKY1_CONF_MASK;
++
++	return 0;
++}
++
++static void pinctrl_restore_context(struct sky1_pinctrl *spctl)
++{
++	int i;
++	unsigned long *reg;
++
++	reg = spctl->saved_vals;
++	for (i = 0; i < spctl->info->npins; i++)
++		writel(*reg++, spctl->base + spctl->pin_regs[i]);
++}
++
+ static int __maybe_unused sky1_pinctrl_suspend(struct device *dev)
+ {
+ 	struct sky1_pinctrl *spctl = dev_get_drvdata(dev);
++	if (!spctl)
++		return -EINVAL;
++
++	if (spctl->info->flags & SKY1_PINCTRL_CONTEXT_LOSS_OFF) {
++		int ret;
++
++		ret = pinctrl_save_context(dev, spctl);
++		if (ret < 0)
++			return ret;
++	}
+ 
+ 	return pinctrl_force_sleep(spctl->pctl);
+ }
+@@ -518,6 +508,11 @@ static int __maybe_unused sky1_pinctrl_suspend(struct device *dev)
+ static int __maybe_unused sky1_pinctrl_resume(struct device *dev)
+ {
+ 	struct sky1_pinctrl *spctl = dev_get_drvdata(dev);
++	if (!spctl)
++		return -EINVAL;
++
++	if (spctl->info->flags & SKY1_PINCTRL_CONTEXT_LOSS_OFF)
++		pinctrl_restore_context(spctl);
+ 
+ 	return pinctrl_force_default(spctl->pctl);
+ }
+@@ -539,10 +534,18 @@ static int sky1_pinctrl_probe(struct platform_device *pdev)
+ 	return sky1_base_pinctrl_probe(pdev, pinctrl_info);
+ }
+ 
++static const struct acpi_device_id pinctrl_acpi_ids[] = {
++	{"CIXHA016", (kernel_ulong_t)&sky1_pinctrl_info },
++	{"CIXHA017", (kernel_ulong_t)&sky1_pinctrl_s5_info },
++	{ },
++};
++MODULE_DEVICE_TABLE(acpi, pinctrl_acpi_ids);
++
+ static struct platform_driver sky1_pinctrl_driver = {
+ 	.driver = {
+ 		.name = "sky1-pinctrl",
+-		.of_match_table = sky1_pinctrl_of_match,
++		.of_match_table = of_match_ptr(sky1_pinctrl_of_match),
++		.acpi_match_table = pinctrl_acpi_ids,
+ 		.pm = &sky1_pinctrl_pm_ops,
+ 	},
+ 	.probe = sky1_pinctrl_probe,
+@@ -556,4 +559,4 @@ arch_initcall(sky1_pinctrl_init);
+ 
+ MODULE_AUTHOR("Jerry Zhu <Jerry.Zhu@cixtech.com>");
+ MODULE_DESCRIPTION("Cix Sky1 pinctrl driver");
+-MODULE_LICENSE("GPL");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/pinctrl/cix/pinctrl-sky1.h b/drivers/pinctrl/cix/pinctrl-sky1.h
+index a8b0998529651..1c9b835634e60 100644
+--- a/drivers/pinctrl/cix/pinctrl-sky1.h
++++ b/drivers/pinctrl/cix/pinctrl-sky1.h
+@@ -6,29 +6,28 @@
+ #ifndef __DRIVERS_PINCTRL_SKY1_H
+ #define __DRIVERS_PINCTRL_SKY1_H
+ 
+-struct sky1_pinctrl_group {
+-	const char *name;
+-	unsigned long config;
+-	unsigned int pin;
+-};
++#include <linux/pinctrl/pinconf-generic.h>
++#include <linux/pinctrl/pinmux.h>
+ 
+-struct sky1_pin_desc {
+-	const struct pinctrl_pin_desc pin;
+-	const char * const *func_group;
+-	unsigned int nfunc;
++/**
++ * struct sky1_pin - describes a single SKY1 pin
++ * @pin_id: the pin id of this pin
++ * @offest: the iomux register offset
++ * @configs: the mux and config vaule for pin
++ */
++struct sky1_pin {
++	unsigned int pin_id;
++	unsigned int offset;
++	unsigned long configs;
+ };
+ 
+-struct sky1_pinctrl_soc_info {
+-	const struct sky1_pin_desc *pins;
+-	unsigned int npins;
+-};
++/**
++ * sky1_pin_reg contains 32 bits
++ * bit7:bit8 for function select
++ * bit0:bit6 for pad configuration
++ */
++typedef u32 sky1_pin_reg;
+ 
+-#define SKY_PINFUNCTION(_pin, _func)				\
+-((struct sky1_pin_desc) {					\
+-		.pin = _pin,					\
+-		.func_group = _func##_group,			\
+-		.nfunc = ARRAY_SIZE(_func##_group),		\
+-	})
+ /**
+  * @dev: a pointer back to containing device
+  * @base: the offset to the controller in virtual memory
+@@ -38,10 +37,23 @@ struct sky1_pinctrl {
+ 	struct pinctrl_dev *pctl;
+ 	void __iomem *base;
+ 	const struct sky1_pinctrl_soc_info *info;
+-	struct sky1_pinctrl_group *groups;
+-	const char **grp_names;
++	sky1_pin_reg *pin_regs;
++	unsigned int group_index;
++	struct mutex mutex;
++	unsigned long *saved_vals;
+ };
+ 
++// Flags based on pinctrl-single.c
++#define SKY1_PINCTRL_CONTEXT_LOSS_OFF	(1 << 3)
++
++struct sky1_pinctrl_soc_info {
++	unsigned int flags;
++	const struct pinctrl_pin_desc *pins;
++	unsigned int npins;
++};
++
++#define SKY1_PINCTRL_PIN(pin) PINCTRL_PIN(pin, #pin)
++
+ int sky1_base_pinctrl_probe(struct platform_device *pdev,
+ 			const struct sky1_pinctrl_soc_info *info);
+ 

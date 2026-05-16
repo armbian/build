@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Sat, 28 Feb 2026 01:10:21 +1100
+Subject: [PATCH] drm/trilin-dptx: add CEC-over-DP-AUX support
+
+Wire up the kernel's drm_dp_cec helpers for CEC tunneling over the DP
+AUX channel. This enables HDMI-CEC passthrough on DP-to-HDMI bridges
+like the Parade PS186 used on Sky1 boards.
+
+Five hook points following the i915/nouveau/amdgpu pattern:
+- register_connector at init
+- set_edid when EDID is successfully read in get_modes
+- unset_edid on HPD disconnect (framework debounces unregistration)
+- irq in the HPD IRQ handler for CEC message rx/tx
+- unregister_connector at deinit
+
+All functions have no-op stubs when CONFIG_DRM_DISPLAY_DP_AUX_CEC is
+disabled, so no ifdefs are needed in the driver.
+
+Based on a community patch from royka1, refactored to use the kernel
+CEC framework's built-in debounce and retry logic instead of a custom
+delayed work queue.
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 8 ++++++++
+ drivers/gpu/drm/cix/dptx/trilin_drm.c  | 8 +++++++-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index 2eba2a509d4c2..c36690fb6c71c 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -32,6 +32,7 @@
+ #include <drm/drm_simple_kms_helper.h>
+ #include <drm/drm_debugfs.h>
+ #include <drm/drm_file.h>
++#include <drm/display/drm_dp_helper.h>
+ 
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
+@@ -2621,6 +2622,9 @@ int trilin_dp_handle_disconnect(struct trilin_dp *dp, bool send_notification)
+ 	dp->state &= ~DP_STATE_ENABLED;
+ 	dp->active_stream_cnt = 0;
+ 
++	/* Invalidate CEC physical address; the framework debounces unregistration */
++	drm_dp_cec_unset_edid(&dp->aux);
++
+ 	if (dp->mst.mst_active) {
+ 		/* user mode should active power off to disable encoder */
+ 		trilin_dp_set_mst_mgr_state(dp, false);
+@@ -2643,6 +2647,8 @@ int trilin_dp_deinit_config(struct trilin_dp *dp)
+ 	cancel_delayed_work_sync(&dp->hpd_event_work);
+ 	disable_irq(dp->irq);
+ 
++	drm_dp_cec_unregister_connector(&dp->aux);
++
+ 	mutex_lock(&dp->session_lock);
+ 	trilin_dp_aux_cleanup(dp);
+ 	trilin_dp_host_deinit(dp);
+@@ -2718,6 +2724,8 @@ static void trilin_dp_hpd_irq_work_func(struct work_struct *work)
+ 		return;
+ 	}
+ 
++	drm_dp_cec_irq(&dp->aux);
++
+ 	mutex_lock(&dp->session_lock);
+ 	if (!(dp->state & DP_STATE_INITIALIZED)) {
+ 		mutex_unlock(&dp->session_lock);
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm.c b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+index d710b60014d56..423b3f018f9b5 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_drm.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+@@ -26,6 +26,7 @@
+ #include <drm/drm_of.h>
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_simple_kms_helper.h>
++#include <drm/display/drm_dp_helper.h>
+ 
+ #include <linux/clk.h>
+ #include <linux/debugfs.h>
+@@ -343,6 +344,7 @@ static int trilin_dp_connector_get_modes(struct drm_connector *connector)
+ 			return ret;
+ 		}
+ 
++		drm_dp_cec_set_edid(&dp->aux, edid);
+ 		ret = trilin_connector_update_modes(connector, edid);
+ 		kfree(edid);
+ 
+@@ -1244,6 +1246,10 @@ int trilin_dp_drm_init(struct trilin_dpsub *dpsub)
+ 	drm_atomic_helper_connector_reset(connector);
+ 	trilin_dp_add_properties(dp, connector);
+ 	//dp hardware init now
+-	trilin_dp_init_config(dp);
++	ret = trilin_dp_init_config(dp);
++	if (ret)
++		return ret;
++
++	drm_dp_cec_register_connector(&dp->aux, connector);
+ 	return 0;
+ }

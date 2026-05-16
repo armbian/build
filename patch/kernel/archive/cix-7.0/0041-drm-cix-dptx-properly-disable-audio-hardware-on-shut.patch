@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Entrpi <entrpi@proton.me>
+Date: Sat, 28 Feb 2026 14:41:25 +1100
+Subject: [PATCH] drm/cix/dptx: properly disable audio hardware on shutdown and
+ disconnect
+
+Three fixes for audio hardware lifecycle:
+
+- shutdown(): remove the !plugin early return so the running flag is
+  always cleared, preventing stale audio reconfig on the next hotplug.
+  Write AUDIO_ENABLE=0 to actually stop audio packets in hardware.
+
+- core_off(): disable audio packets before tearing down the link.
+  Without this, audio keeps streaming into a dead PHY when the cable
+  is pulled while audio is playing.  The running flag is preserved so
+  reconfig_and_enable() can restore audio on reconnect.
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c       | 6 ++++++
+ drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c | 9 ++++++---
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index c00ebf20ffe57..2dbe1abdc24da 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2139,6 +2139,12 @@ static int trilin_dp_core_off(struct trilin_dp *dp)
+ 		phy->phy_ops->exit(dp);
+ 	}
+ 
++	/* Stop audio packets before tearing down the link.  The ALSA
++	 * stream may still be open (running flag stays set so that
++	 * reconfig_and_enable restores audio on the next plug-in).
++	 */
++	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 0);
++
+ 	trilin_dp_write(dp, TRILIN_DPTX_MST_ENABLE, 0);
+ 	trilin_dp_write(dp, TRILIN_DPTX_SOURCE_ENABLE, 0);
+ 	trilin_dp_write(dp, TRILIN_DPTX_SOFT_RESET, 0);
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+index 0addb5f13205d..a56927404094e 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+@@ -151,10 +151,13 @@ static void dptx_audio_shutdown(struct device *dev, void *data)
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
+-	if (!dp->plugin)
+-		return;
+-
+ 	dp_audio->running = false;
++
++	/* Disable audio packets in hardware.  If the sink was already
++	 * unplugged, core_off has powered down the PHY but this write
++	 * is still safe (MMIO register block remains accessible).
++	 */
++	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 0);
+ }
+ 
+ static int dptx_audio_hw_params(struct device *dev, void *data,
