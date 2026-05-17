@@ -50,6 +50,16 @@ compile_crust() {
 	binutils_version=$(env or1k-elf-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
 	display_alert "Binutils version for Crust" "${binutils_version}" "info"
 
+	call_extension_method "crust_make_config" <<- 'CRUST_MAKE_CONFIG'
+		*Hook to customize Crust make environment before compilation*
+		Called right before invoking make for Crust (both defconfig and target make).
+		Extensions (compile-cache wrappers like ccache/sccache, distcc setups, etc.)
+		can modify env vars exported by the make invocation; the actual wrap
+		point is `${CCACHE}` substituted into `CROSS_COMPILE` below.
+		Available read-only variables:
+		  - CRUST_COMPILER, BOARD, BRANCH, LINUXFAMILY
+	CRUST_MAKE_CONFIG
+
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
