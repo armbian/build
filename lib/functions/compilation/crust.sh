@@ -46,7 +46,7 @@ compile_crust() {
 		return 0
 	fi
 
-	declare binutils_version binutils_flags_crust=""
+	declare binutils_version
 	binutils_version=$(env or1k-elf-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
 	display_alert "Binutils version for Crust" "${binutils_version}" "info"
 
