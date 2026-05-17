@@ -154,8 +154,14 @@ function install_armbian_nvidia_autodetect_helper() {
 		# dpkg-query the package set actually installed (no hardcoded
 		# version — varies per distro / extension config). Returns
 		# empty on a second run, which makes the purge a no-op.
+		# Glob 'nvidia-dkms-*' requires the trailing dash so it won't
+		# match the bare 'nvidia-dkms' / 'nvidia-driver' metapackages
+		# Debian ships (and which the install branch above can pick
+		# under case-3). List those exact names alongside the globs
+		# so the purge covers both shapes.
 		NVIDIA_PKGS=$(dpkg-query -W -f='${binary:Package}\n' \
 			'nvidia-dkms-*' 'nvidia-driver-*' \
+			'nvidia-dkms'   'nvidia-driver'   \
 			'nvidia-settings' 'nvidia-common' 2>/dev/null | tr '\n' ' ')
 		if [ -n "$NVIDIA_PKGS" ]; then
 			DEBIAN_FRONTEND=noninteractive apt-get -y -qq purge $NVIDIA_PKGS >/dev/null 2>&1 || true
