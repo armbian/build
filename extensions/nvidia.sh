@@ -12,6 +12,12 @@ function extension_finish_config__build_nvidia_kernel_module() {
 	fi
 	declare -g MODULES_BLACKLIST="nouveau"
 	declare -g INSTALL_HEADERS="yes"
+	# pciutils ships /usr/bin/lspci. Required by the runtime
+	# armbian-nvidia-autodetect helper that this extension installs in
+	# post_install_kernel_debs — without it the helper short-circuits
+	# (defensively) and the auto-disable on no-GPU hosts never fires.
+	# Not always pulled transitively on minimal-base + GNOME flavours.
+	declare -g PACKAGE_LIST_ADDITIONAL+=" pciutils"
 	# NVIDIA_DRIVER_VERSION is intentionally NOT defaulted here. The
 	# post_install hook below asks apt (inside the chroot, after apt
 	# sources are wired up) which nvidia-dkms-<N> is actually
