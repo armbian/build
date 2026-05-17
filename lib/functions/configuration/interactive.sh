@@ -180,10 +180,10 @@ function interactive_config_ask_board_list() {
 }
 
 function get_kernel_info_for_branch() {
-    local search_branch="$1"
-    local conf_file="${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+	local search_branch="$1"
+	local conf_file="${SRC}/config/sources/families/${BOARDFAMILY}.conf"
 
-    awk -v branch="$search_branch" '
+	awk -v branch="$search_branch" '
     BEGIN { found=0; major_minor=""; desc="" }
     /^[[:space:]]*[a-zA-Z0-9_-]+\)/ {
         if ($0 ~ "^[[:space:]]*" branch "\\)") {
@@ -210,65 +210,64 @@ function get_kernel_info_for_branch() {
 }
 
 function interactive_config_ask_branch() {
-    if [[ -n $BRANCH ]]; then
-        display_alert "Already set BRANCH, skipping interactive" "${BRANCH}" "debug"
-        return 0
-    fi
+	if [[ -n $BRANCH ]]; then
+		display_alert "Already set BRANCH, skipping interactive" "${BRANCH}" "debug"
+		return 0
+	fi
 
-    declare -a options=()
-    declare one_kernel_target
+	declare -a options=()
+	declare one_kernel_target
 
-    for one_kernel_target in $(echo "${KERNEL_TARGET}" | tr "," "\n"); do
-
+	for one_kernel_target in $(echo "${KERNEL_TARGET}" | tr "," "\n"); do
 
 		local version=""
-        local description=""
+		local description=""
 
-        local info
-        info="$(get_kernel_info_for_branch "$one_kernel_target")"
-        version="${info%%|*}"
-        description="${info#*|}"
+		local info
+		info="$(get_kernel_info_for_branch "$one_kernel_target")"
+		version="${info%%|*}"
+		description="${info#*|}"
 
-        # Fallback if description is empty
-        if [[ -z "$description" ]]; then
-            case "$one_kernel_target" in
-                current)
-                    description="Recommended. Usually an LTS kernel"
-                    ;;
-                legacy)
-                    description="Old stable / Legacy kernel"
-                    ;;
-                edge)
-                    description="Bleeding edge / latest possible"
-                    ;;
-                cloud)
-                    description="Cloud optimized minimal LTS kernel"
-                    ;;
-                vendor)
-                    description="Vendor BSP kernel"
+		# Fallback if description is empty
+		if [[ -z "$description" ]]; then
+			case "$one_kernel_target" in
+				current)
+					description="Recommended. Usually an LTS kernel"
 					;;
-                *)
-                    description="Experimental ${one_kernel_target} kernel / for Developers"
-                    ;;
-            esac
-        fi
+				legacy)
+					description="Old stable / Legacy kernel"
+					;;
+				edge)
+					description="Bleeding edge / latest possible"
+					;;
+				cloud)
+					description="Cloud optimized minimal LTS kernel"
+					;;
+				vendor)
+					description="Vendor BSP kernel"
+					;;
+				*)
+					description="Experimental ${one_kernel_target} kernel / for Developers"
+					;;
+			esac
+		fi
 
-        # Append version if found
-        if [[ -n "$version" ]]; then
-            description="${description} (${version})"
-        fi
+		# Append version if found
+		if [[ -n "$version" ]]; then
+			description="${description} (${version})"
+		fi
 
-        options+=("${one_kernel_target}" "${description}")
-    done
+		options+=("${one_kernel_target}" "${description}")
+	done
 
-    dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
-        --menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
-        $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+	dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
+		--menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
+		$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 
-    set_interactive_config_value BRANCH "${DIALOG_RESULT}"
+	set_interactive_config_value BRANCH "${DIALOG_RESULT}"
 
-    [[ -z ${BRANCH} ]] && exit_with_error "No kernel branch selected"
-    return 0
+	[[ -z ${BRANCH} ]] && exit_with_error "No kernel branch selected"
+	return 0
 }
 
 function interactive_config_ask_release() {
