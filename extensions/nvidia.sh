@@ -47,7 +47,7 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		nvidia_driver_pkg="nvidia-driver-${NVIDIA_DRIVER_VERSION}"
 		display_alert "Using pinned NVIDIA_DRIVER_VERSION" "${NVIDIA_DRIVER_VERSION}" "info"
 	else
-		local latest
+		local latest pkgnames_raw sources_files sources_has_restricted apt_lists_sample
 		# chroot_sdcard wraps the inner command with `bash -e -o
 		# pipefail -c …`, so this pipeline returns 1 when grep finds
 		# no numbered nvidia-dkms-N packages (Debian / fall-through
@@ -69,6 +69,17 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 			nvidia_driver_pkg="nvidia-driver"
 			display_alert "Using unversioned nvidia-dkms metapackage" "${DISTRIBUTION}/${RELEASE}" "info"
 		else
+			# Detection failed. Dump enough state to diagnose without
+			# needing to re-enter the chroot manually.
+			pkgnames_raw=$(chroot_sdcard "apt-cache pkgnames 2>/dev/null | grep -c '^nvidia' || true")
+			sources_files=$(chroot_sdcard "ls /etc/apt/sources.list.d/ 2>/dev/null | tr '\n' ' '")
+			sources_has_restricted=$(chroot_sdcard "grep -lE '(^|\s)restricted(\s|\$)' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null | tr '\n' ' '")
+			apt_lists_sample=$(chroot_sdcard "ls /var/lib/apt/lists/ 2>/dev/null | grep -E 'restricted|multiverse' | head -5 | tr '\n' ' '")
+			display_alert "nvidia-dkms detection failed" "${DISTRIBUTION}/${RELEASE}" "warn"
+			display_alert "  apt-cache pkgnames | grep ^nvidia count" "${pkgnames_raw}" "warn"
+			display_alert "  sources.list.d entries" "${sources_files:-<none>}" "warn"
+			display_alert "  files mentioning 'restricted'" "${sources_has_restricted:-<none>}" "warn"
+			display_alert "  apt/lists entries containing restricted/multiverse" "${apt_lists_sample:-<none — apt-get update may not have refreshed indices>}" "warn"
 			display_alert "No nvidia-dkms package in ${DISTRIBUTION}/${RELEASE} apt sources" "skipping nVidia install" "warn"
 			return 0
 		fi
