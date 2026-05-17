@@ -48,10 +48,17 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		display_alert "Using pinned NVIDIA_DRIVER_VERSION" "${NVIDIA_DRIVER_VERSION}" "info"
 	else
 		local latest
+		# chroot_sdcard wraps the inner command with `bash -e -o
+		# pipefail -c …`, so this pipeline returns 1 when grep finds
+		# no numbered nvidia-dkms-N packages (Debian / fall-through
+		# case). Under the framework's outer set -e the substitution
+		# would abort the build before we get to test $latest, making
+		# case-3 below unreachable. `|| true` keeps the substitution
+		# successful with $latest empty so the fall-through fires.
 		latest=$(chroot_sdcard "apt-cache pkgnames 'nvidia-dkms-' 2>/dev/null \
 			| grep -E '^nvidia-dkms-[0-9]+\$' \
 			| sed 's/nvidia-dkms-//' \
-			| sort -nr | head -1")
+			| sort -nr | head -1 || true")
 		if [[ -n "$latest" ]]; then
 			NVIDIA_DRIVER_VERSION="$latest"
 			nvidia_dkms_pkg="nvidia-dkms-${NVIDIA_DRIVER_VERSION}"
