@@ -24,6 +24,41 @@ function extension_hook_opt_out() {
 	fi
 }
 
+# Normalize the active extension list for substring matching.
+# Mirrors initialize_extension_manager's resolution (ENABLE_EXTENSIONS:-EXT)
+# and accepts both comma- and whitespace-separated forms. Emits a canonical
+# `,name1,name2,…,` string suitable for `[[ "$list" == *,name,* ]]` checks.
+# Also folds in extensions enabled programmatically via enable_extension()
+# (from board/family/user configuration) by scanning extension_function_info,
+# so callers see the full set regardless of how each extension was enabled.
+# Stdout: the normalized list. Useful in both the in-core auto-enable shim
+# and per-extension mutex checks between mutually-exclusive extensions.
+function extension_list_normalized() {
+	local raw="${ENABLE_EXTENSIONS:-${EXT:-}}"
+	# Normalize all IFS-style whitespace (space, tab, newline) to commas so
+	# the membership pattern matches what initialize_extension_manager would
+	# split on; the previous space-only substitution missed tab/newline forms.
+	raw="${raw//$'\t'/,}"
+	raw="${raw//$'\n'/,}"
+	raw="${raw// /,}"
+	local list=",${raw},"
+	# Fold in extensions enabled programmatically via enable_extension(),
+	# which record themselves in extension_function_info before
+	# initialize_extension_manager has run. Entries look like
+	#   EXTENSION="name" EXTENSION_DIR="..." EXTENSION_FILE="..." ...
+	if declare -p extension_function_info > /dev/null 2>&1; then
+		local _entry _ext
+		for _entry in "${extension_function_info[@]}"; do
+			_ext="${_entry#*EXTENSION=\"}"
+			_ext="${_ext%%\"*}"
+			[[ -z "${_ext}" ]] && continue
+			[[ "${list}" == *",${_ext},"* ]] || list="${list%,},${_ext},"
+		done
+	fi
+	while [[ "${list}" == *,,* ]]; do list="${list//,,/,}"; done
+	echo "${list}"
+}
+
 function extension_manager_declare_globals() {
 	# global variables managing the state of the extension manager. treat as private.
 	declare -g -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
@@ -591,7 +626,7 @@ function enable_extensions_with_hostdeps_builtin_and_user() {
 		display_alert "Extension search" "Searching in directory: \"${ext_dir}\"" ""
 		if [[ -d "${ext_dir}" ]]; then
 			declare -a ext_list_dir=()
-			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 -r grep -l "${grep_args[@]}" 2>/dev/null || true)
+			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 -r grep -l "${grep_args[@]}" 2> /dev/null || true)
 			display_alert "Extension search result" "Found ${#ext_list_dir[@]} extensions in \"${ext_dir}\"" ""
 			extension_list+=("${ext_list_dir[@]}")
 		else

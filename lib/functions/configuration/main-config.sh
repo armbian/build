@@ -47,7 +47,7 @@ function do_main_configuration() {
 		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
 	fi
 
-	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0"                           # RGB values for MOTD logo
+	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0" # RGB values for MOTD logo
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
@@ -60,7 +60,7 @@ function do_main_configuration() {
 	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                   # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
-	declare -g USE_CCACHE="${USE_CCACHE:-no}"                              # stop using ccache as our worktree is more effective
+	declare -g USE_CCACHE="${USE_CCACHE:-no}" # stop using ccache as our worktree is more effective
 
 	# Armbian config is central tool used in all builds. As its build externally, we have moved it to extension. Enable it here.
 	enable_extension "armbian-config"
@@ -173,7 +173,7 @@ function do_main_configuration() {
 
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
-		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
+		enable_extension "fs-cryptroot-support"                                   # add the tooling needed, cryptsetup
 		if [[ -z $CRYPTROOT_PASSPHRASE ]] && [[ -z $CRYPTROOT_AUTOUNLOCK ]]; then # a passphrase is mandatory if rootfs encryption is enabled, unless CRYPTROOT_AUTOUNLOCK is wanted
 			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE or CRYPTROOT_AUTOUNLOCK is not set"
 		fi
@@ -343,7 +343,7 @@ function do_main_configuration() {
 			;;
 	esac
 
-        # enable APA extension for Debian Unstable release
+	# enable APA extension for Debian Unstable release
 	# loong64 is not supported now
 	#  [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
 
@@ -351,6 +351,40 @@ function do_main_configuration() {
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect
 	##             place to initialize the extension manager. It will create functions
 	##             like the 'post_family_config' that is invoked below.
+
+	# Auto-enable the ccache compile-cache extension when:
+	#   - the legacy toggle is set (USE_CCACHE=yes / PRIVATE_CCACHE=yes), OR
+	#   - the ccache-remote extension is requested (it sets USE_CCACHE=yes
+	#     itself inside extension_prepare_config, too late for this
+	#     shim to react to the toggle directly, so we trigger on the
+	#     extension name instead).
+	# Skip when a competing compile-cache extension (sccache, …) is already
+	# requested. Mutex resolution lives inside the extensions themselves;
+	# the regex below just prevents redundant auto-enabling.
+	#
+	# Placed immediately before initialize_extension_manager so all
+	# in-do_main_configuration sources of USE_CCACHE / PRIVATE_CCACHE /
+	# ENABLE_EXTENSIONS are visible. The extension-list normalisation
+	# (EXT fallback + comma/whitespace handling) is shared with the
+	# per-extension mutex checks via extension_list_normalized.
+	#
+	# Note: USE_CCACHE set in userpatches/lib.config is a framework-level
+	# limitation — lib.config is sourced after initialize_extension_manager
+	# (see line ~443 'too late to define hook functions or add extensions
+	# in lib.config'). For that scenario prepare_compilation_vars emits a
+	# warning at compile phase nudging users to migrate to
+	# ENABLE_EXTENSIONS=ccache.
+	local _ext_list
+	_ext_list="$(extension_list_normalized)"
+	if [[ "${USE_CCACHE}" == "yes" ||
+		"${PRIVATE_CCACHE}" == "yes" ||
+		"${_ext_list}" == *,ccache-remote,* ]]; then
+		if [[ ! "${_ext_list}" == *,ccache,* && ! "${_ext_list}" == *,sccache,* ]]; then
+			enable_extension "ccache"
+		fi
+	fi
+	unset _ext_list
+
 	initialize_extension_manager
 
 	call_extension_method "post_family_config" "config_tweaks_post_family_config" <<- 'POST_FAMILY_CONFIG'
