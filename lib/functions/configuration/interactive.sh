@@ -81,18 +81,24 @@ function get_list_of_all_buildable_boards() {
 		prepare_options=1
 	fi
 
-	local board_file_path board_type full_board_file
+	# Avoid a $(basename ... | cut ...) + $(head | cut ...) subshell pair per board file -
+	# with ~400 boards this is ~800 fork/exec cycles per scan. Bash parameter expansion
+	# plus a single `read` are equivalent and effectively free, which makes a noticeable
+	# difference on every dialog redraw (CSC/WIP toggle, filter changes, etc.).
+	local board_file_path board_type full_board_file board_name board_desc first_line
 	for board_file_path in "${board_file_paths[@]}"; do
 		[[ ! -d "${board_file_path}" ]] && continue
 		for board_type in "${board_types[@]}"; do
 			for full_board_file in "${board_file_path}"/*."${board_type}"; do
 				[[ "${full_board_file}" == *"*"* ]] && continue # ignore non-matches, due to bash's (non-)globbing behaviour
-				local board_name board_desc
-				board_name="$(basename "${full_board_file}" | cut -d'.' -f1)"
+				board_name="${full_board_file##*/}"             # strip directory (basename)
+				board_name="${board_name%.*}"                   # strip extension (cut -d'.' -f1)
 				ref_dict_all_board_types["${board_name}"]="${board_type}"
 				ref_dict_all_board_source_files["${board_name}"]="${ref_dict_all_board_source_files["${board_name}"]} ${full_board_file}" # accumulate, will have extra space
 				if [[ ${prepare_options} -gt 0 ]]; then
-					board_desc="$(head -1 "${full_board_file}" | cut -d'#' -f2)"
+					IFS= read -r first_line < "${full_board_file}" || true
+					board_desc="${first_line#*#}"  # everything after first '#' (cut -d'#' -f2 ...
+					board_desc="${board_desc%%#*}" # ... up to next '#' if any)
 					ref_dict_all_board_descriptions["${board_name}"]="${board_desc}"
 				fi
 			done
@@ -132,12 +138,21 @@ function interactive_config_ask_board_list() {
 	declare temp_rc
 	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
+	# Cache the board scan across dialog redraws. The result only changes when WIP_STATE
+	# changes (Show CSC/WIP/EOS/TVB button toggles the type set), so we re-scan only on
+	# that branch below. Without the cache every redraw would re-glob ~400 board files.
+	declare -a arr_all_board_names=() arr_all_board_options=()                                       # arrays
+	declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=() # dictionaries
+	declare board_list_needs_refresh=yes
 	while true; do
-		declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays
-		declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()                                                        # dictionaries
-		get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
-		echo > "${temp_rc}"                                                                                                                                     # zero out the rcfile to start
-		if [[ $WIP_STATE != supported ]]; then                                                                                                                  # be if wip csc etc included. I personally disagree here.
+		if [[ "${board_list_needs_refresh}" == "yes" ]]; then
+			arr_all_board_names=() arr_all_board_options=()
+			dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()
+			get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
+			board_list_needs_refresh=no
+		fi
+		echo > "${temp_rc}"                    # zero out the rcfile to start
+		if [[ $WIP_STATE != supported ]]; then # be if wip csc etc included. I personally disagree here.
 			cat <<- 'EOF' > "${temp_rc}"
 				dialog_color = (RED,WHITE,OFF)
 				screen_color = (WHITE,RED,ON)
@@ -170,6 +185,7 @@ function interactive_config_ask_board_list() {
 				WIP_BUTTON='CSC/WIP/EOS'
 				EXPERT=no # @TODO: this overrides an "expert" mode that could be set on by the user. revert to original one?
 			fi
+			board_list_needs_refresh=yes # WIP_STATE changed - rescan to include/exclude wip/csc/eos/tvb
 			continue
 		elif [[ $STATUS == 0 ]]; then
 			break
