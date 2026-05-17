@@ -71,10 +71,16 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		else
 			# Detection failed. Dump enough state to diagnose without
 			# needing to re-enter the chroot manually.
+			# Every chroot_sdcard pipeline below ends in `|| true`. The
+			# inner bash runs with -e -o pipefail; grep / find return 1
+			# when nothing matches, which pipefail propagates and would
+			# abort the outer build in a way that triggers bash's
+			# pop_var_context warning instead of just reporting the
+			# diagnostic.
 			pkgnames_raw=$(chroot_sdcard "apt-cache pkgnames 2>/dev/null | grep -c '^nvidia' || true")
-			sources_files=$(chroot_sdcard "ls /etc/apt/sources.list.d/ 2>/dev/null | tr '\n' ' '")
-			sources_has_restricted=$(chroot_sdcard "grep -lE '(^|\s)restricted(\s|\$)' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null | tr '\n' ' '")
-			apt_lists_sample=$(chroot_sdcard "ls /var/lib/apt/lists/ 2>/dev/null | grep -E 'restricted|multiverse' | head -5 | tr '\n' ' '")
+			sources_files=$(chroot_sdcard "ls /etc/apt/sources.list.d/ 2>/dev/null | tr '\n' ' ' || true")
+			sources_has_restricted=$(chroot_sdcard "grep -lF restricted /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null | tr '\n' ' ' || true")
+			apt_lists_sample=$(chroot_sdcard "ls /var/lib/apt/lists/ 2>/dev/null | grep -E 'restricted|multiverse' | head -5 | tr '\n' ' ' || true")
 			display_alert "nvidia-dkms detection failed" "${DISTRIBUTION}/${RELEASE}" "warn"
 			display_alert "  apt-cache pkgnames | grep ^nvidia count" "${pkgnames_raw}" "warn"
 			display_alert "  sources.list.d entries" "${sources_files:-<none>}" "warn"
