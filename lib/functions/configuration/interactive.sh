@@ -135,6 +135,9 @@ function interactive_config_ask_board_list() {
 
 	declare WIP_BUTTON='CSC/WIP/EOS/TVB'
 	declare STATE_DESCRIPTION=' - boards with high level of software maturity'
+	declare BOARD_FILTER=''
+	declare FILTER_TAG='[set filter]'
+	declare CLEAR_TAG='[clear filter]'
 	declare temp_rc
 	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
@@ -151,6 +154,41 @@ function interactive_config_ask_board_list() {
 			get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
 			board_list_needs_refresh=no
 		fi
+
+		# Apply substring filter (case-insensitive, matches name and description) and
+		# prepend a sentinel entry that opens an --inputbox to set/change/clear the filter.
+		# arr_all_board_options is a flat sequence of (tag, item) pairs as dialog expects.
+		declare -a arr_menu_options=()
+		if [[ -n "${BOARD_FILTER}" ]]; then
+			declare lc_filter="${BOARD_FILTER,,}"
+			declare i tag item hay
+			declare -a arr_filter_hits=()
+			for ((i = 0; i < ${#arr_all_board_options[@]}; i += 2)); do
+				tag="${arr_all_board_options[i]}"
+				item="${arr_all_board_options[i + 1]}"
+				# Match against board name + raw description (from dict_all_board_descriptions),
+				# not against arr_all_board_options' item which carries dialog --colors escapes
+				# (\Z1...\Zn) and a leading "(type)" badge - those would cause false positives
+				# for searches like "conf", "wip" or "z1".
+				hay="${tag} ${dict_all_board_descriptions["${tag}"]}"
+				hay="${hay,,}"
+				if [[ "${hay}" == *"${lc_filter}"* ]]; then
+					arr_filter_hits+=("${tag}" "${item}")
+				fi
+			done
+			declare match_count=$((${#arr_filter_hits[@]} / 2))
+			arr_menu_options=(
+				"${FILTER_TAG}" "\Z1change filter (current: ${BOARD_FILTER}, ${match_count}/${#arr_all_board_names[@]} boards)\Zn"
+				"${CLEAR_TAG}" "\Z1clear filter, show all ${#arr_all_board_names[@]} boards\Zn"
+				"${arr_filter_hits[@]}"
+			)
+		else
+			arr_menu_options=(
+				"${FILTER_TAG}" "\Z1filter boards by substring of name or description\Zn"
+				"${arr_all_board_options[@]}"
+			)
+		fi
+
 		echo > "${temp_rc}"                    # zero out the rcfile to start
 		if [[ $WIP_STATE != supported ]]; then # be if wip csc etc included. I personally disagree here.
 			cat <<- 'EOF' > "${temp_rc}"
@@ -166,9 +204,9 @@ function interactive_config_ask_board_list() {
 		DIALOGRC=$temp_rc \
 			dialog_if_terminal_set_vars --title "Choose a board" --backtitle "$backtitle" --scrollbar \
 			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
-			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${arr_all_board_options[@]}"
-		set_interactive_config_value BOARD "${DIALOG_RESULT}"
+			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${arr_menu_options[@]}"
 		declare STATUS=${DIALOG_EXIT_CODE}
+		declare RESULT="${DIALOG_RESULT}"
 
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
@@ -188,6 +226,16 @@ function interactive_config_ask_board_list() {
 			board_list_needs_refresh=yes # WIP_STATE changed - rescan to include/exclude wip/csc/eos/tvb
 			continue
 		elif [[ $STATUS == 0 ]]; then
+			if [[ "${RESULT}" == "${FILTER_TAG}" ]]; then
+				dialog_if_terminal_set_vars --title "Filter boards" --backtitle "$backtitle" \
+					--inputbox "Case-insensitive substring of board name or description. Empty value clears." 8 "${TTY_X}" "${BOARD_FILTER}"
+				[[ ${DIALOG_EXIT_CODE} == 0 ]] && BOARD_FILTER="${DIALOG_RESULT}"
+				continue
+			elif [[ "${RESULT}" == "${CLEAR_TAG}" ]]; then
+				BOARD_FILTER=''
+				continue
+			fi
+			set_interactive_config_value BOARD "${RESULT}"
 			break
 		else
 			exit_with_error "You cancelled interactive config" "Build cancelled, board not chosen"
