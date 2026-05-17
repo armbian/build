@@ -83,6 +83,16 @@ compile_atf() {
 
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
+	call_extension_method "atf_make_config" <<- 'ATF_MAKE_CONFIG'
+		*Hook to customize ATF (TF-A) make environment before compilation*
+		Called right before invoking make for ATF. Extensions (compile-cache
+		wrappers like ccache/sccache, distcc setups, etc.) can modify env vars
+		exported by the make invocation; the actual wrap point is `${CCACHE}`
+		substituted into CROSS_COMPILE / CC below.
+		Available read-only variables:
+		  - ATF_COMPILER, ATF, BOARD, BRANCH, LINUXFAMILY
+	ATF_MAKE_CONFIG
+
 	run_host_command_logged "CROSS_COMPILE='${CCACHE} ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='${CCACHE} ${ATF_COMPILER}gcc'" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
