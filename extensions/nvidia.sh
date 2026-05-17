@@ -48,6 +48,16 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 		display_alert "Using pinned NVIDIA_DRIVER_VERSION" "${NVIDIA_DRIVER_VERSION}" "info"
 	else
 		local latest pkgnames_raw sources_files sources_has_restricted apt_lists_sample
+		# Refresh the chroot's apt indices first. The rootfs cache may
+		# have been built before `restricted` was added to sources, or
+		# the framework may not have run `apt-get update` since the
+		# final sources.list was written. Without fresh indices,
+		# `apt-cache pkgnames` returns nothing for restricted-only
+		# packages (nvidia-dkms-*) even when sources.list lists the
+		# component. Idempotent and quick if indices are already current.
+		display_alert "Refreshing apt indices in chroot" "${EXTENSION}" "debug"
+		chroot_sdcard "apt-get update -qq" || true
+
 		# chroot_sdcard wraps the inner command with `bash -e -o
 		# pipefail -c …`, so this pipeline returns 1 when grep finds
 		# no numbered nvidia-dkms-N packages (Debian / fall-through
