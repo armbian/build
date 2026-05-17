@@ -80,11 +80,17 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	# it handles bash-specific quoting issues, apt proxies, logging, and errors.
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
 	chroot_sdcard_apt_get_install "${nvidia_dkms_pkg}" "${nvidia_driver_pkg}"
+}
 
-	# Install the runtime hardware-detection helper. On hosts that
-	# happen to have NVIDIA hardware this is a no-op; on hosts that
-	# don't, it blacklists the modules and purges the packages so
-	# DKMS doesn't rebuild them on every kernel update.
+# Hook docs (lib/functions/rootfs/distro-agnostic.sh): post_install_kernel_debs
+# explicitly fires BEFORE the BSP is installed. Anything we write under
+# /usr/lib/armbian/ or /etc/systemd/system/ there gets clobbered by the
+# BSP install or by later rootfs sweeps. post_family_tweaks fires AFTER
+# `install_artifact_deb_chroot "armbian-bsp-cli"` (around line 454), so
+# this is the right hook for writing extension-owned auxiliary files
+# into the chroot's final filesystem.
+function post_family_tweaks__build_nvidia_kernel_module_autodetect() {
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 	install_armbian_nvidia_autodetect_helper
 }
 
