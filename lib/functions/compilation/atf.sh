@@ -83,7 +83,7 @@ compile_atf() {
 
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
-	run_host_command_logged "CROSS_COMPILE='ccache ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='ccache ${ATF_COMPILER}gcc'" \
+	run_host_command_logged "CROSS_COMPILE='${CCACHE} ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='${CCACHE} ${ATF_COMPILER}gcc'" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
 		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}"
