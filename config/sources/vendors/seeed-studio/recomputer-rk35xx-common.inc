@@ -427,18 +427,16 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	done
 }
 
-# Clone/pull Seeed RK extension in the proper build phase.
-# Uses fetch_from_repo for retry logic and GitHub mirror support (China).
-# The 000 prefix ensures this runs before other post_family_config hooks
-# (e.g. recomputer_stage_kernel_patches) that depend on the extension.
-function post_family_config__000_seeed_rk_extension_setup() {
-	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
-		return 0
-	fi
+# Clone/pull Seeed RK extension and enable it.
+# Must run during board config sourcing (before initialize_extension_manager),
+# because enable_extension() cannot be called after the extension manager initializes.
+if [[ "${ENABLE_SEEED_RK_EXTENSION:-no}" == "yes" ]]; then
+	# GITHUB_SOURCE is not set yet during board config sourcing; provide a default
+	# so fetch_from_repo's URL rewriting works correctly.
 	GITHUB_SOURCE="${GITHUB_SOURCE:-https://github.com}"
 	fetch_from_repo "https://github.com/Seeed-Studio/seeed_armbian_extension" "seeed_armbian_extension" "branch:main"
-	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension/main"
+	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
 	mkdir -p "${SRC}/extensions"
 	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
 	enable_extension "seeed_armbian_extension"
-}
+fi
