@@ -29,7 +29,15 @@ case "${BRANCH}" in
 		declare -g DISTRO_GENERIC_KERNEL=yes
 		;;
 	cloud)
-		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
+		# console=tty1 alongside SERIALCON (appended later by the
+		# grub-${LINUXFAMILY} extension) gives the kernel two
+		# consoles: the framebuffer one (visible on VNC / virt-manager
+		# / Cockpit-machines viewer) AND serial (where cloud-init and
+		# the unattended getty land). Linux's /dev/console maps to the
+		# LAST console=, so the login prompt stays on serial — but VNC
+		# users finally see boot messages instead of "Display output is
+		# not active". Standard hyperscaler-cloud cmdline shape.
+		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32 console=tty1"
 		declare -g KERNEL_MAJOR_MINOR="6.18"
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
