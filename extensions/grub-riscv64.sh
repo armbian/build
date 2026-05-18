@@ -34,11 +34,25 @@ pre_umount_final_image__install_grub() {
 	local chroot_target="${MOUNT}"
 	display_alert "Extension: ${EXTENSION}: Installing bootloader" "GRUB" "info"
 
-	# RiscV64 specific: actually copy the DTBs to the ESP
-	display_alert "Extension: ${EXTENSION}: Copying DTBs to ESP" "${EXTENSION}" "info"
-	run_host_command_logged mkdir -pv "${chroot_target}"/boot/efi/dtb
-	run_host_command_logged cp -rpv "${chroot_target}"/boot/dtb/* "${chroot_target}"/boot/efi/dtb/
-	# RiscV64 specific: @TODO ??? what is this ??
+	# RiscV64 specific: actually copy the DTBs to the ESP.
+	# Cloud / VM kernels typically don't ship board DTBs because the
+	# firmware (QEMU/EDK2/OpenSBI) generates the device tree at boot.
+	# Only copy when /boot/dtb actually has content; skip silently
+	# otherwise so the cloud branch build doesn't hard-fail with
+	# "cp: cannot stat '.../boot/dtb/*': No such file or directory".
+	if [[ -d "${chroot_target}/boot/dtb" ]] && compgen -G "${chroot_target}/boot/dtb/*" > /dev/null; then
+		display_alert "Extension: ${EXTENSION}: Copying DTBs to ESP" "${EXTENSION}" "info"
+		run_host_command_logged mkdir -pv "${chroot_target}"/boot/efi/dtb
+		run_host_command_logged cp -rpv "${chroot_target}"/boot/dtb/* "${chroot_target}"/boot/efi/dtb/
+	else
+		display_alert "Extension: ${EXTENSION}: No DTBs to copy" "kernel ships no /boot/dtb (common for cloud/VM kernels)" "info"
+	fi
+	# RiscV64 specific: rewrite the 'devicetree' GRUB stanza emitter
+	# in /etc/grub.d/10_linux to 'echo'. Without this, update-grub
+	# emits a `devicetree /boot/dtb/...` line that fails at boot
+	# when the file isn't there (cloud/VM) or isn't the right DTB
+	# for the actual host (SBC swap). 'echo' makes the line a no-op
+	# at GRUB runtime; the firmware-passed device tree wins.
 	sed -i 's,devicetree,echo,g' "${chroot_target}"/etc/grub.d/10_linux
 
 	# add config to disable os-prober, otherwise image will have the host's other OSes boot entries.
