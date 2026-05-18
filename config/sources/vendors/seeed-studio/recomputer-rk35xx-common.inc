@@ -45,7 +45,7 @@ function seeed_recomputer_install_from_apt() {
 	# Import GPG key if not already present (dearmor to binary format for signed-by)
 	if [[ ! -f "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
 		install -d -m 0755 "${SDCARD}/usr/share/keyrings"
-		curl -fsSL --connect-timeout 30 --retry 3 \
+		curl -fsSL --noproxy '*' --connect-timeout 30 --retry 3 \
 			"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
 			| gpg --dearmor > "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
 
@@ -63,8 +63,8 @@ function seeed_recomputer_install_from_apt() {
 		EOF
 	fi
 
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
-	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
+	chroot_sdcard env -u http_proxy -u https_proxy apt-get -y -qq -o Dpkg::Use-Pty=0 update
+	chroot_sdcard env -u http_proxy -u https_proxy DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
 		--no-install-recommends install "$@"
 }
 
@@ -427,13 +427,18 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	done
 }
 
-# Clone/pull Seeed RK extension at top-level before enable_extension.
+# Clone/pull Seeed RK extension in the proper build phase.
 # Uses fetch_from_repo for retry logic and GitHub mirror support (China).
-if [[ "${ENABLE_SEEED_RK_EXTENSION}" == "yes" ]]; then
+# The 000 prefix ensures this runs before other post_family_config hooks
+# (e.g. recomputer_stage_kernel_patches) that depend on the extension.
+function post_family_config__000_seeed_rk_extension_setup() {
+	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
+		return 0
+	fi
 	GITHUB_SOURCE="${GITHUB_SOURCE:-https://github.com}"
 	fetch_from_repo "https://github.com/Seeed-Studio/seeed_armbian_extension" "seeed_armbian_extension" "branch:main"
 	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension/main"
 	mkdir -p "${SRC}/extensions"
 	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
 	enable_extension "seeed_armbian_extension"
-fi
+}
