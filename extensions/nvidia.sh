@@ -31,6 +31,23 @@ function extension_finish_config__build_nvidia_kernel_module() {
 function post_install_kernel_debs__build_nvidia_kernel_module() {
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 
+	# Pre-ship the modprobe blacklist BEFORE installing nvidia packages.
+	# nvidia-dkms postinst triggers update-initramfs; with the file already
+	# in /etc/modprobe.d/, the regenerated initramfs has the blacklist
+	# baked in. Result: no spurious "nvidia: probe failed" lines on hosts
+	# without an NVIDIA GPU during the first boot. The boot-time
+	# armbian-nvidia-autodetect helper removes this file (and modprobes
+	# nvidia_drm) when lspci does see [10de:].
+	mkdir -p "${SDCARD}/etc/modprobe.d"
+	cat <<- EOF > "${SDCARD}/etc/modprobe.d/armbian-nvidia-disabled.conf"
+		# Installed by build/extensions/nvidia.sh.
+		# Removed at boot by armbian-nvidia-autodetect when [10de:] is present.
+		blacklist nvidia
+		blacklist nvidia_drm
+		blacklist nvidia_modeset
+		blacklist nvidia_uvm
+	EOF
+
 	# Resolve which nvidia-dkms / nvidia-driver package(s) to install.
 	# Three cases:
 	#   1. Operator pinned NVIDIA_DRIVER_VERSION (env/config) → trust it.
@@ -174,20 +191,25 @@ function install_armbian_nvidia_autodetect_helper() {
 		# `lspci -nn` output so non-VGA NVIDIA devices (Tegra USB-C,
 		# audio over HDMI, etc.) also count.
 		if lspci -nn 2>/dev/null | grep -qiE '\[10de:'; then
-			# Hardware is present. If a previous boot ran on a host
-			# without NVIDIA, the modprobe blacklist file is still on
-			# disk and would keep the driver from loading even now.
-			# Remove it so the modules can bind on the next boot. rm -f
-			# is idempotent on the common case where the file never
-			# existed. Package reinstall is intentionally NOT attempted
-			# here - apt-installing proprietary NVIDIA drivers without
-			# user consent and without guaranteed network/apt-sources
-			# is out of scope for a boot-time detector. If packages were
-			# previously purged, the operator runs apt install manually.
+			# Hardware is present. The build framework ships a default
+			# /etc/modprobe.d/armbian-nvidia-disabled.conf so initrd udev
+			# doesn't try to load nvidia* on no-GPU hosts. Now that we've
+			# confirmed there IS a GPU, clear the file and modprobe so
+			# display-manager (we are Before= it) starts with the driver
+			# loaded. The rootfs deletion self-heals initramfs on the
+			# next kernel upgrade — until then, initrd stays stale but
+			# this runtime modprobe covers the gap each boot.
+			#
+			# rm -f is idempotent. modprobe nvidia_drm with modeset=1
+			# pulls nvidia + nvidia_modeset via dependencies and gives
+			# Wayland-friendly KMS in one shot. || true on the modprobe
+			# in case the package was previously purged and isn't
+			# installed - the operator handles re-install separately.
 			if [ -f /etc/modprobe.d/armbian-nvidia-disabled.conf ]; then
 				rm -f /etc/modprobe.d/armbian-nvidia-disabled.conf
 				echo "armbian-nvidia-autodetect: NVIDIA hardware detected; cleared modprobe blacklist" | systemd-cat -t armbian-nvidia-autodetect 2>/dev/null || true
 			fi
+			modprobe nvidia_drm modeset=1 2>/dev/null || true
 			exit 0
 		fi
 
