@@ -14,17 +14,33 @@ function post_family_tweaks_bsp__seeed_configure_apt_source() {
 		"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
 		| gpg --dearmor > "${destination}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
 
+	if [[ ! -s "${destination}/usr/share/keyrings/seeed-repo.gpg" ]]; then
+		exit_with_error "Failed to import Seeed GPG key"
+	fi
+
+	# Select APT distribution based on target release
+	local SEEED_DIST="stable"
+	if [[ "${RELEASE}" == "bookworm" ]]; then
+		SEEED_DIST="bookworm"
+	fi
+
 	cat > "${destination}/etc/apt/sources.list.d/seeed.list" <<- EOF
-		deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} stable main
+		deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} ${SEEED_DIST} main
 	EOF
 }
 
 # Helper: install packages from Seeed APT repo.
-# Imports GPG key, writes source, updates only Seeed index, installs packages.
-# The persistent apt source is configured by post_family_tweaks_bsp__seeed_configure_apt_source.
+# Imports GPG key, writes source, updates index, installs packages.
+# Automatically selects 'bookworm' or 'stable' distribution based on RELEASE.
 # Usage: seeed_recomputer_install_from_apt <package> [<package> ...]
 function seeed_recomputer_install_from_apt() {
 	(($#)) || return 0
+
+	# Select APT distribution based on target release
+	local SEEED_DIST="stable"
+	if [[ "${RELEASE}" == "bookworm" ]]; then
+		SEEED_DIST="bookworm"
+	fi
 
 	# Import GPG key if not already present (dearmor to binary format for signed-by)
 	if [[ ! -f "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
@@ -32,21 +48,22 @@ function seeed_recomputer_install_from_apt() {
 		curl -fsSL --connect-timeout 30 --retry 3 \
 			"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
 			| gpg --dearmor > "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
+
+		if [[ ! -s "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
+			exit_with_error "Failed to import Seeed GPG key"
+		fi
 	fi
 
-	# Write Seeed source if not present
-	if [[ ! -f "${SDCARD}/etc/apt/sources.list.d/seeed.list" ]]; then
+	# Write Seeed source if not present (or update distribution if mismatched)
+	local expected_source="deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} ${SEEED_DIST} main"
+	if [[ ! -f "${SDCARD}/etc/apt/sources.list.d/seeed.list" ]] || \
+	   ! grep -qF "${expected_source}" "${SDCARD}/etc/apt/sources.list.d/seeed.list" 2>/dev/null; then
 		cat > "${SDCARD}/etc/apt/sources.list.d/seeed.list" <<- EOF
-			deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} stable main
+			${expected_source}
 		EOF
 	fi
 
-	# Update all apt sources (Ubuntu + Seeed) so apt can resolve
-	# dependencies that live in the Ubuntu repo (e.g. libxcb-dri2-0).
-	# Updating only the Seeed index leaves the Ubuntu cache empty after
-	# rootfs extraction, which breaks dependency resolution.
 	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
-
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
 		--no-install-recommends install "$@"
 }
@@ -302,19 +319,21 @@ function post_family_tweaks__recomputer_usb_auto_mount() {
 function post_family_tweaks__recomputer_add_sbin_to_path() {
 	display_alert "$BOARD" "Adding sbin directories to PATH" "info"
 
-	mkdir -p $SDCARD/etc/profile.d
-	cat > $SDCARD/etc/profile.d/custom-path.sh <<-'EOF'
+	mkdir -p "${SDCARD}/etc/profile.d"
+	cat > "${SDCARD}/etc/profile.d/custom-path.sh" <<-'EOF'
 	# Add sbin directories to PATH for ifconfig and other admin tools
-	if [ -d /usr/sbin ] && [[ ":$PATH:" != *":/usr/sbin:"* ]]; then
-	    PATH="/usr/sbin:$PATH"
-	fi
-	if [ -d /sbin ] && [[ ":$PATH:" != *":/sbin:"* ]]; then
-	    PATH="/sbin:$PATH"
-	fi
+	case ":$PATH:" in
+	  *":/usr/sbin:"*) ;;
+	  *) [ -d /usr/sbin ] && PATH="/usr/sbin:$PATH" ;;
+	esac
+	case ":$PATH:" in
+	  *":/sbin:"*) ;;
+	  *) [ -d /sbin ] && PATH="/sbin:$PATH" ;;
+	esac
 	export PATH
 	EOF
 
-	chmod +x $SDCARD/etc/profile.d/custom-path.sh
+	chmod +x "${SDCARD}/etc/profile.d/custom-path.sh"
 }
 
 # Patch armbian-firstlogin: disable GDM auto-login.
@@ -408,17 +427,13 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	done
 }
 
-# Clone/pull Seeed RK extension at top-level before enable_extension
+# Clone/pull Seeed RK extension at top-level before enable_extension.
+# Uses fetch_from_repo for retry logic and GitHub mirror support (China).
 if [[ "${ENABLE_SEEED_RK_EXTENSION}" == "yes" ]]; then
-	if [[ ! -d "${SRC}/extensions/seeed_armbian_extension" ]]; then
-		display_alert "Cloning Seeed extensions from GitHub" "$BOARD_NAME" "info"
-		git clone https://github.com/Seeed-Studio/seeed_armbian_extension.git "${SRC}/extensions/seeed_armbian_extension" || {
-			display_alert "Failed to clone Seeed extensions" "$BOARD_NAME" "warn"
-		}
-	else
-		display_alert "Seeed extensions already exists, pulling updates" "$BOARD_NAME" "info"
-		git -C "${SRC}/extensions/seeed_armbian_extension" pull || display_alert "Failed to pull updates" "$BOARD_NAME" "warn"
-	fi
-
+	GITHUB_SOURCE="${GITHUB_SOURCE:-https://github.com}"
+	fetch_from_repo "https://github.com/Seeed-Studio/seeed_armbian_extension" "seeed_armbian_extension" "branch:main"
+	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension/main"
+	mkdir -p "${SRC}/extensions"
+	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
 	enable_extension "seeed_armbian_extension"
 fi
