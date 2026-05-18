@@ -67,13 +67,19 @@
 #   DNS-SD service publication (on cache server):
 #     # For HTTP/WebDAV:
 #     avahi-publish-service "ccache-webdav" _ccache._tcp 8088 type=http path=/ccache/
-#     # For Redis:
+#     # For Redis (no auth):
 #     avahi-publish-service "ccache-redis" _ccache._tcp 6379 type=redis
+#     # For Redis with shared-secret password (sniffable on LAN — only useful
+#     # as defense against accidental cross-machine writes, not as
+#     # confidentiality on a hostile LAN):
+#     avahi-publish-service "ccache-redis" _ccache._tcp 6666 type=redis password=<secret>
 #
 #   DNS SRV record (for remote/hosted build servers):
 #     Set CCACHE_REMOTE_DOMAIN to your domain, then create DNS records:
 #       _ccache._tcp.example.com.  SRV  0 0 8088 ccache.example.com.
 #       _ccache._tcp.example.com.  TXT  "type=http" "path=/ccache/"
+#       # or for redis with auth:
+#       _ccache._tcp.example.com.  TXT  "type=redis" "password=<secret>"
 #     The cache server must be reachable from the build host (e.g., via port forwarding).
 #
 #   Legacy mDNS (backward compatible):
@@ -169,7 +175,7 @@ function ccache_discover_remote_storage() {
 			local redis_host="" redis_host_ip="" http_host="" http_host_ip=""
 			while IFS=';' read -r status iface proto name stype domain hostname address port txt_rest; do
 				[[ "${status}" == "=" && "${proto}" == "IPv4" ]] || continue
-				local svc_type="" svc_path=""
+				local svc_type="" svc_path="" svc_password=""
 				# Parse TXT records from remaining fields
 				if [[ "${txt_rest}" =~ \"type=([a-z]+)\" ]]; then
 					svc_type="${BASH_REMATCH[1]}"
@@ -177,16 +183,51 @@ function ccache_discover_remote_storage() {
 				if [[ "${txt_rest}" =~ \"path=([^\"]+)\" ]]; then
 					svc_path="${BASH_REMATCH[1]}"
 				fi
+				# Optional auth TXT for redis-protocol backends. Spec:
+				#   redis://[[USERNAME:]PASSWORD@]HOST[:PORT][|attribute=value...]
+				# Password sniffable on the LAN — only useful as shared-secret
+				# against accidental cross-machine writes, not as defense in depth.
+				if [[ "${txt_rest}" =~ \"password=([^\"]+)\" ]]; then
+					svc_password="${BASH_REMATCH[1]}"
+				fi
 				# Use hostname for URL (Docker --add-host resolves it), fall back to address
 				local svc_host="${hostname%.local}"
 				svc_host="${svc_host%.}"
 				[[ -z "${svc_host}" ]] && svc_host="${address}"
+				# Validate password (if any) once — the RFC 3986 unreserved-char
+				# whitelist applies equally to redis URL `PWD@host` userinfo and
+				# http URL `:PWD@host` Basic-auth userinfo. Any URL gen/sub-delim
+				# (`@ # ? / : =`), the ccache attribute separator `|`, or the
+				# percent-encoding marker `%` would break URL parsing. The
+				# announce TXT carries the password verbatim, so the publisher's
+				# generator must produce a URL-safe value (e.g. `openssl rand -hex 16`).
+				#
+				# Note on the redis form: plain `PWD@host` userinfo (no leading
+				# colon, no `username:` prefix) is what ccache 4.9 needs — it
+				# sends 1-arg legacy `AUTH <pwd>`. The Redis-6 ACL form
+				# `redis://:PWD@host` parses but silently never sends AUTH; the
+				# `redis://default:PWD@host` form sends 2-arg `AUTH default PWD`
+				# which KvRocks <= 2.15.0 rejects with `ERR wrong number of
+				# arguments`.
+				if [[ -n "${svc_password}" && ! "${svc_password}" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+					display_alert "DNS-SD: announce with URL-unsafe password — skipping" \
+						"${svc_host}:${port} (password must match [A-Za-z0-9._~-]+)" "wrn"
+					continue
+				fi
 				if [[ "${svc_type}" == "redis" ]]; then
-					redis_url="redis://${svc_host}:${port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+					if [[ -n "${svc_password}" ]]; then
+						redis_url="redis://${svc_password}@${svc_host}:${port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+					else
+						redis_url="redis://${svc_host}:${port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+					fi
 					redis_host="${svc_host}"
 					redis_host_ip="${address}"
 				elif [[ "${svc_type}" == "http" ]]; then
-					http_url="http://${svc_host}:${port}${svc_path}"
+					if [[ -n "${svc_password}" ]]; then
+						http_url="http://:${svc_password}@${svc_host}:${port}${svc_path}"
+					else
+						http_url="http://${svc_host}:${port}${svc_path}"
+					fi
 					http_host="${svc_host}"
 					http_host_ip="${address}"
 				fi
@@ -218,8 +259,8 @@ function ccache_discover_remote_storage() {
 			read -r _ _ srv_port srv_host <<< "${srv_output}"
 			srv_host="${srv_host%.}" # strip trailing dot
 			if [[ -n "${srv_host}" && -n "${srv_port}" ]]; then
-				# Check TXT record for service type and path
-				local txt_output svc_type="redis" svc_path=""
+				# Check TXT record for service type, path, and optional password.
+				local txt_output svc_type="redis" svc_path="" svc_password=""
 				txt_output=$(dig +short TXT "_ccache._tcp.${CCACHE_REMOTE_DOMAIN}" 2>/dev/null || true)
 				if [[ "${txt_output}" =~ type=([a-z]+) ]]; then
 					svc_type="${BASH_REMATCH[1]}"
@@ -227,15 +268,35 @@ function ccache_discover_remote_storage() {
 				if [[ "${txt_output}" =~ path=([^\"[:space:]]+) ]]; then
 					svc_path="${BASH_REMATCH[1]}"
 				fi
-				local host_port
-				host_port=$(ccache_format_host_port "${srv_host}" "${srv_port}")
-				if [[ "${svc_type}" == "http" ]]; then
-					export CCACHE_REMOTE_STORAGE="http://${host_port}${svc_path}"
-				else
-					export CCACHE_REMOTE_STORAGE="redis://${host_port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+				if [[ "${txt_output}" =~ password=([^\"[:space:]]+) ]]; then
+					svc_password="${BASH_REMATCH[1]}"
 				fi
-				display_alert "DNS SRV: discovered ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
-				return 0
+				# Validate password (if any) against the RFC 3986 unreserved-char
+				# whitelist — same gate applies to both redis URL `PWD@host`
+				# userinfo and http URL `:PWD@host` Basic-auth userinfo. On
+				# failure, fall through to Method 3 (ccache.local) instead of
+				# aborting the whole function so legacy mDNS discovery still
+				# gets a chance.
+				if [[ -n "${svc_password}" && ! "${svc_password}" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+					display_alert "DNS SRV: URL-unsafe password — skipping" \
+						"_ccache._tcp.${CCACHE_REMOTE_DOMAIN} (password must match [A-Za-z0-9._~-]+)" "wrn"
+				else
+					local host_port
+					host_port=$(ccache_format_host_port "${srv_host}" "${srv_port}")
+					if [[ "${svc_type}" == "http" ]]; then
+						if [[ -n "${svc_password}" ]]; then
+							export CCACHE_REMOTE_STORAGE="http://:${svc_password}@${host_port}${svc_path}"
+						else
+							export CCACHE_REMOTE_STORAGE="http://${host_port}${svc_path}"
+						fi
+					elif [[ -n "${svc_password}" ]]; then
+						export CCACHE_REMOTE_STORAGE="redis://${svc_password}@${host_port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+					else
+						export CCACHE_REMOTE_STORAGE="redis://${host_port}|connect-timeout=${CCACHE_REDIS_CONNECT_TIMEOUT}"
+					fi
+					display_alert "DNS SRV: discovered ccache" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+					return 0
+				fi
 			fi
 		fi
 	fi
@@ -304,8 +365,13 @@ function ccache_get_remote_stats() {
 		if [[ "${authority}" =~ ^(.+)@(.+)$ ]]; then
 			local userinfo="${BASH_REMATCH[1]}"
 			authority="${BASH_REMATCH[2]}"
-			# password is after : in userinfo (user:pass or just :pass)
-			[[ "${userinfo}" == *:* ]] && password="${userinfo#*:}"
+			# Accept both user:pass / :pass (Redis-6 ACL form) and bare pass
+			# (legacy form discovery emits — see ccache_discover_remote_storage).
+			if [[ "${userinfo}" == *:* ]]; then
+				password="${userinfo#*:}"
+			else
+				password="${userinfo}"
+			fi
 		fi
 		# Parse host:port (IPv6 in brackets or plain)
 		if [[ "${authority}" =~ ^\[([^]]+)\]:?([0-9]*) ]]; then
