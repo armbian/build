@@ -174,6 +174,20 @@ function install_armbian_nvidia_autodetect_helper() {
 		# `lspci -nn` output so non-VGA NVIDIA devices (Tegra USB-C,
 		# audio over HDMI, etc.) also count.
 		if lspci -nn 2>/dev/null | grep -qiE '\[10de:'; then
+			# Hardware is present. If a previous boot ran on a host
+			# without NVIDIA, the modprobe blacklist file is still on
+			# disk and would keep the driver from loading even now.
+			# Remove it so the modules can bind on the next boot. rm -f
+			# is idempotent on the common case where the file never
+			# existed. Package reinstall is intentionally NOT attempted
+			# here - apt-installing proprietary NVIDIA drivers without
+			# user consent and without guaranteed network/apt-sources
+			# is out of scope for a boot-time detector. If packages were
+			# previously purged, the operator runs apt install manually.
+			if [ -f /etc/modprobe.d/armbian-nvidia-disabled.conf ]; then
+				rm -f /etc/modprobe.d/armbian-nvidia-disabled.conf
+				echo "armbian-nvidia-autodetect: NVIDIA hardware detected; cleared modprobe blacklist" | systemd-cat -t armbian-nvidia-autodetect 2>/dev/null || true
+			fi
 			exit 0
 		fi
 
