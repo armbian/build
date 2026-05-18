@@ -18,12 +18,33 @@ function artifact_rootfs_config_dump() {
 	# Track the latest commit touching configng's desktop definitions.
 	# Any change to YAML, parser, or module code in tools/modules/desktops/
 	# invalidates the desktop rootfs cache — the package list, browser
-	# mapping, tier overrides, or branding may have changed.
+	# mapping, tier overrides, or branding may have changed. Scoped to
+	# desktop builds and the desktop subtree because armbian-config is
+	# only invoked at build time for desktop installs
+	# (`module_desktops install mode=build`); for CLI builds the .deb
+	# is just installed and its contents don't affect the rootfs.
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
 		declare configng_desktops_hash="undetermined"
 		local configng_dir="${SRC}/cache/sources/armbian-configng"
 		if [[ -d "${configng_dir}/.git" ]]; then
-			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>/dev/null || echo "unknown")"
+			# Capture stdout + stderr, then branch on exit status. This is
+			# a best-effort knob for cache-invalidation, not a build
+			# blocker - if git can't read this clone (torn checkout,
+			# stale files, broken HEAD, permissions), we warn and fall
+			# through to "unknown" rather than aborting an hour-long
+			# build. The downstream check in create-cache.sh skips the
+			# fingerprint fold on "unknown" / "undetermined" — the
+			# build still produces a valid image, it just doesn't get
+			# the configng-aware cache bust.
+			declare git_out git_rc
+			git_out="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>&1)"
+			git_rc=$?
+			if (( git_rc == 0 )); then
+				configng_desktops_hash="${git_out}"
+			else
+				display_alert "configng_desktops hash: git log failed (rc=${git_rc}) in ${configng_dir}" "${git_out}" "warn"
+				configng_desktops_hash="unknown"
+			fi
 		fi
 		artifact_input_variables[CONFIGNG_DESKTOPS_HASH]="${configng_desktops_hash}"
 	fi
