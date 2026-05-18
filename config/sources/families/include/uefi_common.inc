@@ -20,6 +20,16 @@ declare -g POWER_MANAGEMENT_FEATURES=yes             # Suspend and resume might 
 # avoids a per-family branch here.
 add_packages_to_image firmware-sof-signed
 
+# ALSA Use Case Manager profiles. Without this package, PipeWire /
+# wireplumber see the SOF card and its PCM devices but have no per-machine
+# recipe for which device is the speaker output / which controls to unmute /
+# how to route on jack-insert, so they fall back to "auto_null". Effect on a
+# ThinkPad X9-15 (LNL, CS42L43 jack + CS35L56 SPI amps): kernel-level audio
+# is fully alive (aplay -l shows Speaker pcm; `speaker-test -D plughw:0,2`
+# plays), but userspace shows "Dummy Output" and the speakers stay silent.
+# Architecture: all package; harmless on non-UCM machines.
+add_packages_to_image alsa-ucm-conf
+
 case "${BRANCH}" in
 
 	ddk)
