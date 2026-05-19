@@ -47,6 +47,21 @@
 function fetch_armbian_configng() {
 	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
 
+	# Skip the fetch when running inside a config-dump-json subprocess.
+	# info-gatherer-image.py spawns up to 128 parallel workers, each
+	# invoking compile.sh config-dump-json with CONFIG_DEFS_ONLY=yes
+	# (see armbian_run_command_and_parse_json_from_stdout). If every
+	# worker also fetched, they'd race on the same on-disk clone at
+	# cache/sources/armbian-configng — git explodes on .git/index.lock
+	# contention, `git checkout` exits 128, the subprocess produces no
+	# JSON, and the gatherer parse fails with "Expecting value: line 1
+	# column 1 (char 0)" for every desktop target. The parent has
+	# already populated the clone before spawning workers (via
+	# cli-jsoninfo.sh's explicit fetch on the matrix-prep path, or
+	# prep_conf_main_build_single's fetch on the single-image path),
+	# so subprocesses just need to read what's on disk.
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0
+
 	declare _save_pwd="${PWD}"
 	declare fetched_revision="" fetched_revision_ts=""
 	fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "branch:main" || \
