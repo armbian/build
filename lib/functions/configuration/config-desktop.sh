@@ -45,7 +45,16 @@
 # warning and falls through with whatever is on disk — downstream
 # consumers handle the "stale or missing clone" case explicitly.
 function fetch_armbian_configng() {
-	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
+	# Fetch unconditionally — not gated on BUILD_DESKTOP=yes. The
+	# matrix-prep parent run never has BUILD_DESKTOP=yes (no specific
+	# board selected for the gha-matrix command), so gating here meant
+	# the clone was only refreshed by cli-jsoninfo.sh's secondary
+	# fetch — which is itself gated on the inventory file's absence
+	# and so silently skipped on `CLEAN_INFO=no`. Fetching here always
+	# guarantees the clone is fresh before any artifact's config_dump
+	# reads `git log -1 -- tools/modules/desktops/`, regardless of
+	# whether the caller is a desktop build, a CLI build, or
+	# matrix-prep.
 
 	# Skip the fetch when running inside a config-dump-json subprocess.
 	# info-gatherer-image.py spawns up to 128 parallel workers, each
