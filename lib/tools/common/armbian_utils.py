@@ -465,8 +465,17 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 			check=True,
 			universal_newlines=False,  # universal_newlines messes up bash encoding, don't use, instead decode utf8 manually;
 			bufsize=-1,  # full buffering
-			# Early (pre-param-parsing) optimizations for those in Armbian bash code, so use an ENV (not PARAM)
+			# Inherit the parent's env (HOME, PATH, locale, GIT_*, etc.) and
+			# layer the build-specific overrides on top. Previously this
+			# dict was constructed from scratch, dropping HOME — which made
+			# every git invocation inside the subprocess fail to load
+			# ~/.gitconfig and miss the safe.directory entry the parent
+			# added for cache/sources/armbian-configng. Result was a
+			# "fatal: detected dubious ownership" cascade that broke
+			# config-dump-json for every desktop build target in the
+			# matrix-prep pass.
 			env={
+				**os.environ,
 				"CONFIG_DEFS_ONLY": "yes",  # Dont do anything. Just output vars.
 				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output, don't write to log files
 				"WRITE_EXTENSIONS_METADATA": "no",  # Not interested in ext meta here
