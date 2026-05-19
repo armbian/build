@@ -509,7 +509,16 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 		info["logs"] = logs
 		return info
 	except json.decoder.JSONDecodeError as e:
-		log.error(f"Error parsing Armbian JSON: params: {params}, stderr: {'; '.join(logs[-5:])}")
+		# Dump raw stdout/stderr in full when the JSON parse fails — the
+		# parsed `logs` view drops anything that isn't "type::message" or
+		# bare stderr noise, and the last-5-lines tail hides the actual
+		# failure cause. PR #9866 debug aid; trim once matrix-prep is
+		# stable again.
+		raw_stdout = result.stdout.decode("utf8", errors="replace") if result and result.stdout else "<EMPTY>"
+		raw_stderr = result.stderr.decode("utf8", errors="replace") if result and result.stderr else "<EMPTY>"
+		log.error(f"Error parsing Armbian JSON: params: {params}, stderr_tail: {'; '.join(logs[-5:])}")
+		log.error(f"  RAW STDOUT for failed target {params.get('target_id','?')} ({len(raw_stdout)} bytes):\n{raw_stdout!r}")
+		log.error(f"  RAW STDERR for failed target {params.get('target_id','?')} ({len(raw_stderr)} bytes):\n{raw_stderr!r}")
 		# return {"in": params, "out": {}, "logs": logs, "config_ok": False}
 		raise e
 
