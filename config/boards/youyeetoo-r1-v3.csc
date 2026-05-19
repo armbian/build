@@ -40,8 +40,8 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2025.10"
-	declare -g BOOTPATCHDIR="v2025.10"
+	declare -g BOOTBRANCH="tag:v2026.04"
+	declare -g BOOTPATCHDIR="v2026.04"
 	unset BOOT_FDT_FILE
 
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
