@@ -55,10 +55,16 @@ function improved_git_fetch() {
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
 		local git_dir="$1"
-		if [[ -e "$1/.git" ]]; then
-			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-			git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
-		fi
+		# Mark the directory safe unconditionally. The previous gate on
+		# `-e "$1/.git"` was a bug: fetch_from_repo calls us BEFORE
+		# running `git init`, so on a freshly-prepared work tree (no
+		# .git yet) the safe.directory add was silently skipped — then
+		# the subsequent `regular_git checkout/clean` after init blew
+		# up with "fatal: detected dubious ownership". Setting
+		# safe.directory on a non-git path is harmless; git only
+		# consults the entry when an actual repo is accessed there.
+		display_alert "git: Marking directory as safe" "$git_dir" "debug"
+		git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
 	fi
