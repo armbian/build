@@ -474,14 +474,25 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 			# "fatal: detected dubious ownership" cascade that broke
 			# config-dump-json for every desktop build target in the
 			# matrix-prep pass.
-			env={
-				**os.environ,
+			#
+			# CI is explicitly cleared: on GHA the parent runs with
+			# CI=true, which makes start_logging_section emit
+			# `::group::...` workflow markers to stdout. That pollutes
+			# the subprocess's stdout (which must be pure JSON for
+			# json.loads), causing every config-dump-json target to
+			# fail with "Expecting value: line 1 column 1 (char 0)"
+			# in matrix-prep — but only on GHA, not locally. Drop CI
+			# (and the closely-related GITHUB_ACTIONS) so subprocesses
+			# behave like a plain non-CI invocation regardless of where
+			# the matrix-prep parent runs.
+			env=({
+				**{k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS")},
 				"CONFIG_DEFS_ONLY": "yes",  # Dont do anything. Just output vars.
 				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output, don't write to log files
 				"WRITE_EXTENSIONS_METADATA": "no",  # Not interested in ext meta here
 				"ALLOW_ROOT": "yes",  # We're gonna be calling it as root, so allow it @TODO not the best option
 				"PRE_PREPARED_HOST": "yes"  # We're gonna be calling it as root, so allow it @TODO not the best option
-			},
+			}),
 			stderr=subprocess.PIPE
 		)
 	except subprocess.CalledProcessError as e:
