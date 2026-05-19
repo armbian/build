@@ -7,10 +7,12 @@ INTRODUCED="2025"
 BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
+KERNEL_TEST_TARGET="current,edge"
 KERNEL_TARGET="edge"
 BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
 HAS_VIDEO_OUTPUT=no
 
+BOOT_TARGETS="mmc0 mmc1 usb0 nvme0 pxe dhcp"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
 # AIC8800
