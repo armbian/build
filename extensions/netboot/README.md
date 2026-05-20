@@ -30,6 +30,7 @@ setup, network configuration, troubleshooting, end-to-end examples.
 - [End-to-end example: helios64](#end-to-end-example-helios64)
 - [Initramfs NFS-mount watchdog](#initramfs-nfs-mount-watchdog)
 - [Tuning the NFS-mount retry delay](#tuning-the-nfs-mount-retry-delay)
+- [Tuning NFS mount options](#tuning-nfs-mount-options)
 - [Troubleshooting](#troubleshooting)
 
 ## Why this exists
@@ -81,6 +82,7 @@ active one by symlinking it to `default-<arch>-<board>` (or
 | `ROOTFS_EXPORT_DIR` | _(empty)_ | rsync target for the rootfs tree. **Relative** value (e.g. `shared/rockchip64/helios64/edge-trixie`) is confined under `${SRC}/output/netboot-export/<value>` so `rsync --delete` cannot escape that subtree. **Absolute path outside the build tree** (e.g. `/srv/netboot/rootfs/shared/<board>/<branch>-<release>` or `/nfsroot`) is kept as-is and bind-mounted into the container at the same path; rsync writes straight into the host export tree. The directory must exist on the host before the build (typically `sudo mkdir -p` for root-owned NFS roots). Primary use: builder host is also the NFS server — single-step `build → boot` loop, no tar/unpack/rsync hop. System roots (`/`, `/etc`, `/usr`, ...) and `..` segments are rejected. The build stamps a `.netboot_export_marker` at the root of every export tree it writes; a non-empty target without that marker is refused (so `rsync --delete` cannot wipe an unrelated Linux tree at the same path) unless `NETBOOT_EXPORT_FORCE=yes`. |
 | `NETBOOT_EXPORT_FORCE` | `no` | Set to `yes` to allow overwriting a non-empty `ROOTFS_EXPORT_DIR` that does not carry the `.netboot_export_marker` stamp (rsync `--delete` will clobber whatever is there). |
 | `NETBOOT_ROOTDELAY` | _(empty)_ | Seconds for the initramfs NFS-mount script to wait before retrying a failed mount (passed as `rootdelay=N` in the kernel cmdline; consumed by `/usr/share/initramfs-tools/scripts/nfs`). Empty leaves the upstream default of 180s. Lower (e.g. `30`) speeds up boot failure on a dead NFS server in trusted labs; higher (e.g. `300`) tolerates flakier servers. Does **not** affect the `Waiting up to 180 secs for end0` netdev wait — that one is hardcoded in `initramfs-tools/scripts/functions:395` and not user-tunable. |
+| `NETBOOT_NFS_OPTIONS` | `tcp,v3` | Comma-separated NFS mount options appended to `nfsroot=` (the `,opt1,opt2,...` tail after the path). Parsed by the kernel per `Documentation/admin-guide/nfs/nfsroot.rst`. Override examples: `tcp,v3,intr,timeo=300,retrans=10` for unreliable links; `tcp,v4.2` for NFSv4.2 servers. Validated as a comma list of alnum/`=`/`_`/`-`/`.` tokens so the value cannot inject whitespace or shell metacharacters into the kernel cmdline. |
 
 ### Hook: `netboot_artifacts_ready`
 
@@ -445,10 +447,12 @@ Options 66/67 above only handle the **TFTP** stage. The kernel still
 needs to know which NFS server to mount as `/`. Two ways:
 
 1. **Bake it into the image**: set `NETBOOT_SERVER=<ip>` at build time;
-   the extension writes a fixed `nfsroot=<server>:<path>,tcp,v3` into
-   the PXE config. The router only needs options 66/67.
+   the extension writes a fixed `nfsroot=<server>:<path>,${NETBOOT_NFS_OPTIONS}`
+   into the PXE config (default options `tcp,v3`). The router only needs
+   options 66/67.
 2. **Use DHCP `siaddr`** (the default when `NETBOOT_SERVER` is empty):
-   the extension writes `nfsroot=<path>,tcp,v3` (no server) into APPEND.
+   the extension writes `nfsroot=<path>,${NETBOOT_NFS_OPTIONS}` (no server)
+   into APPEND.
    At boot the kernel's IP-Config resolves the NFS server from the
    `siaddr` field of the DHCP offer (the boot-server field). Set this on
    the router via `dhcp-boot` / `next-server` in dnsmasq:
@@ -918,6 +922,29 @@ isn't controlled by any kernel cmdline argument or environment
 variable. The only way to bring it down is patching that script in
 the rootfs before `update-initramfs -u`, and that's outside this
 extension's scope.
+
+## Tuning NFS mount options
+
+The `,opt1,opt2,...` tail of `nfsroot=` is the kernel's NFS mount
+option list. Default is `tcp,v3`, set via `NETBOOT_NFS_OPTIONS`. The
+full syntax and per-option semantics live in
+[`Documentation/admin-guide/nfs/nfsroot.rst`](https://www.kernel.org/doc/html/latest/admin-guide/nfs/nfsroot.html)
+and `man 5 nfs`. Common cases:
+
+```bash
+# Default — local LAN
+NETBOOT_NFS_OPTIONS=tcp,v3
+
+# Unreliable links: longer timeout, more retries, interrupt support
+NETBOOT_NFS_OPTIONS=tcp,v3,intr,timeo=300,retrans=10
+
+# NFSv4.2 (server must support it)
+NETBOOT_NFS_OPTIONS=tcp,v4.2
+```
+
+The value is validated as a comma list of alnum / `=` / `_` / `-` /
+`.` tokens, so a malformed override fails at `extension_prepare_config`
+time rather than producing a garbage kernel cmdline.
 
 ## Troubleshooting
 

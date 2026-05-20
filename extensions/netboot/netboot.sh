@@ -71,6 +71,16 @@
 #                             affect the `Waiting up to 180 secs for end0`
 #                             netdev wait — that one is hardcoded in
 #                             initramfs-tools scripts/functions:395.
+#   NETBOOT_NFS_OPTIONS       Comma-separated options appended to nfsroot=
+#                             (the `,opt1,opt2,...` tail after the path).
+#                             Default: `tcp,v3`. Examples:
+#                               `tcp,v3`                         — default, local LAN
+#                               `tcp,v3,intr,timeo=300,retrans=10`— unreliable links
+#                               `tcp,v4.2`                       — NFSv4.2 server-side
+#                             Validated as a comma list of alnum/=/_/-
+#                             tokens so injection into the kernel cmdline
+#                             is constrained. Per
+#                             Documentation/admin-guide/nfs/nfsroot.rst.
 #
 # Hook:
 #   netboot_artifacts_ready   Called after all artifacts are staged. Exposed
@@ -99,6 +109,15 @@ function extension_prepare_config__netboot_defaults_and_validate() {
 	declare -g NETBOOT_ROOTDELAY="${NETBOOT_ROOTDELAY:-}"
 	if [[ -n "${NETBOOT_ROOTDELAY}" && ! "${NETBOOT_ROOTDELAY}" =~ ^[0-9]+$ ]]; then
 		exit_with_error "${EXTENSION}: NETBOOT_ROOTDELAY must be a non-negative integer (got '${NETBOOT_ROOTDELAY}')"
+	fi
+	declare -g NETBOOT_NFS_OPTIONS="${NETBOOT_NFS_OPTIONS:-tcp,v3}"
+	# Constrain to a comma list of alnum / = / _ / - tokens so the value
+	# can be safely concatenated into the kernel cmdline. The kernel itself
+	# parses individual options per Documentation/admin-guide/nfs/nfsroot.rst;
+	# rejecting odd characters here just prevents accidental injection of
+	# whitespace, quotes, or shell metacharacters.
+	if [[ ! "${NETBOOT_NFS_OPTIONS}" =~ ^[A-Za-z0-9=_,.-]+$ ]]; then
+		exit_with_error "${EXTENSION}: NETBOOT_NFS_OPTIONS must be a comma list of NFS options (got '${NETBOOT_NFS_OPTIONS}')"
 	fi
 	# Declared unconditionally so later `[[ -n "${NETBOOT_CLIENT_MAC_NORMALIZED}" ]]`
 	# checks remain safe under `set -u` when no MAC is configured.
@@ -520,13 +539,14 @@ function pre_umount_final_image__900_collect_netboot_artifacts() {
 
 	# extlinux APPEND is passed verbatim to the kernel — U-Boot does not expand
 	# ${var} inside it. With NETBOOT_SERVER set we bake the literal IP into
-	# nfsroot=. Without it we emit nfsroot=<path>,tcp,v3 (no server) and the
+	# nfsroot=. Without it we emit nfsroot=<path>,<options> (no server) and the
 	# kernel resolves the NFS server from DHCP siaddr at boot. Per-host paths
 	# live in the per-board pxelinux.cfg file; the server is a single
-	# network-wide DHCP value.
-	declare nfsroot_param=" nfsroot=${NETBOOT_NFS_PATH},tcp,v3"
+	# network-wide DHCP value. NFS mount options default to `tcp,v3` and are
+	# user-overridable via NETBOOT_NFS_OPTIONS (validated upstream).
+	declare nfsroot_param=" nfsroot=${NETBOOT_NFS_PATH},${NETBOOT_NFS_OPTIONS}"
 	if [[ -n "${NETBOOT_SERVER}" ]]; then
-		nfsroot_param=" nfsroot=${NETBOOT_SERVER}:${NETBOOT_NFS_PATH},tcp,v3"
+		nfsroot_param=" nfsroot=${NETBOOT_SERVER}:${NETBOOT_NFS_PATH},${NETBOOT_NFS_OPTIONS}"
 	fi
 
 	# Initramfs NFS-mount retry delay (scripts/nfs:89 `delay=${ROOTDELAY:-180}`).
