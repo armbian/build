@@ -29,6 +29,7 @@ setup, network configuration, troubleshooting, end-to-end examples.
 - [First boot and `armbian-firstrun`](#first-boot-and-armbian-firstrun)
 - [End-to-end example: helios64](#end-to-end-example-helios64)
 - [Initramfs NFS-mount watchdog](#initramfs-nfs-mount-watchdog)
+- [Tuning the NFS-mount retry delay](#tuning-the-nfs-mount-retry-delay)
 - [Troubleshooting](#troubleshooting)
 
 ## Why this exists
@@ -79,6 +80,7 @@ active one by symlinking it to `default-<arch>-<board>` (or
 | `ROOTFS_COMPRESSION` | `zstd` | Format of the rootfs archive produced by `create_image_from_sdcard_rootfs`. `zstd` (alias `zst`) → `.tar.zst`, `gzip` → `.tar.gz`, `none` → no archive at all. The `none` case requires `ROOTFS_EXPORT_DIR`. |
 | `ROOTFS_EXPORT_DIR` | _(empty)_ | rsync target for the rootfs tree. **Relative** value (e.g. `shared/rockchip64/helios64/edge-trixie`) is confined under `${SRC}/output/netboot-export/<value>` so `rsync --delete` cannot escape that subtree. **Absolute path outside the build tree** (e.g. `/srv/netboot/rootfs/shared/<board>/<branch>-<release>` or `/nfsroot`) is kept as-is and bind-mounted into the container at the same path; rsync writes straight into the host export tree. The directory must exist on the host before the build (typically `sudo mkdir -p` for root-owned NFS roots). Primary use: builder host is also the NFS server — single-step `build → boot` loop, no tar/unpack/rsync hop. System roots (`/`, `/etc`, `/usr`, ...) and `..` segments are rejected. The build stamps a `.netboot_export_marker` at the root of every export tree it writes; a non-empty target without that marker is refused (so `rsync --delete` cannot wipe an unrelated Linux tree at the same path) unless `NETBOOT_EXPORT_FORCE=yes`. |
 | `NETBOOT_EXPORT_FORCE` | `no` | Set to `yes` to allow overwriting a non-empty `ROOTFS_EXPORT_DIR` that does not carry the `.netboot_export_marker` stamp (rsync `--delete` will clobber whatever is there). |
+| `NETBOOT_ROOTDELAY` | _(empty)_ | Seconds for the initramfs NFS-mount script to wait before retrying a failed mount (passed as `rootdelay=N` in the kernel cmdline; consumed by `/usr/share/initramfs-tools/scripts/nfs`). Empty leaves the upstream default of 180s. Lower (e.g. `30`) speeds up boot failure on a dead NFS server in trusted labs; higher (e.g. `300`) tolerates flakier servers. Does **not** affect the `Waiting up to 180 secs for end0` netdev wait — that one is hardcoded in `initramfs-tools/scripts/functions:395` and not user-tunable. |
 
 ### Hook: `netboot_artifacts_ready`
 
@@ -883,6 +885,39 @@ the rootfs before the build packages the initramfs (e.g. in a
 followed by `update-initramfs -u` in the chroot). There is no build-time
 variable for this — silent hangs without a watchdog are essentially never
 what you want on a diskless fleet.
+
+## Tuning the NFS-mount retry delay
+
+The initramfs `scripts/nfs` helper waits `${ROOTDELAY:-180}` seconds
+between mount retries (see `/usr/share/initramfs-tools/scripts/nfs:89`).
+A failing first mount therefore stalls for three minutes before the
+next attempt, which dominates the 10-minute watchdog budget above.
+
+Pass `NETBOOT_ROOTDELAY=N` at build time to add `rootdelay=N` to the
+kernel cmdline. Example:
+
+```bash
+./compile.sh build BOARD=helios64 BRANCH=edge RELEASE=trixie \
+    ROOTFS_TYPE=nfs-root NETBOOT_ROOTDELAY=30
+```
+
+Common values:
+
+- `30`–`60` — trusted home/lab networks. Server failures show up
+  quickly; the watchdog still has 8–9 retries within its window.
+- _(empty)_ — keep the upstream 180s. Reasonable when the server is
+  on a different LAN, or when occasional transient unreachability
+  shouldn't trigger a reboot cycle.
+- `300`+ — flaky links (broken cabling, intermittent uplink) where a
+  longer wait is cheaper than the boot loop.
+
+`NETBOOT_ROOTDELAY` does **not** shorten the `Waiting up to 180 secs
+for end0 ... done` phase — that timeout lives in
+`initramfs-tools/scripts/functions:395` as `local netdevwait=180` and
+isn't controlled by any kernel cmdline argument or environment
+variable. The only way to bring it down is patching that script in
+the rootfs before `update-initramfs -u`, and that's outside this
+extension's scope.
 
 ## Troubleshooting
 

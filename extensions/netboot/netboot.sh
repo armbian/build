@@ -61,6 +61,16 @@
 #                             ROOTFS_EXPORT_DIR that lacks the
 #                             .netboot_export_marker stamp (rsync --delete
 #                             will clobber whatever is there).
+#   NETBOOT_ROOTDELAY         Seconds the initramfs NFS-mount script waits
+#                             before retrying a failed mount (passed as
+#                             `rootdelay=N` in the kernel cmdline; consumed
+#                             by /usr/share/initramfs-tools/scripts/nfs).
+#                             Empty (default) leaves the upstream 180s.
+#                             Lower (e.g. 30) speeds up boot failure on a
+#                             dead NFS server in trusted labs. Does NOT
+#                             affect the `Waiting up to 180 secs for end0`
+#                             netdev wait — that one is hardcoded in
+#                             initramfs-tools scripts/functions:395.
 #
 # Hook:
 #   netboot_artifacts_ready   Called after all artifacts are staged. Exposed
@@ -86,6 +96,10 @@ function extension_prepare_config__netboot_defaults_and_validate() {
 	declare -g BOOTSIZE=0
 	declare -g NETBOOT_HOSTNAME="${NETBOOT_HOSTNAME:-}"
 	declare -g NETBOOT_CLIENT_MAC="${NETBOOT_CLIENT_MAC:-}"
+	declare -g NETBOOT_ROOTDELAY="${NETBOOT_ROOTDELAY:-}"
+	if [[ -n "${NETBOOT_ROOTDELAY}" && ! "${NETBOOT_ROOTDELAY}" =~ ^[0-9]+$ ]]; then
+		exit_with_error "${EXTENSION}: NETBOOT_ROOTDELAY must be a non-negative integer (got '${NETBOOT_ROOTDELAY}')"
+	fi
 	# Declared unconditionally so later `[[ -n "${NETBOOT_CLIENT_MAC_NORMALIZED}" ]]`
 	# checks remain safe under `set -u` when no MAC is configured.
 	declare -g NETBOOT_CLIENT_MAC_NORMALIZED=""
@@ -515,6 +529,12 @@ function pre_umount_final_image__900_collect_netboot_artifacts() {
 		nfsroot_param=" nfsroot=${NETBOOT_SERVER}:${NETBOOT_NFS_PATH},tcp,v3"
 	fi
 
+	# Initramfs NFS-mount retry delay (scripts/nfs:89 `delay=${ROOTDELAY:-180}`).
+	# Empty NETBOOT_ROOTDELAY → kernel cmdline omits the param → upstream 180s
+	# applies. Validation of numeric form happens in extension_prepare_config.
+	declare rootdelay_param=""
+	[[ -n "${NETBOOT_ROOTDELAY}" ]] && rootdelay_param=" rootdelay=${NETBOOT_ROOTDELAY}"
+
 	# Intentionally no `console=` in APPEND: hardcoding a baud (e.g. 115200)
 	# breaks boards like helios64 which run at 1500000. Kernel resolves console
 	# from DTB `/chosen/stdout-path`; `earlycon` keeps the early output.
@@ -570,7 +590,7 @@ function pre_umount_final_image__900_collect_netboot_artifacts() {
 		    KERNEL ${NETBOOT_TFTP_PREFIX}/${kernel_name}${fdt_line:+
 		    ${fdt_line}}${initrd_line:+
 		    ${initrd_line}}
-		    APPEND root=/dev/nfs${nfsroot_param} ip=dhcp rw rootwait earlycon loglevel=7 panic=3
+		    APPEND root=/dev/nfs${nfsroot_param} ip=dhcp rw rootwait${rootdelay_param} earlycon loglevel=7 panic=3
 	EXTLINUX_CONF
 
 	display_alert "${EXTENSION}: artifacts ready" "${tftp_out}" "info"
