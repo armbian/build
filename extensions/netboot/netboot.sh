@@ -517,8 +517,15 @@ function pre_umount_final_image__900_collect_netboot_artifacts() {
 		kernel_name="zImage"
 	elif [[ -n "${IMAGE_INSTALLED_KERNEL_VERSION:-}" && -f "${MOUNT}/boot/vmlinuz-${IMAGE_INSTALLED_KERNEL_VERSION}" ]]; then
 		kernel_src="${MOUNT}/boot/vmlinuz-${IMAGE_INSTALLED_KERNEL_VERSION}"
-		# vmlinuz-* is a generic bzImage/Image; prefer Image for arm64, zImage otherwise
-		[[ "${ARCH}" == "arm64" ]] && kernel_name="Image" || kernel_name="zImage"
+		# vmlinuz-* is a generic bzImage/Image. Use NAME_KERNEL — the same
+		# source of truth Armbian's arch/family configs use — instead of
+		# hardcoding arm64→Image / *→zImage; the latter would mis-name the
+		# TFTP file on riscv64 (Image), loong64 (vmlinux), and any family
+		# override (e.g. meson uses uImage).
+		kernel_name="${NAME_KERNEL:-}"
+		[[ -n "${kernel_name}" ]] || exit_with_error \
+			"${EXTENSION}: NAME_KERNEL not set, cannot name TFTP kernel from vmlinuz fallback" \
+			"expected from arch (config/sources/<arch>.conf) or family include"
 	fi
 	[[ -n "${kernel_src}" ]] || exit_with_error "${EXTENSION}: kernel image not found under ${MOUNT}/boot"
 	run_host_command_logged cp -v "${kernel_src}" "${tftp_prefix_dir}/${kernel_name}"
