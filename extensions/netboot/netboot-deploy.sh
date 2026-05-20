@@ -710,18 +710,17 @@ function artifact_ready__netboot_kernel_deploy() (
 		exit_with_error "${EXTENSION}: ${kernel_src} missing in unpacked deb" \
 			"linux-image deb has unexpected layout; expected /boot/vmlinuz-${kver}"
 	fi
-	# Mirror netboot.sh's full-image kernel-naming fallback (see netboot.sh
-	# around the `kernel_name=Image|zImage` switch): arm64 → Image, anything
-	# else → zImage. The kernel-only deploy must write to the same TFTP path
-	# the bootloader was told to fetch by the original full-image build —
-	# otherwise a kernel-only refresh on amd64/etc. would put a new
-	# `vmlinuz-<kver>` next to the still-booted `zImage`, silently shipping
-	# nothing to the next PXE boot.
-	declare kernel_name
-	case "${ARCH}" in
-		arm64) kernel_name="Image" ;;
-		*) kernel_name="zImage" ;;
-	esac
+	# Derive the on-target TFTP filename from NAME_KERNEL — the same source
+	# of truth Armbian's arch/family configs use (config/sources/arm64.conf,
+	# riscv64.conf, armhf.conf, loong64.conf; families can override, e.g.
+	# meson uses uImage). Hardcoding arm64→Image / *→zImage would silently
+	# write to the wrong TFTP path on riscv64 (NAME_KERNEL=Image), loong64
+	# (vmlinux), and any family-overridden value, leaving the next PXE boot
+	# pointed at the previous kernel while only modules got refreshed.
+	declare kernel_name="${NAME_KERNEL:-}"
+	[[ -n "${kernel_name}" ]] || exit_with_error \
+		"${EXTENSION}: NAME_KERNEL not set, cannot pick TFTP filename for kernel-only deploy" \
+		"expected from arch (config/sources/<arch>.conf) or family include — sourcing didn't complete?"
 	display_alert "${EXTENSION}: rsync kernel to TFTP" \
 		"vmlinuz-${kver} -> ${NETBOOT_DEPLOY_SSH}:${NETBOOT_DEPLOY_TFTP_ROOT}/${NETBOOT_TFTP_PREFIX}/${kernel_name}" "info"
 	run_host_command_logged_raw rsync "${rsync_base[@]}" \
