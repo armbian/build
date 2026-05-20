@@ -31,7 +31,8 @@ case $BOARD in
 				KERNEL_MAJOR_MINOR="6.18"
 				;;
 
-			edge | default) # use for tests with recent mainline kernels
+			edge) # linux 7.1 RC
+				KERNEL_MAJOR_MINOR="7.1"
 				;;
 
 		esac
