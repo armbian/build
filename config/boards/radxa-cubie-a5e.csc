@@ -1,4 +1,4 @@
-# Allwinner Cortex-A55 octa core 1/2/4GB RAM SoC
+# Allwinner Cortex-A55 octa core SoC 2/4GB-RAM, 2x GBe, WiFi/BT, M.2 2230/USB3, NPU
 BOARD_NAME="radxa cubie a5e"
 BOARD_VENDOR="radxa"
 BOARDFAMILY="sun55iw3"
@@ -9,12 +9,7 @@ OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
 KERNEL_TARGET="edge"
 BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
-IMAGE_PARTITION_TABLE="gpt"
-#IMAGE_PARTITION_TABLE="msdos"
-BOOTFS_TYPE="fat"
-BOOTSTART="1"
-BOOTSIZE="512"
-ROOTSTART="513"
+HAS_VIDEO_OUTPUT=no
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
