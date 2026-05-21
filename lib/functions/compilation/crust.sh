@@ -62,11 +62,11 @@ compile_crust() {
 
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
-		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
+		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='${CCACHE:+${CCACHE} }${CRUST_COMPILER}'"
 
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
-		make $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
+		make $target_make "${CTHREADS}" "CROSS_COMPILE='${CCACHE:+${CCACHE} }${CRUST_COMPILER}'"
 
 	# @TODO: severely missing logging
 	[[ $(type -t crust_custom_postprocess) == function ]] && crust_custom_postprocess 2>&1
