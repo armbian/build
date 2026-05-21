@@ -8,6 +8,7 @@ BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
 #BOOT_LOGO="desktop"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current,edge"
 BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
 HAS_VIDEO_OUTPUT=no
 
