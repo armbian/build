@@ -93,7 +93,7 @@ compile_atf() {
 		  - ATF_COMPILER, ATF, BOARD, BRANCH, LINUXFAMILY
 	ATF_MAKE_CONFIG
 
-	run_host_command_logged "CROSS_COMPILE='${CCACHE} ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='${CCACHE} ${ATF_COMPILER}gcc'" \
+	run_host_command_logged "CROSS_COMPILE='${CCACHE:+${CCACHE} }${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='${CCACHE:+${CCACHE} }${ATF_COMPILER}gcc'" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
 		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}"
