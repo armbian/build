@@ -2,6 +2,12 @@
 #
 # Make Red Fault LED (LED2) reports mdadm error events.
 #
+# Invoked by `mdadm --monitor --program=...` with positional args:
+#   $1 = event name (Fail, DegradedArray, RebuildStarted, RebuildFinished,
+#        NewArray, TestMessage, ...)
+#   $2 = md device, e.g. /dev/md0
+#   $3 = component device (only set for some events, e.g. Fail)
+#
 EVENT=$1
 ARRAY=$2
 
@@ -11,46 +17,46 @@ ARRAY=$2
 TRIGGER=/sys/class/leds/helios4:red:fault/trigger
 
 # RED Fault LED brightness
-# britghness 0 = LED off
-# britghness 1 = LED on
+# brightness 0 = LED off
+# brightness 1 = LED on
 BRIGHTNESS=/sys/class/leds/helios4:red:fault/brightness
 
-# Active component device of an array has been marked as faulty OR A newly noticed array appears to be degraded.
-if [ "$EVENT" = "Fail" -o "$EVENT" = "DegradedArray" ]; then
-    echo none > $TRIGGER
-    echo 1 > $BRIGHTNESS
-fi
-
-# Cold-boot path: mdadm --monitor emits NewArray (not DegradedArray) for arrays
-# it sees for the first time after startup, even if those arrays are already
-# degraded. Probe state explicitly so the fault LED comes up at boot when a
-# disk died while the system was off.
-if [ "$EVENT" = "NewArray" ] && [ -n "$ARRAY" ]; then
-    STATE=$(mdadm --detail "$ARRAY" 2>/dev/null | awk -F: '/^[[:space:]]*State[[:space:]]*:/ {sub(/^ /,"",$2); print $2; exit}')
-    case "$STATE" in
-        *degraded*|*FAILED*|*failed*)
-            echo none > $TRIGGER
-            echo 1 > $BRIGHTNESS
-            ;;
-    esac
-fi
-
-# An md array started reconstruction
-if [ "$EVENT" = "RebuildStarted" ]; then
-    echo timer > $TRIGGER
-    echo 1 > $BRIGHTNESS
-fi
-
-# An md array that was rebuilding, isn't any more, either because it finished normally or was aborted. 
-if [ "$EVENT" = "RebuildFinished" ]; then
-    echo none > $TRIGGER
-    echo 0 > $BRIGHTNESS
-fi
-
-# Test RED Fault LED
-if [ "$EVENT" = "TestMessage" ]; then
-    echo timer > $TRIGGER
-    echo 1 > $BRIGHTNESS
-    sleep 5
-    echo 0 > $BRIGHTNESS
-fi
+case "$EVENT" in
+	Fail | DegradedArray)
+		# Component marked faulty, or a newly noticed array is degraded.
+		echo none > "$TRIGGER"
+		echo 1 > "$BRIGHTNESS"
+		;;
+	NewArray)
+		# Cold-boot path: mdadm --monitor emits NewArray (not DegradedArray)
+		# for arrays seen for the first time after startup, even if they are
+		# already degraded. Probe state explicitly so the LED comes up at
+		# boot when a disk died while the system was off.
+		[ -n "$ARRAY" ] || exit 0
+		STATE=$(mdadm --detail "$ARRAY" 2> /dev/null | awk -F: '/^[[:space:]]*State[[:space:]]*:/ {sub(/^ /,"",$2); print $2; exit}')
+		case "$STATE" in
+			*degraded* | *FAILED* | *failed*)
+				echo none > "$TRIGGER"
+				echo 1 > "$BRIGHTNESS"
+				;;
+		esac
+		;;
+	RebuildStarted)
+		# An md array started reconstruction.
+		echo timer > "$TRIGGER"
+		echo 1 > "$BRIGHTNESS"
+		;;
+	RebuildFinished)
+		# An md array that was rebuilding isn't any more, either because
+		# it finished normally or was aborted.
+		echo none > "$TRIGGER"
+		echo 0 > "$BRIGHTNESS"
+		;;
+	TestMessage)
+		# Smoke-test the LED.
+		echo timer > "$TRIGGER"
+		echo 1 > "$BRIGHTNESS"
+		sleep 5
+		echo 0 > "$BRIGHTNESS"
+		;;
+esac
