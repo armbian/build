@@ -3,6 +3,7 @@
 # Make Red Fault LED (LED2) reports mdadm error events.
 #
 EVENT=$1
+ARRAY=$2
 
 # RED Fault LED trigger
 # trigger none = LED not-blinking if LED on
@@ -18,6 +19,20 @@ BRIGHTNESS=/sys/class/leds/helios4:red:fault/brightness
 if [ "$EVENT" = "Fail" -o "$EVENT" = "DegradedArray" ]; then
     echo none > $TRIGGER
     echo 1 > $BRIGHTNESS
+fi
+
+# Cold-boot path: mdadm --monitor emits NewArray (not DegradedArray) for arrays
+# it sees for the first time after startup, even if those arrays are already
+# degraded. Probe state explicitly so the fault LED comes up at boot when a
+# disk died while the system was off.
+if [ "$EVENT" = "NewArray" ] && [ -n "$ARRAY" ]; then
+    STATE=$(mdadm --detail "$ARRAY" 2>/dev/null | awk -F: '/^[[:space:]]*State[[:space:]]*:/ {sub(/^ /,"",$2); print $2; exit}')
+    case "$STATE" in
+        *degraded*|*FAILED*|*failed*)
+            echo none > $TRIGGER
+            echo 1 > $BRIGHTNESS
+            ;;
+    esac
 fi
 
 # An md array started reconstruction
