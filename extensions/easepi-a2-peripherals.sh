@@ -1,22 +1,22 @@
 # EasePi A2 Peripherals Extension (OLED + IR + Bluetooth)
-# 注意：此扩展仅适用于 EasePi-A2 (RK3568)
-# EasePi-A2 硬件特性：
-#   - SSD1306 OLED 显示屏
-#   - 红外接收器
-#   - AP6255 蓝牙模块 (uart8/serial@fe6c0000, alias serial0->ttyS0)
+# Note: This extension is for EasePi-A2 (RK3568) only
+# EasePi-A2 hardware features:
+#   - SSD1306 OLED display
+#   - IR receiver
+#   - AP6255 Bluetooth module (uart8/serial@fe6c0000, alias serial0->ttyS0)
 #
-# 分支适配说明：
-#   - vendor:  内核使用 bluetooth-platdata 驱动，需用户态 hciattach 初始化蓝牙
-#   - current/edge: 主线内核 serdev 自动初始化蓝牙，无需 hciattach
-#   - OLED/IR: 所有分支通用（Go 程序通过 /dev/i2c-3 直接操作硬件）
+# Branch adaptation notes:
+#   - vendor:  kernel uses bluetooth-platdata driver, requires user-space hciattach for BT init
+#   - current/edge: mainline kernel serdev handles Bluetooth automatically, no hciattach needed
+#   - OLED/IR: common across all branches (Go program accesses /dev/i2c-3 directly)
 #
-# 此扩展已整合 bluetooth-hciattach 功能，无需单独启用
+# This extension integrates bluetooth-hciattach; no separate extension needed
 
 
 function extension_prepare_config__easepi-a2-peripherals() {
 	display_alert "Extension: EasePi A2 Peripherals" "Preparing OLED + IR + Bluetooth support (BRANCH=${BRANCH})" "info"
 
-	# vendor 分支需要 hciattach；主线内核 serdev 自动处理，仅做软校验
+	# Vendor branch needs hciattach; mainline kernel serdev handles BT, soft-check only
 	if [[ "${BRANCH}" == "vendor" ]]; then
 		display_alert "EasePi-A2" "Vendor kernel: hciattach bluetooth init will be configured" "info"
 		if [[ -z "${BLUETOOTH_HCIATTACH_PARAMS}" ]]; then
@@ -49,8 +49,8 @@ function add_host_dependencies__easepi_a2_add_golang() {
 function post_family_tweaks_bsp__easepi_a2_bluetooth_hciattach_service() {
 	: "${destination:?destination is not set}"
 
-	# 仅 vendor 分支生成 hciattach 服务
-	# 主线内核通过 serdev (compatible = "brcm,bcm4345c5") 自动初始化蓝牙
+	# Only vendor branch generates hciattach service
+	# Mainline kernel auto-initializes Bluetooth via serdev (compatible = "brcm,bcm4345c5")
 	if [[ "${BRANCH}" != "vendor" ]]; then
 		display_alert "EasePi-A2" "Skipping hciattach service (mainline kernel serdev handles Bluetooth)" "info"
 		return 0
@@ -62,30 +62,30 @@ function post_family_tweaks_bsp__easepi_a2_bluetooth_hciattach_service() {
 	run_host_command_logged mkdir -pv "${destination}${script_dir}"
 	declare script_path="${script_dir}/bluetooth-hciattach.sh"
 
-	# vendor 内核使用 bluetooth-platdata rfkill 驱动控制 GPIO
-	# 初始化顺序：1) rfkill unblock 触发驱动拉高 BT_EN/RESET
-	#             2) 等待芯片上电稳定
-	#             3) hciattach 建立 HCI 通道
+	# Vendor kernel uses bluetooth-platdata rfkill driver for GPIO control
+	# Init sequence: 1) rfkill unblock triggers driver to assert BT_EN/RESET
+	#             2) wait for chip power-up stabilization
+	#             3) hciattach establishes HCI channel
 	cat <<- BT_HCIATTACH_SCRIPT > "${destination}${script_path}"
 		#!/bin/bash
 		set -e
 
 		echo "[BT] Initializing AP6255 Bluetooth (vendor kernel)"
 
-		# 先尝试内核是否已通过 serdev 初始化（兼容未来可能的内核升级）
+		# First try if kernel already initialized via serdev (for future kernel compatibility)
 		if hciconfig hci0 up 2>/dev/null; then
 			echo "[BT] hci0 already initialized by kernel serdev"
 			exit 0
 		fi
 
-		# rfkill unblock 触发 bluetooth-platdata 驱动：
-		#   - 拉高 BT_REG_ON (GPIO4_C4) 使能芯片
-		#   - 配置 BT_WAKE (GPIO0_D5)
-		#   - 注册 BT_HOST_WAKE (GPIO0_D4) 中断
+		# rfkill unblock triggers bluetooth-platdata driver:
+		#   - assert BT_REG_ON (GPIO4_C4) to enable chip
+		#   - configure BT_WAKE (GPIO0_D5)
+		#   - register BT_HOST_WAKE (GPIO0_D4) interrupt
 		rfkill unblock ${BLUETOOTH_HCIATTACH_RKFILL_NUM}
 		sleep 1
 
-		# 确保 bt_default rfkill 已 unblock
+		# Ensure bt_default rfkill is unblocked
 		if [ -d /sys/class/rfkill/rfkill0 ]; then
 			echo 1 > /sys/class/rfkill/rfkill0/state 2>/dev/null || true
 		fi
@@ -115,7 +115,7 @@ function post_family_tweaks_bsp__easepi_a2_bluetooth_hciattach_service() {
 function pre_customize_image__copy_easepi_a2_files() {
 	display_alert "EasePi-A2" "Writing A2 peripheral files (BRANCH=${BRANCH})" "info"
 
-	# 扩展自身目录（用于查找配套资源文件）
+	# Extension's own directory (for locating companion resource files)
 	local EXT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 	mkdir -p "${SDCARD}"/usr/local/oled
@@ -156,9 +156,9 @@ After=sysinit.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/ir/ir-setup.sh
-# 异常自动重启
+# Auto-restart on failure
 Restart=on-failure
-# 重启间隔3秒
+# Restart interval 3 seconds
 RestartSec=3
 
 [Install]
@@ -209,21 +209,21 @@ EOF
 	# =============================================
 	cat <<'EOF' > "${SDCARD}"/usr/local/ir/ir-setup.sh
 #!/bin/bash
-# EasePi A2 红外设备设置脚本
+# EasePi A2 IR device setup script
 
-echo "检测红外设备..."
+echo "Detecting IR devices..."
 
 for dev in /dev/lirc* /sys/class/rc/*; do
     if [ -e "$dev" ]; then
-        echo "找到红外设备: $dev"
+        echo "Found IR device: $dev"
         /usr/bin/ir-keytable -c -w /etc/rc_keymaps/easepi_remote
         /usr/bin/ir-keytable -p nec
         exit 0
     fi
 done
 
-echo "未找到红外设备（可能需要检查设备树配置）"
-exit 0  # 即使没有设备也不报错
+echo "No IR device found (check device tree configuration)"
+exit 0  # Do not error even if no device found
 EOF
 
 	# =============================================
@@ -231,9 +231,9 @@ EOF
 	# =============================================
 	cat <<'FIXIRSCRIPT' > "${SDCARD}"/usr/local/ir/fix_infrared.sh
 #!/bin/bash
-# EasePi A2 红外功能诊断和配置工具
-# 用于手动诊断和重新配置红外接收功能
-# 使用方法：sudo bash /usr/local/ir/fix_infrared.sh
+# EasePi IR diagnostic and configuration tool
+# Manual diagnosis and reconfiguration of IR receiver
+# Usage: sudo bash /usr/local/ir/fix_infrared.sh
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -266,150 +266,150 @@ log_error() {
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        log_error "请以root权限运行此脚本（sudo bash ${SCRIPT_DIR}/fix_infrared.sh）"
+        log_error "Please run with root privileges (sudo bash ${SCRIPT_DIR}/fix_infrared.sh)"
         exit 1
     fi
 }
 
 check_files() {
-    log_info "检查红外相关文件..."
+    log_info "Checking IR related files..."
     if [ ! -f "${SERVICE_FILE}" ]; then
-        log_error "服务文件缺失：${SERVICE_FILE}"
+        log_error "Service file missing: ${SERVICE_FILE}"
         exit 1
     fi
     if [ ! -f "/etc/modules-load.d/infrared.conf" ]; then
-        log_error "模块配置文件缺失：/etc/modules-load.d/infrared.conf"
+        log_error "Module config file missing: /etc/modules-load.d/infrared.conf"
         exit 1
     fi
     if [ ! -f "/etc/rc_keymaps/easepi_remote" ]; then
-        log_error "按键映射文件缺失：/etc/rc_keymaps/easepi_remote"
+        log_error "Keymap file missing: /etc/rc_keymaps/easepi_remote"
         exit 1
     fi
-    log_info "✓ 文件检查通过"
+    log_info "✓ File check passed"
 }
 
 check_deps() {
-    log_info "检查系统依赖..."
+    log_info "Checking system dependencies..."
     if ! command -v ir-keytable &> /dev/null; then
-        log_warn "ir-keytable 未安装"
-        log_info "正在安装..."
+        log_warn "ir-keytable not installed"
+        log_info "Installing..."
         apt-get update -y >> ${LOG_FILE} 2>&1
         apt-get install -y --no-install-recommends ir-keytable >> ${LOG_FILE} 2>&1
         if [ $? -eq 0 ]; then
-            log_info "✓ ir-keytable 安装成功"
+            log_info "✓ ir-keytable installed successfully"
         else
-            log_error "✗ 安装失败"
+            log_error "✗ Installation failed"
             exit 1
         fi
     else
-        log_info "✓ ir-keytable 已安装"
+        log_info "✓ ir-keytable already installed"
     fi
 }
 
 check_modules() {
-    log_info "检查内核模块..."
+    log_info "Checking kernel modules..."
     modules=("gpio_ir_recv" "ir_nec_decoder")
     for mod in "${modules[@]}"; do
         if lsmod | grep -q "^${mod} "; then
-            log_info "✓ ${mod} 已加载"
+            log_info "✓ ${mod} loaded"
         else
-            log_warn "⚠ ${mod} 未加载"
-            log_info "正在加载模块..."
+            log_warn "⚠ ${mod} not loaded"
+            log_info "Loading module..."
             modprobe ${mod} >> ${LOG_FILE} 2>&1
             if [ $? -eq 0 ]; then
-                log_info "✓ ${mod} 加载成功"
+                log_info "✓ ${mod} loaded successfully"
             else
-                log_error "✗ ${mod} 加载失败"
+                log_error "✗ ${mod} failed to load"
             fi
         fi
     done
 }
 
 check_device() {
-    log_info "检查红外设备..."
+    log_info "Checking IR device..."
     if [ -c "/dev/lirc0" ]; then
-        log_info "✓ /dev/lirc0 设备节点存在"
+        log_info "✓ /dev/lirc0 device node exists"
     else
-        log_error "✗ /dev/lirc0 设备节点不存在"
-        log_warn "请检查硬件连接或设备树配置"
+        log_error "✗ /dev/lirc0 device node not found"
+        log_warn "Please check hardware connection or device tree configuration"
     fi
 }
 
 check_protocol() {
-    log_info "检查红外协议..."
+    log_info "Checking IR protocol..."
     PROTOCOLS=$(ir-keytable 2>&1 | grep "Enabled kernel protocols" || true)
     if [ -n "$PROTOCOLS" ]; then
-        log_info "当前协议: $PROTOCOLS"
+        log_info "Current protocol: $PROTOCOLS"
     fi
     if echo "$PROTOCOLS" | grep -q "nec"; then
-        log_info "✓ NEC 协议已启用"
+        log_info "✓ NEC protocol enabled"
     else
-        log_warn "⚠ NEC 协议未启用"
-        log_info "正在启用 NEC 协议..."
+        log_warn "⚠ NEC protocol not enabled"
+        log_info "Enabling NEC protocol..."
         ir-keytable -p nec >> ${LOG_FILE} 2>&1
         if [ $? -eq 0 ]; then
-            log_info "✓ NEC 协议启用成功"
+            log_info "✓ NEC protocol enabled successfully"
         else
-            log_error "✗ NEC 协议启用失败"
+            log_error "✗ NEC protocol enable failed"
         fi
     fi
 }
 
 check_keymap() {
-    log_info "检查按键映射..."
+    log_info "Checking keymap..."
     if ir-keytable -c -w /etc/rc_keymaps/easepi_remote >> ${LOG_FILE} 2>&1; then
-        log_info "✓ 按键映射应用成功"
+        log_info "✓ Keymap applied successfully"
     else
-        log_warn "⚠ 按键映射应用失败"
+        log_warn "⚠ Keymap application failed"
     fi
 }
 
 check_service() {
-    log_info "检查红外服务状态..."
+    log_info "Checking IR service status..."
     if systemctl is-active --quiet ir-keymap.service; then
-        log_info "✓ ir-keymap.service 已执行"
+        log_info "✓ ir-keymap.service is active"
     else
-        log_warn "⚠ ir-keymap.service 未执行"
-        log_info "正在执行服务..."
+        log_warn "⚠ ir-keymap.service is inactive"
+        log_info "Starting service..."
         systemctl start ir-keymap.service
         if [ $? -eq 0 ]; then
-            log_info "✓ 服务执行成功"
+            log_info "✓ Service started successfully"
         else
-            log_warn "⚠ 服务执行失败"
+            log_warn "⚠ Service start failed"
         fi
     fi
     if systemctl is-enabled --quiet ir-keymap.service; then
-        log_info "✓ 服务已设置开机自启"
+        log_info "✓ Service enabled for auto-start"
     else
-        log_warn "⚠ 服务未设置开机自启"
-        log_info "正在设置开机自启..."
+        log_warn "⚠ Service not enabled for auto-start"
+        log_info "Enabling auto-start..."
         systemctl enable ir-keymap.service
     fi
 }
 
 show_commands() {
-    echo -e "\n${GREEN}=== 红外功能诊断和配置工具 ===${NC}"
-    echo -e "\n${YELLOW}📌 常用管理命令：${NC}"
-    echo -e "  • 查看服务状态：  systemctl status ir-keymap.service"
-    echo -e "  • 重启服务：      systemctl restart ir-keymap.service"
-    echo -e "  • 停止服务：      systemctl stop ir-keymap.service"
-    echo -e "  • 查看日志：      tail -f /var/log/ir/ir.log"
-    echo -e "  • 测试红外信号：  ir-keytable -t"
-    echo -e "  • 查看协议配置：  ir-keytable"
-    echo -e "\n${YELLOW}🔧 此工具功能：${NC}"
-    echo -e "  • 检查文件完整性"
-    echo -e "  • 检查并安装依赖"
-    echo -e "  • 检查内核模块"
-    echo -e "  • 检查设备节点"
-    echo -e "  • 检查并配置协议"
-    echo -e "  • 检查服务状态"
+    echo -e "\n${GREEN}=== IR Diagnostic and Configuration Tool ===${NC}"
+    echo -e "\n${YELLOW}📌 Common management commands:${NC}"
+    echo -e "  • View service status:  systemctl status ir-keymap.service"
+    echo -e "  • Restart service:    systemctl restart ir-keymap.service"
+    echo -e "  • Stop service:       systemctl stop ir-keymap.service"
+    echo -e "  • View logs:          tail -f /var/log/ir/ir.log"
+    echo -e "  • Test IR signals:    ir-keytable -t"
+    echo -e "  • View protocol cfg:  ir-keytable"
+    echo -e "\n${YELLOW}🔧 Tool features:${NC}"
+    echo -e "  • Check file integrity"
+    echo -e "  • Check and install dependencies"
+    echo -e "  • Check kernel modules"
+    echo -e "  • Check device nodes"
+    echo -e "  • Check and configure protocol"
+    echo -e "  • Check service status"
     echo -e ""
 }
 
 main() {
     clear
     show_commands
-    echo -e "${GREEN}开始诊断...${NC}\n"
+    echo -e "${GREEN}Starting diagnostics...${NC}\n"
     
     check_root
     check_files
@@ -420,12 +420,12 @@ main() {
     check_keymap
     check_service
     
-    echo -e "\n${GREEN}=== 诊断完成 ===${NC}"
-    echo -e "${YELLOW}是否要测试红外信号接收？(y/n)${NC}"
-    echo -e "${YELLOW}(按 Ctrl+C 退出测试)${NC}"
+    echo -e "\n${GREEN}=== Diagnostics Complete ===${NC}"
+    echo -e "${YELLOW}Test IR signal reception? (y/n)${NC}"
+    echo -e "${YELLOW}(Press Ctrl+C to exit test)${NC}"
     read -r response
     if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-        echo -e "${GREEN}请按下遥控器按键...${NC}"
+        echo -e "${GREEN}Press a remote control button...${NC}"
         ir-keytable -t
     fi
 }
@@ -438,8 +438,8 @@ FIXIRSCRIPT
 	# =============================================
 	cat <<'OLEDINIT' > "${SDCARD}"/usr/local/oled/oled_init.sh
 #!/bin/bash
-# EasePi A2 OLED 128x32 诊断和配置工具 (Go)
-# 使用方法：sudo bash /usr/local/oled/oled_init.sh
+# EasePi A2 OLED 128x32 diagnostic and configuration tool (Go)
+# Usage: sudo bash /usr/local/oled/oled_init.sh
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -453,100 +453,100 @@ SERVICE_FILE="/etc/systemd/system/oled.service"
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}[ERROR]${NC} 请以 root 权限运行此脚本（sudo bash ${SCRIPT_DIR}/oled_init.sh）"
+        echo -e "${RED}[ERROR]${NC} Please run with root privileges (sudo bash ${SCRIPT_DIR}/oled_init.sh)"
         exit 1
     fi
 }
 
 check_files() {
-    echo -e "${GREEN}[INFO]${NC} 检查 OLED 相关文件..."
+    echo -e "${GREEN}[INFO]${NC} Checking OLED related files..."
     if [ ! -f "${OLED_BIN}" ]; then
-        echo -e "${RED}[ERROR]${NC} 程序缺失：${OLED_BIN}"
+        echo -e "${RED}[ERROR]${NC} Binary missing: ${OLED_BIN}"
         exit 1
     fi
     if [ ! -x "${OLED_BIN}" ]; then
-        echo -e "${GREEN}[INFO]${NC} 为 oled 添加执行权限"
+        echo -e "${GREEN}[INFO]${NC} Adding execute permission for oled"
         chmod +x "${OLED_BIN}"
     fi
     if [ ! -f "${FONT_FILE}" ]; then
-        echo -e "${RED}[ERROR]${NC} 字体缺失：${FONT_FILE}"
+        echo -e "${RED}[ERROR]${NC} Font missing: ${FONT_FILE}"
         exit 1
     fi
     if [ ! -f "${SERVICE_FILE}" ]; then
-        echo -e "${RED}[ERROR]${NC} 服务文件缺失：${SERVICE_FILE}"
+        echo -e "${RED}[ERROR]${NC} Service file missing: ${SERVICE_FILE}"
         exit 1
     fi
-    echo -e "${GREEN}[INFO]${NC} ✓ 文件检查通过"
+    echo -e "${GREEN}[INFO]${NC} ✓ File check passed"
 }
 
 check_deps() {
-    echo -e "${GREEN}[INFO]${NC} 检查系统依赖..."
+    echo -e "${GREEN}[INFO]${NC} Checking system dependencies..."
     if ! command -v i2cdetect &>/dev/null; then
-        echo -e "${YELLOW}[WARN]${NC} 缺失 i2c-tools，正在安装..."
+        echo -e "${YELLOW}[WARN]${NC} i2c-tools missing, installing..."
         apt-get update -y -qq
         apt-get install -y --no-install-recommends i2c-tools
     else
-        echo -e "${GREEN}[INFO]${NC} ✓ i2c-tools 已安装"
+        echo -e "${GREEN}[INFO]${NC} ✓ i2c-tools already installed"
     fi
 }
 
 check_i2c() {
-    echo -e "${GREEN}[INFO]${NC} 检查 I2C 总线和 OLED 设备..."
+    echo -e "${GREEN}[INFO]${NC} Checking I2C bus and OLED device..."
     if ! lsmod | grep -q "i2c_dev"; then
-        echo -e "${GREEN}[INFO]${NC} 加载 i2c-dev 模块"
+        echo -e "${GREEN}[INFO]${NC} Loading i2c-dev module"
         modprobe i2c-dev 2>/dev/null
     fi
     if [ -e "/dev/i2c-3" ]; then
-        echo -e "${GREEN}[INFO]${NC} ✓ i2c-3 设备节点存在"
+        echo -e "${GREEN}[INFO]${NC} ✓ i2c-3 device node exists"
         chmod 666 /dev/i2c-3 2>/dev/null
     else
-        echo -e "${RED}[ERROR]${NC} ✗ i2c-3 设备节点不存在"
+        echo -e "${RED}[ERROR]${NC} ✗ i2c-3 device node not found"
         exit 1
     fi
     if i2cdetect -y 3 2>/dev/null | grep -q "3c\|3d"; then
-        echo -e "${GREEN}[INFO]${NC} ✓ 在 i2c-3 上发现 OLED 设备"
+        echo -e "${GREEN}[INFO]${NC} ✓ OLED device found on i2c-3"
     else
-        echo -e "${YELLOW}[WARN]${NC} ⚠ 未检测到 OLED 设备，请检查硬件连接"
+        echo -e "${YELLOW}[WARN]${NC} ⚠ OLED device not detected, please check hardware connection"
         i2cdetect -y 3
     fi
 }
 
 check_service() {
-    echo -e "${GREEN}[INFO]${NC} 检查 OLED 服务状态..."
+    echo -e "${GREEN}[INFO]${NC} Checking OLED service status..."
     if systemctl is-active --quiet oled.service; then
-        echo -e "${GREEN}[INFO]${NC} ✓ oled.service 正在运行"
+        echo -e "${GREEN}[INFO]${NC} ✓ oled.service is running"
     else
-        echo -e "${YELLOW}[WARN]${NC} ⚠ oled.service 未运行"
-        echo -e "${GREEN}[INFO]${NC} 正在启动服务..."
+        echo -e "${YELLOW}[WARN]${NC} ⚠ oled.service is not running"
+        echo -e "${GREEN}[INFO]${NC} Starting service..."
         systemctl start oled.service
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}[INFO]${NC} ✓ 服务启动成功"
+            echo -e "${GREEN}[INFO]${NC} ✓ Service started successfully"
         else
-            echo -e "${RED}[ERROR]${NC} ✗ 服务启动失败"
+            echo -e "${RED}[ERROR]${NC} ✗ Service start failed"
             journalctl -u oled.service -n 20 --no-pager
         fi
     fi
     if systemctl is-enabled --quiet oled.service 2>/dev/null; then
-        echo -e "${GREEN}[INFO]${NC} ✓ oled.service 已设置开机自启"
+        echo -e "${GREEN}[INFO]${NC} ✓ oled.service enabled for auto-start"
     else
-        echo -e "${YELLOW}[WARN]${NC} ⚠ oled.service 未设置开机自启"
+        echo -e "${YELLOW}[WARN]${NC} ⚠ oled.service not enabled for auto-start"
         systemctl enable oled.service
     fi
 }
 
 restart_service() {
-    echo -e "${GREEN}[INFO]${NC} 重启 OLED 服务..."
+    echo -e "${GREEN}[INFO]${NC} Restarting OLED service..."
     systemctl restart oled.service
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}[INFO]${NC} ✓ 服务重启成功"
+        echo -e "${GREEN}[INFO]${NC} ✓ Service restarted successfully"
         sleep 2
         if systemctl is-active --quiet oled.service; then
-            echo -e "${GREEN}[INFO]${NC} ✓ 服务运行正常"
+            echo -e "${GREEN}[INFO]${NC} ✓ Service running normally"
         else
-            echo -e "${RED}[ERROR]${NC} ✗ 服务运行异常"
+            echo -e "${RED}[ERROR]${NC} ✗ Service running abnormally"
         fi
     else
-        echo -e "${RED}[ERROR]${NC} ✗ 服务重启失败"
+        echo -e "${RED}[ERROR]${NC} ✗ Service restart failed"
     fi
 }
 
@@ -557,30 +557,30 @@ show_usage() {
     local ip
     ip=$(ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "N/A")
 
-    echo -e "\n${GREEN}=== EasePi A2 OLED 诊断工具 (Go) ===${NC}"
-    echo -e "${YELLOW}📊 当前状态：${NC}"
-    echo -e "  CPU: ${cpu_usage}%  温度: ${cpu_temp}°C   IP: ${ip}"
-    echo -e "\n${YELLOW}📌 管理命令：${NC}"
-    echo -e "  • 查看状态：  systemctl status oled.service"
-    echo -e "  • 重启服务：  systemctl restart oled.service"
-    echo -e "  • 停止服务：  systemctl stop oled.service"
-    echo -e "  • 前台运行：  ${OLED_BIN}"
-    echo -e "  • 检测设备：  i2cdetect -y 3"
-    echo -e "\n${YELLOW}📋 显示模式：${NC}"
-    echo -e "  • 空闲(1行)：仅 IP 地址，底部对齐"
-    echo -e "  • CPU高(2行)：CPU+温度 在上，IP 在下"
-    echo -e "  • NET高(2行)：网速 在上，IP 在下"
-    echo -e "  • 高负载(3行)：CPU | NET | IP"
-    echo -e "\n${YELLOW}⚙️ 阈值：${NC}"
-    echo -e "  CPU > 30% 或 温度 > 60°C → CPU 模式"
-    echo -e "  NET > 100KB/s → NET 模式"
-    echo -e "  同时触发 → 3 行模式"
+    echo -e "\n${GREEN}=== EasePi A2 OLED Diagnostic Tool (Go) ===${NC}"
+    echo -e "${YELLOW}📊 Current status:${NC}"
+    echo -e "  CPU: ${cpu_usage}%  Temp: ${cpu_temp}°C   IP: ${ip}"
+    echo -e "\n${YELLOW}📌 Management commands:${NC}"
+    echo -e "  • View status:  systemctl status oled.service"
+    echo -e "  • Restart svc:  systemctl restart oled.service"
+    echo -e "  • Stop svc:     systemctl stop oled.service"
+    echo -e "  • Run foreground: ${OLED_BIN}"
+    echo -e "  • Detect device:  i2cdetect -y 3"
+    echo -e "\n${YELLOW}📋 Display modes:${NC}"
+    echo -e "  • Idle(1 line): IP only, bottom-aligned"
+    echo -e "  • CPU high(2 lines): CPU+temp top, IP bottom"
+    echo -e "  • NET high(2 lines): net speed top, IP bottom"
+    echo -e "  • Heavy load(3 lines): CPU | NET | IP"
+    echo -e "\n${YELLOW}⚙️ Thresholds:${NC}"
+    echo -e "  CPU > 30% or Temp > 60°C → CPU mode"
+    echo -e "  NET > 100KB/s → NET mode"
+    echo -e "  Both triggered → 3-line mode"
 }
 
 main() {
     clear
     show_usage
-    echo -e "\n${GREEN}开始诊断...${NC}\n"
+    echo -e "\n${GREEN}Starting diagnostics...${NC}\n"
 
     check_root
     check_files
@@ -588,8 +588,8 @@ main() {
     check_i2c
     check_service
 
-    echo -e "\n${GREEN}=== 诊断完成 ===${NC}"
-    echo -e "${YELLOW}是否要重启 OLED 服务？(y/n)${NC}"
+    echo -e "\n${GREEN}=== Diagnostics Complete ===${NC}"
+    echo -e "${YELLOW}Restart OLED service? (y/n)${NC}"
     read -r response
     if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
         restart_service
@@ -600,7 +600,7 @@ main
 OLEDINIT
 
 	# =============================================
-	# OLED Go Binary: 主机交叉编译 (GOARCH=arm64)
+	# OLED Go Binary: Host cross-compilation (GOARCH=arm64)
 	# =============================================
 	local OLED_SRC_DIR="${EXT_DIR}/easepi-a2-peripherals/oled-src"
 	if [[ -d "${OLED_SRC_DIR}" ]]; then
@@ -621,20 +621,20 @@ OLEDINIT
 	fi
 
 	# =============================================
-	# 字体文件：从系统包链接
+	# Font file: symlink from system package
 	# =============================================
 	ln -sf /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf \
 		"${SDCARD}"/usr/local/oled/DejaVuSansMono.ttf
 
 	# =============================================
-	# 设置脚本权限
+	# Set script permissions
 	# =============================================
 	chmod +x "${SDCARD}"/usr/local/ir/ir-setup.sh 2>/dev/null || true
 	chmod +x "${SDCARD}"/usr/local/ir/fix_infrared.sh 2>/dev/null || true
 	chmod +x "${SDCARD}"/usr/local/oled/oled_init.sh 2>/dev/null || true
 
 	# =============================================
-	# BCM4345C0 蓝牙固件符号链接
+	# BCM4345C0 Bluetooth firmware symlink
 	# =============================================
 	if [ -f "${SDCARD}"/lib/firmware/BCM4345C0.hcd ]; then
 		ln -sf ../BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.hcd 2>/dev/null || \
@@ -646,13 +646,13 @@ OLEDINIT
 function post_customize_image__enable_easepi_a2_services() {
 	display_alert "EasePi-A2" "Enabling A2 peripheral services (BRANCH=${BRANCH})" "info"
 
-	# OLED service（所有分支通用）
+	# OLED service (common across all branches)
 	chroot_sdcard systemctl enable oled.service || true
 
 	# IR service
 	chroot_sdcard systemctl enable ir-keymap.service || true
 
-	# Bluetooth: vendor 分支需要 hciattach 服务，主线内核 serdev 自动处理
+	# Bluetooth: vendor branch needs hciattach service; mainline serdev handles it
 	if [[ "${BRANCH}" == "vendor" ]]; then
 		display_alert "EasePi-A2" "Enabling bluetooth-hciattach.service (vendor kernel)" "info"
 		chroot_sdcard systemctl enable bluetooth-hciattach.service || true

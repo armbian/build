@@ -1,12 +1,12 @@
 # EasePi R2 Peripherals Extension (IR + Bluetooth)
-# 注意：此扩展仅适用于 EasePi-R2 (RK3588)
-# EasePi-R2 硬件特性：
-#   - 红外接收器
-#   - AP6255 蓝牙模块 (ttyS9)
-#   - 无 OLED 显示屏
+# Note: This extension is for EasePi-R2 (RK3588) only
+# EasePi-R2 hardware features:
+#   - IR receiver
+#   - AP6255 Bluetooth module (ttyS9)
+#   - No OLED display
 #
-# 此扩展已整合 bluetooth-hciattach 功能，无需单独启用
-# EasePi-A2 有 OLED 显示屏，请使用 easepi-a2-peripherals.sh
+# This extension integrates bluetooth-hciattach; no separate extension needed
+# For EasePi-A2 with OLED display, use easepi-a2-peripherals.sh
 
 function extension_prepare_config__easepi-r2-peripherals() {
 	display_alert "Extension: EasePi R2 Peripherals" "Preparing IR + Bluetooth support" "info"
@@ -86,9 +86,9 @@ ConditionPathExists=/dev/lirc0
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c "/usr/bin/ir-keytable -c -w /etc/rc_keymaps/easepi_remote && /usr/bin/ir-keytable -p nec"
-# 异常自动重启
+# Auto-restart on failure
 Restart=on-failure
-# 重启间隔3秒
+# Restart interval 3 seconds
 RestartSec=3
 
 [Install]
@@ -145,9 +145,9 @@ EOF
 	# =============================================
 	cat <<'FIXIRSCRIPT' > "${SDCARD}"/usr/local/ir/fix_infrared.sh
 #!/bin/bash
-# EasePi A2 红外功能诊断和配置工具
-# 用于手动诊断和重新配置红外接收功能
-# 使用方法：sudo bash /usr/local/ir/fix_infrared.sh
+# EasePi IR diagnostic and configuration tool
+# Manual diagnosis and reconfiguration of IR receiver
+# Usage: sudo bash /usr/local/ir/fix_infrared.sh
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -180,150 +180,150 @@ log_error() {
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        log_error "请以root权限运行此脚本（sudo bash ${SCRIPT_DIR}/fix_infrared.sh）"
+        log_error "Please run this script with root privileges (sudo bash ${SCRIPT_DIR}/fix_infrared.sh)"
         exit 1
     fi
 }
 
 check_files() {
-    log_info "检查红外相关文件..."
+    log_info "Checking IR related files..."
     if [ ! -f "${SERVICE_FILE}" ]; then
-        log_error "服务文件缺失：${SERVICE_FILE}"
+        log_error "Service file missing: ${SERVICE_FILE}"
         exit 1
     fi
     if [ ! -f "/etc/modules-load.d/infrared.conf" ]; then
-        log_error "模块配置文件缺失：/etc/modules-load.d/infrared.conf"
+        log_error "Module config file missing: /etc/modules-load.d/infrared.conf"
         exit 1
     fi
     if [ ! -f "/etc/rc_keymaps/easepi_remote" ]; then
-        log_error "按键映射文件缺失：/etc/rc_keymaps/easepi_remote"
+        log_error "Keymap file missing: /etc/rc_keymaps/easepi_remote"
         exit 1
     fi
-    log_info "✓ 文件检查通过"
+    log_info "? File check passed"
 }
 
 check_deps() {
-    log_info "检查系统依赖..."
+    log_info "Checking system dependencies..."
     if ! command -v ir-keytable &> /dev/null; then
-        log_warn "ir-keytable 未安装"
-        log_info "正在安装..."
+        log_warn "ir-keytable not installed"
+        log_info "Installing..."
         apt-get update -y >> ${LOG_FILE} 2>&1
         apt-get install -y --no-install-recommends ir-keytable >> ${LOG_FILE} 2>&1
         if [ $? -eq 0 ]; then
-            log_info "✓ ir-keytable 安装成功"
+            log_info "? ir-keytable installed successfully"
         else
-            log_error "✗ 安装失败"
+            log_error "? Installation failed"
             exit 1
         fi
     else
-        log_info "✓ ir-keytable 已安装"
+        log_info "? ir-keytable already installed"
     fi
 }
 
 check_modules() {
-    log_info "检查内核模块..."
+    log_info "Checking kernel modules..."
     modules=("gpio_ir_recv" "ir_nec_decoder")
     for mod in "${modules[@]}"; do
         if lsmod | grep -q "^${mod} "; then
-            log_info "✓ ${mod} 已加载"
+            log_info "? ${mod} loaded"
         else
-            log_warn "⚠ ${mod} 未加载"
-            log_info "正在加载模块..."
+            log_warn "? ${mod} not loaded"
+            log_info "Loading module..."
             modprobe ${mod} >> ${LOG_FILE} 2>&1
             if [ $? -eq 0 ]; then
-                log_info "✓ ${mod} 加载成功"
+                log_info "? ${mod} loaded successfully"
             else
-                log_error "✗ ${mod} 加载失败"
+                log_error "? ${mod} failed to load"
             fi
         fi
     done
 }
 
 check_device() {
-    log_info "检查红外设备..."
+    log_info "Checking IR device..."
     if [ -c "/dev/lirc0" ]; then
-        log_info "✓ /dev/lirc0 设备节点存在"
+        log_info "? /dev/lirc0 device node exists"
     else
-        log_error "✗ /dev/lirc0 设备节点不存在"
-        log_warn "请检查硬件连接或设备树配置"
+        log_error "? /dev/lirc0 device node not found"
+        log_warn "Please check hardware connection or device tree configuration"
     fi
 }
 
 check_protocol() {
-    log_info "检查红外协议..."
+    log_info "Checking IR protocol..."
     PROTOCOLS=$(ir-keytable 2>&1 | grep "Enabled kernel protocols" || true)
     if [ -n "$PROTOCOLS" ]; then
-        log_info "当前协议: $PROTOCOLS"
+        log_info "Current protocol: $PROTOCOLS"
     fi
     if echo "$PROTOCOLS" | grep -q "nec"; then
-        log_info "✓ NEC 协议已启用"
+        log_info "? NEC protocol enabled"
     else
-        log_warn "⚠ NEC 协议未启用"
-        log_info "正在启用 NEC 协议..."
+        log_warn "? NEC protocol not enabled"
+        log_info "Enabling NEC protocol..."
         ir-keytable -p nec >> ${LOG_FILE} 2>&1
         if [ $? -eq 0 ]; then
-            log_info "✓ NEC 协议启用成功"
+            log_info "? NEC protocol enabled successfully"
         else
-            log_error "✗ NEC 协议启用失败"
+            log_error "? NEC protocol enable failed"
         fi
     fi
 }
 
 check_keymap() {
-    log_info "检查按键映射..."
+    log_info "Checking keymap..."
     if ir-keytable -c -w /etc/rc_keymaps/easepi_remote >> ${LOG_FILE} 2>&1; then
-        log_info "✓ 按键映射应用成功"
+        log_info "? Keymap applied successfully"
     else
-        log_warn "⚠ 按键映射应用失败"
+        log_warn "? Keymap application failed"
     fi
 }
 
 check_service() {
-    log_info "检查红外服务状态..."
+    log_info "Checking IR service status..."
     if systemctl is-active --quiet ir-keymap.service; then
-        log_info "✓ ir-keymap.service 已执行"
+        log_info "? ir-keymap.service is active"
     else
-        log_warn "⚠ ir-keymap.service 未执行"
-        log_info "正在执行服务..."
+        log_warn "? ir-keymap.service is inactive"
+        log_info "Starting service..."
         systemctl start ir-keymap.service
         if [ $? -eq 0 ]; then
-            log_info "✓ 服务执行成功"
+            log_info "? Service started successfully"
         else
-            log_warn "⚠ 服务执行失败"
+            log_warn "? Service start failed"
         fi
     fi
     if systemctl is-enabled --quiet ir-keymap.service; then
-        log_info "✓ 服务已设置开机自启"
+        log_info "? Service enabled for auto-start"
     else
-        log_warn "⚠ 服务未设置开机自启"
-        log_info "正在设置开机自启..."
+        log_warn "? Service not enabled for auto-start"
+        log_info "Enabling auto-start..."
         systemctl enable ir-keymap.service
     fi
 }
 
 show_commands() {
-    echo -e "\n${GREEN}=== 红外功能诊断和配置工具 ===${NC}"
-    echo -e "\n${YELLOW}📌 常用管理命令：${NC}"
-    echo -e "  • 查看服务状态：  systemctl status ir-keymap.service"
-    echo -e "  • 重启服务：      systemctl restart ir-keymap.service"
-    echo -e "  • 停止服务：      systemctl stop ir-keymap.service"
-    echo -e "  • 查看日志：      tail -f /var/log/ir/ir.log"
-    echo -e "  • 测试红外信号：  ir-keytable -t"
-    echo -e "  • 查看协议配置：  ir-keytable"
-    echo -e "\n${YELLOW}🔧 此工具功能：${NC}"
-    echo -e "  • 检查文件完整性"
-    echo -e "  • 检查并安装依赖"
-    echo -e "  • 检查内核模块"
-    echo -e "  • 检查设备节点"
-    echo -e "  • 检查并配置协议"
-    echo -e "  • 检查服务状态"
+    echo -e "\n${GREEN}=== IR Diagnostic and Configuration Tool ===${NC}"
+    echo -e "\n${YELLOW}? Common management commands:${NC}"
+    echo -e "  • View service status:  systemctl status ir-keymap.service"
+    echo -e "  • Restart service:    systemctl restart ir-keymap.service"
+    echo -e "  • Stop service:       systemctl stop ir-keymap.service"
+    echo -e "  • View logs:          tail -f /var/log/ir/ir.log"
+    echo -e "  • Test IR signals:    ir-keytable -t"
+    echo -e "  • View protocol cfg:  ir-keytable"
+    echo -e "\n${YELLOW}? Tool features:${NC}"
+    echo -e "  • Check file integrity"
+    echo -e "  • Check and install dependencies"
+    echo -e "  • Check kernel modules"
+    echo -e "  • Check device nodes"
+    echo -e "  • Check and configure protocol"
+    echo -e "  • Check service status"
     echo -e ""
 }
 
 main() {
     clear
     show_commands
-    echo -e "${GREEN}开始诊断...${NC}\n"
+    echo -e "${GREEN}Starting diagnostics...${NC}\n"
     
     check_root
     check_files
@@ -334,12 +334,12 @@ main() {
     check_keymap
     check_service
     
-    echo -e "\n${GREEN}=== 诊断完成 ===${NC}"
-    echo -e "${YELLOW}是否要测试红外信号接收？(y/n)${NC}"
-    echo -e "${YELLOW}(按 Ctrl+C 退出测试)${NC}"
+    echo -e "\n${GREEN}=== Diagnostics Complete ===${NC}"
+    echo -e "${YELLOW}Test IR signal reception? (y/n)${NC}"
+    echo -e "${YELLOW}(Press Ctrl+C to exit test)${NC}"
     read -r response
     if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-        echo -e "${GREEN}请按下遥控器按键...${NC}"
+        echo -e "${GREEN}Press a remote control button...${NC}"
         ir-keytable -t
     fi
 }
@@ -348,7 +348,7 @@ main
 FIXIRSCRIPT
 
 	# =============================================
-	# 设置脚本权限
+	# Set script permissions
 	# =============================================
 	chmod +x "${SDCARD}"/usr/local/ir/fix_infrared.sh 2>/dev/null || true
 }
