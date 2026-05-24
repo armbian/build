@@ -29,9 +29,11 @@ esac
 
 # Helios4 tweak
 family_tweaks_bsp() {
-	## Add dependency list
-	local DEPENDENCIES="fancontrol, mdadm"
-	sed -i "/^Depends:/ s/$/, $DEPENDENCIES/" "${destination}"/DEBIAN/control
+	# fancontrol is required by /etc/systemd/system/fancontrol.service shipped below.
+	# mdadm must be configured before our postinst runs, since the postinst appends
+	# PROGRAM= to /etc/mdadm/mdadm.conf — hence a real dpkg-Depends (deterministic
+	# configure-ordering), not PACKAGE_LIST_BOARD (alphabetic-order race).
+	declare -g EXTRA_BSPDEPS="fancontrol, mdadm"
 
 	## Pack additional files
 
