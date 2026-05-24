@@ -68,10 +68,18 @@ function prepare_root_device__create_volume_group() {
 }
 
 function format_partitions__format_lvm() {
-	# Label the root volume
-	e2label "/dev/mapper/${LVM_VG_NAME}-root" armbi_root
-	blkid | grep "${LVM_VG_NAME}" >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
-	display_alert "LVM labeled partitions" "${EXTENSION}" "info"
+	if [ "$ROOTFS_TYPE" == "ext4" ]; then
+		# Label the root volume
+		e2label "/dev/mapper/${LVM_VG_NAME}-root" armbi_root
+		blkid | grep "${LVM_VG_NAME}" >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
+		display_alert "LVM labeled partitions" "${EXTENSION}" "info"
+	elif [ "$ROOTFS_TYPE" == "btrfs" ]; then
+		btrfs filesystem label $( mount | grep "/dev/mapper/${LVM_VG_NAME}-root" | awk '{print $3}' ) armbi_root
+		blkid | grep "${LVM_VG_NAME}" >> "${DEST}/${LOG_SUBPATH}/lvm.log" 2>&1
+		display_alert "LVM labeled partitions" "${EXTENSION}" "info"
+	else
+		display_alert "LVM partition labels skipped" "${EXTENSION}" "info"
+	fi
 }
 
 function post_umount_final_image__cleanup_lvm(){
