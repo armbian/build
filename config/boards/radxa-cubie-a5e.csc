@@ -2,7 +2,7 @@
 BOARD_NAME="radxa cubie a5e"
 BOARD_VENDOR="radxa"
 BOARDFAMILY="sun55iw3"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="juanesf"
 INTRODUCED="2025"
 BOOTCONFIG="radxa-cubie-a5e_defconfig"
 OVERLAY_PREFIX="sun55i-a527"
@@ -24,9 +24,9 @@ function post_family_tweaks_bsp__aic8800_wireless() {
 	mkdir -p "${destination}"/etc/modprobe.d
 	mkdir -p "${destination}"/etc/modules-load.d
 	# Add wireless conf
-	cat > "${destination}"/etc/modprobe.d/aic8800-wireless.conf <<- EOT
+	cat > "${destination}"/etc/modprobe.d/aic8800-radxa-cubie-a5e.conf <<- EOT
 	options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
-	#options aic8800_bsp_sdio aic_fw_path=/lib/firmware/aic8800_fw/SDIO/aic8800
+	options aic8800_bsp aic_fw_path=/lib/firmware/aic8800/SDIO/aic8800D80
 	EOT
 	# Add needed bluetooth modules
 	cat > "${destination}"/etc/modules-load.d/aic8800-btlpm.conf <<- EOT
