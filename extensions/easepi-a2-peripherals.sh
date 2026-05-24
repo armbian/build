@@ -41,9 +41,8 @@ function post_family_config__easepi_a2_add_oled_packages() {
 	add_packages_to_image i2c-tools ir-keytable fonts-dejavu-core
 }
 
-function add_host_dependencies__easepi_a2_add_golang() {
-	display_alert "EasePi-A2" "Adding golang host dependency for OLED build" "info"
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} golang-go"
+function add_host_dependencies__easepi_a2_download_oled_binary() {
+	display_alert "EasePi-A2" "Adding curl/wget for OLED binary download" "info"
 }
 
 function post_family_tweaks_bsp__easepi_a2_bluetooth_hciattach_service() {
@@ -87,7 +86,7 @@ function post_family_tweaks_bsp__easepi_a2_bluetooth_hciattach_service() {
 
 		# Ensure bt_default rfkill is unblocked
 		if [ -d /sys/class/rfkill/rfkill0 ]; then
-			echo 1 > /sys/class/rfkill/rfkill0/state 2>/dev/null || true
+			echo 1 > /sys/class/rfkill/rfkill0/state 2>/dev/null || echo "[BT] rfkill0 state write failed (non-fatal)"
 		fi
 		sleep 1
 
@@ -600,24 +599,16 @@ main
 OLEDINIT
 
 	# =============================================
-	# OLED Go Binary: Host cross-compilation (GOARCH=arm64)
-	# =============================================
-	local OLED_SRC_DIR="${EXT_DIR}/easepi-a2-peripherals/oled-src"
-	if [[ -d "${OLED_SRC_DIR}" ]]; then
-		display_alert "EasePi-A2" "Building OLED Go binary from source (host cross-compile)" "info"
-		local OLED_BUILD_DIR="$(mktemp -d)"
-		cp -r "${OLED_SRC_DIR}"/* "${OLED_BUILD_DIR}"/
-		(
-			cd "${OLED_BUILD_DIR}" || exit 1
-			CGO_ENABLED=0 GOARCH=arm64 GOOS=linux go build -ldflags='-s -w' -o oled .
-		) || {
-			display_alert "EasePi-A2" "Failed to compile oled Go binary; OLED will be unavailable" "wrn"
-			rm -rf "${OLED_BUILD_DIR}"
-			return 0
-		}
-		cp "${OLED_BUILD_DIR}/oled" "${SDCARD}"/usr/local/oled/oled
+	# OLED Go Binary: download prebuilt from GitHub Releases
+	# Source: https://github.com/ifroncy01/easepi-oled-daemon
+    # =============================================
+    local OLED_RELEASE_URL="https://github.com/ifroncy01/easepi-oled-daemon/releases/latest/download/oled-linux-arm64"
+	display_alert "EasePi-A2" "Downloading OLED Go binary from GitHub Releases" "info"
+	if curl -fsSL -o "${SDCARD}"/usr/local/oled/oled "${OLED_RELEASE_URL}"; then
 		chmod +x "${SDCARD}"/usr/local/oled/oled
-		rm -rf "${OLED_BUILD_DIR}"
+		display_alert "EasePi-A2" "OLED binary downloaded successfully" "info"
+	else
+		display_alert "EasePi-A2" "Failed to download OLED binary; OLED will be unavailable" "wrn"
 	fi
 
 	# =============================================
@@ -629,17 +620,17 @@ OLEDINIT
 	# =============================================
 	# Set script permissions
 	# =============================================
-	chmod +x "${SDCARD}"/usr/local/ir/ir-setup.sh 2>/dev/null || true
-	chmod +x "${SDCARD}"/usr/local/ir/fix_infrared.sh 2>/dev/null || true
-	chmod +x "${SDCARD}"/usr/local/oled/oled_init.sh 2>/dev/null || true
+	chmod +x "${SDCARD}"/usr/local/ir/ir-setup.sh
+	chmod +x "${SDCARD}"/usr/local/ir/fix_infrared.sh
+	chmod +x "${SDCARD}"/usr/local/oled/oled_init.sh
 
 	# =============================================
 	# BCM4345C0 Bluetooth firmware symlink
 	# =============================================
 	if [ -f "${SDCARD}"/lib/firmware/BCM4345C0.hcd ]; then
-		ln -sf ../BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.hcd 2>/dev/null || \
-		ln -sf BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.hcd 2>/dev/null || true
-		ln -sf BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.easepi,a2.hcd 2>/dev/null || true
+		ln -sf ../BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.hcd || \
+		ln -sf BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.hcd
+		ln -sf BCM4345C0.hcd "${SDCARD}"/lib/firmware/brcm/BCM4345C0.easepi,a2.hcd
 	fi
 }
 
@@ -647,17 +638,17 @@ function post_customize_image__enable_easepi_a2_services() {
 	display_alert "EasePi-A2" "Enabling A2 peripheral services (BRANCH=${BRANCH})" "info"
 
 	# OLED service (common across all branches)
-	chroot_sdcard systemctl enable oled.service || true
+	chroot_sdcard systemctl enable oled.service
 
 	# IR service
-	chroot_sdcard systemctl enable ir-keymap.service || true
+	chroot_sdcard systemctl enable ir-keymap.service
 
 	# Bluetooth: vendor branch needs hciattach service; mainline serdev handles it
 	if [[ "${BRANCH}" == "vendor" ]]; then
 		display_alert "EasePi-A2" "Enabling bluetooth-hciattach.service (vendor kernel)" "info"
-		chroot_sdcard systemctl enable bluetooth-hciattach.service || true
+		chroot_sdcard systemctl enable bluetooth-hciattach.service
 	else
 		display_alert "EasePi-A2" "Skipping bluetooth-hciattach.service (mainline kernel serdev handles BT)" "info"
 	fi
-	chroot_sdcard systemctl enable bluetooth.service || true
+	chroot_sdcard systemctl enable bluetooth.service
 }
