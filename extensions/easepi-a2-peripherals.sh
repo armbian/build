@@ -409,7 +409,7 @@ main() {
     clear
     show_commands
     echo -e "${GREEN}Starting diagnostics...${NC}\n"
-    
+
     check_root
     check_files
     check_deps
@@ -418,7 +418,7 @@ main() {
     check_protocol
     check_keymap
     check_service
-    
+
     echo -e "\n${GREEN}=== Diagnostics Complete ===${NC}"
     echo -e "${YELLOW}Test IR signal reception? (y/n)${NC}"
     echo -e "${YELLOW}(Press Ctrl+C to exit test)${NC}"
@@ -601,14 +601,27 @@ OLEDINIT
 	# =============================================
 	# OLED Go Binary: download prebuilt from GitHub Releases
 	# Source: https://github.com/ifroncy01/easepi-oled-daemon
-    # =============================================
-    local OLED_RELEASE_URL="https://github.com/ifroncy01/easepi-oled-daemon/releases/latest/download/oled-linux-arm64"
+	# =============================================
+	local OLED_BASE_URL="https://github.com/ifroncy01/easepi-oled-daemon/releases/latest/download"
+	local OLED_BIN_NAME="oled-linux-arm64"
 	display_alert "EasePi-A2" "Downloading OLED Go binary from GitHub Releases" "info"
-	if curl -fsSL -o "${SDCARD}"/usr/local/oled/oled "${OLED_RELEASE_URL}"; then
-		chmod +x "${SDCARD}"/usr/local/oled/oled
-		display_alert "EasePi-A2" "OLED binary downloaded successfully" "info"
+
+	if curl -fsSL -o "${SDCARD}"/usr/local/oled/oled "${OLED_BASE_URL}/${OLED_BIN_NAME}" && \
+	   curl -fsSL -o /tmp/oled.sha256 "${OLED_BASE_URL}/${OLED_BIN_NAME}.sha256"; then
+		# Verify SHA-256 checksum for supply chain security and reproducible builds
+		local EXPECTED_SUM=$(cut -d' ' -f1 /tmp/oled.sha256)
+		local ACTUAL_SUM=$(sha256sum "${SDCARD}"/usr/local/oled/oled | cut -d' ' -f1)
+		if [[ "${EXPECTED_SUM}" == "${ACTUAL_SUM}" ]]; then
+			chmod +x "${SDCARD}"/usr/local/oled/oled
+			display_alert "EasePi-A2" "OLED binary downloaded and verified successfully" "info"
+			OLED_BINARY_OK=yes
+		else
+			display_alert "EasePi-A2" "OLED binary SHA-256 mismatch; OLED will be unavailable" "wrn"
+			rm -f "${SDCARD}"/usr/local/oled/oled
+		fi
+		rm -f /tmp/oled.sha256
 	else
-		display_alert "EasePi-A2" "Failed to download OLED binary; OLED will be unavailable" "wrn"
+		display_alert "EasePi-A2" "Failed to download OLED binary or checksum; OLED will be unavailable" "wrn"
 	fi
 
 	# =============================================
@@ -637,8 +650,13 @@ OLEDINIT
 function post_customize_image__enable_easepi_a2_services() {
 	display_alert "EasePi-A2" "Enabling A2 peripheral services (BRANCH=${BRANCH})" "info"
 
-	# OLED service (common across all branches)
-	chroot_sdcard systemctl enable oled.service
+	# OLED service: only enable if the binary was downloaded and verified successfully
+	if [[ "${OLED_BINARY_OK}" == "yes" ]]; then
+		chroot_sdcard systemctl enable oled.service
+		display_alert "EasePi-A2" "OLED service enabled" "info"
+	else
+		display_alert "EasePi-A2" "Skipping oled.service (OLED binary not available)" "wrn"
+	fi
 
 	# IR service
 	chroot_sdcard systemctl enable ir-keymap.service
