@@ -47,10 +47,24 @@ case "$EVENT" in
 		echo 1 > "$BRIGHTNESS"
 		;;
 	RebuildFinished)
-		# An md array that was rebuilding isn't any more, either because
-		# it finished normally or was aborted.
-		echo none > "$TRIGGER"
-		echo 0 > "$BRIGHTNESS"
+		# An md array that was rebuilding isn't any more — either because
+		# it finished normally (state=clean) or aborted with the array
+		# still degraded (e.g. a freshly added spare itself failed during
+		# resync). Probe state to decide LED action.
+		[ -n "$ARRAY" ] || exit 0
+		STATE=$(mdadm --detail "$ARRAY" 2> /dev/null | awk -F: '/^[[:space:]]*State[[:space:]]*:/ {sub(/^ /,"",$2); print $2; exit}')
+		case "$STATE" in
+			*degraded* | *FAILED* | *failed*)
+				# Rebuild ended but array still bad — keep fault LED solid.
+				echo none > "$TRIGGER"
+				echo 1 > "$BRIGHTNESS"
+				;;
+			*)
+				# Clean — array fully restored.
+				echo none > "$TRIGGER"
+				echo 0 > "$BRIGHTNESS"
+				;;
+		esac
 		;;
 	TestMessage)
 		# Smoke-test the LED.
