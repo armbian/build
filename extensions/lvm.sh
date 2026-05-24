@@ -69,19 +69,19 @@ function prepare_root_device__create_volume_group() {
 
 function label_partition() {
 	if [ "$ROOTFS_TYPE" == "ext4" ]; then
-		e2label "/dev/mapper/${LVM_VG_NAME}-root" armbi_root
+		e2label "/dev/mapper/${LVM_VG_NAME}-root" "${ROOT_FS_LABEL}"
 	elif [ "$ROOTFS_TYPE" == "btrfs" ]; then
-		btrfs filesystem label "$(mount | grep "/dev/mapper/${LVM_VG_NAME}-root" | awk '{print $3}')" armbi_root
-	elif [ "$ROOTFS_TYPE" == "nilfs" ]; then
-		nilfs-tune -L armbi_root "/dev/mapper/${LVM_VG_NAME}-root"
+		btrfs filesystem label "$(mount | grep "/dev/mapper/${LVM_VG_NAME}-root" | awk '{print $3}')" "${ROOT_FS_LABEL}"
+	elif [ "$ROOTFS_TYPE" == "nilfs2" ]; then
+		nilfs-tune -L "${ROOT_FS_LABEL}" "/dev/mapper/${LVM_VG_NAME}-root"
 	elif [ "$ROOTFS_TYPE" == "xfs" ]; then
-		xfs_io -c "label -s armbi_root" "$(mount | grep "/dev/mapper/${LVM_VG_NAME}-root" | awk '{print $3}')"
+		xfs_io -c "label -s \"${ROOT_FS_LABEL}\"" "$(mount | grep "/dev/mapper/${LVM_VG_NAME}-root" | awk '{print $3}')"
 	fi
 }
 
 function format_partitions__format_lvm() {
-	# Skip unknown/unsupported filesystems. nfs does not support labels and f2fs labels cannot be changed online
-	if echo "ext4 btrfs nilfs xfs" | grep -v -w -q "$ROOTFS_TYPE"; then
+	# Skip unknown filesystems
+	if echo "ext4 btrfs nilfs2 xfs" | grep -v -w -q "$ROOTFS_TYPE"; then
 		display_alert "LVM partition labels skipped" "${EXTENSION}" "info"
 		return
 	fi
