@@ -179,39 +179,62 @@ function prepare_host_binfmt_qemu_cross() {
 			continue
 		fi
 
-		if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" || ! -e "/usr/share/binfmts/qemu-${wanted_arch}" ]]; then
+		# aarch64 host + armhf target: always defer to the handler. It decides native
+		# COMPAT vs qemu-arm and is idempotent across every binfmt_misc state, so it must
+		# run even when qemu-arm is already registered (the common packaged-host case) —
+		# otherwise the native-COMPAT path is skipped and a stale qemu-arm is never repaired.
+		if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
+			prepare_host_binfmt_qemu_cross_arm64_host_armhf_target
+		elif [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" || ! -e "/usr/share/binfmts/qemu-${wanted_arch}" ]]; then
 			display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-
-			# special case: some arm64 machines cant' really run armhf binaries natively (Apple Silicon); check if that is the case and forcibly import and enable qemu-arm for them.
-			if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
-				prepare_host_binfmt_qemu_cross_arm64_host_armhf_target
-			else
-				run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
-			fi
+			run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
 		fi
 	done
 }
 
 function prepare_host_binfmt_qemu_cross_arm64_host_armhf_target() {
 	declare armhf_probe="/usr/arm-linux-gnueabihf/lib/ld-linux-armhf.so.3"
+	declare prefer_native="${PREFER_NATIVE_ARMHF:-yes}"
+	declare qemu_arm_was_enabled=0
 
-	# If qemu-arm is already enabled in the kernel, the native probe
-	# below would route through qemu and lie about COMPAT. Trust the
-	# existing setup — admin or packaged service intended it.
+	# Snapshot qemu-arm state — drives both COMPAT probe and trust-existing.
 	if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] &&
 		[[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
-		display_alert "qemu-arm already enabled in binfmt_misc" "trusting existing setup" "debug"
-		return 0
+		qemu_arm_was_enabled=1
 	fi
 
-	# No active qemu-arm route. Probe CONFIG_COMPAT directly. `arch-test
-	# arm` is unreliable here (probes ARMv5 EABI; COMPAT runs armhf —
-	# EABI v5+; empirically broken on Ubuntu Noble / Ampere CAX). Direct
-	# exec of ld-linux-armhf (from gcc-arm-linux-gnueabihf, an armbian
-	# host build dep when target_arch=armhf|all) is authoritative.
-	if [[ -x "${armhf_probe}" ]] && "${armhf_probe}" --help > /dev/null 2>&1; then
-		display_alert "Host kernel can run armhf natively (CONFIG_COMPAT)" "no qemu-arm setup needed" "debug"
-		return 0
+	# COMPAT probe must run with qemu-arm OFF, otherwise kernel routes
+	# armhf exec through qemu and the probe lies. Temp-disable, probe,
+	# restore on failure. `arch-test arm` is unreliable (probes ARMv5,
+	# COMPAT needs ≥v7); ld-linux-armhf comes from gcc-arm-linux-gnueabihf
+	# (armbian host dep for armhf|all). Toggle needs CAP_SYS_ADMIN — present
+	# in Armbian's docker_cli_prepare_launch; if /proc is read-only anyway,
+	# skip the probe gracefully and trust existing qemu-arm.
+	if [[ "${prefer_native}" == "yes" ]] && [[ -x "${armhf_probe}" ]]; then
+		declare toggle_ok=1
+		if ((qemu_arm_was_enabled)); then
+			echo 0 > /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null || toggle_ok=0
+		fi
+		if ((toggle_ok)) && "${armhf_probe}" --help > /dev/null 2>&1; then
+			display_alert "Host kernel can run armhf natively (CONFIG_COMPAT)" "qemu-arm left disabled if it was on" "info"
+			return 0
+		fi
+		if ((qemu_arm_was_enabled && toggle_ok)); then
+			echo 1 > /proc/sys/fs/binfmt_misc/qemu-arm ||
+				exit_with_error "Failed to restore qemu-arm after failed native armhf probe"
+		fi
+	fi
+
+	# Native COMPAT unavailable (or opt-out via PREFER_NATIVE_ARMHF=no).
+	# Trust existing qemu-arm registration only if it actually executes —
+	# `enabled` flag alone doesn't tell us the interpreter is runnable
+	# (stale path, removed package). Validate via arch-test.
+	if ((qemu_arm_was_enabled)); then
+		if command -v arch-test > /dev/null 2>&1 && arch-test arm > /dev/null 2>&1; then
+			display_alert "qemu-arm enabled and functional" "trusting existing setup" "debug"
+			return 0
+		fi
+		display_alert "qemu-arm enabled but execution probe failed" "stale registration — reconfiguring" "warn"
 	fi
 
 	# ld-linux-armhf may be absent on cross builds whose target isn't
@@ -238,6 +261,7 @@ function prepare_host_binfmt_qemu_cross_arm64_host_armhf_target() {
 		[[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] && echo 1 > /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null || true
 		if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]] &&
 			[[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
+			_verify_qemu_arm_executes
 			display_alert "qemu-arm enabled via packaged descriptor" "leaving package-provided setup intact" "debug"
 			return 0
 		fi
@@ -252,6 +276,7 @@ function prepare_host_binfmt_qemu_cross_arm64_host_armhf_target() {
 	if [[ -e /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
 		echo 1 > /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null || true
 		if [[ "$(head -n1 /proc/sys/fs/binfmt_misc/qemu-arm 2> /dev/null)" == "enabled" ]]; then
+			_verify_qemu_arm_executes
 			display_alert "qemu-arm re-enabled via /proc" "kernel state restored without descriptor" "debug"
 			return 0
 		fi
@@ -277,5 +302,22 @@ function prepare_host_binfmt_qemu_cross_arm64_host_armhf_target() {
 		display_alert "Debugging arch-test" "full output" "debug"
 		run_host_command_logged arch-test || true
 	fi
+	_verify_qemu_arm_executes
 	display_alert "arm 32-bit emulation on arm64" "has been set up via qemu-arm" "cachehit"
+}
+
+# Helper: confirm qemu-arm interpreter actually runs an armhf binary.
+# `update-binfmts --enable` and an `enabled` flag in /proc only attest
+# registration state, not runtime executability — a stale interpreter
+# path or removed package slips through and fails later in chroot. Run
+# `arch-test arm` here so we fail fast at host-prepare time.
+function _verify_qemu_arm_executes() {
+	if ! command -v arch-test > /dev/null 2>&1; then
+		display_alert "qemu-arm runtime verification skipped" "arch-test not available on host" "warn"
+		return 0
+	fi
+	if arch-test arm > /dev/null 2>&1; then
+		return 0
+	fi
+	exit_with_error "qemu-arm registered but armhf execution fails. Interpreter likely broken (stale path, removed package, missing qemu-arm-static). Reinstall qemu-user-binfmt (resolute) / qemu-user-static and retry."
 }
