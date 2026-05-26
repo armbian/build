@@ -18,3 +18,18 @@ BOOTFS_TYPE="fat"
 PACKAGE_LIST_BOARD="build-essential usb-modeswitch eject"
 
 enable_extension "brostrend-aic8800-dkms"
+
+function post_family_config__qidi_x6_use_mainline_uboot() {
+	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
+
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+	declare -g BOOTBRANCH="tag:v2026.04"
+	declare -g BOOTPATCHDIR="v2026.04"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
+
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
+
+	function write_uboot_platform() {
+		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
+	}
+}
