@@ -392,10 +392,6 @@ function custom_kernel_config__recomputer_rk35xx_customizations() {
 		# RK3588 Mali-G610 works in JM mode as well.
 		kernel_config_set_n CONFIG_MALI_CSF_SUPPORT
 
-		# ETH — disable in-tree Realtek PCI driver (RK3588 uses r8125 DKMS)
-		# Note: CONFIG_REALTEK_PHY (RTL8211F, used by RK3576 DWMAC) is independent
-		kernel_config_set_n CONFIG_NET_VENDOR_REALTEK
-
 		# PWM fan
 		kernel_config_set_y CONFIG_SENSORS_PWM_FAN
 
