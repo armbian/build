@@ -110,6 +110,7 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 		| grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
 	local removed_pkgs
 	removed_pkgs=$(comm -23 "${snapshot_before}" "${snapshot_after}")
+	removed_pkgs=$(printf '%s\n' "${removed_pkgs}" | grep -vxE 'bluez|fcs960k-aic-bluez' || true)
 	rm -f "${snapshot_before}" "${snapshot_after}"
 
 	if [[ -n "${removed_pkgs}" ]]; then
