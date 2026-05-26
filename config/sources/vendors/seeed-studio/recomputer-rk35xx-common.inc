@@ -79,7 +79,8 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 		usbdevice-gadget-rk \
 		wpa-supplicant-morse-tools \
 		morsectrl-tools \
-		hostapd-morse-tools
+		hostapd-morse-tools \
+		morse-fgh100m-dkms
 
 	display_alert "Seeed packages installed successfully" "seeed-apt" "info"
 }
