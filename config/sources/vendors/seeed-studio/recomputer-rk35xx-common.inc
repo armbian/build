@@ -160,7 +160,9 @@ function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
 # Enable AIC8800 Bluetooth Service
 function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
-	if chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service || chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
+	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service || \
+	   chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service || \
+	   chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
 		chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
 	else
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
