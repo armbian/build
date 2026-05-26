@@ -535,7 +535,7 @@ driver_uwe5622() {
 
 	# Wireless drivers for Unisoc uwe5622 wireless
 
-	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]] && [[ "$BRANCH" != bleedingedge ]]; then
+	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
@@ -617,17 +617,20 @@ driver_uwe5622() {
 		fi
 
 		if linux-version compare "${version}" ge 6.17; then
-                        process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
+            process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
         fi
 
 		if linux-version compare "${version}" ge 6.18; then
-                        process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
+            process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
         fi
 
 		if linux-version compare "${version}" ge 6.19; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.19.patch" "applying"
 		fi
 
+		if linux-version compare "${version}" ge 7.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v7.1.patch" "applying"
+		fi
 	fi
 }
 
