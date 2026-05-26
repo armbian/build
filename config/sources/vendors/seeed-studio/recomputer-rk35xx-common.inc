@@ -362,15 +362,6 @@ function custom_kernel_config__recomputer_rk35xx_customizations() {
 		# RTC driver PCF8563
 		kernel_config_set_y CONFIG_RTC_DRV_PCF8563
 
-		# Morse Wireless (FGH100M)
-		kernel_config_set_m CONFIG_WLAN_VENDOR_MORSE
-		kernel_config_set_y CONFIG_MORSE_SPI
-		kernel_config_set_y CONFIG_MORSE_USER_ACCESS
-		kernel_config_set_y CONFIG_MORSE_VENDOR_COMMAND
-		kernel_config_set_y CONFIG_MORSE_MONITOR
-		kernel_config_set_y CONFIG_MAC80211_MESH
-		kernel_config_set_val CONFIG_MORSE_DEBUG_MASK "1"
-
 		# Regulator for Raspberry Pi Touchscreen V2 and camera v3
 		kernel_config_set_y CONFIG_VIDEO_ROCKCHIP_VPSS
 		kernel_config_set_y CONFIG_REGULATOR_RASPBERRYPI_TOUCHSCREEN_V2
