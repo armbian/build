@@ -350,47 +350,7 @@ function post_family_tweaks__recomputer_disable_gdm_autologin() {
 		"${SDCARD}/usr/lib/armbian/armbian-firstlogin"
 }
 
-# Common kernel config customizations for all reComputer RK35xx boards.
-# This ensures a single kernel build produces the same .config regardless of
-# which board triggers the build (both boards share LINUXFAMILY=rk35xx).
-function custom_kernel_config__recomputer_rk35xx_customizations() {
-	if [[ -f .config ]]; then
-		display_alert "Applying common kernel config for recomputer-rk35xx" "armbian-kernel" "info"
-
-		# GPIO PCA953X — I2C GPIO expander (RK3576)
-		kernel_config_set_y CONFIG_GPIO_PCA953X
-
-		# RTC driver PCF8563
-		kernel_config_set_y CONFIG_RTC_DRV_PCF8563
-
-		# Regulator for Raspberry Pi Touchscreen V2 and camera v3
-		kernel_config_set_y CONFIG_VIDEO_ROCKCHIP_VPSS
-		kernel_config_set_y CONFIG_REGULATOR_RASPBERRYPI_TOUCHSCREEN_V2
-		kernel_config_set_y CONFIG_VIDEO_IMX708
-		kernel_config_set_y CONFIG_VIDEO_DW9800W
-		kernel_config_set_y CONFIG_REGULATOR_AD5398
-		kernel_config_set_y CONFIG_REGULATOR_DW9807
-
-		# Rockchip OTP (NVMEM)
-		kernel_config_set_y CONFIG_NVMEM_ROCKCHIP_OTP
-
-		# GPU — disable open-source Panfrost/Panthor (use vendor Mali / no GPU driver)
-		kernel_config_set_n CONFIG_DRM_PANFROST
-		kernel_config_set_n CONFIG_DRM_PANTHOR
-
-		# GPU — disable Mali CSF mode; RK3576 Mali-G52 only supports JM.
-		# CSF requires 2MB register space for doorbells which overlaps with
-		# other devices on RK3576 (VOP, JPEG, RGA at 0x27900000+).
-		# RK3588 Mali-G610 works in JM mode as well.
-		kernel_config_set_n CONFIG_MALI_CSF_SUPPORT
-
-		# PWM fan
-		kernel_config_set_y CONFIG_SENSORS_PWM_FAN
-
-		# Goodix touchscreen
-		kernel_config_set_y CONFIG_TOUCHSCREEN_GOODIX
-	fi
-}
+#
 
 # Stage kernel patches from Seeed extension into userpatches so the
 # Armbian framework applies them during kernel build. Uses the same
