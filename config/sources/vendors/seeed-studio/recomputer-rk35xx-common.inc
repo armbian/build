@@ -303,8 +303,8 @@ function post_family_tweaks__recomputer_usb_auto_mount() {
 		    add)
 		        MPOINT="$BASE/$LABEL"
 		        mkdir -p "$MPOINT"
-		        if mount -o noatime "$DEV" "$MPOINT" 2>/dev/null || \
-		           mount -o noatime,uid=1000,gid=1000,umask=002 "$DEV" "$MPOINT" 2>/dev/null; then
+		        if mount -o noatime,uid=1000,gid=1000,umask=002 "$DEV" "$MPOINT" 2>/dev/null || \
+		           mount -o noatime "$DEV" "$MPOINT" 2>/dev/null; then
 		            chown "${FIRST_USER}:${FIRST_USER}" "$MPOINT" 2>/dev/null
 		        else
 		            rmdir "$MPOINT" 2>/dev/null
