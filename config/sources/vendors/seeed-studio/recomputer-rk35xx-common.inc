@@ -212,11 +212,11 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 		sed -i 's/^Requires=bluetooth.service bluetooth.target$/Wants=bluetooth.service/' \
 			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
 			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
-			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null || true
 		sed -i 's/^After=bluetooth.service bluetooth.target$/After=bluetooth.target/' \
 			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
 			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
-			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null || true
 	else
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
 	fi
