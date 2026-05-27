@@ -139,6 +139,30 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 	disable_systemd_service_sdcard gdm3.service
 	disable_systemd_service_sdcard lightdm.service
 	disable_systemd_service_sdcard sddm.service
+
+	# fcs960k-aic-bluez replaces bluez but does not ship a bluetooth.service
+	# unit. Create one pointing to fcs960k's bluetoothd so that
+	# aic-bluetooth.service (which Requires=bluetooth.service) can start.
+	if [[ -f "${SDCARD}/usr/libexec/bluetooth/bluetoothd" ]] && [[ ! -f "${SDCARD}/lib/systemd/system/bluetooth.service" ]] && [[ ! -f "${SDCARD}/usr/lib/systemd/system/bluetooth.service" ]]; then
+		cat > "${SDCARD}/lib/systemd/system/bluetooth.service" <<-'EOF'
+[Unit]
+Description=Bluetooth service
+After=dbus.service
+ConditionPathDirectory=/sys/class/bluetooth
+
+[Service]
+Type=dbus
+BusName=org.bluez
+ExecStart=/usr/libexec/bluetooth/bluetoothd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=bluetooth.target
+Also=aic-bluetooth.service
+Alias=dbus-org.bluez.service
+EOF
+	fi
 }
 
 # AIC8800 wireless tweaks (BSP-level)
@@ -179,6 +203,20 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 	   chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service || \
 	   chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
 		chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
+
+		# Soften hard dependency on bluetooth.service — use sed instead of
+		# drop-in override (systemd drop-in cannot reliably clear list-type
+		# directives like Requires= on this version).  fcs960k-aic-bluez
+		# replaces bluez but does not ship bluetooth.service, so the base
+		# unit's Requires=bluetooth.service would block aic-bluetooth.
+		sed -i 's/^Requires=bluetooth.service bluetooth.target$/Wants=bluetooth.service/' \
+			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
+			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null
+		sed -i 's/^After=bluetooth.service bluetooth.target$/After=bluetooth.target/' \
+			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
+			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null
 	else
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
 	fi
