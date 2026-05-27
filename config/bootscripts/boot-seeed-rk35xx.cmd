@@ -3,7 +3,9 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-setenv load_addr "0x9000000"
+# Use U-Boot's per-SoC overlay address as scratch buffer.
+# RK3576: 0x48200000, RK3588: 0x08200000 (set in ENV_MEM_LAYOUT_SETTINGS)
+setenv load_addr "${fdtoverlay_addr_r}"
 setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk0p1"
@@ -24,9 +26,8 @@ if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
-# Absolute fallback for rk3588 board.
-# If EEPROM is missing/invalid, this value will be used.
-setenv fdtfile "rockchip/rk3588-recomputer-rk3588-devkit.dtb"
+# fdtfile is set by armbianEnv.txt (per-board BOOT_FDT_FILE).
+# EEPROM detection below will override it if a valid EEPROM is found.
 setenv eeprom_dtb_matched "no"
 
 # EEPROM format:
