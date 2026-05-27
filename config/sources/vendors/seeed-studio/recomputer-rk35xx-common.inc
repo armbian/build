@@ -19,9 +19,10 @@ function post_family_tweaks_bsp__seeed_configure_apt_source() {
 	fi
 
 	# Select APT distribution based on target release
-	local SEEED_DIST="stable"
-	if [[ "${RELEASE}" == "bookworm" ]]; then
-		SEEED_DIST="bookworm"
+	# Debian uses bookworm, Ubuntu uses stable
+	local SEEED_DIST="bookworm"
+	if [[ "${RELEASE}" =~ ^(focal|jammy|noble|plucky|questing|oracular)$ ]]; then
+		SEEED_DIST="stable"
 	fi
 
 	cat > "${destination}/etc/apt/sources.list.d/seeed.list" <<- EOF
@@ -37,9 +38,10 @@ function seeed_recomputer_install_from_apt() {
 	(($#)) || return 0
 
 	# Select APT distribution based on target release
-	local SEEED_DIST="stable"
-	if [[ "${RELEASE}" == "bookworm" ]]; then
-		SEEED_DIST="bookworm"
+	# Debian uses bookworm, Ubuntu uses stable
+	local SEEED_DIST="bookworm"
+	if [[ "${RELEASE}" =~ ^(focal|jammy|noble|plucky|questing|oracular)$ ]]; then
+		SEEED_DIST="stable"
 	fi
 
 	# Import GPG key if not already present (dearmor to binary format for signed-by)
@@ -63,8 +65,8 @@ function seeed_recomputer_install_from_apt() {
 		EOF
 	fi
 
-	chroot_sdcard env -u http_proxy -u https_proxy apt-get -y -qq -o Dpkg::Use-Pty=0 update
-	chroot_sdcard env -u http_proxy -u https_proxy DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
+	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
+	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
 		--no-install-recommends install "$@"
 }
 
