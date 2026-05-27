@@ -18,12 +18,8 @@ function post_family_tweaks_bsp__seeed_configure_apt_source() {
 		exit_with_error "Failed to import Seeed GPG key"
 	fi
 
-	# Select APT distribution based on target release
-	# Debian uses bookworm, Ubuntu uses stable
-	local SEEED_DIST="bookworm"
-	if [[ "${RELEASE}" =~ ^(focal|jammy|noble|plucky|questing|oracular)$ ]]; then
-		SEEED_DIST="stable"
-	fi
+	# All releases use the same dist (packages are built on bookworm, forward-compatible)
+	local SEEED_DIST="stable"
 
 	cat > "${destination}/etc/apt/sources.list.d/seeed.list" <<- EOF
 		deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} ${SEEED_DIST} main
@@ -37,12 +33,8 @@ function post_family_tweaks_bsp__seeed_configure_apt_source() {
 function seeed_recomputer_install_from_apt() {
 	(($#)) || return 0
 
-	# Select APT distribution based on target release
-	# Debian uses bookworm, Ubuntu uses stable
-	local SEEED_DIST="bookworm"
-	if [[ "${RELEASE}" =~ ^(focal|jammy|noble|plucky|questing|oracular)$ ]]; then
-		SEEED_DIST="stable"
-	fi
+	# All releases use the same dist (packages are built on bookworm, forward-compatible)
+	local SEEED_DIST="stable"
 
 	# Import GPG key if not already present (dearmor to binary format for signed-by)
 	if [[ ! -f "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
