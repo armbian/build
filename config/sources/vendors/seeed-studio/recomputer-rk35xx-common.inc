@@ -388,7 +388,9 @@ EOF
 }
 
 # Mali EGL — bypass libglvnd for EGL/GLES so GLVND does not fall back to Mesa/llvmpipe.
-# Keep Mali GBM selected to match the Mali userspace stack used by GNOME Wayland.
+# When MALI_USE_SYSTEM_GBM=yes, also remove Mali deb's ldconfig entry and stubs
+# to prevent mali/ wrappers from shadowing our direct libmali.so.1 symlinks.
+# RK3588 keeps the ldconfig entry so libMaliOpenCL remains discoverable.
 function post_family_tweaks__recomputer_mali_egl_override() {
 	display_alert "$BOARD" "Replacing libglvnd EGL/GLES with Mali" "info"
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
@@ -404,6 +406,16 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 		ln -sf libmali.so.1 "${LIB_DIR}/${f}"
 	done
 
+	# Remove Mali deb's ldconfig entry and stubs — they shadow our symlinks.
+	# Only done when MALI_USE_SYSTEM_GBM=yes; RK3588 keeps them for OpenCL.
+	if [[ "${MALI_USE_SYSTEM_GBM}" == "yes" ]]; then
+		rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
+		rm -f "${LIB_DIR}/mali/libEGL.so" "${LIB_DIR}/mali/libEGL.so.1" \
+			"${LIB_DIR}/mali/libGLESv2.so" "${LIB_DIR}/mali/libGLESv2.so.2" \
+			"${LIB_DIR}/mali/libGLESv1_CM.so" "${LIB_DIR}/mali/libGLESv1_CM.so.1" \
+			"${LIB_DIR}/mali/libwayland-egl.so" "${LIB_DIR}/mali/libwayland-egl.so.1"
+	fi
+
 	# Mali EGL vendor JSON for libglvnd-aware apps
 	mkdir -p "${SDCARD}"/usr/share/glvnd/egl_vendor.d/
 	cat > "${SDCARD}"/usr/share/glvnd/egl_vendor.d/00_mali.json <<-'EOF'
@@ -416,17 +428,24 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 EOF
 }
 
-# Fix Mali GBM symlink after all apt ops (dpkg-divert protects against future ldconfig).
+# GBM fixup: MALI_USE_SYSTEM_GBM=yes (board config) means delete Mali's bundled
+# GBM stub and keep system libgbm. The Mali deb includes a 5928-byte libgbm stub
+# (2020) that can cause red/blue color swap on DRM outputs due to incorrect pixel
+# format in buffer allocation. Default is to use Mali GBM (RK3588).
 function pre_umount_final_image__recomputer_mali_gbm_fixup() {
-	display_alert "$BOARD" "Restoring Mali GBM symlink" "info"
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
 
-	chroot_sdcard dpkg-divert --rename \
-		--divert /usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0.mesa \
-		/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0 2>/dev/null || true
-
-	rm -f "${LIB_DIR}/libgbm.so.1"
-	ln -sf mali/libgbm.so.1 "${LIB_DIR}/libgbm.so.1"
+	if [[ "${MALI_USE_SYSTEM_GBM}" == "yes" ]]; then
+		display_alert "$BOARD" "Using system libgbm" "info"
+		rm -f "${LIB_DIR}/mali/libgbm.so" "${LIB_DIR}/mali/libgbm.so.1"
+	else
+		display_alert "$BOARD" "Using Mali GBM" "info"
+		chroot_sdcard dpkg-divert --rename \
+			--divert /usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0.mesa \
+			/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0 2>/dev/null || true
+		rm -f "${LIB_DIR}/libgbm.so.1"
+		ln -sf mali/libgbm.so.1 "${LIB_DIR}/libgbm.so.1"
+	fi
 }
 
 # Patch armbian-firstlogin: disable GDM auto-login.
