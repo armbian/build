@@ -58,7 +58,6 @@ reorder_eth() {
 			if [ -n "$iface" ]; then
 				break
 			fi
-			sleep 0.5
 		done
 		iface_list+=("$iface")
 	done
