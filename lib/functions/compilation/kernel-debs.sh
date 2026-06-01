@@ -28,7 +28,7 @@
 # - building the .debs.
 
 is_enabled() {
-	grep -q "^$1=y" include/config/auto.conf
+	grep -q "^$1=y" "${kernel_work_dir}/include/config/auto.conf"
 }
 
 if_enabled_echo() {
