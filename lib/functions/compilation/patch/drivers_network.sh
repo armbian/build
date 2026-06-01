@@ -150,10 +150,10 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.0; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.1; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:c2f491f0e42c438a29b207e96429b4d76c581a03' # Commit date: 2025-06-23 (please update when updating commit ref)
+		local rtl8192euver='commit:9c0511420da11214c68d8591b19459ba10892aab' # Commit date: 2026-03-13 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -178,16 +178,13 @@ driver_rtl8192EU() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
+		# fix compiler warnings - must be first before other patches
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-compile-warnings.patch" "applying"
 
-		# fix compilation for kernels >= 6.17
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-6.16-6.17.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 5.4.251
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
 	fi
 }
 
