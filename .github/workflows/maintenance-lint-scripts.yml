@@ -25,6 +25,11 @@ on:
 
 permissions:
   contents: read
+  # Required for the `gh api repos/.../pulls/N/files` call below.
+  # `contents: read` alone leaves all other scopes at `none` under
+  # fine-grained / app tokens, and the endpoint then returns
+  # `Resource not accessible by integration`.
+  pull-requests: read
 
 concurrency:
   group: pipeline-lint-${{ github.event.pull_request.number }}
@@ -60,9 +65,46 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v46.0.5
+      # PR-scope file list. Uses the GitHub PR API (merge-base diff,
+      # the same set the PR's "Files changed" tab and reviewdog's
+      # filter_mode=added operate on), not `git diff base..head` —
+      # the latter expands to every commit since the head branch
+      # forked, which on stale-rebased PRs balloons to hundreds of
+      # legacy files and produces red Checks unrelated to the PR.
+      #
+      # The list is written to `pr-changed-files.lines` as one
+      # JSON-encoded path per line. Both the `$GITHUB_OUTPUT`
+      # multiline-heredoc and the env-block alternatives are too
+      # fragile here: Git allows newlines and quotes in paths, and
+      # filename data is attacker-controlled (any PR can add any
+      # path), so any encoding that uses raw newlines as separator
+      # — or any in-script `${{ … }}` interpolation — is a route
+      # to either truncation, lost files, or command injection at
+      # parse time. JSON-per-line cleanly addresses all three: the
+      # newline separator cannot appear inside a JSON-encoded path,
+      # and consumers `jq -r .` to recover the raw string into a
+      # shell variable that already exists (no parsing of the path
+      # *as* shell code).
+      - name: Get changed files (PR-scope, merge-base)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_FILE_COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          # `pulls/N/files` caps at 3000 entries. Above that GitHub
+          # silently returns only a prefix, the downstream gate would
+          # lint a partial PR, and SC errors in trailing files could
+          # ship as green. Refuse loudly instead — a local merge-base
+          # fallback is possible but rarely worth carrying since PRs
+          # of this size are exceptional.
+          if (( PR_FILE_COUNT > 3000 )); then
+            echo "::error::PR changes ${PR_FILE_COUNT} files; GitHub's pulls/N/files API caps at 3000. Split the PR, or extend this workflow with a local merge-base fallback."
+            exit 1
+          fi
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename | @json' > pr-changed-files.lines
+          echo "PR-scope changed files (#${{ github.event.pull_request.number }}):"
+          jq -r . < pr-changed-files.lines | sed 's/^/  /'
 
       - name: Install shfmt (used by `shfmt -f .` enumerator and the drift artifact)
         run: sudo apt-get update -qq && sudo apt-get install -y shfmt
@@ -103,15 +145,21 @@ jobs:
           # in the red-cross gate at end of job, but their output
           # also needs to land in the artifact so the post phase can
           # inline-comment on them. Same exclusion regex as the gate.
-          CHANGED_FILES="${{ steps.changed-files.outputs.all_changed_files }}"
-          for file in $CHANGED_FILES; do
+          #
+          # Read each path as JSON (escapes embedded newlines/quotes)
+          # then jq-decode into $file. Because $file is *assigned*, not
+          # interpolated, even a path like `x"$(id)".sh` becomes a
+          # plain string here — no command substitution at parse time.
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            file=$(jq -r . <<< "$line")
             [[ -f "$file" ]] || continue
             if [[ ! "$file" =~ lib/|extensions/|\.py$|\.service$|\.rules$|\.network$|\.netdev$ ]]; then
               if grep -qE '^#!/.*bash' "$file" 2>/dev/null; then
                 "$SC" --shell=bash --severity=error --format=gcc "$file" >> shellcheck-findings.txt 2>&1 || true
               fi
             fi
-          done
+          done < pr-changed-files.lines
 
       - name: ShellCheck — produce auto-fix diff (PR-suggestion artifact)
         run: |
@@ -180,22 +228,66 @@ jobs:
       # ============================================================
       - name: Red-cross gate (framework run + critical per-file)
         run: |
-          bash lib/tools/shellcheck.sh
+          # Capture every gate diagnostic so a non-zero exit can publish
+          # a readable report to the Step Summary. Without this the only
+          # artifact of a fail is the bare job log buried under collapsed
+          # step groups.
+          gate_log="$(mktemp)"
+          trap 'rm -f "$gate_log"' EXIT
 
-          # Assign the changed-files template output into a shell
-          # variable first so its content cannot be parsed by bash as
-          # code (a malicious PR could otherwise name a file
-          # `$(cmd).sh` and execute that command on template
-          # expansion — zizmor template-injection).
-          CHANGED_FILES="${{ steps.changed-files.outputs.all_changed_files }}"
-          ret=0
-          for file in $CHANGED_FILES; do
+          set +e
+          bash lib/tools/shellcheck.sh 2>&1 | tee -a "$gate_log"
+          framework_ret=${PIPESTATUS[0]}
+
+          # Same cached, version-pinned ShellCheck binary the artifact
+          # step uses — not the runner's system `shellcheck`, whose
+          # version may differ and report findings the gate and the
+          # artifact disagree on.
+          SC=$(find cache/tools/shellcheck -name 'shellcheck-v*' -type f -executable | head -1)
+
+          # Read each path as JSON-encoded (escapes newlines/quotes)
+          # then jq-decode into $file. Path content is attacker-
+          # controlled (any PR can add any filename), so it must
+          # never reach the shell parser as code — see comments on
+          # the `Get changed files` step above.
+          per_file_ret=0
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            file=$(jq -r . <<< "$line")
             [[ -f "$file" ]] || continue
             if [[ ! "$file" =~ lib/|extensions/|\.py$|\.service$|\.rules$|\.network$|\.netdev$ ]]; then
               if grep -qE '^#!/.*bash' "$file" 2>/dev/null; then
-                shellcheck --shell=bash --severity=error "$file" || ret=$?
+                # gcc format keeps the captured log compact and
+                # file:line-prefixed for the Step Summary.
+                "$SC" --shell=bash --severity=error --format=gcc "$file" 2>&1 | tee -a "$gate_log"
+                rc=${PIPESTATUS[0]}
+                [[ $rc -ne 0 ]] && per_file_ret=$rc
               fi
             fi
-          done
+          done < pr-changed-files.lines
+          set -e
+
+          ret=0
+          [[ $framework_ret -ne 0 ]] && ret=$framework_ret
+          [[ $per_file_ret -ne 0 ]] && ret=$per_file_ret
+
+          if [[ $ret -ne 0 ]]; then
+            # Step Summary — the readable report a PR author sees on the
+            # Check's run page. Inline per-line markers are intentionally
+            # left to the post workflow's reviewdog pass (which also
+            # surfaces them on the Conversation tab); emitting `::error`
+            # annotations here too would double up on the same lines.
+            # The Summary is the fallback that still works when reviewdog
+            # no-ops (cross-fork token, filter mismatch, reviewdog down).
+            {
+              echo "## Red-cross gate failed"
+              echo
+              echo "ShellCheck reported findings in PR-scope files. Details:"
+              echo
+              echo '```'
+              cat "$gate_log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           exit $ret

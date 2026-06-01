@@ -505,7 +505,8 @@ function install_distribution_agnostic() {
 	# example: SERIALCON="ttyS0:15000000,ttyGS1"
 	#
 	ifs=$IFS
-	for i in $(echo "${SERIALCON:-'ttyS0'}" | sed "s/,/ /g"); do
+	local _serialcon_csv="${SERIALCON:-ttyS0}"
+	for i in ${_serialcon_csv//,/ }; do
 		IFS=':' read -r -a array <<< "$i"
 		[[ "${array[0]}" == "tty1" ]] && continue # Don't enable tty1 as serial console.
 		display_alert "Enabling serial console" "${array[0]}" "info"
