@@ -9,7 +9,7 @@
 setenv kernel_addr_r "0x42000000"
 setenv fdt_addr_r "0x48000000"
 setenv ramdisk_addr_r "0x82000000"
-# Aux loads (env, dtbos). Keep below 0x8a800000 where boot.scr is sourced from.
+# Aux loads (env, dtbos). Keep above 0x8a800000 where boot.scr is sourced from.
 setenv load_addr "0x90000000"
 setenv overlay_error "false"
 
