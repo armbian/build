@@ -24,7 +24,7 @@ UBOOT_TARGET_MAP="flash.bin;;flash.bin"
 case $BOARD in
 
 	mba8mpxl* | tq-smarc2-*)
-		LINUXCONFIG='linux-tqma-'$BRANCH # one config for "tq arm modules"
+		LINUXCONFIG='linux-tq-imx8m-'$BRANCH # one config for "tq arm modules"
 		case $BRANCH in
 
 			current) # mainline stable kernel
