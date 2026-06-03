@@ -499,3 +499,14 @@ if [[ "${ENABLE_SEEED_RK_EXTENSION:-no}" == "yes" ]]; then
 	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
 	enable_extension "seeed_armbian_extension"
 fi
+
+# Disable armbian-hardware-optimize — the BSP kernel handles DVFS via DT OPP
+# tables + devfreq, and IRQ affinity is a no-op for seeed-rk35xx families
+# (no matching case in the script). The service's USB quirks function also
+# risks corrupting /boot/armbianEnv.txt with multiple non-atomic sed -i writes.
+function post_family_tweaks__recomputer_rk35xx_disable_armbian_hardware_optimize() {
+	display_alert "$BOARD" "Removing armbian-hardware-optimize.service" "info"
+
+	chroot_sdcard systemctl --no-reload disable armbian-hardware-optimize.service 2>/dev/null || true
+	rm -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service
+}
