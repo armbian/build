@@ -13,7 +13,7 @@ declare -g ATFBRANCH="tag:lts-v2.12.9"
 declare -g BOOTDELAY=1
 declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
 declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2024.01"}"
-declare -g BOOTENV_FILE='sunxi.txt'
+declare -g BOOTENV_FILE="${BOOTENV_FILE:-"sunxi.txt"}"
 declare -g UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 declare -g OVERLAY_DIR="/boot/dtb/allwinner/overlay"
