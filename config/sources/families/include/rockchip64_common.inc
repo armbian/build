@@ -36,6 +36,12 @@ case $BRANCH in
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
+
+	bleedingedge)
+		declare -g KERNEL_MAJOR_MINOR="7.1"
+		declare -g LINUXFAMILY=rockchip64
+		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
+		;;
 esac
 
 # rockchip64 (used mainly for RK3399) legacy kernel 4.4 is dead code
@@ -52,6 +58,11 @@ esac
 # Available options for BOOT_SCENARIO are:
 # - only-blobs: proprietary rockchip ddrbin, miniloader and ATF
 # - spl-blobs: proprietary rockchip ddrbin and ATF, but uses mainline u-boot SPL in place of rockchip miniloader
+# - vendor-spl-blobs: like spl-blobs but FlashBoot in boot_merger ini points at a vendor SPL blob declared via
+#   VENDOR_SPL_PATH instead of the mainline-built ./spl/u-boot-spl.bin. Used for boards where mainline SPL has
+#   unresolved SoC-specific issues, e.g. NanoPi M5 (RK3576 mainline SPL has the UFS OCS load_addr bug). Also
+#   triggers binman to deploy u-boot-rockchip-spi.bin so SPI flash can use mainline SPL (which knows the chip
+#   via DT) while SD/eMMC/UFS use the vendor SPL idblock.
 # - tpl-spl-blob: uses mainline u-boot TPL and SPL with proprietary rockchip ATF blob
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
@@ -151,7 +162,7 @@ case "$BOOT_SOC" in
 
 	rk3588) #CPUMAX undefined?
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.18.bin"}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.20_20250926.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.48.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk3588_spl_loader_v1.16.113.bin"
@@ -185,6 +196,19 @@ prepare_boot_configuration() {
 			;;
 		spl-blobs)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
+			;;
+		vendor-spl-blobs)
+			# Like spl-blobs but boot_merger uses VENDOR_SPL_PATH for FlashBoot.
+			# Empty make-target list (env vars only): binman default goal produces
+			# u-boot.itb + u-boot-rockchip-spi.bin as side products. boot_merger
+			# then overwrites idbloader.img with the vendor-SPL version.
+			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;idbloader.img u-boot.itb u-boot-rockchip-spi.bin"
+			# Default VENDOR_SPL_PATH per SoC; board can still override.
+			if [[ -z "${VENDOR_SPL_PATH:-}" ]]; then
+				case "$BOOT_SOC" in
+					rk3576) declare -g VENDOR_SPL_PATH="${RKBIN_DIR}/rk35/rk3576_spl_v1.08.bin" ;;
+				esac
+			fi
 			;;
 		only-blobs)
 			UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
@@ -220,11 +244,23 @@ uboot_custom_postprocess() {
 			:
 			;;
 
-		spl-blobs | tpl-blob-atf-mainline)
+		spl-blobs | tpl-blob-atf-mainline | vendor-spl-blobs)
 			# Bomb if DDR_BLOB not defined or does not exist
 			declare SPL_BIN_PATH="${RKBIN_DIR}/${DDR_BLOB}"
 			[[ -z ${SPL_BIN_PATH} ]] && exit_with_error "DDR_BLOB not defined for scenario ${BOOT_SCENARIO}"
 			[[ ! -f "${SPL_BIN_PATH}" ]] && exit_with_error "DDR_BLOB ${SPL_BIN_PATH} does not exist for scenario ${BOOT_SCENARIO}"
+
+			# vendor-spl-blobs: FlashBoot in boot_merger points at the vendor SPL blob
+			# declared by the board via VENDOR_SPL_PATH (instead of the mainline-built
+			# ./spl/u-boot-spl.bin). Everything else (DDR, boost, usbplug, BL31) is
+			# unchanged from spl-blobs.
+			declare FLASH_BOOT_BIN="./spl/u-boot-spl.bin"
+			if [[ "$BOOT_SCENARIO" == "vendor-spl-blobs" ]]; then
+				[[ -z "${VENDOR_SPL_PATH:-}" ]] && exit_with_error "VENDOR_SPL_PATH must be set for BOOT_SCENARIO=vendor-spl-blobs"
+				[[ ! -f "${VENDOR_SPL_PATH}" ]] && exit_with_error "VENDOR_SPL_PATH (${VENDOR_SPL_PATH}) does not exist"
+				FLASH_BOOT_BIN="${VENDOR_SPL_PATH}"
+				display_alert "boot_merger for '${BOOT_SOC}'" "using vendor SPL ${VENDOR_SPL_PATH##*/}" "info"
+			fi
 
 			if [[ "$BOOT_SOC" == "rk3576" ]]; then
 				display_alert "boot_merger for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
@@ -234,7 +270,7 @@ uboot_custom_postprocess() {
 				sed -i "s|Path1=.*rk3576_ddr.*$|Path1=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
 				sed -i "s|Path1=.*rk3576_usbplug.*$|Path1=${RKBIN_DIR}/rk35/rk3576_usbplug_v1.03.bin|g" $RKBOOT_INI_FILE
 				sed -i "s|FlashData=.*$|FlashData=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
-				sed -i "s|FlashBoot=.*$|FlashBoot=./spl/u-boot-spl.bin|g" $RKBOOT_INI_FILE
+				sed -i "s|FlashBoot=.*$|FlashBoot=${FLASH_BOOT_BIN}|g" $RKBOOT_INI_FILE
 				sed -i "s|IDB_PATH=.*$|IDB_PATH=idbloader.img|g" $RKBOOT_INI_FILE
 				run_host_x86_binary_logged $RKBIN_DIR/tools/boot_merger $RKBOOT_INI_FILE
 				rm -f $RKBOOT_INI_FILE
@@ -300,6 +336,23 @@ write_uboot_platform() {
 		${logging_prelude} dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none
 	else
 		echo "Unsupported u-boot processing configuration!"
+		exit 1
+	fi
+}
+
+write_uboot_platform_ufs() {
+	# Args: $1 = u-boot deploy dir (DIR), $2 = Boot LUN A (e.g. /dev/sdb), $3 = General LUN (e.g. /dev/sda).
+	# Generic mainline-stack writer: idbloader.img → Boot LUN A @ 32 KiB; u-boot.itb → General LUN @ 8 MiB.
+	# UFS LUNs expose 4 KiB logical blocks, so bs=4096 with pre-divided seek values.
+	# Boards needing a vendor idblock (e.g. RK3576 NanoPi M5) override this in their post_family_config hook.
+	local logging_prelude=""
+	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
+
+	if [[ -f $1/idbloader.img && -f $1/u-boot.itb ]]; then
+		${logging_prelude} dd if=$1/idbloader.img of=$2 bs=4096 seek=8    conv=notrunc,fsync status=none
+		${logging_prelude} dd if=$1/u-boot.itb   of=$3 bs=4096 seek=2048 conv=notrunc,fsync status=none
+	else
+		echo "write_uboot_platform_ufs: no idbloader.img + u-boot.itb pair in $1; board hook must override."
 		exit 1
 	fi
 }

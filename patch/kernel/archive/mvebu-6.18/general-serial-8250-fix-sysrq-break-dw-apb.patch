@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <325961+iav@users.noreply.github.com>
+Date: Sat, 03 May 2026 00:00:00 +0000
+Subject: serial: 8250: fix SysRq-via-BREAK regression for dw-apb-uart (8250_dw)
+
+This file is a verbatim copy of the same patch from
+patch/kernel/archive/rockchip64-7.0/ (PR #9750). Root cause is described
+in the original rockchip patch below: the same drivers/tty/serial/8250/
+8250_dw.c is used on Armada 38x (mvebu) — e.g. helios4 — and inherits the
+same regression. Verified 2026-05-05 on helios4 with kernel-mvebu 6.18-edge:
+without the patch handle_sysrq() never runs; with the patch
+`sysrq: HELP : ...` appears on the serial console after
+`picocom Ctrl-A 'C-\' h` (with console_loglevel raised above the
+boot-default 1).
+
+Original rockchip patch description follows verbatim:
+
+──────────────────────────────────────────────────────────────────
+
+Sending a serial BREAK followed by a SysRq command character stopped
+working on dw-apb-uart (e.g. RK3399 / helios64) in Linux 7.0.
+
+The refactoring introduced by:
+
+  commit 8324a54f604d ("serial: 8250: Add serial8250_handle_irq_locked()")
+  Link: https://patch.msgid.link/20260203171049.4353-4-ilpo.jarvinen@linux.intel.com
+  (Ilpo Järvinen, [PATCH v2 4/7], 2026-02-03; merged for linux 7.0,
+   Cc: stable -> backported to v6.19.10)
+
+  commit 883c5a2bc934 ("serial: 8250_dw: Rework dw8250_handle_irq() locking and IIR handling")
+  Link: https://patch.msgid.link/20260203171049.4353-5-ilpo.jarvinen@linux.intel.com
+  (Ilpo Järvinen, [PATCH v2 5/7], 2026-02-03)
+
+replaced the explicit uart_unlock_and_check_sysrq_irqrestore() call in
+serial8250_handle_irq() with a guard(uart_port_lock_irqsave) scope.
+The guard releases the port lock at scope exit via
+uart_port_unlock_irqrestore(), but unlike uart_unlock_and_check_sysrq*
+it does NOT check port->sysrq_ch and therefore never calls handle_sysrq().
+
+Traced with bpftrace on a helios64 (RK3399, dw-apb-uart):
+  - BREAK is received: lsr=0xf9 (UART_LSR_BI set), port->sysrq timer armed
+  - next char arrives: port->sysrq != 0, uart_prepare_sysrq_char() sets
+    port->sysrq_ch correctly
+  - handle_sysrq() is never called: uart_unlock_and_check_sysrq_irqrestore()
+    is absent from the dw8250 -> serial8250_handle_irq_locked() call chain
+
+Other drivers (amba-pl011, meson_uart, msm_serial, etc.) each call
+uart_unlock_and_check_sysrq() explicitly in their IRQ handler; 8250_dw
+relied on serial8250_handle_irq() doing it, and the refactor broke that.
+
+Fix: dw8250_handle_irq() uses guard() and calls serial8250_handle_irq_locked()
+directly, bypassing serial8250_handle_irq() entirely. The fix is in
+dw8250_handle_irq(): replace guard() with explicit locking and use
+uart_unlock_and_check_sysrq_irqrestore() at the normal exit point.
+Early-exit paths (UART_IIR_NO_INT / UART_IIR_BUSY) get plain
+uart_port_unlock_irqrestore() since they do not process RX chars.
+
+The change to serial8250_handle_irq() is kept as a defence-in-depth fix
+for any other caller that goes through that path.
+
+Fixes: 8324a54f604d ("serial: 8250: Add serial8250_handle_irq_locked()")
+Cc: Ilpo Järvinen <ilpo.jarvinen@linux.intel.com>
+Signed-off-by: Igor Velkov <iav@iav.lv>
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ drivers/tty/serial/8250/8250_dw.c   | 11 +++++++++--
+ drivers/tty/serial/8250/8250_port.c |  5 +++--
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/tty/serial/8250/8250_dw.c b/drivers/tty/serial/8250/8250_dw.c
+index 94beadb4024d..bd8f14dc248c 100644
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -426,19 +426,23 @@ static int dw8250_handle_irq(struct uart_port *p)
+ 	bool rx_timeout = (iir & 0x3f) == UART_IIR_RX_TIMEOUT;
+ 	unsigned int quirks = d->pdata->quirks;
+ 	unsigned int status;
++	unsigned long flags;
+
+-	guard(uart_port_lock_irqsave)(p);
++	uart_port_lock_irqsave(p, &flags);
+
+ 	switch (FIELD_GET(DW_UART_IIR_IID, iir)) {
+ 	case UART_IIR_NO_INT:
+-		if (d->uart_16550_compatible || up->dma)
++		if (d->uart_16550_compatible || up->dma) {
++			uart_port_unlock_irqrestore(p, flags);
+ 			return 0;
++		}
+
+ 		if (quirks & DW_UART_QUIRK_IER_KICK &&
+ 		    d->no_int_count == (DW_UART_QUIRK_IER_KICK_THRES - 1))
+ 			dw8250_quirk_ier_kick(p);
+ 		d->no_int_count = (d->no_int_count + 1) % DW_UART_QUIRK_IER_KICK_THRES;
+
++		uart_port_unlock_irqrestore(p, flags);
+ 		return 0;
+
+ 	case UART_IIR_BUSY:
+@@ -447,6 +451,7 @@ static int dw8250_handle_irq(struct uart_port *p)
+
+ 		d->no_int_count = 0;
+
++		uart_port_unlock_irqrestore(p, flags);
+ 		return 1;
+ 	}
+
+@@ -480,6 +485,7 @@ static int dw8250_handle_irq(struct uart_port *p)
+ 	}
+
+ 	serial8250_handle_irq_locked(p, iir);
++	uart_unlock_and_check_sysrq_irqrestore(p, flags);
+
+ 	return 1;
+ }
+diff --git a/drivers/tty/serial/8250/8250_port.c b/drivers/tty/serial/8250/8250_port.c
+index 328711b5df1a..a815e9075648 100644
+--- a/drivers/tty/serial/8250/8250_port.c
++++ b/drivers/tty/serial/8250/8250_port.c
+@@ -1834,11 +1834,14 @@ EXPORT_SYMBOL_NS_GPL(serial8250_handle_irq_locked, "SERIAL_8250");
+  */
+ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
+ {
++	unsigned long flags;
++
+ 	if (iir & UART_IIR_NO_INT)
+ 		return 0;
+
+-	guard(uart_port_lock_irqsave)(port);
++	uart_port_lock_irqsave(port, &flags);
+ 	serial8250_handle_irq_locked(port, iir);
++	uart_unlock_and_check_sysrq_irqrestore(port, flags);
+
+ 	return 1;
+ }

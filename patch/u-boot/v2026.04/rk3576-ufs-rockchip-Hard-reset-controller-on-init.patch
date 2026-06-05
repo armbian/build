@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 7 May 2026 21:00:00 +0000
+Subject: ufs: rockchip: rk3576: Hard-reset controller on init to clear vendor
+ SPL handoff state
+
+When a vendor (Rockchip rkbin) SPL hands off to U-Boot proper, the UFS
+host controller is left in an active state from the SPL's link-startup
+and device discovery. The mainline ufshcd-rockchip driver's normal HCE
+toggle (Host Controller Enable bit) does not fully clear that state on
+RK3576: subsequent UIC commands time out with "Controller not ready to
+accept UIC commands", and the bus rescan loops indefinitely.
+
+Pulse the controller's reset-controller bulk (the four SRST_*_UFS_*
+resets already requested by ufs_rockchip_common_init) at the start of
+the SoC-specific init hook. This clears the controller register state
+fully -- equivalent to a SoC-level reset of the UFS block -- so the
+subsequent HCE enable, link startup, and SCSI scan all proceed cleanly.
+
+Has no effect when SPL is the mainline-built one (controller comes up
+already-fresh in SPL), and is a no-op for boards without UFS-capable
+boot ROMs.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/ufs/ufs-rockchip.c | 22 ++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/drivers/ufs/ufs-rockchip.c b/drivers/ufs/ufs-rockchip.c
+index 111111111111..222222222222 100644
+--- a/drivers/ufs/ufs-rockchip.c
++++ b/drivers/ufs/ufs-rockchip.c
+@@ -180,6 +180,7 @@ static int ufs_rockchip_device_reset(struct ufs_hba *hba)
+ 
+ static int ufs_rockchip_rk3576_init(struct ufs_hba *hba)
+ {
++	struct ufs_rockchip_host *host;
+ 	int ret = 0;
+ 
+ 	ret = ufs_rockchip_common_init(hba);
+@@ -188,6 +189,27 @@ static int ufs_rockchip_rk3576_init(struct ufs_hba *hba)
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Hard-reset the UFS controller through the reset-controller framework.
++	 * Vendor (rkbin) SPL leaves the controller in a state where the normal
++	 * HCE toggle is insufficient — UIC commands time out with "Controller
++	 * not ready". Pulsing SRST_A_UFS_BIU/SYS/UFS/P_UFS_GRF clears all
++	 * controller registers, so the regular ufshcd_init flow can proceed.
++	 */
++	host = dev_get_priv(hba->dev);
++	ret = reset_assert_bulk(&host->rsts);
++	if (ret) {
++		dev_err(hba->dev, "%s: reset assert fail %d\n", __func__, ret);
++		return ret;
++	}
++	udelay(100);
++	ret = reset_deassert_bulk(&host->rsts);
++	if (ret) {
++		dev_err(hba->dev, "%s: reset deassert fail %d\n", __func__, ret);
++		return ret;
++	}
++	udelay(100);
++
+ 	return 0;
+ }
+ 
+-- 
+Armbian
+

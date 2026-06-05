@@ -1,0 +1,197 @@
+name: "Maintenance: Lint scripts (post)"
+#
+# Second phase of the two-phase lint pipeline. Triggered by the
+# completion of maintenance-lint-scripts.yml ("Maintenance: Lint
+# scripts"), runs in the BASE repository's context with a full write
+# token — so review comments and suggestion blocks can be posted to
+# pull requests originating from forks too.
+#
+# Security boundary: this workflow never checks out PR code. It only
+# downloads the lint job's artifacts (text findings + unified diffs +
+# PR metadata) and feeds them to reviewdog. CodeQL's
+# actions/untrusted-checkout rule stays quiet because no
+# `actions/checkout` runs with `ref: ${{ github.event.pull_request.head.sha }}`
+# (or equivalent untrusted ref).
+#
+# Note: GitHub always runs `workflow_run` workflows from the default
+# branch's copy of this file, so changes to the post pipeline take
+# effect only after merging into the default branch.
+#
+# Runs on every fork of armbian/build by default. If a fork doesn't
+# want PR comments — disable Settings → Actions → Workflows →
+# "Maintenance: Lint scripts (post)". Disabling only the post leaves
+# the red-cross Check still working (Maintenance: Lint scripts itself);
+# disabling both leaves the fork lint-free.
+
+on:
+  workflow_run:
+    workflows: ["Maintenance: Lint scripts"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  Post:
+    name: Post ShellCheck and shfmt diagnostics
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read    # required by actions/download-artifact@v4 when downloading from another workflow run via `run-id`
+      pull-requests: write
+      checks: write
+      issues: write    # documented requirement of reviewdog for PR-comment APIs
+    # Run even on red-cross lint conclusions (`failure`) — the
+    # artifact is uploaded via `if: always()` in the lint workflow,
+    # and we want to surface diagnostics in the PR even when the
+    # gate failed. Skip the conclusions where no artifact is
+    # produced (cancelled / timed_out / skipped / action_required).
+    if: >-
+      ${{ github.event.workflow_run.conclusion != 'cancelled'
+       && github.event.workflow_run.conclusion != 'timed_out'
+       && github.event.workflow_run.conclusion != 'skipped'
+       && github.event.workflow_run.conclusion != 'action_required' }}
+    steps:
+      - name: Checkout BASE for reviewdog's local git context
+        # reviewdog requires a `.git` to be present even when its
+        # reporter (`github-pr-review`) computes the PR diff via API.
+        # Checking out BASE (the workflow's default branch — our own
+        # trusted code) gives it what it needs without ever pulling PR
+        # code into the privileged context; CodeQL's untrusted-checkout
+        # rule stays quiet because there is no `ref: ...head.sha`.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false   # defense-in-depth: post-step uses REVIEWDOG_GITHUB_API_TOKEN, not the on-disk extraheader
+
+      - name: Surface workflow purpose + disable instructions in the Check summary
+        run: |
+          cat >>"$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## What this Check does
+
+          `Maintenance: Lint scripts (post)` is the second phase of the lint pipeline. It downloads diagnostic artifacts produced by `Maintenance: Lint scripts` and posts them as inline review comments and auto-fix `suggestion` blocks on the PR via [reviewdog](https://github.com/reviewdog/reviewdog).
+
+          ### Don't want PR comments?
+
+          This workflow runs on every fork of `armbian/build` by default. To stop the PR-comment spam:
+
+          * **Just the comments** — Settings → Actions → Workflows → "Maintenance: Lint scripts (post)" → "Disable workflow". The lint Check itself (red cross / green check) keeps working.
+          * **Disable both phases** — disable `Maintenance: Lint scripts` instead; the post phase becomes a no-op automatically because there are no artifacts.
+
+          EOF
+
+      - name: Download lint artifacts (no checkout of PR code)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lint-scripts-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Synthesize pull_request event JSON for reviewdog
+        run: |
+          # reviewdog in a workflow_run context cannot find PR info on
+          # its own — GITHUB_EVENT_NAME is `workflow_run` and
+          # GITHUB_EVENT_PATH points to a workflow_run payload, not a
+          # pull_request event. CI_* fallback env vars are bypassed when
+          # GitHub Actions context is detected. Workaround: synthesize a
+          # minimal pull_request event JSON, then override
+          # GITHUB_EVENT_NAME and GITHUB_EVENT_PATH at the step level
+          # for each subsequent reviewdog invocation.
+          PR_NUMBER=$(cat pr-number.txt)
+          HEAD_SHA=$(cat head-sha.txt)
+          BASE_SHA=$(cat base-sha.txt)
+          BASE_REF=$(cat base-ref.txt)
+          BASE_REPO=$(cat base-repo.txt)
+          OWNER="${BASE_REPO%/*}"
+          NAME="${BASE_REPO##*/}"
+          jq -n \
+            --argjson number "$PR_NUMBER" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg base_sha "$BASE_SHA" \
+            --arg base_ref "$BASE_REF" \
+            --arg owner "$OWNER" \
+            --arg name "$NAME" \
+            --arg full "$BASE_REPO" \
+            '{
+              "action": "synchronize",
+              "number": $number,
+              "repository": {
+                "name": $name,
+                "full_name": $full,
+                "owner": { "login": $owner }
+              },
+              "pull_request": {
+                "number": $number,
+                "head": {
+                  "sha": $head_sha,
+                  "ref": "pr-head",
+                  "repo": { "full_name": $full, "name": $name, "owner": { "login": $owner } }
+                },
+                "base": {
+                  "sha": $base_sha,
+                  "ref": $base_ref,
+                  "repo": { "full_name": $full, "name": $name, "owner": { "login": $owner } }
+                }
+              }
+            }' > /tmp/pr-event.json
+          cat /tmp/pr-event.json
+          echo "FAKE_PR_EVENT_PATH=/tmp/pr-event.json" >> "$GITHUB_ENV"
+
+      - uses: reviewdog/action-setup@d8a7baabd7f3e8544ee4dbde3ee41d0011c3a93f # v1.4.0
+        with:
+          reviewdog_version: latest
+
+      # GitHub Actions strips `GITHUB_*` overrides from step-level
+      # `env:` blocks (documented), so we apply the overrides inline as
+      # bash command-environment variables — GitHub can't touch those.
+      - name: Post ShellCheck findings as inline review comments
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # reviewdog has no built-in `gcc` parser; supply vim
+          # errorformat (-efm) patterns matching
+          # `file:line:col: severity: message`. Three patterns cover
+          # error / warning / note outputs.
+          cat shellcheck-findings.txt | env \
+            GITHUB_EVENT_NAME=pull_request \
+            GITHUB_EVENT_PATH="$FAKE_PR_EVENT_PATH" \
+            reviewdog \
+              -name=shellcheck-findings \
+              -efm='%f:%l:%c: %trror: %m' \
+              -efm='%f:%l:%c: %tarning: %m' \
+              -efm='%f:%l:%c: %tote: %m' \
+              -reporter=github-pr-review \
+              -filter-mode=added \
+              -fail-level=none
+
+      - name: Post ShellCheck auto-fix as suggestion blocks
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `-f=diff` parses unified-diff input and emits `suggestion`
+          # blocks for each hunk on PR-added lines (filter_mode=added).
+          # Replaces reviewdog/action-suggester (which needs a checked-
+          # out worktree to compute the diff itself).
+          cat shellcheck-fix.diff | env \
+            GITHUB_EVENT_NAME=pull_request \
+            GITHUB_EVENT_PATH="$FAKE_PR_EVENT_PATH" \
+            reviewdog \
+              -name=shellcheck-fix \
+              -f=diff \
+              -filter-mode=added \
+              -reporter=github-pr-review \
+              -fail-level=none
+
+      - name: Post shfmt drift as suggestion blocks
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat shfmt.diff | env \
+            GITHUB_EVENT_NAME=pull_request \
+            GITHUB_EVENT_PATH="$FAKE_PR_EVENT_PATH" \
+            reviewdog \
+              -name=shfmt \
+              -f=diff \
+              -filter-mode=added \
+              -reporter=github-pr-review \
+              -fail-level=none

@@ -69,6 +69,10 @@ function kernel_config_initialize() {
 		run_host_command_logged cp -pv "${kernel_config_source_filename}" "${kernel_work_dir}/.config"
 	fi
 
+	# Ensure .config ends with a newline; ./scripts/config appends via `echo >>` and
+	# silently concatenates the first added option with the last line otherwise.
+	sed -i -e '$a\' "${kernel_work_dir}/.config"
+
 	# Call the extensions. This is _also_ done during the kernel artifact's prepare_version, for consistent caching.
 	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist before call_extensions_kernel_config: ${kernel_work_dir}"
 	call_extensions_kernel_config
@@ -92,6 +96,13 @@ function call_extensions_kernel_config() {
 	declare -A opts_val=()
 	# shellcheck disable=SC2034
 	declare -a opts_y=() opts_n=() opts_m=()
+
+	# kernel_config_set_* append to this array; ensure it exists globally so their
+	# changes survive for artifact versioning even when no caller pre-declared it.
+	if ! declare -p kernel_config_modifying_hashes >/dev/null 2>&1; then
+		# shellcheck disable=SC2034
+		declare -ga kernel_config_modifying_hashes=()
+	fi
 
 	# Run the core-armbian config modifications here, built-in extensions:
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'

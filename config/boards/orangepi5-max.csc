@@ -67,7 +67,23 @@ function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 }
 
 function post_family_tweaks__orangepi5max_enable_bluetooth_service() {
+	# On the edge kernel, the mainline hci_bcm SerDev driver handles BT natively
+	# via the DT bluetooth node. The user-space patchram service would conflict
+	# with SerDev (both try to claim /dev/ttyS7), so we skip enabling it.
+	[[ "$BRANCH" == "edge" ]] && return 0
+
 	display_alert "$BOARD" "Enabling ap6611s-bluetooth.service" "info"
 	chroot_sdcard systemctl enable ap6611s-bluetooth.service
+	return 0
+}
+
+# On the edge kernel, hci_bcm constructs the firmware filename from the board
+# compatible string (BCM.<board>.hcd), not from the chip name. Create a symlink
+# so the driver finds the SYN43711A0 patchram firmware.
+function post_family_tweaks__orangepi5max_bt_firmware_symlink() {
+	[[ "$BRANCH" != "edge" ]] && return 0
+	display_alert "$BOARD" "Creating BT firmware symlink for edge kernel" "info"
+	mkdir -p "$SDCARD/lib/firmware/brcm"
+	ln -sf SYN43711A0.hcd "$SDCARD/lib/firmware/brcm/BCM.xunlong,orangepi-5-max.hcd"
 	return 0
 }

@@ -183,9 +183,8 @@ function kernel_dtb_only_build() {
 
 	display_alert "Considering further .dts convenience processing" "for board '${BOARD}' branch '${BRANCH}'" "info"
 
-	# If BOOT_FDT_FILE is not set, bail.
 	if [[ -z "${BOOT_FDT_FILE}" ]]; then
-		display_alert "Board '${BOARD}' branch '${BRANCH}'" "No BOOT_FDT_FILE set for board, skipping further processing" "warn"
+		display_alert "Board '${BOARD}' branch '${BRANCH}' has no BOOT_FDT_FILE" "linux-dtb package produced OK; preprocessed DTS copy skipped. Check board config and any post_family_config_* hook that may unset it." "err"
 		return 0
 	fi
 
@@ -241,7 +240,7 @@ function kernel_dtb_only_build() {
 
 	display_alert "Kernel DTB-only for development" "Normalizing (dtc dts-to-dts) preprocessed FDT" "info"
 	declare preprocessed_fdt_normalized="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.dts"
-	run_host_command_logged dtc -s -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
+	run_host_command_logged dtc -@ -s -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
 
 	# Remove any phandles by grepping them out. This is not accurate and might be misleading, but sometimes useful for basic diffing across very different devices.
 	declare preprocessed_fdt_normalized_nophandles="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.nophandles.dts"

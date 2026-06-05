@@ -87,6 +87,26 @@ inputs:
     required: false
     default: ""
 
+  armbian_release_prerelease:
+    description: "Publish the GitHub release as a pre-release. Useful for matrix builds: leave as 'true' while images are still being uploaded, then promote to a regular release with `gh release edit <tag> --prerelease=false --latest` once all assets land."
+    required: false
+    default: "false"
+
+  armbian_download_base_url:
+    description: "Base URL where the published images live (used to construct file_url / redi_url in the assets manifest)"
+    required: false
+    default: "https://dl.armbian.com"
+
+  armbian_download_repository:
+    description: "Repository segment under <download_base>/<board>/<repo>/ (e.g. 'archive', 'nightly'). Set to empty string for a flat URL shape <download_base>/<filename> — useful when images are published directly to a GitHub release. In flat mode redi_url* mirror file_url* (no separate redirector exists)."
+    required: false
+    default: "archive"
+
+  armbian_index_url:
+    description: "URL of the canonical armbian-images.json used to enrich each entry's company_name / company_website / company_logo by board_slug. Set to empty string to skip enrichment."
+    required: false
+    default: "https://github.armbian.com/armbian-images.json"
+
 runs:
   using: "composite"
 
@@ -94,7 +114,7 @@ runs:
 
     - name: Free Github Runner
       if: ${{ inputs.armbian_runner_clean != '' }}
-      uses: descriptinc/free-disk-space@main
+      uses: descriptinc/free-disk-space@1b4b157593c6801212a2ed488c205e0a810b4592 # main
       with:
         android: true
         dotnet: true
@@ -105,13 +125,13 @@ runs:
 
     - name: "Import GPG key"
       if: ${{ inputs.armbian_pgp_key != '' }}
-      uses: crazy-max/ghaction-import-gpg@v7
+      uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
       with:
         gpg_private_key: ${{ inputs.armbian_pgp_key }}
         passphrase: ${{ inputs.armbian_pgp_password }}
 
     - name: "Checkout Armbian os"
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         repository: armbian/os
         fetch-depth: 1
@@ -119,7 +139,7 @@ runs:
         path: os
 
     - name: "Checkout Armbian build framework"
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         repository: armbian/build
         ref: ${{ inputs.armbian_branch }}
@@ -127,7 +147,7 @@ runs:
         path: build
 
     - name: "Checkout customisations"
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         fetch-depth: 0
         clean: false
@@ -185,8 +205,7 @@ runs:
           BUILD_DESKTOP="yes"
           BUILD_MINIMAL="no"
           DESKTOP_ENVIRONMENT="${{ inputs.armbian_ui }}"
-          DESKTOP_APPGROUPS_SELECTED=""
-          DESKTOP_ENVIRONMENT_CONFIG_NAME="config_base"
+          DESKTOP_TIER="mid"
         fi
 
         # go to build folder
@@ -206,8 +225,7 @@ runs:
         BUILD_DESKTOP="${BUILD_DESKTOP}" \
         BUILD_MINIMAL="${BUILD_MINIMAL}" \
         DESKTOP_ENVIRONMENT="${DESKTOP_ENVIRONMENT}" \
-        DESKTOP_APPGROUPS_SELECTED="${DESKTOP_APPGROUPS_SELECTED}" \
-        DESKTOP_ENVIRONMENT_CONFIG_NAME="${DESKTOP_ENVIRONMENT_CONFIG_NAME}" \
+        DESKTOP_TIER="${DESKTOP_TIER}" \
         ENABLE_EXTENSIONS="${{ inputs.armbian_extensions }}" \
         COMPRESS_OUTPUTIMAGE="${{ inputs.armbian_compress }}" \
         SHARE_LOG="yes" \
@@ -221,7 +239,291 @@ runs:
         gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes \
         build/output/images/*.img*.xz
 
-    - uses: ncipollo/release-action@v1
+    - name: "Generate release assets manifest"
+      shell: bash
+      env:
+        ARMBIAN_VERSION: ${{ env.ARMBIAN_VERSION }}
+        ARMBIAN_BOARD: ${{ inputs.armbian_board }}
+        ARMBIAN_RELEASE: ${{ inputs.armbian_release }}
+        ARMBIAN_KERNEL_BRANCH: ${{ inputs.armbian_kernel_branch }}
+        ARMBIAN_UI: ${{ inputs.armbian_ui }}
+        ARMBIAN_DOWNLOAD_BASE_URL: ${{ inputs.armbian_download_base_url }}
+        ARMBIAN_DOWNLOAD_REPOSITORY: ${{ inputs.armbian_download_repository }}
+        ARMBIAN_INDEX_URL: ${{ inputs.armbian_index_url }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json, os, re, sys, urllib.request
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        # ── Configuration ────────────────────────────────────────────────────
+        IMAGES_DIR = Path("build/output/images")
+        INFO_JSON  = Path("build/output/info/image-info.json")
+
+        DOWNLOAD_BASE = os.environ.get("ARMBIAN_DOWNLOAD_BASE_URL", "https://dl.armbian.com").rstrip("/")
+        # strip("/") so "archive/", "/archive/", or "/" all behave correctly:
+        # avoids double-slashes in composed URLs and lets a slash-only value
+        # collapse to "" (which selects the flat-URL shape below).
+        DOWNLOAD_REPO = os.environ.get("ARMBIAN_DOWNLOAD_REPOSITORY", "archive").strip("/")
+        INDEX_URL     = os.environ.get("ARMBIAN_INDEX_URL", "https://github.armbian.com/armbian-images.json")
+        VERSION_ENV   = os.environ.get("ARMBIAN_VERSION", "")
+
+        # Image format extensions: (full_ext, image_format) pairs. full_ext
+        # lands in the `file_extension` JSON field (e.g. "img.qcow2.xz");
+        # image_format groups variants of the same product (raw vs qcow2 vs
+        # hyperv) for de-dup. Same (stem, image_format) collapses to one
+        # entry preferring xz > zst > raw uncompressed (EXTS is ordered that
+        # way so first-seen wins); different image_format coexist as
+        # separate entries.
+        EXTS = (
+            ("img.qcow2.xz",   "img.qcow2"),
+            ("img.qcow2.zst",  "img.qcow2"),
+            ("img.qcow2",      "img.qcow2"),
+            ("img.vhdx.xz",    "img.vhdx"),
+            ("img.vhdx.zst",   "img.vhdx"),
+            ("img.vhdx",       "img.vhdx"),
+            ("hyperv.zip.xz",  "hyperv.zip"),
+            ("hyperv.zip.zst", "hyperv.zip"),
+            ("hyperv.zip",     "hyperv.zip"),
+            ("img.xz",         "img"),
+            ("img.zst",        "img"),
+            ("img",            "img"),
+        )
+
+        # image_format -> redi_url variant suffix (canonical generator
+        # appends "-qcow2" / "-hyperv" to the friendly redirect path so a
+        # board can serve multiple formats at distinct URLs).
+        FORMAT_SUFFIX = {"img.qcow2": "qcow2", "img.vhdx": "vhdx", "hyperv.zip": "hyperv"}
+
+        # Filename: Armbian[-unofficial]_{version}_{Board}_{distro}_{branch}_{kernel}[_{variant[.app]}]
+        # Variant token is optional (some legacy / hand-crafted builds omit it).
+        FNAME_RE = re.compile(
+            r"^(?P<prefix>Armbian(?:-\w+)?)_(?P<version>[^_]+)_(?P<board>[^_]+)_"
+            r"(?P<distro>[^_]+)_(?P<branch>[^_]+)_(?P<kernel>[^_]+)"
+            r"(?:_(?P<variant>[^.]+(?:\.[^.]+)?))?$"
+        )
+
+        # Fields copied verbatim from the canonical published index when the
+        # slug is present there. Local image-info.json wins per-field for the
+        # board_* fields; company_* and platinum_* are only sourced here.
+        ENRICHMENT_FIELDS = (
+            "board_name", "board_vendor", "board_support", "board_introduced",
+            "company_name", "company_website", "company_logo",
+            "platinum", "platinum_expired", "platinum_until",
+        )
+
+        # ── Loaders ──────────────────────────────────────────────────────────
+        def load_enrichment(url):
+            """Fetch the canonical index and build slug -> enrichment-fields
+            map. Best-effort: silently skips on any failure."""
+            if not url:
+                return {}
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "armbian-build-action"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.load(resp)
+            except Exception as e:
+                print(f"::warning title=Assets manifest::Could not fetch enrichment index {url}: {e}")
+                return {}
+            out = {}
+            for asset in data.get("assets", []):
+                slug = (asset.get("board_slug") or "").lower()
+                if slug and slug not in out:
+                    out[slug] = {k: asset.get(k) or "" for k in ENRICHMENT_FIELDS}
+            print(f"Enrichment loaded from {url}: {len(out)} board entries")
+            return out
+
+        def load_board_meta(path):
+            """Read BOARD_TOP_LEVEL_VARS slug -> board_* fields from the
+            build framework's image-info.json (written before this step runs)."""
+            if not path.is_file():
+                return {}
+            try:
+                data = json.loads(path.read_text())
+            except Exception as e:
+                print(f"::warning::Could not parse {path}: {e}")
+                return {}
+            out = {}
+            for entry in data:
+                inv = (entry.get("in", {}) or {}).get("inventory", {}) or {}
+                tlv = inv.get("BOARD_TOP_LEVEL_VARS", {}) or {}
+                slug = (inv.get("BOARD") or "").lower()
+                if not slug:
+                    continue
+                out[slug] = {
+                    "board_name":       tlv.get("BOARD_NAME", ""),
+                    "board_vendor":     tlv.get("BOARD_VENDOR", ""),
+                    "board_support":    tlv.get("BOARD_SUPPORT_LEVEL", ""),
+                    "board_introduced": tlv.get("INTRODUCED", ""),
+                }
+            return out
+
+        # ── Filename parser ──────────────────────────────────────────────────
+        def parse_name(stem):
+            """Extract version/board_slug/distro/branch/kernel/variant/app
+            from a filename stem (no extension). Returns None if no match.
+
+            Variant token can carry .application (e.g. "minimal.hyperv").
+            Kernel field can carry a -suffix: "6.18.26-sdk", "6.6.0-rc1-sdk".
+            Strip only the LAST dash-segment so multi-dash kernels preserve
+            any intermediate tag (e.g. rc1) in kernel_version. Treat the
+            stripped suffix as file_application iff every char is a letter
+            (sdk, omv, kali, …); pre-release tags like "rc5" carry digits
+            and stay attached.
+            """
+            m = FNAME_RE.match(stem)
+            if not m:
+                return None
+            variant = m.group("variant") or ""
+            file_application = ""
+            if "." in variant:
+                variant, file_application = variant.split(".", 1)
+            kernel = m.group("kernel")
+            if "-" in kernel:
+                last_token = kernel.rsplit("-", 1)[1]
+                kernel = kernel.rsplit("-", 1)[0]
+                if last_token.isalpha() and not file_application:
+                    file_application = last_token
+            return {
+                "version":          m.group("version"),
+                "board_slug":       m.group("board").lower(),
+                "distro":           m.group("distro"),
+                "branch":           m.group("branch"),
+                "kernel_version":   kernel,
+                "variant":          variant,
+                "file_application": file_application,
+            }
+
+        # ── URL composition ──────────────────────────────────────────────────
+        def signature_urls(base):
+            """Return (base, base.asc, base.sha, ""). The build never
+            produces a .torrent for the assets it ships, so the torrent
+            slot is always empty — the field is kept for schema parity
+            with the canonical armbian-images.json index.
+            """
+            return base, f"{base}.asc", f"{base}.sha", ""
+
+        def build_urls(parsed, image_format, img_name):
+            """Compose file_url + redi_url (each with its .asc/.sha
+            siblings; torrent slot is always empty — see signature_urls).
+
+            Two URL shapes, selected by DOWNLOAD_REPO:
+              non-empty -> {base}/{board}/{repo}/{filename}    dl.armbian.com style
+              empty     -> {base}/{filename}                   flat (e.g. GitHub releases)
+            Flat mode mirrors redi_url* onto file_url* since there is no
+            separate redirector.
+            """
+            slug = parsed["board_slug"]
+            if DOWNLOAD_REPO:
+                file_urls = signature_urls(f"{DOWNLOAD_BASE}/{slug}/{DOWNLOAD_REPO}/{img_name}")
+                # redi_variant: variant[-{format|app}]. Format suffix wins
+                # over app when both apply (canonical convention).
+                redi_variant = parsed["variant"]
+                tail = FORMAT_SUFFIX.get(image_format) or parsed["file_application"]
+                if tail:
+                    redi_variant = f"{redi_variant}-{tail}" if redi_variant else tail
+                redi_name = f"{parsed['distro'].capitalize()}_{parsed['branch']}"
+                if redi_variant:
+                    redi_name = f"{redi_name}_{redi_variant}"
+                redi_urls = signature_urls(f"{DOWNLOAD_BASE}/{slug}/{redi_name}")
+                return file_urls, redi_urls
+            file_urls = signature_urls(f"{DOWNLOAD_BASE}/{img_name}")
+            return file_urls, file_urls
+
+        # ── Walk image dir, build manifest ───────────────────────────────────
+        def collect_candidates():
+            """Walk IMAGES_DIR, group files by (stem, image_format). Within
+            each group keep the most-compressed form (EXTS is ordered xz >
+            zst > raw, first-seen wins)."""
+            out = {}
+            for ext, image_format in EXTS:
+                for f in IMAGES_DIR.glob(f"*.{ext}"):
+                    stem = f.name[: -(len(ext) + 1)]
+                    key = (stem, image_format)
+                    if key not in out:
+                        out[key] = ext
+            return out
+
+        def build_asset(parsed, image_format, ext, img, board_meta, enrichment):
+            slug = parsed["board_slug"]
+            meta = board_meta.get(slug, {})
+            enrich = enrichment.get(slug, {})
+            stat = img.stat()
+            file_date = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc) \
+                                .strftime("%Y-%m-%dT%H:%M:%SZ")
+            (file_url, file_asc, file_sha, file_tor), \
+                (redi_url, redi_asc, redi_sha, redi_tor) = \
+                build_urls(parsed, image_format, img.name)
+            return {
+                "board_slug":          slug,
+                # local image-info.json wins per-field; published index fills the rest.
+                "board_name":          meta.get("board_name")       or enrich.get("board_name", ""),
+                "board_vendor":        meta.get("board_vendor")     or enrich.get("board_vendor", ""),
+                "board_support":       meta.get("board_support")    or enrich.get("board_support", ""),
+                "board_introduced":    meta.get("board_introduced") or enrich.get("board_introduced", ""),
+                "company_name":        enrich.get("company_name", ""),
+                "company_website":     enrich.get("company_website", ""),
+                "company_logo":        enrich.get("company_logo", ""),
+                "armbian_version":     parsed["version"] or VERSION_ENV,
+                "file_url":            file_url,
+                "file_url_asc":        file_asc,
+                "file_url_sha":        file_sha,
+                "file_url_torrent":    file_tor,
+                "redi_url":            redi_url,
+                "redi_url_asc":        redi_asc,
+                "redi_url_sha":        redi_sha,
+                "redi_url_torrent":    redi_tor,
+                "file_size":           str(stat.st_size),
+                "file_date":           file_date,
+                "distro":              parsed["distro"],
+                "branch":              parsed["branch"],
+                "variant":             parsed["variant"],
+                "file_application":    parsed["file_application"],
+                "promoted":            "false",
+                "download_repository": DOWNLOAD_REPO,
+                "file_extension":      ext,
+                "kernel_version":      parsed["kernel_version"],
+                "platinum":            enrich.get("platinum") or "false",
+                "platinum_expired":    enrich.get("platinum_expired") or "false",
+                "platinum_until":      enrich.get("platinum_until", ""),
+            }
+
+        def write_manifest(asset):
+            """One manifest per image, '<image_filename>.assets.json'.
+            Image filenames are guaranteed unique across this build call
+            and across parallel matrix cells, so the manifest filename is
+            too. Schema {"assets": [...]} so consumers expecting the array
+            (e.g. `jq -s 'map(.assets) | flatten'`) keep working."""
+            img_name = Path(asset["file_url"]).name
+            out = IMAGES_DIR / f"{img_name}.assets.json"
+            out.write_text(json.dumps({"assets": [asset]}, indent=2) + "\n")
+            print(f"Wrote {out}")
+
+        # ── Main ─────────────────────────────────────────────────────────────
+        enrichment = load_enrichment(INDEX_URL)
+        board_meta = load_board_meta(INFO_JSON)
+        candidates = collect_candidates()
+
+        assets = []
+        for (stem, image_format), ext in sorted(candidates.items()):
+            img = IMAGES_DIR / f"{stem}.{ext}"
+            parsed = parse_name(stem)
+            if not parsed:
+                print(f"::warning::Unrecognised filename {img.name}, skipping")
+                continue
+            assets.append(build_asset(parsed, image_format, ext, img, board_meta, enrichment))
+
+        if not assets:
+            print("::warning title=Assets manifest::No images found for assets manifest")
+            sys.exit(0)
+
+        for asset in assets:
+            write_manifest(asset)
+        print(f"Total: {len(assets)} per-image assets manifest{'s' if len(assets) != 1 else ''}")
+        PY
+
+    - uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
       with:
         tag: ${{ inputs.armbian_release_tag != '' && inputs.armbian_release_tag || env.ARMBIAN_VERSION }}
         name: "${{ inputs.armbian_release_title }}"
@@ -230,6 +532,8 @@ runs:
         removeArtifacts: false
         replacesArtifacts: true
         makeLatest: true
+        prerelease: ${{ inputs.armbian_release_prerelease }}
+        artifactErrorsFailBuild: true
         token: "${{ inputs.armbian_token }}"
         body: |
           ${{ inputs.armbian_release_body }}

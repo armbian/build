@@ -31,7 +31,7 @@ function kernel_main_patching_python() {
 		#"BOARD="                                             # BOARD is needed for the patchset selection logic; mostly for u-boot. empty for kernel.
 		#"TARGET="                                            # TARGET is need for u-boot's SPI/SATA etc selection logic. empty for kernel
 		# For table generation to fit into the screen, or being large when in GHA.
-		"COLUMNS=${COLUMNS}"
+		"COLUMNS=${COLUMNS:-160}"
 		"COLORFGBG=${COLORFGBG}"
 		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.

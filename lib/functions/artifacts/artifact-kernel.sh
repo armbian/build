@@ -125,7 +125,7 @@ function artifact_kernel_prepare_version() {
 
 	# run the extensions. they _must_ behave, and not try to modify the .config, instead just fill kernel_config_modifying_hashes
 	declare kernel_config_modifying_hashes_hash="undetermined"
-	declare -a kernel_config_modifying_hashes=()
+	declare -ga kernel_config_modifying_hashes=()
 	call_extensions_kernel_config
 	# Reduce to last assignment per key to keep hashing stable and ignore overridden options.
 	# tac reverses order so last becomes first, then sort -uk keeps first occurrence of each key.

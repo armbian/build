@@ -61,10 +61,10 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 - **MODULES_BLACKLIST_EDGE** ( space-separated list of kernel modules ): appends modules to the kernel's blacklist/deny list for **edge** kernel
 - **SERIALCON** ( comma-separated list of terminal interfaces [:bandwidth] ): declares which serial console should be used on the system
 	- Example: `ttyS0:15000000,ttyGS1`
-- **SKIP_ARMBIAN_REPO** ( boolean ): Whether to include the armbian repository in the built image
+- **SKIP_ARMBIAN_REPO** ( boolean ): Whether to exclude the armbian repository from the built image
     - Values:
-        - yes: Include (default)
-        - no: Do NO include
+        - yes: Exclude the armbian repo (armbian.sources stays `.disabled`)
+        - no: Include the armbian repo (default)
 - **POWER_MANAGEMENT_FEATURES** (boolean): Controls whether system sleep functionality (suspend, hibernate, hybrid sleep) is allowed on the built image.
     - Values:
          - yes: Enable power-management sleep features (allow systemd sleep modes)

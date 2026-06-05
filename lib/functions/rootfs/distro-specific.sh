@@ -266,19 +266,25 @@ function create_sources_list_and_deploy_repo_key() {
 	mkdir -p "${basedir}"/usr/share/keyrings
 	# change to binary form
 	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian-archive-keyring.gpg"
-	gpg --batch --yes --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
+	# Use a temporary GPG homedir so we don't touch the builder's
+	# ~/.gnupg (which may be owned by a different user when running
+	# under sudo, producing "unsafe ownership on homedir" warnings).
+	local gpg_tmp
+	gpg_tmp=$(mktemp -d)
+	gpg --homedir "${gpg_tmp}" --batch --yes --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
+	rm -rf "${gpg_tmp}"
 
 	# deploy the qemu binary, no matter where the rootfs came from (built or cached)
 	deploy_qemu_binary_to_chroot "${basedir}" "${when}" # undeployed at end of this function
 
 	# lets link to the old file as armbian-config uses it and we can't set there to new file
 	# we user force linking as some old caches still exists
-	chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
+	LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
 
 	# lets keep old way for old distributions
 	if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
 		cp "${SRC}"/config/armbian.key "${basedir}"
-		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+		LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
 	fi
 
 	# undeploy the qemu binary from the image; we don't want to ship the host's qemu in the target image

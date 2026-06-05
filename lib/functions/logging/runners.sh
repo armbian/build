@@ -131,13 +131,20 @@ function chroot_sdcard_apt_get() {
 
 # please, please, unify around this function.
 function chroot_sdcard() {
-	raw_command="$*" raw_extra="chroot_sdcard" TMPDIR="" \
+	# LC_ALL/LANG/LANGUAGE: clear the host's locale before entering the
+	# chroot — the target rootfs usually hasn't generated the host's locale
+	# yet, producing noisy "bash: warning: setlocale: LC_ALL: cannot change
+	# locale" on every chroot_sdcard call. Individual commands that need a
+	# specific locale (dpkg-divert, locale-gen) set LC_ALL=C explicitly.
+	# SUDO_USER: clear so chroot commands don't try to look up the host
+	# builder's username (which doesn't exist inside the rootfs).
+	raw_command="$*" raw_extra="chroot_sdcard" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" \
 		run_host_command_logged_raw chroot "${SDCARD}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # please, please, unify around this function.
 function chroot_mount() {
-	raw_command="$*" raw_extra="chroot_mount" TMPDIR="" \
+	raw_command="$*" raw_extra="chroot_mount" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" \
 		run_host_command_logged_raw chroot "${MOUNT}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
@@ -149,13 +156,13 @@ function chroot_sdcard_with_stdout() {
 function chroot_custom_long_running() { # any pipe causes the left-hand side to subshell and caos ensues. it's just like chroot_custom()
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!

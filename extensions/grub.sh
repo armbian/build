@@ -265,9 +265,29 @@ configure_grub() {
 	[[ -n "$SERIALCON" ]] &&
 		GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
-	[[ "$BOOT_LOGO" == "yes" || "$BOOT_LOGO" == "desktop" && "$BUILD_DESKTOP" == "yes" ]] &&
-		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3" ||
-		GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose i915.force_probe=*"
+	# Kernel cmdline. We always pass the graphical-Plymouth flags
+	# (splash plymouth.ignore-serial-consoles) on UEFI x86,
+	# regardless of whether this image is being built as CLI or
+	# desktop. Two reasons:
+	#   1. Users routinely add a desktop later via armbian-config
+	#      and we don't want that to require regenerating grub.cfg.
+	#      The .cfg is baked once at image-build time and stays
+	#      put across desktop installs.
+	#   2. Plymouth handles the "no theme installed" / "no DRM"
+	#      cases gracefully — the flags are harmless on a CLI
+	#      install. They are NOT harmless when wrong: the previous
+	#      'splash=verbose' value was rejected by the kernel
+	#      ("Unknown kernel command line parameters splash=verbose"
+	#      in dmesg) AND interpreted by Plymouth as "render the
+	#      verbose/text theme", so a desktop installed later still
+	#      booted to a black/text screen.
+	#
+	# Deliberately NO 'quiet' and NO 'loglevel=3' here. Plymouth
+	# still draws the splash on top of the kernel boot messages,
+	# but the messages remain visible underneath so users can see
+	# what their system is doing. Press Esc during boot to drop
+	# the splash and read the messages directly.
+	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles i915.force_probe=*"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
@@ -290,7 +310,7 @@ configure_grub() {
 		GRUB_DISABLE_SUBMENU=y                                   # Do not put all kernel options into a submenu, instead, list them all on the main menu.
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
-		GRUB_GFXPAYLOAD=keep
+		GRUB_GFXPAYLOAD_LINUX=text                               # Note the correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD (the latter is silently ignored). The 'text' value disables Ubuntu's vt.handoff=7 injection: Ubuntu's grub2 10_linux only expands 'vt.handoff=7' inside grub.cfg's gfxmode function when the gfxpayload arg is exactly 'keep'. Setting it to 'text' makes the runtime check fail and the framebuffer console stays bound to fbcon for the entire userspace lifetime — which is what we want, otherwise after Plymouth quits on a CLI install (or after the user uninstalls the desktop), the kernel hands the framebuffer to VT7 waiting for an X server, nothing ever claims it, and the local console goes black even though getty@tty1 is running.
 		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
 	grubCfgFrag

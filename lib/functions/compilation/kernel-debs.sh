@@ -265,6 +265,7 @@ function kernel_package_callback_linux_image() {
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Priority: optional
+		Depends: initramfs-tools | linux-initramfs-tool
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
@@ -510,6 +511,9 @@ function kernel_package_callback_linux_headers() {
 
 	# Generate a control file
 	# TODO: libssl-dev is only required if we're signing modules, which is a kernel .config option.
+	# Note: 'pahole | dwarves' alternative — older releases (buster/bullseye/focal) ship pahole inside the
+	# 'dwarves' package; standalone 'pahole' exists from bookworm/jammy onward. When support for these
+	# releases is dropped, simplify to 'pahole'.
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Version: ${artifact_version}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
@@ -517,8 +521,8 @@ function kernel_package_callback_linux_headers() {
 		Package: ${package_name}
 		Architecture: ${ARCH}
 		Priority: optional
-		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole
+		Provides: linux-headers (= ${kernel_version}), linux-headers-armbian, armbian-$BRANCH
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole | dwarves
 		Description: Armbian Linux $BRANCH headers ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .

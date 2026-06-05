@@ -460,10 +460,6 @@ function board_side_bsp_cli_postinst_finish() {
 		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
 
-	if [[ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]]; then
-		mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
-	fi
-
 	# Reload services
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service > /dev/null 2>&1
 }

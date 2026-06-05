@@ -13,8 +13,21 @@ function artifact_rootfs_config_dump() {
 	artifact_input_variables[SELECTED_CONFIGURATION]="${SELECTED_CONFIGURATION}" # should be represented below anyway
 	artifact_input_variables[BUILD_MINIMAL]="${BUILD_MINIMAL}"
 	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT:-"no_DESKTOP_ENVIRONMENT_set"}"
-	artifact_input_variables[DESKTOP_ENVIRONMENT_CONFIG_NAME]="${DESKTOP_ENVIRONMENT_CONFIG_NAME:-"no_DESKTOP_ENVIRONMENT_CONFIG_NAME_set"}"
-	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
+	artifact_input_variables[DESKTOP_TIER]="${DESKTOP_TIER:-"no_DESKTOP_TIER_set"}"
+
+	# Track the latest commit touching configng's desktop definitions.
+	# Any change to YAML, parser, or module code in tools/modules/desktops/
+	# invalidates the desktop rootfs cache — the package list, browser
+	# mapping, tier overrides, or branding may have changed.
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		declare configng_desktops_hash="undetermined"
+		local configng_dir="${SRC}/cache/sources/armbian-configng"
+		if [[ -d "${configng_dir}/.git" ]]; then
+			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>/dev/null || echo "unknown")"
+		fi
+		artifact_input_variables[CONFIGNG_DESKTOPS_HASH]="${configng_desktops_hash}"
+	fi
+
 	# Hash of the packages added/removed by extensions
 	declare pkgs_hash="undetermined"
 	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
@@ -43,8 +56,8 @@ function artifact_rootfs_prepare_version() {
 	# add more reasons for desktop stuff
 	if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
 		reasons+=("desktop_environment \"${DESKTOP_ENVIRONMENT}\"")
-		reasons+=("desktop_environment_config_name \"${DESKTOP_ENVIRONMENT_CONFIG_NAME}\"")
-		reasons+=("desktop_appgroups_selected \"${DESKTOP_APPGROUPS_SELECTED}\"")
+		reasons+=("desktop_tier \"${DESKTOP_TIER}\"")
+		reasons+=("configng_desktops \"${artifact_input_variables[CONFIGNG_DESKTOPS_HASH]:-none}\"")
 	fi
 
 	# we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
@@ -138,9 +151,15 @@ function artifact_rootfs_cli_adapter_config_prep() {
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
 	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
-	if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then # if not set to yes, force it to yes.
-		declare -g SKIP_ARMBIAN_REPO="yes"            # Using the repo during rootfs build causes insanity, so don't. Make readonly to ensure.
-	fi
+	# Don't force SKIP_ARMBIAN_REPO=yes for rootfs artifact builds anymore.
+	# The new desktop install path (module_desktops install mode=build,
+	# invoked from rootfs-create.sh) needs apt.armbian.com's
+	# <release>-utils (armbian-config itself) and <release>-desktop
+	# (firefox, chromium, gnome-branded bits) components to be reachable
+	# while the rootfs is being assembled. Default to "no" (repo ON)
+	# and let boards/userpatches opt out explicitly if they still need
+	# the repo-free rootfs behaviour for whatever reason.
+	declare -g SKIP_ARMBIAN_REPO="${SKIP_ARMBIAN_REPO:-no}"
 	declare -g -r SKIP_ARMBIAN_REPO # make it readonly to ensure sanity if hooks try to change it
 
 	track_general_config_variables "in artifact_rootfs_cli_adapter_config_prep"

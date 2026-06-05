@@ -34,7 +34,7 @@ function post_family_tweaks__nanopir5s_udev_network_interfaces() {
 	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
 		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="wan1"
 		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0000:01:00.0", NAME:="lan1"
-		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan2"
+        SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:11:00.0", NAME:="lan2"
 	EOF
 }
 

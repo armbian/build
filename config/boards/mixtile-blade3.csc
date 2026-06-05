@@ -42,8 +42,8 @@ function post_family_config__blade3_use_mainline_uboot() {
 	declare -g BOOTDELAY=1
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
+	declare -g BOOTBRANCH="tag:v2026.04"
+	declare -g BOOTPATCHDIR="v2026.04" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}"
 

@@ -136,6 +136,7 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 
 		display_alert "Enabling eBPF and BTF info" "for fully BTF & CO-RE enabled kernel" "info"
 		opts_n+=("DEBUG_INFO_NONE")                   # Make sure the "none" option is disabled
+		opts_n+=("DEBUG_INFO_REDUCED")                # DEBUG_INFO_REDUCED=y disables DEBUG_INFO_BTF
 		opts_y+=(
 			"BPF_JIT" "BPF_JIT_DEFAULT_ON" "FTRACE_SYSCALLS" "PROBE_EVENTS_BTF_ARGS" "BPF_KPROBE_OVERRIDE" # eBPF == on
 			"BPF_UNPRIV_DEFAULT_OFF"
@@ -154,6 +155,8 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 			"DYNAMIC_FTRACE"                         # Dynamic ftrace support
 			"FTRACE"                                 # Ftrace (function tracer) support
 			"FUNCTION_TRACER"                        # Function tracer support
+			"KPROBES"                                # Kprobes support for dynamic kernel instrumentation
+			"KPROBE_EVENTS"                          # Kprobe events support
 			"TRACEFS_AUTOMOUNT_DEPRECATED"           # This is valid until 2030, needed for some eBPF tools
 		)
 	fi
@@ -616,6 +619,7 @@ function kernel_config_set_m() {
 	declare module="$1"
 	display_alert "Enabling kernel module" "${module}=m" "debug"
 	run_host_command_logged ./scripts/config --module "${module}"
+	kernel_config_modifying_hashes+=("${module}=m")
 }
 
 # Sets a kernel configuration option to be built-in (=y).
@@ -627,6 +631,7 @@ function kernel_config_set_y() {
 	declare config="$1"
 	display_alert "Enabling kernel config/built-in" "${config}=y" "debug"
 	run_host_command_logged ./scripts/config --enable "${config}"
+	kernel_config_modifying_hashes+=("${config}=y")
 }
 
 # Disables a kernel configuration option (=n).
@@ -637,6 +642,7 @@ function kernel_config_set_n() {
 	declare config="$1"
 	display_alert "Disabling kernel config/module" "${config}=n" "debug"
 	run_host_command_logged ./scripts/config --disable "${config}"
+	kernel_config_modifying_hashes+=("${config}=n")
 }
 
 # Sets a kernel configuration option to a string value.
@@ -649,6 +655,7 @@ function kernel_config_set_string() {
 	declare value="${2}"
 	display_alert "Setting kernel config/module string" "${config}=${value}" "debug"
 	run_host_command_logged ./scripts/config --set-str "${config}" "${value}"
+	kernel_config_modifying_hashes+=("${config}=\"${value}\"")
 }
 
 # Sets a kernel configuration option to a numeric or hexadecimal value.
@@ -661,6 +668,7 @@ function kernel_config_set_val() {
 	declare value="${2}"
 	display_alert "Setting kernel config/module value" "${config}=${value}" "debug"
 	run_host_command_logged ./scripts/config --set-val "${config}" "${value}"
+	kernel_config_modifying_hashes+=("${config}=${value}")
 }
 
 # Applies kernel configuration options from arrays to hashes and the .config file.

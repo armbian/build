@@ -15,6 +15,7 @@ import logging
 import multiprocessing
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -221,11 +222,20 @@ def find_armbian_src_path():
 	if not os.path.exists(core_distributions_path):
 		raise Exception("Can't find config/distributions")
 
-	core_desktop_path = os.path.realpath(os.path.join(armbian_src_path, "config", "desktop"))
-	log.debug(f"Real path to core desktop '{core_desktop_path}'")
-	# Make sure it exists
-	if not os.path.exists(core_desktop_path):
-		raise Exception("Can't find config/desktop")
+	# Desktop YAMLs live in an external repo (armbian/configng) that is
+	# fetched on demand into cache/sources/armbian-configng. If the cache
+	# is present, expose the YAML directory and parser path; otherwise
+	# the desktop inventory will come back empty (see
+	# get_desktop_inventory_for_distro).
+	configng_cache_dir = os.path.realpath(os.path.join(armbian_src_path, "cache", "sources", "armbian-configng"))
+	configng_yaml_dir = os.path.join(configng_cache_dir, "tools", "modules", "desktops", "yaml")
+	configng_parser = os.path.join(configng_cache_dir, "tools", "modules", "desktops", "scripts", "parse_desktop_yaml.py")
+	if os.path.isdir(configng_yaml_dir) and os.path.isfile(configng_parser):
+		log.debug(f"configng desktop YAMLs available at '{configng_yaml_dir}'")
+	else:
+		log.debug(f"configng desktop cache not fully present at '{configng_cache_dir}' — desktop inventory will be empty")
+		configng_yaml_dir = None
+		configng_parser = None
 
 	userpatches_boards_path = os.path.realpath(os.path.join(armbian_src_path, "userpatches", "config", "boards"))
 	log.debug(f"Real path to userpatches boards '{userpatches_boards_path}'")
@@ -233,7 +243,8 @@ def find_armbian_src_path():
 
 	return {
 		"armbian_src_path": armbian_src_path, "compile_sh_full_path": compile_sh_full_path, "core_boards_path": core_boards_path,
-		"core_distributions_path": core_distributions_path, "core_desktop_path": core_desktop_path,
+		"core_distributions_path": core_distributions_path,
+		"configng_yaml_dir": configng_yaml_dir, "configng_parser": configng_parser,
 		"userpatches_boards_path": userpatches_boards_path, "has_userpatches_path": has_userpatches_path
 	}
 
@@ -255,32 +266,62 @@ def split_commas_and_clean_into_list(string):
 
 
 def get_desktop_inventory_for_distro(distro, armbian_paths):
-	ret = []
-	desktops_path = armbian_paths["core_desktop_path"]
-	envs_path_for_distro = os.path.join(desktops_path, distro, "environments")
-	if not os.path.exists(envs_path_for_distro):
-		log.warning(f"Can't find desktop environments for distro '{distro}' at '{envs_path_for_distro}'")
-		return ret
-	for env in os.listdir(envs_path_for_distro):
-		one_env_path = os.path.join(envs_path_for_distro, env)
-		if not os.path.isdir(one_env_path):
-			continue
-		log.debug(f"Processing desktop '{env}' for distro '{distro}'")
-		support_file_path = os.path.join(one_env_path, "support")
-		arches_file_path = os.path.join(one_env_path, "architectures")
-		if not os.path.exists(support_file_path):
-			log.warning(f"Can't find desktop support file for distro '{distro}' and environment '{env}' at '{support_file_path}'")
-			continue
-		if not os.path.exists(arches_file_path):
-			log.warning(f"Can't find desktop arches file for distro '{distro}' and environment '{env}' at '{arches_file_path}'")
-			continue
+	"""Return [{id, support, arches}, ...] for every first-tier supported
+	DE that declares a release block for `distro` in configng's YAML
+	matrix.
 
-		env_main_info = {
-			"id": env,
-			"support": read_one_distro_config_file(support_file_path),
-			"arches": split_commas_and_clean_into_list(read_one_distro_config_file(arches_file_path))
-		}
-		ret.append(env_main_info)
+	Only `status: supported` DEs participate in the auto-generated build
+	matrix. `community` DEs are reachable interactively (EXPERT mode
+	dialog) or explicitly (DESKTOP_ENVIRONMENT=...) but are not enumerated
+	here. `unsupported` DEs are vendor-specific and never enumerated."""
+	ret = []
+	yaml_dir = armbian_paths.get("configng_yaml_dir")
+	parser = armbian_paths.get("configng_parser")
+	if yaml_dir is None or parser is None:
+		# configng not fetched yet — inventory is empty. cli-jsoninfo.sh
+		# calls fetch_from_repo before invoking userspace-inventory.py
+		# so this only trips on ad-hoc Python runs.
+		return ret
+
+	# Any arch works for --list-json; each JSON entry carries its own
+	# per-release `architectures` list regardless of the arg we pass.
+	try:
+		proc = subprocess.run(
+			[sys.executable, parser, yaml_dir, "--list-json", distro, "amd64", "--filter", "all"],
+			capture_output=True, text=True, check=False, timeout=30,
+		)
+	except subprocess.TimeoutExpired:
+		log.warning(f"parse_desktop_yaml.py timed out for distro '{distro}'")
+		return ret
+
+	if proc.returncode != 0:
+		log.warning(f"parse_desktop_yaml.py failed for distro '{distro}': {proc.stderr.strip()}")
+		return ret
+
+	try:
+		entries = json.loads(proc.stdout) if proc.stdout.strip() else []
+	except json.JSONDecodeError as e:
+		log.warning(f"parse_desktop_yaml.py returned non-JSON for distro '{distro}': {e}")
+		return ret
+
+	for entry in entries:
+		status = entry.get("status", "unsupported")
+		# Only first-tier supported DEs participate in the auto-
+		# generated build matrix. `community` DEs are still installable
+		# end-to-end (dialog EXPERT mode, CLI with DESKTOP_ENVIRONMENT=…)
+		# but shouldn't generate CI targets by default — leave that
+		# choice to the operator.
+		if status != "supported":
+			continue
+		arches = entry.get("architectures") or []
+		if not arches:
+			# DE doesn't declare this release at all; skip silently.
+			continue
+		ret.append({
+			"id": entry.get("name", ""),
+			"support": status,
+			"arches": arches,
+		})
 
 	return ret
 
@@ -308,6 +349,47 @@ def armbian_get_all_userspace_inventory():
 		all_distros.append(distro_main_info)
 
 	return all_distros
+
+
+# ARCH is declared per-family in config/sources/families/<BOARDFAMILY>.conf —
+# but many families delegate to a shared include (e.g. meson-g12b.conf sources
+# meson64_common.inc which then sets ARCH=arm64). Rather than hand-write a
+# mini-bash to follow `source` directives, just bash-source the family file
+# in a throwaway subshell and print ARCH. Cache results per family — there
+# are ~60 unique families across ~370 boards.
+_family_arch_cache: dict = {}
+
+
+def armbian_get_arch_for_family(family_name, armbian_src_path):
+	"""Return the ARCH declared by config/sources/families/<family>.conf
+	(after resolving any `source` includes), or None if the file or the
+	ARCH declaration is missing. Result is cached per family."""
+	if not family_name:
+		return None
+	if family_name in _family_arch_cache:
+		return _family_arch_cache[family_name]
+	family_file = os.path.join(armbian_src_path, "config", "sources", "families", f"{family_name}.conf")
+	arch = None
+	if os.path.isfile(family_file):
+		# Set ARCH via the EXIT trap so we still capture it even if the
+		# family conf aborts mid-source via `${FOO:?error}` on a required
+		# var that wouldn't be set in this minimal context (ls1046a, etc).
+		bash_code = (
+			"( trap 'printf \"%s\" \"${ARCH:-}\"; exit 0' EXIT; "
+			"source " + shlex.quote(family_file) + " >/dev/null 2>&1 )"
+		)
+		try:
+			proc = subprocess.run(
+				["bash", "-c", bash_code],
+				capture_output=True, text=True, timeout=5, check=False,
+			)
+			value = (proc.stdout or "").strip()
+			if value and re.match(r"^[a-zA-Z0-9_]+$", value):
+				arch = value
+		except (subprocess.TimeoutExpired, OSError) as e:
+			log.debug(f"Could not resolve ARCH for family '{family_name}': {e}")
+	_family_arch_cache[family_name] = arch
+	return arch
 
 
 def armbian_get_all_boards_inventory():
@@ -338,6 +420,27 @@ def armbian_get_all_boards_inventory():
 			else:
 				log.debug(f"Userpatched Board {uboard_name} is already in core boards")
 				info_for_board[uboard_name] = {**info_for_board[uboard_name], **uboard}
+
+	# Resolve ARCH per-board. Prefer an explicit board-level ARCH
+	# declaration (picked up by the generic board-file regex into
+	# BOARD_TOP_LEVEL_VARS); fall back to the family conf so boards
+	# that inherit their arch transitively (most of them) don't need
+	# the redundant declaration. Targets compositors use this to drop
+	# matrix invocations where board arch doesn't match the requested
+	# release's arch list (e.g. noble without loong64) instead of
+	# relying on compile.sh to reject the combo downstream.
+	for board, info in info_for_board.items():
+		top_vars = info.get("BOARD_TOP_LEVEL_VARS", {})
+		arch = top_vars.get("ARCH")
+		if not arch:
+			family = top_vars.get("BOARDFAMILY")
+			arch = armbian_get_arch_for_family(family, armbian_paths["armbian_src_path"])
+			if arch:
+				top_vars["ARCH"] = arch
+		if arch:
+			info["ARCH"] = arch
+		else:
+			log.warning(f"Could not resolve ARCH for board '{board}' (family '{top_vars.get('BOARDFAMILY')}')")
 
 	return info_for_board
 

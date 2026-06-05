@@ -175,7 +175,7 @@ function adaptative_prepare_host_dependencies() {
 		ncurses-base ncurses-term # for `make menuconfig`
 		ntpsec-ntpdate #this is a more secure ntpdate
 		patchutils pkg-config pv
-		"qemu-user-static" "arch-test"
+		"arch-test"
 		rsync
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools
@@ -202,7 +202,9 @@ function adaptative_prepare_host_dependencies() {
 	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
 	### 'python3-setuptools' and 'python3-pyelftools' moved to requirements.txt to make sure build hosts use the same/latest versions of these tools.
 	### 'python3-dev' depends on distutils, so instead depend on libpython3-dev which doesn't.
-	host_dependencies+=("python3" "libpython3-dev" "libffi-dev")
+	### 'python3-yaml' is needed by configng's parse_desktop_yaml.py during
+	###   BUILD_DESKTOP=yes (config-desktop.sh::interactive_desktop_main_configuration).
+	host_dependencies+=("python3" "libpython3-dev" "libffi-dev" "python3-yaml")
 
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
@@ -212,6 +214,19 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Adding package to 'host_dependencies'" "python3-setuptools" "info"
 		host_dependencies+=("python3-setuptools")
 	fi
+
+	# qemu binfmt + chrooted user emulation.
+	# Up to and including Ubuntu noble / Debian trixie this is the
+	# `qemu-user-static` package (real package shipping the static
+	# /usr/libexec/qemu-binfmt/<arch>-static binaries). Ubuntu resolute
+	# (26.04) splits that into `qemu-user-binfmt` + `qemu-user-binfmt-hwe`
+	# and turns `qemu-user-static` into a virtual package — apt then
+	# refuses to auto-pick a provider, so install the non-HWE concrete
+	# name explicitly there.
+	case "${host_release}" in
+		resolute) host_dependencies+=("qemu-user-binfmt") ;;
+		*)        host_dependencies+=("qemu-user-static") ;;
+	esac
 
 	### Python2 -- required for some older u-boot builds
 	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.

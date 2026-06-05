@@ -1,59 +1,293 @@
 name: "Maintenance: Lint scripts"
 run-name: 'Shellcheck - PR #${{ github.event.pull_request.number }} ("${{ github.event.pull_request.title }}")'
 #
-# Run ShellCheck on all scripts and generate report as build artifact
+# Lint phase of a two-phase pipeline that produces both:
+#   * a pass/fail Check on the PR (red cross on critical findings); and
+#   * artifacts consumed by maintenance-lint-scripts-post.yml, which
+#     posts findings and auto-fix suggestions inline on the PR via
+#     reviewdog.
 #
+# The post workflow runs via `workflow_run` in the base repository
+# context with a write token, so PR comments work for forks too.
+# This workflow itself only needs a read token.
+#
+# Runs on every fork of armbian/build by default. If a fork doesn't
+# want it (private fork, repurposed tree, etc.), disable either:
+#   * the whole Actions surface — Settings → Actions → General →
+#     "Disable actions"; or
+#   * just this workflow — Settings → Actions → General →
+#     "Allow ... and select non-Armbian actions" + explicitly disable
+#     "Maintenance: Lint scripts" under Actions → Workflows.
 
 on:
-  workflow_dispatch:
   pull_request:
     types: [opened, reopened, synchronize]
 
 permissions:
   contents: read
+  # Required for the `gh api repos/.../pulls/N/files` call below.
+  # `contents: read` alone leaves all other scopes at `none` under
+  # fine-grained / app tokens, and the endpoint then returns
+  # `Resource not accessible by integration`.
+  pull-requests: read
 
 concurrency:
-  group: pipeline-lint-${{github.event.pull_request.number}}
+  group: pipeline-lint-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   Shellcheck:
     name: Shell script analysis
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'Armbian' }}
 
     steps:
+      - name: Surface workflow purpose + disable instructions in the Check summary
+        run: |
+          cat >>"$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## What this Check does
+
+          `Maintenance: Lint scripts` runs ShellCheck on the PR's shell scripts and produces:
+
+          * a **red cross / green check** on the PR (red on critical or `--severity=error` findings in changed scripts); and
+          * artifacts consumed by `Maintenance: Lint scripts (post)`, which posts inline review comments and auto-fix suggestions back on the PR via [reviewdog](https://github.com/reviewdog/reviewdog).
+
+          ### Don't want this in a fork?
+
+          This workflow runs on every fork of `armbian/build` by default. To disable in your fork:
+
+          * **All Actions** — Settings → Actions → General → "Disable actions".
+          * **Just this workflow** — Settings → Actions → Workflows → "Maintenance: Lint scripts" → "Disable workflow". The companion `Maintenance: Lint scripts (post)` becomes a no-op once this one is disabled.
+
+          EOF
+
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 2
 
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@22103cc46bda19c2b464ffe86db46df6922fd323 # v46.0.3
-
-      - name: List all changed files
+      # PR-scope file list. Uses the GitHub PR API (merge-base diff,
+      # the same set the PR's "Files changed" tab and reviewdog's
+      # filter_mode=added operate on), not `git diff base..head` —
+      # the latter expands to every commit since the head branch
+      # forked, which on stale-rebased PRs balloons to hundreds of
+      # legacy files and produces red Checks unrelated to the PR.
+      #
+      # The list is written to `pr-changed-files.lines` as one
+      # JSON-encoded path per line. Both the `$GITHUB_OUTPUT`
+      # multiline-heredoc and the env-block alternatives are too
+      # fragile here: Git allows newlines and quotes in paths, and
+      # filename data is attacker-controlled (any PR can add any
+      # path), so any encoding that uses raw newlines as separator
+      # — or any in-script `${{ … }}` interpolation — is a route
+      # to either truncation, lost files, or command injection at
+      # parse time. JSON-per-line cleanly addresses all three: the
+      # newline separator cannot appear inside a JSON-encoded path,
+      # and consumers `jq -r .` to recover the raw string into a
+      # shell variable that already exists (no parsing of the path
+      # *as* shell code).
+      - name: Get changed files (PR-scope, merge-base)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_FILE_COUNT: ${{ github.event.pull_request.changed_files }}
         run: |
+          # `pulls/N/files` caps at 3000 entries. Above that GitHub
+          # silently returns only a prefix, the downstream gate would
+          # lint a partial PR, and SC errors in trailing files could
+          # ship as green. Refuse loudly instead — a local merge-base
+          # fallback is possible but rarely worth carrying since PRs
+          # of this size are exceptional.
+          if (( PR_FILE_COUNT > 3000 )); then
+            echo "::error::PR changes ${PR_FILE_COUNT} files; GitHub's pulls/N/files API caps at 3000. Split the PR, or extend this workflow with a local merge-base fallback."
+            exit 1
+          fi
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename | @json' > pr-changed-files.lines
+          echo "PR-scope changed files (#${{ github.event.pull_request.number }}):"
+          jq -r . < pr-changed-files.lines | sed 's/^/  /'
 
-          # Use framework internal mechanism for checking `lib` and `extensions` code only one file is passed,
-          # and source's are followed, thus the whole project is "understood" by shellcheck.
-          # For example, when checking individual files, one variable might be thought "unused" because it
-          # is only used in another file, which does not happen when done properly.
+      - name: Install shfmt (used by `shfmt -f .` enumerator and the drift artifact)
+        run: sudo apt-get update -qq && sudo apt-get install -y shfmt
 
-          bash lib/tools/shellcheck.sh
+      # ============================================================
+      # Produce artifacts for the post workflow BEFORE the red-cross
+      # gate, so even a red-cross failure ships diagnostics to the PR.
+      # SHELLCHECK_INSTALL_ONLY=1 just populates the framework cache;
+      # subsequent steps reuse the binary directly.
+      # ============================================================
+      - name: ShellCheck — populate platform-detected binary cache
+        env:
+          SHELLCHECK_INSTALL_ONLY: "1"
+        run: bash lib/tools/shellcheck.sh
+
+      - name: ShellCheck — produce findings in gcc format (PR-comment artifact)
+        run: |
+          # Mirror calculate_params_for_severity SEVERITY=critical from
+          # lib/tools/shellcheck.sh, emit gcc-format so the post job can
+          # parse with reviewdog -efm. compile.sh as the entry-point
+          # follows the entire source closure (--check-sourced
+          # --external-sources); SC2154 against cross-file definitions
+          # resolves correctly.
+          SC=$(find cache/tools/shellcheck -name 'shellcheck-v*' -type f -executable | head -1)
+          if [[ -z "$SC" || ! -x "$SC" ]]; then
+            echo "::error::ShellCheck binary not found in cache/tools/shellcheck (SC='$SC')"
+            exit 1
+          fi
+          "$SC" \
+            --check-sourced --external-sources --shell=bash \
+            --severity=warning --format=gcc \
+            --exclude=SC2034,SC2207,SC2046,SC2086,SC2206 \
+            compile.sh \
+            > shellcheck-findings.txt 2>&1 || true
+
+          # Per-file ShellCheck on standalone bash-shebang scripts
+          # outside compile.sh's source closure — those are linted
+          # in the red-cross gate at end of job, but their output
+          # also needs to land in the artifact so the post phase can
+          # inline-comment on them. Same exclusion regex as the gate.
+          #
+          # Read each path as JSON (escapes embedded newlines/quotes)
+          # then jq-decode into $file. Because $file is *assigned*, not
+          # interpolated, even a path like `x"$(id)".sh` becomes a
+          # plain string here — no command substitution at parse time.
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            file=$(jq -r . <<< "$line")
+            [[ -f "$file" ]] || continue
+            if [[ ! "$file" =~ lib/|extensions/|\.py$|\.service$|\.rules$|\.network$|\.netdev$ ]]; then
+              if grep -qE '^#!/.*bash' "$file" 2>/dev/null; then
+                "$SC" --shell=bash --severity=error --format=gcc "$file" >> shellcheck-findings.txt 2>&1 || true
+              fi
+            fi
+          done < pr-changed-files.lines
+
+      - name: ShellCheck — produce auto-fix diff (PR-suggestion artifact)
+        run: |
+          # `--severity=style` (broadest) on purpose: ShellCheck's auto-fix
+          # coverage is mostly style/info-level (SC2006, SC2196, SC2129…);
+          # --severity=warning leaves only excluded codes. filter_mode=added
+          # in the post step limits noise to lines this PR adds.
+          SC=$(find cache/tools/shellcheck -name 'shellcheck-v*' -type f -executable | head -1)
+          if [[ -z "$SC" || ! -x "$SC" ]]; then
+            echo "::error::ShellCheck binary not found in cache/tools/shellcheck (SC='$SC')"
+            exit 1
+          fi
+          "$SC" -f diff \
+            --severity=style --shell=bash \
+            --exclude=SC2034,SC2207,SC2046,SC2086,SC2206 \
+            $(shfmt -f .) \
+            > shellcheck-fix.diff 2>/dev/null || true
+
+      - name: shfmt — produce drift diff (PR-suggestion artifact)
+        run: |
+          # `|| true`: shfmt aborts with exit 1 on any unparseable file
+          # (some Armbian shell scripts use bash-extension syntax that
+          # confuses the parser). Files that *did* produce diff hunks
+          # still ship to the post step.
+          shfmt -d $(shfmt -f .) > shfmt.diff 2>/dev/null || true
+
+      - name: Stash PR metadata for the post workflow
+        run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
+          echo "${{ github.event.pull_request.head.sha }}" > head-sha.txt
+          # head-repo.txt is intentionally captured even though the
+          # current post workflow doesn't consume it — it's the only
+          # place we have authoritative access to the PR's fork-owner
+          # name, and the post workflow may need it later (e.g., to
+          # build a cross-fork compare URL in a Check Run summary).
+          echo "${{ github.event.pull_request.head.repo.full_name }}" > head-repo.txt
+          echo "${{ github.event.pull_request.base.sha }}" > base-sha.txt
+          echo "${{ github.event.pull_request.base.ref }}" > base-ref.txt
+          echo "${{ github.repository }}" > base-repo.txt
+
+      - name: Upload artifact (always — even if the red-cross gate below fails)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lint-scripts-results
+          path: |
+            shellcheck-findings.txt
+            shellcheck-fix.diff
+            shfmt.diff
+            pr-number.txt
+            head-sha.txt
+            head-repo.txt
+            base-sha.txt
+            base-ref.txt
+            base-repo.txt
+          retention-days: 1
+          if-no-files-found: error
+
+      # ============================================================
+      # Red-cross gate — preserves the previous maintenance-lint-scripts.yml
+      # pass/fail semantics: framework run (via compile.sh entry-point,
+      # follows the source chain so cross-file vars aren't reported as
+      # "unused") + per-file --severity=error on bash-shebang scripts
+      # outside lib/ and extensions/. Anything that previously turned
+      # the PR Check red still does so here.
+      # ============================================================
+      - name: Red-cross gate (framework run + critical per-file)
+        run: |
+          # Capture every gate diagnostic so a non-zero exit can publish
+          # a readable report to the Step Summary. Without this the only
+          # artifact of a fail is the bare job log buried under collapsed
+          # step groups.
+          gate_log="$(mktemp)"
+          trap 'rm -f "$gate_log"' EXIT
+
+          set +e
+          bash lib/tools/shellcheck.sh 2>&1 | tee -a "$gate_log"
+          framework_ret=${PIPESTATUS[0]}
+
+          # Same cached, version-pinned ShellCheck binary the artifact
+          # step uses — not the runner's system `shellcheck`, whose
+          # version may differ and report findings the gate and the
+          # artifact disagree on.
+          SC=$(find cache/tools/shellcheck -name 'shellcheck-v*' -type f -executable | head -1)
+
+          # Read each path as JSON-encoded (escapes newlines/quotes)
+          # then jq-decode into $file. Path content is attacker-
+          # controlled (any PR can add any filename), so it must
+          # never reach the shell parser as code — see comments on
+          # the `Get changed files` step above.
+          per_file_ret=0
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            file=$(jq -r . <<< "$line")
+            [[ -f "$file" ]] || continue
+            if [[ ! "$file" =~ lib/|extensions/|\.py$|\.service$|\.rules$|\.network$|\.netdev$ ]]; then
+              if grep -qE '^#!/.*bash' "$file" 2>/dev/null; then
+                # gcc format keeps the captured log compact and
+                # file:line-prefixed for the Step Summary.
+                "$SC" --shell=bash --severity=error --format=gcc "$file" 2>&1 | tee -a "$gate_log"
+                rc=${PIPESTATUS[0]}
+                [[ $rc -ne 0 ]] && per_file_ret=$rc
+              fi
+            fi
+          done < pr-changed-files.lines
+          set -e
 
           ret=0
+          [[ $framework_ret -ne 0 ]] && ret=$framework_ret
+          [[ $per_file_ret -ne 0 ]] && ret=$per_file_ret
 
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-
-              if [[ ! "${file}" =~ lib/|extensions/|.py|.service|.rules|.network|.netdev ]]; then
-                  if grep -qE "^#\!/.*bash" $file; then
-
-                      shellcheck --severity=error $file || ret=$?
-
-                  fi
-              fi
-
-          done
+          if [[ $ret -ne 0 ]]; then
+            # Step Summary — the readable report a PR author sees on the
+            # Check's run page. Inline per-line markers are intentionally
+            # left to the post workflow's reviewdog pass (which also
+            # surfaces them on the Conversation tab); emitting `::error`
+            # annotations here too would double up on the same lines.
+            # The Summary is the fallback that still works when reviewdog
+            # no-ops (cross-fork token, filter mismatch, reviewdog down).
+            {
+              echo "## Red-cross gate failed"
+              echo
+              echo "ShellCheck reported findings in PR-scope files. Details:"
+              echo
+              echo '```'
+              cat "$gate_log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           exit $ret
