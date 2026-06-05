@@ -510,3 +510,17 @@ function post_family_tweaks__recomputer_rk35xx_disable_armbian_hardware_optimize
 	chroot_sdcard systemctl --no-reload disable armbian-hardware-optimize.service 2>/dev/null || true
 	rm -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service
 }
+
+# Create armbianEnv.txt.bak at build time.
+# Protects against sed -i + power loss corruption.
+function pre_umount_final_image__recomputer_armbianenv_backup() {
+	display_alert "$BOARD" "Creating armbianEnv.txt backup" "info"
+
+	local env_file="${MOUNT}/boot/armbianEnv.txt"
+	local bak_file="${MOUNT}/boot/armbianEnv.txt.bak"
+
+	if [[ -f "${env_file}" ]]; then
+		cp -a "${env_file}" "${bak_file}"
+		display_alert "$BOARD" "armbianEnv.txt.bak created"
+	fi
+}
