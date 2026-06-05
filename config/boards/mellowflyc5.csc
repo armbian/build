@@ -17,7 +17,7 @@ BOOTENV_FILE="mellowflyc5.txt"
 
 
 # WiFi RTL8821CS
-PACKAGE_LIST_BOARD="rfkill"
+PACKAGE_LIST_BOARD="rfkill mmc-utils"
 
 # Enable eMMC (mmc2) in the SPL. Without this, CONFIG_MMC_SUNXI_SLOT_EXTRA
 # defaults to -1 and the SPL never calls sunxi_mmc_init(2), causing
