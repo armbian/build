@@ -87,10 +87,21 @@ function run_tool_oras() {
 
 	# Run oras, possibly with retries...
 	declare ORAS_HOME="${HOME:-"${TMPDIR}"}" # oras _requires_ a HOME to work atleast in 1.2+
+	declare -a oras_proxy_env=(
+		"http_proxy=${http_proxy:-${HTTP_PROXY:-}}"
+		"https_proxy=${https_proxy:-${HTTPS_PROXY:-}}"
+		"HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}"
+		"HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}}"
+		"ftp_proxy=${ftp_proxy:-${FTP_PROXY:-}}"
+		"FTP_PROXY=${FTP_PROXY:-${ftp_proxy:-}}"
+		"no_proxy=${no_proxy:-${NO_PROXY:-}}"
+		"NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
+		"APT_PROXY_ADDR=${APT_PROXY_ADDR:-}"
+	)
 	display_alert "Running ORAS ${ACTUAL_VERSION}" "HOME='${ORAS_HOME}'; retries='${retries:-1}'; cmdline: $*" "debug"
 	if [[ "${retries:-1}" -gt 1 ]]; then
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
-		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "HTTPS_PROXY=${HTTPS_PROXY}" "${ORAS_BIN}" "$@"
+		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "${oras_proxy_env[@]}" "${ORAS_BIN}" "$@"
 	else
 		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
 		if [[ $# -eq 0 ]]; then
@@ -99,7 +110,7 @@ function run_tool_oras() {
 		fi
 
 		display_alert "Calling ORAS" "$*" "debug"
-		env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
+		env -i "HOME=${ORAS_HOME}" "${oras_proxy_env[@]}" "${ORAS_BIN}" "$@"
 	fi
 }
 
