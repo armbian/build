@@ -42,7 +42,8 @@ function prepare_python_and_pip() {
 
 	declare python3_version_majorminor python3_version_string
 	# Extract the major and minor version numbers (e.g., "3.12" instead of "3.12.2")
-	python3_version_majorminor=$(echo "${python3_version_full}" | awk '{print $2}' | cut -d. -f1,2)
+	declare _py_ver_triplet="${python3_version_full#* }" # strip "Python " prefix → "3.12.2"
+	python3_version_majorminor="${_py_ver_triplet%.*}"   # strip ".PATCH" suffix → "3.12"
 	# Construct the version string (e.g., "python3.12")
 	python3_version_string="python$python3_version_majorminor"
 
