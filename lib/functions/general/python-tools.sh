@@ -127,15 +127,15 @@ function prepare_python_and_pip() {
 		# Install pip, using get-pip.py; that bootstraps pip using an embedded, temporary, pip contained in get-pip.py
 		display_alert "Installing pip using get-pip.py" "${pip3_version_number}" "info"
 		declare -a python_proxy_env=(
-		"http_proxy=${http_proxy:-${HTTP_PROXY:-}}"
-		"https_proxy=${https_proxy:-${HTTPS_PROXY:-}}"
-		"HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}"
-		"HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}}"
-		"ftp_proxy=${ftp_proxy:-${FTP_PROXY:-}}"
-		"FTP_PROXY=${FTP_PROXY:-${ftp_proxy:-}}"
-		"no_proxy=${no_proxy:-${NO_PROXY:-}}"
-		"NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
-		"APT_PROXY_ADDR=${APT_PROXY_ADDR:-}"
+			"http_proxy=${http_proxy:-${HTTP_PROXY:-}}"
+			"https_proxy=${https_proxy:-${HTTPS_PROXY:-}}"
+			"HTTP_PROXY=${HTTP_PROXY:-${http_proxy:-}}"
+			"HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy:-}}"
+			"ftp_proxy=${ftp_proxy:-${FTP_PROXY:-}}"
+			"FTP_PROXY=${FTP_PROXY:-${ftp_proxy:-}}"
+			"no_proxy=${no_proxy:-${NO_PROXY:-}}"
+			"NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
+			"APT_PROXY_ADDR=${APT_PROXY_ADDR:-}"
 		)
 		run_host_command_logged env -i "${python_proxy_env[@]@Q}" "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" "${PYTHON3_INFO[GET_PIP_BIN]}" "${pip3_extra_args[@]}" "pip==${pip3_version_number}"
 
