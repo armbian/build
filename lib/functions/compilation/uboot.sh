@@ -579,7 +579,7 @@ function uboot_postinst_base() {
 		#recognize_root
 		root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 		root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
-		root_partition_name=$(echo $root_partition | sed 's/\/dev\///g')
+		root_partition_name="${root_partition#/dev/}"
 		root_partition_device_name=$(lsblk -ndo pkname $root_partition)
 		root_partition_device=/dev/$root_partition_device_name
 
