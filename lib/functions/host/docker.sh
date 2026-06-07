@@ -62,7 +62,6 @@ function get_docker_info_once() {
 		fi
 		declare -g -r DOCKER_IS_PODMAN="${DOCKER_IS_PODMAN}" # readonly
 
-
 		declare -g DOCKER_INFO_OK="no"
 		if [[ "${DOCKER_INFO}" =~ "DOCKER_INFO_OK" ]]; then
 			DOCKER_INFO_OK="yes"
@@ -547,7 +546,7 @@ function docker_cli_prepare_launch() {
 	while IFS= read -r _dns_server; do
 		[[ "${_dns_server}" =~ ^127\. || "${_dns_server}" == "::1" || "${_dns_server}" =~ ^fe80: ]] && continue
 		DOCKER_ARGS+=("--dns" "${_dns_server}")
-	done < <(awk '/^nameserver/ {print $2}' "${_dns_resolv_file}" 2>/dev/null)
+	done < <(awk '/^nameserver/ {print $2}' "${_dns_resolv_file}" 2> /dev/null)
 
 	# DOCKER_PRIVILEGED=no switches to a narrow capability set.
 	if [[ "${DOCKER_PRIVILEGED:-yes}" == "yes" ]]; then
@@ -821,7 +820,7 @@ function docker_cleanup_old_images() {
 
 		# Remove images beyond the first 2 (keep newest 2)
 		if [[ ${#image_ids[@]} -gt 2 ]]; then
-			for ((i=2; i<${#image_ids[@]}; i++)); do
+			for ((i = 2; i < ${#image_ids[@]}; i++)); do
 				display_alert "Removing old image" "${image_tag}:${image_ids[$i]}" "debug"
 				docker rmi "${image_ids[$i]}" > /dev/null 2>&1 || true
 			done
