@@ -279,8 +279,8 @@ function fetch_from_repo() {
 				while read -r key path; do
 					# key is like: submodule.libfoo.path
 					# extract "libfoo" from "submodule.libfoo.path"
-					local name=${key#submodule.}   # -> libfoo.path
-					name=${name%.path}             # -> libfoo
+					local name=${key#submodule.} # -> libfoo.path
+					name=${name%.path}           # -> libfoo
 
 					cd "${git_work_dir}" || exit
 
