@@ -45,16 +45,17 @@ function post_install_kernel_debs__install_r8125_dkms_package() {
 	# Extract r8125 source into /usr/src/r8125-9.016.01
 	use_clean_environment="yes" chroot_sdcard "mkdir -p /usr/src/r8125-9.016.01"
 	use_clean_environment="yes" chroot_sdcard "tar -xzf /tmp/r8125.tar.gz -C /tmp/"
-	use_clean_environment="yes" chroot_sdcard "cp -r /tmp/realtek-r8125-dkms-master/* /usr/src/r8125-9.016.01/"
+	use_clean_environment="yes" chroot_sdcard "cp -a /tmp/realtek-r8125-dkms-master/. /usr/src/r8125-9.016.01/"
 	use_clean_environment="yes" chroot_sdcard "rm -rf /tmp/r8125.tar.gz /tmp/realtek-r8125-dkms-master"
 
 	# Build and install the kernel module via DKMS
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/r8125*/*/build/*.log")
 	display_alert "Building r8125 kernel module via DKMS" "${EXTENSION}" "info"
 
-	# Find the target kernel version (not the host kernel running in Docker)
-	local target_kver
-	target_kver=$(ls "${SDCARD}/lib/modules/" | grep -v "^$(uname -r)$" | head -1)
+	# Build the full target kernel version string
+	# IMAGE_INSTALLED_KERNEL_VERSION provides the base version (e.g., "6.1.115")
+	# We need to append BRANCH and LINUXFAMILY for the full version (e.g., "6.1.115-vendor-rk35xx")
+	local target_kver="${IMAGE_INSTALLED_KERNEL_VERSION}-${BRANCH}-${LINUXFAMILY}"
 	if [[ -z "${target_kver}" ]]; then
 		display_alert "Cannot determine target kernel version" "r8125 DKMS build skipped" "warn"
 		return 0
