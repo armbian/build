@@ -45,7 +45,7 @@ function post_install_kernel_debs__install_r8125_dkms_package() {
 	# Extract r8125 source into /usr/src/r8125-9.016.01
 	use_clean_environment="yes" chroot_sdcard "mkdir -p /usr/src/r8125-9.016.01"
 	use_clean_environment="yes" chroot_sdcard "tar -xzf /tmp/r8125.tar.gz -C /tmp/"
-	use_clean_environment="yes" chroot_sdcard "cp -r /tmp/realtek-r8125-dkms-master/* /usr/src/r8125-9.016.01/"
+	use_clean_environment="yes" chroot_sdcard "cp -a /tmp/realtek-r8125-dkms-master/. /usr/src/r8125-9.016.01/"
 	use_clean_environment="yes" chroot_sdcard "rm -rf /tmp/r8125.tar.gz /tmp/realtek-r8125-dkms-master"
 
 	# Build and install the kernel module via DKMS
