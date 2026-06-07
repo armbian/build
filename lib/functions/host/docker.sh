@@ -222,7 +222,7 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	DOCKER_SERVER_NAME_HOST="$(grep -i -e "name:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_NAME_HOST="$(grep -im1 -e "^ *Name:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
 
 	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
