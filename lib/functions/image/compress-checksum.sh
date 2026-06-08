@@ -36,6 +36,10 @@ function output_images_compress_and_checksum() {
 	# threads and reserve ~61GB for marginal wall-time gain. Override per-build
 	# with COMPRESS_MAX_THREADS (set it >= nproc to disable the cap).
 	max_threads="${COMPRESS_MAX_THREADS:-32}"
+	# Guard against a non-numeric or zero override: bash arithmetic reads
+	# either as 0, which would set compress_threads=0 (xz/zstd -T0 = "use all
+	# cores") and silently collapse the cap. Fall back to the default 32.
+	[[ "${max_threads}" =~ ^[0-9]+$ ]] && (( max_threads >= 1 )) || max_threads=32
 	compress_threads=$host_threads
 	(( compress_threads > max_threads )) && compress_threads=$max_threads
 	active_jobs=$(pgrep -cx 'xz|zstd|zstdmt' 2>/dev/null || true)
