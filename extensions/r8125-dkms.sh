@@ -26,7 +26,7 @@ function extension_finish_config__install_r8125_dkms() {
 	if [[ ! -f "${r8125_cache_dir}/source.tar.gz" ]]; then
 		display_alert "Downloading r8125 DKMS source" "${r8125_tarball_url}" "info"
 		run_host_command_logged mkdir -p "${r8125_cache_dir}"
-		run_host_command_logged wget -q --show-progress "${r8125_tarball_url}" -O "${r8125_cache_dir}/source.tar.gz"
+		run_host_command_logged curl -fsSL --progress-bar "${r8125_tarball_url}" -o "${r8125_cache_dir}/source.tar.gz"
 	fi
 }
 
