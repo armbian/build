@@ -288,7 +288,8 @@ function docker_cli_prepare_dockerfile() {
 	declare -a -g host_dependencies=()
 
 	# Get the actual host architecture for proper cross-compiler selection
-	declare host_arch="$(dpkg --print-architecture)"
+	declare host_arch
+	host_arch="$(dpkg --print-architecture)"
 	host_release="${DOCKER_WANTED_RELEASE}" host_arch="${host_arch}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
 	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}' host_arch '${host_arch}'" "${host_dependencies[*]}" "debug"
 
