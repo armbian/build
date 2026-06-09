@@ -15,6 +15,19 @@
 
 . /etc/armbian-release
 
+# Atomic write helper: mv tmp to dest with sync
+atomic_write() {
+	local dest="$1" mode="${2:-}"
+	local tmp="${dest}.tmp"
+	if [[ -n "$mode" ]]; then
+		chmod "$mode" "$tmp"
+	elif [[ -e "$dest" ]]; then
+		chmod --reference="$dest" "$tmp"
+	fi
+	mv -f "$tmp" "$dest"
+	sync -f "$dest" 2>/dev/null || sync "$dest" 2>/dev/null
+}
+
 check_abort() {
 
 	echo -e "\nDisabling user account creation procedure\n"
@@ -117,9 +130,8 @@ do_firstrun_automated_network_configuration()
 
 						DEVICE_NAME=${wlan_index}
 						DEVTYPE=wifis
-						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
-						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
-						#Enable Wlan, disable Eth
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml.tmp
+						atomic_write /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml 600
 						PRESET_NET_ETHERNET_ENABLED=0
 						netplan apply > /dev/null 2>&1
 
@@ -131,9 +143,8 @@ do_firstrun_automated_network_configuration()
 
 						DEVICE_NAME=${eth_index}
 						DEVTYPE=ethernets
-						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
-						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
-						# Enable Eth, disable Wlan
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml.tmp
+						atomic_write /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml 600
 						PRESET_NET_WIFI_ENABLED=0
 						netplan apply > /dev/null 2>&1
 				fi
@@ -262,7 +273,11 @@ set_shell() {
 	# /etc/default/useradd; /etc/adduser.conf only exists when the (now optional
 	# on Debian forky+) adduser package is installed, so guard that edit.
 	sed -i "s|^SHELL=.*|SHELL=${SHELL_PATH}|" /etc/default/useradd
-	[[ -f /etc/adduser.conf ]] && sed -i "s|^DSHELL=.*|DSHELL=${SHELL_PATH}|" /etc/adduser.conf
+	sync -f /etc/default/useradd 2>/dev/null
+	if [[ -f /etc/adduser.conf ]]; then
+		sed -i "s|^DSHELL=.*|DSHELL=${SHELL_PATH}|" /etc/adduser.conf
+		sync -f /etc/adduser.conf 2>/dev/null
+	fi
 
 }
 
@@ -342,7 +357,7 @@ set_timezone_and_locales() {
 						done
 
 						# generate config
-						cat <<- EOF > /etc/netplan/30-wifis-dhcp.yaml
+						cat <<- EOF > /etc/netplan/30-wifis-dhcp.yaml.tmp
 						# Created by Armbian firstlogin script
 						network:
 						  wifis:
@@ -353,7 +368,8 @@ set_timezone_and_locales() {
 						        "$SSID":
 						         password: "${password}"
 						EOF
-						chmod 600 /etc/netplan/30-wifis-dhcp.yaml
+						chmod 600 /etc/netplan/30-wifis-dhcp.yaml.tmp
+						atomic_write /etc/netplan/30-wifis-dhcp.yaml
 
 						# apply to netplan
 						systemctl daemon-reload
@@ -424,6 +440,7 @@ set_timezone_and_locales() {
 			jq '.timezone, .country, .country_code' |
 			while read -r TIMEZONE; do
 				read -r COUNTRY
+				read -r COUNTRYCODE
 				echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete '"\n'
 			done
 	)
@@ -487,25 +504,28 @@ set_timezone_and_locales() {
 		timedatectl set-timezone "${TZDATA}"
 		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
 
-		# change default locales
-		sed -i "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" /etc/default/locale
+		# change default locales (atomic write)
+		if sed -i "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" /etc/default/locale; then
+			sync -f /etc/default/locale 2>/dev/null
+		fi
 
-		# generate locales
-		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+		# generate locales (atomic write for locale.gen)
+		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen > /etc/locale.gen.tmp; then
+			atomic_write /etc/locale.gen
+		fi
 		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 		locale-gen "${LOCALES}" > /dev/null 2>&1
 
-		# setting detected locales only for user
-		{
-			echo "export LC_ALL=$LOCALES"
-			echo "export LANG=$LOCALES"
-			echo "export LANGUAGE=$LOCALES"
-		} >> /home/"$RealUserName"/.bashrc
-		{
-			echo "export LC_ALL=$LOCALES"
-			echo "export LANG=$LOCALES"
-			echo "export LANGUAGE=$LOCALES"
-		} >> /home/"$RealUserName"/.xsessionrc
+		# setting detected locales only for user (idempotent)
+		for rcfile in /home/"$RealUserName"/.bashrc /home/"$RealUserName"/.xsessionrc; do
+			if ! grep -q "^export LC_ALL=$LOCALES" "$rcfile" 2>/dev/null; then
+				{
+					echo "export LC_ALL=$LOCALES"
+					echo "export LANG=$LOCALES"
+					echo "export LANGUAGE=$LOCALES"
+				} >> "$rcfile"
+			fi
+		done
 
 	fi
 }
@@ -537,6 +557,15 @@ add_profile_sync_settings() {
 add_user() {
 	read -r -t 0 _
 	REPEATS=3
+
+	# Power-loss re-run: detect existing regular user, skip username prompt
+	local existing_user
+	existing_user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
+	if [ -n "$existing_user" ] && [ -d "/home/$existing_user" ]; then
+		RealUserName="$existing_user"
+		username="$existing_user"
+		echo -e "Detected existing user \e[0;92m$RealUserName\x1B[0m from previous setup, reusing."
+	else
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		[[ -z "${PRESET_USER_NAME}" ]] && echo -e "\nPlease provide a username (eg. your first name): \c"
 		if [ -z "$PRESET_USER_NAME" ];then
@@ -551,8 +580,13 @@ add_user() {
 
 		RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
 		[ -z "$RealUserName" ] && return
-		if ! id "$RealUserName" > /dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
+		if ! id "$RealUserName" > /dev/null 2>&1; then
+			break
+		else
+			echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."
+		fi
 	done
+	fi
 
 	# Set default user login icon
 	set_user_icon "$RealUserName"
@@ -588,13 +622,16 @@ add_user() {
 				RealName="$PRESET_DEFAULT_REALNAME"
 			fi
 
-			# useradd (Essential, from passwd) instead of adduser (optional on
-			# Debian forky+, absent from minimal images). --user-group mirrors
-			# adduser's per-user group; --create-home copies /etc/skel; login shell
-			# comes from SHELL_PATH (set_shell ran first). Password is disabled here
-			# and set right below, same as adduser --disabled-password.
-			useradd --create-home --home-dir /home/"$RealUserName" --shell "$SHELL_PATH" \
-				--comment "$RealName" --user-group "$RealUserName"
+			# Skip user creation if already exists (power-loss re-run)
+			if ! id "$RealUserName" > /dev/null 2>&1; then
+				# useradd (Essential, from passwd) instead of adduser (optional on
+				# Debian forky+, absent from minimal images). --user-group mirrors
+				# adduser's per-user group; --create-home copies /etc/skel; login shell
+				# comes from SHELL_PATH (set_shell ran first). Password is disabled here
+				# and set right below, same as adduser --disabled-password.
+				useradd --create-home --home-dir /home/"$RealUserName" --shell "$SHELL_PATH" \
+					--comment "$RealName" --user-group "$RealUserName"
+			fi
 
 			# download and add SSH key if defined
 			if [[ -n "${PRESET_USER_KEY}" ]]; then
@@ -631,10 +668,33 @@ add_user() {
 			[ -z "$RealName" ] && RealName="$RealUserName"
 			echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
 			echo -e "Please use this account for your daily work from now on.\n"
-			rm -f /root/.not_logged_in_yet
+			# .not_logged_in_yet is NOT deleted here - moved to end of script
+			# to ensure all subsequent configuration (timezone, SSH, desktop)
+			# completes before marking firstlogin as done
+			# Validate sudoers before modifying (detect power-loss corruption)
+			if ! grep -q '^root\s\+ALL' /etc/sudoers 2>/dev/null; then
+				# sudoers corrupted (power-loss), restore from dpkg default
+				cat > /etc/sudoers.tmp << 'SUEOF'
+Defaults	env_reset
+Defaults	mail_badpass
+Defaults	secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+root	ALL=(ALL:ALL) ALL
+%sudo	ALL=(ALL:ALL) ALL
+
+@includedir /etc/sudoers.d
+SUEOF
+				chmod 440 /etc/sudoers.tmp
+				atomic_write /etc/sudoers
+			fi
 			# set up profile sync daemon on desktop systems
 			if command -v psd > /dev/null 2>&1; then
-				echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
+				# Add psd-overlay-helper to sudoers (atomic write, idempotent)
+				if ! grep -q "psd-overlay-helper" /etc/sudoers 2>/dev/null; then
+					cp -p /etc/sudoers /etc/sudoers.tmp
+					echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers.tmp
+					atomic_write /etc/sudoers
+				fi
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
 			fi
@@ -643,7 +703,7 @@ add_user() {
 			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again [${REPEATS}]."
 			REPEATS=$((REPEATS - 1))
 		fi
-		[[ "$REPEATS" -eq 0 ]] && logout
+		[[ "$REPEATS" -eq 0 ]] && exit 0
 	done
 
 }
@@ -673,7 +733,7 @@ set_user_icon() {
 }
 
 
-if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
+if [[ -f /root/.not_logged_in_yet && -n "$(tty)" ]]; then
 
 	. /root/.not_logged_in_yet
 
@@ -684,9 +744,11 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	do_firstrun_automated_network_configuration
 
-	# disable autologin
+	# disable autologin (remove both generic and tty-specific paths)
 	rm -f /etc/systemd/system/getty@.service.d/override.conf
+	rm -f /etc/systemd/system/getty@tty1.service.d/override.conf
 	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
+	rm -f /etc/systemd/system/serial-getty@ttyGS0.service.d/override.conf
 	systemctl daemon-reload
 
 	declare desktop_dm="none"
@@ -872,11 +934,15 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	trap check_abort INT
 
-	while [ -f "/root/.not_logged_in_yet" ]; do
+	if [ -f "/root/.not_logged_in_yet" ]; then
 		[[ -z "${PRESET_USER_NAME}" ]] && echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
 		[[ "${desktop_dm}" != "none" ]] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
 		add_user
-	done
+		if [[ -z "${RealUserName:-}" ]]; then
+			echo -e "\nUser creation failed. Retrying on next login."
+			exit 1
+		fi
+	fi
 	trap - INT TERM EXIT
 
 	# ask user to select automated locales or not
@@ -888,8 +954,15 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
 
-	# re-enable passing locale environment via ssh
-	sed -e '/^#AcceptEnv LANG/ s/^#//' -i /etc/ssh/sshd_config
+	# re-enable passing locale environment via ssh and allow root password login (atomic write)
+	if sed -e '/^#AcceptEnv LANG/ s/^#//' -e 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config > /etc/ssh/sshd_config.tmp; then
+		atomic_write /etc/ssh/sshd_config
+	fi
+	# Delete marker BEFORE restarting sshd.  If the script is running
+	# over an SSH session, `systemctl restart ssh.service` kills the
+	# session and this script with it, so any code after the restart
+	# never executes.
+	rm -f /root/.not_logged_in_yet
 	# restart sshd daemon
 	systemctl restart ssh.service
 
@@ -1052,3 +1125,8 @@ fi
 if [[ -f /root/provisioning.sh ]]; then
 	. /root/provisioning.sh
 fi
+
+# All configuration complete - safe to remove firstlogin marker now
+# This must be the last operation to ensure power-loss during any
+# step above will cause firstlogin to re-run on next boot.
+[[ -n "$(tty)" ]] && rm -f /root/.not_logged_in_yet
