@@ -351,40 +351,6 @@ function do_main_configuration() {
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect
 	##             place to initialize the extension manager. It will create functions
 	##             like the 'post_family_config' that is invoked below.
-
-	# Auto-enable the ccache compile-cache extension when:
-	#   - the legacy toggle is set (USE_CCACHE=yes / PRIVATE_CCACHE=yes), OR
-	#   - the ccache-remote extension is requested (it sets USE_CCACHE=yes
-	#     itself inside extension_prepare_config, too late for this
-	#     shim to react to the toggle directly, so we trigger on the
-	#     extension name instead).
-	# Skip when a competing compile-cache extension (sccache, …) is already
-	# requested. Mutex resolution lives inside the extensions themselves;
-	# the regex below just prevents redundant auto-enabling.
-	#
-	# Placed immediately before initialize_extension_manager so all
-	# in-do_main_configuration sources of USE_CCACHE / PRIVATE_CCACHE /
-	# ENABLE_EXTENSIONS are visible. The extension-list normalisation
-	# (EXT fallback + comma/whitespace handling) is shared with the
-	# per-extension mutex checks via extension_list_normalized.
-	#
-	# Note: USE_CCACHE set in userpatches/lib.config is a framework-level
-	# limitation — lib.config is sourced after initialize_extension_manager
-	# (see line ~443 'too late to define hook functions or add extensions
-	# in lib.config'). For that scenario prepare_compilation_vars emits a
-	# warning at compile phase nudging users to migrate to
-	# ENABLE_EXTENSIONS=ccache.
-	local _ext_list
-	_ext_list="$(extension_list_normalized)"
-	if [[ "${USE_CCACHE}" == "yes" ||
-		"${PRIVATE_CCACHE}" == "yes" ||
-		"${_ext_list}" == *,ccache-remote,* ]]; then
-		if [[ ! "${_ext_list}" == *,ccache,* && ! "${_ext_list}" == *,sccache,* ]]; then
-			enable_extension "ccache"
-		fi
-	fi
-	unset _ext_list
-
 	initialize_extension_manager
 
 	call_extension_method "post_family_config" "config_tweaks_post_family_config" <<- 'POST_FAMILY_CONFIG'
