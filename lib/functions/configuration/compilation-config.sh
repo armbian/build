@@ -30,16 +30,12 @@ function prepare_compilation_vars() {
 		wrapper prefix directory is needed.
 	COMPILE_PREPARE_VARS
 
-	# Framework-level limitation: USE_CCACHE / PRIVATE_CCACHE set in
-	# userpatches/lib.config (sourced after initialize_extension_manager —
-	# see main-config.sh:443 "too late to define hook functions or add
-	# extensions in lib.config") cannot auto-enable the ccache extension.
-	# Warn the user so they can migrate; we deliberately do not duplicate
-	# the env-setup logic here — it lives in extensions/ccache.sh as the
-	# sole owner of the ccache backend.
-	if [[ ("${USE_CCACHE}" == "yes" || "${PRIVATE_CCACHE}" == "yes") && -z "${CCACHE}" ]]; then
-		display_alert "USE_CCACHE / PRIVATE_CCACHE set, but no compile-cache extension is active" \
-			"likely set in userpatches/lib.config (framework limit: too late to enable extensions there). Add 'ccache' to ENABLE_EXTENSIONS / EXT in your CLI, env, or config file sourced earlier." "warn"
+	# Migration reminder — remove after mid-2027.
+	# USE_CCACHE / PRIVATE_CCACHE no longer enable any compile-cache backend;
+	# compile-cache extensions are now enabled explicitly via ENABLE_EXTENSIONS.
+	if [[ ("${USE_CCACHE:-}" == "yes" || "${PRIVATE_CCACHE:-}" == "yes") && -z "${CCACHE}" ]]; then
+		display_alert "USE_CCACHE / PRIVATE_CCACHE are ignored" \
+			"compile-cache backends are now extensions; use ENABLE_EXTENSIONS=ccache (or another backend)" "wrn"
 	fi
 
 	# moved from config: this does not belong in configuration. it's a compilation thing.
