@@ -31,8 +31,8 @@ function extension_hook_opt_out() {
 # Also folds in extensions enabled programmatically via enable_extension()
 # (from board/family/user configuration) by scanning extension_function_info,
 # so callers see the full set regardless of how each extension was enabled.
-# Stdout: the normalized list. Useful in both the in-core auto-enable shim
-# and per-extension mutex checks between mutually-exclusive extensions.
+# Stdout: the normalized list. Used by per-extension mutex checks between
+# mutually-exclusive extensions.
 function extension_list_normalized() {
 	local raw="${ENABLE_EXTENSIONS:-${EXT:-}}"
 	# Normalize all IFS-style whitespace (space, tab, newline) to commas so
