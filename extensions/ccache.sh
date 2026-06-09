@@ -12,11 +12,7 @@
 # inject CCACHE_UMASK into the env-i make envs since the kernel/u-boot
 # auto-passthrough only covers CCACHE_DIR.
 #
-# Auto-enabled by core when USE_CCACHE=yes / PRIVATE_CCACHE=yes is set, or
-# when the ccache-remote extension is requested (see
-# main_config_redefine_user_target in main-config.sh). Can also be enabled
-# explicitly via ENABLE_EXTENSIONS=ccache regardless of the USE_CCACHE
-# toggle.
+# Enable explicitly via ENABLE_EXTENSIONS=ccache (or EXT=ccache).
 #
 # Mutually exclusive with other compile-cache extensions (sccache, …) — the
 # mutex is enforced in extension_prepare_config__ccache.
