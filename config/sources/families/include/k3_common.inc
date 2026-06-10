@@ -14,7 +14,7 @@ declare -g CLEAN_LEVEL="make-atf,make-uboot"
 
 declare -g INSTALL_HEADERS="yes"
 
-declare -g TI_PACKAGES=()
+[[ -v "TI_PACKAGES" ]] || declare -g TI_PACKAGES=()
 if [[ "${CC33XX_SUPPORT}" == "yes" ]] ; then
 	if [[ "${RELEASE}" == "trixie" || "${RELEASE}" == "noble" ]] ; then
 		TI_PACKAGES+=("cc33xx-fw" "cc33xx-target-scripts" "cc33conf" "cc33calibrator")
