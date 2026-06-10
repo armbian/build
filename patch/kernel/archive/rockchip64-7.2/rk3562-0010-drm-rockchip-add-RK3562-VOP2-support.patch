@@ -1,0 +1,546 @@
+From 2b693b026bd40b1606e1cf98f1898669290bf7ed Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sun, 23 Aug 2026 15:40:20 +0800
+Subject: [PATCH 10/18] drm/rockchip: add RK3562 VOP2 support
+
+Describe the RK3562 display controller as a single-VP VOP2 instance with four ESMART windows connected to VP0.
+
+Add RK3562 window and video-port data, the RK3562 overlay and interface-polarity register definitions, and the RK3562-specific overlay, layer-mixer, delay, and interface-mux programming. Reuse the RK3568-compatible VP and smart-window register layouts where the hardware matches.
+
+Enable the existing VOP2 CSU integration for RK3562 so the VOP ACLK divider is updated from the active ACLK and VP DCLK rates during CRTC enable. Keep the SoC-specific behavior behind VOP2_FEATURE_HAS_CSU and the RK3562 vop2_ops table.
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.c |  30 ++
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.h |  27 ++
+ drivers/gpu/drm/rockchip/rockchip_vop2_reg.c | 367 +++++++++++++++++++
+ 3 files changed, 424 insertions(+)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+index 843c7ef97..d33b9cc99 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -9,6 +9,7 @@
+ #include <linux/delay.h>
+ #include <linux/iopoll.h>
+ #include <linux/kernel.h>
++#include <linux/math64.h>
+ #include <linux/media-bus-format.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+@@ -18,6 +19,7 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/swab.h>
++#include <soc/rockchip/rockchip_csu.h>
+ 
+ #include <drm/drm.h>
+ #include <drm/drm_atomic.h>
+@@ -1799,6 +1801,28 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc,
+ 
+ 	clk_set_rate(vp->dclk, clock);
+ 
++	if ((vop2->data->feature & VOP2_FEATURE_HAS_CSU) && vop2->csu_aclk) {
++		unsigned long aclk_rate = clk_get_rate(vop2->aclk);
++		unsigned long dclk_rate = clk_get_rate(vp->dclk);
++		u32 csu_div;
++		int csu_ret;
++
++		if (aclk_rate && dclk_rate) {
++			csu_div = clamp_t(u64,
++					  div_u64((u64)(aclk_rate - 1) * 2, dclk_rate),
++					  1, CSU_MAX_DIV);
++
++			if (csu_div != vop2->csu_div) {
++				csu_ret = rockchip_csu_set_div(vop2->csu_aclk, csu_div);
++				if (csu_ret < 0)
++					drm_err(vop2->drm, "failed to set csu aclk divider: %d\n",
++						csu_ret);
++				else
++					vop2->csu_div = csu_div;
++			}
++		}
++	}
++
+ 	vop2_post_config(crtc);
+ 
+ 	vop2_cfg_done(vp);
+@@ -2723,6 +2747,12 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 					     "cannot get sys_pmu\n");
+ 	}
+ 
++	if (vop2_data->feature & VOP2_FEATURE_HAS_CSU) {
++		vop2->csu_aclk = rockchip_csu_get(dev, "aclk");
++		if (IS_ERR(vop2->csu_aclk))
++			vop2->csu_aclk = NULL;
++	}
++
+ 	vop2->hclk = devm_clk_get(vop2->dev, "hclk");
+ 	if (IS_ERR(vop2->hclk))
+ 		return dev_err_probe(drm->dev, PTR_ERR(vop2->hclk),
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+index 377226528..b7f15255b 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.h
+@@ -29,6 +29,7 @@
+ #define VOP2_FEATURE_HAS_VO1_GRF	BIT(2)
+ #define VOP2_FEATURE_HAS_VOP_GRF	BIT(3)
+ #define VOP2_FEATURE_HAS_SYS_PMU	BIT(4)
++#define VOP2_FEATURE_HAS_CSU		BIT(5)
+ 
+ #define WIN_FEATURE_AFBDC		BIT(0)
+ #define WIN_FEATURE_CLUSTER		BIT(1)
+@@ -286,6 +287,8 @@ struct vop2_data {
+ 	unsigned int soc_id;
+ };
+ 
++struct csu_clk;
++
+ struct vop2 {
+ 	u32 version;
+ 	struct device *dev;
+@@ -309,6 +312,9 @@ struct vop2 {
+ 	struct regmap *vo1_grf;
+ 	struct regmap *sys_pmu;
+ 
++	struct csu_clk *csu_aclk;
++	u32 csu_div;
++
+ 	/* physical map length of vop2 register */
+ 	u32 len;
+ 
+@@ -485,6 +491,21 @@ enum dst_factor_mode {
+ #define RK3568_VP1_CTRL_BASE			0x0D00
+ #define RK3568_VP2_CTRL_BASE			0x0E00
+ #define RK3588_VP3_CTRL_BASE			0x0F00
++
++/* rk3562 overlay registers definition */
++#define RK3562_OVL_SYS				0x500
++#define RK3562_OVL_SYS_PORT_SEL_IMD		0x504
++#define RK3562_OVL_SYS_ESMART0_CTRL		0x520
++#define RK3562_OVL_SYS_ESMART1_CTRL		0x524
++#define RK3562_OVL_SYS_ESMART2_CTRL		0x528
++#define RK3562_OVL_SYS_ESMART3_CTRL		0x52C
++#define RK3562_OVL_PORT0_CTRL			0x600
++#define RK3562_OVL_PORT0_LAYER_SEL		0x604
++#define RK3562_OVL_PORT0_BG_MIX_CTRL		0x670
++#define RK3562_OVL_PORT0_CTRL__OVERLAY_MODE	BIT(0)
++
++#define RK3562_GRF_IOC_VO_IO_CON		0x10500
++
+ #define RK3568_VP_DSP_CTRL			0x00
+ #define RK3568_VP_MIPI_CTRL			0x04
+ #define RK3568_VP_COLOR_BAR_CTRL		0x08
+@@ -708,6 +729,12 @@ enum dst_factor_mode {
+ #define RK3568_DSP_IF_POL__HDMI_PIN_POL			GENMASK(7, 4)
+ #define RK3568_DSP_IF_POL__RGB_LVDS_PIN_POL		GENMASK(3, 0)
+ 
++/* RK3562 uses separate pin and clock polarity fields for these outputs. */
++#define RK3562_DSP_IF_POL__MIPI_PIN_POL		GENMASK(14, 12)
++#define RK3562_DSP_IF_POL__MIPI_DCLK_POL		BIT(15)
++#define RK3562_DSP_IF_POL__RGB_LVDS_PIN_POL		GENMASK(2, 0)
++#define RK3562_DSP_IF_POL__LVDS_DCLK_POL		BIT(3)
++
+ #define RK3588_DSP_IF_POL__DP1_PIN_POL			GENMASK(14, 12)
+ #define RK3588_DSP_IF_POL__DP0_PIN_POL			GENMASK(10, 8)
+ 
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+index 02a788a4d..7e07ab02f 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop2_reg.c
+@@ -552,6 +552,158 @@ static const struct reg_field rk3576_vop_smart_regs[VOP2_WIN_MAX_REG] = {
+ 	[VOP2_WIN_AFBC_ROTATE_90] = { .reg = 0xffffffff },
+ };
+ 
++/*
++ * RK3562 VOP has one VP and four ESMART windows.
++ * All windows are connected to VP0.
++ *
++ * RK3562 uses the RK3568-compatible ESMART window register layout.
++ */
++static const struct vop2_video_port_data rk3562_vop_video_ports[] = {
++	{
++		.id = 0,
++		.gamma_lut_len = 1024,
++		.cubic_lut_len = 9 * 9 * 9,
++		.max_output = { 2048, 4096 },
++		.pre_scan_max_dly = { 6, 8, 0, 43 },
++		.offset = 0xc00,
++	},
++};
++
++static const struct vop2_win_data rk3562_vop_win_data[] = {
++	{
++		.name = "Esmart0-win0",
++		.phys_id = ROCKCHIP_VOP2_ESMART0,
++		.base = 0x1800,
++		.possible_vp_mask = BIT(0),
++		.formats = formats_esmart,
++		.nformats = ARRAY_SIZE(formats_esmart),
++		.format_modifiers = format_modifiers,
++		.layer_sel_id = { 0, 0, 0xff, 0xff },
++		.supported_rotations = DRM_MODE_REFLECT_Y,
++		.axi_bus_id = 0,
++		.axi_yrgb_r_id = 0x02,
++		.axi_uv_r_id = 0x03,
++		.type = DRM_PLANE_TYPE_PRIMARY,
++		.max_upscale_factor = 8,
++		.max_downscale_factor = 8,
++		.dly = { 27, 45, 48 },
++	}, {
++		.name = "Esmart1-win0",
++		.phys_id = ROCKCHIP_VOP2_ESMART1,
++		.base = 0x1a00,
++		.possible_vp_mask = BIT(0),
++		.formats = formats_esmart,
++		.nformats = ARRAY_SIZE(formats_esmart),
++		.format_modifiers = format_modifiers,
++		.layer_sel_id = { 1, 1, 0xff, 0xff },
++		.supported_rotations = DRM_MODE_REFLECT_Y,
++		.axi_bus_id = 0,
++		.axi_yrgb_r_id = 0x04,
++		.axi_uv_r_id = 0x05,
++		.type = DRM_PLANE_TYPE_OVERLAY,
++		.max_upscale_factor = 8,
++		.max_downscale_factor = 8,
++		.dly = { 27, 45, 48 },
++	}, {
++		.name = "Esmart2-win0",
++		.phys_id = ROCKCHIP_VOP2_ESMART2,
++		.base = 0x1c00,
++		.possible_vp_mask = BIT(0),
++		.formats = formats_esmart,
++		.nformats = ARRAY_SIZE(formats_esmart),
++		.format_modifiers = format_modifiers,
++		.layer_sel_id = { 2, 2, 0xff, 0xff },
++		.supported_rotations = DRM_MODE_REFLECT_Y,
++		.axi_bus_id = 0,
++		.axi_yrgb_r_id = 0x06,
++		.axi_uv_r_id = 0x07,
++		.type = DRM_PLANE_TYPE_PRIMARY,
++		.max_upscale_factor = 8,
++		.max_downscale_factor = 8,
++		.dly = { 27, 45, 48 },
++	}, {
++		.name = "Esmart3-win0",
++		.phys_id = ROCKCHIP_VOP2_ESMART3,
++		.base = 0x1e00,
++		.possible_vp_mask = BIT(0),
++		.formats = formats_esmart,
++		.nformats = ARRAY_SIZE(formats_esmart),
++		.format_modifiers = format_modifiers,
++		.layer_sel_id = { 3, 3, 0xff, 0xff },
++		.supported_rotations = DRM_MODE_REFLECT_Y,
++		.axi_bus_id = 0,
++		.axi_yrgb_r_id = 0x08,
++		.axi_uv_r_id = 0x0d,
++		.type = DRM_PLANE_TYPE_OVERLAY,
++		.max_upscale_factor = 8,
++		.max_downscale_factor = 8,
++		.dly = { 27, 45, 48 },
++	},
++};
++
++/* RK3562 has RK3562-specific overlay registers, but RK3568-compatible
++ * VP/ESMART blocks.
++ */
++static const struct vop2_regs_dump rk3562_regs_dump[] = {
++	{
++		.name = "SYS",
++		.base = RK3568_REG_CFG_DONE,
++		.size = 0x100,
++		.en_reg  = 0,
++		.en_val = 0,
++		.en_mask = 0
++	}, {
++		.name = "OVL_SYS",
++		.base = RK3562_OVL_SYS,
++		.size = 0x80,
++		.en_reg = 0,
++		.en_val = 0,
++		.en_mask = 0,
++	}, {
++		.name = "OVL_VP0",
++		.base = RK3562_OVL_PORT0_CTRL,
++		.size = 0x80,
++		.en_reg = 0,
++		.en_val = 0,
++		.en_mask = 0,
++	}, {
++		.name = "VP0",
++		.base = RK3568_VP0_CTRL_BASE,
++		.size = 0x100,
++		.en_reg = RK3568_VP_DSP_CTRL,
++		.en_val = 0,
++		.en_mask = RK3568_VP_DSP_CTRL__STANDBY,
++	}, {
++		.name = "Esmart0",
++		.base = RK3568_ESMART0_CTRL_BASE,
++		.size = 0xf0,
++		.en_reg = RK3568_SMART_REGION0_CTRL,
++		.en_val = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++		.en_mask = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++	}, {
++		.name = "Esmart1",
++		.base = RK3568_ESMART1_CTRL_BASE,
++		.size = 0xf0,
++		.en_reg = RK3568_SMART_REGION0_CTRL,
++		.en_val = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++		.en_mask = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++	}, {
++		.name = "Esmart2",
++		.base = RK3568_SMART0_CTRL_BASE,
++		.size = 0xf0,
++		.en_reg = RK3568_SMART_REGION0_CTRL,
++		.en_val = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++		.en_mask = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++	}, {
++		.name = "Esmart3",
++		.base = RK3568_SMART1_CTRL_BASE,
++		.size = 0xf0,
++		.en_reg = RK3568_SMART_REGION0_CTRL,
++		.en_val = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++		.en_mask = RK3568_SMART_REGION0_CTRL__WIN0_EN,
++	},
++};
++
+ static const struct vop2_video_port_data rk3568_vop_video_ports[] = {
+ 	{
+ 		.id = 0,
+@@ -2486,6 +2638,200 @@ static void rk3576_vop2_setup_bg_dly(struct vop2_video_port *vp)
+ 	vop2_vp_write(vp, RK3568_VP_PRE_SCAN_HTIMING, pre_scan_dly);
+ }
+ 
++/* RK3562-specific interface, overlay and timing configuration. */
++static unsigned long rk3562_set_intf_mux(struct vop2_video_port *vp, int id, u32 polflags)
++{
++	struct vop2 *vop2 = vp->vop2;
++	struct drm_crtc *crtc = &vp->crtc;
++	u32 die, dip;
++
++	die = vop2_readl(vop2, RK3568_DSP_IF_EN);
++	dip = vop2_readl(vop2, RK3568_DSP_IF_POL);
++
++	switch (id) {
++	case ROCKCHIP_VOP2_EP_RGB0:
++		die &= ~RK3568_SYS_DSP_INFACE_EN_RGB_MUX;
++		die |= RK3568_SYS_DSP_INFACE_EN_RGB |
++			   FIELD_PREP(RK3568_SYS_DSP_INFACE_EN_RGB_MUX, vp->id);
++		dip &= ~RK3562_DSP_IF_POL__RGB_LVDS_PIN_POL;
++		dip |= FIELD_PREP(RK3562_DSP_IF_POL__RGB_LVDS_PIN_POL, polflags);
++		if (polflags & POLFLAG_DCLK_INV)
++			regmap_write(vop2->sys_grf, RK3562_GRF_IOC_VO_IO_CON,
++				     BIT(3 + 16) | BIT(3));
++		else
++			regmap_write(vop2->sys_grf, RK3562_GRF_IOC_VO_IO_CON,
++				     BIT(3 + 16));
++		break;
++	case ROCKCHIP_VOP2_EP_MIPI0:
++		die &= ~RK3568_SYS_DSP_INFACE_EN_MIPI0_MUX;
++		die |= RK3568_SYS_DSP_INFACE_EN_MIPI0 |
++			   FIELD_PREP(RK3568_SYS_DSP_INFACE_EN_MIPI0_MUX, vp->id);
++		dip &= ~(RK3562_DSP_IF_POL__MIPI_PIN_POL |
++			  RK3562_DSP_IF_POL__MIPI_DCLK_POL);
++		dip |= FIELD_PREP(RK3562_DSP_IF_POL__MIPI_PIN_POL, polflags);
++		if (polflags & POLFLAG_DCLK_INV)
++			dip |= RK3562_DSP_IF_POL__MIPI_DCLK_POL;
++		break;
++	case ROCKCHIP_VOP2_EP_LVDS0:
++		die &= ~RK3568_SYS_DSP_INFACE_EN_LVDS0_MUX;
++		die |= RK3568_SYS_DSP_INFACE_EN_LVDS0 |
++			   FIELD_PREP(RK3568_SYS_DSP_INFACE_EN_LVDS0_MUX, vp->id);
++		dip &= ~(RK3562_DSP_IF_POL__RGB_LVDS_PIN_POL |
++			  RK3562_DSP_IF_POL__LVDS_DCLK_POL);
++		dip |= FIELD_PREP(RK3562_DSP_IF_POL__RGB_LVDS_PIN_POL, polflags);
++		if (polflags & POLFLAG_DCLK_INV)
++			dip |= RK3562_DSP_IF_POL__LVDS_DCLK_POL;
++		break;
++	default:
++		drm_err(vop2->drm, "Invalid interface id %d on vp%d\n", id, vp->id);
++		return 0;
++	}
++
++	dip |= RK3568_DSP_IF_POL__CFG_DONE_IMD;
++
++	vop2_writel(vop2, RK3568_DSP_IF_EN, die);
++	vop2_writel(vop2, RK3568_DSP_IF_POL, dip);
++
++	return crtc->state->adjusted_mode.crtc_clock * 1000LL;
++}
++
++static void rk3562_vop2_setup_dly_for_windows(struct vop2_video_port *vp)
++{
++	struct vop2 *vop2 = vp->vop2;
++	struct vop2_win *win;
++	int i;
++
++	for (i = 0; i < vop2->data->win_size; i++) {
++		win = &vop2->win[i];
++
++		switch (win->data->phys_id) {
++		case ROCKCHIP_VOP2_ESMART0:
++			regmap_update_bits(vop2->map, RK3562_OVL_SYS_ESMART0_CTRL,
++					   0xff, win->delay);
++			break;
++		case ROCKCHIP_VOP2_ESMART1:
++			regmap_update_bits(vop2->map, RK3562_OVL_SYS_ESMART1_CTRL,
++					   0xff, win->delay);
++			break;
++		case ROCKCHIP_VOP2_ESMART2:
++			regmap_update_bits(vop2->map, RK3562_OVL_SYS_ESMART2_CTRL,
++					   0xff, win->delay);
++			break;
++		case ROCKCHIP_VOP2_ESMART3:
++			regmap_update_bits(vop2->map, RK3562_OVL_SYS_ESMART3_CTRL,
++					   0xff, win->delay);
++			break;
++		default:
++			break;
++		}
++	}
++}
++
++static void rk3562_vop2_setup_layer_mixer(struct vop2_video_port *vp)
++{
++	struct vop2 *vop2 = vp->vop2;
++	struct drm_plane *plane;
++	u32 layer_sel = 0;
++	u32 port_sel = 0;
++
++	mutex_lock(&vop2->ovl_lock);
++
++	drm_atomic_crtc_for_each_plane(plane, &vp->crtc) {
++		struct vop2_win *win = to_vop2_win(plane);
++		u8 layer_id = plane->state->normalized_zpos;
++		u32 sel_mask, sel_shift;
++
++		switch (win->data->phys_id) {
++		case ROCKCHIP_VOP2_ESMART0:
++			sel_mask = GENMASK(17, 16);
++			sel_shift = 16;
++			break;
++		case ROCKCHIP_VOP2_ESMART1:
++			sel_mask = GENMASK(21, 20);
++			sel_shift = 20;
++			break;
++		case ROCKCHIP_VOP2_ESMART2:
++			sel_mask = GENMASK(25, 24);
++			sel_shift = 24;
++			break;
++		case ROCKCHIP_VOP2_ESMART3:
++			sel_mask = GENMASK(29, 28);
++			sel_shift = 28;
++			break;
++		default:
++			continue;
++		}
++
++		port_sel &= ~sel_mask;
++		port_sel |= (u32)(vp->id << sel_shift) & sel_mask;
++		layer_sel &= ~(0xf << (layer_id * 4));
++		layer_sel |= (u32)(win->data->layer_sel_id[vp->id] << (layer_id * 4));
++	}
++
++	vop2_writel(vop2, RK3562_OVL_SYS_PORT_SEL_IMD, port_sel);
++	vop2_writel(vop2, RK3562_OVL_PORT0_LAYER_SEL, layer_sel);
++
++	mutex_unlock(&vop2->ovl_lock);
++}
++
++static void rk3562_vop2_setup_overlay(struct vop2_video_port *vp)
++{
++	struct vop2 *vop2 = vp->vop2;
++	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(vp->crtc.state);
++	struct drm_crtc *crtc = &vp->crtc;
++	struct drm_plane *plane;
++	u32 ovl_ctrl;
++
++	mutex_lock(&vop2->ovl_lock);
++	ovl_ctrl = vop2_readl(vop2, RK3562_OVL_PORT0_CTRL);
++	if (vcstate->yuv_overlay)
++		ovl_ctrl |= RK3562_OVL_PORT0_CTRL__OVERLAY_MODE;
++	else
++		ovl_ctrl &= ~RK3562_OVL_PORT0_CTRL__OVERLAY_MODE;
++	vop2_writel(vop2, RK3562_OVL_PORT0_CTRL, ovl_ctrl);
++	mutex_unlock(&vop2->ovl_lock);
++
++	vp->win_mask = 0;
++
++	drm_atomic_crtc_for_each_plane(plane, crtc) {
++		struct vop2_win *win = to_vop2_win(plane);
++
++		win->delay = win->data->dly[VOP2_DLY_MODE_DEFAULT];
++		vp->win_mask |= BIT(win->data->phys_id);
++	}
++
++	if (!vp->win_mask)
++		return;
++
++	rk3562_vop2_setup_layer_mixer(vp);
++	vop2_setup_alpha(vp);
++	rk3562_vop2_setup_dly_for_windows(vp);
++}
++
++static void rk3562_vop2_setup_bg_dly(struct vop2_video_port *vp)
++{
++	struct drm_crtc *crtc = &vp->crtc;
++	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
++	u16 hdisplay = mode->crtc_hdisplay;
++	u16 hsync_len = mode->crtc_hsync_end - mode->crtc_hsync_start;
++	u32 bg_dly;
++	u32 pre_scan_dly;
++
++	bg_dly = vp->data->pre_scan_max_dly[3];
++
++	regmap_update_bits(vp->vop2->map, RK3562_OVL_PORT0_BG_MIX_CTRL,
++			   GENMASK(31, 24), FIELD_PREP(GENMASK(31, 24), bg_dly));
++
++	pre_scan_dly = ((bg_dly + (hdisplay >> 1) - 1) << 16) | hsync_len;
++	vop2_vp_write(vp, RK3568_VP_PRE_SCAN_HTIMING, pre_scan_dly);
++}
++
++static const struct vop2_ops rk3562_vop_ops = {
++	.setup_intf_mux = rk3562_set_intf_mux,
++	.setup_bg_dly = rk3562_vop2_setup_bg_dly,
++	.setup_overlay = rk3562_vop2_setup_overlay,
++};
++
+ static const struct vop2_ops rk3568_vop_ops = {
+ 	.setup_intf_mux = rk3568_set_intf_mux,
+ 	.setup_bg_dly = rk3568_vop2_setup_bg_dly,
+@@ -2504,6 +2850,24 @@ static const struct vop2_ops rk3588_vop_ops = {
+ 	.setup_overlay = rk3568_vop2_setup_overlay,
+ };
+ 
++/* RK3562 is a single-VP VOP with ESMART-only windows. */
++static const struct vop2_data rk3562_vop = {
++	.version = VOP_VERSION_RK3562,
++	.feature = VOP2_FEATURE_HAS_SYS_GRF | VOP2_FEATURE_HAS_CSU,
++	.nr_vps = 1,
++	.max_input = { 4096, 4096 },
++	.max_output = { 4096, 4096 },
++	.vp = rk3562_vop_video_ports,
++	.win = rk3562_vop_win_data,
++	.win_size = ARRAY_SIZE(rk3562_vop_win_data),
++	.smart_reg = rk3568_vop_smart_regs,
++	.nr_smart_regs = ARRAY_SIZE(rk3568_vop_smart_regs),
++	.regs_dump = rk3562_regs_dump,
++	.regs_dump_size = ARRAY_SIZE(rk3562_regs_dump),
++	.ops = &rk3562_vop_ops,
++	.soc_id = 3562,
++};
++
+ static const struct vop2_data rk3566_vop = {
+ 	.version = VOP_VERSION_RK3568,
+ 	.feature = VOP2_FEATURE_HAS_SYS_GRF,
+@@ -2583,6 +2947,9 @@ static const struct vop2_data rk3588_vop = {
+ 
+ static const struct of_device_id vop2_dt_match[] = {
+ 	{
++		.compatible = "rockchip,rk3562-vop",
++		.data = &rk3562_vop,
++	}, {
+ 		.compatible = "rockchip,rk3566-vop",
+ 		.data = &rk3566_vop,
+ 	}, {
+-- 
+2.55.0
+

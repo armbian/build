@@ -1,0 +1,156 @@
+From da597ada32987e059bcd98c3ce757cf25cdca0fd Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sat, 29 Aug 2026 18:26:55 +0800
+Subject: [PATCH] power: supply: rk817-charger: Configure USB input limit from
+ DT
+
+The RK817 charger driver currently uses a fixed 1.5 A USB input
+current limit during initialization and restores the same value after
+USB unplug, since the corresponding register bits are reset.
+
+Parse the optional input-current-limit-microamp device-tree property,
+map it to the supported RK817 current-limit values, and apply it during
+initialization and after USB unplug. Preserve the existing 1.5 A default
+when the property is absent.
+---
+ drivers/power/supply/rk817_charger.c | 82 ++++++++++++++++++++++------
+ 1 file changed, 66 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+index 9436c6bbf..8f65e43e7 100644
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -45,6 +45,25 @@ enum rk817_chg_cur {
+ 	CHG_0_5A,
+ };
+ 
++struct rk817_usb_input_current_limit {
++	u32 microamp;
++	u8 reg;
++};
++
++static const struct rk817_usb_input_current_limit
++rk817_usb_input_current_limits[] = {
++	{ 80000, 0x1 },
++	{ 450000, 0x0 },
++	{ 850000, 0x2 },
++	{ 1500000, 0x3 },
++	{ 1750000, 0x4 },
++	{ 2000000, 0x5 },
++	{ 2500000, 0x6 },
++	{ 3000000, 0x7 },
++};
++
++#define RK817_USB_INPUT_CURRENT_DEFAULT_UA	1500000
++
+ struct rk817_charger {
+ 	struct device *dev;
+ 	struct rk808 *rk808;
+@@ -103,6 +122,7 @@ struct rk817_charger {
+ 	int max_chg_volt_uv;
+ 	int charge_status;
+ 	int charger_input_volt_avg_uv;
++	u32 usb_input_current_limit_ua;
+ 
+ 	/* Work queue to periodically update values. */
+ 	struct delayed_work work;
+@@ -167,6 +187,31 @@ static int rk817_chg_cur_from_reg(u8 reg)
+ 	}
+ }
+ 
++static int rk817_usb_input_current_to_reg(u32 microamp)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rk817_usb_input_current_limits); i++)
++		if (microamp == rk817_usb_input_current_limits[i].microamp)
++			return rk817_usb_input_current_limits[i].reg;
++
++	return -EINVAL;
++}
++
++static int rk817_set_usb_input_current_limit(struct rk817_charger *charger)
++{
++	int reg;
++
++	reg = rk817_usb_input_current_to_reg(
++		charger->usb_input_current_limit_ua);
++	if (reg < 0)
++		return reg;
++
++	return regmap_write_bits(charger->rk808->regmap, RK817_PMIC_CHRG_IN,
++				RK817_USB_ILIM_SEL | RK817_USB_ILIM_EN,
++				reg | RK817_USB_ILIM_EN);
++}
++
+ static void rk817_bat_calib_vol(struct rk817_charger *charger)
+ {
+ 	uint32_t vcalib0 = 0;
+@@ -592,6 +637,7 @@ static irqreturn_t rk817_plug_out_isr(int irq, void *cg)
+ {
+ 	struct rk817_charger *charger;
+ 	struct rk808 *rk808;
++	int ret;
+ 
+ 	charger = (struct rk817_charger *)cg;
+ 	rk808 = charger->rk808;
+@@ -610,14 +656,10 @@ static irqreturn_t rk817_plug_out_isr(int irq, void *cg)
+ 	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_VLIM_EN,
+ 			  (0x01 << 7));
+ 
+-	/*
+-	 * Set average USB input current limit to 1.5A and enable USB current
+-	 * input limit.
+-	 */
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN,
+-			  RK817_USB_ILIM_SEL, 0x03);
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_ILIM_EN,
+-			  (0x01 << 3));
++	ret = rk817_set_usb_input_current_limit(charger);
++	if (ret)
++		dev_err(charger->dev,
++			"failed to restore USB input current limit: %d\n", ret);
+ 
+ 	rk817_read_props(charger);
+ 
+@@ -1025,14 +1067,10 @@ static int rk817_battery_init(struct rk817_charger *charger,
+ 	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_VLIM_EN,
+ 			  (0x01 << 7));
+ 
+-	/*
+-	 * Set average USB input current limit to 1.5A and enable USB current
+-	 * input limit.
+-	 */
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN,
+-			  RK817_USB_ILIM_SEL, 0x03);
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_ILIM_EN,
+-			  (0x01 << 3));
++	ret = rk817_set_usb_input_current_limit(charger);
++	if (ret)
++		return dev_err_probe(charger->dev, ret,
++				     "failed to set USB input current limit\n");
+ 
+ 	return 0;
+ }
+@@ -1081,6 +1119,18 @@ static int rk817_charger_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	charger->rk808 = rk808;
++	charger->usb_input_current_limit_ua =
++		RK817_USB_INPUT_CURRENT_DEFAULT_UA;
++	ret = of_property_read_u32(node, "rockchip,input-current-limit-microamp",
++				   &charger->usb_input_current_limit_ua);
++	if (ret && ret != -EINVAL)
++		return dev_err_probe(dev, ret,
++				     "failed to read USB input current limit\n");
++	if (rk817_usb_input_current_to_reg(
++			charger->usb_input_current_limit_ua) < 0)
++		return dev_err_probe(dev, -EINVAL,
++				     "invalid USB input current limit: %u uA\n",
++				     charger->usb_input_current_limit_ua);
+ 
+ 	charger->dev = &pdev->dev;
+ 	platform_set_drvdata(pdev, charger);
+-- 
+2.55.0
+
