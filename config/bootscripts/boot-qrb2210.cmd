@@ -3,12 +3,14 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# Set load addresses for Qualcomm QRB2210
-# These must be set explicitly because ABL overwrites defaults at runtime
-setenv kernel_addr_r "0xc0000000"
-setenv fdt_addr_r "0xc3000000"
-setenv ramdisk_addr_r "0xc4000000"
-setenv load_addr "0xd4000000"
+# Set load addresses for Qualcomm QRB2210 / Imola (2 GiB RAM @ 0x40000000–0x7eb00000, 0x80000000–0xc0000000).
+# ABL overwrites U-Boot defaults at runtime; these must be set in the script.
+# 0xc0000000+ is past the end of RAM — U-Boot 2026.01 LMB rejects loads there (see boot log far=0xc3000000).
+setenv kernel_addr_r "0x42000000"
+setenv fdt_addr_r "0x48000000"
+setenv ramdisk_addr_r "0x82000000"
+# Aux loads (env, dtbos). Keep above 0x8a800000 where boot.scr is sourced from.
+setenv load_addr "0x90000000"
 setenv overlay_error "false"
 
 # Qualcomm eMMC device and boot partition (0x43 = GPT partition 67 "efi")
@@ -17,7 +19,7 @@ setenv devnum "0"
 test -n "${distro_bootpart}" || setenv distro_bootpart "43"
 
 # default values
-setenv rootdev "/dev/mmcblk0p1"
+setenv rootdev "/dev/mmcblk0p68"
 setenv verbosity "1"
 setenv console "serial"
 setenv bootlogo "false"

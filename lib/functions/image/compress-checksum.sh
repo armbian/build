@@ -28,9 +28,20 @@ function output_images_compress_and_checksum() {
 	# *is* fair-shared among peers, with a 60% safety margin, so the level
 	# selection below picks the strongest preset that fits without OOMing
 	# even if every peer also reaches for its top level at the same instant.
-	declare host_threads active_jobs compress_threads mem_avail_mb mem_budget_mb
+	declare host_threads active_jobs compress_threads mem_avail_mb mem_budget_mb max_threads
 	host_threads=$(nproc)
+	# Cap threads: xz speedup is sublinear and its ratio slightly worsens past
+	# ~16-32 threads (more independent blocks), while peak memory grows linearly
+	# (~674MB/thread at -9). On a 128-core box an image would otherwise grab ~91
+	# threads and reserve ~61GB for marginal wall-time gain. Override per-build
+	# with COMPRESS_MAX_THREADS (set it >= nproc to disable the cap).
+	max_threads="${COMPRESS_MAX_THREADS:-32}"
+	# Guard against a non-numeric or zero override: bash arithmetic reads
+	# either as 0, which would set compress_threads=0 (xz/zstd -T0 = "use all
+	# cores") and silently collapse the cap. Fall back to the default 32.
+	[[ "${max_threads}" =~ ^[0-9]+$ ]] && (( max_threads >= 1 )) || max_threads=32
 	compress_threads=$host_threads
+	(( compress_threads > max_threads )) && compress_threads=$max_threads
 	active_jobs=$(pgrep -cx 'xz|zstd|zstdmt' 2>/dev/null || true)
 	[[ -z "${active_jobs}" ]] && active_jobs=0
 
@@ -97,7 +108,7 @@ function output_images_compress_and_checksum() {
 	done
 
 	display_alert "Compression host" \
-		"nproc=${host_threads} loadavg=${loadavg} MemTotal=${mem_total_mb}MB MemAvail=${mem_avail_mb}MB" \
+		"nproc=${host_threads} (cap=${max_threads}) loadavg=${loadavg} MemTotal=${mem_total_mb}MB MemAvail=${mem_avail_mb}MB" \
 		"info"
 	display_alert "Compression resource share" \
 		"active_xz/zstd=${active_jobs} -> threads=${compress_threads}, budget=${mem_budget_mb}MB; pick xz=-${xz_elastic_level} zstd=-${zstd_elastic_level}" \
