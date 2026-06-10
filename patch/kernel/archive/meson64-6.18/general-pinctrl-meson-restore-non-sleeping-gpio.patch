@@ -1,0 +1,55 @@
+From 878274b02d1b1f9610a696ceac66bdb2b89279ee Mon Sep 17 00:00:00 2001
+From: Viacheslav Bocharov <v@baodeep.com>
+Date: Wed, 10 Jun 2026 12:38:37 +0300
+Subject: [PATCH] pinctrl: meson: restore non-sleeping GPIO access
+
+Commit 28f240683871 ("pinctrl: meson: mark the GPIO controller as
+sleeping") set gpio_chip.can_sleep = true to work around
+gpio-shared-proxy holding a spinlock across a sleeping pinctrl config
+path. It was backported to 6.18.y as commit e81d1bc4ea79 ("pinctrl:
+meson: mark the GPIO controller as sleeping"), but the shared-GPIO
+proxy code does not exist in 6.18 at all, so on this kernel the
+workaround fixes nothing and only causes a regression.
+
+meson_gpio_get/set/direction_* access MMIO through regmap. The
+regmap_mmio bus uses fast I/O (spinlock) locking, so these value
+callbacks do not contain sleeping operations. Since gpio_chip.can_sleep
+describes the get/set value path, restore can_sleep = false.
+
+Marking the controller sleeping broke atomic value consumers such as
+w1-gpio (1-Wire bitbang): w1_io.c runs its read time slot under
+local_irq_save() and uses the non-cansleep gpiod_set_value() /
+gpiod_get_value(), which with can_sleep=true trigger WARN_ON(can_sleep)
+in gpiolib on every transferred bit (from w1_gpio_write_bit() /
+w1_gpio_read_bit() via w1_reset_bus() and w1_search()). The printk and
+stack dump inside the IRQs-off, microsecond-scale time slot destroy the
+bit timing, so reset/presence detection and ROM search fail: the bus
+master registers but w1_master_slave_count stays at 0 and no devices
+are found. Verified on an Amlogic A113X board (DS18B20 on GPIOA_14):
+with can_sleep restored to false the warnings are gone and the sensor
+is detected and read again.
+
+Fixes: e81d1bc4ea79 ("pinctrl: meson: mark the GPIO controller as sleeping")
+Link: https://lore.kernel.org/all/20260105150509.56537-1-bartosz.golaszewski@oss.qualcomm.com/
+Assisted-by: Claude:claude-opus-4-8
+Signed-off-by: Viacheslav Bocharov <v@baodeep.com>
+---
+ drivers/pinctrl/meson/pinctrl-meson.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pinctrl/meson/pinctrl-meson.c b/drivers/pinctrl/meson/pinctrl-meson.c
+index 4507dc8b5563..18295b15ecd9 100644
+--- a/drivers/pinctrl/meson/pinctrl-meson.c
++++ b/drivers/pinctrl/meson/pinctrl-meson.c
+@@ -619,7 +619,7 @@ static int meson_gpiolib_register(struct meson_pinctrl *pc)
+ 	pc->chip.set = meson_gpio_set;
+ 	pc->chip.base = -1;
+ 	pc->chip.ngpio = pc->data->num_pins;
+-	pc->chip.can_sleep = true;
++	pc->chip.can_sleep = false;
+ 
+ 	ret = gpiochip_add_data(&pc->chip, pc);
+ 	if (ret) {
+-- 
+2.54.0
+
