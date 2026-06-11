@@ -1,4 +1,4 @@
-# Anbernic RG DS - RK3568 quad-core dual 4" 640x480 MIPI-DSI eMMC/MicroSD WiFi/BT 2xUSB-C
+# RK3568 quad-core dual 4" 640x480 MIPI-DSI eMMC/MicroSD WiFi/BT 2xUSB-C
 BOARD_NAME="Anbernic RG DS"
 BOARD_VENDOR="Anbernic"
 BOARDFAMILY="rk35xx"
