@@ -15,16 +15,21 @@
 
 . /etc/armbian-release
 
-# Atomic write helper: mv tmp to dest with sync
+# Atomic write helper: atomically replace dest with src via rename + sync.
+# Usage: atomic_write <src> <dest> [mode]
+#   src  — temporary file with new content (consumed/removed by this call)
+#   dest — target file to replace atomically
+#   mode — optional permission mode (e.g. 600); if omitted, preserves dest's mode
+# Uses mv (rename syscall) for atomicity — do NOT replace with `install`,
+# which copies data in-place and breaks crash safety on power loss.
 atomic_write() {
-	local dest="$1" mode="${2:-}"
-	local tmp="${dest}.tmp"
+	local src="$1" dest="$2" mode="${3:-}"
 	if [[ -n "$mode" ]]; then
-		chmod "$mode" "$tmp"
+		chmod "$mode" "$src"
 	elif [[ -e "$dest" ]]; then
-		chmod --reference="$dest" "$tmp"
+		chmod --reference="$dest" "$src"
 	fi
-	mv -f "$tmp" "$dest"
+	mv -f "$src" "$dest"
 	sync -f "$dest" 2>/dev/null || sync "$dest" 2>/dev/null
 }
 
@@ -130,8 +135,9 @@ do_firstrun_automated_network_configuration()
 
 						DEVICE_NAME=${wlan_index}
 						DEVTYPE=wifis
-						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml.tmp
-						atomic_write /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml 600
+						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
+						echo -e "$(createYAML)" > "${_f}.tmp"
+						atomic_write "${_f}.tmp" "$_f" 600
 						PRESET_NET_ETHERNET_ENABLED=0
 						netplan apply > /dev/null 2>&1
 
@@ -143,8 +149,9 @@ do_firstrun_automated_network_configuration()
 
 						DEVICE_NAME=${eth_index}
 						DEVTYPE=ethernets
-						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml.tmp
-						atomic_write /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml 600
+						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
+						echo -e "$(createYAML)" > "${_f}.tmp"
+						atomic_write "${_f}.tmp" "$_f" 600
 						PRESET_NET_WIFI_ENABLED=0
 						netplan apply > /dev/null 2>&1
 				fi
@@ -357,7 +364,8 @@ set_timezone_and_locales() {
 						done
 
 						# generate config
-						cat <<- EOF > /etc/netplan/30-wifis-dhcp.yaml.tmp
+						local _f="/etc/netplan/30-wifis-dhcp.yaml"
+						cat <<- EOF > "${_f}.tmp"
 						# Created by Armbian firstlogin script
 						network:
 						  wifis:
@@ -368,8 +376,7 @@ set_timezone_and_locales() {
 						        "$SSID":
 						         password: "${password}"
 						EOF
-						chmod 600 /etc/netplan/30-wifis-dhcp.yaml.tmp
-						atomic_write /etc/netplan/30-wifis-dhcp.yaml
+						atomic_write "${_f}.tmp" "$_f" 600
 
 						# apply to netplan
 						systemctl daemon-reload
@@ -510,8 +517,9 @@ set_timezone_and_locales() {
 		fi
 
 		# generate locales (atomic write for locale.gen)
-		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen > /etc/locale.gen.tmp; then
-			atomic_write /etc/locale.gen
+		local _f="/etc/locale.gen"
+		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' "$_f" > "${_f}.tmp"; then
+			atomic_write "${_f}.tmp" "$_f"
 		fi
 		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 		locale-gen "${LOCALES}" > /dev/null 2>&1
@@ -674,7 +682,8 @@ add_user() {
 			# Validate sudoers before modifying (detect power-loss corruption)
 			if ! grep -q '^root\s\+ALL' /etc/sudoers 2>/dev/null; then
 				# sudoers corrupted (power-loss), restore from dpkg default
-				cat > /etc/sudoers.tmp << 'SUEOF'
+				local _f="/etc/sudoers"
+				cat > "${_f}.tmp" << 'SUEOF'
 Defaults	env_reset
 Defaults	mail_badpass
 Defaults	secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -684,16 +693,16 @@ root	ALL=(ALL:ALL) ALL
 
 @includedir /etc/sudoers.d
 SUEOF
-				chmod 440 /etc/sudoers.tmp
-				atomic_write /etc/sudoers
+				atomic_write "${_f}.tmp" "$_f" 440
 			fi
 			# set up profile sync daemon on desktop systems
 			if command -v psd > /dev/null 2>&1; then
 				# Add psd-overlay-helper to sudoers (atomic write, idempotent)
 				if ! grep -q "psd-overlay-helper" /etc/sudoers 2>/dev/null; then
-					cp -p /etc/sudoers /etc/sudoers.tmp
-					echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers.tmp
-					atomic_write /etc/sudoers
+					local _f="/etc/sudoers"
+					cp -p "$_f" "${_f}.tmp"
+					echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> "${_f}.tmp"
+					atomic_write "${_f}.tmp" "$_f"
 				fi
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
@@ -955,8 +964,9 @@ if [[ -f /root/.not_logged_in_yet && -n "$(tty)" ]]; then
 	fi
 
 	# re-enable passing locale environment via ssh and allow root password login (atomic write)
-	if sed -e '/^#AcceptEnv LANG/ s/^#//' -e 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config > /etc/ssh/sshd_config.tmp; then
-		atomic_write /etc/ssh/sshd_config
+	_f="/etc/ssh/sshd_config"
+	if sed -e '/^#AcceptEnv LANG/ s/^#//' -e 's/^#PermitRootLogin.*/PermitRootLogin yes/' "$_f" > "${_f}.tmp"; then
+		atomic_write "${_f}.tmp" "$_f"
 	fi
 	# Delete marker BEFORE restarting sshd.  If the script is running
 	# over an SSH session, `systemctl restart ssh.service` kills the
