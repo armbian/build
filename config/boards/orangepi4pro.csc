@@ -10,6 +10,11 @@ BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-4-pro.dtb"
 OVERLAY_PREFIX="sun60i-a733"
 IMAGE_PARTITION_TABLE="msdos"
 
+# Video output DOES work without GPU acceleration but we still don't want to
+# build desktop targets.
+HAS_VIDEO_OUTPUT="no"
+FULL_DESKTOP="no"
+
 # --- Kernel: Orange Pi's vendor BSP tree ---
 # The sun60iw2 family file intentionally leaves kernel source to the board, so
 # multiple A733 boards (which use different vendor kernel trees) can share the
