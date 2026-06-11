@@ -223,8 +223,8 @@ BUILD_BOOT_PACKAGE_EOF
 )"
 	OUT="${out_dir}" run_host_command_logged bash -c "${uboot_builder}"
 
-	[[ -f "${out_dir}/boot_package.fex" && -f "${out_dir}/boot0_sdcard.fex" ]] || \
-		exit_with_error "U-Boot boot-package build failed (no .fex produced) - see log"
+	[[ -f "${out_dir}/boot_package.fex" && -f "${out_dir}/boot0_sdcard.fex" && -f "${out_dir}/boot0_spinor.fex" ]] || \
+		exit_with_error "U-Boot boot-package build failed (missing .fex - boot_package/boot0_sdcard/boot0_spinor) - see log"
 	declare -g EXTENSION_BUILT_UBOOT="yes"
 	return 0
 }
