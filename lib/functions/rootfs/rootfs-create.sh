@@ -119,6 +119,18 @@ function create_new_rootfs_cache_via_debootstrap() {
 		debootstrap_arguments+=("--customize-hook='sync-out /var/cache/apt/archives/ ${LOCAL_APT_CACHE_INFO[HOST_DEBOOTSTRAP_CACHE_DIR]}'")
 	fi
 
+	# If no managed acng is configured but an apt proxy address is set
+	# (e.g. APT_PROXY_ADDR exported by a CI runner), route mmdebstrap's
+	# downloads through it as a real proxy — the idiomatic --aptopt way the
+	# MANAGE_ACNG case above hints at, and the same proxy the later chroot
+	# apt-get phase uses (runners.sh). Without this the base-system bootstrap
+	# goes direct to the mirror, bypassing the cache. MANAGE_ACNG=yes / a URL
+	# already route through acng's URL-prefix, so this only covers no/unset.
+	if [[ -n "${APT_PROXY_ADDR}" && ( "${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}" ) ]]; then
+		display_alert "Routing mmdebstrap through apt proxy" "http://${APT_PROXY_ADDR##*@}" "info"
+		debootstrap_arguments+=("'--aptopt=Acquire::http::Proxy \"http://${APT_PROXY_ADDR}\"'")
+	fi
+
 	debootstrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
 	mkdir -p "${SDCARD}/usr/bin"

@@ -234,6 +234,11 @@ function do_main_configuration() {
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
+	# A CI runner that advertises a pass-through git proxy (GITPROXY_ADDRESS,
+	# exported from NetBox by the runner) selects the gitproxy mirror
+	# automatically, unless an explicit GITHUB_MIRROR was already set.
+	[[ -z $GITHUB_MIRROR && -n ${GITPROXY_ADDRESS:-} ]] && GITHUB_MIRROR=gitproxy
+
 	case $GITHUB_MIRROR in
 		fastgit)
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
@@ -241,6 +246,9 @@ function do_main_configuration() {
 		ghproxy)
 			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghfast.top
 			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
+			;;
+		gitproxy)
+			declare -g -r GITHUB_SOURCE="${GITPROXY_ADDRESS}"
 			;;
 		gitclone)
 			declare -g -r GITHUB_SOURCE='https://gitclone.com/github.com'
