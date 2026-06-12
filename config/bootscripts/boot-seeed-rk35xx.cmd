@@ -22,22 +22,24 @@ test -n "${distro_bootpart}" || distro_bootpart=1
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
 # Load armbianEnv.txt with corruption detection and .bak fallback.
-# Power loss can fill the file with 0xFF (eMMC erased block) which passes
-# "env import -t" without error but imports zero variables. Clear rootdev
-# before import; if it remains empty, the file was corrupt.
+# Power loss can fill the file with 0xFF (eMMC erased block) or ^@ (NUL,
+# on other storage media) which passes "env import -t" without error but
+# imports zero variables. Clear rootdev before import; if it remains
+# empty, the file was corrupt.
 setenv rootdev
 if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 if test -z "${rootdev}"; then
 	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.bak; then
-		echo "Loading armbianEnv.txt.bak as fallback"
+		echo "WARNING: armbianEnv.txt corrupt, loading .bak fallback"
 		setenv rootdev
 		env import -t ${load_addr} ${filesize}
 	fi
 fi
 # Final safety: derive rootdev from boot source if still unset
 if test -z "${rootdev}"; then
+	echo "WARNING: rootdev not set, deriving from boot source ${devnum}:${distro_bootpart}"
 	setenv rootdev "/dev/mmcblk${devnum}p${distro_bootpart}"
 fi
 
