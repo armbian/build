@@ -1,4 +1,4 @@
-# Orange Pi 4 Pro (Allwinner A733 8-core 2-16G RAM GBE USB3 WiFi/BT NVMe eMMC)
+# Allwinner A733 octa core 2-16GB RAM GBE USB3 WiFi/BT NVMe eMMC
 BOARD_NAME="Orange Pi 4 Pro"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun60iw2"
