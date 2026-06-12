@@ -14,24 +14,7 @@
 [[ -n "$DISTRIB_CODENAME" && -f /etc/armbian-distribution-status ]] && DISTRIBUTION_STATUS=$(grep "^$DISTRIB_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2 | cut -d";" -f1)
 
 . /etc/armbian-release
-
-# Atomic write helper: atomically replace dest with src via rename + sync.
-# Usage: atomic_write <src> <dest> [mode]
-#   src  — temporary file with new content (consumed/removed by this call)
-#   dest — target file to replace atomically
-#   mode — optional permission mode (e.g. 600); if omitted, preserves dest's mode
-# Uses mv (rename syscall) for atomicity — do NOT replace with `install`,
-# which copies data in-place and breaks crash safety on power loss.
-atomic_write() {
-	local src="$1" dest="$2" mode="${3:-}"
-	if [[ -n "$mode" ]]; then
-		chmod "$mode" "$src"
-	elif [[ -e "$dest" ]]; then
-		chmod --reference="$dest" "$src"
-	fi
-	mv -f "$src" "$dest"
-	sync -f "$dest" 2>/dev/null || sync "$dest" 2>/dev/null
-}
+. /usr/lib/armbian/armbian-common
 
 check_abort() {
 
@@ -137,7 +120,7 @@ do_firstrun_automated_network_configuration()
 						DEVTYPE=wifis
 						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
 						echo -e "$(createYAML)" > "${_f}.tmp"
-						atomic_write "${_f}.tmp" "$_f" 600
+						atomic_write "${_f}.tmp" "${_f}" 600
 						PRESET_NET_ETHERNET_ENABLED=0
 						netplan apply > /dev/null 2>&1
 
@@ -151,7 +134,7 @@ do_firstrun_automated_network_configuration()
 						DEVTYPE=ethernets
 						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
 						echo -e "$(createYAML)" > "${_f}.tmp"
-						atomic_write "${_f}.tmp" "$_f" 600
+						atomic_write "${_f}.tmp" "${_f}" 600
 						PRESET_NET_WIFI_ENABLED=0
 						netplan apply > /dev/null 2>&1
 				fi
@@ -276,14 +259,15 @@ set_shell() {
 	SHELL_PATH=$(grep "/$USER_SHELL$" /etc/shells | tail -1)
 	chsh -s "$(grep -iF "/$USER_SHELL" /etc/shells | tail -1)"
 
-	# change shell for future users. useradd (Essential, from passwd) reads
-	# /etc/default/useradd; /etc/adduser.conf only exists when the (now optional
-	# on Debian forky+) adduser package is installed, so guard that edit.
-	sed -i "s|^SHELL=.*|SHELL=${SHELL_PATH}|" /etc/default/useradd
-	sync -f /etc/default/useradd 2>/dev/null
+	# Change shell for future users. useradd reads /etc/default/useradd;
+	# /etc/adduser.conf is optional, so guard that edit.
+	local _f="/etc/default/useradd"
+	sed "s|^SHELL=.*|SHELL=${SHELL_PATH}|" "${_f}" > "${_f}.tmp"
+	atomic_write "${_f}.tmp" "${_f}"
 	if [[ -f /etc/adduser.conf ]]; then
-		sed -i "s|^DSHELL=.*|DSHELL=${SHELL_PATH}|" /etc/adduser.conf
-		sync -f /etc/adduser.conf 2>/dev/null
+		_f="/etc/adduser.conf"
+		sed "s|^DSHELL=.*|DSHELL=${SHELL_PATH}|" "${_f}" > "${_f}.tmp"
+		atomic_write "${_f}.tmp" "${_f}"
 	fi
 
 }
@@ -376,7 +360,7 @@ set_timezone_and_locales() {
 						        "$SSID":
 						         password: "${password}"
 						EOF
-						atomic_write "${_f}.tmp" "$_f" 600
+						atomic_write "${_f}.tmp" "${_f}" 600
 
 						# apply to netplan
 						systemctl daemon-reload
@@ -512,14 +496,15 @@ set_timezone_and_locales() {
 		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
 
 		# change default locales (atomic write)
-		if sed -i "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" /etc/default/locale; then
-			sync -f /etc/default/locale 2>/dev/null
+		local _f="/etc/default/locale"
+		if sed "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" "${_f}" > "${_f}.tmp"; then
+			atomic_write "${_f}.tmp" "${_f}"
 		fi
 
 		# generate locales (atomic write for locale.gen)
 		local _f="/etc/locale.gen"
-		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' "$_f" > "${_f}.tmp"; then
-			atomic_write "${_f}.tmp" "$_f"
+		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' "${_f}" > "${_f}.tmp"; then
+			atomic_write "${_f}.tmp" "${_f}"
 		fi
 		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 		locale-gen "${LOCALES}" > /dev/null 2>&1
@@ -569,9 +554,9 @@ add_user() {
 	# Power-loss re-run: detect existing regular user, skip username prompt
 	local existing_user
 	existing_user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
-	if [ -n "$existing_user" ] && [ -d "/home/$existing_user" ]; then
-		RealUserName="$existing_user"
-		username="$existing_user"
+	if [ -n "${existing_user}" ] && [ -d "/home/${existing_user}" ]; then
+		RealUserName="${existing_user}"
+		username="${existing_user}"
 		echo -e "Detected existing user \e[0;92m$RealUserName\x1B[0m from previous setup, reusing."
 	else
 	while [ -f "/root/.not_logged_in_yet" ]; do
@@ -683,6 +668,8 @@ add_user() {
 			if ! grep -q '^root\s\+ALL' /etc/sudoers 2>/dev/null; then
 				# sudoers corrupted (power-loss), restore from dpkg default
 				local _f="/etc/sudoers"
+				# Note: quoted heredoc tag ('SUEOF') disables shell variable expansion;
+				# all content is literal — do not add $VAR references inside without unquoting.
 				cat > "${_f}.tmp" << 'SUEOF'
 Defaults	env_reset
 Defaults	mail_badpass
@@ -693,16 +680,16 @@ root	ALL=(ALL:ALL) ALL
 
 @includedir /etc/sudoers.d
 SUEOF
-				atomic_write "${_f}.tmp" "$_f" 440
+				atomic_write "${_f}.tmp" "${_f}" 440
 			fi
 			# set up profile sync daemon on desktop systems
 			if command -v psd > /dev/null 2>&1; then
 				# Add psd-overlay-helper to sudoers (atomic write, idempotent)
 				if ! grep -q "psd-overlay-helper" /etc/sudoers 2>/dev/null; then
 					local _f="/etc/sudoers"
-					cp -p "$_f" "${_f}.tmp"
+					cp -p "${_f}" "${_f}.tmp"
 					echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> "${_f}.tmp"
-					atomic_write "${_f}.tmp" "$_f"
+					atomic_write "${_f}.tmp" "${_f}"
 				fi
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
@@ -963,10 +950,10 @@ if [[ -f /root/.not_logged_in_yet && -n "$(tty)" ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
 
-	# re-enable passing locale environment via ssh and allow root password login (atomic write)
+	# re-enable passing locale environment via ssh (atomic write)
 	_f="/etc/ssh/sshd_config"
-	if sed -e '/^#AcceptEnv LANG/ s/^#//' -e 's/^#PermitRootLogin.*/PermitRootLogin yes/' "$_f" > "${_f}.tmp"; then
-		atomic_write "${_f}.tmp" "$_f"
+	if sed -E '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' "${_f}" > "${_f}.tmp"; then
+		atomic_write "${_f}.tmp" "${_f}"
 	fi
 	# Delete marker BEFORE restarting sshd.  If the script is running
 	# over an SSH session, `systemctl restart ssh.service` kills the
