@@ -43,7 +43,18 @@ function post_family_tweaks__cm3588_nas_udev_naming_network_interfaces() {
 
 # Mainline U-Boot
 function post_family_config__cm3588_nas_use_mainline_uboot() {
-	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
+	display_alert "${BOARD}/${BRANCH}" "Using mainline U-Boot for ${BOARD}/${BRANCH}" "info"
+
+	# If BRANCH==vendor, use rkbin BL31 ${RKBIN_DIR}/${BL31_BLOB}, otherwise, bl31.elf from mainline ATF/TF-A
+	declare bl31_blob="undetermined"
+	if [[ "${BRANCH}" == "vendor" ]]; then
+		display_alert "${BOARD}/${BRANCH}" "Using Rockchip rkbin BL31 blob : ${RKBIN_DIR}/${BL31_BLOB}" "info"
+		bl31_blob="${RKBIN_DIR}/${BL31_BLOB}"
+		declare -g ATF_COMPILE="no" # no need to build mainline it either
+	else
+		display_alert "${BOARD}/${BRANCH}" "Using mainline BL31: bl31.elf from mainline ATF/TF-A" "info"
+		bl31_blob="bl31.elf"
+	fi
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
