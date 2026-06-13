@@ -21,7 +21,7 @@ test -n "${distro_bootpart}" || distro_bootpart=1
 
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
-# Load armbianEnv.txt with corruption detection and .bak fallback.
+# Load armbianEnv.txt with corruption detection and .dist fallback.
 # Power loss can fill the file with 0xFF (eMMC erased block) or ^@ (NUL,
 # on other storage media) which passes "env import -t" without error but
 # imports zero variables. Clear rootdev before import; if it remains
@@ -31,8 +31,8 @@ if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv
 	env import -t ${load_addr} ${filesize}
 fi
 if test -z "${rootdev}"; then
-	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.bak; then
-		echo "WARNING: armbianEnv.txt corrupt, loading .bak fallback"
+	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.dist; then
+		echo "WARNING: armbianEnv.txt corrupt, loading .dist fallback"
 		setenv rootdev
 		env import -t ${load_addr} ${filesize}
 	fi
