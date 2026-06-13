@@ -636,6 +636,8 @@ driver_uwe5622() {
 		if linux-version compare "${version}" ge 7.1; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v7.1.patch" "applying"
 		fi
+
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-missing-prototypes.patch" "applying"
 	fi
 }
 
