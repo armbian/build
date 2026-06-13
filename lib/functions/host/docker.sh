@@ -905,10 +905,18 @@ function docker_setup_auto_pull_cronjob() {
 		fi
 		sudo chmod +x "${wrapper_script}" || true
 
-		# Create/update cron file
+		# Create/update cron file. Guard the write like the wrapper script above:
+		# if the tee fails (sudo refused, /etc read-only, cron not really
+		# present, ...) we must NOT go on to chmod a file that was never
+		# created — that is what printed the confusing
+		# "chmod: cannot access '${cron_file}': No such file or directory".
+		# Treat it as best-effort and bail gracefully, same as the wrapper path.
 		display_alert "Creating/updating Docker auto-pull cronjob" "${cron_file}" "info"
-		echo "${cron_content}" | sudo tee "${cron_file}" > /dev/null
-		sudo chmod 600 "${cron_file}"
+		if ! echo "${cron_content}" | sudo tee "${cron_file}" > /dev/null 2>&1; then
+			display_alert "Docker auto-pull" "failed to create cronjob ${cron_file} (sudo/permissions?)" "warn"
+			return 0
+		fi
+		sudo chmod 600 "${cron_file}" || true
 
 		# Store hash for next time
 		sudo mkdir -p "$(dirname "${hash_file}")"
