@@ -368,7 +368,12 @@ function docker_cli_build_dockerfile() {
 	if [[ "${do_force_pull:-yes}" == "yes" ]]; then
 		display_alert "Pulling" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 		local pull_failed="yes"
-		run_host_command_logged docker pull "${DOCKER_ARMBIAN_BASE_IMAGE}" && pull_failed="no"
+		# Retry the pull: ghcr.io intermittently returns "error from registry:
+		# denied" under load or on a transient token hiccup even for a
+		# published, accessible image. A single failure would otherwise drop us
+		# into a needless (and much slower) from-scratch build. Retry a few
+		# times before giving up; only then fall back to scratch.
+		sleep_seconds=10 do_with_retries 3 run_host_command_logged docker pull "${DOCKER_ARMBIAN_BASE_IMAGE}" && pull_failed="no"
 
 		if [[ "${pull_failed}" == "no" ]]; then
 			local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
