@@ -129,6 +129,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 	if [[ -n "${APT_PROXY_ADDR}" && ("${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}") ]]; then
 		display_alert "Routing mmdebstrap through apt proxy" "http://${APT_PROXY_ADDR##*@}" "info"
 		debootstrap_arguments+=("'--aptopt=Acquire::http::Proxy \"http://${APT_PROXY_ADDR}\"'")
+		# Disable HTTP pipelining through the proxy (see chroot_sdcard_apt_get in
+		# runners.sh) — avoids "File has unexpected size" against volatile indexes.
+		debootstrap_arguments+=("'--aptopt=Acquire::http::Pipeline-Depth \"0\"'")
 	fi
 
 	debootstrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
