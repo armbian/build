@@ -252,9 +252,14 @@ function fetch_from_repo() {
 		esac
 	fi
 
-	if [[ -f "${SRC}"/config/sources/git_sources.json && $ref_type == "branch" ]]; then
-		cached_revision=$(jq --raw-output '.[] | select(.source == "'$url'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
-		[[ -z "${cached_revision}" ]] || fetched_revision=${cached_revision}
+	if [[ "${ref_type}" == "branch" ]]; then
+		declare cached_revision
+		cached_revision="$(_git_sources_pinned_sha1 "${url}" "${ref_name}")"
+		if [[ "${cached_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+			fetched_revision="${cached_revision}"
+		elif [[ -n "${cached_revision}" ]]; then
+			exit_with_error "Invalid pinned SHA1 '${cached_revision}' for '${url}' '${ref_name}' in config/sources/git_sources.json"
+		fi
 	fi
 
 	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
@@ -279,8 +284,8 @@ function fetch_from_repo() {
 				while read -r key path; do
 					# key is like: submodule.libfoo.path
 					# extract "libfoo" from "submodule.libfoo.path"
-					local name=${key#submodule.}   # -> libfoo.path
-					name=${name%.path}             # -> libfoo
+					local name=${key#submodule.} # -> libfoo.path
+					name=${name%.path}           # -> libfoo
 
 					cd "${git_work_dir}" || exit
 
