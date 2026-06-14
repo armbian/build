@@ -23,7 +23,7 @@
 #   # Disable local cache, use remote only (saves local disk space):
 #   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_ONLY=yes BOARD=...
 #
-# Automatically sets USE_CCACHE=yes
+# Automatically enables the `ccache` backend extension and sets PRIVATE_CCACHE=yes.
 #
 # Supported ccache environment variables (passed through to builds):
 # See: https://ccache.dev/manual/latest.html#_configuration_options
@@ -102,6 +102,12 @@
 #   path must be identical on all machines (e.g., /home/build/armbian).
 #   This is because ccache includes the working directory in the cache key.
 #   Docker builds automatically use consistent paths (/armbian/...).
+
+# ccache-remote is a remote-storage layer on top of the `ccache` backend
+# extension, not a backend itself. Pull it in so that enabling ccache-remote
+# alone still wires up the ccache binary (PATH prefix, ${CCACHE} substitution);
+# since the ccache refactor, USE_CCACHE no longer activates a backend on its own.
+enable_extension "ccache"
 
 # Default Redis connection timeout in milliseconds (can be overridden by user)
 # Note: Must be set before extension loads (e.g., via environment or command line)
@@ -507,10 +513,10 @@ function ccache_post_compilation__show_remote_stats() {
 
 # This runs inside Docker (or native build) during configuration
 function extension_prepare_config__setup_remote_ccache() {
-	# Enable ccache with a consistent cache directory ($SRC/cache/ccache).
-	# PRIVATE_CCACHE ensures the same CCACHE_DIR is used in native and Docker builds,
-	# avoiding fragmented caches in /root/.cache/ccache vs $SRC/cache/ccache.
-	declare -g USE_CCACHE=yes
+	# The `ccache` backend extension (enabled at the top of this file) provides
+	# the binary wiring. PRIVATE_CCACHE pins CCACHE_DIR to $SRC/cache/ccache so
+	# native and Docker builds share one cache instead of fragmenting between
+	# /root/.cache/ccache and $SRC/cache/ccache.
 	declare -g PRIVATE_CCACHE=yes
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
