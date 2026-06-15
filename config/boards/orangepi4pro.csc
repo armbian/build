@@ -14,8 +14,7 @@ OVERLAY_PREFIX="sun60i-a733"
 KERNELPATCHDIR="archive/sun60iw2-opi-vendor"
 
 function write_uboot_platform() {
-	local SCRIPT_DIR="$1"
-	local DEVICE="$2"
+	local SCRIPT_DIR="$1" DEVICE="$2"
 	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot0_sdcard.fex" of="${DEVICE}" bs=1k seek=8
 	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot_package.fex" of="${DEVICE}" bs=1k seek=16400
 	sync "${DEVICE}"
