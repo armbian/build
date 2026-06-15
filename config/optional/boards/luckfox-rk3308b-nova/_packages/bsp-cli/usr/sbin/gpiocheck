@@ -1,0 +1,157 @@
+#!/bin/sh
+
+#   gpiocheck                 all pins: iomux function + pull decoded from GRF
+#   gpiocheck GPIO4_D2        one pin: mux, pull, direction, level, kernel owner
+#   gpiocheck GPIO0_A1 in     read the pin as GPIO input (sysfs)
+#   gpiocheck GPIO0_A1 out 1  drive the pin as GPIO output (sysfs)
+
+GRF=$((0xff000000))
+GPIO_BASE=$((0xff220000))
+
+die() { echo "gpiocheck: $*" >&2; exit 1; }
+
+readl() {
+	if command -v devmem >/dev/null 2>&1; then
+		printf '%d\n' "$(devmem "$1")"
+	else
+		v=$(dd if=/dev/mem bs=4 skip=$(($1 / 4)) count=1 2>/dev/null | od -An -tx4 | tr -d ' \n')
+		[ -n "$v" ] || die "cannot read /dev/mem (need root?)"
+		printf '%d\n' "$((0x$v))"
+	fi
+}
+
+mux_off() {
+	case "$1$2" in
+	0A) echo "$((0x00)) 2" ;;
+	0B) echo "$((0x08)) 2" ;;
+	0C) echo "$((0x10)) 2" ;;
+	1A) echo "$((0x20)) 2" ;;
+	1B) [ "$3" -lt 4 ] && echo "$((0x28)) 4" || echo "$((0x2c)) 4" ;;
+	1C) [ "$3" -lt 4 ] && echo "$((0x30)) 4" || echo "$((0x34)) 4" ;;
+	1D) echo "$((0x38)) 2" ;;
+	2A) echo "$((0x40)) 2" ;;
+	2B) echo "$((0x48)) 2" ;;
+	2C) echo "$((0x50)) 2" ;;
+	3A) echo "$((0x60)) 2" ;;
+	3B) echo "$((0x68)) 2" ;;
+	4A) echo "$((0x80)) 2" ;;
+	4B) echo "$((0x88)) 2" ;;
+	4C) echo "$((0x90)) 2" ;;
+	4D) echo "$((0x98)) 2" ;;
+	*)  echo "-" ;;
+	esac
+}
+
+pull_off() {
+	case "$1$2" in
+	0A) echo $((0xa0)) ;; 0B) echo $((0xa4)) ;; 0C) echo $((0xa8)) ;;
+	1A) echo $((0xb0)) ;; 1B) echo $((0xb4)) ;; 1C) echo $((0xb8)) ;; 1D) echo $((0xbc)) ;;
+	2A) echo $((0xc0)) ;; 2B) echo $((0xc4)) ;; 2C) echo $((0xc8)) ;;
+	3A) echo $((0xd0)) ;; 3B) echo $((0xd4)) ;;
+	4A) echo $((0xe0)) ;; 4B) echo $((0xe4)) ;; 4C) echo $((0xe8)) ;; 4D) echo $((0xec)) ;;
+	*)  echo "-" ;;
+	esac
+}
+
+mux_get() {
+	set -- "$1" "$2" "$3" $(mux_off "$1" "$2" "$3")
+	[ "$4" = "-" ] && { echo "?"; return; }
+	if [ "$5" = 4 ]; then shift_n=$((($3 % 4) * 4)); mask=15
+	else shift_n=$(($3 * 2)); mask=3; fi
+	v=$(readl $((GRF + $4)))
+	f=$(((v >> shift_n) & mask))
+	[ "$f" = 0 ] && echo "gpio" || echo "f$f"
+}
+
+pull_get() {
+	off=$(pull_off "$1" "$2")
+	[ "$off" = "-" ] && { echo "?"; return; }
+	v=$(readl $((GRF + off)))
+	case $(((v >> ($3 * 2)) & 3)) in
+	0) echo none ;; 1) echo up ;; 2) echo down ;; 3) echo hold ;;
+	esac
+}
+
+letter_idx() { case "$1" in A) echo 0 ;; B) echo 1 ;; C) echo 2 ;; D) echo 3 ;; esac; }
+
+parse_pin() {
+	p=$(echo "$1" | tr 'a-z' 'A-Z' | sed -e 's/^GPIO//' -e 's/_//')
+	bank=${p%%[A-D]*}
+	rest=${p#"$bank"}
+	letter=$(echo "$rest" | cut -c1)
+	num=${rest#?}
+	case "$bank" in 0|1|2|3|4) ;; *) die "bad pin '$1' (expected e.g. GPIO4_D2)" ;; esac
+	case "$letter" in A|B|C|D) ;; *) die "bad pin '$1'" ;; esac
+	case "$num" in [0-7]) ;; *) die "bad pin '$1'" ;; esac
+	line=$(($(letter_idx "$letter") * 8 + num))
+	global=$((bank * 32 + line))
+}
+
+show_pin() {
+	parse_pin "$1"
+	base=$((GPIO_BASE + bank * 0x10000))
+	mux=$(mux_get "$bank" "$letter" "$num")
+	pull=$(pull_get "$bank" "$letter" "$num")
+	ext=$(readl $((base + 0x50)))
+	ddr=$(readl $((base + 0x04)))
+	lvl=$(((ext >> line) & 1))
+	dir=in; [ $(((ddr >> line) & 1)) = 1 ] && dir=out
+	echo "GPIO${bank}_${letter}${num}: chip gpiochip${bank} line ${line} (global ${global})"
+	echo "  mux   : ${mux}"
+	echo "  pull  : ${pull}"
+	echo "  dir   : ${dir} (hw DDR; kernel view may differ)"
+	echo "  level : ${lvl}"
+	if [ -r /sys/kernel/debug/gpio ]; then
+		owner=$(grep "gpio-${global} " /sys/kernel/debug/gpio 2>/dev/null)
+		[ -n "$owner" ] && echo "  kernel:${owner}"
+	fi
+}
+
+sysfs_pin() {
+	g=/sys/class/gpio/gpio$1
+	[ -d "$g" ] || echo "$1" > /sys/class/gpio/export 2>/dev/null
+	[ -d "$g" ] || die "cannot export gpio$1 (claimed by a driver?)"
+	echo "$g"
+}
+
+overview() {
+	echo "RK3308B GRF iomux/pull decode (0=gpio):"
+	for bank in 0 1 2 3 4; do
+		for letter in A B C D; do
+			[ "$(mux_off "$bank" "$letter" 0)" = "-" ] && continue
+			row=""
+			for num in 0 1 2 3 4 5 6 7; do
+				row="$row ${num}:$(mux_get "$bank" "$letter" "$num")/$(pull_get "$bank" "$letter" "$num")"
+			done
+			printf 'GPIO%s_%s:%s\n' "$bank" "$letter" "$row"
+		done
+	done
+	if [ -r /sys/kernel/debug/gpio ]; then
+		echo
+		echo "Kernel-claimed lines:"
+		grep "gpio-" /sys/kernel/debug/gpio
+	fi
+}
+
+case "$#" in
+0) overview ;;
+1) show_pin "$1" ;;
+*)
+	parse_pin "$1"
+	case "$2" in
+	in)
+		g=$(sysfs_pin "$global")
+		echo in > "$g/direction"
+		echo "GPIO${bank}_${letter}${num} = $(cat "$g/value")"
+		;;
+	out)
+		case "$3" in 0|1) ;; *) die "usage: gpiocheck <pin> out 0|1" ;; esac
+		g=$(sysfs_pin "$global")
+		echo out > "$g/direction" || die "cannot set direction on gpio$global"
+		echo "$3" > "$g/value" || die "cannot drive gpio$global"
+		echo "GPIO${bank}_${letter}${num} driven to $3"
+		;;
+	*) die "unknown action '$2' (in / out 0|1)" ;;
+	esac
+	;;
+esac

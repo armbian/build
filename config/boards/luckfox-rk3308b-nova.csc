@@ -29,6 +29,12 @@ MINILOADER_BLOB="rk33/rk3308_miniloader_v1.39.bin"
 FORCE_UBOOT_UPDATE="yes"
 OVERLAY_PREFIX="rk3308-luckfox-nova"
 
+# Board helper tools shipped via the bsp-cli package
+# (config/optional/boards/luckfox-rk3308b-nova/_packages/bsp-cli/):
+#   novaconfig (DT-overlay interface toggle), mictest, pdmtest, gpiocheck,
+#   pwmtest, /etc/asound.conf. They need dtc (overlay compile) and alsa-utils.
+PACKAGE_LIST_BOARD="device-tree-compiler alsa-utils"
+
 function post_family_config__luckfox_rk3308b_nova_boot() {
 	# debug console is uart4 (1500000n8)
 	declare -g BOOTSCRIPT="boot-rockchip64-ttyS4.cmd:boot.cmd"
