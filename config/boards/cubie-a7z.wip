@@ -1,0 +1,105 @@
+# Allwinner A733 octa core 1-16GB RAM GBE USB3 WiFi/BT NPU GPU (Radxa Cubie A7Z)
+#
+# REFERENCE / WIP board config. Demonstrates how a second sun60iw2 board reuses
+# the shared family (config/sources/families/sun60iw2.conf) and only overrides
+# the genuinely board-specific inputs. NOT validated on Armbian or on hardware.
+#
+# Shared from the family (no need to repeat here): the vendor U-Boot fork build,
+# the boot-packaging procedure, the kernel source/branch/defconfig, INITRD_ARCH,
+# SERIALCON, BOOTSCRIPT, OFFSET.
+#
+# Board-specific overrides below: device tree, kernel patch dir, the DRAM blob
+# paths (LPDDR4X vs the OPi's LPDDR5), and the SD boot offsets the Cubie's stock
+# boot0 expects.
+
+BOARD_NAME="Radxa Cubie A7Z"
+BOARD_VENDOR="radxa"
+BOARDFAMILY="sun60iw2"
+BOARD_MAINTAINER=""
+INTRODUCED="2025"
+KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
+IMAGE_PARTITION_TABLE="msdos"
+
+HAS_VIDEO_OUTPUT="no"
+FULL_DESKTOP="no"
+
+# Device tree (added by the board patch dir) + this board's patch set.
+BOOT_FDT_FILE="allwinner/sun60i-a733-cubie-a7z.dtb"
+OVERLAY_PREFIX="sun60i-a733"
+KERNELPATCHDIR="archive/sun60iw2-cubie-vendor"
+
+# Same AIC8800D80 silicon as the OPi 4 Pro; the shared vendor kernel ships the
+# in-tree bsp driver. (dok2d builds Radxa's out-of-tree USB driver instead — a
+# packaging choice, not a hardware difference.)
+MODULES="aic8800_bsp aic8800_fdrv aic8800_btlpm"
+
+# --- SD boot layout: the Cubie's stock boot0 lives at sector 256 (128 KiB) and
+# its boot_package at sector 24576 (12 MiB), unlike the OPi (8 KiB / 16400 KiB).
+SUNXI_BOOT0_SEEK_KIB=128
+SUNXI_BOOT_PKG_SEEK_KIB=12288
+
+# --- DRAM blobs ---
+# Cubie A7Z is LPDDR4X @ 1800 MT/s; the orangepi-build a733 blobs target the
+# OPi's LPDDR5 and will not train. The board's sys_config and a known-good stock
+# boot0 are not redistributable, so they are fetched at build time (mirrors
+# dok2d/cubie-a7z-debian) by fetch_sunxi_dram_blobs() below, which then points
+# the family's SUNXI_*_FEX path vars at the fetched files. All SHA-pinned.
+declare -g CUBIE_DEVICE_REPO="${CUBIE_DEVICE_REPO:-https://github.com/radxa/allwinner-device.git}"
+declare -g CUBIE_DEVICE_REF="${CUBIE_DEVICE_REF:-79d54f44e14111db3845096cef0639a6c9222707}"   # device-a733-v1.4.6
+declare -g CUBIE_RADXA_IMAGE_URL="${CUBIE_RADXA_IMAGE_URL:-https://github.com/radxa-build/radxa-cubie-a7z/releases/download/rsdk-b1/radxa-cubie-a7z_bullseye_kde_b1.output_512.img.xz}"
+declare -g CUBIE_RADXA_IMAGE_SHA256="${CUBIE_RADXA_IMAGE_SHA256:-d991b8bf20fb23fda160feac386decfbd54d544b95cdb95da050a2b131e038ac}"
+declare -g CUBIE_BOOT0_SECTOR="${CUBIE_BOOT0_SECTOR:-256}"
+declare -g CUBIE_BOOT0_SIZE="${CUBIE_BOOT0_SIZE:-262144}"
+declare -g CUBIE_BOOT0_SHA256="${CUBIE_BOOT0_SHA256:-ec93227f0ca2fc09a18ee92fbdab7b7a81e2effb824937bf20652d9c9cf4e69e}"
+
+# Produce the Cubie's DRAM blobs and declare them to the family via the
+# SUNXI_*_FEX path vars. Called by build_custom_uboot__sun60iw2 with (work_dir).
+#
+# NOTE: untested. Downloads a ~1 GB Radxa image to extract boot0; intended as a
+# concrete illustration of a fetch-required board, not a verified build path.
+function fetch_sunxi_dram_blobs() {
+	local work_dir="$1"
+
+	# Board sys_config (correct 1800 MT/s DRAM) from Radxa allwinner-device.
+	local dev_dir="${work_dir}/allwinner-device"
+	display_alert "Cubie A7Z: fetching board sys_config" "${CUBIE_DEVICE_REF:0:12}" "info"
+	run_host_command_logged git init -q "${dev_dir}"
+	run_host_command_logged git -C "${dev_dir}" remote add origin "${CUBIE_DEVICE_REPO}"
+	run_host_command_logged git -C "${dev_dir}" config core.sparseCheckout true
+	echo "configs/cubie_a7z/*" > "${dev_dir}/.git/info/sparse-checkout"
+	run_host_command_logged git -C "${dev_dir}" fetch -q --depth 1 origin "${CUBIE_DEVICE_REF}"
+	run_host_command_logged git -C "${dev_dir}" checkout -q FETCH_HEAD
+	[[ -f "${dev_dir}/configs/cubie_a7z/sys_config.fex" ]] || exit_with_error "Cubie A7Z: sys_config.fex missing in allwinner-device @ ${CUBIE_DEVICE_REF}"
+
+	# Stock boot0 (known-good LPDDR4X init) extracted from the official image.
+	local img_xz="${work_dir}/radxa-cubie-a7z.img.xz"
+	local img="${work_dir}/radxa-cubie-a7z.img"
+	local boot0="${work_dir}/boot0_stock.bin"
+	display_alert "Cubie A7Z: downloading Radxa image for stock boot0" "~1 GB" "info"
+	run_host_command_logged wget -q -O "${img_xz}" "${CUBIE_RADXA_IMAGE_URL}"
+	echo "${CUBIE_RADXA_IMAGE_SHA256}  ${img_xz}" | sha256sum -c - || exit_with_error "Cubie A7Z: Radxa image SHA256 mismatch"
+	run_host_command_logged unxz -k "${img_xz}"
+	run_host_command_logged dd if="${img}" of="${boot0}" bs=512 skip="${CUBIE_BOOT0_SECTOR}" count="$(( CUBIE_BOOT0_SIZE / 512 ))" status=none
+	echo "${CUBIE_BOOT0_SHA256}  ${boot0}" | sha256sum -c - || exit_with_error "Cubie A7Z: extracted boot0 SHA256 mismatch"
+	run_host_command_logged rm -f "${img}" "${img_xz}"
+
+	# Hand the fetched files to the family via the documented path vars.
+	# A733 SD path uses one boot0; reuse it for the spinor slot (SPI untested).
+	declare -g SUNXI_SYS_CONFIG_FEX="${dev_dir}/configs/cubie_a7z/sys_config.fex"
+	declare -g SUNXI_BOOT0_SDCARD_FEX="${boot0}"
+	declare -g SUNXI_BOOT0_SPINOR_FEX="${boot0}"
+}
+
+function post_family_tweaks__cubiea7z() {
+	display_alert "Radxa Cubie A7Z rootfs tweaks" "${BOARD}" "info"
+	echo "extraargs=coherent_pool=2M no_console_suspend fsck.fix=yes fsck.repair=yes" >> "${SDCARD}"/boot/armbianEnv.txt
+
+	if [[ -d "${SDCARD}/lib/firmware/aic8800/SDIO/aic8800D80" ]]; then
+		ln -sfn aic8800/SDIO/aic8800D80 "${SDCARD}/lib/firmware/aic8800d80"
+	else
+		display_alert "aic8800D80 firmware not found in rootfs" "WiFi may not work; check armbian-firmware" "warn"
+	fi
+
+	chroot_sdcard_apt_get_install mtd-utils
+}
