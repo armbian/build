@@ -1,0 +1,582 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuwei Wu <shuwei.wu@mailbox.org>
+Date: Fri, 12 Jun 2026 17:51:01 +0800
+Subject: [PATCH v3 1/2] cpufreq: spacemit: Add K1 cpufreq driver
+
+K1 has two CPU cluster clocks but one shared CPU voltage rail. Use one
+cpufreq policy for all CPUs, let the OPP core handle the shared regulator
+and the cluster0 clock, and update the cluster1 clock explicitly.
+
+Block spacemit,k1 from cpufreq-dt probing when OPP v2 nodes are present,
+as K1 needs the dedicated driver for safe transitions.
+
+Signed-off-by: Shuwei Wu <shuwei.wu@mailbox.org>
+---
+Changes in v3:
+- Add a K1-specific cpufreq driver for the shared-rail, dual-clock topology
+- Add spacemit,k1 to the cpufreq-dt blocklist
+---
+ drivers/cpufreq/Kconfig               |   4 +
+ drivers/cpufreq/Kconfig.riscv         |  15 ++
+ drivers/cpufreq/Makefile              |   3 +
+ drivers/cpufreq/cpufreq-dt-platdev.c  |   2 +
+ drivers/cpufreq/spacemit-k1-cpufreq.c | 251 ++++++++++++++++++++++++++++++++++
+ 5 files changed, 275 insertions(+)
+
+diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
+index 78702a08364f..19bbd1bd2f36 100644
+--- a/drivers/cpufreq/Kconfig
++++ b/drivers/cpufreq/Kconfig
+@@ -259,6 +259,10 @@ endif
+ 
+ source "drivers/cpufreq/Kconfig.arm"
+ 
++if RISCV
++source "drivers/cpufreq/Kconfig.riscv"
++endif
++
+ if PPC32 || PPC64
+ source "drivers/cpufreq/Kconfig.powerpc"
+ endif
+diff --git a/drivers/cpufreq/Kconfig.riscv b/drivers/cpufreq/Kconfig.riscv
+new file mode 100644
+index 000000000000..3d5b59fbcd4c
+--- /dev/null
++++ b/drivers/cpufreq/Kconfig.riscv
+@@ -0,0 +1,15 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# RISC-V CPU Frequency scaling drivers
++#
++
++config RISCV_SPACEMIT_K1_CPUFREQ
++	tristate "SpacemiT K1 CPUFreq driver"
++	depends on ARCH_SPACEMIT || COMPILE_TEST
++	depends on OF && COMMON_CLK
++	select PM_OPP
++	help
++	  Enable CPU frequency scaling for SpacemiT K1 SoC.
++	  K1 has two CPU cluster clocks and one shared CPU voltage rail.
++	  The driver keeps all CPUs in one policy and updates both cluster
++	  clocks with the shared OPP transition.
+diff --git a/drivers/cpufreq/Makefile b/drivers/cpufreq/Makefile
+index 385c9fcc65c6..9680f420e824 100644
+--- a/drivers/cpufreq/Makefile
++++ b/drivers/cpufreq/Makefile
+@@ -89,6 +89,9 @@ obj-$(CONFIG_ARM_TEGRA194_CPUFREQ)	+= tegra194-cpufreq.o
+ obj-$(CONFIG_ARM_TI_CPUFREQ)		+= ti-cpufreq.o
+ obj-$(CONFIG_ARM_VEXPRESS_SPC_CPUFREQ)	+= vexpress-spc-cpufreq.o
+ 
++##################################################################################
++# RISC-V SoC drivers
++obj-$(CONFIG_RISCV_SPACEMIT_K1_CPUFREQ)	+= spacemit-k1-cpufreq.o
+ 
+ ##################################################################################
+ # PowerPC platform drivers
+diff --git a/drivers/cpufreq/cpufreq-dt-platdev.c b/drivers/cpufreq/cpufreq-dt-platdev.c
+index 25fd3b191b7e..69bbe739a627 100644
+--- a/drivers/cpufreq/cpufreq-dt-platdev.c
++++ b/drivers/cpufreq/cpufreq-dt-platdev.c
+@@ -185,6 +185,8 @@ static const struct of_device_id blocklist[] __initconst = {
+ 	{ .compatible = "qcom,sm8550", },
+ 	{ .compatible = "qcom,sm8650", },
+ 
++	{ .compatible = "spacemit,k1", },
++
+ 	{ .compatible = "st,stih407", },
+ 	{ .compatible = "st,stih410", },
+ 	{ .compatible = "st,stih418", },
+diff --git a/drivers/cpufreq/spacemit-k1-cpufreq.c b/drivers/cpufreq/spacemit-k1-cpufreq.c
+new file mode 100644
+index 000000000000..631897eb8022
+--- /dev/null
++++ b/drivers/cpufreq/spacemit-k1-cpufreq.c
+@@ -0,0 +1,251 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CPU frequency scaling driver for SpacemiT K1 SoC.
++ *
++ * Copyright (c) 2026 Shuwei Wu <shuwei.wu@mailbox.org>
++ */
++
++#include <linux/clk.h>
++#include <linux/cpu.h>
++#include <linux/cpufreq.h>
++#include <linux/cpumask.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/pm_opp.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++
++struct k1_cpufreq_priv {
++	struct device *cpu_dev;
++	struct clk *cluster0_clk;
++	struct clk *cluster1_clk;
++	struct cpufreq_frequency_table *freq_table;
++	cpumask_var_t cpus;
++	int opp_token;
++};
++
++static struct platform_device *k1_cpufreq_pdev;
++
++static int k1_cpufreq_set_target(struct cpufreq_policy *policy,
++				 unsigned int index)
++{
++	struct k1_cpufreq_priv *priv = policy->driver_data;
++	unsigned long old_freq = policy->cur * 1000UL;
++	unsigned long new_freq = policy->freq_table[index].frequency * 1000UL;
++	int ret;
++
++	if (!old_freq)
++		old_freq = clk_get_rate(priv->cluster0_clk);
++
++	if (new_freq > old_freq) {
++		ret = dev_pm_opp_set_rate(priv->cpu_dev, new_freq);
++		if (ret)
++			return ret;
++
++		ret = clk_set_rate(priv->cluster1_clk, new_freq);
++		if (ret)
++			dev_pm_opp_set_rate(priv->cpu_dev, old_freq);
++
++		return ret;
++	}
++
++	ret = clk_set_rate(priv->cluster1_clk, new_freq);
++	if (ret)
++		return ret;
++
++	ret = dev_pm_opp_set_rate(priv->cpu_dev, new_freq);
++	if (ret)
++		clk_set_rate(priv->cluster1_clk, old_freq);
++
++	return ret;
++}
++
++static int k1_cpufreq_init_policy(struct cpufreq_policy *policy)
++{
++	struct k1_cpufreq_priv *priv = cpufreq_get_driver_data();
++	unsigned int transition_latency;
++
++	cpumask_copy(policy->cpus, priv->cpus);
++	policy->clk = priv->cluster0_clk;
++	policy->freq_table = priv->freq_table;
++	policy->driver_data = priv;
++	policy->dvfs_possible_from_any_cpu = true;
++
++	transition_latency = dev_pm_opp_get_max_transition_latency(priv->cpu_dev);
++	if (!transition_latency)
++		transition_latency = CPUFREQ_DEFAULT_TRANSITION_LATENCY_NS;
++	policy->cpuinfo.transition_latency = transition_latency;
++
++	return 0;
++}
++
++static struct cpufreq_driver k1_cpufreq_driver = {
++	.flags = CPUFREQ_NEED_INITIAL_FREQ_CHECK | CPUFREQ_IS_COOLING_DEV,
++	.verify = cpufreq_generic_frequency_table_verify,
++	.target_index = k1_cpufreq_set_target,
++	.get = cpufreq_generic_get,
++	.init = k1_cpufreq_init_policy,
++	.register_em = cpufreq_register_em_with_opp,
++	.name = "k1-cpufreq",
++};
++
++static int k1_cpufreq_probe(struct platform_device *pdev)
++{
++	struct k1_cpufreq_priv *priv;
++	struct device *cpu4_dev;
++	static const char * const reg_names[] = { "cpu", NULL };
++	int cpu, ret;
++
++	priv = kzalloc_obj(*priv);
++	if (!priv)
++		return -ENOMEM;
++
++	if (!zalloc_cpumask_var(&priv->cpus, GFP_KERNEL)) {
++		ret = -ENOMEM;
++		goto free_data;
++	}
++
++	priv->cpu_dev = get_cpu_device(0);
++	cpu4_dev = get_cpu_device(4);
++	if (!priv->cpu_dev || !cpu4_dev) {
++		ret = -EPROBE_DEFER;
++		goto free_cpumask;
++	}
++
++	for_each_present_cpu(cpu)
++		cpumask_set_cpu(cpu, priv->cpus);
++
++	priv->cluster0_clk = clk_get(priv->cpu_dev, NULL);
++	if (IS_ERR(priv->cluster0_clk)) {
++		ret = PTR_ERR(priv->cluster0_clk);
++		dev_err_probe(priv->cpu_dev, ret, "failed to get cluster0 clock\n");
++		goto free_cpumask;
++	}
++
++	priv->cluster1_clk = clk_get(cpu4_dev, NULL);
++	if (IS_ERR(priv->cluster1_clk)) {
++		ret = PTR_ERR(priv->cluster1_clk);
++		dev_err_probe(cpu4_dev, ret, "failed to get cluster1 clock\n");
++		goto put_clk_c0;
++	}
++
++	priv->opp_token = dev_pm_opp_set_regulators(priv->cpu_dev, reg_names);
++	if (priv->opp_token < 0) {
++		ret = priv->opp_token;
++		dev_err_probe(priv->cpu_dev, ret, "failed to set regulators\n");
++		goto put_clk_c1;
++	}
++
++	ret = dev_pm_opp_of_cpumask_add_table(priv->cpus);
++	if (ret) {
++		dev_err_probe(priv->cpu_dev, ret, "failed to add OPP table\n");
++		goto put_opp_regulators;
++	}
++
++	ret = dev_pm_opp_get_opp_count(priv->cpu_dev);
++	if (ret <= 0) {
++		dev_err(priv->cpu_dev, "OPP table can't be empty\n");
++		ret = -ENODEV;
++		goto remove_opp_table;
++	}
++
++	ret = dev_pm_opp_init_cpufreq_table(priv->cpu_dev, &priv->freq_table);
++	if (ret) {
++		dev_err(priv->cpu_dev, "failed to init cpufreq table: %d\n", ret);
++		goto remove_opp_table;
++	}
++
++	k1_cpufreq_driver.driver_data = priv;
++	ret = cpufreq_register_driver(&k1_cpufreq_driver);
++	if (ret)
++		goto free_freq_table;
++
++	platform_set_drvdata(pdev, priv);
++
++	return 0;
++
++free_freq_table:
++	k1_cpufreq_driver.driver_data = NULL;
++	dev_pm_opp_free_cpufreq_table(priv->cpu_dev, &priv->freq_table);
++remove_opp_table:
++	dev_pm_opp_of_cpumask_remove_table(priv->cpus);
++put_opp_regulators:
++	dev_pm_opp_put_regulators(priv->opp_token);
++put_clk_c1:
++	clk_put(priv->cluster1_clk);
++put_clk_c0:
++	clk_put(priv->cluster0_clk);
++free_cpumask:
++	free_cpumask_var(priv->cpus);
++free_data:
++	kfree(priv);
++
++	return ret;
++}
++
++static void k1_cpufreq_remove(struct platform_device *pdev)
++{
++	struct k1_cpufreq_priv *priv = platform_get_drvdata(pdev);
++
++	if (!priv)
++		return;
++
++	cpufreq_unregister_driver(&k1_cpufreq_driver);
++	k1_cpufreq_driver.driver_data = NULL;
++	dev_pm_opp_free_cpufreq_table(priv->cpu_dev, &priv->freq_table);
++	dev_pm_opp_of_cpumask_remove_table(priv->cpus);
++	dev_pm_opp_put_regulators(priv->opp_token);
++	clk_put(priv->cluster1_clk);
++	clk_put(priv->cluster0_clk);
++	free_cpumask_var(priv->cpus);
++	kfree(priv);
++}
++
++static struct platform_driver k1_cpufreq_platdrv = {
++	.probe = k1_cpufreq_probe,
++	.remove = k1_cpufreq_remove,
++	.driver = {
++		.name = "spacemit-k1-cpufreq",
++	},
++};
++
++static const struct of_device_id k1_cpufreq_match_list[] __initconst = {
++	{ .compatible = "spacemit,k1" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, k1_cpufreq_match_list);
++
++/*
++ * K1 has no dedicated cpufreq controller device. Register a logical platform
++ * device so clock/regulator dependencies can defer probe.
++ */
++static int __init k1_cpufreq_init(void)
++{
++	int ret;
++
++	if (!of_machine_device_match(k1_cpufreq_match_list))
++		return -ENODEV;
++
++	ret = platform_driver_register(&k1_cpufreq_platdrv);
++	if (ret)
++		return ret;
++
++	k1_cpufreq_pdev = platform_device_register_simple("spacemit-k1-cpufreq", -1, NULL, 0);
++	ret = PTR_ERR_OR_ZERO(k1_cpufreq_pdev);
++	if (ret)
++		platform_driver_unregister(&k1_cpufreq_platdrv);
++
++	return ret;
++}
++module_init(k1_cpufreq_init);
++
++static void __exit k1_cpufreq_exit(void)
++{
++	platform_device_unregister(k1_cpufreq_pdev);
++	platform_driver_unregister(&k1_cpufreq_platdrv);
++}
++module_exit(k1_cpufreq_exit);
++
++MODULE_DESCRIPTION("SpacemiT K1 CPUFreq driver");
++MODULE_AUTHOR("Shuwei Wu <shuwei.wu@mailbox.org>");
++MODULE_LICENSE("GPL");
+
+-- 
+2.53.0
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shuwei Wu <shuwei.wu@mailbox.org>
+Date: Fri, 12 Jun 2026 17:51:02 +0800
+Subject: [PATCH v3 2/2] riscv: dts: spacemit: Add cpu scaling for K1 SoC
+
+Use one shared CPU OPP table for all CPUs and add CPU clock properties
+for the two CPU clock clusters.
+
+Enable CPU DVFS on Banana Pi BPI-F3 by including the OPP table and
+wiring the CPU nodes to the CPU regulator supply.
+
+Signed-off-by: Shuwei Wu <shuwei.wu@mailbox.org>
+---
+Changes in v3:
+- Use one shared CPU OPP table for all CPUs
+
+Changes in v2:
+- Add k1-opp.dtsi with OPP tables for both CPU clusters
+- Assign CPU supplies and include OPP table for Banana Pi BPI-F3
+---
+ arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dts | 35 ++++++++++++-
+ arch/riscv/boot/dts/spacemit/k1-opp.dtsi        | 70 +++++++++++++++++++++++++
+ arch/riscv/boot/dts/spacemit/k1.dtsi            |  8 +++
+ 3 files changed, 112 insertions(+), 1 deletion(-)
+
+diff --git a/arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dts b/arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dts
+index 444c3b1e6f44..81ab5f70176b 100644
+--- a/arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dts
++++ b/arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dts
+@@ -5,6 +5,7 @@
+ 
+ #include "k1.dtsi"
+ #include "k1-pinctrl.dtsi"
++#include "k1-opp.dtsi"
+ 
+ / {
+ 	model = "Banana Pi BPI-F3";
+@@ -86,6 +87,38 @@ &combo_phy {
+ 	status = "okay";
+ };
+ 
++&cpu_0 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_1 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_2 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_3 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_4 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_5 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_6 {
++	cpu-supply = <&buck1_0v9>;
++};
++
++&cpu_7 {
++	cpu-supply = <&buck1_0v9>;
++};
++
+ &emmc {
+ 	bus-width = <8>;
+ 	mmc-hs400-1_8v;
+@@ -201,7 +234,7 @@ pmic@41 {
+ 		dldoin2-supply = <&buck5>;
+ 
+ 		regulators {
+-			buck1 {
++			buck1_0v9: buck1 {
+ 				regulator-min-microvolt = <500000>;
+ 				regulator-max-microvolt = <3450000>;
+ 				regulator-ramp-delay = <5000>;
+diff --git a/arch/riscv/boot/dts/spacemit/k1-opp.dtsi b/arch/riscv/boot/dts/spacemit/k1-opp.dtsi
+new file mode 100644
+index 000000000000..3627812e1344
+--- /dev/null
++++ b/arch/riscv/boot/dts/spacemit/k1-opp.dtsi
+@@ -0,0 +1,70 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++
++/ {
++	cpu_opp_table: opp-table-cpu {
++		compatible = "operating-points-v2";
++		opp-shared;
++
++		opp-614400000 {
++			opp-hz = /bits/ 64 <614400000>;
++			opp-microvolt = <950000>;
++			clock-latency-ns = <200000>;
++		};
++
++		opp-819000000 {
++			opp-hz = /bits/ 64 <819000000>;
++			opp-microvolt = <950000>;
++			clock-latency-ns = <200000>;
++		};
++
++		opp-1000000000 {
++			opp-hz = /bits/ 64 <1000000000>;
++			opp-microvolt = <950000>;
++			clock-latency-ns = <200000>;
++		};
++
++		opp-1228800000 {
++			opp-hz = /bits/ 64 <1228800000>;
++			opp-microvolt = <950000>;
++			clock-latency-ns = <200000>;
++		};
++
++		opp-1600000000 {
++			opp-hz = /bits/ 64 <1600000000>;
++			opp-microvolt = <1050000>;
++			clock-latency-ns = <200000>;
++		};
++	};
++};
++
++&cpu_0 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_1 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_2 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_3 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_4 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_5 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_6 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
++
++&cpu_7 {
++	operating-points-v2 = <&cpu_opp_table>;
++};
+diff --git a/arch/riscv/boot/dts/spacemit/k1.dtsi b/arch/riscv/boot/dts/spacemit/k1.dtsi
+index 529ec68e9c23..bdd109b81730 100644
+--- a/arch/riscv/boot/dts/spacemit/k1.dtsi
++++ b/arch/riscv/boot/dts/spacemit/k1.dtsi
+@@ -54,6 +54,7 @@ cpu_0: cpu@0 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <0>;
++			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -84,6 +85,7 @@ cpu_1: cpu@1 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <1>;
++			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -114,6 +116,7 @@ cpu_2: cpu@2 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <2>;
++			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -144,6 +147,7 @@ cpu_3: cpu@3 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <3>;
++			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -174,6 +178,7 @@ cpu_4: cpu@4 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <4>;
++			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -204,6 +209,7 @@ cpu_5: cpu@5 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <5>;
++			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -234,6 +240,7 @@ cpu_6: cpu@6 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <6>;
++			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+@@ -264,6 +271,7 @@ cpu_7: cpu@7 {
+ 			compatible = "spacemit,x60", "riscv";
+ 			device_type = "cpu";
+ 			reg = <7>;
++			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+ 			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+ 			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+
+-- 
+2.53.0
+
