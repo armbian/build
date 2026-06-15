@@ -8,22 +8,26 @@ KERNEL_TARGET="vendor"
 KERNEL_TEST_TARGET="vendor"
 IMAGE_PARTITION_TABLE="msdos"
 
-# Video output DOES work without GPU acceleration but we still don't want to
-# build desktop targets.
-HAS_VIDEO_OUTPUT="no"
-FULL_DESKTOP="no"
-
-# --- Board-specific kernel bits (source/branch/defconfig come from the family) ---
-# Device tree + this board's patch set. The DRAM blobs (boot0 + sys_config) use
-# the family defaults (orangepi-build's a733 blobs, correct for this board's
-# LPDDR5), so the SUNXI_*_FEX path vars are left unset here.
+# --- Board-specific build configuration ---
 BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-4-pro.dtb"
 OVERLAY_PREFIX="sun60i-a733"
 KERNELPATCHDIR="archive/sun60iw2-opi-vendor"
 
-# NOTE: Don't swap in an out-of-tree AIC8800 DKMS driver — it shadows the
-# in-tree bsp symbols and breaks fdrv ("Unknown symbol").
-MODULES="aic8800_bsp aic8800_fdrv aic8800_btlpm"
+function write_uboot_platform() {
+	local SCRIPT_DIR="$1"
+	local DEVICE="$2"
+	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot0_sdcard.fex" of="${DEVICE}" bs=1k seek=8
+	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot_package.fex" of="${DEVICE}" bs=1k seek=16400
+	sync "${DEVICE}"
+}
+
+function write_uboot_platform_mtd() {
+	local SCRIPT_DIR="$1"   # dir holding boot0_spinor.fex + boot_package.fex
+	flash_erase /dev/mtd0 0 0
+	mtd_debug write /dev/mtd0 0      "$(stat -c%s "$SCRIPT_DIR/boot0_spinor.fex")" "$SCRIPT_DIR/boot0_spinor.fex"
+	mtd_debug write /dev/mtd0 262144 "$(stat -c%s "$SCRIPT_DIR/boot_package.fex")" "$SCRIPT_DIR/boot_package.fex"
+	sync
+}
 
 function post_family_tweaks__orangepi4pro() {
 	display_alert "Orange Pi 4 Pro rootfs tweaks" "${BOARD}" "info"
