@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: local build <local@orangepi3b>
+Date: Sun, 14 Jun 2026 05:00:00 +0700
+Subject: [PATCH] drm: mipi-dsi: guard detach during host probe unwind
+
+On the Orange Pi 3B RK3566 vendor 6.1 kernel, enabling the Raspberry
+touchscreen DSI path can make the Rockchip DW MIPI DSI probe fail during
+deferred probing. The DW host unregister path then walks child DSI devices
+and calls mipi_dsi_detach() for a device whose host pointer has already been
+cleared. mipi_dsi_detach() dereferences dsi->host unconditionally and oopses:
+
+  pc : mipi_dsi_detach+0x14/0x60
+  Call trace:
+    mipi_dsi_detach
+    mipi_dsi_host_unregister
+    dw_mipi_dsi_remove
+    dw_mipi_dsi_rockchip_probe
+    deferred_probe_work_func
+
+Treat a missing DSI device, missing host, bogus low host pointer, or already
+detached device as an already-detached device. This keeps the failed probe path
+from taking the whole system down and lets the real DSI probe error be reported.
+---
+ drivers/gpu/drm/drm_mipi_dsi.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_mipi_dsi.c b/drivers/gpu/drm/drm_mipi_dsi.c
+--- a/drivers/gpu/drm/drm_mipi_dsi.c
++++ b/drivers/gpu/drm/drm_mipi_dsi.c
+@@ -31,6 +31,7 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/slab.h>
+ 
++#include <asm/memory.h>
+ #include <drm/display/drm_dsc.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_print.h>
+@@ -391,10 +392,18 @@ EXPORT_SYMBOL(mipi_dsi_attach);
+  */
+ int mipi_dsi_detach(struct mipi_dsi_device *dsi)
+ {
+-	const struct mipi_dsi_host_ops *ops = dsi->host->ops;
++	const struct mipi_dsi_host_ops *ops;
+ 
+-	if (WARN_ON(!dsi->attached))
++	if (!dsi)
++		return -EINVAL;
++	if (!dsi->attached)
+ 		return -EINVAL;
++	if (!dsi->host)
++		return -EINVAL;
++	if ((unsigned long)dsi->host < PAGE_OFFSET)
++		return -EINVAL;
++
++	ops = dsi->host->ops;
+ 
+ 	if (!ops || !ops->detach)
+ 		return -ENOSYS;
+-- 
+2.39.5

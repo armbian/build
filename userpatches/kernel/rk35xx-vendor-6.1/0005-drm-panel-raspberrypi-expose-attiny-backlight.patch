@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: local build <local@orangepi3b>
+Date: Tue, 16 Jun 2026 04:45:00 +0700
+Subject: [PATCH] drm/panel: raspberrypi: expose ATTINY PWM as backlight
+
+The Raspberry-compatible Waveshare 5-inch DSI panel is driven through the
+raspberrypi touchscreen panel path. Its brightness is controlled by the
+ATTINY/MCU REG_PWM register at I2C address 0x45, not by the board PWM
+backlight node.
+
+The local OPi3B DSI overlay disables the unused board PWM/backlight path to
+avoid deferred-probe noise, so expose the panel MCU PWM as a normal Linux raw
+backlight device instead. This provides:
+
+  /sys/class/backlight/rpi_backlight/brightness
+  /sys/class/backlight/rpi_backlight/max_brightness
+
+and lets desktop brightness tools adjust the actual LCD backlight.
+---
+ drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c | 57 ++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
++++ b/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
+@@ -41,6 +41,7 @@
+  * device with a drm_panel.
+  */
+ 
++#include <linux/backlight.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/fb.h>
+@@ -194,6 +195,8 @@
+ 	struct drm_panel base;
+ 	struct mipi_dsi_device *dsi;
+ 	struct i2c_client *i2c;
++	struct backlight_device *backlight;
++	u8 brightness;
+ };
+ 
+ static const struct drm_display_mode rpi_touchscreen_modes[] = {
+@@ -251,6 +254,54 @@
+ 		dev_err(&ts->i2c->dev, "I2C write failed: %d\n", ret);
+ }
+ 
++static int rpi_touchscreen_bl_update_status(struct backlight_device *bl)
++{
++	struct rpi_touchscreen *ts = bl_get_data(bl);
++	int brightness = backlight_get_brightness(bl);
++
++	rpi_touchscreen_i2c_write(ts, REG_PWM, brightness);
++	ts->brightness = brightness;
++
++	return 0;
++}
++
++static int rpi_touchscreen_bl_get_brightness(struct backlight_device *bl)
++{
++	struct rpi_touchscreen *ts = bl_get_data(bl);
++	int brightness;
++
++	brightness = rpi_touchscreen_i2c_read(ts, REG_PWM);
++	if (brightness < 0)
++		return ts->brightness;
++
++	ts->brightness = brightness;
++
++	return brightness;
++}
++
++static const struct backlight_ops rpi_touchscreen_bl_ops = {
++	.update_status = rpi_touchscreen_bl_update_status,
++	.get_brightness = rpi_touchscreen_bl_get_brightness,
++};
++
++static int rpi_touchscreen_register_backlight(struct rpi_touchscreen *ts)
++{
++	struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		.brightness = 255,
++		.max_brightness = 255,
++	};
++	struct device *dev = &ts->i2c->dev;
++
++	ts->brightness = props.brightness;
++	ts->backlight = devm_backlight_device_register(dev, "rpi_backlight",
++						       dev, ts,
++						       &rpi_touchscreen_bl_ops,
++						       &props);
++
++	return PTR_ERR_OR_ZERO(ts->backlight);
++}
++
+ static int rpi_touchscreen_write(struct rpi_touchscreen *ts, u16 reg, u32 val)
+ {
+ 	u8 msg[] = {
+@@ -327,7 +378,9 @@
+ 	struct rpi_touchscreen *ts = panel_to_ts(panel);
+ 
+ 	/* Turn on the backlight. */
+-	rpi_touchscreen_i2c_write(ts, REG_PWM, 255);
++	rpi_touchscreen_i2c_write(ts, REG_PWM, 255);
++	if (ts->backlight)
++		ts->brightness = 255;
+ 
+ 	/* Default to the same orientation as the closed source
+ 	 * firmware used for the panel.  Runtime rotation
+@@ -427,6 +481,10 @@
+ 	}
+ 	dev_info(dev, "Atmel firmware revision 0x%02x detected\n", ver);
+ 
++	ret = rpi_touchscreen_register_backlight(ts);
++	if (ret)
++		return ret;
++
+ 	/* Turn off at boot, so we can cleanly sequence powering on. */
+ 	rpi_touchscreen_i2c_write(ts, REG_POWERON, 0);
+ 
+-- 
+2.39.5

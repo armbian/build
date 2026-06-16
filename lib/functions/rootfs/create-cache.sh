@@ -144,7 +144,7 @@ function extract_rootfs_artifact() {
 
 	local date_diff=$((($(date +%s) - $(stat -c %Y "${cache_fname}")) / 86400))
 	display_alert "Extracting ${artifact_version}" "${date_diff} days old" "info"
-	pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") ${artifact_version}" "${cache_fname}" | zstdmt -dc | tar xp --xattrs -C "${SDCARD}"/
+	zstdmt -dc "${cache_fname}" | tar xp --xattrs -C "${SDCARD}"/
 
 	declare -a pv_tar_zstdmt_pipe_status=("${PIPESTATUS[@]}") # capture and the pipe_status array from PIPESTATUS
 	declare one_pipe_status

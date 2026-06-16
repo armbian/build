@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: local build <local@orangepi3b>
+Date: Sun, 14 Jun 2026 05:55:00 +0700
+Subject: [PATCH] phy: guard destroy during failed DSI probe cleanup
+
+On the Orange Pi 3B RK3566 vendor 6.1 kernel, enabling the DSI panel path
+can make the Rockchip DSI probe fail while deferred probing is still settling.
+The error unwind releases the internal DSI D-PHY devres object and reaches
+phy_destroy(). In this vendor tree that can happen with a PHY device whose
+sysfs/kernfs node is already absent, causing device_unregister() to walk a
+NULL kernfs node:
+
+  pc : kernfs_root+0x0/0x1c
+  Call trace:
+    kernfs_root
+    kernfs_find_and_get
+    sysfs_unmerge_group
+    dpm_sysfs_remove
+    device_del
+    device_unregister
+    phy_destroy
+    devm_phy_consume
+    release_nodes
+    devres_release_all
+    device_unbind_cleanup
+    really_probe
+    deferred_probe_work_func
+
+Do not call device_unregister() for a NULL PHY or a PHY device without an
+attached kernfs node. This avoids turning a recoverable DSI probe/unwind
+failure into a system-breaking kernel oops.
+---
+ drivers/phy/phy-core.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/phy/phy-core.c b/drivers/phy/phy-core.c
+index 3eeb2c2f68e2..38d3cad465bc 100644
+--- a/drivers/phy/phy-core.c
++++ b/drivers/phy/phy-core.c
+@@ -43,6 +43,9 @@ static void devm_phy_consume(struct device *dev, void *res)
+ {
+ 	struct phy *phy = *(struct phy **)res;
+ 
++	if (!phy)
++		return;
++
+ 	phy_destroy(phy);
+ }
+ 
+@@ -1039,6 +1042,15 @@ EXPORT_SYMBOL_GPL(devm_phy_create);
+  */
+ void phy_destroy(struct phy *phy)
+ {
++	if (!phy)
++		return;
++
++	if (!phy->dev.kobj.sd) {
++		pr_warn("phy: skip destroy of %s with no sysfs node\n",
++			dev_name(&phy->dev));
++		return;
++	}
++
+ 	pm_runtime_disable(&phy->dev);
+ 	device_unregister(&phy->dev);
+ }
+-- 
+2.39.5

@@ -1,0 +1,206 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: local build <local@orangepi3b>
+Date: Mon, 15 Jun 2026 18:20:00 +0700
+Subject: [PATCH] drm: rockchip: dsi: break Raspberry panel probe cycle
+
+On RK3566 Orange Pi 3B with a Raspberry/Waveshare DSI panel attached over
+I2C, the vendor 6.1 DSI stack can enter a deferred-probe loop:
+
+  dw-mipi-dsi-rockchip fe070000.dsi: failed to find panel or bridge: -517
+  rpi_touchscreen 1-0045: DSI host not ready, deferring panel probe
+
+The loop is caused by the ordering of three pieces:
+
+  1. The Rockchip DSI probe registers the MIPI DSI host.
+  2. It immediately registers the DRM component.
+  3. Component bind fails because the I2C panel has not registered its DRM
+     panel yet, then the probe unwinds and unregisters the MIPI DSI host.
+
+The I2C panel then retries, sees that the DSI host disappeared, and defers
+again. The display aggregate repeatedly binds/unbinds HDMI and DSI, preventing
+the system from reaching a stable boot.
+
+For the Raspberry-compatible panel path, keep the MIPI DSI host alive and
+delay Rockchip component registration. This gives deferred I2C probing a
+chance to find the host and register the panel. Also register the DRM panel
+before creating the DSI child device, because this vendor Synopsys host checks
+drm_of_find_panel_or_bridge() from mipi_dsi_attach().
+---
+ drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c | 28 ++++++++---------
+ drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c       | 36 +++++++++++++++++++++-
+ 2 files changed, 50 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c b/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
+index 7ed9a36..55176fe 100644
+--- a/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
++++ b/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
+@@ -392,7 +392,7 @@ static int rpi_touchscreen_probe(struct i2c_client *i2c,
+ 	struct rpi_touchscreen *ts;
+ 	struct device_node *endpoint, *dsi_host_node;
+ 	struct mipi_dsi_host *host;
+-	int ver;
++	int ver, ret;
+ 	struct mipi_dsi_device_info info = {
+ 		.type = RPI_DSI_DRIVER_NAME,
+ 		.channel = 0,
+@@ -454,25 +454,25 @@ static int rpi_touchscreen_probe(struct i2c_client *i2c,
+ 	if (!info.node)
+ 		goto error;
+ 
++	drm_panel_init(&ts->base, dev, &rpi_touchscreen_funcs,
++		       DRM_MODE_CONNECTOR_DSI);
++
++	drm_panel_add(&ts->base);
++	dev_info(dev, "DRM panel registered before DSI child registration\n");
++
+ 	of_node_put(endpoint);
+ 
+ 	ts->dsi = mipi_dsi_device_register_full(host, &info);
+ 	if (IS_ERR(ts->dsi)) {
+ 		dev_err(dev, "DSI device registration failed: %ld\n",
+ 			PTR_ERR(ts->dsi));
+-		return PTR_ERR(ts->dsi);
++		ret = PTR_ERR(ts->dsi);
++		drm_panel_remove(&ts->base);
++		ts->dsi = NULL;
++		return ret;
+ 	}
+ 	dev_info(dev, "registered DSI child device for host attach\n");
+ 
+-	drm_panel_init(&ts->base, dev, &rpi_touchscreen_funcs,
+-		       DRM_MODE_CONNECTOR_DSI);
+-
+-	/* This appears last, as it's what will unblock the DSI host
+-	 * driver's component bind function.
+-	 */
+-	drm_panel_add(&ts->base);
+-	dev_info(dev, "DRM panel registered\n");
+-
+ 	return 0;
+ 
+ error:
+@@ -484,11 +484,13 @@ static void rpi_touchscreen_remove(struct i2c_client *i2c)
+ {
+ 	struct rpi_touchscreen *ts = i2c_get_clientdata(i2c);
+ 
+-	mipi_dsi_detach(ts->dsi);
++	if (ts->dsi)
++		mipi_dsi_detach(ts->dsi);
+ 
+ 	drm_panel_remove(&ts->base);
+ 
+-	mipi_dsi_device_unregister(ts->dsi);
++	if (ts->dsi)
++		mipi_dsi_device_unregister(ts->dsi);
+ }
+ 
+ static int rpi_touchscreen_dsi_probe(struct mipi_dsi_device *dsi)
+diff --git a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+index bf4b3b5..ef0dd03 100644
+--- a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+@@ -8,6 +8,7 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/iopoll.h>
++#include <linux/jiffies.h>
+ #include <linux/math64.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+@@ -15,6 +16,7 @@
+ #include <linux/phy/phy.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
++#include <linux/workqueue.h>
+ 
+ #include <video/mipi_display.h>
+ #include <uapi/linux/videodev2.h>
+@@ -339,6 +341,9 @@ struct dw_mipi_dsi_rockchip {
+ 	struct dw_mipi_dsi *dmd;
+ 	const struct rockchip_dw_dsi_chip_data *cdata;
+ 	struct dw_mipi_dsi_plat_data pdata;
++	struct delayed_work component_add_work;
++	bool component_added;
++	int component_add_retries;
+ 	int devcnt;
+ 	struct rockchip_drm_sub_dev sub_dev;
+ 	struct drm_panel *panel;
+@@ -1181,6 +1186,41 @@ static int dw_mipi_dsi_rockchip_component_del(struct dw_mipi_dsi_rockchip *dsi)
+ 	return 0;
+ }
+ 
++static bool dw_mipi_dsi_rockchip_has_rpi_panel(struct dw_mipi_dsi_rockchip *dsi)
++{
++	struct device_node *remote;
++	bool ret;
++
++	remote = of_graph_get_remote_node(dsi->dev->of_node, 1, -1);
++	if (!remote)
++		return false;
++
++	ret = of_device_is_compatible(remote, "raspberrypi,7inch-touchscreen-panel");
++	of_node_put(remote);
++
++	return ret;
++}
++
++static void dw_mipi_dsi_rockchip_component_add_work(struct work_struct *work)
++{
++	struct dw_mipi_dsi_rockchip *dsi =
++		container_of(to_delayed_work(work), struct dw_mipi_dsi_rockchip,
++			     component_add_work);
++	int ret;
++
++	ret = dw_mipi_dsi_rockchip_component_add(dsi);
++	if (!ret) {
++		dsi->component_added = true;
++		dev_info(dsi->dev, "delayed component registration succeeded\n");
++		return;
++	}
++
++	if (ret == -EPROBE_DEFER && dsi->component_add_retries++ < 40)
++		schedule_delayed_work(&dsi->component_add_work, msecs_to_jiffies(100));
++	else
++		dev_err(dsi->dev, "delayed component registration failed: %d\n", ret);
++}
++
+ static int dw_mipi_dsi_rockchip_dphy_bind(struct device *dev,
+ 					  struct device *master,
+ 					  void *data)
+@@ -1542,11 +1582,22 @@ static int dw_mipi_dsi_rockchip_probe(struct platform_device *pdev)
+ 		goto err_clkdisable;
+ 	}
+ 
++	INIT_DELAYED_WORK(&dsi->component_add_work,
++			  dw_mipi_dsi_rockchip_component_add_work);
++
++	if (dw_mipi_dsi_rockchip_has_rpi_panel(dsi)) {
++		dev_info(dev, "Raspberry-compatible DSI panel detected; delaying component registration\n");
++		schedule_delayed_work(&dsi->component_add_work,
++				      msecs_to_jiffies(500));
++		return 0;
++	}
++
+ 	ret = dw_mipi_dsi_rockchip_component_add(dsi);
+ 	if (ret < 0) {
+ 		dw_mipi_dsi_remove(dsi->dmd);
+ 		goto err_clkdisable;
+ 	}
++	dsi->component_added = true;
+ 
+ 	return 0;
+ 
+@@ -1560,7 +1611,10 @@ static int dw_mipi_dsi_rockchip_remove(struct platform_device *pdev)
+ 	struct dw_mipi_dsi_rockchip *dsi = platform_get_drvdata(pdev);
+ 
+ 
+-	dw_mipi_dsi_rockchip_component_del(dsi);
++	cancel_delayed_work_sync(&dsi->component_add_work);
++
++	if (dsi->component_added)
++		dw_mipi_dsi_rockchip_component_del(dsi);
+ 	dw_mipi_dsi_remove(dsi->dmd);
+ 
+ 	return 0;
+-- 
+2.39.5

@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: local build <local@orangepi3b>
+Date: Tue, 16 Jun 2026 08:25:00 +0700
+Subject: [PATCH] drm/panel: raspberrypi: add OPi3B probe diagnostics
+
+The Orange Pi 3B RK3566 DSI path can fail as an endless deferred-probe loop:
+
+  dw-mipi-dsi-rockchip fe070000.dsi: failed to find panel or bridge: -517
+
+That only says the DSI host is waiting for a DRM panel. It does not tell us
+whether the I2C panel node probed, whether the ATTINY controller answered on
+0x45, or whether the panel driver is deferring while looking for the DSI host.
+
+Add explicit probe-stage messages so UART captures identify the real blocking
+point.
+
+Do not change display timing or MIPI DSI mode flags in this patch. The
+25.979 MHz preferred mode and sync-pulse/no-HBP experiments caused wrong
+colors and horizontal wrap on the tested Waveshare/Raspberry-compatible
+800x480 panel. Keep the vendor driver's original 26 MHz burst/no-HBP setup
+while retaining useful boot diagnostics.
+---
+ drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+--- a/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
++++ b/drivers/gpu/drm/panel/panel-raspberrypi-touchscreen.c
+@@ -390,10 +390,14 @@
+ 
+ 	ts->i2c = i2c;
+ 
++	dev_info(dev, "OPi3B DSI panel probe start, i2c addr=0x%02x\n",
++		 i2c->addr);
++
+ 	ver = rpi_touchscreen_i2c_read(ts, REG_ID);
+ 	if (ver < 0) {
+-		dev_err(dev, "Atmel I2C read failed: %d\n", ver);
+-		return -ENODEV;
++		dev_err(dev, "Atmel I2C read failed at addr 0x%02x: %d\n",
++			i2c->addr, ver);
++		return ver;
+ 	}
+ 
+ 	switch (ver) {
+@@ -404,23 +408,28 @@
+ 		dev_err(dev, "Unknown Atmel firmware revision: 0x%02x\n", ver);
+ 		return -ENODEV;
+ 	}
++	dev_info(dev, "Atmel firmware revision 0x%02x detected\n", ver);
+ 
+ 	/* Turn off at boot, so we can cleanly sequence powering on. */
+ 	rpi_touchscreen_i2c_write(ts, REG_POWERON, 0);
+ 
+ 	/* Look up the DSI host.  It needs to probe before we do. */
+ 	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
+-	if (!endpoint)
++	if (!endpoint) {
++		dev_err(dev, "missing DSI endpoint in panel DT node\n");
+ 		return -ENODEV;
++	}
+ 
+ 	dsi_host_node = of_graph_get_remote_port_parent(endpoint);
+ 	if (!dsi_host_node)
+ 		goto error;
++	dev_info(dev, "remote DSI host node is %pOF\n", dsi_host_node);
+ 
+ 	host = of_find_mipi_dsi_host_by_node(dsi_host_node);
+ 	of_node_put(dsi_host_node);
+ 	if (!host) {
+ 		of_node_put(endpoint);
++		dev_info(dev, "DSI host not ready, deferring panel probe\n");
+ 		return -EPROBE_DEFER;
+ 	}
+ 
+@@ -436,6 +445,7 @@
+ 			PTR_ERR(ts->dsi));
+ 		return PTR_ERR(ts->dsi);
+ 	}
++	dev_info(dev, "registered DSI child device for host attach\n");
+ 
+ 	drm_panel_init(&ts->base, dev, &rpi_touchscreen_funcs,
+ 		       DRM_MODE_CONNECTOR_DSI);
+@@ -444,6 +454,7 @@
+ 	 * driver's component bind function.
+ 	 */
+ 	drm_panel_add(&ts->base);
++	dev_info(dev, "DRM panel registered\n");
+ 
+ 	return 0;
+ 
+-- 
+2.39.5
