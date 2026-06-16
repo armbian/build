@@ -18,7 +18,7 @@ else
 fi
 
 # ----------------------------------------------------------- interface data
-IFACES="i2c0 i2c1 uart1 uart3 spi2 pdm i2s_tx"
+IFACES="i2c0 i2c1 uart1 uart3 spi2 pdm i2s_tx i2s_rx"
 
 if_path() {
 	case "$1" in
@@ -29,6 +29,7 @@ if_path() {
 	spi2)  echo "/spi@ff140000" ;;
 	pdm)   echo "/pdm@ff380000" ;;
 	i2s_tx) echo "/i2s@ff300000" ;;
+	i2s_rx) echo "/sound-i2s-rx-test" ;;
 	esac
 }
 
@@ -41,6 +42,7 @@ if_pins() {
 	spi2)  echo "MISO=GPIO1_C6 MOSI=GPIO1_C7 CLK=GPIO1_D0 CS=GPIO1_D1" ;;
 	pdm)   echo "CLK=GPIO2_A6 SDI0-3=GPIO2_B5/B6/B7/C0 (P1, card hw:1,0)" ;;
 	i2s_tx) echo "TX/master: SCLK=GPIO2_A5 LRCK=GPIO2_A7 SDO=GPIO2_B1 SDI=GPIO2_B5 (P1, shares pdm pins)" ;;
+	i2s_rx) echo "RX capture: BCLK=GPIO2_A6 LRCK=GPIO2_B0 DATA=GPIO2_B5 (frees pwm@ff160030/ff170030; card hw:i2srxtest)" ;;
 	esac
 }
 
@@ -48,7 +50,7 @@ if_pins() {
 if_group() {
 	case "$1" in
 	i2c0|uart1|spi2) echo gpio1d ;;
-	pdm|i2s_tx) echo gpio2_audio ;;
+	pdm|i2s_tx|i2s_rx) echo gpio2_audio ;;
 	*) echo "" ;;
 	esac
 }
@@ -77,6 +79,25 @@ emit_overlay() {
 			status = "okay";
 		};
 	};
+};
+EOF
+	elif [ "$1" = i2s_rx ]; then
+		# i2s_8ch_0 in RX/slave mode + the dmic capture card. Switch to the
+		# RX clock pins and free them from the two header PWMs that squat there.
+		cat > "$tmp" <<EOF
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "/i2s@ff300000";
+		__overlay__ {
+			status = "okay";
+			pinctrl-0 = <&i2s_8ch_0_sclkrx &i2s_8ch_0_lrckrx &i2s_8ch_0_sdi0>;
+		};
+	};
+	fragment@1 { target-path = "/pwm@ff160030"; __overlay__ { status = "disabled"; }; };
+	fragment@2 { target-path = "/pwm@ff170030"; __overlay__ { status = "disabled"; }; };
+	fragment@3 { target-path = "/sound-i2s-rx-test"; __overlay__ { status = "okay"; }; };
 };
 EOF
 	elif [ "$1" = spi2 ]; then
@@ -113,7 +134,7 @@ EOF
 };
 EOF
 	fi
-	dtc -q -I dts -O dtb -o "$OVL_DIR/nova-$1.dtbo" "$tmp" || { rm -f "$tmp"; return 1; }
+	dtc -q -@ -I dts -O dtb -o "$OVL_DIR/nova-$1.dtbo" "$tmp" || { rm -f "$tmp"; return 1; }
 	rm -f "$tmp"
 }
 
@@ -180,6 +201,16 @@ toggle() {
 					return
 				fi
 			done
+		fi
+		# i2s_rx's overlay references base-DTB labels (the RX pinctrl groups),
+		# which need a /__symbols__ node - i.e. a kernel DTB built with dtc -@.
+		# Without it the bootloader can't apply the overlay and the boot fails,
+		# so refuse here rather than leave an unbootable image.
+		if [ "$name" = i2s_rx ] && [ ! -e /proc/device-tree/__symbols__ ] \
+		   && [ ! -e /sys/firmware/devicetree/base/__symbols__ ]; then
+			echo ">> $name needs a base DTB with /__symbols__ (kernel built with dtc -@)."
+			echo "   This image's DTB has none; enabling it would break boot. Refusing."
+			return
 		fi
 		emit_overlay "$name" || return
 		write_list $(enabled_list) "$name"
