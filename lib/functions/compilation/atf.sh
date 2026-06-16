@@ -86,7 +86,7 @@ compile_atf() {
 	run_host_command_logged "CROSS_COMPILE='ccache ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='ccache ${ATF_COMPILER}gcc'" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
-		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}"
+		make ENABLE_BACKTRACE="0" LOG_LEVEL="${ATF_LOG_LEVEL:-40}" BUILD_STRING="armbian" $target_make "${CTHREADS}"
 
 	# @TODO: severely missing logging
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
