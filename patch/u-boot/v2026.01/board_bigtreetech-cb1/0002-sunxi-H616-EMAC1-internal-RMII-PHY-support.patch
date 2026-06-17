@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 17 Jun 2026 09:19:30 +0200
+Subject: [PATCH 2/4] sunxi: H616: EMAC1 internal RMII PHY support
+
+Add the H616 EMAC1 driver variant (syscon offset 0x34) + compatible, the emac1
+pinctrl function, and the board-level clock/syscon + i2c PHY-clock-chip bring-up
+the BigTreeTech CB1's internal RMII PHY needs. Guarded to MACH_SUN50I_H616.
+---
+ arch/arm/mach-sunxi/board.c           |  1 +
+ arch/arm/mach-sunxi/clock_sun50i_h6.c |  7 +++++++
+ board/sunxi/board.c                   | 21 +++++++++++++++++++++
+ drivers/net/sun8i_emac.c              |  7 +++++++
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c |  1 +
+ 5 files changed, 37 insertions(+)
+
+diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
+index 432b1c10..6309271a 100644
+--- a/arch/arm/mach-sunxi/board.c
++++ b/arch/arm/mach-sunxi/board.c
+@@ -487,6 +487,7 @@ void board_init_f(ulong dummy)
+ 	/* Needed early by sunxi_board_init if PMU is enabled */
+ 	i2c_init_board();
+ 	i2c_init(CONFIG_SYS_I2C_SPEED, CONFIG_SYS_I2C_SLAVE);
++	i2c_set_bus_num(0);
+ #endif
+ 	sunxi_board_init();
+ }
+diff --git a/arch/arm/mach-sunxi/clock_sun50i_h6.c b/arch/arm/mach-sunxi/clock_sun50i_h6.c
+index 80004f13..049d7551 100644
+--- a/arch/arm/mach-sunxi/clock_sun50i_h6.c
++++ b/arch/arm/mach-sunxi/clock_sun50i_h6.c
+@@ -72,6 +72,13 @@ void clock_init_safe(void)
+ 		writel(MBUS_CLK_SRC_PLL6X2 | MBUS_CLK_M(3),
+ 		       ccm + CCU_H6_MBUS_CFG);
+ 	}
++
++	if (IS_ENABLED(CONFIG_MACH_SUN50I_H616)) {
++		/* BigTreeTech CB1: bring up EMAC1 internal RMII PHY clock/syscon */
++		writel(0x10001, 0x030017ac);
++		writel(0x50, 0x0300a028);
++		writel(0x20, 0x0300a040);
++	}
+ }
+ 
+ void clock_init_uart(void)
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 2929bc17..30e09d06 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -555,6 +555,7 @@ static void sunxi_spl_store_dram_size(phys_addr_t dram_size)
+ void sunxi_board_init(void)
+ {
+ 	int power_failed = 0;
++	u8 data[2];
+ 
+ #ifdef CONFIG_LED_STATUS
+ 	if (IS_ENABLED(CONFIG_SPL_DRIVERS_MISC))
+@@ -651,6 +652,26 @@ void sunxi_board_init(void)
+ 		clock_set_pll1(get_board_sys_clk());
+ 	else
+ 		printf("Failed to set core voltage! Can't set CPU frequency\n");
++
++	/* BigTreeTech CB1: configure EMAC1 RMII PHY clock chip (i2c1, addr 0x10) */
++	if (IS_ENABLED(CONFIG_MACH_SUN50I_H616)) {
++		i2c_set_bus_num(1);
++		data[0] = 0;
++		data[1] = 1;
++		i2c_write(0x10, 0xfe, 1, data, 2);
++		i2c_write(0x10, 2, 1, data, 2);
++		data[1] = 1;
++		i2c_write(0x10, 2, 1, data, 2);
++		data[1] = 0xf;
++		i2c_write(0x10, 0x16, 1, data, 2);
++		data[1] = 3;
++		i2c_write(0x10, 0x14, 1, data, 2);
++		data[1] = 0x60;
++		i2c_write(0x10, 0xfe, 1, data, 2);
++		data[0] = 0x08;
++		data[1] = 0x14;
++		i2c_write(0x10, 0, 1, data, 2);
++	}
+ }
+ #endif /* CONFIG_XPL_BUILD */
+ 
+diff --git a/drivers/net/sun8i_emac.c b/drivers/net/sun8i_emac.c
+index 41c52f56..39da380a 100644
+--- a/drivers/net/sun8i_emac.c
++++ b/drivers/net/sun8i_emac.c
+@@ -900,6 +900,11 @@ static const struct emac_variant emac_variant_h6 = {
+ 	.support_rmii		= true,
+ };
+ 
++static const struct emac_variant emac_variant_h616_1 = {
++	.syscon_offset		= 0x34,
++	.support_rmii		= true,
++};
++
+ static const struct udevice_id sun8i_emac_eth_ids[] = {
+ 	{ .compatible = "allwinner,sun8i-a83t-emac",
+ 	  .data = (ulong)&emac_variant_a83t },
+@@ -913,6 +918,8 @@ static const struct udevice_id sun8i_emac_eth_ids[] = {
+ 	  .data = (ulong)&emac_variant_a64 },
+ 	{ .compatible = "allwinner,sun50i-h6-emac",
+ 	  .data = (ulong)&emac_variant_h6 },
++	{ .compatible = "allwinner,sun50i-h616-emac1",
++	  .data = (ulong)&emac_variant_h616_1 },
+ 	{ }
+ };
+ 
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index fd357ab0..b025666e 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -737,6 +737,7 @@ static const struct sunxi_pinctrl_desc __maybe_unused sun50i_h6_r_pinctrl_desc =
+ 
+ static const struct sunxi_pinctrl_function sun50i_h616_pinctrl_functions[] = {
+ 	{ "emac0",	2 },	/* PI0-PI16 */
++	{ "emac1",	2 },	/* PA0-PA9 */
+ 	{ "gpio_in",	0 },
+ 	{ "gpio_out",	1 },
+ 	{ "mmc0",	2 },	/* PF0-PF5 */
