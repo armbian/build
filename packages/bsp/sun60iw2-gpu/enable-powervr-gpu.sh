@@ -182,6 +182,23 @@ apt-get install -y --no-install-recommends \
 	libx11-xcb1 libxcb-dri3-0 libxcb-present0 libxcb-sync1 libxshmfence1 libwayland-client0 || \
 	log "WARNING: could not install some X/Wayland client libs; Vulkan/GLES may not load."
 
+# Standardise on Debian's ocl-icd loader, then hide Radxa's bundled libOpenCL.
+# The userspace package ships its own /usr/lib/libOpenCL.so{,.1} loader, which
+# competes with ocl-icd (two libOpenCL.so.1 on the system). Install ocl-icd FIRST
+# (else diverting would leave no libOpenCL at all), then dpkg-divert Radxa's aside
+# — upgrade-safe and reversible, unlike rm'ing a file owned by another package.
+log "Standardising on the ocl-icd OpenCL loader"
+apt-get install -y --no-install-recommends ocl-icd-libopencl1 || \
+	log "WARNING: could not install ocl-icd-libopencl1; leaving Radxa's bundled loader in place."
+if dpkg -s ocl-icd-libopencl1 > /dev/null 2>&1; then
+	for f in /usr/lib/libOpenCL.so /usr/lib/libOpenCL.so.1; do
+		if [[ -e "${f}" ]] && ! dpkg-divert --list "${f}" | grep -q .; then
+			dpkg-divert --add --rename --divert "${f}.radxa-disabled" "${f}"
+		fi
+	done
+	ldconfig
+fi
+
 # Register the PowerVR OpenCL ICD. The package ships libPVROCL but not the vendor
 # registration file the OpenCL loader needs, so clinfo finds 0 platforms without
 # it. This is the headless-friendly compute path (no display required).
