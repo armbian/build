@@ -1,0 +1,416 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nikvoid <nikvoid@users.noreply.github.com>
+Date: Mon, 16 Jun 2025 13:19:58 +0300
+Subject: QCASPI fixes/workaround for rockchip SPI (quirks?)
+
+Improved reliabillity of probe; do SPI transactions in single read-write message
+---
+ drivers/net/ethernet/qualcomm/qca_7k.c  | 123 ++++---
+ drivers/net/ethernet/qualcomm/qca_spi.c | 162 +++++++---
+ drivers/net/ethernet/qualcomm/qca_spi.h |   2 +-
+ 3 files changed, 171 insertions(+), 116 deletions(-)
+
+diff --git a/drivers/net/ethernet/qualcomm/qca_7k.c b/drivers/net/ethernet/qualcomm/qca_7k.c
+index 4292c89bd35c..9fabe1c9782f 100644
+--- a/drivers/net/ethernet/qualcomm/qca_7k.c
++++ b/drivers/net/ethernet/qualcomm/qca_7k.c
+@@ -38,86 +38,83 @@ qcaspi_spi_error(struct qcaspi *qca)
+ 	netdev_err(qca->net_dev, "spi error\n");
+ 	qca->sync = QCASPI_SYNC_UNKNOWN;
+ 	qca->stats.spi_err++;
+ }
+ 
+-int
+-qcaspi_read_register(struct qcaspi *qca, u16 reg, u16 *result)
++int qcaspi_read_register(struct qcaspi *qca, u16 reg, u16 *result)
+ {
+-	__be16 rx_data;
+-	__be16 tx_data;
+-	struct spi_transfer transfer[2];
+-	struct spi_message msg;
+-	int ret;
+-
+-	memset(transfer, 0, sizeof(transfer));
+-
+-	spi_message_init(&msg);
+-
+-	tx_data = cpu_to_be16(QCA7K_SPI_READ | QCA7K_SPI_INTERNAL | reg);
+-	*result = 0;
+-
+-	transfer[0].tx_buf = &tx_data;
+-	transfer[0].len = QCASPI_CMD_LEN;
+-	transfer[1].rx_buf = &rx_data;
+-	transfer[1].len = QCASPI_CMD_LEN;
+-
+-	spi_message_add_tail(&transfer[0], &msg);
+-
+-	if (qca->legacy_mode) {
+-		spi_sync(qca->spi_dev, &msg);
+-		spi_message_init(&msg);
+-	}
+-	spi_message_add_tail(&transfer[1], &msg);
+-	ret = spi_sync(qca->spi_dev, &msg);
+-
+-	if (!ret)
+-		ret = msg.status;
+-
+-	if (ret)
+-		qcaspi_spi_error(qca);
+-	else
+-		*result = be16_to_cpu(rx_data);
+-
+-	return ret;
++    u8 tx_buf[4] = {0};  /* 4-byte transmit buffer */
++    u8 rx_buf[4] = {0};  /* 4-byte receive buffer */
++    struct spi_transfer transfer;
++    struct spi_message msg;
++    int ret;
++
++    /* Initialize transfer and message */
++    memset(&transfer, 0, sizeof(transfer));
++    spi_message_init(&msg);
++
++    /* Prepare 4-byte command: first 2 bytes are the read command, last 2 are dummy */
++    __be16 tx_data = cpu_to_be16(QCA7K_SPI_READ | QCA7K_SPI_INTERNAL | reg);
++    memcpy(tx_buf, &tx_data, QCASPI_CMD_LEN);  /* Copy 2-byte command to tx_buf */
++
++    /* Set up single 4-byte transfer */
++    transfer.tx_buf = tx_buf;
++    transfer.rx_buf = rx_buf;
++    transfer.len = 4;  /* Single 4-byte transfer */
++    spi_message_add_tail(&transfer, &msg);
++
++    /* Perform the SPI transfer */
++    ret = spi_sync(qca->spi_dev, &msg);
++
++    if (!ret)
++        ret = msg.status;
++
++    if (ret) {
++        qcaspi_spi_error(qca);
++    } else {
++        /* Extract the last 2 bytes of the 4-byte response */
++        __be16 rx_data;
++        memcpy(&rx_data, &rx_buf[2], QCASPI_CMD_LEN);
++        *result = be16_to_cpu(rx_data);
++    }
++
++    return ret;
+ }
+ 
+ static int
+ __qcaspi_write_register(struct qcaspi *qca, u16 reg, u16 value)
+ {
+-	__be16 tx_data[2];
+-	struct spi_transfer transfer[2];
+-	struct spi_message msg;
+-	int ret;
+-
+-	memset(&transfer, 0, sizeof(transfer));
++    u8 tx_buf[4] = {0};  /* 4-byte transmit buffer */
++    struct spi_transfer transfer;
++    struct spi_message msg;
++    int ret;
+ 
+-	spi_message_init(&msg);
++    /* Initialize transfer and message */
++    memset(&transfer, 0, sizeof(transfer));
++    spi_message_init(&msg);
+ 
+-	tx_data[0] = cpu_to_be16(QCA7K_SPI_WRITE | QCA7K_SPI_INTERNAL | reg);
+-	tx_data[1] = cpu_to_be16(value);
++    /* Prepare 4-byte command: first 2 bytes are the write command, last 2 are the value */
++    __be16 tx_data[2];
++    tx_data[0] = cpu_to_be16(QCA7K_SPI_WRITE | QCA7K_SPI_INTERNAL | reg);
++    tx_data[1] = cpu_to_be16(value);
++    memcpy(tx_buf, tx_data, 4);  /* Copy 4 bytes (command + value) to tx_buf */
+ 
+-	transfer[0].tx_buf = &tx_data[0];
+-	transfer[0].len = QCASPI_CMD_LEN;
+-	transfer[1].tx_buf = &tx_data[1];
+-	transfer[1].len = QCASPI_CMD_LEN;
++    /* Set up single 4-byte transfer */
++    transfer.tx_buf = tx_buf;
++    transfer.len = 4;  /* Single 4-byte transfer */
++    spi_message_add_tail(&transfer, &msg);
+ 
+-	spi_message_add_tail(&transfer[0], &msg);
+-	if (qca->legacy_mode) {
+-		spi_sync(qca->spi_dev, &msg);
+-		spi_message_init(&msg);
+-	}
+-	spi_message_add_tail(&transfer[1], &msg);
+-	ret = spi_sync(qca->spi_dev, &msg);
++    /* Perform the SPI transfer */
++    ret = spi_sync(qca->spi_dev, &msg);
+ 
+-	if (!ret)
+-		ret = msg.status;
++    if (!ret)
++        ret = msg.status;
+ 
+-	if (ret)
+-		qcaspi_spi_error(qca);
++    if (ret)
++        qcaspi_spi_error(qca);
+ 
+-	return ret;
++    return ret;
+ }
+ 
+ int
+ qcaspi_write_register(struct qcaspi *qca, u16 reg, u16 value, int retry)
+ {
+diff --git a/drivers/net/ethernet/qualcomm/qca_spi.c b/drivers/net/ethernet/qualcomm/qca_spi.c
+index 926a087ae1c6..4db58951bb0e 100644
+--- a/drivers/net/ethernet/qualcomm/qca_spi.c
++++ b/drivers/net/ethernet/qualcomm/qca_spi.c
+@@ -104,34 +104,48 @@ end_spi_intr_handling(struct qcaspi *qca, u16 intr_cause)
+ }
+ 
+ static u32
+ qcaspi_write_burst(struct qcaspi *qca, u8 *src, u32 len)
+ {
+-	__be16 cmd;
+-	struct spi_message msg;
+-	struct spi_transfer transfer[2];
+-	int ret;
+-
+-	memset(&transfer, 0, sizeof(transfer));
+-	spi_message_init(&msg);
+-
+-	cmd = cpu_to_be16(QCA7K_SPI_WRITE | QCA7K_SPI_EXTERNAL);
+-	transfer[0].tx_buf = &cmd;
+-	transfer[0].len = QCASPI_CMD_LEN;
+-	transfer[1].tx_buf = src;
+-	transfer[1].len = len;
+-
+-	spi_message_add_tail(&transfer[0], &msg);
+-	spi_message_add_tail(&transfer[1], &msg);
+-	ret = spi_sync(qca->spi_dev, &msg);
+-
+-	if (ret || (msg.actual_length != QCASPI_CMD_LEN + len)) {
+-		qcaspi_spi_error(qca);
+-		return 0;
+-	}
+-
+-	return len;
++    u8 *tx_buf;  /* Dynamically allocated transmit buffer */
++    struct spi_message msg;
++    struct spi_transfer transfer;
++    int ret;
++
++    /* Allocate buffer for command + data */
++    tx_buf = kmalloc(QCASPI_CMD_LEN + len, GFP_KERNEL);
++    if (!tx_buf) {
++        qcaspi_spi_error(qca);
++        return 0;
++    }
++
++    /* Initialize transfer and message */
++    memset(&transfer, 0, sizeof(transfer));
++    spi_message_init(&msg);
++
++    /* Prepare buffer: first 2 bytes are the command, followed by data */
++    __be16 cmd = cpu_to_be16(QCA7K_SPI_WRITE | QCA7K_SPI_EXTERNAL);
++    memcpy(tx_buf, &cmd, QCASPI_CMD_LEN);  /* Copy 2-byte command */
++    memcpy(tx_buf + QCASPI_CMD_LEN, src, len);  /* Copy data */
++
++    /* Set up single transfer */
++    transfer.tx_buf = tx_buf;
++    transfer.len = QCASPI_CMD_LEN + len;  /* Total length: command + data */
++    spi_message_add_tail(&transfer, &msg);
++
++    /* Perform the SPI transfer */
++    ret = spi_sync(qca->spi_dev, &msg);
++
++    /* Free the allocated buffer */
++    kfree(tx_buf);
++
++    if (ret || (msg.actual_length != QCASPI_CMD_LEN + len)) {
++        qcaspi_spi_error(qca);
++        return 0;
++    }
++
++    return len;
+ }
+ 
+ static u32
+ qcaspi_write_legacy(struct qcaspi *qca, u8 *src, u32 len)
+ {
+@@ -157,34 +171,65 @@ qcaspi_write_legacy(struct qcaspi *qca, u8 *src, u32 len)
+ }
+ 
+ static u32
+ qcaspi_read_burst(struct qcaspi *qca, u8 *dst, u32 len)
+ {
+-	struct spi_message msg;
+-	__be16 cmd;
+-	struct spi_transfer transfer[2];
+-	int ret;
+-
+-	memset(&transfer, 0, sizeof(transfer));
+-	spi_message_init(&msg);
+-
+-	cmd = cpu_to_be16(QCA7K_SPI_READ | QCA7K_SPI_EXTERNAL);
+-	transfer[0].tx_buf = &cmd;
+-	transfer[0].len = QCASPI_CMD_LEN;
+-	transfer[1].rx_buf = dst;
+-	transfer[1].len = len;
+-
+-	spi_message_add_tail(&transfer[0], &msg);
+-	spi_message_add_tail(&transfer[1], &msg);
+-	ret = spi_sync(qca->spi_dev, &msg);
+-
+-	if (ret || (msg.actual_length != QCASPI_CMD_LEN + len)) {
+-		qcaspi_spi_error(qca);
+-		return 0;
+-	}
+-
+-	return len;
++    u8 *tx_buf;  /* Dynamically allocated transmit buffer */
++    u8 *rx_buf;  /* Dynamically allocated receive buffer */
++    struct spi_message msg;
++    struct spi_transfer transfer;
++    int ret;
++
++    /* Allocate transmit buffer for command + dummy data */
++    tx_buf = kmalloc(QCASPI_CMD_LEN + len, GFP_KERNEL);
++    if (!tx_buf) {
++        qcaspi_spi_error(qca);
++        return 0;
++    }
++
++    /* Allocate receive buffer for padding + data */
++    rx_buf = kmalloc(QCASPI_CMD_LEN + len, GFP_KERNEL);
++    if (!rx_buf) {
++        kfree(tx_buf);
++        qcaspi_spi_error(qca);
++        return 0;
++    }
++
++    /* Initialize transfer and message */
++    memset(&transfer, 0, sizeof(transfer));
++    spi_message_init(&msg);
++
++    /* Prepare transmit buffer: first 2 bytes are the command, followed by dummy data */
++    __be16 cmd = cpu_to_be16(QCA7K_SPI_READ | QCA7K_SPI_EXTERNAL);
++    memcpy(tx_buf, &cmd, QCASPI_CMD_LEN);  /* Copy 2-byte command */
++    memset(tx_buf + QCASPI_CMD_LEN, 0, len);  /* Fill rest with zeros (dummy) */
++
++    /* Set up single transfer */
++    transfer.tx_buf = tx_buf;
++    transfer.rx_buf = rx_buf;
++    transfer.len = QCASPI_CMD_LEN + len;  /* Total length: command + data */
++    spi_message_add_tail(&transfer, &msg);
++
++    /* Perform the SPI transfer */
++    ret = spi_sync(qca->spi_dev, &msg);
++
++    /* Copy received data (skipping 2-byte padding) to dst */
++    if (!ret && msg.actual_length == QCASPI_CMD_LEN + len) {
++        memcpy(dst, rx_buf + QCASPI_CMD_LEN, len);  /* Copy only the data */
++    }
++
++    /* Free allocated buffers */
++    kfree(tx_buf);
++    kfree(rx_buf);
++
++    /* Check for errors */
++    if (ret || msg.actual_length != QCASPI_CMD_LEN + len) {
++        qcaspi_spi_error(qca);
++        return 0;
++    }
++
++    return len;
+ }
+ 
+ static u32
+ qcaspi_read_legacy(struct qcaspi *qca, u8 *dst, u32 len)
+ {
+@@ -628,12 +673,14 @@ qcaspi_spi_thread(void *data)
+ 
+ 				qcafrm_fsm_init_spi(&qca->frm_handle);
+ 				qca->stats.device_reset++;
+ 
+ 				/* not synced. */
+-				if (qca->sync != QCASPI_SYNC_READY)
++				if (qca->sync != QCASPI_SYNC_READY) {
++					netdev_dbg(qca->net_dev, "Out of sync");
+ 					continue;
++				}
+ 
+ 				netif_wake_queue(qca->net_dev);
+ 				netif_carrier_on(qca->net_dev);
+ 			}
+ 
+@@ -907,10 +954,11 @@ qca_spi_probe(struct spi_device *spi)
+ 	struct qcaspi *qca = NULL;
+ 	struct net_device *qcaspi_devs = NULL;
+ 	u8 legacy_mode = 0;
+ 	u16 signature;
+ 	int ret;
++	int i;
+ 
+ 	if (!spi->dev.of_node) {
+ 		dev_err(&spi->dev, "Missing device tree\n");
+ 		return -EINVAL;
+ 	}
+@@ -950,11 +998,11 @@ qca_spi_probe(struct spi_device *spi)
+ 	    wr_verify > QCASPI_WRITE_VERIFY_MAX) {
+ 		dev_err(&spi->dev, "Invalid write verify: %d\n",
+ 			wr_verify);
+ 		return -EINVAL;
+ 	}
+-
++	
+ 	dev_info(&spi->dev, "ver=%s, clkspeed=%d, burst_len=%d, pluggable=%d\n",
+ 		 QCASPI_DRV_VERSION,
+ 		 qcaspi_clkspeed,
+ 		 qcaspi_burst_len,
+ 		 qcaspi_pluggable);
+@@ -993,12 +1041,22 @@ qca_spi_probe(struct spi_device *spi)
+ 	}
+ 
+ 	netif_carrier_off(qca->net_dev);
+ 
+ 	if (!qcaspi_pluggable) {
+-		qcaspi_read_register(qca, SPI_REG_SIGNATURE, &signature);
+-		qcaspi_read_register(qca, SPI_REG_SIGNATURE, &signature);
++		for (i = 0; i < 5; i++) {
++			/* Discard first signature */
++			qcaspi_read_register(qca, SPI_REG_SIGNATURE, &signature);
++			qcaspi_read_register(qca, SPI_REG_SIGNATURE, &signature);
++			if (signature != QCASPI_GOOD_SIGNATURE) {
++				dev_info(&spi->dev, "Signature %d: 0x%04X Invalid, reset device", i, signature);
++				qcaspi_write_register(qca, SPI_REG_SPI_CONFIG, QCASPI_SLAVE_RESET_BIT, 0);
++			} else {
++				dev_info(&spi->dev, "Signature %d: 0x%04X OK", i, signature);
++				break;
++			}
++		}
+ 
+ 		if (signature != QCASPI_GOOD_SIGNATURE) {
+ 			dev_err(&spi->dev, "Invalid signature (0x%04X)\n",
+ 				signature);
+ 			free_netdev(qcaspi_devs);
+diff --git a/drivers/net/ethernet/qualcomm/qca_spi.h b/drivers/net/ethernet/qualcomm/qca_spi.h
+index 58ad910068d4..0fb491e29ba7 100644
+--- a/drivers/net/ethernet/qualcomm/qca_spi.h
++++ b/drivers/net/ethernet/qualcomm/qca_spi.h
+@@ -32,11 +32,11 @@
+ #include <linux/spi/spi.h>
+ #include <linux/types.h>
+ 
+ #include "qca_7k_common.h"
+ 
+-#define QCASPI_DRV_VERSION "0.2.7-i"
++#define QCASPI_DRV_VERSION "0.2.8"
+ #define QCASPI_DRV_NAME    "qcaspi"
+ 
+ #define QCASPI_GOOD_SIGNATURE 0xAA55
+ 
+ #define TX_RING_MAX_LEN 10
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
