@@ -4,21 +4,20 @@
 # sun60iw2 (Allwinner A733: Orange Pi 4 Pro, Radxa Cubie A7Z, ...).
 #
 # Run as root ON A BOOTED sun60iw2 board. It:
-#   1. builds the GPU kernel module (pvrsrvkm.ko) FROM SOURCE via DKMS, and
+#   1. builds the GPU kernel module (pvrsrvkm.ko) FROM SOURCE via DKMS,
 #   2. installs Imagination's proprietary PowerVR userspace (a DDK-version-MATCHED
-#      set) from Radxa's Debian packages — NOT carved out of a disk image.
+#      set) plus the Allwinner Cedar VPU userspace, from Radxa's a733-bullseye
+#      Debian packages — NOT carved from an image, and
+#   3. wires up the bits Radxa's image pipeline would otherwise add (X/Wayland
+#      client libs, OpenCL ICD registration, module autoload, Cedar udev + gst-omx).
 #
 # The userspace blobs are non-redistributable, so they are NOT shipped in the
-# Armbian image; this script fetches them on demand. GPU acceleration is optional
+# Armbian image; this script fetches them on demand. Acceleration is optional
 # (headless servers don't need it), hence opt-in.
 #
-# STATUS: FIRST DRAFT — not yet verified end-to-end on hardware. The approach is
-# derived from the proven transplant in Incipiens/OrangePiZero3W-GPU-VPU (which
-# does the same DKMS build + userspace graft against a 6.6.x-sun60iw2 kernel) and
-# from dok2d's Cubie A7Z work. Repo/package details below are confirmed against
-# Radxa's published a733-bullseye repo (June 2026). The main remaining unknown is
-# the suite mismatch: these packages target Debian 11 (bullseye) and we install
-# them on Trixie — see README.md ("Suite mismatch").
+# Validated on hardware (Orange Pi 4 Pro, headless Trixie): OpenCL enumerates the
+# PowerVR B-Series BXM-4-64 with a driver version matching the kernel pvr build,
+# and H.264 hardware decode works through gst-omx (omxh264dec).
 #
 # SPDX-License-Identifier: GPL-2.0
 #
@@ -39,42 +38,14 @@ RADXA_APT_KEYRING="/usr/share/keyrings/radxa-archive-keyring.gpg"
 # The keyring is distributed as a .deb that installs ${RADXA_APT_KEYRING}.
 RADXA_KEYRING_RELEASE="https://github.com/radxa-pkg/radxa-archive-keyring/releases/latest/download"
 
-# Package names as they appear in the index. NOTE: the userspace/VPU packages
-# have MALFORMED names — the version and ".deb" are baked into the Package: field.
-# apt still installs them by that exact literal name (it only treats a name as a
-# local file when a matching file exists in the cwd). They form a matched DDK pair
-# with the module, all from the same a733-bullseye suite.
+# Package names as they appear in the index. NOTE: the userspace and 2.0.0 VPU
+# packages have MALFORMED names — the version and ".deb" are baked into the
+# Package: field. apt still installs them by that exact literal name (it only
+# treats a name as a local file when a matching file exists in the cwd). The GPU
+# module and userspace are a matched DDK pair from the same a733-bullseye suite.
 PKG_GPU_DKMS="img-bxm-dkms"                            # 0.1.0-3: builds pvrsrvkm.ko from source
 PKG_GPU_USERSPACE="xserver-xorg-img-bxm-1.21.1-2.deb"  # PowerVR DDK userspace (GLES/EGL/Vulkan/fw)
-PKG_VPU=("libcedarc-dev-2.0.0-arm64" "libgstreamer-openmax-allwinner")  # optional VPU
-
-# ----------------------------------------------------------------------------
-WITH_VPU="no"
-DEB_DIR=""
-
-usage() {
-	cat <<EOF
-Usage: $(basename "$0") [options]
-
-  --debs DIR   Install the GPU/VPU .deb files found in DIR instead of adding
-               Radxa's apt repo. Use this if you have pulled the packages
-               manually (e.g. from Radxa's pool) — avoids the repo-URL VERIFY.
-  --with-vpu   Also install the Allwinner Cedar VPU userspace (libcedarc +
-               gstreamer-omx) and wire up the cedar device nodes.
-  -h, --help   Show this help.
-
-Default (no --debs): add Radxa's apt repo and apt-install the packages.
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-		--with-vpu) WITH_VPU="yes"; shift ;;
-		--debs) DEB_DIR="${2:?--debs needs a directory}"; shift 2 ;;
-		-h|--help) usage; exit 0 ;;
-		*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
-	esac
-done
+PKG_VPU=("libcedarc-dev-2.0.0-arm64" "libgstreamer-openmax-allwinner")  # Cedar VPU userspace + gst-omx
 
 log() { echo ">> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -113,40 +84,27 @@ fi
 # ----------------------------------------------------------------------------
 # 2. Install the GPU packages (kernel module source + userspace)
 # ----------------------------------------------------------------------------
-PKGS=("${PKG_GPU_DKMS}" "${PKG_GPU_USERSPACE}")
-[[ "${WITH_VPU}" == "yes" ]] && PKGS+=("${PKG_VPU[@]}")
-
-if [[ -n "${DEB_DIR}" ]]; then
-	log "Installing packages from local directory: ${DEB_DIR}"
-	[[ -d "${DEB_DIR}" ]] || die "--debs directory not found: ${DEB_DIR}"
-	shopt -s nullglob
-	debs=("${DEB_DIR}"/*.deb)
-	shopt -u nullglob
-	[[ ${#debs[@]} -gt 0 ]] || die "no .deb files in ${DEB_DIR}"
-	apt-get install -y "${debs[@]}"   # apt resolves deps; paths force file mode
-else
-	log "Installing Radxa archive keyring"
-	if [[ ! -f "${RADXA_APT_KEYRING}" ]]; then
-		tmpd="$(mktemp -d)"
-		ver="$(curl -fsSL "${RADXA_KEYRING_RELEASE}/VERSION")" \
-			|| die "could not query radxa-archive-keyring version"
-		curl -fsSL -o "${tmpd}/keyring.deb" \
-			"${RADXA_KEYRING_RELEASE}/radxa-archive-keyring_${ver}_all.deb" \
-			|| die "could not download radxa-archive-keyring"
-		dpkg -i "${tmpd}/keyring.deb" || die "radxa-archive-keyring install failed"
-		rm -rf "${tmpd}"
-	fi
-	log "Adding Radxa a733-bullseye package repo"
-	echo "deb [signed-by=${RADXA_APT_KEYRING}] ${RADXA_APT_URL}/ ${RADXA_APT_SUITE} ${RADXA_APT_COMPONENTS}" \
-		> "${RADXA_APT_LIST}"
-	apt-get update
-
-	# apt installs all of these by name (even the malformed ones). This is also
-	# where a bullseye-on-Trixie dependency clash would surface, though in testing
-	# the userspace pulled no heavy deps — see README ("Suite mismatch").
-	log "Installing: ${PKGS[*]}"
-	apt-get install -y "${PKGS[@]}" || die "package install failed — see README (names / suite mismatch)"
+log "Installing Radxa archive keyring"
+if [[ ! -f "${RADXA_APT_KEYRING}" ]]; then
+	tmpd="$(mktemp -d)"
+	ver="$(curl -fsSL "${RADXA_KEYRING_RELEASE}/VERSION")" \
+		|| die "could not query radxa-archive-keyring version"
+	curl -fsSL -o "${tmpd}/keyring.deb" \
+		"${RADXA_KEYRING_RELEASE}/radxa-archive-keyring_${ver}_all.deb" \
+		|| die "could not download radxa-archive-keyring"
+	dpkg -i "${tmpd}/keyring.deb" || die "radxa-archive-keyring install failed"
+	rm -rf "${tmpd}"
 fi
+
+log "Adding Radxa a733-bullseye package repo"
+echo "deb [signed-by=${RADXA_APT_KEYRING}] ${RADXA_APT_URL}/ ${RADXA_APT_SUITE} ${RADXA_APT_COMPONENTS}" \
+	> "${RADXA_APT_LIST}"
+apt-get update
+
+# apt installs all of these by name (the malformed names are still valid).
+log "Installing GPU + VPU packages"
+apt-get install -y "${PKG_GPU_DKMS}" "${PKG_GPU_USERSPACE}" "${PKG_VPU[@]}" \
+	|| die "package install failed — see README"
 
 # ----------------------------------------------------------------------------
 # 3. Ensure the kernel module built (DKMS compiles pvrsrvkm.ko from source)
@@ -211,24 +169,25 @@ else
 	log "WARNING: libPVROCL.so.1 not found; skipping OpenCL ICD registration."
 fi
 
-if [[ "${WITH_VPU}" == "yes" ]]; then
-	log "Wiring up Cedar VPU device nodes"
-	cat > /etc/udev/rules.d/99-cedar-ve.rules <<'EOF'
+# ----------------------------------------------------------------------------
+# 5. VPU (Cedar) runtime wiring
+# ----------------------------------------------------------------------------
+log "Wiring up Cedar VPU (device-node perms + gst-omx workaround flags)"
+cat > /etc/udev/rules.d/99-cedar-ve.rules <<'EOF'
 KERNEL=="cedar_dev*", MODE="0666"
 SUBSYSTEM=="cedar_ve",  TAG+="uaccess", MODE="0666"
 SUBSYSTEM=="cedar_ve2", TAG+="uaccess", MODE="0666"
 EOF
-	# gst-omx needs extra workaround flags on this SoC or decode/encode stalls in
-	# the OMX Loaded->Idle transition (see Incipiens build.sh for the analysis).
-	GSTOMX="/etc/xdg/gstomx.conf"
-	if [[ -f "${GSTOMX}" ]]; then
-		HACKS="event-port-settings-changed-ndata-parameter-swap;event-port-settings-changed-port-0-to-1;no-disable-outport;no-component-reconfigure;no-component-role;no-empty-eos-buffer;pass-color-format-to-decoder;pass-profile-to-decoder;signals-premature-eos;height-multiple-16"
-		sed -i "s|^hacks=.*|hacks=${HACKS}|" "${GSTOMX}"
-	fi
+# gst-omx needs extra workaround flags on this SoC or decode/encode stalls in the
+# OMX Loaded->Idle transition (see Incipiens build.sh for the analysis).
+GSTOMX="/etc/xdg/gstomx.conf"
+if [[ -f "${GSTOMX}" ]]; then
+	HACKS="event-port-settings-changed-ndata-parameter-swap;event-port-settings-changed-port-0-to-1;no-disable-outport;no-component-reconfigure;no-component-role;no-empty-eos-buffer;pass-color-format-to-decoder;pass-profile-to-decoder;signals-premature-eos;height-multiple-16"
+	sed -i "s|^hacks=.*|hacks=${HACKS}|" "${GSTOMX}"
 fi
 
 log "Done. Reboot (or 'modprobe pvrsrvkm') to load the GPU module."
-log "Validate (headless): 'apt-get install clinfo && clinfo' should list the"
+log "Validate GPU (headless): 'apt-get install clinfo && clinfo' should list the"
 log "  'PowerVR B-Series' GPU with Driver Version matching the kernel's pvr build."
-log "  Vulkan/GLES (vulkaninfo, glmark2) additionally need a display/compositor, so"
-log "  they are expected to fail on a bare headless server."
+log "Validate VPU: 'gst-inspect-1.0 omxh264dec' (Hardware decoder) and decode an"
+log "  8-bit 4:2:0 H.264 clip. Vulkan/GLES additionally need a display/compositor."

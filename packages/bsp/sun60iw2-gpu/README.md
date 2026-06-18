@@ -21,16 +21,17 @@ After running the enabler and rebooting on a headless Trixie image:
 - **Vulkan/GLES** load (after the X/Wayland client libs are installed) but fail to
   create an instance on a bare TTY — they need a display/compositor. Expected on a
   headless box; not a sign of a broken GPU.
-- **VPU (`--with-vpu`) works** — the gst-omx plugin (`libgstomx.so` 1.18) loads on
-  Trixie's GStreamer, `omxh264dec` is `Codec/Decoder/Video/Hardware`, and a headless
-  H.264 decode runs end-to-end (OMX `Loaded→Idle→Executing` with no stall, `cedarc`
-  loads `libawh264.so`, buffers via `/dev/cedar_dev` + `/dev/dma_heap`, output
-  negotiated as YV12 DMABuf, pipeline reaches PLAYING/EOS). Note the HW decoder is
-  **8-bit 4:2:0 only** — a test clip must be encoded that way (`x264enc` defaulted
-  to High 4:4:4 10-bit, which the decoder correctly rejects; force
-  `video/x-raw,format=I420` + `video/x-h264,profile=main`). The `hacks=` line in
-  `/etc/xdg/gstomx.conf` (patched by the enabler) is required to avoid an OMX
-  `Loaded→Idle` stall.
+- **VPU works** — the gst-omx plugin (`libgstomx.so` 1.18) loads on Trixie's
+  GStreamer, `omxh264dec` is `Codec/Decoder/Video/Hardware`, and a headless H.264
+  decode runs end-to-end (OMX `Loaded→Idle→Executing` with no stall, `cedarc` loads
+  `libawh264.so`, buffers via `/dev/cedar_dev` + `/dev/dma_heap`, output negotiated
+  as YV12 DMABuf, pipeline reaches PLAYING/EOS). The HW decoder is **8-bit 4:2:0
+  only** — a test clip must be encoded that way (`x264enc` defaulted to High 4:4:4
+  10-bit, which the decoder correctly rejects; force `video/x-raw,format=I420` +
+  `video/x-h264,profile=main`). A file→file decode also drops the last few frames
+  because the OMX component doesn't drain its reorder buffer at EOS (harmless for
+  streaming/playback). The enabler installs the VPU packages and wires up the Cedar
+  udev rule + `gstomx.conf` `hacks=` line as part of its normal run.
 
 Two gaps in Radxa's desktop-built packages that the enabler now fixes
 automatically: the userspace links X/Wayland client libs (must be installed or the
@@ -98,8 +99,8 @@ that installs `/usr/share/keyrings/radxa-archive-keyring.gpg`).
 |---|---|---|---|
 | `img-bxm-dkms` | `0.1.0-3` | all | GPU kernel module — built from source via DKMS |
 | `xserver-xorg-img-bxm` | `1.21.1-2` | arm64 | PowerVR userspace (GLES/EGL/Vulkan ICD/DRI/rgx fw) |
-| `libcedarc-dev` | `2.0.0` | arm64 | Cedar VPU userspace (`--with-vpu`) |
-| `libgstreamer-openmax-allwinner` | `1.4.6-3` | arm64 | gst-omx VPU plugin (`--with-vpu`) |
+| `libcedarc-dev` | `2.0.0` | arm64 | Cedar VPU userspace |
+| `libgstreamer-openmax-allwinner` | `1.4.6-3` | arm64 | gst-omx VPU plugin |
 
 The GPU module and userspace are a matched DDK pair shipped in the same suite, so
 pulling both from `a733-bullseye` keeps them version-coherent.
@@ -109,7 +110,7 @@ the version and `.deb` suffix baked into their `Package:` field (e.g.
 `xserver-xorg-img-bxm-1.21.1-2.deb`, `libcedarc-dev-2.0.0-arm64`). That's ugly but
 apt still installs them by that exact literal name — it only treats a name as a
 local file when a matching file exists in the cwd. So the script just lists the
-literal names; no pool-path workaround needed. (The clean name `xserver-xorg-img-bxm`
+literal name; no pool-path workaround needed. (The clean name `xserver-xorg-img-bxm`
 fails with "Unable to locate package" precisely because the real name is mangled.)
 
 ## AI accelerator (NPU) — not available here
@@ -136,7 +137,7 @@ the fact that GPU accel is optional for this project's headless use case.
 | `enable-powervr-gpu` script | this repo (GPL) | baked into the image (`/usr/local/sbin`) |
 | `pvrsrvkm.ko` GPU module | built from source (DKMS) | built on first run |
 | PowerVR userspace + firmware | Radxa `.deb` (proprietary) | fetched on first run |
-| Cedar VPU userspace (`--with-vpu`) | Radxa `.deb` | fetched on first run |
+| Cedar VPU userspace | Radxa `.deb` | fetched on first run |
 
 ## Suite mismatch — the main open risk
 
