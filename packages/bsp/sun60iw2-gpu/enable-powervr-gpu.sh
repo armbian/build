@@ -61,7 +61,8 @@ fi
 log "Installing Radxa archive keyring"
 if [[ ! -f "${RADXA_APT_KEYRING}" ]]; then
 	tmpd="$(mktemp -d)"
-	ver="$(curl -fsSL "${RADXA_KEYRING_RELEASE}/VERSION")" || die "could not query radxa-archive-keyring version"
+	ver="$(curl -fsSL "${RADXA_KEYRING_RELEASE}/VERSION" | tr -d '[:space:]')" || die "could not query radxa-archive-keyring version"
+	[[ -n "${ver}" ]] || die "radxa-archive-keyring VERSION was empty"
 	curl -fsSL -o "${tmpd}/keyring.deb" "${RADXA_KEYRING_RELEASE}/radxa-archive-keyring_${ver}_all.deb" \
 		|| die "could not download radxa-archive-keyring"
 	dpkg -i "${tmpd}/keyring.deb" || die "radxa-archive-keyring install failed"
