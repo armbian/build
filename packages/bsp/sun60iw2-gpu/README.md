@@ -6,6 +6,12 @@ This adds *optional* PowerVR GPU acceleration to the sun60iw2 (Allwinner A733)
 boards. It is deliberately kept out of the base image and is opt-in, because the
 GPU userspace is non-redistributable and headless installs don't need it.
 
+The enabler re-execs itself under `sudo` if not run as root, and is **idempotent
+and safe to re-run** — every step overwrites-or-skips (no appends), `apt`
+installs no-op when satisfied, and the one stateful op (`dpkg-divert` of Radxa's
+bundled `libOpenCL`) is guarded against re-diverting. Re-running simply finishes a
+partial run; there is intentionally no run-once guard.
+
 ## Validation (confirmed on hardware)
 
 After running the enabler and rebooting on a headless Trixie image:
