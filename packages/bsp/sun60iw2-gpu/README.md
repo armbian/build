@@ -54,6 +54,24 @@ it. That works but is ugly and has poor provenance. Radxa's images are built by
 available as **`.deb` packages** with real versioning and dependencies — that's
 what `enable-powervr-gpu.sh` consumes instead of carving an image.
 
+### Confirmed package source (June 2026)
+
+The packages live in Radxa's **`a733-bullseye`** apt repo
+(`https://github.com/radxa-repo/a733-bullseye`), suite `a733-bullseye`, component
+`main`. The signing key is `radxa-archive-keyring` (a `.deb` from
+[`radxa-pkg/radxa-archive-keyring`](https://github.com/radxa-pkg/radxa-archive-keyring)
+that installs `/usr/share/keyrings/radxa-archive-keyring.gpg`).
+
+| Package | Version | Arch | Role |
+|---|---|---|---|
+| `img-bxm-dkms` | `0.1.0-3` | all | GPU kernel module — built from source via DKMS |
+| `xserver-xorg-img-bxm` | `1.21.1-2` | arm64 | PowerVR userspace (GLES/EGL/Vulkan ICD/DRI/rgx fw) |
+| `libcedarc-dev` | `2.0.0` | arm64 | Cedar VPU userspace (`--with-vpu`) |
+| `libgstreamer-openmax-allwinner` | `1.4.6-3` | arm64 | gst-omx VPU plugin (`--with-vpu`) |
+
+The GPU module and userspace are a matched DDK pair shipped in the same suite, so
+pulling both from `a733-bullseye` keeps them version-coherent.
+
 ### Why opt-in and not in the image
 
 The PowerVR userspace is non-redistributable, so Armbian can't bake it into a
@@ -70,15 +88,36 @@ the fact that GPU accel is optional for this project's headless use case.
 | PowerVR userspace + firmware | Radxa `.deb` (proprietary) | fetched on first run |
 | Cedar VPU userspace (`--with-vpu`) | Radxa `.deb` | fetched on first run |
 
-## Open items before this is trustworthy (the `VERIFY:` marks)
+## Suite mismatch — the main open risk
 
-- **Radxa apt repo URL / suite / signing key.** Placeholders in the script. If the
-  repo can't be confirmed, use `--debs DIR` to install hand-pulled packages.
-- **Exact package names + matched versions** of `img-bxm-dkms` and the userspace.
+These packages are built for **Debian 11 (bullseye)** and we install them on an
+Armbian **Trixie (Debian 13)** rootfs. Two consequences to validate on hardware:
+
+- **Userspace dependencies / Xorg ABI.** `xserver-xorg-img-bxm` is packaged as an
+  Xorg DDX and pulls an X server stack whose ABI is bullseye's, not Trixie's. On a
+  headless image we don't want X at all — what we actually need is the render-node
+  path (`pvrsrvkm` + `libsrv_um` + GLES/EGL + the Vulkan ICD), which depends mainly
+  on `libc`/`libdrm` and should be far more portable across suites (newer glibc
+  runs older binaries). The likely outcome: GLES/EGL/Vulkan **offscreen/render**
+  works; **X11 acceleration** does not on Trixie. We may need to install only the
+  render libs (as the `Incipiens` hack does, skipping the Xorg files) rather than
+  apt-installing the whole package on a headless rootfs.
+- **VPU is higher-risk than GPU.** `libgstreamer-openmax-allwinner` (`1.4.6-3`)
+  targets GStreamer 1.18 (bullseye); Trixie ships 1.24+. Expect the gst-omx path to
+  need more work than the GPU path. `--with-vpu` is therefore the more experimental
+  option.
+
+The `--debs DIR` mode (hand-pulled `.deb`s, `dpkg -i`) is the escape hatch when the
+repo's dependency resolution fights with Trixie.
+
+## Other open items
+
 - **`sunxi-sid.h`** availability in the Armbian `linux-headers` package. Orange
   Pi's tree has it under `bsp/include`; confirm the headers package installs it.
   If not, stage it under `/usr/src/linux-headers-$(uname -r)/bsp/include/` before
   the DKMS build (the `Incipiens` hack copies it from the Radxa headers).
+- **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
+  0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
 - **Hardware test.** Nothing here has been run on a board yet.
 
 ## Possible future refinement: build the module in the kernel package

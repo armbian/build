@@ -15,8 +15,10 @@
 # STATUS: FIRST DRAFT — not yet verified end-to-end on hardware. The approach is
 # derived from the proven transplant in Incipiens/OrangePiZero3W-GPU-VPU (which
 # does the same DKMS build + userspace graft against a 6.6.x-sun60iw2 kernel) and
-# from dok2d's Cubie A7Z work. Lines marked "VERIFY:" need confirmation against
-# Radxa's published packages before this can be relied on. See README.md.
+# from dok2d's Cubie A7Z work. Repo/package details below are confirmed against
+# Radxa's published a733-bullseye repo (June 2026). The main remaining unknown is
+# the suite mismatch: these packages target Debian 11 (bullseye) and we install
+# them on Trixie — see README.md ("Suite mismatch").
 #
 # SPDX-License-Identifier: GPL-2.0
 #
@@ -24,26 +26,25 @@
 set -euo pipefail
 
 # ----------------------------------------------------------------------------
-# Configuration (VERIFY against Radxa's package repo)
+# Configuration
 # ----------------------------------------------------------------------------
 # The PowerVR DDK is Imagination proprietary; Radxa redistributes it as .debs
-# built by rsdk (https://github.com/RadxaOS-SDK/rsdk). Pull from the package
-# repo rather than extracting from a Radxa disk image.
-#
-# VERIFY: exact apt repo URL / suite / signing key. Radxa's package repo layout
-# has changed across releases; confirm before trusting these defaults.
+# built by rsdk (https://github.com/RadxaOS-SDK/rsdk) and published to the
+# a733-bullseye apt repo. We pull from there rather than carving a disk image.
 RADXA_APT_LIST="/etc/apt/sources.list.d/radxa-a733-gpu.list"
-RADXA_APT_URL="https://radxa-repo.github.io/bookworm"   # VERIFY
-RADXA_APT_SUITE="bookworm"                              # VERIFY
-RADXA_APT_COMPONENTS="main"                             # VERIFY
+RADXA_APT_URL="https://radxa-repo.github.io/a733-bullseye"
+RADXA_APT_SUITE="a733-bullseye"
+RADXA_APT_COMPONENTS="main"
 RADXA_APT_KEYRING="/usr/share/keyrings/radxa-archive-keyring.gpg"
-RADXA_APT_KEY_URL="https://radxa-repo.github.io/radxa-archive-keyring.gpg"  # VERIFY
+# The keyring is distributed as a .deb that installs ${RADXA_APT_KEYRING}.
+RADXA_KEYRING_RELEASE="https://github.com/radxa-pkg/radxa-archive-keyring/releases/latest/download"
 
-# Package names (VERIFY exact names + that the versions match each other; the
-# kernel module DDK version and the userspace DDK version MUST be the same).
-PKG_GPU_DKMS="img-bxm-dkms"            # DKMS source -> builds pvrsrvkm.ko from source
-PKG_GPU_USERSPACE="xserver-xorg-img-bxm"  # GLES/EGL/Vulkan ICD/DRI/rgx firmware
-PKG_VPU=("libcedarc" "libcedarc-dev" "gstreamer1.0-omx-allwinner")  # optional, VERIFY
+# Matched DDK pair, both shipped together in a733-bullseye (verified present).
+# The kernel module and userspace are one DDK release and must stay matched;
+# taking both from the same suite guarantees that.
+PKG_GPU_DKMS="img-bxm-dkms"               # 0.1.0-3 (all):   builds pvrsrvkm.ko from source
+PKG_GPU_USERSPACE="xserver-xorg-img-bxm"  # 1.21.1-2 (arm64): GLES/EGL/Vulkan ICD/DRI/rgx fw
+PKG_VPU=("libcedarc-dev" "libgstreamer-openmax-allwinner")  # 2.0.0 / 1.4.6-3 (optional)
 
 # ----------------------------------------------------------------------------
 WITH_VPU="no"
@@ -88,9 +89,9 @@ log "Target kernel: ${KVER}"
 # ----------------------------------------------------------------------------
 # 1. Build prerequisites
 # ----------------------------------------------------------------------------
-log "Installing build prerequisites (dkms, kernel headers)"
+log "Installing build prerequisites (dkms, kernel headers, curl)"
 apt-get update
-apt-get install -y --no-install-recommends dkms || die "could not install dkms"
+apt-get install -y --no-install-recommends dkms curl ca-certificates || die "could not install build prerequisites"
 
 # The DKMS build needs this kernel's headers. Armbian ships them as
 # linux-headers-<branch>; INSTALL_HEADERS=yes in the family puts them on disk.
@@ -126,20 +127,19 @@ if [[ -n "${DEB_DIR}" ]]; then
 	dpkg -i "${debs[@]}" || true
 	apt-get install -y -f
 else
-	log "Adding Radxa package repo (VERIFY url/key in this script before trusting it)"
+	log "Installing Radxa archive keyring"
 	if [[ ! -f "${RADXA_APT_KEYRING}" ]]; then
-		tmpkey="$(mktemp)"
-		if command -v curl >/dev/null 2>&1; then
-			curl -fsSL "${RADXA_APT_KEY_URL}" -o "${tmpkey}" \
-				|| die "could not fetch Radxa signing key (VERIFY RADXA_APT_KEY_URL)"
-		else
-			wget -qO "${tmpkey}" "${RADXA_APT_KEY_URL}" \
-				|| die "could not fetch Radxa signing key (VERIFY RADXA_APT_KEY_URL)"
-		fi
-		install -m644 "${tmpkey}" "${RADXA_APT_KEYRING}"
-		rm -f "${tmpkey}"
+		tmpd="$(mktemp -d)"
+		ver="$(curl -fsSL "${RADXA_KEYRING_RELEASE}/VERSION")" \
+			|| die "could not query radxa-archive-keyring version"
+		curl -fsSL -o "${tmpd}/keyring.deb" \
+			"${RADXA_KEYRING_RELEASE}/radxa-archive-keyring_${ver}_all.deb" \
+			|| die "could not download radxa-archive-keyring"
+		dpkg -i "${tmpd}/keyring.deb" || die "radxa-archive-keyring install failed"
+		rm -rf "${tmpd}"
 	fi
-	echo "deb [signed-by=${RADXA_APT_KEYRING}] ${RADXA_APT_URL} ${RADXA_APT_SUITE} ${RADXA_APT_COMPONENTS}" \
+	log "Adding Radxa a733-bullseye package repo"
+	echo "deb [signed-by=${RADXA_APT_KEYRING}] ${RADXA_APT_URL}/ ${RADXA_APT_SUITE} ${RADXA_APT_COMPONENTS}" \
 		> "${RADXA_APT_LIST}"
 	apt-get update
 	log "Installing: ${PKGS[*]}"
