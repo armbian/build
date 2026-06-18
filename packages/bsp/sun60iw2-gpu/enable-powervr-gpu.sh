@@ -173,6 +173,27 @@ ldconfig
 ldconfig -p | grep -E "libsrv_um|libGLESv2_PVR|libEGL_PVR" | head || \
 	log "WARNING: PowerVR userspace libs not visible to ldconfig — check the userspace package."
 
+# The desktop-built userspace links X/Wayland client libraries; without them the
+# Vulkan/GLES drivers fail to even load (e.g. "libX11-xcb.so.1: cannot open ...").
+# Install the runtime deps so the drivers load. NOTE: Vulkan/GLES still need a
+# display/compositor to actually run — on a headless box OpenCL is the usable path.
+log "Installing PowerVR userspace runtime deps (X/Wayland client libs)"
+apt-get install -y --no-install-recommends \
+	libx11-xcb1 libxcb-dri3-0 libxcb-present0 libxcb-sync1 libxshmfence1 libwayland-client0 || \
+	log "WARNING: could not install some X/Wayland client libs; Vulkan/GLES may not load."
+
+# Register the PowerVR OpenCL ICD. The package ships libPVROCL but not the vendor
+# registration file the OpenCL loader needs, so clinfo finds 0 platforms without
+# it. This is the headless-friendly compute path (no display required).
+ocl_lib="$(ldconfig -p | awk '/libPVROCL\.so\.1/{print $NF; exit}')"
+if [[ -n "${ocl_lib}" ]]; then
+	log "Registering PowerVR OpenCL ICD (${ocl_lib})"
+	install -d /etc/OpenCL/vendors
+	echo "${ocl_lib}" > /etc/OpenCL/vendors/imgtec.icd
+else
+	log "WARNING: libPVROCL.so.1 not found; skipping OpenCL ICD registration."
+fi
+
 if [[ "${WITH_VPU}" == "yes" ]]; then
 	log "Wiring up Cedar VPU device nodes"
 	cat > /etc/udev/rules.d/99-cedar-ve.rules <<'EOF'
@@ -190,4 +211,7 @@ EOF
 fi
 
 log "Done. Reboot (or 'modprobe pvrsrvkm') to load the GPU module."
-log "Verify afterwards with: vulkaninfo | head, or glmark2-es2 / chrome://gpu on a desktop image."
+log "Validate (headless): 'apt-get install clinfo && clinfo' should list the"
+log "  'PowerVR B-Series' GPU with Driver Version matching the kernel's pvr build."
+log "  Vulkan/GLES (vulkaninfo, glmark2) additionally need a display/compositor, so"
+log "  they are expected to fail on a bare headless server."

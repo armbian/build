@@ -1,10 +1,33 @@
 # sun60iw2 (A733) GPU/VPU acceleration — opt-in
 
-**Status: first draft / WIP. Not yet verified on hardware.**
+**Status: GPU validated on hardware (Orange Pi 4 Pro, headless Trixie).** VPU
+(`--with-vpu`) is still untested.
 
 This adds *optional* PowerVR GPU acceleration to the sun60iw2 (Allwinner A733)
 boards. It is deliberately kept out of the base image and is opt-in, because the
 GPU userspace is non-redistributable and headless installs don't need it.
+
+## Validation (confirmed on hardware)
+
+After running the enabler and rebooting on a headless Trixie image:
+
+- Kernel: `pvrsrvkm` loads, `[drm] Initialized pvr 24.2.6603887`, RGX firmware
+  (`rgx.fw.36.56.104.183`) loads on first client connect, `renderD128` present
+  and owned by `pvrsrvkm` (`img,gpu`).
+- **OpenCL works** — `clinfo` enumerates `PowerVR B-Series BXM-4-64`, contexts
+  create successfully, and the device's `Driver Version 24.2@6603887` matches the
+  kernel's `pvr` build, proving the `img-bxm-dkms` (KM) and `xserver-xorg-img-bxm`
+  (UM) are a genuinely matched DDK pair. This is the validation path for a
+  headless server (OpenCL needs no display).
+- **Vulkan/GLES** load (after the X/Wayland client libs are installed) but fail to
+  create an instance on a bare TTY — they need a display/compositor. Expected on a
+  headless box; not a sign of a broken GPU.
+
+Two gaps in Radxa's desktop-built packages that the enabler now fixes
+automatically: the userspace links X/Wayland client libs (must be installed or the
+drivers won't even `dlopen`), and the OpenCL driver ships without its
+`/etc/OpenCL/vendors/*.icd` registration (so `clinfo` finds 0 platforms until it's
+created).
 
 ## TL;DR
 
@@ -111,14 +134,13 @@ the fact that GPU accel is optional for this project's headless use case.
 These packages are built for **Debian 11 (bullseye)** and we install them on an
 Armbian **Trixie (Debian 13)** rootfs. Two consequences to validate on hardware:
 
-- **Userspace dependencies / Xorg ABI.** UPDATE (tested on hardware): the
-  userspace package installed cleanly on Trixie via apt with **no heavy
-  dependencies and no conflicts** — the feared bullseye X-stack drag did not
-  materialise at install time. So the dependency risk is largely retired. What's
-  still unverified is *runtime*: whether the GLES/EGL/Vulkan render-node path
-  actually works, and whether the bundled Xorg DDX (ABI 1.21, vs Trixie's newer
-  Xserver) is usable — though on a headless box X11 doesn't matter; the render node
-  is what counts.
+- **Userspace dependencies / Xorg ABI.** RESOLVED (tested on hardware): the
+  userspace package installs cleanly on Trixie via apt with **no heavy
+  dependencies and no conflicts**. At runtime the drivers need a handful of
+  X/Wayland *client* libs present to load (the enabler installs them), after which
+  **OpenCL works**. The bundled Xorg DDX (ABI 1.21 vs Trixie's newer Xserver) and
+  headless Vulkan/GLES are not usable without a display — but that's irrelevant to
+  a headless server, where the render node + OpenCL are what count.
 - **VPU is higher-risk than GPU.** `libgstreamer-openmax-allwinner` (`1.4.6-3`)
   targets GStreamer 1.18 (bullseye); Trixie ships 1.24+. Expect the gst-omx path to
   need more work than the GPU path. `--with-vpu` is therefore the more experimental
