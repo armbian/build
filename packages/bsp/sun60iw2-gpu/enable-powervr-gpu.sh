@@ -27,7 +27,12 @@ PKG_VPU=("libcedarc-dev-2.0.0-arm64" "libgstreamer-openmax-allwinner")
 log() { echo ">> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "Run as root."
+# Needs root (apt, dpkg, modprobe, /etc writes); re-exec under sudo if we aren't.
+if [[ ${EUID} -ne 0 ]]; then
+	command -v sudo > /dev/null 2>&1 || die "must run as root (sudo not found)"
+	log "Not root — re-running under sudo"
+	exec sudo -- "$0" "$@"
+fi
 
 KVER="$(uname -r)"
 case "${KVER}" in
