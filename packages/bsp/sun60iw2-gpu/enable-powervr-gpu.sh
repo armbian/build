@@ -105,15 +105,22 @@ if [[ ! -d "/usr/src/linux-headers-${KVER}" && ! -d "/lib/modules/${KVER}/build"
 		|| die "kernel headers for ${KVER} not found; install the matching linux-headers package first"
 fi
 
-# img-bxm-dkms references the BSP header sunxi-sid.h. Orange Pi's 6.6 source tree
-# carries it under bsp/include, but Armbian's linux-headers package does NOT ship
-# the bsp/ subtree, so we stage it from the kernel source to match our kernel.
+# img-bxm-dkms's sunxi_platform.c does '#include <sunxi-sid.h>' (angle brackets),
+# so the header must be on the compiler -I path. Orange Pi's 6.6 source carries it
+# under bsp/include, but Armbian's linux-headers package ships neither the bsp/
+# subtree nor a bsp/include on -I. Stage it from the kernel source into BOTH the
+# Allwinner bsp/include dir and the generic kernel include/ root (the latter is
+# always on LINUXINCLUDE, so the angle-bracket include resolves regardless).
 KERNEL_SID_URL="https://raw.githubusercontent.com/orangepi-xunlong/linux-orangepi/orange-pi-6.6-sun60iw2/bsp/include/sunxi-sid.h"
-if ! find "/usr/src/linux-headers-${KVER}" -name sunxi-sid.h 2>/dev/null | grep -q .; then
+KHDR="/usr/src/linux-headers-${KVER}"
+if [[ ! -f "${KHDR}/include/sunxi-sid.h" ]]; then
 	log "Staging sunxi-sid.h from the kernel source (missing from headers package)"
-	install -d "/usr/src/linux-headers-${KVER}/bsp/include"
-	curl -fsSL -o "/usr/src/linux-headers-${KVER}/bsp/include/sunxi-sid.h" "${KERNEL_SID_URL}" \
+	sid_tmp="$(mktemp)"
+	curl -fsSL -o "${sid_tmp}" "${KERNEL_SID_URL}" \
 		|| die "could not fetch sunxi-sid.h from kernel source (${KERNEL_SID_URL})"
+	install -D -m644 "${sid_tmp}" "${KHDR}/bsp/include/sunxi-sid.h"
+	install -D -m644 "${sid_tmp}" "${KHDR}/include/sunxi-sid.h"
+	rm -f "${sid_tmp}"
 fi
 
 # ----------------------------------------------------------------------------
