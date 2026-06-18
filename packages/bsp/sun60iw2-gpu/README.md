@@ -1,7 +1,6 @@
 # sun60iw2 (A733) GPU/VPU acceleration — opt-in
 
-**Status: GPU validated on hardware (Orange Pi 4 Pro, headless Trixie).** VPU
-(`--with-vpu`) is still untested.
+**Status: GPU and VPU validated on hardware (Orange Pi 4 Pro, headless Trixie).**
 
 This adds *optional* PowerVR GPU acceleration to the sun60iw2 (Allwinner A733)
 boards. It is deliberately kept out of the base image and is opt-in, because the
@@ -22,6 +21,16 @@ After running the enabler and rebooting on a headless Trixie image:
 - **Vulkan/GLES** load (after the X/Wayland client libs are installed) but fail to
   create an instance on a bare TTY — they need a display/compositor. Expected on a
   headless box; not a sign of a broken GPU.
+- **VPU (`--with-vpu`) works** — the gst-omx plugin (`libgstomx.so` 1.18) loads on
+  Trixie's GStreamer, `omxh264dec` is `Codec/Decoder/Video/Hardware`, and a headless
+  H.264 decode runs end-to-end (OMX `Loaded→Idle→Executing` with no stall, `cedarc`
+  loads `libawh264.so`, buffers via `/dev/cedar_dev` + `/dev/dma_heap`, output
+  negotiated as YV12 DMABuf, pipeline reaches PLAYING/EOS). Note the HW decoder is
+  **8-bit 4:2:0 only** — a test clip must be encoded that way (`x264enc` defaulted
+  to High 4:4:4 10-bit, which the decoder correctly rejects; force
+  `video/x-raw,format=I420` + `video/x-h264,profile=main`). The `hacks=` line in
+  `/etc/xdg/gstomx.conf` (patched by the enabler) is required to avoid an OMX
+  `Loaded→Idle` stall.
 
 Two gaps in Radxa's desktop-built packages that the enabler now fixes
 automatically: the userspace links X/Wayland client libs (must be installed or the
@@ -141,10 +150,10 @@ Armbian **Trixie (Debian 13)** rootfs. Two consequences to validate on hardware:
   **OpenCL works**. The bundled Xorg DDX (ABI 1.21 vs Trixie's newer Xserver) and
   headless Vulkan/GLES are not usable without a display — but that's irrelevant to
   a headless server, where the render node + OpenCL are what count.
-- **VPU is higher-risk than GPU.** `libgstreamer-openmax-allwinner` (`1.4.6-3`)
-  targets GStreamer 1.18 (bullseye); Trixie ships 1.24+. Expect the gst-omx path to
-  need more work than the GPU path. `--with-vpu` is therefore the more experimental
-  option.
+- **VPU — RESOLVED.** Although `libgstreamer-openmax-allwinner` (`1.4.6-3`) targets
+  GStreamer 1.18 (bullseye) and Trixie ships 1.26, GStreamer's stable 1.x plugin ABI
+  means the plugin loads and H.264 HW decode works (validated above). The only gotcha
+  is the 8-bit-4:2:0-only decoder and the required `gstomx.conf` `hacks=` line.
 
 The `--debs DIR` mode (hand-pulled `.deb`s, `dpkg -i`) is the escape hatch when the
 repo's dependency resolution fights with Trixie.
@@ -161,9 +170,11 @@ repo's dependency resolution fights with Trixie.
   build needs — with `bsp/include` present, `img-bxm-dkms` 0.1.0-3 compiles fully
   against our 6.6 vendor kernel. (The enabler just sanity-checks the header is
   present and errors out clearly if the headers package predates this hook.)
-- **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
-  0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
-- **Hardware test.** Nothing here has been run on a board yet.
+- ~~Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?~~ CONFIRMED: builds
+  and loads against 6.6.98-vendor-sun60iw2.
+- ~~Hardware test.~~ DONE on Orange Pi 4 Pro (headless Trixie): GPU (OpenCL) and VPU
+  (H.264 HW decode) both validated. Remaining untested: H.265/VP9 decode, HW encode,
+  and Vulkan/GLES with a real display.
 
 ## Possible future refinement: build the module in the kernel package
 
