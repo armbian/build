@@ -130,20 +130,15 @@ repo's dependency resolution fights with Trixie.
 ## Other open items
 
 - **`bsp/include` headers** — Armbian's `linux-headers` package omits the vendor
-  `bsp/` subtree, so the GPU DKMS build can't find `<sunxi-sid.h>`. RESOLVED two
-  ways:
-   - *Primary (general fix):* `pre_package_kernel_headers__sun60iw2_bsp_include` in
-     the family copies the kernel's own `bsp/include` into the headers package,
-     version-matched, benefiting any out-of-tree module. Takes effect on the next
-     image/kernel build.
-   - *Fallback (works on stock images too):* the GPL `sunxi-sid.h` is vendored here
-     and shipped at `/usr/local/share/sun60iw2-gpu/`; the enabler stages it onto
-     the compiler `-I` path (`include/` root + `bsp/include/`) if it isn't already
-     present, with a kernel-source download only as a last resort.
-
-  CONFIRMED on hardware that `sunxi-sid.h` is the only `bsp/` header the build
-  needs — with it staged, `img-bxm-dkms` 0.1.0-3 compiles fully against our 6.6
-  vendor kernel.
+  `bsp/` subtree, so the GPU DKMS build couldn't find `<sunxi-sid.h>`. RESOLVED by
+  `pre_package_kernel_headers__sun60iw2_bsp_include` in the family, which copies the
+  kernel's own `bsp/include` into the headers package (version-matched, and useful
+  to any out-of-tree module). The kernel Makefile already puts `-I$(srctree)/bsp/include`
+  on `LINUXINCLUDE`, so the angle-bracket include resolves with no per-build
+  staging. CONFIRMED on hardware that `sunxi-sid.h` is the only `bsp/` header the
+  build needs — with `bsp/include` present, `img-bxm-dkms` 0.1.0-3 compiles fully
+  against our 6.6 vendor kernel. (The enabler just sanity-checks the header is
+  present and errors out clearly if the headers package predates this hook.)
 - **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
   0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
 - **Hardware test.** Nothing here has been run on a board yet.

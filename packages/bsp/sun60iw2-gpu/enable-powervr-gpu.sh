@@ -102,30 +102,12 @@ if [[ ! -d "/usr/src/linux-headers-${KVER}" && ! -d "/lib/modules/${KVER}/build"
 		|| die "kernel headers for ${KVER} not found; install the matching linux-headers package first"
 fi
 
-# img-bxm-dkms's sunxi_platform.c does '#include <sunxi-sid.h>' (angle brackets),
-# so the header must be on the compiler -I path. Orange Pi's 6.6 source carries it
-# under bsp/include, but Armbian's linux-headers package ships neither the bsp/
-# subtree nor a bsp/include on -I. Stage it from the kernel source into BOTH the
-# Allwinner bsp/include dir and the generic kernel include/ root (the latter is
-# always on LINUXINCLUDE, so the angle-bracket include resolves regardless).
-# Prefer the copy shipped in the image; only fetch from the kernel source if
-# someone is running this script standalone without it.
-LOCAL_SID="/usr/local/share/sun60iw2-gpu/sunxi-sid.h"
-KERNEL_SID_URL="https://raw.githubusercontent.com/orangepi-xunlong/linux-orangepi/orange-pi-6.6-sun60iw2/bsp/include/sunxi-sid.h"
-KHDR="/usr/src/linux-headers-${KVER}"
-if [[ ! -f "${KHDR}/include/sunxi-sid.h" ]]; then
-	sid_src="${LOCAL_SID}"
-	if [[ -f "${sid_src}" ]]; then
-		log "Staging sunxi-sid.h from the image (${LOCAL_SID})"
-	else
-		log "sunxi-sid.h not in image; fetching from kernel source"
-		sid_src="$(mktemp)"
-		curl -fsSL -o "${sid_src}" "${KERNEL_SID_URL}" \
-			|| die "could not obtain sunxi-sid.h (no local copy; fetch failed: ${KERNEL_SID_URL})"
-	fi
-	install -D -m644 "${sid_src}" "${KHDR}/bsp/include/sunxi-sid.h"
-	install -D -m644 "${sid_src}" "${KHDR}/include/sunxi-sid.h"
-	[[ "${sid_src}" == "${LOCAL_SID}" ]] || rm -f "${sid_src}"
+# The GPU DKMS build does '#include <sunxi-sid.h>' (angle brackets), which the
+# kernel Makefile resolves via '-I$(srctree)/bsp/include' in LINUXINCLUDE. Our
+# family's pre_package_kernel_headers hook ships bsp/include in the linux-headers
+# package, so the header is already on the -I path here — nothing to stage.
+if ! find "/usr/src/linux-headers-${KVER}" -name sunxi-sid.h 2>/dev/null | grep -q .; then
+	die "sunxi-sid.h not found under the linux-headers tree; the headers package is missing bsp/include (rebuild the image with the pre_package_kernel_headers hook)"
 fi
 
 # ----------------------------------------------------------------------------
