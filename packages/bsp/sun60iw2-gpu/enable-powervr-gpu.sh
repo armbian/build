@@ -39,17 +39,14 @@ RADXA_APT_KEYRING="/usr/share/keyrings/radxa-archive-keyring.gpg"
 # The keyring is distributed as a .deb that installs ${RADXA_APT_KEYRING}.
 RADXA_KEYRING_RELEASE="https://github.com/radxa-pkg/radxa-archive-keyring/releases/latest/download"
 
-# The GPU kernel-module package is properly indexed and installs by name.
-PKG_GPU_DKMS="img-bxm-dkms"   # 0.1.0-3 (all): builds pvrsrvkm.ko from source
-
-# The userspace/VPU packages have MALFORMED index names — the version and ".deb"
-# are baked into the Package: field (e.g. "xserver-xorg-img-bxm-1.21.1-2.deb",
-# "libcedarc-dev-2.0.0-arm64"), so apt can't install them by name (a name ending
-# in .deb is treated as a local file). We resolve their pool path from the index
-# and install the .deb file directly. Values below are ERE patterns matched
-# against the index Filename: lines. They form a matched DDK pair with the module.
-POOL_FN_GPU_USERSPACE='xserver-xorg-img-bxm_.*_arm64\.deb'   # PowerVR DDK userspace 1.21.1-2
-POOL_FN_VPU=('libcedarc-dev_2\.0\.0_arm64' 'libgstreamer-openmax-allwinner_.*_arm64\.deb')
+# Package names as they appear in the index. NOTE: the userspace/VPU packages
+# have MALFORMED names — the version and ".deb" are baked into the Package: field.
+# apt still installs them by that exact literal name (it only treats a name as a
+# local file when a matching file exists in the cwd). They form a matched DDK pair
+# with the module, all from the same a733-bullseye suite.
+PKG_GPU_DKMS="img-bxm-dkms"                            # 0.1.0-3: builds pvrsrvkm.ko from source
+PKG_GPU_USERSPACE="xserver-xorg-img-bxm-1.21.1-2.deb"  # PowerVR DDK userspace (GLES/EGL/Vulkan/fw)
+PKG_VPU=("libcedarc-dev-2.0.0-arm64" "libgstreamer-openmax-allwinner")  # optional VPU
 
 # ----------------------------------------------------------------------------
 WITH_VPU="no"
@@ -134,13 +131,8 @@ fi
 # ----------------------------------------------------------------------------
 # 2. Install the GPU packages (kernel module source + userspace)
 # ----------------------------------------------------------------------------
-# Resolve a pool path from the downloaded index by matching the Filename: line
-# (we install userspace by file because its Package: name is malformed).
-INDEX_GLOB="/var/lib/apt/lists/*$(echo "${RADXA_APT_SUITE}" | tr -d '/')*Packages"
-pool_filename() { # $1 = ERE matched against Filename: entries
-	# shellcheck disable=SC2086
-	awk '/^Filename:/{print $2}' ${INDEX_GLOB} 2>/dev/null | grep -E "$1" | sort -u | head -n1
-}
+PKGS=("${PKG_GPU_DKMS}" "${PKG_GPU_USERSPACE}")
+[[ "${WITH_VPU}" == "yes" ]] && PKGS+=("${PKG_VPU[@]}")
 
 if [[ -n "${DEB_DIR}" ]]; then
 	log "Installing packages from local directory: ${DEB_DIR}"
@@ -167,28 +159,11 @@ else
 		> "${RADXA_APT_LIST}"
 	apt-get update
 
-	# GPU kernel module: properly indexed, install by name.
-	log "Installing GPU kernel module (DKMS, from source): ${PKG_GPU_DKMS}"
-	apt-get install -y "${PKG_GPU_DKMS}" || die "${PKG_GPU_DKMS} install failed"
-
-	# Userspace (+ optional VPU): malformed index names, so fetch the .deb from
-	# the pool and install the file. This is also where a bullseye-on-Trixie
-	# dependency clash would surface — see README ("Suite mismatch").
-	patterns=("${POOL_FN_GPU_USERSPACE}")
-	[[ "${WITH_VPU}" == "yes" ]] && patterns+=("${POOL_FN_VPU[@]}")
-	workdir="$(mktemp -d)"
-	pool_debs=()
-	for pat in "${patterns[@]}"; do
-		fn="$(pool_filename "${pat}")"
-		[[ -n "${fn}" ]] || die "no pool entry in the index matched: ${pat}"
-		log "  fetching ${fn}"
-		curl -fsSL -o "${workdir}/$(basename "${fn}")" "${RADXA_APT_URL}/${fn}" \
-			|| die "download failed: ${fn}"
-		pool_debs+=("${workdir}/$(basename "${fn}")")
-	done
-	apt-get install -y "${pool_debs[@]}" \
-		|| die "userspace install failed — likely the bullseye-on-Trixie dependency clash; see README"
-	rm -rf "${workdir}"
+	# apt installs all of these by name (even the malformed ones). This is also
+	# where a bullseye-on-Trixie dependency clash would surface, though in testing
+	# the userspace pulled no heavy deps — see README ("Suite mismatch").
+	log "Installing: ${PKGS[*]}"
+	apt-get install -y "${PKGS[@]}" || die "package install failed — see README (names / suite mismatch)"
 fi
 
 # ----------------------------------------------------------------------------

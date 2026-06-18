@@ -72,13 +72,13 @@ that installs `/usr/share/keyrings/radxa-archive-keyring.gpg`).
 The GPU module and userspace are a matched DDK pair shipped in the same suite, so
 pulling both from `a733-bullseye` keeps them version-coherent.
 
-**Caveat — malformed package names.** Only `img-bxm-dkms` is cleanly indexed and
-installable by name. The userspace and 2.0.0 VPU packages have the version and
-`.deb` suffix baked into their `Package:` field (e.g.
-`xserver-xorg-img-bxm-1.21.1-2.deb`, `libcedarc-dev-2.0.0-arm64`), which apt
-refuses to install by name (a name ending in `.deb` is treated as a local file).
-The script works around this by resolving each one's pool path from the index
-(`Filename:`) and installing the `.deb` directly.
+**Caveat — malformed package names.** The userspace and 2.0.0 VPU packages have
+the version and `.deb` suffix baked into their `Package:` field (e.g.
+`xserver-xorg-img-bxm-1.21.1-2.deb`, `libcedarc-dev-2.0.0-arm64`). That's ugly but
+apt still installs them by that exact literal name — it only treats a name as a
+local file when a matching file exists in the cwd. So the script just lists the
+literal names; no pool-path workaround needed. (The clean name `xserver-xorg-img-bxm`
+fails with "Unable to locate package" precisely because the real name is mangled.)
 
 ## AI accelerator (NPU) — not available here
 
@@ -111,15 +111,14 @@ the fact that GPU accel is optional for this project's headless use case.
 These packages are built for **Debian 11 (bullseye)** and we install them on an
 Armbian **Trixie (Debian 13)** rootfs. Two consequences to validate on hardware:
 
-- **Userspace dependencies / Xorg ABI.** `xserver-xorg-img-bxm` is packaged as an
-  Xorg DDX and pulls an X server stack whose ABI is bullseye's, not Trixie's. On a
-  headless image we don't want X at all — what we actually need is the render-node
-  path (`pvrsrvkm` + `libsrv_um` + GLES/EGL + the Vulkan ICD), which depends mainly
-  on `libc`/`libdrm` and should be far more portable across suites (newer glibc
-  runs older binaries). The likely outcome: GLES/EGL/Vulkan **offscreen/render**
-  works; **X11 acceleration** does not on Trixie. We may need to install only the
-  render libs (as the `Incipiens` hack does, skipping the Xorg files) rather than
-  apt-installing the whole package on a headless rootfs.
+- **Userspace dependencies / Xorg ABI.** UPDATE (tested on hardware): the
+  userspace package installed cleanly on Trixie via apt with **no heavy
+  dependencies and no conflicts** — the feared bullseye X-stack drag did not
+  materialise at install time. So the dependency risk is largely retired. What's
+  still unverified is *runtime*: whether the GLES/EGL/Vulkan render-node path
+  actually works, and whether the bundled Xorg DDX (ABI 1.21, vs Trixie's newer
+  Xserver) is usable — though on a headless box X11 doesn't matter; the render node
+  is what counts.
 - **VPU is higher-risk than GPU.** `libgstreamer-openmax-allwinner` (`1.4.6-3`)
   targets GStreamer 1.18 (bullseye); Trixie ships 1.24+. Expect the gst-omx path to
   need more work than the GPU path. `--with-vpu` is therefore the more experimental
@@ -130,16 +129,21 @@ repo's dependency resolution fights with Trixie.
 
 ## Other open items
 
-- **`sunxi-sid.h`** — CONFIRMED missing from the Armbian `linux-headers` package
-  (it doesn't ship the `bsp/` subtree). RESOLVED: the GPL header is vendored here
-  (`sunxi-sid.h`, verbatim from `orange-pi-6.6-sun60iw2:bsp/include/`), shipped in
-  the image at `/usr/local/share/sun60iw2-gpu/`, and the enabler stages it into the
-  kernel headers tree before the DKMS build (into both `bsp/include/` and the
-  generic `include/` root, since the module does `#include <sunxi-sid.h>` with
-  angle brackets and needs it on the `-I` path). No network fetch needed; a
-  download from the kernel source remains only as a standalone-run fallback.
-  CONFIRMED on hardware that this is the only `bsp/` header the build needs — with
-  it staged, `img-bxm-dkms` 0.1.0-3 compiles fully against our 6.6 vendor kernel.
+- **`bsp/include` headers** — Armbian's `linux-headers` package omits the vendor
+  `bsp/` subtree, so the GPU DKMS build can't find `<sunxi-sid.h>`. RESOLVED two
+  ways:
+   - *Primary (general fix):* `pre_package_kernel_headers__sun60iw2_bsp_include` in
+     the family copies the kernel's own `bsp/include` into the headers package,
+     version-matched, benefiting any out-of-tree module. Takes effect on the next
+     image/kernel build.
+   - *Fallback (works on stock images too):* the GPL `sunxi-sid.h` is vendored here
+     and shipped at `/usr/local/share/sun60iw2-gpu/`; the enabler stages it onto
+     the compiler `-I` path (`include/` root + `bsp/include/`) if it isn't already
+     present, with a kernel-source download only as a last resort.
+
+  CONFIRMED on hardware that `sunxi-sid.h` is the only `bsp/` header the build
+  needs — with it staged, `img-bxm-dkms` 0.1.0-3 compiles fully against our 6.6
+  vendor kernel.
 - **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
   0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
 - **Hardware test.** Nothing here has been run on a board yet.
