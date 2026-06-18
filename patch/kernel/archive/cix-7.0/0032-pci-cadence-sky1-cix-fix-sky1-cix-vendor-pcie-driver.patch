@@ -1,0 +1,678 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 11 Jun 2026 17:11:06 +0800
+Subject: pci: cadence: sky1-cix: fix sky1 cix vendor pcie driver
+
+---
+ drivers/pci/controller/cadence/pci-sky1-cix.c             |  88 +++++--
+ drivers/pci/controller/cadence/pci-sky1-debugfs.c         |   6 +-
+ drivers/pci/controller/cadence/pcie-cadence-host-common.c |   3 +-
+ drivers/pci/controller/cadence/pcie-cadence-host-hpa.c    | 131 +++++++++-
+ drivers/pci/controller/cadence/pcie-cadence.c             |  46 ++++
+ drivers/pci/controller/cadence/pcie-cadence.h             |  48 ++++
+ 6 files changed, 290 insertions(+), 32 deletions(-)
+
+diff --git a/drivers/pci/controller/cadence/pci-sky1-cix.c b/drivers/pci/controller/cadence/pci-sky1-cix.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pci-sky1-cix.c
++++ b/drivers/pci/controller/cadence/pci-sky1-cix.c
+@@ -22,6 +22,7 @@
+ #include <linux/delay.h>
+ #include <linux/reset.h>
+ #include <linux/syscore_ops.h>
++#include <linux/version.h>
+ 
+ #include "../../pci.h"
+ #include "pcie-cadence.h"
+@@ -158,6 +159,15 @@ static const struct sky1_pcie_ctrl_desc sky1_pcie_desc[] = {
+ 	{}
+ };
+ 
++static const struct cdns_plat_pcie_of_data sky1_lga_reg_offsets = {
++	.is_rc				= 1,
++	.ip_reg_bank_offset		= CDNS_PCIE_IP_REG_BANK_BASE,
++	.ip_cfg_ctrl_reg_offset		= CDNS_PCIE_IP_CFG_CTRL_REG_BANK_BASE,
++	.axi_mstr_common_offset		= CDNS_PCIE_IP_AXI_MASTER_COMMON_BASE,
++	.axi_slave_offset		= CDNS_PCIE_IP_AXI_SLAVE_BASE,
++	.axi_master_offset		= CDNS_PCIE_IP_AXI_MASTER_COMMON_BASE,
++};
++
+ u32 sky1_pcie_get_bits32(void __iomem *addr, u32 bits_msk)
+ {
+ 	u32 value = 0;
+@@ -217,7 +227,7 @@ static void sky1_pcie_enable_local_irq(struct sky1_pcie *pcie, bool en)
+ 	u32 enanle_err_0 = 0;
+ 	u32 enanle_err_1 = 0;
+ 
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	if (en) {
+ 		/* mask aer error local interrupt */
+ 		enanle_err_0 |= LOCAL_INT_AER;
+@@ -352,7 +362,7 @@ static void sky1_pcie_enable_pmpme_rc(struct sky1_pcie *pcie, bool en)
+ 	u32 reg;
+ 	u8 offset;
+ 
+-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_PM);
++	offset = sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_PM);
+ 	dev_info(dev, "PCI_CAP_ID_PM offset = 0x%x\n", offset);
+ 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_PM_CTRL);
+ 	/* Clear PME status. */
+@@ -373,7 +383,7 @@ static void sky1_pcie_pme_work_fn(struct work_struct *work)
+ 	u8 offset;
+ 
+ 	mutex_lock(&pcie->pme_mutex);
+-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
++	offset = sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+ 	dev_info(dev, "PCI_CAP_ID_EXP offset = 0x%x\n", offset);
+ 
+ 	/* disable pme interrupt */
+@@ -455,7 +465,7 @@ static irqreturn_t sky1_pcie_local_irq_handler(int irq, void *arg)
+ 	int i = 0;
+ 	u32 sta;
+ 
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	sta = readl(reg_base + I_LOCAL_ERR_STS_REG0);
+ 	dev_info(pcie->dev, "line = %d sta = 0x%08x \n", __LINE__, sta);
+ 	for (i = 0; i < 32; i++) {
+@@ -499,15 +509,15 @@ static void sky1_pcie_handle_rp_aer_irq(struct sky1_pcie *pcie)
+ 	u32 uncorr_val = 0;
+ 	u32 reg32 = 0;
+ 
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	aer_offset =
+-		cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
++		sky1_cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
+ 	if (!aer_offset) {
+ 		dev_err(dev, "RC no aer capability\n");
+ 		return;
+ 	}
+ 
+-	offset = cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
++	offset = sky1_cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
+ 	if (!offset) {
+ 		dev_err(dev, "RC no pci capability\n");
+ 		return;
+@@ -628,9 +638,9 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
+ 	 PCI_ERR_ROOT_MULTI_COR_RCV | PCI_ERR_ROOT_MULTI_UNCOR_RCV)
+ 
+ 	spin_lock_irqsave(&pcie->aer_lock, flags);
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	aer_offset =
+-		cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
++		sky1_cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
+ 	if (!aer_offset) {
+ 		dev_err(pcie->dev, "RC no aer capability\n");
+ 		ret = IRQ_NONE;
+@@ -1231,14 +1241,14 @@ static int sky1_pcie_parse_clocks(struct sky1_pcie *pcie)
+ 	struct clk *axi_clk, *apb_clk, *refclk;
+ 	int ret = 0;
+ 
+-	axi_clk = devm_clk_get(dev, "axi_clk");
++	axi_clk = devm_clk_get_optional(dev, "axi_clk");
+ 	if (IS_ERR(axi_clk)) {
+ 		ret = PTR_ERR(axi_clk);
+ 		dev_err(dev, "Failed to get axi_clk\n");
+ 	}
+ 	pcie->pcie_axi_clk = axi_clk;
+ 
+-	apb_clk = devm_clk_get(dev, "apb_clk");
++	apb_clk = devm_clk_get_optional(dev, "apb_clk");
+ 	if (IS_ERR(apb_clk)) {
+ 		ret = PTR_ERR(apb_clk);
+ 		dev_err(dev, "Failed to get apb_clk\n");
+@@ -1609,7 +1619,7 @@ static void sky1_pcie_set_devctrl(struct sky1_pcie *pcie)
+ 	u32 reg;
+ 	u16 offset;
+ 
+-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
++	offset = sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+ 	if (!offset)
+ 		return;
+ 	dev_dbg(dev, "PCI_CAP_ID_EXP offset = 0x%x\n", offset);
+@@ -1636,7 +1646,7 @@ static void sky1_pcie_set_preset_val(struct sky1_pcie *pcie)
+ 	struct device *dev = pcie->dev;
+ 	u16 offset;
+ 
+-	offset = cdns_pcie_find_ext_capability(pcie->reg_base,
++	offset = sky1_cdns_pcie_find_ext_capability(pcie->reg_base,
+ 					       PCI_EXT_CAP_ID_SECPCI);
+ 	if (!offset)
+ 		return;
+@@ -1647,7 +1657,7 @@ static void sky1_pcie_set_preset_val(struct sky1_pcie *pcie)
+ 	sky1_pcie_ctrl_writel_reg(pcie, offset + 0x14, 0x27072707);
+ 	sky1_pcie_ctrl_writel_reg(pcie, offset + 0x18, 0x27072707);
+ 
+-	offset = cdns_pcie_find_ext_capability(pcie->reg_base,
++	offset = sky1_cdns_pcie_find_ext_capability(pcie->reg_base,
+ 					       PCI_EXT_CAP_ID_PL_16GT);
+ 	if (!offset)
+ 		return;
+@@ -1712,7 +1722,7 @@ static void sky1_pcie_set_l0s_disable(struct sky1_pcie *pcie)
+ 	u8 offset;
+ 	u32 reg;
+ 
+-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
++	offset = sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+ 	/* Clear L0s from RC's link cap */
+ 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_EXP_LNKCAP);
+ 	reg &= ~PCI_EXP_LNKCAP_ASPM_L0S;
+@@ -1724,7 +1734,7 @@ static void sky1_pcie_set_l1_disable(struct sky1_pcie *pcie)
+ 	u8 offset;
+ 	u32 reg;
+ 
+-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
++	offset = sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+ 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_EXP_LNKCAP);
+ 	reg &= ~PCI_EXP_LNKCAP_ASPM_L1;
+ 	sky1_pcie_ctrl_writel_reg(pcie, offset + PCI_EXP_LNKCAP, reg);
+@@ -2120,7 +2130,7 @@ static void sky1_pcie_get_linkctrl_offset(struct sky1_pcie *pcie)
+ {
+ 	/* PCI_EXP_LNKCTL_LD: Link Disable */
+ 	pcie->linkctrl_offset =
+-		cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP) +
++		sky1_cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP) +
+ 		PCI_EXP_LNKCTL;
+ }
+ 
+@@ -2193,7 +2203,11 @@ static int _sky1_pcie_syscore_op_shutdown(struct sky1_pcie *pcie)
+ 	return 0;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
++static void sky1_pcie_syscore_op_shutdown(void *data)
++#else
+ static void sky1_pcie_syscore_op_shutdown(void)
++#endif
+ {
+ 	struct sky1_pcie *pcie;
+ 
+@@ -2202,10 +2216,20 @@ static void sky1_pcie_syscore_op_shutdown(void)
+ 	}
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
++static const struct syscore_ops sky1_pcie_syscore_ops = {
++#else
+ static struct syscore_ops sky1_pcie_syscore_ops = {
++#endif
+ 	.shutdown = sky1_pcie_syscore_op_shutdown,
+ };
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
++static struct syscore sky1_pcie_syscore = {
++	.ops = &sky1_pcie_syscore_ops,
++};
++#endif
++
+ static void sky1_pcie_x211_enum_lock(struct sky1_pcie *pcie, bool lock)
+ {
+ 	if (sky1_pcie_is_x211(pcie)) {
+@@ -2243,7 +2267,7 @@ static int sky1_pcie_really_probe(void *p)
+ 	}
+ 	sky1_pcie_enable_irq(pcie, true);
+ 
+-	ret = cdns_pcie_host_setup(rc);
++	ret = cdns_pcie_hpa_host_setup(rc);
+ 	if (ret < 0)
+ 		goto err_ecam_free;
+ 
+@@ -2254,7 +2278,11 @@ static int sky1_pcie_really_probe(void *p)
+ 	mutex_lock(&sky1_init_mutex);
+ 	/* Register for syscore ops only when first instance probed */
+ 	if (list_empty(&sky1_pcie_list))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
++		register_syscore(&sky1_pcie_syscore);
++#else
+ 		register_syscore_ops(&sky1_pcie_syscore_ops);
++#endif
+ 
+ 	/*
+ 	 * Add the qcom_pcie list of each PCIe instance probed to
+@@ -2354,8 +2382,7 @@ static int sky1_pcie_probe(struct platform_device *pdev)
+ 	bridge->ops = &sky1_pcie_own_ops;
+ 	bridge->child_ops = (struct pci_ops *)&pci_generic_ecam_ops.pci_ops;
+ 	rc = pci_host_bridge_priv(bridge);
+-	rc->ecam_support_flag = pcie->ecam_support_flag;
+-	rc->id = pcie->id;
++	rc->ecam_supported = pcie->ecam_support_flag;
+ 	rc->cfg_base = pcie->cfg->win;
+ 	rc->cfg_res = &pcie->cfg->res;
+ 
+@@ -2363,9 +2390,10 @@ static int sky1_pcie_probe(struct platform_device *pdev)
+ 	cdns_pcie->dev = dev;
+ 	cdns_pcie->ops = &sky1_pcie_ops;
+ 	cdns_pcie->reg_base = pcie->reg_base;
+-	cdns_pcie->plat_emu = (pcie->plat == PCIE_PLAT_EMU) ? true : false;
+ 	cdns_pcie->msg_res = pcie->msg_res;
+ 
++	cdns_pcie->cdns_pcie_reg_offsets = &sky1_lga_reg_offsets;
++
+ 	pcie->cdns_pcie = cdns_pcie;
+ 	pcie->cdns_pcie_rc = rc;
+ 	pcie->cfg_base = rc->cfg_base;
+@@ -2409,7 +2437,11 @@ static int sky1_pcie_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
++static void sky1_pcie_remove(struct platform_device *pdev)
++#else
+ static int sky1_pcie_remove(struct platform_device *pdev)
++#endif
+ {
+ 	struct sky1_pcie *pcie = platform_get_drvdata(pdev);
+ 	struct device *dev = &pdev->dev;
+@@ -2446,10 +2478,16 @@ static int sky1_pcie_remove(struct platform_device *pdev)
+ 	if (pcie->is_probe) {
+ 		list_del(&pcie->list);
+ 		if (list_empty(&sky1_pcie_list))
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
++			unregister_syscore(&sky1_pcie_syscore);
++#else
+ 			unregister_syscore_ops(&sky1_pcie_syscore_ops);
++#endif
+ 	}
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+ 	return 0;
++#endif
+ }
+ 
+ static const struct sky1_pcie_data sky1_pcie_rc_data = {
+@@ -2499,8 +2537,6 @@ static int sky1_pcie_suspend_noirq(struct device *dev)
+ 	return ret;
+ }
+ 
+-extern int cdns_pcie_host_restore(struct cdns_pcie_rc *rc);
+-
+ static int sky1_pcie_power_check(struct device *dev)
+ {
+ 	acpi_handle handle, pwhandle;
+@@ -2552,9 +2588,9 @@ static int sky1_pcie_resume_noirq(struct device *dev)
+ 	sky1_pcie_init(pcie);
+ 	sky1_pcie_set_linksta_slc(pcie);
+ 
+-	ret = cdns_pcie_host_restore(rc);
++	ret = cdns_pcie_hpa_host_restore(rc);
+ 	if (ret < 0)
+-		dev_err(dev, "cdns_pcie_host_restore err, err=%d\n", ret);
++		dev_err(dev, "cdns_pcie_hpa_host_restore err, err=%d\n", ret);
+ 
+ 	sky1_pcie_enable_irq(pcie, true);
+ 	dev_info(dev, "%s end\n", __func__);
+@@ -2569,7 +2605,7 @@ static struct platform_driver sky1_pcie_driver = {
+ 	.probe  = sky1_pcie_probe,
+ 	.remove = sky1_pcie_remove,
+ 	.driver = {
+-		.name	= "sky1-pcie",
++		.name	= "sky1-pcie-cix",
+ 		.acpi_match_table = acpi_sky1_pcie_match,
+ 		.suppress_bind_attrs = true,
+ 		.pm	= &sky1_pcie_pm_ops,
+diff --git a/drivers/pci/controller/cadence/pci-sky1-debugfs.c b/drivers/pci/controller/cadence/pci-sky1-debugfs.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pci-sky1-debugfs.c
++++ b/drivers/pci/controller/cadence/pci-sky1-debugfs.c
+@@ -895,7 +895,7 @@ static void sky1_pcie_link_set_speed(struct sky1_pcie *pcie, u32 link_gen)
+ 	void __iomem *reg_base;
+ 	u8 offset;
+ 
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	offset = cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
+ 	dev_info(pcie->dev, "PCI_CAP_ID_EXP: 0x%x\n", offset);
+ 
+@@ -937,7 +937,7 @@ static void sky1_pcie_set_speed_retrain(struct sky1_pcie *pcie)
+ 	u8 offset;
+ 	char *speed;
+ 
+-	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++	reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 	offset = cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
+ 	val = readl(reg_base + offset + PCI_EXP_LNKCTL);
+ 	val |= PCI_EXP_LNKCTL_RL;
+@@ -1116,7 +1116,7 @@ static ssize_t sky1_pcie_compliance_write(struct file *file,
+ 	ret = kstrtoint_from_user(user_buf, count, 0, &type);
+ 	if (!ret) {
+ 		dev_info(pcie->dev, "type: %d\n", type);
+-		reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
++		reg_base = pcie->reg_base + CDNS_PCIE_HPA_RP_BASE;
+ 		offset = cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
+ 		dev_info(pcie->dev, "PCI_CAP_ID_EXP: 0x%x\n", offset);
+ 		val = readl(reg_base + offset + PCI_EXP_LNKCTL2);
+diff --git a/drivers/pci/controller/cadence/pcie-cadence-host-common.c b/drivers/pci/controller/cadence/pcie-cadence-host-common.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence-host-common.c
++++ b/drivers/pci/controller/cadence/pcie-cadence-host-common.c
+@@ -262,7 +262,6 @@ int cdns_pcie_host_map_dma_ranges(struct cdns_pcie_rc *rc,
+ {
+ 	struct cdns_pcie *pcie = &rc->pcie;
+ 	struct device *dev = pcie->dev;
+-	struct device_node *np = dev->of_node;
+ 	struct pci_host_bridge *bridge;
+ 	struct resource_entry *entry;
+ 	u32 no_bar_nbits = 32;
+@@ -273,7 +272,7 @@ int cdns_pcie_host_map_dma_ranges(struct cdns_pcie_rc *rc,
+ 		return -ENOMEM;
+ 
+ 	if (list_empty(&bridge->dma_ranges)) {
+-		of_property_read_u32(np, "cdns,no-bar-match-nbits",
++		device_property_read_u32(dev, "cdns,no-bar-match-nbits",
+ 				     &no_bar_nbits);
+ 		err = pci_host_ib_config(rc, RP_NO_BAR, 0x0, (u64)1 << no_bar_nbits, 0);
+ 		if (err)
+diff --git a/drivers/pci/controller/cadence/pcie-cadence-host-hpa.c b/drivers/pci/controller/cadence/pcie-cadence-host-hpa.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence-host-hpa.c
++++ b/drivers/pci/controller/cadence/pcie-cadence-host-hpa.c
+@@ -226,15 +226,105 @@ static void cdns_pcie_hpa_create_region_for_cfg(struct cdns_pcie_rc *rc)
+ 			     CDNS_PCIE_HPA_AT_OB_REGION_CTRL0(0), 0x06000000);
+ }
+ 
++static int cdns_pcie_hpa_create_region_for_ecam(struct cdns_pcie_rc *rc)
++{
++	struct cdns_pcie *pcie = &rc->pcie;
++	struct pci_host_bridge *bridge = pci_host_bridge_from_priv(rc);
++	struct resource *cfg_res = rc->cfg_res;
++	struct resource_entry *entry;
++	resource_size_t size;
++	u64 sz;
++	int nbits;
++	int busnr = 0, secbus = 0, subbus = 0;
++	u32 value, root_port_req_id_reg, pcie_bus_number_reg;
++	u32 ecam_addr_0, region_size_0, request_id_0;
++	u32 axi_address_low;
++
++	entry = resource_list_first_type(&bridge->windows, IORESOURCE_BUS);
++	if (entry) {
++		busnr = entry->res->start;
++		secbus = (busnr < 0xff) ? (busnr + 1) : 0xff;
++		subbus = entry->res->end;
++	}
++	size = resource_size(cfg_res);
++	sz = 1ULL << fls64(size - 1);
++	nbits = ilog2(sz);
++	if (nbits < 8)
++		nbits = 8;
++
++	root_port_req_id_reg = ((busnr & 0xff) << 8);
++	pcie_bus_number_reg = ((subbus & 0xff) << 16) | ((secbus & 0xff) << 8) | (busnr & 0xff);
++	ecam_addr_0 = cfg_res->start;
++	region_size_0 = nbits - 1;
++	request_id_0 = ((busnr & 0xff) << 8);
++
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_TAG_MANAGEMENT, 0x200000);
++
++	/* Taking slave err as OKAY */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_SLAVE_RESP, 0x0);
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_SLAVE_RESP + 0x4, 0x0);
++
++	/* Program "i_root_port_req_id_reg" with RP's BDF */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_IP_REG,
++			     I_ROOT_PORT_REQ_ID_REG, root_port_req_id_reg);
++
++	/* Program "i_pcie_bus_numbers" with primary, secondary and subordinate bus numbers */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_RP,
++			     I_PCIE_BUS_NUMBERS, pcie_bus_number_reg);
++
++	/* Program "lm_hal_sbsa_ctrl[0]" to enable the sbsa */
++	value = cdns_pcie_hpa_readl(pcie, REG_BANK_IP_REG, LM_HAL_SBSA_CTRL);
++	value |= BIT(0);
++	cdns_pcie_hpa_writel(pcie, REG_BANK_IP_REG, LM_HAL_SBSA_CTRL, value);
++
++	/* Program region[0] for ECAM */
++	axi_address_low = (ecam_addr_0 & 0xfff00000) | region_size_0;
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_CPU_ADDR0(0),
++			     axi_address_low);
++
++	/* rc0-high-axi-address */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_CPU_ADDR1(0), 0x0);
++	/* Type-1 CFG */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_DESC0(0),
++			     CDNS_PCIE_HPA_AT_OB_REGION_DESC0_TYPE_CONF_TYPE1);
++
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_DESC1(0),
++			     request_id_0 << 16);
++
++	/* All AXI bits pass through PCIe */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_PCI_ADDR0(0), 0x1b);
++	/* PCIe address-high */
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_PCI_ADDR1(0), 0);
++
++	cdns_pcie_hpa_writel(pcie, REG_BANK_AXI_SLAVE,
++			     CDNS_PCIE_HPA_AT_OB_REGION_CTRL0(0),
++			     CDNS_PCIE_HPA_AT_OB_REGION_CTRL0_SUPPLY_BUS |
++			     CDNS_PCIE_HPA_AT_OB_REGION_CTRL0_SUPPLY_DEV_FN);
++
++	return 0;
++}
++
+ static int cdns_pcie_hpa_host_init_address_translation(struct cdns_pcie_rc *rc)
+ {
+ 	struct cdns_pcie *pcie = &rc->pcie;
++	struct device *dev = pcie->dev;
+ 	struct pci_host_bridge *bridge = pci_host_bridge_from_priv(rc);
+ 	struct resource_entry *entry;
+ 	int r = 0, busnr = 0;
+ 
+ 	if (!rc->ecam_supported)
+ 		cdns_pcie_hpa_create_region_for_cfg(rc);
++	else
++		cdns_pcie_hpa_create_region_for_ecam(rc);
+ 
+ 	entry = resource_list_first_type(&bridge->windows, IORESOURCE_BUS);
+ 	if (entry)
+@@ -267,7 +357,7 @@ static int cdns_pcie_hpa_host_init_address_translation(struct cdns_pcie_rc *rc)
+ 		r++;
+ 	}
+ 
+-	if (rc->no_inbound_map)
++	if (rc->no_inbound_map || device_property_read_bool(dev, "cdns,no-inbound-bar"))
+ 		return 0;
+ 	else
+ 		return cdns_pcie_host_map_dma_ranges(rc, cdns_pcie_hpa_host_bar_ib_config);
+@@ -326,6 +416,12 @@ int cdns_pcie_hpa_host_setup(struct cdns_pcie_rc *rc)
+ 	pcie = &rc->pcie;
+ 	pcie->is_rc = true;
+ 
++	if ((rc->vendor_id==0)||(rc->vendor_id==0xffff))
++		device_property_read_u32(dev, "vendor-id", &rc->vendor_id);
++
++	if ((rc->device_id==0)||(rc->device_id==0xffff))
++		device_property_read_u32(dev, "device-id", &rc->device_id);
++
+ 	if (!pcie->reg_base) {
+ 		pcie->reg_base = devm_platform_ioremap_resource_byname(pdev, "reg");
+ 		if (IS_ERR(pcie->reg_base)) {
+@@ -364,5 +460,38 @@ int cdns_pcie_hpa_host_setup(struct cdns_pcie_rc *rc)
+ }
+ EXPORT_SYMBOL_GPL(cdns_pcie_hpa_host_setup);
+ 
++int cdns_pcie_hpa_host_restore(struct cdns_pcie_rc *rc)
++{
++	struct device *dev = rc->pcie.dev;
++	struct pci_host_bridge *bridge;
++	struct cdns_pcie *pcie;
++	int ret = 0;
++
++	bridge = pci_host_bridge_from_priv(rc);
++	pcie = &rc->pcie;
++	if (rc->quirk_detect_quiet_flag)
++		cdns_pcie_hpa_detect_quiet_min_delay_set(&rc->pcie);
++
++	cdns_pcie_hpa_host_enable_ptm_response(pcie);
++
++	ret = cdns_pcie_start_link(pcie);
++	if (ret) {
++		dev_err(dev, "Failed to start link\n");
++		return ret;
++	}
++
++	ret = cdns_pcie_host_start_link(rc, cdns_pcie_link_up);
++	if (ret)
++		dev_dbg(dev, "PCIe link never came up\n");
++
++	ret = cdns_pcie_hpa_host_init(rc);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "%s end\n", __func__);
++
++	return ret;
++}
++
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("Cadence PCIe host controller driver");
+diff --git a/drivers/pci/controller/cadence/pcie-cadence.c b/drivers/pci/controller/cadence/pcie-cadence.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence.c
++++ b/drivers/pci/controller/cadence/pcie-cadence.c
+@@ -10,6 +10,52 @@
+ #include "pcie-cadence.h"
+ #include "../../pci.h"
+ 
++/*
++ * Keep BSP-style capability search semantics:
++ *
++ * @reg_base is the base address of the config space window to search.
++ * For Root Port config space, caller should pass:
++ *
++ *      pcie->reg_base + CDNS_PCIE_RP_BASE
++ *
++ * This intentionally differs from mainline cdns_pcie_find_capability(pcie, cap),
++ * which searches from pcie->reg_base.
++ */
++int sky1_cdns_pcie_read_cfg_byte(void __iomem *reg_base, int where,
++					u8 *val)
++{
++	*val = cdns_pcie_read_sz(reg_base + where, 0x1);
++	return PCIBIOS_SUCCESSFUL;
++}
++
++int sky1_cdns_pcie_read_cfg_word(void __iomem *reg_base, int where,
++					u16 *val)
++{
++	*val = cdns_pcie_read_sz(reg_base + where, 0x2);
++	return PCIBIOS_SUCCESSFUL;
++}
++
++int sky1_cdns_pcie_read_cfg_dword(void __iomem *reg_base, int where,
++					 u32 *val)
++{
++	*val = cdns_pcie_read_sz(reg_base + where, 0x4);
++	return PCIBIOS_SUCCESSFUL;
++}
++
++u8 sky1_cdns_pcie_find_capability(void __iomem *reg_base, u8 cap)
++{
++	return PCI_FIND_NEXT_CAP(sky1_cdns_pcie_read_cfg,
++				 PCI_CAPABILITY_LIST, cap, NULL, reg_base);
++}
++EXPORT_SYMBOL_GPL(sky1_cdns_pcie_find_capability);
++
++u16 sky1_cdns_pcie_find_ext_capability(void __iomem *reg_base, u16 cap)
++{
++	return PCI_FIND_NEXT_EXT_CAP(sky1_cdns_pcie_read_cfg,
++				     0, cap, NULL, reg_base);
++}
++EXPORT_SYMBOL_GPL(sky1_cdns_pcie_find_ext_capability);
++
+ u8 cdns_pcie_find_capability(struct cdns_pcie *pcie, u8 cap)
+ {
+ 	return PCI_FIND_NEXT_CAP(cdns_pcie_read_cfg, PCI_CAPABILITY_LIST,
+diff --git a/drivers/pci/controller/cadence/pcie-cadence.h b/drivers/pci/controller/cadence/pcie-cadence.h
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence.h
++++ b/drivers/pci/controller/cadence/pcie-cadence.h
+@@ -14,6 +14,46 @@
+ #include "pcie-cadence-lga-regs.h"
+ #include "pcie-cadence-hpa-regs.h"
+ 
++/*
++ * Local Management Registers
++ */
++#define CDNS_PCIE_IP_REG_BANK_BASE		0x1000
++#define CDNS_PCIE_IP_CFG_CTRL_REG_BANK_BASE 	0x4c00
++#define CDNS_PCIE_IP_AXI_SLAVE_BASE		0x9000
++#define CDNS_PCIE_IP_AXI_MASTER_COMMON_BASE	0xb000
++
++enum cdns_pcie_msg_routing {
++	/* Route to Root Complex */
++	MSG_ROUTING_TO_RC,
++
++	/* Use Address Routing */
++	MSG_ROUTING_BY_ADDR,
++
++	/* Use ID Routing */
++	MSG_ROUTING_BY_ID,
++
++	/* Route as Broadcast Message from Root Complex */
++	MSG_ROUTING_BCAST,
++
++	/* Local message; terminate at receiver (INTx messages) */
++	MSG_ROUTING_LOCAL,
++
++	/* Gather & route to Root Complex (PME_TO_Ack message) */
++	MSG_ROUTING_GATHER,
++};
++
++enum cdns_pcie_msg_code {
++	MSG_CODE_PME_TURN_OFF	= 0x15,
++	MSG_CODE_ASSERT_INTA	= 0x20,
++	MSG_CODE_ASSERT_INTB	= 0x21,
++	MSG_CODE_ASSERT_INTC	= 0x22,
++	MSG_CODE_ASSERT_INTD	= 0x23,
++	MSG_CODE_DEASSERT_INTA	= 0x24,
++	MSG_CODE_DEASSERT_INTB	= 0x25,
++	MSG_CODE_DEASSERT_INTC	= 0x26,
++	MSG_CODE_DEASSERT_INTD	= 0x27,
++};
++
+ enum cdns_pcie_rp_bar {
+ 	RP_BAR_UNDEFINED = -1,
+ 	RP_BAR0,
+@@ -441,6 +481,7 @@ static inline bool cdns_pcie_link_up(struct cdns_pcie *pcie)
+ int cdns_pcie_host_link_setup(struct cdns_pcie_rc *rc);
+ int cdns_pcie_host_init(struct cdns_pcie_rc *rc);
+ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc);
++int cdns_pcie_hpa_host_restore(struct cdns_pcie_rc *rc);
+ void cdns_pcie_host_disable(struct cdns_pcie_rc *rc);
+ void __iomem *cdns_pci_map_bus(struct pci_bus *bus, unsigned int devfn,
+ 			       int where);
+@@ -461,6 +502,11 @@ static inline int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
+ 	return 0;
+ }
+ 
++static inline int cdns_pcie_hpa_host_restore(struct cdns_pcie_rc *rc)
++{
++	return 0;
++}
++
+ static inline int cdns_pcie_hpa_host_setup(struct cdns_pcie_rc *rc)
+ {
+ 	return 0;
+@@ -498,6 +544,8 @@ static inline int cdns_pcie_hpa_ep_setup(struct cdns_pcie_ep *ep)
+ 
+ #endif
+ 
++u8 sky1_cdns_pcie_find_capability(void __iomem *addr, u8 cap);
++u16 sky1_cdns_pcie_find_ext_capability(void __iomem *addr, u16 cap);
+ u8   cdns_pcie_find_capability(struct cdns_pcie *pcie, u8 cap);
+ u16  cdns_pcie_find_ext_capability(struct cdns_pcie *pcie, u8 cap);
+ bool cdns_pcie_linkup(struct cdns_pcie *pcie);
+-- 
+Armbian
+
