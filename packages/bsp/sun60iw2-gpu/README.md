@@ -131,10 +131,15 @@ repo's dependency resolution fights with Trixie.
 ## Other open items
 
 - **`sunxi-sid.h`** — CONFIRMED missing from the Armbian `linux-headers` package
-  (it doesn't ship the `bsp/` subtree). The script now auto-stages it from the
-  kernel source (`orange-pi-6.6-sun60iw2:bsp/include/sunxi-sid.h`) into
-  `/usr/src/linux-headers-$(uname -r)/bsp/include/` before the DKMS build. Watch
-  for the build needing *other* `bsp/...` headers — Incipiens only needed this one.
+  (it doesn't ship the `bsp/` subtree). RESOLVED: the GPL header is vendored here
+  (`sunxi-sid.h`, verbatim from `orange-pi-6.6-sun60iw2:bsp/include/`), shipped in
+  the image at `/usr/local/share/sun60iw2-gpu/`, and the enabler stages it into the
+  kernel headers tree before the DKMS build (into both `bsp/include/` and the
+  generic `include/` root, since the module does `#include <sunxi-sid.h>` with
+  angle brackets and needs it on the `-I` path). No network fetch needed; a
+  download from the kernel source remains only as a standalone-run fallback.
+  CONFIRMED on hardware that this is the only `bsp/` header the build needs — with
+  it staged, `img-bxm-dkms` 0.1.0-3 compiles fully against our 6.6 vendor kernel.
 - **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
   0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
 - **Hardware test.** Nothing here has been run on a board yet.
