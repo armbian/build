@@ -141,4 +141,4 @@ modprobe pvrsrvkm || die "modprobe pvrsrvkm failed; check dmesg"
 
 log "Done. GPU + VPU active now and on boot."
 log "Validate GPU: 'apt-get install clinfo && clinfo' lists 'PowerVR B-Series'."
-log "Validate VPU: 'gst-inspect-1.0 omxh264dec' shows a Hardware decoder."
+log "Validate VPU: 'apt-get install gstreamer1.0-tools && gst-inspect-1.0 omxh264dec' shows a Hardware decoder."
