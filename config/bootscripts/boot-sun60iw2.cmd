@@ -6,7 +6,13 @@
 # Loads Image via booti (vendor U-Boot 2018 arm64). If booti is unavailable
 # in your U-Boot build, see README-PORT.md for the uImage/bootm fallback.
 
-setenv load_addr "0x43100000"
+# OPi U-Boot's default load addresses are cramped and break on a
+# kernel >= ~30MB. Re-layout the addresses to allow for larger kernels (i.e. BTF)
+setenv kernel_addr_r "0x41000000"   # kernel zone 0x41000000..0x48000000 (~112 MB, below BL31)
+setenv fdt_addr_r "0x4a000000"      # device tree (small), above BL31
+setenv ramdisk_addr_r "0x4b000000"  # uInitrd staging, above the FDT
+setenv load_addr "0x4d000000"       # armbianEnv + overlay scratch, above the ramdisk
+
 setenv overlay_error "false"
 # default values
 setenv verbosity "1"
