@@ -112,10 +112,11 @@ repo's dependency resolution fights with Trixie.
 
 ## Other open items
 
-- **`sunxi-sid.h`** availability in the Armbian `linux-headers` package. Orange
-  Pi's tree has it under `bsp/include`; confirm the headers package installs it.
-  If not, stage it under `/usr/src/linux-headers-$(uname -r)/bsp/include/` before
-  the DKMS build (the `Incipiens` hack copies it from the Radxa headers).
+- **`sunxi-sid.h`** — CONFIRMED missing from the Armbian `linux-headers` package
+  (it doesn't ship the `bsp/` subtree). The script now auto-stages it from the
+  kernel source (`orange-pi-6.6-sun60iw2:bsp/include/sunxi-sid.h`) into
+  `/usr/src/linux-headers-$(uname -r)/bsp/include/` before the DKMS build. Watch
+  for the build needing *other* `bsp/...` headers — Incipiens only needed this one.
 - **Does `img-bxm-dkms` 0.1.0-3 build against our 6.6 kernel?** Incipiens proved
   0.1.0-2 builds against 6.6.98-sun60iw2; -3 is expected to as well, but untested.
 - **Hardware test.** Nothing here has been run on a board yet.

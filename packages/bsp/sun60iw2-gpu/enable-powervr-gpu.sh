@@ -101,13 +101,14 @@ if [[ ! -d "/usr/src/linux-headers-${KVER}" && ! -d "/lib/modules/${KVER}/build"
 fi
 
 # img-bxm-dkms references the BSP header sunxi-sid.h. Orange Pi's 6.6 source tree
-# carries it under bsp/include, so the Armbian headers package SHOULD already
-# provide it. VERIFY; if the DKMS build later fails on a missing sunxi-sid.h,
-# copy it from the kernel source into:
-#   /usr/src/linux-headers-${KVER}/bsp/include/sunxi-sid.h
+# carries it under bsp/include, but Armbian's linux-headers package does NOT ship
+# the bsp/ subtree, so we stage it from the kernel source to match our kernel.
+KERNEL_SID_URL="https://raw.githubusercontent.com/orangepi-xunlong/linux-orangepi/orange-pi-6.6-sun60iw2/bsp/include/sunxi-sid.h"
 if ! find "/usr/src/linux-headers-${KVER}" -name sunxi-sid.h 2>/dev/null | grep -q .; then
-	log "WARNING: sunxi-sid.h not found in the headers package."
-	log "         If the DKMS build fails, stage it under bsp/include (see README)."
+	log "Staging sunxi-sid.h from the kernel source (missing from headers package)"
+	install -d "/usr/src/linux-headers-${KVER}/bsp/include"
+	curl -fsSL -o "/usr/src/linux-headers-${KVER}/bsp/include/sunxi-sid.h" "${KERNEL_SID_URL}" \
+		|| die "could not fetch sunxi-sid.h from kernel source (${KERNEL_SID_URL})"
 fi
 
 # ----------------------------------------------------------------------------
