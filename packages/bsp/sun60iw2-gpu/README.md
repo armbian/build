@@ -72,6 +72,24 @@ that installs `/usr/share/keyrings/radxa-archive-keyring.gpg`).
 The GPU module and userspace are a matched DDK pair shipped in the same suite, so
 pulling both from `a733-bullseye` keeps them version-coherent.
 
+**Caveat — malformed package names.** Only `img-bxm-dkms` is cleanly indexed and
+installable by name. The userspace and 2.0.0 VPU packages have the version and
+`.deb` suffix baked into their `Package:` field (e.g.
+`xserver-xorg-img-bxm-1.21.1-2.deb`, `libcedarc-dev-2.0.0-arm64`), which apt
+refuses to install by name (a name ending in `.deb` is treated as a local file).
+The script works around this by resolving each one's pool path from the index
+(`Filename:`) and installing the `.deb` directly.
+
+## AI accelerator (NPU) — not available here
+
+Asked to look: the `a733-bullseye` repo has **no Allwinner NPU userspace package**.
+The `rknn2` / `rknn_model_zoo` entries in the repo are Rockchip RKNN, not Allwinner,
+so they don't apply to the A733's VeriSilicon NPU. The only unexplored candidate is
+`allwinner-prebuilt-extra` (0.1.9) — worth a `dpkg -c` to see if it bundles any NPU
+libraries (`libVIPlite`, `libovx`, `galcore`, etc.). NPU enablement is a separate,
+larger effort (its own kernel driver + userspace) and is out of scope for this GPU
+draft.
+
 ### Why opt-in and not in the image
 
 The PowerVR userspace is non-redistributable, so Armbian can't bake it into a

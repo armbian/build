@@ -39,12 +39,17 @@ RADXA_APT_KEYRING="/usr/share/keyrings/radxa-archive-keyring.gpg"
 # The keyring is distributed as a .deb that installs ${RADXA_APT_KEYRING}.
 RADXA_KEYRING_RELEASE="https://github.com/radxa-pkg/radxa-archive-keyring/releases/latest/download"
 
-# Matched DDK pair, both shipped together in a733-bullseye (verified present).
-# The kernel module and userspace are one DDK release and must stay matched;
-# taking both from the same suite guarantees that.
-PKG_GPU_DKMS="img-bxm-dkms"               # 0.1.0-3 (all):   builds pvrsrvkm.ko from source
-PKG_GPU_USERSPACE="xserver-xorg-img-bxm"  # 1.21.1-2 (arm64): GLES/EGL/Vulkan ICD/DRI/rgx fw
-PKG_VPU=("libcedarc-dev" "libgstreamer-openmax-allwinner")  # 2.0.0 / 1.4.6-3 (optional)
+# The GPU kernel-module package is properly indexed and installs by name.
+PKG_GPU_DKMS="img-bxm-dkms"   # 0.1.0-3 (all): builds pvrsrvkm.ko from source
+
+# The userspace/VPU packages have MALFORMED index names — the version and ".deb"
+# are baked into the Package: field (e.g. "xserver-xorg-img-bxm-1.21.1-2.deb",
+# "libcedarc-dev-2.0.0-arm64"), so apt can't install them by name (a name ending
+# in .deb is treated as a local file). We resolve their pool path from the index
+# and install the .deb file directly. Values below are ERE patterns matched
+# against the index Filename: lines. They form a matched DDK pair with the module.
+POOL_FN_GPU_USERSPACE='xserver-xorg-img-bxm_.*_arm64\.deb'   # PowerVR DDK userspace 1.21.1-2
+POOL_FN_VPU=('libcedarc-dev_2\.0\.0_arm64' 'libgstreamer-openmax-allwinner_.*_arm64\.deb')
 
 # ----------------------------------------------------------------------------
 WITH_VPU="no"
@@ -114,8 +119,13 @@ fi
 # ----------------------------------------------------------------------------
 # 2. Install the GPU packages (kernel module source + userspace)
 # ----------------------------------------------------------------------------
-PKGS=("${PKG_GPU_DKMS}" "${PKG_GPU_USERSPACE}")
-[[ "${WITH_VPU}" == "yes" ]] && PKGS+=("${PKG_VPU[@]}")
+# Resolve a pool path from the downloaded index by matching the Filename: line
+# (we install userspace by file because its Package: name is malformed).
+INDEX_GLOB="/var/lib/apt/lists/*$(echo "${RADXA_APT_SUITE}" | tr -d '/')*Packages"
+pool_filename() { # $1 = ERE matched against Filename: entries
+	# shellcheck disable=SC2086
+	awk '/^Filename:/{print $2}' ${INDEX_GLOB} 2>/dev/null | grep -E "$1" | sort -u | head -n1
+}
 
 if [[ -n "${DEB_DIR}" ]]; then
 	log "Installing packages from local directory: ${DEB_DIR}"
@@ -124,9 +134,7 @@ if [[ -n "${DEB_DIR}" ]]; then
 	debs=("${DEB_DIR}"/*.deb)
 	shopt -u nullglob
 	[[ ${#debs[@]} -gt 0 ]] || die "no .deb files in ${DEB_DIR}"
-	# dpkg first, then apt to settle any dependencies pulled from the base repos.
-	dpkg -i "${debs[@]}" || true
-	apt-get install -y -f
+	apt-get install -y "${debs[@]}"   # apt resolves deps; paths force file mode
 else
 	log "Installing Radxa archive keyring"
 	if [[ ! -f "${RADXA_APT_KEYRING}" ]]; then
@@ -143,8 +151,29 @@ else
 	echo "deb [signed-by=${RADXA_APT_KEYRING}] ${RADXA_APT_URL}/ ${RADXA_APT_SUITE} ${RADXA_APT_COMPONENTS}" \
 		> "${RADXA_APT_LIST}"
 	apt-get update
-	log "Installing: ${PKGS[*]}"
-	apt-get install -y "${PKGS[@]}" || die "package install failed (VERIFY package names/repo)"
+
+	# GPU kernel module: properly indexed, install by name.
+	log "Installing GPU kernel module (DKMS, from source): ${PKG_GPU_DKMS}"
+	apt-get install -y "${PKG_GPU_DKMS}" || die "${PKG_GPU_DKMS} install failed"
+
+	# Userspace (+ optional VPU): malformed index names, so fetch the .deb from
+	# the pool and install the file. This is also where a bullseye-on-Trixie
+	# dependency clash would surface — see README ("Suite mismatch").
+	patterns=("${POOL_FN_GPU_USERSPACE}")
+	[[ "${WITH_VPU}" == "yes" ]] && patterns+=("${POOL_FN_VPU[@]}")
+	workdir="$(mktemp -d)"
+	pool_debs=()
+	for pat in "${patterns[@]}"; do
+		fn="$(pool_filename "${pat}")"
+		[[ -n "${fn}" ]] || die "no pool entry in the index matched: ${pat}"
+		log "  fetching ${fn}"
+		curl -fsSL -o "${workdir}/$(basename "${fn}")" "${RADXA_APT_URL}/${fn}" \
+			|| die "download failed: ${fn}"
+		pool_debs+=("${workdir}/$(basename "${fn}")")
+	done
+	apt-get install -y "${pool_debs[@]}" \
+		|| die "userspace install failed — likely the bullseye-on-Trixie dependency clash; see README"
+	rm -rf "${workdir}"
 fi
 
 # ----------------------------------------------------------------------------
