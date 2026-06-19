@@ -1,6 +1,6 @@
 function add_host_dependencies__qcow2_host_deps() {
 	[[ "${SKIP_QCOW2}" == "yes" ]] && return 0
-	EXTRA_BUILD_DEPS+=("emulation::qemu-utils")
+	EXTRA_BUILD_DEPS+=("qemu::qemu-utils")
 }
 
 function post_build_image__900_convert_to_qcow2_img() {
