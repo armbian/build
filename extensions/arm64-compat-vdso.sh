@@ -1,4 +1,15 @@
 # Enable 32-bit compat vDSO for arm64 kernels with GCC or clang.
+#
+# Builds the kernel with CONFIG_COMPAT + COMPAT_VDSO + ARM64_32BIT_EL0, letting
+# an arm64 host running this kernel execute armhf (32-bit ARM) userspace
+# natively at full speed. One concrete use case is Armbian's rootfs phase: on
+# such a host, armhf chroot / package post-install steps run native instead of
+# through qemu-user-static (~10× faster). See lib/functions/rootfs/qemu-static.sh
+# and the PREFER_NATIVE_ARMHF build switch.
+#
+# Note: aarch64 silicon without 32-bit ARM userspace support at EL0 (notably
+# Apple M-series) cannot run armhf even with this kernel option enabled.
+#
 # Requirements:
 # - arm64 build target (ARCH=arm64, ARCHITECTURE=arm64).
 # - For GCC builds: a 32-bit ARM cross-compiler (default prefix arm-linux-gnueabi-),
@@ -25,7 +36,7 @@ function host_dependencies_ready__arm64_compat_vdso() {
 	fi
 
 	local compat_gcc_prefix="${CROSS_COMPILE_COMPAT:-"arm-linux-gnueabi-"}"
-	if ! command -v "${compat_gcc_prefix}gcc" >/dev/null 2>&1; then
+	if ! command -v "${compat_gcc_prefix}gcc" > /dev/null 2>&1; then
 		exit_with_error "Missing 32-bit compiler '${compat_gcc_prefix}gcc' for COMPAT_VDSO; install gcc-arm-linux-gnueabi or set CROSS_COMPILE_COMPAT"
 	fi
 }
@@ -46,7 +57,7 @@ function custom_kernel_config__arm64_compat_vdso() {
 	opts_y+=("COMPAT" "COMPAT_VDSO" "ARM64_32BIT_EL0")
 
 	if [[ -f .config ]]; then
-		kconfig_hit="$(grep -R -n -m1 "COMPAT_VDSO" arch/arm64 Kconfig* 2>/dev/null || true)"
+		kconfig_hit="$(grep -R -n -m1 "COMPAT_VDSO" arch/arm64 Kconfig* 2> /dev/null || true)"
 		if [[ -z "${kconfig_hit}" ]]; then
 			exit_with_error "Selected kernel tree lacks COMPAT_VDSO support for arm64"
 		fi

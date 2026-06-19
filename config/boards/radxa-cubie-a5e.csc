@@ -1,5 +1,5 @@
 # Allwinner Cortex-A55 octa core SoC 2/4GB-RAM, 2x GBe, WiFi/BT, M.2 2230/USB3, NPU
-BOARD_NAME="radxa cubie a5e"
+BOARD_NAME="Cubie A5E"
 BOARD_VENDOR="radxa"
 BOARDFAMILY="sun55iw3"
 BOARD_MAINTAINER="juanesf"

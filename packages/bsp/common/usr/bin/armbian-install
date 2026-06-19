@@ -153,9 +153,10 @@ mtdcheck=$(grep 'mtdblock' /proc/partitions | awk '{print $NF}' | xargs)
 # 3 - Extract the UUID=<uuid> from $sdblkid via regex without " - as e.g.: UUID=2e1d1509-a8fc-4f8b-8a51-88fb8593f8d6
 sduuid=$(echo "$sdblkid" | sed -nE 's/^.*[[:space:]](UUID="[0-9a-zA-Z-]*").*/\1/p' | tr -d '"')
 
-#recognize EFI
+# recognize EFI
 [[ -d /sys/firmware/efi ]] && DEVICE_TYPE="uefi"
-efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
+# Don't detect efi_partition globally - it causes issues when multiple disks are present
+# EFI partition will be detected per-target disk in check_partitions() and create_armbian()
 
 # define makefs and mount options
 declare -A mkopts mountopts
@@ -503,7 +504,19 @@ create_armbian()
 		echo "GRUB_DISABLE_OS_PROBER=false" >> "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
 
 		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> "${TempDir}"/rootfs/etc/fstab
-		echo "UUID=$(lsblk -io KNAME,LABEL,UUID,PARTLABEL | grep $diskcheck | grep -i efi | awk '{print $3}')				/boot/efi		vfat	 defaults 0 2" >> "${TempDir}"/rootfs/etc/fstab
+		# Find EFI partition on TARGET disk only, using lsblk for reliability
+		local target_efi_uuid
+		target_efi_uuid=$(lsblk -o KNAME,UUID,PARTTYPENAME,PARTLABEL -n -l "/dev/$diskcheck" | grep -iE 'efi|EFI' | awk '{print $2}' | head -1)
+		if [[ -z "$target_efi_uuid" ]]; then
+			# Fallback: try p1 as common EFI partition location
+			target_efi_uuid=$(blkid -s UUID -o value "/dev/${diskcheck}p1" 2>/dev/null)
+		fi
+		if [[ -z "$target_efi_uuid" ]]; then
+			echo "ERROR: Cannot find EFI partition UUID on /dev/$diskcheck" >> $logfile
+			umount_device "$2"
+			exit 20
+		fi
+		echo "UUID=$target_efi_uuid				/boot/efi		vfat	 defaults 0 2" >> "${TempDir}"/rootfs/etc/fstab
 		echo "/swapfile none swap sw 0 0" >> "${TempDir}"/rootfs/etc/fstab
 
 		cat <<-hibernatemenu >"${TempDir}"/rootfs/etc/polkit-1/localauthority/50-local.d/com.ubuntu.enable-hibernate.pkla
@@ -518,18 +531,44 @@ create_armbian()
 		ResultActive=yes
 		hibernatemenu
 
-		efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
+		# Find EFI partition on TARGET disk only using lsblk (more reliable than fdisk|grep)
+		efi_partition=$(lsblk -o KNAME,PARTTYPENAME,PARTLABEL -n -l "/dev/$diskcheck" | grep -iE 'efi|EFI' | awk '{print "/dev/"$1}' | head -1)
+		if [[ -z "$efi_partition" ]] || [[ ! -b "$efi_partition" ]]; then
+			# Fallback: try p1 as common EFI partition location
+			efi_partition="/dev/${diskcheck}p1"
+			if [[ ! -b "$efi_partition" ]]; then
+				echo "ERROR: Cannot find EFI partition on /dev/$diskcheck" >> $logfile
+				umount_device "$2"
+				exit 21
+			fi
+		fi
 
 		echo "Install GRUB to $efi_partition"
+		echo "INFO: Installing GRUB to $efi_partition on /dev/$diskcheck" >> $logfile
 		mkdir -p "${TempDir}"/rootfs/{dev,proc,sys}
-		mount $efi_partition "${TempDir}"/rootfs/boot/efi
+		if ! mount "$efi_partition" "${TempDir}"/rootfs/boot/efi; then
+			echo "ERROR: Failed to mount EFI partition $efi_partition" >> $logfile
+			umount_device "$2"
+			exit 22
+		fi
+		# Verify mount succeeded
+		if ! mountpoint -q "${TempDir}"/rootfs/boot/efi; then
+			echo "ERROR: EFI partition mount verification failed" >> $logfile
+			umount_device "$2"
+			exit 23
+		fi
 		mount --bind /dev "${TempDir}"/rootfs/dev
 		mount --make-rslave --bind /dev/pts "${TempDir}"/rootfs/dev/pts
 		mount --bind /proc "${TempDir}"/rootfs/proc
 		mount --make-rslave --rbind /sys "${TempDir}"/rootfs/sys
 		arch_target=$([[ $(arch) == x86_64 ]] && echo "x86_64-efi" || echo "arm64-efi")
-		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=$arch_target --efi-directory=/boot/efi --bootloader-id=Armbian" >> $logfile
-		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg" >> $logfile
+		if ! chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=$arch_target --efi-directory=/boot/efi --bootloader-id=Armbian --removable" >> $logfile 2>&1; then
+			echo "ERROR: GRUB installation failed" >> $logfile
+			umount_device "$2"
+			exit 24
+		fi
+		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg" >> $logfile 2>&1
+		echo "INFO: GRUB installation completed successfully" >> $logfile
 		grep "${TempDir}"/rootfs/sys /proc/mounts | cut -f2 -d" " | sort -r | xargs umount -n
 		umount "${TempDir}"/rootfs/proc
 		umount "${TempDir}"/rootfs/dev/pts
@@ -837,25 +876,36 @@ check_partitions()
 		dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestination $diskcheck has ${FREE_SPACE}GB of available space. \n\nAutomated install will generate needed partition(s)!" 9 55
 		[[ $? -ne 0 ]] && exit 11
 		if [[ "$DEVICE_TYPE" == uefi ]]; then
-			if [[ -z "$efi_partition" ]]; then
+			# Check for EFI partition on TARGET disk only using lsblk
+			local target_efi
+			target_efi=$(lsblk -o KNAME,PARTTYPENAME,PARTLABEL -n -l "/dev/$diskcheck" | grep -iE 'efi|EFI' | awk '{print "/dev/"$1}' | head -1)
+			if [[ -z "$target_efi" ]] || [[ ! -b "$target_efi" ]]; then
+				echo "INFO: No EFI partition found on /dev/$diskcheck, creating..." >> $logfile
 				wipefs -aq /dev/$diskcheck
 				# create EFI partition
 				{
 					echo n; echo ; echo ; echo ; echo +200M;
 					echo t; echo EF; echo w;
-				} | fdisk /dev/$diskcheck &> /dev/null || true
-				yes | mkfs.vfat /dev/${diskcheck}p1 &> /dev/null || true
-				fatlabel /dev/${diskcheck}p1 EFI
+				} | fdisk "/dev/$diskcheck" &> /dev/null || true
+				sync
+				partprobe "/dev/$diskcheck" || true
+				sleep 1
+				yes | mkfs.vfat -F 32 "/dev/${diskcheck}p1" &> /dev/null || true
+				fatlabel "/dev/${diskcheck}p1" EFI
+				target_efi="/dev/${diskcheck}p1"
 			fi
 			{
 				echo n; echo ; echo ; echo ; echo
 				echo w
-			} | fdisk /dev/$diskcheck &> /dev/null || true
+			} | fdisk "/dev/$diskcheck" &> /dev/null || true
+			sync
+			partprobe "/dev/$diskcheck" || true
+			sleep 1
 			yes | mkfs.ext4 /dev/${diskcheck}p2 &> /dev/null || true
 
 			# re-read
 			emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-			efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
+			# No longer needed - EFI partition detection happens in create_armbian()
 		else
 			# Create new partition of max free size
 			{

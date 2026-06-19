@@ -511,16 +511,16 @@ function post_family_tweaks__recomputer_rk35xx_disable_armbian_hardware_optimize
 	rm -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service
 }
 
-# Create armbianEnv.txt.bak at build time.
+# Create armbianEnv.txt.dist at build time.
 # Protects against sed -i + power loss corruption.
 function pre_umount_final_image__recomputer_armbianenv_backup() {
-	display_alert "$BOARD" "Creating armbianEnv.txt backup" "info"
+	display_alert "$BOARD" "Creating armbianEnv.txt.dist fallback" "info"
 
 	local env_file="${MOUNT}/boot/armbianEnv.txt"
-	local bak_file="${MOUNT}/boot/armbianEnv.txt.bak"
+	local dist_file="${MOUNT}/boot/armbianEnv.txt.dist"
 
 	if [[ -f "${env_file}" ]]; then
-		cp -a "${env_file}" "${bak_file}"
-		display_alert "$BOARD" "armbianEnv.txt.bak created"
+		cp -a "${env_file}" "${dist_file}"
+		display_alert "$BOARD" "armbianEnv.txt.dist created"
 	fi
 }
