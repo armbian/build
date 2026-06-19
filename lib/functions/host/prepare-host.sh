@@ -175,14 +175,10 @@ function adaptative_prepare_host_dependencies() {
 		# filesystem & partition tooling
 		fs-tools::dosfstools fs-tools::e2fsprogs fs-tools::parted fs-tools::gdisk fs-tools::fdisk
 
-		# compressors et al
-		compression::lz4 compression::unzip compression::zip compression::pigz
-		compression::xz-utils compression::pbzip2 compression::lzop compression::zstd
-
-		# qemu binfmt + arch detection
-		emulation::binfmt-support emulation::arch-test
-
-		# core/misc: small utilities, downloaders, gpg, ncurses, logging, etc.
+		# core/misc: small utilities, downloaders, gpg, ncurses, logging, compressors, etc.
+		# binfmt-support/arch-test live here too (the heavy qemu-user-static is its own "qemu" group).
+		core::binfmt-support core::arch-test
+		core::lz4 core::unzip core::zip core::pigz core::xz-utils core::pbzip2 core::lzop core::zstd # compressors et al
 		core::bc core::bsdextrautils core::ca-certificates core::cpio
 		core::dialog core::dirmngr core::gawk core::gettext core::gnupg core::gpg
 		core::jq   # required for parsing JSON, specially rootfs-caching related.
@@ -232,8 +228,8 @@ function adaptative_prepare_host_dependencies() {
 	# refuses to auto-pick a provider, so install the non-HWE concrete
 	# name explicitly there.
 	case "${host_release}" in
-		resolute) host_dependencies+=("emulation::qemu-user-binfmt") ;;
-		*)        host_dependencies+=("emulation::qemu-user-static") ;;
+		resolute) host_dependencies+=("qemu::qemu-user-binfmt") ;;
+		*)        host_dependencies+=("qemu::qemu-user-static") ;;
 	esac
 
 	### Python2 -- required for some older u-boot builds
@@ -253,18 +249,20 @@ function adaptative_prepare_host_dependencies() {
 	### ARCH
 	declare wanted_arch="${target_arch:-"all"}"
 
+	# Cross-toolchains are split per target family so each lands in a similarly-sized layer.
 	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-other::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
+		host_dependencies+=("cross-amd64::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
 	fi
 
 	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
-		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64
-		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation
-		host_dependencies+=("cross-arm::gcc-aarch64-linux-gnu" "cross-arm::gcc-arm-linux-gnueabi")
+		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64 (64-bit arm)
+		host_dependencies+=("cross-arm64::gcc-aarch64-linux-gnu")
+		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation (32-bit arm)
+		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabi")
 	fi
 
 	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-arm::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
+		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
@@ -278,7 +276,7 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
-		host_dependencies+=("cross-other::libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
+		host_dependencies+=("cross-amd64::libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
