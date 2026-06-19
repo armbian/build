@@ -316,7 +316,7 @@ function install_host_dependencies() {
 	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
 		*run after all host dependencies are installed*
 		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		All the dependencies, including the default/core deps and the ones added via the `EXTRA_BUILD_DEPS` array
 		are installed at this point. The system clock has not yet been synced.
 	HOST_DEPENDENCIES_READY
 
