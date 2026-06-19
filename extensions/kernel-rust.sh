@@ -51,7 +51,7 @@ declare -g RUST_TOOL_SYSROOT=""
 function add_host_dependencies__add_rust_compiler() {
 	display_alert "Adding Rust kernel build dependencies" "${EXTENSION}" "info"
 	# bindgen needs libclang for dlopen; available on all target distros.
-	EXTRA_BUILD_DEPS+=("libclang-dev")
+	EXTRA_BUILD_DEPS+=("clang::libclang-dev")
 }
 
 # Download rustup-init binary for the current architecture.
