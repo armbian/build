@@ -273,7 +273,11 @@ function docker_create_dockerfile_apt_install_runs() {
 
 	# Preferred layer order: heaviest/most-stable first, so they stay cached longest.
 	# Any unknown (e.g. extension-defined) group is appended after, in first-seen order.
-	declare -a preferred_order=(clang qemu cross-other cross-amd64 cross-arm64 cross-armhf native-toolchain build-tools imaging python fs-tools core)
+	# NOTE on ordering: groups that explicitly pre-install a heavy *shared* dependency of a later
+	# group must come first, so that dependency lands in their (smaller, parallel-pullable) layer
+	# instead of inflating the later one. Specifically: 'llvm' before 'clang' (llvm-dev is the bulk
+	# of libclang-dev), and 'native-toolchain' before 'rust' (so gcc stays in native-toolchain).
+	declare -a preferred_order=(llvm clang qemu cross-other cross-amd64 cross-arm64 cross-armhf native-toolchain rust build-tools imaging python fs-tools core)
 	declare -a final_order=()
 	for group in "${preferred_order[@]}"; do
 		[[ -n "${group_pkgs[${group}]:-}" ]] && final_order+=("${group}")

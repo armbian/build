@@ -280,8 +280,10 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+		# llvm goes in its own (earlier) layer; clang/lld depend on libllvm, so splitting it out
+		# keeps the clang layer smaller and gives llvm its own parallel-pullable layer.
+		host_dependencies+=("llvm::llvm")
 		host_dependencies+=("clang::clang")
-		host_dependencies+=("clang::llvm")
 		host_dependencies+=("clang::lld")
 	fi
 
