@@ -1,11 +1,10 @@
-# Avnet MaaXBoard 8ULP (i.MX8ULP A2)
+# NXP i.MX8ULP A2 dual-core 2GB RAM 32GB eMMC
 BOARD_NAME="Avnet MaaXBoard 8ULP"
 BOARD_VENDOR="avnet"
 BOARDFAMILY="imx8ulp"
 BOARD_MAINTAINER="govindsi"
 INTRODUCED="2023"
 HAS_VIDEO_OUTPUT="yes"
-ATF_PLAT="imx8ulp"
 BOOTCONFIG="maaxboard-8ulp_defconfig"
 KERNEL_TARGET="current"
 KERNEL_TEST_TARGET="current"
