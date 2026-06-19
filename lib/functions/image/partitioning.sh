@@ -302,7 +302,62 @@ function prepare_partitions() {
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
+		# mkfs opens the target O_EXCL and fails with "apparently in use by the
+		# system; will not make a filesystem here!" when something still holds the
+		# just-created partition open — usually the host udevd probing it (blkid),
+		# but sometimes a leaked holder left on this loop device by a prior build
+		# (loop devices are a global kernel resource shared across containers).
+		#
+		# Re-probing the SAME loop doesn't clear it: a fresh partprobe just makes
+		# the host udevd re-scan and re-take the hold. So on a busy failure we
+		# detach this loop and grab a FRESH one, then back off to let its probe
+		# finish before retrying. That both sidesteps a stuck/leaked device and
+		# waits out the udev window. (udevadm settle can't help: the build is in a
+		# container with no udevd; the probing udevd lives on the host.)
+		#
+		# Before EACH attempt verify our loop still backs OUR raw image; if a
+		# sibling build reassigned it we must NOT write a filesystem — it would
+		# clobber the other build — so bail loudly. Reallocation is only safe when
+		# no storage extension remapped the root device (e.g. LUKS on top of the
+		# loop partition); in that case fall back to a plain backoff retry.
+		declare -i _mkfs_attempt
+		for _mkfs_attempt in 1 2 3 4 5; do
+			if ! losetup -j "${SDCARD}.raw" 2> /dev/null | grep -q "^${LOOP}:"; then
+				exit_with_error "Loop ${LOOP} no longer backs ${SDCARD}.raw (reassigned under us?) — refusing to mkfs to avoid corrupting another build"
+			fi
+			skip_error_info="yes" run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}" && break
+			[[ ${_mkfs_attempt} -ge 5 ]] && exit_with_error "mkfs on ${rootdevice} failed after ${_mkfs_attempt} attempts — device stayed busy"
+
+			if [[ "${rootdevice}" != "${physical_rootdevice}" ]]; then
+				# a storage extension remapped the root device — can't reallocate
+				# the loop without orphaning that mapping; just back off.
+				display_alert "mkfs failed: device busy, backing off and retrying" "${rootdevice} (attempt ${_mkfs_attempt})" "warn"
+				sleep $(( _mkfs_attempt * 2 ))
+				continue
+			fi
+
+			# Detach the busy loop and grab a fresh one for our raw image.
+			display_alert "mkfs failed: device busy, reallocating loop device" "detaching ${LOOP} (attempt ${_mkfs_attempt})" "warn"
+			losetup -d "${LOOP}" 2> /dev/null || true
+
+			exec {FD}> /var/lock/armbian-debootstrap-losetup
+			flock -x "$FD"
+			if [[ "$sfdisk_version_num" -ge "24100" ]]; then
+				LOOP=$(losetup --show --partscan --find -b "$SECTOR_SIZE" "${SDCARD}".raw) || { flock -u "$FD"; exit_with_error "Unable to find free loop device"; }
+			else
+				LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || { flock -u "$FD"; exit_with_error "Unable to find free loop device"; }
+			fi
+			flock -u "$FD"
+			display_alert "Reallocated loop device" "LOOP=${LOOP}"
+
+			run_host_command_logged partprobe "${LOOP}" || true
+			rootdevice="${LOOP}p${rootpart}"
+			physical_rootdevice="${rootdevice}"
+			check_loop_device "${rootdevice}"
+			# Let the host udevd finish probing the freshly-attached partition (its
+			# O_EXCL hold is what fails mkfs) before retrying on it.
+			sleep $(( _mkfs_attempt * 2 ))
+		done
 
 		#
 		# BEGIN: Options for specific filesystems
