@@ -127,7 +127,19 @@ function cli_handle_docker() {
 function docker_cli_prepare() {
 	# @TODO: Make sure we can access docker, on Linux; gotta be part of 'docker' group: grep -q "$(whoami)" <(getent group docker)
 
-	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
+	# Unique tag per build to avoid collisions when multiple runners build in parallel on
+	# the same host under different users (shared Docker daemon, separate ${SRC} trees).
+	declare build_suffix="${ARMBIAN_BUILD_UUID:-$(uuidgen 2> /dev/null)}"
+	# Hash the UUID and take 8 hex chars, instead of its first 8 raw chars: when
+	# uuidgen was unavailable, ARMBIAN_BUILD_UUID is the "no-uuidgen-yet-<RANDOM>-..."
+	# fallback whose first 8 chars are a constant "no-uuidg", so every parallel build
+	# would share one tag and collide. Hashing folds in the per-build RANDOM while
+	# staying deterministic within this build. Add local entropy only if there is no
+	# UUID at all (e.g. docker.sh run standalone before deps are installed).
+	[[ -z "${build_suffix}" ]] && build_suffix="${EPOCHREALTIME:-$(date +%s%N)}-$$-${RANDOM}${RANDOM}"
+	build_suffix="$(printf '%s' "${build_suffix}" | sha256sum 2> /dev/null | cut -c1-8)"
+	[[ -z "${build_suffix}" ]] && build_suffix="$(printf '%08x' "$$")" # no sha256sum: PID hex
+	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:${build_suffix}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:trixie"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"
@@ -743,6 +755,15 @@ function docker_cli_launch() {
 		# No use polluting GHA/CI with notices about Docker failure (real failure, inside Docker, generated enough errors already) skip_ci_special="yes"
 		skip_ci_special="yes" display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
 	fi
+
+	# This build owns a unique '${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}' tag (one per build, so parallel
+	# builds on a shared daemon never collide). The container has exited (--rm), so remove our tag now —
+	# otherwise these per-build images pile up: they stay *tagged*, so neither 'docker image prune'
+	# (dangling-only) nor docker_cleanup_old_images() (which matches 'docker-armbian-build', not the
+	# local 'armbian.local.only/armbian-build' repo) ever reaps them. Removing our own unique tag can't
+	# disturb other in-flight builds, and shared base layers are kept. Ignore errors (the image may
+	# already be gone, e.g. reaped by host housekeeping).
+	run_host_command_logged docker image rm --force "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" "||" true
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
 	local logs_path="${DEST}/logs" log_file
