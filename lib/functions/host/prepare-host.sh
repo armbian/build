@@ -279,22 +279,21 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=("lld")
 	fi
 
-	declare -g EXTRA_BUILD_DEPS=""
+	declare -g -a EXTRA_BUILD_DEPS=()
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
-		you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+		append packages to install to the `EXTRA_BUILD_DEPS` array here, e.g. `EXTRA_BUILD_DEPS+=("pkg")`.
 	ADD_HOST_DEPENDENCIES
 
-	if [ -n "${EXTRA_BUILD_DEPS}" ]; then
-		# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
-		host_dependencies+=(${EXTRA_BUILD_DEPS})
+	if [[ ${#EXTRA_BUILD_DEPS[@]} -gt 0 ]]; then
+		host_dependencies+=("${EXTRA_BUILD_DEPS[@]}")
 	fi
 
 	declare -g FINAL_HOST_DEPS="${host_dependencies[*]}"
 	call_extension_method "host_dependencies_known" <<- 'HOST_DEPENDENCIES_KNOWN'
 		*run after all host dependencies are known (but not installed)*
 		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		All the dependencies, including the default/core deps and the ones added via the `EXTRA_BUILD_DEPS` array
 		are determined at this point, but not yet installed.
 	HOST_DEPENDENCIES_KNOWN
 }
