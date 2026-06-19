@@ -14,7 +14,7 @@
 
 function add_host_dependencies__mtkflash() {
 	display_alert "Preparing mtkflash host-side dependencies" "${EXTENSION}" "info"
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} rustc cargo build-essential" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("rustc" "cargo" "build-essential")
 }
 
 function extension_finish_config__900_mtkflash() {
