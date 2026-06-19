@@ -3,9 +3,59 @@ set -eu
 
 G=/sys/kernel/config/usb_gadget/pb2
 CONFIG=c.1
-DEV_MAC=7e:d3:6e:6d:ad:50
-HOST_MAC=3e:4e:a9:17:31:0e
+IDENTITY_DIR=/var/lib/pb2-usb-gadget
+IDENTITY_FILE=$IDENTITY_DIR/identity
 FALLBACK_SERIAL=PB2NCMACM0001
+
+read_dt_serial() {
+	if [ -r /proc/device-tree/serial-number ]; then
+		serial=$(tr -d '\000' < /proc/device-tree/serial-number)
+		if [ -n "$serial" ]; then
+			printf '%s\n' "$serial"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+persistent_identity() {
+	if [ -s "$IDENTITY_FILE" ]; then
+		cat "$IDENTITY_FILE"
+		return 0
+	fi
+
+	mkdir -p "$IDENTITY_DIR"
+	identity=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+	if [ -z "$identity" ]; then
+		identity=$FALLBACK_SERIAL
+	fi
+	printf '%s\n' "$identity" > "$IDENTITY_FILE"
+	chmod 600 "$IDENTITY_FILE"
+	printf '%s\n' "$identity"
+}
+
+usb_serial() {
+	if serial=$(read_dt_serial); then
+		printf '%s\n' "$serial"
+		return 0
+	fi
+
+	printf 'PB2NCMACM-%s\n' "$(persistent_identity)"
+}
+
+derive_mac() {
+	prefix=$1
+	label=$2
+	hash=$(printf '%s:%s\n' "$label" "$USB_SERIAL" | sha256sum | cut -d' ' -f1)
+	printf '%s:%s:%s:%s:%s:%s\n' \
+		"$prefix" \
+		"$(printf '%s' "$hash" | cut -c1-2)" \
+		"$(printf '%s' "$hash" | cut -c3-4)" \
+		"$(printf '%s' "$hash" | cut -c5-6)" \
+		"$(printf '%s' "$hash" | cut -c7-8)" \
+		"$(printf '%s' "$hash" | cut -c9-10)"
+}
 
 first_udc() {
 	for u in /sys/class/udc/*; do
@@ -54,6 +104,9 @@ fi
 
 cleanup_configfs
 UDC=$(first_udc)
+USB_SERIAL=$(usb_serial)
+DEV_MAC=$(derive_mac 02 pb2-dev)
+HOST_MAC=$(derive_mac 06 pb2-host)
 
 mkdir -p "$G"
 cd "$G"
@@ -67,11 +120,7 @@ printf '0x02\n' > bDeviceSubClass
 printf '0x01\n' > bDeviceProtocol
 
 mkdir -p strings/0x409
-if [ -r /proc/device-tree/serial-number ]; then
-	tr -d '\000' < /proc/device-tree/serial-number > strings/0x409/serialnumber || printf '%s\n' "$FALLBACK_SERIAL" > strings/0x409/serialnumber
-else
-	printf '%s\n' "$FALLBACK_SERIAL" > strings/0x409/serialnumber
-fi
+printf '%s\n' "$USB_SERIAL" > strings/0x409/serialnumber
 printf 'BeagleBoard.org\n' > strings/0x409/manufacturer
 printf 'PocketBeagle 2 NCM+ACM\n' > strings/0x409/product
 
