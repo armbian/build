@@ -1,0 +1,292 @@
+#!/bin/sh
+# novaconfig - Luckfox Nova (RK3308B, mainline) configuration tool
+
+[ "$(id -u)" = 0 ] || { echo "novaconfig: run as root" >&2; exit 1; }
+
+# ---------------------------------------------------------------- boot mode
+if [ -f /boot/armbianEnv.txt ]; then
+	MODE=armbian
+	OVL_DIR=/boot/overlay-user
+	ENV=/boot/armbianEnv.txt
+elif [ -f /boot/extlinux/extlinux.conf ]; then
+	MODE=extlinux
+	OVL_DIR=/boot/overlays
+	CONF=/boot/extlinux/extlinux.conf
+else
+	echo "novaconfig: neither armbianEnv.txt nor extlinux.conf found" >&2
+	exit 1
+fi
+
+# ----------------------------------------------------------- interface data
+IFACES="i2c0 i2c1 uart1 uart3 spi2 pdm i2s_tx i2s_rx"
+
+if_path() {
+	case "$1" in
+	i2c0)  echo "/i2c@ff040000" ;;
+	i2c1)  echo "/i2c@ff050000" ;;
+	uart1) echo "/serial@ff0b0000" ;;
+	uart3) echo "/serial@ff0d0000" ;;
+	spi2)  echo "/spi@ff140000" ;;
+	pdm)   echo "/pdm@ff380000" ;;
+	i2s_tx) echo "/i2s@ff300000" ;;
+	i2s_rx) echo "/sound-i2s-rx-test" ;;
+	esac
+}
+
+if_pins() {
+	case "$1" in
+	i2c0)  echo "SDA=GPIO1_D0 SCL=GPIO1_D1" ;;
+	i2c1)  echo "SDA=GPIO0_B3 SCL=GPIO0_B4" ;;
+	uart1) echo "RX=GPIO1_D0 TX=GPIO1_D1 (ttyS1)" ;;
+	uart3) echo "RX=GPIO3_B4 TX=GPIO3_B5 (ttyS3)" ;;
+	spi2)  echo "MISO=GPIO1_C6 MOSI=GPIO1_C7 CLK=GPIO1_D0 CS=GPIO1_D1" ;;
+	pdm)   echo "CLK=GPIO2_A6 SDI0-3=GPIO2_B5/B6/B7/C0 (P1, card hw:1,0)" ;;
+	i2s_tx) echo "TX/master: SCLK=GPIO2_A5 LRCK=GPIO2_A7 SDO=GPIO2_B1 SDI=GPIO2_B5 (P1, shares pdm pins)" ;;
+	i2s_rx) echo "RX capture: BCLK=GPIO2_A6 LRCK=GPIO2_B0 DATA=GPIO2_B5 (frees pwm@ff160030/ff170030; card hw:i2srxtest)" ;;
+	esac
+}
+
+# i2c0 / uart1 / spi2 all live on GPIO1_D0/D1 - mutually exclusive
+if_group() {
+	case "$1" in
+	i2c0|uart1|spi2) echo gpio1d ;;
+	pdm|i2s_tx|i2s_rx) echo gpio2_audio ;;
+	*) echo "" ;;
+	esac
+}
+
+emit_overlay() {
+	mkdir -p "$OVL_DIR"
+	command -v dtc >/dev/null 2>&1 || {
+		echo "dtc not found (Armbian: apt install device-tree-compiler)" >&2
+		return 1
+	}
+	tmp=$(mktemp /tmp/novaconfig.XXXXXX.dts) || return 1
+	if [ "$1" = pdm ]; then
+		cat > "$tmp" <<EOF
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "$(if_path "$1")";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+	fragment@1 {
+		target-path = "/sound-pdm";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};
+EOF
+	elif [ "$1" = i2s_rx ]; then
+		# i2s_8ch_0 in RX/slave mode + the dmic capture card. Switch to the
+		# RX clock pins and free them from the two header PWMs that squat there.
+		cat > "$tmp" <<EOF
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "/i2s@ff300000";
+		__overlay__ {
+			status = "okay";
+			pinctrl-0 = <&i2s_8ch_0_sclkrx &i2s_8ch_0_lrckrx &i2s_8ch_0_sdi0>;
+		};
+	};
+	fragment@1 { target-path = "/pwm@ff160030"; __overlay__ { status = "disabled"; }; };
+	fragment@2 { target-path = "/pwm@ff170030"; __overlay__ { status = "disabled"; }; };
+	fragment@3 { target-path = "/sound-i2s-rx-test"; __overlay__ { status = "okay"; }; };
+};
+EOF
+	elif [ "$1" = spi2 ]; then
+		cat > "$tmp" <<EOF
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "$(if_path "$1")";
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			spidev@0 {
+				compatible = "rohm,dh2228fv"; /* spidev */
+				reg = <0>;
+				spi-max-frequency = <10000000>;
+			};
+		};
+	};
+};
+EOF
+	else
+		cat > "$tmp" <<EOF
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "$(if_path "$1")";
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};
+EOF
+	fi
+	dtc -q -@ -I dts -O dtb -o "$OVL_DIR/nova-$1.dtbo" "$tmp" || { rm -f "$tmp"; return 1; }
+	rm -f "$tmp"
+}
+
+# -------------------------------------------------- boot-config read/write
+enabled_list() {
+	case "$MODE" in
+	armbian)
+		sed -n 's/^user_overlays=//p' "$ENV" | tr ' ' '\n' |
+			sed -n 's/^nova-//p' | tr '\n' ' '
+		;;
+	extlinux)
+		sed -n 's/^[[:space:]]*fdtoverlays[[:space:]]*//p' "$CONF" | tr ' ' '\n' |
+			sed -n 's|.*/nova-\(.*\)\.dtbo|\1|p' | tr '\n' ' '
+		;;
+	esac
+}
+
+write_list() {
+	names="$*"
+	case "$MODE" in
+	armbian)
+		# preserve overlays the user added that aren't ours
+		others=$(sed -n 's/^user_overlays=//p' "$ENV" | tr ' ' '\n' \
+			| grep -v '^nova-' | grep -v '^$' | tr '\n' ' ')
+		toks=""
+		for n in $names; do toks="$toks nova-$n"; done
+		toks=$(echo "$others$toks" | tr -s ' '); toks=${toks# }; toks=${toks% }
+		sed -i '/^user_overlays=/d' "$ENV"
+		[ -n "$toks" ] && echo "user_overlays=$toks" >> "$ENV"
+		;;
+	extlinux)
+		others=$(sed -n 's/^[[:space:]]*fdtoverlays[[:space:]]*//p' "$CONF" | tr ' ' '\n' \
+			| grep -v '/nova-' | grep -v '^$' | tr '\n' ' ')
+		paths=""
+		for n in $names; do paths="$paths $OVL_DIR/nova-$n.dtbo"; done
+		paths=$(echo "$others$paths" | tr -s ' '); paths=${paths# }; paths=${paths% }
+		sed -i '/^[[:space:]]*fdtoverlays/d' "$CONF"
+		[ -n "$paths" ] && sed -i "/devicetree /a\\	fdtoverlays $paths" "$CONF"
+		;;
+	esac
+}
+
+is_enabled() { case " $(enabled_list) " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+live_status() {
+	s=$(tr -d '\0' < "/proc/device-tree$(if_path "$1")/status" 2>/dev/null)
+	echo "${s:-okay?}"
+}
+
+toggle() {
+	name=$1
+	if is_enabled "$name"; then
+		new=""
+		for n in $(enabled_list); do [ "$n" = "$name" ] || new="$new $n"; done
+		write_list $new
+		rm -f "$OVL_DIR/nova-$name.dtbo"
+		echo ">> $name disabled (reboot to apply)"
+	else
+		grp=$(if_group "$name")
+		if [ -n "$grp" ]; then
+			for n in $(enabled_list); do
+				if [ "$(if_group "$n")" = "$grp" ]; then
+					echo ">> conflict: $n shares pins with $name - disable $n first"
+					return
+				fi
+			done
+		fi
+		# i2s_rx's overlay references base-DTB labels (the RX pinctrl groups),
+		# which need a /__symbols__ node - i.e. a kernel DTB built with dtc -@.
+		# Without it the bootloader can't apply the overlay and the boot fails,
+		# so refuse here rather than leave an unbootable image.
+		if [ "$name" = i2s_rx ] && [ ! -e /proc/device-tree/__symbols__ ] \
+		   && [ ! -e /sys/firmware/devicetree/base/__symbols__ ]; then
+			echo ">> $name needs a base DTB with /__symbols__ (kernel built with dtc -@)."
+			echo "   This image's DTB has none; enabling it would break boot. Refusing."
+			return
+		fi
+		emit_overlay "$name" || return
+		write_list $(enabled_list) "$name"
+		echo ">> $name enabled (reboot to apply)"
+	fi
+}
+
+# ------------------------------------------------------------------- menus
+sysinfo() {
+	echo "--- system ---------------------------------------"
+	echo "model  : $(tr -d '\0' < /proc/device-tree/model 2>/dev/null)"
+	echo "kernel : $(uname -r)  ($(uname -v))"
+	echo "distro : $MODE"
+	echo "root   : $(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)"
+	rootsrc=$(findmnt -n -o SOURCE / 2>/dev/null || awk '$2=="/"{print $1}' /proc/mounts)
+	echo "rootdev: $rootsrc"
+	for i in eth0 end0; do
+		ip=$(ip -4 addr show "$i" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p')
+		[ -n "$ip" ] && echo "ip     : $i $ip"
+	done
+	echo "uptime : $(uptime)"
+}
+
+iface_menu() {
+	while :; do
+		echo
+		echo "--- interfaces (overlay, needs reboot) -----------"
+		i=0
+		for n in $IFACES; do
+			i=$((i + 1))
+			if is_enabled "$n"; then st="[ENABLED ]"; else st="[disabled]"; fi
+			printf '  %d) %-6s %s live=%-8s %s\n' "$i" "$n" "$st" "$(live_status "$n")" "$(if_pins "$n")"
+		done
+		echo "  9) disable all"
+		echo "  0) back"
+		printf 'toggle which? '
+		read -r c
+		[ "$c" = 0 ] && return
+		if [ "$c" = 9 ]; then
+			for n in $(enabled_list); do rm -f "$OVL_DIR/nova-$n.dtbo"; done
+			write_list ""
+			echo ">> all interfaces disabled (reboot to apply)"
+			continue
+		fi
+		i=0
+		for n in $IFACES; do
+			i=$((i + 1))
+			[ "$c" = "$i" ] && { toggle "$n"; break; }
+		done
+	done
+}
+
+while :; do
+	echo
+	echo "=== novaconfig (Luckfox Nova / mainline) =========="
+	echo "  1) system info"
+	echo "  2) GPIO inspector        (gpiocheck)"
+	echo "  3) PWM tester            (pwmtest)"
+	echo "  4) interfaces (overlays: i2c/uart/spi/pdm/i2s)"
+	echo "  0) exit"
+	printf 'choice: '
+	read -r c
+	case "$c" in
+	1) sysinfo ;;
+	2)
+		printf 'pin (empty = overview): '
+		read -r p
+		if [ -n "$p" ]; then gpiocheck "$p"; else gpiocheck; fi
+		;;
+	3)
+		pwmtest
+		printf 'channel freq duty (e.g. "pwm5 1000 50", empty = skip): '
+		read -r a b d
+		[ -n "$a" ] && pwmtest "$a" "${b:-1000}" "${d:-50}"
+		;;
+	4) iface_menu ;;
+	0) echo; echo "*** don't forget to reboot! ***"; exit 0 ;;
+	esac
+done
