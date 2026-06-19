@@ -253,6 +253,7 @@ function docker_cli_prepare() {
 function docker_create_dockerfile_apt_install_runs() {
 	declare comment_gate="${1}"
 	declare -A group_pkgs=()
+	declare -A pkg_seen=() # global dedup: a package is installed once, in the first group that lists it
 	declare -a groups_seen=()
 	declare entry group pkg
 
@@ -264,13 +265,15 @@ function docker_create_dockerfile_apt_install_runs() {
 			group="${HOSTDEP_DEFAULT_GROUP}"
 			pkg="${entry}"
 		fi
+		[[ -n "${pkg_seen[${pkg}]:-}" ]] && continue # skip duplicate package (e.g. added by several extensions)
+		pkg_seen[${pkg}]="y"
 		[[ -z "${group_pkgs[${group}]:-}" ]] && groups_seen+=("${group}")
 		group_pkgs[${group}]+="${pkg} "
 	done
 
 	# Preferred layer order: heaviest/most-stable first, so they stay cached longest.
 	# Any unknown (e.g. extension-defined) group is appended after, in first-seen order.
-	declare -a preferred_order=(clang cross-arm cross-other emulation imaging native-toolchain build-tools python fs-tools compression core)
+	declare -a preferred_order=(clang qemu cross-other cross-amd64 cross-arm64 cross-armhf native-toolchain build-tools imaging python fs-tools core)
 	declare -a final_order=()
 	for group in "${preferred_order[@]}"; do
 		[[ -n "${group_pkgs[${group}]:-}" ]] && final_order+=("${group}")
