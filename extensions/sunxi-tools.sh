@@ -4,7 +4,7 @@
 # This is only used for non-Docker, since the Docker image already has it, since it includes compilers for all architectures.
 function add_host_dependencies__sunxi_add_32_bit_c_compiler() {
 	display_alert "Adding armhf C compiler to host dependencies" "for sunxi bootloader compile" "debug"
-	EXTRA_BUILD_DEPS+=("cross-arm::gcc-arm-linux-gnueabi")
+	EXTRA_BUILD_DEPS+=("cross-armhf::gcc-arm-linux-gnueabi")
 }
 
 # Install gcc-or1k-elf for crust compilation
