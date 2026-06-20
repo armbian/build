@@ -150,7 +150,7 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.1; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.2; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
 		local rtl8192euver='commit:9c0511420da11214c68d8591b19459ba10892aab' # Commit date: 2026-03-13 (please update when updating commit ref)
@@ -188,6 +188,11 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 7.1
+		if linux-version compare "${version}" ge 7.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-linux-7.1.patch" "applying"
+		fi
 	fi
 }
 
