@@ -1,0 +1,97 @@
+#!/bin/sh
+# pwmtest - RK3308B (Luckfox Nova) PWM helper
+
+#   pwmtest                     list PWM channels (SoC name, pin, state)
+#   pwmtest pwm5 1000 50        pwm5: 1000 Hz, 50% duty, enable
+#   pwmtest pwm5 off            disable pwm5
+
+
+die() { echo "pwmtest: $*" >&2; exit 1; }
+
+soc_name() {
+	case "$1" in
+	ff180000*) echo pwm0 ;; ff180010*) echo pwm1 ;;
+	ff180020*) echo pwm2 ;; ff180030*) echo pwm3 ;;
+	ff170000*) echo pwm4 ;; ff170010*) echo pwm5 ;;
+	ff170020*) echo pwm6 ;; ff170030*) echo pwm7 ;;
+	ff160000*) echo pwm8 ;; ff160010*) echo pwm9 ;;
+	ff160020*) echo pwm10 ;; ff160030*) echo pwm11 ;;
+	*) echo "?" ;;
+	esac
+}
+
+pin_of() {
+	case "$1" in
+	pwm0) echo "GPIO0_B5 (vdd_core!)" ;;
+	pwm1) echo GPIO0_B6 ;; pwm2) echo GPIO0_B7 ;; pwm3) echo GPIO0_C0 ;;
+	pwm4) echo "GPIO0_A1 (work LED)" ;;
+	pwm5) echo GPIO0_C1 ;; pwm6) echo GPIO0_C2 ;;
+	pwm7) echo GPIO2_B0 ;; pwm8) echo GPIO2_B2 ;; pwm9) echo GPIO2_B3 ;;
+	pwm10) echo GPIO2_B4 ;; pwm11) echo GPIO2_C0 ;;
+	*) echo "?" ;;
+	esac
+}
+
+chip_of() {
+	for c in /sys/class/pwm/pwmchip*; do
+		[ -e "$c" ] || continue
+		addr=$(basename "$(readlink -f "$c/device")")
+		[ "$(soc_name "$addr")" = "$1" ] && { echo "$c"; return; }
+	done
+}
+
+list() {
+	for c in /sys/class/pwm/pwmchip*; do
+		[ -e "$c" ] || continue
+		addr=$(basename "$(readlink -f "$c/device")")
+		name=$(soc_name "$addr")
+		state="free"
+		if [ -d "$c/pwm0" ]; then
+			en=$(cat "$c/pwm0/enable" 2>/dev/null)
+			per=$(cat "$c/pwm0/period" 2>/dev/null)
+			dut=$(cat "$c/pwm0/duty_cycle" 2>/dev/null)
+			state="exported enable=$en period=${per}ns duty=${dut}ns"
+		elif ls "$c"/pwm-* >/dev/null 2>&1; then
+			state="in use (kernel)"
+		fi
+		[ "$name" = pwm0 ] && state="claimed by vdd_core regulator - DO NOT TOUCH"
+		printf '%-6s %s  pin %-22s %s\n' "$name" "$(basename "$c")" "$(pin_of "$name")" "$state"
+	done
+}
+
+[ $# -eq 0 ] && { list; exit 0; }
+
+name=$1
+[ "$name" = pwm0 ] && die "pwm0 is the CPU core supply, refusing"
+chip=$(chip_of "$name")
+[ -n "$chip" ] || die "$name not found (not enabled in the DTS or wrong name)"
+
+if [ "$2" = off ]; then
+	[ -d "$chip/pwm0" ] || die "$name is not exported"
+	echo 0 > "$chip/pwm0/enable"
+	echo "$name disabled"
+	exit 0
+fi
+
+freq=${2:-1000}
+duty=${3:-50}
+[ "$freq" -gt 0 ] 2>/dev/null || die "bad frequency '$freq' (Hz)"
+[ "$duty" -ge 0 ] 2>/dev/null && [ "$duty" -le 100 ] || die "bad duty '$duty' (0-100)"
+
+period=$((1000000000 / freq))
+[ "$period" -gt 0 ] || die "frequency '$freq' Hz is too high"
+dc=$((period * duty / 100))
+
+[ -d "$chip/pwm0" ] || echo 0 > "$chip/export"
+[ -d "$chip/pwm0" ] || die "cannot export $name"
+
+# order matters: duty must stay below period at all times, and polarity can
+# only be changed while disabled (boot-time register state is often inversed,
+# which made 0% read 3.3V and 100% read 0V)
+echo 0 > "$chip/pwm0/enable" 2>/dev/null
+echo 0 > "$chip/pwm0/duty_cycle" 2>/dev/null
+[ -f "$chip/pwm0/polarity" ] && echo normal > "$chip/pwm0/polarity" 2>/dev/null
+echo "$period" > "$chip/pwm0/period" || die "failed to set period"
+echo "$dc" > "$chip/pwm0/duty_cycle" || die "failed to set duty_cycle"
+echo 1 > "$chip/pwm0/enable" || die "failed to enable $name"
+echo "$name ($(pin_of "$name")): ${freq} Hz, ${duty}% (period ${period}ns, duty ${dc}ns)"
