@@ -287,8 +287,11 @@ function docker_cli_prepare_dockerfile() {
 	fi
 	declare -a -g host_dependencies=()
 
-	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
-	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}'" "${host_dependencies[*]}" "debug"
+	# Get the actual host architecture for proper cross-compiler selection
+	declare host_arch
+	host_arch="$(dpkg --print-architecture)"
+	host_release="${DOCKER_WANTED_RELEASE}" host_arch="${host_arch}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
+	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}' host_arch '${host_arch}'" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
 	display_alert "Creating" "Dockerfile; FROM ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
