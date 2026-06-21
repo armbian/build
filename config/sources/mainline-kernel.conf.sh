@@ -7,9 +7,12 @@
 # Shared versioning logic for Armbian mainline kernels.
 function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	[[ -n "${KERNELBRANCH}" ]] && return 0           # if already set, don't touch it; that way other hooks can run in any order
-	if [[ "${KERNEL_MAJOR_MINOR}" == "7.2" ]]; then # @TODO: roll over to next MAJOR.MINOR and MAJOR.MINOR-rc1 when it is released
-		declare -g KERNELBRANCH="tag:v7.2-rc1"
-		display_alert "mainline-kernel: upstream release candidate" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
+	if [[ "${KERNEL_MAJOR_MINOR}" == "7.2" ]]; then # @TODO: switch to 'tag:v7.2-rc1' once Linus tags it, then roll over to the next MAJOR.MINOR
+		# v7.2-rc1 is not tagged upstream yet (7.2 merge window still open), so a
+		# 'tag:v7.2-rc1' SHA1 fetch fails the build. Track Linus' master HEAD until
+		# rc1 lands; the __750 hook below points the source at the torvalds repo.
+		declare -g KERNELBRANCH="branch:master"
+		display_alert "mainline-kernel: tracking merge-window HEAD" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
 	fi
 }
 
@@ -26,11 +29,12 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 
  # Example: 6.7-rc7 was released by Linus, but kernel.org git and google git mirrors took a while to catch up; change the source to pull directly from Linus.
  # This was necessary for a few days in late December 2023, but no longer; tag was pushed on 28/Dec/2023.
- function mainline_kernel_decide_version__750_use_torvalds_for_7.2-rc1() {
- 	if [[ "${KERNELBRANCH}" == 'tag:v7.2-rc1' ]]; then
- 		display_alert "Using Linus kernel repo for 7.2-rc1" "${KERNELBRANCH}" "warn"
+ function mainline_kernel_decide_version__750_use_torvalds_for_7.2() {
+ 	if [[ "${KERNEL_MAJOR_MINOR}" == "7.2" && "${KERNELBRANCH}" == 'branch:master' ]]; then
+ 		# Pull the merge-window HEAD straight from Linus; kernel.org/google mirrors
+ 		# lag the master branch (and v7.2-rc1 isn't tagged anywhere yet).
  		declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
- 		display_alert "mainline-kernel: missing torvalds tag on 7.2-rc1" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "info"
+ 		display_alert "mainline-kernel: tracking Linus master for 7.2" "Using KERNELSOURCE='${KERNELSOURCE}' for KERNELBRANCH='${KERNELBRANCH}'" "warn"
  	fi
  }
 
