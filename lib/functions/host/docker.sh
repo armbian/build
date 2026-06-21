@@ -397,12 +397,28 @@ function docker_cli_build_dockerfile() {
 
 function docker_cli_prepare_launch() {
 	display_alert "Preparing" "common Docker arguments" "debug"
+
+	# The container otherwise inherits the Docker daemon's default open-file limit
+	# (classically 1024 soft), independent of the host's own (possibly generous)
+	# limit. That is too low for the parallel info-gatherer (cpu*4 workers, each
+	# holding pipes) and it dies with "OSError: [Errno 24] Too many open files".
+	# Pass the HOST's hard limit through so the container matches the host. The
+	# host hard limit can never exceed the kernel's fs.nr_open, and the container
+	# shares that kernel, so this value is always a valid --ulimit.
+	declare _docker_nofile_hard
+	_docker_nofile_hard="$(ulimit -H -n 2>/dev/null || true)"
+	[[ "${_docker_nofile_hard}" == "unlimited" || -z "${_docker_nofile_hard}" ]] && _docker_nofile_hard=1048576
+
 	declare -g -a DOCKER_ARGS=(
 		"--rm" # side effect - named volumes are considered not attached to anything and are removed on "docker volume prune", since container was removed.
 
 		"--cap-add=SYS_ADMIN"  # add only required capabilities instead
 		"--cap-add=MKNOD"      # (though MKNOD should be already present)
 		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it @TODO: rpardini maybe it's dead already?
+
+		# Match the host's open-file limit (see above) so the parallel info-gatherer
+		# isn't capped by the container's default 1024 and hit Errno 24.
+		"--ulimit" "nofile=${_docker_nofile_hard}:${_docker_nofile_hard}"
 
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
