@@ -7,6 +7,12 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function add_host_dependencies__stubble_dependencies() {
+	EXTRA_BUILD_DEPS+=("python3-pyelftools")
+	EXTRA_BUILD_DEPS+=("python3-libfdt")
+	EXTRA_BUILD_DEPS+=("systemd-ukify")
+}
+
 function compile_stubble() {
 	if [[ "${KERNEL_DO_STUBBLE}" != "yes" ]]; then
 		return 0

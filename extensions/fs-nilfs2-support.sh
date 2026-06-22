@@ -8,7 +8,7 @@ function extension_prepare_config__add_to_image_nilfs-tools() {
 
 function add_host_dependencies__add_nilfs_tools() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "nilfs-tools" "debug"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} nilfs-tools" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::nilfs-tools")
 }
 
 function pre_update_initramfs__add_module_into_initramfs_config() {

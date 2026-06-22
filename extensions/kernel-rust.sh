@@ -51,7 +51,10 @@ declare -g RUST_TOOL_SYSROOT=""
 function add_host_dependencies__add_rust_compiler() {
 	display_alert "Adding Rust kernel build dependencies" "${EXTENSION}" "info"
 	# bindgen needs libclang for dlopen; available on all target distros.
-	EXTRA_BUILD_DEPS+=" libclang-dev "
+	# NB: do NOT pre-pull llvm-dev into an earlier layer to "split" this — measured, llvm-dev is a
+	# superset far larger than what libclang-dev needs (~+560MB total, bigger max layer). Keep
+	# libclang-dev as a single ~633MB 'clang' layer instead.
+	EXTRA_BUILD_DEPS+=("clang::libclang-dev")
 }
 
 # Download rustup-init binary for the current architecture.

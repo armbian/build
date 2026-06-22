@@ -9,5 +9,5 @@ function extension_prepare_config__add_to_image_xfsprogs() {
 
 function add_host_dependencies__add_xfs_tooling() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "xfsprogs" "debug"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} xfsprogs" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::xfsprogs")
 }

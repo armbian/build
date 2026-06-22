@@ -1,0 +1,709 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Fri, 22 May 2026 12:40:36 +0800
+Subject: add thermal IPA support
+
+---
+ drivers/acpi/cppc_acpi.c         |   4 +
+ drivers/acpi/processor_thermal.c | 235 ++++++++++
+ drivers/acpi/thermal.c           |  79 +++-
+ drivers/cpufreq/cppc_cpufreq.c   | 172 ++++++-
+ include/acpi/cppc_acpi.h         |  13 +
+ 5 files changed, 500 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/acpi/cppc_acpi.c b/drivers/acpi/cppc_acpi.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/cppc_acpi.c
++++ b/drivers/acpi/cppc_acpi.c
+@@ -524,6 +524,10 @@ int acpi_get_psd_map(unsigned int cpu, struct cppc_cpudata *cpu_data)
+ 	else if (pdomain->coord_type == DOMAIN_COORD_TYPE_SW_ANY)
+ 		cpu_data->shared_type = CPUFREQ_SHARED_TYPE_ANY;
+ 
++#ifdef CONFIG_CIX_THERMAL
++	cpu_data->perf_domain = pdomain->domain;
++#endif
++
+ 	for_each_possible_cpu(i) {
+ 		if (i == cpu)
+ 			continue;
+diff --git a/drivers/acpi/processor_thermal.c b/drivers/acpi/processor_thermal.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/processor_thermal.c
++++ b/drivers/acpi/processor_thermal.c
+@@ -16,6 +16,10 @@
+ #include <linux/acpi.h>
+ #include <acpi/processor.h>
+ #include <linux/uaccess.h>
++#include <linux/cix/cpu_ipa.h>
++#include <linux/energy_model.h>
++#include <acpi/cppc_acpi.h>
++#include <asm/cputype.h>
+ 
+ #include "internal.h"
+ 
+@@ -62,6 +66,92 @@ static int phys_package_first_cpu(int cpu)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_CIX_THERMAL
++static unsigned int cix_get_static_power(unsigned int cpu)
++{
++	int pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
++	unsigned long long temp;
++	struct acpi_object_list arg_list;
++	union acpi_object arg;
++	acpi_status status;
++
++	arg_list.count = 1;
++	arg_list.pointer = &arg;
++	arg.type = ACPI_TYPE_INTEGER;
++	arg.integer.value = pcpu;
++
++	if (pcpu > 12) {
++		pr_err("CIX: Invalid CPU[%d %u] for SPRG\n", pcpu, cpu);
++		return 0;
++	}
++
++	status = acpi_evaluate_integer(NULL, "\\_SB.SPRG", &arg_list, &temp);
++	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND) {
++		pr_err("failed to evaluate SPRG %s\n",
++		       acpi_format_exception(status));
++		return 0;
++	}
++
++	return (unsigned int)(temp & 0xFFFFFFFF);
++}
++
++static unsigned int cix_get_dynamic_power(unsigned int cpu)
++{
++	int pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
++	unsigned long long temp;
++	struct acpi_object_list arg_list;
++	union acpi_object arg;
++	acpi_status status;
++
++	arg_list.count = 1;
++	arg_list.pointer = &arg;
++	arg.type = ACPI_TYPE_INTEGER;
++	arg.integer.value = pcpu;
++
++	if (pcpu > 12) {
++		pr_err("CIX: Invalid CPU[%d %u] for DPRG\n", pcpu, cpu);
++		return 0;
++	}
++
++	status = acpi_evaluate_integer(NULL, "\\_SB.DPRG", &arg_list, &temp);
++	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND) {
++		pr_err("failed to evaluate DPRG %s\n",
++		       acpi_format_exception(status));
++		return 0;
++	}
++
++	return (unsigned int)(temp & 0xFFFFFFFF);
++}
++
++static int processor_get_static_power_cpus(const struct cpumask *cpus)
++{
++	int power = cix_get_static_power_cpus(cpus);
++	unsigned int cpu;
++
++	if (power)
++		return power;
++
++	for_each_cpu(cpu, cpus)
++		power += cix_get_static_power(cpu);
++
++	return power;
++}
++
++static int processor_get_dynamic_power_cpus(const struct cpumask *cpus)
++{
++	int power = cix_get_dynamic_power_cpus(cpus);
++	unsigned int cpu;
++
++	if (power)
++		return power;
++
++	for_each_cpu(cpu, cpus)
++		power += cix_get_dynamic_power(cpu);
++
++	return power;
++}
++#endif
++
+ static bool cpu_has_cpufreq(unsigned int cpu)
+ {
+ 	if (!acpi_processor_cpufreq_init)
+@@ -302,10 +392,155 @@ processor_set_cur_state(struct thermal_cooling_device *cdev,
+ 	return result;
+ }
+ 
++#ifdef CONFIG_CIX_THERMAL
++static int processor_get_requested_power(struct thermal_cooling_device *cdev,
++					 u32 *power)
++{
++	struct acpi_device *device = cdev->devdata;
++	struct cpufreq_policy *policy;
++	struct acpi_processor *pr;
++
++	if (!device)
++		return -EINVAL;
++
++	pr = acpi_driver_data(device);
++	if (!pr || pr->id >= num_possible_cpus())
++		return -EINVAL;
++
++	policy = cpufreq_cpu_get(pr->id);
++	if (!policy)
++		return -EINVAL;
++
++	*power = processor_get_static_power_cpus(policy->cpus) +
++		 processor_get_dynamic_power_cpus(policy->cpus);
++	cpufreq_cpu_put(policy);
++
++	return 0;
++}
++
++static int processor_state2power(struct thermal_cooling_device *cdev,
++				 unsigned long state, u32 *power)
++{
++	unsigned int opp_power, num_cpus, idx;
++	struct cpufreq_policy *policy;
++	struct cppc_cpudata *cpu_data;
++	struct em_perf_domain *em;
++	struct em_perf_state *table;
++	struct acpi_device *device = cdev->devdata;
++	struct acpi_processor *pr;
++
++	if (!device)
++		return -EINVAL;
++
++	pr = acpi_driver_data(device);
++	if (!pr || pr->id >= num_possible_cpus())
++		return -EINVAL;
++
++	policy = cpufreq_cpu_get(pr->id);
++	if (!policy)
++		return -EINVAL;
++
++	cpu_data = policy->driver_data;
++	if (!cpu_data || !cpu_data->opp_level_num) {
++		cpufreq_cpu_put(policy);
++		return -ENODEV;
++	}
++
++	if (state >= cpu_data->opp_level_num) {
++		cpufreq_cpu_put(policy);
++		return -EINVAL;
++	}
++
++	em = em_cpu_get(policy->cpu);
++	if (!em) {
++		cpufreq_cpu_put(policy);
++		return -ENODEV;
++	}
++
++	num_cpus = cpumask_weight(policy->cpus);
++	idx = cpu_data->opp_level_num - state - 1;
++
++	rcu_read_lock();
++	table = em_perf_state_from_pd(em);
++	opp_power = table[idx].power;
++	rcu_read_unlock();
++
++	*power = opp_power * num_cpus;
++	*power += processor_get_static_power_cpus(policy->cpus);
++	cpufreq_cpu_put(policy);
++
++	return 0;
++}
++
++static int processor_power2state(struct thermal_cooling_device *cdev,
++				 u32 power, unsigned long *state)
++{
++	struct cpufreq_policy *policy;
++	struct cppc_cpudata *cpu_data;
++	struct em_perf_domain *em;
++	struct em_perf_state *table;
++	u32 normalised_power, em_power_mw, static_power;
++	int i;
++	struct acpi_device *device = cdev->devdata;
++	struct acpi_processor *pr;
++
++	if (!device)
++		return -EINVAL;
++
++	pr = acpi_driver_data(device);
++	if (!pr || pr->id >= num_possible_cpus())
++		return -EINVAL;
++
++	policy = cpufreq_cpu_get(pr->id);
++	if (!policy)
++		return -EINVAL;
++
++	cpu_data = policy->driver_data;
++	if (!cpu_data || !cpu_data->opp_level_num) {
++		cpufreq_cpu_put(policy);
++		return -ENODEV;
++	}
++
++	static_power = processor_get_static_power_cpus(policy->cpus);
++	normalised_power = power > static_power ? power - static_power : 0;
++
++	em = em_cpu_get(policy->cpu);
++	if (!em) {
++		cpufreq_cpu_put(policy);
++		return -ENODEV;
++	}
++
++	rcu_read_lock();
++	table = em_perf_state_from_pd(em);
++
++	for (i = cpu_data->opp_level_num - 1; i >= 0; i--) {
++		em_power_mw = table[i].power;
++		if (normalised_power >= em_power_mw)
++			break;
++	}
++	rcu_read_unlock();
++
++	cpufreq_cpu_put(policy);
++
++	if (i < 0) {
++		*state = cpu_data->opp_level_num - 1;
++		return 0;
++	}
++
++	*state = cpu_data->opp_level_num - i - 1;
++	return 0;
++}
++#endif
++
+ const struct thermal_cooling_device_ops processor_cooling_ops = {
+ 	.get_max_state = processor_get_max_state,
+ 	.get_cur_state = processor_get_cur_state,
+ 	.set_cur_state = processor_set_cur_state,
++#ifdef CONFIG_CIX_THERMAL
++	.get_requested_power = processor_get_requested_power,
++	.power2state = processor_power2state,
++	.state2power = processor_state2power,
++#endif
+ };
+ 
+ int acpi_processor_thermal_init(struct acpi_processor *pr,
+diff --git a/drivers/acpi/thermal.c b/drivers/acpi/thermal.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/thermal.c
++++ b/drivers/acpi/thermal.c
+@@ -48,7 +48,12 @@
+ 
+ #define ACPI_THERMAL_TRIP_PASSIVE	(-1)
+ 
++#ifdef CONFIG_CIX_THERMAL
++#define ACPI_THERMAL_MAX_NR_TRIPS	(ACPI_THERMAL_MAX_ACTIVE + 4)
++#define TEMP_MIN_DECIK			2180
++#else
+ #define ACPI_THERMAL_MAX_NR_TRIPS	(ACPI_THERMAL_MAX_ACTIVE + 3)
++#endif
+ 
+ /*
+  * This exception is thrown out in two cases:
+@@ -88,6 +93,9 @@ static struct workqueue_struct *acpi_thermal_pm_queue;
+ 
+ struct acpi_thermal_trip {
+ 	unsigned long temp_dk;
++#ifdef CONFIG_CIX_THERMAL
++	unsigned long switch_on_temp_dk;
++#endif
+ 	struct acpi_handle_list devices;
+ };
+ 
+@@ -120,6 +128,9 @@ struct acpi_thermal {
+ 	struct work_struct thermal_check_work;
+ 	struct mutex thermal_check_lock;
+ 	refcount_t thermal_check_count;
++#ifdef CONFIG_CIX_THERMAL
++	unsigned long sustainable_power;
++#endif
+ };
+ 
+ /* --------------------------------------------------------------------------
+@@ -148,6 +159,41 @@ static int acpi_thermal_get_temperature(struct acpi_thermal *tz)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_CIX_THERMAL
++static int acpi_thermal_get_sustainable_power(struct acpi_thermal *tz)
++{
++	acpi_status status;
++	unsigned long long tmp;
++
++	if (!tz)
++		return -EINVAL;
++
++	status = acpi_evaluate_integer(tz->device->handle, "SSTP", NULL, &tmp);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	tz->sustainable_power = tmp;
++	acpi_handle_debug(tz->device->handle, "Sustainable power is %lu mW\n",
++			  tz->sustainable_power);
++
++	return 0;
++}
++
++static void acpi_thermal_init_switch_on_temp(struct acpi_thermal *tz,
++					   struct acpi_thermal_trip *acpi_trip)
++{
++	acpi_status status;
++	unsigned long long tmp;
++
++	status = acpi_evaluate_integer(tz->device->handle, "SWIT", NULL, &tmp);
++	if (ACPI_FAILURE(status) || tmp > acpi_trip->temp_dk ||
++	    tmp < TEMP_MIN_DECIK)
++		acpi_trip->switch_on_temp_dk = THERMAL_TEMP_INVALID;
++	else
++		acpi_trip->switch_on_temp_dk = tmp;
++}
++#endif
++
+ static int acpi_thermal_get_polling_frequency(struct acpi_thermal *tz)
+ {
+ 	acpi_status status = AE_OK;
+@@ -452,10 +498,17 @@ static bool acpi_thermal_init_trip(struct acpi_thermal *tz, int index)
+ 		goto fail;
+ 
+ 	acpi_trip->temp_dk = temp;
++#ifdef CONFIG_CIX_THERMAL
++	if (index == ACPI_THERMAL_TRIP_PASSIVE)
++		acpi_thermal_init_switch_on_temp(tz, acpi_trip);
++#endif
+ 	return true;
+ 
+ fail:
+ 	acpi_trip->temp_dk = THERMAL_TEMP_INVALID;
++#ifdef CONFIG_CIX_THERMAL
++	acpi_trip->switch_on_temp_dk = THERMAL_TEMP_INVALID;
++#endif
+ 	return false;
+ }
+ 
+@@ -622,16 +675,21 @@ static int acpi_thermal_register_thermal_zone(struct acpi_thermal *tz,
+ 					      int passive_delay)
+ {
+ 	const char *tz_type = acpi_device_bid(tz->device);
++	struct thermal_zone_params tzp = {};
+ 	int result;
+ 
++#ifdef CONFIG_CIX_THERMAL
++	tzp.sustainable_power = tz->sustainable_power;
++#endif
++
+ 	if (trip_count)
+ 		tz->thermal_zone = thermal_zone_device_register_with_trips(
+ 					tz_type, trip_table, trip_count, tz,
+-					&acpi_thermal_zone_ops, NULL, passive_delay,
++					&acpi_thermal_zone_ops, &tzp, passive_delay,
+ 					tz->polling_frequency * 100);
+ 	else
+ 		tz->thermal_zone = thermal_tripless_zone_device_register(
+-					tz_type, tz, &acpi_thermal_zone_ops, NULL);
++					tz_type, tz, &acpi_thermal_zone_ops, &tzp);
+ 
+ 	if (IS_ERR(tz->thermal_zone))
+ 		return PTR_ERR(tz->thermal_zone);
+@@ -867,9 +925,26 @@ static int acpi_thermal_probe(struct platform_device *pdev)
+ 		trip++;
+ 	}
+ 
++#ifdef CONFIG_CIX_THERMAL
++	acpi_trip = &tz->trips.passive.trip;
++	if (acpi_thermal_trip_valid(acpi_trip) &&
++	    acpi_trip->switch_on_temp_dk != THERMAL_TEMP_INVALID) {
++		trip->type = THERMAL_TRIP_PASSIVE;
++		trip->temperature = acpi_thermal_temp(tz, acpi_trip->switch_on_temp_dk);
++		trip->priv = acpi_trip;
++		trip++;
++	}
++#endif
++
+ 	if (trip == trip_table)
+ 		pr_warn(FW_BUG "No valid trip points!\n");
+ 
++#ifdef CONFIG_CIX_THERMAL
++	result = acpi_thermal_get_sustainable_power(tz);
++	if (result)
++		goto free_memory;
++#endif
++
+ 	result = acpi_thermal_register_thermal_zone(tz, trip_table,
+ 						    trip - trip_table,
+ 						    passive_delay);
+diff --git a/drivers/cpufreq/cppc_cpufreq.c b/drivers/cpufreq/cppc_cpufreq.c
+index 111111111111..222222222222 100644
+--- a/drivers/cpufreq/cppc_cpufreq.c
++++ b/drivers/cpufreq/cppc_cpufreq.c
+@@ -382,6 +382,7 @@ static unsigned int cppc_cpufreq_get_transition_delay_us(unsigned int cpu)
+ 
+ #if defined(CONFIG_ARM64) && defined(CONFIG_ENERGY_MODEL)
+ 
++#ifndef CONFIG_CIX_THERMAL
+ static DEFINE_PER_CPU(unsigned int, efficiency_class);
+ 
+ /* Create an artificial performance state every CPPC_EM_CAP_STEP capacity unit. */
+@@ -563,6 +564,64 @@ static void populate_efficiency_class(void)
+ 	}
+ 	cppc_cpufreq_driver.register_em = cppc_cpufreq_register_em;
+ }
++#else /* CONFIG_CIX_THERMAL */
++static unsigned int cix_get_perf_level_count(struct cpufreq_policy *policy)
++{
++	struct cppc_cpudata *cpu_data = policy->driver_data;
++
++	if (!cpu_data) {
++		pr_warn("No CPU data for CPU%d\n", policy->cpu);
++		return 0;
++	}
++	return cpu_data->opp_level_num;
++}
++
++static int cix_cppc_get_cpu_power(struct device *cpu_dev,
++				  unsigned long *power, unsigned long *KHz)
++{
++	struct cpufreq_policy *policy;
++	struct cppc_cpudata *cpu_data;
++	struct cppc_opp *opp;
++	unsigned int i, level_num;
++
++	policy = cpufreq_cpu_get_raw(cpu_dev->id);
++	if (!policy)
++		return -EINVAL;
++
++	cpu_data = policy->driver_data;
++	if (!cpu_data || !cpu_data->opp_level_num)
++		return -EINVAL;
++
++	opp = cpu_data->opp;
++	level_num = cpu_data->opp_level_num;
++
++	for (i = 0; i < level_num; i++) {
++		if (*KHz > opp[i].freq)
++			continue;
++
++		*KHz = opp[i].freq;
++		*power = opp[i].power;
++		break;
++	}
++
++	return 0;
++}
++
++static void cix_cppc_cpufreq_register_em(struct cpufreq_policy *policy)
++{
++	struct cppc_cpudata *cpu_data = policy->driver_data;
++	struct em_data_callback em_cb = EM_DATA_CB(cix_cppc_get_cpu_power);
++
++	em_dev_register_perf_domain(get_cpu_device(policy->cpu),
++				    cix_get_perf_level_count(policy), &em_cb,
++				    cpu_data->shared_cpu_map, 0);
++}
++
++static void populate_efficiency_class(void)
++{
++	cppc_cpufreq_driver.register_em = cix_cppc_cpufreq_register_em;
++}
++#endif /* CONFIG_CIX_THERMAL */
+ 
+ #else
+ static void populate_efficiency_class(void)
+@@ -613,6 +672,82 @@ static void cppc_cpufreq_put_cpu_data(struct cpufreq_policy *policy)
+ 	policy->driver_data = NULL;
+ }
+ 
++#ifdef CONFIG_CIX_THERMAL
++static int cppc_opp_init(struct cpufreq_policy *policy)
++{
++	struct acpi_object_list input;
++	union acpi_object params[2];
++	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
++	acpi_status status;
++	struct cppc_perf_caps *perf_caps;
++	struct cppc_cpudata *cpu_data;
++	struct device *cpu_dev;
++	acpi_handle handle;
++	union acpi_object *package;
++	u32 *data;
++	int i;
++
++	cpu_data = policy->driver_data;
++	if (!cpu_data) {
++		pr_warn("No CPU data for CPU%d\n", policy->cpu);
++		return -ENODEV;
++	}
++
++	perf_caps = &cpu_data->perf_caps;
++
++	params[0].type = ACPI_TYPE_INTEGER;
++	params[0].integer.value = cpu_data->perf_domain;
++	params[1].type = ACPI_TYPE_INTEGER;
++	params[1].integer.value = 0;
++
++	input.count = 2;
++	input.pointer = params;
++
++	cpu_dev = get_cpu_device(policy->cpu);
++	handle = ACPI_HANDLE(cpu_dev);
++	if (!handle) {
++		pr_err("No ACPI handle for CPU:%d\n", cpu_dev->id);
++		return -EINVAL;
++	}
++
++	status = acpi_evaluate_object(handle, "\\_SB.PMMX.PEFG", &input, &buffer);
++	if (ACPI_FAILURE(status)) {
++		pr_err("Failed to call PEFG: %s\n", acpi_format_exception(status));
++		goto out;
++	}
++
++	package = buffer.pointer;
++	if (!package || package->type != ACPI_TYPE_BUFFER) {
++		pr_err("cppc_opp_init: cpu:%d, no buffer returned\n", cpu_dev->id);
++		goto out;
++	}
++
++	data = (u32 *)package->buffer.pointer;
++
++	cpu_data->opp_level_num = data[1];
++	if (!cpu_data->opp_level_num) {
++		pr_warn("cppc_opp_init: cpu:%d, no performance levels found\n",
++			cpu_dev->id);
++		goto out;
++	}
++	if (cpu_data->opp_level_num > MAX_OPP_LEVELS) {
++		pr_warn("cppc_opp_init: cpu:%d, too many performance levels: %d\n",
++			cpu_dev->id, cpu_data->opp_level_num);
++		goto out;
++	}
++	for (i = 0; i < cpu_data->opp_level_num; i++) {
++		cpu_data->opp[i].perf = data[2 + i * 3];
++		cpu_data->opp[i].power = data[3 + i * 3];
++		cpu_data->opp[i].freq = cppc_perf_to_khz(perf_caps,
++							 cpu_data->opp[i].perf);
++	}
++
++out:
++	kfree(buffer.pointer);
++	return 0;
++}
++#endif
++
+ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
+ {
+ 	unsigned int cpu = policy->cpu;
+@@ -689,6 +824,9 @@ static int cppc_cpufreq_cpu_init(struct cpufreq_policy *policy)
+ 	}
+ 
+ 	cppc_cpufreq_cpu_fie_init(policy);
++#ifdef CONFIG_CIX_THERMAL
++	cppc_opp_init(policy);
++#endif
+ 	return 0;
+ 
+ out:
+@@ -746,6 +884,28 @@ static int cppc_perf_from_fbctrs(struct cppc_perf_fb_ctrs *fb_ctrs_t0,
+ 	return (reference_perf * delta_delivered) / delta_reference;
+ }
+ 
++#ifdef CONFIG_ARCH_CIX
++/*
++ * On CIX platform, perf calculation from feedback counters is inaccurate;
++ * use desired performance instead.
++ */
++static unsigned int cix_cppc_cpufreq_get_rate(unsigned int cpu)
++{
++	struct cpufreq_policy *policy __free(put_cpufreq_policy) = cpufreq_cpu_get(cpu);
++	struct cppc_cpudata *cpu_data;
++	u64 desired_perf;
++
++	if (!policy)
++		return 0;
++
++	cpu_data = policy->driver_data;
++	if (cppc_get_desired_perf(cpu, &desired_perf))
++		desired_perf = cpu_data->perf_ctrls.desired_perf;
++
++	return cppc_perf_to_khz(&cpu_data->perf_caps, desired_perf);
++}
++#endif
++
+ static int cppc_get_perf_ctrs_sample(int cpu,
+ 				     struct cppc_perf_fb_ctrs *fb_ctrs_t0,
+ 				     struct cppc_perf_fb_ctrs *fb_ctrs_t1)
+@@ -761,6 +921,7 @@ static int cppc_get_perf_ctrs_sample(int cpu,
+ 	return cppc_get_perf_ctrs(cpu, fb_ctrs_t1);
+ }
+ 
++#ifndef CONFIG_ARCH_CIX
+ static unsigned int cppc_cpufreq_get_rate(unsigned int cpu)
+ {
+ 	struct cpufreq_policy *policy __free(put_cpufreq_policy) = cpufreq_cpu_get(cpu);
+@@ -802,6 +963,7 @@ static unsigned int cppc_cpufreq_get_rate(unsigned int cpu)
+ 
+ 	return cppc_perf_to_khz(&cpu_data->perf_caps, delivered_perf);
+ }
++#endif
+ 
+ static int cppc_cpufreq_set_boost(struct cpufreq_policy *policy, int state)
+ {
+@@ -927,10 +1089,18 @@ static struct freq_attr *cppc_cpufreq_attr[] = {
+ };
+ 
+ static struct cpufreq_driver cppc_cpufreq_driver = {
+-	.flags = CPUFREQ_CONST_LOOPS | CPUFREQ_NEED_UPDATE_LIMITS,
++	.flags = CPUFREQ_CONST_LOOPS | CPUFREQ_NEED_UPDATE_LIMITS
++#ifdef CONFIG_CIX_THERMAL
++		 | CPUFREQ_IS_COOLING_DEV
++#endif
++		 ,
+ 	.verify = cppc_verify_policy,
+ 	.target = cppc_cpufreq_set_target,
++#ifdef CONFIG_ARCH_CIX
++	.get = cix_cppc_cpufreq_get_rate,
++#else
+ 	.get = cppc_cpufreq_get_rate,
++#endif
+ 	.fast_switch = cppc_cpufreq_fast_switch,
+ 	.init = cppc_cpufreq_cpu_init,
+ 	.exit = cppc_cpufreq_cpu_exit,
+diff --git a/include/acpi/cppc_acpi.h b/include/acpi/cppc_acpi.h
+index 111111111111..222222222222 100644
+--- a/include/acpi/cppc_acpi.h
++++ b/include/acpi/cppc_acpi.h
+@@ -137,6 +137,14 @@ struct cppc_perf_fb_ctrs {
+ 	u64 wraparound_time;
+ };
+ 
++struct cppc_opp {
++	u32 perf;
++	u32 power;
++	u32 freq; /* in KHz */
++};
++
++#define MAX_OPP_LEVELS	16
++
+ /* Per CPU container for runtime CPPC management. */
+ struct cppc_cpudata {
+ 	struct cppc_perf_caps perf_caps;
+@@ -144,6 +152,11 @@ struct cppc_cpudata {
+ 	struct cppc_perf_fb_ctrs perf_fb_ctrs;
+ 	unsigned int shared_type;
+ 	cpumask_var_t shared_cpu_map;
++#ifdef CONFIG_CIX_THERMAL
++	struct cppc_opp opp[MAX_OPP_LEVELS];
++	unsigned int opp_level_num;
++	unsigned int perf_domain;
++#endif
+ };
+ 
+ #ifdef CONFIG_ACPI_CPPC_LIB
+-- 
+Armbian
+
