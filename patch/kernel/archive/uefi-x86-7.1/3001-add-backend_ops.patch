@@ -1,0 +1,823 @@
+From a0e70488564c65715872bb3eba1dde42b7e880e7 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 24 Apr 2026 04:15:06 +0530
+Subject: [PATCH 01/12] add backend_ops
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ MAINTAINERS                                   |   2 +-
+ drivers/gpio/Kconfig                          |   2 +-
+ drivers/gpio/gpio-macsmc.c                    |  12 +-
+ drivers/hwmon/Kconfig                         |   2 +-
+ drivers/mfd/Kconfig                           |  15 +-
+ drivers/mfd/Makefile                          |   2 +-
+ drivers/mfd/macsmc-core.c                     | 147 +++++++++++++++++
+ drivers/power/reset/Kconfig                   |   2 +-
+ drivers/power/supply/Kconfig                  |   2 +-
+ drivers/rtc/Kconfig                           |   2 +-
+ drivers/soc/apple/Kconfig                     |  13 ++
+ drivers/soc/apple/Makefile                    |   2 +
+ .../macsmc.c => soc/apple/macsmc-rtkit.c}     | 155 ++++++------------
+ include/linux/mfd/macsmc.h                    |  80 +++++++--
+ 14 files changed, 291 insertions(+), 147 deletions(-)
+ create mode 100644 drivers/mfd/macsmc-core.c
+ rename drivers/{mfd/macsmc.c => soc/apple/macsmc-rtkit.c} (71%)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index d885cf5ccc34..e3c2f15c92d6 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2540,7 +2540,7 @@ F:	drivers/input/touchscreen/apple_z2.c
+ F:	drivers/iommu/apple-dart.c
+ F:	drivers/iommu/io-pgtable-dart.c
+ F:	drivers/irqchip/irq-apple-aic.c
+-F:	drivers/mfd/macsmc.c
++F:	drivers/mfd/macsmc-core.c
+ F:	drivers/nvme/host/apple.c
+ F:	drivers/nvmem/apple-efuses.c
+ F:	drivers/nvmem/apple-spmi-nvmem.c
+diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+index 020e51e30317..1d7c7c37aed4 100644
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -1517,7 +1517,7 @@ config GPIO_LP87565
+ 
+ config GPIO_MACSMC
+ 	tristate "Apple Mac SMC GPIO"
+-	depends on MFD_MACSMC
++	depends on MACSMC_RTKIT
+ 	help
+ 	  Support for GPIOs controlled by the SMC microcontroller on Apple Mac
+ 	  systems.
+diff --git a/drivers/gpio/gpio-macsmc.c b/drivers/gpio/gpio-macsmc.c
+index b0952d066a9d..145128ee7194 100644
+--- a/drivers/gpio/gpio-macsmc.c
++++ b/drivers/gpio/gpio-macsmc.c
+@@ -97,20 +97,10 @@ static int macsmc_gpio_find_first_gpio_index(struct macsmc_gpio *smcgp)
+ {
+ 	struct apple_smc *smc = smcgp->smc;
+ 	smc_key key = macsmc_gpio_key(0);
+-	smc_key first_key, last_key;
+ 	int start, count, ret;
+ 
+ 	/* Return early if the key is out of bounds */
+-	ret = apple_smc_get_key_by_index(smc, 0, &first_key);
+-	if (ret)
+-		return ret;
+-	if (key <= first_key)
+-		return -ENODEV;
+-
+-	ret = apple_smc_get_key_by_index(smc, smc->key_count - 1, &last_key);
+-	if (ret)
+-		return ret;
+-	if (key > last_key)
++	if (key <= smc->first_key || key > smc->last_key)
+ 		return -ENODEV;
+ 
+ 	/* Binary search to find index of first SMC key bigger or equal to key */
+diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
+index 14e4cea48acc..29944e0555a4 100644
+--- a/drivers/hwmon/Kconfig
++++ b/drivers/hwmon/Kconfig
+@@ -1166,7 +1166,7 @@ config SENSORS_LTQ_CPUTEMP
+ 
+ config SENSORS_MACSMC_HWMON
+ 	tristate "Apple SMC (Apple Silicon)"
+-	depends on MFD_MACSMC && OF
++	depends on MFD_MACSMC_CORE
+ 	help
+ 	  This driver enables hwmon support for current, power, temperature,
+ 	  and voltage sensors, as well as fan speed reporting and control
+diff --git a/drivers/mfd/Kconfig b/drivers/mfd/Kconfig
+index 7192c9d1d268..a54fe5bfd227 100644
+--- a/drivers/mfd/Kconfig
++++ b/drivers/mfd/Kconfig
+@@ -325,24 +325,15 @@ config MFD_LOCHNAGAR
+ 	help
+ 	  Support for Cirrus Logic Lochnagar audio development board.
+ 
+-config MFD_MACSMC
+-	tristate "Apple Silicon System Management Controller (SMC)"
+-	depends on ARCH_APPLE || COMPILE_TEST
+-	depends on OF
+-	depends on APPLE_RTKIT
++config MFD_MACSMC_CORE
++	tristate "Apple System Management Controller (SMC) Core"
+ 	select MFD_CORE
+ 	help
+-	  The System Management Controller (SMC) on Apple Silicon machines is a
++	  The System Management Controller (SMC) on Apple Macs machines is a
+ 	  piece of hardware that exposes various functionalities such as
+ 	  temperature sensors, voltage/power meters, shutdown/reboot handling,
+ 	  GPIOs and more.
+ 
+-	  Communication happens via a shared mailbox using the RTKit protocol
+-	  which is also used for other co-processors. The SMC protocol then
+-	  allows reading and writing many different keys which implement the
+-	  various features. The MFD core device handles this protocol and
+-	  exposes it to the sub-devices.
+-
+ config MFD_MADERA
+ 	tristate "Cirrus Logic Madera codecs"
+ 	select MFD_CORE
+diff --git a/drivers/mfd/Makefile b/drivers/mfd/Makefile
+index e75e8045c28a..7ca766796c96 100644
+--- a/drivers/mfd/Makefile
++++ b/drivers/mfd/Makefile
+@@ -22,7 +22,7 @@ obj-$(CONFIG_MFD_CS42L43_SDW)	+= cs42l43-sdw.o
+ obj-$(CONFIG_MFD_ENE_KB3930)	+= ene-kb3930.o
+ obj-$(CONFIG_MFD_EXYNOS_LPASS)	+= exynos-lpass.o
+ obj-$(CONFIG_MFD_GATEWORKS_GSC)	+= gateworks-gsc.o
+-obj-$(CONFIG_MFD_MACSMC)	+= macsmc.o
++obj-$(CONFIG_MFD_MACSMC_CORE)	+= macsmc-core.o
+ 
+ obj-$(CONFIG_MFD_TI_LP873X)	+= lp873x.o
+ obj-$(CONFIG_MFD_TI_LP87565)	+= lp87565.o
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+new file mode 100644
+index 000000000000..e5d3e66223e2
+--- /dev/null
++++ b/drivers/mfd/macsmc-core.c
+@@ -0,0 +1,147 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple SMC core framework
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ */
++
++#include <linux/bitfield.h>
++#include <linux/device.h>
++#include <linux/mfd/core.h>
++#include <linux/mfd/macsmc.h>
++#include <linux/mutex.h>
++#include <linux/spinlock.h>
++
++static const struct mfd_cell apple_smc_devs[] = {
++	MFD_CELL_NAME("macsmc-input"),
++	MFD_CELL_NAME("macsmc-power"),
++	MFD_CELL_OF("macsmc-gpio", NULL, NULL, 0, 0, "apple,smc-gpio"),
++	MFD_CELL_OF("macsmc-hwmon", NULL, NULL, 0, 0, "apple,smc-hwmon"),
++	MFD_CELL_OF("macsmc-reboot", NULL, NULL, 0, 0, "apple,smc-reboot"),
++	MFD_CELL_OF("macsmc-rtc", NULL, NULL, 0, 0, "apple,smc-rtc"),
++};
++
++static const struct mfd_cell apple_smc_acpi_devs[] = {
++	MFD_CELL_NAME("macsmc-hwmon"),
++	MFD_CELL_NAME("macsmc-power"),
++	MFD_CELL_NAME("macsmc-rtc"),
++};
++
++int apple_smc_read(struct apple_smc *smc, smc_key key, void *buf, size_t size)
++{
++	guard(mutex)(&smc->mutex);
++	return smc->be->read(smc->be_cookie, key, buf, size);
++}
++EXPORT_SYMBOL(apple_smc_read);
++
++int apple_smc_write(struct apple_smc *smc, smc_key key, const void *buf, size_t size)
++{
++	guard(mutex)(&smc->mutex);
++	return smc->be->write(smc->be_cookie, key, buf, size);
++}
++EXPORT_SYMBOL(apple_smc_write);
++
++int apple_smc_enter_atomic(struct apple_smc *smc)
++{
++	guard(mutex)(&smc->mutex);
++	return smc->be->enter_atomic(smc->be_cookie);
++}
++EXPORT_SYMBOL(apple_smc_enter_atomic);
++
++int apple_smc_write_atomic(struct apple_smc *smc, smc_key key, const void *buf, size_t size)
++{
++	guard(spinlock_irqsave)(&smc->lock);
++	return smc->be->write_atomic(smc->be_cookie, key, buf, size);
++}
++EXPORT_SYMBOL(apple_smc_write_atomic);
++
++int apple_smc_rw(struct apple_smc *smc, smc_key key, const void *wbuf, size_t wsize,
++		void *rbuf, size_t rsize)
++{
++	guard(mutex)(&smc->mutex);
++	return smc->be->rw(smc->be_cookie, key, wbuf, wsize, rbuf, rsize);
++}
++EXPORT_SYMBOL(apple_smc_rw);
++
++int apple_smc_get_key_by_index(struct apple_smc *smc, int index, smc_key *key)
++{
++	guard(mutex)(&smc->mutex);
++	int ret;
++
++	ret = smc->be->get_key_by_index(smc->be_cookie, index, key);
++	*key = swab32(*key);
++
++	return ret;
++}
++EXPORT_SYMBOL(apple_smc_get_key_by_index);
++
++int apple_smc_get_key_info(struct apple_smc *smc, smc_key key, struct apple_smc_key_info *info)
++{
++	guard(mutex)(&smc->mutex);
++	return smc->be->get_key_info(smc->be_cookie, key, info);
++}
++EXPORT_SYMBOL(apple_smc_get_key_info);
++
++static void apple_smc_disable_notifications(void *data)
++{
++	struct apple_smc *smc = data;
++
++	apple_smc_write_flag(smc, SMC_KEY(NTAP), false);
++}
++
++int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops, void *cookie)
++{
++	struct apple_smc *smc;
++	u32 count;
++	int ret;
++
++	smc = devm_kzalloc(dev, sizeof(*smc), GFP_KERNEL);
++	if (!smc)
++		return -ENOMEM;
++
++	smc->dev = dev;
++	smc->be_cookie = cookie;
++	smc->be = ops;
++	mutex_init(&smc->mutex);
++	spin_lock_init(&smc->lock);
++
++	if (!strcmp(dev_driver_string(smc->dev), "macsmc-rtkit")) {
++		apple_smc_write_flag(smc, SMC_KEY(NTAP), true);
++		ret = devm_add_action_or_reset(dev, apple_smc_disable_notifications, smc);
++		if (ret < 0)
++			return ret;
++	} else
++		smc->is_acpi = true;
++
++	ret = apple_smc_read_u32(smc, SMC_KEY(#KEY), &count);
++	if (ret < 0)
++		return ret;
++	smc->key_count = be32_to_cpu(count);
++
++	ret = apple_smc_get_key_by_index(smc, 0, &smc->first_key);
++	if (ret < 0)
++		return ret;
++
++	ret = apple_smc_get_key_by_index(smc, smc->key_count - 1, &smc->last_key);
++	if (ret < 0)
++		return ret;
++
++	dev_set_drvdata(dev, smc);
++
++	if (smc->is_acpi)
++		ret = devm_mfd_add_devices(dev, -1, apple_smc_acpi_devs,
++			ARRAY_SIZE(apple_smc_acpi_devs), NULL, 0, NULL);
++	else
++		ret = devm_mfd_add_devices(dev, -1, apple_smc_devs,
++			ARRAY_SIZE(apple_smc_devs), NULL, 0, NULL);
++	if (ret < 0)
++		return ret;
++
++	dev_info(dev, "Successfully Initialized (%d keys First key: %p4ch Last key: %p4ch)\n",
++			smc->key_count, &smc->first_key, &smc->last_key);
++	return 0;
++}
++EXPORT_SYMBOL(apple_smc_probe);
++
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple SMC core");
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index 124afb99febe..c260470b911f 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -130,7 +130,7 @@ config POWER_RESET_LINKSTATION
+ 
+ config POWER_RESET_MACSMC
+ 	tristate "Apple SMC reset/power-off driver"
+-	depends on MFD_MACSMC
++	depends on MACSMC_RTKIT
+ 	help
+ 	  This driver supports reset and power-off on Apple Mac machines
+ 	  that implement this functionality via the SMC.
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index 83392ed6a8da..b402f158930f 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -1156,7 +1156,7 @@ config FUEL_GAUGE_MM8013
+ 
+ config MACSMC_POWER
+ 	tristate "Apple SMC Battery and Power Driver"
+-	depends on MFD_MACSMC
++	depends on MFD_MACSMC_CORE
+ 	help
+ 	  This driver provides support for the battery and AC adapter on
+ 	  Apple Silicon machines. It exposes battery telemetry (voltage,
+diff --git a/drivers/rtc/Kconfig b/drivers/rtc/Kconfig
+index b46ac73a2124..78014d324801 100644
+--- a/drivers/rtc/Kconfig
++++ b/drivers/rtc/Kconfig
+@@ -2102,7 +2102,7 @@ config RTC_DRV_WILCO_EC
+ 
+ config RTC_DRV_MACSMC
+ 	tristate "Apple Mac System Management Controller RTC"
+-	depends on MFD_MACSMC
++	depends on MFD_MACSMC_CORE
+ 	help
+ 	  If you say yes here you get support for RTC functions
+ 	  inside Apple SPMI PMUs accessed through the SoC's
+diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
+index d0ff32182a2b..761f12727e99 100644
+--- a/drivers/soc/apple/Kconfig
++++ b/drivers/soc/apple/Kconfig
+@@ -38,6 +38,19 @@ config APPLE_SART
+ 
+ 	  Say 'y' here if you have an Apple SoC.
+ 
++config MACSMC_RTKIT
++	tristate "Apple Silicon System Management Controller (SMC) Backend"
++	depends on ARCH_APPLE || COMPILE_TEST
++	depends on OF
++	depends on APPLE_RTKIT
++	depends on MFD_MACSMC_CORE
++	help
++	  MACSMC RTKIT allows communicatation with the System Management
++	  Controller on M-series Macs. It is required to use GPIO, control fans
++	  and to control battery start and end threshold.
++
++	  Say 'y' here if you have an Apple Soc
++
+ config APPLE_TUNABLE
+ 	tristate
+ 	depends on ARCH_APPLE || COMPILE_TEST
+diff --git a/drivers/soc/apple/Makefile b/drivers/soc/apple/Makefile
+index 0b85ab61aefe..73ad1d52ad6d 100644
+--- a/drivers/soc/apple/Makefile
++++ b/drivers/soc/apple/Makefile
+@@ -9,5 +9,7 @@ apple-rtkit-y = rtkit.o rtkit-crashlog.o
+ obj-$(CONFIG_APPLE_SART) += apple-sart.o
+ apple-sart-y = sart.o
+ 
++obj-$(CONFIG_MACSMC_RTKIT) += macsmc-rtkit.o
++
+ obj-$(CONFIG_APPLE_TUNABLE) += apple-tunable.o
+ apple-tunable-y = tunable.o
+diff --git a/drivers/mfd/macsmc.c b/drivers/soc/apple/macsmc-rtkit.c
+similarity index 71%
+rename from drivers/mfd/macsmc.c
+rename to drivers/soc/apple/macsmc-rtkit.c
+index 358feec2d088..4c35d078ab1e 100644
+--- a/drivers/mfd/macsmc.c
++++ b/drivers/soc/apple/macsmc-rtkit.c
+@@ -27,14 +27,6 @@
+ #define SMC_SHMEM_SIZE			0x1000
+ #define SMC_MAX_SIZE			255
+ 
+-#define SMC_MSG_READ_KEY		0x10
+-#define SMC_MSG_WRITE_KEY		0x11
+-#define SMC_MSG_GET_KEY_BY_INDEX	0x12
+-#define SMC_MSG_GET_KEY_INFO		0x13
+-#define SMC_MSG_INITIALIZE		0x17
+-#define SMC_MSG_NOTIFICATION		0x18
+-#define SMC_MSG_RW_KEY			0x20
+-
+ #define SMC_DATA			GENMASK_ULL(63, 32)
+ #define SMC_WSIZE			GENMASK_ULL(31, 24)
+ #define SMC_SIZE			GENMASK_ULL(23, 16)
+@@ -44,24 +36,13 @@
+ 
+ #define SMC_TIMEOUT_MS		500
+ 
+-static const struct mfd_cell apple_smc_devs[] = {
+-	MFD_CELL_NAME("macsmc-input"),
+-	MFD_CELL_NAME("macsmc-power"),
+-	MFD_CELL_OF("macsmc-gpio", NULL, NULL, 0, 0, "apple,smc-gpio"),
+-	MFD_CELL_OF("macsmc-hwmon", NULL, NULL, 0, 0, "apple,smc-hwmon"),
+-	MFD_CELL_OF("macsmc-reboot", NULL, NULL, 0, 0, "apple,smc-reboot"),
+-	MFD_CELL_OF("macsmc-rtc", NULL, NULL, 0, 0, "apple,smc-rtc"),
+-};
+-
+-static int apple_smc_cmd_locked(struct apple_smc *smc, u64 cmd, u64 arg,
++static int apple_smc_rtkit_cmd_locked(struct apple_smc_rtkit *smc, u64 cmd, u64 arg,
+ 				  u64 size, u64 wsize, u32 *ret_data)
+ {
+ 	u8 result;
+ 	int ret;
+ 	u64 msg;
+ 
+-	lockdep_assert_held(&smc->mutex);
+-
+ 	if (smc->boot_stage != APPLE_SMC_INITIALIZED)
+ 		return -EIO;
+ 	if (smc->atomic_mode)
+@@ -103,15 +84,7 @@ static int apple_smc_cmd_locked(struct apple_smc *smc, u64 cmd, u64 arg,
+ 	return FIELD_GET(SMC_SIZE, smc->cmd_ret);
+ }
+ 
+-static int apple_smc_cmd(struct apple_smc *smc, u64 cmd, u64 arg,
+-			 u64 size, u64 wsize, u32 *ret_data)
+-{
+-	guard(mutex)(&smc->mutex);
+-
+-	return apple_smc_cmd_locked(smc, cmd, arg, size, wsize, ret_data);
+-}
+-
+-static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
++static int apple_smc_rtkit_rw_locked(struct apple_smc_rtkit *smc, smc_key key,
+ 				const void *wbuf, size_t wsize,
+ 				void *rbuf, size_t rsize)
+ {
+@@ -120,8 +93,6 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
+ 	int ret;
+ 	u64 cmd;
+ 
+-	lockdep_assert_held(&smc->mutex);
+-
+ 	if (rsize > SMC_MAX_SIZE)
+ 		return -EINVAL;
+ 	if (wsize > SMC_MAX_SIZE)
+@@ -149,7 +120,7 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = apple_smc_cmd_locked(smc, cmd, key, smc_size, smc_wsize, &rdata);
++	ret = apple_smc_rtkit_cmd_locked(smc, cmd, key, smc_size, smc_wsize, &rdata);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -169,48 +140,43 @@ static int apple_smc_rw_locked(struct apple_smc *smc, smc_key key,
+ 	return ret;
+ }
+ 
+-int apple_smc_read(struct apple_smc *smc, smc_key key, void *buf, size_t size)
++static int apple_smc_rtkit_read(void *cookie, smc_key key, void *buf, size_t size)
+ {
+-	guard(mutex)(&smc->mutex);
++	struct apple_smc_rtkit *smc = cookie;
+ 
+-	return apple_smc_rw_locked(smc, key, NULL, 0, buf, size);
++	return apple_smc_rtkit_rw_locked(smc, key, NULL, 0, buf, size);
+ }
+-EXPORT_SYMBOL(apple_smc_read);
+ 
+-int apple_smc_write(struct apple_smc *smc, smc_key key, const void *buf, size_t size)
++static int apple_smc_rtkit_write(void *cookie, smc_key key, const void *buf, size_t size)
+ {
+-	guard(mutex)(&smc->mutex);
++	struct apple_smc_rtkit *smc = cookie;
+ 
+-	return apple_smc_rw_locked(smc, key, buf, size, NULL, 0);
++	return apple_smc_rtkit_rw_locked(smc, key, buf, size, NULL, 0);
+ }
+-EXPORT_SYMBOL(apple_smc_write);
+ 
+-int apple_smc_rw(struct apple_smc *smc, smc_key key, const void *wbuf, size_t wsize,
++static int apple_smc_rtkit_rw(void *cookie, smc_key key, const void *wbuf, size_t wsize,
+ 		 void *rbuf, size_t rsize)
+ {
+-	guard(mutex)(&smc->mutex);
++	struct apple_smc_rtkit *smc = cookie;
+ 
+-	return apple_smc_rw_locked(smc, key, wbuf, wsize, rbuf, rsize);
++	return apple_smc_rtkit_rw_locked(smc, key, wbuf, wsize, rbuf, rsize);
+ }
+-EXPORT_SYMBOL(apple_smc_rw);
+ 
+-int apple_smc_get_key_by_index(struct apple_smc *smc, int index, smc_key *key)
++static int apple_smc_rtkit_get_key_by_index(void *cookie, int index, smc_key *key)
+ {
+-	int ret;
+-
+-	ret = apple_smc_cmd(smc, SMC_MSG_GET_KEY_BY_INDEX, index, 0, 0, key);
++	struct apple_smc_rtkit *smc = cookie;
+ 
+-	*key = swab32(*key);
+-	return ret;
++	return apple_smc_rtkit_cmd_locked(smc, SMC_MSG_GET_KEY_BY_INDEX, index, 0, 0, key);
+ }
+-EXPORT_SYMBOL(apple_smc_get_key_by_index);
+ 
+-int apple_smc_get_key_info(struct apple_smc *smc, smc_key key, struct apple_smc_key_info *info)
++static int apple_smc_rtkit_get_key_info(void *cookie, smc_key key,
++		struct apple_smc_key_info *info)
+ {
++	struct apple_smc_rtkit *smc = cookie;
+ 	u8 key_info[6];
+ 	int ret;
+ 
+-	ret = apple_smc_cmd(smc, SMC_MSG_GET_KEY_INFO, key, 0, 0, NULL);
++	ret = apple_smc_rtkit_cmd_locked(smc, SMC_MSG_GET_KEY_INFO, key, 0, 0, NULL);
+ 	if (ret >= 0 && info) {
+ 		memcpy_fromio(key_info, smc->shmem.iomem, sizeof(key_info));
+ 		info->size = key_info[0];
+@@ -219,11 +185,10 @@ int apple_smc_get_key_info(struct apple_smc *smc, smc_key key, struct apple_smc_
+ 	}
+ 	return ret;
+ }
+-EXPORT_SYMBOL(apple_smc_get_key_info);
+ 
+-int apple_smc_enter_atomic(struct apple_smc *smc)
++static int apple_smc_rtkit_enter_atomic(void *cookie)
+ {
+-	guard(mutex)(&smc->mutex);
++	struct apple_smc_rtkit *smc = cookie;
+ 
+ 	/*
+ 	 * Disable notifications since this is called before shutdown and no
+@@ -235,17 +200,16 @@ int apple_smc_enter_atomic(struct apple_smc *smc)
+ 	 */
+ 	const u8 flag = 0;
+ 
+-	apple_smc_rw_locked(smc, SMC_KEY(NTAP), &flag, sizeof(flag), NULL, 0);
++	apple_smc_rtkit_rw_locked(smc, SMC_KEY(NTAP), &flag, sizeof(flag), NULL, 0);
+ 
+ 	smc->atomic_mode = true;
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(apple_smc_enter_atomic);
+ 
+-int apple_smc_write_atomic(struct apple_smc *smc, smc_key key, const void *buf, size_t size)
++static int apple_smc_rtkit_write_atomic(void *cookie, smc_key key, const void *buf, size_t size)
+ {
+-	guard(spinlock_irqsave)(&smc->lock);
++	struct apple_smc_rtkit *smc = cookie;
+ 	u8 result;
+ 	int ret;
+ 	u64 msg;
+@@ -293,11 +257,20 @@ int apple_smc_write_atomic(struct apple_smc *smc, smc_key key, const void *buf,
+ 
+ 	return FIELD_GET(SMC_SIZE, smc->cmd_ret);
+ }
+-EXPORT_SYMBOL(apple_smc_write_atomic);
++
++static const struct apple_smc_backend_ops apple_smc_rtkit_backend_ops = {
++	.read = apple_smc_rtkit_read,
++	.write = apple_smc_rtkit_write,
++	.enter_atomic = apple_smc_rtkit_enter_atomic,
++	.write_atomic = apple_smc_rtkit_write_atomic,
++	.rw = apple_smc_rtkit_rw,
++	.get_key_by_index = apple_smc_rtkit_get_key_by_index,
++	.get_key_info = apple_smc_rtkit_get_key_info,
++};
+ 
+ static void apple_smc_rtkit_crashed(void *cookie, const void *bfr, size_t bfr_len)
+ {
+-	struct apple_smc *smc = cookie;
++	struct apple_smc_rtkit *smc = cookie;
+ 
+ 	smc->boot_stage = APPLE_SMC_ERROR_CRASHED;
+ 	dev_err(smc->dev, "SMC crashed! Your system will reboot in a few seconds...\n");
+@@ -305,7 +278,7 @@ static void apple_smc_rtkit_crashed(void *cookie, const void *bfr, size_t bfr_le
+ 
+ static int apple_smc_rtkit_shmem_setup(void *cookie, struct apple_rtkit_shmem *bfr)
+ {
+-	struct apple_smc *smc = cookie;
++	struct apple_smc_rtkit *smc = cookie;
+ 	size_t bfr_end;
+ 
+ 	if (!bfr->iova) {
+@@ -332,7 +305,7 @@ static int apple_smc_rtkit_shmem_setup(void *cookie, struct apple_rtkit_shmem *b
+ 
+ static bool apple_smc_rtkit_recv_early(void *cookie, u8 endpoint, u64 message)
+ {
+-	struct apple_smc *smc = cookie;
++	struct apple_smc_rtkit *smc = cookie;
+ 
+ 	if (endpoint != SMC_ENDPOINT) {
+ 		dev_warn(smc->dev, "Received message for unknown endpoint 0x%x\n", endpoint);
+@@ -368,7 +341,7 @@ static bool apple_smc_rtkit_recv_early(void *cookie, u8 endpoint, u64 message)
+ 
+ static void apple_smc_rtkit_recv(void *cookie, u8 endpoint, u64 message)
+ {
+-	struct apple_smc *smc = cookie;
++	struct apple_smc_rtkit *smc = cookie;
+ 
+ 	if (endpoint != SMC_ENDPOINT) {
+ 		dev_warn(smc->dev, "Received message for unknown endpoint 0x%x\n", endpoint);
+@@ -392,32 +365,23 @@ static const struct apple_rtkit_ops apple_smc_rtkit_ops = {
+ 
+ static void apple_smc_rtkit_shutdown(void *data)
+ {
+-	struct apple_smc *smc = data;
++	struct apple_smc_rtkit *smc = data;
+ 
+ 	/* Shut down SMC firmware, if it's not completely wedged */
+ 	if (apple_rtkit_is_running(smc->rtk))
+ 		apple_rtkit_quiesce(smc->rtk);
+ }
+ 
+-static void apple_smc_disable_notifications(void *data)
+-{
+-	struct apple_smc *smc = data;
+-
+-	apple_smc_write_flag(smc, SMC_KEY(NTAP), false);
+-}
+-
+-static int apple_smc_probe(struct platform_device *pdev)
++static int apple_smc_rtkit_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+-	struct apple_smc *smc;
+-	u32 count;
++	struct apple_smc_rtkit *smc;
+ 	int ret;
+ 
+ 	smc = devm_kzalloc(dev, sizeof(*smc), GFP_KERNEL);
+ 	if (!smc)
+ 		return -ENOMEM;
+ 
+-	mutex_init(&smc->mutex);
+ 	smc->dev = &pdev->dev;
+ 	smc->sram_base = devm_platform_get_and_ioremap_resource(pdev, 1, &smc->sram);
+ 	if (IS_ERR(smc->sram_base))
+@@ -458,47 +422,28 @@ static int apple_smc_probe(struct platform_device *pdev)
+ 		return -EIO;
+ 	}
+ 
+-	dev_set_drvdata(&pdev->dev, smc);
+ 	BLOCKING_INIT_NOTIFIER_HEAD(&smc->event_handlers);
+ 
+-	ret = apple_smc_read_u32(smc, SMC_KEY(#KEY), &count);
+-	if (ret)
+-		return dev_err_probe(smc->dev, ret, "Failed to get key count");
+-	smc->key_count = be32_to_cpu(count);
+-
+-	/* Enable notifications */
+-	apple_smc_write_flag(smc, SMC_KEY(NTAP), true);
+-	ret = devm_add_action_or_reset(dev, apple_smc_disable_notifications, smc);
+-	if (ret)
+-		return ret;
+-
+-	ret = devm_mfd_add_devices(smc->dev, PLATFORM_DEVID_NONE,
+-				   apple_smc_devs, ARRAY_SIZE(apple_smc_devs),
+-				   NULL, 0, NULL);
+-	if (ret)
+-		return dev_err_probe(smc->dev, ret, "Failed to register sub-devices");
+-
+-
+-	return 0;
++	return apple_smc_probe(dev, &apple_smc_rtkit_backend_ops, smc);
+ }
+ 
+-static const struct of_device_id apple_smc_of_match[] = {
++static const struct of_device_id apple_smc_rtkit_of_match[] = {
+ 	{ .compatible = "apple,t8103-smc" },
+ 	{ .compatible = "apple,smc" },
+ 	{},
+ };
+-MODULE_DEVICE_TABLE(of, apple_smc_of_match);
++MODULE_DEVICE_TABLE(of, apple_smc_rtkit_of_match);
+ 
+-static struct platform_driver apple_smc_driver = {
++static struct platform_driver apple_smc_rtkit_driver = {
+ 	.driver = {
+-		.name = "macsmc",
+-		.of_match_table = apple_smc_of_match,
++		.name = "macsmc-rtkit",
++		.of_match_table = apple_smc_rtkit_of_match,
+ 	},
+-	.probe = apple_smc_probe,
++	.probe = apple_smc_rtkit_probe,
+ };
+-module_platform_driver(apple_smc_driver);
++module_platform_driver(apple_smc_rtkit_driver);
+ 
+ MODULE_AUTHOR("Hector Martin <marcan@marcan.st>");
+ MODULE_AUTHOR("Sven Peter <sven@kernel.org>");
+ MODULE_LICENSE("Dual MIT/GPL");
+-MODULE_DESCRIPTION("Apple SMC driver");
++MODULE_DESCRIPTION("Apple SMC RTKIT Backend driver");
+diff --git a/include/linux/mfd/macsmc.h b/include/linux/mfd/macsmc.h
+index cc09ecce0df7..9db1b267d124 100644
+--- a/include/linux/mfd/macsmc.h
++++ b/include/linux/mfd/macsmc.h
+@@ -47,6 +47,14 @@ typedef u32 smc_key;
+ #define APPLE_SMC_WRITABLE BIT(6)
+ #define APPLE_SMC_FUNCTION BIT(4)
+ 
++#define SMC_MSG_READ_KEY                0x10
++#define SMC_MSG_WRITE_KEY               0x11
++#define SMC_MSG_GET_KEY_BY_INDEX        0x12
++#define SMC_MSG_GET_KEY_INFO            0x13
++#define SMC_MSG_INITIALIZE              0x17
++#define SMC_MSG_NOTIFICATION            0x18
++#define SMC_MSG_RW_KEY                  0x20
++
+ /**
+  * struct apple_smc_key_info - Information for a SMC key as returned by SMC
+  * @type_code: FourCC code indicating the type for this key.
+@@ -80,13 +88,60 @@ enum apple_smc_boot_stage {
+ 	APPLE_SMC_ERROR_CRASHED
+ };
+ 
++/**
++ * struct apple_smc_backend_ops - SMC backend interface
++ * @read: Read SMC key data
++ * @write: Write SMC key data
++ * @enter_atomic: Enter atomic access mode
++ * @write_atomic: Atomic write to SMC key
++ * @rw: Combined write/read transaction
++ * @get_key_by_index: Resolve key by index
++ * @get_key_info: Get metadata for key
++ */
++struct apple_smc_backend_ops {
++	int (*read)(void *cookie, smc_key key, void *buf, size_t size);
++	int (*write)(void *cookie, smc_key key, const void *buf, size_t size);
++	int (*enter_atomic)(void *cookie);
++	int (*write_atomic)(void *cookie, smc_key key, const void *buf, size_t size);
++	int (*rw)(void *cookie, smc_key key, const void *wbuf, size_t wsize,
++		  void *rbuf, size_t rsize);
++	int (*get_key_by_index)(void *cookie, int index, smc_key *key);
++	int (*get_key_info)(void *cookie, smc_key key,
++			    struct apple_smc_key_info *info);
++};
++
+ /**
+  * struct apple_smc
+  * @dev: Underlying device struct for the physical backend device
+  * @key_count: Number of available SMC keys
+  * @first_key: First valid SMC key
+  * @last_key: Last valid SMC key
++ * @be: Backend operations for SMC access
++ * @be_cookie: Backend context passed to ops callbacks
++ * @mutex: Mutex for non-atomic mode
++ * @lock: Spinlock for atomic mode
++ * @is_acpi: True if the backend is provided via ACPI
++ */
++struct apple_smc {
++	struct device *dev;
++
++	u32 key_count;
++	smc_key first_key;
++	smc_key last_key;
++
++	const struct apple_smc_backend_ops *be;
++	void *be_cookie;
++
++	struct mutex mutex;
++	spinlock_t lock;
++
++	bool is_acpi;
++};
++
++/**
++ * struct apple_smc_rtkit
+  * @event_handlers: Notifier call chain for events received from SMC
++ * @dev: Device struct for the physical backend device
+  * @rtk: Pointer to Apple RTKit instance
+  * @init_done: Completion for initialization
+  * @boot_stage: Current boot stage of SMC
+@@ -98,18 +153,11 @@ enum apple_smc_boot_stage {
+  * @atomic_pending: Flag indicating pending atomic command
+  * @cmd_done: Completion for command execution in non-atomic mode
+  * @cmd_ret: Return value from SMC for last command
+- * @mutex: Mutex for non-atomic mode
+- * @lock: Spinlock for atomic mode
+  */
+-struct apple_smc {
+-	struct device *dev;
+-
+-	u32 key_count;
+-	smc_key first_key;
+-	smc_key last_key;
+-
++struct apple_smc_rtkit {
+ 	struct blocking_notifier_head event_handlers;
+ 
++	struct device *dev;
+ 	struct apple_rtkit *rtk;
+ 
+ 	struct completion init_done;
+@@ -125,11 +173,9 @@ struct apple_smc {
+ 	bool atomic_pending;
+ 	struct completion cmd_done;
+ 	u64 cmd_ret;
+-
+-	struct mutex mutex;
+-	spinlock_t lock;
+ };
+ 
++
+ /**
+  * apple_smc_read - Read size bytes from given SMC key into buf
+  * @smc: Pointer to apple_smc struct
+@@ -225,6 +271,16 @@ static inline bool apple_smc_key_exists(struct apple_smc *smc, smc_key key)
+ 	return apple_smc_get_key_info(smc, key, NULL) >= 0;
+ }
+ 
++/**
++ * apple_smc_probe - Initialize Apple SMC device
++ * @dev: Device for the SMC instance
++ * @ops: Backend operations for SMC access
++ * @cookie: Opaque backend context
++ *
++ * Return: Zero on success, negative errno on error
++ */
++int apple_smc_probe(struct device *dev, const struct apple_smc_backend_ops *ops, void *cookie);
++
+ #define APPLE_SMC_TYPE_OPS(type) \
+ 	static inline int apple_smc_read_##type(struct apple_smc *smc, smc_key key, type *p) \
+ 	{ \
+-- 
+2.43.0
+
