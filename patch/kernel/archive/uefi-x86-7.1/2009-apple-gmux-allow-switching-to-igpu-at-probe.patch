@@ -1,0 +1,109 @@
+From bd8e785c74e22978648ced004552eb9c137f1eb6 Mon Sep 17 00:00:00 2001
+From: Orlando Chamberlain <orlandoch.dev@gmail.com>
+Date: Fri, 10 Feb 2023 22:45:00 +1100
+Subject: [PATCH 9/9] apple-gmux: allow switching to igpu at probe
+
+This means user don't need to set the gpu-power-prefs efivar to use the
+igpu while runtime switching isn't working, so macOS will be unaffected.
+
+This isn't really upstreamable, what we want upstream is the ability to
+switch at runtime (so both gpus need to be able to probe the eDP panel).
+
+Based off of work by Kerem Karabay <kekrby@gmail.com>
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c |  3 +++
+ drivers/gpu/vga/vga_switcheroo.c        |  7 +------
+ drivers/pci/vgaarb.c                    |  1 +
+ drivers/platform/x86/apple-gmux.c       | 18 ++++++++++++++++++
+ 4 files changed, 23 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+index 81edf66dbea8..8f3daf28665b 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+@@ -2051,6 +2051,9 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
+ 	int ret, retry = 0, i;
+ 	bool supports_atomic = false;
+ 
++	if (vga_switcheroo_client_probe_defer(pdev))
++		return -EPROBE_DEFER;
++
+ 	if ((pdev->class >> 8) == PCI_CLASS_DISPLAY_VGA ||
+ 	    (pdev->class >> 8) == PCI_CLASS_DISPLAY_OTHER) {
+ 		if (drm_firmware_drivers_only() && amdgpu_modeset == -1)
+diff --git a/drivers/gpu/vga/vga_switcheroo.c b/drivers/gpu/vga/vga_switcheroo.c
+index 365e6ddbe90f..cf357cd3389d 100644
+--- a/drivers/gpu/vga/vga_switcheroo.c
++++ b/drivers/gpu/vga/vga_switcheroo.c
+@@ -438,12 +438,7 @@ find_active_client(struct list_head *head)
+ bool vga_switcheroo_client_probe_defer(struct pci_dev *pdev)
+ {
+ 	if (pci_is_display(pdev)) {
+-		/*
+-		 * apple-gmux is needed on pre-retina MacBook Pro
+-		 * to probe the panel if pdev is the inactive GPU.
+-		 */
+-		if (apple_gmux_present() && pdev != vga_default_device() &&
+-		    !vgasr_priv.handler_flags)
++		if (apple_gmux_present() && !vgasr_priv.handler_flags)
+ 			return true;
+ 	}
+ 
+diff --git a/drivers/pci/vgaarb.c b/drivers/pci/vgaarb.c
+index 5e6b1eb54c64..1f11701d37d1 100644
+--- a/drivers/pci/vgaarb.c
++++ b/drivers/pci/vgaarb.c
+@@ -143,6 +143,7 @@ void vga_set_default_device(struct pci_dev *pdev)
+ 	pci_dev_put(vga_default);
+ 	vga_default = pci_dev_get(pdev);
+ }
++EXPORT_SYMBOL_GPL(vga_set_default_device);
+ 
+ /**
+  * vga_remove_vgacon - deactivate VGA console
+diff --git a/drivers/platform/x86/apple-gmux.c b/drivers/platform/x86/apple-gmux.c
+index 1417e230edbd..e69785af8e1d 100644
+--- a/drivers/platform/x86/apple-gmux.c
++++ b/drivers/platform/x86/apple-gmux.c
+@@ -21,6 +21,7 @@
+ #include <linux/delay.h>
+ #include <linux/pci.h>
+ #include <linux/vga_switcheroo.h>
++#include <linux/vgaarb.h>
+ #include <linux/debugfs.h>
+ #include <acpi/video.h>
+ #include <asm/io.h>
+@@ -107,6 +108,10 @@ struct apple_gmux_config {
+ 
+ # define MMIO_GMUX_MAX_BRIGHTNESS	0xffff
+ 
++static bool force_igd;
++module_param(force_igd, bool, 0);
++MODULE_PARM_DESC(force_idg, "Switch gpu to igd on module load. Make sure that you have apple-set-os set up and the iGPU is in `lspci -s 00:02.0`. (default: false) (bool)");
++
+ static u8 gmux_pio_read8(struct apple_gmux_data *gmux_data, int port)
+ {
+ 	return inb(gmux_data->iostart + port);
+@@ -945,6 +950,19 @@ static int gmux_probe(struct pnp_dev *pnp, const struct pnp_device_id *id)
+ 	gmux_enable_interrupts(gmux_data);
+ 	gmux_read_switch_state(gmux_data);
+ 
++	if (force_igd) {
++		struct pci_dev *pdev;
++
++		pdev = pci_get_domain_bus_and_slot(0, 0, PCI_DEVFN(2, 0));
++		if (pdev) {
++			pr_info("Switching to IGD");
++			gmux_switchto(VGA_SWITCHEROO_IGD);
++			vga_set_default_device(pdev);
++		} else {
++			pr_err("force_idg is true, but couldn't find iGPU at 00:02.0! Is apple-set-os working?");
++		}
++	}
++
+ 	/*
+ 	 * Retina MacBook Pros cannot switch the panel's AUX separately
+ 	 * and need eDP pre-calibration. They are distinguishable from
+-- 
+2.43.0
+
