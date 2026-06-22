@@ -8,6 +8,11 @@
 # https://github.com/armbian/build/
 
 function add_host_dependencies__stubble_dependencies() {
+	# Only stubble-using configs (KERNEL_DO_STUBBLE=yes, e.g. the uefidt family)
+	# need these. systemd-ukify and python3-libfdt aren't in older hosts' repos
+	# (Ubuntu Jammy ships systemd 249 — no ukify), so adding them unconditionally
+	# breaks host-prep for EVERY other build on such a host. Gate on the flag.
+	[[ "${KERNEL_DO_STUBBLE}" != "yes" ]] && return 0
 	EXTRA_BUILD_DEPS+=("python3-pyelftools")
 	EXTRA_BUILD_DEPS+=("python3-libfdt")
 	EXTRA_BUILD_DEPS+=("systemd-ukify")
