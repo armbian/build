@@ -5,7 +5,7 @@ BOARDFAMILY="rk35xx"
 BOOT_SOC="rk3568"
 BOARD_MAINTAINER="crackerjacques"
 INTRODUCED="2025"
-KERNEL_TARGET="edge,bleedingedge"
+KERNEL_TARGET="edge"
 KERNEL_TEST_TARGET="edge"
 
 PACKAGE_LIST_BOARD+=" python3-evdev python3-libevdev xinput"

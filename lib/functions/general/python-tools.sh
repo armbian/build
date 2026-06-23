@@ -160,7 +160,7 @@ function host_deps_add_extra_python() {
 	# Determine what version of python3;  focal-like OS's have Python 3.8, but we need 3.9.
 	if [[ "focal ulyana ulyssa uma una" == *"${host_release}"* ]]; then
 		display_alert "Using Python 3.9 for" "hostdeps: '${host_release}' has outdated python3, using python3.9" "warn"
-		host_dependencies+=("python3.9-dev")
+		host_dependencies+=("python::python3.9-dev")
 	else
 		display_alert "Using Python3 for" "hostdeps: '${host_release}' has python3 >= 3.9" "debug"
 	fi

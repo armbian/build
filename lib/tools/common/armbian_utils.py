@@ -14,6 +14,7 @@ import json
 import logging
 import multiprocessing
 import os
+import resource
 import re
 import shlex
 import subprocess
@@ -542,6 +543,18 @@ def gather_json_output_from_armbian(command: str, targets: list[dict]):
 		total = len(targets)
 		# get the number of processor cores on this machine
 		max_workers = multiprocessing.cpu_count() * 4  # use four times the number of cpu cores, that's the sweet spot
+		# Each pool worker keeps a pipe open in the parent and forks a config-dump
+		# subprocess (more pipes), so a high core count (e.g. 512 workers on a
+		# 128-core host) blows past the default soft open-file limit and the pool
+		# dies spawning workers ("OSError: [Errno 24] Too many open files"). Raise
+		# the soft RLIMIT_NOFILE to the hard limit so the workers have the fds.
+		try:
+			soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+			if soft < hard:
+				resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+				log.info(f"Raised open-file limit {soft} -> {hard} for {max_workers} workers.")
+		except (ValueError, OSError) as e:
+			log.warning(f"Could not raise the open-file limit for {max_workers} workers: {e}")
 		log.info(f"Using {max_workers} workers for parallel processing.")
 		with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 			every_future = []

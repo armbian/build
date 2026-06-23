@@ -110,6 +110,10 @@ function artifact_uboot_prepare_version() {
 		"${IMAGE_PARTITION_TABLE}" "${BOOT_FDT_FILE}" "${SERIALCON}"     # image and kernel related, to be used as reference/docs
 		"${SRC_EXTLINUX}" "${SRC_CMDLINE}"                               # image and kernel related, to be used as reference/docs
 	)
+	# Opt-in cache-bust for a board shipping a prebuilt/external u-boot blob: bump
+	# UBOOT_HASH_EXTRA when the blob changes to force a repackage. Appended ONLY when
+	# set, so boards that don't use it keep their exact previous version (no churn).
+	[[ -n "${UBOOT_HASH_EXTRA:-}" ]] && vars_to_hash+=("${UBOOT_HASH_EXTRA}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
@@ -121,7 +125,10 @@ function artifact_uboot_prepare_version() {
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
-	# outer scope
+	# outer scope. UBOOT_HASH_EXTRA (in vars_to_hash above) folds into -V, so a board
+	# that ships a prebuilt or externally-fetched u-boot blob just bumps that string
+	# to force a repackage — no filesystem read here (the blob may not exist yet at
+	# matrix-prep, and may not live in this repo at all).
 	artifact_version="${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(

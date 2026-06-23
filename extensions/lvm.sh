@@ -15,7 +15,7 @@
 
 # We will need to create several LVM objects: PV VG VOL on the image from the host
 function add_host_dependencies__lvm_host_deps() {
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} lvm2"
+	EXTRA_BUILD_DEPS+=("fs-tools::lvm2")
 }
 
 function extension_prepare_config__lvm_image_suffix() {

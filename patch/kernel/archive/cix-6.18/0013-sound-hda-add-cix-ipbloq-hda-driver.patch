@@ -1,0 +1,1086 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Tue, 17 Mar 2026 17:29:25 +0800
+Subject: sound: hda: add cix ipbloq hda driver
+
+---
+ sound/hda/controllers/Kconfig          |   16 +
+ sound/hda/controllers/Makefile         |    2 +
+ sound/hda/controllers/hda_cix_ipbloq.c | 1025 ++++++++++
+ 3 files changed, 1043 insertions(+)
+
+diff --git a/sound/hda/controllers/Kconfig b/sound/hda/controllers/Kconfig
+index 111111111111..222222222222 100644
+--- a/sound/hda/controllers/Kconfig
++++ b/sound/hda/controllers/Kconfig
+@@ -40,3 +40,19 @@ config SND_HDA_ACPI
+ 
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called snd-hda-acpi.
++
++config SND_HDA_CIX_IPBLOQ
++	tristate "CIX Sky1 IPBLOQ HD Audio"
++	depends on ARCH_CIX || COMPILE_TEST
++	select SND_HDA
++	select SND_HDA_ALIGNED_MMIO
++	help
++	  Say Y here to support the HDA controller present in CIX Sky1 SoCs
++	  (used in boards like the Radxa Orion O6).
++
++	  This enables support for the IPBLOQ HD Audio controller which
++	  interfaces with Realtek ALC256/ALC269 codecs for the 3.5mm audio
++	  jack.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called snd-hda-cix-ipbloq.
+diff --git a/sound/hda/controllers/Makefile b/sound/hda/controllers/Makefile
+index 111111111111..222222222222 100644
+--- a/sound/hda/controllers/Makefile
++++ b/sound/hda/controllers/Makefile
+@@ -2,6 +2,7 @@
+ snd-hda-intel-y := intel.o
+ snd-hda-tegra-y := tegra.o
+ snd-hda-acpi-y := acpi.o
++snd-hda-cix-ipbloq-y := hda_cix_ipbloq.o
+ 
+ subdir-ccflags-y += -I$(src)/../common
+ 
+@@ -11,3 +12,4 @@ CFLAGS_intel.o := -I$(src)
+ obj-$(CONFIG_SND_HDA_INTEL) += snd-hda-intel.o
+ obj-$(CONFIG_SND_HDA_TEGRA) += snd-hda-tegra.o
+ obj-$(CONFIG_SND_HDA_ACPI) += snd-hda-acpi.o
++obj-$(CONFIG_SND_HDA_CIX_IPBLOQ) += snd-hda-cix-ipbloq.o
+diff --git a/sound/hda/controllers/hda_cix_ipbloq.c b/sound/hda/controllers/hda_cix_ipbloq.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/hda/controllers/hda_cix_ipbloq.c
+@@ -0,0 +1,1025 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++// Ported to mainline 6.18 for Radxa Orion O6
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/dma-direct.h>
++#include <linux/dma-map-ops.h>
++#include <linux/gpio/consumer.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/mfd/syscon.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/reset.h>
++#include <linux/string.h>
++
++#include <sound/hda_codec.h>
++#include "hda_controller.h"
++
++#define CIX_IPBLOQ_JACKPOLL_DEFAULT_TIME_MS	1000
++#define CIX_IPBLOQ_POWER_SAVE_DEFAULT_TIME_MS	100
++
++/*
++ * CIX Sky1 HDA DMA address translation.
++ * The HDA controller sits behind the audio subsystem bus which has a
++ * fixed offset: CPU phys 0x90000000 maps to DMA addr 0x0 on the controller.
++ * Under DT this is handled via dma-ranges on the hda_bus simple-bus node.
++ * Under ACPI we must configure the offset explicitly.
++ */
++#define CIX_HDA_DMA_CPU_START	0x90000000ULL
++#define CIX_HDA_DMA_DEV_START	0x0ULL
++#define CIX_HDA_DMA_SIZE	0x80000000ULL
++
++struct cix_ipbloq_hda {
++	struct azx chip;
++	struct device *dev;
++	void __iomem *regs;
++
++	struct reset_control_bulk_data resets[1];
++	struct clk_bulk_data clocks[2];
++	unsigned int nresets;
++	unsigned int nclocks;
++
++	struct work_struct probe_work;
++
++	struct gpio_desc *pdb_gpiod;
++	struct gpio_desc *depop_mute_gpiod;
++
++	const char *sname;
++};
++
++static const struct hda_controller_ops cix_ipbloq_hda_ops;
++
++/* alc256 cix evb init verb table */
++static unsigned int alc256_cix_evb_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC256
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0256&SUBSYS_10EC129E
++	 * The number of verb command block : 16
++	 *
++	 * NID 0x12 : 0x90A60130
++	 * NID 0x13 : 0x40000000
++	 * NID 0x14 : 0x90170110
++	 * NID 0x18 : 0x411111F0
++	 * NID 0x19 : 0x04A11040
++	 * NID 0x1A : 0x411111F0
++	 * NID 0x1B : 0x411111F0
++	 * NID 0x1D : 0x4068996D
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x21 : 0x04211020
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* 1bit reset */
++	0x0205001A,
++	0x0204C00B,
++	0x0205001A,
++	0x0204800B,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C30,
++	0x01271D01,
++	0x01271EA6,
++	0x01271F90,
++	/* Pin widget 0x13 - DMIC */
++	0x01371C00,
++	0x01371D00,
++	0x01371E00,
++	0x01371F40,
++	/* Pin widget 0x14 - Front (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x18 - NPC */
++	0x01871CF0,
++	0x01871D11,
++	0x01871E11,
++	0x01871F41,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C40,
++	0x01971D10,
++	0x01971EA1,
++	0x01971F04,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71CF0,
++	0x01A71D11,
++	0x01A71E11,
++	0x01A71F41,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71CF0,
++	0x01B71D11,
++	0x01B71E11,
++	0x01B71F41,
++	/* Pin widget 0x1D - BEEP-IN */
++	0x01D71C6D,
++	0x01D71D99,
++	0x01D71E68,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Pin widget 0x21 - HP1-OUT (Port-I) */
++	0x02171C20,
++	0x02171D10,
++	0x02171E21,
++	0x02171F04,
++
++	0x02050010,
++	0x02040020,
++	0x02050038,
++	0x02046981,
++
++	0x02050008,
++	0x02046A6C,
++	0x0205001B,
++	0x02040A4B,
++
++	0x0205003C,
++	0x02040354,
++	0x0205003C,
++	0x02040314,
++
++	0x02050046,
++	0x02040004,
++	0x05750003,
++	0x057409A3,
++};
++
++/* alc256 cix orion o6 init verb table */
++static unsigned int alc256_cix_orion_o6_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC256
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0256&SUBSYS_10EC129E
++	 * The number of verb command block : 16
++	 *
++	 * NID 0x12 : 0x40000000
++	 * NID 0x13 : 0x411111F0
++	 * NID 0x14 : 0x90170110
++	 * NID 0x18 : 0x411111F0
++	 * NID 0x19 : 0x01A11030
++	 * NID 0x1A : 0x02A19040
++	 * NID 0x1B : 0x02014020
++	 * NID 0x1D : 0x4045C069
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x21 : 0x0121101F
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* 1bit reset */
++	0x0205001A,
++	0x0204C00B,
++	0x0205001A,
++	0x0204800B,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C00,
++	0x01271D00,
++	0x01271E00,
++	0x01271F40,
++	/* Pin widget 0x13 - DMIC */
++	0x01371CF0,
++	0x01371D11,
++	0x01371E11,
++	0x01371F41,
++	/* Pin widget 0x14 - Front (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x18 - NPC */
++	0x01871CF0,
++	0x01871D11,
++	0x01871E11,
++	0x01871F41,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C30,
++	0x01971D10,
++	0x01971EA1,
++	0x01971F01,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71C40,
++	0x01A71D90,
++	0x01A71EA1,
++	0x01A71F02,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71C20,
++	0x01B71D40,
++	0x01B71E01,
++	0x01B71F02,
++	/* Pin widget 0x1D - BEEP-IN */
++	0x01D71C69,
++	0x01D71DC0,
++	0x01D71E45,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Pin widget 0x21 - HP1-OUT (Port-I) */
++	0x02171C1F,
++	0x02171D10,
++	0x02171E21,
++	0x02171F01,
++
++	0x02050010,
++	0x02040020,
++	0x02050038,
++	0x02046981,
++
++	0x02050008,
++	0x02046A4C,
++	0x0205001B,
++	0x02040A4B,
++
++	0x0205003C,
++	0x02040354,
++	0x0205003C,
++	0x02040314,
++
++	0x02050046,
++	0x02040004,
++	0x05750003,
++	0x057409A3,
++};
++
++/* alc269 cix orapi 6p init verb table */
++static unsigned int alc269_cix_orapi_6p_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC269-VC3
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0269&SUBSYS_10EC129E
++	 * The number of verb command block : 17
++	 *
++	 * NID 0x12 : 0x40000000
++	 * NID 0x14 : 0x90170110
++	 * NID 0x15 : 0x0421101F
++	 * NID 0x17 : 0x411111F0
++	 * NID 0x18 : 0x04A11020
++	 * NID 0x19 : 0x90A7012F
++	 * NID 0x1A : 0x411111F0
++	 * NID 0x1B : 0x411111F0
++	 * NID 0x1D : 0x40538205
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x20 : 0x0000FFFF
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C00,
++	0x01271D00,
++	0x01271E00,
++	0x01271F40,
++	/* Pin widget 0x14 - SPEAKER-OUT (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x15 - HP-OUT (Port-A) */
++	0x01571C1F,
++	0x01571D10,
++	0x01571E21,
++	0x01571F04,
++	/* Pin widget 0x17 - MONO-OUT (Port-H) */
++	0x01771CF0,
++	0x01771D11,
++	0x01771E11,
++	0x01771F41,
++	/* Pin widget 0x18 - MIC1 (Port-B) */
++	0x01871C20,
++	0x01871D10,
++	0x01871EA1,
++	0x01871F04,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C2F,
++	0x01971D01,
++	0x01971EA7,
++	0x01971F90,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71CF0,
++	0x01A71D11,
++	0x01A71E11,
++	0x01A71F41,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71CF0,
++	0x01B71D11,
++	0x01B71E11,
++	0x01B71F41,
++	/* Pin widget 0x1D - PC-BEEP */
++	0x01D71C05,
++	0x01D71D82,
++	0x01D71E53,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Widget node 0x20 */
++	0x02050018,
++	0x02040184,
++	0x0205001C,
++	0x02040800,
++	/* Widget node 0x20 - 1 */
++	0x02050024,
++	0x02040000,
++	0x02050004,
++	0x02040080,
++	/* Widget node 0x20 - 2 */
++	0x02050008,
++	0x02040300,
++	0x0205000C,
++	0x02043F00,
++	/* Widget node 0x20 - 3 */
++	0x02050015,
++	0x02048002,
++	0x02050015,
++	0x02048002,
++	/* Widget node 0x0C */
++	0x00C37080,
++	0x00270610,
++	0x00D37080,
++	0x00370610,
++};
++
++static int cix_ipbloq_hda_send_init_verbs(struct cix_ipbloq_hda *hda)
++{
++	struct azx *chip = &hda->chip;
++	struct hdac_bus *bus = azx_bus(chip);
++	unsigned int *init_verbs = NULL;
++	unsigned int size = 0;
++	int i;
++
++	/* Select verb table based on board model */
++	if (hda->sname && !strcmp(hda->sname, "CIX SKY1 EVB HDA")) {
++		dev_dbg(bus->dev, "CIX SKY1 EVB HDA\n");
++		init_verbs = alc256_cix_evb_init_verbs;
++		size = ARRAY_SIZE(alc256_cix_evb_init_verbs);
++	} else if (hda->sname && !strcmp(hda->sname, "CIX SKY1 ORION O6 HDA")) {
++		dev_dbg(bus->dev, "CIX SKY1 ORION O6 HDA\n");
++		init_verbs = alc256_cix_orion_o6_init_verbs;
++		size = ARRAY_SIZE(alc256_cix_orion_o6_init_verbs);
++	} else if (hda->sname && !strcmp(hda->sname, "CIX SKY1 ORAPI 6P HDA")) {
++		dev_dbg(bus->dev, "CIX SKY1 ORAPI 6P HDA\n");
++		init_verbs = alc269_cix_orapi_6p_init_verbs;
++		size = ARRAY_SIZE(alc269_cix_orapi_6p_init_verbs);
++	}
++
++	if (!init_verbs || !size) {
++		dev_warn(bus->dev, "no init verbs for model: %s\n",
++			 hda->sname ? hda->sname : "unknown");
++		return 0;
++	}
++
++	for (i = 0; i < size; i++)
++		bus->ops->command(bus, init_verbs[i]);
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_dev_disconnect(struct snd_device *device)
++{
++	struct azx *chip = device->device_data;
++
++	chip->bus.shutdown = 1;
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_dev_free(struct snd_device *device)
++{
++	struct azx *chip = device->device_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++
++	cancel_work_sync(&hda->probe_work);
++
++	if (azx_bus(chip)->chip_init) {
++		azx_stop_all_streams(chip);
++		azx_stop_chip(chip);
++	}
++
++	azx_free_stream_pages(chip);
++	azx_free_streams(chip);
++	snd_hdac_bus_exit(azx_bus(chip));
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_init_chip(struct azx *chip, struct platform_device *pdev)
++{
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	struct hdac_bus *bus = azx_bus(chip);
++	struct resource *res;
++
++	hda->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(hda->regs)) {
++		dev_err(&pdev->dev, "failed to get and ioremap resource\n");
++		return PTR_ERR(hda->regs);
++	}
++
++	bus->remap_addr = hda->regs;
++	bus->addr = res->start;
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_init(struct azx *chip, struct platform_device *pdev)
++{
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	struct hdac_bus *bus = azx_bus(chip);
++	struct snd_card *card = chip->card;
++	const char *sname = NULL, *drv_name = "cix-ipbloq-hda";
++	unsigned short gcap;
++	int irq_id, err;
++
++	err = cix_ipbloq_hda_init_chip(chip, pdev);
++	if (err)
++		return err;
++
++	irq_id = platform_get_irq(pdev, 0);
++	if (irq_id < 0) {
++		dev_err(&pdev->dev, "failed to get the irq\n");
++		return irq_id;
++	}
++
++	err = devm_request_irq(chip->card->dev, irq_id, azx_interrupt,
++			     IRQF_SHARED, KBUILD_MODNAME, chip);
++	if (err) {
++		dev_err(chip->card->dev,
++			"Unable to request IRQ %d, disabling device\n",
++			irq_id);
++		return err;
++	}
++
++	bus->irq = irq_id;
++	bus->dma_stop_delay = 100;
++	card->sync_irq = bus->irq;
++
++	gcap = azx_readw(chip, GCAP);
++	dev_info(card->dev, "chipset global capabilities = 0x%x\n", gcap);
++
++	chip->capture_streams = (gcap >> 8) & 0x0f;
++	chip->playback_streams = (gcap >> 12) & 0x0f;
++	chip->capture_index_offset = 0;
++	chip->playback_index_offset = chip->capture_streams;
++	chip->num_streams = chip->playback_streams + chip->capture_streams;
++
++	/* initialize streams */
++	err = azx_init_streams(chip);
++	if (err < 0) {
++		dev_err(card->dev, "failed to initialize streams: %d\n", err);
++		return err;
++	}
++
++	err = azx_alloc_stream_pages(chip);
++	if (err < 0) {
++		dev_err(card->dev, "failed to allocate stream pages: %d\n", err);
++		return err;
++	}
++
++	/* initialize chip */
++	azx_init_chip(chip, 1);
++
++	/* codec detection */
++	if (!bus->codec_mask) {
++		dev_err(card->dev, "no codecs found\n");
++		return -ENODEV;
++	}
++	dev_info(card->dev, "codec detection mask = 0x%lx\n", bus->codec_mask);
++
++	/* driver name */
++	strscpy(card->driver, drv_name, sizeof(card->driver));
++
++	/* shortname for card */
++	device_property_read_string(&pdev->dev, "cix,model", &sname);
++	if (!sname)
++		sname = drv_name;
++	/* use to distinguish boards later when select verb table */
++	hda->sname = sname;
++
++	if (strlen(sname) > sizeof(card->shortname))
++		dev_info(card->dev, "truncating shortname for card\n");
++	strscpy(card->shortname, sname, sizeof(card->shortname));
++
++	/* longname for card */
++	snprintf(card->longname, sizeof(card->longname),
++		 "%s at 0x%lx irq %i",
++		 card->shortname, bus->addr, bus->irq);
++
++	return 0;
++}
++
++static void cix_ipbloq_hda_probe_work(struct work_struct *work)
++{
++	struct cix_ipbloq_hda *hda = container_of(work, struct cix_ipbloq_hda, probe_work);
++	struct platform_device *pdev = to_platform_device(hda->dev);
++	struct azx *chip = &hda->chip;
++	struct hdac_bus *bus = azx_bus(chip);
++	int err;
++
++	pm_runtime_get_sync(hda->dev);
++
++	to_hda_bus(bus)->bus_probing = 1;
++
++	err = cix_ipbloq_hda_init(chip, pdev);
++	if (err < 0)
++		goto out_free;
++
++	/* Send init verbs before codec probe */
++	cix_ipbloq_hda_send_init_verbs(hda);
++
++	/* create codec instances */
++	err = azx_probe_codecs(chip, 8);
++	if (err < 0)
++		goto out_free;
++
++	err = azx_codec_configure(chip);
++	if (err < 0)
++		goto out_free;
++
++	err = snd_card_register(chip->card);
++	if (err < 0)
++		goto out_free;
++
++	chip->running = 1;
++
++	to_hda_bus(bus)->bus_probing = 0;
++
++	snd_hda_set_power_save(&chip->bus, CIX_IPBLOQ_POWER_SAVE_DEFAULT_TIME_MS);
++
++	dev_info(hda->dev, "cix ipbloq hda probed\n");
++
++ out_free:
++	pm_runtime_put(hda->dev);
++	return; /* no error return from async probe */
++}
++
++static int cix_ipbloq_hda_create(struct snd_card *card,
++				 unsigned int driver_caps,
++				 struct cix_ipbloq_hda *hda)
++{
++	static const struct snd_device_ops ops = {
++		.dev_disconnect = cix_ipbloq_hda_dev_disconnect,
++		.dev_free = cix_ipbloq_hda_dev_free,
++	};
++	struct azx *chip;
++	int err;
++
++	chip = &hda->chip;
++
++	mutex_init(&chip->open_mutex);
++	chip->card = card;
++	chip->ops = &cix_ipbloq_hda_ops;
++	chip->driver_caps = driver_caps;
++	chip->driver_type = driver_caps & 0xff;
++	chip->dev_index = 0;
++	chip->single_cmd = 0;
++	chip->codec_probe_mask = -1;
++	chip->align_buffer_size = 1;
++	chip->jackpoll_interval = msecs_to_jiffies(CIX_IPBLOQ_JACKPOLL_DEFAULT_TIME_MS);
++	INIT_LIST_HEAD(&chip->pcm_list);
++
++	/* HD-audio controllers appear pretty inaccurate about the update-IRQ timing.
++	 * The IRQ is issued before actually the data is processed. So use stream
++	 * link position by default instead of dma position buffer.
++	 */
++	chip->get_position[0] = chip->get_position[1] = azx_get_pos_lpib;
++
++	INIT_WORK(&hda->probe_work, cix_ipbloq_hda_probe_work);
++
++	err = azx_bus_init(chip, NULL);
++	if (err < 0) {
++		dev_err(hda->dev, "failed to init bus, err = %d\n", err);
++		return err;
++	}
++
++	/* RIRBSTS.RINTFL cannot be cleared, cause interrupt storm */
++	chip->bus.core.polling_mode = 1;
++	chip->bus.core.not_use_interrupts = 1;
++
++	chip->bus.core.aligned_mmio = 1;
++	chip->bus.jackpoll_in_suspend = 1;
++
++	/*
++	 * DMA address translation (CPU phys → HDA bus addr) is handled by
++	 * dma-ranges under DT, or configured in probe under ACPI.
++	 */
++
++	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
++	if (err < 0) {
++		dev_err(card->dev, "failed to create device, err = %d\n", err);
++		return err;
++	}
++
++	return 0;
++}
++
++/*
++ * Parse the RSVL table from the CIX audio subsystem resource device
++ * (CIXA1019) to find reserved DMA memory for the HDA controller.
++ * The RSVL table format is:
++ *   Package { Package { base_addr, size, flags_str, consumer_ref }, ... }
++ */
++#ifdef CONFIG_ACPI
++static int cix_ipbloq_hda_setup_acpi_rsvmem(struct device *dev)
++{
++	struct acpi_device *rest_adev;
++	struct acpi_buffer output = {ACPI_ALLOCATE_BUFFER, NULL};
++	union acpi_object *out_obj, *entry, *el;
++	acpi_status status;
++	phys_addr_t base;
++	resource_size_t size;
++	dma_addr_t bus_addr;
++	int i, ret = -ENODEV;
++
++	/* Find the audio subsystem resource device CIXA1019 */
++	rest_adev = acpi_dev_get_first_match_dev("CIXA1019", NULL, -1);
++	if (!rest_adev)
++		return -ENODEV;
++
++	status = acpi_evaluate_object_typed(
++		acpi_device_handle(rest_adev), "RSVL", NULL, &output,
++		ACPI_TYPE_PACKAGE);
++	acpi_dev_put(rest_adev);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	out_obj = output.pointer;
++
++	for (i = 0; i < out_obj->package.count; i++) {
++		struct acpi_device *consumer;
++
++		entry = &out_obj->package.elements[i];
++		if (entry->type != ACPI_TYPE_PACKAGE || entry->package.count < 4)
++			continue;
++
++		/* Element 3 is the consumer device reference */
++		el = &entry->package.elements[3];
++		if (el->type != ACPI_TYPE_LOCAL_REFERENCE)
++			continue;
++
++		consumer = acpi_fetch_acpi_dev(el->reference.handle);
++		if (!consumer || consumer != ACPI_COMPANION(dev))
++			continue;
++
++		/* Found our entry — extract base and size */
++		el = &entry->package.elements[0];
++		if (el->type != ACPI_TYPE_INTEGER)
++			break;
++		base = el->integer.value;
++
++		el = &entry->package.elements[1];
++		if (el->type != ACPI_TYPE_INTEGER)
++			break;
++		size = el->integer.value;
++
++		/* Translate CPU physical to bus address */
++		if (base < CIX_HDA_DMA_CPU_START ||
++		    base + size > CIX_HDA_DMA_CPU_START + CIX_HDA_DMA_SIZE) {
++			dev_warn(dev, "RSVL: region 0x%llx+0x%llx outside DMA window\n",
++				 (u64)base, (u64)size);
++			break;
++		}
++		bus_addr = base - CIX_HDA_DMA_CPU_START + CIX_HDA_DMA_DEV_START;
++
++		ret = dma_declare_coherent_memory(dev, base, bus_addr, size);
++		if (ret) {
++			dev_warn(dev, "RSVL: failed to declare coherent mem: %d\n", ret);
++			break;
++		}
++		dev_info(dev, "RSVL: reserved %lluMB DMA at 0x%llx (bus 0x%llx)\n",
++			 (u64)size >> 20, (u64)base, (u64)bus_addr);
++		ret = 0;
++		break;
++	}
++
++	kfree(output.pointer);
++	return ret;
++}
++#else
++static inline int cix_ipbloq_hda_setup_acpi_rsvmem(struct device *dev)
++{
++	return -ENODEV;
++}
++#endif
++
++static int cix_ipbloq_hda_probe(struct platform_device *pdev)
++{
++	const unsigned int driver_flags = AZX_DCAPS_PM_RUNTIME;
++	struct snd_card *card;
++	struct azx *chip;
++	struct cix_ipbloq_hda *hda;
++	int err;
++
++	hda = devm_kzalloc(&pdev->dev, sizeof(*hda), GFP_KERNEL);
++	if (!hda) {
++		dev_err(&pdev->dev, "failed to allocate memory for hda\n");
++		return -ENOMEM;
++	}
++	hda->dev = &pdev->dev;
++	chip = &hda->chip;
++
++	err = snd_card_new(&pdev->dev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1,
++			   THIS_MODULE, 0, &card);
++	if (err < 0) {
++		dev_err(&pdev->dev, "failed to create card, err = %d\n", err);
++		return err;
++	}
++
++	dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
++
++	/*
++	 * Under ACPI, configure DMA address translation for the HDA
++	 * controller. The audio subsystem bus applies a fixed offset
++	 * between CPU physical addresses and the controller's bus
++	 * addresses. Under DT this is handled by dma-ranges.
++	 */
++	if (has_acpi_companion(&pdev->dev) && !pdev->dev.dma_range_map) {
++		struct bus_dma_region *map;
++
++		/*
++		 * Use kcalloc, not devm_kcalloc: the core driver model
++		 * frees dma_range_map with plain kfree() in
++		 * device_unbind_cleanup(), so this must be a standalone
++		 * allocation.
++		 */
++		map = kcalloc(2, sizeof(*map), GFP_KERNEL);
++		if (!map) {
++			err = -ENOMEM;
++			goto out_free;
++		}
++		map[0].cpu_start = CIX_HDA_DMA_CPU_START;
++		map[0].dma_start = CIX_HDA_DMA_DEV_START;
++		map[0].size = CIX_HDA_DMA_SIZE;
++		/* map[1] is zero-initialized sentinel */
++		pdev->dev.dma_range_map = map;
++	}
++
++	if (!pdev->dev.dma_mem && pdev->dev.of_node) {
++		err = of_reserved_mem_device_init(&pdev->dev);
++		if (err && err != -ENODEV) {
++			dev_err(&pdev->dev,
++				"failed to init reserved mem for DMA, err = %d\n", err);
++			goto out_free;
++		}
++	}
++
++	if (IS_ENABLED(CONFIG_ACPI) &&
++	    !pdev->dev.dma_mem && has_acpi_companion(&pdev->dev)) {
++		err = cix_ipbloq_hda_setup_acpi_rsvmem(&pdev->dev);
++		if (err && err != -ENODEV) {
++			dev_err(&pdev->dev,
++				"failed to init ACPI reserved mem for DMA, err = %d\n", err);
++			goto out_free;
++		}
++	}
++
++	hda->resets[hda->nresets++].id = "hda";
++	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, hda->nresets,
++						    hda->resets);
++	if (err) {
++		dev_err(&pdev->dev, "failed to get reset, err = %d\n", err);
++		goto out_free;
++	}
++
++	hda->clocks[hda->nclocks++].id = "sysclk";
++	hda->clocks[hda->nclocks++].id = "clk48m";
++	err = devm_clk_bulk_get(&pdev->dev, hda->nclocks, hda->clocks);
++	if (err < 0) {
++		dev_err(&pdev->dev, "failed to get clk, err = %d\n", err);
++		goto out_free;
++	}
++
++	hda->pdb_gpiod = devm_gpiod_get_optional(&pdev->dev, "pdb", GPIOD_OUT_HIGH);
++	if (IS_ERR(hda->pdb_gpiod)) {
++		err = PTR_ERR(hda->pdb_gpiod);
++		dev_err(&pdev->dev, "failed to get pdb gpio, err: %d\n", err);
++		goto out_free;
++	}
++	msleep(20);
++
++	hda->depop_mute_gpiod = devm_gpiod_get_optional(&pdev->dev, "depop-mute", GPIOD_OUT_HIGH);
++	if (IS_ERR(hda->depop_mute_gpiod)) {
++		err = PTR_ERR(hda->depop_mute_gpiod);
++		dev_err(&pdev->dev, "failed to get depop gpio, err: %d\n", err);
++		goto out_free;
++	}
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 1);
++
++	err = cix_ipbloq_hda_create(card, driver_flags, hda);
++	if (err < 0)
++		goto out_free;
++	card->private_data = chip;
++
++	dev_set_drvdata(&pdev->dev, card);
++
++	pm_runtime_enable(hda->dev);
++	if (!azx_has_pm_runtime(chip))
++		pm_runtime_forbid(hda->dev);
++
++	schedule_work(&hda->probe_work);
++
++	return 0;
++
++out_free:
++	snd_card_free(card);
++	return err;
++}
++
++static void cix_ipbloq_hda_remove(struct platform_device *pdev)
++{
++	snd_card_free(dev_get_drvdata(&pdev->dev));
++
++	pm_runtime_disable(&pdev->dev);
++}
++
++static void cix_ipbloq_hda_shutdown(struct platform_device *pdev)
++{
++	struct snd_card *card = dev_get_drvdata(&pdev->dev);
++	struct azx *chip;
++
++	if (!card)
++		return;
++
++	chip = card->private_data;
++	if (chip && chip->running)
++		azx_stop_chip(chip);
++}
++
++static int __maybe_unused cix_ipbloq_hda_suspend(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	rc = pm_runtime_force_suspend(dev);
++	if (rc < 0)
++		return rc;
++	snd_power_change_state(card, SNDRV_CTL_POWER_D3cold);
++
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 0);
++
++	gpiod_set_value_cansleep(hda->pdb_gpiod, 0);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_resume(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	gpiod_set_value_cansleep(hda->pdb_gpiod, 1);
++	msleep(20);
++
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 1);
++
++	rc = pm_runtime_force_resume(dev);
++	if (rc < 0)
++		return rc;
++	snd_power_change_state(card, SNDRV_CTL_POWER_D0);
++
++	/* Resend init verbs after resume */
++	cix_ipbloq_hda_send_init_verbs(hda);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_runtime_suspend(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++
++	dev_dbg(dev, "%s\n", __func__);
++
++	if (chip && chip->running) {
++		azx_stop_chip(chip);
++		azx_enter_link_reset(chip);
++	}
++
++	clk_bulk_disable_unprepare(hda->nclocks, hda->clocks);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_runtime_resume(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	dev_dbg(dev, "%s\n", __func__);
++
++	rc = clk_bulk_prepare_enable(hda->nclocks, hda->clocks);
++	if (rc) {
++		dev_err(dev, "failed to enable clk bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	rc = reset_control_bulk_assert(hda->nresets, hda->resets);
++	if (rc) {
++		dev_err(dev, "failed to assert reset bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	usleep_range(10, 20);
++
++	rc = reset_control_bulk_deassert(hda->nresets, hda->resets);
++	if (rc) {
++		dev_err(dev, "failed to deassert reset bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	if (chip && chip->running)
++		azx_init_chip(chip, 1);
++
++	return 0;
++}
++
++static const struct dev_pm_ops cix_ipbloq_hda_pm = {
++	SET_SYSTEM_SLEEP_PM_OPS(cix_ipbloq_hda_suspend,
++				cix_ipbloq_hda_resume)
++	SET_RUNTIME_PM_OPS(cix_ipbloq_hda_runtime_suspend,
++			   cix_ipbloq_hda_runtime_resume, NULL)
++};
++
++static const struct of_device_id cix_ipbloq_hda_match[] = {
++	{ .compatible = "cix,sky1-ipbloq-hda", .data = NULL },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cix_ipbloq_hda_match);
++
++static const struct acpi_device_id cix_ipbloq_hda_acpi_match[] = {
++	{ "CIXH6020" },
++	{},
++};
++MODULE_DEVICE_TABLE(acpi, cix_ipbloq_hda_acpi_match);
++
++static struct platform_driver cix_ipbloq_hda_driver = {
++	.driver = {
++		.name = "cix-ipbloq-hda",
++		.pm = &cix_ipbloq_hda_pm,
++		.of_match_table = cix_ipbloq_hda_match,
++		.acpi_match_table = cix_ipbloq_hda_acpi_match,
++	},
++	.probe = cix_ipbloq_hda_probe,
++	.remove = cix_ipbloq_hda_remove,
++	.shutdown = cix_ipbloq_hda_shutdown,
++};
++module_platform_driver(cix_ipbloq_hda_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("CIX IPBLOQ HDA bus driver");
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+-- 
+Armbian
+

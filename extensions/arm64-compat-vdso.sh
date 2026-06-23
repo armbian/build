@@ -24,9 +24,9 @@ function extension_prepare_config__arm64_compat_vdso() {
 
 function add_host_dependencies__arm64_compat_vdso() {
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
-		EXTRA_BUILD_DEPS+=" clang "
+		EXTRA_BUILD_DEPS+=("clang::clang")
 	else
-		EXTRA_BUILD_DEPS+=" gcc-arm-linux-gnueabi "
+		EXTRA_BUILD_DEPS+=("cross-armhf::gcc-arm-linux-gnueabi")
 	fi
 }
 
