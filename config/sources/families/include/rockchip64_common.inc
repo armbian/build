@@ -262,7 +262,12 @@ uboot_custom_postprocess() {
 				display_alert "boot_merger for '${BOOT_SOC}'" "using vendor SPL ${VENDOR_SPL_PATH##*/}" "info"
 			fi
 
-			if [[ "$BOOT_SOC" == "rk3576" ]]; then
+			if declare -F board_uboot_spl_blobs_postprocess >/dev/null; then
+				# Board/extension hook: take over SPL loader generation for this BOOT_SOC
+				# (e.g. boot_merger with custom usbplug, idbloader via mkimage, maskrom
+				# spl_loader save). Falls through to the upstream branches below otherwise.
+				board_uboot_spl_blobs_postprocess "$BOOT_SOC" "$SPL_BIN_PATH" "$FLASH_BOOT_BIN"
+			elif [[ "$BOOT_SOC" == "rk3576" ]]; then
 				display_alert "boot_merger for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
 				RKBOOT_INI_FILE=rk3576.ini
 				cp $RKBIN_DIR/rk35/RK3576MINIALL.ini $RKBOOT_INI_FILE
@@ -308,6 +313,9 @@ uboot_custom_postprocess() {
 			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
 			run_host_command_logged dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
 			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
+			# Hook: allow board/extension to copy out the SPI image (e.g. for Maskrom recovery)
+			declare -F board_uboot_spi_image_postprocess >/dev/null && \
+				board_uboot_spi_image_postprocess
 		else
 			display_alert "uboot_custom_postprocess (mkimage) for BOOT_SUPPORT_SPI:${BOOT_SUPPORT_SPI:-"no"} and BOOT_SPI_RKSPI_LOADER=${BOOT_SPI_RKSPI_LOADER:-"no"}" "SPI rkspi_loader.img" "info"
 			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
