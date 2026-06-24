@@ -159,7 +159,7 @@ function artifact_kernel_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh # expansion
+	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh "${SRC}"/lib/functions/compilation/stubble.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
