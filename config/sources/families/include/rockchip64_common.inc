@@ -313,9 +313,6 @@ uboot_custom_postprocess() {
 			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
 			run_host_command_logged dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
 			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
-			# Hook: allow board/extension to copy out the SPI image (e.g. for Maskrom recovery)
-			declare -F board_uboot_spi_image_postprocess >/dev/null && \
-				board_uboot_spi_image_postprocess
 		else
 			display_alert "uboot_custom_postprocess (mkimage) for BOOT_SUPPORT_SPI:${BOOT_SUPPORT_SPI:-"no"} and BOOT_SPI_RKSPI_LOADER=${BOOT_SPI_RKSPI_LOADER:-"no"}" "SPI rkspi_loader.img" "info"
 			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
@@ -323,6 +320,12 @@ uboot_custom_postprocess() {
 			run_host_command_logged dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
 			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
 		fi
+		# Hook: allow board/extension to copy out the finished SPI image
+		# (e.g. for Maskrom recovery). Invoked after both rkspi_loader.img
+		# build paths so the hook contract is consistent regardless of
+		# BOOT_SPI_RKSPI_LOADER.
+		declare -F board_uboot_spi_image_postprocess >/dev/null && \
+			board_uboot_spi_image_postprocess
 	fi
 }
 
