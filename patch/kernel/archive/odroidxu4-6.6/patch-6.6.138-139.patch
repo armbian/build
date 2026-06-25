@@ -1,0 +1,123 @@
+diff --git a/Makefile b/Makefile
+index 7878fd783212d0..d00b00f0c54fcb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 138
++SUBLEVEL = 139
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+index deb5fe00177630..c9f83af0e0b784 100644
+--- a/arch/x86/include/asm/msr-index.h
++++ b/arch/x86/include/asm/msr-index.h
+@@ -675,6 +675,7 @@
+ /* Zen4 */
+ #define MSR_ZEN4_BP_CFG			0xc001102e
+ #define MSR_ZEN4_BP_CFG_SHARED_BTB_FIX_BIT 5
++#define MSR_ZEN2_BP_CFG_BUG_FIX_BIT	33
+ 
+ /* Zen 2 */
+ #define MSR_ZEN2_SPECTRAL_CHICKEN	0xc00110e3
+diff --git a/arch/x86/kernel/cpu/amd.c b/arch/x86/kernel/cpu/amd.c
+index 211141d37d1555..c5bcf438483060 100644
+--- a/arch/x86/kernel/cpu/amd.c
++++ b/arch/x86/kernel/cpu/amd.c
+@@ -1166,6 +1166,9 @@ static void init_amd_zen2(struct cpuinfo_x86 *c)
+ 		msr_clear_bit(MSR_AMD64_CPUID_FN_7, 18);
+ 		pr_emerg("RDSEED is not reliable on this platform; disabling.\n");
+ 	}
++
++	if (!cpu_has(c, X86_FEATURE_HYPERVISOR))
++		msr_set_bit(MSR_ZEN4_BP_CFG, MSR_ZEN2_BP_CFG_BUG_FIX_BIT);
+ }
+ 
+ static void init_amd_zen3(struct cpuinfo_x86 *c)
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 9c7c67efce346f..856a560100c23e 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -916,6 +916,9 @@ struct task_struct {
+ 	 */
+ 	unsigned			sched_remote_wakeup:1;
+ 
++	/* Save user-dumpable when mm goes away */
++	unsigned			user_dumpable:1;
++
+ 	/* Bit to tell LSMs we're in execve(): */
+ 	unsigned			in_execve:1;
+ 	unsigned			in_iowait:1;
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 03a1dd32e6ff3c..686bbe72bb41ad 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -559,6 +559,7 @@ static void exit_mm(void)
+ 	 */
+ 	smp_mb__after_spinlock();
+ 	local_irq_disable();
++	current->user_dumpable = (get_dumpable(mm) == SUID_DUMP_USER);
+ 	current->mm = NULL;
+ 	membarrier_update_current_mm(NULL);
+ 	enter_lazy_tlb(mm, current);
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 443057bee87cb7..3c7d122a37fb4c 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -283,11 +283,24 @@ static bool ptrace_has_cap(struct user_namespace *ns, unsigned int mode)
+ 	return ns_capable(ns, CAP_SYS_PTRACE);
+ }
+ 
++static bool task_still_dumpable(struct task_struct *task, unsigned int mode)
++{
++	struct mm_struct *mm = task->mm;
++	if (mm) {
++		if (get_dumpable(mm) == SUID_DUMP_USER)
++			return true;
++		return ptrace_has_cap(mm->user_ns, mode);
++	}
++
++	if (task->user_dumpable)
++		return true;
++	return ptrace_has_cap(&init_user_ns, mode);
++}
++
+ /* Returns 0 on success, -errno on denial. */
+ static int __ptrace_may_access(struct task_struct *task, unsigned int mode)
+ {
+ 	const struct cred *cred = current_cred(), *tcred;
+-	struct mm_struct *mm;
+ 	kuid_t caller_uid;
+ 	kgid_t caller_gid;
+ 
+@@ -348,11 +361,8 @@ ok:
+ 	 * Pairs with a write barrier in commit_creds().
+ 	 */
+ 	smp_rmb();
+-	mm = task->mm;
+-	if (mm &&
+-	    ((get_dumpable(mm) != SUID_DUMP_USER) &&
+-	     !ptrace_has_cap(mm->user_ns, mode)))
+-	    return -EPERM;
++	if (!task_still_dumpable(task, mode))
++		return -EPERM;
+ 
+ 	return security_ptrace_access_check(task, mode);
+ }
+diff --git a/tools/arch/x86/include/asm/msr-index.h b/tools/arch/x86/include/asm/msr-index.h
+index 76f9cad9fb62b1..d108bc6634ed4d 100644
+--- a/tools/arch/x86/include/asm/msr-index.h
++++ b/tools/arch/x86/include/asm/msr-index.h
+@@ -638,6 +638,9 @@
+ /* AMD Last Branch Record MSRs */
+ #define MSR_AMD64_LBR_SELECT			0xc000010e
+ 
++#define MSR_ZEN4_BP_CFG			0xc001102e
++#define MSR_ZEN2_BP_CFG_BUG_FIX_BIT	33
++
+ /* Fam 17h MSRs */
+ #define MSR_F17H_IRPERF			0xc00000e9
+ 

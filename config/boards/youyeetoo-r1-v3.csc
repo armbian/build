@@ -3,6 +3,7 @@ BOARD_NAME="Youyeetoo R1 v3"
 BOARD_VENDOR="youyeetoo"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="SuperKali"
+INTRODUCED="2024"
 BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="vendor,current,edge"

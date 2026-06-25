@@ -1,0 +1,1006 @@
+diff --git a/Makefile b/Makefile
+index bed8bc23e68acd..11d81cfd9dccbe 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 136
++SUBLEVEL = 137
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/crypto/Kconfig b/crypto/Kconfig
+index fc0f75d8be01d2..f6eb33f22763d3 100644
+--- a/crypto/Kconfig
++++ b/crypto/Kconfig
+@@ -221,7 +221,6 @@ config CRYPTO_AUTHENC
+ 	select CRYPTO_SKCIPHER
+ 	select CRYPTO_MANAGER
+ 	select CRYPTO_HASH
+-	select CRYPTO_NULL
+ 	help
+ 	  Authenc: Combined mode wrapper for IPsec.
+ 
+@@ -1379,7 +1378,6 @@ config CRYPTO_USER_API_AEAD
+ 	depends on NET
+ 	select CRYPTO_AEAD
+ 	select CRYPTO_SKCIPHER
+-	select CRYPTO_NULL
+ 	select CRYPTO_USER_API
+ 	help
+ 	  Enable the userspace interface for AEAD cipher algorithms.
+diff --git a/crypto/af_alg.c b/crypto/af_alg.c
+index 24575ceae14bd0..ce58738ce00d88 100644
+--- a/crypto/af_alg.c
++++ b/crypto/af_alg.c
+@@ -636,15 +636,13 @@ static int af_alg_alloc_tsgl(struct sock *sk)
+ /**
+  * af_alg_count_tsgl - Count number of TX SG entries
+  *
+- * The counting starts from the beginning of the SGL to @bytes. If
+- * an @offset is provided, the counting of the SG entries starts at the @offset.
++ * The counting starts from the beginning of the SGL to @bytes.
+  *
+  * @sk: socket of connection to user space
+  * @bytes: Count the number of SG entries holding given number of bytes.
+- * @offset: Start the counting of SG entries from the given offset.
+  * Return: Number of TX SG entries found given the constraints
+  */
+-unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset)
++unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes)
+ {
+ 	const struct alg_sock *ask = alg_sk(sk);
+ 	const struct af_alg_ctx *ctx = ask->private;
+@@ -659,25 +657,11 @@ unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset)
+ 		const struct scatterlist *sg = sgl->sg;
+ 
+ 		for (i = 0; i < sgl->cur; i++) {
+-			size_t bytes_count;
+-
+-			/* Skip offset */
+-			if (offset >= sg[i].length) {
+-				offset -= sg[i].length;
+-				bytes -= sg[i].length;
+-				continue;
+-			}
+-
+-			bytes_count = sg[i].length - offset;
+-
+-			offset = 0;
+ 			sgl_count++;
+-
+-			/* If we have seen requested number of bytes, stop */
+-			if (bytes_count >= bytes)
++			if (sg[i].length >= bytes)
+ 				return sgl_count;
+ 
+-			bytes -= bytes_count;
++			bytes -= sg[i].length;
+ 		}
+ 	}
+ 
+@@ -689,19 +673,14 @@ EXPORT_SYMBOL_GPL(af_alg_count_tsgl);
+  * af_alg_pull_tsgl - Release the specified buffers from TX SGL
+  *
+  * If @dst is non-null, reassign the pages to @dst. The caller must release
+- * the pages. If @dst_offset is given only reassign the pages to @dst starting
+- * at the @dst_offset (byte). The caller must ensure that @dst is large
+- * enough (e.g. by using af_alg_count_tsgl with the same offset).
++ * the pages.
+  *
+  * @sk: socket of connection to user space
+  * @used: Number of bytes to pull from TX SGL
+  * @dst: If non-NULL, buffer is reassigned to dst SGL instead of releasing. The
+  *	 caller must release the buffers in dst.
+- * @dst_offset: Reassign the TX SGL from given offset. All buffers before
+- *	        reaching the offset is released.
+  */
+-void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
+-		      size_t dst_offset)
++void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst)
+ {
+ 	struct alg_sock *ask = alg_sk(sk);
+ 	struct af_alg_ctx *ctx = ask->private;
+@@ -725,19 +704,11 @@ void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
+ 			 * Assumption: caller created af_alg_count_tsgl(len)
+ 			 * SG entries in dst.
+ 			 */
+-			if (dst) {
+-				if (dst_offset >= plen) {
+-					/* discard page before offset */
+-					dst_offset -= plen;
+-				} else {
+-					/* reassign page to dst after offset */
+-					get_page(page);
+-					sg_set_page(dst + j, page,
+-						    plen - dst_offset,
+-						    sg[i].offset + dst_offset);
+-					dst_offset = 0;
+-					j++;
+-				}
++			if (dst && plen) {
++				/* reassign page to dst */
++				get_page(page);
++				sg_set_page(dst + j, page, plen, sg[i].offset);
++				j++;
+ 			}
+ 
+ 			sg[i].length -= plen;
+diff --git a/crypto/algif_aead.c b/crypto/algif_aead.c
+index 481e66f8708bb7..cb651ab58d6293 100644
+--- a/crypto/algif_aead.c
++++ b/crypto/algif_aead.c
+@@ -26,8 +26,6 @@
+ #include <crypto/internal/aead.h>
+ #include <crypto/scatterwalk.h>
+ #include <crypto/if_alg.h>
+-#include <crypto/skcipher.h>
+-#include <crypto/null.h>
+ #include <linux/init.h>
+ #include <linux/list.h>
+ #include <linux/kernel.h>
+@@ -36,19 +34,13 @@
+ #include <linux/net.h>
+ #include <net/sock.h>
+ 
+-struct aead_tfm {
+-	struct crypto_aead *aead;
+-	struct crypto_sync_skcipher *null_tfm;
+-};
+-
+ static inline bool aead_sufficient_data(struct sock *sk)
+ {
+ 	struct alg_sock *ask = alg_sk(sk);
+ 	struct sock *psk = ask->parent;
+ 	struct alg_sock *pask = alg_sk(psk);
+ 	struct af_alg_ctx *ctx = ask->private;
+-	struct aead_tfm *aeadc = pask->private;
+-	struct crypto_aead *tfm = aeadc->aead;
++	struct crypto_aead *tfm = pask->private;
+ 	unsigned int as = crypto_aead_authsize(tfm);
+ 
+ 	/*
+@@ -64,27 +56,12 @@ static int aead_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
+ 	struct alg_sock *ask = alg_sk(sk);
+ 	struct sock *psk = ask->parent;
+ 	struct alg_sock *pask = alg_sk(psk);
+-	struct aead_tfm *aeadc = pask->private;
+-	struct crypto_aead *tfm = aeadc->aead;
++	struct crypto_aead *tfm = pask->private;
+ 	unsigned int ivsize = crypto_aead_ivsize(tfm);
+ 
+ 	return af_alg_sendmsg(sock, msg, size, ivsize);
+ }
+ 
+-static int crypto_aead_copy_sgl(struct crypto_sync_skcipher *null_tfm,
+-				struct scatterlist *src,
+-				struct scatterlist *dst, unsigned int len)
+-{
+-	SYNC_SKCIPHER_REQUEST_ON_STACK(skreq, null_tfm);
+-
+-	skcipher_request_set_sync_tfm(skreq, null_tfm);
+-	skcipher_request_set_callback(skreq, CRYPTO_TFM_REQ_MAY_SLEEP,
+-				      NULL, NULL);
+-	skcipher_request_set_crypt(skreq, src, dst, len, NULL);
+-
+-	return crypto_skcipher_encrypt(skreq);
+-}
+-
+ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 			 size_t ignored, int flags)
+ {
+@@ -93,13 +70,12 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	struct sock *psk = ask->parent;
+ 	struct alg_sock *pask = alg_sk(psk);
+ 	struct af_alg_ctx *ctx = ask->private;
+-	struct aead_tfm *aeadc = pask->private;
+-	struct crypto_aead *tfm = aeadc->aead;
+-	struct crypto_sync_skcipher *null_tfm = aeadc->null_tfm;
+-	unsigned int i, as = crypto_aead_authsize(tfm);
++	struct crypto_aead *tfm = pask->private;
++	unsigned int as = crypto_aead_authsize(tfm);
++	unsigned int ivsize = crypto_aead_ivsize(tfm);
+ 	struct af_alg_async_req *areq;
+-	struct af_alg_tsgl *tsgl, *tmp;
+ 	struct scatterlist *rsgl_src, *tsgl_src = NULL;
++	void *iv;
+ 	int err = 0;
+ 	size_t used = 0;		/* [in]  TX bufs to be en/decrypted */
+ 	size_t outlen = 0;		/* [out] RX bufs produced by kernel */
+@@ -151,10 +127,14 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 
+ 	/* Allocate cipher request for current operation. */
+ 	areq = af_alg_alloc_areq(sk, sizeof(struct af_alg_async_req) +
+-				     crypto_aead_reqsize(tfm));
++				     crypto_aead_reqsize(tfm) + ivsize);
+ 	if (IS_ERR(areq))
+ 		return PTR_ERR(areq);
+ 
++	iv = (u8 *)aead_request_ctx(&areq->cra_u.aead_req) +
++	     crypto_aead_reqsize(tfm);
++	memcpy(iv, ctx->iv, ivsize);
++
+ 	/* convert iovecs of output buffers into RX SGL */
+ 	err = af_alg_get_rsgl(sk, msg, flags, areq, outlen, &usedpages);
+ 	if (err)
+@@ -178,23 +158,24 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 		outlen -= less;
+ 	}
+ 
++	/*
++	 * Create a per request TX SGL for this request which tracks the
++	 * SG entries from the global TX SGL.
++	 */
+ 	processed = used + ctx->aead_assoclen;
+-	list_for_each_entry_safe(tsgl, tmp, &ctx->tsgl_list, list) {
+-		for (i = 0; i < tsgl->cur; i++) {
+-			struct scatterlist *process_sg = tsgl->sg + i;
+-
+-			if (!(process_sg->length) || !sg_page(process_sg))
+-				continue;
+-			tsgl_src = process_sg;
+-			break;
+-		}
+-		if (tsgl_src)
+-			break;
+-	}
+-	if (processed && !tsgl_src) {
+-		err = -EFAULT;
++	areq->tsgl_entries = af_alg_count_tsgl(sk, processed);
++	if (!areq->tsgl_entries)
++		areq->tsgl_entries = 1;
++	areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
++					         areq->tsgl_entries),
++				  GFP_KERNEL);
++	if (!areq->tsgl) {
++		err = -ENOMEM;
+ 		goto free;
+ 	}
++	sg_init_table(areq->tsgl, areq->tsgl_entries);
++	af_alg_pull_tsgl(sk, processed, areq->tsgl);
++	tsgl_src = areq->tsgl;
+ 
+ 	/*
+ 	 * Copy of AAD from source to destination
+@@ -203,84 +184,16 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	 * when user space uses an in-place cipher operation, the kernel
+ 	 * will copy the data as it does not see whether such in-place operation
+ 	 * is initiated.
+-	 *
+-	 * To ensure efficiency, the following implementation ensure that the
+-	 * ciphers are invoked to perform a crypto operation in-place. This
+-	 * is achieved by memory management specified as follows.
+ 	 */
+ 
+ 	/* Use the RX SGL as source (and destination) for crypto op. */
+ 	rsgl_src = areq->first_rsgl.sgl.sgt.sgl;
+ 
+-	if (ctx->enc) {
+-		/*
+-		 * Encryption operation - The in-place cipher operation is
+-		 * achieved by the following operation:
+-		 *
+-		 * TX SGL: AAD || PT
+-		 *	    |	   |
+-		 *	    | copy |
+-		 *	    v	   v
+-		 * RX SGL: AAD || PT || Tag
+-		 */
+-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
+-					   areq->first_rsgl.sgl.sgt.sgl,
+-					   processed);
+-		if (err)
+-			goto free;
+-		af_alg_pull_tsgl(sk, processed, NULL, 0);
+-	} else {
+-		/*
+-		 * Decryption operation - To achieve an in-place cipher
+-		 * operation, the following  SGL structure is used:
+-		 *
+-		 * TX SGL: AAD || CT || Tag
+-		 *	    |	   |	 ^
+-		 *	    | copy |	 | Create SGL link.
+-		 *	    v	   v	 |
+-		 * RX SGL: AAD || CT ----+
+-		 */
+-
+-		 /* Copy AAD || CT to RX SGL buffer for in-place operation. */
+-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
+-					   areq->first_rsgl.sgl.sgt.sgl,
+-					   outlen);
+-		if (err)
+-			goto free;
+-
+-		/* Create TX SGL for tag and chain it to RX SGL. */
+-		areq->tsgl_entries = af_alg_count_tsgl(sk, processed,
+-						       processed - as);
+-		if (!areq->tsgl_entries)
+-			areq->tsgl_entries = 1;
+-		areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
+-							 areq->tsgl_entries),
+-					  GFP_KERNEL);
+-		if (!areq->tsgl) {
+-			err = -ENOMEM;
+-			goto free;
+-		}
+-		sg_init_table(areq->tsgl, areq->tsgl_entries);
+-
+-		/* Release TX SGL, except for tag data and reassign tag data. */
+-		af_alg_pull_tsgl(sk, processed, areq->tsgl, processed - as);
+-
+-		/* chain the areq TX SGL holding the tag with RX SGL */
+-		if (usedpages) {
+-			/* RX SGL present */
+-			struct af_alg_sgl *sgl_prev = &areq->last_rsgl->sgl;
+-			struct scatterlist *sg = sgl_prev->sgt.sgl;
+-
+-			sg_unmark_end(sg + sgl_prev->sgt.nents - 1);
+-			sg_chain(sg, sgl_prev->sgt.nents + 1, areq->tsgl);
+-		} else
+-			/* no RX SGL present (e.g. authentication only) */
+-			rsgl_src = areq->tsgl;
+-	}
++	memcpy_sglist(rsgl_src, tsgl_src, ctx->aead_assoclen);
+ 
+ 	/* Initialize the crypto operation */
+-	aead_request_set_crypt(&areq->cra_u.aead_req, rsgl_src,
+-			       areq->first_rsgl.sgl.sgt.sgl, used, ctx->iv);
++	aead_request_set_crypt(&areq->cra_u.aead_req, tsgl_src,
++			       areq->first_rsgl.sgl.sgt.sgl, used, iv);
+ 	aead_request_set_ad(&areq->cra_u.aead_req, ctx->aead_assoclen);
+ 	aead_request_set_tfm(&areq->cra_u.aead_req, tfm);
+ 
+@@ -379,7 +292,7 @@ static int aead_check_key(struct socket *sock)
+ 	int err = 0;
+ 	struct sock *psk;
+ 	struct alg_sock *pask;
+-	struct aead_tfm *tfm;
++	struct crypto_aead *tfm;
+ 	struct sock *sk = sock->sk;
+ 	struct alg_sock *ask = alg_sk(sk);
+ 
+@@ -393,7 +306,7 @@ static int aead_check_key(struct socket *sock)
+ 
+ 	err = -ENOKEY;
+ 	lock_sock_nested(psk, SINGLE_DEPTH_NESTING);
+-	if (crypto_aead_get_flags(tfm->aead) & CRYPTO_TFM_NEED_KEY)
++	if (crypto_aead_get_flags(tfm) & CRYPTO_TFM_NEED_KEY)
+ 		goto unlock;
+ 
+ 	atomic_dec(&pask->nokey_refcnt);
+@@ -454,54 +367,22 @@ static struct proto_ops algif_aead_ops_nokey = {
+ 
+ static void *aead_bind(const char *name, u32 type, u32 mask)
+ {
+-	struct aead_tfm *tfm;
+-	struct crypto_aead *aead;
+-	struct crypto_sync_skcipher *null_tfm;
+-
+-	tfm = kzalloc(sizeof(*tfm), GFP_KERNEL);
+-	if (!tfm)
+-		return ERR_PTR(-ENOMEM);
+-
+-	aead = crypto_alloc_aead(name, type, mask);
+-	if (IS_ERR(aead)) {
+-		kfree(tfm);
+-		return ERR_CAST(aead);
+-	}
+-
+-	null_tfm = crypto_get_default_null_skcipher();
+-	if (IS_ERR(null_tfm)) {
+-		crypto_free_aead(aead);
+-		kfree(tfm);
+-		return ERR_CAST(null_tfm);
+-	}
+-
+-	tfm->aead = aead;
+-	tfm->null_tfm = null_tfm;
+-
+-	return tfm;
++	return crypto_alloc_aead(name, type, mask);
+ }
+ 
+ static void aead_release(void *private)
+ {
+-	struct aead_tfm *tfm = private;
+-
+-	crypto_free_aead(tfm->aead);
+-	crypto_put_default_null_skcipher();
+-	kfree(tfm);
++	crypto_free_aead(private);
+ }
+ 
+ static int aead_setauthsize(void *private, unsigned int authsize)
+ {
+-	struct aead_tfm *tfm = private;
+-
+-	return crypto_aead_setauthsize(tfm->aead, authsize);
++	return crypto_aead_setauthsize(private, authsize);
+ }
+ 
+ static int aead_setkey(void *private, const u8 *key, unsigned int keylen)
+ {
+-	struct aead_tfm *tfm = private;
+-
+-	return crypto_aead_setkey(tfm->aead, key, keylen);
++	return crypto_aead_setkey(private, key, keylen);
+ }
+ 
+ static void aead_sock_destruct(struct sock *sk)
+@@ -510,11 +391,10 @@ static void aead_sock_destruct(struct sock *sk)
+ 	struct af_alg_ctx *ctx = ask->private;
+ 	struct sock *psk = ask->parent;
+ 	struct alg_sock *pask = alg_sk(psk);
+-	struct aead_tfm *aeadc = pask->private;
+-	struct crypto_aead *tfm = aeadc->aead;
++	struct crypto_aead *tfm = pask->private;
+ 	unsigned int ivlen = crypto_aead_ivsize(tfm);
+ 
+-	af_alg_pull_tsgl(sk, ctx->used, NULL, 0);
++	af_alg_pull_tsgl(sk, ctx->used, NULL);
+ 	sock_kzfree_s(sk, ctx->iv, ivlen);
+ 	sock_kfree_s(sk, ctx, ctx->len);
+ 	af_alg_release_parent(sk);
+@@ -524,10 +404,9 @@ static int aead_accept_parent_nokey(void *private, struct sock *sk)
+ {
+ 	struct af_alg_ctx *ctx;
+ 	struct alg_sock *ask = alg_sk(sk);
+-	struct aead_tfm *tfm = private;
+-	struct crypto_aead *aead = tfm->aead;
++	struct crypto_aead *tfm = private;
+ 	unsigned int len = sizeof(*ctx);
+-	unsigned int ivlen = crypto_aead_ivsize(aead);
++	unsigned int ivlen = crypto_aead_ivsize(tfm);
+ 
+ 	ctx = sock_kmalloc(sk, len, GFP_KERNEL);
+ 	if (!ctx)
+@@ -554,9 +433,9 @@ static int aead_accept_parent_nokey(void *private, struct sock *sk)
+ 
+ static int aead_accept_parent(void *private, struct sock *sk)
+ {
+-	struct aead_tfm *tfm = private;
++	struct crypto_aead *tfm = private;
+ 
+-	if (crypto_aead_get_flags(tfm->aead) & CRYPTO_TFM_NEED_KEY)
++	if (crypto_aead_get_flags(tfm) & CRYPTO_TFM_NEED_KEY)
+ 		return -ENOKEY;
+ 
+ 	return aead_accept_parent_nokey(private, sk);
+diff --git a/crypto/algif_skcipher.c b/crypto/algif_skcipher.c
+index 9ada9b741af8dc..e31b1da58dba41 100644
+--- a/crypto/algif_skcipher.c
++++ b/crypto/algif_skcipher.c
+@@ -89,7 +89,7 @@ static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	 * Create a per request TX SGL for this request which tracks the
+ 	 * SG entries from the global TX SGL.
+ 	 */
+-	areq->tsgl_entries = af_alg_count_tsgl(sk, len, 0);
++	areq->tsgl_entries = af_alg_count_tsgl(sk, len);
+ 	if (!areq->tsgl_entries)
+ 		areq->tsgl_entries = 1;
+ 	areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
+@@ -100,7 +100,7 @@ static int _skcipher_recvmsg(struct socket *sock, struct msghdr *msg,
+ 		goto free;
+ 	}
+ 	sg_init_table(areq->tsgl, areq->tsgl_entries);
+-	af_alg_pull_tsgl(sk, len, areq->tsgl, 0);
++	af_alg_pull_tsgl(sk, len, areq->tsgl);
+ 
+ 	/* Initialize the crypto operation */
+ 	skcipher_request_set_tfm(&areq->cra_u.skcipher_req, tfm);
+@@ -299,7 +299,7 @@ static void skcipher_sock_destruct(struct sock *sk)
+ 	struct alg_sock *pask = alg_sk(psk);
+ 	struct crypto_skcipher *tfm = pask->private;
+ 
+-	af_alg_pull_tsgl(sk, ctx->used, NULL, 0);
++	af_alg_pull_tsgl(sk, ctx->used, NULL);
+ 	sock_kzfree_s(sk, ctx->iv, crypto_skcipher_ivsize(tfm));
+ 	sock_kfree_s(sk, ctx, ctx->len);
+ 	af_alg_release_parent(sk);
+diff --git a/crypto/authenc.c b/crypto/authenc.c
+index ebaa035a54f4bf..ae4614edc9cfa4 100644
+--- a/crypto/authenc.c
++++ b/crypto/authenc.c
+@@ -9,7 +9,6 @@
+ #include <crypto/internal/hash.h>
+ #include <crypto/internal/skcipher.h>
+ #include <crypto/authenc.h>
+-#include <crypto/null.h>
+ #include <crypto/scatterwalk.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+@@ -28,7 +27,6 @@ struct authenc_instance_ctx {
+ struct crypto_authenc_ctx {
+ 	struct crypto_ahash *auth;
+ 	struct crypto_skcipher *enc;
+-	struct crypto_sync_skcipher *null;
+ };
+ 
+ struct authenc_request_ctx {
+@@ -189,21 +187,6 @@ static void crypto_authenc_encrypt_done(void *data, int err)
+ 	authenc_request_complete(areq, err);
+ }
+ 
+-static int crypto_authenc_copy_assoc(struct aead_request *req)
+-{
+-	struct crypto_aead *authenc = crypto_aead_reqtfm(req);
+-	struct crypto_authenc_ctx *ctx = crypto_aead_ctx(authenc);
+-	SYNC_SKCIPHER_REQUEST_ON_STACK(skreq, ctx->null);
+-
+-	skcipher_request_set_sync_tfm(skreq, ctx->null);
+-	skcipher_request_set_callback(skreq, aead_request_flags(req),
+-				      NULL, NULL);
+-	skcipher_request_set_crypt(skreq, req->src, req->dst, req->assoclen,
+-				   NULL);
+-
+-	return crypto_skcipher_encrypt(skreq);
+-}
+-
+ static int crypto_authenc_encrypt(struct aead_request *req)
+ {
+ 	struct crypto_aead *authenc = crypto_aead_reqtfm(req);
+@@ -222,10 +205,7 @@ static int crypto_authenc_encrypt(struct aead_request *req)
+ 	dst = src;
+ 
+ 	if (req->src != req->dst) {
+-		err = crypto_authenc_copy_assoc(req);
+-		if (err)
+-			return err;
+-
++		memcpy_sglist(req->dst, req->src, req->assoclen);
+ 		dst = scatterwalk_ffwd(areq_ctx->dst, req->dst, req->assoclen);
+ 	}
+ 
+@@ -334,7 +314,6 @@ static int crypto_authenc_init_tfm(struct crypto_aead *tfm)
+ 	struct crypto_authenc_ctx *ctx = crypto_aead_ctx(tfm);
+ 	struct crypto_ahash *auth;
+ 	struct crypto_skcipher *enc;
+-	struct crypto_sync_skcipher *null;
+ 	int err;
+ 
+ 	auth = crypto_spawn_ahash(&ictx->auth);
+@@ -346,14 +325,8 @@ static int crypto_authenc_init_tfm(struct crypto_aead *tfm)
+ 	if (IS_ERR(enc))
+ 		goto err_free_ahash;
+ 
+-	null = crypto_get_default_null_skcipher();
+-	err = PTR_ERR(null);
+-	if (IS_ERR(null))
+-		goto err_free_skcipher;
+-
+ 	ctx->auth = auth;
+ 	ctx->enc = enc;
+-	ctx->null = null;
+ 
+ 	crypto_aead_set_reqsize(
+ 		tfm,
+@@ -367,8 +340,6 @@ static int crypto_authenc_init_tfm(struct crypto_aead *tfm)
+ 
+ 	return 0;
+ 
+-err_free_skcipher:
+-	crypto_free_skcipher(enc);
+ err_free_ahash:
+ 	crypto_free_ahash(auth);
+ 	return err;
+@@ -380,7 +351,6 @@ static void crypto_authenc_exit_tfm(struct crypto_aead *tfm)
+ 
+ 	crypto_free_ahash(ctx->auth);
+ 	crypto_free_skcipher(ctx->enc);
+-	crypto_put_default_null_skcipher();
+ }
+ 
+ static void crypto_authenc_free(struct aead_instance *inst)
+diff --git a/crypto/authencesn.c b/crypto/authencesn.c
+index 29ff3a0e86c09f..eeda044a0f5fb5 100644
+--- a/crypto/authencesn.c
++++ b/crypto/authencesn.c
+@@ -12,7 +12,6 @@
+ #include <crypto/internal/hash.h>
+ #include <crypto/internal/skcipher.h>
+ #include <crypto/authenc.h>
+-#include <crypto/null.h>
+ #include <crypto/scatterwalk.h>
+ #include <linux/err.h>
+ #include <linux/init.h>
+@@ -31,7 +30,6 @@ struct crypto_authenc_esn_ctx {
+ 	unsigned int reqoff;
+ 	struct crypto_ahash *auth;
+ 	struct crypto_skcipher *enc;
+-	struct crypto_sync_skcipher *null;
+ };
+ 
+ struct authenc_esn_request_ctx {
+@@ -162,20 +160,6 @@ static void crypto_authenc_esn_encrypt_done(void *data, int err)
+ 	authenc_esn_request_complete(areq, err);
+ }
+ 
+-static int crypto_authenc_esn_copy(struct aead_request *req, unsigned int len)
+-{
+-	struct crypto_aead *authenc_esn = crypto_aead_reqtfm(req);
+-	struct crypto_authenc_esn_ctx *ctx = crypto_aead_ctx(authenc_esn);
+-	SYNC_SKCIPHER_REQUEST_ON_STACK(skreq, ctx->null);
+-
+-	skcipher_request_set_sync_tfm(skreq, ctx->null);
+-	skcipher_request_set_callback(skreq, aead_request_flags(req),
+-				      NULL, NULL);
+-	skcipher_request_set_crypt(skreq, req->src, req->dst, len, NULL);
+-
+-	return crypto_skcipher_encrypt(skreq);
+-}
+-
+ static int crypto_authenc_esn_encrypt(struct aead_request *req)
+ {
+ 	struct crypto_aead *authenc_esn = crypto_aead_reqtfm(req);
+@@ -197,10 +181,7 @@ static int crypto_authenc_esn_encrypt(struct aead_request *req)
+ 	dst = src;
+ 
+ 	if (req->src != req->dst) {
+-		err = crypto_authenc_esn_copy(req, assoclen);
+-		if (err)
+-			return err;
+-
++		memcpy_sglist(req->dst, req->src, assoclen);
+ 		sg_init_table(areq_ctx->dst, 2);
+ 		dst = scatterwalk_ffwd(areq_ctx->dst, req->dst, assoclen);
+ 	}
+@@ -231,6 +212,7 @@ static int crypto_authenc_esn_decrypt_tail(struct aead_request *req,
+ 			      crypto_ahash_alignmask(auth) + 1);
+ 	unsigned int cryptlen = req->cryptlen - authsize;
+ 	unsigned int assoclen = req->assoclen;
++	struct scatterlist *src = req->src;
+ 	struct scatterlist *dst = req->dst;
+ 	u8 *ihash = ohash + crypto_ahash_digestsize(auth);
+ 	u32 tmp[2];
+@@ -238,23 +220,29 @@ static int crypto_authenc_esn_decrypt_tail(struct aead_request *req,
+ 	if (!authsize)
+ 		goto decrypt;
+ 
+-	/* Move high-order bits of sequence number back. */
+-	scatterwalk_map_and_copy(tmp, dst, 4, 4, 0);
+-	scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 0);
+-	scatterwalk_map_and_copy(tmp, dst, 0, 8, 1);
++	if (src == dst) {
++		/* Move high-order bits of sequence number back. */
++		scatterwalk_map_and_copy(tmp, dst, 4, 4, 0);
++		scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 0);
++		scatterwalk_map_and_copy(tmp, dst, 0, 8, 1);
++	} else
++		memcpy_sglist(dst, src, assoclen);
+ 
+ 	if (crypto_memneq(ihash, ohash, authsize))
+ 		return -EBADMSG;
+ 
+ decrypt:
+ 
+-	sg_init_table(areq_ctx->dst, 2);
+ 	dst = scatterwalk_ffwd(areq_ctx->dst, dst, assoclen);
++	if (req->src == req->dst)
++		src = dst;
++	else
++		src = scatterwalk_ffwd(areq_ctx->src, src, assoclen);
+ 
+ 	skcipher_request_set_tfm(skreq, ctx->enc);
+ 	skcipher_request_set_callback(skreq, flags,
+ 				      req->base.complete, req->base.data);
+-	skcipher_request_set_crypt(skreq, dst, dst, cryptlen, req->iv);
++	skcipher_request_set_crypt(skreq, src, dst, cryptlen, req->iv);
+ 
+ 	return crypto_skcipher_decrypt(skreq);
+ }
+@@ -280,6 +268,7 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
+ 	unsigned int assoclen = req->assoclen;
+ 	unsigned int cryptlen = req->cryptlen;
+ 	u8 *ihash = ohash + crypto_ahash_digestsize(auth);
++	struct scatterlist *src = req->src;
+ 	struct scatterlist *dst = req->dst;
+ 	u32 tmp[2];
+ 	int err;
+@@ -287,27 +276,28 @@ static int crypto_authenc_esn_decrypt(struct aead_request *req)
+ 	if (assoclen < 8)
+ 		return -EINVAL;
+ 
+-	cryptlen -= authsize;
+-
+-	if (req->src != dst) {
+-		err = crypto_authenc_esn_copy(req, assoclen + cryptlen);
+-		if (err)
+-			return err;
+-	}
++	if (!authsize)
++		goto tail;
+ 
++	cryptlen -= authsize;
+ 	scatterwalk_map_and_copy(ihash, req->src, assoclen + cryptlen,
+ 				 authsize, 0);
+ 
+-	if (!authsize)
+-		goto tail;
+-
+ 	/* Move high-order bits of sequence number to the end. */
+-	scatterwalk_map_and_copy(tmp, dst, 0, 8, 0);
+-	scatterwalk_map_and_copy(tmp, dst, 4, 4, 1);
+-	scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 1);
+-
+-	sg_init_table(areq_ctx->dst, 2);
+-	dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
++	scatterwalk_map_and_copy(tmp, src, 0, 8, 0);
++	if (src == dst) {
++		scatterwalk_map_and_copy(tmp, dst, 4, 4, 1);
++		scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen, 4, 1);
++		dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
++	} else {
++		scatterwalk_map_and_copy(tmp, dst, 0, 4, 1);
++		scatterwalk_map_and_copy(tmp + 1, dst, assoclen + cryptlen - 4, 4, 1);
++
++		src = scatterwalk_ffwd(areq_ctx->src, src, 8);
++		dst = scatterwalk_ffwd(areq_ctx->dst, dst, 4);
++		memcpy_sglist(dst, src, assoclen + cryptlen - 8);
++		dst = req->dst;
++	}
+ 
+ 	ahash_request_set_tfm(ahreq, auth);
+ 	ahash_request_set_crypt(ahreq, dst, ohash, assoclen + cryptlen);
+@@ -329,7 +319,6 @@ static int crypto_authenc_esn_init_tfm(struct crypto_aead *tfm)
+ 	struct crypto_authenc_esn_ctx *ctx = crypto_aead_ctx(tfm);
+ 	struct crypto_ahash *auth;
+ 	struct crypto_skcipher *enc;
+-	struct crypto_sync_skcipher *null;
+ 	int err;
+ 
+ 	auth = crypto_spawn_ahash(&ictx->auth);
+@@ -341,14 +330,8 @@ static int crypto_authenc_esn_init_tfm(struct crypto_aead *tfm)
+ 	if (IS_ERR(enc))
+ 		goto err_free_ahash;
+ 
+-	null = crypto_get_default_null_skcipher();
+-	err = PTR_ERR(null);
+-	if (IS_ERR(null))
+-		goto err_free_skcipher;
+-
+ 	ctx->auth = auth;
+ 	ctx->enc = enc;
+-	ctx->null = null;
+ 
+ 	ctx->reqoff = ALIGN(2 * crypto_ahash_digestsize(auth),
+ 			    crypto_ahash_alignmask(auth) + 1);
+@@ -365,8 +348,6 @@ static int crypto_authenc_esn_init_tfm(struct crypto_aead *tfm)
+ 
+ 	return 0;
+ 
+-err_free_skcipher:
+-	crypto_free_skcipher(enc);
+ err_free_ahash:
+ 	crypto_free_ahash(auth);
+ 	return err;
+@@ -378,7 +359,6 @@ static void crypto_authenc_esn_exit_tfm(struct crypto_aead *tfm)
+ 
+ 	crypto_free_ahash(ctx->auth);
+ 	crypto_free_skcipher(ctx->enc);
+-	crypto_put_default_null_skcipher();
+ }
+ 
+ static void crypto_authenc_esn_free(struct aead_instance *inst)
+diff --git a/crypto/scatterwalk.c b/crypto/scatterwalk.c
+index 16f6ba896fb63b..9f0b27005166ca 100644
+--- a/crypto/scatterwalk.c
++++ b/crypto/scatterwalk.c
+@@ -69,6 +69,100 @@ void scatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
+ }
+ EXPORT_SYMBOL_GPL(scatterwalk_map_and_copy);
+ 
++/**
++ * memcpy_sglist() - Copy data from one scatterlist to another
++ * @dst: The destination scatterlist.  Can be NULL if @nbytes == 0.
++ * @src: The source scatterlist.  Can be NULL if @nbytes == 0.
++ * @nbytes: Number of bytes to copy
++ *
++ * The scatterlists can describe exactly the same memory, in which case this
++ * function is a no-op.  No other overlaps are supported.
++ *
++ * Context: Any context
++ */
++void memcpy_sglist(struct scatterlist *dst, struct scatterlist *src,
++		   unsigned int nbytes)
++{
++	unsigned int src_offset, dst_offset;
++
++	if (unlikely(nbytes == 0)) /* in case src and/or dst is NULL */
++		return;
++
++	src_offset = src->offset;
++	dst_offset = dst->offset;
++	for (;;) {
++		/* Compute the length to copy this step. */
++		unsigned int len = min3(src->offset + src->length - src_offset,
++					dst->offset + dst->length - dst_offset,
++					nbytes);
++		struct page *src_page = sg_page(src);
++		struct page *dst_page = sg_page(dst);
++		const void *src_virt;
++		void *dst_virt;
++
++		if (IS_ENABLED(CONFIG_HIGHMEM)) {
++			/* HIGHMEM: we may have to actually map the pages. */
++			const unsigned int src_oip = offset_in_page(src_offset);
++			const unsigned int dst_oip = offset_in_page(dst_offset);
++			const unsigned int limit = PAGE_SIZE;
++
++			/* Further limit len to not cross a page boundary. */
++			len = min3(len, limit - src_oip, limit - dst_oip);
++
++			/* Compute the source and destination pages. */
++			src_page += src_offset / PAGE_SIZE;
++			dst_page += dst_offset / PAGE_SIZE;
++
++			if (src_page != dst_page) {
++				/* Copy between different pages. */
++				memcpy_page(dst_page, dst_oip,
++					    src_page, src_oip, len);
++				flush_dcache_page(dst_page);
++			} else if (src_oip != dst_oip) {
++				/* Copy between different parts of same page. */
++				dst_virt = kmap_local_page(dst_page);
++				memcpy(dst_virt + dst_oip, dst_virt + src_oip,
++				       len);
++				kunmap_local(dst_virt);
++				flush_dcache_page(dst_page);
++			} /* Else, it's the same memory.  No action needed. */
++		} else {
++			/*
++			 * !HIGHMEM: no mapping needed.  Just work in the linear
++			 * buffer of each sg entry.  Note that we can cross page
++			 * boundaries, as they are not significant in this case.
++			 */
++			src_virt = page_address(src_page) + src_offset;
++			dst_virt = page_address(dst_page) + dst_offset;
++			if (src_virt != dst_virt) {
++				memcpy(dst_virt, src_virt, len);
++				if (ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE)
++					__scatterwalk_flush_dcache_pages(
++						dst_page, dst_offset, len);
++			} /* Else, it's the same memory.  No action needed. */
++		}
++		nbytes -= len;
++		if (nbytes == 0) /* No more to copy? */
++			break;
++
++		/*
++		 * There's more to copy.  Advance the offsets by the length
++		 * copied this step, and advance the sg entries as needed.
++		 */
++		src_offset += len;
++		if (src_offset >= src->offset + src->length) {
++			src = sg_next(src);
++			src_offset = src->offset;
++		}
++		dst_offset += len;
++		if (dst_offset >= dst->offset + dst->length) {
++			dst = sg_next(dst);
++			dst_offset = dst->offset;
++		}
++	}
++}
++EXPORT_SYMBOL_GPL(memcpy_sglist);
++
+ struct scatterlist *scatterwalk_ffwd(struct scatterlist dst[2],
+ 				     struct scatterlist *src,
+ 				     unsigned int len)
+diff --git a/drivers/xen/privcmd.c b/drivers/xen/privcmd.c
+index 049b29089b7ecc..ddbe0a6451ac96 100644
+--- a/drivers/xen/privcmd.c
++++ b/drivers/xen/privcmd.c
+@@ -1213,6 +1213,12 @@ static void privcmd_close(struct vm_area_struct *vma)
+ 	kvfree(pages);
+ }
+ 
++static int privcmd_may_split(struct vm_area_struct *area, unsigned long addr)
++{
++	/* Forbid splitting, avoids double free via privcmd_close(). */
++	return -EINVAL;
++}
++
+ static vm_fault_t privcmd_fault(struct vm_fault *vmf)
+ {
+ 	printk(KERN_DEBUG "privcmd_fault: vma=%p %lx-%lx, pgoff=%lx, uv=%p\n",
+@@ -1224,6 +1230,7 @@ static vm_fault_t privcmd_fault(struct vm_fault *vmf)
+ 
+ static const struct vm_operations_struct privcmd_vm_ops = {
+ 	.close = privcmd_close,
++	.may_split = privcmd_may_split,
+ 	.fault = privcmd_fault
+ };
+ 
+diff --git a/drivers/xen/sys-hypervisor.c b/drivers/xen/sys-hypervisor.c
+index 2f880374b46321..c1a0ca1b1b5fae 100644
+--- a/drivers/xen/sys-hypervisor.c
++++ b/drivers/xen/sys-hypervisor.c
+@@ -366,6 +366,8 @@ static ssize_t buildid_show(struct hyp_sysfs_attr *attr, char *buffer)
+ 			ret = sprintf(buffer, "<denied>");
+ 		return ret;
+ 	}
++	if (ret > PAGE_SIZE)
++		return -ENOSPC;
+ 
+ 	buildid = kmalloc(sizeof(*buildid) + ret, GFP_KERNEL);
+ 	if (!buildid)
+@@ -373,8 +375,10 @@ static ssize_t buildid_show(struct hyp_sysfs_attr *attr, char *buffer)
+ 
+ 	buildid->len = ret;
+ 	ret = HYPERVISOR_xen_version(XENVER_build_id, buildid);
+-	if (ret > 0)
+-		ret = sprintf(buffer, "%s", buildid->buf);
++	if (ret > 0) {
++		/* Build id is binary, not a string. */
++		memcpy(buffer, buildid->buf, ret);
++	}
+ 	kfree(buildid);
+ 
+ 	return ret;
+diff --git a/include/crypto/if_alg.h b/include/crypto/if_alg.h
+index 2fe6abb2ca803d..64a52531437946 100644
+--- a/include/crypto/if_alg.h
++++ b/include/crypto/if_alg.h
+@@ -227,9 +227,8 @@ static inline bool af_alg_readable(struct sock *sk)
+ 	return PAGE_SIZE <= af_alg_rcvbuf(sk);
+ }
+ 
+-unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes, size_t offset);
+-void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst,
+-		      size_t dst_offset);
++unsigned int af_alg_count_tsgl(struct sock *sk, size_t bytes);
++void af_alg_pull_tsgl(struct sock *sk, size_t used, struct scatterlist *dst);
+ void af_alg_wmem_wakeup(struct sock *sk);
+ int af_alg_wait_for_data(struct sock *sk, unsigned flags, unsigned min);
+ int af_alg_sendmsg(struct socket *sock, struct msghdr *msg, size_t size,
+diff --git a/include/crypto/scatterwalk.h b/include/crypto/scatterwalk.h
+index 32fc4473175b1d..7e7942950c07e3 100644
+--- a/include/crypto/scatterwalk.h
++++ b/include/crypto/scatterwalk.h
+@@ -83,6 +83,34 @@ static inline void scatterwalk_pagedone(struct scatter_walk *walk, int out,
+ 		scatterwalk_start(walk, sg_next(walk->sg));
+ }
+ 
++/*
++ * Flush the dcache of any pages that overlap the region
++ * [offset, offset + nbytes) relative to base_page.
++ *
++ * This should be called only when ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE, to ensure
++ * that all relevant code (including the call to sg_page() in the caller, if
++ * applicable) gets fully optimized out when !ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE.
++ */
++static inline void __scatterwalk_flush_dcache_pages(struct page *base_page,
++						    unsigned int offset,
++						    unsigned int nbytes)
++{
++	unsigned int num_pages;
++
++	base_page += offset / PAGE_SIZE;
++	offset %= PAGE_SIZE;
++
++	/*
++	 * This is an overflow-safe version of
++	 * num_pages = DIV_ROUND_UP(offset + nbytes, PAGE_SIZE).
++	 */
++	num_pages = nbytes / PAGE_SIZE;
++	num_pages += DIV_ROUND_UP(offset + (nbytes % PAGE_SIZE), PAGE_SIZE);
++
++	for (unsigned int i = 0; i < num_pages; i++)
++		flush_dcache_page(base_page + i);
++}
++
+ static inline void scatterwalk_done(struct scatter_walk *walk, int out,
+ 				    int more)
+ {
+@@ -94,6 +122,9 @@ static inline void scatterwalk_done(struct scatter_walk *walk, int out,
+ void scatterwalk_copychunks(void *buf, struct scatter_walk *walk,
+ 			    size_t nbytes, int out);
+ 
++void memcpy_sglist(struct scatterlist *dst, struct scatterlist *src,
++		   unsigned int nbytes);
++
+ void scatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
+ 			      unsigned int start, unsigned int nbytes, int out);
+ 

@@ -90,8 +90,6 @@ function armbian_register_commands() {
 
 		["armbian-base-files"]="artifact"
 		["armbian-bsp-cli"]="artifact"
-		["armbian-bsp-desktop"]="artifact"
-		["armbian-desktop"]="artifact"
 
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
@@ -151,8 +149,6 @@ function armbian_register_commands() {
 
 		["armbian-base-files"]="WHAT='armbian-base-files' ${common_cli_artifact_vars}"
 		["armbian-bsp-cli"]="WHAT='armbian-bsp-cli' ${common_cli_artifact_vars}"
-		["armbian-bsp-desktop"]="WHAT='armbian-bsp-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
-		["armbian-desktop"]="WHAT='armbian-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
 
 		["oras-upload"]="ORAS_OPERATION='upload'"
 

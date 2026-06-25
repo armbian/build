@@ -44,13 +44,13 @@ function pre_customize_image__inject_cloud_init_config() {
 	display_alert "Extension: ${EXTENSION}: Configuring" "cloud-init" "info"
 	local config_src="${EXTENSION_DIR}/config"
 	local config_dst="${SDCARD}/etc/cloud/cloud.cfg.d"
-	run_host_command_logged cp ${config_src}/* $config_dst
+	run_host_command_logged cp "${config_src}"/* "${config_dst}"
 
 	# Provide default cloud-init files
 	display_alert "Extension: ${EXTENSION}: Defaults" "cloud-init" "info"
 	local defaults_src="${EXTENSION_DIR}/defaults"
 	local defaults_dst="${SDCARD}/boot"
-	run_host_command_logged cp ${defaults_src}/* $defaults_dst
+	run_host_command_logged cp "${defaults_src}"/* "${defaults_dst}"
 	return 0
 }
 
@@ -59,8 +59,8 @@ function pre_customize_image__disable_armbian_first_run() {
 	display_alert "Extension: ${EXTENSION}: Disabling" "armbian firstrun" "info"
 
 	# Clean up default profile and network
-	rm -f ${SDCARD}/etc/profile.d/armbian-check-first-*
-	rm -f ${SDCARD}/etc/netplan/armbian-*
+	rm -f "${SDCARD}"/etc/profile.d/armbian-check-first-*
+	rm -f "${SDCARD}"/etc/netplan/armbian-*
 
 	# remove any networkd config leftover from armbian build
 	rm -f "${SDCARD}"/etc/systemd/network/*.network || true

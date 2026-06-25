@@ -1,0 +1,573 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <325961+iav@users.noreply.github.com>
+Date: Mon, 22 Jun 2026 00:00:00 +0000
+Subject: gpio: mvebu: allow two PWM lines on a single GPIO bank
+
+Armada-38x style SoCs expose two PWM "blink" counters (A and B) shared by
+all GPIO banks. The driver mapped one counter per GPIO chip (id 0 -> A,
+id 1 -> B) and tracked a single requested line per chip, so a second PWM
+line on the same bank was rejected with -EBUSY.
+
+This is exactly the Helios4 case: both fans, j10-pwm (<&gpio1 9>) and
+j17-pwm (<&gpio1 23>), hang off gpio1, so only the first one probes and
+the second fails:
+
+  pwm-fan j17-pwm: error -EBUSY: Could not get PWM
+  pwm-fan j17-pwm: probe with driver pwm-fan failed with error -16
+
+Publish each legacy bank's blink counter into a small SoC-global pool and
+claim a counter per line. A PWM request now takes whichever counter is
+free and routes the line to it via its bit in the bank's
+GPIO_BLINK_CNT_SELECT register (0 -> A, 1 -> B). A single bank can
+therefore drive both counters, giving the two Helios4 fans independent
+duty/period. The hardware model is confirmed by the long-carried Kobol
+"patch requirement" (which used the same SoC-global counter list on real
+hardware) and by the upstream comment that "there are only two sets of
+PWM configuration registers for all the GPIO lines".
+
+Armada-8K keeps both counters within one bank's register block and
+replicates that block per CP110, so a single SoC-global pair cannot
+describe it. A8K banks therefore keep their counter to themselves (no
+cross-bank borrowing, original one-PWM-per-bank behaviour preserved),
+which also avoids the global pool aliasing two CP110 instances.
+
+While reworking the request path:
+- gpiochip_request_own_desc() may sleep, so it is moved out of the
+  counter spinlock; a per-line bitmap (test_and_set_bit) rejects a
+  duplicate request before the sleeping descriptor request.
+- get_state() now reports the per-line blink-enable bit
+  (GPIO_BLINK_EN & BIT(hwpwm)) instead of "any line on the bank enabled".
+
+This is a fresh reimplementation of the Kobol fan patch, rebased onto the
+post-LTS gpio-mvebu.c rework (devm_pwmchip_alloc / pwmchip_get_drvdata).
+
+Co-authored-by: Rosen Penev <rosenp@gmail.com>
+Assisted-by: Claude:claude-opus-4.8
+Signed-off-by: Igor Velkov <325961+iav@users.noreply.github.com>
+---
+diff --git a/drivers/gpio/gpio-mvebu.c b/drivers/gpio/gpio-mvebu.c
+--- a/drivers/gpio/gpio-mvebu.c
++++ b/drivers/gpio/gpio-mvebu.c
+@@ -96,20 +96,69 @@
+ 
+ #define MVEBU_MAX_GPIO_PER_BANK		32
+ 
+-struct mvebu_pwm {
++/*
++ * Armada-38x style SoCs provide exactly two PWM "blink" counters (A and B)
++ * shared by every GPIO bank. Each bank's "pwm" register resource maps only one
++ * of them (GPIO chip id 0 -> counter A, id 1 -> counter B), while a per-line
++ * bit in each bank's GPIO_BLINK_CNT_SELECT register routes that line to counter
++ * A (0) or counter B (1). Driving more than one PWM line on a single bank (for
++ * example the two fans wired to gpio1 on Helios4) therefore requires a line to
++ * borrow the counter mapped by the other bank, so on these SoCs each bank
++ * publishes its counter into a small global pool that lines claim from.
++ *
++ * Armada-8K instead keeps both counters inside a single bank's register block
++ * and replicates that block per CP110, so a SoC-global pool cannot describe it.
++ * There each bank only ever drives its own counter (no cross-bank borrowing).
++ */
++enum mvebu_pwm_counter_id {
++	MVEBU_PWM_COUNTER_A = 0,
++	MVEBU_PWM_COUNTER_B,
++	MVEBU_PWM_COUNTER_NUM,
++};
++
++struct mvebu_pwm_counter {
+ 	struct regmap		*regs;
+ 	u32			 offset;
+ 	unsigned long		 clk_rate;
++	enum mvebu_pwm_counter_id id;
++	bool			 in_use;
++
++	/* Used to preserve PWM registers across suspend/resume */
++	u32			 blink_on_duration;
++	u32			 blink_off_duration;
++};
++
++struct mvebu_pwm_line {
+ 	struct gpio_desc	*gpiod;
+-	spinlock_t		 lock;
++	struct mvebu_pwm_counter *counter;	/* claimed counter, or NULL */
++};
++
++struct mvebu_pwm {
+ 	struct mvebu_gpio_chip	*mvchip;
++	struct mvebu_pwm_counter counter;	/* this bank's own blink counter */
++	bool			 shared;	/* counter joins the global pool */
+ 
+-	/* Used to preserve GPIO/PWM registers across suspend/resume */
++	/* Used to preserve the GPIO blink select register across suspend/resume */
+ 	u32			 blink_select;
+-	u32			 blink_on_duration;
+-	u32			 blink_off_duration;
++
++	/*
++	 * Per-line "requested" bits. gpiochip_request_own_desc() may sleep and
++	 * so cannot run under mvebu_pwm_lock; this bitmap rejects a duplicate
++	 * request before the descriptor request, without taking the lock.
++	 */
++	unsigned long		 hwlock[BITS_TO_LONGS(MVEBU_MAX_GPIO_PER_BANK)];
++
++	struct mvebu_pwm_line	 line[];	/* indexed by hwpwm, sized ngpio */
+ };
+ 
++/*
++ * Legacy mvebu only: the two SoC-global blink counters, indexed by id and
++ * populated as each bank's PWM block is probed. The lock serialises both
++ * counter allocation and shared register access across all banks.
++ */
++static struct mvebu_pwm_counter *mvebu_pwm_pool[MVEBU_PWM_COUNTER_NUM];
++static DEFINE_SPINLOCK(mvebu_pwm_lock);
++
+ struct mvebu_gpio_chip {
+ 	struct gpio_chip   chip;
+ 	struct regmap     *regs;
+@@ -286,14 +335,14 @@
+  * Functions returning offsets of individual registers for a given
+  * PWM controller.
+  */
+-static unsigned int mvebu_pwmreg_blink_on_duration(struct mvebu_pwm *mvpwm)
++static unsigned int mvebu_pwmreg_blink_on_duration(struct mvebu_pwm_counter *counter)
+ {
+-	return mvpwm->offset + PWM_BLINK_ON_DURATION_OFF;
++	return counter->offset + PWM_BLINK_ON_DURATION_OFF;
+ }
+ 
+-static unsigned int mvebu_pwmreg_blink_off_duration(struct mvebu_pwm *mvpwm)
++static unsigned int mvebu_pwmreg_blink_off_duration(struct mvebu_pwm_counter *counter)
+ {
+-	return mvpwm->offset + PWM_BLINK_OFF_DURATION_OFF;
++	return counter->offset + PWM_BLINK_OFF_DURATION_OFF;
+ }
+ 
+ /*
+@@ -644,40 +693,90 @@
+ {
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
++	struct mvebu_pwm_line *line = &mvpwm->line[pwm->hwpwm];
++	struct mvebu_pwm_counter *counter = NULL;
++	enum mvebu_pwm_counter_id id;
++	bool incomplete = false;
+ 	struct gpio_desc *desc;
+ 	unsigned long flags;
+-	int ret = 0;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	if (test_and_set_bit(pwm->hwpwm, mvpwm->hwlock))
++		return -EBUSY;
+ 
+-	if (mvpwm->gpiod) {
+-		ret = -EBUSY;
+-	} else {
+-		desc = gpiochip_request_own_desc(&mvchip->chip,
+-						 pwm->hwpwm, "mvebu-pwm",
+-						 GPIO_ACTIVE_HIGH,
+-						 GPIOD_OUT_LOW);
+-		if (IS_ERR(desc)) {
+-			ret = PTR_ERR(desc);
+-			goto out;
++	/*
++	 * Reserve a counter before requesting the GPIO, so a request that
++	 * ultimately fails never takes the line and drives it low.
++	 */
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
++	if (mvpwm->shared) {
++		/* Claim whichever shared counter is published and free. */
++		for (id = MVEBU_PWM_COUNTER_A; id < MVEBU_PWM_COUNTER_NUM; id++) {
++			if (!mvebu_pwm_pool[id]) {
++				incomplete = true;	/* peer bank not probed yet */
++				continue;
++			}
++			if (!mvebu_pwm_pool[id]->in_use) {
++				counter = mvebu_pwm_pool[id];
++				break;
++			}
+ 		}
++	} else if (!mvpwm->counter.in_use) {
++		counter = &mvpwm->counter;
++	}
++	if (counter)
++		counter->in_use = true;
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
+ 
+-		mvpwm->gpiod = desc;
++	if (!counter) {
++		clear_bit(pwm->hwpwm, mvpwm->hwlock);
++		/*
++		 * A shared counter may still appear once the peer bank probes;
++		 * ask the consumer to retry instead of failing permanently.
++		 */
++		return incomplete ? -EPROBE_DEFER : -EBUSY;
+ 	}
+-out:
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
+-	return ret;
++
++	desc = gpiochip_request_own_desc(&mvchip->chip, pwm->hwpwm, "mvebu-pwm",
++					 GPIO_ACTIVE_HIGH, GPIOD_OUT_LOW);
++	if (IS_ERR(desc)) {
++		spin_lock_irqsave(&mvebu_pwm_lock, flags);
++		counter->in_use = false;
++		spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
++		clear_bit(pwm->hwpwm, mvpwm->hwlock);
++		return PTR_ERR(desc);
++	}
++
++	/* Route this line to the claimed counter (select bit: 0 -> A, 1 -> B). */
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
++	regmap_update_bits(mvchip->regs,
++			   GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
++			   BIT(pwm->hwpwm),
++			   counter->id == MVEBU_PWM_COUNTER_B ? BIT(pwm->hwpwm) : 0);
++	line->counter = counter;
++	line->gpiod = desc;
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
++
++	return 0;
+ }
+ 
+ static void mvebu_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
+ {
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
++	struct mvebu_pwm_line *line = &mvpwm->line[pwm->hwpwm];
++	struct gpio_desc *desc;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
+-	gpiochip_free_own_desc(mvpwm->gpiod);
+-	mvpwm->gpiod = NULL;
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
++	if (line->counter)
++		line->counter->in_use = false;
++	desc = line->gpiod;
++	line->gpiod = NULL;
++	line->counter = NULL;
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
++
++	/* gpiochip_free_own_desc() may sleep; run it outside the lock. */
++	gpiochip_free_own_desc(desc);
++	clear_bit(pwm->hwpwm, mvpwm->hwlock);
+ }
+ 
+ static int mvebu_pwm_get_state(struct pwm_chip *chip,
+@@ -687,36 +786,38 @@
+ 
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
++	struct mvebu_pwm_line *line = &mvpwm->line[pwm->hwpwm];
++	struct mvebu_pwm_counter *counter;
+ 	unsigned long long val;
+ 	unsigned long flags;
+ 	u32 u;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
+ 
+-	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm), &u);
++	/* Before the line is requested, report the bank's own counter. */
++	counter = line->counter ? line->counter : &mvpwm->counter;
++
++	regmap_read(counter->regs, mvebu_pwmreg_blink_on_duration(counter), &u);
+ 	/* Hardware treats zero as 2^32. See mvebu_pwm_apply(). */
+ 	if (u > 0)
+ 		val = u;
+ 	else
+ 		val = UINT_MAX + 1ULL;
+ 	state->duty_cycle = DIV_ROUND_UP_ULL(val * NSEC_PER_SEC,
+-			mvpwm->clk_rate);
++			counter->clk_rate);
+ 
+-	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_off_duration(mvpwm), &u);
++	regmap_read(counter->regs, mvebu_pwmreg_blink_off_duration(counter), &u);
+ 	/* period = on + off duration */
+ 	if (u > 0)
+ 		val += u;
+ 	else
+ 		val += UINT_MAX + 1ULL;
+-	state->period = DIV_ROUND_UP_ULL(val * NSEC_PER_SEC, mvpwm->clk_rate);
++	state->period = DIV_ROUND_UP_ULL(val * NSEC_PER_SEC, counter->clk_rate);
+ 
+ 	regmap_read(mvchip->regs, GPIO_BLINK_EN_OFF + mvchip->offset, &u);
+-	if (u)
+-		state->enabled = true;
+-	else
+-		state->enabled = false;
++	state->enabled = !!(u & BIT(pwm->hwpwm));
+ 
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
+ 
+ 	return 0;
+ }
+@@ -726,6 +827,8 @@
+ {
+ 	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
+ 	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
++	struct mvebu_pwm_line *line = &mvpwm->line[pwm->hwpwm];
++	struct mvebu_pwm_counter *counter = line->counter;
+ 	unsigned long long val;
+ 	unsigned long flags;
+ 	unsigned int on, off;
+@@ -733,7 +836,7 @@
+ 	if (state->polarity != PWM_POLARITY_NORMAL)
+ 		return -EINVAL;
+ 
+-	val = (unsigned long long) mvpwm->clk_rate * state->duty_cycle;
++	val = (unsigned long long) counter->clk_rate * state->duty_cycle;
+ 	do_div(val, NSEC_PER_SEC);
+ 	if (val > UINT_MAX + 1ULL)
+ 		return -EINVAL;
+@@ -748,7 +851,7 @@
+ 	else
+ 		on = 1;
+ 
+-	val = (unsigned long long) mvpwm->clk_rate * state->period;
++	val = (unsigned long long) counter->clk_rate * state->period;
+ 	do_div(val, NSEC_PER_SEC);
+ 	val -= on;
+ 	if (val > UINT_MAX + 1ULL)
+@@ -760,16 +863,16 @@
+ 	else
+ 		off = 1;
+ 
+-	spin_lock_irqsave(&mvpwm->lock, flags);
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
+ 
+-	regmap_write(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm), on);
+-	regmap_write(mvpwm->regs, mvebu_pwmreg_blink_off_duration(mvpwm), off);
++	regmap_write(counter->regs, mvebu_pwmreg_blink_on_duration(counter), on);
++	regmap_write(counter->regs, mvebu_pwmreg_blink_off_duration(counter), off);
+ 	if (state->enabled)
+ 		mvebu_gpio_blink(&mvchip->chip, pwm->hwpwm, 1);
+ 	else
+ 		mvebu_gpio_blink(&mvchip->chip, pwm->hwpwm, 0);
+ 
+-	spin_unlock_irqrestore(&mvpwm->lock, flags);
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
+ 
+ 	return 0;
+ }
+@@ -784,25 +887,38 @@
+ static void __maybe_unused mvebu_pwm_suspend(struct mvebu_gpio_chip *mvchip)
+ {
+ 	struct mvebu_pwm *mvpwm = mvchip->mvpwm;
++	struct mvebu_pwm_counter *counter = &mvpwm->counter;
+ 
+ 	regmap_read(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
+ 		    &mvpwm->blink_select);
+-	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm),
+-		    &mvpwm->blink_on_duration);
+-	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_off_duration(mvpwm),
+-		    &mvpwm->blink_off_duration);
++	regmap_read(counter->regs, mvebu_pwmreg_blink_on_duration(counter),
++		    &counter->blink_on_duration);
++	regmap_read(counter->regs, mvebu_pwmreg_blink_off_duration(counter),
++		    &counter->blink_off_duration);
+ }
+ 
+ static void __maybe_unused mvebu_pwm_resume(struct mvebu_gpio_chip *mvchip)
+ {
+ 	struct mvebu_pwm *mvpwm = mvchip->mvpwm;
++	struct mvebu_pwm_counter *counter = &mvpwm->counter;
+ 
+ 	regmap_write(mvchip->regs, GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
+ 		     mvpwm->blink_select);
+-	regmap_write(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm),
+-		     mvpwm->blink_on_duration);
+-	regmap_write(mvpwm->regs, mvebu_pwmreg_blink_off_duration(mvpwm),
+-		     mvpwm->blink_off_duration);
++	regmap_write(counter->regs, mvebu_pwmreg_blink_on_duration(counter),
++		     counter->blink_on_duration);
++	regmap_write(counter->regs, mvebu_pwmreg_blink_off_duration(counter),
++		     counter->blink_off_duration);
++}
++
++/* Withdraw a bank's counter from the shared pool when its chip goes away. */
++static void mvebu_pwm_pool_remove(void *data)
++{
++	struct mvebu_pwm_counter **slot = data;
++	unsigned long flags;
++
++	spin_lock_irqsave(&mvebu_pwm_lock, flags);
++	*slot = NULL;
++	spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
+ }
+ 
+ static int mvebu_pwm_probe(struct platform_device *pdev,
+@@ -810,15 +926,20 @@
+ 			   int id)
+ {
+ 	struct device *dev = &pdev->dev;
++	enum mvebu_pwm_counter_id cid;
+ 	struct mvebu_pwm *mvpwm;
+ 	struct pwm_chip *chip;
++	struct regmap *regs;
++	unsigned long clk_rate;
+ 	void __iomem *base;
++	unsigned int i;
+ 	u32 offset;
+ 	u32 set;
++	int ret;
+ 
+ 	if (mvchip->soc_variant == MVEBU_GPIO_SOC_VARIANT_A8K) {
+-		int ret = device_property_read_u32(dev, "marvell,pwm-offset",
+-						   &offset);
++		ret = device_property_read_u32(dev, "marvell,pwm-offset",
++					       &offset);
+ 		if (ret < 0)
+ 			return 0;
+ 	} else {
+@@ -836,28 +957,21 @@
+ 	if (IS_ERR(mvchip->clk))
+ 		return PTR_ERR(mvchip->clk);
+ 
+-	chip = devm_pwmchip_alloc(dev, mvchip->chip.ngpio, sizeof(*mvpwm));
+-	if (IS_ERR(chip))
+-		return PTR_ERR(chip);
+-	mvpwm = to_mvebu_pwm(chip);
+-
+-	mvchip->mvpwm = mvpwm;
+-	mvpwm->mvchip = mvchip;
+-	mvpwm->offset = offset;
+-
+ 	if (mvchip->soc_variant == MVEBU_GPIO_SOC_VARIANT_A8K) {
+-		mvpwm->regs = mvchip->regs;
++		regs = mvchip->regs;
+ 
+ 		switch (mvchip->offset) {
+ 		case AP80X_GPIO0_OFF_A8K:
+ 		case CP11X_GPIO0_OFF_A8K:
+ 			/* Blink counter A */
++			cid = MVEBU_PWM_COUNTER_A;
+ 			set = 0;
+ 			break;
+ 		case CP11X_GPIO1_OFF_A8K:
+ 			/* Blink counter B */
++			cid = MVEBU_PWM_COUNTER_B;
+ 			set = U32_MAX;
+-			mvpwm->offset += PWM_BLINK_COUNTER_B_OFF;
++			offset += PWM_BLINK_COUNTER_B_OFF;
+ 			break;
+ 		default:
+ 			return -EINVAL;
+@@ -867,37 +981,87 @@
+ 		if (IS_ERR(base))
+ 			return PTR_ERR(base);
+ 
+-		mvpwm->regs = devm_regmap_init_mmio(&pdev->dev, base,
+-						    &mvebu_gpio_regmap_config);
+-		if (IS_ERR(mvpwm->regs))
+-			return PTR_ERR(mvpwm->regs);
++		regs = devm_regmap_init_mmio(&pdev->dev, base,
++					     &mvebu_gpio_regmap_config);
++		if (IS_ERR(regs))
++			return PTR_ERR(regs);
+ 
+ 		/*
+-		 * Use set A for lines of GPIO chip with id 0, B for GPIO chip
+-		 * with id 1. Don't allow further GPIO chips to be used for PWM.
++		 * Use counter A for lines of GPIO chip with id 0, B for GPIO
++		 * chip with id 1. Don't allow further GPIO chips to be used for
++		 * PWM.
+ 		 */
+-		if (id == 0)
++		if (id == 0) {
++			cid = MVEBU_PWM_COUNTER_A;
+ 			set = 0;
+-		else if (id == 1)
++		} else if (id == 1) {
++			cid = MVEBU_PWM_COUNTER_B;
+ 			set = U32_MAX;
+-		else
++		} else {
+ 			return -EINVAL;
++		}
+ 	}
+ 
+-	regmap_write(mvchip->regs,
+-		     GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset, set);
+-
+-	mvpwm->clk_rate = clk_get_rate(mvchip->clk);
+-	if (!mvpwm->clk_rate) {
++	clk_rate = clk_get_rate(mvchip->clk);
++	if (!clk_rate) {
+ 		dev_err(dev, "failed to get clock rate\n");
+ 		return -EINVAL;
+ 	}
+ 
++	chip = devm_pwmchip_alloc(dev, mvchip->chip.ngpio,
++				  struct_size(mvpwm, line, mvchip->chip.ngpio));
++	if (IS_ERR(chip))
++		return PTR_ERR(chip);
++	mvpwm = to_mvebu_pwm(chip);
++
++	mvchip->mvpwm = mvpwm;
++	mvpwm->mvchip = mvchip;
++	for (i = 0; i < mvchip->chip.ngpio; i++)
++		mvpwm->line[i].counter = NULL;
++
++	mvpwm->counter.regs = regs;
++	mvpwm->counter.offset = offset;
++	mvpwm->counter.clk_rate = clk_rate;
++	mvpwm->counter.id = cid;
++	mvpwm->counter.in_use = false;
++	/*
++	 * Set the shared flag before the chip goes live, so a consumer request
++	 * racing devm_pwmchip_add() takes the shared path (and defers on an
++	 * incomplete pool) instead of the one-PWM-per-bank fallback.
++	 */
++	mvpwm->shared = mvchip->soc_variant != MVEBU_GPIO_SOC_VARIANT_A8K;
++
++	/* Default per-line routing matches the historical bank-wide setting. */
++	regmap_write(mvchip->regs,
++		     GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset, set);
++
+ 	chip->ops = &mvebu_pwm_ops;
+ 
+-	spin_lock_init(&mvpwm->lock);
++	ret = devm_pwmchip_add(dev, chip);
++	if (ret)
++		return ret;
+ 
+-	return devm_pwmchip_add(dev, chip);
++	/*
++	 * On legacy SoCs the two counters are shared across banks: publish this
++	 * bank's counter so the other bank can borrow it. Do so only once the
++	 * chip is live, and withdraw it on unbind, so the pool never points at
++	 * freed devm storage. A8K replicates the counters per CP110, so each
++	 * bank keeps its counter to itself (no pool entry).
++	 */
++	if (mvpwm->shared) {
++		unsigned long flags;
++
++		spin_lock_irqsave(&mvebu_pwm_lock, flags);
++		mvebu_pwm_pool[cid] = &mvpwm->counter;
++		spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
++
++		ret = devm_add_action_or_reset(dev, mvebu_pwm_pool_remove,
++					       &mvebu_pwm_pool[cid]);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
+ }
+ 
+ #ifdef CONFIG_DEBUG_FS
+@@ -1333,6 +1497,13 @@
+ 	.driver		= {
+ 		.name		= "mvebu-gpio",
+ 		.of_match_table = mvebu_gpio_of_match,
++		/*
++		 * This GPIO/pinctrl/IRQ controller is foundational and has no
++		 * remove path; unbinding it would strand all its consumers and,
++		 * with cross-bank PWM counter borrowing, free a counter still in
++		 * use by another bank. Disallow unbind entirely.
++		 */
++		.suppress_bind_attrs = true,
+ 	},
+ 	.probe		= mvebu_gpio_probe,
+ 	.suspend        = mvebu_gpio_suspend,

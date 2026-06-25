@@ -345,7 +345,11 @@ function artifact_dump_json_info() {
 		declaration="$(declare -p "${var}")"
 		# Special handling for arrays. Syntax is not pretty, but works.
 		if [[ "${declaration}" =~ "declare -a" ]]; then
-			eval "declare ${var}_ARRAY=\"\${${var}[*]}\""
+			# nameref alias avoids eval; ${var} is from a hard-coded list so
+			# it's already a valid identifier.
+			local -n _ao_src="${var}"
+			declare "${var}_ARRAY=${_ao_src[*]}"
+			unset -n _ao_src
 			ARTIFACTS_VAR_DICT["${var}_ARRAY"]="$(declare -p "${var}_ARRAY")"
 		else
 			ARTIFACTS_VAR_DICT["${var}"]="${declaration}"

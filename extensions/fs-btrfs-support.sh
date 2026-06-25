@@ -9,5 +9,5 @@ function extension_prepare_config__add_to_image_btrfs-progs() {
 
 function add_host_dependencies__add_btrfs_tooling() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "btrfs-progs" "debug"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} btrfs-progs" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::btrfs-progs")
 }

@@ -1,0 +1,270 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Date: Mon, 16 Mar 2026 13:55:53 +0000
+Subject: [PATCH 14/48] ASoC: qcom: common: setup fe dais before be dais
+
+On Elite DSP architecuture q6routing setup depends on some of the pcm
+dais to be probed to setup the routing. For some reason if the
+devicetree entires are incorrectly ordered, specially in overlays,
+this could result in
+
+failures like below
+
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL1(*) -> [MultiMedia1] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL2(*) -> [MultiMedia2] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL3(*) -> [MultiMedia3] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL4(*) -> [MultiMedia4] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL5(*) -> [MultiMedia5] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL6(*) -> [MultiMedia6] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL7(*) -> [MultiMedia7] -> HDMI Mixer
+q6routing ab00000.remoteproc:glink-edge:apr:service@8:routing: ASoC: Failed to add route MM_DL8(*) -> [MultiMedia8] -> HDMI Mixer
+
+Fix this by setting up the pcm dais first and then the backend dais
+after.
+
+Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+---
+ sound/soc/qcom/common.c | 193 +++++++++++++++++++++++-----------------
+ 1 file changed, 112 insertions(+), 81 deletions(-)
+
+diff --git a/sound/soc/qcom/common.c b/sound/soc/qcom/common.c
+index 7ee60a58a336..88e5cc3c9b49 100644
+--- a/sound/soc/qcom/common.c
++++ b/sound/soc/qcom/common.c
+@@ -1,3 +1,4 @@
++
+ // SPDX-License-Identifier: GPL-2.0
+ // Copyright (c) 2018, Linaro Limited.
+ // Copyright (c) 2018, The Linux Foundation. All rights reserved.
+@@ -23,16 +24,106 @@ static const struct snd_soc_dapm_widget qcom_jack_snd_widgets[] = {
+ 	SND_SOC_DAPM_SPK("DP7 Jack", NULL),
+ };
+ 
+-int qcom_snd_parse_of(struct snd_soc_card *card)
++static int qcom_snd_setup_dai_links(struct snd_soc_card *card, struct snd_soc_dai_link *link,
++				    struct device_node *np)
+ {
+-	struct device_node *np;
+ 	struct device_node *codec = NULL;
+ 	struct device_node *platform = NULL;
+ 	struct device_node *cpu = NULL;
+ 	struct device *dev = card->dev;
+-	struct snd_soc_dai_link *link;
+ 	struct of_phandle_args args;
+ 	struct snd_soc_dai_link_component *dlc;
++	int ret;
++
++	dlc = devm_kcalloc(dev, 2, sizeof(*dlc), GFP_KERNEL);
++	if (!dlc)
++		return -ENOMEM;
++	link->cpus	= &dlc[0];
++	link->platforms	= &dlc[1];
++
++	link->num_cpus		= 1;
++	link->num_platforms	= 1;
++
++	ret = of_property_read_string(np, "link-name", &link->name);
++	if (ret) {
++		dev_err(card->dev, "error getting codec dai_link name\n");
++		return ret;
++	}
++
++	cpu = of_get_child_by_name(np, "cpu");
++	platform = of_get_child_by_name(np, "platform");
++	codec = of_get_child_by_name(np, "codec");
++
++	if (!cpu) {
++		dev_err(dev, "%s: Can't find cpu DT node\n", link->name);
++		ret = -EINVAL;
++		goto err;
++	}
++
++	ret = snd_soc_of_get_dlc(cpu, &args, link->cpus, 0);
++	if (ret) {
++		dev_err_probe(card->dev, ret,
++			      "%s: error getting cpu dai name\n", link->name);
++		goto err;
++	}
++
++	link->id = args.args[0];
++
++	if (platform) {
++		link->platforms->of_node = of_parse_phandle(platform,
++				"sound-dai",
++				0);
++		if (!link->platforms->of_node) {
++			dev_err(card->dev, "%s: platform dai not found\n", link->name);
++			ret = -EINVAL;
++			goto err;
++		}
++	} else {
++		link->platforms->of_node = link->cpus->of_node;
++	}
++
++	if (codec) {
++		ret = snd_soc_of_get_dai_link_codecs(dev, codec, link);
++		if (ret < 0) {
++			dev_err_probe(card->dev, ret,
++				      "%s: codec dai not found\n", link->name);
++			goto err;
++		}
++
++		if (platform) {
++			/* DPCM backend */
++			link->no_pcm = 1;
++			link->ignore_pmdown_time = 1;
++		}
++	} else {
++		/* DPCM frontend */
++		link->codecs	 = &snd_soc_dummy_dlc;
++		link->num_codecs = 1;
++		link->dynamic = 1;
++	}
++
++	if (platform || !codec) {
++		/* DPCM */
++		link->ignore_suspend = 1;
++		link->nonatomic = 1;
++	}
++	link->stream_name = link->name;
++
++	ret = 0;
++err:
++	of_node_put(cpu);
++	of_node_put(codec);
++	of_node_put(platform);
++
++	return ret;
++}
++
++int qcom_snd_parse_of(struct snd_soc_card *card)
++{
++	struct device_node *np;
++	struct device_node *codec = NULL;
++	struct device *dev = card->dev;
++	struct snd_soc_dai_link *link;
+ 	int ret, num_links;
+ 
+ 	ret = snd_soc_of_parse_card_name(card, "model");
+@@ -82,89 +173,36 @@ int qcom_snd_parse_of(struct snd_soc_card *card)
+ 	card->num_links = num_links;
+ 	link = card->dai_link;
+ 
++	/* setup pcm dais first */
+ 	for_each_available_child_of_node(dev->of_node, np) {
+-		dlc = devm_kcalloc(dev, 2, sizeof(*dlc), GFP_KERNEL);
+-		if (!dlc) {
+-			ret = -ENOMEM;
+-			goto err_put_np;
+-		}
+-
+-		link->cpus	= &dlc[0];
+-		link->platforms	= &dlc[1];
+-
+-		link->num_cpus		= 1;
+-		link->num_platforms	= 1;
+-
+-		ret = of_property_read_string(np, "link-name", &link->name);
+-		if (ret) {
+-			dev_err(card->dev, "error getting codec dai_link name\n");
+-			goto err_put_np;
+-		}
+-
+-		cpu = of_get_child_by_name(np, "cpu");
+-		platform = of_get_child_by_name(np, "platform");
+ 		codec = of_get_child_by_name(np, "codec");
+-
+-		if (!cpu) {
+-			dev_err(dev, "%s: Can't find cpu DT node\n", link->name);
+-			ret = -EINVAL;
+-			goto err;
++		if (codec) {
++			of_node_put(codec);
++			continue;
+ 		}
+ 
+-		ret = snd_soc_of_get_dlc(cpu, &args, link->cpus, 0);
++		ret = qcom_snd_setup_dai_links(card, link, np);
+ 		if (ret) {
+-			dev_err_probe(card->dev, ret,
+-				      "%s: error getting cpu dai name\n", link->name);
+-			goto err;
+-		}
+-
+-		link->id = args.args[0];
+-
+-		if (platform) {
+-			link->platforms->of_node = of_parse_phandle(platform,
+-					"sound-dai",
+-					0);
+-			if (!link->platforms->of_node) {
+-				dev_err(card->dev, "%s: platform dai not found\n", link->name);
+-				ret = -EINVAL;
+-				goto err;
+-			}
+-		} else {
+-			link->platforms->of_node = link->cpus->of_node;
++			of_node_put(np);
++			return ret;
+ 		}
+ 
+-		if (codec) {
+-			ret = snd_soc_of_get_dai_link_codecs(dev, codec, link);
+-			if (ret < 0) {
+-				dev_err_probe(card->dev, ret,
+-					      "%s: codec dai not found\n", link->name);
+-				goto err;
+-			}
++		link++;
++	}
+ 
+-			if (platform) {
+-				/* DPCM backend */
+-				link->no_pcm = 1;
+-				link->ignore_pmdown_time = 1;
+-			}
+-		} else {
+-			/* DPCM frontend */
+-			link->codecs	 = &snd_soc_dummy_dlc;
+-			link->num_codecs = 1;
+-			link->dynamic = 1;
+-		}
++	/* setup backend dais */
++	for_each_available_child_of_node(dev->of_node, np) {
++		codec = of_get_child_by_name(np, "codec");
++		if (!codec)
++			continue;
+ 
+-		if (platform || !codec) {
+-			/* DPCM */
+-			link->ignore_suspend = 1;
+-			link->nonatomic = 1;
++		ret = qcom_snd_setup_dai_links(card, link, np);
++		if (ret) {
++			of_node_put(np);
++			return ret;
+ 		}
+ 
+-		link->stream_name = link->name;
+ 		link++;
+-
+-		of_node_put(cpu);
+-		of_node_put(codec);
+-		of_node_put(platform);
+ 	}
+ 
+ 	if (!card->dapm_widgets) {
+@@ -172,13 +210,6 @@ int qcom_snd_parse_of(struct snd_soc_card *card)
+ 		card->num_dapm_widgets = ARRAY_SIZE(qcom_jack_snd_widgets);
+ 	}
+ 
+-	return 0;
+-err:
+-	of_node_put(cpu);
+-	of_node_put(codec);
+-	of_node_put(platform);
+-err_put_np:
+-	of_node_put(np);
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(qcom_snd_parse_of);

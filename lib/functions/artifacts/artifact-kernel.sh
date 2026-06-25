@@ -125,7 +125,7 @@ function artifact_kernel_prepare_version() {
 
 	# run the extensions. they _must_ behave, and not try to modify the .config, instead just fill kernel_config_modifying_hashes
 	declare kernel_config_modifying_hashes_hash="undetermined"
-	declare -a kernel_config_modifying_hashes=()
+	declare -ga kernel_config_modifying_hashes=()
 	call_extensions_kernel_config
 	# Reduce to last assignment per key to keep hashing stable and ignore overridden options.
 	# tac reverses order so last becomes first, then sort -uk keeps first occurrence of each key.
@@ -159,7 +159,7 @@ function artifact_kernel_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh # expansion
+	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh "${SRC}"/lib/functions/compilation/stubble.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

@@ -1,8 +1,9 @@
-# Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi/BT
+# Rockchip RK3399 4GB DDR3 32GB eMMC GBE USB3 M.2 Key-E
 BOARD_NAME="SMART AM40"
-BOARD_VENDOR="rockchip"
+BOARD_VENDOR="smart"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="retro98boy"
+INTRODUCED="2024"
 BOOTCONFIG="am40-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
@@ -15,4 +16,4 @@ BOOTBRANCH_BOARD="tag:v2026.01"
 BOOTPATCHDIR="v2026.01"
 BOOT_SCENARIO="binman"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS2,1500000 console=tty0"
+SRC_CMDLINE="console=ttyS2,1500000 console=tty0 rk3399_pcie_ignore_serror"

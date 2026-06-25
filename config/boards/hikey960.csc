@@ -3,6 +3,7 @@ declare -g BOARD_NAME="HiKey 960"
 declare -g BOARD_VENDOR="huawei"
 declare -g BOARDFAMILY="uefi-arm64"
 declare -g BOARD_MAINTAINER=""
+declare -g INTRODUCED="2017"
 declare -g KERNEL_TARGET="current,edge"
 declare -g KERNEL_TEST_TARGET="current"
 

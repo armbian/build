@@ -168,6 +168,25 @@ function compile_armbian-base-files() {
 	sed -i "s|^PRIVACY_POLICY_URL=.*|PRIVACY_POLICY_URL=\"${VENDORPRIVACY}\"|" "${destination}"/etc/os-release
 	sed -i "s|^LOGO=.*|LOGO=\"${VENDORLOGO}\"|" "${destination}"/etc/os-release
 
+	# Replace Ubuntu logo files with symlinks to Armbian's.
+	# Ubuntu hardcodes lookups for ubuntu-logo*.svg / ubuntu-logo*.png
+	# in GNOME Settings → About and other places. The Armbian logos
+	# are shipped by armbian-bsp-cli (packages/bsp/common/usr/share/
+	# pixmaps/armbian-logo*). Since we own this base-files repack,
+	# we can safely replace the upstream files with relative symlinks.
+	if [[ -d "${destination}/usr/share/pixmaps" ]]; then
+		for suffix in ".svg" "-text.png" "-text-dark.png" "-text.svg" "-text-dark.svg"; do
+			# Only replace files actually present in the upstream
+			# base-files payload — don't create symlinks for variants
+			# that don't exist in this release.
+			local upstream="${destination}/usr/share/pixmaps/ubuntu-logo${suffix}"
+			if [[ -f "${upstream}" ]]; then
+				rm -f "${upstream}"
+				ln -sf "armbian-logo${suffix}" "${upstream}"
+			fi
+		done
+	fi
+
 	# Remove content from motd: Ubuntu header, welcome text and news. We have our own
 	rm -f "${destination}"/etc/update-motd.d/00-header
 	sed -i "\/etc\/update-motd.d\/00-header/d" "${destination}/DEBIAN/conffiles"

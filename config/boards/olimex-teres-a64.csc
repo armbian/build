@@ -6,6 +6,7 @@ BOARD_VENDOR="olimex"
 BOARDFAMILY="sun50iw1"
 
 BOARD_MAINTAINER="Kreyren"
+INTRODUCED="2017"
 
 KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"

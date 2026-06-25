@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Troy Mitchell <troy.mitchell@linux.dev>
+Date: Wed, 29 Apr 2026 19:41:54 +0800
+Subject: [PATCH v2] riscv: mm: fix SWIOTLB initialization for systems with
+ DRAM above 4GB
+
+On RISC-V platforms where the entire physical memory (DRAM) resides
+above the 32-bit address space (i.e., above dma32_phys_limit), the
+current SWIOTLB initialization logic fails.
+
+This patch addresses two interconnected issues on such platforms:
+
+1. Incorrect 32-bit DMA bounce assumption:
+The existing condition `max_pfn > PFN_DOWN(dma32_phys_limit)` assumes
+that a 32-bit DMA bounce buffer is required simply because the maximum
+PFN exceeds the 32-bit limit. However, if all DRAM starts above 4GB,
+no memory exists below the limit to satisfy this allocation. Fix
+this by adding a check to ensure `memblock_start_of_DRAM()` is actually
+below the 32-bit limit before enforcing 32-bit SWIOTLB.
+
+2. kmalloc() bounce buffer allocation failure on non-coherent systems:
+For non-coherent hardware, a bounce buffer is still mandatory for
+cache-line-aligned kmalloc(), even if 32-bit DMA bouncing is skipped.
+Without the `SWIOTLB_ANY` flag, swiotlb_init() defaults to allocating
+from low memory, which fails completely when DRAM only exists in high
+memory. By appending `SWIOTLB_ANY` to swiotlb_flags, the allocator is
+permitted to allocate this alignment buffer from high memory.
+
+With this patch, systems with non-coherent DMA and DRAM entirely above
+4GB can successfully map the software IO TLB in high memory and boot
+normally.
+
+Tested-by: Anirudh Srinivasan <asrinivasan@oss.tenstorrent.com>
+Signed-off-by: Troy Mitchell <troy.mitchell@linux.dev>
+---
+Changes in v2:
+- add Anirudh's TB tag
+- Link to v1: https://lore.kernel.org/r/20260331-fix-riscv-swiotlb-v1-1-74dd5e6be0f1@linux.dev
+
+To: Paul Walmsley <pjw@kernel.org>
+To: Palmer Dabbelt <palmer@dabbelt.com>
+To: Albert Ou <aou@eecs.berkeley.edu>
+To: Alexandre Ghiti <alex@ghiti.fr>
+Cc: linux-riscv@lists.infradead.org
+Cc: linux-kernel@vger.kernel.org
+---
+ arch/riscv/mm/init.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/arch/riscv/mm/init.c b/arch/riscv/mm/init.c
+index 811e03786c56..3244e4fba89c 100644
+--- a/arch/riscv/mm/init.c
++++ b/arch/riscv/mm/init.c
+@@ -168,7 +168,9 @@ static void print_vm_layout(void) { }
+ 
+ void __init arch_mm_preinit(void)
+ {
+-	bool swiotlb = max_pfn > PFN_DOWN(dma32_phys_limit);
++	bool swiotlb = max_pfn > PFN_DOWN(dma32_phys_limit) &&
++		       memblock_start_of_DRAM() < dma32_phys_limit;
++	unsigned int swiotlb_flags = SWIOTLB_VERBOSE;
+ #ifdef CONFIG_FLATMEM
+ 	BUG_ON(!mem_map);
+ #endif /* CONFIG_FLATMEM */
+@@ -176,17 +178,21 @@ void __init arch_mm_preinit(void)
+ 	if (IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) && !swiotlb &&
+ 	    dma_cache_alignment != 1) {
+ 		/*
+-		 * If no bouncing needed for ZONE_DMA, allocate 1MB swiotlb
+-		 * buffer per 1GB of RAM for kmalloc() bouncing on
+-		 * non-coherent platforms.
++		 * No 32-bit DMA bouncing needed (either all DRAM is within
++		 * the 32-bit limit, or it all starts above it), but
++		 * non-coherent hardware still requires cache-line-aligned
++		 * bounce buffers for kmalloc().  Use SWIOTLB_ANY so that the
++		 * buffer can be allocated from high memory when DRAM starts
++		 * above dma32_phys_limit.  Allocate ~1 MB per 1 GB of RAM.
+ 		 */
+ 		unsigned long size =
+ 			DIV_ROUND_UP(memblock_phys_mem_size(), 1024);
+ 		swiotlb_adjust_size(min(swiotlb_size_or_default(), size));
+ 		swiotlb = true;
++		swiotlb_flags |= SWIOTLB_ANY;
+ 	}
+ 
+-	swiotlb_init(swiotlb, SWIOTLB_VERBOSE);
++	swiotlb_init(swiotlb, swiotlb_flags);
+ 
+ 	print_vm_layout();
+ }
+
+-- 
+2.53.0
+

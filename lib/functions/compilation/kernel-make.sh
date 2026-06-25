@@ -111,8 +111,10 @@ function run_kernel_make_dialog() {
 
 function run_kernel_make_long_running() {
 	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
-	KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
+	local command_result=0
+	KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@" || command_result=$?
 	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
+	return ${command_result}
 }
 
 function kernel_determine_toolchain() {

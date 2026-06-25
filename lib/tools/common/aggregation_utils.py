@@ -18,10 +18,7 @@ log: logging.Logger = logging.getLogger("aggregation_utils")
 AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = []
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = []
 CLI_SEARCH_RELATIVE_DIRS = []
-DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS = []
-DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS = []
 SELECTED_CONFIGURATION = None
-DESKTOP_APPGROUPS_SELECTED = []
 SRC = None
 
 # Hack: this shouldn't be a global.
@@ -219,13 +216,7 @@ def aggregate_all_cli(artifact, aggregation_function=aggregate_packages_from_pot
 	return aggregation_function(process_common_path_for_potentials(potential_paths))
 
 
-def aggregate_all_desktop(artifact, aggregation_function=aggregate_packages_from_potential):
-	potential_paths = calculate_potential_paths(
-		AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS, DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS, ["."], artifact)
-	potential_paths = calculate_potential_paths(
-		AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS, DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS,
-		DESKTOP_APPGROUPS_SELECTED, artifact, potential_paths)
-	return aggregation_function(process_common_path_for_potentials(potential_paths))
+# aggregate_all_desktop() removed — desktop packages owned by armbian-config now.
 
 
 def join_refs_for_bash_single_string(refs):

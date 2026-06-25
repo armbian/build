@@ -42,7 +42,14 @@ wait_for_package_manager() {
 	done
 }
 
+# Host dependency entries may carry an optional "group::package" prefix (see prepare-host.sh).
+# The group is only meaningful for Docker layer splitting (docker.sh); everywhere else the
+# bare package name is used. Split on the *first* "::" so apt multiarch names (pkg:arch) survive.
+declare -g HOSTDEP_GROUP_DELIMITER="::"
+declare -g HOSTDEP_DEFAULT_GROUP="core"
+
 # Install the whitespace-delimited packages listed in the first parameter, in the host (not chroot).
+# Entries may be "group::package"; the optional group prefix is stripped before installing.
 # It handles correctly the case where all wanted packages are already installed, and in that case does nothing.
 # If packages are to be installed, it does an apt-get update first.
 function install_host_side_packages() {
@@ -63,6 +70,7 @@ function install_host_side_packages() {
 	currently_provided_packages=($(dpkg-query --show --showformat='${Provides}\n' | grep -v "^$" | sed -e 's/([^()]*)//g' | sed -e 's|,||g' | tr -s "\n" " "))
 
 	for PKG_TO_INSTALL in ${wanted_packages_string}; do
+		PKG_TO_INSTALL="${PKG_TO_INSTALL#*"${HOSTDEP_GROUP_DELIMITER}"}" # drop optional "group::" prefix
 		# shellcheck disable=SC2076 # I wanna match literally, thanks.
 		if [[ ! " ${currently_installed_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
 			if [[ ! " ${currently_provided_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then

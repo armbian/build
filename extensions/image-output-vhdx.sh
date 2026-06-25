@@ -2,7 +2,7 @@ enable_extension "image-output-qcow2"
 
 #### *run before installing host dependencies*
 function add_host_dependencies__vhdx_host_deps() {
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} qemu-utils"
+	EXTRA_BUILD_DEPS+=("qemu::qemu-utils")
 }
 
 #### *allow extensions to prepare their own config, after user config is done*

@@ -23,7 +23,7 @@ function do_main_configuration() {
 	# common options
 	declare revision_from="set in env or command-line parameter"
 	if [[ "${REVISION}" == "" ]]; then
-		if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+		if [[ -f "${USERPATCHES_PATH}/VERSION" ]]; then
 			REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
 			revision_from="userpatches VERSION file"
 		else
@@ -64,6 +64,9 @@ function do_main_configuration() {
 
 	# Armbian config is central tool used in all builds. As its build externally, we have moved it to extension. Enable it here.
 	enable_extension "armbian-config"
+
+	# Fix binman pkg_resources removal in setuptools >= 82. Can be removed when all U-Boot versions are >= v2025.10.
+	enable_extension "uboot-binman-fix-pkg-resources"
 
 	# Network stack to use, default to network-manager; configuration can override this.
 	# Will be made read-only further down.
@@ -160,8 +163,11 @@ function do_main_configuration() {
 			;;
 	esac
 
-	# Check if the filesystem type is supported by the build host
-	if [[ $CONFIG_DEFS_ONLY != yes ]]; then # don't waste time if only gathering config defs
+	# Check if the filesystem type is supported by the build host.
+	# Skipped for nfs / nfs-root: these rootfs types produce a tarball on the
+	# host (rootfs-to-image.sh `tar | gzip`) and never mount NFS locally — the
+	# target's kernel mounts it at boot time, so host FS support is irrelevant.
+	if [[ $CONFIG_DEFS_ONLY != yes && $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != nfs-root ]]; then # don't waste time if only gathering config defs
 		check_filesystem_compatibility_on_host
 	fi
 
@@ -199,6 +205,15 @@ function do_main_configuration() {
 	# Defaults... # @TODO: why?
 	declare -g -r MAINLINE_UBOOT_DIR='u-boot'
 
+	# Opt-in cache-bust string for the u-boot artifact. A board/family that ships a
+	# prebuilt or externally-fetched u-boot blob (e.g. khadas-vim1/vim2) sets this —
+	# typically to the blob's upstream version — and bumps it whenever the blob
+	# changes, so the u-boot .deb repackages instead of reusing the cached artifact.
+	# It can't be a content hash: the blob may live outside this repo and not exist
+	# yet at matrix-prep. Folded into the artifact version by artifact-uboot.sh.
+	# (`:-` so it never clobbers a value a board/family already set.)
+	declare -g UBOOT_HASH_EXTRA="${UBOOT_HASH_EXTRA:-}"
+
 	# pre-calculate mirrors. important: this sets _SOURCE variants that might be used in common.conf to default things to mainline, but using mirror.
 	# @TODO: setting them here allows family/board code (and hooks) to read them and embed them into configuration, which is bad: it might end up without the mirror.
 	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
@@ -228,6 +243,11 @@ function do_main_configuration() {
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
+	# A CI runner that advertises a pass-through git proxy (GITPROXY_ADDRESS,
+	# exported from NetBox by the runner) selects the gitproxy mirror
+	# automatically, unless an explicit GITHUB_MIRROR was already set.
+	[[ -z $GITHUB_MIRROR && -n ${GITPROXY_ADDRESS:-} ]] && GITHUB_MIRROR=gitproxy
+
 	case $GITHUB_MIRROR in
 		fastgit)
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
@@ -235,6 +255,9 @@ function do_main_configuration() {
 		ghproxy)
 			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghfast.top
 			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
+			;;
+		gitproxy)
+			declare -g -r GITHUB_SOURCE="${GITPROXY_ADDRESS}"
 			;;
 		gitclone)
 			declare -g -r GITHUB_SOURCE='https://gitclone.com/github.com'
@@ -449,12 +472,23 @@ function do_extra_configuration() {
 		APT_MIRROR=$UBUNTU_MIRROR
 	fi
 
-	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR}" "info"
+	# Derive APT_PROXY_ADDR from proxy env vars if unset, which runners.sh uses inside chroot.
+	# Skip if MANAGE_ACNG is active to prevent conflicting behavior.
+	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && ( -z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no" ) ]]; then
+		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
+		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
+	fi
+	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR##*@}" "info"
 
 	# @TODO: allow to run aggregation, for CONFIG_DEFS_ONLY? rootfs_aggregate_packages
 
-	# Give the option to configure DNS server used in the chroot during the build process
-	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+	# Derive host DNS server so chroot can resolve hostnames on proxy; else, use cloudflare
+	if [[ -z "${NAMESERVER}" ]]; then
+		declare _dns_resolv_file="/etc/resolv.conf"
+		[[ -f "/run/systemd/resolve/resolv.conf" ]] && _dns_resolv_file="/run/systemd/resolve/resolv.conf"
+		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2>/dev/null)"
+		NAMESERVER="${NAMESERVER:-1.0.0.1}"
+	fi
 
 	# Consolidate the extra image suffix. loop and add.
 	declare EXTRA_IMAGE_SUFFIX=""
@@ -515,7 +549,7 @@ function write_config_summary_output_file() {
 		Minimal: $BUILD_MINIMAL
 		Desktop: $BUILD_DESKTOP
 		Desktop Environment: $DESKTOP_ENVIRONMENT
-		Software groups: $DESKTOP_APPGROUPS_SELECTED
+		Desktop Tier: $DESKTOP_TIER
 
 		Kernel configuration:
 		Repository: $KERNELSOURCE
@@ -598,13 +632,13 @@ function check_filesystem_compatibility_on_host() {
 		fi
 
 		# For f2fs, check if support for extended attributes is enabled in kernel config (otherwise will fail later when using rsync)
-		if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+		if [[ "$ROOTFS_TYPE" == "f2fs" ]]; then
 			local build_host_kernel_config=""
 
 			# Try to find kernel config in different places
-			if [ -f "/boot/config-$(uname -r)" ]; then
+			if [[ -f "/boot/config-$(uname -r)" ]]; then
 				build_host_kernel_config="/boot/config-$(uname -r)"
-			elif [ -f "/proc/config.gz" ]; then
+			elif [[ -f "/proc/config.gz" ]]; then
 				# Try to extract kernel config from /proc/config.gz
 				if command -v gzip &> /dev/null; then
 					gzip -dc /proc/config.gz > /tmp/build_host_kernel_config
@@ -617,7 +651,7 @@ function check_filesystem_compatibility_on_host() {
 			fi
 
 			# Check if required configurations are set
-			if [ -n "$build_host_kernel_config" ]; then
+			if [[ -n "$build_host_kernel_config" ]]; then
 				if ! grep -q '^CONFIG_F2FS_FS_XATTR=y$' "$build_host_kernel_config" ||
 					! grep -q '^CONFIG_F2FS_FS_SECURITY=y$' "$build_host_kernel_config"; then
 					exit_with_error "Required kernel configurations for f2fs filesystem not enabled." "Please enable CONFIG_F2FS_FS_XATTR and CONFIG_F2FS_FS_SECURITY in your host kernel configuration." "err"
@@ -638,7 +672,7 @@ function pre_install_distribution_specific__disable_cnf_apt_hook() {
 }
 
 function post_post_debootstrap_tweaks__restore_cnf_apt_hook() {
-	if [ -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled ]; then # (re-enable command-not-found after building rootfs if it's been disabled)
+	if [[ -f "${SDCARD}/etc/apt/apt.conf.d/50command-not-found.disabled" ]]; then # (re-enable command-not-found after building rootfs if it's been disabled)
 		display_alert "Enabling command-not-found after build-time " "${BOARD}:${RELEASE}-${BRANCH}" "info"
 		run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found
 	fi

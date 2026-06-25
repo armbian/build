@@ -24,7 +24,7 @@ function exit_if_countdown_not_aborted() {
 	display_alert "Problem detected" "${reason}" "err"
 	display_alert "Exiting in ${loops} seconds" "Press <Ctrl-C> to abort, <Enter> to ignore and continue" "err"
 	echo -n "Counting down: " >&2
-	for i in $(seq 1 "${loops}"); do
+	for ((i = 1; i <= loops; i++)); do
 		declare stop_waiting=0
 		declare keep_waiting=0
 		timeout --foreground 1 bash -c "read -n1; echo \$REPLY" && stop_waiting=1 || keep_waiting=1
@@ -54,7 +54,7 @@ function countdown_and_continue_if_not_aborted() {
 	fi
 
 	echo -n "Counting down: " >&2
-	for i in $(seq 1 "${loops}"); do
+	for ((i = 1; i <= loops; i++)); do
 		declare stop_waiting=0
 		declare keep_waiting=0
 		timeout --foreground 1 bash -c "read -n1; echo \$REPLY" && stop_waiting=1 || keep_waiting=1

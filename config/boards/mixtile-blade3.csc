@@ -3,6 +3,7 @@ declare -g BOARD_NAME="Mixtile Blade 3"
 declare -g BOARD_VENDOR="mixtile"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER="rpardini"
+declare -g INTRODUCED="2023"
 # DO NOT put comments on same line as KERNEL_TARGET: edge builds and can be used for development with 'BRANCH=edge` forced; not enabled for end-users
 declare -g KERNEL_TARGET="vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-blade3-v101-linux.dtb" # Included in https://github.com/armbian/linux-rockchip/pull/64 # has a hook to change it for edge below
@@ -41,8 +42,8 @@ function post_family_config__blade3_use_mainline_uboot() {
 	declare -g BOOTDELAY=1
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
+	declare -g BOOTBRANCH="tag:v2026.04"
+	declare -g BOOTPATCHDIR="v2026.04" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}"
 

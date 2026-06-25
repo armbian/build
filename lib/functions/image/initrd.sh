@@ -32,7 +32,7 @@ update_initramfs() {
 		# disabled; if debugging, we want the full output, even if it is huge.
 		# logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
 	fi
-	if [ "$target_dir" != "" ]; then
+	if [[ "$target_dir" != "" ]]; then
 		initrd_kern_ver="$(basename "$target_dir")"
 		initrd_file="${chroot_target}/boot/initrd.img-${initrd_kern_ver}"
 		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -u${initrd_debug} -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp

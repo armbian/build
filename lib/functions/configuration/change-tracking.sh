@@ -18,7 +18,13 @@ function track_config_variables() {
 
 		# if the var is an array...
 		if [[ "${array_values:-"no"}" == "yes" ]]; then
-			eval "var_value=\"\${${var_name}[@]}\"" # sorry
+			# bash nameref (local -n) creates an alias for the variable named in $var_name —
+			# no eval needed, no code-injection risk. Works for arrays and scalars alike.
+			# unset -n removes the alias only (not the referenced array) to avoid
+			# "already a nameref" warnings on the next loop iteration.
+			local -n _ct_arr_ref="${var_name}"
+			var_value="${_ct_arr_ref[*]}"
+			unset -n _ct_arr_ref
 			value_text="${blue_color:-}(${bright_blue_color:-}${var_value}${blue_color:-})"
 		else
 			var_value="${!var_name}"

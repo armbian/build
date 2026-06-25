@@ -1,0 +1,389 @@
+diff --git a/drivers/net/phy/Kconfig b/drivers/net/phy/Kconfig
+index 70b0f0f..e38696e 100644
+--- a/drivers/net/phy/Kconfig
++++ b/drivers/net/phy/Kconfig
+@@ -109,6 +109,13 @@ config AC200_PHY
+ 	help
+ 	  Fast ethernet PHY as found in X-Powers AC200 multi-function device.
+ 
++config AC300_PHY
++	tristate "Allwinner AC300 EPHY support"
++	depends on OF && NVMEM
++	help
++	  Adds support for the integrated Fast Ethernet PHY (EPHY) inside the
++	  Allwinner H616/H618 SoC (X-Powers AC300).
++
+ config AMD_PHY
+ 	tristate "AMD and Altima PHYs"
+ 	help
+diff --git a/drivers/net/phy/Makefile b/drivers/net/phy/Makefile
+index 769fe6a..2319869 100644
+--- a/drivers/net/phy/Makefile
++++ b/drivers/net/phy/Makefile
+@@ -28,6 +28,7 @@ sfp-obj-$(CONFIG_SFP)		+= sfp-bus.o
+ obj-y				+= $(sfp-obj-y) $(sfp-obj-m)
+ 
+ obj-$(CONFIG_AC200_PHY)		+= ac200-phy.o
++obj-$(CONFIG_AC300_PHY)		+= ac300-phy.o
+ obj-$(CONFIG_ADIN_PHY)		+= adin.o
+ obj-$(CONFIG_ADIN1100_PHY)	+= adin1100.o
+ obj-$(CONFIG_AIR_EN8811H_PHY)   += air_en8811h.o
+diff --git a/drivers/net/phy/ac300-phy.c b/drivers/net/phy/ac300-phy.c
+new file mode 100644
+index 0000000..7f98ffe
+--- /dev/null
++++ b/drivers/net/phy/ac300-phy.c
+@@ -0,0 +1,353 @@
++// SPDX-License-Identifier: GPL-2.0+
++/**
++ * Driver for X-Powers AC300 Ethernet PHY
++ *
++ * Datasheet: https://linux-sunxi.org/images/b/b2/AC300_User_Manual_V1.0_cleaned.pdf
++ *
++ * Copyright (c) 2026 Alastair D'Silva <alastair@d-silva.org>
++ */
++
++#include <linux/clk.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/phy.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/of_device.h>
++#include <linux/of.h>
++
++#define AC300_EPHY_ID			0x00441400
++#define AC300_EPHY_ID_MASK		0x0ffffff0
++
++/* AC300 Configuration Registers (on MDIO Address 16) */
++#define AC300_REG00_CHIP_VERSION_MASK	GENMASK(15, 12)
++#define AC300_REG00_PKG_STATUS_MASK	GENMASK(11, 8)
++#define AC300_REG00_EPHY_CLK_SEL_MASK	GENMASK(7, 6)
++#define AC300_REG00_EPHY_CLK_SEL_25M	0
++#define AC300_REG00_EPHY_CLK_SEL_27M	1
++#define AC300_REG00_EPHY_CLK_SEL_24M	2
++#define AC300_REG00_EFUSE_REG_CLK_GATING	BIT(5)
++#define AC300_REG00_EPHY_REG_CLK_GATING	BIT(4)
++#define AC300_REG00_MDIO_ERROR		BIT(3)
++#define AC300_REG00_CLKIN_GATING	BIT(2)
++#define AC300_REG00_EPHY_RESET_INVALID	BIT(1)
++#define AC300_REG00_CHIP_RESET		BIT(0)
++
++#define AC300_REG01_DEFAULT		0x1084
++#define AC300_REG01_BGTC_MASK		GENMASK(12, 8)
++#define AC300_REG01_BG_EN		BIT(7)
++#define AC300_REG01_BGV_MASK		GENMASK(5, 0)
++
++#define AC300_REG02_DEFAULT		0xC000
++#define AC300_REG02_DLDOEN		BIT(15)
++#define AC300_REG02_DLDOVOL_MASK	GENMASK(14, 12)
++
++#define AC300_REG05_DEFAULT		0xA800
++#define AC300_REG05_MDIO_DRV_MASK	GENMASK(15, 14)
++#define AC300_REG05_LED_DRV_MASK	GENMASK(13, 12)
++#define AC300_REG05_MII_DRV_MASK	GENMASK(11, 10)
++#define AC300_REG05_EPHY_IRQ_STATUS	BIT(9)
++#define AC300_REG05_EPHY_IRQ_ENABLE	BIT(8)
++#define AC300_REG05_CLKIN_PAD_EN	BIT(4)
++#define AC300_REG05_E_DPX_LED_IO_EN	BIT(3)
++#define AC300_REG05_E_SPD_LED_IO_EN	BIT(2)
++#define AC300_REG05_E_LNK_LED_IO_EN	BIT(1)
++#define AC300_REG05_EPHY_MII_IO_EN	BIT(0)
++
++#define AC300_REG06_DEFAULT		0x0001
++#define AC300_REG06_BGS_EFUSE_MASK	GENMASK(15, 12)
++#define AC300_REG06_XMII_SEL		BIT(11)
++#define AC300_REG06_EPHY_MODE_MASK	GENMASK(10, 9)
++#define AC300_REG06_BIST_CLK_EN		BIT(3)
++#define AC300_REG06_LED_POL		BIT(1)
++#define AC300_REG06_SHUTDOWN		BIT(0)
++
++struct ac300_phy_priv {
++	struct clk *ephy_clk;
++	struct clk *pwm_clk;
++	u16 caldata;
++};
++
++static int ac300_phy_disable(struct phy_device *phydev)
++{
++	struct mii_bus *bus = phydev->mdio.bus;
++	int cfg_addr = 16 + phydev->mdio.addr;
++	u16 val;
++	int ret;
++
++	val = 0x1f00 | FIELD_PREP(AC300_REG00_EPHY_CLK_SEL_MASK, AC300_REG00_EPHY_CLK_SEL_24M);
++	ret = mdiobus_write(bus, cfg_addr, 0x00, val);
++	if (ret)
++		return ret;
++
++	ret = mdiobus_write(bus, cfg_addr, 0x05, AC300_REG05_DEFAULT);
++	if (ret)
++		return ret;
++
++	return mdiobus_write(bus, cfg_addr, 0x06, AC300_REG06_SHUTDOWN);
++}
++
++static int ac300_phy_enable(struct phy_device *phydev)
++{
++	struct ac300_phy_priv *priv = phydev->priv;
++	struct mii_bus *bus = phydev->mdio.bus;
++	int cfg_addr = 16 + phydev->mdio.addr;
++	u16 val;
++	int ret;
++
++	/* Step 1: release reset */
++	val = 0x1f00 | FIELD_PREP(AC300_REG00_EPHY_CLK_SEL_MASK, AC300_REG00_EPHY_CLK_SEL_24M) |
++	      AC300_REG00_EPHY_RESET_INVALID | AC300_REG00_CHIP_RESET;
++	ret = mdiobus_write(bus, cfg_addr, 0x00, val);
++	if (ret)
++		return ret;
++	msleep(10);
++
++	/* Step 2: clk gating */
++	val |= AC300_REG00_EPHY_REG_CLK_GATING | AC300_REG00_CLKIN_GATING | AC300_REG00_EFUSE_REG_CLK_GATING;
++	ret = mdiobus_write(bus, cfg_addr, 0x00, val);
++	if (ret)
++		return ret;
++	msleep(10);
++
++	/* Step 2.5: Apply System BIAS Calibration */
++	val = AC300_REG01_DEFAULT;
++	if (priv->caldata) {
++		val = (priv->caldata & (AC300_REG01_BGTC_MASK | AC300_REG01_BGV_MASK));
++	}
++	val |= AC300_REG01_BG_EN; /* Ensure Bandgap is enabled */
++	ret = mdiobus_write(bus, cfg_addr, 0x01, val);
++	if (ret)
++		return ret;
++	msleep(10);
++
++	/* Step 3: SYS_IO setup */
++	val = AC300_REG05_DEFAULT | AC300_REG05_CLKIN_PAD_EN |
++	      AC300_REG05_EPHY_MII_IO_EN | AC300_REG05_E_DPX_LED_IO_EN;
++	ret = mdiobus_write(bus, cfg_addr, 0x05, val);
++	if (ret)
++		return ret;
++	msleep(10);
++
++	/* Step 4: RMII Mode, SHUTDOWN=0, calibration & LED polarity */
++	val = 0;
++	if (phydev->interface == PHY_INTERFACE_MODE_RMII)
++		val |= AC300_REG06_XMII_SEL;
++	val |= AC300_REG06_LED_POL; /* LED_POL 1:Low active */
++	val &= ~(0x0F << 12);
++	val |= (0x0F & (0x03 + priv->caldata)) << 12;
++	ret = mdiobus_write(bus, cfg_addr, 0x06, val);
++	if (ret)
++		return ret;
++	msleep(100);
++
++	return 0;
++}
++
++static int ac300_phy_config_init(struct phy_device *phydev)
++{
++	struct ac300_phy_priv *priv = phydev->priv;
++	int ret;
++
++	/* Write page-based EPHY transceiver and signal path optimizations */
++	ret = phy_write(phydev, 0x1f, 0x0100); /* Switch to Page 1 */
++	if (ret)
++		return ret;
++	ret = phy_write(phydev, 0x12, 0x4824); /* Disable APS */
++	if (ret)
++		return ret;
++
++	ret = phy_write(phydev, 0x1f, 0x0200); /* Switch to Page 2 */
++	if (ret)
++		return ret;
++	ret = phy_write(phydev, 0x18, 0x0000); /* PHYAFE TRX optimization */
++	if (ret)
++		return ret;
++
++	ret = phy_write(phydev, 0x1f, 0x0600); /* Switch to Page 6 */
++	if (ret)
++		return ret;
++	if (priv->caldata & BIT(9)) {
++		ret = phy_write(phydev, 0x14, 0x7809); /* Fixed TX optimization */
++		if (ret)
++			return ret;
++		ret = phy_write(phydev, 0x13, 0xf000); /* Fixed RX optimization */
++		if (ret)
++			return ret;
++		ret = phy_write(phydev, 0x10, 0x5523);
++		if (ret)
++			return ret;
++		ret = phy_write(phydev, 0x15, 0x3533);
++		if (ret)
++			return ret;
++	} else {
++		ret = phy_write(phydev, 0x14, 0x708b); /* Default TX optimization */
++		if (ret)
++			return ret;
++		ret = phy_write(phydev, 0x13, 0xF000); /* Default RX optimization */
++		if (ret)
++			return ret;
++		ret = phy_write(phydev, 0x15, 0x1530);
++		if (ret)
++			return ret;
++	}
++
++	ret = phy_write(phydev, 0x1f, 0x0800); /* Switch to Page 8 */
++	if (ret)
++		return ret;
++	if (priv->caldata & BIT(9)) {
++		ret = phy_write(phydev, 0x1d, 0x0844); /* disable auto offset */
++		if (ret)
++			return ret;
++	}
++	ret = phy_write(phydev, 0x18, 0x00bc); /* PHYAFE TRX optimization */
++	if (ret)
++		return ret;
++
++	ret = phy_write(phydev, 0x1f, 0x0100); /* Switch to page 1 */
++	if (ret)
++		return ret;
++	ret = phy_clear_bits(phydev, 0x17, BIT(3)); /* Disable Intelligent EEE */
++	if (ret)
++		return ret;
++
++	/* Disable 802.3az EEE */
++	ret = phy_write(phydev, 0x1f, 0x0200); /* Switch to page 2 */
++	if (ret)
++		return ret;
++	ret = phy_write(phydev, 0x18, 0x0000);
++	if (ret)
++		return ret;
++	ret = phy_write(phydev, 0x1f, 0x0000); /* Switch to page 0 */
++	if (ret)
++		return ret;
++
++	return phy_clear_bits_mmd(phydev, 0x7, 0x3c, BIT(1));
++}
++
++static int ac300_phy_probe(struct phy_device *phydev)
++{
++	struct device *dev = &phydev->mdio.dev;
++	struct ac300_phy_priv *priv;
++	struct nvmem_cell *calcell;
++	u16 *caldata;
++	size_t callen;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	phydev->priv = priv;
++
++	priv->ephy_clk = devm_clk_get_optional_enabled(dev, "ephy");
++	if (IS_ERR(priv->ephy_clk))
++		return dev_err_probe(dev, PTR_ERR(priv->ephy_clk),
++				     "Failed to request ephy clock\n");
++
++	priv->pwm_clk = devm_clk_get_optional_enabled(dev, "pwm");
++	if (IS_ERR(priv->pwm_clk))
++		return dev_err_probe(dev, PTR_ERR(priv->pwm_clk),
++				     "Failed to request pwm clock\n");
++
++	/* Read calibration data from NVMEM/SID */
++	calcell = devm_nvmem_cell_get(dev, "calibration");
++	if (IS_ERR(calcell)) {
++		if (PTR_ERR(calcell) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++		dev_warn(dev, "Failed to get EPHY calibration cell (%pe)\n", calcell);
++	} else {
++		caldata = nvmem_cell_read(calcell, &callen);
++		if (IS_ERR(caldata)) {
++			if (PTR_ERR(caldata) == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++			dev_warn(dev, "Failed to read EPHY calibration data (%pe)\n", caldata);
++		} else {
++			if (callen < sizeof(priv->caldata)) {
++				dev_warn(dev, "EPHY calibration cell is too short (%zu bytes, expected at least %zu)\n",
++					 callen, sizeof(priv->caldata));
++				kfree(caldata);
++			} else {
++				priv->caldata = *caldata;
++				kfree(caldata);
++				dev_info(dev, "Read AC300 EPHY calibration from nvmem: 0x%04x\n", priv->caldata);
++			}
++		}
++	}
++
++	return ac300_phy_enable(phydev);
++}
++
++static void ac300_phy_remove(struct phy_device *phydev)
++{
++	ac300_phy_disable(phydev);
++}
++
++static int ac300_phy_suspend(struct phy_device *phydev)
++{
++	int ret;
++
++	ret = ac300_phy_disable(phydev);
++	if (ret)
++		return ret;
++	return genphy_suspend(phydev);
++}
++
++static int ac300_phy_resume(struct phy_device *phydev)
++{
++	int ret;
++
++	ret = ac300_phy_enable(phydev);
++	if (ret)
++		return ret;
++	return genphy_resume(phydev);
++}
++
++static int ac300_phy_soft_reset(struct phy_device *phydev)
++{
++	int ret;
++
++	ret = ac300_phy_enable(phydev);
++	if (ret)
++		return ret;
++	return genphy_soft_reset(phydev);
++}
++
++static int ac300_phy_match_phy_device(struct phy_device *phydev,
++				      const struct phy_driver *phydrv)
++{
++	/* Bind only if the device tree node specifically declares the AC300 compatible string */
++	if (phydev->mdio.dev.of_node &&
++	    of_device_is_compatible(phydev->mdio.dev.of_node, "allwinner,sun50i-h618-ac300-ephy")) {
++		return 1;
++	}
++	return 0;
++}
++
++static struct phy_driver ac300_phy_driver[] = {
++	{
++		.phy_id		= AC300_EPHY_ID,
++		.phy_id_mask	= AC300_EPHY_ID_MASK,
++		.name		= "Allwinner AC300 EPHY",
++		.features	= PHY_BASIC_FEATURES,
++		.match_phy_device = ac300_phy_match_phy_device,
++		.soft_reset	= ac300_phy_soft_reset,
++		.config_init	= ac300_phy_config_init,
++		.probe		= ac300_phy_probe,
++		.remove		= ac300_phy_remove,
++		.suspend	= ac300_phy_suspend,
++		.resume		= ac300_phy_resume,
++	}
++};
++module_phy_driver(ac300_phy_driver);
++
++MODULE_AUTHOR("Alastair D'Silva <alastair@d-silva.org>");
++MODULE_DESCRIPTION("X-Powers AC300 Ethernet PHY driver");
++MODULE_LICENSE("GPL");
++
++static const struct mdio_device_id __maybe_unused ac300_phy_tbl[] = {
++	{ AC300_EPHY_ID, AC300_EPHY_ID_MASK },
++	{ }
++};
++MODULE_DEVICE_TABLE(mdio, ac300_phy_tbl);

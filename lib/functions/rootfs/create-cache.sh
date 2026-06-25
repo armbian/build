@@ -28,8 +28,7 @@ function calculate_rootfs_cache_id() {
 	declare -a extension_hooks_to_hash=("custom_apt_repo")
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
-	declare legacy_debootstrap="${LEGACY_DEBOOTSTRAP:-"no"}"
-	hash_hooks="$(echo "${extension_hooks_hashed[@]}" LDB=${legacy_debootstrap,,} LANG=${DEST_LANG} | sha256sum | cut -d' ' -f1)"
+	hash_hooks="$(echo "${extension_hooks_hashed[@]}" LANG=${DEST_LANG} | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
 	# AGGREGATED_ROOTFS_HASH is produced by aggregation.py
@@ -39,6 +38,41 @@ function calculate_rootfs_cache_id() {
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}-desktop"
 	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
+
+	# Fold DESKTOP_TIER into the cache name for desktop builds.
+	# tier=minimal, tier=mid and tier=full install different
+	# package sets under the same DE, so they can't share a
+	# cache tarball — otherwise the first tier to build wins and
+	# every subsequent tier of that DE silently reuses its rootfs.
+	if [[ ${BUILD_DESKTOP} == yes && -n ${DESKTOP_TIER} ]]; then
+		cache_type="${cache_type}-${DESKTOP_TIER}"
+	fi
+
+	# Fold a short fingerprint of the resolved armbian-configng
+	# desktop tree into the cache name. The desktop package set is
+	# chosen by configng YAMLs at rootfs-create time
+	# (`armbian-config --api module_desktops install mode=build`),
+	# not by the aggregation layer — so packages_hash and
+	# AGGREGATED_ROOTFS_HASH are blind to configng entirely. Without
+	# this, a configng commit that changes which packages a DE
+	# installs leaves the existing rootfs tarball untouched in the
+	# cache and every subsequent build cache-hits the pre-change
+	# version.
+	#
+	# CONFIGNG_DESKTOPS_HASH is set by artifact_rootfs_config_dump
+	# above from `git log -1 -- tools/modules/desktops/` in the
+	# cache/sources/armbian-configng clone. 8-char prefix keeps
+	# the filename readable while still giving us ~2^32 of
+	# collision resistance — same truncation style the rest of
+	# this file uses for the hash_hooks/bash_hash components.
+	if [[ ${BUILD_DESKTOP} == yes ]]; then
+		declare _configng_fp="${artifact_input_variables[CONFIGNG_DESKTOPS_HASH]:-}"
+		if [[ -n "${_configng_fp}" \
+				&& "${_configng_fp}" != "undetermined" \
+				&& "${_configng_fp}" != "unknown" ]]; then
+			cache_type="${cache_type}-${_configng_fp:0:8}"
+		fi
+	fi
 
 	# allow extensions to modify cache_type, since they may have used add_packages_to_rootfs() or remove_packages()
 	cache_type="${cache_type}${EXTRA_ROOTFS_NAME:-""}"

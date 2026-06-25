@@ -1,0 +1,401 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: cunyuan <cunyuan.liu@cixtech.com>
+Date: Thu, 10 Apr 2025 17:17:08 +0800
+Subject: DPTSW-16421: thermal: Register the GPU Energy Model using SCMI
+ protocol driver
+
+For the cooling device using devfreq, currently, only the dev_pm_opp_of_register_em() function can be used to register the Energy Model.
+This function can only calculate the EM power based on the dynamic-power-coefficient configured in the dts.
+
+Therefore, we need to implement a new EM registration function that can read the EM power through the SCMI protocol.
+
+This patch adds a SCMI driver to register Energy Model for Cix platforms.
+
+Signed-off-by: cunyuan.liu <cunyuan.liu@cixtech.com>
+Change-Id: I9983e3323b77d2dd5aba70385c9a350af48fd77f
+(cherry picked from commit 42a77f269cacce02abc82786ab48f9c22ff18062)
+---
+ drivers/pmdomain/arm/scmi_perf_domain.c |  45 +++
+ drivers/thermal/cix/Kconfig             |  11 +
+ drivers/thermal/cix/Makefile            |   1 +
+ drivers/thermal/cix/cix_scmi_em.c       | 191 ++++++++++
+ include/linux/cix/cix_scmi_em.h         |  30 ++
+ include/linux/scmi_perf_domain.h        |  17 +
+ 6 files changed, 295 insertions(+)
+
+diff --git a/drivers/pmdomain/arm/scmi_perf_domain.c b/drivers/pmdomain/arm/scmi_perf_domain.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/arm/scmi_perf_domain.c
++++ b/drivers/pmdomain/arm/scmi_perf_domain.c
+@@ -24,6 +24,10 @@ struct scmi_perf_domain {
+ 	u32 domain_id;
+ };
+ 
++/* Global protocol ops for use by drivers that need direct domain ID access */
++static const struct scmi_perf_proto_ops *global_perf_ops;
++static const struct scmi_protocol_handle *global_ph;
++
+ #define to_scmi_pd(pd) container_of(pd, struct scmi_perf_domain, genpd)
+ 
+ static int
+@@ -171,6 +175,10 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ 	if (IS_ERR(perf_ops))
+ 		return PTR_ERR(perf_ops);
+ 
++	/* Store global protocol ops for direct domain ID access */
++	global_perf_ops = perf_ops;
++	global_ph = ph;
++
+ 	num_domains = perf_ops->num_domains_get(ph);
+ 	if (num_domains < 0) {
+ 		dev_warn(dev, "Failed with %d when getting num perf domains\n",
+@@ -334,6 +342,43 @@ enum scmi_power_scale scmi_perf_domain_power_scale(struct device *dev)
+ }
+ EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale);
+ 
++/**
++ * scmi_perf_domain_est_power_by_id() - Get estimated power via SCMI by domain ID
++ * @domain_id: SCMI performance domain ID
++ * @rate:      [in/out] Frequency in Hz (may be adjusted by firmware)
++ * @power:     [out] Estimated power in firmware-native units
++ *
++ * This function allows drivers to access SCMI power estimates by direct
++ * domain ID, bypassing the genpd binding requirement. Useful for devices
++ * that are not attached to SCMI perf domain via power-domains property.
++ *
++ * Returns 0 on success, or negative error.
++ */
++int scmi_perf_domain_est_power_by_id(u32 domain_id, unsigned long *rate,
++				      unsigned long *power)
++{
++	if (!global_perf_ops)
++		return -ENODEV;
++
++	return global_perf_ops->est_power_get(global_ph, domain_id, rate, power);
++}
++EXPORT_SYMBOL_GPL(scmi_perf_domain_est_power_by_id);
++
++/**
++ * scmi_perf_domain_power_scale_by_id() - Get power scale by domain ID
++ * @domain_id: SCMI performance domain ID
++ *
++ * Returns the power scale enum, or SCMI_POWER_BOGOWATTS on error.
++ */
++enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id)
++{
++	if (!global_perf_ops)
++		return SCMI_POWER_BOGOWATTS;
++
++	return global_perf_ops->power_scale_get(global_ph);
++}
++EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale_by_id);
++
+ module_scmi_driver(scmi_perf_domain_driver);
+ 
+ MODULE_AUTHOR("Ulf Hansson <ulf.hansson@linaro.org>");
+diff --git a/drivers/thermal/cix/Kconfig b/drivers/thermal/cix/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cix/Kconfig
++++ b/drivers/thermal/cix/Kconfig
+@@ -6,6 +6,7 @@ config CIX_THERMAL
+ 	depends on THERMAL && THERMAL_GOV_POWER_ALLOCATOR
+ 	depends on CPU_FREQ && ENERGY_MODEL
+ 	depends on ACPI_CPPC_CPUFREQ
++	select CIX_SCMI_ENERGY_MODEL
+ 	help
+ 	  Power allocator (IPA) support for CIX platforms, including the
+ 	  cpu-ipa MMIO driver for per-CPU static/dynamic power, ACPI thermal
+@@ -14,3 +15,13 @@ config CIX_THERMAL
+ 
+ 	  If unsure, say Y on CIX Sky1 systems using the power_allocator
+ 	  thermal governor.
++
++config CIX_SCMI_ENERGY_MODEL
++	tristate "SCMI based Cix Energy Model driver"
++	depends on ENERGY_MODEL
++	depends on CIX_THERMAL
++	depends on ARM_SCMI_PROTOCOL
++	help
++	  It uses SCMI Message Protocol and SCMI performance domain helpers
++	  to register Energy Model (EM) for Cix platforms. Supports both
++	  genpd-bound devices and DT-based domain ID parsing.
+diff --git a/drivers/thermal/cix/Makefile b/drivers/thermal/cix/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cix/Makefile
++++ b/drivers/thermal/cix/Makefile
+@@ -3,3 +3,4 @@
+ # CIX thermal drivers
+ #
+ obj-$(CONFIG_CIX_THERMAL)	+= cix_cpu_ipa.o
++obj-$(CONFIG_CIX_SCMI_ENERGY_MODEL)	+= cix_scmi_em.o
+diff --git a/drivers/thermal/cix/cix_scmi_em.c b/drivers/thermal/cix/cix_scmi_em.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/cix/cix_scmi_em.c
+@@ -0,0 +1,191 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * SCMI based Cix Energy Model driver
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd. All Rights Reserved.
++ */
++
++#include <linux/acpi.h>
++#include <linux/energy_model.h>
++#include <linux/module.h>
++#include <linux/pm_opp.h>
++#include <linux/scmi_perf_domain.h>
++#include <linux/units.h>
++#include <linux/cix/cix_scmi_em.h>
++
++/*
++ * Cached SCMI perf domain ID for GPU.
++ * We discover this by parsing fwnode properties.
++ * A value of -1 means not yet discovered.
++ */
++static int gpu_scmi_domain_id = -1;
++
++/*
++ * cix_scmi_dev_domain_id() - Get SCMI perf domain ID from fwnode
++ * @dev: The GPU device
++ *
++ * This function parses the domain ID directly from firmware (DT/ACPI)
++ * properties, following the same pattern used by upstream SCMI cpufreq
++ * driver after perf_ops->device_domain_id was removed in Linux v6.7.
++ *
++ * The algorithm:
++ * 1. Look for "power-domain-names" property to find the index of "perf" domain
++ * 2. Get the phandle args from "power-domains" property at that index
++ * 3. The first arg is the SCMI performance domain ID
++ * 4. Fallback: if no "perf" named domain, use first power-domain or clock
++ *
++ * Returns the domain ID, or negative error.
++ */
++static int cix_scmi_dev_domain_id(struct device *dev)
++{
++	struct fwnode_reference_args fwnode_args;
++	int index;
++
++	/* Find the corresponding index for power-domain "perf". */
++	index = fwnode_property_match_string(dev->fwnode,
++					     "power-domain-names", "perf");
++	if (index < 0) {
++		dev_dbg(dev, "No 'perf' power-domain name, trying first clock\n");
++		/* Fallback: use first clock phandle as the domain ID */
++		if (fwnode_property_get_reference_args(dev->fwnode, "clocks",
++						       "#clock-cells", 1, 0,
++						       &fwnode_args)) {
++			dev_err(dev, "Failed to get domain ID from clocks\n");
++			return -EINVAL;
++		}
++	} else {
++		/* Found "perf" power-domain name, get its phandle args */
++		if (fwnode_property_get_reference_args(dev->fwnode,
++						       "power-domains",
++						       "#power-domain-cells",
++						       1, index, &fwnode_args)) {
++			dev_err(dev, "Failed to get domain ID from power-domains\n");
++			return -EINVAL;
++		}
++	}
++
++	dev_info(dev, "SCMI perf domain ID from fwnode: %llu\n",
++		 fwnode_args.args[0]);
++
++	return fwnode_args.args[0];
++}
++
++/*
++ * cix_scmi_discover_gpu_domain() - Discover SCMI perf domain ID for GPU
++ * @dev: The GPU device (e.g., mali device)
++ *
++ * Parses domain ID directly from fwnode (DT/ACPI) properties, following
++ * the upstream pattern used in the SCMI cpufreq driver.
++ *
++ * Returns the domain ID on success, or negative error.
++ */
++static int cix_scmi_discover_gpu_domain(struct device *dev)
++{
++	int domain_id;
++
++	/* Already discovered */
++	if (gpu_scmi_domain_id >= 0)
++		return gpu_scmi_domain_id;
++
++	/*
++	 * Parse domain ID directly from fwnode (DT/ACPI).
++	 * This is the upstream-approved method after v6.7 removed
++	 * perf_ops->device_domain_id.
++	 */
++	domain_id = cix_scmi_dev_domain_id(dev);
++	if (domain_id < 0) {
++		dev_err(dev, "Failed to parse SCMI perf domain ID from fwnode\n");
++		return domain_id;
++	}
++
++	/* Verify the domain is actually available via SCMI */
++	if (scmi_perf_domain_power_scale_by_id(domain_id) == SCMI_POWER_BOGOWATTS) {
++		dev_err(dev, "SCMI perf domain %d (from fwnode) is not available\n",
++			domain_id);
++		return -ENODEV;
++	}
++
++	dev_info(dev, "SCMI perf domain %d (from fwnode)\n", domain_id);
++	gpu_scmi_domain_id = domain_id;
++	return domain_id;
++}
++
++static __maybe_unused int
++cix_scmi_get_em_power(struct device *dev, unsigned long *power,
++		      unsigned long *KHz)
++{
++	enum scmi_power_scale power_scale;
++	unsigned long Hz;
++	int domain_id, ret;
++
++	/* Discover the domain ID on first call */
++	domain_id = cix_scmi_discover_gpu_domain(dev);
++	if (domain_id < 0)
++		return domain_id;
++
++	power_scale = scmi_perf_domain_power_scale_by_id(domain_id);
++	if (power_scale == SCMI_POWER_BOGOWATTS) {
++		dev_err(dev, "SCMI perf domain %d not available\n", domain_id);
++		return -ENODEV;
++	}
++
++	dev_dbg(dev, "SCMI: using domain %d, power scale: %s\n",
++		domain_id,
++		power_scale == SCMI_POWER_MILLIWATTS ? "mW" :
++		power_scale == SCMI_POWER_MICROWATTS ? "uW" : "BogoWatts");
++
++	/* Get the power from SCMI performance domain. */
++	Hz = *KHz * 1000;
++	ret = scmi_perf_domain_est_power_by_id(domain_id, &Hz, power);
++	if (ret) {
++		dev_err(dev, "SCMI est_power_get failed: %d\n", ret);
++		return ret;
++	}
++
++	dev_dbg(dev, "SCMI: freq=%lu Hz, power=%lu (raw)\n", Hz, *power);
++
++	/* Convert to micro-Watts if needed (EM framework only supports uW) */
++	if (power_scale == SCMI_POWER_MILLIWATTS) {
++		*power *= MICROWATT_PER_MILLIWATT;
++		dev_dbg(dev, "Converted mW -> uW: %lu\n", *power);
++	}
++
++	*KHz = Hz / 1000;
++
++	return 0;
++}
++
++int cix_scmi_register_em(struct device *dev)
++{
++	struct em_data_callback em_cb = EM_DATA_CB(cix_scmi_get_em_power);
++	int ret, nr_opp;
++
++	dev_dbg(dev, "Registering Energy Model via SCMI\n");
++
++	nr_opp = dev_pm_opp_get_opp_count(dev);
++	if (nr_opp <= 0) {
++		dev_err(dev, "Failed to get OPP counts: %d\n", nr_opp);
++		return -EINVAL;
++	}
++
++	dev_dbg(dev, "Found %d OPPs\n", nr_opp);
++
++	/*
++	 * Linux v6.7+ Energy Model framework only supports micro-Watt
++	 * power values. Since our callback converts milli-Watts to
++	 * micro-Watts when needed, we always pass microwatts=true.
++	 */
++	ret = em_dev_register_perf_domain(dev, nr_opp, &em_cb, NULL, true);
++	if (ret)
++		dev_err(dev, "Failed to register Energy Model: %d\n", ret);
++	else
++		dev_info(dev, "Energy Model registered successfully (domain %d)\n",
++			 gpu_scmi_domain_id);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(cix_scmi_register_em);
++
++MODULE_AUTHOR("Cixtech,Inc.");
++MODULE_DESCRIPTION("CIX SCMI Energy Model interface driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/include/linux/cix/cix_scmi_em.h b/include/linux/cix/cix_scmi_em.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/cix/cix_scmi_em.h
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright 2024 Cix Technology Group Co., Ltd.*/
++/**
++ * Cix Energy Model driver
++ */
++
++#ifndef __CIX_SCMI_EM_H
++#define __CIX_SCMI_EM_H
++
++#if IS_ENABLED(CONFIG_CIX_SCMI_ENERGY_MODEL)
++/**
++ * cix_scmi_register_em() - Register an energy model using
++ *              SCMI Message Protocol
++ *
++ * @dev: Device for which the EM is to register
++ *
++ * Return: 0 for success; else the error code is returned
++ */
++int cix_scmi_register_em(struct device *dev);
++
++#else /* !CONFIG_CIX_SCMI_ENERGY_MODEL */
++
++static inline int cix_scmi_register_em(struct device *dev)
++{
++	return -EINVAL;
++}
++
++#endif /* CONFIG_CIX_SCMI_ENERGY_MODEL */
++
++#endif /* __CIX_SCMI_EM_H */
+\ No newline at end of file
+diff --git a/include/linux/scmi_perf_domain.h b/include/linux/scmi_perf_domain.h
+index 111111111111..222222222222 100644
+--- a/include/linux/scmi_perf_domain.h
++++ b/include/linux/scmi_perf_domain.h
+@@ -16,6 +16,11 @@ int scmi_perf_domain_est_power(struct device *dev,
+ 			       unsigned long *rate, unsigned long *power);
+ enum scmi_power_scale scmi_perf_domain_power_scale(struct device *dev);
+ 
++/* Direct domain ID access variants (bypasses genpd binding requirement) */
++int scmi_perf_domain_est_power_by_id(u32 domain_id, unsigned long *rate,
++				      unsigned long *power);
++enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id);
++
+ #else
+ 
+ static inline int scmi_perf_domain_est_power(struct device *dev,
+@@ -30,5 +35,17 @@ static inline enum scmi_power_scale scmi_perf_domain_power_scale(struct device *
+ 	return SCMI_POWER_BOGOWATTS;
+ }
+ 
++static inline int scmi_perf_domain_est_power_by_id(u32 domain_id,
++						    unsigned long *rate,
++						    unsigned long *power)
++{
++	return -ENODEV;
++}
++
++static inline enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id)
++{
++	return SCMI_POWER_BOGOWATTS;
++}
++
+ #endif /* CONFIG_ARM_SCMI_PERF_DOMAIN */
+ #endif /* _LINUX_SCMI_PERF_DOMAIN_H */
+-- 
+Armbian
+

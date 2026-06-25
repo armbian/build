@@ -3,6 +3,7 @@ declare -g BOARD_NAME="Mekotronics R58X-Pro"
 declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""
+declare -g INTRODUCED="2024"
 declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mekotronics-r58x-pro.dtb" # mainline name; see below for vendor
 declare -g DISPLAY_MANAGER="wayland"
@@ -12,12 +13,17 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does not have a UEFI_EDK2_BOARD_ID
 
 if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
+	# Attention: does _not_ use the vendor/mekotronics shared config anymore; mainline u-boot also for vendor kernel.
+
 	display_alert "$BOARD" "vendor/legacy configuration applied for $BOARD / $BRANCH" "info"
-	declare -g BOOTCONFIG="mekotronics_r58x-rk3588_defconfig"                       # vendor u-boot; with NVMe and a DTS
 	declare -g BOOT_FDT_FILE="rockchip/rk3588-blueberry-edge-v12-maizhuo-linux.dtb" # different for vendor
-	# Source shared vendor configuration; it does BOOT_SCENARIO="spl-blobs" & hciattach - common to all vendor-kernel Meko's
-	source "${SRC}/config/sources/vendors/mekotronics/mekotronics-rk3588.conf.sh"
-	return 0 # this returns early so below code is only for current/edge branches
+
+	# For the bluetooth
+	declare -g BLUETOOTH_HCIATTACH_PARAMS="-s 115200 /dev/ttyS6 bcm43xx 1500000" # For the bluetooth-hciattach extension
+	enable_extension "bluetooth-hciattach"                                       # Enable the bluetooth-hciattach extension
+
+	# For the u-boot-menu extension (build with 'EXT=u-boot-menu')
+	declare -g SRC_CMDLINE="loglevel=7 console=ttyS2,1500000 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"
 fi
 
 # For current/edge branches:
@@ -30,7 +36,7 @@ function post_family_config__meko_r58x_pro_use_mainline_uboot() {
 	declare -g BOOTCONFIG="mekotronics-r58x-pro-rk3588_defconfig" # mainline
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.04-rc2"
+	declare -g BOOTBRANCH="tag:v2026.04"
 	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
@@ -56,8 +62,6 @@ function pre_config_uboot_target__meko_r58x_pro_patch_rockchip_common_boot_order
 }
 
 function pre_config_uboot_target__meko_r58x_pro_patch_uboot_dtsi_for_ums() {
-	[[ "${BRANCH}" == "vendor" ]] && return 0 # Not for 'vendor' branch, which uses 2017.09 vendor u-boot from Radxa
-
 	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
 	# Append to the t6 u-boot dtsi file with stuff for enabling gadget/otg/peripheral mode
 	cat <<- EOD >> arch/arm/dts/rk3588-mekotronics-r58x-pro-u-boot.dtsi
@@ -100,9 +104,13 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
 
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
+	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
+
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
-	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB")
 	for config in "${enable_configs[@]}"; do
 		run_host_command_logged scripts/config --enable "${config}"
 	done

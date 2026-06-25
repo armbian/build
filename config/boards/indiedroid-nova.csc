@@ -2,6 +2,7 @@
 declare -g BOARD_NAME="Indiedroid Nova"
 declare -g BOARD_VENDOR="rockchip"
 declare -g BOARD_MAINTAINER="lanefu"
+declare -g INTRODUCED="2022"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOOTCONFIG="indiedroid_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 declare -g BOOT_SOC="rk3588"

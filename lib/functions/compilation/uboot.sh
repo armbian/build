@@ -149,12 +149,6 @@ function compile_uboot_target() {
 			run_host_command_logged scripts/config --set-val CONFIG_BOOTDELAY "${BOOTDELAY}"
 		fi
 
-		# Hack, up the log level to 6: "info" (default is 4: "warning")
-		display_alert "Hacking log level in u-boot config" "LOGLEVEL=${uboot_loglevel} for ${target}" "info"
-		run_host_command_logged scripts/config --enable CONFIG_LOG
-		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL ${uboot_loglevel}
-		run_host_command_logged scripts/config --set-val CONFIG_LOG_MAX_LEVEL ${uboot_loglevel}
-
 		# Include Armbian version so UART bootlogs are drastically more useful
 		run_host_command_logged ./scripts/config --disable "LOCALVERSION_AUTO"
 		run_host_command_logged ./scripts/config --set-str "LOCALVERSION" "_armbian-${artifact_version}" # crazy quotes!
@@ -505,6 +499,7 @@ function compile_uboot() {
 		DIR=/usr/lib/$uboot_name
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
+		$(declare -f write_uboot_platform_ufs || true)
 		$(declare -f setup_write_uboot_platform || true)
 	EOF
 

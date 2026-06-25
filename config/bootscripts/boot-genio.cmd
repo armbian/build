@@ -31,10 +31,12 @@ setenv load_addr "0x43000000"
 # "0x56000000" = 1,436,207,360 bytes = ~2 MB
 setenv fdt_addr_r "0x56000000"
 
-# Kernel load address (100 MB)
-# "0x40000000" - "0x46400000"
-# 1,073,741,824 - 1,173,637,760 bytes = 100 MB
-setenv kernel_addr_r "0x40000000"
+# Kernel load address
+# ATTENTION: must sit ABOVE reserved low-RAM hole "0x43200000"-"0x43DFFFFF", not below it.
+# Loading at "0x40000000" only leaves 50 MB before that hole, which overflows for kernels >50 MB.
+# "0x44000000" (2mb aligned, just past the hole) - "0x54600000" (next reserved region) = 262 MB
+# 1,140,850,688 - 1,415,577,600 bytes = 262 MB
+setenv kernel_addr_r "0x44000000"
 
 # Initramfs load address (500 MB)
 # "0x64000000" - "0x83800000"
@@ -94,11 +96,26 @@ if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgro
 echo "Final bootargs: ${bootargs}"
 
 echo "Loading kernel image to ${kernel_addr_r}..."
-load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
+if load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image; then
+	echo "Loaded kernel image (${filesize} bytes)"
+else
+	echo "FATAL: failed to load ${prefix}Image to ${kernel_addr_r} - aborting boot"
+	exit
+fi
 echo "Loading initramfs to ${ramdisk_addr_r}..."
-load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd
+if load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd; then
+	echo "Loaded initramfs (${filesize} bytes)"
+else
+	echo "FATAL: failed to load ${prefix}uInitrd to ${ramdisk_addr_r} - aborting boot"
+	exit
+fi
 echo "Loading device tree ${fdtfile} to ${fdt_addr_r}..."
-load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+	echo "Loaded device tree (${filesize} bytes)"
+else
+	echo "FATAL: failed to load ${prefix}dtb/${fdtfile} to ${fdt_addr_r} - aborting boot"
+	exit
+fi
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 for overlay_file in ${overlays}; do

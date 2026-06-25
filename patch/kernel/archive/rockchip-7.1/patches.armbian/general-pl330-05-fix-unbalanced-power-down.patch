@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sugar Zhang <sugar.zhang@rock-chips.com>
+Date: Sat, 26 Mar 2022 18:01:21 +0800
+Subject: dmaengine: pl330: Fix unbalanced runtime PM
+
+This driver use runtime PM autosuspend mechanism to manager clk.
+
+  pm_runtime_use_autosuspend(&adev->dev);
+  pm_runtime_set_autosuspend_delay(&adev->dev, PL330_AUTOSUSPEND_DELAY);
+
+So, after ref count reached to zero, it will enter suspend
+after the delay time elapsed.
+
+The unbalanced PM:
+
+* May cause dmac the next start failed.
+* May cause dmac read unexpected state.
+* May cause dmac stall if power down happen at the middle of the transfer.
+  e.g. may lose ack from AXI bus and stall.
+
+Considering the following situation:
+
+      DMA TERMINATE               TASKLET ROUTINE
+            |                            |
+            |                       issue_pending
+            |                            |
+            |                     pch->active = true
+            |                       pm_runtime_get
+  pm_runtime_put(if active)              |
+    pch->active = false                  |
+            |                      work_list empty
+            |                            |
+            |                     pm_runtime_put(force)
+            |                            |
+
+At this point, it's unbalanced(1 get / 2 put).
+
+After this patch:
+
+      DMA TERMINATE               TASKLET ROUTINE
+            |                            |
+            |                       issue_pending
+            |                            |
+            |                     pch->active = true
+            |                       pm_runtime_get
+  pm_runtime_put(if active)              |
+    pch->active = false                  |
+            |                      work_list empty
+            |                            |
+            |                   pm_runtime_put(if active)
+            |                            |
+
+Now, it's balanced(1 get / 1 put).
+
+Fixes:
+commit 5c9e6c2b2ba3 ("dmaengine: pl330: Fix runtime PM support for terminated transfers")
+commit ae43b3289186 ("ARM: 8202/1: dmaengine: pl330: Add runtime Power Management support v12")
+
+Change-Id: Ib1feb508c16afb4bc9ced0c3660f2b6b4a19c068
+Signed-off-by: Huibin Hong <huibin.hong@rock-chips.com>
+Signed-off-by: Sugar Zhang <sugar.zhang@rock-chips.com>
+---
+ drivers/dma/pl330.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/dma/pl330.c b/drivers/dma/pl330.c
+index 111111111111..222222222222 100644
+--- a/drivers/dma/pl330.c
++++ b/drivers/dma/pl330.c
+@@ -2274,7 +2274,7 @@ static void pl330_tasklet(struct tasklet_struct *t)
+ 		spin_lock(&pch->thread->dmac->lock);
+ 		_stop(pch->thread);
+ 		spin_unlock(&pch->thread->dmac->lock);
+-		power_down = true;
++		power_down = pch->active;
+ 		pch->active = false;
+ 	} else {
+ 		/* Make sure the PL330 Channel thread is active */
+-- 
+Armbian
+

@@ -8,6 +8,7 @@ KERNEL_TEST_TARGET="current"
 MODULES="g_serial"
 BOOT_LOGO="yes"
 BOARD_MAINTAINER="eliasbakken"
+INTRODUCED="2021"
 
 function post_family_config__shrink_atf() {
 	display_alert "Choose ATF branch 🍰" "recore"

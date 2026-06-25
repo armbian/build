@@ -44,13 +44,8 @@ function determine_artifacts_to_build_for_image() {
 	# Userspace, BOARD+BRANCH specific (not RELEASE)
 	artifacts_to_build+=("armbian-bsp-cli")
 
-	# Userspace, RELEASE-specific artifacts.
-	if [[ -n "${RELEASE}" ]]; then
-		if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
-			artifacts_to_build+=("armbian-desktop")
-			artifacts_to_build+=("armbian-bsp-desktop")
-		fi
-	fi
+	# Desktop packages are now installed by armbian-config (module_desktops)
+	# during rootfs creation in distro-agnostic.sh. No per-DE artifact to build.
 
 	# If we're only dumping the config, include the rootfs artifact.
 	# In a "real" build, this artifact is built/consumed by get_or_create_rootfs_cache_chroot_sdcard(), not here.
@@ -70,7 +65,7 @@ function main_default_build_packages() {
 	if [[ "${IGNORE_UPDATES}" != "yes" ]]; then
 		LOG_SECTION="clean_deprecated_mountpoints" do_with_logging clean_deprecated_mountpoints
 
-		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
+		for cleaning_fragment in ${CLEAN_LEVEL//,/ }; do
 			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != none ]] && [[ $cleaning_fragment != make* ]]; then
 				LOG_SECTION="cleaning_${cleaning_fragment}" do_with_logging general_cleaning "${cleaning_fragment}"
 			fi

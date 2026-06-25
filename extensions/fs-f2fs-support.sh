@@ -4,5 +4,5 @@
 
 function add_host_dependencies__add_f2fs_tooling() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "f2fs-tools" "debug"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} f2fs-tools" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::f2fs-tools")
 }

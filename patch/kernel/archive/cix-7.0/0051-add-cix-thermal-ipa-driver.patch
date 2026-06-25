@@ -1,0 +1,367 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Fri, 22 May 2026 12:40:06 +0800
+Subject: add cix thermal ipa driver
+
+---
+ drivers/thermal/Kconfig               |   5 +
+ drivers/thermal/Makefile              |   1 +
+ drivers/thermal/cix/Kconfig           |  16 +
+ drivers/thermal/cix/Makefile          |   5 +
+ drivers/thermal/cix/cix_cpu_ipa.c     | 149 ++++++++++
+ drivers/thermal/cpufreq_cooling.c     |  33 +-
+ drivers/thermal/gov_power_allocator.c |  12 +
+ include/linux/cix/cpu_ipa.h           |  23 ++
+ 8 files changed, 241 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -465,6 +465,11 @@ depends on ARCH_EXYNOS || COMPILE_TEST
+ source "drivers/thermal/samsung/Kconfig"
+ endmenu
+ 
++menu "Cix thermal drivers"
++depends on ARCH_CIX || COMPILE_TEST
++source "drivers/thermal/cix/Kconfig"
++endmenu
++
+ menu "STMicroelectronics thermal drivers"
+ depends on (ARCH_STI || ARCH_STM32) && THERMAL_OF
+ source "drivers/thermal/st/Kconfig"
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -69,3 +69,4 @@ obj-$(CONFIG_SPRD_THERMAL)	+= sprd_thermal.o
+ obj-$(CONFIG_KHADAS_MCU_FAN_THERMAL)	+= khadas_mcu_fan.o
+ obj-$(CONFIG_LOONGSON2_THERMAL)	+= loongson2_thermal.o
+ obj-$(CONFIG_THERMAL_CORE_TESTING)	+= testing/
++obj-y					+= cix/
+diff --git a/drivers/thermal/cix/Kconfig b/drivers/thermal/cix/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/cix/Kconfig
+@@ -0,0 +1,16 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++config CIX_THERMAL
++	bool "CIX thermal IPA support"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on THERMAL && THERMAL_GOV_POWER_ALLOCATOR
++	depends on CPU_FREQ && ENERGY_MODEL
++	depends on ACPI_CPPC_CPUFREQ
++	help
++	  Power allocator (IPA) support for CIX platforms, including the
++	  cpu-ipa MMIO driver for per-CPU static/dynamic power, ACPI thermal
++	  zone methods (SSTP, SWIT), CPPC OPP data, and processor cooling
++	  device power callbacks.
++
++	  If unsure, say Y on CIX Sky1 systems using the power_allocator
++	  thermal governor.
+diff --git a/drivers/thermal/cix/Makefile b/drivers/thermal/cix/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/cix/Makefile
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# CIX thermal drivers
++#
++obj-$(CONFIG_CIX_THERMAL)	+= cix_cpu_ipa.o
+diff --git a/drivers/thermal/cix/cix_cpu_ipa.c b/drivers/thermal/cix/cix_cpu_ipa.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/cix/cix_cpu_ipa.c
+@@ -0,0 +1,149 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CIX CPU IPA support driver
++ *
++ * Copyright (C) 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/cix/cpu_ipa.h>
++#include <linux/cpu.h>
++#include <linux/device.h>
++#include <linux/export.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <asm/cputype.h>
++
++#define REG_OFFSET	0x40
++
++struct cpu_ipa_info {
++	u32 off_cnt;
++	u32 rsvd[13];
++	s32 dynamic_power;
++	s32 static_power;
++};
++
++struct cpu_ipa {
++	struct device *dev;
++	void __iomem *regs;
++};
++
++static struct cpu_ipa *cpu_ipa_dev;
++
++static struct cpu_ipa_info *cpu_ipa_info_for_cpu(unsigned int cpu)
++{
++	int pcpu;
++
++	if (!cpu_ipa_dev || !cpu_ipa_dev->regs)
++		return NULL;
++
++	pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
++	if (pcpu > 12)
++		return NULL;
++
++	return cpu_ipa_dev->regs + pcpu * REG_OFFSET;
++}
++
++static int cix_get_static_power(unsigned int cpu)
++{
++	struct cpu_ipa_info *info = cpu_ipa_info_for_cpu(cpu);
++
++	if (!info)
++		return 0;
++
++	return info->static_power;
++}
++
++static int cix_get_dynamic_power(unsigned int cpu)
++{
++	struct cpu_ipa_info *info = cpu_ipa_info_for_cpu(cpu);
++
++	if (!info)
++		return 0;
++
++	return info->dynamic_power;
++}
++
++int cix_get_static_power_cpus(const struct cpumask *cpus)
++{
++	unsigned int cpu, total_power = 0;
++
++	for_each_cpu(cpu, cpus)
++		total_power += cix_get_static_power(cpu);
++
++	return total_power;
++}
++EXPORT_SYMBOL_GPL(cix_get_static_power_cpus);
++
++int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
++{
++	unsigned int cpu, total_power = 0;
++
++	for_each_cpu(cpu, cpus)
++		total_power += cix_get_dynamic_power(cpu);
++
++	return total_power;
++}
++EXPORT_SYMBOL_GPL(cix_get_dynamic_power_cpus);
++
++static int cpu_ipa_probe(struct platform_device *pdev)
++{
++	struct cpu_ipa *ipa;
++
++	ipa = devm_kzalloc(&pdev->dev, sizeof(*ipa), GFP_KERNEL);
++	if (!ipa)
++		return -ENOMEM;
++
++	ipa->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ipa->regs))
++		return PTR_ERR(ipa->regs);
++
++	ipa->dev = &pdev->dev;
++	platform_set_drvdata(pdev, ipa);
++	cpu_ipa_dev = ipa;
++
++	return 0;
++}
++
++static void cpu_ipa_remove(struct platform_device *pdev)
++{
++	cpu_ipa_dev = NULL;
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int cpu_ipa_resume(struct device *dev)
++{
++	return 0;
++}
++
++static int cpu_ipa_suspend(struct device *dev)
++{
++	return 0;
++}
++#endif
++
++static const struct dev_pm_ops cpu_ipa_pm = {
++	SET_SYSTEM_SLEEP_PM_OPS(cpu_ipa_suspend, cpu_ipa_resume)
++};
++
++static const struct of_device_id cpu_ipa_of_match[] = {
++	{ .compatible = "cix,cpu-ipa", },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, cpu_ipa_of_match);
++
++static struct platform_driver cpu_ipa_platdrv = {
++	.probe		= cpu_ipa_probe,
++	.remove		= cpu_ipa_remove,
++	.driver = {
++		.name	= "cpu-ipa",
++		.pm	= pm_sleep_ptr(&cpu_ipa_pm),
++		.of_match_table = cpu_ipa_of_match,
++	},
++};
++module_platform_driver(cpu_ipa_platdrv);
++
++MODULE_DESCRIPTION("CIX CPU IPA support driver");
++MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/thermal/cpufreq_cooling.c b/drivers/thermal/cpufreq_cooling.c
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cpufreq_cooling.c
++++ b/drivers/thermal/cpufreq_cooling.c
+@@ -23,6 +23,8 @@
+ #include <linux/thermal.h>
+ #include <linux/units.h>
+ 
++#include <linux/cix/cpu_ipa.h>
++
+ #include "thermal_trace.h"
+ 
+ /*
+@@ -188,6 +190,7 @@ static u32 get_load(struct cpufreq_cooling_device *cpufreq_cdev, int cpu,
+ }
+ #endif /* CONFIG_SMP */
+ 
++#ifndef CONFIG_CIX_THERMAL
+ /**
+  * get_dynamic_power() - calculate the dynamic power
+  * @cpufreq_cdev:	&cpufreq_cooling_device for this cdev
+@@ -204,6 +207,7 @@ static u32 get_dynamic_power(struct cpufreq_cooling_device *cpufreq_cdev,
+ 	raw_cpu_power = cpu_freq_to_power(cpufreq_cdev, freq);
+ 	return (raw_cpu_power * cpufreq_cdev->last_load) / 100;
+ }
++#endif
+ 
+ /**
+  * cpufreq_get_requested_power() - get the current power
+@@ -251,7 +255,12 @@ static int cpufreq_get_requested_power(struct thermal_cooling_device *cdev,
+ 
+ 	cpufreq_cdev->last_load = total_load;
+ 
++#ifdef CONFIG_CIX_THERMAL
++	*power = cix_get_static_power_cpus(policy->cpus) +
++		 cix_get_dynamic_power_cpus(policy->cpus);
++#else
+ 	*power = get_dynamic_power(cpufreq_cdev, freq);
++#endif
+ 
+ 	trace_thermal_power_cpu_get_power_simple(policy->cpu, *power);
+ 
+@@ -293,6 +302,10 @@ static int cpufreq_state2power(struct thermal_cooling_device *cdev,
+ 
+ 	*power = cpu_freq_to_power(cpufreq_cdev, freq) * num_cpus;
+ 
++#ifdef CONFIG_CIX_THERMAL
++	*power += cix_get_static_power_cpus(cpufreq_cdev->policy->cpus);
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -315,12 +328,26 @@ static int cpufreq_power2state(struct thermal_cooling_device *cdev,
+ 			       u32 power, unsigned long *state)
+ {
+ 	unsigned int target_freq;
+-	u32 last_load, normalised_power;
++	u32 normalised_power;
+ 	struct cpufreq_cooling_device *cpufreq_cdev = cdev->devdata;
+ 	struct cpufreq_policy *policy = cpufreq_cdev->policy;
+ 
+-	last_load = cpufreq_cdev->last_load ?: 1;
+-	normalised_power = (power * 100) / last_load;
++#ifdef CONFIG_CIX_THERMAL
++	{
++		u32 static_power = cix_get_static_power_cpus(policy->cpus);
++
++		if (power > static_power)
++			normalised_power = power - static_power;
++		else
++			normalised_power = 0;
++	}
++#else
++	{
++		u32 last_load = cpufreq_cdev->last_load ?: 1;
++
++		normalised_power = (power * 100) / last_load;
++	}
++#endif
+ 	target_freq = cpu_power_to_freq(cpufreq_cdev, normalised_power);
+ 
+ 	*state = get_level(cpufreq_cdev, target_freq);
+diff --git a/drivers/thermal/gov_power_allocator.c b/drivers/thermal/gov_power_allocator.c
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/gov_power_allocator.c
++++ b/drivers/thermal/gov_power_allocator.c
+@@ -534,6 +534,18 @@ static void get_governor_trips(struct thermal_zone_device *tz,
+ 		params->trip_switch_on = NULL;
+ 		params->trip_max = last_active;
+ 	}
++
++	/*
++	 * ACPI may register passive trips out of IPA order (target before
++	 * switch-on). Swap when the first passive trip is hotter than the last.
++	 */
++	if (params->trip_switch_on && params->trip_max &&
++	    params->trip_switch_on->temperature > params->trip_max->temperature) {
++		const struct thermal_trip *tmp = params->trip_switch_on;
++
++		params->trip_switch_on = params->trip_max;
++		params->trip_max = tmp;
++	}
+ }
+ 
+ static void reset_pid_controller(struct power_allocator_params *params)
+diff --git a/include/linux/cix/cpu_ipa.h b/include/linux/cix/cpu_ipa.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/cix/cpu_ipa.h
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_CIX_CPU_IPA_H
++#define _LINUX_CIX_CPU_IPA_H
++
++#include <linux/types.h>
++#include <linux/cpumask.h>
++
++#ifdef CONFIG_CIX_THERMAL
++int cix_get_static_power_cpus(const struct cpumask *cpus);
++int cix_get_dynamic_power_cpus(const struct cpumask *cpus);
++#else
++static inline int cix_get_static_power_cpus(const struct cpumask *cpus)
++{
++	return 0;
++}
++
++static inline int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
++{
++	return 0;
++}
++#endif
++
++#endif /* _LINUX_CIX_CPU_IPA_H */
+-- 
+Armbian
+

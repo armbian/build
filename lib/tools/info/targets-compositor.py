@@ -85,8 +85,16 @@ def get_userspace_inventory(opts: dict):
 		opts["cloud"] = False
 	if "desktops" not in opts:
 		opts["desktops"] = False
-	if "desktop_variations" not in opts:
-		opts["desktop_variations"] = [[]]
+	# Desktop tiers to emit for each matched (release, arch, desktop).
+	# armbian-config's module_desktops defines three tiers: minimal, mid,
+	# full (see tools/modules/desktops/yaml/*.yaml and common.yaml tiers).
+	# Default to mid-only so pre-existing targets that don't care about
+	# tiers keep producing exactly one userspace per desktop, same as
+	# before this knob was introduced. Targets that want the full
+	# minimal/mid/full fan-out should set `tiers: [minimal, mid, full]`
+	# explicitly in their items-from-inventory.userspace block.
+	if "tiers" not in opts:
+		opts["tiers"] = ["mid"]
 
 	# loop over the userspace inventory
 	for userspace in userspace_inventory:
@@ -148,15 +156,16 @@ def get_userspace_inventory(opts: dict):
 							f"Skipping userspace inventory desktop: '{desktop['id']}' does not support wanted_arch '{wanted_arch}' for userspace '{userspace['id']}'")
 						continue
 
-					# loop over the variants... desktop_variations is a list of lists
-					for variant in opts["desktop_variations"]:
-						appgroups_comma = ",".join(variant)
-
+					# Emit one entry per requested tier. module_desktops
+					# treats minimal/mid/full as separate install targets
+					# with different package sets, so they need separate
+					# rootfs artifacts — they are not interchangeable at
+					# build time.
+					for tier in opts["tiers"]:
 						for bb in wanted_bbs_for_arch:
 							ret.append({**bb, **{
 								"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "yes",
-								"DESKTOP_ENVIRONMENT_CONFIG_NAME": "config_base",  # yeah, config_base is hardcoded.
-								"DESKTOP_APPGROUPS_SELECTED": appgroups_comma,  # hopefully empty works
+								"DESKTOP_TIER": tier,
 								"DESKTOP_ENVIRONMENT": desktop["id"]}})
 
 	return ret
@@ -200,9 +209,10 @@ for target_name in targets["targets"]:
 	if "items-from-inventory" in target_obj:
 		# loop over the keys, for regular board vs branches inventory
 		for key in target_obj["items-from-inventory"]:
+			cfg = target_obj["items-from-inventory"][key]
 			to_add = []
 			if key == "userspace":
-				to_add.extend(get_userspace_inventory(target_obj["items-from-inventory"][key]))
+				to_add.extend(get_userspace_inventory(cfg))
 			elif key == "all":
 				to_add.extend(all_boards_all_branches)
 			elif key == "not-eos":
@@ -211,6 +221,43 @@ for target_name in targets["targets"]:
 				to_add.extend(not_eos_with_video_boards_all_branches)
 			else:
 				to_add.extend(boards_by_support_level_and_branches[key])
+
+			# For non-userspace inventory sources, honour optional
+			# skip-arches / only-arches filters declared on the
+			# inventory key. Example:
+			#   items-from-inventory:
+			#     not-eos-with-video:
+			#       skip-arches: [loong64, riscv64]
+			# Drops board entries whose ARCH matches skip-arches, or
+			# doesn't match only-arches. Board ARCH comes from the
+			# board/family conf (see armbian_utils.armbian_get_all_boards_inventory).
+			# userspace inventory has its own internal arch filtering
+			# via the `arches:` key and is not touched here.
+			if key != "userspace" and isinstance(cfg, dict):
+				skip_arches = set(cfg.get("skip-arches") or [])
+				only_arches_raw = cfg.get("only-arches")
+				only_arches = set(only_arches_raw) if only_arches_raw else None
+				if skip_arches or only_arches is not None:
+					before = len(to_add)
+					filtered = []
+					for bb in to_add:
+						board = bb.get("BOARD")
+						arch = board_inventory.get(board, {}).get("ARCH")
+						if arch is None:
+							log.warning(f"Cannot resolve ARCH for board '{board}'; keeping it")
+							filtered.append(bb)
+							continue
+						if only_arches is not None and arch not in only_arches:
+							continue
+						if arch in skip_arches:
+							continue
+						filtered.append(bb)
+					to_add = filtered
+					log.info(
+						f"Arch filter on '{key}' (skip={sorted(skip_arches)}, "
+						f"only={sorted(only_arches) if only_arches else None}): "
+						f"{before} → {len(to_add)}")
+
 			log.info(f"Adding '{key}' from inventory to target '{target_name}': {len(to_add)} targets")
 			all_items.extend(to_add)
 

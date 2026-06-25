@@ -1,0 +1,126 @@
+#!/bin/bash
+
+set -euo pipefail
+
+DRIVER_DIR="${DRIVER_DIR:-/sys/bus/platform/drivers/onboard-usb-dev}"
+UNBIND_DELAY_SECS="${UNBIND_DELAY_SECS:-1}"
+SETTLE_SECS="${SETTLE_SECS:-5}"
+RECOVERY_TIMEOUT_SECS="${RECOVERY_TIMEOUT_SECS:-60}"
+RECOVERY_POLL_SECS="${RECOVERY_POLL_SECS:-2}"
+
+log() {
+    echo "photonicat-usb-hub-watchdog: $*"
+}
+
+list_bound_devices() {
+    local path name target
+
+    for path in "$DRIVER_DIR"/*; do
+        [[ -e "$path" || -L "$path" ]] || continue
+        [[ -d "$path" || -L "$path" ]] || continue
+
+        name="${path##*/}"
+        case "$name" in
+            bind|module|uevent|unbind) continue ;;
+        esac
+
+        target="$(readlink -f "$path" 2>/dev/null || true)"
+        if [[ -d "$target" ]]; then
+            printf '%s\n' "$name"
+        fi
+    done
+}
+
+usb_link_count() {
+    local dir="$1"
+    local link count=0
+
+    for link in "$dir"/usb_dev.*; do
+        if [[ -e "$link" || -L "$link" ]]; then
+            count=$((count + 1))
+        fi
+    done
+
+    printf '%s\n' "$count"
+}
+
+device_needs_rebind() {
+    local device="$1"
+    local quiet="${2:-}"
+    local dir expected=1 attached
+
+    dir="$(readlink -f "$DRIVER_DIR/$device" 2>/dev/null || true)"
+    if [[ ! -d "$dir" ]]; then
+        [[ "$quiet" == "quiet" ]] || log "platform device $device disappeared"
+        return 0
+    fi
+
+    [[ -e "$dir/of_node/peer-hub" ]] && expected=2
+    attached="$(usb_link_count "$dir")"
+
+    if (( attached < expected )); then
+        [[ "$quiet" == "quiet" ]] || log "platform device $device has $attached/$expected onboard USB link(s)"
+        return 0
+    fi
+
+    return 1
+}
+
+if [[ ! -e "$DRIVER_DIR/unbind" || ! -e "$DRIVER_DIR/bind" ]]; then
+    log "onboard-usb-dev reset path is unavailable"
+    exit 0
+fi
+
+mapfile -t onboard_devices < <(list_bound_devices)
+(( ${#onboard_devices[@]} > 0 )) || exit 0
+
+devices_to_rebind=()
+for device in "${onboard_devices[@]}"; do
+    if device_needs_rebind "$device"; then
+        devices_to_rebind+=("$device")
+    fi
+done
+
+(( ${#devices_to_rebind[@]} > 0 )) || exit 0
+
+for device in "${devices_to_rebind[@]}"; do
+    log "rebinding onboard USB platform device $device"
+    if ! printf '%s' "$device" > "$DRIVER_DIR/unbind"; then
+        log "failed to unbind onboard USB platform device $device"
+        exit 1
+    fi
+    sleep "$UNBIND_DELAY_SECS"
+    if ! printf '%s' "$device" > "$DRIVER_DIR/bind"; then
+        log "failed to bind onboard USB platform device $device"
+        exit 1
+    fi
+done
+
+sleep "$SETTLE_SECS"
+
+deadline=$((SECONDS + RECOVERY_TIMEOUT_SECS))
+pending=("${devices_to_rebind[@]}")
+while :; do
+    still_pending=()
+
+    for device in "${pending[@]}"; do
+        if device_needs_rebind "$device" "quiet"; then
+            still_pending+=("$device")
+        else
+            log "onboard USB platform device $device recovered"
+        fi
+    done
+
+    (( ${#still_pending[@]} == 0 )) && exit 0
+    (( SECONDS >= deadline )) && break
+
+    pending=("${still_pending[@]}")
+    sleep "$RECOVERY_POLL_SECS"
+done
+
+for device in "${still_pending[@]}"; do
+    device_needs_rebind "$device" || true
+    log "onboard USB platform device $device did not recover"
+done
+
+exit 1

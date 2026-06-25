@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 21 May 2026 18:06:36 +0800
+Subject: pci: cadence: sky1: fix clk under ACPI
+
+---
+ drivers/pci/controller/cadence/pci-sky1-cix.c | 107 +++++++++-
+ 1 file changed, 105 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/controller/cadence/pci-sky1-cix.c b/drivers/pci/controller/cadence/pci-sky1-cix.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/pci-sky1-cix.c
++++ b/drivers/pci/controller/cadence/pci-sky1-cix.c
+@@ -26,6 +26,7 @@
+ 
+ #include "../../pci.h"
+ #include "pcie-cadence.h"
++#include "pci-sky1-acpi.h"
+ #include "pci-sky1-cix.h"
+ #include "pci-sky1-debugfs.h"
+ 
+@@ -1235,31 +1236,133 @@ static int sky1_pcie_parse_max_payload(struct sky1_pcie *pcie)
+ 	return ret;
+ }
+ 
++static void sky1_pcie_clk_release(void *data)
++{
++	clk_put((struct clk *)data);
++}
++
+ static int sky1_pcie_parse_clocks(struct sky1_pcie *pcie)
+ {
+ 	struct device *dev = pcie->dev;
+ 	struct clk *axi_clk, *apb_clk, *refclk;
+ 	int ret = 0;
+ 
+-	axi_clk = devm_clk_get_optional(dev, "axi_clk");
++#if IS_ENABLED(CONFIG_ACPI)
++	/*
++	 * Sky1 ACPI registers synthetic platform devices as "sky1-pcie.N.auto"
++	 * (pci-sky1-acpi.c) while clk-sky1-acpi CLKT clkdev entries use
++	 * acpi_dev_name(), e.g. "CIXH2020:02". Resolve clocks via the bound
++	 * ACPI companion so dev_id matches clkdev_create().
++	 */
++	{
++		struct acpi_device *adev = ACPI_COMPANION(dev);
++
++		if (adev) {
++			const char *adev_id = acpi_dev_name(adev);
++
++			axi_clk = clk_get_sys(adev_id, "axi_clk");
++			if (IS_ERR(axi_clk)) {
++				ret = PTR_ERR(axi_clk);
++				dev_err(dev, "Failed to get axi_clk\n");
++			} else {
++				ret = devm_add_action_or_reset(dev, sky1_pcie_clk_release,
++							       axi_clk);
++				if (ret)
++					return ret;
++			}
++			pcie->pcie_axi_clk = axi_clk;
++
++			apb_clk = clk_get_sys(adev_id, "apb_clk");
++			if (IS_ERR(apb_clk)) {
++				ret = PTR_ERR(apb_clk);
++				dev_err(dev, "Failed to get apb_clk\n");
++			} else {
++				ret = devm_add_action_or_reset(dev, sky1_pcie_clk_release,
++							       apb_clk);
++				if (ret)
++					return ret;
++			}
++			pcie->pcie_apb_clk = apb_clk;
++
++			refclk = clk_get_sys(adev_id, "refclk_b");
++			if (IS_ERR(refclk)) {
++				if (PTR_ERR(refclk) == -ENOENT) {
++					refclk = NULL;
++				} else {
++					ret = PTR_ERR(refclk);
++					dev_err(dev, "failed to get refclk_b\n");
++				}
++			} else {
++				ret = devm_add_action_or_reset(dev, sky1_pcie_clk_release,
++							       refclk);
++				if (ret)
++					return ret;
++			}
++			pcie->pcie_refclk_b = refclk;
++
++			return 0;
++		}
++	}
++#endif
++
++	axi_clk = devm_clk_get(dev, "axi_clk");
+ 	if (IS_ERR(axi_clk)) {
+ 		ret = PTR_ERR(axi_clk);
+ 		dev_err(dev, "Failed to get axi_clk\n");
+ 	}
+ 	pcie->pcie_axi_clk = axi_clk;
+ 
+-	apb_clk = devm_clk_get_optional(dev, "apb_clk");
++	apb_clk = devm_clk_get(dev, "apb_clk");
+ 	if (IS_ERR(apb_clk)) {
+ 		ret = PTR_ERR(apb_clk);
+ 		dev_err(dev, "Failed to get apb_clk\n");
+ 	}
+ 	pcie->pcie_apb_clk = apb_clk;
+ 
++#if IS_ENABLED(CONFIG_ACPI)
++	/*
++	 * Same clkdev dev_id as axi/apb: ACPI name, or pdata->adev when
++	 * companion fwnode is not set yet (see pci-sky1-acpi.c).
++	 */
++	{
++		struct sky1_pcie_acpi_pdata *apd = dev_get_platdata(dev);
++		struct acpi_device *ref_adev = ACPI_COMPANION(dev);
++
++		if (!ref_adev && apd)
++			ref_adev = apd->adev;
++
++		if (ref_adev) {
++			const char *ref_id = acpi_dev_name(ref_adev);
++
++			refclk = clk_get_sys(ref_id, "refclk_b");
++			if (IS_ERR(refclk)) {
++				if (PTR_ERR(refclk) == -ENOENT) {
++					refclk = NULL;
++				} else {
++					ret = PTR_ERR(refclk);
++					dev_err(dev, "failed to get refclk_b\n");
++				}
++			} else {
++				ret = devm_add_action_or_reset(dev, sky1_pcie_clk_release,
++							       refclk);
++				if (ret)
++					return ret;
++			}
++		} else {
++			refclk = devm_clk_get_optional(dev, "refclk_b");
++			if (IS_ERR(refclk)) {
++				ret = PTR_ERR(refclk);
++				dev_err(dev, "failed to get refclk_b\n");
++			}
++		}
++	}
++#else
+ 	refclk = devm_clk_get_optional(dev, "refclk_b");
+ 	if (IS_ERR(refclk)) {
+ 		ret = PTR_ERR(refclk);
+ 		dev_err(dev, "failed to get refclk_b\n");
+ 	}
++#endif
+ 	pcie->pcie_refclk_b = refclk;
+ 
+ 	return 0;
+-- 
+Armbian
+

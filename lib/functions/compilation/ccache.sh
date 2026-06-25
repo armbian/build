@@ -100,7 +100,7 @@ function do_with_ccache_statistics() {
 
 		# calculate the difference, in human-readable format; numfmt is from coreutils.
 		local ccache_dir_size_diff_human
-		ccache_dir_size_diff_human="$(numfmt --to=iec-i --suffix=B --format="%.2f" "${ccache_dir_size_diff}")"
+		ccache_dir_size_diff_human="$(numfmt --to=iec-i --suffix=B --format="%.2f" -- "${ccache_dir_size_diff}")"
 
 		# display the difference
 		display_alert "ccache dir size change" "${ccache_dir_size_diff_human}" "ccache"

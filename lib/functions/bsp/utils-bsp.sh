@@ -24,7 +24,7 @@ copy_all_packages_files_for() {
 
 	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS}; do
 		local package_dirpath="${package_src_dir}/${package_name}"
-		if [ -d "${package_dirpath}" ]; then
+		if [[ -d "${package_dirpath}" ]]; then
 			display_alert "Adding found files" "${package_dirpath} for '${package_name}'" "info"
 			run_host_command_logged cp -rv "${package_dirpath}/"* "${destination}/"
 		else

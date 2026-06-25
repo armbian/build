@@ -4,7 +4,7 @@
 
 function add_host_dependencies__add_cryptroot_tooling() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "cryptsetup openssh-client" "info"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} cryptsetup openssh-client" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::cryptsetup" "openssh-client")
 }
 
 function extension_prepare_config__prepare_cryptroot() {

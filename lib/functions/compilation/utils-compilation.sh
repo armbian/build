@@ -64,12 +64,16 @@ overlayfs_wrapper() {
 	fi
 	if [[ $operation == cleanup ]]; then
 		if [[ -f /tmp/.overlayfs_wrapper_umount ]]; then
-			for dir in $(< /tmp/.overlayfs_wrapper_umount); do
+			local -a _overlay_umount_dirs
+			mapfile -t _overlay_umount_dirs < /tmp/.overlayfs_wrapper_umount
+			for dir in "${_overlay_umount_dirs[@]}"; do
 				[[ $dir == /tmp/* ]] && umount -l "$dir" > /dev/null 2>&1
 			done
 		fi
 		if [[ -f /tmp/.overlayfs_wrapper_cleanup ]]; then
-			for dir in $(< /tmp/.overlayfs_wrapper_cleanup); do
+			local -a _overlay_cleanup_dirs
+			mapfile -t _overlay_cleanup_dirs < /tmp/.overlayfs_wrapper_cleanup
+			for dir in "${_overlay_cleanup_dirs[@]}"; do
 				[[ $dir == /tmp/* ]] && rm -rf "$dir"
 			done
 		fi

@@ -1,0 +1,2043 @@
+diff --git a/Makefile b/Makefile
+index 54c385978feed5..b9c04d8271b94a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 126
++SUBLEVEL = 127
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/arch/loongarch/include/asm/addrspace.h b/arch/loongarch/include/asm/addrspace.h
+index b24437e28c6eda..913981b835f4b1 100644
+--- a/arch/loongarch/include/asm/addrspace.h
++++ b/arch/loongarch/include/asm/addrspace.h
+@@ -36,6 +36,10 @@ extern unsigned long vm_map_base;
+ #define UNCACHE_BASE		CSR_DMW0_BASE
+ #endif
+ 
++#ifndef WRITECOMBINE_BASE
++#define WRITECOMBINE_BASE	CSR_DMW2_BASE
++#endif
++
+ #define DMW_PABITS	48
+ #define TO_PHYS_MASK	((1ULL << DMW_PABITS) - 1)
+ 
+diff --git a/arch/loongarch/include/asm/io.h b/arch/loongarch/include/asm/io.h
+index 4a8adcca329b81..838db690b723a5 100644
+--- a/arch/loongarch/include/asm/io.h
++++ b/arch/loongarch/include/asm/io.h
+@@ -30,10 +30,16 @@ extern void __init early_iounmap(void __iomem *addr, unsigned long size);
+ static inline void __iomem *ioremap_prot(phys_addr_t offset, unsigned long size,
+ 					 unsigned long prot_val)
+ {
+-	if (prot_val & _CACHE_CC)
++	switch (prot_val & _CACHE_MASK) {
++	case _CACHE_CC:
+ 		return (void __iomem *)(unsigned long)(CACHE_BASE + offset);
+-	else
++	case _CACHE_SUC:
+ 		return (void __iomem *)(unsigned long)(UNCACHE_BASE + offset);
++	case _CACHE_WUC:
++		return (void __iomem *)(unsigned long)(WRITECOMBINE_BASE + offset);
++	default:
++		return NULL;
++	}
+ }
+ 
+ #define ioremap(offset, size)		\
+diff --git a/arch/loongarch/include/asm/kasan.h b/arch/loongarch/include/asm/kasan.h
+index cb74a47f620e18..7f52bd31b9d4f5 100644
+--- a/arch/loongarch/include/asm/kasan.h
++++ b/arch/loongarch/include/asm/kasan.h
+@@ -25,6 +25,7 @@
+ /* 64-bit segment value. */
+ #define XKPRANGE_UC_SEG		(0x8000)
+ #define XKPRANGE_CC_SEG		(0x9000)
++#define XKPRANGE_WC_SEG		(0xa000)
+ #define XKVRANGE_VC_SEG		(0xffff)
+ 
+ /* Cached */
+@@ -41,10 +42,17 @@
+ #define XKPRANGE_UC_SHADOW_SIZE		(XKPRANGE_UC_SIZE >> KASAN_SHADOW_SCALE_SHIFT)
+ #define XKPRANGE_UC_SHADOW_END		(XKPRANGE_UC_KASAN_OFFSET + XKPRANGE_UC_SHADOW_SIZE)
+ 
++/* WriteCombine */
++#define XKPRANGE_WC_START		WRITECOMBINE_BASE
++#define XKPRANGE_WC_SIZE		XRANGE_SIZE
++#define XKPRANGE_WC_KASAN_OFFSET	XKPRANGE_UC_SHADOW_END
++#define XKPRANGE_WC_SHADOW_SIZE		(XKPRANGE_WC_SIZE >> KASAN_SHADOW_SCALE_SHIFT)
++#define XKPRANGE_WC_SHADOW_END		(XKPRANGE_WC_KASAN_OFFSET + XKPRANGE_WC_SHADOW_SIZE)
++
+ /* VMALLOC (Cached or UnCached)  */
+ #define XKVRANGE_VC_START		MODULES_VADDR
+ #define XKVRANGE_VC_SIZE		round_up(KFENCE_AREA_END - MODULES_VADDR + 1, PGDIR_SIZE)
+-#define XKVRANGE_VC_KASAN_OFFSET	XKPRANGE_UC_SHADOW_END
++#define XKVRANGE_VC_KASAN_OFFSET	XKPRANGE_WC_SHADOW_END
+ #define XKVRANGE_VC_SHADOW_SIZE		(XKVRANGE_VC_SIZE >> KASAN_SHADOW_SCALE_SHIFT)
+ #define XKVRANGE_VC_SHADOW_END		(XKVRANGE_VC_KASAN_OFFSET + XKVRANGE_VC_SHADOW_SIZE)
+ 
+@@ -55,6 +63,7 @@
+ 
+ #define XKPRANGE_CC_SHADOW_OFFSET	(KASAN_SHADOW_START + XKPRANGE_CC_KASAN_OFFSET)
+ #define XKPRANGE_UC_SHADOW_OFFSET	(KASAN_SHADOW_START + XKPRANGE_UC_KASAN_OFFSET)
++#define XKPRANGE_WC_SHADOW_OFFSET	(KASAN_SHADOW_START + XKPRANGE_WC_KASAN_OFFSET)
+ #define XKVRANGE_VC_SHADOW_OFFSET	(KASAN_SHADOW_START + XKVRANGE_VC_KASAN_OFFSET)
+ 
+ extern bool kasan_early_stage;
+diff --git a/arch/loongarch/include/asm/loongarch.h b/arch/loongarch/include/asm/loongarch.h
+index 2c996da6a5bf57..ce3fc1666868ee 100644
+--- a/arch/loongarch/include/asm/loongarch.h
++++ b/arch/loongarch/include/asm/loongarch.h
+@@ -856,7 +856,7 @@
+ #define LOONGARCH_CSR_DMWIN2		0x182	/* 64 direct map win2: MEM */
+ #define LOONGARCH_CSR_DMWIN3		0x183	/* 64 direct map win3: MEM */
+ 
+-/* Direct Map window 0/1 */
++/* Direct Map window 0/1/2/3 */
+ #define CSR_DMW0_PLV0		_CONST64_(1 << 0)
+ #define CSR_DMW0_VSEG		_CONST64_(0x8000)
+ #define CSR_DMW0_BASE		(CSR_DMW0_VSEG << DMW_PABITS)
+@@ -868,6 +868,14 @@
+ #define CSR_DMW1_BASE		(CSR_DMW1_VSEG << DMW_PABITS)
+ #define CSR_DMW1_INIT		(CSR_DMW1_BASE | CSR_DMW1_MAT | CSR_DMW1_PLV0)
+ 
++#define CSR_DMW2_PLV0		_CONST64_(1 << 0)
++#define CSR_DMW2_MAT		_CONST64_(2 << 4)
++#define CSR_DMW2_VSEG		_CONST64_(0xa000)
++#define CSR_DMW2_BASE		(CSR_DMW2_VSEG << DMW_PABITS)
++#define CSR_DMW2_INIT		(CSR_DMW2_BASE | CSR_DMW2_MAT | CSR_DMW2_PLV0)
++
++#define CSR_DMW3_INIT		0x0
++
+ /* Performance Counter registers */
+ #define LOONGARCH_CSR_PERFCTRL0		0x200	/* 32 perf event 0 config */
+ #define LOONGARCH_CSR_PERFCNTR0		0x201	/* 64 perf event 0 count value */
+diff --git a/arch/loongarch/include/asm/stackframe.h b/arch/loongarch/include/asm/stackframe.h
+index efc8c42290d019..35ba862f20252d 100644
+--- a/arch/loongarch/include/asm/stackframe.h
++++ b/arch/loongarch/include/asm/stackframe.h
+@@ -37,6 +37,17 @@
+ 	cfi_restore \reg \offset \docfi
+ 	.endm
+ 
++	.macro SETUP_DMWINS temp
++	li.d	\temp, CSR_DMW0_INIT	# WUC, PLV0, 0x8000 xxxx xxxx xxxx
++	csrwr	\temp, LOONGARCH_CSR_DMWIN0
++	li.d	\temp, CSR_DMW1_INIT	# CAC, PLV0, 0x9000 xxxx xxxx xxxx
++	csrwr	\temp, LOONGARCH_CSR_DMWIN1
++	li.d	\temp, CSR_DMW2_INIT	# WUC, PLV0, 0xa000 xxxx xxxx xxxx
++	csrwr	\temp, LOONGARCH_CSR_DMWIN2
++	li.d	\temp, CSR_DMW3_INIT	# 0x0, unused
++	csrwr	\temp, LOONGARCH_CSR_DMWIN3
++	.endm
++
+ /* Jump to the runtime virtual address. */
+ 	.macro JUMP_VIRT_ADDR temp1 temp2
+ 	li.d	\temp1, CACHE_BASE
+diff --git a/arch/loongarch/kernel/head.S b/arch/loongarch/kernel/head.S
+index e336fbc4eb9675..841e51144945a6 100644
+--- a/arch/loongarch/kernel/head.S
++++ b/arch/loongarch/kernel/head.S
+@@ -44,11 +44,7 @@ SYM_DATA(kernel_fsize, .long _kernel_fsize);
+ SYM_CODE_START(kernel_entry)			# kernel entry point
+ 
+ 	/* Config direct window and set PG */
+-	li.d		t0, CSR_DMW0_INIT	# UC, PLV0, 0x8000 xxxx xxxx xxxx
+-	csrwr		t0, LOONGARCH_CSR_DMWIN0
+-	li.d		t0, CSR_DMW1_INIT	# CA, PLV0, 0x9000 xxxx xxxx xxxx
+-	csrwr		t0, LOONGARCH_CSR_DMWIN1
+-
++	SETUP_DMWINS	t0
+ 	JUMP_VIRT_ADDR	t0, t1
+ 
+ 	/* Enable PG */
+@@ -119,11 +115,8 @@ SYM_CODE_END(kernel_entry)
+  * function after setting up the stack and tp registers.
+  */
+ SYM_CODE_START(smpboot_entry)
+-	li.d		t0, CSR_DMW0_INIT	# UC, PLV0
+-	csrwr		t0, LOONGARCH_CSR_DMWIN0
+-	li.d		t0, CSR_DMW1_INIT	# CA, PLV0
+-	csrwr		t0, LOONGARCH_CSR_DMWIN1
+ 
++	SETUP_DMWINS	t0
+ 	JUMP_VIRT_ADDR	t0, t1
+ 
+ 	/* Enable PG */
+diff --git a/arch/loongarch/mm/kasan_init.c b/arch/loongarch/mm/kasan_init.c
+index 082cb2a6f1ef24..40aea6c14ab11f 100644
+--- a/arch/loongarch/mm/kasan_init.c
++++ b/arch/loongarch/mm/kasan_init.c
+@@ -42,36 +42,43 @@ static pgd_t kasan_pg_dir[PTRS_PER_PGD] __initdata __aligned(PAGE_SIZE);
+ 
+ bool kasan_early_stage = true;
+ 
+-void *kasan_mem_to_shadow(const void *addr)
++static void *mem_to_shadow(const void *addr)
+ {
+-	if (!kasan_arch_is_ready()) {
++	unsigned long offset = 0;
++	unsigned long maddr = (unsigned long)addr;
++	unsigned long xrange = (maddr >> XRANGE_SHIFT) & 0xffff;
++
++	if (maddr >= FIXADDR_START)
+ 		return (void *)(kasan_early_shadow_page);
+-	} else {
+-		unsigned long maddr = (unsigned long)addr;
+-		unsigned long xrange = (maddr >> XRANGE_SHIFT) & 0xffff;
+-		unsigned long offset = 0;
+-
+-		if (maddr >= FIXADDR_START)
+-			return (void *)(kasan_early_shadow_page);
+-
+-		maddr &= XRANGE_SHADOW_MASK;
+-		switch (xrange) {
+-		case XKPRANGE_CC_SEG:
+-			offset = XKPRANGE_CC_SHADOW_OFFSET;
+-			break;
+-		case XKPRANGE_UC_SEG:
+-			offset = XKPRANGE_UC_SHADOW_OFFSET;
+-			break;
+-		case XKVRANGE_VC_SEG:
+-			offset = XKVRANGE_VC_SHADOW_OFFSET;
+-			break;
+-		default:
+-			WARN_ON(1);
+-			return NULL;
+-		}
+ 
+-		return (void *)((maddr >> KASAN_SHADOW_SCALE_SHIFT) + offset);
++	maddr &= XRANGE_SHADOW_MASK;
++	switch (xrange) {
++	case XKPRANGE_CC_SEG:
++		offset = XKPRANGE_CC_SHADOW_OFFSET;
++		break;
++	case XKPRANGE_UC_SEG:
++		offset = XKPRANGE_UC_SHADOW_OFFSET;
++		break;
++	case XKPRANGE_WC_SEG:
++		offset = XKPRANGE_WC_SHADOW_OFFSET;
++		break;
++	case XKVRANGE_VC_SEG:
++		offset = XKVRANGE_VC_SHADOW_OFFSET;
++		break;
++	default:
++		WARN_ON(1);
++		return NULL;
+ 	}
++
++	return (void *)((maddr >> KASAN_SHADOW_SCALE_SHIFT) + offset);
++}
++
++void *kasan_mem_to_shadow(const void *addr)
++{
++	if (kasan_arch_is_ready())
++		return mem_to_shadow(addr);
++	else
++		return (void *)(kasan_early_shadow_page);
+ }
+ 
+ const void *kasan_shadow_to_mem(const void *shadow_addr)
+@@ -86,6 +93,8 @@ const void *kasan_shadow_to_mem(const void *shadow_addr)
+ 
+ 	if (addr >= XKVRANGE_VC_SHADOW_OFFSET)
+ 		return (void *)(((addr - XKVRANGE_VC_SHADOW_OFFSET) << KASAN_SHADOW_SCALE_SHIFT) + XKVRANGE_VC_START);
++	else if (addr >= XKPRANGE_WC_SHADOW_OFFSET)
++		return (void *)(((addr - XKPRANGE_WC_SHADOW_OFFSET) << KASAN_SHADOW_SCALE_SHIFT) + XKPRANGE_WC_START);
+ 	else if (addr >= XKPRANGE_UC_SHADOW_OFFSET)
+ 		return (void *)(((addr - XKPRANGE_UC_SHADOW_OFFSET) << KASAN_SHADOW_SCALE_SHIFT) + XKPRANGE_UC_START);
+ 	else if (addr >= XKPRANGE_CC_SHADOW_OFFSET)
+@@ -290,10 +299,8 @@ void __init kasan_init(void)
+ 	/* Maps everything to a single page of zeroes */
+ 	kasan_pgd_populate(KASAN_SHADOW_START, KASAN_SHADOW_END, NUMA_NO_NODE, true);
+ 
+-	kasan_populate_early_shadow(kasan_mem_to_shadow((void *)VMALLOC_START),
+-					kasan_mem_to_shadow((void *)KFENCE_AREA_END));
+-
+-	kasan_early_stage = false;
++	kasan_populate_early_shadow(mem_to_shadow((void *)VMALLOC_START),
++					mem_to_shadow((void *)KFENCE_AREA_END));
+ 
+ 	/* Populate the linear mapping */
+ 	for_each_mem_range(i, &pa_start, &pa_end) {
+@@ -303,13 +310,13 @@ void __init kasan_init(void)
+ 		if (start >= end)
+ 			break;
+ 
+-		kasan_map_populate((unsigned long)kasan_mem_to_shadow(start),
+-			(unsigned long)kasan_mem_to_shadow(end), NUMA_NO_NODE);
++		kasan_map_populate((unsigned long)mem_to_shadow(start),
++			(unsigned long)mem_to_shadow(end), NUMA_NO_NODE);
+ 	}
+ 
+ 	/* Populate modules mapping */
+-	kasan_map_populate((unsigned long)kasan_mem_to_shadow((void *)MODULES_VADDR),
+-		(unsigned long)kasan_mem_to_shadow((void *)MODULES_END), NUMA_NO_NODE);
++	kasan_map_populate((unsigned long)mem_to_shadow((void *)MODULES_VADDR),
++		(unsigned long)mem_to_shadow((void *)MODULES_END), NUMA_NO_NODE);
+ 	/*
+ 	 * KAsan may reuse the contents of kasan_early_shadow_pte directly, so we
+ 	 * should make sure that it maps the zero page read-only.
+@@ -324,5 +331,6 @@ void __init kasan_init(void)
+ 
+ 	/* At this point kasan is fully initialized. Enable error messages */
+ 	init_task.kasan_depth = 0;
++	kasan_early_stage = false;
+ 	pr_info("KernelAddressSanitizer initialized.\n");
+ }
+diff --git a/arch/loongarch/power/suspend_asm.S b/arch/loongarch/power/suspend_asm.S
+index e2fc3b4e31f001..c28ad52b7bafba 100644
+--- a/arch/loongarch/power/suspend_asm.S
++++ b/arch/loongarch/power/suspend_asm.S
+@@ -73,11 +73,7 @@ SYM_FUNC_START(loongarch_suspend_enter)
+ 	 * Reload all of the registers and return.
+ 	 */
+ SYM_INNER_LABEL(loongarch_wakeup_start, SYM_L_GLOBAL)
+-	li.d		t0, CSR_DMW0_INIT	# UC, PLV0
+-	csrwr		t0, LOONGARCH_CSR_DMWIN0
+-	li.d		t0, CSR_DMW1_INIT	# CA, PLV0
+-	csrwr		t0, LOONGARCH_CSR_DMWIN1
+-
++	SETUP_DMWINS	t0
+ 	JUMP_VIRT_ADDR	t0, t1
+ 
+ 	/* Enable PG */
+diff --git a/drivers/bus/fsl-mc/fsl-mc-bus.c b/drivers/bus/fsl-mc/fsl-mc-bus.c
+index 03642df2df0bbf..8b421ef0580a78 100644
+--- a/drivers/bus/fsl-mc/fsl-mc-bus.c
++++ b/drivers/bus/fsl-mc/fsl-mc-bus.c
+@@ -175,8 +175,8 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
+ {
+ 	struct fsl_mc_device *mc_dev = to_fsl_mc_device(dev);
+ 
+-	return sprintf(buf, "fsl-mc:v%08Xd%s\n", mc_dev->obj_desc.vendor,
+-		       mc_dev->obj_desc.type);
++	return sysfs_emit(buf, "fsl-mc:v%08Xd%s\n", mc_dev->obj_desc.vendor,
++			mc_dev->obj_desc.type);
+ }
+ static DEVICE_ATTR_RO(modalias);
+ 
+@@ -201,8 +201,12 @@ static ssize_t driver_override_show(struct device *dev,
+ 				    struct device_attribute *attr, char *buf)
+ {
+ 	struct fsl_mc_device *mc_dev = to_fsl_mc_device(dev);
++	ssize_t len;
+ 
+-	return snprintf(buf, PAGE_SIZE, "%s\n", mc_dev->driver_override);
++	device_lock(dev);
++	len = sysfs_emit(buf, "%s\n", mc_dev->driver_override);
++	device_unlock(dev);
++	return len;
+ }
+ static DEVICE_ATTR_RW(driver_override);
+ 
+diff --git a/drivers/firmware/efi/libstub/loongarch.c b/drivers/firmware/efi/libstub/loongarch.c
+index d0ef93551c44f6..3782d0a187d1f5 100644
+--- a/drivers/firmware/efi/libstub/loongarch.c
++++ b/drivers/firmware/efi/libstub/loongarch.c
+@@ -74,6 +74,8 @@ efi_status_t efi_boot_kernel(void *handle, efi_loaded_image_t *image,
+ 	/* Config Direct Mapping */
+ 	csr_write64(CSR_DMW0_INIT, LOONGARCH_CSR_DMWIN0);
+ 	csr_write64(CSR_DMW1_INIT, LOONGARCH_CSR_DMWIN1);
++	csr_write64(CSR_DMW2_INIT, LOONGARCH_CSR_DMWIN2);
++	csr_write64(CSR_DMW3_INIT, LOONGARCH_CSR_DMWIN3);
+ 
+ 	real_kernel_entry = (void *)kernel_entry_address(kernel_addr, image);
+ 
+diff --git a/drivers/gpio/gpio-sprd.c b/drivers/gpio/gpio-sprd.c
+index c117c11bfb29a8..192f05a2c19c1c 100644
+--- a/drivers/gpio/gpio-sprd.c
++++ b/drivers/gpio/gpio-sprd.c
+@@ -35,7 +35,7 @@
+ struct sprd_gpio {
+ 	struct gpio_chip chip;
+ 	void __iomem *base;
+-	spinlock_t lock;
++	raw_spinlock_t lock;
+ 	int irq;
+ };
+ 
+@@ -54,7 +54,7 @@ static void sprd_gpio_update(struct gpio_chip *chip, unsigned int offset,
+ 	unsigned long flags;
+ 	u32 tmp;
+ 
+-	spin_lock_irqsave(&sprd_gpio->lock, flags);
++	raw_spin_lock_irqsave(&sprd_gpio->lock, flags);
+ 	tmp = readl_relaxed(base + reg);
+ 
+ 	if (val)
+@@ -63,7 +63,7 @@ static void sprd_gpio_update(struct gpio_chip *chip, unsigned int offset,
+ 		tmp &= ~BIT(SPRD_GPIO_BIT(offset));
+ 
+ 	writel_relaxed(tmp, base + reg);
+-	spin_unlock_irqrestore(&sprd_gpio->lock, flags);
++	raw_spin_unlock_irqrestore(&sprd_gpio->lock, flags);
+ }
+ 
+ static int sprd_gpio_read(struct gpio_chip *chip, unsigned int offset, u16 reg)
+@@ -234,7 +234,7 @@ static int sprd_gpio_probe(struct platform_device *pdev)
+ 	if (IS_ERR(sprd_gpio->base))
+ 		return PTR_ERR(sprd_gpio->base);
+ 
+-	spin_lock_init(&sprd_gpio->lock);
++	raw_spin_lock_init(&sprd_gpio->lock);
+ 
+ 	sprd_gpio->chip.label = dev_name(&pdev->dev);
+ 	sprd_gpio->chip.ngpio = SPRD_GPIO_NR;
+diff --git a/drivers/gpio/gpiolib-acpi.c b/drivers/gpio/gpiolib-acpi.c
+index 69d4297ae57549..4d4757eac9e5fe 100644
+--- a/drivers/gpio/gpiolib-acpi.c
++++ b/drivers/gpio/gpiolib-acpi.c
+@@ -1417,6 +1417,7 @@ static int acpi_gpio_package_count(const union acpi_object *obj)
+ 	while (element < end) {
+ 		switch (element->type) {
+ 		case ACPI_TYPE_LOCAL_REFERENCE:
++		case ACPI_TYPE_STRING:
+ 			element += 3;
+ 			fallthrough;
+ 		case ACPI_TYPE_INTEGER:
+diff --git a/drivers/gpu/drm/tegra/hdmi.c b/drivers/gpu/drm/tegra/hdmi.c
+index 58c2ba94e7dd65..2451c9b67024d9 100644
+--- a/drivers/gpu/drm/tegra/hdmi.c
++++ b/drivers/gpu/drm/tegra/hdmi.c
+@@ -656,7 +656,7 @@ static void tegra_hdmi_write_infopack(struct tegra_hdmi *hdmi, const void *data,
+ {
+ 	const u8 *ptr = data;
+ 	unsigned long offset;
+-	size_t i, j;
++	size_t i;
+ 	u32 value;
+ 
+ 	switch (ptr[0]) {
+@@ -689,7 +689,7 @@ static void tegra_hdmi_write_infopack(struct tegra_hdmi *hdmi, const void *data,
+ 	 * - subpack_low: bytes 0 - 3
+ 	 * - subpack_high: bytes 4 - 6 (with byte 7 padded to 0x00)
+ 	 */
+-	for (i = 3, j = 0; i < size; i += 7, j += 8) {
++	for (i = 3; i < size; i += 7) {
+ 		size_t rem = size - i, num = min_t(size_t, rem, 4);
+ 
+ 		value = tegra_hdmi_subpack(&ptr[i], num);
+diff --git a/drivers/gpu/drm/tegra/sor.c b/drivers/gpu/drm/tegra/sor.c
+index 61b437a84806ed..1b03f8ca80a10b 100644
+--- a/drivers/gpu/drm/tegra/sor.c
++++ b/drivers/gpu/drm/tegra/sor.c
+@@ -1861,7 +1861,7 @@ static void tegra_sor_hdmi_write_infopack(struct tegra_sor *sor,
+ {
+ 	const u8 *ptr = data;
+ 	unsigned long offset;
+-	size_t i, j;
++	size_t i;
+ 	u32 value;
+ 
+ 	switch (ptr[0]) {
+@@ -1894,7 +1894,7 @@ static void tegra_sor_hdmi_write_infopack(struct tegra_sor *sor,
+ 	 * - subpack_low: bytes 0 - 3
+ 	 * - subpack_high: bytes 4 - 6 (with byte 7 padded to 0x00)
+ 	 */
+-	for (i = 3, j = 0; i < size; i += 7, j += 8) {
++	for (i = 3; i < size; i += 7) {
+ 		size_t rem = size - i, num = min_t(size_t, rem, 4);
+ 
+ 		value = tegra_sor_hdmi_subpack(&ptr[i], num);
+diff --git a/drivers/net/bareudp.c b/drivers/net/bareudp.c
+index 54767154de265c..cfbc0240126ef0 100644
+--- a/drivers/net/bareudp.c
++++ b/drivers/net/bareudp.c
+@@ -319,7 +319,7 @@ static int bareudp_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be32 saddr;
+ 	int err;
+ 
+-	if (!skb_vlan_inet_prepare(skb, skb->protocol != htons(ETH_P_TEB)))
++	if (skb_vlan_inet_prepare(skb, skb->protocol != htons(ETH_P_TEB)))
+ 		return -EINVAL;
+ 
+ 	if (!sock)
+@@ -385,7 +385,7 @@ static int bareudp6_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be16 sport;
+ 	int err;
+ 
+-	if (!skb_vlan_inet_prepare(skb, skb->protocol != htons(ETH_P_TEB)))
++	if (skb_vlan_inet_prepare(skb, skb->protocol != htons(ETH_P_TEB)))
+ 		return -EINVAL;
+ 
+ 	if (!sock)
+diff --git a/drivers/net/geneve.c b/drivers/net/geneve.c
+index 27761334e1bff7..33dae09f7fb220 100644
+--- a/drivers/net/geneve.c
++++ b/drivers/net/geneve.c
+@@ -927,7 +927,7 @@ static int geneve_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be16 sport;
+ 	int err;
+ 
+-	if (!skb_vlan_inet_prepare(skb, inner_proto_inherit))
++	if (skb_vlan_inet_prepare(skb, inner_proto_inherit))
+ 		return -EINVAL;
+ 
+ 	sport = udp_flow_src_port(geneve->net, skb, 1, USHRT_MAX, true);
+@@ -1026,7 +1026,7 @@ static int geneve6_xmit_skb(struct sk_buff *skb, struct net_device *dev,
+ 	__be16 sport;
+ 	int err;
+ 
+-	if (!skb_vlan_inet_prepare(skb, inner_proto_inherit))
++	if (skb_vlan_inet_prepare(skb, inner_proto_inherit))
+ 		return -EINVAL;
+ 
+ 	sport = udp_flow_src_port(geneve->net, skb, 1, USHRT_MAX, true);
+diff --git a/drivers/net/wireguard/device.c b/drivers/net/wireguard/device.c
+index f98e0f027a0542..deb9636b0ecf8f 100644
+--- a/drivers/net/wireguard/device.c
++++ b/drivers/net/wireguard/device.c
+@@ -369,7 +369,6 @@ static int wg_newlink(struct net *src_net, struct net_device *dev,
+ 	if (ret < 0)
+ 		goto err_free_handshake_queue;
+ 
+-	dev_set_threaded(dev, true);
+ 	ret = register_netdevice(dev);
+ 	if (ret < 0)
+ 		goto err_uninit_ratelimiter;
+diff --git a/drivers/pci/endpoint/pci-ep-cfs.c b/drivers/pci/endpoint/pci-ep-cfs.c
+index c17dff4bd19b43..c28c3f094496a8 100644
+--- a/drivers/pci/endpoint/pci-ep-cfs.c
++++ b/drivers/pci/endpoint/pci-ep-cfs.c
+@@ -23,8 +23,6 @@ struct pci_epf_group {
+ 	struct config_group group;
+ 	struct config_group primary_epc_group;
+ 	struct config_group secondary_epc_group;
+-	struct config_group *type_group;
+-	struct delayed_work cfs_work;
+ 	struct pci_epf *epf;
+ 	int index;
+ };
+@@ -101,7 +99,7 @@ static struct config_group
+ 	secondary_epc_group = &epf_group->secondary_epc_group;
+ 	config_group_init_type_name(secondary_epc_group, "secondary",
+ 				    &pci_secondary_epc_type);
+-	configfs_register_group(&epf_group->group, secondary_epc_group);
++	configfs_add_default_group(secondary_epc_group, &epf_group->group);
+ 
+ 	return secondary_epc_group;
+ }
+@@ -161,7 +159,7 @@ static struct config_group
+ 
+ 	config_group_init_type_name(primary_epc_group, "primary",
+ 				    &pci_primary_epc_type);
+-	configfs_register_group(&epf_group->group, primary_epc_group);
++	configfs_add_default_group(primary_epc_group, &epf_group->group);
+ 
+ 	return primary_epc_group;
+ }
+@@ -562,15 +560,13 @@ static void pci_ep_cfs_add_type_group(struct pci_epf_group *epf_group)
+ 		return;
+ 	}
+ 
+-	configfs_register_group(&epf_group->group, group);
++	configfs_add_default_group(group, &epf_group->group);
+ }
+ 
+-static void pci_epf_cfs_work(struct work_struct *work)
++static void pci_epf_cfs_add_sub_groups(struct pci_epf_group *epf_group)
+ {
+-	struct pci_epf_group *epf_group;
+ 	struct config_group *group;
+ 
+-	epf_group = container_of(work, struct pci_epf_group, cfs_work.work);
+ 	group = pci_ep_cfs_add_primary_group(epf_group);
+ 	if (IS_ERR(group)) {
+ 		pr_err("failed to create 'primary' EPC interface\n");
+@@ -629,9 +625,7 @@ static struct config_group *pci_epf_make(struct config_group *group,
+ 
+ 	kfree(epf_name);
+ 
+-	INIT_DELAYED_WORK(&epf_group->cfs_work, pci_epf_cfs_work);
+-	queue_delayed_work(system_wq, &epf_group->cfs_work,
+-			   msecs_to_jiffies(1));
++	pci_epf_cfs_add_sub_groups(epf_group);
+ 
+ 	return &epf_group->group;
+ 
+diff --git a/drivers/platform/x86/amd/pmc/pmc-quirks.c b/drivers/platform/x86/amd/pmc/pmc-quirks.c
+index a5031339dac8c9..a6006b4ec2cc08 100644
+--- a/drivers/platform/x86/amd/pmc/pmc-quirks.c
++++ b/drivers/platform/x86/amd/pmc/pmc-quirks.c
+@@ -296,6 +296,13 @@ static const struct dmi_system_id fwbug_list[] = {
+ 			DMI_MATCH(DMI_BOARD_NAME, "XxKK4NAx_XxSP4NAx"),
+ 		}
+ 	},
++	{
++		.ident = "MECHREVO Wujie 15X Pro",
++		.driver_data = &quirk_spurious_8042,
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME, "WUJIE Series-X5SP4NAG"),
++		}
++	},
+ 	{}
+ };
+ 
+diff --git a/drivers/platform/x86/classmate-laptop.c b/drivers/platform/x86/classmate-laptop.c
+index 2edaea2492df73..053c8a86d5ece4 100644
+--- a/drivers/platform/x86/classmate-laptop.c
++++ b/drivers/platform/x86/classmate-laptop.c
+@@ -208,7 +208,12 @@ static ssize_t cmpc_accel_sensitivity_show_v4(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	return sprintf(buf, "%d\n", accel->sensitivity);
+ }
+@@ -225,7 +230,12 @@ static ssize_t cmpc_accel_sensitivity_store_v4(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	r = kstrtoul(buf, 0, &sensitivity);
+ 	if (r)
+@@ -257,7 +267,12 @@ static ssize_t cmpc_accel_g_select_show_v4(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	return sprintf(buf, "%d\n", accel->g_select);
+ }
+@@ -274,7 +289,12 @@ static ssize_t cmpc_accel_g_select_store_v4(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	r = kstrtoul(buf, 0, &g_select);
+ 	if (r)
+@@ -303,6 +323,8 @@ static int cmpc_accel_open_v4(struct input_dev *input)
+ 
+ 	acpi = to_acpi_device(input->dev.parent);
+ 	accel = dev_get_drvdata(&input->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	cmpc_accel_set_sensitivity_v4(acpi->handle, accel->sensitivity);
+ 	cmpc_accel_set_g_select_v4(acpi->handle, accel->g_select);
+@@ -551,7 +573,12 @@ static ssize_t cmpc_accel_sensitivity_show(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	return sprintf(buf, "%d\n", accel->sensitivity);
+ }
+@@ -568,7 +595,12 @@ static ssize_t cmpc_accel_sensitivity_store(struct device *dev,
+ 
+ 	acpi = to_acpi_device(dev);
+ 	inputdev = dev_get_drvdata(&acpi->dev);
++	if (!inputdev)
++		return -ENXIO;
++
+ 	accel = dev_get_drvdata(&inputdev->dev);
++	if (!accel)
++		return -ENXIO;
+ 
+ 	r = kstrtoul(buf, 0, &sensitivity);
+ 	if (r)
+diff --git a/drivers/platform/x86/panasonic-laptop.c b/drivers/platform/x86/panasonic-laptop.c
+index 7365286f6d2dc1..ad907c558997a4 100644
+--- a/drivers/platform/x86/panasonic-laptop.c
++++ b/drivers/platform/x86/panasonic-laptop.c
+@@ -1077,7 +1077,7 @@ static int acpi_pcc_hotkey_add(struct acpi_device *device)
+ 			PLATFORM_DEVID_NONE, NULL, 0);
+ 		if (IS_ERR(pcc->platform)) {
+ 			result = PTR_ERR(pcc->platform);
+-			goto out_backlight;
++			goto out_sysfs;
+ 		}
+ 		result = device_create_file(&pcc->platform->dev,
+ 			&dev_attr_cdpower);
+@@ -1093,6 +1093,8 @@ static int acpi_pcc_hotkey_add(struct acpi_device *device)
+ 
+ out_platform:
+ 	platform_device_unregister(pcc->platform);
++out_sysfs:
++	sysfs_remove_group(&device->dev.kobj, &pcc_attr_group);
+ out_backlight:
+ 	backlight_device_unregister(pcc->backlight);
+ out_input:
+diff --git a/drivers/scsi/qla2xxx/qla_bsg.c b/drivers/scsi/qla2xxx/qla_bsg.c
+index 10431a67d202bb..f43969ed87bf9e 100644
+--- a/drivers/scsi/qla2xxx/qla_bsg.c
++++ b/drivers/scsi/qla2xxx/qla_bsg.c
+@@ -1546,8 +1546,9 @@ qla2x00_update_optrom(struct bsg_job *bsg_job)
+ 	ha->optrom_buffer = NULL;
+ 	ha->optrom_state = QLA_SWAITING;
+ 	mutex_unlock(&ha->optrom_mutex);
+-	bsg_job_done(bsg_job, bsg_reply->result,
+-		       bsg_reply->reply_payload_rcv_len);
++	if (!rval)
++		bsg_job_done(bsg_job, bsg_reply->result,
++			     bsg_reply->reply_payload_rcv_len);
+ 	return rval;
+ }
+ 
+@@ -2612,8 +2613,9 @@ qla2x00_manage_host_stats(struct bsg_job *bsg_job)
+ 				    sizeof(struct ql_vnd_mng_host_stats_resp));
+ 
+ 	bsg_reply->result = DID_OK;
+-	bsg_job_done(bsg_job, bsg_reply->result,
+-		     bsg_reply->reply_payload_rcv_len);
++	if (!ret)
++		bsg_job_done(bsg_job, bsg_reply->result,
++			     bsg_reply->reply_payload_rcv_len);
+ 
+ 	return ret;
+ }
+@@ -2702,8 +2704,9 @@ qla2x00_get_host_stats(struct bsg_job *bsg_job)
+ 							       bsg_job->reply_payload.sg_cnt,
+ 							       data, response_len);
+ 	bsg_reply->result = DID_OK;
+-	bsg_job_done(bsg_job, bsg_reply->result,
+-		     bsg_reply->reply_payload_rcv_len);
++	if (!ret)
++		bsg_job_done(bsg_job, bsg_reply->result,
++			     bsg_reply->reply_payload_rcv_len);
+ 
+ 	kfree(data);
+ host_stat_out:
+@@ -2802,8 +2805,9 @@ reply:
+ 				    bsg_job->reply_payload.sg_cnt, data,
+ 				    response_len);
+ 	bsg_reply->result = DID_OK;
+-	bsg_job_done(bsg_job, bsg_reply->result,
+-		     bsg_reply->reply_payload_rcv_len);
++	if (!ret)
++		bsg_job_done(bsg_job, bsg_reply->result,
++			     bsg_reply->reply_payload_rcv_len);
+ 
+ tgt_stat_out:
+ 	kfree(data);
+@@ -2864,8 +2868,9 @@ qla2x00_manage_host_port(struct bsg_job *bsg_job)
+ 				    bsg_job->reply_payload.sg_cnt, &rsp_data,
+ 				    sizeof(struct ql_vnd_mng_host_port_resp));
+ 	bsg_reply->result = DID_OK;
+-	bsg_job_done(bsg_job, bsg_reply->result,
+-		     bsg_reply->reply_payload_rcv_len);
++	if (!ret)
++		bsg_job_done(bsg_job, bsg_reply->result,
++			     bsg_reply->reply_payload_rcv_len);
+ 
+ 	return ret;
+ }
+@@ -3240,7 +3245,8 @@ int qla2x00_mailbox_passthru(struct bsg_job *bsg_job)
+ 
+ 	bsg_job->reply_len = sizeof(*bsg_job->reply);
+ 	bsg_reply->result = DID_OK << 16;
+-	bsg_job_done(bsg_job, bsg_reply->result, bsg_reply->reply_payload_rcv_len);
++	if (!ret)
++		bsg_job_done(bsg_job, bsg_reply->result, bsg_reply->reply_payload_rcv_len);
+ 
+ 	kfree(req_data);
+ 
+diff --git a/drivers/usb/serial/option.c b/drivers/usb/serial/option.c
+index 60993836cf91cf..58f34c8d2b84ac 100644
+--- a/drivers/usb/serial/option.c
++++ b/drivers/usb/serial/option.c
+@@ -1401,12 +1401,16 @@ static const struct usb_device_id option_ids[] = {
+ 	  .driver_info = NCTRL(0) | RSVD(1) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a0, 0xff),	/* Telit FN20C04 (rmnet) */
+ 	  .driver_info = RSVD(0) | NCTRL(3) },
++	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a1, 0xff),	/* Telit FN20C04 (RNDIS) */
++	  .driver_info = NCTRL(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a2, 0xff),	/* Telit FN920C04 (MBIM) */
+ 	  .driver_info = NCTRL(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a3, 0xff),	/* Telit FN920C04 (ECM) */
+ 	  .driver_info = NCTRL(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a4, 0xff),	/* Telit FN20C04 (rmnet) */
+ 	  .driver_info = RSVD(0) | NCTRL(3) },
++	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a6, 0xff),	/* Telit FN920C04 (RNDIS) */
++	  .driver_info = NCTRL(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a7, 0xff),	/* Telit FN920C04 (MBIM) */
+ 	  .driver_info = NCTRL(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10a8, 0xff),	/* Telit FN920C04 (ECM) */
+@@ -1415,6 +1419,8 @@ static const struct usb_device_id option_ids[] = {
+ 	  .driver_info = RSVD(0) | NCTRL(2) | RSVD(3) | RSVD(4) },
+ 	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10aa, 0xff),	/* Telit FN920C04 (MBIM) */
+ 	  .driver_info = NCTRL(3) | RSVD(4) | RSVD(5) },
++	{ USB_DEVICE_INTERFACE_CLASS(TELIT_VENDOR_ID, 0x10ab, 0xff),	/* Telit FN920C04 (RNDIS) */
++	  .driver_info = NCTRL(3) | RSVD(4) | RSVD(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(TELIT_VENDOR_ID, 0x10b0, 0xff, 0xff, 0x30),	/* Telit FE990B (rmnet) */
+ 	  .driver_info = NCTRL(5) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(TELIT_VENDOR_ID, 0x10b0, 0xff, 0xff, 0x40) },
+diff --git a/drivers/video/fbdev/riva/riva_hw.c b/drivers/video/fbdev/riva/riva_hw.c
+index 8b829b7200642f..f292079566cfca 100644
+--- a/drivers/video/fbdev/riva/riva_hw.c
++++ b/drivers/video/fbdev/riva/riva_hw.c
+@@ -436,6 +436,9 @@ static char nv3_arb(nv3_fifo_info * res_info, nv3_sim_state * state,  nv3_arb_in
+     vmisses = 2;
+     eburst_size = state->memory_width * 1;
+     mburst_size = 32;
++    if (!state->mclk_khz)
++	return (0);
++
+     gns = 1000000 * (gmisses*state->mem_page_miss + state->mem_latency)/state->mclk_khz;
+     ainfo->by_gfacc = gns*ainfo->gdrain_rate/1000000;
+     ainfo->wcmocc = 0;
+diff --git a/drivers/video/fbdev/smscufx.c b/drivers/video/fbdev/smscufx.c
+index 387d18706fecfe..b590763b01089e 100644
+--- a/drivers/video/fbdev/smscufx.c
++++ b/drivers/video/fbdev/smscufx.c
+@@ -988,7 +988,6 @@ static int ufx_ops_ioctl(struct fb_info *info, unsigned int cmd,
+ 			 unsigned long arg)
+ {
+ 	struct ufx_data *dev = info->par;
+-	struct dloarea *area = NULL;
+ 
+ 	if (!atomic_read(&dev->usb_active))
+ 		return 0;
+@@ -1003,6 +1002,10 @@ static int ufx_ops_ioctl(struct fb_info *info, unsigned int cmd,
+ 
+ 	/* TODO: Help propose a standard fb.h ioctl to report mmap damage */
+ 	if (cmd == UFX_IOCTL_REPORT_DAMAGE) {
++		struct dloarea *area __free(kfree) = kmalloc(sizeof(*area), GFP_KERNEL);
++		if (!area)
++			return -ENOMEM;
++
+ 		/* If we have a damage-aware client, turn fb_defio "off"
+ 		 * To avoid perf imact of unnecessary page fault handling.
+ 		 * Done by resetting the delay for this fb_info to a very
+@@ -1012,7 +1015,8 @@ static int ufx_ops_ioctl(struct fb_info *info, unsigned int cmd,
+ 		if (info->fbdefio)
+ 			info->fbdefio->delay = UFX_DEFIO_WRITE_DISABLE;
+ 
+-		area = (struct dloarea *)arg;
++		if (copy_from_user(area, (u8 __user *)arg, sizeof(*area)))
++			return -EFAULT;
+ 
+ 		if (area->x < 0)
+ 			area->x = 0;
+diff --git a/fs/f2fs/data.c b/fs/f2fs/data.c
+index c863e27fd846b3..44f6be3ea11a70 100644
+--- a/fs/f2fs/data.c
++++ b/fs/f2fs/data.c
+@@ -358,14 +358,20 @@ static void f2fs_write_end_io(struct bio *bio)
+ 					page->index != nid_of_node(page));
+ 
+ 		dec_page_count(sbi, type);
++
++		/*
++		 * we should access sbi before end_page_writeback() to
++		 * avoid racing w/ kill_f2fs_super()
++		 */
++		if (type == F2FS_WB_CP_DATA && !get_pages(sbi, type) &&
++				wq_has_sleeper(&sbi->cp_wait))
++			wake_up(&sbi->cp_wait);
++
+ 		if (f2fs_in_warm_node_list(sbi, page))
+ 			f2fs_del_fsync_node_entry(sbi, page);
+ 		clear_page_private_gcing(page);
+ 		end_page_writeback(page);
+ 	}
+-	if (!get_pages(sbi, F2FS_WB_CP_DATA) &&
+-				wq_has_sleeper(&sbi->cp_wait))
+-		wake_up(&sbi->cp_wait);
+ 
+ 	bio_put(bio);
+ }
+@@ -3934,6 +3940,7 @@ static int check_swap_activate(struct swap_info_struct *sis,
+ 
+ 	while (cur_lblock < last_lblock && cur_lblock < sis->max) {
+ 		struct f2fs_map_blocks map;
++		bool last_extent = false;
+ retry:
+ 		cond_resched();
+ 
+@@ -3959,11 +3966,10 @@ retry:
+ 		pblock = map.m_pblk;
+ 		nr_pblocks = map.m_len;
+ 
+-		if ((pblock - SM_I(sbi)->main_blkaddr) % blks_per_sec ||
+-				nr_pblocks % blks_per_sec ||
+-				!f2fs_valid_pinned_area(sbi, pblock)) {
+-			bool last_extent = false;
+-
++		if (!last_extent &&
++			((pblock - SM_I(sbi)->main_blkaddr) % blks_per_sec ||
++			nr_pblocks % blks_per_sec ||
++			!f2fs_valid_pinned_area(sbi, pblock))) {
+ 			not_aligned++;
+ 
+ 			nr_pblocks = roundup(nr_pblocks, blks_per_sec);
+@@ -3984,8 +3990,8 @@ retry:
+ 				goto out;
+ 			}
+ 
+-			if (!last_extent)
+-				goto retry;
++			/* lookup block mapping info after block migration */
++			goto retry;
+ 		}
+ 
+ 		if (cur_lblock + nr_pblocks >= sis->max)
+diff --git a/fs/f2fs/f2fs.h b/fs/f2fs/f2fs.h
+index 9a4eabd11c7340..d7afa8bc0ff8e2 100644
+--- a/fs/f2fs/f2fs.h
++++ b/fs/f2fs/f2fs.h
+@@ -1567,6 +1567,7 @@ struct f2fs_sb_info {
+ 
+ #ifdef CONFIG_BLK_DEV_ZONED
+ 	unsigned int blocks_per_blkz;		/* F2FS blocks per zone */
++	unsigned int max_open_zones;		/* max open zone resources of the zoned device */
+ #endif
+ 
+ 	/* for node-related operations */
+diff --git a/fs/f2fs/gc.c b/fs/f2fs/gc.c
+index e9904158241460..8122135bb1fff0 100644
+--- a/fs/f2fs/gc.c
++++ b/fs/f2fs/gc.c
+@@ -1998,6 +1998,7 @@ int f2fs_gc_range(struct f2fs_sb_info *sbi,
+ 	unsigned int segno;
+ 	unsigned int gc_secs = dry_run_sections;
+ 
++	stat_inc_gc_call_count(sbi, FOREGROUND);
+ 	for (segno = start_seg; segno <= end_seg; segno += SEGS_PER_SEC(sbi)) {
+ 		struct gc_inode_list gc_list = {
+ 			.ilist = LIST_HEAD_INIT(gc_list.ilist),
+diff --git a/fs/f2fs/node.c b/fs/f2fs/node.c
+index 1b404937743cf3..133141f10d94da 100644
+--- a/fs/f2fs/node.c
++++ b/fs/f2fs/node.c
+@@ -1696,8 +1696,13 @@ static int __write_node_page(struct page *page, bool atomic, bool *submitted,
+ 		goto redirty_out;
+ 	}
+ 
+-	if (atomic && !test_opt(sbi, NOBARRIER) && !f2fs_sb_has_blkzoned(sbi))
+-		fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
++	if (atomic) {
++		if (!test_opt(sbi, NOBARRIER) && !f2fs_sb_has_blkzoned(sbi))
++			fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
++		if (IS_INODE(page))
++			set_dentry_mark(page,
++				f2fs_need_dentry_mark(sbi, ino_of_node(page)));
++	}
+ 
+ 	/* should add to global list before clearing PAGECACHE status */
+ 	if (f2fs_in_warm_node_list(sbi, page)) {
+@@ -1852,8 +1857,9 @@ continue_unlock:
+ 					if (is_inode_flag_set(inode,
+ 								FI_DIRTY_INODE))
+ 						f2fs_update_inode(inode, page);
+-					set_dentry_mark(page,
+-						f2fs_need_dentry_mark(sbi, ino));
++					if (!atomic)
++						set_dentry_mark(page,
++							f2fs_need_dentry_mark(sbi, ino));
+ 				}
+ 				/* may be written by other thread */
+ 				if (!PageDirty(page))
+diff --git a/fs/f2fs/super.c b/fs/f2fs/super.c
+index dd6cd014fefb03..9bd71d68cd95c2 100644
+--- a/fs/f2fs/super.c
++++ b/fs/f2fs/super.c
+@@ -2359,6 +2359,17 @@ static int f2fs_remount(struct super_block *sb, int *flags, char *data)
+ 	if (err)
+ 		goto restore_opts;
+ 
++#ifdef CONFIG_BLK_DEV_ZONED
++	if (f2fs_sb_has_blkzoned(sbi) &&
++		sbi->max_open_zones < F2FS_OPTION(sbi).active_logs) {
++		f2fs_err(sbi,
++			"zoned: max open zones %u is too small, need at least %u open zones",
++				 sbi->max_open_zones, F2FS_OPTION(sbi).active_logs);
++		err = -EINVAL;
++		goto restore_opts;
++	}
++#endif
++
+ 	/* flush outstanding errors before changing fs state */
+ 	flush_work(&sbi->s_error_work);
+ 
+@@ -3902,11 +3913,24 @@ static int init_blkz_info(struct f2fs_sb_info *sbi, int devi)
+ 	sector_t nr_sectors = bdev_nr_sectors(bdev);
+ 	struct f2fs_report_zones_args rep_zone_arg;
+ 	u64 zone_sectors;
++	unsigned int max_open_zones;
+ 	int ret;
+ 
+ 	if (!f2fs_sb_has_blkzoned(sbi))
+ 		return 0;
+ 
++	if (bdev_is_zoned(FDEV(devi).bdev)) {
++		max_open_zones = bdev_max_open_zones(bdev);
++		if (max_open_zones && (max_open_zones < sbi->max_open_zones))
++			sbi->max_open_zones = max_open_zones;
++		if (sbi->max_open_zones < F2FS_OPTION(sbi).active_logs) {
++			f2fs_err(sbi,
++				"zoned: max open zones %u is too small, need at least %u open zones",
++				sbi->max_open_zones, F2FS_OPTION(sbi).active_logs);
++			return -EINVAL;
++		}
++	}
++
+ 	zone_sectors = bdev_zone_sectors(bdev);
+ 	if (sbi->blocks_per_blkz && sbi->blocks_per_blkz !=
+ 				SECTOR_TO_BLOCK(zone_sectors))
+@@ -4188,6 +4212,9 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
+ 
+ 	logical_blksize = bdev_logical_block_size(sbi->sb->s_bdev);
+ 	sbi->aligned_blksize = true;
++#ifdef CONFIG_BLK_DEV_ZONED
++	sbi->max_open_zones = UINT_MAX;
++#endif
+ 
+ 	for (i = 0; i < max_devices; i++) {
+ 		if (i == 0)
+diff --git a/fs/f2fs/sysfs.c b/fs/f2fs/sysfs.c
+index c4b0661888a159..436bbf23f8e7c6 100644
+--- a/fs/f2fs/sysfs.c
++++ b/fs/f2fs/sysfs.c
+@@ -58,6 +58,7 @@ struct f2fs_attr {
+ 			 const char *buf, size_t len);
+ 	int struct_type;
+ 	int offset;
++	int size;
+ 	int id;
+ };
+ 
+@@ -285,11 +286,30 @@ static ssize_t main_blkaddr_show(struct f2fs_attr *a,
+ 			(unsigned long long)MAIN_BLKADDR(sbi));
+ }
+ 
++static ssize_t __sbi_show_value(struct f2fs_attr *a,
++		struct f2fs_sb_info *sbi, char *buf,
++		unsigned char *value)
++{
++	switch (a->size) {
++	case 1:
++		return sysfs_emit(buf, "%u\n", *(u8 *)value);
++	case 2:
++		return sysfs_emit(buf, "%u\n", *(u16 *)value);
++	case 4:
++		return sysfs_emit(buf, "%u\n", *(u32 *)value);
++	case 8:
++		return sysfs_emit(buf, "%llu\n", *(u64 *)value);
++	default:
++		f2fs_bug_on(sbi, 1);
++		return sysfs_emit(buf,
++				"show sysfs node value with wrong type\n");
++	}
++}
++
+ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
+ 			struct f2fs_sb_info *sbi, char *buf)
+ {
+ 	unsigned char *ptr = NULL;
+-	unsigned int *ui;
+ 
+ 	ptr = __struct_ptr(sbi, a->struct_type);
+ 	if (!ptr)
+@@ -372,9 +392,30 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
+ 				atomic_read(&sbi->cp_call_count[BACKGROUND]));
+ #endif
+ 
+-	ui = (unsigned int *)(ptr + a->offset);
++	return __sbi_show_value(a, sbi, buf, ptr + a->offset);
++}
+ 
+-	return sysfs_emit(buf, "%u\n", *ui);
++static void __sbi_store_value(struct f2fs_attr *a,
++			struct f2fs_sb_info *sbi,
++			unsigned char *ui, unsigned long value)
++{
++	switch (a->size) {
++	case 1:
++		*(u8 *)ui = value;
++		break;
++	case 2:
++		*(u16 *)ui = value;
++		break;
++	case 4:
++		*(u32 *)ui = value;
++		break;
++	case 8:
++		*(u64 *)ui = value;
++		break;
++	default:
++		f2fs_bug_on(sbi, 1);
++		f2fs_err(sbi, "store sysfs node value with wrong type");
++	}
+ }
+ 
+ static ssize_t __sbi_store(struct f2fs_attr *a,
+@@ -746,7 +787,7 @@ out:
+ 		return count;
+ 	}
+ 
+-	*ui = (unsigned int)t;
++	__sbi_store_value(a, sbi, ptr + a->offset, t);
+ 
+ 	return count;
+ }
+@@ -860,24 +901,27 @@ static struct f2fs_attr f2fs_attr_sb_##_name = {		\
+ 	.id	= F2FS_FEATURE_##_feat,				\
+ }
+ 
+-#define F2FS_ATTR_OFFSET(_struct_type, _name, _mode, _show, _store, _offset) \
++#define F2FS_ATTR_OFFSET(_struct_type, _name, _mode, _show, _store, _offset, _size) \
+ static struct f2fs_attr f2fs_attr_##_name = {			\
+ 	.attr = {.name = __stringify(_name), .mode = _mode },	\
+ 	.show	= _show,					\
+ 	.store	= _store,					\
+ 	.struct_type = _struct_type,				\
+-	.offset = _offset					\
++	.offset = _offset,					\
++	.size = _size						\
+ }
+ 
+ #define F2FS_RO_ATTR(struct_type, struct_name, name, elname)	\
+ 	F2FS_ATTR_OFFSET(struct_type, name, 0444,		\
+ 		f2fs_sbi_show, NULL,				\
+-		offsetof(struct struct_name, elname))
++		offsetof(struct struct_name, elname),		\
++		sizeof_field(struct struct_name, elname))
+ 
+ #define F2FS_RW_ATTR(struct_type, struct_name, name, elname)	\
+ 	F2FS_ATTR_OFFSET(struct_type, name, 0644,		\
+ 		f2fs_sbi_show, f2fs_sbi_store,			\
+-		offsetof(struct struct_name, elname))
++		offsetof(struct struct_name, elname),		\
++		sizeof_field(struct struct_name, elname))
+ 
+ #define F2FS_GENERAL_RO_ATTR(name) \
+ static struct f2fs_attr f2fs_attr_##name = __ATTR(name, 0444, name##_show, NULL)
+diff --git a/fs/romfs/super.c b/fs/romfs/super.c
+index b1bdfbc211c3c0..82975173dcb04e 100644
+--- a/fs/romfs/super.c
++++ b/fs/romfs/super.c
+@@ -467,7 +467,10 @@ static int romfs_fill_super(struct super_block *sb, struct fs_context *fc)
+ 
+ #ifdef CONFIG_BLOCK
+ 	if (!sb->s_mtd) {
+-		sb_set_blocksize(sb, ROMBSIZE);
++		if (!sb_set_blocksize(sb, ROMBSIZE)) {
++			errorf(fc, "romfs: unable to set blocksize\n");
++			return -EINVAL;
++		}
+ 	} else {
+ 		sb->s_blocksize = ROMBSIZE;
+ 		sb->s_blocksize_bits = blksize_bits(ROMBSIZE);
+diff --git a/include/asm-generic/tlb.h b/include/asm-generic/tlb.h
+index 129a3a75997659..f9eae152bd53a3 100644
+--- a/include/asm-generic/tlb.h
++++ b/include/asm-generic/tlb.h
+@@ -46,7 +46,8 @@
+  *
+  * The mmu_gather API consists of:
+  *
+- *  - tlb_gather_mmu() / tlb_gather_mmu_fullmm() / tlb_finish_mmu()
++ *  - tlb_gather_mmu() / tlb_gather_mmu_fullmm() / tlb_gather_mmu_vma() /
++ *    tlb_finish_mmu()
+  *
+  *    start and finish a mmu_gather
+  *
+@@ -337,6 +338,20 @@ struct mmu_gather {
+ 	unsigned int		vma_huge : 1;
+ 	unsigned int		vma_pfn  : 1;
+ 
++	/*
++	 * Did we unshare (unmap) any shared page tables? For now only
++	 * used for hugetlb PMD table sharing.
++	 */
++	unsigned int		unshared_tables : 1;
++
++	/*
++	 * Did we unshare any page tables such that they are now exclusive
++	 * and could get reused+modified by the new owner? When setting this
++	 * flag, "unshared_tables" will be set as well. For now only used
++	 * for hugetlb PMD table sharing.
++	 */
++	unsigned int		fully_unshared_tables : 1;
++
+ 	unsigned int		batch_count;
+ 
+ #ifndef CONFIG_MMU_GATHER_NO_GATHER
+@@ -373,6 +388,7 @@ static inline void __tlb_reset_range(struct mmu_gather *tlb)
+ 	tlb->cleared_pmds = 0;
+ 	tlb->cleared_puds = 0;
+ 	tlb->cleared_p4ds = 0;
++	tlb->unshared_tables = 0;
+ 	/*
+ 	 * Do not reset mmu_gather::vma_* fields here, we do not
+ 	 * call into tlb_start_vma() again to set them if there is an
+@@ -452,7 +468,7 @@ static inline void tlb_flush_mmu_tlbonly(struct mmu_gather *tlb)
+ 	 * these bits.
+ 	 */
+ 	if (!(tlb->freed_tables || tlb->cleared_ptes || tlb->cleared_pmds ||
+-	      tlb->cleared_puds || tlb->cleared_p4ds))
++	      tlb->cleared_puds || tlb->cleared_p4ds || tlb->unshared_tables))
+ 		return;
+ 
+ 	tlb_flush(tlb);
+@@ -718,6 +734,63 @@ static inline bool huge_pmd_needs_flush(pmd_t oldpmd, pmd_t newpmd)
+ }
+ #endif
+ 
++#ifdef CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING
++static inline void tlb_unshare_pmd_ptdesc(struct mmu_gather *tlb, struct ptdesc *pt,
++					  unsigned long addr)
++{
++	/*
++	 * The caller must make sure that concurrent unsharing + exclusive
++	 * reuse is impossible until tlb_flush_unshared_tables() was called.
++	 */
++	VM_WARN_ON_ONCE(!ptdesc_pmd_is_shared(pt));
++	ptdesc_pmd_pts_dec(pt);
++
++	/* Clearing a PUD pointing at a PMD table with PMD leaves. */
++	tlb_flush_pmd_range(tlb, addr & PUD_MASK, PUD_SIZE);
++
++	/*
++	 * If the page table is now exclusively owned, we fully unshared
++	 * a page table.
++	 */
++	if (!ptdesc_pmd_is_shared(pt))
++		tlb->fully_unshared_tables = true;
++	tlb->unshared_tables = true;
++}
++
++static inline void tlb_flush_unshared_tables(struct mmu_gather *tlb)
++{
++	/*
++	 * As soon as the caller drops locks to allow for reuse of
++	 * previously-shared tables, these tables could get modified and
++	 * even reused outside of hugetlb context, so we have to make sure that
++	 * any page table walkers (incl. TLB, GUP-fast) are aware of that
++	 * change.
++	 *
++	 * Even if we are not fully unsharing a PMD table, we must
++	 * flush the TLB for the unsharer now.
++	 */
++	if (tlb->unshared_tables)
++		tlb_flush_mmu_tlbonly(tlb);
++
++	/*
++	 * Similarly, we must make sure that concurrent GUP-fast will not
++	 * walk previously-shared page tables that are getting modified+reused
++	 * elsewhere. So broadcast an IPI to wait for any concurrent GUP-fast.
++	 *
++	 * We only perform this when we are the last sharer of a page table,
++	 * as the IPI will reach all CPUs: any GUP-fast.
++	 *
++	 * Note that on configs where tlb_remove_table_sync_one() is a NOP,
++	 * the expectation is that the tlb_flush_mmu_tlbonly() would have issued
++	 * required IPIs already for us.
++	 */
++	if (tlb->fully_unshared_tables) {
++		tlb_remove_table_sync_one();
++		tlb->fully_unshared_tables = false;
++	}
++}
++#endif /* CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING */
++
+ #endif /* CONFIG_MMU */
+ 
+ #endif /* _ASM_GENERIC__TLB_H */
+diff --git a/include/linux/hugetlb.h b/include/linux/hugetlb.h
+index 8b051b8c40345d..d3aa91007c90a1 100644
+--- a/include/linux/hugetlb.h
++++ b/include/linux/hugetlb.h
+@@ -241,8 +241,9 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
+ pte_t *huge_pte_offset(struct mm_struct *mm,
+ 		       unsigned long addr, unsigned long sz);
+ unsigned long hugetlb_mask_last_page(struct hstate *h);
+-int huge_pmd_unshare(struct mm_struct *mm, struct vm_area_struct *vma,
+-				unsigned long addr, pte_t *ptep);
++int huge_pmd_unshare(struct mmu_gather *tlb, struct vm_area_struct *vma,
++		unsigned long addr, pte_t *ptep);
++void huge_pmd_unshare_flush(struct mmu_gather *tlb, struct vm_area_struct *vma);
+ void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
+ 				unsigned long *start, unsigned long *end);
+ 
+@@ -304,13 +305,17 @@ static inline struct address_space *hugetlb_page_mapping_lock_write(
+ 	return NULL;
+ }
+ 
+-static inline int huge_pmd_unshare(struct mm_struct *mm,
+-					struct vm_area_struct *vma,
+-					unsigned long addr, pte_t *ptep)
++static inline int huge_pmd_unshare(struct mmu_gather *tlb,
++		struct vm_area_struct *vma, unsigned long addr, pte_t *ptep)
+ {
+ 	return 0;
+ }
+ 
++static inline void huge_pmd_unshare_flush(struct mmu_gather *tlb,
++		struct vm_area_struct *vma)
++{
++}
++
+ static inline void adjust_range_if_pmd_sharing_possible(
+ 				struct vm_area_struct *vma,
+ 				unsigned long *start, unsigned long *end)
+@@ -1247,7 +1252,7 @@ static inline __init void hugetlb_cma_reserve(int order)
+ #ifdef CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING
+ static inline bool hugetlb_pmd_shared(pte_t *pte)
+ {
+-	return page_count(virt_to_page(pte)) > 1;
++	return ptdesc_pmd_is_shared(virt_to_ptdesc(pte));
+ }
+ #else
+ static inline bool hugetlb_pmd_shared(pte_t *pte)
+diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
+index e77d4a5c0baced..ce3370823f9c7c 100644
+--- a/include/linux/mm_types.h
++++ b/include/linux/mm_types.h
+@@ -492,6 +492,11 @@ static inline int ptdesc_pmd_pts_count(struct ptdesc *ptdesc)
+ {
+ 	return atomic_read(&ptdesc->pt_share_count);
+ }
++
++static inline bool ptdesc_pmd_is_shared(struct ptdesc *ptdesc)
++{
++	return !!ptdesc_pmd_pts_count(ptdesc);
++}
+ #else
+ static inline void ptdesc_pmd_pts_init(struct ptdesc *ptdesc)
+ {
+@@ -1172,6 +1177,7 @@ static inline unsigned int mm_cid_size(void)
+ struct mmu_gather;
+ extern void tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm);
+ extern void tlb_gather_mmu_fullmm(struct mmu_gather *tlb, struct mm_struct *mm);
++void tlb_gather_mmu_vma(struct mmu_gather *tlb, struct vm_area_struct *vma);
+ extern void tlb_finish_mmu(struct mmu_gather *tlb);
+ 
+ struct vm_fault;
+diff --git a/include/net/ip_tunnels.h b/include/net/ip_tunnels.h
+index 3d36794cb1899a..1051af74285c58 100644
+--- a/include/net/ip_tunnels.h
++++ b/include/net/ip_tunnels.h
+@@ -362,11 +362,12 @@ static inline bool pskb_inet_may_pull(struct sk_buff *skb)
+ 
+ /* Variant of pskb_inet_may_pull().
+  */
+-static inline bool skb_vlan_inet_prepare(struct sk_buff *skb,
+-					 bool inner_proto_inherit)
++static inline enum skb_drop_reason
++skb_vlan_inet_prepare(struct sk_buff *skb, bool inner_proto_inherit)
+ {
+ 	int nhlen = 0, maclen = inner_proto_inherit ? 0 : ETH_HLEN;
+ 	__be16 type = skb->protocol;
++	enum skb_drop_reason reason;
+ 
+ 	/* Essentially this is skb_protocol(skb, true)
+ 	 * And we get MAC len.
+@@ -387,11 +388,13 @@ static inline bool skb_vlan_inet_prepare(struct sk_buff *skb,
+ 	/* For ETH_P_IPV6/ETH_P_IP we make sure to pull
+ 	 * a base network header in skb->head.
+ 	 */
+-	if (!pskb_may_pull(skb, maclen + nhlen))
+-		return false;
++	reason = pskb_may_pull_reason(skb, maclen + nhlen);
++	if (reason)
++		return reason;
+ 
+ 	skb_set_network_header(skb, maclen);
+-	return true;
++
++	return SKB_NOT_DROPPED_YET;
+ }
+ 
+ static inline int ip_encap_hlen(struct ip_tunnel_encap *e)
+diff --git a/kernel/cgroup/cpuset.c b/kernel/cgroup/cpuset.c
+index f61dde0497f397..3c466e74275167 100644
+--- a/kernel/cgroup/cpuset.c
++++ b/kernel/cgroup/cpuset.c
+@@ -486,7 +486,7 @@ static inline bool partition_is_populated(struct cpuset *cs,
+ 	    cs->attach_in_progress)
+ 		return true;
+ 	if (!excluded_child && !cs->nr_subparts_cpus)
+-		return cgroup_is_populated(cs->css.cgroup);
++		return cpuset_is_populated(cs);
+ 
+ 	rcu_read_lock();
+ 	cpuset_for_each_descendant_pre(cp, pos_css, cs) {
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 532a840a426646..aa0ef3bc4dd650 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -5090,18 +5090,13 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 			break;
+ 		}
+ 
+-		/*
+-		 * If the pagetables are shared don't copy or take references.
+-		 *
+-		 * dst_pte == src_pte is the common case of src/dest sharing.
+-		 * However, src could have 'unshared' and dst shares with
+-		 * another vma. So page_count of ptep page is checked instead
+-		 * to reliably determine whether pte is shared.
+-		 */
+-		if (page_count(virt_to_page(dst_pte)) > 1) {
++#ifdef CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING
++		/* If the pagetables are shared, there is nothing to do */
++		if (ptdesc_pmd_is_shared(virt_to_ptdesc(dst_pte))) {
+ 			addr |= last_addr_mask;
+ 			continue;
+ 		}
++#endif
+ 
+ 		dst_ptl = huge_pte_lock(h, dst, dst_pte);
+ 		src_ptl = huge_pte_lockptr(h, src, src_pte);
+@@ -5274,7 +5269,7 @@ int move_hugetlb_page_tables(struct vm_area_struct *vma,
+ 	unsigned long last_addr_mask;
+ 	pte_t *src_pte, *dst_pte;
+ 	struct mmu_notifier_range range;
+-	bool shared_pmd = false;
++	struct mmu_gather tlb;
+ 
+ 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, mm, old_addr,
+ 				old_end);
+@@ -5284,6 +5279,7 @@ int move_hugetlb_page_tables(struct vm_area_struct *vma,
+ 	 * range.
+ 	 */
+ 	flush_cache_range(vma, range.start, range.end);
++	tlb_gather_mmu_vma(&tlb, vma);
+ 
+ 	mmu_notifier_invalidate_range_start(&range);
+ 	last_addr_mask = hugetlb_mask_last_page(h);
+@@ -5300,8 +5296,7 @@ int move_hugetlb_page_tables(struct vm_area_struct *vma,
+ 		if (huge_pte_none(huge_ptep_get(src_pte)))
+ 			continue;
+ 
+-		if (huge_pmd_unshare(mm, vma, old_addr, src_pte)) {
+-			shared_pmd = true;
++		if (huge_pmd_unshare(&tlb, vma, old_addr, src_pte)) {
+ 			old_addr |= last_addr_mask;
+ 			new_addr |= last_addr_mask;
+ 			continue;
+@@ -5312,15 +5307,16 @@ int move_hugetlb_page_tables(struct vm_area_struct *vma,
+ 			break;
+ 
+ 		move_huge_pte(vma, old_addr, new_addr, src_pte, dst_pte, sz);
++		tlb_remove_huge_tlb_entry(h, &tlb, src_pte, old_addr);
+ 	}
+ 
+-	if (shared_pmd)
+-		flush_hugetlb_tlb_range(vma, range.start, range.end);
+-	else
+-		flush_hugetlb_tlb_range(vma, old_end - len, old_end);
++	tlb_flush_mmu_tlbonly(&tlb);
++	huge_pmd_unshare_flush(&tlb, vma);
++
+ 	mmu_notifier_invalidate_range_end(&range);
+ 	i_mmap_unlock_write(mapping);
+ 	hugetlb_vma_unlock_write(vma);
++	tlb_finish_mmu(&tlb);
+ 
+ 	return len + old_addr - old_end;
+ }
+@@ -5338,7 +5334,6 @@ void __unmap_hugepage_range(struct mmu_gather *tlb, struct vm_area_struct *vma,
+ 	struct hstate *h = hstate_vma(vma);
+ 	unsigned long sz = huge_page_size(h);
+ 	unsigned long last_addr_mask;
+-	bool force_flush = false;
+ 
+ 	WARN_ON(!is_vm_hugetlb_page(vma));
+ 	BUG_ON(start & ~huge_page_mask(h));
+@@ -5361,10 +5356,8 @@ void __unmap_hugepage_range(struct mmu_gather *tlb, struct vm_area_struct *vma,
+ 		}
+ 
+ 		ptl = huge_pte_lock(h, mm, ptep);
+-		if (huge_pmd_unshare(mm, vma, address, ptep)) {
++		if (huge_pmd_unshare(tlb, vma, address, ptep)) {
+ 			spin_unlock(ptl);
+-			tlb_flush_pmd_range(tlb, address & PUD_MASK, PUD_SIZE);
+-			force_flush = true;
+ 			address |= last_addr_mask;
+ 			continue;
+ 		}
+@@ -5439,21 +5432,7 @@ void __unmap_hugepage_range(struct mmu_gather *tlb, struct vm_area_struct *vma,
+ 	}
+ 	tlb_end_vma(tlb, vma);
+ 
+-	/*
+-	 * If we unshared PMDs, the TLB flush was not recorded in mmu_gather. We
+-	 * could defer the flush until now, since by holding i_mmap_rwsem we
+-	 * guaranteed that the last refernece would not be dropped. But we must
+-	 * do the flushing before we return, as otherwise i_mmap_rwsem will be
+-	 * dropped and the last reference to the shared PMDs page might be
+-	 * dropped as well.
+-	 *
+-	 * In theory we could defer the freeing of the PMD pages as well, but
+-	 * huge_pmd_unshare() relies on the exact page_count for the PMD page to
+-	 * detect sharing, so we cannot defer the release of the page either.
+-	 * Instead, do flush now.
+-	 */
+-	if (force_flush)
+-		tlb_flush_mmu_tlbonly(tlb);
++	huge_pmd_unshare_flush(tlb, vma);
+ }
+ 
+ void __hugetlb_zap_begin(struct vm_area_struct *vma,
+@@ -6585,11 +6564,11 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 	pte_t pte;
+ 	struct hstate *h = hstate_vma(vma);
+ 	long pages = 0, psize = huge_page_size(h);
+-	bool shared_pmd = false;
+ 	struct mmu_notifier_range range;
+ 	unsigned long last_addr_mask;
+ 	bool uffd_wp = cp_flags & MM_CP_UFFD_WP;
+ 	bool uffd_wp_resolve = cp_flags & MM_CP_UFFD_WP_RESOLVE;
++	struct mmu_gather tlb;
+ 
+ 	/*
+ 	 * In the case of shared PMDs, the area to flush could be beyond
+@@ -6602,6 +6581,7 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 
+ 	BUG_ON(address >= end);
+ 	flush_cache_range(vma, range.start, range.end);
++	tlb_gather_mmu_vma(&tlb, vma);
+ 
+ 	mmu_notifier_invalidate_range_start(&range);
+ 	hugetlb_vma_lock_write(vma);
+@@ -6626,7 +6606,7 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 			}
+ 		}
+ 		ptl = huge_pte_lock(h, mm, ptep);
+-		if (huge_pmd_unshare(mm, vma, address, ptep)) {
++		if (huge_pmd_unshare(&tlb, vma, address, ptep)) {
+ 			/*
+ 			 * When uffd-wp is enabled on the vma, unshare
+ 			 * shouldn't happen at all.  Warn about it if it
+@@ -6635,7 +6615,6 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 			WARN_ON_ONCE(uffd_wp || uffd_wp_resolve);
+ 			pages++;
+ 			spin_unlock(ptl);
+-			shared_pmd = true;
+ 			address |= last_addr_mask;
+ 			continue;
+ 		}
+@@ -6687,6 +6666,7 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 				pte = huge_pte_clear_uffd_wp(pte);
+ 			huge_ptep_modify_prot_commit(vma, address, ptep, old_pte, pte);
+ 			pages++;
++			tlb_remove_huge_tlb_entry(h, &tlb, ptep, address);
+ 		} else {
+ 			/* None pte */
+ 			if (unlikely(uffd_wp))
+@@ -6699,17 +6679,9 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 
+ 		cond_resched();
+ 	}
+-	/*
+-	 * Must flush TLB before releasing i_mmap_rwsem: x86's huge_pmd_unshare
+-	 * may have cleared our pud entry and done put_page on the page table:
+-	 * once we release i_mmap_rwsem, another task can do the final put_page
+-	 * and that page table be reused and filled with junk.  If we actually
+-	 * did unshare a page of pmds, flush the range corresponding to the pud.
+-	 */
+-	if (shared_pmd)
+-		flush_hugetlb_tlb_range(vma, range.start, range.end);
+-	else
+-		flush_hugetlb_tlb_range(vma, start, end);
++
++	tlb_flush_mmu_tlbonly(&tlb);
++	huge_pmd_unshare_flush(&tlb, vma);
+ 	/*
+ 	 * No need to call mmu_notifier_arch_invalidate_secondary_tlbs() we are
+ 	 * downgrading page table protection not changing it to point to a new
+@@ -6720,6 +6692,7 @@ long hugetlb_change_protection(struct vm_area_struct *vma,
+ 	i_mmap_unlock_write(vma->vm_file->f_mapping);
+ 	hugetlb_vma_unlock_write(vma);
+ 	mmu_notifier_invalidate_range_end(&range);
++	tlb_finish_mmu(&tlb);
+ 
+ 	return pages > 0 ? (pages << h->order) : pages;
+ }
+@@ -7057,18 +7030,27 @@ out:
+ 	return pte;
+ }
+ 
+-/*
+- * unmap huge page backed by shared pte.
++/**
++ * huge_pmd_unshare - Unmap a pmd table if it is shared by multiple users
++ * @tlb: the current mmu_gather.
++ * @vma: the vma covering the pmd table.
++ * @addr: the address we are trying to unshare.
++ * @ptep: pointer into the (pmd) page table.
+  *
+- * Called with page table lock held.
++ * Called with the page table lock held, the i_mmap_rwsem held in write mode
++ * and the hugetlb vma lock held in write mode.
+  *
+- * returns: 1 successfully unmapped a shared pte page
+- *	    0 the underlying pte page is not shared, or it is the last user
++ * Note: The caller must call huge_pmd_unshare_flush() before dropping the
++ * i_mmap_rwsem.
++ *
++ * Returns: 1 if it was a shared PMD table and it got unmapped, or 0 if it
++ *	    was not a shared PMD table.
+  */
+-int huge_pmd_unshare(struct mm_struct *mm, struct vm_area_struct *vma,
+-					unsigned long addr, pte_t *ptep)
++int huge_pmd_unshare(struct mmu_gather *tlb, struct vm_area_struct *vma,
++		unsigned long addr, pte_t *ptep)
+ {
+ 	unsigned long sz = huge_page_size(hstate_vma(vma));
++	struct mm_struct *mm = vma->vm_mm;
+ 	pgd_t *pgd = pgd_offset(mm, addr);
+ 	p4d_t *p4d = p4d_offset(pgd, addr);
+ 	pud_t *pud = pud_offset(p4d, addr);
+@@ -7077,22 +7059,40 @@ int huge_pmd_unshare(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	hugetlb_vma_assert_locked(vma);
+ 	if (sz != PMD_SIZE)
+ 		return 0;
+-	if (!ptdesc_pmd_pts_count(virt_to_ptdesc(ptep)))
++	if (!ptdesc_pmd_is_shared(virt_to_ptdesc(ptep)))
+ 		return 0;
+ 
+ 	pud_clear(pud);
+-	/*
+-	 * Once our caller drops the rmap lock, some other process might be
+-	 * using this page table as a normal, non-hugetlb page table.
+-	 * Wait for pending gup_fast() in other threads to finish before letting
+-	 * that happen.
+-	 */
+-	tlb_remove_table_sync_one();
+-	ptdesc_pmd_pts_dec(virt_to_ptdesc(ptep));
++
++	tlb_unshare_pmd_ptdesc(tlb, virt_to_ptdesc(ptep), addr);
++
+ 	mm_dec_nr_pmds(mm);
+ 	return 1;
+ }
+ 
++/*
++ * huge_pmd_unshare_flush - Complete a sequence of huge_pmd_unshare() calls
++ * @tlb: the current mmu_gather.
++ * @vma: the vma covering the pmd table.
++ *
++ * Perform necessary TLB flushes or IPI broadcasts to synchronize PMD table
++ * unsharing with concurrent page table walkers.
++ *
++ * This function must be called after a sequence of huge_pmd_unshare()
++ * calls while still holding the i_mmap_rwsem.
++ */
++void huge_pmd_unshare_flush(struct mmu_gather *tlb, struct vm_area_struct *vma)
++{
++	/*
++	 * We must synchronize page table unsharing such that nobody will
++	 * try reusing a previously-shared page table while it might still
++	 * be in use by previous sharers (TLB, GUP_fast).
++	 */
++	i_mmap_assert_write_locked(vma->vm_file->f_mapping);
++
++	tlb_flush_unshared_tables(tlb);
++}
++
+ #else /* !CONFIG_HUGETLB_PMD_PAGE_TABLE_SHARING */
+ 
+ pte_t *huge_pmd_share(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -7101,12 +7101,16 @@ pte_t *huge_pmd_share(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	return NULL;
+ }
+ 
+-int huge_pmd_unshare(struct mm_struct *mm, struct vm_area_struct *vma,
+-				unsigned long addr, pte_t *ptep)
++int huge_pmd_unshare(struct mmu_gather *tlb, struct vm_area_struct *vma,
++		unsigned long addr, pte_t *ptep)
+ {
+ 	return 0;
+ }
+ 
++void huge_pmd_unshare_flush(struct mmu_gather *tlb, struct vm_area_struct *vma)
++{
++}
++
+ void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
+ 				unsigned long *start, unsigned long *end)
+ {
+@@ -7339,6 +7343,7 @@ static void hugetlb_unshare_pmds(struct vm_area_struct *vma,
+ 	unsigned long sz = huge_page_size(h);
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	struct mmu_notifier_range range;
++	struct mmu_gather tlb;
+ 	unsigned long address;
+ 	spinlock_t *ptl;
+ 	pte_t *ptep;
+@@ -7350,6 +7355,8 @@ static void hugetlb_unshare_pmds(struct vm_area_struct *vma,
+ 		return;
+ 
+ 	flush_cache_range(vma, start, end);
++	tlb_gather_mmu_vma(&tlb, vma);
++
+ 	/*
+ 	 * No need to call adjust_range_if_pmd_sharing_possible(), because
+ 	 * we have already done the PUD_SIZE alignment.
+@@ -7368,10 +7375,10 @@ static void hugetlb_unshare_pmds(struct vm_area_struct *vma,
+ 		if (!ptep)
+ 			continue;
+ 		ptl = huge_pte_lock(h, mm, ptep);
+-		huge_pmd_unshare(mm, vma, address, ptep);
++		huge_pmd_unshare(&tlb, vma, address, ptep);
+ 		spin_unlock(ptl);
+ 	}
+-	flush_hugetlb_tlb_range(vma, start, end);
++	huge_pmd_unshare_flush(&tlb, vma);
+ 	if (take_locks) {
+ 		i_mmap_unlock_write(vma->vm_file->f_mapping);
+ 		hugetlb_vma_unlock_write(vma);
+@@ -7381,6 +7388,7 @@ static void hugetlb_unshare_pmds(struct vm_area_struct *vma,
+ 	 * Documentation/mm/mmu_notifier.rst.
+ 	 */
+ 	mmu_notifier_invalidate_range_end(&range);
++	tlb_finish_mmu(&tlb);
+ }
+ 
+ /*
+diff --git a/mm/mmu_gather.c b/mm/mmu_gather.c
+index 4f559f4ddd2171..156c4d41805bd3 100644
+--- a/mm/mmu_gather.c
++++ b/mm/mmu_gather.c
+@@ -9,6 +9,7 @@
+ #include <linux/smp.h>
+ #include <linux/swap.h>
+ #include <linux/rmap.h>
++#include <linux/hugetlb.h>
+ 
+ #include <asm/pgalloc.h>
+ #include <asm/tlb.h>
+@@ -321,6 +322,7 @@ static void __tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
+ 	tlb->page_size = 0;
+ #endif
+ 
++	tlb->fully_unshared_tables = 0;
+ 	__tlb_reset_range(tlb);
+ 	inc_tlb_flush_pending(tlb->mm);
+ }
+@@ -354,6 +356,31 @@ void tlb_gather_mmu_fullmm(struct mmu_gather *tlb, struct mm_struct *mm)
+ 	__tlb_gather_mmu(tlb, mm, true);
+ }
+ 
++/**
++ * tlb_gather_mmu_vma - initialize an mmu_gather structure for operating on a
++ *			single VMA
++ * @tlb: the mmu_gather structure to initialize
++ * @vma: the vm_area_struct
++ *
++ * Called to initialize an (on-stack) mmu_gather structure for operating on
++ * a single VMA. In contrast to tlb_gather_mmu(), calling this function will
++ * not require another call to tlb_start_vma(). In contrast to tlb_start_vma(),
++ * this function will *not* call flush_cache_range().
++ *
++ * For hugetlb VMAs, this function will also initialize the mmu_gather
++ * page_size accordingly, not requiring a separate call to
++ * tlb_change_page_size().
++ *
++ */
++void tlb_gather_mmu_vma(struct mmu_gather *tlb, struct vm_area_struct *vma)
++{
++	tlb_gather_mmu(tlb, vma->vm_mm);
++	tlb_update_vma_flags(tlb, vma);
++	if (is_vm_hugetlb_page(vma))
++		/* All entries have the same size. */
++		tlb_change_page_size(tlb, huge_page_size(hstate_vma(vma)));
++}
++
+ /**
+  * tlb_finish_mmu - finish an mmu_gather structure
+  * @tlb: the mmu_gather structure to finish
+@@ -363,6 +390,12 @@ void tlb_gather_mmu_fullmm(struct mmu_gather *tlb, struct mm_struct *mm)
+  */
+ void tlb_finish_mmu(struct mmu_gather *tlb)
+ {
++	/*
++	 * We expect an earlier huge_pmd_unshare_flush() call to sort this out,
++	 * due to complicated locking requirements with page table unsharing.
++	 */
++	VM_WARN_ON_ONCE(tlb->fully_unshared_tables);
++
+ 	/*
+ 	 * If there are parallel threads are doing PTE changes on same range
+ 	 * under non-exclusive lock (e.g., mmap_lock read-side) but defer TLB
+diff --git a/mm/rmap.c b/mm/rmap.c
+index b511dd811c30c7..0a88928c410a01 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -76,7 +76,7 @@
+ #include <linux/userfaultfd_k.h>
+ #include <linux/mm_inline.h>
+ 
+-#include <asm/tlbflush.h>
++#include <asm/tlb.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/tlb.h>
+@@ -1568,16 +1568,20 @@ static bool try_to_unmap_one(struct folio *folio, struct vm_area_struct *vma,
+ 			 * if unsuccessful.
+ 			 */
+ 			if (!anon) {
++				struct mmu_gather tlb;
++
+ 				VM_BUG_ON(!(flags & TTU_RMAP_LOCKED));
+ 				if (!hugetlb_vma_trylock_write(vma)) {
+ 					page_vma_mapped_walk_done(&pvmw);
+ 					ret = false;
+ 					break;
+ 				}
+-				if (huge_pmd_unshare(mm, vma, address, pvmw.pte)) {
++
++				tlb_gather_mmu_vma(&tlb, vma);
++				if (huge_pmd_unshare(&tlb, vma, address, pvmw.pte)) {
+ 					hugetlb_vma_unlock_write(vma);
+-					flush_tlb_range(vma,
+-						range.start, range.end);
++					huge_pmd_unshare_flush(&tlb, vma);
++					tlb_finish_mmu(&tlb);
+ 					/*
+ 					 * The PMD table was unmapped,
+ 					 * consequently unmapping the folio.
+@@ -1586,6 +1590,7 @@ static bool try_to_unmap_one(struct folio *folio, struct vm_area_struct *vma,
+ 					break;
+ 				}
+ 				hugetlb_vma_unlock_write(vma);
++				tlb_finish_mmu(&tlb);
+ 			}
+ 			pteval = huge_ptep_clear_flush(vma, address, pvmw.pte);
+ 		} else {
+@@ -1927,17 +1932,20 @@ static bool try_to_migrate_one(struct folio *folio, struct vm_area_struct *vma,
+ 			 * fail if unsuccessful.
+ 			 */
+ 			if (!anon) {
++				struct mmu_gather tlb;
++
+ 				VM_BUG_ON(!(flags & TTU_RMAP_LOCKED));
+ 				if (!hugetlb_vma_trylock_write(vma)) {
+ 					page_vma_mapped_walk_done(&pvmw);
+ 					ret = false;
+ 					break;
+ 				}
+-				if (huge_pmd_unshare(mm, vma, address, pvmw.pte)) {
+-					hugetlb_vma_unlock_write(vma);
+-					flush_tlb_range(vma,
+-						range.start, range.end);
+ 
++				tlb_gather_mmu_vma(&tlb, vma);
++				if (huge_pmd_unshare(&tlb, vma, address, pvmw.pte)) {
++					hugetlb_vma_unlock_write(vma);
++					huge_pmd_unshare_flush(&tlb, vma);
++					tlb_finish_mmu(&tlb);
+ 					/*
+ 					 * The PMD table was unmapped,
+ 					 * consequently unmapping the folio.
+@@ -1946,6 +1954,7 @@ static bool try_to_migrate_one(struct folio *folio, struct vm_area_struct *vma,
+ 					break;
+ 				}
+ 				hugetlb_vma_unlock_write(vma);
++				tlb_finish_mmu(&tlb);
+ 			}
+ 			/* Nuke the hugetlb page table entry */
+ 			pteval = huge_ptep_clear_flush(vma, address, pvmw.pte);
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index c60358a4a75728..5b836a91135cc8 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -10650,6 +10650,7 @@ static const struct hda_quirk alc269_fixup_tbl[] = {
+ 	SND_PCI_QUIRK(0x1ee7, 0x2078, "HONOR BRB-X M1010", ALC2XX_FIXUP_HEADSET_MIC),
+ 	SND_PCI_QUIRK(0x1f66, 0x0105, "Ayaneo Portable Game Player", ALC287_FIXUP_CS35L41_I2C_2),
+ 	SND_PCI_QUIRK(0x2014, 0x800a, "Positivo ARN50", ALC269_FIXUP_LIMIT_INT_MIC_BOOST),
++	SND_PCI_QUIRK(0x2039, 0x0001, "Inspur S14-G1", ALC295_FIXUP_CHROME_BOOK),
+ 	SND_PCI_QUIRK(0x2782, 0x0214, "VAIO VJFE-CL", ALC269_FIXUP_LIMIT_INT_MIC_BOOST),
+ 	SND_PCI_QUIRK(0x2782, 0x0228, "Infinix ZERO BOOK 13", ALC269VB_FIXUP_INFINIX_ZERO_BOOK_13),
+ 	SND_PCI_QUIRK(0x2782, 0x0232, "CHUWI CoreBook XPro", ALC269VB_FIXUP_CHUWI_COREBOOK_XPRO),
+@@ -11102,6 +11103,10 @@ static const struct snd_hda_pin_quirk alc269_pin_fixup_tbl[] = {
+ 		{0x12, 0x90a60140},
+ 		{0x19, 0x04a11030},
+ 		{0x21, 0x04211020}),
++	SND_HDA_PIN_QUIRK(0x10ec0274, 0x1d05, "TongFang", ALC274_FIXUP_HP_HEADSET_MIC,
++		{0x17, 0x90170110},
++		{0x19, 0x03a11030},
++		{0x21, 0x03211020}),
+ 	SND_HDA_PIN_QUIRK(0x10ec0282, 0x1025, "Acer", ALC282_FIXUP_ACER_DISABLE_LINEOUT,
+ 		ALC282_STANDARD_PINS,
+ 		{0x12, 0x90a609c0},
+diff --git a/sound/soc/amd/yc/acp6x-mach.c b/sound/soc/amd/yc/acp6x-mach.c
+index b0456be5d921a3..b6068d289f5f9d 100644
+--- a/sound/soc/amd/yc/acp6x-mach.c
++++ b/sound/soc/amd/yc/acp6x-mach.c
+@@ -535,6 +535,13 @@ static const struct dmi_system_id yc_acp_quirk_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "15NBC1011"),
+ 		}
+ 	},
++	{
++		.driver_data = &acp6x_card,
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ASUS EXPERTBOOK PM1503CDA"),
++		}
++	},
+ 	{
+ 		.driver_data = &acp6x_card,
+ 		.matches = {
+@@ -626,6 +633,13 @@ static const struct dmi_system_id yc_acp_quirk_table[] = {
+ 			DMI_MATCH(DMI_BOARD_NAME, "8BD6"),
+ 		}
+ 	},
++	{
++		.driver_data = &acp6x_card,
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "HP"),
++			DMI_MATCH(DMI_BOARD_NAME, "8EE4"),
++		}
++	},
+ 	{
+ 		.driver_data = &acp6x_card,
+ 		.matches = {
+diff --git a/sound/soc/codecs/cs35l45.c b/sound/soc/codecs/cs35l45.c
+index 7e439c778c6b49..11e28c340a709a 100644
+--- a/sound/soc/codecs/cs35l45.c
++++ b/sound/soc/codecs/cs35l45.c
+@@ -316,7 +316,7 @@ static const struct snd_soc_dapm_widget cs35l45_dapm_widgets[] = {
+ 	SND_SOC_DAPM_AIF_OUT("ASP_TX2", NULL, 1, CS35L45_ASP_ENABLES1, CS35L45_ASP_TX2_EN_SHIFT, 0),
+ 	SND_SOC_DAPM_AIF_OUT("ASP_TX3", NULL, 2, CS35L45_ASP_ENABLES1, CS35L45_ASP_TX3_EN_SHIFT, 0),
+ 	SND_SOC_DAPM_AIF_OUT("ASP_TX4", NULL, 3, CS35L45_ASP_ENABLES1, CS35L45_ASP_TX4_EN_SHIFT, 0),
+-	SND_SOC_DAPM_AIF_OUT("ASP_TX5", NULL, 3, CS35L45_ASP_ENABLES1, CS35L45_ASP_TX5_EN_SHIFT, 0),
++	SND_SOC_DAPM_AIF_OUT("ASP_TX5", NULL, 4, CS35L45_ASP_ENABLES1, CS35L45_ASP_TX5_EN_SHIFT, 0),
+ 
+ 	SND_SOC_DAPM_MUX("ASP_TX1 Source", SND_SOC_NOPM, 0, 0, &cs35l45_asp_muxes[0]),
+ 	SND_SOC_DAPM_MUX("ASP_TX2 Source", SND_SOC_NOPM, 0, 0, &cs35l45_asp_muxes[1]),
+diff --git a/sound/soc/codecs/cs42l43-jack.c b/sound/soc/codecs/cs42l43-jack.c
+index 6d8455c1bee6d8..f58d55d77693f2 100644
+--- a/sound/soc/codecs/cs42l43-jack.c
++++ b/sound/soc/codecs/cs42l43-jack.c
+@@ -496,7 +496,23 @@ void cs42l43_bias_sense_timeout(struct work_struct *work)
+ 	pm_runtime_put_autosuspend(priv->dev);
+ }
+ 
+-static void cs42l43_start_load_detect(struct cs42l43_codec *priv)
++static const struct reg_sequence cs42l43_3pole_patch[] = {
++	{ 0x4000,	0x00000055 },
++	{ 0x4000,	0x000000AA },
++	{ 0x17420,	0x8500F300 },
++	{ 0x17424,	0x36003E00 },
++	{ 0x4000,	0x00000000 },
++};
++
++static const struct reg_sequence cs42l43_4pole_patch[] = {
++	{ 0x4000,	0x00000055 },
++	{ 0x4000,	0x000000AA },
++	{ 0x17420,	0x7800E600 },
++	{ 0x17424,	0x36003800 },
++	{ 0x4000,	0x00000000 },
++};
++
++static void cs42l43_start_load_detect(struct cs42l43_codec *priv, bool mic)
+ {
+ 	struct cs42l43 *cs42l43 = priv->core;
+ 
+@@ -520,6 +536,15 @@ static void cs42l43_start_load_detect(struct cs42l43_codec *priv)
+ 			dev_err(priv->dev, "Load detect HP power down timed out\n");
+ 	}
+ 
++	if (mic)
++		regmap_multi_reg_write_bypassed(cs42l43->regmap,
++						cs42l43_4pole_patch,
++						ARRAY_SIZE(cs42l43_4pole_patch));
++	else
++		regmap_multi_reg_write_bypassed(cs42l43->regmap,
++						cs42l43_3pole_patch,
++						ARRAY_SIZE(cs42l43_3pole_patch));
++
+ 	regmap_update_bits(cs42l43->regmap, CS42L43_BLOCK_EN3,
+ 			   CS42L43_ADC1_EN_MASK | CS42L43_ADC2_EN_MASK, 0);
+ 	regmap_update_bits(cs42l43->regmap, CS42L43_DACCNFG2, CS42L43_HP_HPF_EN_MASK, 0);
+@@ -598,7 +623,7 @@ static int cs42l43_run_load_detect(struct cs42l43_codec *priv, bool mic)
+ 
+ 	reinit_completion(&priv->load_detect);
+ 
+-	cs42l43_start_load_detect(priv);
++	cs42l43_start_load_detect(priv, mic);
+ 	time_left = wait_for_completion_timeout(&priv->load_detect,
+ 						msecs_to_jiffies(CS42L43_LOAD_TIMEOUT_MS));
+ 	cs42l43_stop_load_detect(priv);
+@@ -622,11 +647,11 @@ static int cs42l43_run_load_detect(struct cs42l43_codec *priv, bool mic)
+ 	}
+ 
+ 	switch (val & CS42L43_AMP3_RES_DET_MASK) {
+-	case 0x0: // low impedance
+-	case 0x1: // high impedance
++	case 0x0: // < 22 Ohm impedance
++	case 0x1: // < 150 Ohm impedance
++	case 0x2: // < 1000 Ohm impedance
+ 		return CS42L43_JACK_HEADPHONE;
+-	case 0x2: // lineout
+-	case 0x3: // Open circuit
++	case 0x3: // > 1000 Ohm impedance
+ 		return CS42L43_JACK_LINEOUT;
+ 	default:
+ 		return -EINVAL;
+diff --git a/sound/soc/fsl/fsl_xcvr.c b/sound/soc/fsl/fsl_xcvr.c
+index 90a0a24c05d845..3a5ab8b5367289 100644
+--- a/sound/soc/fsl/fsl_xcvr.c
++++ b/sound/soc/fsl/fsl_xcvr.c
+@@ -206,10 +206,13 @@ static int fsl_xcvr_mode_put(struct snd_kcontrol *kcontrol,
+ 
+ 	xcvr->mode = snd_soc_enum_item_to_val(e, item[0]);
+ 
++	down_read(&card->snd_card->controls_rwsem);
+ 	fsl_xcvr_activate_ctl(dai, fsl_xcvr_arc_mode_kctl.name,
+ 			      (xcvr->mode == FSL_XCVR_MODE_ARC));
+ 	fsl_xcvr_activate_ctl(dai, fsl_xcvr_earc_capds_kctl.name,
+ 			      (xcvr->mode == FSL_XCVR_MODE_EARC));
++	up_read(&card->snd_card->controls_rwsem);
++
+ 	/* Allow playback for SPDIF only */
+ 	rtd = snd_soc_get_pcm_runtime(card, card->dai_link);
+ 	rtd->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream_count =
+diff --git a/sound/soc/intel/boards/sof_es8336.c b/sound/soc/intel/boards/sof_es8336.c
+index c9d9381c76796f..02b74ab62ff585 100644
+--- a/sound/soc/intel/boards/sof_es8336.c
++++ b/sound/soc/intel/boards/sof_es8336.c
+@@ -332,6 +332,15 @@ static int sof_es8336_quirk_cb(const struct dmi_system_id *id)
+  * if the topology file is modified as well.
+  */
+ static const struct dmi_system_id sof_es8336_quirk_table[] = {
++	{
++		.callback = sof_es8336_quirk_cb,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HUAWEI"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "BOD-WXX9"),
++		},
++		.driver_data = (void *)(SOF_ES8336_HEADPHONE_GPIO |
++					SOF_ES8336_ENABLE_DMIC)
++	},
+ 	{
+ 		.callback = sof_es8336_quirk_cb,
+ 		.matches = {

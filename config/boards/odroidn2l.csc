@@ -3,6 +3,7 @@ BOARD_NAME="Odroid N2L"
 BOARD_VENDOR="hardkernel"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER=""
+INTRODUCED="2024"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost

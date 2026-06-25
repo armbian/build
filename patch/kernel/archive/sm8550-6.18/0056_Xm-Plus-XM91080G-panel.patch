@@ -1,0 +1,444 @@
+From d8b86c47b60709049b32ef72a96eb21727e1facc Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Mon, 27 Oct 2025 16:49:38 +0800
+Subject: [PATCH] drm/panel: Add panel driver for Xm-Plus XM91080G based panels
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/gpu/drm/panel/Kconfig              |  10 +
+ drivers/gpu/drm/panel/Makefile             |   1 +
+ drivers/gpu/drm/panel/panel-boe-xm91080g.c | 388 +++++++++++++++++++++
+ 3 files changed, 399 insertions(+)
+ create mode 100644 drivers/gpu/drm/panel/panel-boe-xm91080g.c
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index c667f5e4424f..3bcf710414dd 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -105,6 +105,16 @@ config DRM_PANEL_BOE_TV101WUM_LL2
+ 	  Say Y here if you want to support for BOE TV101WUM-LL2
+ 	  WUXGA PANEL DSI Video Mode panel
+ 
++config DRM_PANEL_BOE_XM91080G
++	tristate "Xm-Plus XM91080G-based panels"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	select DRM_KMS_HELPER
++	help
++	  Say Y if you want to enable support for panels based on the
++	  Xm-Plus XM91080G controller.
++
+ config DRM_PANEL_EBBG_FT8719
+ 	tristate "EBBG FT8719 panel driver"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 5306d33caead..4b64459f88b5 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -9,6 +9,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_TD4320) += panel-boe-td4320.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TH101MB31UIG002_28A) += panel-boe-th101mb31ig002-28a.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_LL2) += panel-boe-tv101wum-ll2.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
++obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
+ obj-$(CONFIG_DRM_PANEL_DSI_CM) += panel-dsi-cm.o
+ obj-$(CONFIG_DRM_PANEL_LVDS) += panel-lvds.o
+ obj-$(CONFIG_DRM_PANEL_SIMPLE) += panel-simple.o
+diff --git a/drivers/gpu/drm/panel/panel-boe-xm91080g.c b/drivers/gpu/drm/panel/panel-boe-xm91080g.c
+new file mode 100644
+index 000000000000..bd8e0f8562c8
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-boe-xm91080g.c
+@@ -0,0 +1,388 @@
++/*
++ * Xm-Plus XM91080G Driver IC panels driver
++ *
++ * Copyright (c) 2025 Teguh Sobirin <teguh@sobir.in>
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct xm91080g {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct regulator_bulk_data *supplies;
++	struct gpio_desc *reset_gpio;
++    enum drm_panel_orientation orientation;
++};
++
++static const struct regulator_bulk_data xm91080g_supplies[] = {
++	{ .supply = "vdd" },
++	{ .supply = "vddio" },
++	{ .supply = "vci" },
++	{ .supply = "disp" },
++	{ .supply = "blvdd" },
++};
++
++static inline struct xm91080g *to_xm91080g(struct drm_panel *panel)
++{
++	return container_of(panel, struct xm91080g, panel);
++}
++
++static void xm91080g_reset(struct xm91080g *ctx)
++{
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(50);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	usleep_range(1000, 2000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++}
++
++static int xm91080g_on(struct xm91080g *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xff, 0x10, 0x80, 0x01);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xff, 0x10, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x81);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb2,
++					 0xa0, 0x00, 0x14, 0x00, 0x14);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x86);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb2,
++					 0x04, 0x06, 0x04, 0x04, 0x23, 0x04);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb4,
++					 0x18, 0x0b, 0x07, 0x87, 0x0f, 0x00,
++					 0x00, 0x02, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb4,
++					 0x18, 0x0a, 0x07, 0x88, 0x0f, 0x00,
++					 0x00, 0x02, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb4,
++					 0x18, 0x09, 0x07, 0x89, 0x0f, 0x00,
++					 0x00, 0x02, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xb0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb4,
++					 0x18, 0x08, 0x07, 0x8a, 0x0f, 0x00,
++					 0x00, 0x02, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6,
++					 0x83, 0x02, 0x00, 0x00, 0x82, 0x02,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xbc,
++					 0x00, 0x00, 0x0e, 0x26, 0x25, 0x02,
++					 0x1d, 0x00, 0x08, 0x06, 0x1f, 0x20,
++					 0x21, 0x00, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xbc,
++					 0x00, 0x00, 0x0d, 0x26, 0x25, 0x02,
++					 0x1d, 0x00, 0x07, 0x05, 0x1f, 0x20,
++					 0x21, 0x00, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xbc,
++					 0x00, 0x00, 0x0d, 0x25, 0x26, 0x02,
++					 0x1d, 0x00, 0x05, 0x07, 0x1f, 0x20,
++					 0x21, 0x00, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xb0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xbc,
++					 0x00, 0x00, 0x0e, 0x25, 0x26, 0x02,
++					 0x1d, 0x00, 0x06, 0x08, 0x1f, 0x20,
++					 0x21, 0x00, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9,
++					 0xc0, 0xc0, 0xe4, 0xe4, 0xe4, 0xea,
++					 0xe6, 0xc0, 0xe4, 0xe4, 0x54, 0xe4,
++					 0xe4, 0xc0, 0xc0, 0xc0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xb0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9,
++					 0xc0, 0xc0, 0xe4, 0xe4, 0xe4, 0xea,
++					 0xe6, 0xc0, 0xe4, 0xe4, 0x54, 0xe4,
++					 0xe4, 0xc0, 0xc0, 0xc0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9,
++					 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++					 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++					 0xff, 0xff, 0xff, 0xff);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb9,
++					 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++					 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
++					 0xff, 0xff, 0xff, 0xff);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xba,
++					 0x0a, 0xaa, 0xaa, 0x80, 0x0a, 0xaa,
++					 0xaa, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xd0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6,
++					 0x81, 0x00, 0x02, 0x02);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xe0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xb6,
++					 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
++					 0x01, 0x01, 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa5);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xc0, 0x20);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa5, 0x20);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xf0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa4, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xab, 0xa8, 0x94);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xa0);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa4, 0x2f, 0x2f);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd4,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd5,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd6,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd7,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd8,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x80);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xd9,
++					 0x03, 0x07, 0x0f, 0x18, 0x1f, 0x23,
++					 0x28, 0x2c, 0x30, 0x3c, 0x44, 0x53,
++					 0x5e, 0x6f, 0x7e, 0x7e, 0x8f, 0xa2,
++					 0xaf, 0xbe, 0xc8, 0xd4, 0xd8, 0xdc,
++					 0xe1, 0xe5, 0xea, 0xf1, 0xfb, 0xff,
++					 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
++					 0x00, 0x00);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x9c);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa6, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0xc2);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa6, 0x08);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x86);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa5, 0x19);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x00, 0x90);
++	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xa3,
++					 0x04, 0x04, 0x01, 0x05, 0x06, 0x00);
++
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 70);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++
++	return dsi_ctx.accum_err;
++}
++
++static int xm91080g_off(struct xm91080g *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 50);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	return dsi_ctx.accum_err;
++}
++
++static int xm91080g_prepare(struct drm_panel *panel)
++{
++	struct xm91080g *ctx = to_xm91080g(panel);
++	struct device *dev = &ctx->dsi->dev;
++	int ret;
++
++    ret = regulator_bulk_enable(ARRAY_SIZE(xm91080g_supplies), ctx->supplies);
++    if (ret < 0) {
++        dev_err(dev, "Failed to enable regulators: %d\n", ret);
++        return ret;
++    }
++
++	xm91080g_reset(ctx);
++
++	ret = xm91080g_on(ctx);
++	if (ret < 0) {
++		dev_err(dev, "Failed to initialize panel: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++        regulator_bulk_disable(ARRAY_SIZE(xm91080g_supplies), ctx->supplies);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int xm91080g_unprepare(struct drm_panel *panel)
++{
++	struct xm91080g *ctx = to_xm91080g(panel);
++	struct device *dev = &ctx->dsi->dev;
++	int ret;
++
++	ret = xm91080g_off(ctx);
++	if (ret < 0)
++		dev_err(dev, "Failed to un-initialize panel: %d\n", ret);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++
++    regulator_bulk_disable(ARRAY_SIZE(xm91080g_supplies), ctx->supplies);
++
++	return 0;
++}
++
++static const struct drm_display_mode xm91080g_mode = {
++	.clock = (1080 + 24 + 4 + 16) * (1920 + 18 + 2 + 16) * 60 / 1000,
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 24,
++	.hsync_end = 1080 + 24 + 4,
++	.htotal = 1080 + 24 + 4 + 16,
++	.vdisplay = 1920,
++	.vsync_start = 1920 + 18,
++	.vsync_end = 1920 + 18 + 2,
++	.vtotal = 1920 + 18 + 2 + 16,
++	.width_mm = 61,
++	.height_mm = 110,
++	.type = DRM_MODE_TYPE_DRIVER,
++};
++
++static int xm91080g_get_modes(struct drm_panel *panel,
++			     struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &xm91080g_mode);
++}
++
++static enum drm_panel_orientation xm91080g_get_orientation(struct drm_panel *panel)
++{
++	struct xm91080g *ctx = to_xm91080g(panel);
++
++	return ctx->orientation;
++}
++
++static const struct drm_panel_funcs xm91080g_panel_funcs = {
++	.prepare = xm91080g_prepare,
++	.unprepare = xm91080g_unprepare,
++	.get_modes = xm91080g_get_modes,
++    .get_orientation = xm91080g_get_orientation,
++};
++
++static int xm91080g_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct xm91080g *ctx;
++	int ret;
++
++	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(xm91080g_supplies),
++		xm91080g_supplies, &ctx->supplies);
++	if (ret < 0){
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++	}
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST;
++
++	drm_panel_init(&ctx->panel, dev, &xm91080g_panel_funcs,
++		       DRM_MODE_CONNECTOR_DSI);
++
++    ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++    if (ret < 0) {
++        dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
++        return ret;
++    }
++
++	ctx->panel.prepare_prev_first = true;
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "Failed to attach to DSI host\n");
++	}
++
++	return 0;
++}
++
++static void xm91080g_remove(struct mipi_dsi_device *dsi)
++{
++	struct xm91080g *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id xm91080g_of_match[] = {
++	{ .compatible = "boe,xm91080g" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, xm91080g_of_match);
++
++static struct mipi_dsi_driver xm91080g_driver = {
++	.probe = xm91080g_probe,
++	.remove = xm91080g_remove,
++	.driver = {
++		.name = "panel-xm91080g",
++		.of_match_table = xm91080g_of_match,
++	},
++};
++module_mipi_dsi_driver(xm91080g_driver);
++
++MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
++MODULE_DESCRIPTION("DRM driver for Xm-Plus XM91080G based MIPI DSI panels");
++MODULE_LICENSE("GPL");
+\ No newline at end of file
+-- 
+2.34.1
+
