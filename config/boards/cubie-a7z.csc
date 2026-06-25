@@ -29,7 +29,8 @@ function write_uboot_platform() {
 
 # Fetch the Cubie's DRAM blobs and point the family's SUNXI_*_FEX vars at them.
 function fetch_custom_uboot__cubiea7z() {
-	local work_dir="$(mktemp -d)"
+	local work_dir
+	work_dir="$(mktemp -d)" || exit_with_error "Cubie A7Z: failed to create temp dir"
 
 	# A733 SD path uses one boot0; reuse it for the spinor slot (SPI untested).
 	declare -g SUNXI_SYS_CONFIG_FEX="${work_dir}/sys_config.fex"
