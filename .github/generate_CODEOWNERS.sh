@@ -35,9 +35,10 @@ function generate_for_board() {
 		[[ -n "${BOARD_MAINTAINER}" ]] || return
 		# CODEOWNERS owners = ACTIVE maintainers only — drop any flagged inactive so
 		# they aren't pinged (BOARD_MAINTAINER above keeps the full list untouched).
-		maintainers="$(echo "${BOARD_MAINTAINER}" | xargs -n1 | while read -r _m; do
-			[[ -n "$_m" && -z "${INACTIVE[$_m]:-}" ]] && printf '@%s ' "$_m"
-		done)"
+		local _m maintainers=""
+		for _m in ${BOARD_MAINTAINER}; do
+			[[ -n "${INACTIVE[$_m]:-}" ]] || maintainers+="@${_m} "
+		done
 		maintainers="${maintainers% }"
 		# all maintainers inactive -> emit no entry, so the default owner applies
 		[[ -n "${maintainers}" ]] || return
