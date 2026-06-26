@@ -86,7 +86,9 @@ function fetch_from_repo() {
 	local git_work_dir
 
 	# Set GitHub mirror before anything else touches $url
-	url="$(echo "$url" | sed "s|^https://github.com/|${GITHUB_SOURCE}/|")"
+	if [[ "${url}" == https://github.com/* ]]; then
+		url="${GITHUB_SOURCE}/${url#https://github.com/}"
+	fi
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	local offline=false
@@ -279,8 +281,8 @@ function fetch_from_repo() {
 				while read -r key path; do
 					# key is like: submodule.libfoo.path
 					# extract "libfoo" from "submodule.libfoo.path"
-					local name=${key#submodule.}   # -> libfoo.path
-					name=${name%.path}             # -> libfoo
+					local name=${key#submodule.} # -> libfoo.path
+					name=${name%.path}           # -> libfoo
 
 					cd "${git_work_dir}" || exit
 

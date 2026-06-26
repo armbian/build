@@ -72,8 +72,8 @@ function calculate_hash_for_files() {
 
 	declare full_hash
 	full_hash="$(cd "${SRC}" && sha256sum "${files_to_hash_sorted[@]}")"
-	hash_files="$(echo "${full_hash}" | sha256sum | cut -d' ' -f1)" # hash of hashes
-	hash_files="${hash_files:0:16}"                                 # shorten it to 16 characters
+	hash_files="$(sha256sum <<< "${full_hash}" | cut -d' ' -f1)" # hash of hashes
+	hash_files="${hash_files:0:16}"                              # shorten it to 16 characters
 
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		display_alert "Hash for files:" "$hash_files" "debug"
@@ -95,7 +95,7 @@ function calculate_hash_for_function_bodies() {
 	if [[ ${#function_bodies[@]} -eq 0 ]]; then
 		hash_functions="0000000000000000"
 	else
-		hash_functions="$(echo "${function_bodies[@]}" | sha256sum | cut -d' ' -f1)"
+		hash_functions="$(sha256sum <<< "${function_bodies[*]}" | cut -d' ' -f1)"
 	fi
 	return 0
 }
@@ -113,7 +113,7 @@ function calculate_hash_for_variables() {
 		all_values="${all_values//${SRC}/}" # remove all occurences of ${SRC} from all_values
 	fi
 
-	hash_variables="$(echo "${all_values}" | sha256sum | cut -d' ' -f1)" # outer scope
+	hash_variables="$(sha256sum <<< "${all_values}" | cut -d' ' -f1)" # outer scope
 	display_alert "calculate_hash_for_variables all_values_pre_normalize" "${all_values_pre_normalize}" "debug"
 	if [[ "${do_normalize_src_path:-"yes"}" == "yes" ]]; then
 		display_alert "calculate_hash_for_variables               normalized" "${all_values}" "debug"
