@@ -116,6 +116,44 @@ jobs:
 
           ./.github/generate_CODEOWNERS.sh
 
+      - name: "Flag CODEOWNERS users without write access"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          # Individuals referenced in the generated CODEOWNERS (drop any @org/team refs).
+          mapfile -t users < <(grep -oE '@[A-Za-z0-9_/-]+' .github/CODEOWNERS \
+            | sed 's/^@//' | grep -v '/' | tr 'A-Z' 'a-z' | sort -u)
+
+          # Collaborators that actually have push (write) access. A CODEOWNERS entry
+          # for anyone WITHOUT write access is silently ignored by GitHub — never
+          # review-requested — so surface them for the maintainers to fix.
+          collabs="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/collaborators" \
+            --jq '.[] | select(.permissions.push) | .login' 2>/dev/null || true)"
+          have_push="$(tr 'A-Z' 'a-z' <<<"$collabs" | sort -u)"
+
+          {
+            echo ""
+            echo "### CODEOWNERS users without write access"
+            echo ""
+            if [[ -z "$have_push" ]]; then
+              echo "_Could not read repository collaborators (token lacks access) — check skipped._"
+            else
+              missing=()
+              for u in "${users[@]}"; do
+                grep -qxF "$u" <<<"$have_push" || missing+=("$u")
+              done
+              if (( ${#missing[@]} )); then
+                echo "These ${#missing[@]} CODEOWNERS entries are ignored by GitHub until granted write access:"
+                echo ""
+                printf -- '- @%s\n' "${missing[@]}"
+              else
+                echo "_All ${#users[@]} CODEOWNERS users have write access._"
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Create Pull Request
         id: cpr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
