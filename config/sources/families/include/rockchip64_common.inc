@@ -324,8 +324,8 @@ uboot_custom_postprocess() {
 		# (e.g. for Maskrom recovery). Invoked after both rkspi_loader.img
 		# build paths so the hook contract is consistent regardless of
 		# BOOT_SPI_RKSPI_LOADER.
-		declare -F board_uboot_spi_image_postprocess >/dev/null && \
-			board_uboot_spi_image_postprocess
+		declare -F board_uboot_spi_image_after_build >/dev/null && \
+			board_uboot_spi_image_after_build
 	fi
 }
 
