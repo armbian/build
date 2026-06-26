@@ -1,4 +1,4 @@
-# Allwinner A733 (sun60iw2) octa-core 1-16GB, WiFi6/BT (USB), NPU, GPU, UFS, no Ethernet
+# Allwinner A733 (sun60iw2) octa-core 1-16GB, WiFi6/BT (USB), NPU, GPU, UFS
 BOARD_NAME="Radxa Cubie A7Z"
 BOARD_VENDOR="radxa"
 BOARDFAMILY="sun60iw2"
