@@ -2,6 +2,15 @@
 
 SRC="$(realpath "${BASH_SOURCE%/*}/../")"
 
+# Maintainers flagged inactive (one GitHub username per line) are dropped from
+# CODEOWNERS so they aren't review-requested on PRs touching "their" code — they
+# stay listed in each board's BOARD_MAINTAINER. The sync workflow writes this file
+# from the contacts DB's Days_since_last_activity; absent/unset => no filtering.
+declare -A INACTIVE
+if [[ -n "${INACTIVE_MAINTAINERS_FILE:-}" && -f "${INACTIVE_MAINTAINERS_FILE}" ]]; then
+	while read -r _u; do _u="${_u#@}"; [[ -n "$_u" ]] && INACTIVE["$_u"]=1; done < "${INACTIVE_MAINTAINERS_FILE}"
+fi
+
 # Dummy function for successful source
 function display_alert() { :; }
 function enable_extension() { :; }
@@ -24,7 +33,14 @@ function generate_for_board() {
 		LINUXFAMILY="${BOARDFAMILY}"
 
 		[[ -n "${BOARD_MAINTAINER}" ]] || return
-		maintainers="$(echo "${BOARD_MAINTAINER}" | xargs -n1 | sed -E 's|^.+$|@\0|' | tr '\n' ' ')"
+		# CODEOWNERS owners = ACTIVE maintainers only — drop any flagged inactive so
+		# they aren't pinged (BOARD_MAINTAINER above keeps the full list untouched).
+		maintainers="$(echo "${BOARD_MAINTAINER}" | xargs -n1 | while read -r _m; do
+			[[ -n "$_m" && -z "${INACTIVE[$_m]:-}" ]] && printf '@%s ' "$_m"
+		done)"
+		maintainers="${maintainers% }"
+		# all maintainers inactive -> emit no entry, so the default owner applies
+		[[ -n "${maintainers}" ]] || return
 
 		while read -r BRANCH; do
 			(
