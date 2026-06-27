@@ -22,9 +22,9 @@ enable_extension "radxa-aic8800"
 
 # In-tree boot blobs consumed by the family's uboot_custom_postprocess.
 # Extracted from Radxa's official OS image boot sector.
-SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/cubie-a7z/boot0.fex"
-SUNXI_BOOT0_SPINOR_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/cubie-a7z/boot0.fex"
-SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/cubie-a7z/sys_config.fex"
+SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_cubie-a7z.fex"
+SUNXI_BOOT0_SPINOR_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_cubie-a7z.fex"
+SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/sys_config_cubie-a7z.fex"
 
 # Invalidate U-Boot cache if any of the blobs change
 UBOOT_HASH_EXTRA="$(cat "${SUNXI_BOOT0_SDCARD_FEX}" "${SUNXI_SYS_CONFIG_FEX}" | sha256sum | cut -d' ' -f1)"

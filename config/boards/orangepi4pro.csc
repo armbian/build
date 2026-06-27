@@ -15,9 +15,9 @@ KERNELPATCHDIR="archive/sun60iw2-opi-vendor"
 
 # In-tree boot blobs consumed by the family's uboot_custom_postprocess.
 # Source: https://github.com/orangepi-xunlong/orangepi-build @ 7f776a2
-SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/orangepi4pro/boot0_sdcard.fex"
-SUNXI_BOOT0_SPINOR_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/orangepi4pro/boot0_spinor.fex"
-SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/orangepi4pro/sys_config.fex"
+SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_sdcard_orangepi4pro.fex"
+SUNXI_BOOT0_SPINOR_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_spinor_orangepi4pro.fex"
+SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/sys_config_orangepi4pro.fex"
 
 # Invalidate U-Boot cache if any of the blobs change
 UBOOT_HASH_EXTRA="$(cat "${SUNXI_BOOT0_SDCARD_FEX}" "${SUNXI_BOOT0_SPINOR_FEX}" "${SUNXI_SYS_CONFIG_FEX}" | sha256sum | cut -d' ' -f1)"
