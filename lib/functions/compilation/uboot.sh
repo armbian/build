@@ -482,6 +482,9 @@ function compile_uboot() {
 		display_alert "Analyzing u-boot binary with binwalk" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
 		run_host_command_logged file --brief "${binfile}" "||" true ";" binwalk --run-as=root "${binfile}" "||" true # do not fail, ever
 
+		display_alert "Analyzing u-boot binary with dumpimage" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
+		run_host_command_logged dumpimage -l "${binfile}" "||" true # do not fail, ever
+
 		if [[ "${UBOOT_BINS_TO_OUTPUT}" == "yes" ]]; then
 			display_alert "Copying u-boot binary to output for later binwalk inspection" "'${base_binfile}' built on ${HOSTRELEASE}" "warn"
 			declare target="${SRC}/output/uboot-bin-${uboot_name}-${base_binfile}-host-${HOSTRELEASE}.bin"
