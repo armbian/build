@@ -10,8 +10,6 @@ IMAGE_PARTITION_TABLE="msdos"
 
 # --- Board-specific build configuration ---
 BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-4-pro.dtb"
-OVERLAY_PREFIX="sun60i-a733"
-KERNELPATCHDIR="archive/sun60iw2-opi-vendor"
 
 # In-tree boot blobs consumed by the family's uboot_custom_postprocess.
 # Source: https://github.com/orangepi-xunlong/orangepi-build @ 7f776a2

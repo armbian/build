@@ -10,8 +10,6 @@ IMAGE_PARTITION_TABLE="msdos"
 
 # --- Board-specific build configuration ---
 BOOT_FDT_FILE="allwinner/sun60i-a733-cubie-a7z.dtb"
-OVERLAY_PREFIX="sun60i-a733"
-KERNELPATCHDIR="archive/sun60iw2-cubie-vendor"
 
 # WiFi/BT = FCU760K (AIC8800D80 over USB)
 # Override MODULES with the bus-suffixed USB modules (aic8800-usb-dkms) so only those load.
