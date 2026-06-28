@@ -166,7 +166,7 @@ function adaptative_prepare_host_dependencies() {
 		# dev libraries & build helper tools
 		build-tools::device-tree-compiler build-tools::libelf-dev build-tools::libfdt-dev
 		build-tools::libncurses-dev build-tools::libssl-dev build-tools::libusb-1.0-0-dev
-		build-tools::swig build-tools::u-boot-tools build-tools::uuid-dev build-tools::zlib1g-dev # swig needed for some u-boot's (e.g. "bananapi.conf")
+		build-tools::swig build-tools::u-boot-tools build-tools::uuid-dev build-tools::uuid-runtime build-tools::zlib1g-dev # swig needed for some u-boot's; uuid-runtime provides uuidgen for unique Docker image tags
 		build-tools::dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 
 		# imaging - required for plymouth: converting images / spinners; large fan-out of libs

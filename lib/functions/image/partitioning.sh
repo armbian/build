@@ -247,7 +247,13 @@ function prepare_partitions() {
 
 		# Check sfdisk version to determine if --sector-size is supported
 		sfdisk_version=$(sfdisk --version | awk '/util-linux/ {print $NF}')
-		sfdisk_version_num=$(echo "$sfdisk_version" | awk -F. '{printf "%d%02d%02d\n", $1, $2, $3}')
+		IFS=. read -r _sfd_maj _sfd_min _sfd_patch _ <<< "${sfdisk_version}"
+		# Strip any non-numeric suffix (e.g. "2.41-rc1" -> minor "41", not "41-rc1")
+		# so `printf %d` never bombs under `set -e` on prerelease util-linux builds.
+		_sfd_maj="${_sfd_maj%%[!0-9]*}"
+		_sfd_min="${_sfd_min%%[!0-9]*}"
+		_sfd_patch="${_sfd_patch%%[!0-9]*}"
+		printf -v sfdisk_version_num '%d%02d%02d' "${_sfd_maj:-0}" "${_sfd_min:-0}" "${_sfd_patch:-0}"
 		if [[ "$sfdisk_version_num" -ge "24100" ]]; then
 			echo "${partition_script_output}" | run_host_command_logged sfdisk --sector-size "$SECTOR_SIZE" "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 		else
