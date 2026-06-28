@@ -389,12 +389,7 @@ write_uboot_platform_mtd() {
 	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 
-	CHOICE=$(dialog --no-collapse \
-		--title "armbian-install" \
-		--backtitle "$backtitle" \
-		--radiolist "Choose SPI image:" 0 56 4 \
-		"${MENU_ITEMS[@]}" \
-		3>&1 1>&2 2>&3)
+	CHOICE=$(dialog --no-collapse --title "armbian-install" --backtitle "$backtitle" --radiolist "Choose SPI image:" 0 56 4 "${MENU_ITEMS[@]}" 3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
 		idx=$((CHOICE-1))
