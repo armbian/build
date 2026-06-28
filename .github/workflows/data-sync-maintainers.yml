@@ -17,13 +17,20 @@ jobs:
     name: "Maintainers sync"
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'armbian' }}
+    env:
+      MAINTAINER_INACTIVE_DAYS: "365"   # maintainers idle >= this many days are dropped from CODEOWNERS (kept as BOARD_MAINTAINER)
     steps:
 
       - name: "Checkout build repo"
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: armbian/build
-          ref:  main
+          # Follow the dispatched ref: the scheduled run is on main (so this is
+          # 'main' there), but a manual workflow_dispatch from a branch checks out
+          # THAT branch — so changes to generate_CODEOWNERS.sh / configs can be
+          # tested end-to-end before merge (was hardcoded 'main', which always ran
+          # main's files regardless of where you dispatched from).
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
           clean: false
 
@@ -44,27 +51,42 @@ jobs:
         run: |
 
           # reset all maintainers so we generate from scratch
-          sed -i "s/BOARD_MAINTAINER.*/BOARD_MAINTAINER=\"\"/" config/boards/*.{conf,wip,eos,tvb}
+          sed -i "s/BOARD_MAINTAINER.*/BOARD_MAINTAINER=\"\"/" config/boards/*.{conf,wip,csc,eos,tvb}
 
           # extract values fron JSON
           declare -A MAINTAINERS
+          INACTIVE_DAYS="${MAINTAINER_INACTIVE_DAYS:-365}"
+          : > /tmp/inactive_maintainers.txt   # GitHub usernames idle >= INACTIVE_DAYS (for CODEOWNERS)
           {
             # By default, bash run the pipe command in subshells
             # which make variable can't be assigned to.
             # And yes, lastpipe can solve it
             # But this is better.
-            while read -r i; do
-              NAME="$(echo "$i" | jq --raw-output '.First_Name')"
-              BOARD="$(echo "$i" | jq --raw-output '.Maintaining')"
-              MAINTAINER_GITHUB="$(echo "$i" | jq --raw-output '.Github' | cut -d"/" -f4)"
-              if [[ "$BOARD" != null && "$MAINTAINER_GITHUB" != null ]]; then
-                echo "- [$NAME](https://github.com/${MAINTAINER_GITHUB})"
-                while read -r i; do
-                  echo -e "  - $i"
-                  MAINTAINERS["$i"]+="$MAINTAINER_GITHUB "
-                done < <( echo "$BOARD" | sed "s/,/\n/g" | sort -u )
+            # One jq pass -> a row per maintainer: name, boards, github-username,
+            # idle-days, joined by US (0x1f). A non-whitespace separator is required:
+            # IFS=$'\t' read collapses consecutive tabs, so an empty field (e.g. a null
+            # Maintaining) would shift the columns. Replaces ~4 jq forks per record and
+            # the inner board loop's var that used to shadow the record var.
+            while IFS=$'\x1f' read -r NAME BOARD MAINTAINER_GITHUB DAYS; do
+              # long-inactive: kept in BOARD_MAINTAINER below, recorded for CODEOWNERS drop
+              if [[ -n "$MAINTAINER_GITHUB" && -n "$DAYS" ]] && (( DAYS >= INACTIVE_DAYS )); then
+                echo "$MAINTAINER_GITHUB" >> /tmp/inactive_maintainers.txt
+                echo "  ⚠ inactive ${DAYS}d: @${MAINTAINER_GITHUB} (dropped from CODEOWNERS)"
               fi
-            done < <(jq -c '.[]' /tmp/armbian_maintainers.json)
+              [[ -n "$BOARD" && -n "$MAINTAINER_GITHUB" ]] || continue
+              echo "- [$NAME](https://github.com/${MAINTAINER_GITHUB})"
+              while read -r board; do
+                [[ -n "$board" ]] || continue
+                echo -e "  - $board"
+                MAINTAINERS["$board"]+="$MAINTAINER_GITHUB "
+              done < <(echo "$BOARD" | tr ',' '\n' | sort -u)
+            done < <(jq -r '
+              .[] | [ (.First_Name // ""), (.Maintaining // ""),
+                      (.Github | split("/") | .[3] // ""),
+                      (if (.Days_since_last_activity | type) == "number"
+                       then (.Days_since_last_activity | floor | tostring) else "" end) ]
+                   | join("\u001f")
+            ' /tmp/armbian_maintainers.json)
 
             for cfg in config/boards/*.{conf,wip,csc,eos,tvb}; do
               board_name="$(echo "${cfg##*/}" | sed -E 's/\..*//')"
@@ -88,9 +110,49 @@ jobs:
             done
 
       - name: "Re-generate CODEOWNERS"
+        env:
+          INACTIVE_MAINTAINERS_FILE: /tmp/inactive_maintainers.txt
         run: |
 
           ./.github/generate_CODEOWNERS.sh
+
+      - name: "Flag CODEOWNERS users without write access"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          # Individuals referenced in the generated CODEOWNERS (drop any @org/team refs).
+          mapfile -t users < <(grep -oE '@[A-Za-z0-9_/-]+' .github/CODEOWNERS \
+            | sed 's/^@//' | grep -v '/' | tr 'A-Z' 'a-z' | sort -u)
+
+          # Collaborators that actually have push (write) access. A CODEOWNERS entry
+          # for anyone WITHOUT write access is silently ignored by GitHub — never
+          # review-requested — so surface them for the maintainers to fix.
+          collabs="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/collaborators" \
+            --jq '.[] | select(.permissions.push) | .login' 2>/dev/null || true)"
+          have_push="$(tr 'A-Z' 'a-z' <<<"$collabs" | sort -u)"
+
+          {
+            echo ""
+            echo "### CODEOWNERS users without write access"
+            echo ""
+            if [[ -z "$have_push" ]]; then
+              echo "_Could not read repository collaborators (token lacks access) — check skipped._"
+            else
+              missing=()
+              for u in "${users[@]}"; do
+                grep -qxF "$u" <<<"$have_push" || missing+=("$u")
+              done
+              if (( ${#missing[@]} )); then
+                echo "These ${#missing[@]} CODEOWNERS entries are ignored by GitHub until granted write access:"
+                echo ""
+                printf -- '- @%s\n' "${missing[@]}"
+              else
+                echo "_All ${#users[@]} CODEOWNERS users have write access._"
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create Pull Request
         id: cpr

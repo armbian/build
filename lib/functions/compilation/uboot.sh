@@ -482,6 +482,9 @@ function compile_uboot() {
 		display_alert "Analyzing u-boot binary with binwalk" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
 		run_host_command_logged file --brief "${binfile}" "||" true ";" binwalk --run-as=root "${binfile}" "||" true # do not fail, ever
 
+		display_alert "Analyzing u-boot binary with dumpimage" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
+		run_host_command_logged dumpimage -l "${binfile}" "||" true # do not fail, ever
+
 		if [[ "${UBOOT_BINS_TO_OUTPUT}" == "yes" ]]; then
 			display_alert "Copying u-boot binary to output for later binwalk inspection" "'${base_binfile}' built on ${HOSTRELEASE}" "warn"
 			declare target="${SRC}/output/uboot-bin-${uboot_name}-${base_binfile}-host-${HOSTRELEASE}.bin"
@@ -579,7 +582,7 @@ function uboot_postinst_base() {
 		#recognize_root
 		root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 		root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
-		root_partition_name=$(echo $root_partition | sed 's/\/dev\///g')
+		root_partition_name="${root_partition#/dev/}"
 		root_partition_device_name=$(lsblk -ndo pkname $root_partition)
 		root_partition_device=/dev/$root_partition_device_name
 

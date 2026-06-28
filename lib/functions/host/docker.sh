@@ -62,7 +62,6 @@ function get_docker_info_once() {
 		fi
 		declare -g -r DOCKER_IS_PODMAN="${DOCKER_IS_PODMAN}" # readonly
 
-
 		declare -g DOCKER_INFO_OK="no"
 		if [[ "${DOCKER_INFO}" =~ "DOCKER_INFO_OK" ]]; then
 			DOCKER_INFO_OK="yes"
@@ -127,7 +126,19 @@ function cli_handle_docker() {
 function docker_cli_prepare() {
 	# @TODO: Make sure we can access docker, on Linux; gotta be part of 'docker' group: grep -q "$(whoami)" <(getent group docker)
 
-	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
+	# Unique tag per build to avoid collisions when multiple runners build in parallel on
+	# the same host under different users (shared Docker daemon, separate ${SRC} trees).
+	declare build_suffix="${ARMBIAN_BUILD_UUID:-$(uuidgen 2> /dev/null)}"
+	# Hash the UUID and take 8 hex chars, instead of its first 8 raw chars: when
+	# uuidgen was unavailable, ARMBIAN_BUILD_UUID is the "no-uuidgen-yet-<RANDOM>-..."
+	# fallback whose first 8 chars are a constant "no-uuidg", so every parallel build
+	# would share one tag and collide. Hashing folds in the per-build RANDOM while
+	# staying deterministic within this build. Add local entropy only if there is no
+	# UUID at all (e.g. docker.sh run standalone before deps are installed).
+	[[ -z "${build_suffix}" ]] && build_suffix="${EPOCHREALTIME:-$(date +%s%N)}-$$-${RANDOM}${RANDOM}"
+	build_suffix="$(printf '%s' "${build_suffix}" | sha256sum 2> /dev/null | cut -c1-8)"
+	[[ -z "${build_suffix}" ]] && build_suffix="$(printf '%08x' "$$")" # no sha256sum: PID hex
+	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:${build_suffix}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:trixie"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"
@@ -181,26 +192,26 @@ function docker_cli_prepare() {
 	# Detect some docker info; use cached.
 	get_docker_info_once
 
-	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_VERSION="$(grep -i -e "Server Version:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
 
-	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_KERNEL_VERSION="$(grep -i -e "Kernel Version:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "debug"
 
-	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_TOTAL_RAM="$(grep -i -e "Total memory:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "debug"
 
-	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_CPUS="$(grep -i -e "CPUs:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "debug"
 
-	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_OS="$(grep -i -e "Operating System:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "debug"
 
 	declare -g DOCKER_ARMBIAN_HOST_OS_UNAME
 	DOCKER_ARMBIAN_HOST_OS_UNAME="$(uname)"
 	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 
-	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_BUILDX_VERSION="$(grep -i -e "buildx:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "debug"
 
 	declare -g DOCKER_HAS_BUILDX=no
@@ -211,7 +222,7 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_NAME_HOST="$(grep -im1 -e "^ *Name:" <<< "${DOCKER_INFO}" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
 
 	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
@@ -535,7 +546,7 @@ function docker_cli_prepare_launch() {
 	while IFS= read -r _dns_server; do
 		[[ "${_dns_server}" =~ ^127\. || "${_dns_server}" == "::1" || "${_dns_server}" =~ ^fe80: ]] && continue
 		DOCKER_ARGS+=("--dns" "${_dns_server}")
-	done < <(awk '/^nameserver/ {print $2}' "${_dns_resolv_file}" 2>/dev/null)
+	done < <(awk '/^nameserver/ {print $2}' "${_dns_resolv_file}" 2> /dev/null)
 
 	# DOCKER_PRIVILEGED=no switches to a narrow capability set.
 	if [[ "${DOCKER_PRIVILEGED:-yes}" == "yes" ]]; then
@@ -744,6 +755,15 @@ function docker_cli_launch() {
 		skip_ci_special="yes" display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
 	fi
 
+	# This build owns a unique '${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}' tag (one per build, so parallel
+	# builds on a shared daemon never collide). The container has exited (--rm), so remove our tag now —
+	# otherwise these per-build images pile up: they stay *tagged*, so neither 'docker image prune'
+	# (dangling-only) nor docker_cleanup_old_images() (which matches 'docker-armbian-build', not the
+	# local 'armbian.local.only/armbian-build' repo) ever reaps them. Removing our own unique tag can't
+	# disturb other in-flight builds, and shared base layers are kept. Ignore errors (the image may
+	# already be gone, e.g. reaped by host housekeeping).
+	run_host_command_logged docker image rm --force "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" "||" true
+
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
 	local logs_path="${DEST}/logs" log_file
 	log_file="$(find "${logs_path}" -type f -name "*${ARMBIAN_BUILD_UUID}*.*" -print -quit)"
@@ -800,7 +820,7 @@ function docker_cleanup_old_images() {
 
 		# Remove images beyond the first 2 (keep newest 2)
 		if [[ ${#image_ids[@]} -gt 2 ]]; then
-			for ((i=2; i<${#image_ids[@]}; i++)); do
+			for ((i = 2; i < ${#image_ids[@]}; i++)); do
 				display_alert "Removing old image" "${image_tag}:${image_ids[$i]}" "debug"
 				docker rmi "${image_ids[$i]}" > /dev/null 2>&1 || true
 			done
