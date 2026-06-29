@@ -93,6 +93,12 @@ function custom_kernel_config__ask_modules() {
 	local ask_drv="${kernel_work_dir}/drivers/net/ethernet/freescale/ask"
 	local bsp_dir="${SRC}/packages/bsp/gateway-dk"
 
+	# Cleanup previous tree if it exists (otherwise copying again creates 1-deep duplicates)
+	if [[ -d "${ask_drv}" ]]; then
+		display_alert "ASK extension" "removing previous ASK module tree in kernel" "info"
+		run_host_command_logged rm -rf "${ask_drv}"
+	fi
+
 	# Copy module sources and Kbuild files from ASK cache
 	# (Kbuild files coexist with old Makefiles — kbuild prefers Kbuild when both exist)
 	run_host_command_logged mkdir -pv "${ask_drv}"
