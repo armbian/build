@@ -158,6 +158,10 @@ function create_new_rootfs_cache_via_debootstrap() {
 	display_alert "Cleaning up after mmdebstrap" "mmdebstrap cleanup" "info"
 	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
 	rm -f "${SDCARD}/etc/apt/apt.conf.d/99-armbian-sandbox" # build-time only; don't ship in the image
+	# mmdebstrap persists the bootstrap --aptopt (our APT_PROXY_ADDR proxy) as
+	# 99mmdebstrap inside the rootfs. That build-host proxy is meaningless — and
+	# usually unreachable — on the user's machine, breaking their apt. Strip it.
+	rm -f "${SDCARD}/etc/apt/apt.conf.d/99mmdebstrap"
 
 	local_apt_deb_cache_prepare "after mmdebstrap cleanup" # just for size reference in logs
 
