@@ -52,7 +52,7 @@ function post_family_config__000_ask_override_family() {
 # Uses post_family_config because the kernel patch staging hook needs it before fetch_sources_tools runs
 function post_family_config__ask_fetch_repo() {
 	# Skip during config-dump-json: no $HOME is set, fetch_from_repo would fail in git_ensure_safe_directory
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" || "${ARMBIAN_COMMAND}" == "download-artifact" ]] && {
 		declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"
 		return 0
 	}
