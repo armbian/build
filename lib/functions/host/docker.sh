@@ -526,6 +526,9 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_SHA=${GITHUB_SHA}"
 		"--env" "GITHUB_WORKFLOW=${GITHUB_WORKFLOW}"
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+		"--env" "RUNNER_ARCH=${RUNNER_ARCH}"
+		"--env" "RUNNER_ENVIRONMENT=${RUNNER_ENVIRONMENT}"
+		"--env" "RUNNER_NAME=${RUNNER_NAME}"
 
 		# Pass proxy args
 		"--env" "http_proxy=${http_proxy:-${HTTP_PROXY:-}}"
