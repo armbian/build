@@ -491,7 +491,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]] ; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
-		local rtl88x2csver='commit:55971663534233fd8d80363ddcb2fec1c01c473c' # Commit date: May 05, 2026 (please update when updating commit ref)
+		local rtl88x2csver='commit:8ff62a4b331aba9c880e6ce64bdd1cb1ce96d8fe' # Commit date: Jun 29, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
