@@ -154,20 +154,34 @@ function custom_kernel_config__ask_modules() {
 	fi
 }
 
-# Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build.
+# Copy ASK kernel patch to userpatches so it's applied during kernel build.
 # userpatches/ is the Armbian-standard location for extension-provided patches — the build
-# framework merges them with patches from patch/kernel/ at build time. The directory is
-# gitignored and ephemeral; it does not persist across clean builds.
-function post_family_config__ask_kernel_patch() {
+# framework merges them with patches from patch/kernel/ at build time.
+function kernel_extra_create_patches__ask_kernel_patch() {
 	display_alert "ASK extension" "ASK kernel patch being staged in userpatches" "wrn"
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache wasn't populated during config-dump-json
-	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
+	declare patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
-	local patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
 	run_host_command_logged mkdir -pv "${patch_dst}"
 	# Renamed to 003- to apply after 001-ina234 and 002-device-tree in the Armbian patch dir
-	run_host_command_logged cp -v "${patch_src}" "${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	run_host_command_logged cp -v "${patch_src}" "${patch_dst_file}"
+	run_host_command_logged touch "${patch_dst_file}" # always recently-modified
 	display_alert "ASK extension" "ASK kernel patch staged in userpatches" "info"
+}
+
+function post_family_config__cleanup_ask_kernel_patch() {
+	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	# if patch_dst_file exists, remove it -- it shouldn't be there in post_family_config stage (pre-hashing)
+	# read: "the previous build left a staged ASK kernel patch in userpatches, remove it so patches hash doesn't change"
+	if [[ -f "${patch_dst_file}" ]]; then
+		display_alert "ASK extension" "removing staged ASK kernel patch from userpatches" "info"
+		run_host_command_logged rm -f "${patch_dst_file}"
+	else
+		display_alert "ASK extension" "no staged ASK kernel patch found in userpatches, nothing to remove" "info"
+	fi
+	return 0
 }
 
 # Install module autoload config (modules are in the kernel .deb, just need the load list)
