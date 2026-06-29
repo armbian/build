@@ -95,23 +95,23 @@ function custom_kernel_config__ask_modules() {
 
 	# Copy module sources and Kbuild files from ASK cache
 	# (Kbuild files coexist with old Makefiles — kbuild prefers Kbuild when both exist)
-	mkdir -p "${ask_drv}"
-	cp -a "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
-	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
-	cp -a "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
+	run_host_command_logged mkdir -pv "${ask_drv}"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
 
 	# Parent Kconfig and Makefile from ASK repo
-	cp "${ASK_CACHE_DIR}/Kconfig" "${ask_drv}/Kconfig"
-	cp "${ASK_CACHE_DIR}/Kbuild.mk" "${ask_drv}/Makefile"
+	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kconfig" "${ask_drv}/Kconfig"
+	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kbuild.mk" "${ask_drv}/Makefile"
 
 	# Board-specific modules (not part of ASK repo — from Armbian BSP)
 	if [[ "${BOARD}" == "gateway-dk" ]]; then
-		mkdir -p "${ask_drv}/sfp_led" "${ask_drv}/leds_lp5812"
-		cp "${bsp_dir}/sfp-led.c" "${ask_drv}/sfp_led/"
-		cp "${bsp_dir}/sfp-led.Kbuild" "${ask_drv}/sfp_led/Kbuild"
-		cp "${bsp_dir}/leds-lp5812.c" "${ask_drv}/leds_lp5812/"
-		cp "${bsp_dir}/leds-lp5812.h" "${ask_drv}/leds_lp5812/"
-		cp "${bsp_dir}/leds-lp5812.Kbuild" "${ask_drv}/leds_lp5812/Kbuild"
+		run_host_command_logged mkdir -pv "${ask_drv}/sfp_led" "${ask_drv}/leds_lp5812"
+		run_host_command_logged cp -v "${bsp_dir}/sfp-led.c" "${ask_drv}/sfp_led/"
+		run_host_command_logged cp -v "${bsp_dir}/sfp-led.Kbuild" "${ask_drv}/sfp_led/Kbuild"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.c" "${ask_drv}/leds_lp5812/"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.h" "${ask_drv}/leds_lp5812/"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.Kbuild" "${ask_drv}/leds_lp5812/Kbuild"
 
 		# Add board-specific entries to ASK Kconfig and Makefile
 		patch -p1 -d "${ask_drv}" < "${bsp_dir}/ask-kconfig-board-modules.patch"
@@ -121,11 +121,18 @@ function custom_kernel_config__ask_modules() {
 
 	# Wire into parent freescale Kconfig and Makefile
 	local fsl_dir="${kernel_work_dir}/drivers/net/ethernet/freescale"
-	if ! grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig" 2> /dev/null; then
+	if ! grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig"; then
+		display_alert "ASK extension" "adding ASK Kconfig to freescale Kconfig" "info"
 		sed -i '/endif.*NET_VENDOR_FREESCALE/i source "drivers/net/ethernet/freescale/ask/Kconfig"' "${fsl_dir}/Kconfig"
+	else
+		display_alert "ASK extension" "ASK Kconfig already present in freescale Kconfig" "info"
 	fi
-	if ! grep -q 'ask/' "${fsl_dir}/Makefile" 2> /dev/null; then
+
+	if ! grep -q 'ask/' "${fsl_dir}/Makefile"; then
+		display_alert "ASK extension" "adding ASK modules to freescale Makefile" "info"
 		echo 'obj-y += ask/' >> "${fsl_dir}/Makefile"
+	else
+		display_alert "ASK extension" "ASK modules already present in freescale Makefile"
 	fi
 
 	display_alert "ASK extension" "ASK module sources and Kbuild files placed in kernel tree" "info"
@@ -146,13 +153,14 @@ function custom_kernel_config__ask_modules() {
 # framework merges them with patches from patch/kernel/ at build time. The directory is
 # gitignored and ephemeral; it does not persist across clean builds.
 function post_family_config__ask_kernel_patch() {
+	display_alert "ASK extension" "ASK kernel patch being staged in userpatches" "wrn"
 	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache wasn't populated during config-dump-json
 	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
 	local patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
-	mkdir -p "${patch_dst}"
+	run_host_command_logged mkdir -pv "${patch_dst}"
 	# Renamed to 003- to apply after 001-ina234 and 002-device-tree in the Armbian patch dir
-	cp "${patch_src}" "${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	run_host_command_logged cp -v "${patch_src}" "${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
 	display_alert "ASK extension" "ASK kernel patch staged in userpatches" "info"
 }
 
@@ -529,6 +537,5 @@ function rebuild_patched_deb() {
 		DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
 		cd '${workdir}' && dpkg -i ${debs} && \
 		cp ${debs} /tmp/ask-patched-debs/ && \
-		rm -rf '${workdir}'" ||
-		exit_with_error "${pkg} rebuild failed"
+		rm -rf '${workdir}'" || exit_with_error "${pkg} rebuild failed"
 }
