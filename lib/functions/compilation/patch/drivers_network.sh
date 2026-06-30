@@ -138,14 +138,14 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.2; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:9c0511420da11214c68d8591b19459ba10892aab' # Commit date: 2026-03-13 (please update when updating commit ref)
+		local rtl8192euver='commit:76d861773b97296bcf5b008309f740bcf7439398' # Commit date: 2026-06-30 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes" # https://github.com/Mange/rtl8192eu-linux-driver
+		fetch_from_repo "$GITHUB_SOURCE/EvilOlaf/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes" # https://github.com/EvilOlaf/rtl8192eu-linux-driver
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8192eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8192eu/"
@@ -166,21 +166,6 @@ driver_rtl8192EU() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# fix compiler warnings - must be first before other patches
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-compile-warnings.patch" "applying"
-
-		# fix -Wmissing-prototypes: static for file-private functions, prototypes in headers for cross-file
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-missing-prototypes.patch" "applying"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 7.1
-		if linux-version compare "${version}" ge 7.1; then
-			process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-linux-7.1.patch" "applying"
-		fi
 	fi
 }
 
