@@ -15,10 +15,15 @@ setenv disp_mode "1920x1080M60"
 setenv rootfstype "ext4"
 setenv earlycon "off"
 
-# Print boot source
-echo "Booting from SD"
+# MMC device that u-boot loaded this script from. Modern u-boot (v2026.07)
+# enumerates the SD as mmc 2 via FSL_SDHC; old u-boot used mmc 0. Use the
+# device u-boot already selected, defaulting to 0 if it didn't set one.
+if test -z "${devnum}"; then setenv devnum "0"; fi
 
-if ext4load mmc 0 ${load_addr} /boot/armbianEnv.txt || fatload mmc 0 ${load_addr} armbianEnv.txt; then
+# Print boot source
+echo "Booting from SD (mmc ${devnum})"
+
+if ext4load mmc ${devnum} ${load_addr} /boot/armbianEnv.txt || fatload mmc ${devnum} ${load_addr} armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
@@ -33,9 +38,9 @@ fi
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 run findfdt
-ext4load mmc 0 ${ramdisk_addr} /boot/uInitrd || fatload mmc 0 ${ramdisk_addr} uInitrd || ext4load mmc 0 ${ramdisk_addr} uInitrd
-ext4load mmc 0 ${loadaddr} /boot/zImage || fatload mmc 0 ${loadaddr} zImage
-ext4load mmc 0 ${fdt_addr} /boot/dtb/${fdt_file} || fatload mmc 0 ${fdt_addr} dtb/${fdt_file}
+ext4load mmc ${devnum} ${ramdisk_addr} /boot/uInitrd || fatload mmc ${devnum} ${ramdisk_addr} uInitrd || ext4load mmc ${devnum} ${ramdisk_addr} uInitrd
+ext4load mmc ${devnum} ${loadaddr} /boot/zImage || fatload mmc ${devnum} ${loadaddr} zImage
+ext4load mmc ${devnum} ${fdt_addr} /boot/dtb/${fdt_file} || fatload mmc ${devnum} ${fdt_addr} dtb/${fdt_file}
 bootz ${loadaddr} ${ramdisk_addr} ${fdt_addr}
 
 # Recompile with:
