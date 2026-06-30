@@ -20,7 +20,7 @@ function post_family_config__udoo_uboot_v2026() {
 	# Modern udoo_defconfig is DM/OF_CONTROL -> SPL payload is u-boot-dtb.img.
 	# Keep Armbian's raw-dd layout (SPL@1KiB, u-boot@69KiB); see the SPL raw-mode
 	# override below.
-	declare -g UBOOT_TARGET_MAP="SPL:SPL.sdhc u-boot-dtb.img:u-boot.img.sdhc"
+	declare -g UBOOT_TARGET_MAP=";;SPL:SPL.sdhc u-boot-dtb.img:u-boot.img.sdhc"
 }
 
 # Upstream udoo_defconfig has SPL load u-boot-dtb.img from an EXT4 filesystem,
