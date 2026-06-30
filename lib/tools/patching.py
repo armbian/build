@@ -375,9 +375,11 @@ if apply_patches:
 			parent.rewrite_patch_file(patches)
 		FAILED_PATCHES = [one_patch for one_patch in VALID_PATCHES if (not one_patch.applied_ok) or (one_patch.rewritten_patch is None)]
 		for failed_patch in FAILED_PATCHES:
-			log.info(
-				f"Consider removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "
-				f"it was not applied successfully.")
+			log.warning(
+				f"Removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "
+				f" it failed to apply/was not rewritten.")
+			os.remove(failed_patch.parent.full_file_path())
+
 
 # Create markdown about the patches
 readme_markdown: "str | None" = None
