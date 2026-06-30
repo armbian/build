@@ -37,10 +37,17 @@ else
 fi
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+# Resolve the dtb name. Modern u-boot's findfdt sets ${fdtfile} (e.g.
+# imx6q-udoo.dtb / imx6dl-udoo.dtb by SoC); the old script used ${fdt_file},
+# which is unset on v2026.07 -> "Failed to load '/boot/dtb/'". Use fdtfile, and
+# fall back to the Quad dtb if neither findfdt nor armbianEnv provided one.
 run findfdt
+if test -z "${fdtfile}"; then setenv fdtfile "${fdt_file}"; fi
+if test -z "${fdtfile}"; then setenv fdtfile "imx6q-udoo.dtb"; fi
+
 ext4load mmc ${devnum} ${ramdisk_addr} /boot/uInitrd || fatload mmc ${devnum} ${ramdisk_addr} uInitrd || ext4load mmc ${devnum} ${ramdisk_addr} uInitrd
 ext4load mmc ${devnum} ${loadaddr} /boot/zImage || fatload mmc ${devnum} ${loadaddr} zImage
-ext4load mmc ${devnum} ${fdt_addr} /boot/dtb/${fdt_file} || fatload mmc ${devnum} ${fdt_addr} dtb/${fdt_file}
+ext4load mmc ${devnum} ${fdt_addr} /boot/dtb/${fdtfile} || fatload mmc ${devnum} ${fdt_addr} dtb/${fdtfile}
 bootz ${loadaddr} ${ramdisk_addr} ${fdt_addr}
 
 # Recompile with:
