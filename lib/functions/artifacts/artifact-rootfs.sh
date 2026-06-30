@@ -18,12 +18,39 @@ function artifact_rootfs_config_dump() {
 	# Track the latest commit touching configng's desktop definitions.
 	# Any change to YAML, parser, or module code in tools/modules/desktops/
 	# invalidates the desktop rootfs cache — the package list, browser
-	# mapping, tier overrides, or branding may have changed.
+	# mapping, tier overrides, or branding may have changed. Scoped to
+	# desktop builds and the desktop subtree because armbian-config is
+	# only invoked at build time for desktop installs
+	# (`module_desktops install mode=build`); for CLI builds the .deb
+	# is just installed and its contents don't affect the rootfs.
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
 		declare configng_desktops_hash="undetermined"
 		local configng_dir="${SRC}/cache/sources/armbian-configng"
 		if [[ -d "${configng_dir}/.git" ]]; then
-			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>/dev/null || echo "unknown")"
+			# Best-effort knob for cache-invalidation, not a build blocker - if
+			# git can't read this clone (torn checkout, stale files, broken HEAD,
+			# permissions) we warn and fall through to "unknown" rather than
+			# aborting an hour-long build. create-cache.sh skips the fingerprint
+			# fold on "unknown" / "undetermined", so the image still builds, it
+			# just doesn't get the configng-aware cache bust.
+			#
+			# Two subtleties, both load-bearing under compile.sh's `set -e`:
+			#   (1) `if cmd; then` — NOT a bare `var=$(cmd)`, which under errexit
+			#       aborts the build on git failure before the fallback runs.
+			#   (2) stderr to a file, never merged into the SHA — `git log` can
+			#       exit 0 yet still print hint:/advice:/fsmonitor lines that would
+			#       pollute the cache key (create-cache.sh folds in the first 8
+			#       chars). The warn surfaces git's message from the file.
+			declare git_out git_rc git_err
+			git_err="$(mktemp 2> /dev/null)" || git_err=/dev/null
+			if git_out="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2> "${git_err}")"; then
+				configng_desktops_hash="${git_out}"
+			else
+				git_rc=$?
+				display_alert "configng_desktops hash: git log failed (rc=${git_rc}) in ${configng_dir}" "$(< "${git_err}" 2> /dev/null)" "warn"
+				configng_desktops_hash="unknown"
+			fi
+			[[ "${git_err}" != /dev/null ]] && rm -f "${git_err}"
 		fi
 		artifact_input_variables[CONFIGNG_DESKTOPS_HASH]="${configng_desktops_hash}"
 	fi
