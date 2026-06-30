@@ -39,8 +39,8 @@ driver_wifi_injection() {
 	# - Add compatibility shims for cfg80211/mac80211 where API changed in 6.12
 	# - Add Kconfig option and module parameter notes for enabling injection
 	if linux-version compare "${version}" ge 6.12; then
-                display_alert "Adding" "Enables Wi-Fi packet injection and monitor-mode tweaks" "info"
-                process_patch_file "${SRC}/patch/misc/wireless-injection-6.12.patch" "applying"
+		display_alert "Adding" "Enables Wi-Fi packet injection and monitor-mode tweaks" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-injection-6.12.patch" "applying"
 	fi
 }
 
@@ -243,14 +243,12 @@ driver_rtl8812EU_rtl8822EU() {
 		sed -i 's/^\([[:space:]]*\)---help---/\1help/' \
 			"$kerneldir/drivers/net/wireless/rtl8822eu/Kconfig"
 
-
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8822EU) += rtl8822eu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 	fi
 }
-
 
 driver_xradio_xr819() {
 
@@ -441,7 +439,7 @@ driver_rtl8852bs() {
 		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
 		case ${LINUXFAMILY} in
 			# For Rockchip devices, add family name here
-			rk35xx|rockchip64)
+			rk35xx | rockchip64)
 				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 			# For Spacemit devices, add family name here
@@ -461,7 +459,7 @@ driver_rtl88x2cs() {
 	# Only used for meson64 family boards, use mainline rtw88 driver for all other boards
 	# If doesn't build,ask @adeepn for a fix
 
-	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]] ; then
+	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
 		local rtl88x2csver='commit:4741c414b87be0a9cf8b7e53ef822403a495f995' # Commit date: Jun 30, 2026 (please update when updating commit ref)
@@ -588,12 +586,12 @@ driver_uwe5622() {
 		fi
 
 		if linux-version compare "${version}" ge 6.17; then
-            process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
-        fi
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.17.patch" "applying"
+		fi
 
 		if linux-version compare "${version}" ge 6.18; then
-            process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
-        fi
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.18.patch" "applying"
+		fi
 
 		if linux-version compare "${version}" ge 6.19; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.19.patch" "applying"
@@ -707,7 +705,6 @@ driver_rtl8723cs() {
 	if linux-version compare "${version}" ge 6.14; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.14.patch" "applying"
 	fi
-
 
 }
 
@@ -904,4 +901,3 @@ driver_rtl8152_rtl8153() {
 			"$kerneldir/drivers/net/usb/"
 	fi
 }
-

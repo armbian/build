@@ -61,7 +61,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 			local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
 			acng_check_status_or_restart
 			;;
-		no)     ;& # do nothing, fallthrough
+		no) ;& # do nothing, fallthrough
 		"")
 			:  # still do nothing
 			;; # stop falling
@@ -126,7 +126,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# apt-get phase uses (runners.sh). Without this the base-system bootstrap
 	# goes direct to the mirror, bypassing the cache. MANAGE_ACNG=yes / a URL
 	# already route through acng's URL-prefix, so this only covers no/unset.
-	if [[ -n "${APT_PROXY_ADDR}" && ( "${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}" ) ]]; then
+	if [[ -n "${APT_PROXY_ADDR}" && ("${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}") ]]; then
 		display_alert "Routing mmdebstrap through apt proxy" "http://${APT_PROXY_ADDR##*@}" "info"
 		debootstrap_arguments+=("'--aptopt=Acquire::http::Proxy \"http://${APT_PROXY_ADDR}\"'")
 	fi
@@ -150,7 +150,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	}
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
-
 
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
 

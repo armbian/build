@@ -27,7 +27,7 @@ function fetch_custom_uboot__orangepi4pro() {
 	display_alert "Orange Pi 4 Pro: fetching DRAM blobs" "${blob_ref:0:12}" "info"
 	run_host_command_logged wget -q -O "${SUNXI_BOOT0_SDCARD_FEX}" "${url_base}/boot0_sdcard_a733.fex"
 	run_host_command_logged wget -q -O "${SUNXI_BOOT0_SPINOR_FEX}" "${url_base}/boot0_spinor_a733.fex"
-	run_host_command_logged wget -q -O "${SUNXI_SYS_CONFIG_FEX}"  "${url_base}/sys_config/sys_config.fex"
+	run_host_command_logged wget -q -O "${SUNXI_SYS_CONFIG_FEX}" "${url_base}/sys_config/sys_config.fex"
 }
 
 function write_uboot_platform() {
@@ -38,9 +38,9 @@ function write_uboot_platform() {
 }
 
 function write_uboot_platform_mtd() {
-	local SCRIPT_DIR="$1"   # dir holding boot0_spinor.fex + boot_package.fex
+	local SCRIPT_DIR="$1" # dir holding boot0_spinor.fex + boot_package.fex
 	flash_erase /dev/mtd0 0 0
-	mtd_debug write /dev/mtd0 0      "$(stat -c%s "$SCRIPT_DIR/boot0_spinor.fex")" "$SCRIPT_DIR/boot0_spinor.fex"
+	mtd_debug write /dev/mtd0 0 "$(stat -c%s "$SCRIPT_DIR/boot0_spinor.fex")" "$SCRIPT_DIR/boot0_spinor.fex"
 	mtd_debug write /dev/mtd0 262144 "$(stat -c%s "$SCRIPT_DIR/boot_package.fex")" "$SCRIPT_DIR/boot_package.fex"
 	sync
 }

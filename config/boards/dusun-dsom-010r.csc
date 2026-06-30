@@ -9,9 +9,8 @@ BOOT_FDT_FILE="rockchip/rk3328-dusun-dsom-010r.dtb"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 DEFAULT_CONSOLE="serial"
-DEFAULT_OVERLAYS="dusun-010r-rp3328b"  # Enable, by default, the RP3328B carrier board devices
+DEFAULT_OVERLAYS="dusun-010r-rp3328b" # Enable, by default, the RP3328B carrier board devices
 BOOTBRANCH_BOARD="tag:v2026.04"
 BOOTPATCHDIR="v2026.04"
 BOOT_SCENARIO="binman-atf-mainline"
 DDR_BLOB="rk33/rk3328_ddr_933MHz_v1.16.bin"
-

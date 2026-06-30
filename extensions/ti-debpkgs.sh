@@ -1,9 +1,9 @@
 function post_repo_customize_image__install_ti_packages() {
 
-    # Read JSON array into Bash array safely
+	# Read JSON array into Bash array safely
 	mapfile -t valid_suites < <(
 		curl -s https://api.github.com/repos/TexasInstruments/ti-debpkgs/contents/dists |
-		jq -r '.[].name'
+			jq -r '.[].name'
 	)
 	display_alert "TI Repo has the following valid suites - ${valid_suites[@]}..."
 
@@ -25,7 +25,7 @@ function post_repo_customize_image__install_ti_packages() {
 		run_host_command_logged "cp \"$SRC/packages/bsp/ti/ti-debpkgs/ti-debpkgs\" \"$SDCARD/etc/apt/preferences.d/\""
 
 		# Install packages
-		if [[ ${#TI_PACKAGES[@]} -gt 0 ]] ; then
+		if [[ ${#TI_PACKAGES[@]} -gt 0 ]]; then
 			do_with_retries 3 chroot_sdcard_apt_get_update
 			do_with_retries 3 chroot_sdcard_apt_get_install "${TI_PACKAGES[@]}"
 		fi
