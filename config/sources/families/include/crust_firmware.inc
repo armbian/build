@@ -14,8 +14,10 @@ if [[ -n "${CRUSTCONFIG}" ]]; then
 	[[ -z $CRUSTBRANCH ]] && CRUSTBRANCH='tag:v0.6'
 	[[ -z $CRUST_COMPILER ]] && CRUST_COMPILER='or1k-elf-'
 
-	# Apply crust patches if crust is enabled
-	BOOTPATCHDIR="${BOOTPATCHDIR} u-boot-sunxi-crust"
+	# Crust/SCP patchdir. v2026.07+ has native SCP (binman scp.bin node +
+	# auto CONFIG_SUNXI_SCP_BASE), so it uses an empty dir; the legacy
+	# u-boot-sunxi-crust set (h3-scp.patch) only forward-applies to v2024.01.
+	BOOTPATCHDIR="${BOOTPATCHDIR} v2026.07-sunxi-crust"
 
 	# Use a different BOOTDIR so that we don't leave scp.bin behind for non crust builds
 	BOOTDIR="u-boot-crust"
