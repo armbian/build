@@ -141,7 +141,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:76d861773b97296bcf5b008309f740bcf7439398' # Commit date: 2026-06-30 (please update when updating commit ref)
+		local rtl8192euver='commit:e34f53cf41cccedeb93a63c0090fc4764da282e6' # Commit date: 2026-06-30 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
