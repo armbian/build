@@ -15,7 +15,8 @@ case "${BRANCH}" in current)
 	BCMDHD_SPACEMIT_TYPE="sdio"
 	BCMDHD_SPACEMIT_TAG="v101.10.591.84.37-4"
 	enable_extension "bcmdhd-spacemit"
-;;esac
+	;;
+esac
 
 function post_config_uboot_target__extra_configs_for_orangepi() {
 	display_alert "$BOARD" "disable MMC UHS support to speed up MMC under Linux" "info"
@@ -24,11 +25,11 @@ function post_config_uboot_target__extra_configs_for_orangepi() {
 
 write_uboot_platform_mtd() {
 	if [ -b /dev/mtdblock0 ]; then
-		dd if="${1}/bootinfo_spinor.bin" of=/dev/mtdblock0 bs=65536 status=none;
-		dd if="${1}/FSBL.bin" of=/dev/mtdblock2 bs=65536 status=none;
-		dd if="${1}/u-boot-env-default.bin" of=/dev/mtdblock3 bs=65536 status=none;
-		dd if="${1}/fw_dynamic.itb" of=/dev/mtdblock4 bs=65536 status=none;
-		dd if="${1}/u-boot.itb" of=/dev/mtdblock5 bs=65536 status=none;
+		dd if="${1}/bootinfo_spinor.bin" of=/dev/mtdblock0 bs=65536 status=none
+		dd if="${1}/FSBL.bin" of=/dev/mtdblock2 bs=65536 status=none
+		dd if="${1}/u-boot-env-default.bin" of=/dev/mtdblock3 bs=65536 status=none
+		dd if="${1}/fw_dynamic.itb" of=/dev/mtdblock4 bs=65536 status=none
+		dd if="${1}/u-boot.itb" of=/dev/mtdblock5 bs=65536 status=none
 		sync
 	fi
 }
@@ -57,7 +58,7 @@ function post_family_tweaks__orangepirv2_enable_bluetooth_service() {
 
 function post_family_tweaks_bsp__orangepirv2_bt() {
 	# Build custom Bluetooth firmware hacking tool
-	if [ -f "$SRC/packages/bsp/$BOARD/brcm_patchram_plus.c" ];then
+	if [ -f "$SRC/packages/bsp/$BOARD/brcm_patchram_plus.c" ]; then
 		run_host_command_logged env PATH="${toolchain}:${PATH}" "${UBOOT_COMPILER}gcc" "$SRC/packages/bsp/${BOARD}/brcm_patchram_plus.c" -Wno-implicit-function-declaration -s -o "$destination/usr/bin/brcm_patchram_plus" || exit_with_error "Unable to compile brcm_patchram_plus.c"
 	fi
 }

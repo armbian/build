@@ -59,7 +59,6 @@ function pre_customize_image__add_odin2_scripts() {
 
 	chroot_sdcard git clone https://github.com/Squishy123/odin2-scripts.git "$launcher_dir/odin2-scripts"
 
-
 	local launcher_dir="${SDCARD}/usr/local/bin"
 	local launcher_file="${launcher_dir}/install-odin2-scripts"
 	run_host_command_logged mkdir -pv "${launcher_dir}"
@@ -76,4 +75,3 @@ function pre_customize_image__add_odin2_scripts() {
 	run_host_command_logged chmod -v +x "${launcher_file}"
 	display_alert "Added Odin2 Scripts" "${EXTENSION}" "info"
 }
-

@@ -194,8 +194,8 @@ function run_host_x86_binary_logged() {
 	if [[ "$(uname -m)" != "x86_64" ]]; then # If we're NOT on x86...
 		case "${target_bin_arch}" in
 			*"x86-64"*) qemu_arch='x86_64' ;;
-			*"80386"*)  qemu_arch='i386' ;;
-			*"i386"*)   qemu_arch='i386' ;;
+			*"80386"*) qemu_arch='i386' ;;
+			*"i386"*) qemu_arch='i386' ;;
 			*)
 				exit_with_error "Unexpected binary architecture (${target_bin_arch}) for '${invoked_bin}'"
 				;;

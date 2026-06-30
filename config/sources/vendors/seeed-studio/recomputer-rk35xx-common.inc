@@ -11,8 +11,8 @@ function post_family_tweaks_bsp__seeed_configure_apt_source() {
 	install -d -m 0755 "${destination}/usr/share/keyrings"
 	install -d -m 0755 "${destination}/etc/apt/sources.list.d"
 	curl -fsSL --connect-timeout 30 --retry 3 \
-		"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
-		| gpg --dearmor > "${destination}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
+		"${SEEED_APT_REPO_URL}/seeed-repo.gpg" |
+		gpg --dearmor > "${destination}/usr/share/keyrings/seeed-repo.gpg" 2> /dev/null
 
 	if [[ ! -s "${destination}/usr/share/keyrings/seeed-repo.gpg" ]]; then
 		exit_with_error "Failed to import Seeed GPG key"
@@ -40,8 +40,8 @@ function seeed_recomputer_install_from_apt() {
 	if [[ ! -f "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
 		install -d -m 0755 "${SDCARD}/usr/share/keyrings"
 		curl -fsSL --noproxy '*' --connect-timeout 30 --retry 3 \
-			"${SEEED_APT_REPO_URL}/seeed-repo.gpg" \
-			| gpg --dearmor > "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" 2>/dev/null
+			"${SEEED_APT_REPO_URL}/seeed-repo.gpg" |
+			gpg --dearmor > "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" 2> /dev/null
 
 		if [[ ! -s "${SDCARD}/usr/share/keyrings/seeed-repo.gpg" ]]; then
 			exit_with_error "Failed to import Seeed GPG key"
@@ -50,8 +50,8 @@ function seeed_recomputer_install_from_apt() {
 
 	# Write Seeed source if not present (or update distribution if mismatched)
 	local expected_source="deb [signed-by=/usr/share/keyrings/seeed-repo.gpg] ${SEEED_APT_REPO_URL} ${SEEED_DIST} main"
-	if [[ ! -f "${SDCARD}/etc/apt/sources.list.d/seeed.list" ]] || \
-	   ! grep -qF "${expected_source}" "${SDCARD}/etc/apt/sources.list.d/seeed.list" 2>/dev/null; then
+	if [[ ! -f "${SDCARD}/etc/apt/sources.list.d/seeed.list" ]] ||
+		! grep -qF "${expected_source}" "${SDCARD}/etc/apt/sources.list.d/seeed.list" 2> /dev/null; then
 		cat > "${SDCARD}/etc/apt/sources.list.d/seeed.list" <<- EOF
 			${expected_source}
 		EOF
@@ -95,19 +95,19 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 	local snapshot_before snapshot_after
 	snapshot_before=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-before.XXXXXX)
 	snapshot_after=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-after.XXXXXX)
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' \
-		| grep "^ii " | awk '{print $2}' | sort > "${snapshot_before}"
+	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
+		grep "^ii " | awk '{print $2}' | sort > "${snapshot_before}"
 
 	# Pre-compute packages that depend on bluez (one apt-cache call instead of N)
 	local bluez_deps
-	bluez_deps=$(chroot_sdcard_with_stdout apt-cache rdepends --installed bluez 2>/dev/null \
-		| awk 'NR>2 && NF{print $1}' | sort -u)
+	bluez_deps=$(chroot_sdcard_with_stdout apt-cache rdepends --installed bluez 2> /dev/null |
+		awk 'NR>2 && NF{print $1}' | sort -u)
 
 	seeed_recomputer_install_from_apt fcs960k-aic-bluez
 
 	# Diff to detect removed packages
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' \
-		| grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
+	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
+		grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
 	local removed_pkgs
 	removed_pkgs=$(comm -23 "${snapshot_before}" "${snapshot_after}")
 	removed_pkgs=$(printf '%s\n' "${removed_pkgs}" | grep -vxE 'bluez|fcs960k-aic-bluez' || true)
@@ -144,24 +144,24 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 	# unit. Create one pointing to fcs960k's bluetoothd so that
 	# aic-bluetooth.service (which Requires=bluetooth.service) can start.
 	if [[ -f "${SDCARD}/usr/libexec/bluetooth/bluetoothd" ]] && [[ ! -f "${SDCARD}/lib/systemd/system/bluetooth.service" ]] && [[ ! -f "${SDCARD}/usr/lib/systemd/system/bluetooth.service" ]]; then
-		cat > "${SDCARD}/lib/systemd/system/bluetooth.service" <<-'EOF'
-[Unit]
-Description=Bluetooth service
-After=dbus.service
-ConditionPathDirectory=/sys/class/bluetooth
+		cat > "${SDCARD}/lib/systemd/system/bluetooth.service" <<- 'EOF'
+			[Unit]
+			Description=Bluetooth service
+			After=dbus.service
+			ConditionPathDirectory=/sys/class/bluetooth
 
-[Service]
-Type=dbus
-BusName=org.bluez
-ExecStart=/usr/libexec/bluetooth/bluetoothd
-Restart=on-failure
-RestartSec=5
+			[Service]
+			Type=dbus
+			BusName=org.bluez
+			ExecStart=/usr/libexec/bluetooth/bluetoothd
+			Restart=on-failure
+			RestartSec=5
 
-[Install]
-WantedBy=bluetooth.target
-Also=aic-bluetooth.service
-Alias=dbus-org.bluez.service
-EOF
+			[Install]
+			WantedBy=bluetooth.target
+			Also=aic-bluetooth.service
+			Alias=dbus-org.bluez.service
+		EOF
 	fi
 }
 
@@ -199,9 +199,9 @@ function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
 # Enable AIC8800 Bluetooth Service
 function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
-	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service || \
-	   chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service || \
-	   chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
+	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service ||
+		chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service ||
+		chroot_sdcard test -f /etc/systemd/system/aic-bluetooth.service; then
 		chroot_sdcard systemctl --no-reload enable aic-bluetooth.service
 
 		# Soften hard dependency on bluetooth.service — use sed instead of
@@ -212,11 +212,11 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 		sed -i 's/^Requires=bluetooth.service bluetooth.target$/Wants=bluetooth.service/' \
 			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
 			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
-			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null || true
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2> /dev/null || true
 		sed -i 's/^After=bluetooth.service bluetooth.target$/After=bluetooth.target/' \
 			"${SDCARD}"/usr/lib/systemd/system/aic-bluetooth.service \
 			"${SDCARD}"/lib/systemd/system/aic-bluetooth.service \
-			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2>/dev/null || true
+			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2> /dev/null || true
 	else
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
 	fi
@@ -344,17 +344,17 @@ function post_family_tweaks__recomputer_add_sbin_to_path() {
 	display_alert "$BOARD" "Adding sbin directories to PATH" "info"
 
 	mkdir -p "${SDCARD}/etc/profile.d"
-	cat > "${SDCARD}/etc/profile.d/custom-path.sh" <<-'EOF'
-	# Add sbin directories to PATH for ifconfig and other admin tools
-	case ":$PATH:" in
-	  *":/usr/sbin:"*) ;;
-	  *) [ -d /usr/sbin ] && PATH="/usr/sbin:$PATH" ;;
-	esac
-	case ":$PATH:" in
-	  *":/sbin:"*) ;;
-	  *) [ -d /sbin ] && PATH="/sbin:$PATH" ;;
-	esac
-	export PATH
+	cat > "${SDCARD}/etc/profile.d/custom-path.sh" <<- 'EOF'
+		# Add sbin directories to PATH for ifconfig and other admin tools
+		case ":$PATH:" in
+		  *":/usr/sbin:"*) ;;
+		  *) [ -d /usr/sbin ] && PATH="/usr/sbin:$PATH" ;;
+		esac
+		case ":$PATH:" in
+		  *":/sbin:"*) ;;
+		  *) [ -d /sbin ] && PATH="/sbin:$PATH" ;;
+		esac
+		export PATH
 	EOF
 
 	chmod +x "${SDCARD}/etc/profile.d/custom-path.sh"
@@ -368,8 +368,8 @@ function post_family_tweaks__recomputer_mali_dma_heap_permissions() {
 	echo 'SUBSYSTEM=="dma_heap", GROUP="render", MODE="0660"' > "${SDCARD}/etc/udev/rules.d/50-mali-dma-heap.rules"
 
 	# GDM greeter needs render+video groups for DRM and DMA heap access.
-	chroot_sdcard usermod -aG render Debian-gdm 2>/dev/null || true
-	chroot_sdcard usermod -aG video Debian-gdm 2>/dev/null || true
+	chroot_sdcard usermod -aG render Debian-gdm 2> /dev/null || true
+	chroot_sdcard usermod -aG video Debian-gdm 2> /dev/null || true
 }
 
 # X11 — OutputClass matches rockchip DRM
@@ -377,14 +377,14 @@ function post_family_tweaks__recomputer_mali_x11_kms_config() {
 	display_alert "$BOARD" "Configuring X11 for Rockchip KMS" "info"
 
 	mkdir -p "${SDCARD}"/etc/X11/xorg.conf.d/
-	cat > "${SDCARD}"/etc/X11/xorg.conf.d/10-rockchip-kms.conf <<-'EOF'
-Section "OutputClass"
-    Identifier  "RockchipDRM"
-    MatchDriver "rockchip"
-    Driver      "modesetting"
-    Option      "PrimaryGPU"     "yes"
-EndSection
-EOF
+	cat > "${SDCARD}"/etc/X11/xorg.conf.d/10-rockchip-kms.conf <<- 'EOF'
+		Section "OutputClass"
+		    Identifier  "RockchipDRM"
+		    MatchDriver "rockchip"
+		    Driver      "modesetting"
+		    Option      "PrimaryGPU"     "yes"
+		EndSection
+	EOF
 }
 
 # Mali EGL — bypass libglvnd for EGL/GLES so GLVND does not fall back to Mesa/llvmpipe.
@@ -418,14 +418,14 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 
 	# Mali EGL vendor JSON for libglvnd-aware apps
 	mkdir -p "${SDCARD}"/usr/share/glvnd/egl_vendor.d/
-	cat > "${SDCARD}"/usr/share/glvnd/egl_vendor.d/00_mali.json <<-'EOF'
-{
-    "file_format_version" : "1.0.0",
-    "ICD" : {
-        "library_path" : "libmali.so.1"
-    }
-}
-EOF
+	cat > "${SDCARD}"/usr/share/glvnd/egl_vendor.d/00_mali.json <<- 'EOF'
+		{
+		    "file_format_version" : "1.0.0",
+		    "ICD" : {
+		        "library_path" : "libmali.so.1"
+		    }
+		}
+	EOF
 }
 
 # GBM fixup: MALI_USE_SYSTEM_GBM=yes (board config) means delete Mali's bundled
@@ -442,7 +442,7 @@ function pre_umount_final_image__recomputer_mali_gbm_fixup() {
 		display_alert "$BOARD" "Using Mali GBM" "info"
 		chroot_sdcard dpkg-divert --rename \
 			--divert /usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0.mesa \
-			/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0 2>/dev/null || true
+			/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0 2> /dev/null || true
 		rm -f "${LIB_DIR}/libgbm.so.1"
 		ln -sf mali/libgbm.so.1 "${LIB_DIR}/libgbm.so.1"
 	fi
@@ -507,7 +507,7 @@ fi
 function post_family_tweaks__recomputer_rk35xx_disable_armbian_hardware_optimize() {
 	display_alert "$BOARD" "Removing armbian-hardware-optimize.service" "info"
 
-	chroot_sdcard systemctl --no-reload disable armbian-hardware-optimize.service 2>/dev/null || true
+	chroot_sdcard systemctl --no-reload disable armbian-hardware-optimize.service 2> /dev/null || true
 	rm -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service
 }
 

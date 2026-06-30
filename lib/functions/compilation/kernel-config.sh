@@ -99,7 +99,7 @@ function call_extensions_kernel_config() {
 
 	# kernel_config_set_* append to this array; ensure it exists globally so their
 	# changes survive for artifact versioning even when no caller pre-declared it.
-	if ! declare -p kernel_config_modifying_hashes >/dev/null 2>&1; then
+	if ! declare -p kernel_config_modifying_hashes > /dev/null 2>&1; then
 		# shellcheck disable=SC2034
 		declare -ga kernel_config_modifying_hashes=()
 	fi

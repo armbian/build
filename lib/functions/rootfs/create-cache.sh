@@ -67,9 +67,9 @@ function calculate_rootfs_cache_id() {
 	# this file uses for the hash_hooks/bash_hash components.
 	if [[ ${BUILD_DESKTOP} == yes ]]; then
 		declare _configng_fp="${artifact_input_variables[CONFIGNG_DESKTOPS_HASH]:-}"
-		if [[ -n "${_configng_fp}" \
-				&& "${_configng_fp}" != "undetermined" \
-				&& "${_configng_fp}" != "unknown" ]]; then
+		if [[ -n "${_configng_fp}" &&
+			"${_configng_fp}" != "undetermined" &&
+			"${_configng_fp}" != "unknown" ]]; then
 			cache_type="${cache_type}-${_configng_fp:0:8}"
 		fi
 	fi
