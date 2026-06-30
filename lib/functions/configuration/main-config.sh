@@ -68,6 +68,9 @@ function do_main_configuration() {
 	# Fix binman pkg_resources removal in setuptools >= 82. Can be removed when all U-Boot versions are >= v2025.10.
 	enable_extension "uboot-binman-fix-pkg-resources"
 
+	# Fix old U-Boot pylibfdt: distutils removed in Python 3.12+ (trixie ships 3.13). No-op on newer U-Boot.
+	enable_extension "uboot-fix-pylibfdt-distutils"
+
 	# Network stack to use, default to network-manager; configuration can override this.
 	# Will be made read-only further down.
 	declare -g NETWORKING_STACK="${NETWORKING_STACK}"
