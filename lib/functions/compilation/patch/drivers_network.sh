@@ -48,14 +48,14 @@ driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 7.2; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:0a5d04114fac3c9f48a343cb905fbb6a3f9f5df5' # Commit date: 2025-09-26 (please update when updating commit ref)
+		local rtl8189esver='commit:7aff01915502ea0687b499800c34404a10c57721' # Commit date: 2026-06-29 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes" # https://github.com/jwrdegoede/rtl8189ES_linux
+		fetch_from_repo "$GITHUB_SOURCE/EvilOlaf/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes" # https://github.com/EvilOlaf/rtl8189ES_linux
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189es"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189es/"
@@ -80,18 +80,6 @@ driver_rtl8189ES() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/rtl8189es/Makefile"
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 5.4.251
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
-
-		# fix compilation for kernels >= 7.1
-		if linux-version compare "${version}" ge 7.1; then
-			process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-7.1-kernel.patch" "applying"
-		fi
 	fi
 }
 
