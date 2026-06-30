@@ -20,10 +20,23 @@ function artifact_rootfs_config_dump() {
 	# invalidates the desktop rootfs cache — the package list, browser
 	# mapping, tier overrides, or branding may have changed.
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		# Read CONFIGNG_DESKTOPS_HASH from the cache/sources/armbian-configng
+		# clone. The clone is guaranteed fresh by the fetch_armbian_configng
+		# call in prep_conf_main_{minimal_ni,build_single} — both build
+		# entry points refresh it before this function ever runs. Keeping
+		# the fetch out of here (it used to live here for a couple of
+		# revisions) means the matrix-prep path and the full-build path
+		# converge on the same authoritative state at the same point in
+		# time, instead of each artifact's config_dump fetching mid-flow.
 		declare configng_desktops_hash="undetermined"
 		local configng_dir="${SRC}/cache/sources/armbian-configng"
 		if [[ -d "${configng_dir}/.git" ]]; then
 			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>/dev/null || echo "unknown")"
+			# Operator-facing breadcrumb: short hash + commit subject so
+			# build logs make the cache fingerprint trivially traceable.
+			local configng_desktops_subject
+			configng_desktops_subject="$(git -C "${configng_dir}" log -1 --format=%s -- tools/modules/desktops/ 2>/dev/null || true)"
+			display_alert "configng desktops HEAD" "${configng_desktops_hash:0:12} ${configng_desktops_subject}" "info"
 		fi
 		artifact_input_variables[CONFIGNG_DESKTOPS_HASH]="${configng_desktops_hash}"
 	fi

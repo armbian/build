@@ -25,30 +25,70 @@
 #   DESKTOP_ENVIRONMENT_CONFIG_NAME
 #   DESKTOP_APPGROUPS_SELECTED
 
+# Ensure cache/sources/armbian-configng is a fresh clone of
+# https://github.com/armbian/configng#main. Idempotent and safe to call
+# multiple times (fetch_from_repo handles initial-clone and refresh).
+#
+# Called once per build from both prep_conf_main_minimal_ni (the json-
+# info / matrix-prep path used by armbian/os CI) AND
+# prep_conf_main_build_single (full image build). Having both paths
+# call this guarantees CONFIGNG_DESKTOPS_HASH is computed against the
+# real HEAD of configng, not a stale on-disk snapshot — which was the
+# root cause of the "I pushed to configng but the image still has the
+# old YAML" class of bug.
+#
+# Save/restore PWD because fetch_from_repo cd's into the work tree and
+# doesn't restore. Declare fetched_revision/_ts locals because
+# fetch_from_repo writes to them in caller scope.
+#
+# Non-fatal: failed fetch (offline, network blip, mirror down) logs a
+# warning and falls through with whatever is on disk — downstream
+# consumers handle the "stale or missing clone" case explicitly.
+function fetch_armbian_configng() {
+	# Fetch unconditionally — not gated on BUILD_DESKTOP=yes. The
+	# matrix-prep parent run never has BUILD_DESKTOP=yes (no specific
+	# board selected for the gha-matrix command), so gating here meant
+	# the clone was only refreshed by cli-jsoninfo.sh's secondary
+	# fetch — which is itself gated on the inventory file's absence
+	# and so silently skipped on `CLEAN_INFO=no`. Fetching here always
+	# guarantees the clone is fresh before any artifact's config_dump
+	# reads `git log -1 -- tools/modules/desktops/`, regardless of
+	# whether the caller is a desktop build, a CLI build, or
+	# matrix-prep.
+
+	# Skip the fetch when running inside a config-dump-json subprocess.
+	# info-gatherer-image.py spawns up to 128 parallel workers, each
+	# invoking compile.sh config-dump-json with CONFIG_DEFS_ONLY=yes
+	# (see armbian_run_command_and_parse_json_from_stdout). If every
+	# worker also fetched, they'd race on the same on-disk clone at
+	# cache/sources/armbian-configng — git explodes on .git/index.lock
+	# contention, `git checkout` exits 128, the subprocess produces no
+	# JSON, and the gatherer parse fails with "Expecting value: line 1
+	# column 1 (char 0)" for every desktop target. The parent has
+	# already populated the clone before spawning workers (via
+	# cli-jsoninfo.sh's explicit fetch on the matrix-prep path, or
+	# prep_conf_main_build_single's fetch on the single-image path),
+	# so subprocesses just need to read what's on disk.
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0
+
+	declare _save_pwd="${PWD}"
+	declare fetched_revision="" fetched_revision_ts=""
+	fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "branch:main" || \
+		display_alert "armbian-configng fetch_from_repo failed" "falling back to on-disk state if any" "wrn"
+	cd "${_save_pwd}" || true
+}
+
 function interactive_desktop_main_configuration() {
 	[[ $BUILD_DESKTOP != "yes" ]] && return 0
 
 	display_alert "desktop-config" "DESKTOP_ENVIRONMENT entry: ${DESKTOP_ENVIRONMENT}" "debug"
 
-	# Refresh the armbian-configng clone on EVERY desktop build,
-	# regardless of whether DESKTOP_ENVIRONMENT was pre-set. The
-	# clone feeds two downstream consumers:
-	#
-	#   1. The interactive DE-selection dialog below — only fires
-	#      when DESKTOP_ENVIRONMENT is empty.
-	#   2. artifact_rootfs_config_dump, which reads the clone's
-	#      `git log -1 -- tools/modules/desktops/` as the
-	#      CONFIGNG_DESKTOPS_HASH input that (via create-cache.sh's
-	#      cache_type) fingerprints the rootfs tarball filename.
-	#
-	# Keeping the fetch inside the `-z DESKTOP_ENVIRONMENT` branch
-	# meant every non-interactive build (CI, items-from-inventory,
-	# scripted local) skipped it — so the hash was computed against
-	# whatever stale clone happened to be on disk and the build
-	# happily cache-hit a pre-configng-change rootfs. Hoisting the
-	# fetch up here makes the clone authoritative for every
-	# BUILD_DESKTOP=yes invocation.
-	fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "branch:main"
+	# Refresh the armbian-configng clone before the DE-selection dialog
+	# runs. fetch_armbian_configng is idempotent — typically already
+	# invoked once by prep_conf_main_{minimal_ni,build_single} above
+	# this in the call chain; re-calling here is a cheap no-op that
+	# also handles standalone callers (e.g. plain config-only paths).
+	fetch_armbian_configng
 
 	local configng_dir="${SRC}/cache/sources/armbian-configng"
 	local yaml_dir="${configng_dir}/tools/modules/desktops/yaml"

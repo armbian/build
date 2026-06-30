@@ -28,6 +28,14 @@ function prep_conf_main_build_single() {
 
 	LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
 
+	# Refresh armbian-configng once, early — needs BUILD_DESKTOP to be
+	# authoritative (set by do_main_configuration above). The clone is a
+	# build-wide input: feeds CONFIGNG_DESKTOPS_HASH (cache fingerprint)
+	# AND the DE dialog AND the runtime YAML parser. Doing this here
+	# means artifact_rootfs_config_dump can rely on a fresh on-disk
+	# tree instead of fetching mid-flow per artifact.
+	fetch_armbian_configng
+
 	interactive_desktop_main_configuration
 	interactive_finish # cleans up vars used for interactive
 
@@ -71,6 +79,14 @@ function prep_conf_main_minimal_ni() {
 	# Required, but does stuff it maybe shouldn't
 	allow_no_family="${allow_no_family:-"yes"}" \
 		LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
+
+	# Refresh armbian-configng for the non-interactive path too (matrix-
+	# prep / json-info / cli-build's minimal config). Same rationale as
+	# in prep_conf_main_build_single: every code path that ends up
+	# reading CONFIGNG_DESKTOPS_HASH (from artifact_rootfs_config_dump)
+	# needs the clone fresh, OR the OCI cache fingerprint resolves to
+	# the wrong tag and CI ships the pre-change config.
+	fetch_armbian_configng
 
 	# Required: does a lot of stuff and extension_prepare_config() hook
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration

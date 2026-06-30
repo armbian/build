@@ -466,14 +466,34 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 			check=True,
 			universal_newlines=False,  # universal_newlines messes up bash encoding, don't use, instead decode utf8 manually;
 			bufsize=-1,  # full buffering
-			# Early (pre-param-parsing) optimizations for those in Armbian bash code, so use an ENV (not PARAM)
-			env={
+			# Inherit the parent's env (HOME, PATH, locale, GIT_*, etc.) and
+			# layer the build-specific overrides on top. Previously this
+			# dict was constructed from scratch, dropping HOME — which made
+			# every git invocation inside the subprocess fail to load
+			# ~/.gitconfig and miss the safe.directory entry the parent
+			# added for cache/sources/armbian-configng. Result was a
+			# "fatal: detected dubious ownership" cascade that broke
+			# config-dump-json for every desktop build target in the
+			# matrix-prep pass.
+			#
+			# CI is explicitly cleared: on GHA the parent runs with
+			# CI=true, which makes start_logging_section emit
+			# `::group::...` workflow markers to stdout. That pollutes
+			# the subprocess's stdout (which must be pure JSON for
+			# json.loads), causing every config-dump-json target to
+			# fail with "Expecting value: line 1 column 1 (char 0)"
+			# in matrix-prep — but only on GHA, not locally. Drop CI
+			# (and the closely-related GITHUB_ACTIONS) so subprocesses
+			# behave like a plain non-CI invocation regardless of where
+			# the matrix-prep parent runs.
+			env=({
+				**{k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS")},
 				"CONFIG_DEFS_ONLY": "yes",  # Dont do anything. Just output vars.
 				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output, don't write to log files
 				"WRITE_EXTENSIONS_METADATA": "no",  # Not interested in ext meta here
 				"ALLOW_ROOT": "yes",  # We're gonna be calling it as root, so allow it @TODO not the best option
 				"PRE_PREPARED_HOST": "yes"  # We're gonna be calling it as root, so allow it @TODO not the best option
-			},
+			}),
 			stderr=subprocess.PIPE
 		)
 	except subprocess.CalledProcessError as e:
@@ -501,7 +521,16 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 		info["logs"] = logs
 		return info
 	except json.decoder.JSONDecodeError as e:
-		log.error(f"Error parsing Armbian JSON: params: {params}, stderr: {'; '.join(logs[-5:])}")
+		# Dump raw stdout/stderr in full when the JSON parse fails — the
+		# parsed `logs` view drops anything that isn't "type::message" or
+		# bare stderr noise, and the last-5-lines tail hides the actual
+		# failure cause. PR #9866 debug aid; trim once matrix-prep is
+		# stable again.
+		raw_stdout = result.stdout.decode("utf8", errors="replace") if result and result.stdout else "<EMPTY>"
+		raw_stderr = result.stderr.decode("utf8", errors="replace") if result and result.stderr else "<EMPTY>"
+		log.error(f"Error parsing Armbian JSON: params: {params}, stderr_tail: {'; '.join(logs[-5:])}")
+		log.error(f"  RAW STDOUT for failed target {params.get('target_id','?')} ({len(raw_stdout)} bytes):\n{raw_stdout!r}")
+		log.error(f"  RAW STDERR for failed target {params.get('target_id','?')} ({len(raw_stderr)} bytes):\n{raw_stderr!r}")
 		# return {"in": params, "out": {}, "logs": logs, "config_ok": False}
 		raise e
 
