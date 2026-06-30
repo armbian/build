@@ -52,6 +52,10 @@ case "${BRANCH}" in
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="7.1"
 		;;
+
+	bleedingedge)
+		declare -g KERNEL_MAJOR_MINOR="7.2"
+		;;
 esac
 
 # Common for all branches
