@@ -7,31 +7,11 @@ INTRODUCED="2023"
 KERNEL_TARGET="vendor"
 BOOT_FDT_FILE="starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw"
+SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw rw no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 splash plymouth.ignore-serial-consoles"
 BOOTCONFIG=none
 
-function post_family_tweaks__visionfive2_uenv() {
-	# rpardini: uEnv.txt is needed to re-enable distroboot-like behaviour on the board's SPI u-boot
-	display_alert "$BOARD" "creating uEnv.txt" "info"
-	cat <<- UENV_SCRIPT_HEADER > "${SDCARD}/boot/uEnv.txt"
-		fdt_high=0xffffffffffffffff
-		initrd_high=0xffffffffffffffff
-
-		kernel_addr_r=0x44000000
-		kernel_comp_addr_r=0x90000000
-		kernel_comp_size=0x10000000
-
-		fdt_addr_r=0x48000000
-		ramdisk_addr_r=0x48100000
-
-		# Move distro to first boot to speed up booting
-		boot_targets=distro mmc1 dhcp
-
-		distro_bootpart=1
-
-		# Fix missing bootcmd
-		bootcmd=run bootcmd_distro
-	UENV_SCRIPT_HEADER
-
-	return 0
+function post_assign_board_extlinux_paths() {
+	KERNEL_PATH="/boot/Image"
+	INITRD_PATH="/boot/uInitrd"
+	FDT_PATH="/boot/dtb/${BOOT_FDT_FILE}"
 }
