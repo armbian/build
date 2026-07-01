@@ -13,3 +13,4 @@ KERNEL_TEST_TARGET="current"
 # NB: do NOT re-add the old A83T sunxi_mmc_can_calibrate patch - upstream
 # excludes A83T on purpose (no delay-calibration HW) and forcing it breaks the
 # SPL MMC read (Error -38).
+# Boots from SD only; eMMC boot is not supported.
