@@ -10,11 +10,6 @@ SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw rw no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 splash plymouth.ignore-serial-consoles"
 BOOTCONFIG=none
 
-function post_family_tweaks__visionfive2_uenv() {
-	display_alert "$BOARD" "skipping uEnv.txt generation to respect modern U-Boot default env" "info"
-	return 0
-}
-
 function post_assign_board_extlinux_paths() {
 	KERNEL_PATH="/boot/Image"
 	INITRD_PATH="/boot/uInitrd"
