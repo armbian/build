@@ -7,18 +7,16 @@ INTRODUCED="2023"
 KERNEL_TARGET="vendor"
 BOOT_FDT_FILE="starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw"
+SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw rw no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 splash plymouth.ignore-serial-consoles"
 BOOTCONFIG=none
 
 function post_family_tweaks__visionfive2_uenv() {
-	# rpardini: uEnv.txt is broken on modern SPI u-boot, disabling it
-	display_alert "$BOARD" "skipping uEnv.txt generation for modern U-Boot compatibility" "info"
+	display_alert "$BOARD" "skipping uEnv.txt generation to respect modern U-Boot default env" "info"
 	return 0
 }
 
 function post_assign_board_extlinux_paths() {
-	# Force correct root symlinks for single ext4 partition on StarFive
-	KERNEL_PATH="/vmlinuz"
-	INITRD_PATH="/initrd.img"
-	FDT_PATH="/boot/starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
+	KERNEL_PATH="/boot/Image"
+	INITRD_PATH="/boot/uInitrd"
+	FDT_PATH="/boot/dtb/starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
 }
