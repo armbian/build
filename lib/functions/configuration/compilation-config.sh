@@ -8,22 +8,34 @@
 # https://github.com/armbian/build/
 
 function prepare_compilation_vars() {
-	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE == yes || ${PRIVATE_CCACHE} == yes ]]; then
-		display_alert "using CCACHE" "USE_CCACHE or PRIVATE_CCACHE is set to yes" "warn"
+	# Backend-agnostic dispatch point for compile-cache extensions
+	# (ccache, sccache, …). Runs after every extension_prepare_config_*
+	# (so values set late by other extensions — e.g. PRIVATE_CCACHE from
+	# ccache-remote — are visible) and before run_*_make_internal builds
+	# the env-i make arrays (so ${CCACHE} substitution and PATH prepend
+	# propagate correctly). Order-independent by construction.
+	#
+	# Reset CCACHE to empty first so a previous USE_CCACHE=yes build in
+	# the same shell (or a CCACHE exported in the user's environment)
+	# does not silently leak the wrapper into a USE_CCACHE=no run. Any
+	# enabled backend extension will assign CCACHE inside its hook.
+	declare -g CCACHE=""
+	call_extension_method "compile_prepare_vars" <<- 'COMPILE_PREPARE_VARS'
+		*compile-cache env setup hook for ccache / sccache / similar backends*
+		Called once early in default_build_start, after all extension
+		prepare_config hooks have run and before kernel/u-boot/ATF/Crust
+		make invocations begin. Implementations export the env vars their
+		backend needs (CCACHE, CCACHE_DIR, CCACHE_UMASK, SCCACHE_DIR, …)
+		so later array-building code captures them, and tweak PATH if a
+		wrapper prefix directory is needed.
+	COMPILE_PREPARE_VARS
 
-		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing
-		# private ccache directory to avoid permission issues when using build script with "sudo"
-		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache # actual export
-
-		# Set default umask for ccache to allow write access for all users (enables cache sharing)
-		# CCACHE_UMASK=000 creates files with permissions 666 (rw-rw-rw-) and dirs with 777 (rwxrwxrwx)
-		# Only set this for shared cache, not for private cache
-		[[ -z "${CCACHE_UMASK}" && "${PRIVATE_CCACHE}" != "yes" ]] && export CCACHE_UMASK=000
-	else
-		CCACHE=""
+	# Migration reminder — remove after mid-2027.
+	# USE_CCACHE / PRIVATE_CCACHE no longer enable any compile-cache backend;
+	# compile-cache extensions are now enabled explicitly via ENABLE_EXTENSIONS.
+	if [[ ("${USE_CCACHE:-}" == "yes" || "${PRIVATE_CCACHE:-}" == "yes") && -z "${CCACHE}" ]]; then
+		display_alert "USE_CCACHE / PRIVATE_CCACHE are ignored" \
+			"compile-cache backends are now extensions; use ENABLE_EXTENSIONS=ccache (or another backend)" "wrn"
 	fi
 
 	# moved from config: this does not belong in configuration. it's a compilation thing.
@@ -36,7 +48,7 @@ function prepare_compilation_vars() {
 	# If CPUTHREADS is defined and a valid positive integer allow user to override CTHREADS
 	# This is useful for limiting Armbian build to a specific number of threads, e.g. for build servers
 	if [[ "$CPUTHREADS" =~ ^[1-9][0-9]*$ ]]; then
-    	CTHREADS="-j$CPUTHREADS"
+		CTHREADS="-j$CPUTHREADS"
 		echo "Using user-defined thread count: $CTHREADS"
 	fi
 

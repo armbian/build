@@ -256,11 +256,11 @@ function kernel_build() {
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
 	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets_build[*]}" "info"
-	do_with_ccache_statistics \
+	do_with_compile_wrapper \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_build[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Installing kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets_install[*]}" "info"
-	do_with_ccache_statistics \
+	do_with_compile_wrapper \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_install[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
