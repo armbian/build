@@ -41,21 +41,21 @@ function output_images_compress_and_checksum() {
 	# Guard against a non-numeric or zero override: bash arithmetic reads
 	# either as 0, which would set compress_threads=0 (xz/zstd -T0 = "use all
 	# cores") and silently collapse the cap. Fall back to the default 16.
-	[[ "${max_threads}" =~ ^[0-9]+$ ]] && (( max_threads >= 1 )) || max_threads=16
+	[[ "${max_threads}" =~ ^[0-9]+$ ]] && ((max_threads >= 1)) || max_threads=16
 	compress_threads=$host_threads
-	(( compress_threads > max_threads )) && compress_threads=$max_threads
-	active_jobs=$(pgrep -cx 'xz|zstd|zstdmt' 2>/dev/null || true)
+	((compress_threads > max_threads)) && compress_threads=$max_threads
+	active_jobs=$(pgrep -cx 'xz|zstd|zstdmt' 2> /dev/null || true)
 	[[ -z "${active_jobs}" ]] && active_jobs=0
 
 	mem_avail_mb=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
-	mem_budget_mb=$(( mem_avail_mb * 6 / 10 / (active_jobs + 1) ))
+	mem_budget_mb=$((mem_avail_mb * 6 / 10 / (active_jobs + 1)))
 
 	# Hard memory ceiling handed to `xz --memlimit-compress`: a backstop so the
 	# encoder scales its own thread count down rather than risking OOM. Default
 	# 10 GiB, lowered only when the host has less memory available than that.
 	# Override explicitly with IMAGE_XZ_MEMLIMIT (e.g. "4GiB").
 	declare xz_memlimit_mb=10240
-	(( mem_avail_mb < xz_memlimit_mb )) && xz_memlimit_mb=$mem_avail_mb
+	((mem_avail_mb < xz_memlimit_mb)) && xz_memlimit_mb=$mem_avail_mb
 	declare xz_memlimit="${IMAGE_XZ_MEMLIMIT:-${xz_memlimit_mb}MiB}"
 
 	# Pick the strongest xz preset that fits BOTH memory and CPU class. Each
@@ -73,7 +73,7 @@ function output_images_compress_and_checksum() {
 		rest="${entry#*:}"
 		pt="${rest%%:*}"
 		floor="${rest##*:}"
-		if (( compress_threads >= floor )) && (( compress_threads * pt <= mem_budget_mb )); then
+		if ((compress_threads >= floor)) && ((compress_threads * pt <= mem_budget_mb)); then
 			xz_elastic_level="$lvl"
 			break
 		fi
@@ -83,9 +83,9 @@ function output_images_compress_and_checksum() {
 	# elastic walk only escalates above that when both CPU and RAM clearly
 	# support it. Keeps weak ARM hosts (2-4 cores) at a sensible level.
 	declare zstd_elastic_level="9"
-	(( compress_threads >= 4 )) && zstd_elastic_level="12"
-	(( compress_threads >= 8 && mem_budget_mb >= 2048 )) && zstd_elastic_level="19"
-	(( compress_threads >= 16 && mem_budget_mb >= 4096 )) && zstd_elastic_level="22"
+	((compress_threads >= 4)) && zstd_elastic_level="12"
+	((compress_threads >= 8 && mem_budget_mb >= 2048)) && zstd_elastic_level="19"
+	((compress_threads >= 16 && mem_budget_mb >= 4096)) && zstd_elastic_level="22"
 
 	# Trace each xz preset considered against the budget AND the cpu floor;
 	# useful when the picked level looks surprising in a build log.
@@ -95,12 +95,12 @@ function output_images_compress_and_checksum() {
 		rest="${entry#*:}"
 		pt="${rest%%:*}"
 		floor="${rest##*:}"
-		need=$(( compress_threads * pt ))
-		if (( compress_threads < floor )); then
+		need=$((compress_threads * pt))
+		if ((compress_threads < floor)); then
 			xz_walk_trace+="-${lvl}:cpu<${floor} skip; "
 			continue
 		fi
-		if (( need <= mem_budget_mb )); then
+		if ((need <= mem_budget_mb)); then
 			xz_walk_trace+="-${lvl}:${need}MB<=budget OK; "
 			break
 		else
@@ -113,8 +113,8 @@ function output_images_compress_and_checksum() {
 	loadavg=$(awk '{print $1"/"$2"/"$3}' /proc/loadavg)
 	for f in "${images[@]}"; do
 		[[ -L "$f" || ! -f "$f" || "$f" == *.txt ]] && continue
-		total_input_mb=$(( total_input_mb + $(stat -c %s "$f") / 1024 / 1024 ))
-		input_count=$(( input_count + 1 ))
+		total_input_mb=$((total_input_mb + $(stat -c %s "$f") / 1024 / 1024))
+		input_count=$((input_count + 1))
 	done
 
 	display_alert "Compression host" \
@@ -151,19 +151,37 @@ function output_images_compress_and_checksum() {
 		# so threads beyond (file_size / block_size) sit idle and waste per-thread
 		# memory. Cap to whatever the file can actually use.
 		declare file_size_mb file_threads xz_block_mb xz_per_thread_mb peak_mem_mb
-		file_size_mb=$(( $(stat -c %s "${uncompressed_file}") / 1024 / 1024 ))
+		file_size_mb=$(($(stat -c %s "${uncompressed_file}") / 1024 / 1024))
 		case "${xz_compression_ratio_image}" in
-			9|9e) xz_block_mb=192; xz_per_thread_mb=674 ;;
-			7|8)  xz_block_mb=48;  xz_per_thread_mb=186 ;;
-			6)    xz_block_mb=24;  xz_per_thread_mb=94 ;;
-			3|4|5) xz_block_mb=12; xz_per_thread_mb=32 ;;
-			0)    xz_block_mb=3;   xz_per_thread_mb=2 ;;
-			*)    xz_block_mb=3;   xz_per_thread_mb=9 ;;
+			9 | 9e)
+				xz_block_mb=192
+				xz_per_thread_mb=674
+				;;
+			7 | 8)
+				xz_block_mb=48
+				xz_per_thread_mb=186
+				;;
+			6)
+				xz_block_mb=24
+				xz_per_thread_mb=94
+				;;
+			3 | 4 | 5)
+				xz_block_mb=12
+				xz_per_thread_mb=32
+				;;
+			0)
+				xz_block_mb=3
+				xz_per_thread_mb=2
+				;;
+			*)
+				xz_block_mb=3
+				xz_per_thread_mb=9
+				;;
 		esac
-		file_threads=$(( file_size_mb / xz_block_mb ))
-		(( file_threads < 1 )) && file_threads=1
-		(( file_threads > compress_threads )) && file_threads=$compress_threads
-		peak_mem_mb=$(( file_threads * xz_per_thread_mb ))
+		file_threads=$((file_size_mb / xz_block_mb))
+		((file_threads < 1)) && file_threads=1
+		((file_threads > compress_threads)) && file_threads=$compress_threads
+		peak_mem_mb=$((file_threads * xz_per_thread_mb))
 
 		declare t_start t_elapsed compressed_mb ratio_pct mb_per_sec
 		t_start=$SECONDS
@@ -179,19 +197,19 @@ function output_images_compress_and_checksum() {
 			# lower levels zstd's default windowLog (~4-16 MB) decompresses
 			# much cheaper on small devices.
 			declare -a zstd_args=(-T"${compress_threads}")
-			(( zstd_level >= 19 )) && zstd_args+=(--long=27)
-			(( zstd_level >= 20 )) && zstd_args+=(--ultra)
+			((zstd_level >= 19)) && zstd_args+=(--long=27)
+			((zstd_level >= 20)) && zstd_args+=(--ultra)
 			display_alert "Compressing with zstd" "${uncompressed_file_basename}.zst (-${zstd_level}, threads: ${compress_threads}, size: ${file_size_mb}MB)" "info"
 			zstdmt "${zstd_args[@]}" "-${zstd_level}" "${uncompressed_file}" -o "${uncompressed_file}.zst"
 			rm -f "${uncompressed_file}"
 			compression_type=".zst"
 		fi
 
-		t_elapsed=$(( SECONDS - t_start ))
-		(( t_elapsed < 1 )) && t_elapsed=1
-		compressed_mb=$(( $(stat -c %s "${uncompressed_file}${compression_type}" 2>/dev/null || echo 0) / 1024 / 1024 ))
-		(( file_size_mb > 0 )) && ratio_pct=$(( compressed_mb * 100 / file_size_mb )) || ratio_pct=0
-		mb_per_sec=$(( file_size_mb / t_elapsed ))
+		t_elapsed=$((SECONDS - t_start))
+		((t_elapsed < 1)) && t_elapsed=1
+		compressed_mb=$(($(stat -c %s "${uncompressed_file}${compression_type}" 2> /dev/null || echo 0) / 1024 / 1024))
+		((file_size_mb > 0)) && ratio_pct=$((compressed_mb * 100 / file_size_mb)) || ratio_pct=0
+		mb_per_sec=$((file_size_mb / t_elapsed))
 		display_alert "Compressed" "${uncompressed_file_basename}${compression_type}: ${file_size_mb}MB -> ${compressed_mb}MB (${ratio_pct}%), ${t_elapsed}s, ${mb_per_sec} MB/s" "info"
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then

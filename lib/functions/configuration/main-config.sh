@@ -47,7 +47,7 @@ function do_main_configuration() {
 		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
 	fi
 
-	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0"                           # RGB values for MOTD logo
+	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0" # RGB values for MOTD logo
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
@@ -60,7 +60,7 @@ function do_main_configuration() {
 	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                   # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
-	declare -g USE_CCACHE="${USE_CCACHE:-no}"                              # stop using ccache as our worktree is more effective
+	declare -g USE_CCACHE="${USE_CCACHE:-no}" # stop using ccache as our worktree is more effective
 
 	# Armbian config is central tool used in all builds. As its build externally, we have moved it to extension. Enable it here.
 	enable_extension "armbian-config"
@@ -173,7 +173,7 @@ function do_main_configuration() {
 
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
-		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
+		enable_extension "fs-cryptroot-support"                                   # add the tooling needed, cryptsetup
 		if [[ -z $CRYPTROOT_PASSPHRASE ]] && [[ -z $CRYPTROOT_AUTOUNLOCK ]]; then # a passphrase is mandatory if rootfs encryption is enabled, unless CRYPTROOT_AUTOUNLOCK is wanted
 			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE or CRYPTROOT_AUTOUNLOCK is not set"
 		fi
@@ -343,7 +343,7 @@ function do_main_configuration() {
 			;;
 	esac
 
-        # enable APA extension for Debian Unstable release
+	# enable APA extension for Debian Unstable release
 	# loong64 is not supported now
 	#  [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
 
@@ -474,7 +474,7 @@ function do_extra_configuration() {
 
 	# Derive APT_PROXY_ADDR from proxy env vars if unset, which runners.sh uses inside chroot.
 	# Skip if MANAGE_ACNG is active to prevent conflicting behavior.
-	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && ( -z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no" ) ]]; then
+	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && (-z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no") ]]; then
 		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
 		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
 	fi
@@ -486,7 +486,7 @@ function do_extra_configuration() {
 	if [[ -z "${NAMESERVER}" ]]; then
 		declare _dns_resolv_file="/etc/resolv.conf"
 		[[ -f "/run/systemd/resolve/resolv.conf" ]] && _dns_resolv_file="/run/systemd/resolve/resolv.conf"
-		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2>/dev/null)"
+		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2> /dev/null)"
 		NAMESERVER="${NAMESERVER:-1.0.0.1}"
 	fi
 

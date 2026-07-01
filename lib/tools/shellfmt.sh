@@ -50,7 +50,7 @@ if [[ ! -f "${SHELLFMT_BIN}" ]]; then
 	curl -fLo "${SHELLFMT_BIN}" "${DOWN_URL}" || {
 		echo "shellfmt download failed from ${DOWN_URL}"
 		rm -f "${SHELLFMT_BIN}"
-		exit 1;
+		exit 1
 	}
 	chmod +x "${SHELLFMT_BIN}"
 fi
@@ -109,10 +109,10 @@ if ((${#SCOPED_ARGS[@]} > 0)); then
 	fi
 else
 	# Full-tree mode: aggregate every file the framework cares about.
-	board_config_files=$(find config/boards -type f \( -name "*.conf" -o -name "*.csc" -o -name "*.tvb" -o -name "*.eos" -o -name "*.wip" \))  # All board config files
-	family_config_files=$(find config/sources -type f \( -name "*.conf" -o -name "*.inc" -o -name "*.sh" \)) # All family config files
-	lib_files=$(find lib -type f -name "*.sh")                                                               # All build framework shell files
-	extensions_files=$(find extensions -type f -name "*.sh")                                                 # All extension shell files
+	board_config_files=$(find config/boards -type f \( -name "*.conf" -o -name "*.csc" -o -name "*.tvb" -o -name "*.eos" -o -name "*.wip" \)) # All board config files
+	family_config_files=$(find config/sources -type f \( -name "*.conf" -o -name "*.inc" -o -name "*.sh" \))                                  # All family config files
+	lib_files=$(find lib -type f -name "*.sh")                                                                                                # All build framework shell files
+	extensions_files=$(find extensions -type f -name "*.sh")                                                                                  # All extension shell files
 
 	ALL_BASH_FILES=(compile.sh ${board_config_files} ${family_config_files} ${lib_files} ${extensions_files})
 fi

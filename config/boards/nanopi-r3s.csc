@@ -15,7 +15,7 @@ enable_extension "uboot-btrfs"
 
 function post_family_config__use_mainline_uboot() {
 	if [[ "$BRANCH" == "vendor" ]]; then
-    	return 0
+		return 0
 	fi
 
 	unset BOOT_FDT_FILE # boot.scr will use whatever u-boot detects and sets 'fdtfile' to

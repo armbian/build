@@ -87,9 +87,9 @@ function post_family_config__retroidpocket-rpmini_extra_packages() {
 	fi
 
 	display_alert "Setting up extra packages for ${BOARD}" "${RELEASE}" "info"
-	add_packages_to_image "bluez" "bluetooth"        # for bluetooth stuff
-	add_packages_to_image "mtools"                   # for access to the EFI partition
-	add_packages_to_image "zstd"                     # for zstd compression of initrd
+	add_packages_to_image "bluez" "bluetooth" # for bluetooth stuff
+	add_packages_to_image "mtools"            # for access to the EFI partition
+	add_packages_to_image "zstd"              # for zstd compression of initrd
 }
 
 function post_family_tweaks_bsp__retroidpocket-rpmini_bsp_firmware_in_initrd() {

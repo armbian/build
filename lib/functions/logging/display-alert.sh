@@ -148,7 +148,7 @@ function display_alert() {
 			ci_log="warning"
 			;;
 
-		notice )
+		notice)
 			level="notice"
 			level_indicator="🥦"
 			inline_logs_color="\e[1;32m"
