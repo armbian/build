@@ -61,7 +61,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 			local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
 			acng_check_status_or_restart
 			;;
-		no)     ;& # do nothing, fallthrough
+		no) ;& # do nothing, fallthrough
 		"")
 			:  # still do nothing
 			;; # stop falling
@@ -126,7 +126,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# apt-get phase uses (runners.sh). Without this the base-system bootstrap
 	# goes direct to the mirror, bypassing the cache. MANAGE_ACNG=yes / a URL
 	# already route through acng's URL-prefix, so this only covers no/unset.
-	if [[ -n "${APT_PROXY_ADDR}" && ( "${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}" ) ]]; then
+	if [[ -n "${APT_PROXY_ADDR}" && ("${MANAGE_ACNG}" == "no" || -z "${MANAGE_ACNG}") ]]; then
 		display_alert "Routing mmdebstrap through apt proxy" "http://${APT_PROXY_ADDR##*@}" "info"
 		debootstrap_arguments+=("'--aptopt=Acquire::http::Proxy \"http://${APT_PROXY_ADDR}\"'")
 	fi
@@ -151,13 +151,16 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "for mmdebstrap" # just for size reference in logs
 
-
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "mmdebstrap did not produce /bin/bash"
 
 	# Done with mmdebstrap. Clean-up its litterbox.
 	display_alert "Cleaning up after mmdebstrap" "mmdebstrap cleanup" "info"
 	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
 	rm -f "${SDCARD}/etc/apt/apt.conf.d/99-armbian-sandbox" # build-time only; don't ship in the image
+	# mmdebstrap persists the bootstrap --aptopt (our APT_PROXY_ADDR proxy) as
+	# 99mmdebstrap inside the rootfs. That build-host proxy is meaningless — and
+	# usually unreachable — on the user's machine, breaking their apt. Strip it.
+	rm -f "${SDCARD}/etc/apt/apt.conf.d/99mmdebstrap"
 
 	local_apt_deb_cache_prepare "after mmdebstrap cleanup" # just for size reference in logs
 

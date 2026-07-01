@@ -12,15 +12,15 @@ function bootscript_export_display_console() {
 	typeset ITEM
 	typeset CONSOLEARGS
 
-	for ITEM in ${DISPLAYCON//,/ } ; do
+	for ITEM in ${DISPLAYCON//,/ }; do
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }console=${ITEM//:/,}"
 	done
 
-	for ITEM in $SRC_CMDLINE ; do
-		if [[ ! 'console' == "${ITEM%%=*}" ]] ; then
+	for ITEM in $SRC_CMDLINE; do
+		if [[ ! 'console' == "${ITEM%%=*}" ]]; then
 			continue
 		fi
-		if [[ "${ITEM#*=}" =~ 'tty'[AGSU]* ]] ; then
+		if [[ "${ITEM#*=}" =~ 'tty'[AGSU]* ]]; then
 			continue
 		fi
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
@@ -35,15 +35,15 @@ function bootscript_export_serial_console() {
 	typeset ITEM
 	typeset CONSOLEARGS
 
-	for ITEM in ${SERIALCON//,/ } ; do
+	for ITEM in ${SERIALCON//,/ }; do
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }console=${ITEM//:/,}"
 	done
 
-	for ITEM in $SRC_CMDLINE ; do
-		if [[ ! 'console' == "${ITEM%%=*}" ]] ; then
+	for ITEM in $SRC_CMDLINE; do
+		if [[ ! 'console' == "${ITEM%%=*}" ]]; then
 			continue
 		fi
-		if [[ ! "${ITEM#*=}" =~ 'tty'[AGSU]* ]] ; then
+		if [[ ! "${ITEM#*=}" =~ 'tty'[AGSU]* ]]; then
 			continue
 		fi
 		CONSOLEARGS="${CONSOLEARGS:-}${CONSOLEARGS:+ }${ITEM:?}"
@@ -67,7 +67,7 @@ function render_bootscript_template() { (
 
 	export $(set | sed -En '/^BOOTSCRIPT_TEMPLATE__/s/=.*$//p')
 	envsubst "'${SHELL_FORMAT}'"
-) }
+); }
 
 function proof_rendered_bootscript_template() {
 	! egrep '\$\{?BOOTSCRIPT_TEMPLATE__' "${1:?}"
@@ -228,18 +228,18 @@ function install_distribution_agnostic() {
 
 		if [[ -n "${BOOTSCRIPT}" ]]; then # @TODO: && "${BOOTCONFIG}" != "none"
 			case "${bootscript_src}" in
-			*'.template')
-				display_alert "Rendering boot script template" "${bootscript_src_path}/${bootscript_src}" "info"
-				run_host_command_logged cat "${bootscript_src_path}/${bootscript_src}" | render_bootscript_template > "${SDCARD}/boot/${bootscript_dst}"
+				*'.template')
+					display_alert "Rendering boot script template" "${bootscript_src_path}/${bootscript_src}" "info"
+					run_host_command_logged cat "${bootscript_src_path}/${bootscript_src}" | render_bootscript_template > "${SDCARD}/boot/${bootscript_dst}"
 
-				if ! proof_rendered_bootscript_template "${SDCARD}/boot/${bootscript_dst}" ; then
-					exit_with_error "Render of bootscript template was not successful. Inspect '${SDCARD}/boot/${bootscript_dst}' for unrendered variables."
-				fi
-				;;
-			*)
-				display_alert "Deploying boot script" "${bootscript_src_path}/${bootscript_src}" "info"
-				run_host_command_logged cp -pv "${bootscript_src_path}/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
-				;;
+					if ! proof_rendered_bootscript_template "${SDCARD}/boot/${bootscript_dst}"; then
+						exit_with_error "Render of bootscript template was not successful. Inspect '${SDCARD}/boot/${bootscript_dst}' for unrendered variables."
+					fi
+					;;
+				*)
+					display_alert "Deploying boot script" "${bootscript_src_path}/${bootscript_src}" "info"
+					run_host_command_logged cp -pv "${bootscript_src_path}/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+					;;
 			esac
 		fi
 
@@ -416,7 +416,7 @@ function install_distribution_agnostic() {
 	if [[ $PLYMOUTH == yes ]]; then
 		install_artifact_deb_chroot "armbian-plymouth-theme"
 	else
-		chroot_sdcard_apt_get_remove --auto-remove plymouth 2>/dev/null || true
+		chroot_sdcard_apt_get_remove --auto-remove plymouth 2> /dev/null || true
 	fi
 
 	# freeze armbian packages

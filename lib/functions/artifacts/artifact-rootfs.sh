@@ -23,7 +23,7 @@ function artifact_rootfs_config_dump() {
 		declare configng_desktops_hash="undetermined"
 		local configng_dir="${SRC}/cache/sources/armbian-configng"
 		if [[ -d "${configng_dir}/.git" ]]; then
-			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2>/dev/null || echo "unknown")"
+			configng_desktops_hash="$(git -C "${configng_dir}" log -1 --format=%H -- tools/modules/desktops/ 2> /dev/null || echo "unknown")"
 		fi
 		artifact_input_variables[CONFIGNG_DESKTOPS_HASH]="${configng_desktops_hash}"
 	fi

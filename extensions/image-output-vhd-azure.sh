@@ -9,7 +9,7 @@
 
 function add_host_dependencies__vhd_host_deps() {
 	declare -g SKIP_QCOW2=yes # Skip qcow2 from the image-output-qcow2 extension
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} qemu-utils"
+	EXTRA_BUILD_DEPS+=("qemu::qemu-utils")
 }
 
 function post_build_image__900_convert_to_vhd_img() {

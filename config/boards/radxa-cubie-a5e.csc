@@ -25,15 +25,15 @@ function post_family_tweaks_bsp__aic8800_wireless() {
 	mkdir -p "${destination}"/etc/modules-load.d
 	# Add wireless conf
 	cat > "${destination}"/etc/modprobe.d/aic8800-radxa-cubie-a5e.conf <<- EOT
-	options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
-	options aic8800_bsp aic_fw_path=/lib/firmware/aic8800/SDIO/aic8800D80
+		options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
+		options aic8800_bsp aic_fw_path=/lib/firmware/aic8800/SDIO/aic8800D80
 	EOT
 	# Add needed bluetooth modules
 	cat > "${destination}"/etc/modules-load.d/aic8800-btlpm.conf <<- EOT
-	hidp
-	rfcomm
-	bnep
-	aic8800_btlpm_sdio
+		hidp
+		rfcomm
+		bnep
+		aic8800_btlpm_sdio
 	EOT
 	# Add AIC8800 Bluetooth Service and Script
 	if [[ -d "$SRC/packages/bsp/aic8800" ]]; then
