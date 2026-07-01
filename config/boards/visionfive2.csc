@@ -13,5 +13,5 @@ BOOTCONFIG=none
 function post_assign_board_extlinux_paths() {
 	KERNEL_PATH="/boot/Image"
 	INITRD_PATH="/boot/uInitrd"
-	FDT_PATH="/boot/dtb/starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
+	FDT_PATH="/boot/dtb/${BOOT_FDT_FILE}"
 }
