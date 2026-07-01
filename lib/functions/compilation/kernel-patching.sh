@@ -75,6 +75,14 @@ function kernel_main_patching() {
 	declare kernel_drivers_patch_file kernel_drivers_patch_hash
 	LOG_SECTION="kernel_drivers_create_patches" do_with_logging do_with_hooks kernel_drivers_create_patches "${kernel_work_dir}" "${kernel_git_revision}"
 
+	call_extension_method "kernel_extra_create_patches" <<- 'KERNEL_EXTRA_CREATE_PATCHES'
+		*stage more patches for kernel, after kernel_drivers*
+		This is called after kernel_drivers_create_patches (wifi-drivers) and can be used to stage more patches
+		to be applied. This is done immediately before actually patching, and thus, after any hashing is done.
+		This allows implementors to stage custom patches (eg, from an out-of-tree driver into userpatches) without
+		impacting the kernel version/hash.
+	KERNEL_EXTRA_CREATE_PATCHES
+
 	# Python patching will git reset to the kernel SHA1 git revision, and remove all untracked files.
 	LOG_SECTION="kernel_main_patching_python" do_with_logging do_with_hooks kernel_main_patching_python
 

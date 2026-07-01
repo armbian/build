@@ -50,8 +50,8 @@ function run_memoized() {
 		# Lock is held by another process, inform user and wait with periodic feedback
 		display_alert "Waiting for lock" "another build may be running; check: docker ps -a | grep armbian" "info"
 
-		declare -i lock_wait_interval=${MEMOIZE_FLOCK_WAIT_INTERVAL:-10}  # seconds between retries/messages
-		declare -i lock_max_wait=${MEMOIZE_FLOCK_MAX_WAIT:-0}             # 0 = infinite (default for compatibility)
+		declare -i lock_wait_interval=${MEMOIZE_FLOCK_WAIT_INTERVAL:-10} # seconds between retries/messages
+		declare -i lock_max_wait=${MEMOIZE_FLOCK_MAX_WAIT:-0}            # 0 = infinite (default for compatibility)
 		declare -i lock_total_wait=0
 		declare -i lock_acquired=0
 

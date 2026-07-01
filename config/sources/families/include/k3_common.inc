@@ -15,8 +15,8 @@ declare -g CLEAN_LEVEL="make-atf,make-uboot"
 declare -g INSTALL_HEADERS="yes"
 
 [[ -v "TI_PACKAGES" ]] || declare -g TI_PACKAGES=()
-if [[ "${CC33XX_SUPPORT}" == "yes" ]] ; then
-	if [[ "${RELEASE}" == "trixie" || "${RELEASE}" == "noble" ]] ; then
+if [[ "${CC33XX_SUPPORT}" == "yes" ]]; then
+	if [[ "${RELEASE}" == "trixie" || "${RELEASE}" == "noble" ]]; then
 		TI_PACKAGES+=("cc33xx-fw" "cc33xx-target-scripts" "cc33conf" "cc33calibrator")
 	fi
 fi
@@ -26,11 +26,11 @@ enable_extension "apa"
 
 case "${BRANCH}" in
 
-	edge)	# experimental (limited testing): uses latest bleeding-edge upstream mainline version
+	edge) # experimental (limited testing): uses latest bleeding-edge upstream mainline version
 
 		# KERNELSOURCE defined in mainline-config.sh
 		# KERNELBRANCH defined in mainline-kernel.conf.sh
-		declare -g KERNEL_MAJOR_MINOR="6.18"							# needs updating with each minor kernel release
+		declare -g KERNEL_MAJOR_MINOR="6.18" # needs updating with each minor kernel release
 		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
 		declare -g ATFBRANCH="branch:master"
 		declare -g OPTEE_BRANCH="branch:master"
