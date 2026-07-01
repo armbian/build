@@ -2,7 +2,7 @@
 BOARD_NAME="Cubox i2eX/i4"
 BOARD_VENDOR="solidrun"
 BOARDFAMILY="imx6"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="igorpecovnik"
 INTRODUCED="2014"
 BOOTCONFIG="mx6cuboxi_defconfig"
 BOOTSCRIPT="boot-cubox.cmd:boot.cmd"
