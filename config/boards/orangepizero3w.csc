@@ -1,4 +1,4 @@
-# Allwinner A733 octa core 2-16GB RAM WiFi6/BT UFS/eMMC microSD
+# Allwinner A733 octa core 4-16GB RAM WiFi6/BT UFS/eMMC microSD
 BOARD_NAME="Orange Pi Zero 3W"
 INTRODUCED="2025"
 BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-zero3w.dtb"

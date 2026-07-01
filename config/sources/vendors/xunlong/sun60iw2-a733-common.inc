@@ -1,6 +1,4 @@
 # Shared configuration for the Xunlong Orange Pi A733 (sun60iw2) boards.
-# Source this AFTER setting XUNLONG_A733_DRAM_BLOB.
-
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun60iw2"
 KERNEL_TARGET="vendor"
