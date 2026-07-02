@@ -16,10 +16,14 @@ INTRODUCED="2022"
 # build on the upstream roc-cc config like renegade. Trade-off: u-boot loses the
 # mkspi-specific DT tweaks (SD IO-voltage regulator GPIO, in-SoC PHY) — boot is
 # unaffected (SD works at 3.3V; the second NIC/display are kernel-side).
+# spl-blobs (not binman-atf-mainline): use Rockchip's proprietary DDR blob for
+# DRAM init. The mainline in-tree TPL fails memory training on this board's DDR4
+# ("data training error" -> boot ROM); the ddrbin trains it reliably, same as
+# the vendor path did on the old u-boot.
 BOOTCONFIG="roc-cc-rk3328_defconfig"
 BOOTBRANCH_BOARD="tag:v2026.04"
 BOOTPATCHDIR="v2026.04"
-BOOT_SCENARIO="binman-atf-mainline"
+BOOT_SCENARIO="spl-blobs"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 #No need to build Desktop images, minimal set will be installed together with KlipperScreen
