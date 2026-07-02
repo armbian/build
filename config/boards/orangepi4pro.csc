@@ -16,8 +16,7 @@ SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/sys_config_orangepi.f
 # Invalidate U-Boot cache if any of the blobs change
 UBOOT_HASH_EXTRA="$(cat "${SUNXI_BOOT0_SDCARD_FEX}" "${SUNXI_BOOT0_SPINOR_FEX}" "${SUNXI_SYS_CONFIG_FEX}" | sha256sum | cut -d' ' -f1)"
 
-# The 4 Pro has 16 MB SPI-NOR; support writing the bootloader to MTD (the SD
-# writer and blob fetch are shared in the common include).
+# The 4 Pro has 16 MB SPI-NOR; support writing the bootloader to MTD
 function write_uboot_platform_mtd() {
 	local SCRIPT_DIR="$1"   # dir holding boot0_spinor.fex + boot_package.fex
 	flash_erase /dev/mtd0 0 0
