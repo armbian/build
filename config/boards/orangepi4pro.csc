@@ -1,12 +1,20 @@
 # Allwinner A733 octa core 2-16GB RAM GBE USB3 WiFi/BT NVMe eMMC
 BOARD_NAME="Orange Pi 4 Pro"
+BOARD_VENDOR="xunlong"
+BOARDFAMILY="sun60iw2"
+BOARD_MAINTAINER="shkolnik"
 INTRODUCED="2025"
+KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
+IMAGE_PARTITION_TABLE="msdos"
+
 BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-4-pro.dtb"
 SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_sdcard_orangepi4pro.fex"
 SUNXI_BOOT0_SPINOR_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_spinor_orangepi4pro.fex"
-BOARD_MAINTAINER="shkolnik"
+SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/sys_config_orangepi.fex"
 
-source "${SRC}/config/sources/vendors/xunlong/sun60iw2-a733-common.inc"
+# Invalidate U-Boot cache if any of the blobs change
+UBOOT_HASH_EXTRA="$(cat "${SUNXI_BOOT0_SDCARD_FEX}" "${SUNXI_BOOT0_SPINOR_FEX}" "${SUNXI_SYS_CONFIG_FEX}" | sha256sum | cut -d' ' -f1)"
 
 # The 4 Pro has 16 MB SPI-NOR; support writing the bootloader to MTD (the SD
 # writer and blob fetch are shared in the common include).

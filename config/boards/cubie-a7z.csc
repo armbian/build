@@ -10,6 +10,8 @@ IMAGE_PARTITION_TABLE="msdos"
 
 # --- Board-specific build configuration ---
 BOOT_FDT_FILE="allwinner/sun60i-a733-cubie-a7z.dtb"
+BOOT0_OFFSET=128
+BOOT_PACKAGE_OFFSET=12288
 
 # WiFi/BT = FCU760K (AIC8800D80 over USB)
 # Override MODULES with the bus-suffixed USB modules (aic8800-usb-dkms) so only those load.
@@ -26,10 +28,3 @@ SUNXI_SYS_CONFIG_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/sys_config_cubie-a7z.
 
 # Invalidate U-Boot cache if any of the blobs change
 UBOOT_HASH_EXTRA="$(cat "${SUNXI_BOOT0_SDCARD_FEX}" "${SUNXI_SYS_CONFIG_FEX}" | sha256sum | cut -d' ' -f1)"
-
-function write_uboot_platform() {
-	local SCRIPT_DIR="$1" DEVICE="$2"
-	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot0_sdcard.fex" of="${DEVICE}" bs=1k seek=128
-	dd conv=notrunc,fsync status=none if="${SCRIPT_DIR}/boot_package.fex" of="${DEVICE}" bs=1k seek=12288
-	sync "${DEVICE}"
-}
