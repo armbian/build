@@ -13,17 +13,19 @@ INTRODUCED="2022"
 # mkspi's own u-boot defconfig/DTS were Armbian-patched onto the old v2022.07
 # tree (board_mkspi/) and don't port cleanly to v2026.04. That defconfig was
 # roc-cc-based and its DTS a roc-cc derivative (same rk3328 DRAM/boot path), so
-# build on the upstream roc-cc config like renegade. Trade-off: u-boot loses the
-# mkspi-specific DT tweaks (SD IO-voltage regulator GPIO, in-SoC PHY) — boot is
-# unaffected (SD works at 3.3V; the second NIC/display are kernel-side).
-# spl-blobs (not binman-atf-mainline): use Rockchip's proprietary DDR blob for
-# DRAM init. The mainline in-tree TPL fails memory training on this board's DDR4
-# ("data training error" -> boot ROM); the ddrbin trains it reliably, same as
-# the vendor path did on the old u-boot.
-BOOTCONFIG="roc-cc-rk3328_defconfig"
+# reuse the roc-cc board here. Trade-off: u-boot loses the mkspi-specific DT
+# tweaks (SD IO-voltage regulator GPIO, in-SoC PHY) — boot is unaffected (SD
+# works at 3.3V; the second NIC/display are kernel-side).
+#
+# BOOTCONFIG is our own defconfig (patch/u-boot/v2026.04/defconfig/), which is
+# the upstream roc-cc config plus CONFIG_ROCKCHIP_EXTERNAL_TPL=y: the mainline
+# in-tree rk3328 TPL fails DDR4 memory training on this board ("data training
+# error" -> boot ROM), so use Rockchip's ddrbin (passed as ROCKCHIP_TPL by the
+# binman-atf-mainline scenario) for DRAM init instead — as dusun-dsom-010r does.
+BOOTCONFIG="mkspi-rk3328_defconfig"
 BOOTBRANCH_BOARD="tag:v2026.04"
 BOOTPATCHDIR="v2026.04"
-BOOT_SCENARIO="spl-blobs"
+BOOT_SCENARIO="binman-atf-mainline"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 #No need to build Desktop images, minimal set will be installed together with KlipperScreen
