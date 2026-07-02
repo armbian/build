@@ -216,8 +216,10 @@ function pre_package_kernel_headers__add_rust_artifacts() {
 	#
 	# The file set was determined empirically (strace of an out-of-tree Rust
 	# module build against a fully built tree): rustc reads rust/*.rmeta (crate
-	# metadata, target-arch neutral) and rust/*.so (proc-macro dylibs). The
-	# crate set varies per kernel version, so copy by glob, not by name.
+	# metadata, target-arch neutral) and rust/*.so (proc-macro dylibs). With
+	# CONFIG_RUST_INLINE_HELPERS=y (6.19+, clang builds) kbuild additionally
+	# links module objects with rust/helpers/helpers_module.bc. The set varies
+	# per kernel version and config, so copy by glob, not by name.
 	# shellcheck disable=SC2154 # kernel_work_dir is defined in the calling packaging function
 	if ! grep -q "^CONFIG_RUST=y" "${kernel_work_dir}/include/config/auto.conf" 2> /dev/null; then
 		display_alert "Kernel built without CONFIG_RUST, not adding Rust artifacts to headers" "${EXTENSION}" "debug"
@@ -226,7 +228,7 @@ function pre_package_kernel_headers__add_rust_artifacts() {
 
 	declare -a rust_artifacts=()
 	local f
-	for f in "${kernel_work_dir}/rust/"*.rmeta "${kernel_work_dir}/rust/"*.so; do
+	for f in "${kernel_work_dir}/rust/"*.rmeta "${kernel_work_dir}/rust/"*.so "${kernel_work_dir}/rust/helpers/"*.bc; do
 		if [[ -f "${f}" ]]; then
 			rust_artifacts+=("${f#"${kernel_work_dir}/"}")
 		fi
