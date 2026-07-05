@@ -1,6 +1,5 @@
-# Rockchip RK3576 (4xA72+4xA53) gaming handheld: 5.5" 1080x1920 TDDI touch LCD,
-# Mali-G52 MC3, SPI-MCU gamepad, eMMC/microSD, WiFi/BT, USB-C (USB3/DP/PD), HDMI
-BOARD_NAME="Anbernic RG Vita Pro"
+# Rockchip RK3576 SoC octa core handheld 5.5" 1080x1920 touch LCD eMMC MicroSD USB3 WiFi/BT HDMI
+BOARD_NAME="RG Vita Pro"
 BOARD_VENDOR="Anbernic"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="generic-rk3576_defconfig"
