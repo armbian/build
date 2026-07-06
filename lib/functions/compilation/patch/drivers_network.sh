@@ -509,7 +509,7 @@ driver_uwe5622() {
 	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.2 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:8cdd4325e98ba8d2646f0f2565bbe0c4c3149438'
+		local uwe5622ver='commit:731b8c25f30c0ab76c20380a24ce42ef26540d43' # Commit date: Jul 6, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 
@@ -523,8 +523,12 @@ driver_uwe5622() {
 		cp -R "${SRC}/cache/sources/uwe5622/${uwe5622ver#*:}"/{tty-sdio,unisocwcn,unisocwifi,Kconfig,Makefile} \
 			"$kerneldir/drivers/net/wireless/uwe5622"
 
-		# Add to section Makefile (driver has its own Kconfig)
+		# Add to section Makefile
 		echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
+
+		# Add to Kconfig
+		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/uwe5622\/Kconfig"' \
+			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		display_alert "Added" "uwe5622 driver with inline kernel version guards (5.15-7.1)" "info"
 	fi
