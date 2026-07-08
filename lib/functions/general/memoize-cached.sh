@@ -97,6 +97,7 @@ function run_memoized() {
 			display_alert "Using cached" "${var_n}" "info"
 			# shellcheck disable=SC1090 # yep, I'm sourcing the cache here. produced below.
 			source "${disk_cache_file}"
+			flock -u "${lock_fd}"
 			return 0
 		fi
 	fi
