@@ -127,7 +127,7 @@ function post_build_image__900_jethub_burn() {
 
 	bootstrap_tools
 
-	local -r debs_dir="${SRC}/output/debs"
+	local -r debs_dir="${DEB_STORAGE:-${SRC}/output/debs}"
 	local uboot_deb uboot_bin
 	uboot_deb=$(find "${debs_dir}" -maxdepth 1 -type f -name "linux-u-boot-${BOARD}-*.deb" | sort -V | tail -n1)
 	[[ -n "${uboot_deb}" ]] || exit_with_error "u-boot deb not found for ${BOARD}"
