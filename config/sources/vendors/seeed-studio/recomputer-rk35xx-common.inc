@@ -57,9 +57,9 @@ function seeed_recomputer_install_from_apt() {
 		EOF
 	fi
 
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
-	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
-		--no-install-recommends install "$@"
+	chroot_sdcard_apt_get_update
+	chroot_sdcard_apt_get_install_download_only "$@"
+	chroot_sdcard_apt_get_install "$@"
 }
 
 # Install Seeed common packages (USB gadget, Morse tools).
