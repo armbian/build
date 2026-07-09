@@ -89,56 +89,8 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
 
-	# Snapshot installed packages (only "ii" status, excluding rc/unpacked)
-	# dpkg-query -W lists ALL packages including rc-status (removed, config-files),
-	# which would make comm diff miss packages that were removed but left config files.
-	local snapshot_before snapshot_after
-	snapshot_before=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-before.XXXXXX)
-	snapshot_after=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-after.XXXXXX)
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
-		grep "^ii " | awk '{print $2}' | sort > "${snapshot_before}"
-
-	# Pre-compute packages that depend on bluez (one apt-cache call instead of N)
-	local bluez_deps
-	bluez_deps=$(chroot_sdcard_with_stdout apt-cache rdepends --installed bluez 2> /dev/null |
-		awk 'NR>2 && NF{print $1}' | sort -u)
-
+	display_alert "Actually Installing fcs960k-aic-bluez (replacing bluez) now" "seeed-apt" "debug"
 	seeed_recomputer_install_from_apt fcs960k-aic-bluez
-
-	# Diff to detect removed packages
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
-		grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
-	local removed_pkgs
-	removed_pkgs=$(comm -23 "${snapshot_before}" "${snapshot_after}")
-	removed_pkgs=$(printf '%s\n' "${removed_pkgs}" | grep -vxE 'bluez|fcs960k-aic-bluez' || true)
-	rm -f "${snapshot_before}" "${snapshot_after}"
-
-	if [[ -n "${removed_pkgs}" ]]; then
-		# Filter out packages that depend on bluez — reinstalling them would
-		# pull bluez back via apt dependency resolution, which conflicts with
-		# fcs960k-aic-bluez and removes it again.
-		local -a safe_pkgs=()
-		for pkg in ${removed_pkgs}; do
-			if printf '%s\n' "${bluez_deps}" | grep -qxF "$pkg"; then
-				display_alert "Skipping reinstall (depends on bluez)" "$pkg" "warn"
-			else
-				safe_pkgs+=("$pkg")
-			fi
-		done
-
-		if [[ ${#safe_pkgs[@]} -gt 0 ]]; then
-			display_alert "Reinstalling packages removed by bluez conflict" "${safe_pkgs[*]}" "warn"
-			chroot_sdcard_apt_get_install "${safe_pkgs[@]}"
-		fi
-	fi
-
-	# Re-disable display managers: reinstalling gdm3 triggers its postinst
-	# which re-enables display-manager.service, undoing desktop_postinstall()'s
-	# disable. Without this the system boots into GDM instead of console,
-	# skipping armbian-firstlogin's user/password setup prompt.
-	disable_systemd_service_sdcard gdm3.service
-	disable_systemd_service_sdcard lightdm.service
-	disable_systemd_service_sdcard sddm.service
 
 	# fcs960k-aic-bluez replaces bluez but does not ship a bluetooth.service
 	# unit. Create one pointing to fcs960k's bluetoothd so that
@@ -163,6 +115,8 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 			Alias=dbus-org.bluez.service
 		EOF
 	fi
+
+	return 0
 }
 
 # AIC8800 wireless tweaks (BSP-level)
