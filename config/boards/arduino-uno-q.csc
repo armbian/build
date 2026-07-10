@@ -40,6 +40,30 @@ function post_family_tweaks__arduino-uno-q() {
 	chroot_sdcard systemctl enable armbian-resize-filesystem-qcom.service
 }
 
+# Pin src:mesa to trixie-backports for the Adreno 702 (qrb2210, chip 0xb2070002;
+# needs Mesa >= 25.2.0). trixie ships 25.0.7, backports has 26.x. Desktop only.
+function post_family_tweaks__arduino_uno_q_mesa_backports_pin() {
+	if [[ "${DISTRIBUTION}" != "Debian" || "${RELEASE}" != "trixie" || "${BUILD_DESKTOP}" != "yes" ]]; then
+		display_alert "Skipping Mesa backports pin" "${DISTRIBUTION} ${RELEASE} desktop=${BUILD_DESKTOP}" "info"
+		return 0
+	fi
+
+	display_alert "Pinning Mesa to trixie-backports" "${BOARD}" "info"
+
+	install -d -m755 "${SDCARD}/etc/apt/preferences.d"
+	cat > "${SDCARD}/etc/apt/preferences.d/armbian-mesa-from-backports" <<-'EOF'
+		Package: src:mesa
+		Pin: release n=trixie-backports
+		Pin-Priority: 990
+	EOF
+
+	do_with_retries 3 chroot_sdcard_apt_get_update
+
+	# full-upgrade: lets apt drop mesa-va-drivers/mesa-vdpau-drivers
+	# (their drivers are now provided directly by mesa-libgallium).
+	do_with_retries 3 chroot_sdcard_apt_get full-upgrade
+}
+
 function post_family_tweaks_bsp__arduino-uno-q_usb_gadget() {
 	# BSP is built once and cached across distros, so install files unconditionally.
 	# The usbgadget-rndis service is enabled in post_family_tweaks__ only when adbd is unavailable.
