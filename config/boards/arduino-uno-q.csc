@@ -42,7 +42,7 @@ function post_family_tweaks__arduino-uno-q() {
 
 # Pin src:mesa to trixie-backports for the Adreno 702 (qrb2210, chip 0xb2070002;
 # needs Mesa >= 25.2.0). trixie ships 25.0.7, backports has 26.x. Desktop only.
-function post_family_tweaks__arduino_uno_q_mesa_backports_pin() {
+function post_family_tweaks__arduino-uno-q_mesa_backports_pin() {
 	if [[ "${DISTRIBUTION}" != "Debian" || "${RELEASE}" != "trixie" || "${BUILD_DESKTOP}" != "yes" ]]; then
 		display_alert "Skipping Mesa backports pin" "${DISTRIBUTION} ${RELEASE} desktop=${BUILD_DESKTOP}" "info"
 		return 0
