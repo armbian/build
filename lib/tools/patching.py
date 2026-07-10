@@ -20,6 +20,7 @@ from git import Repo
 import common.armbian_utils as armbian_utils
 import common.dt_makefile_patcher as dt_makefile_patcher
 import common.patching_utils as patching_utils
+import common.patching_parallel as patching_parallel
 from common.md_asset_log import SummarizedMarkdownWriter
 from common.md_asset_log import get_gh_pages_workflow_script
 from common.patching_config import PatchingConfig
@@ -49,6 +50,9 @@ SPLIT_PATCHES = armbian_utils.get_from_env("SPLIT_PATCHES")
 ALLOW_RECREATE_EXISTING_FILES = armbian_utils.get_from_env("ALLOW_RECREATE_EXISTING_FILES")
 GIT_ARCHEOLOGY = armbian_utils.get_from_env("GIT_ARCHEOLOGY")
 FAST_ARCHEOLOGY = armbian_utils.get_from_env("FAST_ARCHEOLOGY")
+PARALLEL_PATCHES = armbian_utils.get_from_env("PARALLEL_PATCHES")
+PARALLEL_WORKERS = armbian_utils.get_from_env("PARALLEL_WORKERS")
+LINUXFAMILY = armbian_utils.get_from_env("LINUXFAMILY")
 apply_patches = APPLY_PATCHES == "yes"
 apply_patches_to_git = PATCHES_TO_GIT == "yes"
 git_archeology = GIT_ARCHEOLOGY == "yes"
@@ -56,6 +60,7 @@ fast_archeology = FAST_ARCHEOLOGY == "yes"
 rewrite_patches_in_place = REWRITE_PATCHES == "yes"
 rewrite_only_patches_needing_rebase = REWRITE_PATCHES_NEEDING_REBASE == "yes"
 split_patches = SPLIT_PATCHES == "yes"
+parallel_patches = PARALLEL_PATCHES == "yes"
 apply_options = {
 	"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes"),
 	"set_patch_date": True,
@@ -303,32 +308,101 @@ if apply_patches:
 	root_makefile_mtime = os.path.getmtime(root_makefile)
 	apply_options["root_makefile_date"] = root_makefile_mtime
 	log.debug(f"- Root Makefile '{root_makefile}' date: '{root_makefile_mtime}'")
-	chars_total = len(str(total_patches))
-	counter = 0
-	for one_patch in VALID_PATCHES:
-		counter += 1
-		counter_str = str(counter).zfill(chars_total)
 
-		log.info(f"-> {counter_str}/{total_patches}: {one_patch.str_oneline_around('', '')}")
-		one_patch.applied_ok = False
-		try:
-			one_patch.apply_patch(GIT_WORK_DIR, apply_options)
-			one_patch.applied_ok = True
-		except Exception as e:
-			log.error(f"Problem with {one_patch}: {e}")
-			any_failed_to_apply = True
-			failed_to_apply_list.append(one_patch)
+	# PARALLEL PROCESSING MODE (using overlayfs)
+	if parallel_patches:
+		log.info(f"Using parallel patch processing mode with overlayfs...")
 
-		if one_patch.applied_ok and apply_patches_to_git:
-			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches, pconfig)
+		# Calculate optimal workers or use specified number
+		if PARALLEL_WORKERS:
+			try:
+				num_workers = int(PARALLEL_WORKERS)
+			except ValueError:
+				log.warning(f"Invalid PARALLEL_WORKERS value: {PARALLEL_WORKERS}, using auto-calculate")
+				num_workers = patching_parallel.calculate_optimal_workers()
+		else:
+			num_workers = patching_parallel.calculate_optimal_workers()
 
-			if not split_patches and (committed is not None):
-				commit_hash = committed['commit_hash']
-				one_patch.git_commit_hash = commit_hash
+		# Prepare apply_options for parallel processing
+		parallel_apply_options = {
+			"allow_recreate_existing_files": apply_options["allow_recreate_existing_files"],
+			"set_patch_date": apply_options["set_patch_date"],
+			"rewrite_patches": rewrite_patches_in_place,
+			"split_patches": split_patches,
+			"add_rebase_tags": (not rewrite_patches_in_place),
+			"root_makefile_date": root_makefile_mtime,
+		}
 
-				if rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
-					rewritten_patch = patching_utils.export_commit_as_patch(git_repo, commit_hash)
-					one_patch.rewritten_patch = rewritten_patch
+		# Progress callback for parallel processing
+		def progress_callback(completed, total, result):
+			if result.success:
+				log.info(f"Progress: {completed}/{total} - {result.patch_id} - OK")
+			else:
+				log.warning(f"Progress: {completed}/{total} - {result.patch_id} - FAILED: {result.error_message}")
+
+		# Process patches in parallel
+		parallel_results = patching_parallel.process_patches_parallel(
+			patches=VALID_PATCHES,
+			git_work_dir=GIT_WORK_DIR,
+			base_revision=BASE_GIT_REVISION,
+			num_workers=num_workers,
+			root_makefile_date=root_makefile_mtime,
+			apply_options=parallel_apply_options,
+			pconfig=pconfig,
+			LINUXFAMILY=LINUXFAMILY or "",
+			progress_callback=progress_callback
+		)
+
+		# Update patch objects with parallel results
+		patching_parallel.update_patches_from_parallel_results(
+			patches=VALID_PATCHES,
+			parallel_results=parallel_results,
+			apply_options=parallel_apply_options,
+			git_repo=git_repo,
+			pconfig=pconfig
+		)
+
+		# Check for failures
+		for one_patch in VALID_PATCHES:
+			if not one_patch.applied_ok:
+				any_failed_to_apply = True
+				failed_to_apply_list.append(one_patch)
+			elif one_patch.applied_ok and apply_patches_to_git:
+				# For parallel mode, commit_hash is already set by update_patches_from_parallel_results
+				if one_patch.git_commit_hash and rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
+					# rewritten_patch is already set by update_patches_from_parallel_results
+					pass
+
+		log.info(f"Parallel processing completed: {len(VALID_PATCHES)} patches processed")
+
+	# SERIAL PROCESSING MODE (original implementation)
+	else:  # not parallel_patches
+		chars_total = len(str(total_patches))
+		counter = 0
+		for one_patch in VALID_PATCHES:
+			counter += 1
+			counter_str = str(counter).zfill(chars_total)
+
+			log.info(f"-> {counter_str}/{total_patches}: {one_patch.str_oneline_around('', '')}")
+			one_patch.applied_ok = False
+			try:
+				one_patch.apply_patch(GIT_WORK_DIR, apply_options)
+				one_patch.applied_ok = True
+			except Exception as e:
+				log.error(f"Problem with {one_patch}: {e}")
+				any_failed_to_apply = True
+				failed_to_apply_list.append(one_patch)
+
+			if one_patch.applied_ok and apply_patches_to_git:
+				committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches, pconfig)
+
+				if not split_patches and (committed is not None):
+					commit_hash = committed['commit_hash']
+					one_patch.git_commit_hash = commit_hash
+
+					if rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
+						rewritten_patch = patching_utils.export_commit_as_patch(git_repo, commit_hash)
+						one_patch.rewritten_patch = rewritten_patch
 
 	if (not apply_patches_to_git) and (not rewrite_patches_in_place) and any_failed_to_apply:
 		log.error(
