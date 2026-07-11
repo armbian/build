@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xilin Wu <sophon@radxa.com>
+Date: Wed, 13 May 2026 16:59:50 +0800
+Subject: [PATCH 06/12] drm/msm/dpu: Reassert core clock rate on runtime resume
+
+DPU runtime suspend can drop the power-domain performance state even
+though the clock framework still reports the previously programmed core
+clock rate after the clocks are enabled again. In that case the DPU perf
+code may not call dev_pm_opp_set_rate() before the hardware state is
+restored, leaving the clock rate and the OPP required-opps vote out of
+sync.
+
+This can make high bandwidth modes fail after system suspend/resume. On
+SC8280XP, a 4k120 mode can resume with the DP link trained successfully,
+but later hit CTL recovery and vblank timeouts because the MMCX
+performance state was not reasserted before DPU register programming.
+
+Reapply the current DPU core clock rate during runtime resume, after
+enabling the clocks and before restoring VBIF and encoder state. This
+makes the OPP framework restore the required-opps vote without forcing a
+higher clock rate than the one already selected.
+
+Fixes: b0530eb11913 ("drm/msm/dpu: Use OPP API to set clk/perf state")
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+(cherry picked from commit 228e6a0642cf3ec83907dce3d84af02f7bb2577c)
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+index 35f7af4743d7..fc3a65385b19 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -1454,6 +1454,7 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
+ 	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
+ 	struct drm_encoder *encoder;
+ 	struct drm_device *ddev;
++	unsigned long core_rate;
+ 
+ 	ddev = dpu_kms->dev;
+ 
+@@ -1463,6 +1464,24 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
+ 		return rc;
+ 	}
+ 
++	/*
++	 * Runtime suspend can drop the power-domain performance state even when
++	 * the clock framework still reports the previously programmed rate.
++	 * Re-assert the current core clock rate so OPP required-opps are restored
++	 * before touching DPU registers.
++	 */
++	core_rate = dpu_kms_get_clk_rate(dpu_kms, "core");
++	if (core_rate) {
++		core_rate = min_t(unsigned long, core_rate, dpu_kms->perf.max_core_clk_rate);
++		rc = dev_pm_opp_set_rate(&dpu_kms->pdev->dev, core_rate);
++		if (rc) {
++			DPU_ERROR("failed to restore core clock rate %lu: %d\n",
++				  core_rate, rc);
++			return rc;
++		}
++		dpu_kms->perf.core_clk_rate = core_rate;
++	}
++
+ 	dpu_vbif_init_memtypes(dpu_kms);
+ 
+ 	drm_for_each_encoder(encoder, ddev)
