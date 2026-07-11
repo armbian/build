@@ -247,11 +247,21 @@ function get_kernel_info_for_branch() {
 	local search_branch="$1"
 	local conf_file="${SRC}/config/sources/families/${BOARDFAMILY}.conf"
 
+	# Recognises both `branch)` and `pat1 | pat2 | …)` case labels (#8957).
 	awk -v branch="$search_branch" '
     BEGIN { found=0; major_minor=""; desc="" }
-    /^[[:space:]]*[a-zA-Z0-9_-]+\)/ {
-        if ($0 ~ "^[[:space:]]*" branch "\\)") {
-            found=1
+    /^[[:space:]]*[a-zA-Z0-9_*?-][a-zA-Z0-9_*? |-]*\)/ {
+        label = $0
+        sub(/\).*/, "", label)
+        sub(/^[[:space:]]+/, "", label)
+        sub(/[[:space:]]+$/, "", label)
+        n = split(label, alts, /[[:space:]]*\|[[:space:]]*/)
+        matched = 0
+        for (i = 1; i <= n; i++) {
+            if (alts[i] == branch) { matched = 1; break }
+        }
+        if (matched) {
+            found = 1
             next
         } else if (found) {
             exit

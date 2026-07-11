@@ -28,7 +28,7 @@
 # - building the .debs.
 
 is_enabled() {
-	grep -q "^$1=y" include/config/auto.conf
+	grep -q "^$1=y" "${kernel_work_dir}/include/config/auto.conf"
 }
 
 if_enabled_echo() {
@@ -208,6 +208,22 @@ function kernel_package_callback_linux_image() {
 	declare kernel_image_pre_package_path="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
 	declare installed_image_path="boot/${kernel_image_name}-${kernel_version_family}" # using old mkdebian terminology here for compatibility
 
+	if [[ "${KERNEL_DO_STUBBLE}" == "yes" ]]; then
+		# Use built stubble paths, fallback to system if not available
+		local stubble_find_dtbs="${STUBBLE_FIND_DTBS:-/usr/libexec/stubble/finddtbs.py}"
+		local stubble_efi="${STUBBLE_EFI_PATH:-/usr/lib/stubble/stubble.efi}"
+		local stubble_hwids="${STUBBLE_HWIDS_DIR:-/usr/share/stubble/hwids}"
+		local stubble_sbat="${STUBBLE_SBAT_PATH:-/usr/share/stubble/sbat}"
+
+		# Run finddtbs and validate output
+		stubble_dtbs_raw=$("${stubble_find_dtbs}" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${stubble_hwids}")
+		if [[ $? -ne 0 ]]; then
+			exit_with_error "finddtbs.py failed" "${stubble_find_dtbs}"
+		fi
+		stubble_dtbs=$(echo "${stubble_dtbs_raw}" | sed 's|.*|--devicetree-auto=&|' | tr '\n' ' ')
+		run_host_command_logged /usr/bin/ukify build --linux="${kernel_image_pre_package_path}" --stub="${stubble_efi}" --hwids="${stubble_hwids}" --sbat="@${stubble_sbat}" ${stubble_dtbs} --output="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi"
+		run_host_command_logged mv "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi" "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
+	fi
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
 	run_host_command_logged tree -C --du -h "${tmp_kernel_install_dirs[INSTALL_PATH]}"
 

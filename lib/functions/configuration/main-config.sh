@@ -47,7 +47,7 @@ function do_main_configuration() {
 		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
 	fi
 
-	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0"                           # RGB values for MOTD logo
+	[[ -z $VENDORCOLOR ]] && VENDORCOLOR="247;16;0" # RGB values for MOTD logo
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
@@ -60,7 +60,7 @@ function do_main_configuration() {
 	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                   # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
-	declare -g USE_CCACHE="${USE_CCACHE:-no}"                              # stop using ccache as our worktree is more effective
+	declare -g USE_CCACHE="${USE_CCACHE:-no}" # stop using ccache as our worktree is more effective
 
 	# Armbian config is central tool used in all builds. As its build externally, we have moved it to extension. Enable it here.
 	enable_extension "armbian-config"
@@ -173,7 +173,7 @@ function do_main_configuration() {
 
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
-		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
+		enable_extension "fs-cryptroot-support"                                   # add the tooling needed, cryptsetup
 		if [[ -z $CRYPTROOT_PASSPHRASE ]] && [[ -z $CRYPTROOT_AUTOUNLOCK ]]; then # a passphrase is mandatory if rootfs encryption is enabled, unless CRYPTROOT_AUTOUNLOCK is wanted
 			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE or CRYPTROOT_AUTOUNLOCK is not set"
 		fi
@@ -205,6 +205,15 @@ function do_main_configuration() {
 	# Defaults... # @TODO: why?
 	declare -g -r MAINLINE_UBOOT_DIR='u-boot'
 
+	# Opt-in cache-bust string for the u-boot artifact. A board/family that ships a
+	# prebuilt or externally-fetched u-boot blob (e.g. khadas-vim1/vim2) sets this —
+	# typically to the blob's upstream version — and bumps it whenever the blob
+	# changes, so the u-boot .deb repackages instead of reusing the cached artifact.
+	# It can't be a content hash: the blob may live outside this repo and not exist
+	# yet at matrix-prep. Folded into the artifact version by artifact-uboot.sh.
+	# (`:-` so it never clobbers a value a board/family already set.)
+	declare -g UBOOT_HASH_EXTRA="${UBOOT_HASH_EXTRA:-}"
+
 	# pre-calculate mirrors. important: this sets _SOURCE variants that might be used in common.conf to default things to mainline, but using mirror.
 	# @TODO: setting them here allows family/board code (and hooks) to read them and embed them into configuration, which is bad: it might end up without the mirror.
 	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
@@ -234,6 +243,11 @@ function do_main_configuration() {
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
+	# A CI runner that advertises a pass-through git proxy (GITPROXY_ADDRESS,
+	# exported from NetBox by the runner) selects the gitproxy mirror
+	# automatically, unless an explicit GITHUB_MIRROR was already set.
+	[[ -z $GITHUB_MIRROR && -n ${GITPROXY_ADDRESS:-} ]] && GITHUB_MIRROR=gitproxy
+
 	case $GITHUB_MIRROR in
 		fastgit)
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
@@ -241,6 +255,9 @@ function do_main_configuration() {
 		ghproxy)
 			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghfast.top
 			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
+			;;
+		gitproxy)
+			declare -g -r GITHUB_SOURCE="${GITPROXY_ADDRESS}"
 			;;
 		gitclone)
 			declare -g -r GITHUB_SOURCE='https://gitclone.com/github.com'
@@ -326,7 +343,7 @@ function do_main_configuration() {
 			;;
 	esac
 
-        # enable APA extension for Debian Unstable release
+	# enable APA extension for Debian Unstable release
 	# loong64 is not supported now
 	#  [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
 
@@ -457,7 +474,7 @@ function do_extra_configuration() {
 
 	# Derive APT_PROXY_ADDR from proxy env vars if unset, which runners.sh uses inside chroot.
 	# Skip if MANAGE_ACNG is active to prevent conflicting behavior.
-	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && ( -z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no" ) ]]; then
+	if [[ -z "${APT_PROXY_ADDR}" && -n "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" && (-z "${MANAGE_ACNG}" || "${MANAGE_ACNG}" == "no") ]]; then
 		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
 		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
 	fi
@@ -469,7 +486,7 @@ function do_extra_configuration() {
 	if [[ -z "${NAMESERVER}" ]]; then
 		declare _dns_resolv_file="/etc/resolv.conf"
 		[[ -f "/run/systemd/resolve/resolv.conf" ]] && _dns_resolv_file="/run/systemd/resolve/resolv.conf"
-		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2>/dev/null)"
+		NAMESERVER="$(awk '(/^nameserver/) && ($2 !~ /^127\./) && ($2 != "::1") && ($2 !~ /^fe80:/) {print $2; exit}' "${_dns_resolv_file}" 2> /dev/null)"
 		NAMESERVER="${NAMESERVER:-1.0.0.1}"
 	fi
 

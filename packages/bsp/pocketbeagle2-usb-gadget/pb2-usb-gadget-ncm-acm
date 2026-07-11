@@ -1,0 +1,147 @@
+#!/bin/sh
+set -eu
+
+G=/sys/kernel/config/usb_gadget/pb2
+CONFIG=c.1
+IDENTITY_DIR=/var/lib/pb2-usb-gadget
+IDENTITY_FILE=$IDENTITY_DIR/identity
+FALLBACK_SERIAL=PB2NCMACM0001
+
+read_dt_serial() {
+	if [ -r /proc/device-tree/serial-number ]; then
+		serial=$(tr -d '\000' < /proc/device-tree/serial-number)
+		if [ -n "$serial" ]; then
+			printf '%s\n' "$serial"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+persistent_identity() {
+	if [ -s "$IDENTITY_FILE" ]; then
+		cat "$IDENTITY_FILE"
+		return 0
+	fi
+
+	mkdir -p "$IDENTITY_DIR"
+	identity=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+	if [ -z "$identity" ]; then
+		identity=$FALLBACK_SERIAL
+	fi
+	printf '%s\n' "$identity" > "$IDENTITY_FILE"
+	chmod 600 "$IDENTITY_FILE"
+	printf '%s\n' "$identity"
+}
+
+usb_serial() {
+	if serial=$(read_dt_serial); then
+		printf '%s\n' "$serial"
+		return 0
+	fi
+
+	printf 'PB2NCMACM-%s\n' "$(persistent_identity)"
+}
+
+derive_mac() {
+	prefix=$1
+	label=$2
+	hash=$(printf '%s:%s\n' "$label" "$USB_SERIAL" | sha256sum | cut -d' ' -f1)
+	printf '%s:%s:%s:%s:%s:%s\n' \
+		"$prefix" \
+		"$(printf '%s' "$hash" | cut -c1-2)" \
+		"$(printf '%s' "$hash" | cut -c3-4)" \
+		"$(printf '%s' "$hash" | cut -c5-6)" \
+		"$(printf '%s' "$hash" | cut -c7-8)" \
+		"$(printf '%s' "$hash" | cut -c9-10)"
+}
+
+first_udc() {
+	for u in /sys/class/udc/*; do
+		[ -e "$u" ] || continue
+		basename "$u"
+		return 0
+	done
+	return 1
+}
+
+cleanup_configfs() {
+	if [ -d "$G" ]; then
+		[ ! -f "$G/UDC" ] || echo "" > "$G/UDC" 2>/dev/null || true
+		find "$G/configs" -type l -exec rm -f {} + 2>/dev/null || true
+		find "$G/os_desc" -type l -exec rm -f {} + 2>/dev/null || true
+		find "$G/functions" -mindepth 1 -maxdepth 1 -type d -exec rmdir {} + 2>/dev/null || true
+		find "$G/configs" -mindepth 1 -type d -depth -exec rmdir {} + 2>/dev/null || true
+		find "$G/strings" -mindepth 1 -type d -depth -exec rmdir {} + 2>/dev/null || true
+		rmdir "$G" 2>/dev/null || true
+	fi
+}
+
+case "${1:-start}" in
+	stop)
+		[ ! -d "$G" ] || echo "" > "$G/UDC" 2>/dev/null || true
+		ip link set usb0 down 2>/dev/null || true
+		cleanup_configfs
+		exit 0
+		;;
+	start | restart) ;;
+	*)
+		echo "usage: $0 [start|stop|restart]" >&2
+		exit 2
+		;;
+esac
+
+mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config
+modprobe libcomposite
+modprobe usb_f_ncm
+modprobe usb_f_acm
+
+if [ -d /sys/module/g_cdc ] || [ -d /sys/module/g_ether ] || [ -d /sys/module/g_multi ]; then
+	echo "legacy gadget module is loaded; reboot after removing legacy boot args" >&2
+	exit 1
+fi
+
+cleanup_configfs
+if ! UDC=$(first_udc); then
+	echo "no USB device controller found under /sys/class/udc" >&2
+	exit 1
+fi
+if [ -z "$UDC" ]; then
+	echo "USB device controller name is empty" >&2
+	exit 1
+fi
+USB_SERIAL=$(usb_serial)
+DEV_MAC=$(derive_mac 02 pb2-dev)
+HOST_MAC=$(derive_mac 06 pb2-host)
+
+mkdir -p "$G"
+cd "$G"
+
+printf '0x1d6b\n' > idVendor
+printf '0x0105\n' > idProduct
+printf '0x0200\n' > bcdUSB
+printf '0x0100\n' > bcdDevice
+printf '0xEF\n' > bDeviceClass
+printf '0x02\n' > bDeviceSubClass
+printf '0x01\n' > bDeviceProtocol
+
+mkdir -p strings/0x409
+printf '%s\n' "$USB_SERIAL" > strings/0x409/serialnumber
+printf 'BeagleBoard.org\n' > strings/0x409/manufacturer
+printf 'PocketBeagle 2 NCM+ACM\n' > strings/0x409/product
+
+mkdir -p configs/$CONFIG/strings/0x409
+printf '0x80\n' > configs/$CONFIG/bmAttributes
+printf '250\n' > configs/$CONFIG/MaxPower
+printf 'NCM network + serial\n' > configs/$CONFIG/strings/0x409/configuration
+
+mkdir -p functions/ncm.usb0
+printf '%s\n' "$DEV_MAC" > functions/ncm.usb0/dev_addr
+printf '%s\n' "$HOST_MAC" > functions/ncm.usb0/host_addr
+mkdir -p functions/acm.usb0
+
+ln -s functions/ncm.usb0 configs/$CONFIG/ncm.usb0
+ln -s functions/acm.usb0 configs/$CONFIG/acm.usb0
+printf '%s\n' "$UDC" > UDC
+ip link set usb0 up 2>/dev/null || true

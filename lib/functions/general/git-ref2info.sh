@@ -132,7 +132,8 @@ function memoized_git_ref_to_info() {
 
 				"https://gitverse.ru/"*)
 					declare org_and_repo=""
-					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
+					org_and_repo="${_gr_org}/${_gr_repo}"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					url="https://gitverse.ru/api/repos/${org_and_repo}/raw/commit/${sha1}/Makefile"
 					;;
@@ -140,7 +141,8 @@ function memoized_git_ref_to_info() {
 				"https://gitee.com/"*)
 					# parse org/repo from https://gitee.com/org/repo
 					declare org_and_repo=""
-					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
+					org_and_repo="${_gr_org}/${_gr_repo}"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					url="https://gitee.com/${org_and_repo}/raw/${sha1}/Makefile"
 					;;
@@ -148,7 +150,8 @@ function memoized_git_ref_to_info() {
 				"https://github.com/"*)
 					# parse org/repo from https://github.com/org/repo
 					declare org_and_repo=""
-					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
+					org_and_repo="${_gr_org}/${_gr_repo}"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
@@ -170,7 +173,20 @@ function memoized_git_ref_to_info() {
 					;;
 
 				*)
-					exit_with_error "Unknown git source '${git_source}'"
+					# git_cdn / gitproxy mirror: GITHUB_SOURCE is the proxy base
+					# (GITPROXY_ADDRESS) and the proxy serves github repos at
+					# /org/repo, so git_source is http://host:port/org/repo. The
+					# Makefile version is the upstream one, so fetch it from github's
+					# raw endpoint directly (the proxy is for git clones, not raw HTTP).
+					if [[ "${GITHUB_MIRROR}" == "gitproxy" && -n "${GITPROXY_ADDRESS:-}" && "${git_source}" == "${GITPROXY_ADDRESS%/}/"* ]]; then
+						declare org_and_repo=""
+						IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
+						org_and_repo="${_gr_org}/${_gr_repo}"
+						org_and_repo="${org_and_repo%.git}" # remove .git if present
+						url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+					else
+						exit_with_error "Unknown git source '${git_source}'"
+					fi
 					;;
 			esac
 

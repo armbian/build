@@ -21,31 +21,30 @@ test -n "${distro_bootpart}" || distro_bootpart=1
 
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
-# Load armbianEnv.txt with corruption detection and .bak fallback.
-# sed -i + power loss can zero or truncate the file.
-setenv armbian_env_loaded "no"
+# Load armbianEnv.txt with corruption detection and .dist fallback.
+# Power loss can fill the file with 0xFF (eMMC erased block) or ^@ (NUL,
+# on other storage media) which passes "env import -t" without error but
+# imports zero variables. Clear rootdev before import; if it remains
+# empty, the file was corrupt.
+setenv rootdev
 if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt; then
-	if env import -t ${load_addr} ${filesize}; then
-		setenv armbian_env_loaded "yes"
-	else
-		echo "WARNING: armbianEnv.txt format error"
-	fi
+	env import -t ${load_addr} ${filesize}
 fi
-if test "${armbian_env_loaded}" = "no"; then
-	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.bak; then
-		echo "Loading armbianEnv.txt.bak as fallback"
-		if env import -t ${load_addr} ${filesize}; then
-			setenv armbian_env_loaded "yes"
-		else
-			echo "ERROR: armbianEnv.txt.bak format error"
-		fi
-	else
-		echo "WARNING: no armbianEnv.txt.bak found"
-	fi
-fi
-# Final safety: restore default rootdev if all sources failed
 if test -z "${rootdev}"; then
-	setenv rootdev "/dev/mmcblk0p1"
+	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.dist; then
+		echo "WARNING: armbianEnv.txt corrupt, loading .dist fallback"
+		setenv rootdev
+		env import -t ${load_addr} ${filesize}
+	fi
+fi
+# Final safety: derive rootdev from boot source if still unset
+if test -z "${rootdev}"; then
+	echo "WARNING: rootdev not set, deriving from boot source ${devtype} ${devnum}:${distro_bootpart}"
+	if test "${devtype}" = "nvme"; then
+		setenv rootdev "/dev/nvme${devnum}n1p${distro_bootpart}"
+	else
+		setenv rootdev "/dev/mmcblk${devnum}p${distro_bootpart}"
+	fi
 fi
 
 # fdtfile is set by armbianEnv.txt (per-board BOOT_FDT_FILE).
@@ -107,7 +106,7 @@ echo "Using fdtfile=${fdtfile}"
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"; fi
+if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyFIQ0,1500000n8 ${consoleargs}"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
@@ -115,8 +114,9 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-# get PARTUUID of first partition on SD/eMMC the boot script was loaded from
+# get PARTUUID of the partition the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
+if test "${devtype}" = "nvme"; then part uuid nvme ${devnum}:${distro_bootpart} partuuid; fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 if test -n "${cryptdevice}"; then setenv bootargs "${bootargs} cryptdevice=${cryptdevice}"; fi

@@ -4,7 +4,7 @@
 
 function add_host_dependencies__add_cryptroot_tooling() {
 	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "cryptsetup openssh-client" "info"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} cryptsetup openssh-client" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS+=("fs-tools::cryptsetup" "openssh-client")
 }
 
 function extension_prepare_config__prepare_cryptroot() {
@@ -82,7 +82,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 	fi
 }
 
-function post_umount_final_image__export_private_key(){
+function post_umount_final_image__export_private_key() {
 	if [[ $CRYPTROOT_SSH_UNLOCK == yes && -f "${DROPBEAR_DIR}"/id_ecdsa ]]; then
 		CRYPTROOT_SSH_UNLOCK_KEY_PATH="${DESTIMG}/${version}.key"
 		# copy dropbear ssh key to image output dir for convenience
@@ -92,11 +92,11 @@ function post_umount_final_image__export_private_key(){
 	fi
 }
 
-function post_umount_final_image__750_cryptroot_cleanup(){
+function post_umount_final_image__750_cryptroot_cleanup() {
 	execute_and_remove_cleanup_handler cleanup_cryptroot
 }
 
-function cleanup_cryptroot(){
+function cleanup_cryptroot() {
 	cryptsetup luksClose "${CRYPTROOT_MAPPER}" 2>&1
 	display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
 }

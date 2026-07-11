@@ -8,5 +8,5 @@ function extension_prepare_config__add_to_image_watchdog() {
 
 function post_customize_image__enable_watchdog_device_config() {
 	display_alert "Enable /dev/watchdog in /etc/watchdog.conf ${HOOK_POINT}" "${EXTENSION}" "info"
-	sed -e 'sX^#watchdog-deviceXwatchdog-deviceX' -i  "${SDCARD}"/etc/watchdog.conf
+	sed -e 'sX^#watchdog-deviceXwatchdog-deviceX' -i "${SDCARD}"/etc/watchdog.conf
 }

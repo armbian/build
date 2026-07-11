@@ -17,8 +17,8 @@ function obtain_and_check_host_release_and_arch() {
 	display_alert "Build host architecture" "${HOSTARCH:-(unknown)}" "info"
 
 	case "${HOSTARCH}" in
-		amd64 | arm64) ;; # officially supported
-		armhf | riscv64 | loong64)  # experimental
+		amd64 | arm64) ;;          # officially supported
+		armhf | riscv64 | loong64) # experimental
 			display_alert "EXPERIMENTAL build host support" "${HOSTARCH}" "wrn"
 			;;
 		*)

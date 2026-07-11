@@ -151,7 +151,10 @@ function artifact_kernel_prepare_version() {
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# Hash the extension hooks
-	declare -a extension_hooks_to_hash=("pre_package_kernel_image" "kernel_copy_extra_sources" "pre_package_kernel_headers")
+	declare -a extension_hooks_to_hash=(
+		"pre_package_kernel_image" "kernel_copy_extra_sources" "pre_package_kernel_headers"
+		"kernel_extra_create_patches"
+	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
@@ -159,7 +162,7 @@ function artifact_kernel_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh # expansion
+	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh "${SRC}"/lib/functions/compilation/stubble.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

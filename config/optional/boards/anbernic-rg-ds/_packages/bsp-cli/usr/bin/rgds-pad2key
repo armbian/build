@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+# RG DS: gamepad/HOME buttons -> keyboard (evdev/uinput, X11/Wayland-safe).
+# Reads every input device that emits a mapped BTN_* code (gpio gamepad keys AND
+# the separate adc HOME key) and injects keyboard keys. Analog sticks untouched.
+import time, select, evdev
+from evdev import ecodes as e, UInput
+MAP = {
+    e.BTN_DPAD_UP: e.KEY_UP,     e.BTN_DPAD_DOWN: e.KEY_DOWN,
+    e.BTN_DPAD_LEFT: e.KEY_LEFT, e.BTN_DPAD_RIGHT: e.KEY_RIGHT,
+    e.BTN_SELECT: e.KEY_SPACE,
+    e.BTN_START:  e.KEY_LEFTMETA,
+    e.BTN_SOUTH:  e.KEY_ENTER,
+    e.BTN_EAST:   e.KEY_ESC,
+    e.BTN_WEST:   e.KEY_HOME,
+}
+# Chords: on a single press, tap the whole combo (modifiers down first, up last).
+COMBO = {
+    e.BTN_MODE:  (e.KEY_LEFTALT,  e.KEY_TAB),   # HOME -> Alt+Tab
+    e.BTN_NORTH: (e.KEY_LEFTCTRL, e.KEY_F4),    # X -> Ctrl+F4
+}
+ALL = set(MAP) | set(COMBO)
+def sources():
+    out = {}
+    for p in evdev.list_devices():
+        try: d = evdev.InputDevice(p)
+        except Exception: continue
+        if d.name == "rgds-pad2key": continue
+        if any(k in d.capabilities().get(e.EV_KEY, []) for k in ALL):
+            out[d.fd] = d
+    return out
+devs = {}
+while not devs:
+    devs = sources()
+    if not devs: time.sleep(2)
+_keys = set(MAP.values())
+for _seq in COMBO.values(): _keys.update(_seq)
+ui = UInput({e.EV_KEY: sorted(_keys)}, name="rgds-pad2key")
+while True:
+    if not devs:                       # all inputs vanished: re-scan, don't spin
+        devs = sources()
+        if not devs:
+            time.sleep(2)
+            continue
+    r, _, _ = select.select(devs, [], [])
+    for fd in r:
+        try: events = list(devs[fd].read())
+        except OSError:                # device removed: drop its stale fd
+            try: devs[fd].close()
+            except Exception: pass
+            del devs[fd]
+            continue
+        for ev in events:
+            if ev.type != e.EV_KEY: continue
+            if ev.code in COMBO:
+                if ev.value == 1:                 # press: tap the chord once
+                    seq = COMBO[ev.code]
+                    for k in seq: ui.write(e.EV_KEY, k, 1)
+                    for k in reversed(seq): ui.write(e.EV_KEY, k, 0)
+                    ui.syn()
+            elif ev.code in MAP:
+                ui.write(e.EV_KEY, MAP[ev.code], ev.value); ui.syn()

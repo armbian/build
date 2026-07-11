@@ -270,6 +270,12 @@ function kernel_package() {
 	local ts=${SECONDS}
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
+
+	# Build stubble if enabled
+	if [[ "${KERNEL_DO_STUBBLE}" == "yes" ]]; then
+		compile_stubble
+	fi
+
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }
