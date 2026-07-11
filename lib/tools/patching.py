@@ -60,7 +60,8 @@ fast_archeology = FAST_ARCHEOLOGY == "yes"
 rewrite_patches_in_place = REWRITE_PATCHES == "yes"
 rewrite_only_patches_needing_rebase = REWRITE_PATCHES_NEEDING_REBASE == "yes"
 split_patches = SPLIT_PATCHES == "yes"
-parallel_patches = PARALLEL_PATCHES == "yes"
+# Parallel patches: only enable during rewrites when explicitly requested
+parallel_patches = rewrite_patches_in_place and (PARALLEL_PATCHES == "yes")
 apply_options = {
 	"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes"),
 	"set_patch_date": True,

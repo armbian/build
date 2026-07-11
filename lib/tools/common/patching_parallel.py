@@ -886,39 +886,19 @@ def group_patches_by_series(patches: List, LINUXFAMILY: str) -> List[List]:
     """
     Group patches for parallel processing based on dependencies.
 
-    For sunxi with series.conf: group by folder (patches within a folder must be sequential)
-    For other families with series.conf: use file-based dependency detection
-    For no series.conf: use file-based dependency detection
-
-    IMPORTANT: File-based dependency detection is the key to correct parallelization.
+    Uses file-based dependency detection for all cases.
     Patches that share files MUST be processed sequentially in the same worker.
 
     Args:
         patches: List of PatchInPatchFile objects
-        LINUXFAMILY: The kernel family name
+        LINUXFAMILY: The kernel family name (unused, kept for API compatibility)
 
     Returns:
         List of patch groups, where each group must be processed sequentially
     """
-    # Check if any patch comes from a series
-    has_series = any(patch.parent.from_series for patch in patches)
-
-    if LINUXFAMILY == "sunxi" and has_series:
-        # Sunxi: group by immediate parent folder
-        groups = {}
-        for patch in patches:
-            # Get the parent directory name
-            parent_dir = os.path.basename(patch.parent.patch_dir.full_dir)
-            if parent_dir not in groups:
-                groups[parent_dir] = []
-            groups[parent_dir].append(patch)
-
-        # Return groups as lists
-        return list(groups.values())
-    else:
-        # Use file-based dependency detection for all other cases
-        log.info("Using file-based dependency detection...")
-        return group_patches_by_implicit_dependencies(patches)
+    # Use file-based dependency detection for all cases
+    log.info("Using file-based dependency detection...")
+    return group_patches_by_implicit_dependencies(patches)
 
 
 def group_patches_by_implicit_dependencies(patches: List) -> List[List]:
