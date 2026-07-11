@@ -3,6 +3,8 @@
 
 # Seeed APT repository configuration
 SEEED_APT_REPO_URL="https://seeed-studio.github.io/seeed_armbian_extension"
+SEEED_DEFAULT_ENABLE="${SEEED_DEFAULT_ENABLE:-"yes"}" # default all Seeed vendor features on unless explicitly disabled
+display_alert "$BOARD" "SEEED_DEFAULT_ENABLE is set to '${SEEED_DEFAULT_ENABLE}'" "info"
 
 # Configure Seeed APT repository in the image (persists for apt upgrade)
 function post_family_tweaks_bsp__seeed_configure_apt_source() {
@@ -69,14 +71,13 @@ function seeed_recomputer_install_from_apt() {
 function pre_install_distribution_specific__recomputer_install_seeed_packages() {
 	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
-	seeed_recomputer_install_from_apt \
-		usbdevice-gadget-rk \
-		wpa-supplicant-morse-tools \
-		morsectrl-tools \
-		hostapd-morse-tools \
-		morse-fgh100m-dkms
+	declare -a pkgs=()
+	[[ "${SEEED_USB_GADGET_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(usbdevice-gadget-rk)
+	[[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(wpa-supplicant-morse-tools morsectrl-tools hostapd-morse-tools morse-fgh100m-dkms)
 
-	display_alert "Seeed packages installed successfully" "seeed-apt" "info"
+	seeed_recomputer_install_from_apt "${pkgs[@]}" # this does nothing if array is empty
+
+	display_alert "Seeed packages installed successfully" "seeed-apt: ${pkgs[*]}" "info"
 }
 
 # Install fcs960k-aic-bluez AFTER all desktop/extension packages.
@@ -87,6 +88,11 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 # We perform snapshot and diff entirely inside chroot to avoid
 # pipe/process-substitution issues with dpkg-query across chroot boundary.
 function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed fcs960k-aic-bluez (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
+	fi
+
 	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
 
 	display_alert "Actually Installing fcs960k-aic-bluez (replacing bluez) now" "seeed-apt" "debug"
@@ -121,6 +127,11 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 
 # AIC8800 wireless tweaks (BSP-level)
 function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed AIC8800 Tweaks (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Installing AIC8800 Tweaks" "info"
 	mkdir -p "${destination}"/etc/modprobe.d
 	mkdir -p "${destination}"/etc/modules-load.d
@@ -152,6 +163,11 @@ function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
 
 # Enable AIC8800 Bluetooth Service
 function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed AIC8800 Bluetooth Service (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
 	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service ||
 		chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service ||
@@ -178,6 +194,13 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 
 # Morse FGH100M firmware
 function post_family_tweaks_bsp__recomputer_fgh100m_morse_firmware() {
+	if [[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed Morse FGH100M firmware (SEEED_MORSE_ENABLE=no)" "info"
+		return 0
+	fi
+
+	display_alert "$BOARD" "Installing Morse FGH100M firmware" "info"
+
 	local morse_fw_rev="commit:974c7744263ffb56a1c8678962e740fdcb3428f7"
 
 	fetch_from_repo "https://github.com/MorseMicro/morse-firmware.git" "morse-firmware" "${morse_fw_rev}" "yes"
@@ -195,6 +218,11 @@ function post_family_tweaks_bsp__recomputer_fgh100m_morse_firmware() {
 
 # USB gadget defaults (ACM + RNDIS, usb0 management link)
 function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
+	if [[ "${SEEED_USB_GADGET_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping USB gadget defaults (SEEED_USB_GADGET_ENABLE=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Configuring USB gadget defaults (ACM + RNDIS, usb0 management link)" "info"
 
 	do_with_retries 3 chroot_sdcard_apt_get_install dnsmasq
@@ -268,6 +296,11 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 # Auto-mount USB storage under /media/<first-user>/ (DE-agnostic)
 function post_family_tweaks__recomputer_usb_auto_mount() {
+	if [[ "${SEEED_AUTOMOUNT_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping USB auto-mount (SEEED_AUTOMOUNT_ENABLE=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Installing USB auto-mount" "info"
 
 	# Helper script: mount/unmount USB device under /media/<first-user>/LABEL
