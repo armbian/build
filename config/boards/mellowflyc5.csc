@@ -1,6 +1,5 @@
 # Allwinner H618 quad core 1GB RAM SoC 100M Ethernet WiFi
 BOARD_NAME="Mellow Fly-C5"
-BOOTPATCHDIR="u-boot-sunxi"
 
 BOARD_VENDOR="mellow"
 BOARDFAMILY="sun50iw9"
