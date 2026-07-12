@@ -1,0 +1,3418 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Wed, 18 Mar 2026 14:29:42 +0800
+Subject: sound: soc: add cix soc support
+
+Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+---
+ sound/soc/Kconfig           |    1 +
+ sound/soc/Makefile          |    1 +
+ sound/soc/cix/Kconfig       |   37 +
+ sound/soc/cix/Makefile      |   10 +
+ sound/soc/cix/card-utils.c  |  768 ++++++
+ sound/soc/cix/card-utils.h  |   73 +
+ sound/soc/cix/cdns_i2s_mc.c | 1166 +++++++++
+ sound/soc/cix/cdns_i2s_sc.c | 1204 ++++++++++
+ sound/soc/cix/sky1-card.c   |   73 +
+ 9 files changed, 3333 insertions(+)
+
+diff --git a/sound/soc/Kconfig b/sound/soc/Kconfig
+index 111111111111..222222222222 100644
+--- a/sound/soc/Kconfig
++++ b/sound/soc/Kconfig
+@@ -108,6 +108,7 @@ source "sound/soc/apple/Kconfig"
+ source "sound/soc/atmel/Kconfig"
+ source "sound/soc/au1x/Kconfig"
+ source "sound/soc/bcm/Kconfig"
++source "sound/soc/cix/Kconfig"
+ source "sound/soc/cirrus/Kconfig"
+ source "sound/soc/dwc/Kconfig"
+ source "sound/soc/fsl/Kconfig"
+diff --git a/sound/soc/Makefile b/sound/soc/Makefile
+index 111111111111..222222222222 100644
+--- a/sound/soc/Makefile
++++ b/sound/soc/Makefile
+@@ -50,6 +50,7 @@ obj-$(CONFIG_SND_SOC)	+= amd/
+ obj-$(CONFIG_SND_SOC)	+= atmel/
+ obj-$(CONFIG_SND_SOC)	+= au1x/
+ obj-$(CONFIG_SND_SOC)	+= bcm/
++obj-$(CONFIG_SND_SOC)	+= cix/
+ obj-$(CONFIG_SND_SOC)	+= cirrus/
+ obj-$(CONFIG_SND_SOC)	+= dwc/
+ obj-$(CONFIG_SND_SOC)	+= fsl/
+diff --git a/sound/soc/cix/Kconfig b/sound/soc/cix/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/Kconfig
+@@ -0,0 +1,37 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++config SND_SOC_CIX
++	tristate "ASoC support for CIX SoCs"
++	depends on ARCH_CIX || COMPILE_TEST
++	help
++	  Say Y or M if you want to add support for codecs attached to
++	  the CIX SoC audio interfaces. You will also need to select the
++	  audio interfaces to support below.
++
++config SND_SOC_CDNS_I2S_MC
++	tristate "Cadence I2S Multi-Channel Controller"
++	depends on SND_SOC_CIX
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	help
++	  Say Y or M if you want to add support for the Cadence I2S
++	  Multi-Channel controller used in CIX Sky1 SoCs. This controller
++	  supports up to 16 audio channels.
++
++config SND_SOC_CDNS_I2S_SC
++	tristate "Cadence I2S Single-Channel Controller"
++	depends on SND_SOC_CIX
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	help
++	  Say Y or M if you want to add support for the Cadence I2S
++	  Single-Channel controller used in CIX Sky1 SoCs. This controller
++	  supports stereo (2-channel) audio.
++
++config SND_SOC_SKY1_SOUND_CARD
++	tristate "CIX Sky1 Sound Card"
++	depends on SND_SOC_CIX
++	select MFD_SYSCON
++	help
++	  Say Y or M if you want to add support for the CIX Sky1 ASoC
++	  machine driver. This driver provides DAI link configuration,
++	  jack detection, and MCLK setup for audio codecs connected
++	  to the Sky1 SoC.
+diff --git a/sound/soc/cix/Makefile b/sound/soc/cix/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/Makefile
+@@ -0,0 +1,10 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++obj-$(CONFIG_SND_SOC_CDNS_I2S_MC) += snd-soc-cdns-i2s-mc.o
++snd-soc-cdns-i2s-mc-y := cdns_i2s_mc.o
++
++obj-$(CONFIG_SND_SOC_CDNS_I2S_SC) += snd-soc-cdns-i2s-sc.o
++snd-soc-cdns-i2s-sc-y := cdns_i2s_sc.o
++
++obj-$(CONFIG_SND_SOC_SKY1_SOUND_CARD) += snd-soc-sky1-card.o
++snd-soc-sky1-card-y := sky1-card.o card-utils.o
+diff --git a/sound/soc/cix/card-utils.c b/sound/soc/cix/card-utils.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/card-utils.c
+@@ -0,0 +1,768 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/module.h>
++#include <linux/mfd/syscon.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include "card-utils.h"
++#include <sound/jack.h>
++
++#define SKY1_AUDSS_CRU_INFO_MCLK		0x70
++#define SKY1_AUDSS_CRU_INFO_MCLK_DIV_OFF(x)	(10 + (3 * (x)))
++#define SKY1_AUDSS_CRU_INFO_MCLK_DIV_MASK(x)	GENMASK((12 + (3 * (x))), (10 + (3 * (x))))
++
++static const char *mclk_pll_names[AUDIO_CLK_NUM] = {
++	[AUDIO_CLK0] = "audio_clk0",
++	[AUDIO_CLK2] = "audio_clk2",
++};
++
++static int cix_jack_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++	struct device *dev = rtd->card->dev;
++	int ret, jack[JACK_CNT], cnt, i;
++
++	if (!link_info->jack_det_mask)
++		return 0;
++
++	cnt = 0;
++	if (link_info->jack_det_mask & JACK_MASK_DPIN) {
++		jack[cnt] = JACK_DPIN;
++		cnt++;
++	}
++
++	if (link_info->jack_det_mask & JACK_MASK_DPOUT) {
++		jack[cnt] = JACK_DPOUT;
++		cnt++;
++	}
++
++	if (link_info->jack_det_mask & JACK_MASK_HP) {
++		jack[cnt] = JACK_HP;
++		cnt++;
++	}
++
++	for (i = 0; i < cnt; i++) {
++		ret = snd_soc_card_jack_new(rtd->card,
++				link_info->jack_pin[jack[i]].pin,
++				link_info->jack_pin[jack[i]].mask,
++				&link_info->jack[jack[i]]);
++		if (ret) {
++			dev_err(dev, "can't new jack:%d, %d\n", i, ret);
++			return ret;
++		}
++		dev_info(dev, "codec component %s\n", codec_dai->component->name);
++
++		snd_soc_component_set_jack(codec_dai->component,
++						&link_info->jack[jack[i]], NULL);
++	}
++
++	return 0;
++}
++
++static int cix_dailink_parsing_fmt(struct device_node *np,
++				   struct device_node *codec_np,
++				   unsigned int *fmt)
++{
++	struct device_node *bitclkmaster = NULL;
++	struct device_node *framemaster = NULL;
++	unsigned int dai_fmt;
++
++	dai_fmt = snd_soc_daifmt_parse_format(np, NULL);
++
++	snd_soc_daifmt_parse_clock_provider_as_phandle(np, NULL,
++						       &bitclkmaster,
++						       &framemaster);
++	if (bitclkmaster != framemaster) {
++		pr_info("Must be the same bitclock and frame master\n");
++		of_node_put(bitclkmaster);
++		of_node_put(framemaster);
++		return -EINVAL;
++	}
++	if (bitclkmaster) {
++		dai_fmt &= ~SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK;
++		if (codec_np == bitclkmaster)
++			dai_fmt |= SND_SOC_DAIFMT_CBP_CFP;
++		else
++			dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
++	} else {
++		/*
++		 * No clock master specified - default to codec as consumer
++		 * (CPU/I2S provides clocks). This matches vendor kernel
++		 * behavior from snd_soc_daifmt_clock_provider_from_bitmap(0).
++		 */
++		dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
++	}
++	of_node_put(bitclkmaster);
++	of_node_put(framemaster);
++	*fmt = dai_fmt;
++
++	return 0;
++}
++
++/* only disabled dai-link status, not continue to parse */
++static bool cix_dailink_status_check(struct device_node *np)
++{
++	const char *status;
++	int ret;
++
++	ret = of_property_read_string(np, "status", &status);
++
++	if (status) {
++		if (!strcmp(status, "okay") || !strcmp(status, "ok"))
++			return true;
++		else
++			return false;
++	}
++
++	return true;
++}
++
++static int dai_set_sysclk(struct snd_pcm_substream *substream,
++			  struct snd_pcm_hw_params *params,
++			  unsigned int mclk_fs)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++	struct snd_soc_dai *codec_dai;
++	unsigned int mclk, mclk_div, mclk_parent_rate, sample_rate;
++	struct clk *mclk_parent;
++	int ret, i;
++	u32 val;
++
++	if (!mclk_fs || !priv->cru_regmap)
++		return 0;
++
++	sample_rate = params_rate(params);
++
++	dev_dbg(rtd->dev, "sample rate:%d, mclk-fs ratio:%d\n", sample_rate, mclk_fs);
++
++	/* Adjust mclk_fs due to mclk design limitation */
++	if (sample_rate % 8000 == 0) {
++		if (sample_rate < 32000 || sample_rate > 192000) {
++			dev_err(rtd->dev,
++				"8khz_pll cannot satisfy mclk less than 32khz or large than 192khz");
++			return -EINVAL;
++		}
++
++		if (sample_rate == 32000) {
++			mclk_fs = 512;
++			mclk_div = 3;
++		} else if (sample_rate == 48000) {
++			mclk_fs = 512;
++			mclk_div = 2;
++		} else if (sample_rate == 64000) {
++			mclk_fs = 256;
++			mclk_div = 3;
++		} else if (sample_rate == 96000) {
++			mclk_fs = 256;
++			mclk_div = 2;
++		} else if (sample_rate == 192000) {
++			mclk_fs = 256;
++			mclk_div = 0;
++		}
++
++		mclk_parent = link_info->clks[AUDIO_CLK0];
++	} else if (sample_rate % 11025 == 0) {
++		if (sample_rate < 44100 || sample_rate > 176400) {
++			dev_err(rtd->dev,
++				"11.025khz_pll cannot satisfy mclk less than 44.1khz or large than 176.4khz");
++			return -EINVAL;
++		}
++
++		if (sample_rate == 44100) {
++			mclk_fs = 512;
++			mclk_div = 2;
++		} else if (sample_rate == 88200) {
++			mclk_fs = 256;
++			mclk_div = 2;
++		} else if (sample_rate == 176400) {
++			mclk_fs = 256;
++			mclk_div = 0;
++		}
++
++		mclk_parent = link_info->clks[AUDIO_CLK2];
++	} else {
++		dev_err(rtd->dev, "invalid sample rate");
++		return -EINVAL;
++	}
++
++	mclk_parent_rate = clk_get_rate(mclk_parent);
++	dev_dbg(rtd->dev, "mclk parent rate = %d\n", mclk_parent_rate);
++
++	mclk = sample_rate * mclk_fs;
++
++	dev_dbg(rtd->dev, "mclk-fs ratio:%d, mclk-div:%d, mclk freq:%d\n",
++		 mclk_fs, mclk_div, mclk);
++
++	/* for cpu dai */
++	regmap_read(priv->cru_regmap, SKY1_AUDSS_CRU_INFO_MCLK, &val);
++	val &= ~SKY1_AUDSS_CRU_INFO_MCLK_DIV_MASK(link_info->mclk_idx);
++	val |= (mclk_div << SKY1_AUDSS_CRU_INFO_MCLK_DIV_OFF(link_info->mclk_idx));
++	regmap_write(priv->cru_regmap, SKY1_AUDSS_CRU_INFO_MCLK, val);
++
++	ret = clk_set_parent(link_info->clk_mclk, mclk_parent);
++	if (ret) {
++		dev_err(rtd->dev, "failed to set mclk parent\n");
++		return ret;
++	}
++
++	/* for codec dai */
++	for_each_rtd_codec_dais(rtd, i, codec_dai) {
++		ret = snd_soc_dai_set_sysclk(codec_dai, 0, mclk,
++				SND_SOC_CLOCK_IN);
++		if (ret && ret != -ENOTSUPP)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int dai_startup(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++	int ret;
++
++	if (link_info->mclk_fs) {
++		ret = clk_prepare_enable(link_info->clk_mclk);
++		if (ret) {
++			dev_err(rtd->dev, "failed to enable mclk\n");
++			return ret;
++		}
++
++		link_info->mclk_enabled = true;
++	}
++
++	return 0;
++}
++
++static void dai_shutdown(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++
++	if (link_info->mclk_fs) {
++		link_info->mclk_enabled = false;
++
++		clk_disable_unprepare(link_info->clk_mclk);
++	}
++}
++
++static int dai_hw_params(struct snd_pcm_substream *substream,
++			 struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++
++	if (link_info->mclk_fs)
++		return dai_set_sysclk(substream, params, link_info->mclk_fs);
++
++	return 0;
++}
++
++static struct snd_soc_ops cix_dailink_ops = {
++	.startup = dai_startup,
++	.hw_params = dai_hw_params,
++	.shutdown = dai_shutdown,
++};
++
++static int cix_dailink_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
++	struct device *dev = rtd->card->dev;
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct dai_link_info *link_info =
++		(struct dai_link_info *)((priv->link_info + rtd->id));
++	struct snd_soc_dai_link *dai_link =
++		(struct snd_soc_dai_link *)((priv)->card->dai_link + rtd->id);
++	int ret, fmt;
++
++	dev_dbg(dev, "%s, dai_fmt:0x%x\n", __func__, dai_link->dai_fmt);
++
++	ret = snd_soc_dai_set_fmt(cpu_dai, dai_link->dai_fmt);
++	if (ret && ret != -ENOTSUPP)
++	      return ret;
++
++	fmt = dai_link->dai_fmt & SND_SOC_DAIFMT_FORMAT_MASK;
++	if (fmt == SND_SOC_DAIFMT_DSP_A || fmt == SND_SOC_DAIFMT_DSP_B) {
++		dev_dbg(dev,
++			"\ttdm tx mask:0x%x, rx mask:0x%x, slots:%d, slot width:%d\n",
++			link_info->tx_mask, link_info->rx_mask,
++			link_info->slots, link_info->slot_width);
++
++		ret = snd_soc_dai_set_tdm_slot(cpu_dai, link_info->tx_mask,
++				link_info->rx_mask, link_info->slots, link_info->slot_width);
++		if (ret && ret != -ENOTSUPP)
++			return ret;
++	}
++
++	cix_jack_init(rtd);
++
++	return 0;
++}
++
++static int cix_gpio_init(struct cix_asoc_card *priv)
++{
++	struct snd_soc_card *card = priv->card;
++	struct device *dev = card->dev;
++	int ret;
++
++	priv->pdb0_gpiod = devm_gpiod_get_optional(dev, "pdb0", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->pdb0_gpiod)) {
++		ret = PTR_ERR(priv->pdb0_gpiod);
++		dev_err(dev, "failed to pdb gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	priv->pdb1_gpiod = devm_gpiod_get_optional(dev, "pdb1", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->pdb1_gpiod)) {
++		ret = PTR_ERR(priv->pdb1_gpiod);
++		dev_err(dev, "failed to get amplifier gpio: %d\n", ret);
++		return ret;
++	}
++
++	priv->pdb2_gpiod = devm_gpiod_get_optional(dev, "pdb2", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->pdb2_gpiod)) {
++		ret = PTR_ERR(priv->pdb2_gpiod);
++		dev_err(dev, "failed to get amplifier gpio: %d\n", ret);
++		return ret;
++	}
++
++	priv->pdb3_gpiod = devm_gpiod_get_optional(dev, "pdb3", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->pdb3_gpiod)) {
++		ret = PTR_ERR(priv->pdb3_gpiod);
++		dev_err(dev, "failed to get amplifier gpio: %d\n", ret);
++		return ret;
++	}
++
++	priv->beep_gpiod = devm_gpiod_get_optional(dev, "beep", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->beep_gpiod)) {
++		ret = PTR_ERR(priv->beep_gpiod);
++		dev_err(dev, "failed to beep gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	priv->codec_gpiod = devm_gpiod_get_optional(dev, "codec", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->codec_gpiod)) {
++		ret = PTR_ERR(priv->codec_gpiod);
++		dev_err(dev, "failed to codec gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	priv->i2sint_gpiod = devm_gpiod_get_optional(dev, "i2sint", GPIOD_IN);
++	if (IS_ERR(priv->i2sint_gpiod)) {
++		ret = PTR_ERR(priv->i2sint_gpiod);
++		dev_err(dev, "failed to i2s int gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	priv->mclk_gpiod = devm_gpiod_get_optional(dev, "mclkext", GPIOD_OUT_HIGH);
++	if (IS_ERR(priv->mclk_gpiod)) {
++		ret = PTR_ERR(priv->mclk_gpiod);
++		dev_err(dev, "failed to get mclk gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	priv->hpmicdet_gpiod = devm_gpiod_get_optional(dev, "hpmicdet", GPIOD_IN);
++	if (IS_ERR(priv->hpmicdet_gpiod)) {
++		ret = PTR_ERR(priv->hpmicdet_gpiod);
++		dev_err(dev, "failed to get hp mic detect gpio, ret: %d\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int cix_card_suspend_post(struct snd_soc_card *card)
++{
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(card);
++	struct snd_soc_pcm_runtime *rtd;
++	struct dai_link_info *link_info;
++
++	for_each_card_rtds(card, rtd) {
++		link_info = (struct dai_link_info *)((priv->link_info + rtd->id));
++
++		if (link_info->mclk_enabled)
++			clk_disable_unprepare(link_info->clk_mclk);
++	}
++
++	return 0;
++}
++
++static int cix_card_resume_pre(struct snd_soc_card *card)
++{
++	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(card);
++	struct snd_soc_pcm_runtime *rtd;
++	struct dai_link_info *link_info;
++	int ret;
++
++	for_each_card_rtds(card, rtd) {
++		link_info = (struct dai_link_info *)((priv->link_info + rtd->id));
++
++		if (link_info->mclk_enabled) {
++			ret = clk_prepare_enable(link_info->clk_mclk);
++			if (ret) {
++				dev_err(rtd->dev, "failed to enable mclk\n");
++				return ret;
++			}
++		}
++	}
++
++	return 0;
++}
++
++int cix_card_parse_of(struct cix_asoc_card *priv)
++{
++	struct snd_soc_card *card = priv->card;
++	struct device *dev = card->dev;
++	struct device_node *np;
++	struct device_node *codec;
++	struct device_node *cpu;
++	struct snd_soc_dai_link *link;
++	struct dai_link_info *link_info;
++	struct of_phandle_args args;
++	struct snd_soc_dai_link_component *comp_cpu;
++	int i, ret, num_links, current_np;
++
++	ret = snd_soc_of_parse_card_name(card, "model");
++	if (ret) {
++		dev_err(dev, "error parsing card name: %d\n", ret);
++		return ret;
++	}
++
++	ret = cix_gpio_init(priv);
++	if (ret) {
++		dev_err(dev, "failed to init gpio: %d\n", ret);
++		return ret;
++	}
++
++	priv->cru_regmap = syscon_regmap_lookup_by_phandle(dev->of_node,
++							   "cru-ctrl");
++	if (PTR_ERR(priv->cru_regmap) == -ENODEV) {
++		priv->cru_regmap = NULL;
++	} else if (IS_ERR(priv->cru_regmap)) {
++		return PTR_ERR(priv->cru_regmap);
++	}
++
++	num_links = of_get_child_count(dev->of_node);
++
++	link = devm_kcalloc(dev, num_links, sizeof(*link), GFP_KERNEL);
++	if (!link)
++		return -ENOMEM;
++	link_info = devm_kcalloc(dev, num_links, sizeof(*link_info), GFP_KERNEL);
++	if (!link_info)
++		return -ENOMEM;
++
++	/* DMA trigger ordering: start before I2S, stop after I2S */
++	link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
++	link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
++
++	card->num_links = num_links;
++	card->dai_link = link;
++	card->suspend_post = cix_card_suspend_post;
++	card->resume_pre = cix_card_resume_pre;
++	priv->link_info = link_info;
++
++	current_np = 0;
++	for_each_child_of_node(dev->of_node, np) {
++		if (!cix_dailink_status_check(np)) {
++			num_links--;
++			card->num_links = num_links;
++			continue;
++		}
++
++		comp_cpu = devm_kzalloc(dev, 2 * sizeof(*comp_cpu), GFP_KERNEL);
++		if (!comp_cpu) {
++			ret = -ENOMEM;
++			goto err_put_np;
++		}
++
++		cpu = of_get_child_by_name(np, "cpu");
++		if (!cpu) {
++			dev_err(dev, "can't find cpu device node\n");
++			ret = -EINVAL;
++			goto err_put_cpu;
++		}
++
++		ret = of_parse_phandle_with_args(cpu, "sound-dai",
++						 "#sound-dai-cells", 0, &args);
++		if (ret) {
++			dev_err(dev, "%s: error getting cpu phandle\n", cpu->name);
++			goto err_put_cpu;
++		}
++
++		link->cpus = &comp_cpu[0];
++		link->num_cpus = 1;
++		link->cpus->of_node = args.np;
++		link->id = args.args[0];
++
++		link->platforms	= &comp_cpu[1];
++		link->num_platforms = 1;
++		link->platforms->of_node = link->cpus->of_node;
++
++		dev_info(dev, "dai-link name:%s\n", np->name);
++
++		ret = snd_soc_of_get_dai_name(cpu, &link->cpus->dai_name, 0);
++		if (ret) {
++			if (ret != -EPROBE_DEFER)
++				dev_err(card->dev, "%s: error getting cpu dai name: %d\n",
++					link->name, ret);
++			goto err_put_cpu;
++		}
++		dev_info(dev, "\tcpu dai name:%s\n", link->cpus->dai_name);
++
++		codec = of_get_child_by_name(np, "codec");
++		if (codec) {
++			ret = snd_soc_of_get_dai_link_codecs(dev, codec, link);
++			if (ret < 0) {
++				if (ret != -EPROBE_DEFER)
++					dev_err(card->dev, "%s: codec dai not found: %d\n",
++						link->name, ret);
++				goto err_put_codec;
++			}
++		} else {
++			struct snd_soc_dai_link_component *comp_codec;
++
++			comp_codec = devm_kzalloc(dev, sizeof(*comp_codec), GFP_KERNEL);
++			if (!comp_codec) {
++				ret = -ENOMEM;
++				goto err_put_codec;
++			}
++
++			link->num_codecs = 1;
++			link->codecs = comp_codec;
++			link->codecs->dai_name = "snd-soc-dummy-dai";
++			link->codecs->name = "snd-soc-dummy";
++		}
++		dev_info(dev, "\tcodec dai name:%s\n", link->codecs->dai_name );
++
++		cix_dailink_parsing_fmt(np, codec, &link->dai_fmt);
++
++		of_property_read_u32(np, "mclk-fs", &link_info->mclk_fs);
++		if (link_info->mclk_fs) {
++			link_info->clk_mclk = devm_get_clk_from_child(dev, np, "mclk");
++			if (IS_ERR(link_info->clk_mclk)) {
++				dev_err(dev, "failed to get clk_mclk clock\n");
++				return PTR_ERR(link_info->clk_mclk);
++			}
++
++			for (i = 0; i < AUDIO_CLK_NUM; i++) {
++				link_info->clks[i] = devm_get_clk_from_child(dev, np, mclk_pll_names[i]);
++				if (IS_ERR(link_info->clks[i])) {
++					dev_err(dev, "failed to get clock %s\n", mclk_pll_names[i]);
++					return PTR_ERR(link_info->clks[i]);
++				}
++			}
++
++			ret = of_property_read_u8(np, "mclk-idx", &link_info->mclk_idx);
++			if (ret) {
++				dev_err(dev, "failed to get mclk-idx: %d", ret);
++				return ret;
++			}
++		}
++
++		snd_soc_of_parse_tdm_slot(np,
++					  &link_info->tx_mask,
++					  &link_info->rx_mask,
++					  &link_info->slots,
++					  &link_info->slot_width);
++
++		if (of_property_read_bool(np, "jack-det,dpin")) {
++			link_info->jack_pin[JACK_DPIN].pin = np->name ? np->name : "jack-dpin";
++			link_info->jack_pin[JACK_DPIN].mask = SND_JACK_LINEIN;
++			link_info->jack_det_mask |= JACK_MASK_DPIN;
++		}
++		if (of_property_read_bool(np, "jack-det,dpout")) {
++			char dp_str[32];
++
++			snprintf(dp_str, sizeof(dp_str),
++				"HDMI/DP,pcm=%d", current_np);
++
++			link_info->jack_pin[JACK_DPOUT].pin = kstrdup(dp_str, GFP_KERNEL);
++			link_info->jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
++			link_info->jack_det_mask |= JACK_MASK_DPOUT;
++		}
++		if (of_property_read_bool(np, "jack-det,hp")) {
++			link_info->jack_pin[JACK_HP].pin = "Headset";
++			link_info->jack_pin[JACK_HP].mask = SND_JACK_HEADSET;
++			link_info->jack_det_mask |= JACK_MASK_HP;
++		}
++
++		dev_info(dev, "\t\tdai_fmt:0x%x\n", link->dai_fmt);
++		dev_info(dev, "\t\tmclk_fs:%d\n", link_info->mclk_fs);
++		dev_info(dev,
++			"\t\ttdm tx mask:0x%x, rx mask:0x%x, slots:%d, slot width:%d\n",
++			link_info->tx_mask, link_info->rx_mask,
++			link_info->slots, link_info->slot_width);
++		dev_info(dev, "\t\tjack_det_mask:0x%x\n",
++			link_info->jack_det_mask);
++
++		link->stream_name = np->name ? np->name : link->cpus->dai_name;
++		link->name = np->name ? np->name : link->cpus->dai_name;
++		link->ops = &cix_dailink_ops;
++		link->init = cix_dailink_init;
++
++		link++;
++		link_info++;
++		current_np++;
++
++		of_node_put(cpu);
++		of_node_put(codec);
++	}
++
++	return 0;
++
++err_put_codec:
++	of_node_put(codec);
++err_put_cpu:
++	of_node_put(cpu);
++err_put_np:
++	of_node_put(np);
++
++	return ret;
++}
++EXPORT_SYMBOL(cix_card_parse_of);
++
++/*
++ * ACPI HDMI audio topology for Sky1 Orion O6.
++ *
++ * Under ACPI, the DAI link topology is fixed:
++ *   I2S5 (CIXH6011:02) → hdmi-audio-codec.0 (DP0)
++ *   I2S6 (CIXH6011:03) → hdmi-audio-codec.1 (DP1)
++ *   I2S7 (CIXH6011:04) → hdmi-audio-codec.2 (DP2/eDP)
++ *   I2S8 (CIXH6011:05) → hdmi-audio-codec.3 (DP3)
++ *   I2S9 (CIXH6011:06) → hdmi-audio-codec.4 (DP4)
++ */
++#define SKY1_HDMI_LINKS	5
++
++static const struct {
++	const char *i2s_name;	/* ACPI platform device name */
++	int codec_id;		/* hdmi-audio-codec.N */
++	const char *stream;	/* ALSA stream name */
++} sky1_hdmi_topology[SKY1_HDMI_LINKS] = {
++	{ "CIXH6011:02", 0, "HDMI/DP 0" },
++	{ "CIXH6011:03", 1, "HDMI/DP 1" },
++	{ "CIXH6011:04", 2, "HDMI/DP 2" },
++	{ "CIXH6011:05", 3, "HDMI/DP 3" },
++	{ "CIXH6011:06", 4, "HDMI/DP 4" },
++};
++
++int cix_card_parse_acpi(struct cix_asoc_card *priv)
++{
++	struct snd_soc_card *card = priv->card;
++	struct device *dev = card->dev;
++	struct snd_soc_dai_link *links;
++	struct snd_soc_dai_link_component *comps;
++	struct dai_link_info *link_info;
++	int i, num_links = 0;
++
++	card->name = "cix_sky1";
++
++	links = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*links), GFP_KERNEL);
++	if (!links)
++		return -ENOMEM;
++
++	/* 3 components per link: cpu, codec, platform */
++	comps = devm_kcalloc(dev, SKY1_HDMI_LINKS * 3, sizeof(*comps),
++			     GFP_KERNEL);
++	if (!comps)
++		return -ENOMEM;
++
++	link_info = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*link_info),
++				 GFP_KERNEL);
++	if (!link_info)
++		return -ENOMEM;
++
++	for (i = 0; i < SKY1_HDMI_LINKS; i++) {
++		const char *i2s_name = sky1_hdmi_topology[i].i2s_name;
++		struct snd_soc_dai_link_component *cpu, *codec, *plat;
++		struct snd_soc_dai_link *link;
++		struct device *i2s_dev;
++
++		/* Skip links whose I2S platform device doesn't exist */
++		i2s_dev = bus_find_device_by_name(&platform_bus_type, NULL,
++						  i2s_name);
++		if (!i2s_dev) {
++			dev_info(dev, "I2S device %s not present, skipping\n",
++				 i2s_name);
++			continue;
++		}
++		put_device(i2s_dev);
++
++		cpu = &comps[num_links * 3];
++		codec = &comps[num_links * 3 + 1];
++		plat = &comps[num_links * 3 + 2];
++		link = &links[num_links];
++
++		/* CPU DAI: I2S MC playback */
++		cpu->name = i2s_name;
++		cpu->dai_name = "i2s-mc-aif1";
++
++		/* Codec DAI: hdmi-audio-codec */
++		codec->name = devm_kasprintf(dev, GFP_KERNEL,
++					     "hdmi-audio-codec.%d",
++					     sky1_hdmi_topology[i].codec_id);
++		if (!codec->name)
++			return -ENOMEM;
++		codec->dai_name = "i2s-hifi";
++
++		/* Platform: DMA is co-located with CPU */
++		plat->name = cpu->name;
++
++		link->cpus = cpu;
++		link->num_cpus = 1;
++		link->codecs = codec;
++		link->num_codecs = 1;
++		link->platforms = plat;
++		link->num_platforms = 1;
++
++		link->name = sky1_hdmi_topology[i].stream;
++		link->stream_name = sky1_hdmi_topology[i].stream;
++		link->id = i;
++
++		link->dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF |
++				SND_SOC_DAIFMT_CBC_CFC;
++		link->ops = &cix_dailink_ops;
++		link->init = cix_dailink_init;
++		link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
++		link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
++
++		/* HDMI/DP output jack detection */
++		link_info[num_links].jack_pin[JACK_DPOUT].pin =
++			devm_kasprintf(dev, GFP_KERNEL, "HDMI/DP,pcm=%d",
++				       num_links);
++		if (!link_info[num_links].jack_pin[JACK_DPOUT].pin)
++			return -ENOMEM;
++		link_info[num_links].jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
++		link_info[num_links].jack_det_mask = JACK_MASK_DPOUT;
++
++		num_links++;
++	}
++
++	card->dai_link = links;
++	card->num_links = num_links;
++	card->suspend_post = cix_card_suspend_post;
++	card->resume_pre = cix_card_resume_pre;
++	priv->link_info = link_info;
++
++	return 0;
++}
++EXPORT_SYMBOL(cix_card_parse_acpi);
++
++MODULE_DESCRIPTION("Sound Card Utils for Cix Technology");
++MODULE_AUTHOR("Xing.Wang <xing.wang@cixtech.com>");
++MODULE_LICENSE("GPL v2");
+diff --git a/sound/soc/cix/card-utils.h b/sound/soc/cix/card-utils.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/card-utils.h
+@@ -0,0 +1,73 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Copyright 2024 Cix Technology Group Co., Ltd. */
++
++#ifndef __CIX_CARD_H__
++#define __CIX_CARD_H__
++
++#include <linux/module.h>
++#include <linux/of_platform.h>
++#include <sound/soc.h>
++#include <linux/workqueue.h>
++#include <linux/gpio/consumer.h>
++
++enum jack_det {
++	JACK_DPIN = 0x0,
++	JACK_DPOUT,
++	JACK_HP, /* headphone or headset */
++
++	JACK_CNT
++};
++
++#define JACK_MASK_DPIN   (0x1 << JACK_DPIN)
++#define JACK_MASK_DPOUT  (0x1 << JACK_DPOUT)
++#define JACK_MASK_HP     (0x1 << JACK_HP)
++
++enum {
++	AUDIO_CLK0,
++	AUDIO_CLK2,
++	AUDIO_CLK_NUM,
++};
++
++struct dai_link_info {
++	struct clk *clk_mclk;
++	struct clk *clks[AUDIO_CLK_NUM];
++	u8 mclk_idx;
++	bool mclk_enabled;
++
++	unsigned int mclk_fs;
++
++	unsigned int tx_mask;
++	unsigned int rx_mask;
++	unsigned int slots;
++	unsigned int slot_width;
++
++	struct snd_soc_jack	jack[JACK_CNT];
++	struct snd_soc_jack_pin	jack_pin[JACK_CNT];
++	unsigned int jack_det_mask;
++};
++
++struct cix_asoc_card {
++	struct snd_soc_card *card;
++	struct dai_link_info *link_info;
++
++	struct regmap *cru_regmap;
++
++	/* pa, now support for alc1019 */
++	struct gpio_desc *pdb0_gpiod; /* for chip power */
++	struct gpio_desc *pdb1_gpiod;
++	struct gpio_desc *pdb2_gpiod;
++	struct gpio_desc *pdb3_gpiod;
++	struct gpio_desc *beep_gpiod; /* for beep sound */
++
++	/* codec, now support for alc5682 */
++	struct gpio_desc *codec_gpiod; /* load switch for codec */
++	struct gpio_desc *i2sint_gpiod; /* codec int */
++	struct gpio_desc *hpmicdet_gpiod; /* mic detect */
++
++	struct gpio_desc *mclk_gpiod;
++};
++
++int cix_card_parse_of(struct cix_asoc_card *priv);
++int cix_card_parse_acpi(struct cix_asoc_card *priv);
++
++#endif
+diff --git a/sound/soc/cix/cdns_i2s_mc.c b/sound/soc/cix/cdns_i2s_mc.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/cdns_i2s_mc.c
+@@ -0,0 +1,1166 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/mfd/syscon.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++#include <sound/dmaengine_pcm.h>
++#include <sound/pcm_params.h>
++
++/* Special Function Registers */
++/* Control Register */
++#define I2S_CTRL				0x00
++#define I2S_CTRL_RSYNC_LOOP_BACK		BIT(28)
++#define I2S_CTRL_TSYNC_LOOP_BACK		BIT(27)
++#define I2S_CTRL_RSYNC_RST			BIT(26)
++#define I2S_CTRL_TSYNC_RST			BIT(25)
++#define I2S_CTRL_RFIFO_RST			BIT(24)
++#define I2S_CTRL_TFIFO_RST			BIT(23)
++#define I2S_CTRL_R_MS				BIT(22)
++#define I2S_CTRL_T_MS				BIT(21)
++#define I2S_CTRL_SFR_RST			BIT(20)
++#define I2S_CTRL_LOOP_BACK_6_7			BIT(19)
++#define I2S_CTRL_LOOP_BACK_4_5			BIT(18)
++#define I2S_CTRL_LOOP_BACK_2_3			BIT(17)
++#define I2S_CTRL_LOOP_BACK_0_1			BIT(16)
++#define I2S_CTRL_TR_CFG				GENMASK(15, 8)
++#define I2S_CTRL_I2S_EN				GENMASK(7, 0)
++
++/* Interrupt Status Register */
++#define I2S_INTR_STAT				0x04
++#define I2S_INTR_STAT_RFIFO_AFULL		BIT(15)
++#define I2S_INTR_STAT_RFIFO_FULL		BIT(14)
++#define I2S_INTR_STAT_RFIFO_AEMPTY		BIT(13)
++#define I2S_INTR_STAT_RFIFO_EMPTY		BIT(12)
++#define I2S_INTR_STAT_TFIFO_AFULL		BIT(11)
++#define I2S_INTR_STAT_TFIFO_FULL		BIT(10)
++#define I2S_INTR_STAT_TFIFO_AEMPTY		BIT(9)
++#define I2S_INTR_STAT_TFIFO_EMPTY		BIT(8)
++#define I2S_INTR_STAT_OVERR_CODE		GENMASK(7, 5)
++#define I2S_INTR_STAT_RDATA_OVERR		BIT(4)
++#define I2S_INTR_STAT_UNDERR_CODE		GENMASK(3, 1)
++#define I2S_INTR_STAT_TDATA_UNDERR		BIT(0)
++
++/* Sample Rate And Resolution Control Register */
++#define I2S_SRR					0x08
++#define I2S_SRR_RRESOLUTION			GENMASK(31, 27)
++#define I2S_SRR_RSAMPLE_RATE			GENMASK(26, 16)
++#define I2S_SRR_TRESOLUTION			GENMASK(15, 11)
++#define I2S_SRR_TSAMPLE_RATE			GENMASK(10, 0)
++
++/* Clock Strobes And Interrupt Masks Control Register */
++#define I2S_CID_CTRL				0x0c
++#define I2S_CID_CTRL_RFIFO_AFULL_MASK		BIT(31)
++#define I2S_CID_CTRL_RFIFO_FULL_MASK		BIT(30)
++#define I2S_CID_CTRL_RFIFO_AEMPTY_MASK		BIT(29)
++#define I2S_CID_CTRL_RFIFO_EMPTY_MASK		BIT(28)
++#define I2S_CID_CTRL_TFIFO_AFULL_MASK		BIT(27)
++#define I2S_CID_CTRL_TFIFO_FULL_MASK		BIT(26)
++#define I2S_CID_CTRL_TFIFO_AEMPTY_MASK		BIT(25)
++#define I2S_CID_CTRL_TFIFO_EMPTY_MASK		BIT(24)
++#define I2S_CID_CTRL_I2S_MASK			GENMASK(23, 16)
++#define I2S_CID_CTRL_INTREQ_MASK		BIT(15)
++#define I2S_CID_CTRL_STROBE_RS			BIT(9)
++#define I2S_CID_CTRL_STROBE_TS			BIT(8)
++#define I2S_CID_CTRL_I2S_STROBE			GENMASK(7, 0)
++
++/* Transmit FIFO Level Status Register, read only */
++#define I2S_TFIFO_STAT				0x10
++
++/* Receive FIFO Level Status Register, read only */
++#define I2S_RFIFO_STAT				0x14
++
++/* Transmit FIFO Thresholds Control Register */
++#define I2S_TFIFO_CTRL				0x18
++#define I2S_TFIFO_CTRL_TAFULL_THRESHOLD		GENMASK(31, 16)
++#define I2S_TFIFO_CTRL_TAEMPTY_THRESHOLD	GENMASK(15, 0)
++
++/* Receive FIFO Thresholds Control Register */
++#define I2S_RFIFO_CTRL				0x1c
++#define I2S_RFIFO_CTRL_RAFULL_THRESHOLD		GENMASK(31, 16)
++#define I2S_RFIFO_CTRL_RAEMPTY_THRESHOLD	GENMASK(15, 0)
++
++/* Device Configuration Register */
++#define I2S_DEV_CONF				0x20
++#define I2S_DEV_CONF_REC_WS_DSP_MODE		BIT(11)
++#define I2S_DEV_CONF_REC_DATA_WS_DEL		BIT(10)
++#define I2S_DEV_CONF_REC_I2S_ALIGN_LR		BIT(9)
++#define I2S_DEV_CONF_REC_APB_ALIGN_LR		BIT(8)
++#define I2S_DEV_CONF_REC_WS_POLAR		BIT(7)
++#define I2S_DEV_CONF_REC_SCK_POLAR		BIT(6)
++#define I2S_DEV_CONF_TRAN_WS_DSP_MODE		BIT(5)
++#define I2S_DEV_CONF_TRAN_DATA_WS_DEL		BIT(4)
++#define I2S_DEV_CONF_TRAN_I2S_ALIGN_LR		BIT(3)
++#define I2S_DEV_CONF_TRAN_APB_ALIGN_LR		BIT(2)
++#define I2S_DEV_CONF_TRAN_WS_POLAR		BIT(1)
++#define I2S_DEV_CONF_TRAN_SCK_POLAR		BIT(0)
++
++/* Status Register, read only */
++#define I2S_POLL_STAT				0x24
++#define I2S_POLL_STAT_RX_OVERRUN		BIT(6)
++#define I2S_POLL_STAT_RX_AFULL			BIT(5)
++#define I2S_POLL_STAT_RX_FULL			BIT(4)
++#define I2S_POLL_STAT_TX_UNDERRUN		BIT(2)
++#define I2S_POLL_STAT_TX_AEMPTY			BIT(1)
++#define I2S_POLL_STAT_TX_EMPTY			BIT(0)
++
++/* Transmit And Recevie FIFOs Address */
++#define I2S_FIFO_ADDRESS			0x3c
++
++#define DRV_NAME	"cdns-i2s-mc"
++
++enum {
++	AUDIO_CLK0,
++	AUDIO_CLK1,
++	AUDIO_CLK2,
++	AUDIO_CLK3,
++	AUDIO_CLK_NUM,
++};
++
++static const char *cdns_i2s_mc_clk_pll_names[AUDIO_CLK_NUM] = {
++	[AUDIO_CLK0] = "audio_clk0",
++	[AUDIO_CLK1] = "audio_clk1",
++	[AUDIO_CLK2] = "audio_clk2",
++	[AUDIO_CLK3] = "audio_clk3",
++};
++
++enum {
++	I2S_MC_AIF1,
++	I2S_MC_AIF2,
++};
++
++struct cdns_i2s_mc_devtype_data {
++	u32 data_width;
++	u32 rfifo_depth;
++	u32 tfifo_depth;
++	u32 rfifo_aempty_threshold;
++	u32 rfifo_afull_threshold;
++	u32 tfifo_aempty_threshold;
++	u32 tfifo_afull_threshold;
++};
++
++struct cdns_i2s_mc_stats {
++	u32 tdata_underr;
++	u32 rdata_overr;
++};
++
++struct cdns_i2s_mc_priv {
++	struct device *dev;
++	struct regmap *regmap;
++	struct reset_control *i2s_rst;
++
++	int irq;
++
++	struct clk *clk_hst;
++	struct clk *clk_i2s;
++	struct clk *clks[AUDIO_CLK_NUM];
++
++	struct snd_dmaengine_dai_dma_data capture_dma_data;
++	struct snd_dmaengine_dai_dma_data playback_dma_data;
++
++	const struct cdns_i2s_mc_devtype_data *devtype_data;
++	struct cdns_i2s_mc_stats stats;
++
++	/* i2s id index */
++	int idx;
++
++	bool is_master_mode;
++
++	u8 pin_out_num;
++	u8 pin_rx_mask;
++	u8 pin_rx_mask_adjust;
++	u8 pin_tx_mask;
++	u8 pin_tx_mask_adjust;
++};
++
++static int cdns_i2s_mc_clks_enable(struct cdns_i2s_mc_priv *i2s_mc_priv)
++{
++	int ret;
++
++	ret = clk_prepare_enable(i2s_mc_priv->clk_hst);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(i2s_mc_priv->clk_i2s);
++	if (ret)
++		clk_disable_unprepare(i2s_mc_priv->clk_hst);
++
++	return ret;
++}
++
++static void cdns_i2s_mc_clks_disable(struct cdns_i2s_mc_priv *i2s_mc_priv)
++{
++	clk_disable_unprepare(i2s_mc_priv->clk_hst);
++	clk_disable_unprepare(i2s_mc_priv->clk_i2s);
++}
++
++static void cdns_i2s_mc_adjust_pin_config(u8 pin_out, u8 *pin_mask, u32 slots)
++{
++	u8 mask = 0, num = 0;
++	int i;
++
++	for (i = 0; i < pin_out; i++) {
++		if (*pin_mask & (0x1 << i)) {
++			mask |= (0x1 << i);
++			if (++num == slots / 2) {
++				*pin_mask = mask;
++				break;
++			}
++		}
++	}
++}
++
++static void cdns_i2s_mc_tx_config(struct cdns_i2s_mc_priv *i2s_mc_priv, bool on)
++{
++	u32 irq_mask = 0, clk_mask = 0, i2s_mask = 0;
++
++	irq_mask |= FIELD_PREP(I2S_CID_CTRL_I2S_MASK,
++			       i2s_mc_priv->pin_tx_mask_adjust);
++
++	clk_mask |= FIELD_PREP(I2S_CID_CTRL_I2S_STROBE,
++			       i2s_mc_priv->pin_tx_mask_adjust) |
++		    I2S_CID_CTRL_STROBE_TS;
++
++	i2s_mask |= FIELD_PREP(I2S_CTRL_I2S_EN, i2s_mc_priv->pin_tx_mask_adjust);
++
++	if (on) {
++		/* Transmitter data underrun interrupt unmask */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, irq_mask, irq_mask);
++
++		/* Transmitter clock enable */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, clk_mask, 0);
++
++		/*
++		 * Transmitter enable
++		 * Transmitter synchronizing unit out of reset
++		 */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   i2s_mask | I2S_CTRL_TSYNC_RST,
++				   i2s_mask | I2S_CTRL_TSYNC_RST);
++	} else {
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   i2s_mask | I2S_CTRL_TSYNC_RST, 0);
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, clk_mask, clk_mask);
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, irq_mask, 0);
++	}
++}
++
++static void cdns_i2s_mc_rx_config(struct cdns_i2s_mc_priv *i2s_mc_priv, bool on)
++{
++	u32 irq_mask = 0, clk_mask = 0, i2s_mask = 0;
++
++	irq_mask |= FIELD_PREP(I2S_CID_CTRL_I2S_MASK,
++			       i2s_mc_priv->pin_rx_mask_adjust);
++
++	clk_mask |= FIELD_PREP(I2S_CID_CTRL_I2S_STROBE,
++			       i2s_mc_priv->pin_rx_mask_adjust) |
++		    I2S_CID_CTRL_STROBE_RS;
++
++	i2s_mask |= FIELD_PREP(I2S_CTRL_I2S_EN, i2s_mc_priv->pin_rx_mask_adjust);
++
++	if (on) {
++		/* Receiver data overrun interrupt unmask */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, irq_mask, irq_mask);
++
++		/* Receiver clock enable */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, clk_mask, 0);
++
++		/*
++		 * Receiver enable
++		 * Receiver synchronizing unit out of reset
++		 */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   i2s_mask | I2S_CTRL_RSYNC_RST,
++				   i2s_mask | I2S_CTRL_RSYNC_RST);
++	} else {
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   i2s_mask | I2S_CTRL_RSYNC_RST, 0);
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, clk_mask, clk_mask);
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL, irq_mask, 0);
++	}
++}
++
++static irqreturn_t cdns_i2s_mc_isr(int irq, void *devid)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = (struct cdns_i2s_mc_priv *)devid;
++	struct device *dev = i2s_mc_priv->dev;
++
++	u32 stat, stat_mask = 0;
++
++	regmap_read(i2s_mc_priv->regmap, I2S_INTR_STAT, &stat);
++	if (!stat)
++		return IRQ_NONE;
++
++	/* Clear the status */
++	stat_mask |= I2S_INTR_STAT_TDATA_UNDERR | I2S_INTR_STAT_RDATA_OVERR;
++	regmap_update_bits(i2s_mc_priv->regmap, I2S_INTR_STAT, stat_mask, 0);
++
++	/* Transmitter status */
++	if (stat & I2S_INTR_STAT_TDATA_UNDERR) {
++		i2s_mc_priv->stats.tdata_underr++;
++		dev_dbg(dev, "isr: tx data underrun\n");
++	}
++
++	/* Receiver status */
++	if (stat & I2S_INTR_STAT_RDATA_OVERR) {
++		i2s_mc_priv->stats.rdata_overr++;
++		dev_dbg(dev, "isr: rx data overrun\n");
++	}
++
++	dev_dbg(dev, "%s: tdata_underr:%u, rdata_overr:%u\n",
++		__func__, i2s_mc_priv->stats.tdata_underr, i2s_mc_priv->stats.rdata_overr);
++
++	return IRQ_HANDLED;
++}
++
++static int cdns_i2s_mc_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	struct device *dev = i2s_mc_priv->dev;
++	u32 ctrl = 0, dev_conf = 0;
++
++	dev_dbg(dev, "fmt = 0x%x\n", fmt);
++
++	if (cpu_dai->id == I2S_MC_AIF1) {
++		/* DAI hardware signal polarity */
++		switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++		case SND_SOC_DAIFMT_NB_NF:
++			/* both normal clocks */
++			dev_conf |= I2S_DEV_CONF_TRAN_SCK_POLAR;
++			dev_conf &= ~ I2S_DEV_CONF_TRAN_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_NB_IF:
++			/* invert frame clock */
++			dev_conf |= I2S_DEV_CONF_TRAN_SCK_POLAR;
++			dev_conf |= I2S_DEV_CONF_TRAN_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_IB_NF:
++			/* invet bit clock */
++			dev_conf &= ~I2S_DEV_CONF_TRAN_SCK_POLAR;
++			dev_conf &= ~I2S_DEV_CONF_TRAN_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_IB_IF:
++			/* invert both clocks */
++			dev_conf &= ~I2S_DEV_CONF_TRAN_SCK_POLAR;
++			dev_conf |= I2S_DEV_CONF_TRAN_WS_POLAR;
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* DAI hardware audio formats */
++		switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++		case SND_SOC_DAIFMT_I2S:
++			dev_conf |= I2S_DEV_CONF_TRAN_I2S_ALIGN_LR;
++			dev_conf &= ~(I2S_DEV_CONF_TRAN_APB_ALIGN_LR | I2S_DEV_CONF_TRAN_DATA_WS_DEL |
++				      I2S_DEV_CONF_TRAN_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_RIGHT_J:
++			dev_conf |= I2S_DEV_CONF_TRAN_DATA_WS_DEL;
++			dev_conf &= ~(I2S_DEV_CONF_TRAN_I2S_ALIGN_LR | I2S_DEV_CONF_TRAN_APB_ALIGN_LR |
++				      I2S_DEV_CONF_TRAN_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_LEFT_J:
++			dev_conf |= I2S_DEV_CONF_TRAN_I2S_ALIGN_LR | I2S_DEV_CONF_TRAN_DATA_WS_DEL;
++			dev_conf &= ~(I2S_DEV_CONF_TRAN_APB_ALIGN_LR | I2S_DEV_CONF_TRAN_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_DSP_A:
++			dev_conf |= I2S_DEV_CONF_TRAN_I2S_ALIGN_LR | I2S_DEV_CONF_TRAN_DATA_WS_DEL |
++				    I2S_DEV_CONF_TRAN_WS_DSP_MODE;
++			dev_conf &= ~I2S_DEV_CONF_TRAN_APB_ALIGN_LR;
++			break;
++		case SND_SOC_DAIFMT_DSP_B:
++			dev_conf |= I2S_DEV_CONF_TRAN_I2S_ALIGN_LR | I2S_DEV_CONF_TRAN_WS_DSP_MODE;
++			dev_conf &= ~(I2S_DEV_CONF_TRAN_APB_ALIGN_LR | I2S_DEV_CONF_TRAN_DATA_WS_DEL);
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* DAI hardware clock masters */
++		switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
++		case SND_SOC_DAIFMT_BC_FC:
++			ctrl &= ~I2S_CTRL_T_MS;
++			i2s_mc_priv->is_master_mode = false;
++			break;
++		case SND_SOC_DAIFMT_BP_FP:
++			ctrl |= I2S_CTRL_T_MS;
++			i2s_mc_priv->is_master_mode = true;
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* Configure I2S channels for transmitter */
++		ctrl |= FIELD_PREP(I2S_CTRL_TR_CFG, i2s_mc_priv->pin_tx_mask);
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_DEV_CONF,
++				   I2S_DEV_CONF_TRAN_SCK_POLAR | I2S_DEV_CONF_TRAN_WS_POLAR |
++				   I2S_DEV_CONF_TRAN_APB_ALIGN_LR | I2S_DEV_CONF_TRAN_I2S_ALIGN_LR |
++				   I2S_DEV_CONF_TRAN_DATA_WS_DEL | I2S_DEV_CONF_TRAN_WS_DSP_MODE, dev_conf);
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_T_MS | I2S_CTRL_TR_CFG, ctrl);
++	} else if (cpu_dai->id == I2S_MC_AIF2) {
++		/* DAI hardware signal polarity */
++		switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++		case SND_SOC_DAIFMT_NB_NF:
++			/* both normal clocks */
++			dev_conf |= I2S_DEV_CONF_REC_SCK_POLAR;
++			dev_conf &= ~I2S_DEV_CONF_REC_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_NB_IF:
++			/* invert frame clock */
++			dev_conf |= I2S_DEV_CONF_REC_SCK_POLAR;
++			dev_conf |= I2S_DEV_CONF_REC_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_IB_NF:
++			/* invet bit clock */
++			dev_conf &= ~I2S_DEV_CONF_REC_SCK_POLAR;
++			dev_conf &= ~I2S_DEV_CONF_REC_WS_POLAR;
++			break;
++		case SND_SOC_DAIFMT_IB_IF:
++			/* invert both clocks */
++			dev_conf &= ~I2S_DEV_CONF_REC_SCK_POLAR;
++			dev_conf |= I2S_DEV_CONF_REC_WS_POLAR;
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* DAI hardware audio formats */
++		switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++		case SND_SOC_DAIFMT_I2S:
++			dev_conf |= I2S_DEV_CONF_REC_I2S_ALIGN_LR;
++			dev_conf &= ~(I2S_DEV_CONF_REC_APB_ALIGN_LR | I2S_DEV_CONF_REC_DATA_WS_DEL |
++				      I2S_DEV_CONF_REC_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_RIGHT_J:
++			dev_conf |= I2S_DEV_CONF_REC_DATA_WS_DEL;
++			dev_conf &= ~(I2S_DEV_CONF_REC_I2S_ALIGN_LR | I2S_DEV_CONF_REC_APB_ALIGN_LR |
++				      I2S_DEV_CONF_REC_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_LEFT_J:
++			dev_conf |= I2S_DEV_CONF_REC_I2S_ALIGN_LR | I2S_DEV_CONF_REC_DATA_WS_DEL;
++			dev_conf &= ~(I2S_DEV_CONF_REC_APB_ALIGN_LR | I2S_DEV_CONF_REC_WS_DSP_MODE);
++			break;
++		case SND_SOC_DAIFMT_DSP_A:
++			dev_conf |= I2S_DEV_CONF_REC_I2S_ALIGN_LR | I2S_DEV_CONF_REC_DATA_WS_DEL |
++				    I2S_DEV_CONF_REC_WS_DSP_MODE;
++			dev_conf &= ~I2S_DEV_CONF_REC_APB_ALIGN_LR;
++			break;
++		case SND_SOC_DAIFMT_DSP_B:
++			dev_conf |= I2S_DEV_CONF_REC_I2S_ALIGN_LR | I2S_DEV_CONF_REC_WS_DSP_MODE;
++			dev_conf &= ~(I2S_DEV_CONF_REC_APB_ALIGN_LR | I2S_DEV_CONF_REC_DATA_WS_DEL);
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* DAI hardware clock masters */
++		switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
++		case SND_SOC_DAIFMT_BC_FC:
++			ctrl &= ~I2S_CTRL_R_MS;
++			i2s_mc_priv->is_master_mode = false;
++			break;
++		case SND_SOC_DAIFMT_BP_FP:
++			ctrl |= I2S_CTRL_R_MS;
++			i2s_mc_priv->is_master_mode = true;
++			break;
++		default:
++			return -EINVAL;
++		}
++
++		/* Configure I2S channels for recevier */
++		ctrl |= FIELD_PREP(I2S_CTRL_TR_CFG, ~(i2s_mc_priv->pin_rx_mask));
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_DEV_CONF,
++				   I2S_DEV_CONF_REC_SCK_POLAR | I2S_DEV_CONF_REC_WS_POLAR |
++				   I2S_DEV_CONF_REC_APB_ALIGN_LR | I2S_DEV_CONF_REC_I2S_ALIGN_LR |
++				   I2S_DEV_CONF_REC_DATA_WS_DEL | I2S_DEV_CONF_REC_WS_DSP_MODE, dev_conf);
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_R_MS | I2S_CTRL_TR_CFG, ctrl);
++	} else {
++		dev_err(i2s_mc_priv->dev, "Invalid dai id\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_mc_startup(struct snd_pcm_substream *substream,
++			       struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	u32 ctrl = 0, fifo = 0;
++
++	/*
++	 * FIFO reset should meet two requirements
++	 * 1) after strobe_ts and strobe_rs clock on
++	 * 2) before dma ready to receive trigger
++	 */
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		/* Transmitter clock enable */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL,
++				   I2S_CID_CTRL_STROBE_TS, 0);
++
++		/*
++		 * Transmitter FIFO reset
++		 * When '0', transmit FIFO pointers are reset to zero. Threshold level for
++		 * this FIFO is unchanged. This bit is automatically set to '1' after one
++		 * clock cycle if TX FIFO reset has been acknowledged.
++		 * Dessert then assert this bit here, since I2S_CTRL register is not
++		 * volatible, would not read from hardware any longer. If not, it would
++		 * clear tx fifo every time when write this register.
++		 */
++		ctrl &= ~I2S_CTRL_TFIFO_RST;
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_TFIFO_RST, ctrl);
++		ctrl |= I2S_CTRL_TFIFO_RST;
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_TFIFO_RST, ctrl);
++
++		/* Transmitter FIFO threshold set */
++		fifo |= FIELD_PREP(I2S_TFIFO_CTRL_TAEMPTY_THRESHOLD,
++				   i2s_mc_priv->devtype_data->tfifo_aempty_threshold) |
++			FIELD_PREP(I2S_TFIFO_CTRL_TAFULL_THRESHOLD,
++				   i2s_mc_priv->devtype_data->tfifo_afull_threshold);
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_TFIFO_CTRL,
++				   I2S_TFIFO_CTRL_TAEMPTY_THRESHOLD | I2S_TFIFO_CTRL_TAFULL_THRESHOLD, fifo);
++	} else {
++		/* Receiver clock enable */
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL,
++				   I2S_CID_CTRL_STROBE_RS, 0);
++
++		/*
++		 * Receiver FIFO reset
++		 * When '0', receive FIFO pointers are reset to zero. Threshold level for
++		 * this FIFO is unchanged. This bit is automatically set to '1' after one
++		 * clock cycle if RX FIFO reset has been acknowledged.
++		 * Dessert then assert this bit here, since I2S_CTRL register is not
++		 * volatible, would not read from hardware any longer. If not, it would
++		 * clear rx fifo every time when write this register.
++		 */
++		ctrl &= ~I2S_CTRL_RFIFO_RST;
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_RFIFO_RST, ctrl);
++		ctrl |= I2S_CTRL_RFIFO_RST;
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_RFIFO_RST, ctrl);
++
++		/* Receiver FIFO threshold set */
++		fifo |= FIELD_PREP(I2S_RFIFO_CTRL_RAEMPTY_THRESHOLD,
++				   i2s_mc_priv->devtype_data->rfifo_aempty_threshold) |
++			FIELD_PREP(I2S_RFIFO_CTRL_RAFULL_THRESHOLD,
++				   i2s_mc_priv->devtype_data->rfifo_afull_threshold);
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_RFIFO_CTRL,
++				   I2S_RFIFO_CTRL_RAEMPTY_THRESHOLD | I2S_RFIFO_CTRL_RAFULL_THRESHOLD, fifo);
++	}
++
++	/*
++	 * Enable global interrupt mask, for both transmitter and recevider, use
++	 * individual interrupt masks
++	 */
++	regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL,
++			   I2S_CID_CTRL_INTREQ_MASK, I2S_CID_CTRL_INTREQ_MASK);
++
++	return 0;
++}
++
++static int cdns_i2s_mc_hw_params(struct snd_pcm_substream *substream,
++				 struct snd_pcm_hw_params *params,
++				 struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	struct device *dev = i2s_mc_priv->dev;
++	u32 i2s_clk_rate, rate, sample_rate;
++	u32 slots, slot_width, resolution;
++	u8 pin_tx_num, pin_rx_num;
++	struct clk *clk_parent;
++	int ret;
++
++	rate = params_rate(params);
++	slot_width = i2s_mc_priv->devtype_data->data_width;
++	dev_dbg(dev, "rate = %d, slot_width = %d\n", rate, slot_width);
++
++	/* switch clk mux to select the appropriate clk parent */
++	if (rate % 8000 == 0) {
++		/* Sampling rate is a multiple of 8KHz, select "audio_clk0" */
++		clk_parent = i2s_mc_priv->clks[AUDIO_CLK0];
++
++		ret = clk_set_parent(i2s_mc_priv->clk_i2s, clk_parent);
++	} else if (rate % 11025 == 0) {
++		/* Sampling rate is a multiple of 11.025KHz, select "audio_clk2" */
++		clk_parent = i2s_mc_priv->clks[AUDIO_CLK2];
++
++		ret = clk_set_parent(i2s_mc_priv->clk_i2s, clk_parent);
++	} else {
++		dev_err(i2s_mc_priv->dev, "Invalid sample rate\n");
++		return -EINVAL;
++	}
++	if (ret) {
++		dev_err(i2s_mc_priv->dev, "Failed to set i2s clock parent\n");
++		return ret;
++	}
++
++	i2s_clk_rate = clk_get_rate(i2s_mc_priv->clk_i2s);
++	dev_dbg(dev, "i2s clk rate = %d\n", i2s_clk_rate);
++
++	if (i2s_mc_priv->is_master_mode) {
++		if (i2s_clk_rate < rate * 2 * slot_width * 6) {
++			dev_err(i2s_mc_priv->dev,
++				"clk freq %d is too low, must greater then %d * %d * %d * 6 = %d\n",
++				i2s_clk_rate, rate, slot_width, 2, rate * slot_width * 2 * 6);
++			return -EINVAL;
++		}
++
++		sample_rate = DIV_ROUND_CLOSEST(i2s_clk_rate, (rate * 2 * slot_width));
++	} else {
++		if (i2s_clk_rate < rate * 2 * slot_width * 7) {
++			dev_err(i2s_mc_priv->dev,
++				"clk freq %d is too low, must greater then %d * %d * %d * 7 = %d\n",
++				i2s_clk_rate, rate, slot_width, 2, rate * slot_width * 2 * 7);
++			return -EINVAL;
++		}
++	}
++
++	slots = params_channels(params);
++	resolution = params_width(params);
++	dev_dbg(dev, "slots = %d, resolution = %d\n", slots, resolution);
++
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		i2s_mc_priv->pin_tx_mask_adjust = i2s_mc_priv->pin_tx_mask;
++
++		pin_tx_num = hweight8(i2s_mc_priv->pin_tx_mask);
++		if (slots > 2 * pin_tx_num) {
++			dev_err(i2s_mc_priv->dev,
++				"Transmit channel number is large than hardware config\n");
++			return -EINVAL;
++		} else if (slots < 2 * pin_tx_num) {
++			cdns_i2s_mc_adjust_pin_config(i2s_mc_priv->pin_out_num,
++						      &i2s_mc_priv->pin_tx_mask_adjust, slots);
++		}
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_SRR, I2S_SRR_TSAMPLE_RATE,
++				   FIELD_PREP(I2S_SRR_TSAMPLE_RATE, sample_rate));
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_SRR, I2S_SRR_TRESOLUTION,
++				   FIELD_PREP(I2S_SRR_TRESOLUTION, (resolution - 1)));
++	} else {
++		i2s_mc_priv->pin_rx_mask_adjust = i2s_mc_priv->pin_rx_mask;
++
++		pin_rx_num = hweight8(i2s_mc_priv->pin_rx_mask);
++		if (slots > 2 * pin_rx_num) {
++			dev_err(i2s_mc_priv->dev,
++				"Receive channel number is large than hardware config\n");
++			return -EINVAL;
++		} else if (slots < 2 * pin_rx_num) {
++			cdns_i2s_mc_adjust_pin_config(i2s_mc_priv->pin_out_num,
++						      &i2s_mc_priv->pin_rx_mask_adjust, slots);
++		}
++
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_SRR, I2S_SRR_RSAMPLE_RATE,
++				   FIELD_PREP(I2S_SRR_RSAMPLE_RATE, sample_rate));
++		regmap_update_bits(i2s_mc_priv->regmap, I2S_SRR, I2S_SRR_RRESOLUTION,
++				   FIELD_PREP(I2S_SRR_RRESOLUTION, (resolution - 1)));
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_mc_trigger(struct snd_pcm_substream *substream,
++			       int cmd, struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			cdns_i2s_mc_tx_config(i2s_mc_priv, true);
++		else
++			cdns_i2s_mc_rx_config(i2s_mc_priv, true);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			cdns_i2s_mc_tx_config(i2s_mc_priv, false);
++		else
++			cdns_i2s_mc_rx_config(i2s_mc_priv, false);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_mc_dai_probe(struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	u32 ctrl = 0, cid_ctrl = 0;
++
++	/*
++	 * Transceiver disable
++	 * Transceiver clock disable
++	 * All interrupts masked
++	 * Reset for transmitter synchronizing unit
++	 * Reset for receiver synchronizing unit
++	 */
++	ctrl |= FIELD_PREP(I2S_CTRL_I2S_EN, 0);
++	ctrl &= ~(I2S_CTRL_TSYNC_RST | I2S_CTRL_RSYNC_RST);
++	cid_ctrl |= I2S_CID_CTRL_STROBE_TS | I2S_CID_CTRL_STROBE_RS;
++	cid_ctrl &= ~I2S_CID_CTRL_INTREQ_MASK;
++
++	regmap_update_bits(i2s_mc_priv->regmap, I2S_CTRL, I2S_CTRL_I2S_EN, ctrl);
++	regmap_update_bits(i2s_mc_priv->regmap, I2S_CID_CTRL,
++			   I2S_CID_CTRL_STROBE_TS | I2S_CID_CTRL_STROBE_RS |
++			   I2S_CID_CTRL_INTREQ_MASK, cid_ctrl);
++
++	snd_soc_dai_init_dma_data(cpu_dai, &i2s_mc_priv->playback_dma_data,
++				  &i2s_mc_priv->capture_dma_data);
++
++	snd_soc_dai_set_drvdata(cpu_dai, i2s_mc_priv);
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops cdns_i2s_mc_dai_ops = {
++	.probe = cdns_i2s_mc_dai_probe,
++	.set_fmt = cdns_i2s_mc_set_fmt,
++
++	.startup = cdns_i2s_mc_startup,
++	.hw_params = cdns_i2s_mc_hw_params,
++	.trigger = cdns_i2s_mc_trigger,
++};
++
++static struct snd_soc_dai_driver cdns_i2s_mc_dai[] = {
++	{
++		.name = "i2s-mc-aif1",
++		.id = I2S_MC_AIF1,
++		.playback = {
++			.stream_name = "I2S-MC-Playback",
++			.channels_min = 2,
++			.channels_max = 16,
++			.rates = SNDRV_PCM_RATE_8000_192000,
++			.formats = (SNDRV_PCM_FMTBIT_S16_LE |
++				    SNDRV_PCM_FMTBIT_S24_LE |
++				    SNDRV_PCM_FMTBIT_S32_LE),
++		},
++		.ops = &cdns_i2s_mc_dai_ops,
++	},
++	{
++		.name = "i2s-mc-aif2",
++		.id = I2S_MC_AIF2,
++		.capture = {
++			.stream_name = "I2S-MC-Capture",
++			.channels_min = 2,
++			.channels_max = 16,
++			.rates = SNDRV_PCM_RATE_8000_192000,
++			.formats = (SNDRV_PCM_FMTBIT_S16_LE |
++				    SNDRV_PCM_FMTBIT_S24_LE |
++				    SNDRV_PCM_FMTBIT_S32_LE),
++		},
++		.ops = &cdns_i2s_mc_dai_ops,
++	},
++};
++
++static const struct snd_soc_component_driver cdns_i2s_mc_component = {
++	.name = DRV_NAME,
++	.legacy_dai_naming      = 1,
++};
++
++static const struct reg_default cdns_i2s_mc_reg_defaults[] = {
++	{I2S_CTRL, 0x01900000},
++	{I2S_INTR_STAT, 0x00003300},
++	{I2S_SRR, 0x00000000},
++	{I2S_CID_CTRL, 0x00000000},
++	{I2S_TFIFO_STAT, 0x00000000},
++	{I2S_RFIFO_STAT, 0x00000000},
++	{I2S_TFIFO_CTRL, 0x000f0000},
++	{I2S_RFIFO_CTRL, 0x000f0000},
++	{I2S_DEV_CONF, 0x00000208},
++	{I2S_POLL_STAT, 0x00000003},
++};
++
++static bool cdns_i2s_mc_readable_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_CTRL:
++	case I2S_INTR_STAT:
++	case I2S_SRR:
++	case I2S_CID_CTRL:
++	case I2S_TFIFO_STAT:
++	case I2S_RFIFO_STAT:
++	case I2S_TFIFO_CTRL:
++	case I2S_RFIFO_CTRL:
++	case I2S_DEV_CONF:
++	case I2S_POLL_STAT:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static bool cdns_i2s_mc_writeable_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_CTRL:
++	case I2S_INTR_STAT:
++	case I2S_SRR:
++	case I2S_CID_CTRL:
++	case I2S_TFIFO_CTRL:
++	case I2S_RFIFO_CTRL:
++	case I2S_DEV_CONF:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static bool cdns_i2s_mc_volatile_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_INTR_STAT:
++	case I2S_TFIFO_STAT:
++	case I2S_RFIFO_STAT:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static struct regmap_config cdns_i2s_mc_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++
++	.max_register = I2S_POLL_STAT,
++	.reg_defaults = cdns_i2s_mc_reg_defaults,
++	.num_reg_defaults = ARRAY_SIZE(cdns_i2s_mc_reg_defaults),
++	.readable_reg = cdns_i2s_mc_readable_reg,
++	.writeable_reg = cdns_i2s_mc_writeable_reg,
++	.volatile_reg = cdns_i2s_mc_volatile_reg,
++	.cache_type = REGCACHE_FLAT,
++};
++
++static int cdns_i2s_get_pin_config(struct platform_device *pdev,
++				   struct cdns_i2s_mc_priv *i2s_mc_priv)
++{
++	u8 rxtx_mask;
++	int ret;
++
++	ret = device_property_read_u8(&pdev->dev,
++				"cdns,pin-out-num", &i2s_mc_priv->pin_out_num);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to get pin-out-num: %d", ret);
++		return ret;
++	}
++
++	ret = device_property_read_u8(&pdev->dev,
++				"cdns,pin-rx-mask", &i2s_mc_priv->pin_rx_mask);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to get pin-rx-mask: %d", ret);
++		return ret;
++	}
++
++	ret = device_property_read_u8(&pdev->dev,
++				"cdns,pin-tx-mask", &i2s_mc_priv->pin_tx_mask);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to get pin-tx-mask: %d", ret);
++		return ret;
++	}
++
++	rxtx_mask = i2s_mc_priv->pin_rx_mask & i2s_mc_priv->pin_tx_mask;
++	if (rxtx_mask) {
++		dev_err(&pdev->dev, "Pin configuration for transmitter and receiver is conflict\n");
++		return -EINVAL;
++	}
++
++	rxtx_mask = i2s_mc_priv->pin_rx_mask | i2s_mc_priv->pin_tx_mask;
++	if (hweight8(rxtx_mask) > i2s_mc_priv->pin_out_num) {
++		dev_err(&pdev->dev, "Pin configuration is out of range\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static void cdns_i2s_mc_rst(struct cdns_i2s_mc_priv *i2s_mc_priv)
++{
++	u32 idx = i2s_mc_priv->idx;
++
++	dev_dbg(i2s_mc_priv->dev, "i2s index = %d\n", idx);
++
++	/* reset */
++	reset_control_assert(i2s_mc_priv->i2s_rst);
++
++	usleep_range(1, 2);
++
++	/* release reset */
++	reset_control_deassert(i2s_mc_priv->i2s_rst);
++}
++
++static int cdns_i2s_mc_probe(struct platform_device *pdev)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv;
++	struct resource *res;
++	void __iomem *base;
++	int i, irq, ret;
++	char *irq_name;
++
++	i2s_mc_priv = devm_kzalloc(&pdev->dev, sizeof(*i2s_mc_priv), GFP_KERNEL);
++	if (!i2s_mc_priv)
++		return -ENOMEM;
++
++	platform_set_drvdata(pdev, i2s_mc_priv);
++
++	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	i2s_mc_priv->dev = &pdev->dev;
++	i2s_mc_priv->devtype_data = device_get_match_data(&pdev->dev);
++	i2s_mc_priv->idx = of_alias_get_id(i2s_mc_priv->dev->of_node, "i2s");
++	if (i2s_mc_priv->idx < 0)
++		device_property_read_u32(&pdev->dev, "id", &i2s_mc_priv->idx);
++
++	i2s_mc_priv->regmap = devm_regmap_init_mmio(&pdev->dev, base,
++						    &cdns_i2s_mc_regmap_config);
++	if (IS_ERR(i2s_mc_priv->regmap)) {
++		dev_err(&pdev->dev, "Failed to initialize managed register map\n");
++		return PTR_ERR(i2s_mc_priv->regmap);
++	}
++
++	i2s_mc_priv->clk_hst = devm_clk_get(&pdev->dev, "hst");
++	if (IS_ERR(i2s_mc_priv->clk_hst)) {
++		dev_err(&pdev->dev, "Failed to get clk_hst clock\n");
++		return PTR_ERR(i2s_mc_priv->clk_hst);
++	}
++
++	i2s_mc_priv->clk_i2s = devm_clk_get(&pdev->dev, "i2s");
++	if (IS_ERR(i2s_mc_priv->clk_i2s)) {
++		dev_err(&pdev->dev, "Failed to get clk_i2s clock\n");
++		return PTR_ERR(i2s_mc_priv->clk_i2s);
++	}
++
++	for (i = 0; i < AUDIO_CLK_NUM; i++) {
++		i2s_mc_priv->clks[i] = devm_clk_get_optional(&pdev->dev,
++							     cdns_i2s_mc_clk_pll_names[i]);
++		if (IS_ERR(i2s_mc_priv->clks[i])) {
++			dev_err(&pdev->dev, "Failed to get clock %s\n",
++				cdns_i2s_mc_clk_pll_names[i]);
++			return PTR_ERR(i2s_mc_priv->clks[i]);
++		}
++	}
++
++	i2s_mc_priv->i2s_rst = devm_reset_control_get(&pdev->dev, "i2s");
++	if (IS_ERR(i2s_mc_priv->i2s_rst))
++		return PTR_ERR(i2s_mc_priv->i2s_rst);
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++	i2s_mc_priv->irq = irq;
++
++	irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL,
++				  "%s%d",
++				  dev_name(&pdev->dev), i2s_mc_priv->idx);
++	if (!irq_name)
++			return -ENOMEM;
++
++	ret = devm_request_irq(&pdev->dev, irq, cdns_i2s_mc_isr, IRQF_SHARED,
++			       irq_name, i2s_mc_priv);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to request irq: %d", ret);
++		return ret;
++	}
++
++	ret = cdns_i2s_get_pin_config(pdev, i2s_mc_priv);
++	if (ret)
++		return ret;
++
++	i2s_mc_priv->playback_dma_data.addr = res->start + I2S_FIFO_ADDRESS;
++	/* Buswidth will be set by framework at runtime */
++	i2s_mc_priv->playback_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
++	i2s_mc_priv->playback_dma_data.maxburst = 4;
++
++	i2s_mc_priv->capture_dma_data.addr = res->start + I2S_FIFO_ADDRESS;
++	/* Buswidth will be set by framework at runtime */
++	i2s_mc_priv->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
++	i2s_mc_priv->capture_dma_data.maxburst = 4;
++
++	/*
++	 * Under ACPI, snd_dmaengine_pcm_register() skips DMA channel
++	 * pre-allocation (it only pre-allocates for DT devices).  Provide
++	 * explicit channel names so dmaengine_pcm_new() can request them
++	 * at PCM creation time via acpi_dma_request_slave_chan_by_name().
++	 */
++	static const struct snd_dmaengine_pcm_config pcm_config = {
++		.prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
++		.chan_names = { [SNDRV_PCM_STREAM_PLAYBACK] = "tx",
++			        [SNDRV_PCM_STREAM_CAPTURE]  = "rx" },
++	};
++
++	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, &pcm_config, 0);
++	if (ret) {
++		if (ret != -EPROBE_DEFER)
++			dev_err(&pdev->dev, "Failed to register dmaengine component:%d\n", ret);
++		return ret;
++	}
++
++	pm_runtime_get_noresume(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++
++	ret = cdns_i2s_mc_clks_enable(i2s_mc_priv);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to enable clocks:%d\n", ret);
++		return ret;
++	}
++
++	cdns_i2s_mc_rst(i2s_mc_priv);
++
++	/*
++	 * Let pm_runtime_put_sync() disable the clocks, and take regcache effect.
++	 * If CONFIG_PM is not enabled, the clock will stay powered.
++	 */
++	pm_runtime_put_sync(&pdev->dev);
++
++	ret = devm_snd_soc_register_component(&pdev->dev, &cdns_i2s_mc_component,
++					      cdns_i2s_mc_dai, ARRAY_SIZE(cdns_i2s_mc_dai));
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register soc componnet:%d\n", ret);
++		return ret;
++	}
++
++	dev_info(&pdev->dev, "I2S-MC driver probed\n");
++
++	return 0;
++}
++
++static void cdns_i2s_mc_remove(struct platform_device *pdev)
++{
++	if (!pm_runtime_status_suspended(&pdev->dev))
++		pm_runtime_force_suspend(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++}
++
++static int __maybe_unused cdns_i2s_mc_runtime_suspend(struct device *dev)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = dev_get_drvdata(dev);
++
++	regcache_cache_only(i2s_mc_priv->regmap, true);
++	disable_irq(i2s_mc_priv->irq);
++	cdns_i2s_mc_clks_disable(i2s_mc_priv);
++
++	return 0;
++}
++
++static int __maybe_unused cdns_i2s_mc_runtime_resume(struct device *dev)
++{
++	struct cdns_i2s_mc_priv *i2s_mc_priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = cdns_i2s_mc_clks_enable(i2s_mc_priv);
++	if (ret) {
++		dev_err(dev, "Failed to enable clocks:%d\n", ret);
++		return ret;
++	}
++
++	cdns_i2s_mc_rst(i2s_mc_priv);
++
++	enable_irq(i2s_mc_priv->irq);
++
++	regcache_cache_only(i2s_mc_priv->regmap, false);
++	regcache_mark_dirty(i2s_mc_priv->regmap);
++
++	ret = regcache_sync(i2s_mc_priv->regmap);
++	if (ret)
++		cdns_i2s_mc_clks_disable(i2s_mc_priv);
++
++	return ret;
++}
++
++static int __maybe_unused cdns_i2s_mc_system_suspend(struct device *dev)
++{
++	int ret;
++
++	ret = pm_runtime_force_suspend(dev);
++	if (ret)
++		return ret;
++
++	pinctrl_pm_select_sleep_state(dev);
++
++	return 0;
++}
++
++static int __maybe_unused cdns_i2s_mc_system_resume(struct device *dev)
++{
++	int ret;
++
++	pinctrl_pm_select_default_state(dev);
++
++	ret = pm_runtime_force_resume(dev);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static const struct dev_pm_ops cdns_i2s_mc_pm_ops = {
++	SET_RUNTIME_PM_OPS(cdns_i2s_mc_runtime_suspend,
++			   cdns_i2s_mc_runtime_resume, NULL)
++	SET_SYSTEM_SLEEP_PM_OPS(cdns_i2s_mc_system_suspend,
++				cdns_i2s_mc_system_resume)
++};
++
++static const struct cdns_i2s_mc_devtype_data sky1_devtype_data = {
++	.data_width = 32,
++	.rfifo_depth = 4,
++	.tfifo_depth = 4,
++	.rfifo_aempty_threshold = 4,
++	.rfifo_afull_threshold = 12,
++	.tfifo_aempty_threshold = 4,
++	.tfifo_afull_threshold = 12,
++};
++
++static const struct of_device_id cdns_i2s_mc_of_match[] = {
++	{ .compatible = "cdns,sky1-i2s-mc", .data = &sky1_devtype_data},
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, cdns_i2s_mc_of_match);
++
++static const struct acpi_device_id cdns_i2s_mc_acpi_match[] = {
++	{ "CIXH6011", (kernel_ulong_t)&sky1_devtype_data },
++	{ },
++};
++MODULE_DEVICE_TABLE(acpi, cdns_i2s_mc_acpi_match);
++
++static struct platform_driver cdns_i2s_mc_driver = {
++	.probe = cdns_i2s_mc_probe,
++	.remove = cdns_i2s_mc_remove,
++	.driver = {
++		.name = DRV_NAME,
++		.pm = &cdns_i2s_mc_pm_ops,
++		.of_match_table = cdns_i2s_mc_of_match,
++		.acpi_match_table = ACPI_PTR(cdns_i2s_mc_acpi_match),
++	},
++};
++module_platform_driver(cdns_i2s_mc_driver);
++
++MODULE_LICENSE("GPL v2");
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
++MODULE_DESCRIPTION("Cadence I2S-MC Controller Driver");
+diff --git a/sound/soc/cix/cdns_i2s_sc.c b/sound/soc/cix/cdns_i2s_sc.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/cdns_i2s_sc.c
+@@ -0,0 +1,1204 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/mfd/syscon.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++#include <sound/dmaengine_pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/tlv.h>
++
++/* Special Function Registers */
++/* Control Register */
++#define I2S_CTRL				0x00
++#define I2S_CTRL_LR_PACK			BIT(31)
++#define I2S_CTRL_FIFO_AFULL_MASK		BIT(30)
++#define I2S_CTRL_FIFO_FULL_MASK			BIT(29)
++#define I2S_CTRL_FIFO_AEMPTY_MASK		BIT(28)
++#define I2S_CTRL_FIFO_EMPTY_MASK		BIT(27)
++#define I2S_CTRL_I2S_MASK			BIT(26)
++#define I2S_CTRL_INTREQ_MASK			BIT(25)
++#define I2S_CTRL_I2S_STB			BIT(24)
++#define I2S_CTRL_HOST_DATA_ALIGN		BIT(23)
++#define I2S_CTRL_DATA_ORDER			BIT(22)
++#define I2S_CTRL_DATA_ALIGN			BIT(21)
++#define I2S_CTRL_DATA_WS_DEL			GENMASK(20, 16)
++#define I2S_CTRL_WS_POLAR			BIT(15)
++#define I2S_CTRL_SCK_POLAR			BIT(14)
++#define I2S_CTRL_AUDIO_MODE			BIT(13)
++#define I2S_CTRL_MONO_MODE			BIT(12)
++#define I2S_CTRL_WS_MODE			GENMASK(11, 8)
++#define I2S_CTRL_CHN_WIDTH			GENMASK(7, 5)
++#define I2S_CTRL_CHN_WIDTH_8			0
++#define I2S_CTRL_CHN_WIDTH_12			1
++#define I2S_CTRL_CHN_WIDTH_16			2
++#define I2S_CTRL_CHN_WIDTH_18			3
++#define I2S_CTRL_CHN_WIDTH_20			4
++#define I2S_CTRL_CHN_WIDTH_24			5
++#define I2S_CTRL_CHN_WIDTH_28			6
++#define I2S_CTRL_CHN_WIDTH_32			7
++#define I2S_CTRL_FIFO_RST			BIT(4)
++#define I2S_CTRL_SFR_RST			BIT(3)
++#define I2S_CTRL_MS_CFG				BIT(2)
++#define I2S_CTRL_DIR_CFG			BIT(1)
++#define I2S_CTRL_I2S_EN				BIT(0)
++
++/* Full-Duplex Mode Control Register */
++#define I2S_CTRL_FDX				0x04
++#define I2S_CTRL_FDX_RFIFO_AFULL_MASK		BIT(30)
++#define I2S_CTRL_FDX_RFIFO_FULL_MASK		BIT(29)
++#define I2S_CTRL_FDX_RFIFO_AEMPTY_MASK		BIT(28)
++#define I2S_CTRL_FDX_RFIFO_EMPTY_MASK		BIT(27)
++#define I2S_CTRL_FDX_RI2S_MASK			BIT(26)
++#define I2S_CTRL_FDX_RFIFO_RST			BIT(4)
++#define I2S_CTRL_FDX_I2S_FRX_EN			BIT(2)
++#define I2S_CTRL_FDX_I2S_FTX_EN			BIT(1)
++#define I2S_CTRL_FDX_FULL_DUPLEX		BIT(0)
++
++/* Sample Resolution Register */
++#define I2S_SRES				0x08
++#define I2S_SRES_RESOLUTION			GENMASK(4, 0)
++
++/* Full-Duplex Mode Receive Sample Resolution Register */
++#define I2S_SRES_FDR				0x0c
++#define I2S_SRES_FDR_RRESOLUTION		GENMASK(4, 0)
++
++/* Transceiver Sample Rate Register */
++#define I2S_SRATE				0x10
++#define I2S_SRATE_SAMPLE_RATE			GENMASK(19, 0)
++
++/* Status Flags Register */
++#define I2S_STAT				0x14
++#define I2S_STAT_RFIFO_AFULL			BIT(19)
++#define I2S_STAT_RFIFO_FULL			BIT(18)
++#define I2S_STAT_RFIFO_AEMPTY			BIT(17)
++#define I2S_STAT_RFIFO_EMPTY			BIT(16)
++#define I2S_STAT_FIFO_AFULL			BIT(5)
++#define I2S_STAT_FIFO_FULL			BIT(4)
++#define I2S_STAT_FIFO_AEMPTY			BIT(3)
++#define I2S_STAT_FIFO_EMPTY			BIT(2)
++#define I2S_STAT_RDATA_OVERR			BIT(1)
++#define I2S_STAT_TDATA_UNDERR			BIT(0)
++
++/* FIFO Level Register (read only) */
++#define I2S_FIFO_LEVEL				0x18
++
++/* FIFO Almost Empty Level Register */
++#define I2S_FIFO_AEMPTY				0x1c
++
++/* FIFO Almost Full Level Register */
++#define I2S_FIFO_AFULL				0x20
++
++/* Full-Duplex Mode Receiver FIFO Level Register (read only) */
++#define I2S_FIFO_LEVEL_FDR			0x24
++
++/* Full-Duplex Mode Receiver FIFO Almost Empty Level Register */
++#define I2S_FIFO_AEMPTY_FDR			0x28
++
++/* Full-Duplex Mode Receiver FIFO Almost Full Level Register */
++#define I2S_FIFO_AFULL_FDR			0x2c
++
++/* Time Division Multiplexing Control Register */
++#define I2S_TDM_CTRL				0x30
++#define I2S_TDM_CTRL_CHN_EN			GENMASK(31, 16)
++#define I2S_TDM_CTRL_CHN_NO			GENMASK(4, 1)
++#define I2S_TDM_CTRL_TDM_EN			BIT(0)
++
++/* Time Division Multiplexing Full-Duplex Mode Channels Direction Register */
++#define I2S_TDM_FD_DIR				0x34
++#define I2S_TDM_FD_DIR_CHN_RXEN			GENMASK(31, 16)
++#define I2S_TDM_FD_DIR_CHN_TXEN			GENMASK(15, 0)
++
++/* Transmit And Receive FIFOs Address */
++#define I2S_FIFO_ADDRESS			0x40
++
++#define DRV_NAME	"cdns-i2s-sc"
++
++#define SKY1_AUDSS_CRU_INFO_I2S_LOOP		0x5c
++#define SKY1_AUDSS_CRU_INFO_I2S_LOOP_MAST	GENMASK(1, 0)
++
++enum {
++	AUDIO_CLK0,
++	AUDIO_CLK2,
++	AUDIO_CLK_NUM,
++};
++
++static const char *cdns_i2s_sc_clk_pll_names[AUDIO_CLK_NUM] = {
++	[AUDIO_CLK0] = "audio_clk0",
++	[AUDIO_CLK2] = "audio_clk2",
++};
++
++struct cdns_i2s_sc_devtype_data {
++	u32 fifo_depth;
++	u32 rx_fifo_aempty_threshold;
++	u32 rx_fifo_afull_threshold;
++	u32 tx_fifo_aempty_threshold;
++	u32 tx_fifo_afull_threshold;
++};
++
++struct cdns_i2s_sc_tdm_config {
++	unsigned int tx_mask;
++	unsigned int rx_mask;
++	int slots;
++	int slot_width;
++};
++
++struct cdns_i2s_sc_stats {
++	u32 tdata_underr;
++	u32 rdata_overr;
++};
++
++struct cdns_i2s_sc_priv {
++	struct device *dev;
++	struct regmap *regmap;
++	struct regmap *cru_regmap;
++	struct reset_control *i2s_rst;
++
++	int irq;
++
++	struct clk *clk_hst;
++	struct clk *clk_i2s;
++	struct clk *clks[AUDIO_CLK_NUM];
++
++	struct snd_dmaengine_dai_dma_data capture_dma_data;
++	struct snd_dmaengine_dai_dma_data playback_dma_data;
++
++	const struct cdns_i2s_sc_devtype_data *devtype_data;
++	struct cdns_i2s_sc_tdm_config tdm_config;
++	struct cdns_i2s_sc_stats stats;
++
++	/* i2s id index */
++	int idx;
++
++	bool is_master_mode;
++	bool is_tdm_mode;
++
++	/*
++	 * NOTE:
++	 * I2S_CTRL_FDX[I2S_FTX_EN] = 1 && I2S_CTRL[I2S_EN] = 1 to enable transmitter
++	 * I2S_CTRL_FDX[I2S_FRX_EN] = 1 && I2S_CTRL[I2S_EN] = 1 to enable receiver
++	 * We can dynamically switch of the transmitter and receiver enable separately,
++	 * but need always enable I2S transceiver, so I2S-SC controller hopes to start
++	 * the transmitter and receiver together, also to stop them when they are both
++	 * try to stop.
++	 */
++	bool rx_start;
++	bool tx_start;
++};
++
++/* I2S SC index */
++enum {
++	I2S_SC0 = 0,
++	I2S_SC1,
++	I2S_SC2
++};
++
++static const char * const i2s_sc_loopback_src_text[] = {
++	"No Loopback",
++	"Loopback from i2s0",
++	"Loopback from i2s1",
++	"Loopback from i2s3(mc2a)"};
++
++static const struct soc_enum lp_src_enum =
++    SOC_ENUM_SINGLE(SND_SOC_NOPM,
++		    0,
++		    ARRAY_SIZE(i2s_sc_loopback_src_text),
++		    i2s_sc_loopback_src_text);
++
++static int lp_src_get(struct snd_kcontrol *kcontrol,
++	struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_dai *dai = snd_kcontrol_chip(kcontrol);
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(dai);
++	int val;
++
++	if (!i2s_sc_priv->cru_regmap)
++		return 0;
++
++	if (pm_runtime_status_suspended(i2s_sc_priv->dev))
++		return 0;
++
++	regmap_read(i2s_sc_priv->cru_regmap, SKY1_AUDSS_CRU_INFO_I2S_LOOP, &val);
++	val &= SKY1_AUDSS_CRU_INFO_I2S_LOOP_MAST;
++
++	ucontrol->value.enumerated.item[0] = val;
++
++	return 0;
++}
++
++static int lp_src_set(struct snd_kcontrol *kcontrol,
++	struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_dai *dai = snd_kcontrol_chip(kcontrol);
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(dai);
++	int lp_src_index = ucontrol->value.enumerated.item[0];
++
++	if (!i2s_sc_priv->cru_regmap)
++		return 0;
++
++	if (pm_runtime_status_suspended(i2s_sc_priv->dev)) {
++		dev_info(i2s_sc_priv->dev,
++			 "usage: playback from i2s0/1/3, set this mixer, then capture by i2s2");
++		return 0;
++	}
++
++	regmap_update_bits(i2s_sc_priv->cru_regmap, SKY1_AUDSS_CRU_INFO_I2S_LOOP,
++			   SKY1_AUDSS_CRU_INFO_I2S_LOOP_MAST,
++			   FIELD_PREP(SKY1_AUDSS_CRU_INFO_I2S_LOOP_MAST, lp_src_index));
++
++	return 0;
++}
++
++static const struct snd_kcontrol_new i2s_sc_lb_controls[] = {
++	SOC_ENUM_EXT("Loopback Src", lp_src_enum, lp_src_get, lp_src_set),
++};
++
++static int cdns_i2s_sc_clks_enable(struct cdns_i2s_sc_priv *i2s_sc_priv)
++{
++	int ret;
++
++	ret = clk_prepare_enable(i2s_sc_priv->clk_hst);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(i2s_sc_priv->clk_i2s);
++	if (ret)
++		clk_disable_unprepare(i2s_sc_priv->clk_hst);
++
++	return ret;
++}
++
++static void cdns_i2s_sc_clks_disable(struct cdns_i2s_sc_priv *i2s_sc_priv)
++{
++	clk_disable_unprepare(i2s_sc_priv->clk_hst);
++	clk_disable_unprepare(i2s_sc_priv->clk_i2s);
++}
++
++static void cdns_i2s_sc_rxtx_common_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
++{
++	if (on) {
++		/* Full-duplex mode enable */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_FULL_DUPLEX, I2S_CTRL_FDX_FULL_DUPLEX);
++
++		if (i2s_sc_priv->is_tdm_mode) {
++			/* TDM mode enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++					   I2S_TDM_CTRL_TDM_EN, I2S_TDM_CTRL_TDM_EN);
++
++			/* Number of supported audio channels in TDM mode */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_CHN_NO,
++					   FIELD_PREP(I2S_TDM_CTRL_CHN_NO, i2s_sc_priv->tdm_config.slots - 1));
++
++			/* TDM mode channels enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_CHN_EN,
++					   FIELD_PREP(I2S_TDM_CTRL_CHN_EN,
++						      i2s_sc_priv->tdm_config.rx_mask |
++						      i2s_sc_priv->tdm_config.tx_mask));
++		}
++
++		/* Transceiver clock enable */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_I2S_STB, 0);
++
++		/* All interrupt requests unmask */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_INTREQ_MASK, I2S_CTRL_INTREQ_MASK);
++	} else {
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_INTREQ_MASK, 0);
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_I2S_STB, I2S_CTRL_I2S_STB);
++
++		if (i2s_sc_priv->is_tdm_mode) {
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++					   I2S_TDM_CTRL_TDM_EN, 0);
++
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++					   I2S_TDM_CTRL_CHN_NO, 0);
++
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++					   I2S_TDM_CTRL_CHN_EN, 0);
++		}
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_FULL_DUPLEX, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_I2S_EN, 0);
++	}
++}
++
++static void cdns_i2s_sc_tx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
++{
++	u32 irq_mask = I2S_CTRL_I2S_MASK;
++
++	if (on) {
++		cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, irq_mask, irq_mask);
++
++		if (i2s_sc_priv->is_tdm_mode)
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_TXEN,
++					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_TXEN, i2s_sc_priv->tdm_config.tx_mask));
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_I2S_FTX_EN, I2S_CTRL_FDX_I2S_FTX_EN);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_I2S_EN, I2S_CTRL_I2S_EN);
++
++		i2s_sc_priv->tx_start = true;
++	} else {
++		unsigned int timeout = 16;
++		u32 fifo_level;
++
++		/* Drain TX FIFO to avoid residue data in full-duplex mode */
++		while (timeout--) {
++			regmap_read(i2s_sc_priv->regmap, I2S_FIFO_LEVEL, &fifo_level);
++			if (!fifo_level)
++				break;
++			udelay(125);
++		}
++		if (!timeout)
++			dev_warn(i2s_sc_priv->dev, "tx fifo drain timeout\n");
++		else
++			udelay(250); /* Generate underrun to clear internal state */
++
++		i2s_sc_priv->tx_start = false;
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_I2S_FTX_EN, 0);
++
++		if (i2s_sc_priv->is_tdm_mode)
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
++					   I2S_TDM_FD_DIR_CHN_TXEN, 0);
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, irq_mask, 0);
++
++		if (!i2s_sc_priv->rx_start)
++			cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
++	}
++}
++
++static void cdns_i2s_sc_rx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
++{
++	u32 irq_mask = 0;
++
++	irq_mask |= I2S_CTRL_FDX_RI2S_MASK;
++
++	if (on) {
++		cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
++
++		/* Receiver data overrun interrupt unmask */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX, irq_mask, irq_mask);
++
++		if (i2s_sc_priv->is_tdm_mode)
++			/* TDM mode channels receive enale */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_RXEN,
++					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_RXEN, i2s_sc_priv->tdm_config.rx_mask));
++
++		/* Full-duplex mode receiver enable */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_I2S_FRX_EN, I2S_CTRL_FDX_I2S_FRX_EN);
++
++		/* Transceiver enable */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_I2S_EN, I2S_CTRL_I2S_EN);
++
++		i2s_sc_priv->rx_start = true;
++	} else {
++		i2s_sc_priv->rx_start = false;
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_I2S_FRX_EN, 0);
++
++		if (i2s_sc_priv->is_tdm_mode)
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
++					   I2S_TDM_FD_DIR_CHN_RXEN, 0);
++
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX, irq_mask, 0);
++
++		if (!i2s_sc_priv->tx_start)
++			cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
++	}
++}
++
++static irqreturn_t cdns_i2s_sc_isr(int irq, void *devid)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = (struct cdns_i2s_sc_priv *)devid;
++	struct device *dev = i2s_sc_priv->dev;
++	u32 stat, stat_mask = 0;
++
++	regmap_read(i2s_sc_priv->regmap, I2S_STAT, &stat);
++	if (!stat)
++		return IRQ_NONE;
++
++	/* Clear the status */
++	stat_mask |= I2S_STAT_TDATA_UNDERR | I2S_STAT_RDATA_OVERR;
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_STAT, stat_mask, 0);
++
++	/* Transmitter status */
++	if (stat & I2S_STAT_TDATA_UNDERR) {
++		i2s_sc_priv->stats.tdata_underr++;
++		dev_dbg(dev, "isr: tx data underrun\n");
++	}
++
++	/* Receiver status */
++	if (stat & I2S_STAT_RDATA_OVERR) {
++		i2s_sc_priv->stats.rdata_overr++;
++		dev_dbg(dev, "isr: rx data overrun\n");
++	}
++
++	dev_dbg(dev, "%s: tdata_underr:%u, rdata_overr:%u\n",
++		__func__, i2s_sc_priv->stats.tdata_underr, i2s_sc_priv->stats.rdata_overr);
++
++	return IRQ_HANDLED;
++}
++
++static int cdns_i2s_sc_set_tdm_slot(struct snd_soc_dai *cpu_dai, unsigned int tx_mask,
++				    unsigned int rx_mask, int slots, int slot_width)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	struct device *dev = i2s_sc_priv->dev;
++
++	dev_dbg(dev, "tx_mask = 0x%x, rx_maske = 0x%x, slots = 0x%x, slot_width = 0x%x\n",
++		     tx_mask, rx_mask, slots, slot_width);
++	if (slots > 16 || slot_width > 32) {
++		dev_err(i2s_sc_priv->dev,
++			"TDM mode supports up to 16 slots and maximum slot width is 32 bit\n");
++		return -EINVAL;
++	}
++
++	i2s_sc_priv->tdm_config.slots = slots;
++	i2s_sc_priv->tdm_config.slot_width = slot_width;
++	i2s_sc_priv->tdm_config.rx_mask = rx_mask;
++	i2s_sc_priv->tdm_config.tx_mask = tx_mask;
++
++	i2s_sc_priv->is_tdm_mode = true;
++
++	return 0;
++}
++
++static int cdns_i2s_sc_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	struct device *dev = i2s_sc_priv->dev;
++	u32 ctrl = 0, ctrl_mask = 0;
++
++	dev_dbg(dev, "format = 0x%x\n", fmt);
++
++	/* DAI hardware audio formats */
++	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++		ctrl |= FIELD_PREP(I2S_CTRL_WS_MODE, 1) |
++			FIELD_PREP(I2S_CTRL_DATA_WS_DEL, 1);
++		ctrl &= ~(I2S_CTRL_DATA_ALIGN | I2S_CTRL_DATA_ORDER);
++		break;
++	case SND_SOC_DAIFMT_RIGHT_J:
++		ctrl |= FIELD_PREP(I2S_CTRL_WS_MODE, 1) |
++			FIELD_PREP(I2S_CTRL_DATA_WS_DEL, 0) |
++			I2S_CTRL_DATA_ALIGN;
++		ctrl &= ~I2S_CTRL_DATA_ORDER;
++		break;
++	case SND_SOC_DAIFMT_LEFT_J:
++		ctrl |= FIELD_PREP(I2S_CTRL_WS_MODE, 1) |
++			FIELD_PREP(I2S_CTRL_DATA_WS_DEL, 0);
++		ctrl &= ~(I2S_CTRL_DATA_ALIGN | I2S_CTRL_DATA_ORDER);
++		break;
++	case SND_SOC_DAIFMT_DSP_A:
++		ctrl |= FIELD_PREP(I2S_CTRL_WS_MODE, 0) |
++			FIELD_PREP(I2S_CTRL_DATA_WS_DEL, 1);
++		ctrl &= ~(I2S_CTRL_DATA_ALIGN | I2S_CTRL_DATA_ORDER);
++		break;
++	case SND_SOC_DAIFMT_DSP_B:
++		ctrl |= FIELD_PREP(I2S_CTRL_WS_MODE, 0) |
++			FIELD_PREP(I2S_CTRL_DATA_WS_DEL, 0);
++		ctrl &= ~(I2S_CTRL_DATA_ALIGN | I2S_CTRL_DATA_ORDER);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	/* DAI hardware signal polarity */
++	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++	case SND_SOC_DAIFMT_NB_NF:
++		/* both normal clocks */
++		ctrl |= I2S_CTRL_SCK_POLAR;
++		ctrl &= ~I2S_CTRL_WS_POLAR;
++		break;
++	case SND_SOC_DAIFMT_NB_IF:
++		/* invert frame clock */
++		ctrl |= I2S_CTRL_SCK_POLAR;
++		ctrl |= I2S_CTRL_WS_POLAR;
++		break;
++	case SND_SOC_DAIFMT_IB_NF:
++		/* invet bit clock */
++		ctrl &= ~I2S_CTRL_SCK_POLAR;
++		ctrl &= ~I2S_CTRL_WS_POLAR;
++		break;
++	case SND_SOC_DAIFMT_IB_IF:
++		/* invert both clocks */
++		ctrl &= ~I2S_CTRL_SCK_POLAR;
++		ctrl |= I2S_CTRL_WS_POLAR;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	/* DAI hardware clock masters */
++	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
++	case SND_SOC_DAIFMT_BC_FC:
++		ctrl &= ~I2S_CTRL_MS_CFG;
++		i2s_sc_priv->is_master_mode = false;
++		break;
++	case SND_SOC_DAIFMT_BP_FP:
++		ctrl |= I2S_CTRL_MS_CFG;
++		i2s_sc_priv->is_master_mode = true;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	ctrl_mask |= I2S_CTRL_WS_MODE | I2S_CTRL_DATA_WS_DEL | I2S_CTRL_DATA_ALIGN |
++		     I2S_CTRL_DATA_ORDER | I2S_CTRL_SCK_POLAR | I2S_CTRL_WS_POLAR |
++		     I2S_CTRL_MS_CFG;
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, ctrl_mask, ctrl);
++
++	return 0;
++}
++
++static int cdns_i2s_sc_prepare(struct snd_pcm_substream *substream,
++			       struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++
++	/* Transceiver clock enable */
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, I2S_CTRL_I2S_STB, 0);
++
++	/*
++	 * FIFO reset should meet two requirements
++	 * 1) after i2s_stb clock on
++	 * 2) before dma ready to receive trigger
++	 */
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		/*
++		 * Transmitter FIFO reset
++		 * When LOW, FIFO pointer is reset to zero. Threshold levels for
++		 * FIFO are unchanged. This bit is automatically set to HIGH after
++		 * one clock cycle.
++		 * Dessert then assert this bit here, since I2S_CTRL register is not
++		 * volatible, would not read from hardware any longer. If not, it would
++		 * clear tx fifo every time when write this register.
++		 */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, I2S_CTRL_FIFO_RST, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++				   I2S_CTRL_FIFO_RST, I2S_CTRL_FIFO_RST);
++
++		/* Transmitter FIFO threshold set */
++		regmap_write(i2s_sc_priv->regmap, I2S_FIFO_AEMPTY,
++			     i2s_sc_priv->devtype_data->tx_fifo_aempty_threshold);
++		regmap_write(i2s_sc_priv->regmap, I2S_FIFO_AFULL,
++			     i2s_sc_priv->devtype_data->tx_fifo_afull_threshold);
++	} else {
++		/*
++		 * Receiver FIFO reset
++		 * When '0', RFIFO pointer is reset to zero. Threshold levels for RFIFO
++		 * are unchanged. The bit is automatically set to '1' after one clock cycle.
++		 * Dessert then assert this bit here, since I2S_CTRL_FDX register is not
++		 * volatible, would not read from hardware any longer. If not, it would
++		 * clear rx fifo every time when write this register.
++		 */
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX, I2S_CTRL_FDX_RFIFO_RST, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++				   I2S_CTRL_FDX_RFIFO_RST, I2S_CTRL_FDX_RFIFO_RST);
++
++		/* Receiver FIFO threshold set */
++		regmap_write(i2s_sc_priv->regmap, I2S_FIFO_AEMPTY_FDR,
++			     i2s_sc_priv->devtype_data->rx_fifo_aempty_threshold);
++		regmap_write(i2s_sc_priv->regmap, I2S_FIFO_AFULL_FDR,
++			     i2s_sc_priv->devtype_data->rx_fifo_afull_threshold);
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_sc_hw_params(struct snd_pcm_substream *substream,
++				 struct snd_pcm_hw_params *params,
++				 struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	struct device *dev = i2s_sc_priv->dev;
++	u32 slots, slot_width, resolution, val;
++	u32 i2s_clk_rate, rate, sample_rate;
++	struct clk *clk_parent;
++	int ret;
++
++	/* Set sample slots, slot width and resolution */
++	slots = params_channels(params);
++	resolution = params_width(params);
++	dev_dbg(dev, "slots = %d, resolution = %d\n", slots, resolution);
++
++	if (i2s_sc_priv->is_tdm_mode) {
++		/* TDM mode */
++		if (slots != i2s_sc_priv->tdm_config.slots) {
++			dev_err(i2s_sc_priv->dev,
++				"Slot number does not match with specified tdm slots number\n");
++			return -EINVAL;
++		}
++
++		if (resolution != i2s_sc_priv->tdm_config.slot_width) {
++			dev_err(i2s_sc_priv->dev,
++				"Sample width does not match with specified tdm slot width\n");
++			return -EINVAL;
++		}
++
++		slot_width = i2s_sc_priv->tdm_config.slot_width;
++	} else {
++		/* I2S mode */
++		if (slots != 2) {
++			dev_err(i2s_sc_priv->dev,
++				"Only support stereo audio in I2S mode\n");
++			return -EINVAL;
++		}
++
++		slot_width = 32;
++	}
++
++	dev_dbg(dev, "slot_width = %d\n", slot_width);
++
++	if (slot_width == 8) {
++		val = I2S_CTRL_CHN_WIDTH_8;
++	} else if (slot_width == 12) {
++		val = I2S_CTRL_CHN_WIDTH_12;
++	} else if (slot_width == 16) {
++		val = I2S_CTRL_CHN_WIDTH_16;
++	} else if (slot_width == 18) {
++		val = I2S_CTRL_CHN_WIDTH_18;
++	} else if (slot_width == 20) {
++		val = I2S_CTRL_CHN_WIDTH_20;
++	} else if (slot_width == 24) {
++		val = I2S_CTRL_CHN_WIDTH_24;
++	} else if (slot_width == 28) {
++		val = I2S_CTRL_CHN_WIDTH_28;
++	} else if (slot_width == 32) {
++		val = I2S_CTRL_CHN_WIDTH_32;
++	} else {
++		dev_err(i2s_sc_priv->dev, "Slot width is invalid value\n");
++		return -EINVAL;
++	}
++
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, I2S_CTRL_CHN_WIDTH,
++			   FIELD_PREP(I2S_CTRL_CHN_WIDTH, val));
++
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++		regmap_write(i2s_sc_priv->regmap, I2S_SRES,
++			     FIELD_PREP(I2S_SRES_RESOLUTION, (resolution - 1)));
++	else
++		regmap_write(i2s_sc_priv->regmap, I2S_SRES_FDR,
++			     FIELD_PREP(I2S_SRES_FDR_RRESOLUTION, (resolution - 1)));
++
++	rate = params_rate(params);
++	dev_dbg(dev, "rate = %d\n", rate);
++
++	/* switch clk mux to select the appropriate clk parent */
++	if (rate % 8000 == 0) {
++		/* Sampling rate is a multiple of 8KHz, select "audio_clk0" */
++		clk_parent = i2s_sc_priv->clks[AUDIO_CLK0];
++
++		ret = clk_set_parent(i2s_sc_priv->clk_i2s, clk_parent);
++	} else if (rate % 11025 == 0){
++		/* Sampling rate is a multiple of 11.025KHz, select "audio_clk2" */
++		clk_parent = i2s_sc_priv->clks[AUDIO_CLK2];
++
++		ret = clk_set_parent(i2s_sc_priv->clk_i2s, clk_parent);
++	} else {
++		dev_err(i2s_sc_priv->dev, "Invalid sample rate\n");
++		return -EINVAL;
++	}
++	if (ret) {
++		dev_err(i2s_sc_priv->dev, "Failed to set i2s clock parent\n");
++		return ret;
++	}
++
++	i2s_clk_rate = clk_get_rate(i2s_sc_priv->clk_i2s);
++	dev_dbg(dev, "i2s clk rate = %d\n", i2s_clk_rate);
++
++	if (i2s_clk_rate < rate * slot_width * slots * 6) {
++		dev_err(i2s_sc_priv->dev,
++			"clk freq %d is too low, must greater then %d * %d * %d * 6 = %d\n",
++			i2s_clk_rate, rate, slot_width, slots, rate * slot_width * slots * 6);
++		return -EINVAL;
++	}
++
++	/* Set sample rate */
++	if (i2s_sc_priv->is_master_mode) {
++		sample_rate = DIV_ROUND_CLOSEST(i2s_clk_rate, (rate * slots * slot_width));
++		regmap_write(i2s_sc_priv->regmap, I2S_SRATE,
++			     FIELD_PREP(I2S_SRATE_SAMPLE_RATE, sample_rate));
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_sc_trigger(struct snd_pcm_substream *substream,
++			       int cmd, struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			cdns_i2s_sc_tx_config(i2s_sc_priv, true);
++		else
++			cdns_i2s_sc_rx_config(i2s_sc_priv, true);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			cdns_i2s_sc_tx_config(i2s_sc_priv, false);
++		else
++			cdns_i2s_sc_rx_config(i2s_sc_priv, false);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int cdns_i2s_sc_dai_probe(struct snd_soc_dai *cpu_dai)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	u32 ctrl = 0;
++	int ret = 0;
++
++	/* i2s_sc2 for loopback */
++	if (I2S_SC2 == i2s_sc_priv->idx) {
++		ret = snd_soc_add_dai_controls(cpu_dai, i2s_sc_lb_controls,
++					ARRAY_SIZE(i2s_sc_lb_controls));
++		if (ret < 0)
++			dev_warn(i2s_sc_priv->dev, "failed add dai controls\n");
++	}
++
++	/*
++	 * Transceiver disable
++	 * Transceiver clock disable
++	 * All interrupts masked
++	 */
++	ctrl &= ~(I2S_CTRL_I2S_EN | I2S_CTRL_INTREQ_MASK);
++	ctrl |= I2S_CTRL_I2S_STB;
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
++			   I2S_CTRL_I2S_EN | I2S_CTRL_INTREQ_MASK |
++			   I2S_CTRL_LR_PACK | I2S_CTRL_I2S_STB,
++			   ctrl);
++
++	/*
++	 * Full-duplex mode disable
++	 * Full-duplex mode transmitter disable
++	 * Full-duplex mode receiver disable
++	 */
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
++			   I2S_CTRL_FDX_FULL_DUPLEX | I2S_CTRL_FDX_I2S_FTX_EN |
++			   I2S_CTRL_FDX_I2S_FRX_EN,
++			   0);
++
++	/* TDM mode disable, default works in standard stereo I2S mode */
++	regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_TDM_EN, 0);
++
++	snd_soc_dai_init_dma_data(cpu_dai, &i2s_sc_priv->playback_dma_data,
++				  &i2s_sc_priv->capture_dma_data);
++
++	snd_soc_dai_set_drvdata(cpu_dai, i2s_sc_priv);
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops cdns_i2s_sc_dai_ops = {
++	.probe = cdns_i2s_sc_dai_probe,
++	.set_tdm_slot = cdns_i2s_sc_set_tdm_slot,
++	.set_fmt = cdns_i2s_sc_set_fmt,
++
++	.hw_params = cdns_i2s_sc_hw_params,
++	.prepare = cdns_i2s_sc_prepare,
++	.trigger = cdns_i2s_sc_trigger,
++};
++
++static struct snd_soc_dai_driver cdns_i2s_sc_dai = {
++	.playback = {
++		.stream_name = "I2S-SC-Playback",
++		.channels_min = 1,
++		.channels_max = 16,
++		.rates = SNDRV_PCM_RATE_8000_192000,
++		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
++			    SNDRV_PCM_FMTBIT_S24_LE |
++			    SNDRV_PCM_FMTBIT_S32_LE),
++	},
++	.capture = {
++		.stream_name = "I2S-SC-Capture",
++		.channels_min = 1,
++		.channels_max = 16,
++		.rates = SNDRV_PCM_RATE_8000_192000,
++		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
++			    SNDRV_PCM_FMTBIT_S24_LE |
++			    SNDRV_PCM_FMTBIT_S32_LE),
++	},
++	.ops = &cdns_i2s_sc_dai_ops,
++	.symmetric_rate = 1,
++	.symmetric_channels = 1,
++};
++
++static const struct snd_soc_component_driver cdns_i2s_sc_component = {
++	.name = DRV_NAME,
++	.legacy_dai_naming      = 1,
++};
++
++static const struct reg_default cdns_i2s_sc_reg_defaults[] = {
++	{I2S_CTRL, 0x000001b8},
++	{I2S_CTRL_FDX, 0x00000010},
++	{I2S_SRES, 0x00000000},
++	{I2S_SRES_FDR, 0x00000000},
++	{I2S_SRATE, 0x00000000},
++	{I2S_STAT, 0x0003000c},
++	{I2S_FIFO_LEVEL, 0x00000000},
++	{I2S_FIFO_AEMPTY, 0x00000000},
++	{I2S_FIFO_AFULL, 0x0000000f},
++	{I2S_FIFO_LEVEL_FDR, 0x00000000},
++	{I2S_FIFO_AEMPTY_FDR, 0x00000000},
++	{I2S_FIFO_AFULL_FDR, 0x0000000f},
++	{I2S_TDM_CTRL, 0xffff0000},
++	{I2S_TDM_FD_DIR, 0x0000ffff},
++};
++
++static bool cdns_i2s_sc_readable_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_CTRL:
++	case I2S_CTRL_FDX:
++	case I2S_SRES:
++	case I2S_SRES_FDR:
++	case I2S_SRATE:
++	case I2S_STAT:
++	case I2S_FIFO_LEVEL:
++	case I2S_FIFO_AEMPTY:
++	case I2S_FIFO_AFULL:
++	case I2S_FIFO_LEVEL_FDR:
++	case I2S_FIFO_AEMPTY_FDR:
++	case I2S_FIFO_AFULL_FDR:
++	case I2S_TDM_CTRL:
++	case I2S_TDM_FD_DIR:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static bool cdns_i2s_sc_writeable_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_CTRL:
++	case I2S_CTRL_FDX:
++	case I2S_SRES:
++	case I2S_SRES_FDR:
++	case I2S_SRATE:
++	case I2S_STAT:
++	case I2S_FIFO_AEMPTY:
++	case I2S_FIFO_AFULL:
++	case I2S_FIFO_AEMPTY_FDR:
++	case I2S_FIFO_AFULL_FDR:
++	case I2S_TDM_CTRL:
++	case I2S_TDM_FD_DIR:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static bool cdns_i2s_sc_volatile_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case I2S_STAT:
++	case I2S_FIFO_LEVEL:
++	case I2S_FIFO_LEVEL_FDR:
++		return true;
++	default:
++		return false;
++	}
++};
++
++static struct regmap_config cdns_i2s_sc_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++
++	.max_register = I2S_TDM_FD_DIR,
++	.reg_defaults = cdns_i2s_sc_reg_defaults,
++	.num_reg_defaults = ARRAY_SIZE(cdns_i2s_sc_reg_defaults),
++	.readable_reg = cdns_i2s_sc_readable_reg,
++	.writeable_reg = cdns_i2s_sc_writeable_reg,
++	.volatile_reg = cdns_i2s_sc_volatile_reg,
++	.cache_type = REGCACHE_FLAT,
++};
++
++static void cdns_i2s_sc_rst(struct cdns_i2s_sc_priv *i2s_sc_priv)
++{
++	u32 idx = i2s_sc_priv->idx;
++
++	dev_dbg(i2s_sc_priv->dev, "i2s index = %d\n", idx);
++
++	/* reset */
++	reset_control_assert(i2s_sc_priv->i2s_rst);
++
++	usleep_range(1, 2);
++
++	/* release reset */
++	reset_control_deassert(i2s_sc_priv->i2s_rst);
++}
++
++static int cdns_i2s_sc_probe(struct platform_device *pdev)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv;
++	struct resource *res;
++	void __iomem *base;
++	int i, irq, ret;
++	char *irq_name;
++
++	i2s_sc_priv = devm_kzalloc(&pdev->dev, sizeof(*i2s_sc_priv), GFP_KERNEL);
++	if (!i2s_sc_priv)
++		return -ENOMEM;
++
++	platform_set_drvdata(pdev, i2s_sc_priv);
++
++	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	i2s_sc_priv->dev = &pdev->dev;
++	i2s_sc_priv->devtype_data = device_get_match_data(&pdev->dev);
++	i2s_sc_priv->idx = of_alias_get_id(i2s_sc_priv->dev->of_node, "i2s");
++	if (i2s_sc_priv->idx < 0)
++		device_property_read_u32(&pdev->dev, "id", &i2s_sc_priv->idx);
++
++	i2s_sc_priv->regmap = devm_regmap_init_mmio(&pdev->dev, base,
++						    &cdns_i2s_sc_regmap_config);
++	if (IS_ERR(i2s_sc_priv->regmap)) {
++		dev_err(&pdev->dev, "Failed to initialize managed register map\n");
++		return PTR_ERR(i2s_sc_priv->regmap);
++	}
++
++	i2s_sc_priv->clk_hst = devm_clk_get(&pdev->dev, "hst");
++	if (IS_ERR(i2s_sc_priv->clk_hst)) {
++		dev_err(&pdev->dev, "Failed to get clk_hst clock\n");
++		return PTR_ERR(i2s_sc_priv->clk_hst);
++	}
++
++	i2s_sc_priv->clk_i2s = devm_clk_get(&pdev->dev, "i2s");
++	if (IS_ERR(i2s_sc_priv->clk_i2s)) {
++		dev_err(&pdev->dev, "Failed to get clk_i2s clock\n");
++		return PTR_ERR(i2s_sc_priv->clk_i2s);
++	}
++
++	for (i = 0; i < AUDIO_CLK_NUM; i++) {
++		i2s_sc_priv->clks[i] = devm_clk_get(&pdev->dev,
++						    cdns_i2s_sc_clk_pll_names[i]);
++		if (IS_ERR(i2s_sc_priv->clks[i])) {
++			dev_err(&pdev->dev, "Failed to get clock %s\n",
++				cdns_i2s_sc_clk_pll_names[i]);
++			return PTR_ERR(i2s_sc_priv->clks[i]);
++		}
++	}
++
++	i2s_sc_priv->i2s_rst = devm_reset_control_get(&pdev->dev, "i2s");
++	if (IS_ERR(i2s_sc_priv->i2s_rst))
++		return PTR_ERR(i2s_sc_priv->i2s_rst);
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++	i2s_sc_priv->irq = irq;
++
++	irq_name = devm_kasprintf(&pdev->dev, GFP_KERNEL,
++				  "%s%d",
++				  dev_name(&pdev->dev), i2s_sc_priv->idx);
++	if (!irq_name)
++			return -ENOMEM;
++
++	ret = devm_request_irq(&pdev->dev, irq, cdns_i2s_sc_isr, IRQF_SHARED,
++			       irq_name, i2s_sc_priv);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to request irq: %d", ret);
++		return ret;
++	}
++
++	i2s_sc_priv->playback_dma_data.addr = res->start + I2S_FIFO_ADDRESS;
++	/* Buswidth will be set by framework at runtime */
++	i2s_sc_priv->playback_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
++	i2s_sc_priv->playback_dma_data.maxburst = 4;
++
++	i2s_sc_priv->capture_dma_data.addr = res->start + I2S_FIFO_ADDRESS;
++	/* Buswidth will be set by framework at runtime */
++	i2s_sc_priv->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
++	i2s_sc_priv->capture_dma_data.maxburst = 4;
++
++	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
++	if (ret) {
++		if (ret != -EPROBE_DEFER)
++			dev_err(&pdev->dev, "Failed to register dmaengine component:%d\n", ret);
++		return ret;
++	}
++
++	i2s_sc_priv->cru_regmap =
++		syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++					"cdns,cru-ctrl");
++	if (PTR_ERR(i2s_sc_priv->cru_regmap) == -ENODEV) {
++		i2s_sc_priv->cru_regmap = NULL;
++	} else if (IS_ERR(i2s_sc_priv->cru_regmap)) {
++		ret = PTR_ERR(i2s_sc_priv->cru_regmap);
++		return ret;
++	}
++
++	pm_runtime_get_noresume(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++
++	ret = cdns_i2s_sc_clks_enable(i2s_sc_priv);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to enable clocks:%d\n", ret);
++		return ret;
++	}
++
++	cdns_i2s_sc_rst(i2s_sc_priv);
++
++	/*
++	 * Let pm_runtime_put_sync() disable the clocks, and take regcache effect.
++	 * If CONFIG_PM is not enabled, the clock will stay powered.
++	 */
++	pm_runtime_put_sync(&pdev->dev);
++
++	ret = devm_snd_soc_register_component(&pdev->dev, &cdns_i2s_sc_component,
++					      &cdns_i2s_sc_dai, 1);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to register soc componnet:%d\n", ret);
++		return ret;
++	}
++
++	dev_info(&pdev->dev, "I2S-SC driver probed\n");
++
++	return 0;
++}
++
++static void cdns_i2s_sc_remove(struct platform_device *pdev)
++{
++	if (!pm_runtime_status_suspended(&pdev->dev))
++		pm_runtime_force_suspend(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++}
++
++static int __maybe_unused cdns_i2s_sc_runtime_suspend(struct device *dev)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = dev_get_drvdata(dev);
++
++	regcache_cache_only(i2s_sc_priv->regmap, true);
++	disable_irq(i2s_sc_priv->irq);
++	cdns_i2s_sc_clks_disable(i2s_sc_priv);
++
++	return 0;
++}
++
++static int __maybe_unused cdns_i2s_sc_runtime_resume(struct device *dev)
++{
++	struct cdns_i2s_sc_priv *i2s_sc_priv = dev_get_drvdata(dev);
++	int ret;
++
++	ret = cdns_i2s_sc_clks_enable(i2s_sc_priv);
++	if (ret) {
++		dev_err(dev, "Failed to enable clocks:%d\n", ret);
++		return ret;
++	}
++
++	cdns_i2s_sc_rst(i2s_sc_priv);
++
++	enable_irq(i2s_sc_priv->irq);
++
++	regcache_cache_only(i2s_sc_priv->regmap, false);
++	regcache_mark_dirty(i2s_sc_priv->regmap);
++
++	ret = regcache_sync(i2s_sc_priv->regmap);
++	if (ret)
++		cdns_i2s_sc_clks_disable(i2s_sc_priv);
++
++	return ret;
++}
++
++static int __maybe_unused cdns_i2s_sc_system_suspend(struct device *dev)
++{
++	int ret;
++
++	ret = pm_runtime_force_suspend(dev);
++	if (ret)
++		return ret;
++
++	pinctrl_pm_select_sleep_state(dev);
++
++	return 0;
++}
++
++static int __maybe_unused cdns_i2s_sc_system_resume(struct device *dev)
++{
++	int ret;
++
++	pinctrl_pm_select_default_state(dev);
++
++	ret = pm_runtime_force_resume(dev);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static const struct dev_pm_ops cdns_i2s_sc_pm_ops = {
++	SET_RUNTIME_PM_OPS(cdns_i2s_sc_runtime_suspend,
++			   cdns_i2s_sc_runtime_resume, NULL)
++	SET_SYSTEM_SLEEP_PM_OPS(cdns_i2s_sc_system_suspend,
++				cdns_i2s_sc_system_resume)
++};
++
++static const struct cdns_i2s_sc_devtype_data sky1_devtype_data = {
++	/* When DEPTH = 4 then each FIFO has 16 words and each FIFO memory size is 64 bytes */
++	.fifo_depth = 4,
++	.rx_fifo_aempty_threshold = 4,
++	.rx_fifo_afull_threshold = 12,
++	.tx_fifo_aempty_threshold = 4,
++	.tx_fifo_afull_threshold = 12,
++};
++
++static const struct of_device_id cdns_i2s_sc_of_match[] = {
++	{ .compatible = "cdns,sky1-i2s-sc", .data = &sky1_devtype_data},
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, cdns_i2s_sc_of_match);
++
++static struct platform_driver cdns_i2s_sc_driver = {
++	.probe = cdns_i2s_sc_probe,
++	.remove = cdns_i2s_sc_remove,
++	.driver = {
++		.name = DRV_NAME,
++		.pm = &cdns_i2s_sc_pm_ops,
++		.of_match_table = cdns_i2s_sc_of_match,
++	},
++};
++module_platform_driver(cdns_i2s_sc_driver);
++
++MODULE_LICENSE("GPL v2");
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
++MODULE_DESCRIPTION("Cadence I2S-SC Controller Driver");
+diff --git a/sound/soc/cix/sky1-card.c b/sound/soc/cix/sky1-card.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/sound/soc/cix/sky1-card.c
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++
++#include <linux/acpi.h>
++#include <linux/module.h>
++#include "card-utils.h"
++
++static int cix_asoc_card_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cix_asoc_card *priv;
++	struct snd_soc_card *card;
++	int ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
++	if (!card)
++		return -ENOMEM;
++	card->owner = THIS_MODULE;
++	card->dev = dev;
++	priv->card = card;
++
++	platform_set_drvdata(pdev, card);
++	snd_soc_card_set_drvdata(card, priv);
++
++	if (dev->of_node)
++		ret = cix_card_parse_of(priv);
++	else
++		ret = cix_card_parse_acpi(priv);
++	if (ret) {
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "card parse failed (%d)\n", ret);
++		return ret;
++	}
++
++	ret = devm_snd_soc_register_card(dev, card);
++	if (ret) {
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "snd_soc_register_card failed (%d)\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static const struct of_device_id sky1_of_match[] = {
++	{ .compatible = "cix,sky1-sound-card", },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sky1_of_match);
++
++static const struct acpi_device_id sky1_acpi_match[] = {
++	{ "CIXH6070", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_acpi_match);
++
++static struct platform_driver sky1_card_pdrv = {
++	.driver = {
++		.name = "sky1-asoc-card",
++		.of_match_table = sky1_of_match,
++		.acpi_match_table = sky1_acpi_match,
++		.pm = &snd_soc_pm_ops,
++	},
++	.probe = cix_asoc_card_probe,
++};
++module_platform_driver(sky1_card_pdrv);
++
++MODULE_DESCRIPTION("Sky1 ALSA machine driver for Cix Technology");
++MODULE_AUTHOR("Xing.Wang <xing.wang@cixtech.com>");
++MODULE_LICENSE("GPL v2");
+-- 
+Cixtech
+
