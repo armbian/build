@@ -1,0 +1,338 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Wed, 18 Mar 2026 14:29:41 +0800
+Subject: firmware: add cix dsp ipc driver
+
+Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+---
+ drivers/firmware/Kconfig         |   1 +
+ drivers/firmware/Makefile        |   1 +
+ drivers/firmware/cix/Kconfig     |  12 +
+ drivers/firmware/cix/Makefile    |   3 +
+ drivers/firmware/cix/cix-dsp.c   | 175 ++++++++++
+ include/linux/firmware/cix/dsp.h |  86 +++++
+ 6 files changed, 278 insertions(+)
+
+diff --git a/drivers/firmware/Kconfig b/drivers/firmware/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/firmware/Kconfig
++++ b/drivers/firmware/Kconfig
+@@ -298,5 +298,6 @@ source "drivers/firmware/samsung/Kconfig"
+ source "drivers/firmware/smccc/Kconfig"
+ source "drivers/firmware/tegra/Kconfig"
+ source "drivers/firmware/xilinx/Kconfig"
++source "drivers/firmware/cix/Kconfig"
+ 
+ endmenu
+diff --git a/drivers/firmware/Makefile b/drivers/firmware/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/firmware/Makefile
++++ b/drivers/firmware/Makefile
+@@ -38,3 +38,4 @@ obj-y				+= samsung/
+ obj-y				+= smccc/
+ obj-y				+= tegra/
+ obj-y				+= xilinx/
++obj-y				+= cix/
+diff --git a/drivers/firmware/cix/Kconfig b/drivers/firmware/cix/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/firmware/cix/Kconfig
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++config CIX_DSP
++	tristate "CIX DSP IPC driver"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on MAILBOX
++	help
++	  This driver provides IPC communication helpers for the CIX DSP.
++	  It is used by the Sound Open Firmware (SOF) driver to communicate
++	  with the audio DSP on CIX Sky1 SoCs.
++
++	  If unsure, say N.
+diff --git a/drivers/firmware/cix/Makefile b/drivers/firmware/cix/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/firmware/cix/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++obj-$(CONFIG_CIX_DSP)		+= cix-dsp.o
+diff --git a/drivers/firmware/cix/cix-dsp.c b/drivers/firmware/cix/cix-dsp.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/firmware/cix/cix-dsp.c
+@@ -0,0 +1,175 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * CIX DSP IPC interface driver (host side)
++ *
++ * This driver provides mailbox-based IPC communication helpers for
++ * the Sound Open Firmware (SOF) driver to communicate with the DSP.
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#include <linux/firmware/cix/dsp.h>
++#include <linux/kernel.h>
++#include <linux/mailbox_client.h>
++#include <linux/module.h>
++#include <linux/io.h>
++#include <linux/platform_device.h>
++
++static const char * const dsp_mbox_ch_names[CIX_DSP_MBOX_NUM] = {
++	"txdb",
++	"rxdb"
++};
++
++/**
++ * cix_dsp_ipc_send - Send an IPC message to the DSP
++ * @ipc: DSP IPC context
++ * @idx: Mailbox channel index (CIX_DSP_IPC_REQ or CIX_DSP_IPC_REP)
++ * @msg: Message to send
++ *
++ * Returns 0 on success, negative error code on failure.
++ */
++int cix_dsp_ipc_send(struct cix_dsp_ipc *ipc, unsigned int idx, u32 msg)
++{
++	struct cix_dsp_chan *dsp_chan;
++	int ret;
++
++	if (idx >= CIX_DSP_MBOX_NUM)
++		return -EINVAL;
++
++	dsp_chan = &ipc->chans[idx];
++	ret = mbox_send_message(dsp_chan->ch, &msg);
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(cix_dsp_ipc_send);
++
++static void cix_dsp_rx_callback(struct mbox_client *cl, void *msg)
++{
++	struct cix_dsp_chan *chan = container_of(cl, struct cix_dsp_chan, cl);
++	struct device *dev = cl->dev;
++
++	switch (chan->idx) {
++	case CIX_DSP_MBOX_REPLY:
++		chan->ipc->ops->handle_reply(chan->ipc);
++		mbox_client_txdone(chan->ch, 0);
++		break;
++	case CIX_DSP_MBOX_REQUEST:
++		chan->ipc->ops->handle_request(chan->ipc);
++		break;
++	default:
++		dev_err(dev, "wrong mbox chan %d\n", chan->idx);
++		break;
++	}
++}
++
++/**
++ * cix_dsp_request_mbox - Request mailbox channels for DSP IPC
++ * @dsp_ipc: DSP IPC context
++ *
++ * Sets up the TX (request) and RX (response) mailbox channels for
++ * bidirectional communication with the DSP.
++ *
++ * Returns 0 on success, negative error code on failure.
++ */
++int cix_dsp_request_mbox(struct cix_dsp_ipc *dsp_ipc)
++{
++	struct device *dev = dsp_ipc->dev;
++	struct cix_dsp_chan *dsp_chan;
++	struct mbox_client *cl;
++	int i, j;
++	int ret;
++
++	/*
++	 * Communication model:
++	 * AP req -- txdb --> DSP
++	 *    AP <-- txdb --  DSP rsp
++	 *    AP <-- rxdb --  DSP req
++	 * AP rsp -- rxdb --> DSP
++	 */
++	for (i = 0; i < CIX_DSP_MBOX_NUM; i++) {
++		dsp_chan = &dsp_ipc->chans[i];
++		cl = &dsp_chan->cl;
++		cl->dev = dev;
++		cl->tx_block = false;
++		cl->knows_txdone = false;
++		cl->tx_prepare = NULL;
++		cl->rx_callback = cix_dsp_rx_callback;
++
++		dsp_chan->ipc = dsp_ipc;
++		dsp_chan->idx = i;
++		dsp_chan->ch = mbox_request_channel_byname(cl,
++							   dsp_mbox_ch_names[i]);
++		if (IS_ERR(dsp_chan->ch)) {
++			ret = PTR_ERR(dsp_chan->ch);
++			if (ret != -EPROBE_DEFER)
++				dev_err(dev,
++					"Failed to request mbox chan %s ret %d\n",
++					dsp_mbox_ch_names[i], ret);
++
++			for (j = 0; j < i; j++) {
++				dsp_chan = &dsp_ipc->chans[j];
++				mbox_free_channel(dsp_chan->ch);
++			}
++
++			return ret;
++		}
++	}
++
++	dsp_ipc->dev = dev;
++
++	dev_dbg(dev, "CIX DSP IPC mailbox channels requested\n");
++
++	return 0;
++}
++EXPORT_SYMBOL(cix_dsp_request_mbox);
++
++/**
++ * cix_dsp_free_mbox - Free mailbox channels
++ * @dsp_ipc: DSP IPC context
++ */
++void cix_dsp_free_mbox(struct cix_dsp_ipc *dsp_ipc)
++{
++	struct cix_dsp_chan *dsp_chan;
++	int i;
++
++	for (i = 0; i < CIX_DSP_MBOX_NUM; i++) {
++		dsp_chan = &dsp_ipc->chans[i];
++		mbox_free_channel(dsp_chan->ch);
++	}
++
++	dev_dbg(dsp_ipc->dev, "CIX DSP IPC mailbox channels freed\n");
++}
++EXPORT_SYMBOL(cix_dsp_free_mbox);
++
++static int cix_dsp_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cix_dsp_ipc *dsp_ipc;
++
++	device_set_node(&pdev->dev, pdev->dev.parent->fwnode);
++
++	dsp_ipc = devm_kzalloc(dev, sizeof(*dsp_ipc), GFP_KERNEL);
++	if (!dsp_ipc)
++		return -ENOMEM;
++
++	dsp_ipc->dev = dev;
++	dev_set_drvdata(dev, dsp_ipc);
++
++	dev_dbg(dev, "CIX DSP IPC initialized\n");
++
++	return 0;
++}
++
++static struct platform_driver cix_dsp_driver = {
++	.driver = {
++		.name = "cix-dsp",
++	},
++	.probe = cix_dsp_probe,
++};
++builtin_platform_driver(cix_dsp_driver);
++
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
++MODULE_DESCRIPTION("CIX DSP IPC Driver");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/firmware/cix/dsp.h b/include/linux/firmware/cix/dsp.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/firmware/cix/dsp.h
+@@ -0,0 +1,86 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * Header file for the CIX DSP IPC implementation
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.
++ */
++
++#ifndef _CIX_DSP_IPC_H_
++#define _CIX_DSP_IPC_H_
++
++#include <linux/device.h>
++#include <linux/types.h>
++#include <linux/mailbox_client.h>
++
++#define CIX_DSP_IPC_REQ		0
++#define CIX_DSP_IPC_REP		1
++#define CIX_DSP_IPC_OP_REQ	BIT(0)
++#define CIX_DSP_IPC_OP_REP	BIT(1)
++
++enum {
++	CIX_DSP_MBOX_REPLY,
++	CIX_DSP_MBOX_REQUEST,
++	CIX_DSP_MBOX_NUM,
++};
++
++struct cix_dsp_ipc;
++
++struct cix_dsp_ops {
++	void (*handle_reply)(struct cix_dsp_ipc *dsp_ipc);
++	void (*handle_request)(struct cix_dsp_ipc *dsp_ipc);
++};
++
++struct cix_dsp_chan {
++	struct cix_dsp_ipc *ipc;
++	struct mbox_client cl;
++	struct mbox_chan *ch;
++	int idx;
++};
++
++struct cix_dsp_ipc {
++	struct device *dev;
++	struct cix_dsp_ops *ops;
++	struct cix_dsp_chan chans[CIX_DSP_MBOX_NUM];
++	void *private_data;
++};
++
++static inline void cix_dsp_set_data(struct cix_dsp_ipc *dsp_ipc, void *data)
++{
++	if (!dsp_ipc)
++		return;
++
++	dsp_ipc->private_data = data;
++}
++
++static inline void *cix_dsp_get_data(struct cix_dsp_ipc *dsp_ipc)
++{
++	if (!dsp_ipc)
++		return NULL;
++
++	return dsp_ipc->private_data;
++}
++
++#if IS_ENABLED(CONFIG_CIX_DSP)
++
++int cix_dsp_ipc_send(struct cix_dsp_ipc *ipc, unsigned int idx, u32 op);
++int cix_dsp_request_mbox(struct cix_dsp_ipc *dsp_ipc);
++void cix_dsp_free_mbox(struct cix_dsp_ipc *dsp_ipc);
++
++#else
++
++static inline int cix_dsp_ipc_send(struct cix_dsp_ipc *ipc, unsigned int idx,
++				   u32 op)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int cix_dsp_request_mbox(struct cix_dsp_ipc *dsp_ipc)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline void cix_dsp_free_mbox(struct cix_dsp_ipc *dsp_ipc) {}
++
++#endif
++
++#endif /* _CIX_DSP_IPC_H */
+-- 
+Cixtech
+

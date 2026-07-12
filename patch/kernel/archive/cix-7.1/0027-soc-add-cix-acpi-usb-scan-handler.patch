@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Wed, 1 Apr 2026 11:29:38 +0800
+Subject: soc: add cix acpi usb scan handler
+
+---
+ drivers/soc/cix/Kconfig             | 12 ++
+ drivers/soc/cix/Makefile            |  1 +
+ drivers/soc/cix/cix-acpi-usb-scan.c | 68 ++++++++++
+ 3 files changed, 81 insertions(+)
+
+diff --git a/drivers/soc/cix/Kconfig b/drivers/soc/cix/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/soc/cix/Kconfig
++++ b/drivers/soc/cix/Kconfig
+@@ -15,3 +15,15 @@ config CIX_ACPI_RESOURCE_LOOKUP
+ 	  Required for CIX Sky1 ACPI boot with drivers that use
+ 	  platform_get_resource_byname() or devm_reset_control_get().
+ 
++config CIX_ACPI_USB_SCAN
++	bool "CIX ACPI USB scan handler"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on ACPI
++	default ARCH_CIX
++	help
++	  Block PNP0D10 (generic xHCI) platform device creation on CIX Sky1
++	  so the vendor USB driver chain (cdnsp-sky1 + cdnsp-plat) can own
++	  the hardware instead of xhci-plat.
++
++	  Required for proper USB controller initialization under ACPI boot.
++
+diff --git a/drivers/soc/cix/Makefile b/drivers/soc/cix/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/soc/cix/Makefile
++++ b/drivers/soc/cix/Makefile
+@@ -1,2 +1,3 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-$(CONFIG_CIX_ACPI_RESOURCE_LOOKUP)	+= cix-acpi-resource-lookup.o
++obj-$(CONFIG_CIX_ACPI_USB_SCAN)		+= cix-acpi-usb-scan.o
+diff --git a/drivers/soc/cix/cix-acpi-usb-scan.c b/drivers/soc/cix/cix-acpi-usb-scan.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/cix/cix-acpi-usb-scan.c
+@@ -0,0 +1,68 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * ACPI scan handler to block PNP0D10 (generic xHCI) on CIX Sky1.
++ *
++ * The Sky1 DSDT defines both PNP0D10 (generic xHCI) and CIXH2030/CIXH2031
++ * (vendor USB wrapper/controller) for each USB port, with overlapping MMIO
++ * on the xHCI register block.  The vendor driver chain (cdnsp-sky1 for
++ * CIXH2030 wrapper → cdnsp-plat for CIXH2031 controller) must own the
++ * hardware for proper initialization including timing prescalers, APB
++ * timeout chicken bits, and PHY lifecycle management.
++ *
++ * Block PNP0D10 platform device creation so xhci-plat doesn't race for
++ * the same MMIO region.  Same pattern as pci-sky1-acpi.c blocking PNP0A08.
++ */
++
++#ifdef CONFIG_ACPI
++
++#include <linux/acpi.h>
++#include <linux/init.h>
++
++static bool sky1_usb_acpi_detected;
++
++static int sky1_usb_scan_attach(struct acpi_device *adev,
++				const struct acpi_device_id *id)
++{
++	if (!sky1_usb_acpi_detected)
++		return 0;
++
++	dev_info(&adev->dev,
++		 "Sky1: blocking PNP0D10, CIXH2030/CIXH2031 will handle USB\n");
++	return 1;
++}
++
++static const struct acpi_device_id sky1_usb_scan_ids[] = {
++	{ "PNP0D10", 0 },
++	{ },
++};
++
++static struct acpi_scan_handler sky1_usb_scan_handler = {
++	.ids = sky1_usb_scan_ids,
++	.attach = sky1_usb_scan_attach,
++};
++
++static int __init sky1_usb_acpi_init(void)
++{
++	struct acpi_table_header *header;
++
++	if (acpi_disabled)
++		return 0;
++
++	/* Use MCFG OEM ID to identify Sky1, same as PCIe scan handler */
++	if (ACPI_FAILURE(acpi_get_table(ACPI_SIG_MCFG, 0, &header)))
++		return 0;
++
++	sky1_usb_acpi_detected = !memcmp(header->oem_id, "CIXTEK", 6) &&
++				  !memcmp(header->oem_table_id, "SKY1EDK2", 8);
++	acpi_put_table(header);
++
++	if (!sky1_usb_acpi_detected)
++		return 0;
++
++	pr_info("Sky1 USB: registering PNP0D10 scan handler\n");
++	return acpi_scan_add_handler(&sky1_usb_scan_handler);
++}
++/* Must run before subsys_initcall(acpi_init) which creates platform devices */
++arch_initcall(sky1_usb_acpi_init);
++
++#endif /* CONFIG_ACPI */
+-- 
+Cixtech
+

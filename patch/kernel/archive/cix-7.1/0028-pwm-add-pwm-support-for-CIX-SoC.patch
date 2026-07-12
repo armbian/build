@@ -1,0 +1,299 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 30 Apr 2026 11:35:14 +0800
+Subject: pwm: add pwm support for CIX SoC
+
+---
+ drivers/pwm/Kconfig    |   9 +
+ drivers/pwm/Makefile   |   1 +
+ drivers/pwm/pwm-sky1.c | 250 ++++++++++
+ 3 files changed, 260 insertions(+)
+
+diff --git a/drivers/pwm/Kconfig b/drivers/pwm/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/pwm/Kconfig
++++ b/drivers/pwm/Kconfig
+@@ -842,6 +842,15 @@ config PWM_XILINX
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called pwm-xilinx.
+ 
++ config PWM_SKY1
++	tristate "CIX Sky1 PWM support"
++	depends on ARCH_CIX || COMPILE_TEST
++	help
++	  PWM driver support for CIX Sky1 SoCs.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called pwm-sky1.
++
+  config RUST_PWM_ABSTRACTIONS
+ 	bool
+ 	depends on RUST
+diff --git a/drivers/pwm/Makefile b/drivers/pwm/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/pwm/Makefile
++++ b/drivers/pwm/Makefile
+@@ -77,3 +77,4 @@ obj-$(CONFIG_PWM_TWL_LED)	+= pwm-twl-led.o
+ obj-$(CONFIG_PWM_VISCONTI)	+= pwm-visconti.o
+ obj-$(CONFIG_PWM_VT8500)	+= pwm-vt8500.o
+ obj-$(CONFIG_PWM_XILINX)	+= pwm-xilinx.o
++obj-$(CONFIG_PWM_SKY1) += pwm-sky1.o
+diff --git a/drivers/pwm/pwm-sky1.c b/drivers/pwm/pwm-sky1.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/pwm/pwm-sky1.c
+@@ -0,0 +1,250 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * simple driver for PWM (Pulse Width Modulator) controller
++ * Ported to mainline 6.18+ PWM API
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pwm.h>
++#include <linux/sysfb.h>
++#include <linux/slab.h>
++#include <linux/acpi.h>
++#include <linux/reset.h>
++#include <linux/pm_runtime.h>
++#include <linux/pm.h>
++#include <linux/pinctrl/consumer.h>
++
++/* PWM registers */
++#define TCTL		0x0024	/* Control register for PWM */
++#define PWMH_RW		0x0028	/* Contains PWM_HIGH_TIME value */
++#define PWMPRD_RW	0x002C	/* Contains PWM_PERIOD value */
++
++/* Timer function mode */
++#define PWM_MODE	0x3	/* PWM mode */
++
++/* TCTL register bits */
++#define ENABLE		(1 << 17)	/* Enable PWM */
++#define ENPWM		(1 << 14)	/* Enable PWM output */
++
++struct pwm_sky1_chip {
++	struct clk *pclk;
++	struct clk *tclk;
++	void __iomem *mmio_base;
++	struct reset_control *func_reset;
++};
++
++static inline struct pwm_sky1_chip *to_pwm_sky1_chip(struct pwm_chip *chip)
++{
++	return pwmchip_get_drvdata(chip);
++}
++
++static int pwm_sky1_clk_prepare_enable(struct pwm_sky1_chip *sky1)
++{
++	int ret;
++
++	ret = clk_prepare_enable(sky1->pclk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(sky1->tclk);
++	if (ret) {
++		clk_disable_unprepare(sky1->pclk);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void pwm_sky1_clk_disable_unprepare(struct pwm_sky1_chip *sky1)
++{
++	clk_disable_unprepare(sky1->tclk);
++	clk_disable_unprepare(sky1->pclk);
++}
++
++static int pwm_sky1_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
++			      struct pwm_state *state)
++{
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	u64 clk_rate;
++	u32 cr, pwmh, pwmprd;
++
++	cr = readl(sky1->mmio_base + TCTL);
++	pwmh = readl(sky1->mmio_base + PWMH_RW);
++	pwmprd = readl(sky1->mmio_base + PWMPRD_RW);
++
++	clk_rate = clk_get_rate(sky1->tclk);
++
++	if (clk_rate)
++		state->period = DIV_ROUND_UP_ULL(1000000000ULL * pwmprd, clk_rate);
++	else
++		state->period = 0;
++
++	if (clk_rate)
++		state->duty_cycle = DIV_ROUND_UP_ULL(1000000000ULL * pwmh, clk_rate);
++	else
++		state->duty_cycle = 0;
++
++	state->enabled = (cr & ENABLE) && (cr & ENPWM);
++	state->polarity = PWM_POLARITY_NORMAL;
++
++	return 0;
++}
++
++static int pwm_sky1_apply(struct pwm_chip *chip, struct pwm_device *pwm,
++			  const struct pwm_state *state)
++{
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	u64 clk_rate;
++	unsigned long pwmh, pwmprd;
++	u32 cr;
++
++	clk_rate = clk_get_rate(sky1->tclk);
++	if (!clk_rate)
++		return -EINVAL;
++
++	/* Disable PWM for configure */
++	cr = readl(sky1->mmio_base + TCTL);
++	cr &= ~(ENPWM | ENABLE);
++	writel(cr, sky1->mmio_base + TCTL);
++
++	pwmprd = DIV_ROUND_UP_ULL(clk_rate * state->period, 1000000000ULL);
++	pwmh = DIV_ROUND_UP_ULL(clk_rate * state->duty_cycle, 1000000000ULL);
++
++	writel(pwmprd, sky1->mmio_base + PWMPRD_RW);
++	writel(pwmh, sky1->mmio_base + PWMH_RW);
++
++	if (state->enabled) {
++		cr = readl(sky1->mmio_base + TCTL);
++		cr |= PWM_MODE | ENPWM | ENABLE;
++		writel(cr, sky1->mmio_base + TCTL);
++	}
++
++	return 0;
++}
++
++static const struct pwm_ops pwm_sky1_ops = {
++	.apply = pwm_sky1_apply,
++	.get_state = pwm_sky1_get_state,
++};
++
++static int __maybe_unused sky1_pwm_suspend(struct device *dev)
++{
++	struct pwm_chip *chip = dev_get_drvdata(dev);
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++
++	pwm_sky1_clk_disable_unprepare(sky1);
++	pinctrl_pm_select_sleep_state(dev);
++
++	return 0;
++}
++
++static int __maybe_unused sky1_pwm_resume(struct device *dev)
++{
++	struct pwm_chip *chip = dev_get_drvdata(dev);
++	struct pwm_sky1_chip *sky1 = to_pwm_sky1_chip(chip);
++	int ret;
++
++	ret = pwm_sky1_clk_prepare_enable(sky1);
++	if (ret)
++		return ret;
++
++	pinctrl_pm_select_default_state(dev);
++
++	return 0;
++}
++
++static SIMPLE_DEV_PM_OPS(sky1_pwm_dev_ops, sky1_pwm_suspend, sky1_pwm_resume);
++
++static const struct of_device_id pwm_sky1_dt_ids[] = {
++	{ .compatible = "cix,sky1-pwm", },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, pwm_sky1_dt_ids);
++
++static const struct acpi_device_id pwm_sky1_acpi_match[] = {
++	{ "CIXH2011", 0 },
++	{ },
++};
++MODULE_DEVICE_TABLE(acpi, pwm_sky1_acpi_match);
++
++static int pwm_sky1_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct pwm_sky1_chip *sky1;
++	struct pwm_chip *chip;
++	int ret;
++	u32 pwmcr;
++
++	chip = devm_pwmchip_alloc(dev, 1, sizeof(*sky1));
++	if (IS_ERR(chip))
++		return PTR_ERR(chip);
++
++	sky1 = to_pwm_sky1_chip(chip);
++
++	sky1->pclk = devm_clk_get(dev, "fch_pwm_apb_clk");
++	if (IS_ERR(sky1->pclk))
++		return dev_err_probe(dev, PTR_ERR(sky1->pclk),
++				     "failed to get apb clock\n");
++
++	sky1->tclk = devm_clk_get(dev, "fch_pwm_func_clk");
++	if (IS_ERR(sky1->tclk))
++		return dev_err_probe(dev, PTR_ERR(sky1->tclk),
++				     "failed to get func clock\n");
++
++	sky1->func_reset = devm_reset_control_get_optional_shared(dev, "func_reset");
++	if (IS_ERR(sky1->func_reset))
++		return dev_err_probe(dev, PTR_ERR(sky1->func_reset),
++				     "failed to get reset\n");
++
++	sky1->mmio_base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(sky1->mmio_base))
++		return PTR_ERR(sky1->mmio_base);
++
++	chip->ops = &pwm_sky1_ops;
++	platform_set_drvdata(pdev, chip);
++
++	ret = pwm_sky1_clk_prepare_enable(sky1);
++	if (ret)
++		return ret;
++
++	pwmcr = readl(sky1->mmio_base + TCTL);
++
++	/* Check if PWM was already initialized by UEFI */
++	if (sysfb_primary_display.screen.lfb_linelength && (pwmcr & (PWM_MODE | ENABLE | ENPWM)))
++		return devm_pwmchip_add(dev, chip);
++
++	/* Configure timer to PWM mode */
++	writel(PWM_MODE, sky1->mmio_base + TCTL);
++
++	return devm_pwmchip_add(dev, chip);
++}
++
++static void pwm_sky1_remove(struct platform_device *pdev)
++{
++	/* devm handles cleanup */
++}
++
++static struct platform_driver sky1_pwm_driver = {
++	.driver = {
++		.name = "pwm-sky1",
++		.of_match_table = pwm_sky1_dt_ids,
++		.acpi_match_table = ACPI_PTR(pwm_sky1_acpi_match),
++		.pm = &sky1_pwm_dev_ops,
++	},
++	.probe = pwm_sky1_probe,
++	.remove = pwm_sky1_remove,
++};
++module_platform_driver(sky1_pwm_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Jerry Zhu <jerry.zhu@cixtech.com>");
++MODULE_DESCRIPTION("CIX Sky1 PWM driver");
+-- 
+Cixtech
+
