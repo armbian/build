@@ -447,18 +447,22 @@ function armbian_kernel_config__enable_netfilter_xtables_legacy() {
 # Filesystems enabled:
 #   BTRFS_FS          - Btrfs filesystem with copy-on-write and snapshots
 #   EXT4_FS           - Extended filesystem 4 (standard Linux filesystem)
+#   F2FS_FS           - Flash-Friendly File System (armbian-install root option)
 #   EROFS_FS          - Enhanced Read-Only File System (useful for Docker images)
 #
 # Options enabled:
 #   BTRFS_FS_POSIX_ACL - POSIX Access Control Lists for Btrfs
 #   EXT4_FS_POSIX_ACL  - POSIX Access Control Lists for ext4
 #   EXT4_FS_SECURITY   - Security extensions for ext4
+#   F2FS_FS_SECURITY   - Security extensions for f2fs
 function armbian_kernel_config__enable_various_filesystems() {
 	opts_m+=("BTRFS_FS")           # Enables Btrfs filesystem (copy-on-write, snapshots)
 	opts_y+=("BTRFS_FS_POSIX_ACL") # Enables POSIX ACL support for Btrfs
 	opts_y+=("EXT4_FS")            # Enables ext4 filesystem support
 	opts_y+=("EXT4_FS_POSIX_ACL")  # Enables POSIX ACL support for ext4
 	opts_y+=("EXT4_FS_SECURITY")   # Enables security extensions for ext4
+	opts_m+=("F2FS_FS")            # Flash-Friendly FS - module, like btrfs (armbian-install root option)
+	opts_y+=("F2FS_FS_SECURITY")   # Enables security extensions for f2fs
 	opts_m+=("EROFS_FS")           # Enhanced Read-Only FS (useful for Docker images)
 }
 
