@@ -24,6 +24,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+from multiprocessing import Manager, Queue
 
 import git
 
@@ -44,6 +45,9 @@ class ParallelPatchResult:
     patch_output: str = ""
     error_message: Optional[str] = None
     memory_mb: Optional[float] = None
+    diffstats: Optional[str] = None  # e.g., "(+2/-0)[1M]"
+    files: Optional[str] = None  # e.g., "bes2600.c" or "file1.c, file2.h"
+    commit_messages: List[str] = field(default_factory=list)  # Commit details from worker
 
 
 @dataclass
@@ -155,7 +159,7 @@ class OverlayFSMount:
                                 with open(git_file, 'w') as f:
                                     f.write(f"gitdir: {copied_metadata_dir}")
 
-                                log.info(f"Copied git metadata for worker {self.worker_id}: {absolute_gitdir} -> {copied_metadata_dir}")
+                                log.debug(f"Copied git metadata for worker {self.worker_id}: {absolute_gitdir} -> {copied_metadata_dir}")
                             else:
                                 # Not a worktree, just fix the path
                                 with open(git_file, 'w') as f:
@@ -239,7 +243,7 @@ def cleanup_stale_mounts():
                 parts = line.split()
                 if len(parts) >= 2:
                     mount_point = parts[1]
-                    log.info(f"Cleaning up stale mount: {mount_point}")
+                    log.debug(f"Cleaning up stale mount: {mount_point}")
                     try:
                         subprocess.run(["umount", mount_point], capture_output=True, check=False)
                         # Try to remove the directory
@@ -276,7 +280,7 @@ def cleanup_stale_mounts():
                         import re as re_module
                         if re_module.search(r'-worker-\d+$', dirname):
                             worker_dir = os.path.join(git_worktrees_base, dirname)
-                            log.info(f"Cleaning up stale git metadata directory: {worker_dir}")
+                            log.debug(f"Cleaning up stale git metadata directory: {worker_dir}")
                             try:
                                 shutil.rmtree(worker_dir)
                             except Exception as e:
@@ -359,12 +363,16 @@ def calculate_optimal_workers() -> int:
     # Get CPU count
     cpu_count = os.cpu_count() or 1
 
-    # With overlayfs + git metadata copying, we have no git contention
-    # Use all CPU cores for maximum parallelization!
-    workers = max(1, min(memory_based_workers, cpu_count))
+    # I/O bound constraint: git + overlayfs don't scale beyond ~32 workers
+    # Even with many CPU cores, filesystem operations become the bottleneck
+    io_cap = 32
+
+    # With overlayfs + git metadata copying, we have no git contention BETWEEN workers
+    # But git operations themselves are I/O bound and don't scale infinitely
+    workers = max(1, min(memory_based_workers, cpu_count, io_cap))
 
     log.info(f"System resources: {cpu_count} CPUs, {available_memory_gb:.2f} GB available memory")
-    log.info(f"Calculated optimal workers: {workers} (using all CPU cores with isolated git metadata)")
+    log.info(f"Calculated optimal workers: {workers} (capped at {io_cap} for I/O-bound git operations)")
 
     return workers
 
@@ -476,7 +484,7 @@ def export_commit_as_patch(working_dir: str, commit_hash: str, use_index_rewrite
     return patch_content
 
 
-def _process_worker_patches_sequential(worker_items: List[PatchWorkItem]) -> List[ParallelPatchResult]:
+def _process_worker_patches_sequential(worker_items: List[PatchWorkItem], progress_queue=None) -> List[ParallelPatchResult]:
     """
     Process all patches assigned to a single worker sequentially.
 
@@ -494,6 +502,7 @@ def _process_worker_patches_sequential(worker_items: List[PatchWorkItem]) -> Lis
 
     Args:
         worker_items: List of PatchWorkItem objects to process sequentially
+        progress_queue: Optional multiprocessing queue for real-time progress updates
 
     Returns:
         List of ParallelPatchResult objects
@@ -511,14 +520,25 @@ def _process_worker_patches_sequential(worker_items: List[PatchWorkItem]) -> Lis
         try:
             result = process_single_patch_worker(work_item)
             worker_results.append(result)
+
+            # Report progress immediately if queue is available
+            if progress_queue is not None:
+                progress_queue.put(('progress', result))
+
         except Exception as e:
             log.error(f"Exception processing {work_item.patch_id}: {e}")
-            worker_results.append(ParallelPatchResult(
+            error_result = ParallelPatchResult(
                 patch_index=work_item.patch_index,
                 patch_id=work_item.patch_id,
                 success=False,
                 error_message=str(e)
-            ))
+            )
+            worker_results.append(error_result)
+
+            # Report errors immediately too
+            if progress_queue is not None:
+                progress_queue.put(('progress', error_result))
+
     return worker_results
 
 
@@ -545,7 +565,8 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
         ParallelPatchResult with processing outcome
     """
     start_memory = get_memory_mb()
-    problems = []
+    # Start with original problems from parsing, append worker findings
+    problems = item.patch_data.get('original_problems', [])
     patch_output = ""
 
     try:
@@ -576,6 +597,13 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
         do_not_commit_regexes = item.patch_data.get('do_not_commit_regexes', [])
         add_rebase_tags = item.patch_data.get('add_rebase_tags', True)
 
+        # Extract diffstats and files for progress display
+        diffstats = item.patch_data.get('diffstats', '')
+        files = item.patch_data.get('files', '')
+
+        # Initialize commit_messages list for tracking progress
+        commit_messages = []
+
         log.debug(f"[Worker {item.mount_path}] Processing patch {item.patch_index}: {patch_id}")
 
         # STEP 1: Configure git safe.directory and reset git tree
@@ -592,19 +620,20 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
 
             if item.is_first_in_sequence:
                 # Hard reset to base revision - only for first patch in each dependency group
+                # Base tree is pre-cleaned, so git clean is lighter (skip ignored files)
                 repo.git.reset('--hard', item.base_revision)
-                repo.git.clean('-fdx')
+                repo.git.clean('-fd')  # Skip -x (ignored files) since base is already clean
 
                 # Create persistent worker branch (will be used for all patches in this worker)
                 # Force=True in case branch already exists from previous group
                 repo.create_head(item.worker_branch_name, item.base_revision, force=True)
                 repo.heads[item.worker_branch_name].checkout()
-                log.info(f"[PATCH {item.patch_index}] Reset git tree to {item.base_revision} and checked out worker branch {item.worker_branch_name} (group {item.group_id})")
+                log.debug(f"[PATCH {item.patch_index}] Reset git tree to {item.base_revision} and checked out worker branch {item.worker_branch_name} (group {item.group_id})")
             else:
                 # Not first patch in group - build on cumulative changes from previous patches in SAME group
                 # Worker branch already exists and is checked out from previous patch in this group
                 current_head = repo.head.commit.hexsha[:8]
-                log.info(f"[PATCH {item.patch_index}] Building on cumulative changes for patch {patch_id} (worker branch: {item.worker_branch_name}, group {item.group_id}, current HEAD: {current_head})")
+                log.debug(f"[PATCH {item.patch_index}] Building on cumulative changes for patch {patch_id} (worker branch: {item.worker_branch_name}, group {item.group_id}, current HEAD: {current_head})")
 
                 # Ensure we're on the worker branch
                 if repo.active_branch.name != item.worker_branch_name:
@@ -753,20 +782,44 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
                 if problems:
                     commit_message += f"\n\nProblems: {', '.join(problems)}"
 
+            # Track commit details for progress display (matching serial format)
+            commit_messages.append(f"Committing changes to git: {patch_id_str if add_rebase_tags else patch_id}")
+
+            # Track files being added (for new files)
+            for file_name in all_file_names_touched:
+                if file_name in created_file_names:
+                    commit_messages.append(f"Adding file {file_name} to git")
+
             # Create commit with proper author and date
             author = git.Actor(from_name, from_email)
             committer = git.Actor("Armbian AutoPatcher", "patching@armbian.com")
 
-            commit = repo.index.commit(
-                message=commit_message,
-                author=author,
-                committer=committer,
-                author_date=date_str,
-                commit_date=date_str,
-                skip_hooks=True
-            )
+            # Retry logic for transient git race conditions (alternates sharing)
+            # Error: [Errno 2] on temp object files = concurrent git writes
+            max_retries = 3
+            commit = None
+            for attempt in range(max_retries):
+                try:
+                    commit = repo.index.commit(
+                        message=commit_message,
+                        author=author,
+                        committer=committer,
+                        author_date=date_str,
+                        commit_date=date_str,
+                        skip_hooks=True
+                    )
+                    break  # Success
+                except FileNotFoundError as e:
+                    if attempt < max_retries - 1:
+                        log.warning(f"Git commit race condition on {patch_id} (attempt {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(0.1 * (2 ** attempt))  # Exponential backoff: 100ms, 200ms, 400ms
+                    else:
+                        raise  # Re-raise after final attempt
 
             commit_hash = commit.hexsha
+
+            # Track successful commit
+            commit_messages.append(f"Committed changes to git: {commit_hash}")
 
             # Check for empty commit
             if commit.stats.total["files"] == 0:
@@ -780,7 +833,7 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
                     error_message="Commit ended up empty"
                 )
 
-            log.info(f"Committed changes for {patch_id}: {commit_hash}")
+            log.debug(f"Committed changes for {patch_id}: {commit_hash}")
 
         except Exception as commit_error:
             log.error(f"Failed to commit changes for {patch_id}: {commit_error}")
@@ -803,8 +856,10 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
                 preview = rewritten_patch[:200] if rewritten_patch else "None"
                 log.debug(f"Exported commit {commit_hash} as normalized patch for {patch_id}. Preview: {preview}")
             except Exception as export_error:
-                log.warning(f"Failed to export commit as patch for {patch_id}: {export_error}")
-                problems.append("export_failed")
+                # When rewriting patches, export failure is critical - re-raise to fail the operation
+                # This matches serial behavior where export exceptions propagate
+                log.error(f"Failed to export commit as patch for {patch_id}: {export_error}")
+                raise
 
         end_memory = get_memory_mb()
 
@@ -816,7 +871,10 @@ def process_single_patch_worker(item: PatchWorkItem) -> ParallelPatchResult:
             rewritten_patch=rewritten_patch,
             problems=problems,
             patch_output=patch_output,
-            memory_mb=end_memory - start_memory
+            memory_mb=end_memory - start_memory,
+            diffstats=diffstats,
+            files=files,
+            commit_messages=commit_messages
         )
 
     except Exception as e:
@@ -877,6 +935,9 @@ def prepare_patch_data(patch_obj, root_makefile_date: float, apply_options: dict
         'do_not_commit_files': pconfig.patches_to_git_config.do_not_commit_files if pconfig else [],
         'do_not_commit_regexes': pconfig.patches_to_git_config.do_not_commit_regexes if pconfig else [],
         'add_rebase_tags': apply_options.get('add_rebase_tags', True),
+        'original_problems': list(patch_obj.problems),
+        'diffstats': getattr(patch_obj, 'one_line_patch_stats', lambda: '')() if not patch_obj.failed_to_parse else '',
+        'files': ', '.join(list(patch_obj.patched_file_stats_dict.keys())[:3]) if hasattr(patch_obj, 'patched_file_stats_dict') and patch_obj.patched_file_stats_dict else '',
     }
 
     return patch_data
@@ -925,8 +986,25 @@ def group_patches_by_implicit_dependencies(patches: List) -> List[List]:
 
     # Step 1: Build file -> patches mapping
     file_to_patches = {}  # file_path -> list of patch indices
+    unknown_file_patches = []  # Patches with failed_to_parse or autogen (no file info)
+
     for patch_idx, patch in enumerate(patches):
+        # Track patches with unknown files (failed_to_parse or autogen)
+        # These patches cannot be safely parallelized since we don't know what they touch
+        if getattr(patch, 'failed_to_parse', False) or getattr(patch.parent.patch_dir, 'is_autogen_dir', False):
+            unknown_file_patches.append(patch_idx)
+            log.debug(f"Patch {patch_idx} ({patch.parent.relative_dirs_and_base_file_name}) has unknown files")
+            continue
+
+        # Include all_file_names_touched (new names after rename)
         for file_path in patch.all_file_names_touched:
+            if file_path not in file_to_patches:
+                file_to_patches[file_path] = []
+            file_to_patches[file_path].append(patch_idx)
+
+        # Include renamed_file_names_source (old names before rename)
+        # Critical: patches modifying the old name must depend on this rename
+        for file_path in patch.renamed_file_names_source:
             if file_path not in file_to_patches:
                 file_to_patches[file_path] = []
             file_to_patches[file_path].append(patch_idx)
@@ -962,6 +1040,16 @@ def group_patches_by_implicit_dependencies(patches: List) -> List[List]:
 
     log.info(f"File-based dependency: Found {connections} file-sharing connections")
 
+    # Handle unknown-file patches conservatively
+    # These patches (failed_to_parse or autogen) have no file information
+    # They MUST be serialized with each other to avoid potential conflicts
+    if unknown_file_patches:
+        log.info(f"File-based dependency: {len(unknown_file_patches)} patches with unknown files (serializing)")
+        # Union all unknown-file patches together into a single sequential chain
+        for i in range(len(unknown_file_patches) - 1):
+            union(unknown_file_patches[i], unknown_file_patches[i + 1])
+            connections += 1
+
     # Step 3: Group patches by their component root
     groups_dict = {}  # root -> list of patches
     for patch_idx in range(len(patches)):
@@ -981,10 +1069,10 @@ def group_patches_by_implicit_dependencies(patches: List) -> List[List]:
     total_groups = len(groups)
 
     # DEBUG: Log group composition to verify grouping is working
-    log.info(f"File-based dependency: Sample group composition:")
+    log.debug(f"File-based dependency: Sample group composition:")
     for i, group in enumerate(groups[:5]):  # Log first 5 groups
         patch_names = [f"{p.parent.relative_dirs_and_base_file_name}(:{p.counter})" for p in group]
-        log.info(f"  Group {i} ({len(group)} patches): {', '.join(patch_names[:3])}{'...' if len(patch_names) > 3 else ''}")
+        log.debug(f"  Group {i} ({len(group)} patches): {', '.join(patch_names[:3])}{'...' if len(patch_names) > 3 else ''}")
     independent_groups = sum(1 for g in groups if len(g) == 1)
     chained_groups = total_groups - independent_groups
 
@@ -1037,21 +1125,39 @@ def process_patches_parallel(
         log.debug("Cleaning up any stale overlayfs mounts...")
         cleanup_stale_mounts()
 
+        # IMPORTANT: Clean base git tree ONCE before creating mounts
+        # This prevents N workers from each doing expensive git clean traversals
+        # Overlayfs mounts inherit this clean state via lowerdir
+        log.debug(f"Cleaning base git tree at {git_work_dir} (single traversal)...")
+        try:
+            base_repo = git.Repo(git_work_dir, odbt=git.GitCmdObjectDB)
+            base_repo.git.reset('--hard', base_revision)
+            base_repo.git.clean('-fdx')
+            log.debug("Base git tree cleaned successfully")
+        except Exception as e:
+            log.error(f"Failed to clean base git tree: {e}")
+            return results
+
         # Calculate optimal workers if not specified
         if num_workers == 0:
             num_workers = calculate_optimal_workers()
 
         # Group patches based on dependencies
-        log.info(f"Grouping {len(patches)} patches for parallel processing...")
+        log.debug(f"Grouping {len(patches)} patches for parallel processing...")
         patch_groups = group_patches_by_series(patches, LINUXFAMILY)
         group_info = f"{len(patch_groups)} groups"
         if len(patch_groups) == len(patches):
             group_info += " (all independent)"
-        log.info(f"Created {group_info} for parallel processing")
+        log.debug(f"Created {group_info} for parallel processing")
+
+        # Cap workers at number of groups - no point in more workers than groups
+        if num_workers > len(patch_groups):
+            log.debug(f"Capping workers from {num_workers} to {len(patch_groups)} (number of groups)")
+            num_workers = len(patch_groups)
 
         # Create overlayfs mounts for parallel workers
         temp_base = tempfile.mkdtemp(prefix="armbian-patch-parallel-")
-        log.info(f"Creating {num_workers} overlayfs mounts in {temp_base}")
+        log.debug(f"Creating {num_workers} overlayfs mounts in {temp_base}")
 
         for i in range(num_workers):
             mount_path = os.path.join(temp_base, f"worker-{i}")
@@ -1072,7 +1178,7 @@ def process_patches_parallel(
 
         # Adjust worker count to actual mounts created
         actual_workers = len(mounts)
-        log.info(f"Using {actual_workers} workers")
+        log.debug(f"Using {actual_workers} workers")
 
         # Prepare work items for all patches
         # Assign entire groups to workers (not individual patches)
@@ -1092,7 +1198,8 @@ def process_patches_parallel(
             worker_id = group_idx % actual_workers
             mount = mounts[worker_id]
 
-            for patch_idx, patch in enumerate(group):
+            for patch in group:
+                total_patches += 1
                 patch_data = prepare_patch_data(patch, root_makefile_date, apply_options, pconfig)
 
                 # CRITICAL: Use the ORIGINAL patch position in the input list as patch_index
@@ -1110,39 +1217,70 @@ def process_patches_parallel(
                 )
                 worktree_patch_groups[worker_id].append(work_item)
 
-        log.info(f"Starting parallel processing with {actual_workers} workers...")
-        log.info(f"Each worker processes its assigned patches sequentially")
+        log.debug(f"Starting parallel processing with {actual_workers} workers...")
+        log.debug(f"Each worker processes its assigned patches sequentially")
         start_time = time.time()
 
         # Process each worker's patches in parallel using processes (not threads)
         # Processes bypass Python's GIL for true CPU parallelism
         completed_count = 0
 
+        # Use Manager Queue for progress updates to enable real-time feedback
+        manager = Manager()
+        progress_queue = manager.Queue() if progress_callback else None
+
         with ProcessPoolExecutor(max_workers=actual_workers) as executor:
             # Submit each worker's patch group to be processed sequentially
             future_to_worker = {}
             for worker_id, worker_items in enumerate(worktree_patch_groups):
                 if worker_items:  # Only submit if there are patches to process
-                    future = executor.submit(_process_worker_patches_sequential, worker_items)
+                    future = executor.submit(_process_worker_patches_sequential, worker_items, progress_queue)
                     future_to_worker[future] = worker_id
 
-            # Collect results from all workers
-            for future in as_completed(future_to_worker):
-                worker_id = future_to_worker[future]
-                try:
-                    worker_results = future.result()
-                    results.extend(worker_results)
-                    completed_count += len(worker_results)
+            # Monitor progress queue for real-time updates while workers run
+            # This gives immediate feedback instead of waiting for batch completion
+            pending_futures = set(future_to_worker.keys())
+            reported_indices = set()  # Track which patches we've already reported
 
-                    # Update progress callback if provided
-                    if progress_callback:
+            while pending_futures:
+                # Process all available progress updates first (non-blocking)
+                if progress_queue:
+                    while not progress_queue.empty():
+                        try:
+                            item = progress_queue.get_nowait()
+                            if item[0] == 'progress':
+                                result = item[1]
+                                if result.patch_index not in reported_indices:
+                                    reported_indices.add(result.patch_index)
+                                    completed_count += 1
+                                    progress_callback(completed_count, total_patches, result)
+                        except:
+                            break  # Queue empty, exit loop
+
+                # Check for completed futures (workers that finished)
+                done_futures = [f for f in pending_futures if f.done()]
+                for future in done_futures:
+                    worker_id = future_to_worker[future]
+                    pending_futures.remove(future)
+                    try:
+                        worker_results = future.result()
+                        results.extend(worker_results)
+
+                        # Report any remaining results from this worker that weren't reported via queue
                         for result in worker_results:
-                            progress_callback(completed_count, total_patches, result)
+                            if result.patch_index not in reported_indices:
+                                reported_indices.add(result.patch_index)
+                                completed_count += 1
+                                if progress_callback:
+                                    progress_callback(completed_count, total_patches, result)
 
-                    log.debug(f"Worker {worker_id} completed {len(worker_results)} patches")
+                        log.debug(f"Worker {worker_id} completed {len(worker_results)} patches")
+                    except Exception as e:
+                        log.error(f"Exception in worker {worker_id}: {e}")
 
-                except Exception as e:
-                    log.error(f"Exception in worker {worker_id}: {e}")
+                # Small sleep to avoid busy-waiting if nothing to do
+                if not done_futures and (not progress_queue or progress_queue.empty()):
+                    time.sleep(0.05)
 
         # Sort results by patch index for consistent output
         results.sort(key=lambda r: r.patch_index)
@@ -1159,13 +1297,17 @@ def process_patches_parallel(
         if mem_results:
             avg_mem = sum(r.memory_mb for r in mem_results) / len(mem_results)
             max_mem = max(r.memory_mb for r in mem_results)
-            log.info(f"Avg memory per patch: {avg_mem:.1f} MB, Max: {max_mem:.1f} MB")
+            log.debug(f"Avg memory per patch: {avg_mem:.1f} MB, Max: {max_mem:.1f} MB")
 
     finally:
         # Clean up overlayfs mounts
-        log.info("Cleaning up overlayfs mounts...")
+        log.debug("Cleaning up overlayfs mounts...")
         for overlay in mounts:
             overlay.unmount()
+
+        # Clean up manager
+        if 'manager' in locals():
+            manager.shutdown()
 
         # Remove temp directory
         try:
@@ -1204,7 +1346,7 @@ def update_patches_from_parallel_results(
     rewrite_patches_in_place = apply_options.get('rewrite_patches', False)
 
     # Log for debugging: track patches vs results
-    log.info(f"update_patches_from_parallel_results: {len(patches)} patches, {len(parallel_results)} results")
+    log.debug(f"update_patches_from_parallel_results: {len(patches)} patches, {len(parallel_results)} results")
 
     # Create a map of patch_index to result for safe lookup
     results_by_index = {result.patch_index: result for result in parallel_results}
