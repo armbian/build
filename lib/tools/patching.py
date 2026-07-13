@@ -318,6 +318,9 @@ if apply_patches:
 		if PARALLEL_WORKERS:
 			try:
 				num_workers = int(PARALLEL_WORKERS)
+				if num_workers < 0:
+					log.warning(f"Invalid PARALLEL_WORKERS value: {PARALLEL_WORKERS} (negative), using auto-calculate")
+					num_workers = patching_parallel.calculate_optimal_workers()
 			except ValueError:
 				log.warning(f"Invalid PARALLEL_WORKERS value: {PARALLEL_WORKERS}, using auto-calculate")
 				num_workers = patching_parallel.calculate_optimal_workers()
@@ -334,12 +337,29 @@ if apply_patches:
 			"root_makefile_date": root_makefile_mtime,
 		}
 
-		# Progress callback for parallel processing
+		# Progress callback for parallel processing - match serial format
 		def progress_callback(completed, total, result):
+			chars_total = len(str(total))
+			counter_str = str(completed).zfill(chars_total)
+
 			if result.success:
-				log.info(f"Progress: {completed}/{total} - {result.patch_id} - OK")
+				# Build output similar to serial mode: -> 008/480: patch_id (+2/-0)[1M] {files}
+				patch_info = f"-> {counter_str}/{total}: {result.patch_id}"
+
+				# Add diffstats and files if available
+				if result.diffstats:
+					patch_info += f" {result.diffstats}"
+				if result.files:
+					patch_info += f" {{{result.files}}}"
+
+				log.info(f"[🔨]   {patch_info}")
+
+				# Add commit messages if available (from worker)
+				if result.commit_messages:
+					for msg in result.commit_messages:
+						log.info(f"[🔨]   {msg}")
 			else:
-				log.warning(f"Progress: {completed}/{total} - {result.patch_id} - FAILED: {result.error_message}")
+				log.warning(f"[🔨]   -> {counter_str}/{total}: {result.patch_id} - FAILED: {result.error_message}")
 
 		# Process patches in parallel
 		parallel_results = patching_parallel.process_patches_parallel(
