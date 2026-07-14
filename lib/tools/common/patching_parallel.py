@@ -182,26 +182,35 @@ class OverlayFSMount:
         Returns:
             True if successful, False otherwise
         """
-        success = True
-
         # Unmount if mounted
         if self.is_mounted:
             try:
                 result = subprocess.run(
                     ["umount", self.mount_path],
-                    capture_output=True, text=True, check=False
+                    capture_output=True, text=True, check=False, timeout=5
                 )
                 if result.returncode != 0:
-                    log.warning(f"Failed to unmount {self.mount_path}: {result.stderr}")
-                    success = False
-                else:
-                    log.debug(f"Unmounted {self.mount_path}")
-                    self.is_mounted = False
+                    log.error(f"Failed to unmount {self.mount_path}: {result.stderr.strip()}")
+                    log.error("Mount still active after unmount attempt. Workers should have released all handles.")
+                    # Debug: check what's holding the mount
+                    try:
+                        lsof = subprocess.run(["lsof", "+c", "0", self.mount_path],
+                                             capture_output=True, text=True, check=False, timeout=2)
+                        if lsof.stdout:
+                            log.debug(f"Open files on mount:\n{lsof.stdout}")
+                    except Exception:
+                        pass
+                    return False
+                log.debug(f"Unmounted {self.mount_path}")
+                self.is_mounted = False
+            except subprocess.TimeoutExpired:
+                log.error(f"umount {self.mount_path} timed out")
+                return False
             except Exception as e:
                 log.warning(f"Failed to unmount {self.mount_path}: {e}")
-                success = False
+                return False
 
-        # Clean up directories
+        # Only clean up directories after successful unmount
         for dir_path in [self.upperdir, self.workdir, self.mount_path]:
             try:
                 if os.path.exists(dir_path):
@@ -217,7 +226,7 @@ class OverlayFSMount:
             except Exception as e:
                 log.warning(f"Failed to remove copied git metadata {self.copied_git_metadata_dir}: {e}")
 
-        return success
+        return True
 
     def __enter__(self):
         """Mount overlayfs on context entry."""
@@ -1069,7 +1078,7 @@ def group_patches_by_implicit_dependencies(patches: List) -> List[List]:
     total_groups = len(groups)
 
     # DEBUG: Log group composition to verify grouping is working
-    log.debug(f"File-based dependency: Sample group composition:")
+    log.debug("File-based dependency: Sample group composition:")
     for i, group in enumerate(groups[:5]):  # Log first 5 groups
         patch_names = [f"{p.parent.relative_dirs_and_base_file_name}(:{p.counter})" for p in group]
         log.debug(f"  Group {i} ({len(group)} patches): {', '.join(patch_names[:3])}{'...' if len(patch_names) > 3 else ''}")
@@ -1218,7 +1227,7 @@ def process_patches_parallel(
                 worktree_patch_groups[worker_id].append(work_item)
 
         log.debug(f"Starting parallel processing with {actual_workers} workers...")
-        log.debug(f"Each worker processes its assigned patches sequentially")
+        log.debug("Each worker processes its assigned patches sequentially")
         start_time = time.time()
 
         # Process each worker's patches in parallel using processes (not threads)
