@@ -1,0 +1,1116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 26 Sep 2024 23:00:02 +0200
+Subject: input: cyttsp4: Add Cypress TMA445 touchscreen driver
+
+This sensor is used on Pocketbook Touch Lux 3 (as part of XD4 toucscreen
+enabled eInk panel). Add support for it.
+
+This driver also implements self calibration, which is necessary to
+perform after installing a new panel into the reader.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/input/touchscreen/Kconfig   |   13 +
+ drivers/input/touchscreen/Makefile  |    1 +
+ drivers/input/touchscreen/cyttsp4.c | 1053 ++++++++++
+ 3 files changed, 1067 insertions(+)
+
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -266,6 +266,19 @@ config TOUCHSCREEN_CYTTSP_SPI
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called cyttsp_spi.
+ 
++config TOUCHSCREEN_CYTTSP4
++	tristate "Cypress TrueTouch Gen4 Touchscreen Driver (I2C)"
++	depends on I2C
++	help
++	  Core driver for Cypress TrueTouch(tm) Standard Product
++	  Generation4 touchscreen controllers.
++
++	  Say Y here if you have a Cypress Gen4 touchscreen.
++
++	  If unsure, say N.
++
++	  To compile this driver as a module, choose M here.
++
+ config TOUCHSCREEN_CYTTSP5
+ 	tristate "Cypress TrueTouch Gen5 Touchscreen Driver"
+ 	depends on I2C
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_TOUCHSCREEN_CY8CTMG110)	+= cy8ctmg110_ts.o
+ obj-$(CONFIG_TOUCHSCREEN_CYTTSP_CORE)	+= cyttsp_core.o
+ obj-$(CONFIG_TOUCHSCREEN_CYTTSP_I2C)	+= cyttsp_i2c.o
+ obj-$(CONFIG_TOUCHSCREEN_CYTTSP_SPI)	+= cyttsp_spi.o
++obj-$(CONFIG_TOUCHSCREEN_CYTTSP4)	+= cyttsp4.o
+ obj-$(CONFIG_TOUCHSCREEN_CYTTSP5)	+= cyttsp5.o
+ obj-$(CONFIG_TOUCHSCREEN_DA9034)	+= da9034-ts.o
+ obj-$(CONFIG_TOUCHSCREEN_DA9052)	+= da9052_tsi.o
+diff --git a/drivers/input/touchscreen/cyttsp4.c b/drivers/input/touchscreen/cyttsp4.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/input/touchscreen/cyttsp4.c
+@@ -0,0 +1,1053 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Cypress TrueTouch V4 I2C touchscreen driver.
++ *
++ * Copyright (c) Ondřej Jirman <megi@xff.cz>
++ */
++
++//#define DEBUG
++
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/input/mt.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/pm.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <linux/bitmap.h>
++#include <linux/bitops.h>
++
++/* Host-mode register and bits */
++#define CY_REG_HST_MODE		0x00
++#define CY_HST_TOGGLE		BIT(7)	/* host toggles after each IRQ */
++#define CY_HST_MODE_CHANGE	BIT(3)
++#define CY_HST_MODE_MASK	(7 << 4)
++#define CY_HST_OPERATE		(0 << 4)
++#define CY_HST_SYSINFO		(1 << 4)
++#define CY_HST_CAT		(2 << 4)
++#define CY_HST_SLEEP		BIT(1)
++#define CY_HST_RESET		BIT(0)
++
++/* CAT command interface */
++#define CY_CAT_CMD_OFS			2	/* cmd byte in CAT-mode map */
++#define CY_CMD_COMPLETE_BIT		BIT(6)	/* set on opcode when done */
++#define CY_CMD_CAT_CALIBRATE_IDACS	0x09
++#define CY_CAL_MUTUAL_SCREEN		0x00
++#define CY_CAL_MUTUAL_BUTTON		0x01
++#define CY_CAL_SELF			0x02
++#define CY_CAL_TIMEOUT_MS		10000	/* self-cap can take 7-8 s */
++#define CY_CAL_POLL_MS			200	/* fallback if no IRQ */
++
++/*
++ * Sysinfo mode header layout (16 bytes at register 0 in sysinfo mode).
++ * Sub-block offsets are taken from bytes within hdr[] directly by code.
++ */
++#define CY_SI_HDR_LEN		16
++
++/* cydata sub-block (firmware identification) */
++#define CY_CYDATA_TTPIDH	0
++#define CY_CYDATA_TTPIDL	1
++#define CY_CYDATA_FW_MAJ	2
++#define CY_CYDATA_FW_MIN	3
++#define CY_CYDATA_BLVER_MAJ	12
++#define CY_CYDATA_BLVER_MIN	13
++#define CY_CYDATA_TTSP_MAJ	17
++#define CY_CYDATA_TTSP_MIN	18
++
++/* pcfg sub-block (panel config) */
++#define CY_PCFG_RES_XH		6
++#define CY_PCFG_RES_XL		7
++#define CY_PCFG_RES_YH		8
++#define CY_PCFG_RES_YL		9
++#define CY_PCFG_MAX_ZH		10
++#define CY_PCFG_MAX_ZL		11
++#define CY_PCFG_LEN		13
++#define CY_PCFG_RES_MASK	0x7F	/* top bit is origin flag */
++
++/* opcfg sub-block (operational-mode layout) */
++#define CY_OPCFG_CMD_OFS	0
++#define CY_OPCFG_REP_OFS	1
++#define CY_OPCFG_NUM_BTNS	4
++#define CY_OPCFG_TT_STAT_OFS	5
++#define CY_OPCFG_MAX_TCHS	7
++#define CY_OPCFG_TCH_REC_SIZE	8
++#define CY_OPCFG_TCH_REC_OLD	9	/* {loc,size} × 7 fields */
++#define CY_NUM_TCH_FIELDS	7
++#define CY_OPCFG_MIN_LEN	(CY_OPCFG_TCH_REC_OLD + 2 * CY_NUM_TCH_FIELDS)
++
++/* tch_rec_* loc-byte encoding */
++#define CY_BYTE_OFS_MASK	0x1F
++#define CY_BOFS_MASK		0xE0
++#define CY_BOFS_SHIFT		5
++
++/* Event IDs and status mask */
++#define CY_EV_NO_EVENT		0
++#define CY_EV_LIFTOFF		3
++#define CY_TT_STAT_NUM_TCH_MASK	0x1F
++
++/* Indices into ts->tch[] — matches the first five of enum cyttsp4_tch_abs. */
++#define CY_TCH_X		0	/* X position */
++#define CY_TCH_Y		1	/* Y position */
++#define CY_TCH_P		2	/* Pressure / Z */
++#define CY_TCH_T		3	/* Touch ID */
++#define CY_TCH_E		4	/* Event */
++
++#define CY_MAX_TOUCHES_CAP	32
++
++#define CY_RESET_PULSE_MS	40
++#define CY_RESET_SETTLE_MS	150	/* bootloader boot time before it ACKs */
++#define CY_BOOT_TIMEOUT_MS	2000	/* wait for app fw to take over */
++#define CY_MODE_TIMEOUT_MS	500	/* per mode-change transition */
++
++struct cyttsp4 {
++	struct i2c_client *client;
++	struct input_dev *input;
++	struct mutex lock;		/* serialises bus + PM transitions */
++
++	struct gpio_desc *reset_gpio;
++	struct gpio_desc *power_gpio;
++	struct regulator *vdd;
++
++	/*
++	 * Raised by the threaded IRQ handler on every interrupt from the
++	 * chip. Waiters (mode switches, bootloader exit, calibrate
++	 * completion) reinit this before the operation and wait_for on it
++	 * after, then re-check the relevant register state.
++	 */
++	struct completion int_complete;
++
++	/*
++	 * Gates the touch-reporting path in the IRQ handler. Clear while
++	 * we are still bringing the chip up or running a CAT-mode
++	 * operation; set once operate-mode touch reporting is valid.
++	 */
++	bool ready;
++
++	u32 max_x;
++	u32 max_y;
++	u32 max_p;
++
++	/*
++	 * Touch-record layout parsed from sysinfo opcfg at probe. Each
++	 * tch_* entry gives byte offset, byte size, bit offset, and max
++	 * value of a field inside one touch record. Matches the vendor
++	 * driver's tch_abs_params for abs X, Y, P, T (touch ID), E (event).
++	 */
++	struct {
++		u8 ofs;
++		u8 size;	/* in bytes */
++		u8 bofs;	/* bit shift applied to each byte */
++		u32 max;	/* mask = max - 1 */
++	} tch[5];
++	u8 rep_ofs;		/* first operational report byte */
++	u8 tt_stat_ofs;		/* offset of tt_stat within report */
++	u8 tch_rec_size;	/* bytes per touch record */
++	u8 max_tchs;		/* firmware-declared max simultaneous touches */
++
++	bool suspended;
++};
++
++/* --- Bus helpers --------------------------------------------------------- */
++
++/*
++ * The chip exposes a 16-bit register space via two adjacent I2C slave
++ * addresses: bit 8 of the register address is OR'd into the low bit of
++ * the 7-bit slave address, while the low 8 bits are sent as the usual
++ * register-pointer byte. This mirrors the A8 bit used on the SPI
++ * variant of the same part.
++ */
++static int cyttsp4_read(struct cyttsp4 *ts, u16 reg, void *buf, size_t len)
++{
++	u8 slave = ts->client->addr | ((reg >> 8) & 0x1);
++	u8 reg_lo = reg & 0xFF;
++	struct i2c_msg msgs[2] = {
++		{
++			.addr = slave,
++			.flags = 0,
++			.len = 1,
++			.buf = &reg_lo,
++		},
++		{
++			.addr = slave,
++			.flags = I2C_M_RD,
++			.len = len,
++			.buf = buf,
++		},
++	};
++	int ret;
++
++	ret = i2c_transfer(ts->client->adapter, msgs, 2);
++	if (ret < 0)
++		return ret;
++	return ret == 2 ? 0 : -EIO;
++}
++
++static int cyttsp4_write(struct cyttsp4 *ts, u16 reg, u8 val)
++{
++	u8 slave = ts->client->addr | ((reg >> 8) & 0x1);
++	u8 tx[2] = { reg & 0xFF, val };
++	struct i2c_msg msg = {
++		.addr = slave,
++		.flags = 0,
++		.len = sizeof(tx),
++		.buf = tx,
++	};
++	int ret;
++
++	ret = i2c_transfer(ts->client->adapter, &msg, 1);
++	if (ret < 0)
++		return ret;
++	return ret == 1 ? 0 : -EIO;
++}
++
++/* --- Mode switching ------------------------------------------------------ */
++
++/*
++ * Toggle HST_MODE into `target` (one of CY_HST_OPERATE / CY_HST_SYSINFO /
++ * CY_HST_CAT) and wait for the CHANGE bit to clear with the mode field
++ * reading back the requested value. The chip asserts its IRQ when the
++ * transition completes; we wait on the completion the IRQ handler
++ * signals, re-checking the register once woken.
++ */
++static int cyttsp4_switch_mode(struct cyttsp4 *ts, u8 target)
++{
++	struct device *dev = &ts->client->dev;
++	unsigned long timeout;
++	u8 mode = 0xff;
++	int ret;
++
++	dev_dbg(dev, "mode switch requested -> 0x%02x\n", target);
++	reinit_completion(&ts->int_complete);
++
++	ret = cyttsp4_write(ts, CY_REG_HST_MODE, CY_HST_MODE_CHANGE | target);
++	if (ret) {
++		dev_dbg(dev, "mode write (target=%02x) failed: %d\n",
++			target, ret);
++		return ret;
++	}
++
++	timeout = wait_for_completion_timeout(&ts->int_complete,
++			msecs_to_jiffies(CY_MODE_TIMEOUT_MS));
++	if (timeout)
++		dev_dbg(dev, "IRQ observed for mode change to 0x%02x\n",
++			target);
++	else
++		dev_dbg(dev, "no IRQ for mode change to 0x%02x, polling\n",
++			target);
++
++	ret = cyttsp4_read(ts, CY_REG_HST_MODE, &mode, 1);
++	if (ret)
++		return ret;
++	if (!(mode & CY_HST_MODE_CHANGE) &&
++	    (mode & CY_HST_MODE_MASK) == target) {
++		dev_dbg(dev, "mode change to 0x%02x complete (HST_MODE=0x%02x)\n",
++			target, mode);
++		return 0;
++	}
++
++	dev_dbg(dev,
++		"mode change to 0x%02x incomplete, HST_MODE=0x%02x\n",
++		target, mode);
++	return -ETIMEDOUT;
++}
++
++/* --- IDAC calibration (CAT mode) ---------------------------------------- */
++
++/*
++ * Issue one CALIBRATE_IDACS command with `arg` selecting the sensor type:
++ * 0 = mutual-capacitance screen, 1 = mutual-capacitance button,
++ * 2 = self-capacitance. Must be called with the chip already in CAT mode
++ * and the touch IRQ disabled (we poll the status byte ourselves).
++ */
++static int cyttsp4_cat_calibrate_one(struct cyttsp4 *ts, u8 arg)
++{
++	struct device *dev = &ts->client->dev;
++	unsigned long deadline;
++	u8 status[2];
++	int ret;
++	unsigned int polls = 0;
++
++	dev_dbg(dev, "calibrate: issuing IDAC calibration arg=0x%02x\n", arg);
++
++	ret = cyttsp4_write(ts, CY_CAT_CMD_OFS + 1, arg);
++	if (ret)
++		return ret;
++
++	reinit_completion(&ts->int_complete);
++
++	ret = cyttsp4_write(ts, CY_CAT_CMD_OFS, CY_CMD_CAT_CALIBRATE_IDACS);
++	if (ret)
++		return ret;
++
++	deadline = jiffies + msecs_to_jiffies(CY_CAL_TIMEOUT_MS);
++	do {
++		unsigned long remaining;
++
++		/*
++		 * Wait for either the next IRQ (signalled via int_complete
++		 * from the IRQ handler) or a short fallback interval, so we
++		 * still make forward progress on firmware revs where the
++		 * command-complete IRQ is flaky. Re-init *before* checking
++		 * status so a late wake from the previous iteration doesn't
++		 * mask the next one.
++		 */
++		remaining = deadline - jiffies;
++		wait_for_completion_timeout(&ts->int_complete,
++			min_t(unsigned long, remaining,
++			      msecs_to_jiffies(CY_CAL_POLL_MS)));
++		reinit_completion(&ts->int_complete);
++
++		ret = cyttsp4_read(ts, CY_CAT_CMD_OFS, status, sizeof(status));
++		if (ret)
++			return ret;
++		polls++;
++		if (status[0] & CY_CMD_COMPLETE_BIT) {
++			dev_dbg(dev,
++				"calibrate arg=0x%02x done after %u poll(s), status=0x%02x\n",
++				arg, polls, status[1]);
++			return status[1] == 0 ? 0 : -EIO;
++		}
++	} while (time_before(jiffies, deadline));
++
++	dev_err(dev, "calibrate arg=0x%02x timed out\n", arg);
++	return -ETIMEDOUT;
++}
++
++static int cyttsp4_calibrate(struct cyttsp4 *ts, bool mutual, bool self,
++			     bool button)
++{
++	int ret, ret2;
++	bool prev_ready;
++
++	mutex_lock(&ts->lock);
++	if (ts->suspended) {
++		mutex_unlock(&ts->lock);
++		return -EAGAIN;
++	}
++
++	/*
++	 * Leave the IRQ enabled — wait_for_fw / switch_mode / cat_calibrate
++	 * all need the completion signal. Suppress touch reporting for the
++	 * duration by clearing ts->ready instead.
++	 */
++	prev_ready = ts->ready;
++	ts->ready = false;
++	dev_dbg(&ts->client->dev,
++		"calibrate start: mutual=%d self=%d button=%d\n",
++		mutual, self, button);
++
++	ret = cyttsp4_switch_mode(ts, CY_HST_CAT);
++	if (ret)
++		goto out_restore;
++
++	if (mutual) {
++		ret = cyttsp4_cat_calibrate_one(ts, CY_CAL_MUTUAL_SCREEN);
++		if (ret)
++			goto out_opmode;
++	}
++	if (button) {
++		ret = cyttsp4_cat_calibrate_one(ts, CY_CAL_MUTUAL_BUTTON);
++		if (ret)
++			goto out_opmode;
++	}
++	if (self) {
++		ret = cyttsp4_cat_calibrate_one(ts, CY_CAL_SELF);
++		if (ret)
++			goto out_opmode;
++	}
++
++out_opmode:
++	ret2 = cyttsp4_switch_mode(ts, CY_HST_OPERATE);
++	if (!ret)
++		ret = ret2;
++out_restore:
++	ts->ready = prev_ready;
++	dev_dbg(&ts->client->dev, "calibrate end: ret=%d\n", ret);
++	mutex_unlock(&ts->lock);
++	return ret;
++}
++
++static ssize_t calibrate_store(struct device *dev,
++			       struct device_attribute *attr,
++			       const char *buf, size_t count)
++{
++	struct cyttsp4 *ts = dev_get_drvdata(dev);
++	bool mutual = false, self = false, button = false;
++	int ret;
++
++	dev_dbg(dev, "calibrate_store: input=%.*s\n",
++		(int)min_t(size_t, count, 32), buf);
++
++	if (sysfs_streq(buf, "mutual")) {
++		mutual = true;
++	} else if (sysfs_streq(buf, "self")) {
++		self = true;
++	} else if (sysfs_streq(buf, "button")) {
++		button = true;
++	}
++
++	ret = cyttsp4_calibrate(ts, mutual, self, button);
++	if (ret)
++		dev_err(dev, "calibration failed: %d\n", ret);
++
++	return ret ? ret : count;
++}
++static DEVICE_ATTR_WO(calibrate);
++
++static struct attribute *cyttsp4_attrs[] = {
++	&dev_attr_calibrate.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(cyttsp4);
++
++/* --- Sysinfo dump ------------------------------------------------------- */
++
++/*
++ * Switch the chip into sysinfo mode, read back the descriptor header plus
++ * the cydata block, log identifying info, and return to operating mode.
++ * Failures here are non-fatal: we only use it to make bring-up easier.
++ */
++/*
++ * Parse sysinfo: fills ts->max_{x,y,p} from pcfg and the touch-record
++ * layout (rep_ofs, tt_stat_ofs, tch_rec_size, max_tchs, tch[]) from
++ * opcfg. Failure is fatal for probe — we have no sensible defaults.
++ */
++static int cyttsp4_parse_sysinfo(struct cyttsp4 *ts)
++{
++	struct device *dev = &ts->client->dev;
++	u8 hdr[CY_SI_HDR_LEN];
++	u8 cydata[32];
++	u8 pcfg[CY_PCFG_LEN];
++	u8 opcfg[64];
++	u16 map_sz, cydata_ofs, pcfg_ofs, opcfg_ofs;
++	unsigned int abs;
++	int ret;
++
++	dev_dbg(dev, "sysinfo: switching to sysinfo mode\n");
++	ret = cyttsp4_switch_mode(ts, CY_HST_SYSINFO);
++	if (ret) {
++		dev_warn(dev, "switch to sysinfo mode failed: %d\n", ret);
++		goto out_restore;
++	}
++
++	ret = cyttsp4_read(ts, 0, hdr, sizeof(hdr));
++	if (ret)
++		goto out_restore;
++
++	map_sz     = (hdr[2] << 8) | hdr[3];
++	cydata_ofs = (hdr[4] << 8) | hdr[5];
++	pcfg_ofs   = (hdr[8] << 8) | hdr[9];
++	opcfg_ofs  = (hdr[10] << 8) | hdr[11];
++
++	dev_info(dev,
++		"sysinfo: map_sz=%u cydata=0x%04x pcfg=0x%04x opcfg=0x%04x\n",
++		map_sz, cydata_ofs, pcfg_ofs, opcfg_ofs);
++
++	if (cydata_ofs && cydata_ofs < map_sz &&
++	    !cyttsp4_read(ts, cydata_ofs, cydata, min_t(size_t,
++		sizeof(cydata), map_sz - cydata_ofs))) {
++		dev_info(dev,
++			"sysinfo: ttpid=%02x%02x fw=%u.%u bl=%u.%u ttsp=%u.%u\n",
++			cydata[CY_CYDATA_TTPIDH], cydata[CY_CYDATA_TTPIDL],
++			cydata[CY_CYDATA_FW_MAJ], cydata[CY_CYDATA_FW_MIN],
++			cydata[CY_CYDATA_BLVER_MAJ], cydata[CY_CYDATA_BLVER_MIN],
++			cydata[CY_CYDATA_TTSP_MAJ], cydata[CY_CYDATA_TTSP_MIN]);
++	}
++
++	if (pcfg_ofs && pcfg_ofs + CY_PCFG_LEN <= map_sz &&
++	    !cyttsp4_read(ts, pcfg_ofs, pcfg, CY_PCFG_LEN)) {
++		u16 res_x = ((pcfg[CY_PCFG_RES_XH] & CY_PCFG_RES_MASK) << 8) |
++			    pcfg[CY_PCFG_RES_XL];
++		u16 res_y = ((pcfg[CY_PCFG_RES_YH] & CY_PCFG_RES_MASK) << 8) |
++			    pcfg[CY_PCFG_RES_YL];
++		u16 max_z = (pcfg[CY_PCFG_MAX_ZH] << 8) | pcfg[CY_PCFG_MAX_ZL];
++
++		dev_info(dev, "sysinfo: panel res=%ux%u max_z=%u\n",
++			 res_x, res_y, max_z);
++		if (res_x && res_y && max_z) {
++			ts->max_x = res_x - 1;
++			ts->max_y = res_y - 1;
++			ts->max_p = max_z;
++		}
++	}
++
++	if (!ts->max_x || !ts->max_y) {
++		dev_err(dev, "unknown panel resolution\n");
++		ret = -EINVAL;
++		goto out_restore;
++	}
++
++	if (!(opcfg_ofs && opcfg_ofs + CY_OPCFG_MIN_LEN <= map_sz)) {
++		dev_err(dev, "opcfg block not present or truncated\n");
++		ret = -EINVAL;
++		goto out_restore;
++	}
++
++	ret = cyttsp4_read(ts, opcfg_ofs, opcfg, CY_OPCFG_MIN_LEN);
++	if (ret) {
++		dev_err(dev, "opcfg read failed: %d\n", ret);
++		goto out_restore;
++	}
++
++	ts->rep_ofs      = opcfg[CY_OPCFG_REP_OFS];
++	ts->tt_stat_ofs  = opcfg[CY_OPCFG_TT_STAT_OFS];
++	ts->max_tchs     = opcfg[CY_OPCFG_MAX_TCHS] & CY_BYTE_OFS_MASK;
++	ts->tch_rec_size = opcfg[CY_OPCFG_TCH_REC_SIZE] & CY_BYTE_OFS_MASK;
++
++	if (!ts->max_tchs || !ts->tch_rec_size) {
++		dev_err(dev,
++			"invalid touch layout: max_tchs=%u rec_sz=%u\n",
++			ts->max_tchs, ts->tch_rec_size);
++		ret = -EINVAL;
++		goto out_restore;
++	}
++	if (ts->max_tchs > CY_MAX_TOUCHES_CAP)
++		ts->max_tchs = CY_MAX_TOUCHES_CAP;
++
++	dev_info(dev,
++		"sysinfo: cmd_ofs=%u rep_ofs=%u tt_stat_ofs=%u rec_sz=%u max_tchs=%u\n",
++		opcfg[CY_OPCFG_CMD_OFS], ts->rep_ofs,
++		ts->tt_stat_ofs, ts->tch_rec_size, ts->max_tchs);
++
++	for (abs = 0; abs < 5; abs++) {
++		u8 loc   = opcfg[CY_OPCFG_TCH_REC_OLD + 2 * abs];
++		u8 nbits = opcfg[CY_OPCFG_TCH_REC_OLD + 2 * abs + 1];
++
++		ts->tch[abs].ofs  = loc & CY_BYTE_OFS_MASK;
++		ts->tch[abs].bofs = (loc & CY_BOFS_MASK) >> CY_BOFS_SHIFT;
++		ts->tch[abs].size = DIV_ROUND_UP(nbits, 8);
++		ts->tch[abs].max  = 1UL << nbits;
++		dev_dbg(dev, "tch[%u]: ofs=%u size=%u bofs=%u max=%u\n",
++			abs, ts->tch[abs].ofs, ts->tch[abs].size,
++			ts->tch[abs].bofs, ts->tch[abs].max);
++
++		if (!ts->tch[abs].size ||
++		    ts->tch[abs].ofs + ts->tch[abs].size > ts->tch_rec_size) {
++			dev_err(dev,
++				"tch[%u] out of range: ofs=%u size=%u rec_sz=%u\n",
++				abs, ts->tch[abs].ofs, ts->tch[abs].size,
++				ts->tch_rec_size);
++			ret = -EINVAL;
++			goto out_restore;
++		}
++	}
++
++	ret = 0;
++out_restore:
++	dev_dbg(dev, "sysinfo: restoring operating mode\n");
++	if (cyttsp4_switch_mode(ts, CY_HST_OPERATE))
++		dev_warn(dev, "failed to restore operating mode\n");
++
++	return ret;
++}
++
++/* --- Touch reporting ----------------------------------------------------- */
++
++static inline u32 cyttsp4_get_axis(const u8 *xy, unsigned int size,
++				   unsigned int bofs, u32 max)
++{
++	u32 v = 0;
++	unsigned int n;
++
++	for (n = 0; n < size; n++)
++		v = (v << 8) | (xy[n] >> bofs);
++	return v & (max - 1);
++}
++
++static void cyttsp4_report_touches(struct cyttsp4 *ts, u8 num_tch,
++				   const u8 *records)
++{
++	struct device *dev = &ts->client->dev;
++	DECLARE_BITMAP(used, CY_MAX_TOUCHES_CAP);
++	unsigned int i;
++
++	bitmap_zero(used, CY_MAX_TOUCHES_CAP);
++
++	for (i = 0; i < num_tch; i++) {
++		const u8 *r = records + i * ts->tch_rec_size;
++		u32 x   = cyttsp4_get_axis(r + ts->tch[CY_TCH_X].ofs,
++				ts->tch[CY_TCH_X].size,
++				ts->tch[CY_TCH_X].bofs,
++				ts->tch[CY_TCH_X].max);
++		u32 y   = cyttsp4_get_axis(r + ts->tch[CY_TCH_Y].ofs,
++				ts->tch[CY_TCH_Y].size,
++				ts->tch[CY_TCH_Y].bofs,
++				ts->tch[CY_TCH_Y].max);
++		u32 p   = cyttsp4_get_axis(r + ts->tch[CY_TCH_P].ofs,
++				ts->tch[CY_TCH_P].size,
++				ts->tch[CY_TCH_P].bofs,
++				ts->tch[CY_TCH_P].max);
++		u32 tid = cyttsp4_get_axis(r + ts->tch[CY_TCH_T].ofs,
++				ts->tch[CY_TCH_T].size,
++				ts->tch[CY_TCH_T].bofs,
++				ts->tch[CY_TCH_T].max);
++		u32 ev  = cyttsp4_get_axis(r + ts->tch[CY_TCH_E].ofs,
++				ts->tch[CY_TCH_E].size,
++				ts->tch[CY_TCH_E].bofs,
++				ts->tch[CY_TCH_E].max);
++
++		dev_dbg(dev,
++			"  rec[%u] raw=%*ph -> x=%u y=%u p=%u tid=%u ev=%u\n",
++			i, ts->tch_rec_size, r, x, y, p, tid, ev);
++
++		if (tid >= CY_MAX_TOUCHES_CAP) {
++			dev_dbg(dev, "  rec[%u] dropped: tid=%u >= cap %u\n",
++				i, tid, CY_MAX_TOUCHES_CAP);
++			continue;
++		}
++		if (ev == CY_EV_NO_EVENT || ev == CY_EV_LIFTOFF) {
++			dev_dbg(dev, "  rec[%u] dropped: ev=%u (no-event/liftoff)\n",
++				i, ev);
++			continue;
++		}
++
++		__set_bit(tid, used);
++
++		input_mt_slot(ts->input, tid);
++		input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, true);
++		input_report_abs(ts->input, ABS_MT_POSITION_X, x);
++		input_report_abs(ts->input, ABS_MT_POSITION_Y, y);
++		input_report_abs(ts->input, ABS_MT_PRESSURE, p);
++	}
++
++	for (i = 0; i < ts->max_tchs; i++) {
++		if (test_bit(i, used))
++			continue;
++		input_mt_slot(ts->input, i);
++		input_mt_report_slot_inactive(ts->input);
++	}
++
++	input_mt_sync_frame(ts->input);
++	input_sync(ts->input);
++}
++
++static irqreturn_t cyttsp4_irq(int irq, void *dev_id)
++{
++	struct cyttsp4 *ts = dev_id;
++	u8 buf[256];
++	unsigned int total = ts->tt_stat_ofs + 1 +
++		ts->max_tchs * ts->tch_rec_size;
++	u8 num_tch;
++	u8 hst_mode;
++	int ret;
++
++	/*
++	 * Wake any waiters first — mode-change, bootloader-exit, and
++	 * CAT-command waits all block on int_complete and re-read the
++	 * relevant registers once woken.
++	 */
++	complete(&ts->int_complete);
++
++	/*
++	 * Handshake: the chip raises its IRQ on any event and expects the
++	 * host to acknowledge by toggling bit 7 of HST_MODE. Without this
++	 * the firmware treats the previous IRQ as unacknowledged and stops
++	 * raising new ones, which manifests as CAT-mode command timeouts.
++	 * Mode-change transitions don't need (or want) the handshake —
++	 * doing it while MODE_CHANGE is asserted loops forever.
++	 */
++	ret = cyttsp4_read(ts, CY_REG_HST_MODE, &hst_mode, 1);
++	if (ret) {
++		dev_err_ratelimited(&ts->client->dev,
++				    "IRQ: HST_MODE read failed: %d\n", ret);
++		return IRQ_HANDLED;
++	}
++	if (!(hst_mode & CY_HST_MODE_CHANGE)) {
++		ret = cyttsp4_write(ts, CY_REG_HST_MODE,
++				    hst_mode ^ CY_HST_TOGGLE);
++		if (ret)
++			dev_err_ratelimited(&ts->client->dev,
++					    "IRQ: handshake failed: %d\n",
++					    ret);
++	}
++
++	mutex_lock(&ts->lock);
++	if (ts->suspended || !ts->ready) {
++		dev_dbg(&ts->client->dev,
++			"IRQ (suspended=%d ready=%d HST_MODE=0x%02x)\n",
++			ts->suspended, ts->ready, hst_mode);
++		mutex_unlock(&ts->lock);
++		return IRQ_HANDLED;
++	}
++
++	if (total > sizeof(buf))
++		total = sizeof(buf);
++
++	ret = cyttsp4_read(ts, 0, buf, total);
++	mutex_unlock(&ts->lock);
++	if (ret) {
++		dev_err_ratelimited(&ts->client->dev,
++				    "read failed: %d\n", ret);
++		return IRQ_HANDLED;
++	}
++
++	num_tch = buf[ts->tt_stat_ofs] & CY_TT_STAT_NUM_TCH_MASK;
++	if (num_tch > ts->max_tchs)
++		num_tch = ts->max_tchs;
++
++	dev_dbg(&ts->client->dev,
++		"touch frame: %u touch(es) [rep_ofs=%u tt_stat@%u=0x%02x rec_sz=%u]\n",
++		num_tch, ts->rep_ofs, ts->tt_stat_ofs,
++		buf[ts->tt_stat_ofs], ts->tch_rec_size);
++
++	/*
++	 * Records begin immediately after tt_stat, not at rep_ofs:
++	 * rep_ofs..tt_stat_ofs is the report header (mode flags plus
++	 * optional button bytes), and tt_stat itself occupies one byte.
++	 */
++	cyttsp4_report_touches(ts, num_tch,
++			       buf + ts->tt_stat_ofs + 1);
++
++	return IRQ_HANDLED;
++}
++
++/* --- Hardware bring-up --------------------------------------------------- */
++
++static void cyttsp4_hard_reset(struct cyttsp4 *ts)
++{
++	if (!ts->reset_gpio)
++		return;
++
++	dev_dbg(&ts->client->dev, "asserting reset\n");
++	gpiod_set_value_cansleep(ts->reset_gpio, 1);
++	msleep(CY_RESET_PULSE_MS);
++
++	dev_dbg(&ts->client->dev, "releasing reset\n");
++	gpiod_set_value_cansleep(ts->reset_gpio, 0);
++	msleep(CY_RESET_SETTLE_MS);
++}
++
++/*
++ * Bootloader "exit to touch application" command. After reset the chip
++ * comes up running its bootloader (HST_MODE bit 0 set) and stays there
++ * until the host writes this 8-byte escape packet to register 0.
++ * Bytes: start 0xFF, cmd 0x01 (EXIT), length 0x0000, two CRC bytes,
++ * and a stop 0x17. Taken verbatim from the vendor driver.
++ */
++static const u8 cyttsp4_ldr_exit[] = {
++	0xFF, 0x01, 0x3B, 0x00, 0x00, 0x4F, 0x6D, 0x17
++};
++
++/* Response returned by the bootloader if the application image is bad. */
++static const u8 cyttsp4_ldr_err_app[] = {
++	0x01, 0x02, 0x00, 0x00, 0x55, 0xDD, 0x17
++};
++
++static int cyttsp4_exit_bootloader(struct cyttsp4 *ts)
++{
++	/* Write to register 0: one register-pointer byte + the 8-byte packet. */
++	u8 tx[1 + sizeof(cyttsp4_ldr_exit)];
++	struct i2c_msg msg = {
++		.addr = ts->client->addr,
++		.flags = 0,
++		.len = sizeof(tx),
++		.buf = tx,
++	};
++	int ret;
++
++	tx[0] = 0;	/* CY_REG_BASE */
++	memcpy(&tx[1], cyttsp4_ldr_exit, sizeof(cyttsp4_ldr_exit));
++
++	ret = i2c_transfer(ts->client->adapter, &msg, 1);
++	if (ret < 0)
++		return ret;
++
++	return ret == 1 ? 0 : -EIO;
++}
++
++static int cyttsp4_wait_for_fw(struct cyttsp4 *ts)
++{
++	struct device *dev = &ts->client->dev;
++	unsigned long deadline = jiffies + msecs_to_jiffies(CY_BOOT_TIMEOUT_MS);
++	bool sent_exit = false;
++	unsigned int waits = 0;
++	u8 mode;
++	int ret;
++
++	while (time_before_eq(jiffies, deadline)) {
++		ret = cyttsp4_read(ts, CY_REG_HST_MODE, &mode, 1);
++		if (ret) {
++			/*
++			 * The chip can NAK transactions while still in its
++			 * internal reset. Treat bus errors as "not ready yet"
++			 * and keep retrying until the overall deadline.
++			 */
++			dev_dbg(dev, "HST_MODE read failed: %d (retrying)\n",
++				ret);
++			msleep(20);
++			waits++;
++			continue;
++		}
++		dev_dbg(dev, "HST_MODE=0x%02x (iter %u%s)\n", mode, waits,
++			sent_exit ? ", exit sent" : "");
++
++		if (!(mode & CY_HST_RESET)) {
++			dev_dbg(dev, "app firmware up after %u wait(s)\n",
++				waits);
++			return 0;
++		}
++
++		if (!sent_exit) {
++			u8 reply[sizeof(cyttsp4_ldr_err_app)];
++
++			dev_dbg(dev, "sending bootloader exit packet\n");
++			reinit_completion(&ts->int_complete);
++
++			ret = cyttsp4_exit_bootloader(ts);
++			if (ret) {
++				dev_err(dev,
++					"exit-bootloader write failed: %d\n",
++					ret);
++				return ret;
++			}
++			sent_exit = true;
++
++			if (wait_for_completion_timeout(&ts->int_complete,
++				msecs_to_jiffies(CY_MODE_TIMEOUT_MS)))
++				dev_dbg(dev, "got IRQ after exit packet\n");
++			else
++				dev_dbg(dev, "no IRQ after exit packet (ok)\n");
++
++			if (!cyttsp4_read(ts, CY_REG_HST_MODE, reply,
++					  sizeof(reply)) &&
++			    !memcmp(reply, cyttsp4_ldr_err_app,
++				    sizeof(cyttsp4_ldr_err_app))) {
++				dev_err(dev,
++					"bootloader reports invalid touch application firmware\n");
++				return -ENODEV;
++			}
++			continue;
++		}
++
++		reinit_completion(&ts->int_complete);
++		if (wait_for_completion_timeout(&ts->int_complete,
++			msecs_to_jiffies(CY_MODE_TIMEOUT_MS)))
++			dev_dbg(dev, "got IRQ while waiting for app fw\n");
++		waits++;
++	}
++
++	if (ret)
++		dev_err(dev,
++			"firmware handoff timed out, chip never ACKed (last err %d)\n",
++			ret);
++	else
++		dev_err(dev,
++			"firmware handoff timed out, last HST_MODE=0x%02x\n",
++			mode);
++	return -ETIMEDOUT;
++}
++
++static int cyttsp4_power_on(struct cyttsp4 *ts)
++{
++	struct device *dev = &ts->client->dev;
++	int ret;
++
++	dev_dbg(dev, "power on\n");
++	if (ts->vdd) {
++		dev_dbg(dev, "enabling vdd regulator\n");
++		ret = regulator_enable(ts->vdd);
++		if (ret)
++			return ret;
++		msleep(10);
++	}
++	cyttsp4_hard_reset(ts);
++
++	ret = cyttsp4_wait_for_fw(ts);
++	if (ret) {
++		dev_err(dev,
++			"timeout waiting for application firmware (%d)\n", ret);
++		return ret;
++	}
++	dev_dbg(dev, "application firmware is up\n");
++	return 0;
++}
++
++static void cyttsp4_power_off(struct cyttsp4 *ts)
++{
++	dev_dbg(&ts->client->dev, "power off\n");
++	if (ts->power_gpio)
++		gpiod_set_value_cansleep(ts->power_gpio, 0);
++	if (ts->vdd)
++		regulator_disable(ts->vdd);
++}
++
++static int cyttsp4_enter_sleep(struct cyttsp4 *ts)
++{
++	/* Toggle into low-power mode via host-mode register. */
++	return cyttsp4_write(ts, CY_REG_HST_MODE,
++			     CY_HST_OPERATE | CY_HST_SLEEP);
++}
++
++/* --- PM ------------------------------------------------------------------ */
++
++static int cyttsp4_suspend(struct device *dev)
++{
++	struct cyttsp4 *ts = dev_get_drvdata(dev);
++
++	dev_dbg(dev, "suspend\n");
++	mutex_lock(&ts->lock);
++	ts->ready = false;
++	disable_irq(ts->client->irq);
++	cyttsp4_enter_sleep(ts);
++	ts->suspended = true;
++	mutex_unlock(&ts->lock);
++
++	return 0;
++}
++
++static int cyttsp4_resume(struct device *dev)
++{
++	struct cyttsp4 *ts = dev_get_drvdata(dev);
++	int ret;
++
++	dev_dbg(dev, "resume\n");
++	mutex_lock(&ts->lock);
++	enable_irq(ts->client->irq);
++	cyttsp4_hard_reset(ts);
++	ret = cyttsp4_wait_for_fw(ts);
++	if (ret)
++		dev_warn(dev, "firmware not ready after resume: %d\n", ret);
++	ts->suspended = false;
++	ts->ready = (ret == 0);
++	mutex_unlock(&ts->lock);
++	dev_dbg(dev, "resume done, ready=%d\n", ts->ready);
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(cyttsp4_pm_ops,
++				cyttsp4_suspend, cyttsp4_resume);
++
++/* --- Probe / remove ------------------------------------------------------ */
++
++static int cyttsp4_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct cyttsp4 *ts;
++	struct input_dev *input;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -EIO;
++	if (client->irq <= 0)
++		return dev_err_probe(dev, -EINVAL, "missing IRQ\n");
++
++	ts = devm_kzalloc(dev, sizeof(*ts), GFP_KERNEL);
++	if (!ts)
++		return -ENOMEM;
++
++	ts->client = client;
++	mutex_init(&ts->lock);
++	init_completion(&ts->int_complete);
++	i2c_set_clientdata(client, ts);
++
++	dev_dbg(dev, "probe starting, irq=%d addr=0x%02x\n",
++		client->irq, client->addr);
++
++	ts->power_gpio = devm_gpiod_get_optional(dev, "power", GPIOD_OUT_HIGH);
++	if (IS_ERR(ts->power_gpio))
++		return dev_err_probe(dev, PTR_ERR(ts->power_gpio),
++				     "power gpio\n");
++
++	ts->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ts->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ts->reset_gpio),
++				     "reset gpio\n");
++
++	ts->vdd = devm_regulator_get_optional(dev, "vdd");
++	if (IS_ERR(ts->vdd)) {
++		if (PTR_ERR(ts->vdd) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++		ts->vdd = NULL;
++	}
++
++	ret = devm_request_threaded_irq(dev, client->irq, NULL, cyttsp4_irq,
++					IRQF_ONESHOT, "cyttsp4", ts);
++	if (ret)
++		return dev_err_probe(dev, ret, "request_irq failed\n");
++
++	ret = cyttsp4_power_on(ts);
++	if (ret)
++		return dev_err_probe(dev, ret, "power on failed\n");
++
++	ret = cyttsp4_parse_sysinfo(ts);
++	if (ret) {
++		dev_err(dev, "sysinfo parse failed: %d\n", ret);
++		goto err_power;
++	}
++
++	input = devm_input_allocate_device(dev);
++	if (!input) {
++		ret = -ENOMEM;
++		goto err_power;
++	}
++	ts->input = input;
++
++	input->name = "Cypress TrueTouch V4";
++	input->id.bustype = BUS_I2C;
++	input->dev.parent = dev;
++
++	input_set_abs_params(input, ABS_MT_POSITION_X, 0, ts->max_x, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, ts->max_y, 0, 0);
++	input_set_abs_params(input, ABS_MT_PRESSURE, 0, ts->max_p, 0, 0);
++
++	ret = input_mt_init_slots(input, ts->max_tchs,
++				  INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
++	if (ret)
++		goto err_power;
++
++	ret = input_register_device(input);
++	if (ret)
++		goto err_power;
++
++	/* Open the gate on touch reporting. */
++	mutex_lock(&ts->lock);
++	ts->ready = true;
++	mutex_unlock(&ts->lock);
++	dev_dbg(dev, "probe complete, ready for touches\n");
++
++	return 0;
++
++err_power:
++	cyttsp4_power_off(ts);
++	return ret;
++}
++
++static void cyttsp4_remove(struct i2c_client *client)
++{
++	struct cyttsp4 *ts = i2c_get_clientdata(client);
++
++	cyttsp4_power_off(ts);
++}
++
++static const struct i2c_device_id cyttsp4_id[] = {
++	{ "tma445" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, cyttsp4_id);
++
++static const struct of_device_id cyttsp4_of_match[] = {
++	{ .compatible = "cypress,tma445" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cyttsp4_of_match);
++
++static struct i2c_driver cyttsp4_driver = {
++	.driver = {
++		.name = "cyttsp4",
++		.of_match_table = cyttsp4_of_match,
++		.pm = pm_sleep_ptr(&cyttsp4_pm_ops),
++		.dev_groups = cyttsp4_groups,
++	},
++	.probe    = cyttsp4_probe,
++	.remove   = cyttsp4_remove,
++	.id_table = cyttsp4_id,
++};
++module_i2c_driver(cyttsp4_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Cypress TrueTouch V4 I2C touchscreen driver");
+-- 
+Armbian
+
