@@ -120,9 +120,10 @@ do_firstrun_automated_network_configuration()
 						DEVTYPE=wifis
 						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
 						if echo -e "$(createYAML)" > "${_f}.tmp"; then
-							atomic_write "${_f}.tmp" "${_f}" 600
+							atomic_write "${_f}.tmp" "${_f}" 600 || return 1
 						else
 							rm -f "${_f}.tmp"
+							return 1
 						fi
 						PRESET_NET_ETHERNET_ENABLED=0
 						netplan apply > /dev/null 2>&1
@@ -137,9 +138,10 @@ do_firstrun_automated_network_configuration()
 						DEVTYPE=ethernets
 						local _f="/etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml"
 						if echo -e "$(createYAML)" > "${_f}.tmp"; then
-							atomic_write "${_f}.tmp" "${_f}" 600
+							atomic_write "${_f}.tmp" "${_f}" 600 || return 1
 						else
 							rm -f "${_f}.tmp"
+							return 1
 						fi
 						PRESET_NET_WIFI_ENABLED=0
 						netplan apply > /dev/null 2>&1
@@ -269,16 +271,18 @@ set_shell() {
 	# /etc/adduser.conf is optional, so guard that edit.
 	local _f="/etc/default/useradd"
 	if sed "s|^SHELL=.*|SHELL=${SHELL_PATH}|" "${_f}" > "${_f}.tmp"; then
-		atomic_write "${_f}.tmp" "${_f}"
+		atomic_write "${_f}.tmp" "${_f}" || return 1
 	else
 		rm -f "${_f}.tmp"
+		return 1
 	fi
 	if [[ -f /etc/adduser.conf ]]; then
 		_f="/etc/adduser.conf"
 		if sed "s|^DSHELL=.*|DSHELL=${SHELL_PATH}|" "${_f}" > "${_f}.tmp"; then
-			atomic_write "${_f}.tmp" "${_f}"
+			atomic_write "${_f}.tmp" "${_f}" || return 1
 		else
 			rm -f "${_f}.tmp"
+			return 1
 		fi
 	fi
 
@@ -373,9 +377,10 @@ set_timezone_and_locales() {
 						         password: "${password}"
 						EOF
 						then
-							atomic_write "${_f}.tmp" "${_f}" 600
+							atomic_write "${_f}.tmp" "${_f}" 600 || return 1
 						else
 							rm -f "${_f}.tmp"
+							return 1
 						fi
 
 						# apply to netplan
@@ -514,13 +519,19 @@ set_timezone_and_locales() {
 		# change default locales (atomic write)
 		local _f="/etc/default/locale"
 		if sed "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" "${_f}" > "${_f}.tmp"; then
-			atomic_write "${_f}.tmp" "${_f}"
+			atomic_write "${_f}.tmp" "${_f}" || return 1
+		else
+			rm -f "${_f}.tmp"
+			return 1
 		fi
 
 		# generate locales (atomic write for locale.gen)
 		local _f="/etc/locale.gen"
 		if sed 's/# '"${LOCALES}"'/'"${LOCALES}"'/' "${_f}" > "${_f}.tmp"; then
-			atomic_write "${_f}.tmp" "${_f}"
+			atomic_write "${_f}.tmp" "${_f}" || return 1
+		else
+			rm -f "${_f}.tmp"
+			return 1
 		fi
 		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 		locale-gen "${LOCALES}" > /dev/null 2>&1
@@ -535,10 +546,11 @@ set_timezone_and_locales() {
 			fi
 			if ! grep -q "^export LC_ALL=$LOCALES" "$rcfile" 2>/dev/null; then
 				{
+					cat -- "$rcfile"
 					echo "export LC_ALL=$LOCALES"
 					echo "export LANG=$LOCALES"
 					echo "export LANGUAGE=$LOCALES"
-				} >> "$rcfile"
+				} > "${rcfile}.tmp" && atomic_write "${rcfile}.tmp" "$rcfile" "" "$RealUserName:$RealUserName" || return 1
 			fi
 		done
 
@@ -652,19 +664,26 @@ add_user() {
 				# comes from SHELL_PATH (set_shell ran first). Password is disabled here
 				# and set right below, same as adduser --disabled-password.
 				useradd --create-home --home-dir /home/"$RealUserName" --shell "$SHELL_PATH" \
-					--comment "$RealName" --user-group "$RealUserName"
+					--comment "$RealName" --user-group "$RealUserName" || return 1
 			elif [ ! -d "/home/$RealUserName" ]; then
-				mkdir -p /home/"$RealUserName"
-				cp -r /etc/skel/. /home/"$RealUserName"/ 2>/dev/null
-				chown -R "$RealUserName:$RealUserName" /home/"$RealUserName"
+				mkdir -p /home/"$RealUserName" || return 1
+				cp -r /etc/skel/. /home/"$RealUserName"/ 2>/dev/null || return 1
+				chown -R "$RealUserName:$RealUserName" /home/"$RealUserName" || return 1
 				echo -e "Repaired missing home directory for \e[0;92m$RealUserName\x1B[0m."
 			fi
 
 			# download and add SSH key if defined
 			if [[ -n "${PRESET_USER_KEY}" ]]; then
-				mkdir -p /home/"$RealUserName"/.ssh/
-				curl --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > /home/"$RealUserName"/.ssh/authorized_keys 2> /dev/null
-				chown -R "$RealUserName":"$RealUserName" /home/"$RealUserName"/.ssh/
+				local _f="/home/$RealUserName/.ssh/authorized_keys"
+				mkdir -p /home/"$RealUserName"/.ssh/ || return 1
+				chown "$RealUserName:$RealUserName" /home/"$RealUserName"/.ssh/ || return 1
+				chmod 700 /home/"$RealUserName"/.ssh/ || return 1
+				if curl --retry 5 --connect-timeout 3 "${PRESET_USER_KEY}" > "${_f}.tmp" 2> /dev/null; then
+					atomic_write "${_f}.tmp" "${_f}" 600 "$RealUserName:$RealUserName" || return 1
+				else
+					rm -f "${_f}.tmp"
+					return 1
+				fi
 			fi
 
 			if [[ -n "$first_input" ]]; then
@@ -706,9 +725,10 @@ add_user() {
 				# need to restore or validate any dist version of /etc/sudoers.
 				local _f="/etc/sudoers.d/armbian-firstlogin-psd"
 				if echo "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" > "${_f}.tmp"; then
-					atomic_write "${_f}.tmp" "${_f}" 440
+					atomic_write "${_f}.tmp" "${_f}" 440 || return 1
 				else
 					rm -f "${_f}.tmp"
+					return 1
 				fi
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
@@ -754,10 +774,17 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	# override configuration from URL
 	if [[ -n "${PRESET_CONFIGURATION}" ]]; then
-		curl --retry 5 --connect-timeout 3 "${PRESET_CONFIGURATION}" > /root/.not_logged_in_yet 2> /dev/null
+		_f="/root/.not_logged_in_yet"
+		if curl --retry 5 --connect-timeout 3 "${PRESET_CONFIGURATION}" > "${_f}.tmp" 2> /dev/null && bash -n "${_f}.tmp"; then
+			atomic_write "${_f}.tmp" "${_f}" 600 || exit 1
+			. "${_f}"
+		else
+			rm -f "${_f}.tmp"
+			exit 1
+		fi
 	fi
 
-	do_firstrun_automated_network_configuration
+	do_firstrun_automated_network_configuration || exit 1
 
 	# disable autologin (remove both generic and tty-specific paths)
 	rm -f /etc/systemd/system/getty@.service.d/override.conf
@@ -944,7 +971,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	# ask user to select shell
 	trap '' 2
-	set_shell
+	set_shell || exit 1
 	trap - INT TERM EXIT
 
 	trap check_abort INT
@@ -953,7 +980,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		[[ -z "${PRESET_USER_NAME}" ]] && echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
 		[[ "${desktop_dm}" != "none" ]] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
 		add_user
-		if [[ -z "${RealUserName:-}" ]]; then
+		if [[ $? -ne 0 || -z "${RealUserName:-}" ]]; then
 			echo -e "\nUser creation failed. Retrying on next login."
 			exit 1
 		fi
@@ -962,7 +989,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	# ask user to select automated locales or not
 	trap '' 2
-	set_timezone_and_locales
+	set_timezone_and_locales || exit 1
 	trap - INT TERM EXIT
 
 	if [[ ${USER_SHELL} == zsh ]]; then
@@ -972,15 +999,14 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# re-enable passing locale environment via ssh (atomic write)
 	_f="/etc/ssh/sshd_config"
 	if sed -E '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' "${_f}" > "${_f}.tmp"; then
-		atomic_write "${_f}.tmp" "${_f}"
+		atomic_write "${_f}.tmp" "${_f}" || exit 1
+	else
+		rm -f "${_f}.tmp"
+		exit 1
 	fi
-	# Delete marker BEFORE restarting sshd.  If the script is running
-	# over an SSH session, `systemctl restart ssh.service` kills the
-	# session and this script with it, so any code after the restart
-	# never executes.
-	rm -f /root/.not_logged_in_yet
-	# restart sshd daemon
-	systemctl restart ssh.service
+	# Reload keeps the active SSH session alive, so the marker can remain until
+	# every remaining firstlogin action completes.
+	systemctl reload ssh.service || exit 1
 
 	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
 	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
@@ -1145,4 +1171,7 @@ fi
 # All configuration complete - safe to remove firstlogin marker now
 # This must be the last operation to ensure power-loss during any
 # step above will cause firstlogin to re-run on next boot.
-tty -s && rm -f /root/.not_logged_in_yet
+if tty -s; then
+	rm -f /root/.not_logged_in_yet
+	sync -f /root 2>/dev/null || sync
+fi
