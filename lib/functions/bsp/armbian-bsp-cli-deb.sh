@@ -127,6 +127,19 @@ function compile_armbian-bsp-cli() {
 	run_host_command_logged rsync -av "${SRC}"/packages/bsp/common/* "${destination}"
 	wait_for_disk_sync "after rsync'ing package/bsp/common for bsp-cli"
 
+	# Optional: park SATA/HDD heads on shutdown. Opt-in per board or family with
+	# HDD_PARK_ON_SHUTDOWN="yes". The generic script syncs, waits for any mdadm
+	# array to go clean, then spins down (hdparm -y) and detaches every
+	# /sys/block/sd*, so NAS-style boards (Odroid HC4/XU4, and any of the many
+	# SATA-capable boards) avoid violent emergency head retracts on power-off.
+	# The script itself skips reboot/kexec. (Not under packages/bsp/common, which
+	# is rsynced to every image unconditionally - this must only install on opt-in.)
+	if [[ "${HDD_PARK_ON_SHUTDOWN}" == "yes" ]]; then
+		display_alert "Installing SATA park-on-shutdown hook" "${BOARD}" "info"
+		mkdir -p "${destination}"/lib/systemd/system-shutdown
+		install -m 0755 "${SRC}"/packages/bsp/park-sata-disks.shutdown "${destination}"/lib/systemd/system-shutdown/park-sata-disks.shutdown
+	fi
+
 	mkdir -p "${destination}"/usr/share/armbian/
 
 	# get bootscript information.
