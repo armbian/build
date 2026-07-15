@@ -1,0 +1,119 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav-armbian@draconpern.com>
+Date: Thu, 10 Apr 2026 00:00:00 +0000
+Subject: [PATCH] fs: btrfs: fix zstd decompression for BTRFS extents
+
+The generic zstd_decompress() wrapper in lib/zstd/zstd.c works for FIT
+images but fails for BTRFS filesystem extents due to two issues:
+
+1. Sector-aligned compressed size: BTRFS stores compressed extents
+   padded to sector boundaries (4096 bytes).  The on-disk size
+   (disk_num_bytes) may be larger than the actual zstd frame.
+   zstd_decompress_dctx() rejects trailing data after the frame,
+   causing decompression failures for regular (non-inline) extents.
+
+2. Sector-aligned decompressed size: BTRFS compresses in sector-sized
+   blocks, so the zstd frame content size may exceed the actual data
+   size (ram_bytes) stored in extent metadata.  For example, a 3906
+   byte file is compressed as a 4096 byte block.  When the output
+   buffer is sized to ram_bytes, zstd_decompress_dctx() fails with
+   ZSTD_error_dstSize_tooSmall (error 70) for inline extents.
+
+Both issues manifest as boot failures on zstd-compressed BTRFS:
+
+  zstd_decompress: failed to decompress: 70
+  BTRFS: An error occurred while reading file /boot/boot.scr
+
+Fix by calling zstd_decompress_dctx() directly with two adjustments:
+- Use zstd_find_frame_compressed_size() to strip sector padding from
+  the input, giving zstd the exact frame size.
+- Use ZSTD_getFrameContentSize() to detect when the frame decompresses
+  to more than dlen bytes, and allocate a temporary buffer for the
+  full decompressed frame when needed.
+
+This is consistent with decompress_lzo() and decompress_zlib() which
+also call their library functions directly without generic wrappers.
+
+Signed-off-by: Igor Velkov <iav-armbian@draconpern.com>
+---
+ fs/btrfs/compression.c | 66 +++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 62 insertions(+), 4 deletions(-)
+
+diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
+--- a/fs/btrfs/compression.c
++++ b/fs/btrfs/compression.c
+@@ -137,12 +137,70 @@
+
+ static u32 decompress_zstd(const u8 *cbuf, u32 clen, u8 *dbuf, u32 dlen)
+ {
+-	struct abuf in, out;
++	zstd_dctx *ctx;
++	size_t wsize, ret, frame_csize, out_len;
++	void *workspace;
++	unsigned long long fcs;
++	u8 *tmp = NULL;
++	u8 *out_buf = dbuf;
++
++	out_len = dlen;
+
+-	abuf_init_set(&in, (u8 *)cbuf, clen);
+-	abuf_init_set(&out, dbuf, dlen);
++	/*
++	 * Find the actual compressed frame size. BTRFS stores compressed
++	 * extents padded to sector boundaries, but zstd_decompress_dctx()
++	 * requires the exact frame size without trailing padding.
++	 */
++	frame_csize = zstd_find_frame_compressed_size(cbuf, clen);
++	if (!zstd_is_error(frame_csize))
++		clen = frame_csize;
+
+-	return zstd_decompress(&in, &out);
++	/*
++	 * BTRFS compresses in sector-sized blocks, so the zstd frame may
++	 * decompress to a full sector (e.g. 4096) even when the actual
++	 * data (ram_bytes) is smaller. Allocate a larger buffer when needed
++	 * to avoid ZSTD_error_dstSize_tooSmall.
++	 */
++	fcs = ZSTD_getFrameContentSize(cbuf, clen);
++	if (fcs != ZSTD_CONTENTSIZE_ERROR &&
++	    fcs != ZSTD_CONTENTSIZE_UNKNOWN && fcs > dlen) {
++		if (fcs > SIZE_MAX)
++			return -1;
++		tmp = malloc(fcs);
++		if (!tmp)
++			return -1;
++		out_buf = tmp;
++		out_len = fcs;
++	}
++
++	wsize = zstd_dctx_workspace_bound();
++	workspace = malloc(wsize);
++	if (!workspace) {
++		free(tmp);
++		return -1;
++	}
++
++	ctx = zstd_init_dctx(workspace, wsize);
++	if (!ctx) {
++		free(workspace);
++		free(tmp);
++		return -1;
++	}
++
++	ret = zstd_decompress_dctx(ctx, out_buf, out_len, cbuf, clen);
++	free(workspace);
++
++	if (zstd_is_error(ret) || ret < dlen) {
++		free(tmp);
++		return -1;
++	}
++
++	if (tmp) {
++		memcpy(dbuf, tmp, dlen);
++		free(tmp);
++	}
++
++	return dlen;
+ }
+
+ u32 btrfs_decompress(u8 type, const char *c, u32 clen, char *d, u32 dlen)
