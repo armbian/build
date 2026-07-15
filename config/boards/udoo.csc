@@ -11,4 +11,4 @@ BOOTENV_FILE="udoo.txt"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
-# u-boot (mainline v2026.07-rc4) + SPL raw-sector load are set in the imx6 family conf.
+# u-boot (mainline v2026.07) + SPL raw-sector load are set in the imx6 family conf.
