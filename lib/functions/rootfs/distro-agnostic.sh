@@ -381,7 +381,7 @@ function install_distribution_agnostic() {
 				Pin: version 1.35+dfsg-4*
 				Pin-Priority: 1001
 			EOF
-			chroot_sdcard apt-get -y --allow-downgrades install tar
+			do_with_retries 3 chroot_sdcard_apt_get --allow-downgrades install tar
 		fi
 
 		install_artifact_deb_chroot "linux-image"
@@ -404,7 +404,7 @@ function install_distribution_agnostic() {
 		if [[ "${RELEASE}" == "resolute" ]]; then
 			display_alert "Unpinning tar" "restoring resolute tar after kernel deb install" "info"
 			rm -f "${SDCARD}/etc/apt/preferences.d/tar-pin"
-			chroot_sdcard apt-get install -y tar
+			do_with_retries 3 chroot_sdcard_apt_get install tar
 		fi
 	fi
 
