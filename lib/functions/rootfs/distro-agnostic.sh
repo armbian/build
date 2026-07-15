@@ -404,7 +404,7 @@ function install_distribution_agnostic() {
 		if [[ "${RELEASE}" == "resolute" ]]; then
 			display_alert "Unpinning tar" "restoring resolute tar after kernel deb install" "info"
 			rm -f "${SDCARD}/etc/apt/preferences.d/tar-pin"
-			chroot_sdcard apt-get upgrade -y
+			chroot_sdcard apt-get install -y tar
 		fi
 	fi
 
