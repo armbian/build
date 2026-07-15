@@ -376,7 +376,6 @@ function install_distribution_agnostic() {
 		# just one. Remove once upstream tar is fixed.
 		if [[ "${RELEASE}" == "resolute" ]]; then
 			display_alert "Pinning tar" "to 1.35+dfsg-4 for resolute kernel deb install" "info"
-			chroot_sdcard apt-get update
 			cat > "${SDCARD}/etc/apt/preferences.d/tar-pin" <<-'EOF'
 				Package: tar
 				Pin: version 1.35+dfsg-4*
