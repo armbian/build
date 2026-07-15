@@ -7,7 +7,8 @@ BOOT_LOGO="desktop"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current,edge"
 FORCE_BOOTSCRIPT_UPDATE="yes"
-BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04"
+# Bumped off the v2025.04 self-pin to the sunxi64 family default (v2026.07):
+# the half-applied pin built v2026.07 source with the v2025.04 patch and failed.
+# Board DT + defconfig now ride v2026.07-sunxi64/board_cherryba-m1.
 BOARD_MAINTAINER="IsMrX"
 INTRODUCED="2024"

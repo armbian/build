@@ -65,7 +65,7 @@ function post_build_image__900_convert_to_arduino_img() {
 
 function image_output_arduino_cleanup() {
 	if [[ -n "${ARDUINO_ROOTFS_LOOP}" ]]; then
-		umount "${ARDUINO_ROOTFS_MOUNT}" 2>/dev/null
-		losetup -d "${ARDUINO_ROOTFS_LOOP}" 2>/dev/null
+		umount "${ARDUINO_ROOTFS_MOUNT}" 2> /dev/null
+		losetup -d "${ARDUINO_ROOTFS_LOOP}" 2> /dev/null
 	fi
 }

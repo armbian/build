@@ -482,11 +482,23 @@ function compile_uboot() {
 		display_alert "Analyzing u-boot binary with binwalk" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
 		run_host_command_logged file --brief "${binfile}" "||" true ";" binwalk --run-as=root "${binfile}" "||" true # do not fail, ever
 
+		display_alert "Analyzing u-boot binary with dumpimage" "'${base_binfile}' built on ${HOSTRELEASE}" "info"
+		run_host_command_logged dumpimage -l "${binfile}" "||" true # do not fail, ever
+
 		if [[ "${UBOOT_BINS_TO_OUTPUT}" == "yes" ]]; then
 			display_alert "Copying u-boot binary to output for later binwalk inspection" "'${base_binfile}' built on ${HOSTRELEASE}" "warn"
 			declare target="${SRC}/output/uboot-bin-${uboot_name}-${base_binfile}-host-${HOSTRELEASE}.bin"
 			run_host_command_logged cp -v "${binfile}" "${target}"
 		fi
+
+		# Delegate to a hook for any extra analysis of the u-boot binary file
+		call_extension_method "check_uboot_produced_binary_file" <<- 'CHECK_UBOOT_PRODUCED_BINARY_FILE'
+			*check one produced u-boot binary*
+			This is called once for *each* produced u-boot binary file, before packaging them into the .deb package.
+			You can use this to analyze the produced binary for correctness, or to extract some information from it.
+			You can use the variable binfile to access the full path to the binary file, and base_binfile to access just the filename.
+		CHECK_UBOOT_PRODUCED_BINARY_FILE
+
 	done
 
 	artifact_package_hook_helper_board_side_functions "postinst" uboot_postinst_base "${postinst_functions[@]}"

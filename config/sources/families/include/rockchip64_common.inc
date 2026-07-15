@@ -180,7 +180,7 @@ prepare_boot_configuration() {
 			ATF_COMPILE=yes
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 			ATFDIR='arm-trusted-firmware'
-			ATFBRANCH='tag:v2.13.0' # also adapt ATFPATCHDIR when changing this
+			ATFBRANCH='tag:v2.13.0'            # also adapt ATFPATCHDIR when changing this
 			ATFPATCHDIR='atf-rockchip64/v2.13' # there's also v2.14 patches ready
 			ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
 
@@ -188,8 +188,8 @@ prepare_boot_configuration() {
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			[[ $BOOT_SCENARIO == binman-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
-				# binman builds do not have separate build targets for idbloader.img and u-boot.itb
-				# ROCKCHIP_TPL needed for boards with CONFIG_ROCKCHIP_EXTERNAL_TPL, ignored for boards without it
+			# binman builds do not have separate build targets for idbloader.img and u-boot.itb
+			# ROCKCHIP_TPL needed for boards with CONFIG_ROCKCHIP_EXTERNAL_TPL, ignored for boards without it
 			;;
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -262,7 +262,12 @@ uboot_custom_postprocess() {
 				display_alert "boot_merger for '${BOOT_SOC}'" "using vendor SPL ${VENDOR_SPL_PATH##*/}" "info"
 			fi
 
-			if [[ "$BOOT_SOC" == "rk3576" ]]; then
+			if declare -F board_uboot_spl_blobs_postprocess >/dev/null; then
+				# Board/extension hook: take over SPL loader generation for this BOOT_SOC
+				# (e.g. boot_merger with custom usbplug, idbloader via mkimage, maskrom
+				# spl_loader save). Falls through to the upstream branches below otherwise.
+				board_uboot_spl_blobs_postprocess "$BOOT_SOC" "$SPL_BIN_PATH" "$FLASH_BOOT_BIN"
+			elif [[ "$BOOT_SOC" == "rk3576" ]]; then
 				display_alert "boot_merger for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
 				RKBOOT_INI_FILE=rk3576.ini
 				cp $RKBIN_DIR/rk35/RK3576MINIALL.ini $RKBOOT_INI_FILE
@@ -315,6 +320,13 @@ uboot_custom_postprocess() {
 			run_host_command_logged dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
 			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
 		fi
+		# Hook: allow board/extension to copy out the finished SPI image
+		# (e.g. for Maskrom recovery). Invoked after both rkspi_loader.img
+		# build paths so the hook contract is consistent regardless of
+		# BOOT_SPI_RKSPI_LOADER.
+		if declare -F board_uboot_spi_image_after_build >/dev/null; then
+			board_uboot_spi_image_after_build
+		fi
 	fi
 }
 
@@ -349,8 +361,8 @@ write_uboot_platform_ufs() {
 	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
 
 	if [[ -f $1/idbloader.img && -f $1/u-boot.itb ]]; then
-		${logging_prelude} dd if=$1/idbloader.img of=$2 bs=4096 seek=8    conv=notrunc,fsync status=none
-		${logging_prelude} dd if=$1/u-boot.itb   of=$3 bs=4096 seek=2048 conv=notrunc,fsync status=none
+		${logging_prelude} dd if=$1/idbloader.img of=$2 bs=4096 seek=8 conv=notrunc,fsync status=none
+		${logging_prelude} dd if=$1/u-boot.itb of=$3 bs=4096 seek=2048 conv=notrunc,fsync status=none
 	else
 		echo "write_uboot_platform_ufs: no idbloader.img + u-boot.itb pair in $1; board hook must override."
 		exit 1
@@ -389,15 +401,10 @@ write_uboot_platform_mtd() {
 	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 
-	CHOICE=$(dialog --no-collapse \
-		--title "armbian-install" \
-		--backtitle "$backtitle" \
-		--radiolist "Choose SPI image:" 0 56 4 \
-		"${MENU_ITEMS[@]}" \
-		3>&1 1>&2 2>&3)
+	CHOICE=$(dialog --no-collapse --title "armbian-install" --backtitle "$backtitle" --radiolist "Choose SPI image:" 0 56 4 "${MENU_ITEMS[@]}" 3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
-		idx=$((CHOICE-1))
+		idx=$((CHOICE - 1))
 		chosen_file="${FILE_ARRAY[$idx]}"
 		if [[ "$chosen_file" == *rkspi_loader*.img ]]; then
 			dd if="$chosen_file" of="$2" conv=notrunc status=none > /dev/null 2>&1

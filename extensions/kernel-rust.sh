@@ -12,6 +12,13 @@
 #   RUST_EXTRA_COMPONENTS+=("clippy" "llvm-tools")
 #   RUST_EXTRA_CARGO_CRATES+=("mdbook" "cargo-deb@2.11.0")
 #
+# The linux-headers package gets the prebuilt Rust crate artifacts
+# (rust/*.rmeta, proc-macro rust/*.so), so out-of-tree (DKMS) Rust modules
+# build against the installed headers. Proc-macro .so files are build-host
+# binaries: for Rust DKMS on the target, build the kernel natively on the
+# same architecture. A matching rustc version on the target is required
+# (see CONFIG_RUSTC_VERSION_TEXT in the shipped .config).
+#
 # Usage:  ./compile.sh kernel-config BOARD=... BRANCH=... ENABLE_EXTENSIONS="kernel-rust"
 #
 # References:
@@ -198,6 +205,66 @@ function custom_kernel_config__add_rust_compiler() {
 		opts_m+=("SAMPLE_RUST_MINIMAL")
 		opts_m+=("SAMPLE_RUST_PRINT")
 		opts_m+=("SAMPLE_RUST_DRIVER_FAUX")
+	fi
+}
+
+function pre_package_kernel_headers__add_rust_artifacts() {
+	# Ship prebuilt Rust crate artifacts in the linux-headers package so that
+	# out-of-tree (DKMS) Rust modules can build against the installed headers.
+	# Without them kbuild sees CONFIG_RUST=y in auto.conf but rustc fails with
+	# E0463 "can't find crate for core".
+	#
+	# The file set was determined empirically (strace of an out-of-tree Rust
+	# module build against a fully built tree): rustc reads rust/*.rmeta (crate
+	# metadata, target-arch neutral) and rust/*.so (proc-macro dylibs). With
+	# CONFIG_RUST_INLINE_HELPERS=y (6.19+, clang builds) kbuild additionally
+	# links module objects with rust/helpers/helpers_module.bc. The set varies
+	# per kernel version and config, so copy by glob, not by name.
+	# shellcheck disable=SC2154 # kernel_work_dir is defined in the calling packaging function
+	if ! grep -q "^CONFIG_RUST=y" "${kernel_work_dir}/include/config/auto.conf" 2> /dev/null; then
+		display_alert "Kernel built without CONFIG_RUST, not adding Rust artifacts to headers" "${EXTENSION}" "debug"
+		return 0
+	fi
+
+	declare -a rust_artifacts=()
+	local f
+	for f in "${kernel_work_dir}/rust/"*.rmeta "${kernel_work_dir}/rust/"*.so "${kernel_work_dir}/rust/helpers/"*.bc; do
+		if [[ -f "${f}" ]]; then
+			rust_artifacts+=("${f#"${kernel_work_dir}/"}")
+		fi
+	done
+
+	# A headers package that advertises CONFIG_RUST=y without the artifacts is
+	# broken-by-construction (worse than no Rust support), so fail the build.
+	if [[ ${#rust_artifacts[@]} -eq 0 ]]; then
+		exit_with_error "CONFIG_RUST=y but no rust/*.rmeta artifacts found in kernel tree" "${EXTENSION}"
+	fi
+
+	# proc-macro .so files run on the *build host*; after cross-compilation they
+	# will not load on the target, so Rust DKMS there needs same-arch headers.
+	local host_arch target_arch_pattern
+	host_arch="$(uname -m)"
+	case "${ARCH}" in
+		arm64) target_arch_pattern="aarch64" ;;
+		amd64) target_arch_pattern="x86_64" ;;
+		armhf) target_arch_pattern="armv[6-8]l" ;;
+		riscv64) target_arch_pattern="riscv64" ;;
+		*) target_arch_pattern="${ARCH}" ;;
+	esac
+	# shellcheck disable=SC2254 # pattern expansion is the point here
+	case "${host_arch}" in
+		${target_arch_pattern}) : ;; # native build, .so files match the target
+		*)
+			display_alert "Rust proc-macro .so in headers are ${host_arch} binaries" \
+				"${EXTENSION}: Rust DKMS on ${ARCH} target requires natively-built headers" "wrn"
+			;;
+	esac
+
+	display_alert "Adding Rust artifacts to linux-headers" "${EXTENSION}: ${#rust_artifacts[@]} files" "info"
+	# shellcheck disable=SC2154 # headers_target_dir is defined in the calling packaging function
+	tar -c -f - -C "${kernel_work_dir}" "${rust_artifacts[@]}" | tar -xf - -C "${headers_target_dir}"
+	if [[ "${PIPESTATUS[0]}" -ne 0 || "${PIPESTATUS[1]}" -ne 0 ]]; then
+		exit_with_error "Failed to copy Rust artifacts into headers package" "${EXTENSION}"
 	fi
 }
 

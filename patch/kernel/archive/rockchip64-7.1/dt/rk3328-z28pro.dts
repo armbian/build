@@ -1,1 +1,144 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Z28 PRO RK3328 TV box.
+ *
+ * The board is electrically a Rock64 derivative (same RK805 PMIC, GMAC2IO
+ * gigabit ethernet, HDMI and USB), so it is built on top of rk3328-rock64.dts
+ * and only the storage/wireless wiring - which is genuinely different - is
+ * overridden here:
+ *
+ *   - mmc@ff500000 (sdmmc)      -> onboard RTL8822BS Wi-Fi (SDIO), non-removable
+ *   - mmc@ff5f0000 (sdmmc_ext)  -> the physical microSD/TF card slot
+ *   - mmc@ff520000 (emmc)       -> eMMC, boot device (inherited from rock64)
+ *
+ * Note the RK3328 boot ROM cannot boot from sdmmc_ext, so the microSD slot is
+ * usable as storage only - the box always boots from eMMC. GPIO assignments are
+ * taken from the historical Armbian z28pro DTS and hanwckf's rk3328-z28pro.dts
+ * (both agree): Wi-Fi WL_REG_ON gpio1 PC2, host-wake gpio1 PA5, SD-card power
+ * vcc_sd gpio2 PA7 (active high), TF card-detect gpio3 PA1.
+ */
+
 #include "rk3328-rock64.dts"
+
+/ {
+	model = "Z28 PRO";
+	compatible = "rockchip,rk3328-z28pro", "pine64,rock64", "rockchip,rk3328";
+
+	aliases {
+		mmc0 = &sdmmc_ext;	/* microSD / TF card */
+		mmc1 = &emmc;		/* eMMC (boot) */
+		mmc2 = &sdmmc;		/* RTL8822BS Wi-Fi */
+	};
+
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		/*
+		 * RTL8822BS needs its 32.768 kHz reference from the RK805
+		 * (clkout2). Without it the SDIO interface never trains and
+		 * mmc init fails with "voltages below defined range" / -84.
+		 */
+		clocks = <&rk805 1>;
+		clock-names = "ext_clock";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_enable_h>;
+		post-power-on-delay-ms = <200>;
+		reset-gpios = <&gpio1 RK_PC2 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/*
+ * The Z28 PRO's ethernet PHY reset is on gpio2 PC1 (not rock64's gpio1 PC2,
+ * which here is the Wi-Fi WL_REG_ON). Leaving rock64's value makes the GMAC
+ * fight the Wi-Fi pwrseq for gpio1 PC2 -> "Cannot register the MDIO bus"
+ * (-EBUSY) and no ethernet. Re-point it and use the z28pro RGMII delays.
+ */
+&gmac2io {
+	snps,reset-gpio = <&gpio2 RK_PC1 GPIO_ACTIVE_LOW>;
+	tx_delay = <0x26>;
+	rx_delay = <0x11>;
+};
+
+/*
+ * rock64 enables spi0 for its SPI-NOR; the Z28 PRO has none, and spi0's gpio3
+ * pins collide with sdmmc0ext ("pin gpio3-2 already requested by ff190000.spi"),
+ * blocking the microSD slot. Disable it so sdmmc_ext can claim its pins.
+ */
+&spi0 {
+	status = "disabled";
+};
+
+/* microSD / TF card slot lives on the sdmmc_ext controller */
+&sdmmc_ext {
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cd-gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_LOW>;
+	disable-wp;
+	max-frequency = <150000000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc0ext_clk &sdmmc0ext_cmd &sdmmc0ext_bus4 &sdmmcext_cd>;
+	vmmc-supply = <&vcc_sd>;
+	status = "okay";
+};
+
+/*
+ * rock64 defines vcc_sd on gpio0 PD6 for its microSD; on the Z28 PRO the
+ * card-slot power enable is gpio2 PA7 (active high). Re-point the existing
+ * regulator instead of leaving an orphan one driving the wrong pin.
+ */
+&vcc_sd {
+	gpio = <&gpio2 RK_PA7 GPIO_ACTIVE_HIGH>;
+	pinctrl-0 = <&sdmmcext_pwren>;
+};
+
+/*
+ * sdmmc controller carries the onboard RTL8822BS Wi-Fi (SDIO), not a card.
+ *
+ * Wi-Fi does not work yet: the card enumerates at the 400 kHz probe but times
+ * out (-110) as soon as the bus is clocked up, at any speed or signal voltage.
+ * Clock (rk805 clkout2) and WL_REG_ON (gpio1 PC2) are confirmed correct (match
+ * working mainline rk3328 boards), so the remaining cause is board-level
+ * (32 kHz reference routing / sdmmc0 signal integrity) and needs on-hardware
+ * debugging.
+ *
+ * It is kept ENABLED on purpose: Linux names mmcblkN in probe order, so
+ * disabling this host renumbers the eMMC and breaks a path-based root= (the
+ * board then "cannot find rootfs"). The cost of leaving it enabled is ~1 s of
+ * mmc init retries and some dmesg noise at boot.
+ */
+&sdmmc {
+	/delete-property/ vmmc-supply;
+	/delete-property/ disable-wp;
+	/delete-property/ cap-mmc-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	non-removable;
+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+};
+
+&pinctrl {
+	sdmmc-ext {
+		sdmmcext_pwren: sdmmcext-pwren {
+			rockchip,pins = <2 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		sdmmcext_cd: sdmmcext-cd {
+			rockchip,pins = <3 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	sdio-pwrseq {
+		wifi_enable_h: wifi-enable-h {
+			rockchip,pins = <1 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	wifi {
+		wifi_host_wake: wifi-host-wake {
+			rockchip,pins = <1 RK_PA5 RK_FUNC_GPIO &pcfg_pull_down>;
+		};
+	};
+};

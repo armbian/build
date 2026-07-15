@@ -83,7 +83,7 @@ function interactive_desktop_main_configuration() {
 		local de_json de_stderr de_rc=0
 		de_stderr=$(mktemp)
 		de_json=$(python3 "${parser}" "${yaml_dir}" --list-json \
-			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2>"${de_stderr}") || de_rc=$?
+			"${RELEASE}" "${ARCH}" --status "${status_filter}" 2> "${de_stderr}") || de_rc=$?
 		if [[ "${de_rc}" -ne 0 ]]; then
 			local err_text
 			err_text=$(cat "${de_stderr}" 2> /dev/null || true)
@@ -113,7 +113,7 @@ function interactive_desktop_main_configuration() {
 import sys, json
 for de in json.load(sys.stdin):
     print(de.get('name','') + '\t' + de.get('description','') + '\t' + de.get('status',''))
-" 2>/dev/null)
+" 2> /dev/null)
 
 		if [[ "${#options[@]}" -eq 0 ]]; then
 			exit_with_error "No desktop environments available for ${RELEASE}/${ARCH}"

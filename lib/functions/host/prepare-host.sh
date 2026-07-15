@@ -167,7 +167,7 @@ function adaptative_prepare_host_dependencies() {
 		build-tools::device-tree-compiler build-tools::libelf-dev build-tools::libfdt-dev
 		build-tools::libncurses-dev build-tools::libssl-dev build-tools::libusb-1.0-0-dev
 		build-tools::swig build-tools::u-boot-tools build-tools::uuid-dev build-tools::uuid-runtime build-tools::zlib1g-dev # swig needed for some u-boot's; uuid-runtime provides uuidgen for unique Docker image tags
-		build-tools::dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		build-tools::dwarves                                                                                                # dwarves has been replaced by "pahole" and is now a transitional package
 
 		# imaging - required for plymouth: converting images / spinners; large fan-out of libs
 		imaging::imagemagick
@@ -189,13 +189,13 @@ function adaptative_prepare_host_dependencies() {
 		core::ntpsec-ntpdate                  # this is a more secure ntpdate
 		core::patchutils core::pv
 		core::rsync
-		core::udev # causes initramfs rebuild, but is usually pre-installed.
-		core::file core::tree core::expect # logging utilities; expect is needed for 'unbuffer' command
-		core::colorized-logs                # for ansi2html, ansi2txt, pipetty
+		core::udev                                   # causes initramfs rebuild, but is usually pre-installed.
+		core::file core::tree core::expect           # logging utilities; expect is needed for 'unbuffer' command
+		core::colorized-logs                         # for ansi2html, ansi2txt, pipetty
 		core::aria2 core::curl core::axel core::wget # downloaders et al
-		core::parallel # do things in parallel (used for fast md5 hashing in initrd cache)
-		core::rdfind   # armbian-firmware-full/linux-firmware symlink creation step
-		core::binwalk  # for debugging produced u-boot binaries
+		core::parallel                               # do things in parallel (used for fast md5 hashing in initrd cache)
+		core::rdfind                                 # armbian-firmware-full/linux-firmware symlink creation step
+		core::binwalk                                # for debugging produced u-boot binaries
 	)
 
 	# @TODO: distcc -- handle in extension?
@@ -229,7 +229,7 @@ function adaptative_prepare_host_dependencies() {
 	# name explicitly there.
 	case "${host_release}" in
 		resolute) host_dependencies+=("qemu::qemu-user-binfmt") ;;
-		*)        host_dependencies+=("qemu::qemu-user-static") ;;
+		*) host_dependencies+=("qemu::qemu-user-static") ;;
 	esac
 
 	### Python2 -- required for some older u-boot builds
@@ -266,7 +266,7 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-other::gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64
+		host_dependencies+=("cross-other::gcc-riscv64-linux-gnu")   # crossbuild-essential-riscv64
 		host_dependencies+=("cross-other::libc6-dev-riscv64-cross") # Support for compiling riscv64 binaries
 	fi
 

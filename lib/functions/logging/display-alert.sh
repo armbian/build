@@ -148,6 +148,13 @@ function display_alert() {
 			ci_log="warning"
 			;;
 
+		notice)
+			level="notice"
+			level_indicator="🥦"
+			inline_logs_color="\e[1;32m"
+			ci_log="notice"
+			;;
+
 		ext)
 			level_indicator="✨"
 			case "${background_dark_or_light}" in
