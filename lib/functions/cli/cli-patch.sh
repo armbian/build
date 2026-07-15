@@ -48,7 +48,7 @@ function cli_patch_kernel_run() {
 	# </prepare the git sha1>
 
 	# prepare push details, if set
-	declare target_repo_url target_branch do_push="no"
+	declare target_repo_url target_branch do_push="no" used_github_shorthand="no"
 	declare -a push_command=()
 	determine_git_push_details "next-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" # fills in the above; parameter is the branch name
 
@@ -89,7 +89,7 @@ function cli_patch_uboot_run() {
 	# </prepare the git sha1>
 
 	# prepare push details, if set
-	declare target_repo_url target_branch do_push="no"
+	declare target_repo_url target_branch do_push="no" used_github_shorthand="no"
 	declare -a push_command=()
 	determine_git_push_details "${BOARD}-${BRANCH}" # fills in the above; parameter is the branch name
 
@@ -134,6 +134,7 @@ function determine_git_push_details() {
 	# explicit PUSH_TO_REPO (e.g. a CI HTTPS/token URL) - only synthesize when empty.
 	if [[ -n "${PUSH_TO_GITHUB}" && -z "${PUSH_TO_REPO}" ]]; then
 		PUSH_TO_REPO="git@github.com:${PUSH_TO_GITHUB}.git"
+		used_github_shorthand="yes" # the push target IS github.com/${PUSH_TO_GITHUB}
 		display_alert "Will push to GitHub" "${PUSH_TO_GITHUB}" "info"
 	fi
 
@@ -159,8 +160,10 @@ function execute_git_push() {
 	GIT_SSH_COMMAND="ssh -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" "${push_command[@]}"
 	display_alert "Done pushing to ${target_branch}" "$(git_redact_credentials "${target_repo_url}")" "info"
 
-	# If GitHub, link there to both the branch main view and History view
-	if [[ -n "${PUSH_TO_GITHUB}" ]]; then
+	# If we synthesized the target from the PUSH_TO_GITHUB shorthand, link there to both
+	# the branch main view and History view. Skipped when an explicit PUSH_TO_REPO took
+	# precedence, since then the push went elsewhere and these URLs would be misleading.
+	if [[ "${used_github_shorthand:-no}" == "yes" ]]; then
 		display_alert "GitHub tree URL" "https://github.com/${PUSH_TO_GITHUB}/tree/${target_branch}" "info"
 		display_alert "GitHub commits URL" "https://github.com/${PUSH_TO_GITHUB}/commits/${target_branch}" "info"
 	fi
