@@ -370,6 +370,21 @@ function install_distribution_agnostic() {
 
 	# install kernel: image/dtb/headers
 	if [[ "${KERNELSOURCE}" != "none" ]]; then
+		# resolute ships a tar that hits an ENOSYS bug while dpkg unpacks the
+		# kernel debs in the build chroot; pin it to a known-good version for the
+		# install and restore it afterwards. Applies to ALL families/boards, not
+		# just one. Remove once upstream tar is fixed.
+		if [[ "${RELEASE}" == "resolute" ]]; then
+			display_alert "Pinning tar" "to 1.35+dfsg-4 for resolute kernel deb install" "info"
+			chroot_sdcard apt-get update
+			cat > "${SDCARD}/etc/apt/preferences.d/tar-pin" <<-'EOF'
+				Package: tar
+				Pin: version 1.35+dfsg-4*
+				Pin-Priority: 1001
+			EOF
+			chroot_sdcard apt-get -y --allow-downgrades install tar=1.35+dfsg-4
+		fi
+
 		install_artifact_deb_chroot "linux-image"
 
 		if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then
@@ -386,6 +401,12 @@ function install_distribution_agnostic() {
 		IMAGE_INSTALLED_KERNEL_VERSION=$(dpkg --info "${DEB_STORAGE}/${image_artifacts_debs_reversioned["linux-image"]}" | grep "^ Source:" | sed -e 's/ Source: linux-//')
 		display_alert "Parsed kernel version from local package" "${IMAGE_INSTALLED_KERNEL_VERSION}" "debug"
 
+		# Restore the distro's tar after the kernel debs are installed (see the pin above).
+		if [[ "${RELEASE}" == "resolute" ]]; then
+			display_alert "Unpinning tar" "restoring resolute tar after kernel deb install" "info"
+			rm -f "${SDCARD}/etc/apt/preferences.d/tar-pin"
+			chroot_sdcard apt-get upgrade -y
+		fi
 	fi
 
 	call_extension_method "post_install_kernel_debs" <<- 'POST_INSTALL_KERNEL_DEBS'
