@@ -280,11 +280,16 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
 		depends_base_files=""
 	fi
+	# Provides/Conflicts/Replaces linux-sysctl-defaults: the BSP ships
+	# /usr/lib/sysctl.d/50-default.conf itself (armbian's copy of the distro
+	# defaults), so it satisfies that dependency without pulling the external
+	# package, and cleanly takes over its file if it was ever installed.
 	cat <<- EOF >> "${control_file_new}"
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}${EXTRA_BSPDEPS:+, ${EXTRA_BSPDEPS}}
-		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Replaces: zram-config, linux-sysctl-defaults, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
-		Provides: armbian-bsp-cli
+		Conflicts: linux-sysctl-defaults
+		Provides: armbian-bsp-cli, linux-sysctl-defaults
 	EOF
 
 	artifact_deb_reversion_unpack_data_deb
