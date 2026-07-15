@@ -381,7 +381,7 @@ function install_distribution_agnostic() {
 				Pin: version 1.35+dfsg-4*
 				Pin-Priority: 1001
 			EOF
-			chroot_sdcard apt-get -y --allow-downgrades install tar=1.35+dfsg-4
+			chroot_sdcard apt-get -y --allow-downgrades install tar
 		fi
 
 		install_artifact_deb_chroot "linux-image"
