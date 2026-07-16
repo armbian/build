@@ -260,12 +260,15 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
+	# Depends: ${EXTRA_BSPDEPS} — opt-in slot for family/board-specific runtime deb-Depends.
+	#         Use this (not PACKAGE_LIST_BOARD) when configure-ordering matters:
+	#         only deb-Depends guarantees the dep is configured before this BSP's postinst runs.
 	declare depends_base_files=", base-files (>= ${REVISION})"
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
 		depends_base_files=""
 	fi
 	cat <<- EOF >> "${control_file_new}"
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}${EXTRA_BSPDEPS:+, ${EXTRA_BSPDEPS}}
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Provides: armbian-bsp-cli
