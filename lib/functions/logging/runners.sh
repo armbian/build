@@ -12,7 +12,7 @@
 
 # Define a wrapper function for pv to prevent terminal hangs on PTY size queries in non-interactive/background environments
 function pv() {
-	if [[ -t 2 ]]; then
+	if [[ -t 2 && -z "${ARMBIAN_RELAUNCHED}" && "${TERM}" != "dumb" ]]; then
 		command pv "$@"
 	else
 		local files=()
