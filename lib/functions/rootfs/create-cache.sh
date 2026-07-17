@@ -18,7 +18,7 @@ function write_build_resolv_conf() {
 	local target="${1}/etc/resolv.conf"
 	local -a ns=("${NAMESERVER}")
 	local fb
-	for fb in 1.1.1.1 8.8.8.8; do
+	for fb in 1.1.1.1 8.8.8.8 9.9.9.9; do
 		[[ "${fb}" == "${NAMESERVER}" ]] && continue
 		ns+=("${fb}")
 	done
