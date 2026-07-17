@@ -10,6 +10,44 @@
 # All those runner helper functions have a particular non-quoting style.
 # callers might need to force quote with bash's @Q modifier.
 
+# Define a wrapper function for pv to prevent terminal hangs on PTY size queries in non-interactive/background environments
+function pv() {
+	if [[ -t 2 ]]; then
+		command pv "$@"
+	else
+		local files=()
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+				--)
+					shift
+					files+=("$@")
+					break
+					;;
+				-s|-N|-L|-B|-R|-P|-w|-H|--size|--name|--rate-limit|--buffer-size|--remote|--pidfile|--width|--height)
+					shift
+					[[ $# -gt 0 ]] && shift
+					;;
+				-*)
+					shift 1
+					;;
+				*)
+					files+=("$1")
+					shift
+					;;
+			esac
+		done
+		if [[ ${#files[@]} -gt 0 ]]; then
+			cat "${files[@]}"
+		else
+			cat
+		fi
+	fi
+}
+export -f pv
+
+
+
+
 # shortcut
 function chroot_sdcard_apt_get_install() {
 	chroot_sdcard_apt_get --no-install-recommends install "$@"
