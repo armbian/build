@@ -16,14 +16,15 @@
 # (resolvconf / systemd-resolved), so these public resolvers are never shipped.
 function write_build_resolv_conf() {
 	local target="${1}/etc/resolv.conf"
-	local -a ns=("${NAMESERVER}")
+	local -a ns=()
+	[[ -n "${NAMESERVER}" ]] && ns=("${NAMESERVER}") # omit an empty primary; never emit a blank "nameserver" line
 	local fb
 	for fb in 1.1.1.1 8.8.8.8 9.9.9.9; do
 		[[ "${fb}" == "${NAMESERVER}" ]] && continue
 		ns+=("${fb}")
 	done
 	ns=("${ns[@]:0:3}") # cap at MAXNS=3; extra nameserver lines are ignored by glibc
-	run_host_command_logged rm -fv "${target}"
+	run_host_command_logged rm -fv "${target@Q}"
 	{
 		for fb in "${ns[@]}"; do echo "nameserver ${fb}"; done
 		echo "options timeout:3 attempts:2" # fail over to the next resolver quickly instead of hanging
