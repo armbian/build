@@ -70,6 +70,14 @@ function chroot_sdcard_apt_get() {
 
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 
+	# Prevent dpkg from prompting about modified conffiles in non-interactive chroot builds.
+	# Without this, packages like ubuntu-pro-client that ship modified conffiles (e.g.
+	# /etc/apt/apt.conf.d/20apt-esm-hook.conf) will prompt on stdin, get EOF, and fail.
+	# --force-confdef: use dpkg's default action (no prompt)
+	# --force-confold: if the default is ambiguous, keep the existing conffile
+	apt_params+=(-o "Dpkg::Options::=--force-confdef")
+	apt_params+=(-o "Dpkg::Options::=--force-confold")
+
 	# --list-cleanup
 	#     This option is on by default; use --no-list-cleanup to turn it off. When it is on, apt-get will
 	#     automatically manage the contents of /var/lib/apt/lists to ensure that obsolete files are erased. The only

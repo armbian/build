@@ -26,11 +26,27 @@ jobs:
       issues: write
 
     steps:
-      - name: "Checkout build repo (PR head)"
+      # Security: this runs as pull_request_target (trusted token/secrets). We do
+      # NOT check out the fork's head into the working tree - checkout@v7 refuses
+      # that as a "pwn request" risk. Instead we check out the trusted base and
+      # fetch the PR head as bare objects; the steps below only read data from it
+      # (git diff + git show), never execute fork code, so no unsafe opt-in is needed.
+      - name: "Checkout build repo (base)"
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          # Defense-in-depth for pull_request_target: don't leave the privileged
+          # GITHUB_TOKEN in .git/config. The PR-head fetch below is anonymous
+          # (public repo) and the comment step uses secrets.GITHUB_TOKEN directly.
+          persist-credentials: false
+
+      - name: "Fetch PR head objects (no checkout)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
 
       - name: "Checkout armbian.github.io (images repo)"
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -39,6 +55,7 @@ jobs:
           ref: ${{ env.WEBSITE_REF }}
           path: website
           fetch-depth: 1
+          persist-credentials: false # read-only checkout; don't retain the token in .git/config
 
       - name: "Find newly added board configs in PR"
         id: added
@@ -71,6 +88,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
           missing_any=0
           comment_file="$(mktemp)"
 
@@ -92,7 +111,8 @@ jobs:
             board="${file%.*}"
 
             vendor="$(
-              grep -E '^[[:space:]]*(export[[:space:]]+|declare[[:space:]]+-g[[:space:]]+)?BOARD_VENDOR[[:space:]]*=' -m1 -- "$cfg" 2>/dev/null \
+              git show "${HEAD_SHA}:${cfg}" 2>/dev/null \
+              | grep -E '^[[:space:]]*(export[[:space:]]+|declare[[:space:]]+-g[[:space:]]+)?BOARD_VENDOR[[:space:]]*=' -m1 \
               | sed -E 's/^[[:space:]]*(export[[:space:]]+|declare[[:space:]]+-g[[:space:]]+)?BOARD_VENDOR[[:space:]]*=[[:space:]]*//; s/^"//; s/"$//' \
               | tr '[:upper:]' '[:lower:]' \
               | tr '_' '-' \

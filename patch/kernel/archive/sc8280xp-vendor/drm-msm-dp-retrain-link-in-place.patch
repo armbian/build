@@ -1,0 +1,196 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 2 Jul 2026 21:57:34 +0200
+Subject: drm/msm/dp: retrain the link in place instead of tearing it down
+
+The hotplug recovery work restores a replugged link by turning the
+link and pixel clocks off and back on under an active scanout, with
+no lock shared with the atomic path and every return value ignored.
+A compositor modeset racing it, which any EDID change triggers, then
+writes link registers on a gated clock domain: in the best case
+PUSH_IDLE times out, in the worst the access stalls the display noc
+and the firmware resets the SoC.
+
+Retrain in place instead, under the modeset locks, with the clocks
+on the whole time, and skip the retrain when the link already checks
+out. Training right after a replug can fail transiently, so retry a
+few times; once the retries run out, leave LINK_STATUS_BAD and send
+a hotplug event so userspace does a fresh modeset. A training
+failure in atomic_enable now schedules the same recovery instead of
+being ignored.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c    | 18 +++
+ drivers/gpu/drm/msm/dp/dp_ctrl.h    |  1 +
+ drivers/gpu/drm/msm/dp/dp_display.c | 74 +++++++++-
+ 3 files changed, 85 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -2135,6 +2135,24 @@ static int msm_dp_ctrl_link_maintenance(struct msm_dp_ctrl_private *ctrl)
+ 	return ret;
+ }
+ 
++int msm_dp_ctrl_retrain_link(struct msm_dp_ctrl *msm_dp_ctrl)
++{
++	struct msm_dp_ctrl_private *ctrl;
++	u8 link_status[DP_LINK_STATUS_SIZE];
++
++	ctrl = container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
++
++	if (!ctrl->link_clks_on)
++		return -EINVAL;
++
++	/* a racing modeset may have retrained the link already */
++	if (drm_dp_dpcd_read_link_status(ctrl->aux, link_status) >= 0 &&
++	    drm_dp_channel_eq_ok(link_status, ctrl->link->link_params.num_lanes))
++		return 0;
++
++	return msm_dp_ctrl_link_maintenance(ctrl);
++}
++
+ #define SCRAMBLER_RESET_COUNT_VALUE		0xFC
+ 
+ static void msm_dp_ctrl_send_phy_pattern(struct msm_dp_ctrl_private *ctrl,
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.h b/drivers/gpu/drm/msm/dp/dp_ctrl.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.h
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.h
+@@ -19,6 +19,7 @@ struct phy;
+ int msm_dp_ctrl_on_link(struct msm_dp_ctrl *msm_dp_ctrl);
+ int msm_dp_ctrl_on_stream(struct msm_dp_ctrl *msm_dp_ctrl, bool force_link_train);
+ void msm_dp_ctrl_off_link_stream(struct msm_dp_ctrl *msm_dp_ctrl);
++int msm_dp_ctrl_retrain_link(struct msm_dp_ctrl *msm_dp_ctrl);
+ void msm_dp_ctrl_off(struct msm_dp_ctrl *msm_dp_ctrl);
+ void msm_dp_ctrl_push_idle(struct msm_dp_ctrl *msm_dp_ctrl);
+ irqreturn_t msm_dp_ctrl_isr(struct msm_dp_ctrl *msm_dp_ctrl);
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -15,6 +15,8 @@
+ #include <drm/display/drm_dp_aux_bus.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/drm_edid.h>
++#include <drm/drm_modeset_lock.h>
++#include <drm/drm_probe_helper.h>
+ 
+ #include "msm_drv.h"
+ #include "msm_kms.h"
+@@ -37,6 +39,9 @@ MODULE_PARM_DESC(psr_enabled, "enable PSR for eDP and DP displays");
+ #define EDID_RECHECK_TRIES	2
+ #define EDID_RECHECK_DELAY_MS	2500
+ 
++#define HPD_RECOVERY_MAX_TRIES	5
++#define HPD_RECOVERY_DELAY_MS	500
++
+ enum {
+ 	ISR_DISCONNECTED,
+ 	ISR_CONNECT_PENDING,
+@@ -60,6 +65,7 @@ struct msm_dp_display_private {
+ 	bool plugged;
+ 
+ 	struct delayed_work hpd_recovery_work;
++	unsigned int hpd_recovery_tries;
+ 
+ 	struct delayed_work edid_recheck_work;
+ 	unsigned int edid_recheck_left;
+@@ -423,14 +429,61 @@ static void msm_dp_hpd_recovery_work(struct work_struct *work)
+ 	struct delayed_work *dw = to_delayed_work(work);
+ 	struct msm_dp_display_private *dp =
+ 		container_of(dw, struct msm_dp_display_private, hpd_recovery_work);
++	struct drm_connector *connector = dp->msm_dp_display.connector;
++	struct drm_device *dev = dp->drm_dev;
++	struct drm_modeset_acquire_ctx ctx;
++	struct drm_crtc *crtc;
++	int rc = 0;
++	int ret;
+ 
+-	if (!dp->msm_dp_display.power_on || !dp->plugged)
++	if (!dp->msm_dp_display.power_on || !dp->plugged) {
++		dp->hpd_recovery_tries = 0;
+ 		return;
++	}
++
++	/* clocks stay on, and the locks serialize any concurrent commit */
++	drm_modeset_acquire_init(&ctx, 0);
++
++retry:
++	ret = drm_modeset_lock(&dev->mode_config.connection_mutex, &ctx);
++	if (ret)
++		goto unlock;
++
++	crtc = connector->state->crtc;
++	if (crtc) {
++		ret = drm_modeset_lock(&crtc->mutex, &ctx);
++		if (ret)
++			goto unlock;
++	}
++
++	if (dp->msm_dp_display.power_on && dp->plugged)
++		rc = msm_dp_ctrl_retrain_link(dp->ctrl);
+ 
+-	msm_dp_ctrl_off_link_stream(dp->ctrl);
+-	msm_dp_ctrl_on_link(dp->ctrl);
+-	msm_dp_ctrl_on_stream(dp->ctrl, false);
++unlock:
++	if (ret == -EDEADLK) {
++		ret = drm_modeset_backoff(&ctx);
++		if (!ret)
++			goto retry;
++	}
++	drm_modeset_drop_locks(&ctx);
++	drm_modeset_acquire_fini(&ctx);
++
++	if (rc) {
++		if (++dp->hpd_recovery_tries < HPD_RECOVERY_MAX_TRIES) {
++			schedule_delayed_work(&dp->hpd_recovery_work,
++					      msecs_to_jiffies(HPD_RECOVERY_DELAY_MS));
++			return;
++		}
+ 
++		DRM_ERROR("link recovery failed after %u tries. rc=%d\n",
++			  dp->hpd_recovery_tries, rc);
++		dp->hpd_recovery_tries = 0;
++		/* LINK_STATUS_BAD is still set, let userspace do a fresh modeset */
++		drm_kms_helper_connector_hotplug_event(dp->msm_dp_display.connector);
++		return;
++	}
++
++	dp->hpd_recovery_tries = 0;
+ 	drm_connector_set_link_status_property(dp->msm_dp_display.connector,
+ 					       DRM_MODE_LINK_STATUS_GOOD);
+ }
+@@ -471,7 +524,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 		drm_connector_set_link_status_property(dp->msm_dp_display.connector,
+ 						       DRM_MODE_LINK_STATUS_BAD);
+ 
+-		schedule_delayed_work(&dp->hpd_recovery_work, msecs_to_jiffies(500));
++		dp->hpd_recovery_tries = 0;
++		schedule_delayed_work(&dp->hpd_recovery_work,
++				      msecs_to_jiffies(HPD_RECOVERY_DELAY_MS));
+ 	}
+ 
+ 	if (!ret && drm_dp_is_branch(dp->panel->dpcd)) {
+@@ -1623,9 +1678,12 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
+ 	}
+ 
+ 	rc = msm_dp_ctrl_on_link(msm_dp_display->ctrl);
+-	if (rc)
+-		DRM_ERROR("Failed link training (rc=%d)\n", rc);
+-	// TODO: schedule drm_connector_set_link_status_property()
++	if (rc) {
++		/* link status cannot be set from commit context */
++		DRM_ERROR("Failed link training (rc=%d), scheduling recovery\n", rc);
++		mod_delayed_work(system_wq, &msm_dp_display->hpd_recovery_work,
++				 msecs_to_jiffies(HPD_RECOVERY_DELAY_MS));
++	}
+ 
+ 	msm_dp_display_enable(msm_dp_display, force_link_train);
+ 
+-- 
+Armbian
+

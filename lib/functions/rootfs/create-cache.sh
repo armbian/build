@@ -57,7 +57,9 @@ function calculate_rootfs_cache_id() {
 	# this, a configng commit that changes which packages a DE
 	# installs leaves the existing rootfs tarball untouched in the
 	# cache and every subsequent build cache-hits the pre-change
-	# version.
+	# version. Scoped to desktop builds: CLI images don't invoke
+	# armbian-config at build time, so configng content doesn't
+	# affect their rootfs.
 	#
 	# CONFIGNG_DESKTOPS_HASH is set by artifact_rootfs_config_dump
 	# above from `git log -1 -- tools/modules/desktops/` in the

@@ -38,9 +38,7 @@ function post_family_tweaks_bsp__norco-emb-3531() {
 	install -Dm644 "${SRC}/packages/bsp/norco-emb-3531/emb-3531.conf" \
 		"${destination}/usr/share/alsa/ucm2/Rockchip/emb-3531/emb-3531.conf"
 
-	if [ ! -d "${destination}/usr/share/alsa/ucm2/conf.d/simple-card" ]; then
-		mkdir -p "${destination}/usr/share/alsa/ucm2/conf.d/simple-card"
-	fi
-	ln -sfv /usr/share/alsa/ucm2/Rockchip/emb-3531/emb-3531.conf \
+	mkdir -p "${destination}/usr/share/alsa/ucm2/conf.d/simple-card"
+	ln -sfv ../../Rockchip/emb-3531/emb-3531.conf \
 		"${destination}/usr/share/alsa/ucm2/conf.d/simple-card/emb-3531.conf"
 }
