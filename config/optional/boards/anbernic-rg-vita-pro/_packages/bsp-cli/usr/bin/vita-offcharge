@@ -6,8 +6,10 @@
 #
 # Runs as a oneshot before the display manager / getty. Exit 0 = boot goes on.
 # Config in /etc/default/vita-offcharge:
-#   PWRON_MASK=0x01   bit(s) set in ON_SOURCE when the power button caused boot
+#   PWRON_MASK=0x80   bit(s) set in ON_SOURCE when the power button caused boot
 #   DISABLE=1
+#   LOGFILE=/path     trace battery/charger/CPU while charging (unset = no trace)
+#   LOG_INTERVAL=10   seconds between trace samples
 import fcntl
 import glob
 import os
@@ -76,6 +78,66 @@ def charger_online():
         except OSError:
             continue
     return False
+
+
+def read_str(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def cpu_busy(prev):
+    """Busy percentage since the previous /proc/stat snapshot."""
+    fields = read_str('/proc/stat').split()[1:9]
+    if len(fields) < 8:
+        return None, prev
+    vals = [int(x) for x in fields]
+    idle, total = vals[3] + vals[4], sum(vals)
+    if prev is None:
+        return None, (idle, total)
+    d_idle, d_total = idle - prev[0], total - prev[1]
+    pct = None if d_total <= 0 else 100.0 * (d_total - d_idle) / d_total
+    return pct, (idle, total)
+
+
+def log_sample(path, cpu_pct):
+    """Append one power/load sample. Only called when LOGFILE is configured."""
+    fields = [time.strftime('%H:%M:%S')]
+
+    for d in glob.glob('/sys/class/power_supply/*'):
+        name = os.path.basename(d)
+        kind = read_str(d + '/type')
+        if kind == 'Battery':
+            fields += [
+                'cap=' + read_str(d + '/capacity'),
+                'uV=' + read_str(d + '/voltage_now'),
+                'uA=' + read_str(d + '/current_now'),
+                'bat=' + read_str(d + '/status'),
+                'degC=' + read_str(d + '/temp'),
+            ]
+        elif read_str(d + '/online') == '1':
+            fields.append(f'src={name}:{read_str(d + "/charge_type") or "?"}')
+            for key, tag in (('input_current_limit', 'ilim'),
+                             ('current_max', 'imax'),
+                             ('voltage_max', 'vmax')):
+                val = read_str(f'{d}/{key}')
+                if val:
+                    fields.append(f'{tag}={val}')
+
+    khz = [read_str(p) for p in
+           sorted(glob.glob('/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq'))]
+    fields.append('cpu=%s' % ('?' if cpu_pct is None else '%.1f%%' % cpu_pct))
+    fields.append('cores=' + (read_str('/sys/devices/system/cpu/online') or '?'))
+    if any(khz):
+        fields.append('MHz=' + ','.join(str(int(k) // 1000) for k in khz if k))
+
+    try:
+        with open(path, 'a') as f:
+            f.write(' '.join(fields) + '\n')
+    except OSError:
+        pass
 
 
 def find_pwrkey():
@@ -228,8 +290,20 @@ def main():
             pass
         return 0
 
-    screen_timeout = float(conf.get('SCREEN_TIMEOUT', '10'))
-    boot_hold = float(conf.get('BOOT_HOLD', '2'))
+    def conf_float(key, default):
+        try:
+            return float(conf.get(key, default))
+        except ValueError:
+            return float(default)
+
+    screen_timeout = conf_float('SCREEN_TIMEOUT', '10')
+    boot_hold = conf_float('BOOT_HOLD', '2')
+
+    # Optional charge-rate/load trace, off unless LOGFILE is set in the config.
+    logfile = conf.get('LOGFILE')
+    log_every = conf_float('LOG_INTERVAL', '10')
+    last_log = 0.0
+    cpu_prev = None
 
     screen_on = True
     lit_at = time.time()
@@ -237,6 +311,12 @@ def main():
     down_at = None
     while True:
         now = time.time()
+
+        if logfile and now - last_log >= log_every:
+            cpu_pct, cpu_prev = cpu_busy(cpu_prev)
+            log_sample(logfile, cpu_pct)
+            last_log = now
+
         if screen_on:
             if now - last_draw >= 5:
                 draw(*battery())
