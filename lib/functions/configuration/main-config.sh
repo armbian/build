@@ -138,7 +138,8 @@ function do_main_configuration() {
 	case "$ROOTFS_TYPE" in
 		ext4) # nothing extra here
 			;;
-		nfs)
+		nfs|nfs-root)
+			display_alert "ROOTFS_TYPE=${ROOTFS_TYPE} is deprecated" "Use NETBOOT=yes instead for modern, complete PXE network booting." "wrn"
 			FIXED_IMAGE_SIZE=256 # small SD card with kernel, boot script and .dtb/.bin files
 			;;
 		f2fs)
