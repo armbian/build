@@ -48,7 +48,7 @@ new file mode 100644
 index 0000000..b438237
 --- /dev/null
 +++ b/drivers/power/supply/sgm41542_charger.c
-@@ -0,0 +1,1397 @@
+@@ -0,0 +1,1419 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Charger driver for Sgm4154x
@@ -701,7 +701,7 @@ index 0000000..b438237
 +	case POWER_SUPPLY_PROP_ONLINE:
 +		if (val->intval) {
 +			ret = sgm4154x_enable_charger(sgm);
-+			sgm4154x_set_watchdog_timer(sgm, SGM4154x_WDT_TIMER_40S);
++			sgm4154x_set_watchdog_timer(sgm, 40);
 +		} else {
 +			sgm4154x_set_watchdog_timer(sgm, 0);
 +			ret = sgm4154x_disable_charger(sgm);
@@ -854,6 +854,34 @@ index 0000000..b438237
 +	device_create_file(dev, &dev_attr_registers);
 +}
 +
++/*
++ * Program the input current limit for the currently detected charger type.
++ * The charger comes up at the 500mA USB default, so this has to run both from
++ * the attach interrupt and from probe when VBUS is already present - the
++ * latter is what happens when the board is powered on by plugging the charger
++ * in, and without it charging stays clamped to 500mA.
++ */
++static int sgm4154x_config_input_curr_lim(struct sgm4154x_device *sgm)
++{
++	int ilim;
++
++	switch (sgm->state.chrg_type) {
++	case SGM4154x_USB_SDP:
++		ilim = DEFAULT_INPUT_CURRENT;
++		break;
++	case SGM4154x_USB_CDP:
++		ilim = 1500000;
++		break;
++	case SGM4154x_USB_DCP:
++	default:
++		/* DCP, USB PD or another non-BC1.2 source: use the full limit */
++		ilim = SGM4154x_IINDPM_DEF_uA;
++		break;
++	}
++
++	return sgm4154x_set_input_curr_lim(sgm, ilim);
++}
++
 +static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
 +{
 +	struct sgm4154x_device *sgm4154x = private;
@@ -875,24 +903,7 @@ index 0000000..b438237
 +	}
 +	sgm4154x->state = state;
 +	if (state.vbus_gd) {
-+		int ilim;
-+
-+		switch (state.chrg_type) {
-+		case SGM4154x_USB_DCP:
-+			ilim = SGM4154x_IINDPM_DEF_uA;
-+			break;
-+		case SGM4154x_USB_CDP:
-+			ilim = 1500000;
-+			break;
-+		case SGM4154x_USB_SDP:
-+			ilim = DEFAULT_INPUT_CURRENT;
-+			break;
-+		default:
-+			/* USB PD or other non-BC1.2 source; use full DCP limit */
-+			ilim = SGM4154x_IINDPM_DEF_uA;
-+			break;
-+		}
-+		ret = sgm4154x_set_input_curr_lim(sgm4154x, ilim);
++		ret = sgm4154x_config_input_curr_lim(sgm4154x);
 +		if (ret) {
 +			dev_err(sgm4154x->dev, "set input current error!\n");
 +			return IRQ_NONE;
@@ -1370,26 +1381,37 @@ index 0000000..b438237
 +	ret = sgm4154x_set_otg_voltage(sgm, 5000000);
 +	if (ret) {
 +		dev_err(sgm->dev, "set OTG voltage error!\n");
-+		return ret;
++		goto error_out;
 +	}
 +
 +	ret = sgm4154x_set_otg_current(sgm, 1200000);
 +	if (ret) {
 +		dev_err(sgm->dev, "set OTG current error!\n");
-+		return ret;
++		goto error_out;
 +	}
 +
 +	sgm->sgm_monitor_wq = alloc_ordered_workqueue("%s",
 +			WQ_MEM_RECLAIM | WQ_FREEZABLE, "sgm-monitor-wq");
++	if (!sgm->sgm_monitor_wq) {
++		dev_err(dev, "Failed to create monitor workqueue\n");
++		ret = -ENOMEM;
++		goto error_out;
++	}
 +	INIT_DELAYED_WORK(&sgm->sgm_delay_work, sgm_charger_work);
 +
 +	sgm4154x_vbus_regulator_register(sgm);
 +	sgm4154x_create_device_node(sgm->dev);
 +
-+	/* Enable charging now if VBUS was already present at probe time. */
++	/*
++	 * Configure and enable charging now if VBUS was already present at probe
++	 * time - no attach interrupt will arrive to do it for us, and the input
++	 * current limit would otherwise stay at the 500mA USB default.
++	 */
 +	ret = sgm4154x_get_state(sgm, &sgm->state);
-+	if (!ret && sgm->state.vbus_gd)
++	if (!ret && sgm->state.vbus_gd) {
++		sgm4154x_config_input_curr_lim(sgm);
 +		sgm4154x_enable_charger(sgm);
++	}
 +
 +	return 0;
 +
