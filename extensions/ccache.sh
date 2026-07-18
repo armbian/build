@@ -46,6 +46,16 @@ function extension_prepare_config__ccache() {
 	# prepare_compilation_vars). See ordering invariant in the file header.
 }
 
+# Core prepare-host currently installs ccache unconditionally (part of the
+# native-toolchain host dependency group) and refreshes the /usr/lib/ccache
+# symlinks via update-ccache-symlinks. Declare the dependency here anyway so
+# the extension stays self-contained if core ever stops shipping ccache by
+# default; the duplicate entry is harmless (apt handles it).
+function add_host_dependencies__ccache() {
+	display_alert "Extension: ${EXTENSION}: adding packages to host dependencies" "ccache" "debug"
+	EXTRA_BUILD_DEPS+=("native-toolchain::ccache")
+}
+
 # Main env setup. Runs from prepare_compilation_vars — late enough that
 # values set by other extensions (PRIVATE_CCACHE from ccache-remote) and
 # by userpatches/lib.config / user_config hooks are settled, and early
