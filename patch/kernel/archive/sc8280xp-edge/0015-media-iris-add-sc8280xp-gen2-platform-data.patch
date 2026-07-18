@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Sat, 18 Jul 2026 00:40:00 +0200
+Subject: media: iris: add sc8280xp Gen2 platform data
+
+The Q8B video-codec uses compatible "qcom,sc8280xp-iris" and loads the
+Gen2 firmware vpu20_p4_gen2_s6.mbn. Aliasing it to sm8250_data drove the
+Gen2 VPU with Gen1 HFI ops, so SYS_INIT was rejected ("bad packet size
+(64 should be 20)") and core init failed. Add sc8280xp_data that keeps
+the SM8250 VPU2 resources, clocks, power domains and DMA ceiling but
+wires the Gen2 command, response and instance ops, the Gen2 cap and
+config tables and the Gen2 firmware. AV1 is dropped since VPU2 cannot
+decode it. Point the compatible at the new entry ahead of the
+venus-fallback ifdef.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/media/platform/qcom/iris/iris_platform_common.h |   1 +
+ drivers/media/platform/qcom/iris/iris_platform_gen2.c   | 152 ++++++++++
+ drivers/media/platform/qcom/iris/iris_probe.c           |   4 +
+ 3 files changed, 157 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -43,6 +43,7 @@ enum pipe_type {
+ 
+ extern const struct iris_platform_data qcs8300_data;
+ extern const struct iris_platform_data sc7280_data;
++extern const struct iris_platform_data sc8280xp_data;
+ extern const struct iris_platform_data sm8250_data;
+ extern const struct iris_platform_data sm8550_data;
+ extern const struct iris_platform_data sm8650_data;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_gen2.c b/drivers/media/platform/qcom/iris/iris_platform_gen2.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_gen2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_gen2.c
+@@ -1317,3 +1317,155 @@ const struct iris_platform_data qcs8300_data = {
+ 	.enc_op_int_buf_tbl = sm8550_enc_op_int_buf_tbl,
+ 	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_op_int_buf_tbl),
+ };
++
++/*
++ * SC8280XP pairs the SM8250-class VPU2 hardware (iris_vpu2_ops, four VPP
++ * pipes, 8K frames, 0xe0000000-1 DMA ceiling) with the Gen2 HFI firmware
++ * "qcom/vpu/vpu20_p4_gen2_s6.mbn", so it uses the SM8250 resource tables but
++ * the Gen2 command/response ops and Gen2 instance-cap/config tables. AV1 is
++ * omitted from the format list since VPU2 cannot decode it.
++ */
++static struct iris_fmt platform_fmts_sc8280xp_dec[] = {
++	[IRIS_FMT_H264] = {
++		.pixfmt = V4L2_PIX_FMT_H264,
++		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
++	},
++	[IRIS_FMT_HEVC] = {
++		.pixfmt = V4L2_PIX_FMT_HEVC,
++		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
++	},
++	[IRIS_FMT_VP9] = {
++		.pixfmt = V4L2_PIX_FMT_VP9,
++		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
++	},
++};
++
++static struct platform_inst_caps platform_inst_cap_sc8280xp = {
++	.min_frame_width = 128,
++	.max_frame_width = 8192,
++	.min_frame_height = 128,
++	.max_frame_height = 8192,
++	.max_mbpf = 138240,
++	.mb_cycles_vsp = 25,
++	.mb_cycles_vpp = 200,
++	.max_frame_rate = MAXIMUM_FPS,
++	.max_operating_rate = MAXIMUM_FPS,
++};
++
++static const struct icc_info sc8280xp_icc_table[] = {
++	{ "cpu-cfg",    1000, 1000     },
++	{ "video-mem",  1000, 15000000 },
++};
++
++static const char * const sc8280xp_clk_reset_table[] = { "bus", "core" };
++
++static const struct bw_info sc8280xp_bw_table_dec[] = {
++	{ ((4096 * 2160) / 256) * 60, 2403000 },
++	{ ((4096 * 2160) / 256) * 30, 1224000 },
++	{ ((1920 * 1080) / 256) * 60,  812000 },
++	{ ((1920 * 1080) / 256) * 30,  416000 },
++};
++
++static const char * const sc8280xp_pmdomain_table[] = { "venus", "vcodec0" };
++
++static const char * const sc8280xp_opp_pd_table[] = { "mx" };
++
++static const struct platform_clk_data sc8280xp_clk_table[] = {
++	{IRIS_AXI_CLK,  "iface"        },
++	{IRIS_CTRL_CLK, "core"         },
++	{IRIS_HW_CLK,   "vcodec0_core" },
++};
++
++static const char * const sc8280xp_opp_clk_table[] = {
++	"vcodec0_core",
++	NULL,
++};
++
++const struct iris_platform_data sc8280xp_data = {
++	.get_instance = iris_hfi_gen2_get_instance,
++	.init_hfi_command_ops = iris_hfi_gen2_command_ops_init,
++	.init_hfi_response_ops = iris_hfi_gen2_response_ops_init,
++	.get_vpu_buffer_size = iris_vpu_buf_size,
++	.vpu_ops = &iris_vpu2_ops,
++	.set_preset_registers = iris_set_sm8550_preset_registers,
++	.icc_tbl = sc8280xp_icc_table,
++	.icc_tbl_size = ARRAY_SIZE(sc8280xp_icc_table),
++	.clk_rst_tbl = sc8280xp_clk_reset_table,
++	.clk_rst_tbl_size = ARRAY_SIZE(sc8280xp_clk_reset_table),
++	.bw_tbl_dec = sc8280xp_bw_table_dec,
++	.bw_tbl_dec_size = ARRAY_SIZE(sc8280xp_bw_table_dec),
++	.pmdomain_tbl = sc8280xp_pmdomain_table,
++	.pmdomain_tbl_size = ARRAY_SIZE(sc8280xp_pmdomain_table),
++	.opp_pd_tbl = sc8280xp_opp_pd_table,
++	.opp_pd_tbl_size = ARRAY_SIZE(sc8280xp_opp_pd_table),
++	.clk_tbl = sc8280xp_clk_table,
++	.clk_tbl_size = ARRAY_SIZE(sc8280xp_clk_table),
++	.opp_clk_tbl = sc8280xp_opp_clk_table,
++	/* Upper bound of DMA address range */
++	.dma_mask = 0xe0000000 - 1,
++	.fwname = "qcom/vpu/vpu20_p4_gen2_s6.mbn",
++	.pas_id = IRIS_PAS_ID,
++	.inst_iris_fmts = platform_fmts_sc8280xp_dec,
++	.inst_iris_fmts_size = ARRAY_SIZE(platform_fmts_sc8280xp_dec),
++	.inst_caps = &platform_inst_cap_sc8280xp,
++	.inst_fw_caps_dec = inst_fw_cap_sm8550_dec,
++	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_sm8550_dec),
++	.inst_fw_caps_enc = inst_fw_cap_sm8550_enc,
++	.inst_fw_caps_enc_size = ARRAY_SIZE(inst_fw_cap_sm8550_enc),
++	.tz_cp_config_data = tz_cp_config_sm8550,
++	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_sm8550),
++	.core_arch = VIDEO_ARCH_LX,
++	.hw_response_timeout = HW_RESPONSE_TIMEOUT_VALUE,
++	.ubwc_config = &ubwc_config_sm8550,
++	.num_vpp_pipe = 4,
++	.max_session_count = 16,
++	.max_core_mbpf = NUM_MBS_8K,
++	.max_core_mbps = ((7680 * 4320) / 256) * 60,
++	.dec_input_config_params_default =
++		sm8550_vdec_input_config_params_default,
++	.dec_input_config_params_default_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_params_default),
++	.dec_input_config_params_hevc =
++		sm8550_vdec_input_config_param_hevc,
++	.dec_input_config_params_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_hevc),
++	.dec_input_config_params_vp9 =
++		sm8550_vdec_input_config_param_vp9,
++	.dec_input_config_params_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_vp9),
++	.dec_output_config_params =
++		sm8550_vdec_output_config_params,
++	.dec_output_config_params_size =
++		ARRAY_SIZE(sm8550_vdec_output_config_params),
++
++	.enc_input_config_params =
++		sm8550_venc_input_config_params,
++	.enc_input_config_params_size =
++		ARRAY_SIZE(sm8550_venc_input_config_params),
++	.enc_output_config_params =
++		sm8550_venc_output_config_params,
++	.enc_output_config_params_size =
++		ARRAY_SIZE(sm8550_venc_output_config_params),
++
++	.dec_input_prop = sm8550_vdec_subscribe_input_properties,
++	.dec_input_prop_size = ARRAY_SIZE(sm8550_vdec_subscribe_input_properties),
++	.dec_output_prop_avc = sm8550_vdec_subscribe_output_properties_avc,
++	.dec_output_prop_avc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_avc),
++	.dec_output_prop_hevc = sm8550_vdec_subscribe_output_properties_hevc,
++	.dec_output_prop_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_hevc),
++	.dec_output_prop_vp9 = sm8550_vdec_subscribe_output_properties_vp9,
++	.dec_output_prop_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_vp9),
++
++	.dec_ip_int_buf_tbl = sm8550_dec_ip_int_buf_tbl,
++	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_ip_int_buf_tbl),
++	.dec_op_int_buf_tbl = sm8550_dec_op_int_buf_tbl,
++	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_op_int_buf_tbl),
++
++	.enc_ip_int_buf_tbl = sm8550_enc_ip_int_buf_tbl,
++	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_ip_int_buf_tbl),
++	.enc_op_int_buf_tbl = sm8550_enc_op_int_buf_tbl,
++	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_op_int_buf_tbl),
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -352,6 +352,10 @@ static const struct of_device_id iris_dt_match[] = {
+ 		.compatible = "qcom,qcs8300-iris",
+ 		.data = &qcs8300_data,
+ 	},
++	{
++		.compatible = "qcom,sc8280xp-iris",
++		.data = &sc8280xp_data,
++	},
+ #if (!IS_ENABLED(CONFIG_VIDEO_QCOM_VENUS))
+ 	{
+ 		.compatible = "qcom,sc7280-venus",
+-- 
+Armbian
+

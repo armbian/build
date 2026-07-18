@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Thompson <daniel@riscstar.com>
+Date: Thu, 4 Jun 2026 20:00:11 -0500
+Subject: net: pcs: xpcs: re-order xpcs_pre_config() to update after the reset
+
+Currently, on Wangxun platforms, the XPCS is configured during the call
+to xpcs_switch_interface_mode() and, if the need_reset flag is set, the
+XPCS is reset and the configuration will be lost. This is harmless at
+present because need_reset will never actually be set on these platforms.
+
+Nevertheless having xpcs_switch_interface_mode() on the wrong side of
+the reset is an obstacle for future changes where wiping out programmed
+configuration with a reset could be harmful.
+
+Reorder xpcs_pre_config() to allow the reset can happen before we
+switch interface mode. To make this work we have to hoist the special
+case logic for SGMII into the parent function.
+
+Signed-off-by: Daniel Thompson <daniel@riscstar.com>
+Signed-off-by: Alex Elder <elder@riscstar.com>
+---
+ drivers/net/pcs/pcs-xpcs.c | 52 +++++-----
+ 1 file changed, 28 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/net/pcs/pcs-xpcs.c b/drivers/net/pcs/pcs-xpcs.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/pcs/pcs-xpcs.c
++++ b/drivers/net/pcs/pcs-xpcs.c
+@@ -705,46 +705,50 @@ static void xpcs_get_interfaces(struct dw_xpcs *xpcs, unsigned long *interfaces)
+ static int xpcs_switch_interface_mode(struct dw_xpcs *xpcs,
+ 				      phy_interface_t interface)
+ {
+-	int ret = 0;
++	/* Wangxun provides a full alternative implementation to handle quirks */
++	if (xpcs->info.pma == WX_TXGBE_XPCS_PMA_10G_ID)
++		return txgbe_xpcs_switch_mode(xpcs, interface);
+ 
+-	if (xpcs->info.pma == WX_TXGBE_XPCS_PMA_10G_ID) {
+-		ret = txgbe_xpcs_switch_mode(xpcs, interface);
+-	} else if (xpcs->interface != interface) {
+-		if (interface == PHY_INTERFACE_MODE_SGMII)
+-			xpcs->need_reset = true;
+-		xpcs->interface = interface;
+-	}
++	xpcs->interface = interface;
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static void xpcs_pre_config(struct phylink_pcs *pcs, phy_interface_t interface)
+ {
+ 	struct dw_xpcs *xpcs = phylink_pcs_to_xpcs(pcs);
+ 	const struct dw_xpcs_compat *compat;
++	bool force_reset;
+ 	int ret;
+ 
+-	ret = xpcs_switch_interface_mode(xpcs, interface);
+-	if (ret)
+-		dev_err(&xpcs->mdiodev->dev, "switch interface failed: %pe\n",
+-			ERR_PTR(ret));
++	/*
++	 * According to the XPCS datasheet, a soft reset is required to initiate
++	 * Clause 37 auto-negotiation when the XPCS switches interface modes.
++	 */
++	force_reset = interface == PHY_INTERFACE_MODE_SGMII;
+ 
+-	if (!xpcs->need_reset)
+-		return;
++	if (force_reset || xpcs->need_reset) {
++		compat = xpcs_find_compat(xpcs, interface);
++		if (!compat) {
++			dev_err(&xpcs->mdiodev->dev, "unsupported interface %s\n",
++				phy_modes(interface));
++			return;
++		}
+ 
+-	compat = xpcs_find_compat(xpcs, interface);
+-	if (!compat) {
+-		dev_err(&xpcs->mdiodev->dev, "unsupported interface %s\n",
+-			phy_modes(interface));
+-		return;
++		ret = xpcs_soft_reset(xpcs, compat);
++		if (ret) {
++			dev_err(&xpcs->mdiodev->dev, "soft reset failed: %pe\n",
++				ERR_PTR(ret));
++			return;
++		}
++
++		xpcs->need_reset = false;
+ 	}
+ 
+-	ret = xpcs_soft_reset(xpcs, compat);
++	ret = xpcs_switch_interface_mode(xpcs, interface);
+ 	if (ret)
+-		dev_err(&xpcs->mdiodev->dev, "soft reset failed: %pe\n",
++		dev_err(&xpcs->mdiodev->dev, "switch interface failed: %pe\n",
+ 			ERR_PTR(ret));
+-
+-	xpcs->need_reset = false;
+ }
+ 
+ static int xpcs_config_aneg_c37_sgmii(struct dw_xpcs *xpcs,
+-- 
+Armbian
+

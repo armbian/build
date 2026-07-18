@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 2 Jul 2026 21:57:34 +0200
+Subject: drm/msm/dp: recheck the EDID shortly after plug on branch devices
+
+DP-to-HDMI bridges that hold the downstream EDID in their own MCU can
+serve a stale copy for a few seconds after hotplug while they refresh it
+from the sink. The plug handler reads the EDID once, inside that window,
+so the connector can keep advertising fallback modes until the next
+replug. Reread the EDID a couple of seconds after plug and, if it
+changed, update the connector and send a hotplug event. Only branch
+devices are rechecked; the delayed work is gated on connection state and
+cancelled on unplug and unbind.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 51 ++++++++++
+ drivers/gpu/drm/msm/dp/dp_panel.c   | 28 +++++
+ drivers/gpu/drm/msm/dp/dp_panel.h   |  2 +
+ 3 files changed, 81 insertions(+)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -15,6 +15,7 @@
+ #include <drm/display/drm_dp_aux_bus.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/drm_edid.h>
++#include <drm/drm_probe_helper.h>
+ 
+ #include "msm_drv.h"
+ #include "msm_kms.h"
+@@ -34,6 +35,9 @@ MODULE_PARM_DESC(psr_enabled, "enable PSR for eDP and DP displays");
+ 
+ #define HPD_STRING_SIZE 30
+ 
++#define EDID_RECHECK_TRIES	2
++#define EDID_RECHECK_DELAY_MS	2500
++
+ enum {
+ 	ISR_DISCONNECTED,
+ 	ISR_CONNECT_PENDING,
+@@ -84,6 +88,9 @@ struct msm_dp_display_private {
+ 	bool phy_initialized;
+ 	bool audio_supported;
+ 
++	struct delayed_work edid_recheck_work;
++	unsigned int edid_recheck_left;
++
+ 	struct drm_device *drm_dev;
+ 
+ 	struct drm_dp_aux *aux;
+@@ -331,6 +338,8 @@ static void msm_dp_display_unbind(struct device *dev, struct device *master,
+ 
+ 	kthread_stop(dp->ev_tsk);
+ 
++	cancel_delayed_work_sync(&dp->edid_recheck_work);
++
+ 	of_dp_aux_depopulate_bus(dp->aux);
+ 
+ 	msm_dp_aux_unregister(dp->aux);
+@@ -590,6 +599,37 @@ static int msm_dp_display_usbpd_attention_cb(struct device *dev)
+ 	return rc;
+ }
+ 
++static void msm_dp_edid_recheck_work(struct work_struct *work)
++{
++	struct delayed_work *dw = to_delayed_work(work);
++	struct msm_dp_display_private *dp =
++		container_of(dw, struct msm_dp_display_private, edid_recheck_work);
++	struct drm_connector *connector = dp->msm_dp_display.connector;
++	u32 state;
++	int changed;
++
++	mutex_lock(&dp->event_mutex);
++	state = dp->hpd_state;
++	mutex_unlock(&dp->event_mutex);
++
++	if (state != ST_MAINLINK_READY && state != ST_CONNECTED)
++		return;
++
++	mutex_lock(&connector->dev->mode_config.mutex);
++	changed = msm_dp_panel_recheck_edid(dp->panel, connector);
++	mutex_unlock(&connector->dev->mode_config.mutex);
++
++	if (changed) {
++		drm_dbg_dp(dp->drm_dev, "sink EDID settled late, notifying userspace\n");
++		drm_kms_helper_connector_hotplug_event(connector);
++		return;
++	}
++
++	if (--dp->edid_recheck_left)
++		schedule_delayed_work(&dp->edid_recheck_work,
++				      msecs_to_jiffies(EDID_RECHECK_DELAY_MS));
++}
++
+ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp, u32 data)
+ {
+ 	u32 state;
+@@ -634,6 +674,13 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp, u32 data)
+ 		pm_runtime_put_sync(&pdev->dev);
+ 	} else {
+ 		dp->hpd_state = ST_MAINLINK_READY;
++
++		if (drm_dp_is_branch(dp->panel->dpcd)) {
++			/* bridges with an EDID cache can settle a few seconds late */
++			dp->edid_recheck_left = EDID_RECHECK_TRIES;
++			mod_delayed_work(system_wq, &dp->edid_recheck_work,
++					 msecs_to_jiffies(EDID_RECHECK_DELAY_MS));
++		}
+ 	}
+ 
+ 	drm_dbg_dp(dp->drm_dev, "After, type=%d hpd_state=%d\n",
+@@ -665,6 +712,8 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp, u32 data)
+ 
+ 	msm_dp_aux_enable_xfers(dp->aux, false);
+ 
++	cancel_delayed_work(&dp->edid_recheck_work);
++
+ 	mutex_lock(&dp->event_mutex);
+ 
+ 	state = dp->hpd_state;
+@@ -1402,6 +1451,8 @@ static int msm_dp_display_probe(struct platform_device *pdev)
+ 	init_waitqueue_head(&dp->event_q);
+ 	spin_lock_init(&dp->event_lock);
+ 
++	INIT_DELAYED_WORK(&dp->edid_recheck_work, msm_dp_edid_recheck_work);
++
+ 	/* Store DP audio handle inside DP display */
+ 	dp->msm_dp_display.msm_dp_audio = dp->audio;
+ 
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.c
++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
+@@ -293,6 +293,34 @@ int msm_dp_panel_read_sink_caps(struct msm_dp_panel *msm_dp_panel,
+ 	return rc;
+ }
+ 
++int msm_dp_panel_recheck_edid(struct msm_dp_panel *msm_dp_panel,
++			      struct drm_connector *connector)
++{
++	struct msm_dp_panel_private *panel;
++	const struct drm_edid *drm_edid;
++	const struct edid *old, *new;
++
++	panel = container_of(msm_dp_panel, struct msm_dp_panel_private, msm_dp_panel);
++
++	drm_edid = drm_edid_read_ddc(connector, &panel->aux->ddc);
++	if (!drm_edid)
++		return 0;
++
++	old = drm_edid_raw(msm_dp_panel->drm_edid);
++	new = drm_edid_raw(drm_edid);
++	if (old && old->extensions == new->extensions &&
++	    !memcmp(old, new, (new->extensions + 1) * EDID_LENGTH)) {
++		drm_edid_free(drm_edid);
++		return 0;
++	}
++
++	drm_edid_free(msm_dp_panel->drm_edid);
++	msm_dp_panel->drm_edid = drm_edid;
++	drm_edid_connector_update(connector, drm_edid);
++
++	return 1;
++}
++
+ u32 msm_dp_panel_get_mode_bpp(struct msm_dp_panel *msm_dp_panel,
+ 		u32 mode_edid_bpp, u32 mode_pclk_khz)
+ {
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.h b/drivers/gpu/drm/msm/dp/dp_panel.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.h
++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
+@@ -49,6 +49,8 @@ int msm_dp_panel_deinit(struct msm_dp_panel *msm_dp_panel);
+ int msm_dp_panel_timing_cfg(struct msm_dp_panel *msm_dp_panel, bool wide_bus_en);
+ int msm_dp_panel_read_sink_caps(struct msm_dp_panel *msm_dp_panel,
+ 		struct drm_connector *connector);
++int msm_dp_panel_recheck_edid(struct msm_dp_panel *msm_dp_panel,
++			      struct drm_connector *connector);
+ u32 msm_dp_panel_get_mode_bpp(struct msm_dp_panel *msm_dp_panel, u32 mode_max_bpp,
+ 			u32 mode_pclk_khz);
+ int msm_dp_panel_get_modes(struct msm_dp_panel *msm_dp_panel,
+-- 
+Armbian
+
