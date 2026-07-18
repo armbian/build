@@ -18,9 +18,25 @@ BOOT_SCENARIO="spl-blobs"
 function post_family_tweaks__youyeetoo_r1_naming_audios() {
 	display_alert "$BOARD" "Renaming Youyeetoo R1 audios" "info"
 
+	# PulseAudio releases (bookworm, jammy, noble): udev SOUND_DESCRIPTION maps to PA_PROP_DEVICE_DESCRIPTION.
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8323-sound", ENV{SOUND_DESCRIPTION}="ES8323 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+
+	# PipeWire releases (trixie, forky, sid, resolute+): WirePlumber 0.5 ignores udev SOUND_DESCRIPTION, set device.description directly.
+	mkdir -p $SDCARD/etc/wireplumber/wireplumber.conf.d/
+	cat > $SDCARD/etc/wireplumber/wireplumber.conf.d/51-youyeetoo-r1-v3-audio-names.conf <<-'WPCONF'
+		monitor.alsa.rules = [
+		  {
+		    matches = [ { device.name = "alsa_card.platform-es8323-sound" } ]
+		    actions = { update-props = { device.description = "ES8323 Audio" } }
+		  }
+		  {
+		    matches = [ { device.name = "alsa_card.platform-hdmi0-sound" } ]
+		    actions = { update-props = { device.description = "HDMI0 Audio" } }
+		  }
+		]
+	WPCONF
 
 	return 0
 }
