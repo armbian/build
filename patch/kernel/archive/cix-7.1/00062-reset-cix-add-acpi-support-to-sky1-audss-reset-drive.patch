@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Tue, 7 Jul 2026 17:13:40 +0800
+Subject: reset: cix: add acpi support to sky1 audss reset driver
+
+---
+ drivers/reset/reset-sky1-audss.c | 149 +++++++++-
+ 1 file changed, 139 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/reset/reset-sky1-audss.c b/drivers/reset/reset-sky1-audss.c
+index 111111111111..222222222222 100644
+--- a/drivers/reset/reset-sky1-audss.c
++++ b/drivers/reset/reset-sky1-audss.c
+@@ -3,15 +3,29 @@
+  * Cix Sky1 Audio Subsystem reset controller driver
+  *
+  * Copyright 2026 Cix Technology Group Co., Ltd.
++ *
++ * Two binding paths:
++ *  - DT:  the AUDSS CRU node owns both clock and reset; the clock driver
++ *          spawns a "reset" auxiliary device whose driver is bound here.
++ *  - ACPI: the firmware exposes a dedicated reset device (HID CIXH6062),
++ *          separate from the clock device (CIXH6061).  RSTL references
++ *          CIXH6062 as the reset provider and DLKL adds device links from
++ *          consumers (DMA, I2S, HDA, ...) to it, so this driver must bind
++ *          CIXH6062 directly to unblock those consumers.
+  */
+ 
+ #include <dt-bindings/reset/cix,sky1-audss-cru.h>
+ 
++#include <linux/acpi.h>
+ #include <linux/auxiliary_bus.h>
+ #include <linux/delay.h>
+ #include <linux/device.h>
++#include <linux/device/bus.h>
++#include <linux/fwnode.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/reset-controller.h>
+ 
+@@ -96,41 +110,156 @@ static const struct reset_control_ops sky1_audss_reset_ops = {
+ 	.deassert = sky1_audss_reset_deassert,
+ };
+ 
+-static int sky1_audss_reset_probe(struct auxiliary_device *adev,
+-				  const struct auxiliary_device_id *id)
++/*
++ * Register the reset controller against @fwnode (ACPI provider) when given,
++ * otherwise against the device's of_node (DT path).  reset_controller_register
++ * rejects a controller with both set, so only one is populated.
++ */
++static int sky1_audss_reset_register(struct device *dev, struct regmap *regmap,
++				     struct fwnode_handle *fwnode)
+ {
+ 	struct sky1_audss_reset *priv;
+-	struct device *dev = &adev->dev;
+ 
+ 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+-	priv->regmap = dev_get_regmap(dev->parent, NULL);
+-	if (!priv->regmap)
+-		return dev_err_probe(dev, -ENODEV, "failed to get parent regmap\n");
+-
++	priv->regmap = regmap;
+ 	priv->map = sky1_audss_reset_map;
+ 	priv->rcdev.owner = THIS_MODULE;
+ 	priv->rcdev.nr_resets = ARRAY_SIZE(sky1_audss_reset_map);
+ 	priv->rcdev.ops = &sky1_audss_reset_ops;
+-	priv->rcdev.of_node = dev->of_node;
+ 	priv->rcdev.dev = dev;
++	if (fwnode)
++		priv->rcdev.fwnode = fwnode;
++	else
++		priv->rcdev.of_node = dev->of_node;
+ 
+ 	return devm_reset_controller_register(dev, &priv->rcdev);
+ }
+ 
++/* DT: auxiliary device spawned by the AUDSS clock driver. */
++static int sky1_audss_reset_probe(struct auxiliary_device *adev,
++				  const struct auxiliary_device_id *id)
++{
++	struct device *dev = &adev->dev;
++	struct regmap *regmap;
++
++	regmap = dev_get_regmap(dev->parent, NULL);
++	if (!regmap)
++		return dev_err_probe(dev, -ENODEV, "failed to get parent regmap\n");
++
++	return sky1_audss_reset_register(dev, regmap, NULL);
++}
++
+ static const struct auxiliary_device_id sky1_audss_reset_ids[] = {
+ 	{ .name = "clk_sky1_audss.reset" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(auxiliary, sky1_audss_reset_ids);
+ 
+-static struct auxiliary_driver sky1_audss_reset_driver = {
++static struct auxiliary_driver sky1_audss_reset_aux_driver = {
+ 	.probe = sky1_audss_reset_probe,
+ 	.id_table = sky1_audss_reset_ids,
+ };
+-module_auxiliary_driver(sky1_audss_reset_driver);
++
++#ifdef CONFIG_ACPI
++/*
++ * Resolve the AUDSS CRU regmap from the "audss_cru" _DSD reference, which
++ * points at the CIXHA018 syscon provider that owns the MMIO.  Used by the
++ * ACPI platform path where the reset device (CIXH6062) does not map the
++ * registers itself.
++ */
++static struct regmap *sky1_audss_resolve_regmap(struct device *dev)
++{
++	struct fwnode_handle *fw;
++	struct device *syscon_dev;
++	struct regmap *regmap;
++
++	fw = fwnode_find_reference(dev_fwnode(dev), "audss_cru", 0);
++	if (IS_ERR(fw))
++		return ERR_CAST(fw);
++
++	syscon_dev = bus_find_device_by_fwnode(&platform_bus_type, fw);
++	fwnode_handle_put(fw);
++	if (!syscon_dev)
++		return ERR_PTR(-EPROBE_DEFER);
++
++	regmap = dev_get_regmap(syscon_dev, NULL);
++	put_device(syscon_dev);
++	if (!regmap)
++		return ERR_PTR(-EPROBE_DEFER);
++
++	return regmap;
++}
++
++/* ACPI: dedicated reset device (CIXH6062), separate from the clock (CIXH6061). */
++static int sky1_audss_reset_acpi_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct regmap *regmap;
++	int ret;
++
++	regmap = sky1_audss_resolve_regmap(dev);
++	if (IS_ERR(regmap))
++		return dev_err_probe(dev, PTR_ERR(regmap),
++				     "failed to get audss_cru regmap\n");
++
++	ret = sky1_audss_reset_register(dev, regmap, dev_fwnode(dev));
++	if (ret)
++		return ret;
++
++	/* CIXH6062 is the DLKL/_DEP supplier for DMA, I2S, HDA, etc. */
++	acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
++
++	return 0;
++}
++
++static const struct acpi_device_id sky1_audss_reset_acpi_match[] = {
++	{ "CIXH6062", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_audss_reset_acpi_match);
++
++static struct platform_driver sky1_audss_reset_platform_driver = {
++	.probe = sky1_audss_reset_acpi_probe,
++	.driver = {
++		.name = "sky1-audss-reset",
++		.acpi_match_table = sky1_audss_reset_acpi_match,
++	},
++};
++#endif
++
++static int __init sky1_audss_reset_init(void)
++{
++	int ret;
++
++#ifdef CONFIG_ACPI
++	ret = platform_driver_register(&sky1_audss_reset_platform_driver);
++	if (ret)
++		return ret;
++#endif
++
++	ret = auxiliary_driver_register(&sky1_audss_reset_aux_driver);
++	if (ret) {
++#ifdef CONFIG_ACPI
++		platform_driver_unregister(&sky1_audss_reset_platform_driver);
++#endif
++		return ret;
++	}
++
++	return 0;
++}
++module_init(sky1_audss_reset_init);
++
++static void __exit sky1_audss_reset_exit(void)
++{
++	auxiliary_driver_unregister(&sky1_audss_reset_aux_driver);
++#ifdef CONFIG_ACPI
++	platform_driver_unregister(&sky1_audss_reset_platform_driver);
++#endif
++}
++module_exit(sky1_audss_reset_exit);
+ 
+ MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+ MODULE_DESCRIPTION("Cix Sky1 Audio Subsystem reset driver");
+-- 
+Armbian
+

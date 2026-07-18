@@ -24,7 +24,7 @@ function post_family_config__h96_max_use_mainline_uboot() {
 
 	declare -g BOOTCONFIG="generic-rk3568_defconfig"
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.07-rc5"
+	declare -g BOOTBRANCH="tag:v2026.07"
 	declare -g BOOTPATCHDIR="v2026.07/board_${BOARD}"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 

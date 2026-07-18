@@ -349,8 +349,16 @@ function docker_cli_prepare_dockerfile() {
 	fi
 	declare -a -g host_dependencies=()
 
-	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
-	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}'" "${host_dependencies[*]}" "debug"
+	# Get the host architecture for proper cross-compiler selection. Normally this
+	# is the machine running the build, but when generating a Dockerfile for a
+	# foreign-arch image (e.g. a riscv64 build image built under QEMU on an amd64
+	# runner) the caller sets DOCKER_ARMBIAN_HOST_ARCH to the image's target arch,
+	# so the arch-specific host-dependency guards (skipping cross-compilers that
+	# don't exist on riscv64, etc.) match the image being produced, not the runner.
+	declare host_arch
+	host_arch="${DOCKER_ARMBIAN_HOST_ARCH:-"$(dpkg --print-architecture)"}"
+	host_release="${DOCKER_WANTED_RELEASE}" host_arch="${host_arch}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
+	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}' host_arch '${host_arch}'" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
 	display_alert "Creating" "Dockerfile; FROM ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"

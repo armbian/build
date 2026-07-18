@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Fri, 26 Jun 2026 14:24:31 +0800
+Subject: PROJ031-2: backlight: pwm-backlight: add acpi support for cix
+
+Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Change-Id: I2f292a56f094cc8022609112b9eba967abfce6af
+---
+ drivers/video/backlight/pwm_bl.c | 82 ++++++++--
+ 1 file changed, 70 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/video/backlight/pwm_bl.c b/drivers/video/backlight/pwm_bl.c
+index 111111111111..222222222222 100644
+--- a/drivers/video/backlight/pwm_bl.c
++++ b/drivers/video/backlight/pwm_bl.c
+@@ -17,6 +17,8 @@
+ #include <linux/pwm_backlight.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/slab.h>
++#include <linux/acpi.h>
++#include <acpi/video.h>
+ 
+ struct pwm_bl_data {
+ 	struct pwm_device	*pwm;
+@@ -127,8 +129,14 @@ static int pwm_backlight_update_status(struct backlight_device *bl)
+ 	return 0;
+ }
+ 
++static int bd_get_brightness(struct backlight_device *bd)
++{
++	return bd->props.brightness;
++}
++
+ static const struct backlight_ops pwm_backlight_ops = {
+ 	.update_status	= pwm_backlight_update_status,
++	.get_brightness = bd_get_brightness,
+ };
+ 
+ #ifdef CONFIG_OF
+@@ -218,16 +226,13 @@ int pwm_backlight_brightness_default(struct device *dev,
+ static int pwm_backlight_parse_dt(struct device *dev,
+ 				  struct platform_pwm_backlight_data *data)
+ {
+-	struct device_node *node = dev->of_node;
+ 	unsigned int num_levels;
+ 	unsigned int num_steps = 0;
+-	struct property *prop;
+ 	unsigned int *table;
+-	int length;
+ 	u32 value;
+ 	int ret;
+ 
+-	if (!node)
++	if (!dev)
+ 		return -ENODEV;
+ 
+ 	memset(data, 0, sizeof(*data));
+@@ -236,19 +241,18 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 	 * These values are optional and set as 0 by default, the out values
+ 	 * are modified only if a valid u32 value can be decoded.
+ 	 */
+-	of_property_read_u32(node, "post-pwm-on-delay-ms",
++	device_property_read_u32(dev, "post-pwm-on-delay-ms",
+ 			     &data->post_pwm_on_delay);
+-	of_property_read_u32(node, "pwm-off-delay-ms", &data->pwm_off_delay);
++	device_property_read_u32(dev, "pwm-off-delay-ms", &data->pwm_off_delay);
+ 
+ 	/*
+ 	 * Determine the number of brightness levels, if this property is not
+ 	 * set a default table of brightness levels will be used.
+ 	 */
+-	prop = of_find_property(node, "brightness-levels", &length);
+-	if (!prop)
++	if (!device_property_present(dev, "brightness-levels"))
+ 		return 0;
+ 
+-	num_levels = length / sizeof(u32);
++	num_levels = device_property_count_u32(dev, "brightness-levels");
+ 
+ 	/* read brightness levels from DT property */
+ 	if (num_levels > 0) {
+@@ -257,13 +261,13 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 		if (!data->levels)
+ 			return -ENOMEM;
+ 
+-		ret = of_property_read_u32_array(node, "brightness-levels",
++		ret = device_property_read_u32_array(dev, "brightness-levels",
+ 						 data->levels,
+ 						 num_levels);
+ 		if (ret < 0)
+ 			return ret;
+ 
+-		ret = of_property_read_u32(node, "default-brightness-level",
++		ret = device_property_read_u32(dev, "default-brightness-level",
+ 					   &value);
+ 		if (ret < 0)
+ 			return ret;
+@@ -275,7 +279,7 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 		 * interpolation between each of the values of brightness levels
+ 		 * and creates a new pre-computed table.
+ 		 */
+-		of_property_read_u32(node, "num-interpolated-steps",
++		device_property_read_u32(dev, "num-interpolated-steps",
+ 				     &num_steps);
+ 
+ 		/*
+@@ -369,6 +373,12 @@ int pwm_backlight_brightness_default(struct device *dev,
+ }
+ #endif
+ 
++static const struct acpi_device_id pwm_backlight_acpi_match[] = {
++				{ .id = "CIXH5041", .driver_data = 0 },
++				{ /* sentinel */ } };
++
++MODULE_DEVICE_TABLE(acpi, pwm_backlight_acpi_match);
++
+ static bool pwm_backlight_is_linear(struct platform_pwm_backlight_data *data)
+ {
+ 	unsigned int nlevels = data->max_brightness + 1;
+@@ -437,6 +447,43 @@ static int pwm_backlight_initial_power_state(const struct pwm_bl_data *pb)
+ 	return active ? BACKLIGHT_POWER_ON : BACKLIGHT_POWER_OFF;
+ }
+ 
++static void acpi_brightness_adjust_notify(acpi_handle handle, u32 event, void *data)
++{
++	struct platform_device *pdev = (struct platform_device *)data;
++	struct backlight_device *bl;
++	int current_brightness;
++
++	if (!pdev)
++		return;
++
++	bl = (struct backlight_device *)platform_get_drvdata(pdev);
++
++	if (!bl)
++		return;
++
++	current_brightness = backlight_get_brightness(bl);
++	switch (event) {
++		case ACPI_VIDEO_NOTIFY_INC_BRIGHTNESS:	/* Increase brightness */
++			current_brightness += 25;
++			break;
++		case ACPI_VIDEO_NOTIFY_DEC_BRIGHTNESS:	/* Decrease brightness */
++			current_brightness -= 25;
++			break;
++		default:
++			acpi_handle_debug(handle, "Unsupported event [0x%x]\n", event);
++			return;
++	}
++
++	if (current_brightness > 254)
++		current_brightness = 254;
++	else if (current_brightness < 0)
++		current_brightness = 0;
++
++	bl->props.brightness = current_brightness;
++
++	backlight_force_update(bl, BACKLIGHT_UPDATE_HOTKEY);
++}
++
+ static int pwm_backlight_probe(struct platform_device *pdev)
+ {
+ 	struct platform_pwm_backlight_data *data = dev_get_platdata(&pdev->dev);
+@@ -604,6 +651,16 @@ static int pwm_backlight_probe(struct platform_device *pdev)
+ 	backlight_update_status(bl);
+ 
+ 	platform_set_drvdata(pdev, bl);
++
++	if (has_acpi_companion(&pdev->dev)) {
++		acpi_status status = acpi_install_notify_handler(
++			to_acpi_device_node(pdev->dev.fwnode)->handle,
++			ACPI_DEVICE_NOTIFY, acpi_brightness_adjust_notify,
++			pdev);
++		if (ACPI_FAILURE(status))
++			dev_err(&pdev->dev, "Error installing notify handler\n");
++	}
++
+ 	return 0;
+ 
+ err_alloc:
+@@ -695,6 +752,7 @@ static struct platform_driver pwm_backlight_driver = {
+ 		.name		= "pwm-backlight",
+ 		.pm		= &pwm_backlight_pm_ops,
+ 		.of_match_table	= of_match_ptr(pwm_backlight_of_match),
++		.acpi_match_table = ACPI_PTR(pwm_backlight_acpi_match),
+ 	},
+ 	.probe		= pwm_backlight_probe,
+ 	.remove		= pwm_backlight_remove,
+-- 
+Armbian
+
