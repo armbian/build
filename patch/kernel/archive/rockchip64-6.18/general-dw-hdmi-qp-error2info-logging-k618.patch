@@ -1,0 +1,112 @@
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2 1/2] drm/bridge: dw-hdmi-qp: Return 0 in audio prepare
+ when disconnected
+From: Detlev Casanova <detlev.casanova@collabora.com>
+Date: Tue, 22 Jul 2025 15:54:35 -0400
+Message-Id: <20250722195437.1347865-2-detlev.casanova@collabora.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+To configure audio registers, the clock of the video port in use must be
+enabled.
+As those clocks are managed by the VOP driver, they can't be enabled here
+to write the registers even when the HDMI cable is disconnected.
+
+Furthermore, the registers values are computed from the TMDS char rate,
+which is not available when disconnected.
+
+Returning -ENODEV seemed reasonable at first, but ASoC will log an error
+multiple times if dw_hdmi_qp_audio_prepare() return an error.
+Userspace might also retry multiple times, filling the kernel log with:
+
+hdmi-audio-codec hdmi-audio-codec.0.auto: ASoC error (-19): at snd_soc_dai_prepare() on i2s-hifi
+
+This has become even worse with the support of the second HDMI TX port.
+
+Activating the clocks to write fake data (fake because the TMDS char
+rate is unavailable) would require API changes to communicate between
+VOP and HDMI, which doesn't really make sense.
+
+Using a cached regmap to be dumped when a cable is connected won't work
+because writing order is important and some data needs to be retrieved
+from registers to write others.
+
+Returning 0 to silently fail sounds like the best and simplest solution.
+
+Fixes: fd0141d1a8a2 ("drm/bridge: synopsys: Add audio support for dw-hdmi-qp")
+Signed-off-by: Detlev Casanova <detlev.casanova@collabora.com>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+index 5e5f8c2f95be1..9b9d43c02e3a5 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-qp.c
+@@ -460,8 +460,16 @@ static int dw_hdmi_qp_audio_prepare(stru
+ 	struct dw_hdmi_qp *hdmi = dw_hdmi_qp_from_bridge(bridge);
+ 	bool ref2stream = false;
+ 
++	/*
++	 * Silently return if tmds_char_rate is not set.
++	 *
++	 * Writing audio registers requires that the clock of the Video Port currently in
++	 * use by the VOP (dclk_vp<id>) is enabled.
++	 * That clock is guaranteed to be enabled when hdmi->tmds_char_rate is set, so we
++	 * only configure audio when it is set.
++	 */
+ 	if (!hdmi->tmds_char_rate)
+-		return -ENODEV;
++		return 0;
+ 
+ 	if (fmt->bit_clk_provider | fmt->frame_clk_provider) {
+ 		dev_err(hdmi->dev, "unsupported clock settings\n");
+-- 
+2.50.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v2 2/2] ASoC: hdac_hdmi: Use dev_info on invalid ELD
+ version
+From: Detlev Casanova <detlev.casanova@collabora.com>
+Date: Tue, 22 Jul 2025 15:54:36 -0400
+Message-Id: <20250722195437.1347865-3-detlev.casanova@collabora.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+When disconnected, the ELD data cannot be read by the display driver, so
+it just sets the data to 0.
+
+That makes the ELD parsing code read an ELD version of 0, which is
+invalid. In hdac_hdmi, that is logged with dev_err(), but should be
+logged with dev_info() instead as it is done in sound/core/pcm_drm_eld.c
+
+This avoids printing multiple messages like:
+
+    HDMI: Unknown ELD version 0
+
+in the kernel log when userspace tries to open the sound device.
+
+Signed-off-by: Detlev Casanova <detlev.casanova@collabora.com>
+---
+ sound/soc/codecs/hdac_hdmi.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/hdac_hdmi.c b/sound/soc/codecs/hdac_hdmi.c
+index 1139a2754ca33..4cc3b7a1062bd 100644
+--- a/sound/soc/codecs/hdac_hdmi.c
++++ b/sound/soc/codecs/hdac_hdmi.c
+@@ -1230,7 +1230,7 @@ static int hdac_hdmi_parse_eld(struct hd
+ 						>> DRM_ELD_VER_SHIFT;
+ 
+ 	if (ver != ELD_VER_CEA_861D && ver != ELD_VER_PARTIAL) {
+-		dev_err_ratelimited(&hdev->dev,
++		dev_info_ratelimited(&hdev->dev,
+ 				    "HDMI: Unknown ELD version %d\n", ver);
+ 		return -EINVAL;
+ 	}
+ 
+-- 
+2.50.1
+
