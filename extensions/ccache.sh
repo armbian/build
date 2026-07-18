@@ -46,6 +46,12 @@ function extension_prepare_config__ccache() {
 	# prepare_compilation_vars). See ordering invariant in the file header.
 }
 
+# Core installs ccache too; we declare it so the extension stands on its own.
+function add_host_dependencies__ccache() {
+	display_alert "Extension: ${EXTENSION}: adding packages to host dependencies" "ccache" "debug"
+	EXTRA_BUILD_DEPS+=("native-toolchain::ccache")
+}
+
 # Main env setup. Runs from prepare_compilation_vars — late enough that
 # values set by other extensions (PRIVATE_CCACHE from ccache-remote) and
 # by userpatches/lib.config / user_config hooks are settled, and early
