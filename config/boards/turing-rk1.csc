@@ -51,8 +51,8 @@ function post_family_config__turing-rk1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH='tag:v2024.04'
-	declare -g BOOTPATCHDIR="v2024.04"
+	declare -g BOOTBRANCH='tag:v2026.07'
+	declare -g BOOTPATCHDIR="v2026.07"
 	declare -g BOOTDELAY=1
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
