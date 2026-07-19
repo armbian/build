@@ -193,6 +193,8 @@ function compile_uboot_target() {
 		"-Wno-error=address-of-packed-member"      # for very old-uboots
 		"-Wno-error=implicit-function-declaration" # gcc >= 14 (trixie) makes these hard errors; old u-boots miss #include <env.h> etc.
 		"-Wno-error=implicit-int"                  # companion to the above on gcc >= 14
+		"-Wno-error=int-conversion"                # gcc >= 14 hard error; vendor u-boots (e.g. Realtek rtd16xxb) assign ptr<->int
+		"-Wno-error=incompatible-pointer-types"    # gcc >= 14 hard error; vendor driver callback signatures mismatch
 	)
 	if linux-version compare "${gcc_version_main}" ge "11.0"; then
 		uboot_cflags_array+=(
