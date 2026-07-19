@@ -50,7 +50,7 @@ function cli_patch_kernel_run() {
 	# prepare push details, if set
 	declare target_repo_url target_branch do_push="no" used_github_shorthand="no"
 	declare -a push_command=()
-	determine_git_push_details "next-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" # fills in the above; parameter is the branch name
+	determine_git_push_details "${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" # fills in the above; parameter is the branch name
 
 	# Prepare the host and build kernel; without using standard build
 	prepare_host   # This handles its own logging sections, and is possibly interactive.
@@ -127,7 +127,7 @@ function git_redact_credentials() {
 }
 
 # Determine the git push target from PUSH_TO_GITHUB / PUSH_TO_REPO.
-#   $1: middle of the branch name (kernel: "next-<family>-<ver>"; u-boot: "<board>-<branch>")
+#   $1: middle of the branch name (kernel: "<family>-<ver>"; u-boot: "<board>-<branch>")
 # Sets parent-scope vars: do_push, target_branch, target_repo_url. Uses VENDOR.
 function determine_git_push_details() {
 	# PUSH_TO_GITHUB=org/repo is shorthand for the SSH URL, but must NOT clobber an
