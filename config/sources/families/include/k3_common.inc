@@ -85,8 +85,14 @@ function pre_config_uboot_target__build_first_stage() {
 }
 
 function post_uboot_custom_postprocess__update_uboot_names() {
-	cp ${TISPL_FILE} tispl.bin || true
-	cp ${UBOOT_FILE} u-boot.img || true
+	# Only rename when the board actually declares a differently-named signed
+	# output. Boards that don't set these (e.g. sk-am62-lp) already have binman's
+	# tispl.bin/u-boot.img; the old unconditional 'cp ${VAR} tispl.bin || true'
+	# ran as 'cp tispl.bin' with the var empty, logging a spurious
+	# "cp: missing destination file operand" that was only hidden by '|| true'.
+	[[ -n "${TISPL_FILE}" ]] && cp "${TISPL_FILE}" tispl.bin
+	[[ -n "${UBOOT_FILE}" ]] && cp "${UBOOT_FILE}" u-boot.img
+	return 0
 }
 
 function pre_prepare_partitions() {
