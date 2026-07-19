@@ -1,190 +1,78 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Juan Sanchez Fuentes <juanesf91@gmail.com>
-Date: Thu, 16 Jul 2026 22:30:00 -0400
-Subject: [PATCH] debug: add MMC/FAT debug output for Avaota A1 troubleshooting
+Date: Sun, 19 Jul 2026 01:30:00 -0400
+Subject: [PATCH] debug: MMC diagnostics for Avaota A1 boot failure
 
-This patch adds detailed debug output to the MMC and FAT layers to help
-diagnose issues on the Avaota A1 (A523/A527) board where the SD card bus
-has marginal signal integrity.
+Add printf-based debug output to diagnose SD card read failures on
+Avaota A1 (A523). Output includes clock configuration, command
+tracing, and controller error registers (rint, status, clkcr, gctrl).
 
-Debug output includes:
-- MMC clock configuration (mod_clk, config_clock)
-- Controller register state (clkcr, gctrl, rint, status, ntsr)
-- MMC initialization sequence (core_init, sunxi_mmc_init)
-- CMD17 read loop tracing
-- FAT boot sector validation (first 16 bytes, DOS magic)
-- CMD failure diagnostics (rint, status, gctrl, clkcr)
-
-Apply this patch on top of the signal-integrity-fixes patch to enable
-verbose output during development and debugging. Remove it for production
-builds to reduce log noise.
+Apply on top of the other MMC patches to get verbose SPL boot output.
+Remove this patch for clean production builds.
 
 Co-assisted-by: opencode/minimax-m3
 Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
 ---
- drivers/mmc/mmc.c       |  17 +++++++
- drivers/mmc/sunxi_mmc.c | 123 ++++++++++++++++++++++++++++++++++++++++++++++++
- 2 files changed, 140 insertions(+)
+ drivers/mmc/sunxi_mmc.c | 30 ++++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
 
-diff --git a/drivers/mmc/mmc.c b/drivers/mmc/mmc.c
-index XXXXXX..YYYYYY 100644
---- a/drivers/mmc/mmc.c
-+++ b/drivers/mmc/mmc.c
-@@ -510,6 +510,9 @@ static int mmc_read_blocks(struct mmc *mmc, void *dst, lbaint_t start,
- 		if (mmc_send_cmd(mmc, &cmd, &data))
- 			return i;
- 	}
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC_DM] CMD17 loop: start=" LBAF " blkcnt=" LBAF "\n", start, blkcnt);
-+#endif
- 	return blkcnt;
- #else
- 	/*
-@@ -540,6 +543,9 @@ static int mmc_read_blocks(struct mmc *mmc, void *dst, lbaint_t start,
- 		if (retries <= 0)
- 			log_warning("mmc: card not ready before sector %lu\n",
- 				    (unsigned long)(start + i));
-+#ifdef CONFIG_XPL_BUILD
-+		printf("[MMC] WARN: card not ready before sector %lu\n",
-+		       (unsigned long)(start + i));
-+#endif
- 
- 		cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
- 		cmd.cmdarg = mmc->high_capacity ? start + i :
-@@ -610,6 +616,11 @@ ulong mmc_bread(struct blk_desc *block_dev, lbaint_t start, lbaint_t blkcnt,
- 
- #ifdef CONFIG_XPL_BUILD
- 	printf("[MMC_BREAD] dev=%d start=" LBAF " blkcnt=" LBAF "\n",
- 	       block_dev->devnum, start, blkcnt);
-+#else
-+	printf("[MMC_DM] CMD17 loop: start=" LBAF " blkcnt=" LBAF "\n", start, blkcnt);
-+#endif
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC_BREAD] dev=%d start=" LBAF " blkcnt=" LBAF "\n",
-+	       block_dev->devnum, start, blkcnt);
- #endif
- 
- 	struct mmc *mmc = find_mmc_device(dev_num);
 diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
 index XXXXXX..YYYYYY 100644
 --- a/drivers/mmc/sunxi_mmc.c
 +++ b/drivers/mmc/sunxi_mmc.c
-@@ -187,6 +187,12 @@ static int mmc_set_mod_clk(struct sunxi_mmc_priv *priv, unsigned int hz)
- 	debug("mmc %u set mod-clk req %u parent %u n %u m %u rate %u\n",
- 	      priv->mmc_no, hz, pll_hz, 1u << n, div, pll_hz / (1u << n) / div);
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -130,10 +130,14 @@
+ 	}
  
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] mod-clk: req=%u parent=%u n=%u div=%u rate=%u mclkreg=0x%08x\n",
-+	      priv->mmc_no, hz, pll_hz, 1u << n, div,
-+	      pll_hz / (1u << n) / div, readl(priv->mclkreg));
-+#endif
+ 	if (n > 3) {
+-		printf("mmc %u error cannot set clock to %u\n", priv->mmc_no,
+-		       hz);
++		printf("[MMC%d] CLOCK ERROR: req=%u pll_hz=%u n=%u div=%u\n",
++		       priv->mmc_no, hz, pll_hz, n, div);
+ 		return -1;
+ 	}
 +
- 	return 0;
- }
++	printf("[MMC%d] mod-clk: req=%u parent=%u n=%u div=%u rate=%u\n",
++	       priv->mmc_no, hz, pll_hz, 1u << n, div,
++	       pll_hz / (1u << n) / div);
  
-@@ -222,6 +228,18 @@ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
- {
- 	unsigned rval = readl(&priv->reg->clkcr);
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] config_clock: clkcr_before=0x%08x clock=%u\n",
-+	      priv->mmc_no, rval, mmc->clock);
-+#endif
- 
- 	/* Disable Clock */
- 	rval &= ~SUNXI_MMC_CLK_ENABLE;
-@@ -267,6 +285,11 @@ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
- 	if (mmc_update_clk(priv))
+ 	/* determine delays */
+ 	if (hz <= 400000) {
+@@ -226,6 +230,10 @@
+ 	if (mmc_set_mod_clk(priv, clock))
  		return -1;
  
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] config_clock: clkcr_after=0x%08x gctrl=0x%08x\n",
-+	      priv->mmc_no, readl(&priv->reg->clkcr), readl(&priv->reg->gctrl));
-+#endif
++	printf("[MMC%d] cfg-clk: clkcr=0x%08x gctrl=0x%08x rint=0x%08x\n",
++	       priv->mmc_no, readl(&priv->reg->clkcr),
++	       readl(&priv->reg->gctrl), readl(&priv->reg->rint));
 +
- 	return 0;
- }
- 
-@@ -324,6 +347,15 @@ static int mmc_trans_data_by_cpu(struct sunxi_mmc_priv *priv, struct mmc *mmc,
- 		while ((status = readl(&priv->reg->status)) & status_bit) {
- 			if (get_timer(start) > timeout_msecs) {
-+#ifdef CONFIG_XPL_BUILD
-+				printf("[MMC%d] DATA TIMEOUT: word=%u/%u status=0x%08x rint=0x%08x gctrl=0x%08x clkcr=0x%08x\n",
-+				       priv->mmc_no, i, word_cnt, status,
-+				       readl(&priv->reg->rint),
-+				       readl(&priv->reg->gctrl),
-+				       readl(&priv->reg->clkcr));
-+#endif
- 				return -1;
- 			}
- 		}
-@@ -382,6 +414,12 @@ static int mmc_rint_wait(struct sunxi_mmc_priv *priv, struct mmc *mmc,
+ 	/* Clear internal divider */
+ 	rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;
+ 	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
+@@ -347,8 +355,12 @@
+ 		status = readl(&priv->reg->rint);
  		if ((get_timer(start) > timeout_msecs) ||
  		    (status & SUNXI_MMC_RINT_INTERRUPT_ERROR_BIT)) {
-+#ifdef CONFIG_XPL_BUILD
-+			printf("[MMC%d] RINT_WAIT '%s' FAILED: rint=0x%08x status=0x%08x done_bit=0x%08x timeout=%u\n",
+-			debug("%s timeout %x\n", what,
+-			      status & SUNXI_MMC_RINT_INTERRUPT_ERROR_BIT);
++			printf("[MMC%d] %s ERR: rint=0x%08x status=0x%08x\n",
 +			       priv->mmc_no, what, status,
-+			       readl(&priv->reg->status), done_bit, timeout_msecs);
-+#endif
- 			debug("%s timeout %x\n", what,
- 			      status & SUNXI_MMC_RINT_INTERRUPT_ERROR_BIT);
++			       readl(&priv->reg->status));
++			printf("[MMC%d] gctrl=0x%08x clkcr=0x%08x\n",
++			       priv->mmc_no, readl(&priv->reg->gctrl),
++			       readl(&priv->reg->clkcr));
  			return -ETIMEDOUT;
-@@ -512,6 +550,11 @@ static int sunxi_mmc_send_cmd_common(struct sunxi_mmc_priv *priv,
- out:
- 	if (error < 0) {
- 		printf("[MMC%d] CMD%d FAILED: rint=0x%08x status=0x%08x gctrl=0x%08x clkcr=0x%08x error=%d\n",
-+		       priv->mmc_no, cmd->cmdidx, readl(&priv->reg->rint),
-+		       readl(&priv->reg->status), readl(&priv->reg->gctrl),
-+		       readl(&priv->reg->clkcr), error);
- 		writel(SUNXI_MMC_GCTRL_RESET, &priv->reg->gctrl);
- 		mmc_update_clk(priv);
+ 		}
+ 	} while (!(status & done_bit));
+@@ -397,8 +409,8 @@
+ 		writel(data->blocks * data->blocksize, &priv->reg->bytecnt);
  	}
-@@ -594,11 +637,23 @@ static int sunxi_mmc_core_init(struct mmc *mmc)
- {
- 	struct sunxi_mmc_priv *priv = mmc->priv;
  
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] core_init BEFORE reset: clkcr=0x%08x gctrl=0x%08x rint=0x%08x status=0x%08x\n",
-+	       priv->mmc_no,
-+	       readl(&priv->reg->clkcr), readl(&priv->reg->gctrl),
-+	       readl(&priv->reg->rint), readl(&priv->reg->status));
-+#endif
-+
- 	sunxi_mmc_reset(priv->reg);
+-	debug("mmc %d, cmd %d(0x%08x), arg 0x%08x\n", priv->mmc_no,
+-	      cmd->cmdidx, cmdval | cmd->cmdidx, cmd->cmdarg);
++	printf("[MMC%d] cmd=%d arg=0x%08x\n",
++	       priv->mmc_no, cmd->cmdidx, cmd->cmdarg);
+ 	writel(cmd->cmdarg, &priv->reg->arg);
  
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] core_init AFTER reset: clkcr=0x%08x gctrl=0x%08x rint=0x%08x status=0x%08x ntsr=0x%08x\n",
-+	       priv->mmc_no,
-+	       readl(&priv->reg->clkcr), readl(&priv->reg->gctrl),
-+	       readl(&priv->reg->rint), readl(&priv->reg->status),
-+	       readl(&priv->reg->ntsr));
-+#endif
-+
- 	return 0;
- }
- 
-@@ -679,6 +734,10 @@ struct mmc *sunxi_mmc_init(int sdc_no)
- 
- 	/* config ahb clock */
- 	debug("init mmc %d clock and io\n", sdc_no);
-+#ifdef CONFIG_XPL_BUILD
-+	printf("[MMC%d] sunxi_mmc_init: ccm_bgr=0x%08x\n", sdc_no,
-+	       readl(ccm + CCU_H6_MMC_GATE_RESET));
-+#endif
- #if !defined(CONFIG_SUN50I_GEN_H6) && !defined(CONFIG_SUNXI_GEN_NCAT2)
- 	setbits_le32(ccm + CCU_AHB_GATE0, 1 << AHB_GATE_OFFSET_MMC(sdc_no));
- 
-@@ -789,6 +848,11 @@ static int sunxi_mmc_probe(struct udevice *dev)
- 	if (ret)
- 		return ret;
- 
-+	printf("[MMC_DM_PROBE] cfg->f_max=%u host_caps=0x%x bus_width=%d\n",
-+	       cfg->f_max, cfg->host_caps,
-+	       (cfg->host_caps & MMC_MODE_8BIT) ? 8 :
-+	       (cfg->host_caps & MMC_MODE_4BIT) ? 4 : 1);
-+
- 	priv->reg = dev_read_addr_ptr(dev);
- 
- 	/* We don't have a sunxi clock driver so find the clock address here */
--- 
-2.34.1
-
+ 	if (!data)
