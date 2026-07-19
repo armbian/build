@@ -138,7 +138,8 @@ function docker_cli_prepare() {
 	[[ -z "${build_suffix}" ]] && build_suffix="${EPOCHREALTIME:-$(date +%s%N)}-$$-${RANDOM}${RANDOM}"
 	build_suffix="$(printf '%s' "${build_suffix}" | sha256sum 2> /dev/null | cut -c1-8)"
 	[[ -z "${build_suffix}" ]] && build_suffix="$(printf '%08x' "$$")" # no sha256sum: PID hex
-	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:${build_suffix}"
+	declare -g DOCKER_ARMBIAN_LOCAL_IMAGE_REPO="armbian.local.only/armbian-build"
+	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="${DOCKER_ARMBIAN_LOCAL_IMAGE_REPO}:${build_suffix}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:trixie"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"
@@ -851,6 +852,33 @@ function docker_cleanup_old_images() {
 			done
 		fi
 	done
+
+	# Reap leftovers of the per-build tag (see DOCKER_ARMBIAN_INITIAL_IMAGE_TAG). Every run coins its
+	# own tag, so the "keep the newest 2" rule above never sees more than one image per tag and can
+	# never reap them; 'docker image prune' ignores them too, since they are tagged, not dangling.
+	# Group by repository instead, and work on tag references rather than image IDs: a cached rebuild
+	# hangs a new tag on the image it reused, and 'docker rmi <id>' refuses an image carrying several
+	# tags, so those leftovers would survive. Age comes from LastTagTime rather than the creation
+	# date, which belongs to whatever build first produced the image and can be far older than a tag
+	# that a build in flight -- possibly another user's on a shared daemon -- has only just attached
+	# to it. LastTagTime tracks the image, not the individual tag, so re-tagging shields the older
+	# tags on that image as well; erring towards keeping them costs one image worth of disk, while
+	# the opposite error kills a running build.
+	declare stale_ref stale_tag_time stale_tag_is_zero stale_tagged_at
+	declare -i stale_tag_cutoff=$(($(date +%s) - 48 * 3600))
+	while read -r stale_ref; do
+		[[ -z "${stale_ref}" ]] && continue
+		stale_tag_time="$(docker image inspect --format '{{.Metadata.LastTagTime.IsZero}} {{.Metadata.LastTagTime.Unix}}' "${stale_ref}" 2> /dev/null || true)"
+		stale_tag_is_zero="${stale_tag_time%% *}"
+		stale_tagged_at="${stale_tag_time##* }"
+		# An unset tag time renders as the year-one zero value, which would read as ancient: leave it.
+		[[ "${stale_tag_is_zero}" != "false" ]] && continue
+		[[ ! "${stale_tagged_at}" =~ ^[0-9]+$ ]] && continue
+		if [[ ${stale_tagged_at} -lt ${stale_tag_cutoff} ]]; then
+			display_alert "Removing leftover per-build image" "${stale_ref}" "debug"
+			docker rmi "${stale_ref}" > /dev/null 2>&1 || true
+		fi
+	done < <(docker images --format '{{.Repository}}:{{.Tag}}' "${DOCKER_ARMBIAN_LOCAL_IMAGE_REPO:-"armbian.local.only/armbian-build"}" 2> /dev/null)
 
 	display_alert "Docker cleanup complete" "dangling images removed, old armbian images pruned" "info"
 }
