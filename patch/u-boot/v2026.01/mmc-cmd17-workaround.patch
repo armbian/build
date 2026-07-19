@@ -1,113 +1,14 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Juan Sanchez Fuentes <juanesf91@gmail.com>
-Date: Thu, 16 Jul 2026 20:15:00 -0400
-Subject: [PATCH] mmc: Use CMD17 instead of CMD18 for multi-block reads
-
-Some boards (e.g., Avaota A1 with A523 SoC) experience data corruption
-when using CMD18 (READ_MULTIPLE_BLOCK) due to signal integrity issues
-on the SD card bus. CMD17 (READ_SINGLE_BLOCK) in a loop is more
-reliable, especially at higher clock speeds.
-
-Before each CMD17 we send CMD7 (SELECT_CARD) to re-select the card
-and ensure it is in TRANSFER state. If CMD17 fails, it is retried
-up to 3 times with a 10ms delay between attempts.
-
-Also skip CMD16 (SET_BLOCKLEN) for SDHC/SDXC cards since they always
-use a fixed 512-byte block length. Some cards (and the A523 SoC MMC
-controller) fail CMD16 after a fresh controller reset even though
-the identification sequence succeeded.
-
-Co-assisted-by: opencode/minimax-m3
-Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
----
- drivers/mmc/mmc.c | 31 +++++++++++++++++++++----------
- 1 file changed, 21 insertions(+), 10 deletions(-)
-
 diff --git a/drivers/mmc/mmc.c b/drivers/mmc/mmc.c
-index 111111111111..222222222222 100644
+index bf82c515600..900dc6376df 100644
 --- a/drivers/mmc/mmc.c
 +++ b/drivers/mmc/mmc.c
---- a/drivers/mmc/mmc.c
-+++ b/drivers/mmc/mmc.c
-@@ -357,6 +357,9 @@
+@@ -357,6 +357,9 @@ int mmc_set_blocklen(struct mmc *mmc, int len)
  	if (mmc->ddr_mode)
  		return 0;
- 
+
 +	if (mmc->high_capacity && len == 512)
 +		return 0;
 +
  	cmd.cmdidx = MMC_CMD_SET_BLOCKLEN;
  	cmd.resp_type = MMC_RSP_R1;
  	cmd.cmdarg = len;
-@@ -461,33 +464,45 @@
- 	struct mmc_cmd cmd;
- 	struct mmc_data data;
- 
--	if (blkcnt > 1)
--		cmd.cmdidx = MMC_CMD_READ_MULTIPLE_BLOCK;
--	else
--		cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
--
--	if (mmc->high_capacity)
--		cmd.cmdarg = start;
--	else
--		cmd.cmdarg = start * mmc->read_bl_len;
--
--	cmd.resp_type = MMC_RSP_R1;
--
--	data.dest = dst;
--	data.blocks = blkcnt;
--	data.blocksize = mmc->read_bl_len;
--	data.flags = MMC_DATA_READ;
--
--	if (mmc_send_cmd(mmc, &cmd, &data))
--		return 0;
--
--	if (blkcnt > 1) {
--		if (mmc_send_stop_transmission(mmc, false)) {
--#if !defined(CONFIG_XPL_BUILD) || defined(CONFIG_SPL_LIBCOMMON_SUPPORT)
--			log_err("mmc fail to send stop cmd\n");
--#endif
--			return 0;
-+	/*
-+	 * Use CMD17 (single-block read) in a loop.  CMD18 (multi-block)
-+	 * fails on some boards (e.g. Avaota A1 / A523) due to marginal
-+	 * signal integrity on the SD card bus.  CMD17 is slower but
-+	 * reliable.
-+	 *
-+	 * Before each CMD17 we send CMD7 (SELECT_CARD) to make sure the
-+	 * card is selected and in TRANSFER state.  Some controllers
-+	 * lose the card select state between transfers.
-+	 */
-+	lbaint_t i;
-+	int retries;
-+
-+	for (i = 0; i < blkcnt; i++) {
-+		for (retries = 3; retries > 0; retries--) {
-+			struct mmc_cmd sel_cmd;
-+
-+			sel_cmd.cmdidx = MMC_CMD_SELECT_CARD;
-+			sel_cmd.resp_type = MMC_RSP_R1;
-+			sel_cmd.cmdarg = mmc->rca << 16;
-+			mmc_send_cmd(mmc, &sel_cmd, NULL);
-+
-+			cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
-+			cmd.cmdarg = mmc->high_capacity ? start + i :
-+				     (start + i) * mmc->read_bl_len;
-+			cmd.resp_type = MMC_RSP_R1;
-+
-+			data.dest = (void *)((uintptr_t)dst + i * mmc->read_bl_len);
-+			data.blocks = 1;
-+			data.blocksize = mmc->read_bl_len;
-+			data.flags = MMC_DATA_READ;
-+
-+			if (mmc_send_cmd(mmc, &cmd, &data) == 0)
-+				break;
-+
-+			udelay(10000);
- 		}
-+		if (retries <= 0)
-+			return i;
- 	}
- 
- 	return blkcnt;
