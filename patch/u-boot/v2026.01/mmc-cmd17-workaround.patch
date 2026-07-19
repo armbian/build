@@ -8,14 +8,9 @@ when using CMD18 (READ_MULTIPLE_BLOCK) due to signal integrity issues
 on the SD card bus. CMD17 (READ_SINGLE_BLOCK) in a loop is more
 reliable, especially at higher clock speeds.
 
-After each CMD17 we poll CMD13 (SEND_STATUS) to wait for the card to
-leave the DATA state and become ready for the next command. Without
-this, the next CMD17 sees a DATA_CRC_ERROR because the card is still
-driving the data lines from the previous transfer.
-
-If CMD13 shows the card is in STANDBY state (0x0600), send CMD7 to
-re-select it before proceeding. This handles cases where the card
-gets deselected after a failed bus mode switch.
+Before each CMD17 we send CMD7 (SELECT_CARD) to re-select the card
+and ensure it is in TRANSFER state. If CMD17 fails, it is retried
+up to 3 times with a 10ms delay between attempts.
 
 Also skip CMD16 (SET_BLOCKLEN) for SDHC/SDXC cards since they always
 use a fixed 512-byte block length. Some cards (and the A523 SoC MMC
@@ -25,8 +20,8 @@ the identification sequence succeeded.
 Co-assisted-by: opencode/minimax-m3
 Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
 ---
- drivers/mmc/mmc.c | 86 ++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 80 insertions(+), 6 deletions(-)
+ drivers/mmc/mmc.c | 31 +++++++++++++++++++++----------
+ 1 file changed, 21 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/mmc/mmc.c b/drivers/mmc/mmc.c
 index 111111111111..222222222222 100644
@@ -44,72 +39,14 @@ index 111111111111..222222222222 100644
  	cmd.cmdidx = MMC_CMD_SET_BLOCKLEN;
  	cmd.resp_type = MMC_RSP_R1;
  	cmd.cmdarg = len;
-@@ -461,33 +464,95 @@
+@@ -461,33 +464,45 @@
  	struct mmc_cmd cmd;
  	struct mmc_data data;
  
 -	if (blkcnt > 1)
 -		cmd.cmdidx = MMC_CMD_READ_MULTIPLE_BLOCK;
 -	else
-+	/*
-+	 * Use CMD17 (single-block read) in a loop.  CMD18 (multi-block)
-+	 * fails on some boards (e.g. Avaota A1 / A523) due to marginal
-+	 * signal integrity on the SD card bus.  CMD17 is slower but
-+	 * reliable.
-+	 *
-+	 * Before each CMD17 we poll CMD13 (SEND_STATUS) to wait for the
-+	 * card to leave the DATA state.  On some boards (Avaota A1) the
-+	 * card keeps driving the data lines after DATA_OVER, causing
-+	 * DATA_CRC_ERROR on the very next CMD17.
-+	 *
-+	 * If the card is in STANDBY state (0x0600, e.g. after a failed
-+	 * bus mode switch), re-select it with CMD7 before retrying.
-+	 */
-+	lbaint_t i;
-+
-+	for (i = 0; i < blkcnt; i++) {
-+		int retries;
-+		struct mmc_cmd st_cmd;
-+
-+		for (retries = 1000; retries > 0; retries--) {
-+			u32 card_state;
-+
-+			st_cmd.cmdidx = MMC_CMD_SEND_STATUS;
-+			st_cmd.cmdarg = mmc->rca << 16;
-+			st_cmd.resp_type = MMC_RSP_R1;
-+			if (mmc_send_cmd(mmc, &st_cmd, NULL)) {
-+				udelay(100);
-+				continue;
-+			}
-+
-+			card_state = st_cmd.response[0] & 0x1E00;
-+
-+			if (card_state == 0x0800)
-+				break;	/* TRANSFER - ready */
-+
-+			if (card_state == 0x0600) {
-+				struct mmc_cmd sel_cmd;
-+
-+				/*
-+				 * STANDBY - card may have been deselected
-+				 * after a failed bus mode switch.  Re-select.
-+				 */
-+				sel_cmd.cmdidx = MMC_CMD_SELECT_CARD;
-+				sel_cmd.resp_type = MMC_RSP_R1;
-+				sel_cmd.cmdarg = mmc->rca << 16;
-+				mmc_send_cmd(mmc, &sel_cmd, NULL);
-+				continue;
-+			}
-+
-+			/* DATA or other state - wait */
-+			udelay(100);
-+		}
-+
-+		if (retries <= 0)
-+			log_warning("mmc: card not ready before sector %lu\n",
-+				    (unsigned long)(start + i));
-+
- 		cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
+-		cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
 -
 -	if (mmc->high_capacity)
 -		cmd.cmdarg = start;
@@ -132,36 +69,45 @@ index 111111111111..222222222222 100644
 -			log_err("mmc fail to send stop cmd\n");
 -#endif
 -			return 0;
-+		cmd.cmdarg = mmc->high_capacity ? start + i :
-+			     (start + i) * mmc->read_bl_len;
-+		cmd.resp_type = MMC_RSP_R1;
++	/*
++	 * Use CMD17 (single-block read) in a loop.  CMD18 (multi-block)
++	 * fails on some boards (e.g. Avaota A1 / A523) due to marginal
++	 * signal integrity on the SD card bus.  CMD17 is slower but
++	 * reliable.
++	 *
++	 * Before each CMD17 we send CMD7 (SELECT_CARD) to make sure the
++	 * card is selected and in TRANSFER state.  Some controllers
++	 * lose the card select state between transfers.
++	 */
++	lbaint_t i;
++	int retries;
 +
-+		data.dest = (void *)((uintptr_t)dst + i * mmc->read_bl_len);
-+		data.blocks = 1;
-+		data.blocksize = mmc->read_bl_len;
-+		data.flags = MMC_DATA_READ;
++	for (i = 0; i < blkcnt; i++) {
++		for (retries = 3; retries > 0; retries--) {
++			struct mmc_cmd sel_cmd;
 +
-+		if (mmc_send_cmd(mmc, &cmd, &data))
-+			return i;
++			sel_cmd.cmdidx = MMC_CMD_SELECT_CARD;
++			sel_cmd.resp_type = MMC_RSP_R1;
++			sel_cmd.cmdarg = mmc->rca << 16;
++			mmc_send_cmd(mmc, &sel_cmd, NULL);
 +
-+		/*
-+		 * After each block read, poll CMD13 to wait for the card
-+		 * to finish driving data lines.  This prevents
-+		 * DATA_CRC_ERROR on the next CMD17.
-+		 */
-+		for (retries = 500; retries > 0; retries--) {
-+			st_cmd.cmdidx = MMC_CMD_SEND_STATUS;
-+			st_cmd.cmdarg = mmc->rca << 16;
-+			st_cmd.resp_type = MMC_RSP_R1;
-+			if (mmc_send_cmd(mmc, &st_cmd, NULL) == 0 &&
-+			    (st_cmd.response[0] & 0x1E00) == 0x0800)
++			cmd.cmdidx = MMC_CMD_READ_SINGLE_BLOCK;
++			cmd.cmdarg = mmc->high_capacity ? start + i :
++				     (start + i) * mmc->read_bl_len;
++			cmd.resp_type = MMC_RSP_R1;
++
++			data.dest = (void *)((uintptr_t)dst + i * mmc->read_bl_len);
++			data.blocks = 1;
++			data.blocksize = mmc->read_bl_len;
++			data.flags = MMC_DATA_READ;
++
++			if (mmc_send_cmd(mmc, &cmd, &data) == 0)
 +				break;
-+			udelay(100);
++
++			udelay(10000);
  		}
 +		if (retries <= 0)
-+			log_debug("mmc: card slow to settle after "
-+				  "sector %lu\n",
-+				  (unsigned long)(start + i));
++			return i;
  	}
  
  	return blkcnt;
