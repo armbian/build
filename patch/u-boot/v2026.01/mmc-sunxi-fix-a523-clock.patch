@@ -1,10 +1,10 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Juan Sanchez Fuentes <juanesf91@gmail.com>
 Date: Thu, 16 Jul 2026 20:15:00 -0400
-Subject: [PATCH] mmc: sunxi: fix A523/A527 MMC clock configuration
+Subject: [PATCH] mmc: sunxi: fix A523/T527 MMC clock and signal integrity
 
-The Allwinner A523/T527 SoC has two issues in the MMC clock path that
-are not present on older sunxi SoCs:
+The Allwinner A523/T527 SoC has several issues in the MMC clock path
+and signal integrity that are not present on older sunxi SoCs:
 
 1. The MMC mod clock has a fixed post-divider of 2 that is not
    accounted for in the OSC24M (identification) path.  When running
@@ -16,16 +16,26 @@ are not present on older sunxi SoCs:
    CCLK_DIV must be >= 1, which means the card clock is always
    mod_clock / 2.  Compensate by requesting double the mod clock rate.
 
+3. In SPL, cap the card clock at 12 MHz.  Higher clocks cause
+   DATA_CRC_ERROR on consecutive CMD17 commands due to signal-integrity
+   issues on the SD-card data lines.
+
+4. In SPL, force 1-bit bus width.  4-bit mode produces DATA_CRC_ERROR
+   on the second consecutive CMD17.  1-bit mode uses only DAT0 and is
+   much more tolerant.  The BROM itself uses 1-bit mode.
+
 Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
 ---
- drivers/mmc/sunxi_mmc.c | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ drivers/mmc/sunxi_mmc.c | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
-index e28c81afffe..94cee997ded 100644
+index e28c81afffe..f2cfe8940eb 100644
 --- a/drivers/mmc/sunxi_mmc.c
 +++ b/drivers/mmc/sunxi_mmc.c
-@@ -77,6 +77,8 @@ static int mmc_set_mod_clk(struct sunxi_mmc_priv *priv, unsigned int hz)
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -77,6 +77,8 @@
  	if (hz <= 24000000) {
  		pll = CCM_MMC_CTRL_OSCM24;
  		pll_hz = 24000000;
@@ -34,22 +44,36 @@ index e28c81afffe..94cee997ded 100644
  	} else {
  #ifdef CONFIG_MACH_SUN9I
  		pll = CCM_MMC_CTRL_PLL_PERIPH0;
-@@ -114,6 +116,14 @@ static int mmc_set_mod_clk(struct sunxi_mmc_priv *priv, unsigned int hz)
+@@ -113,6 +115,9 @@
+ 				pll_hz *= 2;
  		}
  	}
- 
-+	/*
-+	 * On the A523, CCLK_DIV must be >= 1 (CCLK_DIV=0 is undefined, not
-+	 * bypass). This halves the card clock: card_clock = mod_clock / 2.
-+	 * Compensate by requesting double the mod clock rate from the CCU.
-+	 */
++
 +	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
 +		hz *= 2;
-+
+ 
  	div = pll_hz / hz;
  	if (pll_hz % hz)
- 		div++;
-@@ -217,6 +227,8 @@ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+@@ -204,6 +209,12 @@
+ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+ {
+ 	unsigned rval = readl(&priv->reg->clkcr);
++	unsigned int clock = mmc->clock;
++
++#ifdef CONFIG_XPL_BUILD
++	if (clock > 12000000)
++		clock = 12000000;
++#endif
+ 
+ 	/* Disable Clock */
+ 	rval &= ~SUNXI_MMC_CLK_ENABLE;
+@@ -212,11 +223,13 @@
+ 		return -1;
+ 
+ 	/* Set mod_clk to new rate */
+-	if (mmc_set_mod_clk(priv, mmc->clock))
++	if (mmc_set_mod_clk(priv, clock))
+ 		return -1;
  
  	/* Clear internal divider */
  	rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;
@@ -58,3 +82,15 @@ index e28c81afffe..94cee997ded 100644
  	writel(rval, &priv->reg->clkcr);
  
  #if defined(CONFIG_SUNXI_GEN_SUN6I) || defined(CONFIG_SUN50I_GEN_H6) || defined(CONFIG_SUNXI_GEN_NCAT2)
+@@ -573,7 +586,11 @@
+ 	cfg->ops  = &sunxi_mmc_ops;
+ 
+ 	cfg->voltages = MMC_VDD_32_33 | MMC_VDD_33_34;
++#ifdef CONFIG_XPL_BUILD
++	cfg->host_caps = 0;
++#else
+ 	cfg->host_caps = MMC_MODE_4BIT;
++#endif
+ 
+ 	if ((IS_ENABLED(CONFIG_MACH_SUN50I) || IS_ENABLED(CONFIG_MACH_SUN8I) ||
+ 	    IS_ENABLED(CONFIG_SUN50I_GEN_H6) || IS_ENABLED(CONFIG_MACH_SUN55I_A523)) &&
