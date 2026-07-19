@@ -350,6 +350,13 @@ function do_main_configuration() {
 	# loong64 is not supported now
 	#  [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
 
+	# Debug symbols package pairs with its exact kernel build; the toolchain version-part
+	# makes compiler-distinct builds distinct artifacts, so the pairing stays exact.
+	# Gated after family config: KERNEL_DBG_PACKAGE may be set at the family level.
+	if [[ "${KERNEL_DBG_PACKAGE}" == "yes" ]]; then
+		enable_extension "kernel-version-toolchain"
+	fi
+
 	## Extensions: at this point we've sourced all the config files that will be used,
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect
 	##             place to initialize the extension manager. It will create functions
