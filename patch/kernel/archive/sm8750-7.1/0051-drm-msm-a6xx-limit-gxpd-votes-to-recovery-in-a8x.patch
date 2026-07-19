@@ -1,0 +1,114 @@
+From: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Date: Tue, 7 Apr 2026 15:00:56 +0530
+Subject: [PATCH] drm/msm/a6xx: Limit GXPD votes to recovery in A8x
+
+In A8x GPUs, the GX GDSC is moved to a separate block called GXCLKCTL
+which is under the GX power domain. Due to the way the support for this
+block is implemented in its driver, pm_runtime votes result in a vote on
+GX/GMxC/MxC rails from the APPS RSC. This is against the Adreno
+architecture which require GMU to be the sole voter of these collapsible
+rails on behalf of GPU, except during the GPU/GMU recovery.
+
+To align with this architectural requirement and to realize the power
+benefits of the IFPC feature, remove the GXPD votes during gmu resume
+and suspend. And during the recovery sequence, enable/disable the GXPD
+along with the 'synced_poweroff' genpd hint to force collapse this GDSC.
+
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Signed-off-by: Taniya Das <taniya.das@oss.qualcomm.com>
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1251,6 +1251,57 @@
+ }
+ 
+ 
++static int a6xx_gmu_gxpd_get(struct a6xx_gmu *gmu)
++{
++	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
++	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++
++	if (IS_ERR_OR_NULL(gmu->gxpd))
++		return 0;
++
++	/*
++	 * On A8xx HW, GX GDSC is moved to a new clk controller block under GX
++	 * power domain. The clock driver for this new block keeps the GX rail
++	 * voted when gxpd is voted. So, use the gxpd only during gpu recovery.
++	 */
++	if (adreno_gpu->info->family >= ADRENO_8XX_GEN1)
++		return 0;
++
++	/*
++	 * On A6x/A7x, "enable" the GX power domain which won't actually do
++	 * anything but it will make sure that the refcounting is correct in
++	 * case we need to bring down the GX after a GMU failure
++	 */
++	return pm_runtime_get_sync(gmu->gxpd);
++}
++
++static int a6xx_gmu_gxpd_put(struct a6xx_gmu *gmu)
++{
++	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
++	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
++
++	if (IS_ERR_OR_NULL(gmu->gxpd))
++		return 0;
++
++	if (adreno_gpu->info->family < ADRENO_8XX_GEN1)
++		return pm_runtime_put_sync(gmu->gxpd);
++
++	/*
++	 * On A8x, GX GDSC collapse should be triggered only when it is stuck ON
++	 */
++	if (adreno_gpu->funcs->gx_is_on(adreno_gpu)) {
++		pm_runtime_get_sync(gmu->gxpd);
++		/*
++		 * Hint to gfxclkctl driver to do a hw collapse during the next
++		 * RPM PUT. This is a special behavior in the gfxclkctl driver
++		 */
++		dev_pm_genpd_synced_poweroff(gmu->gxpd);
++		pm_runtime_put_sync(gmu->gxpd);
++	}
++
++	return 0;
++}
++
+ int a6xx_gmu_resume(struct a6xx_gpu *a6xx_gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
+@@ -1266,13 +1317,7 @@
+ 	/* Turn on the resources */
+ 	pm_runtime_get_sync(gmu->dev);
+ 
+-	/*
+-	 * "enable" the GX power domain which won't actually do anything but it
+-	 * will make sure that the refcounting is correct in case we need to
+-	 * bring down the GX after a GMU failure
+-	 */
+-	if (!IS_ERR_OR_NULL(gmu->gxpd))
+-		pm_runtime_get_sync(gmu->gxpd);
++	a6xx_gmu_gxpd_get(gmu);
+ 
+ 	/* Use a known rate to bring up the GMU */
+ 	clk_set_rate(gmu->core_clk, 200000000);
+@@ -1339,7 +1384,8 @@
+ disable_clk:
+ 	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
+ rpm_put:
+-	pm_runtime_put(gmu->gxpd);
++	a6xx_gmu_gxpd_put(gmu);
++
+ 	pm_runtime_put(gmu->dev);
+ 
+ 	return ret;
+@@ -1455,8 +1501,7 @@
+ 	 * domain. Usually the GMU does this but only if the shutdown sequence
+ 	 * was successful
+ 	 */
+-	if (!IS_ERR_OR_NULL(gmu->gxpd))
+-		pm_runtime_put_sync(gmu->gxpd);
++	a6xx_gmu_gxpd_put(gmu);
+ 
+ 	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
+ 
