@@ -472,6 +472,15 @@ function docker_cli_build_dockerfile() {
 		display_alert "Re-created" "Dockerfile, proceeding, build from scratch" "debug"
 	fi
 
+	# Without buildx, the classic builder keeps its layer cache only in the image store, so the
+	# per-build image removed at the end of every run (see docker_cli_launch) takes the cache with
+	# it: each invocation re-runs the whole Dockerfile, including the expensive requirements step.
+	# Those images also escape both reapers -- 'docker image prune' skips tagged ones, and
+	# docker_cleanup_old_images() matches a different repo -- so they pile up as well.
+	if [[ "${DOCKER_HAS_BUILDX}" != "yes" ]]; then
+		display_alert "Docker buildx not available" "install it, or this image is rebuilt from scratch on every run (and the leftovers are never cleaned up); see 'docker buildx' / package docker-buildx(-plugin)" "err"
+	fi
+
 	display_alert "Building" "Dockerfile via '${DOCKER_BUILDX_OR_BUILD[*]}'" "info"
 
 	BUILDKIT_COLORS="run=123,20,245:error=yellow:cancel=blue:warning=white" \
