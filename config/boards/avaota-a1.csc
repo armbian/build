@@ -52,9 +52,9 @@ function post_family_tweaks__avaota-a1() {
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
-# AIC8800 (disabled: DKMS build fails with gcc -fmin-function-alignment=8)
-#AIC8800_TYPE="sdio"
-#enable_extension "radxa-aic8800"
+# AIC8800
+AIC8800_TYPE="sdio"
+enable_extension "radxa-aic8800"
 
 # AIC8800 Wireless
 function post_family_tweaks_bsp__aic8800_wireless() {
