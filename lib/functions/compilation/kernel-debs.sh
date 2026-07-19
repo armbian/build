@@ -88,6 +88,11 @@ function prepare_kernel_packaging_debs() {
 
 		display_alert "Packaging linux-libc-dev" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-libc-dev-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
+
+		if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+			display_alert "Packaging linux-image-dbg" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
+			create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}-dbg" "${debs_target_dir}" kernel_package_callback_linux_dbg "linux-dbg"
+		fi
 	fi
 
 	return 0
@@ -286,6 +291,14 @@ function kernel_package_callback_linux_image() {
 		run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/usr/lib/linux-image-${kernel_version_family}"
 	fi
 
+	# The versioned virtual "-build" provide pairs linux-image with its linux-dbg package.
+	# Reversioning rewrites only the Version: field, so the artifact_version pinned here and
+	# in the dbg package's Depends survives it, keeping the pairing exact per-build.
+	declare provides_dbg_pair=""
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		provides_dbg_pair=", linux-image-${BRANCH}-${LINUXFAMILY}-build (= ${artifact_version})"
+	fi
+
 	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Package: ${package_name}
@@ -298,7 +311,7 @@ function kernel_package_callback_linux_image() {
 		Section: kernel
 		Priority: optional
 		Depends: initramfs-tools | linux-initramfs-tool
-		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules
+		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules${provides_dbg_pair}
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
 		 ${artifact_version_reason:-"${kernel_version_family}"}
@@ -621,6 +634,58 @@ function kernel_package_callback_linux_headers() {
 			fi
 		EOT_POSTINST_FINISH
 	)
+}
+
+function kernel_package_callback_linux_dbg() {
+	display_alert "linux-dbg packaging" "${package_directory}" "debug"
+
+	[[ -f "${kernel_work_dir}/vmlinux" ]] || exit_with_error "KERNEL_DBG_PACKAGE=yes, but vmlinux not found in '${kernel_work_dir}'"
+
+	# Last line of defence, after the final .config: any hook may still have turned debug info off.
+	if ! is_enabled CONFIG_DEBUG_INFO; then
+		exit_with_error "KERNEL_DBG_PACKAGE=yes, but kernel built without CONFIG_DEBUG_INFO" "vmlinux carries no DWARF, so the package would be useless to crash, drgn and gdb; check for a kernel config hook or an interactive KERNEL_CONFIGURE=yes session turning DEBUG_INFO off"
+	fi
+
+	# The config bit only records the intent. KERNEL_EXTRA_CFLAGS or a make-params hook can pass
+	# -g0 through KCFLAGS and leave CONFIG_DEBUG_INFO=y standing over an ELF with no debug
+	# sections, so ask the ELF itself. Captured, not piped into grep: grep -q exits on the first
+	# match and the SIGPIPE would surface as a pipeline failure.
+	declare vmlinux_sections=""
+	vmlinux_sections="$(readelf -S "${kernel_work_dir}/vmlinux" 2> /dev/null || true)"
+	if [[ -z "${vmlinux_sections}" ]]; then
+		display_alert "Could not read vmlinux section headers" "readelf unavailable; skipping .debug_info verification" "wrn"
+	elif [[ "${vmlinux_sections}" != *".debug_info"* ]]; then
+		exit_with_error "KERNEL_DBG_PACKAGE=yes, but vmlinux has no .debug_info section" "CONFIG_DEBUG_INFO=y is set, so the debug sections were suppressed at compile time — check KERNEL_EXTRA_CFLAGS and any kernel_make_config/custom_kernel_make_params hook for -g0 or similar"
+	fi
+
+	if is_enabled CONFIG_DEBUG_INFO_SPLIT; then
+		exit_with_error "KERNEL_DBG_PACKAGE=yes does not support CONFIG_DEBUG_INFO_SPLIT" "DWARF lives in .dwo sidecar files that are not packaged; rebuild with CONFIG_DEBUG_INFO_SPLIT=n (distro debug kernels use non-split DWARF)"
+	fi
+
+	# /usr/lib/debug/lib/modules/<ver>/vmlinux is the standard search path of crash, drgn and gdb
+	declare vmlinux_debug_dir="${package_directory}/usr/lib/debug/lib/modules/${kernel_version_family}"
+	mkdir -p "${vmlinux_debug_dir}"
+	run_host_command_logged cp -v "${kernel_work_dir}/vmlinux" "${vmlinux_debug_dir}/vmlinux"
+
+	# Generate a control file.
+	# The versioned virtual "-build" dependency pins these debug symbols to the exact kernel
+	# build: artifact_version encodes every input hash (source SHA1, patches, .config, hooks,
+	# toolchain), and reversioning does not touch Provides/Depends, so dpkg refuses to install
+	# debug symbols for a kernel built from any other combination of inputs.
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Version: ${artifact_version}
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+		Section: debug
+		Package: ${package_name}
+		Architecture: ${ARCH}
+		Priority: optional
+		Depends: linux-image-${BRANCH}-${LINUXFAMILY}, linux-image-${BRANCH}-${LINUXFAMILY}-build (= ${artifact_version})
+		Provides: linux-image-dbg, linux-image-armbian-dbg
+		Description: Armbian Linux $BRANCH debug symbols (vmlinux) ${kernel_version_family}
+		 This package contains the unstripped vmlinux for ${kernel_version_family}.
+		 It is used by crash, drgn and gdb to analyze kdump vmcores and the live kernel.
+		 ${artifact_version_reason:-"${kernel_version_family}"}
+	CONTROL_FILE
 }
 
 function kernel_package_callback_linux_libc_dev() {
