@@ -62,9 +62,17 @@ function git_ensure_safe_directory() {
 			# already-added longer one (…/amlogic-boot-fip-jethub) and we skip
 			# adding it -> later "dubious ownership". Compare values literally.
 			local existing found=no
+			# Suppress only the two benign exit codes from --get-all: 1 when the key is
+			# unset (first run) and 141 (SIGPIPE) when the loop's 'break' closes the pipe
+			# early. Both are the last command in this '<(…)' process-substitution
+			# subshell, which inherits the framework's errtrace ERR trap and would
+			# otherwise emit a spurious "Error occurred in SUBSHELL git.sh" annotation.
+			# Any other exit code is a real git config failure and is deliberately left
+			# to trip the ERR trap (unlike a blanket '|| true', which would hide it).
 			while IFS= read -r existing; do
 				[[ "$existing" == "$git_dir" ]] && { found=yes; break; }
-			done < <(git config --global --get-all safe.directory 2> /dev/null)
+			done < <(git config --global --get-all safe.directory 2> /dev/null \
+				|| { rc=$?; [[ "$rc" == 1 || "$rc" == 141 ]]; })
 			[[ "$found" == yes ]] || regular_git config --global --add safe.directory "$git_dir"
 		fi
 	else
