@@ -1,0 +1,60 @@
+From: Teguh Sobirin <teguh@sobir.in>
+Subject: [PATCH] clk: qcom: gxclkctl-kaanapali: GX GDSC collapse only on synced_poweroff (SM8750 a830)
+
+Adds gdsc_gx_disable and wires it as GX GDSC .power_off so the HW-managed
+rail collapses only during GMU recovery, silencing the gdsc_toggle_logic WARN.
+---
+diff --git a/drivers/clk/qcom/gdsc.c b/drivers/clk/qcom/gdsc.c
+index 95aa071..ab5d741 100644
+--- a/drivers/clk/qcom/gdsc.c
++++ b/drivers/clk/qcom/gdsc.c
+@@ -675,3 +675,25 @@ int gdsc_gx_do_nothing_enable(struct generic_pm_domain *domain)
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(gdsc_gx_do_nothing_enable);
++
++/*
++ * GX GDSC is a special power domain. Normally, its disable sequence
++ * is managed by the GMU firmware, and high level OS must not attempt
++ * to disable it. The only exception is during GMU recovery, where the
++ * GMU driver can set GenPD’s synced_poweroff flag to allow explicitly
++ * disable GX GDSC in hardware.
++ */
++int gdsc_gx_disable(struct generic_pm_domain *domain)
++{
++	struct gdsc *sc = domain_to_gdsc(domain);
++
++	if (domain->synced_poweroff)
++		return gdsc_disable(domain);
++
++	/* Remove parent-supply placed in enable */
++	if (sc->rsupply)
++		return regulator_disable(sc->rsupply);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(gdsc_gx_disable);
+diff --git a/drivers/clk/qcom/gdsc.h b/drivers/clk/qcom/gdsc.h
+index dd843e8..495daeb 100644
+--- a/drivers/clk/qcom/gdsc.h
++++ b/drivers/clk/qcom/gdsc.h
+@@ -88,6 +88,7 @@ int gdsc_register(struct gdsc_desc *desc, struct reset_controller_dev *,
+ 		  struct regmap *);
+ void gdsc_unregister(struct gdsc_desc *desc);
+ int gdsc_gx_do_nothing_enable(struct generic_pm_domain *domain);
++int gdsc_gx_disable(struct generic_pm_domain *domain);
+ #else
+ static inline int gdsc_register(struct gdsc_desc *desc,
+ 				struct reset_controller_dev *rcdev,
+diff --git a/drivers/clk/qcom/gxclkctl-kaanapali.c b/drivers/clk/qcom/gxclkctl-kaanapali.c
+index 40d8563..d7cf683 100644
+--- a/drivers/clk/qcom/gxclkctl-kaanapali.c
++++ b/drivers/clk/qcom/gxclkctl-kaanapali.c
+@@ -26,6 +26,7 @@ static struct gdsc gx_clkctl_gx_gdsc = {
+ 	.pd = {
+ 		.name = "gx_clkctl_gx_gdsc",
+ 		.power_on = gdsc_gx_do_nothing_enable,
++		.power_off = gdsc_gx_disable,
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
