@@ -3,7 +3,7 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-setenv scriptaddr "0x10000000"
+setenv scriptaddr "0x08000000"
 setenv kernel_addr_r "0x08080000"
 setenv fdt_addr_r "0x4080000"
 setenv overlay_error "false"
