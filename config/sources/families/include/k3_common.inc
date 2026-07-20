@@ -60,8 +60,50 @@ function compile_k3_bootgen() {
 
 	if [[ "${BOOT_SOC}" != "am62l" ]]; then
 		pushd ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:} || exit
-		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
-		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
+
+		# Build the R5 first-stage SPL (tiboot3) with GCC 13. GCC 14 (the Trixie
+		# default) produces oversized SPL code that overruns CONFIG_SPL_SIZE_LIMIT
+		# on am62p/am62-lp; GCC 13 is smaller and fits. Passed as CC (u-boot Kbuild
+		# honours a command-line CC); CROSS_COMPILE stays for binutils. Needs
+		# gcc-13-arm-linux-gnueabi (soft-float) in the build image.
+		declare r5_cc="CC=arm-linux-gnueabi-gcc-13"
+		# Be certain the pinned compiler is present and really is GCC 13: fail
+		# early and clearly rather than let a missing binary surface as a cryptic
+		# mid-build error, and never silently fall back to the default GCC (which
+		# would reintroduce the SPL oversize).
+		declare r5_gcc_major
+		r5_gcc_major="$(arm-linux-gnueabi-gcc-13 -dumpversion 2>/dev/null | cut -d. -f1 || true)"
+		[[ "${r5_gcc_major}" == "13" ]] || exit_with_error "K3 R5 SPL requires arm-linux-gnueabi-gcc-13" "found version '${r5_gcc_major:-none}'"
+		display_alert "K3 R5 SPL first-stage compiler" "arm-linux-gnueabi-gcc-13 (GCC ${r5_gcc_major})" "info"
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ${r5_cc} ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
+
+		# Size safety net for am62p, on top of the GCC 13 build above. GCC 13
+		# keeps the R5 SPL under CONFIG_SPL_SIZE_LIMIT - am62-lp now fits with its
+		# full SPI-NAND boot stack - but am62p's cap raise is retained as a fallback
+		# until a card boot smoke test confirms GCC 13 alone suffices (its stock
+		# limit sits ~58 KB below the SRAM top, so raising into that headroom is
+		# harmless). Only tiboot3 (R5 first stage) is affected; the A53 SPL and
+		# u-boot proper are untouched.
+		declare r5_config_changed="no"
+		case "${TIBOOT3_BOOTCONFIG}" in
+			am62px_evm_r5_defconfig)
+				# AM62Px: SPL_SIZE_LIMIT 0x3C000, but the stack pointer (SRAM top)
+				# is at 0x43c4a7f0 -> ~58 KB of unused SRAM above the limit. The
+				# overrun is only a few KB (excess 0x1bee), so raise the caps into
+				# that headroom and keep the (unused-by-us but functional) SPI +
+				# SPI-NAND boot paths. New top 0x43c40000 stays below the stack.
+				display_alert "$BOARD" "Raising am62p R5 SPL size limit into available SRAM headroom" "info"
+				run_host_command_logged scripts/config --file build-r5/.config \
+					--set-val CONFIG_SPL_SIZE_LIMIT 0x40000 \
+					--set-val CONFIG_SPL_MAX_SIZE 0x3F000
+				r5_config_changed="yes"
+				;;
+		esac
+		if [[ "${r5_config_changed}" == "yes" ]]; then
+			run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ${r5_cc} ARCH=arm O=build-r5 olddefconfig
+		fi
+
+		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ${r5_cc} ARCH=arm O=build-r5 BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware
 		popd
 	fi
 }
