@@ -127,8 +127,18 @@ function pre_config_uboot_target__build_first_stage() {
 }
 
 function post_uboot_custom_postprocess__update_uboot_names() {
-	cp ${TISPL_FILE} tispl.bin || true
-	cp ${UBOOT_FILE} u-boot.img || true
+	# Rename a board's override output onto tispl.bin/u-boot.img, but only if it
+	# was actually produced, and never let the copy be fatal. Both an absent
+	# source and a failing cp trip Armbian's ERR trap, so guard on the file
+	# existing (an 'if', not '[[ -f ]] && cp', whose false test returns 1) and
+	# keep '|| true' on the cp. This matters because newer u-boot (mainline
+	# 2026.07 / recent TI SDK) renamed the GP outputs to ti-spl_unsigned.fit.*
+	# (source absent -> skip, fall back to binman's standard tispl.bin), and on
+	# GP parts binman can make the *_unsigned image and tispl.bin the same file,
+	# so 'cp src dst' errors with "are the same file" (present -> tolerate).
+	if [[ -f "${TISPL_FILE}" ]]; then cp "${TISPL_FILE}" tispl.bin || true; fi
+	if [[ -f "${UBOOT_FILE}" ]]; then cp "${UBOOT_FILE}" u-boot.img || true; fi
+	return 0
 }
 
 function pre_prepare_partitions() {
