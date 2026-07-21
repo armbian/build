@@ -401,8 +401,13 @@ function docker_cli_prepare_dockerfile() {
 }
 
 function docker_cli_build_dockerfile() {
-	local do_force_pull="no"
+	# DOCKER_FORCE_PULL=yes forces a re-pull of the base image, bypassing the
+	# ~24h marker cache below. Use it to pick up a freshly-published framework
+	# image immediately (e.g. after a docker-armbian-build change) instead of
+	# waiting for the marker to expire or the local copy to be removed.
+	local do_force_pull="${DOCKER_FORCE_PULL:-no}"
 	local local_image_sha
+	[[ "${do_force_pull}" == "yes" ]] && display_alert "Docker base image" "DOCKER_FORCE_PULL=yes: forcing a re-pull" "info"
 
 	declare docker_marker_dir="${SRC}"/cache/docker
 
