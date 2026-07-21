@@ -481,7 +481,24 @@ function do_extra_configuration() {
 		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
 		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
 	fi
-	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR##*@}" "info"
+	# Validate the proxy is actually reachable before adopting it. A derived or
+	# inherited APT_PROXY_ADDR — http_proxy injected into the job by a self-hosted
+	# runner, or a stale NetBox apt_proxy — can point at a cache this host cannot
+	# reach, which otherwise hard-fails every apt operation in the build. Probe
+	# host:port with a short timeout; if it doesn't connect, drop it and go direct.
+	if [[ -n "${APT_PROXY_ADDR}" ]]; then
+		declare _apt_proxy_hostport="${APT_PROXY_ADDR##*@}" # drop optional user@
+		declare _apt_proxy_host="${_apt_proxy_hostport%:*}"
+		declare _apt_proxy_port="${_apt_proxy_hostport##*:}"
+		[[ "${_apt_proxy_port}" == "${_apt_proxy_hostport}" ]] && _apt_proxy_port="3142" # no :port -> acng default
+		if timeout 2 bash -c "exec 3<>/dev/tcp/${_apt_proxy_host}/${_apt_proxy_port}" 2> /dev/null; then
+			display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${_apt_proxy_hostport} (reachable)" "info"
+		else
+			display_alert "Apt proxy unreachable - building direct" "${_apt_proxy_hostport} not connectable in 2s; ignoring APT_PROXY_ADDR" "wrn"
+			APT_PROXY_ADDR=""
+		fi
+		unset _apt_proxy_hostport _apt_proxy_host _apt_proxy_port
+	fi
 
 	# @TODO: allow to run aggregation, for CONFIG_DEFS_ONLY? rootfs_aggregate_packages
 
