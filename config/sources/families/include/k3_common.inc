@@ -77,13 +77,11 @@ function compile_k3_bootgen() {
 		display_alert "K3 R5 SPL first-stage compiler" "arm-linux-gnueabi-gcc-13 (GCC ${r5_gcc_major})" "info"
 		run_host_command_logged make -j$(nproc) CROSS_COMPILE=arm-linux-gnueabi- ${r5_cc} ARCH=arm O=build-r5 ${TIBOOT3_BOOTCONFIG}
 
-		# Size safety net for am62p, on top of the GCC 13 build above. GCC 13
-		# keeps the R5 SPL under CONFIG_SPL_SIZE_LIMIT - am62-lp now fits with its
-		# full SPI-NAND boot stack - but am62p's cap raise is retained as a fallback
-		# until a card boot smoke test confirms GCC 13 alone suffices (its stock
-		# limit sits ~58 KB below the SRAM top, so raising into that headroom is
-		# harmless). Only tiboot3 (R5 first stage) is affected; the A53 SPL and
-		# u-boot proper are untouched.
+		# Per-config R5 SPL size handling, on top of the GCC 13 build above. The
+		# vendor R5 defconfigs overrun CONFIG_SPL_SIZE_LIMIT; the remedy depends on
+		# the SoC's SRAM layout (see CONFIG_CUSTOM_SYS_INIT_SP_ADDR vs the limit).
+		# Only tiboot3 (R5 first stage) is affected; the A53 SPL and u-boot proper
+		# are untouched.
 		declare r5_config_changed="no"
 		case "${TIBOOT3_BOOTCONFIG}" in
 			am62px_evm_r5_defconfig)
@@ -96,6 +94,31 @@ function compile_k3_bootgen() {
 				run_host_command_logged scripts/config --file build-r5/.config \
 					--set-val CONFIG_SPL_SIZE_LIMIT 0x40000 \
 					--set-val CONFIG_SPL_MAX_SIZE 0x3F000
+				r5_config_changed="yes"
+				;;
+			am62x_lpsk_r5_defconfig)
+				# AM625: SPL_SIZE_LIMIT (0x3A7F0) already sits at the stack pointer
+				# (base+0x3A7F0), with BSS just above at 0x43c3b000 - no SRAM to
+				# raise into, and GCC 13 does not reclaim enough (excess ~0x48d0).
+				# am62x_lpsk = am62x_evm (which fits) + a SPI-NAND boot stack the
+				# board needs, so instead drop the inherited-but-unused SPI-NOR boot
+				# stack: Armbian boots tiboot3 from SD/eMMC, and SPI-NAND is kept.
+				# The Cadence QSPI controller and MTD_SPI_NAND stay (SPI-NAND still
+				# works); only the SPI-NOR chip drivers + spi-nor framework and the
+				# YMODEM UART-recovery loader are removed. olddefconfig cascades deps.
+				display_alert "$BOARD" "Dropping unused SPI-NOR boot stack from am62-lp R5 SPL to fit SRAM (keeping SPI-NAND)" "info"
+				run_host_command_logged scripts/config --file build-r5/.config \
+					--disable CONFIG_SPL_SPI_FLASH_SUPPORT \
+					--disable CONFIG_SPL_SPI_LOAD \
+					--disable CONFIG_SPL_DM_SPI_FLASH \
+					--disable CONFIG_SPL_SPI_FLASH_SFDP_SUPPORT \
+					--disable CONFIG_DM_SPI_FLASH \
+					--disable CONFIG_SPI_FLASH_SFDP_SUPPORT \
+					--disable CONFIG_SPI_FLASH_SOFT_RESET \
+					--disable CONFIG_SPI_FLASH_SOFT_RESET_ON_BOOT \
+					--disable CONFIG_SPI_FLASH_SPANSION \
+					--disable CONFIG_SPI_FLASH_S28HX_T \
+					--disable CONFIG_SPL_YMODEM_SUPPORT
 				r5_config_changed="yes"
 				;;
 		esac
