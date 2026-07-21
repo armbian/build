@@ -1,0 +1,134 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armbian <build@armbian.com>
+Date: Tue, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH] ufs: fix DMA cache coherency like mainline (multi-block reads)
+
+Radxa prepare_prdt_table() invalidated pccb->pdata before starting DMA for
+every transfer. On RK3576 that opens a window where speculative CPU fills
+reload stale cache lines while the UFS controller writes DRAM. Single-block
+READs often still looked correct; multi-block READs returned OK but trailing
+blocks were zeros (confirmed: scsi read LBA0 count=2 vs LBA1 count=1).
+
+Mainline ufs-uclass.c does not invalidate the data buffer before DMA. It
+flushes before ufshcd_send_command and invalidates after. Match that, and
+fix descriptor cache range math to use [aligned_start, aligned_end).
+
+This replaces the single-block scsi I/O workaround for native-4K UFS.
+
+--- a/drivers/ufs/ufs.c	2026-07-21 18:14:51.936539112 +0200
++++ b/drivers/ufs/ufs.c	2026-07-21 18:14:51.936539112 +0200
+@@ -753,18 +753,44 @@
+ }
+ 
+ /**
++ * ufshcd_cache_flush - Flush cache
++ *
++ * Flush cache in aligned [addr, addr+size) range (mainline-compatible).
++ */
++static void ufshcd_cache_flush(void *addr, unsigned long size)
++{
++	uintptr_t start_addr = (uintptr_t)addr & ~(ARCH_DMA_MINALIGN - 1);
++	uintptr_t end_addr = ALIGN((uintptr_t)addr + size, ARCH_DMA_MINALIGN);
++
++	if (!size)
++		return;
++	flush_dcache_range(start_addr, end_addr);
++}
++
++/**
++ * ufshcd_cache_invalidate - Invalidate cache
++ *
++ * Invalidate cache in aligned [addr, addr+size) range (mainline-compatible).
++ */
++static void ufshcd_cache_invalidate(void *addr, unsigned long size)
++{
++	uintptr_t start_addr = (uintptr_t)addr & ~(ARCH_DMA_MINALIGN - 1);
++	uintptr_t end_addr = ALIGN((uintptr_t)addr + size, ARCH_DMA_MINALIGN);
++
++	if (!size)
++		return;
++	invalidate_dcache_range(start_addr, end_addr);
++}
++
++/**
+  * ufshcd_cache_flush_and_invalidate - Flush and invalidate cache
+  *
+- * Flush and invalidate cache in aligned address..address+size range.
+- * The invalidation is in place to avoid stale data in cache.
++ * Used for UTRD/UCD descriptors. Range math matches mainline flush/invalidate.
+  */
+ static void ufshcd_cache_flush_and_invalidate(void *addr, unsigned long size)
+ {
+-	uintptr_t aaddr = (uintptr_t)addr & ~(ARCH_DMA_MINALIGN - 1);
+-	unsigned long asize = ALIGN(size, ARCH_DMA_MINALIGN);
+-
+-	flush_dcache_range(aaddr, aaddr + asize);
+-	invalidate_dcache_range(aaddr, aaddr + asize);
++	ufshcd_cache_flush(addr, size);
++	ufshcd_cache_invalidate(addr, size);
+ }
+ 
+ /**
+@@ -1510,7 +1536,6 @@
+ {
+ 	struct utp_transfer_req_desc *req_desc = hba->utrdl;
+ 	struct ufshcd_sg_entry *prd_table = hba->ucd_prdt_ptr;
+-	uintptr_t aaddr = (uintptr_t)(pccb->pdata) & ~(ARCH_DMA_MINALIGN - 1);
+ 	ulong datalen = pccb->datalen;
+ 	int table_length;
+ 	u8 *buf;
+@@ -1518,17 +1543,16 @@
+ 
+ 	if (!datalen) {
+ 		req_desc->prd_table_length = 0;
+-		ufshcd_cache_flush_and_invalidate(req_desc, sizeof(*req_desc));
++		ufshcd_cache_flush(req_desc, sizeof(*req_desc));
+ 		return;
+ 	}
+ 
+-	if (pccb->dma_dir == DMA_TO_DEVICE) {	/* Write to device */
+-		flush_dcache_range(aaddr, ALIGN(aaddr + datalen + ARCH_DMA_MINALIGN - 1, ARCH_DMA_MINALIGN));
+-	}
+-
+-	/* In any case, invalidate cache to avoid stale data in it. */
+-	invalidate_dcache_range(aaddr, ALIGN(aaddr + datalen + ARCH_DMA_MINALIGN - 1, ARCH_DMA_MINALIGN));
+-
++	/*
++	 * Do not touch pccb->pdata cache here. Invalidating the DATA-IN buffer
++	 * before DMA lets speculative fills reload stale lines (seen as zeros
++	 * in trailing blocks of multi-block UFS reads on RK3576). Mainline
++	 * flushes/invalidates pdata around ufshcd_send_command instead.
++	 */
+ 	table_length = DIV_ROUND_UP(pccb->datalen, MAX_PRDT_ENTRY);
+ 	buf = pccb->pdata;
+ 	i = table_length;
+@@ -1542,8 +1566,8 @@
+ 	prepare_prdt_desc(&prd_table[table_length - i - 1], buf, datalen - 1);
+ 
+ 	req_desc->prd_table_length = table_length;
+-	ufshcd_cache_flush_and_invalidate(prd_table, sizeof(*prd_table) * table_length);
+-	ufshcd_cache_flush_and_invalidate(req_desc, sizeof(*req_desc));
++	ufshcd_cache_flush(prd_table, sizeof(*prd_table) * table_length);
++	ufshcd_cache_flush(req_desc, sizeof(*req_desc));
+ }
+ 
+ int ufs_send_scsi_cmd(struct ufs_hba *hba, struct scsi_cmd *pccb)
+@@ -1561,11 +1585,18 @@
+ 	ufshcd_prepare_utp_scsi_cmd_upiu(hba, pccb, upiu_flags);
+ 	prepare_prdt_table(hba, pccb);
+ 
++	/* Mainline ordering: clean dirty lines, DMA, then drop stale lines. */
++	if (pccb->datalen)
++		ufshcd_cache_flush(pccb->pdata, pccb->datalen);
++
+ 	if (ufshcd_send_command(hba, TASK_TAG) == -ETIMEDOUT && retry_count) {
+ 		retry_count--;
+ 		goto retry;
+ 	}
+ 
++	if (pccb->datalen)
++		ufshcd_cache_invalidate(pccb->pdata, pccb->datalen);
++
+ 	ocs = ufshcd_get_tr_ocs(hba);
+ 	switch (ocs) {
+ 	case OCS_SUCCESS:
