@@ -19,6 +19,14 @@ function cli_entrypoint() {
 		trap 'echo "${FUNCNAME[*]}|${BASH_LINENO[*]}|${BASH_SOURCE[*]}|${LINENO}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
 	fi
 
+	# Capture the real terminal width once, here, before any logging redirects
+	# fd 1, so the patch-summary tables can match the user's terminal. Empty when
+	# stdout is not a tty (piped / CI), so those runs fall back to a fixed width.
+	declare -g -x ARMBIAN_TTY_COLUMNS="" # "exported" to shutup shellcheck; read by the patching wrappers
+	if [[ -t 1 ]]; then
+		ARMBIAN_TTY_COLUMNS="$(tput cols 2> /dev/null || echo "")"
+	fi
+
 	# @TODO: allow for a super-early userpatches/config-000.custom.conf.sh to be loaded, before anything else.
 	# This would allow for custom commands and interceptors.
 
