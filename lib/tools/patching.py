@@ -361,11 +361,46 @@ if apply_patches:
 			else:
 				log.warning(f"[🔨]   -> {counter_str}/{total}: {result.patch_id} - FAILED: {result.error_message}")
 
-		# Process patches in parallel
+		# CRITICAL: In parallel mode, driver patches (is_autogen_dir) must be applied first
+		# so that all workers start from the same driver-modified base.
+		# Filter patches to separate drivers from regular patches
+		driver_patches = [p for p in VALID_PATCHES if p.parent.patch_dir.is_autogen_dir]
+		regular_patches = [p for p in VALID_PATCHES if not p.parent.patch_dir.is_autogen_dir]
+
+		parallel_base_revision = BASE_GIT_REVISION
+
+		# Apply driver patches first to establish common base for all workers
+		if driver_patches:
+			log.info(f"Applying {len(driver_patches)} driver patches first (sequential, establishes common base)...")
+			driver_counter = 0
+			for driver_patch in driver_patches:
+				driver_counter += 1
+				log.info(f"-> [DRIVER {driver_counter}/{len(driver_patches)}]: {driver_patch.str_oneline_around('', '')}")
+				driver_patch.applied_ok = False
+				try:
+					driver_patch.apply_patch(GIT_WORK_DIR, apply_options)
+					driver_patch.applied_ok = True
+				except Exception as e:
+					log.error(f"Problem with driver patch {driver_patch}: {e}")
+					any_failed_to_apply = True
+					failed_to_apply_list.append(driver_patch)
+
+				if driver_patch.applied_ok and apply_patches_to_git:
+					committed = driver_patch.commit_changes_to_git(git_repo, False, split_patches, pconfig)
+
+			# Get the new HEAD revision after driver patches - this becomes base for parallel processing
+			if not any_failed_to_apply:
+				parallel_base_revision = git_repo.head.commit.hexsha
+				log.info(f"Driver patches applied, new base revision: {parallel_base_revision[:12]}")
+			else:
+				log.error("Some driver patches failed, falling back to original base revision")
+
+		# Process regular patches in parallel
+		log.info(f"Processing {len(regular_patches)} regular patches in parallel...")
 		parallel_results = patching_parallel.process_patches_parallel(
-			patches=VALID_PATCHES,
+			patches=regular_patches,
 			git_work_dir=GIT_WORK_DIR,
-			base_revision=BASE_GIT_REVISION,
+			base_revision=parallel_base_revision,
 			num_workers=num_workers,
 			root_makefile_date=root_makefile_mtime,
 			apply_options=parallel_apply_options,
@@ -374,9 +409,9 @@ if apply_patches:
 			progress_callback=progress_callback
 		)
 
-		# Update patch objects with parallel results
+		# Update patch objects with parallel results (only regular patches, drivers already handled)
 		patching_parallel.update_patches_from_parallel_results(
-			patches=VALID_PATCHES,
+			patches=regular_patches,
 			parallel_results=parallel_results,
 			apply_options=parallel_apply_options,
 			git_repo=git_repo,
@@ -394,7 +429,7 @@ if apply_patches:
 					# rewritten_patch is already set by update_patches_from_parallel_results
 					pass
 
-		log.info(f"Parallel processing completed: {len(VALID_PATCHES)} patches processed")
+		log.info(f"Parallel processing completed: {len(driver_patches)} driver patches + {len(regular_patches)} regular patches = {len(VALID_PATCHES)} total")
 
 	# SERIAL PROCESSING MODE (original implementation)
 	else:  # not parallel_patches
