@@ -228,12 +228,12 @@ for patch in VALID_PATCHES:
 		log.critical(f"Failed to parse {patch.parent.full_file_path()}(:{patch.counter}): {invalid_exception}")
 		log.critical(
 			f"Can't continue; please fix the patch file {patch.parent.full_file_path()} manually;"
-			f" check for possible double-mbox encoding. Sorry.")
+			" check for possible double-mbox encoding. Sorry.")
 
 if has_critical_parse_errors:
 	raise Exception("Critical errors found while parsing patches. Please fix the patch files manually.")
 
-log.debug(f"Parsed patches.")
+log.debug("Parsed patches.")
 
 # Now, for patches missing description, try to recover descriptions from the Armbian repo.
 # It might be the SRC is not a git repo (say, when building in Docker), so we need to check.
@@ -242,7 +242,7 @@ if apply_patches_to_git and git_archeology:
 		armbian_git_repo = Repo(SRC)
 	except InvalidGitRepositoryError:
 		armbian_git_repo = None
-		log.warning(f"- SRC is not a git repo, so cannot recover descriptions from there.")
+		log.warning("- SRC is not a git repo, so cannot recover descriptions from there.")
 	if armbian_git_repo is not None:
 		bad_archeology_hexshas = ["something"]
 
@@ -314,7 +314,7 @@ if apply_patches:
 
 	# PARALLEL PROCESSING MODE (using overlayfs)
 	if parallel_patches:
-		log.info(f"Using parallel patch processing mode with overlayfs...")
+		log.info("Using parallel patch processing mode with overlayfs...")
 
 		# Calculate optimal workers or use specified number
 		if PARALLEL_WORKERS:
@@ -509,7 +509,7 @@ if apply_patches:
 		for failed_patch in FAILED_PATCHES:
 			log.info(
 				f"Consider removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "
-				f"it was not applied successfully.")
+				"it was not applied successfully.")
 
 # Create markdown about the patches
 readme_markdown: "str | None" = None
@@ -519,7 +519,7 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 	patches_with_problems = 0
 	problem_by_type: dict[str, int] = {}
 	if total_patches == 0:
-		md.write(f"- No patches found.\n")
+		md.write("- No patches found.\n")
 	else:
 		# Prepare the Markdown table header
 		md.write(
