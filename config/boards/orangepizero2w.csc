@@ -5,7 +5,7 @@ BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER="chraac"
 INTRODUCED="2023"
 BOOTCONFIG="orangepi_zero2w_defconfig"
-# u-boot rides the sunxi64 family default (v2026.07-rc4 / v2026.07-sunxi64);
+# u-boot rides the sunxi64 family default (v2026.07 / v2026.07-sunxi64);
 # defconfig + DT are upstream. Was self-pinned to v2025.04 (H616 DRAM patches
 # it needed are now upstream: size-detection rework + 1.5GB).
 BOOT_LOGO="desktop"

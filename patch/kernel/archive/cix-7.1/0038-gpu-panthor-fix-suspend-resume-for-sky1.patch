@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 21 May 2026 18:09:50 +0800
+Subject: gpu: panthor: fix suspend/resume for sky1
+
+---
+ drivers/gpu/drm/panthor/panthor_device.c | 90 +++++++---
+ drivers/gpu/drm/panthor/panthor_device.h |  2 +
+ drivers/gpu/drm/panthor/panthor_drv.c    | 14 +-
+ 3 files changed, 74 insertions(+), 32 deletions(-)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_device.c b/drivers/gpu/drm/panthor/panthor_device.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.c
++++ b/drivers/gpu/drm/panthor/panthor_device.c
+@@ -435,6 +435,46 @@ static void panthor_device_free_page(struct drm_device *ddev, void *data)
+ 	__free_page(data);
+ }
+ 
++/*
++ * Sky1 steps 3–5 after power domain is back (probe and system resume noirq).
++ * Must not re-request MMIO; mappings are established once at probe.
++ */
++static int panthor_device_sky1_hw_power_on(struct panthor_device *ptdev)
++{
++	int ret;
++
++	if (!panthor_is_sky1(ptdev))
++		return 0;
++
++	if (ptdev->gpu_reset) {
++		ret = reset_control_assert(ptdev->gpu_reset);
++		if (ret) {
++			dev_err(ptdev->base.dev, "GPU reset assert failed: %d\n", ret);
++			return ret;
++		}
++
++		usleep_range(10, 20);
++
++		ret = reset_control_deassert(ptdev->gpu_reset);
++		if (ret) {
++			dev_err(ptdev->base.dev, "GPU reset deassert failed: %d\n", ret);
++			return ret;
++		}
++	}
++
++	if (!IS_ERR_OR_NULL(ptdev->sky1_rcsu_reg)) {
++		u32 pgctrl;
++
++		pgctrl = readl(ptdev->sky1_rcsu_reg + 0x218);
++		pgctrl |= BIT(0); /* QCHANNEL_CLOCK_GATE_ENABLE */
++		writel(pgctrl, ptdev->sky1_rcsu_reg + 0x218);
++
++		dev_dbg(ptdev->base.dev, "qchannel clock gating enabled\n");
++	}
++
++	return 0;
++}
++
+ int panthor_device_init(struct panthor_device *ptdev)
+ {
+ 	u32 *dummy_page_virt;
+@@ -555,34 +595,9 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 	 * 4. IP Reset de-assert
+ 	 * 5. Qchannel clock gating enable
+ 	 */
+-	if (panthor_is_sky1(ptdev)) {
+-		if (ptdev->gpu_reset) {
+-			ret = reset_control_assert(ptdev->gpu_reset);
+-			if (ret) {
+-				dev_err(ptdev->base.dev, "GPU reset assert failed: %d\n", ret);
+-				goto err_rpm_put;
+-			}
+-
+-			usleep_range(10, 20);
+-
+-			ret = reset_control_deassert(ptdev->gpu_reset);
+-			if (ret) {
+-				dev_err(ptdev->base.dev, "GPU reset deassert failed: %d\n", ret);
+-				goto err_rpm_put;
+-			}
+-
+-		}
+-
+-		if (ptdev->sky1_rcsu_reg) {
+-			u32 pgctrl;
+-
+-			pgctrl = readl(ptdev->sky1_rcsu_reg + 0x218);
+-			pgctrl |= BIT(0);  /* QCHANNEL_CLOCK_GATE_ENABLE */
+-			writel(pgctrl, ptdev->sky1_rcsu_reg + 0x218);
+-
+-			dev_dbg(ptdev->base.dev, "qchannel clock gating enabled\n");
+-		}
+-	}
++	ret = panthor_device_sky1_hw_power_on(ptdev);
++	if (ret)
++		goto err_rpm_put;
+ 
+ 	ret = panthor_hw_init(ptdev);
+ 	if (ret)
+@@ -938,3 +953,22 @@ int panthor_device_suspend(struct device *dev)
+ 	atomic_set(&ptdev->pm.state, PANTHOR_DEVICE_PM_STATE_SUSPENDED);
+ 	return 0;
+ }
++
++int panthor_device_suspend_noirq(struct device *dev)
++{
++	return pm_runtime_force_suspend(dev);
++}
++
++int panthor_device_resume_noirq(struct device *dev)
++{
++	struct panthor_device *ptdev = dev_get_drvdata(dev);
++	int ret;
++
++	if (panthor_device_is_initialized(ptdev)) {
++		ret = panthor_device_sky1_hw_power_on(ptdev);
++		if (ret)
++			return ret;
++	}
++
++	return pm_runtime_force_resume(dev);
++}
+diff --git a/drivers/gpu/drm/panthor/panthor_device.h b/drivers/gpu/drm/panthor/panthor_device.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.h
++++ b/drivers/gpu/drm/panthor/panthor_device.h
+@@ -337,6 +337,8 @@ struct panthor_file {
+ 
+ int panthor_device_init(struct panthor_device *ptdev);
+ void panthor_device_unplug(struct panthor_device *ptdev);
++int panthor_device_suspend_noirq(struct device *dev);
++int panthor_device_resume_noirq(struct device *dev);
+ 
+ /**
+  * panthor_device_schedule_reset() - Schedules a reset operation
+diff --git a/drivers/gpu/drm/panthor/panthor_drv.c b/drivers/gpu/drm/panthor/panthor_drv.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panthor/panthor_drv.c
++++ b/drivers/gpu/drm/panthor/panthor_drv.c
+@@ -1912,10 +1912,16 @@ static const struct acpi_device_id panthor_acpi_match[] = {
+ MODULE_DEVICE_TABLE(acpi, panthor_acpi_match);
+ #endif
+ 
+-static DEFINE_RUNTIME_DEV_PM_OPS(panthor_pm_ops,
+-				 panthor_device_suspend,
+-				 panthor_device_resume,
+-				 NULL);
++/*
++ * System sleep: noirq runs pm_runtime_force_{suspend,resume} (see
++ * panthor_device_{suspend,resume}_noirq). Sky1 reset/qchannel is done in
++ * resume_noirq before clocks are re-enabled via runtime resume.
++ */
++static const struct dev_pm_ops panthor_pm_ops = {
++	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(panthor_device_suspend_noirq,
++				      panthor_device_resume_noirq)
++	RUNTIME_PM_OPS(panthor_device_suspend, panthor_device_resume, NULL)
++};
+ 
+ static struct platform_driver panthor_driver = {
+ 	.probe = panthor_probe,
+-- 
+Armbian
+

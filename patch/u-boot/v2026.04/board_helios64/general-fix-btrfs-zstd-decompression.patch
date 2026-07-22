@@ -4,7 +4,7 @@ Date: Thu, 10 Apr 2026 00:00:00 +0000
 Subject: [PATCH] fs: btrfs: fix zstd decompression for BTRFS extents
 
 The generic zstd_decompress() wrapper in lib/zstd/zstd.c works for FIT
-images but fails for BTRFS filesystem extents due to two issues:
+images but fails for BTRFS filesystem extents due to three issues:
 
 1. Sector-aligned compressed size: BTRFS stores compressed extents
    padded to sector boundaries (4096 bytes).  The on-disk size
@@ -19,7 +19,12 @@ images but fails for BTRFS filesystem extents due to two issues:
    buffer is sized to ram_bytes, zstd_decompress_dctx() fails with
    ZSTD_error_dstSize_tooSmall (error 70) for inline extents.
 
-Both issues manifest as boot failures on zstd-compressed BTRFS:
+3. Short extents: a frame may legitimately decompress to fewer bytes
+   than the destination buffer (ram_bytes).  Treating that as an error
+   fails reads of short extents whose tail must be zero-filled.
+
+The first two issues manifest as boot failures on zstd-compressed
+BTRFS:
 
   zstd_decompress: failed to decompress: 70
   BTRFS: An error occurred while reading file /boot/boot.scr
@@ -31,18 +36,24 @@ Fix by calling zstd_decompress_dctx() directly with two adjustments:
   to more than dlen bytes, and allocate a temporary buffer for the
   full decompressed frame when needed.
 
+Return the actual number of decompressed bytes, capped at dlen so that
+sector padding beyond ram_bytes is never copied out.  A short result
+is not an error: like decompress_zlib() and decompress_lzo(), report
+the real length and let the caller's read path zero-fill the rest of
+the destination.  -1 is returned only on real failures.
+
 This is consistent with decompress_lzo() and decompress_zlib() which
 also call their library functions directly without generic wrappers.
 
 Signed-off-by: Igor Velkov <iav-armbian@draconpern.com>
 ---
- fs/btrfs/compression.c | 66 +++++++++++++++++++++++++++++++++++++++++++----
- 1 file changed, 62 insertions(+), 4 deletions(-)
+ fs/btrfs/compression.c | 76 ++++++++++++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 72 insertions(+), 4 deletions(-)
 
 diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
 --- a/fs/btrfs/compression.c
 +++ b/fs/btrfs/compression.c
-@@ -137,12 +137,70 @@
+@@ -137,12 +137,80 @@
 
  static u32 decompress_zstd(const u8 *cbuf, u32 clen, u8 *dbuf, u32 dlen)
  {
@@ -53,11 +64,12 @@ diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
 +	unsigned long long fcs;
 +	u8 *tmp = NULL;
 +	u8 *out_buf = dbuf;
-+
-+	out_len = dlen;
 
 -	abuf_init_set(&in, (u8 *)cbuf, clen);
 -	abuf_init_set(&out, dbuf, dlen);
++	out_len = dlen;
+
+-	return zstd_decompress(&in, &out);
 +	/*
 +	 * Find the actual compressed frame size. BTRFS stores compressed
 +	 * extents padded to sector boundaries, but zstd_decompress_dctx()
@@ -66,8 +78,7 @@ diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
 +	frame_csize = zstd_find_frame_compressed_size(cbuf, clen);
 +	if (!zstd_is_error(frame_csize))
 +		clen = frame_csize;
-
--	return zstd_decompress(&in, &out);
++
 +	/*
 +	 * BTRFS compresses in sector-sized blocks, so the zstd frame may
 +	 * decompress to a full sector (e.g. 4096) even when the actual
@@ -103,17 +114,27 @@ diff --git a/fs/btrfs/compression.c b/fs/btrfs/compression.c
 +	ret = zstd_decompress_dctx(ctx, out_buf, out_len, cbuf, clen);
 +	free(workspace);
 +
-+	if (zstd_is_error(ret) || ret < dlen) {
++	if (zstd_is_error(ret)) {
 +		free(tmp);
 +		return -1;
 +	}
 +
++	/*
++	 * The frame may carry sector padding past ram_bytes: never copy or
++	 * report more than dlen. A short result (ret < dlen) is not an
++	 * error: as in decompress_zlib() and decompress_lzo(), return the
++	 * actual decompressed length and let the read path zero-fill the
++	 * remainder of the destination.
++	 */
++	if (ret > dlen)
++		ret = dlen;
++
 +	if (tmp) {
-+		memcpy(dbuf, tmp, dlen);
++		memcpy(dbuf, tmp, ret);
 +		free(tmp);
 +	}
 +
-+	return dlen;
++	return ret;
  }
 
  u32 btrfs_decompress(u8 type, const char *c, u32 clen, char *d, u32 dlen)

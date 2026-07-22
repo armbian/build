@@ -1,0 +1,309 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "wuyi.shen" <wuyi.shen@cixtech.com>
+Date: Tue, 26 May 2026 10:33:26 +0800
+Subject: DPTSW-25537: drm/cix/dptx: HPD fast replug link train (stream-keep)
+
+Re-train DP link on hotplug insert using the last atomic-committed mode
+when userspace keeps the display pipeline enabled (fast replug). Use a
+stream-keep path (core_off/core_on + video stream) so Wayland does not
+need a new encoder_enable to light the panel.
+
+Clear last_mode after encoder_disable/unprepare so slow replug skips plug
+train and avoids racing with mutter enable. Only run plug train when
+DPTX_STATE_ENABLED and active_stream_cnt are set.
+
+Also fix core_on(shallow) to skip SOURCE_ENABLE via train_done, and use
+core_on(false) in prepare for boot source enable.
+
+hpd_plug_link_train defaults to Y (module param; set 0 to disable)
+
+Signed-off-by: wuyi.shen <wuyi.shen@cixtech.com>
+Change-Id: If18ddf64f6c465638f54e3167529b626165f2989
+Signed-off-by: wuyi.shen <wuyi.shen@cixtech.com>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c | 162 +++++++++-
+ drivers/gpu/drm/cix/dptx/trilin_dptx.h |  10 +
+ drivers/gpu/drm/cix/dptx/trilin_drm.c  |  10 +
+ 3 files changed, 181 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -2158,6 +2158,9 @@ static int trilin_dp_core_on(struct trilin_dp *dp, bool shallow)
+ 		rc = trilin_dp_train_loop(dp);
+ 	}
+ 
++	if (shallow)
++		goto train_done;
++
+ 	/*dptx source enable*/
+ 	trilin_dp_write(dp, TRILIN_DPTX_SOFT_RESET, enable_sources);
+ 	trilin_dp_write(dp, TRILIN_DPTX_SOURCE_ENABLE, enable_sources);
+@@ -2166,6 +2169,8 @@ static int trilin_dp_core_on(struct trilin_dp *dp, bool shallow)
+ 	if (!dp->mst.mst_active)
+ 		trilin_dp_write(dp, TRILIN_DPTX_SST_SOURCE_SELECT, dp->dp_panel.source_id);
+ 
++train_done:
++
+ 	if (!rc)
+ 		DP_INFO("main link training done! rate:%d lanes:%d %s\n",
+ 			dp->mode.link_rate, dp->mode.lane_cnt, fast_train_success ? "[use fast training]" : "");
+@@ -2771,6 +2776,157 @@ int trilin_dp_deinit_config(struct trilin_dp *dp)
+ 
+ #define DP_HPD_MAX_TRIES 100
+ 
++static bool hpd_plug_link_train = true;
++module_param(hpd_plug_link_train, bool, 0644);
++MODULE_PARM_DESC(hpd_plug_link_train,
++		 "On hotplug insert, link train using last committed mode (default: Y)");
++
++void trilin_dp_record_last_mode(struct trilin_dp *dp,
++				const struct drm_display_mode *mode)
++{
++	if (!dp || !mode || !mode->clock)
++		return;
++
++	dp->last_mode.valid = true;
++	dp->last_mode.clock = mode->clock;
++	dp->last_mode.hdisplay = mode->hdisplay;
++	dp->last_mode.vdisplay = mode->vdisplay;
++}
++
++static bool trilin_dp_mode_matches_last(struct drm_display_mode *mode,
++					struct trilin_dp_last_mode *last)
++{
++	int delta;
++
++	if (!last->valid || !mode->clock)
++		return false;
++
++	if (mode->hdisplay != last->hdisplay ||
++	    mode->vdisplay != last->vdisplay)
++		return false;
++
++	delta = abs(mode->clock - last->clock);
++	if (delta > max(mode->clock / 20, 1000))
++		return false;
++
++	return true;
++}
++
++static struct drm_display_mode *
++trilin_dp_find_last_mode(struct drm_connector *connector,
++			 struct trilin_dp_last_mode *last)
++{
++	struct drm_display_mode *mode;
++
++	list_for_each_entry(mode, &connector->modes, head) {
++		if (trilin_dp_mode_matches_last(mode, last))
++			return mode;
++	}
++
++	return NULL;
++}
++
++static u8 trilin_dp_hpd_pick_link_rate_bw(struct trilin_dp *dp, int pclock, u8 bpp)
++{
++	int max_rate = dp->link_config.max_rate;
++	u8 max_lanes = dp->link_config.max_lanes;
++	int rate, i;
++
++	static const int link_rates[] = { 810000, 540000, 270000, 162000 };
++
++	for (i = 0; i < ARRAY_SIZE(link_rates); i++) {
++		if (link_rates[i] > max_rate)
++			break;
++		rate = trilin_dp_max_rate(link_rates[i], max_lanes, bpp);
++		if (pclock <= rate)
++			return drm_dp_link_rate_to_bw_code(link_rates[i]);
++	}
++
++	return drm_dp_link_rate_to_bw_code(max_rate);
++}
++
++static void trilin_dp_hpd_plug_link_train(struct trilin_dp *dp,
++					  enum drm_connector_status old_status)
++{
++	struct drm_connector *connector = &dp->connector.base;
++	struct drm_device *dev = connector->dev;
++	struct drm_display_mode *train_mode;
++	struct trilin_connector *conn = &dp->connector;
++	u8 bpp, link_rate_bw;
++	int rc;
++
++	if (!hpd_plug_link_train || !dp->last_mode.valid)
++		return;
++
++	/* Boot probe is unknown->connected; only real hotplug replug. */
++	if (old_status != connector_status_disconnected)
++		return;
++
++	if (!(dp->state & DPTX_STATE_INITIALIZED) || dp->mst.mst_active)
++		return;
++
++	/*
++	 * Only help fast replug while userspace keeps the atomic pipeline up.
++	 * After encoder_disable, mutter will re-commit; link-only train here
++	 * races with that enable and can wedge the PHY (seen on slow replug).
++	 */
++	if (!(dp->state & DPTX_STATE_ENABLED) || !dp->active_stream_cnt)
++		return;
++
++	mutex_lock(&dev->mode_config.mutex);
++	drm_helper_probe_single_connector_modes(connector,
++						dev->mode_config.max_width,
++						dev->mode_config.max_height);
++	train_mode = trilin_dp_find_last_mode(connector, &dp->last_mode);
++	mutex_unlock(&dev->mode_config.mutex);
++
++	if (!train_mode || !train_mode->clock)
++		return;
++
++	rc = trilin_dp_handle_connect(dp, false);
++	if (rc) {
++		DP_ERR("hpd plug train: handle_connect failed (%d)\n", rc);
++		return;
++	}
++
++	bpp = conn->config.bpp ? conn->config.bpp : 24;
++	link_rate_bw = trilin_dp_hpd_pick_link_rate_bw(dp, train_mode->clock, bpp);
++	rc = trilin_dp_mode_configure(dp, train_mode->clock, link_rate_bw, bpp,
++				      false);
++	if (rc < 0) {
++		DP_ERR("hpd plug train: mode_configure failed (%d)\n", rc);
++		return;
++	}
++
++	mutex_lock(&dp->session_lock);
++	/*
++	 * Fast replug: DPU/CRTC/plane stay up (mutter keeps atomic config).
++	 * Only DP link/PHY was lost — redo phy+train and refresh stream MSAs.
++	 */
++	trilin_dp_core_off(dp);
++	rc = trilin_dp_core_on(dp, false);
++	if (!rc) {
++		trilin_dp_panel_hw_cfg(dp, &dp->dp_panel);
++		trilin_dp_ctrl_enable_stream_clocks(dp, &dp->dp_panel, true);
++		trilin_dp_write(dp,
++				TRILIN_DPTX_VIDEO_STREAM_ENABLE +
++				TRILIN_DPTX_SOURCE_OFFSET * dp->dp_panel.source_id,
++				1);
++		trilin_dp_write(dp,
++				TRILIN_DPTX_SECONDARY_STREAM_ENABLE +
++				TRILIN_DPTX_SOURCE_OFFSET * dp->dp_panel.source_id,
++				1);
++	}
++	mutex_unlock(&dp->session_lock);
++
++	if (rc)
++		DP_ERR("hpd plug train: train_loop failed (%d)\n", rc);
++	else
++		DP_INFO("hpd plug train: %dx%d@%d (stream-keep)\n",
++			train_mode->hdisplay, train_mode->vdisplay,
++			train_mode->clock);
++}
++
+ /*hdp event handle plug in and out*/
+ static void trilin_dp_hpd_event_work_func(struct work_struct *work)
+ {
+@@ -2817,6 +2973,9 @@ static void trilin_dp_hpd_event_work_func(struct work_struct *work)
+ 	if (dp->drm)
+ 		drm_helper_hpd_irq_event(dp->drm);
+ 
++	if (connected)
++		trilin_dp_hpd_plug_link_train(dp, old_status);
++
+ 	DP_DEBUG("dp audio plugin status = %d\n", connected);
+ 	dptx_audio_handle_plugged_change(dp_audio, connected);
+ 
+@@ -3094,7 +3253,7 @@ int trilin_dp_prepare(struct trilin_dp *dp)
+ 		goto end;
+ 	}
+ 
+-	rc = trilin_dp_core_on(dp, true);
++	rc = trilin_dp_core_on(dp, false);
+ end:
+ 	mutex_unlock(&dp->session_lock);
+ 	return rc;
+@@ -3398,6 +3557,7 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
+ 	dp->dev = dev;
+ 	dp->dpsub = dpsub;
+ 	dp->status = connector_status_unknown;
++	dp->last_mode.valid = false;
+ 
+ 	dpsub->drm = drm;
+ 	dp->drm = drm;
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.h b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.h
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.h
+@@ -239,6 +239,13 @@ struct trilin_dp_mode {
+ 	const char *fmt;
+ };
+ 
++struct trilin_dp_last_mode {
++	bool valid;
++	int clock;
++	u32 hdisplay;
++	u32 vdisplay;
++};
++
+ /**
+  * struct trilin_dp_config - Configuration of DisplayPort from DTS
+  * @misc0: misc0 configuration (per DP v1.2 spec)
+@@ -467,6 +474,7 @@ struct trilin_dp {
+ 	u8 edp_dpcd[EDP_DISPLAY_CTL_CAP_SIZE];
+ 
+ 	struct trilin_dp_link_config link_config;
++	struct trilin_dp_last_mode last_mode;
+ 	struct trilin_dp_mode mode;
+ 	struct trilin_dp_link_caps caps;
+ 	u8 train_set[TRILIN_DPTX_MAX_LANES];
+@@ -573,6 +581,8 @@ int trilin_dp_panel_setup_hdr_sdp(struct trilin_dp *dp,
+ int trilin_dp_max_rate(int link_rate, u8 lane_num, u8 bpp);
+ int trilin_dp_mode_configure(struct trilin_dp *dp, int pclock, u8 current_bw,
+ 			     u8 bpp, bool downshift);
++void trilin_dp_record_last_mode(struct trilin_dp *dp,
++				const struct drm_display_mode *mode);
+ void trilin_dp_dump_regs(struct seq_file *m, struct trilin_dp *dp);
+ void trilin_dp_connector_debugfs_init(struct drm_connector *connector,
+ 				      struct dentry *root);
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm.c b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_drm.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+@@ -775,6 +775,13 @@ static void trilin_dp_encoder_disable(struct drm_encoder *encoder,
+ 		return;
+ 	}
+ 
++	/*
++	 * Userspace tore down the pipeline; slow replug should not reuse a
++	 * stale mode in hpd_plug_link_train. Fast replug still works because
++	 * mutter often has not disabled yet when HPD fires.
++	 */
++	dp->last_mode.valid = false;
++
+ 	DP_DEBUG("end\n");
+ }
+ 
+@@ -1070,6 +1077,8 @@ int trilin_dp_encoder_compute_config(struct drm_encoder *encoder,
+ 	if (ret < 0)
+ 		return -EINVAL;
+ 
++	trilin_dp_record_last_mode(dp, adjusted_mode);
++
+ 	conn->config.format = format;
+ 	conn->config.colorspace = colorspace;
+ 	conn->config.bpc = bpc;
+@@ -1200,6 +1209,7 @@ void trilin_dp_encoder_atomic_mode_set(
+ 	struct drm_display_mode *adjusted_mode = &crtc_state->adjusted_mode;
+ 
+ 	DP_INFO("set mode: %s %d", adjusted_mode->name, adjusted_mode->clock);
++	trilin_dp_record_last_mode(dp, adjusted_mode);
+ 	if (dp->force_pixel_per_cycle != 0) {
+ 		dp->pixel_per_cycle = dp->force_pixel_per_cycle;
+ 	} else {
+-- 
+Armbian
+

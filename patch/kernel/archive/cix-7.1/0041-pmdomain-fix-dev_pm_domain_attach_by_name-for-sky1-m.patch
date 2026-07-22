@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 21 May 2026 18:14:11 +0800
+Subject: pmdomain: fix dev_pm_domain_attach_by_name for sky1 mali driver
+
+---
+ drivers/base/power/common.c             | 16 +++++++--
+ drivers/pmdomain/arm/scmi_perf_domain.c | 18 +++++++++-
+ drivers/pmdomain/core.c                 |  3 ++
+ 3 files changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/base/power/common.c b/drivers/base/power/common.c
+index 111111111111..222222222222 100644
+--- a/drivers/base/power/common.c
++++ b/drivers/base/power/common.c
+@@ -118,6 +118,18 @@ int dev_pm_domain_attach(struct device *dev, u32 flags)
+ }
+ EXPORT_SYMBOL_GPL(dev_pm_domain_attach);
+ 
++/*
++ * dev_pm_domain_attach() may already have set a PM domain on @dev (typically
++ * acpi_general_pm_domain on ACPI platform devices).  attach_by_{id,name} still
++ * need to work in that case: they create a separate virtual device for an
++ * additional domain listed in power-domain-names / _DSD, not replace @dev's
++ * existing domain.
++ */
++static bool dev_pm_domain_attach_rejects_extra(struct device *dev)
++{
++	return dev->pm_domain && !has_acpi_companion(dev);
++}
++
+ /**
+  * dev_pm_domain_attach_by_id - Associate a device with one of its PM domains.
+  * @dev: The device used to lookup the PM domain.
+@@ -147,7 +159,7 @@ EXPORT_SYMBOL_GPL(dev_pm_domain_attach);
+ struct device *dev_pm_domain_attach_by_id(struct device *dev,
+ 					  unsigned int index)
+ {
+-	if (dev->pm_domain)
++	if (dev_pm_domain_attach_rejects_extra(dev))
+ 		return ERR_PTR(-EEXIST);
+ 
+ 	return genpd_dev_pm_attach_by_id(dev, index);
+@@ -164,7 +176,7 @@ EXPORT_SYMBOL_GPL(dev_pm_domain_attach_by_id);
+ struct device *dev_pm_domain_attach_by_name(struct device *dev,
+ 					    const char *name)
+ {
+-	if (dev->pm_domain)
++	if (dev_pm_domain_attach_rejects_extra(dev))
+ 		return ERR_PTR(-EEXIST);
+ 
+ 	return genpd_dev_pm_attach_by_name(dev, name);
+diff --git a/drivers/pmdomain/arm/scmi_perf_domain.c b/drivers/pmdomain/arm/scmi_perf_domain.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/arm/scmi_perf_domain.c
++++ b/drivers/pmdomain/arm/scmi_perf_domain.c
+@@ -112,15 +112,31 @@ static int match_proto_reg(struct acpi_device *adev, void *data)
+ static struct fwnode_handle *scmi_perf_find_proto_fwnode(struct scmi_device *sdev)
+ {
+ 	struct acpi_device *parent_adev;
++	struct fwnode_handle *fw = dev_fwnode(&sdev->dev);
+ 	struct proto_fwnode_match match = {
+ 		.protocol_id = sdev->protocol_id,
+ 		.result = NULL,
+ 	};
++	u32 reg;
+ 
+ 	if (sdev->dev.of_node)
+ 		return NULL;
+ 
+-	parent_adev = to_acpi_device_node(dev_fwnode(&sdev->dev));
++	/*
++	 * Under ACPI the SCMI perf protocol device is created on the protocol
++	 * child node (e.g. \_SB.SCMI.DVFS with reg = SCMI_PROTOCOL_PERF).
++	 * Consumers reference that same node in power-domains; the provider
++	 * must be registered on its fwnode, not on a sibling search starting
++	 * from the protocol device as if it were the SCMI parent.
++	 */
++	if (fw && !fwnode_property_read_u32(fw, "reg", &reg) &&
++	    reg == sdev->protocol_id)
++		return fw;
++
++	/* Fallback: walk SCMI controller children (legacy / unusual layout). */
++	parent_adev = ACPI_COMPANION(sdev->dev.parent);
++	if (!parent_adev)
++		parent_adev = to_acpi_device_node(dev_fwnode(sdev->dev.parent));
+ 	if (!parent_adev)
+ 		return NULL;
+ 
+diff --git a/drivers/pmdomain/core.c b/drivers/pmdomain/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/core.c
++++ b/drivers/pmdomain/core.c
+@@ -3582,8 +3582,11 @@ struct device *genpd_dev_pm_attach_by_id(struct device *dev,
+ 
+ 	/* Try to attach the device to the PM domain at the specified index. */
+ 	if (use_acpi)
++	{
++		virt_dev->fwnode = fwnode_handle_get(dev_fwnode(dev));
+ 		ret = __genpd_dev_pm_attach_acpi(virt_dev, dev, index,
+ 						 num_domains, false);
++	}
+ 	else
+ 		ret = __genpd_dev_pm_attach(virt_dev, dev, index,
+ 					    num_domains, false);
+-- 
+Armbian
+

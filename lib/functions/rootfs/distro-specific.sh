@@ -10,6 +10,11 @@
 function install_distribution_specific() {
 	display_alert "Applying distribution specific tweaks for" "${RELEASE:-}" "info"
 
+	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
+		*give config a chance to act before install_distribution_specific*
+		Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+	PRE_INSTALL_DISTRIBUTION_SPECIFIC
+
 	# disable broken service, the problem is in default misconfiguration
 	disable_systemd_service_sdcard smartmontools.service smartd.service
 

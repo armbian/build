@@ -85,6 +85,20 @@ function chroot_sdcard_apt_get() {
 	#     APT::Get::List-Cleanup.
 	apt_params+=(-o "APT::Get::List-Cleanup=0") # Armbian frequently changes ours sources list; it's dynamic via aggregation
 
+	# Harden apt against transient mirror / proxy / DNS failures:
+	#   Acquire::Retries=3          - retry a failed download a few times instead of
+	#                                 dying on the first blip (apt does not retry at all
+	#                                 otherwise; a flaky mirror/acng/DNS then fails hard).
+	#   APT::Update::Error-Mode=any - make `apt-get update` a HARD failure when ANY index
+	#                                 fails, so the build aborts *at update* with the real
+	#                                 cause (e.g. "Temporary failure resolving ...") rather
+	#                                 than continuing with empty package lists and dying
+	#                                 later at install with a misleading
+	#                                 "E: Unable to locate package ...". Ignored by the
+	#                                 non-update apt-get subcommands.
+	apt_params+=(-o "Acquire::Retries=3")
+	apt_params+=(-o "APT::Update::Error-Mode=any")
+
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
 		# Configure Clean-Installed to off
 		display_alert "Configuring APT to not clean up the cache" "APT will not clean up the cache" "debug"

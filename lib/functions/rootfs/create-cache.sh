@@ -7,6 +7,31 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Write a build-time /etc/resolv.conf into the chroot: the primary resolver
+# (${NAMESERVER}) followed by public fallbacks, so a single flaky or unreachable
+# resolver doesn't break apt with "Temporary failure resolving ...". Order is
+# preserved (primary first), so a working primary is always tried before any
+# fallback; the glibc resolver honours at most MAXNS=3 nameservers, so we cap at
+# three. Build-time only — the shipped image's resolv.conf is finalized later
+# (resolvconf / systemd-resolved), so these public resolvers are never shipped.
+function write_build_resolv_conf() {
+	local target="${1}/etc/resolv.conf"
+	local -a ns=()
+	[[ -n "${NAMESERVER}" ]] && ns=("${NAMESERVER}") # omit an empty primary; never emit a blank "nameserver" line
+	local fb
+	for fb in 1.1.1.1 8.8.8.8 9.9.9.9; do
+		[[ "${fb}" == "${NAMESERVER}" ]] && continue
+		ns+=("${fb}")
+	done
+	ns=("${ns[@]:0:3}") # cap at MAXNS=3; extra nameserver lines are ignored by glibc
+	run_host_command_logged rm -fv "${target@Q}"
+	{
+		for fb in "${ns[@]}"; do echo "nameserver ${fb}"; done
+		echo "options timeout:3 attempts:2" # fail over to the next resolver quickly instead of hanging
+	} > "${target}"
+	display_alert "Wrote build-time resolv.conf" "${ns[*]}" "debug"
+}
+
 # called by artifact-rootfs::artifact_rootfs_prepare_version()
 function calculate_rootfs_cache_id() {
 	# Validate that AGGREGATED_ROOTFS_HASH is set
@@ -57,7 +82,9 @@ function calculate_rootfs_cache_id() {
 	# this, a configng commit that changes which packages a DE
 	# installs leaves the existing rootfs tarball untouched in the
 	# cache and every subsequent build cache-hits the pre-change
-	# version.
+	# version. Scoped to desktop builds: CLI images don't invoke
+	# armbian-config at build time, so configng content doesn't
+	# affect their rootfs.
 	#
 	# CONFIGNG_DESKTOPS_HASH is set by artifact_rootfs_config_dump
 	# above from `git log -1 -- tools/modules/desktops/` in the
@@ -156,8 +183,7 @@ function extract_rootfs_artifact() {
 
 	wait_for_disk_sync "after restoring rootfs cache"
 
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
-	run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
+	write_build_resolv_conf "${SDCARD}"
 
 	# all sources etc.
 	# armbian repo is NOT yet included here, since we'll be building the image, and don't want the repo interferring.
@@ -167,4 +193,4 @@ function extract_rootfs_artifact() {
 }
 
 # This comment strategically introduced to force a rebuild of all rootfs, as this file's contents are hashed into all rootfs versions.
-# Just a number to force rebuild 005
+# Just a number to force rebuild 006
