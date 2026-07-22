@@ -509,7 +509,7 @@ driver_uwe5622() {
 	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.2 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:6088bdbaa9b31b355c807878450d21348eb4a8e3' # Commit date: Jul 7, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:7bfaaf46ea6834a964672b91b4bf7fd9f0a834e7' # Commit date: Jul 22, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 
