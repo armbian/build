@@ -1,6 +1,7 @@
 # Allwinner Cortex-A55 octa core 2/4GB RAM SoC USB3 USB-C 2x GbE LCD
 BOARD_NAME="Avaota A1"
 BOARD_VENDOR="allwinner"
+BOARDFAMILY="sun55iw3"
 BOARD_MAINTAINER="juanesf"
 INTRODUCED="2024"
 OVERLAY_PREFIX="sun55i-t527"
