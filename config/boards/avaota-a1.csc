@@ -1,7 +1,7 @@
 # Allwinner Cortex-A55 octa core 2/4GB RAM SoC USB3 USB-C 2x GbE LCD
 BOARD_NAME="Avaota A1"
 BOARD_VENDOR="allwinner"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="juanesf"
 INTRODUCED="2024"
 OVERLAY_PREFIX="sun55i-t527"
 BOOT_FDT_FILE="allwinner/sun55i-t527-avaota-a1.dtb"
@@ -62,7 +62,7 @@ function post_family_tweaks_bsp__aic8800_wireless() {
 	mkdir -p "${destination}"/etc/modprobe.d
 	mkdir -p "${destination}"/etc/modules-load.d
 	# Add wireless conf
-	cat > "${destination}"/etc/modprobe.d/aic8800-radxa-cubie-a5e.conf <<- EOT
+	cat > "${destination}"/etc/modprobe.d/aic8800-avaota-a1.conf <<- EOT
 	options aic8800_fdrv_sdio aicwf_dbg_level=0 custregd=0 ps_on=0
 	options aic8800_bsp aic_fw_path=/lib/firmware/aic8800/SDIO/aic8800D80
 	EOT
