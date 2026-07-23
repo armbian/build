@@ -15,25 +15,27 @@ diff --git a/drivers/remoteproc/remoteproc_cdev.c b/drivers/remoteproc/remotepro
 index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c60b29b6e 100644
 --- a/drivers/remoteproc/remoteproc_cdev.c
 +++ b/drivers/remoteproc/remoteproc_cdev.c
-@@ -7,9 +7,11 @@
+@@ -7,9 +7,12 @@
  
  #include <linux/cdev.h>
  #include <linux/compat.h>
 +#include <linux/dma-buf.h>
  #include <linux/fs.h>
  #include <linux/module.h>
++#include <linux/mutex.h>
  #include <linux/remoteproc.h>
 +#include <linux/slab.h>
  #include <linux/uaccess.h>
  #include <uapi/linux/remoteproc_cdev.h>
  
-@@ -18,9 +20,20 @@
+@@ -18,9 +21,21 @@
  #define NUM_RPROC_DEVICES	64
  static dev_t rproc_major;
  
 +struct rproc_cdev_file {
 +	struct rproc *rproc;
 +	struct list_head attachments;
++	struct mutex attachments_lock;
 +};
 +
 +struct rproc_cdev_attach {
@@ -49,7 +51,7 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
  	int ret = 0;
  	char cmd[10];
  
-@@ -47,7 +60,8 @@ static ssize_t rproc_cdev_write(struct file *filp, const char __user *buf, size_
+@@ -47,7 +62,8 @@ static ssize_t rproc_cdev_write(struct file *filp, const char __user *buf, size_
  
  static long rproc_device_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
  {
@@ -59,7 +61,7 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
  	void __user *argp = (void __user *)arg;
  	s32 param;
  
-@@ -64,6 +78,54 @@ static long rproc_device_ioctl(struct file *filp, unsigned int ioctl, unsigned l
+@@ -64,6 +80,58 @@ static long rproc_device_ioctl(struct file *filp, unsigned int ioctl, unsigned l
  			return -EFAULT;
  
  		break;
@@ -99,10 +101,14 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
 +		}
 +
 +		attach->dmabuf = dmabuf;
++		mutex_lock(&rproc_file->attachments_lock);
 +		list_add_tail(&attach->node, &rproc_file->attachments);
++		mutex_unlock(&rproc_file->attachments_lock);
 +
 +		if (copy_to_user(argp, &data, sizeof(data))) {
++			mutex_lock(&rproc_file->attachments_lock);
 +			list_del(&attach->node);
++			mutex_unlock(&rproc_file->attachments_lock);
 +			kfree(attach);
 +			rproc_detach_dmabuf(rproc, dmabuf);
 +			dma_buf_put(dmabuf);
@@ -114,7 +120,7 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
  	default:
  		dev_err(&rproc->dev, "Unsupported ioctl\n");
  		return -EINVAL;
-@@ -72,18 +134,44 @@ static long rproc_device_ioctl(struct file *filp, unsigned int ioctl, unsigned l
+@@ -72,18 +140,48 @@ static long rproc_device_ioctl(struct file *filp, unsigned int ioctl, unsigned l
  	return 0;
  }
  
@@ -130,6 +136,7 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
 +
 +	rproc_file->rproc = rproc;
 +	INIT_LIST_HEAD(&rproc_file->attachments);
++	mutex_init(&rproc_file->attachments_lock);
 +	filp->private_data = rproc_file;
 +
 +	return 0;
@@ -144,29 +151,32 @@ index 687f205fd70a675e321de358e0c38f168ff82466..0d691d0955c69d86e90e3eb795348b8c
  
 -	if (!rproc->cdev_put_on_release)
 -		return 0;
-+	list_for_each_entry_safe(attach, tmp, &rproc_file->attachments, node) {
-+		rproc_detach_dmabuf(rproc, attach->dmabuf);
-+		dma_buf_put(attach->dmabuf);
-+		list_del(&attach->node);
-+		kfree(attach);
-+	}
- 
--	if (rproc->state == RPROC_RUNNING)
--		rproc_shutdown(rproc);
--	else if (rproc->state == RPROC_ATTACHED)
--		ret = rproc_detach(rproc);
 +	if (rproc->cdev_put_on_release) {
 +		if (rproc->state == RPROC_RUNNING)
 +			rproc_shutdown(rproc);
 +		else if (rproc->state == RPROC_ATTACHED)
 +			ret = rproc_detach(rproc);
 +	}
+ 
+-	if (rproc->state == RPROC_RUNNING)
+-		rproc_shutdown(rproc);
+-	else if (rproc->state == RPROC_ATTACHED)
+-		ret = rproc_detach(rproc);
++	mutex_lock(&rproc_file->attachments_lock);
++	list_for_each_entry_safe(attach, tmp, &rproc_file->attachments, node) {
++		rproc_detach_dmabuf(rproc, attach->dmabuf);
++		dma_buf_put(attach->dmabuf);
++		list_del(&attach->node);
++		kfree(attach);
++	}
++	mutex_unlock(&rproc_file->attachments_lock);
++	mutex_destroy(&rproc_file->attachments_lock);
 +
 +	kfree(rproc_file);
  
  	return ret;
  }
-@@ -92,6 +180,7 @@ static const struct file_operations rproc_fops = {
+@@ -92,6 +190,7 @@ static const struct file_operations rproc_fops = {
  	.write = rproc_cdev_write,
  	.unlocked_ioctl = rproc_device_ioctl,
  	.compat_ioctl = compat_ptr_ioctl,
@@ -260,7 +270,7 @@ index 82567210052893a501e7591204af1feb07befb22..15381b96df2c13b83814fecd5ab8b347
 +		goto fail_detach;
 +	}
 +
-+	if (sgt->orig_nents != 1) {
++	if (sgt->nents != 1) {
 +		dev_err(dev, "DMA-BUF not contiguous\n");
 +		ret = -EINVAL;
 +		goto fail_unmap;
