@@ -50,6 +50,9 @@ function kernel_main_patching_python() {
 		"ALLOW_RECREATE_EXISTING_FILES=yes"       # Allow patches to recreate files that already exist.
 		"GIT_ARCHEOLOGY=${GIT_ARCHEOLOGY:-no}"    # Allow git to do some archaeology to find the original patch's owners; used when patching to git/rewriting.
 		"FAST_ARCHEOLOGY=${FAST_ARCHEOLOGY:-yes}" # Does archeology even further by looking for history from other patch files with the same name
+		"LINUXFAMILY=${LINUXFAMILY}"              # Linux family name for series.conf handling in parallel mode
+		"PARALLEL_PATCHES=${PARALLEL_PATCHES:-no}" # Enable parallel patch processing
+		"PARALLEL_WORKERS=${PARALLEL_WORKERS}"    # Number of parallel workers (default: auto-calculate)
 		# Pass the maintainer info, used for commits.
 		"MAINTAINER_NAME=${MAINTAINER}"      # Name of the maintainer
 		"MAINTAINER_EMAIL=${MAINTAINERMAIL}" # Email of the maintainer
