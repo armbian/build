@@ -99,6 +99,7 @@ dtb-$(CONFIG_ARCH_SUNXI) += \
 	sun50i-h616-ir.dtbo \
 	sun50i-h616-tft35_spi.dtbo \
 	sun50i-h616-mcp2515.dtbo \
+	sun50i-h616-walnutpi-zerow-expansion.dtbo \
 	sun50i-h616-ws2812.dtbo \
 	sun50i-h616-light.dtbo
 
