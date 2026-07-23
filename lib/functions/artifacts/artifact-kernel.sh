@@ -19,6 +19,12 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
 	artifact_input_variables[ARCH]="${ARCH}"
 	artifact_input_variables[EXTRAWIFI]="${EXTRAWIFI:-"yes"}"
+	artifact_input_variables[KERNEL_DBG_PACKAGE]="${KERNEL_DBG_PACKAGE:-"no"}" # dbg and non-dbg targets must not be coalesced by the artifact reducer
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		# compiler inputs split the dbg artifact version, so they must split reducer groups too
+		artifact_input_variables[KERNEL_COMPILER]="${KERNEL_COMPILER}"
+		artifact_input_variables[KERNEL_EXTRA_CFLAGS]="${KERNEL_EXTRA_CFLAGS:-""}"
+	fi
 }
 
 # This is run in a logging section.
@@ -145,6 +151,26 @@ function artifact_kernel_prepare_version() {
 		"${NAME_KERNEL}"
 		"${SRC_LOADADDR}"
 	)
+	# Hash KERNEL_DBG_PACKAGE only when enabled, giving dbg-enabled builds a cache entry
+	# distinct from regular builds (a cached tarball without the dbg deb would poison them).
+	# The linux-image/-dbg pairing keys exactness on artifact_version, so builds differing
+	# in cflags, cross-toolchain prefix or compiler version must not share a version.
+	# The compiler version is resolved here directly, not via the kernel-version-toolchain
+	# extension: that extension is force-enabled in main-config, which hooks running later
+	# (post_family_config, user_config) can no longer trigger — the hash must not depend
+	# on extension-enablement timing. The extension still adds the visible version part.
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		declare dbg_compiler_bin="${KERNEL_COMPILER}gcc"
+		[[ "${KERNEL_COMPILER}" == "clang" ]] && dbg_compiler_bin="clang"
+		declare dbg_compiler_version=""
+		dbg_compiler_version="$("${dbg_compiler_bin}" -dumpfullversion -dumpversion 2> /dev/null || true)"
+		vars_to_hash+=(
+			"KERNEL_DBG_PACKAGE=yes"
+			"KERNEL_COMPILER=${KERNEL_COMPILER}"
+			"KERNEL_COMPILER_VERSION=${dbg_compiler_version}"
+			"KERNEL_EXTRA_CFLAGS=${KERNEL_EXTRA_CFLAGS:-""}"
+		)
+	fi
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
@@ -155,6 +181,11 @@ function artifact_kernel_prepare_version() {
 		"pre_package_kernel_image" "kernel_copy_extra_sources" "pre_package_kernel_headers"
 		"kernel_extra_create_patches"
 	)
+	# dbg pairing keys exactness on artifact_version: make-time hooks can change compile
+	# flags (e.g. KERNEL_EXTRA_CFLAGS), so their sources must be part of the dbg hash.
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		extension_hooks_to_hash+=("kernel_make_config" "custom_kernel_make_params")
+	fi
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
@@ -251,6 +282,12 @@ function artifact_kernel_prepare_version() {
 		# some/most kernels have also working headers...
 		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 			artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
+		fi
+
+		# opt-in debug package: unstripped vmlinux for crash/drgn/gdb analysis of vmcores.
+		# Debian-style name: "-dbg" suffixed to the name of the package it complements.
+		if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+			artifact_map_packages+=(["linux-dbg"]="linux-image-${BRANCH}-${LINUXFAMILY}-dbg")
 		fi
 	fi
 
