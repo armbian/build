@@ -1,0 +1,167 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: https://www.armbian.com/authors
+#
+# Collect and upload system debug information for Armbian support.
+#
+############################################################################
+
+# Config:
+declare -a paste_servers=("paste.armbian.com" "paste.next.armbian.com" "paste.armbian.de" "paste.armbian.eu")
+if [[ "${PASTE_SERVER_HOST}" != "" ]]; then
+	echo "Using custom paste server: '${PASTE_SERVER_HOST}'"
+	paste_servers=("${PASTE_SERVER_HOST}" "${paste_servers[@]}")
+fi
+
+# Set up colors if available
+if test -t 1; then
+	ncolors=$(tput colors)
+	if test -n "$ncolors" && test $ncolors -ge 8; then
+		BOLD="$(tput bold)"
+		NC='\033[0m' # No Color
+	fi
+fi
+
+Main() {
+	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+	# Check if curl is available, install if not
+	if ! command -v curl > /dev/null 2>&1; then
+		echo "curl not found in PATH. Trying to install it..." >&2
+		if [ "$(id -u)" = "0" ]; then
+			apt-get update && apt-get -f -y install curl || {
+				echo "Failed to install curl. Please run 'apt-get update' and retry, or install curl manually." >&2
+				exit 1
+			}
+		else
+			echo "Please install curl: sudo apt-get update && sudo apt-get install curl" >&2
+			exit 1
+		fi
+	fi
+
+	# 5 second countdown with option to force stdout output
+	force_stdout=false
+	echo -e "\n${BOLD}Collecting debug information for Armbian support${NC}"
+	echo -e "Press any key within 5 seconds to output to stdout instead of uploading..."
+	for i in {5..1}; do
+		echo -ne "\r$i seconds remaining... "
+		# Read with timeout (works in bash)
+		if read -s -n 1 -t 1; then
+			force_stdout=true
+			echo -e "\n${BOLD}Key pressed - will output to stdout${NC}\n"
+			break
+		fi
+	done
+	if [ "$force_stdout" = false ]; then
+		echo -e "\rStarting upload...        "
+	fi
+
+	# Create temp file for collected data
+	temp_file=$(mktemp) || { echo "Failed to create temp file" >&2; exit 1; }
+	trap "rm -f '${temp_file}'" EXIT
+
+	# Collect all info once into temp file
+	{
+		LC_ALL=C date
+		echo "-----------------------------------------------------------------------------------------------------------------------------"
+		dmesg --color=always
+		echo "-----------------------------------------------------------------------------------------------------------------------------"
+		CollectSupportInfo || echo "Error collecting support info"
+	} > "${temp_file}"
+
+	# Process the collected info
+	if [ "$force_stdout" = true ]; then
+		# Output to stdout with line numbers
+		sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' < "${temp_file}" |
+			awk '!NF{$0=" "}1' | nl -
+		echo -e "\nPlease upload the ${BOLD}whole output${NC} above to an online pasteboard service\nand provide the URL at the place where you have been asked for this.\n"
+	else
+		# Try to upload to paste servers
+		upload_success=false
+
+		for paste_server in "${paste_servers[@]}"; do
+			echo "Sending to ${paste_server}..."
+			declare -i counter=0
+
+			sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' < "${temp_file}" |
+				curl -s --fail --connect-timeout 10 --max-time 30 --data-binary @- "https://${paste_server}/log"
+
+			# Save PIPESTATUS before any other command
+			pipe_status=("${PIPESTATUS[@]}")
+
+			# Check PIPESTATUS
+			for i in "${pipe_status[@]}"; do
+				counter=$((counter + 1))
+				if [[ $i -ne 0 ]]; then
+					echo "Failed (pipe ${counter} returned ${i})."
+					continue 2
+				fi
+			done
+
+			# If we get here, upload succeeded
+			upload_success=true
+			break
+		done
+
+		if [ "$upload_success" = true ]; then
+			echo -e "\n${BOLD}Upload successful!${NC} Please post the URL at the place where you have been asked for.\n"
+		else
+			echo -e "\n${BOLD}All upload attempts failed. Outputting to stdout instead:${NC}\n"
+			sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' < "${temp_file}" |
+				awk '!NF{$0=" "}1' | nl -
+			echo -e "\nPlease upload the ${BOLD}whole output${NC} above to an online pasteboard service\nand provide the URL in the forum where you have been asked for this.\n"
+		fi
+	fi
+}
+
+CollectSupportInfo() {
+	[[ -s /var/log/armbian-hardware-monitor.log ]] && cat /var/log/armbian-hardware-monitor.log || zcat /var/log/armbian-hardware-monitor.log.1.gz 2> /dev/null
+	[[ -f /boot/armbianEnv.txt ]] && LOGLEVEL=$(awk -F'=' '/^verbosity/ {print $2}' /boot/armbianEnv.txt)
+	LOGLEVEL=${LOGLEVEL:-1}
+	if [ "$LOGLEVEL" -gt 4 ]; then
+		VERBOSE='-v'
+		command -v lshw > /dev/null 2>&1 && (
+			echo -e "\n### lshw:"
+			lshw -quiet -sanitize -numeric
+		)
+	fi
+	command -v lsusb > /dev/null 2>&1 && (
+		echo -e "\n### lsusb:\n"
+		lsusb ${VERBOSE} 2> /dev/null
+		echo ""
+		lsusb -t 2> /dev/null
+	)
+	command -v lspci > /dev/null 2>&1 && (
+		echo -e "\n### lspci:\n"
+		lspci ${VERBOSE} 2> /dev/null
+	)
+	command -v nvme > /dev/null 2>&1 && (
+		echo -e "\n### nvme:\n"
+		nvme list 2> /dev/null
+	)
+	[ -z "$SUDO_USER" ] || echo -e "\n### Group membership of $(groups "$SUDO_USER")"
+	echo -en "\n### Userland"
+	[[ -f /etc/armbian-release ]] && echo -en " generated with Armbian Build Framework"
+	echo -en ":\n"
+	echo -e "\n$(grep PRETTY_NAME /etc/os-release)"
+	echo -e "\n### Installed packages:\n\n$(dpkg -l | grep -E "openmediavault|armbian| linux-")"
+	echo -e "\n### Loaded modules:\n\n$(lsmod)"
+	[[ -f /var/log/nand-sata-install.log ]] && echo -e "\n### nand-sata-install.log:\n\n$(cat /var/log/nand-sata-install.log)"
+	echo -e "\n### Current sysinfo:\n\n$(command -v iostat >/dev/null 2>&1 && iostat -p ALL | grep -v "^loop")\n\n$(vmstat -w)\n\n$(free -h)\n\n$(zramctl 2> /dev/null)\n\n$(uptime)\n\n$(dmesg | tail -n 250)"
+	echo -e "\n"
+	if [[ "$(id -u)" -eq "0" ]]; then
+		for sysfsnode in /proc/sys/vm/*; do
+			sysctl "${sysfsnode/\/proc\/sys\/vm\//vm.}"
+		done
+	fi
+	echo -e "\n### interrupts:\n$(cat /proc/interrupts)"
+	ls /tmp/armbianmonitor_checks_* > /dev/null 2>&1 || return 0
+	for file in /tmp/armbianmonitor_checks_*; do
+		echo -e "\n### \c"
+		ls "${file}" | cut -f1 -d.
+		echo
+		cat "${file}"
+	done
+} # CollectSupportInfo
+
+Main "$@"
