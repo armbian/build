@@ -30,7 +30,7 @@ case "${BRANCH}" in
 
 		# KERNELSOURCE defined in mainline-config.sh
 		# KERNELBRANCH defined in mainline-kernel.conf.sh
-		declare -g KERNEL_MAJOR_MINOR="6.18" # needs updating with each minor kernel release
+		declare -g KERNEL_MAJOR_MINOR="7.2" # follow the build framework's current mainline edge target
 		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
 		declare -g ATFBRANCH="branch:master"
 		declare -g OPTEE_BRANCH="branch:master"
