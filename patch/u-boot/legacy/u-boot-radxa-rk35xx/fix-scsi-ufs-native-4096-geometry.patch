@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armbian <build@armbian.com>
+Date: Tue, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH] scsi: ufs: use native 4096 geometry like mainline
+
+Downstream forced UFS 4096-byte devices to 512e logical blocks and put
+the LUN into SCSI CDBs. On Rock 4D that corrupts inquiry/capacity
+(garbled vendor, absurd blksz) and then GPT validation fails with
+"my_lba incorrect" because partition I/O no longer matches the
+4096-native GPT that mainline boots successfully.
+
+Align with mainline U-Boot:
+- Keep native blksz/lba (no 4096->512 remap)
+- Do not encode LUN in CDBs (UFS carries LUN in the UPIU)
+- Treat READ CAPACITY last LBA as inclusive (+1)
+- Only keep 512e RMW helpers when blksz was actually remapped
+
+--- a/drivers/scsi/scsi.c	2026-07-21 17:13:58.773446557 +0200
++++ b/drivers/scsi/scsi.c	2026-07-21 17:14:41.717725997 +0200
+@@ -61,7 +61,7 @@
+ 		       unsigned long blocks)
+ {
+ 	pccb->cmd[0] = SCSI_READ16;
+-	pccb->cmd[1] = pccb->lun << 5;
++	pccb->cmd[1] = 0;
+ 	pccb->cmd[2] = (unsigned char)(start >> 56) & 0xff;
+ 	pccb->cmd[3] = (unsigned char)(start >> 48) & 0xff;
+ 	pccb->cmd[4] = (unsigned char)(start >> 40) & 0xff;
+@@ -90,7 +90,7 @@
+ 				unsigned short blocks)
+ {
+ 	pccb->cmd[0] = SCSI_READ10;
+-	pccb->cmd[1] = pccb->lun << 5;
++	pccb->cmd[1] = 0;
+ 	pccb->cmd[2] = (unsigned char)(start >> 24) & 0xff;
+ 	pccb->cmd[3] = (unsigned char)(start >> 16) & 0xff;
+ 	pccb->cmd[4] = (unsigned char)(start >> 8) & 0xff;
+@@ -111,7 +111,7 @@
+ 				 unsigned short blocks)
+ {
+ 	pccb->cmd[0] = SCSI_WRITE10;
+-	pccb->cmd[1] = pccb->lun << 5 | 0x8;
++	pccb->cmd[1] = 0;
+ 	pccb->cmd[2] = (unsigned char)(start >> 24) & 0xff;
+ 	pccb->cmd[3] = (unsigned char)(start >> 16) & 0xff;
+ 	pccb->cmd[4] = (unsigned char)(start >> 8) & 0xff;
+@@ -132,7 +132,7 @@
+ static void scsi_setup_inquiry(struct scsi_cmd *pccb)
+ {
+ 	pccb->cmd[0] = SCSI_INQUIRY;
+-	pccb->cmd[1] = pccb->lun << 5;
++	pccb->cmd[1] = 0;
+ 	pccb->cmd[2] = 0;
+ 	pccb->cmd[3] = 0;
+ 	if (pccb->datalen > SCSI_MAX_INQUIRY_BYTES)
+@@ -150,7 +150,7 @@
+ static void scsi_setup_test_unit_ready(struct scsi_cmd *pccb)
+ {
+ 	pccb->cmd[0] = SCSI_TST_U_RDY;
+-	pccb->cmd[1] = pccb->lun << 5;
++	pccb->cmd[1] = 0;
+ 	pccb->cmd[2] = 0;
+ 	pccb->cmd[3] = 0;
+ 	pccb->cmd[4] = 0;
+@@ -242,7 +242,9 @@
+ {
+ #ifdef CONFIG_BLK
+ 	struct blk_desc *block_dev = dev_get_uclass_platdata(dev);
+-	uint32_t rawsectsz = block_dev->rawblksz / 512;
++	/* 512e conversion only if logical blksz was remapped to 512 */
++	uint32_t rawsectsz = (block_dev->blksz == 512 &&
++			      block_dev->rawblksz == 4096) ? 8 : 1;
+ 	long ret = blkcnt;
+ 
+ 	if (rawsectsz == 8) {
+@@ -364,7 +366,8 @@
+ {
+ #ifdef CONFIG_BLK
+ 	struct blk_desc *block_dev = dev_get_uclass_platdata(dev);
+-	uint32_t rawsectsz = block_dev->rawblksz / 512;
++	uint32_t rawsectsz = (block_dev->blksz == 512 &&
++			      block_dev->rawblksz == 4096) ? 8 : 1;
+ 	long ret = blkcnt;
+ 
+ 	if (rawsectsz == 8) {
+@@ -547,8 +550,9 @@
+ 
+ 	memset(pccb->cmd, '\0', sizeof(pccb->cmd));
+ 	pccb->cmd[0] = SCSI_RD_CAPAC10;
+-	pccb->cmd[1] = pccb->lun << 5;
++	pccb->cmd[1] = 0;
+ 	pccb->cmdlen = 10;
++	pccb->dma_dir = DMA_FROM_DEVICE;
+ 	pccb->msgout[0] = SCSI_IDENTIFY; /* NOT USED */
+ 
+ 	pccb->datalen = 8;
+@@ -566,6 +570,7 @@
+ 			 ((unsigned long)pccb->pdata[5] << 16) |
+ 			 ((unsigned long)pccb->pdata[6] << 8)  |
+ 			 ((unsigned long)pccb->pdata[7]);
++		*capacity += 1;
+ 		return 0;
+ 	}
+ 
+@@ -589,6 +594,7 @@
+ 		    ((uint64_t)pccb->pdata[5] << 16) |
+ 		    ((uint64_t)pccb->pdata[6] << 8)  |
+ 		    ((uint64_t)pccb->pdata[7]);
++	*capacity += 1;
+ 
+ 	*blksz = ((uint64_t)pccb->pdata[8]  << 56) |
+ 		 ((uint64_t)pccb->pdata[9]  << 48) |
+@@ -760,13 +766,11 @@
+ 	bdesc->lun = lun;
+ 	bdesc->removable = bd.removable;
+ 	bdesc->type = bd.type;
+-
+-	if (bdesc->rawblksz == 4096) {
+-		bdesc->blksz = 512;
+-		bdesc->rawlba++; /* add 1 sector for ufs */
+-		bdesc->lba = bdesc->rawlba * 8;
+-		bdesc->align_sector_buf = memalign(CONFIG_SYS_CACHELINE_SIZE, bdesc->rawblksz);
+-	}
++	/*
++	 * Keep native UFS geometry (typically 4096-byte blocks) like mainline.
++	 * Remapping to 512e breaks 4096-native GPT and corrupts capacity.
++	 */
++	bdesc->log2blksz = bd.log2blksz;
+ 
+ 	memcpy(&bdesc->vendor, &bd.vendor, sizeof(bd.vendor));
+ 	memcpy(&bdesc->product, &bd.product, sizeof(bd.product));

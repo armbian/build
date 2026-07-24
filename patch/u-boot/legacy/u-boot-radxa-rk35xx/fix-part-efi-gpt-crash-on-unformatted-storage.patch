@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armbian <build@armbian.com>
+Date: Tue, 21 Jul 2026 00:00:00 +0000
+Subject: [PATCH] disk: part_efi: align GPT probe with mainline (fix Rock 4D boot)
+
+Downstream Rockchip U-Boot runs RKIMG GPT validate/repair inside
+part_test_efi() on every part_init() (SCSI/UFS/MTD scan). Mainline only
+checks the protective MBR. That extra path heap-corrupts via
+gpt_entry_modify() underflow and aborts before a valid GPT is used for
+boot.
+
+Also harden PTE allocation against garbage headers (SPL malloc_simple),
+but cap at 512 entries — not CONFIG GPT_ENTRY_NUMBERS (64 on Radxa) —
+so Armbian/mainline 128-entry GPTs still validate. Keep PTE reuse
+shortcut required by CONFIG_SPL_SYS_MALLOC_SIMPLE.
+
+--- a/disk/part_efi.c	2026-07-21 17:39:42.622243863 +0200
++++ b/disk/part_efi.c	2026-07-21 17:39:42.622243863 +0200
+@@ -140,6 +140,21 @@
+ 		return -1;
+ 	}
+ 
++	/*
++	 * Reject impossible PTE array sizes before any allocation. Garbage
++	 * headers otherwise exhaust SPL's malloc_simple pool. Do not use
++	 * GPT_ENTRY_NUMBERS (often 64 on Radxa) — Armbian images commonly
++	 * ship 128-entry GPTs like mainline.
++	 */
++	if (le32_to_cpu(gpt_h->num_partition_entries) == 0 ||
++	    le32_to_cpu(gpt_h->num_partition_entries) > 512 ||
++	    le32_to_cpu(gpt_h->sizeof_partition_entry) != sizeof(gpt_entry)) {
++		printf("GPT: invalid partition entry geometry: entries=%u size=%u\n",
++		       le32_to_cpu(gpt_h->num_partition_entries),
++		       le32_to_cpu(gpt_h->sizeof_partition_entry));
++		return -1;
++	}
++
+ 	debug("GPT: first_usable_lba: %llX last_usable_lba: %llX last lba: "
+ 	      LBAF "\n", le64_to_cpu(gpt_h->first_usable_lba),
+ 	      le64_to_cpu(gpt_h->last_usable_lba), lastlba);
+@@ -373,17 +388,21 @@
+ 
+ #ifdef CONFIG_RKIMG_BOOTLOADER
+ #if defined(CONFIG_SPL_KERNEL_BOOT) || !defined(CONFIG_SPL_BUILD)
+-static void gpt_entry_modify(struct blk_desc *dev_desc,
++static void __maybe_unused gpt_entry_modify(struct blk_desc *dev_desc,
+ 			     gpt_entry *gpt_pte,
+ 			     gpt_header *gpt_head)
+ {
+ 	int i;
+ 	uint32_t calc_crc32;
+ 
+-	for (i = 0; i < gpt_head->num_partition_entries; i++) {
++	for (i = 0; i < le32_to_cpu(gpt_head->num_partition_entries); i++) {
+ 		if (!is_pte_valid(&gpt_pte[i]))
+ 			break;
+ 	}
++	/* No valid entries: do not index gpt_pte[i - 1] (heap corruption). */
++	if (i == 0)
++		return;
++
+ 	if (dev_desc->rawblksz == 4096) {
+ 		if (gpt_pte[i - 1].ending_lba <= (dev_desc->rawlba - 6))
+ 			return;
+@@ -400,7 +419,7 @@
+ 	gpt_head->partition_entry_array_crc32 = calc_crc32;
+ }
+ 
+-static int part_efi_repair(struct blk_desc *dev_desc, gpt_entry *gpt_pte,
++static int __maybe_unused part_efi_repair(struct blk_desc *dev_desc, gpt_entry *gpt_pte,
+ 			   gpt_header *gpt_head, int head_gpt_valid,
+ 			   int backup_gpt_valid)
+ {
+@@ -504,57 +523,13 @@
+ 		|| (is_pmbr_valid(legacymbr) != 1)) {
+ 		return -1;
+ 	}
+-#ifdef CONFIG_RKIMG_BOOTLOADER
+-#if defined(CONFIG_SPL_KERNEL_BOOT) || !defined(CONFIG_SPL_BUILD)
+-	gpt_entry *h_gpt_pte = NULL;
+-	gpt_header *h_gpt_head = NULL;
+-	gpt_entry *b_gpt_pte = NULL;
+-	gpt_header *b_gpt_head = NULL;
+-	int head_gpt_valid = 0;
+-	int backup_gpt_valid = 0;
+-
+-	if (!h_gpt_head)
+-		h_gpt_head = memalign(ARCH_DMA_MINALIGN, dev_desc->rawblksz);
+-	if (!b_gpt_head)
+-		b_gpt_head = memalign(ARCH_DMA_MINALIGN, dev_desc->rawblksz);
+-
+-	head_gpt_valid = is_gpt_valid(dev_desc, GPT_PRIMARY_PARTITION_TABLE_LBA,
+-				      h_gpt_head, &h_gpt_pte);
+-	backup_gpt_valid = is_gpt_valid(dev_desc, (dev_desc->rawlba - 1),
+-					b_gpt_head, &b_gpt_pte);
+-
+-	if ((head_gpt_valid == 1) &&
+-	    (le64_to_cpu(h_gpt_head->last_usable_lba)
+-	     == FACTORY_UNKNOWN_LBA)) {
+-		if (part_efi_repair(dev_desc, h_gpt_pte, h_gpt_head,
+-				    0, 1))
+-			printf("Primary GPT repair fail!\n");
+-		/* Force repair backup GPT for factory or ota upgrade. */
+-		backup_gpt_valid = 0;
+-	}
+-
+-	if (head_gpt_valid == 1 && backup_gpt_valid == 0) {
+-		if (part_efi_repair(dev_desc, h_gpt_pte, h_gpt_head,
+-				    head_gpt_valid, backup_gpt_valid))
+-			printf("Backup GPT repair fail!\n");
+-	} else if (head_gpt_valid == 0 && backup_gpt_valid == 1) {
+-		if (part_efi_repair(dev_desc, b_gpt_pte, b_gpt_head,
+-				    head_gpt_valid, backup_gpt_valid))
+-			printf("Primary GPT repair fail!\n");
+-	} else if (head_gpt_valid == 0 && backup_gpt_valid == 0) {
+-		ret = -1;
+-	}
+-
+-	free(h_gpt_pte);
+-	h_gpt_pte = NULL;
+-	free(h_gpt_head);
+-	h_gpt_head = NULL;
+-	free(b_gpt_pte);
+-	b_gpt_pte = NULL;
+-	free(b_gpt_head);
+-	b_gpt_head = NULL;
+-#endif
+-#endif
++	/*
++	 * Mainline U-Boot only checks the protective MBR here. Downstream
++	 * CONFIG_RKIMG_BOOTLOADER used to validate/repair GPT during every
++	 * part_init() (including SCSI/UFS scan). That path crashes on some
++	 * media and is unnecessary for normal boot — GPT is validated later
++	 * in part_get_info_efi() when partitions are actually used.
++	 */
+ 	return ret;
+ }
+ 
+@@ -1270,14 +1245,17 @@
+ 	      (u32) le32_to_cpu(pgpt_head->sizeof_partition_entry),
+ 	      (ulong)count);
+ 
++	if (le32_to_cpu(pgpt_head->num_partition_entries) == 0 ||
++	    le32_to_cpu(pgpt_head->num_partition_entries) > 512 ||
++	    le32_to_cpu(pgpt_head->sizeof_partition_entry) != sizeof(gpt_entry))
++		return NULL;
++
+ 	/* Allocate memory for PTE, remember to FREE */
+-	if (count != 0) {
+-		pte = memalign(ARCH_DMA_MINALIGN,
+-			       PAD_SIZE(count, dev_desc->rawblksz));
+-	}
++	pte = memalign(ARCH_DMA_MINALIGN,
++		       PAD_SIZE(count, dev_desc->rawblksz));
+ 
+-	if (count == 0 || pte == NULL) {
+-		printf("%s: ERROR: Can't allocate %#lX bytes for GPT Entries\n",
++	if (!pte) {
++		printf("%s: ERROR: Can't allocate %lu bytes for GPT Entries\n",
+ 		       __func__, (ulong)count);
+ 		return NULL;
+ 	}
