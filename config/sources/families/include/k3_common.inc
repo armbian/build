@@ -80,7 +80,9 @@ function pre_config_uboot_target__build_first_stage() {
 
 	if [[ "${BOOT_SOC}" != "am62l" ]]; then
 		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
-		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+		# sysfw.itb only exists on older K3 (J721E: SYSFW_FILE set). On AM62 the
+		# system firmware is combined into tiboot3.bin, so there is nothing to copy.
+		[[ -n "${SYSFW_FILE}" ]] && cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb
 	fi
 }
 
@@ -109,7 +111,10 @@ function format_partitions() {
 
 function write_uboot_platform() {
 	cp $1/tiboot3.bin ${MOUNT}/boot
-	cp $1/sysfw.itb ${MOUNT}/boot || true
+	# sysfw.itb is only present on older K3 (J721E); on AM62 it is folded into
+	# tiboot3.bin. Copy it only if it exists, so AM62 boards (e.g. BeaglePlay)
+	# do not log a misleading "cp: cannot stat sysfw.itb" during install.
+	[[ -f $1/sysfw.itb ]] && cp $1/sysfw.itb ${MOUNT}/boot
 	cp $1/tispl.bin ${MOUNT}/boot
 	cp $1/u-boot.img ${MOUNT}/boot
 }
