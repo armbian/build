@@ -1,0 +1,203 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Devin Li <Devin.Li@cixtech.com>
+Date: Thu, 4 Jun 2026 11:38:16 +0800
+Subject: ACPI: thermal: bind devfreq cooling devices via devfreq parent fwnode
+
+When a devfreq cooling device is registered through
+of_devfreq_cooling_register*(), cdev->devdata stores the private
+struct devfreq_cooling_device pointer rather than a struct acpi_device.
+acpi_thermal_should_bind_cdev() blindly compared cdev->devdata against
+acpi_fetch_acpi_dev(handle), so the comparison always failed and the
+devfreq cooling device was never bound to any ACPI thermal trip point,
+even when DSDT _PSL/_ALx explicitly listed the underlying device.
+
+Resolve the real ACPI device by walking dfc->devfreq->dev.parent->fwnode
+when cdev->type starts with "devfreq". This brings the 7.0 ACPI thermal
+binding behavior in line with the 6.6 BSP, allowing GPU/devfreq cooling
+devices to bind to their thermal zones again.
+
+To enable this without breaking encapsulation through hardcoded offsets,
+struct devfreq_cooling_device is moved from drivers/thermal/devfreq_cooling.c
+to include/linux/devfreq_cooling.h so that ACPI thermal can access its
+fields safely.
+
+Signed-off-by: devin.li <Devin.Li@cixtech.com>
+Change-Id: I8b28e046bed57610279f6fc5244d1da21b7cd19f
+---
+ drivers/acpi/thermal.c            | 31 +++++++
+ drivers/thermal/devfreq_cooling.c | 39 +-------
+ include/linux/devfreq_cooling.h   | 44 ++++++++++
+ 3 files changed, 79 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/acpi/thermal.c b/drivers/acpi/thermal.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/thermal.c
++++ b/drivers/acpi/thermal.c
+@@ -28,6 +28,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/thermal.h>
+ #include <linux/acpi.h>
++#include <linux/devfreq_cooling.h>
+ #include <linux/workqueue.h>
+ #include <linux/uaccess.h>
+ #include <linux/units.h>
+@@ -611,6 +612,14 @@ static void acpi_thermal_zone_device_critical(struct thermal_zone_device *therma
+ 	thermal_zone_device_critical(thermal);
+ }
+ 
++/*
++ * Check if a cooling device type matches a given prefix string.
++ */
++static bool check_cdev_type(struct thermal_cooling_device *cdev, const char *type)
++{
++	return cdev->type && !strncmp(cdev->type, type, strlen(type));
++}
++
+ static bool acpi_thermal_should_bind_cdev(struct thermal_zone_device *thermal,
+ 					  const struct thermal_trip *trip,
+ 					  struct thermal_cooling_device *cdev,
+@@ -620,6 +629,28 @@ static bool acpi_thermal_should_bind_cdev(struct thermal_zone_device *thermal,
+ 	struct acpi_device *cdev_adev = cdev->devdata;
+ 	int i;
+ 
++	/*
++	 * For devfreq cooling devices, cdev->devdata points to a private
++	 * struct devfreq_cooling_device, not to an acpi_device. Resolve the
++	 * underlying ACPI device by walking dfc->devfreq->dev.parent->fwnode.
++	 */
++	if (check_cdev_type(cdev, "devfreq")) {
++		struct devfreq_cooling_device *dfc = cdev->devdata;
++
++		if (dfc && dfc->devfreq && dfc->devfreq->dev.parent &&
++		    dfc->devfreq->dev.parent->fwnode)
++			cdev_adev = to_acpi_device_node(dfc->devfreq->dev.parent->fwnode);
++		else
++			cdev_adev = NULL;
++	}
++
++	pr_debug("ACPI thermal bind check: tz=%s cdev=%s type=%s trip_type=%d cdev_adev=%s\n",
++		 dev_name(thermal_zone_device(thermal)),
++		 dev_name(&cdev->device),
++		 cdev->type ? cdev->type : "(null)",
++		 trip->type,
++		 cdev_adev ? dev_name(&cdev_adev->dev) : "(null)");
++
+ 	/* Skip critical and hot trips. */
+ 	if (!acpi_trip)
+ 		return false;
+diff --git a/drivers/thermal/devfreq_cooling.c b/drivers/thermal/devfreq_cooling.c
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/devfreq_cooling.c
++++ b/drivers/thermal/devfreq_cooling.c
+@@ -24,42 +24,11 @@
+ 
+ #define SCALE_ERROR_MITIGATION	100
+ 
+-/**
+- * struct devfreq_cooling_device - Devfreq cooling device
+- *		devfreq_cooling_device registered.
+- * @cdev:	Pointer to associated thermal cooling device.
+- * @cooling_ops: devfreq callbacks to thermal cooling device ops
+- * @devfreq:	Pointer to associated devfreq device.
+- * @cooling_state:	Current cooling state.
+- * @freq_table:	Pointer to a table with the frequencies sorted in descending
+- *		order.  You can index the table by cooling device state
+- * @max_state:	It is the last index, that is, one less than the number of the
+- *		OPPs
+- * @power_ops:	Pointer to devfreq_cooling_power, a more precised model.
+- * @res_util:	Resource utilization scaling factor for the power.
+- *		It is multiplied by 100 to minimize the error. It is used
+- *		for estimation of the power budget instead of using
+- *		'utilization' (which is	'busy_time' / 'total_time').
+- *		The 'res_util' range is from 100 to power * 100	for the
+- *		corresponding 'state'.
+- * @capped_state:	index to cooling state with in dynamic power budget
+- * @req_max_freq:	PM QoS request for limiting the maximum frequency
+- *			of the devfreq device.
+- * @em_pd:		Energy Model for the associated Devfreq device
++/*
++ * struct devfreq_cooling_device is defined in <linux/devfreq_cooling.h>
++ * (exposed publicly so ACPI thermal can walk dfc->devfreq->dev.parent->fwnode
++ * to find the underlying ACPI device for binding).
+  */
+-struct devfreq_cooling_device {
+-	struct thermal_cooling_device *cdev;
+-	struct thermal_cooling_device_ops cooling_ops;
+-	struct devfreq *devfreq;
+-	unsigned long cooling_state;
+-	u32 *freq_table;
+-	size_t max_state;
+-	struct devfreq_cooling_power *power_ops;
+-	u32 res_util;
+-	int capped_state;
+-	struct dev_pm_qos_request req_max_freq;
+-	struct em_perf_domain *em_pd;
+-};
+ 
+ static int devfreq_cooling_get_max_state(struct thermal_cooling_device *cdev,
+ 					 unsigned long *state)
+diff --git a/include/linux/devfreq_cooling.h b/include/linux/devfreq_cooling.h
+index 111111111111..222222222222 100644
+--- a/include/linux/devfreq_cooling.h
++++ b/include/linux/devfreq_cooling.h
+@@ -12,6 +12,8 @@
+ 
+ #include <linux/devfreq.h>
+ #include <linux/thermal.h>
++#include <linux/pm_qos.h>
++#include <linux/energy_model.h>
+ 
+ 
+ /**
+@@ -39,6 +41,48 @@ struct devfreq_cooling_power {
+ 			      unsigned long freq, unsigned long voltage);
+ };
+ 
++/**
++ * struct devfreq_cooling_device - Devfreq cooling device
++ *		devfreq_cooling_device registered.
++ * @cdev:	Pointer to associated thermal cooling device.
++ * @cooling_ops: devfreq callbacks to thermal cooling device ops
++ * @devfreq:	Pointer to associated devfreq device.
++ * @cooling_state:	Current cooling state.
++ * @freq_table:	Pointer to a table with the frequencies sorted in descending
++ *		order.  You can index the table by cooling device state
++ * @max_state:	It is the last index, that is, one less than the number of the
++ *		OPPs
++ * @power_ops:	Pointer to devfreq_cooling_power, a more precised model.
++ * @res_util:	Resource utilization scaling factor for the power.
++ *		It is multiplied by 100 to minimize the error. It is used
++ *		for estimation of the power budget instead of using
++ *		'utilization' (which is	'busy_time' / 'total_time').
++ *		The 'res_util' range is from 100 to power * 100	for the
++ *		corresponding 'state'.
++ * @capped_state:	index to cooling state with in dynamic power budget
++ * @req_max_freq:	PM QoS request for limiting the maximum frequency
++ *			of the devfreq device.
++ * @em_pd:		Energy Model for the associated Devfreq device
++ *
++ * NOTE: This struct is exposed in the public header (instead of being
++ * private to drivers/thermal/devfreq_cooling.c) so that ACPI thermal
++ * (drivers/acpi/thermal.c) can resolve the underlying ACPI device for
++ * devfreq cooling devices via dfc->devfreq->dev.parent->fwnode.
++ */
++struct devfreq_cooling_device {
++	struct thermal_cooling_device *cdev;
++	struct thermal_cooling_device_ops cooling_ops;
++	struct devfreq *devfreq;
++	unsigned long cooling_state;
++	u32 *freq_table;
++	size_t max_state;
++	struct devfreq_cooling_power *power_ops;
++	u32 res_util;
++	int capped_state;
++	struct dev_pm_qos_request req_max_freq;
++	struct em_perf_domain *em_pd;
++};
++
+ #ifdef CONFIG_DEVFREQ_THERMAL
+ 
+ struct thermal_cooling_device *
+-- 
+Armbian
+

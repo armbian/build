@@ -131,6 +131,16 @@ function kernel_determine_toolchain() {
 	else
 		kernel_compiler_full="${KERNEL_COMPILER}gcc"
 	fi
+
+	# Fail fast with a readable message if the (cross-)compiler is missing, instead of
+	# letting the '-dumpversion' invocation below die with a cryptic
+	# "env: '${kernel_compiler_full}': No such file or directory" (Error 127). The common
+	# case is cross-building a target whose toolchain is unavailable on this host - e.g. an
+	# arm64 target on a riscv64 host, where gcc-aarch64-linux-gnu is not in the repositories.
+	if ! eval command -v "${kernel_compiler_full}" > /dev/null 2>&1; then
+		exit_with_error "Kernel compiler '${kernel_compiler_full}' not found for target ${ARCH} on host $(dpkg --print-architecture); its cross-toolchain is likely unavailable for this host architecture. Build on a supported host, use a Docker build, or install the toolchain."
+	fi
+
 	kernel_compiler_version="$(eval env "${kernel_compiler_full}" -dumpfullversion -dumpversion)"
 	display_alert "Compiler version" "${kernel_compiler_full} ${kernel_compiler_version}" "info"
 }
