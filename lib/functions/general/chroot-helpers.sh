@@ -112,20 +112,23 @@ function umount_chroot_recursive() {
 #
 # mount_chroot_proc_for_uutils <target> <cleanup_id_nameref>
 function mount_chroot_proc_for_uutils() {
-	local target
-	target="$(realpath "$1")"          # normalize, remove last slash if dir
+	local target target_proc
+	target="$(realpath "$1")" # normalize, remove last slash if dir
+	target_proc="${target}/proc"
 	local -n nameref_cleanup_id="${2}" # nameref: set to the cleanup id (empty if nothing mounted)
 	nameref_cleanup_id=""
 
 	# procfs already usable? later stages (after mount_chroot) land here -> nothing to do.
-	if [[ -e "${target}/proc/self/auxv" ]]; then
+	if [[ -e "${target_proc}/self/auxv" ]]; then
 		display_alert "procfs already present in chroot" "${target} - uutils workaround not needed" "debug"
 		return 0
 	fi
 
+	# @Q-quote the path: run_host_command_logged re-parses its args through `bash -c "$*"`,
+	# so an unquoted path with whitespace/metacharacters would be word-split a second time.
 	display_alert "Mounting procfs for uutils coreutils" "${target} (rustix auxv workaround)" "info"
-	run_host_command_logged mkdir -p "${target}/proc"
-	run_host_command_logged mount -t proc chproc "${target}/proc"
+	run_host_command_logged mkdir -p "${target_proc@Q}"
+	run_host_command_logged mount -t proc chproc "${target_proc@Q}"
 
 	# Register teardown so the mount is removed even if a later chroot step aborts.
 	nameref_cleanup_id="umount_chroot_proc_for_uutils ${target@Q}"
@@ -145,9 +148,10 @@ function done_with_chroot_proc_for_uutils() {
 # umount_chroot_proc_for_uutils <target> -- cleanup callback; only registered when we mounted.
 function umount_chroot_proc_for_uutils() {
 	local target="${1}"
-	if mountpoint -q "${target}/proc" 2> /dev/null; then
+	local target_proc="${target}/proc"
+	if mountpoint -q "${target_proc}" 2> /dev/null; then
 		display_alert "Unmounting procfs mounted for uutils coreutils" "${target}" "debug"
-		run_host_command_logged umount "${target}/proc" "||" true
+		run_host_command_logged umount "${target_proc@Q}" "||" true
 	fi
 	return 0
 }
