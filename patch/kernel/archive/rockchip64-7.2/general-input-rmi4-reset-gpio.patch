@@ -1,0 +1,138 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] Input: synaptics-rmi4 - hard-reset via reset GPIO instead of
+ chip-wide SW reset
+
+The rmi4 core issues an F01 device reset command (0x01) over i2c during
+probe (rmi_initial_reset). On TDDI modules - touch and display driver in
+a single IC, as on the Anbernic RG Vita Pro (Synaptics BACA281300, which
+shares the vdd_lcd rail with the DSI panel) - that software reset also
+resets the display half of the chip: the LCD loses its DSI init right
+before the login prompt and stays black (backlight on) until the panel
+is re-prepared via a DPMS cycle.
+
+When a dedicated touch reset line is described in DT (reset-gpios),
+install a transport reset op that pulses that GPIO instead, which
+rmi_initial_reset() uses in place of the chip-wide command. Also pulse
+it on resume, and defer probe while the touch IC is not ready.
+
+Patch from ROCKNIX (RK3576 device patch 0008).
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+--- a/drivers/input/rmi4/rmi_i2c.c
++++ b/drivers/input/rmi4/rmi_i2c.c
+@@ -8,6 +8,7 @@
+ #include <linux/rmi.h>
+ #include <linux/of.h>
+ #include <linux/delay.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/regulator/consumer.h>
+ #include "rmi_driver.h"
+ 
+@@ -27,6 +28,7 @@
+  *
+  * @supplies: Array of voltage regulators
+  * @startup_delay: Milliseconds to pause after powering up the regulators
++ * @reset_gpio: Optional GPIO to hardware-reset the touch IC
+  */
+ struct rmi_i2c_xport {
+ 	struct rmi_transport_dev xport;
+@@ -40,6 +42,8 @@
+ 
+ 	struct regulator_bulk_data supplies[2];
+ 	u32 startup_delay;
++	struct gpio_desc *reset_gpio;
++	struct rmi_transport_ops ops;
+ };
+ 
+ #define RMI_PAGE_SELECT_REGISTER 0xff
+@@ -198,6 +202,28 @@
+ 	rmi_unregister_transport_device(&rmi_i2c->xport);
+ }
+ 
++static void rmi_i2c_reset(struct rmi_i2c_xport *rmi_i2c)
++{
++	const struct rmi_device_platform_data *pdata = &rmi_i2c->xport.pdata;
++
++	if (!rmi_i2c->reset_gpio)
++		return;
++
++	gpiod_set_value_cansleep(rmi_i2c->reset_gpio, 1);
++	msleep(20);
++	gpiod_set_value_cansleep(rmi_i2c->reset_gpio, 0);
++	msleep(pdata->reset_delay_ms ?: 100);
++}
++
++static int rmi_i2c_reset_op(struct rmi_transport_dev *xport, u16 reset_addr)
++{
++	struct rmi_i2c_xport *rmi_i2c =
++		container_of(xport, struct rmi_i2c_xport, xport);
++
++	rmi_i2c_reset(rmi_i2c);
++	return 0;
++}
++
+ static int rmi_i2c_probe(struct i2c_client *client)
+ {
+ 	struct rmi_device_platform_data *pdata;
+@@ -251,21 +277,43 @@
+ 
+ 	msleep(rmi_i2c->startup_delay);
+ 
++	rmi_i2c->reset_gpio = devm_gpiod_get_optional(&client->dev, "reset",
++						       GPIOD_OUT_LOW);
++	if (IS_ERR(rmi_i2c->reset_gpio))
++		return PTR_ERR(rmi_i2c->reset_gpio);
++
+ 	rmi_i2c->client = client;
+ 	mutex_init(&rmi_i2c->page_mutex);
+ 
++	rmi_i2c->ops = rmi_i2c_ops;
++	if (rmi_i2c->reset_gpio)
++		rmi_i2c->ops.reset = rmi_i2c_reset_op;
++
+ 	rmi_i2c->xport.dev = &client->dev;
+ 	rmi_i2c->xport.proto_name = "i2c";
+-	rmi_i2c->xport.ops = &rmi_i2c_ops;
++	rmi_i2c->xport.ops = &rmi_i2c->ops;
+ 
+ 	i2c_set_clientdata(client, rmi_i2c);
+ 
+ 	/*
++	 * Read reset_delay_ms from DT now so rmi_i2c_reset() can use it
++	 * before rmi_driver_of_probe() is called later during transport
++	 * device registration.
++	 */
++	of_property_read_u32(client->dev.of_node, "syna,reset-delay-ms",
++			     &pdata->reset_delay_ms);
++
++	rmi_i2c_reset(rmi_i2c);
++
++	/*
+ 	 * Setting the page to zero will (a) make sure the PSR is in a
+ 	 * known state, and (b) make sure we can talk to the device.
+ 	 */
+ 	error = rmi_set_page(rmi_i2c, 0);
+ 	if (error) {
++		if (error == -ENXIO || error == -ENODEV)
++			return dev_err_probe(&client->dev, -EPROBE_DEFER,
++					     "Touch IC not ready, will retry\n");
+ 		dev_err(&client->dev, "Failed to set page select to 0\n");
+ 		return error;
+ 	}
+@@ -315,6 +363,7 @@
+ 		return ret;
+ 
+ 	msleep(rmi_i2c->startup_delay);
++	rmi_i2c_reset(rmi_i2c);
+ 
+ 	ret = rmi_driver_resume(rmi_i2c->xport.rmi_dev, true);
+ 	if (ret)
+@@ -351,6 +400,7 @@
+ 		return ret;
+ 
+ 	msleep(rmi_i2c->startup_delay);
++	rmi_i2c_reset(rmi_i2c);
+ 
+ 	ret = rmi_driver_resume(rmi_i2c->xport.rmi_dev, false);
+ 	if (ret)
