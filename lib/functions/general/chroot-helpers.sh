@@ -92,3 +92,62 @@ function umount_chroot_recursive() {
 	fi
 	return 0
 }
+
+# Ubuntu 26.04 (resolute) and newer ship uutils coreutils. Their rustix-based
+# startup reads the process auxiliary vector; when the kernel's primary auxv
+# path fails (observed on arm64 vendor/BSP kernels, e.g. Rockchip RK3588) rustix
+# falls back to reading /proc/self/auxv. Inside a bare chroot that file does not
+# exist, so the binary panics ("called \`Result::unwrap()\` on an \`Err\` value")
+# and aborts the very first chroot command run against a freshly-extracted
+# rootfs. qemu-user cross-builds are immune (qemu supplies the auxv directly),
+# so this only bites *native* builds, where the framework skips qemu entirely.
+#
+# mount_chroot_proc_for_uutils mounts procfs into the target for a chroot that
+# runs before the normal mount_chroot() has set the mounts up. It is a no-op
+# when procfs is already present (guarded on ${target}/proc/self/auxv), so it
+# stays inert in every stage/build where mount_chroot() already ran. Teardown is
+# registered with the cleanup-handler registry so the mount is removed even if a
+# later step aborts before the paired done_with_chroot_proc_for_uutils() runs.
+# Mirrors the prepare/done idiom in host/mktemp-utils.sh.
+#
+# mount_chroot_proc_for_uutils <target> <cleanup_id_nameref>
+function mount_chroot_proc_for_uutils() {
+	local target
+	target="$(realpath "$1")"          # normalize, remove last slash if dir
+	local -n nameref_cleanup_id="${2}" # nameref: set to the cleanup id (empty if nothing mounted)
+	nameref_cleanup_id=""
+
+	# procfs already usable? later stages (after mount_chroot) land here -> nothing to do.
+	if [[ -e "${target}/proc/self/auxv" ]]; then
+		display_alert "procfs already present in chroot" "${target} - uutils workaround not needed" "debug"
+		return 0
+	fi
+
+	display_alert "Mounting procfs for uutils coreutils" "${target} (rustix auxv workaround)" "info"
+	run_host_command_logged mkdir -p "${target}/proc"
+	run_host_command_logged mount -t proc chproc "${target}/proc"
+
+	# Register teardown so the mount is removed even if a later chroot step aborts.
+	nameref_cleanup_id="umount_chroot_proc_for_uutils ${target@Q}"
+	add_cleanup_handler "${nameref_cleanup_id}"
+	return 0
+}
+
+# done_with_chroot_proc_for_uutils <cleanup_id>
+# Success-path teardown: unmount now and de-stack the handler. If something fails
+# _before_ this, the trap manager runs the registered handler instead.
+function done_with_chroot_proc_for_uutils() {
+	local cleanup_id="${1}"
+	[[ -z "${cleanup_id}" ]] && return 0 # nothing was mounted (procfs already present)
+	execute_and_remove_cleanup_handler "${cleanup_id}"
+}
+
+# umount_chroot_proc_for_uutils <target> -- cleanup callback; only registered when we mounted.
+function umount_chroot_proc_for_uutils() {
+	local target="${1}"
+	if mountpoint -q "${target}/proc" 2> /dev/null; then
+		display_alert "Unmounting procfs mounted for uutils coreutils" "${target}" "debug"
+		run_host_command_logged umount "${target}/proc" "||" true
+	fi
+	return 0
+}

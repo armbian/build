@@ -281,6 +281,12 @@ function create_sources_list_and_deploy_repo_key() {
 	gpg --homedir "${gpg_tmp}" --batch --yes --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
 	rm -rf "${gpg_tmp}"
 
+	# Ubuntu 26.04+ uutils coreutils read /proc/self/auxv at startup; the chroot
+	# calls below abort without it on native builds. Mount procfs for them (no-op
+	# if already mounted); see mount_chroot_proc_for_uutils() in chroot-helpers.sh.
+	declare uutils_proc_cleanup_id=""
+	mount_chroot_proc_for_uutils "${basedir}" uutils_proc_cleanup_id
+
 	# deploy the qemu binary, no matter where the rootfs came from (built or cached)
 	deploy_qemu_binary_to_chroot "${basedir}" "${when}" # undeployed at end of this function
 
@@ -348,6 +354,10 @@ function create_sources_list_and_deploy_repo_key() {
 	CUSTOM_APT_REPO
 
 	unset CUSTOM_REPO_WHEN
+
+	# Unmount the procfs we mounted for uutils coreutils, if any (see above). A
+	# failure before this point is handled by the registered cleanup handler.
+	done_with_chroot_proc_for_uutils "${uutils_proc_cleanup_id}"
 
 	return 0
 }
