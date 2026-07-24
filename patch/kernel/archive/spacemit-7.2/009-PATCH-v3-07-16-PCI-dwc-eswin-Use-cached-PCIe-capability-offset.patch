@@ -1,0 +1,387 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 07/16] PCI: dwc: eswin: Use cached PCIe capability offset
+Date: Mon, 20 Jul 2026 23:06:10 +0800
+
+This function is called after dw_pcie_host_init() has already cached the
+offset (dw_pcie_link_up() is called after .init and after caching).
+Therefore, we can directly use pci->pcie_cap.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+In pcie-eswin, the call chain is:
+
+  static const struct dw_pcie_ops dw_pcie_ops = {
+    .link_up = eswin_pcie_link_up,
+  };
+  eswin_pcie_link_up()
+    -> dw_pcie_find_capability()
+---
+ drivers/pci/controller/dwc/pcie-eswin.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-eswin.c b/drivers/pci/controller/dwc/pcie-eswin.c
+index ce8d64f8a395..6a37fd5a8384 100644
+--- a/drivers/pci/controller/dwc/pcie-eswin.c
++++ b/drivers/pci/controller/dwc/pcie-eswin.c
+@@ -84,8 +84,7 @@ static int eswin_pcie_start_link(struct dw_pcie *pci)
+ 
+ static bool eswin_pcie_link_up(struct dw_pcie *pci)
+ {
+-	u16 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+-	u16 val = dw_pcie_readw_dbi(pci, offset + PCI_EXP_LNKSTA);
++	u16 val = dw_pcie_readw_dbi(pci, pci->pcie_cap + PCI_EXP_LNKSTA);
+ 
+ 	return val & PCI_EXP_LNKSTA_DLLLA;
+ }
+-- 
+2.34.1
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 02/16] PCI: dwc: Use cached PCIe capability offset in core
+Date: Mon, 20 Jul 2026 23:06:05 +0800
+
+Modify the DWC core functions to use the cached pcie_cap offset instead
+of calling dw_pcie_find_capability() each time.
+
+In the DWC core, dw_pcie_find_capability() is called at several locations:
+- dw_pcie_ep_init_non_sticky_registers()
+- dw_pcie_wait_for_link()
+- dw_pcie_link_set_max_speed()
+- dw_pcie_link_get_max_link_width()
+- dw_pcie_link_set_max_link_width()
+
+The cached offset is initialized after hardware is ready:
+- In host mode: dw_pcie_host_init() calls pp->ops->host_init() (enables
+  clocks/resets), then dw_pcie_get_pcie_cap() caches the offset.
+- In endpoint mode: the core no longer caches automatically. Instead,
+  drivers must call dw_pcie_get_pcie_cap() after hardware is enabled
+  (e.g., after PERST# deassert). dw_pcie_ep_init_non_sticky_registers()
+  is called after that point, so it can safely use pci->pcie_cap.
+
+dw_pcie_ep_init_non_sticky_registers() now assumes pci->pcie_cap is
+valid. if not, it prints a warning and skips the operation. The other
+functions run after probe, so pci->pcie_cap is already valid and can
+be used directly.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+ drivers/pci/controller/dwc/pcie-designware-ep.c   |  2 +-
+ drivers/pci/controller/dwc/pcie-designware-host.c |  2 ++
+ drivers/pci/controller/dwc/pcie-designware.c      | 15 ++++++---------
+ 3 files changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware-ep.c b/drivers/pci/controller/dwc/pcie-designware-ep.c
+index 7d2794945704..14228be8bbce 100644
+--- a/drivers/pci/controller/dwc/pcie-designware-ep.c
++++ b/drivers/pci/controller/dwc/pcie-designware-ep.c
+@@ -1246,7 +1246,7 @@ static void dw_pcie_ep_init_non_sticky_registers(struct dw_pcie *pci)
+ 	 * to all other functions as well.
+ 	 */
+ 	if (funcs > 1) {
+-		offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++		offset = pci->pcie_cap;
+ 		func0_lnkcap = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCAP);
+ 		func0_lnkcap = FIELD_GET(PCI_EXP_LNKCAP_MLW |
+ 					 PCI_EXP_LNKCAP_SLS, func0_lnkcap);
+diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
+index 06722259d2e3..fee800ac56d4 100644
+--- a/drivers/pci/controller/dwc/pcie-designware-host.c
++++ b/drivers/pci/controller/dwc/pcie-designware-host.c
+@@ -593,6 +593,8 @@ int dw_pcie_host_init(struct dw_pcie_rp *pp)
+ 			goto err_free_ecam;
+ 	}
+ 
++	dw_pcie_get_pcie_cap(pci);
++
+ 	if (pci_msi_enabled()) {
+ 		pp->use_imsi_rx = !(pp->ops->msi_init ||
+ 				     of_property_present(np, "msi-parent") ||
+diff --git a/drivers/pci/controller/dwc/pcie-designware.c b/drivers/pci/controller/dwc/pcie-designware.c
+index ec4722ed9303..810729b91892 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.c
++++ b/drivers/pci/controller/dwc/pcie-designware.c
+@@ -766,7 +766,7 @@ const char *dw_pcie_ltssm_status_string(enum dw_pcie_ltssm ltssm)
+  */
+ int dw_pcie_wait_for_link(struct dw_pcie *pci)
+ {
+-	u32 offset, val, ltssm;
++	u32 val, ltssm;
+ 	int retries;
+ 
+ 	/* Check if the link is up or not */
+@@ -806,8 +806,7 @@ int dw_pcie_wait_for_link(struct dw_pcie *pci)
+ 
+ 	pci_host_common_link_train_delay(pci->max_link_speed);
+ 
+-	offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+-	val = dw_pcie_readw_dbi(pci, offset + PCI_EXP_LNKSTA);
++	val = dw_pcie_readw_dbi(pci, pci->pcie_cap + PCI_EXP_LNKSTA);
+ 
+ 	dev_info(pci->dev, "PCIe Gen.%u x%u link up\n",
+ 		 FIELD_GET(PCI_EXP_LNKSTA_CLS, val),
+@@ -843,7 +842,7 @@ EXPORT_SYMBOL_GPL(dw_pcie_upconfig_setup);
+ static void dw_pcie_link_set_max_speed(struct dw_pcie *pci)
+ {
+ 	u32 cap, ctrl2, link_speed;
+-	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	u8 offset = pci->pcie_cap;
+ 
+ 	cap = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCAP);
+ 
+@@ -890,7 +889,7 @@ static void dw_pcie_link_set_max_speed(struct dw_pcie *pci)
+ int dw_pcie_link_get_max_link_width(struct dw_pcie *pci)
+ {
+ 	u8 cap = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+-	u32 lnkcap = dw_pcie_readl_dbi(pci, cap + PCI_EXP_LNKCAP);
++	u32 lnkcap = dw_pcie_readl_dbi(pci, pci->pcie_cap + PCI_EXP_LNKCAP);
+ 
+ 	return FIELD_GET(PCI_EXP_LNKCAP_MLW, lnkcap);
+ }
+@@ -898,7 +897,6 @@ int dw_pcie_link_get_max_link_width(struct dw_pcie *pci)
+ static void dw_pcie_link_set_max_link_width(struct dw_pcie *pci, u32 num_lanes)
+ {
+ 	u32 lnkcap, lwsc, plc;
+-	u8 cap;
+ 
+ 	if (!num_lanes)
+ 		return;
+@@ -935,10 +933,9 @@ static void dw_pcie_link_set_max_link_width(struct dw_pcie *pci, u32 num_lanes)
+ 	dw_pcie_writel_dbi(pci, PCIE_PORT_LINK_CONTROL, plc);
+ 	dw_pcie_writel_dbi(pci, PCIE_LINK_WIDTH_SPEED_CONTROL, lwsc);
+ 
+-	cap = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+-	lnkcap = dw_pcie_readl_dbi(pci, cap + PCI_EXP_LNKCAP);
++	lnkcap = dw_pcie_readl_dbi(pci, pci->pcie_cap + PCI_EXP_LNKCAP);
+ 	FIELD_MODIFY(PCI_EXP_LNKCAP_MLW, &lnkcap, num_lanes);
+-	dw_pcie_writel_dbi(pci, cap + PCI_EXP_LNKCAP, lnkcap);
++	dw_pcie_writel_dbi(pci, pci->pcie_cap + PCI_EXP_LNKCAP, lnkcap);
+ }
+ 
+ void dw_pcie_iatu_detect(struct dw_pcie *pci)
+-- 
+2.34.1
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 01/16] PCI: dwc: Add pcie_cap field and helper in designware header
+Date: Mon, 20 Jul 2026 23:06:04 +0800
+
+Add a pcie_cap field to struct dw_pcie to store the offset of the
+PCI Express Capability structure. Provide a helper dw_pcie_get_pcie_cap()
+which performs the capability search on first call and caches the result.
+
+This is a preparatory step for replacing repetitive capability searches
+in both core and platform drivers.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+ drivers/pci/controller/dwc/pcie-designware.h | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware.h b/drivers/pci/controller/dwc/pcie-designware.h
+index de4b245b1758..8113efd33a24 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.h
++++ b/drivers/pci/controller/dwc/pcie-designware.h
+@@ -591,6 +591,8 @@ struct dw_pcie {
+ 	 * use_parent_dt_ranges to true to avoid this warning.
+ 	 */
+ 	bool			use_parent_dt_ranges;
++
++	u8			pcie_cap;	/* PCIe capability offset */
+ };
+ 
+ #define to_dw_pcie_from_pp(port) container_of((port), struct dw_pcie, pp)
+@@ -829,6 +831,21 @@ static inline void dw_pcie_dbi_ro_wr_dis(struct dw_pcie *pci)
+ 	dw_pcie_writel_dbi(pci, reg, val);
+ }
+ 
++/**
++ * dw_pcie_get_pcie_cap() - Return cached PCIe Capability offset
++ * @pci: DWC instance
++ *
++ * Finds and caches the offset of PCI_CAP_ID_EXP on first call.
++ * Returns 0 if the capability is not present.
++ */
++static inline u8 dw_pcie_get_pcie_cap(struct dw_pcie *pci)
++{
++	if (!pci->pcie_cap)
++		pci->pcie_cap = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++
++	return pci->pcie_cap;
++}
++
+ static inline int dw_pcie_start_link(struct dw_pcie *pci)
+ {
+ 	if (pci->ops && pci->ops->start_link)
+-- 
+2.34.1
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 05/16] PCI: dwc: meson: Use cached PCIe capability offset
+Date: Mon, 20 Jul 2026 23:06:08 +0800
+
+dw_pcie_host_init() calls pp->ops->init (meson_pcie_host_init) before
+caching the offset. Therefore, inside .init we must call
+dw_pcie_get_pcie_cap() to obtain the offset (the helper will perform the
+DBI read and cache the result). This is safe because the hardware is
+already enabled by the driver's own initialization.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+In pci-meson, the call chain is:
+
+  static const struct dw_pcie_host_ops meson_pcie_host_ops = {
+    .init = meson_pcie_host_init,
+  };
+  meson_pcie_host_init()
+    -> meson_set_max_payload()
+      -> dw_pcie_find_capability()
+    -> meson_set_max_rd_req_size()
+      -> dw_pcie_find_capability()
+---
+ drivers/pci/controller/dwc/pci-meson.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pci-meson.c b/drivers/pci/controller/dwc/pci-meson.c
+index 7a4da9fae1ea..c9d0388d262b 100644
+--- a/drivers/pci/controller/dwc/pci-meson.c
++++ b/drivers/pci/controller/dwc/pci-meson.c
+@@ -277,7 +277,7 @@ static void meson_set_max_payload(struct meson_pcie *mp, int size)
+ {
+ 	struct dw_pcie *pci = &mp->pci;
+ 	u32 val;
+-	u16 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	u8 offset = dw_pcie_get_pcie_cap(pci);
+ 	int max_payload_size = meson_size_to_payload(mp, size);
+ 
+ 	val = dw_pcie_readl_dbi(pci, offset + PCI_EXP_DEVCTL);
+@@ -293,7 +293,7 @@ static void meson_set_max_rd_req_size(struct meson_pcie *mp, int size)
+ {
+ 	struct dw_pcie *pci = &mp->pci;
+ 	u32 val;
+-	u16 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	u8 offset = dw_pcie_get_pcie_cap(pci);
+ 	int max_rd_req_size = meson_size_to_payload(mp, size);
+ 
+ 	val = dw_pcie_readl_dbi(pci, offset + PCI_EXP_DEVCTL);
+-- 
+2.34.1
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 04/16] PCI: dwc: layerscape-ep: Use cached PCIe capability offset
+Date: Mon, 20 Jul 2026 23:06:07 +0800
+
+Replace these with dw_pcie_get_pcie_cap(). The hardware is already enabled
+by the driver before ls_pcie_ep_probe() and before the interrupt handler
+runs. dw_pcie_get_pcie_cap() will cache the offset on first call, and
+subsequent calls (including inside dw_pcie_ep_init) will use the cached
+value without re-searching.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+In pci-layerscape-ep, dw_pcie_find_capability() is called in:
+
+  ls_pcie_ep_probe()
+    -> offset = dw_pcie_find_capability()
+    -> pcie->lnkcap = dw_pcie_readl_dbi(offset + PCI_EXP_LNKCAP)
+    -> dw_pcie_ep_init()
+    -> ls_pcie_ep_interrupt_init()
+        -> devm_request_irq(..., ls_pcie_ep_event_handler)
+          -> ls_pcie_ep_event_handler()
+            -> dw_pcie_find_capability()
+---
+ drivers/pci/controller/dwc/pci-layerscape-ep.c | 9 +++------
+ 1 file changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pci-layerscape-ep.c b/drivers/pci/controller/dwc/pci-layerscape-ep.c
+index 8936975ff104..b2d0b51df3c5 100644
+--- a/drivers/pci/controller/dwc/pci-layerscape-ep.c
++++ b/drivers/pci/controller/dwc/pci-layerscape-ep.c
+@@ -74,7 +74,6 @@ static irqreturn_t ls_pcie_ep_event_handler(int irq, void *dev_id)
+ 	struct ls_pcie_ep *pcie = dev_id;
+ 	struct dw_pcie *pci = pcie->pci;
+ 	u32 val, cfg;
+-	u8 offset;
+ 
+ 	val = ls_pcie_pf_lut_readl(pcie, PEX_PF0_PME_MES_DR);
+ 	ls_pcie_pf_lut_writel(pcie, PEX_PF0_PME_MES_DR, val);
+@@ -83,9 +82,6 @@ static irqreturn_t ls_pcie_ep_event_handler(int irq, void *dev_id)
+ 		return IRQ_NONE;
+ 
+ 	if (val & PEX_PF0_PME_MES_DR_LUD) {
+-
+-		offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+-
+ 		/*
+ 		 * The values of the Maximum Link Width and Supported Link
+ 		 * Speed from the Link Capabilities Register will be lost
+@@ -93,7 +89,8 @@ static irqreturn_t ls_pcie_ep_event_handler(int irq, void *dev_id)
+ 		 * that configured by the Reset Configuration Word (RCW).
+ 		 */
+ 		dw_pcie_dbi_ro_wr_en(pci);
+-		dw_pcie_writel_dbi(pci, offset + PCI_EXP_LNKCAP, pcie->lnkcap);
++		dw_pcie_writel_dbi(pci, pci->pcie_cap + PCI_EXP_LNKCAP,
++				   pcie->lnkcap);
+ 		dw_pcie_dbi_ro_wr_dis(pci);
+ 
+ 		cfg = ls_pcie_pf_lut_readl(pcie, PEX_PF0_CONFIG);
+@@ -266,7 +263,7 @@ static int __init ls_pcie_ep_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, pcie);
+ 
+-	offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	offset = dw_pcie_get_pcie_cap(pci);
+ 	pcie->lnkcap = dw_pcie_readl_dbi(pci, offset + PCI_EXP_LNKCAP);
+ 
+ 	ret = dw_pcie_ep_init(&pci->ep);
+-- 
+2.34.1
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hans Zhang <18255117159@163.com>
+Subject: [PATCH v3 13/16] PCI: dwc: spacemit-k1: Use cached PCIe capability offset
+Date: Mon, 20 Jul 2026 23:06:16 +0800
+
+Because .init runs before core caching, we call dw_pcie_get_pcie_cap()
+inside k1_pcie_disable_aspm_l1() to get the capability base, then add
+PCI_EXP_LNKCAP. Hardware is already enabled at this point.
+
+Signed-off-by: Hans Zhang <18255117159@163.com>
+---
+In pcie-spacemit-k1, the call chain is:
+
+  static const struct dw_pcie_host_ops k1_pcie_host_ops = {
+    .init = k1_pcie_init,
+  };
+  k1_pcie_init()
+    -> k1_pcie_disable_aspm_l1()
+      -> dw_pcie_find_capability()
+---
+ drivers/pci/controller/dwc/pcie-spacemit-k1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-spacemit-k1.c b/drivers/pci/controller/dwc/pcie-spacemit-k1.c
+index 04241df8fd59..3e741324f44a 100644
+--- a/drivers/pci/controller/dwc/pcie-spacemit-k1.c
++++ b/drivers/pci/controller/dwc/pcie-spacemit-k1.c
+@@ -116,7 +116,7 @@ static void k1_pcie_disable_aspm_l1(struct k1_pcie *k1)
+ 	u8 offset;
+ 	u32 val;
+ 
+-	offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	offset = dw_pcie_get_pcie_cap(pci);
+ 	offset += PCI_EXP_LNKCAP;
+ 
+ 	dw_pcie_dbi_ro_wr_en(pci);
+-- 
+2.34.1
+
