@@ -374,10 +374,20 @@ if apply_patches:
 			patches = patch_files_by_parent[parent]
 			parent.rewrite_patch_file(patches)
 		FAILED_PATCHES = [one_patch for one_patch in VALID_PATCHES if (not one_patch.applied_ok) or (one_patch.rewritten_patch is None)]
-		for failed_patch in FAILED_PATCHES:
-			log.info(
-				f"Consider removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "
-				f"it was not applied successfully.")
+		# A single (mbox) patch file can hold multiple patches, so several entries
+		# in FAILED_PATCHES may share one parent file. Deduplicate the file paths
+		# before deleting, otherwise the second os.remove() of the same file raises
+		# FileNotFoundError and aborts patching. Guard removal against races too.
+		failed_patch_files = {failed_patch.parent.full_file_path() for failed_patch in FAILED_PATCHES}
+		for patch_file_path in sorted(failed_patch_files):
+			log.warning(f"Removing {patch_file_path}; it failed to apply/was not rewritten.")
+			try:
+				os.remove(patch_file_path)
+			except FileNotFoundError:
+				log.debug(f"Patch file already removed: {patch_file_path}")
+			except OSError as e:
+				log.error(f"Failed to remove patch file {patch_file_path}: {e}")
+
 
 # Create markdown about the patches
 readme_markdown: "str | None" = None
