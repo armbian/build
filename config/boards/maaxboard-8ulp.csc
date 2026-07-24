@@ -2,7 +2,7 @@
 BOARD_NAME="Avnet MaaXBoard 8ULP"
 BOARD_VENDOR="avnet"
 BOARDFAMILY="imx8ulp"
-BOARD_MAINTAINER="govindsi"
+BOARD_MAINTAINER=""
 INTRODUCED="2023"
 HAS_VIDEO_OUTPUT="yes"
 BOOTCONFIG="maaxboard-8ulp_defconfig"

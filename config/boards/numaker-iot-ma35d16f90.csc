@@ -1,7 +1,7 @@
 # Dual-core Cortex-A35 + Cortex-M4, 512MB DDR
 BOARD_NAME="NuMaker IoT MA35D16F90"
 BOARD_VENDOR="nuvoton"
-BOARD_MAINTAINER="TuAFBogey"
+BOARD_MAINTAINER=""
 BOARDFAMILY="nuvoton-ma35d1"
 INTRODUCED="2024"
 # SD card boot (sdcard1 = SD1 slot on NuMaker IoT board)
