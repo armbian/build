@@ -30,7 +30,7 @@ case "${BRANCH}" in
 
 		# KERNELSOURCE defined in mainline-config.sh
 		# KERNELBRANCH defined in mainline-kernel.conf.sh
-		declare -g KERNEL_MAJOR_MINOR="6.18" # needs updating with each minor kernel release
+		declare -g KERNEL_MAJOR_MINOR="7.2" # follow the build framework's current mainline edge target
 		declare -g KERNEL_DESCRIPTION="Latest upstream mainline kernel"
 		declare -g ATFBRANCH="branch:master"
 		declare -g OPTEE_BRANCH="branch:master"
@@ -43,7 +43,7 @@ esac
 
 ATF_TARGET_MAP="PLAT=${ATF_PLAT} TARGET_BOARD=${ATF_BOARD} SPD=opteed ${ATF_ARGS} all;;build/${ATF_PLAT}/${ATF_BOARD}/release/bl31.bin:bl31.bin ${EXTRA_ATF_TARGETS}"
 
-UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-pager_v2.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} tispl.bin u-boot.img"
+UBOOT_TARGET_MAP="BL31=bl31.bin ${EXTRA_BOOT_ARGS} TEE=${SRC}/cache/sources/optee-os/out/arm-plat-k3/core/tee-pager_v2.bin BINMAN_INDIRS=${SRC}/cache/sources/ti-linux-firmware all;;tiboot3.bin ${SYSFW_FILE:+sysfw.itb} ${TISPL_FILE:-tispl.bin}:tispl.bin ${UBOOT_FILE:-u-boot.img}:u-boot.img"
 
 # To match what our current SDK produces
 BOOT_FS_LABEL="boot"
@@ -79,14 +79,11 @@ function pre_config_uboot_target__build_first_stage() {
 	compile_k3_bootgen
 
 	if [[ "${BOOT_SOC}" != "am62l" ]]; then
-		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE} tiboot3.bin
-		cp ${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE} sysfw.itb || true
+		cp "${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${TIBOOT3_FILE}" tiboot3.bin
+		if [[ -n "${SYSFW_FILE:-}" ]]; then
+			cp "${SRC}/cache/sources/u-boot-worktree/${BOOTDIR}/${BOOTBRANCH##*:}/build-r5/${SYSFW_FILE}" sysfw.itb
+		fi
 	fi
-}
-
-function post_uboot_custom_postprocess__update_uboot_names() {
-	cp ${TISPL_FILE} tispl.bin || true
-	cp ${UBOOT_FILE} u-boot.img || true
 }
 
 function pre_prepare_partitions() {
@@ -108,8 +105,10 @@ function format_partitions() {
 }
 
 function write_uboot_platform() {
-	cp $1/tiboot3.bin ${MOUNT}/boot
-	cp $1/sysfw.itb ${MOUNT}/boot || true
-	cp $1/tispl.bin ${MOUNT}/boot
-	cp $1/u-boot.img ${MOUNT}/boot
+	cp "$1/tiboot3.bin" "${MOUNT}/boot"
+	if [[ -f "$1/sysfw.itb" ]]; then
+		cp "$1/sysfw.itb" "${MOUNT}/boot"
+	fi
+	cp "$1/tispl.bin" "${MOUNT}/boot"
+	cp "$1/u-boot.img" "${MOUNT}/boot"
 }

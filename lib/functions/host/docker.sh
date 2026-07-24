@@ -519,10 +519,12 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
-		# Pass down the TERM, COLORFGBG, and the COLUMNS
+		# Pass down the TERM, COLORFGBG, and the COLUMNS. docker run has no --tty,
+		# so the container can't measure the terminal itself; forward the width
+		# captured on the host (ARMBIAN_TTY_COLUMNS) so patch tables match it.
 		"--env" "TERM=${TERM}"
 		"--env" "COLORFGBG=${COLORFGBG-}"
-		"--env" "COLUMNS=${COLUMNS:-"160"}"
+		"--env" "COLUMNS=${COLUMNS:-${ARMBIAN_TTY_COLUMNS:-}}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
 		"--env" "CI=${CI}"                         # All CI's, hopefully

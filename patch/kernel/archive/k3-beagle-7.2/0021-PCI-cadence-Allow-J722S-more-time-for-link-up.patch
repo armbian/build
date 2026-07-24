@@ -1,0 +1,98 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Andrei Aldea <andrei1998@gmail.com>
+Date: Wed, 22 Jul 2026 22:05:00 -0500
+Subject: [PATCH] PCI: cadence: Allow J722S more time for link up
+
+The BeagleY-AI PCIe port can host an ASM1182e switch with an NVMe device
+behind it.  On a cold boot this topology occasionally takes longer than the
+generic Cadence one-second link timeout to become ready.  The initial PCI
+scan then fixes the root bridge subordinate bus to 01; a later manual rescan
+can discover the switch but cannot allocate its downstream buses.
+
+Make the Cadence link retry count configurable by the platform glue and give
+J722S five seconds.  Keep the existing one-second default for every other
+Cadence platform so systems without an endpoint do not acquire a longer boot
+delay.
+
+Signed-off-by: Andrei Aldea <andrei1998@gmail.com>
+---
+ drivers/pci/controller/cadence/pci-j721e.c             | 4 ++++
+ drivers/pci/controller/cadence/pcie-cadence-host-common.c | 3 ++-
+ drivers/pci/controller/cadence/pcie-cadence.h          | 2 ++
+ 3 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/cadence/pcie-cadence.h b/drivers/pci/controller/cadence/pcie-cadence.h
+index 853a69b83b7b..8c229bf52e99 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence.h
++++ b/drivers/pci/controller/cadence/pcie-cadence.h
+@@ -87,6 +87,7 @@ struct cdns_plat_pcie_of_data {
+  *       wrapper
+  * @cdns_pcie_reg_offsets: Register bank offsets for different SoC
+  * @max_link_speed: Maximum supported link speed
++ * @link_wait_max_retries: Platform override for link-up polling retries
+  */
+ struct cdns_pcie {
+ 	void __iomem		             *reg_base;
+@@ -100,6 +101,7 @@ struct cdns_pcie {
+ 	const  struct cdns_pcie_ops          *ops;
+ 	const  struct cdns_plat_pcie_of_data *cdns_pcie_reg_offsets;
+ 	int				     max_link_speed;
++	unsigned int			     link_wait_max_retries;
+ };
+ 
+ /**
+diff --git a/drivers/pci/controller/cadence/pcie-cadence-host-common.c b/drivers/pci/controller/cadence/pcie-cadence-host-common.c
+index 6321a8d3c752..cc259e3ea6e2 100644
+--- a/drivers/pci/controller/cadence/pcie-cadence-host-common.c
++++ b/drivers/pci/controller/cadence/pcie-cadence-host-common.c
+@@ -51,9 +51,11 @@ int cdns_pcie_host_wait_for_link(struct cdns_pcie *pcie,
+ {
+ 	struct device *dev = pcie->dev;
+ 	int retries;
++	int max_retries = pcie->link_wait_max_retries ?:
++			  LINK_WAIT_MAX_RETRIES;
+ 
+ 	/* Check if the link is up or not */
+-	for (retries = 0; retries < LINK_WAIT_MAX_RETRIES; retries++) {
++	for (retries = 0; retries < max_retries; retries++) {
+ 		if (pcie_link_up(pcie)) {
+ 			dev_info(dev, "Link up\n");
+ 			return 0;
+diff --git a/drivers/pci/controller/cadence/pci-j721e.c b/drivers/pci/controller/cadence/pci-j721e.c
+index 243035b06309..2065e1ea0cea 100644
+--- a/drivers/pci/controller/cadence/pci-j721e.c
++++ b/drivers/pci/controller/cadence/pci-j721e.c
+@@ -51,6 +51,7 @@ enum link_status {
+ #define LANE_COUNT(n)			((n) << 8)
+ 
+ #define ACSPCIE_PAD_DISABLE_MASK	GENMASK(1, 0)
++#define J722S_LINK_WAIT_MAX_RETRIES	50
+ #define GENERATION_SEL_MASK		GENMASK(1, 0)
+ 
+ struct j721e_pcie {
+@@ -78,6 +79,7 @@ struct j721e_pcie_data {
+ 	u32			linkdown_irq_regfield;
+ 	unsigned int		byte_access_allowed:1;
+ 	unsigned int		max_lanes;
++	unsigned int		link_wait_max_retries;
+ };
+ 
+ static inline u32 j721e_pcie_user_readl(struct j721e_pcie *pcie, u32 offset)
+@@ -424,6 +426,7 @@ static const struct j721e_pcie_data j722s_pcie_rc_data = {
+ 	.linkdown_irq_regfield = J7200_LINK_DOWN,
+ 	.byte_access_allowed = true,
+ 	.max_lanes = 1,
++	.link_wait_max_retries = J722S_LINK_WAIT_MAX_RETRIES,
+ };
+ 
+ static const struct of_device_id of_j721e_pcie_match[] = {
+@@ -519,6 +522,7 @@ static int j721e_pcie_probe(struct platform_device *pdev)
+ 		return 0;
+ 	}
+ 
++	cdns_pcie->link_wait_max_retries = data->link_wait_max_retries;
+ 	pcie->mode = mode;
+ 	pcie->linkdown_irq_regfield = data->linkdown_irq_regfield;
+ 
+-- 
+2.50.1
