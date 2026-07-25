@@ -31,7 +31,10 @@ function kernel_main_patching_python() {
 		#"BOARD="                                             # BOARD is needed for the patchset selection logic; mostly for u-boot. empty for kernel.
 		#"TARGET="                                            # TARGET is need for u-boot's SPI/SATA etc selection logic. empty for kernel
 		# For table generation to fit into the screen, or being large when in GHA.
-		"COLUMNS=${COLUMNS:-160}"
+		# Prefer an explicit COLUMNS, else the terminal width captured at startup
+		# (ARMBIAN_TTY_COLUMNS); empty on piped/CI runs so patching.py picks a
+		# fixed wide width for logs instead of a synthetic narrow one.
+		"COLUMNS=${COLUMNS:-${ARMBIAN_TTY_COLUMNS:-}}"
 		"COLORFGBG=${COLORFGBG}"
 		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.

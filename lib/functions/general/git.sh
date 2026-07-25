@@ -57,7 +57,23 @@ function git_ensure_safe_directory() {
 		local git_dir="$1"
 		if [[ -e "$1/.git" ]]; then
 			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-			git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
+			# NB: 'git config --get safe.directory <path>' treats <path> as a
+			# regex, so a shorter path (…/amlogic-boot-fip) spuriously matches an
+			# already-added longer one (…/amlogic-boot-fip-jethub) and we skip
+			# adding it -> later "dubious ownership". Compare values literally.
+			local existing found=no
+			# Suppress only the two benign exit codes from --get-all: 1 when the key is
+			# unset (first run) and 141 (SIGPIPE) when the loop's 'break' closes the pipe
+			# early. Both are the last command in this '<(…)' process-substitution
+			# subshell, which inherits the framework's errtrace ERR trap and would
+			# otherwise emit a spurious "Error occurred in SUBSHELL git.sh" annotation.
+			# Any other exit code is a real git config failure and is deliberately left
+			# to trip the ERR trap (unlike a blanket '|| true', which would hide it).
+			while IFS= read -r existing; do
+				[[ "$existing" == "$git_dir" ]] && { found=yes; break; }
+			done < <(git config --global --get-all safe.directory 2> /dev/null \
+				|| { rc=$?; [[ "$rc" == 1 || "$rc" == 141 ]]; })
+			[[ "$found" == yes ]] || regular_git config --global --add safe.directory "$git_dir"
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"

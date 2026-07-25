@@ -1,24 +1,15 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 
-// rpardini, early 2026:
-// - Status of this mainline port:
-// - Initially started by Joshua Riek (2023?)
-// - I then added some PCIe3x4 stuff, but never got around to finishing it
-// - Specifically, the 2 FUSB302's are beyond me for now
-//   - One of them _powers_ the board. To use with mainline, power the board some other way with 12V, otherwise kaboom.
-//     - See sre's talk on this issue; Blade3 should be similar to Rock-5b in this aspect.
-// - A challenge has been the PCI2x1 lanes to the miniPCIe and ASM1182e switch
-//   - Which by themselves seem to work, but the devices behind them (Switch + RTL8169 NICs) do not get powered
-//   - Until one day I tried to describe a (in theory) USB-related power pin, and suddenly both PCIe NICs started working!
-// - All that said, the board is really not stable with this; end-users are much better off with vendor kernel for now.
+// rpardini, mid 2026:
 // - Any and all help is appreciated. Those boards are nice, they've 2 FUSB302, and fancy PCIe Endpoint mode stuff.
 // - Schematics we have access to are in https://damwold5pt25n.cloudfront.net/blade3/file/Schematic_Blade_3_v1.1.0.pdf
-//   - Those clearly lie.
 
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/rockchip.h>
+#include <dt-bindings/usb/pd.h>
+#include <dt-bindings/soc/rockchip,vop2.h>
 #include "rk3588.dtsi"
 
 / {
@@ -26,6 +17,8 @@
 	compatible = "mixtile,blade3", "rockchip,rk3588";
 
 	aliases {
+		ethernet0 = &rtl_eth0;
+		ethernet1 = &rtl_eth1;
 		mmc0 = &sdhci;
 		mmc1 = &sdmmc;
 		serial2 = &uart2;
@@ -84,6 +77,41 @@
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 		vin-supply = <&vcc5v0_usbdcin>;
+	};
+
+	/*
+	 * Type-C VBUS source rails, gated by GPIO and managed by the tcpm/fusb302
+	 * stack (vendor-faithful: NOT always-on). GPIO4_B0 (TYPEC5V_PWREN0) is the
+	 * pin the vendor DT also labels vcc5v0_host_en: on this board it additionally
+	 * gates power reaching the ASM1182e PCIe switch + RTL8125B NICs. If the
+	 * switch/NICs fail to power on mainline (tcpm may not hold VBUS the way the
+	 * vendor stack does), add "regulator-always-on;" to vbus5v0_typec0 to force
+	 * GPIO4_B0 permanently high (Rock 5B vcc5v0_host pattern) -- this reliably
+	 * powers the switch at the cost of Type-C0's ability to source 5V, an
+	 * acceptable trade for a 12V-powered board.
+	 */
+	vbus5v0_typec0: vbus5v0-typec0-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vbus5v0_typec0";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PB0 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_usb>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec5v_pwren0>;
+	};
+
+	vbus5v0_typec1: vbus5v0-typec1-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vbus5v0_typec1";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		enable-active-high;
+		gpio = <&gpio4 RK_PA3 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vcc5v0_usb>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec5v_pwren1>;
 	};
 
 	pcie20_avdd0v85: pcie20-avdd0v85-regulator {
@@ -158,6 +186,31 @@
 		regulator-min-microvolt = <1100000>;
 		regulator-max-microvolt = <1100000>;
 		vin-supply = <&vcc5v0_sys>;
+	};
+
+	/* miniPCIe 2.0 slot power enable; GPIO3_C6 = PCIE20_PWREN (schematic) */
+	vcc3v3_minipcie: vcc3v3-minipcie-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_minipcie";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		enable-active-high;
+		gpio = <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <5000>;
+		vin-supply = <&vcc5v0_sys>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&minipcie_pwren>;
+	};
+
+	hdmi0-con {
+		compatible = "hdmi-connector";
+		type = "a";
+
+		port {
+			hdmi0_con_in: endpoint {
+				remote-endpoint = <&hdmi0_out_con>;
+			};
+		};
 	};
 };
 
@@ -268,7 +321,6 @@
 		reg = <0x42>;
 		fcs,suspend-voltage-selector = <1>;
 		regulator-name = "vdd_npu_s0";
-		regulator-always-on;
 		regulator-boot-on;
 		regulator-min-microvolt = <550000>;
 		regulator-max-microvolt = <950000>;
@@ -277,6 +329,93 @@
 
 		regulator-state-mem {
 			regulator-off-in-suspend;
+		};
+	};
+
+	/*
+	 * Type-C1 = the board's USB-C POWER-INPUT port. Its fusb302 negotiates PD
+	 * (up to 20V) into the VCC12V~20V_DCIN rail. This negotiation is essential
+	 * in u-boot (v2026.07, which shares this DT and ships tcpm+fusb302) for
+	 * anyone powering the board over USB-C -- u-boot renegotiates early, within
+	 * the PD spec window. NOTE (Rock 5B precedent): the Linux tcpm can send PD
+	 * messages too late (>5s), making a PD supply hard-reset and thus reset the
+	 * whole board; Rock 5B works around this by disabling its power-input
+	 * fusb302 in the *kernel* (status = "fail").
+	 */
+	usbc_pwr: usb-typec@22 {
+		compatible = "fcs,fusb302";
+		reg = <0x22>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PC6 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc_pwr_int>;
+		vbus-supply = <&vbus5v0_typec1>;
+
+		/*
+		 * When the board is starting to send power-delivery messages
+		 * too late (5 seconds according to the specification), the
+		 * power-supply reacts with a hard-reset. That removes the
+		 * power from VBUS for some time, which resets te whole board.
+		 */
+		status = "fail";
+
+		usbc_pwr_con: connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			/*
+			 * Power-INPUT port: force sink so the fusb302 never
+			 * presents Rp / sources 5V out vbus5v0_typec1. It only
+			 * ever draws power into the VCC12V~20V_DCIN rail.
+			 */
+			power-role = "sink";
+			/* fusb302 supports PD Rev 2.0 Ver 1.2 */
+			pd-revision = /bits/ 8 <0x2 0x0 0x1 0x2>;
+			op-sink-microwatt = <15000000>;
+			/*
+			 * VCC12V~20V_DCIN only supports 12V+, so the variable
+			 * sink PDO starts at 12V and negotiation can't land on
+			 * an unsupported 5V/9V contract. The mandatory vSafe5V
+			 * fixed PDO stays (a sink must always advertise it).
+			 */
+			sink-pdos =
+				<PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)
+				 PDO_VAR(12000, 20000, 5000)>;
+			source-pdos =
+				<PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+
+			altmodes {
+				displayport {
+					svid = /bits/ 16 <0xff01>;
+					vdo = <0xffffffff>;
+				};
+			};
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usbc_pwr_hs: endpoint {
+						remote-endpoint = <&usb_host1_xhci_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					usbc_pwr_ss: endpoint {
+						remote-endpoint = <&usbdp_phy1_ss>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+					usbc_pwr_sbu: endpoint {
+						remote-endpoint = <&usbdp_phy1_sbu>;
+					};
+				};
+			};
 		};
 	};
 };
@@ -290,6 +429,70 @@
 &i2c5 {
 	pinctrl-0 = <&i2c5m3_xfer>;
 	status = "okay";
+};
+
+/* USB Type-C 0 */
+&i2c6 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c6m0_xfer>;
+	status = "okay";
+
+	usbc_host: usb-typec@22 {
+		compatible = "fcs,fusb302";
+		reg = <0x22>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PC5 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc_host_int>;
+		vbus-supply = <&vbus5v0_typec0>;
+		status = "okay";
+
+		usbc_host_con: connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "sink";
+			/*
+			 * PD is disabled on Type-C0: it is a USB3 data / host port that
+			 * only needs to source 5V Type-C VBUS to attached devices. With PD
+			 * enabled the fusb302/tcpm endlessly retries Source_Capabilities
+			 * against non-PD USB devices ("PD retry failed"). VBUS sourcing is
+			 * driven by the vbus5v0_typec0 regulator on Type-C attach and is
+			 * unaffected. Type-C1 keeps PD -- it is the USB-C power-input port.
+			 * typec-power-opmode is required by the binding when pd-disable is
+			 * set; advertise 1.5A as the Type-C source current.
+			 */
+			pd-disable;
+			typec-power-opmode = "1.5A";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usbc_host_hs: endpoint {
+						remote-endpoint = <&usb_host0_xhci_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					usbc_host_ss: endpoint {
+						remote-endpoint = <&usbdp_phy0_ss>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+					usbc_host_sbu: endpoint {
+						remote-endpoint = <&usbdp_phy0_sbu>;
+					};
+				};
+			};
+		};
+	};
 };
 
 &i2s2_2ch {
@@ -329,11 +532,69 @@
 	//pinctrl-names = "default";
 	//pinctrl-0 = <&pcie2_0_rst>;
 	status = "okay";
+
+	/*
+	 * Describe the fixed PCIe topology on this port so the two soldered
+	 * RTL8125 2.5GbE controllers get stable ethernet0/ethernet1 aliases and
+	 * can take a fixed/nvmem MAC. Mirrors the enumerated hierarchy (domain
+	 * 0002 in lspci):
+	 *   20:00.0 RK3588 root port
+	 *     21:00.0 ASM1182e switch upstream
+	 *       22:03.0 downstream port -> 23:00.0 RTL8125 #0 (eth0)
+	 *       22:07.0 downstream port -> 24:00.0 RTL8125 #1 (eth1)
+	 * reg encodes the config address (bus << 16 | dev << 11 | fn << 8).
+	 */
+	pcie@0,0 {
+		reg = <0x200000 0 0 0 0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+		device_type = "pci";
+		bus-range = <0x20 0x2f>;
+
+		pcie@0,0 { // ASM1182e switch upstream port (21:00.0)
+			reg = <0x210000 0 0 0 0>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			ranges;
+			device_type = "pci";
+			bus-range = <0x22 0x24>;
+
+			pcie@3,0 { // ASM1182e downstream port (22:03.0)
+				reg = <0x221800 0 0 0 0>;
+				#address-cells = <3>;
+				#size-cells = <2>;
+				ranges;
+				device_type = "pci";
+				bus-range = <0x23 0x23>;
+
+				rtl_eth0: ethernet@0,0 { // RTL8125 #0 (23:00.0)
+					compatible = "pci10ec,8125";
+					reg = <0x230000 0 0 0 0>;
+				};
+			};
+
+			pcie@7,0 { // ASM1182e downstream port (22:07.0)
+				reg = <0x223800 0 0 0 0>;
+				#address-cells = <3>;
+				#size-cells = <2>;
+				ranges;
+				device_type = "pci";
+				bus-range = <0x24 0x24>;
+
+				rtl_eth1: ethernet@0,0 { // RTL8125 #1 (24:00.0)
+					compatible = "pci10ec,8125";
+					reg = <0x240000 0 0 0 0>;
+				};
+			};
+		};
+	};
 };
 
 &pcie2x1l1 { // combphy2, to miniPCIe socket
 	reset-gpios = <&gpio4 RK_PA2 GPIO_ACTIVE_HIGH>;
 	rockchip,init-delay-ms = <100>;
+	vpcie3v3-supply = <&vcc3v3_minipcie>;
 	//pinctrl-names = "default";
 	//pinctrl-0 = <&pcie2_1_rst>;
 	status = "okay";
@@ -383,15 +644,41 @@
 		};
 	};
 
-	usb {
-		vcc5v0_host_en: vcc5v0-host-en {
+	usb-typec {
+		usbc_host_int: usbc_host-int {
+			rockchip,pins = <0 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		usbc_pwr_int: usbc_pwr-int {
+			rockchip,pins = <0 RK_PC6 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		/*
+		 * GPIO4_B0 = TYPEC5V_PWREN0 enables Type-C0 VBUS AND (per the vendor DT's
+		 * vcc5v0_host_en alias for the same pin) gates power reaching the ASM1182e
+		 * PCIe switch + RTL8125B NICs. Owned by the vbus5v0_typec0 regulator.
+		 */
+		typec5v_pwren0: typec5v-pwren0 {
 			rockchip,pins = <4 RK_PB0 RK_FUNC_GPIO &pcfg_pull_none>;
-			// Schematics say this drives a ETA6027S2F current limiter enabling VBUS5V0_TYPEC0.
-			// But it _must_ somehow power the PCIe switch too, as both RTL8169's come up working with this!
+		};
+
+		typec5v_pwren1: typec5v-pwren1 {
+			rockchip,pins = <4 RK_PA3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};
 
-	// GPIO3_C6: 3 RK_PC6 is for power to the minipci 2.0 slot
+	pcie2 {
+		minipcie_pwren: minipcie-pwren {
+			/* GPIO3_C6 = PCIE20_PWREN, powers the miniPCIe 2.0 slot */
+			rockchip,pins = <3 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	hdmirx {
+		hdmirx_hpd: hdmirx-5v-detection {
+			rockchip,pins = <1 RK_PD5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
 };
 
 &pwm8 { // 4-pin FAN HEADER, PWM OUTPUT
@@ -771,11 +1058,207 @@
 	};
 };
 
+/* USB2 OTG phys for the two Type-C ports */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	status = "okay";
+};
+
+&u2phy1 {
+	status = "okay";
+};
+
+&u2phy1_otg {
+	status = "okay";
+};
+
+/* USB3+DP combo phys; orientation/mode switch driven by the fusb302 tcpm.
+ * sbu*-dc-gpios drive the SBU/AUX orientation mux (values from the vendor DT).
+ */
+&usbdp_phy0 {
+	mode-switch;
+	orientation-switch;
+	sbu1-dc-gpios = <&gpio4 RK_PA6 GPIO_ACTIVE_HIGH>;
+	sbu2-dc-gpios = <&gpio4 RK_PA7 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		usbdp_phy0_ss: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&usbc_host_ss>;
+		};
+
+		usbdp_phy0_sbu: endpoint@1 {
+			reg = <1>;
+			remote-endpoint = <&usbc_host_sbu>;
+		};
+	};
+};
+
+&usbdp_phy1 {
+	mode-switch;
+	orientation-switch;
+	sbu1-dc-gpios = <&gpio4 RK_PA4 GPIO_ACTIVE_HIGH>;
+	sbu2-dc-gpios = <&gpio4 RK_PA5 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+
+	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		usbdp_phy1_ss: endpoint@0 {
+			reg = <0>;
+			remote-endpoint = <&usbc_pwr_ss>;
+		};
+
+		usbdp_phy1_sbu: endpoint@1 {
+			reg = <1>;
+			remote-endpoint = <&usbc_pwr_sbu>;
+		};
+	};
+};
+
+/* USB3 OTG (dwc3) controllers; base already sets dr_mode = "otg" + phys */
+&usb_host0_xhci {
+	usb-role-switch;
+	status = "okay";
+
+	port {
+		usb_host0_xhci_hs: endpoint {
+			remote-endpoint = <&usbc_host_hs>;
+		};
+	};
+};
+
+&usb_host1_xhci {
+	usb-role-switch;
+	status = "okay";
+
+	port {
+		usb_host1_xhci_hs: endpoint {
+			remote-endpoint = <&usbc_pwr_hs>;
+		};
+	};
+};
+
 &tsadc {
 	status = "okay";
 };
 
 &uart2 {
 	pinctrl-0 = <&uart2m0_xfer>;
+	status = "okay";
+};
+
+/* CAN2 exposed on the 30-pin header; routed on can2_m0 (GPIO3_C4/C5) per schematic */
+/* Disabled as it is not in mainline yet
+&can2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&can2m0_pins>;
+	assigned-clocks = <&cru CLK_CAN2>;
+	assigned-clock-rates = <300000000>;
+	status = "okay";
+};
+*/
+
+&vop {
+	status = "okay";
+};
+
+&vop_mmu {
+	status = "okay";
+};
+
+&vp0 {
+	vp0_out_hdmi0: endpoint@ROCKCHIP_VOP2_EP_HDMI0 {
+		reg = <ROCKCHIP_VOP2_EP_HDMI0>;
+		remote-endpoint = <&hdmi0_in_vp0>;
+	};
+};
+
+&hdmi0 {
+	status = "okay";
+};
+
+&hdmi0_in {
+	hdmi0_in_vp0: endpoint {
+		remote-endpoint = <&vp0_out_hdmi0>;
+	};
+};
+
+&hdmi0_out {
+	hdmi0_out_con: endpoint {
+		remote-endpoint = <&hdmi0_con_in>;
+	};
+};
+
+&hdmi0_sound {
+	status = "okay";
+};
+
+&hdptxphy0 {
+	status = "okay";
+};
+
+/* HDMI0 audio */
+&i2s5_8ch {
+	status = "okay";
+};
+
+/* HDMI-RX (input capture) on this board; HPD/5V-detect on GPIO1_D5 */
+&hdmi_receiver_cma {
+	status = "okay";
+};
+
+&hdmi_receiver {
+	hpd-gpios = <&gpio1 RK_PD5 GPIO_ACTIVE_LOW>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&hdmim1_rx_cec &hdmim1_rx_hpdin &hdmim1_rx_scl &hdmim1_rx_sda &hdmirx_hpd>;
+	status = "okay";
+};
+
+/* HDMI-RX audio */
+&i2s7_8ch {
+	status = "okay";
+};
+
+/* NPU (rocket driver); rails from vdd_npu_s0 on i2c1 */
+&pd_npu {
+	domain-supply = <&vdd_npu_s0>;
+};
+
+&rknn_core_0 {
+	npu-supply = <&vdd_npu_s0>;
+	sram-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_core_1 {
+	npu-supply = <&vdd_npu_s0>;
+	sram-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_core_2 {
+	npu-supply = <&vdd_npu_s0>;
+	sram-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_mmu_0 {
+	status = "okay";
+};
+
+&rknn_mmu_1 {
+	status = "okay";
+};
+
+&rknn_mmu_2 {
 	status = "okay";
 };

@@ -23,6 +23,12 @@ function extension_prepare_config__arm64_compat_vdso() {
 }
 
 function add_host_dependencies__arm64_compat_vdso() {
+	# Skip cross-compilers that don't exist on non-standard host architectures (e.g., riscv64)
+	if [[ "${host_arch}" == "riscv64" ]]; then
+		display_alert "Skipping arm64-compat-vdso extension" "gcc-arm-linux-gnueabi not available on ${host_arch}" "warn"
+		return 0
+	fi
+
 	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
 		EXTRA_BUILD_DEPS+=("clang::clang")
 	else

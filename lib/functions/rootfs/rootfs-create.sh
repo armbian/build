@@ -236,8 +236,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
 	# Systemd resolver is not working yet
-	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
-	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
+	write_build_resolv_conf "${SDCARD}"
 
 	# Install desktop via armbian-config INSIDE rootfs-create (before the
 	# cache tarball is saved) so desktop packages are included in the
@@ -283,8 +282,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
-	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
-	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
+	write_build_resolv_conf "${SDCARD}"
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
 	# Note: As we don't use systemd-firstboot.service functionality, we make it empty to prevent services

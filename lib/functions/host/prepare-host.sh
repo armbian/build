@@ -250,19 +250,23 @@ function adaptative_prepare_host_dependencies() {
 	declare wanted_arch="${target_arch:-"all"}"
 
 	# Cross-toolchains are split per target family so each lands in a similarly-sized layer.
-	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-amd64::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
-	fi
+	# Skip cross-compilers that don't exist on non-standard host architectures (e.g. riscv64),
+	# where only riscv64 cross-compilers are available in the repositories.
+	if [[ "${host_arch}" != "riscv64" ]]; then
+		if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
+			host_dependencies+=("cross-amd64::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
+		fi
 
-	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
-		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64 (64-bit arm)
-		host_dependencies+=("cross-arm64::gcc-aarch64-linux-gnu")
-		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation (32-bit arm)
-		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabi")
-	fi
+		if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
+			# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64 (64-bit arm)
+			host_dependencies+=("cross-arm64::gcc-aarch64-linux-gnu")
+			# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation (32-bit arm)
+			host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabi")
+		fi
 
-	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
+		if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
+			host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
+		fi
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
@@ -275,7 +279,8 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=("cross-other::debian-ports-archive-keyring")
 	fi
 
-	if [[ "${wanted_arch}" != "amd64" ]]; then
+	# libc6-amd64-cross is not available on riscv64 hosts
+	if [[ "${wanted_arch}" != "amd64" ]] && [[ "${host_arch}" != "riscv64" ]]; then
 		host_dependencies+=("cross-amd64::libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 

@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Linus Walleij <linusw@kernel.org>
+Date: Mon, 11 May 2026 21:43:43 +0200
+Subject: gpio: regmap: Support sparsed fixed direction
+
+On some regmapped GPIOs apparently only a sparser selection of the lines
+(not all) are actually fixed direction.
+
+Support this situation by adding an optional bitmap indicating which
+GPIOs are actually fixed direction and which are not.
+
+Link: https://lore.kernel.org/linux-gpio/20260501155421.3329862-10-elder@riscstar.com/
+Tested-by: Alex Elder <elder@riscstar.com>
+Signed-off-by: Linus Walleij <linusw@kernel.org>
+Reviewed-by: Michael Walle <mwalle@kernel.org>
+Reviewed-by: Alex Elder <elder@riscstar.com>
+Link: https://patch.msgid.link/20260511-regmap-gpio-sparse-fixed-dir-v3-1-1429ec453be7@kernel.org
+Signed-off-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+(cherry picked from commit 68d801eabda5219dcc25c9de98d3bbdb5b51b0a5)
+---
+ drivers/gpio/gpio-regmap.c  | 37 +++++++++-
+ include/linux/gpio/regmap.h |  7 ++
+ 2 files changed, 40 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpio/gpio-regmap.c b/drivers/gpio/gpio-regmap.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpio/gpio-regmap.c
++++ b/drivers/gpio/gpio-regmap.c
+@@ -31,6 +31,7 @@ struct gpio_regmap {
+ 	unsigned int reg_clr_base;
+ 	unsigned int reg_dir_in_base;
+ 	unsigned int reg_dir_out_base;
++	unsigned long *fixed_direction_mask;
+ 	unsigned long *fixed_direction_output;
+ 
+ #ifdef CONFIG_REGMAP_IRQ
+@@ -138,6 +139,20 @@ static int gpio_regmap_set_with_clear(struct gpio_chip *chip,
+ 	return regmap_write(gpio->regmap, reg, mask);
+ }
+ 
++static bool gpio_regmap_fixed_direction(struct gpio_regmap *gpio,
++					unsigned int offset)
++{
++	if (!gpio->fixed_direction_output)
++		return false;
++
++	/* In this case only some GPIOs are fixed as input/output */
++	if (gpio->fixed_direction_mask &&
++	    !test_bit(offset, gpio->fixed_direction_mask))
++		return false;
++
++	return true;
++}
++
+ static int gpio_regmap_get_direction(struct gpio_chip *chip,
+ 				     unsigned int offset)
+ {
+@@ -145,7 +160,7 @@ static int gpio_regmap_get_direction(struct gpio_chip *chip,
+ 	unsigned int base, val, reg, mask;
+ 	int invert, ret;
+ 
+-	if (gpio->fixed_direction_output) {
++	if (gpio_regmap_fixed_direction(gpio, offset)) {
+ 		if (test_bit(offset, gpio->fixed_direction_output))
+ 			return GPIO_LINE_DIRECTION_OUT;
+ 		else
+@@ -302,12 +317,23 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
+ 			goto err_free_gpio;
+ 	}
+ 
++	if (config->fixed_direction_mask) {
++		gpio->fixed_direction_mask = bitmap_alloc(chip->ngpio,
++							    GFP_KERNEL);
++		if (!gpio->fixed_direction_mask) {
++			ret = -ENOMEM;
++			goto err_free_gpio;
++		}
++		bitmap_copy(gpio->fixed_direction_mask,
++			    config->fixed_direction_mask, chip->ngpio);
++	}
++
+ 	if (config->fixed_direction_output) {
+ 		gpio->fixed_direction_output = bitmap_alloc(chip->ngpio,
+ 							    GFP_KERNEL);
+ 		if (!gpio->fixed_direction_output) {
+ 			ret = -ENOMEM;
+-			goto err_free_gpio;
++			goto err_free_bitmap_dirmask;
+ 		}
+ 		bitmap_copy(gpio->fixed_direction_output,
+ 			    config->fixed_direction_output, chip->ngpio);
+@@ -329,7 +355,7 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
+ 
+ 	ret = gpiochip_add_data(chip, gpio);
+ 	if (ret < 0)
+-		goto err_free_bitmap;
++		goto err_free_bitmap_output;
+ 
+ #ifdef CONFIG_REGMAP_IRQ
+ 	if (config->regmap_irq_chip) {
+@@ -355,8 +381,10 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
+ 
+ err_remove_gpiochip:
+ 	gpiochip_remove(chip);
+-err_free_bitmap:
++err_free_bitmap_output:
+ 	bitmap_free(gpio->fixed_direction_output);
++err_free_bitmap_dirmask:
++	bitmap_free(gpio->fixed_direction_mask);
+ err_free_gpio:
+ 	kfree(gpio);
+ 	return ERR_PTR(ret);
+@@ -376,6 +404,7 @@ void gpio_regmap_unregister(struct gpio_regmap *gpio)
+ 
+ 	gpiochip_remove(&gpio->gpio_chip);
+ 	bitmap_free(gpio->fixed_direction_output);
++	bitmap_free(gpio->fixed_direction_mask);
+ 	kfree(gpio);
+ }
+ EXPORT_SYMBOL_GPL(gpio_regmap_unregister);
+diff --git a/include/linux/gpio/regmap.h b/include/linux/gpio/regmap.h
+index 111111111111..222222222222 100644
+--- a/include/linux/gpio/regmap.h
++++ b/include/linux/gpio/regmap.h
+@@ -38,6 +38,12 @@ struct regmap;
+  *			offset to a register/bitmask pair. If not
+  *			given the default gpio_regmap_simple_xlate()
+  *			is used.
++ * @fixed_direction_mask:
++ *			(Optional) Bitmap representing the GPIO lines that
++ *			make use of the @fixed_direction_output list to
++ *			enforce direction of the GPIO. If this is NULL
++ *			and @fixed_direction_output is defined, ALL GPIOs
++ *			are assumed to be fixed direction (out or in).
+  * @fixed_direction_output:
+  *			(Optional) Bitmap representing the fixed direction of
+  *			the GPIO lines. Useful when there are GPIO lines with a
+@@ -89,6 +95,7 @@ struct gpio_regmap_config {
+ 	int reg_stride;
+ 	int ngpio_per_reg;
+ 	struct irq_domain *irq_domain;
++	unsigned long *fixed_direction_mask;
+ 	unsigned long *fixed_direction_output;
+ 
+ #ifdef CONFIG_REGMAP_IRQ
+-- 
+Armbian
+

@@ -5,7 +5,7 @@ declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER="rpardini"
 declare -g INTRODUCED="2023"
 # DO NOT put comments on same line as KERNEL_TARGET: edge builds and can be used for development with 'BRANCH=edge` forced; not enabled for end-users
-declare -g KERNEL_TARGET="vendor"
+declare -g KERNEL_TARGET="vendor,edge"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-blade3-v101-linux.dtb" # Included in https://github.com/armbian/linux-rockchip/pull/64 # has a hook to change it for edge below
 declare -g BOOT_SCENARIO="spl-blobs"                             # so we don't depend on defconfig naming convention
 declare -g BOOT_SOC="rk3588"                                     # so we don't depend on defconfig naming convention
@@ -31,24 +31,26 @@ function post_family_config__vendor_uboot_blade3() {
 }
 
 function post_family_config__blade3_use_mainline_uboot() {
-	if [[ "${BRANCH}" != "edge" ]]; then
-		return 0
-	fi
+	[[ "${BRANCH}" == *"edge" ]] || return 0 # only for edge/bleedingedge
 
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
+
+	# To reuse ATF code in rockchip64_common, let's change the BOOT_SCENARIO and call prepare_boot_configuration() again
+	BOOT_SCENARIO="tpl-blob-atf-mainline"
+	prepare_boot_configuration
 
 	declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # MAINLINE U-BOOT OVERRIDE
 
 	declare -g BOOTDELAY=1
 
 	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.04"
-	declare -g BOOTPATCHDIR="v2026.04" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
+	declare -g BOOTBRANCH="tag:v2026.07"
+	declare -g BOOTPATCHDIR="v2026.07" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
 
 	BOOTDIR="u-boot-${BOARD}"
 
-	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin" # NOT u-boot-rockchip-spi.bin
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd                                 # disable stuff from rockchip64_common; we're using binman here which does all the work already
+	UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin" # NOT u-boot-rockchip-spi.bin
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd                # disable stuff from rockchip64_common; we're using binman here which does all the work already
 
 	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
 	function write_uboot_platform() {
@@ -58,7 +60,8 @@ function post_family_config__blade3_use_mainline_uboot() {
 	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
 }
 
-function post_family_config_branch_edge__different_dtb_for_edge() {
+function post_family_config__different_dtb_for_edge() {
+	[[ "${BRANCH}" == *"edge" ]] || return 0 # only for edge/bleedingedge
 	declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb"
 	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "warn"
 }
@@ -68,11 +71,60 @@ function post_family_config_branch_edge__different_dtb_for_edge() {
 # On the mixtile-blade3: mmc0 is eMMC; mmc1 is microSD
 # Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
 function pre_config_uboot_target__blade3_patch_rockchip_common_boot_order() {
-	if [[ "${BRANCH}" != "edge" ]]; then
-		return 0
-	fi
+	[[ "${BRANCH}" == *"edge" ]] || return 0                                    # only for edge/bleedingedge
 	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
 	regular_git diff -u include/configs/rockchip-common.h || true
+}
+
+# Fancy up config
+function post_config_uboot_target__mixtile_blade3_fancy_mainline_uboot_config() {
+	[[ "${BRANCH}" == *"edge" ]] || return 0 # only for edge/bleedingedge
+
+	display_alert "mainline u-boot" "Extra mainline u-boot configs for ${BOARD}/${BRANCH}" "info"
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
+	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
+	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more filesystems support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_BTRFS
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more compression support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LZO
+	run_host_command_logged scripts/config --enable CONFIG_BZIP2
+	run_host_command_logged scripts/config --enable CONFIG_ZSTD
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable gpio LED support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LED
+	run_host_command_logged scripts/config --enable CONFIG_LED_GPIO
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable networking cmds" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_NFS
+	run_host_command_logged scripts/config --enable CONFIG_CMD_WGET
+	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
+	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable MBed TLS stuff" "info"
+	run_host_command_logged scripts/config --enable CONFIG_WGET_HTTPS
+	run_host_command_logged scripts/config --enable CONFIG_WGET_CACERT
+	#run_host_command_logged scripts/config --enable CONFIG_WGET_BUILTIN_CACERT # not yet
+	run_host_command_logged scripts/config --enable CONFIG_MBEDTLS_LIB
+
+	# UMS, RockUSB, gadget stuff
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB")
+	for config in "${enable_configs[@]}"; do
+		run_host_command_logged scripts/config --enable "${config}"
+	done
+	# Auto-enabled by the above, force off...
+	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+	return 0
 }
