@@ -1,0 +1,23 @@
+# Allwinner H616 quad core 2/4GB RAM SoC WiFi eMMC AXP313 PMIC
+BOARD_NAME="Tanix TX6s AXP313"
+BOARD_VENDOR="allwinner"
+BOARDFAMILY="sun50iw9"
+BOARD_MAINTAINER=""
+INTRODUCED="2020"
+BOOTCONFIG="tanix_tx6s_axp313_defconfig"
+BOOT_LOGO="desktop"
+OVERLAY_PREFIX="sun50i-h616"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+FORCE_BOOTSCRIPT_UPDATE="yes"
+BOOTBRANCH="tag:v2025.04"
+BOOTPATCHDIR="v2025-sunxi"
+
+function post_family_tweaks__tanix_tx6s_axp313() {
+    ln -srf $SDCARD/lib/firmware/brcm/brcmfmac-ap6330-sdio.bin \
+            $SDCARD/lib/firmware/brcm/brcmfmac-ap6330-sdio.tanix,tx6s.bin
+    cp -R $SRC/packages/blobs/sunxi/h618/armbian-audio-config $SDCARD/usr/lib/armbian
+    cp -R $SRC/packages/blobs/sunxi/h618/armbian-audio-config $SDCARD/lib/armbian
+}
+
+
