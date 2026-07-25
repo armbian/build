@@ -1,0 +1,51 @@
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 00:00:00 +0000
+Subject: [PATCH] iommu/arm-smmu-v3: disable event queue for CIX Sky1 PCIe SMMU
+
+Sky1 firmware truncates the PCIe SMMU stream table to 25 of 32
+Stream-ID bits, so every PCIe DMA raises a C_BAD_STREAMID event queue
+interrupt (~130/s on CPU0). Leave the event queue disabled for this
+SMMU (DMA still works via disable_bypass=0).
+---
+diff --git a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+index bf4aef62ec99..a3b2335edc7a 100644
+--- a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
++++ b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+@@ -4746,6 +4746,25 @@ static void arm_smmu_write_strtab(struct arm_smmu_device *smmu)
+ 	writel_relaxed(reg, smmu->base + ARM_SMMU_STRTAB_BASE_CFG);
+ }
+ 
++/*
++ * CIX Sky1: the PCIe SMMU's 2-level stream table only covers 25 of 32
++ * Stream-ID bits, so every PCIe DMA raises a C_BAD_STREAMID event -> a
++ * ~130 IRQ/s event-queue storm on CPU0 that stalls early boot (probes
++ * fault in hardirq context) and wedges the system. DMA still works via
++ * disable_bypass=0. Leave the event queue disabled for this SMMU so the
++ * storm never starts.
++ */
++static bool arm_smmu_is_cix_sky1_pcie(struct arm_smmu_device *smmu)
++{
++	struct resource *res;
++
++	if (smmu->dev->of_node)
++		return false;
++	res = platform_get_resource(to_platform_device(smmu->dev),
++				    IORESOURCE_MEM, 0);
++	return res && res->start == 0x0b010000ULL;
++}
++
+ static int arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ {
+ 	int ret;
+@@ -4812,7 +4831,10 @@ static int arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 	writel_relaxed(smmu->evtq.q.llq.prod, smmu->page1 + ARM_SMMU_EVTQ_PROD);
+ 	writel_relaxed(smmu->evtq.q.llq.cons, smmu->page1 + ARM_SMMU_EVTQ_CONS);
+ 
+-	enables |= CR0_EVTQEN;
++	if (arm_smmu_is_cix_sky1_pcie(smmu))
++		dev_info(smmu->dev, "CIX Sky1: leaving event queue disabled (C_BAD_STREAMID storm workaround)\n");
++	else
++		enables |= CR0_EVTQEN;
+ 	ret = arm_smmu_write_reg_sync(smmu, enables, ARM_SMMU_CR0,
+ 				      ARM_SMMU_CR0ACK);
+ 	if (ret) {

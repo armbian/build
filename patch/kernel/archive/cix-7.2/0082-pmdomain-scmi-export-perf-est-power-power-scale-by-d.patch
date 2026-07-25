@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 2 Jul 2026 22:22:23 -0400
+Subject: [PATCH 82/83] pmdomain: scmi: export perf est-power/power-scale by
+ domain id (NCZ 0061 subset)
+
+Only the scmi_perf_domain helper exports from NCZ 0061; the thermal/cix
+GPU energy-model registration itself comes from the cixtech 2026q2
+CIX_SCMI_ENERGY_MODEL driver.
+---
+ drivers/pmdomain/arm/scmi_perf_domain.c | 45 +++++++++++++++++++++++++
+ include/linux/scmi_perf_domain.h        | 17 ++++++++++
+ 2 files changed, 62 insertions(+)
+
+diff --git a/drivers/pmdomain/arm/scmi_perf_domain.c b/drivers/pmdomain/arm/scmi_perf_domain.c
+index b0e9283025af..741c3253f21c 100644
+--- a/drivers/pmdomain/arm/scmi_perf_domain.c
++++ b/drivers/pmdomain/arm/scmi_perf_domain.c
+@@ -24,6 +24,10 @@ struct scmi_perf_domain {
+ 	u32 domain_id;
+ };
+ 
++/* Global protocol ops for use by drivers that need direct domain ID access */
++static const struct scmi_perf_proto_ops *global_perf_ops;
++static const struct scmi_protocol_handle *global_ph;
++
+ #define to_scmi_pd(pd) container_of(pd, struct scmi_perf_domain, genpd)
+ 
+ static int
+@@ -171,6 +175,10 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ 	if (IS_ERR(perf_ops))
+ 		return PTR_ERR(perf_ops);
+ 
++	/* Store global protocol ops for direct domain ID access */
++	global_perf_ops = perf_ops;
++	global_ph = ph;
++
+ 	num_domains = perf_ops->num_domains_get(ph);
+ 	if (num_domains < 0) {
+ 		dev_warn(dev, "Failed with %d when getting num perf domains\n",
+@@ -334,6 +342,43 @@ enum scmi_power_scale scmi_perf_domain_power_scale(struct device *dev)
+ }
+ EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale);
+ 
++/**
++ * scmi_perf_domain_est_power_by_id() - Get estimated power via SCMI by domain ID
++ * @domain_id: SCMI performance domain ID
++ * @rate:      [in/out] Frequency in Hz (may be adjusted by firmware)
++ * @power:     [out] Estimated power in firmware-native units
++ *
++ * This function allows drivers to access SCMI power estimates by direct
++ * domain ID, bypassing the genpd binding requirement. Useful for devices
++ * that are not attached to SCMI perf domain via power-domains property.
++ *
++ * Returns 0 on success, or negative error.
++ */
++int scmi_perf_domain_est_power_by_id(u32 domain_id, unsigned long *rate,
++				      unsigned long *power)
++{
++	if (!global_perf_ops)
++		return -ENODEV;
++
++	return global_perf_ops->est_power_get(global_ph, domain_id, rate, power);
++}
++EXPORT_SYMBOL_GPL(scmi_perf_domain_est_power_by_id);
++
++/**
++ * scmi_perf_domain_power_scale_by_id() - Get power scale by domain ID
++ * @domain_id: SCMI performance domain ID
++ *
++ * Returns the power scale enum, or SCMI_POWER_BOGOWATTS on error.
++ */
++enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id)
++{
++	if (!global_perf_ops)
++		return SCMI_POWER_BOGOWATTS;
++
++	return global_perf_ops->power_scale_get(global_ph);
++}
++EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale_by_id);
++
+ module_scmi_driver(scmi_perf_domain_driver);
+ 
+ MODULE_AUTHOR("Ulf Hansson <ulf.hansson@linaro.org>");
+diff --git a/include/linux/scmi_perf_domain.h b/include/linux/scmi_perf_domain.h
+index 4e3aadddbc43..5fdea9c765a3 100644
+--- a/include/linux/scmi_perf_domain.h
++++ b/include/linux/scmi_perf_domain.h
+@@ -16,6 +16,11 @@ int scmi_perf_domain_est_power(struct device *dev,
+ 			       unsigned long *rate, unsigned long *power);
+ enum scmi_power_scale scmi_perf_domain_power_scale(struct device *dev);
+ 
++/* Direct domain ID access variants (bypasses genpd binding requirement) */
++int scmi_perf_domain_est_power_by_id(u32 domain_id, unsigned long *rate,
++				      unsigned long *power);
++enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id);
++
+ #else
+ 
+ static inline int scmi_perf_domain_est_power(struct device *dev,
+@@ -30,5 +35,17 @@ static inline enum scmi_power_scale scmi_perf_domain_power_scale(struct device *
+ 	return SCMI_POWER_BOGOWATTS;
+ }
+ 
++static inline int scmi_perf_domain_est_power_by_id(u32 domain_id,
++						    unsigned long *rate,
++						    unsigned long *power)
++{
++	return -ENODEV;
++}
++
++static inline enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id)
++{
++	return SCMI_POWER_BOGOWATTS;
++}
++
+ #endif /* CONFIG_ARM_SCMI_PERF_DOMAIN */
+ #endif /* _LINUX_SCMI_PERF_DOMAIN_H */

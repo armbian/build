@@ -1,0 +1,121 @@
+From 55fee6e60949bdb515c58aa822e181e0bea168c0 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 9 Jul 2026 20:06:11 -0400
+Subject: [PATCH 5/6] acpi: sta_quirk: tighten hidden Sky1 SCMI/NPU child
+ device matching
+
+Scope the SCMI/NPU _STA=0 un-hide by parent HID + child ACPI name
+(DVFS/CLKS for SCMI, CRE0-2 for NPU) rather than just parent HID.
+
+Affects:
+  - SCMI children of CIXHA006 (parent) -> DVFS or CLKS (child)
+  - NPU cores (CRE0-2) children of CIXH4000/NPU0 (parent)
+  - Both also require parent.uid == 0
+
+Also tighten SCMI HID matching to allow the un-hide even when
+child _HID is unavailable (child HID can be unevaluated when
+_STA=0 on the child).
+
+Source: linux-cix-sky1-next-7.1/patches-7.1/2011-fix-acpi-force-enable-hidden-Sky1-SCMI-NPU-child-dev.patch
+
+Forward-port notes:
+  - Reuses --ignore-whitespace to apply on top of 2007.
+---
+ drivers/acpi/sta_quirk.c | 58 ++++++++++++++++++++++++++++++++--------
+ 1 file changed, 47 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/acpi/sta_quirk.c b/drivers/acpi/sta_quirk.c
+index a5376750b912..f69c088bad16 100644
+--- a/drivers/acpi/sta_quirk.c
++++ b/drivers/acpi/sta_quirk.c
+@@ -14,11 +14,17 @@
+  */
+ 
+ #include <linux/acpi.h>
++#include <linux/string.h>
+ #include <acpi/acpi_bus.h>
+ 
+ #include "internal.h"
+ 
+-/* SCMI protocol: match the CHILD device directly (HID is populated) */
++/* SCMI parent: match children of CIXHA006 (SCMI controller) by parent HID */
++static const struct acpi_device_id cix_scmi_parent_ids[] = {
++	{ "CIXHA006", 0 },
++	{ }
++};
++
+ static const struct acpi_device_id cix_scmi_proto_sta_ids[] = {
+ 	{ "CIXHA008", 0 },
+ 	{ "CIXHA009", 0 },
+@@ -31,6 +37,19 @@ static const struct acpi_device_id cix_npu_parent_ids[] = {
+ 	{ }
+ };
+ 
++static bool acpi_name_is(struct acpi_device *adev, const char *name)
++{
++	struct acpi_buffer buf;
++	char node_name[ACPI_NAMESEG_SIZE + 1] = { };
++
++	buf.length = sizeof(node_name);
++	buf.pointer = node_name;
++	if (ACPI_FAILURE(acpi_get_name(adev->handle, ACPI_SINGLE_NAME, &buf)))
++		return false;
++
++	return !strcmp(node_name, name);
++}
++
+ bool acpi_sta_override_firmware_quirk(struct acpi_device *adev,
+ 				unsigned long long *status)
+ {
+@@ -38,21 +57,38 @@ bool acpi_sta_override_firmware_quirk(struct acpi_device *adev,
+ 
+ 	/*
+ 	 * NPU core devices (CRE0/CRE1/CRE2 under CIXH4000/NPU0):
+-	 * _STA=0 prevents _HID from being evaluated on the child, so
+-	 * match by parent HID via acpi_dev_parent() instead.
++	 * _STA=0 prevents full child binding.  Scope by parent HID and
++	 * child ACPI name, not parent alone.
+ 	 */
+-	if (parent && !acpi_match_device_ids(parent, cix_npu_parent_ids)) {
++	if (parent && !acpi_match_device_ids(parent, cix_npu_parent_ids) &&
++	    (acpi_name_is(adev, "CRE0") ||
++	     acpi_name_is(adev, "CRE1") ||
++	     acpi_name_is(adev, "CRE2"))) {
+ 		*status = ACPI_STA_DEFAULT;
+ 		return true;
+ 	}
+ 
+-	/* SCMI protocol devices: child HID is populated, uid=0 only */
+-	if (acpi_match_device_ids(adev, cix_scmi_proto_sta_ids))
+-		return false;
++	/*
++	 * SCMI protocol children under CIXHA006 are CIXHA008 (DVFS) and
++	 * CIXHA009 (CLKS).  Child HID can be unavailable while _STA=0,
++	 * so scope by parent HID plus child ACPI name.
++	 */
++	if (parent) {
++		bool scmi_parent = !acpi_match_device_ids(parent, cix_scmi_parent_ids);
++		const char *parent_uid = acpi_device_uid(parent);
++		const char *child_uid = acpi_device_uid(adev);
++		bool scmi_uid0 = !parent_uid || !strcmp(parent_uid, "0");
++		bool scmi_child_uid0 = !child_uid || !strcmp(child_uid, "0");
++		bool scmi_child_hid = !acpi_match_device_ids(adev, cix_scmi_proto_sta_ids);
++		bool scmi_child_name = acpi_name_is(adev, "DVFS") ||
++			acpi_name_is(adev, "CLKS");
+ 
+-	if (!acpi_dev_uid_match(adev, 0))
+-		return false;
++		if (scmi_parent && scmi_uid0 && scmi_child_uid0 &&
++		    (scmi_child_hid || scmi_child_name)) {
++			*status = ACPI_STA_DEFAULT;
++			return true;
++		}
++	}
+ 
+-	*status = ACPI_STA_DEFAULT;
+-	return true;
++	return false;
+ }
+-- 
+2.51.0
+

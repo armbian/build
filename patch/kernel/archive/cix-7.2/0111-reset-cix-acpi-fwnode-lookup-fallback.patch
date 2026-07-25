@@ -1,0 +1,49 @@
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 21:00:00 -0400
+Subject: [PATCH] reset: fall back to CIX lookup table for ACPI fwnode (RTL8127-era USB+audio reset fix)
+
+Mainline 9035073d0ef1 moved reset lookup from OF nodes to generic fwnodes;
+ACPI devices always have a fwnode so 7.2 never reached the CIX RSTL lookup
+table (7.0.12 did, because ACPI devices had no of_node). Result: cdnsp-sky1
+USB and arm-dma350/asoc audio get -ENOENT on their reset controls. Fall back
+to the registered lookup entries only when the native fwnode reset is absent.
+
+---
+diff --git a/drivers/reset/core.c b/drivers/reset/core.c
+index 8ecdf3bb5c19..5890a29e2f41 100644
+--- a/drivers/reset/core.c
++++ b/drivers/reset/core.c
+@@ -1331,12 +1331,31 @@ struct reset_control *__reset_control_get(struct device *dev, const char *id,
+ 	bool shared = flags & RESET_CONTROL_FLAGS_BIT_SHARED;
+ 	bool acquired = flags & RESET_CONTROL_FLAGS_BIT_ACQUIRED;
+ 	struct fwnode_handle *fwnode = dev_fwnode(dev);
++	struct reset_control *rstc;
+ 
+ 	if (WARN_ON(shared && acquired))
+ 		return ERR_PTR(-EINVAL);
+ 
+-	if (fwnode)
+-		return __fwnode_reset_control_get(fwnode, id, index, flags);
++	if (fwnode) {
++		rstc = __fwnode_reset_control_get(fwnode, id, index, flags);
++		if (!IS_ERR_OR_NULL(rstc))
++			return rstc;
++
++		/*
++		 * Lookup tables support firmware interfaces which cannot express
++		 * resets as standard fwnode properties.  CIX ACPI, for example,
++		 * describes them in RSTL AML packages which a platform helper
++		 * translates into reset_control_lookup entries.
++		 *
++		 * Before the reset core was converted from OF to fwnode, ACPI
++		 * consumers reached the lookup path because they had no of_node.
++		 * Preserve that behavior when the fwnode has no matching reset,
++		 * while still propagating malformed properties, probe deferrals,
++		 * and all other errors from native fwnode reset providers.
++		 */
++		if (IS_ERR(rstc) && PTR_ERR(rstc) != -ENOENT)
++			return rstc;
++	}
+ 
+ 	return __reset_control_get_from_lookup(dev, id, flags);
+ }

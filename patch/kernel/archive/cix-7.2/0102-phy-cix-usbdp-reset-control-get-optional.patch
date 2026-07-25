@@ -1,0 +1,52 @@
+From 3fa7da9bd037b232336dbe9e969e04abeb631db0 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 10:22:54 -0400
+Subject: [PATCH] phy: cix-usbdp: use reset_control_get_optional, dont assert
+ ERR handle
+
+cix_udphy_probe did devm_reset_control_get("reset"/"preset") and only
+logged on failure without bailing or NULLing the handle, then called
+reset_control_assert(udphy->reset) on the ERR_PTR when reset is absent
+from ACPI. That hits WARN_ON(IS_ERR(rstc)) at drivers/reset/core.c:503
+and corrupts preempt_count (DEBUG_PREEMPT: preempt_count_sub underflow
+via rpm_suspend/pm_runtime_work), leaving in_hardirq() set so the next
+kworker ioremap (cdns_i2c probe) BUG_ONs in __get_vm_area_node -> 1.5s
+boot crash on metal. Use devm_reset_control_get_optional so an absent
+reset is NULL (assert is a no-op) and bail via dev_err_probe on real
+errors.
+---
+ drivers/phy/cix/phy-cix-usbdp.c | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/phy/cix/phy-cix-usbdp.c b/drivers/phy/cix/phy-cix-usbdp.c
+index 270a52dc6501..f01e3f0669ba 100644
+--- a/drivers/phy/cix/phy-cix-usbdp.c
++++ b/drivers/phy/cix/phy-cix-usbdp.c
+@@ -1445,15 +1445,15 @@ static int cix_udphy_probe(struct platform_device *pdev)
+ 		return -EINVAL;
+ 	}
+ 
+-	udphy->reset = devm_reset_control_get(dev, "reset");
+-	if (IS_ERR(udphy->reset)) {
+-		dev_err(dev, "%s: failed to get reset\n", __func__);
+-	}
+-
+-	udphy->preset = devm_reset_control_get(dev, "preset");
+-	if (IS_ERR(udphy->preset)) {
+-		dev_err(dev, "%s: failed to get preset\n", __func__);
+-	}
++	udphy->reset = devm_reset_control_get_optional(dev, "reset");
++	if (IS_ERR(udphy->reset))
++		return dev_err_probe(dev, PTR_ERR(udphy->reset),
++				     "%s: failed to get reset\n", __func__);
++
++	udphy->preset = devm_reset_control_get_optional(dev, "preset");
++	if (IS_ERR(udphy->preset))
++		return dev_err_probe(dev, PTR_ERR(udphy->preset),
++				     "%s: failed to get preset\n", __func__);
+ 
+ 	if (!device_property_read_u8(dev, "default_conf", &udphy->next_mode))
+ 		dev_info(dev, "phy init default mode %02x\n", udphy->next_mode);
+-- 
+2.51.0
+

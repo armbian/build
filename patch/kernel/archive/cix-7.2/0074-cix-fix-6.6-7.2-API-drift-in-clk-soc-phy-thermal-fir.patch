@@ -1,0 +1,398 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 2 Jul 2026 21:59:57 -0400
+Subject: [PATCH 74/83] cix: fix 6.6->7.2 API drift in
+ clk/soc/phy/thermal/firmware
+
+- clk_ops.round_rate removed: convert to determine_rate (acpi_clk, audss)
+- platform_driver.remove returns void
+- gpio_chip.set returns int
+- struct cma multi-range layout (acpi_resource_lookup)
+- strncpy removed -> strscpy; asm/unaligned.h -> linux/unaligned.h
+- scmi perf device_domain_id dropped: local clocks-phandle helper
+- guard vendor SMMU attach-notifier + dfx hisysevent (not ported)
+---
+ drivers/clk/cix/acpi_clk.c                  | 13 +++++----
+ drivers/clk/cix/clk-sky1-audss.c            | 29 +-------------------
+ drivers/phy/cix/phy-cix-usb2.c              |  2 ++
+ drivers/soc/cix/acpi/acpi_resource_lookup.c |  7 ++++-
+ drivers/soc/cix/acpi/cix-acpi-ec-gpio.c     |  4 +--
+ drivers/soc/cix/acpi/cix-acpi-ec.c          |  4 +--
+ drivers/soc/cix/acpi/dsdt_override.c        |  2 +-
+ drivers/soc/cix/cix-ddr-lp.c                |  3 +--
+ drivers/soc/cix/cix-plat.c                  |  6 +++++
+ drivers/soc/cix/cix-suspend.c               | 11 ++++++--
+ drivers/thermal/cix/cix_scmi_em.c           | 20 +++++++++++++-
+ include/linux/cix/cix_scmi_em.h             | 30 +++++++++++++++++++++
+ 12 files changed, 84 insertions(+), 47 deletions(-)
+ create mode 100644 include/linux/cix/cix_scmi_em.h
+
+diff --git a/drivers/clk/cix/acpi_clk.c b/drivers/clk/cix/acpi_clk.c
+index 8a1ea7d92e7c..1f6bb267a0e4 100644
+--- a/drivers/clk/cix/acpi_clk.c
++++ b/drivers/clk/cix/acpi_clk.c
+@@ -248,18 +248,18 @@ static int acpi_cix_clk_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	return ret;
+ }
+ 
+-static long cix_acpi_clk_round_rate(struct clk_hw *hw, unsigned long rate,
+-				    unsigned long *prate)
++static int cix_acpi_clk_determine_rate(struct clk_hw *hw,
++					struct clk_rate_request *req)
+ {
+-	/* do not support now */
+-	return rate;
++	/* do not support now: accept the requested rate */
++	return 0;
+ }
+ 
+ static const struct clk_ops acpi_clk_ops = {
+ 	.prepare = acpi_clk_prepare,
+ 	.unprepare = acpi_clk_unprepare,
+ 	.recalc_rate = acpi_cix_clk_recalc_rate,
+-	.round_rate = cix_acpi_clk_round_rate,
++	.determine_rate = cix_acpi_clk_determine_rate,
+ 	.set_rate = acpi_cix_clk_set_rate,
+ };
+ 
+@@ -500,9 +500,8 @@ static int cix_acpi_clk_probe(struct platform_device *pdev)
+ 	return status;
+ }
+ 
+-static int cix_acpi_clk_remove(struct platform_device *pdev)
++static void cix_acpi_clk_remove(struct platform_device *pdev)
+ {
+-	return 0;
+ }
+ 
+ static const struct acpi_device_id __maybe_unused cix_acpi_clk_match[] = {
+diff --git a/drivers/clk/cix/clk-sky1-audss.c b/drivers/clk/cix/clk-sky1-audss.c
+index c48bd67921f9..eb70e91eb22e 100644
+--- a/drivers/clk/cix/clk-sky1-audss.c
++++ b/drivers/clk/cix/clk-sky1-audss.c
+@@ -596,30 +596,6 @@ static unsigned long sky1_audss_clk_divider_recalc_rate(struct clk_hw *hw,
+ 				   divider->flags, divider->width);
+ }
+ 
+-static long sky1_audss_clk_divider_round_rate(struct clk_hw *hw,
+-					      unsigned long rate,
+-					      unsigned long *prate)
+-{
+-	struct clk_divider *divider = to_clk_divider(hw);
+-	struct sky1_clk_divider *sky1_div = to_sky1_clk_divider(divider);
+-
+-	/* if read only, just return current value */
+-	if (divider->flags & CLK_DIVIDER_READ_ONLY) {
+-		u32 val;
+-
+-		regmap_read(sky1_div->regmap, sky1_div->offset, &val);
+-		val = val >> divider->shift;
+-		val &= clk_div_mask(divider->width);
+-
+-		return divider_ro_round_rate(hw, rate, prate, divider->table,
+-					     divider->width, divider->flags,
+-					     val);
+-	}
+-
+-	return divider_round_rate(hw, rate, prate, divider->table,
+-				  divider->width, divider->flags);
+-}
+-
+ static int sky1_audss_clk_divider_determine_rate(struct clk_hw *hw,
+ 						 struct clk_rate_request *req)
+ {
+@@ -683,7 +659,6 @@ static int sky1_audss_clk_divider_set_rate(struct clk_hw *hw,
+ /* Derive from drivers/clk/clk-divider.c clk_div_ops */
+ static const struct clk_ops sky1_audss_clk_divider_ops = {
+ 	.recalc_rate = sky1_audss_clk_divider_recalc_rate,
+-	.round_rate = sky1_audss_clk_divider_round_rate,
+ 	.determine_rate = sky1_audss_clk_divider_determine_rate,
+ 	.set_rate = sky1_audss_clk_divider_set_rate,
+ };
+@@ -1170,7 +1145,7 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static int sky1_audss_clk_remove(struct platform_device *pdev)
++static void sky1_audss_clk_remove(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct sky1_audss_clks_priv *priv = dev_get_drvdata(dev);
+@@ -1181,8 +1156,6 @@ static int sky1_audss_clk_remove(struct platform_device *pdev)
+ 		pm_runtime_force_suspend(dev);
+ 
+ 	pm_runtime_disable(dev);
+-
+-	return 0;
+ }
+ 
+ static int __maybe_unused sky1_audss_clk_runtime_suspend(struct device *dev)
+diff --git a/drivers/phy/cix/phy-cix-usb2.c b/drivers/phy/cix/phy-cix-usb2.c
+index 01593d859ed3..3aa46427beff 100644
+--- a/drivers/phy/cix/phy-cix-usb2.c
++++ b/drivers/phy/cix/phy-cix-usb2.c
+@@ -6,6 +6,8 @@
+ #include <linux/reset.h>
+ #include <linux/kernel.h>
+ #include <linux/of_platform.h>
++#include <linux/platform_device.h>
++#include <linux/module.h>
+ 
+ static const struct acpi_device_id cix_usb2phy_acpi_match[] = {
+ 	{ "CIXH2032" },
+diff --git a/drivers/soc/cix/acpi/acpi_resource_lookup.c b/drivers/soc/cix/acpi/acpi_resource_lookup.c
+index 667b714709c9..70beb40626c5 100644
+--- a/drivers/soc/cix/acpi/acpi_resource_lookup.c
++++ b/drivers/soc/cix/acpi/acpi_resource_lookup.c
+@@ -216,8 +216,13 @@ static int cma_init_reserved_memory(phys_addr_t base, phys_addr_t size,
+ 	else
+ 		snprintf(cma->name, CMA_MAX_NAME,  "cma%d\n", cma_area_count);
+ 
+-	cma->base_pfn = PFN_DOWN(base);
++	cma->ranges[0].base_pfn = PFN_DOWN(base);
++	cma->ranges[0].early_pfn = PFN_DOWN(base);
++	cma->ranges[0].count = size >> PAGE_SHIFT;
++	cma->nranges = 1;
+ 	cma->count = size >> PAGE_SHIFT;
++	cma->available_count = size >> PAGE_SHIFT;
++	cma->nid = NUMA_NO_NODE;
+ 	cma->order_per_bit = order_per_bit;
+ 	*res_cma = cma;
+ 	cma_area_count++;
+diff --git a/drivers/soc/cix/acpi/cix-acpi-ec-gpio.c b/drivers/soc/cix/acpi/cix-acpi-ec-gpio.c
+index ed3354318462..464f4c34adef 100644
+--- a/drivers/soc/cix/acpi/cix-acpi-ec-gpio.c
++++ b/drivers/soc/cix/acpi/cix-acpi-ec-gpio.c
+@@ -126,11 +126,11 @@ static int cix_aec_gpio_get(struct gpio_chip *gc, unsigned int gpio)
+ 	return cix_aec_gpio_read(aec->handle, &aec->lock, gpio);
+ }
+ 
+-static void cix_aec_gpio_set(struct gpio_chip *gc, unsigned int gpio, int value)
++static int cix_aec_gpio_set(struct gpio_chip *gc, unsigned int gpio, int value)
+ {
+ 	struct cix_aec *aec = gpiochip_get_data(gc);
+ 
+-	cix_aec_gpio_write(aec->handle, &aec->lock, gpio, value);
++	return cix_aec_gpio_write(aec->handle, &aec->lock, gpio, value);
+ }
+ 
+ static ssize_t gpio_count_show(struct device *dev,
+diff --git a/drivers/soc/cix/acpi/cix-acpi-ec.c b/drivers/soc/cix/acpi/cix-acpi-ec.c
+index e30515e7f37a..6256bd1f9077 100644
+--- a/drivers/soc/cix/acpi/cix-acpi-ec.c
++++ b/drivers/soc/cix/acpi/cix-acpi-ec.c
+@@ -360,7 +360,7 @@ static int cix_aec_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static int cix_aec_remove(struct platform_device *pdev)
++static void cix_aec_remove(struct platform_device *pdev)
+ {
+ 	struct cix_aec *aec = platform_get_drvdata(pdev);
+ 
+@@ -374,8 +374,6 @@ static int cix_aec_remove(struct platform_device *pdev)
+ 		device_unregister(aec->class_dev);
+ 		aec->class_dev = NULL;
+ 	}
+-
+-	return 0;
+ }
+ 
+ static const struct acpi_device_id cix_aec_acpi_match[] = {
+diff --git a/drivers/soc/cix/acpi/dsdt_override.c b/drivers/soc/cix/acpi/dsdt_override.c
+index 7de7a5f45cd2..257d039519d3 100644
+--- a/drivers/soc/cix/acpi/dsdt_override.c
++++ b/drivers/soc/cix/acpi/dsdt_override.c
+@@ -13,7 +13,7 @@
+ #include <linux/efi.h>
+ #include <linux/libfdt.h>
+ #include <linux/of_fdt.h>
+-#include <asm/unaligned.h>
++#include <linux/unaligned.h>
+ 
+ #define AML_NAME_OP                 (u16) 0x08
+ 
+diff --git a/drivers/soc/cix/cix-ddr-lp.c b/drivers/soc/cix/cix-ddr-lp.c
+index eb0a0ecf5b22..1c9f96fabc4c 100644
+--- a/drivers/soc/cix/cix-ddr-lp.c
++++ b/drivers/soc/cix/cix-ddr-lp.c
+@@ -143,9 +143,8 @@ static int cix_ddrlp_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
+-static int cix_ddrlp_remove(struct platform_device *pdev)
++static void cix_ddrlp_remove(struct platform_device *pdev)
+ {
+-	return 0;
+ }
+ 
+ #ifdef CONFIG_OF
+diff --git a/drivers/soc/cix/cix-plat.c b/drivers/soc/cix/cix-plat.c
+index f48e5ffd9de0..d43190e5f636 100644
+--- a/drivers/soc/cix/cix-plat.c
++++ b/drivers/soc/cix/cix-plat.c
+@@ -92,6 +92,7 @@ static int __init parse_gop(char *arg)
+ }
+ early_param("efifb_enable", parse_gop);
+ 
++#ifdef CONFIG_CIX_SMMU_ATTACH_NOTIFIER
+ static void smmu_pcie_quirks(struct device *dev)
+ {
+ 	struct arm_smmu_master *master;
+@@ -161,6 +162,7 @@ static int smmu_attach_notify(struct notifier_block *nb, unsigned long val,
+ static struct notifier_block smmu_attach_nb = {
+ 	.notifier_call = smmu_attach_notify,
+ };
++#endif /* CONFIG_CIX_SMMU_ATTACH_NOTIFIER */
+ 
+ void cix_pcie_io_space_init(void)
+ {
+@@ -179,7 +181,11 @@ int cix_pcie_quirks_init(void)
+ 		return -ENOMEM;
+ 	}
+ 
++#ifdef CONFIG_CIX_SMMU_ATTACH_NOTIFIER
+ 	return register_smmu_attach_notifier(&smmu_attach_nb);
++#else
++	return 0;
++#endif
+ }
+ 
+ #ifdef CIX_GOP_RESOURCE_QUIRK
+diff --git a/drivers/soc/cix/cix-suspend.c b/drivers/soc/cix/cix-suspend.c
+index 3629b319d8d0..e6ca2d4e9a86 100644
+--- a/drivers/soc/cix/cix-suspend.c
++++ b/drivers/soc/cix/cix-suspend.c
+@@ -5,13 +5,16 @@
+  *
+  */
+ #include <linux/kernel.h>
++#include <linux/string.h>
+ #include <linux/module.h>
+ #include <linux/types.h>
+ #include <linux/mutex.h>
+ #include <linux/errno.h>
+ #include <linux/device.h>
+ #include <linux/soc/cix/cix_suspend.h>
++#if IS_ENABLED(CONFIG_HISYSEVENT)
+ #include <dfx/hiview_hisysevent.h>
++#endif
+ 
+ static struct suspend_info suspend_warn;
+ static spinlock_t suspend_warn_lock;
+@@ -38,7 +41,7 @@ void suspend_warning_set(const char *name, suspend_warn_type_t type)
+ 	if (!suspend_warn.is_set) {
+ 		suspend_warn.type = type;
+ 		suspend_warn.is_set = true;
+-		strncpy(suspend_warn.name, name, SUSPEND_MAX_MODULE_NAME_LEN - 1);
++		strscpy(suspend_warn.name, name, SUSPEND_MAX_MODULE_NAME_LEN);
+ 	} else {
+ 		pr_warn("Suspend warn already set: type=%d, new type=%d\n", suspend_warn.type, type);
+ 	}
+@@ -64,14 +67,17 @@ EXPORT_SYMBOL_GPL(suspend_warning_clear);
+ 
+ bool suspend_warning_check(void)
+ {
++	bool was_set = false;
++#if IS_ENABLED(CONFIG_HISYSEVENT)
+ 	struct hiview_hisysevent *event = NULL;
+ 	int ret = 0;
+-	bool was_set = false;
++#endif
+ 
+ 	spin_lock_irqsave(&suspend_warn_lock, suspend_warn_flags);
+ 	if (suspend_warn.is_set) {
+ 		was_set = true;
+ 
++#if IS_ENABLED(CONFIG_HISYSEVENT)
+ 		if(!IS_ERR_OR_NULL(suspend_warn.name)) {
+ 			event = hisysevent_create("KERNEL_VENDOR", "SUSPEND_ERROR", FAULT);
+ 			if (event == NULL) {
+@@ -84,6 +90,7 @@ bool suspend_warning_check(void)
+ 				pr_err("report hievent failed: error_name = %s \n", suspend_warn.name);
+ 			hisysevent_destroy(&event);
+ 		}
++#endif
+ 
+ 	}
+ 	spin_unlock_irqrestore(&suspend_warn_lock, suspend_warn_flags);
+diff --git a/drivers/thermal/cix/cix_scmi_em.c b/drivers/thermal/cix/cix_scmi_em.c
+index 474d5db2b76f..2e578aefba94 100644
+--- a/drivers/thermal/cix/cix_scmi_em.c
++++ b/drivers/thermal/cix/cix_scmi_em.c
+@@ -10,11 +10,29 @@
+ #include <linux/pm_opp.h>
+ #include <linux/scmi_protocol.h>
+ #include <linux/units.h>
++#include <linux/of.h>
+ #include <linux/cix/cix_scmi_em.h>
+ 
+ static struct scmi_protocol_handle *ph;
+ static const struct scmi_perf_proto_ops *perf_ops;
+ 
++/*
++ * SCMI v7.2 dropped perf_ops->device_domain_id(); resolve the perf domain
++ * from the device clocks phandle like the old helper did (DT boot only).
++ */
++static int cix_scmi_device_domain_id(struct device *dev)
++{
++	struct of_phandle_args clkspec;
++
++	if (!dev->of_node ||
++	    of_parse_phandle_with_args(dev->of_node, "clocks", "#clock-cells",
++				       0, &clkspec))
++		return -EINVAL;
++	of_node_put(clkspec.np);
++	return clkspec.args[0];
++}
++
++
+ static int __maybe_unused
+ cix_scmi_get_em_power(struct device *dev, unsigned long *power,
+ 		   unsigned long *KHz)
+@@ -23,7 +41,7 @@ cix_scmi_get_em_power(struct device *dev, unsigned long *power,
+ 	unsigned long Hz;
+ 	int ret, domain;
+ 
+-	domain = perf_ops->device_domain_id(dev);
++	domain = cix_scmi_device_domain_id(dev);
+ 	if (domain < 0)
+ 		return domain;
+ 
+diff --git a/include/linux/cix/cix_scmi_em.h b/include/linux/cix/cix_scmi_em.h
+new file mode 100644
+index 000000000000..9e194478c72b
+--- /dev/null
++++ b/include/linux/cix/cix_scmi_em.h
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright 2024 Cix Technology Group Co., Ltd.*/
++/**
++ * Cix Energy Model driver
++ */
++
++#ifndef __CIX_SCMI_EM_H
++#define __CIX_SCMI_EM_H
++
++#ifdef CONFIG_CIX_SCMI_ENERGY_MODEL
++/**
++ * cix_scmi_register_em() - Register an energy model using
++ *              SCMI Message Protocol
++ *
++ * @dev: Device for which the EM is to register
++ *
++ * Return: 0 for success; else the error code is returned
++ */
++int cix_scmi_register_em(struct device *dev);
++
++#else /* !CONFIG_CIX_SCMI_ENERGY_MODEL */
++
++static inline int cix_scmi_register_em(struct device *dev)
++{
++	return -EINVAL;
++}
++
++#endif /* CONFIG_CIX_SCMI_ENERGY_MODEL */
++
++#endif /* __CIX_SCMI_EM_H */
+\ No newline at end of file

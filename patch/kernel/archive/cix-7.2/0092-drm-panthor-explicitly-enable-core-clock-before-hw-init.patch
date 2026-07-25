@@ -1,0 +1,71 @@
+From 41bbca4d6c7eb274e610139c10d2c7270a94c153 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 10:19:34 -0400
+Subject: [PATCH] drm/panthor: explicitly enable core clock before hw_init (NCZ
+ 0092)
+
+Confirmed on real Sky1 (.66) hardware tonight, past the 0086 gpu_core
+clock-lookup fix: panthor now finds its core clock by name, but its
+reported rate is 0 -- clk_prepare_enable() was never actually called
+before panthor_hw_init() touches GPU MMIO, causing an asynchronous
+SError panic (panthor_hw_init -> panthor_device_init ->
+platform_probe).
+
+Root cause: pm_runtime_resume_and_get() right before panthor_hw_init()
+is supposed to trigger the runtime_resume callback that calls
+clk_prepare_enable on the core/stacks/coregroup clocks. But
+__pm_runtime_resume() is gated on this platform (NCZ 0089/0090,
+forward-ported from the 7.1.2 investigation) until a late_initcall
+sets cix_system_ready -- a fix for OTHER drivers whose premature
+deferred-probe resume touches not-yet-clocked hardware. That gate
+silently no-ops a device own FIRST, synchronous, in-probe resume too,
+so the resume callback that would enable the clock never actually
+runs during panthor own probe.
+
+This exact interaction never surfaced during the 7.1.2 investigation
+because panthor never got its clock lookup working there either --
+0086 (tonight) and 0089/0090 (forward-ported from 7.1.2) individually
+worked as designed, but together expose a genuinely new incompatibility.
+
+Fix: explicitly clk_prepare_enable() the core clock right after
+panthor_clk_init() succeeds, independent of the pm_runtime path.
+clk_prepare_enable is refcounted, so this does not conflict with the
+resume callback also enabling it later once cix_system_ready flips true.
+---
+ drivers/gpu/drm/panthor/panthor_device.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_device.c b/drivers/gpu/drm/panthor/panthor_device.c
+index ea33b6366a7e..9b8909047874 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.c
++++ b/drivers/gpu/drm/panthor/panthor_device.c
+@@ -312,6 +312,26 @@ int panthor_device_init(struct panthor_device *ptdev)
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * NCZ CIX Sky1 fix: explicitly enable the core clock here rather than
++	 * relying on pm_runtime_resume_and_get() below to do it via the
++	 * runtime_resume callback. On this platform, __pm_runtime_resume() is
++	 * gated (NCZ patches 0089/0090) until a late_initcall marks the system
++	 * ready, to stop OTHER drivers' premature deferred-probe resumes from
++	 * touching not-yet-clocked hardware. But that gate also silently
++	 * no-ops THIS device's own first (synchronous, in-probe) resume, so
++	 * panthor_hw_init() below was running against an unprepared/disabled
++	 * core clock (reported rate=0) and immediately hit an SError touching
++	 * GPU MMIO. Confirmed on real Sky1 (.66) hardware. clk_prepare_enable
++	 * is refcounted, so this does not conflict with the later resume path
++	 * once cix_system_ready flips true and genuinely runs.
++	 */
++	if (!IS_ERR_OR_NULL(ptdev->clks.core)) {
++		ret = clk_prepare_enable(ptdev->clks.core);
++		if (ret)
++			return ret;
++	}
++
+ 	ret = panthor_pm_domain_init(ptdev);
+ 	if (ret) {
+ 		drm_err(&ptdev->base, "init pm-domains failed, ret=%d", ret);
+-- 
+2.51.0
+

@@ -1,0 +1,197 @@
+From f1765419a95323e1ff94a622733515dd7d4a9934 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 01:35:58 -0400
+Subject: [PATCH 5/5] clk/reset: sky1-audss: do not defer on missing parent
+ clocks/reset/regmap (NCZ 0092)
+
+Forward-port of 9014/9014b-clk-sky1-audss-dont-defer-*.patch. On 7.1.2
+this was the final, never-successfully-deployed fix for the rootfs-mount
+deadlock (audss-clk/CIXH6061 EPROBE_DEFER blocking CIXH2030 PCIe -> NVMe
+enumeration); confirmed the same EPROBE_DEFER pattern is still present
+in 7.2s vendor clk driver (0065) tonight.
+
+clk-sky1-audss.c: parent clock lookups and the NoC reset were fatal on
+failure. Make them non-fatal (warn, continue with NULL); clks_enable/
+disable/set_rate all skip NULL/ERR entries so the internal audss clocks
+still register even with some parents unavailable.
+
+reset-sky1-audss.c: same EPROBE_DEFER anti-pattern found in a sibling
+reset driver split out during the 0065 vendor refactor (not present in
+the 7.1.1 tree this way). Unlike the clk file, this driver had NO
+downstream NULL-guards on its regmap access (regmap_update_bits/
+regmap_read in reset_update/status) -- added guards there too, since
+removing the EPROBE_DEFER without them would trade a safe indefinite
+defer for a NULL-pointer-deref crash the first time a reset operation
+actually runs.
+---
+ drivers/clk/cix/clk-sky1-audss.c | 58 +++++++++++++++++++++-----------
+ drivers/reset/reset-sky1-audss.c | 17 ++++++++--
+ 2 files changed, 53 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/clk/cix/clk-sky1-audss.c b/drivers/clk/cix/clk-sky1-audss.c
+index eb70e91eb22e..524f478cfab0 100644
+--- a/drivers/clk/cix/clk-sky1-audss.c
++++ b/drivers/clk/cix/clk-sky1-audss.c
+@@ -896,12 +896,21 @@ static int sky1_audss_clks_get(struct sky1_audss_clks_priv *priv)
+ {
+ 	int i;
+ 
++	/*
++	 * NCZ CIX Sky1 boot fix (patch 9014 forward-port): don't defer if a
++	 * parent clock is not yet available. Under ACPI boot the clk-sky1-acpi
++	 * (acpi_clk.c) clkdev entries are not always visible to this probe at
++	 * the right time, causing indefinite -EPROBE_DEFER. Since audss-clk is
++	 * a supplier for CIXH2030 (PCIe) and CIXH1006 (DMA), that stalls NVMe
++	 * enumeration and rootfs never mounts. Warn but continue with NULL;
++	 * enable/disable/set_rate below all skip NULL/ERR entries.
++	 */
+ 	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
+ 		priv->clks[i] = devm_clk_get(priv->dev, sky1_audss_clks_names[i]);
+ 		if (IS_ERR(priv->clks[i])) {
+-			dev_err(priv->dev, "failed to get clock %s\n",
+-				sky1_audss_clks_names[i]);
+-			return PTR_ERR(priv->clks[i]);
++			dev_warn(priv->dev, "clock %s not ready (%ld), continuing without it\n",
++				 sky1_audss_clks_names[i], PTR_ERR(priv->clks[i]));
++			priv->clks[i] = NULL;
+ 		}
+ 	}
+ 
+@@ -913,6 +922,8 @@ static int sky1_audss_clks_enable(struct sky1_audss_clks_priv *priv)
+ 	int i, err;
+ 
+ 	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		if (IS_ERR_OR_NULL(priv->clks[i]))
++			continue;
+ 		err = clk_prepare_enable(priv->clks[i]);
+ 		if (err) {
+ 			dev_err(priv->dev, "failed to enable clock %s\n",
+@@ -924,8 +935,11 @@ static int sky1_audss_clks_enable(struct sky1_audss_clks_priv *priv)
+ 	return 0;
+ 
+ err_clks:
+-	while (--i >= 0)
++	while (--i >= 0) {
++		if (IS_ERR_OR_NULL(priv->clks[i]))
++			continue;
+ 		clk_disable_unprepare(priv->clks[i]);
++	}
+ 
+ 	return err;
+ }
+@@ -934,8 +948,11 @@ static void sky1_audss_clks_disable(struct sky1_audss_clks_priv *priv)
+ {
+ 	int i;
+ 
+-	for(i = 0; i < SKY1_AUDSS_CLKS_NUM; i++)
++	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		if (IS_ERR_OR_NULL(priv->clks[i]))
++			continue;
+ 		clk_disable_unprepare(priv->clks[i]);
++	}
+ }
+ 
+ static int sky1_audss_clks_set_rate(struct sky1_audss_clks_priv *priv)
+@@ -943,12 +960,12 @@ static int sky1_audss_clks_set_rate(struct sky1_audss_clks_priv *priv)
+ 	int i, err;
+ 
+ 	for (i = 0; i < SKY1_AUDSS_CLKS_NUM; i++) {
++		if (IS_ERR_OR_NULL(priv->clks[i]))
++			continue;
+ 		err = clk_set_rate(priv->clks[i], clk_rate_default[i]);
+-		if (err) {
+-			dev_err(priv->dev, "failed to set clock rate %s\n",
+-				sky1_audss_clks_names[i]);
+-			return err;
+-		}
++		if (err)
++			dev_warn(priv->dev, "failed to set clock rate %s\n",
++				 sky1_audss_clks_names[i]);
+ 	}
+ 
+ 	return 0;
+@@ -1052,21 +1069,22 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
+ 
+ 	sky1_audss_clks_get_rate(priv);
+ 
+-	/* reset audio subsystem */
+-	rst_noc = devm_reset_control_get(dev, "noc");
++	/* reset audio subsystem (NCZ patch 9014: not fatal if missing) */
++	rst_noc = devm_reset_control_get_optional_exclusive(dev, "noc");
+ 	if (IS_ERR(rst_noc)) {
+-		dev_err(dev, "failed to get noc reset\n");
+-		ret = PTR_ERR(rst_noc);
+-		goto fail_reset;
++		dev_warn(dev, "noc reset not ready, continuing without it\n");
++		rst_noc = NULL;
+ 	}
+ 	priv->rst_noc = rst_noc;
+ 
+-	/* reset */
+-	reset_control_assert(rst_noc);
+-	usleep_range(1, 2);
++	if (rst_noc) {
++		/* reset */
++		reset_control_assert(rst_noc);
++		usleep_range(1, 2);
+ 
+-	/* release reset */
+-	reset_control_deassert(rst_noc);
++		/* release reset */
++		reset_control_deassert(rst_noc);
++	}
+ 
+ 	rcsu_base = ioremap(SKY1_AUDSS_RCSU_ADDR, SKY1_AUDSS_RCSU_LEN);
+ 	priv->rcsu_base = rcsu_base;
+diff --git a/drivers/reset/reset-sky1-audss.c b/drivers/reset/reset-sky1-audss.c
+index 7d08c711175c..1288bb2cc885 100644
+--- a/drivers/reset/reset-sky1-audss.c
++++ b/drivers/reset/reset-sky1-audss.c
+@@ -33,6 +33,9 @@ static int sky1_audss_reset_update(struct sky1_audss_reset *rst,
+ 	unsigned int bit = BIT(id);
+ 	unsigned int val = assert ? 0 : bit;
+ 
++	if (!rst->regmap)
++		return -ENODEV;
++
+ 	return regmap_update_bits(rst->regmap, SKY1_AUDSS_SW_RST, bit, val);
+ }
+ 
+@@ -81,6 +84,9 @@ static int sky1_audss_reset_status(struct reset_controller_dev *rcdev,
+ 	unsigned int val;
+ 	int ret;
+ 
++	if (!rst->regmap)
++		return -ENODEV;
++
+ 	ret = regmap_read(rst->regmap, SKY1_AUDSS_SW_RST, &val);
+ 	if (ret)
+ 		return ret;
+@@ -120,8 +126,13 @@ static int sky1_audss_reset_probe(struct platform_device *pdev)
+ 			if (syscon_dev) {
+ 				regmap = dev_get_regmap(syscon_dev, NULL);
+ 				put_device(syscon_dev);
+-				if (!regmap)
+-					regmap = ERR_PTR(-EPROBE_DEFER);
++				/*
++				 * NCZ patch 9014b forward-port: don't force EPROBE_DEFER
++				 * if the regmap isn't ready yet. Continue with NULL --
++				 * sky1_audss_reset_update()/_status() below guard against
++				 * it. The regmap becomes available once the audss_cru
++				 * syscon device finishes its own probe.
++				 */
+ 			}
+ 		}
+ 	}
+@@ -129,6 +140,8 @@ static int sky1_audss_reset_probe(struct platform_device *pdev)
+ 	if (IS_ERR(regmap))
+ 		return dev_err_probe(dev, PTR_ERR(regmap),
+ 				     "failed to get parent regmap\n");
++	if (!regmap)
++		dev_warn(dev, "parent regmap not ready, continuing without it\n");
+ 
+ 	rst = devm_kzalloc(dev, sizeof(*rst), GFP_KERNEL);
+ 	if (!rst)
+-- 
+2.51.0
+

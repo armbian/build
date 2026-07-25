@@ -1,0 +1,90 @@
+From 5a83c815ed0ea0325a6a82eac4c1804c09b3fb6f Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 9 Jul 2026 20:05:57 -0400
+Subject: [PATCH 3/6] acpi: sta_quirk: add NPU CRE child override via
+ acpi_dev_parent()
+
+CIX BIOS v1.0 leaves NPU cores (CRE0-2, children of CIXH4000/NPU0)
+at _STA 0. Children are _ADR-matched so _HID is never evaluated;
+acpi_match_device_ids() on the child fails. Match by parent HID via
+acpi_dev_parent().
+
+Source: linux-cix-sky1-next-7.1/patches-7.1/2007-acpi-sta-quirk-add-cixh4010-npu-cores.patch
+
+Forward-port notes:
+  - Drop the pre-existing tabs+spaces style violation on the
+    unsigned long long *status line that blocks the hunk from
+    applying (kernel coding style is tabs only).
+---
+ drivers/acpi/sta_quirk.c | 40 +++++++++++++++++++++++++++++++---------
+ 1 file changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/acpi/sta_quirk.c b/drivers/acpi/sta_quirk.c
+index 43cd8b71df4c..a5376750b912 100644
+--- a/drivers/acpi/sta_quirk.c
++++ b/drivers/acpi/sta_quirk.c
+@@ -1,9 +1,16 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * ACPI _STA overrides for firmware bugs (non-arch-specific).
++ * ACPI _STA overrides for CIX BIOS v1.0 firmware bugs.
+  *
+- * CIX: unhide SCMI protocol child devices (CIXHA008/CIXHA009) that old
+- * firmware leaves at _STA 0 under CIXHA006.
++ * CIX BIOS v1.0 leaves certain devices at _STA 0 so the ACPI bus scan
++ * skips full enumeration.  Key quirk: children with _STA=0 are created
++ * as _ADR-matched acpi_device structs WITHOUT _HID evaluation, so
++ * acpi_match_device_ids() cannot be used on the child directly.
++ * Match on the PARENT device HID via acpi_dev_parent() instead.
++ *
++ * Devices affected:
++ *   CIXHA008, CIXHA009 (SCMI protocol, children of CIXHA006, uid=0)
++ *   CRE0-2 (NPU cores, children of CIXH4000/NPU0, all uids)
+  */
+ 
+ #include <linux/acpi.h>
+@@ -11,20 +18,35 @@
+ 
+ #include "internal.h"
+ 
+-/*
+- * Old CIX firmware leaves DVFS/CLKS SCMI protocol devices (children of
+- * CIXHA006) at _STA 0 so Linux skips them in acpi_bus_attach() and
+- * acpi_get_next_present_subnode(). Treat them as fully present/enabled.
+- */
++/* SCMI protocol: match the CHILD device directly (HID is populated) */
+ static const struct acpi_device_id cix_scmi_proto_sta_ids[] = {
+ 	{ "CIXHA008", 0 },
+ 	{ "CIXHA009", 0 },
+ 	{ }
+ };
+ 
++/* NPU parent: match children of CIXH4000 (NPU0) by PARENT HID */
++static const struct acpi_device_id cix_npu_parent_ids[] = {
++	{ "CIXH4000", 0 },
++	{ }
++};
++
+ bool acpi_sta_override_firmware_quirk(struct acpi_device *adev,
+-				       unsigned long long *status)
++				unsigned long long *status)
+ {
++	struct acpi_device *parent = acpi_dev_parent(adev);
++
++	/*
++	 * NPU core devices (CRE0/CRE1/CRE2 under CIXH4000/NPU0):
++	 * _STA=0 prevents _HID from being evaluated on the child, so
++	 * match by parent HID via acpi_dev_parent() instead.
++	 */
++	if (parent && !acpi_match_device_ids(parent, cix_npu_parent_ids)) {
++		*status = ACPI_STA_DEFAULT;
++		return true;
++	}
++
++	/* SCMI protocol devices: child HID is populated, uid=0 only */
+ 	if (acpi_match_device_ids(adev, cix_scmi_proto_sta_ids))
+ 		return false;
+ 
+-- 
+2.51.0
+

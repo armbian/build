@@ -1,0 +1,72 @@
+From bfabe9250ce5cad15182e998011467dee5660f00 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 10:35:31 -0400
+Subject: [PATCH] phy: cix-usb2/usb3: use reset_control_get_optional (same fix
+ as usbdp)
+
+cix_usb2phy_probe and cix_u3phy_probe had the same bug as usbdp: get
+reset/preset via devm_reset_control_get, log-only on IS_ERR without
+bailing/NULLing, then (usb3) reset_control_assert on the ERR_PTR ->
+WARN reset/core.c:503 + preempt_count underflow -> in_hardirq ->
+cdns_i2c BUG. Switch both to devm_reset_control_get_optional + bail via
+dev_err_probe. hda (cix-ipbloq) already bails correctly.
+---
+ drivers/phy/cix/phy-cix-usb2.c | 11 +++++------
+ drivers/phy/cix/phy-cix-usb3.c | 18 +++++++++---------
+ 2 files changed, 14 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/phy/cix/phy-cix-usb2.c b/drivers/phy/cix/phy-cix-usb2.c
+index 3aa46427beff..25dbd4a6fd3c 100644
+--- a/drivers/phy/cix/phy-cix-usb2.c
++++ b/drivers/phy/cix/phy-cix-usb2.c
+@@ -30,13 +30,12 @@ static int cix_usb2phy_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct reset_control *preset;
+ 
+-	preset = devm_reset_control_get(dev, "preset");
++	preset = devm_reset_control_get_optional(dev, "preset");
++	if (IS_ERR(preset))
++		return dev_err_probe(dev, PTR_ERR(preset),
++				     "%s: failed to get preset\n", __func__);
+ 
+-	if (IS_ERR(preset)) {
+-		dev_err(dev, "%s: failed to get preset\n", __func__);
+-	} else {
+-		reset_control_deassert(preset);
+-	}
++	reset_control_deassert(preset);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/phy/cix/phy-cix-usb3.c b/drivers/phy/cix/phy-cix-usb3.c
+index 6e5db3637692..26bd025bc772 100644
+--- a/drivers/phy/cix/phy-cix-usb3.c
++++ b/drivers/phy/cix/phy-cix-usb3.c
+@@ -365,15 +365,15 @@ static int cix_u3phy_probe(struct platform_device *pdev)
+ 		return -EINVAL;
+ 	}
+ 
+-	u3phy->reset = devm_reset_control_get(dev, "reset");
+-	if (IS_ERR(u3phy->reset)) {
+-		dev_err(dev, "%s: failed to get reset\n", __func__);
+-	}
+-
+-	u3phy->preset = devm_reset_control_get(dev, "preset");
+-	if (IS_ERR(u3phy->preset)) {
+-		dev_err(dev, "%s: failed to get preset\n", __func__);
+-	}
++	u3phy->reset = devm_reset_control_get_optional(dev, "reset");
++	if (IS_ERR(u3phy->reset))
++		return dev_err_probe(dev, PTR_ERR(u3phy->reset),
++				     "%s: failed to get reset\n", __func__);
++
++	u3phy->preset = devm_reset_control_get_optional(dev, "preset");
++	if (IS_ERR(u3phy->preset))
++		return dev_err_probe(dev, PTR_ERR(u3phy->preset),
++				     "%s: failed to get preset\n", __func__);
+ 
+ 	u3phy->apb_clk = devm_clk_get(dev, "apb_clk");
+ 	if (IS_ERR(u3phy->apb_clk)) {
+-- 
+2.51.0
+

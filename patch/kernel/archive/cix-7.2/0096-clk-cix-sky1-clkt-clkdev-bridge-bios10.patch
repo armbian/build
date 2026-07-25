@@ -1,0 +1,260 @@
+From 248d592b4c61457dd8fceca885cb39aa9c3bf1ce Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Tue, 7 Jul 2026 06:11:20 -0400
+Subject: [PATCH] clk: cix: bring back Sky1 CLKT clkdev bridge (clk-sky1-acpi)
+ for cixmini firmware
+
+The cixmini Sky1 UEFI (BIOS 1.0, 2026-03) describes consumer clocks via
+vendor CLKT packages {scmi_clock_id, con_name, [consumer_ref]} in the
+DSDT. The 2026q2 cix acpi_clk walker expects a different scheme, maps
+zero entries on this firmware, and silently binds CIXHA010 anyway --
+leaving every apb/pclk consumer (cix-pcie-phy, cix-usbdp, pwm, uart)
+without clocks, which is the root of the dead-PCIe/NVMe bring-up
+blocker. Port the proven clk-sky1-acpi CLKT bridge from the
+cix-sky1-next 7.0/7.1 tree (bridges CLKT entries to clk-scmi
+scmi-clk-<id> clkdev aliases, defers until SCMI clocks appear) and
+unmatch acpi_clk so the bridge owns CIXHA010.
+---
+ drivers/clk/cix/Makefile        |   1 +
+ drivers/clk/cix/acpi_clk.c      |   8 +-
+ drivers/clk/cix/clk-sky1-acpi.c | 196 ++++++++++++++++++++++++++++++++
+ 3 files changed, 204 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/clk/cix/clk-sky1-acpi.c
+
+diff --git a/drivers/clk/cix/Makefile b/drivers/clk/cix/Makefile
+index c2bd36619c66..f960ecc4f23e 100644
+--- a/drivers/clk/cix/Makefile
++++ b/drivers/clk/cix/Makefile
+@@ -4,6 +4,7 @@
+ obj-$(CONFIG_CLK_SKY1_AUDSS) += clk-sky1-audss.o
+ obj-$(CONFIG_CIX_CLK_DEBUG) += cix-clk-debug.o
+ 
++obj-$(CONFIG_CIX_ACPI_CLK) += clk-sky1-acpi.o
+ obj-$(CONFIG_CIX_ACPI_CLK) += acpi_clk.o
+ obj-$(CONFIG_CIX_ACPI_CLK) += acpi_scmi_clk.o
+ obj-$(CONFIG_COMMON_CLK_CIX) += clk.o
+diff --git a/drivers/clk/cix/acpi_clk.c b/drivers/clk/cix/acpi_clk.c
+index 0b67aaa5ab81..4aa6783c0083 100644
+--- a/drivers/clk/cix/acpi_clk.c
++++ b/drivers/clk/cix/acpi_clk.c
+@@ -520,8 +520,14 @@ static void cix_acpi_clk_remove(struct platform_device *pdev)
+ {
+ }
+ 
++/*
++ * NCZ: CIXHA010 is claimed by clk-sky1-acpi (CLKT lookup-table bridge),
++ * which matches the description scheme the cixmini Sky1 UEFI (BIOS 1.0,
++ * 2026-03) actually provides. This 2026q2 walker maps nothing on that
++ * firmware and would silently squat the device, so it is left compiled
++ * but unmatched.
++ */
+ static const struct acpi_device_id __maybe_unused cix_acpi_clk_match[] = {
+-	{ "CIXHA010", 0 },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(acpi, cix_acpi_clk_match);
+diff --git a/drivers/clk/cix/clk-sky1-acpi.c b/drivers/clk/cix/clk-sky1-acpi.c
+new file mode 100644
+index 000000000000..4c5ca954da00
+--- /dev/null
++++ b/drivers/clk/cix/clk-sky1-acpi.c
+@@ -0,0 +1,196 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX Sky1 ACPI clock lookup table (CLKT) driver
++ *
++ * Parses vendor CLKT tables in the ACPI namespace to bridge
++ * SCMI-provided clocks to consumer devices via clkdev lookups.
++ *
++ * The vendor DSDT defines per-device CLKT Name objects:
++ *   Name (CLKT, Package (N) {
++ *       Package (3) { clock_id, con_name, consumer_ref },
++ *       ...
++ *   })
++ *
++ * This driver walks the ACPI namespace, evaluates each CLKT,
++ * looks up the corresponding SCMI clock (registered by clk-scmi
++ * as "scmi-clk-<id>"), and creates clkdev entries so consumer
++ * drivers find clocks via standard clk_get().
++ */
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/clkdev.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++struct sky1_acpi_clk {
++	struct device *dev;
++	int mapped;
++};
++
++static void sky1_clkdev_drop(void *data)
++{
++	clkdev_drop(data);
++}
++
++static int sky1_parse_clkt_entry(struct sky1_acpi_clk *priv,
++				 const char *consumer_name,
++				 union acpi_object *entry)
++{
++	union acpi_object *elems;
++	u64 clock_id;
++	const char *con_id;
++	char scmi_id[20];
++	struct clk *clk;
++	struct clk_lookup *cl;
++	int ret;
++
++	if (entry->type != ACPI_TYPE_PACKAGE || entry->package.count < 2)
++		return -EINVAL;
++
++	elems = entry->package.elements;
++
++	/* Element 0: SCMI clock ID (integer) */
++	if (elems[0].type != ACPI_TYPE_INTEGER)
++		return -EINVAL;
++	clock_id = elems[0].integer.value;
++
++	/* Element 1: connection name (string, empty = unnamed) */
++	if (elems[1].type != ACPI_TYPE_STRING)
++		return -EINVAL;
++	con_id = elems[1].string.pointer;
++	if (con_id[0] == '\0')
++		con_id = NULL;
++
++	/* Look up the SCMI clock by its clkdev registration name */
++	snprintf(scmi_id, sizeof(scmi_id), "scmi-clk-%llu", clock_id);
++	clk = clk_get(NULL, scmi_id);
++	if (IS_ERR(clk)) {
++		dev_dbg(priv->dev, "SCMI clock %llu not available for %s\n",
++			clock_id, consumer_name);
++		return PTR_ERR(clk);
++	}
++
++	/* Register consumer lookup */
++	cl = clkdev_create(clk, con_id, "%s", consumer_name);
++	clk_put(clk);
++	if (!cl) {
++		dev_warn(priv->dev,
++			 "Failed to create clkdev for %s clock %llu\n",
++			 consumer_name, clock_id);
++		return -ENOMEM;
++	}
++
++	/* Auto-cleanup on device removal */
++	ret = devm_add_action_or_reset(priv->dev, sky1_clkdev_drop, cl);
++	if (ret)
++		return ret;
++
++	dev_dbg(priv->dev, "Mapped SCMI clock %llu -> %s:%s\n",
++		clock_id, consumer_name, con_id ?: "(unnamed)");
++	priv->mapped++;
++
++	return 0;
++}
++
++static acpi_status sky1_clkt_walk_cb(acpi_handle handle, u32 level,
++				     void *context, void **ret_val)
++{
++	struct sky1_acpi_clk *priv = context;
++	struct acpi_device *adev;
++	struct acpi_buffer buf = { ACPI_ALLOCATE_BUFFER, NULL };
++	union acpi_object *obj;
++	const char *consumer_name;
++	acpi_status status;
++	int i;
++
++	status = acpi_evaluate_object(handle, "CLKT", NULL, &buf);
++	if (ACPI_FAILURE(status))
++		return AE_OK;
++
++	obj = buf.pointer;
++	if (!obj || obj->type != ACPI_TYPE_PACKAGE || obj->package.count == 0)
++		goto out;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev)
++		goto out;
++
++	for (i = 0; i < obj->package.count; i++) {
++		union acpi_object *e = &obj->package.elements[i];
++		union acpi_object *ref;
++
++		/*
++		 * Element 2 (if present) is the actual consumer device
++		 * reference.  Use it instead of the CLKT-owning device.
++		 * Most entries are self-references (consumer == owner),
++		 * but some cross-reference a different device (e.g.,
++		 * DMA1's CLKT registers a clock for DMA0).
++		 */
++		if (e->type == ACPI_TYPE_PACKAGE &&
++		    e->package.count >= 3) {
++			struct acpi_device *cdev;
++
++			ref = &e->package.elements[2];
++			if (ref->type == ACPI_TYPE_LOCAL_REFERENCE) {
++				cdev = acpi_fetch_acpi_dev(ref->reference.handle);
++				if (cdev) {
++					consumer_name = acpi_dev_name(cdev);
++					goto parse;
++				}
++			}
++		}
++		consumer_name = acpi_dev_name(adev);
++parse:
++		sky1_parse_clkt_entry(priv, consumer_name, e);
++	}
++
++out:
++	kfree(buf.pointer);
++	return AE_OK;
++}
++
++static int sky1_acpi_clk_probe(struct platform_device *pdev)
++{
++	struct sky1_acpi_clk *priv;
++	acpi_status status;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->dev = &pdev->dev;
++
++	status = acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
++				     ACPI_UINT32_MAX, sky1_clkt_walk_cb,
++				     NULL, priv, NULL);
++	if (ACPI_FAILURE(status))
++		return dev_err_probe(&pdev->dev, -ENODEV,
++				     "ACPI namespace walk failed\n");
++
++	if (priv->mapped == 0)
++		return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
++				     "No SCMI clocks mapped yet\n");
++
++	dev_info(&pdev->dev, "Mapped %d ACPI clock lookup entries\n",
++		 priv->mapped);
++	return 0;
++}
++
++static const struct acpi_device_id sky1_acpi_clk_ids[] = {
++	{ "CIXHA010", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, sky1_acpi_clk_ids);
++
++static struct platform_driver sky1_acpi_clk_driver = {
++	.driver = {
++		.name = "clk-sky1-acpi",
++		.acpi_match_table = sky1_acpi_clk_ids,
++	},
++	.probe = sky1_acpi_clk_probe,
++};
++module_platform_driver(sky1_acpi_clk_driver);
++
++MODULE_DESCRIPTION("CIX Sky1 ACPI clock lookup table driver");
++MODULE_LICENSE("GPL");
+-- 
+2.51.0
+

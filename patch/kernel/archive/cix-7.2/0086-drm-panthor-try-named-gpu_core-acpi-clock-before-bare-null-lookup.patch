@@ -1,0 +1,42 @@
+From 034d460e8acebe00c0fbb3f6614262254aed23a1 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 01:25:26 -0400
+Subject: [PATCH] drm/panthor: try named gpu_core ACPI clock before bare NULL
+ lookup (NCZ 0086)
+
+Forward-port of our own 7.0.12-cix-sky1-next fix
+(2012-fix-panthor-gate-Sky1-gpu_core-clock-fallback.patch, already
+shipping and confirmed working), never carried into the 7.1/7.2 series.
+
+panthor_clk_init() tries devm_clk_get(dev, NULL) (bare/default clock)
+first. On Sky1 ACPI boot the CIXH5000 GPU device clock is registered
+under the ACPI clkdev name gpu_core, not as a default/NULL lookup --
+confirmed on real hardware tonight:
+
+  panthor CIXH5000:00: error -ENOENT: get core clock failed
+  panthor CIXH5000:00: probe with driver panthor failed with error -2
+
+Fix: when the bare lookup fails AND the device has an ACPI companion
+matching CIXH5000, try the named gpu_core lookup before giving up.
+Falls through to the original error path unchanged if that also fails.
+---
+ drivers/gpu/drm/panthor/panthor_device.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_device.c b/drivers/gpu/drm/panthor/panthor_device.c
+index 793a24bb783d..ea33b6366a7e 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.c
++++ b/drivers/gpu/drm/panthor/panthor_device.c
+@@ -32,6 +32,9 @@
+ static int panthor_clk_init(struct panthor_device *ptdev)
+ {
+ 	ptdev->clks.core = devm_clk_get(ptdev->base.dev, NULL);
++	if (IS_ERR(ptdev->clks.core) && has_acpi_companion(ptdev->base.dev) &&
++	    acpi_dev_hid_match(ACPI_COMPANION(ptdev->base.dev), "CIXH5000"))
++		ptdev->clks.core = devm_clk_get_optional(ptdev->base.dev, "gpu_core");
+ 	if (IS_ERR(ptdev->clks.core))
+ 		return dev_err_probe(ptdev->base.dev,
+ 				     PTR_ERR(ptdev->clks.core),
+-- 
+2.51.0
+

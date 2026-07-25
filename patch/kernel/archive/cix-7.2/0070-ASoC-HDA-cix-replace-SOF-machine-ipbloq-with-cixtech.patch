@@ -1,0 +1,2763 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 2 Jul 2026 21:48:59 -0400
+Subject: [PATCH 70/83] ASoC/HDA: cix: replace SOF+machine+ipbloq with cixtech
+ 2026q2
+
+---
+ sound/pci/hda/hda_cix_ipbloq.c | 905 +++++++++++++++++++++++++++++++++
+ sound/soc/cix/Kconfig          |  42 +-
+ sound/soc/cix/Makefile         |  15 +-
+ sound/soc/cix/card-utils.c     | 529 +++++++++++++------
+ sound/soc/cix/card-utils.h     |  11 +-
+ sound/soc/cix/cdns_i2s_mc.c    |  85 +++-
+ sound/soc/cix/cdns_i2s_sc.c    | 190 +++++--
+ sound/soc/cix/sky1-card.c      |  34 +-
+ sound/soc/sof/cix/Kconfig      |   2 +-
+ sound/soc/sof/cix/Makefile     |   1 -
+ sound/soc/sof/cix/cix-common.c |  34 +-
+ sound/soc/sof/cix/cix-common.h |   6 +-
+ sound/soc/sof/cix/cix-sky1.c   | 104 ++--
+ 13 files changed, 1595 insertions(+), 363 deletions(-)
+ create mode 100644 sound/pci/hda/hda_cix_ipbloq.c
+
+diff --git a/sound/pci/hda/hda_cix_ipbloq.c b/sound/pci/hda/hda_cix_ipbloq.c
+new file mode 100644
+index 000000000000..0676e426d6d3
+--- /dev/null
++++ b/sound/pci/hda/hda_cix_ipbloq.c
+@@ -0,0 +1,905 @@
++// SPDX-License-Identifier: GPL-2.0
++// Copyright 2024 Cix Technology Group Co., Ltd.
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/mfd/syscon.h>
++#include <linux/of.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/reset.h>
++#include <linux/string.h>
++
++#include <sound/hda_codec.h>
++#include "hda_controller.h"
++
++#define CIX_IPBLOQ_ADDR_HOST_TO_HDAC_OFFSET	0x90000000
++
++#define CIX_IPBLOQ_JACKPOLL_DEFAULT_TIME_MS	1000
++#define CIX_IPBLOQ_POWER_SAVE_DEFAULT_TIME_MS	100
++
++struct cix_ipbloq_hda {
++	struct azx chip;
++	struct device *dev;
++	void __iomem *regs;
++
++	struct reset_control_bulk_data resets[1];
++	struct clk_bulk_data clocks[2];
++	unsigned int nresets;
++	unsigned int nclocks;
++
++	struct work_struct probe_work;
++
++	struct gpio_desc *pdb_gpiod;
++	struct gpio_desc *depop_mute_gpiod;
++
++	const char *sname;
++};
++
++static const struct hda_controller_ops cix_ipbloq_hda_ops;
++
++/* alc256 cix evb init verb table */
++static unsigned int alc256_cix_evb_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC256
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0256&SUBSYS_10EC129E
++	 * The number of verb command block : 16
++	 *
++	 * NID 0x12 : 0x90A60130
++	 * NID 0x13 : 0x40000000
++	 * NID 0x14 : 0x90170110
++	 * NID 0x18 : 0x411111F0
++	 * NID 0x19 : 0x04A11040
++	 * NID 0x1A : 0x411111F0
++	 * NID 0x1B : 0x411111F0
++	 * NID 0x1D : 0x4068996D
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x21 : 0x04211020
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* 1bit reset */
++	0x0205001A,
++	0x0204C00B,
++	0x0205001A,
++	0x0204800B,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C30,
++	0x01271D01,
++	0x01271EA6,
++	0x01271F90,
++	/* Pin widget 0x13 - DMIC */
++	0x01371C00,
++	0x01371D00,
++	0x01371E00,
++	0x01371F40,
++	/* Pin widget 0x14 - Front (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x18 - NPC */
++	0x01871CF0,
++	0x01871D11,
++	0x01871E11,
++	0x01871F41,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C40,
++	0x01971D10,
++	0x01971EA1,
++	0x01971F04,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71CF0,
++	0x01A71D11,
++	0x01A71E11,
++	0x01A71F41,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71CF0,
++	0x01B71D11,
++	0x01B71E11,
++	0x01B71F41,
++	/* Pin widget 0x1D - BEEP-IN */
++	0x01D71C6D,
++	0x01D71D99,
++	0x01D71E68,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Pin widget 0x21 - HP1-OUT (Port-I) */
++	0x02171C20,
++	0x02171D10,
++	0x02171E21,
++	0x02171F04,
++
++	0x02050010,
++	0x02040020,
++	0x02050038,
++	0x02046981,
++
++	0x02050008,
++	0x02046A6C,
++	0x0205001B,
++	0x02040A4B,
++
++	0x0205003C,
++	0x02040354,
++	0x0205003C,
++	0x02040314,
++
++	0x02050046,
++	0x02040004,
++	0x05750003,
++	0x057409A3,
++};
++
++/* alc256 cix orion o6 init verb table */
++static unsigned int alc256_cix_orion_o6_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC256
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0256&SUBSYS_10EC129E
++	 * The number of verb command block : 16
++	 *
++	 * NID 0x12 : 0x40000000
++	 * NID 0x13 : 0x411111F0
++	 * NID 0x14 : 0x90170110
++	 * NID 0x18 : 0x411111F0
++	 * NID 0x19 : 0x01A11030
++	 * NID 0x1A : 0x02A19040
++	 * NID 0x1B : 0x02014020
++	 * NID 0x1D : 0x4045C069
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x21 : 0x0121101F
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* 1bit reset */
++	0x0205001A,
++	0x0204C00B,
++	0x0205001A,
++	0x0204800B,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C00,
++	0x01271D00,
++	0x01271E00,
++	0x01271F40,
++	/* Pin widget 0x13 - DMIC */
++	0x01371CF0,
++	0x01371D11,
++	0x01371E11,
++	0x01371F41,
++	/* Pin widget 0x14 - Front (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x18 - NPC */
++	0x01871CF0,
++	0x01871D11,
++	0x01871E11,
++	0x01871F41,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C30,
++	0x01971D10,
++	0x01971EA1,
++	0x01971F01,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71C40,
++	0x01A71D90,
++	0x01A71EA1,
++	0x01A71F02,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71C20,
++	0x01B71D40,
++	0x01B71E01,
++	0x01B71F02,
++	/* Pin widget 0x1D - BEEP-IN */
++	0x01D71C69,
++	0x01D71DC0,
++	0x01D71E45,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Pin widget 0x21 - HP1-OUT (Port-I) */
++	0x02171C1F,
++	0x02171D10,
++	0x02171E21,
++	0x02171F01,
++
++	0x02050010,
++	0x02040020,
++	0x02050038,
++	0x02046981,
++
++	0x02050008,
++	0x02046A4C,
++	0x0205001B,
++	0x02040A4B,
++
++	0x0205003C,
++	0x02040354,
++	0x0205003C,
++	0x02040314,
++
++	0x02050046,
++	0x02040004,
++	0x05750003,
++	0x057409A3,
++};
++
++/* alc269 cix orapi 6p init verb table */
++static unsigned int alc269_cix_orapi_6p_init_verbs[] = {
++	/* Realtek High Definition Audio Configuration - Version : 5.0.3.3
++	 * Realtek HD Audio Codec : ALC269-VC3
++	 * PCI PnP ID : PCI\VEN_8086&DEV_2668&SUBSYS_129E10EC
++	 * HDA Codec PnP ID : HDAUDIO\FUNC_01&VEN_10EC&DEV_0269&SUBSYS_10EC129E
++	 * The number of verb command block : 17
++	 *
++	 * NID 0x12 : 0x40000000
++	 * NID 0x14 : 0x90170110
++	 * NID 0x15 : 0x0421101F
++	 * NID 0x17 : 0x411111F0
++	 * NID 0x18 : 0x04A11020
++	 * NID 0x19 : 0x90A7012F
++	 * NID 0x1A : 0x411111F0
++	 * NID 0x1B : 0x411111F0
++	 * NID 0x1D : 0x40538205
++	 * NID 0x1E : 0x411111F0
++	 * NID 0x20 : 0x0000FFFF
++	 */
++
++	/* ==== HDA Codec Subsystem ID Verb-table ===== */
++	/* HDA Codec Subsystem ID  : 0x10EC129E */
++	0x0017209E,
++	0x00172112,
++	0x001722EC,
++	0x00172310,
++
++	/* ==== Pin Widget Verb-table ===== */
++	/* Widget node 0x01 */
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	0x0017FF00,
++	/* Pin widget 0x12 - DMIC */
++	0x01271C00,
++	0x01271D00,
++	0x01271E00,
++	0x01271F40,
++	/* Pin widget 0x14 - SPEAKER-OUT (Port-D) */
++	0x01471C10,
++	0x01471D01,
++	0x01471E17,
++	0x01471F90,
++	/* Pin widget 0x15 - HP-OUT (Port-A) */
++	0x01571C1F,
++	0x01571D10,
++	0x01571E21,
++	0x01571F04,
++	/* Pin widget 0x17 - MONO-OUT (Port-H) */
++	0x01771CF0,
++	0x01771D11,
++	0x01771E11,
++	0x01771F41,
++	/* Pin widget 0x18 - MIC1 (Port-B) */
++	0x01871C20,
++	0x01871D10,
++	0x01871EA1,
++	0x01871F04,
++	/* Pin widget 0x19 - MIC2 (Port-F) */
++	0x01971C2F,
++	0x01971D01,
++	0x01971EA7,
++	0x01971F90,
++	/* Pin widget 0x1A - LINE1 (Port-C) */
++	0x01A71CF0,
++	0x01A71D11,
++	0x01A71E11,
++	0x01A71F41,
++	/* Pin widget 0x1B - LINE2 (Port-E) */
++	0x01B71CF0,
++	0x01B71D11,
++	0x01B71E11,
++	0x01B71F41,
++	/* Pin widget 0x1D - PC-BEEP */
++	0x01D71C05,
++	0x01D71D82,
++	0x01D71E53,
++	0x01D71F40,
++	/* Pin widget 0x1E - S/PDIF-OUT */
++	0x01E71CF0,
++	0x01E71D11,
++	0x01E71E11,
++	0x01E71F41,
++	/* Widget node 0x20 */
++	0x02050018,
++	0x02040184,
++	0x0205001C,
++	0x02040800,
++	/* Widget node 0x20 - 1 */
++	0x02050024,
++	0x02040000,
++	0x02050004,
++	0x02040080,
++	/* Widget node 0x20 - 2 */
++	0x02050008,
++	0x02040300,
++	0x0205000C,
++	0x02043F00,
++	/* Widget node 0x20 - 3 */
++	0x02050015,
++	0x02048002,
++	0x02050015,
++	0x02048002,
++	/* Widget node 0x0C */
++	0x00C37080,
++	0x00270610,
++	0x00D37080,
++	0x00370610,
++};
++
++static dma_addr_t cix_ipbloq_hda_addr_host_to_hdac(struct hdac_bus *bus, dma_addr_t addr)
++{
++	dma_addr_t addr_adj;
++
++	addr_adj = addr - CIX_IPBLOQ_ADDR_HOST_TO_HDAC_OFFSET;
++	dev_dbg(bus->dev, "addr = 0x%llx, addr_adj = 0x%llx\n", addr, addr_adj);
++
++	return addr_adj;
++}
++
++static int cix_ipbloq_hda_config_init_verbs(struct hdac_bus *bus, unsigned int vendor_id)
++{
++	struct snd_card *card = dev_get_drvdata(bus->dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	unsigned int *init_verbs, size;
++	int i;
++
++	dev_dbg(bus->dev, "vendor id = 0x%x\n", vendor_id);
++
++	switch (vendor_id) {
++	case 0x10ec0256:
++		if (hda->sname && !strcmp(hda->sname, "CIX SKY1 EVB HDA")) {
++			dev_dbg(bus->dev, "CIX SKY1 EVB HDA\n");
++			init_verbs = alc256_cix_evb_init_verbs;
++			size = ARRAY_SIZE(alc256_cix_evb_init_verbs);
++		} else if (hda->sname && !strcmp(hda->sname, "CIX SKY1 ORION O6 HDA")) {
++			dev_dbg(bus->dev, "CIX SKY1 ORION O6 HDA\n");
++			init_verbs = alc256_cix_orion_o6_init_verbs;
++			size = ARRAY_SIZE(alc256_cix_orion_o6_init_verbs);
++		}
++		break;
++	case 0x10ec0269:
++		if (hda->sname && !strcmp(hda->sname, "CIX SKY1 ORAPI 6P HDA")) {
++			dev_dbg(bus->dev, "CIX SKY1 ORAPI 6P HDA\n");
++			init_verbs = alc269_cix_orapi_6p_init_verbs;
++			size = ARRAY_SIZE(alc269_cix_orapi_6p_init_verbs);
++		}
++		break;
++	default:
++		dev_err(bus->dev, "unsupport codec chip\n");
++		return -EINVAL;
++	}
++
++	if (init_verbs) {
++		for (i = 0; i < size; i++)
++			bus->ops->command(bus,  init_verbs[i]);
++	} else {
++		dev_err(bus->dev, "unsupport platform\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_dev_disconnect(struct snd_device *device)
++{
++	struct azx *chip = device->device_data;
++
++	chip->bus.shutdown = 1;
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_dev_free(struct snd_device *device)
++{
++	struct azx *chip = device->device_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++
++	cancel_work_sync(&hda->probe_work);
++
++	if (azx_bus(chip)->chip_init) {
++		azx_stop_all_streams(chip);
++		azx_stop_chip(chip);
++	}
++
++	azx_free_stream_pages(chip);
++	azx_free_streams(chip);
++	snd_hdac_bus_exit(azx_bus(chip));
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_init_chip(struct azx *chip, struct platform_device *pdev)
++{
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	struct hdac_bus *bus = azx_bus(chip);
++	struct resource *res;
++
++	hda->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(hda->regs)) {
++		dev_err(&pdev->dev, "failed to get and ioremap resource\n");
++		return PTR_ERR(hda->regs);
++	}
++
++	bus->remap_addr = hda->regs;
++	bus->addr = res->start;
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_init(struct azx *chip, struct platform_device *pdev)
++{
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	struct hdac_bus *bus = azx_bus(chip);
++	struct snd_card *card = chip->card;
++	const char *sname = NULL, *drv_name = "cix-ipbloq-hda";
++	unsigned short gcap;
++	int irq_id, err;
++
++	err = cix_ipbloq_hda_init_chip(chip, pdev);
++	if (err)
++		return err;
++
++	irq_id = platform_get_irq(pdev, 0);
++	if (irq_id < 0) {
++		dev_err(&pdev->dev, "failed to get the irq\n");
++		return irq_id;
++	}
++
++	err = devm_request_irq(chip->card->dev, irq_id, azx_interrupt,
++			     IRQF_SHARED, KBUILD_MODNAME, chip);
++	if (err) {
++		dev_err(chip->card->dev,
++			"Unable to request IRQ %d, disabling device\n",
++			irq_id);
++		return err;
++	}
++
++	bus->irq = irq_id;
++	bus->dma_stop_delay = 100;
++	card->sync_irq = bus->irq;
++
++	gcap = azx_readw(chip, GCAP);
++	dev_info(card->dev, "chipset global capabilities = 0x%x\n", gcap);
++
++	chip->capture_streams = (gcap >> 8) & 0x0f;
++	chip->playback_streams = (gcap >> 12) & 0x0f;
++	chip->capture_index_offset = 0;
++	chip->playback_index_offset = chip->capture_streams;
++	chip->num_streams = chip->playback_streams + chip->capture_streams;
++
++	/* initialize streams */
++	err = azx_init_streams(chip);
++	if (err < 0) {
++		dev_err(card->dev, "failed to initialize streams: %d\n", err);
++		return err;
++	}
++
++	err = azx_alloc_stream_pages(chip);
++	if (err < 0) {
++		dev_err(card->dev, "failed to allocate stream pages: %d\n", err);
++		return err;
++	}
++
++	/* initialize chip */
++	azx_init_chip(chip, 1);
++
++	/* codec detection */
++	if (!bus->codec_mask) {
++		dev_err(card->dev, "no codecs found\n");
++		return -ENODEV;
++	}
++	dev_info(card->dev, "codec detection mask = 0x%lx\n", bus->codec_mask);
++
++	/* driver name */
++	strscpy(card->driver, drv_name, sizeof(card->driver));
++
++	/* shortname for card */
++	device_property_read_string(&pdev->dev, "cix,model", &sname);
++	if (!sname)
++		sname = drv_name;
++	/* use to distinguish boards later when select verb table */
++	hda->sname = sname;
++
++	if (strlen(sname) > sizeof(card->shortname))
++		dev_info(card->dev, "truncating shortname for card\n");
++	strscpy(card->shortname, sname, sizeof(card->shortname));
++
++	/* longname for card */
++	snprintf(card->longname, sizeof(card->longname),
++		 "%s at 0x%lx irq %i",
++		 card->shortname, bus->addr, bus->irq);
++
++	return 0;
++}
++
++static void cix_ipbloq_hda_probe_work(struct work_struct *work)
++{
++	struct cix_ipbloq_hda *hda = container_of(work, struct cix_ipbloq_hda, probe_work);
++	struct platform_device *pdev = to_platform_device(hda->dev);
++	struct azx *chip = &hda->chip;
++	struct hdac_bus *bus = azx_bus(chip);
++	int err;
++
++	pm_runtime_get_sync(hda->dev);
++
++	to_hda_bus(bus)->bus_probing = 1;
++
++	err = cix_ipbloq_hda_init(chip, pdev);
++	if (err < 0)
++		goto out_free;
++
++	/* create codec instances */
++	err = azx_probe_codecs(chip, 8);
++	if (err < 0)
++		goto out_free;
++
++	err = azx_codec_configure(chip);
++	if (err < 0)
++		goto out_free;
++
++	err = snd_card_register(chip->card);
++	if (err < 0)
++		goto out_free;
++
++	chip->running = 1;
++
++	to_hda_bus(bus)->bus_probing = 0;
++
++	snd_hda_set_power_save(&chip->bus, CIX_IPBLOQ_POWER_SAVE_DEFAULT_TIME_MS);
++
++	dev_info(hda->dev, "cix ipbloq hda probed\n");
++
++ out_free:
++	pm_runtime_put(hda->dev);
++	return; /* no error return from async probe */
++}
++
++static int cix_ipbloq_hda_create(struct snd_card *card,
++				 unsigned int driver_caps,
++				 struct cix_ipbloq_hda *hda)
++{
++	static const struct snd_device_ops ops = {
++		.dev_disconnect = cix_ipbloq_hda_dev_disconnect,
++		.dev_free = cix_ipbloq_hda_dev_free,
++	};
++	struct azx *chip;
++	int err;
++
++	chip = &hda->chip;
++
++	mutex_init(&chip->open_mutex);
++	chip->card = card;
++	chip->ops = &cix_ipbloq_hda_ops;
++	chip->driver_caps = driver_caps;
++	chip->driver_type = driver_caps & 0xff;
++	chip->dev_index = 0;
++	chip->single_cmd = 0;
++	chip->codec_probe_mask = -1;
++	chip->align_buffer_size = 1;
++	chip->jackpoll_interval = msecs_to_jiffies(CIX_IPBLOQ_JACKPOLL_DEFAULT_TIME_MS);
++	INIT_LIST_HEAD(&chip->pcm_list);
++
++	/* HD-audio controllers appear pretty inaccurate about the update-IRQ timing.
++	 * The IRQ is issued before actually the data is processed. So use stream
++	 * link position by default instead of dma position buffer.
++	 */
++	chip->get_position[0] = chip->get_position[1] = azx_get_pos_lpib;
++
++	INIT_WORK(&hda->probe_work, cix_ipbloq_hda_probe_work);
++
++	err = azx_bus_init(chip, NULL);
++	if (err < 0) {
++		dev_err(hda->dev, "failed to init bus, err = %d\n", err);
++		return err;
++	}
++
++	/* RIRBSTS.RINTFL cannot be cleared, cause interrupt storm */
++	chip->bus.core.polling_mode = 1;
++	chip->bus.core.not_use_interrupts = 1;
++
++	chip->bus.core.aligned_mmio = 1;
++	chip->bus.jackpoll_in_suspend = 1;
++
++	/* host and hdac has different memory view */
++	chip->bus.core.addr_host_to_hdac = cix_ipbloq_hda_addr_host_to_hdac;
++
++	/* config init verbs TODO: config from BIOS
++	 */
++	chip->bus.core.config_init_verbs = cix_ipbloq_hda_config_init_verbs;
++
++	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
++	if (err < 0) {
++		dev_err(card->dev, "failed to create device, err = %d\n", err);
++		return err;
++	}
++
++	return 0;
++}
++
++static int cix_ipbloq_hda_probe(struct platform_device *pdev)
++{
++	const unsigned int driver_flags = AZX_DCAPS_PM_RUNTIME;
++	struct snd_card *card;
++	struct azx *chip;
++	struct cix_ipbloq_hda *hda;
++	int err;
++
++	hda = devm_kzalloc(&pdev->dev, sizeof(*hda), GFP_KERNEL);
++	if (!hda) {
++		dev_err(&pdev->dev, "failed to allocate memory for hda\n");
++		return -ENOMEM;
++	}
++	hda->dev = &pdev->dev;
++	chip = &hda->chip;
++
++	err = snd_card_new(&pdev->dev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1,
++			   THIS_MODULE, 0, &card);
++	if (err < 0) {
++		dev_err(&pdev->dev, "failed to crate card, err = %d\n", err);
++		return err;
++	}
++
++	dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
++	if (!pdev->dev.dma_mem)  {
++		/*
++		 * if dev.dma_mem not allcated
++		 * we should try to get it from dts
++		 */
++		err = of_reserved_mem_device_init(&pdev->dev);
++		if (err && err != -ENODEV) {
++			dev_err(&pdev->dev,
++				"failed to init reserved mem for DMA, err = %d\n", err);
++			goto out_free;
++		}
++	}
++
++	hda->resets[hda->nresets++].id = "hda";
++	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, hda->nresets,
++						    hda->resets);
++	if (err) {
++		dev_err(&pdev->dev, "failed to get reset, err = %d\n", err);
++		goto out_free;
++	}
++
++	hda->clocks[hda->nclocks++].id = "sysclk";
++	hda->clocks[hda->nclocks++].id = "clk48m";
++	err = devm_clk_bulk_get(&pdev->dev, hda->nclocks, hda->clocks);
++	if (err < 0) {
++		dev_err(&pdev->dev, "failed to get clk, err = %d\n", err);
++		goto out_free;
++	}
++
++	hda->pdb_gpiod = devm_gpiod_get_optional(&pdev->dev, "pdb", GPIOD_OUT_HIGH | GPIOD_FLAGS_BIT_NONEXCLUSIVE);
++	if (IS_ERR(hda->pdb_gpiod)) {
++		err = PTR_ERR(hda->pdb_gpiod);
++		dev_err(&pdev->dev, "failed to get pdb gpio, err: %d\n", err);
++		goto out_free;
++	}
++	msleep(20);
++
++	hda->depop_mute_gpiod = devm_gpiod_get_optional(&pdev->dev, "depop-mute", GPIOD_OUT_HIGH);
++	if (IS_ERR(hda->depop_mute_gpiod)) {
++		err = PTR_ERR(hda->depop_mute_gpiod);
++		dev_err(&pdev->dev, "failed to get depop gpio, err: %d\n", err);
++		goto out_free;
++	}
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 1);
++
++	err = cix_ipbloq_hda_create(card, driver_flags, hda);
++	if (err < 0)
++		goto out_free;
++	card->private_data = chip;
++
++	dev_set_drvdata(&pdev->dev, card);
++
++	pm_runtime_enable(hda->dev);
++	if (!azx_has_pm_runtime(chip))
++		pm_runtime_forbid(hda->dev);
++
++	schedule_work(&hda->probe_work);
++
++	return 0;
++
++out_free:
++	snd_card_free(card);
++	return err;
++}
++
++static void cix_ipbloq_hda_remove(struct platform_device *pdev)
++{
++	snd_card_free(dev_get_drvdata(&pdev->dev));
++
++	pm_runtime_disable(&pdev->dev);
++}
++
++static void cix_ipbloq_hda_shutdown(struct platform_device *pdev)
++{
++	struct snd_card *card = dev_get_drvdata(&pdev->dev);
++	struct azx *chip;
++
++	if (!card)
++		return;
++
++	chip = card->private_data;
++	if (chip && chip->running)
++		azx_stop_chip(chip);
++}
++
++static int __maybe_unused cix_ipbloq_hda_suspend(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	rc = pm_runtime_force_suspend(dev);
++	if (rc < 0)
++		return rc;
++	snd_power_change_state(card, SNDRV_CTL_POWER_D3cold);
++
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 0);
++
++	gpiod_set_value_cansleep(hda->pdb_gpiod, 0);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_resume(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	gpiod_set_value_cansleep(hda->pdb_gpiod, 1);
++	msleep(20);
++
++	gpiod_set_value_cansleep(hda->depop_mute_gpiod, 1);
++
++	rc = pm_runtime_force_resume(dev);
++	if (rc < 0)
++		return rc;
++	snd_power_change_state(card, SNDRV_CTL_POWER_D0);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_runtime_suspend(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++
++	dev_dbg(dev, "%s\n", __func__);
++
++	if (chip && chip->running) {
++		azx_stop_chip(chip);
++		azx_enter_link_reset(chip);
++	}
++
++	clk_bulk_disable_unprepare(hda->nclocks, hda->clocks);
++
++	return 0;
++}
++
++static int __maybe_unused cix_ipbloq_hda_runtime_resume(struct device *dev)
++{
++	struct snd_card *card = dev_get_drvdata(dev);
++	struct azx *chip = card->private_data;
++	struct cix_ipbloq_hda *hda = container_of(chip, struct cix_ipbloq_hda, chip);
++	int rc;
++
++	dev_dbg(dev, "%s\n", __func__);
++
++	rc = clk_bulk_prepare_enable(hda->nclocks, hda->clocks);
++	if (rc) {
++		dev_err(dev, "failed to enable clk bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	rc = reset_control_bulk_assert(hda->nresets, hda->resets);
++	if (rc) {
++		dev_err(dev, "failed to assert reset bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	usleep_range(10, 20);
++
++	rc = reset_control_bulk_deassert(hda->nresets, hda->resets);
++	if (rc) {
++		dev_err(dev, "failed to deassert reset bulk, rc: %d\n", rc);
++		return rc;
++	}
++
++	if (chip && chip->running)
++		azx_init_chip(chip, 1);
++
++	return 0;
++}
++
++static const struct dev_pm_ops cix_ipbloq_hda_pm = {
++	SET_SYSTEM_SLEEP_PM_OPS(cix_ipbloq_hda_suspend,
++				cix_ipbloq_hda_resume)
++	SET_RUNTIME_PM_OPS(cix_ipbloq_hda_runtime_suspend,
++			   cix_ipbloq_hda_runtime_resume, NULL)
++};
++
++static const struct of_device_id cix_ipbloq_hda_match[] = {
++	{ .compatible = "cix,sky1-ipbloq-hda", .data = NULL },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cix_ipbloq_hda_match);
++
++static const struct acpi_device_id cix_ipbloq_hda_acpi_match[] = {
++	{ "CIXH6020" },
++	{},
++};
++MODULE_DEVICE_TABLE(acpi, cix_ipbloq_hda_acpi_match);
++
++static struct platform_driver cix_ipbloq_hda_driver = {
++	.driver = {
++		.name = "cix-ipbloq-hda",
++		.pm = &cix_ipbloq_hda_pm,
++		.of_match_table = cix_ipbloq_hda_match,
++		.acpi_match_table = cix_ipbloq_hda_acpi_match,
++	},
++	.probe = cix_ipbloq_hda_probe,
++	.remove_new = cix_ipbloq_hda_remove,
++	.shutdown = cix_ipbloq_hda_shutdown,
++};
++module_platform_driver(cix_ipbloq_hda_driver);
++
++MODULE_LICENSE("GPL v2");
++MODULE_DESCRIPTION("CIX IPBLOQ HDA bus driver");
++MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+diff --git a/sound/soc/cix/Kconfig b/sound/soc/cix/Kconfig
+index 8789e016eb53..097230b2568d 100644
+--- a/sound/soc/cix/Kconfig
++++ b/sound/soc/cix/Kconfig
+@@ -1,37 +1,27 @@
+ # SPDX-License-Identifier: GPL-2.0-only
++menu "ASoC support for Cixtech"
++
++comment "ASoC options for Cixtech CPUs:"
+ 
+ config SND_SOC_CIX
+-	tristate "ASoC support for CIX SoCs"
+-	depends on ARCH_CIX || COMPILE_TEST
++	tristate "CIX ASoC"
++	imply SND_SOC_RT5682S
++	default n
+ 	help
+-	  Say Y or M if you want to add support for codecs attached to
+-	  the CIX SoC audio interfaces. You will also need to select the
+-	  audio interfaces to support below.
++	  Select Y or M to add support for CIX sound card
+ 
+-config SND_SOC_CDNS_I2S_MC
+-	tristate "Cadence I2S Multi-Channel Controller"
+-	depends on SND_SOC_CIX
+-	select SND_SOC_GENERIC_DMAENGINE_PCM
+-	help
+-	  Say Y or M if you want to add support for the Cadence I2S
+-	  Multi-Channel controller used in CIX Sky1 SoCs. This controller
+-	  supports up to 16 audio channels.
+ 
+ config SND_SOC_CDNS_I2S_SC
+-	tristate "Cadence I2S Single-Channel Controller"
+-	depends on SND_SOC_CIX
++	tristate "Cadence I2S-SC Controller Driver"
+ 	select SND_SOC_GENERIC_DMAENGINE_PCM
+ 	help
+-	  Say Y or M if you want to add support for the Cadence I2S
+-	  Single-Channel controller used in CIX Sky1 SoCs. This controller
+-	  supports stereo (2-channel) audio.
++	  Say Y or M if you want to add driver support for Cadence
++	  I2S-SC (SingleChannel) controller.
+ 
+-config SND_SOC_SKY1_SOUND_CARD
+-	tristate "CIX Sky1 Sound Card"
+-	depends on SND_SOC_CIX
+-	select MFD_SYSCON
++config SND_SOC_CDNS_I2S_MC
++	tristate "Cadence I2S-MC Controller Driver"
++	select SND_SOC_GENERIC_DMAENGINE_PCM
+ 	help
+-	  Say Y or M if you want to add support for the CIX Sky1 ASoC
+-	  machine driver. This driver provides DAI link configuration,
+-	  jack detection, and MCLK setup for audio codecs connected
+-	  to the Sky1 SoC.
++	  Say Y or M if you want to add driver support for Cadence
++	  I2S-MC (MultiChannel) controller.
++endmenu
+diff --git a/sound/soc/cix/Makefile b/sound/soc/cix/Makefile
+index 93b2055dfa50..c449a8648e97 100644
+--- a/sound/soc/cix/Makefile
++++ b/sound/soc/cix/Makefile
+@@ -1,10 +1,9 @@
+-# SPDX-License-Identifier: GPL-2.0-only
+-
+-obj-$(CONFIG_SND_SOC_CDNS_I2S_MC) += snd-soc-cdns-i2s-mc.o
+-snd-soc-cdns-i2s-mc-y := cdns_i2s_mc.o
++# SPDX-License-Identifier: GPL-2.0
++# Cixtech Platform Support
++snd-soc-cdns-i2s-sc-objs := cdns_i2s_sc.o
++snd-soc-cdns-i2s-mc-objs := cdns_i2s_mc.o
++snd-soc-sky1-sound-card-objs := card-utils.o sky1-card.o
+ 
+ obj-$(CONFIG_SND_SOC_CDNS_I2S_SC) += snd-soc-cdns-i2s-sc.o
+-snd-soc-cdns-i2s-sc-y := cdns_i2s_sc.o
+-
+-obj-$(CONFIG_SND_SOC_SKY1_SOUND_CARD) += snd-soc-sky1-card.o
+-snd-soc-sky1-card-y := sky1-card.o card-utils.o
++obj-$(CONFIG_SND_SOC_CDNS_I2S_MC) += snd-soc-cdns-i2s-mc.o
++obj-${CONFIG_SND_SOC_CIX} += snd-soc-sky1-sound-card.o
+diff --git a/sound/soc/cix/card-utils.c b/sound/soc/cix/card-utils.c
+index 15080dd9dbb9..f208159e84a3 100644
+--- a/sound/soc/cix/card-utils.c
++++ b/sound/soc/cix/card-utils.c
+@@ -1,11 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0
+ // Copyright 2024 Cix Technology Group Co., Ltd.
+-
+-#include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/module.h>
+ #include <linux/mfd/syscon.h>
+-#include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include "card-utils.h"
+ #include <sound/jack.h>
+@@ -14,6 +11,9 @@
+ #define SKY1_AUDSS_CRU_INFO_MCLK_DIV_OFF(x)	(10 + (3 * (x)))
+ #define SKY1_AUDSS_CRU_INFO_MCLK_DIV_MASK(x)	GENMASK((12 + (3 * (x))), (10 + (3 * (x))))
+ 
++#define SKY1_AUDSS_DP_AUDIO_COUNT		5
++#define SKY1_AUDSS_DP_AUDIO_OFFSET		5
++
+ static const char *mclk_pll_names[AUDIO_CLK_NUM] = {
+ 	[AUDIO_CLK0] = "audio_clk0",
+ 	[AUDIO_CLK2] = "audio_clk2",
+@@ -24,7 +24,7 @@ static int cix_jack_init(struct snd_soc_pcm_runtime *rtd)
+ 	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+ 	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 	struct device *dev = rtd->card->dev;
+ 	int ret, jack[JACK_CNT], cnt, i;
+ 
+@@ -73,30 +73,18 @@ static int cix_dailink_parsing_fmt(struct device_node *np,
+ 	struct device_node *framemaster = NULL;
+ 	unsigned int dai_fmt;
+ 
+-	dai_fmt = snd_soc_daifmt_parse_format(np, NULL);
+-
+-	snd_soc_daifmt_parse_clock_provider_as_phandle(np, NULL,
+-						       &bitclkmaster,
+-						       &framemaster);
++	dai_fmt = snd_soc_of_parse_daifmt(np, NULL,
++				&bitclkmaster, &framemaster);
+ 	if (bitclkmaster != framemaster) {
+ 		pr_info("Must be the same bitclock and frame master\n");
+-		of_node_put(bitclkmaster);
+-		of_node_put(framemaster);
+ 		return -EINVAL;
+ 	}
+ 	if (bitclkmaster) {
+-		dai_fmt &= ~SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK;
++		dai_fmt &= ~SND_SOC_DAIFMT_MASTER_MASK;
+ 		if (codec_np == bitclkmaster)
+-			dai_fmt |= SND_SOC_DAIFMT_CBP_CFP;
++			dai_fmt |= SND_SOC_DAIFMT_CBM_CFM;
+ 		else
+-			dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
+-	} else {
+-		/*
+-		 * No clock master specified - default to codec as consumer
+-		 * (CPU/I2S provides clocks). This matches vendor kernel
+-		 * behavior from snd_soc_daifmt_clock_provider_from_bitmap(0).
+-		 */
+-		dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
++			dai_fmt |= SND_SOC_DAIFMT_CBS_CFS;
+ 	}
+ 	of_node_put(bitclkmaster);
+ 	of_node_put(framemaster);
+@@ -130,7 +118,7 @@ static int dai_set_sysclk(struct snd_pcm_substream *substream,
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 	struct snd_soc_dai *codec_dai;
+ 	unsigned int mclk, mclk_div, mclk_parent_rate, sample_rate;
+ 	struct clk *mclk_parent;
+@@ -230,7 +218,7 @@ static int dai_startup(struct snd_pcm_substream *substream)
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 	int ret;
+ 
+ 	if (link_info->mclk_fs) {
+@@ -251,7 +239,7 @@ static void dai_shutdown(struct snd_pcm_substream *substream)
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 
+ 	if (link_info->mclk_fs) {
+ 		link_info->mclk_enabled = false;
+@@ -266,7 +254,7 @@ static int dai_hw_params(struct snd_pcm_substream *substream,
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct cix_asoc_card *priv = snd_soc_card_get_drvdata(rtd->card);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 
+ 	if (link_info->mclk_fs)
+ 		return dai_set_sysclk(substream, params, link_info->mclk_fs);
+@@ -286,9 +274,9 @@ static int cix_dailink_init(struct snd_soc_pcm_runtime *rtd)
+ 	struct device *dev = rtd->card->dev;
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct dai_link_info *link_info =
+-		(struct dai_link_info *)((priv->link_info + rtd->id));
++		(struct dai_link_info *)((priv->link_info + rtd->num));
+ 	struct snd_soc_dai_link *dai_link =
+-		(struct snd_soc_dai_link *)((priv)->card->dai_link + rtd->id);
++		(struct snd_soc_dai_link *)((priv)->card->dai_link + rtd->num);
+ 	int ret, fmt;
+ 
+ 	dev_dbg(dev, "%s, dai_fmt:0x%x\n", __func__, dai_link->dai_fmt);
+@@ -321,7 +309,7 @@ static int cix_gpio_init(struct cix_asoc_card *priv)
+ 	struct device *dev = card->dev;
+ 	int ret;
+ 
+-	priv->pdb0_gpiod = devm_gpiod_get_optional(dev, "pdb0", GPIOD_OUT_HIGH);
++	priv->pdb0_gpiod = devm_gpiod_get_optional(dev, "pdb0", GPIOD_OUT_HIGH | GPIOD_FLAGS_BIT_NONEXCLUSIVE);
+ 	if (IS_ERR(priv->pdb0_gpiod)) {
+ 		ret = PTR_ERR(priv->pdb0_gpiod);
+ 		dev_err(dev, "failed to pdb gpio, ret: %d\n", ret);
+@@ -349,41 +337,6 @@ static int cix_gpio_init(struct cix_asoc_card *priv)
+ 		return ret;
+ 	}
+ 
+-	priv->beep_gpiod = devm_gpiod_get_optional(dev, "beep", GPIOD_OUT_HIGH);
+-	if (IS_ERR(priv->beep_gpiod)) {
+-		ret = PTR_ERR(priv->beep_gpiod);
+-		dev_err(dev, "failed to beep gpio, ret: %d\n", ret);
+-		return ret;
+-	}
+-
+-	priv->codec_gpiod = devm_gpiod_get_optional(dev, "codec", GPIOD_OUT_HIGH);
+-	if (IS_ERR(priv->codec_gpiod)) {
+-		ret = PTR_ERR(priv->codec_gpiod);
+-		dev_err(dev, "failed to codec gpio, ret: %d\n", ret);
+-		return ret;
+-	}
+-
+-	priv->i2sint_gpiod = devm_gpiod_get_optional(dev, "i2sint", GPIOD_IN);
+-	if (IS_ERR(priv->i2sint_gpiod)) {
+-		ret = PTR_ERR(priv->i2sint_gpiod);
+-		dev_err(dev, "failed to i2s int gpio, ret: %d\n", ret);
+-		return ret;
+-	}
+-
+-	priv->mclk_gpiod = devm_gpiod_get_optional(dev, "mclkext", GPIOD_OUT_HIGH);
+-	if (IS_ERR(priv->mclk_gpiod)) {
+-		ret = PTR_ERR(priv->mclk_gpiod);
+-		dev_err(dev, "failed to get mclk gpio, ret: %d\n", ret);
+-		return ret;
+-	}
+-
+-	priv->hpmicdet_gpiod = devm_gpiod_get_optional(dev, "hpmicdet", GPIOD_IN);
+-	if (IS_ERR(priv->hpmicdet_gpiod)) {
+-		ret = PTR_ERR(priv->hpmicdet_gpiod);
+-		dev_err(dev, "failed to get hp mic detect gpio, ret: %d\n", ret);
+-		return ret;
+-	}
+-
+ 	return 0;
+ }
+ 
+@@ -394,7 +347,7 @@ static int cix_card_suspend_post(struct snd_soc_card *card)
+ 	struct dai_link_info *link_info;
+ 
+ 	for_each_card_rtds(card, rtd) {
+-		link_info = (struct dai_link_info *)((priv->link_info + rtd->id));
++		link_info = (struct dai_link_info *)((priv->link_info + rtd->num));
+ 
+ 		if (link_info->mclk_enabled)
+ 			clk_disable_unprepare(link_info->clk_mclk);
+@@ -411,7 +364,7 @@ static int cix_card_resume_pre(struct snd_soc_card *card)
+ 	int ret;
+ 
+ 	for_each_card_rtds(card, rtd) {
+-		link_info = (struct dai_link_info *)((priv->link_info + rtd->id));
++		link_info = (struct dai_link_info *)((priv->link_info + rtd->num));
+ 
+ 		if (link_info->mclk_enabled) {
+ 			ret = clk_prepare_enable(link_info->clk_mclk);
+@@ -450,8 +403,7 @@ int cix_card_parse_of(struct cix_asoc_card *priv)
+ 		return ret;
+ 	}
+ 
+-	priv->cru_regmap = syscon_regmap_lookup_by_phandle(dev->of_node,
+-							   "cru-ctrl");
++	priv->cru_regmap = syscon_regmap_lookup_by_phandle(dev->of_node, "cru-ctrl");
+ 	if (PTR_ERR(priv->cru_regmap) == -ENODEV) {
+ 		priv->cru_regmap = NULL;
+ 	} else if (IS_ERR(priv->cru_regmap)) {
+@@ -467,7 +419,6 @@ int cix_card_parse_of(struct cix_asoc_card *priv)
+ 	if (!link_info)
+ 		return -ENOMEM;
+ 
+-	/* DMA trigger ordering: start before I2S, stop after I2S */
+ 	link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
+ 	link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
+ 
+@@ -493,7 +444,7 @@ int cix_card_parse_of(struct cix_asoc_card *priv)
+ 
+ 		cpu = of_get_child_by_name(np, "cpu");
+ 		if (!cpu) {
+-			dev_err(dev, "can't find cpu device node\n");
++			dev_err(dev, "%s: can't find cpu device node\n", cpu->name);
+ 			ret = -EINVAL;
+ 			goto err_put_cpu;
+ 		}
+@@ -637,129 +588,383 @@ int cix_card_parse_of(struct cix_asoc_card *priv)
+ }
+ EXPORT_SYMBOL(cix_card_parse_of);
+ 
++enum {
++	LK_I2S0_SC_ALC5682_CODEC = 0,
++	LK_I2S3_MC_ALC1019_PA,
++	LK_I2S5_DP0,
++	LK_I2S6_DP1,
++	LK_I2S7_DP2,
++	LK_I2S8_DP3,
++	LK_I2S9_DP4,
++
++	LK_MAX
++};
++
+ /*
+- * ACPI HDMI audio topology for Sky1 Orion O6.
+- *
+- * Under ACPI, the DAI link topology is fixed:
+- *   I2S5 (CIXH6011:02) → hdmi-audio-codec.0 (DP0)
+- *   I2S6 (CIXH6011:03) → hdmi-audio-codec.1 (DP1)
+- *   I2S7 (CIXH6011:04) → hdmi-audio-codec.2 (DP2/eDP)
+- *   I2S8 (CIXH6011:05) → hdmi-audio-codec.3 (DP3)
+- *   I2S9 (CIXH6011:06) → hdmi-audio-codec.4 (DP4)
++ * COMP_CPU with "dai_name" only, works well in DT binding, cause
++ * component will be matched by "of_node".
++ * But for acpi we need specify the "name" attribute to match component.
+  */
+-#define SKY1_HDMI_LINKS	5
+-
+-static const struct {
+-	const char *i2s_name;	/* ACPI platform device name */
+-	int codec_id;		/* hdmi-audio-codec.N */
+-	const char *stream;	/* ALSA stream name */
+-} sky1_hdmi_topology[SKY1_HDMI_LINKS] = {
+-	{ "CIXH6011:02", 0, "HDMI/DP 0" },
+-	{ "CIXH6011:03", 1, "HDMI/DP 1" },
+-	{ "CIXH6011:04", 2, "HDMI/DP 2" },
+-	{ "CIXH6011:05", 3, "HDMI/DP 3" },
+-	{ "CIXH6011:06", 4, "HDMI/DP 4" },
++SND_SOC_DAILINK_DEFS(cix_i2s0_sc_alc5682,
++	DAILINK_COMP_ARRAY({.name = "CIXH6010:00", .dai_name = "i2s-sc-aif",}),
++	DAILINK_COMP_ARRAY(COMP_CODEC("i2c-RTL5682:00", "rt5682s-aif1")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("CIXH6010:00")));
++SND_SOC_DAILINK_DEFS(cix_i2s3_mc_alc1019,
++	DAILINK_COMP_ARRAY({.name = "CIXH6011:00", .dai_name = "i2s-mc-aif1",}),
++	DAILINK_COMP_ARRAY(COMP_DUMMY()),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("CIXH6011:00")));
++SND_SOC_DAILINK_DEFS(cix_i2s5_dp0,
++	DAILINK_COMP_ARRAY({.name = NULL, .dai_name = "i2s-mc-aif1", }),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "i2s-hifi")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM(NULL)));
++SND_SOC_DAILINK_DEFS(cix_i2s6_dp1,
++	DAILINK_COMP_ARRAY({.name = NULL, .dai_name = "i2s-mc-aif1", }),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "i2s-hifi")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM(NULL)));
++SND_SOC_DAILINK_DEFS(cix_i2s7_dp2,
++	DAILINK_COMP_ARRAY({.name = NULL, .dai_name = "i2s-mc-aif1", }),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "i2s-hifi")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM(NULL)));
++SND_SOC_DAILINK_DEFS(cix_i2s8_dp3,
++	DAILINK_COMP_ARRAY({.name = NULL, .dai_name = "i2s-mc-aif1", }),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "i2s-hifi")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM(NULL)));
++SND_SOC_DAILINK_DEFS(cix_i2s9_dp4,
++	DAILINK_COMP_ARRAY({.name = NULL, .dai_name = "i2s-mc-aif1", }),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "i2s-hifi")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM(NULL)));
++
++static struct dai_link_info sky1_link_info[] = {
++	{
++		.jack_pin[JACK_HP].pin = "Headset",
++		.jack_pin[JACK_HP].mask = SND_JACK_HEADSET,
++		.jack_det_mask = JACK_MASK_HP,
++		.mclk_fs = 512,
++		.mclk_idx = 0,
++	}, /* "dailink_i2s_sc0_alc5682" */
++	{
++	}, /* "dailink_i2s_mc3_alc1019" */
++	{
++	}, /* "dailink_i2s5_dp0 */
++	{
++	}, /* "dailink_i2s6_dp1 */
++	{
++	}, /* "dailink_i2s7_dp2 */
++	{
++	}, /* "dailink_i2s8_dp3 */
++	{
++	}, /* "dailink_i2s9_dp4 */
++};
++
++static struct snd_soc_dai_link sky1_dailink[] = {
++	{
++		.name = "dailink_i2s_sc0_alc5682",
++		.stream_name = "soc:i2s-sc0",
++		.id = 0, // i2s0
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.dpcm_capture = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s0_sc_alc5682),
++	},
++	{
++		.name = "dailink_i2s_m2a_alc1019",
++		.stream_name = "soc:i2s-m2a",
++		.id = 3, // i2s3
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s3_mc_alc1019),
++	},
++	{
++		.name = "dailink_i2s_m5a_dp0",
++		.stream_name = "soc:i2s-m5a",
++		.id = 5, // i2s5
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s5_dp0),
++	},
++	{
++		.name = "dailink_i2s_m5b_dp1",
++		.stream_name = "soc:i2s-m5b",
++		.id = 6, // i2s6
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s6_dp1),
++	},
++	{
++		.name = "dailink_i2s_m5c_dp2",
++		.stream_name = "soc:i2s-m5c",
++		.id = 7, // i2s7
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s7_dp2),
++	},
++	{
++		.name = "dailink_i2s_m5d_dp3",
++		.stream_name = "soc:i2s-m5d",
++		.id = 8, // i2s8
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s8_dp3),
++	},
++	{
++		.name = "dailink_i2s_m5e_dp4",
++		.stream_name = "soc:i2s-m5e",
++		.id = 9, // i2s9
++		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF
++				| SND_SOC_DAIFMT_GATED
++				| SND_SOC_DAIFMT_CBC_CFC,
++		.init = &cix_dailink_init,
++		.dpcm_playback = 1,
++		.ops = &cix_dailink_ops,
++		SND_SOC_DAILINK_REG(cix_i2s9_dp4),
++	},
+ };
+ 
++static int cix_acpi_i2s_audio_check_present(int idx)
++{
++	struct acpi_device *adev;
++	char path[16];
++	acpi_handle handle;
++	acpi_status status;
++
++	snprintf(path, 16, "\\_SB.I2S%d", idx);
++	status = acpi_get_handle(NULL, path, &handle);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	return 0;
++}
++
++static int cix_acpi_dp_audio_check_present(int idx)
++{
++	struct acpi_device *adev;
++	char path[16];
++	acpi_handle handle;
++	acpi_status status;
++
++	snprintf(path, 16, "\\_SB.I2S%d", idx + SKY1_AUDSS_DP_AUDIO_OFFSET);
++	status = acpi_get_handle(NULL, path, &handle);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	snprintf(path, 16, "\\_SB.DP0%d", idx);
++	status = acpi_get_handle(NULL, path, &handle);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	return 0;
++}
++
++static const char *cix_acpi_dp_audio_get_cpu_name(int idx)
++{
++	struct acpi_device *adev;
++	char path[16];
++	acpi_handle handle;
++	acpi_status status;
++
++	snprintf(path, 16, "\\_SB.I2S%d", idx + SKY1_AUDSS_DP_AUDIO_OFFSET);
++	status = acpi_get_handle(NULL, path, &handle);
++	if (ACPI_FAILURE(status))
++		return NULL;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return NULL;
++
++	return dev_name(&adev->dev);
++}
++
++static const char *cix_acpi_dp_audio_get_codec_name(int idx)
++{
++	struct acpi_device *adev;
++	struct device *dev, *dpdev;
++	char path[16];
++	acpi_handle handle;
++	acpi_status status;
++
++	snprintf(path, 16, "\\_SB.DP0%d", idx);
++	status = acpi_get_handle(NULL, path, &handle);
++	if (ACPI_FAILURE(status))
++		return NULL;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return NULL;
++
++	dev = bus_find_device_by_acpi_dev(&platform_bus_type, adev);
++	if (!dev)
++		return NULL;
++
++	dpdev = device_find_any_child(dev);
++	if (!dpdev)
++		return NULL;
++
++	return dev_name(dpdev);
++}
++
+ int cix_card_parse_acpi(struct cix_asoc_card *priv)
+ {
+ 	struct snd_soc_card *card = priv->card;
+-	struct device *dev = card->dev;
+-	struct snd_soc_dai_link *links;
+-	struct snd_soc_dai_link_component *comps;
++	struct snd_soc_dai_link *link;
+ 	struct dai_link_info *link_info;
+-	int i, num_links = 0;
++	struct device *dev = card->dev;
++	int ret, i, j, num_links = 0;
+ 
+-	card->name = "cix_sky1";
++	ret = cix_gpio_init(priv);
++	if (ret)
++		return ret;
+ 
+-	links = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*links), GFP_KERNEL);
+-	if (!links)
+-		return -ENOMEM;
++	priv->cru_regmap = device_syscon_regmap_lookup_by_property(dev, "cru-ctrl");
++	if (PTR_ERR(priv->cru_regmap) == -ENODEV) {
++		priv->cru_regmap = NULL;
++	} else if (IS_ERR(priv->cru_regmap)) {
++		return PTR_ERR(priv->cru_regmap);
++	}
++
++	for (i = 0; i < (LK_MAX - SKY1_AUDSS_DP_AUDIO_COUNT); i++)
++		if (!cix_acpi_i2s_audio_check_present(sky1_dailink[i].id))
++			num_links++;
++	for (i = 0; i < SKY1_AUDSS_DP_AUDIO_COUNT; i++)
++		if (!cix_acpi_dp_audio_check_present(i))
++			num_links++;
++	if (num_links <= 0)
++		return -ENODEV;
++	dev_info(dev, "num_links = %d\n", num_links);
+ 
+-	/* 3 components per link: cpu, codec, platform */
+-	comps = devm_kcalloc(dev, SKY1_HDMI_LINKS * 3, sizeof(*comps),
+-			     GFP_KERNEL);
+-	if (!comps)
++	link = devm_kcalloc(dev, num_links, sizeof(*link), GFP_KERNEL);
++	if (!link)
+ 		return -ENOMEM;
+ 
+-	link_info = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*link_info),
+-				 GFP_KERNEL);
++	link_info = devm_kcalloc(dev, num_links, sizeof(*link_info), GFP_KERNEL);
+ 	if (!link_info)
+ 		return -ENOMEM;
+ 
+-	for (i = 0; i < SKY1_HDMI_LINKS; i++) {
+-		const char *i2s_name = sky1_hdmi_topology[i].i2s_name;
+-		struct snd_soc_dai_link_component *cpu, *codec, *plat;
+-		struct snd_soc_dai_link *link;
+-		struct device *i2s_dev;
+-
+-		/* Skip links whose I2S platform device doesn't exist */
+-		i2s_dev = bus_find_device_by_name(&platform_bus_type, NULL,
+-						  i2s_name);
+-		if (!i2s_dev) {
+-			dev_info(dev, "I2S device %s not present, skipping\n",
+-				 i2s_name);
++	link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
++	link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
++
++	card->name = "cix,sky1";
++	card->num_links = num_links;
++	card->dai_link = link;
++	card->suspend_post = cix_card_suspend_post;
++	card->resume_pre = cix_card_resume_pre;
++	priv->link_info = link_info;
++
++	/* on-board audio */
++	for (i = 0; i < (LK_MAX - SKY1_AUDSS_DP_AUDIO_COUNT); i++) {
++		if (cix_acpi_i2s_audio_check_present(sky1_dailink[i].id))
+ 			continue;
++
++		memcpy(link, &sky1_dailink[i], sizeof(struct snd_soc_dai_link));
++		memcpy(link_info, &sky1_link_info[i], sizeof(struct dai_link_info));
++
++		if (link_info->mclk_fs) {
++			char mclk[16];
++
++			snprintf(mclk, 16, "mclk%d", link_info->mclk_idx);
++			dev_info(dev, "mclk = %s\n", mclk);
++
++			link_info->clk_mclk = devm_clk_get(dev, mclk);
++			if (IS_ERR(link_info->clk_mclk)) {
++				dev_err(dev, "failed to get clk_mclk clock\n");
++				return PTR_ERR(link_info->clk_mclk);
++			}
++
++			for (j = 0; j < AUDIO_CLK_NUM; j++) {
++				link_info->clks[j] = devm_clk_get(dev, mclk_pll_names[j]);
++				if (IS_ERR(link_info->clks[j])) {
++					dev_err(dev, "failed to get clock %s\n", mclk_pll_names[j]);
++					return PTR_ERR(link_info->clks[j]);
++				}
++			}
+ 		}
+-		put_device(i2s_dev);
+ 
+-		cpu = &comps[num_links * 3];
+-		codec = &comps[num_links * 3 + 1];
+-		plat = &comps[num_links * 3 + 2];
+-		link = &links[num_links];
++		dev_info(dev, "audio: cpu[%s][%s] codec[%s][%s] platform[%s]\n",
++			 link->cpus->name, link->cpus->dai_name,
++			 link->codecs->name, link->codecs->dai_name,
++			 link->platforms->name);
++		link++;
++		link_info++;
++	}
+ 
+-		/* CPU DAI: I2S MC playback */
+-		cpu->name = i2s_name;
+-		cpu->dai_name = "i2s-mc-aif1";
++	/* dp audio */
++	for (i = 0; i < SKY1_AUDSS_DP_AUDIO_COUNT; i++) {
++		char dp_str[32];
+ 
+-		/* Codec DAI: hdmi-audio-codec */
+-		codec->name = devm_kasprintf(dev, GFP_KERNEL,
+-					     "hdmi-audio-codec.%d",
+-					     sky1_hdmi_topology[i].codec_id);
+-		if (!codec->name)
+-			return -ENOMEM;
+-		codec->dai_name = "i2s-hifi";
++		if (cix_acpi_dp_audio_check_present(i))
++			continue;
+ 
+-		/* Platform: DMA is co-located with CPU */
+-		plat->name = cpu->name;
++		memcpy(link, &sky1_dailink[i + LK_I2S5_DP0], sizeof(struct snd_soc_dai_link));
++		memcpy(link_info, &sky1_link_info[i + LK_I2S5_DP0], sizeof(struct dai_link_info));
+ 
+-		link->cpus = cpu;
+ 		link->num_cpus = 1;
+-		link->codecs = codec;
+ 		link->num_codecs = 1;
+-		link->platforms = plat;
+ 		link->num_platforms = 1;
+ 
+-		link->name = sky1_hdmi_topology[i].stream;
+-		link->stream_name = sky1_hdmi_topology[i].stream;
+-		link->id = i;
++		link->cpus->name = cix_acpi_dp_audio_get_cpu_name(i);
++		link->codecs->name = cix_acpi_dp_audio_get_codec_name(i);
++		link->cpus->dai_name = "i2s-mc-aif1";
++		link->codecs->dai_name = "i2s-hifi";
++		link->platforms->name = link->cpus->name;
++
++		snprintf(dp_str, sizeof(dp_str), "HDMI/DP,pcm=%d", (int)(link - card->dai_link));
++		link_info->jack_pin[JACK_DPOUT].pin = devm_kstrdup(dev, dp_str, GFP_KERNEL);
++		link_info->jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT,
++		link_info->jack_det_mask = JACK_MASK_DPOUT,
++
++		dev_info(dev, "dp[%d]:cpu[%s][%s] codec[%s][%s] platform[%s]\n", i,
++			 link->cpus->name, link->cpus->dai_name,
++			 link->codecs->name, link->codecs->dai_name,
++			 link->platforms->name);
++
++		if (!link->cpus->name || !link->cpus->dai_name ||
++		    !link->codecs->name || !link->codecs->dai_name ||
++		    !link->platforms->name) {
++			ret =  -EPROBE_DEFER;
++			goto err;
++		}
+ 
+-		link->dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF |
+-				SND_SOC_DAIFMT_CBC_CFC;
+-		link->ops = &cix_dailink_ops;
+-		link->init = cix_dailink_init;
+-		link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
+-		link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
+-
+-		/* HDMI/DP output jack detection */
+-		link_info[num_links].jack_pin[JACK_DPOUT].pin =
+-			devm_kasprintf(dev, GFP_KERNEL, "HDMI/DP,pcm=%d",
+-				       num_links);
+-		if (!link_info[num_links].jack_pin[JACK_DPOUT].pin)
+-			return -ENOMEM;
+-		link_info[num_links].jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
+-		link_info[num_links].jack_det_mask = JACK_MASK_DPOUT;
+-
+-		num_links++;
++		link++;
++		link_info++;
+ 	}
+ 
+-	card->dai_link = links;
+-	card->num_links = num_links;
+-	card->suspend_post = cix_card_suspend_post;
+-	card->resume_pre = cix_card_resume_pre;
+-	priv->link_info = link_info;
+-
+-	return 0;
++err:
++	return ret;
+ }
+ EXPORT_SYMBOL(cix_card_parse_acpi);
+ 
+diff --git a/sound/soc/cix/card-utils.h b/sound/soc/cix/card-utils.h
+index 2b0bf8065a73..b8d1945dda7a 100644
+--- a/sound/soc/cix/card-utils.h
++++ b/sound/soc/cix/card-utils.h
+@@ -3,7 +3,7 @@
+ 
+ #ifndef __CIX_CARD_H__
+ #define __CIX_CARD_H__
+-
++#include <linux/acpi.h>
+ #include <linux/module.h>
+ #include <linux/of_platform.h>
+ #include <sound/soc.h>
+@@ -57,17 +57,8 @@ struct cix_asoc_card {
+ 	struct gpio_desc *pdb1_gpiod;
+ 	struct gpio_desc *pdb2_gpiod;
+ 	struct gpio_desc *pdb3_gpiod;
+-	struct gpio_desc *beep_gpiod; /* for beep sound */
+-
+-	/* codec, now support for alc5682 */
+-	struct gpio_desc *codec_gpiod; /* load switch for codec */
+-	struct gpio_desc *i2sint_gpiod; /* codec int */
+-	struct gpio_desc *hpmicdet_gpiod; /* mic detect */
+-
+-	struct gpio_desc *mclk_gpiod;
+ };
+ 
+ int cix_card_parse_of(struct cix_asoc_card *priv);
+ int cix_card_parse_acpi(struct cix_asoc_card *priv);
+-
+ #endif
+diff --git a/sound/soc/cix/cdns_i2s_mc.c b/sound/soc/cix/cdns_i2s_mc.c
+index 29b2aa3dfa54..86c2dd86b00e 100644
+--- a/sound/soc/cix/cdns_i2s_mc.c
++++ b/sound/soc/cix/cdns_i2s_mc.c
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ // Copyright 2024 Cix Technology Group Co., Ltd.
+ 
+-
+ #include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+@@ -499,7 +498,7 @@ static int cdns_i2s_mc_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
+ 	return 0;
+ }
+ 
+-static int cdns_i2s_mc_startup(struct snd_pcm_substream *substream,
++static int cdns_i2s_mc_prepare(struct snd_pcm_substream *substream,
+ 			       struct snd_soc_dai *cpu_dai)
+ {
+ 	struct cdns_i2s_mc_priv *i2s_mc_priv = snd_soc_dai_get_drvdata(cpu_dai);
+@@ -644,9 +643,9 @@ static int cdns_i2s_mc_hw_params(struct snd_pcm_substream *substream,
+ 
+ 		pin_tx_num = hweight8(i2s_mc_priv->pin_tx_mask);
+ 		if (slots > 2 * pin_tx_num) {
+-			dev_err(i2s_mc_priv->dev,
+-				"Transmit channel number is large than hardware config\n");
+-			return -EINVAL;
++			dev_warn(i2s_mc_priv->dev,
++				 "Transmit channel number is large than hardware config\n");
++			return -ENOTSUPP;
+ 		} else if (slots < 2 * pin_tx_num) {
+ 			cdns_i2s_mc_adjust_pin_config(i2s_mc_priv->pin_out_num,
+ 						      &i2s_mc_priv->pin_tx_mask_adjust, slots);
+@@ -661,9 +660,9 @@ static int cdns_i2s_mc_hw_params(struct snd_pcm_substream *substream,
+ 
+ 		pin_rx_num = hweight8(i2s_mc_priv->pin_rx_mask);
+ 		if (slots > 2 * pin_rx_num) {
+-			dev_err(i2s_mc_priv->dev,
+-				"Receive channel number is large than hardware config\n");
+-			return -EINVAL;
++			dev_warn(i2s_mc_priv->dev,
++				 "Receive channel number is large than hardware config\n");
++			return -ENOTSUPP;
+ 		} else if (slots < 2 * pin_rx_num) {
+ 			cdns_i2s_mc_adjust_pin_config(i2s_mc_priv->pin_out_num,
+ 						      &i2s_mc_priv->pin_rx_mask_adjust, slots);
+@@ -741,8 +740,8 @@ static const struct snd_soc_dai_ops cdns_i2s_mc_dai_ops = {
+ 	.probe = cdns_i2s_mc_dai_probe,
+ 	.set_fmt = cdns_i2s_mc_set_fmt,
+ 
+-	.startup = cdns_i2s_mc_startup,
+ 	.hw_params = cdns_i2s_mc_hw_params,
++	.prepare = cdns_i2s_mc_prepare,
+ 	.trigger = cdns_i2s_mc_trigger,
+ };
+ 
+@@ -856,6 +855,43 @@ static struct regmap_config cdns_i2s_mc_regmap_config = {
+ 	.cache_type = REGCACHE_FLAT,
+ };
+ 
++static struct snd_dmaengine_pcm_config *devm_snd_pcm_alloc_config(
++			struct device *dev)
++{
++	struct snd_dmaengine_pcm_config *config = NULL;
++	int cnt, ret;
++
++	if (!dev)
++		return NULL;
++
++	config = devm_kzalloc(dev, sizeof(*config), GFP_KERNEL);
++	if (!config)
++		return NULL;
++
++	cnt = device_property_string_array_count(dev, "dma-names");
++	if (cnt < 0)
++		goto ERROR;
++
++	if (cnt > SNDRV_PCM_STREAM_LAST + 1) /* enum start from 0 */
++		cnt = SNDRV_PCM_STREAM_LAST + 1;
++
++	ret = device_property_read_string_array(dev, "dma-names",
++						config->chan_names, cnt);
++	if (ret < 0)
++		goto ERROR;
++
++	config->prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config;
++
++	return config;
++
++ERROR:
++	if (config)
++		kfree(config);
++	dev_err(dev, "snd pcm alloc config fail\n");
++
++	return NULL;
++}
++
+ static int cdns_i2s_get_pin_config(struct platform_device *pdev,
+ 				   struct cdns_i2s_mc_priv *i2s_mc_priv)
+ {
+@@ -1002,19 +1038,18 @@ static int cdns_i2s_mc_probe(struct platform_device *pdev)
+ 	i2s_mc_priv->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
+ 	i2s_mc_priv->capture_dma_data.maxburst = 4;
+ 
+-	/*
+-	 * Under ACPI, snd_dmaengine_pcm_register() skips DMA channel
+-	 * pre-allocation (it only pre-allocates for DT devices).  Provide
+-	 * explicit channel names so dmaengine_pcm_new() can request them
+-	 * at PCM creation time via acpi_dma_request_slave_chan_by_name().
+-	 */
+-	static const struct snd_dmaengine_pcm_config pcm_config = {
+-		.prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
+-		.chan_names = { [SNDRV_PCM_STREAM_PLAYBACK] = "tx",
+-			        [SNDRV_PCM_STREAM_CAPTURE]  = "rx" },
+-	};
+-
+-	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, &pcm_config, 0);
++	if (ACPI_COMPANION(&pdev->dev))
++		/*
++		 * For now dmaengine_pcm_request_chan_of() was called in
++		 * function devm_snd_dmaengine_pcm_register(), which didn't
++		 * work in acpi intialize if you want request the dma channel.
++		 * So that snd dma config should be specified, and dma channel
++		 * will be requested in snd pcm creation process.
++		 */
++		ret = devm_snd_dmaengine_pcm_register(&pdev->dev,
++				devm_snd_pcm_alloc_config(&pdev->dev), 0);
++	else
++		ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+ 	if (ret) {
+ 		if (ret != -EPROBE_DEFER)
+ 			dev_err(&pdev->dev, "Failed to register dmaengine component:%d\n", ret);
+@@ -1051,11 +1086,13 @@ static int cdns_i2s_mc_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
+-static void cdns_i2s_mc_remove(struct platform_device *pdev)
++static int cdns_i2s_mc_remove(struct platform_device *pdev)
+ {
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		pm_runtime_force_suspend(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
++
++	return 0;
+ }
+ 
+ static int __maybe_unused cdns_i2s_mc_runtime_suspend(struct device *dev)
+@@ -1144,7 +1181,7 @@ static const struct of_device_id cdns_i2s_mc_of_match[] = {
+ MODULE_DEVICE_TABLE(of, cdns_i2s_mc_of_match);
+ 
+ static const struct acpi_device_id cdns_i2s_mc_acpi_match[] = {
+-	{ "CIXH6011", (kernel_ulong_t)&sky1_devtype_data },
++	{ "CIXH6011", .driver_data = (kernel_ulong_t)&sky1_devtype_data },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(acpi, cdns_i2s_mc_acpi_match);
+diff --git a/sound/soc/cix/cdns_i2s_sc.c b/sound/soc/cix/cdns_i2s_sc.c
+index 59e9b98ca7fa..49b5bcc09f19 100644
+--- a/sound/soc/cix/cdns_i2s_sc.c
++++ b/sound/soc/cix/cdns_i2s_sc.c
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ // Copyright 2024 Cix Technology Group Co., Ltd.
+ 
+-
++#include <linux/acpi.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/module.h>
+@@ -11,6 +11,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <linux/spinlock.h>
+ #include <sound/dmaengine_pcm.h>
+ #include <sound/pcm_params.h>
+ #include <sound/soc.h>
+@@ -136,6 +137,10 @@ static const char *cdns_i2s_sc_clk_pll_names[AUDIO_CLK_NUM] = {
+ 	[AUDIO_CLK2] = "audio_clk2",
+ };
+ 
++enum {
++	I2S_SC_AIF = 1 ,
++};
++
+ struct cdns_i2s_sc_devtype_data {
+ 	u32 fifo_depth;
+ 	u32 rx_fifo_aempty_threshold;
+@@ -192,6 +197,8 @@ struct cdns_i2s_sc_priv {
+ 	 */
+ 	bool rx_start;
+ 	bool tx_start;
++
++	raw_spinlock_t lock;
+ };
+ 
+ /* I2S SC index */
+@@ -303,6 +310,18 @@ static void cdns_i2s_sc_rxtx_common_config(struct cdns_i2s_sc_priv *i2s_sc_priv,
+ 					   FIELD_PREP(I2S_TDM_CTRL_CHN_EN,
+ 						      i2s_sc_priv->tdm_config.rx_mask |
+ 						      i2s_sc_priv->tdm_config.tx_mask));
++		} else {
++			/* TDM mode enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++					   I2S_TDM_CTRL_TDM_EN, I2S_TDM_CTRL_TDM_EN);
++
++			/* Two channels in TDM mode */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_CHN_NO,
++					   FIELD_PREP(I2S_TDM_CTRL_CHN_NO, (2 - 1)));
++
++			/* TDM mode channels enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_CHN_EN,
++					   FIELD_PREP(I2S_TDM_CTRL_CHN_EN, 0x3));
+ 		}
+ 
+ 		/* Transceiver clock enable */
+@@ -319,19 +338,16 @@ static void cdns_i2s_sc_rxtx_common_config(struct cdns_i2s_sc_priv *i2s_sc_priv,
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
+ 				   I2S_CTRL_I2S_STB, I2S_CTRL_I2S_STB);
+ 
+-		if (i2s_sc_priv->is_tdm_mode) {
+-			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
+-					   I2S_TDM_CTRL_TDM_EN, 0);
+-
+-			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
+-					   I2S_TDM_CTRL_CHN_NO, 0);
+-
+-			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
+-					   I2S_TDM_CTRL_CHN_EN, 0);
+-		}
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++				   I2S_TDM_CTRL_TDM_EN, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++				   I2S_TDM_CTRL_CHN_NO, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL,
++				   I2S_TDM_CTRL_CHN_EN, 0);
+ 
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
+ 				   I2S_CTRL_FDX_FULL_DUPLEX, 0);
++
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
+ 				   I2S_CTRL_I2S_EN, 0);
+ 	}
+@@ -339,28 +355,46 @@ static void cdns_i2s_sc_rxtx_common_config(struct cdns_i2s_sc_priv *i2s_sc_priv,
+ 
+ static void cdns_i2s_sc_tx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
+ {
+-	u32 irq_mask = I2S_CTRL_I2S_MASK;
++	u32 irq_mask = 0, fifo_level = 0;
++	unsigned int timeout = 16;
++
++
++	irq_mask |= I2S_CTRL_I2S_MASK;
+ 
+ 	if (on) {
+ 		cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
+ 
++		/* Transmitter data underrun interrupt unmask */
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, irq_mask, irq_mask);
+ 
+ 		if (i2s_sc_priv->is_tdm_mode)
++			/* TDM mode channels transmit enable */
+ 			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_TXEN,
+ 					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_TXEN, i2s_sc_priv->tdm_config.tx_mask));
++		else
++			/* TDM mode channels transmit enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_TXEN,
++					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_TXEN, 0x3));
+ 
++		/* Full-duplex mode transmitter enable */
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
+ 				   I2S_CTRL_FDX_I2S_FTX_EN, I2S_CTRL_FDX_I2S_FTX_EN);
++
++		/* Transceiver enable */
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
+ 				   I2S_CTRL_I2S_EN, I2S_CTRL_I2S_EN);
+ 
+ 		i2s_sc_priv->tx_start = true;
+ 	} else {
+-		unsigned int timeout = 16;
+-		u32 fifo_level;
+-
+-		/* Drain TX FIFO to avoid residue data in full-duplex mode */
++		/*
++		 * In full-duplex mode, transmitter disable when receiver enabled,
++		 * internal register would residue the last data, then trasmit it when
++		 * transmitter enable again, lead to an extra piece of channel data
++		 * being sent, underrun can correct the logic inside.
++		 *
++		 * Maximum tx fifo size is 16, minimum sample rate supported is 8KHz,
++		 * single frame time is 125us, so set timeout to 2000us.
++		 */
+ 		while (timeout--) {
+ 			regmap_read(i2s_sc_priv->regmap, I2S_FIFO_LEVEL, &fifo_level);
+ 			if (!fifo_level)
+@@ -368,18 +402,20 @@ static void cdns_i2s_sc_tx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
+ 			udelay(125);
+ 		}
+ 		if (!timeout)
+-			dev_warn(i2s_sc_priv->dev, "tx fifo drain timeout\n");
++			dev_warn(i2s_sc_priv->dev, "tx fifo transmit timeout\n");
+ 		else
+-			udelay(250); /* Generate underrun to clear internal state */
++			/* Must wait at least single frame time to generate underrun,
++			 * minimum sample rate supported is 8KHz, single frame time is 125us.
++			 */
++			udelay(250);
+ 
+ 		i2s_sc_priv->tx_start = false;
+ 
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
+ 				   I2S_CTRL_FDX_I2S_FTX_EN, 0);
+ 
+-		if (i2s_sc_priv->is_tdm_mode)
+-			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
+-					   I2S_TDM_FD_DIR_CHN_TXEN, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
++				   I2S_TDM_FD_DIR_CHN_TXEN, 0);
+ 
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, irq_mask, 0);
+ 
+@@ -401,9 +437,13 @@ static void cdns_i2s_sc_rx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX, irq_mask, irq_mask);
+ 
+ 		if (i2s_sc_priv->is_tdm_mode)
+-			/* TDM mode channels receive enale */
++			/* TDM mode channels receive enable */
+ 			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_RXEN,
+ 					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_RXEN, i2s_sc_priv->tdm_config.rx_mask));
++		else
++			/* TDM mode channels receive enable */
++			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_RXEN,
++					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_RXEN, 0x3));
+ 
+ 		/* Full-duplex mode receiver enable */
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
+@@ -420,9 +460,8 @@ static void cdns_i2s_sc_rx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
+ 				   I2S_CTRL_FDX_I2S_FRX_EN, 0);
+ 
+-		if (i2s_sc_priv->is_tdm_mode)
+-			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
+-					   I2S_TDM_FD_DIR_CHN_RXEN, 0);
++		regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR,
++				   I2S_TDM_FD_DIR_CHN_RXEN, 0);
+ 
+ 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX, irq_mask, 0);
+ 
+@@ -532,22 +571,22 @@ static int cdns_i2s_sc_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
+ 	case SND_SOC_DAIFMT_NB_NF:
+ 		/* both normal clocks */
+ 		ctrl |= I2S_CTRL_SCK_POLAR;
+-		ctrl &= ~I2S_CTRL_WS_POLAR;
++		ctrl |= I2S_CTRL_WS_POLAR;
+ 		break;
+ 	case SND_SOC_DAIFMT_NB_IF:
+ 		/* invert frame clock */
+ 		ctrl |= I2S_CTRL_SCK_POLAR;
+-		ctrl |= I2S_CTRL_WS_POLAR;
++		ctrl &= ~I2S_CTRL_WS_POLAR;
+ 		break;
+ 	case SND_SOC_DAIFMT_IB_NF:
+ 		/* invet bit clock */
+ 		ctrl &= ~I2S_CTRL_SCK_POLAR;
+-		ctrl &= ~I2S_CTRL_WS_POLAR;
++		ctrl |= I2S_CTRL_WS_POLAR;
+ 		break;
+ 	case SND_SOC_DAIFMT_IB_IF:
+ 		/* invert both clocks */
+ 		ctrl &= ~I2S_CTRL_SCK_POLAR;
+-		ctrl |= I2S_CTRL_WS_POLAR;
++		ctrl &= ~I2S_CTRL_WS_POLAR;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -664,9 +703,9 @@ static int cdns_i2s_sc_hw_params(struct snd_pcm_substream *substream,
+ 	} else {
+ 		/* I2S mode */
+ 		if (slots != 2) {
+-			dev_err(i2s_sc_priv->dev,
+-				"Only support stereo audio in I2S mode\n");
+-			return -EINVAL;
++			dev_warn(i2s_sc_priv->dev,
++				 "Only support stereo audio in I2S mode\n");
++			return -ENOTSUPP;
+ 		}
+ 
+ 		slot_width = 32;
+@@ -752,6 +791,9 @@ static int cdns_i2s_sc_trigger(struct snd_pcm_substream *substream,
+ 			       int cmd, struct snd_soc_dai *cpu_dai)
+ {
+ 	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
++	int ret = 0;
++
++	raw_spin_lock(&i2s_sc_priv->lock);
+ 
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+@@ -771,10 +813,12 @@ static int cdns_i2s_sc_trigger(struct snd_pcm_substream *substream,
+ 			cdns_i2s_sc_rx_config(i2s_sc_priv, false);
+ 		break;
+ 	default:
+-		return -EINVAL;
++		ret = -EINVAL;
+ 	}
+ 
+-	return 0;
++	raw_spin_unlock(&i2s_sc_priv->lock);
++
++	return ret;
+ }
+ 
+ static int cdns_i2s_sc_dai_probe(struct snd_soc_dai *cpu_dai)
+@@ -813,9 +857,6 @@ static int cdns_i2s_sc_dai_probe(struct snd_soc_dai *cpu_dai)
+ 			   I2S_CTRL_FDX_I2S_FRX_EN,
+ 			   0);
+ 
+-	/* TDM mode disable, default works in standard stereo I2S mode */
+-	regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_CTRL, I2S_TDM_CTRL_TDM_EN, 0);
+-
+ 	snd_soc_dai_init_dma_data(cpu_dai, &i2s_sc_priv->playback_dma_data,
+ 				  &i2s_sc_priv->capture_dma_data);
+ 
+@@ -835,6 +876,8 @@ static const struct snd_soc_dai_ops cdns_i2s_sc_dai_ops = {
+ };
+ 
+ static struct snd_soc_dai_driver cdns_i2s_sc_dai = {
++	.name = "i2s-sc-aif",
++	.id = I2S_SC_AIF,
+ 	.playback = {
+ 		.stream_name = "I2S-SC-Playback",
+ 		.channels_min = 1,
+@@ -878,6 +921,7 @@ static const struct reg_default cdns_i2s_sc_reg_defaults[] = {
+ 	{I2S_FIFO_AFULL_FDR, 0x0000000f},
+ 	{I2S_TDM_CTRL, 0xffff0000},
+ 	{I2S_TDM_FD_DIR, 0x0000ffff},
++	{I2S_FIFO_ADDRESS, 0x00000000},
+ };
+ 
+ static bool cdns_i2s_sc_readable_reg(struct device *dev, unsigned int reg)
+@@ -897,6 +941,7 @@ static bool cdns_i2s_sc_readable_reg(struct device *dev, unsigned int reg)
+ 	case I2S_FIFO_AFULL_FDR:
+ 	case I2S_TDM_CTRL:
+ 	case I2S_TDM_FD_DIR:
++	case I2S_FIFO_ADDRESS:
+ 		return true;
+ 	default:
+ 		return false;
+@@ -918,6 +963,7 @@ static bool cdns_i2s_sc_writeable_reg(struct device *dev, unsigned int reg)
+ 	case I2S_FIFO_AFULL_FDR:
+ 	case I2S_TDM_CTRL:
+ 	case I2S_TDM_FD_DIR:
++	case I2S_FIFO_ADDRESS:
+ 		return true;
+ 	default:
+ 		return false;
+@@ -941,7 +987,7 @@ static struct regmap_config cdns_i2s_sc_regmap_config = {
+ 	.reg_stride = 4,
+ 	.val_bits = 32,
+ 
+-	.max_register = I2S_TDM_FD_DIR,
++	.max_register = I2S_FIFO_ADDRESS,
+ 	.reg_defaults = cdns_i2s_sc_reg_defaults,
+ 	.num_reg_defaults = ARRAY_SIZE(cdns_i2s_sc_reg_defaults),
+ 	.readable_reg = cdns_i2s_sc_readable_reg,
+@@ -950,6 +996,43 @@ static struct regmap_config cdns_i2s_sc_regmap_config = {
+ 	.cache_type = REGCACHE_FLAT,
+ };
+ 
++static struct snd_dmaengine_pcm_config *devm_snd_pcm_alloc_config(
++			struct device *dev)
++{
++	struct snd_dmaengine_pcm_config *config = NULL;
++	int cnt, ret;
++
++	if (!dev)
++		return NULL;
++
++	config = devm_kzalloc(dev, sizeof(*config), GFP_KERNEL);
++	if (!config)
++		return NULL;
++
++	cnt = device_property_string_array_count(dev, "dma-names");
++	if (cnt < 0)
++		goto ERROR;
++
++	if (cnt > SNDRV_PCM_STREAM_LAST + 1) /* enum start from 0 */
++		cnt = SNDRV_PCM_STREAM_LAST + 1;
++
++	ret = device_property_read_string_array(dev, "dma-names",
++						config->chan_names, cnt);
++	if (ret < 0)
++		goto ERROR;
++
++	config->prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config;
++
++	return config;
++
++ERROR:
++	if (config)
++		kfree(config);
++	dev_err(dev, "snd pcm alloc config fail\n");
++
++	return NULL;
++}
++
+ static void cdns_i2s_sc_rst(struct cdns_i2s_sc_priv *i2s_sc_priv)
+ {
+ 	u32 idx = i2s_sc_priv->idx;
+@@ -989,6 +1072,11 @@ static int cdns_i2s_sc_probe(struct platform_device *pdev)
+ 	if (i2s_sc_priv->idx < 0)
+ 		device_property_read_u32(&pdev->dev, "id", &i2s_sc_priv->idx);
+ 
++	i2s_sc_priv->rx_start = false;
++	i2s_sc_priv->tx_start = false;
++
++	raw_spin_lock_init(&i2s_sc_priv->lock);
++
+ 	i2s_sc_priv->regmap = devm_regmap_init_mmio(&pdev->dev, base,
+ 						    &cdns_i2s_sc_regmap_config);
+ 	if (IS_ERR(i2s_sc_priv->regmap)) {
+@@ -1050,7 +1138,18 @@ static int cdns_i2s_sc_probe(struct platform_device *pdev)
+ 	i2s_sc_priv->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
+ 	i2s_sc_priv->capture_dma_data.maxburst = 4;
+ 
+-	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
++	if (ACPI_COMPANION(&pdev->dev))
++		/*
++		 * For now dmaengine_pcm_request_chan_of() was called in
++		 * function devm_snd_dmaengine_pcm_register(), which didn't
++		 * work in acpi intialize if you want request the dma channel.
++		 * So that snd dma config should be specified, and dma channel
++		 * will be requested in snd pcm creation process.
++		 */
++		ret = devm_snd_dmaengine_pcm_register(&pdev->dev,
++				devm_snd_pcm_alloc_config(&pdev->dev), 0);
++	else
++		ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+ 	if (ret) {
+ 		if (ret != -EPROBE_DEFER)
+ 			dev_err(&pdev->dev, "Failed to register dmaengine component:%d\n", ret);
+@@ -1058,7 +1157,7 @@ static int cdns_i2s_sc_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	i2s_sc_priv->cru_regmap =
+-		syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++		device_syscon_regmap_lookup_by_property(&pdev->dev,
+ 					"cdns,cru-ctrl");
+ 	if (PTR_ERR(i2s_sc_priv->cru_regmap) == -ENODEV) {
+ 		i2s_sc_priv->cru_regmap = NULL;
+@@ -1097,11 +1196,13 @@ static int cdns_i2s_sc_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
+-static void cdns_i2s_sc_remove(struct platform_device *pdev)
++static int cdns_i2s_sc_remove(struct platform_device *pdev)
+ {
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		pm_runtime_force_suspend(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
++
++	return 0;
+ }
+ 
+ static int __maybe_unused cdns_i2s_sc_runtime_suspend(struct device *dev)
+@@ -1188,6 +1289,12 @@ static const struct of_device_id cdns_i2s_sc_of_match[] = {
+ };
+ MODULE_DEVICE_TABLE(of, cdns_i2s_sc_of_match);
+ 
++static const struct acpi_device_id cdns_i2s_sc_acpi_match[] = {
++	{ "CIXH6010", .driver_data = (kernel_ulong_t)&sky1_devtype_data },
++	{ },
++};
++MODULE_DEVICE_TABLE(acpi, cdns_i2s_sc_acpi_match);
++
+ static struct platform_driver cdns_i2s_sc_driver = {
+ 	.probe = cdns_i2s_sc_probe,
+ 	.remove = cdns_i2s_sc_remove,
+@@ -1195,6 +1302,7 @@ static struct platform_driver cdns_i2s_sc_driver = {
+ 		.name = DRV_NAME,
+ 		.pm = &cdns_i2s_sc_pm_ops,
+ 		.of_match_table = cdns_i2s_sc_of_match,
++		.acpi_match_table = ACPI_PTR(cdns_i2s_sc_acpi_match),
+ 	},
+ };
+ module_platform_driver(cdns_i2s_sc_driver);
+diff --git a/sound/soc/cix/sky1-card.c b/sound/soc/cix/sky1-card.c
+index a119dae36009..d77bd59ffb57 100644
+--- a/sound/soc/cix/sky1-card.c
++++ b/sound/soc/cix/sky1-card.c
+@@ -1,8 +1,5 @@
+ // SPDX-License-Identifier: GPL-2.0
+ // Copyright 2024 Cix Technology Group Co., Ltd.
+-
+-#include <linux/acpi.h>
+-#include <linux/module.h>
+ #include "card-utils.h"
+ 
+ static int cix_asoc_card_probe(struct platform_device *pdev)
+@@ -25,38 +22,41 @@ static int cix_asoc_card_probe(struct platform_device *pdev)
+ 	platform_set_drvdata(pdev, card);
+ 	snd_soc_card_set_drvdata(card, priv);
+ 
+-	if (dev->of_node)
+-		ret = cix_card_parse_of(priv);
+-	else
++	if (ACPI_COMPANION(dev))
+ 		ret = cix_card_parse_acpi(priv);
++	else
++		ret = cix_card_parse_of(priv);
+ 	if (ret) {
+ 		if (ret != -EPROBE_DEFER)
+-			dev_err(dev, "card parse failed (%d)\n", ret);
+-		return ret;
++			dev_err(dev, "cix_card_parse_of failed (%d)\n", ret);
++		goto err;
+ 	}
+ 
+ 	ret = devm_snd_soc_register_card(dev, card);
+ 	if (ret) {
+ 		if (ret != -EPROBE_DEFER)
+ 			dev_err(dev, "snd_soc_register_card failed (%d)\n", ret);
+-		return ret;
++		goto err;
+ 	}
+ 
+ 	return 0;
++err:
++	return ret;
+ }
+ 
+-static const struct of_device_id sky1_of_match[] = {
+-	{ .compatible = "cix,sky1-sound-card", },
+-	{ }
+-};
+-MODULE_DEVICE_TABLE(of, sky1_of_match);
+-
+ static const struct acpi_device_id sky1_acpi_match[] = {
+-	{ "CIXH6070", 0 },
+-	{ }
++	{ "CIXH6070", },
++	{ },
+ };
+ MODULE_DEVICE_TABLE(acpi, sky1_acpi_match);
+ 
++static const struct of_device_id sky1_of_match[] = {
++	{
++		.compatible = "cix,sky1-sound-card",
++	}, {}
++};
++MODULE_DEVICE_TABLE(of, sky1_of_match);
++
+ static struct platform_driver sky1_card_pdrv = {
+ 	.driver = {
+ 		.name = "sky1-asoc-card",
+diff --git a/sound/soc/sof/cix/Kconfig b/sound/soc/sof/cix/Kconfig
+index c9269df48f6c..adc8e8fcd235 100644
+--- a/sound/soc/sof/cix/Kconfig
++++ b/sound/soc/sof/cix/Kconfig
+@@ -2,7 +2,7 @@
+ 
+ config SND_SOC_SOF_CIX_TOPLEVEL
+ 	bool "SOF support for CIX audio DSPs"
+-	depends on ARM64 || COMPILE_TEST
++	depends on ARM64 || SOC_CIX
+ 	depends on SND_SOC_SOF_OF
+ 	help
+ 	  This adds support for Sound Open Firmware for CIX platforms.
+diff --git a/sound/soc/sof/cix/Makefile b/sound/soc/sof/cix/Makefile
+index 269f780f7c4e..8721162df158 100644
+--- a/sound/soc/sof/cix/Makefile
++++ b/sound/soc/sof/cix/Makefile
+@@ -1,5 +1,4 @@
+ # SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+-
+ snd-sof-cix-common-objs := cix-common.o
+ snd-sof-cix-sky1-objs := cix-sky1.o
+ 
+diff --git a/sound/soc/sof/cix/cix-common.c b/sound/soc/sof/cix/cix-common.c
+index 31df10c63e47..775ed4acc315 100644
+--- a/sound/soc/sof/cix/cix-common.c
++++ b/sound/soc/sof/cix/cix-common.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+ /*
+- * Common helpers for the audio DSP on CIX SoCs
++ * Common helpers for the audio DSP on CIX
+  *
+  * Copyright 2024 Cix Technology Group Co., Ltd.
+  */
+@@ -12,15 +12,15 @@
+ #include "cix-common.h"
+ 
+ /**
+- * cix_get_registers - Read DSP registers after a panic/oops
+- * @sdev: SOF device
+- * @xoops: Stores information about registers
+- * @panic_info: Stores information about filename and line number
+- * @stack: Stores the stack dump
+- * @stack_words: Size of the stack dump in words
++ * cix_get_registers() - This function is called in case of DSP oops
++ * in order to gather information about the registers, filename and
++ * linenumber and stack.
+  *
+- * This function is called in case of DSP oops in order to gather
+- * information about the registers, filename, linenumber and stack.
++ * @sdev: SOF device
++ * @xoops: Stores information about registers.
++ * @panic_info: Stores information about filename and line number.
++ * @stack: Stores the stack dump.
++ * @stack_words: Size of the stack dump.
+  */
+ void cix_get_registers(struct snd_sof_dev *sdev,
+ 		       struct sof_ipc_dsp_oops_xtensa *xoops,
+@@ -47,12 +47,11 @@ void cix_get_registers(struct snd_sof_dev *sdev,
+ }
+ 
+ /**
+- * cix_dump - Dump DSP state on panic
+- * @sdev: SOF device
+- * @flags: Dump flags (unused but required by ops prototype)
++ * cix_dump() - This function is called when a panic message is
++ * received from the firmware.
+  *
+- * This function is called when a panic message is received from
+- * the firmware. It reads and prints the DSP state for debugging.
++ * @sdev: SOF device
++ * @flags: parameter not used but required by ops prototype
+  */
+ void cix_dump(struct snd_sof_dev *sdev, u32 flags)
+ {
+@@ -61,14 +60,12 @@ void cix_dump(struct snd_sof_dev *sdev, u32 flags)
+ 	u32 stack[CIX_STACK_DUMP_SIZE];
+ 	u32 status;
+ 
+-	/*
+-	 * Get information about the panic status from the debug box area.
++	/* Get information about the panic status from the debug box area.
+ 	 * Compute the trace point based on the status.
+ 	 */
+ 	sof_mailbox_read(sdev, sdev->debug_box.offset + 0x4, &status, 4);
+ 
+-	/*
+-	 * Get information about the registers, the filename and line
++	/* Get information about the registers, the filename and line
+ 	 * number and the stack.
+ 	 */
+ 	cix_get_registers(sdev, &xoops, &panic_info, stack,
+@@ -105,5 +102,4 @@ void cix_disable_clocks(struct snd_sof_dev *sdev, struct cix_clocks *clks)
+ EXPORT_SYMBOL(cix_disable_clocks);
+ 
+ MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+-MODULE_DESCRIPTION("SOF common support for CIX platforms");
+ MODULE_LICENSE("Dual BSD/GPL");
+diff --git a/sound/soc/sof/cix/cix-common.h b/sound/soc/sof/cix/cix-common.h
+index ea81cf3edb79..e6db1e80e00f 100644
+--- a/sound/soc/sof/cix/cix-common.h
++++ b/sound/soc/sof/cix/cix-common.h
+@@ -1,4 +1,4 @@
+-/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause) */
++// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+ /*
+  * Copyright 2024 Cix Technology Group Co., Ltd.
+  */
+@@ -11,10 +11,6 @@
+ #define EXCEPT_MAX_HDR_SIZE		0x400
+ #define CIX_STACK_DUMP_SIZE		32
+ 
+-struct snd_sof_dev;
+-struct sof_ipc_dsp_oops_xtensa;
+-struct sof_ipc_panic_info;
+-
+ void cix_get_registers(struct snd_sof_dev *sdev,
+ 		       struct sof_ipc_dsp_oops_xtensa *xoops,
+ 		       struct sof_ipc_panic_info *panic_info,
+diff --git a/sound/soc/sof/cix/cix-sky1.c b/sound/soc/sof/cix/cix-sky1.c
+index fcd1ec131a6d..bf048fa16a24 100644
+--- a/sound/soc/sof/cix/cix-sky1.c
++++ b/sound/soc/sof/cix/cix-sky1.c
+@@ -1,7 +1,5 @@
+ // SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+ /*
+- * Sound Open Firmware platform driver for CIX Sky1 SoC
+- *
+  * Copyright 2024 Cix Technology Group Co., Ltd.
+  */
+ 
+@@ -24,29 +22,27 @@
+ #include "../sof-of-dev.h"
+ #include "cix-common.h"
+ 
+-#define MBOX_OFFSET			0x800000
+-#define MBOX_SIZE			0x1000
++#define MBOX_OFFSET				0x800000
++#define MBOX_SIZE				0x1000
+ 
+-#define SKY1_SRAM_BASE			0x1C80400000ULL
+-#define SKY1_SRAM_SIZE			0x100000
++#define SKY1_SRAM_BASE				0x1C80400000
++#define SKY1_SRAM_SIZE				0x100000
+ 
+-/* DSP register offsets */
+-#define SKY1_INFO_HIFI0			0x00
+-#define SKY1_INFO_HIFI1			0x04
+-#define SKY1_INFO_HIFI2			0x08
++/* DSP register define */
++#define SKY1_INFO_HIFI0				0x00
++#define SKY1_INFO_HIFI1				0x04
++#define SKY1_INFO_HIFI2				0x08
+ 
+-/* info hifi0 bits */
+-#define SKY1_INFO_HIFI0_OCD_HALTONRST	BIT(1)
+-#define SKY1_INFO_HIFI0_CLK_EN		BIT(0)
+-
+-/* info hifi1 bits */
++/* info hifi0 */
++#define SKY1_INFO_HIFI0_OCD_HALTONRST		BIT(1)
++#define SKY1_INFO_HIFI0_CLK_EN			BIT(0)
++/* info hifi1 */
+ #define SKY1_INFO_HIFI1_ALTER_RST_VECTOR	GENMASK(31, 0)
+-#define SKY1_INFO_HIFI1_SEL_VECTOR	BIT(0)
+-
+-/* info hifi2 bits */
+-#define SKY1_INFO_HIFI2_NMI		BIT(2)
+-#define SKY1_INFO_HIFI2_RUN_STALL	BIT(1)
+-#define SKY1_INFO_HIFI2_PWAIT_MODE	BIT(0)
++#define SKY1_INFO_HIFI1_SEL_VECTOR		BIT(0)
++/* info hifi2 */
++#define SKY1_INFO_HIFI2_NMI			BIT(2)
++#define SKY1_INFO_HIFI2_RUN_STALL		BIT(1)
++#define SKY1_INFO_HIFI2_PWAIT_MODE		BIT(0)
+ 
+ static struct clk_bulk_data sky1_dsp_clks[] = {
+ 	{ .id = "clk" },
+@@ -97,16 +93,29 @@ static void sky1_dsp_handle_request(struct cix_dsp_ipc *ipc)
+ {
+ 	struct sky1_priv *priv = cix_dsp_get_data(ipc);
+ 	u32 p; /* Panic code */
++#if 0
++	int ret;
++#endif
+ 
+ 	/* Read the message from the debug box. */
+-	sof_mailbox_read(priv->sdev, priv->sdev->debug_box.offset + 4,
+-			 &p, sizeof(p));
++	sof_mailbox_read(priv->sdev, priv->sdev->debug_box.offset + 4, &p, sizeof(p));
+ 
+ 	/* Check to see if the message is a panic code (0x*dead***) */
+-	if ((p & SOF_IPC_PANIC_MAGIC_MASK) == SOF_IPC_PANIC_MAGIC)
++	if ((p & SOF_IPC_PANIC_MAGIC_MASK) == SOF_IPC_PANIC_MAGIC) {
+ 		snd_sof_dsp_panic(priv->sdev, p, true);
+-	else
++	} else {
+ 		snd_sof_ipc_msgs_rx(priv->sdev);
++
++		/*
++		 * mailbox controller driver would ack automaticly after received message handled,
++		 * if not, need send response ipc manually.
++		 */
++#if 0
++		ret = cix_dsp_ipc_send(priv->dsp_ipc, CIX_DSP_IPC_REP, CIX_DSP_IPC_OP_REP);
++		if (ret)
++			dev_err(priv->dev, "request send ipc failed");
++#endif
++	}
+ }
+ 
+ static struct cix_dsp_ops sky1_dsp_ops = {
+@@ -121,8 +130,7 @@ static int sky1_send_msg(struct snd_sof_dev *sdev, struct snd_sof_ipc_msg *msg)
+ 	sof_mailbox_write(sdev, sdev->host_box.offset, msg->msg_data,
+ 			  msg->msg_size);
+ 
+-	return cix_dsp_ipc_send(priv->dsp_ipc, CIX_DSP_IPC_REQ,
+-				CIX_DSP_IPC_OP_REQ);
++	return cix_dsp_ipc_send(priv->dsp_ipc, CIX_DSP_IPC_REQ, CIX_DSP_IPC_OP_REQ);
+ }
+ 
+ /*
+@@ -130,7 +138,7 @@ static int sky1_send_msg(struct snd_sof_dev *sdev, struct snd_sof_ipc_msg *msg)
+  */
+ static int sky1_reset(struct snd_sof_dev *sdev)
+ {
+-	struct sky1_priv *priv = sdev->pdata->hw_pdata;
++	struct sky1_priv *priv = (struct sky1_priv *)sdev->pdata->hw_pdata;
+ 
+ 	/* reset DSP core */
+ 	reset_control_assert(priv->dsp_rst);
+@@ -150,7 +158,7 @@ static int sky1_reset(struct snd_sof_dev *sdev)
+ 
+ static int sky1_pre_fw_run(struct snd_sof_dev *sdev)
+ {
+-	struct sky1_priv *priv = sdev->pdata->hw_pdata;
++	struct sky1_priv *priv = (struct sky1_priv *)sdev->pdata->hw_pdata;
+ 
+ 	/* reset DSP core */
+ 	reset_control_assert(priv->dsp_rst);
+@@ -166,7 +174,7 @@ static int sky1_pre_fw_run(struct snd_sof_dev *sdev)
+ 
+ static int sky1_run(struct snd_sof_dev *sdev)
+ {
+-	struct sky1_priv *priv = sdev->pdata->hw_pdata;
++	struct sky1_priv *priv = (struct sky1_priv *)sdev->pdata->hw_pdata;
+ 
+ 	regmap_update_bits(priv->regmap, SKY1_INFO_HIFI2,
+ 			   SKY1_INFO_HIFI2_RUN_STALL, 0);
+@@ -198,7 +206,7 @@ static int sky1_probe(struct snd_sof_dev *sdev)
+ 	struct device_node *res_node;
+ 	struct sky1_priv *priv;
+ 	struct resource res;
+-	int ret;
++	int ret = 0;
+ 
+ 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+@@ -230,11 +238,9 @@ static int sky1_probe(struct snd_sof_dev *sdev)
+ 	cix_dsp_set_data(priv->dsp_ipc, priv);
+ 	priv->dsp_ipc->ops = &sky1_dsp_ops;
+ 
+-	sdev->bar[SOF_FW_BLK_TYPE_IRAM] = devm_ioremap_wc(sdev->dev,
+-							  SKY1_SRAM_BASE,
+-							  SKY1_SRAM_SIZE);
++	sdev->bar[SOF_FW_BLK_TYPE_IRAM] = devm_ioremap_wc(sdev->dev, SKY1_SRAM_BASE, SKY1_SRAM_SIZE);
+ 	if (!sdev->bar[SOF_FW_BLK_TYPE_IRAM]) {
+-		dev_err(sdev->dev, "failed to ioremap base 0x%llx size 0x%x\n",
++		dev_err(sdev->dev, "failed to ioremap base 0x%lx size 0x%x\n",
+ 			SKY1_SRAM_BASE, SKY1_SRAM_SIZE);
+ 		ret = -ENOMEM;
+ 		goto exit_pdev_unregister;
+@@ -273,7 +279,7 @@ static int sky1_probe(struct snd_sof_dev *sdev)
+ 
+ 	priv->regmap = syscon_regmap_lookup_by_phandle(np, "cix,dsp-ctrl");
+ 	if (IS_ERR(priv->regmap)) {
+-		dev_err(&pdev->dev, "cannot find dsp-ctrl registers\n");
++		dev_err(&pdev->dev, "cannot find dsp-ctrl registers");
+ 		ret = PTR_ERR(priv->regmap);
+ 		goto exit_pdev_unregister;
+ 	}
+@@ -324,7 +330,7 @@ static int sky1_probe(struct snd_sof_dev *sdev)
+ 	return ret;
+ }
+ 
+-static void sky1_remove(struct snd_sof_dev *sdev)
++static int sky1_remove(struct snd_sof_dev *sdev)
+ {
+ 	struct sky1_priv *priv = sdev->pdata->hw_pdata;
+ 
+@@ -333,6 +339,8 @@ static void sky1_remove(struct snd_sof_dev *sdev)
+ 	cix_disable_clocks(sdev, priv->clks);
+ 
+ 	platform_device_unregister(priv->ipc_dev);
++
++	return 0;
+ }
+ 
+ /* on CIX there is 1 to 1 match between type and BAR idx */
+@@ -385,7 +393,7 @@ static int sky1_dsp_set_power_state(struct snd_sof_dev *sdev,
+ 
+ static int sky1_resume(struct snd_sof_dev *sdev)
+ {
+-	struct sky1_priv *priv = sdev->pdata->hw_pdata;
++	struct sky1_priv *priv = (struct sky1_priv *)sdev->pdata->hw_pdata;
+ 	int ret;
+ 
+ 	ret = cix_enable_clocks(sdev, priv->clks);
+@@ -401,7 +409,7 @@ static int sky1_resume(struct snd_sof_dev *sdev)
+ 
+ static void sky1_suspend(struct snd_sof_dev *sdev)
+ {
+-	struct sky1_priv *priv = sdev->pdata->hw_pdata;
++	struct sky1_priv *priv = (struct sky1_priv *)sdev->pdata->hw_pdata;
+ 
+ 	sky1_free_mbox(priv);
+ 
+@@ -468,11 +476,10 @@ static int sky1_dsp_suspend(struct snd_sof_dev *sdev, unsigned int target_state)
+ }
+ 
+ /* sky1 ops */
+-static const struct snd_sof_dsp_ops sof_sky1_ops = {
++static struct snd_sof_dsp_ops sof_sky1_ops = {
+ 	/* probe and remove */
+ 	.probe		= sky1_probe,
+ 	.remove		= sky1_remove,
+-
+ 	/* DSP core boot and reset */
+ 	.reset		= sky1_reset,
+ 	.pre_fw_run	= sky1_pre_fw_run,
+@@ -541,23 +548,23 @@ static struct snd_sof_of_mach sof_sky1_machs[] = {
+ 
+ static struct sof_dev_desc sof_of_sky1_desc = {
+ 	.of_machines	= sof_sky1_machs,
+-	.ipc_supported_mask	= BIT(SOF_IPC_TYPE_3),
+-	.ipc_default		= SOF_IPC_TYPE_3,
++	.ipc_supported_mask	= BIT(SOF_IPC),
++	.ipc_default		= SOF_IPC,
+ 	.default_fw_path = {
+-		[SOF_IPC_TYPE_3] = "cix/sof",
++		[SOF_IPC] = "cix/sof",
+ 	},
+ 	.default_tplg_path = {
+-		[SOF_IPC_TYPE_3] = "cix/sof-tplg",
++		[SOF_IPC] = "cix/sof-tplg",
+ 	},
+ 	.default_fw_filename = {
+-		[SOF_IPC_TYPE_3] = "sof-sky1.ri",
++		[SOF_IPC] = "sof-sky1.ri",
+ 	},
+ 	.nocodec_tplg_filename = "sof-sky1-nocodec.tplg",
+ 	.ops = &sof_sky1_ops,
+ };
+ 
+ static const struct of_device_id sof_of_sky1_ids[] = {
+-	{ .compatible = "cix,sky1-dsp", .data = &sof_of_sky1_desc },
++	{ .compatible = "cix,sky1-dsp", .data = &sof_of_sky1_desc},
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sof_of_sky1_ids);
+@@ -573,7 +580,6 @@ static struct platform_driver snd_sof_of_sky1_driver = {
+ };
+ module_platform_driver(snd_sof_of_sky1_driver);
+ 
+-MODULE_IMPORT_NS("SND_SOC_SOF_XTENSA");
++MODULE_IMPORT_NS(SND_SOC_SOF_XTENSA);
+ MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+-MODULE_DESCRIPTION("SOF support for CIX Sky1");
+ MODULE_LICENSE("Dual BSD/GPL");

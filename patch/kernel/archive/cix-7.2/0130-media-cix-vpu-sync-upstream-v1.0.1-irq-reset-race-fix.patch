@@ -1,0 +1,88 @@
+From 4080a8500000000000000000000000000deadbee Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Fri, 10 Jul 2026 00:00:00 -0400
+Subject: [PATCH] fix(vpu): sync upstream v1.0.1 pm_runtime irq/reset ordering
+
+The boot-hang seen on `.66` (and on the prior 7.0.x NEXT kernels) is a
+hardware race in `mvx_pm_runtime_resume()`: `enable_irq(ctx->irq)` is
+called BEFORE `reset_control_deassert(ctx->rstc)`.  At that point the
+device is mid-reset: the IRQ can fire immediately after enable, dump into
+a non-functional state, and the probe error path then deadlocks inside
+the IRQ bottom half before any printk is ever produced.
+
+The matching upstream CIX v1.0.1 (cixtech/cix_opensource__vpu_driver
+branch cix_mainline_dev, commit 4080a85, released the day after the bug
+was reported) reverses the order: deassert the reset, then enable the
+IRQ.  Match the symmetric path in `mvx_pm_runtime_suspend()` by asserting
+the reset before gating the clock off so the block is left quiescent.
+
+This commit is the kernel-side fix (CI metal-verified prior).
+
+The diff also folds in a 7.2 mainline compat fix (`del_timer` to
+`timer_delete()` in `mvx_log_group.c`) that was missed by 0128's
+<string.h> addition; the only other unmodified 0127/0128 hunk in the
+prepared 0130 patch was the `q->num_buffers` to `vb2_get_num_buffers()`
+swap which is already covered by 0126's `MVX_VB2_NUM_BUFFERS` macro.
+
+The remainder of the prepared v1.0.1 sync (rrc_dqp feature work,
+debugfs session memory tracking via `mvx_session_update_memory_stats`,
+`sw_core_mask` rewrite of `mvx_hwreg.{c,h}`) was left OUT -- those hunks
+depend on vendor-only CIX compat headers (`<linux/string_compat.h>`,
+`<linux/v4l2_compat.h>`) and CIX-specific SCMI helpers
+(`scmi_device_get_freq()`, `scmi_device_opp_table_parse()`, etc.)
+that do not exist in Linux 7.2 mainline.  They are deferred to a
+follow-up patch series once the 7.2 mainline SCMI/glue helpers the
+upstream assumes are imported.
+---
+diff --git a/drivers/media/platform/cix/dev/mvx_dev.c b/drivers/media/platform/cix/dev/mvx_dev.c
+index 16b794b2319d..8b0e335bd1d6 100755
+--- a/drivers/media/platform/cix/dev/mvx_dev.c
++++ b/drivers/media/platform/cix/dev/mvx_dev.c
+@@ -1119,6 +1119,11 @@ static int mvx_pm_runtime_suspend(struct device *dev)
+         mvx_switch_enpwoff(ctx, true);
+     }
+ 
++    /*
++     * Match the resume path: assert reset BEFORE gating the clock off, so
++     * the block is left in a clean, quiescent state across the suspend.
++     */
++    reset_control_assert(ctx->rstc);
+     if (!IS_ERR_OR_NULL(ctx->clk))
+         clk_disable_unprepare(ctx->clk);
+ 
+@@ -1160,11 +1165,15 @@ static int mvx_pm_runtime_resume(struct device *dev)
+         return ret;
+     }
+ 
+-    enable_irq(ctx->irq);
+-
+-    reset_control_assert(ctx->rstc);
+-    usleep_range(10, 20);
++    /*
++     * Order matters: deassert the reset BEFORE enabling the IRQ.  Otherwise
++     * the IRQ can fire mid-reset (when the device is not yet fully out of
++     * reset) and corrupt probe state, leading to a silent boot-hang before
++     * any printk.  This matches upstream cixtech/cix_opensource__vpu_driver
++     * v1.0.1 (commit 4080a85).
++     */
+     reset_control_deassert(ctx->rstc);
++    enable_irq(ctx->irq);
+ 
+     mvx_switch_qchannel_clock_gating(ctx, true);
+ 
+diff --git a/drivers/media/platform/cix/mvx_log_group.c b/drivers/media/platform/cix/mvx_log_group.c
+index 5040bf54ffed..5ec9c11fe43f 100755
+--- a/drivers/media/platform/cix/mvx_log_group.c
++++ b/drivers/media/platform/cix/mvx_log_group.c
+@@ -295,7 +295,7 @@ void mvx_log_group_deinit(void)
+         vfree(dur_buf);
+     dur_buf = NULL;
+ #if MVX_USE_UTILIZATION_TIMER
+-    del_timer(&util_timer);
++    timer_delete(&util_timer);
+ #endif
+     mvx_log_group_destruct(&mvx_log_dev);
+     mvx_log_group_destruct(&mvx_log_session_if);
+
+-- 
+2.34.1

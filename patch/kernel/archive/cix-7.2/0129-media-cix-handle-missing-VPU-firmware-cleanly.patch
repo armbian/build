@@ -1,0 +1,123 @@
+From a1fee0da7ee89056b45eada15fa0e72e96796b6f Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 9 Jul 2026 21:16:56 -0400
+Subject: [PATCH] media: cix: handle missing VPU firmware cleanly
+
+---
+ drivers/media/platform/cix/if/mvx_firmware.c  | 13 +++++++++--
+ .../platform/cix/if/mvx_firmware_cache.c      | 13 +++++------
+ drivers/media/platform/cix/if/mvx_session.c   | 23 +++++++++++++++++++
+ 3 files changed, 40 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/platform/cix/if/mvx_firmware.c b/drivers/media/platform/cix/if/mvx_firmware.c
+index 8fd392eca9e8..0a4f453437f6 100755
+--- a/drivers/media/platform/cix/if/mvx_firmware.c
++++ b/drivers/media/platform/cix/if/mvx_firmware.c
+@@ -39,6 +39,7 @@
+ #include <linux/device.h>
+ #include <linux/dma-buf.h>
+ #include <linux/errno.h>
++#include <linux/err.h>
+ #include <linux/gfp.h>
+ #include <linux/list.h>
+ #include <linux/mm.h>
+@@ -533,9 +534,17 @@ int mvx_fw_factory(struct mvx_fw *fw,
+          IS_ERR_OR_NULL(fw_bin->nonsecure.fw)) ||
+         (fw_bin->securevideo != false &&
+          IS_ERR_OR_NULL(fw_bin->secure.securefw))) {
++        int err = -EINVAL;
++
++        if (fw_bin->securevideo == false && IS_ERR(fw_bin->nonsecure.fw))
++            err = PTR_ERR(fw_bin->nonsecure.fw);
++        else if (fw_bin->securevideo != false &&
++             IS_ERR(fw_bin->secure.securefw))
++            err = PTR_ERR(fw_bin->secure.securefw);
++
+         MVX_LOG_PRINT(&mvx_log_if, MVX_LOG_WARNING,
+-                  "Firmware binary was loaded with error.");
+-        return -EINVAL;
++                  "Firmware binary was loaded with error. ret=%d.", err);
++        return err;
+     }
+ 
+     ncores = hweight32(core_mask);
+diff --git a/drivers/media/platform/cix/if/mvx_firmware_cache.c b/drivers/media/platform/cix/if/mvx_firmware_cache.c
+index f9a15dd8e679..8bb2c4af93d1 100755
+--- a/drivers/media/platform/cix/if/mvx_firmware_cache.c
++++ b/drivers/media/platform/cix/if/mvx_firmware_cache.c
+@@ -292,7 +292,7 @@ static void request_firmware_done(const struct firmware *fw,
+         MVX_LOG_PRINT(&mvx_log_if, MVX_LOG_WARNING,
+                   "Failed to load firmware binary. filename=%s.",
+                   fw_bin->filename);
+-        fw = ERR_PTR(-EINVAL);
++        fw = ERR_PTR(-ENOENT);
+         goto fw_ready_callback;
+     }
+ 
+@@ -704,17 +704,16 @@ int mvx_fw_cache_get(struct mvx_fw_cache *cache,
+     }
+ 
+     /*
+-     * If the firmware binary has already been loaded, then the callback
+-     * routine can be called right away.
+-     * Else the callback and argument is enqueued to the firmware
+-     * notification list.
++     * If the firmware request has completed, successfully or not, call the
++     * callback right away. A NULL firmware pointer means the request is still
++     * pending, so enqueue the callback for request_firmware_done().
+      */
+     if ((fw_bin->securevideo != false &&
+-         IS_ERR_OR_NULL(fw_bin->secure.securefw) == false)) {
++         fw_bin->secure.securefw != NULL)) {
+         mutex_unlock(&fw_bin->mutex);
+         event->fw_bin_ready(fw_bin, event->arg, true);
+     } else if (fw_bin->securevideo == false &&
+-           IS_ERR_OR_NULL(fw_bin->nonsecure.fw) == false) {
++           fw_bin->nonsecure.fw != NULL) {
+         mutex_unlock(&fw_bin->mutex);
+         event->fw_bin_ready(fw_bin, event->arg, true);
+     } else {
+diff --git a/drivers/media/platform/cix/if/mvx_session.c b/drivers/media/platform/cix/if/mvx_session.c
+index b0754b803f4d..d88c4ce9f06e 100755
+--- a/drivers/media/platform/cix/if/mvx_session.c
++++ b/drivers/media/platform/cix/if/mvx_session.c
+@@ -2961,6 +2961,23 @@ static void return_done_buffers(struct mvx_session *session,
+     }
+ }
+ 
++static int fw_bin_error(const struct mvx_fw_bin *bin)
++{
++    if (bin->securevideo != false) {
++        if (IS_ERR(bin->secure.securefw))
++            return PTR_ERR(bin->secure.securefw);
++        if (bin->secure.securefw == NULL)
++            return -EINVAL;
++    } else {
++        if (IS_ERR(bin->nonsecure.fw))
++            return PTR_ERR(bin->nonsecure.fw);
++        if (bin->nonsecure.fw == NULL)
++            return -EINVAL;
++    }
++
++    return 0;
++}
++
+ /**
+  * fw_bin_ready() - Complete firmware configuration.
+  *
+@@ -2997,6 +3014,12 @@ static void fw_bin_ready(struct mvx_fw_bin *bin,
+     if (!is_stream_on(session))
+         goto put_fw_bin;
+ 
++    ret = fw_bin_error(bin);
++    if (ret != 0) {
++        send_event_error(session, ret);
++        goto put_fw_bin;
++    }
++
+     /* Create client session. */
+     session->isession.core_mask = session->client_ops->get_core_mask(
+         session->client_ops);
+-- 
+2.51.0
+
