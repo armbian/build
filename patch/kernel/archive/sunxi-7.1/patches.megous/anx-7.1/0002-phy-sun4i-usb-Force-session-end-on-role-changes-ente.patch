@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 19 Jul 2026 01:16:17 +0200
+Subject: phy: sun4i-usb: Force session end on role changes entering/leaving
+ host
+
+usb_add_hcd() sets PHY_MODE_USB_HOST on all phys of a host controller,
+so the EHCI0/OHCI0 probes flip phy0's dr_mode to host and re-route it
+away from musb when they come up after boot.  When the type-c driver
+then sets the role back to device, the id 0 -> 1 transition clears the
+musb session while the forced vbus_det stays 1 the whole time - no
+vbus edge, so musb never restarts the session and the gadget stays
+invisible until the cable is physically replugged.  This is why
+rebooting with the cable attached ends with no device on the host.
+
+Mirror sun4i_usb_phy_set_mode() in the role_set callback: force a full
+id reprocess and a session end pulse for transitions entering/leaving
+host routing.  NONE <-> DEVICE changes keep the fast path since the
+vbus_det edge covers them.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 19 ++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -709,6 +709,25 @@ static int sun4i_usb_role_set(struct usb_role_switch *sw, enum usb_role role)
+ {
+ 	struct sun4i_usb_phy_data *data = usb_role_switch_get_drvdata(sw);
+ 
++	/*
++	 * When the port stops being routed to the host controllers (id 0 -> 1)
++	 * the forced vbus_det typically stays 1 the whole time, so musb never
++	 * sees a vbus edge and its session stays dead -- the gadget does not
++	 * come up until the cable is physically replugged.  This happens e.g.
++	 * on boot with the cable attached: EHCI0/OHCI0 probe flips phy0 to
++	 * host mode via usb_add_hcd()'s phy_set_mode(PHY_MODE_USB_HOST)
++	 * before the type-c driver claims the role switch.  Mirror
++	 * sun4i_usb_phy_set_mode(): force a full id reprocess and a session
++	 * end (vbus_det pulse) for transitions that enter or leave host
++	 * routing.  Plain NONE <-> DEVICE changes keep the fast path, the
++	 * vbus_det edge alone is enough there.
++	 */
++	if (data->usb_role != role &&
++	    (role == USB_ROLE_HOST || data->id_det == 0)) {
++		data->id_det = -1;
++		data->force_session_end = true;
++	}
++
+ 	data->usb_role = role;
+ 	queue_delayed_work(system_wq, &data->detect, 0);
+ 
+-- 
+Armbian
+
