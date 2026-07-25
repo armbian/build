@@ -420,16 +420,11 @@ if apply_patches:
 			pconfig=pconfig
 		)
 
-		# Check for failures
-		for one_patch in VALID_PATCHES:
+		# Check for failures in regular patches only (drivers already recorded above)
+		for one_patch in regular_patches:
 			if not one_patch.applied_ok:
 				any_failed_to_apply = True
 				failed_to_apply_list.append(one_patch)
-			elif one_patch.applied_ok and apply_patches_to_git:
-				# For parallel mode, commit_hash is already set by update_patches_from_parallel_results
-				if one_patch.git_commit_hash and rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
-					# rewritten_patch is already set by update_patches_from_parallel_results
-					pass
 
 		log.info(f"Parallel processing completed: {len(driver_patches)} driver patches + {len(regular_patches)} regular patches = {len(VALID_PATCHES)} total")
 
