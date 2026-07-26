@@ -155,6 +155,7 @@ function do_main_configuration() {
 			;;
 		btrfs)
 			enable_extension "fs-btrfs-support"
+			[[ -n "$BTRFS_CHECKSUM" && ! "$BTRFS_CHECKSUM" =~ ^(crc32c|xxhash|sha256|blake2)$ ]] && exit_with_error "Unknown btrfs checksum algorithm" "$BTRFS_CHECKSUM"
 			[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
 			[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
 			;;
