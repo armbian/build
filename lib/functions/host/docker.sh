@@ -357,7 +357,14 @@ function docker_cli_prepare_dockerfile() {
 	# so the arch-specific host-dependency guards (skipping cross-compilers that
 	# don't exist on riscv64, etc.) match the image being produced, not the runner.
 	declare host_arch
-	host_arch="${DOCKER_ARMBIAN_HOST_ARCH:-"$(dpkg --print-architecture)"}"
+	if [[ -n "${DOCKER_ARMBIAN_HOST_ARCH:-}" ]]; then
+		host_arch="${DOCKER_ARMBIAN_HOST_ARCH}"
+	else
+		# Resolve the architecture where the Dockerfile will actually build.
+		# This also avoids relying on host tools such as dpkg, which may not
+		# exist on macOS or non-Debian Docker hosts.
+		host_arch="$(docker version --format '{{.Server.Arch}}')"
+	fi
 	host_release="${DOCKER_WANTED_RELEASE}" host_arch="${host_arch}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
 	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}' host_arch '${host_arch}'" "${host_dependencies[*]}" "debug"
 
@@ -519,10 +526,12 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
-		# Pass down the TERM, COLORFGBG, and the COLUMNS
+		# Pass down the TERM, COLORFGBG, and the COLUMNS. docker run has no --tty,
+		# so the container can't measure the terminal itself; forward the width
+		# captured on the host (ARMBIAN_TTY_COLUMNS) so patch tables match it.
 		"--env" "TERM=${TERM}"
 		"--env" "COLORFGBG=${COLORFGBG-}"
-		"--env" "COLUMNS=${COLUMNS:-"160"}"
+		"--env" "COLUMNS=${COLUMNS:-${ARMBIAN_TTY_COLUMNS:-}}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
 		"--env" "CI=${CI}"                         # All CI's, hopefully

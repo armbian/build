@@ -1,0 +1,463 @@
+From 0cd071f02519f64aff0409b05923ca7a8dcd508b Mon Sep 17 00:00:00 2001
+From: Andrew Davis <afd@ti.com>
+Date: Fri, 6 Feb 2026 12:58:03 -0600
+Subject: [PATCH] PENDING: dma-buf: heaps: Add Carveout heap to DMA-BUF Heaps
+
+This adds a Carveout heap, which allows userspace to allocate
+a dma-buf of contiguous memory out of a carveout region.
+
+Signed-off-by: Andrew Davis <afd@ti.com>
+---
+ drivers/dma-buf/heaps/Kconfig         |  10 +
+ drivers/dma-buf/heaps/Makefile        |   1 +
+ drivers/dma-buf/heaps/carveout-heap.c | 411 ++++++++++++++++++++++++++
+ 3 files changed, 422 insertions(+)
+ create mode 100644 drivers/dma-buf/heaps/carveout-heap.c
+
+diff --git a/drivers/dma-buf/heaps/Kconfig b/drivers/dma-buf/heaps/Kconfig
+index bb369b38b001..4f909fd2622b 100644
+--- a/drivers/dma-buf/heaps/Kconfig
++++ b/drivers/dma-buf/heaps/Kconfig
+@@ -22,3 +22,13 @@ config DMABUF_HEAPS_CMA_LEGACY
+ 	  from the CMA area's devicetree node, or "reserved" if the area is not
+ 	  defined in the devicetree. This uses the same underlying allocator as
+ 	  CONFIG_DMABUF_HEAPS_CMA.
++
++config DMABUF_HEAPS_CARVEOUT
++	bool "DMA-BUF Carveout Heap"
++	depends on DMABUF_HEAPS && HAS_IOMEM
++	depends on OF_RESERVED_MEM
++	select GENERIC_ALLOCATOR
++	help
++	  Choose this option to enable dma-buf Carveout heap. This heap is
++	  backed by the a carved-out of memory. If your system has these
++	  regions, you should say Y here.
+diff --git a/drivers/dma-buf/heaps/Makefile b/drivers/dma-buf/heaps/Makefile
+index 974467791032..0692e9792b9c 100644
+--- a/drivers/dma-buf/heaps/Makefile
++++ b/drivers/dma-buf/heaps/Makefile
+@@ -1,3 +1,4 @@
+ # SPDX-License-Identifier: GPL-2.0
+ obj-$(CONFIG_DMABUF_HEAPS_SYSTEM)	+= system_heap.o
+ obj-$(CONFIG_DMABUF_HEAPS_CMA)		+= cma_heap.o
++obj-$(CONFIG_DMABUF_HEAPS_CARVEOUT)	+= carveout-heap.o
+diff --git a/drivers/dma-buf/heaps/carveout-heap.c b/drivers/dma-buf/heaps/carveout-heap.c
+new file mode 100644
+index 000000000000..87f9a21e170b
+--- /dev/null
++++ b/drivers/dma-buf/heaps/carveout-heap.c
+@@ -0,0 +1,411 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Carveout DMA-Heap userspace exporter
++ *
++ * Copyright (C) 2019-2022 Texas Instruments Incorporated - https://www.ti.com/
++ *	Andrew Davis <afd@ti.com>
++ */
++
++#include <linux/dma-mapping.h>
++#include <linux/err.h>
++#include <linux/genalloc.h>
++#include <linux/io.h>
++#include <linux/mm.h>
++#include <linux/scatterlist.h>
++#include <linux/slab.h>
++#include <linux/highmem.h>
++#include <linux/dma-buf.h>
++#include <linux/dma-heap.h>
++
++struct carveout_dma_heap {
++	struct dma_heap *heap;
++	struct gen_pool *pool;
++	bool cached;
++};
++
++struct carveout_dma_heap_buffer {
++	struct gen_pool *pool;
++	struct list_head attachments;
++	struct mutex attachments_lock;
++	struct mutex vmap_lock;
++	int vmap_cnt;
++	unsigned long len;
++	void *vaddr;
++	phys_addr_t paddr;
++	bool cached;
++};
++
++struct dma_heap_attachment {
++	struct device *dev;
++	struct sg_table *table;
++	struct list_head list;
++};
++
++static int dma_heap_attach(struct dma_buf *dmabuf,
++			   struct dma_buf_attachment *attachment)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	struct dma_heap_attachment *a;
++	struct sg_table *table;
++
++	a = kzalloc(sizeof(*a), GFP_KERNEL);
++	if (!a)
++		return -ENOMEM;
++
++	table = kmalloc(sizeof(*table), GFP_KERNEL);
++	if (!table) {
++		kfree(a);
++		return -ENOMEM;
++	}
++	if (sg_alloc_table(table, 1, GFP_KERNEL)) {
++		kfree(a);
++		return -ENOMEM;
++	}
++	sg_set_page(table->sgl, pfn_to_page(PFN_DOWN(buffer->paddr)), buffer->len, 0);
++
++	a->table = table;
++	a->dev = attachment->dev;
++	INIT_LIST_HEAD(&a->list);
++
++	attachment->priv = a;
++
++	mutex_lock(&buffer->attachments_lock);
++	list_add(&a->list, &buffer->attachments);
++	mutex_unlock(&buffer->attachments_lock);
++
++	return 0;
++}
++
++static void dma_heap_detatch(struct dma_buf *dmabuf,
++			     struct dma_buf_attachment *attachment)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	struct dma_heap_attachment *a = attachment->priv;
++
++	mutex_lock(&buffer->attachments_lock);
++	list_del(&a->list);
++	mutex_unlock(&buffer->attachments_lock);
++
++	sg_free_table(a->table);
++	kfree(a->table);
++	kfree(a);
++}
++
++static struct sg_table *dma_heap_map_dma_buf(struct dma_buf_attachment *attachment,
++					     enum dma_data_direction direction)
++{
++	struct carveout_dma_heap_buffer *buffer = attachment->dmabuf->priv;
++	struct dma_heap_attachment *a = attachment->priv;
++	struct sg_table *table = a->table;
++
++	unsigned long attrs = buffer->cached ? 0 : DMA_ATTR_SKIP_CPU_SYNC;
++
++	if (!dma_map_sg_attrs(attachment->dev, table->sgl, table->nents,
++			      direction, attrs))
++		return ERR_PTR(-ENOMEM);
++
++	return table;
++}
++
++static void dma_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
++				   struct sg_table *table,
++				   enum dma_data_direction direction)
++{
++	struct carveout_dma_heap_buffer *buffer = attachment->dmabuf->priv;
++	unsigned long attrs = buffer->cached ? 0 : DMA_ATTR_SKIP_CPU_SYNC;
++
++	dma_unmap_sg_attrs(attachment->dev, table->sgl, table->nents,
++			   direction, attrs);
++}
++
++static void dma_heap_dma_buf_release(struct dma_buf *dmabuf)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++
++	if (buffer->vmap_cnt > 0) {
++		WARN(1, "%s: buffer still mapped in the kernel\n", __func__);
++		memunmap(buffer->vaddr);
++	}
++
++	gen_pool_free(buffer->pool, buffer->paddr, buffer->len);
++	kfree(buffer);
++}
++
++static int dma_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
++					     enum dma_data_direction direction)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	struct dma_heap_attachment *a;
++
++	if (!buffer->cached)
++		return 0;
++
++	mutex_lock(&buffer->vmap_lock);
++	if (buffer->vmap_cnt)
++		invalidate_kernel_vmap_range(buffer->vaddr, buffer->len);
++	mutex_unlock(&buffer->vmap_lock);
++
++	mutex_lock(&buffer->attachments_lock);
++	list_for_each_entry(a, &buffer->attachments, list) {
++		dma_sync_sg_for_cpu(a->dev, a->table->sgl, a->table->nents,
++				    direction);
++	}
++	mutex_unlock(&buffer->attachments_lock);
++
++	return 0;
++}
++
++static int dma_heap_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
++					   enum dma_data_direction direction)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	struct dma_heap_attachment *a;
++
++	if (!buffer->cached)
++		return 0;
++
++	mutex_lock(&buffer->vmap_lock);
++	if (buffer->vmap_cnt)
++		flush_kernel_vmap_range(buffer->vaddr, buffer->len);
++	mutex_unlock(&buffer->vmap_lock);
++
++	mutex_lock(&buffer->attachments_lock);
++	list_for_each_entry(a, &buffer->attachments, list) {
++		dma_sync_sg_for_device(a->dev, a->table->sgl, a->table->nents,
++				       direction);
++	}
++	mutex_unlock(&buffer->attachments_lock);
++
++	return 0;
++}
++
++static int dma_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	int ret;
++
++	if (!buffer->cached)
++		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
++
++	ret = vm_iomap_memory(vma, buffer->paddr, buffer->len);
++	if (ret)
++		pr_err("Could not map buffer to userspace\n");
++
++	return ret;
++}
++
++static int dma_heap_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++	void *vaddr;
++	int ret = 0;
++
++	mutex_lock(&buffer->vmap_lock);
++
++	if (buffer->vmap_cnt) {
++		buffer->vmap_cnt++;
++		iosys_map_set_vaddr(map, buffer->vaddr);
++		goto exit;
++	}
++	if (buffer->cached)
++		vaddr = memremap(buffer->paddr, buffer->len, MEMREMAP_WB);
++	else
++		vaddr = memremap(buffer->paddr, buffer->len, MEMREMAP_WC);
++	if (!vaddr) {
++		pr_err("Could not memremap buffer\n");
++		ret = -ENOMEM;
++		goto exit;
++	}
++	if (IS_ERR(vaddr)) {
++		ret = PTR_ERR(vaddr);
++		goto exit;
++	}
++
++	buffer->vaddr = vaddr;
++	buffer->vmap_cnt++;
++	iosys_map_set_vaddr(map, buffer->vaddr);
++exit:
++	mutex_unlock(&buffer->vmap_lock);
++
++	return ret;
++}
++
++static void dma_heap_vunmap(struct dma_buf *dmabuf, struct iosys_map *map)
++{
++	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
++
++	mutex_lock(&buffer->vmap_lock);
++	if (!--buffer->vmap_cnt) {
++		memunmap(buffer->vaddr);
++		buffer->vaddr = NULL;
++	}
++	mutex_unlock(&buffer->vmap_lock);
++}
++
++static const struct dma_buf_ops carveout_dma_heap_buf_ops = {
++	.attach = dma_heap_attach,
++	.detach = dma_heap_detatch,
++	.map_dma_buf = dma_heap_map_dma_buf,
++	.unmap_dma_buf = dma_heap_unmap_dma_buf,
++	.release = dma_heap_dma_buf_release,
++	.begin_cpu_access = dma_heap_dma_buf_begin_cpu_access,
++	.end_cpu_access = dma_heap_dma_buf_end_cpu_access,
++	.mmap = dma_heap_mmap,
++	.vmap = dma_heap_vmap,
++	.vunmap = dma_heap_vunmap,
++};
++
++static struct dma_buf *carveout_dma_heap_allocate(struct dma_heap *heap,
++						  unsigned long len,
++						  u32 fd_flags,
++						  u64 heap_flags)
++{
++	struct carveout_dma_heap *carveout_dma_heap = dma_heap_get_drvdata(heap);
++	struct carveout_dma_heap_buffer *buffer;
++
++	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
++	struct dma_buf *dmabuf;
++	int ret = 0;
++
++	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
++	if (!buffer)
++		return ERR_PTR(-ENOMEM);
++	buffer->pool = carveout_dma_heap->pool;
++	buffer->cached = carveout_dma_heap->cached;
++	INIT_LIST_HEAD(&buffer->attachments);
++	mutex_init(&buffer->attachments_lock);
++	mutex_init(&buffer->vmap_lock);
++	buffer->len = len;
++
++	buffer->paddr = gen_pool_alloc(buffer->pool, buffer->len);
++	if (!buffer->paddr) {
++		ret = -ENOMEM;
++		goto free_buffer;
++	}
++
++	/* create the dmabuf */
++	exp_info.exp_name = dma_heap_get_name(heap);
++	exp_info.ops = &carveout_dma_heap_buf_ops;
++	exp_info.size = buffer->len;
++	exp_info.flags = fd_flags;
++	exp_info.priv = buffer;
++	dmabuf = dma_buf_export(&exp_info);
++	if (IS_ERR(dmabuf)) {
++		ret = PTR_ERR(dmabuf);
++		goto free_pool;
++	}
++
++	return dmabuf;
++
++free_pool:
++	gen_pool_free(buffer->pool, buffer->paddr, buffer->len);
++free_buffer:
++	kfree(buffer);
++
++	return ERR_PTR(ret);
++}
++
++static struct dma_heap_ops carveout_dma_heap_ops = {
++	.allocate = carveout_dma_heap_allocate,
++};
++
++static int carveout_dma_heap_export(phys_addr_t base, size_t size, const char *name, bool cached)
++{
++	struct carveout_dma_heap *carveout_dma_heap;
++	struct dma_heap_export_info exp_info;
++	int ret;
++
++	carveout_dma_heap = kzalloc(sizeof(*carveout_dma_heap), GFP_KERNEL);
++	if (!carveout_dma_heap)
++		return -ENOMEM;
++
++	carveout_dma_heap->pool = gen_pool_create(PAGE_SHIFT, NUMA_NO_NODE);
++	if (IS_ERR(carveout_dma_heap->pool)) {
++		pr_err("Carveout Heap: Could not create memory pool\n");
++		ret = PTR_ERR(carveout_dma_heap->pool);
++		goto free_carveout_dma_heap;
++	}
++	ret = gen_pool_add(carveout_dma_heap->pool, base, size, NUMA_NO_NODE);
++	if (ret) {
++		pr_err("Carveout Heap: Could not add memory to pool\n");
++		goto free_pool;
++	}
++
++	carveout_dma_heap->cached = cached;
++
++	exp_info.name = kasprintf(GFP_KERNEL, "carveout_%s", name);
++	exp_info.ops = &carveout_dma_heap_ops;
++	exp_info.priv = carveout_dma_heap;
++	carveout_dma_heap->heap = dma_heap_add(&exp_info);
++	if (IS_ERR(carveout_dma_heap->heap)) {
++		pr_err("Carveout Heap: Could not add DMA-Heap\n");
++		ret = PTR_ERR(carveout_dma_heap->heap);
++		goto free_pool;
++	}
++
++	pr_info("Carveout Heap: Exported %zu MiB at %pa\n", size / SZ_1M, &base);
++
++	return 0;
++
++free_pool:
++	gen_pool_destroy(carveout_dma_heap->pool);
++free_carveout_dma_heap:
++	kfree(carveout_dma_heap);
++	return ret;
++}
++
++#ifdef CONFIG_OF_RESERVED_MEM
++#include <linux/of.h>
++#include <linux/of_fdt.h>
++#include <linux/of_reserved_mem.h>
++
++#define MAX_HEAP_AREAS 7
++static struct reserved_mem heap_areas[MAX_HEAP_AREAS];
++static size_t heap_area_count;
++
++static int __init carveout_dma_heap_init_areas(void)
++{
++	int i;
++
++	for (i = 0; i < heap_area_count; i++) {
++		struct reserved_mem *rmem = &heap_areas[i];
++		bool cached = !of_get_flat_dt_prop(rmem->fdt_node, "no-map", NULL);
++		int ret = carveout_dma_heap_export(rmem->base, rmem->size, rmem->name, cached);
++		if (ret) {
++			pr_err("Carveout Heap: could not export as DMA-Heap\n");
++			return ret;
++		}
++	}
++
++	return 0;
++}
++fs_initcall(carveout_dma_heap_init_areas);
++
++static int __init rmem_dma_heap_carveout_setup(struct reserved_mem *rmem)
++{
++	phys_addr_t align = PAGE_SIZE;
++	phys_addr_t mask = align - 1;
++
++	if ((rmem->base & mask) || (rmem->size & mask)) {
++		pr_err("Carveout Heap: incorrect alignment of region\n");
++		return -EINVAL;
++	}
++
++	/* Sanity check */
++	if (heap_area_count == ARRAY_SIZE(heap_areas)) {
++		pr_err("Not enough slots for DMA-Heap reserved regions!\n");
++		return -ENOSPC;
++	}
++
++	/*
++	 * Each reserved area must be initialized later, when more kernel
++	 * subsystems (like slab allocator) are available.
++	 */
++	heap_areas[heap_area_count] = *rmem;
++	heap_area_count++;
++
++	return 0;
++}
++RESERVEDMEM_OF_DECLARE(dma_heap_carveout, "dma-heap-carveout", rmem_dma_heap_carveout_setup);
++
++#endif
+-- 
+2.43.0
+
