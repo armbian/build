@@ -51,7 +51,6 @@ function prepare_partitions() {
 	else
 		display_alert "e2fsprogs version" "$e2fsprogs_version does not support orphan_file" "info"
 	fi
-
 	# mkopts[fat] is empty
 	# mkopts[ext2] is empty
 	# mkopts[f2fs] is empty
@@ -59,6 +58,10 @@ function prepare_partitions() {
 	# mkopts[nilfs2] is empty
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
+
+	if [[ -n "$BTRFS_CHECKSUM" ]]; then
+		mkopts[btrfs]+=" --checksum=$BTRFS_CHECKSUM "
+	fi
 
 	mkopts_label[ext4]='-L '
 	mkopts_label[ext2]='-L '
