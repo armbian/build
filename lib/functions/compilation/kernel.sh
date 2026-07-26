@@ -260,25 +260,8 @@ function kernel_build() {
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_build[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Installing kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets_install[*]}" "info"
-
-	# Run dtbs_install separately with -j1 to avoid parallel install race
-	# where multiple jobs try to create dtbs/allwinner directory simultaneously.
-	local install_targets_without_dtbs=()
-	local target
-	for target in "${build_targets_install[@]}"; do
-		if [[ "${target}" != "dtbs_install" ]]; then
-			install_targets_without_dtbs+=("${target}")
-		fi
-	done
-
 	do_with_ccache_statistics \
-		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${install_targets_without_dtbs[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
-
-	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
-		display_alert "Installing DTBs" "with -j1 to avoid race" "info"
-		do_with_ccache_statistics \
-			run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "-j1" "dtbs_install"
-	fi
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets_install[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }
