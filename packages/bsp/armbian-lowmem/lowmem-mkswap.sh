@@ -23,6 +23,9 @@ if (( FREE_MB < NEEDED_MB )); then
     exit 1
 fi
 
+# Prevent permission race
+umask 077
+
 # Create swapfile, set permissions, and enable it
 fallocate -l "${SWAPFILE_SIZE_MB}M" "${SWAPFILE_PATH}"
 chmod 600 "${SWAPFILE_PATH}"
