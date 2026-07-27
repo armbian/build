@@ -356,7 +356,7 @@ function install_distribution_agnostic() {
 	declare -g image_artifacts_packages image_artifacts_debs_reversioned
 	debug_dict image_artifacts_packages
 	debug_dict image_artifacts_debs_reversioned
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
+	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
 		install_artifact_deb_chroot "uboot"
 	fi
 

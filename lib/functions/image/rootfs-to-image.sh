@@ -98,7 +98,7 @@ function create_image_from_sdcard_rootfs() {
 
 	# stage: write u-boot, unless BOOTCONFIG=none
 	declare -g -A image_artifacts_debs_reversioned
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
+	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
 		write_uboot_to_loop_image "${LOOP}" "${DEB_STORAGE}/${image_artifacts_debs_reversioned["uboot"]}"
 	fi
 
