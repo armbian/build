@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 function determine_artifacts_to_build_for_image() {
 	# outer scope: declare -a artifacts_to_build=()
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
+	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
 		artifacts_to_build+=("uboot")
 	fi
 	if [[ "${KERNELSOURCE}" != 'none' ]]; then
