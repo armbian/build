@@ -393,7 +393,10 @@ function board_side_bsp_cli_preinst() {
 			echo vm.swappiness=100 >> /etc/sysctl.conf
 			;;
 	esac
-	sysctl -p > /dev/null 2>&1
+	# --system (not -p) so the change to /etc/sysctl.conf above *and* the
+	# drop-ins under /usr/lib/sysctl.d (our 50-default.conf) are applied on
+	# upgrade; -p reads only /etc/sysctl.conf and would leave them to next boot.
+	sysctl --system > /dev/null 2>&1
 	# replace canonical advertisement
 	if [[ -d "/var/lib/ubuntu-advantage/messages/" ]]; then
 		echo -e "\nSupport Armbian! \nLearn more at https://armbian.com/donate" > /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status
