@@ -68,7 +68,7 @@ showall() {
 
 	local releases_to_show=("${DISTROS[@]}")
 	if [[ ${#DISTROS[@]} -eq 0 ]]; then
-		releases_to_show=($(aptly repo list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}' | grep -E '^.+-(utils|desktop)$' | sed 's/-(utils|desktop)$//' | sort -u))
+		releases_to_show=($(aptly repo list -config="${CONFIG}" -raw 2>/dev/null | awk '{print $NF}' | grep -E '^.+-(utils|desktop)$' | sed -E 's/-(utils|desktop)$//' | sort -u))
 	fi
 
 	for release in "${releases_to_show[@]}"; do
@@ -266,8 +266,13 @@ process_release() {
 	# Check if we have any packages to publish
 	# Get package counts in each repo
 	local utils_count desktop_count
-	utils_count=$(aptly repo show -config="${CONFIG}" "${release}-utils" 2>/dev/null | grep "Number of packages" | awk '{print $4}') || utils_count="0"
-	desktop_count=$(aptly repo show -config="${CONFIG}" "${release}-desktop" 2>/dev/null | grep "Number of packages" | awk '{print $4}') || desktop_count="0"
+	# The command substitution is a pipeline ending in awk, which exits 0 even when
+	# grep matches nothing, so a `|| ..="0"` fallback would be dead code; default at
+	# expansion so an empty result becomes 0 for the numeric comparisons below.
+	utils_count=$(aptly repo show -config="${CONFIG}" "${release}-utils" 2>/dev/null | grep "Number of packages" | awk '{print $4}')
+	desktop_count=$(aptly repo show -config="${CONFIG}" "${release}-desktop" 2>/dev/null | grep "Number of packages" | awk '{print $4}')
+	utils_count="${utils_count:-0}"
+	desktop_count="${desktop_count:-0}"
 
 	log "Package counts for $release: utils=$utils_count, desktop=$desktop_count"
 
@@ -283,6 +288,13 @@ process_release() {
 
 	if [[ "$FORCE_PUBLISH" == true ]]; then
 		log "Force publish enabled: will publish even with no packages"
+	fi
+
+	# Drop the existing publish first: aptly refuses to drop a snapshot that is still
+	# referenced by a publish, so unpublish before recreating the snapshots below.
+	if aptly publish list -config="${CONFIG}" 2>/dev/null | grep -q "^\[${release}\]"; then
+		log "Dropping existing publish for $release"
+		run_aptly publish drop -config="${CONFIG}" "${release}"
 	fi
 
 	# Always drop and recreate snapshots for fresh publish
@@ -320,12 +332,6 @@ process_release() {
 
 	# Publish - include common snapshot for main component
 	log "Publishing $release"
-
-	# Drop existing publish for this release if it exists to avoid "file already exists" errors
-	if aptly publish list -config="${CONFIG}" 2>/dev/null | grep -q "^\[${release}\]"; then
-		log "Dropping existing publish for $release"
-		run_aptly publish drop -config="${CONFIG}" "${release}"
-	fi
 
 	# Build publish command with only components that have packages
 	local component_list=$(IFS=,; echo "${components_to_publish[*]}")
@@ -377,9 +383,13 @@ process_release() {
 		fi
 	done
 
-	# Sign all Release files (both top-level and component-level)
-	# Skip binary-* subdirectories
-	find "${release_pub_dir}" -type f -name "Release" | while read -r release_file; do
+	# Sign all Release files (both top-level and component-level). Skip binary-*
+	# subdirectories. Read from a process substitution (not a `find | while` pipe)
+	# so the loop runs in this shell and its failure count survives, and fail the
+	# release if any signature could not be produced -- otherwise a keyring/gpg
+	# problem would publish an unsigned repository while reporting success.
+	local sign_failures=0
+	while IFS= read -r release_file; do
 		if [[ "$release_file" =~ /binary-[^/]+/Release$ ]]; then
 			continue
 		fi
@@ -395,11 +405,18 @@ process_release() {
 				log "Successfully signed: ${release_file}"
 			else
 				log "ERROR: Failed to create Release.gpg for: ${release_file}"
+				sign_failures=$((sign_failures + 1))
 			fi
 		else
 			log "ERROR: Failed to create InRelease for: ${release_file}"
+			sign_failures=$((sign_failures + 1))
 		fi
-	done
+	done < <(find "${release_pub_dir}" -type f -name "Release")
+
+	if [[ "$sign_failures" -gt 0 ]]; then
+		log "ERROR: ${sign_failures} Release file(s) failed to sign for $release"
+		return 1
+	fi
 
 	log "Completed processing release: $release"
 }
@@ -485,6 +502,11 @@ get_gpg_signing_params() {
 	fi
 
 	GPG_PARAMS=("--yes" "--armor")
+	# If a passphrase was supplied, feed it to gpg non-interactively (keys may be
+	# protected). Without this the -p/--password option was silently ignored.
+	if [[ -n "$gpg_password" ]]; then
+		GPG_PARAMS+=("--pinentry-mode" "loopback" "--passphrase" "$gpg_password")
+	fi
 	local keys_found=0
 
 	# Add all available keys to GPG parameters
@@ -730,8 +752,8 @@ Usage: $0 [ -short | --long ]
     exit 2
 }
 
-SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F:,P:,m
-LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add:,force-publish:,multiple-versions
+SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F,P,m
+LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add,force-publish,multiple-versions
 if ! OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@"); then
 	help
 	exit 1
