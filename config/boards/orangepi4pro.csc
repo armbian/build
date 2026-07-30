@@ -7,6 +7,7 @@ INTRODUCED="2025"
 KERNEL_TARGET="vendor"
 KERNEL_TEST_TARGET="vendor"
 IMAGE_PARTITION_TABLE="msdos"
+HAS_VIDEO_OUTPUT="no" # no desktop on this vendor kernel; board-level so the build-list inventory sees it
 
 BOOT_FDT_FILE="allwinner/sun60i-a733-orangepi-4-pro.dtb"
 SUNXI_BOOT0_SDCARD_FEX="${SRC}/packages/blobs/sunxi/sun60iw2/boot0_sdcard_orangepi4pro.fex"
