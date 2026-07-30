@@ -7,6 +7,7 @@ INTRODUCED="2025"
 KERNEL_TARGET="vendor"
 KERNEL_TEST_TARGET="vendor"
 IMAGE_PARTITION_TABLE="msdos"
+HAS_VIDEO_OUTPUT="no" # no desktop on this vendor kernel; board-level so the build-list inventory sees it
 
 # --- Board-specific build configuration ---
 BOOT_FDT_FILE="allwinner/sun60i-a733-cubie-a7z.dtb"
