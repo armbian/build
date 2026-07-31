@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Thu, 24 Jul 2026 00:00:00 +0000
+Subject: [PATCH] mmc: sunxi: be conservative with A523 MMC in SPL
+
+On the Allwinner A523/T527 (Avaota A1), booting from SD card in SPL fails
+with:
+
+  mmc_load_image_raw_sector: mmc block read error
+  Error: -38
+
+The A523 upstream clock handling is tuned for the main SD slot, but the
+SPL still runs the card at high speed / 4-bit mode, which causes read
+errors on some boards/cards.  Make the SPL MMC path conservative for all
+A523 controllers: cap the clock, force CCLK_DIV=/2, and do not advertise
+high-speed modes.  8-bit bus is still allowed for eMMC.  U-Boot proper
+keeps the full 4/8-bit and HS capabilities.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:deepseek-v4-flash-free
+---
+ drivers/mmc/sunxi_mmc.c | 34 +++++++++++++++++++++++++++-------
+ 1 file changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
+index e28c81a..c0c9e36 100644
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -77,6 +77,9 @@ static int mmc_set_mod_clk(struct sunxi_mmc_priv *priv, unsigned int hz)
+ 	if (hz <= 24000000) {
+ 		pll = CCM_MMC_CTRL_OSCM24;
+ 		pll_hz = 24000000;
++		if (IS_ENABLED(CONFIG_MACH_SUN55I_A523) &&
++		    IS_ENABLED(CONFIG_XPL_BUILD))
++			pll_hz /= 2;
+ 	} else {
+ #ifdef CONFIG_MACH_SUN9I
+ 		pll = CCM_MMC_CTRL_PLL_PERIPH0;
+@@ -204,6 +207,16 @@ static int mmc_update_clk(struct sunxi_mmc_priv *priv)
+ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+ {
+ 	unsigned rval = readl(&priv->reg->clkcr);
++	unsigned int clock = mmc->clock;
++
++	/* In SPL, cap the clock to avoid signal integrity issues. */
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523) && clock > 12000000)
++		clock = 12000000;
++	#endif
++
++	debug("mmc %u config_clock req %u actual %u\n", priv->mmc_no,
++	      mmc->clock, clock);
+ 
+ 	/* Disable Clock */
+ 	rval &= ~SUNXI_MMC_CLK_ENABLE;
+@@ -212,11 +225,16 @@ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+ 		return -1;
+ 
+ 	/* Set mod_clk to new rate */
+-	if (mmc_set_mod_clk(priv, mmc->clock))
++	if (mmc_set_mod_clk(priv, clock))
+ 		return -1;
+ 
+ 	/* Clear internal divider */
+ 	rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;
++	/* On A523 CCLK_DIV=0 is undefined; use /2 in SPL. */
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
++		rval |= 1;
++	#endif
+ 	writel(rval, &priv->reg->clkcr);
+ 
+ #if defined(CONFIG_SUNXI_GEN_SUN6I) || defined(CONFIG_SUN50I_GEN_H6) || defined(CONFIG_SUNXI_GEN_NCAT2)
+@@ -573,18 +591,41 @@ struct mmc *sunxi_mmc_init(int sdc_no)
+ 	cfg->ops  = &sunxi_mmc_ops;
+ 
+ 	cfg->voltages = MMC_VDD_32_33 | MMC_VDD_33_34;
+-	cfg->host_caps = MMC_MODE_4BIT;
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
++		cfg->host_caps = 0;
++	else
++	#endif
++		cfg->host_caps = MMC_MODE_4BIT;
++
++	debug("mmc %u sdc %d host_caps initial %x\n", priv->mmc_no, sdc_no,
++	      cfg->host_caps);
+ 
+ 	if ((IS_ENABLED(CONFIG_MACH_SUN50I) || IS_ENABLED(CONFIG_MACH_SUN8I) ||
+ 	    IS_ENABLED(CONFIG_SUN50I_GEN_H6) || IS_ENABLED(CONFIG_MACH_SUN55I_A523)) &&
+ 	    (sdc_no == 2))
+ 		cfg->host_caps = MMC_MODE_8BIT;
+ 
+-	cfg->host_caps |= MMC_MODE_HS_52MHz | MMC_MODE_HS;
+-	cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523)) {
++		/*
++		 * Avoid high-speed modes and limit the clock to keep the
++		 * SPL reads reliable on this controller.
++		 */
++		cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++		cfg->f_min = 400000;
++		cfg->f_max = 12000000;
++	} else
++	#endif
++	{
++		cfg->host_caps |= MMC_MODE_HS_52MHz | MMC_MODE_HS;
++		cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++		cfg->f_min = 400000;
++		cfg->f_max = 52000000;
++	}
+ 
+-	cfg->f_min = 400000;
+-	cfg->f_max = 52000000;
++	debug("mmc %u sdc %d host_caps final %x f_max %u\n", priv->mmc_no,
++	      sdc_no, cfg->host_caps, cfg->f_max);
+ 
+ 	if (mmc_resource_init(sdc_no) != 0)
+ 		return NULL;
