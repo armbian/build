@@ -53,11 +53,9 @@ class PatchingToGitConfig:
 class PatchingConfig:
 	def __init__(self, yaml_config_file_paths: list[str]):
 		self.yaml_config_file_paths = yaml_config_file_paths
-		if len(yaml_config_file_paths) == 0:
-			self.yaml_config = {}
-		else:
-			# I'm lazy, single one for now.
-			self.yaml_config = self.read_yaml_config(yaml_config_file_paths[0])["config"]
+		self.yaml_config = {}
+		for p in yaml_config_file_paths:
+			self.yaml_config.update(self.read_yaml_config(p)["config"])
 
 		self.patches_to_git_config: PatchingToGitConfig = PatchingToGitConfig(self.yaml_config.get("patches-to-git", {}))
 
