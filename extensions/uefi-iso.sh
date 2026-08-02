@@ -40,10 +40,12 @@
 function extension_prepare_config__prepare_uefi_iso_config() {
 	declare -g SKIP_UEFI_ISO="${SKIP_UEFI_ISO:-no}"
 	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
-	# uefi-iso only applies to the generic UEFI boards (uefi-x86 / uefi-arm64 /
-	# uefi-riscv64 / ...). On anything else, warn and disable rather than error.
-	if [[ "${BOARD}" != uefi* ]]; then
-		display_alert "Extension: ${EXTENSION}: disabled" "only supported on UEFI boards (BOARD=uefi*), not '${BOARD}'" "wrn"
+	# uefi-iso only applies to the generic UEFI families (uefi-x86 / uefi-arm64 /
+	# uefi-riscv64 / ...). Gate on BOARDFAMILY, not BOARD, so qemu-uefi-x86
+	# (BOARDFAMILY=uefi-x86, but BOARD starts with qemu-) is covered. On anything
+	# else, warn and disable rather than error.
+	if [[ "${BOARDFAMILY}" != uefi* ]]; then
+		display_alert "Extension: ${EXTENSION}: disabled" "only supported on UEFI boards (BOARDFAMILY=uefi*), not '${BOARDFAMILY}'" "wrn"
 		declare -g SKIP_UEFI_ISO="yes"
 		return 0
 	fi
@@ -223,7 +225,12 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	else
 		display_alert "Extension: ${EXTENSION}: grub wallpaper/font missing" "booting to text menu" "info"
 	fi
+	# grub-mkstandalone runs the target's own binary inside the chroot; on a cross
+	# build update_initramfs already undeployed the static qemu, so redeploy it for
+	# this call (a no-op / cheap on a native build) and remove it again after.
+	deploy_qemu_binary_to_chroot "${MOUNT}" "${EXTENSION}"
 	run_host_command_logged "${gm_args[*]@Q}"
+	undeploy_qemu_binary_from_chroot "${MOUNT}" "${EXTENSION}"
 	[[ -f "${MOUNT}/tmp/${efi_boot_name}" ]] || exit_with_error "uefi-iso: grub-mkstandalone did not produce ${efi_boot_name}"
 
 	# --- El Torito EFI boot image: a small FAT holding /EFI/BOOT/${efi_boot_name} ---
@@ -267,9 +274,15 @@ function post_build_image__990_uefi_iso_drop_img() {
 	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
 	[[ "${UEFI_ISO_KEEP_IMG}" == "yes" ]] && return 0
 	[[ -f "${DESTIMG}/${version}.iso" ]] || return 0 # only drop the .img if the ISO was produced
+	# Keep the .img when it is about to be written to a card: that write happens
+	# right after this hook (rootfs-to-image.sh) and is guarded by the .img existing.
+	if [[ -n "${CARD_DEVICE:-}" ]]; then
+		display_alert "Extension: ${EXTENSION}: keeping .img" "CARD_DEVICE=${CARD_DEVICE} is set" "info"
+		return 0
+	fi
 	if [[ -f "${DESTIMG}/${version}.img" ]]; then
 		display_alert "Extension: ${EXTENSION}: dropping .img (ISO carries the rootfs)" "${version}.img" "info"
-		run_host_command_logged rm -vf "${DESTIMG}/${version}.img" "${DESTIMG}/${version}.img.txt"
+		run_host_command_logged rm -vf "${DESTIMG}/${version}.img" # .img.txt is created later, after this hook
 	fi
 	return 0
 }
