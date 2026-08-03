@@ -387,11 +387,28 @@ function post_family_tweaks__recomputer_mali_x11_kms_config() {
 	EOF
 }
 
+function post_family_tweaks__recomputer_panthor_userspace_cleanup() {
+	[[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]] || return 0
+
+	display_alert "$BOARD" "Removing Mali userspace wrappers for Panthor" "info"
+	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
+
+	rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
+	rm -rf "${LIB_DIR}/mali"
+	rm -f "${SDCARD}/usr/share/glvnd/egl_vendor.d/00_mali.json"
+	chroot_sdcard ldconfig
+}
+
 # Mali EGL — bypass libglvnd for EGL/GLES so GLVND does not fall back to Mesa/llvmpipe.
 # When MALI_USE_SYSTEM_GBM=yes, also remove Mali deb's ldconfig entry and stubs
 # to prevent mali/ wrappers from shadowing our direct libmali.so.1 symlinks.
 # RK3588 keeps the ldconfig entry so libMaliOpenCL remains discoverable.
 function post_family_tweaks__recomputer_mali_egl_override() {
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
+		display_alert "$BOARD" "Skipping Mali EGL override for Panthor" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Replacing libglvnd EGL/GLES with Mali" "info"
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
 
@@ -434,6 +451,14 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 # format in buffer allocation. Default is to use Mali GBM (RK3588).
 function pre_umount_final_image__recomputer_mali_gbm_fixup() {
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
+
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
+		display_alert "$BOARD" "Using Mesa GBM for Panthor" "info"
+		rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
+		rm -rf "${LIB_DIR}/mali"
+		chroot_sdcard ldconfig
+		return 0
+	fi
 
 	if [[ "${MALI_USE_SYSTEM_GBM}" == "yes" ]]; then
 		display_alert "$BOARD" "Using system libgbm" "info"
