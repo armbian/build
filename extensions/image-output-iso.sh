@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Extension: uefi-iso
+# Extension: image-output-iso
 #
 # Produce a bootable LIVE .iso from a UEFI build (amd64 and arm64; riscv64 is
 # EXPERIMENTAL/untested) so it can be booted from a BMC/IPMI *virtual CD* (cloud,
@@ -18,7 +18,7 @@
 # GPT partition, which is invisible under virtual-CD boot — grub loaded but had
 # nothing to boot. This live layout is the only shape a virtual CD actually runs.
 #
-# Enable with `enable_extension "uefi-iso"` on a UEFI target that uses the `grub`
+# Enable with `enable_extension "image-output-iso"` on a UEFI target that uses the `grub`
 # extension (uefi-x86 / uefi-arm64; riscv64 experimental).
 #
 # Firmware requirements to boot the ISO:
@@ -30,29 +30,29 @@
 #     future addition; for now boot with Secure Boot off.
 #
 # Vars:
-#   SKIP_UEFI_ISO=yes       - do nothing
-#   UEFI_ISO_VOLID="..."    - ISO9660 volume id (max 32 chars, default ARMBIAN)
-#   UEFI_ISO_COMP="zstd"    - squashfs compressor (zstd|xz|gzip)
-#   UEFI_ISO_TIMEOUT=1      - grub menu seconds (0 = boot immediately; >0 shows the splash)
-#   UEFI_ISO_KEEP_IMG=no    - keep the .img alongside the .iso (default: drop it)
+#   SKIP_ISO=yes       - do nothing
+#   ISO_VOLID="..."    - ISO9660 volume id (max 32 chars, default ARMBIAN)
+#   ISO_COMP="zstd"    - squashfs compressor (zstd|xz|gzip)
+#   ISO_TIMEOUT=1      - grub menu seconds (0 = boot immediately; >0 shows the splash)
+#   ISO_KEEP_IMG=no    - keep the .img alongside the .iso (default: drop it)
 #
 
-function extension_prepare_config__prepare_uefi_iso_config() {
-	declare -g SKIP_UEFI_ISO="${SKIP_UEFI_ISO:-no}"
-	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
-	# uefi-iso only applies to the generic UEFI families (uefi-x86 / uefi-arm64 /
+function extension_prepare_config__prepare_image_output_iso_config() {
+	declare -g SKIP_ISO="${SKIP_ISO:-no}"
+	[[ "${SKIP_ISO}" == "yes" ]] && return 0
+	# image-output-iso only applies to the generic UEFI families (uefi-x86 / uefi-arm64 /
 	# uefi-riscv64 / ...). Gate on BOARDFAMILY, not BOARD, so qemu-uefi-x86
 	# (BOARDFAMILY=uefi-x86, but BOARD starts with qemu-) is covered. On anything
 	# else, warn and disable rather than error.
 	if [[ "${BOARDFAMILY}" != uefi* ]]; then
 		display_alert "Extension: ${EXTENSION}: disabled" "only supported on UEFI boards (BOARDFAMILY=uefi*), not '${BOARDFAMILY}'" "wrn"
-		declare -g SKIP_UEFI_ISO="yes"
+		declare -g SKIP_ISO="yes"
 		return 0
 	fi
-	declare -g UEFI_ISO_VOLID="${UEFI_ISO_VOLID:-ARMBIAN}"
-	declare -g UEFI_ISO_COMP="${UEFI_ISO_COMP:-zstd}"
-	declare -g UEFI_ISO_TIMEOUT="${UEFI_ISO_TIMEOUT:-1}"
-	declare -g UEFI_ISO_KEEP_IMG="${UEFI_ISO_KEEP_IMG:-no}" # the ISO carries the rootfs; drop the .img by default
+	declare -g ISO_VOLID="${ISO_VOLID:-ARMBIAN}"
+	declare -g ISO_COMP="${ISO_COMP:-zstd}"
+	declare -g ISO_TIMEOUT="${ISO_TIMEOUT:-1}"
+	declare -g ISO_KEEP_IMG="${ISO_KEEP_IMG:-no}" # the ISO carries the rootfs; drop the .img by default
 
 	# The kernel/grub run over a serial-and-VGA console: gfxterm needs a font/module
 	# that is not embedded, and IPMI wants serial/text anyway.
@@ -67,16 +67,16 @@ function extension_prepare_config__prepare_uefi_iso_config() {
 }
 
 #### *run before installing host dependencies*
-function add_host_dependencies__uefi_iso_host_deps() {
-	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
-	EXTRA_BUILD_DEPS+=("uefi-iso::xorriso" "uefi-iso::squashfs-tools" "uefi-iso::mtools" "uefi-iso::dosfstools")
+function add_host_dependencies__image_output_iso_host_deps() {
+	[[ "${SKIP_ISO}" == "yes" ]] && return 0
+	EXTRA_BUILD_DEPS+=("image-output-iso::xorriso" "image-output-iso::squashfs-tools" "image-output-iso::mtools" "image-output-iso::dosfstools")
 }
 
 #### *hack the mounted final image, before unmount*
 # Runs while the final rootfs is mounted at ${MOUNT} (loop ${LOOP}) with the
 # live-boot-enabled initrd already built — the right moment to assemble the ISO.
-function pre_umount_final_image__800_build_uefi_iso() {
-	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
+function pre_umount_final_image__800_build_image_output_iso() {
+	[[ "${SKIP_ISO}" == "yes" ]] && return 0
 	# Map ARCH to the grub EFI target and the fallback boot filename the firmware
 	# looks for on removable media (BOOTX64.EFI on x86_64, BOOTAA64.EFI on aarch64).
 	declare grub_efi_format efi_boot_name
@@ -88,7 +88,7 @@ function pre_umount_final_image__800_build_uefi_iso() {
 			display_alert "Extension: ${EXTENSION}: riscv64 is EXPERIMENTAL and untested" "proceed at your own risk" "wrn"
 			;;
 		*)
-			display_alert "Extension: ${EXTENSION}: skipping" "uefi-iso targets amd64/arm64/riscv64 UEFI, ARCH=${ARCH}" "wrn"
+			display_alert "Extension: ${EXTENSION}: skipping" "image-output-iso targets amd64/arm64/riscv64 UEFI, ARCH=${ARCH}" "wrn"
 			return 0
 			;;
 	esac
@@ -98,7 +98,7 @@ function pre_umount_final_image__800_build_uefi_iso() {
 
 	declare tmp_dir stage_dir
 	mkdir -p "${DESTIMG}"
-	tmp_dir="$(mktemp -d -p "${DESTIMG}" "uefi-iso.XXXXXX")"
+	tmp_dir="$(mktemp -d -p "${DESTIMG}" "image-output-iso.XXXXXX")"
 	stage_dir="${tmp_dir}/iso-root"
 	mkdir -p "${stage_dir}/live" "${stage_dir}/boot/grub"
 
@@ -106,12 +106,12 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	declare kernel_file initrd_file
 	kernel_file="$(ls -1 "${MOUNT}"/boot/vmlinuz-* 2>/dev/null | grep -vE '\.(manifest|dtb|old)$' | sort -V | tail -1)"
 	initrd_file="$(ls -1 "${MOUNT}"/boot/initrd.img-* 2>/dev/null | grep -vE '\.manifest$' | sort -V | tail -1)"
-	[[ -f "${kernel_file}" ]] || exit_with_error "uefi-iso: no kernel found under ${MOUNT}/boot"
-	[[ -f "${initrd_file}" ]] || exit_with_error "uefi-iso: no initrd found under ${MOUNT}/boot"
+	[[ -f "${kernel_file}" ]] || exit_with_error "image-output-iso: no kernel found under ${MOUNT}/boot"
+	[[ -f "${initrd_file}" ]] || exit_with_error "image-output-iso: no initrd found under ${MOUNT}/boot"
 	display_alert "Using kernel/initrd" "$(basename "${kernel_file}") / $(basename "${initrd_file}")" "info"
 	# run_host_command_logged re-parses its args through `bash -c`, so every call
 	# below is built as an array and passed as "${cmd[*]@Q}" (per-element shell
-	# quoting) so dynamic values (paths, user-set UEFI_ISO_VOLID) cannot re-parse.
+	# quoting) so dynamic values (paths, user-set ISO_VOLID) cannot re-parse.
 	declare -a cmd
 	cmd=(cp -v "${kernel_file}" "${stage_dir}/live/vmlinuz") && run_host_command_logged "${cmd[*]@Q}"
 	cmd=(cp -v "${initrd_file}" "${stage_dir}/live/initrd.img") && run_host_command_logged "${cmd[*]@Q}"
@@ -156,9 +156,9 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	# themselves: they are mount points the live rootfs needs. Excluding the
 	# directories outright leaves the live system with no /proc,/sys,/dev,/run, so
 	# init cannot mount them and panics ("Attempted to kill init").
-	display_alert "Creating rootfs squashfs (${UEFI_ISO_COMP})" "${EXTENSION}" "info"
+	display_alert "Creating rootfs squashfs (${ISO_COMP})" "${EXTENSION}" "info"
 	cmd=(mksquashfs "${MOUNT}" "${stage_dir}/live/filesystem.squashfs"
-		-noappend -comp "${UEFI_ISO_COMP}" -no-progress -wildcards
+		-noappend -comp "${ISO_COMP}" -no-progress -wildcards
 		-e "proc/*" "sys/*" "dev/*" "run/*" "tmp/*" "var/tmp/*" "var/cache/apt/archives/*")
 	# Capture the result instead of letting a failure abort here, so the mounted
 	# image state is ALWAYS restored below (a kept .img is never left with the
@@ -178,7 +178,7 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	for gen in "${live_gen_mask[@]}"; do
 		rm -f "${MOUNT}/etc/systemd/system-generators/${gen}"
 	done
-	[[ "${squashfs_rc}" -ne 0 ]] && exit_with_error "uefi-iso: mksquashfs failed (exit ${squashfs_rc})"
+	[[ "${squashfs_rc}" -ne 0 ]] && exit_with_error "image-output-iso: mksquashfs failed (exit ${squashfs_rc})"
 
 	# --- self-contained grub EFI (embeds our cfg + all modules; no external deps,
 	#     so 'terminal gfxterm not found' and missing-module failures cannot happen) ---
@@ -188,9 +188,9 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	# the font/graphics do not init, fall back to a plain text console.
 	# $prefix (grub's own var) always points at the embedded memdisk, even after the
 	# menuentry's `search` changes $root — escaped here so the shell leaves it alone.
-	cat > "${MOUNT}/tmp/uefi-iso-grub.cfg" <<- GRUBCFG
+	cat > "${MOUNT}/tmp/image-output-iso-grub.cfg" <<- GRUBCFG
 		set default=0
-		set timeout=${UEFI_ISO_TIMEOUT}
+		set timeout=${ISO_TIMEOUT}
 		insmod serial
 		serial --unit=0 --speed=115200
 		terminal_input console serial
@@ -218,7 +218,7 @@ function pre_umount_final_image__800_build_uefi_iso() {
 		--format="${grub_efi_format}"
 		--output="/tmp/${efi_boot_name}"
 		--modules="part_gpt part_msdos fat iso9660 normal linux echo all_video gfxterm gfxterm_background png test true loadenv search search_fs_uuid search_fs_file search_label configfile serial terminal ls cat halt reboot"
-		"boot/grub/grub.cfg=/tmp/uefi-iso-grub.cfg")
+		"boot/grub/grub.cfg=/tmp/image-output-iso-grub.cfg")
 	# embed the font + wallpaper (paths are inside the chroot) if present
 	if [[ -f "${MOUNT}/usr/share/grub/unicode.pf2" && -f "${MOUNT}/usr/share/images/grub/wallpaper.png" ]]; then
 		gm_args+=("boot/grub/fonts/unicode.pf2=/usr/share/grub/unicode.pf2" "boot/grub/armbian.png=/usr/share/images/grub/wallpaper.png")
@@ -231,7 +231,7 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	deploy_qemu_binary_to_chroot "${MOUNT}" "${EXTENSION}"
 	run_host_command_logged "${gm_args[*]@Q}"
 	undeploy_qemu_binary_from_chroot "${MOUNT}" "${EXTENSION}"
-	[[ -f "${MOUNT}/tmp/${efi_boot_name}" ]] || exit_with_error "uefi-iso: grub-mkstandalone did not produce ${efi_boot_name}"
+	[[ -f "${MOUNT}/tmp/${efi_boot_name}" ]] || exit_with_error "image-output-iso: grub-mkstandalone did not produce ${efi_boot_name}"
 
 	# --- El Torito EFI boot image: a small FAT holding /EFI/BOOT/${efi_boot_name} ---
 	declare efi_img="${stage_dir}/boot/grub/efiboot.img"
@@ -239,17 +239,17 @@ function pre_umount_final_image__800_build_uefi_iso() {
 	efi_bytes="$(stat -c%s "${MOUNT}/tmp/${efi_boot_name}")"
 	efi_blocks=$(((efi_bytes / 1024) + 2048)) # grub + FAT overhead + slack, in KiB
 	cmd=(dd if=/dev/zero of="${efi_img}" bs=1024 count="${efi_blocks}" status=none) && run_host_command_logged "${cmd[*]@Q}"
-	cmd=(mkfs.vfat -n UEFI_ISO "${efi_img}") && run_host_command_logged "${cmd[*]@Q}"
+	cmd=(mkfs.vfat -n EFIBOOT "${efi_img}") && run_host_command_logged "${cmd[*]@Q}"
 	cmd=(mmd -i "${efi_img}" ::/EFI ::/EFI/BOOT) && run_host_command_logged "${cmd[*]@Q}"
 	cmd=(mcopy -i "${efi_img}" "${MOUNT}/tmp/${efi_boot_name}" "::/EFI/BOOT/${efi_boot_name}") && run_host_command_logged "${cmd[*]@Q}"
-	rm -f "${MOUNT}/tmp/${efi_boot_name}" "${MOUNT}/tmp/uefi-iso-grub.cfg"
+	rm -f "${MOUNT}/tmp/${efi_boot_name}" "${MOUNT}/tmp/image-output-iso-grub.cfg"
 
 	# --- assemble the hybrid ISO ---
 	declare iso="${DESTIMG}/${version}.iso"
 	display_alert "Assembling ISO" "${iso}" "info"
 	cmd=(xorriso -as mkisofs
 		-iso-level 3
-		-volid "${UEFI_ISO_VOLID:0:32}"
+		-volid "${ISO_VOLID:0:32}"
 		-full-iso9660-filenames
 		-e boot/grub/efiboot.img
 		-no-emul-boot
@@ -270,9 +270,9 @@ function pre_umount_final_image__800_build_uefi_iso() {
 # The live ISO already contains the whole rootfs (as a squashfs), so the .img is
 # redundant. Drop it (default) so only the .iso is finalized/published; runs late
 # so any image-output-* conversion (qcow2, ...) has already consumed the .img.
-function post_build_image__990_uefi_iso_drop_img() {
-	[[ "${SKIP_UEFI_ISO}" == "yes" ]] && return 0
-	[[ "${UEFI_ISO_KEEP_IMG}" == "yes" ]] && return 0
+function post_build_image__990_image_output_iso_drop_img() {
+	[[ "${SKIP_ISO}" == "yes" ]] && return 0
+	[[ "${ISO_KEEP_IMG}" == "yes" ]] && return 0
 	[[ -f "${DESTIMG}/${version}.iso" ]] || return 0 # only drop the .img if the ISO was produced
 	# Keep the .img when it is about to be written to a card: that write happens
 	# right after this hook (rootfs-to-image.sh) and is guarded by the .img existing.
