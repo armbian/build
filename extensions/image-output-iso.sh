@@ -104,7 +104,10 @@ function pre_umount_final_image__800_build_image_output_iso() {
 
 	# --- kernel + initrd (newest real files in the image /boot) ---
 	declare kernel_file initrd_file
-	kernel_file="$(ls -1 "${MOUNT}"/boot/vmlinuz-* 2>/dev/null | grep -vE '\.(manifest|dtb|old)$' | sort -V | tail -1)"
+	# Debian/Ubuntu name the compressed kernel vmlinuz-*, but some arm64 kernels
+	# (e.g. the 'cloud' branch) install the image as vmlinux-* instead. GRUB boots
+	# either, so accept both; prefer vmlinuz-* when both are present.
+	kernel_file="$(ls -1 "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/vmlinux-* 2>/dev/null | grep -vE '\.(manifest|dtb|old)$' | sort -V | tail -1)"
 	initrd_file="$(ls -1 "${MOUNT}"/boot/initrd.img-* 2>/dev/null | grep -vE '\.manifest$' | sort -V | tail -1)"
 	[[ -f "${kernel_file}" ]] || exit_with_error "image-output-iso: no kernel found under ${MOUNT}/boot"
 	[[ -f "${initrd_file}" ]] || exit_with_error "image-output-iso: no initrd found under ${MOUNT}/boot"
