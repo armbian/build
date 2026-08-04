@@ -80,6 +80,9 @@ driver_rtl8189ES() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/rtl8189es/Makefile"
 
+		# cfg80211 set_monitor_channel gained a net_device arg (6.13 mainline; backported to 6.12.101)
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-set-monitor-channel-6.12.101.patch" "applying"
+
 	fi
 }
 
@@ -119,6 +122,9 @@ driver_rtl8189FS() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/rtl8189fs/Makefile"
 
+		# cfg80211 set_monitor_channel gained a net_device arg (6.13 mainline; backported to 6.12.101)
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-set-monitor-channel-6.12.101.patch" "applying"
+
 	fi
 }
 
@@ -153,6 +159,9 @@ driver_rtl8192EU() {
 		echo "obj-\$(CONFIG_RTL8192EU) += rtl8192eu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# cfg80211 set_monitor_channel gained a net_device arg (6.13 mainline; backported to 6.12.101)
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-set-monitor-channel-6.12.101.patch" "applying"
 
 	fi
 }
@@ -202,6 +211,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-Fix-6.16.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-set-monitor-channel-6.12.101.patch" "applying"
 	fi
 }
 
@@ -328,6 +338,7 @@ driver_rtl8811CU_rtl8821C() {
 
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-6.16.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-set-monitor-channel-6.12.101.patch" "applying"
 	fi
 }
 
@@ -370,6 +381,7 @@ driver_rtl88x2bu() {
 
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-6.16.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-set-monitor-channel-6.12.101.patch" "applying"
 
 	fi
 }
