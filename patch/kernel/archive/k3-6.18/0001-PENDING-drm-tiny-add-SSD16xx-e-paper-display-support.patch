@@ -10,6 +10,9 @@ controller.
 Forward-port the driver integration to the DRM client setup API used by
 TI Linux 6.18.
 
+Propagate panel-ready failures, reject framebuffers without a CPU mapping,
+and periodically perform a full refresh to limit e-paper ghosting.
+
 The original driver was developed by Devarsh Thakkar at Texas
 Instruments. The 6.18 backport was developed with assistance from
 OpenAI Codex.
@@ -22,12 +25,12 @@ Signed-off-by: Andrei Aldea <andrei1998@gmail.com>
  MAINTAINERS                    |   7 +
  drivers/gpu/drm/tiny/Kconfig   |  14 +
  drivers/gpu/drm/tiny/Makefile  |   1 +
- drivers/gpu/drm/tiny/ssd16xx.c | 857 +++++++++++++++++++++++++++++++++
- 4 files changed, 879 insertions(+)
+ drivers/gpu/drm/tiny/ssd16xx.c | 904 +++++++++++++++++++++++++++++++++
+ 4 files changed, 926 insertions(+)
  create mode 100644 drivers/gpu/drm/tiny/ssd16xx.c
 
 diff --git a/MAINTAINERS b/MAINTAINERS
-index e8f06145fb54..157917efe86a 100644
+index e8f06145fb54..f7678c88faca 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
 @@ -8119,6 +8119,13 @@ F:	Documentation/devicetree/bindings/display/solomon,ssd-common.yaml
@@ -81,10 +84,10 @@ index 48d30bf6152f..068545dd43ec 100644
  obj-$(CONFIG_TINYDRM_SHARP_MEMORY)	+= sharp-memory.o
 diff --git a/drivers/gpu/drm/tiny/ssd16xx.c b/drivers/gpu/drm/tiny/ssd16xx.c
 new file mode 100644
-index 000000000000..403a257e0d9f
+index 000000000000..c6926034c822
 --- /dev/null
 +++ b/drivers/gpu/drm/tiny/ssd16xx.c
-@@ -0,0 +1,857 @@
+@@ -0,0 +1,904 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * DRM driver for e-ink display panels using Solomon SSD16xx family controllers
@@ -143,6 +146,7 @@ index 000000000000..403a257e0d9f
 +
 +#define SSD16XX_SPI_BITS_PER_WORD			8
 +#define SSD16XX_SPI_SPEED_DEFAULT			1000000
++#define SSD16XX_PARTIAL_REFRESH_LIMIT			5
 +
 +MODULE_IMPORT_NS("DMA_BUF");
 +
@@ -212,6 +216,7 @@ index 000000000000..403a257e0d9f
 +	u32 height;
 +
 +	bool partial_mode_ready;
++	u8 partial_refreshes;
 +	bool initialized;
 +};
 +
@@ -250,7 +255,7 @@ index 000000000000..403a257e0d9f
 +};
 +
 +/* BUSY pin is ACTIVE HIGH: 1=busy, 0=ready */
-+static void ssd16xx_wait_for_panel(struct ssd16xx_panel *panel)
++static int ssd16xx_wait_for_panel(struct ssd16xx_panel *panel)
 +{
 +	unsigned int timeout_ms = 10000;
 +	unsigned long timeout_jiffies = jiffies + msecs_to_jiffies(timeout_ms);
@@ -258,23 +263,36 @@ index 000000000000..403a257e0d9f
 +	unsigned long start_ms = jiffies_to_msecs(jiffies);
 +
 +	busy_val = gpiod_get_value_cansleep(panel->busy);
++	if (busy_val < 0) {
++		drm_err(&panel->drm, "Failed to read BUSY GPIO: %d\n", busy_val);
++		return busy_val;
++	}
 +	drm_dbg(&panel->drm, "BUSY initial value: %d\n", busy_val);
 +
-+	while (gpiod_get_value_cansleep(panel->busy) == 1) {
-+		if (time_after(jiffies, timeout_jiffies)) {
++	while (busy_val == 1) {
++		if (time_after_eq(jiffies, timeout_jiffies)) {
 +			unsigned long elapsed_ms;
 +
 +			elapsed_ms = jiffies_to_msecs(jiffies) - start_ms;
 +			drm_err(&panel->drm,
 +				"Busy wait timed out after %lums (BUSY still HIGH)\n",
 +				elapsed_ms);
-+			return;
++			return -ETIMEDOUT;
 +		}
 +		usleep_range(100, 200);
++
++		busy_val = gpiod_get_value_cansleep(panel->busy);
++		if (busy_val < 0) {
++			drm_err(&panel->drm, "Failed to read BUSY GPIO: %d\n",
++				busy_val);
++			return busy_val;
++		}
 +	}
 +
 +	drm_dbg(&panel->drm, "BUSY became ready after %lums\n",
 +		jiffies_to_msecs(jiffies) - start_ms);
++
++	return 0;
 +}
 +
 +static void ssd16xx_spi_sync(struct spi_device *spi, struct spi_message *msg,
@@ -391,9 +409,14 @@ index 000000000000..403a257e0d9f
 +{
 +	int busy_before;
 +
++	if (err->errno_code)
++		return;
++
 +	/* Wait for panel to be ready BEFORE sending update command */
 +	drm_dbg(&panel->drm, "display_update: Waiting for panel ready before update...\n");
-+	ssd16xx_wait_for_panel(panel);
++	err->errno_code = ssd16xx_wait_for_panel(panel);
++	if (err->errno_code)
++		return;
 +
 +	busy_before = gpiod_get_value_cansleep(panel->busy);
 +	drm_dbg(&panel->drm, "display_update: Sending update mode 0x%02x (BUSY=%d)\n",
@@ -409,12 +432,15 @@ index 000000000000..403a257e0d9f
 +		busy_before);
 +
 +	if (!err->errno_code)
-+		ssd16xx_wait_for_panel(panel);
++		err->errno_code = ssd16xx_wait_for_panel(panel);
 +}
 +
 +static int ssd16xx_hw_init(struct ssd16xx_panel *panel)
 +{
 +	struct ssd16xx_error_ctx err = { .errno_code = 0 };
++
++	panel->partial_mode_ready = false;
++	panel->partial_refreshes = 0;
 +
 +	/* Hardware reset */
 +	gpiod_set_value_cansleep(panel->reset, 1);
@@ -424,7 +450,8 @@ index 000000000000..403a257e0d9f
 +
 +	/* Software reset */
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_SW_RESET, &err);
-+	ssd16xx_wait_for_panel(panel);
++	if (!err.errno_code)
++		err.errno_code = ssd16xx_wait_for_panel(panel);
 +
 +	/* Driver output control - set height and scan direction */
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_DRIVER_OUTPUT_CONTROL, &err);
@@ -447,7 +474,8 @@ index 000000000000..403a257e0d9f
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_DISPLAY_UPDATE_CONTROL2, &err);
 +	ssd16xx_send_data(panel, panel->panel_cfg->temp_load_sequence, &err);
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_MASTER_ACTIVATION, &err);
-+	ssd16xx_wait_for_panel(panel);
++	if (!err.errno_code)
++		err.errno_code = ssd16xx_wait_for_panel(panel);
 +
 +	/* Data entry mode */
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_DATA_ENTRY_MODE, &err);
@@ -467,7 +495,8 @@ index 000000000000..403a257e0d9f
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_SET_RAM_Y_ADDRESS_COUNTER, &err);
 +	ssd16xx_send_y_param(panel, 0x00, &err);
 +
-+	ssd16xx_wait_for_panel(panel);
++	if (!err.errno_code)
++		err.errno_code = ssd16xx_wait_for_panel(panel);
 +
 +	if (err.errno_code) {
 +		drm_err(&panel->drm, "Hardware initialization failed: %d\n",
@@ -475,12 +504,11 @@ index 000000000000..403a257e0d9f
 +		return err.errno_code;
 +	}
 +
-+	panel->partial_mode_ready = true;
 +	return 0;
 +}
 +
 +/* Clear display: Write 0xFF (white) to both BW and RED RAM */
-+static void ssd16xx_clear_display(struct ssd16xx_panel *panel)
++static int ssd16xx_clear_display(struct ssd16xx_panel *panel)
 +{
 +	struct ssd16xx_error_ctx err = { .errno_code = 0 };
 +	unsigned int data_size = (panel->width * panel->height) / 8;
@@ -488,7 +516,7 @@ index 000000000000..403a257e0d9f
 +
 +	white_buffer = kmalloc(data_size, GFP_KERNEL);
 +	if (!white_buffer)
-+		return;
++		return -ENOMEM;
 +	memset(white_buffer, 0xFF, data_size);
 +
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_SET_RAM_X_ADDRESS_COUNTER, &err);
@@ -506,10 +534,16 @@ index 000000000000..403a257e0d9f
 +	ssd16xx_send_data_bulk(panel, white_buffer, data_size, &err);
 +	ssd16xx_display_update(panel, panel->controller_cfg->full_refresh_mode, &err);
 +
-+	if (err.errno_code)
++	if (err.errno_code) {
 +		drm_err(&panel->drm, "Clear display failed: %d\n", err.errno_code);
++	} else {
++		panel->partial_mode_ready = true;
++		panel->partial_refreshes = 0;
++	}
 +
 +	kfree(white_buffer);
++
++	return err.errno_code;
 +}
 +
 +/*
@@ -517,15 +551,14 @@ index 000000000000..403a257e0d9f
 + * Based on Good Display GDEY042T81 EPD_Dis_Part()
 + * Must be called before using 0xFF partial refresh mode
 + */
-+static void ssd16xx_prepare_partial_refresh(struct ssd16xx_panel *panel)
++static void ssd16xx_prepare_partial_refresh(struct ssd16xx_panel *panel,
++					    struct ssd16xx_error_ctx *err)
 +{
-+	struct ssd16xx_error_ctx err = { .errno_code = 0 };
-+
-+	ssd16xx_send_cmd(panel, SSD16XX_CMD_BORDER_WAVEFORM_CONTROL, &err);
-+	ssd16xx_send_data(panel, panel->panel_cfg->border_waveform_partial, &err);
-+	ssd16xx_send_cmd(panel, SSD16XX_CMD_DISPLAY_UPDATE_CONTROL1, &err);
-+	ssd16xx_send_data(panel, panel->panel_cfg->display_update_ctrl1_partial[0], &err);
-+	ssd16xx_send_data(panel, panel->panel_cfg->display_update_ctrl1_partial[1], &err);
++	ssd16xx_send_cmd(panel, SSD16XX_CMD_BORDER_WAVEFORM_CONTROL, err);
++	ssd16xx_send_data(panel, panel->panel_cfg->border_waveform_partial, err);
++	ssd16xx_send_cmd(panel, SSD16XX_CMD_DISPLAY_UPDATE_CONTROL1, err);
++	ssd16xx_send_data(panel, panel->panel_cfg->display_update_ctrl1_partial[0], err);
++	ssd16xx_send_data(panel, panel->panel_cfg->display_update_ctrl1_partial[1], err);
 +}
 +
 +/*
@@ -583,6 +616,12 @@ index 000000000000..403a257e0d9f
 +	struct ssd16xx_error_ctx err = { .errno_code = 0 };
 +	unsigned int data_size = (panel->width * panel->height) / 8;
 +	u8 *mono_buffer;
++	bool full_refresh;
++
++	if (!dma_obj || !dma_obj->vaddr) {
++		drm_err(&panel->drm, "Framebuffer has no CPU mapping\n");
++		return;
++	}
 +
 +	mono_buffer = kzalloc(data_size, GFP_KERNEL);
 +	if (!mono_buffer)
@@ -599,6 +638,8 @@ index 000000000000..403a257e0d9f
 +	drm_dbg(&panel->drm, "  Converting %dx%d framebuffer to 1bpp\n",
 +		panel->width, panel->height);
 +	ssd16xx_convert_fb_to_1bpp(mono_buffer, &map, fb, rect);
++	full_refresh = !panel->partial_mode_ready ||
++		panel->partial_refreshes >= SSD16XX_PARTIAL_REFRESH_LIMIT;
 +
 +	/* Reset RAM address counters to start position */
 +	ssd16xx_send_cmd(panel, SSD16XX_CMD_SET_RAM_X_ADDRESS_COUNTER, &err);
@@ -614,33 +655,37 @@ index 000000000000..403a257e0d9f
 +	ssd16xx_send_data_bulk(panel, mono_buffer, data_size, &err);
 +
 +	/*
-+	 * Choose refresh mode based on initialization state
-+	 * After baseline is established in RED RAM, we can use faster partial refresh
++	 * Periodically replace the RED RAM baseline with a full refresh so partial
++	 * updates do not accumulate ghosting indefinitely.
 +	 */
-+	if (panel->partial_mode_ready) {
++	if (!full_refresh) {
 +		/*
 +		 * Partial refresh mode: ~300ms update time - FASTEST
 +		 * Only write to BW RAM (new frame)
 +		 * RED RAM keeps baseline - controller compares to find changes
-+		 * This is the fastest mode but may accumulate ghosting over time
 +		 * Requires RED RAM to have been initialized with baseline image
 +		 */
-+		ssd16xx_prepare_partial_refresh(panel);
++		ssd16xx_prepare_partial_refresh(panel, &err);
 +		ssd16xx_display_update(panel, panel->controller_cfg->partial_refresh_mode, &err);
 +	} else {
-+		/* TODO: Add a sysfs hook to select fast refresh mode
-+		 * Fast refresh mode: ~1.5s update time - SLOWER
++		/*
++		 * Full refresh mode: ~2s update time
 +		 * Write same data to BOTH BW RAM (new) and RED RAM (baseline)
-+		 * This establishes the baseline needed for subsequent partial refreshes
-+		 * Used during initialization or when partial mode initialization failed
++		 * to clear accumulated ghosting and establish a new baseline.
 +		 */
 +		ssd16xx_send_cmd(panel, SSD16XX_CMD_WRITE_RAM_RED, &err);
 +		ssd16xx_send_data_bulk(panel, mono_buffer, data_size, &err);
-+		ssd16xx_display_update(panel, panel->controller_cfg->fast_refresh_mode, &err);
++		ssd16xx_display_update(panel, panel->controller_cfg->full_refresh_mode, &err);
 +	}
 +
-+	if (err.errno_code)
++	if (err.errno_code) {
 +		drm_err(&panel->drm, "Display update failed: %d\n", err.errno_code);
++	} else if (full_refresh) {
++		panel->partial_mode_ready = true;
++		panel->partial_refreshes = 0;
++	} else {
++		panel->partial_refreshes++;
++	}
 +
 +	kfree(mono_buffer);
 +}
@@ -674,16 +719,21 @@ index 000000000000..403a257e0d9f
 +{
 +	struct ssd16xx_panel *panel = to_ssd16xx_panel(pipe->crtc.dev);
 +	int idx;
++	int ret;
 +
 +	if (!drm_dev_enter(pipe->crtc.dev, &idx))
 +		return;
 +
-+	if (ssd16xx_hw_init(panel)) {
-+		drm_err(&panel->drm, "Hardware initialization failed\n");
++	ret = ssd16xx_hw_init(panel);
++	if (ret) {
++		drm_err(&panel->drm, "Hardware initialization failed: %d\n", ret);
 +		goto out_exit;
 +	}
 +
-+	ssd16xx_clear_display(panel);
++	ret = ssd16xx_clear_display(panel);
++	if (ret)
++		goto out_exit;
++
 +	panel->initialized = true;
 +
 +out_exit:
