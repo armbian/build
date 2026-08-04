@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Andrei Aldea <andrei1998@gmail.com>
+Date: Tue, 4 Aug 2026 10:54:32 -0500
+Subject: [PATCH 3/4] board: ti: am62lx: add BeagleBadge recovery actions
+
+Return to the boot selector when Linux or Zephyr fails, add USB mass
+storage mode for the SD card, and provide a bounds-checked and verified
+OSPI U-Boot updater.
+
+Require a second physical SELECT press before changing flash, write the
+first-stage image last, and hide the updater unless the ROM boot record
+shows that U-Boot started from SD.
+
+Allow a board-configured boot-menu prompt row so the joystick help can
+be placed near the bottom of the BeagleBadge display.
+
+Developed with assistance from OpenAI Codex.
+
+Signed-off-by: Andrei Aldea <andrei1998@gmail.com>
+---
+ board/ti/am62lx/am62lx_badge.env | 139 ++++++++++++++++++++++++++++++-
+ board/ti/am62lx/evm.c            |   3 +
+ cmd/bootmenu.c                   |  28 +++++--
+ 3 files changed, 163 insertions(+), 7 deletions(-)
+
+diff --git a/board/ti/am62lx/am62lx_badge.env b/board/ti/am62lx/am62lx_badge.env
+index 77359952..d5313756 100644
+--- a/board/ti/am62lx/am62lx_badge.env
++++ b/board/ti/am62lx/am62lx_badge.env
+@@ -49,11 +49,29 @@ stderr=serial,vidconsole
+ 
+ bootdelay=7
+ zephyr_addr=0x82000000
++ospi_tiboot3_addr=0x83000000
++ospi_tispl_addr=0x83100000
++ospi_uboot_addr=0x83400000
++ospi_verify_addr=0x83800000
++ospi_tiboot3_offset=0x0
++ospi_tispl_offset=0x80000
++ospi_uboot_offset=0x280000
++ospi_tiboot3_limit=0x80000
++ospi_tispl_limit=0x200000
++ospi_uboot_limit=0x400000
+ bootmenu_title==== BeagleBadge Boot Selector ===
+ bootmenu_subtitle=Choose your badge experience
+-bootmenu_prompt=Joystick UP/DOWN   SELECT boots   BACK opens console
++bootmenu_prompt=Joystick: UP/DOWN   SELECT boot   BACK console
++bootmenu_prompt_row=17
+ bootmenu_exit_title=U-Boot Console / Recovery
+-badge_boot_linux=run bootcmd
++bootmenu_reenter_on_failure=yes
++badge_boot_linux=
++	echo Starting Linux / Armbian from SD...;
++	run bootcmd;
++	echo ERROR: Linux failed to boot or returned to U-Boot;
++	echo Returning to the BeagleBadge boot menu...;
++	sleep 2;
++	itest 0 == 1
+ badge_boot_zephyr=
+ 	if fatload mmc ${mmcdev}:1 ${zephyr_addr} zephyr.bin; then
+ 		echo Starting Zephyr from SD...;
+@@ -62,8 +80,125 @@ badge_boot_zephyr=
+ 		dcache off;
+ 		icache off;
+ 		go ${zephyr_addr};
++		icache on;
++		dcache on;
++		echo ERROR: Zephyr returned to U-Boot;
+ 	else
+ 		echo ERROR: zephyr.bin was not found on the SD boot partition;
++	fi;
++	echo Returning to the BeagleBadge boot menu...;
++	sleep 2;
++	itest 0 == 1
++badge_load_tiboot3=
++	if fatload mmc ${mmcdev}:1 ${ospi_tiboot3_addr} tiboot3.bin; then
++		setenv ospi_tiboot3_size ${filesize};
++		if itest ${ospi_tiboot3_size} <= ${ospi_tiboot3_limit}; then
++			itest 0 == 0;
++		else
++			echo ERROR: tiboot3.bin is larger than its 512 KiB OSPI partition;
++			itest 0 == 1;
++		fi;
++	else
++		echo ERROR: tiboot3.bin was not found on the SD boot partition;
++		itest 0 == 1;
++	fi
++badge_load_tispl=
++	if fatload mmc ${mmcdev}:1 ${ospi_tispl_addr} tispl.bin; then
++		setenv ospi_tispl_size ${filesize};
++		if itest ${ospi_tispl_size} <= ${ospi_tispl_limit}; then
++			itest 0 == 0;
++		else
++			echo ERROR: tispl.bin is larger than its 2 MiB OSPI partition;
++			itest 0 == 1;
++		fi;
++	else
++		echo ERROR: tispl.bin was not found on the SD boot partition;
++		itest 0 == 1;
++	fi
++badge_load_uboot=
++	if fatload mmc ${mmcdev}:1 ${ospi_uboot_addr} u-boot.img; then
++		setenv ospi_uboot_size ${filesize};
++		if itest ${ospi_uboot_size} <= ${ospi_uboot_limit}; then
++			itest 0 == 0;
++		else
++			echo ERROR: u-boot.img is larger than its 4 MiB OSPI partition;
++			itest 0 == 1;
++		fi;
++	else
++		echo ERROR: u-boot.img was not found on the SD boot partition;
++		itest 0 == 1;
++	fi
++badge_write_uboot=
++	echo Updating u-boot.img...;
++	if sf update ${ospi_uboot_addr} ${ospi_uboot_offset} ${ospi_uboot_size} &&
++	   sf read ${ospi_verify_addr} ${ospi_uboot_offset} ${ospi_uboot_size} &&
++	   cmp.b ${ospi_uboot_addr} ${ospi_verify_addr} ${ospi_uboot_size}; then
++		itest 0 == 0;
++	else
++		echo ERROR: u-boot.img update or verification failed;
++		itest 0 == 1;
+ 	fi
++badge_write_tispl=
++	echo Updating tispl.bin...;
++	if sf update ${ospi_tispl_addr} ${ospi_tispl_offset} ${ospi_tispl_size} &&
++	   sf read ${ospi_verify_addr} ${ospi_tispl_offset} ${ospi_tispl_size} &&
++	   cmp.b ${ospi_tispl_addr} ${ospi_verify_addr} ${ospi_tispl_size}; then
++		itest 0 == 0;
++	else
++		echo ERROR: tispl.bin update or verification failed;
++		itest 0 == 1;
++	fi
++badge_write_tiboot3=
++	echo Updating tiboot3.bin last...;
++	if sf update ${ospi_tiboot3_addr} ${ospi_tiboot3_offset} ${ospi_tiboot3_size} &&
++	   sf read ${ospi_verify_addr} ${ospi_tiboot3_offset} ${ospi_tiboot3_size} &&
++	   cmp.b ${ospi_tiboot3_addr} ${ospi_verify_addr} ${ospi_tiboot3_size}; then
++		itest 0 == 0;
++	else
++		echo ERROR: tiboot3.bin update or verification failed;
++		itest 0 == 1;
++	fi
++badge_usb_storage=
++	echo BeagleBadge USB Storage Mode;
++	echo Exporting the complete SD card to the connected computer...;
++	echo Eject the disk on the computer, then press BACK or any key to return.;
++	if ums 0 mmc ${mmcdev}; then
++		echo USB Storage Mode stopped.;
++	else
++		echo ERROR: USB Storage Mode failed to start;
++	fi;
++	echo Returning to the BeagleBadge boot menu...;
++	sleep 2;
++	itest 0 == 1
++badge_confirm_ospi=
++	echo WARNING: This will replace the U-Boot images in OSPI flash.;
++	echo Release SELECT, then press SELECT again to continue or BACK to cancel.;
++	while button SELECT; do sleep 0.1; done;
++	while ! button SELECT && ! button BACK; do sleep 0.1; done;
++	button SELECT
++badge_update_ospi=
++	echo BeagleBadge OSPI U-Boot updater;
++	if run badge_confirm_ospi; then
++		echo Loading and validating all bootloader images before writing flash...;
++		if run badge_load_tiboot3 badge_load_tispl badge_load_uboot; then
++			if sf probe 0:0; then
++				if run badge_write_uboot badge_write_tispl badge_write_tiboot3; then
++					echo OSPI U-Boot update verified successfully.;
++					echo Rebooting from the normal boot source...;
++					sleep 2;
++					reset;
++				fi;
++			else
++				echo ERROR: OSPI flash was not detected;
++			fi;
++		fi;
++	else
++		echo OSPI update cancelled.;
++	fi;
++	echo Returning to the BeagleBadge boot menu...;
++	sleep 2;
++	itest 0 == 1
+ bootmenu_0=Linux / Armbian (default)=run badge_boot_linux
+ bootmenu_1=Zephyr / Badge Launcher=run badge_boot_zephyr
++bootmenu_2=USB Storage Mode (SD card)=run badge_usb_storage
++bootmenu_3=Update OSPI U-Boot from SD (advanced)=run badge_update_ospi
+diff --git a/board/ti/am62lx/evm.c b/board/ti/am62lx/evm.c
+index be16ba09..827b65ac 100644
+--- a/board/ti/am62lx/evm.c
++++ b/board/ti/am62lx/evm.c
+@@ -24,6 +24,9 @@ int board_init(void)
+ int board_late_init(void)
+ {
+ 	ti_set_fdt_env(NULL, NULL);
++	if (get_boot_device() != BOOT_DEVICE_MMC2)
++		env_set("bootmenu_3", NULL);
++
+ 	return 0;
+ }
+ #endif
+diff --git a/cmd/bootmenu.c b/cmd/bootmenu.c
+index 755050a0..ec12dbc7 100644
+--- a/cmd/bootmenu.c
++++ b/cmd/bootmenu.c
+@@ -30,6 +30,7 @@
+ enum bootmenu_ret {
+ 	BOOTMENU_RET_SUCCESS = 0,
+ 	BOOTMENU_RET_FAIL,
++	BOOTMENU_RET_COMMAND_FAILED,
+ 	BOOTMENU_RET_QUIT,
+ 	BOOTMENU_RET_UPDATED,
+ };
+@@ -477,15 +478,24 @@ cleanup:
+ static void menu_display_statusline(struct menu *m)
+ {
+ 	const char *prompt = env_get("bootmenu_prompt");
++	const char *prompt_row_str = env_get("bootmenu_prompt_row");
+ 	const char *subtitle = env_get("bootmenu_subtitle");
+ 	const char *title = env_get("bootmenu_title");
+ 	struct bootmenu_entry *entry;
+ 	struct bootmenu_data *menu;
++	int prompt_row;
+ 
+ 	if (menu_default_choice(m, (void *)&entry) < 0)
+ 		return;
+ 
+ 	menu = entry->menu;
++	prompt_row = menu->count + 6;
++	if (prompt_row_str) {
++		int configured_row = simple_strtol(prompt_row_str, NULL, 10);
++
++		if (configured_row > prompt_row)
++			prompt_row = configured_row;
++	}
+ 
+ 	printf(ANSI_CURSOR_POSITION, 1, 1);
+ 	puts(ANSI_CLEAR_LINE);
+@@ -503,11 +513,11 @@ static void menu_display_statusline(struct menu *m)
+ 	/* First 3 lines are bootmenu header + 2 empty lines between entries */
+ 	printf(ANSI_CURSOR_POSITION, menu->count + 5, 1);
+ 	puts(ANSI_CLEAR_LINE);
+-	printf(ANSI_CURSOR_POSITION, menu->count + 6, 3);
++	printf(ANSI_CURSOR_POSITION, prompt_row, 3);
+ 	puts(prompt ? prompt :
+ 		"Press UP/DOWN to move, ENTER to select, ESC to quit");
+ 	puts(ANSI_CLEAR_LINE_TO_END);
+-	printf(ANSI_CURSOR_POSITION, menu->count + 7, 1);
++	printf(ANSI_CURSOR_POSITION, prompt_row + 1, 1);
+ 	puts(ANSI_CLEAR_LINE);
+ }
+ 
+@@ -544,7 +554,7 @@ static void handle_uefi_bootnext(void)
+  */
+ static enum bootmenu_ret bootmenu_show(int uefi, int delay)
+ {
+-	int cmd_ret;
++	int cmd_ret = CMD_RET_SUCCESS;
+ 	int init = 0;
+ 	void *choice = NULL;
+ 	char *title = NULL;
+@@ -572,7 +582,8 @@ static enum bootmenu_ret bootmenu_show(int uefi, int delay)
+ 			return BOOTMENU_RET_FAIL;
+ 		}
+ 		cmd_ret = run_command(sep + 1, 0);
+-		return (cmd_ret == CMD_RET_SUCCESS ? BOOTMENU_RET_SUCCESS : BOOTMENU_RET_FAIL);
++		return cmd_ret == CMD_RET_SUCCESS ? BOOTMENU_RET_SUCCESS :
++			BOOTMENU_RET_COMMAND_FAILED;
+ 	}
+ 
+ 	bootmenu = bootmenu_create(uefi, delay);
+@@ -658,8 +669,10 @@ cleanup:
+ 	run_command(CFG_POSTBOOTMENU, 0);
+ #endif
+ 
+-	if (efi_ret != EFI_SUCCESS || cmd_ret != CMD_RET_SUCCESS)
++	if (efi_ret != EFI_SUCCESS)
+ 		ret = BOOTMENU_RET_FAIL;
++	else if (cmd_ret != CMD_RET_SUCCESS)
++		ret = BOOTMENU_RET_COMMAND_FAILED;
+ 
+ 	return ret;
+ }
+@@ -675,6 +688,11 @@ int menu_show(int bootdelay)
+ 		if (ret == BOOTMENU_RET_UPDATED)
+ 			continue;
+ 
++		/* Failed boot entries may opt into another menu selection. */
++		if (ret == BOOTMENU_RET_COMMAND_FAILED &&
++		    env_get_yesno("bootmenu_reenter_on_failure") == 1)
++			continue;
++
+ 		if (IS_ENABLED(CONFIG_BOOTMENU_DISABLE_UBOOT_CONSOLE)) {
+ 			if (ret == BOOTMENU_RET_QUIT) {
+ 				/* default boot process */
