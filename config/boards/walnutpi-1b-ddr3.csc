@@ -4,7 +4,7 @@
 BOARD_NAME="Walnut Pi 1B DDR3"
 BOARD_VENDOR="walnutpi"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="TallGuy74"
 INTRODUCED="2026"
 BOOTCONFIG="walnutpi_1b_ddr3_defconfig"
 BOOT_LOGO="desktop"

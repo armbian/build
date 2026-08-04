@@ -2,7 +2,7 @@
 BOARD_NAME="Walnut Pi ZeroW"
 BOARD_VENDOR="walnutpi"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="TallGuy74"
 INTRODUCED="2026"
 BOOTCONFIG="walnutpi_zerow_defconfig"
 BOOT_LOGO="desktop"
