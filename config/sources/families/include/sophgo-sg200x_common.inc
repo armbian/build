@@ -29,7 +29,6 @@ case "${BRANCH}" in
 
 	bleedingedge)
 		declare -g KERNEL_MAJOR_MINOR="7.2"
-		declare -g KERNELBRANCH="tag:v7.2-rc5"
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-bleedingedge"
 		;;
 
