@@ -1,10 +1,12 @@
 # Allwinner H618 quad core 1GB DDR3 RAM SoC WiFi/BT
-BOARD_NAME="Walnut Pi 1B 1GB"
+# Early 1B revision with 2x 512MB DDR3 (vendor schematic v1.0); newer 1GB
+# boards use LPDDR4 and are covered by walnutpi-1b. Untested on hardware.
+BOARD_NAME="Walnut Pi 1B DDR3"
 BOARD_VENDOR="walnutpi"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER=""
 INTRODUCED="2026"
-BOOTCONFIG="walnutpi_1b_1g_defconfig"
+BOOTCONFIG="walnutpi_1b_ddr3_defconfig"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="sun50i-h618-walnutpi-1b.dtb"
 OVERLAY_PREFIX="sun50i-h616"
