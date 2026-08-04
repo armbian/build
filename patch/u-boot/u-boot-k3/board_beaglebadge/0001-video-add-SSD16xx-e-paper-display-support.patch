@@ -14,6 +14,9 @@ before handing its SPI and GPIO resources to the operating system.
 Add sandbox coverage for synchronization, conversion, error handling,
 refresh cadence, and shutdown.
 
+Keep driver synchronization unconditional by default and make rate limiting
+an explicit capability for slow-transfer drivers such as SSD16xx.
+
 The panel sequence is derived from Texas Instruments Linux revision
 7845a75c5c754570830696603142090002afbe14. Texas Instruments granted
 permission to distribute this port under GPL-2.0-or-later.
@@ -28,13 +31,13 @@ Signed-off-by: Andrei Aldea <andrei1998@gmail.com>
  configs/sandbox_defconfig    |   1 +
  drivers/video/Kconfig        |  11 +
  drivers/video/Makefile       |   1 +
- drivers/video/ssd16xx.c      | 584 +++++++++++++++++++++++++++++++++++
- drivers/video/video-uclass.c |  18 +-
- include/video.h              |   9 +
+ drivers/video/ssd16xx.c      | 586 +++++++++++++++++++++++++++++++++++
+ drivers/video/video-uclass.c |  15 +
+ include/video.h              |  14 +
  test/dm/Makefile             |   1 +
- test/dm/ssd16xx.c            | 252 +++++++++++++++
+ test/dm/ssd16xx.c            | 259 ++++++++++++++++
  test/dm/video.c              |  11 +
- 11 files changed, 907 insertions(+), 4 deletions(-)
+ 11 files changed, 922 insertions(+)
  create mode 100644 drivers/video/ssd16xx.c
  create mode 100644 test/dm/ssd16xx.c
 
@@ -131,10 +134,10 @@ index 96c7ce7b..5734345e 100644
  obj-$(CONFIG_VIDEO_LCD_SAMSUNG_S6E63M0) += samsung-s6e63m0.o
 diff --git a/drivers/video/ssd16xx.c b/drivers/video/ssd16xx.c
 new file mode 100644
-index 00000000..e4db814e
+index 00000000..09fffb06
 --- /dev/null
 +++ b/drivers/video/ssd16xx.c
-@@ -0,0 +1,584 @@
+@@ -0,0 +1,586 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Solomon Systech SSD16xx e-paper video driver
@@ -469,7 +472,8 @@ index 00000000..e4db814e
 +{
 +	const struct ssd16xx_panel *panel = priv->panel;
 +	size_t row_bytes = ssd16xx_row_bytes(panel);
-+	int x, y;
++	size_t x;
++	u16 y;
 +
 +	for (y = 0; y < panel->height; y++) {
 +		const u16 *line = uc_priv->fb + y * uc_priv->line_length;
@@ -697,6 +701,7 @@ index 00000000..e4db814e
 +
 +static const struct video_ops ssd16xx_ops = {
 +	.video_sync = ssd16xx_sync,
++	.video_sync_rate_limited = true,
 +};
 +
 +static const struct udevice_id ssd16xx_ids[] = {
@@ -720,31 +725,22 @@ index 00000000..e4db814e
 +	.flags = DM_FLAG_OS_PREPARE,
 +};
 diff --git a/drivers/video/video-uclass.c b/drivers/video/video-uclass.c
-index 53641fc2..f6748703 100644
+index 53641fc2..2e493fdf 100644
 --- a/drivers/video/video-uclass.c
 +++ b/drivers/video/video-uclass.c
-@@ -500,16 +500,16 @@ int video_sync(struct udevice *vid, bool force)
- 	if (IS_ENABLED(CONFIG_VIDEO_COPY))
+@@ -501,6 +501,11 @@ int video_sync(struct udevice *vid, bool force)
  		video_flush_copy(vid);
  
-+	if (CONFIG_IS_ENABLED(CYCLIC) && !force &&
-+	    get_timer(priv->last_sync) < CONFIG_VIDEO_SYNC_MS)
-+		return 0;
-+
  	if (ops && ops->video_sync) {
++		if (ops->video_sync_rate_limited &&
++		    CONFIG_IS_ENABLED(CYCLIC) && !force &&
++		    get_timer(priv->last_sync) < CONFIG_VIDEO_SYNC_MS)
++			return 0;
++
  		ret = ops->video_sync(vid);
  		if (ret)
  			return ret;
- 	}
- 
--	if (CONFIG_IS_ENABLED(CYCLIC) && !force &&
--	    get_timer(priv->last_sync) < CONFIG_VIDEO_SYNC_MS)
--		return 0;
--
- 	video_flush_dcache(vid, false);
- 
- 	if (IS_ENABLED(CONFIG_VIDEO_COPY))
-@@ -531,6 +531,16 @@ int video_sync(struct udevice *vid, bool force)
+@@ -531,6 +536,16 @@ int video_sync(struct udevice *vid, bool force)
  	return 0;
  }
  
@@ -762,10 +758,24 @@ index 53641fc2..f6748703 100644
  {
  	struct udevice *dev;
 diff --git a/include/video.h b/include/video.h
-index 9ea6b676..b53d8b00 100644
+index 9ea6b676..44162a3e 100644
 --- a/include/video.h
 +++ b/include/video.h
-@@ -295,6 +295,15 @@ int video_draw_box(struct udevice *dev, int x0, int y0, int x1, int y1,
+@@ -142,4 +142,8 @@ struct video_priv {
+  *		For these devices implement video_sync hook to call a sync
+  *		function. vid is pointer to video device udevice. Function
+  *		should return 0 on success video_sync and error code otherwise
++ * @video_sync_rate_limited: Allow the video uclass to skip @video_sync for
++ *		non-forced updates within CONFIG_VIDEO_SYNC_MS. Drivers should set
++ *		this only when the callback transfers the framebuffer to slow
++ *		hardware and does not need to run for every sync request.
+  */
+@@ -146,2 +150,3 @@ struct video_ops {
+-	int (*video_sync)(struct udevice *vid);
++	int (*video_sync)(struct udevice *vid);
++	bool video_sync_rate_limited;
+ };
+@@ -295,6 +300,15 @@ int video_draw_box(struct udevice *dev, int x0, int y0, int x1, int y1,
   */
  int video_sync(struct udevice *vid, bool force);
  
@@ -795,10 +805,10 @@ index 2db0e3b8..95e8b6bf 100644
  obj-$(CONFIG_VIRTIO_RNG) += virtio_device.o
 diff --git a/test/dm/ssd16xx.c b/test/dm/ssd16xx.c
 new file mode 100644
-index 00000000..41881e9a
+index 00000000..2bd780dd
 --- /dev/null
 +++ b/test/dm/ssd16xx.c
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,259 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (C) 2026 Andrei Aldea <andrei1998@gmail.com>
@@ -808,6 +818,7 @@ index 00000000..41881e9a
 +#include <dm.h>
 +#include <errno.h>
 +#include <spi.h>
++#include <time.h>
 +#include <video.h>
 +#include <asm/gpio.h>
 +#include <dm/device-internal.h>
@@ -1003,6 +1014,12 @@ index 00000000..41881e9a
 +	for (i = 0; i < 8; i += 2)
 +		pixels[i] = 0xffff;
 +	video_damage(dev, 0, 0, video_priv->xsize, video_priv->ysize);
++	video_priv->last_sync = get_timer(0);
++	ut_assertok(video_sync(dev, false));
++	ut_asserteq(0, spi_priv->bw_writes);
++	ut_assert(video_damage_pending(dev));
++
++	/* A forced sync bypasses the slow-driver rate limit. */
 +	ut_assertok(video_sync(dev, true));
 +	ut_asserteq(1, spi_priv->bw_writes);
 +	ut_asserteq(0, spi_priv->red_writes);
