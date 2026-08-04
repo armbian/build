@@ -1,0 +1,276 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Andrei Aldea <andrei1998@gmail.com>
+Date: Tue, 4 Aug 2026 10:53:36 -0500
+Subject: [PATCH 2/4] board: ti: am62lx: enable BeagleBadge display and boot
+ menu
+
+Describe the BeagleBadge GDEY042T81 display and GPIO buttons, enable
+the SSD16xx video console, and present a seven-second Linux or Zephyr
+boot selector on the serial and e-paper consoles.
+
+Map the joystick and buttons to standard U-Boot menu controls and keep
+the Back button available as Escape for the recovery console.
+
+Developed with assistance from OpenAI Codex.
+
+Signed-off-by: Andrei Aldea <andrei1998@gmail.com>
+---
+ arch/arm/dts/k3-am62l3-badge-u-boot.dtsi | 60 +++++++++++++++++++++
+ board/ti/am62lx/am62lx_badge.env         | 69 ++++++++++++++++++++++++
+ cmd/bootmenu.c                           | 28 +++++++---
+ configs/am62lx_badge_defconfig           | 23 ++++++++
+ 4 files changed, 173 insertions(+), 7 deletions(-)
+ create mode 100644 board/ti/am62lx/am62lx_badge.env
+
+diff --git a/arch/arm/dts/k3-am62l3-badge-u-boot.dtsi b/arch/arm/dts/k3-am62l3-badge-u-boot.dtsi
+index 50f1a304..182b1c78 100644
+--- a/arch/arm/dts/k3-am62l3-badge-u-boot.dtsi
++++ b/arch/arm/dts/k3-am62l3-badge-u-boot.dtsi
+@@ -4,6 +4,8 @@
+  */
+ 
+ #include "k3-am62l3-evm-binman.dtsi"
++#include <dt-bindings/gpio/gpio.h>
++#include "k3-pinctrl.h"
+ 
+ / {
+ 	aliases {
+@@ -14,3 +16,61 @@
+ &scmi {
+ 	bootph-all;
+ };
++
++&gpio_keys {
++	button-select {
++		linux,code = <KEY_ENTER>;
++	};
++
++	button-back {
++		linux,code = <KEY_ESC>;
++	};
++};
++
++&pmx0 {
++	badge_epd_dc_pins: badge-epd-dc-pins {
++		pinctrl-single,pins = <
++			AM62LX_IOPAD(0x01ac, PIN_OUTPUT, 7) /* SPI0_D0.GPIO0_90 */
++		>;
++	};
++
++	badge_epd_reset_pins: badge-epd-reset-pins {
++		pinctrl-single,pins = <
++			AM62LX_IOPAD(0x009c, PIN_OUTPUT, 7) /* GPMC0_AD9.GPIO0_24 */
++		>;
++	};
++
++	badge_epd_busy_pins: badge-epd-busy-pins {
++		pinctrl-single,pins = <
++			AM62LX_IOPAD(0x00dc, PIN_INPUT, 7) /* GPMC0_WPn.GPIO0_39 */
++		>;
++	};
++
++	badge_spi0_pins: badge-spi0-pins {
++		pinctrl-single,pins = <
++			AM62LX_IOPAD(0x01a8, PIN_OUTPUT, 0) /* SPI0_CLK */
++			AM62LX_IOPAD(0x01a0, PIN_OUTPUT, 0) /* SPI0_CS0 */
++			AM62LX_IOPAD(0x01b0, PIN_OUTPUT, 0) /* SPI0_D1 */
++		>;
++	};
++};
++
++&spi0 {
++	bootph-some-ram;
++	pinctrl-names = "default";
++	pinctrl-0 = <&badge_spi0_pins>;
++	status = "okay";
++
++	display@0 {
++		bootph-some-ram;
++		compatible = "gooddisplay,gdey042t81";
++		reg = <0>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&badge_epd_dc_pins>, <&badge_epd_reset_pins>,
++			    <&badge_epd_busy_pins>;
++		spi-max-frequency = <2000000>;
++		reset-gpios = <&gpio0 24 GPIO_ACTIVE_LOW>;
++		dc-gpios = <&gpio0 90 GPIO_ACTIVE_HIGH>;
++		busy-gpios = <&gpio0 39 GPIO_ACTIVE_HIGH>;
++	};
++};
+diff --git a/board/ti/am62lx/am62lx_badge.env b/board/ti/am62lx/am62lx_badge.env
+new file mode 100644
+index 00000000..77359952
+--- /dev/null
++++ b/board/ti/am62lx/am62lx_badge.env
+@@ -0,0 +1,69 @@
++#include <env/ti/ti_common.env>
++#include <env/ti/mmc.env>
++#include <env/ti/k3_dfu.env>
++
++/*
++ * Since 0x80200000 is the load address for OPTEE, in order to avoid
++ * potentially overwriting it with u-boot.img which has the default
++ * load address of 0x81000000 as specified by dfu_alt_info_ram,
++ * change the load address of u-boot.img to 0x83000000.
++ */
++dfu_alt_info_ram=
++	u-boot.img ram CONFIG_SPL_LOAD_FIT_ADDRESS 0x400000
++
++#if CONFIG_TI_GPMC
++dfu_alt_info_nand=
++	NAND.tiboot3 part 0 1;
++	NAND.tispl part 0 2;
++	NAND.u-boot part 0 3;
++	NAND.tiboot3.backup part 0 4;
++	NAND.tispl.backup part 0 5;
++	NAND.u-boot.backup part 0 6;
++	NAND.u-boot-env part 0 7;
++	NAND.u-boot-env.backup part 0 8;
++	NAND.file-system part 0 9
++#endif
++
++name_kern=Image
++console=ttyS0,115200n8
++args_all=setenv optargs ${optargs} earlycon=ns16550a,mmio32,0x02800000
++run_kern=booti ${loadaddr} ${rd_spec} ${fdtaddr}
++boot_targets=mmc0 mmc1
++boot=mmc
++mmcdev=1
++bootpart=1:2
++bootdir=/boot
++rd_spec=-
++addr_fit=0x85000000
++fdtaddr=0x84f00000
++fdt_addr_r=0x84f00000
++dtboaddr=0x84f80000
++fdtoverlay_addr_r=0x84f80000
++kernel_addr_r=0x82400000
++ramdisk_addr_r=0x84000000
++rdaddr=0x84000000
++
++stdin=serial,button-kbd
++stdout=serial,vidconsole
++stderr=serial,vidconsole
++
++bootdelay=7
++zephyr_addr=0x82000000
++bootmenu_title==== BeagleBadge Boot Selector ===
++bootmenu_subtitle=Choose your badge experience
++bootmenu_prompt=Joystick UP/DOWN   SELECT boots   BACK opens console
++bootmenu_exit_title=U-Boot Console / Recovery
++badge_boot_linux=run bootcmd
++badge_boot_zephyr=
++	if fatload mmc ${mmcdev}:1 ${zephyr_addr} zephyr.bin; then
++		echo Starting Zephyr from SD...;
++		dcache flush;
++		icache flush;
++		dcache off;
++		icache off;
++		go ${zephyr_addr};
++	else
++		echo ERROR: zephyr.bin was not found on the SD boot partition;
++	fi
++bootmenu_0=Linux / Armbian (default)=run badge_boot_linux
++bootmenu_1=Zephyr / Badge Launcher=run badge_boot_zephyr
+diff --git a/cmd/bootmenu.c b/cmd/bootmenu.c
+index d3108778..755050a0 100644
+--- a/cmd/bootmenu.c
++++ b/cmd/bootmenu.c
+@@ -373,6 +373,7 @@ static int prepare_uefi_bootorder_entry(struct bootmenu_data *menu,
+  */
+ static struct bootmenu_data *bootmenu_create(int uefi, int delay)
+ {
++	const char *exit_title;
+ 	int ret;
+ 	unsigned short int i = 0;
+ 	struct bootmenu_data *menu;
+@@ -421,11 +422,15 @@ static struct bootmenu_data *bootmenu_create(int uefi, int delay)
+ 		if (!entry)
+ 			goto cleanup;
+ 
+-		/* Add Quit entry if exiting bootmenu is disabled */
+-		if (!IS_ENABLED(CONFIG_BOOTMENU_DISABLE_UBOOT_CONSOLE))
+-			entry->title = strdup("0. Exit");
+-		else
+-			entry->title = strdup("0. Quit");
++		exit_title = env_get("bootmenu_exit_title");
++		if (!exit_title) {
++			/* Add Quit entry if exiting bootmenu is disabled */
++			if (!IS_ENABLED(CONFIG_BOOTMENU_DISABLE_UBOOT_CONSOLE))
++				exit_title = "0. Exit";
++			else
++				exit_title = "0. Quit";
++		}
++		entry->title = strdup(exit_title);
+ 
+ 		if (!entry->title) {
+ 			free(entry);
+@@ -471,6 +476,9 @@ cleanup:
+ 
+ static void menu_display_statusline(struct menu *m)
+ {
++	const char *prompt = env_get("bootmenu_prompt");
++	const char *subtitle = env_get("bootmenu_subtitle");
++	const char *title = env_get("bootmenu_title");
+ 	struct bootmenu_entry *entry;
+ 	struct bootmenu_data *menu;
+ 
+@@ -482,16 +490,22 @@ static void menu_display_statusline(struct menu *m)
+ 	printf(ANSI_CURSOR_POSITION, 1, 1);
+ 	puts(ANSI_CLEAR_LINE);
+ 	printf(ANSI_CURSOR_POSITION, 2, 3);
+-	puts("*** U-Boot Boot Menu ***");
++	puts(title ? title : "*** U-Boot Boot Menu ***");
+ 	puts(ANSI_CLEAR_LINE_TO_END);
+ 	printf(ANSI_CURSOR_POSITION, 3, 1);
+ 	puts(ANSI_CLEAR_LINE);
++	if (subtitle) {
++		printf(ANSI_CURSOR_POSITION, 3, 3);
++		puts(subtitle);
++		puts(ANSI_CLEAR_LINE_TO_END);
++	}
+ 
+ 	/* First 3 lines are bootmenu header + 2 empty lines between entries */
+ 	printf(ANSI_CURSOR_POSITION, menu->count + 5, 1);
+ 	puts(ANSI_CLEAR_LINE);
+ 	printf(ANSI_CURSOR_POSITION, menu->count + 6, 3);
+-	puts("Press UP/DOWN to move, ENTER to select, ESC to quit");
++	puts(prompt ? prompt :
++		"Press UP/DOWN to move, ENTER to select, ESC to quit");
+ 	puts(ANSI_CLEAR_LINE_TO_END);
+ 	printf(ANSI_CURSOR_POSITION, menu->count + 7, 1);
+ 	puts(ANSI_CLEAR_LINE);
+diff --git a/configs/am62lx_badge_defconfig b/configs/am62lx_badge_defconfig
+index 6e09ffb0..271bc448 100644
+--- a/configs/am62lx_badge_defconfig
++++ b/configs/am62lx_badge_defconfig
+@@ -1,6 +1,29 @@
+ #include <configs/am62lx_evm_defconfig>
+ 
+ CONFIG_DEFAULT_DEVICE_TREE="ti/k3-am62l3-badge"
++CONFIG_ENV_SOURCE_FILE="am62lx_badge"
++CONFIG_BOOTDELAY=7
++CONFIG_AUTOBOOT_MENU_SHOW=y
++CONFIG_CMD_BOOTMENU=y
++CONFIG_CMD_SF=y
++CONFIG_CMD_UMS_ABORT_KEYED=y
++CONFIG_CMD_BOOTEFI_BOOTMGR=n
++CONFIG_CMD_EFICONFIG=n
++CONFIG_CMD_BUTTON=y
++CONFIG_BUTTON=y
++CONFIG_DM_KEYBOARD=y
++CONFIG_BUTTON_KEYBOARD=y
++CONFIG_CYCLIC=y
++CONFIG_VIDEO=y
++CONFIG_VIDEO_DAMAGE=y
++CONFIG_VIDEO_REMOVE=y
++CONFIG_VIDEO_SSD16XX=y
++CONFIG_VIDEO_SYNC_MS=1000
++CONFIG_VIDEO_SYNC_CYCLIC_MS=1000
++CONFIG_CYCLIC_MAX_CPU_TIME_US=1500000
++CONFIG_VIDEO_BPP16=y
++CONFIG_VIDEO_BPP32=n
++CONFIG_OMAP3_SPI=y
+ CONFIG_SPI_FLASH_ISSI=y
+ CONFIG_SPI_FLASH_SPANSION=n
+ CONFIG_SPI_FLASH_S28HX_T=n
