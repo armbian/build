@@ -293,6 +293,8 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 		[Service]
 		RestartSec=3
+		PrivateDevices=yes
+		DeviceAllow=/dev/ttyGS0 rw
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
