@@ -7,6 +7,12 @@
 #endif
 #define CONFIG_ENV_SIZE 0x20000
 #define PART_LAYOUT ""
+/* Armbian: unmodified SDK output, kept as generated. The vendor raw
+ * BOOT/MISC/ROOTFS layout below is not the layout of an Armbian card - that
+ * is an MBR disk image with a FAT /boot and an ext4 root - and distroboot
+ * reads none of it. Only the vendor fallback paths (sdboot, cvi_update) still
+ * refer to these, so the values stay as the SDK emitted them.
+ */
 #define ROOTFS_DEV "/dev/mmcblk0p3"
 #define PARTS_OFFSET \
 "BOOT_PART_OFFSET=0x0\0" \

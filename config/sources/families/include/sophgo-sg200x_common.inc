@@ -32,6 +32,10 @@ case "${BRANCH}" in
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-bleedingedge"
 		;;
 
+	*)
+		exit_with_error "sophgo-sg200x: unsupported BRANCH" "${BRANCH}"
+		;;
+
 esac
 
 declare -g KERNELPATCHDIR="archive/sophgo-sg200x-${KERNEL_MAJOR_MINOR}" # Don't use symlinks.
