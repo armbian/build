@@ -444,6 +444,15 @@ function write_uboot_platform() {
 		fip_bytes="$(stat -c %s "${fip}")"
 		boot0_bytes="$(blockdev --getsize64 "${boot0}")"
 
+		# Each copy gets a fixed 0x800 sectors from cvi_update, so a fip.bin past a
+		# megabyte would have the second dd overwrite the tail of the first. The
+		# read-back further down sees it, but only once boot0 already holds a
+		# bootloader that cannot start.
+		if [[ "${fip_bytes}" -gt $((2048 * 512)) ]]; then
+			echo "sophgo-sg200x: ${fip##*/} is ${fip_bytes} bytes; over $((2048 * 512)), the copy at sector 2048 overwrites the one at sector 0" >&2
+			return 1
+		fi
+
 		# The backup copy goes a megabyte in, so boot0 has to hold that much plus
 		# the file.
 		if [[ $((2048 * 512 + fip_bytes)) -gt "${boot0_bytes}" ]]; then
