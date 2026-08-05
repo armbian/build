@@ -8,6 +8,4 @@ KERNEL_TARGET="edge,bleedingedge"
 KERNEL_TEST_TARGET="edge"
 BOOT_FDT_FILE="sophgo/sg2000-milkv-duo-s.dtb"
 HAS_VIDEO_OUTPUT="no"
-PACKAGE_LIST_BOARD_REMOVE="snapd cloud-init" # 512MB of RAM
-
 enable_extension "sophgo-sg200x-aic8800"
