@@ -122,6 +122,10 @@ def pack(src_path, dst_path, offset, label, chunk_type, part_size=None):
             % (part_size, src_size)
         )
 
+    # Only reachable by hand - the extension always passes --offset 0.
+    if offset < 0:
+        raise ValueError("destination offset %d is negative" % offset)
+
     # _prgImage rounds each chunk up to a 512-byte sector before "mmc write",
     # so a ragged tail is written fine, but a ragged *destination* is not
     # expressible: offset is divided by SECTOR_SIZE with no remainder handling.
