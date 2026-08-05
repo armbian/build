@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Sun, 2 Aug 2026 00:00:00 +0000
+Subject: [PATCH] Avaota A1: fix ST7789V LCD write errors and panel geometry
+
+Fix two bugs preventing reliable use of the 135x240 ST7789V LCD on the
+Avaota A1 (sun55i t527) board with the fbtft staging driver:
+
+1) SPI bits_per_word pollution by the DRM panel driver.
+   The device-tree node is compatible "sitronix,st7789v", which the DRM
+   panel driver panel_sitronix_st7789v binds to first. Its probe sets
+   spi->bits_per_word = 9 and calls spi_setup(). The sun6i SPI master
+   (r_spi0) is 8-bit only (bits_per_word_mask = SPI_BPW_MASK(8)), so
+   spi_setup() fails with -EINVAL but leaves the shared spi_device
+   configured with bits_per_word = 9. When the DRM probe fails, fbtft
+   binds to the same spi_device and every subsequent transfer is
+   rejected with -EINVAL, causing a "write() failed -22" loop.
+   Fix: restore bits_per_word = 8 before returning the probe error.
+
+2) Missing centered window offsets for the 135x240 panel in the
+   240x320 controller.
+   The ST7789V controller is 240x320; the panel active area is 135x240
+   centered (colstart = 52, rowstart = 40 in controller coordinates).
+   fbtft has no offset support (fbtft_set_addr_win always writes
+   CASET/RASET from (0,0)). With rotate = 90 (MADCTL MV|MY = 0x60) the
+   CASET range maps onto the 0..319 gate axis and RASET onto the
+   0..239 source axis, so the window (0..239, 0..134) leaves gates
+   240..279 and sources 135..187 unwritten, showing as noise bands of
+   ~40 px on the right and ~53 px below the picture.
+   Fix: override set_addr_win in fb_st7789v with the centered offsets
+   (rotate 90/270: column += 40, row += 52; rotate 0/180: column += 52,
+   row += 40).
+
+Additionally align init_display with the vendor reference sequence for
+this panel (docs.avaota.fun) and add the "bgr" property to the device
+tree so the address-mode BGR bit is set.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:big-pickle
+---
+ arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts | 1 +
+ drivers/gpu/drm/panel/panel-sitronix-st7789v.c          | 3 +-
+ drivers/staging/fbtft/fb_st7789v.c                      | 69 +++-------
+ 3 files changed, 25 insertions(+), 48 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts b/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts
+index fba626732877..9c80576d3ce3 100644
+--- a/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts
++++ b/arch/arm64/boot/dts/allwinner/sun55i-t527-avaota-a1.dts
+@@ -480,6 +480,7 @@ lcd: st7789v@0 {
+ 		width = <135>;
+ 		height = <240>;
+ 		buswidth = <8>;
+ 		rotate = <90>;
++		bgr;
+ 	};
+ };
+ 
+diff --git a/drivers/gpu/drm/panel/panel-sitronix-st7789v.c b/drivers/gpu/drm/panel/panel-sitronix-st7789v.c
+index d5f821d6b23c..1b51bc43a9ee 100644
+--- a/drivers/gpu/drm/panel/panel-sitronix-st7789v.c
++++ b/drivers/gpu/drm/panel/panel-sitronix-st7789v.c
+@@ -627,8 +627,10 @@ static int st7789v_probe(struct spi_device *spi)
+ 
+ 	spi->bits_per_word = 9;
+ 	ret = spi_setup(spi);
+-	if (ret < 0)
++	if (ret < 0) {
++		spi->bits_per_word = 8;
+ 		return dev_err_probe(&spi->dev, ret, "Failed to setup spi\n");
++	}
+ 
+ 	ctx->info = device_get_match_data(&spi->dev);
+ 
+diff --git a/drivers/staging/fbtft/fb_st7789v.c b/drivers/staging/fbtft/fb_st7789v.c
+index 861a154144e6..2cce94beb56d 100644
+--- a/drivers/staging/fbtft/fb_st7789v.c
++++ b/drivers/staging/fbtft/fb_st7789v.c
+@@ -21,14 +21,8 @@
+ #define DRVNAME "fb_st7789v"
+ 
+ #define DEFAULT_GAMMA \
+-	"70 2C 2E 15 10 09 48 33 53 0B 19 18 20 25\n" \
+-	"70 2C 2E 15 10 09 48 33 53 0B 19 18 20 25"
+-
+-#define HSD20_IPS_GAMMA \
+-	"D0 05 0A 09 08 05 2E 44 45 0F 17 16 2B 33\n" \
+-	"D0 05 0A 09 08 05 2E 43 45 0F 16 16 2B 33"
+-
+-#define HSD20_IPS 1
++	"D0 04 0D 11 13 2B 3F 54 4C 18 0D 0B 1F 23\n" \
++	"D0 04 0C 11 13 2C 3F 44 51 2F 1F 1F 20 23"
+ 
+ /**
+  * enum st7789v_command - ST7789V display controller commands
+@@ -56,7 +50,9 @@ enum st7789v_command {
+ 	PORCTRL = 0xB2,
+ 	GCTRL = 0xB7,
+ 	VCOMS = 0xBB,
++	LCMCTRL = 0xC0,
+ 	VDVVRHEN = 0xC2,
++	FRCTRL2 = 0xC6,
+ 	VRHS = 0xC3,
+ 	VDVS = 0xC4,
+ 	VCMOFSET = 0xC5,
+@@ -156,64 +152,24 @@ static int init_display(struct fbtft_par *par)
+ 
+ 	/* set pixel format to RGB-565 */
+ 	write_reg(par, MIPI_DCS_SET_PIXEL_FORMAT, MIPI_DCS_PIXEL_FMT_16BIT);
+-	if (HSD20_IPS)
+-		write_reg(par, PORCTRL, 0x05, 0x05, 0x00, 0x33, 0x33);
+-
+-	else
+-		write_reg(par, PORCTRL, 0x08, 0x08, 0x00, 0x22, 0x22);
+-
+-	/*
+-	 * VGH = 13.26V
+-	 * VGL = -10.43V
+-	 */
+-	if (HSD20_IPS)
+-		write_reg(par, GCTRL, 0x75);
+-	else
+-		write_reg(par, GCTRL, 0x35);
+-
+-	/*
+-	 * VDV and VRH register values come from command write
+-	 * (instead of NVM)
+-	 */
+-	write_reg(par, VDVVRHEN, 0x01, 0xFF);
+ 
+-	/*
+-	 * VAP =  4.1V + (VCOM + VCOM offset + 0.5 * VDV)
+-	 * VAN = -4.1V + (VCOM + VCOM offset + 0.5 * VDV)
+-	 */
+-	if (HSD20_IPS)
+-		write_reg(par, VRHS, 0x13);
+-	else
+-		write_reg(par, VRHS, 0x0B);
+-
+-	/* VDV = 0V */
++	write_reg(par, PORCTRL, 0x0C, 0x0C, 0x00, 0x33, 0x33);
++	write_reg(par, GCTRL, 0x35);
++	write_reg(par, VCOMS, 0x19);
++	write_reg(par, LCMCTRL, 0x2C);
++	write_reg(par, VDVVRHEN, 0x01);
++	write_reg(par, VRHS, 0x12);
+ 	write_reg(par, VDVS, 0x20);
+-
+-	/* VCOM = 0.9V */
+-	if (HSD20_IPS)
+-		write_reg(par, VCOMS, 0x22);
+-	else
+-		write_reg(par, VCOMS, 0x20);
+-
+-	/* VCOM offset = 0V */
+-	write_reg(par, VCMOFSET, 0x20);
+-
+-	/*
+-	 * AVDD = 6.8V
+-	 * AVCL = -4.8V
+-	 * VDS = 2.3V
+-	 */
++	write_reg(par, FRCTRL2, 0x0F);
+ 	write_reg(par, PWCTRL1, 0xA4, 0xA1);
+ 
+ 	/* TE line output is off by default when powering on */
+ 	if (irq_te)
+ 		write_reg(par, MIPI_DCS_SET_TEAR_ON, 0x00);
+ 
++	write_reg(par, MIPI_DCS_ENTER_INVERT_MODE);
+ 	write_reg(par, MIPI_DCS_SET_DISPLAY_ON);
+ 
+-	if (HSD20_IPS)
+-		write_reg(par, MIPI_DCS_ENTER_INVERT_MODE);
+-
+ 	return 0;
+ }
+ 
+@@ -293,6 +249,27 @@ static int set_var(struct fbtft_par *par)
+ 	return 0;
+ }
+ 
++static void set_addr_win(struct fbtft_par *par, int xs, int ys, int xe, int ye)
++{
++	int col_off, row_off;
++
++	if (par->info->var.rotate == 90 || par->info->var.rotate == 270) {
++		col_off = 40;
++		row_off = 52;
++	} else {
++		col_off = 52;
++		row_off = 40;
++	}
++
++	write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
++		  (xs + col_off) >> 8, (xs + col_off) & 0xFF,
++		  (xe + col_off) >> 8, (xe + col_off) & 0xFF);
++	write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS,
++		  (ys + row_off) >> 8, (ys + row_off) & 0xFF,
++		  (ye + row_off) >> 8, (ye + row_off) & 0xFF);
++	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
++}
++
+ /**
+  * set_gamma() - set gamma curves
+  *
+@@ -372,11 +349,12 @@ static struct fbtft_display display = {
+ 	.height = 320,
+ 	.gamma_num = 2,
+ 	.gamma_len = 14,
+-	.gamma = HSD20_IPS_GAMMA,
++	.gamma = DEFAULT_GAMMA,
+ 	.fbtftops = {
+ 		.init_display = init_display,
+ 		.write_vmem = write_vmem,
+ 		.set_var = set_var,
++		.set_addr_win = set_addr_win,
+ 		.set_gamma = set_gamma,
+ 		.blank = blank,
+ 	},
+-- 
+2.34.1
