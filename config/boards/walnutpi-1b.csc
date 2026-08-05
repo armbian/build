@@ -1,6 +1,6 @@
 # Allwinner H618 quad core 1GB/2GB/4GB LPDDR4 RAM SoC WiFi/BT
-# Covers all LPDDR4 revisions (1G/2G/4G, size auto-detected); early DDR3
-# revision boards are covered by walnutpi-1b-ddr3.
+# Covers all LPDDR4 revisions (1G/2G/4G, size auto-detected); the early
+# DDR3 revision needs a different u-boot DRAM profile and is not covered.
 BOARD_NAME="Walnut Pi 1B"
 BOARD_VENDOR="walnutpi"
 BOARDFAMILY="sun50iw9"
