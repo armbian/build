@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 5 Aug 2026 20:57:37 +0200
+Subject: drm/msm/dp: restore audio when the PCM stays open across a disable
+
+Sound servers hold the DP PCM open, so the audio completion wait in
+disable times out and the codec shutdown never runs. ALSA then issues
+no new prepare on the next enable, leaving the SDP and ACR registers
+stale and playback silent until the sink is suspended by hand.
+
+Record the timed out wait and let the next enable reprogram the audio
+from the cached parameters, as a prepare would have done.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_audio.c   |  1 +
+ drivers/gpu/drm/msm/dp/dp_display.c | 12 +++++++++-
+ drivers/gpu/drm/msm/dp/dp_display.h |  1 +
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_audio.c b/drivers/gpu/drm/msm/dp/dp_audio.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_audio.c
++++ b/drivers/gpu/drm/msm/dp/dp_audio.c
+@@ -298,6 +298,7 @@ int msm_dp_audio_prepare(struct drm_bridge *bridge,
+ 	msm_dp_audio_enable(audio, true);
+ 	msm_dp_display_signal_audio_start(msm_dp_display);
+ 	msm_dp_display->audio_enabled = true;
++	msm_dp_display->audio_restore_pending = false;
+ 
+ end:
+ 	return rc;
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -727,6 +727,13 @@ static int msm_dp_display_post_enable(struct msm_dp *msm_dp_display)
+ 	/* signal the connect event late to synchronize video and display */
+ 	msm_dp_display_handle_plugged_change(msm_dp_display, true);
+ 
++	/* a stream left open across the disable never issues a new prepare */
++	if (msm_dp_display->audio_restore_pending) {
++		msm_dp_display->audio_restore_pending = false;
++		msm_dp_display->audio_enabled = true;
++		msm_dp_audio_restore(msm_dp_display);
++	}
++
+ 	if (msm_dp_display->psr_supported)
+ 		msm_dp_ctrl_config_psr(dp->ctrl);
+ 
+@@ -745,8 +752,11 @@ static int msm_dp_display_disable(struct msm_dp_display_private *dp)
+ 		/* signal the disconnect event */
+ 		msm_dp_display_handle_plugged_change(msm_dp_display, false);
+ 		if (!wait_for_completion_timeout(&dp->audio_comp,
+-				HZ * 5))
++				HZ * 5)) {
+ 			DRM_ERROR("audio comp timeout\n");
++			/* the PCM is still open, no new prepare will come */
++			msm_dp_display->audio_restore_pending = true;
++		}
+ 	}
+ 
+ 	msm_dp_display->audio_enabled = false;
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.h b/drivers/gpu/drm/msm/dp/dp_display.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.h
++++ b/drivers/gpu/drm/msm/dp/dp_display.h
+@@ -18,6 +18,7 @@ struct msm_dp {
+ 	struct drm_bridge *next_bridge;
+ 	struct drm_bridge *bridge;
+ 	bool audio_enabled;
++	bool audio_restore_pending;
+ 	bool power_on;
+ 	unsigned int connector_type;
+ 	bool is_edp;
+-- 
+Armbian
+
