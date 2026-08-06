@@ -25,9 +25,11 @@
 # what makes 7.2 work.
 #
 # What is not board-specific is shared rather than duplicated: the two build
-# fixes live in patch/misc/aic8800/ next to the other driver patches, and the
-# Bluetooth attach script and unit in packages/bsp/aic8800/ alongside the
-# aic-bluetooth pair already there.
+# fixes live in patch/misc/aic8800/ next to the other driver patches. The
+# Bluetooth attach script and unit are not shared - they resolve the UART by
+# hardware address, which only this board needs - so they sit with the rest of
+# the family's BSP files in packages/bsp/sophgo-sg200x/ rather than in the
+# framework-wide packages/bsp/aic8800/ next to the aic-bluetooth pair.
 #
 # The copy happens from custom_kernel_config, not kernel_copy_extra_sources:
 # patching does a git reset --hard plus a clean of untracked files, so anything
@@ -179,34 +181,26 @@ function post_family_tweaks__sophgo_sg200x_aic8800_modprobe() {
 	EOF
 }
 
-# The bsp-cli artifact hashes packages/bsp/common and packages/bsp/${LINUXFAMILY},
-# which covers the file the stable-MAC hook below installs but not the two the
-# Bluetooth hook takes out of the shared packages/bsp/aic8800 - no family name
-# reaches that directory. Hooks are hashed as source text only, so without this the
-# install lines below read the same after aic8800-bluetooth changes, the version
-# collides with the previous build, and the deb comes back out of the cache with the
-# old script in it.
-function extension_prepare_config__sophgo_sg200x_aic8800_hash_bsp_dir() {
-	declare -g -a BSP_CLI_EXTRA_HASH_DIRS
-	BSP_CLI_EXTRA_HASH_DIRS+=("${SRC}/packages/bsp/aic8800")
-}
-
 # The chip's Bluetooth side is a plain HCI H4 controller on uart4, already holding
 # the patch aic8800_bsp uploaded over SDIO - so all it needs is an hciattach at the
 # baud rate the patch table announces. These go into the BSP package rather than
 # straight into ${SDCARD} because they are executable assets: dpkg then owns them
 # and an armbian-bsp-cli upgrade carries fixes to installed systems.
+#
+# packages/bsp/sophgo-sg200x is hashed into the bsp-cli version by the family
+# config, so edits to either file below give the deb a new version; see the
+# BSP_CLI_EXTRA_HASH_DIRS comment in sophgo-sg200x_common.inc.
 function post_family_tweaks_bsp__sophgo_sg200x_aic8800_bluetooth() {
 	display_alert "SG200x AIC8800" "installing Bluetooth attach service" "info"
 
 	run_host_command_logged install -d -m 0755 "${destination}/usr/bin"
 	run_host_command_logged install -m 0755 \
-		"${SRC}/packages/bsp/aic8800/aic8800-bluetooth" \
+		"${SRC}/packages/bsp/sophgo-sg200x/usr/bin/aic8800-bluetooth" \
 		"${destination}/usr/bin/aic8800-bluetooth"
 
 	run_host_command_logged install -d -m 0755 "${destination}/usr/lib/systemd/system"
 	run_host_command_logged install -m 0644 \
-		"${SRC}/packages/bsp/aic8800/aic8800-bluetooth.service" \
+		"${SRC}/packages/bsp/sophgo-sg200x/usr/lib/systemd/system/aic8800-bluetooth.service" \
 		"${destination}/usr/lib/systemd/system/aic8800-bluetooth.service"
 }
 

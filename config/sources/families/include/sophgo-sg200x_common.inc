@@ -547,6 +547,11 @@ if [[ "${NETWORKING_STACK}" == "network-manager" ]]; then
 	declare -g PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY} dnsmasq-base"
 fi
 
+# Everything the post_family_tweaks_bsp hooks below install comes out of
+# packages/bsp/sophgo-sg200x.
+declare -g -a BSP_CLI_EXTRA_HASH_DIRS
+BSP_CLI_EXTRA_HASH_DIRS+=("${SRC}/packages/bsp/sophgo-sg200x")
+
 # Shipped on both storage variants; it refuses to touch its own root device.
 function post_family_tweaks_bsp__sophgo_sg200x_emmc_install_tool() {
 	display_alert "Sophgo SG200x" "installing eMMC install helper" "info"
