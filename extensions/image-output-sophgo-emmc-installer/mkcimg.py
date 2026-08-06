@@ -146,6 +146,14 @@ def pack(src_path, dst_path, offset, label, chunk_type, part_size=None):
             "image ends at byte %d on the target; the u32 offset field in the "
             "chunk header tops out at %d" % (offset + src_size, U32_MAX)
         )
+    # Only bites a hand-passed --part-size: the field is written as
+    # min(part_size, bytes through this chunk), and that second term only
+    # reaches 4GiB once there are 256 chunks, i.e. an image over 255*16MiB.
+    if part_size > U32_MAX:
+        raise ValueError(
+            "partition is %d bytes; the u32 partition size field in the chunk "
+            "header tops out at %d" % (part_size, U32_MAX)
+        )
 
     with open(src_path, "rb") as src, open(dst_path, "wb") as dst:
         dst.write(build_global_header(chunk_count, payload_size, label))
