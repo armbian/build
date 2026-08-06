@@ -518,10 +518,10 @@ driver_uwe5622() {
 	# Standalone driver with inline version guards for kernels 5.15-7.1
 	# Supports Allwinner (sun*) and Rockchip (rockchip64, rk35xx) platforms
 
-	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.2 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
+	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.3 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:fe49fbeba25be33a581f276ff33e051bb48f166c' # Commit date: Aug 02, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:ce59d2aafbdad2cd740ee203053ccfba058a20bc' # Commit date: Aug 06, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 
