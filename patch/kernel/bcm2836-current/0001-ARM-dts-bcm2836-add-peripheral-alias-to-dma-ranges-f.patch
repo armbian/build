@@ -1,0 +1,68 @@
+From 2ab2f9d7eed513f9bb2edb1431bef037e5bd8a56 Mon Sep 17 00:00:00 2001
+From: Matt Brocklehurst <matt@mattbrocklehurst.co.uk>
+Date: Thu, 6 Aug 2026 17:31:07 +0000
+Subject: [PATCH] ARM: dts: bcm2836: add peripheral alias to dma-ranges for
+ MMIO DMA
+
+The soc node has a single dma-ranges entry covering only the RAM
+window (0x0-0x3EFFFFFF -> VC bus 0xC0000000-0xFEFFFFFF). Peripherals
+under this node inherit dev->dma_range_map from that entry alone.
+
+With the DMA_ATTR_MMIO unification in the 6.18 dma-mapping refactor
+(dma_map_phys/dma_direct_map_phys), drivers that DMA-map their own
+MMIO register block (e.g. bcm2835-dma slave transfers to sdhosts
+FIFO register) now route that physical address through the same
+dev->dma_range_map translation as RAM buffers. sdhosts FIFO sits at
+0x3F202040, physical outside the RAM-only window, so the lookup in
+translate_phys_to_dma() finds no matching range and returns the
+no-translation sentinel (dma_addr_t)-1. dma_capable() correctly
+rejects that, and the driver never completes a transfer, so
+disk_scan_partitions() finds zero partitions on the root device and
+the kernel panics unable to mount root.
+
+Confirmed via gdb against QEMU (raspi2b machine, kernel built with
+CONFIG_DEBUG_INFO_DWARF5): dma_direct_map_phys() is reached with
+phys=0x3f202040, attrs=DMA_ATTR_MMIO, and dma_capable() returns false
+because dma_addr == DMA_MAPPING_ERROR (0xffffffff), not because of an
+arithmetic overflow against bus_dma_limit as the WARN message alone
+suggests.
+
+Fix by adding a second dma-ranges entry for the peripheral block,
+using the same 0x3f000000 -> 0x7e000000 alias the sibling ranges
+property (immediately above) already declares for CPU-side MMIO
+access to the same peripherals -- this DMA-side entry was simply
+missing, not a new value invented for this fix.
+
+Verified end to end: kernel boots, both partitions are detected, and
+the ext4 root filesystem mounts cleanly under QEMU raspi2b, where it
+previously panicked at VFS: Unable to mount root fs.
+
+Same dma-ranges line (byte-identical) exists in bcm2837.dtsi, so this
+likely affects Pi 3-class boards too -- see
+https://github.com/raspberrypi/linux/issues/7136, where the reported
+fix (daa7a3588ce0) restored phys_to_dma() translation for MMIO
+addresses but, per this analysis, does not by itself cover physical
+addresses outside the RAM-only dma-ranges window.
+
+Signed-off-by: Matt Brocklehurst <matt@mattbrocklehurst.co.uk>
+---
+ arch/arm/boot/dts/broadcom/bcm2836.dtsi | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/broadcom/bcm2836.dtsi b/arch/arm/boot/dts/broadcom/bcm2836.dtsi
+index 783fe624ba68..4ab7769c056a 100644
+--- a/arch/arm/boot/dts/broadcom/bcm2836.dtsi
++++ b/arch/arm/boot/dts/broadcom/bcm2836.dtsi
+@@ -8,7 +8,8 @@ / {
+ 	soc {
+ 		ranges = <0x7e000000 0x3f000000 0x1000000>,
+ 			 <0x40000000 0x40000000 0x00001000>;
+-		dma-ranges = <0xc0000000 0x00000000 0x3f000000>;
++		dma-ranges = <0xc0000000 0x00000000 0x3f000000>,
++			     <0x7e000000 0x3f000000 0x01000000>;
+ 
+ 		local_intc: interrupt-controller@40000000 {
+ 			compatible = "brcm,bcm2836-l1-intc";
+-- 
+2.43.0
+
