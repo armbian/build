@@ -16,6 +16,7 @@ function artifact_armbian-bsp-cli_config_dump() {
 function artifact_armbian-bsp-cli_prepare_version() {
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
+	: "${LINUXFAMILY:?LINUXFAMILY is not set}" # empty would make the packages/bsp hash below cover the whole tree
 
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
@@ -74,20 +75,19 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common"         # common stuff
-		"${SRC}/packages/bsp/${LINUXFAMILY}" # family files installed by post_family_tweaks_bsp hooks, see below
+		"${SRC}/packages/bsp/${LINUXFAMILY}" # family files, installed by post_family_tweaks_bsp hooks
+		"${SRC}/packages/bsp/${BOARD}"       # board files, ditto
 		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
 		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
 		"${SRC}/config/optional/boards/${BOARD}/_packages/bsp-cli"
 	)
 
-	# Anything else under packages/ a family or extension installs into ${destination} from a
-	# post_family_tweaks_bsp hook. The hooks themselves are hashed just above, but only as source
-	# text: an `install ${SRC}/packages/bsp/foo/bar` line is unchanged when bar's contents change,
-	# so a directory that no entry above reaches is invisible to the version and the deb is then
-	# served from cache with the old file in it. Append the directory here (from the family config
-	# or an extension's extension_prepare_config) and its contents version the package like every
-	# other input does.
+	# The hooks are hashed above, but only as source text: an `install ${SRC}/packages/bsp/foo/bar`
+	# line reads the same whether bar changed or not. Directories no entry above reaches - shared
+	# ones like packages/bsp/aic8800 - are thus invisible to the version, and the deb comes back
+	# from cache with the old file in it. List them here, absolute, from the family config or an
+	# extension's extension_prepare_config.
 	dirs_to_hash+=("${BSP_CLI_EXTRA_HASH_DIRS[@]+"${BSP_CLI_EXTRA_HASH_DIRS[@]}"}")
 
 	declare hash_files="undetermined"
