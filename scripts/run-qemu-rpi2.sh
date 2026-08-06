@@ -18,8 +18,9 @@
 # device, no root required at all.
 #
 # Prerequisites:
-#   - qemu-system-arm, mtools, util-linux (sfdisk -- present by default on
-#     any Debian/Ubuntu base), xz-utils if the image is .img.xz
+#   - qemu-system-arm, qemu-utils (qemu-img), mtools, util-linux (sfdisk --
+#     present by default on any Debian/Ubuntu base), xz-utils if the image
+#     is .img.xz
 #   - A completed build: ./compile.sh BOARD=rpi2b BRANCH=current
 #     BUILD_MINIMAL=yes KERNEL_ONLY=no RELEASE=bookworm
 #
@@ -78,7 +79,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-for tool in qemu-system-arm sfdisk mcopy dd; do
+for tool in qemu-system-arm qemu-img sfdisk mcopy dd; do
 	command -v "$tool" > /dev/null 2>&1 || {
 		echo "error: $tool not found" >&2
 		exit 1
@@ -112,7 +113,11 @@ else
 fi
 
 # QEMU's raspi2b SD controller requires a power-of-2 size; round up.
-size_mib=$(($(stat -c %s "$RAW_IMG") / 1048576 + 1))
+# Ceiling division, not a flat "+1" -- the old formula doubled an
+# already-exact-MiB image (e.g. 4096 -> 8192) and, since RAW_IMG persists
+# across runs for .img.xz inputs, kept doubling it on every later invocation.
+image_bytes=$(stat -c %s "$RAW_IMG")
+size_mib=$(((image_bytes + 1048576 - 1) / 1048576))
 pow2_mib=1
 while ((pow2_mib < size_mib)); do pow2_mib=$((pow2_mib * 2)); done
 qemu-img resize -f raw "$RAW_IMG" "${pow2_mib}M" > /dev/null
