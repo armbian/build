@@ -512,8 +512,6 @@ driver_rtl88x2cs() {
 driver_uwe5622() {
 
 	# Wireless drivers for Unisoc uwe5622 wireless
-	# Standalone driver with inline version guards for kernels 5.15-7.1
-	# Supports Allwinner (sun*) and Rockchip (rockchip64, rk35xx) platforms
 
 	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
