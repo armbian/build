@@ -3,34 +3,30 @@ From: SuperKali <hello@superkali.me>
 Date: Thu, 2 Jul 2026 21:57:34 +0200
 Subject: drm/msm/dp: retrain the link in place instead of tearing it down
 
-The hotplug recovery work restores a replugged link by turning the
-link and pixel clocks off and back on under an active scanout, with
-no lock shared with the atomic path and every return value ignored.
-A compositor modeset racing it, which any EDID change triggers, then
-writes link registers on a gated clock domain: in the best case
-PUSH_IDLE times out, in the worst the access stalls the display noc
-and the firmware resets the SoC.
+The hotplug recovery work restores a replugged link by cycling the link
+and pixel clocks under an active scanout, sharing no lock with the
+atomic path and ignoring every return value. A compositor modeset
+racing it, which any EDID change triggers, then writes link registers
+on a gated clock domain: PUSH_IDLE times out at best, and at worst the
+access stalls the display noc and the firmware resets the SoC.
 
-Retrain in place instead, under the modeset locks, with the clocks
-on the whole time, and skip the retrain when the link already checks
-out. Training right after a replug can fail transiently, so retry a
-few times; once the retries run out, leave LINK_STATUS_BAD and send
-a hotplug event so userspace does a fresh modeset. A training
-failure in atomic_enable now schedules the same recovery instead of
-being ignored.
+Retrain in place instead, under the modeset locks and with the clocks
+on, and skip it when the link already checks out. Training right after
+a replug can fail transiently, so retry a few times before leaving
+LINK_STATUS_BAD and sending a hotplug event for a fresh modeset.
 
 Signed-off-by: SuperKali <hello@superkali.me>
 ---
  drivers/gpu/drm/msm/dp/dp_ctrl.c    | 18 +++
  drivers/gpu/drm/msm/dp/dp_ctrl.h    |  1 +
- drivers/gpu/drm/msm/dp/dp_display.c | 74 +++++++++-
- 3 files changed, 85 insertions(+), 8 deletions(-)
+ drivers/gpu/drm/msm/dp/dp_display.c | 81 ++++++++--
+ 3 files changed, 84 insertions(+), 16 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
 index 111111111111..222222222222 100644
 --- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
 +++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
-@@ -2135,6 +2135,24 @@ static int msm_dp_ctrl_link_maintenance(struct msm_dp_ctrl_private *ctrl)
+@@ -2133,6 +2133,24 @@ static int msm_dp_ctrl_link_maintenance(struct msm_dp_ctrl_private *ctrl)
  	return ret;
  }
  
@@ -80,9 +76,9 @@ index 111111111111..222222222222 100644
  
  #include "msm_drv.h"
  #include "msm_kms.h"
-@@ -37,6 +39,9 @@ MODULE_PARM_DESC(psr_enabled, "enable PSR for eDP and DP displays");
- #define EDID_RECHECK_TRIES	2
- #define EDID_RECHECK_DELAY_MS	2500
+@@ -34,6 +36,9 @@ MODULE_PARM_DESC(psr_enabled, "enable PSR for eDP and DP displays");
+ 
+ #define HPD_STRING_SIZE 30
  
 +#define HPD_RECOVERY_MAX_TRIES	5
 +#define HPD_RECOVERY_DELAY_MS	500
@@ -90,18 +86,19 @@ index 111111111111..222222222222 100644
  enum {
  	ISR_DISCONNECTED,
  	ISR_CONNECT_PENDING,
-@@ -60,6 +65,7 @@ struct msm_dp_display_private {
+@@ -57,6 +62,7 @@ struct msm_dp_display_private {
  	bool plugged;
  
  	struct delayed_work hpd_recovery_work;
 +	unsigned int hpd_recovery_tries;
  
- 	struct delayed_work edid_recheck_work;
- 	unsigned int edid_recheck_left;
-@@ -423,14 +429,61 @@ static void msm_dp_hpd_recovery_work(struct work_struct *work)
+ 	struct drm_device *drm_dev;
+ 
+@@ -393,25 +399,63 @@ static void msm_dp_hpd_recovery_work(struct work_struct *work)
  	struct delayed_work *dw = to_delayed_work(work);
  	struct msm_dp_display_private *dp =
  		container_of(dw, struct msm_dp_display_private, hpd_recovery_work);
+-	int rc;
 +	struct drm_connector *connector = dp->msm_dp_display.connector;
 +	struct drm_device *dev = dp->drm_dev;
 +	struct drm_modeset_acquire_ctx ctx;
@@ -109,20 +106,29 @@ index 111111111111..222222222222 100644
 +	int rc = 0;
 +	int ret;
  
--	if (!dp->msm_dp_display.power_on || !dp->plugged)
+-	mutex_lock(&dp->plugged_lock);
 +	if (!dp->msm_dp_display.power_on || !dp->plugged) {
 +		dp->hpd_recovery_tries = 0;
- 		return;
++		return;
 +	}
-+
+ 
+-	if (!dp->msm_dp_display.power_on || !dp->plugged)
+-		goto unlock;
 +	/* clocks stay on, and the locks serialize any concurrent commit */
 +	drm_modeset_acquire_init(&ctx, 0);
-+
+ 
+-	msm_dp_ctrl_off_link_stream(dp->ctrl);
+-	msm_dp_ctrl_on_link(dp->ctrl);
+-	rc = msm_dp_ctrl_on_stream(dp->ctrl, false);
+-	if (rc)
 +retry:
 +	ret = drm_modeset_lock(&dev->mode_config.connection_mutex, &ctx);
 +	if (ret)
-+		goto unlock;
-+
+ 		goto unlock;
+ 
+-	drm_connector_set_link_status_property(dp->msm_dp_display.connector,
+-					       DRM_MODE_LINK_STATUS_GOOD);
+-	msm_dp_display_handle_plugged_change(&dp->msm_dp_display, true);
 +	crtc = connector->state->crtc;
 +	if (crtc) {
 +		ret = drm_modeset_lock(&crtc->mutex, &ctx);
@@ -133,10 +139,8 @@ index 111111111111..222222222222 100644
 +	if (dp->msm_dp_display.power_on && dp->plugged)
 +		rc = msm_dp_ctrl_retrain_link(dp->ctrl);
  
--	msm_dp_ctrl_off_link_stream(dp->ctrl);
--	msm_dp_ctrl_on_link(dp->ctrl);
--	msm_dp_ctrl_on_stream(dp->ctrl, false);
-+unlock:
+ unlock:
+-	mutex_unlock(&dp->plugged_lock);
 +	if (ret == -EDEADLK) {
 +		ret = drm_modeset_backoff(&ctx);
 +		if (!ret)
@@ -151,7 +155,7 @@ index 111111111111..222222222222 100644
 +					      msecs_to_jiffies(HPD_RECOVERY_DELAY_MS));
 +			return;
 +		}
- 
++
 +		DRM_ERROR("link recovery failed after %u tries. rc=%d\n",
 +			  dp->hpd_recovery_tries, rc);
 +		dp->hpd_recovery_tries = 0;
@@ -161,10 +165,12 @@ index 111111111111..222222222222 100644
 +	}
 +
 +	dp->hpd_recovery_tries = 0;
- 	drm_connector_set_link_status_property(dp->msm_dp_display.connector,
- 					       DRM_MODE_LINK_STATUS_GOOD);
++	drm_connector_set_link_status_property(dp->msm_dp_display.connector,
++					       DRM_MODE_LINK_STATUS_GOOD);
  }
-@@ -471,7 +524,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+@@ -450,7 +494,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
  		drm_connector_set_link_status_property(dp->msm_dp_display.connector,
  						       DRM_MODE_LINK_STATUS_BAD);
  
@@ -174,8 +180,8 @@ index 111111111111..222222222222 100644
 +				      msecs_to_jiffies(HPD_RECOVERY_DELAY_MS));
  	}
  
- 	if (!ret && drm_dp_is_branch(dp->panel->dpcd)) {
-@@ -1623,9 +1678,12 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
+ 	drm_dbg_dp(dp->drm_dev, "After, type=%d sink_count=%d\n",
+@@ -1603,9 +1649,12 @@ void msm_dp_bridge_atomic_enable(struct drm_bridge *drm_bridge,
  	}
  
  	rc = msm_dp_ctrl_on_link(msm_dp_display->ctrl);

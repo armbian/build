@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xilin Wu <sophon@radxa.com>
+Date: Sun, 7 Jun 2026 10:51:00 +0800
+Subject: [PATCH 12/12] media: qcom: iris: print firmware SFR message on system
+ error
+
+Iris already allocates an SFR buffer and passes it to the firmware, but
+does not print the firmware-provided failure reason when a system error
+is reported.
+
+Add a common Iris HFI helper to read the SFR buffer safely and print the
+message with a bounded string length, then call it from the Gen1 and Gen2
+system error handlers before recovery frees the queue memory.
+
+This matches the existing upstream Venus behavior and helps diagnose
+firmware fatal errors.
+
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+(cherry picked from commit 595c088c78a5418c75028c2575cad03a69429781)
+---
+ .../platform/qcom/iris/iris_hfi_common.c      | 26 +++++++++++++++++++
+ .../platform/qcom/iris/iris_hfi_common.h      |  1 +
+ .../qcom/iris/iris_hfi_gen1_response.c        |  5 +++-
+ .../qcom/iris/iris_hfi_gen2_response.c        |  2 ++
+ 4 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_common.c b/drivers/media/platform/qcom/iris/iris_hfi_common.c
+index 621c66593d88..d754ed1bc636 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_common.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_common.c
+@@ -10,6 +10,11 @@
+ #include "iris_hfi_common.h"
+ #include "iris_vpu_common.h"
+ 
++struct iris_hfi_sfr {
++	u32 buf_size;
++	u8 data[];
++};
++
+ u32 iris_hfi_get_v4l2_color_primaries(u32 hfi_primaries)
+ {
+ 	switch (hfi_primaries) {
+@@ -90,6 +95,27 @@ int iris_hfi_core_init(struct iris_core *core)
+ 	return hfi_ops->sys_interframe_powercollapse(core);
+ }
+ 
++void iris_hfi_sfr_print(struct iris_core *core)
++{
++	struct iris_hfi_sfr *sfr = core->sfr_vaddr;
++	u32 size, data_size;
++
++	if (!sfr)
++		return;
++
++	size = sfr->buf_size;
++	if (size <= sizeof(*sfr))
++		return;
++
++	if (size > SFR_SIZE)
++		size = SFR_SIZE;
++
++	data_size = size - sizeof(*sfr);
++
++	dev_err_ratelimited(core->dev, "SFR message from FW: %.*s\n",
++			    (int)data_size, sfr->data);
++}
++
+ irqreturn_t iris_hfi_isr(int irq, void *data)
+ {
+ 	disable_irq_nosync(irq);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_common.h b/drivers/media/platform/qcom/iris/iris_hfi_common.h
+index 3edb5ae582b4..5cac08c89c34 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_common.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_common.h
+@@ -150,6 +150,7 @@ u32 iris_hfi_get_v4l2_color_primaries(u32 hfi_primaries);
+ u32 iris_hfi_get_v4l2_transfer_char(u32 hfi_characterstics);
+ u32 iris_hfi_get_v4l2_matrix_coefficients(u32 hfi_coefficients);
+ int iris_hfi_core_init(struct iris_core *core);
++void iris_hfi_sfr_print(struct iris_core *core);
+ int iris_hfi_pm_suspend(struct iris_core *core);
+ int iris_hfi_pm_resume(struct iris_core *core);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+index 8e864c239e29..0e2042abf6dd 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -220,11 +220,14 @@ iris_hfi_gen1_sys_event_notify(struct iris_core *core, void *packet)
+ 	struct hfi_msg_event_notify_pkt *pkt = packet;
+ 	struct iris_inst *instance;
+ 
+-	if (pkt->event_id == HFI_EVENT_SYS_ERROR)
++	if (pkt->event_id == HFI_EVENT_SYS_ERROR) {
+ 		dev_err(core->dev, "sys error (type: %x, session id:%x, data1:%x, data2:%x)\n",
+ 			pkt->event_id, pkt->shdr.session_id, pkt->event_data1,
+ 			pkt->event_data2);
+ 
++		iris_hfi_sfr_print(core);
++	}
++
+ 	core->state = IRIS_CORE_ERROR;
+ 
+ 	mutex_lock(&core->lock);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 8e19f61bbbf9..09f7594781ff 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -280,6 +280,8 @@ static int iris_hfi_gen2_handle_system_error(struct iris_core *core,
+ 	if (pkt)
+ 		dev_err(core->dev, "received system error of type %#x\n", pkt->type);
+ 
++	iris_hfi_sfr_print(core);
++
+ 	core->state = IRIS_CORE_ERROR;
+ 
+ 	mutex_lock(&core->lock);

@@ -117,10 +117,27 @@ for one_repo_target in repo_targets:
 	all_debs_to_include_quoted = ['"${INCOMING_DEBS_DIR}/' + x + '"' for x in all_debs_to_include]
 
 	if len(all_debs_to_include) > 0:
-		# add all debs to the repop
-		cmds = ["reprepro", "-b", '"${REPO_LOCATION}"', "--component", "main", "includedeb", one_repo_target] + all_debs_to_include_quoted
-		bash_lines.append(f"echo 'reprepro importing {len(all_debs_to_include_quoted)} debs for target {one_repo_target}...' ")
-		bash_lines.append(" ".join(cmds))
+		# Import only the debs that are actually present on disk. A partial build
+		# (some artifacts not yet published to OCI, so debs-to-repo-download could
+		# not fetch them) would otherwise make reprepro error out on the first
+		# missing file and, under the script's `set -e`, abort before the export --
+		# losing the whole repository. Collect the present ones at run time and skip
+		# the rest, mirroring how the raw-deb sync tolerates gaps. Only the count of
+		# skipped debs is logged (not one line each): a target can hold thousands of
+		# debs, so per-deb logging balloons the CI log to hundreds of MB.
+		bash_lines.append(f"echo 'reprepro: target {one_repo_target}: selecting present debs (of {len(all_debs_to_include_quoted)} expected)...'")
+		bash_lines.append("present_debs=()")
+		bash_lines.append("missing_debs=0")
+		bash_lines.append("for one_deb in " + " ".join(all_debs_to_include_quoted) + "; do")
+		bash_lines.append('	if [ -f "${one_deb}" ]; then present_debs+=("${one_deb}"); else missing_debs=$((missing_debs + 1)); fi')
+		bash_lines.append("done")
+		bash_lines.append('[ "${missing_debs}" -gt 0 ] && echo "  ${missing_debs} expected deb(s) not present on disk, skipped"')
+		bash_lines.append('if [ "${#present_debs[@]}" -gt 0 ]; then')
+		bash_lines.append(f'	echo "reprepro importing ${{#present_debs[@]}} debs for target {one_repo_target}..."')
+		bash_lines.append(f'	reprepro -b "${{REPO_LOCATION}}" --component main includedeb {one_repo_target} "${{present_debs[@]}}"')
+		bash_lines.append("else")
+		bash_lines.append(f'	echo "reprepro: target {one_repo_target}: no debs present, skipping includedeb"')
+		bash_lines.append("fi")
 
 # Always export at the end
 export_cmds = ["reprepro", "-b", '"${REPO_LOCATION}"', "export"]

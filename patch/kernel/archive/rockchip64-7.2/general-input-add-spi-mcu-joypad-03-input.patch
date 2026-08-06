@@ -1,0 +1,435 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] input: joystick: spi-mcu-joypad - input device
+
+Register the input_dev and report the six analog axes decoded from the
+MCU frames. Part of the spi-mcu-joypad module. Driver from ROCKNIX.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+--- a/drivers/input/joystick/spi-mcu-joypad/spi-mcu-joypad-input.c
++++ b/drivers/input/joystick/spi-mcu-joypad/spi-mcu-joypad-input.c
+@@ -0,0 +1,424 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * SPI MCU Joypad — input subsystem
++ *
++ * Registers an input_dev with 6 ABS axes.  Handles:
++ *   - Auto-center calibration at probe (average N frames)
++ *   - Asymmetric per-axis range mapping to signed [-32767..32767]
++ *   - Per-stick radial deadzone with edge rescaling
++ *   - Per-trigger linear deadzone with edge rescaling
++ *   - sysfs attributes for runtime deadzone tuning
++ */
++
++#include <linux/math.h>
++
++#include "spi-mcu-joypad.h"
++
++static s32 calibrate_axis(s32 raw, s32 cal_min, s32 cal_max, s32 cal_zero)
++{
++	s32 result = 0;
++
++	if (raw > cal_zero) {
++		s32 range = cal_max - cal_zero;
++
++		if (range > 0) {
++			result = ((raw - cal_zero) * MCU_AXIS_MAX) / range;
++			result = min_t(s32, result, MCU_AXIS_MAX);
++		}
++	} else if (raw < cal_zero) {
++		s32 range = cal_zero - cal_min;
++
++		if (range > 0) {
++			result = -((cal_zero - raw) * (-MCU_AXIS_MIN)) / range;
++			result = max_t(s32, result, MCU_AXIS_MIN);
++		}
++	}
++
++	return result;
++}
++
++static void apply_radial_deadzone(s32 *px, s32 *py, u32 deadzone)
++{
++	s32 x = *px;
++	s32 y = *py;
++	u64 mag_sq = (s64)x * x + (s64)y * y;
++	u64 dead_sq = (u64)deadzone * deadzone;
++	u32 mag;
++
++	if (deadzone == 0)
++		return;
++
++	if (mag_sq <= dead_sq) {
++		*px = 0;
++		*py = 0;
++		return;
++	}
++
++	/* Rescale: map [deadzone..max_dist] -> [0..max_dist]. */
++	mag = int_sqrt(mag_sq);
++	if (mag > 0) {
++		*px = (s32)((s64)x * (mag - deadzone) / mag);
++		*py = (s32)((s64)y * (mag - deadzone) / mag);
++	}
++}
++
++static s32 apply_linear_deadzone(s32 val, u32 deadzone)
++{
++	s32 sign, abs_val;
++
++	if (deadzone == 0)
++		return val;
++
++	sign = (val >= 0) ? 1 : -1;
++	abs_val = abs(val);
++
++	if (abs_val <= (s32)deadzone)
++		return 0;
++
++	/* Rescale: [deadzone..AXIS_MAX] -> [0..AXIS_MAX]. */
++	return sign * (s32)(((s64)(abs_val - deadzone) * MCU_AXIS_MAX) /
++			    (MCU_AXIS_MAX - (s32)deadzone));
++}
++
++/*
++ * Read MCU_CAL_FRAMES SPI frames and average the raw axis values to
++ * determine the at-rest center for each stick and trigger.
++ */
++
++int mcu_joypad_calibrate(struct mcu_joypad *mjp)
++{
++	struct spi_transfer xfer = {
++		.tx_buf = mjp->tx_buf,
++		.rx_buf = mjp->rx_buf,
++		.len    = MCU_BUF_LEN,
++	};
++	u32 sum[MCU_NUM_AXES] = { };
++	int good_frames = 0;
++	u16 axes[MCU_NUM_AXES];
++	int i, err;
++
++	dev_info(mjp->dev, "auto-calibration: reading %d frames...\n",
++		 MCU_CAL_FRAMES);
++
++	for (i = 0; i < MCU_CAL_FRAMES + 10; i++) {
++		err = spi_sync_transfer(mjp->spi, &xfer, 1);
++		if (err) {
++			dev_dbg(mjp->dev, "cal: SPI error %d on frame %d\n",
++				err, i);
++			msleep(mjp->poll_interval_ms);
++			continue;
++		}
++
++		err = mcu_parse_rx(mjp->rx_buf, axes);
++		if (err) {
++			msleep(mjp->poll_interval_ms);
++			continue;
++		}
++
++		for (int a = 0; a < MCU_NUM_AXES; a++)
++			sum[a] += axes[a];
++		good_frames++;
++
++		if (good_frames >= MCU_CAL_FRAMES)
++			break;
++
++		msleep(mjp->poll_interval_ms);
++	}
++
++	if (good_frames == 0) {
++		dev_err(mjp->dev, "auto-calibration failed: no valid frames\n");
++		return -EIO;
++	}
++
++	/* Left stick */
++	mjp->left_cal.x_zero = sum[0] / good_frames;
++	mjp->left_cal.y_zero = sum[1] / good_frames;
++
++	/* Right stick */
++	mjp->right_cal.x_zero = sum[2] / good_frames;
++	mjp->right_cal.y_zero = sum[3] / good_frames;
++
++	/* Triggers */
++	mjp->trig_l_zero = sum[4] / good_frames;
++	mjp->trig_r_zero = sum[5] / good_frames;
++
++	/*
++	 * Seed min/max for dynamic tracking.  If DT provided a range,
++	 * keep it as the starting point so it gives usable scaling from
++	 * the first frame.  Otherwise seed to the zero point so the
++	 * range grows from nothing as the user exercises the sticks.
++	 */
++	if (!mjp->left_cal.has_dt_range) {
++		mjp->left_cal.x_min = mjp->left_cal.x_zero;
++		mjp->left_cal.x_max = mjp->left_cal.x_zero;
++		mjp->left_cal.y_min = mjp->left_cal.y_zero;
++		mjp->left_cal.y_max = mjp->left_cal.y_zero;
++	}
++	if (!mjp->right_cal.has_dt_range) {
++		mjp->right_cal.x_min = mjp->right_cal.x_zero;
++		mjp->right_cal.x_max = mjp->right_cal.x_zero;
++		mjp->right_cal.y_min = mjp->right_cal.y_zero;
++		mjp->right_cal.y_max = mjp->right_cal.y_zero;
++	}
++
++	mjp->calibrated = true;
++
++	dev_info(mjp->dev,
++		 "auto-calibration complete: L(%d,%d) R(%d,%d) T(%d,%d)\n",
++		 mjp->left_cal.x_zero, mjp->left_cal.y_zero,
++		 mjp->right_cal.x_zero, mjp->right_cal.y_zero,
++		 mjp->trig_l_zero, mjp->trig_r_zero);
++
++	return 0;
++}
++
++/*
++ * Update dynamic min/max tracking for a stick calibration pair.
++ * Called every poll cycle so the scaling range adapts to the actual
++ * physical limits of each stick as the user exercises them.
++ */
++static void update_minmax(struct mcu_stick_cal *cal, s32 x, s32 y)
++{
++	if (x < cal->x_min)
++		cal->x_min = x;
++	if (x > cal->x_max)
++		cal->x_max = x;
++	if (y < cal->y_min)
++		cal->y_min = y;
++	if (y > cal->y_max)
++		cal->y_max = y;
++}
++
++void mcu_joypad_input_report(struct mcu_joypad *mjp, const u16 raw[MCU_NUM_AXES])
++{
++	struct mcu_stick_cal *lc = &mjp->left_cal;
++	struct mcu_stick_cal *rc = &mjp->right_cal;
++	s32 lx, ly, rx, ry, lt, rt;
++
++	/* Track actual physical range so calibration scaling is correct. */
++	update_minmax(lc, (s32)raw[0], (s32)raw[1]);
++	update_minmax(rc, (s32)raw[2], (s32)raw[3]);
++
++	/* Asymmetric calibration: raw -> signed [-32767..32767]. */
++	lx = calibrate_axis(raw[0], lc->x_min, lc->x_max, lc->x_zero);
++	ly = calibrate_axis(raw[1], lc->y_min, lc->y_max, lc->y_zero);
++	rx = calibrate_axis(raw[2], rc->x_min, rc->x_max, rc->x_zero);
++	ry = calibrate_axis(raw[3], rc->y_min, rc->y_max, rc->y_zero);
++	lt = calibrate_axis(raw[4], MCU_RAW_MIN, MCU_RAW_MAX, mjp->trig_l_zero);
++	rt = calibrate_axis(raw[5], MCU_RAW_MIN, MCU_RAW_MAX, mjp->trig_r_zero);
++
++	apply_radial_deadzone(&lx, &ly, mjp->deadzone_left);
++	apply_radial_deadzone(&rx, &ry, mjp->deadzone_right);
++
++	lt = apply_linear_deadzone(lt, mjp->deadzone_triggers);
++	rt = apply_linear_deadzone(rt, mjp->deadzone_triggers);
++
++	input_report_abs(mjp->input, ABS_X,  lx);
++	input_report_abs(mjp->input, ABS_Y,  ly);
++	input_report_abs(mjp->input, ABS_RX, rx);
++	input_report_abs(mjp->input, ABS_RY, ry);
++	input_report_abs(mjp->input, ABS_Z,  lt);
++	input_report_abs(mjp->input, ABS_RZ, rt);
++	input_sync(mjp->input);
++}
++
++static ssize_t deadzone_left_show(struct device *dev,
++				  struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->deadzone_left);
++}
++
++static ssize_t deadzone_left_store(struct device *dev,
++				   struct device_attribute *attr,
++				   const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u32 val;
++
++	if (kstrtou32(buf, 0, &val))
++		return -EINVAL;
++	if (val > MCU_AXIS_MAX)
++		return -ERANGE;
++
++	mjp->deadzone_left = val;
++	return count;
++}
++static DEVICE_ATTR_RW(deadzone_left);
++
++static ssize_t deadzone_right_show(struct device *dev,
++				   struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->deadzone_right);
++}
++
++static ssize_t deadzone_right_store(struct device *dev,
++				    struct device_attribute *attr,
++				    const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u32 val;
++
++	if (kstrtou32(buf, 0, &val))
++		return -EINVAL;
++	if (val > MCU_AXIS_MAX)
++		return -ERANGE;
++
++	mjp->deadzone_right = val;
++	return count;
++}
++static DEVICE_ATTR_RW(deadzone_right);
++
++static ssize_t deadzone_triggers_show(struct device *dev,
++				      struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->deadzone_triggers);
++}
++
++static ssize_t deadzone_triggers_store(struct device *dev,
++				       struct device_attribute *attr,
++				       const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u32 val;
++
++	if (kstrtou32(buf, 0, &val))
++		return -EINVAL;
++	if (val > MCU_AXIS_MAX)
++		return -ERANGE;
++
++	mjp->deadzone_triggers = val;
++	return count;
++}
++static DEVICE_ATTR_RW(deadzone_triggers);
++
++static struct attribute *mcu_joypad_input_attrs[] = {
++	&dev_attr_deadzone_left.attr,
++	&dev_attr_deadzone_right.attr,
++	&dev_attr_deadzone_triggers.attr,
++	NULL,
++};
++
++static const struct attribute_group mcu_joypad_input_attr_group = {
++	.attrs = mcu_joypad_input_attrs,
++};
++
++static int mcu_joypad_input_open(struct input_dev *input)
++{
++	struct mcu_joypad *mjp = input_get_drvdata(input);
++
++	mjp->input_opened = true;
++	return 0;
++}
++
++static void mcu_joypad_input_close(struct input_dev *input)
++{
++	struct mcu_joypad *mjp = input_get_drvdata(input);
++
++	mjp->input_opened = false;
++}
++
++static void mcu_joypad_init_cal_defaults(struct mcu_joypad *mjp)
++{
++	struct device *dev = mjp->dev;
++
++	/*
++	 * Analog stick ranges. If DT provides min/max, use them as the
++	 * initial scaling range (auto-cal still captures the zero point,
++	 * and dynamic tracking will refine further).  Without DT values,
++	 * auto-cal seeds min/max to the zero point so range grows from
++	 * nothing as the user exercises the sticks.
++	 */
++	mjp->left_cal.has_dt_range =
++		!device_property_read_u32(dev, "abs-x-min",
++					 (u32 *)&mjp->left_cal.x_min) |
++		!device_property_read_u32(dev, "abs-x-max",
++					 (u32 *)&mjp->left_cal.x_max) |
++		!device_property_read_u32(dev, "abs-y-min",
++					 (u32 *)&mjp->left_cal.y_min) |
++		!device_property_read_u32(dev, "abs-y-max",
++					 (u32 *)&mjp->left_cal.y_max);
++	if (!mjp->left_cal.has_dt_range) {
++		mjp->left_cal.x_min = MCU_RAW_MIN;
++		mjp->left_cal.x_max = MCU_RAW_MAX;
++		mjp->left_cal.y_min = MCU_RAW_MIN;
++		mjp->left_cal.y_max = MCU_RAW_MAX;
++	}
++
++	mjp->right_cal.has_dt_range =
++		!device_property_read_u32(dev, "abs-rx-min",
++					 (u32 *)&mjp->right_cal.x_min) |
++		!device_property_read_u32(dev, "abs-rx-max",
++					 (u32 *)&mjp->right_cal.x_max) |
++		!device_property_read_u32(dev, "abs-ry-min",
++					 (u32 *)&mjp->right_cal.y_min) |
++		!device_property_read_u32(dev, "abs-ry-max",
++					 (u32 *)&mjp->right_cal.y_max);
++	if (!mjp->right_cal.has_dt_range) {
++		mjp->right_cal.x_min = MCU_RAW_MIN;
++		mjp->right_cal.x_max = MCU_RAW_MAX;
++		mjp->right_cal.y_min = MCU_RAW_MIN;
++		mjp->right_cal.y_max = MCU_RAW_MAX;
++	}
++
++	/* Fallback center at midpoint, auto-cal will overwrite. */
++	mjp->left_cal.x_zero  = (mjp->left_cal.x_min + mjp->left_cal.x_max) / 2;
++	mjp->left_cal.y_zero  = (mjp->left_cal.y_min + mjp->left_cal.y_max) / 2;
++	mjp->right_cal.x_zero = (mjp->right_cal.x_min + mjp->right_cal.x_max) / 2;
++	mjp->right_cal.y_zero = (mjp->right_cal.y_min + mjp->right_cal.y_max) / 2;
++	mjp->trig_l_zero = (MCU_RAW_MIN + MCU_RAW_MAX) / 2;
++	mjp->trig_r_zero = (MCU_RAW_MIN + MCU_RAW_MAX) / 2;
++
++	/* Deadzone defaults, overridable from DT. */
++	mjp->deadzone_left     = MCU_DEADZONE_DEFAULT;
++	mjp->deadzone_right    = MCU_DEADZONE_DEFAULT;
++	mjp->deadzone_triggers = MCU_DEADZONE_DEFAULT;
++	device_property_read_u32(dev, "deadzone-left",     &mjp->deadzone_left);
++	device_property_read_u32(dev, "deadzone-right",    &mjp->deadzone_right);
++	device_property_read_u32(dev, "deadzone-triggers", &mjp->deadzone_triggers);
++}
++
++int mcu_joypad_input_register(struct mcu_joypad *mjp)
++{
++	struct input_dev *input;
++	int err;
++
++	static const unsigned int axis_codes[MCU_NUM_AXES] = {
++		ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ,
++	};
++
++	mcu_joypad_init_cal_defaults(mjp);
++
++	input = devm_input_allocate_device(mjp->dev);
++	if (!input)
++		return -ENOMEM;
++
++	mjp->input = input;
++	input_set_drvdata(input, mjp);
++
++	input->name = "MCU Joypad";
++	input->phys = dev_name(mjp->dev);
++	input->id.bustype = BUS_SPI;
++
++	input->open  = mcu_joypad_input_open;
++	input->close = mcu_joypad_input_close;
++
++	for (int i = 0; i < MCU_NUM_AXES; i++)
++		input_set_abs_params(input, axis_codes[i],
++				     MCU_AXIS_MIN, MCU_AXIS_MAX, 0, 0);
++
++	err = input_register_device(input);
++	if (err)
++		return err;
++
++	err = devm_device_add_group(mjp->dev, &mcu_joypad_input_attr_group);
++	if (err)
++		dev_warn(mjp->dev, "failed to create deadzone sysfs: %d\n", err);
++
++	return 0;
++}

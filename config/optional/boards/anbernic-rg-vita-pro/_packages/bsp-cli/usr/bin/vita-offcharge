@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+# Android-style off-charge mode: when the device powered on because a charger
+# was plugged in (RK806 treats plug-in as a power-on event), show a battery
+# screen instead of booting to the desktop; power off again when unplugged,
+# continue normal boot if the power button is pressed.
+#
+# Runs as a oneshot before the display manager / getty. Exit 0 = boot goes on.
+# Config in /etc/default/vita-offcharge:
+#   PWRON_MASK=0x80   bit(s) set in ON_SOURCE when the power button caused boot
+#   DISABLE=1
+#   LOGFILE=/path     trace battery/charger/CPU while charging (unset = no trace)
+#   LOG_INTERVAL=10   seconds between trace samples
+import fcntl
+import glob
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+
+I2C_BUS = '/dev/i2c-1'
+PMIC_ADDR = 0x23
+ONSOURCE_REG = 0x74
+I2C_SLAVE_FORCE = 0x0706
+
+CONF = '/etc/default/vita-offcharge'
+TTY = '/dev/tty1'
+WARM_MARKER = '/var/lib/vita-offcharge/warm-reboot'
+
+
+def read_conf():
+    conf = {}
+    try:
+        with open(CONF) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    conf[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+def read_on_source():
+    fd = os.open(I2C_BUS, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, I2C_SLAVE_FORCE, PMIC_ADDR)
+        os.write(fd, bytes([ONSOURCE_REG]))
+        return os.read(fd, 1)[0]
+    finally:
+        os.close(fd)
+
+
+def battery():
+    cap, status = None, ''
+    for d in glob.glob('/sys/class/power_supply/*'):
+        try:
+            with open(d + '/type') as f:
+                if f.read().strip() != 'Battery':
+                    continue
+            with open(d + '/capacity') as f:
+                cap = int(f.read())
+            with open(d + '/status') as f:
+                status = f.read().strip()
+        except OSError:
+            continue
+    return cap, status
+
+
+def charger_online():
+    for d in glob.glob('/sys/class/power_supply/*/online'):
+        try:
+            with open(d) as f:
+                if f.read().strip() == '1':
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def read_str(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def cpu_busy(prev):
+    """Busy percentage since the previous /proc/stat snapshot."""
+    fields = read_str('/proc/stat').split()[1:9]
+    if len(fields) < 8:
+        return None, prev
+    vals = [int(x) for x in fields]
+    idle, total = vals[3] + vals[4], sum(vals)
+    if prev is None:
+        return None, (idle, total)
+    d_idle, d_total = idle - prev[0], total - prev[1]
+    pct = None if d_total <= 0 else 100.0 * (d_total - d_idle) / d_total
+    return pct, (idle, total)
+
+
+def log_sample(path, cpu_pct):
+    """Append one power/load sample. Only called when LOGFILE is configured."""
+    fields = [time.strftime('%H:%M:%S')]
+
+    for d in glob.glob('/sys/class/power_supply/*'):
+        name = os.path.basename(d)
+        kind = read_str(d + '/type')
+        if kind == 'Battery':
+            fields += [
+                'cap=' + read_str(d + '/capacity'),
+                'uV=' + read_str(d + '/voltage_now'),
+                'uA=' + read_str(d + '/current_now'),
+                'bat=' + read_str(d + '/status'),
+                'degC=' + read_str(d + '/temp'),
+            ]
+        elif read_str(d + '/online') == '1':
+            fields.append(f'src={name}:{read_str(d + "/charge_type") or "?"}')
+            for key, tag in (('input_current_limit', 'ilim'),
+                             ('current_max', 'imax'),
+                             ('voltage_max', 'vmax')):
+                val = read_str(f'{d}/{key}')
+                if val:
+                    fields.append(f'{tag}={val}')
+
+    khz = [read_str(p) for p in
+           sorted(glob.glob('/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq'))]
+    fields.append('cpu=%s' % ('?' if cpu_pct is None else '%.1f%%' % cpu_pct))
+    fields.append('cores=' + (read_str('/sys/devices/system/cpu/online') or '?'))
+    if any(khz):
+        fields.append('MHz=' + ','.join(str(int(k) // 1000) for k in khz if k))
+
+    try:
+        with open(path, 'a') as f:
+            f.write(' '.join(fields) + '\n')
+    except OSError:
+        pass
+
+
+def find_pwrkey():
+    import evdev
+    from evdev import ecodes
+    for p in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(p)
+        except OSError:
+            continue
+        if ecodes.KEY_POWER in dev.capabilities().get(ecodes.EV_KEY, []):
+            return dev
+        dev.close()
+    return None
+
+
+def draw(cap, status):
+    bar_len = 20
+    filled = 0 if cap is None else round(bar_len * cap / 100)
+    fill = '=' * filled
+    empty = ' ' * (bar_len - filled)
+    pct = '??' if cap is None else str(cap)
+    # Linux VT is 16-colour only (no 256/truecolour): green brackets,
+    # amber/orange bar fill (colour 33), bright-yellow percentage.
+    GRN, ORG, YEL, RST = '\033[32m', '\033[33m', '\033[93m', '\033[0m'
+    try:
+        with open(TTY, 'w') as t:
+            t.write('\033[2J\033[H\033[?25l\n\n\n')
+            t.write('        CHARGING\n\n')
+            t.write(f'        {GRN}[{RST}{ORG}{fill}{RST}{empty}{GRN}]{RST}'
+                    f'  {YEL}{pct}%{RST}  {status}\n\n')
+            t.write('        hold POWER to boot, unplug to stay off\n')
+    except OSError:
+        pass
+
+
+def backlight(on):
+    for p in glob.glob('/sys/class/backlight/*/bl_power'):
+        try:
+            with open(p, 'w') as f:
+                f.write('0' if on else '4')
+        except OSError:
+            pass
+
+
+def sysfs_write(path, value):
+    try:
+        with open(path, 'w') as f:
+            f.write(value)
+    except OSError:
+        pass
+
+
+def console_quiet(quiet):
+    # keep parallel boot units and kernel messages off our tty
+    sysfs_write('/proc/sys/kernel/printk', '1 4 1 7\n' if quiet else '4 4 1 7\n')
+    try:
+        os.kill(1, signal.SIGRTMIN + (21 if quiet else 20))
+    except OSError:
+        pass
+
+
+def enter_lowpower():
+    saved = {}
+    for p in glob.glob('/sys/devices/system/cpu/cpufreq/policy*/scaling_governor'):
+        try:
+            with open(p) as f:
+                saved[p] = f.read().strip()
+            sysfs_write(p, 'powersave')
+        except OSError:
+            pass
+    for p in glob.glob('/sys/class/backlight/*/brightness'):
+        try:
+            with open(p) as f:
+                saved[p] = f.read().strip()
+            sysfs_write(p, '48')
+        except OSError:
+            pass
+    return saved
+
+
+def leave_lowpower(saved):
+    for p, v in saved.items():
+        sysfs_write(p, v)
+
+
+def main():
+    conf = read_conf()
+    if conf.get('DISABLE') == '1':
+        return 0
+    try:
+        pwron_mask = int(conf['PWRON_MASK'], 0)
+    except (KeyError, ValueError):
+        return 0          # not calibrated: never block boot
+
+    # ON_SOURCE only changes on a cold power-on; skip after a warm reboot
+    if os.path.exists(WARM_MARKER):
+        os.unlink(WARM_MARKER)
+        return 0
+
+    # wait for the PMIC i2c node
+    for _ in range(20):
+        if os.path.exists(I2C_BUS):
+            break
+        time.sleep(0.5)
+    try:
+        on_source = read_on_source()
+    except OSError:
+        return 0
+    if on_source & pwron_mask:
+        return 0          # power button boot: continue normally
+
+    # Plug-in boot (ON_SOURCE is not the power button). Only show the charge
+    # screen if a charger is actually supplying power. A non-charging plug-in
+    # (USB data cable / keyboard / dead charger) reads online=0 on every
+    # power_supply -> just boot normally. We must NOT power off here: the
+    # board hardware re-powers-on from the plug-in event as long as the device
+    # stays attached, so a poweroff would immediately bounce back into an
+    # infinite off-charge/poweroff loop. Poll briefly first so a real charger
+    # whose power_supply node has not enumerated yet is not mistaken for one.
+    online = False
+    for _ in range(10):
+        if charger_online():
+            online = True
+            break
+        time.sleep(0.5)
+    if not online:
+        return 0          # non-charging plug-in: boot (poweroff would loop)
+
+    # plug-in boot: charge screen
+    from evdev import ecodes
+    pwrkey = None
+    for _ in range(20):
+        pwrkey = find_pwrkey()
+        if pwrkey:
+            break
+        time.sleep(0.5)
+
+    console_quiet(True)
+    saved = enter_lowpower()
+
+    def boot_on():
+        console_quiet(False)
+        leave_lowpower(saved)
+        backlight(True)
+        try:
+            with open(TTY, 'w') as t:
+                t.write('\033[2J\033[H\033[?25h')
+        except OSError:
+            pass
+        return 0
+
+    def conf_float(key, default):
+        try:
+            return float(conf.get(key, default))
+        except ValueError:
+            return float(default)
+
+    screen_timeout = conf_float('SCREEN_TIMEOUT', '10')
+    boot_hold = conf_float('BOOT_HOLD', '2')
+
+    # Optional charge-rate/load trace, off unless LOGFILE is set in the config.
+    logfile = conf.get('LOGFILE')
+    log_every = conf_float('LOG_INTERVAL', '10')
+    last_log = 0.0
+    cpu_prev = None
+
+    screen_on = True
+    lit_at = time.monotonic()
+    last_draw = 0.0
+    down_at = None
+    while True:
+        now = time.monotonic()
+
+        if logfile and now - last_log >= log_every:
+            cpu_pct, cpu_prev = cpu_busy(cpu_prev)
+            log_sample(logfile, cpu_pct)
+            last_log = now
+
+        if screen_on:
+            if now - last_draw >= 5:
+                draw(*battery())
+                last_draw = now
+            if now - lit_at >= screen_timeout and down_at is None:
+                backlight(False)
+                screen_on = False
+        if not charger_online():
+            backlight(True)
+            subprocess.run(['systemctl', 'poweroff', '--no-wall'])
+            time.sleep(60)
+            return 0
+        # long-press POWER boots; a short press (re)lights the screen
+        if pwrkey:
+            r, _, _ = select.select([pwrkey.fd], [], [], 1.0)
+            if r:
+                for ev in pwrkey.read():
+                    if ev.type != ecodes.EV_KEY or ev.code != ecodes.KEY_POWER:
+                        continue
+                    if ev.value == 1:
+                        down_at = time.monotonic()
+                    elif ev.value == 0 and down_at is not None:
+                        held = time.monotonic() - down_at
+                        down_at = None
+                        if held >= boot_hold:
+                            return boot_on()
+                        screen_on = True
+                        lit_at = time.monotonic()
+                        last_draw = 0.0
+                        backlight(True)
+            if down_at is not None and time.monotonic() - down_at >= boot_hold:
+                return boot_on()        # boot without waiting for release
+        else:
+            time.sleep(1)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

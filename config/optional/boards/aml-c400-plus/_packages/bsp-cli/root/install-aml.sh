@@ -123,8 +123,8 @@ if grep -q $PART_ROOT /proc/mounts ; then
 fi
 
 echo "Formatting ROOT partition..."
-mke2fs -F -q -t ext4 -L ROOT_EMMC -m 0 $PART_ROOT
-e2fsck -n $PART_ROOT
+mkfs.ext4 -F -q -O ^64bit -L ROOT_EMMC -m 0 "$PART_ROOT"
+#e2fsck -n $PART_ROOT
 echo "done."
 
 echo "Copying ROOTFS."

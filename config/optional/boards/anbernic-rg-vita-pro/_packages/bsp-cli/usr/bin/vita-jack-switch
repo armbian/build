@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+
+# Headphone-jack auto switch for the Anbernic RG Vita Pro.
+
+import re
+import subprocess
+import sys
+import time
+
+import evdev
+from evdev import ecodes
+
+CARD = 'rockchipes8388c'
+JACK_NAME_HINT = 'Headphones'
+
+
+def amixer(*args):
+    try:
+        return subprocess.run(['amixer', '-c', CARD, *args],
+                              capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        sys.exit('amixer not found')
+
+
+def set_speakers(on):
+    amixer('sset', 'Internal Speakers', 'on' if on else 'off')
+    print(f'internal speakers -> {"on" if on else "off"}', flush=True)
+
+
+def jack_inserted_via_kctl():
+    """Initial state from the ALSA jack kcontrol (e.g. 'Headphones Jack')."""
+    m = re.search(r"name='([^']*Jack[^']*)'", amixer('controls'))
+    if not m:
+        return None
+    out = amixer('cget', f'name={m.group(1)}')
+    m = re.search(r'values=(on|off)', out)
+    return m.group(1) == 'on' if m else None
+
+
+def find_jack_device():
+    for path in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(path)
+        except OSError:
+            continue
+        caps = dev.capabilities()
+        if JACK_NAME_HINT in dev.name and \
+           ecodes.SW_HEADPHONE_INSERT in caps.get(ecodes.EV_SW, []):
+            return dev
+        dev.close()
+    return None
+
+
+def main():
+    dev = None
+    for _ in range(60):
+        dev = find_jack_device()
+        if dev:
+            break
+        time.sleep(2)
+    if not dev:
+        sys.exit('headphone jack input device not found')
+    print(f'watching {dev.path} ({dev.name})', flush=True)
+
+    inserted = jack_inserted_via_kctl()
+    if inserted is not None:
+        set_speakers(not inserted)
+
+    for ev in dev.read_loop():
+        if ev.type == ecodes.EV_SW and ev.code == ecodes.SW_HEADPHONE_INSERT:
+            set_speakers(ev.value == 0)
+
+
+if __name__ == '__main__':
+    main()

@@ -9,6 +9,8 @@
 #
 import logging
 import os
+import shutil
+import sys
 
 import rich.box
 # Let's use GitPython to query and manipulate the git repo
@@ -20,6 +22,7 @@ from git import Repo
 import common.armbian_utils as armbian_utils
 import common.dt_makefile_patcher as dt_makefile_patcher
 import common.patching_utils as patching_utils
+import common.patching_parallel as patching_parallel
 from common.md_asset_log import SummarizedMarkdownWriter
 from common.md_asset_log import get_gh_pages_workflow_script
 from common.patching_config import PatchingConfig
@@ -49,6 +52,9 @@ SPLIT_PATCHES = armbian_utils.get_from_env("SPLIT_PATCHES")
 ALLOW_RECREATE_EXISTING_FILES = armbian_utils.get_from_env("ALLOW_RECREATE_EXISTING_FILES")
 GIT_ARCHEOLOGY = armbian_utils.get_from_env("GIT_ARCHEOLOGY")
 FAST_ARCHEOLOGY = armbian_utils.get_from_env("FAST_ARCHEOLOGY")
+PARALLEL_PATCHES = armbian_utils.get_from_env("PARALLEL_PATCHES")
+PARALLEL_WORKERS = armbian_utils.get_from_env("PARALLEL_WORKERS")
+LINUXFAMILY = armbian_utils.get_from_env("LINUXFAMILY")
 apply_patches = APPLY_PATCHES == "yes"
 apply_patches_to_git = PATCHES_TO_GIT == "yes"
 git_archeology = GIT_ARCHEOLOGY == "yes"
@@ -56,6 +62,8 @@ fast_archeology = FAST_ARCHEOLOGY == "yes"
 rewrite_patches_in_place = REWRITE_PATCHES == "yes"
 rewrite_only_patches_needing_rebase = REWRITE_PATCHES_NEEDING_REBASE == "yes"
 split_patches = SPLIT_PATCHES == "yes"
+# Parallel patches: only enable during rewrites when explicitly requested
+parallel_patches = rewrite_patches_in_place and (PARALLEL_PATCHES == "yes")
 apply_options = {
 	"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes"),
 	"set_patch_date": True,
@@ -220,12 +228,12 @@ for patch in VALID_PATCHES:
 		log.critical(f"Failed to parse {patch.parent.full_file_path()}(:{patch.counter}): {invalid_exception}")
 		log.critical(
 			f"Can't continue; please fix the patch file {patch.parent.full_file_path()} manually;"
-			f" check for possible double-mbox encoding. Sorry.")
+			" check for possible double-mbox encoding. Sorry.")
 
 if has_critical_parse_errors:
 	raise Exception("Critical errors found while parsing patches. Please fix the patch files manually.")
 
-log.debug(f"Parsed patches.")
+log.debug("Parsed patches.")
 
 # Now, for patches missing description, try to recover descriptions from the Armbian repo.
 # It might be the SRC is not a git repo (say, when building in Docker), so we need to check.
@@ -234,7 +242,7 @@ if apply_patches_to_git and git_archeology:
 		armbian_git_repo = Repo(SRC)
 	except InvalidGitRepositoryError:
 		armbian_git_repo = None
-		log.warning(f"- SRC is not a git repo, so cannot recover descriptions from there.")
+		log.warning("- SRC is not a git repo, so cannot recover descriptions from there.")
 	if armbian_git_repo is not None:
 		bad_archeology_hexshas = ["something"]
 
@@ -303,32 +311,151 @@ if apply_patches:
 	root_makefile_mtime = os.path.getmtime(root_makefile)
 	apply_options["root_makefile_date"] = root_makefile_mtime
 	log.debug(f"- Root Makefile '{root_makefile}' date: '{root_makefile_mtime}'")
-	chars_total = len(str(total_patches))
-	counter = 0
-	for one_patch in VALID_PATCHES:
-		counter += 1
-		counter_str = str(counter).zfill(chars_total)
 
-		log.info(f"-> {counter_str}/{total_patches}: {one_patch.str_oneline_around('', '')}")
-		one_patch.applied_ok = False
-		try:
-			one_patch.apply_patch(GIT_WORK_DIR, apply_options)
-			one_patch.applied_ok = True
-		except Exception as e:
-			log.error(f"Problem with {one_patch}: {e}")
-			any_failed_to_apply = True
-			failed_to_apply_list.append(one_patch)
+	# PARALLEL PROCESSING MODE (using overlayfs)
+	if parallel_patches:
+		log.info("Using parallel patch processing mode with overlayfs...")
 
-		if one_patch.applied_ok and apply_patches_to_git:
-			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches, pconfig)
+		# Calculate optimal workers or use specified number
+		if PARALLEL_WORKERS:
+			try:
+				num_workers = int(PARALLEL_WORKERS)
+				if num_workers < 0:
+					log.warning(f"Invalid PARALLEL_WORKERS value: {PARALLEL_WORKERS} (negative), using auto-calculate")
+					num_workers = patching_parallel.calculate_optimal_workers()
+			except ValueError:
+				log.warning(f"Invalid PARALLEL_WORKERS value: {PARALLEL_WORKERS}, using auto-calculate")
+				num_workers = patching_parallel.calculate_optimal_workers()
+		else:
+			num_workers = patching_parallel.calculate_optimal_workers()
 
-			if not split_patches and (committed is not None):
-				commit_hash = committed['commit_hash']
-				one_patch.git_commit_hash = commit_hash
+		# Prepare apply_options for parallel processing
+		parallel_apply_options = {
+			"allow_recreate_existing_files": apply_options["allow_recreate_existing_files"],
+			"set_patch_date": apply_options["set_patch_date"],
+			"rewrite_patches": rewrite_patches_in_place,
+			"split_patches": split_patches,
+			"add_rebase_tags": (not rewrite_patches_in_place),
+			"root_makefile_date": root_makefile_mtime,
+		}
 
-				if rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
-					rewritten_patch = patching_utils.export_commit_as_patch(git_repo, commit_hash)
-					one_patch.rewritten_patch = rewritten_patch
+		# Progress callback for parallel processing - match serial format
+		def progress_callback(completed, total, result):
+			chars_total = len(str(total))
+			counter_str = str(completed).zfill(chars_total)
+
+			if result.success:
+				# Build output similar to serial mode: -> 008/480: patch_id (+2/-0)[1M] {files}
+				patch_info = f"-> {counter_str}/{total}: {result.patch_id}"
+
+				# Add diffstats and files if available
+				if result.diffstats:
+					patch_info += f" {result.diffstats}"
+				if result.files:
+					patch_info += f" {{{result.files}}}"
+
+				log.info(f"[🔨]   {patch_info}")
+
+				# Add commit messages if available (from worker)
+				if result.commit_messages:
+					for msg in result.commit_messages:
+						log.info(f"[🔨]   {msg}")
+			else:
+				log.warning(f"[🔨]   -> {counter_str}/{total}: {result.patch_id} - FAILED: {result.error_message}")
+
+		# CRITICAL: In parallel mode, driver patches (is_autogen_dir) must be applied first
+		# so that all workers start from the same driver-modified base.
+		# Filter patches to separate drivers from regular patches
+		driver_patches = [p for p in VALID_PATCHES if p.parent.patch_dir.is_autogen_dir]
+		regular_patches = [p for p in VALID_PATCHES if not p.parent.patch_dir.is_autogen_dir]
+
+		parallel_base_revision = BASE_GIT_REVISION
+
+		# Apply driver patches first to establish common base for all workers
+		if driver_patches:
+			log.info(f"Applying {len(driver_patches)} driver patches first (sequential, establishes common base)...")
+			driver_counter = 0
+			for driver_patch in driver_patches:
+				driver_counter += 1
+				log.info(f"-> [DRIVER {driver_counter}/{len(driver_patches)}]: {driver_patch.str_oneline_around('', '')}")
+				driver_patch.applied_ok = False
+				try:
+					driver_patch.apply_patch(GIT_WORK_DIR, apply_options)
+					driver_patch.applied_ok = True
+				except Exception as e:
+					log.error(f"Problem with driver patch {driver_patch}: {e}")
+					any_failed_to_apply = True
+					failed_to_apply_list.append(driver_patch)
+
+				if driver_patch.applied_ok and apply_patches_to_git:
+					committed = driver_patch.commit_changes_to_git(git_repo, False, split_patches, pconfig)
+
+			# Get the new HEAD revision after driver patches - this becomes base for parallel processing
+			if not any_failed_to_apply:
+				parallel_base_revision = git_repo.head.commit.hexsha
+				log.info(f"Driver patches applied, new base revision: {parallel_base_revision[:12]}")
+			else:
+				log.error("Some driver patches failed, falling back to original base revision")
+
+		# Process regular patches in parallel
+		log.info(f"Processing {len(regular_patches)} regular patches in parallel...")
+		parallel_results = patching_parallel.process_patches_parallel(
+			patches=regular_patches,
+			git_work_dir=GIT_WORK_DIR,
+			base_revision=parallel_base_revision,
+			num_workers=num_workers,
+			root_makefile_date=root_makefile_mtime,
+			apply_options=parallel_apply_options,
+			pconfig=pconfig,
+			LINUXFAMILY=LINUXFAMILY or "",
+			progress_callback=progress_callback
+		)
+
+		# Update patch objects with parallel results (only regular patches, drivers already handled)
+		patching_parallel.update_patches_from_parallel_results(
+			patches=regular_patches,
+			parallel_results=parallel_results,
+			apply_options=parallel_apply_options,
+			git_repo=git_repo,
+			pconfig=pconfig
+		)
+
+		# Check for failures in regular patches only (drivers already recorded above)
+		for one_patch in regular_patches:
+			if not one_patch.applied_ok:
+				any_failed_to_apply = True
+				failed_to_apply_list.append(one_patch)
+
+		log.info(f"Parallel processing completed: {len(driver_patches)} driver patches + {len(regular_patches)} regular patches = {len(VALID_PATCHES)} total")
+
+	# SERIAL PROCESSING MODE (original implementation)
+	else:  # not parallel_patches
+		chars_total = len(str(total_patches))
+		counter = 0
+		for one_patch in VALID_PATCHES:
+			counter += 1
+			counter_str = str(counter).zfill(chars_total)
+
+			log.info(f"-> {counter_str}/{total_patches}: {one_patch.str_oneline_around('', '')}")
+			one_patch.applied_ok = False
+			try:
+				one_patch.apply_patch(GIT_WORK_DIR, apply_options)
+				one_patch.applied_ok = True
+			except Exception as e:
+				log.error(f"Problem with {one_patch}: {e}")
+				any_failed_to_apply = True
+				failed_to_apply_list.append(one_patch)
+
+			if one_patch.applied_ok and apply_patches_to_git:
+				committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches, pconfig)
+
+				if not split_patches and (committed is not None):
+					commit_hash = committed['commit_hash']
+					one_patch.git_commit_hash = commit_hash
+
+					if rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
+						rewritten_patch = patching_utils.export_commit_as_patch(git_repo, commit_hash)
+						one_patch.rewritten_patch = rewritten_patch
 
 	if (not apply_patches_to_git) and (not rewrite_patches_in_place) and any_failed_to_apply:
 		log.error(
@@ -377,7 +504,7 @@ if apply_patches:
 		for failed_patch in FAILED_PATCHES:
 			log.info(
 				f"Consider removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "
-				f"it was not applied successfully.")
+				"it was not applied successfully.")
 
 # Create markdown about the patches
 readme_markdown: "str | None" = None
@@ -387,7 +514,7 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 	patches_with_problems = 0
 	problem_by_type: dict[str, int] = {}
 	if total_patches == 0:
-		md.write(f"- No patches found.\n")
+		md.write("- No patches found.\n")
 	else:
 		# Prepare the Markdown table header
 		md.write(
@@ -443,16 +570,33 @@ from rich.console import Console
 from rich.table import Table
 from rich.syntax import Syntax
 
-# console width is COLUMNS env var minus 12, or just 160 if GITHUB_ACTIONS env is not empty
-console_width = (int(os.environ.get("COLUMNS", 160)) - 12) if os.environ.get("GITHUB_ACTIONS", "") == "" else 160
+CONSOLE_FALLBACK_WIDTH = 160   # no terminal to measure (CI logs, piped output)
+CONSOLE_WIDTH_MARGIN = 12      # columns reserved for table borders and cell padding
+CONSOLE_MIN_WIDTH = 40         # floor so very narrow terminals still render a table
+
+# Match the table to the width the reader actually has, so a wide and a narrow
+# terminal render the same patch set the same way (just taller/shorter):
+#  - GITHUB_ACTIONS: fixed width, CI logs have no real terminal.
+#  - a real terminal (or an explicit COLUMNS): use its width; get_terminal_size
+#    honours COLUMNS first, then queries the tty.
+#  - redirected/piped output: fixed width so logs stay legible.
+if os.environ.get("GITHUB_ACTIONS", "") != "":
+	console_width = CONSOLE_FALLBACK_WIDTH
+elif sys.stdout.isatty() or os.environ.get("COLUMNS", "").isdigit():
+	console_width = max(shutil.get_terminal_size((CONSOLE_FALLBACK_WIDTH, 25)).columns - CONSOLE_WIDTH_MARGIN, CONSOLE_MIN_WIDTH)
+else:
+	console_width = CONSOLE_FALLBACK_WIDTH
 console = Console(color_system="standard", width=console_width, highlight=False)
 
 # Use Rich to print a summary of the patches
 if True:
 	summary_table = Table(title=f"Summary of {PATCH_TYPE} patches", show_header=True, show_lines=True, box=rich.box.ROUNDED)
-	summary_table.add_column("Patch / Status", overflow="fold", min_width=25)
-	summary_table.add_column("Diffstat / files", max_width=35)
-	summary_table.add_column("Author / Subject", overflow="ellipsis", min_width=25, max_width=40)
+	# Small min_width so all three columns still fit (and fold) down to
+	# CONSOLE_MIN_WIDTH; with min_width=25 the table exceeds ~70 cols and rich
+	# crops the right columns instead of folding them.
+	summary_table.add_column("Patch / Status", overflow="fold", min_width=10)
+	summary_table.add_column("Diffstat / files", overflow="fold", max_width=35)
+	summary_table.add_column("Author / Subject", overflow="fold", min_width=10, max_width=40)
 	for one_patch in VALID_PATCHES:
 		summary_table.add_row(
 			# (one_patch.markdown_name(skip_markdown=True)),  # + " " + one_patch.markdown_problems()
@@ -485,7 +629,13 @@ if any_failed_to_apply:
 			one_patch.rich_patch_output(),
 			reject_compo
 		)
-	console.print(summary_table)
+	# Reject diagnostics need room regardless of the reader's terminal: rich's
+	# Syntax word-wrap elides long unbroken diff lines with an ellipsis when the
+	# column is narrow. Give this table at least the fallback width (so a narrow
+	# terminal still gets room), but the full adaptive width when it is wider, so
+	# a wide terminal keeps every reject line it could show before.
+	console_failed = Console(color_system="standard", width=max(console_width, CONSOLE_FALLBACK_WIDTH), highlight=False)
+	console_failed.print(summary_table)
 
 if exit_with_exception is not None:
 	raise exit_with_exception

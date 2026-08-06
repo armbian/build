@@ -1,0 +1,12 @@
+# Rockchip RV1126 quad-core Cortex-A7 EASY-EAI Nano
+BOARD_NAME="EASY-EAI Nano"
+BOARD_VENDOR="easy-eai"
+BOARDFAMILY="rockchip-rv1126"
+BOARD_MAINTAINER="hqnicolas"
+INTRODUCED="2026"
+KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
+BOOT_FDT_FILE="rv1126-nano.dtb"
+BOOT_SOC="rv1126"
+BOOTCONFIG="easy-eai-nano-rv1126_defconfig"
+IMAGE_PARTITION_TABLE="gpt"

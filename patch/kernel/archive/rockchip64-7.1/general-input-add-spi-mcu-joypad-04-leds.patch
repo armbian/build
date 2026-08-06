@@ -1,0 +1,216 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] input: joystick: spi-mcu-joypad - multicolor LED rings
+
+Expose the two RGB LED rings (one per stick) via the multicolor LED
+class, driven over the same SPI MCU link. Part of the spi-mcu-joypad
+module (needs LEDS_CLASS_MULTICOLOR). Driver from ROCKNIX.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+--- a/drivers/input/joystick/spi-mcu-joypad/spi-mcu-joypad-leds.c
++++ b/drivers/input/joystick/spi-mcu-joypad/spi-mcu-joypad-leds.c
+@@ -0,0 +1,204 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * SPI MCU Joypad — LED subsystem
++ *
++ * Exposes two multicolor LEDs (one per joystick ring) and sysfs
++ * attributes for MCU-native animation modes (mode, speed, switch).
++ *
++ * LED commands in the TX buffer are only applied by the MCU when
++ * accompanied by a valid CRC-16/XMODEM, see mcu_encode_leds()
++ * in the core module.
++ */
++
++#include "spi-mcu-joypad.h"
++
++static int mcu_led_mc_set(struct led_classdev *cdev,
++			   enum led_brightness brightness)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(cdev->dev->parent);
++
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_dirty = true;
++	mutex_unlock(&mjp->tx_lock);
++
++	return 0;
++}
++
++static ssize_t led_mode_show(struct device *dev,
++			     struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->led_mode);
++}
++
++static ssize_t led_mode_store(struct device *dev,
++			      struct device_attribute *attr,
++			      const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u8 val;
++
++	if (kstrtou8(buf, 0, &val))
++		return -EINVAL;
++
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_mode = val;
++	mjp->led_dirty = true;
++	mutex_unlock(&mjp->tx_lock);
++
++	return count;
++}
++static DEVICE_ATTR_RW(led_mode);
++
++static ssize_t led_switch_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->led_switch);
++}
++
++static ssize_t led_switch_store(struct device *dev,
++				struct device_attribute *attr,
++				const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u8 val;
++
++	if (kstrtou8(buf, 0, &val))
++		return -EINVAL;
++	if (val > 1)
++		return -EINVAL;
++
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_switch = val;
++	mjp->led_dirty = true;
++	mutex_unlock(&mjp->tx_lock);
++
++	return count;
++}
++static DEVICE_ATTR_RW(led_switch);
++
++static ssize_t led_speed_show(struct device *dev,
++			      struct device_attribute *attr, char *buf)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", mjp->led_speed);
++}
++
++static ssize_t led_speed_store(struct device *dev,
++			       struct device_attribute *attr,
++			       const char *buf, size_t count)
++{
++	struct mcu_joypad *mjp = dev_get_drvdata(dev);
++	u8 val;
++
++	if (kstrtou8(buf, 0, &val))
++		return -EINVAL;
++
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_speed = val;
++	mjp->led_dirty = true;
++	mutex_unlock(&mjp->tx_lock);
++
++	return count;
++}
++static DEVICE_ATTR_RW(led_speed);
++
++static struct attribute *mcu_joypad_led_attrs[] = {
++	&dev_attr_led_mode.attr,
++	&dev_attr_led_switch.attr,
++	&dev_attr_led_speed.attr,
++	NULL,
++};
++
++static const struct attribute_group mcu_joypad_led_attr_group = {
++	.attrs = mcu_joypad_led_attrs,
++};
++
++/* ---- Registration / teardown -------------------------------------------- */
++
++static const char * const ring_names[MCU_LED_RINGS] = {
++	"left",
++	"right",
++};
++
++int mcu_joypad_leds_register(struct mcu_joypad *mjp)
++{
++	int i, j, err;
++
++	mjp->led_mode   = 1; /* Solid  */
++	mjp->led_switch = 1; /* On     */
++	mjp->led_speed  = 0; /* Static */
++
++	for (i = 0; i < MCU_LED_RINGS; i++) {
++		struct led_classdev_mc *mc = &mjp->mc_leds[i];
++		struct led_classdev *cdev = &mc->led_cdev;
++
++		for (j = 0; j < MCU_LED_COLORS; j++) {
++			mjp->subled_info[i][j].color_index =
++				(j == 0) ? LED_COLOR_ID_RED :
++				(j == 1) ? LED_COLOR_ID_GREEN :
++					   LED_COLOR_ID_BLUE;
++			mjp->subled_info[i][j].intensity = 0;
++			mjp->subled_info[i][j].channel = j;
++		}
++
++		mc->subled_info = mjp->subled_info[i];
++		mc->num_colors = MCU_LED_COLORS;
++
++		cdev->name = devm_kasprintf(mjp->dev, GFP_KERNEL,
++					    "%s::joystick-%s",
++					    dev_name(mjp->dev),
++					    ring_names[i]);
++		if (!cdev->name)
++			return -ENOMEM;
++
++		cdev->brightness = 128;
++		cdev->max_brightness = 255;
++		cdev->brightness_set_blocking = mcu_led_mc_set;
++
++		err = devm_led_classdev_multicolor_register(mjp->dev, mc);
++		if (err) {
++			dev_err(mjp->dev,
++				"failed to register %s LED: %d\n",
++				ring_names[i], err);
++			return err;
++		}
++	}
++
++	err = devm_device_add_group(mjp->dev, &mcu_joypad_led_attr_group);
++	if (err)
++		dev_warn(mjp->dev, "failed to create LED sysfs: %d\n", err);
++
++	/* Push initial state on next poll. */
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_dirty = true;
++	mutex_unlock(&mjp->tx_lock);
++
++	return 0;
++}
++
++void mcu_joypad_leds_unregister(struct mcu_joypad *mjp)
++{
++	/* Nothing to do. */
++}
++
++void mcu_joypad_leds_suspend(struct mcu_joypad *mjp)
++{
++	struct spi_transfer xfer = {
++		.tx_buf = mjp->tx_buf,
++		.rx_buf = mjp->rx_buf,
++		.len    = MCU_BUF_LEN,
++	};
++
++	mutex_lock(&mjp->tx_lock);
++	mjp->led_switch = 0;
++	mjp->led_dirty = true;
++	mcu_joypad_encode_leds(mjp);
++	mutex_unlock(&mjp->tx_lock);
++
++	spi_sync_transfer(mjp->spi, &xfer, 1);
++}

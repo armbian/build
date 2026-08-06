@@ -19,14 +19,8 @@ function build_rootfs_and_image() {
 	# stage: with a basic rootfs available, we mount the chroot and work on it
 	LOG_SECTION="mount_chroot_sdcard" do_with_logging mount_chroot "${SDCARD}"
 
-	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
-		*give config a chance to act before install_distribution_specific*
-		Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
-	PRE_INSTALL_DISTRIBUTION_SPECIFIC
-
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
-
 	LOG_SECTION="install_distribution_specific_${RELEASE}" do_with_logging install_distribution_specific
 	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic # does apt update
 

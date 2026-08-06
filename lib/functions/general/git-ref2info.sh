@@ -7,6 +7,20 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Returns the pinned sha1 for a given git source+branch from
+# config/sources/git_sources.json, or nothing if the file or entry is absent.
+# Uses jq --arg so source/branch values can't break or inject into the jq program.
+# Intentionally file-scope (not nested in memoized_git_ref_to_info) so fetch_from_repo
+# in git.sh can reuse it. Consequence: its body is NOT part of the memoize cache hash
+# (only the memoized function's own body is), so edits here won't invalidate cached
+# entries. Keep it trivial and stable — an exact-match JSON read — so that's safe.
+function _git_sources_pinned_sha1() {
+	declare json="${SRC}/config/sources/git_sources.json"
+	[[ -f "${json}" ]] || return 0
+	jq --raw-output --arg s "${1}" --arg b "${2}" \
+		'[.[] | select(.source == $s and .branch == $b) | .sha1] | first // empty' "${json}"
+}
+
 # This works under memoize-cached.sh::run_memoized() -- which is full of tricks.
 # Nested functions are used because the source of the momoized function is used as part of the cache hash.
 function memoized_git_ref_to_info() {
@@ -30,6 +44,21 @@ function memoized_git_ref_to_info() {
 
 	# Get the SHA1 of the commit
 	declare sha1
+
+	# OFFLINE_WORK guard: do not perform 'git ls-remote' when offline (#6439).
+	# Honored sources, in order: ref_type=commit (sha1 from ref itself); pinned in
+	# config/sources/git_sources.json (branch refs only). If neither yields a sha1 we
+	# fail with a clear message instead of letting the network call surface as a
+	# misleading 502/timeout.
+	if [[ "${OFFLINE_WORK}" == "yes" && "${ref_type}" != "commit" ]]; then
+		sha1="$(_git_sources_pinned_sha1 "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}")"
+		if [[ "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
+			display_alert "OFFLINE_WORK: using pinned SHA1 from git_sources.json" "${ref_name} -> ${sha1}" "info"
+			refs_to_try=() # skip ls-remote loop below
+		else
+			exit_with_error "OFFLINE_WORK=yes but no SHA1 available for '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - run online once to populate cache, or pin sha1 in config/sources/git_sources.json"
+		fi
+	fi
 
 	# Enter loop. The first that resolves to a valid sha1 wins.
 	declare to_try
@@ -93,10 +122,15 @@ function memoized_git_ref_to_info() {
 		} 5<> "${SRC}"/output/info/git_sources.json 6<> "${SRC}"/output/info/git_sources.json.new
 	fi
 
-	if [[ -f "${SRC}"/config/sources/git_sources.json && ${ref_type} == "branch" ]]; then
-		cached_revision=$(jq --raw-output '.[] | select(.source == "'${MEMO_DICT[GIT_SOURCE]}'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
-		display_alert "Found cached git version" "${cached_revision}" "info"
-		[[ -z "${cached_revision}" ]] || sha1=${cached_revision}
+	if [[ "${ref_type}" == "branch" ]]; then
+		declare cached_revision
+		cached_revision="$(_git_sources_pinned_sha1 "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}")"
+		if [[ "${cached_revision}" =~ ^[0-9a-f]{40}$ ]]; then
+			display_alert "Found cached git version" "${cached_revision}" "info"
+			sha1="${cached_revision}"
+		elif [[ -n "${cached_revision}" ]]; then
+			exit_with_error "Invalid pinned SHA1 '${cached_revision}' for '${MEMO_DICT[GIT_SOURCE]}' '${ref_name}' in config/sources/git_sources.json"
+		fi
 	fi
 
 	MEMO_DICT+=(["SHA1"]="${sha1}")
@@ -243,6 +277,14 @@ function memoized_git_ref_to_info() {
 
 			return 0
 		}
+
+		# OFFLINE_WORK guard: Makefile body is fetched via curl to git host(s) — no
+		# network when offline. We have no local fallback here (no bare-clone path in
+		# scope), so fail with a clear message instead of letting curl surface as a
+		# misleading 'undetermined' kernel version downstream (#6439).
+		if [[ "${OFFLINE_WORK}" == "yes" ]]; then
+			exit_with_error "OFFLINE_WORK=yes but Makefile body for '${MEMO_DICT[GIT_SOURCE]}' '${ref_name}' (sha1 ${sha1}) not in cache - run online once to populate ${SRC}/cache/memoize/"
+		fi
 
 		display_alert "Fetching Makefile body" "${ref_name}" "debug"
 		declare makefile_body makefile_url
