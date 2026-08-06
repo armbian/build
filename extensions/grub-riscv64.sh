@@ -10,11 +10,11 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
 	declare -g GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-""}" # Cmdline by default
 	# User config overrides.
-	declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
-	unset BOOTSOURCE                                                                 # To try and convince lib/ to not build or install u-boot.
-	declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-	declare -g UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-	declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
+	declare -g BOOTCONFIG="none"           # To try and convince lib/ to not build or install u-boot.
+	unset BOOTSOURCE                       # To try and convince lib/ to not build or install u-boot.
+	declare -g IMAGE_PARTITION_TABLE="gpt" # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+	declare -g UEFISIZE=256                # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+	declare -g BOOTSIZE=0                  # No separate /boot when using UEFI.
 	if [[ $BOOTPART_REQUIRED == "yes" ]]; then
 		# It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
 		declare -g UEFI_MOUNT_POINT=/boot
@@ -144,8 +144,8 @@ configure_grub() {
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_GFXMODE=1024x768
 		GRUB_GFXPAYLOAD_LINUX=text                               # See extensions/grub.sh — correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD, and 'text' disables Ubuntu's vt.handoff=7 injection.
-		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
-		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
+		GRUB_DISABLE_UUID=false                 # Be explicit about wanting UUID
+		GRUB_DISABLE_LINUX_UUID=false          # Be explicit about wanting UUID
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then

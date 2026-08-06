@@ -18,11 +18,11 @@ function post_config_uboot_target__extra_configs_for_orangepi() {
 
 write_uboot_platform_mtd() {
 	if [ -b /dev/mtdblock0 ]; then
-		dd if="${1}/bootinfo_spinor.bin" of=/dev/mtdblock0 bs=65536 status=none;
-		dd if="${1}/FSBL.bin" of=/dev/mtdblock2 bs=65536 status=none;
-		dd if="${1}/u-boot-env-default.bin" of=/dev/mtdblock3 bs=65536 status=none;
-		dd if="${1}/fw_dynamic.itb" of=/dev/mtdblock4 bs=65536 status=none;
-		dd if="${1}/u-boot.itb" of=/dev/mtdblock5 bs=65536 status=none;
+		dd if="${1}/bootinfo_spinor.bin" of=/dev/mtdblock0 bs=65536 status=none
+		dd if="${1}/FSBL.bin" of=/dev/mtdblock2 bs=65536 status=none
+		dd if="${1}/u-boot-env-default.bin" of=/dev/mtdblock3 bs=65536 status=none
+		dd if="${1}/fw_dynamic.itb" of=/dev/mtdblock4 bs=65536 status=none
+		dd if="${1}/u-boot.itb" of=/dev/mtdblock5 bs=65536 status=none
 		sync
 	fi
 }

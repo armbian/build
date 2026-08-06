@@ -16,12 +16,12 @@ function extension_prepare_config__prepare_grub_standard() {
 
 	if [[ "${UEFI_GRUB}" != "skip" ]]; then
 		# User config overrides for GRUB.
-		declare -g BOOTCONFIG="none"                       # To try and convince lib/ to not build or install u-boot.
-		unset BOOTSOURCE                                   # To try and convince lib/ to not build or install u-boot.
-		declare -g IMAGE_PARTITION_TABLE="gpt"             # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		declare -g UEFISIZE=260                            # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-		declare -g BOOTSIZE=0                              # No separate /boot when using UEFI.
-		if [[ $BOOTPART_REQUIRED == "yes" ]]; then		   # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
+		declare -g BOOTCONFIG="none"               # To try and convince lib/ to not build or install u-boot.
+		unset BOOTSOURCE                           # To try and convince lib/ to not build or install u-boot.
+		declare -g IMAGE_PARTITION_TABLE="gpt"     # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+		declare -g UEFISIZE=260                    # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+		declare -g BOOTSIZE=0                      # No separate /boot when using UEFI.
+		if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
 			declare -g UEFI_MOUNT_POINT=/boot
 		fi
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
@@ -311,8 +311,8 @@ configure_grub() {
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
 		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
 		GRUB_GFXPAYLOAD_LINUX=text                               # Note the correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD (the latter is silently ignored). The 'text' value disables Ubuntu's vt.handoff=7 injection: Ubuntu's grub2 10_linux only expands 'vt.handoff=7' inside grub.cfg's gfxmode function when the gfxpayload arg is exactly 'keep'. Setting it to 'text' makes the runtime check fail and the framebuffer console stays bound to fbcon for the entire userspace lifetime — which is what we want, otherwise after Plymouth quits on a CLI install (or after the user uninstalls the desktop), the kernel hands the framebuffer to VT7 waiting for an X server, nothing ever claims it, and the local console goes black even though getty@tty1 is running.
-		GRUB_DISABLE_UUID=false  								 # Be explicit about wanting UUID
-		GRUB_DISABLE_LINUX_UUID=false  							 # Be explicit about wanting UUID
+		GRUB_DISABLE_UUID=false                 # Be explicit about wanting UUID
+		GRUB_DISABLE_LINUX_UUID=false          # Be explicit about wanting UUID
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then

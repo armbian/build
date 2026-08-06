@@ -27,9 +27,9 @@ function compile_fake_ubuntu_advantage_tools() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Conflicts: ubuntu-advantage-tools
-		Breaks: ubuntu-advantage-tools
-		Provides: ubuntu-advantage-tools (= 65535)
+		Conflicts: ubuntu-advantage-tools, ubuntu-pro-client
+		Breaks: ubuntu-advantage-tools, ubuntu-pro-client
+		Provides: ubuntu-advantage-tools (= 65535), ubuntu-pro-client (= 65535)
 		Priority: optional
 		Section: admin
 		Description: Ban ubuntu-advantage-tools while satisfying ubuntu-minimal dependency

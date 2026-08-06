@@ -23,7 +23,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		return 1
 	fi
 
-	latest_version=$(printf '%s' "${api_output}" | jq -r '.tag_name' 2>/dev/null || true)
+	latest_version=$(printf '%s' "${api_output}" | jq -r '.tag_name' 2> /dev/null || true)
 	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
 		display_alert "Invalid latest_version from GitHub API: '${latest_version}'" "${EXTENSION}" "error"
 		return 1

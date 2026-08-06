@@ -55,13 +55,14 @@ function pre_customize_image__ayn-odin2_alsa_ucm_conf() {
 	display_alert "Add alsa-ucm-conf for ${BOARD}" "${RELEASE}" "warn"
 	(
 		(
-		cd "${SDCARD}/usr/share/alsa" || exit 6
-		curl -L -o temp.zip "${GITHUB_SOURCE}/AYNTechnologies/alsa-ucm-conf/archive/refs/heads/ayn/v1.2.13.zip"
-		unzip -o temp.zip
-		unzip_dir=$(unzip -Z1 temp.zip | head -n1 | cut -d/ -f1)
-		cp -rf "${unzip_dir}/"* .
-		rm -rf "$unzip_dir" temp.zip
-	)	)
+			cd "${SDCARD}/usr/share/alsa" || exit 6
+			curl -L -o temp.zip "${GITHUB_SOURCE}/AYNTechnologies/alsa-ucm-conf/archive/refs/heads/ayn/v1.2.13.zip"
+			unzip -o temp.zip
+			unzip_dir=$(unzip -Z1 temp.zip | head -n1 | cut -d/ -f1)
+			cp -rf "${unzip_dir}/"* .
+			rm -rf "$unzip_dir" temp.zip
+		)
+	)
 }
 
 function post_family_tweaks_bsp__ayn-odin2_firmware() {
@@ -105,30 +106,27 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 	return 0
 }
 
-
 function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
 	display_alert "Adding to bsp-cli" "${BOARD}: firmware in initrd" "warn"
 	declare file_added_to_bsp_destination # Will be filled in by add_file_from_stdin_to_bsp_destination
 	add_file_from_stdin_to_bsp_destination "/etc/initramfs-tools/hooks/ayn-firmware" <<- 'FIRMWARE_HOOK'
-#!/bin/bash
-[[ "$1" == "prereqs" ]] && exit 0
-. /usr/share/initramfs-tools/hook-functions
-for f in $(find /lib/firmware/qcom/sm8550 -type f) ; do
-add_firmware "${f#/lib/firmware/}"
-done
-add_firmware "qcom/a740_sqe.fw" # Extra one for dpu
-add_firmware "qcom/gmu_gen70200.bin" # Extra one for gpu
-add_firmware "qcom/vpu/vpu30_p4.mbn" # Extra one for vpu
-# Extra one for wifi
-for f in $(find /lib/firmware/ath12k/WCN7850/hw2.0 -type f) ; do
-add_firmware "${f#/lib/firmware/}"
-done
-# Extra one for bt
-for f in $(find /lib/firmware/qca -type f) ; do
-add_firmware "${f#/lib/firmware/}"
-done
-FIRMWARE_HOOK
+		#!/bin/bash
+		[[ "$1" == "prereqs" ]] && exit 0
+		. /usr/share/initramfs-tools/hook-functions
+		for f in $(find /lib/firmware/qcom/sm8550 -type f) ; do
+		add_firmware "${f#/lib/firmware/}"
+		done
+		add_firmware "qcom/a740_sqe.fw" # Extra one for dpu
+		add_firmware "qcom/gmu_gen70200.bin" # Extra one for gpu
+		add_firmware "qcom/vpu/vpu30_p4.mbn" # Extra one for vpu
+		# Extra one for wifi
+		for f in $(find /lib/firmware/ath12k/WCN7850/hw2.0 -type f) ; do
+		add_firmware "${f#/lib/firmware/}"
+		done
+		# Extra one for bt
+		for f in $(find /lib/firmware/qca -type f) ; do
+		add_firmware "${f#/lib/firmware/}"
+		done
+	FIRMWARE_HOOK
 	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
 }
-
-

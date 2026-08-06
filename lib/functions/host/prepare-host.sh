@@ -166,8 +166,8 @@ function adaptative_prepare_host_dependencies() {
 		# dev libraries & build helper tools
 		build-tools::device-tree-compiler build-tools::libelf-dev build-tools::libfdt-dev
 		build-tools::libncurses-dev build-tools::libssl-dev build-tools::libusb-1.0-0-dev
-		build-tools::swig build-tools::u-boot-tools build-tools::uuid-dev build-tools::zlib1g-dev # swig needed for some u-boot's (e.g. "bananapi.conf")
-		build-tools::dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		build-tools::swig build-tools::u-boot-tools build-tools::uuid-dev build-tools::uuid-runtime build-tools::zlib1g-dev # swig needed for some u-boot's; uuid-runtime provides uuidgen for unique Docker image tags
+		build-tools::dwarves                                                                                                # dwarves has been replaced by "pahole" and is now a transitional package
 
 		# imaging - required for plymouth: converting images / spinners; large fan-out of libs
 		imaging::imagemagick
@@ -189,13 +189,13 @@ function adaptative_prepare_host_dependencies() {
 		core::ntpsec-ntpdate                  # this is a more secure ntpdate
 		core::patchutils core::pv
 		core::rsync
-		core::udev # causes initramfs rebuild, but is usually pre-installed.
-		core::file core::tree core::expect # logging utilities; expect is needed for 'unbuffer' command
-		core::colorized-logs                # for ansi2html, ansi2txt, pipetty
+		core::udev                                   # causes initramfs rebuild, but is usually pre-installed.
+		core::file core::tree core::expect           # logging utilities; expect is needed for 'unbuffer' command
+		core::colorized-logs                         # for ansi2html, ansi2txt, pipetty
 		core::aria2 core::curl core::axel core::wget # downloaders et al
-		core::parallel # do things in parallel (used for fast md5 hashing in initrd cache)
-		core::rdfind   # armbian-firmware-full/linux-firmware symlink creation step
-		core::binwalk  # for debugging produced u-boot binaries
+		core::parallel                               # do things in parallel (used for fast md5 hashing in initrd cache)
+		core::rdfind                                 # armbian-firmware-full/linux-firmware symlink creation step
+		core::binwalk                                # for debugging produced u-boot binaries
 	)
 
 	# @TODO: distcc -- handle in extension?
@@ -229,7 +229,7 @@ function adaptative_prepare_host_dependencies() {
 	# name explicitly there.
 	case "${host_release}" in
 		resolute) host_dependencies+=("qemu::qemu-user-binfmt") ;;
-		*)        host_dependencies+=("qemu::qemu-user-static") ;;
+		*) host_dependencies+=("qemu::qemu-user-static") ;;
 	esac
 
 	### Python2 -- required for some older u-boot builds
@@ -250,23 +250,27 @@ function adaptative_prepare_host_dependencies() {
 	declare wanted_arch="${target_arch:-"all"}"
 
 	# Cross-toolchains are split per target family so each lands in a similarly-sized layer.
-	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-amd64::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
-	fi
+	# Skip cross-compilers that don't exist on non-standard host architectures (e.g. riscv64),
+	# where only riscv64 cross-compilers are available in the repositories.
+	if [[ "${host_arch}" != "riscv64" ]]; then
+		if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
+			host_dependencies+=("cross-amd64::gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
+		fi
 
-	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
-		# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64 (64-bit arm)
-		host_dependencies+=("cross-arm64::gcc-aarch64-linux-gnu")
-		# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation (32-bit arm)
-		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabi")
-	fi
+		if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
+			# gcc-aarch64-linux-gnu: from crossbuild-essential-arm64 (64-bit arm)
+			host_dependencies+=("cross-arm64::gcc-aarch64-linux-gnu")
+			# gcc-arm-linux-gnueabi: necessary for rockchip64 (and maybe other too) ATF compilation (32-bit arm)
+			host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabi")
+		fi
 
-	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
+		if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
+			host_dependencies+=("cross-armhf::gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
+		fi
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("cross-other::gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64
+		host_dependencies+=("cross-other::gcc-riscv64-linux-gnu")   # crossbuild-essential-riscv64
 		host_dependencies+=("cross-other::libc6-dev-riscv64-cross") # Support for compiling riscv64 binaries
 	fi
 
@@ -275,7 +279,8 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=("cross-other::debian-ports-archive-keyring")
 	fi
 
-	if [[ "${wanted_arch}" != "amd64" ]]; then
+	# libc6-amd64-cross is not available on riscv64 hosts
+	if [[ "${wanted_arch}" != "amd64" ]] && [[ "${host_arch}" != "riscv64" ]]; then
 		host_dependencies+=("cross-amd64::libc6-amd64-cross") # Support for running x86 binaries (under qemu on other arches)
 	fi
 

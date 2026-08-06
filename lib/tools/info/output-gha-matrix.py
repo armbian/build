@@ -87,6 +87,8 @@ def generate_matrix_images(info) -> list[dict]:
 			continue
 
 		desc = f"{image['image_file_id']} {image_id}"
+		# Short, hash-free label for the GHA job name (desc keeps the full id for logs).
+		name = image['image_file_id']
 
 		inputs = image['in']
 
@@ -96,7 +98,7 @@ def generate_matrix_images(info) -> list[dict]:
 		cmds = (armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])  # image build is "build" command, omitted here
 		invocation = " ".join(cmds)
 
-		item = {"desc": desc, "runs_on": runs_on, "invocation": invocation}
+		item = {"desc": desc, "name": name, "runs_on": runs_on, "invocation": invocation}
 		matrix.append(item)
 	return matrix
 
@@ -113,6 +115,8 @@ def generate_matrix_artifacts(info):
 		artifact_name = artifact['in']['artifact_name']
 
 		desc = f"{artifact['out']['artifact_name']}={artifact['out']['artifact_version']}"
+		# Short, hash-free label for the GHA job name (desc keeps name=version+hashes).
+		name = artifact['out']['artifact_name']
 
 		inputs = artifact['in']['original_inputs']
 
@@ -127,7 +131,7 @@ def generate_matrix_artifacts(info):
 		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])
 		invocation = " ".join(cmds)
 
-		item = {"desc": desc, "runs_on": runs_on, "invocation": invocation}
+		item = {"desc": desc, "name": name, "runs_on": runs_on, "invocation": invocation}
 		matrix.append(item)
 	return matrix
 
@@ -187,7 +191,7 @@ for i, chunk in enumerate(chunks):
 	if len(chunk) == 0:
 		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
 		chunks[i] = [
-			{"desc": "Fake matrix element so matrix is not empty", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
+			{"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
 			 "shost": "no", "fdepth": "1"}
 		]
 	else:

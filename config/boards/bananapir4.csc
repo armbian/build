@@ -14,7 +14,7 @@ HAS_VIDEO_OUTPUT="no"
 
 function post_family_tweaks__bpi-r4() {
 	display_alert "Applying eth blobs"
-	
+
 	mkdir -p "$SDCARD/lib/firmware/mediatek/mt7988"
 	cp -v "$SRC/packages/blobs/filogic/firmware/mediatek/mt7988/mt7988_wo_0.bin" "$SDCARD/lib/firmware/mediatek/mt7988/mt7988_wo_0.bin"
 	cp -v "$SRC/packages/blobs/filogic/firmware/mediatek/mt7988/mt7988_wo_1.bin" "$SDCARD/lib/firmware/mediatek/mt7988/mt7988_wo_1.bin"

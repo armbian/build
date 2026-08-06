@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Sat, 18 Jul 2026 01:40:00 +0200
+Subject: PCI: of: skip config reads to DT-disabled bridge nodes
+
+The PCI core reads the vendor ID of every slot behind a bridge. The
+QPS615 (TC9563) switch on pcie3a exposes downstream ports the board
+disables in DT (pcie@1,0 and pcie@2,0). A config read to one does not
+return PCI_ERROR_RESPONSE, it raises an Asynchronous SError the arm64
+handler treats as fatal:
+
+  Kernel panic - not syncing: Asynchronous SError Interrupt
+    pci_bus_generic_read_dev_vendor_id
+    pci_scan_single_device / pci_scan_slot
+    pci_scan_child_bus_extend / pci_scan_bridge_extend
+
+Honour the device tree: when a slot maps to a disabled bridge port, skip
+the read and synthesise an error response instead of touching the dead
+link. Endpoint nodes stay discoverable so quirks still run. Without this
+the switch cannot enumerate and the board does not boot with pcie3a on.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/pci/of.c    | 24 ++++++++++
+ drivers/pci/pci.h   |  5 ++
+ drivers/pci/probe.c |  5 ++
+ 3 files changed, 34 insertions(+)
+
+diff --git a/drivers/pci/of.c b/drivers/pci/of.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/of.c
++++ b/drivers/pci/of.c
+@@ -44,6 +44,30 @@ int pci_set_of_node(struct pci_dev *dev)
+ 	return 0;
+ }
+ 
++/**
++ * pci_of_device_skip_config_read - check whether to skip probing a PCI device
++ * @bus: PCI bus to scan
++ * @devfn: device/function number to check
++ *
++ * Return true only when firmware explicitly describes an unavailable PCI
++ * bridge/port node. Disabled endpoints remain discoverable so fixups still run,
++ * while driver binding is suppressed later in pci_bus_add_device().
++ */
++bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn)
++{
++	if (!bus->dev.of_node)
++		return false;
++
++	struct device_node *node __free(device_node) =
++		of_pci_find_child_device(bus->dev.of_node, devfn);
++
++	if (!node || of_device_is_available(node))
++		return false;
++
++	return of_node_is_type(node, "pci") &&
++	       of_property_present(node, "bus-range");
++}
++
+ void pci_release_of_node(struct pci_dev *dev)
+ {
+ 	of_node_put(dev->dev.of_node);
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 111111111111..222222222222 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -1196,6 +1196,7 @@ u32 of_pci_get_slot_power_limit(struct device_node *node,
+ 				u8 *slot_power_limit_scale);
+ bool of_pci_preserve_config(struct device_node *node);
+ int pci_set_of_node(struct pci_dev *dev);
++bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn);
+ void pci_release_of_node(struct pci_dev *dev);
+ void pci_set_bus_of_node(struct pci_bus *bus);
+ void pci_release_bus_of_node(struct pci_bus *bus);
+@@ -1236,6 +1237,10 @@ static inline bool of_pci_preserve_config(struct device_node *node)
+ }
+ 
+ static inline int pci_set_of_node(struct pci_dev *dev) { return 0; }
++static inline bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn)
++{
++	return false;
++}
+ static inline void pci_release_of_node(struct pci_dev *dev) { }
+ static inline void pci_set_bus_of_node(struct pci_bus *bus) { }
+ static inline void pci_release_bus_of_node(struct pci_bus *bus) { }
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -2591,6 +2591,11 @@ bool pci_bus_generic_read_dev_vendor_id(struct pci_bus *bus, int devfn, u32 *l,
+ bool pci_bus_read_dev_vendor_id(struct pci_bus *bus, int devfn, u32 *l,
+ 				int timeout)
+ {
++	if (pci_of_device_skip_config_read(bus, devfn)) {
++		PCI_SET_ERROR_RESPONSE(l);
++		return false;
++	}
++
+ 	return pci_bus_generic_read_dev_vendor_id(bus, devfn, l, timeout);
+ }
+ EXPORT_SYMBOL(pci_bus_read_dev_vendor_id);
+-- 
+Armbian
+

@@ -81,15 +81,20 @@ function artifact_uboot_prepare_version() {
 	declare -a extension_hooks_to_hash=(
 		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
 		"pre_config_uboot_target" "post_config_uboot_target" "pre_package_uboot_image"
+		"check_uboot_produced_binary_file"
 	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
 
 	# Hash the old-timey hooks and regular core functions (atf code, used by u-boot build process)
+	# calculate_hash_for_function_bodies skips functions that don't exist, so family-specific
+	# builders (e.g. K3's compile_k3_bootgen/optee, which are called from a hashed hook but whose
+	# bodies would otherwise not be hashed) can be listed here without affecting other families.
 	declare hash_functions="undetermined"
 	calculate_hash_for_function_bodies "uboot_custom_postprocess" "write_uboot_platform" "write_uboot_platform_mtd" \
-		"setup_write_uboot_platform" "compile_atf"
+		"setup_write_uboot_platform" "compile_atf" \
+		"compile_k3_bootgen" "compile_k3_optee"
 	declare hash_uboot_functions="${hash_functions}"
 
 	# Hash those two together
@@ -105,7 +110,7 @@ function artifact_uboot_prepare_version() {
 		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}"        # general for all families
 		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"           # rockchip stuff, sorry.
 		"${DDR_BLOB}" "${BL31_BLOB}" "${BL32_BLOB}" "${MINILOADER_BLOB}" # More rockchip stuff, even more sorry.
-		"${ATF_COMPILE}" "${ATFSOURCE}" "${ATFBRANCH}" "${ATFPATCHDIR}"  # arm-trusted-firmware stuff
+		"${ATF_COMPILE}" "${ATFSOURCE}" "${ATFBRANCH}" "${ATFPATCHDIR}" "${ATF_TARGET_MAP}" "${ATF_LOG_LEVEL:-40}" # arm-trusted-firmware stuff
 		"${CRUSTCONFIG}" "${CRUSTBRANCH}" "${CRUSTPATCHDIR}"             # crust stuff
 		"${IMAGE_PARTITION_TABLE}" "${BOOT_FDT_FILE}" "${SERIALCON}"     # image and kernel related, to be used as reference/docs
 		"${SRC_EXTLINUX}" "${SRC_CMDLINE}"                               # image and kernel related, to be used as reference/docs

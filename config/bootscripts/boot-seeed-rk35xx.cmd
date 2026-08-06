@@ -39,8 +39,12 @@ if test -z "${rootdev}"; then
 fi
 # Final safety: derive rootdev from boot source if still unset
 if test -z "${rootdev}"; then
-	echo "WARNING: rootdev not set, deriving from boot source ${devnum}:${distro_bootpart}"
-	setenv rootdev "/dev/mmcblk${devnum}p${distro_bootpart}"
+	echo "WARNING: rootdev not set, deriving from boot source ${devtype} ${devnum}:${distro_bootpart}"
+	if test "${devtype}" = "nvme"; then
+		setenv rootdev "/dev/nvme${devnum}n1p${distro_bootpart}"
+	else
+		setenv rootdev "/dev/mmcblk${devnum}p${distro_bootpart}"
+	fi
 fi
 
 # fdtfile is set by armbianEnv.txt (per-board BOOT_FDT_FILE).
@@ -102,7 +106,7 @@ echo "Using fdtfile=${fdtfile}"
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"; fi
+if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyFIQ0,1500000n8 ${consoleargs}"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
@@ -110,8 +114,9 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-# get PARTUUID of first partition on SD/eMMC the boot script was loaded from
+# get PARTUUID of the partition the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
+if test "${devtype}" = "nvme"; then part uuid nvme ${devnum}:${distro_bootpart} partuuid; fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 if test -n "${cryptdevice}"; then setenv bootargs "${bootargs} cryptdevice=${cryptdevice}"; fi

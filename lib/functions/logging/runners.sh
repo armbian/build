@@ -70,12 +70,34 @@ function chroot_sdcard_apt_get() {
 
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 
+	# Prevent dpkg from prompting about modified conffiles in non-interactive chroot builds.
+	# Without this, packages like ubuntu-pro-client that ship modified conffiles (e.g.
+	# /etc/apt/apt.conf.d/20apt-esm-hook.conf) will prompt on stdin, get EOF, and fail.
+	# --force-confdef: use dpkg's default action (no prompt)
+	# --force-confold: if the default is ambiguous, keep the existing conffile
+	apt_params+=(-o "Dpkg::Options::=--force-confdef")
+	apt_params+=(-o "Dpkg::Options::=--force-confold")
+
 	# --list-cleanup
 	#     This option is on by default; use --no-list-cleanup to turn it off. When it is on, apt-get will
 	#     automatically manage the contents of /var/lib/apt/lists to ensure that obsolete files are erased. The only
 	#     reason to turn it off is if you frequently change your sources list. Configuration Item:
 	#     APT::Get::List-Cleanup.
 	apt_params+=(-o "APT::Get::List-Cleanup=0") # Armbian frequently changes ours sources list; it's dynamic via aggregation
+
+	# Harden apt against transient mirror / proxy / DNS failures:
+	#   Acquire::Retries=3          - retry a failed download a few times instead of
+	#                                 dying on the first blip (apt does not retry at all
+	#                                 otherwise; a flaky mirror/acng/DNS then fails hard).
+	#   APT::Update::Error-Mode=any - make `apt-get update` a HARD failure when ANY index
+	#                                 fails, so the build aborts *at update* with the real
+	#                                 cause (e.g. "Temporary failure resolving ...") rather
+	#                                 than continuing with empty package lists and dying
+	#                                 later at install with a misleading
+	#                                 "E: Unable to locate package ...". Ignored by the
+	#                                 non-update apt-get subcommands.
+	apt_params+=(-o "Acquire::Retries=3")
+	apt_params+=(-o "APT::Update::Error-Mode=any")
 
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
 		# Configure Clean-Installed to off
@@ -194,8 +216,8 @@ function run_host_x86_binary_logged() {
 	if [[ "$(uname -m)" != "x86_64" ]]; then # If we're NOT on x86...
 		case "${target_bin_arch}" in
 			*"x86-64"*) qemu_arch='x86_64' ;;
-			*"80386"*)  qemu_arch='i386' ;;
-			*"i386"*)   qemu_arch='i386' ;;
+			*"80386"*) qemu_arch='i386' ;;
+			*"i386"*) qemu_arch='i386' ;;
 			*)
 				exit_with_error "Unexpected binary architecture (${target_bin_arch}) for '${invoked_bin}'"
 				;;

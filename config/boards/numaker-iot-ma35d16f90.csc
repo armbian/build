@@ -1,11 +1,13 @@
 # Dual-core Cortex-A35 + Cortex-M4, 512MB DDR
 BOARD_NAME="NuMaker IoT MA35D16F90"
 BOARD_VENDOR="nuvoton"
+BOARD_MAINTAINER="TuAFBogey"
 BOARDFAMILY="nuvoton-ma35d1"
 INTRODUCED="2024"
 # SD card boot (sdcard1 = SD1 slot on NuMaker IoT board)
 BOOTCONFIG="ma35d1_sdcard1_defconfig"
 KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
 FULL_DESKTOP="no"
 BOOT_LOGO="no"
 BOOT_FDT_FILE="nuvoton/ma35d1-iot-512m.dtb"

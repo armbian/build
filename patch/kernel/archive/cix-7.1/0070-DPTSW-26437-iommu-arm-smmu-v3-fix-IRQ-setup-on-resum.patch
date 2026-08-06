@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Thu, 2 Jul 2026 10:48:41 +0800
+Subject: DPTSW-26437: iommu/arm-smmu-v3: fix IRQ setup on resume from suspend
+
+Resume from suspend fails to re-arm the SMMU event/error interrupts:
+
+  arm-smmu-v3 arm-smmu-v3.0.auto: msi_domain absent - falling back to wired irqs
+  genirq: Flags mismatch irq 13 ... (arm-smmu-v3-evtq) vs ... (arm-smmu-v3-evtq)
+  arm-smmu-v3 arm-smmu-v3.0.auto: error -EBUSY: request_irq(13) ... arm-smmu-v3-evtq
+  arm-smmu-v3 arm-smmu-v3.0.auto: failed to enable evtq irq
+  genirq: Flags mismatch irq 15 ... (arm-smmu-v3-gerror) vs ... (arm-smmu-v3-gerror)
+  arm-smmu-v3 arm-smmu-v3.0.auto: error -EBUSY: request_irq(15) ... arm-smmu-v3-gerror
+  arm-smmu-v3 arm-smmu-v3.0.auto: failed to enable gerror irq
+
+arm_smmu_resume() calls arm_smmu_device_reset(), which re-runs
+arm_smmu_setup_irqs(). That re-issues devm_request_irq() for the evtq/
+gerror/priq lines, but those handlers are devm-managed and were never
+released in suspend (suspend only clears CR0), so request_irq() returns
+-EBUSY. It also re-enters arm_smmu_setup_msis(), which clears the
+*_IRQ_CFG0 registers and then bails early because the ITS hasn't resumed
+yet (dev->msi.domain is NULL) - printing "msi_domain absent" and leaving
+MSI delivery broken, even though the SMMU was not power-cycled and the
+probe-time MSI config was still valid.
+
+Add a "bool resume" parameter to arm_smmu_setup_irqs() and
+arm_smmu_device_reset(); on resume, skip the request_irq/MSI allocation
+block and only re-enable IRQ_CTRL. The probe path is unchanged. Since
+the hardware kept its MSI address/data and the Linux IRQs stay
+registered, re-enabling IRQ_CTRL is all resume needs.
+
+Signed-off-by: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Change-Id: Ieb9d0dbdf5e623d786eafe2b46d74604f23ba9ce
+---
+ drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c | 52 ++++++----
+ 1 file changed, 32 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+index 111111111111..222222222222 100644
+--- a/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
++++ b/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c
+@@ -4730,7 +4730,7 @@ static void arm_smmu_setup_unique_irqs(struct arm_smmu_device *smmu)
+ 	}
+ }
+ 
+-static int arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
++static int arm_smmu_setup_irqs(struct arm_smmu_device *smmu, bool resume)
+ {
+ 	int ret, irq;
+ 	u32 irqen_flags = IRQ_CTRL_EVTQ_IRQEN | IRQ_CTRL_GERROR_IRQEN;
+@@ -4743,21 +4743,33 @@ static int arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
+ 		return ret;
+ 	}
+ 
+-	irq = smmu->combined_irq;
+-	if (irq) {
+-		/*
+-		 * Cavium ThunderX2 implementation doesn't support unique irq
+-		 * lines. Use a single irq line for all the SMMUv3 interrupts.
+-		 */
+-		ret = devm_request_threaded_irq(smmu->dev, irq,
+-					arm_smmu_combined_irq_handler,
+-					arm_smmu_combined_irq_thread,
+-					IRQF_ONESHOT,
+-					"arm-smmu-v3-combined-irq", smmu);
+-		if (ret < 0)
+-			dev_warn(smmu->dev, "failed to enable combined irq\n");
+-	} else
+-		arm_smmu_setup_unique_irqs(smmu);
++	/*
++	 * IRQ handlers and MSI allocations are devm-managed and persist across
++	 * suspend/resume (suspend only clears CR0). On resume, skip re-requesting
++	 * the Linux IRQs and re-running MSI allocation; otherwise request_irq()
++	 * hits the still-registered handler (-EBUSY) and arm_smmu_setup_msis()
++	 * clobbers the *_IRQ_CFG0 registers when the MSI domain is transiently
++	 * absent (ITS not resumed yet). The SMMU was not power-cycled, so the
++	 * MSI address/data programmed at probe are still valid - just re-enable
++	 * IRQ_CTRL below.
++	 */
++	if (!resume) {
++		irq = smmu->combined_irq;
++		if (irq) {
++			/*
++			 * Cavium ThunderX2 implementation doesn't support unique irq
++			 * lines. Use a single irq line for all the SMMUv3 interrupts.
++			 */
++			ret = devm_request_threaded_irq(smmu->dev, irq,
++						arm_smmu_combined_irq_handler,
++						arm_smmu_combined_irq_thread,
++						IRQF_ONESHOT,
++						"arm-smmu-v3-combined-irq", smmu);
++			if (ret < 0)
++				dev_warn(smmu->dev, "failed to enable combined irq\n");
++		} else
++			arm_smmu_setup_unique_irqs(smmu);
++	}
+ 
+ 	if (smmu->features & ARM_SMMU_FEAT_PRI)
+ 		irqen_flags |= IRQ_CTRL_PRIQ_IRQEN;
+@@ -4806,7 +4818,7 @@ static void arm_smmu_write_strtab(struct arm_smmu_device *smmu)
+ 	writel_relaxed(reg, smmu->base + ARM_SMMU_STRTAB_BASE_CFG);
+ }
+ 
+-static int arm_smmu_device_reset(struct arm_smmu_device *smmu)
++static int arm_smmu_device_reset(struct arm_smmu_device *smmu, bool resume)
+ {
+ 	int ret;
+ 	u32 reg, enables;
+@@ -4910,7 +4922,7 @@ static int arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 		}
+ 	}
+ 
+-	ret = arm_smmu_setup_irqs(smmu);
++	ret = arm_smmu_setup_irqs(smmu, resume);
+ 	if (ret) {
+ 		dev_err(smmu->dev, "failed to setup irqs\n");
+ 		return ret;
+@@ -5476,7 +5488,7 @@ static int __maybe_unused arm_smmu_resume(struct device *dev)
+ {
+ 	struct arm_smmu_device *smmu = dev_get_drvdata(dev);
+ 
+-	arm_smmu_device_reset(smmu);
++	arm_smmu_device_reset(smmu, true);
+ 
+ 	return 0;
+ }
+@@ -5568,7 +5580,7 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
+ 	arm_smmu_rmr_install_bypass_ste(smmu);
+ 
+ 	/* Reset the device */
+-	ret = arm_smmu_device_reset(smmu);
++	ret = arm_smmu_device_reset(smmu, false);
+ 	if (ret)
+ 		goto err_disable;
+ 
+-- 
+Armbian
+

@@ -19,6 +19,14 @@ function cli_entrypoint() {
 		trap 'echo "${FUNCNAME[*]}|${BASH_LINENO[*]}|${BASH_SOURCE[*]}|${LINENO}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
 	fi
 
+	# Capture the real terminal width once, here, before any logging redirects
+	# fd 1, so the patch-summary tables can match the user's terminal. Empty when
+	# stdout is not a tty (piped / CI), so those runs fall back to a fixed width.
+	declare -g -x ARMBIAN_TTY_COLUMNS="" # "exported" to shutup shellcheck; read by the patching wrappers
+	if [[ -t 1 ]]; then
+		ARMBIAN_TTY_COLUMNS="$(tput cols 2> /dev/null || echo "")"
+	fi
+
 	# @TODO: allow for a super-early userpatches/config-000.custom.conf.sh to be loaded, before anything else.
 	# This would allow for custom commands and interceptors.
 
@@ -80,33 +88,33 @@ function cli_entrypoint() {
 	done
 
 	declare -g DOCKER_NICE
-	if [[ "$ARMBIAN_COMMAND" == "docker" ]] || \
-		[[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" && "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" == "yes" ]] || \
+	if [[ "$ARMBIAN_COMMAND" == "docker" ]] ||
+		[[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" && "${ARMBIAN_PARSED_CMDLINE_PARAMS["PREFER_DOCKER"]}" == "yes" ]] ||
 		[[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}" ]]; then
 
-		CURRENT_NICE=$(($(ps -p $$ -o 'nice=')+0))
+		CURRENT_NICE=$(($(ps -p $$ -o 'nice=') + 0))
 		# by default, docker sets up a separate environment that inherits next to nothing.
 		# this detects the current process nice value and attempts to propagate it.
 		if [[ -z "${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}" ]]; then
-		# since it's not been passed to us in our invocation, use our current nice value
-		# this becomes a propagated cmdline parameter in cli-docker.sh
+			# since it's not been passed to us in our invocation, use our current nice value
+			# this becomes a propagated cmdline parameter in cli-docker.sh
 			DOCKER_NICE=$CURRENT_NICE
 			display_alert "Niceness parameter (DOCKER_NICE)" "$DOCKER_NICE" "debug"
 		else
 			# initialize from passed cmdline arg
 			DOCKER_NICE="${ARMBIAN_PARSED_CMDLINE_PARAMS["DOCKER_NICE"]}"
 			# we cast DOCKER_NICE to integer in case we were handed garbage.
-			DOCKER_NICE=$(("$DOCKER_NICE"+0))
+			DOCKER_NICE=$(("$DOCKER_NICE" + 0))
 		fi
-		
+
 		if [[ $CURRENT_NICE -ne $DOCKER_NICE ]]; then
-		# enforce the niceness
+			# enforce the niceness
 			if [[ $UID -eq 0 ]]; then # don't bother if we're not root
 				# Given we run as root in docker, we shouldn't worry about lacking permissions.
 				# if it's an invalid integer value, then we can feel secure in letting it fail.
-				renice -n $DOCKER_NICE -p $$ && \
-				display_alert "enforced nice value (DOCKER_NICE)" "$DOCKER_NICE" "debug" || \
-				display_alert "renice failed" "FAILED" "warn"
+				renice -n $DOCKER_NICE -p $$ &&
+					display_alert "enforced nice value (DOCKER_NICE)" "$DOCKER_NICE" "debug" ||
+					display_alert "renice failed" "FAILED" "warn"
 			fi
 		fi
 	fi

@@ -6,7 +6,7 @@
 # default values
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
-setenv console "display"
+setenv console "both"
 setenv bootlogo "false"
 setenv disp_mode "1920x1080m60"
 setenv earlycon "off"

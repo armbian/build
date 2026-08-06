@@ -52,7 +52,10 @@ function post_family_config__000_ask_override_family() {
 # Uses post_family_config because the kernel patch staging hook needs it before fetch_sources_tools runs
 function post_family_config__ask_fetch_repo() {
 	# Skip during config-dump-json: no $HOME is set, fetch_from_repo would fail in git_ensure_safe_directory
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && { declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"; return 0; }
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" || "${ARMBIAN_COMMAND}" == "download-artifact" ]] && {
+		declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"
+		return 0
+	}
 	# For local file:// repos in Docker, safe.directory is needed (container runs as root)
 	# Use env vars instead of git config --global to avoid persistent side effects
 	if [[ "${ASK_REPO}" == file://* ]]; then
@@ -62,7 +65,7 @@ function post_family_config__ask_fetch_repo() {
 		export GIT_CONFIG_KEY_1="safe.directory" GIT_CONFIG_VALUE_1="${local_path}/.git"
 	fi
 	fetch_from_repo "${ASK_REPO}" "ask-repo" "${ASK_BRANCH}"
-	unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 2>/dev/null
+	unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 2> /dev/null
 	declare -g ASK_CACHE_DIR="${SRC}/cache/sources/ask-repo"
 }
 
@@ -90,25 +93,31 @@ function custom_kernel_config__ask_modules() {
 	local ask_drv="${kernel_work_dir}/drivers/net/ethernet/freescale/ask"
 	local bsp_dir="${SRC}/packages/bsp/gateway-dk"
 
+	# Cleanup previous tree if it exists (otherwise copying again creates 1-deep duplicates)
+	if [[ -d "${ask_drv}" ]]; then
+		display_alert "ASK extension" "removing previous ASK module tree in kernel" "info"
+		run_host_command_logged rm -rf "${ask_drv}"
+	fi
+
 	# Copy module sources and Kbuild files from ASK cache
 	# (Kbuild files coexist with old Makefiles — kbuild prefers Kbuild when both exist)
-	mkdir -p "${ask_drv}"
-	cp -a "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
-	cp -a "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
-	cp -a "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
+	run_host_command_logged mkdir -pv "${ask_drv}"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_CDX_DIR}" "${ask_drv}/cdx"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
+	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
 
 	# Parent Kconfig and Makefile from ASK repo
-	cp "${ASK_CACHE_DIR}/Kconfig" "${ask_drv}/Kconfig"
-	cp "${ASK_CACHE_DIR}/Kbuild.mk" "${ask_drv}/Makefile"
+	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kconfig" "${ask_drv}/Kconfig"
+	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kbuild.mk" "${ask_drv}/Makefile"
 
 	# Board-specific modules (not part of ASK repo — from Armbian BSP)
 	if [[ "${BOARD}" == "gateway-dk" ]]; then
-		mkdir -p "${ask_drv}/sfp_led" "${ask_drv}/leds_lp5812"
-		cp "${bsp_dir}/sfp-led.c" "${ask_drv}/sfp_led/"
-		cp "${bsp_dir}/sfp-led.Kbuild" "${ask_drv}/sfp_led/Kbuild"
-		cp "${bsp_dir}/leds-lp5812.c" "${ask_drv}/leds_lp5812/"
-		cp "${bsp_dir}/leds-lp5812.h" "${ask_drv}/leds_lp5812/"
-		cp "${bsp_dir}/leds-lp5812.Kbuild" "${ask_drv}/leds_lp5812/Kbuild"
+		run_host_command_logged mkdir -pv "${ask_drv}/sfp_led" "${ask_drv}/leds_lp5812"
+		run_host_command_logged cp -v "${bsp_dir}/sfp-led.c" "${ask_drv}/sfp_led/"
+		run_host_command_logged cp -v "${bsp_dir}/sfp-led.Kbuild" "${ask_drv}/sfp_led/Kbuild"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.c" "${ask_drv}/leds_lp5812/"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.h" "${ask_drv}/leds_lp5812/"
+		run_host_command_logged cp -v "${bsp_dir}/leds-lp5812.Kbuild" "${ask_drv}/leds_lp5812/Kbuild"
 
 		# Add board-specific entries to ASK Kconfig and Makefile
 		patch -p1 -d "${ask_drv}" < "${bsp_dir}/ask-kconfig-board-modules.patch"
@@ -118,11 +127,18 @@ function custom_kernel_config__ask_modules() {
 
 	# Wire into parent freescale Kconfig and Makefile
 	local fsl_dir="${kernel_work_dir}/drivers/net/ethernet/freescale"
-	if ! grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig" 2>/dev/null; then
+	if ! grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig"; then
+		display_alert "ASK extension" "adding ASK Kconfig to freescale Kconfig" "info"
 		sed -i '/endif.*NET_VENDOR_FREESCALE/i source "drivers/net/ethernet/freescale/ask/Kconfig"' "${fsl_dir}/Kconfig"
+	else
+		display_alert "ASK extension" "ASK Kconfig already present in freescale Kconfig" "info"
 	fi
-	if ! grep -q 'ask/' "${fsl_dir}/Makefile" 2>/dev/null; then
+
+	if ! grep -q 'ask/' "${fsl_dir}/Makefile"; then
+		display_alert "ASK extension" "adding ASK modules to freescale Makefile" "info"
 		echo 'obj-y += ask/' >> "${fsl_dir}/Makefile"
+	else
+		display_alert "ASK extension" "ASK modules already present in freescale Makefile"
 	fi
 
 	display_alert "ASK extension" "ASK module sources and Kbuild files placed in kernel tree" "info"
@@ -138,21 +154,35 @@ function custom_kernel_config__ask_modules() {
 	fi
 }
 
-# Copy ASK kernel patch to userpatches (gitignored) so it's applied during kernel build.
+# Copy ASK kernel patch to userpatches so it's applied during kernel build.
 # userpatches/ is the Armbian-standard location for extension-provided patches — the build
-# framework merges them with patches from patch/kernel/ at build time. The directory is
-# gitignored and ephemeral; it does not persist across clean builds.
-function post_family_config__ask_kernel_patch() {
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache wasn't populated during config-dump-json
-	local patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
+# framework merges them with patches from patch/kernel/ at build time.
+function kernel_extra_create_patches__ask_kernel_patch() {
+	display_alert "ASK extension" "ASK kernel patch being staged in userpatches" "wrn"
+	declare patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
 	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
-	local patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
-	mkdir -p "${patch_dst}"
+	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	run_host_command_logged mkdir -pv "${patch_dst}"
 	# Renamed to 003- to apply after 001-ina234 and 002-device-tree in the Armbian patch dir
-	cp "${patch_src}" "${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	run_host_command_logged cp -v "${patch_src}" "${patch_dst_file}"
+	run_host_command_logged touch "${patch_dst_file}" # always recently-modified
 	display_alert "ASK extension" "ASK kernel patch staged in userpatches" "info"
 }
 
+function post_family_config__cleanup_ask_kernel_patch() {
+	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
+	# if patch_dst_file exists, remove it -- it shouldn't be there in post_family_config stage (pre-hashing)
+	# read: "the previous build left a staged ASK kernel patch in userpatches, remove it so patches hash doesn't change"
+	if [[ -f "${patch_dst_file}" ]]; then
+		display_alert "ASK extension" "removing staged ASK kernel patch from userpatches" "info"
+		run_host_command_logged rm -f "${patch_dst_file}"
+	else
+		display_alert "ASK extension" "no staged ASK kernel patch found in userpatches, nothing to remove" "info"
+	fi
+	return 0
+}
 
 # Install module autoload config (modules are in the kernel .deb, just need the load list)
 function post_install_kernel_debs__ask_module_autoload() {
@@ -211,8 +241,8 @@ function pre_customize_image__001_build_ask_userspace() {
 	chroot_sdcard "cd /tmp/ask-userspace/fmlib && \
 		patch -p1 < /tmp/ask-userspace/01-mono-ask-extensions.patch && \
 		make KERNEL_SRC=${kdir} libfm-arm.a && \
-		make DESTDIR=/ PREFIX=/usr LIB_DEST_DIR=/usr/lib/${ASK_HOST_TRIPLET} install-libfm-arm" \
-		|| exit_with_error "fmlib build failed"
+		make DESTDIR=/ PREFIX=/usr LIB_DEST_DIR=/usr/lib/${ASK_HOST_TRIPLET} install-libfm-arm" ||
+		exit_with_error "fmlib build failed"
 
 	# --- fmc ---
 	display_alert "ASK extension" "building fmc" "info"
@@ -233,8 +263,8 @@ function pre_customize_image__001_build_ask_userspace() {
 		install -m 644 source/fmc.h /usr/include/fmc/ && \
 		install -m 644 source/libfmc.a /usr/lib/${ASK_HOST_TRIPLET}/ && \
 		install -d /etc/fmc/config && \
-		install -m 644 etc/fmc/config/* /etc/fmc/config/" \
-		|| exit_with_error "fmc build failed"
+		install -m 644 etc/fmc/config/* /etc/fmc/config/" ||
+		exit_with_error "fmc build failed"
 
 	# --- libcli ---
 	display_alert "ASK extension" "building libcli" "info"
@@ -243,8 +273,8 @@ function pre_customize_image__001_build_ask_userspace() {
 
 	chroot_sdcard "cd /tmp/ask-userspace/libcli && \
 		make CFLAGS='-Wno-calloc-transposed-args' && \
-		make PREFIX=/usr DESTDIR=/ install" \
-		|| exit_with_error "libcli build failed"
+		make PREFIX=/usr DESTDIR=/ install" ||
+		exit_with_error "libcli build failed"
 
 	# --- libfci ---
 	display_alert "ASK extension" "building libfci" "info"
@@ -253,8 +283,8 @@ function pre_customize_image__001_build_ask_userspace() {
 	chroot_sdcard "cd /tmp/ask-userspace/libfci && \
 		make && \
 		install -m 644 libfci.a /usr/lib/${ASK_HOST_TRIPLET}/ && \
-		install -m 644 include/libfci.h /usr/include/" \
-		|| exit_with_error "libfci build failed"
+		install -m 644 include/libfci.h /usr/include/" ||
+		exit_with_error "libfci build failed"
 
 	# --- dpa-app ---
 	display_alert "ASK extension" "building dpa-app" "info"
@@ -269,8 +299,8 @@ function pre_customize_image__001_build_ask_userspace() {
 				-I/usr/include/fmc -I/usr/include/fmd -I/usr/include/fmd/integrations \
 				-I/usr/include/fmd/Peripherals -I/usr/include/fmd/Peripherals/common -I/usr/include/cdx' \
 			LDFLAGS='-lfmc -lfm-arm -lstdc++ -lxml2 -lpthread -lcli' && \
-		install -m 755 dpa_app /usr/bin/" \
-		|| exit_with_error "dpa-app build failed"
+		install -m 755 dpa_app /usr/bin/" ||
+		exit_with_error "dpa-app build failed"
 
 	# Install DPA-App config files (from ASK repo)
 	cp "${ASK_CACHE_DIR}/config/gateway-dk/cdx_cfg.xml" "${SDCARD}/etc/"
@@ -295,8 +325,8 @@ function pre_customize_image__001_build_ask_userspace() {
 		install -d /usr/lib/${ASK_HOST_TRIPLET}/xtables && \
 		for name in ${ask_xtables_modules[*]}; do \
 			install -m 644 \"\${name}.so\" /usr/lib/${ASK_HOST_TRIPLET}/xtables/ || exit 1; \
-		done" \
-		|| exit_with_error "xtables extensions build failed"
+		done" ||
+		exit_with_error "xtables extensions build failed"
 
 	# --- Patched system libraries (must be before CMM which depends on patched libnetfilter-conntrack) ---
 	build_ask_patched_libraries
@@ -318,8 +348,8 @@ function pre_customize_image__001_build_ask_userspace() {
 			LIBFCI_DIR=/tmp/ask-userspace/libfci \
 			ABM_DIR=/usr \
 			SYSROOT=/ && \
-		install -m 755 src/cmm /usr/bin/" \
-		|| exit_with_error "cmm build failed"
+		install -m 755 src/cmm /usr/bin/" ||
+		exit_with_error "cmm build failed"
 
 	# Install and enable CMM service (from ASK repo)
 	# Guarded by ConditionPathExists=/dev/cdx_ctrl — won't start without ASK FMAN ucode on NOR
@@ -379,7 +409,7 @@ function pre_customize_image__001_build_ask_userspace() {
 	# Libraries — snapshot all ASK-installed libs from chroot
 	mkdir -p "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}"
 	for lib in libfm-arm.a libfmc.a; do
-		[[ -f "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" ]] && \
+		[[ -f "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" ]] &&
 			cp -a "${SDCARD}/usr/lib/${ASK_HOST_TRIPLET}/${lib}" "${pkgdir}/usr/lib/${ASK_HOST_TRIPLET}/"
 	done
 	for pattern in libcli libfci; do
@@ -463,11 +493,11 @@ CONFFILES
 	# Build .deb once, install in chroot and save to output
 	local debfile="${pkgname}_${ask_version}_arm64.deb"
 	mkdir -p "${SRC}/output/debs"
-	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" \
-		|| exit_with_error "dpkg-deb failed for ${debfile}"
+	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" ||
+		exit_with_error "dpkg-deb failed for ${debfile}"
 	cp "${SRC}/output/debs/${debfile}" "${SDCARD}/root/"
-	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /root/${debfile}" \
-		|| exit_with_error "apt install failed for ${debfile}"
+	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /root/${debfile}" ||
+		exit_with_error "apt install failed for ${debfile}"
 	rm -f "${SDCARD}/root/${debfile}"
 
 	rm -rf "${pkgdir}"
@@ -494,10 +524,9 @@ function build_ask_patched_libraries() {
 		"01-nxp-ask-nonblocking-heap-buffer.patch" \
 		"libnfnetlink0_*.deb libnfnetlink-dev_*.deb"
 
-
 	# Copy patched .debs to output for distribution
 	mkdir -p "${SRC}/output/debs"
-	cp "${SDCARD}"/tmp/ask-patched-debs/*.deb "${SRC}/output/debs/" 2>/dev/null || true
+	cp "${SDCARD}"/tmp/ask-patched-debs/*.deb "${SRC}/output/debs/" 2> /dev/null || true
 	rm -rf "${SDCARD}/tmp/ask-patched-debs"
 }
 
@@ -528,6 +557,5 @@ function rebuild_patched_deb() {
 		DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -b -uc -us && \
 		cd '${workdir}' && dpkg -i ${debs} && \
 		cp ${debs} /tmp/ask-patched-debs/ && \
-		rm -rf '${workdir}'" \
-		|| exit_with_error "${pkg} rebuild failed"
+		rm -rf '${workdir}'" || exit_with_error "${pkg} rebuild failed"
 }

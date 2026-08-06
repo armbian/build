@@ -14,6 +14,10 @@ function post_family_config__shrink_atf() {
 	display_alert "Choose ATF branch 🍰" "recore"
 	declare -g ATFBRANCH="tag:v2.8.0"
 
+	# ATF v2.8.0 passes TF_LDFLAGS directly to the linker (ld.bfd), not to gcc,
+	# so the '-Wl,' prefix on --no-warn-rwx-segment is rejected. Drop the prefix.
+	declare -g ATF_SKIP_LDFLAGS_WL="yes"
+
 	declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=0 SUNXI_PSCI_USE_SCPI=0 bl31;;build/$ATF_PLAT/release/bl31.bin"
 	display_alert "Compile without SCP binary 🍰" "recore"
 	UBOOT_TARGET_MAP="SCP=/dev/null;;u-boot-sunxi-with-spl.bin"

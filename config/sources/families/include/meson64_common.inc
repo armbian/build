@@ -224,7 +224,7 @@ family_tweaks_bsp() {
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
 		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | \
-		"aml-c400-plus" | "aml-s9xx-box" | "bestv-r3300-l")
+			"aml-c400-plus" | "aml-s9xx-box" | "bestv-r3300-l")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 				Section "OutputClass"
 				    Identifier "Amlogic"
@@ -246,7 +246,7 @@ family_tweaks_bsp() {
 			EOF
 			;;
 		"jethubj200" | "odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | \
-		"radxa-zero" | "radxa-zero2" | "bananapi-m2s" | "cainiao-cniot-core")
+			"radxa-zero" | "radxa-zero2" | "bananapi-m2s" | "cainiao-cniot-core")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"

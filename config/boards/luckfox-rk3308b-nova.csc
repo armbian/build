@@ -17,7 +17,7 @@ SERIALCON="ttyS4"
 HAS_VIDEO_OUTPUT="no"
 MODULES_BLACKLIST="rockchipdrm analogix_dp dw_mipi_dsi dw_hdmi gpu_sched lima hantro_vpu panfrost"
 
-BOOTBRANCH_BOARD="tag:v2026.07-rc4"
+BOOTBRANCH_BOARD="tag:v2026.07"
 BOOTPATCHDIR="v2026.07"
 BOOT_SCENARIO="binman"
 BOOTFS_TYPE="ext4"

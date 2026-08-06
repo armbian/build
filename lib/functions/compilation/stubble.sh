@@ -102,8 +102,8 @@ function compile_stubble() {
 	declare sbat_output="${stubble_source_dir}/sbat"
 	if [[ -f "${sbat_template}" ]]; then
 		sed -e "s,@DEBIAN_VERSION@,9-1," \
-		    -e "s,@UPSTREAM_VERSION@,9," \
-		    "${sbat_template}" > "${sbat_output}"
+			-e "s,@UPSTREAM_VERSION@,9," \
+			"${sbat_template}" > "${sbat_output}"
 		display_alert "Generated sbat file from template" "${sbat_output}" "debug"
 	else
 		# Create sbat file manually if template doesn't exist

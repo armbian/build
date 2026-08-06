@@ -9,7 +9,7 @@
 
 function run_tool_oras() {
 	# Default version
-	ORAS_VERSION=${ORAS_VERSION:-1.3.2} # https://github.com/oras-project/oras/releases
+	ORAS_VERSION=${ORAS_VERSION:-1.3.3} # https://github.com/oras-project/oras/releases
 	#ORAS_VERSION=${ORAS_VERSION:-"1.0.0-rc.1"} # https://github.com/oras-project/oras/releases
 
 	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.
@@ -55,7 +55,7 @@ function run_tool_oras() {
 		*loongarch64*)
 			ORAS_ARCH="loong64"
 			ORAS_VERSION="1.3.0-beta.3-loong64" # Only v1.3.0-beta.3-loong64+ has loong64 support
-			ORAS_REPO="amazingfate" # This is my fork repo, we can delete it if oras releases official loong64 binary in the future
+			ORAS_REPO="amazingfate"             # This is my fork repo, we can delete it if oras releases official loong64 binary in the future
 			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
@@ -178,9 +178,9 @@ function oras_get_artifact_manifest() {
 	# still printed so real problems aren't hidden.
 	local oras_stderr_file
 	oras_stderr_file=$(mktemp)
-	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}" 2>"${oras_stderr_file}")" && oras_has_manifest="yes" || oras_has_manifest="no"
+	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}" 2> "${oras_stderr_file}")" && oras_has_manifest="yes" || oras_has_manifest="no"
 	local oras_stderr
-	oras_stderr=$(<"${oras_stderr_file}")
+	oras_stderr=$(< "${oras_stderr_file}")
 	rm -f "${oras_stderr_file}"
 	if [[ "${oras_has_manifest}" == "no" && -n "${oras_stderr}" && "${oras_stderr}" != *"not found"* ]]; then
 		display_alert "ORAS manifest fetch error" "${oras_stderr}" "wrn"

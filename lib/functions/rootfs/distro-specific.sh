@@ -10,6 +10,11 @@
 function install_distribution_specific() {
 	display_alert "Applying distribution specific tweaks for" "${RELEASE:-}" "info"
 
+	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
+		*give config a chance to act before install_distribution_specific*
+		Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+	PRE_INSTALL_DISTRIBUTION_SPECIFIC
+
 	# disable broken service, the problem is in default misconfiguration
 	disable_systemd_service_sdcard smartmontools.service smartd.service
 
@@ -47,11 +52,11 @@ function install_distribution_specific() {
 	if [[ "${POWER_MANAGEMENT_FEATURES:-"no"}" != "yes" ]]; then
 		mkdir -p "${SDCARD}/etc/systemd/sleep.conf.d"
 		cat <<- EOF > "${SDCARD}/etc/systemd/sleep.conf.d/00-disable.conf"
-		[Sleep]
-		AllowSuspend=no
-		AllowHibernation=no
-		AllowHybridSleep=no
-		AllowSuspendThenHibernate=no
+			[Sleep]
+			AllowSuspend=no
+			AllowHibernation=no
+			AllowHybridSleep=no
+			AllowSuspendThenHibernate=no
 		EOF
 	fi
 
@@ -98,11 +103,12 @@ function fetch_distro_keyring() {
 		buster | bullseye | bookworm | trixie | forky | sid)
 			distro="debian"
 			;;
-		focal | jammy | noble | oracular | plucky | questing | resolute )
+		focal | jammy | noble | oracular | plucky | questing | resolute)
 			distro="ubuntu"
 			;;
 		*)
 			exit_with_error "fetch_distro_keyring failed" "unrecognized release: $release"
+			;;
 	esac
 
 	CACHEDIR="/armbian/cache/keyrings/$distro"
@@ -114,12 +120,12 @@ function fetch_distro_keyring() {
 			if [[ -e "${CACHEDIR}/debian-archive-keyring.gpg" ]]; then
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
 			else
-			# for details of how this gets into this mirror, see
-			# github.com/armbian/armbian.github.io/ .github/workflows/generate-keyring-data.yaml
+				# for details of how this gets into this mirror, see
+				# github.com/armbian/armbian.github.io/ .github/workflows/generate-keyring-data.yaml
 				for p in debian-archive-keyring debian-ports-archive-keyring; do
 					# if we use http://, we'll get a 301 to https://, but this means we can't use a caching proxy like ACNG
 					PKG_URL="https://github.armbian.com/keyrings/latest-${p}.deb"
-					run_host_command_logged curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
+					run_host_command_logged curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" ||
 						exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 					KEYRING_DEB=$(basename "${PKG_URL}")
 					# We ignore errors from dpkg-deb/tar b/c we cannot tell the difference between unpack failures and chmod/chgrp failures
@@ -142,7 +148,7 @@ function fetch_distro_keyring() {
 				display_alert "fetch_distro_keyring($release)" "cache found, skipping" "info"
 			else
 				PKG_URL="https://github.armbian.com/keyrings/latest-ubuntu-keyring.deb"
-				run_host_command_logged curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" || \
+				run_host_command_logged curl -fLOJ --output-dir "${CACHEDIR}" "${PKG_URL}" ||
 					exit_with_error "fetch_distro_keyring failed" "unable to download ${PKG_URL}"
 				KEYRING_DEB=$(basename "${PKG_URL}")
 				dpkg-deb -x "${CACHEDIR}/${KEYRING_DEB}" "${CACHEDIR}" || /bin/true # see above in debian block about ignoring errors
@@ -156,6 +162,7 @@ function fetch_distro_keyring() {
 			;;
 		*)
 			exit_with_error "fetch_distro_keyring" "unrecognized distro: $distro"
+			;;
 	esac
 	# cp -l may break here if it's cross-filesystem
 	# copy everything to the "host" inside the container
@@ -196,21 +203,21 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
-			Types: deb
-			URIs: http://${DEBIAN_MIRROR}
-			Suites: ${suites[@]}
-			Components: ${components[@]}
-			Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+				Types: deb
+				URIs: http://${DEBIAN_MIRROR}
+				Suites: ${suites[@]}
+				Components: ${components[@]}
+				Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 			EOF
 
 			if [[ ${#security_suites[@]} -gt 0 ]]; then
 				echo "" >> "${basedir}/etc/apt/sources.list.d/${distro}.sources" # it breaks if there is no line space in between
 				cat <<- EOF >> "${basedir}/etc/apt/sources.list.d/${distro}.sources"
-				Types: deb
-				URIs: http://${DEBIAN_SECURITY}
-				Suites: ${security_suites[@]}
-				Components: ${components[@]}
-				Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+					Types: deb
+					URIs: http://${DEBIAN_SECURITY}
+					Suites: ${security_suites[@]}
+					Components: ${components[@]}
+					Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 				EOF
 			fi
 			;;
@@ -226,11 +233,11 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 			# sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
-			Types: deb
-			URIs: http://${DEBIAN_MIRROR}
-			Suites: ${release}
-			Components: main contrib non-free non-free-firmware
-			Signed-By: ${keyring_filename}
+				Types: deb
+				URIs: http://${DEBIAN_MIRROR}
+				Suites: ${release}
+				Components: main contrib non-free non-free-firmware
+				Signed-By: ${keyring_filename}
 			EOF
 
 			# Required for some packages on riscv64.
@@ -238,12 +245,12 @@ function create_sources_list_and_deploy_repo_key() {
 			if [[ "${ARCH}" == riscv64 ]]; then
 				cat <<- EOF >> "${basedir}/etc/apt/sources.list.d/${distro}.sources"
 
-				Types: deb
-				URIs: http://deb.debian.org/debian-ports/
-				Suites: ${release}
-				Components: main
-				Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-				Architectures: riscv64
+					Types: deb
+					URIs: http://deb.debian.org/debian-ports/
+					Suites: ${release}
+					Components: main
+					Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+					Architectures: riscv64
 				EOF
 			fi
 			;;
@@ -252,11 +259,11 @@ function create_sources_list_and_deploy_repo_key() {
 			distro="ubuntu"
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
-			Types: deb
-			URIs: http://${UBUNTU_MIRROR}
-			Suites: ${release} ${release}-security ${release}-updates ${release}-backports
-			Components: main restricted universe multiverse
-			Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+				Types: deb
+				URIs: http://${UBUNTU_MIRROR}
+				Suites: ${release} ${release}-security ${release}-updates ${release}-backports
+				Components: main restricted universe multiverse
+				Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 			EOF
 			;;
 	esac
@@ -311,11 +318,11 @@ function create_sources_list_and_deploy_repo_key() {
 		armbian_mirror="beta.armbian.com"
 	fi
 	cat <<- EOF > "${basedir}"/etc/apt/sources.list.d/armbian.sources
-	Types: deb
-	URIs: http://${armbian_mirror}
-	Suites: $RELEASE
-	Components: ${components[*]}
-	Signed-By: ${APT_SIGNING_KEY_FILE}
+		Types: deb
+		URIs: http://${armbian_mirror}
+		Suites: $RELEASE
+		Components: ${components[*]}
+		Signed-By: ${APT_SIGNING_KEY_FILE}
 	EOF
 
 	# disable repo if DISTRIBUTION_STATUS==eos, or if SKIP_ARMBIAN_REPO==yes, or if when==image-early.

@@ -21,6 +21,10 @@ function armbian_register_commands() {
 
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
+		# List the extension hook points available in the build framework, by statically scanning the sources.
+		["show-extensions"]="show_extensions" # implemented in cli_show_extensions_pre_run and cli_show_extensions_run
+		["show-hooks"]="show_extensions"      # implemented in cli_show_extensions_pre_run and cli_show_extensions_run
+
 		# Given a board/config/exts, dump out the (non-userspace) JSON of configuration
 		["configdump"]="config_dump_json"          # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 		["config-dump"]="config_dump_json"         # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run

@@ -10,7 +10,7 @@ declare -g SERIALCON="${SERIALCON:-tty1}"            # Consistent serial console
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 declare -g DISTRO_GENERIC_KERNEL=no
-declare -g POWER_MANAGEMENT_FEATURES=yes             # Suspend and resume might work well in UEFI, elsewhere is disabled by default
+declare -g POWER_MANAGEMENT_FEATURES=yes # Suspend and resume might work well in UEFI, elsewhere is disabled by default
 
 # Intel SOF (Sound Open Firmware) DSP blobs for Meteor / Lunar / Panther
 # Lake and friends. Most UEFI x86 laptops route audio through SOF — without
@@ -51,6 +51,10 @@ case "${BRANCH}" in
 
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="7.1"
+		;;
+
+	bleedingedge)
+		declare -g KERNEL_MAJOR_MINOR="7.2"
 		;;
 esac
 

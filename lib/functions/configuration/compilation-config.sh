@@ -36,7 +36,7 @@ function prepare_compilation_vars() {
 	# If CPUTHREADS is defined and a valid positive integer allow user to override CTHREADS
 	# This is useful for limiting Armbian build to a specific number of threads, e.g. for build servers
 	if [[ "$CPUTHREADS" =~ ^[1-9][0-9]*$ ]]; then
-    	CTHREADS="-j$CPUTHREADS"
+		CTHREADS="-j$CPUTHREADS"
 		echo "Using user-defined thread count: $CTHREADS"
 	fi
 

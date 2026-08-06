@@ -25,6 +25,11 @@ trap "systemctl start docker >/dev/null 2>&1; exit" INT TERM
 
 [[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
+# Some board write_uboot_platform hooks are notice-only and call the build-side
+# display_alert, which does not exist in this runtime script; provide a minimal
+# shim so those hooks print their message and return 0 instead of failing 127.
+declare -F display_alert > /dev/null || display_alert() { echo "$1${2:+ $2}"; }
+
 # ORIGINAL_SCRIPT_NAME: Must be either armbian-install or nand-sata-install
 ORIGINAL_SCRIPT_NAME=$(basename $0)
 # script configuration - derive from ORIGINAL_SCRIPT_NAME
@@ -490,16 +495,6 @@ create_armbian()
 
 	if [[ $2 == ${DISK_ROOT_PART} && -z $1 && $DEVICE_TYPE = uefi ]]; then
 
-		# create swap file size of your memory so we can use it for S4
-		MEM_TOTAL=$(cat /proc/meminfo | awk '/MemTotal/ {print $2}')
-
-		# but no more then 16Gb
-		[[ ${MEM_TOTAL} -gt 16107868 ]] && MEM_TOTAL=16107868
-		dd if=/dev/zero of="${TempDir}"/rootfs/swapfile bs=${MEM_TOTAL} count=1024 conv=notrunc >> $logfile
-
-		mkswap "${TempDir}"/rootfs/swapfile >> $logfile
-		chmod 0600 "${TempDir}"/rootfs/swapfile
-		sed -i "/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\"$/ resume=UUID=$(findmnt -no UUID -T "${TempDir}"/rootfs/swapfile) resume_offset=$(filefrag -v "${TempDir}"/rootfs/swapfile |grep " 0:"| awk '{print $4}' | cut -d"." -f1)\"/" "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
 
 		echo "GRUB_DISABLE_OS_PROBER=false" >> "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
 
@@ -517,7 +512,6 @@ create_armbian()
 			exit 20
 		fi
 		echo "UUID=$target_efi_uuid				/boot/efi		vfat	 defaults 0 2" >> "${TempDir}"/rootfs/etc/fstab
-		echo "/swapfile none swap sw 0 0" >> "${TempDir}"/rootfs/etc/fstab
 
 		cat <<-hibernatemenu >"${TempDir}"/rootfs/etc/polkit-1/localauthority/50-local.d/com.ubuntu.enable-hibernate.pkla
 		[Re-enable hibernate by default in upower]
@@ -980,6 +974,40 @@ write_uboot_to_mtd_flash()
 	fi
 }
 
+# Write the platform bootloader to a block device and confirm it worked.
+# write_uboot_platform runs 'dd' without checking its exit status; callers
+# then printed "Done." unconditionally, so a failed write (a dying eMMC
+# returning -110 on cache flush, a write-protected or wrong target) was
+# indistinguishable from success and left the bootloader silently stale.
+# Capture the output, log it, and surface a real error to the user.
+#  $1 = u-boot files directory
+#  $2 = target block device
+write_bootloader_checked()
+{
+	local dir="$1" target="$2" out rc syncout
+	out=$(write_uboot_platform "$dir" "$target" 2>&1)
+	rc=$?
+	# The platform writer's dd may only queue the write (some families omit
+	# conv=fsync); flush the target so a writeback/cache-flush failure (a failing
+	# eMMC returns -110 here) is caught rather than reported as success.
+	if [[ $rc -eq 0 ]]; then
+		syncout=$(sync "$target" 2>&1)
+		rc=$?
+		[[ -n "$syncout" ]] && out+=$'\n'"$syncout"
+	fi
+	printf '%s: write bootloader to %s (rc=%d)\n%s\n' "$(date)" "${target}" "${rc}" "${out}" >> "$logfile"
+	if [[ $rc -ne 0 ]]; then
+		dialog --backtitle "$backtitle" --title ' Bootloader update FAILED ' --colors --cr-wrap --msgbox \
+			"\Z1The bootloader update on ${target} FAILED (exit ${rc}).\Zn\n\n${out}\n\nThe write may be incomplete - the board may not boot until the bootloader is rewritten successfully. Do not assume the previous bootloader is still usable. Check 'dmesg' for I/O errors." 0 0
+	elif [[ -n "$out" ]]; then
+		# Some families' write_uboot_platform prints required manual steps
+		# (e.g. fastboot instructions) instead of writing; surface that output
+		# to the user rather than swallowing it behind "Done.".
+		echo "$out"
+	fi
+	return "$rc"
+}
+
 main()
 {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -1144,14 +1172,14 @@ main()
 				;;
 			5)
 				show_warning "This script will update the bootloader on ${root_partition_device}.\n\n    Continue?"
-				write_uboot_platform "$DIR" "${root_partition_device}"
+				write_bootloader_checked "$DIR" "${root_partition_device}" || return
 				update_bootscript
 				dialog --backtitle "$backtitle" --title 'Writing bootloader' --msgbox '\n          Done.' 7 30
 				return
 				;;
 			6)
 				show_warning "This script will update the bootloader on ${BOOTPART}.\n\n    Continue?"
-				write_uboot_platform "$DIR" ${BOOTPART}
+				write_bootloader_checked "$DIR" "${BOOTPART}" || return
 				echo 'Done'
 				return
 				;;

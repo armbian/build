@@ -17,7 +17,7 @@ function post_armbian_repo_customize_image__install_from_apa() {
 
 	# install desktop environment if requested
 	case ${DESKTOP_ENVIRONMENT^^} in
-		XFCE|KDE|GNOME)
+		XFCE | KDE | GNOME)
 			display_alert "installing ${DESKTOP_ENVIRONMENT^^} desktop environment" "${EXTENSION}: ${DESKTOP_ENVIRONMENT^^}" "info"
 			chroot_sdcard_apt_get install --install-recommends=yes "armbian-desktop-${DESKTOP_ENVIRONMENT,,}"
 			;;

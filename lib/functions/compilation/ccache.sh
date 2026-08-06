@@ -20,9 +20,9 @@ function ccache_get_stat() {
 # Calculate hit percentage from hit and miss counts
 function ccache_hit_pct() {
 	local hit="$1" miss="$2"
-	local total=$(( hit + miss ))
+	local total=$((hit + miss))
 	if [[ $total -gt 0 ]]; then
-		echo $(( hit * 100 / total ))
+		echo $((hit * 100 / total))
 	else
 		echo 0
 	fi

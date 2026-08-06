@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ming Zhangqun <north_sea@qq.com>
+Date: Mon, 23 Jun 2026 00:00:00 +0800
+Subject: [PATCH] rockusb: support SD card and NVMe LUN switch in Loader mode
+
+Allow rkdevtool to flash the SD card (SDMMC0, mmc 1) and NVMe by
+switching LUNs in Loader mode. Changes across two files:
+
+1. drivers/usb/gadget/f_rockusb.c (protocol layer):
+   - rkusb_do_switch_storage(): handle BOOT_TYPE_SD0 (mmc 1) and
+     BOOT_TYPE_PCIE (nvme 0) in addition to the existing eMMC case.
+     SD: mmc_initialize() then mmc 1.
+     NVMe: lazy pci enum + nvme scan (running here in the rockusb main
+     loop avoids a deadlock seen when called from setup_download_mode()
+     during boot-early context).
+   - rkusb_do_get_storage_info(): report mmc devnum 1 as BOOT_TYPE_SD0
+     instead of the default BOOT_TYPE_EMMC. NVMe (IF_TYPE_NVME) is
+     already mapped to BOOT_TYPE_PCIE upstream.
+
+2. arch/arm/mach-rockchip/rk3588/rk3588.c (SoC iomux):
+   - When devnum == 1, configure SDMMC0 pinmux: GPIO4D0-D3 (data),
+     GPIO4D4 (cmd), GPIO4D5 (clk) and GPIO0A4 (det). Without this,
+     dw_mmc probe fails (-19) because the pins are never muxed.
+   - The original eMMC (devnum == 0) path is preserved verbatim inside
+     the new `if (devnum == 0)` branch.
+
+Signed-off-by: Ming Zhangqun <north_sea@qq.com>
+---
+ arch/arm/mach-rockchip/rk3588/rk3588.c | 33 +++++++++----
+ drivers/usb/gadget/f_rockusb.c         | 30 ++++++++++--
+ 2 files changed, 51 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm/mach-rockchip/rk3588/rk3588.c b/arch/arm/mach-rockchip/rk3588/rk3588.c
+--- a/arch/arm/mach-rockchip/rk3588/rk3588.c
++++ b/arch/arm/mach-rockchip/rk3588/rk3588.c
+@@ -73,6 +73,9 @@
+ #define BUS_IOC_GPIO3A_IOMUX_SEL_L	0x60
+ #define BUS_IOC_GPIO3A_IOMUX_SEL_H	0x64
+ #define BUS_IOC_GPIO3C_IOMUX_SEL_H	0x74
++#define BUS_IOC_GPIO4D_IOMUX_SEL_L	0x98
++#define BUS_IOC_GPIO4D_IOMUX_SEL_H	0x9c
++#define PMU1_IOC_GPIO0A_IOMUX_SEL_H	0x04
+
+ #define VCCIO3_5_IOC_BASE		0xfd5fa000
+ #define IOC_VCCIO3_5_GPIO2A_DS_H	0x44
+@@ -868,19 +871,37 @@
+ {
+ 	switch (if_type) {
+ 	case IF_TYPE_MMC:
+-		/*
+-		* set the emmc io drive strength:
+-		* data and cmd: 50ohm
+-		* clock: 25ohm
+-		*/
+-		writel(0x00770052, EMMC_IOC_BASE + EMMC_IOC_GPIO2A_DS_L);
+-		writel(0x77772222, EMMC_IOC_BASE + EMMC_IOC_GPIO2D_DS_L);
+-		writel(0x77772222, EMMC_IOC_BASE + EMMC_IOC_GPIO2D_DS_H);
+-
+-		/* set emmc iomux */
+-		writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2A_IOMUX_SEL_L);
+-		writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2D_IOMUX_SEL_L);
+-		writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2D_IOMUX_SEL_H);
++		if (devnum == 0) {
++			/*
++			* set the emmc io drive strength:
++			* data and cmd: 50ohm
++			* clock: 25ohm
++			*/
++			writel(0x00770052, EMMC_IOC_BASE + EMMC_IOC_GPIO2A_DS_L);
++			writel(0x77772222, EMMC_IOC_BASE + EMMC_IOC_GPIO2D_DS_L);
++			writel(0x77772222, EMMC_IOC_BASE + EMMC_IOC_GPIO2D_DS_H);
++
++			/* set emmc iomux */
++			writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2A_IOMUX_SEL_L);
++			writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2D_IOMUX_SEL_L);
++			writel(0xffff1111, BUS_IOC_BASE + BUS_IOC_GPIO2D_IOMUX_SEL_H);
++		} else if (devnum == 1) {
++			/*
++			* SDMMC0:
++			*   data0-3 = GPIO4D0-D3, cmd = GPIO4D4, clk = GPIO4D5 (mux 1)
++			*   det     = GPIO0A4 (mux 1)
++			* Other pins on these banks are preserved.
++			*/
++			writel((readl(BUS_IOC_BASE + BUS_IOC_GPIO4D_IOMUX_SEL_L)
++					& ~0x0000ffffU) | 0x00001111U,
++			       BUS_IOC_BASE + BUS_IOC_GPIO4D_IOMUX_SEL_L);
++			writel((readl(BUS_IOC_BASE + BUS_IOC_GPIO4D_IOMUX_SEL_H)
++					& ~0x000000ffU) | 0x00000011U,
++			       BUS_IOC_BASE + BUS_IOC_GPIO4D_IOMUX_SEL_H);
++			writel((readl(PMU1_IOC_BASE + PMU1_IOC_GPIO0A_IOMUX_SEL_H)
++					& ~0x0000000fU) | 0x00000001U,
++			       PMU1_IOC_BASE + PMU1_IOC_GPIO0A_IOMUX_SEL_H);
++		}
+ 		break;
+
+ 	case IF_TYPE_MTD:
+diff --git a/drivers/usb/gadget/f_rockusb.c b/drivers/usb/gadget/f_rockusb.c
+--- a/drivers/usb/gadget/f_rockusb.c
++++ b/drivers/usb/gadget/f_rockusb.c
+@@ -761,6 +761,11 @@
+ 		devnum = 0;
+ 		mmc_initialize(gd->bd);
+ 		break;
++	case BOOT_TYPE_SD0:
++		type = IF_TYPE_MMC;
++		devnum = 1;
++		mmc_initialize(gd->bd);
++		break;
+ #endif
+ 	case BOOT_TYPE_MTD_BLK_NAND:
+ 		type = IF_TYPE_MTD;
+@@ -786,6 +791,19 @@ static int rkusb_do_switch_storage(struct fsg_common *common)
+ 		scsi_scan(true);
+ 		break;
+ #endif
++#ifdef CONFIG_NVME
++	case BOOT_TYPE_PCIE:
++		type = IF_TYPE_NVME;
++		devnum = 0;
++		/*
++		 * Lazy init: running pci enum here (in the rockusb main loop)
++		 * avoids the deadlock seen when pci enum is called from
++		 * setup_download_mode() during boot-early context.
++		 */
++		run_command("pci enum", 0);
++		run_command("nvme scan", 0);
++		break;
++#endif
+ 	default:
+ 		printf("Bootdev 0x%x is not support\n", media);
+ 		return -ENODEV;
+@@ -832,7 +850,13 @@
+
+ 	switch (type) {
+ 	case IF_TYPE_MMC:
+-		media = BOOT_TYPE_EMMC;
++		/* Distinguish SD card (mmc 1) from eMMC (mmc 0) by devnum,
++		 * both are registered under UCLASS_MMC with if_type=IF_TYPE_MMC.
++		 */
++		if (devnum == 1)
++			media = BOOT_TYPE_SD0;
++		else
++			media = BOOT_TYPE_EMMC;
+ 		break;
+
+ 	case IF_TYPE_SD:
+--
+2.43.0
+-- 
+2.43.0

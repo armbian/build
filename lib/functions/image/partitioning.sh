@@ -51,7 +51,6 @@ function prepare_partitions() {
 	else
 		display_alert "e2fsprogs version" "$e2fsprogs_version does not support orphan_file" "info"
 	fi
-
 	# mkopts[fat] is empty
 	# mkopts[ext2] is empty
 	# mkopts[f2fs] is empty
@@ -59,6 +58,10 @@ function prepare_partitions() {
 	# mkopts[nilfs2] is empty
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
+
+	if [[ -n "$BTRFS_CHECKSUM" ]]; then
+		mkopts[btrfs]+=" --checksum=$BTRFS_CHECKSUM "
+	fi
 
 	mkopts_label[ext4]='-L '
 	mkopts_label[ext2]='-L '
@@ -247,7 +250,13 @@ function prepare_partitions() {
 
 		# Check sfdisk version to determine if --sector-size is supported
 		sfdisk_version=$(sfdisk --version | awk '/util-linux/ {print $NF}')
-		sfdisk_version_num=$(echo "$sfdisk_version" | awk -F. '{printf "%d%02d%02d\n", $1, $2, $3}')
+		IFS=. read -r _sfd_maj _sfd_min _sfd_patch _ <<< "${sfdisk_version}"
+		# Strip any non-numeric suffix (e.g. "2.41-rc1" -> minor "41", not "41-rc1")
+		# so `printf %d` never bombs under `set -e` on prerelease util-linux builds.
+		_sfd_maj="${_sfd_maj%%[!0-9]*}"
+		_sfd_min="${_sfd_min%%[!0-9]*}"
+		_sfd_patch="${_sfd_patch%%[!0-9]*}"
+		printf -v sfdisk_version_num '%d%02d%02d' "${_sfd_maj:-0}" "${_sfd_min:-0}" "${_sfd_patch:-0}"
 		if [[ "$sfdisk_version_num" -ge "24100" ]]; then
 			echo "${partition_script_output}" | run_host_command_logged sfdisk --sector-size "$SECTOR_SIZE" "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 		else

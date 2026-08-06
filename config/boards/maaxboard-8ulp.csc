@@ -1,0 +1,13 @@
+# NXP i.MX8ULP A2 dual-core 2GB RAM 32GB eMMC
+BOARD_NAME="Avnet MaaXBoard 8ULP"
+BOARD_VENDOR="avnet"
+BOARDFAMILY="imx8ulp"
+BOARD_MAINTAINER="govindsi"
+INTRODUCED="2023"
+HAS_VIDEO_OUTPUT="yes"
+BOOTCONFIG="maaxboard-8ulp_defconfig"
+KERNEL_TARGET="vendor"
+KERNEL_TEST_TARGET="vendor"
+DEFAULT_CONSOLE="serial"
+SERIALCON="ttyLP1"
+BOOT_FDT_FILE="freescale/maaxboard-8ulp.dtb"
