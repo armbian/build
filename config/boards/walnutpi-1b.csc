@@ -2,7 +2,7 @@
 # Covers all LPDDR4 revisions (1G/2G/4G, size auto-detected); the early
 # DDR3 revision needs a different u-boot DRAM profile and is not covered.
 BOARD_NAME="Walnut Pi 1B"
-BOARD_VENDOR="walnutpi"
+BOARD_VENDOR="walnut"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER="TallGuy74"
 INTRODUCED="2026"

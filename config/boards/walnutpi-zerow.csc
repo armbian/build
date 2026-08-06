@@ -1,6 +1,6 @@
 # Allwinner H618 quad core 1GB/2GB/4GB RAM SoC WiFi/BT
 BOARD_NAME="Walnut Pi ZeroW"
-BOARD_VENDOR="walnutpi"
+BOARD_VENDOR="walnut"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER="TallGuy74"
 INTRODUCED="2026"
