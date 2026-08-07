@@ -16,6 +16,7 @@ function artifact_armbian-bsp-cli_config_dump() {
 function artifact_armbian-bsp-cli_prepare_version() {
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
+	: "${LINUXFAMILY:?LINUXFAMILY is not set}" # empty would make the packages/bsp hash below cover the whole tree
 
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
@@ -73,12 +74,22 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	declare -a dirs_to_hash=(
-		"${SRC}/packages/bsp/common" # common stuff
+		"${SRC}/packages/bsp/common"         # common stuff
+		"${SRC}/packages/bsp/${LINUXFAMILY}" # family files, installed by post_family_tweaks_bsp hooks
+		"${SRC}/packages/bsp/${BOARD}"       # board files, ditto
 		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
 		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
 		"${SRC}/config/optional/boards/${BOARD}/_packages/bsp-cli"
 	)
+
+	# The hooks are hashed above, but only as source text: an `install ${SRC}/packages/bsp/foo/bar`
+	# line reads the same whether bar changed or not. Directories no entry above reaches - shared
+	# ones like packages/bsp/aic8800 - are thus invisible to the version, and the deb comes back
+	# from cache with the old file in it. List them here, absolute, from the family config or an
+	# extension's extension_prepare_config.
+	dirs_to_hash+=("${BSP_CLI_EXTRA_HASH_DIRS[@]+"${BSP_CLI_EXTRA_HASH_DIRS[@]}"}")
+
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
 	packages_config_hash="${hash_files}"
