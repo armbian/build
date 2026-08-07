@@ -1,0 +1,76 @@
+From a35aec9605aa6b9c7d35034af913340a101dbef6 Mon Sep 17 00:00:00 2001
+From: Matt Brocklehurst <matt@mattbrocklehurst.co.uk>
+Date: Fri, 7 Aug 2026 02:29:59 +0100
+Subject: [PATCH] mmc: host: bcm2835: guard against host->data already being
+ NULL in bcm2835_finish_data()
+
+Real crash, confirmed live via CI serial console on QEMU (raspi2b,
+after the dma-ranges fix that got boot far enough to actually complete
+a DMA transfer for the first time):
+
+  Unable to handle kernel NULL pointer dereference at virtual address 00000014
+  PC is at bcm2835_finish_data+0x28/0x60
+  ...
+  bcm2835_finish_data from bcm2835_dma_complete_work+0xf8/0x124
+
+Root cause: two independent completion signals can race for the same
+MMC transfer. bcm2835_finish_data() itself clears host->data = NULL
+(via bcm2835_transfer_complete()) when a transfer completes through
+the interrupt/status-polling path. bcm2835_dma_complete_work() -- a
+workqueue callback fired by the DMA engine's own completion
+notification -- calls bcm2835_finish_data() unconditionally, with no
+check for whether the same transfer already finished (and cleared
+host->data) via that other path first. When it loses the race,
+host->data is NULL and the very next line (data->error) is a NULL
+deref.
+
+This was very likely always a latent bug rather than something the
+dma-ranges devicetree fix introduced: before that fix, no DMA
+transfer on this driver ever completed successfully at all (the very
+first dma_map_phys() call always failed), so this code path was never
+reached. Fixing the mapping failure exposed a second, previously
+unreachable bug behind it -- not something we caused, something we
+uncovered.
+
+Not yet confirmed whether this is purely a QEMU-timing artifact (DMA
+completion racing the status-poll path in a way real hardware's
+timing may rarely hit) or a genuine upstream race also latent on real
+hardware. Either way, unconditionally dereferencing a pointer that can
+legitimately be NULL here is wrong regardless of environment -- this
+guard is correct either way, and unblocks CI boot testing tonight
+without requiring a full explanation of the race's real-hardware
+likelihood first.
+
+Signed-off-by: Matt Brocklehurst <matt@mattbrocklehurst.co.uk>
+---
+ drivers/mmc/host/bcm2835.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/mmc/host/bcm2835.c b/drivers/mmc/host/bcm2835.c
+index 2278caee3650..73ed0c57d98b 100644
+--- a/drivers/mmc/host/bcm2835.c
++++ b/drivers/mmc/host/bcm2835.c
+@@ -746,6 +746,20 @@ static void bcm2835_finish_data(struct bcm2835_host *host)
+ 	struct mmc_data *data;
+ 
+ 	data = host->data;
++	/*
++	 * host->data (and the transfer it points to) can already have been
++	 * completed and cleared by the time this runs: bcm2835_dma_complete_work()
++	 * calls this unconditionally from a workqueue, but the same transfer
++	 * may already have finished via the interrupt/status-polling path
++	 * (bcm2835_finish_data() -> bcm2835_transfer_complete(), which sets
++	 * host->data = NULL) before the deferred DMA-completion callback runs.
++	 * Without this guard that's a NULL pointer dereference on data->error
++	 * a few lines down. Confirmed live: "Unable to handle kernel NULL
++	 * pointer dereference at virtual address 00000014", PC at
++	 * bcm2835_finish_data+0x28/0x60, called from bcm2835_dma_complete_work.
++	 */
++	if (!data)
++		return;
+ 
+ 	host->hcfg &= ~(SDHCFG_DATA_IRPT_EN | SDHCFG_BLOCK_IRPT_EN);
+ 	writel(host->hcfg, host->ioaddr + SDHCFG);
+-- 
+2.39.5 (Apple Git-154)
+
