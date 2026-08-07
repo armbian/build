@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Fri, 31 Jul 2026 12:05:46 +0200
+Subject: [PATCH] riscv: dts: sophgo: add a Milk-V Duo S USB device-mode overlay
+
+The base device tree gives the Duo S's one dwc2 controller to the Type-A port
+with dr_mode = "host". That is the right default - the board has ethernet, so
+headless setup does not need USB networking - but it is the wrong only option.
+Plugging the Type-C into a laptop and getting a shell over CDC-NCM is what the
+Duo S is best known for, and what the vendor images do by default.
+
+So put device mode in an overlay, selectable at boot with
+
+    overlays=usb-device
+
+in /boot/armbianEnv.txt. It has to be a boot-time choice: dr_mode is read once,
+by dwc2_get_dr_mode() at probe, and the runtime alternative - usb-role-switch
+on &usb - is exactly the configuration that hangs this SoC, which is why the
+base tree pins a role in the first place.
+
+Peripheral mode itself is safe. dwc2_drd_init() returns immediately unless the
+node carries usb-role-switch, so it never reaches the dwc2_ovr_init() that
+hangs; the path is the same one mainline's dr_mode = "otg" took on this board
+before we pinned it, minus the host controller. Nothing has to touch the PHY's
+ID override either, contrary to how the vendor's userspace switcher does it:
+dwc2 forces the role in GUSBCFG from dr_mode, and never calls phy_set_mode() at
+all, so cv1800_usb_phy_set_mode() stays the dead code it already is.
+
+The second half of the overlay is the one that is easy to miss. phy-supply on
+&usbphy drives the Type-A port's VBUS through reg_usb_vbus, and peripheral mode
+still enables it - dwc2_hsotg_udc_start() calls dwc2_lowlevel_hw_enable(), which
+calls phy_power_on() - so the port would be pushing out 5V, sourced from a board
+that is itself being powered over the Type-C, for as long as the gadget is up.
+queenkjuul's duos-usb-switch drives both of those GPIOs low for device mode for
+the same reason. An overlay cannot delete a property, there being no encoding
+for it in the flattened overlay format, so phy-supply is pointed at a fixed
+regulator that drives nothing instead; reg_usb_vbus is then left with no
+consumer and the regulator core never enables it, nor its vin-supply.
+
+The composite sg2000-milkv-duo-s-usb-device.dtb target is never booted, and is
+there for the same two reasons the C906L one is: it makes the build apply the
+overlay with fdtoverlay, which checks on every build that it still fits its
+base, and through base-dtb-y in scripts/Makefile.dtbs it is what gets -@ onto
+the base DTB. Without those symbols U-Boot's "fdt apply" cannot resolve &usb.
+
+Composing the gadget is left to userspace - sg200x-usb-gadget.service in the
+BSP, which is installed unconditionally and does nothing when no UDC has
+appeared, so it costs nothing on a host-mode image.
+
+Verified with fdtoverlay on both architectures: dr_mode comes back "peripheral"
+where the base has "host", and phy-supply on phy@48 points at the new
+regulator-usb-no-vbus rather than at regulator-usb-vbus.
+
+Signed-off-by: Armbian <info@armbian.com>
+---
+diff --git a/arch/riscv/boot/dts/sophgo/Makefile b/arch/riscv/boot/dts/sophgo/Makefile
+index d3ada01..6fde203 100644
+--- a/arch/riscv/boot/dts/sophgo/Makefile
++++ b/arch/riscv/boot/dts/sophgo/Makefile
+@@ -17,3 +17,11 @@ dtb-$(CONFIG_ARCH_SOPHGO) += sg2044-sophgo-srd3-10.dtb
+ sg2000-milkv-duo-s-c906l-dtbs := sg2000-milkv-duo-s.dtb overlay/sg2000-c906l.dtbo
+ dtb-$(CONFIG_ARCH_SOPHGO) += sg2000-milkv-duo-s-c906l.dtb
+ dtb-$(CONFIG_ARCH_SOPHGO) += overlay/sg2000-c906l.dtbo
++
++# The device-mode overlay, selectable at runtime through armbianEnv.txt. Same
++# arrangement as the C906L one above: the composite target is never booted, it
++# is there so the build applies the overlay with fdtoverlay - which checks that
++# it still fits its base - and so that Makefile.dtbs passes -@ to the base DTB.
++sg2000-milkv-duo-s-usb-device-dtbs := sg2000-milkv-duo-s.dtb overlay/sg2000-usb-device.dtbo
++dtb-$(CONFIG_ARCH_SOPHGO) += sg2000-milkv-duo-s-usb-device.dtb
++dtb-$(CONFIG_ARCH_SOPHGO) += overlay/sg2000-usb-device.dtbo
+diff --git a/arch/riscv/boot/dts/sophgo/overlay/sg2000-usb-device.dtso b/arch/riscv/boot/dts/sophgo/overlay/sg2000-usb-device.dtso
+new file mode 100644
+index 0000000..f5b2eae
+--- /dev/null
++++ b/arch/riscv/boot/dts/sophgo/overlay/sg2000-usb-device.dtso
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++/*
++ * Milk-V Duo S: turn the USB port around, from host to device.
++ *
++ * The board has one dwc2 controller behind one PHY, shared between the Type-C
++ * receptacle and the Type-A port, and the base device tree gives it to the
++ * Type-A port: dr_mode = "host". That is the right default for a board with
++ * ethernet, but it costs the Duo S the trick it is best known for - plug the
++ * Type-C into a laptop and the board comes up as a USB network adapter, a
++ * shell one ssh away with no serial cable, no card reader and no router in the
++ * way.
++ *
++ * This overlay hands the controller to the Type-C side instead. Enable it with
++ *
++ *     overlays=usb-device
++ *
++ * in /boot/armbianEnv.txt, and reboot. dr_mode is read once, by
++ * dwc2_get_dr_mode() at probe, so the choice is a boot-time one; there is no
++ * runtime switch. The usual mechanism for one - usb-role-switch on &usb - hangs
++ * this SoC in probe, which is why the base tree pins a role at all instead of
++ * leaving mainline's "otg". The patch that set dr_mode = "host" has the detail.
++ *
++ * The kernel side is all this overlay does. What turns a UDC into a network
++ * interface is the CDC-NCM gadget composed by sg200x-usb-gadget.service, which
++ * is installed on every SG200x image and exits immediately unless a UDC has
++ * appeared - so it costs nothing when this overlay is not enabled, and needs no
++ * setting up when it is.
++ *
++ * The Type-A port stops working while this is in effect. Serving both is the
++ * one thing a single controller cannot do.
++ */
++
++/dts-v1/;
++/plugin/;
++
++&{/} {
++	/*
++	 * A supply that supplies nothing, to stand in for the Type-A port's VBUS
++	 * on &usbphy below.
++	 *
++	 * phy-supply is enabled from phy_power_on(), and peripheral mode still
++	 * reaches it: dwc2_hsotg_udc_start() calls dwc2_lowlevel_hw_enable() when
++	 * the gadget binds. Leaving the real regulator in place would therefore
++	 * push 5V out of the Type-A port for as long as the gadget is up, sourced
++	 * from a board that is itself being powered over the Type-C. The vendor's
++	 * own mode switcher drives both of those GPIOs low for device mode, for
++	 * the same reason.
++	 *
++	 * It has to be a redirect rather than a deletion: an overlay can override
++	 * the value of a property, but the flattened overlay format has no
++	 * encoding for removing one. Pointed elsewhere, reg_usb_vbus is left with
++	 * no consumer and the regulator core never enables it - nor its
++	 * vin-supply, reg_usb_aux0.
++	 *
++	 * No voltage constraints, deliberately. This stands in for a rail that is
++	 * not being driven, and naming a voltage would be a fiction that
++	 * regulator_get_voltage() would go on to repeat.
++	 */
++	reg_usb_no_vbus: regulator-usb-no-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usb-vbus-off";
++	};
++};
++
++&usb {
++	dr_mode = "peripheral";
++};
++
++&usbphy {
++	phy-supply = <&reg_usb_no_vbus>;
++};

@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Sun, 2 Aug 2026 00:52:20 +0200
+Subject: [PATCH] arm64: dts: sophgo: mux the Milk-V Duo S microSD pads from the DT
+
+The vendor U-Boot only muxes the SD0 bus pads to the SDIO0 function when it
+finds a card in the slot at probe time; with the slot empty it muxes them to
+XGPIO, applies pull-downs, and opens the slot's power switch
+(cvi_sdhci_probe() in drivers/mmc/cvitek/sdhci-cv181x.c of the vendor tree).
+Linux inherited that state unchanged - the sdhci0 node carried no pinctrl -
+so after an eMMC boot with an empty slot a card inserted later was met with
+complete silence: its bus pads were never wired to the controller.
+
+Own the mux and the pulls in the DT, mirroring the eMMC group. The values
+are the vendor bootloader's card-present ones: function 0 (SDIO0)
+everywhere, pull-up on CMD/D0-D3, pull-down on CLK. power-source is required
+by cv1800_dt_node_to_map_post() and only feeds the pull-strength tables; the
+bus pads live in the VDDIO_SD0 domain, which this board runs at 3.3V.
+SD0_CD and SD0_PWR_EN are left out: the bootloader keeps them on SDIO0 in
+both of its paths, and they belong to the VDDIO_EMMC domain, where a second
+power-source would have to match the eMMC group's forever.
+
+The slot's power switch (TOP_SD_PWRSW_CTRL, 0x030001f4) is beyond pinctrl's
+reach, so this is only half the fix: the bootloader must leave the slot
+powered, which the Armbian U-Boot patch
+(0003-mmc-cvitek-always-power-and-mux-the-SD-slot-on-probe) now guarantees.
+With both in place the SD pad setup no longer depends on whether a card
+happened to sit in the slot at boot.
+---
+ arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts | 44 ++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+index da372a2..7473515 100644
+--- a/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
++++ b/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+@@ -271,10 +271,54 @@
+ 	status = "okay";
+ };
+ 
++/*
++ * Route the microSD pads ourselves instead of inheriting them. The vendor
++ * U-Boot (cvi_sdhci_probe() in drivers/mmc/cvitek/sdhci-cv181x.c) checks card
++ * detect when it probes the SD host: with a card in the slot it muxes
++ * SD0_CLK/CMD/D0-D3 to the SDIO0 function and pulls CMD and the data lines
++ * up, with the slot empty it muxes the same pads to XGPIO, pulls them down,
++ * and opens the slot's power switch. Linux inherited whichever state the boot
++ * happened in, so after an eMMC boot with the slot empty a card inserted
++ * later was met with complete silence: the bus pads were not wired to the
++ * controller at all.
++ *
++ * This group restores the mux and the pulls of the card-present case. What it
++ * cannot restore is the power switch (TOP_SD_PWRSW_CTRL, 0x030001f4) - no
++ * mainline driver knows that register, and power-source below only feeds the
++ * pinconf pull-strength tables, it programs nothing - so the bootloader still
++ * has to leave the slot powered; the Armbian U-Boot patch does exactly that.
++ *
++ * SD0_CD and SD0_PWR_EN are not in the group: the vendor code keeps them on
++ * the SDIO0 function in both of its paths, and they sit in the VDDIO_EMMC
++ * power domain, where a second power-source would forever have to agree with
++ * the eMMC group's.
++ */
++&pinctrl {
++	sdhci0_cfg: sdhci0-cfg {
++		sd0-bus-pins {
++			pinmux = <PINMUX(PIN_SD0_CMD, 0)>,
++				 <PINMUX(PIN_SD0_D0, 0)>,
++				 <PINMUX(PIN_SD0_D1, 0)>,
++				 <PINMUX(PIN_SD0_D2, 0)>,
++				 <PINMUX(PIN_SD0_D3, 0)>;
++			bias-pull-up;
++			power-source = <3300>;
++		};
++
++		sd0-clk-pins {
++			pinmux = <PINMUX(PIN_SD0_CLK, 0)>;
++			bias-pull-down;
++			power-source = <3300>;
++		};
++	};
++};
++
+ &sdhci0 {
+ 	bus-width = <4>;
+ 	no-1-8-v;
+ 	disable-wp;
++	pinctrl-names = "default";
++	pinctrl-0 = <&sdhci0_cfg>;
+ 	status = "okay";
+ };
+ 
+-- 
+2.34.1
+

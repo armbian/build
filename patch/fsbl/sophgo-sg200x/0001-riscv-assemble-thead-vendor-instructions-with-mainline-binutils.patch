@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Wed, 29 Jul 2026 00:47:09 +0200
+Subject: [PATCH] riscv: assemble the T-Head vendor instructions with mainline
+ binutils
+
+The RISC-V FSBL is written for T-Head's own toolchain, which knows the C906
+vendor CSRs by name and accepts the XTheadCmo cache mnemonics.  Mainline
+binutils knows neither, so the build dies with
+
+  Error: unknown CSR `mhcr'
+  Error: unrecognized opcode `icache.iall'
+  Error: unrecognized opcode `sync.i'
+
+Give the assembler the raw encodings instead.  A CSR operand is parsed as an
+ordinary expression, so a plain .set is enough for the four vendor CSRs; the
+two cache ops become .long, which is already how this tree spells dcache.ipa,
+dcache.cpa, dcache.cipa and sync.s in lib/cpu/riscv/cache.c.  The resulting
+object code is identical to what the vendor toolchain emits - verified by
+disassembly (csrw 0x7c0 == 0x7c019073, icache.iall == 0x0100000b,
+sync.i == 0x01a0000b).
+
+Upstream would rather use .insn or the XTheadCmo extension names, but those
+need binutils 2.39+ for XTheadCmo and would still leave the CSRs unnamed, so
+this stays the smaller change.
+---
+diff --git a/lib/cpu/riscv/cache.c b/lib/cpu/riscv/cache.c
+index 54828f8..6527dfa 100644
+--- a/lib/cpu/riscv/cache.c
++++ b/lib/cpu/riscv/cache.c
+@@ -57,14 +57,14 @@ void flush_dcache_range(uintptr_t start, size_t size)
+ void enable_dcache(void)
+ {
+ 	asm volatile(
+-		"csrs mhcr, %0;" ::"rI"(0x2)
++		"csrs 0x7c1, %0;"  /* mhcr */ ::"rI"(0x2)
+ 	);
+ }
+ 
+ void disable_dcache(void)
+ {
+ 	asm volatile(
+-		"csrc mhcr, %0;" ::"rI"(0x2)
++		"csrc 0x7c1, %0;"  /* mhcr */ ::"rI"(0x2)
+ 	);
+ }
+ 
+diff --git a/lib/cpu/riscv/cpu_helper.c b/lib/cpu/riscv/cpu_helper.c
+index 7e093fa..9db8677 100644
+--- a/lib/cpu/riscv/cpu_helper.c
++++ b/lib/cpu/riscv/cpu_helper.c
+@@ -10,9 +10,18 @@
+ 
+ void sync_cache(void)
+ {
++	/*
++	 * icache.iall
++	 * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
++	 *   0000000    10000     00000      000      00000  0001011
++	 *
++	 * sync.i
++	 * | 31 - 25 | 24 - 20 | 19 - 15 | 14 - 12 | 11 - 7 | 6 - 0 |
++	 *   0000000    11010     00000      000      00000  0001011
++	 */
+ 	asm volatile(
+-			"icache.iall\n"
+-			"sync.i\n"
++			".long 0x0100000b\n"
++			".long 0x01a0000b\n"
+ 			:
+ 			:
+ 			: "memory");
+diff --git a/lib/cpu/riscv/csr.h b/lib/cpu/riscv/csr.h
+index 6f05d39..6f79772 100644
+--- a/lib/cpu/riscv/csr.h
++++ b/lib/cpu/riscv/csr.h
+@@ -3,6 +3,19 @@
+ #ifndef RISCV_CSR_ENCODING_H
+ #define RISCV_CSR_ENCODING_H
+ 
++/*
++ * T-Head C906 vendor CSRs. Mainline binutils only knows the standard CSR
++ * names, so give the assembler plain symbols to resolve - a CSR operand is
++ * parsed as an ordinary expression, and this produces byte-identical
++ * encodings to the T-Head toolchain.
++ */
++#ifdef __ASSEMBLY__
++.set mxstatus, 0x7c0
++.set mhcr,     0x7c1
++.set mcor,     0x7c2
++.set mhint,    0x7c5
++#endif
++
+ #define MSTATUS_UIE         0x00000001
+ #define MSTATUS_SIE         0x00000002
+ #define MSTATUS_HIE         0x00000004

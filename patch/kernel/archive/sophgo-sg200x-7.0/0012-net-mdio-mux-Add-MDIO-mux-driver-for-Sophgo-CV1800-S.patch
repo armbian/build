@@ -1,0 +1,174 @@
+From af1b5729ff8e384bc5dffa2c415d8d2828c51662 Mon Sep 17 00:00:00 2001
+From: Inochi Amaoto <inochiama@gmail.com>
+Date: Wed, 11 Jun 2025 16:02:00 +0800
+Subject: [PATCH 12/37] net: mdio-mux: Add MDIO mux driver for Sophgo CV1800
+ SoCs
+
+Add device driver for the mux driver for Sophgo CV18XX/SG200X
+series SoCs.
+
+Signed-off-by: Inochi Amaoto <inochiama@gmail.com>
+---
+ drivers/net/mdio/Kconfig            |  10 +++
+ drivers/net/mdio/Makefile           |   1 +
+ drivers/net/mdio/mdio-mux-cv1800b.c | 119 ++++++++++++++++++++++++++++
+ 3 files changed, 130 insertions(+)
+ create mode 100644 drivers/net/mdio/mdio-mux-cv1800b.c
+
+diff --git a/drivers/net/mdio/Kconfig b/drivers/net/mdio/Kconfig
+index 44380378911b..b2e52f6a4e5d 100644
+--- a/drivers/net/mdio/Kconfig
++++ b/drivers/net/mdio/Kconfig
+@@ -280,5 +280,15 @@ config MDIO_BUS_MUX_MMIOREG
+ 
+ 	  Currently, only 8/16/32 bits registers are supported.
+ 
++config MDIO_BUS_MUX_SOPHGO_CV1800B
++	tristate "Sophgo CV1800 MDIO multiplexer driver"
++	depends on ARCH_SOPHGO || COMPILE_TEST
++	depends on OF_MDIO && HAS_IOMEM
++	select MDIO_BUS_MUX
++	default m if ARCH_SOPHGO
++	help
++	  This module provides a driver for the MDIO multiplexer/glue of
++	  the Sophgo CV1800 series SoC. The multiplexer connects either
++	  the external or the internal MDIO bus to the parent bus.
+ 
+ endif
+diff --git a/drivers/net/mdio/Makefile b/drivers/net/mdio/Makefile
+index fbec636700e7..bd64370db23b 100644
+--- a/drivers/net/mdio/Makefile
++++ b/drivers/net/mdio/Makefile
+@@ -34,3 +34,4 @@ obj-$(CONFIG_MDIO_BUS_MUX_MESON_G12A)	+= mdio-mux-meson-g12a.o
+ obj-$(CONFIG_MDIO_BUS_MUX_MESON_GXL)	+= mdio-mux-meson-gxl.o
+ obj-$(CONFIG_MDIO_BUS_MUX_MMIOREG) 	+= mdio-mux-mmioreg.o
+ obj-$(CONFIG_MDIO_BUS_MUX_MULTIPLEXER) 	+= mdio-mux-multiplexer.o
++obj-$(CONFIG_MDIO_BUS_MUX_SOPHGO_CV1800B) += mdio-mux-cv1800b.o
+diff --git a/drivers/net/mdio/mdio-mux-cv1800b.c b/drivers/net/mdio/mdio-mux-cv1800b.c
+new file mode 100644
+index 000000000000..6c69e83c3dcd
+--- /dev/null
++++ b/drivers/net/mdio/mdio-mux-cv1800b.c
+@@ -0,0 +1,119 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sophgo CV1800 MDIO multiplexer driver
++ *
++ * Copyright (C) 2025 Inochi Amaoto <inochiama@gmail.com>
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/mdio-mux.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++
++#define EPHY_PAGE_SELECT		0x07c
++#define EPHY_CTRL			0x800
++#define EPHY_REG_SELECT			0x804
++
++#define EPHY_PAGE_SELECT_SRC		GENMASK(12, 8)
++
++#define EPHY_CTRL_ANALOG_SHUTDOWN	BIT(0)
++#define EPHY_CTRL_USE_EXTPHY		BIT(7)
++#define EPHY_CTRL_PHYMODE		BIT(8)
++#define EPHY_CTRL_PHYMODE_SMI_RMII	1
++#define EPHY_CTRL_EXTPHY_ID		GENMASK(15, 11)
++
++#define EPHY_REG_SELECT_MDIO		0
++#define EPHY_REG_SELECT_APB		1
++
++#define CV1800B_MDIO_INTERNAL_ID	1
++#define CV1800B_MDIO_EXTERNAL_ID	0
++
++struct cv1800b_mdio_mux {
++	void __iomem *regs;
++	void *mux_handle;
++};
++
++static int cv1800b_enable_mdio(struct cv1800b_mdio_mux *mdmux, bool internal_phy)
++{
++	u32 val;
++
++	val = readl(mdmux->regs + EPHY_CTRL);
++
++	if (internal_phy)
++		val &= ~EPHY_CTRL_USE_EXTPHY;
++	else
++		val |= EPHY_CTRL_USE_EXTPHY;
++
++	writel(val, mdmux->regs + EPHY_CTRL);
++
++	writel(EPHY_REG_SELECT_MDIO, mdmux->regs + EPHY_REG_SELECT);
++
++	return 0;
++}
++
++static int cv1800b_mdio_switch_fn(int current_child, int desired_child,
++				  void *data)
++{
++	struct cv1800b_mdio_mux *mdmux = dev_get_drvdata(data);
++
++	if (current_child == desired_child)
++		return 0;
++
++	switch (desired_child) {
++	case CV1800B_MDIO_EXTERNAL_ID:
++		return cv1800b_enable_mdio(mdmux, false);
++	case CV1800B_MDIO_INTERNAL_ID:
++		return cv1800b_enable_mdio(mdmux, true);
++	default:
++		return -EINVAL;
++	}
++}
++
++static int cv1800b_mdio_mux_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cv1800b_mdio_mux *mdmux;
++
++	mdmux = devm_kzalloc(dev, sizeof(*mdmux), GFP_KERNEL);
++	if (!mdmux)
++		return -ENOMEM;
++	platform_set_drvdata(pdev, mdmux);
++
++	mdmux->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(mdmux->regs))
++		return PTR_ERR(mdmux->regs);
++
++	return mdio_mux_init(dev, dev->of_node, cv1800b_mdio_switch_fn,
++			     &mdmux->mux_handle, dev, NULL);
++}
++
++static void cv1800b_mdio_mux_remove(struct platform_device *pdev)
++{
++	struct cv1800b_mdio_mux *mdmux = platform_get_drvdata(pdev);
++
++	mdio_mux_uninit(mdmux->mux_handle);
++}
++
++static const struct of_device_id cv1800b_mdio_mux_match[] = {
++	{ .compatible = "sophgo,cv1800b-mdio-mux", },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cv1800b_mdio_mux_match);
++
++static struct platform_driver cv1800b_mdio_mux_driver = {
++	.probe		= cv1800b_mdio_mux_probe,
++	.remove		= cv1800b_mdio_mux_remove,
++	.driver		= {
++		.name	= "cv1800b-mdio-mux",
++		.of_match_table = cv1800b_mdio_mux_match,
++	},
++};
++module_platform_driver(cv1800b_mdio_mux_driver);
++
++MODULE_DESCRIPTION("Sophgo CV1800 MDIO multiplexer driver");
++MODULE_AUTHOR("Inochi Amaoto <inochiama@gmail.com>");
++MODULE_LICENSE("GPL");
+-- 
+2.34.1
+

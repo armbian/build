@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Mon, 3 Aug 2026 18:14:06 +0200
+Subject: [PATCH] arm64: dts: sophgo: reserve a ramoops region on the Milk-V
+ Duo S
+
+The Duo S is a headless board, and until now the only way to learn why it had
+rebooted was to have been watching the serial console at the moment it did.
+Nothing survived the restart: the kernel log lives in RAM, and a reboot starts
+over with an empty one.
+
+That got worse rather than better with PANIC_TIMEOUT=10 in the Armbian configs.
+A panicking board used to sit there with the trace on the console, which at
+least kept the evidence in front of anyone who came to look; now it restarts
+itself after ten seconds, which is right for a board in a corner but takes the
+trace with it.
+
+So hold a megabyte back for pstore's ramoops backend. DRAM contents are not
+cleared by a warm reset, so the region still holds the dying log when the
+kernel comes back up, and pstore reads it out into /sys/fs/pstore, where it
+stays until deleted.
+
+The address is the interesting part, because both ends of memory are already
+spoken for. U-Boot loads the kernel, dtb and initrd low - between 0x80200000
+and 0x84000000 - and relocates the dtb and initrd high, just under the top of
+DRAM, before handing over. The top is also where the c906l coprocessor's
+region sits at 0x9fe00000 when that overlay is enabled, an address fixed by
+CVIMMAP_FREERTOS_ADDR in the vendor memory map rather than by us. 0x90000000 is
+in the middle, which nothing else claims, and is far enough below 0x9fe00000
+that enabling the c906l overlay cannot collide with it - verified by building
+the dtb and applying the overlay to it, which leaves both regions present and
+the remoteproc node's memory-region unchanged.
+
+no-map is deliberately absent, as it is on most in-tree ramoops nodes. The
+region only has to be kept away from the page allocator; leaving it in the
+kernel's memory map means pfn_valid() holds, and persistent_ram_buffer_map()
+takes the vmap path rather than ioremap, which is the one meant for ordinary
+DRAM.
+
+Sizes are modest for a 512MB board: 32KB per dmesg record and 128KB of console
+log, inside a 1MB region. ftrace and pmsg are left out, matching the pstore
+options the configs enable.
+---
+ .../boot/dts/sophgo/sg2000-milkv-duo-s.dts    | 29 +++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+index 7473515..61d0641 100644
+--- a/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
++++ b/arch/arm64/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+@@ -10,6 +10,35 @@
+ 	model = "Milk-V Duo S";
+ 	compatible = "milkv,duo-s", "sophgo,sg2000";
+ 
++	/*
++	 * A megabyte held back for pstore's ramoops backend, so the tail of the
++	 * kernel log outlives a reboot. PANIC_TIMEOUT is 10 in the Armbian
++	 * configs, so a panicking board restarts itself and would otherwise take
++	 * the trace with it; DRAM survives a warm reset, and pstore finds the
++	 * region again on the next boot and presents it as /sys/fs/pstore.
++	 *
++	 * The address stays clear of both ends of DRAM, which are already spoken
++	 * for. U-Boot loads the kernel, dtb and initrd low, between 0x80200000
++	 * and 0x84000000, and relocates the dtb and initrd high, just under the
++	 * top of memory; the c906l overlay puts the coprocessor's region at
++	 * 0x9fe00000, where the vendor FSBL expects it. The middle is what
++	 * nothing else claims, and 0x90000000 is far enough below 0x9fe00000
++	 * that enabling that overlay cannot collide with this.
++	 *
++	 * No no-map, as on most in-tree ramoops nodes: the region only has to be
++	 * kept away from the page allocator. Left in the kernel's memory map,
++	 * pfn_valid() holds and persistent_ram_buffer_map() vmaps it rather than
++	 * falling back to ioremap, which is the path meant for ordinary DRAM.
++	 */
++	reserved-memory {
++		ramoops@90000000 {
++			compatible = "ramoops";
++			reg = <0x90000000 0x100000>;
++			record-size = <0x8000>;
++			console-size = <0x20000>;
++		};
++	};
++
+ 	aliases {
+ 		i2c1 = &i2c1;
+ 		i2c2 = &i2c2;
+-- 
+2.34.1
+

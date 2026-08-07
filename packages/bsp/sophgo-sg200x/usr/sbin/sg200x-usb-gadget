@@ -1,0 +1,211 @@
+#!/bin/sh
+# Compose a USB CDC-NCM gadget on the SG200x, so that plugging the Type-C port
+# into a computer presents the board as a network adapter.
+#
+# This is the userspace half of the "usb-device" device tree overlay. The kernel
+# half only turns the controller around - dr_mode = "peripheral" - which gets as
+# far as a UDC in /sys/class/udc and no further; a UDC is a piece of hardware
+# waiting to be told what kind of device to pretend to be. That description is
+# built here, through configfs, and only exists while this script has run.
+#
+# Which means the two halves are independent, and this one is harmless on its
+# own: without the overlay the controller is in host mode, dwc2 never registers
+# a gadget, /sys/class/udc is empty, and "start" below exits without touching
+# anything. So the service can be, and is, installed and enabled unconditionally
+# on every SG200x image - there is nothing to switch on when the overlay is
+# added beyond the reboot the overlay needs anyway.
+#
+# NCM rather than RNDIS. RNDIS is Microsoft's, was never standardised, and is
+# being retired by Microsoft themselves; NCM is the USB-IF's own standard for
+# the same job, is what the Milk-V images present, and is bound out of the box by
+# Linux (cdc_ncm), macOS, and Windows 10 1809 and later.
+#
+# Usage: sg200x-usb-gadget start|stop|status
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+set -e
+
+me="${0##*/}"
+
+# The gadget's name is ours to choose; it is only ever a directory name.
+gadget_name="sg200x"
+configfs="/sys/kernel/config"
+g="${configfs}/usb_gadget/${gadget_name}"
+
+# Shared with the ethernet and wifi interfaces, which have the same problem for
+# different reasons: nothing on this board has an address of its own. See the
+# script itself for how one is derived from the chip's efuse serial.
+stable_mac="/lib/udev/sg200x-stable-mac"
+
+# The first (and, on this SoC, only) device controller. Empty when the port is in
+# host mode, which is the case this script exists to do nothing in.
+first_udc() {
+	for udc in /sys/class/udc/*; do
+		[ -e "${udc}" ] || return 0
+		printf '%s\n' "${udc##*/}"
+		return 0
+	done
+}
+
+# A MAC for one end of the link, stable across boots and unique to this chip.
+#
+# Both ends matter. The device end is the board's own usb0; the host end is the
+# address the computer's new interface comes up with, and if that changes on
+# every boot then NetworkManager, netplan and Windows all file the board as a
+# brand new adapter every time and forget whatever was configured for it.
+#
+# Falls back to letting u_ether invent random ones, which still works - it is
+# only the remembering that suffers.
+derived_mac() {
+	[ -x "${stable_mac}" ] || return 1
+	"${stable_mac}" --print "${1}" 2> /dev/null
+}
+
+write() {
+	printf '%s' "${2}" > "${1}"
+}
+
+do_start() {
+	udc="$(first_udc)"
+	if [ -z "${udc}" ]; then
+		echo "${me}: no USB device controller - the port is in host mode." \
+			"Add 'overlays=usb-device' to /boot/armbianEnv.txt and reboot to change that."
+		return 0
+	fi
+
+	if [ -d "${g}" ]; then
+		if [ -n "$(cat "${g}/UDC" 2> /dev/null || true)" ]; then
+			echo "${me}: gadget ${gadget_name} already bound - nothing to do"
+			return 0
+		fi
+
+		# Composed but not bound: what a start that died part way through
+		# leaves behind. Nothing clears it on its own - systemd runs neither
+		# ExecStop nor a plain "stop" for a unit whose ExecStart failed - so
+		# without this the next start would return 0 here and report success
+		# with no gadget on the wire. do_stop removes everything do_start
+		# creates, so this is a full rollback before composing again.
+		echo "${me}: ${gadget_name} is composed but not bound - recomposing" >&2
+		do_stop > /dev/null
+	fi
+
+	[ -d "${configfs}/usb_gadget" ] || {
+		echo "${me}: ${configfs}/usb_gadget is missing - is configfs mounted?" >&2
+		return 1
+	}
+
+	mkdir -p "${g}"
+
+	# 0x1d6b:0x0104 is the Linux Foundation's "Multifunction Composite Gadget",
+	# the identity the kernel's own gadget examples use. Claiming a real vendor's
+	# ID here would be worse than useless: hosts match drivers on it.
+	write "${g}/idVendor" 0x1d6b
+	write "${g}/idProduct" 0x0104
+	write "${g}/bcdDevice" 0x0100
+	write "${g}/bcdUSB" 0x0200
+
+	mkdir -p "${g}/strings/0x409"
+	write "${g}/strings/0x409/manufacturer" "Milk-V"
+
+	# The board's own name, rather than a hardcoded one - this BSP is shared by
+	# the ARM and RISC-V builds and by whatever else the family grows. tr drops
+	# the trailing NUL that comes with every device tree string.
+	model=""
+	[ -r /proc/device-tree/model ] && model="$(tr -d '\0' < /proc/device-tree/model)"
+	write "${g}/strings/0x409/product" "${model:-Sophgo SG200x} CDC-NCM Gadget"
+
+	# A serial number is what lets a host tell two of these apart, and tell this
+	# one from itself a boot later. Derived rather than taken from the efuse
+	# directly, because a serial number is offered to any computer the board is
+	# plugged into, and the chip's real one is not ours to hand out.
+	serial="$(derived_mac usb-gadget-serial | tr -d ':' | tr 'a-f' 'A-F' || true)"
+	[ -n "${serial}" ] && write "${g}/strings/0x409/serialnumber" "${serial}"
+
+	mkdir -p "${g}/functions/ncm.usb0"
+	dev_addr="$(derived_mac usb-gadget-device || true)"
+	host_addr="$(derived_mac usb-gadget-host || true)"
+	[ -n "${dev_addr}" ] && write "${g}/functions/ncm.usb0/dev_addr" "${dev_addr}"
+	[ -n "${host_addr}" ] && write "${g}/functions/ncm.usb0/host_addr" "${host_addr}"
+
+	# Microsoft OS descriptors. Windows 10 1809 and later bind NCM from the
+	# interface class alone and do not need these, but they cost two writes and
+	# they are what the Milk-V and queenkjuul images ship, so a Windows machine
+	# that works with those works with this.
+	write "${g}/os_desc/use" 1
+	write "${g}/os_desc/b_vendor_code" 0xcd
+	write "${g}/os_desc/qw_sign" "MSFT100"
+
+	mkdir -p "${g}/configs/c.1/strings/0x409"
+	write "${g}/configs/c.1/strings/0x409/configuration" "CDC NCM"
+
+	# Self-powered, and 500mA - the USB 2.0 ceiling, and the most a host will
+	# grant. The board does draw its power from this port when it is plugged into
+	# a computer, but saying "bus-powered" invites a bus-powered hub to refuse the
+	# configuration on its own power budget, and there is nothing gained by that.
+	write "${g}/configs/c.1/bmAttributes" 0xc0
+	write "${g}/configs/c.1/MaxPower" 500
+
+	ln -s "${g}/functions/ncm.usb0" "${g}/configs/c.1/"
+	ln -s "${g}/configs/c.1" "${g}/os_desc/"
+
+	# Binding to the UDC is what makes the device appear to whatever is on the
+	# other end of the cable. Everything above was just description.
+	write "${g}/UDC" "${udc}"
+
+	echo "${me}: CDC-NCM gadget bound to ${udc}${dev_addr:+ (${dev_addr})}"
+}
+
+do_stop() {
+	[ -d "${g}" ] || return 0
+
+	# Unbind first: nothing underneath can be removed while the gadget is live.
+	echo "" > "${g}/UDC" 2> /dev/null || true
+
+	rm -f "${g}/configs/c.1/ncm.usb0" "${g}/os_desc/c.1"
+	rmdir "${g}/configs/c.1/strings/0x409" 2> /dev/null || true
+	rmdir "${g}/configs/c.1" 2> /dev/null || true
+	rmdir "${g}/functions/ncm.usb0" 2> /dev/null || true
+	rmdir "${g}/strings/0x409" 2> /dev/null || true
+	rmdir "${g}" 2> /dev/null || true
+
+	echo "${me}: CDC-NCM gadget removed"
+}
+
+do_status() {
+	udc="$(first_udc)"
+	if [ -z "${udc}" ]; then
+		echo "controller: host mode (no UDC; the usb-device overlay is not enabled)"
+		return 0
+	fi
+	echo "controller: device mode, UDC ${udc}"
+
+	if [ ! -d "${g}" ]; then
+		echo "gadget:     not composed"
+		return 0
+	fi
+
+	bound="$(cat "${g}/UDC" 2> /dev/null || true)"
+	if [ -n "${bound}" ]; then
+		echo "gadget:     ${gadget_name}, bound to ${bound}"
+	else
+		echo "gadget:     ${gadget_name}, composed but not bound"
+	fi
+
+	iface="$(cat "${g}/functions/ncm.usb0/ifname" 2> /dev/null || true)"
+	if [ -n "${iface}" ] && [ -d "/sys/class/net/${iface}" ]; then
+		echo "interface:  ${iface} $(cat "/sys/class/net/${iface}/address")"
+		ip -brief address show dev "${iface}" 2> /dev/null || true
+	fi
+}
+
+case "${1:-}" in
+	start) do_start ;;
+	stop) do_stop ;;
+	status) do_status ;;
+	*)
+		echo "usage: ${me} start|stop|status" >&2
+		exit 1
+		;;
+esac

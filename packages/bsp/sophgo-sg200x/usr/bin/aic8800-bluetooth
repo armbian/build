@@ -1,0 +1,64 @@
+#!/bin/sh
+# Bring up the AIC8800D80's Bluetooth side as an HCI device.
+#
+# No firmware download happens here: aic8800_bsp already pushed the BT patch over
+# SDIO while bringing the chip out of reset, so what is left is a plain HCI H4
+# controller sitting on one of the SoC's UARTs. The parameters below are the ones
+# the chip's own patch table announces at boot - "aicbt_patch_table_load bt
+# uart_baud:1500000, uart_flowctrl:1, lpm_enable:0" in dmesg - hence 1.5 Mbaud,
+# RTS/CTS, and nosleep.
+#
+# Which UART differs per board, so it is not baked in here: AIC8800_BT_UART names
+# the device by its hardware address and comes from the unit file. That is the
+# whole reason this is not the framework-wide packages/bsp/aic8800/aic-bluetooth,
+# which does the same job for boards whose controller is always on ttyS1 and which
+# need an HW reset first: on the Duo S the tty number is not fixed.
+set -e
+
+: "${AIC8800_BT_UART:=41c0000.serial}" # SG200x uart4, the Milk-V Duo S default
+: "${AIC8800_BT_BAUD:=1500000}"
+
+# Minimal images have no bluez, and there is nothing to attach with. Leave quietly
+# so the unit does not sit in a failed state on a system that never wanted BT.
+command -v hciattach > /dev/null 2>&1 || {
+	echo "aic8800-bluetooth: bluez not installed, nothing to attach with"
+	exit 0
+}
+
+# Resolve the tty from the hardware address. On the Duo S the Bluetooth uart has
+# no serialN alias in the DT, so its ttySN number falls out of probe order and
+# must not be hardcoded. The device also sits under a simple-bus node, so match on
+# the path rather than assuming /sys/devices/platform/${AIC8800_BT_UART}.
+tty=""
+for dev in /sys/class/tty/ttyS*; do
+	case "$(readlink -f "${dev}/device" 2> /dev/null)" in
+		*"${AIC8800_BT_UART}"*)
+			tty="${dev##*/}"
+			break
+			;;
+	esac
+done
+[ -n "${tty}" ] || {
+	echo "aic8800-bluetooth: ${AIC8800_BT_UART} (Bluetooth UART) has no tty" >&2
+	exit 1
+}
+
+# If anything else owns the port it will answer the controller's HCI replies and
+# eat them, and the symptom is a controller that looks dead - BD address all
+# zeroes, RX bytes 0 - rather than an error. It should never trigger when the
+# console is on a different uart; check anyway, because it is a miserable thing to
+# diagnose.
+if command -v fuser > /dev/null 2>&1 && fuser "/dev/${tty}" > /dev/null 2>&1; then
+	echo "aic8800-bluetooth: /dev/${tty} is already in use" >&2
+	exit 1
+fi
+
+# Stays in the foreground (-n) and replaces this shell (exec) so that hciattach,
+# which holds the HCI device for as long as it lives, is the unit's main process
+# and systemd can restart it if it dies. Nothing may follow this line.
+#
+# bluez 5.65 and later power the adapter on by themselves (AutoEnable defaults to
+# true) - on anything older, set AutoEnable=true under [Policy] in
+# /etc/bluetooth/main.conf.
+echo "aic8800-bluetooth: attaching HCI on /dev/${tty} at ${AIC8800_BT_BAUD}"
+exec hciattach -n -s "${AIC8800_BT_BAUD}" "/dev/${tty}" any "${AIC8800_BT_BAUD}" flow nosleep

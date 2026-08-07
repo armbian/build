@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Sun, 2 Aug 2026 00:52:06 +0200
+Subject: [PATCH] mmc: cvitek: always power and mux the SD slot on probe
+
+cvi_sdhci_probe() checks card detect before setting up the SD slot. With a
+card present it switches the slot's power on at 3.3V and muxes
+SD0_CLK/CMD/D0-D3 to the SDIO0 function; with the slot empty it does the
+opposite - power switch open and discharging (TOP_SD_PWRSW_CTRL = 0xE), bus
+pads muxed away to XGPIO, pull-downs applied.
+
+For the vendor stack that is harmless: their kernel driver repeats the same
+pad-and-power dance on every card-detect interrupt. Mainline Linux does not.
+The sdhci0 node has no vmmc regulator and no mainline driver knows the power
+switch register, so whichever state U-Boot leaves is the state the system
+keeps. Booting from eMMC with the slot empty therefore kills SD hotplug for
+the whole Linux run - inserting a card later produces not one dmesg line,
+since the card sits unpowered in a slot whose bus pads are disconnected from
+the controller.
+
+Take the card-present path unconditionally. That reproduces exactly the
+state of a boot with a card in the slot, where hotplug (remove and
+re-insert, mmc0 in the boot log) is verified to work, and keeping VDD on an
+empty slot is what ordinary SD hosts do anyway.
+
+sdhci-cv180x.c carries the same logic, but this family builds only cv181x
+boards, so it is left alone.
+---
+ drivers/mmc/cvitek/sdhci-cv181x.c | 29 ++++++++++++-----------------
+ 1 file changed, 12 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/mmc/cvitek/sdhci-cv181x.c b/drivers/mmc/cvitek/sdhci-cv181x.c
+index 09edc9a..75d7da3 100644
+--- a/drivers/mmc/cvitek/sdhci-cv181x.c
++++ b/drivers/mmc/cvitek/sdhci-cv181x.c
+@@ -642,23 +642,18 @@ static int cvi_sdhci_probe(struct udevice *dev)
+ 		sdhci_writel(host, sdhci_readl(host, CVI_SDHCI_VENDOR_MSHC_CTRL_R) | BIT(0),
+ 			     CVI_SDHCI_VENDOR_MSHC_CTRL_R);
+ 	} else if (host->index == MMC_TYPE_SD) {
+-		if (host->ops && host->ops->get_cd) {
+-			int present = host->ops->get_cd(host);
+-
+-			if (present == 1) {
+-				//Voltage switching flow (3.3)
+-				//(reg_pwrsw_auto=1, reg_pwrsw_disc=0, reg_pwrsw_vsel=0(3.0v), reg_en_pwrsw=1)
+-				mmio_write_32(TOP_BASE + REG_TOP_SD_PWRSW_CTRL, 0x9);
+-				cvi_sdio0_pad_function(false);
+-				cvi_sdio0_pad_setting(false);
+-			} else {
+-				//Voltage close flow
+-				//(reg_pwrsw_auto=1, reg_pwrsw_disc=1, reg_pwrsw_vsel=1(1.8v), reg_en_pwrsw=0)
+-				mmio_write_32(TOP_BASE + REG_TOP_SD_PWRSW_CTRL, 0xE);
+-				cvi_sdio0_pad_function(true);
+-				cvi_sdio0_pad_setting(true);
+-			}
+-		}
++		/*
++		 * Do not look at card detect here. Setting up the slot only
++		 * when a card sits in it leaves the other path - pads muxed
++		 * away to XGPIO, power switch off and discharging - in place
++		 * for the whole Linux run, and mainline has no driver for
++		 * either register, so a card inserted later is never seen.
++		 */
++		//Voltage switching flow (3.3)
++		//(reg_pwrsw_auto=1, reg_pwrsw_disc=0, reg_pwrsw_vsel=0(3.0v), reg_en_pwrsw=1)
++		mmio_write_32(TOP_BASE + REG_TOP_SD_PWRSW_CTRL, 0x9);
++		cvi_sdio0_pad_function(false);
++		cvi_sdio0_pad_setting(false);
+ 	} else if (host->index == MMC_TYPE_SDIO) {
+ 		cvi_sdio1_pad_setting();
+ 	} else {
+-- 
+2.34.1
+
