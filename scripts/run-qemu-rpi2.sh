@@ -35,7 +35,7 @@
 #
 # Verified end-to-end: kernel boots, both partitions are detected, ext4
 # root filesystem mounts, init launches. Required the devicetree fix in
-# patch/kernel/bcm2836-current/ -- without it, boot panics unable to
+# patch/kernel/archive/bcm2836-6.18/ -- without it, boot panics unable to
 # mount root (see that patch's commit message for the full root cause).
 set -euo pipefail
 
