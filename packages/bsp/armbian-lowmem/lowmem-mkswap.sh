@@ -23,7 +23,18 @@ if (( FREE_MB < NEEDED_MB )); then
     exit 1
 fi
 
-# Create swapfile, set permissions, and enable it
+# Prevent permission race
+umask 077
+
+# Create empty swapfile
+truncate -s0 "${SWAPFILE_PATH}"
+
+# Set the "disable copy-on-write" attribute, since the kernel doesn't support
+# copy-on-write swapfiles.  Ignore error, which probably indicates that the
+# fileystem doesn't support CoW (e.g. on ext4).
+chattr -f +C "${SWAPFILE_PATH}" || true
+
+# Allocate swap space, ensure correct permissions, and enable it
 fallocate -l "${SWAPFILE_SIZE_MB}M" "${SWAPFILE_PATH}"
 chmod 600 "${SWAPFILE_PATH}"
 mkswap "${SWAPFILE_PATH}"
