@@ -78,7 +78,18 @@ SSH_PORT="${RPI3_QEMU_SSH_PORT:-2222}"
 SERIAL_LOG="${ROOT}/logs/qemu-rpi3-serial.log"
 PID_FILE="${ROOT}/logs/qemu-rpi3.pid"
 
-usage() { sed -n '1,38p' "$0"; }
+usage() {
+	cat <<-'EOF'
+		Usage:
+		  ./scripts/run-qemu-rpi3.sh
+		  ./scripts/run-qemu-rpi3.sh --net          # user-mode networking (SSH fwd :2222)
+		  ./scripts/run-qemu-rpi3.sh --net --daemon   # background; serial -> logs/qemu-rpi3-serial.log
+		  ./scripts/run-qemu-rpi3.sh --image /path/to/some.img
+
+		Expect serial console on stdout. First-boot credentials: root / 1234
+		(Armbian's own stock unconfigured default -- change it, don't ship it).
+	EOF
+}
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -116,10 +127,12 @@ done
 
 if [[ -z "$IMAGE" ]]; then
 	images_dir="${ARMBIAN_BUILD_DIR}/output/images"
-	# -iname, not -name: Armbian's own output naming title-cases the board
-	# name (e.g. "Armbian-unofficial_..._Rpi3b_bookworm_....img") -- same
-	# case-sensitivity lesson rpi2's script already learned the hard way.
-	IMAGE="$(find "$images_dir" -maxdepth 1 -type f \( -iname '*rpi3b*.img' -o -iname '*rpi3b*.img.xz' \) | sort | tail -n1)"
+	if [[ -d "$images_dir" ]]; then
+		# -iname, not -name: Armbian's own output naming title-cases the board
+		# name (e.g. "Armbian-unofficial_..._Rpi3b_bookworm_....img") -- same
+		# case-sensitivity lesson rpi2's script already learned the hard way.
+		IMAGE="$(find "$images_dir" -maxdepth 1 -type f \( -iname '*rpi3b*.img' -o -iname '*rpi3b*.img.xz' \) | sort | tail -n1)"
+	fi
 	if [[ -z "$IMAGE" ]]; then
 		echo "error: no rpi3b image found under $images_dir" >&2
 		echo "Build it first: ./compile.sh BOARD=rpi3b BRANCH=current BUILD_MINIMAL=yes KERNEL_ONLY=no RELEASE=bookworm" >&2
@@ -207,7 +220,7 @@ if [[ "$NET" -eq 1 ]]; then
 	# driver for QEMU's emulated USB NIC. Armbian's default module set
 	# for this board hasn't been checked.
 	QEMU_OPTS+=(
-		-netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22"
+		-netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22"
 		-device "usb-net,netdev=net0"
 	)
 fi
