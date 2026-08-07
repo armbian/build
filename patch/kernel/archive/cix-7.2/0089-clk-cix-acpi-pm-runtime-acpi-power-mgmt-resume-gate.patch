@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 01:35:58 -0400
+Subject: clk: cix-acpi + pm_runtime: ACPI power management + resume gate (NCZ
+ 0089)
+
+Forward-port of 9010-clk-sky1-acpi-fix-acpi-power-management.patch and
+9011-pm-runtime-gate-until-late-initcall.patch, proven on 7.1.2 real
+hardware (7.2s equivalent of clk-sky1-acpi.c is acpi_clk.c after the
+cixtech-2026q2 vendor driver replacement in 0065).
+
+9010: cix_acpi_clk_probe() only walks the ACPI namespace: it never
+explicitly manages device power state. The PM core automatically calls
+pm_runtime_resume() after probe returns, which can touch unready
+power-domain registers (SCMI/clock tree still settling), raising an
+SError. Mark the device RPM_ACTIVE + run _PS0 before the namespace walk
+so the post-probe resume becomes a no-op. Do NOT call
+pm_runtime_enable() -- the platform core does that automatically.
+
+9011: deferred-probe retries call pm_runtime_resume, which triggers
+driver runtime_resume callbacks touching unready syscon MMIO. Gate ALL
+__pm_runtime_resume calls behind a cix_system_ready flag set at
+late_initcall (after all CIX drivers have had a chance to probe),
+short-circuiting to RPM_ACTIVE until then.
+---
+ drivers/base/power/runtime.c | 56 ++++++++++
+ drivers/clk/cix/acpi_clk.c   | 16 +++
+ 2 files changed, 72 insertions(+)
+
+diff --git a/drivers/base/power/runtime.c b/drivers/base/power/runtime.c
+index 111111111111..222222222222 100644
+--- a/drivers/base/power/runtime.c
++++ b/drivers/base/power/runtime.c
+@@ -17,6 +17,26 @@
+ #include "../base.h"
+ #include "power.h"
+ 
++/*
++ * NCZ CIX Sky1 boot fix: gate __pm_runtime_resume until the system is
++ * fully initialized. During early boot, deferred probe retries call
++ * pm_runtime_resume which triggers driver runtime_resume callbacks that
++ * touch unready syscon MMIO (reset not deasserted, power domain not on),
++ * causing SError. We skip the actual resume; the device hardware state
++ * will be set up later when its driver properly resumes it. Set in
++ * late_initcall after all CIX drivers have had a chance to probe.
++ */
++static bool cix_system_ready __read_mostly;
++bool cix_pm_system_ready(void) { return cix_system_ready; }
++EXPORT_SYMBOL_GPL(cix_pm_system_ready);
++static int __init cix_system_ready_init(void)
++{
++	cix_system_ready = true;
++	pr_info("cix_pm: system ready - pm_runtime callbacks enabled\n");
++	return 0;
++}
++late_initcall(cix_system_ready_init);
++
+ typedef int (*pm_callback_t)(struct device *);
+ 
+ static inline pm_callback_t get_callback_ptr(const void *start, size_t offset)
+@@ -377,6 +397,25 @@ static int __rpm_callback(int (*cb)(struct device *), struct device *dev)
+ 	int retval = 0, idx;
+ 	bool use_links = dev->power.links_count > 0;
+ 
++	/*
++	 * NCZ CIX Sky1 boot fix (patch 9012): skip ALL runtime PM callbacks
++	 * (resume AND suspend) until late_initcall sets cix_system_ready.
++	 *
++	 * Patch 9011 only gated __pm_runtime_resume, but the crash also
++	 * occurs via rpm_suspend -> acpi_subsys_runtime_suspend ->
++	 * regmap_read/write on unready syscon MMIO during system idle.
++	 *
++	 * Return 0 (success) directly since __rpm_callback has no out
++	 * label (only fail:). The actual hardware state will be set up
++	 * later when the system is ready.
++	 */
++	if (!cix_system_ready && cb) {
++		/* lock is still held here; __rpm_callback must return with
++		 * power.lock HELD (it releases+reacquires around cb), so do
++		 * NOT unlock or the caller double-unlocks -> preempt underflow */
++		return 0;
++	}
++
+ 	if (dev->power.irq_safe) {
+ 		spin_unlock(&dev->power.lock);
+ 	} else {
+@@ -1190,6 +1229,23 @@ int __pm_runtime_resume(struct device *dev, int rpmflags)
+ 	might_sleep_if(!(rpmflags & RPM_ASYNC) && !dev->power.irq_safe &&
+ 			dev->power.runtime_status != RPM_ACTIVE);
+ 
++	/*
++	 * NCZ CIX Sky1 boot fix: skip the actual runtime resume until the
++	 * system is ready. During early boot (before late_initcall sets
++	 * cix_system_ready), deferred probe retries trigger this function,
++	 * which would call the driver runtime_resume callback. That
++	 * callback often touches syscon MMIO that is not yet powered/reset,
++	 * causing SError. We return 1 (RPM_ACTIVE short-circuit) so the
++	 * caller proceeds as if the device is already active. The device
++	 * actual hardware initialization happens later when the driver
++	 * properly resumes it.
++	 */
++	if (!cix_system_ready) {
++		if (rpmflags & RPM_GET_PUT)
++			atomic_inc(&dev->power.usage_count);
++		return 1;
++	}
++
+ 	if (rpmflags & RPM_GET_PUT)
+ 		atomic_inc(&dev->power.usage_count);
+ 
+diff --git a/drivers/clk/cix/acpi_clk.c b/drivers/clk/cix/acpi_clk.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/cix/acpi_clk.c
++++ b/drivers/clk/cix/acpi_clk.c
+@@ -14,6 +14,7 @@
+ #include <linux/acpi.h>
+ #include <linux/completion.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/sysfs.h>
+ #include <linux/version.h>
+ #include "acpi_clk.h"
+@@ -492,6 +493,21 @@ static int cix_acpi_clk_probe(struct platform_device *pdev)
+ {
+ 	acpi_status status;
+ 
++	/*
++	 * NCZ patch 9010 forward-port: mark the device RPM_ACTIVE and run
++	 * _PS0 before the ACPI namespace walk, so the post-probe
++	 * pm_runtime_resume() the PM core issues automatically becomes a
++	 * no-op instead of touching power-domain registers that are still
++	 * settling via the SCMI/clock tree (observed SError on real
++	 * hardware without this). Do NOT call pm_runtime_enable() here --
++	 * the platform core does that automatically after probe returns.
++	 */
++	if (has_acpi_companion(&pdev->dev)) {
++		pm_runtime_set_active(&pdev->dev);
++		pm_runtime_get_noresume(&pdev->dev);
++		acpi_device_set_power(ACPI_COMPANION(&pdev->dev), ACPI_STATE_D0);
++	}
++
+ 	status = acpi_walk_namespace(ACPI_TYPE_ANY, ACPI_ROOT_OBJECT,
+ 				ACPI_UINT32_MAX, acpi_bus_clk_scan,
+ 				NULL, &pdev->dev, NULL);
+-- 
+Armbian
+

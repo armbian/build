@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 00:35:25 -0400
+Subject: firmware: arm_scmi: mailbox: fix ACPI match driver_data type
+ confusion (NCZ 0085)
+
+CIXHA006 (the SCMI mailbox transport ACPI match, added by patch 0001)
+set .driver_data = (kernel_ulong_t)&scmi_mailbox_desc. scmi_mailbox_desc
+is a struct scmi_desc (ops/timeouts/msg sizes) -- it is already wired
+into the transport correctly via DEFINE_SCMI_TRANSPORT_DRIVER own __desc
+macro parameter (memcpy-d into strans.desc). It has nothing to do with
+device_get_match_data().
+
+In the current (v7.2-era) common.h, device_get_match_data() is used for
+a *different*, newer purpose: an optional struct scmi_transport_handle *
+carrying two function pointers (supplier_get/supplier_put), added to
+support transports whose supplier device is not tracked by firmware
+description. The macro-generated probe does:
+
+    strans.th = device_get_match_data(dev);
+    if (strans.th) {
+        supplier = strans.th->supplier_get(strans.th);
+
+With driver_data pointing at scmi_mailbox_desc instead of a real
+scmi_transport_handle, this calls a function pointer read out of the
+wrong struct entirely -- an address inside scmi_mailbox_desc that
+happens to not be executable memory. Confirmed on real Sky1 hardware
+(.66) with kernel 7.2.0-rc1-ncz:
+
+  Unable to handle kernel execute from non-executable memory at
+  virtual address ffff000001922240
+  pc : scmi_mailbox_probe+0x5c/0x1b8
+  lr : scmi_mailbox_probe+0x5c/0x1b8
+  ...
+  Kernel panic - not syncing: Attempted to kill init!
+
+This is a 6.6-era CIX patch (0001) never updated for the newer
+scmi_transport_handle mechanism -- confirmed absent entirely from the
+7.1-line arm_scmi/common.h (grep for scmi_transport_handle/supplier_get
+there returns nothing), so the same driver_data value was harmless
+there and only became live once 7.2 picked up the mainline refactor.
+The OF match entry (arm,scmi) never set driver_data at all -- this
+just brings the ACPI entry in line with it.
+
+Fix: drop the driver_data assignment. strans.th then stays NULL and
+the if (strans.th) guard correctly skips the supplier_get call, matching
+DT-boot behavior.
+
+This is the SCMI mailbox transport, the lowest-level shared plumbing
+under clk-scmi (0003/0075), pmdomain-scmi (0077/0082), and panthor
+SCMI rate-limiting (0084) -- until this crash is fixed nothing
+downstream of SCMI (including NPU/VPU DKMS ACPI dependencies) is
+even reachable on 7.2.
+---
+ drivers/firmware/arm_scmi/transports/mailbox.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/firmware/arm_scmi/transports/mailbox.c b/drivers/firmware/arm_scmi/transports/mailbox.c
+index 111111111111..222222222222 100644
+--- a/drivers/firmware/arm_scmi/transports/mailbox.c
++++ b/drivers/firmware/arm_scmi/transports/mailbox.c
+@@ -383,7 +383,7 @@ static const struct of_device_id scmi_of_match[] = {
+ MODULE_DEVICE_TABLE(of, scmi_of_match);
+ 
+ static const struct acpi_device_id scmi_acpi_match[] = {
+-	{ .id = "CIXHA006", .driver_data = (kernel_ulong_t)&scmi_mailbox_desc },
++	{ .id = "CIXHA006" },
+ 	{ /* Sentinel */ },
+ };
+ 
+-- 
+Armbian
+

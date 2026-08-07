@@ -1,0 +1,270 @@
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index b3afe0688919..f2b9b06c8b51 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -2540,3 +2540,15 @@ source "drivers/acpi/Kconfig"
+ source "arch/arm64/kvm/Kconfig"
+ 
+ source "kernel/livepatch/Kconfig"
++
++config NCZ_BOOT_BEACON
++	bool "NCZ early boot beacon (Sky1 ramoops debug)"
++	default n
++	help
++	  Write early-boot progress tags into the firmware-reserved ramoops
++	  console zone for post-mortem reading after a silent boot failure.
++
++config NCZ_BEACON_PHYS
++	hex "NCZ beacon physical address (ramoops console zone)"
++	depends on NCZ_BOOT_BEACON
++	default 0x83d5f000
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index c1f23dee3266..045a0465d3c3 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -88,3 +88,4 @@ endif
+ 
+ # for cleaning
+ subdir- += vdso vdso32
++obj-$(CONFIG_NCZ_BOOT_BEACON) += ncz-beacon.o
+diff --git a/arch/arm64/kernel/ncz-beacon.c b/arch/arm64/kernel/ncz-beacon.c
+new file mode 100644
+index 000000000000..4d3e179247b7
+--- /dev/null
++++ b/arch/arm64/kernel/ncz-beacon.c
+@@ -0,0 +1,110 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * NCZ early-boot beacon v2: append progress tags into the firmware-reserved
++ * ramoops console zone (CIX Sky1) with explicit dcache clean so records
++ * survive a watchdog reset. Includes a per-initcall trace hook.
++ */
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/kallsyms.h>
++#include <linux/ncz-beacon.h>
++#include <asm/early_ioremap.h>
++#include <asm/cacheflush.h>
++
++#define PRZ_SIG 0x43474244u
++#define MAP_LEN (SZ_64K)
++
++struct prz_hdr {
++	u32 sig;
++	u32 start;
++	u32 size;
++};
++
++static u32 ncz_cursor;
++static bool ncz_inited;
++static void *ncz_late_base;
++
++static void ncz_flush(void *addr, size_t len)
++{
++	dcache_clean_poc((unsigned long)addr, (unsigned long)addr + len);
++}
++
++static void *ncz_map(bool *late)
++{
++	*late = slab_is_available();
++	if (*late) {
++		if (!ncz_late_base)
++			ncz_late_base = memremap(CONFIG_NCZ_BEACON_PHYS,
++						 MAP_LEN, MEMREMAP_WB);
++		return ncz_late_base;
++	}
++	return early_memremap(CONFIG_NCZ_BEACON_PHYS, MAP_LEN);
++}
++
++static void ncz_unmap(void *base, bool late)
++{
++	if (!late)
++		early_memunmap(base, MAP_LEN);
++}
++
++void ncz_beacon(const char *tag)
++{
++	struct prz_hdr *h;
++	void *base;
++	char line[96];
++	bool late;
++	int len;
++
++	base = ncz_map(&late);
++	if (!base)
++		return;
++
++	h = base;
++	if (!ncz_inited) {
++		h->sig = PRZ_SIG;
++		h->start = 0;
++		h->size = 0;
++		ncz_cursor = 0;
++		ncz_inited = true;
++		ncz_flush(h, sizeof(*h));
++	}
++
++	len = scnprintf(line, sizeof(line), "NCZBEACON %s\n", tag);
++	if (ncz_cursor + len < MAP_LEN - sizeof(*h)) {
++		char *dst = (char *)base + sizeof(*h) + ncz_cursor;
++
++		memcpy(dst, line, len);
++		ncz_flush(dst, len);
++		ncz_cursor += len;
++		h->start = ncz_cursor;
++		h->size = ncz_cursor;
++		ncz_flush(h, sizeof(*h));
++	}
++
++	ncz_unmap(base, late);
++}
++
++void ncz_beacon_fn(const void *fn)
++{
++	char buf[80];
++
++	snprintf(buf, sizeof(buf), "fn %ps", fn);
++	ncz_beacon(buf);
++}
++
++static int __init ncz_beacon_core(void)
++{
++	ncz_beacon("B9-core_initcall");
++	return 0;
++}
++core_initcall(ncz_beacon_core);
++
++static int __init ncz_beacon_device(void)
++{
++	ncz_beacon("B10-device_initcall");
++	return 0;
++}
++device_initcall(ncz_beacon_device);
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 23c05dc7a8f2..0848f79003a4 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -53,6 +53,7 @@
+ #include <asm/traps.h>
+ #include <asm/efi.h>
+ #include <asm/xen/hypervisor.h>
++#include <linux/ncz-beacon.h>
+ #include <asm/mmu_context.h>
+ 
+ static int num_standard_resources;
+@@ -288,6 +289,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	early_fixmap_init();
+ 	early_ioremap_init();
++	ncz_beacon("B1-early_ioremap");
+ 
+ 	setup_machine_fdt(__fdt_pointer);
+ 
+@@ -297,6 +299,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	 */
+ 	jump_label_init();
+ 	parse_early_param();
++	ncz_beacon("B2-early_param");
+ 
+ 	dynamic_scs_init();
+ 
+@@ -321,6 +324,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	xen_early_init();
+ 	efi_init();
++	ncz_beacon("B3-efi_init");
+ 
+ 	if (!efi_enabled(EFI_BOOT)) {
+ 		if ((u64)_text % MIN_KIMG_ALIGN)
+@@ -330,18 +334,22 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	}
+ 
+ 	arm64_memblock_init();
++	ncz_beacon("B4-memblock");
+ 
+ 	paging_init();
++	ncz_beacon("B5-paging");
+ 
+ 	acpi_table_upgrade();
+ 
+ 	/* Parse the ACPI tables for possible boot-time configuration */
+ 	acpi_boot_table_init();
++	ncz_beacon("B6-acpi_tables");
+ 
+ 	if (acpi_disabled)
+ 		unflatten_device_tree();
+ 
+ 	bootmem_init();
++	ncz_beacon("B7-bootmem");
+ 
+ 	kasan_init();
+ 
+@@ -359,6 +367,7 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	init_bootcpu_ops();
+ 	smp_init_cpus();
+ 	smp_build_mpidr_hash();
++	ncz_beacon("B8-setup_arch_late");
+ 
+ #ifdef CONFIG_ARM64_SW_TTBR0_PAN
+ 	/*
+diff --git a/include/linux/ncz-beacon.h b/include/linux/ncz-beacon.h
+new file mode 100644
+index 000000000000..444929da241c
+--- /dev/null
++++ b/include/linux/ncz-beacon.h
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_NCZ_BEACON_H
++#define _LINUX_NCZ_BEACON_H
++
++#ifdef CONFIG_NCZ_BOOT_BEACON
++void ncz_beacon(const char *tag);
++void ncz_beacon_fn(const void *fn);
++#else
++static inline void ncz_beacon(const char *tag) {}
++static inline void ncz_beacon_fn(const void *fn) {}
++#endif
++
++#endif
+diff --git a/init/main.c b/init/main.c
+index e363232b428b..0d1976d791a5 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -108,6 +108,7 @@
+ #include <linux/unaligned.h>
+ #include <linux/vdso_datastore.h>
+ #include <net/net_namespace.h>
++#include <linux/ncz-beacon.h>
+ 
+ #include <asm/io.h>
+ #include <asm/setup.h>
+@@ -670,6 +671,8 @@ static __initdata DECLARE_COMPLETION(kthreadd_done);
+ 
+ static noinline void __ref __noreturn rest_init(void)
+ {
++	ncz_beacon("B11-rest_init");
++
+ 	struct task_struct *tsk;
+ 	int pid;
+ 
+@@ -1336,6 +1339,8 @@ static inline void do_trace_initcall_level(const char *level)
+ 
+ int __init_or_module do_one_initcall(initcall_t fn)
+ {
++	ncz_beacon_fn(fn);
++
+ 	int count = preempt_count();
+ 	char msgbuf[64];
+ 	int ret;
+@@ -1538,6 +1543,8 @@ void __weak free_initmem(void)
+ 
+ static int __ref kernel_init(void *unused)
+ {
++	ncz_beacon("B12-kernel_init");
++
+ 	int ret;
+ 
+ 	/*

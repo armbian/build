@@ -1,0 +1,250 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jianfeng Liu <Jianfeng.Liu@cixtech.com>
+Date: Sat, 9 May 2026 10:07:38 +0800
+Subject: disable acpi pcie devices
+
+---
+ drivers/pci/controller/cadence/Makefile        |   1 +
+ drivers/pci/controller/cadence/pci-sky1-acpi.c | 197 ++++++++++
+ drivers/pci/controller/cadence/pci-sky1-acpi.h |  18 +
+ 3 files changed, 216 insertions(+)
+
+diff --git a/drivers/pci/controller/cadence/Makefile b/drivers/pci/controller/cadence/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/cadence/Makefile
++++ b/drivers/pci/controller/cadence/Makefile
+@@ -10,3 +10,4 @@ obj-$(CONFIG_PCIE_CADENCE_PLAT) += pcie-cadence-plat.o
+ obj-$(CONFIG_PCI_J721E) += pci-j721e.o
+ obj-$(CONFIG_PCIE_SG2042_HOST) += pcie-sg2042.o
+ obj-$(CONFIG_PCI_SKY1_HOST) += pci-sky1.o
++obj-$(CONFIG_PCI_SKY1_HOST) += pci-sky1-acpi.o
+diff --git a/drivers/pci/controller/cadence/pci-sky1-acpi.c b/drivers/pci/controller/cadence/pci-sky1-acpi.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/pci/controller/cadence/pci-sky1-acpi.c
+@@ -0,0 +1,197 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * ACPI scan handlers for CIX Sky1 PCIe controllers.
++ *
++ * The DSDT defines both PNP0A08 (standard PCI root bridge) and CIXH2020
++ * (vendor PCIe controller companion) for each PCIe port.  Only one should
++ * create a PCI host bridge.  Block PNP0A08 so pci-sky1.c can probe
++ * CIXH2020 with full controller initialization (PHY, reset, PERST#, etc).
++ *
++ * CIXH2020 _CRS contains both controller register resources (Memory32Fixed)
++ * and PCI address windows (DWordMemory, DWordIO).  The PCI windows get
++ * IORESOURCE_WINDOW from ACPI resource translation.  platform_device_add()
++ * tries to insert DWordIO resources into ioport_resource, but the CPU-side
++ * addresses (e.g. 0x50100000) exceed ARM64's IO_SPACE_LIMIT, causing -EBUSY.
++ * We create CIXH2020 platform devices ourselves with filtered resources
++ * (only controller registers and IRQs).
++ *
++ * Follows the vendor kernel's cix-acpi-plat.c pattern.
++ */
++
++#ifdef CONFIG_ACPI
++
++#include <linux/acpi.h>
++#include <linux/init.h>
++#include <linux/platform_device.h>
++
++#include "pci-sky1-acpi.h"
++
++static bool sky1_acpi_detected;
++
++/*
++ * Resource filter for CIXH2020 _CRS.
++ *
++ * Skip Address Space descriptors (DWordMemory, QWordMemory, DWordIO,
++ * QWordIO) which are PCI bridge address windows.  Keep Memory32Fixed
++ * (controller registers) and Interrupt resources.
++ *
++ * This is the preproc callback for acpi_dev_get_resources().
++ * Return 1 to skip the resource, 0 to include it.
++ */
++static int sky1_cixh2020_res_filter(struct acpi_resource *ares, void *data)
++{
++	struct acpi_resource_address64 addr;
++
++	/* Skip Address Space resources (PCI windows) */
++	if (acpi_resource_to_address64(ares, &addr) == AE_OK)
++		return 1;
++
++	return 0;
++}
++
++/*
++ * Create a platform device for CIXH2020 with filtered resources.
++ *
++ * Replicates the key parts of acpi_create_platform_device() but with
++ * our resource filter to exclude PCI window resources that can't be
++ * claimed by platform_device_add().
++ *
++ * Always returns 1 (handled) — even on failure.  PNP0A08 is already
++ * blocked, so falling through to default ACPI enumeration (return 0)
++ * would create a platform device with fwnode, hitting the fw_devlink
++ * deadlock we're explicitly avoiding.  A stranded controller with an
++ * error log is preferable to a silent hang.
++ */
++static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
++{
++	struct sky1_pcie_acpi_pdata pdata = { .adev = adev };
++	struct platform_device_info pdevinfo = {};
++	struct platform_device *pdev;
++	struct resource_entry *rentry;
++	struct list_head resource_list;
++	struct resource *resources;
++	int count, i;
++
++	INIT_LIST_HEAD(&resource_list);
++	count = acpi_dev_get_resources(adev, &resource_list,
++				       sky1_cixh2020_res_filter, NULL);
++	if (count <= 0) {
++		acpi_dev_free_resource_list(&resource_list);
++		dev_err(&adev->dev, "no usable resources in _CRS, controller stranded\n");
++		return 1; /* claim to prevent default enumeration (fw_devlink) */
++	}
++
++	resources = kcalloc(count, sizeof(*resources), GFP_KERNEL);
++	if (!resources) {
++		acpi_dev_free_resource_list(&resource_list);
++		dev_err(&adev->dev, "resource alloc failed, controller stranded\n");
++		return 1; /* claim to prevent default enumeration (fw_devlink) */
++	}
++
++	i = 0;
++	list_for_each_entry(rentry, &resource_list, node)
++		resources[i++] = *rentry->res;
++	acpi_dev_free_resource_list(&resource_list);
++
++	/*
++	 * Register without fwnode to bypass fw_devlink at device_add()
++	 * time — CIXH2020 _DSD references suppliers (PRP0001 regulators)
++	 * that may lack drivers, which would create unsatisfiable links.
++	 * The ACPI companion is bound post-registration (see below) so
++	 * bus_find_device_by_acpi_dev() works for RSTL reset lookups.
++	 */
++	pdevinfo.name = "sky1-pcie";
++	pdevinfo.id = PLATFORM_DEVID_AUTO;
++	pdevinfo.res = resources;
++	pdevinfo.num_res = count;
++	pdevinfo.data = &pdata;
++	pdevinfo.size_data = sizeof(pdata);
++
++	pdev = platform_device_register_full(&pdevinfo);
++	kfree(resources);
++
++	if (IS_ERR(pdev)) {
++		dev_err(&adev->dev, "platform device creation failed: %ld, controller stranded\n",
++			PTR_ERR(pdev));
++		return 1; /* claim to prevent default enumeration (fw_devlink) */
++	}
++
++	/*
++	 * Bind the ACPI companion now.  The device was registered without
++	 * fwnode (to bypass fw_devlink), so device_add() created no
++	 * supplier links.  Setting fwnode post-registration does NOT
++	 * retroactively trigger fw_devlink — add_links only runs during
++	 * device_add().
++	 *
++	 * The companion is needed so cix-acpi-resource-lookup (CIXA1019)
++	 * can resolve CIXH2020 RSTL entries via bus_find_device_by_acpi_dev()
++	 * and register reset_control_lookup entries for this device.
++	 * Without this, devm_reset_control_get_optional_exclusive() returns
++	 * NULL and the controller reset is silently skipped.
++	 */
++	acpi_bind_one(&pdev->dev, adev);
++
++	dev_info(&adev->dev, "Sky1: created platform device %s (%d resources)\n",
++		 dev_name(&pdev->dev), count);
++	return 1;
++}
++
++/*
++ * Combined scan handler for PNP0A08 (deny) and CIXH2020 (filtered create).
++ *
++ * On non-Sky1 platforms, returns 0 for both — PNP0A08 falls through to
++ * the built-in PCI root handler (via PNP0A03 compat ID), and CIXH2020
++ * falls through to default platform device enumeration.
++ */
++static int sky1_acpi_scan_attach(struct acpi_device *adev,
++				 const struct acpi_device_id *id)
++{
++	if (!sky1_acpi_detected)
++		return 0;
++
++	if (!strcmp(id->id, "PNP0A08")) {
++		dev_info(&adev->dev,
++			 "Sky1: blocking PNP0A08, CIXH2020 will handle\n");
++		return 1;
++	}
++
++	/* CIXH2020 — create platform device with filtered resources */
++	return sky1_cixh2020_create_pdev(adev);
++}
++
++static const struct acpi_device_id sky1_scan_ids[] = {
++	{ "PNP0A08", 0 },
++	{ "CIXH2020", 0 },
++	{ },
++};
++
++static struct acpi_scan_handler sky1_scan_handler = {
++	.ids = sky1_scan_ids,
++	.attach = sky1_acpi_scan_attach,
++};
++
++static int __init sky1_pcie_acpi_init(void)
++{
++	struct acpi_table_header *header;
++
++	if (acpi_disabled)
++		return 0;
++
++	/* Check MCFG OEM ID to identify Sky1 platform */
++	if (ACPI_FAILURE(acpi_get_table(ACPI_SIG_MCFG, 0, &header)))
++		return 0;
++
++	sky1_acpi_detected = !memcmp(header->oem_id, "CIXTEK", 6) &&
++			     !memcmp(header->oem_table_id, "SKY1EDK2", 8);
++	acpi_put_table(header);
++
++	if (!sky1_acpi_detected)
++		return 0;
++
++	pr_info("Sky1 PCIe: registering ACPI scan handler\n");
++	return acpi_scan_add_handler(&sky1_scan_handler);
++}
++/* Must run before subsys_initcall(acpi_init) which registers PCI root handler */
++arch_initcall(sky1_pcie_acpi_init);
++
++#endif /* CONFIG_ACPI */
+diff --git a/drivers/pci/controller/cadence/pci-sky1-acpi.h b/drivers/pci/controller/cadence/pci-sky1-acpi.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/pci/controller/cadence/pci-sky1-acpi.h
+@@ -0,0 +1,18 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _PCIE_SKY1_ACPI_H
++#define _PCIE_SKY1_ACPI_H
++
++struct acpi_device;
++
++/*
++ * Platform data passed from pci-sky1-acpi.c scan handler to pci-sky1.c
++ * probe function.  CIXH2020 platform devices are created without fwnode
++ * (to avoid fw_devlink at device_add time), then the ACPI companion is
++ * bound post-registration via acpi_bind_one().  The pdata carries the
++ * acpi_device for fallback binding in the driver's probe function.
++ */
++struct sky1_pcie_acpi_pdata {
++	struct acpi_device *adev;
++};
++
++#endif /* _PCIE_SKY1_ACPI_H */
+-- 
+Armbian
+

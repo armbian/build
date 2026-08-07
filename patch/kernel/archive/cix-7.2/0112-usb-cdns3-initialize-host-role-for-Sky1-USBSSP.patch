@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 22:39:10 -0400
+Subject: usb: cdns3: initialize host role for Sky1 USBSSP
+
+The v7.2 cdns3 core split role initialization out of cdns_init(), but the imported CIX USBSSP platform driver still assumes the old monolithic behavior. As a result all CIXH2031 devices bind with USB_ROLE_NONE and never instantiate their xHCI children.
+
+Wire the USBSSP platform driver to the unified core host callback and call cdns_core_init_role(). Also retain the xHCI child in the vendor xhci_device field used by the Sky1 runtime-PM hooks.
+---
+ drivers/usb/cdns3/cdnsp-plat.c | 14 ++++++++--
+ drivers/usb/cdns3/host.c       |  5 ++++
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/cdns3/cdnsp-plat.c b/drivers/usb/cdns3/cdnsp-plat.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-plat.c
++++ b/drivers/usb/cdns3/cdnsp-plat.c
+@@ -12,6 +12,7 @@
+ #include "../host/xhci.h"
+ #include "core.h"
+ #include "gadget-export.h"
++#include "host-export.h"
+ #include "drd.h"
+ 
+ static int set_phy_power_on(struct cdns *cdns)
+@@ -173,13 +174,17 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_phy_power_on;
+ 
+-	cdns->gadget_init = cdnsp_gadget_init;
+-
+ 	ret = cdns_init(cdns);
+-
+ 	if (ret)
+ 		goto err_cdns_init;
+ 
++	cdns->gadget_init = cdnsp_gadget_init;
++	cdns->host_init = cdns_host_init;
++
++	ret = cdns_core_init_role(cdns);
++	if (ret)
++		goto err_cdns_init_role;
++
+ 	device_set_wakeup_capable(dev, true);
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+@@ -197,6 +202,9 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 
+ 	return 0;
+ 
++err_cdns_init_role:
++	if (cdns->role_sw)
++		usb_role_switch_unregister(cdns->role_sw);
+ err_cdns_init:
+ 	set_phy_power_off(cdns);
+ err_phy_power_on:
+diff --git a/drivers/usb/cdns3/host.c b/drivers/usb/cdns3/host.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/host.c
++++ b/drivers/usb/cdns3/host.c
+@@ -81,6 +81,7 @@ static int __cdns_host_init(struct cdns *cdns)
+ 	}
+ 
+ 	xhci->dev.parent = cdns->dev;
++	cdns->xhci_device = xhci;
+ 	cdns->host_dev = xhci;
+ 
+ 	ret = platform_device_add_resources(xhci, cdns->xhci_res,
+@@ -126,6 +127,8 @@ static int __cdns_host_init(struct cdns *cdns)
+ free_memory:
+ 	kfree(cdns->xhci_plat_data);
+ err1:
++	cdns->xhci_device = NULL;
++	cdns->host_dev = NULL;
+ 	platform_device_put(xhci);
+ 	return ret;
+ }
+@@ -135,6 +138,7 @@ static void cdns_host_exit(struct cdns *cdns)
+ 	kfree(cdns->xhci_plat_data);
+ 	platform_device_unregister(cdns->host_dev);
+ 	cdns->host_dev = NULL;
++	cdns->xhci_device = NULL;
+ 	cdns_drd_host_off(cdns);
+ }
+ 
+@@ -166,3 +170,4 @@ int cdns_host_init(struct cdns *cdns)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(cdns_host_init);
+-- 
+Armbian
+

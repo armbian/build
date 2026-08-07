@@ -1,0 +1,104 @@
+diff --git a/drivers/pci/controller/cadence/pci-sky1-acpi.c b/drivers/pci/controller/cadence/pci-sky1-acpi.c
+index 1032a73cc7ad..251032d4e056 100644
+--- a/drivers/pci/controller/cadence/pci-sky1-acpi.c
++++ b/drivers/pci/controller/cadence/pci-sky1-acpi.c
+@@ -27,6 +27,20 @@
+ #include "pci-sky1-acpi.h"
+ 
+ static bool sky1_acpi_detected;
++/*
++ * sky1_pcie_native=off reverts to the standard ACPI PNP0A08/ECAM PCI
++ * host path (firmware link bring-up), as used by the working 7.0.12
++ * vendor kernel on cixmini BIOS 1.0. Native mode (default) blocks
++ * PNP0A08 and drives the Cadence controller directly.
++ */
++static bool sky1_pcie_native = true;
++static int __init sky1_pcie_native_setup(char *arg)
++{
++	if (arg && !strcmp(arg, "off"))
++		sky1_pcie_native = false;
++	return 0;
++}
++early_param("sky1_pcie_native", sky1_pcie_native_setup);
+ 
+ /*
+  * Resource filter for CIXH2020 _CRS.
+@@ -146,7 +160,7 @@ static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
+ static int sky1_acpi_scan_attach(struct acpi_device *adev,
+ 				 const struct acpi_device_id *id)
+ {
+-	if (!sky1_acpi_detected)
++	if (!sky1_acpi_detected || !sky1_pcie_native)
+ 		return 0;
+ 
+ 	if (!strcmp(id->id, "PNP0A08")) {
+diff --git a/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c b/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c
+index a7525e3225de..a1a8a02f17d9 100644
+--- a/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c
++++ b/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c
+@@ -26,6 +26,15 @@
+ #include <linux/platform_device.h>
+ #include <linux/reset-controller.h>
+ 
++static bool ncz_no_links;
++static int __init ncz_no_links_setup(char *str)
++{
++	ncz_no_links = true;
++	return 0;
++}
++early_param("ncz_no_links", ncz_no_links_setup);
++
++
+ static struct acpi_device *acpi_obj_to_acpi_dev(const union acpi_object *obj)
+ {
+ 	if (!obj)
+@@ -337,13 +346,15 @@ static int acpi_resource_lookup_device(acpi_handle handle, void *data)
+ 		dev_dbg(dev, "resource name lookup handle failed for %s\n",
+ 			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
+ 
+-	ret = acpi_res_lookup_eval(handle, "DLKL",
++	ret = ncz_no_links ? -ENODEV :
++	      acpi_res_lookup_eval(handle, "DLKL",
+ 				   device_link_lookup_handle, dev);
+ 	if (ret < 0 && ret != -ENODEV)
+ 		dev_dbg(dev, "device link lookup handle failed for %s\n",
+ 			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
+ 
+-	ret = acpi_res_lookup_eval(handle, "CLKT",
++	ret = ncz_no_links ? -ENODEV :
++	      acpi_res_lookup_eval(handle, "CLKT",
+ 				   clock_dependency_handle, dev);
+ 	if (ret < 0 && ret != -ENODEV)
+ 		dev_dbg(dev, "clock dependency handle failed for %s\n",
+diff --git a/init/do_mounts.c b/init/do_mounts.c
+index 95e0b3a0f711..f62decfe4d4e 100644
+--- a/init/do_mounts.c
++++ b/init/do_mounts.c
+@@ -19,6 +19,7 @@
+ #include <linux/ramfs.h>
+ #include <linux/shmem_fs.h>
+ #include <linux/ktime.h>
++#include <linux/ncz-beacon.h>
+ 
+ #include <linux/nfs_fs.h>
+ #include <linux/nfs_fs_sb.h>
+@@ -481,6 +482,7 @@ void __init prepare_namespace(void)
+ 	if (root_wait)
+ 		wait_for_root(saved_root_name);
+ 	mount_root(saved_root_name);
++	ncz_beacon("B13-root_mounted");
+ 	devtmpfs_mount();
+ 
+ 	if (init_pivot_root(".", ".")) {
+diff --git a/init/main.c b/init/main.c
+index 0d1976d791a5..c19be7a296e0 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -1461,6 +1461,7 @@ static void __init do_pre_smp_initcalls(void)
+ 
+ static int run_init_process(const char *init_filename)
+ {
++	ncz_beacon("B14-run_init");
+ 	const char *const *p;
+ 
+ 	argv_init[0] = init_filename;

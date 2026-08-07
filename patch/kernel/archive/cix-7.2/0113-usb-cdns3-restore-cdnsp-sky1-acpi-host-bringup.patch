@@ -1,0 +1,386 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EvilOlaf <werner@armbian.com>
+Date: Sat, 25 Jul 2026 19:30:09 +0200
+Subject: [ARCHEOLOGY] cix: add bleedingedge 7.2 support
+
+> X-Git-Archeology: > recovered message: > patches borrowed from https://gitlab.com/ncz-os/meta-cix/-/tree/main/recipes-kernel/linux-cix-sky1-ncz/linux-cix-sky1-ncz-7.2/patches-7.2?ref_type=heads
+> X-Git-Archeology: - Revision 50c75ea446ca1c4e723b8c0f6078f24806b71301: https://github.com/armbian/build/commit/50c75ea446ca1c4e723b8c0f6078f24806b71301
+> X-Git-Archeology:   Date: Sat, 25 Jul 2026 19:30:09 +0200
+> X-Git-Archeology:   From: EvilOlaf <werner@armbian.com>
+> X-Git-Archeology:   Subject: cix: add bleedingedge 7.2 support
+> X-Git-Archeology:
+---
+ drivers/usb/cdns3/cdnsp-sky1.c | 235 +++++-----
+ drivers/usb/cdns3/cdnsp-sky1.h |   2 +-
+ 2 files changed, 131 insertions(+), 106 deletions(-)
+
+diff --git a/drivers/usb/cdns3/cdnsp-sky1.c b/drivers/usb/cdns3/cdnsp-sky1.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-sky1.c
++++ b/drivers/usb/cdns3/cdnsp-sky1.c
+@@ -12,6 +12,7 @@
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/interrupt.h>
++#include <linux/mutex.h>
+ #include <linux/platform_device.h>
+ #include <linux/io.h>
+ #include <linux/of_platform.h>
+@@ -22,14 +23,22 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/of_address.h>
+ #include <linux/device.h>
++#include <linux/property.h>
+ 
+ #include "core.h"
+ #include "../host/xhci.h"
+ #include "../host/xhci-plat.h"
+-
+-#define GADGET_DEV_NAME_PREFIX	"gadget."
+ #include "cdnsp-sky1.h"
+ 
++/*
++ * Serialize drd_init across all instances to avoid overwhelming the
++ * SCMI mailbox channel.  Each controller's drd_init disables and
++ * re-enables 4 clocks via SCMI — with 10 controllers probing in
++ * parallel that's 80+ SCMI messages competing for a single shared
++ * mailbox, causing timeouts and SErrors on already-clocked hardware.
++ */
++static DEFINE_MUTEX(cdnsp_sky1_init_lock);
++
+ static const char *cix_usb_clk_names[CIX_USB_CLK_NUM] = {
+ 		"sof_clk", "usb_aclk", "lpm_clk", "usb_pclk"
+ };
+@@ -56,6 +65,9 @@ static int sky1_set_mode_by_id(struct device *dev, int mode)
+ {
+ 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
+ 
++	if (!data->usb_syscon)
++		return 0;
++
+ 	return regmap_update_bits(data->usb_syscon,
+ 			sky1_usb_signals[data->id].offset,
+ 			GENMASK(sky1_usb_signals[data->id].bit+1,
+@@ -69,7 +81,7 @@ static int sky1_set_mode_by_id(struct device *dev, int mode)
+  *
+  */
+ 
+-int sky1_usb_clk_enable_all(struct device *dev)
++static int sky1_usb_clk_enable_all(struct device *dev)
+ {
+ 	int i, ret;
+ 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
+@@ -185,7 +197,7 @@ static void sky1_usb_clk_disable_suspend(struct device *dev)
+ #define PS_D3			3
+ #define PS_PME_En		(1 << 8)
+ 
+-int sky1_handshake(void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
++static int sky1_handshake(void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
+ {
+ 	u32	result;
+ 	int	ret;
+@@ -205,7 +217,7 @@ static int cdns_sky1_platform_suspend(struct device *dev,
+ {
+ 
+ 	struct cdns *cdns = dev_get_drvdata(dev);
+-	struct platform_device *xhci_dev = cdns->xhci_device;
++	struct platform_device *xhci_dev = cdns->host_dev;
+ 	struct usb_hcd  *hcd;
+ 	struct xhci_hcd *xhci;
+ 	struct device *parent = cdns->dev->parent;
+@@ -452,35 +464,12 @@ static int cdnsp_sky1_drd_init(struct cdnsp_sky1 *data)
+ 	return 0;
+ }
+ 
+-static int cdns_sky1_platform_reset(struct device *dev)
+-{
+-	int ret;
+-	struct device *parent = dev->parent;
+-	struct cdnsp_sky1 *data = dev_get_drvdata(parent);
+-
+-	if (data)
+-		ret = cdnsp_sky1_drd_init(data);
+-	return ret;
+-}
+-
+-static int cdnsp_sky1_u3_disable(struct cdnsp_sky1 *data)
+-{
+-	dev_info(data->dev, "[%s:%d]disable u3 port\n", __func__, __LINE__);
+-	writel(D_XEC_CFG_3XPORT_MODE_VALUE, (void *)(data->xhci_base)
+-			+ XEC_CFG_3XPORT_MODE);
+-	return 0;
+-}
+-
+-static int cdns_sky1_platform_u3_disable(struct device *dev)
+-{
+-	int ret;
+-	struct device *parent = dev->parent;
+-	struct cdnsp_sky1 *data = dev_get_drvdata(parent);
+-
+-	if (data)
+-		ret = cdnsp_sky1_u3_disable(data);
+-	return ret;
+-}
++/*
++ * Note: Mainline doesn't have platform_reset and platform_u3_disable hooks
++ * in struct cdns3_platform_data. These vendor extensions are not needed:
++ * - Role switching is handled by mainline's usb_role_switch framework
++ * - USB3 disabling is handled via standard "maximum-speed" DT property
++ */
+ 
+ static void *sky1_of_get_addr_by_name(struct device_node *parent, char *name)
+ {
+@@ -549,6 +538,55 @@ static const struct acpi_device_id cdns_sky1_sub_match[] = {
+ 	{},
+ };
+ 
++/*
++ * Ensure USB3 PHY providers have probed before the wrapper's drd_init.
++ *
++ * Under DT, PHY drivers probe before their consumers (phandle dependency).
++ * The PHY probe asserts resets, so when drd_init later configures the
++ * controller, the PHY is in a known reset state.
++ *
++ * Under ACPI, there's no guaranteed probe ordering.  If the wrapper
++ * probes first, drd_init deasserts the controller reset while the PHY
++ * is still active from firmware.  When the PHY later probes and asserts
++ * resets, the controller sees an unexpected link drop that prevents USB3
++ * enumeration.
++ *
++ * This check follows each child controller's "cdnsp,usb3-phy" _DSD
++ * reference to find the PHY provider device, and defers if it hasn't
++ * probed yet.
++ */
++static int cdnsp_sky1_check_phy_deps(struct device *dev)
++{
++	struct fwnode_handle *child;
++
++	device_for_each_child_node(dev, child) {
++		struct fwnode_handle *ref, *phy_parent;
++		struct device *phy_dev;
++
++		ref = fwnode_find_reference(child, "cdnsp,usb3-phy", 0);
++		if (IS_ERR_OR_NULL(ref))
++			continue;
++
++		phy_parent = fwnode_get_parent(ref);
++		fwnode_handle_put(ref);
++		if (!phy_parent)
++			continue;
++
++		phy_dev = bus_find_device_by_fwnode(&platform_bus_type,
++						    phy_parent);
++		fwnode_handle_put(phy_parent);
++		if (!phy_dev || !phy_dev->driver) {
++			if (phy_dev)
++				put_device(phy_dev);
++			fwnode_handle_put(child);
++			return -EPROBE_DEFER;
++		}
++		put_device(phy_dev);
++	}
++
++	return 0;
++}
++
+ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -557,6 +595,12 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ 	int ret;
+ 	struct cdns3_platform_data *cdns_sky1_pdata;
+ 
++	if (ACPI_COMPANION(dev)) {
++		ret = cdnsp_sky1_check_phy_deps(dev);
++		if (ret)
++			return ret;
++	}
++
+ 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+@@ -600,12 +644,13 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ 	}
+ 	data->id = ret;
+ 
+-	data->usb_syscon = device_syscon_regmap_lookup_by_property(&pdev->dev,
++	data->usb_syscon = syscon_regmap_lookup_by_phandle(dev->of_node,
+ 							"cix,usb_syscon");
+ 
+ 	if (IS_ERR(data->usb_syscon)) {
+-		dev_err(dev, "Unable to get cix,usb_syscon regmap");
+-		return PTR_ERR(data->usb_syscon);
++		/* Make optional for ACPI boot */
++		dev_dbg(dev, "Unable to get cix,usb_syscon regmap\n");
++		data->usb_syscon = NULL;
+ 	}
+ 
+ 	data->u3_disable = device_property_read_bool(dev, "u3-port-disable");
+@@ -634,7 +679,35 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ 	if (!data->device_base)
+ 		return PTR_ERR(data->device_base);
+ 
++	/*
++	 * Pre-validate clocks before drd_init touches hardware.
++	 * drd_init asserts resets and disables clocks before trying
++	 * to re-enable them; if clock lookup fails at that point the
++	 * hardware is left inaccessible, causing SErrors on child
++	 * driver probe.  Validate here so we fail cleanly.
++	 *
++	 * Under ACPI, PNP0D10 (generic xHCI) is blocked by the scan
++	 * handler in cix-acpi-usb-scan.c, so no other driver is using
++	 * this hardware.  Both DT and ACPI paths do the same full
++	 * drd_init: timing prescalers, APB timeout chicken bits, mode
++	 * straps, and AXI configuration.
++	 */
++	{
++		int i;
++
++		for (i = 0; i < CIX_USB_CLK_NUM; i++) {
++			struct clk *clk = devm_clk_get(dev,
++						       cix_usb_clk_names[i]);
++			if (IS_ERR(clk))
++				return dev_err_probe(dev, PTR_ERR(clk),
++					"could not get %s clock\n",
++					cix_usb_clk_names[i]);
++		}
++	}
++
++	mutex_lock(&cdnsp_sky1_init_lock);
+ 	ret = cdnsp_sky1_drd_init(data);
++	mutex_unlock(&cdnsp_sky1_init_lock);
+ 	if (ret == -ETIMEDOUT)
+ 		return -EPROBE_DEFER;
+ 	else if (ret)
+@@ -655,10 +728,27 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ 	cdns_sky1_pdata = kzalloc(sizeof(struct cdns3_platform_data), GFP_KERNEL);
+ 	if (!cdns_sky1_pdata)
+ 		return -ENOMEM;
+-	cdns_sky1_pdata->platform_reset = cdns_sky1_platform_reset;
++	/* Note: mainline only supports platform_suspend, not platform_reset/platform_u3_disable */
+ 	cdns_sky1_pdata->platform_suspend = cdns_sky1_platform_suspend;
+-	cdns_sky1_pdata->platform_u3_disable = cdns_sky1_platform_u3_disable;
+-	cdns_sky1_pdata->quirks = CDNS3_DEFAULT_PM_RUNTIME_ALLOW;
++
++	/*
++	 * Only enable runtime PM D3 for OTG (USB-C) controllers where the
++	 * rts5453 PD controller provides out-of-band wake on device plug.
++	 * Host-only (USB-A) controllers cannot generate PME from D3, so
++	 * they must stay active for reliable hot-plug detection.
++	 */
++	{
++		struct device_node *child;
++
++		for_each_child_of_node(node, child) {
++			if (of_property_read_bool(child, "usb-role-switch")) {
++				cdns_sky1_pdata->quirks =
++					CDNS3_DEFAULT_PM_RUNTIME_ALLOW;
++				of_node_put(child);
++				break;
++			}
++		}
++	}
+ 	if (!ACPI_COMPANION(dev)) {
+ 		cdns_sky1_auxdata->platform_data = cdns_sky1_pdata;
+ 		ret = of_platform_populate(node, NULL, cdns_sky1_auxdata, dev);
+@@ -714,7 +804,6 @@ static void cdnsp_sky1_remove(struct platform_device *pdev)
+ 	reset_control_deassert(data->preset);
+ 	sky1_usb_clk_disable_all(dev);
+ 	platform_set_drvdata(pdev, NULL);
+-
+ }
+ 
+ #ifdef CONFIG_PM
+@@ -790,76 +879,12 @@ static const struct acpi_device_id cdnsp_sky1_acpi_match[] = {
+ };
+ MODULE_DEVICE_TABLE(acpi, cdnsp_sky1_acpi_match);
+ 
+-static int cdnsp_sky1_find_cdns(struct device *dev, void *data)
+-{
+-	struct cdns **cdns_ptr = data;
+-
+-	if (dev->of_node && of_device_is_compatible(dev->of_node, "cdns,usbssp")) {
+-		*cdns_ptr = dev_get_drvdata(dev);
+-		return 1;
+-	}
+-
+-	if (acpi_match_device(cdns_sky1_sub_match, dev)) {
+-		*cdns_ptr = dev_get_drvdata(dev);
+-		return 1;
+-	}
+-	return 0;
+-}
+-
+-static int cdnsp_sky1_find_gadget_match(struct device *dev, void *data)
+-{
+-	struct device **gadget_dev = data;
+-	const char *name = dev_name(dev);
+-
+-	/*
+-	 * The gadget device is registered on the gadget bus with name
+-	 * "gadget.%d" (see usb_add_gadget_udc -> dev_set_name).
+-	 * It sits on the gadget bus and has the function driver bound to it.
+-	 */
+-	if (name && !strncmp(name, GADGET_DEV_NAME_PREFIX,
+-				strlen(GADGET_DEV_NAME_PREFIX))) {
+-		*gadget_dev = dev;
+-		return 1;
+-	}
+-	return 0;
+-}
+-
+ static void cdnsp_sky1_shutdown(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
+-	struct cdns *cdns = NULL;
+-	struct device *gadget_dev = NULL;
+ 
+ 	if (!device_may_wakeup(dev)) {
+-		/*
+-		 * Find the cdns3 child device, then find its gadget device
+-		 * and release the function driver before disabling clocks.
+-		 * This ensures all register accesses in gadget_unbind_driver
+-		 * complete before clocks are turned off.
+-		 */
+-		device_for_each_child(dev, &cdns, cdnsp_sky1_find_cdns);
+-		if (cdns)
+-			device_for_each_child(cdns->dev, &gadget_dev,
+-					      cdnsp_sky1_find_gadget_match);
+-		if (gadget_dev)
+-			device_release_driver(gadget_dev);
+-
+-		if (cdns && cdns->xhci_device) {
+-			struct usb_hcd *hcd = platform_get_drvdata(cdns->xhci_device);
+-
+-			if (hcd && hcd->irq > 0) {
+-				disable_irq(hcd->irq);
+-				synchronize_irq(hcd->irq);
+-				/*
+-				 * Clear HCD_FLAG_HW_ACCESSIBLE before disable_irq.
+-				 * This prevents usb_hcd_irq from calling xhci_irq
+-				 * (which reads USBSTS) after clocks are disabled.
+-				 */
+-				clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
+-			}
+-		}
+-
+ 		dev_dbg(dev, "at %s, reset controller\n", __func__);
+ 		reset_control_assert(data->reset);
+ 		reset_control_assert(data->preset);
+diff --git a/drivers/usb/cdns3/cdnsp-sky1.h b/drivers/usb/cdns3/cdnsp-sky1.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-sky1.h
++++ b/drivers/usb/cdns3/cdnsp-sky1.h
+@@ -117,7 +117,7 @@ struct cdnsp_sky1 {
+ 	bool u3_disable;
+ 	bool ssp_disable;
+ 	int axi_bmax_value;
+-	struct gpio_desc * oc_gpio;
++	struct gpio_desc *oc_gpio;
+ };
+ 
+ #endif /* __LINUX_CDNSP_SKY1_H */
+-- 
+Armbian
+
