@@ -22,8 +22,12 @@ function extension_prepare_config__home_assistant() {
 
 function pre_customize_image__500_add_ha_to_image() {
 
-	# Rockchip vendor kernel needs some additional arguments to work right
-	if [[ ${BRANCH} == "vendor" && ${BOARDFAMILY} == "rockchip-rk3588" ]]; then
+	# AppArmor must be on the kernel cmdline for Home Assistant Supervised. On
+	# u-boot boards it goes in via extraargs (armbianEnv.txt / extlinux.conf);
+	# Raspberry Pi (bcm2711) is handled separately through cmdline.txt in the
+	# pre_umount hook, so it is excluded here. The Rockchip RK3588 vendor kernel
+	# in particular needs these to work right.
+	if [[ ${BOARDFAMILY} != "bcm2711" ]]; then
 		declare -g HA_UBOOT_EXTRAARGS="apparmor=1 security=apparmor"
 	fi
 
