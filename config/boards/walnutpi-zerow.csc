@@ -1,0 +1,16 @@
+# Allwinner H618 quad core 1GB/2GB/4GB RAM SoC WiFi/BT
+BOARD_NAME="Walnut Pi ZeroW"
+BOARD_VENDOR="walnut"
+BOARDFAMILY="sun50iw9"
+BOARD_MAINTAINER="TallGuy74"
+INTRODUCED="2026"
+BOOTCONFIG="walnutpi_zerow_defconfig"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="sun50i-h618-walnutpi-zerow.dtb"
+OVERLAY_PREFIX="sun50i-h616"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+FORCE_BOOTSCRIPT_UPDATE="yes"
+SERIALCON="ttyS0"
+
+enable_extension "uwe5622-allwinner"
