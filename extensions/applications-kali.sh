@@ -1,6 +1,5 @@
 function extension_prepare_config__kali() {
 	EXTRA_IMAGE_SUFFIXES+=("-kali") # global array
-	#VENDOR="Armbian_Security"
 	HOST="${HOST:-armbian-security}"
 	display_alert "Target image will have Kali repository preinstalled" "${BOARD}:${RELEASE}-${BRANCH} :: ${EXTENSION}" "info"
 }
