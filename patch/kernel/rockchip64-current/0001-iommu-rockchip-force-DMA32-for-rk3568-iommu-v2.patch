@@ -1,37 +1,53 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Vitalij Borissow <250549977+vitalijborissow@users.noreply.github.com>
-Date: Sat, 15 Feb 2026 21:30:00 +0100
+From: Frantisek Repkovsky <frantisek.repkovsky@gmail.com>
+Date: Sun, 2 Aug 2026 18:47:32 +0000
 Subject: iommu/rockchip: Force GFP_DMA32 for rk3568-iommu v2
 
-On systems with >4GB RAM, the RK3568 IOMMU v2 allocates page tables from
-high memory (above 4GB). While the IOMMU claims 40-bit address support,
-some devices like the NPU cannot properly handle page tables located
-above 4GB, resulting in DMA mapping failures and NPU timeouts.
+This patch originates from here:
+https://lore.kernel.org/all/20260331075010.1463-1-midgy971@gmail.com/#t
 
-This patch forces GFP_DMA32 allocation for IOMMU v2 page tables,
-ensuring all allocations are within the first 4GB of physical memory.
+On boards with more than 4 GB of RAM (e.g. 8 GB LPDDR4X), removing
+GFP_DMA32 causes two distinct failure modes:
 
-Tested on ODROID-M1 with 8GB RAM running kernel 6.18.9-current-rockchip64.
-Without this patch, NPU inference fails with IOMMU page table access errors.
-With this patch, NPU operates correctly with full IOMMU support enabled.
+1. Direct allocation above 4 GB: iommu_alloc_pages_sz() may return
+   memory above 0x100000000.  The hardware page-table walker issues a
+   bus error trying to dereference those addresses, causing an IOMMU
+   fault on the first DMA transaction.
 
-Signed-off-by: Vitalij Borissow <250549977+vitalijborissow@users.noreply.github.com>
+2. SWIOTLB bounce-buffer poisoning: without GFP_DMA32, page tables land
+   above the SWIOTLB window.  dma_map_single() with DMA_BIT_MASK(32)
+   then bounces them into a buffer below 4 GB.  rk_dte_get_page_table()
+   returns phys_to_virt() of the bounce buffer address; PTEs are written
+   there; the next dma_sync_single_for_device(DMA_TO_DEVICE) copies the
+   original (zero) data back over the bounce buffer, silently erasing the
+   freshly written PTEs.  The IOMMU faults because every PTE reads as zero.
+
+Restore GFP_DMA32 (and DMA_BIT_MASK(32)) for iommu_data_ops_v2, which
+currently only serves "rockchip,rk3568-iommu" in mainline.
+
+Signed-off-by: Frantisek Repkovsky <frantisek.repkovsky@gmail.com>
 ---
- drivers/iommu/rockchip-iommu.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ drivers/iommu/rockchip-iommu.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/iommu/rockchip-iommu.c b/drivers/iommu/rockchip-iommu.c
-index 111111111111..222222222222 100644
+index 0861dd469..daea5dd8c 100644
 --- a/drivers/iommu/rockchip-iommu.c
 +++ b/drivers/iommu/rockchip-iommu.c
-@@ -1349,7 +1349,7 @@ static struct rk_iommu_ops iommu_data_ops_v2 = {
+@@ -1346,12 +1346,12 @@ static struct rk_iommu_ops iommu_data_ops_v1 = {
+ 
+ static struct rk_iommu_ops iommu_data_ops_v2 = {
+ 	.pt_address = &rk_dte_pt_address_v2,
  	.mk_dtentries = &rk_mk_dte_v2,
  	.mk_ptentries = &rk_mk_pte_v2,
- 	.dma_bit_mask = DMA_BIT_MASK(40),
+-	.dma_bit_mask = DMA_BIT_MASK(40),
 -	.gfp_flags = 0,
++	.dma_bit_mask = DMA_BIT_MASK(32),
 +	.gfp_flags = GFP_DMA32,
  };
  
  static const struct of_device_id rk_iommu_dt_ids[] = {
+ 	{	.compatible = "rockchip,iommu",
+ 		.data = &iommu_data_ops_v1,
 -- 
-Armbian
+Created with Armbian build tools https://github.com/armbian/build
