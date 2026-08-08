@@ -2,7 +2,7 @@
 BOARD_NAME="Orange Pi Zero2"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER="AGM1968 krachlatte"
+BOARD_MAINTAINER=""
 INTRODUCED="2020"
 BOOTCONFIG="orangepi_zero2_defconfig"
 BOOT_LOGO="desktop"
