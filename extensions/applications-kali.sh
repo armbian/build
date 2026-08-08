@@ -47,4 +47,5 @@ function post_customize_image__kali_tools() {
 	run_host_command_logged echo ". /etc/armbian/kali.sh" >> "${SDCARD}"/etc/skel/.bashrc
 	run_host_command_logged echo ". /etc/armbian/kali.sh" >> "${SDCARD}"/etc/skel/.zshrc
 	run_host_command_logged echo ". /etc/armbian/kali.sh" >> "${SDCARD}"/root/.bashrc
+	run_host_command_logged echo ". /etc/armbian/kali.sh" >> "${SDCARD}"/root/.zshrc
 }
