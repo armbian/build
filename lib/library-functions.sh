@@ -879,6 +879,15 @@ source "${SRC}"/lib/functions/image/rootfs-to-image.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/image/rootfs-to-netboot.sh
+# shellcheck source=lib/functions/image/rootfs-to-netboot.sh
+source "${SRC}"/lib/functions/image/rootfs-to-netboot.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/image/write-device.sh
 # shellcheck source=lib/functions/image/write-device.sh
 source "${SRC}"/lib/functions/image/write-device.sh
