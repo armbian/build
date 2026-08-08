@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 6 Aug 2026 09:55:00 +0200
+Subject: drm/msm/dp: power the phy off before taking it down
+
+msm_dp_ctrl_phy_exit() takes the phy down without powering it off,
+which every other caller in this file does first. The phy core keeps a
+power count for hardware that is no longer initialised and acts on it
+at the next bring-up: phy_init() reports the power on as having
+preceded it, and the driver goes on to touch registers whose clocks the
+exit already took away. Platforms that trap unclocked accesses answer
+with an SError and a reset, which nobody gets to read.
+
+Track whether the phy is powered alongside the clock state the driver
+already keeps, power it off on the way out, and stop dropping the error
+when powering it on.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c | 26 +++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -139,6 +139,7 @@ struct msm_dp_ctrl_private {
+ 
+ 	u32 hw_revision;
+ 
++	bool phy_powered;
+ 	bool core_clks_on;
+ 	bool link_clks_on;
+ 	bool stream_clks_on;
+@@ -1904,7 +1905,14 @@ static int msm_dp_ctrl_enable_mainlink_clocks(struct msm_dp_ctrl_private *ctrl)
+ 	ctrl->phy_opts.dp.ssc = drm_dp_max_downspread(dpcd);
+ 
+ 	phy_configure(phy, &ctrl->phy_opts);
+-	phy_power_on(phy);
++
++	ret = phy_power_on(phy);
++	if (ret) {
++		DRM_ERROR("failed to power on phy, ret=%d\n", ret);
++		return ret;
++	}
++
++	ctrl->phy_powered = true;
+ 
+ 	if (!ctrl->clk_defaults_set) {
+ 		ret = of_clk_set_defaults(ctrl->dev->of_node, false);
+@@ -2053,6 +2061,18 @@ void msm_dp_ctrl_phy_exit(struct msm_dp_ctrl *msm_dp_ctrl)
+ 	phy = ctrl->phy;
+ 
+ 	msm_dp_ctrl_phy_reset(ctrl);
++
++	/*
++	 * Every other caller powers the phy off before taking it down. Doing it
++	 * here too keeps the phy core from carrying a power count for hardware
++	 * that is gone, which it would act on the next time the phy is brought
++	 * up by powering on registers this exit has already unclocked.
++	 */
++	if (ctrl->phy_powered) {
++		phy_power_off(phy);
++		ctrl->phy_powered = false;
++	}
++
+ 	phy_exit(phy);
+ 	drm_dbg_dp(ctrl->drm_dev, "phy=%p init=%d power_on=%d\n",
+ 			phy, phy->init_count, phy->power_count);
+@@ -2075,6 +2095,7 @@ static int msm_dp_ctrl_reinitialize_mainlink(struct msm_dp_ctrl_private *ctrl)
+ 	msm_dp_ctrl_link_clk_disable(&ctrl->msm_dp_ctrl);
+ 
+ 	phy_power_off(phy);
++	ctrl->phy_powered = false;
+ 	/* hw recommended delay before re-enabling clocks */
+ 	msleep(20);
+ 
+@@ -2100,6 +2121,7 @@ static int msm_dp_ctrl_deinitialize_mainlink(struct msm_dp_ctrl_private *ctrl)
+ 	msm_dp_ctrl_link_clk_disable(&ctrl->msm_dp_ctrl);
+ 
+ 	phy_power_off(phy);
++	ctrl->phy_powered = false;
+ 
+ 	/* aux channel down, reinit phy */
+ 	phy_exit(phy);
+@@ -2738,6 +2760,7 @@ void msm_dp_ctrl_off_link_stream(struct msm_dp_ctrl *msm_dp_ctrl)
+ 	msm_dp_ctrl_link_clk_disable(&ctrl->msm_dp_ctrl);
+ 
+ 	phy_power_off(phy);
++	ctrl->phy_powered = false;
+ 
+ 	/* aux channel down, reinit phy */
+ 	phy_exit(phy);
+@@ -2777,6 +2800,7 @@ void msm_dp_ctrl_off(struct msm_dp_ctrl *msm_dp_ctrl)
+ 	msm_dp_ctrl_link_clk_disable(&ctrl->msm_dp_ctrl);
+ 
+ 	phy_power_off(phy);
++	ctrl->phy_powered = false;
+ 	drm_dbg_dp(ctrl->drm_dev, "phy=%p init=%d power_on=%d\n",
+ 			phy, phy->init_count, phy->power_count);
+ }
+-- 
+Armbian
+

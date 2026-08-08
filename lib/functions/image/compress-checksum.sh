@@ -138,6 +138,24 @@ function output_images_compress_and_checksum() {
 		# get just the filename, sans path
 		declare uncompressed_file_basename
 		uncompressed_file_basename=$(basename "${uncompressed_file}")
+
+		# Per-format compression skip. SKIP_COMPRESSING is a global, comma- or
+		# space-separated list of file extensions to leave UNCOMPRESSED (still
+		# checksummed if COMPRESS_OUTPUTIMAGE requests sha), e.g.
+		# SKIP_COMPRESSING="iso,qcow2" — for formats consumed as-is (mounted /
+		# imported) that gain little from xz. Empty (default) = compress everything.
+		if [[ -n "${SKIP_COMPRESSING:-}" ]]; then
+			declare skip_list=",${SKIP_COMPRESSING//[[:space:]]/,},"
+			declare file_ext="${uncompressed_file_basename##*.}"
+			if [[ "${skip_list}" == *",${file_ext},"* ]]; then
+				display_alert "Leaving image uncompressed" "${uncompressed_file_basename} (SKIP_COMPRESSING=${SKIP_COMPRESSING})" "info"
+				if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
+					display_alert "SHA256 calculating" "${uncompressed_file_basename}" "info"
+					sha256sum -b "${uncompressed_file}" | awk '{split($2, a, "/"); print $1, a[length(a)]}' > "${uncompressed_file}".sha
+				fi
+				continue
+			fi
+		fi
 		# Stable release builds (BETA=no) deploy to own infra (no size cap) and
 		# favour speed: force xz -0. Nightly/user builds publish to GitHub releases
 		# (2 GB asset cap) and use the elastic level to compress as much as the
