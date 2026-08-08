@@ -2,7 +2,7 @@
 BOARD_NAME="NanoPi Duo"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="sun8i"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="sgjava"
 INTRODUCED="2017"
 BOOTCONFIG="nanopi_duo_defconfig"
 MODULES="g_serial"
