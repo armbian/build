@@ -2,7 +2,7 @@
 BOARD_NAME="Milk-V Duo S (RISC-V)"
 BOARD_VENDOR="milkv"
 BOARDFAMILY="sophgo-sg200x-riscv64"
-BOARD_MAINTAINER="lukaszsobala"
+BOARD_MAINTAINER=""
 INTRODUCED="2024"
 KERNEL_TARGET="edge,bleedingedge"
 KERNEL_TEST_TARGET="edge"

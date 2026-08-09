@@ -1,7 +1,7 @@
 # Qualcomm SM8750 octa core 8GB/12GB/16GB RAM SoC eMMC USB-C WiFi/BT
 declare -g BOARD_NAME="Ayn Odin3"
 declare -g BOARD_VENDOR="ayntec"
-declare -g BOARD_MAINTAINER="kasimling"
+declare -g BOARD_MAINTAINER=""
 declare -g INTRODUCED="2025"
 declare -g BOARDFAMILY="sm8750"
 declare -g KERNEL_TARGET="edge"

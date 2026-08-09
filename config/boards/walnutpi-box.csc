@@ -2,7 +2,7 @@
 BOARD_NAME="Walnut Pi Box"
 BOARD_VENDOR="walnut"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER="TallGuy74"
+BOARD_MAINTAINER=""
 INTRODUCED="2026"
 BOOTCONFIG="walnutpi_box_defconfig"
 BOOT_LOGO="desktop"
