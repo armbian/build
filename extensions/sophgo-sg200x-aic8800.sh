@@ -51,8 +51,19 @@ declare -g AIC8800_REF="commit:ccf8fd059f70384fae4878c1048603510c2df700"
 declare -g AIC8800_FW_DIR="/lib/firmware/aic8800/SDIO/aic8800D80"
 
 function post_family_config__sophgo_sg200x_aic8800_fetch() {
-	fetch_from_repo "${AIC8800_REPO}" "aic8800-milkv-duos" "${AIC8800_REF}" "yes"
+	# The source dir is a deterministic path off the pinned ref; always declare it.
 	declare -g AIC8800_SRC_DIR="${SRC}/cache/sources/aic8800-milkv-duos/${AIC8800_REF#*:}"
+
+	# Don't fetch during config-dump / version calculation. post_family_config
+	# also runs under `config-dump-json` (CONFIG_DEFS_ONLY=yes), which the
+	# inventory runs in parallel for every board×branch; a real git fetch here
+	# has no kernel tree to feed and races on the global git config
+	# (`git config --global --add safe.directory ...` -> exit 128), which then
+	# breaks the whole inventory. The driver is fetched for real when the kernel
+	# builds (custom_kernel_config, guarded on a present .config).
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0
+
+	fetch_from_repo "${AIC8800_REPO}" "aic8800-milkv-duos" "${AIC8800_REF}" "yes"
 }
 
 function custom_kernel_config__sophgo_sg200x_aic8800_modules() {
