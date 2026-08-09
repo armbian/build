@@ -70,7 +70,7 @@ esac
 # - binman-atf-mainline:  u-boot builds full boot image with mainline ATF from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
-BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
+BOOT_SOC=${BOOT_SOC:=$(expr "${BOOTCONFIG}" : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
 
 if [[ "a${BOOT_SOC}a" == "aa" ]]; then
 	if [[ "${BOOTCONFIG}" != "" && "${BOOTCONFIG}" != " none" ]]; then # only warn if BOOTCONFIG set and not 'none'
