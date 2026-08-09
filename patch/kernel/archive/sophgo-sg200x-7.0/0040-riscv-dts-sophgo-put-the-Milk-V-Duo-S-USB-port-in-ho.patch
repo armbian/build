@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Thu, 30 Jul 2026 23:36:49 +0200
+Subject: [PATCH] riscv: dts: sophgo: put the Milk-V Duo S USB port in host mode
+
+The Duo S shares one dwc2 controller between the Type-C receptacle and the
+Type-A port. Mainline brings it up with dr_mode = "otg" and no way to choose,
+and the board-level plumbing is missing too: phy-cv1800-usb2.c owns the ID
+override and VBUS_POWER bits in the PHY's syscon register, but nothing drives
+the two GPIOs that gate power to the Type-A port, so a peripheral plugged in
+there never comes up.
+
+The known userspace answer to this (queenkjuul's milkv-usb-duos) writes the
+syscon register through /dev/mem and drives the two lines with libgpiod. That
+races the PHY driver's regmap and clobbers VBUS_POWER, which the write of a
+whole 32-bit word cannot preserve. Both halves have a device tree equivalent.
+
+For the role: dr_mode = "host". The obvious alternative - keep otg, add
+usb-role-switch and role-switch-default-mode = "host", and retain the ability
+to select device mode at runtime - hangs the boot on this SoC. dwc2_drd_init()
+calls dwc2_ovr_init(), which forces the session-valid overrides in GOTGCTL and
+then dwc2_force_mode(); dwc2_hcd_init() still completes, and the
+usb_add_gadget_udc() after it never returns. Because this is a deferred probe,
+deferred_probe_initcall() never completes either, so the machine stops before
+clk_disable_unused() with no panic and no further output:
+
+  hub 1-0:1.0: 1 port detected
+  probe of 1-0:1.0 returned 0 after 8613 usecs
+  probe of usb1 returned 0 after 14736 usecs
+  <nothing, ever>
+
+initcall_debug is what makes that legible - "probe of 4340000.usb returned 0"
+never appears. dr_mode = "host" avoids the whole mechanism: dwc2 leaves
+gadget_enabled clear, so neither the gadget nor the role switch is set up. The
+cost is the Type-C receptacle's device mode, which this board can afford - it
+has ethernet, so headless setup does not need USB networking.
+
+For the power: the GPIOs become a fixed regulator each, reached by phy-supply
+on the PHY. USB_VBUS_EN is XGPIOB_5 and AUX0 is XGPIOA_30 in mux function 3,
+per Milk-V's own pinmux table; AUX0's role on the board is undocumented, but it
+is absent from the Duo 256M variant of the same script, so it is Duo S
+specific. They are chained through vin-supply to keep them in the order the
+script uses.
+
+The pads are muxed from the regulator nodes rather than from &usb, so the mux
+is applied before the regulators drive the lines: the pin controller is strict,
+implements no gpio_request_enable, and the GPIO banks declare no gpio-ranges,
+so requesting a line does not mux its pad. Both groups carry power-source,
+which is not optional - cv1800_dt_node_to_map_post() fails the whole map
+without it, and the consumer then never probes at all.
+
+VBUS follows phy_power_on() rather than the role, which is now moot in a
+host-only configuration.
+
+Tested on a Duo S: the controller probes, the root hub enumerates, and the
+board reaches a login prompt.
+
+Signed-off-by: Armbian <info@armbian.com>
+---
+diff --git a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+index e25a1ab..dbab941 100644
+--- a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
++++ b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+@@ -32,6 +32,39 @@
+ 		stdout-path = "serial0:115200n8";
+ 	};
+ 
++	/*
++	 * Type-A port power. Two board lines have to be driven for the port to
++	 * come up, and neither is wired to anything the USB controller drives by
++	 * itself: USB_VBUS_EN, which per Milk-V's own pinmux table is XGPIOB_5
++	 * when muxed to function 3, and AUX0, which is XGPIOA_30. They are
++	 * chained so the regulator core brings AUX0 up first and takes it down
++	 * last, which is the order the vendor's userspace switcher uses.
++	 *
++	 * AUX0's exact role on this board is undocumented - the Duo 256M switcher
++	 * needs no GPIO at all, so it is specific to the Duo S - hence the plain
++	 * name rather than a guess at what it gates.
++	 */
++	reg_usb_aux0: regulator-usb-aux0 {
++		compatible = "regulator-fixed";
++		regulator-name = "usb-aux0";
++		gpio = <&porta 30 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		pinctrl-names = "default";
++		pinctrl-0 = <&usb_aux0_cfg>;
++	};
++
++	reg_usb_vbus: regulator-usb-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usb-vbus";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&portb 5 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&reg_usb_aux0>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&usb_vbus_en_cfg>;
++	};
++
+ 	sound_card {
+ 		compatible = "simple-audio-card";
+ 		simple-audio-card,name = "Milk-V Duo S Built-in Audio";
+@@ -190,11 +223,55 @@
+ 	status = "okay";
+ };
+ 
++/*
++ * The pads are muxed from the regulator nodes rather than from &usb, so the
++ * mux is in place before the regulators drive the lines. The pin controller is
++ * strict and has no gpio_request_enable, and the GPIO banks declare no
++ * gpio-ranges, so requesting the line does not mux the pad by itself.
++ */
++&pinctrl {
++	usb_aux0_cfg: usb-aux0-cfg {
++		usb-aux0-pins {
++			pinmux = <PINMUX(PIN_AUX0, 3)>;
++			power-source = <1800>;
++		};
++	};
++
++	usb_vbus_en_cfg: usb-vbus-en-cfg {
++		usb-vbus-en-pins {
++			pinmux = <PINMUX(PIN_USB_VBUS_EN, 3)>;
++			power-source = <1800>;
++		};
++	};
++};
++
++/*
++ * Host only, not otg with a role switch. dwc2 hangs in probe on this SoC when
++ * usb-role-switch is set: dwc2_drd_init() runs dwc2_ovr_init(), which forces
++ * the session-valid overrides in GOTGCTL and calls dwc2_force_mode(), and the
++ * usb_add_gadget_udc() that follows dwc2_hcd_init() never returns. The probe
++ * is a deferred one, so deferred_probe_initcall() never completes either, and
++ * the boot stops dead before clk_disable_unused() - no output, no panic, the
++ * last line is "hub 1-0:1.0: 1 port detected".
++ *
++ * dr_mode = "host" reaches the same default by a shorter route: dwc2 leaves
++ * gadget_enabled clear, so neither the gadget nor the role switch is set up at
++ * all. The Type-C receptacle gives up its device mode for good, which is the
++ * trade this board wants - it has ethernet for headless work.
++ */
+ &usb {
+-	dr_mode = "otg";
++	dr_mode = "host";
+ 	status = "okay";
+ };
+ 
++/*
++ * phy-supply is enabled by phy_power_on(), which dwc2 calls when it brings the
++ * controller up.
++ */
++&usbphy {
++	phy-supply = <&reg_usb_vbus>;
++};
++
+ &wdt {
+ 	status = "okay";
+ };
+-- 
+2.34.1

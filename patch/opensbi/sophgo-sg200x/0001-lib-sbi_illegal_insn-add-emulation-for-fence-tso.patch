@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: queenkjuul <queenkjuul@pm.me>
+Date: Sun, 12 Apr 2026 03:28:01 +0000
+Subject: [PATCH] lib: sbi_illegal_insn: add emulation for fence.tso
+
+The C906 does not implement fence.tso and traps it as an illegal instruction.
+Anything carrying one - Go binaries and JITs are the usual sources, and gcc
+emits it for __atomic_thread_fence under Ztso - then dies with SIGILL, on a
+core that is otherwise perfectly able to run it, since fence.tso is strictly
+weaker than the fence rw,rw this substitutes.
+
+Emulate it in the illegal-instruction handler, which is where OpenSBI already
+handles the C906's other gaps.
+
+Carried from queenkjuul's milkv-bootloader series (patch 3/7), re-rooted from
+the duo-buildroot-sdk-v2 layout onto the sophgo/opensbi tree. It is the only
+one of that series with no equivalent elsewhere in Armbian: 1 and 4 are our
+u-boot patch 0001 and CONFIG_OF_LIBFDT_OVERLAY, 2 is the OD_CLK_SEL=y build
+variable, 5 only touches the vendor sdboot fallback we do not install, and 6
+and 7 are for the sg2002 Duo 256M.
+
+Without this the from-source fip.bin would be a quiet regression against the
+prebuilt blob it replaced, which carried the fix.
+---
+diff --git a/include/sbi/riscv_encoding.h b/include/sbi/riscv_encoding.h
+index e1d0b46..a357afd 100644
+--- a/include/sbi/riscv_encoding.h
++++ b/include/sbi/riscv_encoding.h
+@@ -625,6 +625,9 @@
+ #define INSN_MASK_WFI			0xffffff00
+ #define INSN_MATCH_WFI			0x10500000
+ 
++#define INSN_MASK_FENCE_TSO		0xffffffff
++#define INSN_MATCH_FENCE_TSO	0x8330000f
++
+ #define INSN_16BIT_MASK			0x3
+ #define INSN_32BIT_MASK			0x1c
+ 
+diff --git a/lib/sbi/sbi_illegal_insn.c b/lib/sbi/sbi_illegal_insn.c
+index 9af3d24..45e7ce9 100644
+--- a/lib/sbi/sbi_illegal_insn.c
++++ b/lib/sbi/sbi_illegal_insn.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <sbi/riscv_asm.h>
++#include <sbi/riscv_barrier.h>
+ #include <sbi/riscv_encoding.h>
+ #include <sbi/sbi_bitops.h>
+ #include <sbi/sbi_emulate_csr.h>
+@@ -31,6 +32,18 @@ static int truly_illegal_insn(ulong insn, struct sbi_trap_regs *regs)
+ 	return sbi_trap_redirect(regs, &trap);
+ }
+ 
++static int misc_mem_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
++{
++	/* Errata workaround: emulate `fence.tso` as `fence rw, rw`. */
++	if ((insn & INSN_MASK_FENCE_TSO) == INSN_MATCH_FENCE_TSO) {
++		smp_mb();
++		regs->mepc += 4;
++		return 0;
++	}
++
++	return truly_illegal_insn(insn, regs);
++}
++
+ static int system_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
+ {
+ 	int do_write, rs1_num = (insn >> 15) & 0x1f;
+@@ -83,7 +96,7 @@ static illegal_insn_func illegal_insn_table[32] = {
+ 	truly_illegal_insn, /* 0 */
+ 	truly_illegal_insn, /* 1 */
+ 	truly_illegal_insn, /* 2 */
+-	truly_illegal_insn, /* 3 */
++	misc_mem_opcode_insn, /* 3 */
+ 	truly_illegal_insn, /* 4 */
+ 	truly_illegal_insn, /* 5 */
+ 	truly_illegal_insn, /* 6 */
