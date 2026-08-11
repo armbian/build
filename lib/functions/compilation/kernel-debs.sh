@@ -233,7 +233,7 @@ function kernel_package_callback_linux_image() {
 			exit_with_error "finddtbs.py failed" "${stubble_find_dtbs}"
 		fi
 		stubble_dtbs=$(echo "${stubble_dtbs_raw}" | sed 's|.*|--devicetree-auto=&|' | tr '\n' ' ')
-		run_host_command_logged /usr/bin/ukify build --linux="${kernel_image_pre_package_path}" --stub="${stubble_efi}" --hwids="${stubble_hwids}" --sbat="@${stubble_sbat}" ${stubble_dtbs} --output="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi"
+		run_host_command_logged /usr/bin/ukify build --linux="${kernel_image_pre_package_path}" --stub="${stubble_efi}" --hwids="${stubble_hwids}" --sbat="@${stubble_sbat}" ${stubble_dtbs} --devicetree-auto=${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}/cix/sky1-orion-o6.dtb --output="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi"
 		run_host_command_logged mv "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi" "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
 	fi
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
