@@ -86,12 +86,20 @@ function apt_find_upstream_package_version_and_download_url() {
 	fi
 
 	found_package_down_url="${base_down_url}/${found_package_filename}"
-	# loong64: if the main archive doesn't have this .deb (e.g. an older release
-	# still only in debian-ports), fall back to the pool-loong64 path.
-	if [[ "${ARCH}" == "loong64" && -n "${base_down_url_fallback}" ]] \
-		&& ! curl -fsIL --max-time 15 "${found_package_down_url}" >/dev/null 2>&1; then
-		display_alert "loong64 base-files not in main archive, falling back to debian-ports" "${found_package_filename}" "info"
-		found_package_down_url="${base_down_url_fallback}/${found_package_filename}"
+	# loong64: if the main archive genuinely lacks this .deb (e.g. an older release
+	# still only in debian-ports), fall back to the pool-loong64 path. Only a
+	# not-found status (404/410) triggers the fallback; timeouts, 5xx and transport
+	# errors are left to do_with_retries on the actual download so a transient main
+	# hiccup does not misroute to the (possibly-dead) ports path. The fallback is
+	# also probed before use, so we never swap in a URL that is itself missing.
+	if [[ "${ARCH}" == "loong64" && -n "${base_down_url_fallback}" ]]; then
+		declare main_probe_status
+		main_probe_status="$(curl -fsIL --max-time 15 -o /dev/null -w '%{http_code}' "${found_package_down_url}" 2>/dev/null || true)"
+		if [[ "${main_probe_status}" == "404" || "${main_probe_status}" == "410" ]] \
+			&& curl -fsIL --max-time 15 "${base_down_url_fallback}/${found_package_filename}" >/dev/null 2>&1; then
+			display_alert "loong64 base-files not in main archive, falling back to debian-ports" "${found_package_filename}" "info"
+			found_package_down_url="${base_down_url_fallback}/${found_package_filename}"
+		fi
 	fi
 	display_alert "Found package filename" "${found_package_filename} in url ${found_package_down_url}" "debug"
 
