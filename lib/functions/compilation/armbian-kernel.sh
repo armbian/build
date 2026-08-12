@@ -67,7 +67,7 @@ function armbian_kernel_config__netkit() {
 function armbian_kernel_config__disable_various_options() {
 	display_alert "Enable EXPERT=y" "armbian-kernel" "debug"
 	opts_y+=("EXPERT") # Too many config options are hidden behind EXPERT=y, lets have it always on
-	display_alert "Disabling module signing / debug / auto version" "armbian-kernel" "debug"
+	display_alert "Disabling module signing / auto versioning" "armbian-kernel" "debug"
 	opts_n+=("SECURITY_LOCKDOWN_LSM") # Disables Linux Security Module lockdown mode
 	opts_n+=("MODULE_SIG")            # No use signing modules
 	opts_n+=("MODULE_SIG_ALL")        # No use auto-signing modules
