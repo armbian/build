@@ -526,6 +526,11 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
+		# Forward CPUTHREADS (the build's `make -j` override) into the container.
+		# It is an env var, not a CLI arg, so without this passthrough the container
+		# never sees it and falls back to the default CPU-based thread count.
+		"--env" "CPUTHREADS=${CPUTHREADS-}"
+
 		# Pass down the TERM, COLORFGBG, and the COLUMNS. docker run has no --tty,
 		# so the container can't measure the terminal itself; forward the width
 		# captured on the host (ARMBIAN_TTY_COLUMNS) so patch tables match it.
