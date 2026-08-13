@@ -526,6 +526,14 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
+		# Forward the compile-time parallelism cap into the container. Self-hosted
+		# runners export CPUTHREADS (from their NetBox cputhreads field) to keep
+		# several runners on one host from oversubscribing cores; the build reads it
+		# in compilation-config.sh for `make -j`. It is an env var (not a CLI arg),
+		# so without this passthrough the container never sees it and falls back to
+		# the 150%-of-CPUs default.
+		"--env" "CPUTHREADS=${CPUTHREADS-}"
+
 		# Pass down the TERM, COLORFGBG, and the COLUMNS. docker run has no --tty,
 		# so the container can't measure the terminal itself; forward the width
 		# captured on the host (ARMBIAN_TTY_COLUMNS) so patch tables match it.
