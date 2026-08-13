@@ -1,7 +1,4 @@
 # Rockchip RK3528A quad core 1/2GB RAM SoC GBe eMMC USB3 GPIO header
-# Hardware-verified: boot, GBe ethernet, USB (host mode), RTC, SD storage,
-# LEDs, GPIO header (I2C5/UART1/SPI1). Not verified: eMMC (no module on hand),
-# USB-C port. Not supported yet: audio (no RK3528 audio driver/DT upstream).
 BOARD_NAME="NanoPi NEO3 Plus"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rk35xx"
