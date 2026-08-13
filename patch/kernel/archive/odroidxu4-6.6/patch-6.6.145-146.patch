@@ -1,0 +1,105 @@
+diff --git a/Makefile b/Makefile
+index 935db0304062f9..bb0b3e5b9056f9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 145
++SUBLEVEL = 146
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index da5c436ea36fd6..881c2d4846d7ce 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -811,19 +811,21 @@ static const struct file_operations proc_single_file_operations = {
+ struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode)
+ {
+ 	struct task_struct *task = get_proc_task(inode);
+-	struct mm_struct *mm = ERR_PTR(-ESRCH);
++	struct mm_struct *mm;
+ 
+-	if (task) {
+-		mm = mm_access(task, mode | PTRACE_MODE_FSCREDS);
+-		put_task_struct(task);
++	if (!task)
++		return ERR_PTR(-ESRCH);
+ 
+-		if (!IS_ERR_OR_NULL(mm)) {
+-			/* ensure this mm_struct can't be freed */
+-			mmgrab(mm);
+-			/* but do not pin its memory */
+-			mmput(mm);
+-		}
+-	}
++	mm = mm_access(task, mode | PTRACE_MODE_FSCREDS);
++	put_task_struct(task);
++
++	if (IS_ERR(mm))
++		return mm == ERR_PTR(-ESRCH) ? NULL : mm;
++
++	/* ensure this mm_struct can't be freed */
++	mmgrab(mm);
++	/* but do not pin its memory */
++	mmput(mm);
+ 
+ 	return mm;
+ }
+@@ -2201,7 +2203,7 @@ static int map_files_d_revalidate(struct dentry *dentry, unsigned int flags)
+ 		goto out_notask;
+ 
+ 	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+-	if (IS_ERR_OR_NULL(mm))
++	if (IS_ERR(mm))
+ 		goto out;
+ 
+ 	if (!dname_to_vma_addr(dentry, &vm_start, &vm_end)) {
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 724040ac589501..36854aaec482d6 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1570,8 +1570,9 @@ struct mm_struct *mm_access(struct task_struct *task, unsigned int mode)
+ 		return ERR_PTR(err);
+ 
+ 	mm = get_task_mm(task);
+-	if (mm && mm != current->mm &&
+-			!ptrace_may_access(task, mode)) {
++	if (!mm) {
++		mm = ERR_PTR(-ESRCH);
++	} else if (mm != current->mm && !ptrace_may_access(task, mode)) {
+ 		mmput(mm);
+ 		mm = ERR_PTR(-EACCES);
+ 	}
+diff --git a/mm/madvise.c b/mm/madvise.c
+index 73ea053c9003ab..0c30710bfd859f 100644
+--- a/mm/madvise.c
++++ b/mm/madvise.c
+@@ -1492,8 +1492,8 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
+ 
+ 	/* Require PTRACE_MODE_READ to avoid leaking ASLR metadata. */
+ 	mm = mm_access(task, PTRACE_MODE_READ_FSCREDS);
+-	if (IS_ERR_OR_NULL(mm)) {
+-		ret = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
++	if (IS_ERR(mm)) {
++		ret = PTR_ERR(mm);
+ 		goto release_task;
+ 	}
+ 
+diff --git a/mm/process_vm_access.c b/mm/process_vm_access.c
+index 0523edab03a6a5..5be8e91aa87209 100644
+--- a/mm/process_vm_access.c
++++ b/mm/process_vm_access.c
+@@ -200,8 +200,8 @@ static ssize_t process_vm_rw_core(pid_t pid, struct iov_iter *iter,
+ 	}
+ 
+ 	mm = mm_access(task, PTRACE_MODE_ATTACH_REALCREDS);
+-	if (!mm || IS_ERR(mm)) {
+-		rc = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
++	if (IS_ERR(mm)) {
++		rc = PTR_ERR(mm);
+ 		/*
+ 		 * Explicitly map EACCES to EPERM as EPERM is a more
+ 		 * appropriate error code for process_vw_readv/writev
