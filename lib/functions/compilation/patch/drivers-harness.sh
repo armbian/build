@@ -5,6 +5,9 @@
 # Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
+#
+# 1
+#
 # https://github.com/armbian/build/
 
 function kernel_drivers_create_patches_hash_only() {
