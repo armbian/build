@@ -1,0 +1,92 @@
+From eb926f51aa584732803ebaf668440cb336875d0f Mon Sep 17 00:00:00 2001
+From: Daniel Bozeman <daniel@orb.net>
+Date: Thu, 13 Aug 2026 11:05:07 +0200
+Subject: [PATCH 1/2] pmdomain/rockchip: skip QoS operations for idle-only
+ domains
+
+Idle-only power domains (pwr_mask == 0) cannot actually be powered
+on or off. rockchip_do_pmu_set_power_domain() already returns early
+for these domains, but rockchip_pd_power() still attempts QoS save
+and idle requests before reaching that check.
+
+On RK3528, the idle-only domains (PD_RKVENC, PD_VO, PD_VPU) have
+QoS registers that may be inaccessible when the generic power domain
+framework attempts to power them off, leading to synchronous external
+aborts.
+
+Return early from rockchip_pd_power() when pwr_mask is zero, matching
+the existing guard in rockchip_do_pmu_set_power_domain().
+
+Fixes: 1fe767a56c32 ("soc: rockchip: power-domain: allow domains only handling idle requests")
+Signed-off-by: Daniel Bozeman <daniel@orb.net>
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index 490bbb1d1d8e8..2eecae092a132 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -640,6 +640,9 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ 	if (rockchip_pmu_domain_is_on(pd) == power_on)
+ 		return 0;
+ 
++	if (pd->info->pwr_mask == 0)
++		return 0;
++
+ 	ret = clk_bulk_enable(pd->num_clks, pd->clks);
+ 	if (ret < 0) {
+ 		dev_err(pmu->dev, "failed to enable clocks\n");
+-- 
+2.55.0
+
+
+From 7f7dbaba1ae860247c0fc9f19b63e1f753332840 Mon Sep 17 00:00:00 2001
+From: Daniel Bozeman <daniel@orb.net>
+Date: Thu, 13 Aug 2026 11:06:20 +0200
+Subject: [PATCH 2/2] pmdomain/rockchip: skip domains returning -EPROBE_DEFER
+
+When iterating child nodes during probe, a single domain returning
+-EPROBE_DEFER (e.g. due to clock dependencies not yet available)
+causes the entire power domain controller to fail and tear down all
+successfully registered domains.
+
+This creates a window where devices in unrelated power domains that
+would have registered successfully cannot access their hardware. On
+RK3528, PD_GPU requires CRU clocks that may not be available yet,
+but the idle-only domains (PD_RKVENC, PD_VO, PD_VPU) have no clock
+requirements. When the controller fails due to PD_GPU, GPIO
+controllers in PD_RKVENC become inaccessible, leading to synchronous
+external aborts when GPIO-controlled regulators probe.
+
+Skip domains that return -EPROBE_DEFER and continue registering the
+rest. Skipped domains have NULL entries in the provider, causing
+their consumers to receive -ENOENT and defer until available.
+
+Fixes: 7c696693a4f5 ("soc: rockchip: power-domain: Add power domain driver")
+Signed-off-by: Daniel Bozeman <daniel@orb.net>
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index 2eecae092a132..f42880c94f468 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -1077,6 +1077,11 @@ static int rockchip_pm_domain_probe(struct platform_device *pdev)
+ 	for_each_available_child_of_node_scoped(np, node) {
+ 		error = rockchip_pm_add_one_domain(pmu, node);
+ 		if (error) {
++			if (error == -EPROBE_DEFER) {
++				dev_dbg(dev, "skipped node %pOFn, dependencies not yet available\n",
++					node);
++				continue;
++			}
+ 			dev_err(dev, "failed to handle node %pOFn: %d\n",
+ 				node, error);
+ 			goto err_out;
+-- 
+2.55.0
+
