@@ -397,8 +397,9 @@ function do_extra_configuration() {
 	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
-	# loong64 is using debian-ports repo now
-	[[ "${ARCH}" == "loong64" ]] && DEBIAN_MIRROR='deb.debian.org/debian-ports'
+	# loong64 was promoted from debian-ports into the main Debian archive (it is
+	# listed in sid's Architectures: and dropped from debian-ports), so it now uses
+	# the default deb.debian.org/debian mirror like every other architecture.
 	DEBIAN_SECURITY='security.debian.org/'
 	[[ "${ARCH}" == "amd64" ]] &&
 		UBUNTU_MIRROR='archive.ubuntu.com/ubuntu/' ||

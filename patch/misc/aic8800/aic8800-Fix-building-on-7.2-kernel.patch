@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Fri, 31 Jul 2026 03:13:07 +0200
+Subject: [PATCH] aic8800: fix building on 7.2 kernels
+
+Two more changes in 7.2 break the vendor driver:
+
+ - strncpy() is gone; the declaration went out of linux/string.h and
+   the implementation out of lib/string.c. The driver has two uses, and
+   they want different things:
+
+     rwnx_msg_tx.c copies into a fixed 64-byte firmware message field
+     that is not NUL-terminated, which is the padding copy - spelled
+     out here as memcpy_and_pad().
+
+     rwnx_platform.c copies a known-length run out of the middle of a
+     longer string and writes the terminator itself on the next line,
+     so strncpy() never reached a NUL and never padded. That is a
+     memcpy().
+
+   Neither replacement needs a version guard: both have been in
+   linux/string.h since well before 7.0.
+
+ - The remain_on_channel cfg80211 op takes a trailing const u8 *rx_addr,
+   an optional receive address filter for the off-channel period.
+   cfg80211 rejects a non-NULL one unless the driver advertises
+   NL80211_EXT_FEATURE_ROC_ADDR_FILTER, which this driver does not, so
+   it is always NULL here and ignoring it matches what mac80211 does
+   with it. Guarded on LINUX_VERSION_CODE, so 7.0 (edge) is unaffected.
+
+Signed-off-by: Lukasz Sobala <lsobala1@gmail.com>
+---
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -5228,7 +5228,18 @@
+ static int
+ rwnx_cfg80211_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 								struct ieee80211_channel *chan,
+-								unsigned int duration, u64 *cookie)
++								unsigned int duration, u64 *cookie
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++								/*
++								 * 7.2 added an optional receive address filter for the
++								 * off-channel period. cfg80211 refuses a non-NULL one
++								 * unless the driver sets NL80211_EXT_FEATURE_ROC_ADDR_FILTER,
++								 * which this one does not, so it is always NULL here.
++								 * mac80211 ignores it in the same way.
++								 */
++								, const u8 *rx_addr
++#endif
++								)
+ {
+ 	return rwnx_cfg80211_remain_on_channel_(wiphy, wdev, chan, duration, cookie, false);
+ }
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_tx.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_tx.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_tx.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_tx.c
+@@ -3428,7 +3428,13 @@
+ 		return -ENOMEM;
+ 
+ 	/* Set parameters for the MM_DBG_TRIGGER_REQ message */
+-	strncpy(req->error, msg, sizeof(req->error));
++	/*
++	 * strncpy() is gone in 7.2. req->error is a fixed 64-byte field of a
++	 * firmware message and is not NUL-terminated, so spell out what
++	 * strncpy() did: copy at most the field size, pad the rest.
++	 */
++	memcpy_and_pad(req->error, sizeof(req->error), msg,
++				   strnlen(msg, sizeof(req->error)), '\0');
+ 
+ 	/* Send the MM_DBG_TRIGGER_REQ message to LMAC FW */
+ 	return rwnx_send_msg(rwnx_hw, req, 0, -1, NULL);
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_platform.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_platform.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_platform.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_platform.c
+@@ -727,7 +727,12 @@
+ 		p--;
+ 
+ 	p++;
+-	strncpy(val, dst, p -dst);
++	/*
++	 * strncpy() is gone in 7.2. dst..p is a known-length run inside a longer
++	 * string, so strncpy() never reached its NUL and never padded; the
++	 * terminator is the line below. That is a plain memcpy().
++	 */
++	memcpy(val, dst, p - dst);
+ 	val[p - dst] = 0;
+ 	return 0;
+ }

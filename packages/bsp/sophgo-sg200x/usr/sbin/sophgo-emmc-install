@@ -1,0 +1,292 @@
+#!/bin/bash
+# Write an Armbian image onto the Milk-V Duo S eMMC, from a running system.
+#
+# Why this is not just "dd the image to /dev/mmcblk2".
+#
+# The SG200x BootROM does not read its bootloader from the eMMC's user area. It
+# reads it raw out of hardware boot partition 1 - /dev/mmcblkXboot0 in Linux, a
+# separate LUN that is not part of the addressable disk. A disk image describes
+# the user area and nothing else, so there is no such thing as a single .img you
+# can dd onto the eMMC and boot: the system lands correctly and the board still
+# comes up dead, because boot0 is empty.
+#
+# So it is two writes, not one. The vendor's own U-Boot flasher does exactly the
+# same two, and this follows it byte for byte - see _storage_update() in
+# cmd/cvi_update.c of sophgo/u-boot-2021.10:
+#
+#     run_command("mmc dev 0 1", 0);                     // boot partition 1
+#     "mmc write %p 0 0x800;"                            // fip.bin at sector 0
+#     "mmc write %p 0x800 0x800;;"                       // backup at sector 2048
+#     run_command("mmc dev 0 0", 0);                     // back to the user area
+#
+# Note what it does not do: it never touches the PARTITION_CONFIG ext_csd. So
+# neither do we. If BOOT_PARTITION_ENABLE were not already set on a given board,
+# the vendor installer would not work on it either.
+#
+# There is one image and it serves both media, so /boot carries two bootloaders:
+# fip.bin, the SD variant, which is the only name a BootROM opens and therefore
+# the one a card boots; and fip-emmc.bin, which nothing boots and which exists
+# for this script. The eMMC one cannot go in /boot/fip.bin on a card - its device
+# tree keeps cv-emmc@4300000, which renumbers the card to mmc 1, and its
+# CONFIG_BOOTCOMMAND runs cvi_update first, which on a card boot would reflash
+# the eMMC from that very card instead of booting it.
+#
+# fip-emmc.bin is taken out of the image after it is written, not from the
+# running system, so that the bootloader in boot0 belongs to the system now in
+# the user area rather than to whatever is running this script. /boot/fip.bin on
+# the eMMC is then replaced with it, so the two never disagree.
+#
+# Usage:
+#   sophgo-emmc-install <image.img[.xz|.gz]> [device]
+#
+# The device defaults to the one eMMC found. It is auto-detected by asking sysfs
+# for the card type rather than by guessing at names: an eMMC reports MMC in
+# /sys/block/<dev>/device/type where a removable card reports SD, and only an
+# eMMC has a boot0.
+#
+# Afterwards: power off, remove the card, power on. The card has to come out -
+# the BootROM prefers it, so with a card present you keep booting the card.
+
+set -o pipefail
+
+readonly SELF="${0##*/}"
+
+die() {
+	printf '%s: %s\n' "${SELF}" "$*" >&2
+	exit 1
+}
+info() { printf '%s: %s\n' "${SELF}" "$*"; }
+warn() { printf '%s: warning: %s\n' "${SELF}" "$*" >&2; }
+
+usage() {
+	cat <<- EOF
+		Usage: ${SELF} [-y] <image.img[.xz|.gz]> [device]
+
+		  -y   do not ask for confirmation
+
+		Writes the image to the eMMC user area, then installs the image's own
+		fip-emmc.bin into the eMMC hardware boot partition, which is where
+		the BootROM looks for it and which the image itself cannot reach.
+
+		With no device given, the single eMMC on the board is used.
+	EOF
+}
+
+assume_yes=no
+while getopts ":yh" opt; do
+	case "${opt}" in
+		y) assume_yes=yes ;;
+		h)
+			usage
+			exit 0
+			;;
+		*)
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+shift $((OPTIND - 1))
+
+[[ $# -ge 1 && $# -le 2 ]] || {
+	usage >&2
+	exit 1
+}
+
+image="$1"
+target="${2:-}"
+
+[[ ${EUID} -eq 0 ]] || die "must run as root"
+[[ -f "${image}" ]] || die "no such image: ${image}"
+
+for tool in dd blkid blockdev findmnt lsblk mountpoint partx; do
+	command -v "${tool}" > /dev/null || die "missing required tool: ${tool}"
+done
+
+# How to get the raw bytes out, and how big they will be once out. The size is
+# needed before writing to refuse an image that does not fit, and xz/gzip both
+# carry the uncompressed size in their footer, so this costs nothing.
+case "${image}" in
+	*.xz)
+		command -v xz > /dev/null || die "image is xz-compressed but xz is not installed"
+		reader=(xz -dc -- "${image}")
+		image_bytes="$(xz -l --robot -- "${image}" 2> /dev/null | awk '$1=="totals"{print $5}')"
+		;;
+	*.gz)
+		command -v gzip > /dev/null || die "image is gzip-compressed but gzip is not installed"
+		reader=(gzip -dc -- "${image}")
+		# Only valid below 4GiB, which every image here is; empty on failure and
+		# the fit check is then skipped rather than made up.
+		image_bytes="$(gzip -l -- "${image}" 2> /dev/null | awk 'NR==2{print $2}')"
+		;;
+	*)
+		reader=(cat -- "${image}")
+		image_bytes="$(stat -c %s -- "${image}")"
+		;;
+esac
+[[ "${image_bytes}" =~ ^[0-9]+$ ]] || image_bytes=""
+
+# Auto-detect the eMMC. /sys/block/<dev>/device/type is "MMC" for an embedded
+# device and "SD" for a card in the slot, which is the distinction that matters
+# and the one thing that does not move around between kernels. boot0 is required
+# too: without it there is nowhere to put fip.bin.
+if [[ -z "${target}" ]]; then
+	declare -a found=()
+	for sysdev in /sys/block/mmcblk[0-9]*; do
+		[[ -d "${sysdev}" ]] || continue
+		name="${sysdev##*/}"
+		[[ "${name}" == *boot* || "${name}" == *rpmb* ]] && continue
+		[[ -d "/sys/block/${name}boot0" ]] || continue
+		[[ "$(cat "${sysdev}/device/type" 2> /dev/null)" == "MMC" ]] || continue
+		found+=("/dev/${name}")
+	done
+	case "${#found[@]}" in
+		0) die "no eMMC found (looked for an mmcblk device of type MMC with a boot0)" ;;
+		1) target="${found[0]}" ;;
+		*) die "more than one eMMC found (${found[*]}); name the one you mean" ;;
+	esac
+	info "detected eMMC: ${target}"
+fi
+
+[[ -b "${target}" ]] || die "not a block device: ${target}"
+target_name="${target##*/}"
+boot0="/dev/${target_name}boot0"
+[[ -b "${boot0}" ]] || die "no ${boot0}; ${target} does not look like an eMMC"
+
+# Refuse to overwrite ourselves. findmnt gives the device holding /, lsblk walks
+# it up to its whole-disk parent, so this catches both /dev/mmcblk2p2 and an
+# unpartitioned root.
+#
+# --nofsroot matters: without it a btrfs subvolume root comes back as
+# /dev/mmcblk2p2[/@] and a bind-mounted one as /dev/mmcblk2p2[/dir], neither of
+# which is a block device, so the guard below would quietly do nothing on
+# exactly the images that need it.
+root_src="$(findmnt -no SOURCE --nofsroot / 2> /dev/null)"
+if [[ -n "${root_src}" && -b "${root_src}" ]]; then
+	root_disk="$(lsblk -no PKNAME "${root_src}" 2> /dev/null)"
+	[[ -z "${root_disk}" ]] && root_disk="${root_src##*/}"
+	[[ "${root_disk}" == "${target_name}" ]] &&
+		die "${target} holds the running root filesystem; boot from the card to install to the eMMC"
+fi
+
+target_bytes="$(blockdev --getsize64 "${target}")"
+if [[ -n "${image_bytes}" && "${image_bytes}" -gt "${target_bytes}" ]]; then
+	die "image is $((image_bytes / 1024 / 1024))MB but ${target} is only $((target_bytes / 1024 / 1024))MB"
+fi
+
+info "image  : ${image}${image_bytes:+ ($((image_bytes / 1024 / 1024))MB)}"
+info "target : ${target} ($((target_bytes / 1024 / 1024))MB) plus ${boot0}"
+
+if [[ "${assume_yes}" != "yes" ]]; then
+	printf '%s: everything on %s will be destroyed. Type yes to continue: ' "${SELF}" "${target}"
+	read -r reply
+	[[ "${reply}" == "yes" ]] || die "aborted"
+fi
+
+# Anything still mounted off the target would be silently corrupted underneath.
+while read -r mnt; do
+	[[ -n "${mnt}" ]] || continue
+	info "unmounting ${mnt}"
+	umount "${mnt}" || die "could not unmount ${mnt}"
+done < <(lsblk -nlo MOUNTPOINT "${target}" 2> /dev/null | grep -v '^$')
+
+info "writing the image to ${target}"
+# No oflag=direct: it buys some speed but fails outright on devices that will
+# not take unaligned direct I/O, and conv=fsync already guarantees the write is
+# on the medium before we move on to boot0.
+"${reader[@]}" | dd of="${target}" bs=4M iflag=fullblock conv=fsync status=progress ||
+	die "writing ${target} failed"
+sync
+
+# The kernel is still holding the old partition table; the mount below needs the
+# new one.
+partx -u "${target}" > /dev/null 2>&1 || partprobe "${target}" > /dev/null 2>&1 || true
+udevadm settle > /dev/null 2>&1 || sleep 2
+
+# p1 is the FAT /boot laid down by sophgo-sg200x_common.inc. It carries two
+# bootloaders: fip.bin, the SD one, which is the only name a BootROM opens and so
+# the one a card boots; and fip-emmc.bin beside it, which nothing boots and which
+# exists precisely for this. Taking the eMMC one from the freshly written image
+# rather than from the running system keeps the guarantee that matters - the
+# bootloader in boot0 is the one that belongs to the system now sitting in the
+# user area, not to whatever happens to be running this script.
+part1="${target}p1"
+[[ -b "${part1}" ]] || part1="${target}1"
+[[ -b "${part1}" ]] || die "no first partition on ${target} after writing; is this an Armbian image?"
+
+mnt="$(mktemp -d)"
+cleanup() { mountpoint -q "${mnt}" && umount "${mnt}"; rmdir "${mnt}" 2> /dev/null; }
+trap cleanup EXIT
+
+# Read-write: the eMMC's own /boot/fip.bin is replaced below, so that boot0 and
+# the file beside it never disagree.
+mount "${part1}" "${mnt}" || die "could not mount ${part1}"
+fip="${mnt}/fip-emmc.bin"
+[[ -s "${fip}" ]] || die "no fip-emmc.bin in the image's boot partition; this image predates one-image-for-both-media"
+
+info "installing fip-emmc.bin into ${boot0} (sectors 0 and 2048, as cvi_update does)"
+
+# The backup copy goes a megabyte in, so boot0 has to hold that much plus the
+# file. Every eMMC on this board has 4MiB there, but a truncated second copy is
+# the kind of thing that boots today and not after the next power cut.
+fip_bytes="$(stat -c %s "${fip}")"
+boot0_bytes="$(blockdev --getsize64 "${boot0}")"
+# cvi_update gives each copy a fixed 0x800 sectors, so a fip.bin past a megabyte
+# would have the backup land on the tail of the primary. The read-back below sees
+# that, but only once boot0 is already carrying a bootloader that cannot start;
+# refusing here leaves the one that was there, which at least still boots.
+[[ "${fip_bytes}" -le $((2048 * 512)) ]] ||
+	die "${fip##*/} is ${fip_bytes} bytes; over $((2048 * 512)), the copy at sector 2048 overwrites the one at sector 0"
+[[ $((2048 * 512 + fip_bytes)) -le "${boot0_bytes}" ]] ||
+	die "${boot0} is only $((boot0_bytes / 1024))KB; ${fip_bytes} bytes at sector 2048 will not fit"
+
+force_ro="/sys/block/${target_name}boot0/force_ro"
+[[ -w "${force_ro}" ]] || die "cannot write ${force_ro}"
+echo 0 > "${force_ro}" || die "could not make ${boot0} writable"
+
+fip_status=0
+dd if="${fip}" of="${boot0}" bs=512 seek=0 conv=fsync status=none || fip_status=1
+dd if="${fip}" of="${boot0}" bs=512 seek=2048 conv=fsync status=none || fip_status=1
+sync
+
+echo 1 > "${force_ro}" || warn "could not restore read-only on ${boot0}"
+[[ "${fip_status}" -eq 0 ]] || die "writing ${boot0} failed; the eMMC will not boot"
+
+# Read both copies back rather than trusting dd's exit status; boot0 is the one
+# place on this board where a bad write is not visible until the next boot.
+if ! cmp -s -n "${fip_bytes}" "${fip}" "${boot0}" ||
+	! cmp -s -i "0:$((2048 * 512))" -n "${fip_bytes}" "${fip}" "${boot0}"; then
+	die "${boot0} does not read back as ${fip##*/}; the eMMC will not boot"
+fi
+info "${boot0} verified"
+
+# The image just written carries the SD bootloader in /boot/fip.bin, because that
+# is what a card has to boot and one image serves both media. On the eMMC nothing
+# reads that file - the BootROM takes boot0 - but leaving the two disagreeing
+# means the board boots one bootloader and shows you another, so put the eMMC one
+# in its place. A later u-boot package upgrade does exactly the same thing.
+info "pointing ${part1}:/fip.bin at the eMMC bootloader"
+cp "${fip}" "${mnt}/fip.bin" || die "could not update fip.bin on ${part1}"
+echo emmc > "${mnt}/sophgo-storage.txt" || warn "could not update sophgo-storage.txt on ${part1}"
+sync
+
+umount "${mnt}"
+
+# Both media carrying the same filesystem UUID makes root=UUID= ambiguous, and
+# the kernel then mounts whichever it enumerates first. Only happens when the
+# very same .img was written to both, but when it does happen it looks like a
+# random boot-to-boot failure, so say so now.
+part2="${target}p2"
+[[ -b "${part2}" ]] || part2="${target}2"
+if [[ -b "${part2}" && -n "${root_src}" && -b "${root_src}" ]]; then
+	new_uuid="$(blkid -o value -s UUID "${part2}" 2> /dev/null)"
+	run_uuid="$(blkid -o value -s UUID "${root_src}" 2> /dev/null)"
+	if [[ -n "${new_uuid}" && "${new_uuid}" == "${run_uuid}" ]]; then
+		warn "the eMMC root and the running root share UUID ${new_uuid}"
+		warn "the same image is on both; root=UUID= is ambiguous until you remove the card"
+	fi
+fi
+
+info "done"
+info "now: power off, remove the card, power on"
+info "the card has to come out - the BootROM prefers it over the eMMC"

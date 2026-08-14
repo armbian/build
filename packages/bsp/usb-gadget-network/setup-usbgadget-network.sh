@@ -85,7 +85,7 @@ set_usbgadget_ipaddress() {
 	INTERFACE=""
 	ip a add "${host_ip}/255.255.0.0" dev usb0 2> /dev/null && ip link set usb0 up && INTERFACE=usb0
 	if [ -z $INTERFACE ]; then
-		ip a add "${host_ip}/255.255.0.0" dev eth0 2> /dev/null && eth0 && INTERFACE=eth0
+		ip a add "${host_ip}/255.255.0.0" dev eth0 2> /dev/null && ip link set eth0 up && INTERFACE=eth0
 	fi
 
 	if [ -z $INTERFACE ]; then

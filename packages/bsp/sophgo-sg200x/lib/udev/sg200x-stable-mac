@@ -1,0 +1,182 @@
+#!/bin/sh
+# Give an SG200x network interface a MAC address that is the same on every boot.
+#
+# Neither interface on the Milk-V Duo S has a MAC address of its own:
+#
+#   ethernet  The DWMAC's address filter is empty and the device tree carries no
+#             mac-address/local-mac-address, so stmmac_check_ether_addr() falls
+#             through to eth_hw_addr_random() - the "device MAC address 06:.."
+#             line in dmesg, a fresh address on every boot. U-Boot cannot help:
+#             the vendor defconfig has CONFIG_NET_RANDOM_ETHADDR=y, and there is
+#             no ethernet0 alias in the device tree for fdt_fixup_ethernet() to
+#             write into anyway.
+#
+#   wifi      aic8800_fdrv asks the chip for its efuse MAC and, when that comes
+#             back blank, keeps its compiled-in default of 88:00:33:77:xx:xx -
+#             whose last two bytes are get_random_bytes(), once per module load.
+#             See rwnx_cfg80211_init() in aic8800_fdrv/rwnx_main.c.
+#
+# systemd's own answer to this, MACAddressPolicy=persistent in 99-default.link,
+# rescues neither. For wifi the driver installs the address with a plain memcpy
+# rather than eth_hw_addr_set(), so addr_assign_type stays NET_ADDR_PERM and
+# systemd believes the address is burned in. And the policy derives its address
+# from an ID_NET_NAME_* property, which udev's net_id builtin does not produce
+# for a bare devicetree platform device like 4070000.ethernet.
+#
+# So derive one here instead, following packages/bsp/rockpis/lib/udev, from the
+# SoC's Final Test Serial Number: unique per chip, and unchanged by rewriting the
+# card.
+#
+# Usage: sg200x-stable-mac <interface> <role> [expected-mac-prefix]
+#        sg200x-stable-mac --print <role>
+#
+#   role    An arbitrary but stable tag, mixed into the hash so the interfaces do
+#           not all end up with one address. Deliberately not the interface name:
+#           renaming eth0 would otherwise silently change its MAC.
+#   prefix  Only act if the interface currently has an address starting with
+#           this. Used for the wifi side, where the address to replace is the
+#           driver's known default and anything else means the chip did have a
+#           real MAC in efuse and we should keep our hands off it.
+#
+# --print derives an address and writes it to stdout instead of assigning it to
+# anything. The USB gadget needs its two addresses - its own and the one it hands
+# the computer at the other end of the cable - written into configfs before the
+# gadget is bound, at which point there is no interface yet to assign them to.
+#
+# To pin a particular address by hand instead, edit or delete the rule in
+# /etc/udev/rules.d that calls this - a .link file with MACAddress= will not do
+# it, because RUN+= programs execute after 80-net-setup-link.rules has had its
+# turn and this would just overwrite it again.
+#
+# Called from udev, so anything printed lands in the journal against
+# systemd-udevd. One line per interface, recording the decision taken - the
+# address assigned, or why the existing one was left alone - and nothing else.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+set -e
+
+me="${0##*/}"
+
+usage() {
+	echo "usage: ${me} <interface> <role> [expected-mac-prefix]" >&2
+	echo "       ${me} --print <role>" >&2
+	exit 1
+}
+
+if [ "${1}" = "--print" ]; then
+	print_only="yes"
+	role="${2}"
+	[ -n "${role}" ] || usage
+else
+	print_only="no"
+	iface="${1}"
+	role="${2}"
+	want_prefix="${3}"
+	[ -n "${iface}" ] && [ -n "${role}" ] || usage
+fi
+
+# Everything up to the derivation is about the interface being changed, and
+# --print has none - it is asked for an address, not asked to install one.
+if [ "${print_only}" = "no" ]; then
+	sysfs="/sys/class/net/${iface}"
+	[ -d "${sysfs}" ] || {
+		# udev substitutes %k, the kernel name, when the rule matches, but RUN
+		# programs execute at the end of event processing - after
+		# 80-net-setup-link.rules could in principle have renamed the interface.
+		# Neither of these devices gets renamed in practice, precisely because
+		# net_id produces no ID_NET_NAME_* for them, but say so plainly if it ever
+		# starts happening rather than failing off in the weeds.
+		echo "${me}: no interface ${iface} (renamed since the udev rule matched?)" >&2
+		exit 1
+	}
+
+	current=$(cat "${sysfs}/address" 2> /dev/null || true)
+
+	if [ -n "${want_prefix}" ]; then
+		case "${current}" in
+			"${want_prefix}"*) ;;
+			*)
+				echo "${me}: ${iface} is ${current}, not ${want_prefix}* - leaving it alone"
+				exit 0
+				;;
+		esac
+	elif [ "$(cat "${sysfs}/addr_assign_type" 2> /dev/null || true)" = "0" ]; then
+		# NET_ADDR_PERM: the driver says this address is burned into the hardware,
+		# so it is not ours to overwrite.
+		echo "${me}: ${iface} has a permanent address (${current}) - leaving it alone"
+		exit 0
+	fi
+fi
+
+# FTSN1..FTSN4, the chip's Final Test Serial Number. nvmem offset 0 is the efuse
+# shadow register - the device tree reg is 0x3050000 and the driver adds its own
+# CV1800B_EFUSE_CONTENT_BASE of 0x100 - which is exactly where the vendor FSBL
+# reads the serial from, as EFUSE_SHADOW_REG + 0x04, four words
+# (plat/cv180x/usb/usb_tty.c, usb_patch_serial). Its test for "not programmed" is
+# that all four words are zero, so that is the test used here too.
+soc_serial() {
+	set -- /sys/bus/nvmem/devices/sophgo_efuse_nvmem*/nvmem
+	nvmem="${1}"
+	[ -r "${nvmem}" ] || return 1
+
+	# Each read powers the efuse clock up and back down around the access, so
+	# serialise them: the ethernet and wifi udev workers can run at once.
+	hex=$(flock -w 5 "${nvmem}" od -An -vtx1 -j 4 -N 16 "${nvmem}" 2> /dev/null) || return 1
+	hex=$(printf '%s' "${hex}" | tr -d ' \n\t')
+
+	case "${hex}" in
+		'') return 1 ;;
+		*[!0]*) printf '%s' "${hex}" ;;
+		*) return 1 ;;
+	esac
+}
+
+if seed=$(soc_serial); then
+	seed_kind="efuse-ftsn"
+else
+	# No serial in efuse. /etc/machine-id is still unique and still stable, it
+	# just does not survive rewriting the card - which is the same trade the
+	# rockpis note warns about, and much better than a new address every boot.
+	seed=$(cat /etc/machine-id 2> /dev/null || true)
+	seed_kind="machine-id"
+	[ -n "${seed}" ] || {
+		echo "${me}: no chip serial in efuse and no machine-id - cannot derive a MAC for ${iface:-${role}}" >&2
+		exit 1
+	}
+fi
+
+# Hashed rather than used directly so that chips with adjacent serial numbers do
+# not get adjacent MAC addresses, and so the role tag spreads the interfaces
+# across the whole address instead of just one byte of it.
+hash=$(printf 'sg200x-stable-mac/%s/%s/%s' "${seed_kind}" "${seed}" "${role}" | sha256sum | cut -c1-12)
+
+b1=$(printf '%s' "${hash}" | cut -c1-2)
+b2=$(printf '%s' "${hash}" | cut -c3-4)
+b3=$(printf '%s' "${hash}" | cut -c5-6)
+b4=$(printf '%s' "${hash}" | cut -c7-8)
+b5=$(printf '%s' "${hash}" | cut -c9-10)
+b6=$(printf '%s' "${hash}" | cut -c11-12)
+
+# Locally administered (0x02 set) and unicast (0x01 clear). This address was
+# synthesised rather than assigned to anybody, and saying so in the address keeps
+# it clear of every real vendor OUI.
+mac=$(printf '%02x:%s:%s:%s:%s:%s' "$(((0x${b1} & 0xfe) | 0x02))" \
+	"${b2}" "${b3}" "${b4}" "${b5}" "${b6}")
+
+if [ "${print_only}" = "yes" ]; then
+	printf '%s\n' "${mac}"
+	exit 0
+fi
+
+# The interface is still down at this point in the udev event, which
+# eth_mac_addr() requires - it returns -EBUSY on a running device. NetworkManager
+# waits for udev to finish initialising a device before it manages it, so this
+# lands before anything tries to bring the link up.
+ip link set dev "${iface}" address "${mac}" || {
+	echo "${me}: could not set ${mac} on ${iface} (already up?)" >&2
+	exit 1
+}
+
+echo "${me}: ${iface} (${role}) ${current} -> ${mac}, derived from ${seed_kind}"

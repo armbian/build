@@ -406,10 +406,10 @@ driver_rtw88() {
 
 driver_rtl8852bs() {
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
-	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 7.2 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:35d3e2660fd912c36777cc50dd43b3fbc805d56a' # Commit date: May 17, 2026 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:3e7d964fac3063f7ff3645827e3180d59f33feec' # Commit date: Aug 14, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -438,11 +438,6 @@ driver_rtl8852bs() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
-		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
-		# @TODO Check on update if this fix is still needed (added 2024-July-10)
-		sed -i "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" \
-			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
-
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/realtek\/rtw89\/Kconfig"/a source "drivers\/net\/wireless\/realtek\/rtl8852bs\/Kconfig"' \
@@ -459,9 +454,6 @@ driver_rtl8852bs() {
 				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 		esac
-
-		# Patches
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8852bs-Update-rtw_regd_init-for-6.1.patch" "applying"
 	fi
 }
 
@@ -515,13 +507,11 @@ driver_rtl88x2cs() {
 driver_uwe5622() {
 
 	# Wireless drivers for Unisoc uwe5622 wireless
-	# Standalone driver with inline version guards for kernels 5.15-7.1
-	# Supports Allwinner (sun*) and Rockchip (rockchip64, rk35xx) platforms
 
-	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 7.2 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
+	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:fe49fbeba25be33a581f276ff33e051bb48f166c' # Commit date: Aug 02, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:ce59d2aafbdad2cd740ee203053ccfba058a20bc' # Commit date: Aug 06, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 
@@ -651,14 +641,15 @@ driver_rtl8723cs() {
 
 ###  The vendor's RTL8723DS driver is still required for RockPI-S support because
 ###  the RTW88 driver for the chip configures its RF gains incorrectly
+###  so restrict application to rockchip64 family
 driver_rtl8723DS() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 7.2; then
+	if linux-version compare "${version}" ge 5.0 && [[ "$LINUXFAMILY" == rockchip64 ]]; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:18a978da1cc9fdf732c082bb5142f2a7e733e352' # Commit date: 2026-05-25 (please update when updating commit ref)
+		local rtl8723dsver='commit:938bc4c52daad88c7217fa6771482e5c820f0dde' # Commit date: Aug 06, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 

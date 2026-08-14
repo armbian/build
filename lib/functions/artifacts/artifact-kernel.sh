@@ -145,6 +145,9 @@ function artifact_kernel_prepare_version() {
 		"${NAME_KERNEL}"
 		"${SRC_LOADADDR}"
 	)
+	# Extra stubble DTBs change the packaged UKI. Appended ONLY when set, so
+	# families that don't use them keep their exact previous -V hash (no churn).
+	[[ ${#EXTRA_STUBBLE_DEVICETREES[@]} -gt 0 ]] && vars_to_hash+=("${EXTRA_STUBBLE_DEVICETREES[*]}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"

@@ -204,6 +204,18 @@ function kernel_package_callback_linux_image() {
 	declare kernel_pre_package_path="${tmp_kernel_install_dirs[INSTALL_PATH]}"
 	kernel_image_installed_file_name=$(basename $(ls ${kernel_pre_package_path}/vmlinu*-${kernel_version_family}))
 	kernel_image_name=${kernel_image_installed_file_name%%-*}
+
+	# installkernel(8) (/sbin/installkernel) and arch/arm64/boot/install.sh name an *uncompressed* arm64
+	# 'Image' as vmlinux-<ver> -- only Image.gz / vmlinuz.efi become vmlinuz-<ver>. That file is a perfectly
+	# bootable Image, but every Armbian consumer and boot script (image-output-abl/-iso, extlinux/boot.cmd,
+	# the vfat-cleanup hook below) expects vmlinuz-<ver>. Normalize the name back to vmlinuz -- unless this
+	# arch genuinely boots a raw vmlinux (KERNEL_IMAGE_TYPE=vmlinux, e.g. loong64), where the name is correct.
+	if [[ "${kernel_image_name}" == "vmlinux" && "${KERNEL_IMAGE_TYPE}" != "vmlinux" ]]; then
+		display_alert "Normalizing misnamed kernel image" "${kernel_image_installed_file_name} -> vmlinuz-${kernel_version_family}" "info"
+		run_host_command_logged mv "${kernel_pre_package_path}/${kernel_image_installed_file_name}" "${kernel_pre_package_path}/vmlinuz-${kernel_version_family}"
+		kernel_image_installed_file_name="vmlinuz-${kernel_version_family}"
+		kernel_image_name="vmlinuz"
+	fi
 	display_alert "linux-image deb packaging kernel_image_name" "${kernel_image_name}" "info"
 	declare kernel_image_pre_package_path="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
 	declare installed_image_path="boot/${kernel_image_name}-${kernel_version_family}" # using old mkdebian terminology here for compatibility
@@ -221,6 +233,10 @@ function kernel_package_callback_linux_image() {
 			exit_with_error "finddtbs.py failed" "${stubble_find_dtbs}"
 		fi
 		stubble_dtbs=$(echo "${stubble_dtbs_raw}" | sed 's|.*|--devicetree-auto=&|' | tr '\n' ' ')
+		# EXTRA_STUBBLE_DEVICETREES: family-supplied DTBs not yet in stubble hwids (see uefidt.conf).
+		for extra_dtb in "${EXTRA_STUBBLE_DEVICETREES[@]}"; do
+			stubble_dtbs+=" --devicetree-auto=${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}/${extra_dtb}"
+		done
 		run_host_command_logged /usr/bin/ukify build --linux="${kernel_image_pre_package_path}" --stub="${stubble_efi}" --hwids="${stubble_hwids}" --sbat="@${stubble_sbat}" ${stubble_dtbs} --output="${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi"
 		run_host_command_logged mv "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}.efi" "${kernel_pre_package_path}/${kernel_image_name}-${kernel_version_family}"
 	fi

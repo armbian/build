@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 19 Jul 2026 20:55:25 +0200
+Subject: clocksource/drivers/sun4i: Wait for pending reload before CTRL write
+
+The A13 manual says of TMR0_RELOAD: "After the bit is set, it can not be
+written again before it's cleared automatically."  Both time_stop() and
+time_start() read-modify-write the control register, so a reload still in
+flight gets rewritten and the write can be dropped, leaving the timer
+unarmed.  In oneshot mode this happens on every tick, and the tick
+eventually stops for good.
+
+Wait for the reload to clear first.  All control register updates go
+through sun4i_clkevt_time_stop().
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clocksource/timer-sun4i.c | 26 +++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i.c
+index 111111111111..222222222222 100644
+--- a/drivers/clocksource/timer-sun4i.c
++++ b/drivers/clocksource/timer-sun4i.c
+@@ -39,6 +39,9 @@
+ 
+ #define TIMER_SYNC_TICKS	3
+ 
++/* The reload bit clears a couple of source clock cycles after it is set. */
++#define TIMER_RELOAD_MAX_POLL	100
++
+ /*
+  * When we disable a timer, we need to wait at least for 2 cycles of
+  * the timer source clock. We will use for that the clocksource timer
+@@ -53,9 +56,30 @@ static void sun4i_clkevt_sync(void __iomem *base)
+ 		cpu_relax();
+ }
+ 
++/*
++ * The control register must not be written while a reload is still in
++ * flight, or the write can be dropped.
++ */
++static int sun4i_clkevt_wait_reload(void __iomem *base, u8 timer)
++{
++	int i;
++
++	for (i = 0; i < TIMER_RELOAD_MAX_POLL; i++) {
++		if (!(readl(base + TIMER_CTL_REG(timer)) & TIMER_CTL_RELOAD))
++			return 0;
++		cpu_relax();
++	}
++
++	return -ETIME;
++}
++
+ static void sun4i_clkevt_time_stop(void __iomem *base, u8 timer)
+ {
+-	u32 val = readl(base + TIMER_CTL_REG(timer));
++	u32 val;
++
++	sun4i_clkevt_wait_reload(base, timer);
++
++	val = readl(base + TIMER_CTL_REG(timer));
+ 	writel(val & ~TIMER_CTL_ENABLE, base + TIMER_CTL_REG(timer));
+ 	sun4i_clkevt_sync(base);
+ }
+-- 
+Armbian
+
