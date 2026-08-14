@@ -438,11 +438,6 @@ driver_rtl8852bs() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
-		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
-		# @TODO Check on update if this fix is still needed (added 2024-July-10)
-		sed -i "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" \
-			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
-
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/realtek\/rtw89\/Kconfig"/a source "drivers\/net\/wireless\/realtek\/rtl8852bs\/Kconfig"' \
