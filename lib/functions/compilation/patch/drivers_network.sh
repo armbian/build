@@ -409,7 +409,7 @@ driver_rtl8852bs() {
 	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:916053dd2805d16c458d92c3216c731ec956eb12' # Commit date: Aug 06, 2026 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:3e7d964fac3063f7ff3645827e3180d59f33feec' # Commit date: Aug 14, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
