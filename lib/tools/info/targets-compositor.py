@@ -95,10 +95,14 @@ def get_userspace_inventory(opts: dict):
 	# explicitly in their items-from-inventory.userspace block.
 	if "tiers" not in opts:
 		opts["tiers"] = ["mid"]
+	# EOS userspace releases are skipped by default. Set include-eos: yes to
+	# also emit them (e.g. base-files, which every release still needs).
+	if "include-eos" not in opts:
+		opts["include-eos"] = False
 
 	# loop over the userspace inventory
 	for userspace in userspace_inventory:
-		if userspace["support"] == "eos":
+		if userspace["support"] == "eos" and not opts["include-eos"]:
 			log.debug(f"Skipping userspace inventory entry: '{userspace['id']}' has support '{userspace['support']}'")
 			continue
 
