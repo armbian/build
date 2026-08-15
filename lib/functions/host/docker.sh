@@ -359,6 +359,9 @@ function docker_cli_prepare_dockerfile() {
 	declare host_arch
 	if [[ -n "${DOCKER_ARMBIAN_HOST_ARCH:-}" ]]; then
 		host_arch="${DOCKER_ARMBIAN_HOST_ARCH}"
+	elif [[ "${DOCKER_IS_PODMAN}" == "yes" ]]; then
+		host_arch="$(docker version --format '{{.OsArch}}')"
+		host_arch="${host_arch##*/}"
 	else
 		# Resolve the architecture where the Dockerfile will actually build.
 		# This also avoids relying on host tools such as dpkg, which may not
