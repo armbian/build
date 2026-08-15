@@ -27,12 +27,19 @@ function compile_kernel() {
 	declare git_kernel_oras_ref
 	kernel_prepare_bare_repo_decide_shallow_or_full # sets kernel_git_bare_tree, git_bundles_dir, git_kernel_ball_fn, git_kernel_oras_ref
 
-	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging do_with_hooks \
-		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging do_with_hooks \
+			kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
+	fi
 
 	# prepare the working copy; this is the actual kernel source tree for this build
 	declare checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
-	LOG_SECTION="kernel_prepare_git" do_with_logging_unless_user_terminal do_with_hooks kernel_prepare_git
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		LOG_SECTION="kernel_prepare_git" do_with_logging_unless_user_terminal do_with_hooks kernel_prepare_git
+	else
+		checked_out_revision="$(git -C "${SRC}/cache/sources/${LINUXSOURCEDIR}" rev-parse HEAD)"
+		checked_out_revision_ts="$(git -C "${SRC}/cache/sources/${LINUXSOURCEDIR}" log -1 --pretty=%ct HEAD)" # unix timestamp of the commit date
+	fi
 
 	# Capture date variables set by fetch_from_repo; it's the date of the last kernel revision
 	declare kernel_git_revision="${checked_out_revision}"
@@ -42,16 +49,22 @@ function compile_kernel() {
 	display_alert "Using Kernel git revision" "${kernel_git_revision} at '${kernel_base_revision_date}'"
 
 	# Call extension method to prepare extra sources
-	call_extension_method "kernel_copy_extra_sources" <<- 'ARMBIAN_KERNEL_SOURCES_EXTRA'
-		*Hook to copy extra kernel sources to the kernel under compilation*
-	ARMBIAN_KERNEL_SOURCES_EXTRA
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		call_extension_method "kernel_copy_extra_sources" <<- 'ARMBIAN_KERNEL_SOURCES_EXTRA'
+			*Hook to copy extra kernel sources to the kernel under compilation*
+		ARMBIAN_KERNEL_SOURCES_EXTRA
+	fi
 
 	# Possibly 'make clean'.
-	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
+	fi
 
 	# Patching.
 	declare hash pre_patch_version
-	kernel_main_patching # has it's own logging sections inside
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		kernel_main_patching # has it's own logging sections inside
+	fi
 
 	# Stop after patching.
 	if [[ "${PATCH_ONLY}" == yes ]]; then
@@ -76,7 +89,9 @@ function compile_kernel() {
 	# log the kernel toolchain version
 	LOG_SECTION="kernel_determine_toolchain" do_with_logging do_with_hooks kernel_determine_toolchain
 
-	kernel_config # has it's own logging sections inside
+	if [[ "${USE_EXISTING_KERNEL_TREE}" != yes ]]; then
+		kernel_config # has it's own logging sections inside
+	fi
 
 	# Validate dts file if flag is set and stop after validation.
 	# Has to happen after kernel .config file was created
