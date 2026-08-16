@@ -44,6 +44,19 @@ function post_family_tweaks_bsp__xiaomi-sheng_firmware() {
 	ln -sfv ../../Xiaomi/sheng/Xiaomi-Pad6SPro.conf \
 		"$destination/usr/share/alsa/ucm2/conf.d/sm8550/Xiaomi-Pad6SPro.conf"
 
+	# WirePlumber: disable ACP so real ALSA sinks are created (otherwise
+	# audio falls back to the Dummy Output sink on this DSP card)
+	mkdir -p $destination/etc/wireplumber/wireplumber.conf.d/
+	install -Dm644 $SRC/packages/bsp/xiaomi-sheng/90-alsa-dsp.conf \
+		$destination/etc/wireplumber/wireplumber.conf.d/90-alsa-dsp.conf
+
+	# Boot-time UCM init (loads HiFi verb + enables speaker amps)
+	mkdir -p $destination/usr/local/bin/
+	install -Dm755 $SRC/packages/bsp/xiaomi-sheng/sheng-ucm-init.sh \
+		$destination/usr/local/bin/
+	install -Dm644 $SRC/packages/bsp/xiaomi-sheng/sheng-ucm-init.service \
+		$destination/usr/lib/systemd/system/
+
 	# USB Gadget Network service
 	mkdir -p $destination/usr/local/bin/
 	mkdir -p $destination/usr/lib/systemd/system/
@@ -83,6 +96,7 @@ function post_family_tweaks__xiaomi-sheng_enable_services() {
 	chroot_sdcard systemctl enable qbootctl.service
 	chroot_sdcard systemctl enable usbgadget-rndis.service
 	chroot_sdcard systemctl enable bt-fixed-mac.service
+	chroot_sdcard systemctl enable sheng-ucm-init.service
 	return 0
 }
 
