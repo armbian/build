@@ -52,6 +52,7 @@ function post_family_tweaks_bsp__xiaomi-sheng_firmware() {
 
 	# Boot-time UCM init (loads HiFi verb + enables speaker amps)
 	mkdir -p $destination/usr/local/bin/
+	mkdir -p $destination/usr/lib/systemd/system/
 	install -Dm755 $SRC/packages/bsp/xiaomi-sheng/sheng-ucm-init.sh \
 		$destination/usr/local/bin/
 	install -Dm644 $SRC/packages/bsp/xiaomi-sheng/sheng-ucm-init.service \
