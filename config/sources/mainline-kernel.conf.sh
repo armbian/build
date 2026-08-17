@@ -26,7 +26,7 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 
 # Example: 6.7-rc7 was released by Linus, but kernel.org git and google git mirrors took a while to catch up; change the source to pull directly from Linus.
 # This was necessary for a few days in late December 2023, but no longer; tag was pushed on 28/Dec/2023.
-function mainline_kernel_decide_version__750_use_torvalds_for_7.3-rc1() {
+function mainline_kernel_decide_version__750_use_torvalds_for_rc_kernel() {
 	if [[ "${KERNELBRANCH}" == 'tag:v7.3-rc1' ]]; then
 		display_alert "Using Linus kernel repo for 7.3-rc1" "${KERNELBRANCH}" "warn"
 		declare -g KERNELSOURCE="https://github.com/torvalds/linux.git"
