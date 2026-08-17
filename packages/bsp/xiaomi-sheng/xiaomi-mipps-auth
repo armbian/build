@@ -1,0 +1,734 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+
+import argparse
+import glob
+import hashlib
+import hmac
+import os
+import pwd
+import random
+import secrets
+import subprocess
+import sys
+import time
+
+
+SEEDS = [
+    "d6e9770506c7f5f4df7a40008c7467b8",
+    "09604eb9ad37e17bd6b2a4f2a3515984",
+    "f6295ce3bde8678c9ffeab616098aba0",
+    "ae0c8ee9b05ba233799badcb9fa22b41",
+    "56b7470c9d6f22ca003e40326fa77eb5",
+    "6019b457cd77fd5fedffdc3d0ed06106",
+    "09e47c32760fb2facfc5843df0716465",
+    "a601934c1403bfd955ebd77f509ba17f",
+    "3e02b44e19dc24f438e62f026ade4aa7",
+    "343d6b41b900beb4c8bf0e8fa7df8c13",
+]
+
+KEYS = [
+    "5c4d4179da1501ed11747492e26083d96b8fbc73c82e7bdf5d3255c2a036a1dc",
+    "4554ea907fc3250d2078bd6277d6cf0cb823e62258d087378af29c466b101026",
+    "83d30625cb0f7ce6d49649ff4cfcf9cebe62469b57e31ba62d01de2810ff621a",
+    "a1447305166b4a786df5ddd707a8360a7328ced7038487607fa21128a15d1864",
+    "e4fb00afd15186af1a44502005d3d1b0b1e9d1a636a51c26349422e7dbadc273",
+    "46b8cae9a46a3254ee551282cf07b7bb6b2ef12bf615463c239bb63b984e42a9",
+    "eaf45b6ff3ccce769e82bd0b007b69c406a66b98f427a2bbe455d1ffcb1ecdcc",
+    "e787db568b7d704d29cc50a2bb1e971f6f1fd7fe9604deb4d4a1a7a72c63ff42",
+    "b5f704a75d0db54a0b5e731779949b321105adc9d5c0858c50efc9bf92892cf4",
+    "df47cc3249833bdefeb4a04a257489fc7500d827b2b66b2689bded7ffe49465e",
+]
+
+FG_KEYS = [
+    "45f0f5a023b09a7437d9b85a6ea2033539321d5437b9543f3f2292e0c966d675",
+    "02b3a85ea4c1a6db6fbd1fd5767c1a42314f37ba7c9460c9ed79a12bb2b5d99c",
+]
+
+XIAOMI_SVID = 0x2717
+FAST_CHARGE_NOTIFICATION_TITLE = "Fast charge active"
+NOTIFICATION_STATE_FILE = "/run/xiaomi-mipps-auth/last-notification"
+CHARGE_PROFILE_STATE_FILE = "/run/xiaomi-mipps-auth/charge-profile"
+USB_ONLINE_STATE_FILE = "/run/xiaomi-mipps-auth/usb-online"
+SYSTEMD_UNIT = "xiaomi-mipps-auth.service"
+ANDROID_CMD_SETTLE = {
+    1: 0.005,
+    2: 0.005,
+    3: 0.005,
+    4: 0.500,
+    5: 0.500,
+    6: 0.005,
+}
+
+
+class UnsupportedChargerError(Exception):
+    def __init__(self, message, terminal=False):
+        super().__init__(message)
+        self.terminal = terminal
+
+def find_xiaomi_dir():
+    candidates = ["/sys/class/qcom-battery"]
+    candidates += glob.glob("/sys/devices/platform/pmic-glink/*/xiaomi")
+    for path in candidates:
+        if os.path.exists(os.path.join(path, "request_vdm_cmd")):
+            return path
+    raise FileNotFoundError("request_vdm_cmd sysfs node not found")
+
+
+def read_node(root, name):
+    with open(os.path.join(root, name), "r", encoding="ascii", errors="ignore") as f:
+        return f.read().strip().replace("\x00", "")
+
+
+def write_node(root, name, value):
+    with open(os.path.join(root, name), "w", encoding="ascii") as f:
+        f.write(value)
+        if not value.endswith("\n"):
+            f.write("\n")
+
+
+def write_node_if_present(root, name, value):
+    path = os.path.join(root, name)
+    if os.path.exists(path):
+        write_node(root, name, value)
+        return True
+    return False
+
+
+def find_power_supply(*names):
+    for name in names:
+        path = os.path.join("/sys/class/power_supply", name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def usb_is_online():
+    path = find_power_supply("qcom-battmgr-usb", "usb")
+    if not path:
+        print("warning: USB power_supply node not found", file=sys.stderr)
+        return False
+
+    try:
+        return read_node(path, "online") == "1"
+    except OSError as e:
+        print(f"warning: failed to read {path}/online: {e}", file=sys.stderr)
+        return False
+
+
+def wait_usb_online(timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if usb_is_online():
+            return True
+        time.sleep(0.05)
+    return usb_is_online()
+
+
+def find_typec_port():
+    for path in glob.glob("/sys/class/typec/port*"):
+        if os.path.exists(os.path.join(path, "data_role")):
+            return path
+    return None
+
+
+def current_attach_token():
+    for path in sorted(glob.glob("/sys/class/typec/port*-partner")):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        return f"{os.path.basename(path)}:{st.st_dev}:{st.st_ino}:{st.st_ctime_ns}"
+    return None
+
+
+def read_state_file(path):
+    try:
+        with open(path, "r", encoding="ascii", errors="ignore") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        print(f"warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
+
+
+def write_state_file(path, value):
+    try:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="ascii") as f:
+            f.write(value)
+            f.write("\n")
+    except OSError as e:
+        print(f"warning: failed to write {path}: {e}", file=sys.stderr)
+
+
+def start_systemd_unit(unit):
+    systemctl = "/usr/bin/systemctl" if os.path.exists("/usr/bin/systemctl") else "systemctl"
+    subprocess.run([systemctl, "--no-block", "start", unit],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=2, check=True)
+
+
+def parse_power_watts(value):
+    try:
+        power = int(value.strip(), 0)
+    except ValueError:
+        return None
+
+    if power <= 0:
+        return None
+    return power
+
+
+def parse_int(value):
+    try:
+        return int(value.strip(), 0)
+    except ValueError:
+        return None
+
+
+def current_int_value(root, name):
+    path = os.path.join(root, name)
+    if not os.path.exists(path):
+        return None
+    try:
+        return parse_int(read_node(root, name))
+    except OSError as e:
+        print(f"warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
+
+
+def current_string_value(root, name):
+    path = os.path.join(root, name)
+    if not os.path.exists(path):
+        return None
+    try:
+        return read_node(root, name).strip()
+    except OSError as e:
+        print(f"warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
+
+
+def current_battery_capacity():
+    battery = find_power_supply("qcom-battmgr-bat", "battery")
+    if not battery:
+        return None
+    return current_int_value(battery, "capacity")
+
+
+def current_power_max_watts(root):
+    path = os.path.join(root, "power_max")
+    if not os.path.exists(path):
+        return None
+    try:
+        return parse_power_watts(read_node(root, "power_max"))
+    except OSError as e:
+        print(f"warning: failed to read {path}: {e}", file=sys.stderr)
+        return None
+
+
+def gvariant_string(value):
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def notify_session_bus(bus, uid, title, body):
+    env = os.environ.copy()
+    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+    env["XDG_RUNTIME_DIR"] = os.path.dirname(bus)
+
+    def drop_privileges():
+        if os.geteuid() != 0:
+            return
+        entry = pwd.getpwuid(uid)
+        os.setgid(entry.pw_gid)
+        os.setuid(uid)
+
+    cmd = [
+        "gdbus", "call", "--session",
+        "--dest", "org.freedesktop.Notifications",
+        "--object-path", "/org/freedesktop/Notifications",
+        "--method", "org.freedesktop.Notifications.Notify",
+        gvariant_string("xiaomi-mipps-auth"),
+        "0",
+        gvariant_string("battery-good-symbolic"),
+        gvariant_string(title),
+        gvariant_string(body),
+        "[]",
+        "{}",
+        "5000",
+    ]
+    subprocess.run(cmd, env=env, preexec_fn=drop_privileges,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=2, check=True)
+
+
+def pd_verified(root):
+    path = os.path.join(root, "pd_verifed")
+    if not os.path.exists(path):
+        return False
+    try:
+        return read_node(root, "pd_verifed").strip() == "1"
+    except OSError:
+        return False
+
+
+def charge_mode_body(mode, watts):
+    if mode == "MiPPS":
+        return f"MiPPS enabled at {watts}W"
+    if mode == "PD":
+        return "PD enabled"
+    return f"PPS enabled at {watts}W"
+
+
+def current_charge_profile(root, pd_auth):
+    capacity = current_battery_capacity()
+    if capacity is None or capacity >= 95:
+        return None
+
+    watts = current_power_max_watts(root)
+    if not watts:
+        return None
+
+    fastchg_mode = current_int_value(root, "fastchg_mode")
+    real_type = current_string_value(root, "real_type")
+    fastchg_active = fastchg_mode is None or fastchg_mode > 0
+
+    if pd_auth:
+        return "MiPPS", watts
+
+    if real_type == "PD_PPS":
+        return "PPS", watts
+
+    if real_type == "PD":
+        if not fastchg_active:
+            return "PD", watts
+        return "PPS", watts
+
+    return None
+
+
+def wait_charge_profile(root, pd_auth, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        profile = current_charge_profile(root, pd_auth)
+        if profile:
+            return profile
+        time.sleep(0.1)
+    return current_charge_profile(root, pd_auth)
+
+
+def charge_profile_notification_key(profile):
+    attach_token = current_attach_token() or "no-typec-partner"
+    mode, watts = profile
+    return f"{attach_token}:{mode}:{watts}"
+
+
+def write_charge_profile(profile):
+    if not profile:
+        write_state_file(CHARGE_PROFILE_STATE_FILE, "none")
+        return
+    mode, _ = profile
+    write_state_file(CHARGE_PROFILE_STATE_FILE, mode)
+
+
+def notify_charge_profile(root, pd_auth, state_file, timeout=2.0):
+    profile = wait_charge_profile(root, pd_auth, timeout)
+    write_charge_profile(profile)
+    if not profile:
+        print("fast_charge_notification=none")
+        write_state_file(state_file, "none")
+        return False
+
+    mode, watts = profile
+    key = charge_profile_notification_key(profile)
+    if read_state_file(state_file) == key:
+        print(f"fast_charge_notification=skipped:{mode}:{watts}W")
+        return False
+
+    body = charge_mode_body(mode, watts)
+    sent = False
+    for bus in sorted(glob.glob("/run/user/[0-9]*/bus")):
+        try:
+            st = os.stat(bus)
+            notify_session_bus(bus, st.st_uid,
+                               FAST_CHARGE_NOTIFICATION_TITLE, body)
+            sent = True
+        except (KeyError, OSError, subprocess.SubprocessError) as e:
+            print(f"warning: failed to send notification on {bus}: {e}",
+                  file=sys.stderr)
+
+    if sent:
+        write_state_file(state_file, key)
+        if mode == "PD":
+            print("fast_charge_notification=PD")
+        else:
+            print(f"fast_charge_notification={mode}:{watts}W")
+    else:
+        print("warning: no desktop session accepted fast charge notification",
+              file=sys.stderr)
+    return sent
+
+
+def notify_completed_charge(root, state_file, pd_auth=None, timeout=2.0):
+    if pd_auth is None:
+        pd_auth = pd_verified(root)
+    return notify_charge_profile(root, pd_auth, state_file, timeout)
+
+
+def wait_real_type(root, timeout):
+    deadline = time.monotonic() + timeout
+    last = "Unknown"
+    while time.monotonic() < deadline:
+        try:
+            last = read_node(root, "real_type")
+        except OSError:
+            return "Unknown"
+        if last and last != "Unknown":
+            return last
+        time.sleep(0.05)
+    return last
+
+
+def ensure_typec_host(timeout):
+    port = find_typec_port()
+    if not port:
+        print("warning: no Type-C data_role node found", file=sys.stderr)
+        return False
+
+    path = os.path.join(port, "data_role")
+    try:
+        role = read_node(port, "data_role")
+    except OSError as e:
+        print(f"warning: failed to read {path}: {e}", file=sys.stderr)
+        return False
+
+    if role.startswith("[host]") or "[host]" in role.split():
+        print(f"typec_data_role={role}")
+        return True
+
+    try:
+        write_node(port, "data_role", "host")
+    except OSError as e:
+        print(f"warning: failed to request Type-C host role: {e}", file=sys.stderr)
+        return False
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        role = read_node(port, "data_role")
+        if role.startswith("[host]") or "[host]" in role.split():
+            print(f"typec_data_role={role}")
+            return True
+        time.sleep(0.05)
+
+    print(f"warning: timed out waiting for Type-C host role, last={role}", file=sys.stderr)
+    return False
+
+
+def vdm_state(root):
+    text = read_node(root, "request_vdm_cmd")
+    state, _, payload = text.partition(",")
+    return int(state), payload.strip()
+
+
+def wait_state(root, expected, timeout):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = vdm_state(root)
+        if last[0] == expected:
+            return last
+        time.sleep(0.02)
+    raise UnsupportedChargerError(f"timed out waiting for VDM state {expected}, last={last}")
+
+
+def send_vdm(root, cmd, payload="null", timeout=2.0, wait=True, settle=0.0):
+    write_node(root, "request_vdm_cmd", f"{cmd},{payload}")
+    if not wait:
+        time.sleep(settle)
+        return vdm_state(root)
+    state = wait_state(root, cmd, timeout)
+    if settle:
+        time.sleep(settle)
+        state = vdm_state(root)
+    return state
+
+
+def normalize_adapter_id(adapter_id):
+    adapter_id = adapter_id.strip().lower()[:8]
+    if len(adapter_id) == 8 and adapter_id != "00000000":
+        bytes.fromhex(adapter_id)
+        return adapter_id
+    return None
+
+
+def normalize_adapter_svid(adapter_svid):
+    adapter_svid = adapter_svid.strip().lower()
+    if not adapter_svid:
+        return None
+    token = adapter_svid.split()[0]
+    if token in ("2717", "0x2717"):
+        return XIAOMI_SVID
+    try:
+        return int(token, 0)
+    except ValueError:
+        return None
+
+
+def current_adapter_svid(root):
+    try:
+        return normalize_adapter_svid(read_node(root, "adapter_svid"))
+    except OSError:
+        return None
+
+
+def detect_adapter_id(root, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            adapter_id = normalize_adapter_id(read_node(root, "adapter_id"))
+            if adapter_id:
+                return adapter_id
+        except (FileNotFoundError, ValueError):
+            pass
+        time.sleep(0.05)
+    return None
+
+
+def should_skip_pdo2(root):
+    try:
+        pdo2 = read_node(root, "pdo2").strip().lower()
+    except OSError:
+        return False
+    return len(pdo2) >= 8 and pdo2[:8] == "00000000"
+
+
+def auth_already_completed(root, state):
+    return state in (6, 7)
+
+
+def print_status(root):
+    for name in ("request_vdm_cmd", "authentic", "slave_authentic",
+                 "adapter_svid", "adapter_id", "apdo_max",
+                 "power_max", "fastchg_mode", "quick_charge_type",
+                 "pps_ptf", "pd_verifed",
+                 "bq2597x_bus_voltage", "bq2597x_bus_current",
+                 "bq2597x_slave_bus_current"):
+        path = os.path.join(root, name)
+        if os.path.exists(path):
+            print(f"{name}={read_node(root, name)}")
+
+
+def node_is_one(root, name):
+    path = os.path.join(root, name)
+    return os.path.exists(path) and read_node(root, name).strip() == "1"
+
+
+def verify_fuel_gauge_once(root, slave):
+    flag = "1" if slave else "0"
+    result_node = "slave_authentic" if slave else "authentic"
+    challenge = secrets.token_hex(32)
+
+    write_node(root, "verify_slave_flag", flag)
+    write_node(root, "verify_digest", challenge)
+    time.sleep(1.4)
+
+    bq_digest = read_node(root, "verify_digest")[:64].lower()
+    expected = [
+        hmac.new(bytes.fromhex(key), bytes.fromhex(challenge),
+                 hashlib.sha256).hexdigest()
+        for key in FG_KEYS
+    ]
+    ok = bq_digest in expected
+    write_node_if_present(root, result_node, "1" if ok else "0")
+    return ok
+
+
+def verify_fuel_gauge(root, slave, required=True, retries=10):
+    result_node = "slave_authentic" if slave else "authentic"
+
+    if node_is_one(root, result_node):
+        print(f"{result_node}_verified=1")
+        return True
+
+    for attempt in range(1, retries + 1):
+        if verify_fuel_gauge_once(root, slave):
+            print(f"{result_node}_verified=1")
+            return True
+        time.sleep(0.2)
+
+    print(f"{result_node}_verified=0")
+    if required:
+        raise RuntimeError(f"{result_node} digest verification failed after {retries} attempts")
+    print(f"warning: {result_node} digest verification failed", file=sys.stderr)
+    return False
+
+
+def enable_battery_auth(root):
+    if not os.path.exists(os.path.join(root, "verify_digest")):
+        raise FileNotFoundError("verify_digest sysfs node not found")
+
+    verify_fuel_gauge(root, False, required=True)
+    verify_fuel_gauge(root, True, required=True)
+    time.sleep(0.5)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sysfs", help="directory containing request_vdm_cmd")
+    parser.add_argument("--seed-index", type=int, choices=range(10), help="fixed seed index for repeatable tests")
+    parser.add_argument("--no-data-role-swap", action="store_true",
+                        help="do not request Type-C host data role before Xiaomi UVDM auth")
+    parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-completed", action="store_true",
+                        help="deprecated; completed handshakes are skipped unless --force is used")
+    parser.add_argument("--once-per-attach", action="store_true",
+                        help="attempt authentication at most once for the current Type-C partner attach")
+    parser.add_argument("--state-file", default="/run/xiaomi-mipps-auth/last-attach",
+                        help="state file used by --once-per-attach")
+    parser.add_argument("--clear-notification", action="store_true",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--usb-online-trigger", action="store_true",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--timeout", type=float, default=2.0)
+    args = parser.parse_args()
+
+    if args.clear_notification:
+        write_state_file(NOTIFICATION_STATE_FILE, "none")
+        write_state_file(CHARGE_PROFILE_STATE_FILE, "none")
+        write_state_file(USB_ONLINE_STATE_FILE, "0")
+        print("fast_charge_notification_state=cleared")
+        return
+
+    if args.usb_online_trigger:
+        if read_state_file(USB_ONLINE_STATE_FILE) == "1":
+            print("usb_online_trigger=skipped")
+            return
+        write_state_file(USB_ONLINE_STATE_FILE, "1")
+        start_systemd_unit(SYSTEMD_UNIT)
+        print("usb_online_trigger=started")
+        return
+
+    root = args.sysfs or find_xiaomi_dir()
+    if not wait_usb_online(args.timeout):
+        print("usb_online=0")
+        write_state_file(NOTIFICATION_STATE_FILE, "none")
+        write_state_file(CHARGE_PROFILE_STATE_FILE, "none")
+        write_state_file(USB_ONLINE_STATE_FILE, "0")
+        return
+    write_state_file(USB_ONLINE_STATE_FILE, "1")
+
+    attach_token = current_attach_token() if args.once_per_attach else None
+    if args.once_per_attach:
+        if attach_token:
+            if read_state_file(args.state_file) == attach_token:
+                print("MiPPS auth skipped: already attempted for current Type-C attach")
+                return
+        else:
+            print("warning: no Type-C partner found for once-per-attach state",
+                  file=sys.stderr)
+
+    state, _ = vdm_state(root)
+    if auth_already_completed(root, state) and not args.force:
+        print(f"sysfs={root}")
+        enable_battery_auth(root)
+        print("MiPPS auth sequence already completed")
+        print_status(root)
+        notify_completed_charge(root, NOTIFICATION_STATE_FILE)
+        return
+
+    try:
+        seed_index = args.seed_index if args.seed_index is not None else random.randrange(len(SEEDS))
+        print(f"sysfs={root}")
+        print(f"real_type={wait_real_type(root, args.timeout)}")
+        print(f"seed_index={seed_index}")
+
+        if not args.no_data_role_swap:
+            ensure_typec_host(args.timeout)
+
+        adapter_svid = current_adapter_svid(root)
+        if adapter_svid is None:
+            print("adapter_svid=unknown")
+        else:
+            print(f"adapter_svid=0x{adapter_svid:04x}")
+            if adapter_svid != XIAOMI_SVID:
+                print(
+                    "warning: adapter_svid is not Xiaomi; continuing because "
+                    "firmware may expose a stale SVID after detach",
+                    file=sys.stderr)
+
+        if should_skip_pdo2(root):
+            raise UnsupportedChargerError("pdo2 reports no source PDO for adapter authentication",
+                                          terminal=True)
+
+        enable_battery_auth(root)
+
+        send_vdm(root, 1, timeout=args.timeout, settle=ANDROID_CMD_SETTLE[1])
+        send_vdm(root, 2, timeout=args.timeout, settle=ANDROID_CMD_SETTLE[2])
+        send_vdm(root, 3, timeout=args.timeout, settle=ANDROID_CMD_SETTLE[3])
+        send_vdm(root, 4, SEEDS[seed_index], timeout=args.timeout,
+                 settle=ANDROID_CMD_SETTLE[4])
+
+        challenge = secrets.token_hex(16)
+        print(f"challenge={challenge}")
+        _, auth = send_vdm(root, 5, challenge, timeout=args.timeout,
+                           settle=ANDROID_CMD_SETTLE[5])
+
+        adapter_id = detect_adapter_id(root, args.timeout)
+        if not adapter_id:
+            raise UnsupportedChargerError("adapter_id sysfs node did not report a valid adapter id",
+                                          terminal=True)
+
+        digest = hmac.new(bytes.fromhex(KEYS[seed_index]),
+                          bytes.fromhex(challenge + adapter_id),
+                          hashlib.sha256).hexdigest()
+        pd_auth = auth.lower()[:32] == digest[:32]
+        if not pd_auth:
+            print(
+                f"adapter auth mismatch: seed_index={seed_index} adapter_id={adapter_id} "
+                f"expected={digest[:32]} charger={auth[:32]}",
+                file=sys.stderr)
+        print(f"adapter_id={adapter_id}")
+
+        pd_auth_payload = "01000000" if pd_auth else "00000000"
+        send_vdm(root, 6, pd_auth_payload, timeout=args.timeout, wait=False,
+                 settle=0.1)
+        if pd_auth:
+            try:
+                send_vdm(root, 8, digest[32:], timeout=args.timeout)
+                print("reverse_auth=1")
+            except UnsupportedChargerError as e:
+                print(f"warning: reverse_auth=0: {e}", file=sys.stderr)
+        else:
+            print("reverse_auth=0")
+        send_vdm(root, 7, pd_auth_payload, timeout=args.timeout, wait=False,
+                 settle=0.1)
+
+        if os.path.exists(os.path.join(root, "pd_verifed")):
+            write_node(root, "pd_verifed", "1" if pd_auth else "0")
+
+        print(f"pd_auth={1 if pd_auth else 0}")
+        print("MiPPS auth sequence completed")
+        print_status(root)
+        notify_completed_charge(root, NOTIFICATION_STATE_FILE, pd_auth)
+    except UnsupportedChargerError as e:
+        notify_completed_charge(root, NOTIFICATION_STATE_FILE)
+        if attach_token and e.terminal:
+            write_state_file(args.state_file, attach_token)
+        raise
+    else:
+        if attach_token:
+            write_state_file(args.state_file, attach_token)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except UnsupportedChargerError as e:
+        print(f"MiPPS auth skipped: {e}")
+        sys.exit(0)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)

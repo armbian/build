@@ -58,6 +58,20 @@ function post_family_tweaks_bsp__xiaomi-sheng_firmware() {
 	install -Dm644 $SRC/packages/bsp/xiaomi-sheng/sheng-ucm-init.service \
 		$destination/usr/lib/systemd/system/
 
+	# Xiaomi MiPPS/PPS charger authentication (edge kernel only)
+	if [[ "$BRANCH" == "edge" ]]; then
+		display_alert "$BOARD" "Install Xiaomi MiPPS charger auth" "info"
+		mkdir -p $destination/usr/libexec/
+		mkdir -p $destination/usr/lib/systemd/system/
+		mkdir -p $destination/usr/lib/udev/rules.d/
+		install -Dm755 $SRC/packages/bsp/xiaomi-sheng/xiaomi-mipps-auth \
+			$destination/usr/libexec/xiaomi-mipps-auth
+		install -Dm644 $SRC/packages/bsp/xiaomi-sheng/xiaomi-mipps-auth.service \
+			$destination/usr/lib/systemd/system/xiaomi-mipps-auth.service
+		install -Dm644 $SRC/packages/bsp/xiaomi-sheng/90-xiaomi-mipps-auth.rules \
+			$destination/usr/lib/udev/rules.d/90-xiaomi-mipps-auth.rules
+	fi
+
 	# USB Gadget Network service
 	mkdir -p $destination/usr/local/bin/
 	mkdir -p $destination/usr/lib/systemd/system/
@@ -98,6 +112,11 @@ function post_family_tweaks__xiaomi-sheng_enable_services() {
 	chroot_sdcard systemctl enable usbgadget-rndis.service
 	chroot_sdcard systemctl enable bt-fixed-mac.service
 	chroot_sdcard systemctl enable sheng-ucm-init.service
+
+	# Xiaomi MiPPS/PPS charger authentication (edge kernel only)
+	if [[ "$BRANCH" == "edge" ]]; then
+		chroot_sdcard systemctl enable xiaomi-mipps-auth.service
+	fi
 	return 0
 }
 
