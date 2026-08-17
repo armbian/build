@@ -87,7 +87,12 @@ function custom_kernel_config__kernel_debug_tier1() {
 		return 0
 	fi
 	display_alert "${EXTENSION}: tier 1" "printk timestamps + lockup/hung-task detection" "info"
+	# DEBUG_KERNEL is only a menu gate, but the lockup/hung-task detectors,
+	# SCHED_STACK_END_CHECK and KALLSYMS_ALL all depend on it. Most family
+	# configs get it selected via EXPERT=y; the few that don't (e.g.
+	# mvebu-legacy) would otherwise have every option below silently dropped.
 	opts_y+=(
+		"DEBUG_KERNEL"
 		"PRINTK_TIME"
 		"PRINTK_CALLER"
 		"DETECT_HUNG_TASK"
