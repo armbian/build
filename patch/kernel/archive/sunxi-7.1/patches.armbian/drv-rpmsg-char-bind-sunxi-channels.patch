@@ -1,0 +1,59 @@
+diff --git a/drivers/rpmsg/rpmsg_char.c b/drivers/rpmsg/rpmsg_char.c
+index bff5aefee212..e6f14262673fe7d1f1ef722410551403a4cedbc7 100644
+--- a/drivers/rpmsg/rpmsg_char.c
++++ b/drivers/rpmsg/rpmsg_char.c
+@@ -176,6 +176,26 @@ static int rpmsg_eptdev_open(struct inode *inode, struct file *filp)
+ 
+ 	ept->flow_cb = rpmsg_ept_flow_cb;
+ 	eptdev->ept = ept;
++
++	/*
++	 * sunxi E906 name-service channels (client, heartbeat) only learn our
++	 * endpoint address once they receive a message: their endpoints are
++	 * auto-bound on RX.  Send a one-byte no-op so the remote endpoint
++	 * binds and starts sending data (heartbeat, client create) to us.
++	 */
++	if (rpdev->announce && !strncmp(rpdev->id.name, "sunxi,", 6)) {
++		int ret = rpmsg_trysendto(ept, "\0", 1, eptdev->chinfo.dst);
++
++		if (ret) {
++			if (!eptdev->default_ept)
++				rpmsg_destroy_ept(ept);
++			eptdev->ept = NULL;
++			put_device(dev);
++			mutex_unlock(&eptdev->ept_lock);
++			return ret;
++		}
++	}
++
+ 	filp->private_data = eptdev;
+ 	mutex_unlock(&eptdev->ept_lock);
+ 
+@@ -534,6 +544,8 @@ static void rpmsg_chrdev_remove(struct rpmsg_device *rpdev)
+ static struct rpmsg_device_id rpmsg_chrdev_id_table[] = {
+ 	{ .name	= "rpmsg-raw" },
+ 	{ .name	= "rpmsg_chrdev" },
++	{ .name	= "sunxi,rpmsg_client" },
++	{ .name	= "sunxi,rpmsg_heartbeat" },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(rpmsg, rpmsg_chrdev_id_table);
+diff --git a/drivers/rpmsg/virtio_rpmsg_bus.c b/drivers/rpmsg/virtio_rpmsg_bus.c
+index 1b8bb05924af..eee98af52212 100644
+--- a/drivers/rpmsg/virtio_rpmsg_bus.c
++++ b/drivers/rpmsg/virtio_rpmsg_bus.c
+@@ -420,6 +420,14 @@ static struct rpmsg_device *__rpmsg_create_channel(struct virtproc_info *vrp,
+ 	 */
+ 	rpdev->announce = rpdev->src != RPMSG_ADDR_ANY;
+ 
++	/*
++	 * sunxi E906: channels announced by the remote (rpmsg client,
++	 * heartbeat) still need our endpoint address announced back,
++	 * otherwise the remote cannot send data to us.
++	 */
++	if (!strncmp(chinfo->name, "sunxi,", 6))
++		rpdev->announce = true;
++
+ 	strscpy(rpdev->id.name, chinfo->name, sizeof(rpdev->id.name));
+ 
+ 	rpdev->dev.parent = &vrp->vdev->dev;

@@ -1,0 +1,491 @@
+From 5e890554155186500a092031c1455fd6a134ea02 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Wed, 29 Jul 2026 11:45:40 -0400
+Subject: [PATCH] mailbox: sun55i: add T527/A523 msgbox driver
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:big-pickle
+---
+ drivers/mailbox/Kconfig         |   9 +
+ drivers/mailbox/Makefile        |   1 +
+ drivers/mailbox/sun55i-msgbox.c | 437 ++++++++++++++++++++++++++++++++
+ 3 files changed, 447 insertions(+)
+ create mode 100644 drivers/mailbox/sun55i-msgbox.c
+
+diff --git a/drivers/mailbox/Kconfig b/drivers/mailbox/Kconfig
+index 5bf4155..dee77a6 100644
+--- a/drivers/mailbox/Kconfig
++++ b/drivers/mailbox/Kconfig
+@@ -332,6 +332,15 @@ config SUN6I_MSGBOX
+ 	  various Allwinner SoCs. This mailbox is used for communication
+ 	  between the application CPUs and the power management coprocessor.
+ 
++config SUN55I_MSGBOX
++	tristate "Allwinner sun55i (T527/A523) Message Box"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	default ARCH_SUNXI
++	help
++	  Mailbox implementation for the multi-region hardware message
++	  box present in Allwinner sun55i SoCs (T527/A523). Supports
++	  12 channels across 4 processors (ARM, DSP, CPUS, RV).
++
+ config SPRD_MBOX
+ 	tristate "Spreadtrum Mailbox"
+ 	depends on ARCH_SPRD || COMPILE_TEST
+diff --git a/drivers/mailbox/Makefile b/drivers/mailbox/Makefile
+index 944d8ea..4c0b038 100644
+--- a/drivers/mailbox/Makefile
++++ b/drivers/mailbox/Makefile
+@@ -70,6 +70,7 @@ obj-$(CONFIG_MTK_VCP_MBOX)	+= mtk-vcp-mailbox.o
+ obj-$(CONFIG_ZYNQMP_IPI_MBOX)	+= zynqmp-ipi-mailbox.o
+ 
+ obj-$(CONFIG_SUN6I_MSGBOX)	+= sun6i-msgbox.o
++obj-$(CONFIG_SUN55I_MSGBOX)	+= sun55i-msgbox.o
+ 
+ obj-$(CONFIG_SPRD_MBOX)		+= sprd-mailbox.o
+ 
+diff --git a/drivers/mailbox/sun55i-msgbox.c b/drivers/mailbox/sun55i-msgbox.c
+new file mode 100644
+index 0000000..a209ac80
+--- /dev/null
++++ b/drivers/mailbox/sun55i-msgbox.c
+@@ -0,0 +1,437 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/mailbox_controller.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
++
++#define NUM_CHANS		12
++#define NUM_PROC		4
++#define CHANS_PER_PROC		4
++#define FIFO_DEPTH		15
++
++#define MSGBOX_REG(n)		(0x100 * (n))
++
++#define READ_IRQ_EN(coef)	(0x20 + MSGBOX_REG(coef))
++#define READ_IRQ_STAT(coef)	(0x24 + MSGBOX_REG(coef))
++#define WRITE_IRQ_EN(coef)	(0x30 + MSGBOX_REG(coef))
++#define WRITE_IRQ_STAT(coef)	(0x34 + MSGBOX_REG(coef))
++
++#define MSG_STAT(coef, p)	(0x60 + MSGBOX_REG(coef) + 0x4 * (p))
++#define MSG_DATA(coef, p)	(0x70 + MSGBOX_REG(coef) + 0x4 * (p))
++
++#define RX_IRQ_BIT(p)		BIT((p) * 2)
++
++struct sun55i_msgbox {
++	struct mbox_controller controller;
++	struct clk *clk;
++	struct reset_control *rst;
++	spinlock_t lock;
++	void __iomem *base[NUM_PROC];
++	struct delayed_work rx_poll;
++	int irq;
++	u32 local_id;
++};
++
++struct chan_map {
++	int remote_proc;
++	int peer_chan;
++};
++
++static struct chan_map sun55i_chan_maps[NUM_CHANS];
++
++/*
++ * sun55iw3: ARM:0, DSP:1, CPUS:2, RV:3
++ * to_coef_n[sender][receiver] = mailbox coefficient used on the
++ * receiver's block when the sender writes to it.
++ *
++ * The RV (E906) writes to coefficient 2 on every peer block, so the
++ * coefficient must not be conflated with the process index: the kick
++ * to the E906 must land at 0x07136270 (RV base 0x07136000 + coef 2),
++ * and its replies arrive on the ARM block at coef 2 (0x030032xx).
++ */
++static const int sun55iw3_to_coef_n[4][4] = {
++	{-1, 1, 0, 2},
++	{0, -1, 1, 2},
++	{0, 1, -1, 2},
++	{2, 1, 0, -1},
++};
++
++static inline int msgbox_coef(int sender, int receiver)
++{
++	return sun55iw3_to_coef_n[sender][receiver];
++}
++
++static int sun55i_msgbox_build_maps(struct sun55i_msgbox *mbox)
++{
++	int i, chan = 0;
++
++	for (i = 0; i < NUM_PROC; i++) {
++		int j;
++
++		if (i == mbox->local_id)
++			continue;
++		for (j = 0; j < CHANS_PER_PROC; j++) {
++			if (chan >= NUM_CHANS)
++				return -EINVAL;
++			sun55i_chan_maps[chan].remote_proc = i;
++			sun55i_chan_maps[chan].peer_chan = j;
++			chan++;
++		}
++	}
++
++	return 0;
++}
++
++static inline struct chan_map *chan_to_map(unsigned int chan)
++{
++	if (chan >= NUM_CHANS)
++		return NULL;
++	return &sun55i_chan_maps[chan];
++}
++
++static void sun55i_msgbox_rx_drain(struct sun55i_msgbox *mbox,
++				   struct mbox_chan *chan, int recv_coef,
++				   int peer_chan, u32 irq_bit)
++{
++	void __iomem *base = mbox->base[mbox->local_id];
++	int timeout = FIFO_DEPTH * 2;
++
++	/* The IRQ pending bit can be cleared only once the FIFO is
++	 * empty: pop every queued message first and hand the payload
++	 * (the remote's vqid) to the client, then clear pending. */
++	while ((readl(base + MSG_STAT(recv_coef, peer_chan)) & 0xf) &&
++	       timeout--) {
++		u32 msg = readl(base + MSG_DATA(recv_coef, peer_chan));
++
++		mbox_chan_received_data(chan, &msg);
++	}
++	writel(irq_bit, base + READ_IRQ_STAT(recv_coef));
++}
++
++static irqreturn_t sun55i_msgbox_irq(int irq, void *dev_id)
++{
++	struct sun55i_msgbox *mbox = dev_id;
++	unsigned long flags;
++	bool handled = false;
++	u32 status, en;
++	int i;
++
++	spin_lock_irqsave(&mbox->lock, flags);
++	for (i = 0; i < NUM_CHANS; i++) {
++		struct chan_map *map = chan_to_map(i);
++		u32 irq_bit, recv_coef;
++
++		if (!map)
++			continue;
++
++		recv_coef = msgbox_coef(map->remote_proc, mbox->local_id);
++		irq_bit = RX_IRQ_BIT(map->peer_chan);
++		en = readl(mbox->base[mbox->local_id] +
++			   READ_IRQ_EN(recv_coef));
++		status = readl(mbox->base[mbox->local_id] +
++			       READ_IRQ_STAT(recv_coef));
++		if (!(status & en & irq_bit))
++			continue;
++
++		handled = true;
++		sun55i_msgbox_rx_drain(mbox, &mbox->controller.chans[i],
++				       recv_coef, map->peer_chan, irq_bit);
++	}
++	spin_unlock_irqrestore(&mbox->lock, flags);
++
++	return handled ? IRQ_HANDLED : IRQ_NONE;
++}
++
++static int sun55i_msgbox_send_data(struct mbox_chan *chan, void *data)
++{
++	struct sun55i_msgbox *mbox = chan->con_priv;
++	int chan_idx = chan - mbox->controller.chans;
++	struct chan_map *map = chan_to_map(chan_idx);
++	u32 msg = data ? *(u32 *)data : 0;
++	u32 stat;
++	unsigned long flags;
++	int coef;
++
++	if (!map)
++		return -EINVAL;
++
++	coef = msgbox_coef(mbox->local_id, map->remote_proc);
++
++	spin_lock_irqsave(&mbox->lock, flags);
++
++	stat = readl(mbox->base[map->remote_proc] +
++		     MSG_STAT(coef, map->peer_chan));
++	if ((stat & 0xf) >= FIFO_DEPTH) {
++		spin_unlock_irqrestore(&mbox->lock, flags);
++		return -EBUSY;
++	}
++
++	writel(msg, mbox->base[map->remote_proc] +
++	       MSG_DATA(coef, map->peer_chan));
++
++	spin_unlock_irqrestore(&mbox->lock, flags);
++	return 0;
++}
++
++static int sun55i_msgbox_startup(struct mbox_chan *chan)
++{
++	struct sun55i_msgbox *mbox = chan->con_priv;
++	int chan_idx = chan - mbox->controller.chans;
++	struct chan_map *map = chan_to_map(chan_idx);
++	u32 en, recv_coef;
++	unsigned long flags;
++
++	if (!map)
++		return -EINVAL;
++
++	recv_coef = msgbox_coef(map->remote_proc, mbox->local_id);
++
++	spin_lock_irqsave(&mbox->lock, flags);
++
++	en = readl(mbox->base[mbox->local_id] + READ_IRQ_EN(recv_coef));
++	en |= RX_IRQ_BIT(map->peer_chan);
++	writel(en, mbox->base[mbox->local_id] + READ_IRQ_EN(recv_coef));
++
++	spin_unlock_irqrestore(&mbox->lock, flags);
++	return 0;
++}
++
++static void sun55i_msgbox_shutdown(struct mbox_chan *chan)
++{
++	struct sun55i_msgbox *mbox = chan->con_priv;
++	int chan_idx = chan - mbox->controller.chans;
++	struct chan_map *map = chan_to_map(chan_idx);
++	u32 en, recv_coef;
++	unsigned long flags;
++
++	if (!map)
++		return;
++
++	recv_coef = msgbox_coef(map->remote_proc, mbox->local_id);
++
++	spin_lock_irqsave(&mbox->lock, flags);
++
++	en = readl(mbox->base[mbox->local_id] + READ_IRQ_EN(recv_coef));
++	en &= ~RX_IRQ_BIT(map->peer_chan);
++	writel(en, mbox->base[mbox->local_id] + READ_IRQ_EN(recv_coef));
++
++	spin_unlock_irqrestore(&mbox->lock, flags);
++}
++
++static bool sun55i_msgbox_last_tx_done(struct mbox_chan *chan)
++{
++	struct sun55i_msgbox *mbox = chan->con_priv;
++	int chan_idx = chan - mbox->controller.chans;
++	struct chan_map *map = chan_to_map(chan_idx);
++	u32 stat;
++	int coef;
++
++	if (!map)
++		return true;
++
++	coef = msgbox_coef(mbox->local_id, map->remote_proc);
++	stat = readl(mbox->base[map->remote_proc] +
++		     MSG_STAT(coef, map->peer_chan));
++	return (stat & 0xf) < FIFO_DEPTH;
++}
++
++/*
++ * The msgbox IRQ line for the ARM block is not reliably wired in the
++ * mainline/Armbian DT, so also poll the read-IRQ status. The IRQ and
++ * the poller both run under mbox->lock: whoever clears the pending
++ * bit first wins, so a message is never delivered twice.
++ */
++static void sun55i_msgbox_poll_rx(struct work_struct *work)
++{
++	struct sun55i_msgbox *mbox = container_of(work, struct sun55i_msgbox,
++						  rx_poll.work);
++	unsigned long flags;
++	int i;
++
++	spin_lock_irqsave(&mbox->lock, flags);
++	for (i = 0; i < NUM_CHANS; i++) {
++		struct chan_map *map = chan_to_map(i);
++		u32 status, en, irq_bit, recv_coef;
++
++		if (!map)
++			continue;
++
++		recv_coef = msgbox_coef(map->remote_proc, mbox->local_id);
++		irq_bit = RX_IRQ_BIT(map->peer_chan);
++		en = readl(mbox->base[mbox->local_id] +
++			   READ_IRQ_EN(recv_coef));
++		status = readl(mbox->base[mbox->local_id] +
++			       READ_IRQ_STAT(recv_coef));
++		if (!(status & en & irq_bit))
++			continue;
++
++		sun55i_msgbox_rx_drain(mbox, &mbox->controller.chans[i],
++				       recv_coef, map->peer_chan, irq_bit);
++	}
++	spin_unlock_irqrestore(&mbox->lock, flags);
++
++	queue_delayed_work(system_unbound_wq, &mbox->rx_poll,
++			   msecs_to_jiffies(2));
++}
++
++static void sun55i_msgbox_start_rx_poll(struct sun55i_msgbox *mbox)
++{
++	INIT_DELAYED_WORK(&mbox->rx_poll, sun55i_msgbox_poll_rx);
++	queue_delayed_work(system_unbound_wq, &mbox->rx_poll,
++			   msecs_to_jiffies(2));
++}
++
++static void sun55i_msgbox_stop_rx_poll(struct sun55i_msgbox *mbox)
++{
++	cancel_delayed_work_sync(&mbox->rx_poll);
++}
++
++static const struct mbox_chan_ops sun55i_msgbox_ops = {
++	.send_data = sun55i_msgbox_send_data,
++	.startup = sun55i_msgbox_startup,
++	.shutdown = sun55i_msgbox_shutdown,
++	.last_tx_done = sun55i_msgbox_last_tx_done,
++};
++
++static int sun55i_msgbox_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun55i_msgbox *mbox;
++	struct mbox_chan *chans;
++	struct resource *res;
++	int ret, i;
++
++	mbox = devm_kzalloc(dev, sizeof(*mbox), GFP_KERNEL);
++	if (!mbox)
++		return -ENOMEM;
++
++	platform_set_drvdata(pdev, mbox);
++
++	mbox->local_id = 0;
++	of_property_read_u32(dev->of_node, "allwinner,local-id", &mbox->local_id);
++
++	spin_lock_init(&mbox->lock);
++
++	mbox->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(mbox->clk))
++		return dev_err_probe(dev, PTR_ERR(mbox->clk), "no clk\n");
++
++	mbox->rst = devm_reset_control_get_exclusive(dev, NULL);
++	if (IS_ERR(mbox->rst))
++		return dev_err_probe(dev, PTR_ERR(mbox->rst), "no rst\n");
++
++	for (i = 0; i < NUM_PROC; i++) {
++		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
++		if (!res)
++			return dev_err_probe(dev, -ENXIO,
++					     "no reg region %d\n", i);
++		mbox->base[i] = devm_ioremap_resource(dev, res);
++		if (IS_ERR(mbox->base[i]))
++			return PTR_ERR(mbox->base[i]);
++	}
++
++	ret = clk_prepare_enable(mbox->clk);
++	if (ret)
++		return ret;
++
++	ret = reset_control_deassert(mbox->rst);
++	if (ret)
++		goto err_clk;
++
++	for (i = 0; i < NUM_PROC; i++) {
++		writel(0, mbox->base[i] + READ_IRQ_EN(i));
++		writel(0, mbox->base[i] + WRITE_IRQ_EN(i));
++		writel(0xffff, mbox->base[i] + READ_IRQ_STAT(i));
++		writel(0xffff, mbox->base[i] + WRITE_IRQ_STAT(i));
++	}
++
++	chans = devm_kcalloc(dev, NUM_CHANS, sizeof(*chans), GFP_KERNEL);
++	if (!chans) {
++		ret = -ENOMEM;
++		goto err_rst;
++	}
++
++	ret = sun55i_msgbox_build_maps(mbox);
++	if (ret)
++		goto err_rst;
++
++	for (i = 0; i < NUM_CHANS; i++)
++		chans[i].con_priv = mbox;
++
++	mbox->controller.dev = dev;
++	mbox->controller.chans = chans;
++	mbox->controller.num_chans = NUM_CHANS;
++	mbox->controller.ops = &sun55i_msgbox_ops;
++	mbox->controller.txdone_poll = true;
++	mbox->controller.txpoll_period = 1;
++
++	mbox->irq = platform_get_irq(pdev, 0);
++	if (mbox->irq < 0) {
++		dev_warn(dev, "no IRQ (err=%d), using RX poller only\n",
++			 mbox->irq);
++		mbox->irq = -1;
++	} else {
++		ret = devm_request_irq(dev, mbox->irq, sun55i_msgbox_irq, 0,
++				       dev_name(dev), mbox);
++		if (ret) {
++			dev_warn(dev, "IRQ %d unavailable (%d), using RX poller only\n",
++				 mbox->irq, ret);
++			mbox->irq = -1;
++		}
++	}
++
++	ret = devm_mbox_controller_register(dev, &mbox->controller);
++	if (ret)
++		goto err_rst;
++
++	sun55i_msgbox_start_rx_poll(mbox);
++
++	dev_info(dev, "msgbox ready (local_id=%u, irq=%d)\n",
++		 mbox->local_id, mbox->irq);
++	return 0;
++
++err_rst:
++	reset_control_assert(mbox->rst);
++err_clk:
++	clk_disable_unprepare(mbox->clk);
++	return ret;
++}
++
++static void sun55i_msgbox_remove(struct platform_device *pdev)
++{
++	struct sun55i_msgbox *mbox = platform_get_drvdata(pdev);
++
++	sun55i_msgbox_stop_rx_poll(mbox);
++	reset_control_assert(mbox->rst);
++	clk_disable_unprepare(mbox->clk);
++}
++
++static const struct of_device_id sun55i_msgbox_of_match[] = {
++	{ .compatible = "allwinner,sun55iw3-msgbox" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun55i_msgbox_of_match);
++
++static struct platform_driver sun55i_msgbox_driver = {
++	.probe = sun55i_msgbox_probe,
++	.remove = sun55i_msgbox_remove,
++	.driver = {
++		.name = "sun55i-msgbox",
++		.of_match_table = sun55i_msgbox_of_match,
++	},
++};
++module_platform_driver(sun55i_msgbox_driver);
++
++MODULE_DESCRIPTION("Allwinner sun55i (T527/A523) Message Box");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
