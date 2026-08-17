@@ -16,10 +16,27 @@
 . /etc/armbian-release
 . /usr/lib/armbian/armbian-common
 
+# Cleanup gate: EXIT trap removes the marker only after FIRSTLOGIN_SUCCESS=1,
+# so power-loss or mid-run failure reruns firstlogin on next boot.
+FIRSTLOGIN_SUCCESS=0
+_firstlogin_cleanup() {
+	if [ "$FIRSTLOGIN_SUCCESS" = "1" ]; then
+		rm -f /root/.not_logged_in_yet
+		sync -f /root 2>/dev/null || sync
+	fi
+}
+trap _firstlogin_cleanup EXIT
+# DM takeover (gdm/lightdm) sends SIGHUP to the console's foreground process
+# while bash is mid-command. An untrapped SIGHUP kills bash mid-flight and its
+# EXIT trap gets cut short: builtins still run, but external commands (rm) do
+# not survive the dying shell. Handle the signal in normal execution context
+# instead — cleanup runs fully, then exit.
+trap '_firstlogin_cleanup; exit' HUP INT TERM
+
 check_abort() {
 
 	echo -e "\nDisabling user account creation procedure\n"
-	rm -f /root/.not_logged_in_yet
+	FIRSTLOGIN_SUCCESS=1
 	if [[ ${USER_SHELL} == zsh ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
@@ -714,9 +731,8 @@ add_user() {
 			[ -z "$RealName" ] && RealName="$RealUserName"
 			echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
 			echo -e "Please use this account for your daily work from now on.\n"
-			# .not_logged_in_yet is NOT deleted here - moved to end of script
-			# to ensure all subsequent configuration (timezone, SSH, desktop)
-			# completes before marking firstlogin as done
+			# .not_logged_in_yet is NOT deleted here - the EXIT trap removes
+			# it once FIRSTLOGIN_SUCCESS=1 is set after all config completes.
 			# set up profile sync daemon on desktop systems
 			if command -v psd > /dev/null 2>&1; then
 				# Grant psd-overlay-helper NOPASSWD via a sudoers drop-in (atomic write).
@@ -954,7 +970,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		fi
 		[[ "$REPEATS" -eq 0 ]] && exit
 	done
-	trap - INT TERM EXIT
+	trap - INT
 
 	# display support status
 	if [ "$IMAGE_TYPE" != "nightly" ]; then
@@ -978,7 +994,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# ask user to select shell
 	trap '' 2
 	set_shell || exit 1
-	trap - INT TERM EXIT
+	trap - INT
 
 	trap check_abort INT
 
@@ -991,12 +1007,12 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 			exit 1
 		fi
 	fi
-	trap - INT TERM EXIT
+	trap - INT
 
 	# ask user to select automated locales or not
 	trap '' 2
 	set_timezone_and_locales || exit 1
-	trap - INT TERM EXIT
+	trap - INT
 
 	if [[ ${USER_SHELL} == zsh ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
@@ -1014,6 +1030,10 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# firstlogin reruns for recovery. Unlike reload, restart succeeds on an
 	# inactive unit, so this does not loop on a fresh image.
 	systemctl restart ssh.service || exit 1
+	# All critical configuration is complete. The EXIT trap may now safely
+	# remove the marker; subsequent failures (DM startup, etc.) should not
+	# force a full firstlogin rerun.
+	FIRSTLOGIN_SUCCESS=1
 
 	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
 	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
@@ -1084,7 +1104,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		else
 			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 1
-			service lightdm start 2> /dev/null
+			systemctl --no-block start lightdm 2>/dev/null
 			if [ -f /root/.desktop_autologin ]; then
 				rm /root/.desktop_autologin
 			else
@@ -1113,7 +1133,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		else
 			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
 			sleep 1
-			service gdm3 start 2> /dev/null
+			systemctl --no-block start gdm3 2>/dev/null
 			if [ -f /root/.desktop_autologin ]; then
 				rm /root/.desktop_autologin
 			else
@@ -1145,7 +1165,8 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 			User=$RealUserName
 		EOF
 		echo -e "\n\e[1m\e[39mNow starting desktop environment via ${desktop_dm}...\x1B[0m\n"
-		systemctl enable --now sddm 2> /dev/null
+		systemctl enable sddm 2>/dev/null
+		systemctl --no-block start sddm 2>/dev/null
 
 		if [ -f /root/.desktop_autologin ]; then
 				rm /root/.desktop_autologin
@@ -1175,10 +1196,4 @@ if [[ -f /root/provisioning.sh ]]; then
 	. /root/provisioning.sh
 fi
 
-# All configuration complete - safe to remove firstlogin marker now
-# This must be the last operation to ensure power-loss during any
-# step above will cause firstlogin to re-run on next boot.
-if tty -s; then
-	rm -f /root/.not_logged_in_yet
-	sync -f /root 2>/dev/null || sync
-fi
+# Marker cleanup is handled by _firstlogin_cleanup EXIT trap.
