@@ -1,0 +1,773 @@
+diff --git a/drivers/remoteproc/Kconfig b/drivers/remoteproc/Kconfig
+index ee54436fea5a..5dce1a82822f 100644
+--- a/drivers/remoteproc/Kconfig
++++ b/drivers/remoteproc/Kconfig
+@@ -380,6 +380,19 @@ config XLNX_R5_REMOTEPROC
+ 
+ 	  It's safe to say N if not interested in using RPU r5f cores.
+ 
++config SUN55I_E906_REMOTEPROC
++	tristate "Allwinner sun55i E906 remoteproc support"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	depends on REMOTEPROC
++	select MAILBOX
++	help
++	  Say y here to support the Allwinner sun55i E906 RISC-V remote
++	  processor via the remote processor framework. An ELF firmware can
++	  be loaded thanks to sysfs remoteproc entries. The remote processor
++	  can be started and stopped.
++
++	  This can be either built-in or a loadable module.
++
+ endif # REMOTEPROC
+ 
+ endmenu
+diff --git a/drivers/remoteproc/Makefile b/drivers/remoteproc/Makefile
+index 1c7598b8475d..3d1fd410690f 100644
+--- a/drivers/remoteproc/Makefile
++++ b/drivers/remoteproc/Makefile
+@@ -40,3 +40,4 @@ obj-$(CONFIG_TI_K3_DSP_REMOTEPROC)	+= ti_k3_dsp_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_TI_K3_M4_REMOTEPROC)	+= ti_k3_m4_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_TI_K3_R5_REMOTEPROC)	+= ti_k3_r5_remoteproc.o ti_k3_common.o
+ obj-$(CONFIG_XLNX_R5_REMOTEPROC)	+= xlnx_r5_remoteproc.o
++obj-$(CONFIG_SUN55I_E906_REMOTEPROC)	+= sun55i_e906_rproc.o
+diff --git a/drivers/remoteproc/sun55i_e906_rproc.c b/drivers/remoteproc/sun55i_e906_rproc.c
+new file mode 100644
+index 000000000000..5bf1bc477293
+--- /dev/null
++++ b/drivers/remoteproc/sun55i_e906_rproc.c
+@@ -0,0 +1,734 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/clk.h>
++#include <linux/dma-mapping.h>
++#include <linux/elf.h>
++#include <linux/firmware.h>
++#include <linux/io.h>
++#include <linux/mailbox_client.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/remoteproc.h>
++#include <linux/reset.h>
++#include <linux/workqueue.h>
++#include "remoteproc_internal.h"
++
++#define E906_STA_ADD_REG	0x204
++
++#define MBOX_NB_VQ		2
++
++struct sun55i_memory_mapping {
++	u64 da;
++	u64 len;
++	u64 pa;
++};
++
++struct sun55i_mbox {
++	struct mbox_chan *chan;
++	struct mbox_client client;
++	struct work_struct vq_work;
++	int vq_id;
++};
++
++struct sun55i_e906_rproc {
++	struct device *dev;
++	struct rproc *rproc;
++
++	void __iomem *e906_cfg;
++
++	struct clk *pubsram_clk;
++	struct clk *mod_clk;
++	struct clk *cfg_clk;
++
++	struct reset_control *pubsram_rst;
++	struct reset_control *mod_rst;
++	struct reset_control *cfg_rst;
++	struct reset_control *dbg_rst;
++
++	struct sun55i_memory_mapping *mem_maps;
++	int mem_maps_cnt;
++
++	struct sun55i_mbox mb;
++	struct workqueue_struct *workqueue;
++
++	u32 pc_entry;
++};
++
++static struct sun55i_e906_rproc *
++sun55i_rproc_priv(struct rproc *rproc)
++{
++	return (struct sun55i_e906_rproc *)rproc->priv;
++}
++
++static int sun55i_da_to_pa(struct rproc *rproc, u64 da, phys_addr_t *pa)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	int i;
++
++	for (i = 0; i < priv->mem_maps_cnt; i++) {
++		if (da < priv->mem_maps[i].da ||
++		    da >= priv->mem_maps[i].da + priv->mem_maps[i].len)
++			continue;
++		*pa = da - priv->mem_maps[i].da + priv->mem_maps[i].pa;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int sun55i_pa_to_da(struct rproc *rproc, phys_addr_t pa, u64 *da)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	int i;
++
++	for (i = 0; i < priv->mem_maps_cnt; i++) {
++		if (pa < priv->mem_maps[i].pa ||
++		    pa >= priv->mem_maps[i].pa + priv->mem_maps[i].len)
++			continue;
++		*da = pa - priv->mem_maps[i].pa + priv->mem_maps[i].da;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static void *sun55i_da_to_va(struct rproc *rproc, u64 da, size_t len,
++			     bool *is_iomem)
++{
++	struct rproc_mem_entry *carveout;
++	phys_addr_t pa;
++	int ret;
++
++	ret = sun55i_da_to_pa(rproc, da, &pa);
++	if (ret)
++		return NULL;
++
++	list_for_each_entry(carveout, &rproc->carveouts, node) {
++		if (pa >= carveout->dma &&
++		    pa < carveout->dma + carveout->len) {
++			if (is_iomem)
++				*is_iomem = true;
++			return carveout->va + (pa - carveout->dma);
++		}
++	}
++
++	return NULL;
++}
++
++static int sun55i_mem_alloc(struct rproc *rproc, struct rproc_mem_entry *mem)
++{
++	void *va;
++
++	va = ioremap_wc(mem->dma, mem->len);
++	if (!va)
++		return -ENOMEM;
++
++	mem->va = va;
++	return 0;
++}
++
++static int sun55i_mem_release(struct rproc *rproc, struct rproc_mem_entry *mem)
++{
++	iounmap(mem->va);
++	return 0;
++}
++
++static void sun55i_mb_vq_work(struct work_struct *work)
++{
++	struct sun55i_mbox *mb = container_of(work, struct sun55i_mbox, vq_work);
++	struct rproc *rproc = dev_get_drvdata(mb->client.dev);
++
++	if (rproc_vq_interrupt(rproc, mb->vq_id) == IRQ_NONE)
++		dev_dbg(&rproc->dev, "no message in vq%d\n", mb->vq_id);
++}
++
++static void sun55i_mb_rx_callback(struct mbox_client *cl, void *data)
++{
++	struct rproc *rproc = dev_get_drvdata(cl->dev);
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	struct sun55i_mbox *mb = container_of(cl, struct sun55i_mbox, client);
++
++	mb->vq_id = *(u32 *)data;
++	queue_work(priv->workqueue, &mb->vq_work);
++}
++
++static void sun55i_mb_tx_done(struct mbox_client *cl, void *msg, int r)
++{
++	struct rproc *rproc = dev_get_drvdata(cl->dev);
++
++	devm_kfree(&rproc->dev, msg);
++}
++
++static int sun55i_request_mbox(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	struct device *dev = priv->dev;
++
++	if (!of_property_present(dev->of_node, "mboxes"))
++		return 0;
++
++	priv->mb.client.rx_callback = sun55i_mb_rx_callback;
++	priv->mb.client.tx_done = sun55i_mb_tx_done;
++	priv->mb.client.tx_block = false;
++	priv->mb.client.dev = dev;
++
++	priv->mb.chan = mbox_request_channel(&priv->mb.client, 0);
++	if (IS_ERR(priv->mb.chan)) {
++		int ret = PTR_ERR(priv->mb.chan);
++
++		if (ret == -EPROBE_DEFER)
++			return ret;
++		priv->mb.chan = NULL;
++		return 0;
++	}
++	INIT_WORK(&priv->mb.vq_work, sun55i_mb_vq_work);
++	return 0;
++}
++
++static void sun55i_free_mbox(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++
++	if (priv->mb.chan) {
++		mbox_free_channel(priv->mb.chan);
++		priv->mb.chan = NULL;
++	}
++}
++
++static int sun55i_e906_assert(struct sun55i_e906_rproc *priv)
++{
++	int ret;
++
++	ret = reset_control_assert(priv->mod_rst);
++	if (ret)
++		return ret;
++	ret = reset_control_assert(priv->cfg_rst);
++	if (ret)
++		return ret;
++	return reset_control_assert(priv->dbg_rst);
++}
++
++static int sun55i_e906_deassert(struct sun55i_e906_rproc *priv)
++{
++	int ret;
++
++	ret = reset_control_deassert(priv->mod_rst);
++	if (ret)
++		return ret;
++	ret = reset_control_deassert(priv->cfg_rst);
++	if (ret)
++		return ret;
++	return reset_control_deassert(priv->dbg_rst);
++}
++
++static int sun55i_e906_enable_sram(struct sun55i_e906_rproc *priv)
++{
++	int ret;
++
++	if (priv->pubsram_rst) {
++		ret = reset_control_deassert(priv->pubsram_rst);
++		if (ret)
++			return ret;
++	}
++
++	ret = clk_prepare_enable(priv->pubsram_clk);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static int sun55i_e906_start(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	struct device *dev = priv->dev;
++	int ret;
++
++	ret = sun55i_e906_assert(priv);
++	if (ret)
++		return ret;
++
++	ret = sun55i_e906_deassert(priv);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(priv->cfg_clk);
++	if (ret) {
++		dev_err(dev, "cfg clk enable failed\n");
++		return ret;
++	}
++
++	/* set start vector */
++	writel(priv->pc_entry, priv->e906_cfg + E906_STA_ADD_REG);
++
++	ret = clk_prepare_enable(priv->mod_clk);
++	if (ret) {
++		dev_err(dev, "mod clk enable failed\n");
++		return ret;
++	}
++
++	return 0;
++}
++
++static int sun55i_e906_stop(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	int ret;
++
++	/* reset before turning off the clock for rv core */
++	ret = reset_control_assert(priv->mod_rst);
++	if (ret)
++		return ret;
++
++	clk_disable_unprepare(priv->mod_clk);
++	clk_disable_unprepare(priv->cfg_clk);
++
++	ret = reset_control_assert(priv->cfg_rst);
++	if (ret)
++		return ret;
++
++	ret = reset_control_assert(priv->dbg_rst);
++	if (ret)
++		return ret;
++
++	clk_disable_unprepare(priv->pubsram_clk);
++
++	return 0;
++}
++
++static int sun55i_e906_attach(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	int ret;
++
++	pm_runtime_get_sync(priv->dev);
++
++	ret = clk_prepare_enable(priv->pubsram_clk);
++	if (ret)
++		return ret;
++
++	ret = sun55i_e906_deassert(priv);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(priv->cfg_clk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(priv->mod_clk);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static void sun55i_e906_kick(struct rproc *rproc, int vqid)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	u32 *msg;
++	int err;
++
++	if (!priv->mb.chan)
++		return;
++	if (WARN_ON(vqid >= MBOX_NB_VQ))
++		return;
++
++	msg = devm_kzalloc(&rproc->dev, sizeof(*msg), GFP_KERNEL);
++	if (!msg)
++		return;
++
++	*msg = vqid;
++	err = mbox_send_message(priv->mb.chan, msg);
++	if (err < 0) {
++		dev_err(&rproc->dev, "kick mbox failed: %d\n", err);
++		devm_kfree(&rproc->dev, msg);
++	}
++}
++
++static int sun55i_e906_parse_fw(struct rproc *rproc, const struct firmware *fw)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	struct elf32_hdr *ehdr = (struct elf32_hdr *)fw->data;
++	int ret;
++
++	if (fw->size < sizeof(*ehdr))
++		return -EINVAL;
++
++	priv->pc_entry = ehdr->e_entry;
++
++	ret = rproc_elf_load_rsc_table(rproc, fw);
++	if (ret) {
++		rproc->cached_table = NULL;
++		rproc->table_ptr = NULL;
++		rproc->table_sz = 0;
++	}
++
++	return 0;
++}
++
++static int sun55i_e906_load(struct rproc *rproc, const struct firmware *fw)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	int ret;
++
++	ret = sun55i_e906_enable_sram(priv);
++	if (ret)
++		return ret;
++
++	return rproc_elf_load_segments(rproc, fw);
++}
++
++static int sun55i_e906_prepare(struct rproc *rproc)
++{
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++	struct device *dev = priv->dev;
++	struct device_node *np = dev->of_node;
++	struct of_phandle_iterator it;
++	struct rproc_mem_entry *mem, *tmp;
++	struct reserved_mem *rmem;
++	int ret;
++
++	ret = of_phandle_iterator_init(&it, np, "memory-region", NULL, 0);
++	if (ret)
++		return 0;
++
++	while (of_phandle_iterator_next(&it) == 0) {
++		u64 da;
++
++		rmem = of_reserved_mem_lookup(it.node);
++		if (!rmem) {
++			dev_err(dev, "unable to find memory-region %pOF\n",
++				it.node);
++			return -EINVAL;
++		}
++
++		ret = sun55i_pa_to_da(rproc, rmem->base, &da);
++		if (ret) {
++			dev_err(dev, "memory-region %pa not in mappings\n",
++				&rmem->base);
++			return -EINVAL;
++		}
++
++		mem = rproc_mem_entry_init(dev, NULL,
++					   (dma_addr_t)rmem->base,
++					   rmem->size, da, NULL,
++					   sun55i_mem_release,
++					   it.node->name);
++		if (mem) {
++			rproc_coredump_add_segment(rproc, da,
++						   rmem->size);
++			ret = sun55i_mem_alloc(rproc, mem);
++			if (ret)
++				goto clean_up;
++		}
++
++		if (!mem) {
++			ret = -ENOMEM;
++			goto clean_up;
++		}
++
++		rproc_add_carveout(rproc, mem);
++	}
++
++	return 0;
++
++clean_up:
++	list_for_each_entry_safe(mem, tmp, &rproc->carveouts, node) {
++		if (mem->release)
++			mem->release(rproc, mem);
++		list_del(&mem->node);
++		kfree(mem);
++	}
++	return ret;
++}
++
++static int sun55i_e906_unprepare(struct rproc *rproc)
++{
++	struct rproc_mem_entry *entry, *tmp;
++
++	list_for_each_entry_safe(entry, tmp, &rproc->carveouts, node) {
++		if (entry->release)
++			entry->release(rproc, entry);
++		list_del(&entry->node);
++		kfree(entry);
++	}
++	return 0;
++}
++
++static int sun55i_e906_find_rsc_table(struct rproc *rproc,
++				      const struct firmware *fw,
++				      struct elf32_shdr **find_shdr)
++{
++	struct elf32_hdr *ehdr = (struct elf32_hdr *)fw->data;
++	struct elf32_shdr *shdr;
++	const char *name_table;
++	const u8 *elf_data = fw->data;
++	size_t shdr_end, str_end;
++	u32 i;
++
++	if (fw->size < sizeof(*ehdr) ||
++	    ehdr->e_ident[EI_CLASS] != ELFCLASS32)
++		return -EINVAL;
++
++	shdr_end = (size_t)ehdr->e_shoff +
++		   (size_t)ehdr->e_shnum * sizeof(*shdr);
++	if (shdr_end > fw->size)
++		return -EINVAL;
++
++	if (ehdr->e_shstrndx >= ehdr->e_shnum)
++		return -EINVAL;
++
++	shdr = (struct elf32_shdr *)(elf_data + ehdr->e_shoff);
++	str_end = (size_t)shdr[ehdr->e_shstrndx].sh_offset +
++		  shdr[ehdr->e_shstrndx].sh_size;
++	if (str_end > fw->size)
++		return -EINVAL;
++
++	name_table = (const char *)(elf_data +
++				    shdr[ehdr->e_shstrndx].sh_offset);
++
++	for (i = 0; i < ehdr->e_shnum; i++, shdr++) {
++		if (shdr->sh_name + sizeof(".resource_table") >
++		    shdr[ehdr->e_shstrndx].sh_size)
++			continue;
++		if (strncmp(name_table + shdr->sh_name, ".resource_table",
++			    sizeof(".resource_table") - 1))
++			continue;
++		*find_shdr = shdr;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static struct resource_table *
++sun55i_e906_get_loaded_rsc_table(struct rproc *rproc, size_t *table_sz)
++{
++	struct device *dev = &rproc->dev;
++	const struct firmware *fw;
++	struct elf32_shdr *shdr;
++	int ret;
++
++	ret = request_firmware(&fw, rproc->firmware, dev);
++	if (ret < 0)
++		return ERR_PTR(-ENODEV);
++
++	ret = rproc_elf_sanity_check(rproc, fw);
++	if (ret) {
++		release_firmware(fw);
++		return ERR_PTR(ret);
++	}
++
++	ret = sun55i_e906_find_rsc_table(rproc, fw, &shdr);
++	if (ret) {
++		release_firmware(fw);
++		return ERR_PTR(-ENODEV);
++	}
++
++	*table_sz = shdr->sh_size;
++	release_firmware(fw);
++
++	return rproc_da_to_va(rproc, shdr->sh_addr, *table_sz, NULL);
++}
++
++static const struct rproc_ops sun55i_e906_rproc_ops = {
++	.prepare	= sun55i_e906_prepare,
++	.unprepare	= sun55i_e906_unprepare,
++	.start		= sun55i_e906_start,
++	.stop		= sun55i_e906_stop,
++	.attach		= sun55i_e906_attach,
++	.da_to_va	= sun55i_da_to_va,
++	.kick		= sun55i_e906_kick,
++	.parse_fw	= sun55i_e906_parse_fw,
++	.load		= sun55i_e906_load,
++	.get_loaded_rsc_table = sun55i_e906_get_loaded_rsc_table,
++	.find_loaded_rsc_table = rproc_elf_find_loaded_rsc_table,
++	.sanity_check	= rproc_elf_sanity_check,
++	.get_boot_addr	= rproc_elf_get_boot_addr,
++};
++
++static int sun55i_e906_parse_dt(struct sun55i_e906_rproc *priv)
++{
++	struct device *dev = priv->dev;
++	struct platform_device *pdev = to_platform_device(dev);
++	struct resource *res;
++	u32 *map_array;
++	int ret, i, count;
++
++	priv->pubsram_clk = devm_clk_get(dev, "pubsram");
++	if (IS_ERR(priv->pubsram_clk))
++		return dev_err_probe(dev, PTR_ERR(priv->pubsram_clk),
++				     "no pubsram clock\n");
++
++	priv->mod_clk = devm_clk_get(dev, "mod");
++	if (IS_ERR(priv->mod_clk))
++		return dev_err_probe(dev, PTR_ERR(priv->mod_clk),
++				     "no mod clock\n");
++
++	priv->cfg_clk = devm_clk_get(dev, "cfg");
++	if (IS_ERR(priv->cfg_clk))
++		return dev_err_probe(dev, PTR_ERR(priv->cfg_clk),
++				     "no cfg clock\n");
++
++	if (of_property_match_string(dev->of_node, "reset-names",
++				     "pubsram-rst") >= 0) {
++		priv->pubsram_rst = devm_reset_control_get_exclusive(dev,
++								     "pubsram-rst");
++		if (IS_ERR(priv->pubsram_rst))
++			return dev_err_probe(dev, PTR_ERR(priv->pubsram_rst),
++					     "no pubsram-rst reset\n");
++	}
++
++	priv->mod_rst = devm_reset_control_get_exclusive(dev, "mod-rst");
++	if (IS_ERR(priv->mod_rst))
++		return dev_err_probe(dev, PTR_ERR(priv->mod_rst),
++				     "no mod-rst reset\n");
++
++	priv->cfg_rst = devm_reset_control_get_exclusive(dev, "cfg-rst");
++	if (IS_ERR(priv->cfg_rst))
++		return dev_err_probe(dev, PTR_ERR(priv->cfg_rst),
++				     "no cfg-rst reset\n");
++
++	priv->dbg_rst = devm_reset_control_get_exclusive(dev, "dbg-rst");
++	if (IS_ERR(priv->dbg_rst))
++		return dev_err_probe(dev, PTR_ERR(priv->dbg_rst),
++				     "no dbg-rst reset\n");
++
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "e906-cfg");
++	if (!res) {
++		dev_err(dev, "no e906-cfg resource\n");
++		return -ENXIO;
++	}
++	priv->e906_cfg = devm_ioremap_resource(dev, res);
++	if (IS_ERR(priv->e906_cfg))
++		return PTR_ERR(priv->e906_cfg);
++
++	count = of_property_count_elems_of_size(dev->of_node,
++						"memory-mappings",
++						sizeof(u32) * 3);
++	if (count <= 0) {
++		dev_err(dev, "no memory-mappings\n");
++		return -ENXIO;
++	}
++
++	priv->mem_maps_cnt = count;
++	priv->mem_maps = devm_kcalloc(dev, count, sizeof(*priv->mem_maps),
++				      GFP_KERNEL);
++	if (!priv->mem_maps)
++		return -ENOMEM;
++
++	map_array = devm_kcalloc(dev, count * 3, sizeof(u32), GFP_KERNEL);
++	if (!map_array)
++		return -ENOMEM;
++
++	ret = of_property_read_u32_array(dev->of_node, "memory-mappings",
++					 map_array, count * 3);
++	if (ret) {
++		dev_err(dev, "failed to read memory-mappings\n");
++		return ret;
++	}
++
++	for (i = 0; i < count; i++) {
++		priv->mem_maps[i].da = map_array[i * 3];
++		priv->mem_maps[i].len = map_array[i * 3 + 1];
++		priv->mem_maps[i].pa = map_array[i * 3 + 2];
++	}
++
++	devm_kfree(dev, map_array);
++	return 0;
++}
++
++static int sun55i_e906_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct rproc *rproc;
++	struct sun55i_e906_rproc *priv;
++	const char *fw_name = NULL;
++	int ret;
++
++	of_property_read_string(dev->of_node, "firmware-name", &fw_name);
++
++	rproc = rproc_alloc(dev, dev_name(dev),
++			    &sun55i_e906_rproc_ops,
++			    fw_name, sizeof(*priv));
++	if (!rproc)
++		return -ENOMEM;
++
++	priv = sun55i_rproc_priv(rproc);
++	priv->dev = dev;
++	priv->rproc = rproc;
++
++	ret = sun55i_e906_parse_dt(priv);
++	if (ret)
++		goto err_free_rproc;
++
++	rproc->has_iommu = false;
++	rproc->auto_boot = false;
++
++	ret = sun55i_request_mbox(rproc);
++	if (ret)
++		goto err_free_rproc;
++
++	priv->workqueue = alloc_workqueue(dev_name(dev), WQ_UNBOUND, 1);
++	if (!priv->workqueue) {
++		ret = -ENOMEM;
++		goto err_free_mbox;
++	}
++
++	platform_set_drvdata(pdev, rproc);
++
++	pm_runtime_enable(dev);
++
++	ret = rproc_add(rproc);
++	if (ret) {
++		pm_runtime_disable(dev);
++		destroy_workqueue(priv->workqueue);
++		sun55i_free_mbox(rproc);
++		rproc_free(rproc);
++		return ret;
++	}
++
++	dev_info(dev, "E906 RISC-V remoteproc ready (fw: %s)\n",
++		 fw_name ? fw_name : "none");
++	return 0;
++
++err_free_mbox:
++	sun55i_free_mbox(rproc);
++err_free_rproc:
++	rproc_free(rproc);
++	return ret;
++}
++
++static void sun55i_e906_remove(struct platform_device *pdev)
++{
++	struct rproc *rproc = platform_get_drvdata(pdev);
++	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
++
++	rproc_del(rproc);
++	destroy_workqueue(priv->workqueue);
++	sun55i_free_mbox(rproc);
++	pm_runtime_disable(&pdev->dev);
++	rproc_free(rproc);
++}
++
++static const struct of_device_id sun55i_e906_rproc_of_match[] = {
++	{ .compatible = "allwinner,e906-rproc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun55i_e906_rproc_of_match);
++
++static struct platform_driver sun55i_e906_rproc_driver = {
++	.probe	= sun55i_e906_probe,
++	.remove	= sun55i_e906_remove,
++	.driver	= {
++		.name = "sun55i-e906-rproc",
++		.of_match_table = sun55i_e906_rproc_of_match,
++	},
++};
++module_platform_driver(sun55i_e906_rproc_driver);
++
++MODULE_DESCRIPTION("Allwinner T527/A523 E906 RISC-V remoteproc driver");
++MODULE_LICENSE("GPL");

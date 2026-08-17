@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 19 Jul 2026 01:16:27 +0200
+Subject: usb: typec: anx7688: Claim role switch at boot, online vbus_in at
+ connect
+
+Track the last requested usb role locally instead of comparing against
+usb_role_switch_get_role(): the sun4i phy's get callback falls back to
+an id-detect derived role when nobody has set one, so on boot with the
+cable attached it already reports DEVICE and the set was skipped.  The
+switch then stayed unclaimed and the EHCI0/OHCI0 probes re-routed phy0
+to host mode via usb_add_hcd(), killing the gadget session.  Setting
+the role claims the switch so later dr_mode changes are ignored.
+
+Enable the vbus_in power path at connect time with the 500 mA default
+limit instead of from anx7688_handle_current_update() 3-4 seconds
+later: onlining the path re-triggers the PMIC's BC1.2 detection which
+drives D+/D- and, done that late, glitches the middle of the
+established USB session - the host saw a disconnect/reconnect a few
+seconds after every plug-in.  The current update now only adjusts the
+input current limit.
+
+Also fix the vbus_in current limit debug print (uA printed as mA).
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/typec/anx7688.c | 56 ++++++++--
+ 1 file changed, 44 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/usb/typec/anx7688.c b/drivers/usb/typec/anx7688.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/anx7688.c
++++ b/drivers/usb/typec/anx7688.c
+@@ -216,6 +216,7 @@ struct anx7688 {
+ 	struct usb_pd_identity partner_identity;
+ 	struct usb_role_switch *role_sw;
+ 	int pwr_role, data_role;
++	enum usb_role usb_role;
+ 
+ 	struct dentry *debug_root;
+ 
+@@ -410,6 +411,7 @@ static int anx7688_connect(struct anx7688 *anx7688)
+ 	return ret;
+ #else
+ 	struct typec_partner_desc desc = {};
++	union power_supply_propval psy_val = {0,};
+ 	int ret, i;
+ 	u8 fw[2];
+ 	const u8 dp_snk_identity[16] = {
+@@ -429,6 +431,23 @@ static int anx7688_connect(struct anx7688 *anx7688)
+ 	anx7688->last_cc_status = -1;
+ 	anx7688->last_dp_state = -1;
+ 
++	/*
++	 * Turn on the VBUS power path right away; the 500 mA safe default
++	 * input current limit was set on disconnect.  This used to happen
++	 * only from anx7688_handle_current_update(), 3-4 seconds after the
++	 * connect, but onlining the path (re)triggers the PMIC's BC1.2
++	 * detection which drives D+/D- -- done that late it lands in the
++	 * middle of the already-established USB gadget session and the host
++	 * sees a disconnect/reconnect.  Done here, BC1.2 runs before/while
++	 * the port is still enumerating and settles quickly.
++	 * anx7688_handle_current_update() now only adjusts the current limit.
++	 */
++	psy_val.intval = 1;
++	ret = power_supply_set_property(anx7688->vbus_in_supply,
++					POWER_SUPPLY_PROP_ONLINE, &psy_val);
++	if (ret)
++		dev_err(anx7688->dev, "failed to enable vbus_in\n");
++
+ 	msleep(10);
+ 	anx7688_power_enable(anx7688);
+ 
+@@ -618,9 +637,11 @@ static void anx7688_disconnect(struct anx7688 *anx7688)
+ 	typec_set_vconn_role(anx7688->port, TYPEC_SINK);
+ 
+ 	usb_role_switch_set_role(anx7688->role_sw, USB_ROLE_NONE);
++	anx7688->usb_role = USB_ROLE_NONE;
+ 
+ 	val.intval = 500 * 1000;
+-	dev_dbg(dev, "setting vbus_in current limit to %d mA\n", val.intval);
++	dev_dbg(dev, "setting vbus_in current limit to %d mA\n",
++		val.intval / 1000);
+ 	ret = power_supply_set_property(anx7688->vbus_in_supply,
+ 					POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+ 					&val);
+@@ -1132,8 +1153,19 @@ static int anx7688_update_status(struct anx7688 *anx7688)
+ 	anx7688->data_role = dr_dfp ? TYPEC_HOST : TYPEC_DEVICE;
+ 	typec_set_data_role(anx7688->port, anx7688->data_role);
+ 
+-	if (usb_role_switch_get_role(anx7688->role_sw) !=
+-	    (dr_dfp ? USB_ROLE_HOST : USB_ROLE_DEVICE)) {
++	/*
++	 * Compare against our own last requested role, not
++	 * usb_role_switch_get_role(): the sun4i phy's get callback falls
++	 * back to reporting a role derived from its id detect when nobody
++	 * has set one yet, so right after boot it already claims DEVICE
++	 * and the set would be skipped here.  The role switch then stays
++	 * unclaimed and usb_add_hcd()'s phy_set_mode(PHY_MODE_USB_HOST)
++	 * from the EHCI0/OHCI0 probes re-routes phy0 away from musb,
++	 * killing the gadget session until the cable is replugged.
++	 * Setting the role claims the switch and makes the phy ignore
++	 * such dr_mode changes.
++	 */
++	if (anx7688->usb_role != (dr_dfp ? USB_ROLE_HOST : USB_ROLE_DEVICE)) {
+ 		dev_dbg(anx7688->dev, "DATA role change requested to %s\n",
+ 			dr_dfp ? "DFP" : "UFP");
+ 
+@@ -1141,6 +1173,8 @@ static int anx7688_update_status(struct anx7688 *anx7688)
+ 					       dr_dfp ? USB_ROLE_HOST : USB_ROLE_DEVICE);
+ 		if (ret)
+ 			return ret;
++
++		anx7688->usb_role = dr_dfp ? USB_ROLE_HOST : USB_ROLE_DEVICE;
+ 	}
+ 
+ 	return 0;
+@@ -1838,15 +1872,13 @@ static void anx7688_handle_current_update(struct anx7688* anx7688)
+ 				val.intval / 1000);
+ 	}
+ 
+-	/* Turn on VBUS power path inside PMIC. */
+-	val.intval = 1;
+-	dev_dbg(dev, "enabling vbus_in power path\n");
+-	ret = power_supply_set_property(anx7688->vbus_in_supply,
+-					POWER_SUPPLY_PROP_ONLINE,
+-					&val);
+-	if (ret)
+-		dev_err(anx7688->dev, "failed to enable vbus_in\n");
+-
++	/*
++	 * The VBUS power path is enabled since anx7688_connect(); toggling
++	 * POWER_SUPPLY_PROP_ONLINE here would re-trigger the PMIC's BC1.2
++	 * detection and glitch D+/D- in the middle of the established USB
++	 * session (host sees a disconnect).  Only the current limit is
++	 * updated at this point.
++	 */
+ 	typec_set_pwr_opmode(anx7688->port, pwr_mode);
+ }
+ 
+-- 
+Armbian
+

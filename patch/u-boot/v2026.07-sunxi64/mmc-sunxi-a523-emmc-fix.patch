@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Thu, 24 Jul 2026 00:00:00 +0000
+Subject: [PATCH] mmc: sunxi: force A523 CCLK_DIV=/2 in SPL and U-Boot proper
+
+On the Allwinner A523/T527 (Avaota A1), booting from SD card in SPL fails
+with:
+
+  mmc_load_image_raw_sector: mmc block read error
+  Error: -38
+
+The A523 upstream clock handling is tuned for the main SD slot, but the
+SPL still runs the card at high speed / 4-bit mode, which causes read
+errors on some boards/cards.  Make the SPL MMC path conservative for all
+A523 controllers: cap the clock, force CCLK_DIV=/2, and do not advertise
+high-speed modes.  8-bit bus is still allowed for eMMC.
+
+CCLK_DIV=0 is undefined on the A523, so U-Boot proper must force
+CCLK_DIV=/2 on this SoC as well; otherwise eMMC block reads become
+unreliable (the FAT directory entry for /boot/boot.scr is found, but the
+file data cannot be read).  The halved internal clock keeps U-Boot proper
+reads conservative while retaining the full 4/8-bit and HS capabilities.
+
+The forced internal divider halves the actual card clock, so request
+twice the rate from the module clock in mmc_config_clock whenever the
+divider is applied.  This keeps the actual clock in line with mmc->clock
+for every PLL branch and build mode (the SPL cap is preserved).
+
+Even with the divider compensated, the on-board eMMC (8-bit bus, HS
+clock) is still unreliable in U-Boot proper: the FAT directory entry for
+/boot/boot.scr is found, but the file data cannot be read (fs_devread
+read error, bad CRC).  The SPL reads the same eMMC fine at 12MHz, so keep
+the eMMC in U-Boot proper on the same conservative clock: drop the HS
+modes and cap f_max at 12MHz for sdc_no == 2 on the A523.  This must be
+done in both the legacy init path (used by the SPL) and the DM probe path
+(used by U-Boot proper).  The SD slot keeps the full 4-bit HS speed.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:deepseek-v4-flash-free
+---
+ drivers/mmc/sunxi_mmc.c | 76 +++++++++++++++++++++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 70 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
+index dec8bc1..7c59c74 100644
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -204,6 +204,16 @@ static int mmc_update_clk(struct sunxi_mmc_priv *priv)
+ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+ {
+ 	unsigned rval = readl(&priv->reg->clkcr);
++	unsigned int clock = mmc->clock;
++
++	/* In SPL, cap the clock to avoid signal integrity issues. */
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523) && clock > 12000000)
++		clock = 12000000;
++	#endif
++
++	debug("mmc %u config_clock req %u actual %u\n", priv->mmc_no,
++	      mmc->clock, clock);
+ 
+ 	/* Disable Clock */
+ 	rval &= ~SUNXI_MMC_CLK_ENABLE;
+@@ -211,12 +221,25 @@ static int mmc_config_clock(struct sunxi_mmc_priv *priv, struct mmc *mmc)
+ 	if (mmc_update_clk(priv))
+ 		return -1;
+ 
++	/*
++	 * The A523 cannot use CCLK_DIV=0 (it is undefined), so the internal
++	 * divider is forced to /2 below. That halves the internal clock, so
++	 * request twice the rate from the module clock to keep the actual
++	 * card clock in line with mmc->clock. This compensates every branch
++	 * and build mode where the divider is applied.
++	 */
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
++		clock *= 2;
++
+ 	/* Set mod_clk to new rate */
+-	if (mmc_set_mod_clk(priv, mmc->clock))
++	if (mmc_set_mod_clk(priv, clock))
+ 		return -1;
+ 
+ 	/* Clear internal divider */
+ 	rval &= ~SUNXI_MMC_CLK_DIVIDER_MASK;
++	/* On A523 CCLK_DIV=0 is undefined; use /2. */
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
++		rval |= 1;
+ 	writel(rval, &priv->reg->clkcr);
+ 
+ #if defined(CONFIG_SUNXI_GEN_SUN6I) || defined(CONFIG_SUN50I_GEN_H6) || defined(CONFIG_SUNXI_GEN_NCAT2)
+@@ -573,18 +596,51 @@ struct mmc *sunxi_mmc_init(int sdc_no)
+ 	cfg->ops  = &sunxi_mmc_ops;
+ 
+ 	cfg->voltages = MMC_VDD_32_33 | MMC_VDD_33_34;
+-	cfg->host_caps = MMC_MODE_4BIT;
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523))
++		cfg->host_caps = 0;
++	else
++	#endif
++		cfg->host_caps = MMC_MODE_4BIT;
++
++	debug("mmc %u sdc %d host_caps initial %x\n", priv->mmc_no, sdc_no,
++	      cfg->host_caps);
+ 
+ 	if ((IS_ENABLED(CONFIG_MACH_SUN50I) || IS_ENABLED(CONFIG_MACH_SUN8I) ||
+ 	    IS_ENABLED(CONFIG_SUN50I_GEN_H6) || IS_ENABLED(CONFIG_MACH_SUN55I_A523)) &&
+ 	    (sdc_no == 2))
+ 		cfg->host_caps = MMC_MODE_8BIT;
+ 
+-	cfg->host_caps |= MMC_MODE_HS_52MHz | MMC_MODE_HS;
+-	cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++	#ifdef CONFIG_XPL_BUILD
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523)) {
++		/*
++		 * Avoid high-speed modes and limit the clock to keep the
++		 * SPL reads reliable on this controller.
++		 */
++		cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++		cfg->f_min = 400000;
++		cfg->f_max = 12000000;
++	} else
++	#endif
++	{
++		cfg->host_caps |= MMC_MODE_HS_52MHz | MMC_MODE_HS;
++		cfg->b_max = CONFIG_SYS_MMC_MAX_BLK_COUNT;
++		cfg->f_min = 400000;
++		if (IS_ENABLED(CONFIG_MACH_SUN55I_A523) && sdc_no == 2) {
++			/*
++			 * eMMC block reads are still unreliable at the full
++			 * HS clock in U-Boot proper, so keep the same
++			 * conservative clock the SPL uses.
++			 */
++			cfg->host_caps &= ~(MMC_MODE_HS_52MHz | MMC_MODE_HS);
++			cfg->f_max = 12000000;
++		} else {
++			cfg->f_max = 52000000;
++		}
++	}
+ 
+-	cfg->f_min = 400000;
+-	cfg->f_max = 52000000;
++	debug("mmc %u sdc %d host_caps final %x f_max %u\n", priv->mmc_no,
++	      sdc_no, cfg->host_caps, cfg->f_max);
+ 
+ 	if (mmc_resource_init(sdc_no) != 0)
+ 		return NULL;
+@@ -709,6 +709,16 @@ static int sunxi_mmc_probe(struct udevice *dev)
+ 	priv->mmc_no = ((uintptr_t)priv->reg - SUNXI_MMC0_BASE) / 0x1000;
+ 	priv->mclkreg = (void *)ccu_reg + get_mclk_offset() + priv->mmc_no * 4;
+ 
++	if (IS_ENABLED(CONFIG_MACH_SUN55I_A523) && priv->mmc_no == 2) {
++		/*
++		 * eMMC block reads are still unreliable at the full HS clock
++		 * in U-Boot proper, so keep the same conservative clock the
++		 * SPL uses.
++		 */
++		cfg->host_caps &= ~(MMC_MODE_HS_52MHz | MMC_MODE_HS);
++		cfg->f_max = 12000000;
++	}
++
+ 	ret = clk_get_by_name(dev, "ahb", &gate_clk);
+ 	if (!ret)
+ 		clk_enable(&gate_clk);
+-- 
+Armbian

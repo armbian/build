@@ -409,7 +409,7 @@ driver_rtl8852bs() {
 	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:916053dd2805d16c458d92c3216c731ec956eb12' # Commit date: Aug 06, 2026 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:6099b02169460aa99e9e1ca8c37de28d248cbe83' # Commit date: Aug 15, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -437,11 +437,6 @@ driver_rtl8852bs() {
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
-
-		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
-		# @TODO Check on update if this fix is still needed (added 2024-July-10)
-		sed -i "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" \
-			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
@@ -516,7 +511,7 @@ driver_uwe5622() {
 	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:ce59d2aafbdad2cd740ee203053ccfba058a20bc' # Commit date: Aug 06, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:d6bec7538a0b4b67e35715ad71eaa056555524cb' # Commit date: Aug 15, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 

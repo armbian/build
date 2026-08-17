@@ -1,0 +1,239 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chen-Yu Tsai <wens@kernel.org>
+Date: Wed, 25 Mar 2026 00:43:53 +0800
+Subject: soc: sunxi: sram: Support claiming multiple regions per device
+
+On the H616, the video engine needs to claim two SRAM regions.
+
+Support claiming multiple regions per device.
+
+Signed-off-by: Chen-Yu Tsai <wens@kernel.org>
+Reviewed-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/soc/sunxi/sunxi_sram.c | 164 ++++++----
+ 1 file changed, 96 insertions(+), 68 deletions(-)
+
+diff --git a/drivers/soc/sunxi/sunxi_sram.c b/drivers/soc/sunxi/sunxi_sram.c
+index 111111111111..222222222222 100644
+--- a/drivers/soc/sunxi/sunxi_sram.c
++++ b/drivers/soc/sunxi/sunxi_sram.c
+@@ -165,79 +165,48 @@ static inline struct sunxi_sram_desc *to_sram_desc(const struct sunxi_sram_data
+ 	return container_of(data, struct sunxi_sram_desc, data);
+ }
+ 
+-static const struct sunxi_sram_data *sunxi_sram_of_parse(struct device_node *node,
+-							 unsigned int *reg_value)
++static const struct sunxi_sram_data *sunxi_sram_get_match(struct device_node *np, u8 val,
++							  unsigned int *reg_value)
+ {
+ 	const struct of_device_id *match;
+ 	const struct sunxi_sram_data *data;
+ 	const struct sunxi_sram_func *func;
+-	struct of_phandle_args args;
+-	u8 val;
+-	int ret;
+-
+-	ret = of_parse_phandle_with_fixed_args(node, "allwinner,sram", 1, 0,
+-					       &args);
+-	if (ret)
+-		return ERR_PTR(ret);
+ 
+-	if (!of_device_is_available(args.np)) {
+-		ret = -EBUSY;
+-		goto err;
+-	}
++	if (!of_device_is_available(np))
++		return ERR_PTR(-ENODEV);
+ 
+-	val = args.args[0];
+-
+-	match = of_match_node(sunxi_sram_dt_ids, args.np);
+-	if (!match) {
+-		ret = -EINVAL;
+-		goto err;
+-	}
++	match = of_match_node(sunxi_sram_dt_ids, np);
++	if (!match)
++		return ERR_PTR(-ENODEV);
+ 
+ 	data = match->data;
+-	if (!data) {
+-		ret = -EINVAL;
+-		goto err;
+-	}
+-
+-	for (func = data->func; func->func; func++) {
+-		if (val == func->val) {
+-			if (reg_value)
+-				*reg_value = func->reg_val;
++	if (!data)
++		return ERR_PTR(-EINVAL);
+ 
++	for (func = data->func; func->func; func++)
++		if (val == func->val)
+ 			break;
+-		}
+-	}
+ 
+-	if (!func->func) {
+-		ret = -EINVAL;
+-		goto err;
+-	}
++	if (!func->func)
++		return ERR_PTR(-EINVAL);
+ 
+-	of_node_put(args.np);
+-	return match->data;
++	if (reg_value)
++		*reg_value = func->reg_val;
+ 
+-err:
+-	of_node_put(args.np);
+-	return ERR_PTR(ret);
++	return data;
+ }
+ 
+-int sunxi_sram_claim(struct device *dev)
++#define SUNXI_SRAM_PROP "allwinner,sram"
++#define SUNXI_SRAM_CELLS 1
++
++static int sunxi_sram_claim_one(struct device_node *np, u8 arg)
+ {
+ 	const struct sunxi_sram_data *sram_data;
+ 	struct sunxi_sram_desc *sram_desc;
+ 	unsigned int device;
+ 	u32 val, mask;
+ 
+-	if (IS_ERR(base))
+-		return PTR_ERR(base);
+-
+-	if (!base)
+-		return -EPROBE_DEFER;
+-
+-	if (!dev || !dev->of_node)
+-		return -EINVAL;
+-
+-	sram_data = sunxi_sram_of_parse(dev->of_node, &device);
++	sram_data = sunxi_sram_get_match(np, arg, &device);
+ 	if (IS_ERR(sram_data))
+ 		return PTR_ERR(sram_data);
+ 
+@@ -248,33 +217,28 @@ int sunxi_sram_claim(struct device *dev)
+ 	if (sram_desc->claim_cnt) {
+ 		if (!WARN_ON(sram_desc->claim_cnt == U8_MAX))
+ 			sram_desc->claim_cnt++;
+-		spin_unlock(&sram_lock);
+-		return 0;
++	} else {
++		mask = GENMASK(sram_data->offset + sram_data->width - 1,
++			       sram_data->offset);
++		val = readl(base + sram_data->reg);
++		val &= ~mask;
++		writel(val | ((device << sram_data->offset) & mask),
++		       base + sram_data->reg);
++
++		sram_desc->claim_cnt++;
+ 	}
+ 
+-	mask = GENMASK(sram_data->offset + sram_data->width - 1,
+-		       sram_data->offset);
+-	val = readl(base + sram_data->reg);
+-	val &= ~mask;
+-	writel(val | ((device << sram_data->offset) & mask),
+-	       base + sram_data->reg);
+-
+-	sram_desc->claim_cnt++;
+ 	spin_unlock(&sram_lock);
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(sunxi_sram_claim);
+ 
+-void sunxi_sram_release(struct device *dev)
++static void sunxi_sram_release_one(struct device_node *np, u8 arg)
+ {
+ 	const struct sunxi_sram_data *sram_data;
+ 	struct sunxi_sram_desc *sram_desc;
+ 
+-	if (!dev || !dev->of_node)
+-		return;
+-
+-	sram_data = sunxi_sram_of_parse(dev->of_node, NULL);
++	sram_data = sunxi_sram_get_match(np, arg, NULL);
+ 	if (IS_ERR(sram_data))
+ 		return;
+ 
+@@ -285,6 +249,70 @@ void sunxi_sram_release(struct device *dev)
+ 		sram_desc->claim_cnt--;
+ 	spin_unlock(&sram_lock);
+ }
++
++int sunxi_sram_claim(struct device *dev)
++{
++	struct of_phandle_iterator it;
++	int err;
++	int count = 0;
++
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	if (!base)
++		return -EPROBE_DEFER;
++
++	if (!dev || !dev->of_node)
++		return -EINVAL;
++
++	of_for_each_phandle(&it, err, dev->of_node, SUNXI_SRAM_PROP,
++			    NULL, SUNXI_SRAM_CELLS) {
++		u32 args[SUNXI_SRAM_CELLS];
++
++		of_phandle_iterator_args(&it, args, SUNXI_SRAM_CELLS);
++
++		err = sunxi_sram_claim_one(it.node, args[0]);
++		if (err)
++			goto err;
++
++		count++;
++	}
++
++	if (count == 0)
++		return -ENOENT;
++
++	return 0;
++
++err:
++	while (count--) {
++		struct of_phandle_args args;
++
++		of_parse_phandle_with_fixed_args(dev->of_node, SUNXI_SRAM_PROP,
++						 SUNXI_SRAM_CELLS, count, &args);
++		sunxi_sram_release_one(args.np, args.args[0]);
++	}
++
++	return err;
++}
++EXPORT_SYMBOL(sunxi_sram_claim);
++
++void sunxi_sram_release(struct device *dev)
++{
++	struct of_phandle_iterator it;
++	int err;
++
++	if (!dev || !dev->of_node)
++		return;
++
++	of_for_each_phandle(&it, err, dev->of_node, SUNXI_SRAM_PROP,
++			    NULL, SUNXI_SRAM_CELLS) {
++		u32 args[SUNXI_SRAM_CELLS];
++
++		of_phandle_iterator_args(&it, args, SUNXI_SRAM_CELLS);
++
++		sunxi_sram_release_one(it.node, args[0]);
++	}
++}
+ EXPORT_SYMBOL(sunxi_sram_release);
+ 
+ struct sunxi_sramc_variant {
+-- 
+Armbian
+
