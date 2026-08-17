@@ -3,11 +3,9 @@
   <br><br>
 </h3>
 
-## Purpose of This Repository
+# Armbian Build Framework
 
-The **Armbian Linux Build Framework** creates customizable OS images based on **Debian** or **Ubuntu** for **single-board computers (SBCs)** and embedded devices.
-
-It builds a complete Linux system including kernel, bootloader, and root filesystem, giving you control over versions, configuration, firmware, device trees, and system optimizations.
+The **Armbian Linux Build Framework** creates customizable OS images based on **Debian** or **Ubuntu** for **single-board computers (SBCs)** and embedded devices. It builds a complete Linux system — kernel, bootloader, and root filesystem — giving you control over versions, configuration, firmware, device trees, and system optimizations.
 
 The framework supports **native**, **cross**, and **containerized** builds for multiple architectures (`x86_64`, `aarch64`, `armhf`, `riscv64`) and is suitable for development, testing, production, or automation.
 
@@ -21,7 +19,7 @@ cd build
 ./compile.sh
 ```
 
-<a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Build demonstration" width="100%"></a>
+<a href="#armbian-build-framework"><img src=".github/README.gif" alt="Build demonstration" width="100%"></a>
 
 ## Build Host Requirements
 
@@ -39,6 +37,54 @@ cd build
 - Superuser privileges (`sudo` or root)
 - Up-to-date system (outdated Docker or other tools can cause failures)
 
+## What's in this repository
+
+The build framework is driven by `compile.sh` (Bash) which sources the library under `lib/`. Board, kernel, bootloader, distribution, and userspace assets live in the top-level directories below.
+
+| Path | Purpose |
+|:--|:--|
+| `compile.sh` | Entry point that sources `lib/single.sh` and dispatches to the CLI |
+| `lib/` | Bash library implementing the build logic |
+| `config/boards/` | Per-board configuration files (`.conf`, `.csc`, `.wip`, `.eos`, `.tvb`) |
+| `config/bootenv/`, `config/bootscripts/` | U-Boot environment defaults and `boot-*.cmd` scripts |
+| `config/cli/`, `config/distributions/` | Userspace package lists and distribution status |
+| `config/sources/`, `config/sources/families/` | SoC / family definitions mapping boards to kernels and U-Boot |
+| `patch/` | Kernel, U-Boot, ATF, and misc patches organized by target and version |
+| `packages/` | Armbian-specific packaging (`bsp-cli`, `bsp-desktop`, kernel packaging helpers, board BSPs) |
+| `extensions/` | Optional build extensions loaded via `ENABLE_EXTENSIONS` |
+| `tools/` | Helper scripts (e.g. `mk_format_patch`, `unifying_configs`) |
+| `action.yml` | GitHub composite action wrapping `compile.sh` for CI reuse |
+| `VERSION` | Current framework version |
+
+### Board configuration status
+
+Board configuration files use their extension to signal support level:
+
+| Extension | Meaning |
+|:--|:--|
+| `.conf` | Supported |
+| `.csc` | Community maintained / unstable |
+| `.wip` | Work in progress |
+| `.eos` | End of life |
+| `.tvb` | TV box |
+
+See [`config/boards/README.md`](config/boards/README.md) for the full list of variables (e.g. `BOARDFAMILY`, `BOOTCONFIG`, `KERNEL_TARGET`, `SERIALCON`, `DEFAULT_OVERLAYS`, …) available in a board file.
+
+## Reusable GitHub Action
+
+`action.yml` exposes the framework as a composite action (`armbian/build`) that other workflows can call to build a kernel or image. Key inputs include `armbian_target` (`image` or `kernel`), `armbian_board`, `armbian_kernel_branch` (`legacy`/`current`/`edge`), `armbian_release`, `armbian_ui` (`minimal`, `server`, or a desktop environment), `armbian_extensions`, and `armbian_compress`. Optional PGP inputs sign the produced images.
+
+Additional runner setup notes for self-hosted workers live in [`.github/workflows/README.md`](.github/workflows/README.md).
+
+## Languages and tooling
+
+- **Bash / POSIX shell** — `compile.sh`, everything under `lib/`, most of `packages/` and `tools/`, and the U-Boot boot script sources in `config/bootscripts/`
+- **YAML** — GitHub Actions workflows in `.github/workflows/`, issue templates, `.pre-commit-config.yaml`, `.coderabbit.yaml`, and the composite `action.yml`
+- **Python** — helper scripts used from the build library
+- **Make / Kbuild** — device-tree overlay Makefiles under `patch/kernel/archive/*/overlay/`
+- **C / device tree source** — kernel and U-Boot patches under `patch/`
+- **Debian packaging** — under `packages/` (control files, postinst/prerm scripts, systemd units)
+
 ## Resources
 
 - **[Documentation](https://docs.armbian.com/Developer-Guide_Overview/)** — Comprehensive guides for building, configuring, and customizing
@@ -48,7 +94,7 @@ cd build
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting issues, submitting changes, and contributing code.
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on reporting issues, submitting changes, and working with patches. Board maintainers are tracked automatically in `config/boards/*` and mirrored into [`.github/CODEOWNERS`](.github/CODEOWNERS).
 
 ## Support
 
@@ -63,6 +109,10 @@ Join discussions with developers and community members on IRC or Discord.
 ### Paid Consultation
 For commercial projects, guaranteed response times, or advanced needs, paid support is available from Armbian maintainers.
 👉 [Contact us](https://www.armbian.com/contact)
+
+## License
+
+This project is released under the **GNU General Public License v2.0** — see [`LICENSE`](LICENSE).
 
 ## Contributors
 
