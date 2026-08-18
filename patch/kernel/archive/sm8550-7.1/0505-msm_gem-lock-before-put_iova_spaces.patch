@@ -1,0 +1,383 @@
+diff --git a/drivers/gpu/drm/msm/msm_gem.c b/drivers/gpu/drm/msm/msm_gem.c
+index b27abaa13..982c96366 100644
+--- a/drivers/gpu/drm/msm/msm_gem.c
++++ b/drivers/gpu/drm/msm/msm_gem.c
+@@ -53,25 +53,29 @@ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
+ {
+ 	struct msm_context *ctx = file->driver_priv;
+ 	struct drm_exec exec;
++	int ret = 0;
+ 
+ 	update_ctx_mem(file, -obj->size);
+-	msm_gem_vma_put(obj);
+ 
+ 	/*
+ 	 * If VM isn't created yet, nothing to cleanup.  And in fact calling
+ 	 * put_iova_spaces() with vm=NULL would be bad, in that it will tear-
+ 	 * down the mappings of shared buffers in other contexts.
+ 	 */
+-	if (!ctx->vm)
++	if (!ctx->vm) {
++		msm_gem_vma_put(obj);
+ 		return;
++	}
+ 
+ 	/*
+ 	 * VM_BIND does not depend on implicit teardown of VMAs on handle
+ 	 * close, but instead on implicit teardown of the VM when the device
+ 	 * is closed (see msm_gem_vm_close())
+ 	 */
+-	if (msm_context_is_vmbind(ctx))
++	if (msm_context_is_vmbind(ctx)) {
++		msm_gem_vma_put(obj);
+ 		return;
++	}
+ 
+ 	/*
+ 	 * TODO we might need to kick this to a queue to avoid blocking
+@@ -80,9 +84,58 @@ static void msm_gem_close(struct drm_gem_object *obj, struct drm_file *file)
+ 	dma_resv_wait_timeout(obj->resv, DMA_RESV_USAGE_BOOKKEEP, false,
+ 			      MAX_SCHEDULE_TIMEOUT);
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, ctx->vm);
+-	put_iova_spaces(obj, ctx->vm, true, "close");
++	/*
++	 * Merge the KMS-VM teardown (if vma_ref hits 0) with the user-VM
++	 * teardown into ONE combined lock window.  This eliminates the gap
++	 * between two separate lock acquisitions that allowed a concurrent
++	 * msm_gem_vma_put() caller to enter drm_gpuvm_bo_find() while
++	 * kms_vm_bo was being list_del()'d (list.next = LIST_POISON1).
++	 */
++#ifdef CONFIG_DRM_MSM_KMS
++	{
++		struct msm_drm_private *priv = obj->dev->dev_private;
++		bool do_kms = priv->kms &&
++			!atomic_dec_return(&to_msm_bo(obj)->vma_ref);
++
++		drm_exec_init(&exec, 0, do_kms ? 3 : 2);
++		drm_exec_until_all_locked (&exec) {
++			ret = drm_exec_lock_obj(&exec,
++						drm_gpuvm_resv_obj(ctx->vm));
++			if (!ret && do_kms)
++				ret = drm_exec_lock_obj(
++					&exec,
++					drm_gpuvm_resv_obj(priv->kms->vm));
++			if (!ret &&
++			    obj->resv != drm_gpuvm_resv(ctx->vm) &&
++			    (!do_kms ||
++			     obj->resv != drm_gpuvm_resv(priv->kms->vm)))
++				ret = drm_exec_lock_obj(&exec, obj);
++			drm_exec_retry_on_contention(&exec);
++			if (GEM_WARN_ON(ret))
++				break;
++		}
++		if (!ret) {
++			if (do_kms)
++				put_iova_spaces(obj, priv->kms->vm, true,
++						"close-kms");
++			put_iova_spaces(obj, ctx->vm, true, "close");
++		} else {
++			WARN(1,
++			     "msm_gem_close: lock failed (%d), skipping IOVA teardown\n",
++			     ret);
++		}
++		drm_exec_fini(&exec);
++	}
++#else
++	atomic_dec(&to_msm_bo(obj)->vma_ref);
++	ret = msm_gem_lock_vm_and_obj(&exec, obj, ctx->vm);
++	if (!ret)
++		put_iova_spaces(obj, ctx->vm, true, "close");
++	else
++		WARN(1, "msm_gem_close: lock failed (%d), skipping IOVA teardown\n",
++		     ret);
+ 	drm_exec_fini(&exec);     /* drop locks */
++#endif
+ }
+ 
+ /*
+@@ -106,9 +159,47 @@ void msm_gem_vma_put(struct drm_gem_object *obj)
+ 
+ #ifdef CONFIG_DRM_MSM_KMS
+ 	struct drm_exec exec;
++	struct drm_gpuvm_bo *vm_bo;
++	int ret;
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, priv->kms->vm);
+-	put_iova_spaces(obj, priv->kms->vm, true, "vma_put");
++	/*
++	 * drm_gpuvm_bo_find() walks obj->gpuva.list, which another thread can
++	 * modify via put_iova_spaces() during handle close.  Take obj->resv
++	 * and every VM resv for this BO (as in msm_gem_free_object()) so KMS
++	 * teardown cannot race with user-VM teardown in msm_gem_close().
++	 */
++	drm_exec_init(&exec, 0, 0);
++	drm_exec_until_all_locked (&exec) {
++		/*
++		 * Always lock obj first: gpuva.list is keyed on obj->resv.
++		 * When obj->resv == kms resv this is the only lock we need.
++		 */
++		ret = drm_exec_lock_obj(&exec, obj);
++		if (!ret && obj->resv != drm_gpuvm_resv(priv->kms->vm))
++			ret = drm_exec_lock_obj(&exec,
++						drm_gpuvm_resv_obj(priv->kms->vm));
++		if (!ret) {
++			drm_gem_for_each_gpuvm_bo(vm_bo, obj) {
++				struct dma_resv *resv = drm_gpuvm_resv(vm_bo->vm);
++
++				if (resv == obj->resv ||
++				    resv == drm_gpuvm_resv(priv->kms->vm))
++					continue;
++				ret = drm_exec_lock_obj(&exec,
++							drm_gpuvm_resv_obj(vm_bo->vm));
++				if (ret)
++					break;
++			}
++		}
++		drm_exec_retry_on_contention(&exec);
++		if (GEM_WARN_ON(ret))
++			break;
++	}
++	if (!ret)
++		put_iova_spaces(obj, priv->kms->vm, true, "vma_put");
++	else
++		WARN(1, "msm_gem_vma_put: lock failed (%d), skipping IOVA teardown\n",
++		     ret);
+ 	drm_exec_fini(&exec);     /* drop locks */
+ #endif
+ }
+@@ -411,26 +502,109 @@ static void
+ put_iova_spaces(struct drm_gem_object *obj, struct drm_gpuvm *vm,
+ 		bool close, const char *reason)
+ {
+-	struct drm_gpuvm_bo *vm_bo, *tmp;
++	struct drm_gpuvm_bo *vm_bo, **vm_bos = NULL;
++	struct drm_gpuva *vma, **vas;
++	unsigned int i, n, match, j, nv;
+ 
+ 	msm_gem_assert_locked(obj);
+ 
+-	drm_gem_for_each_gpuvm_bo_safe (vm_bo, tmp, obj) {
+-		struct drm_gpuva *vma, *vmatmp;
++	/*
++	 * Single-VM teardown (handle close, unpin, etc.): look up the vm_bo
++	 * directly instead of walking obj->gpuva.list. That list can still be
++	 * walked for purge/evict/free (vm == NULL) where every VM must be hit.
++	 */
++	if (vm) {
++		struct drm_gpuvm_bo *candidate;
++
++		vm_bo = NULL;
++		drm_gem_for_each_gpuvm_bo(candidate, obj) {
++			if (candidate->vm == vm) {
++				vm_bo = drm_gpuvm_bo_get(candidate);
++				break;
++			}
++		}
++		if (!vm_bo)
++			return;
++
++		nv = 0;
++		drm_gpuvm_bo_for_each_va(vma, vm_bo)
++			nv++;
++		if (!nv) {
++			drm_gpuvm_bo_put(vm_bo);
++			return;
++		}
+ 
+-		if (vm && vm_bo->vm != vm)
+-			continue;
++		vas = kmalloc_array(nv, sizeof(*vas), GFP_KERNEL);
++		if (!vas) {
++			WARN(1, "msm: put_iova_spaces vma OOM (nv=%u)\n", nv);
++			drm_gpuvm_bo_put(vm_bo);
++			return;
++		}
+ 
+-		drm_gpuvm_bo_get(vm_bo);
++		j = 0;
++		drm_gpuvm_bo_for_each_va(vma, vm_bo)
++			vas[j++] = vma;
+ 
+-		drm_gpuvm_bo_for_each_va_safe (vma, vmatmp, vm_bo) {
+-			msm_gem_vma_unmap(vma, reason);
++		for (j = 0; j < nv; j++) {
++			msm_gem_vma_unmap(vas[j], reason);
+ 			if (close)
+-				msm_gem_vma_close(vma);
++				msm_gem_vma_close(vas[j]);
+ 		}
++		kfree(vas);
++		drm_gpuvm_bo_put(vm_bo);
++		return;
++	}
++
++	match = 0;
++	drm_gem_for_each_gpuvm_bo(vm_bo, obj)
++		match++;
++	if (!match)
++		return;
+ 
++	vm_bos = kmalloc_array(match, sizeof(*vm_bos), GFP_KERNEL);
++	if (!vm_bos) {
++		WARN(1, "msm: put_iova_spaces OOM (match=%u)\n", match);
++		return;
++	}
++
++	n = 0;
++	drm_gem_for_each_gpuvm_bo(vm_bo, obj)
++		vm_bos[n++] = drm_gpuvm_bo_get(vm_bo);
++	GEM_WARN_ON(n != match);
++
++	for (i = 0; i < n; i++) {
++		vm_bo = vm_bos[i];
++
++		nv = 0;
++		drm_gpuvm_bo_for_each_va(vma, vm_bo)
++			nv++;
++		if (!nv) {
++			drm_gpuvm_bo_put(vm_bo);
++			continue;
++		}
++
++		vas = kmalloc_array(nv, sizeof(*vas), GFP_KERNEL);
++		if (!vas) {
++			WARN(1, "msm: put_iova_spaces vma snapshot OOM (nv=%u)\n", nv);
++			drm_gpuvm_bo_put(vm_bo);
++			continue;
++		}
++
++		j = 0;
++		drm_gpuvm_bo_for_each_va(vma, vm_bo)
++			vas[j++] = vma;
++		GEM_WARN_ON(j != nv);
++
++		for (j = 0; j < nv; j++) {
++			msm_gem_vma_unmap(vas[j], reason);
++			if (close)
++				msm_gem_vma_close(vas[j]);
++		}
++		kfree(vas);
+ 		drm_gpuvm_bo_put(vm_bo);
+ 	}
++
++	kfree(vm_bos);
+ }
+ 
+ static struct drm_gpuva *get_vma_locked(struct drm_gem_object *obj,
+@@ -556,8 +730,10 @@ int msm_gem_get_and_pin_iova_range(struct drm_gem_object *obj,
+ 	struct drm_exec exec;
+ 	int ret;
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+-	ret = get_and_pin_iova_range_locked(obj, vm, iova, range_start, range_end);
++	ret = msm_gem_lock_vm_and_obj(&exec, obj, vm);
++	if (!ret)
++		ret = get_and_pin_iova_range_locked(obj, vm, iova, range_start,
++						    range_end);
+ 	drm_exec_fini(&exec);     /* drop locks */
+ 
+ 	return ret;
+@@ -579,14 +755,16 @@ int msm_gem_get_iova(struct drm_gem_object *obj, struct drm_gpuvm *vm,
+ {
+ 	struct drm_gpuva *vma;
+ 	struct drm_exec exec;
+-	int ret = 0;
++	int ret;
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+-	vma = get_vma_locked(obj, vm, 0, U64_MAX);
+-	if (IS_ERR(vma)) {
+-		ret = PTR_ERR(vma);
+-	} else {
+-		*iova = vma->va.addr;
++	ret = msm_gem_lock_vm_and_obj(&exec, obj, vm);
++	if (!ret) {
++		vma = get_vma_locked(obj, vm, 0, U64_MAX);
++		if (IS_ERR(vma)) {
++			ret = PTR_ERR(vma);
++		} else {
++			*iova = vma->va.addr;
++		}
+ 	}
+ 	drm_exec_fini(&exec);     /* drop locks */
+ 
+@@ -620,17 +798,20 @@ int msm_gem_set_iova(struct drm_gem_object *obj,
+ 	struct drm_exec exec;
+ 	int ret = 0;
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+-	if (!iova) {
+-		ret = clear_iova(obj, vm);
+-	} else {
+-		struct drm_gpuva *vma;
+-		vma = get_vma_locked(obj, vm, iova, iova + obj->size);
+-		if (IS_ERR(vma)) {
+-			ret = PTR_ERR(vma);
+-		} else if (GEM_WARN_ON(vma->va.addr != iova)) {
+-			clear_iova(obj, vm);
+-			ret = -EBUSY;
++	ret = msm_gem_lock_vm_and_obj(&exec, obj, vm);
++	if (!ret) {
++		if (!iova) {
++			ret = clear_iova(obj, vm);
++		} else {
++			struct drm_gpuva *vma;
++
++			vma = get_vma_locked(obj, vm, iova, iova + obj->size);
++			if (IS_ERR(vma)) {
++				ret = PTR_ERR(vma);
++			} else if (GEM_WARN_ON(vma->va.addr != iova)) {
++				clear_iova(obj, vm);
++				ret = -EBUSY;
++			}
+ 		}
+ 	}
+ 	drm_exec_fini(&exec);     /* drop locks */
+@@ -658,14 +839,18 @@ void msm_gem_unpin_iova(struct drm_gem_object *obj, struct drm_gpuvm *vm)
+ {
+ 	struct drm_gpuva *vma;
+ 	struct drm_exec exec;
++	int ret;
+ 
+-	msm_gem_lock_vm_and_obj(&exec, obj, vm);
+-	vma = lookup_vma(obj, vm);
+-	if (vma) {
+-		msm_gem_unpin_locked(obj);
++	ret = msm_gem_lock_vm_and_obj(&exec, obj, vm);
++	if (!ret) {
++		vma = lookup_vma(obj, vm);
++		if (vma)
++			msm_gem_unpin_locked(obj);
++		if (!is_kms_vm(vm))
++			put_iova_spaces(obj, vm, true, "close");
++	} else {
++		WARN(1, "msm_gem_unpin_iova: lock failed (%d)\n", ret);
+ 	}
+-	if (!is_kms_vm(vm))
+-		put_iova_spaces(obj, vm, true, "close");
+ 	drm_exec_fini(&exec);     /* drop locks */
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/msm_gem_prime.c b/drivers/gpu/drm/msm/msm_gem_prime.c
+index 036d34c67..12ae6ef16 100644
+--- a/drivers/gpu/drm/msm/msm_gem_prime.c
++++ b/drivers/gpu/drm/msm/msm_gem_prime.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/dma-buf.h>
++#include <linux/dma-resv.h>
+ 
+ #include <drm/drm_drv.h>
+ #include <drm/drm_prime.h>
+@@ -47,6 +48,9 @@ static void msm_gem_dmabuf_release(struct dma_buf *dma_buf)
+ {
+ 	struct drm_gem_object *obj = dma_buf->priv;
+ 
++	dma_resv_wait_timeout(obj->resv, DMA_RESV_USAGE_BOOKKEEP, false,
++			      MAX_SCHEDULE_TIMEOUT);
++
+ 	msm_gem_vma_put(obj);
+ 	drm_gem_dmabuf_release(dma_buf);
+ }
