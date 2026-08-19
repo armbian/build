@@ -131,6 +131,15 @@ case "$BOOT_SOC" in
 		ROCKUSB_BLOB="rk35/rk3528_spl_loader_v1.07.104.bin"
 		;;
 
+	rk3562)
+		CPUMAX=${CPUMAX:="2000000"}
+		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3562_ddr_1056MHz_v1.07.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3562_bl31_v1.21.elf"}"
+		BOOT_SOC_MKIMAGE="rk3562"
+		BOOTENV_FILE='rk35xx.txt'
+		;;
+
 	rk3566)
 		CPUMAX=${CPUMAX:="1800000"}
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
