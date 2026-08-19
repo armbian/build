@@ -1,0 +1,186 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 2 Jul 2026 22:08:56 -0400
+Subject: usb: cdns3: wire CIX Sky1 USBSSP glue into v7.2 unified cdns3 (stage
+ 1)
+
+- Kconfig/Makefile: USB_CDNSP (vendor cdnsp-plat, ACPI CIXH2031 core
+  binder) + USB_CDNSP_SKY1 (CIXH2030 SoC wrapper), module-only under
+  USB_CDNS3=m
+- core.h: add sky1 vendor fields (platform_reset/u3_disable hooks,
+  xhci_device, role_mutex/d3/died, role restore cb); core invocation of
+  these hooks not yet wired (vendor 2026q2 core fork carried it)
+- fix acpi/thermal free_memory label and i2s_sc remove() signature
+  for v7.2
+---
+ drivers/acpi/thermal.c         |  2 +-
+ drivers/usb/cdns3/Kconfig      | 17 ++++++++++
+ drivers/usb/cdns3/Makefile     |  2 ++
+ drivers/usb/cdns3/cdnsp-plat.c |  4 +--
+ drivers/usb/cdns3/cdnsp-sky1.c |  3 +-
+ drivers/usb/cdns3/core.h       | 14 ++++++++
+ sound/soc/cix/cdns_i2s_sc.c    |  4 +--
+ 7 files changed, 38 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/acpi/thermal.c b/drivers/acpi/thermal.c
+index 111111111111..222222222222 100644
+--- a/drivers/acpi/thermal.c
++++ b/drivers/acpi/thermal.c
+@@ -988,7 +988,7 @@ static int acpi_thermal_probe(struct platform_device *pdev)
+ #ifdef CONFIG_CIX_THERMAL
+ 	result = acpi_thermal_get_sustainable_power(tz);
+ 	if (result)
+-		goto free_memory;
++		return result;
+ #endif
+ 
+ 	result = acpi_thermal_register_thermal_zone(tz, trip_table,
+diff --git a/drivers/usb/cdns3/Kconfig b/drivers/usb/cdns3/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/Kconfig
++++ b/drivers/usb/cdns3/Kconfig
+@@ -97,6 +97,23 @@ config USB_CDNS3_IMX
+ 
+ 	  For example, imx8qm and imx8qxp.
+ 
++config USB_CDNSP
++	tristate "Cadence USBSSP platform driver (SoC/ACPI integrated)"
++	depends on USB_CDNS3
++	help
++	  Say Y or M here if your system has a Cadence USBSSP dual-role
++	  controller on a platform bus (SoC-integrated, matched via DT
++	  "cdns,usbssp" or ACPI CIXH2031).
++
++config USB_CDNSP_SKY1
++	tristate "Cadence USBSSP support on CIX Sky1 SoC platforms"
++	depends on ARCH_CIX || COMPILE_TEST
++	depends on USB_CDNS3
++	default USB_CDNSP
++	help
++	  Say Y or M here if you are building for CIX Sky1 SoC platforms
++	  that contain the Cadence USBSSP controller core (e.g. Orion O6).
++
+ config USB_CDNS3_STARFIVE
+ 	tristate "Cadence USB3 support on StarFive SoC platforms"
+ 	depends on ARCH_STARFIVE || COMPILE_TEST
+diff --git a/drivers/usb/cdns3/Makefile b/drivers/usb/cdns3/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/Makefile
++++ b/drivers/usb/cdns3/Makefile
+@@ -28,3 +28,5 @@ obj-$(CONFIG_USB_CDNSP_PCI)			+= cdnsp-pci.o
+ obj-$(CONFIG_USB_CDNS3_TI)			+= cdns3-ti.o
+ obj-$(CONFIG_USB_CDNS3_IMX)			+= cdns3-imx.o
+ obj-$(CONFIG_USB_CDNS3_STARFIVE)		+= cdns3-starfive.o
++obj-$(CONFIG_USB_CDNSP)				+= cdnsp-plat.o
++obj-$(CONFIG_USB_CDNSP_SKY1)			+= cdnsp-sky1.o
+diff --git a/drivers/usb/cdns3/cdnsp-plat.c b/drivers/usb/cdns3/cdnsp-plat.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-plat.c
++++ b/drivers/usb/cdns3/cdnsp-plat.c
+@@ -88,6 +88,7 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	cdns->dev = dev;
+ 	cdns->pdata = dev_get_platdata(dev);
+ 
++	mutex_init(&cdns->role_mutex);
+ 	platform_set_drvdata(pdev, cdns);
+ 
+ 	ret = platform_get_irq_byname(pdev, "host");
+@@ -206,7 +207,7 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static int cdnsp_remove(struct platform_device *pdev)
++static void cdnsp_remove(struct platform_device *pdev)
+ {
+ 	struct cdns *cdns = platform_get_drvdata(pdev);
+ 	struct device *dev = cdns->dev;
+@@ -218,7 +219,6 @@ static int cdnsp_remove(struct platform_device *pdev)
+ 	set_phy_power_off(cdns);
+ 	phy_exit(cdns->usb2_phy);
+ 	phy_exit(cdns->usb3_phy);
+-	return 0;
+ }
+ #ifdef CONFIG_PM
+ 
+diff --git a/drivers/usb/cdns3/cdnsp-sky1.c b/drivers/usb/cdns3/cdnsp-sky1.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-sky1.c
++++ b/drivers/usb/cdns3/cdnsp-sky1.c
+@@ -701,7 +701,7 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static int cdnsp_sky1_remove(struct platform_device *pdev)
++static void cdnsp_sky1_remove(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
+@@ -715,7 +715,6 @@ static int cdnsp_sky1_remove(struct platform_device *pdev)
+ 	sky1_usb_clk_disable_all(dev);
+ 	platform_set_drvdata(pdev, NULL);
+ 
+-	return 0;
+ }
+ 
+ #ifdef CONFIG_PM
+diff --git a/drivers/usb/cdns3/core.h b/drivers/usb/cdns3/core.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/core.h
++++ b/drivers/usb/cdns3/core.h
+@@ -31,6 +31,8 @@ struct cdns_role_driver {
+ 	void (*stop)(struct cdns *cdns);
+ 	int (*suspend)(struct cdns *cdns, bool do_wakeup);
+ 	int (*resume)(struct cdns *cdns, bool lost_power);
++	/* CIX Sky1 vendor hook: restore for hibernation (may be NULL) */
++	int (*restore)(struct cdns *cdns);
+ 	const char *name;
+ #define CDNS_ROLE_STATE_INACTIVE	0
+ #define CDNS_ROLE_STATE_ACTIVE		1
+@@ -42,6 +44,13 @@ struct cdns_role_driver {
+ struct cdns3_platform_data {
+ 	int (*platform_suspend)(struct device *dev,
+ 			bool suspend, bool wakeup);
++	/*
++	 * CIX Sky1 vendor hooks (stage-1 port to v7.2): populated by the
++	 * cdnsp-sky1 glue; core invocation of these hooks is not yet wired
++	 * up on v7.2 (vendor 2026q2 core fork carried it).
++	 */
++	int (*platform_reset)(struct device *dev);
++	int (*platform_u3_disable)(struct device *dev);
+ 	unsigned long quirks;
+ #define CDNS3_DEFAULT_PM_RUNTIME_ALLOW	BIT(0)
+ #define CDNS3_DRD_SUSPEND_RESIDENCY_ENABLE	BIT(1)
+@@ -122,6 +131,11 @@ struct cdns {
+ 	bool				in_lpm;
+ 	bool				wakeup_pending;
+ 	struct cdns3_platform_data	*pdata;
++	struct platform_device		*xhci_device;
++	/* CIX Sky1 vendor state (stage-1 port to v7.2) */
++	struct mutex			role_mutex;
++	bool				d3;
++	bool				died;
+ 	spinlock_t			lock;
+ 	struct xhci_plat_priv		*xhci_plat_data;
+ 	u32                             override_apb_timeout;
+diff --git a/sound/soc/cix/cdns_i2s_sc.c b/sound/soc/cix/cdns_i2s_sc.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/cix/cdns_i2s_sc.c
++++ b/sound/soc/cix/cdns_i2s_sc.c
+@@ -1196,13 +1196,11 @@ static int cdns_i2s_sc_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
+-static int cdns_i2s_sc_remove(struct platform_device *pdev)
++static void cdns_i2s_sc_remove(struct platform_device *pdev)
+ {
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		pm_runtime_force_suspend(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
+-
+-	return 0;
+ }
+ 
+ static int __maybe_unused cdns_i2s_sc_runtime_suspend(struct device *dev)
+-- 
+Armbian
+

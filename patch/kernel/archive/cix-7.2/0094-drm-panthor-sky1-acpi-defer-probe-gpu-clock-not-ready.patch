@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Tue, 7 Jul 2026 05:31:30 -0400
+Subject: drm/panthor: Sky1/ACPI: defer probe while gpu core clock is missing
+ or rate 0
+
+If panthor probes before the SCMI clock provider has registered the
+gpu_core clkdev alias, devm_clk_get_optional() returns NULL, the GPU is
+unclocked, and the first register access raises an asynchronous SError
+that panics the whole boot (captured via ramoops on cixmini). Defer the
+probe until the clock is available and reports a real rate.
+---
+ drivers/gpu/drm/panthor/panthor_device.c | 13 ++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/gpu/drm/panthor/panthor_device.c b/drivers/gpu/drm/panthor/panthor_device.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/panthor/panthor_device.c
++++ b/drivers/gpu/drm/panthor/panthor_device.c
+@@ -53,6 +53,19 @@ static int panthor_clk_init(struct panthor_device *ptdev)
+ 				     "get 'coregroup' clock failed");
+ 
+ 	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
++
++	/*
++	 * Sky1 (ACPI): if the SCMI gpu_core clock has not been registered
++	 * yet, devm_clk_get_optional() above returned NULL and the GPU is
++	 * unclocked -- touching its registers raises an SError.  Defer
++	 * until the clock provider shows up instead of panicking the boot.
++	 */
++	if (has_acpi_companion(ptdev->base.dev) &&
++	    acpi_dev_hid_match(ACPI_COMPANION(ptdev->base.dev), "CIXH5000") &&
++	    (!ptdev->clks.core || !clk_get_rate(ptdev->clks.core)))
++		return dev_err_probe(ptdev->base.dev, -EPROBE_DEFER,
++				     "Sky1: gpu core clock not ready, deferring probe");
++
+ 	return 0;
+ }
+ 
+-- 
+Armbian
+

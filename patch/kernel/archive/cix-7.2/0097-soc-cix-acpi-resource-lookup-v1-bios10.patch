@@ -1,0 +1,444 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Tue, 7 Jul 2026 06:25:53 -0400
+Subject: soc: cix: port BIOS-1.0 ACPI resource lookup bridge
+ (RSTL/RSNL/DLKL/CLKT links)
+
+The 2026q2 acpi_resource_lookup walks the namespace once when CIXA1019
+probes, which races the Sky1 PCIe scan handler platform-device creation
+on cixmini BIOS 1.0 -- sky1-pcie never gets its rcsu_strap resource
+names and USB/PHY reset lookups (RSTL) are never registered. Port the
+proven cix-sky1-next bridge (subsys_initcall + late-consumer fallbacks)
+alongside, with renamed symbols to avoid initcall collisions.
+---
+ drivers/soc/cix/acpi/Makefile                      |   1 +
+ drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c | 409 ++++++++++
+ 2 files changed, 410 insertions(+)
+
+diff --git a/drivers/soc/cix/acpi/Makefile b/drivers/soc/cix/acpi/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/soc/cix/acpi/Makefile
++++ b/drivers/soc/cix/acpi/Makefile
+@@ -6,3 +6,4 @@ obj-y += cix-acpi-plat.o
+ obj-y += cix-fan-mode.o
+ obj-y += cix-ec-acpi.o
+ cix-ec-acpi-y := cix-acpi-ec.o cix-acpi-ec-gpio.o cix-acpi-ec-light.o cix-acpi-ec-fan.o
++obj-y += cix-acpi-resource-lookup-v1.o
+diff --git a/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c b/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/cix/acpi/cix-acpi-resource-lookup-v1.c
+@@ -0,0 +1,409 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * CIX ACPI Resource Lookup driver
++ *
++ * Processes custom DSDT tables (RSTL, RSNL, DLKL) attached to CIX ACPI
++ * devices to bridge the gap between CIX's ACPI firmware and the Linux
++ * kernel's standard resource lookup mechanisms.
++ *
++ * RSTL (Reset Lookup):   Registers reset_control_lookup entries so that
++ *                        devm_reset_control_get() works under ACPI.
++ * RSNL (Resource Names): Assigns names to platform_device resources by
++ *                        index so platform_get_resource_byname() works.
++ * DLKL (Device Links):   Creates device_link dependencies between
++ *                        supplier and consumer devices.
++ * CLKT (Clock Table):    Creates device_link from each CLKT consumer to
++ *                        the ACPI clock provider (CIXHA010) so that
++ *                        clk-sky1-acpi probes before its consumers.
++ *
++ * Based on vendor driver by Zichar Zhang <zichar.zhang@cixtech.com>
++ */
++
++#include <linux/acpi.h>
++#include <linux/device.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/reset-controller.h>
++
++static struct acpi_device *acpi_obj_to_acpi_dev(const union acpi_object *obj)
++{
++	if (!obj)
++		return NULL;
++
++	if (obj->type == ACPI_TYPE_LOCAL_REFERENCE) {
++		return acpi_fetch_acpi_dev(obj->reference.handle);
++	} else if (obj->type == ACPI_TYPE_STRING) {
++		acpi_handle handle;
++		acpi_status status;
++
++		status = acpi_get_handle(NULL, obj->string.pointer, &handle);
++		if (ACPI_FAILURE(status))
++			return NULL;
++		return acpi_fetch_acpi_dev(handle);
++	}
++
++	return NULL;
++}
++
++static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
++{
++	struct acpi_device *adev = acpi_obj_to_acpi_dev(obj);
++
++	if (!adev)
++		return NULL;
++
++	return bus_find_device_by_acpi_dev(&platform_bus_type, adev);
++}
++
++static const char *acpi_obj_to_devname(const union acpi_object *obj)
++{
++	struct acpi_device *adev;
++	struct device *dev;
++
++	dev = acpi_obj_to_platform_device(obj);
++	if (dev)
++		return dev_name(dev);
++
++	/*
++	 * The target platform_device may not be instantiated yet when this
++	 * lookup runs (subsys_initcall ordering vs ACPI platform-device
++	 * creation).  For ACPI-enumerated platform devices, dev_name() equals
++	 * the ACPI device's bus id, so fall back to that deterministic name.
++	 * Without this, reset_control lookups for not-yet-probed consumers
++	 * (e.g. usb_reset/usb_preset on CIXH2030/CIXH2032) get a NULL dev_id
++	 * and are rejected by reset_controller_add_lookup() as "badly
++	 * specified", leaving USB PHY/controller resets unresolved.
++	 */
++	adev = acpi_obj_to_acpi_dev(obj);
++	return adev ? acpi_dev_name(adev) : NULL;
++}
++
++/*
++ * RSTL — Reset Lookup Table
++ *
++ * Each entry: { <provider_ref>, <index>, <consumer_ref>, [<con_id>] }
++ * Registers a reset_control_lookup so devm_reset_control_get() can find
++ * the reset line by consumer device name and optional connection ID.
++ */
++static int reset_lookup_handle(acpi_handle handle,
++			       const union acpi_object *obj, void *data)
++{
++	struct device *dev = data;
++	const union acpi_object *child, *el;
++	struct reset_control_lookup *lookup;
++	int i, pcnt, count = 0;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt < 3)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    el[1].type != ACPI_TYPE_INTEGER ||
++		    (el[2].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[2].type != ACPI_TYPE_STRING) ||
++		    (pcnt > 3 && el[3].type != ACPI_TYPE_STRING))
++			continue;
++
++		lookup = devm_kzalloc(dev, sizeof(*lookup), GFP_KERNEL);
++		if (!lookup)
++			return -ENOMEM;
++		INIT_LIST_HEAD(&lookup->list);
++		lookup->provider = acpi_obj_to_devname(&el[0]);
++		lookup->index = el[1].integer.value;
++		lookup->dev_id = acpi_obj_to_devname(&el[2]);
++		lookup->con_id = pcnt > 3 ?
++			devm_kstrdup(dev, el[3].string.pointer, GFP_KERNEL)
++			: NULL;
++
++		if (!lookup->provider || (!lookup->dev_id && !lookup->con_id))
++			continue;
++
++		reset_controller_add_lookup(lookup, 1);
++
++		dev_dbg(&adev->dev,
++			"rst lookup: prov[%s] idx[%llu] dev[%s] con[%s]\n",
++			lookup->provider, el[1].integer.value,
++			lookup->dev_id, lookup->con_id);
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "reset lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * RSNL — Resource Name Lookup Table
++ *
++ * Each entry: { <device_ref>, <type>, <index>, <name> }
++ * Assigns a name to the device's platform resource at <type>/<index>,
++ * so platform_get_resource_byname() can find it.
++ */
++static int resource_name_lookup_handle(acpi_handle handle,
++				       const union acpi_object *obj, void *data)
++{
++	struct device *rdev, *dev = data;
++	const union acpi_object *child, *el;
++	int i, pcnt, count = 0, index;
++	unsigned int type;
++	struct resource *res;
++	const char *name;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt != 4)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    el[1].type != ACPI_TYPE_INTEGER ||
++		    el[2].type != ACPI_TYPE_INTEGER ||
++		    el[3].type != ACPI_TYPE_STRING)
++			continue;
++
++		rdev = acpi_obj_to_platform_device(&el[0]);
++		type = el[1].integer.value;
++		index = el[2].integer.value;
++		name = devm_kstrdup(dev, el[3].string.pointer, GFP_KERNEL);
++		if (!rdev || !name)
++			continue;
++
++		res = platform_get_resource(to_platform_device(rdev),
++					    type, index);
++		if (!res)
++			continue;
++		res->name = name;
++
++		if ((res->flags & IORESOURCE_IRQ) &&
++		    (res->flags & IORESOURCE_DISABLED))
++			acpi_irq_get(ACPI_HANDLE(rdev), index, res);
++
++		dev_dbg(&adev->dev, "resource name [%s][0x%x][%d]->[%s]\n",
++			dev_name(rdev), type, index, name);
++
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "resource name lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * DLKL — Device Link Lookup Table
++ *
++ * Each entry: { <supplier_ref>, <consumer_ref>, <flags> }
++ * Creates a device_link between supplier and consumer with given flags.
++ */
++static int device_link_lookup_handle(acpi_handle handle,
++				     const union acpi_object *obj, void *data)
++{
++	struct device *consumer, *supplier;
++	const union acpi_object *child, *el;
++	int i, pcnt, count = 0;
++	u32 flags;
++	struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
++
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	for (i = 0; i < obj->package.count; i++) {
++		child = &obj->package.elements[i];
++		pcnt = child->package.count;
++
++		if (pcnt != 3)
++			continue;
++
++		el = child->package.elements;
++
++		if ((el[0].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[0].type != ACPI_TYPE_STRING) ||
++		    (el[1].type != ACPI_TYPE_LOCAL_REFERENCE &&
++		     el[1].type != ACPI_TYPE_STRING) ||
++		    el[2].type != ACPI_TYPE_INTEGER)
++			continue;
++
++		supplier = acpi_obj_to_platform_device(&el[0]);
++		consumer = acpi_obj_to_platform_device(&el[1]);
++		flags = (u32)el[2].integer.value;
++
++		if (!supplier || !consumer)
++			continue;
++
++		device_link_add(consumer, supplier, flags);
++
++		dev_dbg(&adev->dev, "device link [%s]->[%s] flags[%u]\n",
++			dev_name(consumer), dev_name(supplier), flags);
++
++		count++;
++	}
++
++	dev_dbg(&adev->dev, "device link lookup: %d/%d entries\n",
++		count, obj->package.count);
++
++	return count;
++}
++
++/*
++ * CLKT — Clock Table
++ *
++ * Devices with CLKT tables depend on the ACPI clock provider
++ * (CIXHA010 / clk-sky1-acpi) to register clkdev lookups before
++ * they can probe.  Create a device_link to enforce this ordering
++ * so consumers don't need to rely on deferred probe.
++ */
++static int clock_dependency_handle(acpi_handle handle,
++				   const union acpi_object *obj, void *data)
++{
++	struct acpi_device *adev;
++	struct device *consumer, *supplier;
++
++	if (!obj || obj->package.count == 0)
++		return 0;
++
++	adev = acpi_fetch_acpi_dev(handle);
++	if (!adev || !adev->status.present)
++		return -ENODEV;
++
++	consumer = bus_find_device_by_acpi_dev(&platform_bus_type, adev);
++	if (!consumer)
++		return 0;
++
++	supplier = bus_find_device_by_name(&platform_bus_type, NULL,
++					   "CIXHA010:00");
++	if (!supplier || supplier == consumer)
++		return 0;
++
++	device_link_add(consumer, supplier, DL_FLAG_AUTOREMOVE_CONSUMER);
++
++	dev_dbg(data, "clock link [%s]->[CIXHA010:00]\n", dev_name(consumer));
++
++	return 1;
++}
++
++static int acpi_res_lookup_eval(acpi_handle handle, const char *name,
++		int (*func)(acpi_handle, const union acpi_object *, void *),
++		void *data)
++{
++	struct acpi_buffer output = {ACPI_ALLOCATE_BUFFER, NULL};
++	acpi_status status;
++	int ret;
++
++	status = acpi_evaluate_object_typed(handle, (acpi_string)name,
++					    NULL, &output, ACPI_TYPE_PACKAGE);
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	ret = func(handle, (const union acpi_object *)output.pointer, data);
++	kfree(output.pointer);
++
++	return ret;
++}
++
++static int acpi_resource_lookup_device(acpi_handle handle, void *data)
++{
++	struct device *dev = data;
++	int ret;
++
++	ret = acpi_res_lookup_eval(handle, "RSTL", reset_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "reset lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "RSNL",
++				   resource_name_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "resource name lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "DLKL",
++				   device_link_lookup_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "device link lookup handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	ret = acpi_res_lookup_eval(handle, "CLKT",
++				   clock_dependency_handle, dev);
++	if (ret < 0 && ret != -ENODEV)
++		dev_dbg(dev, "clock dependency handle failed for %s\n",
++			acpi_device_hid(acpi_fetch_acpi_dev(handle)));
++
++	return 0;
++}
++
++static acpi_status acpi_bus_res_scan(acpi_handle handle, u32 level,
++				     void *context, void **ret_p)
++{
++	struct device *dev = context;
++	acpi_object_type acpi_type;
++
++	if (!dev)
++		return AE_OK;
++
++	if (ACPI_FAILURE(acpi_get_type(handle, &acpi_type)))
++		return AE_OK;
++
++	if (acpi_type != ACPI_TYPE_DEVICE)
++		return AE_OK;
++
++	acpi_resource_lookup_device(handle, dev);
++
++	return AE_OK;
++}
++
++static int cix_res_lookup_v1_probe(struct platform_device *pdev)
++{
++	acpi_walk_namespace(ACPI_TYPE_ANY, ACPI_ROOT_OBJECT,
++			    ACPI_UINT32_MAX, acpi_bus_res_scan, NULL,
++			    &pdev->dev, NULL);
++
++	dev_info(&pdev->dev, "ACPI resource lookup complete\n");
++	return 0;
++}
++
++static const struct acpi_device_id cix_res_lookup_v1_match[] = {
++	{ "CIXA1019" },
++	{},
++};
++MODULE_DEVICE_TABLE(acpi, cix_res_lookup_v1_match);
++
++static struct platform_driver cix_res_lookup_v1_driver = {
++	.driver = {
++		.name = "cix-acpi-resource-lookup",
++		.acpi_match_table = ACPI_PTR(cix_res_lookup_v1_match),
++	},
++	.probe = cix_res_lookup_v1_probe,
++};
++
++static int __init cix_res_lookup_v1_init(void)
++{
++	if (acpi_disabled)
++		return -ENODEV;
++
++	return platform_driver_register(&cix_res_lookup_v1_driver);
++}
++subsys_initcall(cix_res_lookup_v1_init);
++
++MODULE_DESCRIPTION("CIX ACPI resource lookup driver");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+

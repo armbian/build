@@ -1,0 +1,1336 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 9 Jul 2026 00:58:37 -0400
+Subject: usb: cdns3: restore full sky1-next USBSSP driver set (host-enable
+ hang)
+
+cdnsp-sky1.c alone was insufficient: the host-enable path hangs in
+cdns_role_start(HOST) during xHCI bring-up (dyndbg: role 0->1 then wedge).
+The regression lives in the cdns core host-enable (core.c/drd.c/host.c/
+cdnsp-plat.c), all heavily diverged from the working 7.0.12-sky1-next tree.
+
+Restore the complete sky1-next cdnsp USBSSP driver set (core, drd, host,
+cdnsp-plat/gadget/ep0/mem/ring + headers) which is proven on this exact
+CIX Sky1 hardware+ACPI (edge boots USB/kbd/mouse/BT). Supersedes the
+partial 0112/0113 port work.
+---
+ drivers/usb/cdns3/cdnsp-gadget.c  |  50 +-
+ drivers/usb/cdns3/cdnsp-gadget.h  |   1 -
+ drivers/usb/cdns3/cdnsp-mem.c     |  73 +-
+ drivers/usb/cdns3/cdnsp-plat.c    | 417 ++++------
+ drivers/usb/cdns3/cdnsp-ring.c    |   9 +-
+ drivers/usb/cdns3/core.c          |  48 +-
+ drivers/usb/cdns3/core.h          |  23 +-
+ drivers/usb/cdns3/drd.c           |  45 +-
+ drivers/usb/cdns3/gadget-export.h |  10 +-
+ drivers/usb/cdns3/host-export.h   |   4 +-
+ drivers/usb/cdns3/host.c          |   5 -
+ 11 files changed, 258 insertions(+), 427 deletions(-)
+
+diff --git a/drivers/usb/cdns3/cdnsp-gadget.c b/drivers/usb/cdns3/cdnsp-gadget.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-gadget.c
++++ b/drivers/usb/cdns3/cdnsp-gadget.c
+@@ -124,28 +124,20 @@ void cdnsp_set_link_state(struct cdnsp_device *pdev,
+ }
+ 
+ static void cdnsp_disable_port(struct cdnsp_device *pdev,
+-			       struct cdnsp_port *port)
++			       __le32 __iomem *port_regs)
+ {
+-	u32 temp;
+-
+-	if (!port->exist)
+-		return;
++	u32 temp = cdnsp_port_state_to_neutral(readl(port_regs));
+ 
+-	temp = cdnsp_port_state_to_neutral(readl(&port->regs->portsc));
+-	writel(temp | PORT_PED, &port->regs->portsc);
++	writel(temp | PORT_PED, port_regs);
+ }
+ 
+ static void cdnsp_clear_port_change_bit(struct cdnsp_device *pdev,
+-					struct cdnsp_port *port)
++					__le32 __iomem *port_regs)
+ {
+-	u32 portsc;
+-
+-	if (!port->exist)
+-		return;
++	u32 portsc = readl(port_regs);
+ 
+-	portsc = readl(&port->regs->portsc);
+ 	writel(cdnsp_port_state_to_neutral(portsc) |
+-	       (portsc & PORT_CHANGE_BITS), &port->regs->portsc);
++	       (portsc & PORT_CHANGE_BITS), port_regs);
+ }
+ 
+ static void cdnsp_set_apb_timeout_value(struct cdnsp_device *pdev)
+@@ -952,7 +944,7 @@ void cdnsp_set_usb2_hardware_lpm(struct cdnsp_device *pdev,
+ 				 struct usb_request *req,
+ 				 int enable)
+ {
+-	if (pdev->active_port == &pdev->usb3_port || !pdev->gadget.lpm_capable)
++	if (pdev->active_port != &pdev->usb2_port || !pdev->gadget.lpm_capable)
+ 		return;
+ 
+ 	trace_cdnsp_lpm(enable);
+@@ -1318,26 +1310,20 @@ static int cdnsp_run(struct cdnsp_device *pdev,
+ 		break;
+ 	}
+ 
+-	if (pdev->usb3_port.exist && speed >= USB_SPEED_SUPER) {
++	if (speed >= USB_SPEED_SUPER) {
+ 		writel(temp, &pdev->port3x_regs->mode_addr);
+ 		cdnsp_set_link_state(pdev, &pdev->usb3_port.regs->portsc,
+ 				     XDEV_RXDETECT);
+ 	} else {
+-		cdnsp_disable_port(pdev, &pdev->usb3_port);
++		cdnsp_disable_port(pdev, &pdev->usb3_port.regs->portsc);
+ 	}
+ 
+-	if (pdev->usb2_port.exist) {
+-		cdnsp_set_link_state(pdev, &pdev->usb2_port.regs->portsc,
+-				     XDEV_RXDETECT);
+-		writel(PORT_REG6_L1_L0_HW_EN | fs_speed, &pdev->port20_regs->port_reg6);
+-	}
+-
+-	if (pdev->eusb_port.exist)
+-		cdnsp_set_link_state(pdev, &pdev->eusb_port.regs->portsc,
+-				     XDEV_RXDETECT);
++	cdnsp_set_link_state(pdev, &pdev->usb2_port.regs->portsc,
++			     XDEV_RXDETECT);
+ 
+ 	cdnsp_gadget_ep0_desc.wMaxPacketSize = cpu_to_le16(512);
+ 
++	writel(PORT_REG6_L1_L0_HW_EN | fs_speed, &pdev->port20_regs->port_reg6);
+ 
+ 	ret = cdnsp_start(pdev);
+ 	if (ret) {
+@@ -1483,10 +1469,8 @@ static void cdnsp_stop(struct cdnsp_device *pdev)
+ 			cdnsp_ep_dequeue(&pdev->eps[0], req);
+ 	}
+ 
+-	cdnsp_disable_port(pdev, &pdev->usb2_port);
+-	cdnsp_disable_port(pdev, &pdev->usb3_port);
+-	cdnsp_disable_port(pdev, &pdev->eusb_port);
+-
++	cdnsp_disable_port(pdev, &pdev->usb2_port.regs->portsc);
++	cdnsp_disable_port(pdev, &pdev->usb3_port.regs->portsc);
+ 	cdnsp_disable_slot(pdev);
+ 	cdnsp_halt(pdev);
+ 
+@@ -1495,9 +1479,8 @@ static void cdnsp_stop(struct cdnsp_device *pdev)
+ 	temp = readl(&pdev->ir_set->irq_pending);
+ 	writel(IMAN_IE_CLEAR(temp), &pdev->ir_set->irq_pending);
+ 
+-	cdnsp_clear_port_change_bit(pdev, &pdev->usb2_port);
+-	cdnsp_clear_port_change_bit(pdev, &pdev->eusb_port);
+-	cdnsp_clear_port_change_bit(pdev, &pdev->usb3_port);
++	cdnsp_clear_port_change_bit(pdev, &pdev->usb2_port.regs->portsc);
++	cdnsp_clear_port_change_bit(pdev, &pdev->usb3_port.regs->portsc);
+ 
+ 	/* Clear interrupt line */
+ 	temp = readl(&pdev->ir_set->irq_pending);
+@@ -2092,4 +2075,3 @@ int cdnsp_gadget_init(struct cdns *cdns)
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL_GPL(cdnsp_gadget_init);
+diff --git a/drivers/usb/cdns3/cdnsp-gadget.h b/drivers/usb/cdns3/cdnsp-gadget.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-gadget.h
++++ b/drivers/usb/cdns3/cdnsp-gadget.h
+@@ -1474,7 +1474,6 @@ struct cdnsp_device {
+ 	unsigned int link_state;
+ 
+ 	struct cdnsp_port usb2_port;
+-	struct cdnsp_port eusb_port;
+ 	struct cdnsp_port usb3_port;
+ 	struct cdnsp_port *active_port;
+ 	u16 test_mode;
+diff --git a/drivers/usb/cdns3/cdnsp-mem.c b/drivers/usb/cdns3/cdnsp-mem.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-mem.c
++++ b/drivers/usb/cdns3/cdnsp-mem.c
+@@ -1090,9 +1090,11 @@ void cdnsp_mem_cleanup(struct cdnsp_device *pdev)
+ 			  pdev->dcbaa, pdev->dcbaa->dma);
+ 
+ 	pdev->dcbaa = NULL;
+-	memset(&pdev->usb2_port, 0, sizeof(struct cdnsp_port));
+-	memset(&pdev->eusb_port, 0, sizeof(struct cdnsp_port));
+-	memset(&pdev->usb3_port, 0, sizeof(struct cdnsp_port));
++
++	pdev->usb2_port.exist = 0;
++	pdev->usb3_port.exist = 0;
++	pdev->usb2_port.port_num = 0;
++	pdev->usb3_port.port_num = 0;
+ 	pdev->active_port = NULL;
+ }
+ 
+@@ -1133,18 +1135,6 @@ static void cdnsp_add_in_port(struct cdnsp_device *pdev,
+ 	port_offset = CDNSP_EXT_PORT_OFF(temp);
+ 	port_count = CDNSP_EXT_PORT_COUNT(temp);
+ 
+-	if (port == &pdev->eusb_port) {
+-		/*
+-		 * If controller has usb2 + eusb port then eusb is as
+-		 * second port
+-		 */
+-		if (port_count == 2)
+-			port_offset++;
+-
+-		if (port_count == 1 && pdev->usb2_port.exist)
+-			return;
+-	}
+-
+ 	trace_cdnsp_port_info(addr, port_offset, port_count, port->maj_rev);
+ 
+ 	port->port_num = port_offset;
+@@ -1164,10 +1154,13 @@ static int cdnsp_setup_port_arrays(struct cdnsp_device *pdev)
+ 	base = &pdev->cap_regs->hc_capbase;
+ 	offset = cdnsp_find_next_ext_cap(base, 0,
+ 					 EXT_CAP_CFG_DEV_20PORT_CAP_ID);
+-	if (offset)
+-		pdev->port20_regs = base + offset;
++	pdev->port20_regs = base + offset;
++
++	offset = cdnsp_find_next_ext_cap(base, 0, D_XEC_CFG_3XPORT_CAP);
++	pdev->port3x_regs =  base + offset;
+ 
+ 	offset = 0;
++	base = &pdev->cap_regs->hc_capbase;
+ 
+ 	/* Driver expects max 2 extended protocol capability. */
+ 	for (i = 0; i < 2; i++) {
+@@ -1182,46 +1175,26 @@ static int cdnsp_setup_port_arrays(struct cdnsp_device *pdev)
+ 			cdnsp_add_in_port(pdev, &pdev->usb3_port,
+ 					  base + offset);
+ 
+-		if (CDNSP_EXT_PORT_MAJOR(temp) == 0x02) {
+-			if (!pdev->usb2_port.port_num && pdev->port20_regs)
+-				cdnsp_add_in_port(pdev, &pdev->usb2_port,
+-						  base + offset);
+-
+-			if (!pdev->eusb_port.port_num)
+-				cdnsp_add_in_port(pdev, &pdev->eusb_port,
+-						  base + offset);
+-		}
++		if (CDNSP_EXT_PORT_MAJOR(temp) == 0x02 &&
++		    !pdev->usb2_port.port_num)
++			cdnsp_add_in_port(pdev, &pdev->usb2_port,
++					  base + offset);
+ 	}
+ 
+-	if (!pdev->usb2_port.exist && !pdev->eusb_port.exist &&
+-	    !pdev->usb3_port.exist) {
+-		dev_err(pdev->dev, "Error: No port detected\n");
++	if (!pdev->usb2_port.exist || !pdev->usb3_port.exist) {
++		dev_err(pdev->dev, "Error: Only one port detected\n");
+ 		return -ENODEV;
+ 	}
+ 
+-	if (pdev->usb2_port.exist) {
+-		pdev->usb2_port.regs = (struct cdnsp_port_regs __iomem *)
+-				       (&pdev->op_regs->port_reg_base + NUM_PORT_REGS *
+-					(pdev->usb2_port.port_num - 1));
+-		trace_cdnsp_init("Found USB 2.0 port.");
+-	}
++	trace_cdnsp_init("Found USB 2.0 ports and  USB 3.0 ports.");
+ 
+-	if (pdev->eusb_port.exist) {
+-		pdev->eusb_port.regs = (struct cdnsp_port_regs __iomem *)
+-				       (&pdev->op_regs->port_reg_base + NUM_PORT_REGS *
+-					(pdev->eusb_port.port_num - 1));
+-		trace_cdnsp_init("Found eUSB 2.0 port.");
+-	}
+-
+-	if (pdev->usb3_port.exist) {
+-		offset = cdnsp_find_next_ext_cap(base, 0, D_XEC_CFG_3XPORT_CAP);
+-		pdev->port3x_regs =  base + offset;
++	pdev->usb2_port.regs = (struct cdnsp_port_regs __iomem *)
++			       (&pdev->op_regs->port_reg_base + NUM_PORT_REGS *
++				(pdev->usb2_port.port_num - 1));
+ 
+-		pdev->usb3_port.regs = (struct cdnsp_port_regs __iomem *)
+-				       (&pdev->op_regs->port_reg_base + NUM_PORT_REGS *
+-					(pdev->usb3_port.port_num - 1));
+-		trace_cdnsp_init("Found USB 3.x port.");
+-	}
++	pdev->usb3_port.regs = (struct cdnsp_port_regs __iomem *)
++			       (&pdev->op_regs->port_reg_base + NUM_PORT_REGS *
++				(pdev->usb3_port.port_num - 1));
+ 
+ 	return 0;
+ }
+diff --git a/drivers/usb/cdns3/cdnsp-plat.c b/drivers/usb/cdns3/cdnsp-plat.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-plat.c
++++ b/drivers/usb/cdns3/cdnsp-plat.c
+@@ -1,20 +1,92 @@
+-// SPDX-License-Identifier: GPL-2.0+
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Cadence USBSSP DRD Driver - Platform Device Support
++ *
++ * Based on cdns3-plat.c
++ *
++ * Copyright (C) 2018-2020 Cadence.
++ * Copyright (C) 2017-2018 NXP
++ * Copyright (C) 2019 Texas Instruments
++ *
++ * Author: Peter Chen <peter.chen@nxp.com>
++ *         Pawel Laszczak <pawell@cadence.com>
++ *         Roger Quadros <rogerq@ti.com>
++ */
+ 
+ #include <linux/acpi.h>
+ #include <linux/module.h>
+ #include <linux/irq.h>
+ #include <linux/kernel.h>
++#include <linux/of.h>
++#include <linux/phy/phy.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+-#include <linux/iopoll.h>
++#include <linux/property.h>
+ 
+-#include "../host/xhci-plat.h"
+-#include "../host/xhci.h"
+ #include "core.h"
+ #include "gadget-export.h"
+-#include "host-export.h"
+ #include "drd.h"
+ 
++/*
++ * Resolve a PHY reference from an ACPI _DSD property.
++ *
++ * Under DT, devm_phy_optional_get() resolves PHY phandles directly.
++ * Under ACPI, _DSD device references (e.g. "cdnsp,usb3-phy" → ^^U3P4.USB0)
++ * are not handled by the PHY framework.  Resolve the reference manually:
++ * find the referenced fwnode, get its parent device (the PHY provider),
++ * and look up the PHY via the provider's lookup table.
++ *
++ * Based on the vendor kernel's devm_phy_optional_ref_get().
++ */
++static void cdnsp_phy_release(struct device *dev, void *res)
++{
++	struct phy *phy = *(struct phy **)res;
++
++	phy_put(dev, phy);
++}
++
++static struct phy *cdnsp_acpi_phy_ref_get(struct device *dev, const char *name)
++{
++	struct fwnode_handle *ref_fwnode, *parent_fwnode;
++	const char *phy_con_id;
++	struct device *phy_dev;
++	struct phy **ptr, *phy;
++
++	ref_fwnode = fwnode_find_reference(dev_fwnode(dev), name, 0);
++	if (IS_ERR_OR_NULL(ref_fwnode))
++		return NULL;
++
++	phy_con_id = fwnode_get_name(ref_fwnode);
++
++	parent_fwnode = fwnode_get_parent(ref_fwnode);
++	fwnode_handle_put(ref_fwnode);
++	if (!parent_fwnode)
++		return NULL;
++
++	phy_dev = get_dev_from_fwnode(parent_fwnode);
++	fwnode_handle_put(parent_fwnode);
++	if (!phy_dev)
++		return NULL;
++
++	ptr = devres_alloc(cdnsp_phy_release, sizeof(*ptr), GFP_KERNEL);
++	if (!ptr) {
++		put_device(phy_dev);
++		return ERR_PTR(-ENOMEM);
++	}
++
++	phy = phy_get(phy_dev, phy_con_id);
++	put_device(phy_dev);
++
++	if (IS_ERR_OR_NULL(phy)) {
++		devres_free(ptr);
++		return NULL;
++	}
++
++	*ptr = phy;
++	devres_add(dev, ptr);
++	return phy;
++}
++
+ static int set_phy_power_on(struct cdns *cdns)
+ {
+ 	int ret;
+@@ -36,51 +108,19 @@ static void set_phy_power_off(struct cdns *cdns)
+ 	phy_power_off(cdns->usb2_phy);
+ }
+ 
+-static void devm_phy_release(struct device *dev, void *res)
+-{
+-	struct phy *phy = *(struct phy **)res;
+-
+-	phy_put(dev, phy);
+-}
+-
+-struct phy *devm_phy_optional_ref_get(struct device *dev,
+-			const char *string)
+-{
+-	struct phy **ptr, *phy;
+-	struct fwnode_handle *fwnode;
+-	struct device *rdev;
+-
+-	fwnode = fwnode_find_reference(dev_fwnode(dev), string, 0);
+-	if (IS_ERR_OR_NULL(fwnode))
+-		return NULL;
+-
+-	ptr = devres_alloc(devm_phy_release, sizeof(*ptr), GFP_KERNEL);
+-	if (!ptr)
+-		return ERR_PTR(-ENOMEM);
+-
+-	rdev = get_dev_from_fwnode(fwnode_get_parent(fwnode));
+-	if (IS_ERR_OR_NULL(rdev))
+-		return NULL;
+-	phy = phy_get(rdev, fwnode_get_name(fwnode));
+-	if (!IS_ERR_OR_NULL(phy)) {
+-		*ptr = phy;
+-		devres_add(dev, ptr);
+-	} else {
+-		devres_free(ptr);
+-	}
+-	put_device(rdev);
+-
+-	return phy;
+-}
+-
+-static int cdnsp_probe(struct platform_device *pdev)
++/**
++ * cdnsp_plat_probe - probe for cdnsp core device
++ * @pdev: Pointer to cdnsp core platform device
++ *
++ * Returns 0 on success otherwise negative errno
++ */
++static int cdnsp_plat_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct resource	*res;
+ 	struct cdns *cdns;
+ 	void __iomem *regs;
+ 	int ret;
+-	struct resource irqres;
+ 
+ 	cdns = devm_kzalloc(dev, sizeof(*cdns), GFP_KERNEL);
+ 	if (!cdns)
+@@ -89,27 +129,17 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	cdns->dev = dev;
+ 	cdns->pdata = dev_get_platdata(dev);
+ 
+-	mutex_init(&cdns->role_mutex);
+ 	platform_set_drvdata(pdev, cdns);
+ 
+ 	ret = platform_get_irq_byname(pdev, "host");
+-	if (ret < 0) {
+-		dev_err(dev, "couldn't get host irq\n");
++	if (ret < 0)
+ 		return ret;
+-	}
+ 
+ 	cdns->xhci_res[0].start = ret;
+ 	cdns->xhci_res[0].end = ret;
+ 	cdns->xhci_res[0].flags = IORESOURCE_IRQ | irq_get_trigger_type(ret);
+ 	cdns->xhci_res[0].name = "host";
+ 
+-	if (has_acpi_companion(dev)) {
+-		ret = acpi_irq_get(ACPI_HANDLE(dev), 0, &irqres);
+-		if (ret == 0) {
+-			cdns->xhci_res[0].flags = irqres.flags;
+-		}
+-	}
+-
+ 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "xhci");
+ 	if (!res) {
+ 		dev_err(dev, "couldn't get xhci resource\n");
+@@ -121,16 +151,20 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	cdns->dev_irq = platform_get_irq_byname(pdev, "peripheral");
+ 
+ 	if (cdns->dev_irq < 0)
+-		return cdns->dev_irq;
++		return dev_err_probe(dev, cdns->dev_irq,
++				     "Failed to get peripheral IRQ\n");
+ 
+ 	regs = devm_platform_ioremap_resource_byname(pdev, "dev");
+ 	if (IS_ERR(regs))
+-		return PTR_ERR(regs);
++		return dev_err_probe(dev, PTR_ERR(regs),
++				     "Failed to get dev base\n");
++
+ 	cdns->dev_regs	= regs;
+ 
+ 	cdns->otg_irq = platform_get_irq_byname(pdev, "otg");
+ 	if (cdns->otg_irq < 0)
+-		return cdns->otg_irq;
++		return dev_err_probe(dev, cdns->otg_irq,
++				     "Failed to get otg IRQ\n");
+ 
+ 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "otg");
+ 	if (!res) {
+@@ -138,6 +172,8 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 		return -ENXIO;
+ 	}
+ 
++	cdns->phyrst_a_enable = device_property_read_bool(dev, "cdns,phyrst-a-enable");
++
+ 	cdns->otg_res = *res;
+ 
+ 	cdns->wakeup_irq = platform_get_irq_byname_optional(pdev, "wakeup");
+@@ -148,10 +184,18 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 		dev_dbg(dev, "couldn't get wakeup irq\n");
+ 		cdns->wakeup_irq = 0x0;
+ 	}
++
++	/* CDNSP uses different PHY names than CDNS3 */
+ 	cdns->usb2_phy = devm_phy_optional_get(dev, "cdnsp,usb2-phy");
+-	if (IS_ERR(cdns->usb2_phy)) {
+-		dev_err(dev, "couldn't get usb2_phy\n");
+-		return PTR_ERR(cdns->usb2_phy);
++	if (IS_ERR(cdns->usb2_phy))
++		return dev_err_probe(dev, PTR_ERR(cdns->usb2_phy),
++				     "Failed to get cdnsp,usb2-phy\n");
++
++	/* ACPI: _DSD device references aren't resolved by the PHY framework */
++	if (!cdns->usb2_phy) {
++		cdns->usb2_phy = cdnsp_acpi_phy_ref_get(dev, "cdnsp,usb2-phy");
++		if (IS_ERR(cdns->usb2_phy))
++			return PTR_ERR(cdns->usb2_phy);
+ 	}
+ 
+ 	ret = phy_init(cdns->usb2_phy);
+@@ -159,31 +203,31 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 		return ret;
+ 
+ 	cdns->usb3_phy = devm_phy_optional_get(dev, "cdnsp,usb3-phy");
+-	if (IS_ERR_OR_NULL(cdns->usb3_phy))
+-		cdns->usb3_phy =
+-			devm_phy_optional_ref_get(dev, "cdnsp,usb3-phy");
+ 	if (IS_ERR(cdns->usb3_phy))
+-		return PTR_ERR(cdns->usb3_phy);
++		return dev_err_probe(dev, PTR_ERR(cdns->usb3_phy),
++				     "Failed to get cdnsp,usb3-phy\n");
++
++	/* ACPI: _DSD device references aren't resolved by the PHY framework */
++	if (!cdns->usb3_phy) {
++		cdns->usb3_phy = cdnsp_acpi_phy_ref_get(dev, "cdnsp,usb3-phy");
++		if (IS_ERR(cdns->usb3_phy))
++			return PTR_ERR(cdns->usb3_phy);
++	}
+ 
+ 	ret = phy_init(cdns->usb3_phy);
+ 	if (ret)
+ 		goto err_phy3_init;
+ 
+ 	ret = set_phy_power_on(cdns);
+-
+ 	if (ret)
+ 		goto err_phy_power_on;
+ 
+-	ret = cdns_init(cdns);
+-	if (ret)
+-		goto err_cdns_init;
+-
++	/* Use CDNSP gadget init for SuperSpeedPlus support */
+ 	cdns->gadget_init = cdnsp_gadget_init;
+-	cdns->host_init = cdns_host_init;
+ 
+-	ret = cdns_core_init_role(cdns);
++	ret = cdns_init(cdns);
+ 	if (ret)
+-		goto err_cdns_init_role;
++		goto err_cdns_init;
+ 
+ 	device_set_wakeup_capable(dev, true);
+ 	pm_runtime_set_active(dev);
+@@ -192,19 +236,18 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 		pm_runtime_forbid(dev);
+ 
+ 	/*
+-	 * The controller needs less time between bus and controller suspend,
+-	 * and we also needs a small delay to avoid frequently entering low
+-	 * power mode.
++	 * Allow enough time for USB3 link training and hub port polling
++	 * before entering low power mode. USB3 SuperSpeed link training
++	 * can take hundreds of milliseconds, and the hub driver polls
++	 * at ~256ms intervals. Must be shorter than the platform poll
++	 * interval (1s) to allow D3 between polls for power savings.
+ 	 */
+-	pm_runtime_set_autosuspend_delay(dev, 20);
++	pm_runtime_set_autosuspend_delay(dev, 200);
+ 	pm_runtime_mark_last_busy(dev);
+ 	pm_runtime_use_autosuspend(dev);
+ 
+ 	return 0;
+ 
+-err_cdns_init_role:
+-	if (cdns->role_sw)
+-		usb_role_switch_unregister(cdns->role_sw);
+ err_cdns_init:
+ 	set_phy_power_off(cdns);
+ err_phy_power_on:
+@@ -215,7 +258,11 @@ static int cdnsp_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
+-static void cdnsp_remove(struct platform_device *pdev)
++/**
++ * cdnsp_plat_remove() - unbind drd driver and clean up
++ * @pdev: Pointer to Linux platform device
++ */
++static void cdnsp_plat_remove(struct platform_device *pdev)
+ {
+ 	struct cdns *cdns = platform_get_drvdata(pdev);
+ 	struct device *dev = cdns->dev;
+@@ -228,6 +275,7 @@ static void cdnsp_remove(struct platform_device *pdev)
+ 	phy_exit(cdns->usb2_phy);
+ 	phy_exit(cdns->usb3_phy);
+ }
++
+ #ifdef CONFIG_PM
+ 
+ static int cdnsp_set_platform_suspend(struct device *dev,
+@@ -248,7 +296,7 @@ static int cdnsp_controller_suspend(struct device *dev, pm_message_t msg)
+ 	bool wakeup;
+ 	unsigned long flags;
+ 
+-	if (cdns->in_lpm || cdns->died)
++	if (cdns->in_lpm)
+ 		return 0;
+ 
+ 	if (PMSG_IS_AUTO(msg))
+@@ -272,95 +320,53 @@ static int cdnsp_controller_resume(struct device *dev, pm_message_t msg)
+ 	int ret;
+ 	unsigned long flags;
+ 
+-	if (!cdns->in_lpm || cdns->died)
++	if (!cdns->in_lpm)
+ 		return 0;
+ 
++	if (cdns_power_is_lost(cdns)) {
++		phy_exit(cdns->usb2_phy);
++		ret = phy_init(cdns->usb2_phy);
++		if (ret)
++			return ret;
++
++		phy_exit(cdns->usb3_phy);
++		ret = phy_init(cdns->usb3_phy);
++		if (ret)
++			return ret;
++	}
++
+ 	ret = set_phy_power_on(cdns);
+ 	if (ret)
+ 		return ret;
+ 
+ 	cdnsp_set_platform_suspend(cdns->dev, false, false);
+ 
+-	cdns_resume(cdns);
+ 	spin_lock_irqsave(&cdns->lock, flags);
++	cdns_resume(cdns);
+ 	cdns->in_lpm = false;
+ 	spin_unlock_irqrestore(&cdns->lock, flags);
+ 	cdns_set_active(cdns, !PMSG_IS_AUTO(msg));
++	if (cdns->wakeup_pending) {
++		cdns->wakeup_pending = false;
++		enable_irq(cdns->wakeup_irq);
++	}
++	dev_dbg(cdns->dev, "%s ends\n", __func__);
+ 
+ 	return ret;
+ }
+ 
+ static int cdnsp_plat_runtime_suspend(struct device *dev)
+ {
+-	int ret = 0;
+-	struct cdns *cdns = dev_get_drvdata(dev);
+-	struct platform_device *xhci_dev;
+-	struct usb_hcd  *hcd;
+-	struct xhci_hcd *xhci;
+-	u32	command = 0;
+-	u32	result;
+-
+-	if (cdns->role == USB_ROLE_HOST) {
+-		xhci_dev = cdns->xhci_device;
+-		hcd = dev_get_drvdata(&xhci_dev->dev);
+-		if (!hcd)
+-			goto controller_suspend; /* hcd is not created */
+-
+-		xhci = hcd_to_xhci(hcd);
+-
+-		/* XHCI irq and Wakeup irq are the same interrupt,set Run/Stop bit,
+-		 * Otherwise, can not receive interrupt after entering runtime suspend.
+-		 */
+-		command = readl(&xhci->op_regs->command);
+-		command |= CMD_RUN;
+-		writel(command, &xhci->op_regs->command);
+-		readl_poll_timeout_atomic(&xhci->op_regs->status, result,
+-			(result & STS_HALT) == 0 || result == U32_MAX ,
+-			1, 250 * 1000);
+-		if (result == U32_MAX) {
+-			dev_err(dev, "set controller run timeout\n");
+-		}
+-	}
+-
+-controller_suspend:
+-	ret = cdnsp_controller_suspend(dev, PMSG_AUTO_SUSPEND);
+-
+-	return ret;
++	return cdnsp_controller_suspend(dev, PMSG_AUTO_SUSPEND);
+ }
+ 
+ static int cdnsp_plat_runtime_resume(struct device *dev)
+ {
+-	int ret = 0;
+-	struct cdns *cdns = dev_get_drvdata(dev);
+-	struct platform_device *xhci_dev;
+-	struct usb_hcd  *hcd;
+-	struct xhci_hcd *xhci;
+-
+-	ret = cdnsp_controller_resume(dev, PMSG_AUTO_RESUME);
+-
+-	if (cdns->role == USB_ROLE_HOST) {
+-		xhci_dev = cdns->xhci_device;
+-		hcd = dev_get_drvdata(&xhci_dev->dev);
+-		if (hcd) {
+-			xhci = hcd_to_xhci(hcd);
+-			/*
+-			 * Somethings the interrupt occurs once the we enable the interrupt,
+-			 * So, we need hcd core to handle it at once.
+-			 */
+-			set_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
+-			if (xhci->shared_hcd)
+-				set_bit(HCD_FLAG_HW_ACCESSIBLE, &xhci->shared_hcd->flags);
+-		}
+-
+-		if (cdns->wakeup_pending) {
+-			enable_irq(cdns->wakeup_irq);
+-			cdns->wakeup_pending = false;
+-		}
+-	}
+-	return ret;
++	return cdnsp_controller_resume(dev, PMSG_AUTO_RESUME);
+ }
+ 
+ #ifdef CONFIG_PM_SLEEP
++
+ static int cdnsp_plat_suspend(struct device *dev)
+ {
+ 	struct cdns *cdns = dev_get_drvdata(dev);
+@@ -372,102 +378,23 @@ static int cdnsp_plat_suspend(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (cdns->role == USB_ROLE_HOST) {
+-		if (device_may_wakeup(dev) && cdns->wakeup_irq) {
+-			disable_irq(cdns->wakeup_irq);
+-			enable_irq_wake(cdns->wakeup_irq);
+-			dev_info(cdns->dev, "dis irq,enable wake\n");
+-		}
+-	}
++	if (device_may_wakeup(dev) && cdns->wakeup_irq)
++		enable_irq_wake(cdns->wakeup_irq);
+ 
+ 	return ret;
+ }
+ 
+-static void cdnsp_cdnsp_plat_shutdown(struct platform_device *pdev)
+-{
+-	struct device *dev = &pdev->dev;
+-	struct cdns *cdns = dev_get_drvdata(dev);
+-	int ret;
+-	mutex_lock(&cdns->role_mutex);
+-	cdns_suspend(cdns);
+-
+-	/* suspend the usb controller and config it to D3. */
+-	ret = cdnsp_controller_suspend(dev, PMSG_SUSPEND);
+-	if (ret)
+-		return;
+-	cdns->d3 = true;
+-	mutex_unlock(&cdns->role_mutex);
+-
+-	if (!device_may_wakeup(dev)) {
+-		phy_exit(cdns->usb3_phy);
+-		phy_exit(cdns->usb2_phy);
+-	}
+-	/* if the user configures the usb device as a wake-up device, then enable_irq_wake
+-	 *  will enable the corresponding bit for USB to wake up the system.
+-	 */
+-	if (cdns->role == USB_ROLE_HOST) {
+-		if (device_may_wakeup(dev) && cdns->wakeup_irq) {
+-			disable_irq(cdns->wakeup_irq);
+-			enable_irq_wake(cdns->wakeup_irq);
+-			dev_info(cdns->dev, "dis irq,enable wake\n");
+-		}
+-	}
+-}
+-
+ static int cdnsp_plat_resume(struct device *dev)
+ {
+-	int ret;
+-	struct cdns *cdns = dev_get_drvdata(dev);
+-
+-	ret = cdnsp_controller_resume(dev, PMSG_RESUME);
+-	if (cdns->role == USB_ROLE_HOST) {
+-		if (device_may_wakeup(dev) && cdns->wakeup_irq) {
+-			disable_irq_wake(cdns->wakeup_irq);
+-			enable_irq(cdns->wakeup_irq);
+-			dev_info(cdns->dev, "dis wake,enable irq\n");
+-		}
+-	}
+-
+-	return ret;
++	return cdnsp_controller_resume(dev, PMSG_RESUME);
+ }
+-
+-static int cdnsp_plat_restore(struct device *dev)
+-{
+-	struct cdns *cdns = dev_get_drvdata(dev);
+-	int ret = 0;
+-
+-	dev_dbg(dev, "at func %s\n", __func__);
+-
+-	/* restore for both host and device */
+-	if (cdns->roles[cdns->role]->restore)
+-		ret = cdns->roles[cdns->role]->restore(cdns);
+-
+-	return ret;
+-}
+-
+-static int cdnsp_plat_freeze(struct device *dev)
+-{
+-	dev_dbg(dev, "at func %s\n", __func__);
+-	return 0;
+-}
+-
+-static int cdnsp_plat_thaw(struct device *dev)
+-{
+-	dev_dbg(dev, "at func %s\n", __func__);
+-	return 0;
+-}
+-
+ #endif /* CONFIG_PM_SLEEP */
+ #endif /* CONFIG_PM */
+ 
+ static const struct dev_pm_ops cdnsp_pm_ops = {
+-        .suspend = cdnsp_plat_suspend,
+-        .resume = cdnsp_plat_resume,
+-        .restore = cdnsp_plat_restore,
+-        .freeze = cdnsp_plat_freeze,
+-        .thaw = cdnsp_plat_thaw,
+-	.runtime_resume = cdnsp_plat_runtime_resume,
+-	.runtime_suspend = cdnsp_plat_runtime_suspend,
++	SET_SYSTEM_SLEEP_PM_OPS(cdnsp_plat_suspend, cdnsp_plat_resume)
++	SET_RUNTIME_PM_OPS(cdnsp_plat_runtime_suspend,
++			   cdnsp_plat_runtime_resume, NULL)
+ };
+ 
+ #ifdef CONFIG_OF
+@@ -480,30 +407,26 @@ MODULE_DEVICE_TABLE(of, of_cdnsp_match);
+ 
+ static const struct acpi_device_id acpi_cdnsp_match[] = {
+ 	{ "CIXH2031" },
+-	{},
++	{ },
+ };
+ MODULE_DEVICE_TABLE(acpi, acpi_cdnsp_match);
+ 
+ static struct platform_driver cdnsp_driver = {
+-	.probe		= cdnsp_probe,
+-	.remove 	= cdnsp_remove,
+-	.driver 	= {
++	.probe		= cdnsp_plat_probe,
++	.remove		= cdnsp_plat_remove,
++	.driver		= {
+ 		.name	= "cdns-usbssp",
+-		.of_match_table = of_match_ptr(of_cdnsp_match),
+-		.acpi_match_table = ACPI_PTR(acpi_cdnsp_match),
+-		.pm = &cdnsp_pm_ops,
++		.of_match_table	= of_match_ptr(of_cdnsp_match),
++		.acpi_match_table = acpi_cdnsp_match,
++		.pm	= &cdnsp_pm_ops,
+ 	},
+-	/* some users need to wake up the system through a USB device after the system shutting
+-	 * down, add shutdown callback to suspend the usb controller and config it to D3, and
+-	 * enable_irq_wake will enable the corresponding bit for USB to wake up the system.
+-	 */
+-	.shutdown = cdnsp_cdnsp_plat_shutdown,
+ };
+ 
+ module_platform_driver(cdnsp_driver);
+ 
+-MODULE_AUTHOR("Chao Zeng <Chao.Zeng@cixtech.com>");
+-MODULE_AUTHOR("Matthew MA <Matthew.Ma@cixtech.com>");
++MODULE_ALIAS("platform:cdnsp");
++MODULE_AUTHOR("Peter Chen <peter.chen@nxp.com>");
++MODULE_AUTHOR("Pawel Laszczak <pawell@cadence.com>");
++MODULE_AUTHOR("Roger Quadros <rogerq@ti.com>");
+ MODULE_LICENSE("GPL v2");
+-MODULE_ALIAS("platform: cdnsp");
+-MODULE_DESCRIPTION("Cdnsp common platform driver");
++MODULE_DESCRIPTION("Cadence USBSSP DRD Controller Platform Driver");
+diff --git a/drivers/usb/cdns3/cdnsp-ring.c b/drivers/usb/cdns3/cdnsp-ring.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/cdnsp-ring.c
++++ b/drivers/usb/cdns3/cdnsp-ring.c
+@@ -259,7 +259,7 @@ static bool cdnsp_room_on_ring(struct cdnsp_device *pdev,
+  */
+ static void cdnsp_force_l0_go(struct cdnsp_device *pdev)
+ {
+-	if (pdev->active_port != &pdev->usb3_port && pdev->gadget.lpm_capable)
++	if (pdev->active_port == &pdev->usb2_port && pdev->gadget.lpm_capable)
+ 		cdnsp_set_link_state(pdev, &pdev->active_port->regs->portsc, XDEV_U0);
+ }
+ 
+@@ -763,8 +763,6 @@ static int cdnsp_update_port_id(struct cdnsp_device *pdev, u32 port_id)
+ 
+ 	if (port_id == pdev->usb2_port.port_num) {
+ 		port = &pdev->usb2_port;
+-	} else if (port_id == pdev->eusb_port.port_num) {
+-		port = &pdev->eusb_port;
+ 	} else if (port_id == pdev->usb3_port.port_num) {
+ 		port  = &pdev->usb3_port;
+ 	} else {
+@@ -781,8 +779,7 @@ static int cdnsp_update_port_id(struct cdnsp_device *pdev, u32 port_id)
+ 		cdnsp_enable_slot(pdev);
+ 	}
+ 
+-	if ((pdev->usb2_port.exist && port_id == pdev->usb2_port.port_num) ||
+-	    (pdev->eusb_port.exist && port_id == pdev->eusb_port.port_num))
++	if (port_id == pdev->usb2_port.port_num)
+ 		cdnsp_set_usb2_hardware_lpm(pdev, NULL, 1);
+ 	else
+ 		writel(PORT_U1_TIMEOUT(1) | PORT_U2_TIMEOUT(1),
+@@ -811,7 +808,7 @@ static void cdnsp_handle_port_status(struct cdnsp_device *pdev,
+ 
+ 	port_regs = pdev->active_port->regs;
+ 
+-	if (port_id == pdev->usb2_port.port_num || port_id == pdev->eusb_port.port_num)
++	if (port_id == pdev->usb2_port.port_num)
+ 		port2 = true;
+ 
+ new_event:
+diff --git a/drivers/usb/cdns3/core.c b/drivers/usb/cdns3/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/core.c
++++ b/drivers/usb/cdns3/core.c
+@@ -21,6 +21,7 @@
+ #include <linux/pm_runtime.h>
+ 
+ #include "core.h"
++#include "host-export.h"
+ #include "drd.h"
+ 
+ static int cdns_idle_init(struct cdns *cdns);
+@@ -70,8 +71,7 @@ static void cdns_role_stop(struct cdns *cdns)
+ static void cdns_exit_roles(struct cdns *cdns)
+ {
+ 	cdns_role_stop(cdns);
+-	if (!cdns->no_drd)
+-		cdns_drd_exit(cdns);
++	cdns_drd_exit(cdns);
+ }
+ 
+ /**
+@@ -80,7 +80,7 @@ static void cdns_exit_roles(struct cdns *cdns)
+  *
+  * Returns 0 on success otherwise negative errno
+  */
+-int cdns_core_init_role(struct cdns *cdns)
++static int cdns_core_init_role(struct cdns *cdns)
+ {
+ 	struct device *dev = cdns->dev;
+ 	enum usb_dr_mode best_dr_mode;
+@@ -96,13 +96,23 @@ int cdns_core_init_role(struct cdns *cdns)
+ 	 * can be restricted later depending on strap pin configuration.
+ 	 */
+ 	if (dr_mode == USB_DR_MODE_UNKNOWN) {
+-		if (IS_ENABLED(CONFIG_USB_CDNS3_HOST) &&
+-		    IS_ENABLED(CONFIG_USB_CDNS3_GADGET))
+-			dr_mode = USB_DR_MODE_OTG;
+-		else if (IS_ENABLED(CONFIG_USB_CDNS3_HOST))
+-			dr_mode = USB_DR_MODE_HOST;
+-		else if (IS_ENABLED(CONFIG_USB_CDNS3_GADGET))
+-			dr_mode = USB_DR_MODE_PERIPHERAL;
++		if (cdns->version == CDNSP_CONTROLLER_V2) {
++			if (IS_ENABLED(CONFIG_USB_CDNSP_HOST) &&
++			    IS_ENABLED(CONFIG_USB_CDNSP_GADGET))
++				dr_mode = USB_DR_MODE_OTG;
++			else if (IS_ENABLED(CONFIG_USB_CDNSP_HOST))
++				dr_mode = USB_DR_MODE_HOST;
++			else if (IS_ENABLED(CONFIG_USB_CDNSP_GADGET))
++				dr_mode = USB_DR_MODE_PERIPHERAL;
++		} else {
++			if (IS_ENABLED(CONFIG_USB_CDNS3_HOST) &&
++			    IS_ENABLED(CONFIG_USB_CDNS3_GADGET))
++				dr_mode = USB_DR_MODE_OTG;
++			else if (IS_ENABLED(CONFIG_USB_CDNS3_HOST))
++				dr_mode = USB_DR_MODE_HOST;
++			else if (IS_ENABLED(CONFIG_USB_CDNS3_GADGET))
++				dr_mode = USB_DR_MODE_PERIPHERAL;
++		}
+ 	}
+ 
+ 	/*
+@@ -127,8 +137,11 @@ int cdns_core_init_role(struct cdns *cdns)
+ 	dr_mode = best_dr_mode;
+ 
+ 	if (dr_mode == USB_DR_MODE_OTG || dr_mode == USB_DR_MODE_HOST) {
+-		if (cdns->host_init)
+-			ret = cdns->host_init(cdns);
++		if ((cdns->version == CDNSP_CONTROLLER_V2 &&
++		     IS_ENABLED(CONFIG_USB_CDNSP_HOST)) ||
++		    (cdns->version < CDNSP_CONTROLLER_V2 &&
++		     IS_ENABLED(CONFIG_USB_CDNS3_HOST)))
++			ret = cdns_host_init(cdns);
+ 		else
+ 			ret = -ENXIO;
+ 
+@@ -184,14 +197,11 @@ int cdns_core_init_role(struct cdns *cdns)
+ 		goto err;
+ 	}
+ 
+-	dev_dbg(dev, "Cadence USB3 core: probe succeed\n");
+-
+ 	return 0;
+ err:
+ 	cdns_exit_roles(cdns);
+ 	return ret;
+ }
+-EXPORT_SYMBOL_GPL(cdns_core_init_role);
+ 
+ /**
+  * cdns_hw_role_state_machine  - role switch state machine based on hw events.
+@@ -459,8 +469,14 @@ int cdns_init(struct cdns *cdns)
+ 	if (ret)
+ 		goto init_failed;
+ 
++	ret = cdns_core_init_role(cdns);
++	if (ret)
++		goto init_failed;
++
+ 	spin_lock_init(&cdns->lock);
+ 
++	dev_dbg(dev, "Cadence USB3 core: probe succeed\n");
++
+ 	return 0;
+ init_failed:
+ 	cdns_drd_exit(cdns);
+@@ -560,5 +576,5 @@ EXPORT_SYMBOL_GPL(cdns_set_active);
+ MODULE_AUTHOR("Peter Chen <peter.chen@nxp.com>");
+ MODULE_AUTHOR("Pawel Laszczak <pawell@cadence.com>");
+ MODULE_AUTHOR("Roger Quadros <rogerq@ti.com>");
+-MODULE_DESCRIPTION("Cadence USBSS/USBSSP DRD driver (core, DRD, platform, optional host/gadget)");
++MODULE_DESCRIPTION("Cadence USBSS and USBSSP DRD Driver");
+ MODULE_LICENSE("GPL");
+diff --git a/drivers/usb/cdns3/core.h b/drivers/usb/cdns3/core.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/core.h
++++ b/drivers/usb/cdns3/core.h
+@@ -31,8 +31,6 @@ struct cdns_role_driver {
+ 	void (*stop)(struct cdns *cdns);
+ 	int (*suspend)(struct cdns *cdns, bool do_wakeup);
+ 	int (*resume)(struct cdns *cdns, bool lost_power);
+-	/* CIX Sky1 vendor hook: restore for hibernation (may be NULL) */
+-	int (*restore)(struct cdns *cdns);
+ 	const char *name;
+ #define CDNS_ROLE_STATE_INACTIVE	0
+ #define CDNS_ROLE_STATE_ACTIVE		1
+@@ -44,17 +42,9 @@ struct cdns_role_driver {
+ struct cdns3_platform_data {
+ 	int (*platform_suspend)(struct device *dev,
+ 			bool suspend, bool wakeup);
+-	/*
+-	 * CIX Sky1 vendor hooks (stage-1 port to v7.2): populated by the
+-	 * cdnsp-sky1 glue; core invocation of these hooks is not yet wired
+-	 * up on v7.2 (vendor 2026q2 core fork carried it).
+-	 */
+-	int (*platform_reset)(struct device *dev);
+-	int (*platform_u3_disable)(struct device *dev);
+ 	unsigned long quirks;
+ #define CDNS3_DEFAULT_PM_RUNTIME_ALLOW	BIT(0)
+ #define CDNS3_DRD_SUSPEND_RESIDENCY_ENABLE	BIT(1)
+-	u32 override_apb_timeout;	/* 0 = use default (e.g. for PCI) */
+ };
+ 
+ /**
+@@ -92,10 +82,6 @@ struct cdns3_platform_data {
+  * @override_apb_timeout: hold value of APB timeout. For value 0 the default
+  *                        value in CHICKEN_BITS_3 will be preserved.
+  * @gadget_init: pointer to gadget initialization function
+- * @host_init: pointer to host initialization function
+- * @no_drd: DRD register block is inaccessible. The controller is hardwired to
+- *          single role (host or device) or the logic for role switching is
+- *          missing.
+  */
+ struct cdns {
+ 	struct device			*dev;
+@@ -131,23 +117,16 @@ struct cdns {
+ 	bool				in_lpm;
+ 	bool				wakeup_pending;
+ 	struct cdns3_platform_data	*pdata;
+-	struct platform_device		*xhci_device;
+-	/* CIX Sky1 vendor state (stage-1 port to v7.2) */
+-	struct mutex			role_mutex;
+-	bool				d3;
+-	bool				died;
+ 	spinlock_t			lock;
+ 	struct xhci_plat_priv		*xhci_plat_data;
+ 	u32                             override_apb_timeout;
++
+ 	int (*gadget_init)(struct cdns *cdns);
+-	int (*host_init)(struct cdns *cdns);
+-	bool				no_drd;
+ };
+ 
+ int cdns_hw_role_switch(struct cdns *cdns);
+ int cdns_init(struct cdns *cdns);
+ int cdns_remove(struct cdns *cdns);
+-int cdns_core_init_role(struct cdns *cdns);
+ 
+ #ifdef CONFIG_PM_SLEEP
+ int cdns_resume(struct cdns *cdns);
+diff --git a/drivers/usb/cdns3/drd.c b/drivers/usb/cdns3/drd.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/drd.c
++++ b/drivers/usb/cdns3/drd.c
+@@ -87,9 +87,6 @@ int cdns_get_id(struct cdns *cdns)
+ {
+ 	int id;
+ 
+-	if (cdns->no_drd)
+-		return 0;
+-
+ 	id = readl(&cdns->otg_regs->sts) & OTGSTS_ID_VALUE;
+ 	dev_dbg(cdns->dev, "OTG ID: %d", id);
+ 
+@@ -110,7 +107,7 @@ void cdns_clear_vbus(struct cdns *cdns)
+ {
+ 	u32 reg;
+ 
+-	if (cdns->version != CDNSP_CONTROLLER_V2 || cdns->no_drd)
++	if (cdns->version != CDNSP_CONTROLLER_V2)
+ 		return;
+ 
+ 	reg = readl(&cdns->otg_cdnsp_regs->override);
+@@ -123,7 +120,7 @@ void cdns_set_vbus(struct cdns *cdns)
+ {
+ 	u32 reg;
+ 
+-	if (cdns->version != CDNSP_CONTROLLER_V2 || cdns->no_drd)
++	if (cdns->version != CDNSP_CONTROLLER_V2)
+ 		return;
+ 
+ 	reg = readl(&cdns->otg_cdnsp_regs->override);
+@@ -182,10 +179,7 @@ static void cdns_otg_enable_irq(struct cdns *cdns)
+ int cdns_drd_host_on(struct cdns *cdns)
+ {
+ 	u32 val, ready_bit;
+-	int ret = 0;
+-
+-	if (cdns->no_drd)
+-		goto phy_set;
++	int ret;
+ 
+ 	/* Enable host mode. */
+ 	writel(OTGCMD_HOST_BUS_REQ | OTGCMD_OTG_DIS,
+@@ -203,7 +197,6 @@ int cdns_drd_host_on(struct cdns *cdns)
+ 	if (ret)
+ 		dev_err(cdns->dev, "timeout waiting for xhci_ready\n");
+ 
+-phy_set:
+ 	phy_set_mode(cdns->usb2_phy, PHY_MODE_USB_HOST);
+ 	phy_set_mode(cdns->usb3_phy, PHY_MODE_USB_HOST);
+ 	return ret;
+@@ -217,9 +210,6 @@ void cdns_drd_host_off(struct cdns *cdns)
+ {
+ 	u32 val;
+ 
+-	if (cdns->no_drd)
+-		goto phy_set;
+-
+ 	writel(OTGCMD_HOST_BUS_DROP | OTGCMD_DEV_BUS_DROP |
+ 	       OTGCMD_DEV_POWER_OFF | OTGCMD_HOST_POWER_OFF,
+ 	       &cdns->otg_regs->cmd);
+@@ -228,8 +218,6 @@ void cdns_drd_host_off(struct cdns *cdns)
+ 	readl_poll_timeout_atomic(&cdns->otg_regs->state, val,
+ 				  !(val & OTGSTATE_HOST_STATE_MASK),
+ 				  1, 2000000);
+-
+-phy_set:
+ 	phy_set_mode(cdns->usb2_phy, PHY_MODE_INVALID);
+ 	phy_set_mode(cdns->usb3_phy, PHY_MODE_INVALID);
+ }
+@@ -246,9 +234,6 @@ int cdns_drd_gadget_on(struct cdns *cdns)
+ 	u32 ready_bit;
+ 	int ret, val;
+ 
+-	if (cdns->no_drd)
+-		goto phy_set;
+-
+ 	/* switch OTG core */
+ 	writel(OTGCMD_DEV_BUS_REQ | reg, &cdns->otg_regs->cmd);
+ 
+@@ -266,7 +251,6 @@ int cdns_drd_gadget_on(struct cdns *cdns)
+ 		return ret;
+ 	}
+ 
+-phy_set:
+ 	phy_set_mode(cdns->usb2_phy, PHY_MODE_USB_DEVICE);
+ 	phy_set_mode(cdns->usb3_phy, PHY_MODE_USB_DEVICE);
+ 	return 0;
+@@ -281,9 +265,6 @@ void cdns_drd_gadget_off(struct cdns *cdns)
+ {
+ 	u32 val;
+ 
+-	if (cdns->no_drd)
+-		goto phy_set;
+-
+ 	/*
+ 	 * Driver should wait at least 10us after disabling Device
+ 	 * before turning-off Device (DEV_BUS_DROP).
+@@ -296,8 +277,6 @@ void cdns_drd_gadget_off(struct cdns *cdns)
+ 	readl_poll_timeout_atomic(&cdns->otg_regs->state, val,
+ 				  !(val & OTGSTATE_DEV_STATE_MASK),
+ 				  1, 2000000);
+-
+-phy_set:
+ 	phy_set_mode(cdns->usb2_phy, PHY_MODE_INVALID);
+ 	phy_set_mode(cdns->usb3_phy, PHY_MODE_INVALID);
+ }
+@@ -413,18 +392,6 @@ int cdns_drd_init(struct cdns *cdns)
+ 	u32 state, reg;
+ 	int ret;
+ 
+-	if (cdns->no_drd) {
+-		cdns->dr_mode = usb_get_dr_mode(cdns->dev);
+-
+-		if (cdns->dr_mode != USB_DR_MODE_HOST &&
+-		    cdns->dr_mode != USB_DR_MODE_PERIPHERAL) {
+-			dev_err(cdns->dev, "Incorrect dr_mode\n");
+-			return -EINVAL;
+-		}
+-
+-		return 0;
+-	}
+-
+ 	regs = devm_ioremap_resource(cdns->dev, &cdns->otg_res);
+ 	if (IS_ERR(regs))
+ 		return PTR_ERR(regs);
+@@ -525,9 +492,6 @@ int cdns_drd_init(struct cdns *cdns)
+ 
+ int cdns_drd_exit(struct cdns *cdns)
+ {
+-	if (cdns->no_drd)
+-		return 0;
+-
+ 	cdns_otg_disable_irq(cdns);
+ 
+ 	return 0;
+@@ -536,9 +500,6 @@ int cdns_drd_exit(struct cdns *cdns)
+ /* Indicate the cdns3 core was power lost before */
+ bool cdns_power_is_lost(struct cdns *cdns)
+ {
+-	if (cdns->no_drd)
+-		return false;
+-
+ 	if (cdns->version == CDNS3_CONTROLLER_V0) {
+ 		if (!(readl(&cdns->otg_v0_regs->simulate) & BIT(0)))
+ 			return true;
+diff --git a/drivers/usb/cdns3/gadget-export.h b/drivers/usb/cdns3/gadget-export.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/gadget-export.h
++++ b/drivers/usb/cdns3/gadget-export.h
+@@ -10,10 +10,9 @@
+ #ifndef __LINUX_CDNS3_GADGET_EXPORT
+ #define __LINUX_CDNS3_GADGET_EXPORT
+ 
+-#if IS_ENABLED(CONFIG_USB_CDNS3_GADGET)
++#if IS_ENABLED(CONFIG_USB_CDNSP_GADGET)
+ 
+ int cdnsp_gadget_init(struct cdns *cdns);
+-int cdns3_gadget_init(struct cdns *cdns);
+ #else
+ 
+ static inline int cdnsp_gadget_init(struct cdns *cdns)
+@@ -21,6 +20,13 @@ static inline int cdnsp_gadget_init(struct cdns *cdns)
+ 	return -ENXIO;
+ }
+ 
++#endif /* CONFIG_USB_CDNSP_GADGET */
++
++#if IS_ENABLED(CONFIG_USB_CDNS3_GADGET)
++
++int cdns3_gadget_init(struct cdns *cdns);
++#else
++
+ static inline int cdns3_gadget_init(struct cdns *cdns)
+ {
+ 	return -ENXIO;
+diff --git a/drivers/usb/cdns3/host-export.h b/drivers/usb/cdns3/host-export.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/host-export.h
++++ b/drivers/usb/cdns3/host-export.h
+@@ -9,7 +9,7 @@
+ #ifndef __LINUX_CDNS3_HOST_EXPORT
+ #define __LINUX_CDNS3_HOST_EXPORT
+ 
+-#if IS_ENABLED(CONFIG_USB_CDNS3_HOST)
++#if IS_ENABLED(CONFIG_USB_CDNS_HOST)
+ 
+ int cdns_host_init(struct cdns *cdns);
+ 
+@@ -22,6 +22,6 @@ static inline int cdns_host_init(struct cdns *cdns)
+ 
+ static inline void cdns_host_exit(struct cdns *cdns) { }
+ 
+-#endif /* CONFIG_USB_CDNS3_HOST */
++#endif /* USB_CDNS_HOST */
+ 
+ #endif /* __LINUX_CDNS3_HOST_EXPORT */
+diff --git a/drivers/usb/cdns3/host.c b/drivers/usb/cdns3/host.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/cdns3/host.c
++++ b/drivers/usb/cdns3/host.c
+@@ -81,7 +81,6 @@ static int __cdns_host_init(struct cdns *cdns)
+ 	}
+ 
+ 	xhci->dev.parent = cdns->dev;
+-	cdns->xhci_device = xhci;
+ 	cdns->host_dev = xhci;
+ 
+ 	ret = platform_device_add_resources(xhci, cdns->xhci_res,
+@@ -127,8 +126,6 @@ static int __cdns_host_init(struct cdns *cdns)
+ free_memory:
+ 	kfree(cdns->xhci_plat_data);
+ err1:
+-	cdns->xhci_device = NULL;
+-	cdns->host_dev = NULL;
+ 	platform_device_put(xhci);
+ 	return ret;
+ }
+@@ -138,7 +135,6 @@ static void cdns_host_exit(struct cdns *cdns)
+ 	kfree(cdns->xhci_plat_data);
+ 	platform_device_unregister(cdns->host_dev);
+ 	cdns->host_dev = NULL;
+-	cdns->xhci_device = NULL;
+ 	cdns_drd_host_off(cdns);
+ }
+ 
+@@ -170,4 +166,3 @@ int cdns_host_init(struct cdns *cdns)
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL_GPL(cdns_host_init);
+-- 
+Armbian
+

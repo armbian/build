@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Wed, 8 Jul 2026 19:59:00 -0400
+Subject: PCI: cix: Sky1 RTL8127 ASPM/ClockPM disable (combined create+modify)
+
+Defensively disable ASPM/ClockPM on the CIX Sky1 + RTL8127 (0x8127)
+combination.  The driver firmware configures both when it initialises
+the link; a subsequent ASPM-core sweep during early boot reverts part
+of that state which makes the NIC config-space inaccessible
+(D3cold-resets race the BAR proxy), manifesting as a fatal IMPDEF
+SError on the first r8169 PHYAR MMIO.
+
+Three helpers introduced:
+  - cix_sky1_acpi_pcie_platform() -- fires only when running on the
+    CIX Sky1 ACPI host (CIXH2020 firmware-published _HID).
+  - cix_sky1_disable_config_link_pm() -- clears LNKCTL.ASPMC and
+    LNKCTL.CLKREQ_EN so the endpoint clock cannot be gated via
+    CLKREQ# while its BAR is still in use.
+  - quirk_cix_sky1_disable_aspm_{header,final}() -- handle at
+    module-header-time and final-fixup.
+
+This is a combined create+modify (originally split as 0108a + 0109 by
+the human operator, but the modify-side patch was authored assuming
+the create-side already existed in the patch list.  Merged into one
+patch to fit cleanly into the SRC_URI list.).
+---
+ drivers/pci/quirks.c | 65 ++++++++++
+ 1 file changed, 65 insertions(+)
+
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -6415,3 +6415,68 @@ static void pci_mask_replay_timer_timeout(struct pci_dev *pdev)
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9750, pci_mask_replay_timer_timeout);
+ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9755, pci_mask_replay_timer_timeout);
+ #endif
++
++/*
++ * CIX Sky1 ASPM/ClockPM disable helpers + ASPM workarounds for the
++ * Realtek 0x8127 family on the CIX Sky1 ACPI PCIe host.
++ */
++static bool cix_sky1_acpi_pcie_platform(void)
++{
++#ifdef CONFIG_ARM64
++	return acpi_dev_present("CIXH2020", NULL, NULL);
++#endif
++	return false;
++}
++
++static void cix_sky1_disable_config_link_pm(struct pci_dev *dev)
++{
++	u16 lnkctl;
++
++	if (!dev || !pci_is_pcie(dev))
++		return;
++
++	pcie_capability_read_word(dev, PCI_EXP_LNKCTL, &lnkctl);
++	lnkctl &= PCI_EXP_LNKCTL_ASPMC | PCI_EXP_LNKCTL_CLKREQ_EN;
++	if (lnkctl)
++		pci_info(dev, "CIX Sky1: clearing Link Control low-power bits %#06x\n",
++			 lnkctl);
++
++	/*
++	 * pcie_aspm=off prevents the ASPM core from changing firmware state,
++	 * and pci_disable_link_state() consequently returns -EPERM.  Clear
++	 * both ASPM and Clock PM in config space so CLKREQ# cannot gate the
++	 * endpoint clock while its BAR is still in use.
++	 */
++	pcie_capability_clear_word(dev, PCI_EXP_LNKCTL,
++				   PCI_EXP_LNKCTL_ASPMC |
++				   PCI_EXP_LNKCTL_CLKREQ_EN);
++}
++
++static void quirk_cix_sky1_disable_aspm_header(struct pci_dev *dev)
++{
++	if (!cix_sky1_acpi_pcie_platform())
++		return;
++
++	pcie_aspm_remove_cap(dev,
++			     PCI_EXP_LNKCAP_ASPM_L0S | PCI_EXP_LNKCAP_ASPM_L1);
++	cix_sky1_disable_config_link_pm(dev);
++}
++
++static void quirk_cix_sky1_disable_aspm_final(struct pci_dev *dev)
++{
++	struct pci_dev *bridge;
++
++	if (!cix_sky1_acpi_pcie_platform())
++		return;
++
++	if (pcie_aspm_support_enabled() &&
++	    pci_disable_link_state(dev, PCIE_LINK_STATE_ALL))
++		pci_warn(dev, "CIX Sky1: failed to disable ASPM/ClockPM\n");
++	bridge = pci_upstream_bridge(dev);
++	if (bridge)
++		cix_sky1_disable_config_link_pm(bridge);
++	cix_sky1_disable_config_link_pm(dev);
++	pci_info(dev, "CIX Sky1: ASPM/ClockPM disabled (fault workaround)\n");
++}
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_REALTEK, 0x8127, quirk_cix_sky1_disable_aspm_header);
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_REALTEK, 0x8127, quirk_cix_sky1_disable_aspm_final);
+-- 
+Armbian
+

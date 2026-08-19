@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Fri, 26 Jun 2026 16:20:00 -0400
+Subject: soc: cix: acpi-resource-lookup: resolve dev_id by ACPI name
+
+The RSTL reset-lookup handler resolves consumer/provider device names via
+the live platform_device (bus_find_device_by_acpi_dev). This runs from a
+subsys_initcall and can execute before the consumer's platform_device has
+been created, so acpi_obj_to_devname() returns NULL.
+
+reset_controller_add_lookup() then rejects the entry as "badly specified"
+(it requires non-NULL dev_id and provider), silently dropping the USB
+reset lookups. As a result the cix-usb2/usb3/usbdp PHYs fail to get
+"reset"/"preset", and cdnsp-sky1 (which hard-requires usb_reset/usb_preset)
+cannot probe -> CIXH2030/CIXH2031 stay unbound -> no xHCI, dead USB.
+
+For ACPI-enumerated platform devices, dev_name() equals the ACPI device's
+bus id, so fall back to that deterministic name when the platform_device
+is not (yet) registered. This makes the reset lookups order-independent.
+
+Signed-off-by: Jason Perlow <jperlow@gmail.com>
+---
+ drivers/soc/cix/cix-acpi-resource-lookup.c | 37 +++++++---
+ 1 file changed, 26 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/soc/cix/cix-acpi-resource-lookup.c b/drivers/soc/cix/cix-acpi-resource-lookup.c
+index 111111111111..222222222222 100644
+--- a/drivers/soc/cix/cix-acpi-resource-lookup.c
++++ b/drivers/soc/cix/cix-acpi-resource-lookup.c
+@@ -26,15 +26,13 @@
+ #include <linux/platform_device.h>
+ #include <linux/reset-controller.h>
+ 
+-static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
++static struct acpi_device *acpi_obj_to_acpi_dev(const union acpi_object *obj)
+ {
+-	struct acpi_device *adev;
+-
+ 	if (!obj)
+ 		return NULL;
+ 
+ 	if (obj->type == ACPI_TYPE_LOCAL_REFERENCE) {
+-		adev = acpi_fetch_acpi_dev(obj->reference.handle);
++		return acpi_fetch_acpi_dev(obj->reference.handle);
+ 	} else if (obj->type == ACPI_TYPE_STRING) {
+ 		acpi_handle handle;
+ 		acpi_status status;
+@@ -42,11 +40,16 @@ static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
+ 		status = acpi_get_handle(NULL, obj->string.pointer, &handle);
+ 		if (ACPI_FAILURE(status))
+ 			return NULL;
+-		adev = acpi_fetch_acpi_dev(handle);
+-	} else {
+-		return NULL;
++		return acpi_fetch_acpi_dev(handle);
+ 	}
+ 
++	return NULL;
++}
++
++static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
++{
++	struct acpi_device *adev = acpi_obj_to_acpi_dev(obj);
++
+ 	if (!adev)
+ 		return NULL;
+ 
+@@ -55,13 +58,25 @@ static struct device *acpi_obj_to_platform_device(const union acpi_object *obj)
+ 
+ static const char *acpi_obj_to_devname(const union acpi_object *obj)
+ {
++	struct acpi_device *adev;
+ 	struct device *dev;
+ 
+ 	dev = acpi_obj_to_platform_device(obj);
+-	if (!dev)
+-		return NULL;
+-
+-	return dev_name(dev);
++	if (dev)
++		return dev_name(dev);
++
++	/*
++	 * The target platform_device may not be instantiated yet when this
++	 * lookup runs (subsys_initcall ordering vs ACPI platform-device
++	 * creation).  For ACPI-enumerated platform devices, dev_name() equals
++	 * the ACPI device's bus id, so fall back to that deterministic name.
++	 * Without this, reset_control lookups for not-yet-probed consumers
++	 * (e.g. usb_reset/usb_preset on CIXH2030/CIXH2032) get a NULL dev_id
++	 * and are rejected by reset_controller_add_lookup() as "badly
++	 * specified", leaving USB PHY/controller resets unresolved.
++	 */
++	adev = acpi_obj_to_acpi_dev(obj);
++	return adev ? acpi_dev_name(adev) : NULL;
+ }
+ 
+ /*
+-- 
+Armbian
+

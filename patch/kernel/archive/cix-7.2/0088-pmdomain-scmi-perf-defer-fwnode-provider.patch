@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Mon, 6 Jul 2026 01:35:58 -0400
+Subject: pmdomain: scmi-perf: defer fwnode provider to late_initcall (NCZ
+ 0088)
+
+Forward-port of 9009-pmdomain-scmi-perf-defer-fwnode-provider.patch,
+proven on 7.1.2 real hardware. Registering the genpd fwnode provider
+during SCMI perf-domain probe can trigger premature consumer-device
+attachment under ACPI; a consumer pm_runtime_get_sync() during its own
+probe can touch hardware registers while the SCMI mailbox/clock tree
+is still settling, raising an SError. Defer the
+genpd_add_fwnode_provider_onecell() call to late_initcall, after the
+SCMI stack and core clock/reset providers are stable. DT boot unchanged.
+---
+ drivers/pmdomain/arm/scmi_perf_domain.c | 36 ++++++++--
+ 1 file changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pmdomain/arm/scmi_perf_domain.c b/drivers/pmdomain/arm/scmi_perf_domain.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/arm/scmi_perf_domain.c
++++ b/drivers/pmdomain/arm/scmi_perf_domain.c
+@@ -113,6 +113,17 @@ static int match_proto_reg(struct acpi_device *adev, void *data)
+  *
+  * Returns the protocol fwnode, or NULL if not found.
+  */
++
++/* Deferred fwnode provider registration - avoids premature consumer
++ * attachment during SCMI protocol bring-up (can SError on unready
++ * hardware under ACPI). Probe stores; late_initcall commits.
++ */
++static struct {
++	struct scmi_device *sdev;
++	struct genpd_onecell_data *pd_data;
++	struct fwnode_handle *proto_fw;
++} scmi_perf_deferred;
++
+ static struct fwnode_handle *scmi_perf_find_proto_fwnode(struct scmi_device *sdev)
+ {
+ 	struct acpi_device *parent_adev;
+@@ -239,10 +250,10 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
+ 
+ 		proto_fw = scmi_perf_find_proto_fwnode(sdev);
+ 		if (proto_fw) {
+-			ret = genpd_add_fwnode_provider_onecell(proto_fw,
+-								scmi_pd_data);
+-			if (ret)
+-				goto err;
++			scmi_perf_deferred.sdev = sdev;
++			scmi_perf_deferred.pd_data = scmi_pd_data;
++			scmi_perf_deferred.proto_fw = proto_fw;
++			dev_info(dev, "%s: fwnode provider deferred to late_initcall\n", __func__);
+ 		}
+ 	}
+ 
+@@ -380,6 +391,23 @@ enum scmi_power_scale scmi_perf_domain_power_scale_by_id(u32 domain_id)
+ EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale_by_id);
+ 
+ module_scmi_driver(scmi_perf_domain_driver);
++static int __init scmi_perf_deferred_init(void)
++{
++	if (scmi_perf_deferred.sdev && scmi_perf_deferred.pd_data &&
++	    scmi_perf_deferred.proto_fw) {
++		int ret = genpd_add_fwnode_provider_onecell(
++			scmi_perf_deferred.proto_fw,
++			scmi_perf_deferred.pd_data);
++		if (ret)
++			pr_err("scmi_perf: late fwnode provider failed: %d\n", ret);
++		else
++			pr_info("scmi_perf: late fwnode provider registered (%d domains)\n",
++				scmi_perf_deferred.pd_data->num_domains);
++	}
++	return 0;
++}
++late_initcall(scmi_perf_deferred_init);
++
+ 
+ MODULE_AUTHOR("Ulf Hansson <ulf.hansson@linaro.org>");
+ MODULE_DESCRIPTION("ARM SCMI perf domain driver");
+-- 
+Armbian
+

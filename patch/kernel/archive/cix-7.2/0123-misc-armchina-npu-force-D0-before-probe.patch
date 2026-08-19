@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 9 Jul 2026 20:06:02 -0400
+Subject: misc: armchina-npu: force ACPI D0 when all NPU pd_core[] NULL (BIOS
+ v1.0)
+
+On BIOS v1.0, CRE0/CRE1/CRE2 NPU core devices lack _HID in the DSDT.
+bus_find_device_by_fwnode() returns NULL for all three cores. After the
+fwnode child loop, all pd_core[] entries are NULL, so pm_runtime_resume_and_get
+is skipped entirely.
+
+Without explicit D0 activation, ACPI puts CIXH4000 in D3cold during
+device scan. armchina_aipu_probe() then reads the version register on
+unpowered hardware and gets garbage -> EINVAL.
+
+Fix: when all pd_core[] are NULL, call acpi_device_set_power(D0) before
+armchina_aipu_probe(). This forces the ACPI _PS0 path (bypassing the
+_PR0/SCMI path) to bring hardware to D0.
+
+Source: linux-cix-sky1-next-7.1/patches-7.1/2008-armchina-npu-force-D0-before-probe.patch
+Applies unchanged on top of 2006.
+---
+ drivers/misc/armchina-npu/sky1/sky1.c | 13 ++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/misc/armchina-npu/sky1/sky1.c b/drivers/misc/armchina-npu/sky1/sky1.c
+index 111111111111..222222222222 100644
+--- a/drivers/misc/armchina-npu/sky1/sky1.c
++++ b/drivers/misc/armchina-npu/sky1/sky1.c
+@@ -428,6 +428,19 @@ static int sky1_npu_probe(struct platform_device *p_dev)
+ 			if (ret < 0)
+ 				goto npu_probe_failed;
+ 		}
++		/* If all pd_core[] are NULL (BIOS v1.0 missing _HID on CRE devices),
++		 * force D0 via ACPI to ensure hardware is powered before probing. */
++		{
++			int all_null = 1;
++			for (i = 0; i < CIX_NPU_PD_NUM; i++)
++				if (sky1_npu_pd_core_valid(cix_aipu_priv->pd_core[i]))
++					{ all_null = 0; break; }
++			if (all_null) {
++				struct acpi_device *adev = ACPI_COMPANION(&p_dev->dev);
++				if (adev)
++					acpi_device_set_power(adev, ACPI_STATE_D0);
++			}
++		}
+     }
+ 
+     ret = armchina_aipu_probe(p_dev, &sky1, &sky1_ops);
+-- 
+Armbian
+

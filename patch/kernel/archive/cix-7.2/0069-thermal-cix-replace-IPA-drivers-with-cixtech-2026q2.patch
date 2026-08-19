@@ -1,0 +1,387 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jason Perlow <jperlow@gmail.com>
+Date: Thu, 2 Jul 2026 21:48:59 -0400
+Subject: thermal: cix: replace IPA drivers with cixtech 2026q2
+
+---
+ drivers/thermal/cix/Kconfig                |  23 +-
+ drivers/thermal/cix/Makefile               |   5 +-
+ drivers/thermal/cix/cix_cpu_ipa.c          | 110 ++++------
+ drivers/thermal/cix/cix_scmi_em.c          | 106 +++++++++
+ include/dt-bindings/thermal/sky1-thermal.h |  29 +++
+ 5 files changed, 193 insertions(+), 80 deletions(-)
+
+diff --git a/drivers/thermal/cix/Kconfig b/drivers/thermal/cix/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cix/Kconfig
++++ b/drivers/thermal/cix/Kconfig
+@@ -1,16 +1,15 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+-
+ config CIX_THERMAL
+-	bool "CIX thermal IPA support"
+-	depends on ARCH_CIX || COMPILE_TEST
+-	depends on THERMAL && THERMAL_GOV_POWER_ALLOCATOR
+-	depends on CPU_FREQ && ENERGY_MODEL
+-	depends on ACPI_CPPC_CPUFREQ
++	tristate "Cix thermal IPA driver"
++	depends on ARCH_CIX && THERMAL_GOV_POWER_ALLOCATOR
++	select CIX_SCMI_ENERGY_MODEL
+ 	help
+-	  Power allocator (IPA) support for CIX platforms, including the
+-	  cpu-ipa MMIO driver for per-CPU static/dynamic power, ACPI thermal
+-	  zone methods (SSTP, SWIT), CPPC OPP data, and processor cooling
+-	  device power callbacks.
++	  If you say yes here you get support IPA for CPU
+ 
+-	  If unsure, say Y on CIX Sky1 systems using the power_allocator
+-	  thermal governor.
++config CIX_SCMI_ENERGY_MODEL
++	tristate "SCMI based Cix Energy Model driver"
++	depends on ENERGY_MODEL
++	depends on CIX_THERMAL
++	help
++	  It uses SCMI Message Protocol driver to register
++	  Energy Model (EM) for Cix platforms.
+diff --git a/drivers/thermal/cix/Makefile b/drivers/thermal/cix/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cix/Makefile
++++ b/drivers/thermal/cix/Makefile
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ #
+-# CIX thermal drivers
++# Cix thermal specific Makefile
+ #
+-obj-$(CONFIG_CIX_THERMAL)	+= cix_cpu_ipa.o
++obj-$(CONFIG_CIX_THERMAL)			+= cix_cpu_ipa.o
++obj-$(CONFIG_CIX_SCMI_ENERGY_MODEL)	+= cix_scmi_em.o
+diff --git a/drivers/thermal/cix/cix_cpu_ipa.c b/drivers/thermal/cix/cix_cpu_ipa.c
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/cix/cix_cpu_ipa.c
++++ b/drivers/thermal/cix/cix_cpu_ipa.c
+@@ -1,114 +1,92 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * CIX CPU IPA support driver
++ * Generic Cix IPA support driver
+  *
+- * Copyright (C) 2024 Cix Technology Group Co., Ltd.
++ * Copyright 2024 Cix Technology Group Co., Ltd.All Rights Reserved.
+  */
+ 
+-#include <linux/cix/cpu_ipa.h>
+-#include <linux/cpu.h>
+ #include <linux/device.h>
+ #include <linux/export.h>
+-#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+-#include <asm/cputype.h>
+ 
+-#define REG_OFFSET	0x40
++#define REG_OFFSET 0x40
+ 
+-struct cpu_ipa_info {
+-	u32 off_cnt;
+-	u32 rsvd[13];
+-	s32 dynamic_power;
+-	s32 static_power;
+-};
++typedef struct {
++	volatile uint32_t off_cnt;
++	uint32_t rsvd[13];
++	int32_t dynamic_power;
++	int32_t static_power;
++} CPU_IPA_INFO;
+ 
+ struct cpu_ipa {
+ 	struct device *dev;
+ 	void __iomem *regs;
+-};
+-
+-static struct cpu_ipa *cpu_ipa_dev;
+-
+-static struct cpu_ipa_info *cpu_ipa_info_for_cpu(unsigned int cpu)
+-{
+-	int pcpu;
+-
+-	if (!cpu_ipa_dev || !cpu_ipa_dev->regs)
+-		return NULL;
++} *ci;
+ 
+-	pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
+-	if (pcpu > 12)
+-		return NULL;
+-
+-	return cpu_ipa_dev->regs + pcpu * REG_OFFSET;
+-}
+-
+-static int cix_get_static_power(unsigned int cpu)
++static int cix_get_static_power(int cpu)
+ {
+-	struct cpu_ipa_info *info = cpu_ipa_info_for_cpu(cpu);
++	int pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
+ 
+-	if (!info)
+-		return 0;
++	CPU_IPA_INFO *info = ci->regs + pcpu * REG_OFFSET;
+ 
+ 	return info->static_power;
+ }
+ 
+-static int cix_get_dynamic_power(unsigned int cpu)
++static int cix_get_dynamic_power(int cpu)
+ {
+-	struct cpu_ipa_info *info = cpu_ipa_info_for_cpu(cpu);
++	int pcpu = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
+ 
+-	if (!info)
+-		return 0;
++	CPU_IPA_INFO *info = ci->regs + pcpu * REG_OFFSET;
+ 
+ 	return info->dynamic_power;
+ }
+ 
+-int cix_get_static_power_cpus(const struct cpumask *cpus)
++int cix_get_static_power_cpus(cpumask_var_t cpus)
+ {
+-	unsigned int cpu, total_power = 0;
++	int cpu;
++	int total_power = 0;
+ 
+-	for_each_cpu(cpu, cpus)
++	for_each_cpu(cpu, cpus) {
+ 		total_power += cix_get_static_power(cpu);
+-
++	}
+ 	return total_power;
+ }
+-EXPORT_SYMBOL_GPL(cix_get_static_power_cpus);
++EXPORT_SYMBOL(cix_get_static_power_cpus);
+ 
+-int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
++int cix_get_dynamic_power_cpus(cpumask_var_t cpus)
+ {
+-	unsigned int cpu, total_power = 0;
++	int cpu;
++	int total_power = 0;
+ 
+-	for_each_cpu(cpu, cpus)
++	for_each_cpu(cpu, cpus) {
+ 		total_power += cix_get_dynamic_power(cpu);
+-
++	}
+ 	return total_power;
+ }
+-EXPORT_SYMBOL_GPL(cix_get_dynamic_power_cpus);
++EXPORT_SYMBOL(cix_get_dynamic_power_cpus);
+ 
+ static int cpu_ipa_probe(struct platform_device *pdev)
+ {
+-	struct cpu_ipa *ipa;
++	struct device *dev = &pdev->dev;
+ 
+-	ipa = devm_kzalloc(&pdev->dev, sizeof(*ipa), GFP_KERNEL);
+-	if (!ipa)
++	ci = devm_kzalloc(&pdev->dev, sizeof(*ci), GFP_KERNEL);
++	if (!ci)
+ 		return -ENOMEM;
+ 
+-	ipa->regs = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(ipa->regs))
+-		return PTR_ERR(ipa->regs);
+-
+-	ipa->dev = &pdev->dev;
+-	platform_set_drvdata(pdev, ipa);
+-	cpu_ipa_dev = ipa;
++	ci->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ci->regs))
++		return PTR_ERR(ci->regs);
+ 
++	ci->dev = dev;
++	platform_set_drvdata(pdev, ci);
+ 	return 0;
+ }
+ 
+-static void cpu_ipa_remove(struct platform_device *pdev)
++static void cpu_ipa_shutdown(struct platform_device *pdev)
+ {
+-	cpu_ipa_dev = NULL;
++	return;
+ }
+ 
+ #ifdef CONFIG_PM_SLEEP
+@@ -135,15 +113,15 @@ MODULE_DEVICE_TABLE(of, cpu_ipa_of_match);
+ 
+ static struct platform_driver cpu_ipa_platdrv = {
+ 	.probe		= cpu_ipa_probe,
+-	.remove		= cpu_ipa_remove,
++	.shutdown	= cpu_ipa_shutdown,
+ 	.driver = {
+ 		.name	= "cpu-ipa",
+-		.pm	= pm_sleep_ptr(&cpu_ipa_pm),
+-		.of_match_table = cpu_ipa_of_match,
++		.pm	= &cpu_ipa_pm,
++		.of_match_table = of_match_ptr(cpu_ipa_of_match),
+ 	},
+ };
+ module_platform_driver(cpu_ipa_platdrv);
+ 
+-MODULE_DESCRIPTION("CIX CPU IPA support driver");
+-MODULE_AUTHOR("Cix Technology Group Co., Ltd.");
+-MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Generic Cix IPA support driver");
++MODULE_AUTHOR("Cixtech,Inc.");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/thermal/cix/cix_scmi_em.c b/drivers/thermal/cix/cix_scmi_em.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/cix/cix_scmi_em.c
+@@ -0,0 +1,106 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * SCMI based Cix Energy Model driver
++ *
++ * Copyright 2024 Cix Technology Group Co., Ltd.All Rights Reserved.
++ */
++
++#include <linux/energy_model.h>
++#include <linux/module.h>
++#include <linux/pm_opp.h>
++#include <linux/scmi_protocol.h>
++#include <linux/units.h>
++#include <linux/cix/cix_scmi_em.h>
++
++static struct scmi_protocol_handle *ph;
++static const struct scmi_perf_proto_ops *perf_ops;
++
++static int __maybe_unused
++cix_scmi_get_em_power(struct device *dev, unsigned long *power,
++		   unsigned long *KHz)
++{
++	enum scmi_power_scale power_scale = perf_ops->power_scale_get(ph);
++	unsigned long Hz;
++	int ret, domain;
++
++	domain = perf_ops->device_domain_id(dev);
++	if (domain < 0)
++		return domain;
++
++	/* Get the power from SCMI performance domain. */
++	Hz = *KHz * 1000;
++	ret = perf_ops->est_power_get(ph, domain, &Hz, power);
++	if (ret)
++		return ret;
++
++	if (power_scale == SCMI_POWER_MILLIWATTS)
++		*power *= MICROWATT_PER_MILLIWATT;
++
++	*KHz = Hz / 1000;
++
++	return 0;
++}
++
++int cix_scmi_register_em(struct device *dev)
++{
++	struct em_data_callback em_cb = EM_DATA_CB(cix_scmi_get_em_power);
++	enum scmi_power_scale power_scale = perf_ops->power_scale_get(ph);
++	bool em_power_scale = false;
++	int ret, nr_opp;
++
++	if (power_scale == SCMI_POWER_MILLIWATTS
++	    || power_scale == SCMI_POWER_MICROWATTS)
++		em_power_scale = true;
++
++	nr_opp = dev_pm_opp_get_opp_count(dev);
++	if (nr_opp <= 0) {
++		dev_err(dev, "Failed to get OPP counts\n");
++		return -EINVAL;
++	}
++
++	ret = em_dev_register_perf_domain(dev, nr_opp, &em_cb, NULL, em_power_scale);
++	if (ret) {
++		dev_dbg(dev, "Couldn't register Energy Model %d\n", ret);
++	}
++	return ret;
++}
++EXPORT_SYMBOL_GPL(cix_scmi_register_em);
++
++int cix_scmi_em_probe(struct scmi_device *sdev)
++{
++	const struct scmi_handle *handle;
++
++	handle = sdev->handle;
++
++	if (!handle)
++		return -ENODEV;
++
++	perf_ops = handle->devm_protocol_get(sdev, SCMI_PROTOCOL_PERF, &ph);
++	if (IS_ERR(perf_ops))
++		return PTR_ERR(perf_ops);
++
++	return 0;
++}
++
++static void cix_scmi_em_remove(struct scmi_device *sdev)
++{
++	/* Nothing need to be done now */
++}
++
++static const struct scmi_device_id scmi_id_table[] = {
++	{ SCMI_PROTOCOL_PERF, "cix_em_perf" },
++	{ },
++};
++MODULE_DEVICE_TABLE(scmi, scmi_id_table);
++
++static struct scmi_driver cix_scmi_em_drv = {
++	.name		= "cix-scmi-em",
++	.probe		= cix_scmi_em_probe,
++	.remove		= cix_scmi_em_remove,
++	.id_table	= scmi_id_table,
++};
++module_scmi_driver(cix_scmi_em_drv);
++
++MODULE_AUTHOR("Cixtech,Inc.");
++MODULE_DESCRIPTION("CIX SCMI Energy Model interface driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/include/dt-bindings/thermal/sky1-thermal.h b/include/dt-bindings/thermal/sky1-thermal.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/dt-bindings/thermal/sky1-thermal.h
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright 2024-2025 Cix Technology Group Co., Ltd.
++ */
++
++#ifndef __DT_BINDINGS_SKY1_THERMAL_H__
++#define __DT_BINDINGS_SKY1_THERMAL_H__
++
++/*sensor id pvt0-12*/
++#define VPU_TEMP_SENSOR_ID	0
++#define GPU_BOTTOM_TEMP_SENSOR_ID	1
++#define GPU_TOP_TEMP_SENSOR_ID	2
++#define SOC_BRC_TEMP_SENSOR_ID	3
++#define DDR_BOTTOM4_TEMP_SENSOR_ID	4
++#define DDR_TOP_TEMP_SENSOR_ID	5
++#define CI700_TEMP_SENSOR_ID	6
++#define NPU_TEMP_SENSOR_ID	7
++#define CPU_M1_TEMP_SENSOR_ID	8
++#define CPU_B1_TEMP_SENSOR_ID	9
++#define CPU_M0_TEMP_SENSOR_ID	10
++#define CPU_B0_TEMP_SENSOR_ID	11
++#define SOC_TRC_TEMP_SENSOR_ID	12
++#define GPU_AVERAGE_TEMP_SENSOR_ID	13
++#define NTC0_TEMP_SENSOR_ID	14
++#define NTC1_TEMP_SENSOR_ID	15
++
++#define REG_SENSOR_DEV_COUNT	32
++
++#endif
+-- 
+Armbian
+
