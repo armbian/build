@@ -19,6 +19,7 @@ function xiaomi-sheng_is_userspace_supported() {
 	[[ "${RELEASE}" == "jammy" ]] && return 0
 	[[ "${RELEASE}" == "trixie" ]] && return 0
 	[[ "${RELEASE}" == "noble" ]] && return 0
+	[[ "${RELEASE}" == "resolute" ]] && return 0
 	return 1
 }
 
