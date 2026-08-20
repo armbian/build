@@ -56,7 +56,14 @@ function prepare_host_init() {
 	declare -g -x CCACHE_TEMPDIR="${WORKDIR}/ccache_tmp" # Export CCACHE_TEMPDIR, under Workdir, which is hopefully under tmpfs. Thanks @the-Going for this.
 	declare -g -x XDG_RUNTIME_DIR="${WORKDIR}/xdg_tmp"   # XDG_RUNTIME_DIR is used by the likes of systemd/freedesktop centric apps.
 
-	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
+	# A config-only dump exits before building anything, so preparing the host -- installing
+	# dependencies, managing apt-cacher-ng, syncing the clock -- would be pure side effect on a
+	# command whose contract is "change nothing, just print the vars". Artifacts whose version
+	# needs aggregation are the exception: aggregation runs Python from the host dependencies and
+	# asserts a prepared host.
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" && "${artifact_version_requires_aggregation:-"no"}" != "yes" ]]; then
+		display_alert "Skipping host preparation" "CONFIG_DEFS_ONLY is set; nothing will be built" "debug"
+	elif [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
 		### Write config summary # @TODO: or not? this is a bit useless
 		LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
 
