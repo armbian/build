@@ -7,6 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 #
+import email.errors
 import email.header
 import email.utils
 import logging
@@ -863,8 +864,15 @@ def header_to_str(value) -> "str | None":
 	# non-ASCII authors parse instead of aborting the whole kernel build.
 	if value is None or isinstance(value, str):
 		return value
+	try:
+		decoded_parts = email.header.decode_header(value)
+	except email.errors.HeaderParseError:
+		# A malformed encoded-word (e.g. bad base64) makes decode_header() itself raise,
+		# before the per-part loop can run. Fall back to the raw string form rather than
+		# aborting the whole build; downstream parsing already tolerates mangled text.
+		return str(value)
 	parts = []
-	for data, enc in email.header.decode_header(value):
+	for data, enc in decoded_parts:
 		if isinstance(data, bytes):
 			if enc is None or enc.lower() in ("unknown-8bit", "x-unknown", "unknown"):
 				enc = "utf-8"
