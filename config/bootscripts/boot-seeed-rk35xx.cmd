@@ -24,18 +24,33 @@ echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 # Load armbianEnv.txt with corruption detection and .dist fallback.
 # Power loss can fill the file with 0xFF (eMMC erased block) or ^@ (NUL,
 # on other storage media) which passes "env import -t" without error but
-# imports zero variables. Clear rootdev before import; if it remains
-# empty, the file was corrupt.
+# imports zero variables. Editor-induced CRLF pollution keeps a trailing
+# \r in every value with plain "env import -t"; "env import -t -r"
+# strips it at import (device-verified on the Radxa next-dev-v2024.10
+# U-Boot these boards ship - the banner says 2017.09 because Rockchip
+# pins the version in the Makefile, the code is much newer).
+# Clear rootdev and fdtfile so a stale built-in value can't satisfy the
+# probe below when a corrupt file imports zero variables.
 setenv rootdev
+setenv fdtfile
 if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt; then
-	env import -t ${load_addr} ${filesize}
+	env import -t -r ${load_addr} ${filesize}
 fi
-if test -z "${rootdev}"; then
+# Defense in depth: probe the imported file by loading the DTB its
+# fdtfile points to. On failure (stale fdtfile from an older image,
+# typo, missing dtb) reload .dist, which restores all key vars (rootdev,
+# fdtfile, overlays, ...) from the clean baseline maintained by the
+# build hook and OTA sync.
+if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
+	:
+else
+	echo "WARNING: armbianEnv.txt fdtfile ${fdtfile} not loadable, loading .dist fallback"
+	setenv rootdev
+	setenv fdtfile
 	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt.dist; then
-		echo "WARNING: armbianEnv.txt corrupt, loading .dist fallback"
-		setenv rootdev
-		env import -t ${load_addr} ${filesize}
+		env import -t -r ${load_addr} ${filesize}
 	fi
+	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fi
 # Final safety: derive rootdev from boot source if still unset
 if test -z "${rootdev}"; then

@@ -3,6 +3,8 @@
 
 # Seeed APT repository configuration
 SEEED_APT_REPO_URL="https://seeed-studio.github.io/seeed_armbian_extension"
+SEEED_DEFAULT_ENABLE="${SEEED_DEFAULT_ENABLE:-"yes"}" # default all Seeed vendor features on unless explicitly disabled
+display_alert "$BOARD" "SEEED_DEFAULT_ENABLE is set to '${SEEED_DEFAULT_ENABLE}'" "info"
 
 # Configure Seeed APT repository in the image (persists for apt upgrade)
 function post_family_tweaks_bsp__seeed_configure_apt_source() {
@@ -57,9 +59,9 @@ function seeed_recomputer_install_from_apt() {
 		EOF
 	fi
 
-	chroot_sdcard apt-get -y -qq -o Dpkg::Use-Pty=0 update
-	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Use-Pty=0 \
-		--no-install-recommends install "$@"
+	chroot_sdcard_apt_get_update
+	chroot_sdcard_apt_get_install_download_only "$@"
+	chroot_sdcard_apt_get_install "$@"
 }
 
 # Install Seeed common packages (USB gadget, Morse tools).
@@ -69,14 +71,13 @@ function seeed_recomputer_install_from_apt() {
 function pre_install_distribution_specific__recomputer_install_seeed_packages() {
 	display_alert "Installing Seeed packages from APT repo" "seeed-apt" "info"
 
-	seeed_recomputer_install_from_apt \
-		usbdevice-gadget-rk \
-		wpa-supplicant-morse-tools \
-		morsectrl-tools \
-		hostapd-morse-tools \
-		morse-fgh100m-dkms
+	declare -a pkgs=()
+	[[ "${SEEED_USB_GADGET_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(usbdevice-gadget-rk)
+	[[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(wpa-supplicant-morse-tools morsectrl-tools hostapd-morse-tools morse-fgh100m-dkms)
 
-	display_alert "Seeed packages installed successfully" "seeed-apt" "info"
+	seeed_recomputer_install_from_apt "${pkgs[@]}" # this does nothing if array is empty
+
+	display_alert "Seeed packages installed successfully" "seeed-apt: ${pkgs[*]}" "info"
 }
 
 # Install fcs960k-aic-bluez AFTER all desktop/extension packages.
@@ -87,58 +88,15 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 # We perform snapshot and diff entirely inside chroot to avoid
 # pipe/process-substitution issues with dpkg-query across chroot boundary.
 function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
-	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
-
-	# Snapshot installed packages (only "ii" status, excluding rc/unpacked)
-	# dpkg-query -W lists ALL packages including rc-status (removed, config-files),
-	# which would make comm diff miss packages that were removed but left config files.
-	local snapshot_before snapshot_after
-	snapshot_before=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-before.XXXXXX)
-	snapshot_after=$(mktemp --tmpdir="${SDCARD}/tmp" pkg-after.XXXXXX)
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
-		grep "^ii " | awk '{print $2}' | sort > "${snapshot_before}"
-
-	# Pre-compute packages that depend on bluez (one apt-cache call instead of N)
-	local bluez_deps
-	bluez_deps=$(chroot_sdcard_with_stdout apt-cache rdepends --installed bluez 2> /dev/null |
-		awk 'NR>2 && NF{print $1}' | sort -u)
-
-	seeed_recomputer_install_from_apt fcs960k-aic-bluez
-
-	# Diff to detect removed packages
-	chroot_sdcard_with_stdout dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
-		grep "^ii " | awk '{print $2}' | sort > "${snapshot_after}"
-	local removed_pkgs
-	removed_pkgs=$(comm -23 "${snapshot_before}" "${snapshot_after}")
-	removed_pkgs=$(printf '%s\n' "${removed_pkgs}" | grep -vxE 'bluez|fcs960k-aic-bluez' || true)
-	rm -f "${snapshot_before}" "${snapshot_after}"
-
-	if [[ -n "${removed_pkgs}" ]]; then
-		# Filter out packages that depend on bluez — reinstalling them would
-		# pull bluez back via apt dependency resolution, which conflicts with
-		# fcs960k-aic-bluez and removes it again.
-		local -a safe_pkgs=()
-		for pkg in ${removed_pkgs}; do
-			if printf '%s\n' "${bluez_deps}" | grep -qxF "$pkg"; then
-				display_alert "Skipping reinstall (depends on bluez)" "$pkg" "warn"
-			else
-				safe_pkgs+=("$pkg")
-			fi
-		done
-
-		if [[ ${#safe_pkgs[@]} -gt 0 ]]; then
-			display_alert "Reinstalling packages removed by bluez conflict" "${safe_pkgs[*]}" "warn"
-			chroot_sdcard_apt_get_install "${safe_pkgs[@]}"
-		fi
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed fcs960k-aic-bluez (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
 	fi
 
-	# Re-disable display managers: reinstalling gdm3 triggers its postinst
-	# which re-enables display-manager.service, undoing desktop_postinstall()'s
-	# disable. Without this the system boots into GDM instead of console,
-	# skipping armbian-firstlogin's user/password setup prompt.
-	disable_systemd_service_sdcard gdm3.service
-	disable_systemd_service_sdcard lightdm.service
-	disable_systemd_service_sdcard sddm.service
+	display_alert "Installing fcs960k-aic-bluez (replacing bluez)" "seeed-apt" "info"
+
+	display_alert "Actually Installing fcs960k-aic-bluez (replacing bluez) now" "seeed-apt" "debug"
+	seeed_recomputer_install_from_apt fcs960k-aic-bluez
 
 	# fcs960k-aic-bluez replaces bluez but does not ship a bluetooth.service
 	# unit. Create one pointing to fcs960k's bluetoothd so that
@@ -163,10 +121,17 @@ function post_repo_customize_image__recomputer_install_fcs960k_bluez() {
 			Alias=dbus-org.bluez.service
 		EOF
 	fi
+
+	return 0
 }
 
 # AIC8800 wireless tweaks (BSP-level)
 function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed AIC8800 Tweaks (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Installing AIC8800 Tweaks" "info"
 	mkdir -p "${destination}"/etc/modprobe.d
 	mkdir -p "${destination}"/etc/modules-load.d
@@ -198,6 +163,11 @@ function post_family_tweaks_bsp__recomputer_aic8800_wireless() {
 
 # Enable AIC8800 Bluetooth Service
 function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
+	if [[ "${SEEED_AIC_BLUEZ_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed AIC8800 Bluetooth Service (SEEED_AIC_BLUEZ=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Enabling AIC8800 Bluetooth Service" "info"
 	if chroot_sdcard test -f /usr/lib/systemd/system/aic-bluetooth.service ||
 		chroot_sdcard test -f /lib/systemd/system/aic-bluetooth.service ||
@@ -224,6 +194,13 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 
 # Morse FGH100M firmware
 function post_family_tweaks_bsp__recomputer_fgh100m_morse_firmware() {
+	if [[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping Seeed Morse FGH100M firmware (SEEED_MORSE_ENABLE=no)" "info"
+		return 0
+	fi
+
+	display_alert "$BOARD" "Installing Morse FGH100M firmware" "info"
+
 	local morse_fw_rev="commit:974c7744263ffb56a1c8678962e740fdcb3428f7"
 
 	fetch_from_repo "https://github.com/MorseMicro/morse-firmware.git" "morse-firmware" "${morse_fw_rev}" "yes"
@@ -241,6 +218,11 @@ function post_family_tweaks_bsp__recomputer_fgh100m_morse_firmware() {
 
 # USB gadget defaults (ACM + RNDIS, usb0 management link)
 function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
+	if [[ "${SEEED_USB_GADGET_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping USB gadget defaults (SEEED_USB_GADGET_ENABLE=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Configuring USB gadget defaults (ACM + RNDIS, usb0 management link)" "info"
 
 	do_with_retries 3 chroot_sdcard_apt_get_install dnsmasq
@@ -340,6 +322,11 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 # Auto-mount USB storage under /media/<first-user>/ (DE-agnostic)
 function post_family_tweaks__recomputer_usb_auto_mount() {
+	if [[ "${SEEED_AUTOMOUNT_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "$BOARD" "Skipping USB auto-mount (SEEED_AUTOMOUNT_ENABLE=no)" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Installing USB auto-mount" "info"
 
 	# Helper script: mount/unmount USB device under /media/<first-user>/LABEL
@@ -415,11 +402,28 @@ function post_family_tweaks__recomputer_mali_x11_kms_config() {
 	EOF
 }
 
+function post_family_tweaks__recomputer_panthor_userspace_cleanup() {
+	[[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]] || return 0
+
+	display_alert "$BOARD" "Removing Mali userspace wrappers for Panthor" "info"
+	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
+
+	rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
+	rm -rf "${LIB_DIR}/mali"
+	rm -f "${SDCARD}/usr/share/glvnd/egl_vendor.d/00_mali.json"
+	chroot_sdcard ldconfig
+}
+
 # Mali EGL — bypass libglvnd for EGL/GLES so GLVND does not fall back to Mesa/llvmpipe.
 # When MALI_USE_SYSTEM_GBM=yes, also remove Mali deb's ldconfig entry and stubs
 # to prevent mali/ wrappers from shadowing our direct libmali.so.1 symlinks.
 # RK3588 keeps the ldconfig entry so libMaliOpenCL remains discoverable.
 function post_family_tweaks__recomputer_mali_egl_override() {
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
+		display_alert "$BOARD" "Skipping Mali EGL override for Panthor" "info"
+		return 0
+	fi
+
 	display_alert "$BOARD" "Replacing libglvnd EGL/GLES with Mali" "info"
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
 
@@ -462,6 +466,14 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 # format in buffer allocation. Default is to use Mali GBM (RK3588).
 function pre_umount_final_image__recomputer_mali_gbm_fixup() {
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
+
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
+		display_alert "$BOARD" "Using Mesa GBM for Panthor" "info"
+		rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
+		rm -rf "${LIB_DIR}/mali"
+		chroot_sdcard ldconfig
+		return 0
+	fi
 
 	if [[ "${MALI_USE_SYSTEM_GBM}" == "yes" ]]; then
 		display_alert "$BOARD" "Using system libgbm" "info"
