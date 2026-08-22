@@ -1,7 +1,7 @@
 # Qualcomm SM8550 octa core 8/12/16GB tablet
 declare -g BOARD_NAME="Xiaomi Pad 6S Pro"
 declare -g BOARD_VENDOR="xiaomi"
-declare -g BOARD_MAINTAINER="code002"
+declare -g BOARD_MAINTAINER="code002-2"
 declare -g INTRODUCED="2024"
 declare -g BOARDFAMILY="sm8550-sheng"
 declare -g KERNEL_TARGET="edge,bleedingedge"
