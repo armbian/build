@@ -25,6 +25,10 @@ function post_build_image__900_convert_to_abl_img() {
 	mkfs.ext4 -F "${ROOTFS_IMAGE_FILE}"
 	new_rootfs_image_uuid=$(blkid -s UUID -o value "${ROOTFS_IMAGE_FILE}")
 	old_image_loop_device=$(losetup -f -P --show "${DESTIMG}/${version}.img")
+	# losetup -P scans partitions asynchronously; wait for the p1 node to appear
+	# (and let CONTAINER_COMPAT create it) before blkid/mount, otherwise blkid
+	# races the node and exits 2 -> flaky "Error 2 in SUBSHELL".
+	check_loop_device "${old_image_loop_device}p1"
 	old_rootfs_image_uuid=$(blkid -s UUID -o value "${old_image_loop_device}p1")
 	mount "${old_image_loop_device}p1" "${old_rootfs_image_mount_dir}"
 	mount "${ROOTFS_IMAGE_FILE}" "${new_rootfs_image_mount_dir}"
