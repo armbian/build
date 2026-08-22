@@ -51,7 +51,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:7aff01915502ea0687b499800c34404a10c57721' # Commit date: 2026-06-29 (please update when updating commit ref)
+		local rtl8189esver='commit:a1c0892d03223590b6f4d9f106709d452f5fe07f' # Commit date: 2026-06-30 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
