@@ -142,7 +142,8 @@ function prepare_python_and_pip() {
 
 		# Install the dependencies
 		display_alert "Installing Python dependencies" "from ${python3_pip_dependencies_path}" "info"
-		run_host_command_logged env -i "${python_proxy_env[@]@Q}" "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install "${pip3_extra_args[@]}" -r "${python3_pip_dependencies_path}"
+		# CFLAGS hack for old pyfdtlib
+		run_host_command_logged env -i "${python_proxy_env[@]@Q}" "${PYTHON3_VARS[@]@Q}" "'CFLAGS=-Wno-error=implicit-function-declaration -Wno-error=int-conversion'" "${PYTHON3_INFO[BIN]}" -m pip install "${pip3_extra_args[@]}" -r "${python3_pip_dependencies_path}"
 
 		# Create the hash file
 		run_host_command_logged touch "${python_hash_file}"
