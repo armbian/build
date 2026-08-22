@@ -287,10 +287,29 @@ function reset_uid_owner() {
 	for arg in "$@"; do
 		display_alert "reset_uid_owner: '${arg}' will be owner id '${SET_OWNER_TO_UID}'" "reset_uid_owner" "debug"
 		if [[ -d "${arg}" ]]; then
-			chown "${SET_OWNER_TO_UID}" "${arg}"
-			find "${arg}" -uid 0 -print0 | xargs --no-run-if-empty -0 chown "${SET_OWNER_TO_UID}"
+			# `[[ -d ... ]]` is true both for a real directory and for a
+			# symlink that resolves to one. We need to chown three distinct
+			# things when `arg` is a symlink-to-dir (e.g. ${SRC}/output or
+			# USERPATCHES_PATH living on a separate volume):
+			#   1. The symlink node itself — `chown -h` so dangling-link
+			#      tolerance from 0f41ca72a holds and we don't chase a
+			#      missing target.
+			#   2. The real directory's root inode — `chown` (no -h) on the
+			#      resolved path; otherwise the dereferenced root stays uid=0
+			#      and breaks the next rm/mkdir under the build user.
+			#   3. All children below the resolved root — `find ... -uid 0`
+			#      catches lingering root-owned files from sudoed steps.
+			# When `arg` is a plain directory, real_root == arg and step (1)
+			# is a no-op (chown -h on a non-symlink behaves like chown).
+			local real_root="${arg}"
+			if [[ -L "${arg}" ]]; then
+				chown -h "${SET_OWNER_TO_UID}" "${arg}"
+				real_root="$(readlink -f "${arg}")"
+			fi
+			chown "${SET_OWNER_TO_UID}" "${real_root}"
+			find "${real_root}" -uid 0 -print0 | xargs --no-run-if-empty -0 chown -h "${SET_OWNER_TO_UID}"
 		elif [[ -f "${arg}" ]]; then
-			chown "${SET_OWNER_TO_UID}" "${arg}"
+			chown -h "${SET_OWNER_TO_UID}" "${arg}"
 		else
 			display_alert "reset_uid_owner: '${arg}' is not a file or directory" "skipping" "debug"
 			return 1
@@ -308,9 +327,9 @@ function reset_uid_owner_non_recursive() {
 	for arg in "$@"; do
 		display_alert "reset_uid_owner_non_recursive: '${arg}' will be owner id '${SET_OWNER_TO_UID}'" "reset_uid_owner_non_recursive" "debug"
 		if [[ -d "${arg}" ]]; then
-			chown "${SET_OWNER_TO_UID}" "${arg}"
+			chown -h "${SET_OWNER_TO_UID}" "${arg}"
 		elif [[ -f "${arg}" ]]; then
-			chown "${SET_OWNER_TO_UID}" "${arg}"
+			chown -h "${SET_OWNER_TO_UID}" "${arg}"
 		else
 			display_alert "reset_uid_owner_non_recursive: '${arg}' is not a file or directory" "skipping" "debug"
 			return 1
