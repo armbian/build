@@ -649,7 +649,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0 && [[ "$LINUXFAMILY" == rockchip64 ]]; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:938bc4c52daad88c7217fa6771482e5c820f0dde' # Commit date: Aug 06, 2026 (please update when updating commit ref)
+		local rtl8723dsver='commit:2e63716ff6357fe188f0118d6f4c9f4694912f71' # Commit date: Aug 06, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
