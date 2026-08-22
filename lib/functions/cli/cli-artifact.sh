@@ -40,9 +40,16 @@ function cli_artifact_run() {
 
 	track_general_config_variables "in cli_artifact_run after artifact_cli_adapter_config_prep"
 
-	# if asked by _config_prep to aggregate, and HOSTRELEASE is not set, obtain it.
-	if [[ "${artifact_version_requires_aggregation}" == "yes" ]] && [[ -z "${HOSTRELEASE}" ]]; then
-		obtain_hostrelease_only # Sets HOSTRELEASE
+	# If _config_prep asked to aggregate, prepare_host() will run below and requires both
+	# HOSTRELEASE and HOSTARCH. Under CONFIG_DEFS_ONLY=yes prep_conf_main_minimal_ni() skips
+	# check_basic_host(), so neither is set by then; obtain them here, without the sanity checks.
+	if [[ "${artifact_version_requires_aggregation}" == "yes" ]]; then
+		if [[ -z "${HOSTRELEASE}" ]]; then
+			obtain_hostrelease_only # Sets HOSTRELEASE
+		fi
+		if [[ -z "${HOSTARCH}" ]]; then
+			obtain_hostarch_only # Sets HOSTARCH
+		fi
 	fi
 
 	declare deploy_to_remote="no"
