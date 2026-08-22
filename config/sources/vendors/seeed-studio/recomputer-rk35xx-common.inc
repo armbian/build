@@ -266,6 +266,30 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 	# serial-getty@ttyGS0: clear BindsTo=dev-ttyGS0.device from base unit
 	# (ttyGS0 is a USB gadget, not present at boot → BindsTo causes dependency failure).
 	# Keep Restart=always from base unit (not on-failure, else normal logout kills the getty).
+	#
+	# PrivateDevices=yes stays: it keeps getty restarts reliable across USB
+	# gadget re-bind cycles (#10313). But the private /dev it installs is a
+	# tmpfs with only systemd's minimal node set — DeviceAllow= filters cgroup
+	# device access, it does not create the ttyGS0 node. systemd opens
+	# TTYPath=/dev/ttyGS0 before entering the namespace, so agetty inherits
+	# working fds and prints the prompt; util-linux login however cannot map
+	# stdin back to /dev/ttyGS0 via ttyname(), dies with "FATAL: bad tty",
+	# and Restart=always turns that into an endless login loop. Run login in
+	# PID 1's mount namespace so it sees the real /dev again: setns does not
+	# change cgroup membership, so device filtering and the re-bind hang
+	# protection from #10313 are unaffected.
+	mkdir -p "${SDCARD}/usr/local/bin"
+	cat > "${SDCARD}/usr/local/bin/login-ns.sh" <<- 'WRAPPER_EOF'
+	#!/bin/sh
+	# Run login in PID 1's mount namespace so /dev/ttyGS0 resolves again
+	# (the private /dev from PrivateDevices= has no such node). Required by
+	# serial-getty@ttyGS0. `exec` is mandatory: a non-exec nsenter keeps the
+	# wrapper shell alive sharing the tty fds with login, which wedges the
+	# password prompt.
+	exec nsenter -t 1 -m -- /bin/login "$@"
+	WRAPPER_EOF
+	chmod 0755 "${SDCARD}/usr/local/bin/login-ns.sh"
+
 	mkdir -p "${SDCARD}/etc/systemd/system/serial-getty@ttyGS0.service.d"
 	cat > "${SDCARD}/etc/systemd/system/serial-getty@ttyGS0.service.d/after-usbdevice.conf" <<- EOF
 		[Unit]
@@ -277,6 +301,8 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		RestartSec=3
 		PrivateDevices=yes
 		DeviceAllow=/dev/ttyGS0 rw
+		ExecStart=
+		ExecStart=-/sbin/agetty -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
