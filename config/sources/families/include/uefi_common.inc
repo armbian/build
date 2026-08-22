@@ -50,11 +50,11 @@ case "${BRANCH}" in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="7.1"
+		declare -g KERNEL_MAJOR_MINOR="7.2"
 		;;
 
 	bleedingedge)
-		declare -g KERNEL_MAJOR_MINOR="7.2"
+		declare -g KERNEL_MAJOR_MINOR="7.3"
 		;;
 esac
 
