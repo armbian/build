@@ -94,8 +94,12 @@ function build_rootfs_and_image() {
 
 	#------------------------------------ DOWN HERE IT's 'image' stuff -------------------------------
 
-	LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
-	LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
+	if [[ "${NETBOOT}" == "yes" ]]; then
+		LOG_SECTION="create_netboot_tarballs_and_images" do_with_logging create_netboot_tarballs_and_images
+	else
+		LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
+		LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
+	fi
 
 	# Completely and recursively unmount the directory. --> This will remove the tmpfs mount too <--
 	umount_chroot_recursive "${SDCARD}" "SDCARD rootfs finished"
