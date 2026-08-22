@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sun, 23 Aug 2026 20:41:31 +0200
+Subject: ASoC: mediatek: common: Keep DAI link references until the card binds
+
+mtk_soundcard_common_probe() calls clean_card_reference() unconditionally
+once devm_snd_soc_register_card() returns, dropping the OF references
+taken by parse_dai_link_info() and clearing codecs[].of_node.
+
+That is only safe if the card actually bound. snd_soc_bind_card() queues
+a card whose binding was deferred on unbind_card_list and reports success
+back to the caller:
+
+	if (ret == -EPROBE_DEFER) {
+		list_add(&card->list, &unbind_card_list);
+		ret = 0;
+	}
+
+The machine driver thus returns 0, is never re-probed, and never parses
+the DAI link info again. The DT-derived codec entry has meanwhile had its
+of_node cleared, and its name was already NULL because
+snd_soc_of_get_dai_link_codecs() replaced the static entry with a zeroed
+one in which only of_node and dai_name are filled in. When a later
+component registration retries the queued card from
+snd_soc_add_component(), the bind fails for good with
+
+  ASoC: Neither Component name/of_node are set for DL_SRC_BE
+
+and no sound card is registered at all.
+
+Reproduced on a Radxa NIO 12L (MT8395) with the MediaTek audio drivers
+built as modules. mt8195_mt6359 is loaded before snd_sof_mt8195 has
+registered the ADSP platform component that the card's AFE_SOF_* links
+need, so the first bind is deferred and the references are dropped. The
+queued card is then retried from snd_soc_add_component() while SOF is
+still probing, and dies there. Whether this is hit at all comes down to
+module load order, so the same kernel and config can work on one distro
+and fail on another.
+
+Only release the references once card->instantiated confirms that the
+card is bound.
+
+Fixes: bce93a162505 ("ASoC: mediatek: Add common machine soundcard driver probe mechanism")
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ sound/soc/mediatek/common/mtk-soundcard-driver.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/mediatek/common/mtk-soundcard-driver.c b/sound/soc/mediatek/common/mtk-soundcard-driver.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/mediatek/common/mtk-soundcard-driver.c
++++ b/sound/soc/mediatek/common/mtk-soundcard-driver.c
+@@ -325,7 +325,12 @@ int mtk_soundcard_common_probe(struct platform_device *pdev)
+ 
+ 	ret = devm_snd_soc_register_card(&pdev->dev, card);
+ 
+-	if (!needs_legacy_probe)
++	/*
++	 * A card whose binding was deferred is queued for a later retry and
++	 * reported back as success. That retry reuses the DAI link info parsed
++	 * here, so only drop our references once the card is really bound.
++	 */
++	if (!needs_legacy_probe && card->instantiated)
+ 		clean_card_reference(card);
+ 
+ 	if (ret) {
+-- 
+Armbian
+
