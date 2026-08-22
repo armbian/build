@@ -31,7 +31,7 @@ cd build
 - **Architecture:** x86_64, aarch64, or riscv64
 
 ### Operating System
-- **Native builds:** Armbian or Debian 13 (Trixie)
+- **Native builds:** Armbian/Debian 13 (Trixie)
 - **Containerized:** Any Docker-capable Linux
 - **Windows:** WSL2 with Armbian/Debian 13 (Trixie)
 
