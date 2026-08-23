@@ -23,8 +23,10 @@
 #   1  printk timestamps + lockup/hung-task detection + stack guards
 #      Cost: a handful of bytes per printk, a few cycles per scheduler tick.
 #      No board prerequisites. Default tier.
-#   2  + pstore/ramoops (persistent dmesg through reboot)
-#      Cost: same as tier 1 plus a reserved memory region. Without a DT
+#   2  + pstore/ramoops (persistent dmesg through reboot) + /proc/kcore and
+#      full kallsyms for kexec/kdump, crash and drgn
+#      Cost: same as tier 1 plus a reserved memory region and a larger
+#      kallsyms table (about 1-2 MB). Without a DT
 #      `/reserved-memory/ramoops` node or `ramoops.mem_address=…` bootargs,
 #      the modules load but have nowhere to write — silent no-op.
 #   3  + KGDB / KDB over serial
@@ -85,7 +87,12 @@ function custom_kernel_config__kernel_debug_tier1() {
 		return 0
 	fi
 	display_alert "${EXTENSION}: tier 1" "printk timestamps + lockup/hung-task detection" "info"
+	# DEBUG_KERNEL is only a menu gate, but the lockup/hung-task detectors,
+	# SCHED_STACK_END_CHECK and KALLSYMS_ALL all depend on it. Most family
+	# configs get it selected via EXPERT=y; the few that don't (e.g.
+	# mvebu-legacy) would otherwise have every option below silently dropped.
 	opts_y+=(
+		"DEBUG_KERNEL"
 		"PRINTK_TIME"
 		"PRINTK_CALLER"
 		"DETECT_HUNG_TASK"
@@ -108,6 +115,14 @@ function custom_kernel_config__kernel_debug_tier2_pstore() {
 	fi
 	display_alert "${EXTENSION}: tier 2 (pstore/ramoops)" "needs DT or bootarg reservation, otherwise no-op" "info"
 	opts_y+=("PSTORE" "PSTORE_CONSOLE" "PSTORE_RAM" "PSTORE_DEFLATE_COMPRESS")
+	# Post-mortem tooling: kexec-tools loads the crash kernel using the
+	# VMCOREINFO note in /proc/kcore (PHYS_OFFSET, VA_BITS) and the _text
+	# symbol from /proc/kallsyms (page_offset). Without PROC_KCORE it falls
+	# back to /proc/iomem; without KALLSYMS_ALL arm64 kallsyms only covers
+	# [_stext,_etext] and _text is missing, so the vmcore ELF header is
+	# built with page_offset=0. crash/drgn on a live kernel need /proc/kcore
+	# and full symbol coverage as well.
+	opts_y+=("PROC_KCORE" "KALLSYMS_ALL")
 }
 
 # Tier 3: KGDB/KDB over the serial console. SysRq+g drops into the KDB shell

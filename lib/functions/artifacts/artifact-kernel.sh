@@ -129,10 +129,15 @@ function artifact_kernel_prepare_version() {
 	call_extensions_kernel_config
 	# Reduce to last assignment per key to keep hashing stable and ignore overridden options.
 	# tac reverses order so last becomes first, then sort -uk keeps first occurrence of each key.
+	declare -a kernel_config_modifying_hashes_canonical=("${kernel_config_modifying_hashes[@]}")
+	kernel_config_canonicalize_modifications kernel_config_modifying_hashes_canonical
 	declare -a kernel_config_modifying_hashes_reduced=()
 	mapfile -t kernel_config_modifying_hashes_reduced < <(
-		printf '%s\n' "${kernel_config_modifying_hashes[@]}" | tac | LC_ALL=C sort -s -t '=' -uk 1,1
+		printf '%s\n' "${kernel_config_modifying_hashes_canonical[@]}" | tac | LC_ALL=C sort -s -t '=' -uk 1,1
 	)
+	# Setting an option to the value the config file already carries produces the same kernel;
+	# such a modification must not move the version away from the one built without it.
+	kernel_config_drop_modifications_matching_file kernel_config_modifying_hashes_reduced "${kernel_config_source_filename}"
 	kernel_config_modification_hash="$(printf '%s\n' "${kernel_config_modifying_hashes_reduced[@]}" | sha256sum | cut -d' ' -f1)"
 	kernel_config_modification_hash="${kernel_config_modification_hash:0:16}" # "long hash"
 	declare kernel_config_modification_hash_short="${kernel_config_modification_hash:0:${short_hash_size}}"
@@ -145,6 +150,9 @@ function artifact_kernel_prepare_version() {
 		"${NAME_KERNEL}"
 		"${SRC_LOADADDR}"
 	)
+	# Extra stubble DTBs change the packaged UKI. Appended ONLY when set, so
+	# families that don't use them keep their exact previous -V hash (no churn).
+	[[ ${#EXTRA_STUBBLE_DEVICETREES[@]} -gt 0 ]] && vars_to_hash+=("${EXTRA_STUBBLE_DEVICETREES[*]}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"

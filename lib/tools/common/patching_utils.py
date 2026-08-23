@@ -7,6 +7,8 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 #
+import email.errors
+import email.header
 import email.utils
 import logging
 import mailbox
@@ -223,7 +225,8 @@ class PatchFileInDir:
 					f" the magic date in the patch contents, shouldn't happen. Check the mbox formatting.")
 
 			patches.append(PatchInPatchFile(
-				self, counter, patch_contents, desc, msg['From'], msg['Subject'], msg['Date']))
+				self, counter, patch_contents, desc,
+				header_to_str(msg['From']), header_to_str(msg['Subject']), header_to_str(msg['Date'])))
 
 			counter += 1
 
@@ -850,6 +853,36 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		raise Exception(f"Failed to rewrite indexes in patch output: {stdout_output}")
 
 	return rewritten_indexes
+
+
+def header_to_str(value) -> "str | None":
+	# mailbox.mbox parses with the legacy compat32 policy, so a mail header that
+	# carries raw (non-RFC2047) UTF-8 - e.g. `From: Michał Dziękoński <...>` - comes
+	# back as an email.header.Header tagged 'unknown-8bit' instead of a str, and the
+	# downstream re.match() blows up with "expected string or bytes-like object, got
+	# 'Header'". Decode such headers as UTF-8 (like git mailinfo does) so patches with
+	# non-ASCII authors parse instead of aborting the whole kernel build.
+	if value is None or isinstance(value, str):
+		return value
+	try:
+		decoded_parts = email.header.decode_header(value)
+	except email.errors.HeaderParseError:
+		# A malformed encoded-word (e.g. bad base64) makes decode_header() itself raise,
+		# before the per-part loop can run. Fall back to the raw string form rather than
+		# aborting the whole build; downstream parsing already tolerates mangled text.
+		return str(value)
+	parts = []
+	for data, enc in decoded_parts:
+		if isinstance(data, bytes):
+			if enc is None or enc.lower() in ("unknown-8bit", "x-unknown", "unknown"):
+				enc = "utf-8"
+			try:
+				parts.append(data.decode(enc, "replace"))
+			except LookupError:
+				parts.append(data.decode("utf-8", "replace"))
+		else:
+			parts.append(data)
+	return "".join(parts)
 
 
 # Hack
