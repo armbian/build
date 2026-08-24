@@ -68,7 +68,12 @@ function cli_flash() {
 			fi
 			declare -a kept=()
 			for candidate in "${images[@]}"; do
-				if [[ "${candidate##*/}" == *"${token}"* ]]; then
+				# Match the selector as a complete underscore-delimited field, not
+				# a loose substring: image names are
+				# VENDOR_VERSION_Board_release_branch_kver..., where Board/release/
+				# branch are all middle fields, so a short release/branch (e.g.
+				# 'sid', 'edge') can't accidentally match inside another field.
+				if [[ "${candidate##*/}" == *"_${token}_"* ]]; then
 					kept+=("${candidate}")
 				fi
 			done
