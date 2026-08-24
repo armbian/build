@@ -27,14 +27,49 @@ function cli_flash_run() {
 
 function cli_flash() {
 	declare image_file="${IMAGE:-""}"
-	# If not set, find the latest .img file in ${SRC}/output/images/
+
+	# If not set, find the most recent .img in ${SRC}/output/images/, narrowed by
+	# whichever of BOARD/RELEASE/BRANCH this invocation actually set.
+	#
+	# Composing one glob out of all three unconditionally collapses it to
+	# '*__*.img' when none is set, which is what a bare './compile.sh flash'
+	# does. That matches no Armbian image -- they are named
+	# <version>_<Board>_<release>_<branch>_... -- so the command failed with a
+	# raw "ls: cannot access" even when output/images held a perfectly good
+	# image. Filter the listing instead of building a pattern from empty parts.
 	if [[ -z "${image_file}" ]]; then
-		# shellcheck disable=SC2012
-		image_file="$(ls -1t "${SRC}/output/images"/*"${BOARD^}_${RELEASE}_${BRANCH}"*.img | head -1)"
-		display_alert "cli_flash" "No image file specified. Using latest built image file found: ${image_file}" "info"
+		declare -a images=()
+		declare candidate token
+		# Newest first. find, not a glob, so a missing or empty directory gives
+		# an empty list rather than an unexpanded pattern on stderr.
+		while read -r candidate; do
+			images+=("${candidate}")
+		done < <(find "${SRC}/output/images" -maxdepth 1 -type f -name '*.img' -printf '%T@\t%p\n' 2> /dev/null | sort -rn | cut -f2-)
+
+		declare board_token="${BOARD:+${BOARD^}}"
+		for token in "${board_token}" "${RELEASE}" "${BRANCH}"; do
+			if [[ -z "${token}" ]]; then
+				continue
+			fi
+			declare -a kept=()
+			for candidate in "${images[@]}"; do
+				if [[ "${candidate##*/}" == *"${token}"* ]]; then
+					kept+=("${candidate}")
+				fi
+			done
+			images=("${kept[@]}")
+		done
+
+		if [[ ${#images[@]} -eq 0 ]]; then
+			exit_with_error "No image found in ${SRC}/output/images to flash" \
+				"build one first, or pass IMAGE=/path/to/image.img"
+		fi
+
+		image_file="${images[0]}"
+		display_alert "cli_flash" "No image file specified. Using latest built image file found: ${image_file##*/}" "info"
 	fi
 	if [[ ! -f "${image_file}" ]]; then
-		exit_with_error "No image file to flash."
+		exit_with_error "No image file to flash" "${image_file}"
 	fi
 	declare image_file_basename
 	image_file_basename="$(basename "${image_file}")"
