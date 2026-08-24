@@ -26,6 +26,21 @@ function cli_flash_run() {
 }
 
 function cli_flash() {
+	# Without a target device there is nothing downstream to catch it:
+	# write_image_to_device's `lsblk "${device}"` test is false for an empty
+	# device, and its in-container branch needs a non-empty device too, so the
+	# write is skipped and `flash` exits 0 having done nothing at all -- after
+	# announcing the image and counting down, which reads as success.
+	# Docker is not the obstacle: the launcher passes CARD_DEVICE into the
+	# container when it is set.
+	if [[ -z "${CARD_DEVICE:-}" ]]; then
+		exit_with_error "No target device to flash to" \
+			"pass CARD_DEVICE=/dev/sdX (see 'lsblk' for the device name)"
+	fi
+	if [[ ! -b "${CARD_DEVICE}" ]]; then
+		exit_with_error "CARD_DEVICE is not a block device" "${CARD_DEVICE}"
+	fi
+
 	declare image_file="${IMAGE:-""}"
 
 	# If not set, find the most recent .img in ${SRC}/output/images/, narrowed by
