@@ -349,14 +349,23 @@ function post_family_tweaks__recomputer_add_sbin_to_path() {
 	chmod +x "${SDCARD}/etc/profile.d/custom-path.sh"
 }
 
-# DMA heap — Mali GBM requires /dev/dma_heap access.
+# DMA heap — the GPU stack needs /dev/dma_heap and render node access.
 function post_family_tweaks__recomputer_mali_dma_heap_permissions() {
 	display_alert "$BOARD" "Setting DMA heap permissions for Mali GPU" "info"
 
+	# Ubuntu's gdm greeter runs as dynamic users (gdm-greeter-XXXX) that no
+	# usermod can reach; uaccess ACLs are the only mechanism covering both
+	# them and regular logins. Tag the nodes so logind grants the active
+	# session user an ACL (nodes stay 0660). Without this the greeter cannot
+	# open /dev/dri/renderD* or /dev/dma_heap/* and mutter dies with
+	# "Failed to create gbm device" -> "No GPUs found".
 	mkdir -p "${SDCARD}/etc/udev/rules.d/"
-	echo 'SUBSYSTEM=="dma_heap", GROUP="render", MODE="0660"' > "${SDCARD}/etc/udev/rules.d/50-mali-dma-heap.rules"
+	cat > "${SDCARD}/etc/udev/rules.d/50-mali-dma-heap.rules" <<- 'EOF'
+		SUBSYSTEM=="dma_heap", GROUP="render", MODE="0660", TAG+="uaccess"
+		SUBSYSTEM=="drm", KERNEL=="renderD*", TAG+="uaccess"
+	EOF
 
-	# GDM greeter needs render+video groups for DRM and DMA heap access.
+	# Debian uses a static gdm user; group membership still helps there.
 	chroot_sdcard usermod -aG render Debian-gdm 2> /dev/null || true
 	chroot_sdcard usermod -aG video Debian-gdm 2> /dev/null || true
 }
