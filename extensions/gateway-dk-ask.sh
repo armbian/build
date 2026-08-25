@@ -32,6 +32,17 @@ declare -g LIBCLI_COMMIT="6a3b2f96c4f0916e2603a96bf24d704f6a904e7a"
 # ASK_BRANCH stays the single pin and the SDK can never drift from what ASK targets.
 declare -g NXP_SDK_REPO="https://github.com/nxp-qoriq/linux.git"
 
+# NXP 88W9098 (u-blox JODY-W3) WiFi+BT combo — an optional PCIe card. The mlan/moal
+# fullmac WiFi driver and the combo firmware are baked into every gateway image (inert
+# with no card present, and the firmware also quiets the DTS-declared BT node's
+# btnxpuart probe). Built as a standalone kernel-module .deb (gateway-dk-wifi), NOT
+# in-tree, so it tracks the kernel .deb loosely. Pins mirror OpenWrt's package/kernel
+# /nxp-mwifiex + package/firmware/nxp-wifi-firmware.
+declare -g NXP_MWIFIEX_REPO="https://github.com/nxp-imx/mwifiex.git"
+declare -g NXP_MWIFIEX_COMMIT="09f41e1423e4806a127507d5fa284cd02c46772f" # branch hotfix/lf-6.12.49_2.2.0_hotfix
+declare -g NXP_WIFI_FW_REPO="https://github.com/nxp-imx/imx-firmware.git"
+declare -g NXP_WIFI_FW_COMMIT="8c9b278016c97527b285f2fcbe53c2d428eb171d" # tag lf-6.12.49_2.2.0 (FwImage_9098_PCIE)
+
 # ASK component directories
 declare -g ASK_CDX_DIR="cdx"
 declare -g ASK_FCI_DIR="fci"
@@ -740,6 +751,134 @@ CONFFILES
 	rm -rf "${pkgdir}"
 
 	display_alert "ASK extension" "ASK packaged and installed: ${debfile}" "info"
+}
+
+# Build the NXP 88W9098 (JODY-W3) WiFi driver (mlan/moal) as a standalone kernel-module .deb
+# and ship the combo firmware — baked into every gateway image. Inert with no PCIe card
+# present; the firmware also satisfies the DTS-declared UART Bluetooth node (btnxpuart), which
+# otherwise spams -84/-110 with no firmware. The kernel config already carries CFG80211/
+# MAC80211=m, so this needs no kernel change — the modules build against the linux-headers.
+# Runs after __001 (which installed build-essential; the linux-headers are in the rootfs).
+function pre_customize_image__002_build_wifi() {
+	display_alert "gateway-dk WiFi" "building NXP mwifiex (mlan/moal) driver" "info"
+
+	local kernel_ver kdir
+	kernel_ver=$(ls -1v "${SDCARD}/lib/modules/" | tail -1)
+	[[ -z "${kernel_ver}" ]] && exit_with_error "No kernel version found in ${SDCARD}/lib/modules/"
+	kdir="/usr/src/linux-headers-${kernel_ver}"
+
+	# Driver: small repo, fetch via Armbian's helper. Firmware: the NXP imx-firmware tree is
+	# huge (all i.MX firmware), so pull ONLY the one image dir with a shallow sparse checkout
+	# — same as OpenWrt's package/firmware/nxp-wifi-firmware. Re-fetch only when the pin moves.
+	fetch_from_repo "${NXP_MWIFIEX_REPO}" "nxp-mwifiex" "commit:${NXP_MWIFIEX_COMMIT}"
+	local fwcache="${SRC}/cache/sources/nxp-wifi-firmware"
+	if [[ "$(cat "${fwcache}/.mono-fw-ref" 2> /dev/null)" != "${NXP_WIFI_FW_COMMIT}" ]]; then
+		display_alert "gateway-dk WiFi" "sparse-fetching NXP 9098 firmware" "info"
+		rm -rf "${fwcache}"
+		mkdir -p "${fwcache}"
+		run_host_command_logged git -C "${fwcache}" init -q
+		run_host_command_logged git -C "${fwcache}" remote add origin "${NXP_WIFI_FW_REPO}"
+		run_host_command_logged git -C "${fwcache}" sparse-checkout init --cone
+		run_host_command_logged git -C "${fwcache}" sparse-checkout set FwImage_9098_PCIE
+		run_host_command_logged git -C "${fwcache}" fetch -q --depth 1 origin "${NXP_WIFI_FW_COMMIT}"
+		run_host_command_logged git -C "${fwcache}" checkout -q FETCH_HEAD
+		echo "${NXP_WIFI_FW_COMMIT}" > "${fwcache}/.mono-fw-ref"
+	fi
+	mkdir -p "${SDCARD}/tmp/wifi"
+	cp -a "${SRC}/cache/sources/nxp-mwifiex" "${SDCARD}/tmp/wifi/mwifiex"
+
+	# Mainline-6.12.103 cfg80211 compat: the driver gates set_monitor_channel's net_device
+	# arg on >= 6.13, but stable 6.12.103 backported that one API. OpenWrt sidesteps this via
+	# mac80211 backports; building against the in-kernel cfg80211 needs this one-op fix.
+	run_host_command_logged patch -p1 -d "${SDCARD}/tmp/wifi/mwifiex" \
+		< "${SRC}/packages/bsp/gateway-dk/mwifiex-cfg80211-mainline-6.12.103.patch"
+
+	# Build mlan.ko + moal.ko against the kernel headers. PCIe-9098 only (every other SDIO/USB/
+	# PCIe variant off); cfg80211 fullmac, STA + uAP, no WEXT. Flags mirror OpenWrt's
+	# package/kernel/nxp-mwifiex and are passed as command-line vars so they override the driver
+	# Makefile's own CPTCFG/CONFIG_CFG80211 autodetection. Native arm64 build under qemu — slow.
+	chroot_sdcard "cd /tmp/wifi/mwifiex && make -j\$(nproc) KERNELDIR=${kdir} ARCH=arm64 \
+		CONFIG_PCIE9098=y CONFIG_SD8978=n CONFIG_SD8987=n CONFIG_SD9177=n CONFIG_SD9098=n \
+		CONFIG_SDIW610=n CONFIG_USBIW610=n CONFIG_SDAW693=n CONFIG_PCIEAW693=n \
+		CONFIG_PCIE9097=n CONFIG_PCIE8897=n \
+		CONFIG_NXP_WLAN_DRIVER=m CONFIG_STA_SUPPORT=y CONFIG_UAP_SUPPORT=y \
+		CONFIG_STA_CFG80211=y CONFIG_UAP_CFG80211=y CONFIG_STA_WEXT=n CONFIG_UAP_WEXT=n default" ||
+		exit_with_error "mwifiex driver build failed"
+	[[ -f "${SDCARD}/tmp/wifi/mwifiex/mlan.ko" && -f "${SDCARD}/tmp/wifi/mwifiex/moal.ko" ]] ||
+		exit_with_error "mwifiex build produced no mlan.ko/moal.ko"
+
+	# --- Package as gateway-dk-wifi .deb ---
+	display_alert "gateway-dk WiFi" "packaging gateway-dk-wifi .deb" "info"
+	local pkgname="gateway-dk-wifi"
+	local pkgdir; pkgdir=$(mktemp -d)
+	local moddir="lib/modules/${kernel_ver}/updates/nxp-mwifiex"
+	mkdir -p "${pkgdir}/DEBIAN" "${pkgdir}/${moddir}" "${pkgdir}/lib/firmware/nxp" "${pkgdir}/etc/modules-load.d"
+
+	# Modules shipped uncompressed — modprobe/depmod handle a mix of .ko and the kernel's .ko.zst.
+	cp "${SDCARD}/tmp/wifi/mwifiex/mlan.ko" "${SDCARD}/tmp/wifi/mwifiex/moal.ko" "${pkgdir}/${moddir}/"
+
+	# Firmware — the 88W9098 PCIe combo set (WiFi + BT). Verified on hardware: btnxpuart requests
+	# nxp/uart9098_bt_v1.bin; moal requests pcie9098_wlan_v1.bin + the combo blob.
+	local fwdir="${SRC}/cache/sources/nxp-wifi-firmware/FwImage_9098_PCIE"
+	local fw
+	for fw in pcieuart9098_combo_v1.bin pcie9098_wlan_v1.bin uart9098_bt_v1.bin ed_mac_ctrl_V3_909x.conf txpwrlimit_cfg_9098.conf; do
+		[[ -f "${fwdir}/${fw}" ]] || exit_with_error "NXP WiFi firmware missing" "${fw} in ${fwdir}"
+		cp "${fwdir}/${fw}" "${pkgdir}/lib/firmware/nxp/"
+	done
+
+	# Autoload moal (pulls in mlan via symbol dep). Harmless with no card; the PCIe device also
+	# auto-probes via modalias once present.
+	echo "moal" > "${pkgdir}/etc/modules-load.d/nxp-mwifiex.conf"
+
+	# Prebuilt out-of-tree modules are vermagic-locked to the exact kernel build, so depend on
+	# the EXACT installed linux-image version (query it — the .deb Version is Armbian's date
+	# string, a different namespace from ${kernel_ver}). A kernel point-release then drags a
+	# matching WiFi rebuild instead of leaving stale .ko that silently stop loading. Userspace
+	# is Recommends (installed by default, removable on a headless unit). The package version
+	# tracks the module dir + build date so a driver-only bugfix can ship without a kernel bump.
+	# chroot_sdcard_with_stdout execs its args directly (no shell): pass them separately, and
+	# single-quote the dpkg-query format so ${Version} reaches dpkg-query literally.
+	local kernel_deb_ver
+	kernel_deb_ver=$(chroot_sdcard_with_stdout dpkg-query -W -f='${Version}' "linux-image-${BRANCH}-${LINUXFAMILY}")
+	[[ -n "${kernel_deb_ver}" ]] || exit_with_error "Could not read installed linux-image version for gateway-dk-wifi dependency"
+	local wifi_version="${kernel_ver}+$(date +%Y%m%d)"
+	cat > "${pkgdir}/DEBIAN/control" << EOF
+Package: ${pkgname}
+Version: ${wifi_version}
+Architecture: arm64
+Section: kernel
+Priority: optional
+Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+Depends: linux-image-${BRANCH}-${LINUXFAMILY} (= ${kernel_deb_ver})
+Recommends: hostapd, wpasupplicant, iw, wireless-regdb
+Description: NXP 88W9098 (JODY-W3) WiFi+BT driver and firmware for Mono Gateway DK
+ Out-of-tree mlan/moal cfg80211 fullmac WiFi driver for the optional PCIe
+ 88W9098 card, plus the 9098 combo firmware. Inert when no card is present;
+ the firmware also satisfies the board's UART Bluetooth controller (btnxpuart).
+EOF
+
+	cat > "${pkgdir}/DEBIAN/postinst" << EOF
+#!/bin/bash
+depmod -a ${kernel_ver} || true
+EOF
+	chmod 755 "${pkgdir}/DEBIAN/postinst"
+
+	cat > "${pkgdir}/DEBIAN/postrm" << EOF
+#!/bin/bash
+depmod -a ${kernel_ver} 2>/dev/null || true
+EOF
+	chmod 755 "${pkgdir}/DEBIAN/postrm"
+
+	local debfile="${pkgname}_${wifi_version}_arm64.deb"
+	mkdir -p "${SRC}/output/debs"
+	run_host_command_logged dpkg-deb -b "${pkgdir}" "${SRC}/output/debs/${debfile}" ||
+		exit_with_error "dpkg-deb failed for ${debfile}"
+	rm -rf "${SDCARD}/tmp/wifi" "${pkgdir}"
+
+	cp "${SRC}/output/debs/${debfile}" "${SDCARD}/root/"
+	chroot_sdcard "DEBIAN_FRONTEND=noninteractive apt-get install -y /root/${debfile}" ||
+		exit_with_error "gateway-dk-wifi install failed"
+	rm -f "${SDCARD}/root/${debfile}"
 }
 
 # Build patched versions of system libraries
