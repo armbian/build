@@ -15,13 +15,20 @@
 # Source repos and refs (pinned to match Yocto)
 # For local testing: set ASK_REPO="file:///path/to/ASK" — the Docker mount hook below handles it
 declare -g ASK_REPO="https://github.com/we-are-mono/ASK.git"
-declare -g ASK_BRANCH="commit:a211ea865379362058c6656b9c448e4a7050e93c"
+declare -g ASK_BRANCH="commit:05aaf4ff0830de45b26fcc1a9bc75749c08b8bf3" # mono-1.0.0 (peeled commit)
 declare -g FMLIB_REPO="https://github.com/nxp-qoriq/fmlib.git"
 declare -g FMLIB_COMMIT="7a58ecaf0d90d71d6b78d3ac7998282a472c4394"
 declare -g FMC_REPO="https://github.com/nxp-qoriq/fmc.git"
 declare -g FMC_COMMIT="5b9f4b16a864e9dfa58cdcc860be278a7f66ac18"
 declare -g LIBCLI_REPO="https://github.com/dparrish/libcli.git"
 declare -g LIBCLI_COMMIT="6a3b2f96c4f0916e2603a96bf24d704f6a904e7a"
+
+# NXP DPAA/FMan/QBMan SDK source. Mainline does not carry these drivers, so the
+# kernel base (kernel.org stable, set in the ls1046a family config) is overlaid with
+# this SDK before the ASK hook patches apply. The SDK ref is NOT hand-maintained here:
+# it is read at build time from ASK's format-neutral pin (pins/nxp-sdk-srcrev.inc), so
+# ASK_BRANCH stays the single pin and the SDK can never drift from what ASK targets.
+declare -g NXP_SDK_REPO="https://github.com/nxp-qoriq/linux.git"
 
 # ASK component directories
 declare -g ASK_CDX_DIR="cdx"
@@ -106,9 +113,11 @@ function custom_kernel_config__ask_modules() {
 	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_FCI_DIR}" "${ask_drv}/fci"
 	run_host_command_logged cp -av "${ASK_CACHE_DIR}/${ASK_AUTOBRIDGE_DIR}" "${ask_drv}/auto_bridge"
 
-	# Parent Kconfig and Makefile from ASK repo
-	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kconfig" "${ask_drv}/Kconfig"
-	run_host_command_logged cp -v "${ASK_CACHE_DIR}/Kbuild.mk" "${ask_drv}/Makefile"
+	# Parent Kconfig + Makefile that wire the ASK modules into the in-tree build. ASK 1.0.0
+	# dropped these from its repo root (Yocto/OpenWrt build the modules out-of-tree), so Armbian
+	# carries them in the BSP; the per-module Kbuilds still gate on their CONFIG_ASK_* symbols.
+	run_host_command_logged cp -v "${bsp_dir}/ask-modules.Kconfig" "${ask_drv}/Kconfig"
+	run_host_command_logged cp -v "${bsp_dir}/ask-modules.Makefile" "${ask_drv}/Makefile"
 
 	# Board-specific modules (not part of ASK repo — from Armbian BSP)
 	if [[ "${BOARD}" == "gateway-dk" ]]; then
@@ -130,6 +139,8 @@ function custom_kernel_config__ask_modules() {
 	if ! grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig"; then
 		display_alert "ASK extension" "adding ASK Kconfig to freescale Kconfig" "info"
 		sed -i '/endif.*NET_VENDOR_FREESCALE/i source "drivers/net/ethernet/freescale/ask/Kconfig"' "${fsl_dir}/Kconfig"
+		grep -q 'source.*ask/Kconfig' "${fsl_dir}/Kconfig" ||
+			exit_with_error "ASK Kconfig source insert missed its anchor in freescale/Kconfig (mainline layout changed?)"
 	else
 		display_alert "ASK extension" "ASK Kconfig already present in freescale Kconfig" "info"
 	fi
@@ -143,6 +154,25 @@ function custom_kernel_config__ask_modules() {
 
 	display_alert "ASK extension" "ASK module sources and Kbuild files placed in kernel tree" "info"
 
+	# Wire the SDK's fsl_qbman staging driver (provided by the 005 overlay) into
+	# drivers/staging the same append way Armbian's own out-of-tree drivers do — post-patch
+	# and idempotent, so it is immune to ordering. ASK patch 110's staging/{Makefile,Kconfig}
+	# hunks were stripped at stage time because Armbian's driver harness echo-appends to those
+	# files (rtl8723cs, ...) before the ASK series and breaks the patch context.
+	local staging_dir="${kernel_work_dir}/drivers/staging"
+	if [[ -d "${staging_dir}/fsl_qbman" ]]; then
+		if ! grep -q 'fsl_qbman/' "${staging_dir}/Makefile"; then
+			display_alert "ASK extension" "wiring fsl_qbman into staging Makefile" "info"
+			echo 'obj-$(CONFIG_FSL_SDK_DPA) += fsl_qbman/' >> "${staging_dir}/Makefile"
+		fi
+		if ! grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig"; then
+			display_alert "ASK extension" "wiring fsl_qbman into staging Kconfig" "info"
+			sed -i '/^endif # STAGING/i source "drivers/staging/fsl_qbman/Kconfig"\n' "${staging_dir}/Kconfig"
+			grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig" ||
+				exit_with_error "fsl_qbman Kconfig source insert missed its anchor in staging/Kconfig (mainline layout changed?)"
+		fi
+	fi
+
 	# Enable ASK modules in kernel config (opts_m array, same pattern as meson64_common.inc)
 	opts_y+=("CONFIG_NXP_ASK")
 	opts_m+=("CONFIG_ASK_CDX")
@@ -154,33 +184,238 @@ function custom_kernel_config__ask_modules() {
 	fi
 }
 
-# Copy ASK kernel patch to userpatches so it's applied during kernel build.
-# userpatches/ is the Armbian-standard location for extension-provided patches — the build
-# framework merges them with patches from patch/kernel/ at build time.
-function kernel_extra_create_patches__ask_kernel_patch() {
-	display_alert "ASK extension" "ASK kernel patch being staged in userpatches" "wrn"
-	declare patch_src="${ASK_CACHE_DIR}/patches/kernel/002-mono-gateway-ask-kernel_linux_6_12.patch"
-	[[ -f "${patch_src}" ]] || exit_with_error "ASK kernel patch not found" "${patch_src}"
-	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
-	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
-	run_host_command_logged mkdir -pv "${patch_dst}"
-	# Renamed to 003- to apply after 001-ina234 and 002-device-tree in the Armbian patch dir
-	run_host_command_logged cp -v "${patch_src}" "${patch_dst_file}"
-	run_host_command_logged touch "${patch_dst_file}" # always recently-modified
-	display_alert "ASK extension" "ASK kernel patch staged in userpatches" "info"
+# NXP SDK driver source absent from mainline — copied verbatim into its normal mainline
+# locations. The path set is from the OpenWrt-first reference (scripts/mono-sync-ask-kernel.sh)
+# and the Yocto meta-ask recipe, so all three consumers vendor the exact same tree. ASK-added
+# files (e.g. include/linux/fsl_oh_port.h) arrive with the patch series, not here.
+declare -ga ASK_SDK_PATHS=(
+	"drivers/net/ethernet/freescale/sdk_dpaa"
+	"drivers/net/ethernet/freescale/sdk_fman"
+	"drivers/staging/fsl_qbman"
+	"include/uapi/linux/fmd"
+	"include/linux/fsl_bman.h"
+	"include/linux/fsl_qman.h"
+	"include/linux/fsl_usdpaa.h"
+)
+
+# SDK-flavour DPAA device tree. Mainline ships same-named files under freescale/ with mainline
+# FMan/DPAA bindings the SDK drivers cannot probe. Rather than OVERWRITE mainline's copies —
+# which the sibling ls1046a/QorIQ boards #include, so overwriting would silently rebuild THEIR
+# dtbs with SDK bindings — these are dropped into a private freescale-sdk/ dir that only the
+# Mono board's .dts pulls from (ASK_SDK_DTS_DIR below). The #include closure is self-contained
+# within this set, so keeping the original filenames in a separate dir resolves correctly with
+# ZERO changes to mainline's freescale/ tree. Filenames only (all live under freescale/ in the
+# NXP source and freescale-sdk/ in ours).
+declare -g ASK_SDK_DTS_DIR="arch/arm64/boot/dts/freescale-sdk"
+declare -ga ASK_SDK_DTSI=(
+	"qoriq-qman-portals-sdk.dtsi"
+	"qoriq-bman-portals-sdk.dtsi"
+	"qoriq-dpaa-eth.dtsi"
+	"fsl-ls1046a.dtsi"
+	"fsl-ls1046-post.dtsi"
+	"qoriq-qman-portals.dtsi"
+	"qoriq-bman-portals.dtsi"
+	"qoriq-fman3-0.dtsi"
+	"qoriq-fman3-0-1g-0.dtsi"
+	"qoriq-fman3-0-1g-1.dtsi"
+	"qoriq-fman3-0-1g-2.dtsi"
+	"qoriq-fman3-0-1g-3.dtsi"
+	"qoriq-fman3-0-1g-4.dtsi"
+	"qoriq-fman3-0-1g-5.dtsi"
+	"qoriq-fman3-0-10g-0.dtsi"
+	"qoriq-fman3-0-10g-1.dtsi"
+)
+
+# Synthesize the kernel-side overlay patches from pinned upstream sources ($1 = dest dir):
+#   005-nxp-sdk-overlay.patch            — NXP DPAA/FMan/QBMan SDK, fetched from NXP at the
+#                                          ref ASK pins (the single source of truth)
+#   006-mono-gateway-dk-devicetree.patch — the ASK-owned board device tree + its dtb-y entry
+#
+# Mainline carries neither, and Armbian's patcher git-resets the kernel tree and deletes
+# every untracked file immediately before applying patches — so both must ARRIVE AS patches,
+# not copied-in files. We overlay both onto a pristine mainline tree and capture the deltas as
+# path-scoped unified diffs (one concern per patch). Armbian applies with `patch -p1` (not
+# `git apply`), so these must be plain `git diff` (no --binary); all inputs are text. Diffing
+# against the real mainline tree keeps the Makefile hunk context always correct — no stale
+# vendor/usdpaa context to mismatch.
+function ask_synthesize_kernel_overlay_patches() {
+	declare patch_dst="$1"
+	declare fsl_dts_dir="arch/arm64/boot/dts/freescale"
+
+	# Single pin: read the NXP SDK ref from ASK's format-neutral pin file.
+	declare pin_file="${ASK_CACHE_DIR}/pins/nxp-sdk-srcrev.inc"
+	[[ -f "${pin_file}" ]] || exit_with_error "ASK NXP SDK pin file not found" "${pin_file}"
+	declare sdk_ref
+	sdk_ref="$(sed -n 's/^NXP_SDK_SRCREV *= *"\([0-9a-fA-F]\{40\}\)".*/\1/p' "${pin_file}" | head -1)"
+	[[ -n "${sdk_ref}" ]] || exit_with_error "Could not read NXP_SDK_SRCREV from" "${pin_file}"
+	declare dts_src="${ASK_CACHE_DIR}/dts/mono-gateway-dk.dts"
+	[[ -f "${dts_src}" ]] || exit_with_error "ASK board DTS not found" "${dts_src}"
+	display_alert "ASK extension" "NXP SDK overlay pinned @ ${sdk_ref}" "info"
+
+	# Fetch the SDK via Armbian's helper: cached under cache/sources, mirror-aware. First fetch
+	# of the NXP tree is large; subsequent builds reuse the cache. fetch_from_repo changes cwd.
+	fetch_from_repo "${NXP_SDK_REPO}" "nxp-sdk-linux" "commit:${sdk_ref}"
+	declare sdk_src="${SRC}/cache/sources/nxp-sdk-linux"
+	cd "${kernel_work_dir}" || exit_with_error "Cannot cd back to kernel_work_dir" "${kernel_work_dir}"
+
+	# Deterministic pristine-mainline diff base. kernel_drivers_create_patches ran before us,
+	# and patching.py resets again after, so reset here to be certain.
+	run_host_command_logged git -C "${kernel_work_dir}" reset --hard "${kernel_git_revision}"
+	run_host_command_logged git -C "${kernel_work_dir}" clean -fdxq
+
+	# Overlay 1 — NXP SDK driver source into its normal mainline locations (all absent on
+	# mainline, so pure additions). Directories replace fully (rm+cp, no stale files).
+	declare pth src dst
+	for pth in "${ASK_SDK_PATHS[@]}"; do
+		src="${sdk_src}/${pth}"
+		dst="${kernel_work_dir}/${pth}"
+		[[ -e "${src}" ]] || exit_with_error "NXP SDK path missing (ASK-added files come from the patch series)" "${pth} @ ${sdk_ref}"
+		if [[ -d "${src}" ]]; then
+			run_host_command_logged rm -rf "${dst}"
+			run_host_command_logged mkdir -pv "${dst}"
+			run_host_command_logged cp -a "${src}/." "${dst}/"
+		else
+			run_host_command_logged mkdir -pv "$(dirname "${dst}")"
+			run_host_command_logged cp -a "${src}" "${dst}"
+		fi
+	done
+
+	# Overlay 1b — SDK-flavour dtsi into the PRIVATE freescale-sdk/ dir (never touching mainline's
+	# freescale/, so sibling ls1046a/QorIQ boards are unaffected). Original filenames; the
+	# #include closure is self-contained within this set.
+	run_host_command_logged mkdir -pv "${kernel_work_dir}/${ASK_SDK_DTS_DIR}"
+	declare dtsi
+	for dtsi in "${ASK_SDK_DTSI[@]}"; do
+		src="${sdk_src}/${fsl_dts_dir}/${dtsi}"
+		[[ -f "${src}" ]] || exit_with_error "NXP SDK dtsi missing" "${dtsi} @ ${sdk_ref}"
+		run_host_command_logged cp -a "${src}" "${kernel_work_dir}/${ASK_SDK_DTS_DIR}/${dtsi}"
+	done
+
+	# Overlay 2 — ASK-owned board dts + a private Makefile in freescale-sdk/, and wire that dir
+	# into the arm64 dts build. We own the whole dir, so there is no anchor into a shared file.
+	run_host_command_logged cp -a "${dts_src}" "${kernel_work_dir}/${ASK_SDK_DTS_DIR}/mono-gateway-dk.dts"
+	echo 'dtb-$(CONFIG_ARCH_LAYERSCAPE) += mono-gateway-dk.dtb' > "${kernel_work_dir}/${ASK_SDK_DTS_DIR}/Makefile"
+	declare top_mk="${kernel_work_dir}/arch/arm64/boot/dts/Makefile"
+	if ! grep -q 'subdir-y += freescale-sdk' "${top_mk}"; then
+		# subdir-y order is irrelevant, so append — no anchor to drift against.
+		echo 'subdir-y += freescale-sdk' >> "${top_mk}"
+	fi
+
+	# Capture path-scoped diffs. git diff exits 1 when there are changes, so guard against
+	# errexit; the non-empty checks catch a genuine failure.
+	declare -a sdk_dtsi_paths=()
+	for dtsi in "${ASK_SDK_DTSI[@]}"; do sdk_dtsi_paths+=("${ASK_SDK_DTS_DIR}/${dtsi}"); done
+	run_host_command_logged git -C "${kernel_work_dir}" add -A
+	git -C "${kernel_work_dir}" diff --cached --no-color --no-ext-diff -- "${ASK_SDK_PATHS[@]}" "${sdk_dtsi_paths[@]}" \
+		> "${patch_dst}/005-nxp-sdk-overlay.patch" || true
+	git -C "${kernel_work_dir}" diff --cached --no-color --no-ext-diff -- \
+		"${ASK_SDK_DTS_DIR}/mono-gateway-dk.dts" "${ASK_SDK_DTS_DIR}/Makefile" "arch/arm64/boot/dts/Makefile" \
+		> "${patch_dst}/006-mono-gateway-dk-devicetree.patch" || true
+	[[ -s "${patch_dst}/005-nxp-sdk-overlay.patch" ]] || exit_with_error "Synthesized SDK overlay diff is empty" "005"
+	[[ -s "${patch_dst}/006-mono-gateway-dk-devicetree.patch" ]] || exit_with_error "Synthesized board DTS diff is empty" "006"
+	# Armbian applies with patch(1), which cannot carry git binary hunks. Without --binary,
+	# `git diff` emits a payload-less "Binary files … differ" marker → the file would be
+	# SILENTLY dropped from the overlay. Fail loud if a future SDK/DTS ref introduces one.
+	declare synth
+	for synth in "${patch_dst}/005-nxp-sdk-overlay.patch" "${patch_dst}/006-mono-gateway-dk-devicetree.patch"; do
+		! grep -q "^Binary files " "${synth}" ||
+			exit_with_error "Synthesized overlay contains a binary file patch(1) cannot apply" "${synth##*/}"
+	done
+
+	# Restore pristine mainline; patching.py resets again and re-applies 005/006 + 010-110.
+	run_host_command_logged git -C "${kernel_work_dir}" reset --hard "${kernel_git_revision}"
+	run_host_command_logged git -C "${kernel_work_dir}" clean -fdxq
+	display_alert "ASK extension" "synthesized SDK overlay (005) + board device tree (006)" "info"
 }
 
+# Copy a kernel patch ($1 -> $2), dropping any file-section that targets
+# drivers/staging/Makefile or drivers/staging/Kconfig. Armbian's driver harness
+# echo-appends out-of-tree drivers to those files before the ASK series, so the SDK's
+# fsl_qbman wiring (ASK patch 110) cannot apply by patch context; it is re-added
+# post-patch in custom_kernel_config__ask_modules. Every other hunk is preserved.
+function ask_strip_staging_wiring_hunks() {
+	local src="$1" dst="$2"
+
+	# We re-add only the fsl_qbman wiring post-patch, so a staging section that wires a
+	# DIFFERENT driver would be silently lost. Collect any offending added line (ignoring the
+	# +++ header and blank '+' lines); if there are none, the assumption still holds.
+	local stray
+	stray=$(awk '
+		/^diff --git / { in_staging = ($0 ~ /b\/drivers\/staging\/(Makefile|Kconfig)$/) }
+		in_staging && /^\+[^+]/ && /[^+[:space:]]/ && !/fsl_qbman/ { print }
+	' "$src")
+	[[ -z "$stray" ]] ||
+		exit_with_error "ASK patch $(basename "$src") wires a non-fsl_qbman staging driver; strip would lose it" "$stray"
+
+	# Copy the patch, dropping the drivers/staging/{Makefile,Kconfig} file-sections.
+	awk '
+		/^diff --git / { drop = ($0 ~ /b\/drivers\/staging\/(Makefile|Kconfig)$/) }
+		!drop
+	' "$src" > "$dst"
+}
+
+# Stage the kernel-side ASK inputs into userpatches so Armbian's patcher applies them. Under
+# the ASK-is-single-source-of-truth model the ls1046a patch/kernel/ dir carries no ASK/board
+# patches — everything here comes from the pinned ASK tree (or NXP at ASK's pin):
+#   005-nxp-sdk-overlay.patch            — synthesized NXP SDK overlay (see above)
+#   006-mono-gateway-dk-devicetree.patch — synthesized ASK board device tree (see above)
+#   010-110                              — ASK hook series + SDK-on-mainline build/fix patches
+# userpatches/ is the Armbian-standard location for extension-provided patches; the build
+# framework merges them with the committed patches in patch/kernel/ at build time. Runs
+# immediately before patching, after hashing (staging here does not perturb the kernel hash).
+function kernel_extra_create_patches__ask_kernel_patches() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache not populated during config-dump-json
+	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare manifest="${patch_dst}/.ask-staged"
+	run_host_command_logged mkdir -pv "${patch_dst}"
+
+	# Record exactly what we stage into this (user-owned) dir, so the pre-hash cleanup removes
+	# only our files and never blanket-rm's a user's own patches.
+	: > "${manifest}"
+
+	# 1. NXP SDK overlay (005) + ASK board device tree (006); both sort before the 010-110
+	#    hooks (005 provides the SDK sources those hooks edit).
+	ask_synthesize_kernel_overlay_patches "${patch_dst}"
+	printf '%s\n' "005-nxp-sdk-overlay.patch" "006-mono-gateway-dk-devicetree.patch" >> "${manifest}"
+
+	# 2. ASK hook + fix series 010-110, straight from the pinned ASK tree. Skip the legacy
+	#    5.4 reference monolith (999-*); match every numeric-prefixed patch so nothing (e.g.
+	#    100+) is silently dropped. Each patch is filtered to drop drivers/staging/{Makefile,
+	#    Kconfig} hunks — Armbian's driver harness echo-appends out-of-tree drivers
+	#    (rtl8723cs, ...) to those files BEFORE the ASK series, breaking patch context for the
+	#    SDK's fsl_qbman wiring; that wiring is re-added collision-proof post-patch in
+	#    custom_kernel_config__ask_modules. Non-staging hunks are preserved verbatim.
+	declare ask_patch b staged=0
+	shopt -s nullglob
+	for ask_patch in "${ASK_CACHE_DIR}"/patches/kernel/[0-9]*.patch; do
+		b="$(basename "${ask_patch}")"
+		[[ "${b}" == 999-* ]] && continue
+		ask_strip_staging_wiring_hunks "${ask_patch}" "${patch_dst}/${b}"
+		echo "${b}" >> "${manifest}"
+		staged=$((staged + 1))
+	done
+	shopt -u nullglob
+	[[ "${staged}" -gt 0 ]] || exit_with_error "No ASK kernel patches found" "${ASK_CACHE_DIR}/patches/kernel/[0-9]*.patch"
+	display_alert "ASK extension" "staged SDK overlay + ${staged} ASK kernel patches in userpatches" "info"
+}
+
+# Remove ONLY the patches this extension staged in a previous build (tracked in .ask-staged),
+# then the manifest. userpatches/kernel/ is a user-owned drop location, so we must never
+# blanket-rm *.patch there. Runs in post_family_config (pre-hashing) so stale staged patches
+# never perturb the patch-dir hash; the current build re-stages + re-writes the manifest later.
 function post_family_config__cleanup_ask_kernel_patch() {
 	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
-	declare patch_dst_file="${patch_dst}/003-mono-gateway-ask-kernel_linux_6_12.patch"
-	# if patch_dst_file exists, remove it -- it shouldn't be there in post_family_config stage (pre-hashing)
-	# read: "the previous build left a staged ASK kernel patch in userpatches, remove it so patches hash doesn't change"
-	if [[ -f "${patch_dst_file}" ]]; then
-		display_alert "ASK extension" "removing staged ASK kernel patch from userpatches" "info"
-		run_host_command_logged rm -f "${patch_dst_file}"
-	else
-		display_alert "ASK extension" "no staged ASK kernel patch found in userpatches, nothing to remove" "info"
-	fi
+	declare manifest="${patch_dst}/.ask-staged"
+	[[ -f "${manifest}" ]] || {
+		display_alert "ASK extension" "no ASK-staged patch manifest, nothing to remove" "info"
+		return 0
+	}
+	display_alert "ASK extension" "clearing previously ASK-staged kernel patches (manifest-tracked)" "info"
+	declare f
+	while IFS= read -r f; do
+		[[ -n "${f}" ]] && run_host_command_logged rm -fv "${patch_dst}/${f}"
+	done < "${manifest}"
+	run_host_command_logged rm -f "${manifest}"
 	return 0
 }
 
@@ -441,7 +676,7 @@ Version: ${ask_version}
 Architecture: arm64
 Section: net
 Priority: optional
-Maintainer: Tomaz Zaman <tomaz@mono.si>
+Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 Depends: linux-image-${BRANCH}-${LINUXFAMILY} (>= ${kernel_ver}), libxml2 | libxml2-16, libpcap0.8, iptables
 Description: NXP ASK hardware offloading userspace for Mono Gateway DK
  Userspace tools (fmlib, fmc, libfci, libcli, dpa-app, cmm) and configuration
