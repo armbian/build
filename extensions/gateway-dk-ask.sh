@@ -787,11 +787,11 @@ function pre_customize_image__002_build_wifi() {
 	mkdir -p "${SDCARD}/tmp/wifi"
 	cp -a "${SRC}/cache/sources/nxp-mwifiex" "${SDCARD}/tmp/wifi/mwifiex"
 
-	# Mainline-6.12.103 cfg80211 compat: the driver gates set_monitor_channel's net_device
-	# arg on >= 6.13, but stable 6.12.103 backported that one API. OpenWrt sidesteps this via
-	# mac80211 backports; building against the in-kernel cfg80211 needs this one-op fix.
+	# Mainline cfg80211 compat: the driver gates set_monitor_channel's net_device arg on
+	# >= 6.13, but the 6.12.y stable series backported that one API in 6.12.101. OpenWrt
+	# sidesteps this via mac80211 backports; the in-kernel cfg80211 build needs this one-op fix.
 	run_host_command_logged patch -p1 -d "${SDCARD}/tmp/wifi/mwifiex" \
-		< "${SRC}/packages/bsp/gateway-dk/mwifiex-cfg80211-mainline-6.12.103.patch"
+		< "${SRC}/packages/bsp/gateway-dk/mwifiex-cfg80211-set_monitor_channel.patch"
 
 	# Build mlan.ko + moal.ko against the kernel headers. PCIe-9098 only (every other SDIO/USB/
 	# PCIe variant off); cfg80211 fullmac, STA + uAP, no WEXT. Flags mirror OpenWrt's
