@@ -1,0 +1,139 @@
+From 444f2e103d416d4e0d2da63b28ccaae1dbcc8ae7 Mon Sep 17 00:00:00 2001
+From: Ronald Claveau <linux-kernel-dev@aliel.fr>
+Date: Fri, 10 Apr 2026 17:03:02 +0200
+Subject: [PATCH 68/91] thermal: amlogic: Add support for secure monitor
+ calibration readout
+
+Some SoCs (e.g. T7) expose thermal calibration data through the secure
+monitor rather than a directly accessible eFuse register. Add a use_sm
+flag to amlogic_thermal_data to select this path, and retrieve the
+firmware handle and tsensor_id from the "amlogic,secure-monitor" DT
+phandle with one fixed argument.
+
+Also introduce the amlogic,t7-thermal compatible using this new path.
+
+Signed-off-by: Ronald Claveau <linux-kernel-dev@aliel.fr>
+---
+ drivers/thermal/amlogic_thermal.c | 58 ++++++++++++++++++++++++++++---
+ 1 file changed, 53 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/thermal/amlogic_thermal.c b/drivers/thermal/amlogic_thermal.c
+index 5448d772db12..11e3948cc066 100644
+--- a/drivers/thermal/amlogic_thermal.c
++++ b/drivers/thermal/amlogic_thermal.c
+@@ -25,6 +25,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/thermal.h>
++#include <linux/firmware/meson/meson_sm.h>
+ 
+ #include "thermal_hwmon.h"
+ 
+@@ -84,12 +85,14 @@ struct amlogic_thermal_soc_calib_data {
+  * @u_efuse_off: register offset to read fused calibration value
+  * @calibration_parameters: calibration parameters structure pointer
+  * @regmap_config: regmap config for the device
++ * @use_sm: read data from secure monitor instead of efuse
+  * This structure is required for configuration of amlogic thermal driver.
+  */
+ struct amlogic_thermal_data {
+ 	int u_efuse_off;
+ 	const struct amlogic_thermal_soc_calib_data *calibration_parameters;
+ 	const struct regmap_config *regmap_config;
++	bool use_sm;
+ };
+ 
+ struct amlogic_thermal {
+@@ -100,6 +103,8 @@ struct amlogic_thermal {
+ 	struct clk *clk;
+ 	struct thermal_zone_device *tzd;
+ 	u32 trim_info;
++	struct meson_sm_firmware *sm_fw;
++	u32 tsensor_id;
+ };
+ 
+ /*
+@@ -138,6 +143,12 @@ static int amlogic_thermal_initialize(struct amlogic_thermal *pdata)
+ 	int ret = 0;
+ 	int ver;
+ 
++	if (pdata->data->use_sm) {
++		return meson_sm_get_thermal_calib(pdata->sm_fw,
++						  &pdata->trim_info,
++						  pdata->tsensor_id);
++	}
++
+ 	regmap_read(pdata->sec_ao_map, pdata->data->u_efuse_off,
+ 		    &pdata->trim_info);
+ 
+@@ -226,6 +237,12 @@ static const struct amlogic_thermal_data amlogic_thermal_a1_cpu_param = {
+ 	.regmap_config = &amlogic_thermal_regmap_config_g12a,
+ };
+ 
++static const struct amlogic_thermal_data amlogic_thermal_t7_param = {
++	.use_sm			= true,
++	.calibration_parameters	= &amlogic_thermal_g12a,
++	.regmap_config		= &amlogic_thermal_regmap_config_g12a,
++};
++
+ static const struct of_device_id of_amlogic_thermal_match[] = {
+ 	{
+ 		.compatible = "amlogic,g12a-ddr-thermal",
+@@ -239,6 +256,10 @@ static const struct of_device_id of_amlogic_thermal_match[] = {
+ 		.compatible = "amlogic,a1-cpu-thermal",
+ 		.data = &amlogic_thermal_a1_cpu_param,
+ 	},
++	{
++		.compatible = "amlogic,t7-thermal",
++		.data = &amlogic_thermal_t7_param,
++	},
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, of_amlogic_thermal_match);
+@@ -271,11 +292,38 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
+ 	if (IS_ERR(pdata->clk))
+ 		return dev_err_probe(dev, PTR_ERR(pdata->clk), "failed to get clock\n");
+ 
+-	pdata->sec_ao_map = syscon_regmap_lookup_by_phandle
+-		(pdev->dev.of_node, "amlogic,ao-secure");
+-	if (IS_ERR(pdata->sec_ao_map)) {
+-		dev_err(dev, "syscon regmap lookup failed.\n");
+-		return PTR_ERR(pdata->sec_ao_map);
++	if (pdata->data->use_sm) {
++		struct device_node *sm_np;
++		struct of_phandle_args ph_args;
++
++		ret = of_parse_phandle_with_fixed_args(pdev->dev.of_node,
++						       "amlogic,secure-monitor",
++						       1, 0, &ph_args);
++		if (ret)
++			return ret;
++
++		sm_np = ph_args.np;
++		if (!sm_np) {
++			dev_err(dev,
++				"Failed to parse secure monitor phandle\n");
++			return -ENODEV;
++		}
++
++		pdata->sm_fw = meson_sm_get(sm_np);
++		of_node_put(sm_np);
++		if (!pdata->sm_fw) {
++			dev_err(dev, "Failed to get secure monitor firmware\n");
++			return -EPROBE_DEFER;
++		}
++
++		pdata->tsensor_id = ph_args.args[0];
++	} else {
++		pdata->sec_ao_map = syscon_regmap_lookup_by_phandle
++			(pdev->dev.of_node, "amlogic,ao-secure");
++		if (IS_ERR(pdata->sec_ao_map)) {
++			dev_err(dev, "syscon regmap lookup failed.\n");
++			return PTR_ERR(pdata->sec_ao_map);
++		}
+ 	}
+ 
+ 	pdata->tzd = devm_thermal_of_zone_register(&pdev->dev,
+-- 
+2.53.0
+
