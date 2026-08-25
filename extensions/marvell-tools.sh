@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Fetches the host sources needed to assemble Marvell Armada A3720/A8040 bootloaders. Clones pinned `A3700-utils` (bschnei's fork, fixes modern-toolchain build errors), `mv-ddr-marvell`, `binaries-marvell`, `cryptopp`, and CZ.NIC `mox-boot-builder` for the WTMI secure firmware. Used by EspressoBin/MacchiatoBin bootloader builds; pins guarantee reproducible firmware.
+
 function fetch_sources_tools__marvell_tools() {
 	# EspressoBin/A3720 WTMI (sys_init): upstream Marvell A3700-utils is abandoned
 	# and no longer compiles/links on a modern gcc/ld toolchain ('bool' is a C23

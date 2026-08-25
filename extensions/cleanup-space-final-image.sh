@@ -1,3 +1,5 @@
+# @description Shrinks the final image's compressed footprint. Removes bulky rarely-needed firmware trees (`netronome`, `mrv`, `mellanox`), runs `zerofree` on every ext4 partition after unmount so unused blocks compress away, and logs the largest directories via `du`. Pulls in `fs-tools::zerofree`; enable it to produce smaller downloadable images.
+
 function add_host_dependencies__cleanup_space_final_image_zerofree() {
 	EXTRA_BUILD_DEPS+=("fs-tools::zerofree")
 }

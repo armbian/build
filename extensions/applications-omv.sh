@@ -1,3 +1,5 @@
+# @description Preinstalls OpenMediaVault (OMV), the NAS web management platform, into the image. Runs `armbian-config --api module_omv install` in the chroot after repo customization and appends an `-omv` image suffix. Only supported on Debian `bookworm` and `trixie`; the build errors out on any other release.
+
 function extension_prepare_config__omv() {
 	case "${RELEASE}" in
 		bookworm|trixie)

@@ -1,3 +1,5 @@
+# @description Preinstalls the Kali `kali-rolling` APT repository into the image and tags it `-kali`. Adds Kali's signing key, writes the sources list, and pins all Kali packages to priority 50 so nothing is pulled unless explicitly requested. Adds a login MOTD listing installable `kali-tools-*` packages; Debian only.
+
 function extension_prepare_config__kali() {
 	EXTRA_IMAGE_SUFFIXES+=("-kali") # global array
 	HOST="${HOST:-armbian-security}"

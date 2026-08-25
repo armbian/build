@@ -1,3 +1,5 @@
+# @description Bakes first-boot presets for the Odin2 handheld gaming device into `/root/.not_logged_in_yet`, setting the `odin2` user, default locale/timezone, shell, and Ethernet/WiFi network toggles. Also clones `Squishy123/odin2-scripts` into the rootfs and installs an `install-odin2-scripts` launcher. Enable it when building images specifically for the Odin2.
+
 function post_family_tweaks__preset_configs() {
 	display_alert "$BOARD" "preset configs for rootfs" "info"
 	# Set PRESET_NET_CHANGE_DEFAULTS to 1 to apply any network related settings below

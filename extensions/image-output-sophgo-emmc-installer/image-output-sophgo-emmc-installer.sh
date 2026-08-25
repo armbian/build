@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Rewrites the finished `.img` into an eMMC installer card for Sophgo SG200x (Milk-V Duo S): extracts `fip-emmc.bin`, wraps the whole image as an `armbian.emmc` CIMG payload, and builds a bootable FAT card whose U-Boot `cvi_update` flashes the eMMC. Opt-in; use it when no running system is available to install from.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

@@ -1,3 +1,5 @@
+# @description Installs the AIC8800 WiFi DKMS driver and firmware for Radxa boards. Downloads the `aic8800-<type>-dkms` and firmware debs (`pcie`/`sdio`/`usb` per `AIC8800_TYPE`) from the latest `radxa-pkg/aic8800` release and builds the module in the chroot. Forces `INSTALL_HEADERS=yes`, needs working kernel headers, and skips kernels ≥ 7.3.
+
 function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then

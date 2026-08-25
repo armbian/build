@@ -1,3 +1,5 @@
+# @description Installs the `armbian-config` management tool into the image from Armbian's own APT repository. Adds `http://github.armbian.com/configng` (stable/main, signed by `APT_SIGNING_KEY_FILE`) as an APT source, then installs the package in the chroot. Packages are built from `armbian/configng` and merged into the main repo periodically.
+
 # Install armbian config from repo. Now it is producing externally https://github.com/armbian/configng
 # and they are moved to main armbian repo periodically
 

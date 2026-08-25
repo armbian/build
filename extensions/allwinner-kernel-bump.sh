@@ -1,3 +1,5 @@
+# @description Automates bumping the `edge` kernel for Allwinner (`sunxi*`) boards to the latest mainline version. On relaunch it reads the new `KERNEL_MAJOR_MINOR` from `master`, points `KERNELPATCHDIR` at `archive/sunxi-<ver>`, fetches Megous's git bundle from `xff.cz`, and regenerates the `patches.megous` set plus `series.conf`. Only usable with sunxi edge builds.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Gunjan Gupta <gunjan@armbian.com>

@@ -1,3 +1,5 @@
+# @description Converts the qcow2 from `image-output-qcow2` into a dynamic Microsoft Hyper-V VHDX using `qemu-img` (resized +47G), then bundles it with a PowerShell VM-creation script into a `.hyperv.zip`. Enable it to get a Hyper-V-importable image; set `VHDX_KEEP_QCOW2` or `VHDX_KEEP_IMG` to retain the intermediates.
+
 enable_extension "image-output-qcow2"
 
 #### *run before installing host dependencies*

@@ -1,3 +1,5 @@
+# @description Adds the `systemd-timesyncd` package to the image and enables `systemd-timesyncd.service` in the chroot for network time synchronization. This is systemd's lightweight built-in SNTP client, sufficient when full NTP features aren't needed. Enable it as a minimal alternative to the `chrony` extension.
+
 #
 # Extension to manage network time synchronization with systemd-timesyncd
 #

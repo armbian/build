@@ -1,3 +1,5 @@
+# @description Builds the arm64 kernel with `CONFIG_COMPAT`, `CONFIG_COMPAT_VDSO` and `CONFIG_ARM64_32BIT_EL0`, letting a host on this kernel run armhf userspace natively at full speed. This lets armhf rootfs/chroot steps build native instead of through `qemu-user-static` (~10× faster); the framework auto-detects it via `PREFER_NATIVE_ARMHF`. Needs a 32-bit ARM cross-compiler for GCC builds.
+
 # Enable 32-bit compat vDSO for arm64 kernels with GCC or clang.
 #
 # Builds the kernel with CONFIG_COMPAT + COMPAT_VDSO + ARM64_32BIT_EL0, letting

@@ -1,3 +1,5 @@
+# @description Converts the output image to Khadas OOWOW recovery format using Khadas' `xze` tool, downloaded and cached from the krescue repo, and embeds board metadata matched by `KHADAS_OOWOW_BOARD_ID`. Forces `COMPRESS_OUTPUTIMAGE` to none/sha because xze already applies its own xz compression. Requires `KHADAS_OOWOW_BOARD_ID` to be set.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

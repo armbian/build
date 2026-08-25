@@ -1,3 +1,5 @@
+# @description Repackages the finished image into Android Boot Loader (ABL) format for Qualcomm/Snapdragon boards. Adds `mkbootimg` as a host dep, splits the rootfs into a separate `.rootfs.img`, then builds gzipped-kernel boot and recovery images for each DTB in `ABL_DTB_LIST`. Skips when `UEFI_GRUB_TARGET` or `BOOTFS_TYPE` is set.
+
 function add_host_dependencies__abl_host_deps() {
 	EXTRA_BUILD_DEPS+=("build-tools::mkbootimg")
 }

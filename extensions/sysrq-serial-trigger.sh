@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Enables Magic SysRq over the serial console so an operator can sync, remount read-only and reboot a hung headless board. Sets the `MAGIC_SYSRQ`/`MAGIC_SYSRQ_SERIAL` kernel options with a non-empty `SYSRQ_SERIAL_SEQUENCE` (default `sysrq`), raises U-Boot `BOOTDELAY` to 5, and writes `kernel.sysrq=1` for the full command set.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2026 Igor Velkov

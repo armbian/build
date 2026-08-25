@@ -1,3 +1,5 @@
+# @description Adds the official Texas Instruments Debian package repository (`TexasInstruments/ti-debpkgs`) and installs the packages listed in `TI_PACKAGES`. Validates the APT suite against the repo's `dists` (via GitHub API), using `RELEASE` or the `TI_DEBPKGS_SUITE`/`TI_DEBPKGS_FALLBACK_SUITES` overrides, and installs an apt-preferences pin. Skips gracefully when no matching suite exists.
+
 function post_repo_customize_image__install_ti_packages() {
 
 	# Read JSON array into Bash array safely

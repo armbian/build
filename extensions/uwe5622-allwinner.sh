@@ -1,3 +1,5 @@
+# @description Enables the Spreadtrum UWE5622 (AW859A) WiFi/Bluetooth combo on Allwinner boards. Adds the `sprdbt_tty` module and `bluez`/`rfkill` packages, installs the `aw859a-wifi` and `aw859a-bluetooth` systemd services, and deploys the `hciattach_opi` blob for BT attach. Enable on sunxi boards carrying this chip.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Armbian

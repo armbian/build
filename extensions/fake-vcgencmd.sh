@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Installs a stub `vcgencmd` so Raspberry Pi software that probes it runs on non-Pi boards. Downloads the script (plus LICENSE/README) from `clach04/fake_vcgencmd` v0.0.2 into `/usr/bin/vcgencmd` and makes it executable. Skipped on `rpi4b`, which ships the genuine `vcgencmd`.
 
 function pre_umount_final_image__install_fake_vcgencmd() {
 	display_alert "Extension: ${EXTENSION}: Installing fake vcgencmd" "${EXTENSION}" "info"

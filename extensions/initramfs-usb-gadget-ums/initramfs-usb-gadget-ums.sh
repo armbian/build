@@ -1,3 +1,5 @@
+# @description An early initramfs `init-premount` script turns the board into a USB Mass Storage gadget. When `ums=yes` is on the kernel command line it exposes all block devices over USB and loops forever instead of booting. A host can then flash the eMMC/SD/NVMe with BalenaEtcher or similar.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

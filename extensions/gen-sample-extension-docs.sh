@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Generates reference documentation for the build framework's extension system. Writes auto-generated Markdown of every hook point to `userpatches/extensions/hooks.auto.docs.md` and a fully commented `sample-extension.sh` stub, both derived from the live hook registry. Enable it as an extension developer to discover all available hooks.
+
 ## Hooks
 function extension_metadata_ready__499_display_docs_generation_start_info() {
 	display_alert "Extension: ${EXTENSION}: Generating hook documentation and sample extension"
