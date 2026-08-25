@@ -27,6 +27,7 @@ dtb-$(CONFIG_ARCH_SUNXI) += \
 	sun50i-h5-spi-add-cs1.dtbo \
 	sun50i-h5-spi-jedec-nor.dtbo \
 	sun50i-h5-spi-spidev.dtbo \
+	sun50i-h5-tve.dtbo \
 	sun50i-h5-uart1.dtbo \
 	sun50i-h5-uart2.dtbo \
 	sun50i-h5-uart3.dtbo \
