@@ -870,7 +870,7 @@ EOF
 
 	cat > "${pkgdir}/DEBIAN/postinst" << EOF
 #!/bin/bash
-depmod -a ${kernel_ver} || true
+depmod -a ${kernel_ver}
 EOF
 	chmod 755 "${pkgdir}/DEBIAN/postinst"
 
