@@ -16,6 +16,12 @@ import re
 import sys
 from pathlib import Path
 
+# @doc-page values become Markdown link targets on the published docs site, so
+# only accept site-relative paths: a leading "/", then path characters. This
+# rejects URL schemes ("javascript:", "data:") and protocol-relative "//host"
+# targets, which Python-Markdown would happily pass through into the page.
+DOC_PAGE_RE = re.compile(r"^/[A-Za-z0-9._~\-/]*$")
+
 FRONT_MATTER = '''---
 seo_title: "Armbian build extensions list & ENABLE_EXTENSIONS"
 description: "Alphabetical reference of official Armbian build framework extensions, how to enable them with ENABLE_EXTENSIONS, and what each one does."
@@ -56,7 +62,14 @@ def collect(root: Path):
         name = sh.stem
         desc = m.group(1).strip()
         dp = re.search(r"^#\s*@doc-page\s+(\S+)\s*$", text, re.MULTILINE)
-        exts[name] = {"desc": desc, "doc_page": dp.group(1) if dp else None}
+        doc_page = dp.group(1) if dp else None
+        if doc_page is not None and not DOC_PAGE_RE.match(doc_page):
+            sys.stderr.write(
+                f"gen-extensions-list: {sh.name}: ignoring @doc-page "
+                f"'{doc_page}': not a site-relative path\n"
+            )
+            doc_page = None
+        exts[name] = {"desc": desc, "doc_page": doc_page}
     return exts
 
 

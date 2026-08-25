@@ -1,4 +1,4 @@
-# @description Bakes first-boot presets for the Odin2 handheld gaming device into `/root/.not_logged_in_yet`, setting the `odin2` user, default locale/timezone, shell, and Ethernet/WiFi network toggles. Also clones `Squishy123/odin2-scripts` into the rootfs and installs an `install-odin2-scripts` launcher. Enable it when building images specifically for the Odin2.
+# @description Bakes first-boot presets for the Odin2 handheld gaming device into `/root/.not_logged_in_yet`, setting the `odin2` user, default locale/timezone, shell, and Ethernet/WiFi network toggles. Also clones `Squishy123/odin2-scripts` into the rootfs and installs an `install-odin2-scripts` launcher. **Security:** it hardcodes `1234` as both the root and user password, so images built with it ship with well-known credentials - change those values in the extension, or reset both passwords on first boot, before using such an image anywhere reachable.
 
 function post_family_tweaks__preset_configs() {
 	display_alert "$BOARD" "preset configs for rootfs" "info"
