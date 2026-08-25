@@ -29,6 +29,12 @@ function post_family_config__recomputer_rk3576_module_use_seeed_bootscript() {
 	declare -g BOOTSCRIPT="boot-seeed-rk35xx.cmd:boot.cmd"
 }
 
+# EEPROM on module I2C2 @0x50
+function post_family_tweaks__recomputer_rk3576_module_eeprom_bus() {
+	echo "eeprom_i2c_bus=2" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "eeprom_i2c_addr=0x50" >> "${SDCARD}/boot/armbianEnv.txt"
+}
+
 # Install Mali-G52 userspace library for GPU hardware acceleration
 # Kernel DDK is g25p0; g24p0 userspace library is ABI-compatible
 function pre_install_distribution_specific__recomputer_rk3576_install_libmali() {

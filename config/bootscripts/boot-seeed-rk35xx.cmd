@@ -42,7 +42,7 @@ fi
 # fdtfile, overlays, ...) from the clean baseline maintained by the
 # build hook and OTA sync.
 if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
-	:
+	true
 else
 	echo "WARNING: armbianEnv.txt fdtfile ${fdtfile} not loadable, loading .dist fallback"
 	setenv rootdev
@@ -70,10 +70,16 @@ setenv eeprom_dtb_matched "no"
 #   [0..5]  = "rk35xx"
 #   [6..9]  = board code, e.g. 00A0 / 00B0
 #   [10.. ] = SN (ignored by boot logic)
-# Read EEPROM from i2c4@0x57 and override fdtfile if format matches.
+# Read EEPROM from i2c@0x57 and override fdtfile if format matches.
+# Bus number and chip address are board-specific: set via armbianEnv.txt or
+# board hook (eeprom_i2c_bus / eeprom_i2c_addr).
+#   rk3576/rk3588 devkit: I2C4, 0x57 (on-board EEPROM)
+#   rk3576 module devkit: I2C2, 0x50 (on-module EEPROM)
+test -n "${eeprom_i2c_bus}" || setenv eeprom_i2c_bus 4
+test -n "${eeprom_i2c_addr}" || setenv eeprom_i2c_addr 0x57
 if test "${eeprom_dtb_select}" = "on"; then
-	if i2c dev 4; then
-		if i2c read 0x57 0x0.2 10 ${load_addr}; then
+	if i2c dev ${eeprom_i2c_bus}; then
+		if i2c read ${eeprom_i2c_addr} 0x0.2 10 ${load_addr}; then
 			setexpr.b ee0 *${load_addr}
 			setexpr tmp ${load_addr} + 1
 			setexpr.b ee1 *${tmp}
@@ -101,6 +107,11 @@ if test "${eeprom_dtb_select}" = "on"; then
 					setenv fdtfile "rockchip/rk3576-recomputer-rk3576-devkit.dtb"
 					setenv eeprom_dtb_matched "yes"
 					echo "Detected board: reComputer RK3576 Devkit, using DTB: ${fdtfile}"
+				# 01A0 -> rk3576 module devkit dtb
+				elif test "${code0}" = "0x30" && test "${code1}" = "0x31" && test "${code2}" = "0x41" && test "${code3}" = "0x30"; then
+					setenv fdtfile "rockchip/rk3576-recomputer-rk3576-module-devkit.dtb"
+					setenv eeprom_dtb_matched "yes"
+					echo "Detected board: reComputer RK3576 Module Dev Kit, using DTB: ${fdtfile}"
 				# 00B0 -> rk3588 dtb
 				elif test "${code0}" = "0x30" && test "${code1}" = "0x30" && test "${code2}" = "0x42" && test "${code3}" = "0x30"; then
 					setenv fdtfile "rockchip/rk3588-recomputer-rk3588-devkit.dtb"
