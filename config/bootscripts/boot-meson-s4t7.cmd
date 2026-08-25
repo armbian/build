@@ -21,7 +21,7 @@ if test "${console}" = "serial"; then setenv console_serial "true"; fi
 if test "${console}" = "display"; then setenv console_display "true"; fi
 
 if test "${console_display}" = "true"; then setenv consoleargs "console=tty0"; fi
-if test "${console_serial}" = "true"; then setenv consoleargs "console=tty0 console=ttyS0,921600n8"; fi
+if test "${console_serial}" = "true"; then setenv consoleargs "console=ttyS0,921600n8"; fi
 
 if test "${earlycon}" != "on"; then setexpr bootargs sub " earlycon=\\S* " " " "${bootargs}"; fi
 
