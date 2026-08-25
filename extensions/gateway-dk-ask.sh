@@ -173,18 +173,29 @@ function custom_kernel_config__ask_modules() {
 	# hunks were stripped at stage time because Armbian's driver harness echo-appends to those
 	# files (rtl8723cs, ...) before the ASK series and breaks the patch context.
 	local staging_dir="${kernel_work_dir}/drivers/staging"
-	if [[ -d "${staging_dir}/fsl_qbman" ]]; then
-		if ! grep -q 'fsl_qbman/' "${staging_dir}/Makefile"; then
-			display_alert "ASK extension" "wiring fsl_qbman into staging Makefile" "info"
-			echo 'obj-$(CONFIG_FSL_SDK_DPA) += fsl_qbman/' >> "${staging_dir}/Makefile"
-		fi
-		if ! grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig"; then
-			display_alert "ASK extension" "wiring fsl_qbman into staging Kconfig" "info"
-			sed -i '/^endif # STAGING/i source "drivers/staging/fsl_qbman/Kconfig"\n' "${staging_dir}/Kconfig"
-			grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig" ||
-				exit_with_error "fsl_qbman Kconfig source insert missed its anchor in staging/Kconfig (mainline layout changed?)"
-		fi
+	# fsl_qbman is provided by the 005 SDK overlay; if it is missing the overlay did not apply,
+	# and this wiring is the only registration path left after 110's staging hunks are stripped
+	# — a silent skip would ship a kernel with no SDK QBMan driver. Fail loud instead.
+	[[ -d "${staging_dir}/fsl_qbman" ]] ||
+		exit_with_error "SDK staging driver missing; the 005 overlay did not apply" "${staging_dir}/fsl_qbman"
+	if ! grep -q 'fsl_qbman/' "${staging_dir}/Makefile"; then
+		display_alert "ASK extension" "wiring fsl_qbman into staging Makefile" "info"
+		echo 'obj-$(CONFIG_FSL_SDK_DPA) += fsl_qbman/' >> "${staging_dir}/Makefile"
 	fi
+	if ! grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig"; then
+		display_alert "ASK extension" "wiring fsl_qbman into staging Kconfig" "info"
+		sed -i '/^endif # STAGING/i source "drivers/staging/fsl_qbman/Kconfig"\n' "${staging_dir}/Kconfig"
+		grep -q 'fsl_qbman/Kconfig' "${staging_dir}/Kconfig" ||
+			exit_with_error "fsl_qbman Kconfig source insert missed its anchor in staging/Kconfig (mainline layout changed?)"
+	fi
+
+	# Force the NXP SDK DPAA/FMan stack explicitly on, and the competing mainline drivers off,
+	# rather than relying on Kconfig defaults. ASK_CDX depends on FSL_SDK_FMAN, which itself
+	# requires !FSL_FMAN; if a future mainline enabled FSL_FMAN by default, FSL_SDK_FMAN would
+	# drop, olddefconfig would silently remove ASK_CDX, and a non-offloading kernel would ship
+	# green. Mainline FSL_DPAA_ETH depends on FSL_FMAN, so disabling FSL_FMAN keeps it off too.
+	opts_y+=("CONFIG_FSL_SDK_FMAN" "CONFIG_FSL_SDK_BMAN" "CONFIG_FSL_SDK_QMAN")
+	opts_n+=("CONFIG_FSL_FMAN")
 
 	# Enable ASK modules in kernel config (opts_m array, same pattern as meson64_common.inc)
 	opts_y+=("CONFIG_NXP_ASK")
