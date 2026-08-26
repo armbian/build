@@ -51,6 +51,14 @@ function improved_git_fetch() {
 	improved_git fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
 }
 
+# Every 'git ls-remote' is a hit to the remote: it is slow, and it might hang; let the user know before we do it.
+# <what: human description of what we are asking the remote> <ls-remote args...>
+function git_ls_remote_logged() {
+	declare what="${1}" && shift
+	display_alert "Querying git remote for ${what}" "${*}" "info" # display_alert writes to stderr, so this is safe inside $(...)
+	git ls-remote "$@"
+}
+
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
@@ -198,55 +206,80 @@ function fetch_from_repo() {
 
 		case $ref_type in
 			branch)
-				# TODO: grep refs/heads/$name
-				remote_hash=$(git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
-				[[ -z $local_hash || "${local_hash}" != "a${remote_hash}" ]] && changed=true
+				# Branches are always fetched, because they are mutable; we don't want to be stuck on an old commit.
+				# No ls-remote here on purpose: its answer can't change the outcome, and it'd cost an extra remote round-trip.
+				remote_hash="(not queried)"
+				changed=true
 				;;
 			tag)
-				remote_hash=$(git ls-remote -t "${url}" "$ref_name" | cut -f1)
+				remote_hash=$(git_ls_remote_logged "the tag" -t "${url}" "$ref_name" | cut -f1)
 				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-					remote_hash=$(git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
-					[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+					remote_hash=$(git_ls_remote_logged "the annotated tag commit" -t "${url}" "$ref_name^{}" | cut -f1) # peel the annotated tag down to the commit it points at
+					if [[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]]; then
+						changed=true
+					else
+						display_alert "Git annotated tag already checked out" "$dir tag:${ref_name} @ ${local_hash}" "cachehit"
+					fi
+				else
+					display_alert "Git tag already checked out" "$dir tag:${ref_name} @ ${local_hash}" "cachehit"
 				fi
 				;;
 			head)
-				remote_hash=$(git ls-remote "${url}" HEAD | cut -f1)
-				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				remote_hash=$(git_ls_remote_logged "HEAD" "${url}" HEAD | cut -f1)
+				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
+					changed=true
+				else
+					display_alert "Git already at the remote HEAD" "$dir head @ ${local_hash}" "cachehit"
+				fi
 				;;
 			commit)
 				remote_hash="${ref_name}"
-				[[ -z $local_hash || $local_hash == "@" || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				if [[ -z $local_hash || $local_hash == "@" || "${local_hash}" != "${remote_hash}" ]]; then
+					changed=true
+				else
+					display_alert "Git commit/sha1 already checked out" "$dir commit:${ref_name}" "cachehit"
+				fi
 				;;
 		esac
 
 		display_alert "Git local_hash vs remote_hash" "${local_hash} vs ${remote_hash}" "git"
 
+	else
+		display_alert "Git offline, not checking the remote at all" "$dir ${ref_type}:${ref_name}" "cachehit"
 	fi # offline
 
 	local checkout_from="HEAD" # Probably best to use the local revision?
 
 	if [[ "${changed}" == "true" ]]; then
 
-		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
-		display_alert "Fetching updates from remote repository" "$dir $ref_name"
-		case $ref_type in
-			branch)
-				improved_git_fetch --no-tags "${url}" "${ref_name}"
-				;;
-			tag)
-				improved_git_fetch --no-tags "${url}" tags/"${ref_name}"
-				;;
-			head)
-				improved_git_fetch --no-tags "${url}" HEAD
-				;;
-			commit)
-				# @TODO: if the local copy has the revision, skip the fetch -- would save us a lot of time
-				display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
-				improved_git_fetch --no-tags "${url}" "${ref_name}"
-				;;
-		esac
+		# Important: we might have the commit locally, even if it is not the local_hash; sha1's are immutable, so
+		# if the object is already in the local copy there is nothing to fetch -- saves us a lot of time.
+		if [[ "${ref_type}" == "commit" ]] && git cat-file -e "${ref_name}^{commit}" &> /dev/null; then
+			display_alert "Commit/sha1 already in local copy, skipping git fetch" "$dir ${ref_name}" "cachehit"
+			checkout_from="${ref_name}"
+		else
+			# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
+			display_alert "Fetching updates from remote repository" "$dir $ref_name"
+			case $ref_type in
+				branch)
+					improved_git_fetch --no-tags "${url}" "${ref_name}"
+					;;
+				tag)
+					improved_git_fetch --no-tags "${url}" tags/"${ref_name}"
+					;;
+				head)
+					improved_git_fetch --no-tags "${url}" HEAD
+					;;
+				commit)
+					display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
+					improved_git_fetch --no-tags "${url}" "${ref_name}"
+					;;
+			esac
 
-		checkout_from="FETCH_HEAD"
+			checkout_from="FETCH_HEAD"
+		fi
+	else
+		display_alert "Local copy is up to date, skipping git fetch" "$dir ${ref_type}:${ref_name}" "cachehit"
 	fi
 
 	# if the tree is shallow and big, this first rev-parse takes a while; use info to inform about what is done
