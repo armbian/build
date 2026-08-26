@@ -21,6 +21,19 @@ function _git_sources_pinned_sha1() {
 		'[.[] | select(.source == $s and .branch == $b) | .sha1] | first // empty' "${json}"
 }
 
+# The URL to actually contact for a given git source, honoring GITHUB_MIRROR=ghproxy.
+# Same reasoning as _git_sources_pinned_sha1() above re: file scope and the memoize cache hash:
+# keep it trivial and stable.
+# <source_url>
+function git_remote_url_for_mirror() {
+	declare source_url="${1}"
+	if [[ "${GITHUB_MIRROR}" == "ghproxy" && "${source_url}" == "https://github.com/"* ]]; then
+		echo -n "https://${GHPROXY_ADDRESS}/${source_url}"
+	else
+		echo -n "${source_url}"
+	fi
+}
+
 # This works under memoize-cached.sh::run_memoized() -- which is full of tricks.
 # Nested functions are used because the source of the momoized function is used as part of the cache hash.
 function memoized_git_ref_to_info() {
@@ -32,13 +45,13 @@ function memoized_git_ref_to_info() {
 	MEMO_DICT+=(["REF_TYPE"]="${ref_type}")
 	MEMO_DICT+=(["REF_NAME"]="${ref_name}")
 
-	# Small detour here; if it's a tag, ask for the dereferenced commit, to avoid the annotated tag's sha1, instead get the commit tag points to.
-	# Also, try 'refs/heads/xxx' first. Some repos have Gerrit-style "refs/for/xxx" refs, which are not what we want.
-	if [[ "${ref_type}" == "tag" ]]; then
-		refs_to_try+=("refs/heads/${ref_name}^{}" "refs/heads/${ref_name}" "${ref_name}^{}" "${ref_name}") # try first with a tag dereference, then just the tag. for annotated tags support.
-	elif [[ "${ref_type}" == "branch" ]]; then
+	# Tags are resolved further down, in a single hit to the remote, by git_ls_remote_tag_commit_sha1();
+	# they don't go through the try-list at all. Asking for 'refs/heads/xxx' for a tag, as this used to,
+	# is two guaranteed-dead round-trips: a tag is never in the branch namespace.
+	# For the rest: try 'refs/heads/xxx' first. Some repos have Gerrit-style "refs/for/xxx" refs, which are not what we want.
+	if [[ "${ref_type}" == "branch" ]]; then
 		refs_to_try+=("refs/heads/${ref_name}" "${ref_name}")
-	else
+	elif [[ "${ref_type}" != "tag" ]]; then
 		refs_to_try+=("${ref_name}")
 	fi
 
@@ -60,6 +73,13 @@ function memoized_git_ref_to_info() {
 		fi
 	fi
 
+	# Tags: one ls-remote resolves annotated and lightweight tags alike; no try-list, no wasted round-trips.
+	# Guarded on the sha1 not being valid yet, so the OFFLINE_WORK pinned-sha1 above still wins.
+	if [[ "${ref_type}" == "tag" && ! "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
+		sha1="$(git_ls_remote_tag_commit_sha1 "$(git_remote_url_for_mirror "${MEMO_DICT[GIT_SOURCE]}")" "${ref_name}")"
+		display_alert "SHA1 of tag ${ref_name}" "'${sha1}'" "info"
+	fi
+
 	# Enter loop. The first that resolves to a valid sha1 wins.
 	declare to_try
 	for to_try in "${refs_to_try[@]}"; do
@@ -69,21 +89,7 @@ function memoized_git_ref_to_info() {
 				sha1="${to_try}"
 				;;
 			*)
-				case "${GITHUB_MIRROR}" in
-					"ghproxy")
-						case "${MEMO_DICT[GIT_SOURCE]}" in
-							"https://github.com/"*)
-								sha1="$(git ls-remote --exit-code "https://${GHPROXY_ADDRESS}/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
-								;;
-							*)
-								sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
-								;;
-						esac
-						;;
-					*)
-						sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
-						;;
-				esac
+				sha1="$(git_ls_remote_logged "${ref_type} '${to_try}'" --exit-code "$(git_remote_url_for_mirror "${MEMO_DICT[GIT_SOURCE]}")" "${to_try}" | cut -f1)"
 				;;
 		esac
 

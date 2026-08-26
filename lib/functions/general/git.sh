@@ -59,6 +59,28 @@ function git_ls_remote_logged() {
 	git ls-remote "$@"
 }
 
+# Resolve a tag to the COMMIT it points at, in a single hit to the remote.
+# Annotated tags advertise both 'refs/tags/X' (the tag object) and 'refs/tags/X^{}' (the commit);
+# lightweight tags advertise only 'refs/tags/X', which already is the commit. ls-remote takes more
+# than one pattern at a time, so ask for both and prefer the peeled one -- one round-trip, correct
+# for either kind of tag. Echoes the sha1, or nothing if the remote does not have the tag.
+# <url> <tag_name>
+function git_ls_remote_tag_commit_sha1() {
+	declare url="${1}" tag_name="${2}"
+	declare ls_remote_output peeled="" plain="" one_sha1 one_ref
+	# '|| true': not finding the tag is a normal answer here, not an error; the caller decides what to do.
+	ls_remote_output="$(git_ls_remote_logged "tag '${tag_name}' (annotated or not)" --tags "${url}" "${tag_name}" "${tag_name}^{}" || true)"
+	# Match the full ref name: ls-remote patterns match the tail on a slash boundary, so asking for
+	# 'v2026.07' also matches a 'refs/tags/vendor/v2026.07', which is not the tag we asked for.
+	while read -r one_sha1 one_ref; do
+		case "${one_ref}" in
+			"refs/tags/${tag_name}^{}") peeled="${one_sha1}" ;;
+			"refs/tags/${tag_name}") plain="${one_sha1}" ;;
+		esac
+	done <<< "${ls_remote_output}"
+	echo -n "${peeled:-${plain}}"
+}
+
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
@@ -212,14 +234,12 @@ function fetch_from_repo() {
 				changed=true
 				;;
 			tag)
-				remote_hash=$(git_ls_remote_logged "the tag" -t "${url}" "$ref_name" | cut -f1)
-				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-					remote_hash=$(git_ls_remote_logged "the annotated tag commit" -t "${url}" "$ref_name^{}" | cut -f1) # peel the annotated tag down to the commit it points at
-					if [[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]]; then
-						changed=true
-					else
-						display_alert "Git annotated tag already checked out" "$dir tag:${ref_name} @ ${local_hash}" "cachehit"
-					fi
+				# One hit resolves both annotated and lightweight tags, and always yields a commit, so it is
+				# directly comparable to local_hash (which is 'git rev-parse @', also a commit). Comparing
+				# against the annotated tag's own sha1 could never match, and thus never cache-hit.
+				remote_hash="$(git_ls_remote_tag_commit_sha1 "${url}" "${ref_name}")"
+				if [[ -z $local_hash || -z $remote_hash || "${local_hash}" != "${remote_hash}" ]]; then
+					changed=true
 				else
 					display_alert "Git tag already checked out" "$dir tag:${ref_name} @ ${local_hash}" "cachehit"
 				fi
@@ -286,8 +306,11 @@ function fetch_from_repo() {
 	display_alert "git: Fetch from remote completed, rev-parsing..." "'$dir' '$ref_name' '${checkout_from}'" "info"
 
 	# should be declared in outer scope: fetched_revision fetched_revision_ts
-	fetched_revision="$(git rev-parse "${checkout_from}")"
-	fetched_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
+	# Peel to the commit: after fetching an annotated tag, FETCH_HEAD is the *tag object's* sha1, not the
+	# commit's. Without this, a cold build (fetch -> FETCH_HEAD) and a warm one (cachehit -> HEAD) would
+	# report different revisions for the exact same tree. It also matches what git-ref2info.sh resolves.
+	fetched_revision="$(git rev-parse "${checkout_from}^{commit}")"
+	fetched_revision_ts="$(git log -1 --pretty=%ct "${fetched_revision}")" # unix timestamp of the commit date
 	display_alert "Fetched revision: fetched_revision:" "${fetched_revision}" "git"
 	display_alert "Fetched revision: fetched_revision_ts:" "${fetched_revision_ts}" "git"
 
