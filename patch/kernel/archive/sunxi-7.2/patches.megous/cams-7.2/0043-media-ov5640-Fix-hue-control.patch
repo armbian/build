@@ -1,0 +1,141 @@
+From 6be2497a3447c8c89239b8470208a22da440a336 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:30:05 +0200
+Subject: [PATCH] media: ov5640: Fix hue control
+
+The angle in degrees was written as a 16 bit value over SDE CTRL1 and
+CTRL2, which are the magnitudes of the cosine and sine coefficients of
+a U/V plane rotation, not an angle. The high byte of the angle landed
+in the cosine coefficient and the low byte in the sine one, and the
+sign bits in SDE CTRL8 were never set at all, so the resulting
+rotation was arbitrary and discontinuous at every multiple of 256.
+
+Compute the two coefficients from a table of cosines and set the signs
+of the four terms per quadrant. The values this produces match the
+ones tabulated in the OV5640 module application note for every angle
+listed there.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 84 ++++++++++++++++++++++++++++++++++----
+ 1 file changed, 75 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index 1e3b85ab5e50..60b393de4aaf 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -122,7 +122,9 @@
+ #define OV5640_REG_ISP_FORMAT_MUX_CTRL	0x501f
+ #define OV5640_REG_PRE_ISP_TEST_SET1	0x503d
+ #define OV5640_REG_SDE_CTRL0		0x5580
++#define OV5640_SDE_CTRL0_HUE_EN		BIT(0)
+ #define OV5640_REG_SDE_CTRL1		0x5581
++#define OV5640_REG_SDE_CTRL2		0x5582
+ #define OV5640_REG_SDE_CTRL3		0x5583
+ #define OV5640_REG_SDE_CTRL4		0x5584
+ #define OV5640_REG_SDE_CTRL5		0x5585
+@@ -131,6 +133,24 @@
+ #define OV5640_SDE_CTRL0_CONTRAST_EN	BIT(2)
+ /* UV adjust gain, 0x40 is unity */
+ #define OV5640_SATURATION_UNITY		0x40
++#define OV5640_REG_SDE_CTRL8		0x5588
++/*
++ * Hue is a rotation of the U/V plane:
++ *
++ *   U' =  U * cos + V * sin
++ *   V' = -U * sin + V * cos
++ *
++ * SDE CTRL1 and CTRL2 hold the magnitudes of the two coefficients in
++ * 1/128 steps and SDE CTRL8 the signs of the terms they appear in. The
++ * two sine terms always have opposite signs, so exactly one of the two
++ * sine sign bits is set; both cosine terms share a sign.
++ */
++#define OV5640_SDE_CTRL8_HUE_SIN_POS	BIT(0)
++#define OV5640_SDE_CTRL8_HUE_SIN_NEG	BIT(1)
++#define OV5640_SDE_CTRL8_HUE_COS_NEG	(BIT(4) | BIT(5))
++#define OV5640_SDE_CTRL8_HUE_SIGN_MASK	(OV5640_SDE_CTRL8_HUE_SIN_POS | \
++					 OV5640_SDE_CTRL8_HUE_SIN_NEG | \
++					 OV5640_SDE_CTRL8_HUE_COS_NEG)
+ /* Y gain for contrast, 0x20 is unity */
+ #define OV5640_CONTRAST_UNITY		0x20
+ #define OV5640_REG_AVG_READOUT		0x56a1
+@@ -3384,21 +3404,67 @@ static int ov5640_set_framefmt(struct ov5640_dev *sensor,
+  * Sensor Controls.
+  */
+ 
++/* |cos| in 1/128 steps for 0 to 90 degrees; |sin| is the same table backwards */
++static const u8 ov5640_hue_cos[91] = {
++	0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x7f, 0x7f, 0x7f, 0x7e,
++	0x7e, 0x7e, 0x7d, 0x7d, 0x7c, 0x7c, 0x7b, 0x7a, 0x7a, 0x79,
++	0x78, 0x77, 0x77, 0x76, 0x75, 0x74, 0x73, 0x72, 0x71, 0x70,
++	0x6f, 0x6e, 0x6d, 0x6b, 0x6a, 0x69, 0x68, 0x66, 0x65, 0x63,
++	0x62, 0x61, 0x5f, 0x5e, 0x5c, 0x5b, 0x59, 0x57, 0x56, 0x54,
++	0x52, 0x51, 0x4f, 0x4d, 0x4b, 0x49, 0x48, 0x46, 0x44, 0x42,
++	0x40, 0x3e, 0x3c, 0x3a, 0x38, 0x36, 0x34, 0x32, 0x30, 0x2e,
++	0x2c, 0x2a, 0x28, 0x25, 0x23, 0x21, 0x1f, 0x1d, 0x1b, 0x18,
++	0x16, 0x14, 0x12, 0x10, 0x0d, 0x0b, 0x09, 0x07, 0x04, 0x02,
++	0x00,
++};
++
+ static int ov5640_set_ctrl_hue(struct ov5640_dev *sensor, int value)
+ {
++	unsigned int angle = value % 90;
++	u8 cos_coef, sin_coef, sign;
+ 	int ret;
+ 
+-	if (value) {
+-		ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0,
+-				     BIT(0), BIT(0));
+-		if (ret)
+-			return ret;
+-		ret = ov5640_write_reg16(sensor, OV5640_REG_SDE_CTRL1, value);
+-	} else {
+-		ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0, BIT(0), 0);
++	switch (value / 90) {
++	case 0:
++		cos_coef = ov5640_hue_cos[angle];
++		sin_coef = ov5640_hue_cos[90 - angle];
++		sign = OV5640_SDE_CTRL8_HUE_SIN_POS;
++		break;
++	case 1:
++		cos_coef = ov5640_hue_cos[90 - angle];
++		sin_coef = ov5640_hue_cos[angle];
++		sign = OV5640_SDE_CTRL8_HUE_SIN_POS |
++		       OV5640_SDE_CTRL8_HUE_COS_NEG;
++		break;
++	case 2:
++		cos_coef = ov5640_hue_cos[angle];
++		sin_coef = ov5640_hue_cos[90 - angle];
++		sign = OV5640_SDE_CTRL8_HUE_SIN_NEG |
++		       OV5640_SDE_CTRL8_HUE_COS_NEG;
++		break;
++	default:
++		cos_coef = ov5640_hue_cos[90 - angle];
++		sin_coef = ov5640_hue_cos[angle];
++		sign = OV5640_SDE_CTRL8_HUE_SIN_NEG;
++		break;
+ 	}
+ 
+-	return ret;
++	ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0,
++			     OV5640_SDE_CTRL0_HUE_EN,
++			     OV5640_SDE_CTRL0_HUE_EN);
++	if (ret)
++		return ret;
++
++	ret = ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL1, cos_coef);
++	if (ret)
++		return ret;
++
++	ret = ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL2, sin_coef);
++	if (ret)
++		return ret;
++
++	return ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL8,
++			      OV5640_SDE_CTRL8_HUE_SIGN_MASK, sign);
+ }
+ 
+ static int ov5640_set_ctrl_contrast(struct ov5640_dev *sensor, int value)
+-- 
+2.43.0
+

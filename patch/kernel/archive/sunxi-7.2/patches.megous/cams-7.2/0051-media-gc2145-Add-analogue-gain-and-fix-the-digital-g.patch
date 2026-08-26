@@ -1,0 +1,196 @@
+From 8fbf9ddc2563fd8ed8a86b4bac49a4b6efdc1193 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:59:49 +0200
+Subject: [PATCH] media: gc2145: Add analogue gain and fix the digital gain
+ control
+
+The analogue gain control was wired to 0xb1 and the digital one to
+0xb2. Both of those are digital stages: the datasheet marks them
+read-only and AEC driven, and their ceilings are named
+AEC_max_pre_dg_gain and AEC_max_post_dg_gain. So there was no control
+for a real gain, and the one called analogue was not.
+
+The sensor has no documented analogue gain register at all. What it
+does have is the global gain at 0xb0, the only gain the AEC never
+touches, and the register the vendor code drives for its gain
+function. Expose that as the analogue gain, with unity as the lower
+limit so the control cannot attenuate, and let it apply in both
+exposure modes since the AEC has no say over it.
+
+Move the digital gain control onto the pre digital gain and drop the
+one for the post stage, leaving that to the AEC. The auto exposure
+cluster loses a member as a result.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 86 ++++++++++++++++++++------------------
+ 1 file changed, 46 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 025c0b73ea9d..c4518ec8410e 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -157,6 +157,22 @@
+ #define GC2145_P0_SUB_COL_N2		0xa0
+ #define GC2145_P0_SUB_COL_N3		0xa1
+ #define GC2145_P0_SUB_COL_N4		0xa2
++
++/*
++ * Gain stages, in the order the sensor applies them. Only the global
++ * gain is ours; the datasheet marks the other two read-only and driven
++ * by the AEC, writable only while the AEC is off. There is no separate
++ * analogue gain register documented, and the global gain is the one the
++ * vendor code drives, so that is what the analogue gain control gets.
++ * Its scaling is documented as "float 4.4", but both its reset value
++ * and the vendor code agree that 0x40 is unity.
++ */
++#define GC2145_P0_GLOBAL_GAIN		0xb0
++#define GC2145_GLOBAL_GAIN_UNITY		0x40
++#define GC2145_P0_AUTO_PREGAIN		0xb1
++#define GC2145_P0_AUTO_POSTGAIN		0xb2
++
++#define GC2145_P0_AEC_ENABLE		0xb6
+ #define GC2145_P0_OUT_BUF_ENABLE	0xc2
+ 
+ /* }}} */
+@@ -229,8 +245,8 @@ struct gc2145_ctrls {
+ 		struct v4l2_ctrl *auto_exposure;
+ 		struct v4l2_ctrl *exposure;
+ 		struct v4l2_ctrl *d_gain;
+-		struct v4l2_ctrl *a_gain;
+ 	};
++	struct v4l2_ctrl *a_gain;
+ 	struct v4l2_ctrl *metering;
+ 	struct v4l2_ctrl *exposure_bias;
+ 	struct {
+@@ -806,25 +822,20 @@ static int gc2145_set_white_balance(struct gc2145_dev *sensor)
+ static int gc2145_get_exposure(struct gc2145_dev *sensor)
+ {
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+-	u8 again, dgain;
++	u8 dgain;
+ 	u16 exp;
+ 	int ret;
+ 
+-	ret = gc2145_read(sensor, 0xb1, &again);
++	ret = gc2145_read(sensor, GC2145_P0_AUTO_PREGAIN, &dgain);
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = gc2145_read(sensor, 0xb2, &dgain);
+-	if (ret)
+-		return ret;
+-
+-	ret = gc2145_read16(sensor, 0x03, &exp);
++	ret = gc2145_read16(sensor, GC2145_P0_EXPOSURE_HI, &exp);
+ 	if (ret)
+ 		return ret;
+ 
+ 	ctrls->exposure->val = exp;
+ 	ctrls->d_gain->val = dgain;
+-	ctrls->a_gain->val = again;
+ 
+ 	return 0;
+ }
+@@ -845,36 +856,18 @@ static int gc2145_set_exposure(struct gc2145_dev *sensor)
+ 
+ 	gc2145_tx_start(sensor);
+ 
+-	if (ctrls->auto_exposure->is_new) {
+-		gc2145_tx_write8(sensor, 0xb6, is_auto ? 1 : 0);
+-
+-		//XXX: remove?
+-		//if (ctrls->auto_exposure->cur.val != ctrls->auto_exposure->val &&
+-		    //!is_auto) {
+-			/*
+-			 * Hack: At this point, there are current volatile
+-			 * values in val, but control framework will not
+-			 * update the cur values for our autocluster, as it
+-			 * should. I couldn't find the reason. This fixes
+-			 * it for our driver. Remove this after the kernel
+-			 * is fixed.
+-			 */
+-			//ctrls->exposure->cur.val = ctrls->exposure->val;
+-			//ctrls->d_gain->cur.val = ctrls->d_gain->val;
+-			//ctrls->a_gain->cur.val = ctrls->a_gain->val;
+-		//}
+-	}
++	if (ctrls->auto_exposure->is_new)
++		gc2145_tx_write8(sensor, GC2145_P0_AEC_ENABLE, is_auto ? 1 : 0);
+ 
+ 	if (!is_auto && ctrls->exposure->is_new)
+-		gc2145_tx_write16(sensor, 0x03, ctrls->exposure->val);
++		gc2145_tx_write16(sensor, GC2145_P0_EXPOSURE_HI,
++				  ctrls->exposure->val);
+ 
+ 	if (!is_auto && ctrls->d_gain->is_new)
+-		gc2145_tx_write8(sensor, 0xb2, ctrls->d_gain->val);
+-
+-	if (!is_auto && ctrls->a_gain->is_new)
+-		gc2145_tx_write8(sensor, 0xb1, ctrls->a_gain->val);
++		gc2145_tx_write8(sensor, GC2145_P0_AUTO_PREGAIN,
++				 ctrls->d_gain->val);
+ 
+-	return gc2145_tx_commit(sensor);;
++	return gc2145_tx_commit(sensor);
+ }
+ 
+ struct gc2145_sensor_params {
+@@ -1210,6 +1203,9 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		return gc2145_set_exposure(sensor);
+ 
++	case V4L2_CID_ANALOGUE_GAIN:
++		return gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
++
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values)) {
+ 			dev_err(&sensor->i2c_client->dev, "ae bias out of range\n");
+@@ -1368,10 +1364,20 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 						      V4L2_EXPOSURE_AUTO);
+ 	ctrls->exposure = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE,
+ 					    1, 0x1fff, 1, 0x80);
+-	ctrls->a_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
+-					  0, 255, 1, 0x20);
++	/*
++	 * The pre digital gain is only ours while the AEC is off, so it
++	 * belongs to the auto exposure cluster. Its scaling is not
++	 * documented, so the value is the raw register one.
++	 */
+ 	ctrls->d_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_DIGITAL_GAIN,
+-					  0, 255, 1, 0x40);
++					  1, 255, 1, 0x20);
++	/*
++	 * The global gain is never touched by the AEC, so it stands on its
++	 * own and applies in both exposure modes. Do not let it attenuate.
++	 */
++	ctrls->a_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
++					  GC2145_GLOBAL_GAIN_UNITY, 255, 1,
++					  GC2145_GLOBAL_GAIN_UNITY);
+ 	ctrls->exposure_bias =
+ 		v4l2_ctrl_new_int_menu(hdl, ops, V4L2_CID_AUTO_EXPOSURE_BIAS,
+ 				       ARRAY_SIZE(ae_bias_menu_values) - 1,
+@@ -1466,7 +1472,7 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	ctrls->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+ 	ctrls->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+ 
+-	v4l2_ctrl_auto_cluster(4, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
++	v4l2_ctrl_auto_cluster(3, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
+ 			       true);
+ 
+ 	if (hdl->error) {
+@@ -1831,9 +1837,9 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor)
+ 		gc2145_tx_write8(sensor, 0x135 + i, 0x50);
+ 	}
+ 
+-	// max analog gain
++	// AEC max pre digital gain
+ 	gc2145_tx_write8(sensor, 0x11f, 0x50);
+-	// max digital gain
++	// AEC max post digital gain
+ 	gc2145_tx_write8(sensor, 0x120, 0xe0);
+ 
+ 	gc2145_tx_write8(sensor, GC2145_P0_ISP_OUT_FORMAT, pix_fmt->fmt_setup);
+-- 
+2.43.0
+

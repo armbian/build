@@ -1,0 +1,345 @@
+From 56dbda33a236c4c26d0f2a5e484a519119400817 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 15 Jul 2026 00:30:00 +0200
+Subject: [PATCH] usb: musb: Defer request giveback from queue/set_halt kick
+ paths
+
+Commit 3fc137386c46 ("usb: musb: Fix hardware lockup on first Rx
+endpoint request") stopped musb_ep_restart() from calling rxstate() on
+the OUT path and made it FLUSHFIFO the RX endpoint instead, to avoid
+running the gadget's ->complete() callback synchronously from
+usb_ep_queue() (which the API forbids and which could re-enter the RX
+IRQ path and wedge the endpoint).
+
+That flush is too big a hammer. f_mass_storage routinely pipelines the
+next 31-byte CBW into the RX FIFO before its thread re-queues the
+bulk-OUT request, so the flush silently discards a valid CBW and wedges
+the link (spurious RXCSR / zero-length CBW / host reset).
+
+This behavior was observed on Allwinner A64 SoC (Pinephone) but I assume
+this will be a wider problem, because nothing suggests the code paths
+are Allwinner specific.
+
+Fix the original problem without dropping data: drain via rxstate() as
+expected, but never hand a request back on the caller's stack from the
+kick paths. Add a flag to rxstate() that when set it parks the finished
+request on musb->gb_list and schedules gb_tasklet, which runs the
+completions from softirq context -- where the IRQ-driven completions
+effectively run too. After each completion the tasklet re-selects the
+endpoint and re-arms rxstate() on the (possibly re-queued) head, so a
+packet the host already left in the FIFO while the request ring was
+briefly empty still gets drained.
+
+I tried a workqueue, but that massively affected performance of USB
+transfers, so in the end I opted for running completions in a tasklet
+instead.
+
+The IRQ-driven RX path (musb_g_rx) keeps completing synchronously
+(defer_gb=false). Only the queue()/set_halt() kick paths defer.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/musb_core.h   |  11 ++
+ drivers/usb/musb/musb_gadget.c | 190 ++++++++++++++++++++++++++++-----
+ 2 files changed, 174 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/usb/musb/musb_core.h b/drivers/usb/musb/musb_core.h
+index ff7111846698..991c46769bd2 100644
+--- a/drivers/usb/musb/musb_core.h
++++ b/drivers/usb/musb/musb_core.h
+@@ -327,6 +327,17 @@ struct musb {
+ 	struct delayed_work	deassert_reset_work;
+ 	struct delayed_work	finish_resume_work;
+ 	struct delayed_work	gadget_work;
++
++	/*
++	 * Deferred gadget request completions: rxstate() parks PIO requests
++	 * completed from the queue()/set_halt() kick paths here so the gadget
++	 * callback runs from softirq (like the IRQ-driven completions) instead
++	 * of synchronously on the caller's stack.  A tasklet, not a workqueue:
++	 * this is hot for short-packet OUT traffic (cdc_eem RX, pipelined
++	 * CBWs) and must not be starved by system_wq.
++	 */
++	struct tasklet_struct	gb_tasklet;
++	struct list_head	gb_list;
+ 	u16			hwvers;
+ 
+ 	u16			intrrxe;
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index 3d471c4c1a89..18e7fd9706f7 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -113,6 +113,35 @@ static inline void unmap_dma_buffer(struct musb_request *request,
+ 	request->map_state = UN_MAPPED;
+ }
+ 
++static void rxstate(struct musb *musb, struct musb_request *req, bool defer_gb);
++
++/*
++ * Run a request's completion: unmap and hand it back to the gadget driver.
++ * The request must already be off ep->req_list.  Drops and retakes the lock
++ * around usb_gadget_giveback_request().
++ *
++ * Context: controller locked, IRQs blocked.
++ */
++static void musb_g_complete(struct musb_request *req)
++__releases(req->musb->lock)
++__acquires(req->musb->lock)
++{
++	struct musb_ep		*ep = req->ep;
++	struct musb		*musb = req->musb;
++	int			busy = ep->busy;
++
++	ep->busy = 1;
++	spin_unlock(&musb->lock);
++
++	if (!dma_mapping_error(&musb->g.dev, req->request.dma))
++		unmap_dma_buffer(req, musb);
++
++	trace_musb_req_gb(req);
++	usb_gadget_giveback_request(&ep->end_point, &req->request);
++	spin_lock(&musb->lock);
++	ep->busy = busy;
++}
++
+ /*
+  * Immediately complete a request.
+  *
+@@ -127,27 +156,81 @@ void musb_g_giveback(
+ __releases(ep->musb->lock)
+ __acquires(ep->musb->lock)
+ {
+-	struct musb_request	*req;
+-	struct musb		*musb;
+-	int			busy = ep->busy;
++	struct musb_request	*req = to_musb_request(request);
++
++	list_del(&req->list);
++	if (req->request.status == -EINPROGRESS)
++		req->request.status = status;
++
++	musb_g_complete(req);
++}
+ 
+-	req = to_musb_request(request);
++/*
++ * Defer a request's completion to the gb_tasklet (softirq context).
++ *
++ * usb_ep_ops->queue() and ->set_halt() must not run the gadget's completion
++ * callback synchronously on the caller's stack; rxstate() uses this when it
++ * finishes a PIO request from those (kick) paths.  The request is taken off
++ * ep->req_list now (so the RX IRQ does not re-process or re-complete it) and
++ * parked on musb->gb_list, reusing its list node, until the tasklet runs.
++ *
++ * Context: controller locked, IRQs blocked.
++ */
++static void musb_g_defer_giveback(struct musb_ep *ep,
++				  struct usb_request *request, int status)
++{
++	struct musb_request	*req = to_musb_request(request);
+ 
+ 	list_del(&req->list);
+ 	if (req->request.status == -EINPROGRESS)
+ 		req->request.status = status;
+-	musb = req->musb;
+ 
+-	ep->busy = 1;
+-	spin_unlock(&musb->lock);
++	list_add_tail(&req->list, &ep->musb->gb_list);
++	tasklet_schedule(&ep->musb->gb_tasklet);
++}
+ 
+-	if (!dma_mapping_error(&musb->g.dev, request->dma))
+-		unmap_dma_buffer(req, musb);
++/*
++ * Tasklet that runs deferred request completions off the queue()/set_halt()
++ * stacks.  Softirq context, where the IRQ-driven completions effectively run
++ * too.
++ *
++ * After each completion we mirror musb_g_rx(): re-select the endpoint and run
++ * rxstate() on its new head.  The gadget's ->complete() typically re-queues an
++ * OUT request, but it does so while ep->busy is set (around the giveback) so
++ * musb_gadget_queue() does not kick it; without this re-arm a packet the host
++ * already left in the RX FIFO (ring briefly empty, so the IRQ found no request
++ * and no further IRQ will come) would never be drained and the host's transfer
++ * would hang.  Touching registers here is safe: the kick/re-queue just bumped
++ * runtime-PM with a 500ms autosuspend delay, so the device is still resumed.
++ * Completions from the re-arm land back on gb_list and are drained by the loop.
++ */
++static void musb_g_giveback_tasklet(struct tasklet_struct *t)
++{
++	struct musb		*musb = container_of(t, struct musb, gb_tasklet);
++	struct musb_request	*req, *next;
++	struct musb_ep		*ep;
++	u8			epnum;
++	unsigned long		flags;
+ 
+-	trace_musb_req_gb(req);
+-	usb_gadget_giveback_request(&req->ep->end_point, &req->request);
+-	spin_lock(&musb->lock);
+-	ep->busy = busy;
++	spin_lock_irqsave(&musb->lock, flags);
++	while (!list_empty(&musb->gb_list)) {
++		req = list_first_entry(&musb->gb_list, struct musb_request,
++				       list);
++		list_del(&req->list);
++		ep = req->ep;
++		epnum = req->epnum;
++
++		musb_g_complete(req);
++
++		/* re-arm the (possibly re-queued) head; drain a stranded packet */
++		if (ep->desc && !ep->busy) {
++			musb_ep_select(musb->mregs, epnum);
++			next = next_request(ep);
++			if (next && !next->tx)
++				rxstate(musb, next, true);
++		}
++	}
++	spin_unlock_irqrestore(&musb->lock, flags);
+ }
+ 
+ /* ----------------------------------------------------------------------- */
+@@ -191,6 +274,25 @@ static void nuke(struct musb_ep *ep, const int status)
+ 		ep->dma = NULL;
+ 	}
+ 
++	/*
++	 * Also complete this ep's requests parked on musb->gb_list for
++	 * deferred giveback: they are off ep->req_list, but the API contract
++	 * is that all requests are completed before usb_ep_disable() returns
++	 * (gadget drivers free them right after), and a parked request left
++	 * behind would be completed by the gb_tasklet after it was freed.
++	 * musb_g_complete() drops the lock, so rescan after each giveback.
++	 */
++restart_gb_scan:
++	list_for_each_entry(req, &musb->gb_list, list) {
++		if (req->ep == ep) {
++			list_del(&req->list);
++			if (req->request.status == -EINPROGRESS)
++				req->request.status = status;
++			musb_g_complete(req);
++			goto restart_gb_scan;
++		}
++	}
++
+ 	while (!list_empty(&ep->req_list)) {
+ 		req = list_first_entry(&ep->req_list, struct musb_request, list);
+ 		musb_g_giveback(ep, &req->request, status);
+@@ -516,7 +618,7 @@ void musb_g_tx(struct musb *musb, u8 epnum)
+ /*
+  * Context: controller locked, IRQs blocked, endpoint selected
+  */
+-static void rxstate(struct musb *musb, struct musb_request *req)
++static void rxstate(struct musb *musb, struct musb_request *req, bool defer_gb)
+ {
+ 	const u8		epnum = req->epnum;
+ 	struct usb_request	*request = &req->request;
+@@ -784,8 +886,12 @@ static void rxstate(struct musb *musb, struct musb_request *req)
+ 
+ 	/* reach the end or short packet detected */
+ 	if (request->actual == request->length ||
+-	    fifo_count < musb_ep->packet_sz)
+-		musb_g_giveback(musb_ep, request, 0);
++	    fifo_count < musb_ep->packet_sz) {
++		if (defer_gb)
++			musb_g_defer_giveback(musb_ep, request, 0);
++		else
++			musb_g_giveback(musb_ep, request, 0);
++	}
+ }
+ 
+ /*
+@@ -901,7 +1007,7 @@ void musb_g_rx(struct musb *musb, u8 epnum)
+ 	}
+ exit:
+ 	/* Analyze request */
+-	rxstate(musb, req);
++	rxstate(musb, req, false);
+ }
+ 
+ /* ------------------------------------------------------------ */
+@@ -1162,19 +1268,26 @@ void musb_free_request(struct usb_ep *ep, struct usb_request *req)
+  */
+ void musb_ep_restart(struct musb *musb, struct musb_request *req)
+ {
+-	u16 csr;
+-	void __iomem *epio = req->ep->hw_ep->regs;
+-
+ 	trace_musb_req_start(req);
+ 	musb_ep_select(musb->mregs, req->epnum);
+-	if (req->tx) {
++	if (req->tx)
+ 		txstate(musb, req);
+-	} else {
+-		csr = musb_readw(epio, MUSB_RXCSR);
+-		csr |= MUSB_RXCSR_FLUSHFIFO | MUSB_RXCSR_P_WZC_BITS;
+-		musb_writew(epio, MUSB_RXCSR, csr);
+-		musb_writew(epio, MUSB_RXCSR, csr);
+-	}
++	else
++		/*
++		 * Drain any packet the host already delivered into the RX
++		 * FIFO before this request was queued.  Do NOT flush here:
++		 * f_mass_storage routinely pipelines the next 31-byte CBW
++		 * before its thread re-queues the bulk-OUT request, so a
++		 * flush silently discards a valid CBW and wedges the link
++		 * (spurious RXCSR / zero-length CBW / host reset).
++		 *
++		 * Pass defer_giveback=true: rxstate() may complete a PIO
++		 * short packet here, and usb_ep_ops->queue() (and ->set_halt,
++		 * our other caller) must not run the gadget's completion
++		 * synchronously on the caller's stack.  DMA arming still
++		 * happens inline; only the terminal giveback is deferred.
++		 */
++		rxstate(musb, req, true);
+ }
+ 
+ static int musb_ep_restart_resume_work(struct musb *musb, void *data)
+@@ -1284,6 +1397,19 @@ static int musb_gadget_dequeue(struct usb_ep *ep, struct usb_request *request)
+ 			break;
+ 	}
+ 	if (r != req) {
++		/*
++		 * The request may be parked on musb->gb_list for deferred
++		 * giveback.  Callers rely on the completion having run by
++		 * the time dequeue returns, so run it now instead of
++		 * failing.
++		 */
++		list_for_each_entry(r, &musb->gb_list, list) {
++			if (r == req) {
++				list_del(&r->list);
++				musb_g_complete(r);
++				goto done;
++			}
++		}
+ 		dev_err(musb->controller, "request %p not queued to %s\n",
+ 				request, ep->name);
+ 		status = -EINVAL;
+@@ -1787,6 +1913,8 @@ int musb_gadget_setup(struct musb *musb)
+ 	/* don't support otg protocols */
+ 	musb->g.is_otg = 0;
+ 	INIT_DELAYED_WORK(&musb->gadget_work, musb_gadget_work);
++	tasklet_setup(&musb->gb_tasklet, musb_g_giveback_tasklet);
++	INIT_LIST_HEAD(&musb->gb_list);
+ 	musb_g_init_endpoints(musb);
+ 
+ 	musb->is_active = 0;
+@@ -1905,6 +2033,14 @@ static int musb_gadget_stop(struct usb_gadget *g)
+ 	musb_platform_try_idle(musb, 0);
+ 	spin_unlock_irqrestore(&musb->lock, flags);
+ 
++	/*
++	 * Deliver any deferred request completions before the driver
++	 * detaches.  RX is stopped above, so no new ones can be queued;
++	 * tasklet_kill() lets a scheduled tasklet run to completion (handing
++	 * back any parked requests) before returning, so nothing is leaked.
++	 */
++	tasklet_kill(&musb->gb_tasklet);
++
+ 	/*
+ 	 * FIXME we need to be able to register another
+ 	 * gadget driver here and have everything work;
+-- 
+2.43.0
+

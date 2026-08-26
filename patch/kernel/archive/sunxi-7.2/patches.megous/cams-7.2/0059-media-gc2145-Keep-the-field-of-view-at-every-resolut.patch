@@ -1,0 +1,940 @@
+From 5b957080b8d9c929c17dd1423c0aadc88cb4d9d3 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:15:58 +0200
+Subject: [PATCH] media: gc2145: Keep the field of view at every resolution
+
+The readout window was sized from the requested resolution, so anything
+smaller than the full frame was a window onto the middle of the pixel
+array. 1280x720 read out 1296x752, which is 81 percent of the width and
+63 percent of the height: the picture was not a smaller version of the
+full frame, it was a crop of it.
+
+The sensor has three ways of making the output smaller that keep the
+whole array in the picture, and only one of them was used. Read out the
+analogue crop in full and pick a decimation instead:
+
+  - row skip drops every other row in the array, paired with the ISP
+    column scaler so the pixels stay square. It is the only one that
+    shortens the frame, which is what makes 30fps possible at all.
+  - the subsample block decimates by an arbitrary ratio after that.
+
+The ratios on offer are the ones that divide the active area exactly,
+so the ISP crop only has to trim the dummy pixels: 1600x1200, 1280x960,
+800x600, 640x480, 400x300 and 320x240. The last four halve the frame
+period, so at 96MHz they reach 30fps where the first two reach 15.
+
+The analogue crop becomes a settable selection rectangle, so a caller
+that does want a narrower field of view can ask for one and see what it
+got, and enum_frame_size follows it.
+
+The subsample position lists are not documented beyond a handful of
+examples. The one ratio a vendor table exercises, 4/5 for its 720p
+mode, comes out of this code byte for byte identical.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 665 +++++++++++++++++++++++++------------
+ 1 file changed, 452 insertions(+), 213 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 861891ab2800..731ca260f6af 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -82,13 +82,42 @@
+ #define GC2145_SENSOR_WIDTH_MIN		88u
+ #define GC2145_SENSOR_HEIGHT_MIN	72u
+ 
+-//XXX: 1616x1232 8H/16V dummy pixels on each side
++/*
++ * The pixel array is 1616x1232, of which 1600x1200 carry a picture. The
++ * dummy pixels around it, 8 per side horizontally and 16 vertically, are
++ * read out with the rest and trimmed off by the ISP crop.
++ */
++#define GC2145_NATIVE_WIDTH		1616u
++#define GC2145_NATIVE_HEIGHT		1232u
++#define GC2145_ACTIVE_LEFT		8u
++#define GC2145_ACTIVE_TOP		16u
+ #define GC2145_SENSOR_WIDTH_MAX		1600u
+ #define GC2145_SENSOR_HEIGHT_MAX	1200u
+ 
+ #define GC2145_DEFAULT_WIDTH		GC2145_SENSOR_WIDTH_MAX
+ #define GC2145_DEFAULT_HEIGHT		GC2145_SENSOR_HEIGHT_MAX
+-#define GC2145_DEFAULT_FRAMERATE	10
++#define GC2145_DEFAULT_FRAMERATE	15
++
++/*
++ * One pixel clock period carries one byte out of the parallel port, so
++ * a pixel takes two of them. 96 MHz is the highest rate the parallel
++ * receivers this sensor is paired with are known to sample reliably,
++ * and it divides the 24 MHz input clock exactly.
++ */
++#define GC2145_PCLK_RATE		96000000ul
++
++/*
++ * The GC2155 timing spreadsheet recommends keeping the horizontal
++ * blanking above 0x1f0, but every vendor register table uses less than
++ * that, and the frame rates they claim are only reachable below it.
++ */
++#define GC2145_HBLANK_REG_MIN		342ul
++#define GC2145_VBLANK_REG_MIN		8ul
++#define GC2145_VBLANK_REG_MAX		4092ul
++#define GC2145_SH_DELAY			46ul
++
++/* the exposure register counts array row slots and is 13 bits wide */
++#define GC2145_EXPOSURE_REG_MAX		0x1fffu
+ 
+ /* {{{ Register definitions */
+ 
+@@ -154,6 +183,8 @@
+ 
+ #define GC2145_P0_SUBSAMPLE_RATIO	0x99
+ #define GC2145_P0_SUBSAMPLE_MODE	0x9a
++/* interpolate rather than drop, on both luma and chroma */
++#define GC2145_SUBSAMPLE_MODE_SMOOTH		0x0e
+ #define GC2145_P0_SUB_ROW_N1		0x9b
+ #define GC2145_P0_SUB_ROW_N2		0x9c
+ #define GC2145_P0_SUB_ROW_N3		0x9d
+@@ -882,251 +913,341 @@ static int gc2145_set_exposure(struct gc2145_dev *sensor)
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
++/*
++ * Ways of making the output smaller than the analogue crop. All of them
++ * keep the whole crop in the picture, so the field of view never depends
++ * on the requested resolution:
++ *
++ *  - row skip drops every other row in the pixel array. It is the only
++ *    one that shortens the frame, and it always comes paired with the
++ *    column scaler so that the pixels stay square.
++ *  - the column scaler halves the width in the ISP input stage.
++ *  - the subsample block decimates by an arbitrary ratio afterwards.
++ *
++ * The ratios below are the ones that divide the active area exactly, so
++ * that the ISP crop only ever has to trim the dummy pixels around the
++ * readout window.
++ */
++struct gc2145_mode {
++	/* row skip in the pixel array plus the ISP column scaler */
++	bool half;
++	/* subsample ratio applied after that */
++	u8 sub_num;
++	u8 sub_den;
++	/* the two combined, as a fraction of the analogue crop */
++	u8 num;
++	u8 den;
++};
++
++static const struct gc2145_mode gc2145_modes[] = {
++	{ .half = false, .sub_num = 1, .sub_den = 1, .num = 1, .den = 1 },
++	{ .half = false, .sub_num = 4, .sub_den = 5, .num = 4, .den = 5 },
++	{ .half = true,  .sub_num = 1, .sub_den = 1, .num = 1, .den = 2 },
++	{ .half = true,  .sub_num = 4, .sub_den = 5, .num = 2, .den = 5 },
++	{ .half = true,  .sub_num = 1, .sub_den = 2, .num = 1, .den = 4 },
++	{ .half = true,  .sub_num = 2, .sub_den = 5, .num = 1, .den = 5 },
++};
++
++static void gc2145_mode_output_size(const struct gc2145_mode *mode,
++				    const struct v4l2_rect *crop,
++				    u32 *width, u32 *height)
++{
++	*width = round_down(crop->width * mode->num / mode->den, 2);
++	*height = round_down(crop->height * mode->num / mode->den, 2);
++}
++
++static const struct gc2145_mode *
++gc2145_find_mode(const struct v4l2_rect *crop, u32 width, u32 height)
++{
++	const struct gc2145_mode *best = &gc2145_modes[0];
++	unsigned int best_err = UINT_MAX, err, i;
++	u32 w, h;
++
++	for (i = 0; i < ARRAY_SIZE(gc2145_modes); i++) {
++		gc2145_mode_output_size(&gc2145_modes[i], crop, &w, &h);
++		if (w < GC2145_SENSOR_WIDTH_MIN || h < GC2145_SENSOR_HEIGHT_MIN)
++			continue;
++
++		err = abs((int)w - (int)width) + abs((int)h - (int)height);
++		if (err < best_err) {
++			best_err = err;
++			best = &gc2145_modes[i];
++		}
++	}
++
++	return best;
++}
++
+ struct gc2145_sensor_params {
+-	unsigned int enable_scaler;
+-	unsigned int col_scaler_only;
+-	unsigned int row_skip;
+-	unsigned int col_skip;
++	const struct gc2145_mode *mode;
++	/* readout window, in pixel array coordinates */
++	unsigned long row_start;
++	unsigned long col_start;
++	unsigned long win_width;
++	unsigned long win_height;
++	/* timing */
+ 	unsigned long sh_delay;
+ 	unsigned long hb;
+ 	unsigned long vb;
+ 	unsigned long st;
+ 	unsigned long et;
+-	unsigned long win_width;
+-	unsigned long win_height;
+-	/* size read out of the pixel array, twice the output when scaling */
+-	unsigned long width;
+-	unsigned long height;
+ 	/* size the sensor emits, what the blanking is relative to */
+-	unsigned long out_width;
+-	unsigned long out_height;
++	u32 out_width;
++	u32 out_height;
+ };
+ 
+-static void gc2145_sensor_params_init(struct gc2145_sensor_params* p, int width, int height)
++/*
++ * Row skipping halves the time an array row slot takes, so the exposure
++ * register, which counts those slots, has to be scaled by it. Nothing
++ * else in the decimation chain changes the frame timing.
++ */
++static unsigned int
++gc2145_params_slots_per_line(struct gc2145_sensor_params *p)
++{
++	return p->mode->half ? 2 : 1;
++}
++
++static void gc2145_params_init(struct gc2145_sensor_params *p,
++			       const struct gc2145_mode *mode,
++			       const struct v4l2_rect *crop)
+ {
+-	p->win_height = height + 32;
+-	p->win_width = (width + 16);
+-	p->width = width;
+-	p->height = height;
++	p->mode = mode;
++
++	/*
++	 * The readout window takes in the dummy pixels around the crop,
++	 * which the ISP crop trims off again at the end of the pipeline.
++	 */
++	p->col_start = crop->left - GC2145_ACTIVE_LEFT;
++	p->row_start = crop->top - GC2145_ACTIVE_TOP;
++	p->win_width = crop->width + 2 * GC2145_ACTIVE_LEFT;
++	p->win_height = crop->height + 2 * GC2145_ACTIVE_TOP;
++
++	gc2145_mode_output_size(mode, crop, &p->out_width, &p->out_height);
++
+ 	p->st = 2;
+ 	p->et = 2;
+-	p->vb = 8;
+-	p->hb = 0x1f0;
+-	p->sh_delay = 30;
++	p->vb = GC2145_VBLANK_REG_MIN;
++	p->hb = GC2145_HBLANK_REG_MIN;
++	p->sh_delay = GC2145_SH_DELAY;
+ }
+ 
+-// unit is PCLK periods
++/*
++ * The row period, in the sensor's own unit of two pixels. One unit takes
++ * four periods of the pixel clock on the PCLK pin.
++ */
+ static unsigned long
+-gc2145_sensor_params_get_row_period(struct gc2145_sensor_params* p)
++gc2145_params_row_period(struct gc2145_sensor_params *p)
+ {
+-	return 2 * (p->win_width / 2 / (p->col_skip + 1) + p->sh_delay + p->hb + 4);
++	return p->hb + p->sh_delay + p->win_width / 2 + 4;
+ }
+ 
++/* the number of array row slots in a frame */
+ static unsigned long
+-gc2145_sensor_params_get_frame_period(struct gc2145_sensor_params* p)
++gc2145_params_frame_lines(struct gc2145_sensor_params *p)
+ {
+-	unsigned long rt = gc2145_sensor_params_get_row_period(p);
++	return p->vb + p->win_height;
++}
+ 
+-	return rt * (p->vb + p->win_height) / (p->row_skip + 1);
++static unsigned long
++gc2145_params_frame_period(struct gc2145_sensor_params *p)
++{
++	return gc2145_params_row_period(p)
++		* gc2145_params_frame_lines(p)
++		/ gc2145_params_slots_per_line(p);
+ }
+ 
+ /*
+- * The frame period is counted in PCLK periods, which is what the pixel
+- * rate has to be expressed in for
++ * V4L2 expresses the frame timing as
+  *
+- *   pixel_rate = (width + hblank) * (height + vblank) * framerate
++ *   frame interval = (width + hblank) * (height + vblank) / pixel_rate
+  *
+- * to hold. When the scaler is enabled the sensor is read out at twice
+- * the output resolution and 2PCLK is doubled to match, so the rate the
+- * pixels leave the sensor at stays the same and a row carries half as
+- * many output pixels as it does PCLK periods.
++ * with the exposure counted in the same lines as vblank. The pixel rate
++ * is the one in the pixel array, which is half the clock on the PCLK pin
++ * because a pixel leaves the sensor as two bytes. A V4L2 line is one
++ * output row, so the decimation shows up in hblank and vblank rather
++ * than in the pixel rate, and the line period comes out the same in
++ * every mode - which is what lets an exposure be carried from one mode
++ * to another unchanged.
+  */
+ static unsigned long
+-gc2145_sensor_params_get_pixel_rate(struct gc2145_sensor_params *p,
+-				    unsigned long pclk2)
++gc2145_params_pixel_rate(struct gc2145_sensor_params *p, unsigned long pclk)
+ {
+-	return pclk2 / 2 / (p->enable_scaler + 1);
++	return pclk / 2;
+ }
+ 
+ static unsigned long
+-gc2145_sensor_params_get_hblank(struct gc2145_sensor_params *p)
++gc2145_params_hblank(struct gc2145_sensor_params *p)
+ {
+-	return gc2145_sensor_params_get_row_period(p) / (p->enable_scaler + 1)
+-		- p->out_width;
++	return 2 * gc2145_params_row_period(p) - p->out_width;
+ }
+ 
+ static unsigned long
+-gc2145_sensor_params_get_vblank(struct gc2145_sensor_params *p)
++gc2145_params_vblank(struct gc2145_sensor_params *p)
+ {
+-	return (p->vb + p->win_height) / (p->row_skip + 1) - p->out_height;
++	return gc2145_params_frame_lines(p)
++		/ gc2145_params_slots_per_line(p) - p->out_height;
+ }
+ 
+-static void
+-gc2145_sensor_params_fit_hb_to_power_line_period(struct gc2145_sensor_params* p,
+-					  unsigned long power_line_freq,
+-					  unsigned long pclk)
++static void gc2145_params_fit_hb(struct gc2145_sensor_params *p,
++				 unsigned long power_line_freq,
++				 unsigned long pclk)
+ {
+ 	unsigned long rt, power_line_ratio;
+ 
+-        for (p->hb = 0x1f0; p->hb < 2047; p->hb++) {
+-		rt = gc2145_sensor_params_get_row_period(p);
++	for (p->hb = GC2145_HBLANK_REG_MIN; p->hb < 4095; p->hb++) {
++		rt = gc2145_params_row_period(p);
+ 
+ 		// power_line_ratio is row_freq / power_line_freq * 1000
+-                power_line_ratio = pclk / power_line_freq * 1000 / rt;
++		power_line_ratio = pclk / 4 / power_line_freq * 1000 / rt;
+ 
+ 		// if we're close enough, stop the search
+-                if (power_line_ratio % 1000 < 50)
+-                        break;
+-        }
++		if (power_line_ratio % 1000 < 20)
++			break;
++	}
+ 
+ 	// finding the optimal Hb is not critical
+-	if (p->hb == 2047)
+-		p->hb = 0x1f0;
++	if (p->hb == 4095)
++		p->hb = GC2145_HBLANK_REG_MIN;
+ }
+ 
+-static void
+-gc2145_sensor_params_fit_vb_to_frame_period(struct gc2145_sensor_params* p,
+-				     unsigned long frame_period)
++static void gc2145_params_fit_vb(struct gc2145_sensor_params *p,
++				 unsigned long frame_period)
+ {
+ 	unsigned long rt, fp;
+ 
+-	p->vb = 8;
+-	rt = gc2145_sensor_params_get_row_period(p);
+-	fp = gc2145_sensor_params_get_frame_period(p);
++	p->vb = GC2145_VBLANK_REG_MIN;
++	rt = gc2145_params_row_period(p);
++	fp = gc2145_params_frame_period(p);
+ 
+ 	if (frame_period > fp)
+-		p->vb = frame_period * (p->row_skip + 1) / rt - p->win_height;
++		p->vb = frame_period
++			* gc2145_params_slots_per_line(p) / rt
++			- p->win_height;
+ 
+-	if (p->vb > 4095)
+-		p->vb = 4095;
++	/* the vertical blanking register wants a multiple of four */
++	p->vb = round_down(p->vb, 4);
++
++	if (p->vb > GC2145_VBLANK_REG_MAX)
++		p->vb = GC2145_VBLANK_REG_MAX;
+ }
+ 
+-static struct gc2145_sensor_params gc2145_get_sensor_params(
+-	struct gc2145_dev *sensor,
+-	unsigned long framerate,
+-	unsigned long width,
+-	unsigned long height,
+-	unsigned long *pclk2)
++static struct gc2145_sensor_params
++gc2145_compute_params(struct gc2145_dev *sensor, const struct v4l2_rect *crop,
++		      u32 width, u32 height, unsigned long framerate,
++		      unsigned long *pclk)
+ {
+ 	struct gc2145_sensor_params params = {0};
+-	bool scaling_desired;
+-	unsigned long frame_period;
+ 	unsigned long power_line_freq = sensor->power_line_freq;
+ 
+ 	/*
+-	 * Equations for calculating framerate are:
+-	 *
+-	 *    ww = width + 16
+-	 *    wh = height + 32
+-	 *    Rt = (ww / 2 / (col_skip + 1) + sh_delay + Hb + 4)
+-	 *    Ft = Rt * (Vb + wh) / (row_skip + 1)
+-	 *    framerate = 2pclk / 4 / Ft
+-	 *
+-	 * Based on these equations:
+-	 *
+-	 * 1) First we need to determine what 2PCLK frequency to use. The 2PCLK
+-	 *    frequency is not arbitrarily precise, so we need to calculate the
+-	 *    actual frequency used, after setting our target frequency.
+-	 *
+-	 *    We use a simple heuristic:
+-	 *
+-	 *      If pixel_count * 2 * framerate * 1.15 is > 40MHz, we use 60MHz,
+-	 *      otherwise we use 40MHz.
+-	 *
+-	 * 2) We want to determine lowest Hb that we can use to extend row
+-	 *    period so that row time takes an integer fraction of the power
+-	 *    line frequency period. Minimum Hb is 0x1f0.
+-	 *
+-	 * 3) If the requested resolution is less than half the sensor's size,
+-	 *    we'll use scaling, or row skipping + column scaling, or row and
+-	 *    column skiping, depending on what allows us to achieve the
+-	 *    requested framerate.
+-	 *
+-	 * 4) We use the selected Hb to calculate Vb value that will give
+-	 *    us the desired framerate, given the scaling/skipping option
+-	 *    selected in 3).
++	 * The pixel clock is the same for every mode. Keeping it fixed
++	 * keeps the row period, and with it the exposure line, the same
++	 * across a mode change.
+ 	 */
++	*pclk = GC2145_PCLK_RATE;
+ 
+-	scaling_desired = width <= GC2145_SENSOR_WIDTH_MAX / 2
+-			&& height <= GC2145_SENSOR_HEIGHT_MAX / 2;
++	gc2145_params_init(&params, gc2145_find_mode(crop, width, height),
++			   crop);
+ 
+-	*pclk2 = 60000000;
++	/*
++	 * Stretch the row period so that it takes a whole number of mains
++	 * periods, which is what keeps lighting flicker out of the image,
++	 * then use the vertical blanking to reach the requested rate.
++	 */
++	gc2145_params_fit_hb(&params, power_line_freq, *pclk);
+ 
+-	gc2145_sensor_params_init(&params, width, height);
++	if (framerate)
++		gc2145_params_fit_vb(&params, *pclk / 4 / framerate);
+ 
+-	// if the resolution is < half the sensor size, enable the scaler
+-	// to cover more area of the chip
+-	if (scaling_desired) {
+-		params.enable_scaler = 1;
+-		*pclk2 *= 2;
+-		gc2145_sensor_params_init(&params, width * 2, height * 2);
+-	}
++	return params;
++}
+ 
+-	// we need to call this each time pclk or power_line_freq is changed
+-	gc2145_sensor_params_fit_hb_to_power_line_period(&params,
+-							 power_line_freq,
+-							 *pclk2 / 2);
++static struct gc2145_sensor_params
++gc2145_get_sensor_params(struct gc2145_dev *sensor,
++			 struct v4l2_subdev_state *state,
++			 unsigned long framerate, unsigned long *pclk)
++{
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
+ 
+-	frame_period = gc2145_sensor_params_get_frame_period(&params);
+-	if (framerate <= *pclk2 / 2 / frame_period)
+-		goto apply;
++	return gc2145_compute_params(sensor,
++				     v4l2_subdev_state_get_crop(state, 0),
++				     fmt->width, fmt->height, framerate, pclk);
++}
+ 
+-	if (scaling_desired) {
+-		// try using just the column scaler + row skip
+-		params.col_scaler_only = 1;
+-		params.row_skip = 1;
+-		gc2145_sensor_params_fit_hb_to_power_line_period(&params,
+-								 power_line_freq,
+-								 *pclk2 / 2);
++/*
++ * Refresh the controls that describe the timing to userspace. They are
++ * what a caller needs to turn an exposure in lines into one in seconds,
++ * so they have to follow every change of format, crop or frame rate.
++ */
++static void gc2145_update_timing_ctrls(struct gc2145_dev *sensor,
++				       struct v4l2_subdev_state *state)
++{
++	struct gc2145_sensor_params params;
++	unsigned long pclk;
+ 
+-		frame_period = gc2145_sensor_params_get_frame_period(&params);
+-		if (framerate <= *pclk2 / 2 / frame_period)
+-			goto apply;
++	params = gc2145_get_sensor_params(sensor, state,
++					  sensor->frame_interval.denominator,
++					  &pclk);
+ 
++	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
++				 gc2145_params_pixel_rate(&params, pclk));
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank, gc2145_params_hblank(&params));
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank, gc2145_params_vblank(&params));
++}
+ 
+-		/*
+-		// try disabling the scaler and just use skipping
+-		params.enable_scaler = 0;
+-		*pclk2 /= 2;
+-		params.col_scaler_only = 0;
+-		params.col_skip = 1;
+-		gc2145_sensor_params_fit_hb_to_power_line_period(&params, power_line_freq, *pclk2 / 2);
+-
+-		frame_period = gc2145_sensor_params_get_frame_period(&params);
+-
+-		if (framerate <= *pclk2 / 2 / frame_period)
+-			goto apply;
+-		*/
+-	}
++/*
++ * Program the subsample block. Position zero of every group is always
++ * emitted and the eight nibbles list the other positions to emit, so a
++ * ratio of num/den needs num - 1 of them. Their placement within the
++ * list does not appear to matter; they go at the end because that is
++ * where the one vendor table that uses this block puts them.
++ */
++static void gc2145_tx_subsample(struct gc2145_dev *sensor, u8 num, u8 den)
++{
++	u8 regs[4] = {0, 0, 0, 0};
++	unsigned int i, slot;
+ 
+-apply:
+-	// adjust vb to fit the target framerate
+-	gc2145_sensor_params_fit_vb_to_frame_period(&params,
+-						    *pclk2 / 2 / framerate);
++	for (i = 1; i < num; i++) {
++		/* slot counts nibbles, the high one of each byte first */
++		slot = ARRAY_SIZE(regs) * 2 - num + i;
++		if (slot % 2)
++			regs[slot / 2] |= (i * den / num) & 0xf;
++		else
++			regs[slot / 2] |= ((i * den / num) & 0xf) << 4;
++	}
+ 
+-	params.out_width = width;
+-	params.out_height = height;
++	gc2145_tx_write8(sensor, GC2145_P0_SUBSAMPLE_RATIO, den << 4 | den);
++	gc2145_tx_write8(sensor, GC2145_P0_SUBSAMPLE_MODE,
++			 GC2145_SUBSAMPLE_MODE_SMOOTH);
+ 
+-	return params;
++	for (i = 0; i < ARRAY_SIZE(regs); i++) {
++		gc2145_tx_write8(sensor, GC2145_P0_SUB_ROW_N1 + i, regs[i]);
++		gc2145_tx_write8(sensor, GC2145_P0_SUB_COL_N1 + i, regs[i]);
++	}
+ }
+ 
+-static int gc2145_sensor_params_apply(struct gc2145_dev *sensor,
+-				      struct gc2145_sensor_params* p)
++static int gc2145_params_apply(struct gc2145_dev *sensor,
++			       struct gc2145_sensor_params *p)
+ {
+-	u32 off_x = (GC2145_SENSOR_WIDTH_MAX - p->width) / 2;
+-	u32 off_y = (GC2145_SENSOR_HEIGHT_MAX - p->height) / 2;
++	const struct gc2145_mode *mode = p->mode;
++	unsigned long isp_width, isp_height;
++
++	/* the frame the ISP crop is taken out of */
++	isp_width = p->win_width / (mode->half ? 2 : 1)
++		* mode->sub_num / mode->sub_den;
++	isp_height = p->win_height / (mode->half ? 2 : 1)
++		* mode->sub_num / mode->sub_den;
+ 
+ 	gc2145_tx_start(sensor);
+ 
+-	gc2145_tx_write8(sensor, 0xfd, (p->enable_scaler ? BIT(0) : 0)
+-			| (p->col_scaler_only ? BIT(1) : 0));
++	gc2145_tx_write8(sensor, GC2145_REG_SCALER_MODE,
++			 mode->half ? BIT(0) | BIT(1) : 0);
+ 
+-	gc2145_tx_write8(sensor, 0x18, 0x0a
+-		       | (p->col_skip ? BIT(7) : 0)
+-		       | (p->row_skip ? BIT(6) : 0));
++	gc2145_tx_write8(sensor, 0x18, 0x0a | (mode->half ? BIT(6) : 0));
+ 
+-	gc2145_tx_write16(sensor, 0x09, off_y);
+-	gc2145_tx_write16(sensor, 0x0b, off_x);
++	gc2145_tx_write16(sensor, 0x09, p->row_start);
++	gc2145_tx_write16(sensor, 0x0b, p->col_start);
+ 	gc2145_tx_write16(sensor, 0x0d, p->win_height);
+ 	gc2145_tx_write16(sensor, 0x0f, p->win_width);
+ 	gc2145_tx_write16(sensor, 0x05, p->hb);
+@@ -1136,6 +1257,22 @@ static int gc2145_sensor_params_apply(struct gc2145_dev *sensor,
+ 	gc2145_tx_write8(sensor, 0x13, p->st);
+ 	gc2145_tx_write8(sensor, 0x14, p->et);
+ 
++	gc2145_tx_subsample(sensor, mode->sub_num, mode->sub_den);
++
++	/*
++	 * Trim what is left down to the requested size, centred. The
++	 * origin has to stay even: an odd column would start the line on
++	 * the other chroma sample of the pair and swap Cb with Cr, and an
++	 * odd row would move the Bayer phase in the raw formats.
++	 */
++	gc2145_tx_write16(sensor, GC2145_P0_CROP_Y1_HI,
++			  round_down((isp_height - p->out_height) / 2, 2));
++	gc2145_tx_write16(sensor, GC2145_P0_CROP_X1_HI,
++			  round_down((isp_width - p->out_width) / 2, 2));
++	gc2145_tx_write16(sensor, GC2145_P0_CROP_WIN_HEIGHT_HI, p->out_height);
++	gc2145_tx_write16(sensor, GC2145_P0_CROP_WIN_WIDTH_HI, p->out_width);
++	gc2145_tx_write8(sensor, GC2145_P0_CROP_ENABLE, BIT(0));
++
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
+@@ -1371,29 +1508,35 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	//u8 wb_max = 0;
+ 	//u64 wb_mask = 0;
+ 	//unsigned int i;
++	static const struct v4l2_rect default_crop = {
++		.left = GC2145_ACTIVE_LEFT,
++		.top = GC2145_ACTIVE_TOP,
++		.width = GC2145_SENSOR_WIDTH_MAX,
++		.height = GC2145_SENSOR_HEIGHT_MAX,
++	};
+ 	int ret;
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+-	/* Clock related controls */
+-	params = gc2145_get_sensor_params(sensor, sensor->frame_interval.denominator,
+-					  GC2145_DEFAULT_WIDTH,
+-					  GC2145_DEFAULT_HEIGHT,
+-					  &pixel_rate);
++	/* Clock related controls, for the mode .init_state will pick */
++	params = gc2145_compute_params(sensor, &default_crop,
++				       GC2145_DEFAULT_WIDTH,
++				       GC2145_DEFAULT_HEIGHT,
++				       sensor->frame_interval.denominator,
++				       &pixel_rate);
+ 	ctrls->pixel_rate = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_PIXEL_RATE,
+ 			0, INT_MAX, 1,
+-			gc2145_sensor_params_get_pixel_rate(&params,
+-							    pixel_rate));
++			gc2145_params_pixel_rate(&params, pixel_rate));
+ 
+ 	ctrls->hblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HBLANK,
+ 			0, INT_MAX, 1,
+-			gc2145_sensor_params_get_hblank(&params));
++			gc2145_params_hblank(&params));
+ 
+ 	ctrls->vblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK,
+ 			0, INT_MAX, 1,
+-			gc2145_sensor_params_get_vblank(&params));
++			gc2145_params_vblank(&params));
+ 
+ 	/* Exposure controls */
+ 	ctrls->auto_exposure = v4l2_ctrl_new_std_menu(hdl, ops,
+@@ -1880,14 +2023,18 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 		return -EINVAL;
+ 	}
+ 
+-	params = gc2145_get_sensor_params(sensor, framerate, width, height, &pclk2);
++	params = gc2145_get_sensor_params(sensor, state, framerate, &pclk2);
+ 
+-	gc2145_sensor_params_apply(sensor, &params);
++	gc2145_params_apply(sensor, &params);
+ 
+ 	ret = gc2145_set_2pclk(sensor, &pclk2, true);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/* the measure windows are in output coordinates */
++	width = params.out_width;
++	height = params.out_height;
++
+ 	pad = (width > 256 && height > 256) ? 32 : 16;
+ 
+ 	ret = gc2145_setup_awb(sensor, pad, pad, width - pad * 2, height - pad * 2);
+@@ -1908,8 +2055,8 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 	//XXX: calculate auto exposure settings, there are 4 slots that the HW
+ 	//uses and exposure settings are set in row_time units
+ 
+-	rt = gc2145_sensor_params_get_row_period(&params);
+-	ft = gc2145_sensor_params_get_frame_period(&params);
++	rt = gc2145_params_row_period(&params);
++	ft = gc2145_params_frame_period(&params);
+ 	ft_rt = ft / rt / 4;
+ 
+ 	for (i = 0; i < 7; i++) {
+@@ -1932,10 +2079,8 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 	// disable denoising
+ 	gc2145_tx_update_bits(sensor, 0x80, BIT(2), 0);
+ 
+-	// drive strength
+-	gc2145_tx_write8(sensor, 0x24,
+-			 (pclk2 / (params.enable_scaler + 1)) > 40000000 ?
+-				0xff : 0x55);
++	/* drive strength, for the byte clock leaving the parallel port */
++	gc2145_tx_write8(sensor, 0x24, pclk2 > 40000000 ? 0xff : 0x55);
+ 
+ 	ret = gc2145_tx_commit(sensor);
+ 	if (ret)
+@@ -2049,10 +2194,6 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 				     struct v4l2_subdev_frame_interval *fi)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	const struct v4l2_mbus_framefmt *fmt =
+-		v4l2_subdev_state_get_format(state, 0);
+-	struct gc2145_sensor_params params;
+-	unsigned long pixel_rate;
+ 	int fps;
+ 
+ 	if (fi->pad != 0)
+@@ -2072,15 +2213,7 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 	fi->interval = sensor->frame_interval;
+ 	sensor->pending_mode_change = true;
+ 
+-	params = gc2145_get_sensor_params(sensor, fps, fmt->width,
+-					  fmt->height, &pixel_rate);
+-	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+-			gc2145_sensor_params_get_pixel_rate(&params,
+-							    pixel_rate));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank,
+-			   gc2145_sensor_params_get_hblank(&params));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
+-			   gc2145_sensor_params_get_vblank(&params));
++	gc2145_update_timing_ctrls(sensor, state);
+ 
+ 	return 0;
+ }
+@@ -2097,18 +2230,33 @@ static int gc2145_enum_mbus_code(struct v4l2_subdev *sd,
+ 	return 0;
+ }
+ 
++/*
++ * The sizes on offer are the analogue crop decimated by each of the
++ * ratios the sensor can produce, so they follow the crop rectangle and
++ * every one of them shows the same field of view.
++ */
+ static int gc2145_enum_frame_size(struct v4l2_subdev *sd,
+ 				  struct v4l2_subdev_state *sd_state,
+ 				  struct v4l2_subdev_frame_size_enum *fse)
+ {
+-	if (fse->pad != 0 || fse->index > 0)
++	const struct v4l2_rect *crop;
++	u32 width, height;
++
++	if (fse->pad != 0 || fse->index >= ARRAY_SIZE(gc2145_modes))
+ 		return -EINVAL;
+ 
+-	fse->min_width = GC2145_SENSOR_WIDTH_MIN;
+-	fse->max_width = GC2145_SENSOR_WIDTH_MAX;
++	crop = v4l2_subdev_state_get_crop(sd_state, 0);
++	gc2145_mode_output_size(&gc2145_modes[fse->index], crop,
++				&width, &height);
++
++	if (width < GC2145_SENSOR_WIDTH_MIN ||
++	    height < GC2145_SENSOR_HEIGHT_MIN)
++		return -EINVAL;
+ 
+-	fse->min_height = GC2145_SENSOR_HEIGHT_MIN;
+-	fse->max_height = GC2145_SENSOR_HEIGHT_MAX;
++	fse->min_width = width;
++	fse->max_width = width;
++	fse->min_height = height;
++	fse->max_height = height;
+ 
+ 	return 0;
+ }
+@@ -2134,8 +2282,8 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	struct v4l2_mbus_framefmt *mf = &format->format;
+ 	const struct gc2145_pixfmt *pixfmt;
+-	struct gc2145_sensor_params params;
+-	unsigned long pixel_rate;
++	const struct gc2145_mode *mode;
++	const struct v4l2_rect *crop;
+ 
+ 	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE && sd->enabled_pads)
+ 		return -EBUSY;
+@@ -2152,10 +2300,14 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	mf->quantization = V4L2_QUANTIZATION_DEFAULT;
+ 	mf->field = V4L2_FIELD_NONE;
+ 
+-	mf->width = clamp(mf->width, GC2145_SENSOR_WIDTH_MIN,
+-		      GC2145_SENSOR_WIDTH_MAX);
+-	mf->height = clamp(mf->height, GC2145_SENSOR_HEIGHT_MIN,
+-		       GC2145_SENSOR_HEIGHT_MAX);
++	/*
++	 * Snap to the nearest size the decimation chain can produce out of
++	 * the current analogue crop, rather than windowing the array down
++	 * to the requested size and throwing away the field of view.
++	 */
++	crop = v4l2_subdev_state_get_crop(sd_state, 0);
++	mode = gc2145_find_mode(crop, mf->width, mf->height);
++	gc2145_mode_output_size(mode, crop, &mf->width, &mf->height);
+ 
+ 	*v4l2_subdev_state_get_format(sd_state, 0) = *mf;
+ 
+@@ -2163,17 +2315,95 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 		return 0;
+ 
+ 	sensor->pending_mode_change = true;
++	gc2145_update_timing_ctrls(sensor, sd_state);
+ 
+-	params = gc2145_get_sensor_params(sensor,
+-					  sensor->frame_interval.denominator,
+-					  mf->width, mf->height, &pixel_rate);
+-	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+-			gc2145_sensor_params_get_pixel_rate(&params,
+-							    pixel_rate));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank,
+-			   gc2145_sensor_params_get_hblank(&params));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
+-			   gc2145_sensor_params_get_vblank(&params));
++	return 0;
++}
++
++static int gc2145_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *state,
++				struct v4l2_subdev_selection *sel)
++{
++	if (sel->pad != 0)
++		return -EINVAL;
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		sel->r = *v4l2_subdev_state_get_crop(state, 0);
++		return 0;
++
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = GC2145_NATIVE_WIDTH;
++		sel->r.height = GC2145_NATIVE_HEIGHT;
++		return 0;
++
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++		sel->r.left = GC2145_ACTIVE_LEFT;
++		sel->r.top = GC2145_ACTIVE_TOP;
++		sel->r.width = GC2145_SENSOR_WIDTH_MAX;
++		sel->r.height = GC2145_SENSOR_HEIGHT_MAX;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++/*
++ * The crop is the part of the pixel array that is read out, so it is
++ * what decides the field of view. Narrowing it also shortens the row
++ * and frame periods, which is the only way to go faster than the
++ * decimation ratios allow.
++ */
++static int gc2145_set_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *state,
++				struct v4l2_subdev_selection *sel)
++{
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct v4l2_mbus_framefmt *fmt;
++	struct v4l2_rect *crop;
++	const struct gc2145_mode *mode;
++
++	if (sel->pad != 0 || sel->target != V4L2_SEL_TGT_CROP)
++		return -EINVAL;
++
++	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE && sd->enabled_pads)
++		return -EBUSY;
++
++	/*
++	 * The readout window has to stay even so that the Bayer phase of
++	 * the crop matches the one the ISP is set up for.
++	 */
++	sel->r.width = clamp_t(u32, round_down(sel->r.width, 4),
++			       GC2145_SENSOR_WIDTH_MIN,
++			       GC2145_SENSOR_WIDTH_MAX);
++	sel->r.height = clamp_t(u32, round_down(sel->r.height, 4),
++				GC2145_SENSOR_HEIGHT_MIN,
++				GC2145_SENSOR_HEIGHT_MAX);
++	sel->r.left = clamp_t(u32, round_down(sel->r.left, 2),
++			      GC2145_ACTIVE_LEFT,
++			      GC2145_ACTIVE_LEFT + GC2145_SENSOR_WIDTH_MAX -
++			      sel->r.width);
++	sel->r.top = clamp_t(u32, round_down(sel->r.top, 2),
++			     GC2145_ACTIVE_TOP,
++			     GC2145_ACTIVE_TOP + GC2145_SENSOR_HEIGHT_MAX -
++			     sel->r.height);
++
++	crop = v4l2_subdev_state_get_crop(state, 0);
++	*crop = sel->r;
++
++	/* the sizes on offer moved with the crop, so refit the format */
++	fmt = v4l2_subdev_state_get_format(state, 0);
++	mode = gc2145_find_mode(crop, fmt->width, fmt->height);
++	gc2145_mode_output_size(mode, crop, &fmt->width, &fmt->height);
++
++	if (sel->which != V4L2_SUBDEV_FORMAT_ACTIVE)
++		return 0;
++
++	sensor->pending_mode_change = true;
++	gc2145_update_timing_ctrls(sensor, state);
+ 
+ 	return 0;
+ }
+@@ -2191,6 +2421,13 @@ static int gc2145_init_state(struct v4l2_subdev *sd,
+ 		},
+ 	};
+ 
++	*v4l2_subdev_state_get_crop(state, 0) = (struct v4l2_rect) {
++		.left = GC2145_ACTIVE_LEFT,
++		.top = GC2145_ACTIVE_TOP,
++		.width = GC2145_SENSOR_WIDTH_MAX,
++		.height = GC2145_SENSOR_HEIGHT_MAX,
++	};
++
+ 	return gc2145_set_fmt(sd, state, &fmt);
+ }
+ 
+@@ -2410,6 +2647,8 @@ static const struct v4l2_subdev_pad_ops gc2145_pad_ops = {
+ 	.enum_frame_interval = gc2145_enum_frame_interval,
+ 	.get_fmt = v4l2_subdev_get_fmt,
+ 	.set_fmt = gc2145_set_fmt,
++	.get_selection = gc2145_get_selection,
++	.set_selection = gc2145_set_selection,
+ 	.get_frame_interval = gc2145_get_frame_interval,
+ 	.set_frame_interval = gc2145_set_frame_interval,
+ 	.enable_streams = gc2145_enable_streams,
+-- 
+2.43.0
+

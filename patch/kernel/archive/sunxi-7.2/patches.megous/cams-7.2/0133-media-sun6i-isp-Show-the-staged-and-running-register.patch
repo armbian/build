@@ -1,0 +1,234 @@
+From 376a26851d324a32c4d4ce0aa04c7ca168014497 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 21:37:45 +0200
+Subject: [PATCH] media: sun6i-isp: Show the staged and running registers in
+ debugfs
+
+Nothing after the demosaic responds to anything. Measured on an A83T with
+a raw sensor and a uniform field: the bayer gain and offset act, the bayer
+denoise acts, and the lens shading, the colour matrix, the gamma table,
+the dynamic range compression and the contrast are all bit for bit
+no-ops with settings chosen to be unmissable -- an all-zero matrix that
+should have blacked the frame, an inverted gamma table, an all-zero lens
+table. It is not the parameters failing to arrive, since the blocks that
+do work are driven from the same buffer, and it is not a question of when
+they latch, since handing them over before the frontend starts instead of
+at a frame boundary changes nothing.
+
+Which leaves the registers themselves, and there is no way to look at
+them. The load buffer is only what the driver offered the hardware; what
+the hardware took is in the save region, which it writes the running
+register file back to at each sync, in the same layout. The driver
+allocates that region and points the hardware at it, then never reads it.
+
+So show both, side by side, for the registers that bear on this. A value
+that differs between the two columns is one the hardware declined; a
+value wrong in both is the driver's fault. Neither can be told apart by
+staring at the code, which is the position this leaves off from.
+
+The demosaic registers are defined here for the same reason. The driver
+does not program them and the demosaic works regardless, but it sits
+exactly at the boundary between what responds and what does not, so what
+they actually hold is worth being able to see.
+
+FE_CTRL is the only live register read, and only when the device is
+already awake. Everything else is DRAM.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.c | 99 +++++++++++++++++++
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.h |  3 +
+ .../media/sunxi/sun6i-isp/sun6i_isp_reg.h     | 11 +++
+ 3 files changed, 113 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 0ef008a7abbc..57fe913d12ca 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/debugfs.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/err.h>
+ #include <linux/interrupt.h>
+@@ -14,6 +15,7 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <linux/seq_file.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-mc.h>
+ 
+@@ -32,6 +34,18 @@ u32 sun6i_isp_load_read(struct sun6i_isp_device *isp_dev, u32 offset)
+ 	return *data;
+ }
+ 
++/*
++ * The counterpart of the load buffer: the hardware writes the register file
++ * it is running back here at each sync, so this is what it took, where the
++ * load buffer is only what it was offered.
++ */
++u32 sun6i_isp_save_read(struct sun6i_isp_device *isp_dev, u32 offset)
++{
++	u32 *data = (u32 *)(isp_dev->tables.save.data + offset);
++
++	return *data;
++}
++
+ void sun6i_isp_load_write(struct sun6i_isp_device *isp_dev, u32 offset,
+ 			  u32 value)
+ {
+@@ -235,6 +249,88 @@ static const struct media_device_ops sun6i_isp_media_ops = {
+ 
+ /* V4L2 */
+ 
++/* Debugfs */
++
++/*
++ * The hardware keeps its own account of itself: at every parameter sync it
++ * writes the register file it is actually running to the save region, the
++ * same layout as the load buffer the driver stages into. Reading the two
++ * side by side is the only way to tell a register the driver got wrong
++ * from one the hardware declined to take, which is a distinction guesswork
++ * cannot make and which the whole of this block's behaviour turns on.
++ */
++static const struct {
++	const char	*name;
++	unsigned int	offset;
++} sun6i_isp_debugfs_registers[] = {
++	{ "module_en",	SUN6I_ISP_MODULE_EN_REG },
++	{ "mode",	SUN6I_ISP_MODE_REG },
++	{ "in_cfg",	SUN6I_ISP_IN_CFG_REG },
++	{ "ob_size",	SUN6I_ISP_OB_SIZE_REG },
++	{ "ob_valid",	SUN6I_ISP_OB_VALID_REG },
++	{ "bayer_gain0", SUN6I_ISP_BAYER_GAIN0_REG },
++	{ "bayer_gain1", SUN6I_ISP_BAYER_GAIN1_REG },
++	{ "wb_gain0",	SUN6I_ISP_WB_GAIN0_REG },
++	{ "wb_gain1",	SUN6I_ISP_WB_GAIN1_REG },
++	{ "lsc_cfg",	SUN6I_ISP_LSC_CFG_REG },
++	{ "cfa_cfg0",	SUN6I_ISP_CFA_CFG0_REG },
++	{ "cfa_cfg1",	SUN6I_ISP_CFA_CFG1_REG },
++	{ "sap_cfg",	SUN6I_ISP_SAP_CFG_REG },
++	{ "contrast_cfg", SUN6I_ISP_CONTRAST_CFG_REG },
++	{ "saturation_cfg", SUN6I_ISP_SATURATION_CFG_REG },
++	{ "cnr",	SUN6I_ISP_CNR_REG },
++	{ "mch_cfg",	SUN6I_ISP_MCH_CFG_REG },
++	{ "sch_cfg",	SUN6I_ISP_SCH_CFG_REG },
++};
++
++static int sun6i_isp_debugfs_registers_show(struct seq_file *seq, void *data)
++{
++	struct sun6i_isp_device *isp_dev = seq->private;
++	unsigned int i;
++	u32 value;
++
++	/*
++	 * FE_CTRL is the one live register here; everything else is read out
++	 * of the two DRAM buffers, which are just memory and always safe.
++	 * Skip it rather than touch the bus while the device is suspended.
++	 */
++	if (pm_runtime_get_if_in_use(isp_dev->dev) > 0) {
++		regmap_read(isp_dev->regmap, SUN6I_ISP_FE_CTRL_REG, &value);
++		seq_printf(seq, "fe_ctrl %08x\n\n", value);
++		pm_runtime_put(isp_dev->dev);
++	} else {
++		seq_puts(seq, "fe_ctrl (device suspended)\n\n");
++	}
++
++	seq_printf(seq, "%-16s %8s %8s\n", "register", "staged", "running");
++
++	for (i = 0; i < ARRAY_SIZE(sun6i_isp_debugfs_registers); i++) {
++		u32 offset = sun6i_isp_debugfs_registers[i].offset;
++
++		seq_printf(seq, "%-16s %08x %08x\n",
++			   sun6i_isp_debugfs_registers[i].name,
++			   sun6i_isp_load_read(isp_dev, offset),
++			   sun6i_isp_save_read(isp_dev, offset));
++	}
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(sun6i_isp_debugfs_registers);
++
++static void sun6i_isp_debugfs_setup(struct sun6i_isp_device *isp_dev)
++{
++	isp_dev->debugfs = debugfs_create_dir(SUN6I_ISP_NAME, NULL);
++
++	debugfs_create_file("registers", 0444, isp_dev->debugfs, isp_dev,
++			    &sun6i_isp_debugfs_registers_fops);
++}
++
++static void sun6i_isp_debugfs_cleanup(struct sun6i_isp_device *isp_dev)
++{
++	debugfs_remove_recursive(isp_dev->debugfs);
++	isp_dev->debugfs = NULL;
++}
++
+ static int sun6i_isp_v4l2_setup(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct sun6i_isp_v4l2 *v4l2 = &isp_dev->v4l2;
+@@ -579,6 +675,8 @@ static int sun6i_isp_probe(struct platform_device *platform_dev)
+ 		goto error_stats;
+ 	}
+ 
++	sun6i_isp_debugfs_setup(isp_dev);
++
+ 	return 0;
+ 
+ error_stats:
+@@ -608,6 +706,7 @@ static void sun6i_isp_remove(struct platform_device *platform_dev)
+ {
+ 	struct sun6i_isp_device *isp_dev = platform_get_drvdata(platform_dev);
+ 
++	sun6i_isp_debugfs_cleanup(isp_dev);
+ 	sun6i_isp_params_cleanup(isp_dev);
+ 	sun6i_isp_stats_cleanup(isp_dev);
+ 	sun6i_isp_capture_cleanup(isp_dev);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+index 3a2f455301f7..b888ebcccee8 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+@@ -88,6 +88,8 @@ struct sun6i_isp_device {
+ 	struct reset_control		*reset;
+ 	int				irq;
+ 
++	struct dentry			*debugfs;
++
+ 	spinlock_t			state_lock; /* State helpers lock. */
+ 
+ 	/*
+@@ -110,6 +112,7 @@ struct sun6i_isp_variant {
+ /* Helpers */
+ 
+ u32 sun6i_isp_load_read(struct sun6i_isp_device *isp_dev, u32 offset);
++u32 sun6i_isp_save_read(struct sun6i_isp_device *isp_dev, u32 offset);
+ void sun6i_isp_load_write(struct sun6i_isp_device *isp_dev, u32 offset,
+ 			  u32 value);
+ u32 sun6i_isp_address_value(dma_addr_t address);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 8b469508a33f..9842ce4f18a5 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -361,6 +361,17 @@
+ #define SUN6I_ISP_LSC_CFG_CENTER_Y(v)		(((v) << 13) & GENMASK(25, 13))
+ #define SUN6I_ISP_LSC_CFG_SCALE(v)		(((v) << 26) & GENMASK(30, 26))
+ 
++/* Demosaic */
++
++/*
++ * Not programmed: the demosaic runs on whatever these hold and produces a
++ * correct picture with them left alone. Defined so that the register view
++ * can show what that is.
++ */
++#define SUN6I_ISP_CFA_CFG0_REG			0x154
++#define SUN6I_ISP_CFA_CFG1_REG			0x158
++#define SUN6I_ISP_CFA_TEX_REG			0x15c
++
+ /* CNR */
+ 
+ #define SUN6I_ISP_CNR_REG			0x14c
+-- 
+2.43.0
+

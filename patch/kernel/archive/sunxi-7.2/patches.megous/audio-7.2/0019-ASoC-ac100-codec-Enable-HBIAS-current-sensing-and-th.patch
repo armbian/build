@@ -1,0 +1,122 @@
+From 51545a8011d63f855ab020f25ce265831a236133 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 19:57:14 +0200
+Subject: [PATCH] ASoC: ac100-codec: Enable HBIAS current sensing and the
+ internal osc
+
+Three analog-side prerequisites for jack detection, none of which the
+driver touched before:
+
+- HBIAS_ADC_EN now follows the HBIAS supply widget, the same way the
+  A64 analog codec slaves MICADCEN to its HBIAS. The 5-bit current
+  sense ADC is what plug and button detection read, so it is useless
+  without the bias and wasted power with it off. HBIAS stays in the
+  load-controlled mode, so arming it for detection draws nothing from
+  an empty jack.
+
+- The internal oscillator is enabled at component probe. It clocks the
+  charge pump and the jack detect circuit when no audio clock runs;
+  the vendor driver sets it unconditionally for the same reason.
+
+- The headset bias defaults to 2.5V, the voltage the detection
+  thresholds were validated at, instead of the 1.88V reset default.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/ac100-codec.c | 58 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/sunxi/ac100-codec.c b/sound/soc/sunxi/ac100-codec.c
+index a36c168d4994..4e9552d0a0cc 100644
+--- a/sound/soc/sunxi/ac100-codec.c
++++ b/sound/soc/sunxi/ac100-codec.c
+@@ -355,6 +355,11 @@
+ #define AC100_ADDA_TUNE1_ZERO_CROSSOVER_TIME_OFF                7
+ #define AC100_ADDA_TUNE1_ZERO_CROSSOVER_TIME                    BIT(7)
+ 
++#define AC100_ADDA_TUNE3_OSC_EN_OFF                             0
++#define AC100_ADDA_TUNE3_OSC_EN_MASK                            BIT(0)
++#define AC100_ADDA_TUNE3_OSC_EN_DISABLED                        0
++#define AC100_ADDA_TUNE3_OSC_EN_ENABLED                         BIT(0)
++
+ struct ac100_codec {
+ 	struct device *dev;
+ 	struct snd_soc_component component;
+@@ -701,6 +706,27 @@ static int ac100_codec_hp_power(struct snd_soc_dapm_widget *w,
+ 	return 0;
+ }
+ 
++/*
++ * The 5-bit ADC sensing the HBIAS current is what jack and headset
++ * button detection are made of, so it follows the bias. HBIAS itself
++ * stays in the load-controlled mode (HBIAS_MODE = 0): the bias only
++ * really powers up when an accessory draws from it, so keeping the
++ * supply enabled for detection costs nothing with an empty jack.
++ */
++static int ac100_codec_hbias_event(struct snd_soc_dapm_widget *w,
++				   struct snd_kcontrol *k, int event)
++{
++	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
++	unsigned int val = SND_SOC_DAPM_EVENT_ON(event) ?
++		AC100_ADC_APC_CTRL_HBIAS_ADC_EN_ENABLED :
++		AC100_ADC_APC_CTRL_HBIAS_ADC_EN_DISABLED;
++
++	snd_soc_component_update_bits(component, AC100_ADC_APC_CTRL,
++				      AC100_ADC_APC_CTRL_HBIAS_ADC_EN_MASK,
++				      val);
++	return 0;
++}
++
+ static const struct snd_soc_dapm_widget ac100_codec_widgets[] = {
+ 	/* DAC */
+ 	SND_SOC_DAPM_DAC("Left DAC", NULL, AC100_OUT_MXR_DAC_A_CTRL,
+@@ -794,7 +820,8 @@ static const struct snd_soc_dapm_widget ac100_codec_widgets[] = {
+ 			 SND_SOC_NOPM, 0, 0, ac100_codec_mic2boost_src),
+ 	SND_SOC_DAPM_SUPPLY("HBIAS", AC100_ADC_APC_CTRL,
+ 			    AC100_ADC_APC_CTRL_HBIAS_EN_OFF,
+-			    0, NULL, 0),
++			    0, ac100_codec_hbias_event,
++			    SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+ 	SND_SOC_DAPM_PGA("Mic2 Amplifier", AC100_ADC_SRC_BST_CTRL,
+ 			 AC100_ADC_SRC_BST_CTRL_MIC2AMPEN_OFF, 0, NULL, 0),
+ 
+@@ -918,7 +945,36 @@ static const struct snd_soc_dapm_route ac100_codec_routes[] = {
+ 	{ "LINEOUT", NULL, "Line Out" },
+ };
+ 
++static int ac100_codec_analog_cmpnt_probe(struct snd_soc_component *component)
++{
++	int ret;
++
++	/*
++	 * The internal oscillator clocks the charge pump and the jack
++	 * detection circuit when no audio clock is running; without it
++	 * the HMIC ADC never samples on an idle system.
++	 */
++	ret = snd_soc_component_update_bits(component, AC100_ADDA_TUNE3,
++					    AC100_ADDA_TUNE3_OSC_EN_MASK,
++					    AC100_ADDA_TUNE3_OSC_EN_ENABLED);
++	if (ret < 0)
++		return ret;
++
++	/*
++	 * The jack and button detection thresholds are proportional to
++	 * the headset bias voltage; the values used by the digital side
++	 * were validated at 2.5V, so that is the default. The "Mic2 Bias
++	 * Voltage" control can still lower it, at the cost of detection
++	 * accuracy.
++	 */
++	ret = snd_soc_component_update_bits(component, AC100_OUT_MXR_SRC_BST,
++					    AC100_OUT_MXR_SRC_BST_HMICBIAS_VOLTAGE_MASK,
++					    AC100_OUT_MXR_SRC_BST_HMICBIAS_VOLTAGE_2_50V);
++	return ret < 0 ? ret : 0;
++}
++
+ static const struct snd_soc_component_driver ac100_codec_analog_cmpnt_drv = {
++	.probe			= ac100_codec_analog_cmpnt_probe,
+ 	.controls		= ac100_codec_controls,
+ 	.num_controls		= ARRAY_SIZE(ac100_codec_controls),
+ 	.dapm_widgets		= ac100_codec_widgets,
+-- 
+2.43.0
+

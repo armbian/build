@@ -1,0 +1,118 @@
+From dbe78af192170f3df3fc8523a0af6ad751324dd6 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 19:58:32 +0200
+Subject: [PATCH] media: gc2145: Only offer the raw formats at the full size
+
+The decimated modes destroy the Bayer phase. Every mode but the 1:1 one
+runs the ISP column scaler, and a scaler mixes neighbouring columns,
+which in a mosaic are neighbouring colours.
+
+It shows up plainly against the sensor's own solid colour test patterns,
+read out through the parallel port with nothing else in the path. At
+1600x1200 a solid primary lands on exactly one position of each 2x2 --
+blue on (0,0) and red on (1,1), which is BGGR as advertised. At 1280x960
+and at 640x480 the same primary reads half scale on both column parities
+of the row it belongs to, because each output column is a blend of a
+coloured one and a green one. The row phase survives, that half of the
+decimation being a skip in the pixel array rather than a scale, but half
+a mosaic is no more usable than none.
+
+So pin the raw formats to the undecimated mode: enumerate the one size
+for them, snap to it in set_fmt, and keep it across a crop change. The
+processed formats are untouched, the ISP having demosaiced long before
+the scaler sees anything.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 48 ++++++++++++++++++++++++++++++++++----
+ 1 file changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 63d1fc88d428..d95a29f771c0 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -1016,6 +1016,28 @@ static void gc2145_mode_output_size(const struct gc2145_mode *mode,
+ 	*height = round_down(crop->height * mode->num / mode->den, 2);
+ }
+ 
++/*
++ * Only the undecimated mode keeps the Bayer phase.
++ *
++ * Every other mode runs the ISP column scaler, and the scaler mixes
++ * neighbouring columns, which are neighbouring colours. Reading a raw
++ * frame out of a decimated mode gives a mosaic whose phase changes along
++ * the row: presenting the sensor with a solid primary and looking at the
++ * four positions of each 2x2, the colour lands on one position at
++ * 1600x1200 and on both column parities at 1280x960 and below. The row
++ * phase does survive, because that half of the decimation is a skip in the
++ * pixel array rather than a scale, but half a mosaic is no more usable
++ * than none.
++ *
++ * So a raw format is only ever offered, and only ever set, at the full
++ * size. The processed formats are unaffected - the ISP has already
++ * demosaiced by the time the scaler sees the data.
++ */
++static const struct gc2145_mode *gc2145_raw_mode(void)
++{
++	return &gc2145_modes[0];
++}
++
+ static const struct gc2145_mode *
+ gc2145_find_mode(const struct v4l2_rect *crop, u32 width, u32 height)
+ {
+@@ -2553,15 +2575,26 @@ static int gc2145_enum_frame_size(struct v4l2_subdev *sd,
+ 				  struct v4l2_subdev_state *sd_state,
+ 				  struct v4l2_subdev_frame_size_enum *fse)
+ {
++	const struct gc2145_mode *mode;
+ 	const struct v4l2_rect *crop;
+ 	u32 width, height;
+ 
+-	if (fse->pad != 0 || fse->index >= ARRAY_SIZE(gc2145_modes))
++	if (fse->pad != 0 || !gc2145_find_format(fse->code))
+ 		return -EINVAL;
+ 
++	/* the raw formats come in one size, for the reason above */
++	if (gc2145_format_is_raw(fse->code)) {
++		if (fse->index > 0)
++			return -EINVAL;
++		mode = gc2145_raw_mode();
++	} else {
++		if (fse->index >= ARRAY_SIZE(gc2145_modes))
++			return -EINVAL;
++		mode = &gc2145_modes[fse->index];
++	}
++
+ 	crop = v4l2_subdev_state_get_crop(sd_state, 0);
+-	gc2145_mode_output_size(&gc2145_modes[fse->index], crop,
+-				&width, &height);
++	gc2145_mode_output_size(mode, crop, &width, &height);
+ 
+ 	if (width < GC2145_SENSOR_WIDTH_MIN ||
+ 	    height < GC2145_SENSOR_HEIGHT_MIN)
+@@ -2640,7 +2673,9 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	 * to the requested size and throwing away the field of view.
+ 	 */
+ 	crop = v4l2_subdev_state_get_crop(sd_state, 0);
+-	mode = gc2145_find_mode(crop, mf->width, mf->height);
++	mode = gc2145_format_is_raw(mf->code) ? gc2145_raw_mode()
++					      : gc2145_find_mode(crop, mf->width,
++								 mf->height);
+ 	gc2145_mode_output_size(mode, crop, &mf->width, &mf->height);
+ 
+ 	*v4l2_subdev_state_get_format(sd_state, 0) = *mf;
+@@ -2730,7 +2765,10 @@ static int gc2145_set_selection(struct v4l2_subdev *sd,
+ 
+ 	/* the sizes on offer moved with the crop, so refit the format */
+ 	fmt = v4l2_subdev_state_get_format(state, 0);
+-	mode = gc2145_find_mode(crop, fmt->width, fmt->height);
++	mode = gc2145_format_is_raw(fmt->code) ? gc2145_raw_mode()
++					       : gc2145_find_mode(crop,
++								  fmt->width,
++								  fmt->height);
+ 	gc2145_mode_output_size(mode, crop, &fmt->width, &fmt->height);
+ 
+ 	if (sel->which != V4L2_SUBDEV_FORMAT_ACTIVE)
+-- 
+2.43.0
+

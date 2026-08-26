@@ -1,0 +1,119 @@
+From 4966e766ffbf02fedac4d1eaedfbf1d123b775d2 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:23:41 +0200
+Subject: [PATCH] media: gc2145: Program the AEC anti-flicker parameters
+
+The row period has been fitted to the mains period for a while, but the
+register that tells the AEC to quantise its exposure to that period was
+never written - the call was commented out - so the AEC was still free
+to land anywhere and band under artificial light. The seven exposure
+levels, which are the gears it drops through as the light goes, were
+quarters of a frame and unrelated to the mains period, so the lower ones
+banded too.
+
+Write the step, and lay the levels out as multiples of it starting from
+the first one that covers a frame, which is how the vendor tables are
+built. At 96MHz the step comes out at exactly 10.00ms on 50Hz mains and
+8.33ms on 60Hz, in every mode.
+
+The step is in the units the exposure register counts, so it carries the
+same factor of two as the exposure does while rows are being skipped.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 54 +++++++++++++++++++++++++++++++-------
+ 1 file changed, 44 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 010cc4fbf431..329406a95868 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -209,6 +209,10 @@
+ #define GC2145_P0_AUTO_POSTGAIN		0xb2
+ 
+ #define GC2145_P0_AEC_ENABLE		0xb6
++
++/* AEC, page 1 */
++#define GC2145_P1_AEC_ANTI_FLICKER_HI	0x125
++#define GC2145_P1_AEC_EXP_LEVEL(n)	(0x127 + 2 * (n))
+ #define GC2145_P0_OUT_BUF_ENABLE	0xc2
+ 
+ /* }}} */
+@@ -1135,6 +1139,23 @@ gc2145_params_exposure_max(struct gc2145_sensor_params *p,
+ 		   (unsigned long)GC2145_EXPOSURE_REG_MAX / slots);
+ }
+ 
++/*
++ * The exposure quantum that keeps lighting flicker out of the image: the
++ * mains half period expressed in the units the exposure register counts.
++ * A row slot takes 4 / pclk * row_period / slots_per_line seconds.
++ */
++static unsigned long
++gc2145_params_flicker_step(struct gc2145_sensor_params *p,
++			   unsigned long power_line_freq, unsigned long pclk)
++{
++	unsigned long rt = gc2145_params_row_period(p);
++
++	if (!rt || !power_line_freq)
++		return 0;
++
++	return pclk / (2 * power_line_freq) * p->slots_per_line / (4 * rt);
++}
++
+ static void gc2145_params_fit_hb(struct gc2145_sensor_params *p,
+ 				 unsigned long power_line_freq,
+ 				 unsigned long pclk)
+@@ -2097,7 +2118,7 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 	unsigned long width = fmt->width;
+ 	unsigned long height = fmt->height;
+ 	const struct gc2145_pixfmt *pix_fmt;
+-	unsigned long rt, ft, ft_rt;
++	unsigned long step, lines, level;
+ 
+ 	pix_fmt = gc2145_find_format(fmt->code);
+ 	if (!pix_fmt) {
+@@ -2139,19 +2160,32 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 
+ 	gc2145_tx_start(sensor);
+ 
+-	// anti-flicker step
+-	//gc2145_tx_write16(sensor, 0x125, 360); //XXX: get this from the calculator (hb related)
++	/*
++	 * Quantise the exposure the AEC picks to whole periods of the
++	 * lighting flicker. The row period was already fitted to the mains
++	 * so that this comes out close to a whole number of lines.
++	 */
++	step = gc2145_params_flicker_step(&params, sensor->power_line_freq,
++					  GC2145_PCLK_RATE);
+ 
+-	//XXX: calculate auto exposure settings, there are 4 slots that the HW
+-	//uses and exposure settings are set in row_time units
++	gc2145_tx_write16(sensor, GC2145_P1_AEC_ANTI_FLICKER_HI, step);
+ 
+-	rt = gc2145_params_row_period(&params);
+-	ft = gc2145_params_frame_period(&params);
+-	ft_rt = ft / rt / 4;
++	/*
++	 * The seven exposure levels are the gears the AEC drops through as
++	 * the light goes, each one stretching the frame further than the
++	 * last. They only avoid flicker if they are whole multiples of the
++	 * step above, so start at the first multiple that covers a frame
++	 * and climb from there.
++	 */
++	lines = gc2145_params_frame_lines(&params);
++	level = step ? round_up(lines, step) : lines;
+ 
+ 	for (i = 0; i < 7; i++) {
+-		// exposure settings for exposure levels
+-		gc2145_tx_write16(sensor, 0x127 + 2 * i, ft_rt * (i + 1));
++		gc2145_tx_write16(sensor, GC2145_P1_AEC_EXP_LEVEL(i),
++				  min_t(unsigned long, level,
++					GC2145_EXPOSURE_REG_MAX));
++		level += step ? step : lines / 4;
++
+ 		// max dg gains
+ 		gc2145_tx_write8(sensor, 0x135 + i, 0x50);
+ 	}
+-- 
+2.43.0
+

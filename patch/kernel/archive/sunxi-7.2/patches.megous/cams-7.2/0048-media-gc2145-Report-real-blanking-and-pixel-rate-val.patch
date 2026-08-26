@@ -1,0 +1,153 @@
+From a77885ef8e2f95d3b34bc2f524eb5d124a5c378e Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:56:59 +0200
+Subject: [PATCH] media: gc2145: Report real blanking and pixel rate values
+
+HBLANK was set to the window height and VBLANK to the window width -
+swapped, and neither is a blanking value in the first place. For a
+1600x1200 mode they read 1232 and 1616 where the real blanking is
+about 1076 pixels and 40 lines.
+
+PIXEL_RATE was set to 2PCLK, but every timing formula in the driver
+counts in PCLK, which is half of it. The three values were therefore
+mutually inconsistent: userspace evaluating
+
+  pixel_rate = (width + hblank) * (height + vblank) * framerate
+
+got 79.7 MHz out of controls that claimed 60 MHz.
+
+Derive all three from the mode parameters instead. When the scaler is
+enabled the sensor is read out at twice the output resolution with
+2PCLK doubled to match, so the rate pixels leave the sensor at is
+unchanged and a row carries half as many output pixels as PCLK
+periods; keep the output resolution around for that. The identity now
+holds exactly in both cases, and set_frame_interval() updates the
+blanking as well, which it never did.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 65 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 55 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index c888944e9923..60b30c5004bc 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -884,8 +884,12 @@ struct gc2145_sensor_params {
+ 	unsigned long et;
+ 	unsigned long win_width;
+ 	unsigned long win_height;
++	/* size read out of the pixel array, twice the output when scaling */
+ 	unsigned long width;
+ 	unsigned long height;
++	/* size the sensor emits, what the blanking is relative to */
++	unsigned long out_width;
++	unsigned long out_height;
+ };
+ 
+ static void gc2145_sensor_params_init(struct gc2145_sensor_params* p, int width, int height)
+@@ -916,6 +920,37 @@ gc2145_sensor_params_get_frame_period(struct gc2145_sensor_params* p)
+ 	return rt * (p->vb + p->win_height) / (p->row_skip + 1);
+ }
+ 
++/*
++ * The frame period is counted in PCLK periods, which is what the pixel
++ * rate has to be expressed in for
++ *
++ *   pixel_rate = (width + hblank) * (height + vblank) * framerate
++ *
++ * to hold. When the scaler is enabled the sensor is read out at twice
++ * the output resolution and 2PCLK is doubled to match, so the rate the
++ * pixels leave the sensor at stays the same and a row carries half as
++ * many output pixels as it does PCLK periods.
++ */
++static unsigned long
++gc2145_sensor_params_get_pixel_rate(struct gc2145_sensor_params *p,
++				    unsigned long pclk2)
++{
++	return pclk2 / 2 / (p->enable_scaler + 1);
++}
++
++static unsigned long
++gc2145_sensor_params_get_hblank(struct gc2145_sensor_params *p)
++{
++	return gc2145_sensor_params_get_row_period(p) / (p->enable_scaler + 1)
++		- p->out_width;
++}
++
++static unsigned long
++gc2145_sensor_params_get_vblank(struct gc2145_sensor_params *p)
++{
++	return (p->vb + p->win_height) / (p->row_skip + 1) - p->out_height;
++}
++
+ static void
+ gc2145_sensor_params_fit_hb_to_power_line_period(struct gc2145_sensor_params* p,
+ 					  unsigned long power_line_freq,
+@@ -1058,6 +1093,9 @@ static struct gc2145_sensor_params gc2145_get_sensor_params(
+ 	gc2145_sensor_params_fit_vb_to_frame_period(&params,
+ 						    *pclk2 / 2 / framerate);
+ 
++	params.out_width = width;
++	params.out_height = height;
++
+ 	return params;
+ }
+ 
+@@ -1303,16 +1341,17 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 					  sensor->fmt.height,
+ 					  &pixel_rate);
+ 	ctrls->pixel_rate = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_PIXEL_RATE,
+-					      0, INT_MAX, 1,
+-					      pixel_rate);
++			0, INT_MAX, 1,
++			gc2145_sensor_params_get_pixel_rate(&params,
++							    pixel_rate));
+ 
+ 	ctrls->hblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HBLANK,
+-					  0, INT_MAX, 1,
+-					  params.win_height);
++			0, INT_MAX, 1,
++			gc2145_sensor_params_get_hblank(&params));
+ 
+ 	ctrls->vblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK,
+-					  0, INT_MAX, 1,
+-					  params.win_width);
++			0, INT_MAX, 1,
++			gc2145_sensor_params_get_vblank(&params));
+ 
+ 	/* Exposure controls */
+ 	ctrls->auto_exposure = v4l2_ctrl_new_std_menu(hdl, ops,
+@@ -1891,7 +1930,12 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 
+ 	params = gc2145_get_sensor_params(fps, sensor->fmt.width, sensor->fmt.height, &pixel_rate);
+ 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+-				 pixel_rate);
++			gc2145_sensor_params_get_pixel_rate(&params,
++							    pixel_rate));
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank,
++			   gc2145_sensor_params_get_hblank(&params));
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
++			   gc2145_sensor_params_get_vblank(&params));
+ 
+ #if 0
+ 	if (sensor->streaming) {
+@@ -2023,11 +2067,12 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 
+ 	params = gc2145_get_sensor_params(sensor->frame_interval.denominator, mf->width, mf->height, &pixel_rate);
+ 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+-				 pixel_rate);
++			gc2145_sensor_params_get_pixel_rate(&params,
++							    pixel_rate));
+ 	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank,
+-			   params.win_height);
++			   gc2145_sensor_params_get_hblank(&params));
+ 	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
+-			   params.win_width);
++			   gc2145_sensor_params_get_vblank(&params));
+ out:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
+-- 
+2.43.0
+

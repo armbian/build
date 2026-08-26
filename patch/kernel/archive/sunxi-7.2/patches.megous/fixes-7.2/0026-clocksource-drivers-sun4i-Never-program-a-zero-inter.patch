@@ -1,0 +1,57 @@
+From 2ed851510fcafde7153d84eae37ee994277e1fbb Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 10:28:07 +0200
+Subject: [PATCH] clocksource/drivers/sun4i: Never program a zero interval
+
+The driver registers min_delta_ticks = TIMER_SYNC_TICKS and subtracts
+TIMER_SYNC_TICKS from evt in set_next_event, so a minimum-delta
+program from the clockevents core writes a zero interval.  The
+hardware never fires on a zero interval: the counter is left parked
+at zero, or sometimes frozen with a stale non-zero count - the state
+that defeated the original check_armed() and stopped the tick for
+good.  This showed up as a storm of evt=3/intval=0 arm failures under
+heavy interrupt load (expired hrtimers make the core fall back to
+min_delta_ticks), and matches the intval=0 read back from a wedged
+machine over /dev/mem.
+
+Floor the programmed interval at one tick and raise the registered
+minimum so the core does not request an interval the timer cannot
+generate.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clocksource/timer-sun4i.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i.c
+index 5346732b16da..24a5c7a3b80e 100644
+--- a/drivers/clocksource/timer-sun4i.c
++++ b/drivers/clocksource/timer-sun4i.c
+@@ -205,10 +205,14 @@ static int sun4i_clkevt_next_event(unsigned long evt,
+ 				   struct clock_event_device *clkevt)
+ {
+ 	struct timer_of *to = to_timer_of(clkevt);
++	unsigned long delay;
+ 	int ret;
+ 
++	/* The timer never fires with a zero interval. */
++	delay = evt > TIMER_SYNC_TICKS + 1 ? evt - TIMER_SYNC_TICKS : 1;
++
+ 	sun4i_clkevt_time_stop(timer_of_base(to), 0);
+-	sun4i_clkevt_time_setup(timer_of_base(to), 0, evt - TIMER_SYNC_TICKS);
++	sun4i_clkevt_time_setup(timer_of_base(to), 0, delay);
+ 	sun4i_clkevt_time_start(timer_of_base(to), 0, false);
+ 
+ 	ret = sun4i_clkevt_check_armed(timer_of_base(to), 0);
+@@ -341,7 +345,7 @@ static int __init sun4i_timer_init(struct device_node *node)
+ 	sun4i_timer_clear_interrupt(timer_of_base(&to));
+ 
+ 	clockevents_config_and_register(&to.clkevt, timer_of_rate(&to),
+-					TIMER_SYNC_TICKS, 0xffffffff);
++					TIMER_SYNC_TICKS + 1, 0xffffffff);
+ 
+ 	/* Enable timer0 interrupt */
+ 	val = readl(timer_of_base(&to) + TIMER_IRQ_EN_REG);
+-- 
+2.43.0
+

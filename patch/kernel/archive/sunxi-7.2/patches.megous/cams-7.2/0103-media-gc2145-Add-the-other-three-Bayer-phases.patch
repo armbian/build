@@ -1,0 +1,181 @@
+From ac469100fdbe90158275cad92372e34f0296ac00 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 19:59:38 +0200
+Subject: [PATCH] media: gc2145: Add the other three Bayer phases
+
+The sync register can switch which of the odd and even rows and columns
+comes out first, which moves the Bayer phase, so the sensor can present
+any of the four. Only BGGR was offered.
+
+All four are measured, by reading the parallel port at 1600x1200 with a
+solid primary in the sensor's test pattern generator and looking at which
+position of each 2x2 the colour lands on. With neither switch set blue
+lands on (0,0) and red on (1,1), which is BGGR; with both set they swap,
+which is RGGB; and the two single-switch cases give GRBG and GBRG.
+
+The two switches are named for the wrong axis. The bit the datasheet
+calls the column switch moves the phase down a row, and the one it calls
+the row switch moves it along a column, so the pairings here are the
+transpose of what the names suggest. The datasheet's own table for this
+field disagrees as well, but only in its starting phase, which the
+readout window origin accounts for.
+
+The register is shared with the bus signal polarities set at power-on,
+and one write has to own it, so compose both in a helper and write it
+whole from the format path as well.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 88 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 76 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index d95a29f771c0..ab2f0fb583b9 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -175,6 +175,8 @@
+ #define GC2145_P0_ISP_OUT_FORMAT	0x84
+ #define GC2145_P0_FRAME_START		0x85
+ #define GC2145_P0_SYNC_MODE		0x86
++#define GC2145_SYNC_MODE_COL_SWITCH	BIT(4)
++#define GC2145_SYNC_MODE_ROW_SWITCH	BIT(5)
+ #define GC2145_P0_ISP_BLK_ENABLE4	0x87
+ #define GC2145_P0_ISP_MODULE_GATING	0x88
+ #define GC2145_P0_ISP_BYPASS_MODE	0x89
+@@ -288,6 +290,8 @@ struct gc2145_pixfmt {
+ 	u32 code;
+ 	u32 colorspace;
+ 	u8 fmt_setup;
++	/* row and column switch bits of the sync register, raw only */
++	u8 sync_switch;
+ };
+ 
+ static const struct gc2145_pixfmt gc2145_formats[] = {
+@@ -316,16 +320,50 @@ static const struct gc2145_pixfmt gc2145_formats[] = {
+ 		.colorspace        = V4L2_COLORSPACE_SRGB,
+ 		.fmt_setup         = 0x06,
+ 	},
++	/*
++	 * The raw output mode has the sync register switch which of the odd
++	 * and even rows and columns comes out first, which moves the Bayer
++	 * phase. BGGR is what the sensor gives with neither switch set.
++	 *
++	 * The two switches are named for the wrong axis: measured against a
++	 * solid primary, the bit the datasheet calls the column switch moves
++	 * the phase down a row and the one it calls the row switch moves it
++	 * along a column. The pairings below are what the sensor does, not
++	 * what the names suggest.
++	 */
+ 	{
+ 		.code              = MEDIA_BUS_FMT_SBGGR8_1X8,
+ 		.colorspace        = V4L2_COLORSPACE_RAW,
+ 		.fmt_setup         = 0x17,
++		.sync_switch       = 0,
++	},
++	{
++		.code              = MEDIA_BUS_FMT_SGRBG8_1X8,
++		.colorspace        = V4L2_COLORSPACE_RAW,
++		.fmt_setup         = 0x17,
++		.sync_switch       = GC2145_SYNC_MODE_COL_SWITCH,
++	},
++	{
++		.code              = MEDIA_BUS_FMT_SGBRG8_1X8,
++		.colorspace        = V4L2_COLORSPACE_RAW,
++		.fmt_setup         = 0x17,
++		.sync_switch       = GC2145_SYNC_MODE_ROW_SWITCH,
++	},
++	{
++		.code              = MEDIA_BUS_FMT_SRGGB8_1X8,
++		.colorspace        = V4L2_COLORSPACE_RAW,
++		.fmt_setup         = 0x17,
++		.sync_switch       = GC2145_SYNC_MODE_COL_SWITCH |
++				     GC2145_SYNC_MODE_ROW_SWITCH,
+ 	},
+ };
+ 
+ static bool gc2145_format_is_raw(u32 code)
+ {
+-	return code == MEDIA_BUS_FMT_SBGGR8_1X8;
++	return code == MEDIA_BUS_FMT_SBGGR8_1X8 ||
++	       code == MEDIA_BUS_FMT_SGBRG8_1X8 ||
++	       code == MEDIA_BUS_FMT_SGRBG8_1X8 ||
++	       code == MEDIA_BUS_FMT_SRGGB8_1X8;
+ }
+ 
+ static const struct gc2145_pixfmt *gc2145_find_format(u32 code)
+@@ -2342,6 +2380,34 @@ static int gc2145_setup_aec_range(struct gc2145_dev *sensor,
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
++/*
++ * The sync register carries the bus signal polarities, which depend on the
++ * board, and the row and column switches, which pick the Bayer phase and
++ * so depend on the format. One write owns the register, so both have to be
++ * composed here and written together rather than read-modify-written from
++ * two places.
++ */
++static u8 gc2145_sync_mode(struct gc2145_dev *sensor,
++			   const struct gc2145_pixfmt *pix_fmt)
++{
++	struct v4l2_mbus_config_parallel *bus = &sensor->ep.bus.parallel;
++	u8 sync_mode = 0;
++
++	if (bus->flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
++		sync_mode |= 0x01;
++
++	if (bus->flags & V4L2_MBUS_HSYNC_ACTIVE_LOW)
++		sync_mode |= 0x02;
++
++	if (bus->flags & V4L2_MBUS_PCLK_SAMPLE_FALLING)
++		sync_mode |= 0x04;
++
++	if (pix_fmt)
++		sync_mode |= pix_fmt->sync_switch;
++
++	return sync_mode;
++}
++
+ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 			     struct v4l2_subdev_state *state)
+ {
+@@ -2400,6 +2466,14 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 
+ 	gc2145_tx_write8(sensor, GC2145_P0_ISP_OUT_FORMAT, pix_fmt->fmt_setup);
+ 
++	/*
++	 * Rewritten in full rather than updated, because the switch bits
++	 * that pick the Bayer phase share the register with the bus
++	 * polarities set at power-on.
++	 */
++	gc2145_tx_write8(sensor, GC2145_P0_SYNC_MODE,
++			 gc2145_sync_mode(sensor, pix_fmt));
++
+ 	/* drive strength, for the byte clock leaving the parallel port */
+ 	gc2145_tx_write8(sensor, 0x24, pclk2 > 40000000 ? 0xff : 0x55);
+ 
+@@ -2830,21 +2904,11 @@ static int gc2145_identify(struct gc2145_dev *sensor)
+ 
+ static int gc2145_configure(struct gc2145_dev *sensor)
+ {
+-	struct v4l2_mbus_config_parallel *bus = &sensor->ep.bus.parallel;
+-	u8 sync_mode = 0;
++	u8 sync_mode = gc2145_sync_mode(sensor, NULL);
+ 	int ret;
+ 
+         // setup parallel bus
+ 
+-	if (bus->flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
+-		sync_mode |= 0x01;
+-
+-	if (bus->flags & V4L2_MBUS_HSYNC_ACTIVE_LOW)
+-		sync_mode |= 0x02;
+-
+-	if (bus->flags & V4L2_MBUS_PCLK_SAMPLE_FALLING)
+-		sync_mode |= 0x04;
+-
+ 	gc2145_tx_start(sensor);
+ 
+ 	// soft reset
+-- 
+2.43.0
+

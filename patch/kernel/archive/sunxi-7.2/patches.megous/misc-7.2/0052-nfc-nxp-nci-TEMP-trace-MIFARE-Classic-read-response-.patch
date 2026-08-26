@@ -1,0 +1,102 @@
+From 6a6580b8930f7eaa7f73d60ece62e2866ee1d2ee Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 18 Aug 2026 03:46:51 +0200
+Subject: [PATCH] nfc: nxp-nci: TEMP: trace MIFARE Classic read-response path
+
+Diagnostic only, to be reverted. A MIFARE Classic authenticates but the
+block reads that follow fail: the controller's i2c read of the read
+response returns -ENXIO (-6) in a storm, or a malformed all-zero frame
+reaches the raw socket, while the small authenticate response reads
+fine. Log both sides of that path to tell the two apart:
+
+  - nxp-nci i2c: the NCI header bytes and payload length of every read,
+    the errno of a failed header or payload i2c_master_recv, and a hex
+    dump of each frame that reads back whole.
+  - nci data: pbf/conn/plen/protocol and a hex dump of every Rx DATA
+    packet, plus the status byte and length after the MIFARE frame-I/F
+    strip, so a delivered-but-wrong frame is distinguishable from one
+    that never made it past i2c.
+
+All tagged "nfc-mfc-dbg" for grepping. Drop before merge.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/nfc/nxp-nci/i2c.c | 10 ++++++++++
+ net/nfc/nci/data.c        | 10 ++++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/drivers/nfc/nxp-nci/i2c.c b/drivers/nfc/nxp-nci/i2c.c
+index 9de6b4127527..54b5f74d620f 100644
+--- a/drivers/nfc/nxp-nci/i2c.c
++++ b/drivers/nfc/nxp-nci/i2c.c
+@@ -150,6 +150,7 @@ static int nxp_nci_i2c_nci_read(struct nxp_nci_i2c_phy *phy,
+ 
+ 	r = i2c_master_recv(client, (u8 *) &header, NCI_CTRL_HDR_SIZE);
+ 	if (r < 0) {
++		dev_info(&client->dev, "nfc-mfc-dbg: hdr recv err %d\n", r);
+ 		goto nci_read_exit;
+ 	} else if (r != NCI_CTRL_HDR_SIZE) {
+ 		nfc_err(&client->dev, "Incorrect header length: %u\n", r);
+@@ -157,6 +158,9 @@ static int nxp_nci_i2c_nci_read(struct nxp_nci_i2c_phy *phy,
+ 		goto nci_read_exit;
+ 	}
+ 
++	dev_info(&client->dev, "nfc-mfc-dbg: rx hdr %02x %02x plen=%u\n",
++		 ((u8 *)&header)[0], ((u8 *)&header)[1], header.plen);
++
+ 	*skb = alloc_skb(NCI_CTRL_HDR_SIZE + header.plen, GFP_KERNEL);
+ 	if (*skb == NULL) {
+ 		r = -ENOMEM;
+@@ -170,6 +174,9 @@ static int nxp_nci_i2c_nci_read(struct nxp_nci_i2c_phy *phy,
+ 
+ 	r = i2c_master_recv(client, skb_put(*skb, header.plen), header.plen);
+ 	if (r < 0) {
++		dev_info(&client->dev,
++			 "nfc-mfc-dbg: payload recv err %d (plen=%u)\n",
++			 r, header.plen);
+ 		goto nci_read_exit_free_skb;
+ 	} else if (r != header.plen) {
+ 		nfc_err(&client->dev,
+@@ -179,6 +186,9 @@ static int nxp_nci_i2c_nci_read(struct nxp_nci_i2c_phy *phy,
+ 		goto nci_read_exit_free_skb;
+ 	}
+ 
++	print_hex_dump(KERN_INFO, "nfc-mfc-dbg rx: ", DUMP_PREFIX_NONE,
++		       32, 1, (*skb)->data, (*skb)->len, false);
++
+ 	return 0;
+ 
+ nci_read_exit_free_skb:
+diff --git a/net/nfc/nci/data.c b/net/nfc/nci/data.c
+index 5f98c73db5af..277d33faadb9 100644
+--- a/net/nfc/nci/data.c
++++ b/net/nfc/nci/data.c
+@@ -282,8 +282,16 @@ void nci_rx_data_packet(struct nci_dev *ndev, struct sk_buff *skb)
+ 		 nci_conn_id(skb->data),
+ 		 nci_plen(skb->data));
+ 
++	pr_info("nfc-mfc-dbg: rx data pbf=%d conn=%d plen=%d prot=%d len=%d\n",
++		pbf, conn_id, nci_plen(skb->data),
++		ndev->target_active_prot, skb->len);
++	print_hex_dump(KERN_INFO, "nfc-mfc-dbg data: ", DUMP_PREFIX_NONE,
++		       32, 1, skb->data, skb->len, false);
++
+ 	conn_info = nci_get_conn_info_by_conn_id(ndev, nci_conn_id(skb->data));
+ 	if (!conn_info) {
++		pr_info("nfc-mfc-dbg: no conn_info for conn=%d, dropping\n",
++			conn_id);
+ 		kfree_skb(skb);
+ 		return;
+ 	}
+@@ -299,6 +307,8 @@ void nci_rx_data_packet(struct nci_dev *ndev, struct sk_buff *skb)
+ 		pr_debug("frame I/F => remove the status byte\n");
+ 		status = skb->data[skb->len - 1];
+ 		skb_trim(skb, (skb->len - 1));
++		pr_info("nfc-mfc-dbg: mifare strip status=%02x len_now=%d\n",
++			status, skb->len);
+ 	}
+ 
+ 	nci_add_rx_data_frag(ndev, skb, pbf, conn_id, nci_to_errno(status));
+-- 
+2.43.0
+
