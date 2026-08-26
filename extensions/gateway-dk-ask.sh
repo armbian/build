@@ -111,12 +111,21 @@ function custom_kernel_config__ask_modules() {
 	# only real code changes here force a rebuild, not comment edits.
 	kernel_config_modifying_hashes+=("ask_config_logic=$(declare -f custom_kernel_config__ask_modules | sha256sum | cut -d' ' -f1)")
 	# declare -f covers this function's code but not the content of the board BSP files it copies
-	# into the kernel tree; fold those in too, so editing e.g. sfp-led.c or the board Kconfig patch
-	# rebuilds the kernel. (CDX/FCI/auto_bridge sources come from the ASK repo, already covered by
-	# the ASK pin above.)
-	declare ask_bsp_hash
-	ask_bsp_hash="$(cat "${SRC}"/packages/bsp/gateway-dk/{ask-modules.Kconfig,ask-modules.Makefile,sfp-led.c,sfp-led.Kbuild,leds-lp5812.c,leds-lp5812.h,leds-lp5812.Kbuild,ask-kconfig-board-modules.patch} 2>/dev/null | sha256sum | cut -d' ' -f1)"
-	kernel_config_modifying_hashes+=("ask_bsp_files=${ask_bsp_hash}")
+	# into the kernel tree; fold those in too — via calculate_hash_for_files, which hashes each
+	# file's SRC-relative path and content (sorted, order-independent) — so editing e.g. sfp-led.c
+	# or the board Kconfig patch rebuilds the kernel. (CDX/FCI/auto_bridge sources come from the
+	# ASK repo, already covered by the ASK pin above.)
+	declare hash_files="undetermined"
+	calculate_hash_for_files \
+		"${SRC}"/packages/bsp/gateway-dk/ask-modules.Kconfig \
+		"${SRC}"/packages/bsp/gateway-dk/ask-modules.Makefile \
+		"${SRC}"/packages/bsp/gateway-dk/sfp-led.c \
+		"${SRC}"/packages/bsp/gateway-dk/sfp-led.Kbuild \
+		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.c \
+		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.h \
+		"${SRC}"/packages/bsp/gateway-dk/leds-lp5812.Kbuild \
+		"${SRC}"/packages/bsp/gateway-dk/ask-kconfig-board-modules.patch
+	kernel_config_modifying_hashes+=("ask_bsp_files=${hash_files}")
 
 	# Skip file operations during config-dump-json and version calculation
 	[[ ! -f .config ]] && return 0
