@@ -135,7 +135,10 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 
 	display_alert "Using ${decision} Kernel bare tree for ${KERNEL_MAJOR_MINOR}" "${decision_why}" "info"
 
-	declare base_oras_ref="${GHCR_SOURCE}/armbian/shallow" # @TODO allow changing this
+	# GIT_ORAS_TARBALLS_SHALLOW_BASE_REF points the premade-git-tree pulls at a different registry/namespace;
+	# the same variable serves u-boot. It selects a mirror, not content, so it is deliberately
+	# NOT part of any artifact version hash.
+	declare base_oras_ref="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:-"${GHCR_SOURCE}/armbian/shallow"}"
 	declare estimated_dl_size_mib=0 benefits="" cons=""
 	case "${decision}" in
 		shallow)
@@ -183,8 +186,7 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 
 # This is run under the logging section, so, no interactive parts -- please.
 function kernel_prepare_bare_repo_from_oras_gitball() {
-
-	# validate kernel_git_bare_tree and bare_tree_done_marker_file are set
+	# These are set by kernel_prepare_bare_repo_decide_shallow_or_full(); assert it actually ran.
 	if [[ -z "${kernel_git_bare_tree}" ]]; then
 		exit_with_error "kernel_git_bare_tree is not set"
 	fi
@@ -192,79 +194,10 @@ function kernel_prepare_bare_repo_from_oras_gitball() {
 		exit_with_error "bare_tree_done_marker_file is not set"
 	fi
 
-	declare kernel_git_bare_tree_done_marker="${kernel_git_bare_tree}/${bare_tree_done_marker_file}"
-
-	if [[ ! -d "${kernel_git_bare_tree}" || ! -f "${kernel_git_bare_tree_done_marker}" ]]; then
-		display_alert "Preparing bare kernel git tree" "this might take a long time" "info"
-
-		if [[ -d "${kernel_git_bare_tree}" ]]; then
-			display_alert "Removing old kernel bare tree" "${kernel_git_bare_tree}" "info"
-			run_host_command_logged rm -rf "${kernel_git_bare_tree}"
-		fi
-
-		wait_for_disk_sync "before Kernel git tree download"
-
-		# now, make sure we've the bundle downloaded correctly...
-		# this defines linux_kernel_clone_bundle_file
-		declare linux_kernel_clone_tar_file
-		download_git_kernel_gitball_via_oras # sets linux_kernel_clone_tar_file or dies
-
-		wait_for_disk_sync "before Kernel git extraction"
-
-		# Just extract the tar_file into the "${kernel_git_bare_tree}" directory, no further work needed.
-		run_host_command_logged mkdir -p "${kernel_git_bare_tree}"
-		# @TODO chance of a pv thingy here?
-		run_host_command_logged tar -xf "${linux_kernel_clone_tar_file}" -C "${kernel_git_bare_tree}"
-
-		wait_for_disk_sync "after Kernel git extraction"
-
-		# sanity check
-		if [[ ! -d "${kernel_git_bare_tree}/.git" ]]; then
-			exit_with_error "Kernel bare tree is missing .git directory ${kernel_git_bare_tree}"
-		fi
-
-		# write the marker file
-		touch "${kernel_git_bare_tree_done_marker}"
-	else
-		display_alert "Kernel bare tree already exists" "${kernel_git_bare_tree}" "cachehit"
-	fi
-
-	git_ensure_safe_directory "${kernel_git_bare_tree}"
+	git_oras_tree_prepare_from_gitball \
+		"Kernel" "${kernel_git_bare_tree}" "${bare_tree_done_marker_file}" \
+		"${git_kernel_oras_ref}" "${git_bundles_dir}" "${git_kernel_ball_fn}" \
+		"${SRC}/cache/sources/linux-kernel-worktree"
 
 	return 0
-}
-
-function download_git_kernel_gitball_via_oras() {
-	# validate git_bundles_dir, git_kernel_ball_fn, and git_kernel_oras_ref are set
-	if [[ -z "${git_bundles_dir}" ]]; then
-		exit_with_error "git_bundles_dir is not set"
-	fi
-	if [[ -z "${git_kernel_ball_fn}" ]]; then
-		exit_with_error "git_kernel_ball_fn is not set"
-	fi
-	if [[ -z "${git_kernel_oras_ref}" ]]; then
-		exit_with_error "git_kernel_oras_ref is not set"
-	fi
-
-	run_host_command_logged mkdir -p "${git_bundles_dir}" # this is later cleaned up by kernel_cleanup_bundle_artifacts()
-
-	# defines outer scope value
-	linux_kernel_clone_tar_file="${git_bundles_dir}/${git_kernel_ball_fn}"
-
-	# if the file already exists, do nothing; it will only exist if successfully downloaded by ORAS
-	if [[ -f "${linux_kernel_clone_tar_file}" ]]; then
-		display_alert "Kernel git-tarball already exists" "${git_kernel_ball_fn}" "cachehit"
-		return 0
-	fi
-
-	# do_with_retries 5 xxx ? -- no -- oras_pull_artifact_file should do it's own retries.
-	oras_pull_artifact_file "${git_kernel_oras_ref}" "${git_bundles_dir}" "${git_kernel_ball_fn}"
-
-	# sanity check
-	if [[ ! -f "${linux_kernel_clone_tar_file}" ]]; then
-		exit_with_error "Kernel git-tarball download failed ${linux_kernel_clone_tar_file}"
-	fi
-
-	return 0
-
 }

@@ -271,6 +271,10 @@ function do_main_configuration() {
 			;;
 	esac
 
+	# Note: this selects the mirror for BOOTSOURCE on boards that use mainline u-boot. It no
+	# longer has anything to do with the shared u-boot bare tree, which since the move to
+	# premade ORAS git trees always comes from ${GHCR_SOURCE} -- see uboot-git-oras.sh, and
+	# GHCR_MIRROR / GIT_ORAS_TARBALLS_SHALLOW_BASE_REF for redirecting that.
 	case $UBOOT_MIRROR in
 		gitee)
 			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
