@@ -102,6 +102,12 @@ function extension_finish_config__ask_setup() {
 function custom_kernel_config__ask_modules() {
 	# Invalidate kernel cache when ASK source changes (same pattern as Khadas meson-s4t7)
 	kernel_config_modifying_hashes+=("ask_modules=${ASK_BRANCH}")
+	# This function is not in artifact-kernel.sh's extension_hooks_to_hash, so its non-opts wiring
+	# below (module-source copy, Kconfig/Makefile stitching) would not invalidate the cached kernel
+	# on its own — the opts_* are auto-folded into kernel_config_modifying_hashes, but this logic is
+	# not. Fold the function's own parsed source in; declare -f is comment/whitespace-insensitive, so
+	# only real code changes here force a rebuild, not comment edits.
+	kernel_config_modifying_hashes+=("ask_config_logic=$(declare -f custom_kernel_config__ask_modules | sha256sum | cut -d' ' -f1)")
 
 	# Skip file operations during config-dump-json and version calculation
 	[[ ! -f .config ]] && return 0
