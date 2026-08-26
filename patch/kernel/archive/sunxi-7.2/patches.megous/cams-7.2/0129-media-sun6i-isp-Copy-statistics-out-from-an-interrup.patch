@@ -1,0 +1,244 @@
+From 5e0e493e5cdc7392a61ee4bd7e6051cf353d9f93 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 22:33:34 +0200
+Subject: [PATCH] media: sun6i-isp: Copy statistics out from an interrupt
+ thread
+
+The statistics copy is several kilobytes and was being done in the hard
+handler. That is more than belongs there in general, and particularly
+here: on the A83T the interrupt is shared with the CSI, so time spent in
+our handler is time the other driver waits.
+
+Move the copy to an interrupt thread. The hard handler still does
+everything that has to be prompt -- completing capture buffers and the
+parameter handshake -- and acks before returning, so the line is not
+requested one-shot and stays unmasked for the other user while the
+thread runs.
+
+Deferring the copy needs somewhere for it to read from that the hardware
+is not simultaneously writing, since the statistics destination was
+programmed once and never moved. So allocate two buffers and swap them
+in the hard handler: the one just filled goes to the thread, the other
+becomes the hardware's destination for the next frame. The vendor does
+the same thing with a pool of five.
+
+A frame arriving before the thread gets scheduled now costs one dropped
+set of statistics rather than a torn one.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.c | 68 ++++++++++++++++---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.h |  9 ++-
+ .../media/sunxi/sun6i-isp/sun6i_isp_stats.c   |  9 +--
+ .../media/sunxi/sun6i-isp/sun6i_isp_stats.h   |  3 +-
+ 4 files changed, 75 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 5d3b1a76f820..0ef008a7abbc 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -155,6 +155,7 @@ static void sun6i_isp_table_cleanup(struct sun6i_isp_device *isp_dev,
+ 
+ void sun6i_isp_tables_configure(struct sun6i_isp_device *isp_dev)
+ {
++	struct sun6i_isp_tables *tables = &isp_dev->tables;
+ 	struct regmap *regmap = isp_dev->regmap;
+ 
+ 	regmap_write(regmap, SUN6I_ISP_REG_LOAD_ADDR_REG,
+@@ -170,13 +171,14 @@ void sun6i_isp_tables_configure(struct sun6i_isp_device *isp_dev)
+ 		     SUN6I_ISP_ADDR_VALUE(isp_dev->tables.drc.address));
+ 
+ 	regmap_write(regmap, SUN6I_ISP_STATS_ADDR_REG,
+-		     SUN6I_ISP_ADDR_VALUE(isp_dev->tables.stats.address));
++		     SUN6I_ISP_ADDR_VALUE(tables->stats[tables->stats_index].address));
+ }
+ 
+ static int sun6i_isp_tables_setup(struct sun6i_isp_device *isp_dev,
+ 				  const struct sun6i_isp_variant *variant)
+ {
+ 	struct sun6i_isp_tables *tables = &isp_dev->tables;
++	unsigned int i;
+ 	int ret;
+ 
+ 	tables->load.size = variant->table_load_save_size;
+@@ -199,10 +201,15 @@ static int sun6i_isp_tables_setup(struct sun6i_isp_device *isp_dev,
+ 	if (ret)
+ 		return ret;
+ 
+-	tables->stats.size = variant->table_stats_size;
+-	ret = sun6i_isp_table_setup(isp_dev, &tables->stats);
+-	if (ret)
+-		return ret;
++	for (i = 0; i < ARRAY_SIZE(tables->stats); i++) {
++		tables->stats[i].size = variant->table_stats_size;
++		ret = sun6i_isp_table_setup(isp_dev, &tables->stats[i]);
++		if (ret)
++			return ret;
++	}
++
++	tables->stats_index = 0;
++	tables->stats_done = -1;
+ 
+ 	return 0;
+ }
+@@ -210,8 +217,10 @@ static int sun6i_isp_tables_setup(struct sun6i_isp_device *isp_dev,
+ static void sun6i_isp_tables_cleanup(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct sun6i_isp_tables *tables = &isp_dev->tables;
++	unsigned int i;
+ 
+-	sun6i_isp_table_cleanup(isp_dev, &tables->stats);
++	for (i = 0; i < ARRAY_SIZE(tables->stats); i++)
++		sun6i_isp_table_cleanup(isp_dev, &tables->stats[i]);
+ 	sun6i_isp_table_cleanup(isp_dev, &tables->drc);
+ 	sun6i_isp_table_cleanup(isp_dev, &tables->lut);
+ 	sun6i_isp_table_cleanup(isp_dev, &tables->save);
+@@ -283,8 +292,11 @@ static void sun6i_isp_v4l2_cleanup(struct sun6i_isp_device *isp_dev)
+ static irqreturn_t sun6i_isp_interrupt(int irq, void *private)
+ {
+ 	struct sun6i_isp_device *isp_dev = private;
++	struct sun6i_isp_tables *tables = &isp_dev->tables;
+ 	struct regmap *regmap = isp_dev->regmap;
+ 	u32 status = 0, enable = 0;
++	bool thread = false;
++	dma_addr_t address;
+ 
+ 	regmap_read(regmap, SUN6I_ISP_FE_INT_STA_REG, &status);
+ 	regmap_read(regmap, SUN6I_ISP_FE_INT_EN_REG, &enable);
+@@ -307,7 +319,21 @@ static irqreturn_t sun6i_isp_interrupt(int irq, void *private)
+ 
+ 	if (status & SUN6I_ISP_FE_INT_STA_FINISH) {
+ 		sun6i_isp_capture_finish(isp_dev);
+-		sun6i_isp_stats_finish(isp_dev);
++
++		/*
++		 * Hand the buffer the hardware has just finished to the
++		 * thread and point the hardware at the other one, so the
++		 * copy out is not racing the next frame being written.
++		 */
++
++		tables->stats_done = tables->stats_index;
++		tables->stats_index ^= 1;
++
++		address = tables->stats[tables->stats_index].address;
++		regmap_write(regmap, SUN6I_ISP_STATS_ADDR_REG,
++			     SUN6I_ISP_ADDR_VALUE(address));
++
++		thread = true;
+ 	}
+ 
+ 	if (status & SUN6I_ISP_FE_INT_STA_PARA_LOAD) {
+@@ -318,6 +344,31 @@ static irqreturn_t sun6i_isp_interrupt(int irq, void *private)
+ complete:
+ 	regmap_write(regmap, SUN6I_ISP_FE_INT_STA_REG, status);
+ 
++	return thread ? IRQ_WAKE_THREAD : IRQ_HANDLED;
++}
++
++/*
++ * The statistics copy is several kilobytes, which is more than belongs in
++ * the hard handler -- especially here, where the line is shared with the
++ * CSI on some variants.
++ *
++ * The line is not requested one-shot, so it is left unmasked for the
++ * other user while this runs. The hard handler has already acked, and
++ * has already swapped the hardware onto the other buffer, so a frame
++ * arriving before this gets scheduled costs at worst one dropped set of
++ * statistics rather than a torn one.
++ */
++static irqreturn_t sun6i_isp_interrupt_thread(int irq, void *private)
++{
++	struct sun6i_isp_device *isp_dev = private;
++	struct sun6i_isp_tables *tables = &isp_dev->tables;
++	int done = READ_ONCE(tables->stats_done);
++
++	if (done < 0)
++		return IRQ_HANDLED;
++
++	sun6i_isp_stats_finish(isp_dev, tables->stats[done].data);
++
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -436,7 +487,8 @@ static int sun6i_isp_resources_setup(struct sun6i_isp_device *isp_dev,
+ 		goto error_clock_rate_exclusive;
+ 	}
+ 
+-	ret = devm_request_irq(dev, irq, sun6i_isp_interrupt, IRQF_SHARED,
++	ret = devm_request_threaded_irq(dev, irq, sun6i_isp_interrupt,
++					sun6i_isp_interrupt_thread, IRQF_SHARED,
+ 			       SUN6I_ISP_NAME, isp_dev);
+ 	if (ret) {
+ 		dev_err(dev, "failed to request interrupt\n");
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+index 46c02ce4a3cb..3a2f455301f7 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+@@ -61,7 +61,14 @@ struct sun6i_isp_tables {
+ 
+ 	struct sun6i_isp_table	lut;
+ 	struct sun6i_isp_table	drc;
+-	struct sun6i_isp_table	stats;
++
++	/*
++	 * Two statistics buffers, so the copy out of one can be deferred to
++	 * the interrupt thread while the hardware fills the other.
++	 */
++	struct sun6i_isp_table	stats[2];
++	unsigned int		stats_index;
++	int			stats_done;
+ };
+ 
+ struct sun6i_isp_device {
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+index fd1394bb3f88..eecf9285ea24 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+@@ -36,9 +36,9 @@
+ /* Stats */
+ 
+ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+-					struct sun6i_isp_stats_buffer *stats)
++					struct sun6i_isp_stats_buffer *stats,
++					const void *base)
+ {
+-	const void *base = isp_dev->tables.stats.data;
+ 	u32 modules, blocks = 0;
+ 
+ 	/*
+@@ -85,7 +85,8 @@ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+  * Called from the frame finish interrupt, which is when the hardware is
+  * done writing the buffer for this frame.
+  */
+-void sun6i_isp_stats_finish(struct sun6i_isp_device *isp_dev)
++void sun6i_isp_stats_finish(struct sun6i_isp_device *isp_dev,
++			    const void *base)
+ {
+ 	struct sun6i_isp_stats_state *state = &isp_dev->stats.state;
+ 	struct sun6i_isp_stats_buffer *stats;
+@@ -108,7 +109,7 @@ void sun6i_isp_stats_finish(struct sun6i_isp_device *isp_dev)
+ 
+ 	memset(stats, 0, sizeof(*stats));
+ 
+-	sun6i_isp_stats_buffer_fill(isp_dev, stats);
++	sun6i_isp_stats_buffer_fill(isp_dev, stats, base);
+ 
+ 	stats->sequence =
+ 		isp_dev->captures[SUN6I_ISP_CAPTURE_MAIN].state.sequence;
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.h
+index 6c4822fc54cf..fc076ab8d722 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.h
+@@ -33,7 +33,8 @@ struct sun6i_isp_stats {
+ 
+ /* Stats */
+ 
+-void sun6i_isp_stats_finish(struct sun6i_isp_device *isp_dev);
++void sun6i_isp_stats_finish(struct sun6i_isp_device *isp_dev,
++			    const void *base);
+ 
+ int sun6i_isp_stats_setup(struct sun6i_isp_device *isp_dev);
+ void sun6i_isp_stats_cleanup(struct sun6i_isp_device *isp_dev);
+-- 
+2.43.0
+

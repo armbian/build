@@ -1,0 +1,122 @@
+From 732c893b7a29ac4e4c4d0c1c07818fa618bea3c8 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 26 Jul 2026 01:02:39 +0200
+Subject: [PATCH] Input: goodix - only advertise touchkeys where they can exist
+
+The driver unconditionally advertises KEY_LEFTMETA and KEY_F1-F6 for
+the capacitive buttons, even on phones/panels that have none. The VT
+keyboard handler then matches the touchscreen, tries to open it during
+input device registration - before runtime PM is enabled - and fails:
+
+  input: failed to attach handler kbd to device input2, error: -13
+
+Worse, if it succeeded, it would hold the device open forever,
+defeating the open-gated runtime PM of the controller.
+
+Advertise the keys only where they can actually exist: non-DT (ACPI)
+devices keep the default keymap, DT boards must list the keys in the
+linux,keycodes property.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/input/touchscreen/goodix.c | 55 +++++++++++++++++++++++-------
+ drivers/input/touchscreen/goodix.h |  1 +
+ 2 files changed, 44 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/input/touchscreen/goodix.c b/drivers/input/touchscreen/goodix.c
+index b127efae118f..4540937dfdec 100644
+--- a/drivers/input/touchscreen/goodix.c
++++ b/drivers/input/touchscreen/goodix.c
+@@ -458,7 +458,7 @@ static void goodix_ts_release_keys(struct goodix_ts_data *ts)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < GOODIX_MAX_KEYS; i++)
++	for (i = 0; i < ts->num_keys; i++)
+ 		input_report_key(ts->input_dev, ts->keymap[i], 0);
+ }
+ 
+@@ -471,7 +471,7 @@ static void goodix_ts_report_key(struct goodix_ts_data *ts, u8 *data)
+ 	if (data[0] & GOODIX_HAVE_KEY) {
+ 		touch_num = data[0] & 0x0f;
+ 		key_value = data[1 + ts->contact_size * touch_num];
+-		for (i = 0; i < GOODIX_MAX_KEYS; i++)
++		for (i = 0; i < ts->num_keys; i++)
+ 			if (key_value & BIT(i))
+ 				input_report_key(ts->input_dev,
+ 						 ts->keymap[i], 1);
+@@ -1193,18 +1193,49 @@ static int goodix_configure_dev(struct goodix_ts_data *ts)
+ 		ts->input_dev->id.product = 0x1001;
+ 	ts->input_dev->id.version = ts->version;
+ 
+-	ts->input_dev->keycode = ts->keymap;
+-	ts->input_dev->keycodesize = sizeof(ts->keymap[0]);
+-	ts->input_dev->keycodemax = GOODIX_MAX_KEYS;
++	/*
++	 * Capacitive Windows/Home button on some devices. Only advertise
++	 * the keys where they can exist: DT boards must list them in
++	 * linux,keycodes, non-DT (ACPI) devices keep the default keymap.
++	 * Advertising KEY_* capabilities on pure touchscreens makes the VT
++	 * keyboard handler attach to and open the device, defeating the
++	 * open-gated runtime PM.
++	 */
++	if (device_property_present(&ts->client->dev, "linux,keycodes")) {
++		u32 keycodes[GOODIX_MAX_KEYS];
++		int nkeys;
++
++		nkeys = device_property_count_u32(&ts->client->dev,
++						  "linux,keycodes");
++		if (nkeys > 0) {
++			nkeys = min(nkeys, GOODIX_MAX_KEYS);
++			error = device_property_read_u32_array(&ts->client->dev,
++							       "linux,keycodes",
++							       keycodes, nkeys);
++			if (!error) {
++				ts->num_keys = nkeys;
++				for (i = 0; i < ts->num_keys; i++)
++					ts->keymap[i] = keycodes[i];
++			}
++		}
++	} else if (!dev_of_node(&ts->client->dev)) {
++		ts->num_keys = GOODIX_MAX_KEYS;
++		for (i = 0; i < ts->num_keys; ++i) {
++			if (i == 0)
++				ts->keymap[i] = KEY_LEFTMETA;
++			else
++				ts->keymap[i] = KEY_F1 + (i - 1);
++		}
++	}
+ 
+-	/* Capacitive Windows/Home button on some devices */
+-	for (i = 0; i < GOODIX_MAX_KEYS; ++i) {
+-		if (i == 0)
+-			ts->keymap[i] = KEY_LEFTMETA;
+-		else
+-			ts->keymap[i] = KEY_F1 + (i - 1);
++	if (ts->num_keys) {
++		ts->input_dev->keycode = ts->keymap;
++		ts->input_dev->keycodesize = sizeof(ts->keymap[0]);
++		ts->input_dev->keycodemax = ts->num_keys;
+ 
+-		input_set_capability(ts->input_dev, EV_KEY, ts->keymap[i]);
++		for (i = 0; i < ts->num_keys; i++)
++			input_set_capability(ts->input_dev, EV_KEY,
++					     ts->keymap[i]);
+ 	}
+ 
+ 	input_set_capability(ts->input_dev, EV_ABS, ABS_MT_POSITION_X);
+diff --git a/drivers/input/touchscreen/goodix.h b/drivers/input/touchscreen/goodix.h
+index d0bd81ff9085..7255fea29b8e 100644
+--- a/drivers/input/touchscreen/goodix.h
++++ b/drivers/input/touchscreen/goodix.h
+@@ -101,6 +101,7 @@ struct goodix_ts_data {
+ 	unsigned int contact_size;
+ 	u8 config[GOODIX_CONFIG_MAX_LENGTH];
+ 	unsigned short keymap[GOODIX_MAX_KEYS];
++	int num_keys;
+ 	u8 main_clk[GOODIX_MAIN_CLK_LEN];
+ 	int bak_ref_len;
+ 	u8 *bak_ref;
+-- 
+2.43.0
+

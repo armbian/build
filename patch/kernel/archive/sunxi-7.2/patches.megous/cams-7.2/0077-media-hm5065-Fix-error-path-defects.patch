@@ -1,0 +1,98 @@
+From 9eb8737c8bee1890cac454395220e641fc4265d9 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 13:21:32 +0200
+Subject: [PATCH] media: hm5065: Fix error path defects
+
+A probe with neither the enable nor the reset pin described returned
+whatever happened to be in ret - zero - so the device counted as bound
+with nothing registered, and unbinding it dereferenced the clientdata
+that was never set. The optional gpio lookups were not checked at all,
+so a probe deferral came back as a valid-looking cookie and was later
+written to as if it were a pin. A regulator lookup failure leaked the
+media entity, the external clock had its rate changed while it was
+already running, and remove() destroyed the mutex the control handler
+was about to lock while being freed.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 29 ++++++++++++++++++++---------
+ 1 file changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 63cba8147a04..34c5e18633bb 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -1928,13 +1928,14 @@ static int hm5065_set_power(struct hm5065_dev *sensor, bool on)
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = clk_prepare_enable(sensor->xclk);
++		/* pick the rate before the clock starts, not while it runs */
++		ret = clk_set_rate(sensor->xclk, 24000000);
+ 		if (ret)
+ 			goto power_off;
+ 
+-		ret = clk_set_rate(sensor->xclk, 24000000);
++		ret = clk_prepare_enable(sensor->xclk);
+ 		if (ret)
+-			goto xclk_off;
++			goto power_off;
+ 
+ 		usleep_range(1000, 2000);
+ 		hm5065_chip_enable(sensor, false);
+@@ -2134,15 +2135,28 @@ static int hm5065_probe(struct i2c_client *client)
+ 
+ 	sensor->enable_gpio = devm_gpiod_get_optional(dev, "enable",
+ 							  GPIOD_OUT_LOW);
++	if (IS_ERR(sensor->enable_gpio)) {
++		dev_err(dev, "failed to get enable gpio\n");
++		return PTR_ERR(sensor->enable_gpio);
++	}
++
+ 	sensor->reset_gpio = devm_gpiod_get_optional(dev, "reset",
+ 						     GPIOD_OUT_HIGH);
++	if (IS_ERR(sensor->reset_gpio)) {
++		dev_err(dev, "failed to get reset gpio\n");
++		return PTR_ERR(sensor->reset_gpio);
++	}
+ 
+ 	if (!sensor->enable_gpio && !sensor->reset_gpio) {
+ 		dev_err(dev,
+ 			"either chip enable or reset pin must be configured\n");
+-		return ret;
++		return -EINVAL;
+ 	}
+ 
++	ret = hm5065_get_regulators(sensor);
++	if (ret)
++		return ret;
++
+ 	v4l2_i2c_subdev_init(&sensor->sd, client, &hm5065_subdev_ops);
+ 
+ 	sensor->sd.flags = V4L2_SUBDEV_FL_HAS_DEVNODE;
+@@ -2152,10 +2166,6 @@ static int hm5065_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = hm5065_get_regulators(sensor);
+-	if (ret)
+-		return ret;
+-
+ 	mutex_init(&sensor->lock);
+ 
+ 	ret = hm5065_init_controls(sensor);
+@@ -2182,9 +2192,10 @@ static void hm5065_remove(struct i2c_client *client)
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 
+ 	v4l2_async_unregister_subdev(&sensor->sd);
+-	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
++	/* the handler locks sensor->lock, so it goes before the destroy */
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
++	mutex_destroy(&sensor->lock);
+ }
+ 
+ static const struct i2c_device_id hm5065_id[] = {
+-- 
+2.43.0
+

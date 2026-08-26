@@ -1,0 +1,96 @@
+From 8341859513b9c3809a3611cbba353fde1ca04dd5 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:08:41 +0200
+Subject: [PATCH] media: hm5065: Add manual exposure time via the compiled
+ manual mode
+
+Next to the direct manual mode (integration lines and gains by hand)
+the MCU offers a compiled manual mode: the host asks for an exposure
+time in microseconds and the firmware works out the integration and
+gains within the frame timing. Map it to the shutter priority mode of
+the exposure menu with a new EXPOSURE_ABSOLUTE control providing the
+time in the standard 100us units.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 40 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 32 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 2b6ab2d9963a..8061d7f970ef 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -529,6 +529,7 @@ struct hm5065_ctrls {
+ 		struct v4l2_ctrl *d_gain;
+ 		struct v4l2_ctrl *a_gain;
+ 	};
++	struct v4l2_ctrl *exposure_absolute;
+ 	struct v4l2_ctrl *metering;
+ 	struct v4l2_ctrl *exposure_bias;
+ 	struct {
+@@ -895,10 +896,23 @@ static int hm5065_set_exposure(struct hm5065_dev *sensor)
+ 	int ret = 0;
+ 
+ 	if (ctrls->auto_exposure->is_new) {
+-		ret = cci_write(sensor->regmap, HM5065_REG_EXPOSURE_MODE,
+-				is_auto ?
+-				HM5065_REG_EXPOSURE_MODE_AUTO :
+-				HM5065_REG_EXPOSURE_MODE_DIRECT_MANUAL, NULL);
++		u8 mode;
++
++		switch (ctrls->auto_exposure->val) {
++		case V4L2_EXPOSURE_AUTO:
++			mode = HM5065_REG_EXPOSURE_MODE_AUTO;
++			break;
++		case V4L2_EXPOSURE_SHUTTER_PRIORITY:
++			/* manual exposure time, the MCU compiles the rest */
++			mode = HM5065_REG_EXPOSURE_MODE_COMPILED_MANUAL;
++			break;
++		default:
++			mode = HM5065_REG_EXPOSURE_MODE_DIRECT_MANUAL;
++			break;
++		}
++
++		ret = cci_write(sensor->regmap, HM5065_REG_EXPOSURE_MODE, mode,
++				NULL);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -1097,6 +1111,12 @@ static int hm5065_s_ctrl_do(struct hm5065_dev *sensor,
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		return hm5065_set_exposure(sensor);
+ 
++	case V4L2_CID_EXPOSURE_ABSOLUTE:
++		/* the control unit is 100us, the register wants microseconds */
++		return cci_write(sensor->regmap,
++				 HM5065_REG_MANUAL_EXPOSURE_TIME_US,
++				 hm5065_mili_to_fp16(val * 100000), NULL);
++
+ 	case V4L2_CID_EXPOSURE_METERING:
+ 		if (val == V4L2_EXPOSURE_METERING_AVERAGE)
+ 			reg = HM5065_REG_EXPOSURE_METERING_FLAT;
+@@ -1240,13 +1260,17 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+-	ctrls->auto_exposure = v4l2_ctrl_new_std_menu(hdl, ops,
+-						      V4L2_CID_EXPOSURE_AUTO,
+-						      V4L2_EXPOSURE_MANUAL, 0,
+-						      V4L2_EXPOSURE_AUTO);
++	ctrls->auto_exposure =
++		v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_EXPOSURE_AUTO,
++				       V4L2_EXPOSURE_SHUTTER_PRIORITY, 0,
++				       V4L2_EXPOSURE_AUTO);
+ 	ctrls->exposure = v4l2_ctrl_new_std(hdl, ops,
+ 					    V4L2_CID_EXPOSURE,
+ 					    1, HM5065_SENSOR_HEIGHT, 1, 30);
++	/* in 100us units, applied in the shutter priority mode */
++	ctrls->exposure_absolute =
++		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE_ABSOLUTE,
++				  1, 10000, 1, 100);
+ 	ctrls->d_gain = v4l2_ctrl_new_std(hdl, ops,
+ 					  V4L2_CID_DIGITAL_GAIN,
+ 					  1000, 4000, 1, 1000);
+-- 
+2.43.0
+

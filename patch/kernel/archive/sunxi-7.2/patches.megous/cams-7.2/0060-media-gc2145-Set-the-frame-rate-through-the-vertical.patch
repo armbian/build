@@ -1,0 +1,432 @@
+From 96bd51ceac911df8d114431c39e69582918d9134 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:21:51 +0200
+Subject: [PATCH] media: gc2145: Set the frame rate through the vertical
+ blanking
+
+V4L2 describes the timing of a raw sensor as
+
+  frame interval = (width + hblank) * (height + vblank) / pixel_rate
+
+with the exposure counted in the same lines as vblank, and expects the
+frame rate to be set by moving vblank. This driver reported all three of
+those read-only and took the frame rate through .set_frame_interval
+instead, so the documented way of doing it did not work, and the numbers
+it did report described a mode it had already replaced.
+
+Make the vertical blanking writable and derive everything from it. The
+pixel rate stays fixed and the horizontal blanking keeps being picked to
+fit the mains period, so the line period is the same in every mode,
+which is what lets an exposure be carried from a preview to a still.
+
+The exposure control is now in output lines rather than raw register
+units. Those differ by a factor of two while rows are being skipped,
+because the register counts array row slots, and hiding that is what
+makes exposure * (width + hblank) / pixel_rate come out as the exposure
+time regardless of mode. Its range follows the vertical blanking.
+
+.set_frame_interval stays, reimplemented on top of the blanking so
+existing callers keep working, and .enum_frame_interval now reports the
+fastest interval a size can reach instead of a hardcoded 30fps.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 225 ++++++++++++++++++++++++++++---------
+ 1 file changed, 175 insertions(+), 50 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 731ca260f6af..010cc4fbf431 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -323,6 +323,32 @@ struct gc2145_tx_op {
+ 	u16 mask;
+ };
+ 
++struct gc2145_mode;
++
++struct gc2145_sensor_params {
++	const struct gc2145_mode *mode;
++	/*
++	 * Row skipping halves the time an array row slot takes, so the
++	 * exposure register, which counts those slots, has to be scaled by
++	 * it. Nothing else in the decimation chain changes the timing.
++	 */
++	unsigned int slots_per_line;
++	/* readout window, in pixel array coordinates */
++	unsigned long row_start;
++	unsigned long col_start;
++	unsigned long win_width;
++	unsigned long win_height;
++	/* timing */
++	unsigned long sh_delay;
++	unsigned long hb;
++	unsigned long vb;
++	unsigned long st;
++	unsigned long et;
++	/* size the sensor emits, what the blanking is relative to */
++	u32 out_width;
++	u32 out_height;
++};
++
+ struct gc2145_dev {
+ 	struct i2c_client *i2c_client;
+ 	struct v4l2_subdev sd;
+@@ -341,6 +367,9 @@ struct gc2145_dev {
+ 	struct v4l2_fract frame_interval;
+ 	struct gc2145_ctrls ctrls;
+ 
++	/* the timing the controls currently describe */
++	struct gc2145_sensor_params params;
++
+ 	/* mains frequency the row period is fitted to, in Hz */
+ 	unsigned long power_line_freq;
+ 
+@@ -862,6 +891,13 @@ static int gc2145_set_white_balance(struct gc2145_dev *sensor)
+ 
+ /* Exposure */
+ 
++/*
++ * The exposure register counts array row slots, of which there are
++ * slots_per_line in a V4L2 line, so the two differ whenever rows are
++ * being skipped. Keeping the control in V4L2 lines is what makes
++ * exposure * (width + hblank) / pixel_rate the exposure time in every
++ * mode, and so what lets an exposure be carried between modes.
++ */
+ static int gc2145_get_exposure(struct gc2145_dev *sensor)
+ {
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+@@ -877,7 +913,7 @@ static int gc2145_get_exposure(struct gc2145_dev *sensor)
+ 	if (ret)
+ 		return ret;
+ 
+-	ctrls->exposure->val = exp;
++	ctrls->exposure->val = exp / sensor->params.slots_per_line;
+ 	ctrls->d_gain->val = dgain;
+ 
+ 	return 0;
+@@ -904,7 +940,8 @@ static int gc2145_set_exposure(struct gc2145_dev *sensor)
+ 
+ 	if (!is_auto && ctrls->exposure->is_new)
+ 		gc2145_tx_write16(sensor, GC2145_P0_EXPOSURE_HI,
+-				  ctrls->exposure->val);
++				  ctrls->exposure->val *
++				  sensor->params.slots_per_line);
+ 
+ 	if (!is_auto && ctrls->d_gain->is_new)
+ 		gc2145_tx_write8(sensor, GC2145_P0_AUTO_PREGAIN,
+@@ -978,40 +1015,12 @@ gc2145_find_mode(const struct v4l2_rect *crop, u32 width, u32 height)
+ 	return best;
+ }
+ 
+-struct gc2145_sensor_params {
+-	const struct gc2145_mode *mode;
+-	/* readout window, in pixel array coordinates */
+-	unsigned long row_start;
+-	unsigned long col_start;
+-	unsigned long win_width;
+-	unsigned long win_height;
+-	/* timing */
+-	unsigned long sh_delay;
+-	unsigned long hb;
+-	unsigned long vb;
+-	unsigned long st;
+-	unsigned long et;
+-	/* size the sensor emits, what the blanking is relative to */
+-	u32 out_width;
+-	u32 out_height;
+-};
+-
+-/*
+- * Row skipping halves the time an array row slot takes, so the exposure
+- * register, which counts those slots, has to be scaled by it. Nothing
+- * else in the decimation chain changes the frame timing.
+- */
+-static unsigned int
+-gc2145_params_slots_per_line(struct gc2145_sensor_params *p)
+-{
+-	return p->mode->half ? 2 : 1;
+-}
+-
+ static void gc2145_params_init(struct gc2145_sensor_params *p,
+ 			       const struct gc2145_mode *mode,
+ 			       const struct v4l2_rect *crop)
+ {
+ 	p->mode = mode;
++	p->slots_per_line = mode->half ? 2 : 1;
+ 
+ 	/*
+ 	 * The readout window takes in the dummy pixels around the crop,
+@@ -1053,7 +1062,7 @@ gc2145_params_frame_period(struct gc2145_sensor_params *p)
+ {
+ 	return gc2145_params_row_period(p)
+ 		* gc2145_params_frame_lines(p)
+-		/ gc2145_params_slots_per_line(p);
++		/ p->slots_per_line;
+ }
+ 
+ /*
+@@ -1085,7 +1094,45 @@ static unsigned long
+ gc2145_params_vblank(struct gc2145_sensor_params *p)
+ {
+ 	return gc2145_params_frame_lines(p)
+-		/ gc2145_params_slots_per_line(p) - p->out_height;
++		/ p->slots_per_line - p->out_height;
++}
++
++/* the vertical blanking reachable with a given blanking register value */
++static unsigned long
++gc2145_params_vblank_for_vb(struct gc2145_sensor_params *p, unsigned long vb)
++{
++	return (vb + p->win_height) / p->slots_per_line
++		- p->out_height;
++}
++
++/* and back, rounded down to what the register can express */
++static unsigned long
++gc2145_params_vb_for_vblank(struct gc2145_sensor_params *p,
++			    unsigned long vblank)
++{
++	unsigned long lines = (p->out_height + vblank)
++		* p->slots_per_line;
++
++	if (lines < p->win_height)
++		return GC2145_VBLANK_REG_MIN;
++
++	return clamp(round_down(lines - p->win_height, 4),
++		     GC2145_VBLANK_REG_MIN, GC2145_VBLANK_REG_MAX);
++}
++
++/*
++ * The longest exposure that still fits in a frame. Beyond it the sensor
++ * stretches the frame to make room, which the frame interval no longer
++ * describes, so cap the control there.
++ */
++static unsigned long
++gc2145_params_exposure_max(struct gc2145_sensor_params *p,
++			   unsigned long vblank)
++{
++	unsigned int slots = p->slots_per_line;
++
++	return min(p->out_height + vblank,
++		   (unsigned long)GC2145_EXPOSURE_REG_MAX / slots);
+ }
+ 
+ static void gc2145_params_fit_hb(struct gc2145_sensor_params *p,
+@@ -1121,7 +1168,7 @@ static void gc2145_params_fit_vb(struct gc2145_sensor_params *p,
+ 
+ 	if (frame_period > fp)
+ 		p->vb = frame_period
+-			* gc2145_params_slots_per_line(p) / rt
++			* p->slots_per_line / rt
+ 			- p->win_height;
+ 
+ 	/* the vertical blanking register wants a multiple of four */
+@@ -1183,17 +1230,30 @@ gc2145_get_sensor_params(struct gc2145_dev *sensor,
+ static void gc2145_update_timing_ctrls(struct gc2145_dev *sensor,
+ 				       struct v4l2_subdev_state *state)
+ {
+-	struct gc2145_sensor_params params;
+-	unsigned long pclk;
++	struct gc2145_ctrls *ctrls = &sensor->ctrls;
++	struct gc2145_sensor_params *p = &sensor->params;
++	unsigned long pclk, vblank, vblank_min, vblank_max, hblank, exposure_max;
++
++	*p = gc2145_get_sensor_params(sensor, state,
++				      sensor->frame_interval.denominator, &pclk);
++
++	hblank = gc2145_params_hblank(p);
++	vblank = gc2145_params_vblank(p);
++	vblank_min = gc2145_params_vblank_for_vb(p, GC2145_VBLANK_REG_MIN);
++	vblank_max = gc2145_params_vblank_for_vb(p, GC2145_VBLANK_REG_MAX);
+ 
+-	params = gc2145_get_sensor_params(sensor, state,
+-					  sensor->frame_interval.denominator,
+-					  &pclk);
++	__v4l2_ctrl_modify_range(ctrls->pixel_rate,
++				 gc2145_params_pixel_rate(p, pclk),
++				 gc2145_params_pixel_rate(p, pclk), 1,
++				 gc2145_params_pixel_rate(p, pclk));
++	__v4l2_ctrl_modify_range(ctrls->hblank, hblank, hblank, 1, hblank);
++	__v4l2_ctrl_modify_range(ctrls->vblank, vblank_min, vblank_max, 1,
++				 vblank);
++	__v4l2_ctrl_s_ctrl(ctrls->vblank, vblank);
+ 
+-	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+-				 gc2145_params_pixel_rate(&params, pclk));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank, gc2145_params_hblank(&params));
+-	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank, gc2145_params_vblank(&params));
++	exposure_max = gc2145_params_exposure_max(p, vblank);
++	__v4l2_ctrl_modify_range(ctrls->exposure, 1, exposure_max, 1,
++				 min(ctrls->exposure->val, (s32)exposure_max));
+ }
+ 
+ /*
+@@ -1336,6 +1396,7 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	s32 val = ctrl->val;
++	unsigned long exposure_max;
+ 	unsigned int i;
+ 	int ret;
+ 	u8 test1, test2;
+@@ -1356,13 +1417,27 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 
+ 	case V4L2_CID_PIXEL_RATE:
+ 	case V4L2_CID_HBLANK:
+-	case V4L2_CID_VBLANK:
+ 		/*
+ 		 * Read-only controls that only ever carry values computed
+ 		 * from the mode. They still reach us through the internal
+ 		 * s_ctrl helpers used to update them.
+ 		 */
+ 		return 0;
++
++	case V4L2_CID_VBLANK:
++		/*
++		 * This is how the frame rate is set. Keep the longest
++		 * exposure that still fits in a frame in step with it.
++		 */
++		sensor->params.vb =
++			gc2145_params_vb_for_vblank(&sensor->params, val);
++
++		exposure_max = gc2145_params_exposure_max(&sensor->params,
++							  val);
++		__v4l2_ctrl_modify_range(ctrls->exposure, 1, exposure_max, 1,
++					 min(ctrls->exposure->val,
++					     (s32)exposure_max));
++		break;
+ 	}
+ 
+ 	/*
+@@ -1382,6 +1457,11 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		ret = gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
+ 		break;
+ 
++	case V4L2_CID_VBLANK:
++		ret = gc2145_write16(sensor, GC2145_P0_VBLANK_DELAY_HI,
++				     sensor->params.vb);
++		break;
++
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values)) {
+ 			dev_err(&sensor->i2c_client->dev, "ae bias out of range\n");
+@@ -1660,9 +1740,13 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->wb, V4L2_WHITE_BALANCE_MANUAL, false);
+ #endif
+ 
++	/*
++	 * The pixel rate is fixed and the horizontal blanking is picked to
++	 * fit the mains period, so only the vertical blanking is left for
++	 * a caller to set the frame rate with.
++	 */
+ 	ctrls->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+ 	ctrls->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+-	ctrls->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+ 
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
+ 			       true);
+@@ -2012,7 +2096,6 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 	unsigned long pclk2;
+ 	unsigned long width = fmt->width;
+ 	unsigned long height = fmt->height;
+-	unsigned long framerate = sensor->frame_interval.denominator;
+ 	const struct gc2145_pixfmt *pix_fmt;
+ 	unsigned long rt, ft, ft_rt;
+ 
+@@ -2023,7 +2106,14 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 		return -EINVAL;
+ 	}
+ 
+-	params = gc2145_get_sensor_params(sensor, state, framerate, &pclk2);
++	/*
++	 * The timing was worked out when the format, the crop or the frame
++	 * rate last changed, and the vertical blanking control may have
++	 * moved since, so use what the controls describe rather than
++	 * recomputing and undoing it.
++	 */
++	params = sensor->params;
++	pclk2 = GC2145_PCLK_RATE;
+ 
+ 	gc2145_params_apply(sensor, &params);
+ 
+@@ -2180,11 +2270,21 @@ static int gc2145_get_frame_interval(struct v4l2_subdev *sd,
+ 				     struct v4l2_subdev_frame_interval *fi)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct gc2145_ctrls *ctrls = &sensor->ctrls;
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
++	u64 lines;
+ 
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+ 
+-	fi->interval = sensor->frame_interval;
++	/* whatever the blanking controls currently describe */
++	lines = (u64)(fmt->width + ctrls->hblank->val)
++		* (fmt->height + ctrls->vblank->val);
++
++	fi->interval.numerator = 1;
++	fi->interval.denominator = div64_u64(*ctrls->pixel_rate->p_cur.p_s64 + lines / 2,
++					     lines);
+ 
+ 	return 0;
+ }
+@@ -2210,10 +2310,15 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 
+ 	sensor->frame_interval.numerator = 1;
+ 	sensor->frame_interval.denominator = fps;
+-	fi->interval = sensor->frame_interval;
+ 	sensor->pending_mode_change = true;
+ 
++	/*
++	 * The frame rate lives in the vertical blanking control. This is
++	 * only a way of setting it that predates that, so let it pick the
++	 * blanking and report back what was actually reached.
++	 */
+ 	gc2145_update_timing_ctrls(sensor, state);
++	gc2145_get_frame_interval(sd, state, fi);
+ 
+ 	return 0;
+ }
+@@ -2261,16 +2366,36 @@ static int gc2145_enum_frame_size(struct v4l2_subdev *sd,
+ 	return 0;
+ }
+ 
++/*
++ * The frame rate is continuous between the shortest frame the mode can
++ * produce and the longest the blanking register can reach, so there is
++ * nothing discrete to enumerate. Report the fastest one, and leave the
++ * rest to the vertical blanking control.
++ */
+ static int gc2145_enum_frame_interval(
+ 	struct v4l2_subdev *sd,
+ 	struct v4l2_subdev_state *sd_state,
+ 	struct v4l2_subdev_frame_interval_enum *fie)
+ {
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct gc2145_sensor_params params;
++	unsigned long pclk;
++	u64 lines;
++
+ 	if (fie->pad != 0 || fie->index > 0)
+ 		return -EINVAL;
+ 
++	params = gc2145_compute_params(sensor,
++				       v4l2_subdev_state_get_crop(sd_state, 0),
++				       fie->width, fie->height, 0, &pclk);
++
++	lines = (u64)(params.out_width + gc2145_params_hblank(&params))
++		* (params.out_height + gc2145_params_vblank(&params));
++
+ 	fie->interval.numerator = 1;
+-	fie->interval.denominator = 30;
++	fie->interval.denominator =
++		div64_u64(gc2145_params_pixel_rate(&params, pclk) + lines / 2,
++			  lines);
+ 
+ 	return 0;
+ }
+-- 
+2.43.0
+

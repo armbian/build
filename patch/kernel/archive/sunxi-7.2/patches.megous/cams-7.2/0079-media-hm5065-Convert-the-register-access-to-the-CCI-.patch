@@ -1,0 +1,1412 @@
+From 32c60f8b2b2930664caaea713d5b8f3ea5cf764a Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 13:29:46 +0200
+Subject: [PATCH] media: hm5065: Convert the register access to the CCI helpers
+
+The register map is exactly what v4l2-cci models - flat 16-bit
+addresses, 8/16/32-bit big-endian values - so the hand-rolled i2c
+transfer code and the three width-specific wrappers can go, and each
+register's width moves out of the comments and into its definition,
+where the access helpers enforce it. The chained-error style also
+collapses the long write ladders: the mode setup drops from eleven
+checked calls to a list.
+
+The firmware loader keeps its auto-increment batching through
+regmap_bulk_write, which still puts each run of consecutive registers
+on the wire as one transfer.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/Kconfig  |   1 +
+ drivers/media/i2c/hm5065.c | 869 ++++++++++++++-----------------------
+ 2 files changed, 331 insertions(+), 539 deletions(-)
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index b832f5ebd240..1e129c8a7dfc 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -851,6 +851,7 @@ source "drivers/media/i2c/et8ek8/Kconfig"
+ config VIDEO_HM5065
+ 	tristate "Himax HM5065 sensor support"
+ 	depends on I2C
++	select V4L2_CCI_I2C
+ 	select V4L2_FWNODE
+ 	select VIDEO_V4L2_SUBDEV_API
+ 	select MEDIA_CONTROLLER
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 1c746a79ff16..33182062ca04 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -20,11 +20,13 @@
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/of_device.h>
++#include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/types.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/regulator/consumer.h>
+ #include <media/v4l2-async.h>
++#include <media/v4l2-cci.h>
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-fwnode.h>
+@@ -40,16 +42,16 @@
+ 
+ /* {{{ Register definitions */
+ 
+-/* registers are assumed to be u8 unless otherwise specified */
++/* the CCI register macros encode each register's width */
+ 
+ /* device parameters */
+-#define HM5065_REG_DEVICE_ID			0x0000 /* u16 */
++#define HM5065_REG_DEVICE_ID			CCI_REG16(0x0000)
+ #define HM5065_REG_DEVICE_ID_VALUE		0x039e
+-#define HM5065_REG_FIRMWARE_VSN			0x0002
+-#define HM5065_REG_PATCH_VSN			0x0003
+-#define HM5065_REG_EXCLOCKLUT			0x0009 /* standby */
++#define HM5065_REG_FIRMWARE_VSN			CCI_REG8(0x0002)
++#define HM5065_REG_PATCH_VSN			CCI_REG8(0x0003)
++#define HM5065_REG_EXCLOCKLUT			CCI_REG8(0x0009) /* standby */
+ 
+-#define HM5065_REG_INT_EVENT_FLAG		0x000a
++#define HM5065_REG_INT_EVENT_FLAG		CCI_REG8(0x000a)
+ #define HM5065_REG_INT_EVENT_FLAG_OP_MODE	BIT(0)
+ #define HM5065_REG_INT_EVENT_FLAG_CAM_MODE	BIT(1)
+ #define HM5065_REG_INT_EVENT_FLAG_JPEG_STATUS	BIT(2)
+@@ -57,37 +59,37 @@
+ #define HM5065_REG_INT_EVENT_FLAG_AF_LOCKED	BIT(4)
+ 
+ /* mode manager */
+-#define HM5065_REG_USER_COMMAND			0x0010
++#define HM5065_REG_USER_COMMAND			CCI_REG8(0x0010)
+ #define HM5065_REG_USER_COMMAND_STOP		0x00
+ #define HM5065_REG_USER_COMMAND_RUN		0x01
+ #define HM5065_REG_USER_COMMAND_POWEROFF	0x02
+ 
+-#define HM5065_REG_STATE			0x0011
++#define HM5065_REG_STATE			CCI_REG8(0x0011)
+ #define HM5065_REG_STATE_RAW			0x10
+ #define HM5065_REG_STATE_IDLE			0x20
+ #define HM5065_REG_STATE_RUNNING		0x30
+ 
+-#define HM5065_REG_ACTIVE_PIPE_SETUP_BANK	0x0012
++#define HM5065_REG_ACTIVE_PIPE_SETUP_BANK	CCI_REG8(0x0012)
+ #define HM5065_REG_ACTIVE_PIPE_SETUP_BANK_0	0x00
+ #define HM5065_REG_ACTIVE_PIPE_SETUP_BANK_1	0x01
+ 
+-#define HM5065_REG_NUMBER_OF_FRAMES_STREAMED	0x0014 /* ro */
+-#define HM5065_REG_REQUIRED_STREAM_LENGTH	0x0015
++#define HM5065_REG_NUMBER_OF_FRAMES_STREAMED	CCI_REG8(0x0014) /* ro */
++#define HM5065_REG_REQUIRED_STREAM_LENGTH	CCI_REG8(0x0015)
+ 
+-#define HM5065_REG_CSI_ENABLE			0x0016 /* standby */
++#define HM5065_REG_CSI_ENABLE			CCI_REG8(0x0016) /* standby */
+ #define HM5065_REG_CSI_ENABLE_DISABLE		0x00
+ #define HM5065_REG_CSI_ENABLE_CSI2_1LANE	0x01
+ #define HM5065_REG_CSI_ENABLE_CSI2_2LANE	0x02
+ 
+ /* pipe setup bank 0 */
+-#define HM5065_REG_P0_SENSOR_MODE		0x0040
++#define HM5065_REG_P0_SENSOR_MODE		CCI_REG8(0x0040)
+ #define HM5065_REG_SENSOR_MODE_FULLSIZE		0x00
+ #define HM5065_REG_SENSOR_MODE_BINNING_2X2	0x01
+ #define HM5065_REG_SENSOR_MODE_BINNING_4X4	0x02
+ #define HM5065_REG_SENSOR_MODE_SUBSAMPLING_2X2	0x03
+ #define HM5065_REG_SENSOR_MODE_SUBSAMPLING_4X4	0x04
+ 
+-#define HM5065_REG_P0_IMAGE_SIZE		0x0041
++#define HM5065_REG_P0_IMAGE_SIZE		CCI_REG8(0x0041)
+ #define HM5065_REG_IMAGE_SIZE_5MP		0x00
+ #define HM5065_REG_IMAGE_SIZE_UXGA		0x01
+ #define HM5065_REG_IMAGE_SIZE_SXGA		0x02
+@@ -100,10 +102,10 @@
+ #define HM5065_REG_IMAGE_SIZE_QQCIF		0x09
+ #define HM5065_REG_IMAGE_SIZE_MANUAL		0x0a
+ 
+-#define HM5065_REG_P0_MANUAL_HSIZE		0x0042 /* u16 */
+-#define HM5065_REG_P0_MANUAL_VSIZE		0x0044 /* u16 */
++#define HM5065_REG_P0_MANUAL_HSIZE		CCI_REG16(0x0042)
++#define HM5065_REG_P0_MANUAL_VSIZE		CCI_REG16(0x0044)
+ 
+-#define HM5065_REG_P0_DATA_FORMAT		0x0046
++#define HM5065_REG_P0_DATA_FORMAT		CCI_REG8(0x0046)
+ #define HM5065_REG_DATA_FORMAT_YCBCR_JFIF       0x00
+ #define HM5065_REG_DATA_FORMAT_YCBCR_REC601     0x01
+ #define HM5065_REG_DATA_FORMAT_YCBCR_CUSTOM     0x02
+@@ -115,115 +117,115 @@
+ #define HM5065_REG_DATA_FORMAT_RAW10ITU8        0x08
+ #define HM5065_REG_DATA_FORMAT_JPEG             0x09
+ 
+-#define HM5065_REG_P0_GAMMA_GAIN		0x0049 /* 0-31 */
+-#define HM5065_REG_P0_GAMMA_INTERPOLATION	0x004a /* 0-16 */
+-#define HM5065_REG_P0_PEAKING_GAIN		0x004c /* 0-63 */
++#define HM5065_REG_P0_GAMMA_GAIN		CCI_REG8(0x0049) /* 0-31 */
++#define HM5065_REG_P0_GAMMA_INTERPOLATION	CCI_REG8(0x004a) /* 0-16 */
++#define HM5065_REG_P0_PEAKING_GAIN		CCI_REG8(0x004c) /* 0-63 */
+ 
+-#define HM5065_REG_P0_JPEG_SQUEEZE_MODE		0x004d
++#define HM5065_REG_P0_JPEG_SQUEEZE_MODE		CCI_REG8(0x004d)
+ #define HM5065_REG_JPEG_SQUEEZE_MODE_USER	0x00
+ #define HM5065_REG_JPEG_SQUEEZE_MODE_AUTO	0x01
+ 
+-#define HM5065_REG_P0_JPEG_TARGET_FILE_SIZE	0x004e /* u16, kB */
+-#define HM5065_REG_P0_JPEG_IMAGE_QUALITY	0x0050
++#define HM5065_REG_P0_JPEG_TARGET_FILE_SIZE	CCI_REG16(0x004e) /* kB */
++#define HM5065_REG_P0_JPEG_IMAGE_QUALITY	CCI_REG8(0x0050)
+ #define HM5065_REG_JPEG_IMAGE_QUALITY_HIGH	0x00
+ #define HM5065_REG_JPEG_IMAGE_QUALITY_MEDIUM	0x01
+ #define HM5065_REG_JPEG_IMAGE_QUALITY_LOW	0x02
+ 
+ /* pipe setup bank 1 (only register indexes) */
+-#define HM5065_REG_P1_SENSOR_MODE		0x0060
+-#define HM5065_REG_P1_IMAGE_SIZE		0x0061
+-#define HM5065_REG_P1_MANUAL_HSIZE		0x0062 /* u16 */
+-#define HM5065_REG_P1_MANUAL_VSIZE		0x0064 /* u16 */
+-#define HM5065_REG_P1_DATA_FORMAT		0x0066
+-#define HM5065_REG_P1_GAMMA_GAIN		0x0069 /* 0-31 */
+-#define HM5065_REG_P1_GAMMA_INTERPOLATION	0x006a /* 0-16 */
+-#define HM5065_REG_P1_PEAKING_GAIN		0x006c /* 0-63 */
+-#define HM5065_REG_P1_JPEG_SQUEEZE_MODE		0x006d
+-#define HM5065_REG_P1_JPEG_TARGET_FILE_SIZE	0x006e /* u16, kB */
+-#define HM5065_REG_P1_JPEG_IMAGE_QUALITY	0x0070
++#define HM5065_REG_P1_SENSOR_MODE		CCI_REG8(0x0060)
++#define HM5065_REG_P1_IMAGE_SIZE		CCI_REG8(0x0061)
++#define HM5065_REG_P1_MANUAL_HSIZE		CCI_REG16(0x0062)
++#define HM5065_REG_P1_MANUAL_VSIZE		CCI_REG16(0x0064)
++#define HM5065_REG_P1_DATA_FORMAT		CCI_REG8(0x0066)
++#define HM5065_REG_P1_GAMMA_GAIN		CCI_REG8(0x0069) /* 0-31 */
++#define HM5065_REG_P1_GAMMA_INTERPOLATION	CCI_REG8(0x006a) /* 0-16 */
++#define HM5065_REG_P1_PEAKING_GAIN		CCI_REG8(0x006c) /* 0-63 */
++#define HM5065_REG_P1_JPEG_SQUEEZE_MODE		CCI_REG8(0x006d)
++#define HM5065_REG_P1_JPEG_TARGET_FILE_SIZE	CCI_REG16(0x006e) /* kB */
++#define HM5065_REG_P1_JPEG_IMAGE_QUALITY	CCI_REG8(0x0070)
+ 
+ /* pipe setup - common registers */
+-#define HM5065_REG_CONTRAST			0x0080 /* 0-200 */
+-#define HM5065_REG_COLOR_SATURATION		0x0081 /* 0-200 */
+-#define HM5065_REG_BRIGHTNESS			0x0082 /* 0-200 */
+-#define HM5065_REG_HORIZONTAL_MIRROR		0x0083 /* 0,1 */
+-#define HM5065_REG_VERTICAL_FLIP		0x0084 /* 0,1 */
++#define HM5065_REG_CONTRAST			CCI_REG8(0x0080) /* 0-200 */
++#define HM5065_REG_COLOR_SATURATION		CCI_REG8(0x0081) /* 0-200 */
++#define HM5065_REG_BRIGHTNESS			CCI_REG8(0x0082) /* 0-200 */
++#define HM5065_REG_HORIZONTAL_MIRROR		CCI_REG8(0x0083) /* 0,1 */
++#define HM5065_REG_VERTICAL_FLIP		CCI_REG8(0x0084) /* 0,1 */
+ 
+-#define HM5065_REG_YCRCB_ORDER			0x0085
++#define HM5065_REG_YCRCB_ORDER			CCI_REG8(0x0085)
+ #define HM5065_REG_YCRCB_ORDER_CB_Y_CR_Y	0x00
+ #define HM5065_REG_YCRCB_ORDER_CR_Y_CB_Y	0x01
+ #define HM5065_REG_YCRCB_ORDER_Y_CB_Y_CR	0x02
+ #define HM5065_REG_YCRCB_ORDER_Y_CR_Y_CB	0x03
+ 
+ /* clock chain parameter inputs (floating point) */
+-#define HM5065_REG_EXTERNAL_CLOCK_FREQ_MHZ	0x00b0 /* fp16, 6-27, standby */
+-#define HM5065_REG_TARGET_PLL_OUTPUT	0x00b2 /* fp16, 450-1000, standby */
++#define HM5065_REG_EXTERNAL_CLOCK_FREQ_MHZ	CCI_REG16(0x00b0) /* fp16, 6-27, standby */
++#define HM5065_REG_TARGET_PLL_OUTPUT	CCI_REG16(0x00b2) /* fp16, 450-1000, standby */
+ 
+ /* static frame rate control */
+-#define HM5065_REG_DESIRED_FRAME_RATE_NUM	0x00c8 /* u16 */
+-#define HM5065_REG_DESIRED_FRAME_RATE_DEN	0x00ca
++#define HM5065_REG_DESIRED_FRAME_RATE_NUM	CCI_REG16(0x00c8)
++#define HM5065_REG_DESIRED_FRAME_RATE_DEN	CCI_REG8(0x00ca)
+ 
+ /* static frame rate status */
+-#define HM5065_REG_REQUESTED_FRAME_RATE_HZ	0x00d8 /* fp16 */
+-#define HM5065_REG_MAX_FRAME_RATE_HZ		0x00da /* fp16 */
+-#define HM5065_REG_MIN_FRAME_RATE_HZ		0x00dc /* fp16 */
++#define HM5065_REG_REQUESTED_FRAME_RATE_HZ	CCI_REG16(0x00d8) /* fp16 */
++#define HM5065_REG_MAX_FRAME_RATE_HZ		CCI_REG16(0x00da) /* fp16 */
++#define HM5065_REG_MIN_FRAME_RATE_HZ		CCI_REG16(0x00dc) /* fp16 */
+ 
+ /* exposure controls */
+-#define HM5065_REG_EXPOSURE_MODE			0x0128
++#define HM5065_REG_EXPOSURE_MODE			CCI_REG8(0x0128)
+ #define HM5065_REG_EXPOSURE_MODE_AUTO			0x00
+ #define HM5065_REG_EXPOSURE_MODE_COMPILED_MANUAL	0x01
+ #define HM5065_REG_EXPOSURE_MODE_DIRECT_MANUAL		0x02
+ 
+-#define HM5065_REG_EXPOSURE_METERING		0x0129
++#define HM5065_REG_EXPOSURE_METERING		CCI_REG8(0x0129)
+ #define HM5065_REG_EXPOSURE_METERING_FLAT	0x00
+ #define HM5065_REG_EXPOSURE_METERING_BACKLIT	0x01
+ #define HM5065_REG_EXPOSURE_METERING_CENTERED	0x02
+ 
+-#define HM5065_REG_MANUAL_EXPOSURE_TIME_NUM	0x012a
+-#define HM5065_REG_MANUAL_EXPOSURE_TIME_DEN	0x012b
+-#define HM5065_REG_MANUAL_EXPOSURE_TIME_US	0x012c /* fp16 */
+-#define HM5065_REG_COLD_START_DESIRED_TIME_US	0x012e /* fp16, standby */
+-#define HM5065_REG_EXPOSURE_COMPENSATION	0x0130 /* s8, -7 - +7 */
++#define HM5065_REG_MANUAL_EXPOSURE_TIME_NUM	CCI_REG8(0x012a)
++#define HM5065_REG_MANUAL_EXPOSURE_TIME_DEN	CCI_REG8(0x012b)
++#define HM5065_REG_MANUAL_EXPOSURE_TIME_US	CCI_REG16(0x012c) /* fp16 */
++#define HM5065_REG_COLD_START_DESIRED_TIME_US	CCI_REG16(0x012e) /* fp16, standby */
++#define HM5065_REG_EXPOSURE_COMPENSATION	CCI_REG8(0x0130) /* s8, -7 - +7 */
+ 
+-#define HM5065_REG_DIRECT_MODE_COARSE_INTEGRATION_LINES	0x0132 /* u16 */
+-#define HM5065_REG_DIRECT_MODE_FINE_INTEGRATION_PIXELS	0x0134 /* u16 */
+-#define HM5065_REG_DIRECT_MODE_CODED_ANALOG_GAIN	0x0136 /* u16 */
+-#define HM5065_REG_DIRECT_MODE_DIGITAL_GAIN		0x0138 /* fp16 */
+-#define HM5065_REG_FREEZE_AUTO_EXPOSURE			0x0142 /* 0,1 */
+-#define HM5065_REG_USER_MAXIMUM_INTEGRATION_TIME_US	0x0143 /* fp16 */
+-#define HM5065_REG_ANTI_FLICKER_MODE			0x0148 /* 0,1 */
++#define HM5065_REG_DIRECT_MODE_COARSE_INTEGRATION_LINES	CCI_REG16(0x0132)
++#define HM5065_REG_DIRECT_MODE_FINE_INTEGRATION_PIXELS	CCI_REG16(0x0134)
++#define HM5065_REG_DIRECT_MODE_CODED_ANALOG_GAIN	CCI_REG16(0x0136)
++#define HM5065_REG_DIRECT_MODE_DIGITAL_GAIN		CCI_REG16(0x0138) /* fp16 */
++#define HM5065_REG_FREEZE_AUTO_EXPOSURE			CCI_REG8(0x0142) /* 0,1 */
++#define HM5065_REG_USER_MAXIMUM_INTEGRATION_TIME_US	CCI_REG16(0x0143) /* fp16 */
++#define HM5065_REG_ANTI_FLICKER_MODE			CCI_REG8(0x0148) /* 0,1 */
+ 
+ /* exposure algorithm controls */
+-#define HM5065_REG_DIGITAL_GAIN_FLOOR			0x015c /* fp16 */
+-#define HM5065_REG_DIGITAL_GAIN_CEILING			0x015e /* fp16 */
+-#define HM5065_REG_ANALOG_GAIN_FLOOR			0x02c0 /* u16 */
+-#define HM5065_REG_ANALOG_GAIN_CEILING			0x02c2 /* u16 */
++#define HM5065_REG_DIGITAL_GAIN_FLOOR			CCI_REG16(0x015c) /* fp16 */
++#define HM5065_REG_DIGITAL_GAIN_CEILING			CCI_REG16(0x015e) /* fp16 */
++#define HM5065_REG_ANALOG_GAIN_FLOOR			CCI_REG16(0x02c0)
++#define HM5065_REG_ANALOG_GAIN_CEILING			CCI_REG16(0x02c2)
+ 
+ /* exposure status */
+-#define HM5065_REG_COARSE_INTEGRATION			0x017c /* u16 */
+-#define HM5065_REG_FINE_INTEGRATION_PENDING_PIXELS	0x017e /* u16 */
+-#define HM5065_REG_ANALOG_GAIN_PENDING			0x0180 /* fp16 */
+-#define HM5065_REG_DIGITAL_GAIN_PENDING			0x0182 /* fp16 */
+-#define HM5065_REG_DESIRED_EXPOSURE_TIME_US		0x0184 /* fp16 */
+-#define HM5065_REG_COMPILED_EXPOSURE_TIME_US		0x0186 /* fp16 */
+-#define HM5065_REG_USER_MAXIMUM_INTEGRATION_LINES	0x0189 /* u16 */
+-#define HM5065_REG_TOTAL_INTEGRATION_TIME_PENDING_US	0x018b /* fp16 */
+-#define HM5065_REG_CODED_ANALOG_GAIN_PENDING		0x018d /* u16 */
++#define HM5065_REG_COARSE_INTEGRATION			CCI_REG16(0x017c)
++#define HM5065_REG_FINE_INTEGRATION_PENDING_PIXELS	CCI_REG16(0x017e)
++#define HM5065_REG_ANALOG_GAIN_PENDING			CCI_REG16(0x0180) /* fp16 */
++#define HM5065_REG_DIGITAL_GAIN_PENDING			CCI_REG16(0x0182) /* fp16 */
++#define HM5065_REG_DESIRED_EXPOSURE_TIME_US		CCI_REG16(0x0184) /* fp16 */
++#define HM5065_REG_COMPILED_EXPOSURE_TIME_US		CCI_REG16(0x0186) /* fp16 */
++#define HM5065_REG_USER_MAXIMUM_INTEGRATION_LINES	CCI_REG16(0x0189)
++#define HM5065_REG_TOTAL_INTEGRATION_TIME_PENDING_US	CCI_REG16(0x018b) /* fp16 */
++#define HM5065_REG_CODED_ANALOG_GAIN_PENDING		CCI_REG16(0x018d)
+ 
+ /* flicker detect */
+-#define HM5065_REG_FD_ENABLE_DETECT			0x0190 /* 0,1 */
+-#define HM5065_REG_FD_DETECTION_START			0x0191 /* 0,1 */
+-#define HM5065_REG_FD_MAX_NUMBER_ATTEMP	0x0192 /* 0-255, 0 = continuous */
+-#define HM5065_REG_FD_FLICKER_IDENTIFICATION_THRESHOLD	0x0193 /* u16 */
+-#define HM5065_REG_FD_WIN_TIMES				0x0195
+-#define HM5065_REG_FD_FRAME_RATE_SHIFT_NUMBER		0x0196
+-#define HM5065_REG_FD_MANUAL_FREF_ENABLE		0x0197 /* 0,1 */
+-#define HM5065_REG_FD_MANU_FREF_100			0x0198 /* u16 */
+-#define HM5065_REG_FD_MANU_FREF_120			0x019a /* u16 */
+-#define HM5065_REG_FD_FLICKER_FREQUENCY			0x019c /* fp16 */
++#define HM5065_REG_FD_ENABLE_DETECT			CCI_REG8(0x0190) /* 0,1 */
++#define HM5065_REG_FD_DETECTION_START			CCI_REG8(0x0191) /* 0,1 */
++#define HM5065_REG_FD_MAX_NUMBER_ATTEMP	CCI_REG8(0x0192) /* 0 = continuous */
++#define HM5065_REG_FD_FLICKER_IDENTIFICATION_THRESHOLD	CCI_REG16(0x0193)
++#define HM5065_REG_FD_WIN_TIMES				CCI_REG8(0x0195)
++#define HM5065_REG_FD_FRAME_RATE_SHIFT_NUMBER		CCI_REG8(0x0196)
++#define HM5065_REG_FD_MANUAL_FREF_ENABLE		CCI_REG8(0x0197) /* 0,1 */
++#define HM5065_REG_FD_MANU_FREF_100			CCI_REG16(0x0198)
++#define HM5065_REG_FD_MANU_FREF_120			CCI_REG16(0x019a)
++#define HM5065_REG_FD_FLICKER_FREQUENCY			CCI_REG16(0x019c) /* fp16 */
+ 
+ /* white balance control */
+-#define HM5065_REG_WB_MODE			0x01a0
++#define HM5065_REG_WB_MODE			CCI_REG8(0x01a0)
+ #define HM5065_REG_WB_MODE_OFF			0x00
+ #define HM5065_REG_WB_MODE_AUTOMATIC		0x01
+ #define HM5065_REG_WB_MODE_AUTO_INSTANT		0x02
+@@ -235,35 +237,35 @@
+ #define HM5065_REG_WB_MODE_TUNGSTEN_PRESET	0x08
+ #define HM5065_REG_WB_MODE_HORIZON_PRESET	0x09
+ 
+-#define HM5065_REG_WB_MANUAL_RED_GAIN		0x01a1
+-#define HM5065_REG_WB_MANUAL_GREEN_GAIN		0x01a2
+-#define HM5065_REG_WB_MANUAL_BLUE_GAIN		0x01a3
++#define HM5065_REG_WB_MANUAL_RED_GAIN		CCI_REG8(0x01a1)
++#define HM5065_REG_WB_MANUAL_GREEN_GAIN		CCI_REG8(0x01a2)
++#define HM5065_REG_WB_MANUAL_BLUE_GAIN		CCI_REG8(0x01a3)
+ 
+-#define HM5065_REG_WB_MISC_SETTINGS		0x01a4
++#define HM5065_REG_WB_MISC_SETTINGS		CCI_REG8(0x01a4)
+ #define HM5065_REG_WB_MISC_SETTINGS_FREEZE_ALGO	BIT(2)
+ 
+-#define HM5065_REG_WB_HUE_R_BIAS		0x01a5 /* fp16 */
+-#define HM5065_REG_WB_HUE_B_BIAS		0x01a7 /* fp16 */
++#define HM5065_REG_WB_HUE_R_BIAS		CCI_REG16(0x01a5) /* fp16 */
++#define HM5065_REG_WB_HUE_B_BIAS		CCI_REG16(0x01a7) /* fp16 */
+ 
+-#define HM5065_REG_WB_STATUS			0x01c0
++#define HM5065_REG_WB_STATUS			CCI_REG8(0x01c0)
+ #define HM5065_REG_WB_STATUS_STABLE		BIT(0)
+ 
+-#define HM5065_REG_WB_NORM_RED_GAIN		0x01c8 /* fp16 */
+-#define HM5065_REG_WB_PART_RED_GAIN		0x01e0 /* fp16 */
+-#define HM5065_REG_WB_PART_GREEN_GAIN		0x01e2 /* fp16 */
+-#define HM5065_REG_WB_PART_BLUE_GAIN		0x01e4 /* fp16 */
++#define HM5065_REG_WB_NORM_RED_GAIN		CCI_REG16(0x01c8) /* fp16 */
++#define HM5065_REG_WB_PART_RED_GAIN		CCI_REG16(0x01e0) /* fp16 */
++#define HM5065_REG_WB_PART_GREEN_GAIN		CCI_REG16(0x01e2) /* fp16 */
++#define HM5065_REG_WB_PART_BLUE_GAIN		CCI_REG16(0x01e4) /* fp16 */
+ 
+ /* image stability status */
+-#define HM5065_REG_WHITE_BALANCE_STABLE		0x0291 /* 0,1 */
+-#define HM5065_REG_EXPOSURE_STABLE		0x0292 /* 0,1 */
+-#define HM5065_REG_STABLE			0x0294 /* 0,1 */
++#define HM5065_REG_WHITE_BALANCE_STABLE		CCI_REG8(0x0291) /* 0,1 */
++#define HM5065_REG_EXPOSURE_STABLE		CCI_REG8(0x0292) /* 0,1 */
++#define HM5065_REG_STABLE			CCI_REG8(0x0294) /* 0,1 */
+ 
+ /* special effects */
+-#define HM5065_REG_EFFECTS_NEGATIVE		0x0380 /* 0,1 */
+-#define HM5065_REG_EFFECTS_SOLARISING		0x0381 /* 0,1 */
+-#define HM5065_REG_EFFECTS_SKECTH		0x0382 /* 0,1 */
++#define HM5065_REG_EFFECTS_NEGATIVE		CCI_REG8(0x0380) /* 0,1 */
++#define HM5065_REG_EFFECTS_SOLARISING		CCI_REG8(0x0381) /* 0,1 */
++#define HM5065_REG_EFFECTS_SKECTH		CCI_REG8(0x0382) /* 0,1 */
+ 
+-#define HM5065_REG_EFFECTS_COLOR		0x0384
++#define HM5065_REG_EFFECTS_COLOR		CCI_REG8(0x0384)
+ #define HM5065_REG_EFFECTS_COLOR_NORMAL         0x00
+ #define HM5065_REG_EFFECTS_COLOR_RED_ONLY       0x01
+ #define HM5065_REG_EFFECTS_COLOR_YELLOW_ONLY    0x02
+@@ -278,13 +280,13 @@
+ /* anti-vignete, otp flash (skipped), page 79-89 */
+ 
+ /* flash control */
+-#define HM5065_REG_FLASH_MODE		0x02d0 /* 0,1 */
+-#define HM5065_REG_FLASH_RECOMMENDED	0x02d1 /* 0,1 */
++#define HM5065_REG_FLASH_MODE		CCI_REG8(0x02d0) /* 0,1 */
++#define HM5065_REG_FLASH_RECOMMENDED	CCI_REG8(0x02d1) /* 0,1 */
+ 
+ /* test pattern */
+-#define HM5065_REG_ENABLE_TEST_PATTERN	0x05d8 /* 0,1 */
++#define HM5065_REG_ENABLE_TEST_PATTERN	CCI_REG8(0x05d8) /* 0,1 */
+ 
+-#define HM5065_REG_TEST_PATTERN				0x05d9
++#define HM5065_REG_TEST_PATTERN				CCI_REG8(0x05d9)
+ #define HM5065_REG_TEST_PATTERN_NONE			0x00
+ #define HM5065_REG_TEST_PATTERN_HORIZONTAL_GREY_SCALE	0x01
+ #define HM5065_REG_TEST_PATTERN_VERTICAL_GREY_SCALE	0x02
+@@ -295,75 +297,75 @@
+ #define HM5065_REG_TEST_PATTERN_COLOR_BARS		0x07
+ #define HM5065_REG_TEST_PATTERN_GRADUATED_COLOR_BARS	0x08
+ 
+-#define HM5065_REG_TESTDATA_RED		0x4304 /* u16, 0-1023 */
+-#define HM5065_REG_TESTDATA_GREEN_R	0x4308 /* u16, 0-1023 */
+-#define HM5065_REG_TESTDATA_BLUE	0x430c /* u16, 0-1023 */
+-#define HM5065_REG_TESTDATA_GREEN_B	0x4310 /* u16, 0-1023 */
++#define HM5065_REG_TESTDATA_RED		CCI_REG16(0x4304) /* 0-1023 */
++#define HM5065_REG_TESTDATA_GREEN_R	CCI_REG16(0x4308) /* 0-1023 */
++#define HM5065_REG_TESTDATA_BLUE	CCI_REG16(0x430c) /* 0-1023 */
++#define HM5065_REG_TESTDATA_GREEN_B	CCI_REG16(0x4310) /* 0-1023 */
+ 
+ /* contrast stretch */
+-#define HM5065_REG_CS_ENABLE			0x05e8 /* 0,1 */
+-#define HM5065_REG_CS_GAIN_CEILING		0x05e9 /* fp16 */
+-#define HM5065_REG_CS_BLACK_OFFSET_CEILING	0x05eb
+-#define HM5065_REG_CS_WHITE_PIX_TARGET		0x05ec /* fp16 */
+-#define HM5065_REG_CS_BLACK_PIX_TARGET		0x05ee /* fp16 */
+-#define HM5065_REG_CS_ENABLED			0x05f8 /* 0,1 */
+-#define HM5065_REG_CS_TOTAL_PIXEL		0x05f9 /* fp16 */
+-#define HM5065_REG_CS_W_TARGET			0x05fb /* u32 */
+-#define HM5065_REG_CS_B_TARGET			0x05ff /* u32 */
+-#define HM5065_REG_CS_GAIN			0x0603 /* fp16 */
+-#define HM5065_REG_CS_BLACK_OFFSET		0x0605
+-#define HM5065_REG_CS_WHITE_LIMIT		0x0606
++#define HM5065_REG_CS_ENABLE			CCI_REG8(0x05e8) /* 0,1 */
++#define HM5065_REG_CS_GAIN_CEILING		CCI_REG16(0x05e9) /* fp16 */
++#define HM5065_REG_CS_BLACK_OFFSET_CEILING	CCI_REG8(0x05eb)
++#define HM5065_REG_CS_WHITE_PIX_TARGET		CCI_REG16(0x05ec) /* fp16 */
++#define HM5065_REG_CS_BLACK_PIX_TARGET		CCI_REG16(0x05ee) /* fp16 */
++#define HM5065_REG_CS_ENABLED			CCI_REG8(0x05f8) /* 0,1 */
++#define HM5065_REG_CS_TOTAL_PIXEL		CCI_REG16(0x05f9) /* fp16 */
++#define HM5065_REG_CS_W_TARGET			CCI_REG32(0x05fb)
++#define HM5065_REG_CS_B_TARGET			CCI_REG32(0x05ff)
++#define HM5065_REG_CS_GAIN			CCI_REG16(0x0603) /* fp16 */
++#define HM5065_REG_CS_BLACK_OFFSET		CCI_REG8(0x0605)
++#define HM5065_REG_CS_WHITE_LIMIT		CCI_REG8(0x0606)
+ 
+ /* preset controls */
+-#define HM5065_REG_PRESET_LOADER_ENABLE		0x0638 /* 0,1, standby */
++#define HM5065_REG_PRESET_LOADER_ENABLE		CCI_REG8(0x0638) /* 0,1, standby */
+ 
+-#define HM5065_REG_INDIVIDUAL_PRESET		0x0639 /* standby */
++#define HM5065_REG_INDIVIDUAL_PRESET		CCI_REG8(0x0639) /* standby */
+ #define HM5065_REG_INDIVIDUAL_PRESET_ANTIVIGNETTE	BIT(0)
+ #define HM5065_REG_INDIVIDUAL_PRESET_WHITE_BALANCE	BIT(1)
+ #define HM5065_REG_INDIVIDUAL_PRESET_VCM		BIT(4)
+ 
+ /* jpeg control parameters*/
+-#define HM5065_REG_JPEG_STATUS			0x0649
+-#define HM5065_REG_JPEG_RESTART			0x064a
+-#define HM5065_REG_JPEG_HI_SQUEEZE_VALUE	0x064b /* 5-255 (5 = max q.) */
+-#define HM5065_REG_JPEG_MED_SQUEEZE_VALUE	0x064c /* 5-255 */
+-#define HM5065_REG_JPEG_LOW_SQUEEZE_VALUE	0x064d /* 5-255 */
+-#define HM5065_REG_JPEG_LINE_LENGTH		0x064e /* u16, standby */
+-#define HM5065_REG_JPEG_CLOCK_RATIO		0x0650 /* 1-8, standby */
+-#define HM5065_REG_JPEG_THRES			0x0651 /* u16, standby */
+-#define HM5065_REG_JPEG_BYTE_SENT		0x0653 /* u32 */
++#define HM5065_REG_JPEG_STATUS			CCI_REG8(0x0649)
++#define HM5065_REG_JPEG_RESTART			CCI_REG8(0x064a)
++#define HM5065_REG_JPEG_HI_SQUEEZE_VALUE	CCI_REG8(0x064b) /* 5-255 (5 = max q.) */
++#define HM5065_REG_JPEG_MED_SQUEEZE_VALUE	CCI_REG8(0x064c) /* 5-255 */
++#define HM5065_REG_JPEG_LOW_SQUEEZE_VALUE	CCI_REG8(0x064d) /* 5-255 */
++#define HM5065_REG_JPEG_LINE_LENGTH		CCI_REG16(0x064e) /* standby */
++#define HM5065_REG_JPEG_CLOCK_RATIO		CCI_REG8(0x0650) /* 1-8, standby */
++#define HM5065_REG_JPEG_THRES			CCI_REG16(0x0651) /* standby */
++#define HM5065_REG_JPEG_BYTE_SENT		CCI_REG32(0x0653)
+ 
+ /* autofocus */
+ 
+-#define HM5065_REG_AF_WINDOWS_SYSTEM		0x065a
++#define HM5065_REG_AF_WINDOWS_SYSTEM		CCI_REG8(0x065a)
+ #define HM5065_REG_AF_WINDOWS_SYSTEM_7_ZONES	0x00
+ #define HM5065_REG_AF_WINDOWS_SYSTEM_1_ZONE	0x01
+ 
+-#define HM5065_REG_AF_H_RATIO_NUM		0x065b
+-#define HM5065_REG_AF_H_RATIO_DEN		0x065c
+-#define HM5065_REG_AF_V_RATIO_NUM		0x065d
+-#define HM5065_REG_AF_V_RATIO_DEN		0x065e
++#define HM5065_REG_AF_H_RATIO_NUM		CCI_REG8(0x065b)
++#define HM5065_REG_AF_H_RATIO_DEN		CCI_REG8(0x065c)
++#define HM5065_REG_AF_V_RATIO_NUM		CCI_REG8(0x065d)
++#define HM5065_REG_AF_V_RATIO_DEN		CCI_REG8(0x065e)
+ 
+-#define HM5065_REG_AF_RANGE			0x0709
++#define HM5065_REG_AF_RANGE			CCI_REG8(0x0709)
+ #define HM5065_REG_AF_RANGE_FULL		0x00
+ #define HM5065_REG_AF_RANGE_LANDSCAPE		0x01
+ #define HM5065_REG_AF_RANGE_MACRO		0x02
+ 
+-#define HM5065_REG_AF_MODE			0x070a
++#define HM5065_REG_AF_MODE			CCI_REG8(0x070a)
+ #define HM5065_REG_AF_MODE_MANUAL		0x00
+ #define HM5065_REG_AF_MODE_CONTINUOUS		0x01
+ #define HM5065_REG_AF_MODE_SINGLE		0x03
+ 
+-#define HM5065_REG_AF_MODE_STATUS		0x0720
++#define HM5065_REG_AF_MODE_STATUS		CCI_REG8(0x0720)
+ 
+-#define HM5065_REG_AF_COMMAND			0x070b
++#define HM5065_REG_AF_COMMAND			CCI_REG8(0x070b)
+ #define HM5065_REG_AF_COMMAND_NULL		0x00
+ #define HM5065_REG_AF_COMMAND_RELEASED_BUTTON	0x01
+ #define HM5065_REG_AF_COMMAND_HALF_BUTTON	0x02
+ #define HM5065_REG_AF_COMMAND_TAKE_SNAPSHOT	0x03
+ #define HM5065_REG_AF_COMMAND_REFOCUS		0x04
+ 
+-#define HM5065_REG_AF_LENS_COMMAND		0x070c
++#define HM5065_REG_AF_LENS_COMMAND		CCI_REG8(0x070c)
+ #define HM5065_REG_AF_LENS_COMMAND_NULL				0x00
+ #define HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_INFINITY	0x01
+ #define HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_MACRO		0x02
+@@ -373,23 +375,23 @@
+ #define HM5065_REG_AF_LENS_COMMAND_GOTO_TARGET_POSITION		0x07
+ #define HM5065_REG_AF_LENS_COMMAND_GOTO_HYPERFOCAL		0x0C
+ 
+-#define HM5065_REG_AF_MANUAL_STEP_SIZE		0x070d
+-#define HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE	0x0714
++#define HM5065_REG_AF_MANUAL_STEP_SIZE		CCI_REG8(0x070d)
++#define HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE	CCI_REG8(0x0714)
+ #define HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE_AF	BIT(0)
+ #define HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE_AE	BIT(1)
+ #define HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE_AWB	BIT(2)
+-#define HM5065_REG_AF_FACE_LOCATION_X_START	0x0715 /* u16 */
+-#define HM5065_REG_AF_FACE_LOCATION_X_SIZE	0x0717 /* u16 */
+-#define HM5065_REG_AF_FACE_LOCATION_Y_START	0x0719 /* u16 */
+-#define HM5065_REG_AF_FACE_LOCATION_Y_SIZE	0x071b /* u16 */
++#define HM5065_REG_AF_FACE_LOCATION_X_START	CCI_REG16(0x0715)
++#define HM5065_REG_AF_FACE_LOCATION_X_SIZE	CCI_REG16(0x0717)
++#define HM5065_REG_AF_FACE_LOCATION_Y_START	CCI_REG16(0x0719)
++#define HM5065_REG_AF_FACE_LOCATION_Y_SIZE	CCI_REG16(0x071b)
+ 
+-#define HM5065_REG_AF_IN_FOCUS			0x07ae /* ro 0,1 */
+-#define HM5065_REG_AF_IS_STABLE			0x0725 /* ro 0,1 */
++#define HM5065_REG_AF_IN_FOCUS			CCI_REG8(0x07ae) /* ro 0,1 */
++#define HM5065_REG_AF_IS_STABLE			CCI_REG8(0x0725) /* ro 0,1 */
+ 
+ /* reverse engineered registers */
+-#define HM5065_REG_BUS_DATA_FORMAT		0x7000
+-#define HM5065_REG_COLORSPACE			0x5200
+-#define HM5065_REG_BUS_CONFIG			0x7101
++#define HM5065_REG_BUS_DATA_FORMAT		CCI_REG8(0x7000)
++#define HM5065_REG_COLORSPACE			CCI_REG8(0x5200)
++#define HM5065_REG_BUS_CONFIG			CCI_REG8(0x7101)
+ #define HM5065_REG_BUS_CONFIG_BT656		0x24
+ #define HM5065_REG_BUS_CONFIG_PARALLEL_HH_VL	0x44
+ 
+@@ -547,6 +549,7 @@ struct hm5065_ctrls {
+ 
+ struct hm5065_dev {
+ 	struct i2c_client *i2c_client;
++	struct regmap *regmap;
+ 	struct v4l2_subdev sd;
+ 	struct media_pad pad;
+ 	struct v4l2_fwnode_endpoint ep; /* the parsed DT endpoint info */
+@@ -581,107 +584,6 @@ static inline struct v4l2_subdev *ctrl_to_sd(struct v4l2_ctrl *ctrl)
+ 
+ /* {{{ Register access helpers */
+ 
+-static int hm5065_write_regs(struct hm5065_dev *sensor, u16 start_index,
+-			     u8 *data, int data_size)
+-{
+-	struct i2c_client *client = sensor->i2c_client;
+-	struct i2c_msg msg;
+-	u8 buf[130];
+-	int ret;
+-
+-	if (data_size > sizeof(buf) - 2) {
+-		v4l2_err(&sensor->sd, "%s: oversized transfer (size=%d)\n",
+-			 __func__, data_size);
+-		return -EINVAL;
+-	}
+-
+-	buf[0] = start_index >> 8;
+-	buf[1] = start_index & 0xff;
+-	memcpy(buf + 2, data, data_size);
+-
+-	msg.addr = client->addr;
+-	msg.flags = client->flags;
+-	msg.buf = buf;
+-	msg.len = data_size + 2;
+-
+-	dev_dbg(&sensor->i2c_client->dev, "wr: %04x <= %*ph\n",
+-		(u32)start_index, data_size, data);
+-
+-	ret = i2c_transfer(client->adapter, &msg, 1);
+-	if (ret < 0) {
+-		v4l2_err(&sensor->sd,
+-			 "%s: error %d: start_index=%x, data=%*ph\n",
+-			 __func__, ret, (u32)start_index, data_size, data);
+-		return ret;
+-	}
+-
+-	return 0;
+-}
+-
+-static int hm5065_read_regs(struct hm5065_dev *sensor, u16 start_index,
+-			    u8 *data, int data_size)
+-{
+-	struct i2c_client *client = sensor->i2c_client;
+-	struct i2c_msg msg[2];
+-	u8 buf[2];
+-	int ret;
+-
+-	buf[0] = start_index >> 8;
+-	buf[1] = start_index & 0xff;
+-
+-	msg[0].addr = client->addr;
+-	msg[0].flags = client->flags;
+-	msg[0].buf = buf;
+-	msg[0].len = sizeof(buf);
+-
+-	msg[1].addr = client->addr;
+-	msg[1].flags = client->flags | I2C_M_RD;
+-	msg[1].buf = data;
+-	msg[1].len = data_size;
+-
+-	ret = i2c_transfer(client->adapter, msg, 2);
+-	if (ret < 0) {
+-		v4l2_err(&sensor->sd,
+-			 "%s: error %d: start_index=%x, data_size=%d\n",
+-			 __func__, ret, (u32)start_index, data_size);
+-		return ret;
+-	}
+-
+-	dev_dbg(&sensor->i2c_client->dev, "rd: %04x => %*ph\n",
+-		(u32)start_index, data_size, data);
+-
+-	return 0;
+-}
+-
+-static int hm5065_read(struct hm5065_dev *sensor, u16 reg, u8 *val)
+-{
+-	return hm5065_read_regs(sensor, reg, val, 1);
+-}
+-
+-static int hm5065_write(struct hm5065_dev *sensor, u16 reg, u8 val)
+-{
+-	return hm5065_write_regs(sensor, reg, &val, 1);
+-}
+-
+-static int hm5065_read16(struct hm5065_dev *sensor, u16 reg, u16 *val)
+-{
+-	int ret;
+-
+-	ret = hm5065_read_regs(sensor, reg, (u8 *)val, sizeof(*val));
+-	if (ret)
+-		return ret;
+-
+-	*val = be16_to_cpu(*val);
+-	return 0;
+-}
+-
+-static int hm5065_write16(struct hm5065_dev *sensor, u16 reg, u16 val)
+-{
+-	u16 tmp = cpu_to_be16(val);
+-
+-	return hm5065_write_regs(sensor, reg, (u8 *)&tmp, sizeof(tmp));
+-}
+-
+ /*
+  * The firmware format:
+  * <record 0>, ..., <record N - 1>
+@@ -728,7 +630,7 @@ static int hm5065_load_firmware(struct hm5065_dev *sensor, const char *name)
+ 		       len < sizeof(buf))
+ 			buf[len++] = list[i++].value;
+ 
+-		ret = hm5065_write_regs(sensor, start, buf, len);
++		ret = regmap_bulk_write(sensor->regmap, start, buf, len);
+ 		if (ret)
+ 			goto err_release;
+ 	}
+@@ -799,10 +701,10 @@ static u16 hm5065_mili_to_fp16(s32 val)
+ static int hm5065_get_af_status(struct hm5065_dev *sensor)
+ {
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+-	u8 is_stable, mode;
++	u64 is_stable, mode;
+ 	int ret;
+ 
+-	ret = hm5065_read(sensor, HM5065_REG_AF_MODE_STATUS, &mode);
++	ret = cci_read(sensor->regmap, HM5065_REG_AF_MODE_STATUS, &mode, NULL);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -811,7 +713,8 @@ static int hm5065_get_af_status(struct hm5065_dev *sensor)
+ 		return 0;
+ 	}
+ 
+-	ret = hm5065_read(sensor, HM5065_REG_AF_IS_STABLE, &is_stable);
++	ret = cci_read(sensor->regmap, HM5065_REG_AF_IS_STABLE, &is_stable,
++		       NULL);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -828,19 +731,14 @@ static int hm5065_get_af_status(struct hm5065_dev *sensor)
+ static int hm5065_get_exposure(struct hm5065_dev *sensor)
+ {
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+-	u16 again, dgain, exp;
+-	int ret;
+-
+-	ret = hm5065_read16(sensor, HM5065_REG_CODED_ANALOG_GAIN_PENDING,
+-			    &again);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_read16(sensor, HM5065_REG_DIGITAL_GAIN_PENDING, &dgain);
+-	if (ret)
+-		return ret;
++	u64 again, dgain, exp;
++	int ret = 0;
+ 
+-	ret = hm5065_read16(sensor, HM5065_REG_COARSE_INTEGRATION, &exp);
++	cci_read(sensor->regmap, HM5065_REG_CODED_ANALOG_GAIN_PENDING,
++		 &again, &ret);
++	cci_read(sensor->regmap, HM5065_REG_DIGITAL_GAIN_PENDING, &dgain,
++		 &ret);
++	cci_read(sensor->regmap, HM5065_REG_COARSE_INTEGRATION, &exp, &ret);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -894,51 +792,31 @@ static const u8 hm5065_wb_opts[][2] = {
+ 
+ static int hm5065_set_power_line_frequency(struct hm5065_dev *sensor, s32 val)
+ {
++	struct regmap *map = sensor->regmap;
++	int ret = 0;
+ 	u16 freq;
+-	int ret;
+ 
+ 	switch (val) {
+ 	case V4L2_CID_POWER_LINE_FREQUENCY_DISABLED:
+-		ret = hm5065_write(sensor, HM5065_REG_ANTI_FLICKER_MODE, 0);
+-		if (ret)
+-			return ret;
+-
+-		return hm5065_write(sensor, HM5065_REG_FD_ENABLE_DETECT, 0);
++		cci_write(map, HM5065_REG_ANTI_FLICKER_MODE, 0, &ret);
++		cci_write(map, HM5065_REG_FD_ENABLE_DETECT, 0, &ret);
++		return ret;
+ 	case V4L2_CID_POWER_LINE_FREQUENCY_50HZ:
+ 	case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
+-		ret = hm5065_write(sensor, HM5065_REG_ANTI_FLICKER_MODE, 1);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_FD_ENABLE_DETECT, 0);
+-		if (ret)
+-			return ret;
+-
+ 		freq = (val == V4L2_CID_POWER_LINE_FREQUENCY_50HZ) ?
+ 			0x4b20 : 0x4bc0;
+ 
+-		return hm5065_write16(sensor, HM5065_REG_FD_FLICKER_FREQUENCY,
+-				      freq);
++		cci_write(map, HM5065_REG_ANTI_FLICKER_MODE, 1, &ret);
++		cci_write(map, HM5065_REG_FD_ENABLE_DETECT, 0, &ret);
++		cci_write(map, HM5065_REG_FD_FLICKER_FREQUENCY, freq, &ret);
++		return ret;
+ 	case V4L2_CID_POWER_LINE_FREQUENCY_AUTO:
+-		ret = hm5065_write(sensor, HM5065_REG_FD_ENABLE_DETECT, 1);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_ANTI_FLICKER_MODE, 1);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_FD_MAX_NUMBER_ATTEMP,
+-				   100);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write16(sensor, HM5065_REG_FD_FLICKER_FREQUENCY,
+-				     0);
+-		if (ret)
+-			return ret;
+-
+-		return hm5065_write(sensor, HM5065_REG_FD_DETECTION_START, 1);
++		cci_write(map, HM5065_REG_FD_ENABLE_DETECT, 1, &ret);
++		cci_write(map, HM5065_REG_ANTI_FLICKER_MODE, 1, &ret);
++		cci_write(map, HM5065_REG_FD_MAX_NUMBER_ATTEMP, 100, &ret);
++		cci_write(map, HM5065_REG_FD_FLICKER_FREQUENCY, 0, &ret);
++		cci_write(map, HM5065_REG_FD_DETECTION_START, 1, &ret);
++		return ret;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -946,46 +824,36 @@ static int hm5065_set_power_line_frequency(struct hm5065_dev *sensor, s32 val)
+ 
+ static int hm5065_set_colorfx(struct hm5065_dev *sensor, s32 val)
+ {
+-	int ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_EFFECTS_COLOR,
+-			   HM5065_REG_EFFECTS_COLOR_NORMAL);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_EFFECTS_NEGATIVE, 0);
+-	if (ret)
+-		return ret;
++	struct regmap *map = sensor->regmap;
++	int ret = 0;
+ 
+-	ret = hm5065_write(sensor, HM5065_REG_EFFECTS_SOLARISING, 0);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_EFFECTS_SKECTH, 0);
+-	if (ret)
+-		return ret;
++	cci_write(map, HM5065_REG_EFFECTS_COLOR,
++		  HM5065_REG_EFFECTS_COLOR_NORMAL, &ret);
++	cci_write(map, HM5065_REG_EFFECTS_NEGATIVE, 0, &ret);
++	cci_write(map, HM5065_REG_EFFECTS_SOLARISING, 0, &ret);
++	cci_write(map, HM5065_REG_EFFECTS_SKECTH, 0, &ret);
+ 
+ 	switch (val) {
+ 	case V4L2_COLORFX_NONE:
+-		return 0;
++		return ret;
+ 	case V4L2_COLORFX_NEGATIVE:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_NEGATIVE, 1);
++		return cci_write(map, HM5065_REG_EFFECTS_NEGATIVE, 1, &ret);
+ 	case V4L2_COLORFX_SOLARIZATION:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_SOLARISING, 1);
++		return cci_write(map, HM5065_REG_EFFECTS_SOLARISING, 1, &ret);
+ 	case V4L2_COLORFX_SKETCH:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_SKECTH, 1);
++		return cci_write(map, HM5065_REG_EFFECTS_SKECTH, 1, &ret);
+ 	case V4L2_COLORFX_ANTIQUE:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_COLOR,
+-				    HM5065_REG_EFFECTS_COLOR_ANTIQUE);
++		return cci_write(map, HM5065_REG_EFFECTS_COLOR,
++				 HM5065_REG_EFFECTS_COLOR_ANTIQUE, &ret);
+ 	case V4L2_COLORFX_SEPIA:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_COLOR,
+-				    HM5065_REG_EFFECTS_COLOR_SEPIA);
++		return cci_write(map, HM5065_REG_EFFECTS_COLOR,
++				 HM5065_REG_EFFECTS_COLOR_SEPIA, &ret);
+ 	case V4L2_COLORFX_AQUA:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_COLOR,
+-				    HM5065_REG_EFFECTS_COLOR_AQUA);
++		return cci_write(map, HM5065_REG_EFFECTS_COLOR,
++				 HM5065_REG_EFFECTS_COLOR_AQUA, &ret);
+ 	case V4L2_COLORFX_BW:
+-		return hm5065_write(sensor, HM5065_REG_EFFECTS_COLOR,
+-				    HM5065_REG_EFFECTS_COLOR_BLACK_WHITE);
++		return cci_write(map, HM5065_REG_EFFECTS_COLOR,
++				 HM5065_REG_EFFECTS_COLOR_BLACK_WHITE, &ret);
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -1008,10 +876,10 @@ static int hm5065_set_exposure(struct hm5065_dev *sensor)
+ 	int ret = 0;
+ 
+ 	if (ctrls->auto_exposure->is_new) {
+-		ret = hm5065_write(sensor, HM5065_REG_EXPOSURE_MODE,
+-				   is_auto ?
+-				   HM5065_REG_EXPOSURE_MODE_AUTO :
+-				   HM5065_REG_EXPOSURE_MODE_DIRECT_MANUAL);
++		ret = cci_write(sensor->regmap, HM5065_REG_EXPOSURE_MODE,
++				is_auto ?
++				HM5065_REG_EXPOSURE_MODE_AUTO :
++				HM5065_REG_EXPOSURE_MODE_DIRECT_MANUAL, NULL);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -1031,26 +899,20 @@ static int hm5065_set_exposure(struct hm5065_dev *sensor)
+ 		}
+ 	}
+ 
+-	if (!is_auto && ctrls->exposure->is_new) {
+-		ret = hm5065_write16(sensor,
+-			   HM5065_REG_DIRECT_MODE_COARSE_INTEGRATION_LINES,
+-			   ctrls->exposure->val);
+-		if (ret)
+-			return ret;
+-	}
++	if (!is_auto && ctrls->exposure->is_new)
++		cci_write(sensor->regmap,
++			  HM5065_REG_DIRECT_MODE_COARSE_INTEGRATION_LINES,
++			  ctrls->exposure->val, &ret);
+ 
+-	if (!is_auto && ctrls->d_gain->is_new) {
+-		ret = hm5065_write16(sensor,
+-				     HM5065_REG_DIRECT_MODE_DIGITAL_GAIN,
+-				     hm5065_mili_to_fp16(ctrls->d_gain->val));
+-		if (ret)
+-			return ret;
+-	}
++	if (!is_auto && ctrls->d_gain->is_new)
++		cci_write(sensor->regmap,
++			  HM5065_REG_DIRECT_MODE_DIGITAL_GAIN,
++			  hm5065_mili_to_fp16(ctrls->d_gain->val), &ret);
+ 
+ 	if (!is_auto && ctrls->a_gain->is_new)
+-		ret = hm5065_write16(sensor,
+-				     HM5065_REG_DIRECT_MODE_CODED_ANALOG_GAIN,
+-				     ctrls->a_gain->val);
++		cci_write(sensor->regmap,
++			  HM5065_REG_DIRECT_MODE_CODED_ANALOG_GAIN,
++			  ctrls->a_gain->val, &ret);
+ 
+ 	return ret;
+ }
+@@ -1062,21 +924,15 @@ static int hm5065_3a_lock(struct hm5065_dev *sensor, struct v4l2_ctrl *ctrl)
+ 	int ret = 0;
+ 
+ 	if ((ctrl->val ^ ctrl->cur.val) & V4L2_LOCK_EXPOSURE
+-	    && sensor->ctrls.auto_exposure->val == V4L2_EXPOSURE_AUTO) {
+-		ret = hm5065_write(sensor, HM5065_REG_FREEZE_AUTO_EXPOSURE,
+-				   ae_lock);
+-		if (ret)
+-			return ret;
+-	}
++	    && sensor->ctrls.auto_exposure->val == V4L2_EXPOSURE_AUTO)
++		cci_write(sensor->regmap, HM5065_REG_FREEZE_AUTO_EXPOSURE,
++			  ae_lock, &ret);
+ 
+ 	if (((ctrl->val ^ ctrl->cur.val) & V4L2_LOCK_WHITE_BALANCE)
+-	    && sensor->ctrls.wb->val == V4L2_WHITE_BALANCE_AUTO) {
+-		ret = hm5065_write(sensor, HM5065_REG_WB_MISC_SETTINGS,
+-				   awb_lock ?
+-				   HM5065_REG_WB_MISC_SETTINGS_FREEZE_ALGO : 0);
+-		if (ret)
+-			return ret;
+-	}
++	    && sensor->ctrls.wb->val == V4L2_WHITE_BALANCE_AUTO)
++		cci_write(sensor->regmap, HM5065_REG_WB_MISC_SETTINGS,
++			  awb_lock ?
++			  HM5065_REG_WB_MISC_SETTINGS_FREEZE_ALGO : 0, &ret);
+ 
+ 	return ret;
+ }
+@@ -1085,6 +941,7 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ {
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+ 	bool auto_focus = ctrls->focus_auto->val;
++	struct regmap *map = sensor->regmap;
+ 	int ret = 0;
+ 	u8 range;
+ 
+@@ -1103,9 +960,7 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ 			return -EINVAL;
+ 		}
+ 
+-		ret = hm5065_write(sensor, HM5065_REG_AF_RANGE, range);
+-		if (ret)
+-			return ret;
++		cci_write(map, HM5065_REG_AF_RANGE, range, &ret);
+ 	}
+ 
+ 	if (ctrls->focus_auto->is_new) {
+@@ -1113,80 +968,51 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ 		v4l2_ctrl_activate(ctrls->af_stop, !auto_focus);
+ 		v4l2_ctrl_activate(ctrls->focus_relative, !auto_focus);
+ 
+-		ret = hm5065_write(sensor, HM5065_REG_AF_MODE,
+-				   auto_focus ?
+-				   HM5065_REG_AF_MODE_CONTINUOUS :
+-				   HM5065_REG_AF_MODE_SINGLE);
+-		if (ret)
+-			return ret;
++		cci_write(map, HM5065_REG_AF_MODE,
++			  auto_focus ?
++			  HM5065_REG_AF_MODE_CONTINUOUS :
++			  HM5065_REG_AF_MODE_SINGLE, &ret);
+ 
+-		if (!auto_focus) {
+-			ret = hm5065_write(sensor, HM5065_REG_AF_COMMAND,
+-					 HM5065_REG_AF_COMMAND_RELEASED_BUTTON);
+-			if (ret)
+-				return ret;
+-		}
++		if (!auto_focus)
++			cci_write(map, HM5065_REG_AF_COMMAND,
++				  HM5065_REG_AF_COMMAND_RELEASED_BUTTON, &ret);
+ 	}
+ 
+ 	if (!auto_focus && ctrls->af_start->is_new) {
+-		ret = hm5065_write(sensor, HM5065_REG_AF_MODE,
+-				   HM5065_REG_AF_MODE_SINGLE);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_AF_COMMAND,
+-				   HM5065_REG_AF_COMMAND_RELEASED_BUTTON);
++		cci_write(map, HM5065_REG_AF_MODE,
++			  HM5065_REG_AF_MODE_SINGLE, &ret);
++		cci_write(map, HM5065_REG_AF_COMMAND,
++			  HM5065_REG_AF_COMMAND_RELEASED_BUTTON, &ret);
+ 		if (ret)
+ 			return ret;
+ 
+ 		usleep_range(190000, 200000);
+ 
+-		ret = hm5065_write(sensor, HM5065_REG_AF_COMMAND,
+-				   HM5065_REG_AF_COMMAND_HALF_BUTTON);
+-		if (ret)
+-			return ret;
++		cci_write(map, HM5065_REG_AF_COMMAND,
++			  HM5065_REG_AF_COMMAND_HALF_BUTTON, &ret);
+ 	}
+ 
+ 	if (!auto_focus && ctrls->af_stop->is_new) {
+-		ret = hm5065_write(sensor, HM5065_REG_AF_COMMAND,
+-				   HM5065_REG_AF_COMMAND_RELEASED_BUTTON);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_AF_MODE,
+-				   HM5065_REG_AF_MODE_MANUAL);
+-		if (ret)
+-			return ret;
++		cci_write(map, HM5065_REG_AF_COMMAND,
++			  HM5065_REG_AF_COMMAND_RELEASED_BUTTON, &ret);
++		cci_write(map, HM5065_REG_AF_MODE,
++			  HM5065_REG_AF_MODE_MANUAL, &ret);
+ 	}
+ 
+ 	if (!auto_focus && ctrls->focus_relative->is_new &&
+ 	    ctrls->focus_relative->val) {
+-		u8 cmd = 0xff;
+ 		s32 step = ctrls->focus_relative->val;
+ 
+ 		ctrls->focus_relative->val = 0;
+ 
+-		ret = hm5065_write(sensor, HM5065_REG_AF_MODE,
+-				   HM5065_REG_AF_MODE_MANUAL);
+-		if (ret)
+-			return ret;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_AF_MANUAL_STEP_SIZE,
+-				   abs(step));
+-		if (ret)
+-			return ret;
+-
+-		if (step < 0)
+-			cmd = HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_INFINITY;
+-		else if (step > 0)
+-			cmd = HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_MACRO;
+-
+-		if (cmd != 0xff)
+-			ret = hm5065_write(sensor, HM5065_REG_AF_LENS_COMMAND,
+-					   cmd);
+-
+-		if (ret)
+-			return ret;
++		cci_write(map, HM5065_REG_AF_MODE,
++			  HM5065_REG_AF_MODE_MANUAL, &ret);
++		cci_write(map, HM5065_REG_AF_MANUAL_STEP_SIZE, abs(step),
++			  &ret);
++		cci_write(map, HM5065_REG_AF_LENS_COMMAND,
++			  step < 0 ?
++			  HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_INFINITY :
++			  HM5065_REG_AF_LENS_COMMAND_MOVE_STEP_TO_MACRO, &ret);
+ 	}
+ 
+ 	return ret;
+@@ -1204,10 +1030,8 @@ static int hm5065_set_white_balance(struct hm5065_dev *sensor)
+ 			if (hm5065_wb_opts[i][0] != ctrls->wb->val)
+ 				continue;
+ 
+-			ret = hm5065_write(sensor, HM5065_REG_WB_MODE,
+-					    hm5065_wb_opts[i][1]);
+-			if (ret)
+-				return ret;
++			cci_write(sensor->regmap, HM5065_REG_WB_MODE,
++				  hm5065_wb_opts[i][1], &ret);
+ 			goto next;
+ 		}
+ 
+@@ -1217,16 +1041,14 @@ static int hm5065_set_white_balance(struct hm5065_dev *sensor)
+ next:
+ 	if (ctrls->wb->is_new || ctrls->blue_balance->is_new) {
+ 		val = manual_wb ? ctrls->blue_balance->val : 1000;
+-		ret = hm5065_write16(sensor, HM5065_REG_WB_HUE_B_BIAS,
+-				     hm5065_mili_to_fp16(val));
+-		if (ret)
+-			return ret;
++		cci_write(sensor->regmap, HM5065_REG_WB_HUE_B_BIAS,
++			  hm5065_mili_to_fp16(val), &ret);
+ 	}
+ 
+ 	if (ctrls->wb->is_new || ctrls->red_balance->is_new) {
+ 		val = manual_wb ? ctrls->red_balance->val : 1000;
+-		ret = hm5065_write16(sensor, HM5065_REG_WB_HUE_R_BIAS,
+-				     hm5065_mili_to_fp16(val));
++		cci_write(sensor->regmap, HM5065_REG_WB_HUE_R_BIAS,
++			  hm5065_mili_to_fp16(val), &ret);
+ 	}
+ 
+ 	return ret;
+@@ -1264,40 +1086,46 @@ static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		else
+ 			return -EINVAL;
+ 
+-		return hm5065_write(sensor, HM5065_REG_EXPOSURE_METERING, reg);
++		return cci_write(sensor->regmap, HM5065_REG_EXPOSURE_METERING,
++				 reg, NULL);
+ 
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values))
+ 			return -EINVAL;
+ 
+-		return hm5065_write(sensor, HM5065_REG_EXPOSURE_COMPENSATION,
+-				    (u8)ae_bias_menu_reg_values[val]);
++		return cci_write(sensor->regmap,
++				 HM5065_REG_EXPOSURE_COMPENSATION,
++				 (u8)ae_bias_menu_reg_values[val], NULL);
+ 
+ 	case V4L2_CID_FOCUS_AUTO:
+ 		return hm5065_set_auto_focus(sensor);
+ 
+ 	case V4L2_CID_CONTRAST:
+-		return hm5065_write(sensor, HM5065_REG_CONTRAST, val);
++		return cci_write(sensor->regmap, HM5065_REG_CONTRAST, val,
++				 NULL);
+ 
+ 	case V4L2_CID_SATURATION:
+-		return hm5065_write(sensor, HM5065_REG_COLOR_SATURATION, val);
++		return cci_write(sensor->regmap, HM5065_REG_COLOR_SATURATION,
++				 val, NULL);
+ 
+ 	case V4L2_CID_BRIGHTNESS:
+-		return hm5065_write(sensor, HM5065_REG_BRIGHTNESS, val);
++		return cci_write(sensor->regmap, HM5065_REG_BRIGHTNESS, val,
++				 NULL);
+ 
+ 	case V4L2_CID_POWER_LINE_FREQUENCY:
+ 		return hm5065_set_power_line_frequency(sensor, val);
+ 
+ 	case V4L2_CID_GAMMA:
+-		return hm5065_write(sensor, HM5065_REG_P0_GAMMA_GAIN, val);
++		return cci_write(sensor->regmap, HM5065_REG_P0_GAMMA_GAIN, val,
++				 NULL);
+ 
+ 	case V4L2_CID_VFLIP:
+-		return hm5065_write(sensor, HM5065_REG_VERTICAL_FLIP,
+-				    val ? 1 : 0);
++		return cci_write(sensor->regmap, HM5065_REG_VERTICAL_FLIP,
++				 val ? 1 : 0, NULL);
+ 
+ 	case V4L2_CID_HFLIP:
+-		return hm5065_write(sensor, HM5065_REG_HORIZONTAL_MIRROR,
+-				    val ? 1 : 0);
++		return cci_write(sensor->regmap, HM5065_REG_HORIZONTAL_MIRROR,
++				 val ? 1 : 0, NULL);
+ 
+ 	case V4L2_CID_COLORFX:
+ 		return hm5065_set_colorfx(sensor, val);
+@@ -1309,28 +1137,31 @@ static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		return hm5065_set_white_balance(sensor);
+ 
+ 	case V4L2_CID_TEST_PATTERN_RED:
+-		return hm5065_write16(sensor, HM5065_REG_TESTDATA_RED, val);
++		return cci_write(sensor->regmap, HM5065_REG_TESTDATA_RED, val,
++				 NULL);
+ 
+ 	case V4L2_CID_TEST_PATTERN_GREENR:
+-		return hm5065_write16(sensor, HM5065_REG_TESTDATA_GREEN_R, val);
++		return cci_write(sensor->regmap, HM5065_REG_TESTDATA_GREEN_R,
++				 val, NULL);
+ 
+ 	case V4L2_CID_TEST_PATTERN_BLUE:
+-		return hm5065_write16(sensor, HM5065_REG_TESTDATA_BLUE, val);
++		return cci_write(sensor->regmap, HM5065_REG_TESTDATA_BLUE, val,
++				 NULL);
+ 
+ 	case V4L2_CID_TEST_PATTERN_GREENB:
+-		return hm5065_write16(sensor, HM5065_REG_TESTDATA_GREEN_B, val);
++		return cci_write(sensor->regmap, HM5065_REG_TESTDATA_GREEN_B,
++				 val, NULL);
+ 
+ 	case V4L2_CID_TEST_PATTERN:
+ 		for (i = 0; i < ARRAY_SIZE(ctrls->test_data); i++)
+ 			v4l2_ctrl_activate(ctrls->test_data[i],
+ 					   val == 6); /* solid color */
+ 
+-		ret = hm5065_write(sensor, HM5065_REG_ENABLE_TEST_PATTERN,
+-				   val == 0 ? 0 : 1);
+-		if (ret)
+-			return ret;
+-
+-		return hm5065_write(sensor, HM5065_REG_TEST_PATTERN, val);
++		ret = 0;
++		cci_write(sensor->regmap, HM5065_REG_ENABLE_TEST_PATTERN,
++			  val == 0 ? 0 : 1, &ret);
++		cci_write(sensor->regmap, HM5065_REG_TEST_PATTERN, val, &ret);
++		return ret;
+ 
+ 	default:
+ 		return -EINVAL;
+@@ -1583,16 +1414,12 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ 	fi->interval = sensor->frame_interval;
+ 
+ 	if (sensor->streaming) {
+-		ret = hm5065_write16(sensor, HM5065_REG_DESIRED_FRAME_RATE_NUM,
+-				     fps);
+-		if (ret)
+-			goto err_unlock;
+-
+-		ret = hm5065_write(sensor, HM5065_REG_DESIRED_FRAME_RATE_DEN,
+-				   1);
++		cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_NUM,
++			  fps, &ret);
++		cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_DEN,
++			  1, &ret);
+ 	}
+ 
+-err_unlock:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
+ }
+@@ -1600,8 +1427,9 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ static int hm5065_setup_mode(struct hm5065_dev *sensor)
+ {
+ 	const struct hm5065_pixfmt *pix_fmt;
++	struct regmap *map = sensor->regmap;
+ 	u8 sensor_mode;
+-	int ret, fps;
++	int ret = 0, fps;
+ 
+ 	pix_fmt = hm5065_find_format(sensor->fmt.code);
+ 	if (!pix_fmt) {
+@@ -1610,11 +1438,6 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor)
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = hm5065_write(sensor, HM5065_REG_USER_COMMAND,
+-			   HM5065_REG_USER_COMMAND_POWEROFF);
+-	if (ret)
+-		return ret;
+-
+ 	switch (hm5065_get_max_binning(sensor->fmt.width, sensor->fmt.height)) {
+ 	case 4:
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_BINNING_4X4;
+@@ -1626,64 +1449,32 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor)
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_FULLSIZE;
+ 	}
+ 
+-	ret = hm5065_write(sensor, HM5065_REG_P0_SENSOR_MODE, sensor_mode);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write16(sensor, HM5065_REG_P0_MANUAL_HSIZE,
+-			     sensor->fmt.width);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write16(sensor, HM5065_REG_P0_MANUAL_VSIZE,
+-			     sensor->fmt.height);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_P0_IMAGE_SIZE,
+-			   HM5065_REG_IMAGE_SIZE_MANUAL);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_P0_DATA_FORMAT,
+-			   pix_fmt->data_fmt);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_YCRCB_ORDER,
+-			   pix_fmt->ycbcr_order);
+-	if (ret)
+-		return ret;
+-
+-	/* without this, brightness, contrast and saturation will not work */
+-	ret = hm5065_write(sensor, HM5065_REG_COLORSPACE, 9);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_BUS_DATA_FORMAT,
+-			   pix_fmt->fmt_setup);
+-	if (ret)
+-		return ret;
+-
+ 	fps = hm5065_get_max_fps(sensor->fmt.width, sensor->fmt.height);
+ 	fps = clamp(fps, 1, (int)sensor->frame_interval.denominator);
+ 
+-	ret = hm5065_write16(sensor, HM5065_REG_DESIRED_FRAME_RATE_NUM, fps);
+-	if (ret)
+-		return ret;
+-
+-	ret = hm5065_write(sensor, HM5065_REG_DESIRED_FRAME_RATE_DEN, 1);
+-	if (ret)
+-		return ret;
++	cci_write(map, HM5065_REG_USER_COMMAND,
++		  HM5065_REG_USER_COMMAND_POWEROFF, &ret);
++	cci_write(map, HM5065_REG_P0_SENSOR_MODE, sensor_mode, &ret);
++	cci_write(map, HM5065_REG_P0_MANUAL_HSIZE, sensor->fmt.width, &ret);
++	cci_write(map, HM5065_REG_P0_MANUAL_VSIZE, sensor->fmt.height, &ret);
++	cci_write(map, HM5065_REG_P0_IMAGE_SIZE,
++		  HM5065_REG_IMAGE_SIZE_MANUAL, &ret);
++	cci_write(map, HM5065_REG_P0_DATA_FORMAT, pix_fmt->data_fmt, &ret);
++	cci_write(map, HM5065_REG_YCRCB_ORDER, pix_fmt->ycbcr_order, &ret);
++	/* without this, brightness, contrast and saturation will not work */
++	cci_write(map, HM5065_REG_COLORSPACE, 9, &ret);
++	cci_write(map, HM5065_REG_BUS_DATA_FORMAT, pix_fmt->fmt_setup, &ret);
++	cci_write(map, HM5065_REG_DESIRED_FRAME_RATE_NUM, fps, &ret);
++	cci_write(map, HM5065_REG_DESIRED_FRAME_RATE_DEN, 1, &ret);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int hm5065_set_stream(struct hm5065_dev *sensor, int enable)
+ {
+-	return hm5065_write(sensor, HM5065_REG_USER_COMMAND, enable ?
+-			    HM5065_REG_USER_COMMAND_RUN :
+-			    HM5065_REG_USER_COMMAND_STOP);
++	return cci_write(sensor->regmap, HM5065_REG_USER_COMMAND, enable ?
++			 HM5065_REG_USER_COMMAND_RUN :
++			 HM5065_REG_USER_COMMAND_STOP, NULL);
+ }
+ 
+ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+@@ -1708,8 +1499,8 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ 			msleep(100);
+ 
+ 			/* checking error here is not super important */
+-			hm5065_write(sensor, HM5065_REG_AF_MODE,
+-				     HM5065_REG_AF_MODE_CONTINUOUS);
++			cci_write(sensor->regmap, HM5065_REG_AF_MODE,
++				  HM5065_REG_AF_MODE_CONTINUOUS, NULL);
+ 		}
+ 
+ 		sensor->streaming = !!enable;
+@@ -1869,11 +1660,11 @@ static void hm5065_chip_enable(struct hm5065_dev *sensor, bool enable)
+ static int hm5065_configure(struct hm5065_dev *sensor)
+ {
+ 	int ret;
+-	u16 device_id;
++	u64 device_id;
+ 	const struct hm5065_clk_lut *lut;
+ 	unsigned long xclk_freq;
+ 
+-	ret = hm5065_read16(sensor, HM5065_REG_DEVICE_ID, &device_id);
++	ret = cci_read(sensor->regmap, HM5065_REG_DEVICE_ID, &device_id, NULL);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1892,7 +1683,8 @@ static int hm5065_configure(struct hm5065_dev *sensor)
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = hm5065_write(sensor, HM5065_REG_EXCLOCKLUT, lut->lut_id);
++	ret = cci_write(sensor->regmap, HM5065_REG_EXCLOCKLUT, lut->lut_id,
++			NULL);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1907,15 +1699,10 @@ static int hm5065_configure(struct hm5065_dev *sensor)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (sensor->ep.bus_type == V4L2_MBUS_BT656) {
+-		ret = hm5065_write(sensor, HM5065_REG_BUS_CONFIG,
+-				   HM5065_REG_BUS_CONFIG_BT656);
+-	} else {
+-		ret = hm5065_write(sensor, HM5065_REG_BUS_CONFIG,
+-				   HM5065_REG_BUS_CONFIG_PARALLEL_HH_VL);
+-	}
+-
+-	return ret;
++	return cci_write(sensor->regmap, HM5065_REG_BUS_CONFIG,
++			 sensor->ep.bus_type == V4L2_MBUS_BT656 ?
++			 HM5065_REG_BUS_CONFIG_BT656 :
++			 HM5065_REG_BUS_CONFIG_PARALLEL_HH_VL, NULL);
+ }
+ 
+ static int hm5065_set_power(struct hm5065_dev *sensor, bool on)
+@@ -1998,7 +1785,7 @@ static int hm5065_g_register(struct v4l2_subdev *sd,
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	int ret;
+-	u8 val = 0;
++	u64 val = 0;
+ 
+ 	if (reg->reg > 0xffff)
+ 		return -EINVAL;
+@@ -2006,7 +1793,7 @@ static int hm5065_g_register(struct v4l2_subdev *sd,
+ 	reg->size = 1;
+ 
+ 	mutex_lock(&sensor->lock);
+-	ret = hm5065_read(sensor, reg->reg, &val);
++	ret = cci_read(sensor->regmap, CCI_REG8(reg->reg), &val, NULL);
+ 	mutex_unlock(&sensor->lock);
+ 	if (ret)
+ 		return -EIO;
+@@ -2025,7 +1812,7 @@ static int hm5065_s_register(struct v4l2_subdev *sd,
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&sensor->lock);
+-	ret = hm5065_write(sensor, reg->reg, reg->val);
++	ret = cci_write(sensor->regmap, CCI_REG8(reg->reg), reg->val, NULL);
+ 	mutex_unlock(&sensor->lock);
+ 
+ 	return ret;
+@@ -2091,6 +1878,10 @@ static int hm5065_probe(struct i2c_client *client)
+ 
+ 	sensor->i2c_client = client;
+ 
++	sensor->regmap = devm_cci_regmap_init_i2c(client, 16);
++	if (IS_ERR(sensor->regmap))
++		return PTR_ERR(sensor->regmap);
++
+ 	sensor->fmt.code = hm5065_formats[0].code;
+ 	sensor->fmt.width = 1280;
+ 	sensor->fmt.height = 720;
+-- 
+2.43.0
+

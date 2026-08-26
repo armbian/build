@@ -1,0 +1,432 @@
+From 366f0bd7fac6bb4c4a4315e210da0fd2d4440246 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 13:37:22 +0200
+Subject: [PATCH] media: sun6i-csi: Make the pattern generator a source in the
+ graph
+
+The generator is a source, so make it one: a sub-device with a source
+pad, linked to the bridge alongside whatever sensors are fitted. Enable
+that link instead of a sensor's and the pipeline runs with no sensor in
+it at all.
+
+Two things follow, and both are the point.
+
+Nothing has to be powered up. A sensor start is i2c traffic, a firmware
+handshake and an exposure settle, none of which produce anything a
+pattern run uses, and all of which are paid for on every capture.
+
+The sizes and codes on offer become the CSI's own rather than whatever
+the sensor happens to support. On this board that was three sizes and
+one code, because the sink format is validated against the source and
+the hm5065 reads out at three sizes. A generator fed from memory has no
+such limit, and the sub-device accepts anything the bridge does at any
+size it can carry.
+
+It also removes special cases rather than adding them: the bridge treats
+this like any other source, so it is started and stopped through the
+same path, and the format validates normally instead of being skipped.
+
+There is no device tree endpoint to describe a source that is not on any
+wires, so the bus configuration is filled in here. The polarities are
+the ones the bridge was measured working with; the width follows the
+format, since that is the one bus property the format has to reach the
+hardware through.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../platform/sunxi/sun6i-csi/sun6i_csi.c      | 268 +++++++++++++++++-
+ .../platform/sunxi/sun6i-csi/sun6i_csi.h      |  11 +
+ .../sunxi/sun6i-csi/sun6i_csi_bridge.c        |  14 +-
+ .../sunxi/sun6i-csi/sun6i_csi_bridge.h        |   4 +
+ 4 files changed, 295 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+index 38806a72f554..0e58e00e439f 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+@@ -27,18 +27,26 @@
+ #include "sun6i_csi_capture.h"
+ #include "sun6i_csi_reg.h"
+ 
++static int sun6i_csi_pattern_complete(struct sun6i_csi_device *csi_dev);
++
+ /* ISP */
+ 
+ int sun6i_csi_isp_complete(struct sun6i_csi_device *csi_dev,
+ 			   struct v4l2_device *v4l2_dev)
+ {
++	int ret;
++
+ 	if (csi_dev->v4l2_dev && csi_dev->v4l2_dev != v4l2_dev)
+ 		return -EINVAL;
+ 
+ 	csi_dev->v4l2_dev = v4l2_dev;
+ 	csi_dev->media_dev = v4l2_dev->mdev;
+ 
+-	return sun6i_csi_capture_setup(csi_dev);
++	ret = sun6i_csi_capture_setup(csi_dev);
++	if (ret)
++		return ret;
++
++	return sun6i_csi_pattern_complete(csi_dev);
+ }
+ 
+ static int sun6i_csi_isp_detect(struct sun6i_csi_device *csi_dev)
+@@ -541,6 +549,253 @@ static const struct file_operations sun6i_csi_pattern_data_fops = {
+ 	.llseek		= default_llseek,
+ };
+ 
++/* Pattern sub-device */
++
++#define SUN6I_CSI_PATTERN_NAME		"sun6i-csi-pattern"
++
++static inline struct sun6i_csi_device *
++sun6i_csi_pattern_dev(struct v4l2_subdev *subdev)
++{
++	return container_of(subdev, struct sun6i_csi_device, pattern.subdev);
++}
++
++/*
++ * The bus width is the one thing the format has to reach the bridge through,
++ * because the generator is not on any wires and so has no device tree
++ * endpoint saying how wide they are.
++ */
++static unsigned int sun6i_csi_pattern_bus_width(u32 mbus_code)
++{
++	switch (mbus_code) {
++	case MEDIA_BUS_FMT_SBGGR10_1X10:
++	case MEDIA_BUS_FMT_SGBRG10_1X10:
++	case MEDIA_BUS_FMT_SGRBG10_1X10:
++	case MEDIA_BUS_FMT_SRGGB10_1X10:
++		return 10;
++	case MEDIA_BUS_FMT_SBGGR12_1X12:
++	case MEDIA_BUS_FMT_SGBRG12_1X12:
++	case MEDIA_BUS_FMT_SGRBG12_1X12:
++	case MEDIA_BUS_FMT_SRGGB12_1X12:
++		return 12;
++	default:
++		return 8;
++	}
++}
++
++static int sun6i_csi_pattern_s_stream(struct v4l2_subdev *subdev, int on)
++{
++	struct sun6i_csi_device *csi_dev = sun6i_csi_pattern_dev(subdev);
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct v4l2_subdev_state *state;
++	int ret;
++
++	state = v4l2_subdev_lock_and_get_active_state(subdev);
++	csi_dev->bridge.source_pattern.endpoint.bus.parallel.bus_width =
++		sun6i_csi_pattern_bus_width(v4l2_subdev_state_get_format(state, 0)->code);
++	v4l2_subdev_unlock_state(state);
++
++	mutex_lock(&pattern->lock);
++
++	if (!on) {
++		regmap_update_bits(csi_dev->regmap, SUN6I_CSI_EN_REG,
++				   SUN6I_CSI_EN_PTN_GEN_EN, 0);
++		ret = 0;
++		goto complete;
++	}
++
++	if (!pattern->buffer) {
++		dev_err(csi_dev->dev, "no pattern buffer allocated\n");
++		ret = -ENODEV;
++		goto complete;
++	}
++
++	ret = sun6i_csi_pattern_arm(csi_dev);
++	if (ret)
++		goto complete;
++
++	/*
++	 * The generator stops after PTN_CYCLE+1 passes and the bit clears
++	 * itself, so a stream longer than that needs re-kicking. Nothing here
++	 * runs per frame, so start it at the maximum and let whoever wants
++	 * more frames than that kick it again through debugfs.
++	 */
++	regmap_update_bits(csi_dev->regmap, SUN6I_CSI_EN_REG,
++			   SUN6I_CSI_EN_PTN_START, SUN6I_CSI_EN_PTN_START);
++
++complete:
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++static const struct v4l2_subdev_video_ops sun6i_csi_pattern_video_ops = {
++	.s_stream	= sun6i_csi_pattern_s_stream,
++};
++
++static int
++sun6i_csi_pattern_enum_mbus_code(struct v4l2_subdev *subdev,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_mbus_code_enum *code_enum)
++{
++	const struct sun6i_csi_bridge_format *format =
++		sun6i_csi_bridge_format_by_index(code_enum->index);
++
++	if (!format)
++		return -EINVAL;
++
++	code_enum->code = format->mbus_code;
++
++	return 0;
++}
++
++/*
++ * Anything the bridge can accept, at any size it can carry: the whole point
++ * of the generator is that the input is not limited by what some sensor
++ * happens to offer.
++ */
++static int sun6i_csi_pattern_set_fmt(struct v4l2_subdev *subdev,
++				     struct v4l2_subdev_state *state,
++				     struct v4l2_subdev_format *format)
++{
++	struct v4l2_mbus_framefmt *mbus_format =
++		v4l2_subdev_state_get_format(state, 0);
++
++	if (!sun6i_csi_bridge_format_find(format->format.code))
++		mbus_format->code =
++			sun6i_csi_bridge_format_by_index(0)->mbus_code;
++	else
++		mbus_format->code = format->format.code;
++
++	mbus_format->width = clamp_t(u32, format->format.width,
++				     SUN6I_CSI_CAPTURE_WIDTH_MIN,
++				     SUN6I_CSI_CAPTURE_WIDTH_MAX);
++	mbus_format->height = clamp_t(u32, format->format.height,
++				      SUN6I_CSI_CAPTURE_HEIGHT_MIN,
++				      SUN6I_CSI_CAPTURE_HEIGHT_MAX);
++
++	mbus_format->field = V4L2_FIELD_NONE;
++	mbus_format->colorspace = V4L2_COLORSPACE_RAW;
++	mbus_format->quantization = V4L2_QUANTIZATION_DEFAULT;
++	mbus_format->xfer_func = V4L2_XFER_FUNC_DEFAULT;
++
++	format->format = *mbus_format;
++
++	return 0;
++}
++
++static int sun6i_csi_pattern_init_state(struct v4l2_subdev *subdev,
++					struct v4l2_subdev_state *state)
++{
++	struct v4l2_mbus_framefmt *mbus_format =
++		v4l2_subdev_state_get_format(state, 0);
++
++	mbus_format->code = sun6i_csi_bridge_format_by_index(0)->mbus_code;
++	mbus_format->width = 1280;
++	mbus_format->height = 720;
++	mbus_format->field = V4L2_FIELD_NONE;
++	mbus_format->colorspace = V4L2_COLORSPACE_RAW;
++
++	return 0;
++}
++
++static const struct v4l2_subdev_pad_ops sun6i_csi_pattern_pad_ops = {
++	.enum_mbus_code	= sun6i_csi_pattern_enum_mbus_code,
++	.get_fmt	= v4l2_subdev_get_fmt,
++	.set_fmt	= sun6i_csi_pattern_set_fmt,
++};
++
++static const struct v4l2_subdev_ops sun6i_csi_pattern_subdev_ops = {
++	.video	= &sun6i_csi_pattern_video_ops,
++	.pad	= &sun6i_csi_pattern_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops sun6i_csi_pattern_internal_ops = {
++	.init_state	= sun6i_csi_pattern_init_state,
++};
++
++static const struct media_entity_operations sun6i_csi_pattern_entity_ops = {
++	.link_validate	= v4l2_subdev_link_validate,
++};
++
++/*
++ * Registered once the v4l2 device is known, which with an ISP attached is not
++ * until the bridge's notifier binds something -- the same point the capture
++ * device is set up.
++ */
++static int sun6i_csi_pattern_complete(struct sun6i_csi_device *csi_dev)
++{
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct v4l2_subdev *subdev = &pattern->subdev;
++	struct device *dev = csi_dev->dev;
++	int ret;
++
++	if (pattern->registered)
++		return 0;
++
++	v4l2_subdev_init(subdev, &sun6i_csi_pattern_subdev_ops);
++	subdev->internal_ops = &sun6i_csi_pattern_internal_ops;
++	strscpy(subdev->name, SUN6I_CSI_PATTERN_NAME, sizeof(subdev->name));
++	subdev->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	subdev->owner = THIS_MODULE;
++	subdev->dev = dev;
++
++	v4l2_set_subdevdata(subdev, csi_dev);
++
++	subdev->entity.function = MEDIA_ENT_F_VID_MUX;
++	subdev->entity.ops = &sun6i_csi_pattern_entity_ops;
++
++	pattern->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&subdev->entity, 1, &pattern->pad);
++	if (ret < 0)
++		return ret;
++
++	ret = v4l2_subdev_init_finalize(subdev);
++	if (ret)
++		goto error_media_entity;
++
++	ret = v4l2_device_register_subdev(csi_dev->v4l2_dev, subdev);
++	if (ret) {
++		dev_err(dev, "failed to register pattern subdev: %d\n", ret);
++		goto error_subdev;
++	}
++
++	ret = media_create_pad_link(&subdev->entity, 0,
++				    &csi_dev->bridge.subdev.entity,
++				    SUN6I_CSI_BRIDGE_PAD_SINK, 0);
++	if (ret < 0) {
++		dev_err(dev, "failed to link the pattern to the bridge\n");
++		goto error_register;
++	}
++
++	/*
++	 * Not on any wires, so there is no endpoint in the device tree to
++	 * describe it. These are the polarities the bridge was measured
++	 * working with, and the width follows the format at stream time.
++	 */
++	csi_dev->bridge.source_pattern.subdev = subdev;
++	csi_dev->bridge.source_pattern.endpoint.bus_type = V4L2_MBUS_PARALLEL;
++	csi_dev->bridge.source_pattern.endpoint.bus.parallel.bus_width = 8;
++	csi_dev->bridge.source_pattern.endpoint.bus.parallel.flags =
++		V4L2_MBUS_HSYNC_ACTIVE_LOW | V4L2_MBUS_VSYNC_ACTIVE_HIGH |
++		V4L2_MBUS_PCLK_SAMPLE_FALLING;
++
++	pattern->registered = true;
++
++	return 0;
++
++error_register:
++	v4l2_device_unregister_subdev(subdev);
++
++error_subdev:
++	v4l2_subdev_cleanup(subdev);
++
++error_media_entity:
++	media_entity_cleanup(&subdev->entity);
++
++	return ret;
++}
++
+ static void sun6i_csi_pattern_setup(struct sun6i_csi_device *csi_dev)
+ {
+ 	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
+@@ -582,6 +837,13 @@ static void sun6i_csi_pattern_cleanup(struct sun6i_csi_device *csi_dev)
+ {
+ 	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
+ 
++	if (pattern->registered) {
++		v4l2_device_unregister_subdev(&pattern->subdev);
++		v4l2_subdev_cleanup(&pattern->subdev);
++		media_entity_cleanup(&pattern->subdev.entity);
++		pattern->registered = false;
++	}
++
+ 	/* Enabling took a runtime PM reference that has to go back. */
+ 	if (pattern->enabled) {
+ 		pattern->enabled = false;
+@@ -850,6 +1112,10 @@ static int sun6i_csi_probe(struct platform_device *platform_dev)
+ 		ret = sun6i_csi_capture_setup(csi_dev);
+ 		if (ret)
+ 			goto error_bridge;
++
++		ret = sun6i_csi_pattern_complete(csi_dev);
++		if (ret)
++			goto error_bridge;
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+index ff55e2614073..7182d529c516 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+@@ -46,6 +46,17 @@ struct sun6i_csi_v4l2 {
+ struct sun6i_csi_pattern {
+ 	struct mutex			lock; /* Buffer and register state. */
+ 
++	/*
++	 * The generator is a source in its own right, so it is one in the
++	 * graph too: link it to the bridge instead of a sensor and the
++	 * pipeline runs with no sensor in it at all -- nothing to power up,
++	 * nothing over i2c, and the sizes and codes on offer are the CSI's
++	 * rather than whatever sensor happens to be fitted.
++	 */
++	struct v4l2_subdev		subdev;
++	struct media_pad		pad;
++	bool				registered;
++
+ 	void				*buffer;
+ 	dma_addr_t			address;
+ 	size_t				size;
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+index 250273f17cba..017dc96a61dd 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+@@ -179,6 +179,16 @@ sun6i_csi_bridge_format_find(u32 mbus_code)
+ 	return NULL;
+ }
+ 
++/* For a source that can produce anything the bridge accepts. */
++const struct sun6i_csi_bridge_format *
++sun6i_csi_bridge_format_by_index(unsigned int index)
++{
++	if (index >= ARRAY_SIZE(sun6i_csi_bridge_formats))
++		return NULL;
++
++	return &sun6i_csi_bridge_formats[index];
++}
++
+ /*
+  * How many bytes one frame occupies on the bus, which is the length a pattern
+  * has to have in DRAM to stand in for one.
+@@ -465,7 +475,9 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 
+ 	source_subdev = media_entity_to_v4l2_subdev(remote_pad->entity);
+ 
+-	if (source_subdev == bridge->source_mipi_csi2.subdev) {
++	if (source_subdev == bridge->source_pattern.subdev) {
++		source = &bridge->source_pattern;
++	} else if (source_subdev == bridge->source_mipi_csi2.subdev) {
+ 		source = &bridge->source_mipi_csi2;
+ 	} else {
+ 		for (i = 0; i < SUN6I_CSI_SOURCE_PARALLEL_MAX; i++) {
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+index 60a657cf9cd4..392e19ff3b1a 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+@@ -49,6 +49,7 @@ struct sun6i_csi_bridge {
+ 
+ 	struct sun6i_csi_bridge_source	source_parallel[SUN6I_CSI_SOURCE_PARALLEL_MAX];
+ 	struct sun6i_csi_bridge_source	source_mipi_csi2;
++	struct sun6i_csi_bridge_source	source_pattern;
+ 
+ 	/*
+ 	 * Whether the source was actually started, which is not the same as
+@@ -66,6 +67,9 @@ struct sun6i_csi_bridge {
+ const struct sun6i_csi_bridge_format *
+ sun6i_csi_bridge_format_find(u32 mbus_code);
+ 
++const struct sun6i_csi_bridge_format *
++sun6i_csi_bridge_format_by_index(unsigned int index);
++
+ int sun6i_csi_bridge_frame_bytes(struct sun6i_csi_device *csi_dev, u32 *bytes);
+ 
+ /* Bridge */
+-- 
+2.43.0
+

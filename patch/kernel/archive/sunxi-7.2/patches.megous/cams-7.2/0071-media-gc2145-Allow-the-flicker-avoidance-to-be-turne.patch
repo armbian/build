@@ -1,0 +1,98 @@
+From a19dfebeaf2139bfb6aa676139a76ba05aec04eb Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 20:06:28 +0200
+Subject: [PATCH] media: gc2145: Allow the flicker avoidance to be turned off
+
+Avoiding flicker is not free. The row period is stretched to a whole
+number of mains periods, and the exposure the AEC picks is quantised to
+the mains half period - 10 ms at 50 Hz, which in a 33 ms frame leaves it
+three exposures to choose between and forces everything finer onto the
+gain. Under daylight or LED there is no flicker to avoid and both of
+those are pure loss, so stop masking the DISABLED menu entry out.
+
+A zero mains frequency then means the row period is left at its
+shortest, which is also the fastest the mode reads out, and the AEC gets
+a continuous exposure range. Guard the row period search against it, as
+it divides by the frequency.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 43 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 34 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 611df676d220..1b69f50e3564 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -1189,6 +1189,15 @@ static void gc2145_params_fit_hb(struct gc2145_sensor_params *p,
+ {
+ 	unsigned long rt, power_line_ratio;
+ 
++	/*
++	 * Nothing to fit the row period to, so leave it at its shortest -
++	 * which is also the fastest the mode can be read out.
++	 */
++	if (!power_line_freq) {
++		p->hb = GC2145_HBLANK_REG_MIN;
++		return;
++	}
++
+ 	for (p->hb = GC2145_HBLANK_REG_MIN; p->hb < 4095; p->hb++) {
+ 		rt = gc2145_params_row_period(p);
+ 
+@@ -1460,12 +1469,22 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_POWER_LINE_FREQUENCY:
+ 		/*
+-		 * The row period is fitted to a whole number of mains
+-		 * periods when the mode is programmed, so this only takes
+-		 * effect the next time that happens.
++		 * Zero means there is no flicker to avoid, which leaves the
++		 * row period free to be as short as it can and the exposure
++		 * free to take any value. The row period is fitted when the
++		 * mode is programmed, so this takes full effect then.
+ 		 */
+-		sensor->power_line_freq =
+-			val == V4L2_CID_POWER_LINE_FREQUENCY_60HZ ? 60 : 50;
++		switch (val) {
++		case V4L2_CID_POWER_LINE_FREQUENCY_DISABLED:
++			sensor->power_line_freq = 0;
++			break;
++		case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
++			sensor->power_line_freq = 60;
++			break;
++		default:
++			sensor->power_line_freq = 50;
++			break;
++		}
+ 		sensor->pending_mode_change = true;
+ 		return 0;
+ 
+@@ -1745,14 +1764,20 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 				       ae_bias_menu_values);
+ 
+ 	/*
+-	 * Flicker avoidance is done by fitting the row period to the mains
+-	 * period, so only the two mains frequencies are selectable - there
+-	 * is nothing to disable and no detector to run.
++	 * Flicker avoidance costs something, so it can be turned off: the
++	 * row period is stretched to a whole number of mains periods, and
++	 * the exposure the AEC picks is quantised to the mains half period.
++	 * Under daylight or LED there is no flicker to avoid and both are
++	 * pure loss - the quantum is 10 ms at 50 Hz, which in a 33 ms frame
++	 * leaves the AEC three exposures to choose between.
++	 *
++	 * There is no detector, so this says what the light is rather than
++	 * asking for it to be measured.
+ 	 */
+ 	ctrls->pl_freq = v4l2_ctrl_new_std_menu(hdl, ops,
+ 						V4L2_CID_POWER_LINE_FREQUENCY,
+ 						V4L2_CID_POWER_LINE_FREQUENCY_60HZ,
+-						BIT(V4L2_CID_POWER_LINE_FREQUENCY_DISABLED),
++						0,
+ 						V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
+ 
+ 	/*
+-- 
+2.43.0
+

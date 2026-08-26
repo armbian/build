@@ -1,0 +1,192 @@
+From 88b63e7d556ed3750429e4a9b6b0703a10c70441 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 22:29:40 +0200
+Subject: [PATCH] media: sun6i-isp: Configure the white balance and flicker
+ statistics
+
+The last two measurement blocks without configuration. White balance
+takes a window and a pair of saturation limits; flicker avoidance takes
+a single six bit tuning value.
+
+Two quirks, both as the hardware wants them. The second saturation limit
+goes in twice, once into the upper half of awb_cfg0 and once into the
+low half of awb_cfg1. And the white balance window has no zone grid of
+its own: isp_set_awb_win_reg() writes the size and start but never the
+counts, unlike the exposure and focus equivalents, so the counts in the
+window description are ignored here.
+
+awb_cfg2 and awb_cfg3, which would carry the sum and difference
+thresholds, are deliberately left alone. Their setters are bare returns
+on both supported variants, as are the matching readbacks, so there is
+nothing to program and nowhere for a result to come back.
+
+Both blocks are identical on the A83T and the V3s.
+
+With this the five statistics engines are all configurable, which closes
+the gap left by the statistics node being able to read blocks that could
+not be aimed.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  | 43 +++++++++++++++++++
+ .../media/sunxi/sun6i-isp/sun6i_isp_reg.h     | 30 +++++++++++++
+ .../sunxi/sun6i-isp/uapi/sun6i-isp-config.h   | 20 +++++++++
+ 3 files changed, 93 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index f21e2f909c1c..e376407d59ee 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -326,6 +326,37 @@ sun6i_isp_params_configure_hist(struct sun6i_isp_device *isp_dev,
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODE_REG, value);
+ }
+ 
++static void
++sun6i_isp_params_configure_awb(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_awb *awb = &config->awb;
++	const struct sun6i_isp_params_config_h3a_window *win = &awb->window;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AWB_CFG0_REG,
++			     SUN6I_ISP_AWB_CFG0_SATURATION0(awb->saturation[0]) |
++			     SUN6I_ISP_AWB_CFG0_SATURATION1(awb->saturation[1]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AWB_CFG1_REG,
++			     SUN6I_ISP_AWB_CFG1_SATURATION1(awb->saturation[1]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AWB_CFG4_REG,
++			     SUN6I_ISP_AWB_CFG4_WIDTH(SUN6I_ISP_H3A_SIZE(win->width)) |
++			     SUN6I_ISP_AWB_CFG4_HEIGHT(SUN6I_ISP_H3A_SIZE(win->height)));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AWB_CFG5_REG,
++			     SUN6I_ISP_AWB_CFG5_HORZ_START(SUN6I_ISP_H3A_POS(win->horz_start)) |
++			     SUN6I_ISP_AWB_CFG5_VERT_START(SUN6I_ISP_H3A_POS(win->vert_start)));
++}
++
++static void
++sun6i_isp_params_configure_afs(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AFS_CFG_REG,
++			     SUN6I_ISP_AFS_CFG_ANTI_FLICKER(config->afs.anti_flicker));
++}
++
+ static void
+ sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
+ 			       const struct sun6i_isp_params_config *config)
+@@ -451,6 +482,12 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_HIST)
+ 		sun6i_isp_params_configure_hist(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_AWB)
++		sun6i_isp_params_configure_awb(isp_dev, config);
++
++	if (modules & SUN6I_ISP_MODULE_AFS)
++		sun6i_isp_params_configure_afs(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
+@@ -497,6 +534,12 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_HIST)
+ 		value |= SUN6I_ISP_MODULE_EN_HIST;
+ 
++	if (modules & SUN6I_ISP_MODULE_AWB)
++		value |= SUN6I_ISP_MODULE_EN_AWB;
++
++	if (modules & SUN6I_ISP_MODULE_AFS)
++		value |= SUN6I_ISP_MODULE_EN_AFS;
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		value |= SUN6I_ISP_MODULE_EN_RGB2RGB;
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 109d9c701131..8b469508a33f 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -170,6 +170,36 @@
+ #define SUN6I_ISP_AF_START_HORZ(v)		((v) & GENMASK(10, 0))
+ #define SUN6I_ISP_AF_START_VERT(v)		(((v) << 16) & GENMASK(26, 16))
+ 
++/* AWB */
++
++/*
++ * The saturation limit is programmed twice: the second one lands both in
++ * the upper half of the first register and in the low half of the
++ * second. The sum and difference thresholds that would use awb_cfg2 and
++ * awb_cfg3 have no setters on either supported variant -- both are bare
++ * returns -- so those two registers are left alone.
++ */
++
++#define SUN6I_ISP_AWB_CFG0_REG			0xf8
++#define SUN6I_ISP_AWB_CFG0_SATURATION0(v)	((v) & GENMASK(11, 0))
++#define SUN6I_ISP_AWB_CFG0_SATURATION1(v)	(((v) << 16) & GENMASK(27, 16))
++
++#define SUN6I_ISP_AWB_CFG1_REG			0xfc
++#define SUN6I_ISP_AWB_CFG1_SATURATION1(v)	((v) & GENMASK(11, 0))
++
++#define SUN6I_ISP_AWB_CFG4_REG			0x108
++#define SUN6I_ISP_AWB_CFG4_WIDTH(v)		((v) & GENMASK(8, 0))
++#define SUN6I_ISP_AWB_CFG4_HEIGHT(v)		(((v) << 16) & GENMASK(24, 16))
++
++#define SUN6I_ISP_AWB_CFG5_REG			0x10c
++#define SUN6I_ISP_AWB_CFG5_HORZ_START(v)	((v) & GENMASK(10, 0))
++#define SUN6I_ISP_AWB_CFG5_VERT_START(v)	(((v) << 16) & GENMASK(26, 16))
++
++/* AFS */
++
++#define SUN6I_ISP_AFS_CFG_REG			0x1b8
++#define SUN6I_ISP_AFS_CFG_ANTI_FLICKER(v)	((v) & GENMASK(5, 0))
++
+ /* Histogram */
+ 
+ #define SUN6I_ISP_HIST_SIZE_REG			0x110
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index de885c70dcfc..6e2e0b65e2e5 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -24,6 +24,8 @@
+ #define SUN6I_ISP_MODULE_AE			(1U << 11)
+ #define SUN6I_ISP_MODULE_AF			(1U << 12)
+ #define SUN6I_ISP_MODULE_HIST			(1U << 13)
++#define SUN6I_ISP_MODULE_AWB			(1U << 14)
++#define SUN6I_ISP_MODULE_AFS			(1U << 15)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -147,6 +149,22 @@ struct sun6i_isp_params_config_hist {
+ 	__u8	mode;
+ };
+ 
++/*
++ * White balance gathers over a window with no zone grid of its own, and
++ * takes a pair of saturation limits. The zone counts in the window are
++ * ignored here.
++ */
++struct sun6i_isp_params_config_awb {
++	struct sun6i_isp_params_config_h3a_window	window;
++
++	__u16	saturation[2];
++};
++
++/* Flicker avoidance, a single tuning value. */
++struct sun6i_isp_params_config_afs {
++	__u8	anti_flicker;
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -164,6 +182,8 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_ae	ae;
+ 	struct sun6i_isp_params_config_af	af;
+ 	struct sun6i_isp_params_config_hist	hist;
++	struct sun6i_isp_params_config_awb	awb;
++	struct sun6i_isp_params_config_afs	afs;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+2.43.0
+

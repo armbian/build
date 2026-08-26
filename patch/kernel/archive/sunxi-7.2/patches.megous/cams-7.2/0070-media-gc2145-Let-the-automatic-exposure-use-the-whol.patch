@@ -1,0 +1,73 @@
+From 98a11c0f490220fe3048ff4ce72e4ee5132e47ee Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 19:31:17 +0200
+Subject: [PATCH] media: gc2145: Let the automatic exposure use the whole frame
+
+Two things kept the AEC off the top of the exposure range.
+
+The exposure gears were rounded down to the last whole mains period
+inside a frame, which is not needed: the AEC quantises the exposure it
+picks against the anti-flicker register, so rounding the ceiling as well
+only stopped it short. It reached 90% of what the manual control offers
+and then reached for gain instead.
+
+The analogue gain also defaulted to unity, and since the AEC drives the
+pre gain and nothing else, the total gain clamp left it 8x to work with
+rather than 16x. Default it to the largest global gain that still leaves
+the pre gain its whole range - the one value that costs nothing.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 104797e35fce..611df676d220 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -236,6 +236,15 @@
+ #define GC2145_TOTAL_GAIN_MAX \
+ 	(16 * GC2145_GLOBAL_GAIN_UNITY * GC2145_PREGAIN_UNITY)
+ 
++/*
++ * The largest global gain that still leaves the pre gain its whole
++ * register range under that clamp, which makes it the one value that
++ * costs nothing to default to. It is also worth twice as much as unity
++ * to the automatic exposure, which drives the pre gain and nothing else:
++ * at unity the AEC tops out at 8x total, here at the full 16x.
++ */
++#define GC2145_GLOBAL_GAIN_DEFAULT	(GC2145_TOTAL_GAIN_MAX / 256)
++
+ #define GC2145_P0_AWB_R_GAIN		0xb3
+ #define GC2145_P0_AWB_G_GAIN		0xb4
+ #define GC2145_P0_AWB_B_GAIN		0xb5
+@@ -1728,7 +1737,7 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	 */
+ 	ctrls->a_gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN,
+ 					  GC2145_GLOBAL_GAIN_UNITY, 255, 1,
+-					  GC2145_GLOBAL_GAIN_UNITY);
++					  GC2145_GLOBAL_GAIN_DEFAULT);
+ 	ctrls->exposure_bias =
+ 		v4l2_ctrl_new_int_menu(hdl, ops, V4L2_CID_AUTO_EXPOSURE_BIAS,
+ 				       ARRAY_SIZE(ae_bias_menu_values) - 1,
+@@ -2237,10 +2246,15 @@ static int gc2145_setup_aec_range(struct gc2145_dev *sensor,
+ 	step = gc2145_params_flicker_step(params, sensor->power_line_freq,
+ 					  GC2145_PCLK_RATE);
+ 
++	/*
++	 * The whole frame, not the last whole mains period inside it. The
++	 * AEC quantises the exposure it picks against the anti-flicker
++	 * register below, so rounding the ceiling down as well only stops
++	 * the automatic exposure short of what the manual control offers -
++	 * it reached 90% of the slider and then went to gain instead.
++	 */
+ 	slots = min_t(unsigned long, gc2145_params_frame_lines(params),
+ 		      GC2145_EXPOSURE_REG_MAX);
+-	if (step && slots >= step)
+-		slots = round_down(slots, step);
+ 
+ 	gc2145_tx_start(sensor);
+ 
+-- 
+2.43.0
+

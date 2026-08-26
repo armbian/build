@@ -1,0 +1,122 @@
+From 22587156a2953c2c167bb6f8fa92526467b6e0ea Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 12 Aug 2026 00:40:19 +0200
+Subject: [PATCH] media: rkisp1: Raise the NoC QoS priority of the ISP's AXI
+ masters
+
+The QoS generators of the ISP's bus masters come up at the lowest
+priority, and a full-resolution sensor readout that loses memory
+arbitration under load corrupts - the ISP cannot stall the sensor.
+
+Take the generator syscons from an optional rockchip,qos property and
+raise their priority to 3/3 on every runtime resume. The generators
+sit inside the ISP's power domain, so the write can only land while
+the domain is up; the rockchip domain driver already saves and
+restores the registers across later power cycles (they are the same
+syscons its pm_qos list names), so one write per resume keeps the
+priority in place for as long as the ISP runs.
+
+Boards that do not add the property lose nothing: the driver then
+touches no QoS registers at all.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../platform/rockchip/rkisp1/rkisp1-common.h  |  2 +
+ .../platform/rockchip/rkisp1/rkisp1-dev.c     | 47 +++++++++++++++++++
+ 2 files changed, 49 insertions(+)
+
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h b/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
+index 5e6a4d5f6fd1..89a23a8e5b97 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
+@@ -533,6 +533,8 @@ struct rkisp1_device {
+ 	const struct rkisp1_info *info;
+ 	int irqs[RKISP1_NUM_IRQS];
+ 	bool irqs_enabled;
++	struct regmap *qos[2];
++	unsigned int qos_count;
+ };
+ 
+ /*
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c b/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
+index 1791c02a40ae..785dc1d7a75b 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
+@@ -19,6 +19,7 @@
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regmap.h>
+ #include <media/v4l2-fwnode.h>
+ #include <media/v4l2-mc.h>
+ 
+@@ -333,6 +334,48 @@ static int __maybe_unused rkisp1_runtime_suspend(struct device *dev)
+ 	return pinctrl_pm_select_sleep_state(dev);
+ }
+ 
++/*
++ * The NoC QoS generators of the ISP's AXI masters come up at the lowest
++ * priority, and a full-resolution sensor readout that loses memory
++ * arbitration under load corrupts - the ISP cannot stall the sensor.
++ * Raise the priority of the generators listed in the rockchip,qos
++ * property on every resume: they sit inside the ISP's power domain, so
++ * the write must land after the domain is up; the domain driver then
++ * saves and restores the value across later power cycles.
++ */
++#define RKISP1_QOS_PRIORITY		0x08
++#define RKISP1_QOS_PRIORITY_LEVEL_3_3	0x303
++
++static void rkisp1_qos_apply(struct rkisp1_device *rkisp1)
++{
++	unsigned int i;
++
++	for (i = 0; i < rkisp1->qos_count; i++)
++		regmap_write(rkisp1->qos[i], RKISP1_QOS_PRIORITY,
++			     RKISP1_QOS_PRIORITY_LEVEL_3_3);
++}
++
++static void rkisp1_qos_init(struct rkisp1_device *rkisp1)
++{
++	struct device_node *np;
++	struct regmap *regmap;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(rkisp1->qos); i++) {
++		np = of_parse_phandle(rkisp1->dev->of_node, "rockchip,qos", i);
++		if (!np)
++			break;
++		regmap = syscon_node_to_regmap(np);
++		of_node_put(np);
++		if (IS_ERR(regmap)) {
++			dev_warn(rkisp1->dev, "no QoS regmap %u: %ld\n", i,
++				 PTR_ERR(regmap));
++			break;
++		}
++		rkisp1->qos[rkisp1->qos_count++] = regmap;
++	}
++}
++
+ static int __maybe_unused rkisp1_runtime_resume(struct device *dev)
+ {
+ 	struct rkisp1_device *rkisp1 = dev_get_drvdata(dev);
+@@ -349,6 +392,8 @@ static int __maybe_unused rkisp1_runtime_resume(struct device *dev)
+ 	/* Make sure the IRQ handler will see the above */
+ 	mb();
+ 
++	rkisp1_qos_apply(rkisp1);
++
+ 	return 0;
+ }
+ 
+@@ -711,6 +756,8 @@ static int rkisp1_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	rkisp1_qos_init(rkisp1);
++
+ 	if (info->isp_ver == RKISP1_V_IMX8MP) {
+ 		unsigned int id;
+ 
+-- 
+2.43.0
+

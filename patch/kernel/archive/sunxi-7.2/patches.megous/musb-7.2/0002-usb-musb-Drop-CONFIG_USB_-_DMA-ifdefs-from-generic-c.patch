@@ -1,0 +1,252 @@
+From cd98a714ccaf2af0cba9f478eeb5318591891ae7 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 14 Jul 2026 22:40:41 +0200
+Subject: [PATCH] usb: musb: Drop CONFIG_USB_*_DMA #ifdefs from generic code
+
+Currently the driver uses two ways to compile out unused code. One is
+relying on runtime quirks that can be at compile time forced to 0,
+making the compiler eliminate unreachable code.
+
+The other is preprocesor conditions.
+
+Switch completely to the first method. This is purely a mechanical
+change without any effect on behavior and a preparation for renaming
+and consolidating the dma behavior quirks of various controllers in
+the future commit.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/musb_core.h   | 22 +++++++++++++++
+ drivers/usb/musb/musb_dma.h    | 24 -----------------
+ drivers/usb/musb/musb_gadget.c | 49 ++++++++++++++++------------------
+ drivers/usb/musb/musb_host.c   | 37 -------------------------
+ 4 files changed, 45 insertions(+), 87 deletions(-)
+
+diff --git a/drivers/usb/musb/musb_core.h b/drivers/usb/musb/musb_core.h
+index 91b5b6b66f96..44484fea63cb 100644
+--- a/drivers/usb/musb/musb_core.h
++++ b/drivers/usb/musb/musb_core.h
+@@ -146,11 +146,33 @@ struct musb_platform_ops {
+ #define MUSB_G_NO_SKB_RESERVE	BIT(9)
+ #define MUSB_DA8XX		BIT(8)
+ #define MUSB_PRESERVE_SESSION	BIT(7)
++/*
++ * A DMA-engine quirk bit is only defined when its DMA backend is built in;
++ * otherwise it is 0, so the musb_dma_*() accessors fold to a compile-time 0 and
++ * that engine's code paths are dead-code eliminated (as the old per-accessor
++ * #ifdefs used to do).
++ */
++#ifdef CONFIG_USB_UX500_DMA
+ #define MUSB_DMA_UX500		BIT(6)
++#else
++#define MUSB_DMA_UX500		0
++#endif
++#ifdef CONFIG_USB_TI_CPPI41_DMA
+ #define MUSB_DMA_CPPI41		BIT(5)
++#else
++#define MUSB_DMA_CPPI41		0
++#endif
+ #define MUSB_DMA_CPPI		BIT(4)
++#ifdef CONFIG_USB_TUSB_OMAP_DMA
+ #define MUSB_DMA_TUSB_OMAP	BIT(3)
++#else
++#define MUSB_DMA_TUSB_OMAP	0
++#endif
++#ifdef CONFIG_USB_INVENTRA_DMA
+ #define MUSB_DMA_INVENTRA	BIT(2)
++#else
++#define MUSB_DMA_INVENTRA	0
++#endif
+ #define MUSB_IN_TUSB		BIT(1)
+ #define MUSB_INDEXED_EP		BIT(0)
+ 	u32	quirks;
+diff --git a/drivers/usb/musb/musb_dma.h b/drivers/usb/musb/musb_dma.h
+index 0cd7fc468de8..aaab6eda0668 100644
+--- a/drivers/usb/musb/musb_dma.h
++++ b/drivers/usb/musb/musb_dma.h
+@@ -49,35 +49,11 @@ struct musb_hw_ep;
+ #define	is_dma_capable()	(1)
+ #endif
+ 
+-#ifdef CONFIG_USB_UX500_DMA
+ #define musb_dma_ux500(musb)		(musb->ops->quirks & MUSB_DMA_UX500)
+-#else
+-#define musb_dma_ux500(musb)		0
+-#endif
+-
+-#ifdef CONFIG_USB_TI_CPPI41_DMA
+ #define musb_dma_cppi41(musb)		(musb->ops->quirks & MUSB_DMA_CPPI41)
+-#else
+-#define musb_dma_cppi41(musb)		0
+-#endif
+-
+-#ifdef CONFIG_USB_TUSB_OMAP_DMA
+ #define tusb_dma_omap(musb)		(musb->ops->quirks & MUSB_DMA_TUSB_OMAP)
+-#else
+-#define tusb_dma_omap(musb)		0
+-#endif
+-
+-#ifdef CONFIG_USB_INVENTRA_DMA
+ #define musb_dma_inventra(musb)		(musb->ops->quirks & MUSB_DMA_INVENTRA)
+-#else
+-#define musb_dma_inventra(musb)		0
+-#endif
+-
+-#if defined(CONFIG_USB_TI_CPPI41_DMA)
+ #define	is_cppi_enabled(musb)		musb_dma_cppi41(musb)
+-#else
+-#define	is_cppi_enabled(musb)		0
+-#endif
+ 
+ /*
+  * DMA channel status ... updated by the dma controller driver whenever that
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index 016d3f3fc1e0..cd64afe02e66 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -856,31 +856,31 @@ void musb_g_rx(struct musb *musb, u8 epnum)
+ 
+ 		request->actual += musb_ep->dma->actual_len;
+ 
+-#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_TUSB_OMAP_DMA) || \
+-	defined(CONFIG_USB_UX500_DMA)
+-		/* Autoclear doesn't clear RxPktRdy for short packets */
+-		if ((dma->desired_mode == 0 && !hw_ep->rx_double_buffered)
+-				|| (dma->actual_len
+-					& (musb_ep->packet_sz - 1))) {
+-			/* ack the read! */
+-			csr &= ~MUSB_RXCSR_RXPKTRDY;
+-			musb_writew(epio, MUSB_RXCSR, csr);
+-		}
++		if (musb_dma_inventra(musb) || tusb_dma_omap(musb) ||
++		    musb_dma_ux500(musb)) {
++			/* Autoclear doesn't clear RxPktRdy for short packets */
++			if ((dma->desired_mode == 0 && !hw_ep->rx_double_buffered)
++					|| (dma->actual_len
++						& (musb_ep->packet_sz - 1))) {
++				/* ack the read! */
++				csr &= ~MUSB_RXCSR_RXPKTRDY;
++				musb_writew(epio, MUSB_RXCSR, csr);
++			}
+ 
+-		/* incomplete, and not short? wait for next IN packet */
+-		if ((request->actual < request->length)
+-				&& (musb_ep->dma->actual_len
+-					== musb_ep->packet_sz)) {
+-			/* In double buffer case, continue to unload fifo if
+- 			 * there is Rx packet in FIFO.
+- 			 **/
+-			csr = musb_readw(epio, MUSB_RXCSR);
+-			if ((csr & MUSB_RXCSR_RXPKTRDY) &&
+-				hw_ep->rx_double_buffered)
+-				goto exit;
+-			return;
++			/* incomplete, and not short? wait for next IN packet */
++			if ((request->actual < request->length)
++					&& (musb_ep->dma->actual_len
++						== musb_ep->packet_sz)) {
++				/* In double buffer case, continue to unload fifo if
++				 * there is Rx packet in FIFO.
++				 **/
++				csr = musb_readw(epio, MUSB_RXCSR);
++				if ((csr & MUSB_RXCSR_RXPKTRDY) &&
++					hw_ep->rx_double_buffered)
++					goto exit;
++				return;
++			}
+ 		}
+-#endif
+ 		musb_g_giveback(musb_ep, request, 0);
+ 		/*
+ 		 * In the giveback function the MUSB lock is
+@@ -896,10 +896,7 @@ void musb_g_rx(struct musb *musb, u8 epnum)
+ 		if (!req)
+ 			return;
+ 	}
+-#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_TUSB_OMAP_DMA) || \
+-	defined(CONFIG_USB_UX500_DMA)
+ exit:
+-#endif
+ 	/* Analyze request */
+ 	rxstate(musb, req);
+ }
+diff --git a/drivers/usb/musb/musb_host.c b/drivers/usb/musb/musb_host.c
+index 8efd2fa472f9..08bf4f0e2881 100644
+--- a/drivers/usb/musb/musb_host.c
++++ b/drivers/usb/musb/musb_host.c
+@@ -1175,8 +1175,6 @@ irqreturn_t musb_h_ep0_irq(struct musb *musb)
+ }
+ 
+ 
+-#ifdef CONFIG_USB_INVENTRA_DMA
+-
+ /* Host side TX (OUT) using Mentor DMA works as follows:
+ 	submit_urb ->
+ 		- if queue was empty, Program Endpoint
+@@ -1189,8 +1187,6 @@ irqreturn_t musb_h_ep0_irq(struct musb *musb)
+ 			short packets in mode 1.
+ */
+ 
+-#endif
+-
+ /* Service a Tx-Available or dma completion irq for the endpoint */
+ void musb_host_tx(struct musb *musb, u8 epnum)
+ {
+@@ -1459,7 +1455,6 @@ void musb_host_tx(struct musb *musb, u8 epnum)
+ 			MUSB_TXCSR_H_WZC_BITS | MUSB_TXCSR_TXPKTRDY);
+ }
+ 
+-#ifdef CONFIG_USB_TI_CPPI41_DMA
+ /* Seems to set up ISO for cppi41 and not advance len. See commit c57c41d */
+ static int musb_rx_dma_iso_cppi41(struct dma_controller *dma,
+ 				  struct musb_hw_ep *hw_ep,
+@@ -1485,19 +1480,7 @@ static int musb_rx_dma_iso_cppi41(struct dma_controller *dma,
+ 	return dma->channel_program(channel, qh->maxpacket, 0,
+ 				   (u32)buf, length);
+ }
+-#else
+-static inline int musb_rx_dma_iso_cppi41(struct dma_controller *dma,
+-					 struct musb_hw_ep *hw_ep,
+-					 struct musb_qh *qh,
+-					 struct urb *urb,
+-					 size_t len)
+-{
+-	return false;
+-}
+-#endif
+ 
+-#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_UX500_DMA) || \
+-	defined(CONFIG_USB_TI_CPPI41_DMA)
+ /* Host side RX (IN) using Mentor DMA works as follows:
+ 	submit_urb ->
+ 		- if queue was empty, ProgramEndpoint
+@@ -1701,26 +1684,6 @@ static int musb_rx_dma_in_inventra_cppi41(struct dma_controller *dma,
+ 
+ 	return done;
+ }
+-#else
+-static inline int musb_rx_dma_inventra_cppi41(struct dma_controller *dma,
+-					      struct musb_hw_ep *hw_ep,
+-					      struct musb_qh *qh,
+-					      struct urb *urb,
+-					      size_t len)
+-{
+-	return false;
+-}
+-
+-static inline int musb_rx_dma_in_inventra_cppi41(struct dma_controller *dma,
+-						 struct musb_hw_ep *hw_ep,
+-						 struct musb_qh *qh,
+-						 struct urb *urb,
+-						 size_t len,
+-						 u8 iso_err)
+-{
+-	return false;
+-}
+-#endif
+ 
+ /*
+  * Service an RX interrupt for the given IN endpoint; docs cover bulk, iso,
+-- 
+2.43.0
+

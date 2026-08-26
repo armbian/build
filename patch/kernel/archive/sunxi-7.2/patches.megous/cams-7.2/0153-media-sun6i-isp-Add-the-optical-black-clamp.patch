@@ -1,0 +1,159 @@
+From 11ecf54dbe25c4d99329d3446bd66c6ebc6bed44 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 17:40:37 +0200
+Subject: [PATCH] media: sun6i-isp: Add the optical black clamp
+
+The block has a module enable bit and eight registers of its own -- a
+frame size, a valid window inside it, a sprite, a configuration word, a
+horizontal position, a vertical parameter and a fixed offset -- and
+nothing has ever written any of them. There is no way for userspace to
+enable it either, since it has no bit in the parameters interface.
+
+So it has never been exercised, on this driver or the vendor's, and
+whether it does anything at all on this variant is unknown. Add the
+enable and the registers so that the question can be asked.
+
+The frame size stays where configure_ob() puts it, because that has to
+match what the frontend is receiving. Everything else comes from the
+caller: none of it is understood well enough to derive, and offering the
+registers as they are is more honest than inventing a policy for them.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  | 47 ++++++++++++++++++-
+ .../sunxi/sun6i-isp/uapi/sun6i-isp-config.h   | 26 ++++++++++
+ 2 files changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index ae45ed751cf9..7e429ca06e19 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -476,6 +476,44 @@ sun6i_isp_params_configure_wb_gains(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_WB_CFG_CLIP(wb->clip));
+ }
+ 
++/*
++ * Optical black clamp.
++ *
++ * The frame size stays as configure_ob() sets it, since that has to match
++ * what the frontend is actually receiving. Everything else is the caller's,
++ * because nothing here is understood well enough to derive: the block has
++ * never been enabled on this variant, and its configuration, position and
++ * fixed-offset registers have never been written by any driver.
++ */
++static void
++sun6i_isp_params_configure_obc(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_obc *obc = &config->obc;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_VALID_REG,
++			     SUN6I_ISP_OB_VALID_WIDTH(obc->valid_width) |
++			     SUN6I_ISP_OB_VALID_HEIGHT(obc->valid_height));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_SRC0_VALID_START_REG,
++			     SUN6I_ISP_OB_SRC0_VALID_START_HORZ(obc->valid_start_horz) |
++			     SUN6I_ISP_OB_SRC0_VALID_START_VERT(obc->valid_start_vert));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_SPRITE_REG,
++			     SUN6I_ISP_OB_SPRITE_WIDTH(obc->sprite_width) |
++			     SUN6I_ISP_OB_SPRITE_HEIGHT(obc->sprite_height));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_SPRITE_START_REG,
++			     SUN6I_ISP_OB_SPRITE_START_HORZ(obc->sprite_start_horz) |
++			     SUN6I_ISP_OB_SPRITE_START_VERT(obc->sprite_start_vert));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_CFG_REG, obc->cfg);
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_HORZ_POS_REG, obc->horz_pos);
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_VERT_PARA_REG, obc->vert_para);
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OB_OFFSET_FIXED_REG,
++			     obc->offset_fixed);
++}
++
+ static void
+ sun6i_isp_params_configure_bdnf(struct sun6i_isp_device *isp_dev,
+ 				const struct sun6i_isp_params_config *config)
+@@ -519,7 +557,8 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	 */
+ 
+ 	if (!bayer)
+-		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER |
++		modules &= ~(SUN6I_ISP_MODULE_OBC |
++			     SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER |
+ 			     SUN6I_ISP_MODULE_RGB2RGB |
+ 			     SUN6I_ISP_MODULE_CFA | SUN6I_ISP_MODULE_WB |
+ 			     SUN6I_ISP_MODULE_DPC);
+@@ -533,6 +572,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_BAYER)
+ 		modules &= ~SUN6I_ISP_MODULE_YUV_GAIN_OFFSET;
+ 
++	if (modules & SUN6I_ISP_MODULE_OBC)
++		sun6i_isp_params_configure_obc(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_BDNF)
+ 		sun6i_isp_params_configure_bdnf(isp_dev, config);
+ 
+@@ -600,6 +642,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1 |
+ 		 SUN6I_ISP_MODULE_EN_ROT;
+ 
++	if (modules & SUN6I_ISP_MODULE_OBC)
++		value |= SUN6I_ISP_MODULE_EN_OBC;
++
+ 	if (modules & SUN6I_ISP_MODULE_BDNF)
+ 		value |= SUN6I_ISP_MODULE_EN_BDNF;
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 6d2e0e673f65..2414e26a7b6b 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -30,6 +30,7 @@
+ #define SUN6I_ISP_MODULE_WB			(1U << 17)
+ #define SUN6I_ISP_MODULE_DPC			(1U << 18)
+ #define SUN6I_ISP_MODULE_YUV_DRC		(1U << 19)
++#define SUN6I_ISP_MODULE_OBC			(1U << 20)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -43,6 +44,30 @@ struct sun6i_isp_params_config_bayer {
+ 	__u16	gain_b;
+ };
+ 
++/*
++ * Optical black clamp. The hardware carries a full geometry for it -- a
++ * frame size, a valid window inside that frame, and a sprite -- because
++ * the block is meant to average a covered region of the sensor and
++ * subtract it. Nothing here has ever been exercised on this variant, so
++ * the fields are offered rather than interpreted.
++ */
++struct sun6i_isp_params_config_obc {
++	__u16	valid_width;
++	__u16	valid_height;
++	__u16	valid_start_horz;
++	__u16	valid_start_vert;
++
++	__u16	sprite_width;
++	__u16	sprite_height;
++	__u16	sprite_start_horz;
++	__u16	sprite_start_vert;
++
++	__u32	cfg;
++	__u32	horz_pos;
++	__u32	vert_para;
++	__u32	offset_fixed;
++};
++
+ struct sun6i_isp_params_config_bdnf {
+ 	__u8	in_dis_min;
+ 	__u8	in_dis_max;
+@@ -256,6 +281,7 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_cfa	cfa;
+ 	struct sun6i_isp_params_config_wb	wb;
+ 	struct sun6i_isp_params_config_dpc	dpc;
++	struct sun6i_isp_params_config_obc	obc;
+ };
+ 
+ /*
+-- 
+2.43.0
+

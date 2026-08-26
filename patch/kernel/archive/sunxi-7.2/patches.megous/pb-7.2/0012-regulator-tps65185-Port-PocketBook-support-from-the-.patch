@@ -1,0 +1,476 @@
+From 75d018275ba29d1c72c0d7f7fa76b045799a4ccb Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 16:23:06 +0200
+Subject: [PATCH] regulator: tps65185: Port PocketBook support from the
+ tp65185x driver
+
+- refcounted WAKEUP gpio management: the chip is put in SLEEP whenever
+  no regulator is enabled and no temperature read is in flight;
+  registers reset in SLEEP, so the regmap cache is resynced and VCOM
+  rewritten on every wake (VCOM requested while asleep is latched and
+  applied on wake)
+- power good polling fallback: the PG pin may sit on an irq-less gpio
+  (sun5i has gpio interrupts only on ports B and G, the PocketBook
+  wires PG to PE6)
+- rail-by-rail PG failure report on powerup timeout
+- chip revision identification at probe
+- enable delays for v3p3 (2ms) and vcom (5ms), 100ms rail discharge
+  wait on vposneg disable, error unwind on failed powerup
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/regulator/tps65185.c | 284 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 261 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
+index 786622d8d598..159cd7a5f7ef 100644
+--- a/drivers/regulator/tps65185.c
++++ b/drivers/regulator/tps65185.c
+@@ -49,8 +49,57 @@ struct tps65185_data {
+ 	struct completion pgood_completion;
+ 	int pgood_irq;
+ 	struct completion tmst_completion;
++	/*
++	 * WAKEUP low puts the chip in SLEEP: registers reset and i2c is
++	 * inaccessible. Every code path that talks to the chip holds a
++	 * wake reference; with the last put the chip is returned to
++	 * SLEEP (no wakeup gpio = chip is always awake).
++	 */
++	struct mutex wake_lock;
++	int wake_refs;
++	unsigned int vcom_sel;	/* last requested VCOM, reapplied on wake */
++	bool vcom_on;		/* enable state when there is no ctrl gpio */
+ };
+ 
++static int tps65185_wake_get(struct tps65185_data *data)
++{
++	guard(mutex)(&data->wake_lock);
++
++	if (data->wake_refs++ > 0 || !data->wakeup_gpio)
++		return 0;
++
++	gpiod_set_value_cansleep(data->wakeup_gpio, 1);
++	usleep_range(3000, 4000);
++
++	/* SLEEP reset the registers; restore the cached configuration */
++	regcache_mark_dirty(data->regmap);
++	regcache_sync(data->regmap);
++	/* re-apply VCOM in full: a value requested while the chip slept
++	 * only reached vcom_sel, and the msb register is volatile */
++	regmap_write(data->regmap, TPS65185_REG_VCOM1, data->vcom_sel & 0xFF);
++	regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0),
++			   data->vcom_sel >> 8);
++
++	return 0;
++}
++
++static void tps65185_wake_put(struct tps65185_data *data)
++{
++	guard(mutex)(&data->wake_lock);
++
++	if (--data->wake_refs > 0 || !data->wakeup_gpio)
++		return;
++
++	gpiod_set_value_cansleep(data->wakeup_gpio, 0);
++}
++
++static bool tps65185_is_awake(struct tps65185_data *data)
++{
++	guard(mutex)(&data->wake_lock);
++
++	return data->wake_refs > 0 || !data->wakeup_gpio;
++}
++
+ static const struct hwmon_channel_info *tps65185_info[] = {
+ 	HWMON_CHANNEL_INFO(chip, HWMON_C_REGISTER_TZ),
+ 	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+@@ -64,6 +113,10 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+ 	unsigned int val;
+ 	int ret;
+ 
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
++
+ 	reinit_completion(&data->tmst_completion);
+ 	/* start acquisition */
+ 	regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
+@@ -71,16 +124,21 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+ 	wait_for_completion_timeout(&data->tmst_completion,
+ 				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
+ 	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
+-	if (!(val & TPS65185_CONV_END))
+-		return -ETIMEDOUT;
++	if (!(val & TPS65185_CONV_END)) {
++		ret = -ETIMEDOUT;
++		goto out_sleep;
++	}
+ 
+ 	ret = regmap_read(data->regmap, TPS65185_REG_TMST_VALUE, &val);
+ 	if (ret)
+-		return ret;
++		goto out_sleep;
+ 
+ 	*temp = (s8)val * 1000;
++	ret = 0;
+ 
+-	return 0;
++out_sleep:
++	tps65185_wake_put(data);
++	return ret;
+ }
+ 
+ static umode_t tps65185_hwmon_is_visible(const void *data,
+@@ -123,11 +181,49 @@ static const struct regmap_config regmap_config = {
+ 	.volatile_reg = tps65185_volatile_reg,
+ };
+ 
++static int tps65185_v3p3_enable(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++	int ret;
++
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
++
++	ret = regulator_enable_regmap(rdev);
++	if (ret)
++		tps65185_wake_put(data);
++
++	return ret;
++}
++
++static int tps65185_v3p3_disable(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++	int ret;
++
++	ret = regulator_disable_regmap(rdev);
++	if (!ret)
++		tps65185_wake_put(data);
++
++	return ret;
++}
++
++static int tps65185_v3p3_is_enabled(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++
++	if (!tps65185_is_awake(data))
++		return 0;
++
++	return regulator_is_enabled_regmap(rdev);
++}
++
+ static const struct regulator_ops tps65185_v3p3ops = {
+ 	.list_voltage = regulator_list_voltage_linear,
+-	.enable = regulator_enable_regmap,
+-	.disable = regulator_disable_regmap,
+-	.is_enabled = regulator_is_enabled_regmap,
++	.enable = tps65185_v3p3_enable,
++	.disable = tps65185_v3p3_disable,
++	.is_enabled = tps65185_v3p3_is_enabled,
+ };
+ 
+ static int tps65185_check_powergood(struct regulator_dev *rdev)
+@@ -137,6 +233,26 @@ static int tps65185_check_powergood(struct regulator_dev *rdev)
+ 	return gpiod_get_value_cansleep(data->pgood_gpio);
+ }
+ 
++/* which PG bit monitors which rail, for the powerup failure dump */
++static const struct { const char *name; int bit; } tps65185_pg_rails[] = {
++	{ "VB", 7 }, { "VDDH", 6 }, { "VN", 5 },
++	{ "VPOS", 4 }, { "VEE", 3 }, { "VNEG", 1 },
++};
++
++static void tps65185_report_power_bad(struct tps65185_data *data)
++{
++	unsigned int pg;
++	int i;
++
++	if (regmap_read(data->regmap, TPS65185_REG_PG, &pg))
++		return;
++
++	for (i = 0; i < ARRAY_SIZE(tps65185_pg_rails); i++)
++		if (!(pg & BIT(tps65185_pg_rails[i].bit)))
++			dev_warn(data->dev, "%s rail failed\n",
++				 tps65185_pg_rails[i].name);
++}
++
+ static int tps65185_vposneg_get_voltage_sel(struct regulator_dev *rdev)
+ {
+ 	int ret;
+@@ -163,11 +279,39 @@ static irqreturn_t pgood_handler(int irq, void *dev_id)
+ 	return IRQ_HANDLED;
+ }
+ 
++static int tps65185_wait_powergood(struct tps65185_data *data)
++{
++	int timeout = PGOOD_TIMEOUT_MSECS;
++
++	if (data->pgood_irq > 0) {
++		wait_for_completion_timeout(&data->pgood_completion,
++					    msecs_to_jiffies(timeout));
++	} else {
++		/* PG pin on an irq-less gpio (e.g. sun5i ports != B/G) */
++		while (timeout > 0 &&
++		       gpiod_get_value_cansleep(data->pgood_gpio) != 1) {
++			msleep(5);
++			timeout -= 5;
++		}
++	}
++
++	if (gpiod_get_value_cansleep(data->pgood_gpio) != 1) {
++		tps65185_report_power_bad(data);
++		return -ETIMEDOUT;
++	}
++
++	return 0;
++}
++
+ static int tps65185_vposneg_enable(struct regulator_dev *rdev)
+ {
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
++
+ 	reinit_completion(&data->pgood_completion);
+ 	if (data->pwrup_gpio)
+ 		ret = gpiod_set_value_cansleep(data->pwrup_gpio, 1);
+@@ -177,16 +321,27 @@ static int tps65185_vposneg_enable(struct regulator_dev *rdev)
+ 					 TPS65185_ENABLE_ACTIVE);
+ 
+ 	if (ret)
+-		return ret;
++		goto err_sleep;
+ 
+ 	dev_dbg(data->dev, "turning on...");
+-	wait_for_completion_timeout(&data->pgood_completion,
+-				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
++	ret = tps65185_wait_powergood(data);
++	if (ret)
++		goto err_powerdown;
+ 	dev_dbg(data->dev, "turned on");
+-	if (gpiod_get_value_cansleep(data->pgood_gpio) != 1)
+-		return -ETIMEDOUT;
+ 
+ 	return 0;
++
++err_powerdown:
++	if (data->pwrup_gpio)
++		gpiod_set_value_cansleep(data->pwrup_gpio, 0);
++	else
++		regmap_update_bits(data->regmap, TPS65185_REG_ENABLE,
++				   TPS65185_ENABLE_STANDBY,
++				   TPS65185_ENABLE_STANDBY);
++	msleep(100);
++err_sleep:
++	tps65185_wake_put(data);
++	return ret;
+ }
+ 
+ static int tps65185_vposneg_disable(struct regulator_dev *rdev)
+@@ -200,8 +355,14 @@ static int tps65185_vposneg_disable(struct regulator_dev *rdev)
+ 		ret = regmap_update_bits(data->regmap, TPS65185_REG_ENABLE,
+ 					 TPS65185_ENABLE_STANDBY,
+ 					 TPS65185_ENABLE_STANDBY);
++	if (ret)
++		return ret;
+ 
+-	return ret;
++	/* powering down the high voltage rails takes up to 100ms */
++	msleep(100);
++	tps65185_wake_put(data);
++
++	return 0;
+ }
+ 
+ static int tps65185_vcom_set_voltage_sel(struct regulator_dev *rdev, unsigned int selector)
+@@ -209,6 +370,12 @@ static int tps65185_vcom_set_voltage_sel(struct regulator_dev *rdev, unsigned in
+ 	struct tps65185_data *data = rdev_get_drvdata(rdev);
+ 	int ret;
+ 
++	data->vcom_sel = selector;
++
++	/* in SLEEP the registers are inaccessible; applied on next wake */
++	if (!tps65185_is_awake(data))
++		return 0;
++
+ 	ret = regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0), selector >> 8);
+ 	if (ret < 0)
+ 		return ret;
+@@ -222,6 +389,9 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
+ 	int ret;
+ 	unsigned int sel, sel2;
+ 
++	if (!tps65185_is_awake(data))
++		return data->vcom_sel;
++
+ 	ret = regmap_read(data->regmap, TPS65185_REG_VCOM1, &sel);
+ 	if (ret < 0)
+ 		return ret;
+@@ -236,11 +406,51 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
+ 	return sel;
+ }
+ 
++static int tps65185_vcom_enable(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++	int ret;
++
++	ret = tps65185_wake_get(data);
++	if (ret)
++		return ret;
++
++	gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 1);
++	data->vcom_on = true;
++
++	return 0;
++}
++
++static int tps65185_vcom_disable(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++
++	gpiod_set_value_cansleep(data->vcom_ctrl_gpio, 0);
++	usleep_range(5000, 6000);
++	data->vcom_on = false;
++	tps65185_wake_put(data);
++
++	return 0;
++}
++
++static int tps65185_vcom_is_enabled(struct regulator_dev *rdev)
++{
++	struct tps65185_data *data = rdev_get_drvdata(rdev);
++
++	if (data->vcom_ctrl_gpio)
++		return gpiod_get_value_cansleep(data->vcom_ctrl_gpio);
++
++	return data->vcom_on;
++}
++
+ static const struct regulator_ops tps65185_vcom_ops = {
+ 	.list_voltage = regulator_list_voltage_linear,
+ 	.map_voltage = regulator_map_voltage_linear,
+ 	.set_voltage_sel = tps65185_vcom_set_voltage_sel,
+ 	.get_voltage_sel = tps65185_vcom_get_voltage_sel,
++	.enable = tps65185_vcom_enable,
++	.disable = tps65185_vcom_disable,
++	.is_enabled = tps65185_vcom_is_enabled,
+ };
+ 
+ static const struct regulator_ops tps65185_vposneg_ops = {
+@@ -264,6 +474,7 @@ static const struct regulator_desc regulators[] = {
+ 		.owner = THIS_MODULE,
+ 		.enable_reg = TPS65185_REG_ENABLE,
+ 		.enable_mask = BIT(5),
++		.enable_time = 2000,
+ 		.n_voltages = 1,
+ 		.min_uV = 3300000,
+ 	},
+@@ -292,6 +503,7 @@ static const struct regulator_desc vcom_regulator_desc = {
+ 	.ops = &tps65185_vcom_ops,
+ 	.type = REGULATOR_VOLTAGE,
+ 	.owner = THIS_MODULE,
++	.enable_time = 5000,
+ 	.n_voltages = 511,
+ 	.min_uV = 0,
+ 	.uV_step = 10000,
+@@ -328,6 +540,8 @@ static int tps65185_probe(struct i2c_client *client)
+ 	struct tps65185_data *data;
+ 	struct regulator_config config = { };
+ 	struct regulator_dev *rdev;
++	unsigned int revid;
++	const char *rev;
+ 	int ret = 0;
+ 	int i;
+ 
+@@ -346,9 +560,8 @@ static int tps65185_probe(struct i2c_client *client)
+ 				     PTR_ERR(data->pgood_gpio),
+ 				     "failed to get power good gpio\n");
+ 
++	/* not all gpios can interrupt (e.g. sun5i port E); poll instead */
+ 	data->pgood_irq = gpiod_to_irq(data->pgood_gpio);
+-	if (data->pgood_irq < 0)
+-		return data->pgood_irq;
+ 
+ 	data->pwrup_gpio = devm_gpiod_get_optional(&client->dev, "enable", GPIOD_OUT_LOW);
+ 	if (IS_ERR(data->pwrup_gpio))
+@@ -377,14 +590,17 @@ static int tps65185_probe(struct i2c_client *client)
+ 
+ 	init_completion(&data->pgood_completion);
+ 	init_completion(&data->tmst_completion);
++	mutex_init(&data->wake_lock);
+ 
+-	ret = devm_request_threaded_irq(&client->dev, data->pgood_irq, NULL,
+-					pgood_handler,
+-					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+-					"PGOOD", data);
+-	if (ret)
+-		return dev_err_probe(&client->dev, ret,
+-				     "failed to request power good irq\n");
++	if (data->pgood_irq > 0) {
++		ret = devm_request_threaded_irq(&client->dev, data->pgood_irq,
++						NULL, pgood_handler,
++						IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++						"PGOOD", data);
++		if (ret)
++			return dev_err_probe(&client->dev, ret,
++					     "failed to request power good irq\n");
++	}
+ 
+ 	if (client->irq) {
+ 		ret = devm_request_threaded_irq(&client->dev, client->irq,
+@@ -396,6 +612,23 @@ static int tps65185_probe(struct i2c_client *client)
+ 					     "failed to request irq\n");
+ 	}
+ 
++	/* the chip is awake here: wakeup gpio (if any) was requested high */
++	if (data->wakeup_gpio)
++		usleep_range(10000, 12000);
++
++	ret = regmap_read(data->regmap, TPS65185_REG_REVID, &revid);
++	if (ret)
++		return dev_err_probe(&client->dev, ret, "chip id read failed\n");
++
++	switch (revid) {
++	case 0x45: rev = "TPS65185 1p0"; break;
++	case 0x55: rev = "TPS65185 1p1"; break;
++	case 0x65: rev = "TPS65185 1p2"; break;
++	case 0x66: rev = "TPS651851 1p0"; break;
++	default: rev = "unknown"; break;
++	}
++	dev_info(&client->dev, "chip id 0x%02x (%s)\n", revid, rev);
++
+ 	ret = regmap_update_bits(data->regmap, TPS65185_REG_INT_EN2, BIT(0), BIT(0));
+ 	if (ret)
+ 		return dev_err_probe(&client->dev, ret,
+@@ -414,7 +647,6 @@ static int tps65185_probe(struct i2c_client *client)
+ 					     regulators[i].name);
+ 	}
+ 
+-	config.ena_gpiod = data->vcom_ctrl_gpio;
+ 	rdev = devm_regulator_register(&client->dev, &vcom_regulator_desc, &config);
+ 	if (IS_ERR(rdev))
+ 		return dev_err_probe(&client->dev, PTR_ERR(rdev),
+@@ -429,6 +661,12 @@ static int tps65185_probe(struct i2c_client *client)
+ 			dev_notice(&client->dev, "failed to register hwmon\n");
+ 	}
+ 
++	/* enter SLEEP unless a boot-on regulator took a wake reference */
++	scoped_guard(mutex, &data->wake_lock) {
++		if (!data->wake_refs)
++			gpiod_set_value_cansleep(data->wakeup_gpio, 0);
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+

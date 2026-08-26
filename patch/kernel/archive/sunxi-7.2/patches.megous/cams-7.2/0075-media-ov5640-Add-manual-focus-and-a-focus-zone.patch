@@ -1,0 +1,244 @@
+From 84c0c905f0dcc6c9745bd1d6acc5ff7fd18f6ebd Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 21:29:19 +0200
+Subject: [PATCH] media: ov5640: Add manual focus and a focus zone
+
+The autofocus could be switched on, started and stopped, but the lens
+could not be placed by hand and the focus could not be pointed anywhere
+in particular.
+
+The lens position is a 10 bit DAC split across two registers. It only
+means anything once the firmware has stopped driving it, so switching
+the autofocus off now PAUSES the firmware where it used to release it -
+a release parks the lens at infinity and cuts the coil current, leaving
+nothing to position - and the two controls form a cluster, so the core
+marks the position inactive whenever the autofocus is on.
+
+The zone is a firmware command taking a centre on a virtual view finder
+80 wide and 60 or 45 high depending on whether the frame is 4:3. V4L2
+has no standard control for an autofocus window, only for starting and
+stopping one, so it is a private control taking a point in the frame's
+own pixels and doing the scaling here. Zero gives the default zones
+back.
+
+Both are from the OV5640 SOC autofocus application note, tables 2 and 3
+and section 3.3, which document the command set and the DAC layout the
+datasheet leaves out.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 151 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 147 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index b04c6d65c302..2c36aeb5ccf8 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -185,8 +185,39 @@
+ #define OV5640_FW_CMD_CONTINUOUS_FOCUS	0x04
+ #define OV5640_FW_CMD_GET_FOCUS_RESULT	0x07
+ #define OV5640_FW_CMD_RELEASE_FOCUS	0x08
++#define OV5640_FW_CMD_PAUSE_FOCUS	0x06
+ #define OV5640_FW_CMD_ZONE_CONFIG	0x12
+ #define OV5640_FW_CMD_DEFAULT_ZONES	0x80
++#define OV5640_FW_CMD_SET_ZONE		0x81
++
++/*
++ * The focus zone is given on a virtual view finder the firmware defines
++ * as 80 wide, and 60 or 45 high depending on whether the frame is 4:3.
++ */
++#define OV5640_AF_ZONE_WIDTH		80
++#define OV5640_AF_ZONE_HEIGHT_4_3	60
++#define OV5640_AF_ZONE_HEIGHT		45
++
++/*
++ * The lens position, a 10 bit DAC code split across two registers. The
++ * autofocus firmware drives it while it is running, so it is only ours
++ * once the firmware has been paused rather than released - a release
++ * parks the lens at infinity and turns the coil current off.
++ */
++#define OV5640_REG_VCM_CONTROL0		0x3602
++#define OV5640_VCM_CONTROL0_CODE_LO	GENMASK(7, 4)
++#define OV5640_REG_VCM_CONTROL1		0x3603
++#define OV5640_VCM_CONTROL1_CODE_HI	GENMASK(5, 0)
++#define OV5640_FOCUS_MAX		1023
++
++/*
++ * Where the autofocus should look. V4L2 has no standard control for an
++ * autofocus window - only for starting, stopping and reporting one - so
++ * this is a private one. The value packs the point of interest as
++ * x << 16 | y in the frame's own pixels, and zero restores the default
++ * zones the firmware sets up for itself.
++ */
++#define V4L2_CID_OV5640_FOCUS_ZONE	(V4L2_CID_USER_BASE | 0x1001)
+ 
+ enum ov5640_mode_id {
+ 	OV5640_MODE_QQVGA_160_120 = 0,
+@@ -494,9 +525,11 @@ struct ov5640_ctrls {
+ 	};
+ 	struct {
+ 		struct v4l2_ctrl *focus_auto;
++		struct v4l2_ctrl *focus_absolute;
+ 		struct v4l2_ctrl *af_start;
+ 		struct v4l2_ctrl *af_stop;
+ 		struct v4l2_ctrl *af_status;
++		struct v4l2_ctrl *focus_zone;
+ 	};
+ 	struct v4l2_ctrl *brightness;
+ 	struct v4l2_ctrl *light_freq;
+@@ -3612,6 +3645,68 @@ static int ov5640_set_ctrl_exposure(struct ov5640_dev *sensor,
+ 	return ret;
+ }
+ 
++/*
++ * Move the lens by hand. The firmware owns the DAC while it is running,
++ * so this is only meaningful once it has been paused - see the focus
++ * cluster in ov5640_set_ctrl().
++ */
++static int ov5640_set_focus_position(struct ov5640_dev *sensor, u32 pos)
++{
++	int ret;
++
++	ret = ov5640_mod_reg(sensor, OV5640_REG_VCM_CONTROL1,
++			     OV5640_VCM_CONTROL1_CODE_HI,
++			     FIELD_PREP(OV5640_VCM_CONTROL1_CODE_HI, pos >> 4));
++	if (ret)
++		return ret;
++
++	return ov5640_mod_reg(sensor, OV5640_REG_VCM_CONTROL0,
++			      OV5640_VCM_CONTROL0_CODE_LO,
++			      FIELD_PREP(OV5640_VCM_CONTROL0_CODE_LO,
++					 pos & 0xf));
++}
++
++/*
++ * Point the autofocus at one place in the frame. The zone is a centre on
++ * a virtual view finder the firmware sizes itself, so the caller works
++ * in frame coordinates and the scaling happens here. Zero means give the
++ * default zones back.
++ */
++static int ov5640_set_focus_zone(struct ov5640_dev *sensor, u32 packed)
++{
++	const struct v4l2_mbus_framefmt *fmt = &sensor->fmt;
++	unsigned int x, y, h;
++	int ret;
++
++	if (!packed)
++		return ov5640_fw_command(sensor, OV5640_FW_CMD_DEFAULT_ZONES);
++
++	/* the virtual view finder is only 4:3 when the frame is */
++	h = fmt->width * 3 == fmt->height * 4 ?
++		OV5640_AF_ZONE_HEIGHT_4_3 : OV5640_AF_ZONE_HEIGHT;
++
++	x = (packed >> 16) * OV5640_AF_ZONE_WIDTH / max(fmt->width, 1u);
++	y = (packed & 0xffff) * h / max(fmt->height, 1u);
++
++	ret = ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA0,
++			       min(x, OV5640_AF_ZONE_WIDTH - 1u));
++	if (ret)
++		return ret;
++
++	ret = ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA1,
++			       min(y, h - 1u));
++	if (ret)
++		return ret;
++
++	ret = ov5640_fw_command(sensor, OV5640_FW_CMD_SET_ZONE);
++	if (ret)
++		return ret;
++
++	/* the note asks for a settle before the focus that follows */
++	usleep_range(5000, 6000);
++	return 0;
++}
++
+ static int ov5640_set_ctrl_focus(struct ov5640_dev *sensor, u8 command)
+ {
+ 	struct i2c_client *client = sensor->i2c_client;
+@@ -3850,10 +3945,32 @@ static int ov5640_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		ret = ov5640_set_ctrl_white_balance(sensor, ctrl->val);
+ 		break;
+ 	case V4L2_CID_FOCUS_AUTO:
+-		if (ctrl->val)
+-			ret = ov5640_set_ctrl_focus(sensor, OV5640_FW_CMD_CONTINUOUS_FOCUS);
+-		else
+-			ret = ov5640_set_ctrl_focus(sensor, OV5640_FW_CMD_RELEASE_FOCUS);
++		/*
++		 * The cluster head, so this runs for the lens position too.
++		 * Manual pauses the firmware rather than releasing it: a
++		 * release parks the lens at infinity and cuts the coil
++		 * current, which leaves nothing to position.
++		 */
++		if (ctrl->val) {
++			ret = ov5640_set_ctrl_focus(sensor,
++						    OV5640_FW_CMD_CONTINUOUS_FOCUS);
++			break;
++		}
++
++		ret = ov5640_set_ctrl_focus(sensor, OV5640_FW_CMD_PAUSE_FOCUS);
++		if (ret)
++			break;
++
++		ret = ov5640_set_focus_position(sensor,
++						sensor->ctrls.focus_absolute->val);
++		break;
++
++	case V4L2_CID_FOCUS_ABSOLUTE:
++		/* only reachable while the cluster is in manual */
++		ret = ov5640_set_focus_position(sensor, ctrl->val);
++		break;
++	case V4L2_CID_OV5640_FOCUS_ZONE:
++		ret = ov5640_set_focus_zone(sensor, ctrl->val);
+ 		break;
+ 	case V4L2_CID_AUTO_FOCUS_START:
+ 		ret = ov5640_set_ctrl_focus(sensor, OV5640_FW_CMD_TRIGGER_FOCUS);
+@@ -3903,6 +4020,16 @@ static const struct v4l2_ctrl_ops ov5640_ctrl_ops = {
+ 	.s_ctrl = ov5640_s_ctrl,
+ };
+ 
++static const struct v4l2_ctrl_config ov5640_ctrl_focus_zone = {
++	.id = V4L2_CID_OV5640_FOCUS_ZONE,
++	.name = "Focus Zone",
++	.type = V4L2_CTRL_TYPE_INTEGER,
++	.min = 0,
++	.max = 0xffffff,
++	.step = 1,
++	.def = 0,
++};
++
+ static int ov5640_init_controls(struct ov5640_dev *sensor)
+ {
+ 	const struct ov5640_mode_info *mode = sensor->current_mode;
+@@ -3970,6 +4097,16 @@ static int ov5640_init_controls(struct ov5640_dev *sensor)
+ 	/* Autofocus */
+ 	ctrls->focus_auto = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_FOCUS_AUTO,
+ 					    0, 1, 1, 0);
++	/*
++	 * The lens position, which is only ours while the firmware is
++	 * paused - hence the cluster with the switch above.
++	 */
++	ctrls->focus_absolute = v4l2_ctrl_new_std(hdl, ops,
++						  V4L2_CID_FOCUS_ABSOLUTE, 0,
++						  OV5640_FOCUS_MAX, 1,
++						  OV5640_FOCUS_MAX / 2);
++	ctrls->focus_zone = v4l2_ctrl_new_custom(hdl, &ov5640_ctrl_focus_zone,
++						 NULL);
+ 	ctrls->af_start = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_AUTO_FOCUS_START,
+ 					    0, 1, 1, 0);
+ 	ctrls->af_stop = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_AUTO_FOCUS_STOP,
+@@ -4047,6 +4184,12 @@ static int ov5640_init_controls(struct ov5640_dev *sensor)
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->auto_wb, 0, false);
+ 	v4l2_ctrl_auto_cluster(2, &ctrls->auto_gain, 0, true);
+ 	v4l2_ctrl_auto_cluster(2, &ctrls->auto_exp, 1, true);
++	/*
++	 * Manual is 0 here, so the core marks the lens position inactive
++	 * whenever the autofocus is switched on and userspace does not have
++	 * to work that out for itself.
++	 */
++	v4l2_ctrl_auto_cluster(2, &ctrls->focus_auto, 0, false);
+ 
+ 	sensor->sd.ctrl_handler = hdl;
+ 	return 0;
+-- 
+2.43.0
+

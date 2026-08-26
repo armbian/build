@@ -1,0 +1,79 @@
+From 17a93e504125db44efdb5593e8452557901e240b Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 22:05:44 +0200
+Subject: [PATCH] ASoC: sun8i-codec: Detect an accessory already inserted at
+ boot
+
+Whether a boot-time plug-in is noticed depended on probe ordering:
+when the analog side arms the bias sense before jack detection is set
+up, the plug-in latches early and the stale-pending clearing erases
+it, so a headset inserted before power-on stayed invisible until
+replugged. (Previously it was detected only by replaying that stale
+pending, together with every other stale event.)
+
+Read the sense data after clearing: if it already shows an accessory,
+kick the state machine as if the plug-in interrupt had just fired.
+
+Only where the bias current IS the plug sensor, though. That field is
+the microphone pin's ADC and it measures nothing while the bias is
+off, which on the A64 it is - there the bias is switched on per
+detection. An empty PinePhone socket reads above that variant's own
+headset threshold, so the phone reported a headset nobody had plugged
+in and routed calls into it. Where the bias is switched per detection
+the plug-in interrupt arrives when the detection powers up, which is
+what the driver relied on before this.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/sun8i-codec.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 5d0784b0f24b..f9e0c20390a6 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -1788,6 +1788,7 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 	struct sun8i_codec *scodec = snd_soc_component_get_drvdata(component);
+ 	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+ 	struct platform_device *pdev = to_platform_device(component->dev);
++	unsigned int mdata;
+ 	int ret;
+ 
+ 	if (!variant)
+@@ -1823,6 +1824,33 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * An accessory inserted before boot latched its plug-in while
++	 * nobody was listening, and the clearing above just erased it.
++	 * Where the bias current IS the plug sensor it is armed
++	 * statically, so the sense data still shows the accessory: kick
++	 * the state machine as if the plug-in interrupt had fired.
++	 *
++	 * ONLY THERE. Where the bias is switched on per detection - the
++	 * A64 - nothing is driving the microphone pin at this point, so
++	 * HMIC_DATA is not a measurement of anything: on a PinePhone
++	 * with an EMPTY socket it reads above that variant's own
++	 * headset threshold, and the phone then routed calls into a
++	 * headset that was not there, until someone plugged one in and
++	 * pulled it out again. On those variants the plug-in interrupt
++	 * arrives when the detection powers up, which is what this ever
++	 * relied on.
++	 */
++	regmap_read(scodec->regmap, SUN8I_HMIC_STS, &mdata);
++	mdata = (mdata & SUN8I_HMIC_STS_HMIC_DATA_MASK) >>
++		SUN8I_HMIC_STS_HMIC_DATA;
++	if (variant->hbias_sense && mdata) {
++		scoped_guard(mutex, &scodec->jack_mutex)
++			scodec->last_hmic_irq = SUN8I_HMIC_STS_JACK_IN_IRQ_ST;
++		mod_delayed_work(system_power_efficient_wq, &scodec->jack_work,
++				 msecs_to_jiffies(100));
++	}
++
+ 	if (jack->jack->type & SND_JACK_MICROPHONE) {
+ 		snd_jack_set_key(jack->jack, SND_JACK_BTN_0, KEY_PLAYPAUSE);
+ 		snd_jack_set_key(jack->jack, SND_JACK_BTN_1, KEY_VOLUMEUP);
+-- 
+2.43.0
+

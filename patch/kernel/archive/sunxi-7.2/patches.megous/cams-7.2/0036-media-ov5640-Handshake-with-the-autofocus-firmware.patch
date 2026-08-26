@@ -1,0 +1,107 @@
+From 687b291dc7e352bcd6593e2fa5f0525822296c1a Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:24:39 +0200
+Subject: [PATCH] media: ov5640: Handshake with the autofocus firmware
+
+Commands were written to the main command register without ever
+setting the command flag the firmware uses to pick them up, and the
+fixed 5ms sleep afterwards did not tell us anything about whether the
+command was consumed. Two commands issued in quick succession (a zone
+config right after the firmware starts, or a trigger during a running
+scan) could race.
+
+Set the ack register as documented in the OV5640 SOC autofocus
+application note, and wait for a pending command to be taken before
+issuing a new one. The wait is bounded and only covers the previous
+command, so focus commands still do not block until the scan is done.
+
+Also name 0x3028 for what it is, the command result register, rather
+than a fifth parameter register.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 42 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 33 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index 8fa71a25c53f..2780631732cc 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -132,7 +132,7 @@
+ #define OV5640_REG_FW_CMD_PARA1		0x3025
+ #define OV5640_REG_FW_CMD_PARA2		0x3026
+ #define OV5640_REG_FW_CMD_PARA3		0x3027
+-#define OV5640_REG_FW_CMD_PARA4		0x3028
++#define OV5640_REG_FW_CMD_RESULT	0x3028
+ #define OV5640_REG_FW_STATUS		0x3029
+ 
+ #define OV5640_REG_VCM_CONTROL4		0x3606
+@@ -2614,7 +2614,7 @@ static int ov5640_copy_fw_to_device(struct ov5640_dev *sensor,
+ 	ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA1, 0x00);
+ 	ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA2, 0x00);
+ 	ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA3, 0x00);
+-	ov5640_write_reg(sensor, OV5640_REG_FW_CMD_PARA4, 0x00);
++	ov5640_write_reg(sensor, OV5640_REG_FW_CMD_RESULT, 0x00);
+ 	ov5640_write_reg(sensor, OV5640_REG_FW_STATUS, 0x7f);
+ 
+ 	// Start AF MCU
+@@ -2642,17 +2642,41 @@ static int ov5640_copy_fw_to_device(struct ov5640_dev *sensor,
+ 	return -ETIMEDOUT;
+ }
+ 
+-static int ov5640_fw_command(struct ov5640_dev *sensor, int command)
++/*
++ * Issue a command to the autofocus firmware.
++ *
++ * The firmware takes a command when the ack register is set, and clears
++ * that register once the command has been carried out. Commands that
++ * move the lens hold it set for the whole scan, so only wait here for a
++ * previously issued command to be picked up, never for the one being
++ * issued - focus progress is reported through AUTO_FOCUS_STATUS.
++ */
++static int ov5640_fw_command(struct ov5640_dev *sensor, u8 command)
+ {
++	struct i2c_client *client = sensor->i2c_client;
++	unsigned int i;
++	u8 ack = 1;
+ 	int ret;
+ 
+-	ret = ov5640_write_reg(sensor, OV5640_REG_FW_CMD_MAIN, command);
+-	if(ret)
+-		return ret;
++	for (i = 0; i < 10; i++) {
++		ret = ov5640_read_reg(sensor, OV5640_REG_FW_CMD_ACK, &ack);
++		if (ret)
++			return ret;
++		if (!ack)
++			break;
++
++		usleep_range(1000, 2000);
++	}
+ 
+-	msleep(5);
++	if (ack)
++		dev_dbg(&client->dev,
++			"previous focus command still pending, overriding it\n");
+ 
+-	return 0;
++	ret = ov5640_write_reg(sensor, OV5640_REG_FW_CMD_ACK, 0x01);
++	if (ret)
++		return ret;
++
++	return ov5640_write_reg(sensor, OV5640_REG_FW_CMD_MAIN, command);
+ }
+ 
+ static int ov5640_af_init(struct ov5640_dev *sensor)
+@@ -3437,7 +3461,7 @@ static int ov5640_set_ctrl_exposure(struct ov5640_dev *sensor,
+ 	return ret;
+ }
+ 
+-static int ov5640_set_ctrl_focus(struct ov5640_dev *sensor, int command)
++static int ov5640_set_ctrl_focus(struct ov5640_dev *sensor, u8 command)
+ {
+ 	struct i2c_client *client = sensor->i2c_client;
+ 	int ret;
+-- 
+2.43.0
+

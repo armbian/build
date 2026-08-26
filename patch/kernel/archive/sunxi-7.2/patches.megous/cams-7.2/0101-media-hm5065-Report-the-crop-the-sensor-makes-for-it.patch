@@ -1,0 +1,279 @@
+From e93dd636d18e42e711b832f48063d92e5b078204 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 22:16:53 +0200
+Subject: [PATCH] media: hm5065: Report the crop the sensor makes for itself
+
+The crop support added with the selection API drove the zoom engine,
+and on this chip that engine does nothing: with a capture running, a
+step size of 10 and two ZoomStep_In commands leave the picture
+untouched - frames either side differ no more than any two adjacent
+frames - and the manual crop registers the rest of this sensor family
+documents behave the same way, whether written live or across a
+software standby. The registers exist and read back what is written to
+them, but nothing in the firmware acts on them.
+
+What the firmware does do by itself is crop the field of view to the
+aspect ratio of the requested output size. Captured at 640x480 and at
+640x360, the narrower frame is the middle of the taller one - the
+vertical profile of the 4:3 field matches the 16:9 one only when the
+top and bottom are dropped, peaking exactly at 3/4 - so a display
+shaped output already fills the screen without distortion and without
+asking for anything.
+
+So drop the zoom programming, and keep the selection support as a way
+to report where the sensor is actually reading from rather than as a
+control. Setting a crop is gone, since there is nothing to set.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 146 ++++++++++++-------------------------
+ 1 file changed, 45 insertions(+), 101 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index f751476eb372..16641d223ba2 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -84,15 +84,6 @@
+ #define HM5065_REG_CSI_ENABLE_CSI2_1LANE	0x01
+ #define HM5065_REG_CSI_ENABLE_CSI2_2LANE	0x02
+ 
+-/* zoom control */
+-#define HM5065_REG_ZOOM_CONTROL			CCI_REG8(0x0020)
+-#define HM5065_REG_ZOOM_CONTROL_STOP		0x00
+-#define HM5065_REG_ZOOM_CONTROL_CONTINUOUS_IN	0x01
+-#define HM5065_REG_ZOOM_CONTROL_CONTINUOUS_OUT	0x02
+-#define HM5065_REG_ZOOM_CONTROL_STEP_IN		0x03
+-#define HM5065_REG_ZOOM_CONTROL_STEP_OUT	0x04
+-#define HM5065_REG_ZOOM_STEP_SIZE		CCI_REG16(0x0021) /* 1 = 5% */
+-
+ /* pipe setup bank 0 */
+ #define HM5065_REG_P0_SENSOR_MODE		CCI_REG8(0x0040)
+ #define HM5065_REG_SENSOR_MODE_FULLSIZE		0x00
+@@ -1645,7 +1636,6 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor,
+ {
+ 	const struct v4l2_mbus_framefmt *fmt =
+ 		v4l2_subdev_state_get_format(state, 0);
+-	const struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, 0);
+ 	const struct hm5065_pixfmt *pix_fmt;
+ 	struct regmap *map = sensor->regmap;
+ 	u8 sensor_mode;
+@@ -1658,13 +1648,16 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor,
+ 		return -EINVAL;
+ 	}
+ 
+-	/* binning must leave the cropped view at least as large as the output */
+-	if (fmt->width < crop->width / 4 && fmt->height < crop->height / 4)
++	switch (hm5065_get_max_binning(fmt->width, fmt->height)) {
++	case 4:
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_BINNING_4X4;
+-	else if (fmt->width < crop->width / 2 && fmt->height < crop->height / 2)
++		break;
++	case 2:
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_BINNING_2X2;
+-	else
++		break;
++	default:
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_FULLSIZE;
++	}
+ 
+ 	fps = hm5065_get_max_fps(fmt->width, fmt->height);
+ 	fps = clamp(fps, 1, (int)sensor->frame_interval.denominator);
+@@ -1738,37 +1731,6 @@ static void hm5065_check_frame_rate(struct hm5065_dev *sensor)
+ 		sensor->frame_interval.denominator = fps;
+ }
+ 
+-/*
+- * The only documented handle on cropping is the zoom engine: centred
+- * windows, stepped in units of 5% of the field of view, from the full
+- * sensor mode view down to the output size. Program the step size to
+- * cover the whole distance and take a single step. The width drives the
+- * zoom amount; the exact window the firmware picks - in particular how
+- * it treats the aspect ratio - is not documented, but a smaller output
+- * aspect follows from the output size itself.
+- */
+-static int hm5065_apply_crop(struct hm5065_dev *sensor,
+-			     struct v4l2_subdev_state *state)
+-{
+-	const struct v4l2_rect *crop = v4l2_subdev_state_get_crop(state, 0);
+-	struct regmap *map = sensor->regmap;
+-	int ret = 0, steps;
+-
+-	if (crop->width >= HM5065_SENSOR_WIDTH)
+-		return 0;
+-
+-	steps = DIV_ROUND_CLOSEST(20 * (HM5065_SENSOR_WIDTH - crop->width),
+-				  HM5065_SENSOR_WIDTH);
+-	if (!steps)
+-		return 0;
+-
+-	cci_write(map, HM5065_REG_ZOOM_STEP_SIZE, steps, &ret);
+-	cci_write(map, HM5065_REG_ZOOM_CONTROL,
+-		  HM5065_REG_ZOOM_CONTROL_STEP_IN, &ret);
+-
+-	return ret;
+-}
+-
+ static int hm5065_enable_streams(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_state *state, u32 pad,
+ 				 u64 streams_mask)
+@@ -1799,11 +1761,6 @@ static int hm5065_enable_streams(struct v4l2_subdev *sd,
+ 	if (ret)
+ 		goto err_rpm_put;
+ 
+-	/* the zoom is a live command, the mode setup reset it */
+-	ret = hm5065_apply_crop(sensor, state);
+-	if (ret)
+-		goto err_stream_stop;
+-
+ 	hm5065_check_frame_rate(sensor);
+ 
+ 	if (sensor->ctrls.focus_auto->cur.val) {
+@@ -1816,8 +1773,6 @@ static int hm5065_enable_streams(struct v4l2_subdev *sd,
+ 
+ 	return 0;
+ 
+-err_stream_stop:
+-	hm5065_set_stream(sensor, false);
+ err_rpm_put:
+ 	pm_runtime_put_autosuspend(dev);
+ 	return ret;
+@@ -1906,7 +1861,6 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ {
+ 	struct v4l2_mbus_framefmt *mf = &format->format;
+ 	const struct hm5065_pixfmt *pixfmt;
+-	const struct v4l2_rect *crop;
+ 
+ 	if (format->pad != 0)
+ 		return -EINVAL;
+@@ -1926,18 +1880,50 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 	mf->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+ 	mf->field = V4L2_FIELD_NONE;
+ 
+-	/* the output is scaled out of the cropped view, never up */
+-	crop = v4l2_subdev_state_get_crop(sd_state, format->pad);
+ 	mf->width = clamp(mf->width, HM5065_CAPTURE_WIDTH_MIN,
+-			  (u32)crop->width);
++			  HM5065_SENSOR_WIDTH);
+ 	mf->height = clamp(mf->height, HM5065_CAPTURE_HEIGHT_MIN,
+-			  (u32)crop->height);
++			  HM5065_SENSOR_HEIGHT);
+ 
+ 	*v4l2_subdev_state_get_format(sd_state, format->pad) = *mf;
+ 
+ 	return 0;
+ }
+ 
++/*
++ * The firmware crops the field of view to the aspect ratio of the
++ * requested output size all by itself - a 16:9 output really is the
++ * middle 16:9 of the sensor, not the whole frame squashed - and there is
++ * no way to ask for anything else: the zoom engine and the manual crop
++ * registers this family documents do not do anything on this chip. So
++ * the crop is a consequence of the format, and all we can do is report
++ * the rectangle the sensor is actually reading out.
++ */
++static void hm5065_auto_crop(const struct v4l2_mbus_framefmt *fmt,
++			     struct v4l2_rect *r)
++{
++	unsigned int w = HM5065_SENSOR_WIDTH;
++	unsigned int h = HM5065_SENSOR_HEIGHT;
++
++	if (!fmt->width || !fmt->height) {
++		r->left = r->top = 0;
++		r->width = w;
++		r->height = h;
++		return;
++	}
++
++	/* the largest centred window of the output's shape */
++	if ((u64)w * fmt->height > (u64)h * fmt->width)
++		w = h * fmt->width / fmt->height;
++	else
++		h = w * fmt->height / fmt->width;
++
++	r->width = w;
++	r->height = h;
++	r->left = (HM5065_SENSOR_WIDTH - w) / 2;
++	r->top = (HM5065_SENSOR_HEIGHT - h) / 2;
++}
++
+ static int hm5065_get_selection(struct v4l2_subdev *sd,
+ 				struct v4l2_subdev_state *sd_state,
+ 				struct v4l2_subdev_selection *sel)
+@@ -1947,7 +1933,8 @@ static int hm5065_get_selection(struct v4l2_subdev *sd,
+ 
+ 	switch (sel->target) {
+ 	case V4L2_SEL_TGT_CROP:
+-		sel->r = *v4l2_subdev_state_get_crop(sd_state, 0);
++		hm5065_auto_crop(v4l2_subdev_state_get_format(sd_state, 0),
++				 &sel->r);
+ 		return 0;
+ 	case V4L2_SEL_TGT_CROP_BOUNDS:
+ 	case V4L2_SEL_TGT_CROP_DEFAULT:
+@@ -1961,40 +1948,6 @@ static int hm5065_get_selection(struct v4l2_subdev *sd,
+ 	}
+ }
+ 
+-static int hm5065_set_selection(struct v4l2_subdev *sd,
+-				struct v4l2_subdev_state *sd_state,
+-				struct v4l2_subdev_selection *sel)
+-{
+-	const struct v4l2_mbus_framefmt *fmt;
+-	struct v4l2_rect *crop;
+-
+-	if (sel->pad != 0 || sel->target != V4L2_SEL_TGT_CROP)
+-		return -EINVAL;
+-
+-	if (sel->which == V4L2_SUBDEV_FORMAT_ACTIVE && sd->enabled_pads)
+-		return -EBUSY;
+-
+-	fmt = v4l2_subdev_state_get_format(sd_state, 0);
+-	crop = v4l2_subdev_state_get_crop(sd_state, 0);
+-
+-	/*
+-	 * The zoom engine can only make centred windows, and the output is
+-	 * never scaled up, so the window cannot be smaller than the output.
+-	 */
+-	crop->width = clamp_t(u32, sel->r.width,
+-			      max(fmt->width, HM5065_CAPTURE_WIDTH_MIN),
+-			      HM5065_SENSOR_WIDTH);
+-	crop->height = clamp_t(u32, sel->r.height,
+-			       max(fmt->height, HM5065_CAPTURE_HEIGHT_MIN),
+-			       HM5065_SENSOR_HEIGHT);
+-	crop->left = (HM5065_SENSOR_WIDTH - crop->width) / 2;
+-	crop->top = (HM5065_SENSOR_HEIGHT - crop->height) / 2;
+-
+-	sel->r = *crop;
+-
+-	return 0;
+-}
+-
+ static int hm5065_init_state(struct v4l2_subdev *sd,
+ 			     struct v4l2_subdev_state *state)
+ {
+@@ -2008,14 +1961,6 @@ static int hm5065_init_state(struct v4l2_subdev *sd,
+ 		},
+ 	};
+ 
+-	/* the crop must exist before the format, set_fmt clamps into it */
+-	*v4l2_subdev_state_get_crop(state, 0) = (struct v4l2_rect) {
+-		.left = 0,
+-		.top = 0,
+-		.width = HM5065_SENSOR_WIDTH,
+-		.height = HM5065_SENSOR_HEIGHT,
+-	};
+-
+ 	return hm5065_set_fmt(sd, state, &fmt);
+ }
+ 
+@@ -2219,7 +2164,6 @@ static const struct v4l2_subdev_pad_ops hm5065_pad_ops = {
+ 	.get_fmt = v4l2_subdev_get_fmt,
+ 	.set_fmt = hm5065_set_fmt,
+ 	.get_selection = hm5065_get_selection,
+-	.set_selection = hm5065_set_selection,
+ 	.get_frame_interval = hm5065_get_frame_interval,
+ 	.set_frame_interval = hm5065_set_frame_interval,
+ 	.enable_streams = hm5065_enable_streams,
+-- 
+2.43.0
+

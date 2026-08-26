@@ -1,0 +1,150 @@
+From 5a65bb6688caddbda7c1b6e606598e4a01a91663 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 8 Aug 2026 00:54:45 +0200
+Subject: [PATCH] media: sun6i-isp: reach the staged registers no config field
+ names
+
+Two questions about the sharpening block are blocked on the same missing
+capability, and the register audit still to come needs it for every other
+block.
+
+MODE bit 17 selects a sharpening mode and this driver has always written
+1, so everything measured about that block describes mode 1 and nothing
+is known about mode 0. It cannot be reached with the existing poke: MODE
+is staged, written into the load buffer at stream start, and a poke to
+the live copy is overwritten at the next parameter sync. Make it a module
+parameter -- the hardware only latches it at a frontend start, so there
+is nothing to gain from changing it per frame.
+
+Add load_poke, which writes the load buffer rather than the register
+file. A value written there survives every sync until the driver rewrites
+that register, which for a field no config struct names is never. That
+reaches SAP_CFG [15:12], between level and min, which reads back as
+storage but whose effect is unknown -- and the same question in every
+block still to be audited.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.c | 61 +++++++++++++++++++
+ .../media/sunxi/sun6i-isp/sun6i_isp_proc.c    | 19 +++++-
+ 2 files changed, 79 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 12a3fe9890fd..c742027567e2 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -416,6 +416,65 @@ static ssize_t sun6i_isp_debugfs_poke_write(struct file *file,
+ 	return count;
+ }
+ 
++/*
++ * The same thing, into the load buffer instead of the register file.
++ *
++ * "poke" writes the live register, which the hardware overwrites from the
++ * load region at the next parameter sync -- so for any register the
++ * driver stages, a poke lasts at most one frame. That covers a pipeline
++ * which is not loading at all, and nothing else.
++ *
++ * Two kinds of question need the other behaviour. A register the driver
++ * writes once at stream start and never again, MODE being the one that
++ * matters -- its sharpening mode select at bit 17 has never been anything
++ * but 1. And the bits of a staged register that no config field reaches:
++ * SAP_CFG [15:12] between level and min, which reads back as storage but
++ * whose effect is unknown, and the same question for every block still to
++ * be audited.
++ *
++ * Written here the value survives every sync until the driver itself
++ * rewrites that register, which for an unnamed field is never.
++ */
++static ssize_t sun6i_isp_debugfs_load_poke_write(struct file *file,
++						 const char __user *buffer,
++						 size_t count, loff_t *ppos)
++{
++	struct sun6i_isp_device *isp_dev = file->private_data;
++	unsigned int offset, value;
++	char buf[64];
++
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, buffer, count))
++		return -EFAULT;
++	buf[count] = '\0';
++
++	if (sscanf(buf, "%i %i", &offset, &value) != 2)
++		return -EINVAL;
++
++	if (offset >= SZ_4K || (offset & 3))
++		return -EINVAL;
++
++	/*
++	 * No pm_runtime_get here: this is DRAM the driver owns, not the
++	 * device, and it is readable and writable whether or not the
++	 * hardware is powered.
++	 */
++	if (!isp_dev->tables.load.data)
++		return -ENODEV;
++
++	sun6i_isp_load_write(isp_dev, offset, value);
++
++	return count;
++}
++
++static const struct file_operations sun6i_isp_debugfs_load_poke_fops = {
++	.owner		= THIS_MODULE,
++	.open		= simple_open,
++	.write		= sun6i_isp_debugfs_load_poke_write,
++	.llseek		= noop_llseek,
++};
++
+ static const struct file_operations sun6i_isp_debugfs_poke_fops = {
+ 	.owner		= THIS_MODULE,
+ 	.open		= simple_open,
+@@ -466,6 +525,8 @@ static void sun6i_isp_debugfs_setup(struct sun6i_isp_device *isp_dev)
+ 			    &sun6i_isp_debugfs_registers_fops);
+ 	debugfs_create_file("poke", 0200, isp_dev->debugfs, isp_dev,
+ 			    &sun6i_isp_debugfs_poke_fops);
++	debugfs_create_file("load_poke", 0200, isp_dev->debugfs, isp_dev,
++			    &sun6i_isp_debugfs_load_poke_fops);
+ 	debugfs_create_file("raw", 0444, isp_dev->debugfs, isp_dev,
+ 			    &sun6i_isp_debugfs_raw_fops);
+ }
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+index 075d6ff3528f..addc617415fb 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+@@ -16,6 +16,23 @@
+ #include "sun6i_isp_proc.h"
+ #include "sun6i_isp_reg.h"
+ 
++/*
++ * MODE bit 17 selects the sharpening mode, and this driver has always
++ * written 1 -- so every measurement ever taken of the sharpening block on
++ * this part describes mode 1 and nothing is known about mode 0. It cannot
++ * be reached from the poke interface: MODE is staged, written into the
++ * load buffer here at stream start, and a poke to the live copy is
++ * overwritten at the next parameter sync.
++ *
++ * A module parameter rather than a config field because the hardware only
++ * latches this at a frontend start, so there is nothing to be gained from
++ * being able to change it per frame.
++ */
++static unsigned int sun6i_isp_sharp_mode = 1;
++module_param_named(sharp_mode, sun6i_isp_sharp_mode, uint, 0644);
++MODULE_PARM_DESC(sharp_mode, "sharpening mode written to MODE bit 17");
++
++
+ /* Helpers */
+ 
+ void sun6i_isp_proc_dimensions(struct sun6i_isp_device *isp_dev,
+@@ -299,7 +316,7 @@ void sun6i_isp_proc_configure(struct sun6i_isp_device *isp_dev)
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODE_REG,
+ 			     SUN6I_ISP_MODE_INPUT_FMT(format->input_format) |
+ 			     SUN6I_ISP_MODE_INPUT_YUV_SEQ(format->input_yuv_seq) |
+-			     SUN6I_ISP_MODE_SHARP(1) |
++			     SUN6I_ISP_MODE_SHARP(sun6i_isp_sharp_mode) |
+ 			     SUN6I_ISP_MODE_HIST(2));
+ }
+ 
+-- 
+2.43.0
+
