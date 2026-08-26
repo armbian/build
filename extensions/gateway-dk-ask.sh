@@ -187,12 +187,18 @@ function custom_kernel_config__ask_modules() {
 			exit_with_error "fsl_qbman Kconfig source insert missed its anchor in staging/Kconfig (mainline layout changed?)"
 	fi
 
-	# Force the NXP SDK DPAA/FMan stack explicitly on, and the competing mainline drivers off,
-	# rather than relying on Kconfig defaults. ASK_CDX depends on FSL_SDK_FMAN, which itself
-	# requires !FSL_FMAN; if a future mainline enabled FSL_FMAN by default, FSL_SDK_FMAN would
-	# drop, olddefconfig would silently remove ASK_CDX, and a non-offloading kernel would ship
-	# green. Mainline FSL_DPAA_ETH depends on FSL_FMAN, so disabling FSL_FMAN keeps it off too.
+	# Force the full NXP SDK DPAA/FMan/QBMan stack explicitly on, and the competing mainline
+	# drivers off. These live here, not in linux-ls1046a-current.config, on purpose: that config
+	# is family-level and shared by any future non-ASK LS1046A board running plain mainline, and
+	# the SDK/offload symbols only exist once this extension stages the SDK overlay. Relying on
+	# Kconfig defaults is not safe either — FSL_DPAA_1588 defaults n, FSL_DPAA_ETH_MAX_BUF_COUNT
+	# defaults 128 (we need 640), and FSL_SDK_DPA defaults n. ASK_CDX depends on FSL_SDK_FMAN,
+	# which requires !FSL_FMAN; if a future mainline enabled FSL_FMAN by default, FSL_SDK_FMAN
+	# would drop, olddefconfig would silently remove ASK_CDX, and a non-offloading kernel would
+	# ship green. Mainline FSL_DPAA_ETH depends on FSL_FMAN, so disabling FSL_FMAN keeps it off too.
 	opts_y+=("CONFIG_FSL_SDK_FMAN" "CONFIG_FSL_SDK_BMAN" "CONFIG_FSL_SDK_QMAN")
+	opts_y+=("CONFIG_FSL_SDK_DPA" "CONFIG_FSL_SDK_DPAA_ETH" "CONFIG_FSL_DPAA_1588")
+	opts_val["CONFIG_FSL_DPAA_ETH_MAX_BUF_COUNT"]="640"
 	opts_n+=("CONFIG_FSL_FMAN")
 
 	# Enable ASK modules in kernel config (opts_m array, same pattern as meson64_common.inc)
