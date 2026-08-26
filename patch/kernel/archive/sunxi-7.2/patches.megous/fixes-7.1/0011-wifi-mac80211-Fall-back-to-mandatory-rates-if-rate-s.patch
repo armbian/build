@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Fri, 10 Jul 2026 23:33:35 +0200
+Subject: wifi: mac80211: Fall back to mandatory rates if rate set matches no
+ rate
+
+Since commit 16ee3ea8faef ("wifi: mac80211: check basic rates validity
+in sta_link_apply_parameters"), NL80211_CMD_NEW_STATION and
+NL80211_CMD_SET_STATION fail with -EINVAL when none of the supplied
+supported rates match the band of the interface.
+
+This broke association of misbehaving-but-real stations. Some clients
+(observed with a MediaTek-based device) send an association request on
+5 GHz whose Supported Rates element contains only 11b rates
+(1/2/5.5/11 Mbps) and no Extended Supported Rates element, even though
+the same frame carries valid HT/VHT capabilities. hostapd passes the
+rate set through to SET_STATION when marking the station associated,
+mac80211 now rejects it, and hostapd fails the association with status
+17 (AP_UNABLE_TO_HANDLE_NEW_STA). It gets worse from there: hostapd
+caches the offending rates in its station entry and includes them in
+the NEW_STATION it issues on the client's next authentication attempt
+(ap_sta_re_add()), so even authentication keeps failing until the
+station entry times out, after which the whole cycle repeats. The
+client can never connect. Before the commit above, the unparseable
+rates were simply ignored and such clients associated fine, exchanging
+data over HT/VHT MCS rates.
+
+Keep the protection against an empty rate bitmap (the original
+commit's concern, found by syzkaller), but instead of rejecting the
+station, fall back to the band's mandatory rates - the same fallback
+IBSS and OCB already use. Any station transmitting on a band must
+support that band's mandatory rates per 802.11, so this is a safe
+minimal assumption, and legacy rates are irrelevant for HT/VHT-capable
+stations anyway.
+
+Fixes: 16ee3ea8faef ("wifi: mac80211: check basic rates validity in sta_link_apply_parameters")
+Signed-of-by: Ondrej Jirman <megi@xff.cz>
+---
+ net/mac80211/cfg.c | 14 ++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index 111111111111..222222222222 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -2181,8 +2181,18 @@ static int sta_link_apply_parameters(struct ieee80211_local *local,
+ 	    params->supported_rates_len &&
+ 	    !ieee80211_parse_bitrates(sband, params->supported_rates,
+ 				      params->supported_rates_len,
+-				      &link_sta->pub->supp_rates[sband->band]))
+-		return -EINVAL;
++				      &link_sta->pub->supp_rates[sband->band])) {
++		/*
++		 * Some misbehaving stations report legacy rates of the
++		 * wrong band in their (re)association request (e.g. 11b
++		 * rates on 5 GHz), so none of them may parse. Rejecting
++		 * the station outright would prevent it from ever
++		 * associating; fall back to the band's mandatory rates
++		 * instead, which also keeps the rate bitmap non-empty.
++		 */
++		link_sta->pub->supp_rates[sband->band] =
++			ieee80211_mandatory_rates(sband);
++	}
+ 
+ 	if (params->ht_capa)
+ 		ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, own_ht_cap,
+-- 
+Armbian
+
