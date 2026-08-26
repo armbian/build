@@ -1,0 +1,276 @@
+From 42509a27577c4dc3e4b65b2fe0c48993c0e59cf6 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 16:40:15 +0200
+Subject: [PATCH] media: sun6i-isp: Configure the statistics windows
+
+The exposure, focus and histogram engines each gather over a window,
+the first two dividing it into a grid of zones. None of that was
+configurable: auto exposure was left on a fixed eight by eight grid
+with hardcoded brightness thresholds, and the other two had no register
+definitions at all.
+
+Describe the window in the parameters and program all three.
+
+The geometry encoding is worth knowing about. A size goes in halved and
+then one less, a position just halved, which is what the two helpers
+here do. The histogram then reverses the field order of its position
+register, putting the horizontal start in the upper half where exposure
+and focus put the vertical one -- that is not a transcription slip,
+both isp_set_ae_win_reg() and isp_set_hist_win_reg() are unambiguous
+about it.
+
+The fixed exposure defaults stay as they were for the case where
+userspace asks for nothing, since the comment on them says an output
+depends on it.
+
+All three windows are identical on the A83T and the V3s.
+
+This is only the configuration half. Reading the gathered statistics
+back needs the layout of the records the hardware writes, which is not
+established yet, so nothing enables these without being asked to.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  | 87 ++++++++++++++++++-
+ .../media/sunxi/sun6i-isp/sun6i_isp_reg.h     | 34 ++++++++
+ .../sunxi/sun6i-isp/uapi/sun6i-isp-config.h   | 39 +++++++++
+ 3 files changed, 158 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 0ccc2b42d2ef..f21e2f909c1c 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -63,7 +63,7 @@ static void sun6i_isp_params_configure_ob(struct sun6i_isp_device *isp_dev)
+ 			     SUN6I_ISP_OB_SRC0_VALID_START_VERT(0));
+ }
+ 
+-static void sun6i_isp_params_configure_ae(struct sun6i_isp_device *isp_dev)
++static void sun6i_isp_params_configure_ae_default(struct sun6i_isp_device *isp_dev)
+ {
+ 	/* These are default values that need to be set to get an output. */
+ 
+@@ -261,6 +261,71 @@ sun6i_isp_params_configure_drc(struct sun6i_isp_device *isp_dev,
+ 				     sizeof(config->drc.table));
+ }
+ 
++static void
++sun6i_isp_params_configure_ae(struct sun6i_isp_device *isp_dev,
++			      const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_ae *ae = &config->ae;
++	const struct sun6i_isp_params_config_h3a_window *win = &ae->window;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AE_CFG_REG,
++			     SUN6I_ISP_AE_CFG_LOW_BRI_TH(ae->low_brightness_threshold) |
++			     SUN6I_ISP_AE_CFG_HORZ_NUM(win->horz_num) |
++			     SUN6I_ISP_AE_CFG_HIGH_BRI_TH(ae->high_brightness_threshold) |
++			     SUN6I_ISP_AE_CFG_VERT_NUM(win->vert_num));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AE_SIZE_REG,
++			     SUN6I_ISP_AE_SIZE_WIDTH(SUN6I_ISP_H3A_SIZE(win->width)) |
++			     SUN6I_ISP_AE_SIZE_HEIGHT(SUN6I_ISP_H3A_SIZE(win->height)));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AE_POS_REG,
++			     SUN6I_ISP_AE_POS_HORZ_START(SUN6I_ISP_H3A_POS(win->horz_start)) |
++			     SUN6I_ISP_AE_POS_VERT_START(SUN6I_ISP_H3A_POS(win->vert_start)));
++}
++
++static void
++sun6i_isp_params_configure_af(struct sun6i_isp_device *isp_dev,
++			      const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_h3a_window *win = &config->af.window;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AF_CFG_REG,
++			     SUN6I_ISP_AF_CFG_HORZ_NUM(win->horz_num) |
++			     SUN6I_ISP_AF_CFG_VERT_NUM(win->vert_num));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AF_SIZE_REG,
++			     SUN6I_ISP_AF_SIZE_WIDTH(SUN6I_ISP_H3A_SIZE(win->width)) |
++			     SUN6I_ISP_AF_SIZE_HEIGHT(SUN6I_ISP_H3A_SIZE(win->height)));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_AF_START_REG,
++			     SUN6I_ISP_AF_START_HORZ(SUN6I_ISP_H3A_POS(win->horz_start)) |
++			     SUN6I_ISP_AF_START_VERT(SUN6I_ISP_H3A_POS(win->vert_start)));
++}
++
++static void
++sun6i_isp_params_configure_hist(struct sun6i_isp_device *isp_dev,
++				const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_h3a_window *win =
++		&config->hist.window;
++	u32 value;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_HIST_SIZE_REG,
++			     SUN6I_ISP_HIST_SIZE_WIDTH(SUN6I_ISP_H3A_SIZE(win->width)) |
++			     SUN6I_ISP_HIST_SIZE_HEIGHT(SUN6I_ISP_H3A_SIZE(win->height)));
++
++	/* Note the swapped halves compared to the other windows. */
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_HIST_POS_REG,
++			     SUN6I_ISP_HIST_POS_HORZ(SUN6I_ISP_H3A_POS(win->horz_start)) |
++			     SUN6I_ISP_HIST_POS_VERT(SUN6I_ISP_H3A_POS(win->vert_start)));
++
++	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODE_REG);
++	value &= ~SUN6I_ISP_MODE_HIST(3);
++	value |= SUN6I_ISP_MODE_HIST(config->hist.mode);
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODE_REG, value);
++}
++
+ static void
+ sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
+ 			       const struct sun6i_isp_params_config *config)
+@@ -287,7 +352,7 @@ static void sun6i_isp_params_configure_wb(struct sun6i_isp_device *isp_dev)
+ 
+ static void sun6i_isp_params_configure_base(struct sun6i_isp_device *isp_dev)
+ {
+-	sun6i_isp_params_configure_ae(isp_dev);
++	sun6i_isp_params_configure_ae_default(isp_dev);
+ 	sun6i_isp_params_configure_ob(isp_dev);
+ 	sun6i_isp_params_configure_wb(isp_dev);
+ }
+@@ -377,6 +442,15 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_DRC)
+ 		sun6i_isp_params_configure_drc(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_AE)
++		sun6i_isp_params_configure_ae(isp_dev, config);
++
++	if (modules & SUN6I_ISP_MODULE_AF)
++		sun6i_isp_params_configure_af(isp_dev, config);
++
++	if (modules & SUN6I_ISP_MODULE_HIST)
++		sun6i_isp_params_configure_hist(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
+@@ -414,6 +488,15 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_DRC)
+ 		value |= SUN6I_ISP_MODULE_EN_RGB_DRC;
+ 
++	if (modules & SUN6I_ISP_MODULE_AE)
++		value |= SUN6I_ISP_MODULE_EN_AE;
++
++	if (modules & SUN6I_ISP_MODULE_AF)
++		value |= SUN6I_ISP_MODULE_EN_AF;
++
++	if (modules & SUN6I_ISP_MODULE_HIST)
++		value |= SUN6I_ISP_MODULE_EN_HIST;
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		value |= SUN6I_ISP_MODULE_EN_RGB2RGB;
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 512c77c8c3a5..109d9c701131 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -146,6 +146,40 @@
+ #define SUN6I_ISP_AE_POS_HORZ_START(v)		((v) & GENMASK(10, 0))
+ #define SUN6I_ISP_AE_POS_VERT_START(v)		(((v) << 16) & GENMASK(26, 16))
+ 
++/*
++ * The statistics windows all store their geometry the same odd way: a
++ * size is halved and then one less, a position is just halved. The
++ * histogram is the exception to the field order, putting its horizontal
++ * start in the upper half where the others put the vertical one.
++ */
++
++#define SUN6I_ISP_H3A_SIZE(v)			(((v) >> 1) - 1)
++#define SUN6I_ISP_H3A_POS(v)			((v) >> 1)
++
++/* AF */
++
++#define SUN6I_ISP_AF_CFG_REG			0x170
++#define SUN6I_ISP_AF_CFG_HORZ_NUM(v)		((v) & GENMASK(3, 0))
++#define SUN6I_ISP_AF_CFG_VERT_NUM(v)		(((v) << 8) & GENMASK(11, 8))
++
++#define SUN6I_ISP_AF_SIZE_REG			0x174
++#define SUN6I_ISP_AF_SIZE_WIDTH(v)		((v) & GENMASK(10, 0))
++#define SUN6I_ISP_AF_SIZE_HEIGHT(v)		(((v) << 16) & GENMASK(26, 16))
++
++#define SUN6I_ISP_AF_START_REG			0x178
++#define SUN6I_ISP_AF_START_HORZ(v)		((v) & GENMASK(10, 0))
++#define SUN6I_ISP_AF_START_VERT(v)		(((v) << 16) & GENMASK(26, 16))
++
++/* Histogram */
++
++#define SUN6I_ISP_HIST_SIZE_REG			0x110
++#define SUN6I_ISP_HIST_SIZE_WIDTH(v)		((v) & GENMASK(12, 0))
++#define SUN6I_ISP_HIST_SIZE_HEIGHT(v)		(((v) << 16) & GENMASK(28, 16))
++
++#define SUN6I_ISP_HIST_POS_REG			0x114
++#define SUN6I_ISP_HIST_POS_VERT(v)		((v) & GENMASK(11, 0))
++#define SUN6I_ISP_HIST_POS_HORZ(v)		(((v) << 16) & GENMASK(27, 16))
++
+ /* OB */
+ 
+ #define SUN6I_ISP_OB_SIZE_REG			0x78
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 17275d9569a7..de885c70dcfc 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -21,6 +21,9 @@
+ #define SUN6I_ISP_MODULE_GAMMA			(1U << 8)
+ #define SUN6I_ISP_MODULE_LSC			(1U << 9)
+ #define SUN6I_ISP_MODULE_DRC			(1U << 10)
++#define SUN6I_ISP_MODULE_AE			(1U << 11)
++#define SUN6I_ISP_MODULE_AF			(1U << 12)
++#define SUN6I_ISP_MODULE_HIST			(1U << 13)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -111,6 +114,39 @@ struct sun6i_isp_params_config_drc {
+ 	__u16	table[256];
+ };
+ 
++/*
++ * Window the statistics are gathered over, divided into a grid of zones
++ * for the ones that report per-zone. Sizes and positions are in pixels;
++ * the hardware wants them halved, which the driver does.
++ */
++struct sun6i_isp_params_config_h3a_window {
++	__u8	horz_num;
++	__u8	vert_num;
++
++	__u16	width;
++	__u16	height;
++	__u16	horz_start;
++	__u16	vert_start;
++};
++
++struct sun6i_isp_params_config_ae {
++	struct sun6i_isp_params_config_h3a_window	window;
++
++	__u16	low_brightness_threshold;
++	__u16	high_brightness_threshold;
++};
++
++struct sun6i_isp_params_config_af {
++	struct sun6i_isp_params_config_h3a_window	window;
++};
++
++/* No zone grid: the histogram covers its window as a whole. */
++struct sun6i_isp_params_config_hist {
++	struct sun6i_isp_params_config_h3a_window	window;
++
++	__u8	mode;
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -125,6 +161,9 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_gamma	gamma;
+ 	struct sun6i_isp_params_config_lsc	lsc;
+ 	struct sun6i_isp_params_config_drc	drc;
++	struct sun6i_isp_params_config_ae	ae;
++	struct sun6i_isp_params_config_af	af;
++	struct sun6i_isp_params_config_hist	hist;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+2.43.0
+

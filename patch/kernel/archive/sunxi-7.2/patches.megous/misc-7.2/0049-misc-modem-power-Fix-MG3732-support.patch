@@ -1,0 +1,131 @@
+From 4d4d73ab5223ee069919c385acdf7ecc83c42e7a Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 17 Aug 2026 21:30:57 +0200
+Subject: [PATCH] misc: modem-power: Fix MG3732 support
+
+The sequence was completely incorrect. :)
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/misc/modem-power.c | 67 ++++++++++++++++++++++++++++++++++----
+ 1 file changed, 61 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/misc/modem-power.c b/drivers/misc/modem-power.c
+index b7bbb70ec2c1..4629e4bd7cc8 100644
+--- a/drivers/misc/modem-power.c
++++ b/drivers/misc/modem-power.c
+@@ -203,6 +203,41 @@ static int mpwr_serdev_at_cmd_with_retry_ignore_timeout(struct mpwr_dev *mpwr, c
+ 
+ // {{{ mg2723 variant
+ 
++/*
++ * ON/OFF AND /RESET ARE PULSED INPUTS, NOT LEVELS. From the ZTE
++ * MG3732_V2 Hardware Development Guide, 4.2.3 and table 6-6:
++ *
++ *   power on    ON/OFF low for >50 ms, then RELEASED
++ *   power off   ON/OFF low for 2000 ms (max 5000), then released;
++ *               V_MAIN may go 1-2 s after that
++ *   reset       /RESET low for <2000 ms - the module comes back up
++ *               /RESET low for >2000 ms - the module stays off, and
++ *               only an ON/OFF pulse will start it again
++ *
++ * and, in the same section: "In order to make sure the data is saved
++ * safely, please don't cut off the power when the module is on. It's
++ * strongly recommended to use ON/OFF pin or AT command to turn off the
++ * module."
++ *
++ * This used to drive ON/OFF as an enable - asserted for the whole time
++ * the modem was up, released to turn it off, and the rail then cut
++ * behind it. That is the power button held down permanently and then
++ * let go, which is not an off at all: on the A711 the modem carried on
++ * running, kept the SIM and went on answering AT with `powered`
++ * reading 0, because the rail could not be cut either (reg_vmain is
++ * shared with the USB host controller the modem hangs off).
++ *
++ * EVERY LINE ON THIS BOARD IS INVERTED by an NPN open-collector stage
++ * (Q13/Q14/Q9 on the A711), so a GPIO driven HIGH pulls the module's
++ * pin LOW. Everything below is written in terms of the GPIO, where 1
++ * means the module sees its pin asserted.
++ */
++#define MG2723_T2_MS	1000	/* V_MAIN up -> ON/OFF takes effect */
++#define MG2723_T3_MS	 100	/* ON/OFF asserted, to switch on  (min 50) */
++#define MG2723_T4_MS	2500	/* ON/OFF asserted, to switch off (min 2000) */
++#define MG2723_T5_MS	2000	/* released -> V_MAIN may be removed */
++#define MG2723_RESET_MS	 300	/* a reset, so comfortably under 2000 */
++
+ static int mpwr_mg2723_power_init(struct mpwr_dev* mpwr)
+ {
+ 	// if the device has power applied or doesn't have regulator
+@@ -224,35 +259,55 @@ static int mpwr_mg2723_power_up(struct mpwr_dev* mpwr)
+ {
+ 	int ret;
+ 
+-	// power up
+ 	if (mpwr->regulator) {
++		bool was_on = regulator_is_enabled(mpwr->regulator);
++
+ 		ret = regulator_enable(mpwr->regulator);
+ 		if (ret < 0) {
+ 			dev_err(mpwr->dev,
+ 				"can't enable power supply err=%d", ret);
+ 			return ret;
+ 		}
++		// T2: ON/OFF does nothing until V_MAIN has settled. Only
++		// worth waiting for when we are what turned it on - on a
++		// board where the rail is shared it was already up.
++		if (!was_on)
++			msleep(MG2723_T2_MS);
+ 	}
+ 
++	// out of reset first: power_init() leaves /RESET asserted to
++	// hold the module off, and a module held in reset will not
++	// answer the button
++	gpiod_direction_output(mpwr->reset_gpio, 0);
++
++	// and now the button, PRESSED AND RELEASED
+ 	gpiod_direction_output(mpwr->enable_gpio, 1);
+-	gpiod_direction_output(mpwr->reset_gpio, 1);
+-	msleep(300);
+-	gpiod_set_value(mpwr->reset_gpio, 0);
++	msleep(MG2723_T3_MS);
++	gpiod_set_value(mpwr->enable_gpio, 0);
+ 
+ 	return 0;
+ }
+ 
+ static int mpwr_mg2723_power_down(struct mpwr_dev* mpwr)
+ {
++	// the long press. This is the only thing that switches the
++	// module off; taking its power away instead risks whatever it
++	// had not written yet, and is what the guide asks us not to do
++	gpiod_set_value(mpwr->enable_gpio, 1);
++	msleep(MG2723_T4_MS);
+ 	gpiod_set_value(mpwr->enable_gpio, 0);
+-	msleep(50);
+ 
+ 	if (mpwr->regulator) {
++		// T5: it is still writing its own state for a moment
++		// after the button comes up
++		msleep(MG2723_T5_MS);
+ 		regulator_disable(mpwr->regulator);
+ 
+ 		gpiod_direction_input(mpwr->enable_gpio);
+ 		gpiod_direction_input(mpwr->reset_gpio);
+ 	} else {
++		// no rail to drop, so hold it in reset instead: >2 s of
++		// /RESET is the guide's other way of keeping it off
+ 		gpiod_set_value(mpwr->reset_gpio, 1);
+ 	}
+ 
+@@ -262,7 +317,7 @@ static int mpwr_mg2723_power_down(struct mpwr_dev* mpwr)
+ static int mpwr_mg2723_reset(struct mpwr_dev* mpwr)
+ {
+ 	gpiod_set_value(mpwr->reset_gpio, 1);
+-	msleep(300);
++	msleep(MG2723_RESET_MS);
+ 	gpiod_set_value(mpwr->reset_gpio, 0);
+ 
+ 	return 0;
+-- 
+2.43.0
+

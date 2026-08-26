@@ -1,0 +1,191 @@
+From 961d8d9000db15ae987ce9497dff8e71a5e32ce0 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:46:54 +0200
+Subject: [PATCH] media: sun6i-isp: Add the scaler
+
+Each channel can scale down what the frontend produced, so let the capture
+format be smaller than the input rather than requiring the two to match.
+
+The scaler is brought up unconditionally, even at 1:1 where its ratios
+come out 0x100 and it is a pass-through. That follows the vendor, whose
+channel_enable(), scale_enable(), set_output_size(), scale_cfg() sequence
+has no test on the size, and leaving it out would not be the harmless
+optimisation it looks: the ratio registers live in the load buffer, which
+keeps its contents across streams, so a channel captured at the input
+resolution would run on whatever ratios an earlier stream left behind.
+
+The weight shift the hardware wants alongside the two ratios is the
+vendor's calculation, accumulated in 64 bits rather than 32 - which only
+differs for ratios large enough to overflow, where the vendor result would
+be meaningless anyway.
+
+The self channel is the vendor's thumbnail channel and its scaler has
+three settings rather than a free ratio: full size, half and quarter.
+S_FMT snaps to those, so what comes back is a size the channel can
+actually produce rather than one it would overrun the buffer trying to
+write. It is snapped whichever block the channel is currently driving,
+which is what keeps its format legal for the self block across a restart
+that moves it there.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.c | 122 +++++++++++++++++-
+ 1 file changed, 117 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index b9e61a32b174..7726022d9873 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -208,6 +208,63 @@ sun6i_isp_capture_buffer_configure(struct sun6i_isp_capture *capture,
+ 					   pixelformat, width, height);
+ }
+ 
++/*
++ * The scaler needs a weight shift alongside the two ratios, picked so
++ * that the accumulated filter weights stay in range. This is the
++ * vendor's calculation: sum the products of the horizontal and vertical
++ * tap weights over the whole filter footprint, then take the position of
++ * the top bit of that sum, biased by 8.
++ *
++ * The sum is accumulated in 64 bits rather than the vendor's 32, which
++ * only differs for ratios large enough to overflow, where the vendor
++ * result would be meaningless anyway.
++ */
++static int sun6i_isp_capture_weight_shift(u32 x_ratio, u32 y_ratio)
++{
++	int center_x = ((x_ratio >> 8) + 1) << 7;
++	int center_y = ((y_ratio >> 8) + 1) << 7;
++	unsigned int taps_x = (x_ratio >> 8) + 2;
++	unsigned int taps_y = (y_ratio >> 8) + 2;
++	unsigned int i, j;
++	int shift = -8;
++	s64 sum = 0;
++
++	for (i = 0; i < taps_x; i++) {
++		int weight_x = x_ratio - abs((int)(i << 8) - center_x);
++
++		for (j = 0; j < taps_y; j++)
++			sum += (s64)weight_x *
++			       (y_ratio - abs((int)(j << 8) - center_y));
++	}
++
++	for (sum >>= 8; sum; sum >>= 1)
++		shift++;
++
++	return shift;
++}
++
++static void sun6i_isp_capture_configure_scaler(struct sun6i_isp_capture *capture,
++					       unsigned int width,
++					       unsigned int height)
++{
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	unsigned int input_width, input_height;
++	u32 x_ratio, y_ratio;
++	int shift;
++
++	sun6i_isp_proc_dimensions(isp_dev, &input_width, &input_height);
++
++	x_ratio = (input_width << 8) / width;
++	y_ratio = (input_height << 8) / height;
++
++	shift = sun6i_isp_capture_weight_shift(x_ratio, y_ratio);
++
++	sun6i_isp_load_write(isp_dev, capture->regs->scale_cfg,
++			     SUN6I_ISP_MCH_SCALE_CFG_X_RATIO(x_ratio) |
++			     SUN6I_ISP_MCH_SCALE_CFG_Y_RATIO(y_ratio) |
++			     SUN6I_ISP_MCH_SCALE_CFG_WEIGHT_SHIFT(shift));
++}
++
+ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ {
+ 	struct sun6i_isp_device *isp_dev = capture->isp_dev;
+@@ -230,6 +287,19 @@ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ 			     SUN6I_ISP_MCH_SIZE_CFG_WIDTH(width) |
+ 			     SUN6I_ISP_MCH_SIZE_CFG_HEIGHT(height));
+ 
++	/*
++	 * The scaler is always brought up, even at 1:1 where its ratios come
++	 * out 0x100 and it is a pass-through. That is what the vendor does -
++	 * channel_enable(), scale_enable(), set_output_size(), scale_cfg(), in
++	 * that order, with no test on the size - and leaving it out is not the
++	 * harmless optimisation it looks like: the ratio registers are in the
++	 * load buffer, which keeps its contents across streams, so a channel
++	 * captured at the input resolution would run on whatever ratios some
++	 * earlier stream left behind.
++	 */
++	sun6i_isp_capture_configure_scaler(capture, width, height);
++	cfg |= SUN6I_ISP_MCH_CFG_SCALE_EN;
++
+ 	info = v4l2_format_info(pixelformat);
+ 	if (WARN_ON(!info))
+ 		return;
+@@ -683,18 +753,60 @@ static const struct vb2_ops sun6i_isp_capture_queue_ops = {
+ static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
+ 					     struct v4l2_format *format)
+ {
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
+ 	struct v4l2_pix_format *pix_format = &format->fmt.pix;
++	unsigned int input_width, input_height;
+ 	const struct v4l2_format_info *info;
+ 
+-	v4l_bound_align_image(&pix_format->width, SUN6I_ISP_CAPTURE_WIDTH_MIN,
+-			      SUN6I_ISP_CAPTURE_WIDTH_MAX, 1,
+-			      &pix_format->height, SUN6I_ISP_CAPTURE_HEIGHT_MIN,
+-			      SUN6I_ISP_CAPTURE_HEIGHT_MAX, 1, 0);
+-
+ 	if (!sun6i_isp_capture_format_find(pix_format->pixelformat))
+ 		pix_format->pixelformat =
+ 			sun6i_isp_capture_formats[0].pixelformat;
+ 
++	/* The scaler only goes down, so the input bounds what can be written. */
++	sun6i_isp_proc_dimensions(isp_dev, &input_width, &input_height);
++
++	v4l_bound_align_image(&pix_format->width, SUN6I_ISP_CAPTURE_WIDTH_MIN,
++			      min(input_width, (unsigned int)SUN6I_ISP_CAPTURE_WIDTH_MAX), 1,
++			      &pix_format->height, SUN6I_ISP_CAPTURE_HEIGHT_MIN,
++			      min(input_height, (unsigned int)SUN6I_ISP_CAPTURE_HEIGHT_MAX), 1, 0);
++
++	/*
++	 * The self channel is the vendor's thumbnail channel, and its scaler
++	 * does not take a free ratio the way the main one does: it has three
++	 * settings, full size, half and quarter. The vendor picks between them
++	 * from the ratio that was asked for and then recomputes the output size
++	 * from the setting it chose, rather than from the request -
++	 * bsp_isp_old_set_size_internal(), which does
++	 *
++	 *   ratio = (requested << 16) / input;
++	 *   if      (ratio <= 0x4000) mode = RATIO_1_4, scale = 0x4000;
++	 *   else if (ratio <= 0x8000) mode = RATIO_1_2, scale = 0x8000;
++	 *   else                      mode = ORIGINAL,  scale = 0x10000;
++	 *   size = input * scale >> 16;
++	 *
++	 * Anything else and the channel writes at a size the buffer was not
++	 * allocated for. Snap here instead, so that what comes back from S_FMT
++	 * is a size the channel can actually produce.
++	 *
++	 * It is snapped whichever block the channel ends up driving, so that
++	 * the format stays legal for the self block across a pipeline restart
++	 * that moves it there.
++	 */
++	if (capture->id == SUN6I_ISP_CAPTURE_SELF) {
++		unsigned int ratio = (pix_format->width << 16) / input_width;
++		unsigned int shift;
++
++		if (ratio <= 0x4000)
++			shift = 2;
++		else if (ratio <= 0x8000)
++			shift = 1;
++		else
++			shift = 0;
++
++		pix_format->width = input_width >> shift;
++		pix_format->height = input_height >> shift;
++	}
++
+ 	info = v4l2_format_info(pix_format->pixelformat);
+ 	if (WARN_ON(!info))
+ 		return;
+-- 
+2.43.0
+

@@ -1,0 +1,495 @@
+From 34452c111d966797f55da5635580210819fc63d1 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 13:32:29 +0200
+Subject: [PATCH] media: hm5065: Manage power with runtime PM
+
+The old model powered the sensor from the host's s_power call and
+applied the mode and controls at power-up. Nothing modern calls
+s_power; power now follows use: streaming holds a runtime PM
+reference, the sensor identifies once at probe, and the firmware,
+clock LUT and bus setup are reapplied on every runtime resume. The
+mode is programmed and the cached controls are replayed when
+streaming starts, which is also when the camera MCU is soft power
+cycled by the mode setup, so nothing is lost by writing them earlier.
+
+Control writes while the sensor is off just cache; volatile reads
+report -EIO as before. The firmware request moves to the I2C device,
+since a runtime resume can in principle run before the sub-device is
+registered with a v4l2_device. DEFINE_RUNTIME_DEV_PM_OPS also wires
+system suspend through pm_runtime_force_suspend/resume, which the old
+driver did not handle at all.
+
+The gc2145 on the same bridge has run this way for a while, so the
+bridge side of this is proven.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 261 ++++++++++++++++++++++++-------------
+ 1 file changed, 168 insertions(+), 93 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 33182062ca04..6e586b606a44 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -20,6 +20,7 @@
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/of_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/types.h>
+@@ -566,8 +567,6 @@ struct hm5065_dev {
+ 	struct v4l2_fract frame_interval;
+ 	struct hm5065_ctrls ctrls;
+ 
+-	bool pending_mode_change;
+-	bool powered;
+ 	bool streaming;
+ };
+ 
+@@ -597,7 +596,12 @@ static int hm5065_load_firmware(struct hm5065_dev *sensor, const char *name)
+ 	u16 start, len;
+ 	u8 buf[128];
+ 
+-	ret = request_firmware(&fw, name, sensor->sd.v4l2_dev->dev);
++	/*
++	 * The firmware loads at runtime resume, which can run before the
++	 * sub-device is registered with a v4l2_device, so the request goes
++	 * against the I2C device.
++	 */
++	ret = request_firmware(&fw, name, &sensor->i2c_client->dev);
+ 	if (ret) {
+ 		v4l2_warn(&sensor->sd,
+ 			  "Failed to read firmware %s, continuing anyway...\n",
+@@ -754,29 +758,28 @@ static int hm5065_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+ 
+ 	/* v4l2_ctrl_lock() locks our own mutex */
+ 
+-	if (!sensor->powered)
++	if (!pm_runtime_get_if_in_use(dev))
+ 		return -EIO;
+ 
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_FOCUS_AUTO:
+ 		ret = hm5065_get_af_status(sensor);
+-		if (ret)
+-			return ret;
+ 		break;
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		ret = hm5065_get_exposure(sensor);
+-		if (ret)
+-			return ret;
+ 		break;
+ 	default:
+-		return -EINVAL;
++		ret = -EINVAL;
++		break;
+ 	}
+ 
+-	return 0;
++	pm_runtime_put_autosuspend(dev);
++	return ret;
+ }
+ 
+ static const u8 hm5065_wb_opts[][2] = {
+@@ -1054,26 +1057,15 @@ static int hm5065_set_white_balance(struct hm5065_dev *sensor)
+ 	return ret;
+ }
+ 
+-static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
++static int hm5065_s_ctrl_do(struct hm5065_dev *sensor,
++			    struct v4l2_ctrl *ctrl)
+ {
+-	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+-	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+ 	s32 val = ctrl->val;
+ 	unsigned int i;
+ 	int ret;
+ 	u8 reg;
+ 
+-	/* v4l2_ctrl_lock() locks our own mutex */
+-
+-	/*
+-	 * If the device is not powered up by the host driver do
+-	 * not apply any controls to H/W at this time. Instead
+-	 * the controls will be restored right after power-up.
+-	 */
+-	if (!sensor->powered)
+-		return 0;
+-
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		return hm5065_set_exposure(sensor);
+@@ -1168,6 +1160,29 @@ static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	}
+ }
+ 
++static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
++	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct device *dev = &sensor->i2c_client->dev;
++	int ret;
++
++	/* v4l2_ctrl_lock() locks our own mutex */
++
++	/*
++	 * While the sensor is powered down the values are simply kept in
++	 * the control handler, and the handler setup done when streaming
++	 * starts applies them.
++	 */
++	if (!pm_runtime_get_if_in_use(dev))
++		return 0;
++
++	ret = hm5065_s_ctrl_do(sensor, ctrl);
++
++	pm_runtime_put_autosuspend(dev);
++	return ret;
++}
++
+ static const struct v4l2_ctrl_ops hm5065_ctrl_ops = {
+ 	.g_volatile_ctrl = hm5065_g_volatile_ctrl,
+ 	.s_ctrl = hm5065_s_ctrl,
+@@ -1480,22 +1495,38 @@ static int hm5065_set_stream(struct hm5065_dev *sensor, int enable)
+ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret = 0;
+ 
+ 	mutex_lock(&sensor->lock);
+ 
+-	if (sensor->streaming == !enable) {
+-		if (enable && sensor->pending_mode_change) {
+-			ret = hm5065_setup_mode(sensor);
+-			if (ret)
+-				goto out;
+-		}
++	if (sensor->streaming == !!enable)
++		goto out;
+ 
+-		ret = hm5065_set_stream(sensor, enable);
+-		if (ret)
++	if (enable) {
++		ret = pm_runtime_resume_and_get(dev);
++		if (ret < 0)
+ 			goto out;
+ 
+-		if (enable && sensor->ctrls.focus_auto->cur.val) {
++		ret = hm5065_setup_mode(sensor);
++		if (ret)
++			goto err_rpm_put;
++
++		/*
++		 * The mode setup soft power cycles the camera MCU, and the
++		 * sensor may just have been powered up with the controls
++		 * only cached, so reapply them on top of it. The handler
++		 * lock is our own mutex, which is already held.
++		 */
++		ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
++		if (ret)
++			goto err_rpm_put;
++
++		ret = hm5065_set_stream(sensor, true);
++		if (ret)
++			goto err_rpm_put;
++
++		if (sensor->ctrls.focus_auto->cur.val) {
+ 			msleep(100);
+ 
+ 			/* checking error here is not super important */
+@@ -1503,12 +1534,21 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ 				  HM5065_REG_AF_MODE_CONTINUOUS, NULL);
+ 		}
+ 
+-		sensor->streaming = !!enable;
++		sensor->streaming = true;
++	} else {
++		ret = hm5065_set_stream(sensor, false);
++		sensor->streaming = false;
++		pm_runtime_put_autosuspend(dev);
+ 	}
+ 
+ out:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
++
++err_rpm_put:
++	pm_runtime_put_autosuspend(dev);
++	mutex_unlock(&sensor->lock);
++	return ret;
+ }
+ 
+ /* }}} */
+@@ -1642,7 +1682,6 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 	}
+ 
+ 	sensor->fmt = *mf;
+-	sensor->pending_mode_change = true;
+ out:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
+@@ -1657,12 +1696,10 @@ static void hm5065_chip_enable(struct hm5065_dev *sensor, bool enable)
+ 	gpiod_set_value(sensor->reset_gpio, enable ? 0 : 1);
+ }
+ 
+-static int hm5065_configure(struct hm5065_dev *sensor)
++static int hm5065_identify(struct hm5065_dev *sensor)
+ {
+-	int ret;
+ 	u64 device_id;
+-	const struct hm5065_clk_lut *lut;
+-	unsigned long xclk_freq;
++	int ret;
+ 
+ 	ret = cci_read(sensor->regmap, HM5065_REG_DEVICE_ID, &device_id, NULL);
+ 	if (ret)
+@@ -1672,9 +1709,18 @@ static int hm5065_configure(struct hm5065_dev *sensor)
+ 		dev_err(&sensor->i2c_client->dev,
+ 			"unsupported device id: 0x%04x\n",
+ 			(unsigned int)device_id);
+-		return -EINVAL;
++		return -ENODEV;
+ 	}
+ 
++	return 0;
++}
++
++static int hm5065_configure(struct hm5065_dev *sensor)
++{
++	const struct hm5065_clk_lut *lut;
++	unsigned long xclk_freq;
++	int ret;
++
+ 	xclk_freq = clk_get_rate(sensor->xclk);
+ 	lut = hm5065_find_clk_lut(xclk_freq);
+ 	if (!lut) {
+@@ -1705,78 +1751,75 @@ static int hm5065_configure(struct hm5065_dev *sensor)
+ 			 HM5065_REG_BUS_CONFIG_PARALLEL_HH_VL, NULL);
+ }
+ 
+-static int hm5065_set_power(struct hm5065_dev *sensor, bool on)
++static void hm5065_power_off(struct device *dev)
+ {
+-	int ret = 0;
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 
+-	if (on) {
+-		ret = regulator_bulk_enable(HM5065_NUM_SUPPLIES,
+-					    sensor->supplies);
+-		if (ret)
+-			return ret;
++	clk_disable_unprepare(sensor->xclk);
++	hm5065_chip_enable(sensor, false);
++	regulator_bulk_disable(HM5065_NUM_SUPPLIES, sensor->supplies);
++	msleep(100);
++}
+ 
+-		/* pick the rate before the clock starts, not while it runs */
+-		ret = clk_set_rate(sensor->xclk, 24000000);
+-		if (ret)
+-			goto power_off;
++static int hm5065_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	int ret;
+ 
+-		ret = clk_prepare_enable(sensor->xclk);
+-		if (ret)
+-			goto power_off;
++	ret = regulator_bulk_enable(HM5065_NUM_SUPPLIES, sensor->supplies);
++	if (ret)
++		return ret;
+ 
+-		usleep_range(1000, 2000);
+-		hm5065_chip_enable(sensor, false);
+-		usleep_range(1000, 2000);
+-		hm5065_chip_enable(sensor, true);
+-		usleep_range(50000, 70000);
++	/* pick the rate before the clock starts, not while it runs */
++	ret = clk_set_rate(sensor->xclk, 24000000);
++	if (ret)
++		goto power_off;
+ 
+-		ret = hm5065_configure(sensor);
+-		if (ret)
+-			goto xclk_off;
++	ret = clk_prepare_enable(sensor->xclk);
++	if (ret)
++		goto power_off;
+ 
+-		ret = hm5065_setup_mode(sensor);
+-		if (ret)
+-			goto xclk_off;
++	usleep_range(1000, 2000);
++	hm5065_chip_enable(sensor, false);
++	usleep_range(1000, 2000);
++	hm5065_chip_enable(sensor, true);
++	usleep_range(50000, 70000);
+ 
+-		return 0;
+-	}
++	return 0;
+ 
+-xclk_off:
+-	clk_disable_unprepare(sensor->xclk);
+ power_off:
+ 	hm5065_chip_enable(sensor, false);
+ 	regulator_bulk_disable(HM5065_NUM_SUPPLIES, sensor->supplies);
+-	msleep(100);
+ 	return ret;
+ }
+ 
+-static int hm5065_s_power(struct v4l2_subdev *sd, int on)
++static int hm5065_runtime_resume(struct device *dev)
+ {
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+-	bool power_up, power_down;
+-	int ret = 0;
+-
+-	mutex_lock(&sensor->lock);
++	int ret;
+ 
+-	power_up = on && !sensor->powered;
+-	power_down = !on && sensor->powered;
++	ret = hm5065_power_on(dev);
++	if (ret)
++		return ret;
+ 
+-	if (power_up || power_down) {
+-		ret = hm5065_set_power(sensor, power_up);
+-		if (!ret)
+-			sensor->powered = on;
++	ret = hm5065_configure(sensor);
++	if (ret) {
++		hm5065_power_off(dev);
++		return ret;
+ 	}
+ 
+-	mutex_unlock(&sensor->lock);
++	/* the mode is applied when streaming starts */
++	return 0;
++}
+ 
+-	if (!ret && power_up) {
+-		/* restore controls */
+-		ret = v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+-		if (ret)
+-			hm5065_s_power(sd, 0);
+-	}
++static int hm5065_runtime_suspend(struct device *dev)
++{
++	hm5065_power_off(dev);
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ #ifdef CONFIG_VIDEO_ADV_DEBUG
+@@ -1822,7 +1865,6 @@ static int hm5065_s_register(struct v4l2_subdev *sd,
+ /* }}} */
+ 
+ static const struct v4l2_subdev_core_ops hm5065_core_ops = {
+-	.s_power = hm5065_s_power,
+ #ifdef CONFIG_VIDEO_ADV_DEBUG
+ 	.g_register = hm5065_g_register,
+ 	.s_register = hm5065_s_register,
+@@ -1888,7 +1930,6 @@ static int hm5065_probe(struct i2c_client *client)
+ 	sensor->fmt.field = V4L2_FIELD_NONE;
+ 	sensor->frame_interval.numerator = 1;
+ 	sensor->frame_interval.denominator = 15;
+-	sensor->pending_mode_change = true;
+ 
+ 	endpoint = fwnode_graph_get_next_endpoint(
+ 		of_fwnode_handle(client->dev.of_node), NULL);
+@@ -1959,18 +2000,42 @@ static int hm5065_probe(struct i2c_client *client)
+ 
+ 	mutex_init(&sensor->lock);
+ 
+-	ret = hm5065_init_controls(sensor);
++	/* the sensor has to be powered for the device id to be readable */
++	ret = hm5065_power_on(dev);
+ 	if (ret)
+ 		goto entity_cleanup;
+ 
++	ret = hm5065_identify(sensor);
++	if (ret)
++		goto power_off;
++
++	ret = hm5065_init_controls(sensor);
++	if (ret)
++		goto power_off;
++
++	/*
++	 * Hand the power we are holding over to runtime PM, then let it go
++	 * idle once the sub-device is registered.
++	 */
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++
+ 	ret = v4l2_async_register_subdev(&sensor->sd);
+ 	if (ret)
+-		goto free_ctrls;
++		goto rpm_disable;
++
++	pm_runtime_idle(dev);
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
+ 
+ 	return 0;
+ 
+-free_ctrls:
++rpm_disable:
++	pm_runtime_disable(dev);
++	pm_runtime_set_suspended(dev);
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
++power_off:
++	hm5065_power_off(dev);
+ entity_cleanup:
+ 	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
+@@ -1981,14 +2046,23 @@ static void hm5065_remove(struct i2c_client *client)
+ {
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct device *dev = &client->dev;
+ 
+ 	v4l2_async_unregister_subdev(&sensor->sd);
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	/* the handler locks sensor->lock, so it goes before the destroy */
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+ 	mutex_destroy(&sensor->lock);
++
++	pm_runtime_disable(dev);
++	if (!pm_runtime_status_suspended(dev))
++		hm5065_power_off(dev);
++	pm_runtime_set_suspended(dev);
+ }
+ 
++static DEFINE_RUNTIME_DEV_PM_OPS(hm5065_pm_ops, hm5065_runtime_suspend,
++				 hm5065_runtime_resume, NULL);
++
+ static const struct i2c_device_id hm5065_id[] = {
+ 	{"hm5065", 0},
+ 	{ /* sentinel */ }
+@@ -2005,6 +2079,7 @@ static struct i2c_driver hm5065_i2c_driver = {
+ 	.driver = {
+ 		.name  = "hm5065",
+ 		.of_match_table	= hm5065_dt_ids,
++		.pm = pm_ptr(&hm5065_pm_ops),
+ 	},
+ 	.id_table = hm5065_id,
+ 	.probe    = hm5065_probe,
+-- 
+2.43.0
+

@@ -1,0 +1,191 @@
+From 70c00d9db0e617824f2be6a6864700a1bb582647 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:48:46 +0200
+Subject: [PATCH] media: sun6i-isp: Add mirror and flip
+
+Both channels can mirror and flip what they write, so expose the two as
+V4L2_CID_HFLIP and V4L2_CID_VFLIP. They cost nothing: the channel does
+them on its way out rather than in a second pass.
+
+The vertical one needs the addresses moved. The hardware flips by walking
+each plane backwards, so it has to be handed the plane's last line rather
+than its first - which is what the vendor's bsp_isp_set_output_addr() does
+under its flip flag. Handing it the first line leaves it running off the
+front of the buffer and into whatever lives below, which on an A711 is the
+framebuffer.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.c | 73 ++++++++++++++++++-
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.h |  5 ++
+ 2 files changed, 75 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index 7726022d9873..30035ad0b23e 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -147,7 +147,8 @@ static unsigned int
+ sun6i_isp_capture_planes_configure(struct sun6i_isp_device *isp_dev,
+ 				   const struct sun6i_isp_capture_regs *regs,
+ 				   dma_addr_t base, u32 pixelformat,
+-				   unsigned int width, unsigned int height)
++				   unsigned int width, unsigned int height,
++				   bool flip)
+ {
+ 	const u32 plane_regs[] = { regs->y_addr0, regs->u_addr0, regs->v_addr0 };
+ 	const struct v4l2_format_info *info = v4l2_format_info(pixelformat);
+@@ -161,9 +162,22 @@ sun6i_isp_capture_planes_configure(struct sun6i_isp_device *isp_dev,
+ 		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+ 		unsigned int stride = sun6i_isp_capture_stride(info, i, width);
+ 		unsigned int lines = DIV_ROUND_UP(height, vdiv);
++		dma_addr_t plane = address;
++
++		/*
++		 * Vertical flip is done by walking each plane backwards, so
++		 * the hardware has to be given its last line rather than its
++		 * first - this is what the vendor's bsp_isp_set_output_addr()
++		 * does under its flip flag. Handing it the first line instead
++		 * leaves it running off the front of the buffer and into
++		 * whatever happens to live below it, which on this board is
++		 * the framebuffer.
++		 */
++		if (flip)
++			plane += (lines - 1) * stride;
+ 
+ 		sun6i_isp_load_write(isp_dev, plane_regs[i],
+-				     SUN6I_ISP_ADDR_VALUE(address));
++				     SUN6I_ISP_ADDR_VALUE(plane));
+ 
+ 		address += stride * lines;
+ 	}
+@@ -205,7 +219,8 @@ sun6i_isp_capture_buffer_configure(struct sun6i_isp_capture *capture,
+ 	sun6i_isp_capture_dimensions(capture, &width, &height);
+ 
+ 	sun6i_isp_capture_planes_configure(isp_dev, capture->regs, base,
+-					   pixelformat, width, height);
++					   pixelformat, width, height,
++					   capture->flip);
+ }
+ 
+ /*
+@@ -300,6 +315,12 @@ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ 	sun6i_isp_capture_configure_scaler(capture, width, height);
+ 	cfg |= SUN6I_ISP_MCH_CFG_SCALE_EN;
+ 
++	if (capture->mirror)
++		cfg |= SUN6I_ISP_MCH_CFG_MIRROR_EN;
++
++	if (capture->flip)
++		cfg |= SUN6I_ISP_MCH_CFG_FLIP_EN;
++
+ 	info = v4l2_format_info(pixelformat);
+ 	if (WARN_ON(!info))
+ 		return;
+@@ -621,6 +642,32 @@ static void sun6i_isp_capture_buffer_queue(struct vb2_buffer *vb2_buffer)
+ 		sun6i_isp_state_update(capture->isp_dev, false);
+ }
+ 
++/* Controls */
++
++static int sun6i_isp_capture_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct sun6i_isp_capture *capture =
++		container_of(ctrl->handler, struct sun6i_isp_capture,
++			     ctrl_handler);
++
++	switch (ctrl->id) {
++	case V4L2_CID_HFLIP:
++		capture->mirror = ctrl->val;
++		return 0;
++	case V4L2_CID_VFLIP:
++		capture->flip = ctrl->val;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static const struct v4l2_ctrl_ops sun6i_isp_capture_ctrl_ops = {
++	.s_ctrl		= sun6i_isp_capture_s_ctrl,
++};
++
++/* Queue */
++
+ static int sun6i_isp_capture_start_streaming(struct vb2_queue *queue,
+ 					     unsigned int count)
+ {
+@@ -1113,6 +1160,21 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ 
+ 	sun6i_isp_capture_format_prepare(capture, format);
+ 
++	/* V4L2 Controls */
++
++	v4l2_ctrl_handler_init(&capture->ctrl_handler, 2);
++
++	v4l2_ctrl_new_std(&capture->ctrl_handler, &sun6i_isp_capture_ctrl_ops,
++			  V4L2_CID_HFLIP, 0, 1, 1, 0);
++	v4l2_ctrl_new_std(&capture->ctrl_handler, &sun6i_isp_capture_ctrl_ops,
++			  V4L2_CID_VFLIP, 0, 1, 1, 0);
++
++	ret = capture->ctrl_handler.error;
++	if (ret) {
++		v4l2_err(v4l2_dev, "failed to create controls: %d\n", ret);
++		goto error_ctrl_handler;
++	}
++
+ 	/* Video Device */
+ 
+ 	strscpy(video_dev->name, capture->name, sizeof(video_dev->name));
+@@ -1122,6 +1184,7 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ 	video_dev->fops = &sun6i_isp_capture_fops;
+ 	video_dev->ioctl_ops = &sun6i_isp_capture_ioctl_ops;
+ 	video_dev->v4l2_dev = v4l2_dev;
++	video_dev->ctrl_handler = &capture->ctrl_handler;
+ 	video_dev->queue = queue;
+ 	video_dev->lock = &capture->lock;
+ 
+@@ -1162,6 +1225,9 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ error_media_entity:
+ 	media_entity_cleanup(&video_dev->entity);
+ 
++error_ctrl_handler:
++	v4l2_ctrl_handler_free(&capture->ctrl_handler);
++
+ error_mutex:
+ 	mutex_destroy(&capture->lock);
+ 
+@@ -1173,6 +1239,7 @@ static void sun6i_isp_capture_cleanup_one(struct sun6i_isp_capture *capture)
+ 	struct video_device *video_dev = &capture->video_dev;
+ 
+ 	vb2_video_unregister_device(video_dev);
++	v4l2_ctrl_handler_free(&capture->ctrl_handler);
+ 	media_entity_cleanup(&video_dev->entity);
+ 	mutex_destroy(&capture->lock);
+ }
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+index 82b5315c75f7..13d8de549529 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+@@ -7,6 +7,7 @@
+ #ifndef _SUN6I_ISP_CAPTURE_H_
+ #define _SUN6I_ISP_CAPTURE_H_
+ 
++#include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+ 
+ #define SUN6I_ISP_CAPTURE_NAME		"sun6i-isp-capture"
+@@ -77,7 +78,11 @@ struct sun6i_isp_capture {
+ 	struct mutex			lock; /* Queue lock. */
+ 	struct media_pad		pad;
+ 
++	struct v4l2_ctrl_handler	ctrl_handler;
++
+ 	struct v4l2_format		format;
++	bool				mirror;
++	bool				flip;
+ };
+ 
+ /* Helpers */
+-- 
+2.43.0
+

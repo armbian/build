@@ -1,0 +1,137 @@
+From af3dcded131b18ce1224fa8fe368598f482f3562 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 03:01:22 +0200
+Subject: [PATCH] media: gc2145: Add power line frequency control
+
+The row period is stretched so that it takes a whole number of mains
+periods, which is what keeps lighting flicker out of the image, but
+the frequency it was fitted to was hardcoded to 50 Hz. On 60 Hz mains
+that leaves banding with no way to correct it.
+
+Take the frequency from a control instead. Only the two mains
+frequencies are offered: there is no flicker detector wired up, and
+disabling the fit has no meaning here since the row period always has
+to be some value.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 40 +++++++++++++++++++++++++++++++++-----
+ 1 file changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 3c9e51ba09da..006a9fa5f7cd 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -300,6 +300,9 @@ struct gc2145_dev {
+ 	struct v4l2_fract frame_interval;
+ 	struct gc2145_ctrls ctrls;
+ 
++	/* mains frequency the row period is fitted to, in Hz */
++	unsigned long power_line_freq;
++
+ 	bool pending_mode_change;
+ 	bool powered;
+ 	bool streaming;
+@@ -990,6 +993,7 @@ gc2145_sensor_params_fit_vb_to_frame_period(struct gc2145_sensor_params* p,
+ }
+ 
+ static struct gc2145_sensor_params gc2145_get_sensor_params(
++	struct gc2145_dev *sensor,
+ 	unsigned long framerate,
+ 	unsigned long width,
+ 	unsigned long height,
+@@ -998,7 +1002,7 @@ static struct gc2145_sensor_params gc2145_get_sensor_params(
+ 	struct gc2145_sensor_params params = {0};
+ 	bool scaling_desired;
+ 	unsigned long frame_period;
+-	unsigned long power_line_freq = 50;
++	unsigned long power_line_freq = sensor->power_line_freq;
+ 
+ 	/*
+ 	 * Equations for calculating framerate are:
+@@ -1206,6 +1210,17 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_ANALOGUE_GAIN:
+ 		return gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
+ 
++	case V4L2_CID_POWER_LINE_FREQUENCY:
++		/*
++		 * The row period is fitted to a whole number of mains
++		 * periods when the mode is programmed, so this only takes
++		 * effect the next time that happens.
++		 */
++		sensor->power_line_freq =
++			val == V4L2_CID_POWER_LINE_FREQUENCY_60HZ ? 60 : 50;
++		sensor->pending_mode_change = true;
++		return 0;
++
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values)) {
+ 			dev_err(&sensor->i2c_client->dev, "ae bias out of range\n");
+@@ -1340,7 +1355,7 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	hdl->lock = &sensor->lock;
+ 
+ 	/* Clock related controls */
+-	params = gc2145_get_sensor_params(sensor->frame_interval.denominator,
++	params = gc2145_get_sensor_params(sensor, sensor->frame_interval.denominator,
+ 					  sensor->fmt.width,
+ 					  sensor->fmt.height,
+ 					  &pixel_rate);
+@@ -1384,6 +1399,17 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 				       AE_BIAS_MENU_DEFAULT_VALUE_INDEX,
+ 				       ae_bias_menu_values);
+ 
++	/*
++	 * Flicker avoidance is done by fitting the row period to the mains
++	 * period, so only the two mains frequencies are selectable - there
++	 * is nothing to disable and no detector to run.
++	 */
++	ctrls->pl_freq = v4l2_ctrl_new_std_menu(hdl, ops,
++						V4L2_CID_POWER_LINE_FREQUENCY,
++						V4L2_CID_POWER_LINE_FREQUENCY_60HZ,
++						BIT(V4L2_CID_POWER_LINE_FREQUENCY_DISABLED),
++						V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++
+ 	/* V/H flips */
+ 	ctrls->hflip = v4l2_ctrl_new_std(hdl, ops,
+ 					 V4L2_CID_HFLIP, 0, 1, 1, 0);
+@@ -1798,7 +1824,7 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor)
+ 		return -EINVAL;
+ 	}
+ 
+-	params = gc2145_get_sensor_params(framerate, width, height, &pclk2);
++	params = gc2145_get_sensor_params(sensor, framerate, width, height, &pclk2);
+ 
+ 	gc2145_sensor_params_apply(sensor, &params);
+ 
+@@ -1948,7 +1974,8 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 	fi->interval = sensor->frame_interval;
+ 	sensor->pending_mode_change = true;
+ 
+-	params = gc2145_get_sensor_params(fps, sensor->fmt.width, sensor->fmt.height, &pixel_rate);
++	params = gc2145_get_sensor_params(sensor, fps, sensor->fmt.width,
++					  sensor->fmt.height, &pixel_rate);
+ 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+ 			gc2145_sensor_params_get_pixel_rate(&params,
+ 							    pixel_rate));
+@@ -2085,7 +2112,9 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	sensor->fmt = *mf;
+ 	sensor->pending_mode_change = true;
+ 
+-	params = gc2145_get_sensor_params(sensor->frame_interval.denominator, mf->width, mf->height, &pixel_rate);
++	params = gc2145_get_sensor_params(sensor,
++					  sensor->frame_interval.denominator,
++					  mf->width, mf->height, &pixel_rate);
+ 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+ 			gc2145_sensor_params_get_pixel_rate(&params,
+ 							    pixel_rate));
+@@ -2350,6 +2379,7 @@ static int gc2145_probe(struct i2c_client *client)
+ 	sensor->frame_interval.denominator = 10;
+ 	sensor->pending_mode_change = true;
+ 	sensor->current_bank = 0xff;
++	sensor->power_line_freq = 50;
+ 
+ 	endpoint = fwnode_graph_get_next_endpoint(
+ 		of_fwnode_handle(client->dev.of_node), NULL);
+-- 
+2.43.0
+

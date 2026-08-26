@@ -1,0 +1,414 @@
+From c2ca55f88db3bfb831fa91e74ccf5bcae07e8c43 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 13:35:38 +0200
+Subject: [PATCH] media: hm5065: Keep the format in the sub-device state
+
+The active format lived in the driver struct behind a driver mutex,
+with a separate try-format path. It now lives in the sub-device state
+like everything else expects it to: get_fmt is the core helper, the
+default comes from init_state, and one lock - shared between the
+control handler and the state - covers the format, the frame interval
+and the streaming flag. The ioctl layer locks that state around every
+pad operation, so the hand-rolled locking goes away rather than
+moving.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 150 +++++++++++++++++--------------------
+ 1 file changed, 69 insertions(+), 81 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 6e586b606a44..cf6dd691524a 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -560,10 +560,10 @@ struct hm5065_dev {
+ 	struct gpio_desc *reset_gpio; // nrst pin
+ 	struct gpio_desc *enable_gpio; // ce pin
+ 
+-	/* lock to protect all members below */
+-	struct mutex lock;
+-
+-	struct v4l2_mbus_framefmt fmt;
++	/*
++	 * The sub-device state lock, which is the control handler lock,
++	 * protects all members below.
++	 */
+ 	struct v4l2_fract frame_interval;
+ 	struct hm5065_ctrls ctrls;
+ 
+@@ -761,7 +761,7 @@ static int hm5065_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+ 
+-	/* v4l2_ctrl_lock() locks our own mutex */
++	/* v4l2_ctrl_lock() locks the shared state lock */
+ 
+ 	if (!pm_runtime_get_if_in_use(dev))
+ 		return -EIO;
+@@ -1167,7 +1167,7 @@ static int hm5065_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+ 
+-	/* v4l2_ctrl_lock() locks our own mutex */
++	/* v4l2_ctrl_lock() locks the shared state lock */
+ 
+ 	/*
+ 	 * While the sensor is powered down the values are simply kept in
+@@ -1213,9 +1213,6 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+-	/* we can use our own mutex for the ctrl lock */
+-	hdl->lock = &sensor->lock;
+-
+ 	ctrls->auto_exposure = v4l2_ctrl_new_std_menu(hdl, ops,
+ 						      V4L2_CID_EXPOSURE_AUTO,
+ 						      V4L2_EXPOSURE_MANUAL, 0,
+@@ -1371,9 +1368,7 @@ static int hm5065_get_frame_interval(struct v4l2_subdev *sd,
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
+ 	fi->interval = sensor->frame_interval;
+-	mutex_unlock(&sensor->lock);
+ 
+ 	return 0;
+ }
+@@ -1406,14 +1401,14 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ 				     struct v4l2_subdev_frame_interval *fi)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(sd_state, 0);
+ 	int ret = 0, fps, max_fps;
+ 
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
+-
+-	max_fps = hm5065_get_max_fps(sensor->fmt.width, sensor->fmt.height);
++	max_fps = hm5065_get_max_fps(fmt->width, fmt->height);
+ 
+ 	/* user requested infinite frame rate */
+ 	if (fi->interval.numerator == 0)
+@@ -1435,25 +1430,27 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ 			  1, &ret);
+ 	}
+ 
+-	mutex_unlock(&sensor->lock);
+ 	return ret;
+ }
+ 
+-static int hm5065_setup_mode(struct hm5065_dev *sensor)
++static int hm5065_setup_mode(struct hm5065_dev *sensor,
++			     struct v4l2_subdev_state *state)
+ {
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
+ 	const struct hm5065_pixfmt *pix_fmt;
+ 	struct regmap *map = sensor->regmap;
+ 	u8 sensor_mode;
+ 	int ret = 0, fps;
+ 
+-	pix_fmt = hm5065_find_format(sensor->fmt.code);
++	pix_fmt = hm5065_find_format(fmt->code);
+ 	if (!pix_fmt) {
+ 		dev_err(&sensor->i2c_client->dev,
+-			"pixel format not supported %u\n", sensor->fmt.code);
++			"pixel format not supported %u\n", fmt->code);
+ 		return -EINVAL;
+ 	}
+ 
+-	switch (hm5065_get_max_binning(sensor->fmt.width, sensor->fmt.height)) {
++	switch (hm5065_get_max_binning(fmt->width, fmt->height)) {
+ 	case 4:
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_BINNING_4X4;
+ 		break;
+@@ -1464,14 +1461,14 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor)
+ 		sensor_mode = HM5065_REG_SENSOR_MODE_FULLSIZE;
+ 	}
+ 
+-	fps = hm5065_get_max_fps(sensor->fmt.width, sensor->fmt.height);
++	fps = hm5065_get_max_fps(fmt->width, fmt->height);
+ 	fps = clamp(fps, 1, (int)sensor->frame_interval.denominator);
+ 
+ 	cci_write(map, HM5065_REG_USER_COMMAND,
+ 		  HM5065_REG_USER_COMMAND_POWEROFF, &ret);
+ 	cci_write(map, HM5065_REG_P0_SENSOR_MODE, sensor_mode, &ret);
+-	cci_write(map, HM5065_REG_P0_MANUAL_HSIZE, sensor->fmt.width, &ret);
+-	cci_write(map, HM5065_REG_P0_MANUAL_VSIZE, sensor->fmt.height, &ret);
++	cci_write(map, HM5065_REG_P0_MANUAL_HSIZE, fmt->width, &ret);
++	cci_write(map, HM5065_REG_P0_MANUAL_VSIZE, fmt->height, &ret);
+ 	cci_write(map, HM5065_REG_P0_IMAGE_SIZE,
+ 		  HM5065_REG_IMAGE_SIZE_MANUAL, &ret);
+ 	cci_write(map, HM5065_REG_P0_DATA_FORMAT, pix_fmt->data_fmt, &ret);
+@@ -1496,9 +1493,10 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	struct device *dev = &sensor->i2c_client->dev;
++	struct v4l2_subdev_state *state;
+ 	int ret = 0;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 
+ 	if (sensor->streaming == !!enable)
+ 		goto out;
+@@ -1508,7 +1506,7 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ 		if (ret < 0)
+ 			goto out;
+ 
+-		ret = hm5065_setup_mode(sensor);
++		ret = hm5065_setup_mode(sensor, state);
+ 		if (ret)
+ 			goto err_rpm_put;
+ 
+@@ -1516,7 +1514,7 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ 		 * The mode setup soft power cycles the camera MCU, and the
+ 		 * sensor may just have been powered up with the controls
+ 		 * only cached, so reapply them on top of it. The handler
+-		 * lock is our own mutex, which is already held.
++		 * lock is the state lock, which is already held.
+ 		 */
+ 		ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+ 		if (ret)
+@@ -1542,12 +1540,12 @@ static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
+ 	}
+ 
+ out:
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 	return ret;
+ 
+ err_rpm_put:
+ 	pm_runtime_put_autosuspend(dev);
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 	return ret;
+ }
+ 
+@@ -1614,29 +1612,6 @@ static int hm5065_enum_frame_interval(struct v4l2_subdev *sd,
+ 	return 0;
+ }
+ 
+-static int hm5065_get_fmt(struct v4l2_subdev *sd,
+-			  struct v4l2_subdev_state *sd_state,
+-			  struct v4l2_subdev_format *format)
+-{
+-	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+-	struct v4l2_mbus_framefmt *mf;
+-
+-	if (format->pad != 0)
+-		return -EINVAL;
+-
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+-		mf = v4l2_subdev_state_get_format(sd_state, format->pad);
+-		format->format = *mf;
+-		return 0;
+-	}
+-
+-	mutex_lock(&sensor->lock);
+-	format->format = sensor->fmt;
+-	mutex_unlock(&sensor->lock);
+-
+-	return 0;
+-}
+-
+ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 			  struct v4l2_subdev_state *sd_state,
+ 			  struct v4l2_subdev_format *format)
+@@ -1644,11 +1619,13 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	struct v4l2_mbus_framefmt *mf = &format->format;
+ 	const struct hm5065_pixfmt *pixfmt;
+-	int ret = 0;
+ 
+ 	if (format->pad != 0)
+ 		return -EINVAL;
+ 
++	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE && sensor->streaming)
++		return -EBUSY;
++
+ 	/* check if we support requested mbus fmt */
+ 	pixfmt = hm5065_find_format(mf->code);
+ 	if (!pixfmt)
+@@ -1661,30 +1638,30 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 	mf->quantization = V4L2_QUANTIZATION_DEFAULT;
+ 	mf->field = V4L2_FIELD_NONE;
+ 
+-	mutex_lock(&sensor->lock);
+-
+ 	mf->width = clamp(mf->width, HM5065_CAPTURE_WIDTH_MIN,
+ 			  HM5065_SENSOR_WIDTH);
+ 	mf->height = clamp(mf->height, HM5065_CAPTURE_HEIGHT_MIN,
+ 			  HM5065_SENSOR_HEIGHT);
+ 
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+-		struct v4l2_mbus_framefmt *try_mf;
++	*v4l2_subdev_state_get_format(sd_state, format->pad) = *mf;
+ 
+-		try_mf = v4l2_subdev_state_get_format(sd_state, format->pad);
+-		*try_mf = *mf;
+-		goto out;
+-	}
++	return 0;
++}
+ 
+-	if (sensor->streaming) {
+-		ret = -EBUSY;
+-		goto out;
+-	}
++static int hm5065_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.code = hm5065_formats[0].code,
++			.width = 1280,
++			.height = 720,
++		},
++	};
+ 
+-	sensor->fmt = *mf;
+-out:
+-	mutex_unlock(&sensor->lock);
+-	return ret;
++	return hm5065_set_fmt(sd, state, &fmt);
+ }
+ 
+ /* }}} */
+@@ -1827,6 +1804,7 @@ static int hm5065_g_register(struct v4l2_subdev *sd,
+ 			     struct v4l2_dbg_register *reg)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct v4l2_subdev_state *state;
+ 	int ret;
+ 	u64 val = 0;
+ 
+@@ -1835,9 +1813,9 @@ static int hm5065_g_register(struct v4l2_subdev *sd,
+ 
+ 	reg->size = 1;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 	ret = cci_read(sensor->regmap, CCI_REG8(reg->reg), &val, NULL);
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 	if (ret)
+ 		return -EIO;
+ 
+@@ -1849,14 +1827,15 @@ static int hm5065_s_register(struct v4l2_subdev *sd,
+ 			     const struct v4l2_dbg_register *reg)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	struct v4l2_subdev_state *state;
+ 	int ret;
+ 
+ 	if (reg->reg > 0xffff || reg->val > 0xff)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 	ret = cci_write(sensor->regmap, CCI_REG8(reg->reg), reg->val, NULL);
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 
+ 	return ret;
+ }
+@@ -1875,7 +1854,7 @@ static const struct v4l2_subdev_pad_ops hm5065_pad_ops = {
+ 	.enum_mbus_code = hm5065_enum_mbus_code,
+ 	.enum_frame_size = hm5065_enum_frame_size,
+ 	.enum_frame_interval = hm5065_enum_frame_interval,
+-	.get_fmt = hm5065_get_fmt,
++	.get_fmt = v4l2_subdev_get_fmt,
+ 	.set_fmt = hm5065_set_fmt,
+ 	.get_frame_interval = hm5065_get_frame_interval,
+ 	.set_frame_interval = hm5065_set_frame_interval,
+@@ -1891,6 +1870,10 @@ static const struct v4l2_subdev_ops hm5065_subdev_ops = {
+ 	.video = &hm5065_video_ops,
+ };
+ 
++static const struct v4l2_subdev_internal_ops hm5065_internal_ops = {
++	.init_state = hm5065_init_state,
++};
++
+ static int hm5065_get_regulators(struct hm5065_dev *sensor)
+ {
+ 	int i;
+@@ -1924,10 +1907,6 @@ static int hm5065_probe(struct i2c_client *client)
+ 	if (IS_ERR(sensor->regmap))
+ 		return PTR_ERR(sensor->regmap);
+ 
+-	sensor->fmt.code = hm5065_formats[0].code;
+-	sensor->fmt.width = 1280;
+-	sensor->fmt.height = 720;
+-	sensor->fmt.field = V4L2_FIELD_NONE;
+ 	sensor->frame_interval.numerator = 1;
+ 	sensor->frame_interval.denominator = 15;
+ 
+@@ -1990,6 +1969,7 @@ static int hm5065_probe(struct i2c_client *client)
+ 		return ret;
+ 
+ 	v4l2_i2c_subdev_init(&sensor->sd, client, &hm5065_subdev_ops);
++	sensor->sd.internal_ops = &hm5065_internal_ops;
+ 
+ 	sensor->sd.flags = V4L2_SUBDEV_FL_HAS_DEVNODE;
+ 	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
+@@ -1998,8 +1978,6 @@ static int hm5065_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	mutex_init(&sensor->lock);
+-
+ 	/* the sensor has to be powered for the device id to be readable */
+ 	ret = hm5065_power_on(dev);
+ 	if (ret)
+@@ -2013,6 +1991,16 @@ static int hm5065_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto power_off;
+ 
++	/*
++	 * Share one lock between the control handler and the sub-device
++	 * state, so that a control handler callback can look at the active
++	 * format without taking a second lock.
++	 */
++	sensor->sd.state_lock = sensor->ctrls.handler.lock;
++	ret = v4l2_subdev_init_finalize(&sensor->sd);
++	if (ret)
++		goto free_ctrls;
++
+ 	/*
+ 	 * Hand the power we are holding over to runtime PM, then let it go
+ 	 * idle once the sub-device is registered.
+@@ -2033,11 +2021,12 @@ static int hm5065_probe(struct i2c_client *client)
+ rpm_disable:
+ 	pm_runtime_disable(dev);
+ 	pm_runtime_set_suspended(dev);
++	v4l2_subdev_cleanup(&sensor->sd);
++free_ctrls:
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+ power_off:
+ 	hm5065_power_off(dev);
+ entity_cleanup:
+-	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	return ret;
+ }
+@@ -2049,10 +2038,9 @@ static void hm5065_remove(struct i2c_client *client)
+ 	struct device *dev = &client->dev;
+ 
+ 	v4l2_async_unregister_subdev(&sensor->sd);
++	v4l2_subdev_cleanup(&sensor->sd);
+ 	media_entity_cleanup(&sensor->sd.entity);
+-	/* the handler locks sensor->lock, so it goes before the destroy */
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+-	mutex_destroy(&sensor->lock);
+ 
+ 	pm_runtime_disable(dev);
+ 	if (!pm_runtime_status_suspended(dev))
+-- 
+2.43.0
+

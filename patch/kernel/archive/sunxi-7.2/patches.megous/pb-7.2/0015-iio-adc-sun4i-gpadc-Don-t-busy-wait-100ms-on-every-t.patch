@@ -1,0 +1,55 @@
+From e47837461c51384d41c9e458edc7186a7bb191d6 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 21:56:04 +0200
+Subject: [PATCH] iio: adc: sun4i-gpadc: Don't busy-wait 100ms on every
+ temperature read
+
+The mode-change delay was guarded by a test against the ADC select
+bit alone:
+
+	if ((reg & tp_adc_select) != tp_adc_select)
+		mdelay(100);
+
+The temperature path writes CTRL1 with that bit CLEAR, so in steady
+state the old register never has it set and the test is true on every
+read - exactly the case where nothing changes. With the thermal zone
+polling once a second, that busy-waited 100 ms per second: 10% of the
+CPU on a completely idle board (perf: __loop_delay in kworker/u4).
+
+Delay only when the mode really changes, and sleep instead of
+spinning - this runs in process context, holding a mutex and about to
+wait on a completion.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/iio/adc/sun4i-gpadc-iio.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/iio/adc/sun4i-gpadc-iio.c b/drivers/iio/adc/sun4i-gpadc-iio.c
+index 203459ca9907..cc4800ebc953 100644
+--- a/drivers/iio/adc/sun4i-gpadc-iio.c
++++ b/drivers/iio/adc/sun4i-gpadc-iio.c
+@@ -188,7 +188,7 @@ static int sun4i_prepare_for_irq(struct iio_dev *indio_dev, int channel,
+ 		 */
+ 		if ((reg & info->data->adc_chan_mask) !=
+ 			 info->data->adc_chan_select(channel))
+-			mdelay(10);
++			usleep_range(10000, 11000);
+ 
+ 	} else {
+ 		/*
+@@ -206,8 +206,9 @@ static int sun4i_prepare_for_irq(struct iio_dev *indio_dev, int channel,
+ 	 * When the IP changes mode between ADC or touchscreen, it
+ 	 * needs a bit of time to get correct values.
+ 	 */
+-	if ((reg & info->data->tp_adc_select) != info->data->tp_adc_select)
+-		mdelay(100);
++	if (!!(reg & info->data->tp_adc_select) !=
++	    (irq == info->fifo_data_irq))
++		msleep(100);
+ 
+ 	return 0;
+ }
+-- 
+2.43.0
+

@@ -1,0 +1,91 @@
+From 02c69a093397b9b2addffa8dbfd3fc301de3ebf4 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:09:52 +0200
+Subject: [PATCH] media: hm5065: Honor the firmware reported frame rate limits
+
+The static frame rate status registers report the frame rate range
+the timing generator can actually achieve for the current mode. Read
+them once streaming starts and pull the desired rate down when the
+requested rate is beyond the mode's maximum, instead of trusting the
+guessed formula in hm5065_get_max_fps() alone.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 47 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 37a7a6bdfb1d..f8fe35b42993 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -18,6 +18,7 @@
+ #include <linux/firmware.h>
+ #include <linux/i2c.h>
+ #include <linux/init.h>
++#include <linux/math64.h>
+ #include <linux/module.h>
+ #include <linux/of_device.h>
+ #include <linux/pm_runtime.h>
+@@ -1587,6 +1588,50 @@ static int hm5065_set_stream(struct hm5065_dev *sensor, int enable)
+ 			 HM5065_REG_USER_COMMAND_STOP, NULL);
+ }
+ 
++/*
++ * The firmware's timing generator publishes the frame rate range it can
++ * actually achieve for the current mode. Check it once streaming starts
++ * and pull the desired rate down when the mode setup asked for too much.
++ */
++static void hm5065_check_frame_rate(struct hm5065_dev *sensor)
++{
++	struct device *dev = &sensor->i2c_client->dev;
++	s64 max_mili, min_mili, max_hz, min_hz;
++	s32 max_rem, min_rem;
++	u64 max_fp, min_fp;
++	int ret = 0, fps;
++
++	cci_read(sensor->regmap, HM5065_REG_MAX_FRAME_RATE_HZ, &max_fp, &ret);
++	cci_read(sensor->regmap, HM5065_REG_MIN_FRAME_RATE_HZ, &min_fp, &ret);
++	if (ret || max_fp == 0)
++		return;
++
++	max_mili = hm5065_mili_from_fp16(max_fp);
++	min_mili = hm5065_mili_from_fp16(min_fp);
++
++	max_hz = div_s64_rem(max_mili, 1000, &max_rem);
++	min_hz = div_s64_rem(min_mili, 1000, &min_rem);
++
++	dev_dbg(dev, "firmware frame rate range %lld.%03d-%lld.%03d Hz\n",
++		min_hz, min_rem, max_hz, max_rem);
++
++	fps = sensor->frame_interval.denominator;
++	if ((s64)fps * 1000 <= max_mili)
++		return;
++
++	fps = max_t(int, max_hz, 1);
++
++	dev_warn(dev, "%d fps is beyond the mode's limit, dropping to %d\n",
++		 sensor->frame_interval.denominator, fps);
++
++	ret = 0;
++	cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_NUM, fps,
++		  &ret);
++	cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_DEN, 1, &ret);
++	if (!ret)
++		sensor->frame_interval.denominator = fps;
++}
++
+ static int hm5065_enable_streams(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_state *state, u32 pad,
+ 				 u64 streams_mask)
+@@ -1617,6 +1662,8 @@ static int hm5065_enable_streams(struct v4l2_subdev *sd,
+ 	if (ret)
+ 		goto err_rpm_put;
+ 
++	hm5065_check_frame_rate(sensor);
++
+ 	if (sensor->ctrls.focus_auto->cur.val) {
+ 		msleep(100);
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,78 @@
+From b17b9367def484a30c09d5e51602198d9fda86bf Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 21:51:58 +0200
+Subject: [PATCH] media: sun6i-isp: Make the parameter and table requests
+ rising edges
+
+Reading FE_CTRL back while streaming, twelve seconds after the one
+parameters buffer that asked for a table reload, showed LENS_UPDATE,
+GAMMA_UPDATE and DRC_UPDATE all still set. Nothing clears them: not the
+hardware, which would have to for the bit to mean anything a second
+time, and not this driver, which only ever ORs them in. Once high they
+stayed high, so a request could never be made again.
+
+The vendor kernel treats these as edges. Its frame done handler clears
+PARA_READY, reprograms the load buffer and sets PARA_READY again, an
+explicit low to high transition per frame, and its table update helper
+writes each of the four update bits from a mask rather than ORing, so a
+bit not being asked for is actively cleared.
+
+Do the same: drop the request bits before raising them, so that every
+request is a transition rather than a write of a value that is already
+there. FE_CTRL now reads 0x06 where it read 0x76.
+
+This does not make the lens shading, the gamma curve or the dynamic
+range compression work -- all three were measured again afterwards and
+are still bit for bit no-ops, so whatever holds them is elsewhere, and
+is probably what also holds the colour matrix and the contrast, which
+are register driven and were never explained by this. It is a fix for
+the request bits, which were wrong on their own terms.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.c | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 57fe913d12ca..e42cd50a7d0b 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -65,11 +65,35 @@ void sun6i_isp_load_write(struct sun6i_isp_device *isp_dev, u32 offset,
+  * - state complete: to indicate that the state update was applied.
+  */
+ 
++/*
++ * The request bits are edges, not levels. Nothing in the hardware clears
++ * them once a request has been served, so a driver that only ever sets
++ * them leaves them high and the next request never becomes a transition.
++ * Clear them here, against the value about to be written, so that setting
++ * them below is always a rising edge.
++ */
++static void sun6i_isp_state_arm(struct sun6i_isp_device *isp_dev)
++{
++	struct regmap *regmap = isp_dev->regmap;
++	u32 value;
++
++	regmap_read(regmap, SUN6I_ISP_FE_CTRL_REG, &value);
++	value &= ~(SUN6I_ISP_FE_CTRL_PARA_READY |
++		   SUN6I_ISP_FE_CTRL_LUT_UPDATE |
++		   SUN6I_ISP_FE_CTRL_LENS_UPDATE |
++		   SUN6I_ISP_FE_CTRL_GAMMA_UPDATE |
++		   SUN6I_ISP_FE_CTRL_DRC_UPDATE |
++		   SUN6I_ISP_FE_CTRL_DISC_UPDATE);
++	regmap_write(regmap, SUN6I_ISP_FE_CTRL_REG, value);
++}
++
+ static void sun6i_isp_state_ready(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct regmap *regmap = isp_dev->regmap;
+ 	u32 value;
+ 
++	sun6i_isp_state_arm(isp_dev);
++
+ 	regmap_read(regmap, SUN6I_ISP_FE_CTRL_REG, &value);
+ 	value |= SUN6I_ISP_FE_CTRL_PARA_READY;
+ 	value |= sun6i_isp_params_table_update_take(isp_dev);
+-- 
+2.43.0
+

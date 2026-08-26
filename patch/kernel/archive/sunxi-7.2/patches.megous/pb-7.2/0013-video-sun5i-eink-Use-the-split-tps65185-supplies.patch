@@ -1,0 +1,133 @@
+From 14b32e874a6632088c7d75cabae5e8ad031aa72c Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 16:24:37 +0200
+Subject: [PATCH] video: sun5i-eink: Use the split tps65185 supplies
+
+Replace the single panel supply with vdd (panel logic, V3P3), drive
+(source/gate rails) and vcom, enabled in panel powerup order and
+disabled in reverse. The TPS65185 sequences the individual rails and
+waits for power good inside the drive supply enable. The panel's
+nominal VCOM comes from the vcom-microvolt DT property and is
+programmed before every powerup.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/video/fbdev/sun5i-eink.c | 77 +++++++++++++++++++++++++-------
+ 1 file changed, 62 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
+index bbaa28657c6b..3e2b64d2b4b3 100644
+--- a/drivers/video/fbdev/sun5i-eink.c
++++ b/drivers/video/fbdev/sun5i-eink.c
+@@ -176,7 +176,10 @@ struct eink_dev {
+ 	struct gpio_descs* gpios;
+ 
+ 	// power
+-	struct regulator *panel_supply;
++	struct regulator *vdd_supply;	/* panel logic (TPS65185 V3P3) */
++	struct regulator *drive_supply;	/* source/gate rails (VPOS/VNEG..) */
++	struct regulator *vcom_supply;
++	u32 vcom_uv;			/* panel nominal VCOM magnitude */
+ 	struct timer_list powerdown_timer;
+ 	struct work_struct powerdown_work;
+ 	bool powered;
+@@ -229,6 +232,11 @@ static const struct sun5i_eink_timing eink_default_timing = {
+ 
+ // {{{ Power
+ 
++/*
++ * Panel power sequencing: logic supply first, then the drive rails
++ * (the TPS65185 sequences the individual rails internally and waits
++ * for power good), VCOM last; power down in reverse order.
++ */
+ static int eink_set_power(struct eink_dev* eink, bool en)
+ {
+ 	int ret;
+@@ -236,20 +244,38 @@ static int eink_set_power(struct eink_dev* eink, bool en)
+ 	if (!en == !eink->powered)
+ 		return 0;
+ 
+-	dev_dbg(eink->dev, "%sable power supply", en ? "en" : "dis");
+-
+-	if (en)
+-		ret = regulator_enable(eink->panel_supply);
+-	else
+-		ret = regulator_disable(eink->panel_supply);
+-	if (ret) {
+-		dev_err(eink->dev, "can't %sable power supply (%d)",
+-			en ? "en" : "dis", ret);
+-		return ret;
++	dev_dbg(eink->dev, "%sable power supplies", en ? "en" : "dis");
++
++	if (en) {
++		ret = regulator_set_voltage(eink->vcom_supply, eink->vcom_uv,
++					    eink->vcom_uv);
++		if (ret)
++			goto err;
++		ret = regulator_enable(eink->vdd_supply);
++		if (ret)
++			goto err;
++		ret = regulator_enable(eink->drive_supply);
++		if (ret)
++			goto err_vdd;
++		ret = regulator_enable(eink->vcom_supply);
++		if (ret)
++			goto err_drive;
++	} else {
++		regulator_disable(eink->vcom_supply);
++		regulator_disable(eink->drive_supply);
++		regulator_disable(eink->vdd_supply);
+ 	}
+ 
+ 	eink->powered = en;
+ 	return 0;
++
++err_drive:
++	regulator_disable(eink->drive_supply);
++err_vdd:
++	regulator_disable(eink->vdd_supply);
++err:
++	dev_err(eink->dev, "can't enable power supplies (%d)", ret);
++	return ret;
+ }
+ 
+ static void eink_powerdown_work(struct work_struct *work)
+@@ -919,10 +945,31 @@ static int eink_probe(struct platform_device *pdev)
+ 		return eink->irq;
+ 	}
+ 
+-	eink->panel_supply = devm_regulator_get(dev, "panel");
+-	if (IS_ERR(eink->panel_supply)) {
+-		ret = PTR_ERR(eink->panel_supply);
+-		dev_err(dev, "can't get panel supply (%d)\n", ret);
++	eink->vdd_supply = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(eink->vdd_supply)) {
++		ret = PTR_ERR(eink->vdd_supply);
++		dev_err(dev, "can't get vdd supply (%d)\n", ret);
++		return ret;
++	}
++
++	eink->drive_supply = devm_regulator_get(dev, "drive");
++	if (IS_ERR(eink->drive_supply)) {
++		ret = PTR_ERR(eink->drive_supply);
++		dev_err(dev, "can't get drive supply (%d)\n", ret);
++		return ret;
++	}
++
++	eink->vcom_supply = devm_regulator_get(dev, "vcom");
++	if (IS_ERR(eink->vcom_supply)) {
++		ret = PTR_ERR(eink->vcom_supply);
++		dev_err(dev, "can't get vcom supply (%d)\n", ret);
++		return ret;
++	}
++
++	ret = of_property_read_u32(dev->of_node, "vcom-microvolt",
++				   &eink->vcom_uv);
++	if (ret) {
++		dev_err(dev, "missing vcom-microvolt property (%d)\n", ret);
+ 		return ret;
+ 	}
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,119 @@
+From 02525151d1daf61800a9ffc0911b5ee433cc9001 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 23:48:31 +0200
+Subject: [PATCH] media: sun6i-isp: The statistics window gives the zone size
+
+width and height in the h3a window are the size of one zone, not of the
+area measured. The area is the zone times the zone count, so a caller
+covering a frame wants frame_width / horz_num; passing the frame size
+asks for a grid horz_num times too wide, which runs off the sensor.
+
+Measured rather than assumed. Holding the size and sweeping horz_num
+over 1, 2, 4 and 8 leaves every exposure zone sum bit identical, and a
+per-zone pixel count cannot depend on how many zones there are unless
+the register is the zone. Sweeping the size instead gives a zone sum of
+254 * width * height / 2 to the pixel on a white field at every width
+from 64 to 384, with the brackets closing.
+
+The vendor agrees: HandleAeStat() divides each zone by the width times
+the height it reads back out of the hardware's own saved AE_SIZE, which
+only makes sense if that register holds one zone.
+
+Copy the plane the hardware writes, 64 zones, which is also where the
+vendor's parser loop stops, instead of the whole 0x600 section. Zones
+0 to 63 were all correct on a grid that fits the sensor and 64 onward
+were never written.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_stats.c   |  9 ++++-
+ .../sunxi/sun6i-isp/uapi/sun6i-isp-config.h   | 39 ++++++++++++++-----
+ 2 files changed, 38 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+index b4eb98f29cbe..9916cdb512da 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+@@ -44,6 +44,13 @@
+  */
+ #define SUN6I_ISP_STATS_AWB_SIZE	0x200
+ 
++/*
++ * The same thing on the exposure side: the section is 0x600 but the
++ * hardware writes one plane of 64 zones, 0x400, which is also where the
++ * vendor's parser loop stops.
++ */
++#define SUN6I_ISP_STATS_AE_SIZE		0x400
++
+ /* Stats */
+ 
+ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+@@ -67,7 +74,7 @@ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+ 
+ 	if (modules & SUN6I_ISP_MODULE_EN_AE) {
+ 		memcpy(&stats->ae, base + SUN6I_ISP_STATS_AE_OFFSET,
+-		       sizeof(stats->ae));
++		       SUN6I_ISP_STATS_AE_SIZE);
+ 		blocks |= SUN6I_ISP_STAT_AE;
+ 	}
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 8b24457c1079..86f5d4973d29 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -121,9 +121,26 @@ struct sun6i_isp_params_config_drc {
+ };
+ 
+ /*
+- * Window the statistics are gathered over, divided into a grid of zones
+- * for the ones that report per-zone. Sizes and positions are in pixels;
+- * the hardware wants them halved, which the driver does.
++ * Geometry of the grid the statistics are gathered over. Sizes and
++ * positions are in pixels; the hardware wants them halved, which the
++ * driver does.
++ *
++ * width and height give the size of ONE ZONE, not of the whole area
++ * measured. The area is the zone times the zone count, so a caller that
++ * wants to cover a frame asks for frame_width / horz_num here. Passing
++ * the frame size asks for a grid horz_num times too wide, which runs
++ * off the sensor and quietly measures nothing useful.
++ *
++ * This is measured, not assumed. Holding the size and sweeping
++ * horz_num over 1, 2, 4 and 8 leaves every exposure zone sum bit
++ * identical -- a per-zone pixel count cannot depend on how many zones
++ * there are unless the register is the zone. The vendor agrees:
++ * HandleAeStat() divides each zone by the width times the height read
++ * back out of the hardware's own saved AE_SIZE.
++ *
++ * The exposure zone covers width by height/2 pixels, again measured:
++ * the sum is 254 * width * height / 2 to the pixel on a white field,
++ * for every width from 64 to 384.
+  */
+ struct sun6i_isp_params_config_h3a_window {
+ 	__u8	horz_num;
+@@ -265,12 +282,16 @@ struct sun6i_isp_stats_hist {
+ /*
+  * Per-zone channel sums. The fourth word is not read by the vendor.
+  *
+- * Only the first 64 zones are known to be a plane. The vendor points a
+- * second plane at zone 64 and a third beyond the end of this region
+- * entirely, which does not reconcile with the region being this size, so
+- * the whole region is handed over as zones and the tail is whatever the
+- * hardware actually put there. Do not assume zones[64] onwards are more
+- * of the same until this is settled on hardware.
++ * The hardware writes one plane of 64 zones, which is the vendor's own
++ * loop bound, and the array is sized for the region it is given rather
++ * than for that. Only horz_num * vert_num of the 64 carry a
++ * measurement, and fewer when the grid overruns the sensor; the rest
++ * are zeroed. Measured on a white field with an 8 by 8 grid: zones 0 to
++ * 63 all read 254 * width * height / 2 while the grid fits, and 64
++ * onward were never written.
++ *
++ * The second and third planes the vendor points at zone 64 and beyond
++ * the region entirely are still unexplained and are not exposed.
+  */
+ struct sun6i_isp_stats_ae_zone {
+ 	__u32	sum[3];
+-- 
+2.43.0
+

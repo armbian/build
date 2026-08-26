@@ -1,0 +1,51 @@
+From 29e9c8b559f7288330e20f4033210308eed3e585 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 18 Aug 2026 20:54:37 +0200
+Subject: [PATCH] nfc: nxp-nci: Fix deadlock on driver removal while the device
+ is up
+
+nxp_nci_remove() holds info->info_lock across nci_unregister_device().
+When the NFC device is up at removal time (NCI_UP set - e.g. a reader is
+in use), nci_unregister_device() -> nci_close_device() calls
+ndev->ops->close(), i.e. nxp_nci_close(), which takes info->info_lock
+again. The mutex is not recursive, so the removing task deadlocks on
+itself:
+
+  nxp_nci_i2c_remove -> nxp_nci_remove [holds info_lock]
+    -> nci_unregister_device -> nci_close_device
+      -> nxp_nci_close -> mutex_lock(&info->info_lock)   <-- blocks
+
+This hangs rmmod, driver unbind, and - because the device is torn down
+with NFC still up - system shutdown/reboot.
+
+info_lock only needs to serialize the mode change against open/close/
+send; it does not protect nci_unregister_device (which reaches back into
+nxp_nci_close, a lock user in its own right). The registration side
+already calls nci_register_device() without the lock. Drop the lock
+before unregistering, matching that.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/nfc/nxp-nci/core.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/nfc/nxp-nci/core.c b/drivers/nfc/nxp-nci/core.c
+index 8e84beea168d..8dfd0d9eb6fa 100644
+--- a/drivers/nfc/nxp-nci/core.c
++++ b/drivers/nfc/nxp-nci/core.c
+@@ -333,10 +333,10 @@ void nxp_nci_remove(struct nci_dev *ndev)
+ 	if (info->phy_ops->set_mode)
+ 		info->phy_ops->set_mode(info->phy_id, NXP_NCI_MODE_COLD);
+ 
++	mutex_unlock(&info->info_lock);
++
+ 	nci_unregister_device(ndev);
+ 	nci_free_device(ndev);
+-
+-	mutex_unlock(&info->info_lock);
+ }
+ EXPORT_SYMBOL(nxp_nci_remove);
+ 
+-- 
+2.43.0
+

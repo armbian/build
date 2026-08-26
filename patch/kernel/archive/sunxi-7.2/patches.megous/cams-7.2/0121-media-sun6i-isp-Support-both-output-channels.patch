@@ -1,0 +1,1161 @@
+From 3d9498dc0bc457ec872be598c5a14cba437c896a Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:45:48 +0200
+Subject: [PATCH] media: sun6i-isp: Support both output channels
+
+The ISP writes out through two channels, main and self, each with its own
+size, format and buffer addresses in its own register block. Add the
+second video device, and with it the two things the hardware needs before
+two channels can work at all.
+
+The self channel does not honour its own registers unless the main channel
+is enabled alongside it. On its own it ignores them and lays down a full
+sized 4:2:2 frame - 1843200 bytes at 720p whatever was asked for, at every
+size and format tried - overrunning any buffer smaller than that. The
+main channel through the same code is right every time, and the two
+together are right as well; the vendor's bsp_isp_set_fmt() has the same
+shape, programming the self channel's format only when a second channel
+is in play. So the blocks are handed out rather than owned: the main block
+goes to whichever channel is streaming, and the self block is only used
+when both are.
+
+That assignment cannot change while the pipeline runs. The channel
+registers are only honoured from the frontend start that latched them, so
+a channel joining or leaving is applied by taking the pipeline down and
+bringing it back up around the new set - sun6i_isp_pipeline_restart(). The
+buffers in flight go back to the head of their own queues first, so the
+frame the hardware was part way through is written again rather than
+handed over torn. The channels that keep streaming lose about three frames
+to it, which is the price of two outputs behind one frontend.
+
+Every configuration pass writes both blocks, and one with no channel
+behind it is written disabled rather than left describing an earlier
+stream with only its enable bit standing between that and the hardware.
+
+The capture links become mutable, so a pipeline can leave out the channel
+it has no use for instead of having its format validated anyway.
+
+The stream lock is new: videobuf2 holds a queue lock per channel, which
+does not serialise the two channels against each other, and the restart
+must not interleave with itself.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.c |  31 +-
+ .../staging/media/sunxi/sun6i-isp/sun6i_isp.h |  14 +-
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.c | 551 ++++++++++++++----
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.h |  34 +-
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  |   7 +-
+ 5 files changed, 518 insertions(+), 119 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 2fdfef6d2571..d351af30ce4e 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -93,12 +93,13 @@ void sun6i_isp_state_update(struct sun6i_isp_device *isp_dev, bool ready_hold)
+ /* Pipeline */
+ 
+ /*
+- * Program everything the driver has to say and start the pipeline against it.
++ * Program everything the channels that are streaming now describe, and start
++ * the pipeline against it.
+  *
+  * The load buffer is filled first and handed over as a whole by the PARA_READY
+  * that sun6i_isp_proc_start() sets, so the addresses and the configuration they
+  * belong to reach the hardware together. state_update() therefore stages a
+- * buffer but is told to leave PARA_READY alone.
++ * buffer for each channel but is told to leave PARA_READY alone.
+  */
+ int sun6i_isp_pipeline_start(struct sun6i_isp_device *isp_dev)
+ {
+@@ -111,6 +112,27 @@ int sun6i_isp_pipeline_start(struct sun6i_isp_device *isp_dev)
+ 	return sun6i_isp_proc_start(isp_dev);
+ }
+ 
++/*
++ * Apply a change to the set of streaming channels.
++ *
++ * Which register block each channel drives, and the size, format and addresses
++ * in it, are only honoured from the frontend start that latched them - see
++ * sun6i_isp_proc_start(). So a channel joining or leaving is applied by taking
++ * the pipeline down and bringing it back up around the new set.
++ *
++ * The buffers in flight go back to the head of their own queues first, so that
++ * the frame the hardware was part way through is written again from the top
++ * rather than handed to userspace torn.
++ */
++int sun6i_isp_pipeline_restart(struct sun6i_isp_device *isp_dev)
++{
++	sun6i_isp_proc_stop(isp_dev);
++
++	sun6i_isp_capture_rewind(isp_dev);
++
++	return sun6i_isp_pipeline_start(isp_dev);
++}
++
+ /* Tables */
+ 
+ static int sun6i_isp_table_setup(struct sun6i_isp_device *isp_dev,
+@@ -461,6 +483,7 @@ static int sun6i_isp_probe(struct platform_device *platform_dev)
+ 	platform_set_drvdata(platform_dev, isp_dev);
+ 
+ 	spin_lock_init(&isp_dev->state_lock);
++	mutex_init(&isp_dev->stream_lock);
+ 
+ 	ret = sun6i_isp_resources_setup(isp_dev, platform_dev);
+ 	if (ret)
+@@ -513,6 +536,8 @@ static int sun6i_isp_probe(struct platform_device *platform_dev)
+ error_resources:
+ 	sun6i_isp_resources_cleanup(isp_dev);
+ 
++	mutex_destroy(&isp_dev->stream_lock);
++
+ 	return ret;
+ }
+ 
+@@ -526,6 +551,8 @@ static void sun6i_isp_remove(struct platform_device *platform_dev)
+ 	sun6i_isp_v4l2_cleanup(isp_dev);
+ 	sun6i_isp_tables_cleanup(isp_dev);
+ 	sun6i_isp_resources_cleanup(isp_dev);
++
++	mutex_destroy(&isp_dev->stream_lock);
+ }
+ 
+ /*
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+index dfeb58f79b8a..6d0a8ba17672 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+@@ -7,6 +7,8 @@
+ #ifndef _SUN6I_ISP_H_
+ #define _SUN6I_ISP_H_
+ 
++#include <linux/mutex.h>
++
+ #include <media/v4l2-device.h>
+ #include <media/videobuf2-v4l2.h>
+ 
+@@ -68,7 +70,7 @@ struct sun6i_isp_device {
+ 
+ 	struct sun6i_isp_v4l2		v4l2;
+ 	struct sun6i_isp_proc		proc;
+-	struct sun6i_isp_capture	capture;
++	struct sun6i_isp_capture	captures[SUN6I_ISP_CAPTURE_COUNT];
+ 	struct sun6i_isp_params		params;
+ 
+ 	struct regmap			*regmap;
+@@ -78,6 +80,15 @@ struct sun6i_isp_device {
+ 	int				irq;
+ 
+ 	spinlock_t			state_lock; /* State helpers lock. */
++
++	/*
++	 * Serialises the channels against each other while the set of streaming
++	 * channels changes: each change stops the pipeline, reprograms every
++	 * channel and starts it again, which is neither atomic nor allowed to
++	 * interleave with the same sequence from the other channel. The queue
++	 * locks videobuf2 holds around this are per channel, so they do not.
++	 */
++	struct mutex			stream_lock; /* Channel start/stop lock. */
+ };
+ 
+ struct sun6i_isp_variant {
+@@ -97,6 +108,7 @@ u32 sun6i_isp_address_value(dma_addr_t address);
+ /* Pipeline */
+ 
+ int sun6i_isp_pipeline_start(struct sun6i_isp_device *isp_dev);
++int sun6i_isp_pipeline_restart(struct sun6i_isp_device *isp_dev);
+ 
+ /* State */
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index caf8123d0636..b9e61a32b174 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -16,22 +16,78 @@
+ #include "sun6i_isp_proc.h"
+ #include "sun6i_isp_reg.h"
+ 
++/* Channels */
++
++static const struct sun6i_isp_capture_regs sun6i_isp_capture_regs_main = {
++	.size_cfg	= SUN6I_ISP_MCH_SIZE_CFG_REG,
++	.scale_cfg	= SUN6I_ISP_MCH_SCALE_CFG_REG,
++	.cfg		= SUN6I_ISP_MCH_CFG_REG,
++	.y_addr0	= SUN6I_ISP_MCH_Y_ADDR0_REG,
++	.u_addr0	= SUN6I_ISP_MCH_U_ADDR0_REG,
++	.v_addr0	= SUN6I_ISP_MCH_V_ADDR0_REG,
++};
++
++static const struct sun6i_isp_capture_regs sun6i_isp_capture_regs_self = {
++	.size_cfg	= SUN6I_ISP_SCH_SIZE_CFG_REG,
++	.scale_cfg	= SUN6I_ISP_SCH_SCALE_CFG_REG,
++	.cfg		= SUN6I_ISP_SCH_CFG_REG,
++	.y_addr0	= SUN6I_ISP_SCH_Y_ADDR0_REG,
++	.u_addr0	= SUN6I_ISP_SCH_U_ADDR0_REG,
++	.v_addr0	= SUN6I_ISP_SCH_V_ADDR0_REG,
++};
++
++/*
++ * Hand out the register blocks to the channels that are streaming.
++ *
++ * The self channel does not honour its own size, scale and output format
++ * registers unless the main channel is enabled alongside it. Left to itself it
++ * ignores them and lays down a full sized 4:2:2 frame - 1843200 bytes at 720p
++ * whatever was asked for, at every size and format tried - which overruns any
++ * buffer smaller than that. The main channel through the same code is right
++ * every time, and the two together are right as well. The vendor's
++ * bsp_isp_set_fmt() has the same shape: it only programs the self channel's
++ * format when a second channel is in play, never on its own.
++ *
++ * The two blocks are laid out identically and take the same formats, so the
++ * answer is to give the main block to whichever channel is streaming and only
++ * use the self block when both are. Channels are visited in order and the main
++ * channel comes first, so handing the blocks out in order does exactly that.
++ *
++ * Which block a channel drives can only change here, and this only runs while
++ * the pipeline is stopped - see sun6i_isp_pipeline_restart().
++ */
++static void sun6i_isp_capture_blocks_assign(struct sun6i_isp_device *isp_dev)
++{
++	static const struct sun6i_isp_capture_regs * const blocks[] = {
++		&sun6i_isp_capture_regs_main,
++		&sun6i_isp_capture_regs_self,
++	};
++	unsigned int next = 0;
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++) {
++		struct sun6i_isp_capture *capture = &isp_dev->captures[i];
++
++		capture->regs = capture->state.streaming ? blocks[next++] : NULL;
++	}
++}
++
+ /* Helpers */
+ 
+-void sun6i_isp_capture_dimensions(struct sun6i_isp_device *isp_dev,
++void sun6i_isp_capture_dimensions(struct sun6i_isp_capture *capture,
+ 				  unsigned int *width, unsigned int *height)
+ {
+ 	if (width)
+-		*width = isp_dev->capture.format.fmt.pix.width;
++		*width = capture->format.fmt.pix.width;
+ 	if (height)
+-		*height = isp_dev->capture.format.fmt.pix.height;
++		*height = capture->format.fmt.pix.height;
+ }
+ 
+-void sun6i_isp_capture_format(struct sun6i_isp_device *isp_dev,
++void sun6i_isp_capture_format(struct sun6i_isp_capture *capture,
+ 			      u32 *pixelformat)
+ {
+ 	if (pixelformat)
+-		*pixelformat = isp_dev->capture.format.fmt.pix.pixelformat;
++		*pixelformat = capture->format.fmt.pix.pixelformat;
+ }
+ 
+ /* Format */
+@@ -64,16 +120,15 @@ sun6i_isp_capture_format_find(u32 pixelformat)
+ /*
+  * Stride of one plane.
+  *
+- * The hardware holds strides divided by four, so a stride has to be a multiple
+- * of four for the register to be able to express it at all, and the vendor goes
+- * further and aligns every plane to 16 - ALIGN(width, 16) for luma and
+- * ALIGN(width / 2, 16) for the chroma of a planar format, in its sub_0().
+- *
+- * Following that keeps what the register says and what the buffer was laid out
+- * for the same thing, which they were not: bytesperline was aligned to 2 while
+- * the register rounded up to 4, so a width that is not a multiple of four had
+- * the hardware stepping further per row than the buffer allowed and writing off
+- * the end of it.
++ * The hardware holds strides divided by four, so a stride has to be a
++ * multiple of four for the register to be able to express it at all, and
++ * the vendor goes further and aligns every plane to 16 - ALIGN(width, 16)
++ * for luma and ALIGN(width / 2, 16) for the chroma of a planar format, in
++ * its sub_0(). Following that keeps what the register says and what the
++ * buffer was laid out for the same thing, which they were not: bytesperline
++ * was aligned to 2 while the register rounded up to 4, so a width that is
++ * not a multiple of four had the hardware stepping further per row than the
++ * buffer allowed and writing off the end of it.
+  */
+ unsigned int sun6i_isp_capture_stride(const struct v4l2_format_info *info,
+ 				      unsigned int plane, unsigned int width)
+@@ -84,6 +139,38 @@ unsigned int sun6i_isp_capture_stride(const struct v4l2_format_info *info,
+ 		     SUN6I_ISP_CAPTURE_STRIDE_ALIGN);
+ }
+ 
++/*
++ * Program one image's plane addresses, starting at base, into the given
++ * register block. Returns the number of bytes the image occupies.
++ */
++static unsigned int
++sun6i_isp_capture_planes_configure(struct sun6i_isp_device *isp_dev,
++				   const struct sun6i_isp_capture_regs *regs,
++				   dma_addr_t base, u32 pixelformat,
++				   unsigned int width, unsigned int height)
++{
++	const u32 plane_regs[] = { regs->y_addr0, regs->u_addr0, regs->v_addr0 };
++	const struct v4l2_format_info *info = v4l2_format_info(pixelformat);
++	dma_addr_t address = base;
++	unsigned int i;
++
++	if (WARN_ON(!info))
++		return 0;
++
++	for (i = 0; i < info->comp_planes && i < ARRAY_SIZE(plane_regs); i++) {
++		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
++		unsigned int stride = sun6i_isp_capture_stride(info, i, width);
++		unsigned int lines = DIV_ROUND_UP(height, vdiv);
++
++		sun6i_isp_load_write(isp_dev, plane_regs[i],
++				     SUN6I_ISP_ADDR_VALUE(address));
++
++		address += stride * lines;
++	}
++
++	return address - base;
++}
++
+ unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
+ 					  unsigned int height)
+ {
+@@ -105,58 +192,41 @@ unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
+ }
+ 
+ static void
+-sun6i_isp_capture_buffer_configure(struct sun6i_isp_device *isp_dev,
++sun6i_isp_capture_buffer_configure(struct sun6i_isp_capture *capture,
+ 				   struct sun6i_isp_buffer *isp_buffer)
+ {
+-	static const u32 plane_regs[] = {
+-		SUN6I_ISP_MCH_Y_ADDR0_REG, SUN6I_ISP_MCH_U_ADDR0_REG,
+-		SUN6I_ISP_MCH_V_ADDR0_REG,
+-	};
+-	const struct v4l2_format_info *info;
+-	struct vb2_buffer *vb2_buffer;
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	struct vb2_buffer *vb2_buffer = &isp_buffer->v4l2_buffer.vb2_buf;
++	dma_addr_t base = vb2_dma_contig_plane_dma_addr(vb2_buffer, 0);
+ 	unsigned int width, height;
+-	dma_addr_t address;
+ 	u32 pixelformat;
+-	unsigned int i;
+-
+-	vb2_buffer = &isp_buffer->v4l2_buffer.vb2_buf;
+-	address = vb2_dma_contig_plane_dma_addr(vb2_buffer, 0);
+-
+-	sun6i_isp_capture_dimensions(isp_dev, &width, &height);
+-	sun6i_isp_capture_format(isp_dev, &pixelformat);
+-
+-	info = v4l2_format_info(pixelformat);
+-	if (WARN_ON(!info))
+-		return;
+-
+-	for (i = 0; i < info->comp_planes && i < ARRAY_SIZE(plane_regs); i++) {
+-		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+ 
+-		sun6i_isp_load_write(isp_dev, plane_regs[i],
+-				     SUN6I_ISP_ADDR_VALUE(address));
++	sun6i_isp_capture_format(capture, &pixelformat);
++	sun6i_isp_capture_dimensions(capture, &width, &height);
+ 
+-		address += sun6i_isp_capture_stride(info, i, width) *
+-			   DIV_ROUND_UP(height, vdiv);
+-	}
++	sun6i_isp_capture_planes_configure(isp_dev, capture->regs, base,
++					   pixelformat, width, height);
+ }
+ 
+-void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev)
++static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ {
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
+ 	unsigned int width, height;
++	u32 cfg = 0;
+ 	unsigned int stride_luma, stride_chroma;
+ 	unsigned int stride_luma_div4, stride_chroma_div4 = 0;
+ 	const struct sun6i_isp_capture_format *format;
+ 	const struct v4l2_format_info *info;
+ 	u32 pixelformat;
+ 
+-	sun6i_isp_capture_dimensions(isp_dev, &width, &height);
+-	sun6i_isp_capture_format(isp_dev, &pixelformat);
++	sun6i_isp_capture_dimensions(capture, &width, &height);
++	sun6i_isp_capture_format(capture, &pixelformat);
+ 
+ 	format = sun6i_isp_capture_format_find(pixelformat);
+ 	if (WARN_ON(!format))
+ 		return;
+ 
+-	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_SIZE_CFG_REG,
++	sun6i_isp_load_write(isp_dev, capture->regs->size_cfg,
+ 			     SUN6I_ISP_MCH_SIZE_CFG_WIDTH(width) |
+ 			     SUN6I_ISP_MCH_SIZE_CFG_HEIGHT(height));
+ 
+@@ -172,19 +242,83 @@ void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev)
+ 		stride_chroma_div4 = stride_chroma / 4;
+ 	}
+ 
+-	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_CFG_REG,
+-			     SUN6I_ISP_MCH_CFG_EN |
++	sun6i_isp_load_write(isp_dev, capture->regs->cfg,
++			     cfg | SUN6I_ISP_MCH_CFG_EN |
+ 			     SUN6I_ISP_MCH_CFG_OUTPUT_FMT(format->output_format) |
+ 			     SUN6I_ISP_MCH_CFG_STRIDE_Y_DIV4(stride_luma_div4) |
+ 			     SUN6I_ISP_MCH_CFG_STRIDE_UV_DIV4(stride_chroma_div4));
+ }
+ 
++void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++
++	sun6i_isp_capture_blocks_assign(isp_dev);
++
++	/*
++	 * Both blocks are written on every pass. A block with no channel behind
++	 * it is written disabled rather than left describing an earlier stream,
++	 * with only its enable bit standing between the hardware and a buffer
++	 * that by then belongs to nobody.
++	 */
++	sun6i_isp_load_write(isp_dev, sun6i_isp_capture_regs_main.cfg, 0);
++	sun6i_isp_load_write(isp_dev, sun6i_isp_capture_regs_self.cfg, 0);
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		if (isp_dev->captures[i].regs)
++			sun6i_isp_capture_configure_one(&isp_dev->captures[i]);
++}
++
++/*
++ * Give a channel's buffers back to the head of its own queue.
++ *
++ * These are the buffer the hardware was part way through and the one staged
++ * behind it. Both are put back in the order they were taken, so that the torn
++ * frame is written again from the top rather than handed to userspace as a
++ * frame, and the configuration that follows stages them afresh through
++ * whichever register block the channel now drives.
++ *
++ * Nothing is handed to videobuf2 here: this is the driver's own queue, and
++ * the buffers never stop belonging to the driver.
++ */
++static void sun6i_isp_capture_rewind_one(struct sun6i_isp_capture *capture)
++{
++	struct sun6i_isp_capture_state *state = &capture->state;
++	unsigned long flags;
++
++	spin_lock_irqsave(&state->lock, flags);
++
++	if (state->pending) {
++		list_add(&state->pending->list, &state->queue);
++		state->pending = NULL;
++	}
++
++	if (state->active) {
++		list_add(&state->active->list, &state->queue);
++		state->active = NULL;
++	}
++
++	spin_unlock_irqrestore(&state->lock, flags);
++}
++
++/*
++ * Give every channel's buffers back to the head of its own queue, ahead of a
++ * pipeline restart. See sun6i_isp_pipeline_restart().
++ */
++void sun6i_isp_capture_rewind(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		sun6i_isp_capture_rewind_one(&isp_dev->captures[i]);
++}
++
+ /* State */
+ 
+-static void sun6i_isp_capture_state_cleanup(struct sun6i_isp_device *isp_dev,
++static void sun6i_isp_capture_state_cleanup(struct sun6i_isp_capture *capture,
+ 					    bool error)
+ {
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_capture_state *state = &capture->state;
+ 	struct sun6i_isp_buffer **isp_buffer_states[] = {
+ 		&state->pending, &state->active,
+ 	};
+@@ -218,15 +352,24 @@ static void sun6i_isp_capture_state_cleanup(struct sun6i_isp_device *isp_dev,
+ 	spin_unlock_irqrestore(&state->lock, flags);
+ }
+ 
+-void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+-				    bool *update)
++static void sun6i_isp_capture_state_update_one(struct sun6i_isp_capture *capture,
++					       bool *update)
+ {
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_capture_state *state = &capture->state;
+ 	struct sun6i_isp_buffer *isp_buffer;
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&state->lock, flags);
+ 
++	/*
++	 * A channel on its way out has its buffers back on this queue, put
++	 * there by the rewind, and they are about to go back to userspace.
++	 * Its enable bit is clear so the hardware would not write to them, but
++	 * there is no reason to hand it an address it must not use.
++	 */
++	if (!state->streaming)
++		goto complete;
++
+ 	if (list_empty(&state->queue))
+ 		goto complete;
+ 
+@@ -236,7 +379,7 @@ void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+ 	isp_buffer = list_first_entry(&state->queue, struct sun6i_isp_buffer,
+ 				      list);
+ 
+-	sun6i_isp_capture_buffer_configure(isp_dev, isp_buffer);
++	sun6i_isp_capture_buffer_configure(capture, isp_buffer);
+ 
+ 	list_del(&isp_buffer->list);
+ 
+@@ -249,9 +392,10 @@ void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+ 	spin_unlock_irqrestore(&state->lock, flags);
+ }
+ 
+-void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev)
++static void
++sun6i_isp_capture_state_complete_one(struct sun6i_isp_capture *capture)
+ {
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_capture_state *state = &capture->state;
+ 	struct sun6i_isp_buffer *done;
+ 	unsigned long flags;
+ 
+@@ -281,16 +425,68 @@ void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev)
+ 	spin_unlock_irqrestore(&state->lock, flags);
+ }
+ 
+-void sun6i_isp_capture_finish(struct sun6i_isp_device *isp_dev)
++static void sun6i_isp_capture_finish_one(struct sun6i_isp_capture *capture)
+ {
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_capture_state *state = &capture->state;
+ 	unsigned long flags;
+ 
++	if (!state->streaming)
++		return;
++
+ 	spin_lock_irqsave(&state->lock, flags);
+ 	state->sequence++;
+ 	spin_unlock_irqrestore(&state->lock, flags);
+ }
+ 
++/* True while any channel is streaming. */
++bool sun6i_isp_capture_streaming(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		if (isp_dev->captures[i].state.streaming)
++			return true;
++
++	return false;
++}
++
++void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
++				    bool *update)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		sun6i_isp_capture_state_update_one(&isp_dev->captures[i],
++						   update);
++}
++
++void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		sun6i_isp_capture_state_complete_one(&isp_dev->captures[i]);
++}
++
++/* The two channels share the frame finish interrupt. */
++void sun6i_isp_capture_finish(struct sun6i_isp_device *isp_dev)
++{
++	sun6i_isp_capture_finish_one(&isp_dev->captures[SUN6I_ISP_CAPTURE_MAIN]);
++	sun6i_isp_capture_finish_one(&isp_dev->captures[SUN6I_ISP_CAPTURE_SELF]);
++}
++
++/*
++ * The rotator runs after the channel it reads back, so a rotating channel's
++ * buffer is only complete once the rotator has finished with it.
++ *
++ * Nothing waits for that. Buffers are handed back a whole frame later, at the
++ * parameter load that replaces them, by which point the rotator has long since
++ * finished - so the existing one-frame-behind completion already covers its
++ * extra latency, and hanging completion off ROT_FINISH instead would stall
++ * capture outright whenever the rotator missed a frame. The interrupt is left
++ * masked for that reason.
++ */
++
+ /* Queue */
+ 
+ static int sun6i_isp_capture_queue_setup(struct vb2_queue *queue,
+@@ -299,8 +495,8 @@ static int sun6i_isp_capture_queue_setup(struct vb2_queue *queue,
+ 					 unsigned int sizes[],
+ 					 struct device *alloc_devs[])
+ {
+-	struct sun6i_isp_device *isp_dev = vb2_get_drv_priv(queue);
+-	unsigned int size = isp_dev->capture.format.fmt.pix.sizeimage;
++	struct sun6i_isp_capture *capture = vb2_get_drv_priv(queue);
++	unsigned int size = capture->format.fmt.pix.sizeimage;
+ 
+ 	if (*planes_count)
+ 		return sizes[0] < size ? -EINVAL : 0;
+@@ -313,10 +509,12 @@ static int sun6i_isp_capture_queue_setup(struct vb2_queue *queue,
+ 
+ static int sun6i_isp_capture_buffer_prepare(struct vb2_buffer *vb2_buffer)
+ {
+-	struct sun6i_isp_device *isp_dev =
++	struct sun6i_isp_capture *capture =
+ 		vb2_get_drv_priv(vb2_buffer->vb2_queue);
+-	struct v4l2_device *v4l2_dev = &isp_dev->v4l2.v4l2_dev;
+-	unsigned int size = isp_dev->capture.format.fmt.pix.sizeimage;
++	struct v4l2_device *v4l2_dev = &capture->isp_dev->v4l2.v4l2_dev;
++	unsigned int size = capture->format.fmt.pix.sizeimage;
++	unsigned int width, height;
++	u32 pixelformat;
+ 
+ 	if (vb2_plane_size(vb2_buffer, 0) < size) {
+ 		v4l2_err(v4l2_dev, "buffer too small (%lu < %u)\n",
+@@ -324,16 +522,21 @@ static int sun6i_isp_capture_buffer_prepare(struct vb2_buffer *vb2_buffer)
+ 		return -EINVAL;
+ 	}
+ 
+-	vb2_set_plane_payload(vb2_buffer, 0, size);
++	sun6i_isp_capture_dimensions(capture, &width, &height);
++	sun6i_isp_capture_format(capture, &pixelformat);
++
++	vb2_set_plane_payload(vb2_buffer, 0,
++			      sun6i_isp_capture_image_size(pixelformat, width,
++							   height));
+ 
+ 	return 0;
+ }
+ 
+ static void sun6i_isp_capture_buffer_queue(struct vb2_buffer *vb2_buffer)
+ {
+-	struct sun6i_isp_device *isp_dev =
++	struct sun6i_isp_capture *capture =
+ 		vb2_get_drv_priv(vb2_buffer->vb2_queue);
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_capture_state *state = &capture->state;
+ 	struct vb2_v4l2_buffer *v4l2_buffer = to_vb2_v4l2_buffer(vb2_buffer);
+ 	struct sun6i_isp_buffer *isp_buffer =
+ 		container_of(v4l2_buffer, struct sun6i_isp_buffer, v4l2_buffer);
+@@ -345,16 +548,18 @@ static void sun6i_isp_capture_buffer_queue(struct vb2_buffer *vb2_buffer)
+ 
+ 	/* Update the state to schedule our buffer as soon as possible. */
+ 	if (state->streaming)
+-		sun6i_isp_state_update(isp_dev, false);
++		sun6i_isp_state_update(capture->isp_dev, false);
+ }
+ 
+ static int sun6i_isp_capture_start_streaming(struct vb2_queue *queue,
+ 					     unsigned int count)
+ {
+-	struct sun6i_isp_device *isp_dev = vb2_get_drv_priv(queue);
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
+-	struct video_device *video_dev = &isp_dev->capture.video_dev;
++	struct sun6i_isp_capture *capture = vb2_get_drv_priv(queue);
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	struct sun6i_isp_capture_state *state = &capture->state;
++	struct video_device *video_dev = &capture->video_dev;
+ 	struct v4l2_subdev *subdev = &isp_dev->proc.subdev;
++	bool first;
+ 	int ret;
+ 
+ 	state->sequence = 0;
+@@ -363,39 +568,106 @@ static int sun6i_isp_capture_start_streaming(struct vb2_queue *queue,
+ 	if (ret < 0)
+ 		goto error_state;
+ 
++	mutex_lock(&isp_dev->stream_lock);
++
++	/*
++	 * All the channels share one proc sub-device, so only the first one to
++	 * start may start it: .s_stream() must never be called to start an
++	 * already started sub-device. Asked before this channel is marked
++	 * streaming, so it means "is any other channel already running".
++	 */
++	first = !sun6i_isp_capture_streaming(isp_dev);
++
+ 	state->streaming = true;
+ 
+-	ret = v4l2_subdev_call(subdev, video, s_stream, 1);
+-	if (ret && ret != -ENOIOCTLCMD)
+-		goto error_streaming;
++	if (first) {
++		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
++		if (ret && ret != -ENOIOCTLCMD)
++			goto error_streaming;
++	} else {
++		/*
++		 * The pipeline is already running, so this channel missed the
++		 * configuration pass proc's .s_stream() makes - and the channel
++		 * that is already streaming may have to move to the other
++		 * register block now that this one is here. Both are settled by
++		 * taking the pipeline through a stop and a start.
++		 */
++		ret = sun6i_isp_pipeline_restart(isp_dev);
++		if (ret) {
++			/*
++			 * The pipeline is down now, and the channels that were
++			 * streaming before this one turned up would be left
++			 * with nothing feeding them. Take this channel back out
++			 * and bring the pipeline up around the set that was
++			 * working; if even that fails there is nothing further
++			 * to be done here, and they will find out when they
++			 * stop.
++			 */
++			state->streaming = false;
++			sun6i_isp_pipeline_restart(isp_dev);
++
++			goto error_unlock;
++		}
++	}
++
++	mutex_unlock(&isp_dev->stream_lock);
+ 
+ 	return 0;
+ 
+ error_streaming:
+ 	state->streaming = false;
+ 
++error_unlock:
++	mutex_unlock(&isp_dev->stream_lock);
++
+ 	video_device_pipeline_stop(video_dev);
+ 
+ error_state:
+-	sun6i_isp_capture_state_cleanup(isp_dev, false);
++	sun6i_isp_capture_state_cleanup(capture, false);
+ 
+ 	return ret;
+ }
+ 
+ static void sun6i_isp_capture_stop_streaming(struct vb2_queue *queue)
+ {
+-	struct sun6i_isp_device *isp_dev = vb2_get_drv_priv(queue);
+-	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
+-	struct video_device *video_dev = &isp_dev->capture.video_dev;
++	struct sun6i_isp_capture *capture = vb2_get_drv_priv(queue);
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	struct sun6i_isp_capture_state *state = &capture->state;
++	struct video_device *video_dev = &capture->video_dev;
+ 	struct v4l2_subdev *subdev = &isp_dev->proc.subdev;
+ 
+-	v4l2_subdev_call(subdev, video, s_stream, 0);
++	mutex_lock(&isp_dev->stream_lock);
+ 
+ 	state->streaming = false;
+ 
++	/*
++	 * Mirror of the start path: only the last channel out stops the shared
++	 * proc sub-device. Stopping it on the first would cut the frames off
++	 * under whichever channels remain, so those get the pipeline taken down
++	 * and brought back up around the new set instead - which they need
++	 * anyway, since a self channel left on its own has to move onto the
++	 * main block now that it is free.
++	 *
++	 * Either way the frontend goes down before this returns, so the channel
++	 * is out of the hardware's hands by the time its buffers are handed
++	 * back below. Leaving that to the load buffer would mean the hardware
++	 * finishing a frame into memory that has already gone back to the
++	 * allocator, which surfaces much later as a partial frame written
++	 * across whatever those pages were handed to next.
++	 */
++	if (sun6i_isp_capture_streaming(isp_dev)) {
++		if (sun6i_isp_pipeline_restart(isp_dev))
++			dev_err(isp_dev->dev,
++				"failed to restart the pipeline for the remaining channels\n");
++	} else {
++		v4l2_subdev_call(subdev, video, s_stream, 0);
++	}
++
++	mutex_unlock(&isp_dev->stream_lock);
++
+ 	video_device_pipeline_stop(video_dev);
+ 
+-	sun6i_isp_capture_state_cleanup(isp_dev, true);
++	sun6i_isp_capture_state_cleanup(capture, true);
+ }
+ 
+ static const struct vb2_ops sun6i_isp_capture_queue_ops = {
+@@ -408,7 +680,8 @@ static const struct vb2_ops sun6i_isp_capture_queue_ops = {
+ 
+ /* Video Device */
+ 
+-static void sun6i_isp_capture_format_prepare(struct v4l2_format *format)
++static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
++					     struct v4l2_format *format)
+ {
+ 	struct v4l2_pix_format *pix_format = &format->fmt.pix;
+ 	const struct v4l2_format_info *info;
+@@ -445,8 +718,9 @@ static void sun6i_isp_capture_format_prepare(struct v4l2_format *format)
+ static int sun6i_isp_capture_querycap(struct file *file, void *priv,
+ 				      struct v4l2_capability *capability)
+ {
+-	struct sun6i_isp_device *isp_dev = video_drvdata(file);
+-	struct video_device *video_dev = &isp_dev->capture.video_dev;
++	struct sun6i_isp_capture *capture = video_drvdata(file);
++	struct video_device *video_dev = &capture->video_dev;
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
+ 
+ 	strscpy(capability->driver, SUN6I_ISP_NAME, sizeof(capability->driver));
+ 	strscpy(capability->card, video_dev->name, sizeof(capability->card));
+@@ -472,9 +746,9 @@ static int sun6i_isp_capture_enum_fmt(struct file *file, void *priv,
+ static int sun6i_isp_capture_g_fmt(struct file *file, void *priv,
+ 				   struct v4l2_format *format)
+ {
+-	struct sun6i_isp_device *isp_dev = video_drvdata(file);
++	struct sun6i_isp_capture *capture = video_drvdata(file);
+ 
+-	*format = isp_dev->capture.format;
++	*format = capture->format;
+ 
+ 	return 0;
+ }
+@@ -482,14 +756,14 @@ static int sun6i_isp_capture_g_fmt(struct file *file, void *priv,
+ static int sun6i_isp_capture_s_fmt(struct file *file, void *priv,
+ 				   struct v4l2_format *format)
+ {
+-	struct sun6i_isp_device *isp_dev = video_drvdata(file);
++	struct sun6i_isp_capture *capture = video_drvdata(file);
+ 
+-	if (vb2_is_busy(&isp_dev->capture.queue))
++	if (vb2_is_busy(&capture->queue))
+ 		return -EBUSY;
+ 
+-	sun6i_isp_capture_format_prepare(format);
++	sun6i_isp_capture_format_prepare(capture, format);
+ 
+-	isp_dev->capture.format = *format;
++	capture->format = *format;
+ 
+ 	return 0;
+ }
+@@ -497,7 +771,9 @@ static int sun6i_isp_capture_s_fmt(struct file *file, void *priv,
+ static int sun6i_isp_capture_try_fmt(struct file *file, void *priv,
+ 				     struct v4l2_format *format)
+ {
+-	sun6i_isp_capture_format_prepare(format);
++	struct sun6i_isp_capture *capture = video_drvdata(file);
++
++	sun6i_isp_capture_format_prepare(capture, format);
+ 
+ 	return 0;
+ }
+@@ -556,9 +832,9 @@ static const struct v4l2_ioctl_ops sun6i_isp_capture_ioctl_ops = {
+ 
+ static int sun6i_isp_capture_open(struct file *file)
+ {
+-	struct sun6i_isp_device *isp_dev = video_drvdata(file);
+-	struct video_device *video_dev = &isp_dev->capture.video_dev;
+-	struct mutex *lock = &isp_dev->capture.lock;
++	struct sun6i_isp_capture *capture = video_drvdata(file);
++	struct video_device *video_dev = &capture->video_dev;
++	struct mutex *lock = &capture->lock;
+ 	int ret;
+ 
+ 	if (mutex_lock_interruptible(lock))
+@@ -587,9 +863,9 @@ static int sun6i_isp_capture_open(struct file *file)
+ 
+ static int sun6i_isp_capture_release(struct file *file)
+ {
+-	struct sun6i_isp_device *isp_dev = video_drvdata(file);
+-	struct video_device *video_dev = &isp_dev->capture.video_dev;
+-	struct mutex *lock = &isp_dev->capture.lock;
++	struct sun6i_isp_capture *capture = video_drvdata(file);
++	struct video_device *video_dev = &capture->video_dev;
++	struct mutex *lock = &capture->lock;
+ 
+ 	mutex_lock(lock);
+ 
+@@ -616,16 +892,24 @@ static int sun6i_isp_capture_link_validate(struct media_link *link)
+ {
+ 	struct video_device *video_dev =
+ 		media_entity_to_video_device(link->sink->entity);
+-	struct sun6i_isp_device *isp_dev = video_get_drvdata(video_dev);
++	struct sun6i_isp_capture *capture = video_get_drvdata(video_dev);
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
+ 	struct v4l2_device *v4l2_dev = &isp_dev->v4l2.v4l2_dev;
+ 	unsigned int capture_width, capture_height;
+ 	unsigned int proc_width, proc_height;
+ 
+-	sun6i_isp_capture_dimensions(isp_dev, &capture_width, &capture_height);
++	/*
++	 * What has to fit inside the proc output is what the channel writes,
++	 * not what comes out of the rotator: on a quarter turn the delivered
++	 * image is legitimately taller than the proc output, and checking
++	 * that instead is what used to make STREAMON fail at 90 and 270.
++	 */
++	sun6i_isp_capture_dimensions(capture, &capture_width,
++					    &capture_height);
+ 	sun6i_isp_proc_dimensions(isp_dev, &proc_width, &proc_height);
+ 
+-	/* No cropping/scaling is supported (yet). */
+-	if (capture_width != proc_width || capture_height != proc_height) {
++	/* Each channel scales down independently, so it may only shrink. */
++	if (capture_width > proc_width || capture_height > proc_height) {
+ 		v4l2_err(v4l2_dev,
+ 			 "invalid input/output dimensions: %ux%u/%ux%u\n",
+ 			 proc_width, proc_height, capture_width,
+@@ -642,9 +926,10 @@ static const struct media_entity_operations sun6i_isp_capture_entity_ops = {
+ 
+ /* Capture */
+ 
+-int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
++static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
++				       enum sun6i_isp_capture_id id)
+ {
+-	struct sun6i_isp_capture *capture = &isp_dev->capture;
++	struct sun6i_isp_capture *capture = &isp_dev->captures[id];
+ 	struct sun6i_isp_capture_state *state = &capture->state;
+ 	struct v4l2_device *v4l2_dev = &isp_dev->v4l2.v4l2_dev;
+ 	struct v4l2_subdev *proc_subdev = &isp_dev->proc.subdev;
+@@ -655,6 +940,20 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 	struct v4l2_pix_format *pix_format = &format->fmt.pix;
+ 	int ret;
+ 
++	/* Channel */
++
++	capture->isp_dev = isp_dev;
++	capture->id = id;
++
++	/*
++	 * No register block yet: one is handed out for as long as the channel
++	 * streams, by sun6i_isp_capture_blocks_assign().
++	 */
++	if (id == SUN6I_ISP_CAPTURE_SELF)
++		capture->name = SUN6I_ISP_CAPTURE_SELF_NAME;
++	else
++		capture->name = SUN6I_ISP_CAPTURE_MAIN_NAME;
++
+ 	/* State */
+ 
+ 	INIT_LIST_HEAD(&state->queue);
+@@ -685,7 +984,7 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 	queue->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+ 	queue->lock = &capture->lock;
+ 	queue->dev = isp_dev->dev;
+-	queue->drv_priv = isp_dev;
++	queue->drv_priv = capture;
+ 
+ 	ret = vb2_queue_init(queue);
+ 	if (ret) {
+@@ -700,12 +999,11 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 	pix_format->width = 1280;
+ 	pix_format->height = 720;
+ 
+-	sun6i_isp_capture_format_prepare(format);
++	sun6i_isp_capture_format_prepare(capture, format);
+ 
+ 	/* Video Device */
+ 
+-	strscpy(video_dev->name, SUN6I_ISP_CAPTURE_NAME,
+-		sizeof(video_dev->name));
++	strscpy(video_dev->name, capture->name, sizeof(video_dev->name));
+ 	video_dev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
+ 	video_dev->vfl_dir = VFL_DIR_RX;
+ 	video_dev->release = video_device_release_empty;
+@@ -715,7 +1013,7 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 	video_dev->queue = queue;
+ 	video_dev->lock = &capture->lock;
+ 
+-	video_set_drvdata(video_dev, isp_dev);
++	video_set_drvdata(video_dev, capture);
+ 
+ 	ret = video_register_device(video_dev, VFL_TYPE_VIDEO, -1);
+ 	if (ret) {
+@@ -724,13 +1022,19 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 		goto error_media_entity;
+ 	}
+ 
+-	/* Media Pad Link */
++	/*
++	 * Media Pad Link
++	 *
++	 * Enabled by default but left mutable, so that userspace can drop a
++	 * channel it has no use for instead of having it validated as part
++	 * of every pipeline. The sink pad stays MUST_CONNECT, which is what
++	 * makes streaming a channel whose link was disabled fail cleanly.
++	 */
+ 
+ 	ret = media_create_pad_link(&proc_subdev->entity,
+ 				    SUN6I_ISP_PROC_PAD_SOURCE,
+ 				    &video_dev->entity, 0,
+-				    MEDIA_LNK_FL_ENABLED |
+-				    MEDIA_LNK_FL_IMMUTABLE);
++				    MEDIA_LNK_FL_ENABLED);
+ 	if (ret < 0) {
+ 		v4l2_err(v4l2_dev, "failed to create %s:%u -> %s:%u link\n",
+ 			 proc_subdev->entity.name, SUN6I_ISP_PROC_PAD_SOURCE,
+@@ -752,12 +1056,37 @@ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
+ 	return ret;
+ }
+ 
+-void sun6i_isp_capture_cleanup(struct sun6i_isp_device *isp_dev)
++static void sun6i_isp_capture_cleanup_one(struct sun6i_isp_capture *capture)
+ {
+-	struct sun6i_isp_capture *capture = &isp_dev->capture;
+ 	struct video_device *video_dev = &capture->video_dev;
+ 
+ 	vb2_video_unregister_device(video_dev);
+ 	media_entity_cleanup(&video_dev->entity);
+ 	mutex_destroy(&capture->lock);
+ }
++
++int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++) {
++		ret = sun6i_isp_capture_setup_one(isp_dev, i);
++		if (ret) {
++			while (i--)
++				sun6i_isp_capture_cleanup_one(&isp_dev->captures[i]);
++
++			return ret;
++		}
++	}
++
++	return 0;
++}
++
++void sun6i_isp_capture_cleanup(struct sun6i_isp_device *isp_dev)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
++		sun6i_isp_capture_cleanup_one(&isp_dev->captures[i]);
++}
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+index 01c396d25e6b..82b5315c75f7 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+@@ -10,6 +10,8 @@
+ #include <media/v4l2-device.h>
+ 
+ #define SUN6I_ISP_CAPTURE_NAME		"sun6i-isp-capture"
++#define SUN6I_ISP_CAPTURE_MAIN_NAME	"sun6i-isp-capture-main"
++#define SUN6I_ISP_CAPTURE_SELF_NAME	"sun6i-isp-capture-self"
+ 
+ /*
+  * The stride register holds a stride divided by four, so four is the least
+@@ -30,6 +32,26 @@ struct sun6i_isp_capture_format {
+ 	u8	output_format;
+ };
+ 
++/*
++ * The hardware writes out through two independent channels, each with
++ * its own size, scaler and buffer addresses. They are laid out
++ * identically, so a channel is described by where its registers are.
++ */
++enum sun6i_isp_capture_id {
++	SUN6I_ISP_CAPTURE_MAIN	= 0,
++	SUN6I_ISP_CAPTURE_SELF	= 1,
++	SUN6I_ISP_CAPTURE_COUNT	= 2,
++};
++
++struct sun6i_isp_capture_regs {
++	u32	size_cfg;
++	u32	scale_cfg;
++	u32	cfg;
++	u32	y_addr0;
++	u32	u_addr0;
++	u32	v_addr0;
++};
++
+ struct sun6i_isp_capture_state {
+ 	struct list_head		queue;
+ 	spinlock_t			lock; /* Queue and buffers lock. */
+@@ -43,6 +65,11 @@ struct sun6i_isp_capture_state {
+ };
+ 
+ struct sun6i_isp_capture {
++	struct sun6i_isp_device		*isp_dev;
++	enum sun6i_isp_capture_id	id;
++	const struct sun6i_isp_capture_regs *regs;
++	const char			*name;
++
+ 	struct sun6i_isp_capture_state	state;
+ 
+ 	struct video_device		video_dev;
+@@ -55,9 +82,9 @@ struct sun6i_isp_capture {
+ 
+ /* Helpers */
+ 
+-void sun6i_isp_capture_dimensions(struct sun6i_isp_device *isp_dev,
++void sun6i_isp_capture_dimensions(struct sun6i_isp_capture *capture,
+ 				  unsigned int *width, unsigned int *height);
+-void sun6i_isp_capture_format(struct sun6i_isp_device *isp_dev,
++void sun6i_isp_capture_format(struct sun6i_isp_capture *capture,
+ 			      u32 *pixelformat);
+ 
+ /* Format */
+@@ -73,6 +100,7 @@ unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
+ /* Capture */
+ 
+ void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev);
++void sun6i_isp_capture_rewind(struct sun6i_isp_device *isp_dev);
+ 
+ /* State */
+ 
+@@ -81,6 +109,8 @@ void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+ void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev);
+ void sun6i_isp_capture_finish(struct sun6i_isp_device *isp_dev);
+ 
++bool sun6i_isp_capture_streaming(struct sun6i_isp_device *isp_dev);
++
+ /* Capture */
+ 
+ int sun6i_isp_capture_setup(struct sun6i_isp_device *isp_dev);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index c1236bea6d7a..6a3ba14bab67 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -539,7 +539,8 @@ void sun6i_isp_params_state_complete(struct sun6i_isp_device *isp_dev)
+ 	vb2_buffer->timestamp = ktime_get_ns();
+ 
+ 	/* Parameters will be applied starting from the next frame. */
+-	isp_buffer->v4l2_buffer.sequence = isp_dev->capture.state.sequence + 1;
++	isp_buffer->v4l2_buffer.sequence =
++		isp_dev->captures[SUN6I_ISP_CAPTURE_MAIN].state.sequence + 1;
+ 
+ 	vb2_buffer_done(vb2_buffer, VB2_BUF_STATE_DONE);
+ 
+@@ -595,7 +596,7 @@ static void sun6i_isp_params_buffer_queue(struct vb2_buffer *vb2_buffer)
+ 	struct vb2_v4l2_buffer *v4l2_buffer = to_vb2_v4l2_buffer(vb2_buffer);
+ 	struct sun6i_isp_buffer *isp_buffer =
+ 		container_of(v4l2_buffer, struct sun6i_isp_buffer, v4l2_buffer);
+-	bool capture_streaming = isp_dev->capture.state.streaming;
++	bool capture_streaming = sun6i_isp_capture_streaming(isp_dev);
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&state->lock, flags);
+@@ -611,7 +612,7 @@ static int sun6i_isp_params_start_streaming(struct vb2_queue *queue,
+ {
+ 	struct sun6i_isp_device *isp_dev = vb2_get_drv_priv(queue);
+ 	struct sun6i_isp_params_state *state = &isp_dev->params.state;
+-	bool capture_streaming = isp_dev->capture.state.streaming;
++	bool capture_streaming = sun6i_isp_capture_streaming(isp_dev);
+ 
+ 	state->streaming = true;
+ 
+-- 
+2.43.0
+

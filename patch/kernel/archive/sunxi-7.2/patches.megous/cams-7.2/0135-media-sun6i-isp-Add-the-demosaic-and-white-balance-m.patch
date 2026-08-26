@@ -1,0 +1,213 @@
+From f954740adf3f3e00233c1a31f113a25212b0c7b6 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 22:03:40 +0200
+Subject: [PATCH] media: sun6i-isp: Add the demosaic and white balance modules
+
+Two of the three things the vendor drives that this driver has no concept
+of at all. Both sit in the half of the pipeline where nothing responds.
+
+The demosaic has no enable bit and runs on whatever its registers hold,
+which until now was whatever they came up as: a direction threshold of
+zero. The vendor programs it, along with a minimum RGB that goes into
+three fields across the two registers, the same value in each. Reading
+those registers back gives a level rather than what was written, the
+hardware putting its own measurement over the same bits -- with a
+half-scale field going in they read 0x1fc, which is that field in
+ten-bit units.
+
+White balance correction is not the white balance measurement the awb
+module already has. The gains are 1.8 fixed point and the driver has
+always written unity into them, because without that the pipeline
+produces nothing, but it never set MODULE_EN bit 7, so the block has
+been configured and switched off since the beginning.
+
+Both are bayer-domain, so both are dropped on a YUV input along with the
+other three.
+
+The demosaic threshold is the interesting one: it is the nearest thing
+to the boundary between the blocks that respond and the blocks that do
+not, and it has been sitting at zero the whole time.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  | 59 ++++++++++++++++++-
+ .../media/sunxi/sun6i-isp/sun6i_isp_reg.h     | 14 +++--
+ .../sunxi/sun6i-isp/uapi/sun6i-isp-config.h   | 29 +++++++++
+ 3 files changed, 97 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 5f42716cc040..60530fdfe0ef 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -388,6 +388,51 @@ static void sun6i_isp_params_configure_base(struct sun6i_isp_device *isp_dev)
+ 	sun6i_isp_params_configure_wb(isp_dev);
+ }
+ 
++/*
++ * The demosaic. It has no enable bit of its own and runs whatever these
++ * hold, which until now was whatever they powered up as -- a direction
++ * threshold of zero. The vendor programs both.
++ */
++static void
++sun6i_isp_params_configure_cfa(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_cfa *cfa = &config->cfa;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_CFA_CFG0_REG,
++			     SUN6I_ISP_CFA_CFG0_DIR_TH(cfa->direction_threshold) |
++			     SUN6I_ISP_CFA_CFG0_MIN_RGB(cfa->min_rgb));
++
++	/* the same minimum again, in both halves of the second register */
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_CFA_CFG1_REG,
++			     SUN6I_ISP_CFA_CFG1_MIN_RGB_LOW(cfa->min_rgb) |
++			     SUN6I_ISP_CFA_CFG1_MIN_RGB_HIGH(cfa->min_rgb));
++}
++
++/*
++ * White balance correction. sun6i_isp_params_configure_wb() below sets the
++ * unity gains that the pipeline needs to produce anything at all; this is
++ * the module a parameters buffer can steer, and unlike that one it also
++ * turns the block on.
++ */
++static void
++sun6i_isp_params_configure_wb_gains(struct sun6i_isp_device *isp_dev,
++				    const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_wb *wb = &config->wb;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_WB_GAIN0_REG,
++			     SUN6I_ISP_WB_GAIN0_R(wb->gain_r) |
++			     SUN6I_ISP_WB_GAIN0_GR(wb->gain_gr));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_WB_GAIN1_REG,
++			     SUN6I_ISP_WB_GAIN1_GB(wb->gain_gb) |
++			     SUN6I_ISP_WB_GAIN1_B(wb->gain_b));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_WB_CFG_REG,
++			     SUN6I_ISP_WB_CFG_CLIP(wb->clip));
++}
++
+ static void
+ sun6i_isp_params_configure_bdnf(struct sun6i_isp_device *isp_dev,
+ 				const struct sun6i_isp_params_config *config)
+@@ -432,7 +477,8 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 
+ 	if (!bayer)
+ 		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER |
+-			     SUN6I_ISP_MODULE_RGB2RGB);
++			     SUN6I_ISP_MODULE_RGB2RGB |
++			     SUN6I_ISP_MODULE_CFA | SUN6I_ISP_MODULE_WB);
+ 
+ 	/*
+ 	 * The bayer and YUV gain/offset are the same registers behind two
+@@ -491,6 +537,12 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_CFA)
++		sun6i_isp_params_configure_cfa(isp_dev, config);
++
++	if (modules & SUN6I_ISP_MODULE_WB)
++		sun6i_isp_params_configure_wb_gains(isp_dev, config);
++
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+ 	/*
+ 	 * Clear all modules but keep input configuration. The rotator enable
+@@ -543,6 +595,11 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		value |= SUN6I_ISP_MODULE_EN_RGB2RGB;
+ 
++	if (modules & SUN6I_ISP_MODULE_WB)
++		value |= SUN6I_ISP_MODULE_EN_WB;
++
++	/* The demosaic has no enable bit; it is configuration only. */
++
+ 	/* Bayer stage is always enabled. */
+ 
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 9842ce4f18a5..1b8ea57c58c0 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -363,13 +363,19 @@
+ 
+ /* Demosaic */
+ 
++#define SUN6I_ISP_CFA_CFG0_REG			0x154
++#define SUN6I_ISP_CFA_CFG0_DIR_TH(v)		((v) & GENMASK(12, 0))
++#define SUN6I_ISP_CFA_CFG0_MIN_RGB(v)		(((v) << 16) & GENMASK(25, 16))
++
+ /*
+- * Not programmed: the demosaic runs on whatever these hold and produces a
+- * correct picture with them left alone. Defined so that the register view
+- * can show what that is.
++ * The minimum goes into three fields across two registers, the same value
++ * in each. The hardware writes its own measurement back over the same
++ * bits, so the save region reads a level rather than what was staged.
+  */
+-#define SUN6I_ISP_CFA_CFG0_REG			0x154
+ #define SUN6I_ISP_CFA_CFG1_REG			0x158
++#define SUN6I_ISP_CFA_CFG1_MIN_RGB_LOW(v)	((v) & GENMASK(9, 0))
++#define SUN6I_ISP_CFA_CFG1_MIN_RGB_HIGH(v)	(((v) << 16) & GENMASK(25, 16))
++
+ #define SUN6I_ISP_CFA_TEX_REG			0x15c
+ 
+ /* CNR */
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 11384a6fd30f..91aef737881e 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -26,6 +26,8 @@
+ #define SUN6I_ISP_MODULE_HIST			(1U << 13)
+ #define SUN6I_ISP_MODULE_AWB			(1U << 14)
+ #define SUN6I_ISP_MODULE_AFS			(1U << 15)
++#define SUN6I_ISP_MODULE_CFA			(1U << 16)
++#define SUN6I_ISP_MODULE_WB			(1U << 17)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -165,6 +167,31 @@ struct sun6i_isp_params_config_afs {
+ 	__u8	anti_flicker;
+ };
+ 
++/*
++ * Demosaic. The threshold decides how strongly the interpolation commits
++ * to an edge direction; the minimum is a floor applied to the channels,
++ * and the hardware writes its own measurement back over the same bits, so
++ * reading these registers returns a level rather than what was written.
++ */
++struct sun6i_isp_params_config_cfa {
++	__u16	direction_threshold;
++	__u16	min_rgb;
++};
++
++/*
++ * White balance correction, as opposed to the measurement in awb. Gains
++ * are 1.8 fixed point, so 256 is unity, and the clip is the ceiling the
++ * result is held to.
++ */
++struct sun6i_isp_params_config_wb {
++	__u16	gain_r;
++	__u16	gain_gr;
++	__u16	gain_gb;
++	__u16	gain_b;
++
++	__u16	clip;
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -184,6 +211,8 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_hist	hist;
+ 	struct sun6i_isp_params_config_awb	awb;
+ 	struct sun6i_isp_params_config_afs	afs;
++	struct sun6i_isp_params_config_cfa	cfa;
++	struct sun6i_isp_params_config_wb	wb;
+ };
+ 
+ /*
+-- 
+2.43.0
+

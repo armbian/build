@@ -1,0 +1,246 @@
+From 3e2bdabd898228101d2f74365a786e5eddc4edd7 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 16:39:49 +0200
+Subject: [PATCH] video: sun5i-eink: Per-frame metadata in a leading buffer
+ header
+
+Every queued buffer now starts with a 64-byte header (magic-checked
+at buffer preparation); scanout starts past it. The header carries:
+
+- vcom_uv: VCOM magnitude to apply while this frame scans (0 = keep).
+  A batch started from pause applies it synchronously before the TCON
+  starts; a mid-stream change is applied from a work item kicked by
+  the frame interrupt and settles within the first millisecond of the
+  13ms scan. Waveform files ship per-block vcom offsets, so userspace
+  can now apply them exactly per update.
+- repeat: scan the frame 1+repeat times before advancing - per-frame
+  waveform stretching (temperature experiments, slow motion) without
+  composing duplicates.
+
+The header lives in the same buffer the GPU imports for composition;
+it is out of reach of any render-target rect, and a corrupted header
+fails the QBUF loudly instead of scanning garbage.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/video/fbdev/sun5i-eink.c | 87 +++++++++++++++++++++++++++++++-
+ include/uapi/linux/sun5i-eink.h  | 18 +++++++
+ 2 files changed, 103 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
+index 3e2b64d2b4b3..a2812146ad9a 100644
+--- a/drivers/video/fbdev/sun5i-eink.c
++++ b/drivers/video/fbdev/sun5i-eink.c
+@@ -164,6 +164,9 @@ enum eink_state {
+ struct eink_buffer {
+ 	struct vb2_v4l2_buffer vb;
+ 	struct list_head list;
++	/* from the frame header, latched at buffer preparation */
++	s32 vcom_uv;
++	u32 repeat;
+ };
+ 
+ struct eink_dev {
+@@ -209,10 +212,16 @@ struct eink_dev {
+ 	struct list_head buf_list;
+ 	enum eink_state state;
+ 	unsigned int sequence;
++	unsigned int repeats_left;	/* extra scans of the current buffer */
+ 	wait_queue_head_t waitqueue;
+ 	struct workqueue_struct *wq;	/* ordered */
+ 	struct work_struct idle_work;
+ 	struct work_struct restart_work;
++
++	// per-frame vcom
++	int vcom_cur_uv;		/* last value applied */
++	int vcom_want_uv;		/* requested from the irq, eink->lock */
++	struct work_struct vcom_work;
+ };
+ 
+ #define EINK_DEF_WIDTH		304	/* 1024/4 sources + 40 lead + 8 trail */
+@@ -251,6 +260,7 @@ static int eink_set_power(struct eink_dev* eink, bool en)
+ 					    eink->vcom_uv);
+ 		if (ret)
+ 			goto err;
++		eink->vcom_cur_uv = eink->vcom_uv;
+ 		ret = regulator_enable(eink->vdd_supply);
+ 		if (ret)
+ 			goto err;
+@@ -312,9 +322,44 @@ static void eink_debe_set_address(struct eink_dev *eink, dma_addr_t paddr)
+ 		     SUN4I_BACKEND_REGBUFFCTL_LOADCTL);
+ }
+ 
++/* scanout starts past the frame header */
+ static dma_addr_t eink_buf_addr(struct eink_buffer *buf)
+ {
+-	return vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
++	return vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0) +
++	       SUN5I_EINK_HDR_SIZE;
++}
++
++/*
++ * Apply a frame's VCOM. Sleepable contexts only; the frame interrupt
++ * defers to vcom_work instead (the value then settles within the
++ * first millisecond of the ~13ms frame scan).
++ */
++static void eink_apply_vcom(struct eink_dev *eink, int uv)
++{
++	int ret;
++
++	if (!uv || uv == eink->vcom_cur_uv)
++		return;
++
++	ret = regulator_set_voltage(eink->vcom_supply, uv, uv);
++	if (ret)
++		dev_err(eink->dev, "can't set vcom %duV (%d)\n", uv, ret);
++	else
++		eink->vcom_cur_uv = uv;
++}
++
++static void eink_vcom_work(struct work_struct *work)
++{
++	struct eink_dev *eink = container_of(work, struct eink_dev,
++					     vcom_work);
++	unsigned long flags;
++	int uv;
++
++	spin_lock_irqsave(&eink->lock, flags);
++	uv = eink->vcom_want_uv;
++	spin_unlock_irqrestore(&eink->lock, flags);
++
++	eink_apply_vcom(eink, uv);
+ }
+ 
+ /*
+@@ -491,8 +536,11 @@ static void eink_restart_work(struct work_struct *work)
+ 	}
+ 	buf = list_first_entry(&eink->buf_list, struct eink_buffer, list);
+ 	eink->state = EINK_RUNNING;
++	eink->repeats_left = buf->repeat;
+ 	spin_unlock_irqrestore(&eink->lock, flags);
+ 
++	/* a batch start can apply its VCOM exactly, before scanning */
++	eink_apply_vcom(eink, buf->vcom_uv);
+ 	eink_debe_set_address(eink, eink_buf_addr(buf));
+ 	eink_tcon_start(eink);
+ }
+@@ -528,6 +576,13 @@ static irqreturn_t eink_tcon0_irq_handler(int irq, void *private)
+ 		return IRQ_HANDLED;
+ 	}
+ 
++	if (eink->repeats_left) {
++		/* let the current buffer scan out again */
++		eink->repeats_left--;
++		spin_unlock(&eink->lock);
++		return IRQ_HANDLED;
++	}
++
+ 	buf = list_first_entry(&eink->buf_list, struct eink_buffer, list);
+ 	list_del(&buf->list);
+ 
+@@ -535,6 +590,11 @@ static irqreturn_t eink_tcon0_irq_handler(int irq, void *private)
+ 		/* keep free-running into the next queued frame */
+ 		next = list_first_entry(&eink->buf_list, struct eink_buffer,
+ 					list);
++		eink->repeats_left = next->repeat;
++		if (next->vcom_uv && next->vcom_uv != eink->vcom_cur_uv) {
++			eink->vcom_want_uv = next->vcom_uv;
++			queue_work(eink->wq, &eink->vcom_work);
++		}
+ 		eink_debe_set_address(eink, eink_buf_addr(next));
+ 	} else {
+ 		/* nothing to show - stop cleanly at the frame boundary */
+@@ -573,6 +633,9 @@ static int eink_queue_setup(struct vb2_queue *q, unsigned int *nbuffers,
+ static int eink_buf_prepare(struct vb2_buffer *vb)
+ {
+ 	struct eink_dev *eink = vb2_get_drv_priv(vb->vb2_queue);
++	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
++	struct eink_buffer *buf = container_of(vbuf, struct eink_buffer, vb);
++	const struct sun5i_eink_frame_hdr *hdr;
+ 
+ 	if (vb2_plane_size(vb, 0) < eink->pix.sizeimage) {
+ 		dev_dbg(eink->dev, "buffer too small (%lu < %u)\n",
+@@ -580,6 +643,22 @@ static int eink_buf_prepare(struct vb2_buffer *vb)
+ 		return -EINVAL;
+ 	}
+ 
++	hdr = vb2_plane_vaddr(vb, 0);
++	if (!hdr) {
++		dev_dbg(eink->dev, "buffer not CPU-mappable\n");
++		return -EINVAL;
++	}
++
++	if (hdr->magic != SUN5I_EINK_HDR_MAGIC || hdr->version != 0 ||
++	    hdr->flags != 0) {
++		dev_dbg(eink->dev, "bad frame header (%08x/%u/%x)\n",
++			hdr->magic, hdr->version, hdr->flags);
++		return -EINVAL;
++	}
++
++	buf->vcom_uv = hdr->vcom_uv;
++	buf->repeat = hdr->repeat;
++
+ 	vb2_set_plane_payload(vb, 0, eink->pix.sizeimage);
+ 	return 0;
+ }
+@@ -630,8 +709,10 @@ static int eink_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	buf = list_first_entry(&eink->buf_list, struct eink_buffer, list);
+ 	eink->state = EINK_RUNNING;
+ 	eink->sequence = 0;
++	eink->repeats_left = buf->repeat;
+ 	spin_unlock_irqrestore(&eink->lock, flags);
+ 
++	eink_apply_vcom(eink, buf->vcom_uv);
+ 	eink_debe_setup(eink, buf);
+ 	eink_tcon_start(eink);
+ 	return 0;
+@@ -730,7 +811,8 @@ static void eink_fixup_fmt(struct v4l2_pix_format *pix)
+ 	pix->height = clamp(pix->height, 1u, (u32)EINK_MAX_HEIGHT);
+ 	pix->bytesperline = pix->width *
+ 		(pix->pixelformat == SUN5I_EINK_FMT_PIN32 ? 4 : 1);
+-	pix->sizeimage = pix->bytesperline * pix->height;
++	pix->sizeimage = SUN5I_EINK_HDR_SIZE +
++			 pix->bytesperline * pix->height;
+ }
+ 
+ static int eink_try_fmt_vid_out(struct file *file, void *fh,
+@@ -882,6 +964,7 @@ static int eink_probe(struct platform_device *pdev)
+ 	INIT_WORK(&eink->idle_work, eink_idle_work);
+ 	INIT_WORK(&eink->restart_work, eink_restart_work);
+ 	INIT_WORK(&eink->powerdown_work, eink_powerdown_work);
++	INIT_WORK(&eink->vcom_work, eink_vcom_work);
+ 	timer_setup(&eink->powerdown_timer, eink_supply_powerdown_timer, 0);
+ 
+ 	eink->timing = eink_default_timing;
+diff --git a/include/uapi/linux/sun5i-eink.h b/include/uapi/linux/sun5i-eink.h
+index d9b6deb77d2e..fa6037cd3d16 100644
+--- a/include/uapi/linux/sun5i-eink.h
++++ b/include/uapi/linux/sun5i-eink.h
+@@ -23,6 +23,24 @@
+ #define SUN5I_EINK_FMT_IDX8	v4l2_fourcc('E', 'P', 'D', '8')
+ #define SUN5I_EINK_FMT_PIN32	v4l2_fourcc('E', 'P', 'D', 'W')
+ 
++/*
++ * Every queued buffer starts with this header; the frame itself
++ * (bytesperline * height) follows at SUN5I_EINK_HDR_SIZE. A buffer
++ * with a bad magic or version is rejected at QBUF time.
++ */
++#define SUN5I_EINK_HDR_MAGIC	0x46445045	/* "EPDF" */
++#define SUN5I_EINK_HDR_SIZE	64
++
++struct sun5i_eink_frame_hdr {
++	__u32 magic;		/* SUN5I_EINK_HDR_MAGIC */
++	__u32 version;		/* 0 */
++	__s32 vcom_uv;		/* VCOM magnitude while this frame scans;
++				   0 = keep the current value */
++	__u32 repeat;		/* scan this frame 1 + repeat times */
++	__u32 flags;		/* must be 0 */
++	__u32 reserved[11];	/* pads to SUN5I_EINK_HDR_SIZE */
++};
++
+ struct sun5i_eink_palette {
+ 	__u32 lut[256];		/* index -> DEBE output word (pin states) */
+ };
+-- 
+2.43.0
+

@@ -1,0 +1,122 @@
+From 81b37f13b6f45ca2343eb7dd441b7fab1caf0ac0 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Fri, 24 Jul 2026 19:25:34 +0200
+Subject: [PATCH] dmaengine: sun4i: Allow clients to override the DDMA timing
+ parameters
+
+Dedicated DMA slave transfers currently hardcode timing parameters that
+were found experimentally for SPI. Some peripherals (USB OTG) need a
+different DRQ handshake granularity, so let clients pass a raw PARA
+register value through the standard peripheral_config member of struct
+dma_slave_config. Clients that don't keep the SPI timings.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/dma/sun4i-dma.c       | 32 ++++++++++++++++----------------
+ include/linux/dma/sun4i-dma.h | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+), 16 deletions(-)
+ create mode 100644 include/linux/dma/sun4i-dma.h
+
+diff --git a/drivers/dma/sun4i-dma.c b/drivers/dma/sun4i-dma.c
+index d2321f7287d2..f1ba311ac2b4 100644
+--- a/drivers/dma/sun4i-dma.c
++++ b/drivers/dma/sun4i-dma.c
+@@ -8,6 +8,7 @@
+ #include <linux/bitops.h>
+ #include <linux/clk.h>
+ #include <linux/dma-mapping.h>
++#include <linux/dma/sun4i-dma.h>
+ #include <linux/dmaengine.h>
+ #include <linux/dmapool.h>
+ #include <linux/interrupt.h>
+@@ -88,11 +89,7 @@
+ #define SUN4I_DDMA_CFG_BYTE_COUNT_MODE_REMAIN	BIT(15)
+ #define SUN4I_DDMA_CFG_SRC_NON_SECURE		BIT(12)
+ 
+-/* Dedicated DMA parameter register layout */
+-#define SUN4I_DDMA_PARA_DST_DATA_BLK_SIZE(n)	(((n) - 1) << 24)
+-#define SUN4I_DDMA_PARA_DST_WAIT_CYCLES(n)	(((n) - 1) << 16)
+-#define SUN4I_DDMA_PARA_SRC_DATA_BLK_SIZE(n)	(((n) - 1) << 8)
+-#define SUN4I_DDMA_PARA_SRC_WAIT_CYCLES(n)	(((n) - 1) << 0)
++/* The dedicated DMA parameter register layout is in linux/dma/sun4i-dma.h */
+ 
+ /** DMA register offsets **/
+ 
+@@ -923,6 +920,20 @@ sun4i_dma_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 			    SUN4I_DMA_CFG_SRC_DRQ_TYPE(vchan->endpoint) |
+ 			    SUN4I_DMA_CFG_SRC_ADDR_MODE(io_mode);
+ 
++	/*
++	 * Use the client's dedicated DMA timing parameters when it provided
++	 * some, otherwise fall back to the magic timings that were found
++	 * experimentally with SPI and seem to work for most devices.  As
++	 * usual, we only have the "para" bitfield meanings, but no comment
++	 * on what the values should be when doing a certain operation :|
++	 */
++	if (sconfig->peripheral_config &&
++	    sconfig->peripheral_size == sizeof(struct sun4i_dma_chan_config))
++		para = ((struct sun4i_dma_chan_config *)
++				sconfig->peripheral_config)->para;
++	else
++		para = SUN4I_DDMA_MAGIC_SPI_PARAMETERS;
++
+ 	for_each_sg(sgl, sg, sg_len, i) {
+ 		/* Figure out addresses */
+ 		if (dir == DMA_MEM_TO_DEV) {
+@@ -933,17 +944,6 @@ sun4i_dma_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+ 			dstaddr = sg_dma_address(sg);
+ 		}
+ 
+-		/*
+-		 * These are the magic DMA engine timings that keep SPI going.
+-		 * I haven't seen any interface on DMAEngine to configure
+-		 * timings, and so far they seem to work for everything we
+-		 * support, so I've kept them here. I don't know if other
+-		 * devices need different timings because, as usual, we only
+-		 * have the "para" bitfield meanings, but no comment on what
+-		 * the values should be when doing a certain operation :|
+-		 */
+-		para = SUN4I_DDMA_MAGIC_SPI_PARAMETERS;
+-
+ 		/* And make a suitable promise */
+ 		if (vchan->is_dedicated)
+ 			promise = generate_ddma_promise(chan, srcaddr, dstaddr,
+diff --git a/include/linux/dma/sun4i-dma.h b/include/linux/dma/sun4i-dma.h
+new file mode 100644
+index 000000000000..5a3ae127ba07
+--- /dev/null
++++ b/include/linux/dma/sun4i-dma.h
+@@ -0,0 +1,30 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Allwinner sun4i DMA controller client interface
++ */
++#ifndef _LINUX_DMA_SUN4I_DMA_H
++#define _LINUX_DMA_SUN4I_DMA_H
++
++#include <linux/types.h>
++
++/* Dedicated DMA parameter register layout */
++#define SUN4I_DDMA_PARA_DST_DATA_BLK_SIZE(n)	(((n) - 1) << 24)
++#define SUN4I_DDMA_PARA_DST_WAIT_CYCLES(n)	(((n) - 1) << 16)
++#define SUN4I_DDMA_PARA_SRC_DATA_BLK_SIZE(n)	(((n) - 1) << 8)
++#define SUN4I_DDMA_PARA_SRC_WAIT_CYCLES(n)	(((n) - 1) << 0)
++
++/*
++ * Peripheral-specific configuration, passed through the peripheral_config
++ * member of struct dma_slave_config.  Without it, dedicated DMA slave
++ * transfers use timing parameters that are known to work for SPI.
++ *
++ * para is the raw value for the dedicated DMA parameter register, composed
++ * from the SUN4I_DDMA_PARA_* fields above.  It sets the DRQ handshake
++ * granularity (data block size) and the wait states inserted between
++ * blocks.  It has no effect on normal DMA channels.
++ */
++struct sun4i_dma_chan_config {
++	u32 para;
++};
++
++#endif /* _LINUX_DMA_SUN4I_DMA_H */
+-- 
+2.43.0
+

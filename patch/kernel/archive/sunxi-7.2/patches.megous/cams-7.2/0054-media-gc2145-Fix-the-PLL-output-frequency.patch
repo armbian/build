@@ -1,0 +1,110 @@
+From bf689abc36d1cee79bb82d1bd50cacdbe2d4804d Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 14:54:05 +0200
+Subject: [PATCH] media: gc2145: Fix the PLL output frequency
+
+gc2145_set_2pclk() computes the frequency as mclk * mult / div, which is
+what the clock tree gives when the CLK double bit divides the PLL output
+by 4, but it writes 0xf7 with that bit clear, so the hardware divides by
+8 instead. Every frame rate the driver programs comes out half of what it
+intends.
+
+The same write also put the PCLK divider into bits [6:4], which are the
+serial clock divider feeding the CSI-2 transmitter, and the divider duty
+nibble did not match the ratios GalaxyCore recommends for anything above
+a divide by three.
+
+While here, teach the readback helper about the further divide by four
+that 0xf7[7] applies, and drop its unused sclk_div.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 35 +++++++++++++++++++++++++++--------
+ 1 file changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 006a9fa5f7cd..64e6f0885351 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -1533,11 +1533,17 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+  *         |
+  *       DOUBLE  (div by 4 or 8) based on 0xf7[3]
+  *         |
++ *      DVP MODE  (div by 4 more when 0xf7[7] == 1)
++ *         |
+  *     /-------\
+  *     |       |
+- * pclk_div  sclk_div
++ * pclk_div  sclk_div     - sclk_div is 0xf7[6:4] + 1
+  *     |       |
+- *   2pclk    sclk
++ *   2pclk    sclk        - sclk * 8 is the CSI-2 lane bit rate
++ *
++ * 2pclk is what leaves the PCLK pin, one byte per period. The internal
++ * pixel clock, which the row period below is expressed in multiples of,
++ * is half of it.
+  */
+ __maybe_unused
+ static int gc2145_get_2pclk(struct gc2145_dev *sensor, unsigned long* pclk)
+@@ -1547,8 +1553,8 @@ static int gc2145_get_2pclk(struct gc2145_dev *sensor, unsigned long* pclk)
+ 	bool pll_en; // 0xf8[7]
+ 	bool double_clk; // 0xf7[3]
+ 	bool fixed_32x; // 0xf7[2]
++	bool dvp_mode; // 0xf7[7]
+ 	unsigned long pll_mult; // 0xf8[5:0] + 1
+-	unsigned long sclk_div; // 1 << (0xf7[5:4] + 1)
+ 	unsigned long pclk_div; // 0xfa[7:4] + 1
+ 	unsigned long int_clk;
+ 	unsigned long mclk;
+@@ -1574,9 +1580,9 @@ static int gc2145_get_2pclk(struct gc2145_dev *sensor, unsigned long* pclk)
+ 	pll_en = pll_mode2 & BIT(7);
+ 	double_clk = pll_mode1 & BIT(3);
+ 	fixed_32x = pll_mode1 & BIT(2);
++	dvp_mode = pll_mode1 & BIT(7);
+ 	pll_mult = (pll_mode2 & 0x3f) + 1;
+ 	pclk_div = (clk_div_mode >> 4) + 1;
+-	sclk_div = 1 << (((pll_mode1 >> 4) & 0x3) + 1);
+ 
+ 	int_clk = mclk / (mclk_div2_en ? 2 : 1);
+ 
+@@ -1587,6 +1593,9 @@ static int gc2145_get_2pclk(struct gc2145_dev *sensor, unsigned long* pclk)
+ 
+ 	int_clk /= double_clk ? 4 : 8;
+ 
++	if (dvp_mode)
++		int_clk /= 4;
++
+ 	if (pclk)
+ 		*pclk = int_clk / pclk_div;
+ 
+@@ -1646,13 +1655,23 @@ static int gc2145_set_2pclk(struct gc2145_dev *sensor,
+ 
+ 	gc2145_tx_start(sensor);
+ 
+-	gc2145_tx_write8(sensor, 0xf7,
+-			 ((pclk_div_best - 1)) << 4 |
++	/*
++	 * The frequency computed above is the one reached with the CLK
++	 * double bit set, which divides the PLL output by 4 rather than
++	 * by 8. The serial clock divider in bits [6:4] only feeds the
++	 * CSI-2 transmitter, so leave it alone.
++	 */
++	gc2145_tx_write8(sensor, 0xf7, BIT(3) /* clk_double */ |
+ 			 (mclk_div2_en_best << 1) | BIT(0) /* pll_en */);
+ 	gc2145_tx_write8(sensor, 0xf8, BIT(7) | (pll_mult_best - 1));
++
++	/*
++	 * The low nibble of the divider register is the number of high
++	 * clocks per divided period. Half the divider gives the most
++	 * symmetric duty cycle the hardware can produce.
++	 */
+ 	gc2145_tx_write8(sensor, 0xfa,
+-			 (pclk_div_best - 1) << 4 |
+-			 (((pclk_div_best - 1) / 2) & 0xf));
++			 (pclk_div_best - 1) << 4 | (pclk_div_best / 2));
+ 
+ 	return gc2145_tx_commit(sensor);
+ }
+-- 
+2.43.0
+

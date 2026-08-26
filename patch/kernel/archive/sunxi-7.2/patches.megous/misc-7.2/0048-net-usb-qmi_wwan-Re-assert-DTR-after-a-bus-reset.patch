@@ -1,0 +1,146 @@
+From 483d05bf2362317639be9775af8b5484dfe10e85 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 16 Aug 2026 13:16:08 +0200
+Subject: [PATCH] net: usb: qmi_wwan: Re-assert DTR after a bus reset
+
+Devices needing the "set DTR" quirk get it asserted in bind() only. A
+bus reset - which is what a system resume does to a device whose root
+hub lost power - returns the device to its default state and clears it
+again. The modem then accepts QMI requests and silently discards them.
+
+Captured with usbmon on a PinePhone with a Quectel EG25-G, after a
+resume, sending a QMI_CTL get_version_info:
+
+  S Co:1:002:0 s 21 00 0000 0004 000c 12 = 010b0000 00000001 21000000
+  C Co:1:002:0 0 12 >
+  S Ii:1:002:9 -115:256 8 <
+
+The SEND_ENCAPSULATED_COMMAND completes with status 0, the interrupt
+endpoint is armed and waiting, and no RESPONSE_AVAILABLE notification
+ever arrives. Same for a fresh client ID allocation and for a newly
+opened /dev/cdc-wdm0, while the AT ports on the other interfaces keep
+working normally. Rebinding the driver cures it, which is what pointed
+at bind().
+
+Re-assert DTR from a reset_resume handler instead, so that the WDM
+character device and the client IDs hanging off it survive. The nopm
+variant of usbnet_write_cmd() is mandatory there, as the ordinary one
+takes an autopm reference and would deadlock in a PM callback.
+
+Note this is necessary but not sufficient on its own: cdc-wdm also
+loses a notification that arrives while it is suspending, and needs
+the companion fix to service the response once the modem answers
+again.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/net/usb/qmi_wwan.c | 58 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 50 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index 94cdb61dca83..f5899da4233e 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -732,15 +732,30 @@ static int qmi_wwan_register_subdriver(struct usbnet *dev)
+  * GobiNet driver. The requirement has been verified on an MDM9230
+  * based Sierra Wireless MC7455
+  */
+-static int qmi_wwan_change_dtr(struct usbnet *dev, bool on)
++static int qmi_wwan_change_dtr(struct usbnet *dev, bool on, bool nopm)
+ {
+ 	u8 intf = dev->intf->cur_altsetting->desc.bInterfaceNumber;
++	u8 req = USB_CDC_REQ_SET_CONTROL_LINE_STATE;
++	u8 type = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+ 
+-	return usbnet_write_cmd(dev, USB_CDC_REQ_SET_CONTROL_LINE_STATE,
+-				USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
++	/* the nopm variant is mandatory from a PM callback: the ordinary
++	 * one takes an autopm reference and would deadlock there
++	 */
++	if (nopm)
++		return usbnet_write_cmd_nopm(dev, req, type,
++					     on ? 0x01 : 0x00, intf, NULL, 0);
++
++	return usbnet_write_cmd(dev, req, type,
+ 				on ? 0x01 : 0x00, intf, NULL, 0);
+ }
+ 
++/* does this device need DTR set before it will answer QMI? */
++static bool qmi_wwan_needs_dtr(struct usbnet *dev)
++{
++	return dev->driver_info->data & QMI_WWAN_QUIRK_DTR ||
++	       le16_to_cpu(dev->udev->descriptor.bcdUSB) >= 0x0201;
++}
++
+ static int qmi_wwan_bind(struct usbnet *dev, struct usb_interface *intf)
+ {
+ 	int status;
+@@ -818,10 +833,9 @@ static int qmi_wwan_bind(struct usbnet *dev, struct usb_interface *intf)
+ 	 * but without USB3 support.  Devices based on these chips
+ 	 * need a quirk flag in the device ID table.
+ 	 */
+-	if (dev->driver_info->data & QMI_WWAN_QUIRK_DTR ||
+-	    le16_to_cpu(dev->udev->descriptor.bcdUSB) >= 0x0201) {
++	if (qmi_wwan_needs_dtr(dev)) {
+ 		qmi_wwan_manage_power(dev, 1);
+-		qmi_wwan_change_dtr(dev, true);
++		qmi_wwan_change_dtr(dev, true, false);
+ 	}
+ 
+ 	/* Never use the same address on both ends of the link, even if the
+@@ -857,7 +871,7 @@ static void qmi_wwan_unbind(struct usbnet *dev, struct usb_interface *intf)
+ 
+ 	/* disable MDM9x30 quirk */
+ 	if (le16_to_cpu(dev->udev->descriptor.bcdUSB) >= 0x0201) {
+-		qmi_wwan_change_dtr(dev, false);
++		qmi_wwan_change_dtr(dev, false, false);
+ 		qmi_wwan_manage_power(dev, 0);
+ 	}
+ 
+@@ -926,6 +940,34 @@ static int qmi_wwan_resume(struct usb_interface *intf)
+ 	return ret;
+ }
+ 
++/* A bus reset - which is what a system resume does to a device whose root
++ * hub lost power - returns the device to its default state, and that clears
++ * the DTR set in bind(). Devices needing the quirk above then stop answering
++ * QMI entirely: not an error, just silence, for existing client IDs, for new
++ * ones, and for a freshly opened /dev/cdc-wdm0 alike.
++ *
++ * Re-assert DTR instead of forcing a rebind, so that the WDM character
++ * device and the client IDs hanging off it survive the reset.
++ */
++static int qmi_wwan_reset_resume(struct usb_interface *intf)
++{
++	struct usbnet *dev = usb_get_intfdata(intf);
++	struct qmi_wwan_state *info = (void *)&dev->data;
++	int ret;
++
++	ret = qmi_wwan_resume(intf);
++	if (ret < 0)
++		return ret;
++
++	/* the control interface is the one carrying DTR, and claiming both
++	 * gets this callback twice
++	 */
++	if (intf == info->control && qmi_wwan_needs_dtr(dev))
++		qmi_wwan_change_dtr(dev, true, true);
++
++	return 0;
++}
++
+ static const struct driver_info	qmi_wwan_info = {
+ 	.description	= "WWAN/QMI device",
+ 	.flags		= FLAG_WWAN | FLAG_NOMAXMTU | FLAG_SEND_ZLP,
+@@ -1610,7 +1652,7 @@ static struct usb_driver qmi_wwan_driver = {
+ 	.disconnect	      = qmi_wwan_disconnect,
+ 	.suspend	      = qmi_wwan_suspend,
+ 	.resume		      =	qmi_wwan_resume,
+-	.reset_resume         = qmi_wwan_resume,
++	.reset_resume         = qmi_wwan_reset_resume,
+ 	.supports_autosuspend = 1,
+ 	.disable_hub_initiated_lpm = 1,
+ };
+-- 
+2.43.0
+

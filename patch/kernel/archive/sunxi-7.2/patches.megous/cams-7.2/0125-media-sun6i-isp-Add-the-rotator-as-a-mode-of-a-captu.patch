@@ -1,0 +1,690 @@
+From 72e2169ab7c5c3534ccc265765927046a01314d5 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:50:22 +0200
+Subject: [PATCH] media: sun6i-isp: Add the rotator as a mode of a capture
+ channel
+
+The ISP has a rotator, but it is not an output of its own: it reads back
+what one of the two channels wrote and lays a turned copy through its own
+addresses, and which channel it reads is a bit in its config register. So
+it belongs to a channel as a mode rather than as a third video device, and
+it is exposed as V4L2_CID_ROTATE on both capture nodes.
+
+The buffer carries both images. The channel writes its own untuned output
+into a scratch region past the end of the rotated one, page aligned, and
+the rotator lays the turned copy at offset zero - which is where userspace
+expects the frame, and what the payload length covers. That is the
+vendor's arrangement, where one buffer holds every output at its own
+offset with the one that matters at zero.
+
+Only a quarter turn uses it. A half turn is a mirror and a flip at once,
+which the channel does for free and without a second image in the buffer,
+and it is also the only way to get 180 out of this hardware: the rotator
+produces nothing at all at that angle. Being a mirror and a flip, it
+composes with those two controls rather than overriding them, so 180 plus
+a vertical flip leaves a plain mirror.
+
+There is one rotator, so the second channel to ask for a quarter turn is
+refused rather than quietly taking it from the first - which would leave
+that channel's buffers laid out for a rotation that is no longer
+happening. The enable is programmed from the configuration pass rather
+than by whichever channel wants it, because the load buffer keeps its
+contents across streams and a run that left the bit set would have the
+rotator working against a freed buffer.
+
+The enable lives in MODULE_EN alongside the tuning modules, so the params
+side has to leave it alone: a params buffer arriving mid-stream must not
+turn off a rotator the capture side is using.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.c | 362 ++++++++++++++++--
+ .../media/sunxi/sun6i-isp/sun6i_isp_capture.h |  11 +
+ .../media/sunxi/sun6i-isp/sun6i_isp_params.c  |  10 +-
+ .../media/sunxi/sun6i-isp/sun6i_isp_proc.c    |   3 +-
+ .../media/sunxi/sun6i-isp/sun6i_isp_reg.h     |  16 +
+ 5 files changed, 365 insertions(+), 37 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index fa756121c6a6..b0e7c2e61c92 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -36,6 +36,19 @@ static const struct sun6i_isp_capture_regs sun6i_isp_capture_regs_self = {
+ 	.v_addr0	= SUN6I_ISP_SCH_V_ADDR0_REG,
+ };
+ 
++/*
++ * There is one rotator and it is not a channel: it reads back what one of
++ * the two channels wrote and lays a turned copy through its own addresses.
++ * Which channel it reads is bit 0 of its config register, so it is a mode
++ * of a channel rather than an output of its own.
++ */
++static const struct sun6i_isp_capture_regs sun6i_isp_capture_regs_rot = {
++	.cfg		= SUN6I_ISP_ROT_CFG_REG,
++	.y_addr0	= SUN6I_ISP_ROT_Y_ADDR0_REG,
++	.u_addr0	= SUN6I_ISP_ROT_U_ADDR0_REG,
++	.v_addr0	= SUN6I_ISP_ROT_V_ADDR0_REG,
++};
++
+ /*
+  * Hand out the register blocks to the channels that are streaming.
+  *
+@@ -72,6 +85,54 @@ static void sun6i_isp_capture_blocks_assign(struct sun6i_isp_device *isp_dev)
+ 	}
+ }
+ 
++/*
++ * Only a quarter turn needs the rotator. A half turn is a mirror and a flip
++ * at once, which the channel does by itself for free - no second image in
++ * the buffer for the rotator to read back, and no rotator to go wrong. It is
++ * also the only way to get 180 out of this hardware: the rotator produces
++ * nothing at all at that angle.
++ */
++static bool sun6i_isp_capture_quarter_turn(struct sun6i_isp_capture *capture)
++{
++	return capture->rotation == 90 || capture->rotation == 270;
++}
++
++static bool sun6i_isp_capture_half_turn(struct sun6i_isp_capture *capture)
++{
++	return capture->rotation == 180;
++}
++
++bool sun6i_isp_capture_rotation_taken(struct sun6i_isp_device *isp_dev,
++				      struct sun6i_isp_capture *except)
++{
++	unsigned int i;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++) {
++		struct sun6i_isp_capture *capture = &isp_dev->captures[i];
++
++		if (capture != except &&
++		    sun6i_isp_capture_quarter_turn(capture))
++			return true;
++	}
++
++	return false;
++}
++
++/*
++ * What the channel itself writes, as opposed to what comes out. They differ
++ * on a quarter turn, where the rotated copy userspace is handed has the two
++ * dimensions the other way round from the one the channel produced.
++ */
++static void sun6i_isp_capture_source_dimensions(struct sun6i_isp_capture *capture,
++						unsigned int *width,
++						unsigned int *height)
++{
++	sun6i_isp_capture_dimensions(capture, width, height);
++
++	if (sun6i_isp_capture_quarter_turn(capture))
++		swap(*width, *height);
++}
++
+ /* Helpers */
+ 
+ void sun6i_isp_capture_dimensions(struct sun6i_isp_capture *capture,
+@@ -225,6 +286,38 @@ unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
+ 	return size;
+ }
+ 
++/*
++ * Where the channel's own output goes. Zero without rotation, where the
++ * channel writes the whole buffer; otherwise just past the rotated image,
++ * page aligned the way the vendor lays its regions out.
++ */
++static unsigned int
++sun6i_isp_capture_source_offset(struct sun6i_isp_capture *capture)
++{
++	unsigned int width, height;
++	u32 pixelformat;
++
++	if (!sun6i_isp_capture_quarter_turn(capture))
++		return 0;
++
++	sun6i_isp_capture_dimensions(capture, &width, &height);
++	sun6i_isp_capture_format(capture, &pixelformat);
++
++	return ALIGN(sun6i_isp_capture_image_size(pixelformat, width, height),
++		     PAGE_SIZE);
++}
++
++/*
++ * Lay a buffer out for the hardware.
++ *
++ * Without rotation the channel writes the whole buffer and that is all there
++ * is to it. With rotation the buffer holds two images: the channel writes its
++ * own unrotated output into the scratch region at the far end, the rotator
++ * reads that back and lays the turned copy at the start - which is where
++ * userspace expects to find the frame. This is the vendor's arrangement,
++ * where one buffer carries every output at its own offset, with the regions
++ * ordered so that the one that matters is the one at offset zero.
++ */
+ static void
+ sun6i_isp_capture_buffer_configure(struct sun6i_isp_capture *capture,
+ 				   struct sun6i_isp_buffer *isp_buffer)
+@@ -236,11 +329,23 @@ sun6i_isp_capture_buffer_configure(struct sun6i_isp_capture *capture,
+ 	u32 pixelformat;
+ 
+ 	sun6i_isp_capture_format(capture, &pixelformat);
+-	sun6i_isp_capture_dimensions(capture, &width, &height);
++	sun6i_isp_capture_source_dimensions(capture, &width, &height);
+ 
+-	sun6i_isp_capture_planes_configure(isp_dev, capture->regs, base,
++	sun6i_isp_capture_planes_configure(isp_dev, capture->regs,
++					   base + sun6i_isp_capture_source_offset(capture),
+ 					   pixelformat, width, height,
+-					   capture->flip);
++					   capture->flip !=
++					   sun6i_isp_capture_half_turn(capture));
++
++	if (!sun6i_isp_capture_quarter_turn(capture))
++		return;
++
++	sun6i_isp_capture_dimensions(capture, &width, &height);
++
++	/* The rotator has no flip of its own. */
++	sun6i_isp_capture_planes_configure(isp_dev, &sun6i_isp_capture_regs_rot,
++					   base, pixelformat, width, height,
++					   false);
+ }
+ 
+ /*
+@@ -300,9 +405,111 @@ static void sun6i_isp_capture_configure_scaler(struct sun6i_isp_capture *capture
+ 			     SUN6I_ISP_MCH_SCALE_CFG_WEIGHT_SHIFT(shift));
+ }
+ 
++/*
++ * The rotator's own config: which channel it reads back, the angle, and the
++ * geometry of what it lays down - which is the channel's, turned.
++ */
++static void sun6i_isp_capture_rotator_cfg(struct sun6i_isp_capture *capture)
++{
++	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	unsigned int stride_luma_div4, stride_chroma_div4 = 0;
++	const struct sun6i_isp_capture_format *format;
++	const struct v4l2_format_info *info;
++	unsigned int width, height;
++	u32 pixelformat, value;
++	u32 angle;
++
++	sun6i_isp_capture_dimensions(capture, &width, &height);
++	sun6i_isp_capture_format(capture, &pixelformat);
++
++	format = sun6i_isp_capture_format_find(pixelformat);
++	info = v4l2_format_info(pixelformat);
++	if (WARN_ON(!format || !info))
++		return;
++
++	switch (capture->rotation) {
++	case 90:
++		angle = SUN6I_ISP_ROT_ANGLE_90;
++		break;
++	case 180:
++		angle = SUN6I_ISP_ROT_ANGLE_180;
++		break;
++	case 270:
++		angle = SUN6I_ISP_ROT_ANGLE_270;
++		break;
++	default:
++		angle = SUN6I_ISP_ROT_ANGLE_0;
++		break;
++	}
++
++	stride_luma_div4 = sun6i_isp_capture_stride(info, 0, width) / 4;
++
++	if (info->comp_planes > 1)
++		stride_chroma_div4 =
++			sun6i_isp_capture_stride(info, 1, width) / 4;
++
++	value = SUN6I_ISP_ROT_CFG_ANGLE(angle) |
++		SUN6I_ISP_ROT_CFG_OUTPUT_FMT(format->output_format) |
++		SUN6I_ISP_ROT_CFG_STRIDE_Y_DIV4(stride_luma_div4) |
++		SUN6I_ISP_ROT_CFG_STRIDE_UV_DIV4(stride_chroma_div4);
++
++	/*
++	 * Bit 0 is the source select and not an enable: clear picks the main
++	 * block, set picks the self one. The vendor's isp_rot_src_ch_sel()
++	 * sets it for its channel 0, which its isp_channel_enable() shows is
++	 * the self channel.
++	 *
++	 * It follows the block the channel drives rather than which channel it
++	 * is, so a self channel holding the main block has the rotator read the
++	 * main block back.
++	 */
++	if (capture->regs == &sun6i_isp_capture_regs_self)
++		value |= SUN6I_ISP_ROT_CFG_SRC_SCH;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_ROT_CFG_REG, value);
++}
++
++/*
++ * Program the rotator for whichever channel is turning, and turn it off when
++ * none is. At most one channel can be, since V4L2_CID_ROTATE refuses to take
++ * the rotator away from the other one.
++ *
++ * This is driven from here rather than by the channel that wants it because
++ * the load buffer keeps its contents across streams: a run that leaves the
++ * enable set has the rotator carrying on against the address it was last
++ * given, which by then is a freed buffer whose pages have gone back to CMA and
++ * been handed to somebody else.
++ */
++static void
++sun6i_isp_capture_rotator_configure(struct sun6i_isp_device *isp_dev)
++{
++	struct sun6i_isp_capture *rotating = NULL;
++	unsigned int i;
++	u32 value;
++
++	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++) {
++		struct sun6i_isp_capture *capture = &isp_dev->captures[i];
++
++		if (capture->regs && sun6i_isp_capture_quarter_turn(capture))
++			rotating = capture;
++	}
++
++	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
++
++	if (rotating) {
++		sun6i_isp_capture_rotator_cfg(rotating);
++		value |= SUN6I_ISP_MODULE_EN_ROT;
++	} else {
++		value &= ~SUN6I_ISP_MODULE_EN_ROT;
++	}
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
++}
++
+ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ {
+ 	struct sun6i_isp_device *isp_dev = capture->isp_dev;
++	unsigned int input_width, input_height;
+ 	unsigned int width, height;
+ 	u32 cfg = 0;
+ 	unsigned int stride_luma, stride_chroma;
+@@ -311,7 +518,12 @@ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ 	const struct v4l2_format_info *info;
+ 	u32 pixelformat;
+ 
+-	sun6i_isp_capture_dimensions(capture, &width, &height);
++	/*
++	 * Everything below is the channel's own output, which with rotation on
++	 * is the scratch image the rotator reads back rather than the one
++	 * userspace sees - so it is the source geometry throughout.
++	 */
++	sun6i_isp_capture_source_dimensions(capture, &width, &height);
+ 	sun6i_isp_capture_format(capture, &pixelformat);
+ 
+ 	format = sun6i_isp_capture_format_find(pixelformat);
+@@ -325,20 +537,31 @@ static void sun6i_isp_capture_configure_one(struct sun6i_isp_capture *capture)
+ 	/*
+ 	 * The scaler is always brought up, even at 1:1 where its ratios come
+ 	 * out 0x100 and it is a pass-through. That is what the vendor does -
+-	 * channel_enable(), scale_enable(), set_output_size(), scale_cfg(), in
+-	 * that order, with no test on the size - and leaving it out is not the
+-	 * harmless optimisation it looks like: the ratio registers are in the
+-	 * load buffer, which keeps its contents across streams, so a channel
+-	 * captured at the input resolution would run on whatever ratios some
+-	 * earlier stream left behind.
++	 * channel_enable(), scale_enable(), set_output_size(), scale_cfg(),
++	 * in that order, with no test on the size - and leaving it out is not
++	 * the harmless optimisation it looks like: the ratio registers are in
++	 * the load buffer, which keeps its contents across streams, so a
++	 * channel captured at the input resolution runs on whatever ratios
++	 * some earlier stream left behind. The self channel writes past the
++	 * end of its buffer when that happens, which is why the fault looked
++	 * stable within a boot and different across one.
+ 	 */
++
++	sun6i_isp_proc_dimensions(isp_dev, &input_width, &input_height);
++
+ 	sun6i_isp_capture_configure_scaler(capture, width, height);
+ 	cfg |= SUN6I_ISP_MCH_CFG_SCALE_EN;
+ 
+-	if (capture->mirror)
++	/*
++	 * A half turn is mirror and flip together, so it composes with the
++	 * two controls rather than overriding them: asking for 180 and a
++	 * vertical flip leaves a plain mirror, which is what the two of them
++	 * add up to.
++	 */
++	if (capture->mirror != sun6i_isp_capture_half_turn(capture))
+ 		cfg |= SUN6I_ISP_MCH_CFG_MIRROR_EN;
+ 
+-	if (capture->flip)
++	if (capture->flip != sun6i_isp_capture_half_turn(capture))
+ 		cfg |= SUN6I_ISP_MCH_CFG_FLIP_EN;
+ 
+ 	info = v4l2_format_info(pixelformat);
+@@ -378,6 +601,8 @@ void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev)
+ 	for (i = 0; i < SUN6I_ISP_CAPTURE_COUNT; i++)
+ 		if (isp_dev->captures[i].regs)
+ 			sun6i_isp_capture_configure_one(&isp_dev->captures[i]);
++
++	sun6i_isp_capture_rotator_configure(isp_dev);
+ }
+ 
+ /*
+@@ -633,6 +858,11 @@ static int sun6i_isp_capture_buffer_prepare(struct vb2_buffer *vb2_buffer)
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * The scratch region a rotating channel needs is part of the
++	 * allocation but not part of the frame, so the payload is the image
++	 * userspace is meant to read, which starts at offset zero.
++	 */
+ 	sun6i_isp_capture_dimensions(capture, &width, &height);
+ 	sun6i_isp_capture_format(capture, &pixelformat);
+ 
+@@ -664,6 +894,9 @@ static void sun6i_isp_capture_buffer_queue(struct vb2_buffer *vb2_buffer)
+ 
+ /* Controls */
+ 
++static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
++					     struct v4l2_format *format);
++
+ static int sun6i_isp_capture_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct sun6i_isp_capture *capture =
+@@ -677,6 +910,35 @@ static int sun6i_isp_capture_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_VFLIP:
+ 		capture->flip = ctrl->val;
+ 		return 0;
++	case V4L2_CID_ROTATE:
++		/*
++		 * Unlike the flips, this changes the geometry and the size of
++		 * the buffer needed, so it cannot be moved under a queue that
++		 * has already been allocated and started. And there is one
++		 * rotator between the two channels, so taking it from the
++		 * other one is refused rather than done silently, which would
++		 * leave that channel's buffers laid out for a rotation that
++		 * is no longer happening.
++		 */
++		if (capture->state.streaming)
++			return -EBUSY;
++
++		if ((ctrl->val == 90 || ctrl->val == 270) &&
++		    sun6i_isp_capture_rotation_taken(capture->isp_dev, capture))
++			return -EBUSY;
++
++		if (capture->rotation == ctrl->val)
++			return 0;
++
++		capture->rotation = ctrl->val;
++
++		/*
++		 * A quarter turn transposes the delivered image and rotation
++		 * changes how much buffer is needed, so the format has to be
++		 * recomputed rather than left describing the old arrangement.
++		 */
++		sun6i_isp_capture_format_prepare(capture, &capture->format);
++		return 0;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -686,8 +948,6 @@ static const struct v4l2_ctrl_ops sun6i_isp_capture_ctrl_ops = {
+ 	.s_ctrl		= sun6i_isp_capture_s_ctrl,
+ };
+ 
+-/* Queue */
+-
+ static int sun6i_isp_capture_start_streaming(struct vb2_queue *queue,
+ 					     unsigned int count)
+ {
+@@ -824,25 +1084,39 @@ static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
+ 	struct v4l2_pix_format *pix_format = &format->fmt.pix;
+ 	unsigned int input_width, input_height;
+ 	const struct v4l2_format_info *info;
++	unsigned int source_width, source_height;
+ 
+ 	if (!sun6i_isp_capture_format_find(pix_format->pixelformat))
+ 		pix_format->pixelformat =
+ 			sun6i_isp_capture_formats[0].pixelformat;
+ 
++	/*
++	 * The format describes what comes out, so on a quarter turn it is the
++	 * turned image. What the scaler has to fit inside the proc output is
++	 * the untuned one the channel writes, so bound that and turn the
++	 * result back.
++	 */
++
++	source_width = pix_format->width;
++	source_height = pix_format->height;
++
++	if (sun6i_isp_capture_quarter_turn(capture))
++		swap(source_width, source_height);
++
+ 	/* The scaler only goes down, so the input bounds what can be written. */
+ 	sun6i_isp_proc_dimensions(isp_dev, &input_width, &input_height);
+ 
+-	v4l_bound_align_image(&pix_format->width, SUN6I_ISP_CAPTURE_WIDTH_MIN,
++	v4l_bound_align_image(&source_width, SUN6I_ISP_CAPTURE_WIDTH_MIN,
+ 			      min(input_width, (unsigned int)SUN6I_ISP_CAPTURE_WIDTH_MAX), 1,
+-			      &pix_format->height, SUN6I_ISP_CAPTURE_HEIGHT_MIN,
++			      &source_height, SUN6I_ISP_CAPTURE_HEIGHT_MIN,
+ 			      min(input_height, (unsigned int)SUN6I_ISP_CAPTURE_HEIGHT_MAX), 1, 0);
+ 
+ 	/*
+ 	 * The self channel is the vendor's thumbnail channel, and its scaler
+ 	 * does not take a free ratio the way the main one does: it has three
+ 	 * settings, full size, half and quarter. The vendor picks between them
+-	 * from the ratio that was asked for and then recomputes the output size
+-	 * from the setting it chose, rather than from the request -
++	 * from the ratio that was asked for and then recomputes the output
++	 * size from the setting it chose, rather than from the request -
+ 	 * bsp_isp_old_set_size_internal(), which does
+ 	 *
+ 	 *   ratio = (requested << 16) / input;
+@@ -852,15 +1126,12 @@ static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
+ 	 *   size = input * scale >> 16;
+ 	 *
+ 	 * Anything else and the channel writes at a size the buffer was not
+-	 * allocated for. Snap here instead, so that what comes back from S_FMT
+-	 * is a size the channel can actually produce.
+-	 *
+-	 * It is snapped whichever block the channel ends up driving, so that
+-	 * the format stays legal for the self block across a pipeline restart
+-	 * that moves it there.
++	 * allocated for, which is the driver handing the hardware memory it
++	 * does not own. Snap here instead, so that what comes back from
++	 * S_FMT is a size the channel can actually produce.
+ 	 */
+ 	if (capture->id == SUN6I_ISP_CAPTURE_SELF) {
+-		unsigned int ratio = (pix_format->width << 16) / input_width;
++		unsigned int ratio = (source_width << 16) / input_width;
+ 		unsigned int shift;
+ 
+ 		if (ratio <= 0x4000)
+@@ -870,10 +1141,16 @@ static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
+ 		else
+ 			shift = 0;
+ 
+-		pix_format->width = input_width >> shift;
+-		pix_format->height = input_height >> shift;
++		source_width = input_width >> shift;
++		source_height = input_height >> shift;
+ 	}
+ 
++	pix_format->width = source_width;
++	pix_format->height = source_height;
++
++	if (sun6i_isp_capture_quarter_turn(capture))
++		swap(pix_format->width, pix_format->height);
++
+ 	info = v4l2_format_info(pix_format->pixelformat);
+ 	if (WARN_ON(!info))
+ 		return;
+@@ -886,6 +1163,18 @@ static void sun6i_isp_capture_format_prepare(struct sun6i_isp_capture *capture,
+ 					     pix_format->width,
+ 					     pix_format->height);
+ 
++	/*
++	 * With rotation on the buffer has to carry the channel's own output
++	 * as well, for the rotator to read back. It goes after the rotated
++	 * image, page aligned, the way the vendor lays its regions out; the
++	 * two are not the same size when the width and height pad differently.
++	 */
++	if (sun6i_isp_capture_quarter_turn(capture))
++		pix_format->sizeimage = ALIGN(pix_format->sizeimage, PAGE_SIZE) +
++			sun6i_isp_capture_image_size(pix_format->pixelformat,
++						     source_width,
++						     source_height);
++
+ 	pix_format->field = V4L2_FIELD_NONE;
+ 
+ 	pix_format->colorspace = V4L2_COLORSPACE_RAW;
+@@ -1083,7 +1372,7 @@ static int sun6i_isp_capture_link_validate(struct media_link *link)
+ 	 * image is legitimately taller than the proc output, and checking
+ 	 * that instead is what used to make STREAMON fail at 90 and 270.
+ 	 */
+-	sun6i_isp_capture_dimensions(capture, &capture_width,
++	sun6i_isp_capture_source_dimensions(capture, &capture_width,
+ 					    &capture_height);
+ 	sun6i_isp_proc_dimensions(isp_dev, &proc_width, &proc_height);
+ 
+@@ -1182,12 +1471,19 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ 
+ 	/* V4L2 Controls */
+ 
+-	v4l2_ctrl_handler_init(&capture->ctrl_handler, 2);
++	v4l2_ctrl_handler_init(&capture->ctrl_handler, 3);
+ 
+ 	v4l2_ctrl_new_std(&capture->ctrl_handler, &sun6i_isp_capture_ctrl_ops,
+ 			  V4L2_CID_HFLIP, 0, 1, 1, 0);
+ 	v4l2_ctrl_new_std(&capture->ctrl_handler, &sun6i_isp_capture_ctrl_ops,
+ 			  V4L2_CID_VFLIP, 0, 1, 1, 0);
++	/*
++	 * Both channels offer this, but there is only one rotator, so setting
++	 * it on one while the other is already turning is refused - see
++	 * sun6i_isp_capture_s_ctrl().
++	 */
++	v4l2_ctrl_new_std(&capture->ctrl_handler, &sun6i_isp_capture_ctrl_ops,
++			  V4L2_CID_ROTATE, 0, 270, 90, 0);
+ 
+ 	ret = capture->ctrl_handler.error;
+ 	if (ret) {
+@@ -1204,9 +1500,9 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ 	video_dev->fops = &sun6i_isp_capture_fops;
+ 	video_dev->ioctl_ops = &sun6i_isp_capture_ioctl_ops;
+ 	video_dev->v4l2_dev = v4l2_dev;
+-	video_dev->ctrl_handler = &capture->ctrl_handler;
+ 	video_dev->queue = queue;
+ 	video_dev->lock = &capture->lock;
++	video_dev->ctrl_handler = &capture->ctrl_handler;
+ 
+ 	video_set_drvdata(video_dev, capture);
+ 
+@@ -1242,12 +1538,12 @@ static int sun6i_isp_capture_setup_one(struct sun6i_isp_device *isp_dev,
+ error_video_device:
+ 	vb2_video_unregister_device(video_dev);
+ 
+-error_media_entity:
+-	media_entity_cleanup(&video_dev->entity);
+-
+ error_ctrl_handler:
+ 	v4l2_ctrl_handler_free(&capture->ctrl_handler);
+ 
++error_media_entity:
++	media_entity_cleanup(&video_dev->entity);
++
+ error_mutex:
+ 	mutex_destroy(&capture->lock);
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+index 13d8de549529..6d9fed9bd588 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+@@ -80,9 +80,16 @@ struct sun6i_isp_capture {
+ 
+ 	struct v4l2_ctrl_handler	ctrl_handler;
+ 
++	/*
++	 * The format is what userspace is handed, so on a quarter turn it is
++	 * already the turned one. The geometry the channel itself writes is
++	 * this with the two swapped back - see
++	 * sun6i_isp_capture_source_dimensions().
++	 */
+ 	struct v4l2_format		format;
+ 	bool				mirror;
+ 	bool				flip;
++	unsigned int			rotation;
+ };
+ 
+ /* Helpers */
+@@ -114,6 +121,10 @@ void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+ void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev);
+ void sun6i_isp_capture_finish(struct sun6i_isp_device *isp_dev);
+ 
++/* There is one rotator, so at most one channel may be turning. */
++bool sun6i_isp_capture_rotation_taken(struct sun6i_isp_device *isp_dev,
++				      struct sun6i_isp_capture *except);
++
+ bool sun6i_isp_capture_streaming(struct sun6i_isp_device *isp_dev);
+ 
+ /* Capture */
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 6a3ba14bab67..0ccc2b42d2ef 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -381,8 +381,14 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+-	/* Clear all modules but keep input configuration. */
+-	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1;
++	/*
++	 * Clear all modules but keep input configuration. The rotator enable
++	 * lives in this register too and belongs to the capture side, which
++	 * programmed it at stream start: it is not a tuning module and a
++	 * params buffer arriving mid-stream must not turn it off.
++	 */
++	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1 |
++		 SUN6I_ISP_MODULE_EN_ROT;
+ 
+ 	if (modules & SUN6I_ISP_MODULE_BDNF)
+ 		value |= SUN6I_ISP_MODULE_EN_BDNF;
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+index 099cf89c1517..075d6ff3528f 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+@@ -154,8 +154,7 @@ static void sun6i_isp_proc_irq_enable(struct sun6i_isp_device *isp_dev)
+ 		     SUN6I_ISP_FE_INT_EN_START |
+ 		     SUN6I_ISP_FE_INT_EN_PARA_SAVE |
+ 		     SUN6I_ISP_FE_INT_EN_PARA_LOAD |
+-		     SUN6I_ISP_FE_INT_EN_SRC0_FIFO |
+-		     SUN6I_ISP_FE_INT_EN_ROT_FINISH);
++		     SUN6I_ISP_FE_INT_EN_SRC0_FIFO);
+ }
+ 
+ static void sun6i_isp_proc_irq_disable(struct sun6i_isp_device *isp_dev)
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index cc255a2d0fd4..512c77c8c3a5 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -355,6 +355,22 @@
+ #define SUN6I_ISP_SCH_Y_ADDR0_REG		0x210
+ #define SUN6I_ISP_SCH_U_ADDR0_REG		0x214
+ #define SUN6I_ISP_SCH_V_ADDR0_REG		0x218
++
++#define SUN6I_ISP_ROT_CFG_REG			0x230
++#define SUN6I_ISP_ROT_CFG_SRC_SCH		BIT(0)
++#define SUN6I_ISP_ROT_CFG_OUTPUT_FMT(v)		(((v) << 2) & GENMASK(4, 2))
++#define SUN6I_ISP_ROT_CFG_ANGLE(v)		(((v) << 5) & GENMASK(6, 5))
++#define SUN6I_ISP_ROT_CFG_STRIDE_Y_DIV4(v)	(((v) << 8) & GENMASK(18, 8))
++#define SUN6I_ISP_ROT_CFG_STRIDE_UV_DIV4(v)	(((v) << 20) & GENMASK(30, 20))
++
++#define SUN6I_ISP_ROT_ANGLE_0			0
++#define SUN6I_ISP_ROT_ANGLE_90			1
++#define SUN6I_ISP_ROT_ANGLE_180			2
++#define SUN6I_ISP_ROT_ANGLE_270			3
++
++#define SUN6I_ISP_ROT_Y_ADDR0_REG		0x234
++#define SUN6I_ISP_ROT_U_ADDR0_REG		0x238
++#define SUN6I_ISP_ROT_V_ADDR0_REG		0x23c
+ #define SUN6I_ISP_SCH_Y_ADDR1_REG		0x21c
+ #define SUN6I_ISP_SCH_U_ADDR1_REG		0x220
+ #define SUN6I_ISP_SCH_V_ADDR1_REG		0x224
+-- 
+2.43.0
+
