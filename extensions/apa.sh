@@ -1,3 +1,5 @@
+# @description Enables the Armbian Package Archive (APA) in the target image by setting `APA_IS_ACTIVE` and adding the `github.armbian.com/apa` apt repository. Installs `armbian-common` and `armbian-bsp` from it, plus the matching `armbian-desktop-*` metapackage when a `DESKTOP_ENVIRONMENT` (XFCE/KDE/GNOME) is selected. Enable it to source Armbian's core packages from APA by default.
+
 # Install armbian-common etc. from APA
 
 function extension_prepare_config__apa() {

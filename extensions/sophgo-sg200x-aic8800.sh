@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Adds AIC8800D80 Wi-Fi 6 + Bluetooth 5 (SDIO) support for Sophgo SG200x / Milk-V Duo S boards, which lack a mainline driver. Copies the pinned `queenkjuul/aic8800-milkv-duos` vendor driver into the kernel tree and builds it as in-tree modules with a compiled-in firmware path. Also configures modprobe ordering and a Bluetooth attach service.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

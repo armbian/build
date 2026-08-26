@@ -1,3 +1,5 @@
+# @description Sets up a U-Boot extlinux boot menu on boards that support it. Installs the Debian/Ubuntu `u-boot-menu` package, writes `/etc/default/u-boot` (label, 10s timeout, FDT dir, cmdline from `${SRC_CMDLINE}`), then runs `u-boot-update` in the chroot to generate `extlinux.conf`. Honours `EXTLINUX_SPECIFIC_FDT` and `EXTLINUX_UINITRD`.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

@@ -1,3 +1,5 @@
+# @description Adds XFS root filesystem support, no longer bundled by default in `prepare-host.sh`. Installs `xfsprogs` into the image and adds it to the host build dependencies (`fs-tools::xfsprogs`) so the rootfs can be created. Auto-enabled when `ROOTFS_TYPE=xfs` is set in `main-config.sh`.
+
 # `xfs` support is no longer included by default in prepare-host.sh.
 # Enable this extension to include the required dependencies for building.
 # This is automatically enabled if ROOTFS_TYPE is set to xfs in main-config.sh.

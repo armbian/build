@@ -1,3 +1,5 @@
+# @description Installs the AIC8800 WiFi/BT DKMS driver for BroStrend USB adapters. Fetches the latest `aic8800-dkms` release from `Shadowrom2020/aic8800-dkms` GitHub and builds the kernel module in the chroot. Forces `INSTALL_HEADERS=yes` — requires a kernel with working headers package.
+
 function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then

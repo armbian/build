@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Integrates NXP's ASK data-plane acceleration for the Mono Gateway DK (LS1046A). Builds the ASK kernel modules (CDX, FCI, auto-bridge, sfp-led, lp5812) in-tree, then compiles userspace tools (`fmlib`, `fmc`, `libfci`, `libcli`, `dpa-app`, `cmm`) and patched libraries in the chroot. Everything ships as one `gateway-dk-ask` `.deb`.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

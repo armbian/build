@@ -1,3 +1,5 @@
+# @description Adds the `chrony` package to the image for network time synchronization. Chrony is a full-featured NTP client/server that syncs faster and copes with intermittent connections and jitter better than `systemd-timesyncd`. Enable it as the alternative time-sync extension when accurate or robust NTP is required.
+
 #
 # Extension to manage network time synchronization with Chrony
 #

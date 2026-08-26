@@ -1,3 +1,5 @@
+# @description Writes the SyterKit bootloader to the correct offset of a finished Allwinner image. Downloads the latest `YuzukiHD/SyterKit` release for `SYTERKIT_BOARD_ID`, extracts it, and `dd`s `extlinux_boot_bin_card.bin` to the loop device at an 8KB seek. Auto-used by Allwinner boards that boot via SyterKit instead of U-Boot.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/

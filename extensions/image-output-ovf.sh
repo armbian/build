@@ -1,3 +1,5 @@
+# @description Converts the qcow2 from `image-output-qcow2` into a VMware VMDK using `qemu-img` (resized +47G), generates a matching `.vmx` and bundles them into a `.vmware.zip` for import into VMware and other hypervisors. Tune the guest with `OVF_VM_CPUS` and `OVF_VM_RAM_GB`; `OVF_KEEP_QCOW2`/`OVF_KEEP_IMG` retain intermediates.
+
 enable_extension "image-output-qcow2"
 
 #### *run before installing host dependencies*

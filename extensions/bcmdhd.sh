@@ -1,3 +1,5 @@
+# @description Installs the Broadcom `bcmdhd` WiFi driver as a DKMS module. Downloads the latest `pcie`, `sdio`, or `usb` variant `.deb` (selected by `BCMDHD_TYPE`) from the `armbian/bcmdhd-dkms` GitHub releases and builds it in the chroot. Forces `INSTALL_HEADERS=yes`; skips when `BCMDHD_TYPE` is unset or the kernel lacks working headers.
+
 function extension_finish_config__install_kernel_headers_for_bcmdhd_dkms() {
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then

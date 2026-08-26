@@ -1,3 +1,5 @@
+# @description Builds the `v4l2loopback` virtual-camera kernel module via DKMS in the chroot, installing `v4l2loopback-dkms`, `v4l2loopback-utils`, and `v4l-utils`. Forces `INSTALL_HEADERS=yes` and requires a kernel with a working headers package. Skipped on minimal CLI images and on kernels 7.2 or newer, where the module no longer builds.
+
 function extension_finish_config__build_v4l2loopback_dkms_kernel_module() {
 	# Deny on minimal CLI images
 	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then

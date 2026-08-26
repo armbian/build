@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Patches U-Boot's `binman` tool (`tools/binman/control.py`) to use `importlib.resources` instead of `pkg_resources`, restoring build compatibility on hosts with `setuptools >= 82`, which removed `pkg_resources`. Runs only when `control.py` still imports `pkg_resources`, so it is a safe no-op on newer U-Boot. Covers v2024.x–v2025.04.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

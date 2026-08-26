@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Standard GRUB bootloader setup for UEFI-capable boards (amd64, arm64, loong64), with optional amd64 BIOS support and a `DISTRO_GENERIC_KERNEL` mode that boots the distro kernel instead of Armbian's. Installs `grub-efi`, generates `grub.cfg`, and sets `GRUB_GFXPAYLOAD_LINUX=text` with `splash plymouth.ignore-serial-consoles` to keep the framebuffer console on `fbcon` and kernel boot messages visible.
+
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the u ser.
 function extension_prepare_config__prepare_grub_standard() {
 	# Extension configuration defaults.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Developer/testing extension that detects "wishful hooking" — extension functions whose hook-point names are never actually called by the build. Runs late via `extension_metadata_ready` to scan `defined_hook_point_functions`, warning about any uncalled hook. Includes a deliberate honeypot function to verify the detector itself still works.
 
 ## Hooks
 

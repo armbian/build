@@ -1,3 +1,5 @@
+# @description Runs `make localmodconfig` against a captured `lsmod` file to strip the kernel down to only the modules your hardware actually loads, compiling several times faster. Reads the file from `userpatches/lsmod/${LSMOD}.lsmod`, where the `LSMOD` variable defaults to `$BOARD`. Errors out if that file is missing.
+
 function extension_prepare_config__prepare_localmodconfig() {
 	# If defined, ${LSMOD} can contain a lsmod to apply to the kernel configuration.
 	# to get a file for this run 'lsmod > my_machine.lsmod' and then put it in userpatches/lsmod/
