@@ -72,6 +72,7 @@ dtb-$(CONFIG_MACH_SUN8I) += \
 	sun8i-h3-spi-add-cs1.dtbo \
 	sun8i-h3-spi-jedec-nor.dtbo \
 	sun8i-h3-spi-spidev.dtbo \
+	sun8i-h3-tve.dtbo \
 	sun8i-h3-uart1.dtbo \
 	sun8i-h3-uart2.dtbo \
 	sun8i-h3-uart3.dtbo \
