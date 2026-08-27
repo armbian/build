@@ -1,3 +1,5 @@
+# @description Builds Radxa's `rkdeveloptool` and flashes the freshly built image to a connected Rockchip device over USB. Enables `rkbin-tools` for the `ROCKUSB_BLOB` SPL loader, waits for the board, switches Maskrom to Loader mode, writes the image (`wl`), then resets it. Cannot run under Docker.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

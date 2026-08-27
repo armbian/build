@@ -1,0 +1,140 @@
+From 1b2884a028991a982d477cd51919ccfa81ad1a2c Mon Sep 17 00:00:00 2001
+From: Ronald Claveau <linux-kernel-dev@aliel.fr>
+Date: Mon, 4 May 2026 15:20:57 +0200
+Subject: [PATCH 88/91] PCI: dwc: meson: Protect PCIe DMA memory on T7
+
+On T7, PCIe endpoint DMA access must be restricted to a dedicated
+memory region.
+
+The Trusted OS exposes an SMC call that registers a physical range
+as DMA-accessible window for the PCIe bus.
+
+Signed-off-by: Ronald Claveau <linux-kernel-dev@aliel.fr>
+---
+ drivers/pci/controller/dwc/pci-meson.c | 61 ++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pci-meson.c b/drivers/pci/controller/dwc/pci-meson.c
+index 15ed59b8764f..006c466bc527 100644
+--- a/drivers/pci/controller/dwc/pci-meson.c
++++ b/drivers/pci/controller/dwc/pci-meson.c
+@@ -17,6 +17,8 @@
+ #include <linux/phy/phy.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
++#include <linux/arm-smccc.h>
++#include <linux/of_reserved_mem.h>
+ 
+ #include "pcie-designware.h"
+ 
+@@ -44,6 +46,10 @@
+ #define PCIE_SHARED_RESET		1
+ #define PCIE_NORMAL_RESET		0
+ 
++#define MESON_SMC_PROTECT_MEM \
++		ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, \
++				   ARM_SMCCC_OWNER_TRUSTED_OS, 0xE023)
++
+ enum pcie_data_rate {
+ 	PCIE_GEN1,
+ 	PCIE_GEN2,
+@@ -71,6 +77,10 @@ struct meson_pcie {
+ 	struct phy *phy;
+ };
+ 
++struct meson_pcie_data {
++	bool dma_protect;
++};
++
+ static struct reset_control *meson_pcie_get_reset(struct meson_pcie *mp,
+ 						  const char *id,
+ 						  u32 reset_type)
+@@ -368,6 +378,39 @@ static int meson_pcie_host_init(struct dw_pcie_rp *pp)
+ 	return 0;
+ }
+ 
++static int meson_pcie_protect_memory(struct device *dev,
++				     phys_addr_t base, size_t size)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(MESON_SMC_PROTECT_MEM,
++		      0xc,        /* TEE_MEM_TYPE_PCIE */
++		      (u32)base, (u32)size,
++		      0, 0, 0, 0, &res);
++
++	if (res.a0)
++		dev_warn(dev, "BL31 PCIe mem protect failed: 0x%lx\n", res.a0);
++
++	return res.a0 ? -EIO : 0;
++}
++
++static int meson_pcie_protect_dma_memory(struct device *dev)
++{
++	struct device_node *mem_node;
++	struct reserved_mem *rmem;
++
++	mem_node = of_parse_phandle(dev->of_node, "memory-region", 0);
++	if (!mem_node)
++		return -ENODEV;
++
++	rmem = of_reserved_mem_lookup(mem_node);
++	of_node_put(mem_node);
++	if (!rmem)
++		return -ENODEV;
++
++	return meson_pcie_protect_memory(dev, rmem->base, rmem->size);
++}
++
+ static const struct dw_pcie_host_ops meson_pcie_host_ops = {
+ 	.init = meson_pcie_host_init,
+ };
+@@ -379,6 +422,7 @@ static const struct dw_pcie_ops dw_pcie_ops = {
+ 
+ static int meson_pcie_probe(struct platform_device *pdev)
+ {
++	const struct meson_pcie_data *data;
+ 	struct device *dev = &pdev->dev;
+ 	struct dw_pcie *pci;
+ 	struct meson_pcie *mp;
+@@ -430,6 +474,15 @@ static int meson_pcie_probe(struct platform_device *pdev)
+ 		goto err_phy;
+ 	}
+ 
++	data = of_device_get_match_data(dev);
++	if (data && data->dma_protect) {
++		ret = meson_pcie_protect_dma_memory(dev);
++		if (ret)
++			dev_warn(dev,
++			"BL31 PCIe mem protect failed, DMA may not work: %d\n",
++			ret);
++	}
++
+ 	ret = meson_pcie_probe_clocks(mp);
+ 	if (ret) {
+ 		dev_err(dev, "init clock resources failed, %d\n", ret);
+@@ -451,6 +504,10 @@ static int meson_pcie_probe(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++static const struct meson_pcie_data t7_pcie_data = {
++	.dma_protect = true,
++};
++
+ static const struct of_device_id meson_pcie_of_match[] = {
+ 	{
+ 		.compatible = "amlogic,axg-pcie",
+@@ -458,6 +515,10 @@ static const struct of_device_id meson_pcie_of_match[] = {
+ 	{
+ 		.compatible = "amlogic,g12a-pcie",
+ 	},
++	{
++		.compatible = "amlogic,t7-pcie",
++		.data	    = &t7_pcie_data,
++	},
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(of, meson_pcie_of_match);
+-- 
+2.53.0
+

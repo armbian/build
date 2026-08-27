@@ -1,3 +1,5 @@
+# @description Installs the Motorcomm YT6801 Ethernet controller driver as a DKMS kernel module. Queries the GitHub API for the latest `amazingfate/yt6801-dkms` release, downloads its `.deb` into the chroot (via `ghproxy` when `GITHUB_MIRROR=ghproxy`) and installs it to build against the target kernel. Forces `INSTALL_HEADERS=yes`; needs a working headers package.
+
 function extension_finish_config__install_kernel_headers_for_yt6801_dkms() {
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then

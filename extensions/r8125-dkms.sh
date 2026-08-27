@@ -1,3 +1,5 @@
+# @description Installs Realtek's official `r8125` (v9.016.01) 2.5GbE DKMS driver and blacklists the buggy in-kernel `r8169`. Host-side downloads `awesometic/realtek-r8125-dkms`, then adds/builds/installs the module in the chroot against the target kernel. Forces `INSTALL_HEADERS=yes`; needed on the EasePi-A2 rk35xx vendor kernel where `r8169` breaks RTL8125B TX.
+
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2026 ifroncy01
 #

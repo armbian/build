@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Bakes cumulative kernel debug information into headless boards so serial-console facilities (Magic SysRq, KGDB, pstore) print meaningful symbols instead of raw hex. `KERNEL_DEBUG_TIER` (0-3, default 1) layers printk/lockup detection, then pstore/ramoops and full kallsyms, then KGDB/KDB over serial. Requires `DEBUG_INFO_BTF`, so `KERNEL_BTF=no` is a hard error.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2026 Igor Velkov

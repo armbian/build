@@ -1,3 +1,5 @@
+# @description Preinstalls Docker CE from Docker's official apt repository into the target image. Fetches the Docker GPG key, wires up a `download.docker.com` sources list for the matching Debian/Ubuntu release, then installs `docker-ce`, `docker-ce-cli`, `containerd.io` and `docker-compose-plugin` in the chroot. Enable it to ship container support out of the box.
+
 function extension_prepare_config__docker() {
 	display_alert "Extension: ${EXTENSION}: Target image will have Docker preinstalled" "${EXTENSION}" "info"
 }

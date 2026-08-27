@@ -1,3 +1,5 @@
+# @description Produces a UTM-compatible virtual machine bundle for macOS from the qcow2 output; depends on `image-output-qcow2`. Wraps a resized qcow2 disk and a generated `config.plist` into a `.utm.zip`, setting CPUs and RAM via `UTM_VM_CPUS`/`UTM_VM_RAM_GB`. Enable it to run Armbian images under UTM on Apple Silicon or Intel Macs.
+
 enable_extension "image-output-qcow2"
 
 #### *allow extensions to prepare their own config, after user config is done*

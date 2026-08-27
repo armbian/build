@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Applies userland tweaks for boards with under 256MB RAM: writes an initramfs config (`MODULES=dep`, fixed `RUNSIZE`), installs the `lowmem-mkswap` swapfile service and `armbian-lowmem` defaults, and disables `armbian-ramlog` and zram swap. Enable it on very-low-memory boards so apt, locale-gen and boot run smoothly.
 
 #
 # Armbian Optimizations for Low-Memory Boards

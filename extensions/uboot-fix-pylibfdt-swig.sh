@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Fixes old U-Boot's `pylibfdt` failing to build against SWIG >= 4.3 (Debian trixie), which gave `SWIG_Python_AppendOutput()` a third argument. Rewrites the 2-arg calls to the version-agnostic `SWIG_AppendOutput()` macro in `libfdt.i`/`libfdt_wrap.c` under both pylibfdt paths. A safe no-op when the old call is absent; companion to `uboot-binman-fix-pkg-resources`.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

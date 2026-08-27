@@ -1,3 +1,5 @@
+# @description Integrates edk2-porting UEFI/EDK2 firmware for Rockchip RK3588 boards, enabling `grub-with-dtb` and `initramfs-usb-gadget-ums`, forcing a GPT layout and defaulting `GRUB_CMDLINE_LINUX_DEFAULT` to `acpi=off` when it is unset. Downloads the latest `edk2-porting/edk2-rk3588` release image and `dd`s it onto the loop device, then creates a `uboot` partition for SPL. Requires `UEFI_EDK2_BOARD_ID` to be set.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

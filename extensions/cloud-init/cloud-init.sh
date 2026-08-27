@@ -1,3 +1,5 @@
+# @description Installs and configures `cloud-init` in the image using the NoCloud data source, which reads its configuration from the FAT `armbi_boot` partition. Adds the `cloud-init` and `cloud-initramfs-dyn-netconf` packages, forces `BOOTFS_TYPE=fat`, ships empty default configs (hostname + DHCP), and disables `armbian-first-run`. Tags the image `-ci`.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2024 Rafel del Valle <rvalle@privaz.io>, Ricardo Pardini <ricardo@pardini.net>

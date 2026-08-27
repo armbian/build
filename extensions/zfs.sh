@@ -1,3 +1,5 @@
+# @description Installs OpenZFS on the image by building the `zfs` kernel module through DKMS. Installs the `zfs-dkms` and `zfsutils-linux` packages in the chroot, forcing `INSTALL_HEADERS=yes` so the module can compile against the kernel headers. Skips itself when `KERNEL_HAS_WORKING_HEADERS` is not `yes`.
+
 function extension_finish_config__build_zfs_kernel_module() {
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping ZFS for kernel v${KERNEL_MAJOR_MINOR}" "warn"

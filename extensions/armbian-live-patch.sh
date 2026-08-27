@@ -1,3 +1,5 @@
+# @description Installs the Armbian Live Patch systemd service and its `/usr/lib/armbian/armbian-live-patch` helper into the BSP package. On boot and before apt upgrades it downloads a patch script from `dl.armbian.com/_patch`, verifies its GPG signature against the Armbian keyring, then runs it — letting Armbian push small live fixes to deployed systems.
+
 function post_family_tweaks_bsp__armbian-live-patch() {
 
 	display_alert "Extension: ${EXTENSION}: Installing Armbian Live Patch" "${EXTENSION}" "info"

@@ -1,3 +1,5 @@
+# @description Adds NILFS2 root-filesystem support. Installs `nilfs-tools` into both the image and the host build dependencies, and appends the `nilfs2` module to `/etc/initramfs-tools/modules` so the log-structured filesystem can be mounted at boot. Auto-enabled when `ROOTFS_TYPE=nilfs2` in `main-config.sh`.
+
 # Enable this extension to include the required dependencies for building.
 # This is automatically enabled if ROOTFS_TYPE is set to nilfs2 in main-config.sh.
 

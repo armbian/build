@@ -108,6 +108,7 @@ function install_distribution_agnostic() {
 		MIN_SPEED=$CPUMIN
 		MAX_SPEED=$CPUMAX
 		GOVERNOR=$GOVERNOR
+		BOOST=${CPUBOOST:-false}
 	EOF
 
 	# disable selinux by default

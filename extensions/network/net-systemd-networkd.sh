@@ -1,3 +1,5 @@
+# @description Manages network interfaces with `systemd-networkd` plus Netplan: adds `netplan.io`, enables `systemd-networkd` and `systemd-resolved`, and installs Netplan/networkd config plus drop-in overrides for `systemd-networkd-wait-online` and `apt-daily-upgrade`. Requires `NETWORKING_STACK=systemd-networkd`, and chmods the Netplan configs to `600`.
+
 #
 # Extension to manage network interfaces with systemd-networkd + Netplan
 #

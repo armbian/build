@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Installs the NVIDIA proprietary driver and builds its kernel module via DKMS, blacklisting `nouveau`. Auto-detects the highest `nvidia-dkms-<N>` in the chroot's apt index (or uses `NVIDIA_DRIVER_VERSION`/the Debian `nvidia-dkms` metapackage), forces `INSTALL_HEADERS=yes`, and ships an `armbian-nvidia-autodetect` service that disables the driver on GPU-less hosts. Skipped on minimal images and on kernels without a working headers package.
+
 function extension_finish_config__build_nvidia_kernel_module() {
 	# Deny on minimal CLI images
 	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
