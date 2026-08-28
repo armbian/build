@@ -1,0 +1,584 @@
+From 9eeea8257a004f7dfbe0099bc62083f91d33fe42 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 24 Apr 2026 05:26:48 +0530
+Subject: [PATCH 02/12] acpi
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ MAINTAINERS                        |   5 +
+ drivers/platform/x86/Kconfig       |  10 +
+ drivers/platform/x86/Makefile      |   1 +
+ drivers/platform/x86/macsmc-acpi.c | 480 +++++++++++++++++++++++++++++
+ include/linux/mfd/macsmc.h         |  20 ++
+ 5 files changed, 516 insertions(+)
+ create mode 100644 drivers/platform/x86/macsmc-acpi.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index e3c2f15c92d6..0a51ff99e7f9 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -1937,6 +1937,11 @@ L:	linux-hwmon@vger.kernel.org
+ S:	Odd fixes
+ F:	drivers/hwmon/applesmc.c
+ 
++MACSMC SUPPORT FOR INTEL MACS
++M:	Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++S:	Odd fixes
++F:	drivers/platform/x86/macsmc-acpi.c
++
+ APPLETALK NETWORK LAYER
+ L:	netdev@vger.kernel.org
+ S:	Odd fixes
+diff --git a/drivers/platform/x86/Kconfig b/drivers/platform/x86/Kconfig
+index 2ffa4ecf65b0..573d2abc53e0 100644
+--- a/drivers/platform/x86/Kconfig
++++ b/drivers/platform/x86/Kconfig
+@@ -201,6 +201,16 @@ config ADV_SWBUTTON
+ 	  To compile this driver as a module, choose M here. The module will
+ 	  be called adv_swbutton.
+ 
++config MACSMC_ACPI
++	tristate "Apple SMC (System Management Controller) ACPI Backend"
++	depends on MFD_MACSMC_CORE
++	help
++	  This driver allows communication with the SMC (System Management Controller)
++	  on Intel-Macs. It is used to control fans, control battery, and more.
++
++	  To compile this driver as a module, choose M here. The module will
++	  be called macsmc_acpi.
++
+ config APPLE_GMUX
+ 	tristate "Apple Gmux Driver"
+ 	depends on ACPI && PCI
+diff --git a/drivers/platform/x86/Makefile b/drivers/platform/x86/Makefile
+index 872ac3842391..5124dad7bd7a 100644
+--- a/drivers/platform/x86/Makefile
++++ b/drivers/platform/x86/Makefile
+@@ -28,6 +28,7 @@ obj-y				+= amd/
+ obj-$(CONFIG_ADV_SWBUTTON)	+= adv_swbutton.o
+ 
+ # Apple
++obj-$(CONFIG_MACSMC_ACPI)	+= macsmc-acpi.o
+ obj-$(CONFIG_APPLE_GMUX)	+= apple-gmux.o
+ 
+ # ASUS
+diff --git a/drivers/platform/x86/macsmc-acpi.c b/drivers/platform/x86/macsmc-acpi.c
+new file mode 100644
+index 000000000000..a93748742959
+--- /dev/null
++++ b/drivers/platform/x86/macsmc-acpi.c
+@@ -0,0 +1,480 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple SMC ACPI backend
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ */
++
++#include <linux/acpi.h>
++#include <linux/byteorder/generic.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/io.h>
++#include <linux/mfd/macsmc.h>
++#include <linux/unaligned.h>
++
++#define SMC_IO_DATA_PORT	0
++#define SMC_IO_CMD_PORT		4
++#define SMC_IO_NR_PORTS		32
++
++#define SMC_IO_STATUS_AWAITING_DATA	BIT(0)
++#define SMC_IO_STATUS_IB_CLOSED		BIT(1)
++#define SMC_IO_STATUS_BUSY		BIT(2)
++
++#define SMC_MMIO_KEY_DATA		0
++#define SMC_MMIO_KEY_STATUS		0x4005
++#define SMC_MMIO_KEY_NAME		0x78
++#define SMC_MMIO_KEY_DATA_LEN		0x7D
++#define SMC_MMIO_KEY_SMC_ID		0x7E
++#define SMC_MMIO_KEY_CMD		0x7F
++#define SMC_MMIO_MIN_SIZE		0x4006
++
++#define SMC_TIMEOUT_MS			1000
++
++static int apple_smc_acpi_port_wait(struct apple_smc_acpi *smc, u8 val, u8 mask)
++{
++	int ms;
++
++	for (ms = SMC_TIMEOUT_MS; ms != 0; ms--) {
++		if ((inb(smc->port_base + SMC_IO_CMD_PORT) & mask) == val)
++			return 0;
++
++		msleep(1);
++	}
++	dev_warn(smc->dev, "port/wait: timeout value:%u, mask:%u\n", val, mask);
++	return -ETIMEDOUT;
++}
++
++static int apple_smc_acpi_port_write_byte(struct apple_smc_acpi *smc, u8 buf)
++{
++	int ret;
++
++	ret = apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_IB_CLOSED) ? :
++		apple_smc_acpi_port_wait(smc, SMC_IO_STATUS_BUSY, SMC_IO_STATUS_BUSY);
++	if (ret)
++		return ret;
++
++	outb(buf, smc->port_base + SMC_IO_DATA_PORT);
++	return 0;
++}
++
++static int apple_smc_acpi_port_write_cmd(struct apple_smc_acpi *smc, u8 buf)
++{
++	int ret;
++
++	ret = apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_IB_CLOSED);
++	if (ret)
++		return ret;
++
++	outb(buf, smc->port_base + SMC_IO_CMD_PORT);
++	return 0;
++}
++
++static int apple_smc_acpi_port_write_key(struct apple_smc_acpi *smc, smc_key key)
++{
++	int i;
++
++	for (i = 3; i >= 0; i--) {
++		if (apple_smc_acpi_port_write_byte(smc, (u8)(key >> (i * 8))))
++			return -EIO;
++	}
++	return 0;
++}
++
++static int apple_smc_acpi_port_valid(struct apple_smc_acpi *smc)
++{
++	int ret;
++
++	ret = apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_BUSY);
++	if (!ret)
++		return ret;
++
++	ret = apple_smc_acpi_port_write_cmd(smc, SMC_MSG_READ_KEY);
++	if (ret)
++		return ret;
++
++	return apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_BUSY);
++}
++
++static int apple_smc_acpi_port_read(struct apple_smc_acpi *smc, u8 cmd, smc_key key,
++				void *buffer, size_t len)
++{
++	int ret;
++
++	ret = apple_smc_acpi_port_valid(smc);
++	if (ret)
++		return ret;
++
++	if (apple_smc_acpi_port_write_cmd(smc, cmd) || apple_smc_acpi_port_write_key(smc, key)) {
++		dev_warn(smc->dev, "port/read: read argument failed, key: 0x%X, cmd: 0x%X\n",
++				key, cmd);
++		return -EIO;
++	}
++
++	if (apple_smc_acpi_port_write_byte(smc, len)) {
++		dev_warn(smc->dev, "port/read: read len failed, key: 0x%X, len: 0x%lX\n", key, len);
++		return -EIO;
++	}
++
++	for (ret = 0; ret < len; ret++) {
++		if (apple_smc_acpi_port_wait(smc,
++				SMC_IO_STATUS_AWAITING_DATA | SMC_IO_STATUS_BUSY,
++				SMC_IO_STATUS_AWAITING_DATA | SMC_IO_STATUS_BUSY)) {
++			dev_warn(smc->dev, "port/read: read failed, key: 0x%X\n", key);
++			return -EIO;
++		}
++		((u8 *)buffer)[ret] = inb(smc->port_base + SMC_IO_DATA_PORT);
++	}
++
++	return apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_BUSY);
++}
++
++static int apple_smc_acpi_port_write(struct apple_smc_acpi *smc, smc_key key, const void *buffer,
++		size_t len)
++{
++	int ret;
++
++	ret = apple_smc_acpi_port_valid(smc);
++	if (ret)
++		return ret;
++
++	if (apple_smc_acpi_port_write_cmd(smc, SMC_MSG_WRITE_KEY) ||
++			apple_smc_acpi_port_write_key(smc, key)) {
++		dev_warn(smc->dev, "port/write: write argument failed, key: 0x%X\n", key);
++		return -EIO;
++	}
++
++	if (apple_smc_acpi_port_write_byte(smc, len)) {
++		dev_warn(smc->dev, "port/write: write len failed, key: 0x%X, len: 0x%lX\n",
++				key, len);
++		return -EIO;
++	}
++
++	for (ret = 0; ret < len; ret++) {
++		if (apple_smc_acpi_port_write_byte(smc, ((const u8 *)buffer)[ret])) {
++			dev_warn(smc->dev, "port/write: write failed, key: 0x%X\n", key);
++			return -EIO;
++		}
++	}
++	return apple_smc_acpi_port_wait(smc, 0, SMC_IO_STATUS_BUSY);
++}
++
++static int apple_smc_acpi_port_get_key_info(struct apple_smc_acpi *smc,
++			smc_key key, struct apple_smc_key_info *info)
++{
++	u8 buf[6];
++
++	if (apple_smc_acpi_port_read(smc, SMC_MSG_GET_KEY_INFO, key, buf, 6))
++		return -EIO;
++
++	if (!info)
++		return 0;
++
++	info->size = buf[0];
++	info->type_code = get_unaligned_be32(&buf[1]);
++	info->flags = buf[5];
++
++	return 0;
++}
++
++static void mmio_clear_smc(struct apple_smc_acpi *smc)
++{
++	if (ioread8(smc->iomem_base + SMC_MMIO_KEY_STATUS))
++		return iowrite8(0, smc->iomem_base + SMC_MMIO_KEY_STATUS);
++}
++
++static int apple_smc_acpi_mmio_wait(struct apple_smc_acpi *smc)
++{
++	int ms = SMC_TIMEOUT_MS;
++
++	for (ms = SMC_TIMEOUT_MS; ms != 0; ms--) {
++		if (ioread8(smc->iomem_base + SMC_MMIO_KEY_STATUS) & 0x20)
++			return 0;
++
++		msleep(1);
++	}
++	dev_warn(smc->dev, "mmio/wait: timeout\n");
++	return -ETIMEDOUT;
++}
++
++static int apple_smc_acpi_mmio_read(struct apple_smc_acpi *smc, u8 cmd, smc_key key,
++		void *buffer, size_t len)
++{
++	u8 ret;
++
++	mmio_clear_smc(smc);
++	iowrite32be(key, smc->iomem_base + SMC_MMIO_KEY_NAME);
++	iowrite8(0, smc->iomem_base + SMC_MMIO_KEY_SMC_ID);
++	iowrite8(cmd, smc->iomem_base + SMC_MMIO_KEY_CMD);
++
++	if (apple_smc_acpi_mmio_wait(smc))
++		return -EIO;
++
++	ret = ioread8(smc->iomem_base + SMC_MMIO_KEY_CMD);
++	if (ret) {
++		dev_warn(smc->dev, "mmio/read: read failed, ret: 0x%X, key: 0x%X\n", ret, key);
++		return -ret;
++	}
++
++	memcpy_fromio(buffer, smc->iomem_base + SMC_MMIO_KEY_DATA, len);
++	return 0;
++}
++
++static int apple_smc_acpi_mmio_write(struct apple_smc_acpi *smc, smc_key key, const void *buffer,
++		size_t len)
++{
++	u8 ret;
++
++	mmio_clear_smc(smc);
++	iowrite32be(key, smc->iomem_base + SMC_MMIO_KEY_NAME);
++	memcpy_toio(smc->iomem_base + SMC_MMIO_KEY_DATA, buffer, len);
++	iowrite8(len, smc->iomem_base + SMC_MMIO_KEY_DATA_LEN);
++	iowrite8(0, smc->iomem_base + SMC_MMIO_KEY_SMC_ID);
++	iowrite8(SMC_MSG_WRITE_KEY, smc->iomem_base + SMC_MMIO_KEY_CMD);
++
++	if (apple_smc_acpi_mmio_wait(smc))
++		return -EIO;
++
++	ret = ioread8(smc->iomem_base + SMC_MMIO_KEY_CMD);
++	if (ret) {
++		dev_warn(smc->dev, "mmio/write: write failed, ret: 0x%X, key: 0x%X\n", ret, key);
++		return -ret;
++	}
++
++	return 0;
++}
++
++static int apple_smc_acpi_mmio_get_key_info(struct apple_smc_acpi *smc, smc_key key,
++					struct apple_smc_key_info *info)
++{
++	u8 ret;
++
++	mmio_clear_smc(smc);
++	iowrite32be(key, smc->iomem_base + SMC_MMIO_KEY_NAME);
++	iowrite8(0, smc->iomem_base + SMC_MMIO_KEY_SMC_ID);
++	iowrite8(SMC_MSG_GET_KEY_INFO, smc->iomem_base + SMC_MMIO_KEY_CMD);
++
++	if (apple_smc_acpi_mmio_wait(smc))
++		return -EIO;
++
++	ret = ioread8(smc->iomem_base + SMC_MMIO_KEY_CMD);
++	if (ret) {
++		dev_warn(smc->dev, "mmio/get_key_info failed, ret: 0x%X, key: 0x%X\n", ret, key);
++		return -ret;
++	}
++
++
++	if (!info)
++		return 0;
++	info->type_code = cpu_to_be32(ioread32(smc->iomem_base + SMC_MMIO_KEY_DATA));
++	info->size = ioread8(smc->iomem_base + 5);
++	info->flags = ioread8(smc->iomem_base + 6);
++
++	return 0;
++}
++
++static acpi_status apple_smc_acpi_walk_resources(struct acpi_resource *res,
++	void *data)
++{
++	struct apple_smc_acpi *smc = data;
++
++	switch (res->type) {
++	case ACPI_RESOURCE_TYPE_IO:
++		if (!smc->has_port) {
++			if (res->data.io.address_length < SMC_IO_NR_PORTS)
++				return AE_ERROR;
++			smc->port_base = res->data.io.minimum;
++			smc->has_port = true;
++		}
++		return AE_OK;
++
++	case ACPI_RESOURCE_TYPE_FIXED_MEMORY32:
++		if (!smc->is_mmio) {
++			if (res->data.fixed_memory32.address_length < SMC_MMIO_MIN_SIZE) {
++				dev_warn(smc->dev, "found mmio support but its too small: %u\n",
++					res->data.fixed_memory32.address_length);
++				return AE_OK;
++			}
++			smc->iomem_base_addr = res->data.fixed_memory32.address;
++			smc->iomem_base_size = res->data.fixed_memory32.address_length;
++			smc->is_mmio = true;
++		}
++		return AE_OK;
++
++	case ACPI_RESOURCE_TYPE_END_TAG:
++		if (smc->has_port)
++			return AE_OK;
++		else
++			return AE_NOT_FOUND;
++
++	default:
++		return AE_OK;
++	}
++}
++
++static int apple_smc_acpi_try_enable_mmio(struct apple_smc_acpi *smc)
++{
++	if (!smc->is_mmio)
++		return -ENXIO;
++
++	u8 ldkn;
++
++	smc->iomem_base = ioremap(smc->iomem_base_addr, smc->iomem_base_size);
++	if (!smc->iomem_base)
++		goto out;
++
++	if (ioread8(smc->iomem_base + SMC_MMIO_KEY_STATUS) == 0xFF) {
++		dev_warn(smc->dev, "mmio enable failed: init status is 0xff\n");
++		goto out_iomem;
++	}
++
++	if (apple_smc_acpi_mmio_read(smc, SMC_MSG_READ_KEY, SMC_KEY(LDKN), &ldkn, 1)) {
++		dev_warn(smc->dev, "mmio enable failed: ldkn read failed\n");
++		goto out_iomem;
++	}
++
++	if (ldkn < 2) {
++		dev_warn(smc->dev, "mmio enable failed: ldkn version less than 2\n");
++		goto out_iomem;
++	}
++	return 0;
++
++out_iomem:
++	iounmap(smc->iomem_base);
++out:
++	smc->is_mmio = false;
++	return -ENXIO;
++}
++
++static int apple_smc_acpi_read(void *cookie, smc_key key, void *buf, size_t size)
++{
++	struct apple_smc_acpi *smc = cookie;
++	int ret;
++
++	if (smc->is_mmio)
++		ret = apple_smc_acpi_mmio_read(smc, SMC_MSG_READ_KEY,
++			key, buf, size);
++	else
++		ret = apple_smc_acpi_port_read(smc, SMC_MSG_READ_KEY,
++			key, buf, size);
++
++	if (ret < 0)
++		return ret;
++
++	return size;
++
++}
++
++static int apple_smc_acpi_write(void *cookie, smc_key key, const void *buf, size_t size)
++{
++	struct apple_smc_acpi *smc = cookie;
++
++	if (smc->is_mmio)
++		return apple_smc_acpi_mmio_write(smc, key, buf, size);
++	else
++		return apple_smc_acpi_port_write(smc, key, buf, size);
++
++	return 0;
++}
++
++static int apple_smc_acpi_get_key_by_index(void *cookie, int index, smc_key *key)
++{
++	struct apple_smc_acpi *smc = cookie;
++
++	if (smc->is_mmio)
++		return apple_smc_acpi_mmio_read(smc, SMC_MSG_GET_KEY_BY_INDEX, (smc_key) index,
++				key, 4);
++	else
++		return apple_smc_acpi_port_read(smc, SMC_MSG_GET_KEY_BY_INDEX, (smc_key) index,
++				key, 4);
++
++}
++
++static int apple_smc_acpi_get_key_info(void *cookie, smc_key key,
++		struct apple_smc_key_info *info)
++{
++	struct apple_smc_acpi *smc = cookie;
++
++	if (smc->is_mmio)
++		return apple_smc_acpi_mmio_get_key_info(smc, key, info);
++	else
++		return apple_smc_acpi_port_get_key_info(smc, key, info);
++
++}
++static const struct apple_smc_backend_ops apple_smc_acpi_be_ops = {
++	.read = apple_smc_acpi_read,
++	.write = apple_smc_acpi_write,
++	.get_key_by_index = apple_smc_acpi_get_key_by_index,
++	.get_key_info = apple_smc_acpi_get_key_info,
++};
++
++static int apple_smc_acpi_add(struct acpi_device *adev)
++{
++	struct apple_smc_acpi *smc;
++	acpi_status status;
++
++	smc = devm_kzalloc(&adev->dev, sizeof(*smc), GFP_KERNEL);
++	if (!smc)
++		return -ENOMEM;
++
++	smc->dev = &adev->dev;
++	status = acpi_walk_resources(adev->handle, METHOD_NAME__CRS,
++				apple_smc_acpi_walk_resources, smc);
++
++	if (ACPI_FAILURE(status))
++		return -ENODEV;
++
++	apple_smc_acpi_try_enable_mmio(smc);
++	return apple_smc_probe(smc->dev, &apple_smc_acpi_be_ops, smc);
++}
++
++static int apple_smc_acpi_suspend_late(struct device *dev)
++{
++	struct apple_smc *smc = dev_get_drvdata(dev);
++
++	apple_smc_write_u8(smc, SMC_KEY(WKTP), 2);
++	apple_smc_write_flag(smc, SMC_KEY(MSDW), false);
++	return 0;
++}
++
++static int apple_smc_acpi_resume_noirq(struct device *dev)
++{
++	struct apple_smc *smc = dev_get_drvdata(dev);
++
++	apple_smc_write_u8(smc, SMC_KEY(WKTP), 0);
++	apple_smc_write_flag(smc, SMC_KEY(MSDW), true);
++	return 0;
++}
++
++static int apple_smc_acpi_poweroff_late(struct device *dev)
++{
++	struct apple_smc *smc = dev_get_drvdata(dev);
++	u32 val = 0x8C70;
++
++	apple_smc_write(smc, SMC_KEY(NESN), &val, 4);
++	return 0;
++}
++
++static const struct dev_pm_ops apple_smc_acpi_ops = {
++	.suspend_late = apple_smc_acpi_suspend_late,
++	.resume_noirq = apple_smc_acpi_resume_noirq,
++	.poweroff_late = apple_smc_acpi_poweroff_late,
++};
++
++static const struct acpi_device_id apple_smc_acpi_ids[] = {
++	{"APP0001", 0},
++	{"", 0},
++};
++static struct acpi_driver apple_smc_acpi_driver = {
++	.name = "macsmc-acpi",
++	.ids = apple_smc_acpi_ids,
++	.ops = {
++		.add = apple_smc_acpi_add,
++	},
++};
++
++module_acpi_driver(apple_smc_acpi_driver);
++
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple SMC ACPI backend");
++MODULE_DEVICE_TABLE(acpi, apple_smc_acpi_ids);
+diff --git a/include/linux/mfd/macsmc.h b/include/linux/mfd/macsmc.h
+index 9db1b267d124..d45f9ea5ca76 100644
+--- a/include/linux/mfd/macsmc.h
++++ b/include/linux/mfd/macsmc.h
+@@ -175,6 +175,26 @@ struct apple_smc_rtkit {
+ 	u64 cmd_ret;
+ };
+ 
++/**
++ * struct apple_smc_acpi
++ * @dev: Device struct for the physical backend device
++ * @iomem_base: MMIO base address (virtual address)
++ * @iomem_base_addr: MMIO base address (physical address)
++ * @iomem_base_size: MMIO base size
++ * @is_mmio: True if MMIO is supported
++ * @port_base: PIO base address
++ * @has_port: True if PIO address exists
++ */
++struct apple_smc_acpi {
++	struct device *dev;
++
++	u8 __iomem *iomem_base;
++	u32 iomem_base_addr, iomem_base_size;
++	bool is_mmio;
++
++	u16 port_base;
++	bool has_port;
++};
+ 
+ /**
+  * apple_smc_read - Read size bytes from given SMC key into buf
+-- 
+2.43.0
+

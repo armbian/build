@@ -1,0 +1,96 @@
+From bf27d5ea77af8abe2762f28d1ed100e837b286bc Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 24 Apr 2026 23:58:47 +0530
+Subject: [PATCH 09/12] rtc/macsmc: add x86 support
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ drivers/rtc/rtc-macsmc.c | 45 ++++++++++++++++++++++++++--------------
+ 1 file changed, 30 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/rtc/rtc-macsmc.c b/drivers/rtc/rtc-macsmc.c
+index 8fe883066956..0cf24f0f7963 100644
+--- a/drivers/rtc/rtc-macsmc.c
++++ b/drivers/rtc/rtc-macsmc.c
+@@ -42,17 +42,24 @@ static int macsmc_rtc_get_time(struct device *dev, struct rtc_time *tm)
+ 	if (ret != RTC_BYTES)
+ 		return -EIO;
+ 
+-	p_off = nvmem_cell_read(rtc->rtc_offset, &len);
+-	if (IS_ERR(p_off))
+-		return PTR_ERR(p_off);
+-	if (len < RTC_BYTES) {
++	if (rtc->smc->is_acpi) {
++		ret = apple_smc_read(rtc->smc, SMC_KEY(CLKO), &off, RTC_BYTES);
++		if (ret < 0)
++			return ret;
++		if (ret != RTC_BYTES)
++			return -EIO;
++	} else {
++		p_off = nvmem_cell_read(rtc->rtc_offset, &len);
++		if (IS_ERR(p_off))
++			return PTR_ERR(p_off);
++		if (len < RTC_BYTES) {
++			kfree(p_off);
++			return -EIO;
++		}
++
++		memcpy(&off, p_off, RTC_BYTES);
+ 		kfree(p_off);
+-		return -EIO;
+ 	}
+-
+-	memcpy(&off, p_off, RTC_BYTES);
+-	kfree(p_off);
+-
+ 	/* Sign extend from 48 to 64 bits, then arithmetic shift right 15 bits to get seconds */
+ 	now = sign_extend64(ctr + off, RTC_BITS - 1) >> RTC_SEC_SHIFT;
+ 	rtc_time64_to_tm(now, tm);
+@@ -74,6 +81,9 @@ static int macsmc_rtc_set_time(struct device *dev, struct rtc_time *tm)
+ 
+ 	/* This sets the offset such that the set second begins now */
+ 	off = (rtc_tm_to_time64(tm) << RTC_SEC_SHIFT) - ctr;
++	if (rtc->smc->is_acpi)
++		return apple_smc_write(rtc->smc, SMC_KEY(CLKO), &off, RTC_BYTES);
++
+ 	return nvmem_cell_write(rtc->rtc_offset, &off, RTC_BYTES);
+ }
+ 
+@@ -92,7 +102,10 @@ static int macsmc_rtc_probe(struct platform_device *pdev)
+ 	 * thus bail out early if the SMC on the current machines does not
+ 	 * support RTC and has no node in the device tree.
+ 	 */
+-	if (!pdev->dev.of_node)
++	if (!pdev->dev.of_node && !smc->is_acpi)
++		return -ENODEV;
++
++	if (!apple_smc_key_exists(smc, SMC_KEY(CLKM)))
+ 		return -ENODEV;
+ 
+ 	rtc = devm_kzalloc(&pdev->dev, sizeof(*rtc), GFP_KERNEL);
+@@ -102,11 +115,12 @@ static int macsmc_rtc_probe(struct platform_device *pdev)
+ 	rtc->dev = &pdev->dev;
+ 	rtc->smc = smc;
+ 
+-	rtc->rtc_offset = devm_nvmem_cell_get(&pdev->dev, "rtc_offset");
+-	if (IS_ERR(rtc->rtc_offset))
+-		return dev_err_probe(&pdev->dev, PTR_ERR(rtc->rtc_offset),
+-				     "Failed to get rtc_offset NVMEM cell\n");
+-
++	if (!rtc->smc->is_acpi) {
++		rtc->rtc_offset = devm_nvmem_cell_get(&pdev->dev, "rtc_offset");
++		if (IS_ERR(rtc->rtc_offset))
++			return dev_err_probe(&pdev->dev, PTR_ERR(rtc->rtc_offset),
++					     "Failed to get rtc_offset NVMEM cell\n");
++	}
+ 	rtc->rtc_dev = devm_rtc_allocate_device(&pdev->dev);
+ 	if (IS_ERR(rtc->rtc_dev))
+ 		return PTR_ERR(rtc->rtc_dev);
+@@ -138,3 +152,4 @@ module_platform_driver(macsmc_rtc_driver);
+ MODULE_LICENSE("Dual MIT/GPL");
+ MODULE_DESCRIPTION("Apple SMC RTC driver");
+ MODULE_AUTHOR("Hector Martin <marcan@marcan.st>");
++MODULE_ALIAS("platform:macsmc-rtc");
+-- 
+2.43.0
+
