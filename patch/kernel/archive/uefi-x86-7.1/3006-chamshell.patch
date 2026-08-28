@@ -1,0 +1,180 @@
+From 09ad52ccc7c32ab24f0a7b254fb8707a849b2f80 Mon Sep 17 00:00:00 2001
+From: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+Date: Fri, 24 Apr 2026 19:18:48 +0530
+Subject: [PATCH 06/12] chamshell
+
+Signed-off-by: Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+---
+ MAINTAINERS                           |  1 +
+ drivers/input/misc/Kconfig            | 12 ++++
+ drivers/input/misc/Makefile           |  1 +
+ drivers/input/misc/macsmc-chamshell.c | 97 +++++++++++++++++++++++++++
+ drivers/mfd/macsmc-core.c             |  1 +
+ 5 files changed, 112 insertions(+)
+ create mode 100644 drivers/input/misc/macsmc-chamshell.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 2f9573d6e6b7..c7adaab97960 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -1942,6 +1942,7 @@ M:	Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
+ S:	Odd fixes
+ F:	drivers/iio/accel/macsmc-accel.c
+ F:	drivers/iio/light/macsmc-light.c
++F:	drivers/input/misc/macsmc-chamshell.c
+ F:	drivers/leds/leds-macsmc.c
+ F:	drivers/platform/x86/macsmc-acpi.c
+ 
+diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
+index 94a753fcb64f..dc624a421704 100644
+--- a/drivers/input/misc/Kconfig
++++ b/drivers/input/misc/Kconfig
+@@ -248,6 +248,18 @@ config INPUT_SPARCSPKR
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called sparcspkr.
+ 
++config INPUT_MACSMC_CHAMSHELL
++	tristate "Apple SMC Chamshell support"
++	depends on MACSMC_ACPI
++	help
++	  Say Y here if you want support for Apple SMC Chamshell (LID) sensor
++	  driver.
++
++	  If unsure, say Y.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called macsmc-chamshell.
++
+ config INPUT_M68K_BEEP
+ 	tristate "M68k Beeper support"
+ 	depends on M68K
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index 415fc4e2918b..69e02bf8ce7e 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -51,6 +51,7 @@ obj-$(CONFIG_INPUT_IQS626A)		+= iqs626a.o
+ obj-$(CONFIG_INPUT_IQS7222)		+= iqs7222.o
+ obj-$(CONFIG_INPUT_KEYSPAN_REMOTE)	+= keyspan_remote.o
+ obj-$(CONFIG_INPUT_KXTJ9)		+= kxtj9.o
++obj-$(CONFIG_INPUT_MACSMC_CHAMSHELL)	+= macsmc-chamshell.o
+ obj-$(CONFIG_INPUT_M68K_BEEP)		+= m68kspkr.o
+ obj-$(CONFIG_INPUT_MAX7360_ROTARY)	+= max7360-rotary.o
+ obj-$(CONFIG_INPUT_MAX77650_ONKEY)	+= max77650-onkey.o
+diff --git a/drivers/input/misc/macsmc-chamshell.c b/drivers/input/misc/macsmc-chamshell.c
+new file mode 100644
+index 000000000000..b7e538050487
+--- /dev/null
++++ b/drivers/input/misc/macsmc-chamshell.c
+@@ -0,0 +1,97 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple SMC Chamshell driver
++ *
++ * Copyright (C) 2026 Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>
++ */
++
++#include <linux/input.h>
++#include <linux/mfd/macsmc.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++
++#define CHAMSHELL_KEY	SMC_KEY(MSLD)
++#define CHAMSHELL_POLL_INTERVAL 500
++
++struct macsmc_chamshell {
++	struct apple_smc *smc;
++	u8 last_state;
++};
++
++static void macsmc_chamshell_poll(struct input_dev *input)
++{
++	struct macsmc_chamshell *chamshell = input_get_drvdata(input);
++	u8 val;
++	int ret;
++
++	ret = apple_smc_read_u8(chamshell->smc, CHAMSHELL_KEY, &val);
++	if (ret)
++		return;
++
++	/* Normalize the lid state to 0 or 1.
++	 * I'm not sure if the SMC reports values other than 0,
++	 * but I do know that 0 means the lid is open.
++	 */
++	val = !!val;
++
++	if (val != chamshell->last_state) {
++		chamshell->last_state = val;
++		input_report_switch(input, SW_LID, val);
++		input_sync(input);
++	}
++}
++
++static int macsmc_chamshell_probe(struct platform_device *pdev)
++{
++	struct macsmc_chamshell *chamshell;
++	struct input_dev *input;
++	int ret;
++
++	chamshell = devm_kzalloc(&pdev->dev, sizeof(*chamshell), GFP_KERNEL);
++	if (!chamshell)
++		return -ENOMEM;
++
++	input = devm_input_allocate_device(&pdev->dev);
++	if (!input)
++		return -ENOMEM;
++
++	chamshell->smc = dev_get_drvdata(pdev->dev.parent);
++	if (!chamshell->smc)
++		return -ENODEV;
++
++	if (!apple_smc_key_exists(chamshell->smc, CHAMSHELL_KEY))
++		return -ENODEV;
++
++	input->name = "macsmc-chamshell";
++	input->id.bustype = BUS_HOST;
++
++	input_set_capability(input, EV_SW, SW_LID);
++	input_set_drvdata(input, chamshell);
++
++	ret = input_setup_polling(input, macsmc_chamshell_poll);
++	if (ret)
++		return ret;
++
++	input_set_poll_interval(input, CHAMSHELL_POLL_INTERVAL);
++
++	ret = input_register_device(input);
++	if (ret)
++		return ret;
++
++	platform_set_drvdata(pdev, chamshell);
++	return 0;
++}
++
++static struct platform_driver macsmc_chamshell_platform_driver = {
++	.probe = macsmc_chamshell_probe,
++	.driver = {
++		.name = "macsmc-chamshell",
++	},
++};
++
++module_platform_driver(macsmc_chamshell_platform_driver);
++
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple SMC Chamshell driver");
++MODULE_AUTHOR("Atharva Tiwari <atharvatiwarilinuxdev@gmail.com>");
++MODULE_ALIAS("platform:macsmc-chamshell");
+diff --git a/drivers/mfd/macsmc-core.c b/drivers/mfd/macsmc-core.c
+index ad5f5f7c050a..e1a334e06e32 100644
+--- a/drivers/mfd/macsmc-core.c
++++ b/drivers/mfd/macsmc-core.c
+@@ -22,6 +22,7 @@ static const struct mfd_cell apple_smc_devs[] = {
+ 
+ static const struct mfd_cell apple_smc_acpi_devs[] = {
+ 	MFD_CELL_NAME("macsmc-accel"),
++	MFD_CELL_NAME("macsmc-chamshell"),
+ 	MFD_CELL_NAME("macsmc-hwmon"),
+ 	MFD_CELL_NAME("macsmc-led"),
+ 	MFD_CELL_NAME("macsmc-light"),
+-- 
+2.43.0
+
