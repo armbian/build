@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Fri, 29 Aug 2026 00:00:00 -0400
+Subject: [PATCH] pci: sunxi: fix MSI IRQ ack handling for GICv3
+
+The 7.1 port of sunxi PCIe switched from pci_msi_create_irq_domain
+with a dedicated top chip (sunxi_msi_top_chip.irq_ack = no-op) to
+msi_create_parent_irq_domain with chip_flags=MSI_CHIP_FLAG_SET_ACK
+and a bottom chip without an ack callback. On GICv3 the parent MSI
+domain has no irq_ack (it uses eoi), so irq_chip_ack_parent() jumps
+through a NULL pointer and the kernel panics in handle_edge_irq as
+soon as the NVMe issues its first MSI:
+
+  pc : 0x0
+  lr : irq_chip_ack_parent+0x20
+  handle_edge_irq+0xec
+  sunxi_pcie_host_msi_irq_handler+0x8c
+
+Follow mainline practice as in pcie-brcmstb, pcie-plda and other DWC
+hosts that use msi_create_parent_irq_domain with handle_edge_irq:
+provide a bottom-chip ack that does not rely on the parent. For
+sunxi the MSI is edge-triggered and cleared by the DWC hardware, so
+a no-op ack matching the original 6.18 top chip is sufficient.
+
+This restores the 6.18 behaviour while keeping the 7.1 msi_parent_ops
+API.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:big-pickle
+---
+ drivers/pci/pcie-sunxi/pcie-sunxi-rc.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c b/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
++++ b/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
+@@ -107,8 +107,14 @@ static void sunxi_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
+ 		dev_name(pcie->dev), (int)data->hwirq, msg->address_hi, msg->address_lo);
+ }
+ 
++static void sunxi_msi_bottom_irq_ack(struct irq_data *d)
++{
++	/* MSI is edge-triggered and cleared by DWC hardware - no parent ack needed */
++}
++
+ static struct irq_chip sunxi_msi_bottom_chip = {
+ 	.name			= "SUNXI MSI",
++	.irq_ack		= sunxi_msi_bottom_irq_ack,
+ 	.irq_set_affinity 	= sunxi_msi_set_affinity,
+ 	.irq_compose_msi_msg	= sunxi_compose_msi_msg,
+ };
+-- 
+Armbian
