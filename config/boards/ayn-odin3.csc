@@ -82,19 +82,11 @@ else
 fi
 
 function pre_customize_image__ayn-odin3_alsa_ucm_conf() {
-	display_alert "Add alsa-ucm-conf for ${BOARD}" "${RELEASE}" "warn"
-	(
-		(
-			cd "${SDCARD}/usr/share/alsa" || exit 6
-			curl -L -o temp.zip "${GITHUB_SOURCE}/AYNTechnologies/alsa-ucm-conf/archive/refs/heads/ayn/v1.2.15.3.zip"
-			unzip -o temp.zip
-			unzip_dir=$(unzip -Z1 temp.zip | head -n1 | cut -d/ -f1)
-			cp -rf "${unzip_dir}/"* .
-			rm -rf "$unzip_dir" temp.zip
-			# UEFI boot composes a different UCM card name than the ABL bootimg one
-			ln -sf SM8750-AYN.conf ucm2/conf.d/sm8750/ayn-AYNOdin3-.conf
-		)
-	)
+	# Vendored AYN SM8750 UCM with the Class-AB headphone bring-up and the
+	# entrypoint for the UEFI card name; stock codec sequences come from the
+	# distro alsa-ucm-conf package.
+	display_alert "Install alsa-ucm for ${BOARD}" "vendored AYN SM8750 UCM" "info"
+	cp -a "${SRC}/packages/bsp/${BOARD}/usr/share/alsa/." "${SDCARD}"/usr/share/alsa/
 }
 
 function post_family_tweaks_bsp__ayn-odin3_firmware() {
