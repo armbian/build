@@ -87,18 +87,20 @@ compile_armbian-zsh() {
 
 		# mapfile / readarray: read records from stdin into an array, matching Bash:
 		# name defaults to MAPFILE; -t strips the delimiter, otherwise it is kept;
-		# -d DELIM sets the delimiter (default newline); a final record with no
-		# trailing delimiter is still captured; other Bash flags are accepted and
-		# ignored. readarray delegates to mapfile.
+		# -d DELIM sets the delimiter (default newline); -u FD reads from a file
+		# descriptor; a final record with no trailing delimiter is still captured;
+		# other Bash flags are accepted and ignored. readarray delegates to mapfile.
 		if (( ! ${+builtins[mapfile]} )); then
 			mapfile() {
 				emulate -L zsh
-				local __name __delim=$'\n' __strip=0
+				local __name __delim=$'\n' __strip=0 __fd
 				while [[ $1 == -* && $1 != - && $1 != -- ]]; do
 					case $1 in
 						-t) __strip=1; shift ;;
 						-d) __delim=${2-}; shift 2 ;;
 						-d*) __delim=${1#-d}; shift ;;
+						-u) __fd=${2-}; shift 2 ;;
+						-u*) __fd=${1#-u}; shift ;;
 						-[nOsCc]) shift 2 ;;
 						-[nOsCc]*) shift ;;
 						*) shift ;;
@@ -107,10 +109,12 @@ compile_armbian-zsh() {
 				[[ $1 == -- ]] && shift
 				__name=${1:-MAPFILE}
 				[[ -n $__delim ]] || __delim=$'\n'
+				local -a __ropts=(-r -d "$__delim")
+				[[ -n $__fd ]] && __ropts+=(-u "$__fd")
 				local -a __buf
 				local __rec
 				while true; do
-					if IFS= read -r -d "$__delim" __rec; then
+					if IFS= read "${__ropts[@]}" __rec; then
 						(( __strip )) || __rec+=$__delim
 					elif [[ -n $__rec ]]; then
 						:
@@ -136,6 +140,21 @@ compile_armbian-zsh() {
 		setopt HIST_REDUCE_BLANKS HIST_FIND_NO_DUPS
 	ARMBIAN_DEFAULTS_EOF
 
+	# Enable the bundled plugins from the package-owned custom dir instead of the
+	# per-user plugins=() line, so a package upgrade turns them on for EXISTING
+	# users too (this dir is refreshed on upgrade; ~/.zshrc is only written for new
+	# users). "armbian-plugins" sorts last among the custom snippets, so
+	# zsh-syntax-highlighting is sourced after every other widget is defined.
+	cat > "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/armbian-plugins.zsh <<- 'ARMBIAN_PLUGINS_EOF'
+		# Load the plugins Armbian bundles into custom/plugins. Done here (not in
+		# ~/.zshrc's plugins=()) so upgrades reach existing users. Order matters:
+		# zsh-syntax-highlighting must be sourced last.
+		for _armbian_plugin in zsh-autosuggestions zsh-syntax-highlighting; do
+			source "${ZSH_CUSTOM:-$ZSH/custom}/plugins/${_armbian_plugin}/${_armbian_plugin}.plugin.zsh" 2>/dev/null
+		done
+		unset _armbian_plugin
+	ARMBIAN_PLUGINS_EOF
+
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
@@ -153,9 +172,7 @@ compile_armbian-zsh() {
 	sed -i "s/^# zstyle ':omz:update' mode disabled.*/zstyle ':omz:update' mode disabled/g" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	# define default plugins
-	# zsh-syntax-highlighting must stay LAST — it wraps the line editor and has to
-	# load after every other plugin's widgets are defined.
-	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker zsh-autosuggestions zsh-syntax-highlighting)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	# add collection of Armbian BASH aliases also to ZSH. They are compatible
 	cat "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases >> "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
