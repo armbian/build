@@ -55,16 +55,16 @@ else
 
 		gzip -c "${MOUNT}"/boot/Image > /tmp/Image.gz
 		cat /tmp/Image.gz "${MOUNT}"/boot/dtb/qcom/cq8725s-ayn-odin3.dtb > /tmp/Image.gz-dtb
-		/tmp/mkbootimg  \
-			--kernel /tmp/Image.gz-dtb  \
-			--ramdisk "${MOUNT}"/boot/initrd.img-${initrd_name}  \
-			--base 0x0  \
-			--second_offset 0x00f00000  \
-			--cmdline "clk_ignore_unused pd_ignore_unused console=tty0 ignore_loglevel rw rootwait root=UUID=${rootfs_image_uuid}"  \
-			--kernel_offset 0x10008000          \
-			--ramdisk_offset 0x16000000         \
-			--tags_offset 0x10000100         \
-			--pagesize 2048   -o "${MOUNT}"/boot/KERNEL
+		/tmp/mkbootimg \
+			--kernel /tmp/Image.gz-dtb \
+			--ramdisk "${MOUNT}"/boot/initrd.img-${initrd_name} \
+			--base 0x0 \
+			--second_offset 0x00f00000 \
+			--cmdline "clk_ignore_unused pd_ignore_unused console=tty0 ignore_loglevel rw rootwait root=UUID=${rootfs_image_uuid}" \
+			--kernel_offset 0x10008000 \
+			--ramdisk_offset 0x16000000 \
+			--tags_offset 0x10000100 \
+			--pagesize 2048 -o "${MOUNT}"/boot/KERNEL
 		rm /tmp/Image.gz /tmp/Image.gz-dtb /tmp/mkbootimg
 	}
 
