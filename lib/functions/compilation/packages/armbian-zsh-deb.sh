@@ -145,16 +145,25 @@ compile_armbian-zsh() {
 	# Enable the bundled plugins from the package-owned custom dir instead of the
 	# per-user plugins=() line, so a package upgrade turns them on for EXISTING
 	# users too (this dir is refreshed on upgrade; ~/.zshrc is only written for new
-	# users). "armbian-plugins" sorts last among the custom snippets, so
-	# zsh-syntax-highlighting is sourced after every other widget is defined.
+	# users). syntax-highlighting is deferred to a one-shot precmd hook so it hooks
+	# the line editor after all other init, regardless of custom-file order.
 	cat > "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/armbian-plugins.zsh <<- 'ARMBIAN_PLUGINS_EOF'
-		# Load the plugins Armbian bundles into custom/plugins. Done here (not in
-		# ~/.zshrc's plugins=()) so upgrades reach existing users. Order matters:
-		# zsh-syntax-highlighting must be sourced last.
-		for _armbian_plugin in zsh-autosuggestions zsh-syntax-highlighting; do
-			source "${ZSH_CUSTOM:-$ZSH/custom}/plugins/${_armbian_plugin}/${_armbian_plugin}.plugin.zsh" 2>/dev/null
-		done
-		unset _armbian_plugin
+		# Load the plugins Armbian bundles, from their fixed install path under
+		# $ZSH/custom (NOT $ZSH_CUSTOM, which a user may repoint elsewhere). Done here
+		# rather than in ~/.zshrc's plugins=() so upgrades reach existing users.
+		source "$ZSH/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.plugin.zsh" 2>/dev/null
+
+		# zsh-syntax-highlighting must hook the line editor LAST. Custom files load in
+		# filename order, so a later one could add widgets after us; defer it to a
+		# one-shot precmd hook that fires just before the first prompt, after all init
+		# (including the user's ~/.zshrc) has run.
+		autoload -Uz add-zsh-hook
+		_armbian_zsh_highlight() {
+			source "$ZSH/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.plugin.zsh" 2>/dev/null
+			add-zsh-hook -d precmd _armbian_zsh_highlight
+			unfunction _armbian_zsh_highlight
+		}
+		add-zsh-hook precmd _armbian_zsh_highlight
 	ARMBIAN_PLUGINS_EOF
 
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
