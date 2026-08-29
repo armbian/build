@@ -85,15 +85,40 @@ compile_armbian-zsh() {
 		# bash-completion file works under zsh too.
 		autoload -Uz +X bashcompinit 2>/dev/null && bashcompinit 2>/dev/null
 
-		# mapfile / readarray: read stdin lines into an array. The array name is the
-		# last argument; -t/-d/... flags are accepted and ignored and the trailing
-		# newline is always stripped (the -t common case).
+		# mapfile / readarray: read records from stdin into an array, matching Bash:
+		# name defaults to MAPFILE; -t strips the delimiter, otherwise it is kept;
+		# -d DELIM sets the delimiter (default newline); a final record with no
+		# trailing delimiter is still captured; other Bash flags are accepted and
+		# ignored. readarray delegates to mapfile.
 		if (( ! ${+builtins[mapfile]} )); then
 			mapfile() {
 				emulate -L zsh
-				local __name=${@[-1]} __line
+				local __name __delim=$'\n' __strip=0
+				while [[ $1 == -* && $1 != - && $1 != -- ]]; do
+					case $1 in
+						-t) __strip=1; shift ;;
+						-d) __delim=${2-}; shift 2 ;;
+						-d*) __delim=${1#-d}; shift ;;
+						-[nOsCc]) shift 2 ;;
+						-[nOsCc]*) shift ;;
+						*) shift ;;
+					esac
+				done
+				[[ $1 == -- ]] && shift
+				__name=${1:-MAPFILE}
+				[[ -n $__delim ]] || __delim=$'\n'
 				local -a __buf
-				while IFS= read -r __line; do __buf+=("$__line"); done
+				local __rec
+				while true; do
+					if IFS= read -r -d "$__delim" __rec; then
+						(( __strip )) || __rec+=$__delim
+					elif [[ -n $__rec ]]; then
+						:
+					else
+						break
+					fi
+					__buf+=("$__rec")
+				done
 				set -A "$__name" "${__buf[@]}"
 			}
 			readarray() { mapfile "$@" }
