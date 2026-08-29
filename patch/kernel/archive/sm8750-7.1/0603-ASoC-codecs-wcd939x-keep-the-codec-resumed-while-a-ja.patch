@@ -1,0 +1,64 @@
+From: Anze <aanzdev@gmail.com>
+Subject: [PATCH] ASoC: codecs: wcd939x: keep the codec resumed while a jack is set
+
+Headset detection reports nothing at all on an AYN Odin 3. MBHC is armed
+correctly - ANA_MBHC_MECH reads 0xbd with L_DET_EN set and the plug-type
+polarity matching the vendor DT - the interrupts are mapped, and yet
+plugging headphones produces no interrupt whatsoever and "Headphone
+Jack" stays off.
+
+The codec is runtime suspended essentially all the time: nothing
+streams, so it autosuspends a second after probe and stays there.
+Suspending puts its regmap in cache-only mode and lets the SoundWire
+link stop its clock, and the codec then has no way to signal anything.
+MBHC is powered and watching; its interrupt has nowhere to go.
+
+Resuming both SoundWire devices makes detection work immediately and
+completely:
+
+  wcd939x_wcd_mbhc_calc_impedance: impedance on HPH_L = 41(ohms)
+  wcd939x_wcd_mbhc_calc_impedance: impedance on HPH_R = 43(ohms)
+  wcd939x_wcd_mbhc_calc_impedance: stereo plug type detected
+
+with SW_HEADPHONE_INSERT set on the jack input device and the mechanical
+interrupt firing on every plug and unplug.
+
+Keep them resumed for as long as a jack is registered. pm_runtime_forbid()
+rather than a get/put pair: a plain reference is not enough here, the
+bus suspends the devices again anyway, and forbid is exactly what
+writing "on" to power/control does - which is what was verified on the
+device.
+
+Signed-off-by: Anze <aanzdev@gmail.com>
+---
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+index 2d0c3ec77..cb119f85c 100644
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -3391,11 +3391,25 @@ static int wcd939x_codec_set_jack(struct snd_soc_component *comp,
+ {
+ 	struct wcd939x_priv *wcd = dev_get_drvdata(comp->dev);
+ 
+-	if (jack)
++	if (jack) {
++		/*
++		 * MBHC can only report while the SoundWire devices stay
++		 * resumed: suspending them lets the link stop its clock, and
++		 * the codec's interrupt then has nowhere to go - detection
++		 * goes completely silent even though MBHC itself is armed and
++		 * powered. Hold them up for as long as a jack is registered.
++		 */
++		pm_runtime_forbid(wcd->rxdev);
++		pm_runtime_forbid(wcd->txdev);
++
+ 		return wcd_mbhc_start(wcd->wcd_mbhc, &wcd->mbhc_cfg, jack);
++	}
+ 
+ 	wcd_mbhc_stop(wcd->wcd_mbhc);
+ 
++	pm_runtime_allow(wcd->txdev);
++	pm_runtime_allow(wcd->rxdev);
++
+ 	return 0;
+ }
+ 

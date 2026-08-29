@@ -1,0 +1,81 @@
+From: KONKR Pocket FIT Elite port
+Subject: [PATCH] soundwire: qcom: PCM data port format enable
+
+Data ports carrying PCM samples (e.g. the WCD939x HIFI_PCM headphone
+port) need the controller's per-port PCM format enable
+(SWRM_DOUT_DP_PCM_PORT_CTRL(n) = 0x1054 + 0x100*n, value 0x3) while
+enabled, in addition to the transport parameters; PDM ports don't care,
+which is why mainline never missed it. Vendor reference:
+swr-mstr-ctrl.c swrm_pcm_port_config().
+
+Take the set of PCM ports from an optional qcom,pcm-ports-mask DT
+property, overridable via the pcm_ports_mask module parameter for
+kernels whose DTB predates the property. Set-only: port_enable also
+fires for the inactive bank's disable during bank switches and clearing
+there would strip the format mid-stream.
+---
+--- a/drivers/soundwire/qcom.c	2026-05-23 13:09:44.000000000 +0200
++++ b/drivers/soundwire/qcom.c	2026-06-11 21:30:18.469610305 +0200
+@@ -111,6 +111,7 @@
+ #define SWRM_DPn_PORT_HCTRL_BANK(offset,  n, m)	(offset + 0x100 * (n - 1) + 0x40 * m)
+ #define SWRM_DPn_BLOCK_CTRL3_BANK(offset, n, m)	(offset + 0x100 * (n - 1) + 0x40 * m)
+ #define SWRM_DPn_SAMPLECTRL2_BANK(offset, n, m)	(offset + 0x100 * (n - 1) + 0x40 * m)
++#define SWRM_DOUT_DP_PCM_PORT_CTRL(n)		(0x1054 + 0x100 * n)
+ 
+ #define SWR_V1_3_MSTR_MAX_REG_ADDR				0x1740
+ #define SWR_V2_0_MSTR_MAX_REG_ADDR				0x50ac
+@@ -209,6 +210,7 @@
+ 	int nports;
+ 	int cols_index;
+ 	int rows_index;
++	u32 pcm_ports_mask;
+ 	unsigned long port_mask;
+ 	u32 intr_mask;
+ 	u8 rcmd_id;
+@@ -1026,6 +1028,18 @@
+ 				p_params->bps - 1);
+ }
+ 
++/*
++ * Ports carrying PCM samples (e.g. the WCD939x HIFI_PCM headphone port)
++ * additionally need the controller's per-port PCM format enable
++ * (SWRM_DOUT_DP_PCM_PORT_CTRL) set; PDM ports don't care. Mainline has no
++ * binding for per-port stream type yet, so take the port set from an
++ * optional DT mask, overridable via module parameter for kernels whose DTB
++ * predates the property.
++ */
++static uint pcm_ports_mask;
++module_param(pcm_ports_mask, uint, 0644);
++MODULE_PARM_DESC(pcm_ports_mask, "Bitmask of data ports carrying PCM (overrides qcom,pcm-ports-mask)");
++
+ static int qcom_swrm_transport_params(struct sdw_bus *bus,
+ 				      struct sdw_transport_params *params,
+ 				      enum sdw_reg_bank bank)
+@@ -1121,6 +1135,18 @@
+ 	else
+ 		val &= ~(0xff << SWRM_DP_PORT_CTRL_EN_CHAN_SHFT);
+ 
++	/*
++	 * Only set, never clear: port_enable also fires for the inactive
++	 * bank's disable during bank switches and would strip the PCM format
++	 * mid-stream. The register only affects PCM-mode ports, so a sticky
++	 * 0x3 is harmless.
++	 */
++	if (((ctrl->pcm_ports_mask | pcm_ports_mask) & BIT(enable_ch->port_num)) &&
++	    enable_ch->enable)
++		ctrl->reg_write(ctrl,
++				SWRM_DOUT_DP_PCM_PORT_CTRL(enable_ch->port_num),
++				0x3);
++
+ 	return ctrl->reg_write(ctrl, reg, val);
+ }
+ 
+@@ -1434,6 +1460,8 @@
+ 		ctrl->num_din_ports = val;
+ 	}
+ 
++	of_property_read_u32(np, "qcom,pcm-ports-mask", &ctrl->pcm_ports_mask);
++
+ 	ret = of_property_read_u32(np, "qcom,dout-ports", &val);
+ 	if (!ret) { /* only if present */
+ 		if (val != ctrl->num_dout_ports) {
