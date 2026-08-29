@@ -12,6 +12,21 @@
 . /lib/lsb/init-functions
 . /usr/lib/armbian/armbian-common
 
+# Apply a new system hostname once and mirror it in /etc/hosts. Replaces the
+# previous hostname only where it stands as a whole word (the 127.0.1.1 and ::1
+# records written at build time), leaving loopback names, aliases and comments
+# untouched. No-op when the target is empty or already current; the /etc/hosts
+# edit runs only after the rename itself succeeds.
+set_new_hostname() {
+	local new="$1" old esc_old esc_new
+	old="$(hostname)"
+	[[ -z "$new" || "$new" == "$old" ]] && return 0
+	hostnamectl set-hostname "$new" || return 1
+	esc_old=$(printf '%s' "$old" | sed 's#[][\\.*^$/]#\\&#g')
+	esc_new=$(printf '%s' "$new" | sed 's#[\\/&]#\\&#g')
+	sed -i "s/\b${esc_old}\b/${esc_new}/g" /etc/hosts
+}
+
 case "$1" in
 	start)
 
@@ -129,22 +144,27 @@ case "$1" in
 	# adjust hostname for rpi's
 	if [[ "${BOARD}" == rpi4b && "$(hostname)" == rpi4b ]]; then
 		BOARD_NAME=$(cat /proc/device-tree/model | tr '\0' '\n' | sed -E 's/ Rev [0-9.]+$//')
+		NEW_HOSTNAME=""
 		[[ "$BOARD_NAME" == *"Zero 2 W"* ]] && NEW_HOSTNAME="rpizero2w"
 		[[ "$BOARD_NAME" == *"Pi 5 Model B"* ]] && NEW_HOSTNAME="rpi5b"
 		[[ "$BOARD_NAME" == *"Pi 3 Model B"* ]] && NEW_HOSTNAME="rpi3b"
 		[[ "$BOARD_NAME" == *"Pi 400"* ]] && NEW_HOSTNAME="rpi400"
-		# Update /etc/hosts to reflect the new hostname
-		sed -i "s/$(hostname)/$NEW_HOSTNAME/g" /etc/hosts
-		# Change the hostname
-		hostnamectl set-hostname "$NEW_HOSTNAME"
+		# Leaves the default rpi4b hostname in place when no model matched.
+		set_new_hostname "$NEW_HOSTNAME"
 	fi
 
 	# adjust hostname for the FriendlyElec NanoPi 6-series unified image.
 	# A single image boots on several boards; the unified U-Boot detects the
-	# model via SARADC and exports nanopi6_model=<model> on the kernel command
-	# line, which is only present on these images.
-	if grep -q 'nanopi6_model=' /proc/cmdline; then
-		nanopi6_model=$(sed -n 's/.*nanopi6_model=\([^ ]*\).*/\1/p' /proc/cmdline)
+	# model via SARADC and exports nanopi6_model=<model> as its own token on the
+	# kernel command line, present only on these images. Parse it word-by-word so
+	# it can never match text embedded inside another kernel argument.
+	nanopi6_model=""
+	for arg in $(cat /proc/cmdline); do
+		case "$arg" in
+			nanopi6_model=*) nanopi6_model="${arg#nanopi6_model=}"; break ;;
+		esac
+	done
+	if [[ -n "$nanopi6_model" ]]; then
 		NEW_HOSTNAME=""
 		case "$nanopi6_model" in
 			r6s) NEW_HOSTNAME="nanopi-r6s" ;;
@@ -155,12 +175,7 @@ case "$1" in
 			t6-lts) NEW_HOSTNAME="nanopct6-lts" ;;
 			t6-lts-plus) NEW_HOSTNAME="nanopct6-lts-plus" ;;
 		esac
-		if [[ -n "$NEW_HOSTNAME" && "$NEW_HOSTNAME" != "$(hostname)" ]]; then
-			# Update /etc/hosts to reflect the new hostname
-			sed -i "s/$(hostname)/$NEW_HOSTNAME/g" /etc/hosts
-			# Change the hostname
-			hostnamectl set-hostname "$NEW_HOSTNAME"
-		fi
+		set_new_hostname "$NEW_HOSTNAME"
 	fi
 
 	# Remove KDE Neon base files upgrade pin
