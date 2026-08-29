@@ -87,7 +87,7 @@ compile_armbian-zsh() {
 
 		# mapfile / readarray: read records from stdin into an array, matching Bash:
 		# name defaults to MAPFILE; -t strips the delimiter, otherwise it is kept;
-		# -d DELIM sets the delimiter (default newline); -u FD reads from a file
+		# -d DELIM sets the delimiter (default newline; -d '' means NUL); -u FD reads from a file
 		# descriptor; a final record with no trailing delimiter is still captured;
 		# other Bash flags are accepted and ignored. readarray delegates to mapfile.
 		if (( ! ${+builtins[mapfile]} )); then
@@ -108,7 +108,9 @@ compile_armbian-zsh() {
 				done
 				[[ $1 == -- ]] && shift
 				__name=${1:-MAPFILE}
-				[[ -n $__delim ]] || __delim=$'\n'
+				# keep an explicitly empty -d '' (Bash's NUL delimiter; zsh's
+				# `read -d ""` splits on NUL) — only an omitted -d stays newline,
+				# which the initial default above already handles.
 				local -a __ropts=(-r -d "$__delim")
 				[[ -n $__fd ]] && __ropts+=(-u "$__fd")
 				local -a __buf
