@@ -137,6 +137,21 @@ function memoized_git_ref_to_info() {
 
 	if [[ "${2}" == "include_makefile_body" ]]; then
 
+		# Makefile bodies are cached here, keyed by the git sha1 they belong to. A commit's
+		# Makefile can never change, so these entries are immutable and never expire -- unlike
+		# the memoized dict around them, which needs a TTL because branches move. Kept under
+		# cache/memoize/ so CI, which already persists that path, picks it up for free.
+		declare makefile_body_cache_dir="${SRC}/cache/memoize/makefile-body"
+
+		# Every repo on git.kernel.org is mirrored on kernel.googlesource.com under the same
+		# path, minus the trailing ".git". gitiles serves raw blobs only base64-encoded, via
+		# "?format=TEXT" -- obtain_makefile_body_from_url() decodes those.
+		function googlesource_mirror_of_kernel_org() {
+			declare repo_path="${1%.git}"
+			repo_path="${repo_path#https://git.kernel.org}"
+			echo "https://kernel.googlesource.com${repo_path}/+/${2}/Makefile?format=TEXT"
+		}
+
 		function obtain_makefile_body_from_git() {
 			declare git_source="${1}"
 			declare sha1="${2}"
@@ -145,21 +160,44 @@ function memoized_git_ref_to_info() {
 			makefile_version="undetermined"  # outer scope
 			makefile_codename="undetermined" # outer scope
 
-			declare url="undetermined"
+			# Candidate URLs, tried in order until one works. More than one entry means the
+			# source has a mirror we can fall back to: git.kernel.org's cgit sheds load with
+			# 503s when hit in parallel, and json-info fans out over dozens of workers.
+			declare -a urls=()
 			case "${git_source}" in
 
-				"https://git.kernel.org/pub/scm/linux/kernel/"* | "https://git.ti.com/"*)
-					url="${git_source}/plain/Makefile?h=${sha1}"
+				"https://git.kernel.org/pub/scm/"*)
+					urls+=("${git_source}/plain/Makefile?h=${sha1}")
+					urls+=("$(googlesource_mirror_of_kernel_org "${git_source}" "${sha1}")")
 					;;
 
-				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git" | "https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
-					# for mainline kernel source, only the origin source support curl
+				"https://git.ti.com/"*)
+					urls+=("${git_source}/plain/Makefile?h=${sha1}")
+					;;
+
+				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git")
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
-							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/torvalds/linux/${sha1}/Makefile"
+							urls+=("https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/torvalds/linux/${sha1}/Makefile")
 							;;
 						*)
-							url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+							# Fetch from the host we're actually cloning from; git.kernel.org as backup.
+							urls+=("https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable/+/${sha1}/Makefile?format=TEXT")
+							urls+=("https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}")
+							;;
+					esac
+					;;
+
+				"https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
+					# Chinese mirrors of mainline; they don't serve raw files, so go to the origin.
+					# googlesource is unreachable from where these mirrors are chosen, so it goes last.
+					case "${GITHUB_MIRROR}" in
+						"ghproxy")
+							urls+=("https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/torvalds/linux/${sha1}/Makefile")
+							;;
+						*)
+							urls+=("https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}")
+							urls+=("https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable/+/${sha1}/Makefile?format=TEXT")
 							;;
 					esac
 					;;
@@ -169,7 +207,7 @@ function memoized_git_ref_to_info() {
 					IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
 					org_and_repo="${_gr_org}/${_gr_repo}"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
-					url="https://gitverse.ru/api/repos/${org_and_repo}/raw/commit/${sha1}/Makefile"
+					urls+=("https://gitverse.ru/api/repos/${org_and_repo}/raw/commit/${sha1}/Makefile")
 					;;
 
 				"https://gitee.com/"*)
@@ -178,7 +216,7 @@ function memoized_git_ref_to_info() {
 					IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
 					org_and_repo="${_gr_org}/${_gr_repo}"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
-					url="https://gitee.com/${org_and_repo}/raw/${sha1}/Makefile"
+					urls+=("https://gitee.com/${org_and_repo}/raw/${sha1}/Makefile")
 					;;
 
 				"https://github.com/"*)
@@ -189,10 +227,10 @@ function memoized_git_ref_to_info() {
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
-							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							urls+=("https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile")
 							;;
 						*)
-							url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							urls+=("https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile")
 							;;
 					esac
 					;;
@@ -203,7 +241,7 @@ function memoized_git_ref_to_info() {
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git
 					#          output: https://gitlab.com/rk3588_linux/rk/kernel/-/raw/linux-5.10/Makefile
 					declare gitlab_path="${git_source%.git}" # remove .git
-					url="${gitlab_path}/-/raw/${sha1}/Makefile"
+					urls+=("${gitlab_path}/-/raw/${sha1}/Makefile")
 					;;
 
 				*)
@@ -217,19 +255,49 @@ function memoized_git_ref_to_info() {
 						IFS=/ read -r _ _ _ _gr_org _gr_repo _ <<< "${git_source}"
 						org_and_repo="${_gr_org}/${_gr_repo}"
 						org_and_repo="${org_and_repo%.git}" # remove .git if present
-						url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+						urls+=("https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile")
 					else
 						exit_with_error "Unknown git source '${git_source}'"
 					fi
 					;;
 			esac
 
-			display_alert "Fetching Makefile via HTTP" "${url}" "debug"
-			makefile_url="${url}"
-
-			# Lets do a retry loop here, because GitHub/others are unreliable...
+			makefile_url="${urls[0]}" # outer scope; overwritten below by whichever mirror answered
 			declare makefile_body="undetermined"
-			do_with_retries 5 obtain_makefile_body_from_url "${url}"
+			declare cache_file="${makefile_body_cache_dir}/${sha1}"
+
+			if [[ -s "${cache_file}" ]]; then
+				display_alert "Using cached Makefile body" "sha1 ${sha1}" "debug"
+				makefile_body="$(< "${cache_file}")"
+			else
+				# OFFLINE_WORK guard: nothing cached for this sha1 and no network to fetch it.
+				# Fail clearly instead of letting curl surface as a misleading 'undetermined'
+				# kernel version downstream (#6439).
+				if [[ "${OFFLINE_WORK}" == "yes" ]]; then
+					exit_with_error "OFFLINE_WORK=yes but Makefile body for '${git_source}' (sha1 ${sha1}) not in cache - run online once to populate ${makefile_body_cache_dir}/"
+				fi
+
+				declare url fetched="no"
+				for url in "${urls[@]}"; do
+					display_alert "Fetching Makefile via HTTP" "${url}" "debug"
+					# Jittered delay between retries: the workers that collided on the first
+					# attempt would otherwise collide again on every one after it.
+					if sleep_seconds="$((3 + RANDOM % 8))" do_with_retries 3 obtain_makefile_body_from_url "${url}"; then
+						makefile_url="${url}"
+						fetched="yes"
+						break
+					fi
+					display_alert "Failed to fetch Makefile, trying next mirror" "${url}" "warn"
+				done
+				[[ "${fetched}" == "yes" ]] || exit_with_error "Failed to fetch Makefile for '${git_source}' sha1 '${sha1}' - tried: ${urls[*]}"
+
+				# Cache it, via a rename so parallel workers racing on the same sha1 can't read
+				# a half-written file. Failures here only cost a re-fetch later, so not fatal.
+				declare tmp_cache_file="${cache_file}.tmp.$$.${RANDOM}"
+				if mkdir -p "${makefile_body_cache_dir}" && echo "${makefile_body}" > "${tmp_cache_file}"; then
+					mv -f "${tmp_cache_file}" "${cache_file}" || rm -f "${tmp_cache_file}"
+				fi
+			fi
 
 			parse_makefile_version "${makefile_body}"
 
@@ -237,11 +305,30 @@ function memoized_git_ref_to_info() {
 		}
 
 		function obtain_makefile_body_from_url() {
-			makefile_body="$(curl -sL --fail "${1}")" || {
-				display_alert "Failed to fetch Makefile from URL" "${1}" "warn"
+			declare url="${1}"
+			declare response http_code body
+			declare -i curl_rc=0
+			# --write-out instead of --fail, so the HTTP status makes it into the warning below;
+			# "failed to fetch" with no code is useless when diagnosing a mirror shedding load.
+			response="$(curl -sL --connect-timeout 15 --max-time 60 --write-out $'\n%{http_code}' "${url}")" || curl_rc=$?
+			http_code="${response##*$'\n'}"
+			body="${response%$'\n'*}"
+
+			if [[ ${curl_rc} -ne 0 || "${http_code}" != "200" || -z "${body}" ]]; then
+				display_alert "Failed to fetch Makefile from URL" "HTTP ${http_code} (curl rc ${curl_rc}): ${url}" "warn"
 				return 1
-			}
-			display_alert "Fetched Makefile from URL" "${1}" "debug"
+			fi
+
+			# gitiles (kernel.googlesource.com) only serves raw blobs base64-encoded.
+			if [[ "${url}" == *"format=TEXT"* ]]; then
+				body="$(echo "${body}" | base64 --decode)" || {
+					display_alert "Failed to decode base64 Makefile from URL" "${url}" "warn"
+					return 1
+				}
+			fi
+
+			makefile_body="${body}" # outer scope
+			display_alert "Fetched Makefile from URL" "${url}" "debug"
 			return 0
 		}
 
@@ -277,14 +364,6 @@ function memoized_git_ref_to_info() {
 
 			return 0
 		}
-
-		# OFFLINE_WORK guard: Makefile body is fetched via curl to git host(s) — no
-		# network when offline. We have no local fallback here (no bare-clone path in
-		# scope), so fail with a clear message instead of letting curl surface as a
-		# misleading 'undetermined' kernel version downstream (#6439).
-		if [[ "${OFFLINE_WORK}" == "yes" ]]; then
-			exit_with_error "OFFLINE_WORK=yes but Makefile body for '${MEMO_DICT[GIT_SOURCE]}' '${ref_name}' (sha1 ${sha1}) not in cache - run online once to populate ${SRC}/cache/memoize/"
-		fi
 
 		display_alert "Fetching Makefile body" "${ref_name}" "debug"
 		declare makefile_body makefile_url
