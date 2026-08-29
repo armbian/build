@@ -100,6 +100,17 @@ compile_armbian-zsh() {
 		fi
 	ARMBIAN_COMPAT_EOF
 
+	# Small history deltas layered on top of oh-my-zsh's own config (which already
+	# sets HISTSIZE/dedup/share_history/hist_verify and the completion styling).
+	# Loaded after it via $ZSH/custom/*.zsh.
+	cat > "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/armbian-defaults.zsh <<- 'ARMBIAN_DEFAULTS_EOF'
+		# Armbian zsh defaults, layered on oh-my-zsh's history/completion config.
+		# oh-my-zsh caps SAVEHIST at 10000 while keeping 50000 in memory; persist the
+		# full set to disk, and trim blanks / skip duplicate search hits.
+		SAVEHIST=$HISTSIZE
+		setopt HIST_REDUCE_BLANKS HIST_FIND_NO_DUPS
+	ARMBIAN_DEFAULTS_EOF
+
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
