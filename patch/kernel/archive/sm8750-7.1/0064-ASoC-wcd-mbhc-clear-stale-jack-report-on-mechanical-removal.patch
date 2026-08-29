@@ -1,0 +1,69 @@
+From: KONKR Pocket FIT Elite port
+Subject: [PATCH] ASoC: wcd-mbhc-v2: clear stale jack report on mechanical removal
+
+The mechanical-detection removal path only reports a jack removal when
+mbhc->current_plug names a known plug type.  On boards with an integrated
+3.5mm jack wired through an analog switch (WCD939x USBSS, see the
+"route USBSS on integrated-jack insert" change), the ADC plug-type
+detection can desync and leave current_plug == MBHC_PLUG_TYPE_NONE -- or
+classify the plug as a gnd/mic swap -- while hph_status still holds the
+SND_JACK_HEADPHONE bit from the insertion report.
+
+When that happens the swch IRQ handler takes one of the "goto exit" paths
+without reporting removal, so the "Headphone Jack" control stays latched
+at "inserted" with nothing physically plugged in.  Userspace (PipeWire)
+then keeps routing to the headphone path and mutes the speaker forever.
+
+Mechanical detection is the physical ground truth that the jack is out.
+Funnel the NONE / gnd-mic-swap / default removal paths through a new
+report_removed label that force-clears a stale hph_status and reports a
+clean removal, so the speaker route returns on unplug.
+---
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -556,7 +556,7 @@
+ 		mbhc->extn_cable_hph_rem = false;
+ 
+ 		if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE)
+-			goto exit;
++			goto report_removed;
+ 
+ 		mbhc->is_btn_press = false;
+ 		switch (mbhc->current_plug) {
+@@ -573,17 +573,34 @@
+ 			break;
+ 		case MBHC_PLUG_TYPE_GND_MIC_SWAP:
+ 			dev_err(mbhc->dev, "Ground and Mic Swapped on plug\n");
+-			goto exit;
++			goto report_removed;
+ 		default:
+ 			dev_err(mbhc->dev, "Invalid current plug: %d\n",
+ 				mbhc->current_plug);
+-			goto exit;
++			goto report_removed;
+ 		}
+ 		disable_irq_nosync(mbhc->intr_ids->mbhc_hs_rem_intr);
+ 		disable_irq_nosync(mbhc->intr_ids->mbhc_hs_ins_intr);
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_DETECTION_TYPE, 1);
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_ELECT_SCHMT_ISRC, 0);
+ 		wcd_mbhc_report_plug(mbhc, 0, jack_type);
++		goto exit;
++
++ report_removed:
++		/*
++		 * Mechanical detection is the physical ground truth that the
++		 * jack is out. On boards with an integrated jack wired behind an
++		 * analog switch (e.g. WCD939x USBSS) the ADC plug-type path can
++		 * desync and leave current_plug == NONE (or a gnd/mic-swap
++		 * error) while hph_status still holds the headphone bit -- which
++		 * freezes the "Headphone Jack" control at "inserted", so
++		 * userspace keeps the speaker muted forever. Force a clean
++		 * removal report so the speaker route comes back.
++		 */
++		if (mbhc->hph_status) {
++			mbhc->hph_status = 0;
++			snd_soc_jack_report(mbhc->jack, 0, WCD_MBHC_JACK_MASK);
++		}
+ 	}
+ 
+ exit:

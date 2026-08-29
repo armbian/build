@@ -1,0 +1,531 @@
+From: KONKR Pocket FIT Elite port
+Subject: [PATCH] ASoC: wcd939x: add HPH PCM (HiFi) mode
+
+The WCD9390/9395 support a PCM playback path for HPH ("later" per the
+original driver submission, never implemented): the stream arrives as
+384 kHz PCM on SoundWire port 6 (HIFI_PCM, already declared in
+wcd939x-sdw) and the codec runs its own interpolator, DC droop filter
+and analog compander instead of the legacy PDM receive path. On the
+KONKR Pocket FIT Elite the PDM path produces a constant hiss on the
+jack; the PCM path is what stock Android ships and is silent.
+
+Add an "HPH PCM Switch" kcontrol (kept ahead of the COMP/HPH switches:
+alsa-state restore order matters). When enabled:
+- HPHL/HPHR Switch connect HIFI_PCM_L/R (port 6) instead of HPH_L/R,
+  and the COMP gain port stays unused;
+- DAC bring-up programs the analog compander (zone RMS per power mode,
+  clock + sync-reset pulse), crosstalk coefficients, gain source, and
+  keeps the RDAC chopper running; VNEG_CTRL_1/RDAC bias per vendor;
+- PA bring-up programs the interpolator (INT_EN/DLY_ZN staged, DC droop
+  for 9.6 MHz), DAC rate select by mode, and forces PA power level 0b11
+  (the 0b10 the class-H controller picks leaves a constant hiss);
+- the PDM watchdog and its interrupts stay off (no PDM data to guard);
+- symmetric teardown on power-down.
+
+Register values match a stock Android WCD9395 trace on this device.
+Also set AUTO_DISABLE_DSD in E_CFG0 (stock runs 0x07).
+---
+--- a/sound/soc/codecs/wcd939x.c	2026-06-11 21:30:18.467792000 +0200
++++ b/sound/soc/codecs/wcd939x.c	2026-06-11 21:30:18.469036928 +0200
+@@ -211,6 +211,7 @@
+ 	int ear_pdm_wd_int;
+ 	bool comp1_enable;
+ 	bool comp2_enable;
++	bool hph_pcm_enabled;
+ 	bool ldoh;
+ };
+ 
+@@ -411,6 +412,7 @@
+ 
+ 	snd_soc_component_write(component, WCD939X_E_CFG0,
+ 				WCD939X_CFG0_IDLE_STEREO |
++				WCD939X_CFG0_AUTO_DISABLE_DSD |
+ 				WCD939X_CFG0_AUTO_DISABLE_ANC);
+ 
+ 	return 0;
+@@ -502,6 +504,165 @@
+ 	return 0;
+ }
+ 
++/*
++ * HPH PCM ("HiFi") mode: the HPH stream arrives as PCM samples on SoundWire
++ * port 6 (HIFI_PCM) and the codec runs its own interpolator, DC droop filter
++ * and analog compander, replacing the legacy PDM receive path. Vendor
++ * hph_pcm_enabled behavior; register values match the stock WCD9395 trace
++ * (SoundWire clock fixed at 9.6 MHz on this platform).
++ */
++static void wcd939x_hph_pcm_pre_dac(struct snd_soc_component *component,
++				    bool hphr)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++	bool comp_en = hphr ? wcd939x->comp2_enable : wcd939x->comp1_enable;
++	u16 comp_base = hphr ? WCD939X_R_CTL0 : WCD939X_COMPANDER_HPHL_CTL0;
++	u16 sec_base = hphr ? WCD939X_RX_TOP_HPHR_PATH_SEC0 :
++			      WCD939X_RX_TOP_HPHL_PATH_SEC0;
++
++	/*
++	 * PCM mode keeps the RDAC chopper running (stock 0x30d9 = 0x80);
++	 * set it explicitly in case a PDM-mode bring-up cleared it earlier.
++	 */
++	snd_soc_component_write_field(component, WCD939X_HPH_RDAC_CLK_CTL1,
++				      WCD939X_RDAC_CLK_CTL1_OPAMP_CHOP_CLK_EN,
++				      true);
++
++	if (wcd939x->hph_mode == CLS_H_ULP) {
++		snd_soc_component_write_field(component, WCD939X_HPH_REFBUFF_UHQA_CTL,
++					      WCD939X_REFBUFF_UHQA_CTL_REFBUFP_IOUT_CTL, 1);
++		snd_soc_component_write_field(component, WCD939X_HPH_REFBUFF_UHQA_CTL,
++					      WCD939X_REFBUFF_UHQA_CTL_REFBUFN_IOUT_CTL, 1);
++	}
++
++	if (!comp_en) {
++		/* compander bypassed, gain from register */
++		if (hphr)
++			snd_soc_component_write_field(component, WCD939X_HPH_R_EN,
++						      WCD939X_R_EN_GAIN_SOURCE_SEL, true);
++		else
++			snd_soc_component_write_field(component, WCD939X_HPH_L_EN,
++						      WCD939X_L_EN_GAIN_SOURCE_SEL, true);
++		return;
++	}
++
++	/* compander zone RMS thresholds + path gain per power mode */
++	if (wcd939x->hph_mode == CLS_H_ULP) {
++		snd_soc_component_write(component, comp_base + 12, 0x21);
++		snd_soc_component_write(component, comp_base + 13, 0x30);
++		snd_soc_component_write(component, comp_base + 14, 0x3f);
++		snd_soc_component_write(component, comp_base + 15, 0x48);
++		snd_soc_component_write(component, comp_base + 17, 0x0c);
++	} else {
++		snd_soc_component_write(component, comp_base + 12, 0x1e);
++		snd_soc_component_write(component, comp_base + 13, 0x2a);
++		snd_soc_component_write(component, comp_base + 14, 0x36);
++		snd_soc_component_write(component, comp_base + 15, 0x3c);
++		snd_soc_component_write(component, comp_base + 17, 0x00);
++	}
++
++	/* gain follows the compander */
++	if (hphr)
++		snd_soc_component_write_field(component, WCD939X_HPH_R_EN,
++					      WCD939X_R_EN_GAIN_SOURCE_SEL, false);
++	else
++		snd_soc_component_write_field(component, WCD939X_HPH_L_EN,
++					      WCD939X_L_EN_GAIN_SOURCE_SEL, false);
++
++	/* compander clock enable + sync-reset pulse */
++	snd_soc_component_write(component, comp_base + 7, 0x00);
++	snd_soc_component_write(component, comp_base + 0, 0x61);
++	/* 250us sleep required as per HW sequence */
++	usleep_range(250, 260);
++	snd_soc_component_write(component, comp_base + 0, 0x63);
++	snd_soc_component_write(component, comp_base + 0, 0x61);
++
++	if (hphr)
++		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_COMP_CTL_0,
++					      WCD939X_CDC_COMP_CTL_0_HPHR_COMP_EN, true);
++	else
++		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_COMP_CTL_0,
++					      WCD939X_CDC_COMP_CTL_0_HPHL_COMP_EN, true);
++
++	/* crosstalk coefficients (stock: scale 0x1f, sec2/3 0x11/0x4f) */
++	snd_soc_component_write(component, sec_base + 0, 0x1f);
++	snd_soc_component_write(component, sec_base + 3, 0x4f);
++	snd_soc_component_write(component, sec_base + 2, 0x11);
++}
++
++static void wcd939x_hph_pcm_post_dac(struct snd_soc_component *component)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++
++	snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_TIMER1,
++				      WCD939X_TIMER1_AUTOCHOP_TIMER_CTL_EN, false);
++	snd_soc_component_write(component, WCD939X_FLYBACK_VNEG_CTRL_1, 0xeb);
++	if (wcd939x->hph_mode == CLS_H_LOHIFI)
++		snd_soc_component_write(component,
++					WCD939X_RX_NEW_INT_HPH_RDAC_BIAS_LOHIFI, 0x52);
++	else
++		snd_soc_component_write(component,
++					WCD939X_RX_NEW_INT_HPH_RDAC_BIAS_LOHIFI, 0x64);
++}
++
++static void wcd939x_hph_pcm_dac_teardown(struct snd_soc_component *component,
++					 bool hphr)
++{
++	u16 comp_base = hphr ? WCD939X_R_CTL0 : WCD939X_COMPANDER_HPHL_CTL0;
++
++	/* disable both companders, whichever channel powers down first */
++	snd_soc_component_update_bits(component, WCD939X_DIGITAL_CDC_COMP_CTL_0,
++				      WCD939X_CDC_COMP_CTL_0_HPHL_COMP_EN |
++				      WCD939X_CDC_COMP_CTL_0_HPHR_COMP_EN, 0);
++
++	/* gain source back to register */
++	snd_soc_component_write_field(component, WCD939X_HPH_L_EN,
++				      WCD939X_L_EN_GAIN_SOURCE_SEL, true);
++	snd_soc_component_write_field(component, WCD939X_HPH_R_EN,
++				      WCD939X_R_EN_GAIN_SOURCE_SEL, true);
++
++	/* compander clock off, hold soft reset */
++	snd_soc_component_update_bits(component, comp_base + 0, 0x03, 0x02);
++}
++
++static void wcd939x_hph_pcm_pre_pa(struct snd_soc_component *component,
++				   bool hphr)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++	u16 cfg0 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG0 : WCD939X_RX_TOP_HPHL_PATH_CFG0;
++	u16 cfg1 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG1 : WCD939X_RX_TOP_HPHL_PATH_CFG1;
++
++	/* crosstalk enable for L and R */
++	snd_soc_component_write(component, WCD939X_RX_TOP_PATH_CFG2, 0x0f);
++	/* DC droop coefficient for 9.6 MHz RX clock */
++	snd_soc_component_write(component, cfg1, 0x03);
++	/* delay zero-notch enable, then interpolator enable (stock order) */
++	if (hphr) {
++		snd_soc_component_write(component, cfg0, 0x02);
++		snd_soc_component_write(component, cfg0, 0x06);
++	} else {
++		snd_soc_component_write(component, cfg0, 0x01);
++		snd_soc_component_write(component, cfg0, 0x03);
++	}
++
++	if (wcd939x->hph_mode == CLS_H_HIFI || wcd939x->hph_mode == CLS_AB_HIFI)
++		snd_soc_component_write_field(component, WCD939X_RX_TOP_TOP_CFG0,
++					      WCD939X_TOP_CFG0_HPH_DAC_RATE_SEL, true);
++	else
++		snd_soc_component_write_field(component, WCD939X_RX_TOP_TOP_CFG0,
++					      WCD939X_TOP_CFG0_HPH_DAC_RATE_SEL, false);
++}
++
++static void wcd939x_hph_pcm_post_pa(struct snd_soc_component *component,
++				    bool hphr)
++{
++	u16 cfg0 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG0 : WCD939X_RX_TOP_HPHL_PATH_CFG0;
++	u16 cfg1 = hphr ? WCD939X_RX_TOP_HPHR_PATH_CFG1 : WCD939X_RX_TOP_HPHL_PATH_CFG1;
++
++	snd_soc_component_write(component, cfg0, 0x00);
++	snd_soc_component_write(component, cfg1, 0x00);
++}
++
+ static int wcd939x_codec_hphl_dac_event(struct snd_soc_dapm_widget *w,
+ 					struct snd_kcontrol *kcontrol,
+ 					int event)
+@@ -511,9 +672,12 @@
+ 
+ 	switch (event) {
+ 	case SND_SOC_DAPM_PRE_PMU:
+-		snd_soc_component_write_field(component, WCD939X_HPH_RDAC_CLK_CTL1,
+-					      WCD939X_RDAC_CLK_CTL1_OPAMP_CHOP_CLK_EN,
+-					      false);
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_pre_dac(component, false);
++		else
++			snd_soc_component_write_field(component, WCD939X_HPH_RDAC_CLK_CTL1,
++						      WCD939X_RDAC_CLK_CTL1_OPAMP_CHOP_CLK_EN,
++						      false);
+ 
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_HPH_GAIN_CTL,
+ 					      WCD939X_CDC_HPH_GAIN_CTL_HPHL_RX_EN, true);
+@@ -521,7 +685,9 @@
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_L,
+ 					      WCD939X_RDAC_HD2_CTL_L_HD2_RES_DIV_CTL_L, 0x1d);
+-		if (wcd939x->comp1_enable) {
++		if (wcd939x->hph_pcm_enabled) {
++			wcd939x_hph_pcm_post_dac(component);
++		} else if (wcd939x->comp1_enable) {
+ 			snd_soc_component_write_field(component,
+ 						      WCD939X_DIGITAL_CDC_COMP_CTL_0,
+ 						      WCD939X_CDC_COMP_CTL_0_HPHL_COMP_EN,
+@@ -546,6 +712,8 @@
+ 		}
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_dac_teardown(component, false);
+ 		snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_L,
+ 					      WCD939X_RDAC_HD2_CTL_L_HD2_RES_DIV_CTL_L, 1);
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_HPH_GAIN_CTL,
+@@ -568,9 +736,12 @@
+ 
+ 	switch (event) {
+ 	case SND_SOC_DAPM_PRE_PMU:
+-		snd_soc_component_write_field(component, WCD939X_HPH_RDAC_CLK_CTL1,
+-					      WCD939X_RDAC_CLK_CTL1_OPAMP_CHOP_CLK_EN,
+-					      false);
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_pre_dac(component, true);
++		else
++			snd_soc_component_write_field(component, WCD939X_HPH_RDAC_CLK_CTL1,
++						      WCD939X_RDAC_CLK_CTL1_OPAMP_CHOP_CLK_EN,
++						      false);
+ 
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_HPH_GAIN_CTL,
+ 					      WCD939X_CDC_HPH_GAIN_CTL_HPHR_RX_EN, true);
+@@ -578,7 +749,9 @@
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_R,
+ 					      WCD939X_RDAC_HD2_CTL_R_HD2_RES_DIV_CTL_R, 0x1d);
+-		if (wcd939x->comp2_enable) {
++		if (wcd939x->hph_pcm_enabled) {
++			wcd939x_hph_pcm_post_dac(component);
++		} else if (wcd939x->comp2_enable) {
+ 			snd_soc_component_write_field(component,
+ 						      WCD939X_DIGITAL_CDC_COMP_CTL_0,
+ 						      WCD939X_CDC_COMP_CTL_0_HPHR_COMP_EN,
+@@ -602,6 +775,8 @@
+ 		}
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_dac_teardown(component, true);
+ 		snd_soc_component_write_field(component, WCD939X_HPH_NEW_INT_RDAC_HD2_CTL_R,
+ 					      WCD939X_RDAC_HD2_CTL_R_HD2_RES_DIV_CTL_R, 1);
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_CDC_HPH_GAIN_CTL,
+@@ -658,11 +833,15 @@
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, true);
+ 
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_pre_pa(component, true);
++
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+ 					WCD_CLSH_STATE_HPHR, hph_mode);
+ 		wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+-		if (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP)
++		if (!wcd939x->hph_pcm_enabled &&
++		    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP))
+ 			snd_soc_component_write_field(component,
+ 					WCD939X_HPH_REFBUFF_LP_CTL,
+ 					WCD939X_REFBUFF_LP_CTL_PREREF_FILT_BYPASS, true);
+@@ -680,8 +859,10 @@
+ 			usleep_range(2500, 2600); /* 2.5msec delay as per HW requirement */
+ 
+ 		set_bit(HPH_PA_DELAY, &wcd939x->status_mask);
+-		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL1,
+-					      WCD939X_PDM_WD_CTL1_PDM_WD_EN, 3);
++		/* PDM watchdog guards the PDM data path only */
++		if (!wcd939x->hph_pcm_enabled)
++			snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL1,
++						      WCD939X_PDM_WD_CTL1_PDM_WD_EN, 3);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		/*
+@@ -695,8 +876,9 @@
+ 			else
+ 				usleep_range(7000, 7100);
+ 
+-			if (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI ||
+-			    hph_mode == CLS_H_ULP)
++			if (!wcd939x->hph_pcm_enabled &&
++			    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI ||
++			     hph_mode == CLS_H_ULP))
+ 				snd_soc_component_write_field(component,
+ 						WCD939X_HPH_REFBUFF_LP_CTL,
+ 						WCD939X_REFBUFF_LP_CTL_PREREF_FILT_BYPASS,
+@@ -711,10 +893,20 @@
+ 						      WCD939X_RX_SUPPLIES_REGULATOR_MODE,
+ 						      true);
+ 
+-		enable_irq(wcd939x->hphr_pdm_wd_int);
++		/*
++		 * PCM mode: PA power level 0b11 as on stock; the 0b10 the
++		 * class-H controller picks leaves a constant output hiss.
++		 */
++		if (wcd939x->hph_pcm_enabled)
++			snd_soc_component_write_field(component, WCD939X_ANA_HPH,
++						      WCD939X_HPH_PWR_LEVEL, 3);
++		/* PDM watchdog interrupt for the PDM data path only */
++		if (!wcd939x->hph_pcm_enabled)
++			enable_irq(wcd939x->hphr_pdm_wd_int);
+ 		break;
+ 	case SND_SOC_DAPM_PRE_PMD:
+-		disable_irq_nosync(wcd939x->hphr_pdm_wd_int);
++		if (!wcd939x->hph_pcm_enabled)
++			disable_irq_nosync(wcd939x->hphr_pdm_wd_int);
+ 		/*
+ 		 * 7ms sleep is required if compander is enabled as per
+ 		 * HW requirement. If compander is disabled, then
+@@ -752,6 +944,8 @@
+ 					      WCD939X_HPH_HPHR_REF_ENABLE, false);
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL1,
+ 					      WCD939X_PDM_WD_CTL1_PDM_WD_EN, 0);
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_post_pa(component, true);
+ 
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
+ 					WCD_CLSH_STATE_HPHR, hph_mode);
+@@ -780,11 +974,16 @@
+ 		if (wcd939x->ldoh)
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, true);
++
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_pre_pa(component, false);
++
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+ 					WCD_CLSH_STATE_HPHL, hph_mode);
+ 		wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+-		if (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP)
++		if (!wcd939x->hph_pcm_enabled &&
++		    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP))
+ 			snd_soc_component_write_field(component,
+ 						WCD939X_HPH_REFBUFF_LP_CTL,
+ 						WCD939X_REFBUFF_LP_CTL_PREREF_FILT_BYPASS,
+@@ -803,8 +1002,10 @@
+ 			usleep_range(2500, 2600); /* 2.5msec delay as per HW requirement */
+ 
+ 		set_bit(HPH_PA_DELAY, &wcd939x->status_mask);
+-		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL0,
+-					      WCD939X_PDM_WD_CTL0_PDM_WD_EN, 3);
++		/* PDM watchdog guards the PDM data path only */
++		if (!wcd939x->hph_pcm_enabled)
++			snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL0,
++						      WCD939X_PDM_WD_CTL0_PDM_WD_EN, 3);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMU:
+ 		/*
+@@ -817,8 +1018,9 @@
+ 				usleep_range(20000, 20100);
+ 			else
+ 				usleep_range(7000, 7100);
+-			if (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI ||
+-			    hph_mode == CLS_H_ULP)
++			if (!wcd939x->hph_pcm_enabled &&
++			    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI ||
++			     hph_mode == CLS_H_ULP))
+ 				snd_soc_component_write_field(component,
+ 						WCD939X_HPH_REFBUFF_LP_CTL,
+ 						WCD939X_REFBUFF_LP_CTL_PREREF_FILT_BYPASS,
+@@ -832,10 +1034,20 @@
+ 			snd_soc_component_write_field(component, WCD939X_ANA_RX_SUPPLIES,
+ 						      WCD939X_RX_SUPPLIES_REGULATOR_MODE,
+ 						      true);
+-		enable_irq(wcd939x->hphl_pdm_wd_int);
++		/*
++		 * PCM mode: PA power level 0b11 as on stock; the 0b10 the
++		 * class-H controller picks leaves a constant output hiss.
++		 */
++		if (wcd939x->hph_pcm_enabled)
++			snd_soc_component_write_field(component, WCD939X_ANA_HPH,
++						      WCD939X_HPH_PWR_LEVEL, 3);
++		/* PDM watchdog interrupt for the PDM data path only */
++		if (!wcd939x->hph_pcm_enabled)
++			enable_irq(wcd939x->hphl_pdm_wd_int);
+ 		break;
+ 	case SND_SOC_DAPM_PRE_PMD:
+-		disable_irq_nosync(wcd939x->hphl_pdm_wd_int);
++		if (!wcd939x->hph_pcm_enabled)
++			disable_irq_nosync(wcd939x->hphl_pdm_wd_int);
+ 		/*
+ 		 * 7ms sleep is required if compander is enabled as per
+ 		 * HW requirement. If compander is disabled, then
+@@ -871,6 +1083,8 @@
+ 					      WCD939X_HPH_HPHL_REF_ENABLE, false);
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL0,
+ 					      WCD939X_PDM_WD_CTL0_PDM_WD_EN, 0);
++		if (wcd939x->hph_pcm_enabled)
++			wcd939x_hph_pcm_post_pa(component, false);
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
+ 					WCD_CLSH_STATE_HPHL, hph_mode);
+ 		if (wcd939x->ldoh)
+@@ -1549,6 +1763,13 @@
+ 	else
+ 		wcd939x->comp1_enable = value;
+ 
++	/*
++	 * In HPH PCM mode the compander runs inside the codec and the
++	 * SoundWire COMP gain port stays unused.
++	 */
++	if (wcd939x->hph_pcm_enabled)
++		return 1;
++
+ 	if (value)
+ 		wcd939x_connect_port(wcd, portidx, mc->reg, true);
+ 	else
+@@ -1557,6 +1778,31 @@
+ 	return 1;
+ }
+ 
++static int wcd939x_hph_pcm_enable_get(struct snd_kcontrol *kcontrol,
++				      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.integer.value[0] = wcd939x->hph_pcm_enabled ? 1 : 0;
++
++	return 0;
++}
++
++static int wcd939x_hph_pcm_enable_put(struct snd_kcontrol *kcontrol,
++				      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++
++	if (wcd939x->hph_pcm_enabled == !!ucontrol->value.integer.value[0])
++		return 0;
++
++	wcd939x->hph_pcm_enabled = !!ucontrol->value.integer.value[0];
++
++	return 1;
++}
++
+ static int wcd939x_ldoh_get(struct snd_kcontrol *kcontrol,
+ 			    struct snd_ctl_elem_value *ucontrol)
+ {
+@@ -1795,7 +2041,17 @@
+ 	struct snd_soc_component *comp = snd_kcontrol_chip(kcontrol);
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(comp);
+ 	struct wcd939x_sdw_priv *wcd = wcd939x->sdw_priv[mixer->shift];
+-	unsigned int portidx = wcd->ch_info[mixer->reg].port_num;
++	unsigned int ch_id = mixer->reg;
++	unsigned int portidx;
++
++	/* in HPH PCM mode the HPH stream rides the HIFI_PCM port */
++	if (wcd939x->hph_pcm_enabled) {
++		if (ch_id == WCD939X_HPH_L)
++			ch_id = WCD939X_HIFI_PCM_L;
++		else if (ch_id == WCD939X_HPH_R)
++			ch_id = WCD939X_HIFI_PCM_R;
++	}
++	portidx = wcd->ch_info[ch_id].port_num;
+ 
+ 	ucontrol->value.integer.value[0] = wcd->port_enable[portidx] ? 1 : 0;
+ 
+@@ -1822,11 +2078,21 @@
+ 	struct snd_soc_component *comp = snd_kcontrol_chip(kcontrol);
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(comp);
+ 	struct wcd939x_sdw_priv *wcd = wcd939x->sdw_priv[mixer->shift];
+-	unsigned int portidx = wcd->ch_info[mixer->reg].port_num;
++	unsigned int ch_id = mixer->reg;
++	unsigned int portidx;
++
++	/* in HPH PCM mode the HPH stream rides the HIFI_PCM port */
++	if (wcd939x->hph_pcm_enabled) {
++		if (ch_id == WCD939X_HPH_L)
++			ch_id = WCD939X_HIFI_PCM_L;
++		else if (ch_id == WCD939X_HPH_R)
++			ch_id = WCD939X_HIFI_PCM_R;
++	}
++	portidx = wcd->ch_info[ch_id].port_num;
+ 
+ 	wcd->port_enable[portidx] = !!ucontrol->value.integer.value[0];
+ 
+-	wcd939x_connect_port(wcd, portidx, mixer->reg, wcd->port_enable[portidx]);
++	wcd939x_connect_port(wcd, portidx, ch_id, wcd->port_enable[portidx]);
+ 
+ 	return 1;
+ }
+@@ -2533,6 +2799,9 @@
+ 
+ static const struct snd_kcontrol_new wcd939x_snd_controls[] = {
+ 	/* RX Path */
++	/* must stay ahead of the COMP/HPH switches: restore order matters */
++	SOC_SINGLE_EXT("HPH PCM Switch", SND_SOC_NOPM, 0, 1, 0,
++		       wcd939x_hph_pcm_enable_get, wcd939x_hph_pcm_enable_put),
+ 	SOC_SINGLE_EXT("HPHL_COMP Switch", WCD939X_COMP_L, 0, 1, 0,
+ 		       wcd939x_get_compander, wcd939x_set_compander),
+ 	SOC_SINGLE_EXT("HPHR_COMP Switch", WCD939X_COMP_R, 1, 1, 0,

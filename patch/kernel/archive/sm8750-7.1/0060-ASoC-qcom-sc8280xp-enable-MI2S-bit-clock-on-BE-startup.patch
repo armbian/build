@@ -1,0 +1,106 @@
+ASoC: qcom: sc8280xp: enable the MI2S bit clock around MI2S streams
+
+Cards served by this driver can carry MI2S BE dai-links (the AYN Odin3
+and KONKR Pocket FIT Elite route their speaker amps over MI2S), but
+unlike sc7280/sdm845 the driver never enables the MI2S bit clock: the
+BE streams, yet IBIT stays at enable_count 0, no BCLK leaves the SoC
+and BCLK-slaved amps (aw88261: "check pll lock fail, cannot start")
+never power up. Take the card-level "i2s_clk" (optional, NULL-safe -
+boards without the property are unaffected) and prepare/enable it
+around MI2S BE startup/shutdown, refcounted across the MI2S links.
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 7925aa3..ffb405f 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -2,6 +2,7 @@
+ // Copyright (c) 2022, Linaro Limited
+ 
+ #include <dt-bindings/sound/qcom,q6afe.h>
++#include <linux/clk.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <sound/soc.h>
+@@ -21,6 +22,8 @@ struct sc8280xp_snd_data {
+ 	struct snd_soc_jack jack;
+ 	struct snd_soc_jack dp_jack[8];
+ 	bool jack_setup;
++	struct clk *i2s_clk;
++	int mi2s_clk_count;
+ };
+ 
+ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+@@ -114,9 +117,59 @@ static int sc8280xp_snd_hw_free(struct snd_pcm_substream *substream)
+ 	return qcom_snd_sdw_hw_free(substream, &data->stream_prepared[cpu_dai->id]);
+ }
+ 
++static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	int ret;
++
++	switch (cpu_dai->id) {
++	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
++	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
++		/*
++		 * The MI2S bit clock (DT clock "i2s_clk", a q6prm clock) is
++		 * not managed by the DSP graph: without an explicit enable
++		 * the BE streams but no BCLK ever leaves the SoC and
++		 * BCLK-slaved speaker amps cannot lock their PLL.
++		 */
++		if (++data->mi2s_clk_count == 1) {
++			ret = clk_prepare_enable(data->i2s_clk);
++			if (ret) {
++				data->mi2s_clk_count--;
++				return ret;
++			}
++		}
++		break;
++	default:
++		break;
++	}
++
++	return qcom_snd_sdw_startup(substream);
++}
++
++static void sc8280xp_snd_shutdown(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++
++	switch (cpu_dai->id) {
++	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
++	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
++		if (--data->mi2s_clk_count == 0)
++			clk_disable_unprepare(data->i2s_clk);
++		break;
++	default:
++		break;
++	}
++
++	qcom_snd_sdw_shutdown(substream);
++}
++
+ static const struct snd_soc_ops sc8280xp_be_ops = {
+-	.startup = qcom_snd_sdw_startup,
+-	.shutdown = qcom_snd_sdw_shutdown,
++	.startup = sc8280xp_snd_startup,
++	.shutdown = sc8280xp_snd_shutdown,
+ 	.hw_free = sc8280xp_snd_hw_free,
+ 	.prepare = sc8280xp_snd_prepare,
+ };
+@@ -158,6 +211,11 @@ static int sc8280xp_platform_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
++	data->i2s_clk = devm_clk_get_optional(dev, "i2s_clk");
++	if (IS_ERR(data->i2s_clk))
++		return dev_err_probe(dev, PTR_ERR(data->i2s_clk),
++				     "failed to get i2s_clk\n");
++
+ 	card->driver_name = of_device_get_match_data(dev);
+ 	sc8280xp_add_be_ops(card);
+ 	return devm_snd_soc_register_card(dev, card);

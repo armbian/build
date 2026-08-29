@@ -1,0 +1,74 @@
+From: Anze <aanzdev@gmail.com>
+Date: Mon, 27 Jul 2026 18:00:00 +0200
+Subject: [PATCH] usb: typec: mux: don't swallow EPROBE_DEFER in the dedup check
+
+The 7.1 merge window added a "skip duplicates" filter to typec_mux_match()
+and typec_switch_match(), and started passing the output array in as the
+match data so it can be compared against. Both halves are broken for a
+connector whose mux is not registered yet.
+
+struct device is the FIRST member of struct typec_mux_dev and struct
+typec_switch_dev, so container_of() on a NULL device yields NULL. When
+class_find_device() finds nothing - the normal case while the mux driver
+has not probed yet, e.g. an i2c retimer such as wcd939x-usbss - the dedup
+loop compares that NULL against an array slot that is also NULL, matches,
+and returns NULL. The caller reads that as "no such connection" instead
+of the -EPROBE_DEFER it used to get, so the connector is created WITHOUT
+its mux, permanently: the DP lanes and the AUX/SBU pair are never routed.
+
+The arrays are also uninitialised stack (`struct typec_switch_dev
+*sw_devs[TYPEC_MUX_MAX_DEVS];`), yet the dedup loop reads every slot
+before fwnode_connection_find_matches() has filled them, so a valid switch
+can be dropped by a chance comparison against stack garbage.
+
+7.2 fixed the typec_mux_match() half upstream: the dedup loop is gone from
+it and fwnode_typec_mux_get() passes NULL as the match data now. The
+typec_switch_match() half is unchanged, so only that one is patched here.
+
+Bail out with -EPROBE_DEFER before the dedup loop when no device was
+found, and zero-initialise the array.
+
+[7.1.6: mux half dropped. typec_mux_match() lost its dedup loop and
+fwnode_typec_mux_get() was rewritten (kzalloc_obj + bounded for-loop
+that only reads populated slots) between 7.1.3 and 7.1.6, so that half
+of this bug no longer exists upstream. typec_switch_match() and
+fwnode_typec_switch_get() are unchanged and still carry it -- kept.]
+
+Device-observed on an AYN Odin 3 (SM8750): dock DisplayPort output died
+with the 7.0.11 -> 7.1.3 bump. The firmware enters DP alt mode correctly
+(mux_ctrl=3, pin_assignment=4), raises HPD, and msm_dp powers up its
+clocks and PHY - then the very first DPCD read times out
+(drm_dp_dpcd_probe ... AUX -> (ret=-110)), link_ready stays false and the
+connector reports disconnected, because nothing ever routed the lanes.
+
+Signed-off-by: Anze <aanzdev@gmail.com>
+---
+--- a/drivers/usb/typec/mux.c
++++ b/drivers/usb/typec/mux.c
+@@ -57,6 +57,8 @@
+ 	 */
+ 	dev = class_find_device(&typec_mux_class, NULL, fwnode,
+ 				switch_fwnode_match);
++	if (!dev)
++		return ERR_PTR(-EPROBE_DEFER);
+ 
+ 	/* Skip duplicates */
+ 	for (i = 0; i < TYPEC_MUX_MAX_DEVS; i++)
+@@ -65,7 +67,7 @@
+ 			return NULL;
+ 		}
+ 
+-	return dev ? to_typec_switch_dev(dev) : ERR_PTR(-EPROBE_DEFER);
++	return to_typec_switch_dev(dev);
+ }
+ 
+ /**
+@@ -79,7 +81,7 @@
+  */
+ struct typec_switch *fwnode_typec_switch_get(struct fwnode_handle *fwnode)
+ {
+-	struct typec_switch_dev *sw_devs[TYPEC_MUX_MAX_DEVS];
++	struct typec_switch_dev *sw_devs[TYPEC_MUX_MAX_DEVS] = {};
+ 	struct typec_switch *sw;
+ 	int count;
+ 	int err;
