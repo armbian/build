@@ -19,6 +19,8 @@ compile_armbian-zsh() {
 
 	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "${ARMBIAN_ZSH_BRANCH}"
 	fetch_from_repo "$GITHUB_SOURCE/mroth/evalcache" "evalcache" "commit:d6973f8c3ecde3eabd75c17b47e2222e24ab3e87" # 2025-11-24
+	fetch_from_repo "$GITHUB_SOURCE/zsh-users/zsh-autosuggestions" "zsh-autosuggestions" "commit:85919cd1ffa7d2d5412f6d3fe437ebdbeeec4fc5" # 2025-06-24
+	fetch_from_repo "$GITHUB_SOURCE/zsh-users/zsh-syntax-highlighting" "zsh-syntax-highlighting" "commit:2fc57d63067c18b1100ecdbf684fa5baf49459d1" # 2026-08-22
 
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
@@ -56,8 +58,16 @@ compile_armbian-zsh() {
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
 	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
 
+	# the two most-wanted external plugins: fish-style history suggestions and
+	# command-line syntax highlighting. Dropped into custom/plugins (where oh-my-zsh
+	# resolves plugin names first) and enabled in the plugins=() list below.
+	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/plugins
+	cp -R "${SRC}"/cache/sources/zsh-autosuggestions "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/plugins
+	cp -R "${SRC}"/cache/sources/zsh-syntax-highlighting "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/plugins
+
 	# @TODO: do this properly (not-copy it to begin with)
 	rm -rf "${tmp_dir}/${armbian_zsh_dir}"/etc/.git "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins/.git
+	find "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/plugins -type d -name .git -prune -exec rm -rf {} +
 
 	# bash<->zsh compatibility shims, auto-loaded for every user via oh-my-zsh
 	# ($ZSH/custom/*.zsh) so it is not baked per-.zshrc. Restores the bash builtins
@@ -107,7 +117,9 @@ compile_armbian-zsh() {
 	sed -i "s/^# zstyle ':omz:update' mode disabled.*/zstyle ':omz:update' mode disabled/g" "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	# define default plugins
-	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+	# zsh-syntax-highlighting must stay LAST — it wraps the line editor and has to
+	# load after every other plugin's widgets are defined.
+	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker zsh-autosuggestions zsh-syntax-highlighting)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	# add collection of Armbian BASH aliases also to ZSH. They are compatible
 	cat "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases >> "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
