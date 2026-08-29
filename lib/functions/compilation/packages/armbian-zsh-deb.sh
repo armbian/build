@@ -59,6 +59,37 @@ compile_armbian-zsh() {
 	# @TODO: do this properly (not-copy it to begin with)
 	rm -rf "${tmp_dir}/${armbian_zsh_dir}"/etc/.git "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins/.git
 
+	# bash<->zsh compatibility shims, auto-loaded for every user via oh-my-zsh
+	# ($ZSH/custom/*.zsh) so it is not baked per-.zshrc. Restores the bash builtins
+	# zsh lacks (complete/compgen/compopt via bashcompinit; mapfile/readarray).
+	# NB: scripts with a #!/bin/bash shebang always run under bash regardless of
+	# the login shell — this only smooths bash typed/sourced into interactive zsh.
+	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom
+	cat > "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/custom/armbian-compat.zsh <<- 'ARMBIAN_COMPAT_EOF'
+		# Armbian bash<->zsh interactive compatibility shims (auto-loaded by oh-my-zsh).
+		# Scripts with a #!/bin/bash shebang run under bash regardless of the login
+		# shell; this only smooths bash snippets typed at the prompt or sourced into an
+		# interactive zsh, restoring the bash builtins zsh omits.
+
+		# bashcompinit provides the complete/compgen/compopt builtins so a tool's
+		# bash-completion file works under zsh too.
+		autoload -Uz +X bashcompinit 2>/dev/null && bashcompinit 2>/dev/null
+
+		# mapfile / readarray: read stdin lines into an array. The array name is the
+		# last argument; -t/-d/... flags are accepted and ignored and the trailing
+		# newline is always stripped (the -t common case).
+		if (( ! ${+builtins[mapfile]} )); then
+			mapfile() {
+				emulate -L zsh
+				local __name=${@[-1]} __line
+				local -a __buf
+				while IFS= read -r __line; do __buf+=("$__line"); done
+				set -A "$__name" "${__buf[@]}"
+			}
+			readarray() { mapfile "$@" }
+		fi
+	ARMBIAN_COMPAT_EOF
+
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
