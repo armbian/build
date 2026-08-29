@@ -146,6 +146,23 @@ function post_family_tweaks__ayn-odin3_enable_services() {
 	return 0
 }
 
+function post_family_tweaks__ayn-odin3_mesa_backports() {
+	# The Adreno 830 needs a newer Mesa than trixie ships; pull the GL and
+	# Vulkan stack from backports, otherwise the desktop falls back to llvmpipe.
+	# Only trixie needs this: sid and forky already carry 26.1, and Ubuntu has
+	# no backports pocket with a newer Mesa (noble 25.2, resolute 26.0).
+	# The Armbian rootfs already lists trixie-backports in debian.sources.
+	if [[ "${DISTRIBUTION}" != "Debian" || "${RELEASE}" != "trixie" ]]; then
+		display_alert "No Mesa backports path for this release" "${DISTRIBUTION} ${RELEASE}" "warn"
+		return 0
+	fi
+	do_with_retries 3 chroot_sdcard_apt_get -t trixie-backports install libgl1-mesa-dri libegl-mesa0 libgbm1 mesa-vulkan-drivers
+
+	# GMEM workaround for the A830, harmless where it does not apply
+	mkdir -p "${SDCARD}"/etc/environment.d
+	echo "FD_MESA_DEBUG=sysmem" > "${SDCARD}"/etc/environment.d/50-odin3-mesa.conf
+}
+
 function post_family_tweaks_bsp__ayn-odin3_bsp_firmware_in_initrd() {
 	display_alert "Adding to bsp-cli" "${BOARD}: firmware in initrd" "warn"
 	declare file_added_to_bsp_destination # Will be filled in by add_file_from_stdin_to_bsp_destination
