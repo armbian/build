@@ -91,6 +91,8 @@ function pre_customize_image__ayn-odin3_alsa_ucm_conf() {
 			unzip_dir=$(unzip -Z1 temp.zip | head -n1 | cut -d/ -f1)
 			cp -rf "${unzip_dir}/"* .
 			rm -rf "$unzip_dir" temp.zip
+			# UEFI boot composes a different UCM card name than the ABL bootimg one
+			ln -sf SM8750-AYN.conf ucm2/conf.d/sm8750/ayn-AYNOdin3-.conf
 		)
 	)
 }
