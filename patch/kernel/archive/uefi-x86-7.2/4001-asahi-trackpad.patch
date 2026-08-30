@@ -444,14 +444,23 @@ Will be used for supporting MacBook trackpads connected via SPI.
 
 Signed-off-by: Janne Grunau <j@jannau.net>
 ---
- drivers/hid/hid-magicmouse.c | 32 +++++++++++++++++++++++++++++++-
- 1 file changed, 31 insertions(+), 1 deletion(-)
+[Armbian] Rebased for Linux 7.2. Upstream hardened the DOUBLE_REPORT_ID path
+against unbounded recursion: the parser became __magicmouse_raw_event() with a
+'nested' flag, wrapped by magicmouse_raw_event(). This patch splits that same
+parser into a per-bus handler, so applying it unchanged left the 'if (nested)'
+guard behind in the split-out body, which no longer has that parameter
+("'nested' undeclared"), while the flag itself was silently dropped at the new
+dispatch. Move the guard into the dispatcher instead: it is the single choke
+point every report passes through, so the check keeps working without adding
+'nested' to the input_ops signature that later patches build on.
+
+ drivers/hid/hid-magicmouse.c | 50 ++++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 40 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/hid/hid-magicmouse.c b/drivers/hid/hid-magicmouse.c
-index 956aad89e..c4498bc8e 100644
 --- a/drivers/hid/hid-magicmouse.c
 +++ b/drivers/hid/hid-magicmouse.c
-@@ -114,6 +114,13 @@ MODULE_PARM_DESC(report_undeciphered, "Report undeciphered multi-touch state fie
+@@ -114,6 +114,13 @@ MODULE_PARM_DESC(report_undeciphered, "R
  #define TRACKPAD2_RES_Y \
  	((TRACKPAD2_MAX_Y - TRACKPAD2_MIN_Y) / (TRACKPAD2_DIMENSION_Y / 100))
  
@@ -465,7 +474,7 @@ index 956aad89e..c4498bc8e 100644
  /**
   * struct magicmouse_sc - Tracks Magic Mouse-specific data.
   * @input: Input device through which we report events.
-@@ -127,6 +134,7 @@ MODULE_PARM_DESC(report_undeciphered, "Report undeciphered multi-touch state fie
+@@ -127,6 +134,7 @@ MODULE_PARM_DESC(report_undeciphered, "R
   * @hdev: Pointer to the underlying HID device.
   * @work: Workqueue to handle initialization retry for quirky devices.
   * @battery_timer: Timer for obtaining battery level information.
@@ -481,10 +490,19 @@ index 956aad89e..c4498bc8e 100644
  };
  
  static int magicmouse_firm_touch(struct magicmouse_sc *msc)
-@@ -389,6 +398,14 @@ static int magicmouse_raw_event(struct hid_device *hdev,
- 		struct hid_report *report, u8 *data, int size)
+@@ -389,6 +398,23 @@ static int __magicmouse_raw_event(struct
+ 		struct hid_report *report, u8 *data, int size, bool nested)
  {
  	struct magicmouse_sc *msc = hid_get_drvdata(hdev);
++
++	/*
++	 * A double report only ever wraps two normal reports, so it is never
++	 * nested. Refuse to recurse a second time; otherwise a malicious
++	 * device could chain DOUBLE_REPORT_ID packets to drive unbounded
++	 * recursion and overflow the kernel stack.
++	 */
++	if (nested && size >= 1 && data[0] == DOUBLE_REPORT_ID)
++		return 0;
 +
 +	return msc->input_ops.raw_event(hdev, report, data, size);
 +}
@@ -496,7 +514,23 @@ index 956aad89e..c4498bc8e 100644
  	struct input_dev *input = msc->input;
  	int x = 0, y = 0, ii, clicks = 0, npoints;
  
-@@ -538,7 +555,17 @@ static int magicmouse_event(struct hid_device *hdev, struct hid_field *field,
+@@ -497,15 +523,6 @@ static int __magicmouse_raw_event(struct
+ 		 * packet.
+ 		 */
+ 
+-		/*
+-		 * A double report only ever wraps two normal reports, so it is
+-		 * never nested. Refuse to recurse a second time; otherwise a
+-		 * malicious device could chain DOUBLE_REPORT_ID packets to drive
+-		 * unbounded recursion and overflow the kernel stack.
+-		 */
+-		if (nested)
+-			return 0;
+-
+ 		/* Ensure that we have at least 2 elements (report type and size) */
+ 		if (size < 2)
+ 			return 0;
+@@ -569,7 +586,17 @@ static int magicmouse_event(struct hid_d
  	return 0;
  }
  
@@ -515,7 +549,7 @@ index 956aad89e..c4498bc8e 100644
  {
  	int error;
  	int mt_flags = 0;
-@@ -865,6 +892,9 @@ static int magicmouse_probe(struct hid_device *hdev,
+@@ -905,6 +932,9 @@ static int magicmouse_probe(struct hid_d
  		return -ENOMEM;
  	}
  
