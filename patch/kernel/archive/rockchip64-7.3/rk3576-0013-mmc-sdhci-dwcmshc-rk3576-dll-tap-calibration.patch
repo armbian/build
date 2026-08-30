@@ -1,0 +1,164 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] mmc: sdhci-of-dwcmshc: rk3576: calibrate the HS400 DLL taps
+
+On dwcmshc revision 1 the HS400 path programs fixed DLL taps (TX and
+CMDOUT at 90 degrees, STRBIN at the generic default) and never feeds the
+measured DLL lock value back into the tap-value select. The rk3576
+vendor driver does both: it reads the locked DLL value out of
+DLL_STATUS0 and supplies it as the tap-value select on every DLL clock
+line, and it uses different HS400 taps (TX 7, CMDOUT 7, STRBIN 5) plus
+BOTH_CLK_EDGE rather than EN_SRC_CLK_NEG on CMDOUT.
+
+Without that calibration the HS400 timing has very little margin on
+rk3576. On an Anbernic RG Vita Pro (rk3576, Micron eMMC in HS400-ES at
+200MHz) sustained I/O stalls with
+
+  mmc0: Timeout waiting for hardware interrupt.
+
+for CMD13/CMD18/CMD24 alike - the command or its data phase never
+completes, the block layer stalls for seconds, and a kernel compile or
+a large apt transaction grinds to a halt. Forcing the card down to
+HS200 (by dropping mmc-hs400-1_8v/mmc-hs400-enhanced-strobe from the DT)
+makes the stalls disappear entirely, which points at the HS400 timing
+rather than at the card or the filesystem: the eMMC reports a pristine
+PRE_EOL/LIFE_TIME and fsck finds nothing.
+
+revision == 1 is shared by every non-rk356x SoC (rk3576, rk3588, ...),
+so gate the calibration on a dedicated needs_hs400_dll_calibration flag
+set only for rk3576. rk3588 and the other revision-1 SoCs keep their
+existing 90-degree CMDOUT taps and STRBIN default untouched.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+--- a/drivers/mmc/host/sdhci-of-dwcmshc.c
++++ b/drivers/mmc/host/sdhci-of-dwcmshc.c
+@@ -117,6 +117,13 @@
+ #define DLL_CMDOUT_TAPNUM_FROM_SW	BIT(24)
+ #define DLL_CMDOUT_SRC_CLK_NEG		BIT(28)
+ #define DLL_CMDOUT_EN_SRC_CLK_NEG	BIT(29)
++#define DLL_CMDOUT_BOTH_CLK_EDGE	BIT(30)
++#define DLL_TAP_VALUE_SEL		BIT(25)
++#define DLL_TAP_VALUE_OFFSET		8
++/* HS400 DLL taps used by rk3576, taken from the vendor driver */
++#define DLL_TXCLK_TAPNUM_RK3576		0x7
++#define DLL_CMDOUT_TAPNUM_RK3576	0x7
++#define DLL_STRBIN_TAPNUM_RK3576	0x5
+ 
+ #define DLL_LOCK_WO_TMOUT(x) \
+ 	((((x) & DWCMSHC_EMMC_DLL_LOCKED) == DWCMSHC_EMMC_DLL_LOCKED) && \
+@@ -333,6 +340,13 @@ struct rockchip_pltfm_data {
+ 	 * - Revision 1: Implemented in all other Rockchip SoCs, including RK3576, RK3588, etc.
+ 	 */
+ 	int revision;
++	/*
++	 * rk3576 additionally needs the vendor HS400 DLL tap calibration
++	 * (see dwcmshc_phy_1_8v_init()). Other revision-1 SoCs such as rk3588
++	 * must keep their existing taps, so gate it on a dedicated flag rather
++	 * than on revision == 1 (which is shared by all revision-1 SoCs).
++	 */
++	bool needs_hs400_dll_calibration;
+ };
+ 
+ static void dwcmshc_enable_card_clk(struct sdhci_host *host)
+@@ -756,7 +770,7 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 	struct rk35xx_priv *priv = dwc_priv->priv;
+ 	const struct rockchip_pltfm_data *rockchip_pdata = to_pltfm_data(dwc_priv, rockchip);
+ 	u8 txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT;
+-	u32 extra, reg;
++	u32 extra, reg, dll_lock_value;
+ 	int err;
+ 
+ 	host->mmc->actual_clock = 0;
+@@ -842,23 +856,54 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 		goto enable_clk;
+ 	}
+ 
++	dll_lock_value = ((sdhci_readl(host, DWCMSHC_EMMC_DLL_STATUS0) & 0xFF) * 2) & 0xFF;
++
+ 	extra = 0x1 << 16 | /* tune clock stop en */
+ 		0x3 << 17 | /* pre-change delay */
+ 		0x3 << 19;  /* post-change delay */
+ 	sdhci_writel(host, extra, dwc_priv->vendor_specific_area1 + DWCMSHC_EMMC_ATCTRL);
+ 
++	/*
++	 * rk3576 feeds the measured DLL lock value back as the tap-value
++	 * select on every DLL clock line. Without that calibration the HS400
++	 * timing has little margin and sustained I/O stalls with "Timeout
++	 * waiting for hardware interrupt". Other revision-1 SoCs (rk3588, ...)
++	 * keep their existing taps, so gate this on the dedicated flag.
++	 */
++	if (rockchip_pdata->needs_hs400_dll_calibration &&
++	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
++		extra = DWCMSHC_EMMC_DLL_DLYENA |
++			DLL_TAP_VALUE_SEL |
++			dll_lock_value << DLL_TAP_VALUE_OFFSET;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
++	}
++
+ 	if (host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
+ 	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
+ 		txclk_tapnum = priv->txclk_tapnum;
+ 
+ 	if (rockchip_pdata->revision == 1 && host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
+-		txclk_tapnum = DLL_TXCLK_TAPNUM_90_DEGREES;
+-
+-		extra = DLL_CMDOUT_SRC_CLK_NEG |
+-			DLL_CMDOUT_EN_SRC_CLK_NEG |
+-			DWCMSHC_EMMC_DLL_DLYENA |
+-			DLL_CMDOUT_TAPNUM_90_DEGREES |
+-			DLL_CMDOUT_TAPNUM_FROM_SW;
++		if (rockchip_pdata->needs_hs400_dll_calibration) {
++			/* rk3576: calibrated taps plus the measured DLL lock value */
++			txclk_tapnum = DLL_TXCLK_TAPNUM_RK3576;
++
++			extra = DLL_CMDOUT_SRC_CLK_NEG |
++				DLL_CMDOUT_BOTH_CLK_EDGE |
++				DWCMSHC_EMMC_DLL_DLYENA |
++				DLL_CMDOUT_TAPNUM_RK3576 |
++				DLL_CMDOUT_TAPNUM_FROM_SW |
++				DLL_TAP_VALUE_SEL |
++				dll_lock_value << DLL_TAP_VALUE_OFFSET;
++		} else {
++			/* rk3588 and other revision-1 SoCs: original fixed taps */
++			txclk_tapnum = DLL_TXCLK_TAPNUM_90_DEGREES;
++
++			extra = DLL_CMDOUT_SRC_CLK_NEG |
++				DLL_CMDOUT_EN_SRC_CLK_NEG |
++				DWCMSHC_EMMC_DLL_DLYENA |
++				DLL_CMDOUT_TAPNUM_90_DEGREES |
++				DLL_CMDOUT_TAPNUM_FROM_SW;
++		}
+ 		sdhci_writel(host, extra, DECMSHC_EMMC_DLL_CMDOUT);
+ 	}
+ 
+@@ -866,11 +911,21 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 		DLL_TXCLK_TAPNUM_FROM_SW |
+ 		DLL_RXCLK_NO_INVERTER << DWCMSHC_EMMC_DLL_RXCLK_SRCSEL |
+ 		txclk_tapnum;
++	if (rockchip_pdata->needs_hs400_dll_calibration &&
++	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
++		extra |= DLL_TAP_VALUE_SEL |
++			 dll_lock_value << DLL_TAP_VALUE_OFFSET;
+ 	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_TXCLK);
+ 
+ 	extra = DWCMSHC_EMMC_DLL_DLYENA |
+-		DLL_STRBIN_TAPNUM_DEFAULT |
+ 		DLL_STRBIN_TAPNUM_FROM_SW;
++	if (rockchip_pdata->needs_hs400_dll_calibration &&
++	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
++		extra |= DLL_STRBIN_TAPNUM_RK3576 |
++			 DLL_TAP_VALUE_SEL |
++			 dll_lock_value << DLL_TAP_VALUE_OFFSET;
++	else
++		extra |= DLL_STRBIN_TAPNUM_DEFAULT;
+ 	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_STRBIN);
+ 
+ enable_clk:
+@@ -2152,6 +2207,7 @@ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3576_pdata = {
+ 		.postinit = dwcmshc_rk3576_postinit,
+ 	},
+ 	.revision = 1,
++	.needs_hs400_dll_calibration = true,
+ };
+ 
+ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3588_pdata = {

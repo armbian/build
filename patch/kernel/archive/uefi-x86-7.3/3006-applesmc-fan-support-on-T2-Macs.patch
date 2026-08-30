@@ -1,0 +1,227 @@
+From e77e6a12cd389d1d61b861a1c88a6f393daa6d91 Mon Sep 17 00:00:00 2001
+From: Paul Pawlowski <paul@mrarm.io>
+Date: Sun, 17 Nov 2019 23:12:18 +0100
+Subject: [PATCH 6/9] applesmc: fan support on T2 Macs
+
+T2 Macs changed the fan values from shorts to
+floats, and changed the fan manual override
+setting from a bitmask to a per-fan boolean
+named F0Md (thanks to @kleuter for mentioning
+it).
+
+A minimal soft-float implementation has been
+written for convert floats to integers (and vice
+versa).
+
+Signed-off-by: Aun-Ali Zaidi <admin@kodeit.net>
+---
+ drivers/hwmon/applesmc.c | 119 +++++++++++++++++++++++++++++++++------
+ 1 file changed, 102 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/hwmon/applesmc.c b/drivers/hwmon/applesmc.c
+index 435541f9f..46b64eba7 100644
+--- a/drivers/hwmon/applesmc.c
++++ b/drivers/hwmon/applesmc.c
+@@ -87,6 +87,7 @@
+ #define FAN_ID_FMT		"F%dID" /* r-o char[16] */
+ 
+ #define TEMP_SENSOR_TYPE	"sp78"
++#define FLOAT_TYPE		"flt "
+ 
+ /* List of keys used to read/write fan speeds */
+ static const char *const fan_speed_fmt[] = {
+@@ -96,6 +97,7 @@ static const char *const fan_speed_fmt[] = {
+ 	"F%dSf",		/* safe speed - not all models */
+ 	"F%dTg",		/* target speed (manual: rw) */
+ };
++#define FAN_MANUAL_FMT "F%dMd"
+ 
+ #define INIT_TIMEOUT_MSECS	5000	/* wait up to 5s for device init ... */
+ #define INIT_WAIT_MSECS		50	/* ... in 50ms increments */
+@@ -734,6 +736,42 @@ static int applesmc_read_s16(struct applesmc_device *smc,
+ 	return 0;
+ }
+ 
++/**
++ * applesmc_float_to_u32 - Retrieve the integral part of a float.
++ * This is needed because Apple made fans use float values in the T2.
++ * The fractional point is not significantly useful though, and the integral
++ * part can be easily extracted.
++ */
++static inline u32 applesmc_float_to_u32(u32 d)
++{
++	u8 sign = (u8) ((d >> 31) & 1);
++	s32 exp = (s32) ((d >> 23) & 0xff) - 0x7f;
++	u32 fr = d & ((1u << 23) - 1);
++
++	if (sign || exp < 0)
++		return 0;
++
++	return (u32) ((1u << exp) + (fr >> (23 - exp)));
++}
++
++/**
++ * applesmc_u32_to_float - Convert an u32 into a float.
++ * See applesmc_float_to_u32 for a rationale.
++ */
++static inline u32 applesmc_u32_to_float(u32 d)
++{
++	u32 dc = d, bc = 0, exp;
++
++	if (!d)
++		return 0;
++
++	while (dc >>= 1)
++		++bc;
++	exp = 0x7f + bc;
++
++	return (u32) ((exp << 23) |
++		((d << (23 - (exp - 0x7f))) & ((1u << 23) - 1)));
++}
+ /*
+  * applesmc_device_init - initialize the accelerometer.  Can sleep.
+  */
+@@ -1241,6 +1279,7 @@ static ssize_t applesmc_show_fan_speed(struct device *dev,
+ 				struct device_attribute *attr, char *sysfsbuf)
+ {
+ 	struct applesmc_device *smc = dev_get_drvdata(dev);
++	const struct applesmc_entry *entry;
+ 	int ret;
+ 	unsigned int speed = 0;
+ 	char newkey[5];
+@@ -1249,11 +1288,21 @@ static ssize_t applesmc_show_fan_speed(struct device *dev,
+ 	scnprintf(newkey, sizeof(newkey), fan_speed_fmt[to_option(attr)],
+ 		  to_index(attr));
+ 
+-	ret = applesmc_read_key(smc, newkey, buffer, 2);
++	entry = applesmc_get_entry_by_key(smc, newkey);
++	if (IS_ERR(entry))
++		return PTR_ERR(entry);
++
++	if (!strcmp(entry->type, FLOAT_TYPE)) {
++		ret = applesmc_read_entry(smc, entry, (u8 *) &speed, 4);
++		speed = applesmc_float_to_u32(speed);
++	} else {
++		ret = applesmc_read_entry(smc, entry, buffer, 2);
++		speed = ((buffer[0] << 8 | buffer[1]) >> 2);
++	}
++
+ 	if (ret)
+ 		return ret;
+ 
+-	speed = ((buffer[0] << 8 | buffer[1]) >> 2);
+ 	return sysfs_emit(sysfsbuf, "%u\n", speed);
+ }
+ 
+@@ -1262,6 +1311,7 @@ static ssize_t applesmc_store_fan_speed(struct device *dev,
+ 					const char *sysfsbuf, size_t count)
+ {
+ 	struct applesmc_device *smc = dev_get_drvdata(dev);
++	const struct applesmc_entry *entry;
+ 	int ret;
+ 	unsigned long speed;
+ 	char newkey[5];
+@@ -1273,9 +1323,18 @@ static ssize_t applesmc_store_fan_speed(struct device *dev,
+ 	scnprintf(newkey, sizeof(newkey), fan_speed_fmt[to_option(attr)],
+ 		  to_index(attr));
+ 
+-	buffer[0] = (speed >> 6) & 0xff;
+-	buffer[1] = (speed << 2) & 0xff;
+-	ret = applesmc_write_key(smc, newkey, buffer, 2);
++	entry = applesmc_get_entry_by_key(smc, newkey);
++	if (IS_ERR(entry))
++		return PTR_ERR(entry);
++
++	if (!strcmp(entry->type, FLOAT_TYPE)) {
++		speed = applesmc_u32_to_float(speed);
++		ret = applesmc_write_entry(smc, entry, (u8 *) &speed, 4);
++	} else {
++		buffer[0] = (speed >> 6) & 0xff;
++		buffer[1] = (speed << 2) & 0xff;
++		ret = applesmc_write_key(smc, newkey, buffer, 2);
++	}
+ 
+ 	if (ret)
+ 		return ret;
+@@ -1290,12 +1349,26 @@ static ssize_t applesmc_show_fan_manual(struct device *dev,
+ 	int ret;
+ 	u16 manual = 0;
+ 	u8 buffer[2];
++	char newkey[5];
++	bool has_newkey = false;
++
++	scnprintf(newkey, sizeof(newkey), FAN_MANUAL_FMT, to_index(attr));
++
++	ret = applesmc_has_key(smc, newkey, &has_newkey);
++	if (ret)
++		return ret;
++
++	if (has_newkey) {
++		ret = applesmc_read_key(smc, newkey, buffer, 1);
++		manual = buffer[0];
++	} else {
++		ret = applesmc_read_key(smc, FANS_MANUAL, buffer, 2);
++		manual = ((buffer[0] << 8 | buffer[1]) >> to_index(attr)) & 0x01;
++	}
+ 
+-	ret = applesmc_read_key(smc, FANS_MANUAL, buffer, 2);
+ 	if (ret)
+ 		return ret;
+ 
+-	manual = ((buffer[0] << 8 | buffer[1]) >> to_index(attr)) & 0x01;
+ 	return sysfs_emit(sysfsbuf, "%d\n", manual);
+ }
+ 
+@@ -1306,27 +1379,39 @@ static ssize_t applesmc_store_fan_manual(struct device *dev,
+ 	struct applesmc_device *smc = dev_get_drvdata(dev);
+ 	int ret;
+ 	u8 buffer[2];
++	char newkey[5];
++	bool has_newkey = false;
+ 	unsigned long input;
+ 	u16 val;
+ 
+ 	if (kstrtoul(sysfsbuf, 10, &input) < 0)
+ 		return -EINVAL;
+ 
+-	ret = applesmc_read_key(smc, FANS_MANUAL, buffer, 2);
++	scnprintf(newkey, sizeof(newkey), FAN_MANUAL_FMT, to_index(attr));
++
++	ret = applesmc_has_key(smc, newkey, &has_newkey);
+ 	if (ret)
+-		goto out;
++		return ret;
+ 
+-	val = (buffer[0] << 8 | buffer[1]);
++	if (has_newkey) {
++		buffer[0] = input & 1;
++		ret = applesmc_write_key(smc, newkey, buffer, 1);
++	} else {
++		ret = applesmc_read_key(smc, FANS_MANUAL, buffer, 2);
++		val = (buffer[0] << 8 | buffer[1]);
++		if (ret)
++			goto out;
+ 
+-	if (input)
+-		val = val | (0x01 << to_index(attr));
+-	else
+-		val = val & ~(0x01 << to_index(attr));
++		if (input)
++			val = val | (0x01 << to_index(attr));
++		else
++			val = val & ~(0x01 << to_index(attr));
+ 
+-	buffer[0] = (val >> 8) & 0xFF;
+-	buffer[1] = val & 0xFF;
++		buffer[0] = (val >> 8) & 0xFF;
++		buffer[1] = val & 0xFF;
+ 
+-	ret = applesmc_write_key(smc, FANS_MANUAL, buffer, 2);
++		ret = applesmc_write_key(smc, FANS_MANUAL, buffer, 2);
++	}
+ 
+ out:
+ 	if (ret)
+-- 
+2.45.2
+
