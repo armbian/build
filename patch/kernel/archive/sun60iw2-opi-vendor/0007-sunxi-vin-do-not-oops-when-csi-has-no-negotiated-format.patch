@@ -1,0 +1,72 @@
+From 2ebbf2f30bdda389833216624aa4bfb240ec7e2a Mon Sep 17 00:00:00 2001
+From: Alin Ciciu <periqlesfpv@gmail.com>
+Date: Sun, 30 Aug 2026 17:29:13 +0000
+Subject: [PATCH 1/2] sunxi-vin: do not oops when CSI has no negotiated format
+
+Starting a capture on video0 without a fully negotiated pipeline (for
+example when the device is reopened and streamed without a complete
+S_INPUT/S_FMT cycle in the same open, which sequential v4l2-ctl
+invocations do) leaves csi->csi_fmt NULL. __csi_set_fmt_hw() then
+dereferences it during STREAMON and the resulting oops takes down the
+whole SoC: hard hang, nothing on the console, watchdog-only recovery.
+
+Guard the format pointer (-EPIPE per the STREAMON documentation for an
+invalid pipeline configuration), propagate the error from the CSI
+s_stream path instead of ignoring it, and gate the parser back off on
+the failure path.
+
+Note the surrounding vendor stream paths can still mask the errno on
+its way to userspace; the point of this patch is that a misconfigured
+pipeline no longer freezes the board.
+
+Verified on Orange Pi Zero 3W (A733) with an IMX219 on CAM1: the exact
+reproducer that previously hard-froze the SoC now fails harmlessly, and
+a correctly negotiated pipeline streams NV12 1080p30 normally.
+
+Signed-off-by: Alin Ciciu <periqlesfpv@gmail.com>
+---
+ bsp/drivers/vin/vin-csi/sunxi_csi.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/bsp/drivers/vin/vin-csi/sunxi_csi.c b/bsp/drivers/vin/vin-csi/sunxi_csi.c
+index 4b949bfa5..0dceb60ae 100644
+--- a/bsp/drivers/vin/vin-csi/sunxi_csi.c
++++ b/bsp/drivers/vin/vin-csi/sunxi_csi.c
+@@ -300,6 +300,21 @@ static void csi_par_g_output_size(struct csi_dev *csi,
+ static int __csi_set_fmt_hw(struct csi_dev *csi)
+ {
+ 	struct v4l2_mbus_framefmt *mf = &csi->mf;
++
++	if (!csi->csi_fmt) {
++		/*
++		 * The active format was never negotiated on this subdev
++		 * (media-graph format propagation did not reach it, e.g.
++		 * when the device is reopened and streamed without a full
++		 * S_INPUT/S_FMT cycle in the same open). Dereferencing
++		 * csi_fmt below oopses inside STREAMON, which on this SoC
++		 * takes down the whole system. Fail instead.
++		 */
++		vin_err("csi%d: no active format, aborting stream on\n",
++			csi->id);
++		return -EPIPE;
++	}
++
+ 	struct prs_ncsi_bt656_header bt656_header;
+ 	struct prs_mcsi_if_cfg mcsi_if;
+ 	struct prs_cap_mode mode;
+@@ -519,7 +534,11 @@ static int sunxi_csi_subdev_s_stream(struct v4l2_subdev *sd, int enable)
+ 		csic_prs_enable(csi->id);
+ 		csic_prs_disable(csi->id);
+ 		csic_prs_enable(csi->id);
+-		__csi_set_fmt_hw(csi);
++		if (__csi_set_fmt_hw(csi)) {
++			csic_prs_disable(csi->id);
++			csic_prs_pclk_en(csi->id, 0);
++			return -EPIPE;
++		}
+ 	} else {
+ 		csi->tvin.flag = false;
+ #ifndef SUPPORT_ISP_TDM
+-- 
+2.53.0
+
