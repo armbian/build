@@ -113,18 +113,18 @@ function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
 		#!/bin/bash
 		[[ "$1" == "prereqs" ]] && exit 0
 		. /usr/share/initramfs-tools/hook-functions
-		for f in $(find /lib/firmware/qcom/sm8550 -type f) ; do
+		for f in $(find /lib/firmware/qcom/sm8550 -type f -follow) ; do
 		add_firmware "${f#/lib/firmware/}"
 		done
 		add_firmware "qcom/a740_sqe.fw" # Extra one for dpu
 		add_firmware "qcom/gmu_gen70200.bin" # Extra one for gpu
 		add_firmware "qcom/vpu/vpu30_p4.mbn" # Extra one for vpu
 		# Extra one for wifi
-		for f in $(find /lib/firmware/ath12k/WCN7850/hw2.0 -type f) ; do
+		for f in $(find /lib/firmware/ath12k/WCN7850/hw2.0 -type f -follow) ; do
 		add_firmware "${f#/lib/firmware/}"
 		done
 		# Extra one for bt
-		for f in $(find /lib/firmware/qca -type f) ; do
+		for f in $(find /lib/firmware/qca -type f -follow) ; do
 		add_firmware "${f#/lib/firmware/}"
 		done
 	FIRMWARE_HOOK
