@@ -1,0 +1,219 @@
+From d9d50c0a2ea16ee03a127b08680907b4bf5c6e60 Mon Sep 17 00:00:00 2001
+From: Philippe Simons <simons.philippe@gmail.com>
+Date: Sat, 5 Jul 2025 22:56:35 +0200
+Subject: [PATCH] Add Silergy SY7758 backlight driver
+
+---
+ drivers/video/backlight/Kconfig  |   8 ++
+ drivers/video/backlight/Makefile |   1 +
+ drivers/video/backlight/sy7758.c | 167 +++++++++++++++++++++++++++++++
+ 3 files changed, 176 insertions(+)
+ create mode 100644 drivers/video/backlight/sy7758.c
+
+diff --git a/drivers/video/backlight/Kconfig b/drivers/video/backlight/Kconfig
+index d9374d208cee..35773c0f2a00 100644
+--- a/drivers/video/backlight/Kconfig
++++ b/drivers/video/backlight/Kconfig
+@@ -441,6 +441,14 @@ config BACKLIGHT_SKY81452
+ 	  To compile this driver as a module, choose M here: the module will
+ 	  be called sky81452-backlight
+ 
++config BACKLIGHT_SY7758
++	tristate "Backlight Driver for Silergy SY7758"
++	depends on I2C
++	select REGMAP_I2C
++	help
++		Say Y to enable the backlight driver for the Silergy SY7758
++		backlight controller.
++
+ config BACKLIGHT_TPS65217
+ 	tristate "TPS65217 Backlight"
+ 	depends on MFD_TPS65217
+diff --git a/drivers/video/backlight/Makefile b/drivers/video/backlight/Makefile
+index dfbb169bf6ea..b187cd6024ef 100644
+--- a/drivers/video/backlight/Makefile
++++ b/drivers/video/backlight/Makefile
+@@ -55,6 +55,7 @@ obj-$(CONFIG_BACKLIGHT_QCOM_WLED)	+= qcom-wled.o
+ obj-$(CONFIG_BACKLIGHT_RT4831)		+= rt4831-backlight.o
+ obj-$(CONFIG_BACKLIGHT_SAHARA)		+= kb3886_bl.o
+ obj-$(CONFIG_BACKLIGHT_SKY81452)	+= sky81452-backlight.o
++obj-$(CONFIG_BACKLIGHT_SY7758)		+= sy7758.o
+ obj-$(CONFIG_BACKLIGHT_TPS65217)	+= tps65217_bl.o
+ obj-$(CONFIG_BACKLIGHT_WM831X)		+= wm831x_bl.o
+ obj-$(CONFIG_BACKLIGHT_ARCXCNN) 	+= arcxcnn_bl.o
+diff --git a/drivers/video/backlight/sy7758.c b/drivers/video/backlight/sy7758.c
+new file mode 100644
+index 000000000000..7abad41b9641
+--- /dev/null
++++ b/drivers/video/backlight/sy7758.c
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Backlight driver for the Silergy sy7758
++ *
++ * Copyright (C) 2025 Kancy Joe <kancy2333@outlook.com>
++ */
++
++#include <linux/backlight.h>
++#include <linux/err.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++
++#define DEFAULT_BRIGHTNESS 1500
++#define MAX_BRIGHTNESS 4080
++#define REG_MAX 0xa9
++
++/* reg */
++#define BL_BRT_L 0x10
++#define BL_BRT_H 0x11
++
++static DEFINE_MUTEX(sy7758_update_backlight_mutex);
++
++struct sy7758 {
++	struct i2c_client *client;
++	struct regmap *regmap;
++	bool led_on;
++};
++
++static void sy7758_init(struct sy7758 *sydev);
++
++static const struct regmap_config sy7758_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = REG_MAX,
++};
++
++static int sy7758_write(struct sy7758 *sydev, unsigned int reg,
++			 unsigned int val)
++{
++	return regmap_write(sydev->regmap, reg, val);
++}
++
++static int sy7758_backlight_update_status(struct backlight_device *backlight_dev)
++{
++	struct sy7758 *sydev = bl_get_data(backlight_dev);
++	unsigned int brightness = backlight_get_brightness(backlight_dev);
++	mutex_lock(&sy7758_update_backlight_mutex);
++
++	if (!sydev->led_on && brightness > 0) {
++		// Init
++		sy7758_init(sydev);
++		sydev->led_on = true;
++	} else if (brightness == 0) {
++		sydev->led_on = false;
++	}
++
++	/* Set brightness */
++	sy7758_write(sydev, BL_BRT_L, brightness & 0xf0);
++	sy7758_write(sydev, BL_BRT_H, (brightness >> 8) & 0xf);
++
++	mutex_unlock(&sy7758_update_backlight_mutex);
++	return 0;
++}
++
++static const struct backlight_ops sy7758_backlight_ops = {
++	.options = BL_CORE_SUSPENDRESUME,
++	.update_status = sy7758_backlight_update_status,
++};
++
++static void sy7758_init(struct sy7758 *sydev)
++{
++	sy7758_write(sydev, 0x01, 0x85);
++	sy7758_write(sydev, 0x10, 0x00);
++	sy7758_write(sydev, 0x11, 0x00);
++	sy7758_write(sydev, 0xa5, 0x64);
++	sy7758_write(sydev, 0xa0, 0x55);
++	sy7758_write(sydev, 0xa1, 0x9a);
++	sy7758_write(sydev, 0xa9, 0x80);
++	sy7758_write(sydev, 0xa2, 0x28);
++	/* Wait init done */
++	msleep(10);
++	sy7758_write(sydev, 0x10, 0x40);
++	sy7758_write(sydev, 0x11, 0x01);
++	// Max brightness
++	// 0x10: 0xf0 Low
++	// 0x11: 0x0f High
++
++	// Min brightness
++	// 0x10: 0x10  Low
++	// 0x11: 0x00  High
++	sydev->led_on = true;
++}
++
++static int sy7758_probe(struct i2c_client *client)
++{
++	struct backlight_device *backlight_dev;
++	struct backlight_properties props;
++	struct sy7758 *sydev;
++
++	sydev = devm_kzalloc(&client->dev, sizeof(*sydev), GFP_KERNEL);
++	if (!sydev)
++		return -ENOMEM;
++
++	sydev->client = client;
++	sydev->regmap = devm_regmap_init_i2c(client, &sy7758_regmap_config);
++	if (IS_ERR(sydev->regmap))
++		return dev_err_probe(&client->dev, PTR_ERR(sydev->regmap), "failed to init regmap\n");
++
++	memset(&props, 0, sizeof(props));
++	props.type = BACKLIGHT_RAW;
++	props.max_brightness = MAX_BRIGHTNESS;
++	props.brightness = DEFAULT_BRIGHTNESS;
++	props.scale = BACKLIGHT_SCALE_LINEAR;
++
++	backlight_dev = devm_backlight_device_register(&client->dev, "sy7758-backlight",
++					&client->dev, sydev, &sy7758_backlight_ops, &props);
++	if (IS_ERR(backlight_dev))
++		return dev_err_probe(&client->dev, PTR_ERR(backlight_dev),
++				"failed to register backlight device\n");
++
++	sy7758_init(sydev);
++
++	i2c_set_clientdata(client, backlight_dev);
++	backlight_update_status(backlight_dev);
++
++	return 0;
++}
++
++static void sy7758_remove(struct i2c_client *client)
++{
++	struct backlight_device *backlight_dev = i2c_get_clientdata(client);
++	backlight_dev->props.brightness = 0;
++	backlight_update_status(backlight_dev);
++}
++
++static const struct i2c_device_id sy7758_ids[] = {
++	{ "sy7758" },
++	{}
++};
++MODULE_DEVICE_TABLE(i2c, sy7758_ids);
++
++static const struct of_device_id sy7758_match_table[] = {
++	{
++		.compatible = "silergy,sy7758",
++	},
++	{},
++};
++MODULE_DEVICE_TABLE(of, sy7758_match_table);
++
++static struct i2c_driver sy7758_driver = {
++	.driver = {
++		.name = "sy7758",
++		.of_match_table = sy7758_match_table,
++	},
++	.probe = sy7758_probe,
++	.remove = sy7758_remove,
++	.id_table = sy7758_ids,
++};
++
++module_i2c_driver(sy7758_driver);
++
++MODULE_DESCRIPTION("Silergy sy7758 Backlight Driver");
++MODULE_AUTHOR("Kancy Joe <kancy2333@outlook.com>");
++MODULE_LICENSE("GPL");
+-- 
+2.50.0
+

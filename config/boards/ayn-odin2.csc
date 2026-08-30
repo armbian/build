@@ -34,9 +34,10 @@ if [[ "${WITH_GRUB}" == "yes" ]]; then
 	enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
 else
 	declare -g BOOTFS_TYPE="fat"
-	declare -g BOOTSIZE="256"
+	declare -g BOOTSIZE="512"
 	declare -g IMAGE_PARTITION_TABLE="gpt"
 	declare -g BOOTIMG_CMDLINE_EXTRA="clk_ignore_unused pd_ignore_unused rw quiet rootwait"
+	declare -g BOOT_FDT_FILE="qcom/qcs8550-${BOARD}.dtb"
 
 	function pre_umount_final_image__update_ABL_settings() {
 		if [ -z "$BOOTFS_TYPE" ]; then
