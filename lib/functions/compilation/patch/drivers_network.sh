@@ -267,7 +267,7 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sun* ]]; then
 
 		# Attach to specific commit (is branch:master)
-		local xradio_xr819_ver="commit:43992a7e7ed95ff815cf6d8ba81cef1085e50ab9" # Commit date: Oct 11, 2025 (please update when updating commit ref)
+		local xradio_xr819_ver="commit:3ce657ae533e2213f6fda2297da1598fa11d7a03" # Commit date: Sep 1, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
