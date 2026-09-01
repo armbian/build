@@ -36,11 +36,11 @@ function post_family_config__core3588e_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01"
+	declare -g BOOTBRANCH="tag:v2026.07"
+	declare -g BOOTPATCHDIR="v2026.07"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 
-	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-usb471.bin u-boot-rockchip-usb472.bin"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
 	function write_uboot_platform() {
@@ -63,9 +63,6 @@ function pre_config_uboot_target__core3588e_patch_rockchip_common_boot_order() {
 function post_config_uboot_target__extra_configs_for_core3588e_mainline_environment_in_spi() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable board-specific configs" "info"
 	run_host_command_logged scripts/config --enable CONFIG_CMD_MISC
-
-	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable RAMBoot images" "info"
-	run_host_command_logged scripts/config --enable CONFIG_ROCKCHIP_MASKROM_IMAGE
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
@@ -94,12 +91,24 @@ function post_config_uboot_target__extra_configs_for_core3588e_mainline_environm
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
 	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
 
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
+	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable MBed TLS stuff" "info"
+	run_host_command_logged scripts/config --enable CONFIG_WGET_HTTPS
+	run_host_command_logged scripts/config --enable CONFIG_WGET_CACERT
+	#run_host_command_logged scripts/config --enable CONFIG_WGET_BUILTIN_CACERT # not yet
+	run_host_command_logged scripts/config --enable CONFIG_MBEDTLS_LIB
+
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
-	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB")
 	for config in "${enable_configs[@]}"; do
 		run_host_command_logged scripts/config --enable "${config}"
 	done
 	# Auto-enabled by the above, force off...
 	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+	return 0
 }
