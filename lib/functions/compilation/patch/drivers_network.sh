@@ -463,7 +463,7 @@ driver_rtl88x2cs() {
 	# Only used for meson64 family boards, use mainline rtw88 driver for all other boards
 	# If doesn't build,ask @adeepn for a fix
 
-	if linux-version compare "${version}" ge 5.9 && linux-version compare "${version}" lt 7.3 && [[ "$LINUXFAMILY" == meson64 ]]; then
+	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
 		local rtl88x2csver='commit:f4263fc6ecd11465bf60ce142aa76e2e85e2cbf3' # Commit date: Sep 1, 2026 (please update when updating commit ref)
