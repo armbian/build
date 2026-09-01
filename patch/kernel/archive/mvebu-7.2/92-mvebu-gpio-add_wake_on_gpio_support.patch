@@ -1,0 +1,126 @@
+From b67e64d4eb9765d23010f423e29a627a25f5ac2e Mon Sep 17 00:00:00 2001
+From: Rosen Penev <rosenp@gmail.com>
+Date: Sun, 28 Jun 2026 16:02:02 -0700
+Subject: [PATCH] gpio: mvebu: add wake-up interrupt support
+
+Implement wake IRQ support for the mvebu GPIO controller:
+
+- Replace unused irqbase field with bank_irq[4] to store per-bank
+  IRQ numbers for use in the wake-up callback.
+- Add mvebu_gpio_set_wake_irq() that forwards enable_irq_wake /
+  disable_irq_wake to the correct parent IRQ based on hwirq.
+- Set IRQCHIP_SET_TYPE_MASKED and IRQCHIP_MASK_ON_SUSPEND flags
+  on both level and edge chip types.
+- Set IRQ_GC_INIT_NESTED_LOCK for the nested irq domain.
+- Add missing <linux/interrupt.h> include.
+
+Assisted-by: opencode:big-pickle
+Signed-off-by: Rosen Penev <rosenp@gmail.com>
+Link: https://patch.msgid.link/20260628230202.1209991-1-rosenp@gmail.com
+Signed-off-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+---
+ drivers/gpio/gpio-mvebu.c | 40 ++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpio/gpio-mvebu.c b/drivers/gpio/gpio-mvebu.c
+index c030d1f00abc..26092b223be5 100644
+--- a/drivers/gpio/gpio-mvebu.c
++++ b/drivers/gpio/gpio-mvebu.c
+@@ -37,6 +37,7 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/gpio/machine.h>
+ #include <linux/init.h>
++#include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/irq.h>
+ #include <linux/irqchip/chained_irq.h>
+@@ -114,7 +115,7 @@ struct mvebu_gpio_chip {
+ 	struct regmap     *regs;
+ 	u32		   offset;
+ 	struct regmap     *percpu_regs;
+-	int		   irqbase;
++	int		   bank_irq[4];
+ 	struct irq_domain *domain;
+ 	int		   soc_variant;
+ 
+@@ -603,6 +604,34 @@ static const struct regmap_config mvebu_gpio_regmap_config = {
+ 	.val_bits = 32,
+ };
+ 
++/*
++ * Forward wake-up configuration to the parent bank IRQ.
++ * @d:		interrupt data
++ * @enable:	enable as wake-up if non-zero
++ *
++ * Return: 0 on success, or a negative error code.
++ */
++static int mvebu_gpio_set_wake_irq(struct irq_data *d, unsigned int enable)
++{
++	struct irq_chip_generic *gc = irq_data_get_irq_chip_data(d);
++	struct mvebu_gpio_chip *mvchip = gc->private;
++	int bank;
++	int irq;
++
++	bank = d->hwirq / 8;
++	if (bank >= ARRAY_SIZE(mvchip->bank_irq))
++		return -EINVAL;
++
++	irq = mvchip->bank_irq[bank];
++	if (irq <= 0)
++		return -EINVAL;
++
++	if (enable)
++		return enable_irq_wake(irq);
++
++	return disable_irq_wake(irq);
++}
++
+ /*
+  * Functions implementing the pwm_chip methods
+  */
+@@ -1253,7 +1282,7 @@ static int mvebu_gpio_probe(struct platform_device *pdev)
+ 
+ 	err = irq_alloc_domain_generic_chips(
+ 	    mvchip->domain, ngpios, 2, np->name, handle_level_irq,
+-	    IRQ_NOREQUEST | IRQ_NOPROBE | IRQ_LEVEL, 0, 0);
++	    IRQ_NOREQUEST | IRQ_NOPROBE | IRQ_LEVEL, 0, IRQ_GC_INIT_NESTED_LOCK);
+ 	if (err) {
+ 		dev_err(&pdev->dev, "couldn't allocate irq chips %s (DT).\n",
+ 			mvchip->chip.label);
+@@ -1271,6 +1300,8 @@ static int mvebu_gpio_probe(struct platform_device *pdev)
+ 	ct->chip.irq_mask = mvebu_gpio_level_irq_mask;
+ 	ct->chip.irq_unmask = mvebu_gpio_level_irq_unmask;
+ 	ct->chip.irq_set_type = mvebu_gpio_irq_set_type;
++	ct->chip.irq_set_wake = mvebu_gpio_set_wake_irq;
++	ct->chip.flags = IRQCHIP_SET_TYPE_MASKED | IRQCHIP_MASK_ON_SUSPEND;
+ 	ct->chip.name = mvchip->chip.label;
+ 
+ 	ct = &gc->chip_types[1];
+@@ -1279,6 +1310,8 @@ static int mvebu_gpio_probe(struct platform_device *pdev)
+ 	ct->chip.irq_mask = mvebu_gpio_edge_irq_mask;
+ 	ct->chip.irq_unmask = mvebu_gpio_edge_irq_unmask;
+ 	ct->chip.irq_set_type = mvebu_gpio_irq_set_type;
++	ct->chip.irq_set_wake = mvebu_gpio_set_wake_irq;
++	ct->chip.flags = IRQCHIP_SET_TYPE_MASKED | IRQCHIP_MASK_ON_SUSPEND;
+ 	ct->handler = handle_edge_irq;
+ 	ct->chip.name = mvchip->chip.label;
+ 
+@@ -1287,13 +1320,14 @@ static int mvebu_gpio_probe(struct platform_device *pdev)
+ 	 * interrupt handlers, with each handler dealing with 8 GPIO
+ 	 * pins.
+ 	 */
+-	for (i = 0; i < 4; i++) {
++	for (i = 0; i < ARRAY_SIZE(mvchip->bank_irq); i++) {
+ 		int irq = platform_get_irq_optional(pdev, i);
+ 
+ 		if (irq < 0)
+ 			continue;
+ 		irq_set_chained_handler_and_data(irq, mvebu_gpio_irq_handler,
+ 						 mvchip);
++		mvchip->bank_irq[i] = irq;
+ 	}
+ 
+ 	return 0;
+-- 
+Armbian
+
