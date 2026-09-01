@@ -120,6 +120,27 @@ def to_yaml(gha_workflow):
 	return yaml.safe_dump(gha_workflow, explicit_start=True, default_flow_style=False, sort_keys=False, allow_unicode=True, indent=2, width=1000)
 
 
+# Cut a bash trailing comment off one line: the first '#' that starts a word and
+# is not inside quotes. ARMBIAN_BOARD_CONFIG_REGEX_GENERIC closes its value on
+# either quote character, greedily, so a comment carrying an apostrophe or a
+# quote swallows the rest of the line -- BOARD_NAME="Khadas VIM1S" # don't ...
+# parsed as 'Khadas VIM1S" # don', which then rode into image-info.json and
+# every consumer of it. Strip the comment before matching and the regex sees a
+# clean assignment. A '#' inside the value survives, and a line whose only '#'
+# is quoted (UBOOT_HASH_EXTRA's nested command substitution) is left untouched.
+def strip_bash_trailing_comment(line: str) -> str:
+	quote = None
+	for i, char in enumerate(line):
+		if quote is not None:
+			if char == quote:
+				quote = None
+		elif char in "'\"":
+			quote = char
+		elif char == "#" and (i == 0 or line[i - 1] in " \t"):
+			return line[:i]
+	return line
+
+
 # I've to read the first line from the board file, that's the hardware description in a pound comment.
 # Also, 'KERNEL_TARGET="legacy,current,edge"' which we need to parse.
 def armbian_parse_board_file_for_static_info(board_file, board_id, core_or_userpatched):
@@ -136,7 +157,8 @@ def armbian_parse_board_file_for_static_info(board_file, board_id, core_or_userp
 
 	# Parse generic bash vars, with a horrendous regex.
 	generic_vars = {}
-	generic_var_matches = re.findall(ARMBIAN_BOARD_CONFIG_REGEX_GENERIC, "\n".join(file_lines), re.MULTILINE)
+	board_file_body = "\n".join(strip_bash_trailing_comment(line) for line in file_lines)
+	generic_var_matches = re.findall(ARMBIAN_BOARD_CONFIG_REGEX_GENERIC, board_file_body, re.MULTILINE)
 	for generic_var_match in generic_var_matches:
 		generic_vars[generic_var_match[0]] = generic_var_match[1]
 
