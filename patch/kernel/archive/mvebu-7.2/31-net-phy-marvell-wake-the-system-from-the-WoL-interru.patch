@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rosen Penev <rosenp@gmail.com>
+Date: Sun, 13 Sep 2026 13:51:09 -0700
+Subject: net: phy: marvell: wake the system from the WoL interrupt
+
+Arm the PHY interrupt as a wake IRQ so a WoL event can raise the
+system from suspend on the 88E1318S/88E1510.
+
+When the MDIO device has a "wakeup-source" property and the PHY has
+a valid interrupt, marvell_probe() registers the PHY interrupt as a
+wake IRQ and marks the device wakeup-capable. m88e1318_set_wol()
+then arms or disarms device wakeup together with the WoL options,
+rolling the PHY config back if the PM state update fails.
+
+The interrupt handler treats the WoL event bit as a handled
+interrupt and reports it to the PM core, so a magic packet received
+while the system is running is not taken for a spurious interrupt.
+
+Assisted-by: LLM
+Signed-off-by: Rosen Penev <rosenp@gmail.com>
+---
+ drivers/net/phy/marvell.c | 53 ++++++++--
+ 1 file changed, 46 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -30,6 +30,8 @@
+ #include <linux/ethtool_netlink.h>
+ #include <linux/phy.h>
+ #include <linux/phy_port.h>
++#include <linux/pm_wakeirq.h>
++#include <linux/property.h>
+ #include <linux/marvell_phy.h>
+ #include <linux/bitfield.h>
+ #include <linux/of.h>
+@@ -419,12 +421,14 @@ static irqreturn_t marvell_handle_interrupt(struct phy_device *phydev)
+ 		return IRQ_NONE;
+ 	}
+ 
+-	if (!(irq_status & MII_M1011_IMASK_INIT))
+-		return IRQ_NONE;
+-
+-	phy_trigger_machine(phydev);
++	if (irq_status & (MII_M1011_IMASK_INIT | MII_88E1318S_PHY_CSIER_WOL_EIE)) {
++		if (irq_status & MII_88E1318S_PHY_CSIER_WOL_EIE)
++			pm_wakeup_event(&phydev->mdio.dev, 0);
++		phy_trigger_machine(phydev);
++		return IRQ_HANDLED;
++	}
+ 
+-	return IRQ_HANDLED;
++	return IRQ_NONE;
+ }
+ 
+ static int marvell_set_polarity(struct phy_device *phydev, int polarity)
+@@ -1972,8 +1976,12 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+ 			    struct ethtool_wolinfo *wol)
+ {
+ 	struct marvell_priv *priv = phydev->priv;
++	struct device *dev = &phydev->mdio.dev;
++	bool wol_enable;
+ 	int err = 0, oldpage;
+ 
++	wol_enable = !!(wol->wolopts & (WAKE_MAGIC | WAKE_PHY));
++
+ 	oldpage = phy_save_page(phydev);
+ 	if (oldpage < 0)
+ 		goto error;
+@@ -2129,7 +2137,25 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+ 	}
+ 
+ error:
+-	return phy_restore_page(phydev, oldpage, err);
++	err = phy_restore_page(phydev, oldpage, err);
++	if (err < 0)
++		return err;
++
++	if (device_can_wakeup(dev) && wol_enable != device_may_wakeup(dev)) {
++		err = device_set_wakeup_enable(dev, wol_enable);
++		if (err < 0) {
++			/* Roll back the PHY WoL config if the PM state update failed */
++			struct ethtool_wolinfo wol_off = { .wolopts = 0 };
++			int rollback_err = m88e1318_set_wol(phydev, &wol_off);
++
++			if (rollback_err < 0)
++				phydev_err(phydev,
++					   "Failed to disable WoL after wakeup enable error %d\n",
++					   rollback_err);
++		}
++	}
++
++	return err;
+ }
+ 
+ static int marvell_get_sset_count(struct phy_device *phydev)
+@@ -3641,14 +3667,27 @@ static int m88e1318_led_hw_control_get(struct phy_device *phydev, u8 index,
+ 
+ static int marvell_probe(struct phy_device *phydev)
+ {
++	struct device *dev = &phydev->mdio.dev;
+ 	struct marvell_priv *priv;
+ 
+-	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+ 	phydev->priv = priv;
+ 
++	if (device_property_present(dev, "wakeup-source") &&
++	    phy_interrupt_is_valid(phydev)) {
++		int ret = devm_pm_set_wake_irq(dev, phydev->irq);
++
++		if (ret) {
++			phydev_warn(phydev, "Cannot register wake IRQ %d: %d\n",
++				    phydev->irq, ret);
++		} else {
++			device_set_wakeup_capable(dev, true);
++		}
++	}
++
+ 	return marvell_hwmon_probe(phydev);
+ }
+ 
+-- 
+Armbian
+
