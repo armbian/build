@@ -1,0 +1,265 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rosen Penev <rosenp@gmail.com>
+Date: Sat, 12 Sep 2026 15:54:31 -0700
+Subject: net: phy: marvell: wake the system only from the WoL event
+
+Enable waking the system from a WoL event on the 88E1318S/88E1510.
+
+When WoL is enabled, m88e1318_set_wol() now calls enable_irq_wake()
+on the PHY's IRQ and marks the MDIO device as a wakeup source so the
+underlying GPIO interrupt raises the system from suspend, and reverses
+both on disable.
+
+With WoL active the PHY must stay powered to detect a magic packet,
+but without masking, phy_suspend() would leave every interrupt
+enabled, so a link status change or any other PHY event would assert
+INTn and spuriously wake the system. Set PHY_ALWAYS_CALL_SUSPEND on
+the 88E1318S/88E1510 drivers so that phy_suspend() still calls their
+suspend callbacks with WoL enabled, and have those callbacks keep the
+PHY awake while writing the interrupt enable register (CSIER/IMASK)
+down to only the WoL event bit.
+
+marvell_config_intr() rewrites the whole CSIER register with
+MII_M1011_IMASK_INIT on resume, clearing the WoL enable bit. Re-arm
+WOL_EIE in the resume callbacks so the WoL interrupt stays active for
+the next sleep cycle.
+
+Assisted-by: LLM
+Signed-off-by: Rosen Penev <rosenp@gmail.com>
+---
+ drivers/net/phy/marvell.c | 145 +++++++++-
+ 1 file changed, 138 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -30,6 +30,8 @@
+ #include <linux/ethtool_netlink.h>
+ #include <linux/phy.h>
+ #include <linux/phy_port.h>
++#include <linux/pm_wakeirq.h>
++#include <linux/property.h>
+ #include <linux/marvell_phy.h>
+ #include <linux/bitfield.h>
+ #include <linux/of.h>
+@@ -1902,6 +1904,61 @@ static int marvell_resume(struct phy_device *phydev)
+ 	return err;
+ }
+ 
++/* marvell_wol_suspend_intrs
++ *
++ * With WoL enabled the PHY has to stay powered to keep detecting a WoL
++ * packet, so instead of entering low power mode, mask all interrupt
++ * sources except the WoL event. On the 88E1318S/88E1510 the interrupt
++ * mask (MII_M1011_IMASK) is the same register as the Copper Specific
++ * Interrupt Enable Register (MII_88E1318S_PHY_CSIER), so writing only
++ * the WoL event enable bit unmask just that event.
++ */
++static int marvell_wol_suspend_intrs(struct phy_device *phydev)
++{
++	int oldpage, ret;
++
++	oldpage = phy_save_page(phydev);
++	if (oldpage < 0)
++		return oldpage;
++
++	ret = marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE);
++	if (ret < 0)
++		goto out;
++
++	ret = __phy_write(phydev, MII_88E1318S_PHY_CSIER,
++			  MII_88E1318S_PHY_CSIER_WOL_EIE);
++out:
++	return phy_restore_page(phydev, oldpage, ret);
++}
++
++/* marvell_wol_resume_intrs
++ *
++ * marvell_config_intr() rewrites the whole MII_M1011_IMASK register
++ * (which is MII_88E1318S_PHY_CSIER) with MII_M1011_IMASK_INIT on
++ * resume, clearing the WoL event interrupt enable bit. Re-arm it if
++ * WoL is still enabled so a later WoL event keeps waking the system.
++ */
++static int marvell_wol_resume_intrs(struct phy_device *phydev)
++{
++	int oldpage, ret;
++
++	if (!phydev->wol_enabled)
++		return 0;
++
++	oldpage = phy_save_page(phydev);
++	if (oldpage < 0)
++		return oldpage;
++
++	ret = marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE);
++	if (ret < 0)
++		goto out;
++
++	ret = __phy_set_bits(phydev, MII_88E1318S_PHY_CSIER,
++			     MII_88E1318S_PHY_CSIER_WOL_EIE);
++out:
++	return phy_restore_page(phydev, oldpage, ret);
++}
++
+ /* m88e1510_resume
+  *
+  * The 88e1510 PHY has an erratum where the phy downshift counter is not cleared
+@@ -1934,9 +1991,25 @@ static int m88e1510_resume(struct phy_device *phydev)
+ 
+ 		/* downshift enabled, with previous counter value */
+ 		err = m88e1011_set_downshift(phydev, cnt);
++		if (err < 0)
++			return err;
+ 	}
+ 
+-	return err;
++	return marvell_wol_resume_intrs(phydev);
++}
++
++/* m88e1510_suspend
++ *
++ * If WoL is enabled the PHY receiver has to keep running to detect a
++ * magic packet, so keep it awake and unmask only the WoL event at the
++ * PHY. Otherwise suspend both the fiber and copper interfaces as usual.
++ */
++static int m88e1510_suspend(struct phy_device *phydev)
++{
++	if (phydev->wol_enabled)
++		return marvell_wol_suspend_intrs(phydev);
++
++	return marvell_suspend(phydev);
+ }
+ 
+ static int marvell_aneg_done(struct phy_device *phydev)
+@@ -1969,8 +2042,12 @@ static void m88e1318_get_wol(struct phy_device *phydev,
+ static int m88e1318_set_wol(struct phy_device *phydev,
+ 			    struct ethtool_wolinfo *wol)
+ {
++	struct device *dev = &phydev->mdio.dev;
++	bool wol_enable;
+ 	int err = 0, oldpage;
+ 
++	wol_enable = !!(wol->wolopts & (WAKE_MAGIC | WAKE_PHY));
++
+ 	oldpage = phy_save_page(phydev);
+ 	if (oldpage < 0)
+ 		goto error;
+@@ -2075,7 +2152,49 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+ 	}
+ 
+ error:
+-	return phy_restore_page(phydev, oldpage, err);
++	err = phy_restore_page(phydev, oldpage, err);
++	if (err < 0)
++		return err;
++
++	if (device_can_wakeup(dev) && wol_enable != device_may_wakeup(dev)) {
++		err = device_set_wakeup_enable(dev, wol_enable);
++		if (err < 0) {
++			/* Roll back the PHY WoL config if the PM state update failed */
++			struct ethtool_wolinfo wol_off = { .wolopts = 0 };
++			int rollback_err = m88e1318_set_wol(phydev, &wol_off);
++
++			if (rollback_err < 0)
++				phydev_err(phydev,
++					   "Failed to disable WoL after wakeup enable error %d\n",
++					   rollback_err);
++		}
++	}
++
++	return err;
++}
++
++/* m88e1318_suspend
++ *
++ * If WoL is enabled keep the PHY awake so it can detect a magic packet
++ * while the system is asleep, unmasking only the WoL event at the PHY.
++ * Otherwise suspend the PHY normally.
++ */
++static int m88e1318_suspend(struct phy_device *phydev)
++{
++	if (phydev->wol_enabled)
++		return marvell_wol_suspend_intrs(phydev);
++
++	return genphy_suspend(phydev);
++}
++
++static int m88e1318_resume(struct phy_device *phydev)
++{
++	int err = genphy_resume(phydev);
++
++	if (err < 0)
++		return err;
++
++	return marvell_wol_resume_intrs(phydev);
+ }
+ 
+ static int marvell_get_sset_count(struct phy_device *phydev)
+@@ -3587,14 +3706,25 @@ static int m88e1318_led_hw_control_get(struct phy_device *phydev, u8 index,
+ 
+ static int marvell_probe(struct phy_device *phydev)
+ {
++	struct device *dev = &phydev->mdio.dev;
+ 	struct marvell_priv *priv;
+ 
+-	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+ 	phydev->priv = priv;
+ 
++	if (device_property_present(dev, "wakeup-source") &&
++	    phy_interrupt_is_valid(phydev)) {
++		int ret = devm_pm_set_wake_irq(dev, phydev->irq);
++
++		if (ret)
++			return ret;
++
++		device_set_wakeup_capable(dev, true);
++	}
++
+ 	return marvell_hwmon_probe(phydev);
+ }
+ 
+@@ -3813,6 +3943,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.phy_id_mask = MARVELL_PHY_ID_MASK,
+ 		.name = "Marvell 88E1318S",
+ 		/* PHY_GBIT_FEATURES */
++		.flags = PHY_ALWAYS_CALL_SUSPEND,
+ 		.probe = marvell_probe,
+ 		.config_init = m88e1318_config_init,
+ 		.config_aneg = m88e1318_config_aneg,
+@@ -3821,8 +3952,8 @@ static struct phy_driver marvell_drivers[] = {
+ 		.handle_interrupt = marvell_handle_interrupt,
+ 		.get_wol = m88e1318_get_wol,
+ 		.set_wol = m88e1318_set_wol,
+-		.resume = genphy_resume,
+-		.suspend = genphy_suspend,
++		.resume = m88e1318_resume,
++		.suspend = m88e1318_suspend,
+ 		.read_page = marvell_read_page,
+ 		.write_page = marvell_write_page,
+ 		.get_sset_count = marvell_get_sset_count,
+@@ -3920,7 +4051,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.name = "Marvell 88E1510",
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+ 		.features = PHY_GBIT_FIBRE_FEATURES,
+-		.flags = PHY_POLL_CABLE_TEST,
++		.flags = PHY_POLL_CABLE_TEST | PHY_ALWAYS_CALL_SUSPEND,
+ 		.probe = marvell_probe,
+ 		.config_init = m88e1510_config_init,
+ 		.config_aneg = m88e1510_config_aneg,
+@@ -3930,7 +4061,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.get_wol = m88e1318_get_wol,
+ 		.set_wol = m88e1318_set_wol,
+ 		.resume = m88e1510_resume,
+-		.suspend = marvell_suspend,
++		.suspend = m88e1510_suspend,
+ 		.read_page = marvell_read_page,
+ 		.write_page = marvell_write_page,
+ 		.get_sset_count = marvell_get_sset_count,
+-- 
+Armbian
+
