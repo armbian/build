@@ -1,0 +1,353 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rosen Penev <rosenp@gmail.com>
+Date: Sun, 13 Sep 2026 13:54:38 -0700
+Subject: net: phy: marvell: keep PHY awake with only the WoL event unmasked
+
+With Wake-on-LAN active the PHY must stay powered to receive a
+magic packet, but phy_suspend() only calls the suspend callback when
+the PHY is not awake-enabled by WoL. PHY_ALWAYS_CALL_SUSPEND makes
+it run the callback anyway as long as the PHY has been configured
+for WoL.
+
+The keep-awake suspend path then rewrites the interrupt mask (which
+aliases MII_88E1318S_PHY_CSIER) down to only the WoL event enable
+bit, keeps the copper receiver running, and suspends the fiber
+interface that would otherwise keep asserting the shared interrupt.
+The resume callback restores the normal interrupt mask. A failed
+keep-awake suspend unwinds the register changes, because phy_suspend()
+treats a nonzero callback return as a fatal error and skips resume.
+
+When the WoL event cannot reach the system (no wake-capable IRQ), the
+PHY reverts to normal suspend instead of staying powered for a
+wakeup that can never fire. Only MAC-managed WoL leaves the PHY fully
+awake, because the MAC still needs it to receive and forward packets.
+
+Assisted-by: LLM
+Signed-off-by: Rosen Penev <rosenp@gmail.com>
+---
+ drivers/net/phy/marvell.c | 248 +++++++++-
+ 1 file changed, 231 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -1908,6 +1908,108 @@ static int marvell_resume(struct phy_device *phydev)
+ 	return err;
+ }
+ 
++/* marvell_wol_suspend_intrs
++ *
++ * With WoL enabled the copper interface has to stay powered to keep
++ * detecting a WoL packet, so instead of entering low power mode, mask
++ * all interrupt sources except the WoL event. On the
++ * 88E1318S/88E1510 the interrupt mask (MII_M1011_IMASK) is the same
++ * register as the Copper Specific Interrupt Enable Register
++ * (MII_88E1318S_PHY_CSIER), so writing only the WoL event enable bit
++ * unmasks just that event.
++ *
++ * On dual-media PHYs the fiber interface is suspended as well: left
++ * powered with its normal interrupt sources it could still assert the
++ * shared interrupt and spuriously wake the system.
++ */
++static int marvell_wol_suspend_intrs(struct phy_device *phydev)
++{
++	bool fiber_down = false, intrs_masked = false;
++	int oldpage, ret = 0;
++
++	oldpage = phy_save_page(phydev);
++	if (oldpage < 0)
++		goto restore;
++
++	ret = marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE);
++	if (ret >= 0) {
++		ret = __phy_write(phydev, MII_88E1318S_PHY_CSIER,
++				  MII_88E1318S_PHY_CSIER_WOL_EIE);
++		if (ret >= 0)
++			intrs_masked = true;
++	}
++
++	/* Clear any latched interrupt events so a stale event does not
++	 * assert the interrupt line during suspend.
++	 */
++	if (ret >= 0) {
++		/* IEVENT holds latched event bits; keep only errors so a
++		 * pending event does not fail the suspend.
++		 */
++		ret = min(0, __phy_read(phydev, MII_M1011_IEVENT));
++	}
++
++	if (ret >= 0 &&
++	    linkmode_test_bit(ETHTOOL_LINK_MODE_FIBRE_BIT,
++			      phydev->supported)) {
++		ret = marvell_write_page(phydev, MII_MARVELL_FIBER_PAGE);
++		if (ret >= 0) {
++			ret = __phy_set_bits(phydev, MII_BMCR, BMCR_PDOWN);
++			if (ret >= 0) {
++				fiber_down = true;
++				ret = min(0, __phy_read(phydev, MII_M1011_IEVENT));
++			}
++		}
++	}
++
++	if (ret < 0) {
++		/* Best-effort unwind: after a failed keep-awake suspend the
++		 * PHY keeps running, and phy_suspend() does not call the
++		 * resume path for a failed suspend callback.
++		 */
++		if (fiber_down &&
++		    marvell_write_page(phydev, MII_MARVELL_FIBER_PAGE) >= 0)
++			__phy_clear_bits(phydev, MII_BMCR, BMCR_PDOWN);
++		if (intrs_masked &&
++		    marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE) >= 0)
++			__phy_write(phydev, MII_88E1318S_PHY_CSIER,
++				    MII_M1011_IMASK_INIT);
++	}
++
++restore:
++	return phy_restore_page(phydev, oldpage, ret);
++}
++
++/* marvell_wol_resume_intrs
++ *
++ * On the keep-awake WoL suspend path marvell_wol_suspend_intrs()
++ * rewrites the whole MII_M1011_IMASK register (which is
++ * MII_88E1318S_PHY_CSIER) down to only the WoL event enable bit.
++ * Restore the normal interrupt mask so link and other PHY events are
++ * reported again after resume. The WoL-only mask is applied again on
++ * the next keep-awake suspend.
++ */
++static int marvell_wol_resume_intrs(struct phy_device *phydev)
++{
++	int oldpage, ret = 0;
++
++	if (!phydev->wol_enabled)
++		return 0;
++
++	oldpage = phy_save_page(phydev);
++	if (oldpage < 0)
++		goto restore;
++
++	ret = marvell_write_page(phydev, MII_MARVELL_COPPER_PAGE);
++	if (ret < 0)
++		goto restore;
++
++	ret = __phy_write(phydev, MII_88E1318S_PHY_CSIER,
++			  MII_M1011_IMASK_INIT);
++restore:
++	return phy_restore_page(phydev, oldpage, ret);
++}
++
+ /* m88e1510_resume
+  *
+  * The 88e1510 PHY has an erratum where the phy downshift counter is not cleared
+@@ -1940,9 +2042,50 @@ static int m88e1510_resume(struct phy_device *phydev)
+ 
+ 		/* downshift enabled, with previous counter value */
+ 		err = m88e1011_set_downshift(phydev, cnt);
++		if (err < 0)
++			return err;
+ 	}
+ 
+-	return err;
++	return marvell_wol_resume_intrs(phydev);
++}
++
++/* m88e1510_suspend
++ *
++ * If WoL is enabled, keep the PHY awake so a magic packet can wake
++ * the system:
++ *
++ * - When the WoL wake event is delivered through a wake-capable IRQ
++ *   (device_may_wakeup()), keep the copper receiver running, mask all
++ *   interrupts except the WoL event, and suspend the fiber interface.
++ * - When WoL is handled by the MAC, the MAC still needs the PHY to
++ *   keep receiving and forwarding packets, so leave the PHY fully
++ *   awake.
++ * - Legacy PHY WoL without a wake-capable IRQ cannot wake the system
++ *   up, so suspend the PHY as usual.
++ */
++static int m88e1510_suspend(struct phy_device *phydev)
++{
++	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++
++	if (!phydev->wol_enabled)
++		return marvell_suspend(phydev);
++
++	if (device_may_wakeup(&phydev->mdio.dev))
++		return marvell_wol_suspend_intrs(phydev);
++
++	/* The ethtool core sets netdev->ethtool->wol_enabled for every
++	 * successful WoL request, including PHY-managed WoL, so it cannot
++	 * identify MAC-managed WoL. Read the PHY's own WoL config instead.
++	 */
++	phy_ethtool_get_wol(phydev, &wol);
++	if (wol.wolopts & (WAKE_MAGIC | WAKE_PHY))
++		return marvell_suspend(phydev);
++
++	/* PHY WoL is off, so the remaining WoL state must be MAC-managed:
++	 * leave the PHY awake so the MAC keeps receiving and forwarding
++	 * packets.
++	 */
++	return 0;
+ }
+ 
+ static int marvell_aneg_done(struct phy_device *phydev)
+@@ -2143,6 +2286,12 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+ 
+ 	if (device_can_wakeup(dev) && wol_enable != device_may_wakeup(dev)) {
+ 		err = device_set_wakeup_enable(dev, wol_enable);
++		/* A racing power/wakeup sysfs write may have enabled wakeup
++		 * between the check and the update, so the desired state is
++		 * already reached; tolerate -EEXIST when enabling.
++		 */
++		if (err == -EEXIST && wol_enable)
++			err = 0;
+ 		if (err < 0) {
+ 			/* Roll back the PHY WoL config if the PM state update failed */
+ 			struct ethtool_wolinfo wol_off = { .wolopts = 0 };
+@@ -2158,6 +2307,50 @@ static int m88e1318_set_wol(struct phy_device *phydev,
+ 	return err;
+ }
+ 
++/* m88e1318_suspend
++ *
++ * If WoL is enabled, keep the PHY awake so a magic packet can wake
++ * the system. When the wake event is delivered through a wake-capable
++ * IRQ (device_may_wakeup()), mask all interrupts except the WoL event.
++ * When WoL is handled by the MAC, the MAC still needs the PHY to keep
++ * receiving and forwarding packets, so leave the PHY fully awake.
++ * Legacy PHY WoL without a wake-capable IRQ cannot wake the system up,
++ * so suspend the PHY as usual.
++ */
++static int m88e1318_suspend(struct phy_device *phydev)
++{
++	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++
++	if (!phydev->wol_enabled)
++		return genphy_suspend(phydev);
++
++	if (device_may_wakeup(&phydev->mdio.dev))
++		return marvell_wol_suspend_intrs(phydev);
++
++	/* The ethtool core sets netdev->ethtool->wol_enabled for every
++	 * successful WoL request, including PHY-managed WoL, so it cannot
++	 * identify MAC-managed WoL. Read the PHY's own WoL config instead.
++	 */
++	phy_ethtool_get_wol(phydev, &wol);
++	if (wol.wolopts & (WAKE_MAGIC | WAKE_PHY))
++		return genphy_suspend(phydev);
++
++	/* PHY WoL is off, so the remaining WoL state must be MAC-managed:
++	 * leave the PHY awake so the MAC keeps receiving and forwarding
++	 * packets.
++	 */
++	return 0;
++}
++
++static int m88e1318_resume(struct phy_device *phydev)
++{
++	int err = genphy_resume(phydev);
++	if (err < 0)
++		return err;
++
++	return marvell_wol_resume_intrs(phydev);
++}
++
+ static int marvell_get_sset_count(struct phy_device *phydev)
+ {
+ 	if (linkmode_test_bit(ETHTOOL_LINK_MODE_FIBRE_BIT,
+@@ -3676,19 +3869,39 @@ static int marvell_probe(struct phy_device *phydev)
+ 
+ 	phydev->priv = priv;
+ 
+-	if (device_property_present(dev, "wakeup-source") &&
+-	    phy_interrupt_is_valid(phydev)) {
+-		int ret = devm_pm_set_wake_irq(dev, phydev->irq);
++	return marvell_hwmon_probe(phydev);
++}
+ 
+-		if (ret) {
+-			phydev_warn(phydev, "Cannot register wake IRQ %d: %d\n",
+-				    phydev->irq, ret);
+-		} else {
+-			device_set_wakeup_capable(dev, true);
+-		}
++/* marvell_wol_probe
++ *
++ * If the PHY is a WoL wakeup source and has a usable interrupt, register
++ * that interrupt as a wake IRQ so the WoL event raises the system from
++ * suspend. Only 88E1318S/88E1510 have the interrupt masking logic WoL
++ * depends on, so the wake IRQ is only set up for those two models.
++ */
++static int marvell_wol_probe(struct phy_device *phydev)
++{
++	struct device *dev = &phydev->mdio.dev;
++	int ret;
++
++	ret = marvell_probe(phydev);
++	if (ret < 0)
++		return ret;
++
++	if (!device_property_present(dev, "wakeup-source") ||
++	    !phy_interrupt_is_valid(phydev))
++		return 0;
++
++	ret = devm_pm_set_wake_irq(dev, phydev->irq);
++	if (ret) {
++		phydev_warn(phydev, "Cannot register wake IRQ %d: %d\n",
++			    phydev->irq, ret);
++		return 0;
+ 	}
+ 
+-	return marvell_hwmon_probe(phydev);
++	device_set_wakeup_capable(dev, true);
++
++	return 0;
+ }
+ 
+ static int m88e1510_port_configure_serdes(struct phy_port *port, bool enable,
+@@ -3906,7 +4119,8 @@ static struct phy_driver marvell_drivers[] = {
+ 		.phy_id_mask = MARVELL_PHY_ID_MASK,
+ 		.name = "Marvell 88E1318S",
+ 		/* PHY_GBIT_FEATURES */
+-		.probe = marvell_probe,
++		.flags = PHY_ALWAYS_CALL_SUSPEND,
++		.probe = marvell_wol_probe,
+ 		.config_init = m88e1318_config_init,
+ 		.config_aneg = m88e1318_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -3914,8 +4128,8 @@ static struct phy_driver marvell_drivers[] = {
+ 		.handle_interrupt = marvell_handle_interrupt,
+ 		.get_wol = m88e1318_get_wol,
+ 		.set_wol = m88e1318_set_wol,
+-		.resume = genphy_resume,
+-		.suspend = genphy_suspend,
++		.resume = m88e1318_resume,
++		.suspend = m88e1318_suspend,
+ 		.read_page = marvell_read_page,
+ 		.write_page = marvell_write_page,
+ 		.get_sset_count = marvell_get_sset_count,
+@@ -4013,8 +4227,8 @@ static struct phy_driver marvell_drivers[] = {
+ 		.name = "Marvell 88E1510",
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+ 		.features = PHY_GBIT_FIBRE_FEATURES,
+-		.flags = PHY_POLL_CABLE_TEST,
+-		.probe = marvell_probe,
++		.flags = PHY_POLL_CABLE_TEST | PHY_ALWAYS_CALL_SUSPEND,
++		.probe = marvell_wol_probe,
+ 		.config_init = m88e1510_config_init,
+ 		.config_aneg = m88e1510_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -4023,7 +4237,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.get_wol = m88e1318_get_wol,
+ 		.set_wol = m88e1318_set_wol,
+ 		.resume = m88e1510_resume,
+-		.suspend = marvell_suspend,
++		.suspend = m88e1510_suspend,
+ 		.read_page = marvell_read_page,
+ 		.write_page = marvell_write_page,
+ 		.get_sset_count = marvell_get_sset_count,
+-- 
+Armbian
+
