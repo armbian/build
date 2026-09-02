@@ -1,0 +1,207 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Mon, 22 Jun 2026 12:17:00 +0200
+Subject: net: stmmac: add Phytium DWMAC glue driver
+
+Add a glue driver for the onboard Ethernet controller found on Phytium
+SoCs such as the D2000. The controller is a Synopsys DesignWare GMAC
+enumerated through ACPI with _HID "PHYT0004"; its ACPI _DSD uses the same
+property names as the snps,dwmac device-tree binding.
+
+Resources and the named "macirq" interrupt are obtained through the
+existing stmmac_get_platform_resources() helper, and the platform data is
+allocated with stmmac_plat_dat_alloc() so the standard defaults apply. As
+the D2000 carries two identical MAC instances, the MDIO bus id is derived
+from the ACPI _UID to keep the bus names distinct.
+
+Phytium firmware describes no clock controller, so a fixed-rate clock is
+registered as the MAC clock; the core uses its rate to set the MDC
+divider and as the PTP reference rate.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/net/ethernet/stmicro/stmmac/Kconfig         |  12 +
+ drivers/net/ethernet/stmicro/stmmac/Makefile        |   1 +
+ drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c | 136 ++++++++++
+ 3 files changed, 149 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/Kconfig b/drivers/net/ethernet/stmicro/stmmac/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/Kconfig
++++ b/drivers/net/ethernet/stmicro/stmmac/Kconfig
+@@ -142,6 +142,18 @@ config DWMAC_NUVOTON
+ 	  for the stmmac device driver. The nuvoton-dwmac driver is
+ 	  used for MA35 series SoCs.
+ 
++config DWMAC_PHYTIUM
++	tristate "Phytium DWMAC support"
++	depends on COMMON_CLK
++	depends on ACPI || COMPILE_TEST
++	help
++	  Support for the onboard Ethernet controller on Phytium SoCs such as
++	  the D2000, where the Synopsys DesignWare MAC is described via ACPI
++	  (_HID "PHYT0004").
++
++	  This selects the Phytium SoC glue layer support for the stmmac
++	  device driver.
++
+ config DWMAC_QCOM_ETHQOS
+ 	tristate "Qualcomm ETHQOS support"
+ 	default ARCH_QCOM
+diff --git a/drivers/net/ethernet/stmicro/stmmac/Makefile b/drivers/net/ethernet/stmicro/stmmac/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/Makefile
++++ b/drivers/net/ethernet/stmicro/stmmac/Makefile
+@@ -21,6 +21,7 @@ obj-$(CONFIG_DWMAC_LPC18XX)	+= dwmac-lpc18xx.o
+ obj-$(CONFIG_DWMAC_MEDIATEK)	+= dwmac-mediatek.o
+ obj-$(CONFIG_DWMAC_MESON)	+= dwmac-meson.o dwmac-meson8b.o
+ obj-$(CONFIG_DWMAC_NUVOTON)	+= dwmac-nuvoton.o
++obj-$(CONFIG_DWMAC_PHYTIUM)	+= dwmac-phytium.o
+ obj-$(CONFIG_DWMAC_QCOM_ETHQOS)	+= dwmac-qcom-ethqos.o
+ obj-$(CONFIG_DWMAC_RENESAS_GBETH) += dwmac-renesas-gbeth.o
+ obj-$(CONFIG_DWMAC_ROCKCHIP)	+= dwmac-rk.o
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c
+@@ -0,0 +1,136 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Phytium DWMAC glue driver
++ *
++ * Copyright (C) 2026 Ricardo Pardini <ricardo@pardini.net>
++ *
++ * Glue layer for the Synopsys DesignWare MAC found on Phytium SoCs such as the
++ * D2000, where the onboard GMAC is described through ACPI (_HID "PHYT0004").
++ * Configuration comes from the ACPI _DSD, whose property names mirror the
++ * snps,dwmac device-tree binding. The firmware exposes no clock controller, so
++ * a fixed-rate clock is registered for the core to derive the MDC divider and
++ * the PTP reference rate from.
++ */
++
++#include <linux/acpi.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/etherdevice.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++
++#include "stmmac.h"
++#include "stmmac_platform.h"
++
++#define PHYTIUM_DWMAC_DEFAULT_CLK_RATE	125000000	/* 125 MHz */
++#define PHYTIUM_DWMAC_DEFAULT_FIFO_SIZE	0x10000
++
++static void phytium_dwmac_clk_disable(void *data)
++{
++	clk_disable_unprepare(data);
++}
++
++static int phytium_dwmac_probe(struct platform_device *pdev)
++{
++	struct plat_stmmacenet_data *plat;
++	struct device *dev = &pdev->dev;
++	struct fwnode_handle *fwnode;
++	struct stmmac_resources res;
++	struct acpi_device *adev;
++	struct clk_hw *clk_hw;
++	u64 clk_freq, uid;
++	int ret;
++
++	fwnode = dev_fwnode(dev);
++
++	ret = stmmac_get_platform_resources(pdev, &res);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get platform resources\n");
++
++	device_get_mac_address(dev, res.mac);
++
++	plat = stmmac_plat_dat_alloc(dev);
++	if (!plat)
++		return -ENOMEM;
++
++	plat->mdio_bus_data = devm_kzalloc(dev, sizeof(*plat->mdio_bus_data),
++					   GFP_KERNEL);
++	if (!plat->mdio_bus_data)
++		return -ENOMEM;
++
++	ret = fwnode_get_phy_mode(fwnode);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to get PHY mode\n");
++	plat->phy_interface = ret;
++
++	plat->core_type = DWMAC_CORE_GMAC;
++	plat->pmt = 1;
++
++	/*
++	 * Each MAC needs a distinct MDIO bus id, otherwise a second instance
++	 * clashes on the bus name; derive it from the ACPI _UID.
++	 */
++	adev = ACPI_COMPANION(dev);
++	if (adev && !acpi_dev_uid_to_integer(adev, &uid))
++		plat->bus_id = uid;
++
++	/* Queue 0 must be in DCB mode (MTL_QUEUE_AVB is the zero default). */
++	plat->rx_queues_cfg[0].mode_to_use = MTL_QUEUE_DCB;
++	plat->tx_queues_cfg[0].mode_to_use = MTL_QUEUE_DCB;
++	plat->rx_sched_algorithm = MTL_RX_ALGORITHM_SP;
++	plat->tx_sched_algorithm = MTL_TX_ALGORITHM_SP;
++
++	plat->tx_fifo_size = PHYTIUM_DWMAC_DEFAULT_FIFO_SIZE;
++	plat->rx_fifo_size = PHYTIUM_DWMAC_DEFAULT_FIFO_SIZE;
++
++	device_property_read_u32(dev, "snps,pbl", &plat->dma_cfg->pbl);
++	if (!plat->dma_cfg->pbl)
++		plat->dma_cfg->pbl = DEFAULT_DMA_PBL;
++	plat->dma_cfg->pblx8 = true;
++
++	/*
++	 * No clock controller is described in firmware, so register a
++	 * fixed-rate clock as the MAC clock.
++	 */
++	if (fwnode_property_read_u64(fwnode, "clock-frequency", &clk_freq))
++		clk_freq = PHYTIUM_DWMAC_DEFAULT_CLK_RATE;
++
++	clk_hw = devm_clk_hw_register_fixed_rate(dev, dev_name(dev), NULL, 0,
++						 clk_freq);
++	if (IS_ERR(clk_hw))
++		return dev_err_probe(dev, PTR_ERR(clk_hw),
++				     "failed to register MAC clock\n");
++	plat->stmmac_clk = clk_hw->clk;
++	plat->clk_ptp_rate = clk_freq;
++
++	ret = clk_prepare_enable(plat->stmmac_clk);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to enable MAC clock\n");
++	ret = devm_add_action_or_reset(dev, phytium_dwmac_clk_disable,
++				       plat->stmmac_clk);
++	if (ret)
++		return ret;
++
++	return devm_stmmac_pltfr_probe(pdev, plat, &res);
++}
++
++static const struct acpi_device_id phytium_dwmac_acpi_match[] = {
++	{ "PHYT0004" },
++	{ }
++};
++MODULE_DEVICE_TABLE(acpi, phytium_dwmac_acpi_match);
++
++static struct platform_driver phytium_dwmac_driver = {
++	.probe = phytium_dwmac_probe,
++	.driver = {
++		.name = "phytium-dwmac",
++		.pm = &stmmac_pltfr_pm_ops,
++		.acpi_match_table = phytium_dwmac_acpi_match,
++	},
++};
++module_platform_driver(phytium_dwmac_driver);
++
++MODULE_DESCRIPTION("Phytium DWMAC glue driver");
++MODULE_AUTHOR("Ricardo Pardini <ricardo@pardini.net>");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+

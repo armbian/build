@@ -51,7 +51,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:a1c0892d03223590b6f4d9f106709d452f5fe07f' # Commit date: 2026-06-30 (please update when updating commit ref)
+		local rtl8189esver='commit:6fbc1014694944629c20d9e9dd504f1ea51ddd43' # Commit date: Sep 2nd 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -93,7 +93,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:f95ad2e28bfb1a4350ff5da123a28df4183ca120' # Commit date: 2026-06-30 (please update when updating commit ref)
+		local rtl8189fsver='commit:be148d226d22214a173e5b2dfe4287e53685ceda' # Commit date: Sep 2nd 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -135,7 +135,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:1841930b192e245d09fb19f1ee7d1fa5a2ab30e8' # Commit date: 2026-07-01 (please update when updating commit ref)
+		local rtl8192euver='commit:84c4bfdefd54d8d2d56706ae01d65c2a68728ed9' # Commit date: Sep 2nd 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -406,7 +406,7 @@ driver_rtw88() {
 
 driver_rtl8852bs() {
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
-	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 7.3 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
 
 		# Attach to specific commit
 		local rtl8852bs_ver='commit:58840d11af91d0b72bc830980b4aff740a37b5e3' # Commit date: Aug 18, 2026 (please update when updating commit ref)
@@ -466,7 +466,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
-		local rtl88x2csver='commit:a206673937708aa5d2fb8c42b6b12f2fb96dd9b3' # Commit date: Aug 20, 2026 (please update when updating commit ref)
+		local rtl88x2csver='commit:f4263fc6ecd11465bf60ce142aa76e2e85e2cbf3' # Commit date: Sep 1, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
@@ -511,7 +511,7 @@ driver_uwe5622() {
 	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:d6bec7538a0b4b67e35715ad71eaa056555524cb' # Commit date: Aug 15, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:b64c5d6c36015049bdc34aad5f7b307545bfa29c' # Commit date: Sep 1, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Unisoc uwe5622 driver ${uwe5622ver}" "info"
 
@@ -649,7 +649,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0 && [[ "$LINUXFAMILY" == rockchip64 ]]; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:2e63716ff6357fe188f0118d6f4c9f4694912f71' # Commit date: Aug 06, 2026 (please update when updating commit ref)
+		local rtl8723dsver='commit:13c56416cb9dea2ccf9d351390ad0e9b064ac6a3' # Commit date: Sep 2nd 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
