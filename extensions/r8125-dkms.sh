@@ -13,6 +13,10 @@
 # Only enabled for the vendor branch on easepi-a2 board.
 
 function extension_finish_config__install_r8125_dkms() {
+	if [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]]; then
+		display_alert "Kernel cannot build DKMS modules" "skipping ${EXTENSION}: ${KERNEL_DKMS_UNBUILDABLE_REASON}" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping r8125 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
@@ -33,7 +37,7 @@ function extension_finish_config__install_r8125_dkms() {
 }
 
 function post_install_kernel_debs__install_r8125_dkms_package() {
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 
 	display_alert "Installing Realtek r8125 DKMS driver for RTL8125B" "${EXTENSION}" "info"
 

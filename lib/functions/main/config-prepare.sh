@@ -212,6 +212,31 @@ function config_post_main() {
 	fi
 	track_general_config_variables "at beginning of config_post_main"
 
+	# Can DKMS build out-of-tree modules against this kernel inside the image?
+	#
+	# Distinct from KERNEL_HAS_WORKING_HEADERS, which asks whether the headers
+	# package itself is usable: on a clang-built kernel the headers are fine (see
+	# the sidecar tarball in kernel-debs.sh, which deliberately preserves
+	# CONFIG_CC_IS_CLANG so they describe the kernel as actually compiled), but no
+	# DKMS module can be built from them. The headers advertise clang, DKMS then
+	# invokes it with LLVM=1, and clang is not installed in any Armbian rootfs:
+	#
+	#     The kernel was built by: Debian clang version 19.1.7
+	#     /bin/sh: 1: clang: not found
+	#     make[4]: *** [v4l2loopback.o] Error 127
+	#
+	# Falling back to gcc is not an option either: these kernels set
+	# CONFIG_LTO_CLANG/CONFIG_LTO_CLANG_THIN, and gcc-built modules cannot link
+	# against a ThinLTO kernel. Shipping the toolchain in the image would cost
+	# ~270MB and would still have to keep matching the kernel's clang major on
+	# every future kernel upgrade, so DKMS extensions skip themselves instead.
+	declare -g KERNEL_DKMS_BUILDABLE="yes"
+	declare -g KERNEL_DKMS_UNBUILDABLE_REASON=""
+	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+		declare -g KERNEL_DKMS_BUILDABLE="no"
+		declare -g KERNEL_DKMS_UNBUILDABLE_REASON="kernel is built with clang/LLVM, which is not available in the image"
+	fi
+
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
 	# That is the "default" layout; there will be as many source dirs as there are built kernel debs.
