@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 3 Sep 2026 11:24:58 +0200
+Subject: PCI/pwrctrl: tc9563: Make error teardown safe
+
+When tc9563_pwrctrl_power_on() fails after enabling the supplies, it
+powers the device off before returning the error. The PCIe host init
+error path then destroys the pwrctrl device, and
+tc9563_pwrctrl_remove() calls tc9563_pwrctrl_power_off() again. That
+triggers regulator core "unbalanced disables" warnings.
+
+Track whether the device is currently powered so power_off() only
+disables the supplies once. Also move the dummy I2C client and adapter
+reference cleanup to devm-managed helpers so remove() only needs to
+handle the power transition.
+
+Fixes: b921aa3f8dec ("PCI/pwrctrl: Switch to pwrctrl create, power on/off, destroy APIs")
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+
+(cherry picked from commit 626bbd70d9d1cd6523742e80ec5dc434498a77d6)
+[SuperKali: forward-ported from radxa/kernel linux-7.0.11 to Linux 7.2.3]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/pci/pwrctrl/pci-pwrctrl-tc9563.c | 52 ++++++----
+ 1 file changed, 31 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/pci/pwrctrl/pci-pwrctrl-tc9563.c b/drivers/pci/pwrctrl/pci-pwrctrl-tc9563.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/pwrctrl/pci-pwrctrl-tc9563.c
++++ b/drivers/pci/pwrctrl/pci-pwrctrl-tc9563.c
+@@ -111,6 +111,7 @@ struct tc9563_pwrctrl {
+ 	struct gpio_desc *reset_gpio;
+ 	struct i2c_adapter *adapter;
+ 	struct i2c_client *client;
++	bool powered_on;
+ };
+ 
+ /*
+@@ -454,9 +455,13 @@ static int tc9563_pwrctrl_power_off(struct pci_pwrctrl *pwrctrl)
+ 	struct tc9563_pwrctrl *tc9563 = container_of(pwrctrl,
+ 					    struct tc9563_pwrctrl, pwrctrl);
+ 
++	if (!tc9563->powered_on)
++		return 0;
++
+ 	gpiod_set_value(tc9563->reset_gpio, 1);
+ 
+ 	regulator_bulk_disable(ARRAY_SIZE(tc9563->supplies), tc9563->supplies);
++	tc9563->powered_on = false;
+ 
+ 	return 0;
+ }
+@@ -469,11 +474,15 @@ static int tc9563_pwrctrl_power_on(struct pci_pwrctrl *pwrctrl)
+ 	struct tc9563_pwrctrl_cfg *cfg;
+ 	int ret, i;
+ 
++	if (tc9563->powered_on)
++		return 0;
++
+ 	ret = regulator_bulk_enable(ARRAY_SIZE(tc9563->supplies),
+ 				    tc9563->supplies);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "cannot enable regulators\n");
+ 
++	tc9563->powered_on = true;
+ 	gpiod_set_value(tc9563->reset_gpio, 0);
+ 
+ 	fsleep(TC9563_OSC_STAB_DELAY_US);
+@@ -530,6 +539,13 @@ static int tc9563_pwrctrl_power_on(struct pci_pwrctrl *pwrctrl)
+ 	return ret;
+ }
+ 
++static void tc9563_pwrctrl_put_adapter(void *data)
++{
++	struct i2c_adapter *adapter = data;
++
++	put_device(&adapter->dev);
++}
++
+ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *node = pdev->dev.of_node;
+@@ -553,12 +569,15 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ 	if (!tc9563->adapter)
+ 		return dev_err_probe(dev, -EPROBE_DEFER, "Failed to find I2C adapter\n");
+ 
+-	tc9563->client = i2c_new_dummy_device(tc9563->adapter, addr);
+-	if (IS_ERR(tc9563->client)) {
+-		dev_err(dev, "Failed to create I2C client\n");
+-		put_device(&tc9563->adapter->dev);
+-		return PTR_ERR(tc9563->client);
+-	}
++	ret = devm_add_action_or_reset(dev, tc9563_pwrctrl_put_adapter,
++				       tc9563->adapter);
++	if (ret)
++		return ret;
++
++	tc9563->client = devm_i2c_new_dummy_device(dev, tc9563->adapter, addr);
++	if (IS_ERR(tc9563->client))
++		return dev_err_probe(dev, PTR_ERR(tc9563->client),
++				     "Failed to create I2C client\n");
+ 
+ 	for (int i = 0; i < ARRAY_SIZE(tc9563_supply_names); i++)
+ 		tc9563->supplies[i].supply = tc9563_supply_names[i];
+@@ -567,13 +586,13 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ 				      tc9563->supplies);
+ 	if (ret) {
+ 		dev_err_probe(dev, ret, "failed to get supply regulator\n");
+-		goto remove_i2c;
++		return ret;
+ 	}
+ 
+ 	tc9563->reset_gpio = devm_gpiod_get(dev, "resx", GPIOD_OUT_HIGH);
+ 	if (IS_ERR(tc9563->reset_gpio)) {
+-		ret = dev_err_probe(dev, PTR_ERR(tc9563->reset_gpio), "failed to get resx GPIO\n");
+-		goto remove_i2c;
++		return dev_err_probe(dev, PTR_ERR(tc9563->reset_gpio),
++				     "failed to get resx GPIO\n");
+ 	}
+ 
+ 	pci_pwrctrl_init(&tc9563->pwrctrl, dev);
+@@ -582,7 +601,7 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ 	ret = tc9563_pwrctrl_parse_device_dt(tc9563, node, port);
+ 	if (ret) {
+ 		dev_err(dev, "failed to parse device tree properties: %d\n", ret);
+-		goto remove_i2c;
++		return ret;
+ 	}
+ 
+ 	/*
+@@ -608,7 +627,7 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ 	}
+ 	if (ret) {
+ 		dev_err(dev, "failed to parse device tree properties: %d\n", ret);
+-		goto remove_i2c;
++		return ret;
+ 	}
+ 
+ 	tc9563->pwrctrl.power_on = tc9563_pwrctrl_power_on;
+@@ -616,16 +635,9 @@ static int tc9563_pwrctrl_probe(struct platform_device *pdev)
+ 
+ 	ret = devm_pci_pwrctrl_device_set_ready(dev, &tc9563->pwrctrl);
+ 	if (ret)
+-		goto power_off;
++		return ret;
+ 
+ 	return 0;
+-
+-power_off:
+-	tc9563_pwrctrl_power_off(&tc9563->pwrctrl);
+-remove_i2c:
+-	i2c_unregister_device(tc9563->client);
+-	put_device(&tc9563->adapter->dev);
+-	return ret;
+ }
+ 
+ static void tc9563_pwrctrl_remove(struct platform_device *pdev)
+@@ -635,8 +647,6 @@ static void tc9563_pwrctrl_remove(struct platform_device *pdev)
+ 					struct tc9563_pwrctrl, pwrctrl);
+ 
+ 	tc9563_pwrctrl_power_off(&tc9563->pwrctrl);
+-	i2c_unregister_device(tc9563->client);
+-	put_device(&tc9563->adapter->dev);
+ }
+ 
+ static const struct of_device_id tc9563_pwrctrl_of_match[] = {
+-- 
+Armbian
+
