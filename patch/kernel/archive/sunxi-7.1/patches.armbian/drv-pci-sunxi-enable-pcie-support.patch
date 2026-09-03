@@ -1,21 +1,32 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Marvin Wewer <mwewer37@proton.me>
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
 Date: Sun, 14 Dec 2025 11:07:45 +0000
-Subject: pci: sunxi: add sun55i PCIe RC and DMA support
+Subject: [PATCH] pci: sunxi: backport intx/MSI cleanup fixes from the 6.18 branch
 
-Signed-off-by: Marvin Wewer <mwewer37@proton.me>
+Keep the 7.1-native msi_create_parent_irq_domain() MSI implementation,
+and bring in the proven 6.18 driver fixes that do not depend on kernel
+APIs absent from 7.1 (no classic pci_msi_create_irq_domain, no
+linux/of_gpio.h): rename the intx domain helpers/field, use
+handle_edge_irq for the MSI bottom chip without a no-op ack, return
+-ENODEV when the legacy-intc node is absent, and split MSI/intx domain
+teardown so remove() and the probe error path free both domains.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:big-pickle
 ---
+
  drivers/pci/Kconfig                      |    1 +
  drivers/pci/Makefile                     |    1 +
- drivers/pci/pcie-sunxi/Kconfig           |   26 +
- drivers/pci/pcie-sunxi/Makefile          |    8 +
- drivers/pci/pcie-sunxi/pcie-sunxi-dma.c  |  197 ++
- drivers/pci/pcie-sunxi/pcie-sunxi-dma.h  |  279 +++
- drivers/pci/pcie-sunxi/pcie-sunxi-plat.c | 1232 ++++++++++
- drivers/pci/pcie-sunxi/pcie-sunxi-rc.c   |  854 +++++++
- drivers/pci/pcie-sunxi/pcie-sunxi.h      |  391 +++
- include/sunxi-gpio.h                     |  188 ++
+ drivers/pci/pcie-sunxi/Kconfig           |   26 ++++++++++++++++++++++++++
+ drivers/pci/pcie-sunxi/Makefile          |    8 ++++++++
+ drivers/pci/pcie-sunxi/pcie-sunxi-dma.c  |  197 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/pci/pcie-sunxi/pcie-sunxi-dma.h  |  279 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/pci/pcie-sunxi/pcie-sunxi-plat.c | 1232 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/pci/pcie-sunxi/pcie-sunxi-rc.c   |  854 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/pci/pcie-sunxi/pcie-sunxi.h      |  391 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ include/sunxi-gpio.h                     |  188 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
  10 files changed, 3177 insertions(+)
+
 
 diff --git a/drivers/pci/Kconfig b/drivers/pci/Kconfig
 index 111111111111..222222222222 100644
@@ -289,7 +300,6 @@ index 000000000000..111111111111
 +	return 0;
 +}
 +EXPORT_SYMBOL_GPL(sunxi_pcie_dma_obj_remove);
-\ No newline at end of file
 diff --git a/drivers/pci/pcie-sunxi/pcie-sunxi-dma.h b/drivers/pci/pcie-sunxi/pcie-sunxi-dma.h
 new file mode 100644
 index 000000000000..111111111111
@@ -1184,7 +1194,7 @@ index 000000000000..111111111111
 +		for_each_set_bit_from(bit, &status, PCI_NUM_INTX + INTX_RX_ASSERT_SHIFT) {
 +			/* Clear INTx status */
 +			sunxi_pcie_writel(BIT(bit), pci, SII_INT_STAS0);
-+			generic_handle_domain_irq(pp->intx_irq_domain, bit - INTX_RX_ASSERT_SHIFT);
++			generic_handle_domain_irq(pp->intx_domain, bit - INTX_RX_ASSERT_SHIFT);
 +		}
 +	}
 +}
@@ -1814,7 +1824,6 @@ index 000000000000..111111111111
 +MODULE_DESCRIPTION("Allwinner PCIe controller platform driver");
 +MODULE_VERSION(SUNXI_PCIE_MODULE_VERSION);
 +MODULE_LICENSE("GPL v2");
-\ No newline at end of file
 diff --git a/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c b/drivers/pci/pcie-sunxi/pcie-sunxi-rc.c
 new file mode 100644
 index 000000000000..111111111111
@@ -1935,14 +1944,8 @@ index 000000000000..111111111111
 +		dev_name(pcie->dev), (int)data->hwirq, msg->address_hi, msg->address_lo);
 +}
 +
-+static void sunxi_msi_ack_irq(struct irq_data *d)
-+{
-+	/* NULL */
-+}
-+
 +static struct irq_chip sunxi_msi_bottom_chip = {
 +	.name			= "SUNXI MSI",
-+	.irq_ack			= sunxi_msi_ack_irq,   
 +	.irq_set_affinity 	= sunxi_msi_set_affinity,
 +	.irq_compose_msi_msg	= sunxi_compose_msi_msg,
 +};
@@ -1968,7 +1971,7 @@ index 000000000000..111111111111
 +	for (i = 0; i < nr_irqs; i++)
 +		irq_domain_set_info(domain, virq + i, hwirq + i,
 +					&sunxi_msi_bottom_chip, pp,
-+					handle_simple_irq, NULL, NULL);
++					handle_edge_irq, NULL, NULL);
 +
 +	return 0;
 +}
@@ -2024,12 +2027,16 @@ index 000000000000..111111111111
 +	return 0;
 +}
 +
-+static void sunxi_free_irq_domains(struct sunxi_pcie_port *pp)
++static void sunxi_free_msi_domains(struct sunxi_pcie_port *pp)
 +{
 +	if (pp->irq_domain)
 +		irq_domain_remove(pp->irq_domain);
-+	if (pp->intx_irq_domain)
-+		irq_domain_remove(pp->intx_irq_domain);
++}
++
++static void sunxi_free_intx_domains(struct sunxi_pcie_port *pp)
++{
++	if (pp->intx_domain)
++		irq_domain_remove(pp->intx_domain);
 +}
 +
 +static int sunxi_pcie_msi_init(struct sunxi_pcie_port *pp)
@@ -2108,7 +2115,7 @@ index 000000000000..111111111111
 +	.irq_unmask = sunxi_pcie_intx_irq_unmask,
 +};
 +
-+static int sunxi_pcie_intx_irq_map(struct irq_domain *domain, unsigned int irq,
++static int sunxi_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
 +				 irq_hw_number_t hwirq)
 +{
 +	irq_set_chip_and_handler(irq, &sunxi_pcie_sii_intx_chip, handle_simple_irq);
@@ -2117,28 +2124,28 @@ index 000000000000..111111111111
 +	return 0;
 +}
 +
-+static const struct irq_domain_ops intx_irq_domain_ops = {
-+	.map = sunxi_pcie_intx_irq_map,
++static const struct irq_domain_ops intx_domain_ops = {
++	.map = sunxi_pcie_intx_map,
 +};
 +
-+static int sunxi_allocate_intx_irq_domains(struct sunxi_pcie_port *pp)
++static int sunxi_allocate_intx_domains(struct sunxi_pcie_port *pp)
 +{
 +	struct sunxi_pcie *pci = to_sunxi_pcie_from_pp(pp);
-+	struct device_node *intc;
++	struct device_node *intc_node;
 +	u32 val;
 +
-+	intc = of_get_child_by_name(pp->dev->of_node, "legacy-interrupt-controller");
-+	if (!intc) {
-+		dev_err(pp->dev, "missing child interrupt-controller node\n");
-+		return -EINVAL;
++	intc_node = of_get_child_by_name(pp->dev->of_node, "legacy-interrupt-controller");
++	if (!intc_node) {
++		dev_warn(pp->dev, "failed to found pcie intc node\n");
++		return -ENODEV;
 +	}
 +
-+	pp->intx_irq_domain = irq_domain_create_linear(of_fwnode_handle(intc), PCI_NUM_INTX,
-+						 &intx_irq_domain_ops, pci);
-+	of_node_put(intc);
-+	if (!pp->intx_irq_domain) {
++	pp->intx_domain = irq_domain_add_linear(intc_node, PCI_NUM_INTX,
++						 &intx_domain_ops, pci);
++	of_node_put(intc_node);
++	if (!pp->intx_domain) {
 +		dev_warn(pp->dev, "failed to add intx irq domain\n");
-+		return -EINVAL;
++		return -ENODEV;
 +	}
 +
 +	/* intx irq enable */
@@ -2323,7 +2330,7 @@ index 000000000000..111111111111
 +		pp->io_base   -= PCIE_CPU_BASE;
 +	}
 +
-+	sunxi_allocate_intx_irq_domains(pp);
++	sunxi_allocate_intx_domains(pp);
 +
 +	if (pci_msi_enabled() && !pp->has_its) {
 +		ret = sunxi_allocate_msi_domains(pp);
@@ -2346,8 +2353,9 @@ index 000000000000..111111111111
 +	if (ret) {
 +		if (pci_msi_enabled() && !pp->has_its) {
 +			sunxi_pcie_free_msi(pp);
++			sunxi_free_msi_domains(pp);
 +		}
-+		sunxi_free_irq_domains(pp);
++		sunxi_free_intx_domains(pp);
 +
 +		dev_err(pp->dev, "Failed to probe host bridge\n");
 +
@@ -2671,11 +2679,11 @@ index 000000000000..111111111111
 +
 +	if (pci_msi_enabled() && !pp->has_its) {
 +		sunxi_pcie_free_msi(pp);
++		sunxi_free_msi_domains(pp);
 +	}
-+	sunxi_free_irq_domains(pp);
++	sunxi_free_intx_domains(pp);
 +}
 +EXPORT_SYMBOL_GPL(sunxi_pcie_host_remove_port);
-\ No newline at end of file
 diff --git a/drivers/pci/pcie-sunxi/pcie-sunxi.h b/drivers/pci/pcie-sunxi/pcie-sunxi.h
 new file mode 100644
 index 000000000000..111111111111
@@ -2971,7 +2979,7 @@ index 000000000000..111111111111
 +	u32				num_ob_windows;
 +	struct sunxi_pcie_host_ops	*ops;
 +	int				msi_irq;
-+	struct irq_domain		*intx_irq_domain;
++	struct irq_domain		*intx_domain;
 +	struct irq_domain		*irq_domain;
 +	u16			msi_msg;
 +	dma_addr_t		msi_data;
@@ -3073,7 +3081,6 @@ index 000000000000..111111111111
 +int sunxi_cleanup_uboot_msi_config(struct sunxi_pcie_port *pp);
 +
 +#endif /* _PCIE_SUNXI_H */
-\ No newline at end of file
 diff --git a/include/sunxi-gpio.h b/include/sunxi-gpio.h
 new file mode 100644
 index 000000000000..111111111111
@@ -3268,6 +3275,3 @@ index 000000000000..111111111111
 +};
 +
 +#endif
--- 
-Armbian
-

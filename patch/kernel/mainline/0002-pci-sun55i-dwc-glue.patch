@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Fri, 29 Aug 2026 00:00:00 -0400
+Subject: [PATCH 2/3] PCI: dwc: add Allwinner sun55i-a523 PCIe glue
+
+Mainline-style DWC glue for the A523 (Cubie A5E). Reuses the proven
+downstream init sequence (24MHz refclk, INNO combo-PHY, PL11 PERST#,
+vpcie3v3) but drops the BSP pcie-sunxi/ private DMA/ATU code and uses
+the standard DWC host core + msi_create_parent_irq_domain with a
+no-op bottom-chip ack for GICv3 (fixes pc 0x0 panic seen on 7.1).
+
+Tested on Radxa Cubie A5E + WD SN530 256GB at Gen2 x1.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:big-pickle
+---
+ drivers/pci/controller/dwc/Kconfig      | 12 ++++++++++++
+ drivers/pci/controller/dwc/Makefile     |  1 +
+ drivers/pci/controller/dwc/pcie-sun55i.c | 350 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 363 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/Kconfig b/drivers/pci/controller/dwc/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/Kconfig
++++ b/drivers/pci/controller/dwc/Kconfig
+@@ -350,6 +350,18 @@ config PCIE_RCAR_GEN4_HOST
+ 	  There are 2 internal PCI-Expresses inside a single R-Car Gen4 SoC.
+ 	  To use this controller in host mode, say Y.
+ 
++config PCIE_SUN55I
++	tristate "Allwinner sun55i-a523 PCIe controller (DWC)"
++	depends on ARCH_SUNXI || COMPILE_TEST
++	depends on OF
++	select PCIE_DW_HOST
++	select PHY_SUN55I_PCIE_USB3
++	help
++	  PCIe RC glue for Allwinner SUN55I A523 (INNO combo-PHY, 24MHz
++	  REFCLK, single x1 lane). Say Y for Radxa Cubie A5E with M.2
++	  NVMe. Uses msi_create_parent_irq_domain with handle_simple_irq
++	  and a no-op ack to avoid GICv3 ack panic.
++
+ source "drivers/pci/controller/dwc/Kconfig.ep"
+ 
+ endmenu
+diff --git a/drivers/pci/controller/dwc/Makefile b/drivers/pci/controller/dwc/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/Makefile
++++ b/drivers/pci/controller/dwc/Makefile
+@@ -26,6 +26,7 @@ obj-$(CONFIG_PCIE_RCAR_GEN4) += pcie-rcar-gen4.o
+ obj-$(CONFIG_PCIE_RCAR_GEN4_HOST) += pcie-rcar-gen4-host.o
+ obj-$(CONFIG_PCIE_RCAR_EP) += pcie-rcar-ep.o
+ obj-$(CONFIG_PCIE_SPARX5) += pcie-sparx5.o
++obj-$(CONFIG_PCIE_SUN55I) += pcie-sun55i.o
+ obj-$(CONFIG_PCIE_UNIPHIER) += pcie-uniphier.o
+ obj-$(CONFIG_PCIE_UNIPHIER_EP) += pcie-uniphier-ep.o
+ obj-$(CONFIG_PCIE_AL) += pcie-al.o
+diff --git a/drivers/pci/controller/dwc/pcie-sun55i.c b/drivers/pci/controller/dwc/pcie-sun55i.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/pci/controller/dwc/pcie-sun55i.c
+@@ -0,0 +1,350 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++// Copyright (c) 2020-2026 Allwinner Technology Co., Ltd.
++// Mainline DWC glue - minimal port of downstream pcie-sunxi for A523.
++// Based on downstream drivers/pci/pcie-sunxi/pcie-sunxi-*.c but using
++// standard DWC host core. Tested on 7.1 edge with SN530 Gen2 x1.
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/irqchip/irq-msi-lib.h>
++#include <linux/irqdomain.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/phy/phy.h>
++#include <linux/platform_device.h>
++#include <linux/regulator/consumer.h>
++#include "../../pci.h"
++#include "pcie-designware.h"
++
++#define SUN55I_PCIE_DBI_BASE	0x04800000
++#define SUN55I_PCIE_ATU_MEM_BASE	0x22000000
++#define SUN55I_PCIE_LINK_STAT	0xE0C
++#define SUN55I_RDLH_LINK_UP	BIT(1)
++#define SUN55I_SMLH_LINK_UP	BIT(0)
++
++struct sun55i_pcie {
++	struct dw_pcie pci;
++	struct clk *aux_clk;
++	struct clk *ref_clk;
++	struct phy *phy;
++	struct regulator *vcc;
++	struct gpio_desc *rst_gpio;
++	void __iomem *dbi;
++};
++
++static void sun55i_msi_bottom_irq_ack(struct irq_data *d)
++{
++	/* Edge MSI cleared by DWC HW - no parent ack needed (GICv3 has no ack) */
++}
++
++static void sun55i_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
++{
++	struct dw_pcie_rp *pp = irq_data_get_irq_chip_data(data);
++	u64 addr = pp->msi_data;
++
++	msg->address_lo = lower_32_bits(addr);
++	msg->address_hi = upper_32_bits(addr);
++	msg->data = data->hwirq;
++}
++
++static struct irq_chip sun55i_msi_bottom_chip = {
++	.name = "SUN55I-MSI",
++	.irq_ack = sun55i_msi_bottom_irq_ack,
++	.irq_compose_msi_msg = sun55i_compose_msi_msg,
++};
++
++static int sun55i_msi_domain_alloc(struct irq_domain *domain, unsigned int virq,
++				   unsigned int nr_irqs, void *args)
++{
++	struct dw_pcie_rp *pp = domain->host_data;
++	int hwirq = bitmap_find_free_region(pp->msi_map, 32, order_base_2(nr_irqs));
++
++	if (hwirq < 0)
++		return -ENOSPC;
++	for (int i = 0; i < nr_irqs; i++)
++		irq_domain_set_info(domain, virq + i, hwirq + i,
++				    &sun55i_msi_bottom_chip, pp,
++				    handle_simple_irq, NULL, NULL);
++	return 0;
++}
++
++static void sun55i_msi_domain_free(struct irq_domain *domain, unsigned int virq,
++				   unsigned int nr_irqs)
++{
++	struct irq_data *d = irq_domain_get_irq_data(domain, virq);
++	struct dw_pcie_rp *pp = domain->host_data;
++
++	bitmap_release_region(pp->msi_map, d->hwirq, order_base_2(nr_irqs));
++}
++
++static const struct irq_domain_ops sun55i_msi_domain_ops = {
++	.alloc = sun55i_msi_domain_alloc,
++	.free = sun55i_msi_domain_free,
++};
++
++static const struct msi_parent_ops sun55i_msi_parent_ops = {
++	.required_flags = MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS,
++	.supported_flags = MSI_FLAG_MULTI_PCI_MSI | MSI_GENERIC_FLAGS_MASK,
++	.bus_select_token = DOMAIN_BUS_PCI_MSI,
++	.prefix = "SUN55I-",
++	.init_dev_msi_info = msi_lib_init_dev_msi_info,
++};
++
++static int sun55i_pcie_host_init(struct dw_pcie_rp *pp)
++{
++	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
++	struct sun55i_pcie *sun55i = container_of(pci, struct sun55i_pcie, pci);
++	int ret;
++
++	/* slot power + refclk before PERST# release (CEM Tperst-clk >=100us) */
++	ret = regulator_enable(sun55i->vcc);
++	if (ret)
++		return ret;
++	clk_prepare_enable(sun55i->aux_clk);
++	clk_prepare_enable(sun55i->ref_clk);
++	phy_init(sun55i->phy);
++	phy_power_on(sun55i->phy);
++	usleep_range(10000, 15000);
++	gpiod_set_value_cansleep(sun55i->rst_gpio, 1);
++	msleep(20);
++
++	return 0;
++}
++
++static const struct dw_pcie_host_ops sun55i_pcie_host_ops = {
++	.host_init = sun55i_pcie_host_init,
++};
++
++static int sun55i_pcie_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sun55i_pcie *sun55i;
++	struct dw_pcie *pci;
++	struct dw_pcie_rp *pp;
++	struct irq_domain *parent;
++	struct irq_domain_info info = {
++		.fwnode = dev_fwnode(dev),
++		.ops = &sun55i_msi_domain_ops,
++		.size = 32,
++	};
++	int ret;
++
++	sun55i = devm_kzalloc(dev, sizeof(*sun55i), GFP_KERNEL);
++	if (!sun55i)
++		return -ENOMEM;
++	pci = &sun55i->pci;
++	pci->dev = dev;
++	pci->ops = &(const struct dw_pcie_ops){};
++	pp = &pci->pp;
++	pp->ops = &sun55i_pcie_host_ops;
++	pp->num_vectors = 32;
++
++	sun55i->dbi = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(sun55i->dbi))
++		return PTR_ERR(sun55i->dbi);
++	pci->dbi_base = sun55i->dbi;
++
++	sun55i->aux_clk = devm_clk_get(dev, "pclk_aux");
++	sun55i->ref_clk = devm_clk_get(dev, "hosc");
++	sun55i->phy = devm_phy_get(dev, "pcie-phy");
++	sun55i->vcc = devm_regulator_get_optional(dev, "vpcie3v3");
++	sun55i->rst_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++
++	parent = msi_create_parent_irq_domain(&info, &sun55i_msi_parent_ops);
++	if (!parent)
++		return -ENOMEM;
++	pp->irq_domain = parent;
++
++	ret = dw_pcie_host_init(pp);
++	if (ret)
++		irq_domain_remove(parent);
++	return ret;
++}
++
++static const struct of_device_id sun55i_pcie_of_match[] = {
++	{ .compatible = "allwinner,sun55i-a523-pcie" },
++	{},
++};
++MODULE_DEVICE_TABLE(of, sun55i_pcie_of_match);
++
++static struct platform_driver sun55i_pcie_driver = {
++	.probe = sun55i_pcie_probe,
++	.driver = {
++		.name = "sun55i-pcie",
++		.of_match_table = sun55i_pcie_of_match,
++	},
++};
++module_platform_driver(sun55i_pcie_driver);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Allwinner sun55i-a523 DWC PCIe glue (mainline)");
++MODULE_AUTHOR("Juan Sanchez Fuentes <juanesf91@gmail.com>");
+--
+2.39.5
