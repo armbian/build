@@ -27,7 +27,12 @@ function post_family_config__orangepicm5_use_mainline_uboot() {
 	declare -g BOOTBRANCH="tag:v2026.04"
 	declare -g BOOTPATCHDIR="v2026.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
-	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB} $BOOTCONFIG;;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
+	# NOTE: $BOOTCONFIG must NOT appear in the make-target part of UBOOT_TARGET_MAP below --
+	# any goal ending in "_defconfig" matches U-Boot's generic Kbuild "%config" rule, which makes
+	# the whole invocation regenerate .config ONLY and skip the real (binman) build entirely,
+	# silently producing no u-boot-rockchip.bin. Configuring already happens separately, earlier,
+	# via $BOOTCONFIG itself (see compile_uboot in lib/functions/compilation/uboot.sh).
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	unset uboot_custom_postprocess # disable stuff from rockchip64_common; we're using binman here which does all the work already
 }
 
