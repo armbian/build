@@ -19,7 +19,7 @@ setenv fk_kvers "${prefix}/Image"
 setenv initrd "${prefix}/uInitrd"
 setenv verbosity "1"
 
-echo "Loading ${bootlabel} environment"
+echo "Loading ${bootlabel} environment (${devtype} ${devnum}:${distro_bootpart})"
 load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}/armbianEnv.txt
 env import -t ${scriptaddr} ${filesize}
 
@@ -39,7 +39,7 @@ fi
 
 setenv bootargs "${consoleargs} root=${rootdev} rootfstype=${rootfstype} rw fsck.repair=yes rootwait loglevel=${verbosity} ${extraargs} ${plymouthargs}"
 
-echo "Loading ${fdtfile}"
+echo "Loading ${fdtfile} (${devtype} ${devnum}:${distro_bootpart})"
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${fdtdir}/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
@@ -61,7 +61,7 @@ done
 
 load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${initrd}
 load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${fk_kvers}
-echo "Booting ${bootlabel} from ${devtype} ${devnum}:${distro_bootpart}"
+echo "Booting ${bootlabel} (${devtype} ${devnum}:${distro_bootpart})"
 booti ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
 
 # Recompile with:
