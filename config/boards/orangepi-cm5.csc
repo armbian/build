@@ -1,4 +1,4 @@
-# Rockchip RK3588S octa core 4/8/16GB RAM SoC compute module (Base Board carrier: 1x GbE, 2x 2.5GbE, USB2, USB3, HDMI, 4x MIPI-CSI)
+# Rockchip RK3588S octa core 4/8/16GB RAM SoC compute module (3-port carrier: 1x GbE "wan", 2x 2.5GbE "lan1/lan2", 2x USB2 host, USB3/USB-C OTG, HDMI, SD, fan)
 BOARD_NAME="Orange Pi CM5"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="rockchip-rk3588"
@@ -10,7 +10,7 @@ KERNEL_TARGET="current,edge" # the CM5 device tree (backported into patch/kernel
 KERNEL_TEST_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
-BOOT_FDT_FILE="rockchip/rk3588s-orangepi-cm5-base.dtb" # assumes the module is plugged into Xunlong's "CM5 Base Board" carrier (1x YT8531C GbE + 2x RTL8125 2.5GbE); adjust if using a different carrier
+BOOT_FDT_FILE="rockchip/rk3588s-orangepi-cm5.dtb" # our own carrier dts (see patch/kernel/archive/.../dt/rk3588s-orangepi-cm5.dts), corrected against a dtb dumped off the reporter's actual booted vendor image; NOT the upstream "-base" board (rk3588s-orangepi-cm5-base.dtb), whose Ethernet PHY reset GPIO/timing and USB host wiring don't match this carrier
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 
