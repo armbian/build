@@ -6,7 +6,7 @@
 setenv load_addr "0x9000000"
 setenv overlay_error "false"
 # default values
-setenv rootdev "/dev/mmcblk0p1"
+setenv rootdev ""
 setenv verbosity "1"
 setenv console "both"
 setenv bootlogo "false"
@@ -36,6 +36,19 @@ fi
 
 # get PARTUUID of first partition on SD/eMMC the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
+
+# armbianEnv.txt normally sets rootdev explicitly (e.g. a UUID= override). If it
+# didn't - missing file, or an environment that doesn't set it - fall back to the
+# PARTUUID we already computed above instead of a hardcoded /dev/mmcblk0p1: U-Boot
+# and the kernel can number mmc controllers differently on some rk35xx boards, so a
+# fixed device name can silently point at the wrong (or a nonexistent) device.
+if test -z "${rootdev}"; then
+	if test -n "${partuuid}"; then
+		setenv rootdev "PARTUUID=${partuuid}"
+	else
+		setenv rootdev "/dev/mmcblk0p1"
+	fi
+fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
