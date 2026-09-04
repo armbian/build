@@ -1,5 +1,6 @@
 # Xiangcheng XC3399FR - RK3399 hexa core 4GB LPDDR4, GbE, eMMC, 2x USB3, HDMI, WiFi/BT
 BOARD_NAME="XC3399FR"
+BOARD_VENDOR="proembed"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="liamhnam"
 BOOTCONFIG="fine3399-rk3399_defconfig"
