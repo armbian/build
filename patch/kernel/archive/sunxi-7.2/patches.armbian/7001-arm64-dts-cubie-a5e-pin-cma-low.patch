@@ -1,0 +1,241 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Mon, 31 Aug 2026 08:40:00 -0400
+Subject: arm64: dts: cubie-a5e: pin the CMA pool to low DRAM
+
+The DE fetch aperture only reaches DRAM below ~0x4b100000 (the RCQ
+pool lives at 0x43000000). Without a fixed range the kernel places
+the reusable CMA pool high (0xb0000000), the fbcon framebuffer is
+allocated there, and the DE fetches zeros - screen shows only the
+RCQ background color (green).
+
+Size it to 80 MiB (0x43000000-0x48000000): the default 256 MiB pool
+overlapped the secmon@48000000/48100000 and vdev0buffer/vring@4ae00000
+no-map reservations, and CMA pages handed out from those regions have
+no linear-map PTE - a page-cache write faults the kernel.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:muse-spark-1.2-contributor-free
+---
+ arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts | 124 ++++++++--
+ 1 file changed, 110 insertions(+), 14 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts b/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts
++++ b/arch/arm64/boot/dts/allwinner/sun55i-a527-cubie-a5e.dts
+@@ -1,18 +1,20 @@
+ // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+-// Copyright (C) 2025 Arm Ltd.
++// Author: piotr.oniszczuk@gmail.com
+ 
+ /dts-v1/;
+ 
+ #include "sun55i-a523.dtsi"
+ 
+ #include <dt-bindings/gpio/gpio.h>
+-#include <dt-bindings/leds/common.h>
+ 
+ / {
+ 	model = "Radxa Cubie A5E";
+ 	compatible = "radxa,cubie-a5e", "allwinner,sun55i-a527";
+ 
+ 	aliases {
++		mmc0 = &mmc0;
++		mmc1 = &mmc1;
++		mmc2 = &mmc2;
+ 		ethernet0 = &gmac0;
+ 		ethernet1 = &gmac1;
+ 		serial0 = &uart0;
+@@ -23,21 +25,57 @@ chosen {
+ 		stdout-path = "serial0:115200n8";
+ 	};
+ 
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/*
++		 * The display engine's layer DMA master has a limited fetch
++		 * aperture and can only reach low DRAM (it reads the RCQ pool at
++		 * ~0x43000000 but not 0x4b100000). The kernel's default CMA is
++		 * high (~0xf0000000), so scanout fetches zeros (black). Pin CMA
++		 * just above the kernel image (ends ~0x42c70000) and the RCQ
++		 * pool (~0x43000000), below the dtb (~0x49ff6000).
++		 */
++		linux,cma {
++			compatible = "shared-dma-pool";
++			reusable;
++			/* pin low: the DE fetch aperture only reaches DRAM below
++			 * ~0x4b100000; stop at 0x48000000 to stay clear of the
++			 * secmon@48000000/48100000 and vdev@4ae00000 no-map
++			 * reservations (overlap hands out no-map pages -> oops) */
++			reg = <0x0 0x43000000 0x0 0x5000000>;
++			alloc-ranges = <0x0 0x43000000 0x0 0x5000000>;
++			size = <0x0 0x5000000>;
++			linux,cma-default;
++		};
++	};
++
++	hdmi-connector {
++		compatible = "hdmi-connector";
++		type = "a";
++
++		port {
++			hdmi_con_in: endpoint {
++				remote-endpoint = <&hdmi_out_con>;
++			};
++		};
++	};
++
+ 	leds {
+ 		compatible = "gpio-leds";
+ 
+-		power-led {
+-			function = LED_FUNCTION_POWER;
+-			color = <LED_COLOR_ID_GREEN>;
++		led-0 {
++			label = "radxa:green:power";
+ 			gpios = <&r_pio 0 4 GPIO_ACTIVE_LOW>; /* PL4 */
+-			default-state = "on";
+ 			linux,default-trigger = "heartbeat";
+ 		};
+ 
+-		use-led {
+-			function = LED_FUNCTION_ACTIVITY;
+-			color = <LED_COLOR_ID_BLUE>;
++		led-1 {
++			label = "radxa:blue:user";
+ 			gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL5 */
++			linux,default-trigger = "disk-activity";
+ 		};
+ 	};
+ 
+@@ -62,6 +100,21 @@ wifi_pwrseq: wifi-pwrseq {
+ 		post-power-on-delay-ms = <200>;
+ 	};
+ 
++	reg_3v3_wifi: 3v3-wifi {
++		compatible = "regulator-fixed";
++		regulator-name = "3v3-wifi";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&r_pio 0 7 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>;
++		post-power-on-delay-ms = <200>;
++	};
++
+ 	reg_vcc5v: vcc5v {
+ 		/* board wide 5V supply from the USB-C connector */
+ 		compatible = "regulator-fixed";
+@@ -113,6 +166,24 @@ gma340_pcie: gma340-pcie {
+ 		gpio = <&pio 1 6 GPIO_ACTIVE_HIGH>;
+ 		enable-active-high;
+ 	};
++
++	reg_3v3_wifi: 3v3-wifi {
++		compatible = "regulator-fixed";
++		regulator-name = "3v3-wifi";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		vin-supply = <&reg_vcc5v>;
++		gpio = <&r_pio 0 7 GPIO_ACTIVE_HIGH>; /* PL7 */
++		enable-active-high;
++	};
++};
++
++&cpu0 {
++	cpu-supply = <&reg_dcdc1>;
++};
++
++&cpu4 {
++	cpu-supply = <&reg_dcdc1_323>;
+ };
+ 
+ &ehci0 {
+@@ -196,6 +267,25 @@ wifi@1 {
+ 	};
+ };
+ 
++&mmc1 {
++	bus-width = <4>;
++	max-frequency = <40000000>;
++	mmc-pwrseq = <&wifi_pwrseq>;
++	non-removable;
++	pinctrl-names = "default";
++	pinctrl-0 = <&mmc1_pins>;
++	vmmc-supply = <&reg_3v3_wifi>;
++	vqmmc-supply = <&reg_bldo1>;
++	status = "okay";
++
++	wifi@1 {
++		reg = <1>;
++		interrupt-parent = <&r_pio>;
++		interrupts = <1 0 IRQ_TYPE_LEVEL_LOW>;
++		interrupt-names = "host-wake";
++	};
++};
++
+ &ohci0 {
+ 	status = "okay";
+ };
+@@ -275,6 +365,7 @@ reg_aldo1: aldo1 {
+ 			};
+ 
+ 			reg_aldo2: aldo2 {
++				regulator-always-on;
+ 				regulator-min-microvolt = <1800000>;
+ 				regulator-max-microvolt = <1800000>;
+ 				regulator-name = "vcc-pe";
+@@ -310,6 +401,7 @@ reg_bldo2: bldo2 {
+ 			};
+ 
+ 			reg_bldo3: bldo3 {
++				regulator-always-on;
+ 				regulator-min-microvolt = <3300000>;
+ 				regulator-max-microvolt = <3300000>;
+ 				regulator-name = "vcc-mipi-cam";
+@@ -320,9 +412,10 @@ reg_bldo4: bldo4 {
+ 			};
+ 
+ 			reg_cldo1: cldo1 {
+-				regulator-min-microvolt = <1800000>;
+-				regulator-max-microvolt = <1800000>;
+-				regulator-name = "vcc-pc-and-their-dog";
++				regulator-always-on;
++				regulator-min-microvolt = <1900000>;
++				regulator-max-microvolt = <1900000>;
++				regulator-name = "vcc-pc";
+ 			};
+ 
+ 			reg_cldo2: cldo2 {
+@@ -332,8 +425,8 @@ reg_cldo2: cldo2 {
+ 			reg_cldo3: cldo3 {
+ 				/* IO, USB-2, 3V3, card, NAND, sensor, PI */
+ 				regulator-always-on;
+-				regulator-min-microvolt = <3300000>;
+-				regulator-max-microvolt = <3300000>;
++				regulator-min-microvolt = <3400000>;
++				regulator-max-microvolt = <3400000>;
+ 				regulator-name = "vcc-io-mmc-spi-ana";
+ 			};
+ 
+@@ -392,6 +485,9 @@ reg_dcdc1_323: dcdc1 {
+ 			};
+ 
+ 			/* DCDC2 is polyphased with DCDC1 */
++			reg_dcdc2_323: dcdc2 {
++				x-powers,force-polyfase-mode;
++			};
+ 
+ 			/* RISC-V management core supply */
+ 			reg_dcdc3_323: dcdc3 {
+-- 
+Armbian
+

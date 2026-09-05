@@ -1,0 +1,1317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Date: Tue, 1 Sep 2026 21:50:00 -0400
+Subject: drm/sun55i: stage every UI channel through the RCQ
+
+The v35x RCQ backend only staged the first UI channel (phys 6, the DRM
+primary). Channels 7 and 8 carry the overlay planes and the X hardware
+cursor, so the cursor never rendered.
+
+Parameterize the per-channel register blocks (OVL/VSU/TFBD/CCSC/CDC
+live at a fixed 0x20000 stride per channel), route every UI channel
+through de_top's port2uchn/uch2core muxes, and drive one blender pipe
+per channel. Alpha-capable planes use pixel-alpha with the OVL
+converting straight-alpha ARGB to premultiplied (lay_premul
+NON_TO_EXC) and the blender pipe flagged premultiplied, mirroring the
+vendor de_bld_pipe_set_attr/de_rtmx flow. Page flips keep reloading
+only the per-channel fb-address blocks.
+
+Signed-off-by: Juan Sanchez Fuentes <juanesf91@gmail.com>
+Assisted-by: opencode:muse-spark-1.2-contributor-free
+---
+ drivers/gpu/drm/sun4i/sun55i_de.c | 1118 ++++++++++
+ drivers/gpu/drm/sun4i/sun55i_de.h |  159 ++
+ 2 files changed, 1277 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun55i_de.c b/drivers/gpu/drm/sun4i/sun55i_de.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/gpu/drm/sun4i/sun55i_de.c
+@@ -0,0 +1,1118 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Allwinner sun55iw3 v35x display engine RCQ backend.
++ *
++ * See sun55i_de.h for the architecture. This drives the minimal pipeline
++ * (de_top control via MMIO; blender + output formatter via the RCQ DMA) needed
++ * to scan out a solid background-color frame, as the foundation for layers.
++ *
++ * Register semantics are taken from the vendor BSP (disp2 lowlevel_v35x/de35x:
++ * de_top.c, de_rtmx.c, de_bld.c, de_fmt.c) for sun55iw3 / de352.
++ */
++
++#include <linux/bitops.h>
++#include <linux/device.h>
++#include <linux/dma-mapping.h>
++#include <linux/hrtimer.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/ktime.h>
++#include <linux/math64.h>
++#include <linux/moduleparam.h>
++#include <linux/preempt.h>	/* in_hardirq() — TEMP instrumentation */
++#include <linux/spinlock.h>
++
++#include <drm/drm_atomic.h>
++#include <drm/drm_fb_dma_helper.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_framebuffer.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_print.h>
++#include <drm/drm_rect.h>
++
++#include "sun8i_mixer.h"
++#include "sun55i_de.h"
++#include "sun55i_de_scaler.h"
++
++/*
++ * de_top control registers, relative to the "detop" regmap (DE base + 0x8000).
++ * de_top.c: de_top_set_de2tcon_mux / de_top_set_rtmx_enable.
++ */
++#define SUN55I_DETOP_MBUS_CLK		0x08	/* bit0: DE master-port (DRAM) clk */
++#define SUN55I_DETOP_DE2TCON_MUX	0x10	/* disp N @ bits[N*4 +:4] = TCON */
++#define SUN55I_DETOP_UCH2CORE_MUX	0x24	/* phys UI chn -> core/disp mux */
++#define SUN55I_DETOP_PORT2CHN_MUX	0x28	/* blender port -> phys chn mux */
++#define SUN55I_DETOP_ASYNC_BRIDGE	0x4c
++#define SUN55I_DETOP_BUF_DEPTH		0x50
++
++#define SUN55I_DETOP_MBUS_CLK_EN	BIT(0)
++
++/*
++ * de_off (== RCQ head reg_offset, dest = DE base 0x5000000 + off) of the
++ * datapath blocks. disp0: DE_DISP_OFFSET(0)=0x280000.
++ */
++#define SUN55I_DE_BLD_BASE		0x281000	/* +DISP_BLD_OFFSET 0x1000 */
++#define SUN55I_DE_FMT_BASE		0x285000	/* +DISP_FMT_OFFSET 0x5000 */
++
++/* blender, split into the same 3 blocks the vendor uses (de_bld.c) */
++#define SUN55I_DE_BLD_ATTR_OFF		0x00	/* size 0x60: pipe.en + attrs  */
++#define SUN55I_DE_BLD_ATTR_SIZE		0x60
++#define SUN55I_DE_BLD_CTL_OFF		0x80	/* size 0x24: route/bg/outsize */
++#define SUN55I_DE_BLD_CTL_SIZE		0x24
++#define SUN55I_DE_BLD_CK_OFF		0xa0	/* size 0x60: colorkey/out_ctl */
++#define SUN55I_DE_BLD_CK_SIZE		0x60
++
++/* field offsets within the blender blocks (bld_reg, de_bld_type.h) */
++#define SUN55I_BLD_ATTR_PIPE_EN		0x00	/* in ATTR block */
++#define SUN55I_BLD_CTL_BG_COLOR		0x08	/* in CTL block (0x88-0x80) */
++#define SUN55I_BLD_CTL_OUT_SIZE		0x0c	/* in CTL block (0x8c-0x80) */
++#define SUN55I_BLD_CK_OUT_CTL		0x5c	/* in CK block  (0xfc-0xa0) */
++
++/* output formatter (fmt_reg, de_fmt_type.h) */
++#define SUN55I_DE_FMT_SIZE		0x2c	/* sizeof(struct fmt_reg) */
++#define SUN55I_FMT_CTL			0x00	/* 0:RGB 1:YUV-csc */
++#define SUN55I_FMT_SIZE_REG		0x04
++#define SUN55I_FMT_SWAP			0x08
++#define SUN55I_FMT_BITDEPTH		0x0c	/* 0:8-bit 1:10-bit */
++#define SUN55I_FMT_TYPE			0x10	/* 0:444 1:422 2:420 */
++#define SUN55I_FMT_LIMIT_Y		0x20
++#define SUN55I_FMT_LIMIT_C0		0x24
++#define SUN55I_FMT_LIMIT_C1		0x28
++#define SUN55I_FMT_LIMIT_FULL		0x0fff0000	/* RGB/444 full range */
++
++/*
++ * UI overlay (de_ovl.c, struct ovl_u_reg) for the first UI channel.
++ *
++ * de352 logical->phys map = {0,6,7,8} (mainline cfg): the primary UI plane is
++ * logical channel 1 = phys channel 6. de_top.h: DE_CHN_OFFSET(phy) = 0x100000 +
++ * 0x20000*phy, CHN_OVL_OFFSET = 0x1000. So phys6 overlay base = 0x1c1000.
++ */
++#define SUN55I_DE_OVL_UI_PHYS_CHN	6
++
++/*
++ * Per-channel bases: each v35x channel owns a 0x20000 register stride
++ * (vendor de_ovl_platform.c: DE_CHN_OFFSET_BASE 0x100000 + chn * DE_CHN_SIZE,
++ * relative to the DE base). ch6 -> 0x1c0000, ch7 -> 0x1e0000, ...
++ * with the OVL block at +0x1000, VSU at +0x4000, TFBD at +0x5400,
++ * CCSC at +0x0800 and CDC at +0x8000.
++ */
++#define SUN55I_DE_UI_CHN_BASE(chn)	(0x100000 + (chn) * 0x20000)
++#define SUN55I_DE_OVL_UI_BASE(chn)	(SUN55I_DE_UI_CHN_BASE(chn) + 0x1000)
++#define SUN55I_DE_VSU_UI_BASE(chn)	(SUN55I_DE_UI_CHN_BASE(chn) + 0x4000)
++#define SUN55I_DE_TFBD_UI_BASE(chn)	(SUN55I_DE_UI_CHN_BASE(chn) + 0x5400)
++#define SUN55I_DE_CCSC_UI_BASE(chn)	(SUN55I_DE_UI_CHN_BASE(chn) + 0x0800)
++#define SUN55I_DE_CDC_UI_BASE(chn)	(SUN55I_DE_UI_CHN_BASE(chn) + 0x8000)
++
++/* blender route port for a UI physical channel: map[1..3] = 6..8 */
++#define SUN55I_DE_OVL_UI_LOGIC_CHN(chn)	((chn) - 5)
++
++/*
++ * RCQ blocks within the UI overlay (de_ovl.c:675-703):
++ *   LAY_0 @ +0x00 size 0x1c, PARA @ +0x80 size 0x0c.
++ * Only layer 0 + PARA are used (no scaling -> DS block left clean).
++ */
++#define SUN55I_DE_OVL_LAY_OFF(n)	((n) * 0x20)	/* LAY_n @ +0x00..0x60 */
++#define SUN55I_DE_OVL_LAY0_OFF		0x00
++#define SUN55I_DE_OVL_LAY0_SIZE		0x1c
++#define SUN55I_DE_OVL_PARA_OFF		0x80
++#define SUN55I_DE_OVL_PARA_SIZE		0x0c
++#define SUN55I_DE_OVL_DS_OFF		0xe0	/* hori_ds/vert_ds (de_ovl.c:705) */
++#define SUN55I_DE_OVL_DS_SIZE		0x1c
++
++/*
++ * VSU8 scaler for phys channel 6: DE_CHN_OFFSET(6) + CHN_SCALER_OFFSET =
++ * 0x1c0000 + 0x4000 (de_top.h). de352 makes this channel a DE_SCALER_TYPE_VSU8.
++ *
++ * The v35x channel datapath is ALWAYS overlay -> VSU -> blender; the VSU is not
++ * bypassable, it convolves every output pixel against its filter-coefficient
++ * SRAM. After we power-gate/ungate PD_DE that SRAM powers up RANDOM, so a layer
++ * with only the CTL block staged (en=0) is still filtered by garbage taps and
++ * collapses to a single (per-boot-random) source column. The vendor only avoids
++ * this because Android never power-gates the DE. We therefore program a real 1:1
++ * passthrough: enable + in=out size + unity step + unity coefficients, exactly
++ * as de_vsu8_set_para() does for a non-scaled RGB layer (de_vsu.c:677-779).
++ *
++ * The seven RCQ blocks and their de-offsets (struct vsu8_reg, de_vsu_type.h;
++ * VSU8_REG_BLK_* in de_vsu.c):
++ */
++#define SUN55I_DE_VSU_CTL_OFF		0x000	/* ctl.en + scale_mode */
++#define SUN55I_DE_VSU_CTL_SIZE		0x14
++#define SUN55I_DE_VSU_ATTR_OFF		0x040	/* out_size + glb_alpha */
++#define SUN55I_DE_VSU_ATTR_SIZE		0x08
++#define SUN55I_DE_VSU_YPARA_OFF		0x080	/* y in_size/step/phase */
++#define SUN55I_DE_VSU_CPARA_OFF		0x0c0	/* c in_size/step/phase */
++#define SUN55I_DE_VSU_PARA_SIZE		0x1c
++#define SUN55I_DE_VSU_COEFF0_OFF	0x200	/* y_hori_coeff[32] */
++#define SUN55I_DE_VSU_COEFF1_OFF	0x400	/* y_vert_coeff[32] */
++#define SUN55I_DE_VSU_COEFF2_OFF	0x600	/* c_hori_coeff[32] */
++#define SUN55I_DE_VSU_COEFF_SIZE	0x80
++
++/* fields within the CTL / ATTR / *PARA blocks (struct vsu8_reg) */
++#define SUN55I_VSU_CTL_EN		BIT(0)
++#define SUN55I_VSU_ATTR_OUT_SIZE	0x00	/* in ATTR block (0x40) */
++#define SUN55I_VSU_ATTR_GLB_ALPHA	0x04	/* in ATTR block (0x44) */
++#define SUN55I_VSU_PARA_IN_SIZE		0x00	/* in *PARA block */
++#define SUN55I_VSU_PARA_HSTEP		0x08
++#define SUN55I_VSU_PARA_VSTEP		0x0c
++/*
++ * step.dwval = ratio << SUN55I_VSU_STEP_VALID_START_BIT (de_vsu.c). The ratio
++ * is src/dst in SUN55I_VSU_STEP_FRAC_BITS fixed point (1.0 == 1 << 19), so a
++ * 1:1 step lands at reg 1 << 20. The polyphase coefficients live in
++ * sun55i_de_scaler.h (sun55i_vsu8_lan2_coef / sun55i_vsu8_coef_index).
++ */
++#define SUN55I_VSU_STEP_VALID_START_BIT	1
++
++/*
++ * Other per-channel sub-modules that sit in the phys-6 datapath and must be
++ * disabled/bypassed for a 1:1 linear-RGB layer (de_rtmx_chn_layer_apply):
++ *   TFBD tiled-FB decoder @ +CHN_TFBD_OFFSET 0x5400 (de_tfbd_disable: ctrl=0)
++ *   channel CSC @ +CHN_CCSC_OFFSET 0x800 (de_ccsc_enable 0: ctl=0 bypass)
++ *   CDC color/gamut @ +CHN_CDC_OFFSET 0x8000 (de_cdc_disable: ctl=0)
++ * de352 marks TFBD and CDC supported on UCH0/phys6 (de352_feat.c); left stale
++ * they mangle the fetch / apply a garbage colour transform. The CDC is the
++ * channel colour-management block the vendor bypasses for an SDR RGB->RGB
++ * layer (de_rtmx_chn_apply_csc: cdc_check_bypass == 1 -> de_cdc_disable).
++ */
++
++/* per-layer fields within the LAY_0 block (union ovl_u_lay_reg) */
++#define SUN55I_OVL_LAY_ATTCTL		0x00
++#define SUN55I_OVL_LAY_MBSIZE		0x04	/* crop (w-1)|(h-1)<<16 */
++#define SUN55I_OVL_LAY_MBCOOR		0x08	/* layer-in-chn coord (0) */
++#define SUN55I_OVL_LAY_PITCH		0x0c	/* byte stride */
++#define SUN55I_OVL_LAY_TOP_LADDR	0x10	/* fb DMA addr [31:0] */
++#define SUN55I_OVL_LAY_BOT_LADDR	0x14	/* 0 (progressive) */
++/* fields within the PARA block (top_haddr @0x80, win_size @0x88) */
++#define SUN55I_OVL_PARA_TOP_HADDR	0x00	/* fb addr high byte, per layer */
++#define SUN55I_OVL_PARA_WIN_SIZE	0x08	/* channel out (w-1)|(h-1)<<16 */
++
++/*
++ * attctl (union ovl_u_attctl_reg): en[0] | alpha_mode[2:1] | fmt[12:8] |
++ * glb_alpha[31:24]. Use global-alpha mode (1) with 0xff so the layer is opaque
++ * regardless of any X/undefined alpha bits in the source pixels.
++ */
++#define SUN55I_OVL_ATTCTL_EN		BIT(0)
++#define SUN55I_OVL_ATTCTL_ALPHA_MODE(m)	(((m) & 0x3) << 1)
++#define SUN55I_OVL_ATTCTL_GLOBAL_ALPHA	1
++#define SUN55I_OVL_ATTCTL_FMT(f)	(((f) & 0x1f) << 8)
++#define SUN55I_OVL_ATTCTL_ALPHA(a)	(((a) & 0xff) << 24)
++
++/* blender pipe fields (de_bld.c / struct bld_reg) for showing the channel */
++#define SUN55I_BLD_ATTR_PIPE_IN_SIZE(p)	(0x08 + (p) * 0x10)	/* ATTR block */
++#define SUN55I_BLD_ATTR_PIPE_IN_COORD(p) (0x0c + (p) * 0x10)	/* ATTR block */
++#define SUN55I_BLD_CTL_ROUT		0x00	/* CTL block: rout_ctl @0x80 */
++#define SUN55I_BLD_CTL_PREMUL		0x04	/* CTL block: premul_ctl @0x84 */
++#define SUN55I_BLD_CTL_BLEND(p)		(0x10 + (p) * 0x04)	/* blend_ctl[p] */
++#define SUN55I_BLD_PIPE_EN(p)		(BIT(0) | BIT(8 + (p)))
++#define SUN55I_BLD_ROUT(p, chn)		(((chn) & 0xf) << ((p) << 2))
++#define SUN55I_BLD_BLEND_SRCOVER	0x03010301
++
++#define SUN55I_DE_OUT_SIZE(w, h) \
++	((((w) - 1) & 0x1fff) | ((((h) - 1) & 0x1fff) << 16))
++
++#define SUN55I_RCQ_ALIGN		32
++
++/*
++ * TEMP tunable: the TCON scanline the deferred arm aims for, and the latest
++ * line at which an in-IRQ arm is still considered safe. <0 derives both from
++ * the mode (the middle of the leading vertical-blanking region). Exposed so the
++ * arm point can be walked across the blanking window on hardware without a
++ * rebuild; read back the de->arm_* counters to confirm where arms land.
++ */
++static int arm_target_line = -1;
++module_param(arm_target_line, int, 0644);
++MODULE_PARM_DESC(arm_target_line,
++		 "v35x RCQ arm target scanline; <0 = derive from mode");
++
++/*
++ * The TV-TCON programs its vertical total as ver_total*2 for progressive modes
++ * (vendor tcon1_cfg; mainline sun4i_tcon: V_TOTAL(crtc_vtotal * 2)), so the line
++ * counter (TCON+0xfc) runs 0..2*vtotal. This matches the vendor's own arm-target
++ * math (disp_mgr_protect_reg_for_rcq targets ~line 69 at 1080p60, which is only
++ * in blanking when the counter is doubled). Default on; left as a live knob in
++ * case a specific output path differs - flip it and watch arm_line_max vs
++ * de_line_total. Takes effect at the next modetest (mode_set).
++ */
++static bool tcon_line_double = true;
++module_param(tcon_line_double, bool, 0644);
++MODULE_PARM_DESC(tcon_line_double,
++		 "TCON line counter runs 0..2*vtotal (half-lines)");
++
++/*
++ * TEMP read-only diagnostics, exposed on sun8i_mixer.ko under
++ * /sys/module/sun8i_mixer/parameters/. de_* report the timing derived in
++ * mode_set (so a wrong line-unit/derivation is visible at a glance);
++ * arm_line_* report the TRUE TCON scanline at the moment of every arm
++ * (immediate AND hrtimer-deferred), so we can tell whether a deferred arm is
++ * actually landing in blanking. arm_now/arm_late count the two paths.
++ * Reset at each mode_set (i.e. each modetest run).
++ */
++static int dbg_line_active = -1;
++static int dbg_line_total  = -1;
++static int dbg_ns_per_line = -1;
++static int dbg_arm_target  = -1;
++static int dbg_arm_line_last = -1;
++static int dbg_arm_line_min  = 0x7fffffff;
++static int dbg_arm_line_max  = -1;
++static unsigned int dbg_arm_now;	/* immediate (in-IRQ) arms */
++static unsigned int dbg_arm_late;	/* hrtimer-deferred arms scheduled */
++static unsigned int dbg_commits;	/* commits staged */
++static unsigned int dbg_coalesced;	/* stages overwritten before an arm */
++static unsigned int dbg_arm_busy;	/* arms skipped: load still in flight */
++static unsigned int dbg_status;		/* last RCQ STATUS read at arm */
++module_param_named(de_active_line, dbg_line_active, int, 0444);
++module_param_named(de_line_total,  dbg_line_total,  int, 0444);
++module_param_named(de_ns_per_line, dbg_ns_per_line, int, 0444);
++module_param_named(de_arm_target,  dbg_arm_target,  int, 0444);
++module_param_named(arm_line_last, dbg_arm_line_last, int, 0444);
++module_param_named(arm_line_min,  dbg_arm_line_min,  int, 0444);
++module_param_named(arm_line_max,  dbg_arm_line_max,  int, 0444);
++module_param_named(arm_now,   dbg_arm_now,   uint, 0444);
++module_param_named(arm_late,  dbg_arm_late,  uint, 0444);
++module_param_named(commits,   dbg_commits,   uint, 0444);
++module_param_named(coalesced, dbg_coalesced, uint, 0444);
++module_param_named(arm_busy,  dbg_arm_busy,  uint, 0444);
++module_param_named(rcq_status, dbg_status,   uint, 0444);
++
++/*
++ * Busy-gate: skip an arm while STATUS reports BUSY. DEFAULT OFF - measured on
++ * hardware, BUSY (bit4) is NOT a transient in-flight flag; it is the DE's
++ * active-region flag and is already set by TCON line ~69 (the DE prefetches
++ * ahead of TCON active video at line 82). Gating on it blocks every arm,
++ * including the initial datapath load -> black screen. Kept only as a probe.
++ */
++static bool arm_busy_gate;
++module_param(arm_busy_gate, bool, 0644);
++MODULE_PARM_DESC(arm_busy_gate, "skip RCQ arm while STATUS BUSY (DANGEROUS)");
++
++/*
++ * Arm exactly at the target line like the vendor (sleep from the current line
++ * up to arm_target before arming), rather than arming immediately whenever the
++ * beam is already before the target. The vendor arms late in blanking (~line 69
++ * at 1080p60, ~13 lines before active), which likely compensates for the
++ * DE->TCON async-bridge pipeline delay: TCON-blanking != DE-blanking. Toggle to
++ * A/B early-vs-late arming on hardware. Watch arm_line_min/max move to ~target.
++ */
++/*
++ * DEFAULT OFF: arm early, as soon as the vblank IRQ finds the beam before the
++ * target. On hardware the DE is idle in early blanking (TCON line ~5) but
++ * already BUSY by the vendor target (~69), so arming early lands in the DE's
++ * genuine idle window with the most margin. On = sleep to the target line like
++ * the vendor (kept for A/B testing; the vendor's late arm suits its pipeline,
++ * not necessarily ours).
++ */
++static bool arm_at_target;
++module_param(arm_at_target, bool, 0644);
++MODULE_PARM_DESC(arm_at_target, "sleep to the target line before arming (vendor)");
++
++/*
++ * Minimal page flip: once the datapath has been armed once, a subsequent commit
++ * reloads ONLY the framebuffer-address blocks (the overlay layer + its high-addr
++ * para block), leaving the blender, scaler and formatter loaded from the first
++ * arm. A static image works (one arm); only flips flicker, and the sole thing
++ * that changes per flip is the fb address - so reloading the blender/route/VSU
++ * coefficients every frame (separate RCQ blocks, not necessarily latched
++ * atomically together) is the prime suspect. Off = reload all blocks every
++ * frame (old behaviour). Assumes constant geometry between flips (true for
++ * modetest -v); a geometry/format change still forces a full reload via
++ * mode_set.
++ */
++static bool flip_min = true;
++module_param(flip_min, bool, 0644);
++MODULE_PARM_DESC(flip_min, "page flips reload only the fb-address blocks");
++
++/*
++ * TEMP: phys address of the bound TCON's current-scan register (TCON_tv0 +0xfc,
++ * line in bits[11:0]). Mapped once at init; read in do_arm to record the real
++ * arm scanline for the deferred path too (the de has no other handle to the
++ * TCON). Overridable in case the HDMI TCON base differs.
++ */
++static unsigned int tcon_curline_phys = 0x55030fc;
++module_param(tcon_curline_phys, uint, 0644);
++static void __iomem *tcon_curline_io;
++
++static enum hrtimer_restart sun55i_de_arm_timer(struct hrtimer *t);
++static u32 sun55i_de_arm_target(struct sun55i_de *de);
++
++static struct sun55i_de_block *de_blk(struct sun8i_mixer *mixer, unsigned int i)
++{
++	return &mixer->de->blocks[i];
++}
++
++/* write a u32 into a block's shadow and mark its RCQ head dirty */
++static void de_blk_write(struct sun55i_de_block *blk, u32 off, u32 val)
++{
++	__le32 *p = (__le32 *)((u8 *)blk->shadow + off);
++
++	*p = cpu_to_le32(val);
++	blk->head->dirty = cpu_to_le32(1);
++}
++
++/* read-modify-write a u32 in a block's shadow (shared registers) */
++static void de_blk_update_bits(struct sun55i_de_block *blk, u32 off,
++			       u32 mask, u32 val)
++{
++	__le32 *p = (__le32 *)((u8 *)blk->shadow + off);
++	u32 v = le32_to_cpu(*p);
++
++	v = (v & ~mask) | (val & mask);
++	*p = cpu_to_le32(v);
++	blk->head->dirty = cpu_to_le32(1);
++}
++
++static void de_blk_set_head(struct sun55i_de_block *blk)
++{
++	struct sun55i_de_rcq_head *hd = blk->head;
++
++	hd->low_addr = cpu_to_le32(lower_32_bits(blk->phys));
++	hd->dw0 = cpu_to_le32((blk->size & 0xffffff) |
++			      ((upper_32_bits(blk->phys) & 0xff) << 24));
++	hd->dirty = cpu_to_le32(0);
++	hd->reg_offset = cpu_to_le32(blk->reg_off);
++}
++
++/*
++ * Allocate the coherent RCQ pool (head array + block data) and lay out the
++ * blocks. The shadow defaults (zero) already mean: all blender pipes disabled,
++ * RGB progressive output, no color key.
++ */
++int sun55i_de_init(struct sun8i_mixer *mixer)
++{
++	static const struct {
++		u32 reg_base, off, size;
++	} shared_layout[] = {
++		[SUN55I_DE_BLK_BLD_ATTR] = { SUN55I_DE_BLD_BASE,
++			SUN55I_DE_BLD_ATTR_OFF, SUN55I_DE_BLD_ATTR_SIZE },
++		[SUN55I_DE_BLK_BLD_CTL]  = { SUN55I_DE_BLD_BASE,
++			SUN55I_DE_BLD_CTL_OFF, SUN55I_DE_BLD_CTL_SIZE },
++		[SUN55I_DE_BLK_BLD_CK]   = { SUN55I_DE_BLD_BASE,
++			SUN55I_DE_BLD_CK_OFF, SUN55I_DE_BLD_CK_SIZE },
++		[SUN55I_DE_BLK_FMT]      = { SUN55I_DE_FMT_BASE,
++			0, SUN55I_DE_FMT_SIZE },
++	};
++	/* per-UI-channel block kinds; base selects the channel's register file */
++	static const struct {
++		u8 which;	/* OVL / VSU / TFBD / CCSC / CDC selector */
++		u32 off, size;
++	} ch_layout[SUN55I_DE_BLK_PER_UI_CH] = {
++		[SUN55I_DE_BLKCH_OVL_LAY0] = { 0, SUN55I_DE_OVL_LAY_OFF(0),
++			SUN55I_DE_OVL_LAY0_SIZE },
++		[SUN55I_DE_BLKCH_OVL_LAY1] = { 0, SUN55I_DE_OVL_LAY_OFF(1),
++			SUN55I_DE_OVL_LAY0_SIZE },
++		[SUN55I_DE_BLKCH_OVL_LAY2] = { 0, SUN55I_DE_OVL_LAY_OFF(2),
++			SUN55I_DE_OVL_LAY0_SIZE },
++		[SUN55I_DE_BLKCH_OVL_LAY3] = { 0, SUN55I_DE_OVL_LAY_OFF(3),
++			SUN55I_DE_OVL_LAY0_SIZE },
++		[SUN55I_DE_BLKCH_OVL_PARA] = { 0, SUN55I_DE_OVL_PARA_OFF,
++			SUN55I_DE_OVL_PARA_SIZE },
++		[SUN55I_DE_BLKCH_OVL_DS]   = { 0, SUN55I_DE_OVL_DS_OFF,
++			SUN55I_DE_OVL_DS_SIZE },
++		[SUN55I_DE_BLKCH_VSU_CTL]  = { 1, SUN55I_DE_VSU_CTL_OFF,
++			SUN55I_DE_VSU_CTL_SIZE },
++		[SUN55I_DE_BLKCH_VSU_ATTR] = { 1, SUN55I_DE_VSU_ATTR_OFF,
++			SUN55I_DE_VSU_ATTR_SIZE },
++		[SUN55I_DE_BLKCH_VSU_YPARA] = { 1, SUN55I_DE_VSU_YPARA_OFF,
++			SUN55I_DE_VSU_PARA_SIZE },
++		[SUN55I_DE_BLKCH_VSU_CPARA] = { 1, SUN55I_DE_VSU_CPARA_OFF,
++			SUN55I_DE_VSU_PARA_SIZE },
++		[SUN55I_DE_BLKCH_VSU_COEFF0] = { 1, SUN55I_DE_VSU_COEFF0_OFF,
++			SUN55I_DE_VSU_COEFF_SIZE },
++		[SUN55I_DE_BLKCH_VSU_COEFF1] = { 1, SUN55I_DE_VSU_COEFF1_OFF,
++			SUN55I_DE_VSU_COEFF_SIZE },
++		[SUN55I_DE_BLKCH_VSU_COEFF2] = { 1, SUN55I_DE_VSU_COEFF2_OFF,
++			SUN55I_DE_VSU_COEFF_SIZE },
++		[SUN55I_DE_BLKCH_TFBD_CTL] = { 2, 0, 4 },
++		[SUN55I_DE_BLKCH_CCSC_CTL] = { 3, 0, 4 },
++		[SUN55I_DE_BLKCH_CDC_CTL]  = { 4, 0, 4 },
++	};
++	struct sun55i_de *de;
++	size_t heads_sz, off;
++	unsigned int i;
++
++	de = devm_kzalloc(mixer->dev, sizeof(*de), GFP_KERNEL);
++	if (!de)
++		return -ENOMEM;
++	mixer->de = de;
++	de->mixer = mixer;
++
++	spin_lock_init(&de->arm_lock);
++	hrtimer_setup(&de->arm_timer, sun55i_de_arm_timer, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL);
++
++	/* TEMP: map the TCON current-scan reg for arm-line diagnostics */
++	tcon_curline_io = devm_ioremap(mixer->dev, tcon_curline_phys & ~0x3, 4);
++
++	/* HDMI is wired to tcon_tv0 = vendor tcon2 */
++	de->tcon_id = 2;
++
++	de->nheads = ALIGN(SUN55I_DE_BLK_NUM, 2);
++	heads_sz = ALIGN(de->nheads * sizeof(struct sun55i_de_rcq_head),
++			 SUN55I_RCQ_ALIGN);
++
++	off = heads_sz;
++	for (i = 0; i < SUN55I_DE_BLK_UI_BASE_IDX; i++)
++		off += ALIGN(shared_layout[i].size, SUN55I_RCQ_ALIGN);
++	for (i = 0; i < SUN55I_DE_BLK_NUM - SUN55I_DE_BLK_UI_BASE_IDX; i++)
++		off += ALIGN(ch_layout[i % SUN55I_DE_BLK_PER_UI_CH].size,
++			     SUN55I_RCQ_ALIGN);
++	de->pool_size = off;
++
++	de->pool = dmam_alloc_coherent(mixer->dev, de->pool_size,
++				       &de->pool_dma, GFP_KERNEL);
++	if (!de->pool)
++		return -ENOMEM;
++
++	de->heads = de->pool;
++	de->heads_dma = de->pool_dma;
++
++	off = heads_sz;
++	for (i = 0; i < SUN55I_DE_BLK_UI_BASE_IDX; i++) {
++		struct sun55i_de_block *blk = &de->blocks[i];
++
++		blk->reg_off = shared_layout[i].reg_base + shared_layout[i].off;
++		blk->size = shared_layout[i].size;
++		blk->shadow = (u8 *)de->pool + off;
++		blk->phys = de->pool_dma + off;
++		blk->head = &de->heads[i];
++		de_blk_set_head(blk);
++		off += ALIGN(shared_layout[i].size, SUN55I_RCQ_ALIGN);
++	}
++	for (i = 0; i < SUN55I_DE_BLK_NUM - SUN55I_DE_BLK_UI_BASE_IDX; i++) {
++		struct sun55i_de_block *blk = &de->blocks[SUN55I_DE_BLK_UI_BASE_IDX + i];
++		const u8 which = ch_layout[i % SUN55I_DE_BLK_PER_UI_CH].which;
++		const u32 coff = ch_layout[i % SUN55I_DE_BLK_PER_UI_CH].off;
++		const u32 csize = ch_layout[i % SUN55I_DE_BLK_PER_UI_CH].size;
++		u32 chn = SUN55I_DE_OVL_UI_PHYS_CHN + i / SUN55I_DE_BLK_PER_UI_CH;
++		u32 reg_base;
++
++		switch (which) {
++		case 0: reg_base = SUN55I_DE_OVL_UI_BASE(chn); break;
++		case 1: reg_base = SUN55I_DE_VSU_UI_BASE(chn); break;
++		case 2: reg_base = SUN55I_DE_TFBD_UI_BASE(chn); break;
++		case 3: reg_base = SUN55I_DE_CCSC_UI_BASE(chn); break;
++		default: reg_base = SUN55I_DE_CDC_UI_BASE(chn); break;
++		}
++
++		blk->reg_off = reg_base + coff;
++		blk->size = csize;
++		blk->shadow = (u8 *)de->pool + off;
++		blk->phys = de->pool_dma + off;
++		blk->head = &de->heads[i];
++		de_blk_set_head(blk);
++		off += ALIGN(csize, SUN55I_RCQ_ALIGN);
++	}
++
++	/* static output-formatter setup: RGB, 8-bit, full range */
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_FMT),
++		     SUN55I_FMT_LIMIT_Y, SUN55I_FMT_LIMIT_FULL);
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_FMT),
++		     SUN55I_FMT_LIMIT_C0, SUN55I_FMT_LIMIT_FULL);
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_FMT),
++		     SUN55I_FMT_LIMIT_C1, SUN55I_FMT_LIMIT_FULL);
++
++	/* program the RCQ head array pointer (de_top_set_rcq_head) */
++	regmap_write(mixer->top_regs, SUN55I_MIXER_RCQ_HEAD_LADDR,
++		     lower_32_bits(de->heads_dma));
++	regmap_write(mixer->top_regs, SUN55I_MIXER_RCQ_HEAD_HADDR,
++		     upper_32_bits(de->heads_dma));
++	regmap_write(mixer->top_regs, SUN55I_MIXER_RCQ_HEAD_LEN,
++		     de->nheads * sizeof(struct sun55i_de_rcq_head));
++
++	dev_dbg(mixer->dev,
++		 "sun55i_de: RCQ pool %zu bytes @%pad, %u heads, blocks bld{%06x,%06x,%06x} fmt{%06x} ovl{%06x,%06x}\n",
++		 de->pool_size, &de->pool_dma, de->nheads,
++		 de->blocks[SUN55I_DE_BLK_BLD_ATTR].reg_off,
++		 de->blocks[SUN55I_DE_BLK_BLD_CTL].reg_off,
++		 de->blocks[SUN55I_DE_BLK_BLD_CK].reg_off,
++		 de->blocks[SUN55I_DE_BLK_FMT].reg_off,
++		 de->blocks[SUN55I_DE_BLK_CH(0, SUN55I_DE_BLKCH_OVL_LAY0)].reg_off,
++		 de->blocks[SUN55I_DE_BLK_CH(0, SUN55I_DE_BLKCH_OVL_PARA)].reg_off);
++
++	return 0;
++}
++
++/*
++ * Program the per-mode state: de_top control (MMIO) + datapath sizes (shadow).
++ * Mirrors the vendor de_rtmx_mgr_apply enable path for sun55iw3.
++ */
++void sun55i_de_mode_set(struct sun8i_mixer *mixer,
++			const struct drm_display_mode *mode)
++{
++	struct sun55i_de *de = mixer->de;
++	u32 w = mode->hdisplay, h = mode->vdisplay;
++	u32 size = SUN55I_DE_OUT_SIZE(w, h);
++	u32 vtotal = mode->crtc_vtotal, clock = mode->crtc_clock;
++	u32 vbp;
++	u32 mux;
++	unsigned int i;
++
++	/*
++	 * Beam-gated arm timing (see sun55i_de_vblank_quirk). The TV-TCON line
++	 * counter (cur_line, TCON+0xfc) is zeroed at the start of vertical sync
++	 * and counts up to the programmed vertical total, which is doubled for
++	 * progressive modes (ver_total*2) -> 0..2*vtotal. The RCQ must be armed
++	 * during the leading blanking. We replicate the vendor target exactly
++	 * (disp_mgr_protect_reg_for_rcq): arm_target = ver_back_porch + 3% of
++	 * ver_total, where the Allwinner ver_back_porch = vtotal - vsync_end.
++	 * ns_per_line = htotal / pixel_clock, per counter tick.
++	 */
++	hrtimer_cancel(&de->arm_timer);
++	de->armed_once = false;	/* re-stage the whole datapath for the new mode */
++	de->full_arms_left = 4;	/* re-issue the full reload on the next vblanks */
++	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
++	de->line_total = vtotal ? vtotal : 1;
++	de->arm_target = vbp + (vtotal * 3) / 100;
++	de->ns_per_line = clock ?
++		div_u64((u64)mode->crtc_htotal * NSEC_PER_MSEC, clock) : 0;
++
++	/*
++	 * If the counter is in half-lines the modulus and tick period scale by
++	 * two. arm_target follows the vendor, which uses the raw (un-doubled)
++	 * back-porch line number as the counter target, so it is NOT scaled.
++	 */
++	if (tcon_line_double) {
++		de->line_total  *= 2;
++		de->ns_per_line /= 2;
++	}
++
++	/*
++	 * TEMP: publish the derived timing + reset the arm-line stats. The
++	 * active-video start (leading blanking end) lets the arm target and the
++	 * observed arm line be sanity-checked against it: a tear-free arm needs
++	 * arm_line_max < de_active_line.
++	 */
++	dbg_line_active = (tcon_line_double ? 2 : 1) *
++			  (mode->crtc_vtotal - mode->crtc_vsync_start);
++	dbg_line_total  = de->line_total;
++	dbg_ns_per_line = de->ns_per_line;
++	dbg_arm_target  = sun55i_de_arm_target(de);
++	dbg_arm_line_last = -1;
++	dbg_arm_line_min  = 0x7fffffff;
++	dbg_arm_line_max  = -1;
++	dbg_arm_now = dbg_arm_late = dbg_commits = dbg_coalesced = 0;
++	dbg_arm_busy = 0;
++
++	/* --- de_top control registers: plain MMIO, latch immediately --- */
++
++	/*
++	 * Enable the DE master-port (MBUS/DRAM) clock. This internal gate is
++	 * not a CCU clock; the BSP sets it in de_top_set_clk_enable. Without it
++	 * the blender can still scan out a register-sourced background, but any
++	 * layer's framebuffer DMA fetch underruns -> sheared/torn/miscolored
++	 * output. RMW so we only touch bit0.
++	 */
++	regmap_read(mixer->detop_regs, SUN55I_DETOP_MBUS_CLK, &mux);
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_MBUS_CLK,
++		     mux | SUN55I_DETOP_MBUS_CLK_EN);
++
++	/* bind disp0 -> tcon2 (HDMI); RMW just our nibble */
++	regmap_read(mixer->detop_regs, SUN55I_DETOP_DE2TCON_MUX, &mux);
++	mux &= ~0xf;
++	mux |= de->tcon_id & 0xf;
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_DE2TCON_MUX, mux);
++
++	/* de_top_set_rtmx_enable extras (sun55iw3 / soc_ver >= 2) */
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_ASYNC_BRIDGE, 0x0);
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_BUF_DEPTH, 0x6000);
++
++	/*
++	 * Channel mux for the first UI plane (de_rtmx_set_chn_mux, sun55iw3):
++	 *   uch2core (0x24): route phys chn 6 -> core/disp 0.  width 2,
++	 *     shift ((phy-6)<<1)+16 = 16, value hw_disp(0) -> clear bits[17:16].
++	 *   port2uchn (0x28): blender port 1 -> phys chn 6.  width 4,
++	 *     shift port<<2 = 4, value phy+2 = 8 -> nibble[1] = 8 (== 0xa980).
++	 * RMW so we only own phys6's routing; the bootloader left the rest.
++	 */
++	/*
++	 * Route every UI channel (phys 6..8) to display 0:
++	 *   uch2core (0x24): phys chn -> core/disp mux, 2 bits per phys chn,
++	 *     shift ((phy-6)<<1)+16, value hw_disp(0) -> clear.
++	 *   port2uchn (0x28): blender port (== logical chn) -> phys chn,
++	 *     4 bits per port, shift port<<2, value phys+2.
++	 */
++	regmap_read(mixer->detop_regs, SUN55I_DETOP_UCH2CORE_MUX, &mux);
++	for (i = 0; i < SUN55I_DE_UI_CHANNELS; i++)
++		mux &= ~(0x3 << ((i << 1) + 16));
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_UCH2CORE_MUX, mux);
++
++	regmap_read(mixer->detop_regs, SUN55I_DETOP_PORT2CHN_MUX, &mux);
++	for (i = 0; i < SUN55I_DE_UI_CHANNELS; i++) {
++		unsigned int port = SUN55I_DE_OVL_UI_LOGIC_CHN(
++			SUN55I_DE_OVL_UI_PHYS_CHN + i);
++		unsigned int phys = SUN55I_DE_OVL_UI_PHYS_CHN + i;
++
++		mux &= ~(0xf << (port << 2));
++		mux |= (phys + 2) << (port << 2);
++	}
++	regmap_write(mixer->detop_regs, SUN55I_DETOP_PORT2CHN_MUX, mux);
++
++	regmap_write(mixer->top_regs, SUN50I_MIXER_GLOBAL_SIZE, size);
++	regmap_write(mixer->top_regs, SUN50I_MIXER_GLOBAL_CLK, 1);	/* AUTO_CLK */
++	regmap_write(mixer->top_regs, SUN8I_MIXER_GLOBAL_CTL,
++		     SUN8I_MIXER_GLOBAL_CTL_RT_EN);
++
++	/* --- datapath: staged into the RCQ shadow --- */
++
++	/* blender: all pipes off -> output is the background color */
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_ATTR),
++		     SUN55I_BLD_ATTR_PIPE_EN, 0);
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_CTL),
++		     SUN55I_BLD_CTL_OUT_SIZE, size);
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_CTL),
++		     SUN55I_BLD_CTL_BG_COLOR, mixer->de_bg_color);
++	/* out_ctl: fmt_space=RGB(0), premul=0, interlace=0 */
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_BLD_CK),
++		     SUN55I_BLD_CK_OUT_CTL, 0);
++
++	/* output formatter size */
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_FMT),
++		     SUN55I_FMT_SIZE_REG, size);
++
++	/* TEMP diagnostic (dev_info) — revert later */
++	dev_info(mixer->dev,
++		 "sun55i_de: mode_set %ux%u size=%08x de2tcon_mux=%08x bg=%08x\n",
++		 w, h, size, mux, mixer->de_bg_color);
++}
++
++/*
++ * DRM format -> v35x overlay "fmt" field. For UI (RGB) channels the vendor
++ * uses the raw disp_pixel_format enum as the fmt value (de_ovl.c:202-205,
++ * default case: fmt = format; sunxi_display2.h enum). The word order matches
++ * DRM's little-endian fourcc naming (MSB..LSB == [31:24]..[7:0]).
++ */
++static int sun55i_de_fmt(u32 drm_fmt, u32 *fmt)
++{
++	switch (drm_fmt) {
++	case DRM_FORMAT_ARGB8888: *fmt = 0x00; break;
++	case DRM_FORMAT_ABGR8888: *fmt = 0x01; break;
++	case DRM_FORMAT_RGBA8888: *fmt = 0x02; break;
++	case DRM_FORMAT_BGRA8888: *fmt = 0x03; break;
++	case DRM_FORMAT_XRGB8888: *fmt = 0x04; break;
++	case DRM_FORMAT_XBGR8888: *fmt = 0x05; break;
++	case DRM_FORMAT_RGBX8888: *fmt = 0x06; break;
++	case DRM_FORMAT_BGRX8888: *fmt = 0x07; break;
++	case DRM_FORMAT_RGB888:   *fmt = 0x08; break;
++	case DRM_FORMAT_BGR888:   *fmt = 0x09; break;
++	case DRM_FORMAT_RGB565:   *fmt = 0x0a; break;
++	case DRM_FORMAT_BGR565:   *fmt = 0x0b; break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++/* src/dst ratio in SUN55I_VSU_STEP_FRAC_BITS fixed point (1.0 == 1 << 19) */
++static u32 sun55i_de_vsu_step(u32 src, u32 dst)
++{
++	if (!dst)
++		return 1U << SUN55I_VSU_STEP_FRAC_BITS;
++	return (u32)div_u64((u64)src << SUN55I_VSU_STEP_FRAC_BITS, dst);
++}
++
++/*
++ * Stage the VSU8 scaler to resample the @src_w x @src_h overlay output up/down
++ * to the on-screen @dst_w x @dst_h the blender expects (de_vsu8_set_para +
++ * de_vsu_calc_lay_scale_para for an RGB layer).
++ *
++ * A 1:1 layer must BYPASS the VSU (ctl.en=0), not run a unity step through it:
++ * this channel's (UCH0) scaler line buffer is only 2560 px wide (de352_feat
++ * scale_line_buffer_rgb), so an enabled VSU corrupts every line of a 3840-wide
++ * layer beyond px 2560 (the "static right third" at 4K; live-verified
++ * VSU_CTL=1 -> broken, VSU_CTL=0 -> perfect). Bypassed, the channel passes
++ * pixels through untouched and the line buffer is not used.
++ *
++ * For RGB the chroma parameters equal the luma ones. Phase is left at 0 (whole-
++ * pixel crop origin); the hardware accumulates per-output sub-pixel phase from
++ * the step. Actual scaling of layers wider than the line buffer needs the
++ * overlay coarse down-sampler / a different channel; not handled here.
++ */
++static void sun55i_de_vsu_setup(struct sun8i_mixer *mixer, unsigned int uich,
++				u32 src_w, u32 src_h, u32 dst_w, u32 dst_h)
++{
++	u32 in_size = SUN55I_DE_OUT_SIZE(src_w, src_h);
++	u32 out_size = SUN55I_DE_OUT_SIZE(dst_w, dst_h);
++	u32 hstep = sun55i_de_vsu_step(src_w, dst_w);
++	u32 vstep = sun55i_de_vsu_step(src_h, dst_h);
++	u32 hidx = sun55i_vsu8_coef_index(hstep);
++	u32 vidx = sun55i_vsu8_coef_index(vstep);
++	struct sun55i_de_block *ctl, *attr, *yp, *cp;
++	unsigned int i;
++
++	ctl  = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_CTL));
++	attr = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_ATTR));
++	yp   = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_YPARA));
++	cp   = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_CPARA));
++
++	if (src_w == dst_w && src_h == dst_h) {
++		/* 1:1: bypass the scaler entirely (see comment above) */
++		de_blk_write(ctl, 0, 0);
++		return;
++	}
++
++	/* ctl.en=1; scale_mode stays 0 (RGB) from the zeroed shadow */
++	de_blk_write(ctl, 0, SUN55I_VSU_CTL_EN);
++
++	de_blk_write(attr, SUN55I_VSU_ATTR_OUT_SIZE, out_size);
++	de_blk_write(attr, SUN55I_VSU_ATTR_GLB_ALPHA, 0xff);
++
++	/* luma + chroma (RGB: identical): in_size = src, step = ratio, phase 0 */
++	de_blk_write(yp, SUN55I_VSU_PARA_IN_SIZE, in_size);
++	de_blk_write(yp, SUN55I_VSU_PARA_HSTEP,
++		     hstep << SUN55I_VSU_STEP_VALID_START_BIT);
++	de_blk_write(yp, SUN55I_VSU_PARA_VSTEP,
++		     vstep << SUN55I_VSU_STEP_VALID_START_BIT);
++	de_blk_write(cp, SUN55I_VSU_PARA_IN_SIZE, in_size);
++	de_blk_write(cp, SUN55I_VSU_PARA_HSTEP,
++		     hstep << SUN55I_VSU_STEP_VALID_START_BIT);
++	de_blk_write(cp, SUN55I_VSU_PARA_VSTEP,
++		     vstep << SUN55I_VSU_STEP_VALID_START_BIT);
++
++	/* per-axis polyphase coefficient sets for the actual ratio */
++	for (i = 0; i < SUN55I_VSU_PHASE_NUM; i++) {
++		u32 off = i * sizeof(u32);
++
++		de_blk_write(de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_COEFF0)), off,
++			     sun55i_vsu8_lan2_coef[hidx + i]);	/* y_hori */
++		de_blk_write(de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_COEFF1)), off,
++			     sun55i_vsu8_lan2_coef[vidx + i]);	/* y_vert */
++		de_blk_write(de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_VSU_COEFF2)), off,
++			     sun55i_vsu8_lan2_coef[hidx + i]);	/* c_hori */
++	}
++}
++
++/* turn a UI channel off (its blender pipe falls back to the background) */
++static void sun55i_de_layer_disable(struct sun8i_mixer *mixer, unsigned int chn)
++{
++	unsigned int uich = chn - SUN55I_DE_OVL_UI_PHYS_CHN;
++
++	de_blk_write(de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_OVL_LAY0)),
++		     SUN55I_OVL_LAY_ATTCTL, 0);
++	de_blk_update_bits(de_blk(mixer, SUN55I_DE_BLK_BLD_ATTR),
++			   SUN55I_BLD_ATTR_PIPE_EN, BIT(8 + uich), 0);
++}
++
++/*
++ * Stage one RGB UI layer (phys channels 6..8, pipes 0..2) into the RCQ shadow
++ * from a DRM plane state: the de_ovl layer registers (de_ovl_u_apply_lay) plus
++ * the blender pipe enable/route/attr that makes the channel visible
++ * (de_bld_set_pipe_ctl / de_bld_set_pipe_attr / de_bld_set_blend_mode).
++ *
++ * Channel 6 (pipe 0) is the opaque primary. Channels 7/8 (pipes 1/2) carry
++ * alpha-capable planes (overlay, X cursor): pixel-alpha mode, the OVL
++ * converts straight-alpha ARGB to premultiplied (lay_premul NON_TO_EXC) and
++ * the blender pipe is flagged premultiplied (de_bld_set_premul).
++ * No scaling: the overlay crop == ovl-out == on-screen size.
++ */
++void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer,
++			    struct drm_plane_state *state)
++{
++	struct drm_framebuffer *fb = state->fb;
++	struct sun55i_de_block *lay, *para, *attr, *ctl;
++	unsigned int chn, uich, pipe;
++	u32 src_w, src_h, dst_x, dst_y, dst_w, dst_h;
++	dma_addr_t addr;
++	u32 fmt, attctl;
++
++	if (layer->type != SUN8I_LAYER_TYPE_UI ||
++	    layer->channel < SUN55I_DE_OVL_UI_PHYS_CHN ||
++	    layer->channel >= SUN55I_DE_OVL_UI_PHYS_CHN + SUN55I_DE_UI_CHANNELS)
++		return;
++
++	chn = layer->channel;
++	uich = chn - SUN55I_DE_OVL_UI_PHYS_CHN;
++	pipe = uich;
++
++	if (!state->crtc || !state->visible || !fb) {
++		sun55i_de_layer_disable(mixer, chn);
++		return;
++	}
++
++	if (sun55i_de_fmt(fb->format->format, &fmt)) {
++		DRM_DEBUG_DRIVER("sun55i_de: unsupported format %p4cc\n",
++				 &fb->format->format);
++		sun55i_de_layer_disable(mixer, chn);
++		return;
++	}
++
++	/* source crop (16.16) and on-screen destination */
++	src_w = drm_rect_width(&state->src) >> 16;
++	src_h = drm_rect_height(&state->src) >> 16;
++	dst_x = state->dst.x1;
++	dst_y = state->dst.y1;
++	dst_w = drm_rect_width(&state->dst);
++	dst_h = drm_rect_height(&state->dst);
++
++	addr = drm_fb_dma_get_gem_addr(fb, state, 0);
++
++	/*
++	 * The channel datapath always runs through the VSU8 scaler. Program it
++	 * for the real src->dst ratio: the overlay outputs the src-sized crop
++	 * and the VSU resamples it to the on-screen dst the blender expects.
++	 */
++	sun55i_de_vsu_setup(mixer, uich, src_w, src_h, dst_w, dst_h);
++
++	lay  = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_OVL_LAY0));
++	para = de_blk(mixer, SUN55I_DE_BLK_CH(uich, SUN55I_DE_BLKCH_OVL_PARA));
++	attr = de_blk(mixer, SUN55I_DE_BLK_BLD_ATTR);
++	ctl  = de_blk(mixer, SUN55I_DE_BLK_BLD_CTL);
++
++	/* --- de_ovl layer 0 (de_ovl_u_apply_lay) --- */
++	attctl = SUN55I_OVL_ATTCTL_EN |
++		 SUN55I_OVL_ATTCTL_ALPHA_MODE(uich ? 2 : SUN55I_OVL_ATTCTL_GLOBAL_ALPHA) |
++		 SUN55I_OVL_ATTCTL_FMT(fmt) | SUN55I_OVL_ATTCTL_ALPHA(0xff);
++	if (uich)
++		attctl |= (1 << 16);	/* lay_premul NON_TO_EXC: straight->premul */
++	de_blk_write(lay, SUN55I_OVL_LAY_ATTCTL, attctl);
++	de_blk_write(lay, SUN55I_OVL_LAY_MBSIZE, SUN55I_DE_OUT_SIZE(src_w, src_h));
++	de_blk_write(lay, SUN55I_OVL_LAY_MBCOOR, 0);
++	de_blk_write(lay, SUN55I_OVL_LAY_PITCH, fb->pitches[0]);
++	de_blk_write(lay, SUN55I_OVL_LAY_TOP_LADDR, lower_32_bits(addr));
++	de_blk_write(lay, SUN55I_OVL_LAY_BOT_LADDR, 0);
++
++	/* top_haddr: high byte packed per layer; layer 0 -> bits[7:0] */
++	de_blk_write(para, SUN55I_OVL_PARA_TOP_HADDR,
++		     upper_32_bits(addr) & 0xff);
++	de_blk_write(para, SUN55I_OVL_PARA_WIN_SIZE,
++		     SUN55I_DE_OUT_SIZE(src_w, src_h));
++
++	/* --- blender: enable the pipe, route it, flag premul, geometry --- */
++	/* BIT(0) rides along in the shared en word (matches the working state) */
++	de_blk_update_bits(attr, SUN55I_BLD_ATTR_PIPE_EN,
++			   BIT(0) | BIT(8 + pipe), BIT(0) | BIT(8 + pipe));
++	de_blk_write(attr, SUN55I_BLD_ATTR_PIPE_IN_SIZE(pipe),
++		     SUN55I_DE_OUT_SIZE(dst_w, dst_h));
++	de_blk_write(attr, SUN55I_BLD_ATTR_PIPE_IN_COORD(pipe),
++		     (dst_x & 0xffff) | ((dst_y & 0xffff) << 16));
++	de_blk_update_bits(ctl, SUN55I_BLD_CTL_PREMUL, BIT(pipe),
++			   uich ? BIT(pipe) : 0);
++	de_blk_update_bits(ctl, SUN55I_BLD_CTL_ROUT, 0xf << (pipe << 2),
++			   SUN55I_BLD_ROUT(pipe, SUN55I_DE_OVL_UI_LOGIC_CHN(chn)));
++	de_blk_write(ctl, SUN55I_BLD_CTL_BLEND(pipe), SUN55I_BLD_BLEND_SRCOVER);
++
++	/*
++	 * TEMP diagnostic disabled: this runs on every page flip and a
++	 * synchronous serial-console printk here (~9.5ms at 115200, IRQs off)
++	 * delays the vblank IRQ that arms the RCQ, scattering the arm point
++	 * across the frame -> moving tear.
++	 */
++	/*
++	dev_info(mixer->dev,
++		 "sun55i_de: layer fb=%ux%u %p4cc cpp=%u pitch=%u | src=%ux%u dst=%ux%u+%u+%u | fmt=%u hstep=%05x vstep=%05x addr=%pad\n",
++		 fb->width, fb->height, &fb->format->format, fb->format->cpp[0],
++		 fb->pitches[0], src_w, src_h, dst_w, dst_h, dst_x, dst_y, fmt,
++		 sun55i_de_vsu_step(src_w, dst_w), sun55i_de_vsu_step(src_h, dst_h),
++		 &addr);
++	*/
++}
++
++/*
++ * Stage the RCQ for arming: mark the heads dirty so the next arm reloads them.
++ * The actual RCQ_CTL kick is *not* done here. atomic_flush runs at an arbitrary
++ * point in the active scanout, and the RCQ load is not frame-gated by hardware,
++ * so arming now applies the new datapath mid-frame -> tearing and momentary
++ * background-colour flashes (the bug the vendor avoids by arming in blanking).
++ * Defer the arm to the next blanking window in sun55i_de_vblank_quirk().
++ */
++/* flip-min: only the fb-address blocks need reloading on a page flip */
++static bool is_fb_block(unsigned int i)
++{
++	unsigned int c;
++
++	if (i < SUN55I_DE_BLK_UI_BASE_IDX)
++		return false;
++	for (c = 0; c < SUN55I_DE_UI_CHANNELS; c++) {
++		if (i == SUN55I_DE_BLK_CH(c, SUN55I_DE_BLKCH_OVL_LAY0) ||
++		    i == SUN55I_DE_BLK_CH(c, SUN55I_DE_BLKCH_OVL_PARA))
++			return true;
++	}
++	return false;
++}
++
++void sun55i_de_commit(struct sun8i_mixer *mixer)
++{
++	struct sun55i_de *de = mixer->de;
++	unsigned long flags;
++	unsigned int i;
++
++	/*
++	 * Set the authoritative dirty mask for this arm (overriding the per-block
++	 * dirty that de_blk_write set while staging). Full reload until the
++	 * datapath has been armed once; after that, a minimal flip reloads only
++	 * the fb-address blocks and explicitly leaves the rest un-dirty so the
++	 * blender/scaler/formatter are not re-copied every frame.
++	 */
++	for (i = 0; i < SUN55I_DE_BLK_NUM; i++) {
++		bool dirty = !flip_min || !de->armed_once ||
++			     de->full_arms_left > 0 ||
++			     is_fb_block(i);
++
++		de->blocks[i].head->dirty = cpu_to_le32(dirty);
++	}
++
++	/* ensure shadow + heads are visible to the DMA before it is armed */
++	wmb();
++
++	spin_lock_irqsave(&de->arm_lock, flags);
++	/* TEMP: a stage landing while one is still pending = no vblank in between */
++	if (de->arm_pending) {
++		de->coalesced++;
++		dbg_coalesced++;
++	}
++	de->commit_seq++;
++	dbg_commits++;
++	de->arm_pending = true;
++	spin_unlock_irqrestore(&de->arm_lock, flags);
++}
++
++/*
++ * Issue the RCQ load (RCQ_CTL = 1). Plain MMIO; the DMA latches the dirty head
++ * blocks ~immediately. Caller must hold arm_lock and have confirmed the beam is
++ * in a blanking window. Mirrors de_top_set_rcq_update(disp, 1).
++ */
++static void sun55i_de_do_arm(struct sun55i_de *de)
++{
++	u32 status = 0;
++
++	regmap_read(de->mixer->top_regs, SUN55I_MIXER_RCQ_STATUS, &status);
++	dbg_status = status;
++
++	/*
++	 * A previous load is still in flight: don't stomp it. Leave arm_pending
++	 * set and retry on the next vblank (BUSY clears well within one frame).
++	 */
++	if (arm_busy_gate && (status & SUN55I_MIXER_RCQ_STATUS_BUSY)) {
++		dbg_arm_busy++;
++		return;
++	}
++
++	de->arm_pending = false;
++	de->armed_once = true;
++
++	/*
++	 * Post-modeset full reloads: one load does not reliably latch every
++	 * block, so keep re-arming the (still fully-dirty) list on subsequent
++	 * vblanks until the retry budget drains. The shadow is idempotent -
++	 * re-applying it is harmless - and the arms land in blanking like any
++	 * other, so the datapath converges to the staged config within a few
++	 * frames even when an individual load is dropped.
++	 */
++	if (de->full_arms_left) {
++		de->full_arms_left--;
++		if (de->full_arms_left)
++			de->arm_pending = true;
++	}
++	de->arm_seq++;
++	regmap_write(de->mixer->top_regs, SUN55I_MIXER_RCQ_CTL, 1);
++
++	/* TEMP: record the TCON scanline the arm actually landed on */
++	if (tcon_curline_io) {
++		int line = readl(tcon_curline_io) & 0xfff;
++
++		dbg_arm_line_last = line;
++		if (line < dbg_arm_line_min)
++			dbg_arm_line_min = line;
++		if (line > dbg_arm_line_max)
++			dbg_arm_line_max = line;
++	}
++}
++
++/*
++ * The arm target scanline: a point safely inside the leading blanking. The
++ * vendor value (arm_target = ver_back_porch + 3% of ver_total) is used unless
++ * overridden for on-hardware tuning.
++ */
++static u32 sun55i_de_arm_target(struct sun55i_de *de)
++{
++	if (arm_target_line >= 0)
++		return arm_target_line;
++	return de->arm_target;
++}
++
++/*
++ * hrtimer callback: the beam was in active video (or past the target) when the
++ * vblank IRQ fired, so the arm was scheduled to land here, at the computed time
++ * the beam next re-enters the leading blanking. Arm now. Runs in hardirq
++ * context; RCQ_CTL is non-sleeping MMIO. Replaces the vendor's usleep-to-
++ * blanking from a system_wq work item (disp_mgr_protect_reg_for_rcq) with a
++ * precise absolute-time fire, which is deterministic regardless of the vblank
++ * IRQ's servicing latency.
++ */
++static enum hrtimer_restart sun55i_de_arm_timer(struct hrtimer *t)
++{
++	struct sun55i_de *de = container_of(t, struct sun55i_de, arm_timer);
++	unsigned long flags;
++
++	spin_lock_irqsave(&de->arm_lock, flags);
++	if (de->arm_pending)
++		sun55i_de_do_arm(de);
++	spin_unlock_irqrestore(&de->arm_lock, flags);
++
++	return HRTIMER_NORESTART;
++}
++
++/*
++ * Arm a staged RCQ, gated to the vertical blanking region. Called from the TCON
++ * vblank IRQ (sunxi_engine_ops.vblank_quirk) with @cur_line = the TCON's current
++ * scanline. The RCQ latches ~immediately when armed and is not frame-gated, so
++ * the arm must land while the beam is blanking:
++ *
++ *   - beam still safely inside the leading blanking -> arm now;
++ *   - otherwise (the IRQ was serviced late, into active video, or past the arm
++ *     target) -> schedule the hrtimer for the computed instant the beam next
++ *     re-enters blanking and arm there.
++ *
++ * Either way the arm lands in blanking by construction, so IRQ-servicing jitter
++ * (which otherwise scatters the arm - and the new fb address - across the frame,
++ * the moving-tear bug) cannot place it in active video. This is the mainline
++ * equivalent of the vendor measuring cur_line and delaying to the safe beam
++ * position before de_top_set_rcq_update().
++ */
++void sun55i_de_vblank_quirk(struct sun8i_mixer *mixer, unsigned int cur_line)
++{
++	struct sun55i_de *de = mixer->de;
++	unsigned long flags;
++	u32 target, lines;
++
++	if (!de)
++		return;
++
++	spin_lock_irqsave(&de->arm_lock, flags);
++
++	/* nothing staged, or a timed arm is already pending for this commit */
++	if (!de->arm_pending || hrtimer_active(&de->arm_timer))
++		goto out;
++
++	target = sun55i_de_arm_target(de);
++
++	if (!de->ns_per_line) {
++		/* no timing info (mode_set not run yet): arm now */
++		sun55i_de_do_arm(de);
++	} else if (cur_line <= target && !arm_at_target) {
++		/* already before the target and not asked to wait: arm now */
++		dbg_arm_now++;
++		sun55i_de_do_arm(de);
++	} else {
++		/*
++		 * Sleep to the target line and arm there. If the target is
++		 * still ahead this frame, wait that many lines; otherwise wait
++		 * out the rest of the frame to the target of the next one. The
++		 * subtraction is guarded so an unexpectedly large cur_line can
++		 * only shorten the wait, never underflow.
++		 */
++		if (cur_line <= target) {
++			lines = target - cur_line;
++		} else {
++			u32 ahead = cur_line < de->line_total ?
++				    de->line_total - cur_line : 0;
++
++			lines = ahead + target;
++		}
++		de->arm_deferred++;
++		dbg_arm_late++;
++		hrtimer_start(&de->arm_timer,
++			      ns_to_ktime((u64)lines * de->ns_per_line),
++			      HRTIMER_MODE_REL);
++	}
++
++out:
++	spin_unlock_irqrestore(&de->arm_lock, flags);
++}
+diff --git a/drivers/gpu/drm/sun4i/sun55i_de.h b/drivers/gpu/drm/sun4i/sun55i_de.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/gpu/drm/sun4i/sun55i_de.h
+@@ -0,0 +1,159 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Allwinner sun55iw3 (A523/A527/T527/H728) v35x display engine ("DE33"/v350).
++ *
++ * Unlike the H616 DE33, the v35x DE commits its datapath (blender, output
++ * formatter, layers, ...) ONLY through the RCQ (Register Config Queue): a DMA
++ * engine that, on each frame-start pulse from the bound TCON, walks an array
++ * of 16-byte "heads" and copies marked register blocks from DRAM into the live
++ * DE register space. Plain MMIO writes to those datapath registers land in a
++ * shadow that never latches on its own.
++ *
++ * Only the "de_top" control registers (RT_EN, OUT_SIZE, AUTO_CLK, DE2TCON_MUX,
++ * the RCQ head pointer and RCQ_CTL itself) are plain MMIO and latch directly.
++ *
++ * This backend drives that engine for a minimal pipeline (top + blender + fmt),
++ * which is enough to scan out a solid background-color frame. Layers are added
++ * on top of this foundation.
++ */
++
++#ifndef _SUN55I_DE_H_
++#define _SUN55I_DE_H_
++
++#include <linux/hrtimer.h>
++#include <linux/spinlock.h>
++#include <linux/types.h>
++
++struct sun8i_mixer;
++struct sun8i_layer;
++struct drm_display_mode;
++struct drm_plane_state;
++
++/* one RCQ head: if dirty, DMA @len bytes from phys -> DE_base + reg_offset */
++struct sun55i_de_rcq_head {
++	__le32 low_addr;	/* data block phys [31:0] */
++	__le32 dw0;		/* len[23:0] | high_addr[31:24] (phys [39:32]) */
++	__le32 dirty;		/* bit0: copy this block this frame */
++	__le32 reg_offset;	/* dest offset from DE base (0x5000000) */
++};
++
++/* a shadow register block in the coherent DMA pool, mirrored to reg_offset */
++struct sun55i_de_block {
++	u32				reg_off;	/* offset from DE base */
++	u32				size;		/* bytes (2-byte aligned) */
++	void				*shadow;	/* CPU view in DMA pool */
++	dma_addr_t			phys;		/* DMA phys of @shadow */
++	struct sun55i_de_rcq_head	*head;		/* its head in the array */
++};
++
++/*
++ * UI channels: the mixer map is {0, 6, 7, 8} - logical 0 is the VI channel,
++ * logical 1..3 are the UI channels at physical 6..8. The first UI channel is
++ * the DRM primary plane, the last one carries the X hardware cursor.
++ */
++#define SUN55I_DE_UI_CHANNELS		3
++#define SUN55I_DE_OVL_UI_PHYS_CHN	6	/* first UI channel (phys) */
++
++/* shared datapath blocks (one set per display pipe) */
++enum {
++	SUN55I_DE_BLK_BLD_ATTR,	/* blender pipe enables / per-pipe attrs */
++	SUN55I_DE_BLK_BLD_CTL,	/* blender route / premul / bg color / out size */
++	SUN55I_DE_BLK_BLD_CK,	/* blender color-key / out color ctl */
++	SUN55I_DE_BLK_FMT,	/* output formatter */
++	SUN55I_DE_BLK_UI_BASE_IDX,
++};
++
++/* per-UI-channel block kinds; address them with SUN55I_DE_BLK_CH(c, k) */
++#define SUN55I_DE_BLK_PER_UI_CH	16
++enum {
++	SUN55I_DE_BLKCH_OVL_LAY0,	/* layer-0 regs */
++	SUN55I_DE_BLKCH_OVL_LAY1,	/* layers 1-3: staged zeroed (disabled) */
++	SUN55I_DE_BLKCH_OVL_LAY2,
++	SUN55I_DE_BLKCH_OVL_LAY3,
++	SUN55I_DE_BLKCH_OVL_PARA,	/* top_haddr / win_size */
++	SUN55I_DE_BLKCH_OVL_DS,		/* coarse down-sample: zeroed (bypass) */
++	SUN55I_DE_BLKCH_VSU_CTL,	/* ctl.en + scale_mode */
++	SUN55I_DE_BLKCH_VSU_ATTR,	/* out_size + glb_alpha */
++	SUN55I_DE_BLKCH_VSU_YPARA,	/* y in_size + h/v step + phase */
++	SUN55I_DE_BLKCH_VSU_CPARA,	/* c in_size + h/v step + phase */
++	SUN55I_DE_BLKCH_VSU_COEFF0,	/* y_hori_coeff (unity) */
++	SUN55I_DE_BLKCH_VSU_COEFF1,	/* y_vert_coeff (unity) */
++	SUN55I_DE_BLKCH_VSU_COEFF2,	/* c_hori_coeff (unity) */
++	SUN55I_DE_BLKCH_TFBD_CTL,	/* tiled-FB decoder ctrl: zeroed */
++	SUN55I_DE_BLKCH_CCSC_CTL,	/* channel CSC ctl: zeroed (bypass) */
++	SUN55I_DE_BLKCH_CDC_CTL,	/* channel CDC colour ctl: zeroed */
++};
++
++#define SUN55I_DE_BLK_CH(c, k)	(SUN55I_DE_BLK_UI_BASE_IDX + \
++				 (c) * SUN55I_DE_BLK_PER_UI_CH + (k))
++#define SUN55I_DE_BLK_NUM	(SUN55I_DE_BLK_UI_BASE_IDX + \
++				 SUN55I_DE_UI_CHANNELS * SUN55I_DE_BLK_PER_UI_CH)
++
++/**
++ * struct sun55i_de - v35x RCQ engine state (one display pipe)
++ * @heads:	CPU view of the RCQ head array (head[0..nblocks))
++ * @heads_dma:	DMA address of the head array (programmed into RCQ_HEAD_*)
++ * @pool:	base of the whole coherent allocation (heads + block data)
++ * @pool_dma:	DMA address of @pool
++ * @pool_size:	size of @pool
++ * @nheads:	number of heads programmed (block count, padded even)
++ * @blocks:	per-block shadow descriptors
++ * @tcon_id:	hardware TCON index this pipe drives (HDMI = tcon2)
++ */
++struct sun55i_de {
++	struct sun55i_de_rcq_head	*heads;
++	dma_addr_t			heads_dma;
++	void				*pool;
++	dma_addr_t			pool_dma;
++	size_t				pool_size;
++	unsigned int			nheads;
++	struct sun55i_de_block		blocks[SUN55I_DE_BLK_NUM];
++	unsigned int			tcon_id;
++	struct sun8i_mixer		*mixer;		/* back-ref for the timer */
++
++	/*
++	 * Beam-gated arm. The RCQ latches ~immediately when armed and is not
++	 * frame-gated by hardware, so the arm (RCQ_CTL=1) must be issued while
++	 * the beam is in the vertical blanking region or the new datapath -
++	 * including the new framebuffer address - tears in mid-frame. The
++	 * vblank IRQ that drives the arm is serviced with large, load-dependent
++	 * latency, so arming straight from it drops the load at a random
++	 * scanline. Instead we replicate the vendor BSP (disp_mgr_protect_reg_
++	 * for_rcq): read the TCON's current scanline, and either arm now if the
++	 * beam is safely inside the leading blanking, or schedule an hrtimer to
++	 * fire at the computed time the beam next re-enters blanking and arm
++	 * there. Either way the arm lands in blanking by construction,
++	 * regardless of IRQ-servicing jitter.
++	 */
++	spinlock_t			arm_lock;	/* arm_pending + timer */
++	struct hrtimer			arm_timer;	/* fires in next blanking */
++	bool				arm_pending;	/* RCQ staged, not armed */
++	bool				armed_once;	/* datapath fully loaded once */
++	/*
++	 * Full-reload arms left to issue after a modeset. A single full-reload
++	 * RCQ load does not reliably latch every block (live-verified: the
++	 * first apply after boot lands nothing; a repeat apply of the same
++	 * list lands everything), so the first arms after a mode_set re-issue
++	 * the full-dirty list on consecutive vblanks until this drains.
++	 */
++	unsigned int			full_arms_left;
++	u32				line_total;	/* TCON line counter modulus */
++	u32				arm_target;	/* safe arm line (vendor calc) */
++	u32				ns_per_line;	/* counter-tick period (ns) */
++
++	/* TEMP instrumentation — revert with the dev_info diagnostics */
++	u32				commit_seq;	/* commits staged */
++	u32				arm_seq;	/* RCQ arms issued */
++	u32				coalesced;	/* stages overwritten pre-arm */
++	u32				arm_deferred;	/* arms pushed to the timer */
++};
++
++int sun55i_de_init(struct sun8i_mixer *mixer);
++void sun55i_de_mode_set(struct sun8i_mixer *mixer,
++			const struct drm_display_mode *mode);
++void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer,
++			    struct drm_plane_state *state);
++void sun55i_de_commit(struct sun8i_mixer *mixer);
++void sun55i_de_vblank_quirk(struct sun8i_mixer *mixer, unsigned int cur_line);
++
++#endif /* _SUN55I_DE_H_ */
+-- 
+Armbian
+
