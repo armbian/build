@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 5 Aug 2026 02:49:53 +0200
+Subject: media: hm5065: Allow the raw bus format to be overridden
+
+Raw output works but arrives as two bytes per pixel: ten bits of data in
+a sixteen bit container, high byte first, values spanning 0 to 1023. The
+ISP downstream takes eight bits per pixel, so this is not yet usable by
+it, and a 2592 pixel line occupies 5184 bytes where the capture expects
+2592.
+
+Register 0x7000 selects byte and component order across sixteen values.
+Which of them gives one byte per pixel, if any does, has to be found by
+trying them: the vendor never used raw on this part and its own raw
+format table is empty.
+
+It cannot be swept from userspace. Writing 0x7000 while the sensor is
+streaming stalls it -- measured, the frame never arrives -- and outside
+streaming the chip is powered down and will not answer an I2C read. So
+take it as a parameter instead, and let one build cover the search.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 21 +++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -533,6 +533,23 @@ static const struct hm5065_pixfmt hm5065_formats[] = {
+ 	},
+ };
+ 
++/*
++ * Raw arrives as two bytes per pixel, ten bits of data in a sixteen bit
++ * container, and the ISP downstream can only take eight. Register 0x7000
++ * selects byte and component order over sixteen values and the vendor
++ * never used it for raw, so which of them gives one byte per pixel -- if
++ * any does -- has to be found by trying them.
++ *
++ * It cannot be swept from userspace: writing 0x7000 while the sensor is
++ * streaming stalls it, and outside streaming the chip is powered down and
++ * will not answer. Hence a parameter, so that one build covers the search.
++ * Negative means use the value from the format table.
++ */
++static int raw_bus_format = -1;
++module_param(raw_bus_format, int, 0644);
++MODULE_PARM_DESC(raw_bus_format,
++		 "override register 0x7000 for raw formats (-1: table default)");
++
+ static bool hm5065_format_is_raw(const struct hm5065_pixfmt *fmt)
+ {
+ 	return fmt->data_fmt == HM5065_REG_DATA_FORMAT_RAW10ITU8 ||
+@@ -1698,7 +1715,9 @@ static int hm5065_setup_mode(struct hm5065_dev *sensor,
+ 	cci_write(map, HM5065_REG_YCRCB_ORDER, pix_fmt->ycbcr_order, &ret);
+ 	/* without this, brightness, contrast and saturation will not work */
+ 	cci_write(map, HM5065_REG_COLORSPACE, 9, &ret);
+-	cci_write(map, HM5065_REG_BUS_DATA_FORMAT, pix_fmt->fmt_setup, &ret);
++	cci_write(map, HM5065_REG_BUS_DATA_FORMAT,
++		  hm5065_format_is_raw(pix_fmt) && raw_bus_format >= 0 ?
++		  raw_bus_format : pix_fmt->fmt_setup, &ret);
+ 	cci_write(map, HM5065_REG_DESIRED_FRAME_RATE_NUM, fps, &ret);
+ 	cci_write(map, HM5065_REG_DESIRED_FRAME_RATE_DEN, 1, &ret);
+ 
+-- 
+Armbian
+

@@ -1,0 +1,240 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: enthropy7 <enthropy7@users.noreply.github.com>
+Date: Wed, 26 Aug 2026 13:50:38 +0300
+Subject: drm/sun4i: support the H3 and H5 TV encoders
+
+sun4i_tv.c drives the A10 TV encoder. The H3 and H5 carry the same
+block behind the DE2 display engine, but need a calibration value
+written before the DAC drives anything, and the H5 needs one further
+undocumented register. Add a quirks structure so the A10 keeps its
+current behaviour and the two new compatibles get theirs.
+
+The encoder consumes YUV while the mixer outputs RGB, so the mixer has
+to convert on the way out. Program the DCSC sub-engine with the BT.601
+coefficients through the apply_color_correction and
+disable_color_correction callbacks the engine already exposes. mixer1,
+which is the one that feeds the encoder, is a cut-down block -- one UI
+channel and two scalers against mixer0's three and four -- so it needs
+its own configuration entry.
+
+Tested on an OrangePi Zero (H2+): the connector reports connected, the
+mode comes up as 720x480i, the tve clock runs at 13.5 MHz, and a
+framebuffer image written to /dev/fb0 reproduces correctly on a capture
+card.
+
+Signed-off-by: enthropy7 <enthropy7@users.noreply.github.com>
+---
+ drivers/gpu/drm/sun4i/sun4i_tv.c    | 39 ++++++-
+ drivers/gpu/drm/sun4i/sun8i_mixer.c | 57 +++++++++-
+ drivers/gpu/drm/sun4i/sun8i_mixer.h |  8 +-
+ 3 files changed, 98 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tv.c b/drivers/gpu/drm/sun4i/sun4i_tv.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tv.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tv.c
+@@ -9,6 +9,7 @@
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+@@ -159,6 +160,16 @@ struct tv_mode {
+ 	const struct resync_parameters	*resync_params;
+ };
+ 
++/*
++ * The H3 and H5 encoders need a calibration value written before the DAC will
++ * drive anything, and the H5 needs one more undocumented register. The A10
++ * encoder this driver was written for needs neither, so it takes the empty set.
++ */
++struct sun4i_tv_quirks {
++	unsigned int calibration;
++	unsigned int unknown : 1;
++};
++
+ struct sun4i_tv {
+ 	struct drm_connector	connector;
+ 	struct drm_encoder	encoder;
+@@ -419,7 +430,7 @@ static const struct regmap_config sun4i_tv_regmap_config = {
+ 	.reg_bits	= 32,
+ 	.val_bits	= 32,
+ 	.reg_stride	= 4,
+-	.max_register	= SUN4I_TVE_WSS_DATA2_REG,
++	.max_register	= 0x400,
+ 	.name		= "tv-encoder",
+ };
+ 
+@@ -429,10 +440,15 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 	struct platform_device *pdev = to_platform_device(dev);
+ 	struct drm_device *drm = data;
+ 	struct sun4i_drv *drv = drm->dev_private;
++	const struct sun4i_tv_quirks *quirks;
+ 	struct sun4i_tv *tv;
+ 	void __iomem *regs;
+ 	int ret;
+ 
++	quirks = of_device_get_match_data(dev);
++	if (!quirks)
++		return -EINVAL;
++
+ 	tv = devm_kzalloc(dev, sizeof(*tv), GFP_KERNEL);
+ 	if (!tv)
+ 		return -ENOMEM;
+@@ -472,6 +488,11 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
+ 	}
+ 	clk_prepare_enable(tv->clk);
+ 
++	if (quirks->calibration)
++		regmap_write(tv->regs, 0x304, quirks->calibration);
++	if (quirks->unknown)
++		regmap_write(tv->regs, 0x30c, 0x00101110);
++
+ 	drm_encoder_helper_add(&tv->encoder,
+ 			       &sun4i_tv_helper_funcs);
+ 	ret = drm_simple_encoder_init(drm, &tv->encoder,
+@@ -549,8 +570,22 @@ static void sun4i_tv_remove(struct platform_device *pdev)
+ 	component_del(&pdev->dev, &sun4i_tv_ops);
+ }
+ 
++static const struct sun4i_tv_quirks a10_quirks = {
++};
++
++static const struct sun4i_tv_quirks h3_quirks = {
++	.calibration = 0x02000c00,
++};
++
++static const struct sun4i_tv_quirks h5_quirks = {
++	.calibration = 0x02850000,
++	.unknown = 1,
++};
++
+ static const struct of_device_id sun4i_tv_of_table[] = {
+-	{ .compatible = "allwinner,sun4i-a10-tv-encoder" },
++	{ .compatible = "allwinner,sun4i-a10-tv-encoder", .data = &a10_quirks },
++	{ .compatible = "allwinner,sun8i-h3-tv-encoder", .data = &h3_quirks },
++	{ .compatible = "allwinner,sun50i-h5-tv-encoder", .data = &h5_quirks },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun4i_tv_of_table);
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -40,6 +40,16 @@ struct de2_fmt_info {
+ 
+ static bool hw_preconfigured;
+ 
++/*
++ * The TV encoder takes YUV, so the mixer has to convert on the way out. These
++ * are the BT.601 coefficients the DCSC sub-engine is programmed with.
++ */
++static const u32 sun8i_rgb2yuv_coef[12] = {
++	0x00000107, 0x00000204, 0x00000064, 0x00004200,
++	0x00001f68, 0x00001ed6, 0x000001c2, 0x00020200,
++	0x000001c2, 0x00001e87, 0x00001fb7, 0x00020200,
++};
++
+ static const struct de2_fmt_info de2_formats[] = {
+ 	{
+ 		.drm_fmt = DRM_FORMAT_ARGB8888,
+@@ -440,10 +450,28 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 			 interlaced ? "on" : "off");
+ }
+ 
++static void sun8i_mixer_apply_color_correction(struct sunxi_engine *engine)
++{
++	DRM_DEBUG_DRIVER("Applying RGB to YUV color correction\n");
++
++	regmap_bulk_write(engine->regs, SUN8I_MIXER_DCSC_COEF_REG(0),
++			  sun8i_rgb2yuv_coef, 12);
++	regmap_write(engine->regs, SUN8I_MIXER_DCSC_EN, 1);
++}
++
++static void sun8i_mixer_disable_color_correction(struct sunxi_engine *engine)
++{
++	DRM_DEBUG_DRIVER("Disabling color correction\n");
++
++	regmap_write(engine->regs, SUN8I_MIXER_DCSC_EN, 0);
++}
++
+ static const struct sunxi_engine_ops sun8i_engine_ops = {
+-	.commit		= sun8i_mixer_commit,
+-	.layers_init	= sun8i_layers_init,
+-	.mode_set	= sun8i_mixer_mode_set,
++	.commit			= sun8i_mixer_commit,
++	.layers_init		= sun8i_layers_init,
++	.mode_set		= sun8i_mixer_mode_set,
++	.apply_color_correction	= sun8i_mixer_apply_color_correction,
++	.disable_color_correction = sun8i_mixer_disable_color_correction,
+ };
+ 
+ static const struct sunxi_engine_ops sun50i_engine_ops = {
+@@ -818,6 +846,25 @@ static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
+ 	.vi_num		= 1,
+ };
+ 
++/*
++ * Mixer1 drives TCON1 and from there the TV encoder. It is a cut-down block:
++ * one UI channel and two scalers, against mixer0's three and four.
++ */
++static const struct sun8i_mixer_cfg sun8i_h3_mixer1_cfg = {
++	.lay_cfg = {
++		.ccsc		= CCSC_MIXER1_LAYOUT,
++		.de_type	= SUN8I_MIXER_DE2,
++		.vi_scaler_num	= 1,
++		.scaler_mask	= 0x3,
++		.scanline_yuv	= 2048,
++		.de2_fcc_alpha	= 1,
++	},
++	.de_type	= SUN8I_MIXER_DE2,
++	.mod_rate	= 432000000,
++	.ui_num		= 1,
++	.vi_num		= 1,
++};
++
+ static const struct sun8i_mixer_cfg sun8i_r40_mixer0_cfg = {
+ 	.lay_cfg = {
+ 		.ccsc		= CCSC_MIXER0_LAYOUT,
+@@ -953,6 +1000,10 @@ static const struct of_device_id sun8i_mixer_of_table[] = {
+ 		.compatible = "allwinner,sun8i-h3-de2-mixer-0",
+ 		.data = &sun8i_h3_mixer0_cfg,
+ 	},
++	{
++		.compatible = "allwinner,sun8i-h3-de2-mixer-1",
++		.data = &sun8i_h3_mixer1_cfg,
++	},
+ 	{
+ 		.compatible = "allwinner,sun8i-r40-de2-mixer-0",
+ 		.data = &sun8i_r40_mixer0_cfg,
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+@@ -125,6 +125,13 @@
+ /* format 20 is packed YVU444 10-bit */
+ /* format 21 is packed YUV444 10-bit */
+ 
++/*
++ * The DCSC sub-engine converts the mixer's RGB output to YUV, which is what
++ * the TV encoder expects. It is unused on the HDMI path.
++ */
++#define SUN8I_MIXER_DCSC_EN			0xb0000
++#define SUN8I_MIXER_DCSC_COEF_REG(x)		(0xb0010 + 0x4 * (x))
++
+ /*
+  * Sub-engines listed bellow are unused for now. The EN registers are here only
+  * to be used to disable these sub-engines.
+@@ -135,7 +142,6 @@
+ #define SUN8I_MIXER_PEAK_EN			0xa6000
+ #define SUN8I_MIXER_ASE_EN			0xa8000
+ #define SUN8I_MIXER_FCC_EN			0xaa000
+-#define SUN8I_MIXER_DCSC_EN			0xb0000
+ 
+ #define SUN50I_MIXER_FCE_EN			0x70000
+ #define SUN50I_MIXER_PEAK_EN			0x70800
+-- 
+Armbian
+

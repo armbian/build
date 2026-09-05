@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:12:05 +0200
+Subject: media: sun6i-isp: Add the chroma noise reduction module
+
+CNR works on chroma, so it is useful whether the input arrived as bayer
+or as YUV.
+
+Its enable bit was missing from the register header. The bit numbers
+here are not reverse engineered: the vendor ships bsp_isp_comm.h as
+source, and it names bit 23 CNR_EN. That same header confirms every
+enable bit this driver already had, and turns up one more we have no
+use for yet, DISC_EN at bit 25, which only the V3s has a module for.
+Add both, and mark the disc one as V3s only.
+
+Only the low 12 bits of the register are configuration. The vendor
+reads the upper half back out of the save block as a measured chroma
+noise level, via isp_get_saved_cnr_noise(). There is nowhere to report
+that until the driver grows statistics support, so just record what the
+field is.
+
+Identical register offset and layout on the A83T and the V3s. It does
+move on the A80, to 0x150, along with the lens shading and demosaic
+registers after it -- something to watch for if that variant is ever
+added.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 14 ++++++++++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h         | 12 ++++++++
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h |  6 ++++
+ 3 files changed, 32 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -119,6 +119,14 @@ sun6i_isp_params_configure_yuv_gain_offset(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_YUV_GAIN1_V(yuv->gain_v));
+ }
+ 
++static void
++sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_CNR_REG,
++			     SUN6I_ISP_CNR_OFFSET(config->cnr.offset));
++}
++
+ static void sun6i_isp_params_configure_wb(struct sun6i_isp_device *isp_dev)
+ {
+ 	/* These are default values that need to be set to get an output. */
+@@ -203,6 +211,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_YUV_GAIN_OFFSET)
+ 		sun6i_isp_params_configure_yuv_gain_offset(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_CNR)
++		sun6i_isp_params_configure_cnr(isp_dev, config);
++
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+ 	/* Clear all modules but keep input configuration. */
+ 	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1;
+@@ -213,6 +224,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_YUV_GAIN_OFFSET)
+ 		value |= SUN6I_ISP_MODULE_EN_YUV_GAIN_OFFSET;
+ 
++	if (modules & SUN6I_ISP_MODULE_CNR)
++		value |= SUN6I_ISP_MODULE_EN_CNR;
++
+ 	/* Bayer stage is always enabled. */
+ 
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -96,7 +96,10 @@
+ #define SUN6I_ISP_MODULE_EN_TG			BIT(20)
+ #define SUN6I_ISP_MODULE_EN_ROT			BIT(21)
+ #define SUN6I_ISP_MODULE_EN_CONTRAST		BIT(22)
++#define SUN6I_ISP_MODULE_EN_CNR			BIT(23)
+ #define SUN6I_ISP_MODULE_EN_SATU		BIT(24)
++/* Only on sun8i-v3s-isp, which is the only variant with a disc module. */
++#define SUN6I_ISP_MODULE_EN_DISC		BIT(25)
+ #define SUN6I_ISP_MODULE_EN_SRC1		BIT(30)
+ #define SUN6I_ISP_MODULE_EN_SRC0		BIT(31)
+ 
+@@ -242,6 +245,15 @@
+ #define SUN6I_ISP_WB_CFG_REG			0x148
+ #define SUN6I_ISP_WB_CFG_CLIP(v)		((v) & GENMASK(11, 0))
+ 
++/* CNR */
++
++#define SUN6I_ISP_CNR_REG			0x14c
++#define SUN6I_ISP_CNR_OFFSET(v)			((v) & GENMASK(11, 0))
++/*
++ * The upper half of this register is not configuration: the save block
++ * reports the measured chroma noise level back in GENMASK(31, 16).
++ */
++
+ /* Global */
+ 
+ #define SUN6I_ISP_MCH_SIZE_CFG_REG		0x1e0
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -13,6 +13,7 @@
+ #define SUN6I_ISP_MODULE_BAYER			(1U << 0)
+ #define SUN6I_ISP_MODULE_BDNF			(1U << 1)
+ #define SUN6I_ISP_MODULE_YUV_GAIN_OFFSET	(1U << 2)
++#define SUN6I_ISP_MODULE_CNR			(1U << 3)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -48,12 +49,17 @@ struct sun6i_isp_params_config_yuv_gain_offset {
+ 	__u16	offset_v;
+ };
+ 
++struct sun6i_isp_params_config_cnr {
++	__u16	offset;
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+ 	struct sun6i_isp_params_config_bayer	bayer;
+ 	struct sun6i_isp_params_config_bdnf	bdnf;
+ 	struct sun6i_isp_params_config_yuv_gain_offset	yuv_gain_offset;
++	struct sun6i_isp_params_config_cnr	cnr;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

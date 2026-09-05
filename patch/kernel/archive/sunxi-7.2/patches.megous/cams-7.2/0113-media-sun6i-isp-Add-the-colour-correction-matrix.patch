@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:28:22 +0200
+Subject: media: sun6i-isp: Add the colour correction matrix
+
+A 3x3 matrix and a per-channel offset, matching the vendor's
+isp_rgb2rgb_gain_offset, which is declared as exactly that. The twelve
+values go two to a register, except that the last matrix coefficient
+shares one with the first offset, and the offsets are 13 bits wide
+against 12 for the coefficients.
+
+This one lives between the demosaic and the YUV conversion, so like the
+bayer modules it has nothing to do when the input is already YUV. Fold
+it into the same filter and rewrite that comment, which only described
+the modules ahead of the demosaic.
+
+Identical on the A83T and the V3s.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 48 +++++++++-
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h |  8 ++
+ 2 files changed, 53 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -158,6 +158,39 @@ sun6i_isp_params_configure_sharp(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_SAP_CFG_MAX(sharp->max));
+ }
+ 
++static void
++sun6i_isp_params_configure_rgb2rgb(struct sun6i_isp_device *isp_dev,
++				   const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_rgb2rgb *rgb2rgb =
++		&config->rgb2rgb;
++	const __u16 *matrix = &rgb2rgb->matrix[0][0];
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_GAIN0_REG,
++			     SUN6I_ISP_RGB2RGB_GAIN_LOW(matrix[0]) |
++			     SUN6I_ISP_RGB2RGB_GAIN_HIGH(matrix[1]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_GAIN1_REG,
++			     SUN6I_ISP_RGB2RGB_GAIN_LOW(matrix[2]) |
++			     SUN6I_ISP_RGB2RGB_GAIN_HIGH(matrix[3]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_GAIN2_REG,
++			     SUN6I_ISP_RGB2RGB_GAIN_LOW(matrix[4]) |
++			     SUN6I_ISP_RGB2RGB_GAIN_HIGH(matrix[5]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_GAIN3_REG,
++			     SUN6I_ISP_RGB2RGB_GAIN_LOW(matrix[6]) |
++			     SUN6I_ISP_RGB2RGB_GAIN_HIGH(matrix[7]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_GAIN4_REG,
++			     SUN6I_ISP_RGB2RGB_GAIN4_MATRIX(matrix[8]) |
++			     SUN6I_ISP_RGB2RGB_GAIN4_OFFSET_R(rgb2rgb->offset[0]));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_RGB2RGB_OFFSET_REG,
++			     SUN6I_ISP_RGB2RGB_OFFSET_G(rgb2rgb->offset[1]) |
++			     SUN6I_ISP_RGB2RGB_OFFSET_B(rgb2rgb->offset[2]));
++}
++
+ static void
+ sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
+ 			       const struct sun6i_isp_params_config *config)
+@@ -225,12 +258,15 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	u32 value;
+ 
+ 	/*
+-	 * The bayer domain modules sit before the demosaic and have nothing
+-	 * to act on when the input is already YUV, so leave them alone.
++	 * Some modules only exist on the way from bayer to YUV: the bayer
++	 * gain/offset and the bayer denoise ahead of the demosaic, the
++	 * colour correction matrix behind it. None of them has anything to
++	 * act on when the input is already YUV, so leave them alone.
+ 	 */
+ 
+ 	if (!bayer)
+-		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER);
++		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER |
++			     SUN6I_ISP_MODULE_RGB2RGB);
+ 
+ 	/*
+ 	 * The bayer and YUV gain/offset are the same registers behind two
+@@ -262,6 +298,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_SHARP)
+ 		sun6i_isp_params_configure_sharp(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
++		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
++
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+ 	/* Clear all modules but keep input configuration. */
+ 	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1;
+@@ -284,6 +323,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_SHARP)
+ 		value |= SUN6I_ISP_MODULE_EN_SAP;
+ 
++	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
++		value |= SUN6I_ISP_MODULE_EN_RGB2RGB;
++
+ 	/* Bayer stage is always enabled. */
+ 
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -17,6 +17,7 @@
+ #define SUN6I_ISP_MODULE_CONTRAST		(1U << 4)
+ #define SUN6I_ISP_MODULE_SATURATION		(1U << 5)
+ #define SUN6I_ISP_MODULE_SHARP			(1U << 6)
++#define SUN6I_ISP_MODULE_RGB2RGB		(1U << 7)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -77,6 +78,12 @@ struct sun6i_isp_params_config_sharp {
+ 	__u8	max;
+ };
+ 
++/* A 3x3 colour correction matrix and a per-channel offset. */
++struct sun6i_isp_params_config_rgb2rgb {
++	__u16	matrix[3][3];
++	__u16	offset[3];
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -87,6 +94,7 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_contrast	contrast;
+ 	struct sun6i_isp_params_config_saturation	saturation;
+ 	struct sun6i_isp_params_config_sharp	sharp;
++	struct sun6i_isp_params_config_rgb2rgb	rgb2rgb;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

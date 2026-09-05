@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 21:05:39 +0200
+Subject: ASoC: ac100: Arm HBIAS statically instead of through the card DAPM
+
+Forcing the HBIAS pin from set_jack() oopses on a NULL
+component->card: simple-card initializes aux jacks from the card
+probe, which runs before the aux components are bound - there is no
+card pointer yet and the analog codec's widgets do not exist either,
+so a card-level pin operation cannot work from there at all.
+
+It was also the wrong tool. The bias doubles as the jack detection
+sensor, so DAPM must never own it: a register-backed widget gets
+cleared by the initial DAPM sync and whenever the last microphone
+route goes away, blinding detection each time. Make the HBIAS widget
+NOPM and arm HBIASEN plus the sense ADC once, at analog component
+probe - which is the arrangement the vendor driver ended up with, for
+the same reason. The bias is load-controlled, so an empty jack still
+draws nothing, and the digital side no longer touches the card at
+set_jack() time.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/ac100-codec.c | 49 +++++-----
+ sound/soc/sunxi/sun8i-codec.c | 21 ----
+ 2 files changed, 24 insertions(+), 46 deletions(-)
+
+diff --git a/sound/soc/sunxi/ac100-codec.c b/sound/soc/sunxi/ac100-codec.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/sunxi/ac100-codec.c
++++ b/sound/soc/sunxi/ac100-codec.c
+@@ -706,27 +706,6 @@ static int ac100_codec_hp_power(struct snd_soc_dapm_widget *w,
+ 	return 0;
+ }
+ 
+-/*
+- * The 5-bit ADC sensing the HBIAS current is what jack and headset
+- * button detection are made of, so it follows the bias. HBIAS itself
+- * stays in the load-controlled mode (HBIAS_MODE = 0): the bias only
+- * really powers up when an accessory draws from it, so keeping the
+- * supply enabled for detection costs nothing with an empty jack.
+- */
+-static int ac100_codec_hbias_event(struct snd_soc_dapm_widget *w,
+-				   struct snd_kcontrol *k, int event)
+-{
+-	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+-	unsigned int val = SND_SOC_DAPM_EVENT_ON(event) ?
+-		AC100_ADC_APC_CTRL_HBIAS_ADC_EN_ENABLED :
+-		AC100_ADC_APC_CTRL_HBIAS_ADC_EN_DISABLED;
+-
+-	snd_soc_component_update_bits(component, AC100_ADC_APC_CTRL,
+-				      AC100_ADC_APC_CTRL_HBIAS_ADC_EN_MASK,
+-				      val);
+-	return 0;
+-}
+-
+ static const struct snd_soc_dapm_widget ac100_codec_widgets[] = {
+ 	/* DAC */
+ 	SND_SOC_DAPM_DAC("Left DAC", NULL, AC100_OUT_MXR_DAC_A_CTRL,
+@@ -818,10 +797,12 @@ static const struct snd_soc_dapm_widget ac100_codec_widgets[] = {
+ 	SND_SOC_DAPM_INPUT("MIC3"),
+ 	SND_SOC_DAPM_MUX("Mic2 Amplifier Source",
+ 			 SND_SOC_NOPM, 0, 0, ac100_codec_mic2boost_src),
+-	SND_SOC_DAPM_SUPPLY("HBIAS", AC100_ADC_APC_CTRL,
+-			    AC100_ADC_APC_CTRL_HBIAS_EN_OFF,
+-			    0, ac100_codec_hbias_event,
+-			    SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
++	/*
++	 * Deliberately not register-backed: the bias doubles as the jack
++	 * detection sensor, so it is armed statically at probe and DAPM
++	 * must never power it down (see the comment there).
++	 */
++	SND_SOC_DAPM_SUPPLY("HBIAS", SND_SOC_NOPM, 0, 0, NULL, 0),
+ 	SND_SOC_DAPM_PGA("Mic2 Amplifier", AC100_ADC_SRC_BST_CTRL,
+ 			 AC100_ADC_SRC_BST_CTRL_MIC2AMPEN_OFF, 0, NULL, 0),
+ 
+@@ -970,6 +951,24 @@ static int ac100_codec_analog_cmpnt_probe(struct snd_soc_component *component)
+ 	ret = snd_soc_component_update_bits(component, AC100_OUT_MXR_SRC_BST,
+ 					    AC100_OUT_MXR_SRC_BST_HMICBIAS_VOLTAGE_MASK,
+ 					    AC100_OUT_MXR_SRC_BST_HMICBIAS_VOLTAGE_2_50V);
++	if (ret < 0)
++		return ret;
++
++	/*
++	 * The headset bias and its current sense ADC are the jack
++	 * detection sensor, so they are armed here, statically, and not
++	 * from DAPM: a register-backed widget would be cleared by the
++	 * initial DAPM sync and every time the last microphone route
++	 * goes away, blinding detection. In the load-controlled mode
++	 * (HBIAS_MODE = 0, the reset default) the bias only really
++	 * powers up when an accessory draws from it, so this costs
++	 * nothing with an empty jack.
++	 */
++	ret = snd_soc_component_update_bits(component, AC100_ADC_APC_CTRL,
++					    AC100_ADC_APC_CTRL_HBIAS_EN_MASK |
++					    AC100_ADC_APC_CTRL_HBIAS_ADC_EN_MASK,
++					    AC100_ADC_APC_CTRL_HBIAS_EN_ENABLED |
++					    AC100_ADC_APC_CTRL_HBIAS_ADC_EN_ENABLED);
+ 	return ret < 0 ? ret : 0;
+ }
+ 
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -1791,19 +1791,6 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL1, variant->hmic_ctrl1);
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL2, variant->hmic_ctrl2);
+ 
+-	/*
+-	 * When the plug sensing is the HBIAS current itself, the bias
+-	 * stays armed for as long as detection runs; in the
+-	 * load-controlled mode it draws nothing from an empty jack.
+-	 */
+-	if (variant->hbias_sense) {
+-		struct snd_soc_dapm_context *dapm =
+-			snd_soc_card_to_dapm(component->card);
+-
+-		snd_soc_dapm_force_enable_pin(dapm, "HBIAS");
+-		snd_soc_dapm_sync(dapm);
+-	}
+-
+ 	/* Do not discard any MDATA, enable user written MDATA threshold. */
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_STS, 0);
+ 
+@@ -1845,14 +1832,6 @@ static void sun8i_codec_disable_jack_detect(struct snd_soc_component *component)
+ 			  BIT(SUN8I_HMIC_CTRL1_HMIC_KEYUP_IRQ_EN) |
+ 			  BIT(SUN8I_HMIC_CTRL1_HMIC_DATA_IRQ_EN));
+ 
+-	if (scodec->quirks->jack->hbias_sense) {
+-		struct snd_soc_dapm_context *dapm =
+-			snd_soc_card_to_dapm(component->card);
+-
+-		snd_soc_dapm_disable_pin(dapm, "HBIAS");
+-		snd_soc_dapm_sync(dapm);
+-	}
+-
+ 	scodec->jack = NULL;
+ }
+ 
+-- 
+Armbian
+

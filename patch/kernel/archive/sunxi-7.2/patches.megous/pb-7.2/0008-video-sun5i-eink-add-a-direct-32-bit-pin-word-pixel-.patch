@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 14:00:59 +0200
+Subject: video: sun5i-eink: add a direct 32-bit pin-word pixel format
+
+Two formats now: EPD8 (one palette index byte per dot clock, as
+before) and EPDW (one 32-bit pin word per dot clock, matching the
+original driver's ctlstream layout), so both composition styles can
+be used and compared without touching the kernel.
+---
+ drivers/video/fbdev/sun5i-eink.c | 29 +++++++---
+ include/uapi/linux/sun5i-eink.h  |  9 +++
+ 2 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
+index 111111111111..222222222222 100644
+--- a/drivers/video/fbdev/sun5i-eink.c
++++ b/drivers/video/fbdev/sun5i-eink.c
+@@ -137,6 +137,7 @@
+ 
+ #define SUN4I_BACKEND_ATTCTL_REG1(l)		(0x8a0 + (0x4 * (l)))
+ #define SUN4I_BACKEND_LAY_FBFMT_8BPP				(3 << 8)
++#define SUN4I_BACKEND_LAY_FBFMT_XRGB8888			(9 << 8)
+ 
+ /* 256 x u32 palette RAM for <=8bpp layer formats */
+ #define SUN4I_BACKEND_PALETTE_REG		0x4400
+@@ -290,6 +291,7 @@ static dma_addr_t eink_buf_addr(struct eink_buffer *buf)
+ static void eink_debe_setup(struct eink_dev *eink, struct eink_buffer *buf)
+ {
+ 	struct regmap *be = eink->be_regs;
++	bool pin32 = eink->pix.pixelformat == SUN5I_EINK_FMT_PIN32;
+ 	u32 w = eink->pix.width, h = eink->pix.height;
+ 
+ 	regmap_write(be, SUN4I_BACKEND_DISSIZE_REG,
+@@ -309,9 +311,12 @@ static void eink_debe_setup(struct eink_dev *eink, struct eink_buffer *buf)
+ 	 * low and the panel never reacts. */
+ 	regmap_write(be, SUN4I_BACKEND_ATTCTL_REG0(0), 0xff400301);
+ 	regmap_write(be, SUN4I_BACKEND_ATTCTL_REG1(0),
+-		     SUN4I_BACKEND_LAY_FBFMT_8BPP);
++		     pin32 ? SUN4I_BACKEND_LAY_FBFMT_XRGB8888 :
++			     SUN4I_BACKEND_LAY_FBFMT_8BPP);
+ 
+-	regmap_bulk_write(be, SUN4I_BACKEND_PALETTE_REG, eink->palette, 256);
++	if (!pin32)
++		regmap_bulk_write(be, SUN4I_BACKEND_PALETTE_REG,
++				  eink->palette, 256);
+ 
+ 	eink_debe_set_address(eink, eink_buf_addr(buf));
+ }
+@@ -625,23 +630,29 @@ static int eink_querycap(struct file *file, void *fh,
+ static int eink_enum_fmt_vid_out(struct file *file, void *fh,
+ 				 struct v4l2_fmtdesc *f)
+ {
+-	if (f->index)
+-		return -EINVAL;
+-
+-	f->pixelformat = V4L2_PIX_FMT_GREY;
+-	return 0;
++	switch (f->index) {
++	case 0:
++		f->pixelformat = SUN5I_EINK_FMT_IDX8;
++		return 0;
++	case 1:
++		f->pixelformat = SUN5I_EINK_FMT_PIN32;
++		return 0;
++	}
++	return -EINVAL;
+ }
+ 
+ static void eink_fixup_fmt(struct v4l2_pix_format *pix)
+ {
+-	pix->pixelformat = V4L2_PIX_FMT_GREY;
++	if (pix->pixelformat != SUN5I_EINK_FMT_PIN32)
++		pix->pixelformat = SUN5I_EINK_FMT_IDX8;
+ 	pix->field = V4L2_FIELD_NONE;
+ 	pix->colorspace = V4L2_COLORSPACE_RAW;
+ 
+ 	/* DEBE fetches 32-bit words; keep the row stride word-aligned */
+ 	pix->width = clamp(round_up(pix->width, 4), 8u, (u32)EINK_MAX_WIDTH);
+ 	pix->height = clamp(pix->height, 1u, (u32)EINK_MAX_HEIGHT);
+-	pix->bytesperline = pix->width;
++	pix->bytesperline = pix->width *
++		(pix->pixelformat == SUN5I_EINK_FMT_PIN32 ? 4 : 1);
+ 	pix->sizeimage = pix->bytesperline * pix->height;
+ }
+ 
+diff --git a/include/uapi/linux/sun5i-eink.h b/include/uapi/linux/sun5i-eink.h
+index 111111111111..222222222222 100644
+--- a/include/uapi/linux/sun5i-eink.h
++++ b/include/uapi/linux/sun5i-eink.h
+@@ -14,6 +14,15 @@
+ #include <linux/types.h>
+ #include <linux/videodev2.h>
+ 
++/*
++ * Pixel formats: one buffer element per dot clock.
++ *   EPD8: one byte, resolved to a 32-bit pin word through the
++ *         palette uploaded with SUN5I_EINK_S_PALETTE
++ *   EPDW: one 32-bit pin word directly (bit N drives LCD pin N)
++ */
++#define SUN5I_EINK_FMT_IDX8	v4l2_fourcc('E', 'P', 'D', '8')
++#define SUN5I_EINK_FMT_PIN32	v4l2_fourcc('E', 'P', 'D', 'W')
++
+ struct sun5i_eink_palette {
+ 	__u32 lut[256];		/* index -> DEBE output word (pin states) */
+ };
+-- 
+Armbian
+

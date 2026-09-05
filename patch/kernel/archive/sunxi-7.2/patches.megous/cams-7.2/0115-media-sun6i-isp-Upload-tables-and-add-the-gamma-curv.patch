@@ -1,0 +1,228 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:44:34 +0200
+Subject: media: sun6i-isp: Upload tables, and add the gamma curve
+
+Several modules are driven by a curve in memory rather than by
+registers. The buffers for those were already allocated and their
+addresses already programmed, but nothing ever filled them, so the
+hardware was being pointed at pages of zeroes. That is why none of the
+table-driven modules could be wired up so far.
+
+Add the missing half. Each buffer is a concatenation of fixed-size
+sub-tables, and both supported variants agree on where the ones we care
+about live: the lens table at the start of the LUT buffer, the gamma
+curve after it, the DRC curve at the start of its own buffer. The V3s
+has further tables beyond these, for modules only it has, which is the
+whole of the difference in the buffer sizes the variants declare.
+
+Uploading is a copy into the buffer plus a bit in FE_CTRL telling the
+hardware to reload it. Rather than poke FE_CTRL from the copy, note the
+bit and let it out at the next parameter sync point, so a table swapped
+in mid-stream lands together with the rest of the configuration. Two
+places write FE_CTRL and both now carry the pending bits: the sync
+point itself, and the frontend enable at stream start, which is a full
+write and would otherwise drop them.
+
+The first user is the gamma curve, 256 entries of 16 bits, which needs
+no register configuration of its own.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c             |  1 +
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h             | 14 +++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 49 ++++++++++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.h      |  4 +
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c        |  9 +-
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h |  7 ++
+ 6 files changed, 83 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -58,6 +58,7 @@ static void sun6i_isp_state_ready(struct sun6i_isp_device *isp_dev)
+ 
+ 	regmap_read(regmap, SUN6I_ISP_FE_CTRL_REG, &value);
+ 	value |= SUN6I_ISP_FE_CTRL_PARA_READY;
++	value |= sun6i_isp_params_table_update_take(isp_dev);
+ 	regmap_write(regmap, SUN6I_ISP_FE_CTRL_REG, value);
+ }
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+@@ -38,6 +38,20 @@ struct sun6i_isp_table {
+ 	unsigned int	size;
+ };
+ 
++/*
++ * The LUT and DRC buffers are each a concatenation of fixed-size
++ * sub-tables. Both supported variants place them identically; the V3s
++ * just has further tables after these, for modules it alone has.
++ */
++
++#define SUN6I_ISP_TABLE_LENS_OFFSET	0x0
++#define SUN6I_ISP_TABLE_LENS_SIZE	0x600
++#define SUN6I_ISP_TABLE_GAMMA_OFFSET	0x600
++#define SUN6I_ISP_TABLE_GAMMA_SIZE	0x200
++
++#define SUN6I_ISP_TABLE_DRC_OFFSET	0x0
++#define SUN6I_ISP_TABLE_DRC_SIZE	0x200
++
+ struct sun6i_isp_tables {
+ 	struct sun6i_isp_table	load;
+ 	struct sun6i_isp_table	save;
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -191,6 +191,36 @@ sun6i_isp_params_configure_rgb2rgb(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_RGB2RGB_OFFSET_B(rgb2rgb->offset[2]));
+ }
+ 
++/*
++ * Copy a sub-table into one of the DMA table buffers and note the
++ * FE_CTRL bit that tells the hardware to reload it. The bit is only
++ * applied at the next parameter sync point, so that a table swapped in
++ * mid-stream takes effect together with the rest of the configuration.
++ */
++static void sun6i_isp_params_table_write(struct sun6i_isp_device *isp_dev,
++					 struct sun6i_isp_table *table,
++					 unsigned int offset, u32 update,
++					 const void *data, unsigned int size)
++{
++	if (WARN_ON(offset + size > table->size))
++		return;
++
++	memcpy(table->data + offset, data, size);
++
++	isp_dev->params.state.table_update |= update;
++}
++
++static void
++sun6i_isp_params_configure_gamma(struct sun6i_isp_device *isp_dev,
++				 const struct sun6i_isp_params_config *config)
++{
++	sun6i_isp_params_table_write(isp_dev, &isp_dev->tables.lut,
++				     SUN6I_ISP_TABLE_GAMMA_OFFSET,
++				     SUN6I_ISP_FE_CTRL_GAMMA_UPDATE,
++				     config->gamma.table,
++				     sizeof(config->gamma.table));
++}
++
+ static void
+ sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
+ 			       const struct sun6i_isp_params_config *config)
+@@ -298,6 +328,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_SHARP)
+ 		sun6i_isp_params_configure_sharp(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_GAMMA)
++		sun6i_isp_params_configure_gamma(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
+@@ -331,6 +364,22 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
+ }
+ 
++u32 sun6i_isp_params_table_update_take(struct sun6i_isp_device *isp_dev)
++{
++	struct sun6i_isp_params_state *state = &isp_dev->params.state;
++	unsigned long flags;
++	u32 update;
++
++	spin_lock_irqsave(&state->lock, flags);
++
++	update = state->table_update;
++	state->table_update = 0;
++
++	spin_unlock_irqrestore(&state->lock, flags);
++
++	return update;
++}
++
+ void sun6i_isp_params_configure(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct sun6i_isp_params_state *state = &isp_dev->params.state;
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.h
+@@ -21,6 +21,9 @@ struct sun6i_isp_params_state {
+ 
+ 	bool				configured;
+ 	bool				streaming;
++
++	/* Table update bits owed to FE_CTRL, applied at the next sync. */
++	u32				table_update;
+ };
+ 
+ struct sun6i_isp_params {
+@@ -37,6 +40,7 @@ struct sun6i_isp_params {
+ /* Params */
+ 
+ void sun6i_isp_params_configure(struct sun6i_isp_device *isp_dev);
++u32 sun6i_isp_params_table_update_take(struct sun6i_isp_device *isp_dev);
+ 
+ /* State */
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+@@ -190,8 +190,15 @@ static void sun6i_isp_proc_enable(struct sun6i_isp_device *isp_dev,
+ 	regmap_write(regmap, SUN6I_ISP_FE_CFG_REG,
+ 		     SUN6I_ISP_FE_CFG_EN | SUN6I_ISP_FE_CFG_SRC0_MODE(mode));
+ 
++	/*
++	 * This is a full write rather than a read-modify-write, so it has to
++	 * carry any table reloads the parameters left pending: nothing else
++	 * touches FE_CTRL between here and the first frame.
++	 */
++
+ 	regmap_write(regmap, SUN6I_ISP_FE_CTRL_REG,
+-		     SUN6I_ISP_FE_CTRL_VCAP_EN | SUN6I_ISP_FE_CTRL_PARA_READY);
++		     SUN6I_ISP_FE_CTRL_VCAP_EN | SUN6I_ISP_FE_CTRL_PARA_READY |
++		     sun6i_isp_params_table_update_take(isp_dev));
+ }
+ 
+ static void sun6i_isp_proc_disable(struct sun6i_isp_device *isp_dev)
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -18,6 +18,7 @@
+ #define SUN6I_ISP_MODULE_SATURATION		(1U << 5)
+ #define SUN6I_ISP_MODULE_SHARP			(1U << 6)
+ #define SUN6I_ISP_MODULE_RGB2RGB		(1U << 7)
++#define SUN6I_ISP_MODULE_GAMMA			(1U << 8)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -84,6 +85,11 @@ struct sun6i_isp_params_config_rgb2rgb {
+ 	__u16	offset[3];
+ };
+ 
++/* Gamma curve, one 16-bit entry per input level. */
++struct sun6i_isp_params_config_gamma {
++	__u16	table[256];
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -95,6 +101,7 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_saturation	saturation;
+ 	struct sun6i_isp_params_config_sharp	sharp;
+ 	struct sun6i_isp_params_config_rgb2rgb	rgb2rgb;
++	struct sun6i_isp_params_config_gamma	gamma;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

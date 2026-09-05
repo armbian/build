@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 22:34:30 +0200
+Subject: media: sun6i-isp: Add defect pixel correction and the YUV range
+ compression
+
+Two more of the features the A83T manual lists for this block that the
+driver had no way to reach.
+
+Defect pixel correction comes in two forms and this is the one that
+needs no table: a pixel is corrected when it stands further from its
+neighbours than the thresholds allow, with a slope setting how the limit
+grows with the local level. The mode bit lives in MODE rather than
+beside the thresholds, sharing that register with the input format and
+the histogram mode, so it is set with a read and a single bit changed.
+The table-driven corrector at 0xc0 is left alone: it wants a defect list
+in the LUT region, and every block on this part that reads from a table
+does nothing.
+
+The manual lists dynamic range compression without saying which; there
+are two, one applied in RGB and one in YUV, and only the first was
+reachable. They share a table, so asking for either now writes it.
+
+Neither does anything, measured afterwards against the sensor's colour
+bars: the defect corrector is unmoved with its slope at maximum and its
+thresholds wide open, and unmoved again with the threshold swept across
+its range, and the YUV compression sits at the drift of the run. They
+join the list in section 7.0.1 of blocks whose registers load, read back
+and drive nothing on this part. Reaching them is still worth having --
+the driver could not previously ask.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 41 +++++++++-
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h         | 12 +++
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h | 18 ++++
+ 3 files changed, 69 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -388,6 +388,29 @@ static void sun6i_isp_params_configure_base(struct sun6i_isp_device *isp_dev)
+ 	sun6i_isp_params_configure_wb(isp_dev);
+ }
+ 
++/*
++ * Defect pixel correction. The mode lives in MODE rather than beside the
++ * thresholds, so that register is read back and only its one bit changed
++ * -- the input format and the histogram mode share it.
++ */
++static void
++sun6i_isp_params_configure_dpc(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_dpc *dpc = &config->dpc;
++	u32 value;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_OTF_DC_CFG_REG,
++			     SUN6I_ISP_OTF_DC_CFG_TH_SLOPE(dpc->threshold_slope) |
++			     SUN6I_ISP_OTF_DC_CFG_MIN_TH(dpc->threshold_min) |
++			     SUN6I_ISP_OTF_DC_CFG_MAX_TH(dpc->threshold_max));
++
++	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODE_REG);
++	value &= ~SUN6I_ISP_MODE_OTF_DPC(1);
++	value |= SUN6I_ISP_MODE_OTF_DPC(dpc->mode);
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODE_REG, value);
++}
++
+ /*
+  * The demosaic. It has no enable bit of its own and runs whatever these
+  * hold, which until now was whatever they powered up as -- a direction
+@@ -478,7 +501,8 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (!bayer)
+ 		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER |
+ 			     SUN6I_ISP_MODULE_RGB2RGB |
+-			     SUN6I_ISP_MODULE_CFA | SUN6I_ISP_MODULE_WB);
++			     SUN6I_ISP_MODULE_CFA | SUN6I_ISP_MODULE_WB |
++			     SUN6I_ISP_MODULE_DPC);
+ 
+ 	/*
+ 	 * The bayer and YUV gain/offset are the same registers behind two
+@@ -516,7 +540,7 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_LSC)
+ 		sun6i_isp_params_configure_lsc(isp_dev, config);
+ 
+-	if (modules & SUN6I_ISP_MODULE_DRC)
++	if (modules & (SUN6I_ISP_MODULE_DRC | SUN6I_ISP_MODULE_YUV_DRC))
+ 		sun6i_isp_params_configure_drc(isp_dev, config);
+ 
+ 	if (modules & SUN6I_ISP_MODULE_AE)
+@@ -537,6 +561,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_DPC)
++		sun6i_isp_params_configure_dpc(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_CFA)
+ 		sun6i_isp_params_configure_cfa(isp_dev, config);
+ 
+@@ -598,6 +625,16 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_WB)
+ 		value |= SUN6I_ISP_MODULE_EN_WB;
+ 
++	if (modules & SUN6I_ISP_MODULE_DPC)
++		value |= SUN6I_ISP_MODULE_EN_DPC_OTF;
++
++	/*
++	 * The second dynamic range compression, applied in the YUV domain
++	 * rather than the RGB one. It reads the same table as the first.
++	 */
++	if (modules & SUN6I_ISP_MODULE_YUV_DRC)
++		value |= SUN6I_ISP_MODULE_EN_YUV_DRC;
++
+ 	/* The demosaic has no enable bit; it is configuration only. */
+ 
+ 	/* Bayer stage is always enabled. */
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -241,6 +241,18 @@
+ #define SUN6I_ISP_OB_VERT_PARA_REG		0x98
+ #define SUN6I_ISP_OB_OFFSET_FIXED_REG		0x9c
+ 
++/* Defect pixel correction */
++
++/*
++ * The on-the-fly corrector, which needs no table. The table-driven one at
++ * 0xc0 is not programmed: it wants a defect list in the LUT region, and
++ * every block that reads from a table is inert on this part.
++ */
++#define SUN6I_ISP_OTF_DC_CFG_REG		0xc4
++#define SUN6I_ISP_OTF_DC_CFG_TH_SLOPE(v)	((v) & GENMASK(3, 0))
++#define SUN6I_ISP_OTF_DC_CFG_MIN_TH(v)		(((v) << 4) & GENMASK(15, 4))
++#define SUN6I_ISP_OTF_DC_CFG_MAX_TH(v)		(((v) << 16) & GENMASK(27, 16))
++
+ /* BDNF */
+ 
+ #define SUN6I_ISP_BDNF_CFG_REG			0xcc
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -28,6 +28,8 @@
+ #define SUN6I_ISP_MODULE_AFS			(1U << 15)
+ #define SUN6I_ISP_MODULE_CFA			(1U << 16)
+ #define SUN6I_ISP_MODULE_WB			(1U << 17)
++#define SUN6I_ISP_MODULE_DPC			(1U << 18)
++#define SUN6I_ISP_MODULE_YUV_DRC		(1U << 19)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -167,6 +169,21 @@ struct sun6i_isp_params_config_afs {
+ 	__u8	anti_flicker;
+ };
+ 
++/*
++ * Defect pixel correction, the on-the-fly kind that needs no defect list.
++ * A pixel is corrected when it stands further from its neighbours than the
++ * thresholds allow; the slope sets how the limit grows with the local
++ * level, and the mode selects between the two comparisons the hardware
++ * offers.
++ */
++struct sun6i_isp_params_config_dpc {
++	__u16	threshold_slope;
++	__u16	threshold_min;
++	__u16	threshold_max;
++
++	__u8	mode;
++};
++
+ /*
+  * Demosaic. The threshold decides how strongly the interpolation commits
+  * to an edge direction; the minimum is a floor applied to the channels,
+@@ -213,6 +230,7 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_afs	afs;
+ 	struct sun6i_isp_params_config_cfa	cfa;
+ 	struct sun6i_isp_params_config_wb	wb;
++	struct sun6i_isp_params_config_dpc	dpc;
+ };
+ 
+ /*
+-- 
+Armbian
+

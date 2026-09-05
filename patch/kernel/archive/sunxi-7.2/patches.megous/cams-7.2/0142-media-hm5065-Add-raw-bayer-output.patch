@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 5 Aug 2026 02:35:02 +0200
+Subject: media: hm5065: Add raw bayer output
+
+The sensor can emit its readout unprocessed -- RAW10ITU8 in the data
+format register -- and the driver only ever offered the processed YUV
+and RGB formats.
+
+This is for characterising the ISP behind it. That work needs a known
+input, and this sensor's test patterns are injected at the start of its
+own pipeline, before any of its processing, so in raw they arrive as a
+known mosaic. It also has patterns the other camera on this board does
+not: horizontal, vertical and diagonal grey ramps, and two pseudorandom
+ones. A ramp says which pixels a statistics window really covers, and
+noise gives a filter's kernel by correlation. The gc2145 offers neither,
+and most of its patterns clip in raw anyway.
+
+Raw is not scaled, so it gets the three sizes the readout actually
+produces -- full and the two binned modes -- rather than the free range
+the processed formats have, and enum_frame_size reports them discretely.
+
+Two things here are guesses and are marked as such in the code: the
+bayer phase, which has to be measured off the CSI the way the gc2145 one
+was, and the value for the bus format register, since the vendor never
+used raw on this part -- its own raw format table is present and empty.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 60 ++++++++++
+ 1 file changed, 60 insertions(+)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -512,8 +512,33 @@ static const struct hm5065_pixfmt hm5065_formats[] = {
+ 		.ycbcr_order       = HM5065_REG_YCRCB_ORDER_Y_CR_Y_CB,
+ 		.fmt_setup         = 0x02
+ 	},
++	/*
++	 * Raw bayer, the sensor's own processing bypassed. The colour
++	 * pipeline is what the ISP behind this is being characterised
++	 * against, so being able to hand it an unprocessed frame -- and one
++	 * carrying a test pattern that is injected before that pipeline, so
++	 * it arrives as a known mosaic -- is the point of this entry.
++	 *
++	 * The phase is a guess until it is measured off the CSI the way the
++	 * gc2145 one was. So is the bus setup value: 0x7000 selects byte and
++	 * component order and the vendor never used it for raw, its own raw
++	 * format table being present but empty.
++	 */
++	{
++		.code              = MEDIA_BUS_FMT_SBGGR8_1X8,
++		.colorspace        = V4L2_COLORSPACE_RAW,
++		.data_fmt          = HM5065_REG_DATA_FORMAT_RAW10ITU8,
++		.ycbcr_order       = HM5065_REG_YCRCB_ORDER_Y_CB_Y_CR,
++		.fmt_setup         = 0x08
++	},
+ };
+ 
++static bool hm5065_format_is_raw(const struct hm5065_pixfmt *fmt)
++{
++	return fmt->data_fmt == HM5065_REG_DATA_FORMAT_RAW10ITU8 ||
++	       fmt->data_fmt == HM5065_REG_DATA_FORMAT_RAW10ITU10;
++}
++
+ #define HM5065_NUM_FORMATS ARRAY_SIZE(hm5065_formats)
+ 
+ static const struct hm5065_pixfmt *hm5065_find_format(u32 code)
+@@ -1813,8 +1838,29 @@ static int hm5065_enum_frame_size(struct v4l2_subdev *sd,
+ 				  struct v4l2_subdev_state *sd_state,
+ 				  struct v4l2_subdev_frame_size_enum *fse)
+ {
++	const struct hm5065_pixfmt *pixfmt = hm5065_find_format(fse->code);
++
+ 	if (fse->pad != 0)
+ 		return -EINVAL;
++
++	/*
++	 * Raw is not scaled, so rather than a range it has exactly the
++	 * three sizes the readout produces.
++	 */
++	if (pixfmt && hm5065_format_is_raw(pixfmt)) {
++		static const unsigned int bin[] = { 1, 2, 4 };
++
++		if (fse->index >= ARRAY_SIZE(bin))
++			return -EINVAL;
++
++		fse->min_width = HM5065_SENSOR_WIDTH / bin[fse->index];
++		fse->max_width = fse->min_width;
++		fse->min_height = HM5065_SENSOR_HEIGHT / bin[fse->index];
++		fse->max_height = fse->min_height;
++
++		return 0;
++	}
++
+ 	if (fse->index != 0)
+ 		return -EINVAL;
+ 
+@@ -1885,6 +1931,20 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 	mf->height = clamp(mf->height, HM5065_CAPTURE_HEIGHT_MIN,
+ 			  HM5065_SENSOR_HEIGHT);
+ 
++	/*
++	 * Raw comes straight off the readout, so the only sizes available
++	 * are the ones the readout itself produces: full, and the two
++	 * binned modes. Anything else would need the scaler, which is part
++	 * of the processing being bypassed.
++	 */
++	if (hm5065_format_is_raw(pixfmt)) {
++		unsigned int bin = hm5065_get_max_binning(mf->width,
++							  mf->height);
++
++		mf->width = HM5065_SENSOR_WIDTH / bin;
++		mf->height = HM5065_SENSOR_HEIGHT / bin;
++	}
++
+ 	*v4l2_subdev_state_get_format(sd_state, format->pad) = *mf;
+ 
+ 	return 0;
+-- 
+Armbian
+

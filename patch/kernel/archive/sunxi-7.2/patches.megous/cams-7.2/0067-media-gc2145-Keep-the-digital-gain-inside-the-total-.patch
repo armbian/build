@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 18:24:43 +0200
+Subject: media: gc2145: Keep the digital gain inside the total gain clamp
+
+The global gain and the pre digital gain are multiplied together in one
+place and the product saturates at 16 unities, so with the global gain
+at its maximum the top half of the digital gain control did nothing -
+and, symmetrically, a maximum digital gain left only the bottom third of
+the analogue one useful.
+
+Measured rather than inferred: the knee sits where the product predicts
+it at three different pre gains, the luminance plateaus at the same
+value in every case, and the knee does not move when the exposure
+changes by two stops - which is what rules out the picture simply
+clipping. The post gain is applied after the clamp and is not part of
+it. The same measurement settles the pre gain unity at 0x20.
+
+Move the digital gain's maximum with the analogue gain so that the
+control only ever spans what the sensor will actually apply.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 37 +++++++++-
+ 1 file changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -220,8 +220,21 @@
+ #define GC2145_P0_GLOBAL_GAIN		0xb0
+ #define GC2145_GLOBAL_GAIN_UNITY		0x40
+ #define GC2145_P0_AUTO_PREGAIN		0xb1
++#define GC2145_PREGAIN_UNITY			0x20
+ #define GC2145_P0_AUTO_POSTGAIN		0xb2
+ 
++/*
++ * The global gain and the pre gain are multiplied together in one place
++ * and the product saturates at 16 unities. Measured: the output stops
++ * responding once global * pre reaches that, the knee sits where the
++ * product predicts it at three different pre gains, and it does not move
++ * when the exposure changes by two stops - so this is a clamp on the
++ * gain rather than the picture clipping. The post gain is applied after
++ * the clamp and does not count towards it.
++ */
++#define GC2145_TOTAL_GAIN_MAX \
++	(16 * GC2145_GLOBAL_GAIN_UNITY * GC2145_PREGAIN_UNITY)
++
+ #define GC2145_P0_AWB_R_GAIN		0xb3
+ #define GC2145_P0_AWB_G_GAIN		0xb4
+ #define GC2145_P0_AWB_B_GAIN		0xb5
+@@ -1126,6 +1139,16 @@ gc2145_params_exposure_max(struct gc2145_sensor_params *p,
+ 		   (unsigned long)GC2145_EXPOSURE_REG_MAX / slots);
+ }
+ 
++/*
++ * The largest pre gain the total gain clamp still lets through at a
++ * given global gain. Asking for more only widens the gap between the
++ * gain the control claims and the gain the picture got.
++ */
++static unsigned long gc2145_pregain_max(unsigned long global_gain)
++{
++	return min(255ul, GC2145_TOTAL_GAIN_MAX / global_gain);
++}
++
+ /*
+  * The exposure quantum that keeps lighting flicker out of the image: the
+  * mains half period expressed in the units the exposure register counts.
+@@ -1408,7 +1431,7 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	s32 val = ctrl->val;
+-	unsigned long exposure_max;
++	unsigned long exposure_max, pregain_max;
+ 	int ret;
+ 	u8 test1, test2;
+ 
+@@ -1449,6 +1472,18 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 					 min(ctrls->exposure->val,
+ 					     (s32)exposure_max));
+ 		break;
++
++	case V4L2_CID_ANALOGUE_GAIN:
++		/*
++		 * The two gains are clamped as a product, so how far the
++		 * digital one is worth moving depends on this one. Without
++		 * this the top of its range would silently do nothing.
++		 */
++		pregain_max = gc2145_pregain_max(val);
++		__v4l2_ctrl_modify_range(ctrls->d_gain, 1, pregain_max, 1,
++					 min(ctrls->d_gain->val,
++					     (s32)pregain_max));
++		break;
+ 	}
+ 
+ 	/*
+-- 
+Armbian
+

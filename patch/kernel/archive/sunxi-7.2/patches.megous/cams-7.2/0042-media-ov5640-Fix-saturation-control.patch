@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:29:30 +0200
+Subject: media: ov5640: Fix saturation control
+
+SDE CTRL3 and CTRL4 are only U and V saturation gains when manual UV
+adjust is enabled in SDE CTRL8, which the driver never does. In the
+automatic mode the sensor is left in, they are the two endpoints of
+the chroma gain ramp the UV adjust block applies as a function of
+sensor gain, which the init sequence programs as 0x40 and 0x10 to
+suppress chroma noise in dark scenes.
+
+Writing the control value to both registers therefore flattened that
+ramp. Worse, since the control framework applies every control at
+stream start, the default of 64 overwrote the vendor tuning even when
+userspace never touched saturation.
+
+Scale both endpoints and keep their ratio, so that the ramp survives
+and the default reproduces exactly what the init sequence sets.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 45 ++++++----
+ 1 file changed, 29 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -127,7 +127,10 @@
+ #define OV5640_REG_SDE_CTRL4		0x5584
+ #define OV5640_REG_SDE_CTRL5		0x5585
+ #define OV5640_REG_SDE_CTRL6		0x5586
++#define OV5640_SDE_CTRL0_SAT_EN		BIT(1)
+ #define OV5640_SDE_CTRL0_CONTRAST_EN	BIT(2)
++/* UV adjust gain, 0x40 is unity */
++#define OV5640_SATURATION_UNITY		0x40
+ /* Y gain for contrast, 0x20 is unity */
+ #define OV5640_CONTRAST_UNITY		0x20
+ #define OV5640_REG_AVG_READOUT		0x56a1
+@@ -3421,22 +3424,31 @@ static int ov5640_set_ctrl_saturation(struct ov5640_dev *sensor, int value)
+ {
+ 	int ret;
+ 
+-	if (value) {
+-		ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0,
+-				     BIT(1), BIT(1));
+-		if (ret)
+-			return ret;
+-		ret = ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL3,
+-				       value & 0xff);
+-		if (ret)
+-			return ret;
+-		ret = ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL4,
+-				       value & 0xff);
+-	} else {
+-		ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0, BIT(1), 0);
+-	}
++	/*
++	 * The UV adjust block runs in automatic mode, where it ramps the
++	 * chroma gain between two endpoints as the sensor gain moves
++	 * between the two thresholds programmed by the init sequence, so
++	 * that chroma noise is suppressed in dark scenes. SDE CTRL3 is the
++	 * gain used at low sensor gain and SDE CTRL4 the one used at high
++	 * sensor gain, both with 0x40 as unity.
++	 *
++	 * They are not plain U and V saturation registers - that is what
++	 * they would be with manual UV adjust enabled in SDE CTRL8 - so
++	 * writing the same value to both, as this used to do, flattened
++	 * the ramp and lost the noise suppression. Scale both endpoints
++	 * instead, keeping the 4:1 ratio of the vendor settings.
++	 */
++	ret = ov5640_mod_reg(sensor, OV5640_REG_SDE_CTRL0,
++			     OV5640_SDE_CTRL0_SAT_EN,
++			     OV5640_SDE_CTRL0_SAT_EN);
++	if (ret)
++		return ret;
+ 
+-	return ret;
++	ret = ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL3, value);
++	if (ret)
++		return ret;
++
++	return ov5640_write_reg(sensor, OV5640_REG_SDE_CTRL4, value / 4);
+ }
+ 
+ static int ov5640_set_ctrl_white_balance(struct ov5640_dev *sensor, int awb)
+@@ -3876,7 +3888,8 @@ static int ov5640_init_controls(struct ov5640_dev *sensor)
+ 					     0, V4L2_AUTO_FOCUS_STATUS_IDLE);
+ 
+ 	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,
+-					      0, 255, 1, 64);
++					      0, 255, 1,
++					      OV5640_SATURATION_UNITY);
+ 	ctrls->hue = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HUE,
+ 				       0, 359, 1, 0);
+ 	ctrls->contrast = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_CONTRAST,
+-- 
+Armbian
+

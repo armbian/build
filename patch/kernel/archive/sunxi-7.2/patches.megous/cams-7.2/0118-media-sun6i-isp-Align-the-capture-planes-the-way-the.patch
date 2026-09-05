@@ -1,0 +1,231 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:24:47 +0200
+Subject: media: sun6i-isp: Align the capture planes the way the hardware steps
+ them
+
+The stride registers hold a stride divided by four, and the driver rounds
+up when it fills them - but it lays the buffer out at ALIGN(width, 2)
+bytes per row. For a width that is not a multiple of four the hardware
+therefore steps further per row than the buffer was allocated for, and
+writes off the end of it. At 1278x720 NV12 that is a row and a half past
+the last plane.
+
+The plane offsets have the same problem from the other side: they are
+computed from the unaligned width, so the chroma plane starts before the
+luma plane ends as far as the hardware is concerned.
+
+Align every plane to 16, which is what the vendor's sub_0() does -
+ALIGN(width, 16) for luma and ALIGN(width / 2, 16) for the chroma of a
+planar format - and derive the register value, the plane offsets,
+bytesperline and sizeimage from that one calculation, so the layout the
+buffer was allocated for and the layout the hardware walks cannot drift
+apart again.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c | 104 ++++++----
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h |  12 ++
+ 2 files changed, 75 insertions(+), 41 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -61,23 +61,67 @@ sun6i_isp_capture_format_find(u32 pixelformat)
+ 
+ /* Capture */
+ 
++/*
++ * Stride of one plane.
++ *
++ * The hardware holds strides divided by four, so a stride has to be a multiple
++ * of four for the register to be able to express it at all, and the vendor goes
++ * further and aligns every plane to 16 - ALIGN(width, 16) for luma and
++ * ALIGN(width / 2, 16) for the chroma of a planar format, in its sub_0().
++ *
++ * Following that keeps what the register says and what the buffer was laid out
++ * for the same thing, which they were not: bytesperline was aligned to 2 while
++ * the register rounded up to 4, so a width that is not a multiple of four had
++ * the hardware stepping further per row than the buffer allowed and writing off
++ * the end of it.
++ */
++unsigned int sun6i_isp_capture_stride(const struct v4l2_format_info *info,
++				      unsigned int plane, unsigned int width)
++{
++	unsigned int hdiv = (plane == 0) ? 1 : info->hdiv;
++
++	return ALIGN(info->bpp[plane] * DIV_ROUND_UP(width, hdiv),
++		     SUN6I_ISP_CAPTURE_STRIDE_ALIGN);
++}
++
++unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
++					  unsigned int height)
++{
++	const struct v4l2_format_info *info = v4l2_format_info(pixelformat);
++	unsigned int size = 0;
++	unsigned int i;
++
++	if (WARN_ON(!info))
++		return 0;
++
++	for (i = 0; i < info->comp_planes; i++) {
++		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
++
++		size += sun6i_isp_capture_stride(info, i, width) *
++			DIV_ROUND_UP(height, vdiv);
++	}
++
++	return size;
++}
++
+ static void
+ sun6i_isp_capture_buffer_configure(struct sun6i_isp_device *isp_dev,
+ 				   struct sun6i_isp_buffer *isp_buffer)
+ {
++	static const u32 plane_regs[] = {
++		SUN6I_ISP_MCH_Y_ADDR0_REG, SUN6I_ISP_MCH_U_ADDR0_REG,
++		SUN6I_ISP_MCH_V_ADDR0_REG,
++	};
+ 	const struct v4l2_format_info *info;
+ 	struct vb2_buffer *vb2_buffer;
+ 	unsigned int width, height;
+-	unsigned int width_aligned;
+ 	dma_addr_t address;
+ 	u32 pixelformat;
++	unsigned int i;
+ 
+ 	vb2_buffer = &isp_buffer->v4l2_buffer.vb2_buf;
+ 	address = vb2_dma_contig_plane_dma_addr(vb2_buffer, 0);
+ 
+-	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_Y_ADDR0_REG,
+-			     SUN6I_ISP_ADDR_VALUE(address));
+-
+ 	sun6i_isp_capture_dimensions(isp_dev, &width, &height);
+ 	sun6i_isp_capture_format(isp_dev, &pixelformat);
+ 
+@@ -85,23 +129,14 @@ sun6i_isp_capture_buffer_configure(struct sun6i_isp_device *isp_dev,
+ 	if (WARN_ON(!info))
+ 		return;
+ 
+-	/* Stride needs to be aligned to 4. */
+-	width_aligned = ALIGN(width, 2);
+-
+-	if (info->comp_planes > 1) {
+-		address += info->bpp[0] * width_aligned * height;
++	for (i = 0; i < info->comp_planes && i < ARRAY_SIZE(plane_regs); i++) {
++		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+ 
+-		sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_U_ADDR0_REG,
++		sun6i_isp_load_write(isp_dev, plane_regs[i],
+ 				     SUN6I_ISP_ADDR_VALUE(address));
+-	}
+ 
+-	if (info->comp_planes > 2) {
+-		address += info->bpp[1] *
+-			   DIV_ROUND_UP(width_aligned, info->hdiv) *
+-			   DIV_ROUND_UP(height, info->vdiv);
+-
+-		sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_V_ADDR0_REG,
+-				     SUN6I_ISP_ADDR_VALUE(address));
++		address += sun6i_isp_capture_stride(info, i, width) *
++			   DIV_ROUND_UP(height, vdiv);
+ 	}
+ }
+ 
+@@ -129,12 +164,12 @@ void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev)
+ 	if (WARN_ON(!info))
+ 		return;
+ 
+-	stride_luma = width * info->bpp[0];
+-	stride_luma_div4 = DIV_ROUND_UP(stride_luma, 4);
++	stride_luma = sun6i_isp_capture_stride(info, 0, width);
++	stride_luma_div4 = stride_luma / 4;
+ 
+ 	if (info->comp_planes > 1) {
+-		stride_chroma = width * info->bpp[1] / info->hdiv;
+-		stride_chroma_div4 = DIV_ROUND_UP(stride_chroma, 4);
++		stride_chroma = sun6i_isp_capture_stride(info, 1, width);
++		stride_chroma_div4 = stride_chroma / 4;
+ 	}
+ 
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MCH_CFG_REG,
+@@ -376,9 +411,6 @@ static void sun6i_isp_capture_format_prepare(struct v4l2_format *format)
+ {
+ 	struct v4l2_pix_format *pix_format = &format->fmt.pix;
+ 	const struct v4l2_format_info *info;
+-	unsigned int width, height;
+-	unsigned int width_aligned;
+-	unsigned int i;
+ 
+ 	v4l_bound_align_image(&pix_format->width, SUN6I_ISP_CAPTURE_WIDTH_MIN,
+ 			      SUN6I_ISP_CAPTURE_WIDTH_MAX, 1,
+@@ -393,23 +425,13 @@ static void sun6i_isp_capture_format_prepare(struct v4l2_format *format)
+ 	if (WARN_ON(!info))
+ 		return;
+ 
+-	width = pix_format->width;
+-	height = pix_format->height;
+-
+-	/* Stride needs to be aligned to 4. */
+-	width_aligned = ALIGN(width, 2);
+-
+-	pix_format->bytesperline = width_aligned * info->bpp[0];
+-	pix_format->sizeimage = 0;
++	pix_format->bytesperline = sun6i_isp_capture_stride(info, 0,
++							    pix_format->width);
+ 
+-	for (i = 0; i < info->comp_planes; i++) {
+-		unsigned int hdiv = (i == 0) ? 1 : info->hdiv;
+-		unsigned int vdiv = (i == 0) ? 1 : info->vdiv;
+-
+-		pix_format->sizeimage += info->bpp[i] *
+-					 DIV_ROUND_UP(width_aligned, hdiv) *
+-					 DIV_ROUND_UP(height, vdiv);
+-	}
++	pix_format->sizeimage =
++		sun6i_isp_capture_image_size(pix_format->pixelformat,
++					     pix_format->width,
++					     pix_format->height);
+ 
+ 	pix_format->field = V4L2_FIELD_NONE;
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+@@ -11,12 +11,19 @@
+ 
+ #define SUN6I_ISP_CAPTURE_NAME		"sun6i-isp-capture"
+ 
++/*
++ * The stride register holds a stride divided by four, so four is the least
++ * it can express; the vendor aligns every plane to 16 and this follows it.
++ */
++#define SUN6I_ISP_CAPTURE_STRIDE_ALIGN	16
++
+ #define SUN6I_ISP_CAPTURE_WIDTH_MIN	16
+ #define SUN6I_ISP_CAPTURE_WIDTH_MAX	3264
+ #define SUN6I_ISP_CAPTURE_HEIGHT_MIN	16
+ #define SUN6I_ISP_CAPTURE_HEIGHT_MAX	2448
+ 
+ struct sun6i_isp_device;
++struct v4l2_format_info;
+ 
+ struct sun6i_isp_capture_format {
+ 	u32	pixelformat;
+@@ -59,6 +66,11 @@ void sun6i_isp_capture_format(struct sun6i_isp_device *isp_dev,
+ const struct sun6i_isp_capture_format *
+ sun6i_isp_capture_format_find(u32 pixelformat);
+ 
++unsigned int sun6i_isp_capture_stride(const struct v4l2_format_info *info,
++				      unsigned int plane, unsigned int width);
++unsigned int sun6i_isp_capture_image_size(u32 pixelformat, unsigned int width,
++					  unsigned int height);
++
+ /* Capture */
+ 
+ void sun6i_isp_capture_configure(struct sun6i_isp_device *isp_dev);
+-- 
+Armbian
+

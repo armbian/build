@@ -1,0 +1,261 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 19:59:43 +0200
+Subject: ASoC: sun8i-codec: Parametrize jack detection per variant
+
+The AC100's HMIC block has the same register layout as the A64's, but
+senses the HBIAS current where the A64 senses the microphone pin
+voltage - the same 5-bit number means the opposite thing, and the
+control register fields want different values. Move everything the two
+chips disagree on - the CTRL1/CTRL2 programming, the settle time, the
+plug type decision and the button decode - into a per-variant
+descriptor hung off the quirks, replacing the jack_detection flag.
+
+The A64 tables encode the current constants and decode rules exactly;
+no functional change.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/sun8i-codec.c | 129 +++++++---
+ 1 file changed, 91 insertions(+), 38 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -256,9 +256,30 @@ struct sun8i_codec_aif {
+ 	unsigned int	open_streams	: 2;
+ };
+ 
++/*
++ * How this variant's HMIC block is programmed and how its 5-bit
++ * accessory sense data decodes. The A64 and the AC100 share the block's
++ * register layout, but not the data's meaning: the A64 senses the
++ * microphone pin voltage, so a pressed button pulls the data down,
++ * while the AC100 senses the HBIAS current, so everything pulls it up.
++ *
++ * plug_type() returns the SND_JACK type for the settled reading, or a
++ * negative errno when the reading is not usable yet. button_map()
++ * returns SND_JACK_BTN_* bits, or a negative value for a sample that
++ * must be ignored entirely (not fed to the debouncer).
++ */
++struct sun8i_codec_jack_variant {
++	unsigned int	hmic_ctrl1;	/* debounce and mode fields */
++	unsigned int	hmic_ctrl2;	/* sample rate and thresholds */
++	unsigned int	settle_ms;	/* delay before the plug type read */
++	bool		hbias_sense;	/* plug sensing draws on HBIAS itself */
++	int		(*plug_type)(unsigned int mdata);
++	int		(*button_map)(unsigned int mdata);
++};
++
+ struct sun8i_codec_quirks {
++	const struct sun8i_codec_jack_variant *jack;	/* NULL = no detection */
+ 	bool	bus_clock	: 1;
+-	bool	jack_detection	: 1;
+ 	bool	legacy_widgets	: 1;
+ 	bool	lrck_inversion	: 1;
+ };
+@@ -1428,10 +1449,48 @@ static void sun8i_codec_set_hmic_bias(struct sun8i_codec *scodec, bool enable)
+ 			   irq_mask, enable ? irq_mask : 0);
+ }
+ 
++static int sun50i_a64_codec_plug_type(unsigned int mdata)
++{
++	return mdata < 16 ? SND_JACK_HEADPHONE : SND_JACK_HEADSET;
++}
++
++/*
++ * Assumes 60 mV per ADC LSB increment, 2V bias voltage, 2.2kOhm
++ * bias resistor.
++ */
++static int sun50i_a64_codec_button_map(unsigned int value)
++{
++	if (value == 0)
++		return SND_JACK_BTN_0;
++	else if (value == 1)
++		return SND_JACK_BTN_3;
++	else if (value <= 3)
++		return SND_JACK_BTN_1;
++	else if (value <= 8)
++		return SND_JACK_BTN_2;
++
++	return 0;
++}
++
++static const struct sun8i_codec_jack_variant sun50i_a64_jack_variant = {
++	/* Reserved value required for jack IRQs to trigger. */
++	.hmic_ctrl1	= 0xf << SUN8I_HMIC_CTRL1_HMIC_N |
++			  0x0 << SUN8I_HMIC_CTRL1_MDATA_THRESHOLD_DB |
++			  0x4 << SUN8I_HMIC_CTRL1_HMIC_M,
++	/* Sample the ADC at 128 Hz; bypass smooth filter. */
++	.hmic_ctrl2	= 0x0 << SUN8I_HMIC_CTRL2_HMIC_SAMPLE |
++			  0x17 << SUN8I_HMIC_CTRL2_HMIC_MDATA_THRESHOLD |
++			  0x0 << SUN8I_HMIC_CTRL2_HMIC_SF,
++	.settle_ms	= 600,
++	.plug_type	= sun50i_a64_codec_plug_type,
++	.button_map	= sun50i_a64_codec_button_map,
++};
++
+ static void sun8i_codec_jack_work(struct work_struct *work)
+ {
+ 	struct sun8i_codec *scodec = container_of(work, struct sun8i_codec,
+ 						  jack_work.work);
++	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+ 	struct device *dev = scodec->component->dev;
+ 	unsigned int mdata;
+ 	int type;
+@@ -1448,13 +1507,15 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 		if (scodec->jack_type & SND_JACK_MICROPHONE) {
+ 			/*
+ 			 * If we were in disconnected state, we enable HBIAS and
+-			 * wait 600ms before reading initial HDATA value.
++			 * wait for it to settle before reading the initial
++			 * HDATA value.
+ 			 */
+-			scodec->jack_hbias_ready = ktime_add_ms(ktime_get(), 600);
++			scodec->jack_hbias_ready = ktime_add_ms(ktime_get(),
++							variant->settle_ms);
+ 			sun8i_codec_set_hmic_bias(scodec, true);
+ 			queue_delayed_work(system_power_efficient_wq,
+ 					   &scodec->jack_work,
+-					   msecs_to_jiffies(610));
++					   msecs_to_jiffies(variant->settle_ms + 10));
+ 			scodec->jack_status = SUN8I_JACK_STATUS_WAITING_HBIAS;
+ 		} else {
+ 			snd_soc_jack_report(scodec->jack, SND_JACK_HEADPHONE,
+@@ -1495,7 +1556,7 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 
+ 		regmap_write(scodec->regmap, SUN8I_HMIC_STS, 0);
+ 
+-		type = mdata < 16 ? SND_JACK_HEADPHONE : SND_JACK_HEADSET;
++		type = variant->plug_type(mdata);
+ 		if (type == SND_JACK_HEADPHONE)
+ 			sun8i_codec_set_hmic_bias(scodec, false);
+ 
+@@ -1520,10 +1581,12 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ {
+ 	struct sun8i_codec *scodec = dev_id;
++	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+ 	struct device *dev = scodec->component->dev;
+ 	int type = SND_JACK_HEADSET;
+ 	unsigned int status, value;
+ 	unsigned btn_chg = 0;
++	int ret;
+ 
+ 	guard(mutex)(&scodec->jack_mutex);
+ 
+@@ -1563,18 +1626,10 @@ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ 		value = (status & SUN8I_HMIC_STS_HMIC_DATA_MASK) >>
+ 			SUN8I_HMIC_STS_HMIC_DATA;
+ 
+-		/*
+-		 * Assumes 60 mV per ADC LSB increment, 2V bias voltage, 2.2kOhm
+-		 * bias resistor.
+-		 */
+-		if (value == 0)
+-			type |= SND_JACK_BTN_0;
+-		else if (value == 1)
+-			type |= SND_JACK_BTN_3;
+-		else if (value <= 3)
+-			type |= SND_JACK_BTN_1;
+-		else if (value <= 8)
+-			type |= SND_JACK_BTN_2;
++		ret = variant->button_map(value);
++		if (ret < 0)
++			return IRQ_HANDLED;
++		type |= ret;
+ 
+ 		/*
+ 		 * De-bounce. Only report button after two consecutive A/D
+@@ -1608,10 +1663,11 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 					  struct snd_soc_jack *jack, void *data)
+ {
+ 	struct sun8i_codec *scodec = snd_soc_component_get_drvdata(component);
++	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+ 	struct platform_device *pdev = to_platform_device(component->dev);
+ 	int ret;
+ 
+-	if (!scodec->quirks->jack_detection)
++	if (!variant)
+ 		return 0;
+ 
+ 	scodec->jack = jack;
+@@ -1620,17 +1676,8 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 	if (scodec->jack_irq < 0)
+ 		return scodec->jack_irq;
+ 
+-	/* Reserved value required for jack IRQs to trigger. */
+-	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL1,
+-			   0xf << SUN8I_HMIC_CTRL1_HMIC_N |
+-			   0x0 << SUN8I_HMIC_CTRL1_MDATA_THRESHOLD_DB |
+-			   0x4 << SUN8I_HMIC_CTRL1_HMIC_M);
+-
+-	/* Sample the ADC at 128 Hz; bypass smooth filter. */
+-	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL2,
+-			   0x0 << SUN8I_HMIC_CTRL2_HMIC_SAMPLE |
+-			   0x17 << SUN8I_HMIC_CTRL2_HMIC_MDATA_THRESHOLD |
+-			   0x0 << SUN8I_HMIC_CTRL2_HMIC_SF);
++	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL1, variant->hmic_ctrl1);
++	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL2, variant->hmic_ctrl2);
+ 
+ 	/* Do not discard any MDATA, enable user written MDATA threshold. */
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_STS, 0);
+@@ -1660,7 +1707,7 @@ static void sun8i_codec_disable_jack_detect(struct snd_soc_component *component)
+ {
+ 	struct sun8i_codec *scodec = snd_soc_component_get_drvdata(component);
+ 
+-	if (!scodec->quirks->jack_detection)
++	if (!scodec->quirks->jack)
+ 		return;
+ 
+ 	devm_free_irq(component->dev, scodec->jack_irq, scodec);
+@@ -1834,6 +1881,18 @@ static int sun8i_codec_probe_ac100(struct platform_device *pdev)
+ 	return ret;
+ }
+ 
++static void sun8i_codec_init_jack(struct sun8i_codec *scodec,
++				  struct device *dev)
++{
++	INIT_DELAYED_WORK(&scodec->jack_work, sun8i_codec_jack_work);
++	mutex_init(&scodec->jack_mutex);
++
++	if (of_property_match_string(dev->of_node, "jack-type", "headset") >= 0)
++		scodec->jack_type = SND_JACK_HEADSET | SUN8I_CODEC_BUTTONS;
++	else if (of_property_match_string(dev->of_node, "jack-type", "headphone") >= 0)
++		scodec->jack_type = SND_JACK_HEADPHONE;
++}
++
+ static int sun8i_codec_probe(struct platform_device *pdev)
+ {
+ 	struct sun8i_codec *scodec;
+@@ -1848,16 +1907,10 @@ static int sun8i_codec_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	scodec->quirks = of_device_get_match_data(&pdev->dev);
+-	INIT_DELAYED_WORK(&scodec->jack_work, sun8i_codec_jack_work);
+-	mutex_init(&scodec->jack_mutex);
++	sun8i_codec_init_jack(scodec, &pdev->dev);
+ 
+ 	platform_set_drvdata(pdev, scodec);
+ 
+-	if (of_property_match_string(pdev->dev.of_node, "jack-type", "headset") >= 0)
+-		scodec->jack_type = SND_JACK_HEADSET | SUN8I_CODEC_BUTTONS;
+-	else if (of_property_match_string(pdev->dev.of_node, "jack-type", "headphone") >= 0)
+-		scodec->jack_type = SND_JACK_HEADPHONE;
+-
+ 	if (scodec->quirks->bus_clock) {
+ 		scodec->clk_bus = devm_clk_get(&pdev->dev, "bus");
+ 		if (IS_ERR(scodec->clk_bus)) {
+@@ -1936,7 +1989,7 @@ static const struct sun8i_codec_quirks sun8i_a33_quirks = {
+ 
+ static const struct sun8i_codec_quirks sun50i_a64_quirks = {
+ 	.bus_clock	= true,
+-	.jack_detection	= true,
++	.jack		= &sun50i_a64_jack_variant,
+ };
+ 
+ static const struct sun8i_codec_quirks ac100_quirks = {
+-- 
+Armbian
+

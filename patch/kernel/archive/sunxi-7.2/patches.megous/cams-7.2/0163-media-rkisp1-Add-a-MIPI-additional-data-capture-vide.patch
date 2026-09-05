@@ -1,0 +1,1224 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 19 Aug 2026 01:09:13 +0200
+Subject: media: rkisp1: Add a MIPI additional-data capture video node
+
+The MIPI receiver can divert CSI-2 long packets whose (VC, DT) matches
+one of its four additional-data selectors into a small FIFO, entirely
+separate from the image path. This is the only out-of-band data path
+this ISP generation has - later Rockchip ISPs grew a DMA engine for it.
+The IMX258 delivers its shield-pixel (PDAF) samples as such packets,
+with data type 0x2f, during line blanking. The driver defines the
+registers and unmasks the overflow interrupt, but never programs the
+selectors, so the FIFO stays unused.
+
+Add a rkisp1_addata metadata capture node that delivers one buffer per
+frame: a small header (flags, packet count, byte counts) followed by the
+verbatim FIFO content. Hardware probing on the PinePhone Pro established
+the FIFO framing - each packet appears as its 4-byte MIPI long-packet
+header followed by the dword-padded payload - and the kernel walks those
+headers only to end the buffer on a whole packet and to detect desync;
+the payload semantics stay in userspace, because the shield-pixel layout
+is undocumented and still being reverse engineered.
+
+The same probing measured the FIFO at 2048 dwords, which a sensor can
+overrun well within one frame, so the capture is drained by a 1 ms timer
+while active, plus a final drain at frame end. The hardware's own
+fill-level interrupt is deliberately not used: neither mainline nor the
+vendor driver has ever unmasked it, its clear semantics are undocumented,
+and on RK3399 - where the whole ISP shares one interrupt line - unmasking
+it hung the machine as soon as matching data arrived. There is no DMA on
+this path, so every drain is a bounded loop of register reads in hard
+interrupt context; the per-frame cost scales with how much data the
+sensor is configured to emit, which is userspace's choice, as is the
+per-frame capture limit (fmt.meta.buffersize, clamped to 8 KB - 1 MB).
+The actual amount captured each frame is variable and reported in
+bytesused and in the header.
+
+The selectors are programmed from the sensor's get_frame_desc() - every
+CSI-2 entry whose data type differs from the image stream's - and only
+while the capture node is streaming; otherwise they are parked at their
+match-nothing reset value so the FIFO stays empty. An add_data_dt module
+parameter overrides the frame descriptor for experiments (it also serves
+sensors that do not implement get_frame_desc() yet).
+
+The additional-data overflow interrupt is excluded from the mipi_error
+accounting, which used to count any status other than exactly FRAME_END
+as an error. Debugfs gains capture counters and a MIPI register dump
+(minus the FIFO register, since reading it pops data); CUR_DATA_ID in
+that dump is the cheapest way to see whether a sensor's out-of-band
+packets reach the receiver at all.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/platform/rockchip/rkisp1/Makefile        |   3 +-
+ drivers/media/platform/rockchip/rkisp1/rkisp1-addata.c | 718 ++++++++++
+ drivers/media/platform/rockchip/rkisp1/rkisp1-common.h |  81 ++
+ drivers/media/platform/rockchip/rkisp1/rkisp1-csi.c    |  24 +-
+ drivers/media/platform/rockchip/rkisp1/rkisp1-debug.c  |  48 +
+ drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c    |  18 +-
+ drivers/media/platform/rockchip/rkisp1/rkisp1-regs.h   |   8 +-
+ drivers/media/v4l2-core/v4l2-ioctl.c                   |   1 +
+ include/uapi/linux/rkisp1-config.h                     |  50 +
+ include/uapi/linux/videodev2.h                         |   1 +
+ 10 files changed, 948 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/platform/rockchip/rkisp1/Makefile b/drivers/media/platform/rockchip/rkisp1/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/Makefile
++++ b/drivers/media/platform/rockchip/rkisp1/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
+-rockchip-isp1-y := rkisp1-capture.o \
++rockchip-isp1-y := rkisp1-addata.o \
++		   rkisp1-capture.o \
+ 		   rkisp1-common.o \
+ 		   rkisp1-csi.o \
+ 		   rkisp1-dev.o \
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-addata.c b/drivers/media/platform/rockchip/rkisp1/rkisp1-addata.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-addata.c
+@@ -0,0 +1,718 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++/*
++ * Rockchip ISP1 Driver - MIPI additional-data capture device
++ *
++ * Copyright (C) 2026 Ondrej Jirman <megi@xff.cz>
++ *
++ * The MIPI receiver can divert CSI-2 long packets whose (VC, DT) matches one
++ * of four additional-data selectors into a small FIFO, entirely separate from
++ * the image path. This is the only out-of-band data path this ISP generation
++ * has - later Rockchip ISPs grew a DMA engine for it, ISP_V10 did not. The
++ * IMX258 delivers its shield-pixel (PDAF) samples as such packets, with data
++ * type 0x2f, during line blanking.
++ *
++ * The FIFO holds 2048 dwords (measured; the TRM does not say) and has no
++ * DMA: it is drained with one register read per 4 bytes, in hard interrupt
++ * context. A full-resolution IMX258 with an unrestricted AF window produces
++ * ~600 KB of shield-pixel data per frame, far beyond what a frame-end-only
++ * drain could absorb, so a 1 ms timer spreads the draining across the
++ * frame, every drain bounded. The per-frame CPU cost is therefore an
++ * honest function of the sensor's AF window size, which userspace chooses.
++ *
++ * The hardware's own fill-level interrupt (MIPI IMSC bit 26) is
++ * deliberately NOT used: neither mainline nor the vendor driver has ever
++ * unmasked it, its clear semantics are undocumented, and on RK3399 - where
++ * the whole ISP shares one interrupt line - unmasking it hung the machine
++ * as soon as data arrived. The timer only ticks while the capture is
++ * active.
++ *
++ * Captured data is delivered through the rkisp1_addata metadata node, one
++ * buffer per frame: struct rkisp1_addata_hdr followed by the verbatim FIFO
++ * content. Each packet appears as its 4-byte MIPI long-packet header
++ * followed by the payload padded to a dword boundary (measured; the TRM
++ * does not document the framing either). The kernel walks the headers only
++ * to cut the stream on a whole packet and to detect desync - the payload
++ * semantics belong to userspace.
++ */
++
++#include <linux/hrtimer.h>
++#include <linux/ktime.h>
++#include <linux/sizes.h>
++#include <linux/unaligned.h>
++
++#include <media/v4l2-common.h>
++#include <media/v4l2-event.h>
++#include <media/v4l2-ioctl.h>
++#include <media/videobuf2-core.h>
++#include <media/videobuf2-vmalloc.h>
++
++#include "rkisp1-common.h"
++
++#define RKISP1_ADDATA_DEV_NAME	RKISP1_DRIVER_NAME "_addata"
++
++#define RKISP1_ADDATA_REQ_BUFS_MIN	2
++#define RKISP1_ADDATA_REQ_BUFS_MAX	8
++
++#define RKISP1_ADDATA_SIZE_MIN		SZ_8K
++#define RKISP1_ADDATA_SIZE_DEFAULT	SZ_32K
++#define RKISP1_ADDATA_SIZE_MAX		SZ_1M
++
++/*
++ * Drain period and the iteration bound of a single drain. The budget makes
++ * a stuck ADD_DATA_AVAIL bit cost one counted short drain per tick instead
++ * of a wedged CPU, and caps the time spent in one hard-irq drain to well
++ * under the period; together they sustain ~3 KB per tick, enough for AF
++ * windows far larger than an AF algorithm wants, with the FIFO's 8 KB as
++ * slack for bursts. Larger flows overflow the FIFO and are reported.
++ */
++#define RKISP1_ADDATA_DRAIN_PERIOD_NS	(1 * NSEC_PER_MSEC)
++#define RKISP1_ADDATA_DRAIN_BUDGET	768
++
++/*
++ * Debug override for the first (VC, DT) selector: -1 uses the sensor's
++ * frame descriptor, 0x00..0x3f captures that data type on VC 0 regardless
++ * of what the sensor advertises. Read when the CSI receiver starts.
++ */
++static int add_data_dt = -1;
++module_param(add_data_dt, int, 0644);
++MODULE_PARM_DESC(add_data_dt,
++		 "Additional-data DT override, -1 = from the sensor frame descriptor");
++
++/* ----------------------------------------------------------------------------
++ * Selector programming (called by the CSI receiver, hardware powered)
++ */
++
++static void rkisp1_addata_program(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	unsigned int i;
++
++	for (i = 0; i < 4; i++)
++		rkisp1_write(rkisp1, RKISP1_CIF_MIPI_ADD_DATA_SEL_1 + i * 4,
++			     i < addata->num_sel ? addata->sel[i] :
++			     RKISP1_CIF_MIPI_ADD_DATA_SEL_DISABLED);
++}
++
++static void rkisp1_addata_park(struct rkisp1_device *rkisp1)
++{
++	unsigned int i;
++
++	for (i = 0; i < 4; i++)
++		rkisp1_write(rkisp1, RKISP1_CIF_MIPI_ADD_DATA_SEL_1 + i * 4,
++			     RKISP1_CIF_MIPI_ADD_DATA_SEL_DISABLED);
++}
++
++static void rkisp1_addata_flush_fifo(struct rkisp1_device *rkisp1)
++{
++	u32 val = rkisp1_read(rkisp1, RKISP1_CIF_MIPI_CTRL);
++
++	rkisp1_write(rkisp1, RKISP1_CIF_MIPI_CTRL,
++		     val | RKISP1_CIF_MIPI_CTRL_FLUSH_FIFO);
++	rkisp1_write(rkisp1, RKISP1_CIF_MIPI_CTRL,
++		     val & ~RKISP1_CIF_MIPI_CTRL_FLUSH_FIFO);
++}
++
++/*
++ * Collect the non-image (VC, DT) entries of the sensor's frame descriptor,
++ * or the module-parameter override, into addata->sel[].
++ */
++static void rkisp1_addata_fill_selectors(struct rkisp1_device *rkisp1,
++					 struct v4l2_subdev *source,
++					 unsigned int pad, u32 image_dt)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	struct v4l2_mbus_frame_desc fd = {};
++	unsigned int i;
++	int ret;
++
++	addata->num_sel = 0;
++
++	if (add_data_dt >= 0) {
++		addata->sel[addata->num_sel++] =
++			RKISP1_CIF_MIPI_DATA_SEL_VC(0) |
++			RKISP1_CIF_MIPI_DATA_SEL_DT(add_data_dt & 0x3f);
++		return;
++	}
++
++	ret = v4l2_subdev_call(source, pad, get_frame_desc, pad, &fd);
++	if (ret)
++		return;
++
++	if (fd.type != V4L2_MBUS_FRAME_DESC_TYPE_CSI2)
++		return;
++
++	for (i = 0; i < fd.num_entries && addata->num_sel < 4; i++) {
++		const struct v4l2_mbus_frame_desc_entry *e = &fd.entry[i];
++
++		if (e->bus.csi2.dt == image_dt)
++			continue;
++
++		addata->sel[addata->num_sel++] =
++			RKISP1_CIF_MIPI_DATA_SEL_VC(e->bus.csi2.vc) |
++			RKISP1_CIF_MIPI_DATA_SEL_DT(e->bus.csi2.dt);
++	}
++}
++
++/* called with addata->lock held, when both streaming and csi.active */
++static void rkisp1_addata_capture_on(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++
++	rkisp1_addata_flush_fifo(rkisp1);
++	rkisp1_addata_program(rkisp1);
++	hrtimer_start(&addata->timer,
++		      ns_to_ktime(RKISP1_ADDATA_DRAIN_PERIOD_NS),
++		      HRTIMER_MODE_REL);
++}
++
++void rkisp1_addata_csi_start(struct rkisp1_device *rkisp1,
++			     struct v4l2_subdev *source, unsigned int pad,
++			     u32 image_dt)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++
++	rkisp1_addata_fill_selectors(rkisp1, source, pad, image_dt);
++
++	spin_lock_irq(&addata->lock);
++
++	rkisp1->csi.active = true;
++	if (addata->streaming) {
++		rkisp1_addata_capture_on(rkisp1);
++	} else {
++		rkisp1_addata_flush_fifo(rkisp1);
++		rkisp1_addata_park(rkisp1);
++	}
++
++	spin_unlock_irq(&addata->lock);
++}
++
++/* fail a capture in flight; called with addata->lock held */
++static void rkisp1_addata_abort_frame(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++
++	if (!addata->curr)
++		return;
++
++	vb2_buffer_done(&addata->curr->vb.vb2_buf, VB2_BUF_STATE_ERROR);
++	addata->curr = NULL;
++	addata->curr_flags = 0;
++	addata->curr_dropped = 0;
++	addata->frame_nobuf = false;
++}
++
++void rkisp1_addata_csi_stop(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++
++	spin_lock_irq(&addata->lock);
++	rkisp1->csi.active = false;
++	rkisp1_addata_park(rkisp1);
++	rkisp1_addata_abort_frame(rkisp1);
++	spin_unlock_irq(&addata->lock);
++
++	/*
++	 * Outside the lock: cancel waits for a running callback, and the
++	 * callback takes the lock. It no longer restarts itself with
++	 * csi.active cleared.
++	 */
++	hrtimer_cancel(&addata->timer);
++}
++
++/* ----------------------------------------------------------------------------
++ * Interrupt-side capture
++ */
++
++/* called with addata->lock held */
++static void rkisp1_addata_open_frame(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	struct rkisp1_buffer *buf;
++
++	buf = list_first_entry_or_null(&addata->buf_queue,
++				       struct rkisp1_buffer, queue);
++	if (!buf) {
++		addata->frame_nobuf = true;
++		rkisp1->debug.addata_nobuf++;
++		return;
++	}
++	list_del(&buf->queue);
++
++	addata->curr = buf;
++	addata->curr_hdr = vb2_plane_vaddr(&buf->vb.vb2_buf, 0);
++	addata->curr_data = (u8 *)(addata->curr_hdr + 1);
++	addata->curr_len = 0;
++	addata->curr_sequence = rkisp1->isp.frame_sequence;
++	/*
++	 * curr_flags and curr_dropped are per-frame, not per-buffer: an
++	 * overflow may be recorded before any word was drained into a
++	 * buffer. They are reset when the frame closes.
++	 */
++}
++
++/* called with addata->lock held */
++static void rkisp1_addata_drain(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	u32 max_len = addata->buffersize - sizeof(struct rkisp1_addata_hdr);
++	unsigned int budget = RKISP1_ADDATA_DRAIN_BUDGET;
++
++	while (rkisp1_read(rkisp1, RKISP1_CIF_MIPI_STATUS) &
++	       RKISP1_CIF_MIPI_STATUS_ADD_DATA_AVAIL) {
++		u32 word;
++
++		if (!budget--) {
++			/* the next interrupt continues */
++			rkisp1->debug.addata_budget++;
++			return;
++		}
++
++		word = rkisp1_read(rkisp1, RKISP1_CIF_MIPI_ADD_DATA_FIFO);
++
++		if (!addata->streaming)
++			continue;
++
++		if (!addata->curr && !addata->frame_nobuf)
++			rkisp1_addata_open_frame(rkisp1);
++
++		if (!addata->curr) {
++			rkisp1->debug.addata_dropped += 4;
++			continue;
++		}
++
++		if (addata->curr_len + 4 > max_len) {
++			addata->curr_flags |= RKISP1_ADDATA_FLAG_TRUNCATED;
++			addata->curr_dropped += 4;
++			continue;
++		}
++
++		put_unaligned_le32(word, addata->curr_data + addata->curr_len);
++		addata->curr_len += 4;
++	}
++}
++
++/*
++ * Walk the packet framing: each packet is a 4-byte MIPI long-packet header
++ * whose bits [23:8] are the payload byte count, followed by that payload
++ * padded to a dword. Returns the number of whole packets and trims @len to
++ * the last whole packet.
++ */
++static unsigned int rkisp1_addata_walk(const u8 *data, u32 *len)
++{
++	unsigned int packets = 0;
++	u32 off = 0;
++
++	while (off + 4 <= *len) {
++		u32 hdr = get_unaligned_le32(data + off);
++		u32 adv = 4 + ALIGN((hdr >> 8) & 0xffff, 4);
++
++		if (off + adv > *len)
++			break;
++
++		off += adv;
++		packets++;
++	}
++
++	*len = off;
++	return packets;
++}
++
++/* called with addata->lock held, on the MIPI frame-end interrupt */
++static void rkisp1_addata_close_frame(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	struct rkisp1_addata_hdr *hdr;
++	u32 data_len, leftover;
++
++	addata->frame_nobuf = false;
++
++	/* a frame with no data still produces an (empty) buffer */
++	if (!addata->curr) {
++		rkisp1_addata_open_frame(rkisp1);
++		if (!addata->curr) {
++			addata->curr_flags = 0;
++			addata->curr_dropped = 0;
++			return;
++		}
++	}
++
++	data_len = addata->curr_len;
++	hdr = addata->curr_hdr;
++
++	hdr->num_packets = rkisp1_addata_walk(addata->curr_data, &data_len);
++	leftover = addata->curr_len - data_len;
++
++	/*
++	 * A trailing partial packet is expected when data was lost mid-frame;
++	 * without a loss it means the framing model is wrong or the FIFO
++	 * desynchronised, and the stream cannot be trusted.
++	 */
++	if (leftover &&
++	    !(addata->curr_flags & (RKISP1_ADDATA_FLAG_TRUNCATED |
++				    RKISP1_ADDATA_FLAG_HW_OVERFLOW)))
++		addata->curr_flags |= RKISP1_ADDATA_FLAG_SYNC_LOST;
++
++	if (addata->curr_flags & (RKISP1_ADDATA_FLAG_HW_OVERFLOW |
++				  RKISP1_ADDATA_FLAG_SYNC_LOST))
++		rkisp1_addata_flush_fifo(rkisp1);
++
++	hdr->version = 1;
++	hdr->flags = addata->curr_flags;
++	hdr->data_bytes = data_len;
++	hdr->dropped_bytes = addata->curr_dropped + leftover;
++	memset(hdr->reserved, 0, sizeof(hdr->reserved));
++
++	rkisp1->debug.addata_frames++;
++	rkisp1->debug.addata_bytes += data_len;
++	rkisp1->debug.addata_dropped += addata->curr_dropped + leftover;
++	rkisp1->debug.addata_last_id =
++		rkisp1_read(rkisp1, RKISP1_CIF_MIPI_CUR_DATA_ID);
++
++	vb2_set_plane_payload(&addata->curr->vb.vb2_buf, 0,
++			      sizeof(*hdr) + data_len);
++	addata->curr->vb.sequence = addata->curr_sequence;
++	addata->curr->vb.vb2_buf.timestamp = ktime_get_ns();
++	vb2_buffer_done(&addata->curr->vb.vb2_buf, VB2_BUF_STATE_DONE);
++	addata->curr = NULL;
++	addata->curr_flags = 0;
++	addata->curr_dropped = 0;
++}
++
++static enum hrtimer_restart rkisp1_addata_timer_cb(struct hrtimer *timer)
++{
++	struct rkisp1_addata *addata =
++		container_of(timer, struct rkisp1_addata, timer);
++	struct rkisp1_device *rkisp1 = addata->rkisp1;
++	enum hrtimer_restart ret = HRTIMER_NORESTART;
++	unsigned long flags;
++
++	spin_lock_irqsave(&addata->lock, flags);
++	if (addata->streaming && rkisp1->csi.active) {
++		rkisp1_addata_drain(rkisp1);
++		hrtimer_forward_now(timer,
++				    ns_to_ktime(RKISP1_ADDATA_DRAIN_PERIOD_NS));
++		ret = HRTIMER_RESTART;
++	}
++	spin_unlock_irqrestore(&addata->lock, flags);
++
++	return ret;
++}
++
++void rkisp1_addata_isr(struct rkisp1_device *rkisp1, u32 status)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++
++	spin_lock(&addata->lock);
++
++	if (status & RKISP1_CIF_MIPI_ADD_DATA_OVFLW) {
++		rkisp1->debug.addata_overflow++;
++		addata->curr_flags |= RKISP1_ADDATA_FLAG_HW_OVERFLOW;
++	}
++
++	rkisp1_addata_drain(rkisp1);
++
++	if (status & RKISP1_CIF_MIPI_FRAME_END && addata->streaming)
++		rkisp1_addata_close_frame(rkisp1);
++
++	spin_unlock(&addata->lock);
++}
++
++/* ----------------------------------------------------------------------------
++ * V4L2 ioctls
++ */
++
++static int rkisp1_addata_enum_fmt_meta_cap(struct file *file, void *priv,
++					   struct v4l2_fmtdesc *f)
++{
++	struct video_device *video = video_devdata(file);
++
++	if (f->index > 0 || f->type != video->queue->type)
++		return -EINVAL;
++
++	f->pixelformat = V4L2_META_FMT_RK_ISP1_ADDATA;
++	return 0;
++}
++
++static int rkisp1_addata_g_fmt_meta_cap(struct file *file, void *priv,
++					struct v4l2_format *f)
++{
++	struct video_device *video = video_devdata(file);
++	struct rkisp1_addata *addata = video_get_drvdata(video);
++	struct v4l2_meta_format *meta = &f->fmt.meta;
++
++	if (f->type != video->queue->type)
++		return -EINVAL;
++
++	memset(meta, 0, sizeof(*meta));
++	meta->dataformat = V4L2_META_FMT_RK_ISP1_ADDATA;
++	meta->buffersize = addata->buffersize;
++
++	return 0;
++}
++
++static int rkisp1_addata_try_fmt_meta_cap(struct file *file, void *priv,
++					  struct v4l2_format *f)
++{
++	struct video_device *video = video_devdata(file);
++	struct v4l2_meta_format *meta = &f->fmt.meta;
++	u32 buffersize = meta->buffersize;
++
++	if (f->type != video->queue->type)
++		return -EINVAL;
++
++	if (!buffersize)
++		buffersize = RKISP1_ADDATA_SIZE_DEFAULT;
++
++	memset(meta, 0, sizeof(*meta));
++	meta->dataformat = V4L2_META_FMT_RK_ISP1_ADDATA;
++	meta->buffersize = clamp_t(u32, ALIGN(buffersize, 4),
++				   RKISP1_ADDATA_SIZE_MIN,
++				   RKISP1_ADDATA_SIZE_MAX);
++
++	return 0;
++}
++
++static int rkisp1_addata_s_fmt_meta_cap(struct file *file, void *priv,
++					struct v4l2_format *f)
++{
++	struct video_device *video = video_devdata(file);
++	struct rkisp1_addata *addata = video_get_drvdata(video);
++	int ret;
++
++	if (vb2_is_busy(video->queue))
++		return -EBUSY;
++
++	ret = rkisp1_addata_try_fmt_meta_cap(file, priv, f);
++	if (ret)
++		return ret;
++
++	addata->buffersize = f->fmt.meta.buffersize;
++
++	return 0;
++}
++
++static int rkisp1_addata_querycap(struct file *file,
++				  void *priv, struct v4l2_capability *cap)
++{
++	struct video_device *vdev = video_devdata(file);
++
++	strscpy(cap->driver, RKISP1_DRIVER_NAME, sizeof(cap->driver));
++	strscpy(cap->card, vdev->name, sizeof(cap->card));
++	strscpy(cap->bus_info, RKISP1_BUS_INFO, sizeof(cap->bus_info));
++
++	return 0;
++}
++
++static const struct v4l2_ioctl_ops rkisp1_addata_ioctl = {
++	.vidioc_reqbufs = vb2_ioctl_reqbufs,
++	.vidioc_querybuf = vb2_ioctl_querybuf,
++	.vidioc_create_bufs = vb2_ioctl_create_bufs,
++	.vidioc_qbuf = vb2_ioctl_qbuf,
++	.vidioc_dqbuf = vb2_ioctl_dqbuf,
++	.vidioc_prepare_buf = vb2_ioctl_prepare_buf,
++	.vidioc_expbuf = vb2_ioctl_expbuf,
++	.vidioc_streamon = vb2_ioctl_streamon,
++	.vidioc_streamoff = vb2_ioctl_streamoff,
++	.vidioc_enum_fmt_meta_cap = rkisp1_addata_enum_fmt_meta_cap,
++	.vidioc_g_fmt_meta_cap = rkisp1_addata_g_fmt_meta_cap,
++	.vidioc_s_fmt_meta_cap = rkisp1_addata_s_fmt_meta_cap,
++	.vidioc_try_fmt_meta_cap = rkisp1_addata_try_fmt_meta_cap,
++	.vidioc_querycap = rkisp1_addata_querycap,
++	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
++	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
++};
++
++static const struct v4l2_file_operations rkisp1_addata_fops = {
++	.mmap = vb2_fop_mmap,
++	.unlocked_ioctl = video_ioctl2,
++	.poll = vb2_fop_poll,
++	.open = v4l2_fh_open,
++	.release = vb2_fop_release
++};
++
++/* ----------------------------------------------------------------------------
++ * vb2 queue
++ */
++
++static int rkisp1_addata_vb2_queue_setup(struct vb2_queue *vq,
++					 unsigned int *num_buffers,
++					 unsigned int *num_planes,
++					 unsigned int sizes[],
++					 struct device *alloc_devs[])
++{
++	struct rkisp1_addata *addata = vq->drv_priv;
++
++	*num_planes = 1;
++
++	*num_buffers = clamp_t(u32, *num_buffers, RKISP1_ADDATA_REQ_BUFS_MIN,
++			       RKISP1_ADDATA_REQ_BUFS_MAX);
++
++	sizes[0] = addata->buffersize;
++
++	return 0;
++}
++
++static int rkisp1_addata_vb2_buf_prepare(struct vb2_buffer *vb)
++{
++	struct rkisp1_addata *addata = vb->vb2_queue->drv_priv;
++
++	if (vb2_plane_size(vb, 0) < addata->buffersize)
++		return -EINVAL;
++
++	return 0;
++}
++
++static void rkisp1_addata_vb2_buf_queue(struct vb2_buffer *vb)
++{
++	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
++	struct rkisp1_buffer *buf =
++		container_of(vbuf, struct rkisp1_buffer, vb);
++	struct rkisp1_addata *addata = vb->vb2_queue->drv_priv;
++
++	spin_lock_irq(&addata->lock);
++	list_add_tail(&buf->queue, &addata->buf_queue);
++	spin_unlock_irq(&addata->lock);
++}
++
++static int rkisp1_addata_vb2_start_streaming(struct vb2_queue *vq,
++					     unsigned int count)
++{
++	struct rkisp1_addata *addata = vq->drv_priv;
++	struct rkisp1_device *rkisp1 = addata->rkisp1;
++
++	spin_lock_irq(&addata->lock);
++	addata->streaming = true;
++	addata->curr_flags = 0;
++	addata->curr_dropped = 0;
++	addata->frame_nobuf = false;
++	/*
++	 * If the CSI receiver is already running the capture starts here;
++	 * otherwise rkisp1_addata_csi_start() starts it when the receiver
++	 * starts, which is also the only time the sensor's frame descriptor
++	 * is queried - starting this node mid-stream uses the descriptor
++	 * from the receiver start.
++	 */
++	if (rkisp1->csi.active)
++		rkisp1_addata_capture_on(rkisp1);
++	spin_unlock_irq(&addata->lock);
++
++	return 0;
++}
++
++static void rkisp1_addata_vb2_stop_streaming(struct vb2_queue *vq)
++{
++	struct rkisp1_addata *addata = vq->drv_priv;
++	struct rkisp1_device *rkisp1 = addata->rkisp1;
++	struct rkisp1_buffer *buf;
++
++	spin_lock_irq(&addata->lock);
++
++	addata->streaming = false;
++	if (rkisp1->csi.active) {
++		rkisp1_addata_park(rkisp1);
++		rkisp1_addata_flush_fifo(rkisp1);
++	}
++	rkisp1_addata_abort_frame(rkisp1);
++
++	while ((buf = list_first_entry_or_null(&addata->buf_queue,
++					       struct rkisp1_buffer, queue))) {
++		list_del(&buf->queue);
++		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
++	}
++
++	spin_unlock_irq(&addata->lock);
++
++	/* outside the lock - see rkisp1_addata_csi_stop() */
++	hrtimer_cancel(&addata->timer);
++}
++
++static const struct vb2_ops rkisp1_addata_vb2_ops = {
++	.queue_setup = rkisp1_addata_vb2_queue_setup,
++	.buf_prepare = rkisp1_addata_vb2_buf_prepare,
++	.buf_queue = rkisp1_addata_vb2_buf_queue,
++	.start_streaming = rkisp1_addata_vb2_start_streaming,
++	.stop_streaming = rkisp1_addata_vb2_stop_streaming,
++};
++
++/* ----------------------------------------------------------------------------
++ * Registration
++ */
++
++int rkisp1_addata_register(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	struct rkisp1_vdev_node *node = &addata->vnode;
++	struct video_device *vdev = &node->vdev;
++	struct vb2_queue *q = &node->buf_queue;
++	int ret;
++
++	addata->rkisp1 = rkisp1;
++	addata->buffersize = RKISP1_ADDATA_SIZE_DEFAULT;
++	mutex_init(&node->vlock);
++	INIT_LIST_HEAD(&addata->buf_queue);
++	spin_lock_init(&addata->lock);
++	hrtimer_setup(&addata->timer, rkisp1_addata_timer_cb, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL);
++
++	strscpy(vdev->name, RKISP1_ADDATA_DEV_NAME, sizeof(vdev->name));
++
++	vdev->ioctl_ops = &rkisp1_addata_ioctl;
++	vdev->fops = &rkisp1_addata_fops;
++	vdev->release = video_device_release_empty;
++	vdev->lock = &node->vlock;
++	vdev->v4l2_dev = &rkisp1->v4l2_dev;
++	vdev->queue = q;
++	vdev->device_caps = V4L2_CAP_META_CAPTURE | V4L2_CAP_STREAMING;
++	vdev->vfl_dir = VFL_DIR_RX;
++
++	q->type = V4L2_BUF_TYPE_META_CAPTURE;
++	q->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
++	q->drv_priv = addata;
++	q->ops = &rkisp1_addata_vb2_ops;
++	q->mem_ops = &vb2_vmalloc_memops;
++	q->buf_struct_size = sizeof(struct rkisp1_buffer);
++	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
++	q->lock = &node->vlock;
++
++	ret = vb2_queue_init(q);
++	if (ret)
++		goto err_mutex;
++
++	video_set_drvdata(vdev, addata);
++
++	node->pad.flags = MEDIA_PAD_FL_SINK;
++	ret = media_entity_pads_init(&vdev->entity, 1, &node->pad);
++	if (ret)
++		goto err_mutex;
++
++	ret = video_register_device(vdev, VFL_TYPE_VIDEO, -1);
++	if (ret) {
++		dev_err(&vdev->dev,
++			"failed to register %s, ret=%d\n", vdev->name, ret);
++		goto err_entity;
++	}
++
++	return 0;
++
++err_entity:
++	media_entity_cleanup(&vdev->entity);
++err_mutex:
++	mutex_destroy(&node->vlock);
++	addata->rkisp1 = NULL;
++	return ret;
++}
++
++void rkisp1_addata_unregister(struct rkisp1_device *rkisp1)
++{
++	struct rkisp1_addata *addata = &rkisp1->addata;
++	struct rkisp1_vdev_node *node = &addata->vnode;
++	struct video_device *vdev = &node->vdev;
++
++	if (!addata->rkisp1)
++		return;
++
++	hrtimer_cancel(&addata->timer);
++	vb2_video_unregister_device(vdev);
++	media_entity_cleanup(&vdev->entity);
++	mutex_destroy(&node->vlock);
++}
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h b/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-common.h
+@@ -202,6 +202,8 @@ struct rkisp1_sensor_async {
+  * @sd: v4l2_subdev variable
+  * @pads: media pads
+  * @source: source in-use, set when starting streaming
++ * @active: the receiver is started and its registers may be written;
++ *	    changes under rkisp1_device.addata.lock
+  */
+ struct rkisp1_csi {
+ 	struct rkisp1_device *rkisp1;
+@@ -210,6 +212,7 @@ struct rkisp1_csi {
+ 	struct v4l2_subdev sd;
+ 	struct media_pad pads[RKISP1_CSI_PAD_NUM];
+ 	struct v4l2_subdev *source;
++	bool active;
+ };
+ 
+ /*
+@@ -376,6 +379,62 @@ struct rkisp1_stats {
+ 	struct v4l2_format vdev_fmt;
+ };
+ 
++/*
++ * struct rkisp1_addata - MIPI additional-data capture device
++ *
++ * Captures CSI-2 long packets matched by the MIPI receiver's four
++ * additional-data (VC, DT) selectors. The FIFO has no DMA; it is drained
++ * from the shared hard interrupt, one register read per 4 bytes, spread
++ * across the frame by the fill-level interrupt.
++ *
++ * @vnode:	video node
++ * @rkisp1:	pointer to the rkisp1 device
++ * @lock:	protects everything below, plus rkisp1_csi.active and the
++ *		ADD_DATA_SEL registers
++ * @timer:	periodic drain while capturing; the FIFO's own fill-level
++ *		interrupt is deliberately not used, see rkisp1-addata.c
++ * @buf_queue:	queued empty buffers
++ * @streaming:	the video node is streaming; while also csi.active, the
++ *		selectors are programmed and captures are delivered
++ * @buffersize:	current per-frame capture limit (fmt.meta.buffersize)
++ * @sel:	selector values from the sensor's frame descriptor (or the
++ *		add_data_dt override), in register encoding
++ * @num_sel:	selectors in @sel
++ *
++ * State of the frame being captured, touched only in the ISR:
++ *
++ * @curr:	buffer being filled, NULL outside a capture
++ * @curr_hdr:	its rkisp1_addata_hdr (buffer start)
++ * @curr_data:	its payload area (right after the header)
++ * @curr_len:	payload bytes written so far
++ * @curr_flags:	RKISP1_ADDATA_FLAG_* accumulated for this frame
++ * @curr_dropped: payload bytes dropped for this frame
++ * @curr_sequence: ISP frame number latched when the capture opened
++ * @frame_nobuf: no buffer was available when this frame's data arrived;
++ *		 drop the rest of the frame instead of delivering a tail
++ */
++struct rkisp1_addata {
++	struct rkisp1_vdev_node vnode;
++	struct rkisp1_device *rkisp1;
++
++	spinlock_t lock;
++	struct hrtimer timer;
++	struct list_head buf_queue;
++	bool streaming;
++	u32 buffersize;
++	u32 sel[4];
++	unsigned int num_sel;
++
++	struct rkisp1_buffer *curr;
++	struct rkisp1_addata_hdr *curr_hdr;
++	u8 *curr_data;
++	u32 curr_len;
++	u32 curr_flags;
++	u32 curr_dropped;
++	u32 curr_sequence;
++	bool frame_nobuf;
++};
++
+ struct rkisp1_params;
+ struct rkisp1_params_ops {
+ 	void (*lsc_matrix_config)(struct rkisp1_params *params,
+@@ -480,6 +539,13 @@ struct rkisp1_debug {
+ 	unsigned long stop_timeout[2];
+ 	unsigned long frame_drop[2];
+ 	unsigned long complete_frames;
++	unsigned long addata_frames;
++	unsigned long addata_bytes;
++	unsigned long addata_dropped;
++	unsigned long addata_overflow;
++	unsigned long addata_nobuf;
++	unsigned long addata_budget;
++	unsigned long addata_last_id;
+ };
+ 
+ /*
+@@ -527,6 +593,7 @@ struct rkisp1_device {
+ 	struct rkisp1_capture capture_devs[2];
+ 	struct rkisp1_stats stats;
+ 	struct rkisp1_params params;
++	struct rkisp1_addata addata;
+ 	struct media_pipeline pipe;
+ 	struct mutex stream_lock; /* serialize {start/stop}_streaming cb between capture devices */
+ 	struct rkisp1_debug debug;
+@@ -684,6 +751,20 @@ void rkisp1_resizer_devs_unregister(struct rkisp1_device *rkisp1);
+ int rkisp1_stats_register(struct rkisp1_device *rkisp1);
+ void rkisp1_stats_unregister(struct rkisp1_device *rkisp1);
+ 
++/*
++ * MIPI additional-data capture. The _csi_start/_csi_stop hooks are called by
++ * the CSI receiver around its own start/stop, with the hardware powered:
++ * start programs the (VC, DT) selectors from @source's frame descriptor and
++ * flushes the FIFO, stop parks the selectors and fails a capture in flight.
++ */
++int rkisp1_addata_register(struct rkisp1_device *rkisp1);
++void rkisp1_addata_unregister(struct rkisp1_device *rkisp1);
++void rkisp1_addata_csi_start(struct rkisp1_device *rkisp1,
++			     struct v4l2_subdev *source, unsigned int pad,
++			     u32 image_dt);
++void rkisp1_addata_csi_stop(struct rkisp1_device *rkisp1);
++void rkisp1_addata_isr(struct rkisp1_device *rkisp1, u32 status);
++
+ int rkisp1_params_register(struct rkisp1_device *rkisp1);
+ void rkisp1_params_unregister(struct rkisp1_device *rkisp1);
+ 
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-csi.c b/drivers/media/platform/rockchip/rkisp1/rkisp1-csi.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-csi.c
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-csi.c
+@@ -205,6 +205,10 @@ irqreturn_t rkisp1_csi_isr(int irq, void *ctx)
+ 
+ 	rkisp1_write(rkisp1, RKISP1_CIF_MIPI_ICR, status);
+ 
++	if (status & (RKISP1_CIF_MIPI_ADD_DATA_OVFLW |
++		      RKISP1_CIF_MIPI_FRAME_END))
++		rkisp1_addata_isr(rkisp1, status);
++
+ 	/*
+ 	 * Disable DPHY errctrl interrupt, because this dphy
+ 	 * erctrl signal is asserted until the next changes
+@@ -218,6 +222,13 @@ irqreturn_t rkisp1_csi_isr(int irq, void *ctx)
+ 		rkisp1->csi.is_dphy_errctrl_disabled = true;
+ 	}
+ 
++	/*
++	 * The additional-data overflow is not an error of the image path, so
++	 * mask it out of the error accounting and the errctrl re-enable
++	 * condition below.
++	 */
++	status &= ~RKISP1_CIF_MIPI_ADD_DATA_OVFLW;
++
+ 	/*
+ 	 * Enable DPHY errctrl interrupt again, if mipi have receive
+ 	 * the whole frame without any error.
+@@ -233,7 +244,7 @@ irqreturn_t rkisp1_csi_isr(int irq, void *ctx)
+ 			rkisp1_write(rkisp1, RKISP1_CIF_MIPI_IMSC, val);
+ 			rkisp1->csi.is_dphy_errctrl_disabled = false;
+ 		}
+-	} else {
++	} else if (status) {
+ 		rkisp1->debug.mipi_error++;
+ 	}
+ 
+@@ -361,6 +372,7 @@ static int rkisp1_csi_s_stream(struct v4l2_subdev *sd, int enable)
+ 	if (!enable) {
+ 		v4l2_subdev_call(csi->source, video, s_stream, false);
+ 
++		rkisp1_addata_csi_stop(rkisp1);
+ 		rkisp1_csi_stop(csi);
+ 
+ 		return 0;
+@@ -396,8 +408,18 @@ static int rkisp1_csi_s_stream(struct v4l2_subdev *sd, int enable)
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * Set up the additional-data capture before the sensor starts
++	 * emitting: selectors from the sensor's frame descriptor (or the
++	 * add_data_dt override) and a FIFO flush, so that a restart cannot
++	 * inherit a partial packet.
++	 */
++	rkisp1_addata_csi_start(rkisp1, source, source_pad->index,
++				format->mipi_dt);
++
+ 	ret = v4l2_subdev_call(source, video, s_stream, true);
+ 	if (ret) {
++		rkisp1_addata_csi_stop(rkisp1);
+ 		rkisp1_csi_stop(csi);
+ 		return ret;
+ 	}
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-debug.c b/drivers/media/platform/rockchip/rkisp1/rkisp1-debug.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-debug.c
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-debug.c
+@@ -143,6 +143,36 @@ static int rkisp1_debug_dump_mi_mp_show(struct seq_file *m, void *p)
+ }
+ DEFINE_SHOW_ATTRIBUTE(rkisp1_debug_dump_mi_mp);
+ 
++/*
++ * MIPI receiver registers, including the additional-data path. CUR_DATA_ID
++ * reports the data type of the most recently received packet, which is the
++ * cheapest way to tell whether a sensor's out-of-band packets reach the ISP
++ * at all. MIPI_ADD_DATA_FIFO is deliberately not dumped: reading it pops
++ * captured data.
++ */
++static int rkisp1_debug_dump_mipi_regs_show(struct seq_file *m, void *p)
++{
++	static const struct rkisp1_debug_register registers[] = {
++		RKISP1_DEBUG_REG(MIPI_CTRL),
++		RKISP1_DEBUG_REG(MIPI_STATUS),
++		RKISP1_DEBUG_REG(MIPI_IMSC),
++		RKISP1_DEBUG_REG(MIPI_RIS),
++		RKISP1_DEBUG_REG(MIPI_CUR_DATA_ID),
++		RKISP1_DEBUG_REG(MIPI_IMG_DATA_SEL),
++		RKISP1_DEBUG_REG(MIPI_ADD_DATA_SEL_1),
++		RKISP1_DEBUG_REG(MIPI_ADD_DATA_SEL_2),
++		RKISP1_DEBUG_REG(MIPI_ADD_DATA_SEL_3),
++		RKISP1_DEBUG_REG(MIPI_ADD_DATA_SEL_4),
++		RKISP1_DEBUG_REG(MIPI_FIFO_FILL_LEVEL),
++		RKISP1_DEBUG_REG(MIPI_FRAME),
++		{ /* Sentinel */ },
++	};
++	struct rkisp1_device *rkisp1 = m->private;
++
++	return rkisp1_debug_dump_regs(rkisp1, m, 0, registers);
++}
++DEFINE_SHOW_ATTRIBUTE(rkisp1_debug_dump_mipi_regs);
++
+ #define RKISP1_DEBUG_DATA_COUNT_BINS	32
+ #define RKISP1_DEBUG_DATA_COUNT_STEP	(4096 / RKISP1_DEBUG_DATA_COUNT_BINS)
+ 
+@@ -223,6 +253,20 @@ void rkisp1_debug_init(struct rkisp1_device *rkisp1)
+ 			     &debug->frame_drop[RKISP1_SELFPATH]);
+ 	debugfs_create_ulong("complete_frames", 0444, debug->debugfs_dir,
+ 			     &debug->complete_frames);
++	debugfs_create_ulong("addata_frames", 0444, debug->debugfs_dir,
++			     &debug->addata_frames);
++	debugfs_create_ulong("addata_bytes", 0444, debug->debugfs_dir,
++			     &debug->addata_bytes);
++	debugfs_create_ulong("addata_dropped", 0444, debug->debugfs_dir,
++			     &debug->addata_dropped);
++	debugfs_create_ulong("addata_overflow", 0444, debug->debugfs_dir,
++			     &debug->addata_overflow);
++	debugfs_create_ulong("addata_nobuf", 0444, debug->debugfs_dir,
++			     &debug->addata_nobuf);
++	debugfs_create_ulong("addata_budget", 0444, debug->debugfs_dir,
++			     &debug->addata_budget);
++	debugfs_create_ulong("addata_last_id", 0444, debug->debugfs_dir,
++			     &debug->addata_last_id);
+ 	debugfs_create_file("input_status", 0444, debug->debugfs_dir, rkisp1,
+ 			    &rkisp1_debug_input_status_fops);
+ 
+@@ -241,6 +285,10 @@ void rkisp1_debug_init(struct rkisp1_device *rkisp1)
+ 
+ 	debugfs_create_file("mi_mp", 0444, regs_dir, rkisp1,
+ 			    &rkisp1_debug_dump_mi_mp_fops);
++
++	if (rkisp1_has_feature(rkisp1, MIPI_CSI2))
++		debugfs_create_file("mipi", 0444, regs_dir, rkisp1,
++				    &rkisp1_debug_dump_mipi_regs_fops);
+ }
+ 
+ void rkisp1_debug_cleanup(struct rkisp1_device *rkisp1)
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c b/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-dev.c
+@@ -422,6 +422,16 @@ static int rkisp1_create_links(struct rkisp1_device *rkisp1)
+ 					    MEDIA_LNK_FL_ENABLED);
+ 		if (ret)
+ 			return ret;
++
++		/* ... and to the additional-data capture node. */
++		ret = media_create_pad_link(&rkisp1->csi.sd.entity,
++					    RKISP1_CSI_PAD_SRC,
++					    &rkisp1->addata.vnode.vdev.entity,
++					    0,
++					    MEDIA_LNK_FL_ENABLED |
++					    MEDIA_LNK_FL_IMMUTABLE);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	/* create ISP->RSZ->CAP links */
+@@ -465,8 +475,10 @@ static int rkisp1_create_links(struct rkisp1_device *rkisp1)
+ 
+ static void rkisp1_entities_unregister(struct rkisp1_device *rkisp1)
+ {
+-	if (rkisp1_has_feature(rkisp1, MIPI_CSI2))
++	if (rkisp1_has_feature(rkisp1, MIPI_CSI2)) {
++		rkisp1_addata_unregister(rkisp1);
+ 		rkisp1_csi_unregister(rkisp1);
++	}
+ 	rkisp1_params_unregister(rkisp1);
+ 	rkisp1_stats_unregister(rkisp1);
+ 	rkisp1_capture_devs_unregister(rkisp1);
+@@ -502,6 +514,10 @@ static int rkisp1_entities_register(struct rkisp1_device *rkisp1)
+ 		ret = rkisp1_csi_register(rkisp1);
+ 		if (ret)
+ 			goto error;
++
++		ret = rkisp1_addata_register(rkisp1);
++		if (ret)
++			goto error;
+ 	}
+ 
+ 	ret = rkisp1_create_links(rkisp1);
+diff --git a/drivers/media/platform/rockchip/rkisp1/rkisp1-regs.h b/drivers/media/platform/rockchip/rkisp1/rkisp1-regs.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/rockchip/rkisp1/rkisp1-regs.h
++++ b/drivers/media/platform/rockchip/rkisp1/rkisp1-regs.h
+@@ -341,15 +341,21 @@
+ 
+ /* MIPI_CTRL */
+ #define RKISP1_CIF_MIPI_CTRL_OUTPUT_ENA			BIT(0)
++#define RKISP1_CIF_MIPI_CTRL_FLUSH_FIFO			BIT(1)
+ #define RKISP1_CIF_MIPI_CTRL_SHUTDOWNLANES(a)		(((a) & 0xf) << 8)
+ #define RKISP1_CIF_MIPI_CTRL_NUM_LANES(a)		(((a) & 0x3) << 12)
+ #define RKISP1_CIF_MIPI_CTRL_ERR_SOT_HS_SKIP		BIT(16)
+ #define RKISP1_CIF_MIPI_CTRL_ERR_SOT_SYNC_HS_SKIP	BIT(17)
+ #define RKISP1_CIF_MIPI_CTRL_CLOCKLANE_ENA		BIT(18)
+ 
+-/* MIPI_DATA_SEL */
++/* MIPI_STATUS */
++#define RKISP1_CIF_MIPI_STATUS_ADD_DATA_AVAIL		BIT(0)
++
++/* MIPI_DATA_SEL, MIPI_ADD_DATA_SEL_n */
+ #define RKISP1_CIF_MIPI_DATA_SEL_VC(a)			(((a) & 0x3) << 6)
+ #define RKISP1_CIF_MIPI_DATA_SEL_DT(a)			(((a) & 0x3f) << 0)
++/* reset value of the ADD_DATA_SEL registers: VC 3, DT 0x3f, matches nothing */
++#define RKISP1_CIF_MIPI_ADD_DATA_SEL_DISABLED		0xff
+ 
+ /* MIPI_IMSC, MIPI_RIS, MIPI_MIS, MIPI_ICR, MIPI_ISR */
+ #define RKISP1_CIF_MIPI_SYNC_FIFO_OVFLW(a)		(((a) & 0xf) << 0)
+diff --git a/drivers/media/v4l2-core/v4l2-ioctl.c b/drivers/media/v4l2-core/v4l2-ioctl.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/v4l2-core/v4l2-ioctl.c
++++ b/drivers/media/v4l2-core/v4l2-ioctl.c
+@@ -1467,6 +1467,7 @@ static void v4l_fill_fmtdesc(struct v4l2_fmtdesc *fmt)
+ 	case V4L2_META_FMT_RK_ISP1_PARAMS:	descr = "Rockchip ISP1 3A Parameters"; break;
+ 	case V4L2_META_FMT_RK_ISP1_STAT_3A:	descr = "Rockchip ISP1 3A Statistics"; break;
+ 	case V4L2_META_FMT_RK_ISP1_EXT_PARAMS:	descr = "Rockchip ISP1 Ext 3A Params"; break;
++	case V4L2_META_FMT_RK_ISP1_ADDATA:	descr = "Rockchip ISP1 MIPI Add Data"; break;
+ 	case V4L2_META_FMT_C3ISP_PARAMS:	descr = "Amlogic C3 ISP Parameters"; break;
+ 	case V4L2_META_FMT_C3ISP_STATS:		descr = "Amlogic C3 ISP Statistics"; break;
+ 	case V4L2_META_FMT_MALI_C55_PARAMS:	descr = "ARM Mali-C55 ISP Parameters"; break;
+diff --git a/include/uapi/linux/rkisp1-config.h b/include/uapi/linux/rkisp1-config.h
+index 111111111111..222222222222 100644
+--- a/include/uapi/linux/rkisp1-config.h
++++ b/include/uapi/linux/rkisp1-config.h
+@@ -1724,4 +1724,54 @@ static_assert((sizeof(struct rkisp1_ext_params_cfg) -
+ 	      sizeof(struct v4l2_isp_params_buffer));
+ #endif /* __KERNEL__ */
+ 
++/*---------- PART 4: MIPI additional-data capture ------------*/
++
++/*
++ * The MIPI receiver can divert CSI-2 long packets whose (VC, DT) matches one
++ * of its four additional-data selectors into a CPU-read FIFO, separate from
++ * the image path. Sensors use such packets for out-of-band data - the IMX258
++ * emits its shield-pixel (PDAF) samples this way, with data type 0x2f, during
++ * line blanking.
++ *
++ * The rkisp1_addata video node (V4L2_META_FMT_RK_ISP1_ADDATA) delivers one
++ * buffer per frame: struct rkisp1_addata_hdr followed by @data_bytes of
++ * verbatim FIFO content - a sequence of packets, each one the 4-byte MIPI
++ * long-packet header (data id, 16-bit word count little-endian, ECC) followed
++ * by its payload padded to a 4-byte boundary. The buffer always ends on a
++ * whole packet. Nothing about the payload is interpreted by the kernel.
++ *
++ * fmt.meta.buffersize is the maximum per-frame capture and may be requested
++ * with S_FMT (the driver clamps it); the amount actually captured varies per
++ * frame with the sensor configuration and is reported in bytesused and
++ * @data_bytes. A frame in which nothing was captured is still delivered,
++ * with @num_packets = 0. v4l2_buffer.sequence carries the ISP frame number.
++ */
++
++/* the hardware FIFO overflowed mid-frame; the data is a clean prefix */
++#define RKISP1_ADDATA_FLAG_HW_OVERFLOW		(1U << 0)
++/* the capture buffer filled up; the data is a clean prefix */
++#define RKISP1_ADDATA_FLAG_TRUNCATED		(1U << 1)
++/* packet framing did not parse; the FIFO was flushed to resynchronize */
++#define RKISP1_ADDATA_FLAG_SYNC_LOST		(1U << 2)
++
++/**
++ * struct rkisp1_addata_hdr - MIPI additional-data capture buffer header
++ *
++ * @version: buffer layout version, currently 1
++ * @flags: RKISP1_ADDATA_FLAG_* bits
++ * @num_packets: number of whole packets in the stream
++ * @data_bytes: bytes of packet stream following this header
++ * @dropped_bytes: bytes lost this frame (overflow, truncation, desync);
++ *		   best effort, the hardware does not count its own losses
++ * @reserved: zeroed
++ */
++struct rkisp1_addata_hdr {
++	__u32 version;
++	__u32 flags;
++	__u32 num_packets;
++	__u32 data_bytes;
++	__u32 dropped_bytes;
++	__u32 reserved[3];
++};
++
+ #endif /* _UAPI_RKISP1_CONFIG_H */
+diff --git a/include/uapi/linux/videodev2.h b/include/uapi/linux/videodev2.h
+index 111111111111..222222222222 100644
+--- a/include/uapi/linux/videodev2.h
++++ b/include/uapi/linux/videodev2.h
+@@ -875,6 +875,7 @@ struct v4l2_pix_format {
+ #define V4L2_META_FMT_RK_ISP1_PARAMS	v4l2_fourcc('R', 'K', '1', 'P') /* Rockchip ISP1 3A Parameters */
+ #define V4L2_META_FMT_RK_ISP1_STAT_3A	v4l2_fourcc('R', 'K', '1', 'S') /* Rockchip ISP1 3A Statistics */
+ #define V4L2_META_FMT_RK_ISP1_EXT_PARAMS	v4l2_fourcc('R', 'K', '1', 'E') /* Rockchip ISP1 3a Extensible Parameters */
++#define V4L2_META_FMT_RK_ISP1_ADDATA	v4l2_fourcc('R', 'K', '1', 'A') /* Rockchip ISP1 MIPI additional data */
+ 
+ /* Vendor specific - used for C3_ISP */
+ #define V4L2_META_FMT_C3ISP_PARAMS	v4l2_fourcc('C', '3', 'P', 'M') /* Amlogic C3 ISP Parameters */
+-- 
+Armbian
+

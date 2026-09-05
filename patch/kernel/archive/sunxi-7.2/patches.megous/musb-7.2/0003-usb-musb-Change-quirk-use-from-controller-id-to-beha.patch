@@ -1,0 +1,437 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 14 Jul 2026 22:45:45 +0200
+Subject: usb: musb: Change quirk use from controller id to behavior
+ description
+
+Adding new controller with a slightly different behavior currently leads
+to potentially having to modify quite lot of core code and having to
+decipher interactions of various controllers. This is due to core driver
+code having DMA controller specific quirks gated by the controller
+name instead of a quirk flag that would gate a specific behavioral need
+of a given controller.
+
+It is better to have a behavior guard and just select a behavior by
+requesting it in the musb platform ops. For one, it makes the code
+easier to understand, and also it makes adding new platforms or support
+easier for platforms like Allwinner SoCs which is implemented by one
+musb glue, but Allwinner evolved different DMA implementations and
+slight differences in their multitudes of SoC families.
+
+This change will make it easier to support the DMA on Allwinner platform
+in a clean way.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/da8xx.c       |  3 +-
+ drivers/usb/musb/jz4740.c      |  2 +-
+ drivers/usb/musb/mediatek.c    |  2 +-
+ drivers/usb/musb/mpfs.c        |  2 +-
+ drivers/usb/musb/musb_core.c   |  2 +-
+ drivers/usb/musb/musb_core.h   | 57 ++++++----
+ drivers/usb/musb/musb_dma.h    | 16 ++-
+ drivers/usb/musb/musb_dsps.c   |  3 +-
+ drivers/usb/musb/musb_gadget.c | 21 ++--
+ drivers/usb/musb/musb_host.c   | 24 ++--
+ drivers/usb/musb/omap2430.c    |  2 +-
+ drivers/usb/musb/tusb6010.c    |  2 +-
+ drivers/usb/musb/ux500.c       |  3 +-
+ 13 files changed, 84 insertions(+), 55 deletions(-)
+
+diff --git a/drivers/usb/musb/da8xx.c b/drivers/usb/musb/da8xx.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/da8xx.c
++++ b/drivers/usb/musb/da8xx.c
+@@ -472,7 +472,8 @@ da8xx_dma_controller_create(struct musb *musb, void __iomem *base)
+ 
+ static const struct musb_platform_ops da8xx_ops = {
+ 	.quirks		= MUSB_INDEXED_EP | MUSB_PRESERVE_SESSION |
+-			  MUSB_DMA_CPPI41 | MUSB_DA8XX,
++			  MUSB_DMA_ENGINE_MANAGED | MUSB_DMA_QUEUE_AUTOADVANCE |
++			  MUSB_DA8XX,
+ 	.init		= da8xx_musb_init,
+ 	.exit		= da8xx_musb_exit,
+ 
+diff --git a/drivers/usb/musb/jz4740.c b/drivers/usb/musb/jz4740.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/jz4740.c
++++ b/drivers/usb/musb/jz4740.c
+@@ -189,7 +189,7 @@ static int jz4740_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops jz4740_musb_ops = {
+-	.quirks		= MUSB_DMA_INVENTRA | MUSB_INDEXED_EP,
++	.quirks		= MUSB_DMA_SW_MODE_SELECT | MUSB_INDEXED_EP,
+ 	.fifo_mode	= 2,
+ 	.init		= jz4740_musb_init,
+ 	.exit		= jz4740_musb_exit,
+diff --git a/drivers/usb/musb/mediatek.c b/drivers/usb/musb/mediatek.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/mediatek.c
++++ b/drivers/usb/musb/mediatek.c
+@@ -347,7 +347,7 @@ static int mtk_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops mtk_musb_ops = {
+-	.quirks = MUSB_DMA_INVENTRA,
++	.quirks = MUSB_DMA_SW_MODE_SELECT,
+ 	.init = mtk_musb_init,
+ 	.get_toggle = mtk_musb_get_toggle,
+ 	.set_toggle = mtk_musb_set_toggle,
+diff --git a/drivers/usb/musb/mpfs.c b/drivers/usb/musb/mpfs.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/mpfs.c
++++ b/drivers/usb/musb/mpfs.c
+@@ -239,7 +239,7 @@ static int mpfs_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops mpfs_ops = {
+-	.quirks		= MUSB_DMA_INVENTRA,
++	.quirks		= MUSB_DMA_SW_MODE_SELECT,
+ 	.init		= mpfs_musb_init,
+ 	.exit		= mpfs_musb_exit,
+ 	.fifo_mode	= 2,
+diff --git a/drivers/usb/musb/musb_core.c b/drivers/usb/musb/musb_core.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_core.c
++++ b/drivers/usb/musb/musb_core.c
+@@ -1812,7 +1812,7 @@ void musb_dma_completion(struct musb *musb, u8 epnum, u8 transmit)
+ 	/* called with controller lock already held */
+ 
+ 	if (!epnum) {
+-		if (!is_cppi_enabled(musb)) {
++		if (!musb_dma_queue_autoadvance(musb)) {
+ 			/* endpoint 0 */
+ 			if (is_host_active(musb))
+ 				musb_h_ep0_irq(musb);
+diff --git a/drivers/usb/musb/musb_core.h b/drivers/usb/musb/musb_core.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_core.h
++++ b/drivers/usb/musb/musb_core.h
+@@ -147,31 +147,48 @@ struct musb_platform_ops {
+ #define MUSB_DA8XX		BIT(8)
+ #define MUSB_PRESERVE_SESSION	BIT(7)
+ /*
+- * A DMA-engine quirk bit is only defined when its DMA backend is built in;
+- * otherwise it is 0, so the musb_dma_*() accessors fold to a compile-time 0 and
+- * that engine's code paths are dead-code eliminated (as the old per-accessor
+- * #ifdefs used to do).
++ * DMA behavioral capabilities. Generic core/host/gadget code queries these
++ * instead of the identity of whichever DMA engine a glue driver wires up; each
++ * glue declares the behaviors its engine needs.
++ *
++ * A capability bit is nonzero only when DMA is compiled in at all (i.e. not
++ * CONFIG_MUSB_PIO_ONLY) and at least one engine that needs it is built in;
++ * otherwise it falls through to 0, so the musb_dma_*() accessors fold to a
++ * compile-time 0 and that behavior's code is dead-code eliminated.
++ *
++ * MUSB_DMA_SW_MODE_SELECT: driver selects DMA mode 0/1 and drives CSR
++ * MUSB_DMA_ENGINE_MANAGED: engine drives the transfer; needs tx_dma_start
++ * MUSB_DMA_QUEUE_AUTOADVANCE: engine keeps advancing its queue past short
++ * packets, so HW acks short RX and the driver must not (the only such engine is
++ * CPPI 4.1)
++ * MUSB_DMA_RX_MODE_AUTOCLEAR: gadget RX: AutoClear-then-mode sequence
+  */
+-#ifdef CONFIG_USB_UX500_DMA
+-#define MUSB_DMA_UX500		BIT(6)
+-#else
+-#define MUSB_DMA_UX500		0
++#ifndef CONFIG_MUSB_PIO_ONLY
++#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_UX500_DMA)
++#define MUSB_DMA_SW_MODE_SELECT		BIT(5)
++#endif
++#if defined(CONFIG_USB_TI_CPPI41_DMA) || defined(CONFIG_USB_TUSB_OMAP_DMA)
++#define MUSB_DMA_ENGINE_MANAGED		BIT(4)
+ #endif
+ #ifdef CONFIG_USB_TI_CPPI41_DMA
+-#define MUSB_DMA_CPPI41		BIT(5)
+-#else
+-#define MUSB_DMA_CPPI41		0
++#define MUSB_DMA_QUEUE_AUTOADVANCE	BIT(3)
++#endif
++#ifdef CONFIG_USB_UX500_DMA
++#define MUSB_DMA_RX_MODE_AUTOCLEAR	BIT(2)
++#endif
++#endif /* !CONFIG_MUSB_PIO_ONLY */
++
++#ifndef MUSB_DMA_SW_MODE_SELECT
++#define MUSB_DMA_SW_MODE_SELECT		0
++#endif
++#ifndef MUSB_DMA_ENGINE_MANAGED
++#define MUSB_DMA_ENGINE_MANAGED		0
+ #endif
+-#define MUSB_DMA_CPPI		BIT(4)
+-#ifdef CONFIG_USB_TUSB_OMAP_DMA
+-#define MUSB_DMA_TUSB_OMAP	BIT(3)
+-#else
+-#define MUSB_DMA_TUSB_OMAP	0
++#ifndef MUSB_DMA_QUEUE_AUTOADVANCE
++#define MUSB_DMA_QUEUE_AUTOADVANCE	0
+ #endif
+-#ifdef CONFIG_USB_INVENTRA_DMA
+-#define MUSB_DMA_INVENTRA	BIT(2)
+-#else
+-#define MUSB_DMA_INVENTRA	0
++#ifndef MUSB_DMA_RX_MODE_AUTOCLEAR
++#define MUSB_DMA_RX_MODE_AUTOCLEAR	0
+ #endif
+ #define MUSB_IN_TUSB		BIT(1)
+ #define MUSB_INDEXED_EP		BIT(0)
+diff --git a/drivers/usb/musb/musb_dma.h b/drivers/usb/musb/musb_dma.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_dma.h
++++ b/drivers/usb/musb/musb_dma.h
+@@ -49,11 +49,17 @@ struct musb_hw_ep;
+ #define	is_dma_capable()	(1)
+ #endif
+ 
+-#define musb_dma_ux500(musb)		(musb->ops->quirks & MUSB_DMA_UX500)
+-#define musb_dma_cppi41(musb)		(musb->ops->quirks & MUSB_DMA_CPPI41)
+-#define tusb_dma_omap(musb)		(musb->ops->quirks & MUSB_DMA_TUSB_OMAP)
+-#define musb_dma_inventra(musb)		(musb->ops->quirks & MUSB_DMA_INVENTRA)
+-#define	is_cppi_enabled(musb)		musb_dma_cppi41(musb)
++/*
++ * DMA behavioral capability accessors. Generic core/host/gadget code asks what
++ * a DMA engine needs, never which engine it is; each glue driver declares these
++ * in its musb_platform_ops.quirks. They are only evaluated inside
++ * is_dma_capable() / musb->dma_controller guarded regions, so PIO-only builds
++ * still fold the surrounding block away.
++ */
++#define musb_dma_sw_mode_select(musb)	 ((musb)->ops->quirks & MUSB_DMA_SW_MODE_SELECT)
++#define musb_dma_engine_managed(musb)	 ((musb)->ops->quirks & MUSB_DMA_ENGINE_MANAGED)
++#define musb_dma_queue_autoadvance(musb) ((musb)->ops->quirks & MUSB_DMA_QUEUE_AUTOADVANCE)
++#define musb_dma_rx_mode_autoclear(musb) ((musb)->ops->quirks & MUSB_DMA_RX_MODE_AUTOCLEAR)
+ 
+ /*
+  * DMA channel status ... updated by the dma controller driver whenever that
+diff --git a/drivers/usb/musb/musb_dsps.c b/drivers/usb/musb/musb_dsps.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_dsps.c
++++ b/drivers/usb/musb/musb_dsps.c
+@@ -689,7 +689,8 @@ static void dsps_dma_controller_resume(struct dsps_glue *glue) {}
+ #endif /* CONFIG_USB_TI_CPPI41_DMA */
+ 
+ static struct musb_platform_ops dsps_ops = {
+-	.quirks		= MUSB_DMA_CPPI41 | MUSB_INDEXED_EP,
++	.quirks		= MUSB_DMA_ENGINE_MANAGED | MUSB_DMA_QUEUE_AUTOADVANCE |
++			  MUSB_INDEXED_EP,
+ 	.init		= dsps_musb_init,
+ 	.exit		= dsps_musb_exit,
+ 
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -281,7 +281,7 @@ static void txstate(struct musb *musb, struct musb_request *req)
+ 
+ 		/* MUSB_TXCSR_P_ISO is still set correctly */
+ 
+-		if (musb_dma_inventra(musb) || musb_dma_ux500(musb)) {
++		if (musb_dma_sw_mode_select(musb)) {
+ 			if (request_size < musb_ep->packet_sz)
+ 				musb_ep->dma->desired_mode = 0;
+ 			else
+@@ -331,7 +331,7 @@ static void txstate(struct musb *musb, struct musb_request *req)
+ 			}
+ 		}
+ 
+-		if (is_cppi_enabled(musb)) {
++		if (musb_dma_queue_autoadvance(musb)) {
+ 			/* program endpoint CSR first, then setup DMA */
+ 			csr &= ~(MUSB_TXCSR_P_UNDERRUN | MUSB_TXCSR_TXPKTRDY);
+ 			csr |= MUSB_TXCSR_DMAENAB | MUSB_TXCSR_DMAMODE |
+@@ -367,7 +367,7 @@ static void txstate(struct musb *musb, struct musb_request *req)
+ 				musb_writew(epio, MUSB_TXCSR, csr);
+ 				/* invariant: prequest->buf is non-null */
+ 			}
+-		} else if (tusb_dma_omap(musb))
++		} else if (musb_dma_engine_managed(musb))
+ 			use_dma = use_dma && c->channel_program(
+ 					musb_ep->dma, musb_ep->packet_sz,
+ 					request->zero,
+@@ -554,7 +554,7 @@ static void rxstate(struct musb *musb, struct musb_request *req)
+ 		return;
+ 	}
+ 
+-	if (is_cppi_enabled(musb) && is_buffer_mapped(req)) {
++	if (musb_dma_queue_autoadvance(musb) && is_buffer_mapped(req)) {
+ 		struct dma_controller	*c = musb->dma_controller;
+ 		struct dma_channel	*channel = musb_ep->dma;
+ 
+@@ -599,7 +599,8 @@ static void rxstate(struct musb *musb, struct musb_request *req)
+ 			if (!is_buffer_mapped(req))
+ 				goto buffer_aint_mapped;
+ 
+-			if (musb_dma_inventra(musb)) {
++			if (musb_dma_sw_mode_select(musb) &&
++			    !musb_dma_rx_mode_autoclear(musb)) {
+ 				struct dma_controller	*c;
+ 				struct dma_channel	*channel;
+ 				int			use_dma = 0;
+@@ -674,7 +675,7 @@ static void rxstate(struct musb *musb, struct musb_request *req)
+ 					return;
+ 			}
+ 
+-			if ((musb_dma_ux500(musb)) &&
++			if (musb_dma_rx_mode_autoclear(musb) &&
+ 				(request->actual < request->length)) {
+ 
+ 				struct dma_controller *c;
+@@ -731,7 +732,9 @@ static void rxstate(struct musb *musb, struct musb_request *req)
+ 
+ 			fifo_count = min_t(unsigned, len, fifo_count);
+ 
+-			if (tusb_dma_omap(musb)) {
++			/* engine-managed, but not the autoadvancing queue (TUSB) */
++			if (musb_dma_engine_managed(musb) &&
++			    !musb_dma_queue_autoadvance(musb)) {
+ 				struct dma_controller *c = musb->dma_controller;
+ 				struct dma_channel *channel = musb_ep->dma;
+ 				u32 dma_addr = request->dma + request->actual;
+@@ -856,8 +859,8 @@ void musb_g_rx(struct musb *musb, u8 epnum)
+ 
+ 		request->actual += musb_ep->dma->actual_len;
+ 
+-		if (musb_dma_inventra(musb) || tusb_dma_omap(musb) ||
+-		    musb_dma_ux500(musb)) {
++		/* the autoadvancing-queue engine (CPPI) acks short RX in HW */
++		if (!musb_dma_queue_autoadvance(musb)) {
+ 			/* Autoclear doesn't clear RxPktRdy for short packets */
+ 			if ((dma->desired_mode == 0 && !hw_ep->rx_double_buffered)
+ 					|| (dma->actual_len
+diff --git a/drivers/usb/musb/musb_host.c b/drivers/usb/musb/musb_host.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_host.c
++++ b/drivers/usb/musb/musb_host.c
+@@ -169,7 +169,7 @@ static inline void musb_h_tx_dma_start(struct musb_hw_ep *ep)
+ 	/* NOTE: no locks here; caller should lock and select EP */
+ 	txcsr = musb_readw(ep->regs, MUSB_TXCSR);
+ 	txcsr |= MUSB_TXCSR_DMAENAB | MUSB_TXCSR_H_WZC_BITS;
+-	if (is_cppi_enabled(ep->musb))
++	if (musb_dma_queue_autoadvance(ep->musb))
+ 		txcsr |= MUSB_TXCSR_DMAMODE;
+ 	musb_writew(ep->regs, MUSB_TXCSR, txcsr);
+ }
+@@ -269,7 +269,7 @@ musb_start_urb(struct musb *musb, int is_in, struct musb_qh *qh)
+ 
+ 		if (!hw_ep->tx_channel)
+ 			musb_h_tx_start(hw_ep);
+-		else if (is_cppi_enabled(musb) || tusb_dma_omap(musb))
++		else if (musb_dma_engine_managed(musb))
+ 			musb_h_tx_dma_start(hw_ep);
+ 	}
+ }
+@@ -631,10 +631,10 @@ static bool musb_tx_dma_program(struct dma_controller *dma,
+ 	u16			pkt_size = qh->maxpacket;
+ 	u8			mode;
+ 
+-	if (musb_dma_inventra(hw_ep->musb) || musb_dma_ux500(hw_ep->musb))
++	if (musb_dma_sw_mode_select(hw_ep->musb))
+ 		musb_tx_dma_set_mode_mentor(hw_ep, qh,
+ 					    &length, &mode);
+-	else if (is_cppi_enabled(hw_ep->musb) || tusb_dma_omap(hw_ep->musb))
++	else if (musb_dma_engine_managed(hw_ep->musb))
+ 		musb_tx_dma_set_mode_cppi_tusb(hw_ep, urb, &mode);
+ 	else
+ 		return false;
+@@ -861,7 +861,7 @@ static void musb_ep_program(struct musb *musb, u8 epnum,
+ 
+ 		/* kick things off */
+ 
+-		if ((is_cppi_enabled(musb) || tusb_dma_omap(musb)) && dma_channel) {
++		if (musb_dma_engine_managed(musb) && dma_channel) {
+ 			/* Candidate for DMA */
+ 			dma_channel->actual_len = 0L;
+ 			qh->segsize = len;
+@@ -1407,7 +1407,7 @@ void musb_host_tx(struct musb *musb, u8 epnum)
+ 	} else if ((usb_pipeisoc(pipe) || transfer_pending) && dma) {
+ 		if (musb_tx_dma_program(musb->dma_controller, hw_ep, qh, urb,
+ 				offset, length)) {
+-			if (is_cppi_enabled(musb) || tusb_dma_omap(musb))
++			if (musb_dma_engine_managed(musb))
+ 				musb_h_tx_dma_start(hw_ep);
+ 			return;
+ 		}
+@@ -1545,7 +1545,7 @@ static int musb_rx_dma_inventra_cppi41(struct dma_controller *dma,
+ 			done = true;
+ 		} else {
+ 			/* REVISIT: Why ignore return value here? */
+-			if (musb_dma_cppi41(hw_ep->musb))
++			if (musb_dma_queue_autoadvance(hw_ep->musb))
+ 				done = musb_rx_dma_iso_cppi41(dma, hw_ep, qh,
+ 							      urb, len);
+ 			done = false;
+@@ -1813,7 +1813,7 @@ void musb_host_rx(struct musb *musb, u8 epnum)
+ 	 */
+ 
+ 	/* FIXME this is _way_ too much in-line logic for Mentor DMA */
+-	if (!musb_dma_inventra(musb) && !musb_dma_ux500(musb) &&
++	if (!musb_dma_sw_mode_select(musb) &&
+ 	    (rx_csr & MUSB_RXCSR_H_REQPKT)) {
+ 		/* REVISIT this happened for a while on some short reads...
+ 		 * the cleanup still needs investigation... looks bad...
+@@ -1845,8 +1845,8 @@ void musb_host_rx(struct musb *musb, u8 epnum)
+ 			| MUSB_RXCSR_RXPKTRDY);
+ 		musb_writew(hw_ep->regs, MUSB_RXCSR, val);
+ 
+-		if (musb_dma_inventra(musb) || musb_dma_ux500(musb) ||
+-		    musb_dma_cppi41(musb)) {
++		if (musb_dma_sw_mode_select(musb) ||
++		    musb_dma_queue_autoadvance(musb)) {
+ 			    done = musb_rx_dma_inventra_cppi41(c, hw_ep, qh, urb, xfer_len);
+ 			    musb_dbg(hw_ep->musb,
+ 				    "ep %d dma %s, rxcsr %04x, rxcount %d",
+@@ -1874,8 +1874,8 @@ void musb_host_rx(struct musb *musb, u8 epnum)
+ 		}
+ 
+ 		/* we are expecting IN packets */
+-		if ((musb_dma_inventra(musb) || musb_dma_ux500(musb) ||
+-		    musb_dma_cppi41(musb)) && dma) {
++		if ((musb_dma_sw_mode_select(musb) ||
++		    musb_dma_queue_autoadvance(musb)) && dma) {
+ 			musb_dbg(hw_ep->musb,
+ 				"RX%d count %d, buffer 0x%llx len %d/%d",
+ 				epnum, musb_readw(epio, MUSB_RXCOUNT),
+diff --git a/drivers/usb/musb/omap2430.c b/drivers/usb/musb/omap2430.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/omap2430.c
++++ b/drivers/usb/musb/omap2430.c
+@@ -283,7 +283,7 @@ static int omap2430_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops omap2430_ops = {
+-	.quirks		= MUSB_DMA_INVENTRA,
++	.quirks		= MUSB_DMA_SW_MODE_SELECT,
+ #ifdef CONFIG_USB_INVENTRA_DMA
+ 	.dma_init	= musbhs_dma_controller_create,
+ 	.dma_exit	= musbhs_dma_controller_destroy,
+diff --git a/drivers/usb/musb/tusb6010.c b/drivers/usb/musb/tusb6010.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/tusb6010.c
++++ b/drivers/usb/musb/tusb6010.c
+@@ -1187,7 +1187,7 @@ static int tusb_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops tusb_ops = {
+-	.quirks		= MUSB_DMA_TUSB_OMAP | MUSB_IN_TUSB |
++	.quirks		= MUSB_DMA_ENGINE_MANAGED | MUSB_IN_TUSB |
+ 			  MUSB_G_NO_SKB_RESERVE,
+ 	.init		= tusb_musb_init,
+ 	.exit		= tusb_musb_exit,
+diff --git a/drivers/usb/musb/ux500.c b/drivers/usb/musb/ux500.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/ux500.c
++++ b/drivers/usb/musb/ux500.c
+@@ -173,7 +173,8 @@ static int ux500_musb_exit(struct musb *musb)
+ }
+ 
+ static const struct musb_platform_ops ux500_ops = {
+-	.quirks		= MUSB_DMA_UX500 | MUSB_INDEXED_EP,
++	.quirks		= MUSB_DMA_SW_MODE_SELECT | MUSB_DMA_RX_MODE_AUTOCLEAR |
++			  MUSB_INDEXED_EP,
+ #ifdef CONFIG_USB_UX500_DMA
+ 	.dma_init	= ux500_dma_controller_create,
+ 	.dma_exit	= ux500_dma_controller_destroy,
+-- 
+Armbian
+

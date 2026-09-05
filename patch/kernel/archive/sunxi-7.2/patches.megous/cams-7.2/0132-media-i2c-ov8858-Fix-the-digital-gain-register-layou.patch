@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 11 Aug 2026 17:07:28 +0200
+Subject: media: i2c: ov8858: Fix the digital gain register layout
+
+The driver splits the 14-bit control value 8/6 between 0x350a and
+0x350b, skipping bits 7:6 of the low register. Measured on the sensor
+(fixed exposure and analogue gain, mean luma of the ISP output while
+stepping the control), the silicon takes a plain 12-bit Q4.10 value
+instead - 0x350a[3:0] high, 0x350b[7:0] low, 0x400 = 1x, the same
+layout the ov8856 driver uses. Every sweep point fits that reading,
+including 0x350a[3:0] = 0 frames coming out black.
+
+With the split packing the applied gain was non-monotonic in the
+control value: it wrapped through zero whenever the reassembly
+carried into 0x350a[5:4], which the sensor ignores. A smooth control
+ramp visibly jumped between too-bright and black, and an AE loop
+oscillated against the wrap instead of converging.
+
+Make the control a plain 12-bit value with 0x400 = 1x default and
+write it out unmodified.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov8858.c | 19 +++-------
+ 1 file changed, 5 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/media/i2c/ov8858.c b/drivers/media/i2c/ov8858.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/ov8858.c
++++ b/drivers/media/i2c/ov8858.c
+@@ -60,13 +60,10 @@
+ #define OV8858_LONG_GAIN_DEFAULT	0x80
+ 
+ #define OV8858_REG_LONG_DIGIGAIN	OV8858_REG_16BIT(0x350a)
+-#define OV8858_LONG_DIGIGAIN_H_MASK	0x3fc0
+-#define OV8858_LONG_DIGIGAIN_L_MASK	0x3f
+-#define OV8858_LONG_DIGIGAIN_H_SHIFT	2
+ #define OV8858_LONG_DIGIGAIN_MIN	0x0
+-#define OV8858_LONG_DIGIGAIN_MAX	0x3fff
++#define OV8858_LONG_DIGIGAIN_MAX	0xfff
+ #define OV8858_LONG_DIGIGAIN_STEP	1
+-#define OV8858_LONG_DIGIGAIN_DEFAULT	0x200
++#define OV8858_LONG_DIGIGAIN_DEFAULT	0x400
+ 
+ #define OV8858_REG_VTS			OV8858_REG_16BIT(0x380e)
+ #define OV8858_VTS_MAX			0x7fff
+@@ -1531,7 +1528,6 @@ static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
+ 	struct v4l2_mbus_framefmt *format;
+ 	struct v4l2_subdev_state *state;
+-	u16 digi_gain;
+ 	s64 max_exp;
+ 	int ret;
+ 
+@@ -1571,16 +1567,11 @@ static int ov8858_set_ctrl(struct v4l2_ctrl *ctrl)
+ 		break;
+ 	case V4L2_CID_DIGITAL_GAIN:
+ 		/*
+-		 * Digital gain is assembled as:
+-		 * 0x350a[7:0] = dgain[13:6]
+-		 * 0x350b[5:0] = dgain[5:0]
+-		 * Reassemble the control value to write it in one go.
++		 * Q4.10 across 0x350a[3:0]/0x350b[7:0], 0x400 = 1x. The
++		 * sensor ignores writes to 0x350a above bit 3.
+ 		 */
+-		digi_gain = (ctrl->val & OV8858_LONG_DIGIGAIN_L_MASK)
+-			  | ((ctrl->val & OV8858_LONG_DIGIGAIN_H_MASK) <<
+-			      OV8858_LONG_DIGIGAIN_H_SHIFT);
+ 		ret = ov8858_write(ov8858, OV8858_REG_LONG_DIGIGAIN,
+-				   digi_gain, NULL);
++				   ctrl->val, NULL);
+ 		break;
+ 	case V4L2_CID_VBLANK:
+ 		ret = ov8858_write(ov8858, OV8858_REG_VTS,
+-- 
+Armbian
+

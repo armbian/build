@@ -1,0 +1,244 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 10:52:44 +0200
+Subject: media: sun6i-csi: Show the registers and allow a poke, in debugfs
+
+The CSI has a pattern generator -- a DMA master that replays a DRAM
+buffer into the input mux in place of a sensor -- which no driver has
+ever programmed, in this tree or in either vendor tree. Bringing it up
+means finding out what several never-written fields do, and doing that a
+bit at a time is otherwise a kernel build per bit.
+
+So add the two files that make the block observable and pokeable, the
+same pair the ISP side already has.
+
+The register dump exists rather than regmap's own because that one is not
+guarded against runtime PM, and reading this block while it is held in
+reset takes the bus down. Unlike the ISP there are no load and save
+buffers here, so a register holds what the hardware runs and one column
+says everything.
+
+The directory is named for the device and not the driver: variants other
+than the A83T have two CSI instances, which would collide on one name.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c | 147 +++++++++-
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h |   1 +
+ 2 files changed, 147 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/debugfs.h>
+ #include <linux/err.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+@@ -15,6 +16,7 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
++#include <linux/seq_file.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-mc.h>
+ 
+@@ -128,6 +130,143 @@ static void sun6i_csi_v4l2_cleanup(struct sun6i_csi_device *csi_dev)
+ 	media_device_cleanup(&v4l2->media_dev);
+ }
+ 
++/* Debugfs */
++
++/*
++ * Unlike the ISP the CSI has no load and save buffers: a register holds what
++ * the hardware is running, so one column says everything.
++ *
++ * This exists rather than regmap's own debugfs dump because that one is not
++ * guarded against runtime PM, and reading the block while it is held in reset
++ * takes the bus down.
++ */
++static const struct {
++	const char	*name;
++	unsigned int	offset;
++} sun6i_csi_debugfs_registers[] = {
++	{ "en",			SUN6I_CSI_EN_REG },
++	{ "if_cfg",		SUN6I_CSI_IF_CFG_REG },
++	{ "cap",		SUN6I_CSI_CAP_REG },
++	{ "sync_cnt",		SUN6I_CSI_SYNC_CNT_REG },
++	{ "fifo_thrs",		SUN6I_CSI_FIFO_THRS_REG },
++	{ "bt656_head_cfg",	SUN6I_CSI_BT656_HEAD_CFG_REG },
++	{ "ptn_len",		SUN6I_CSI_PTN_LEN_REG },
++	{ "ptn_addr",		SUN6I_CSI_PTN_ADDR_REG },
++	{ "ver",		SUN6I_CSI_VER_REG },
++	{ "ch_cfg",		SUN6I_CSI_CH_CFG_REG },
++	{ "ch_scale",		SUN6I_CSI_CH_SCALE_REG },
++	{ "ch_fifo0_addr",	SUN6I_CSI_CH_FIFO0_ADDR_REG },
++	{ "ch_fifo1_addr",	SUN6I_CSI_CH_FIFO1_ADDR_REG },
++	{ "ch_fifo2_addr",	SUN6I_CSI_CH_FIFO2_ADDR_REG },
++	{ "ch_sta",		SUN6I_CSI_CH_STA_REG },
++	{ "ch_int_en",		SUN6I_CSI_CH_INT_EN_REG },
++	{ "ch_int_sta",		SUN6I_CSI_CH_INT_STA_REG },
++	{ "ch_fld1_vsize",	SUN6I_CSI_CH_FLD1_VSIZE_REG },
++	{ "ch_hsize",		SUN6I_CSI_CH_HSIZE_REG },
++	{ "ch_vsize",		SUN6I_CSI_CH_VSIZE_REG },
++	{ "ch_buf_len",		SUN6I_CSI_CH_BUF_LEN_REG },
++	{ "ch_flip_size",	SUN6I_CSI_CH_FLIP_SIZE_REG },
++	{ "ch_frm_clk_cnt",	SUN6I_CSI_CH_FRM_CLK_CNT_REG },
++	{ "ch_acc_itnl_clk_cnt", SUN6I_CSI_CH_ACC_ITNL_CLK_CNT_REG },
++	{ "ch_fifo_stat",	SUN6I_CSI_CH_FIFO_STAT_REG },
++	{ "ch_pclk_stat",	SUN6I_CSI_CH_PCLK_STAT_REG },
++};
++
++static int sun6i_csi_debugfs_registers_show(struct seq_file *seq, void *data)
++{
++	struct sun6i_csi_device *csi_dev = seq->private;
++	unsigned int i;
++
++	if (pm_runtime_get_if_in_use(csi_dev->dev) <= 0) {
++		seq_puts(seq, "(device suspended)\n");
++		return 0;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(sun6i_csi_debugfs_registers); i++) {
++		u32 value = 0;
++
++		regmap_read(csi_dev->regmap,
++			    sun6i_csi_debugfs_registers[i].offset, &value);
++
++		seq_printf(seq, "%-16s %08x\n",
++			   sun6i_csi_debugfs_registers[i].name, value);
++	}
++
++	pm_runtime_put(csi_dev->dev);
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(sun6i_csi_debugfs_registers);
++
++/*
++ * Write a register directly: "offset value", both in any base strtoul takes.
++ *
++ * Several fields of this block were never identified -- the pattern generator
++ * in particular has no driver support at all -- and finding out what one does
++ * is otherwise a kernel build per bit.
++ */
++static ssize_t sun6i_csi_debugfs_poke_write(struct file *file,
++					    const char __user *buffer,
++					    size_t count, loff_t *ppos)
++{
++	struct sun6i_csi_device *csi_dev = file->private_data;
++	unsigned int offset, value;
++	char buf[64];
++
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, buffer, count))
++		return -EFAULT;
++	buf[count] = '\0';
++
++	/*
++	 * sscanf and not simple_strtoul: the latter does not skip leading
++	 * whitespace the way its userspace namesake does, so parsing the value
++	 * from just after the offset silently yields zero and every poke writes
++	 * zero instead of what was asked for.
++	 */
++	if (sscanf(buf, "%i %i", &offset, &value) != 2)
++		return -EINVAL;
++
++	if (offset > SUN6I_CSI_CH_PCLK_STAT_REG || (offset & 3))
++		return -EINVAL;
++
++	if (pm_runtime_get_if_in_use(csi_dev->dev) <= 0)
++		return -EAGAIN;
++
++	regmap_write(csi_dev->regmap, offset, value);
++	pm_runtime_put(csi_dev->dev);
++
++	return count;
++}
++
++static const struct file_operations sun6i_csi_debugfs_poke_fops = {
++	.owner		= THIS_MODULE,
++	.open		= simple_open,
++	.write		= sun6i_csi_debugfs_poke_write,
++	.llseek		= noop_llseek,
++};
++
++static void sun6i_csi_debugfs_setup(struct sun6i_csi_device *csi_dev)
++{
++	/*
++	 * Named for the device and not the driver: variants other than the
++	 * A83T have two CSI instances, which would collide on one directory.
++	 */
++	csi_dev->debugfs = debugfs_create_dir(dev_name(csi_dev->dev), NULL);
++
++	debugfs_create_file("registers", 0444, csi_dev->debugfs, csi_dev,
++			    &sun6i_csi_debugfs_registers_fops);
++	debugfs_create_file("poke", 0200, csi_dev->debugfs, csi_dev,
++			    &sun6i_csi_debugfs_poke_fops);
++}
++
++static void sun6i_csi_debugfs_cleanup(struct sun6i_csi_device *csi_dev)
++{
++	debugfs_remove_recursive(csi_dev->debugfs);
++	csi_dev->debugfs = NULL;
++}
++
+ /* Platform */
+ 
+ static irqreturn_t sun6i_csi_interrupt(int irq, void *private)
+@@ -337,6 +476,8 @@ static int sun6i_csi_probe(struct platform_device *platform_dev)
+ 	if (ret)
+ 		goto error_resources;
+ 
++	sun6i_csi_debugfs_setup(csi_dev);
++
+ 	/*
+ 	 * Register our own v4l2 and media devices when there is no ISP around.
+ 	 * Otherwise the ISP will use async subdev registration with our bridge,
+@@ -346,7 +487,7 @@ static int sun6i_csi_probe(struct platform_device *platform_dev)
+ 	if (!csi_dev->isp_available) {
+ 		ret = sun6i_csi_v4l2_setup(csi_dev);
+ 		if (ret)
+-			goto error_resources;
++			goto error_debugfs;
+ 	}
+ 
+ 	ret = sun6i_csi_bridge_setup(csi_dev);
+@@ -368,6 +509,9 @@ static int sun6i_csi_probe(struct platform_device *platform_dev)
+ 	if (!csi_dev->isp_available)
+ 		sun6i_csi_v4l2_cleanup(csi_dev);
+ 
++error_debugfs:
++	sun6i_csi_debugfs_cleanup(csi_dev);
++
+ error_resources:
+ 	sun6i_csi_resources_cleanup(csi_dev);
+ 
+@@ -384,6 +528,7 @@ static void sun6i_csi_remove(struct platform_device *pdev)
+ 	if (!csi_dev->isp_available)
+ 		sun6i_csi_v4l2_cleanup(csi_dev);
+ 
++	sun6i_csi_debugfs_cleanup(csi_dev);
+ 	sun6i_csi_resources_cleanup(csi_dev);
+ }
+ 
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+@@ -47,6 +47,7 @@ struct sun6i_csi_device {
+ 	struct clk			*clock_mod;
+ 	struct clk			*clock_ram;
+ 	struct reset_control		*reset;
++	struct dentry			*debugfs;
+ 
+ 	bool				isp_available;
+ };
+-- 
+Armbian
+

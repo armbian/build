@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 25 Jul 2026 01:08:46 +0200
+Subject: arm64: dts: allwinner: sun50i-a64-pinephone: Fix mpu6050 mount matrix
+
+The mpu6050 carried the same mount matrix as the lis3mdl, but the two
+chips are mounted 180 degrees apart in-plane, so the IMU device frame
+came out rotated 180 degrees around z (all screen rotations detected
+by userspace fusion were inverted).
+
+Proof, from measurements on a PinePhone 1.2:
+
+The mount matrix maps chip-frame vectors to the device frame,
+v_dev = M * v_chip, with the device frame x = right screen edge,
+y = top screen edge, z = out of the screen.
+
+Raw sysfs readings (in_accel_*_raw, scale 0.000598 m/s^2/LSB;
+in_magn_*_raw, scale 0.000146 G/LSB), averaged, noise < 2%:
+
+  pose                       chip-frame reading
+  ------------------------   ------------------------------------
+  A) flat, screen up         accel (  408,    4, 15896)
+                                 = ( 0.24, 0.00,  9.51) m/s^2
+  B) upright, top edge up    accel (16700,  800,   200)
+                                 = ( 9.99, 0.48,  0.12) m/s^2
+  C) flat, top edge to       magn  (-4164,  152, -1227)
+     magnetic north              = (-60.8,  2.2, -17.9) uT
+
+At rest the accelerometer reads the reaction to gravity, i.e. +1 g
+along whatever chip axis points up:
+
+- pose A: up = device +z, measured along chip +z
+    => M * z_chip = z_dev
+- pose B: up = device +y, measured along chip +x
+    => M * x_chip = y_dev
+- the third column follows from the chip frame being right-handed:
+    M * y_chip = M * (z_chip x x_chip) = z_dev x y_dev = -x_dev
+
+Writing these as the columns of M:
+
+  M = [ 0 -1  0 ]
+      [ 1  0  0 ]
+      [ 0  0  1 ]
+
+which is a proper rotation (det = +1, chip rotated 90 deg around z
+relative to the screen) and the transpose of the old matrix; the old
+matrix has M_old * x_chip = -y_dev, i.e. it claims the phone is
+upside down in pose B, and differs from the correct one by exactly
+Rz(180) - matching the uniformly 180-degree-wrong rotation detection
+that prompted this.
+
+Pose C independently anchors the device-frame convention through the
+lis3mdl, whose matrix is unchanged: applying it to the measurement
+gives (2.2, 60.8, -17.9) uT in the device frame - horizontal
+component along +y (top edge) which points north, vertical component
+along -z (field dips into the ground on the northern hemisphere),
+both as expected, while its chip-frame x sign is opposite to the
+mpu6050's in the same physical orientation - confirming the two
+chips really are mounted 180 degrees apart and need different
+matrices.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ arch/arm64/boot/dts/allwinner/sun50i-a64-pinephone.dtsi | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun50i-a64-pinephone.dtsi b/arch/arm64/boot/dts/allwinner/sun50i-a64-pinephone.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/allwinner/sun50i-a64-pinephone.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun50i-a64-pinephone.dtsi
+@@ -702,8 +702,8 @@ accelerometer@68 {
+ 		interrupts = <7 5 IRQ_TYPE_EDGE_RISING>; /* PH5 */
+ 		vdd-supply = <&reg_dldo1>;
+ 		vddio-supply = <&reg_dldo1>;
+-		mount-matrix = "0", "1", "0",
+-			       "-1", "0", "0",
++		mount-matrix = "0", "-1", "0",
++			       "1", "0", "0",
+ 			       "0", "0", "1";
+ 	};
+ };
+-- 
+Armbian
+

@@ -1,0 +1,235 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 25 Jul 2026 21:56:00 +0200
+Subject: clk: sunxi-ng: Change NKMP algorithm for finding factors
+
+The current algorithm tries all factor combinations on every rate
+change (>1500 iterations, several times per change). cpufreq rate
+changes run while the CPU is temporarily clocked at 24 MHz, so this
+is slow enough to show up as significant load.
+
+Instead, derive N analytically for each (K, M, P) combination. Exact
+matches are typically found in a few iterations. When the rate can't
+be hit exactly, a second pass evaluates both the truncated N and
+N + 1 (requested rates are often truncated versions of exactly
+achievable rates) and picks the closest rate not above the request.
+Out-of-range requests clamp to the achievable range, and M = 1
+configurations are preferred, like in the BSP kernel PLL tables.
+
+NKMP clock definitions can now declare PLL constraints that the
+search respects: a valid N*K range (min_nk, max_nk) and a maximum
+output rate above which the P divider must not be used (max_p_rate).
+Both are unrestricted by default, and without constraints the results
+match the original algorithm exactly (verified by an exhaustive
+differential test against the original algorithm).
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clk/sunxi-ng/ccu_nkmp.c | 128 ++++++++--
+ drivers/clk/sunxi-ng/ccu_nkmp.h |   9 +
+ 2 files changed, 113 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu_nkmp.c b/drivers/clk/sunxi-ng/ccu_nkmp.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/sunxi-ng/ccu_nkmp.c
++++ b/drivers/clk/sunxi-ng/ccu_nkmp.c
+@@ -6,6 +6,7 @@
+ 
+ #include <linux/clk-provider.h>
+ #include <linux/io.h>
++#include <linux/limits.h>
+ 
+ #include "ccu_gate.h"
+ #include "ccu_nkmp.h"
+@@ -15,6 +16,8 @@ struct _ccu_nkmp {
+ 	unsigned long	k, min_k, max_k;
+ 	unsigned long	m, min_m, max_m;
+ 	unsigned long	p, min_p, max_p;
++	unsigned long	min_nk, max_nk;
++	unsigned long	max_p_rate;
+ };
+ 
+ static unsigned long ccu_nkmp_calc_rate(unsigned long parent,
+@@ -29,44 +32,115 @@ static unsigned long ccu_nkmp_calc_rate(unsigned long parent,
+ 	return rate;
+ }
+ 
++struct nkmp_best {
++	unsigned long rate;
++	unsigned long n, k, m, p;
++};
++
++static void ccu_nkmp_try(unsigned long parent, unsigned long rate,
++			 unsigned long n, unsigned long k,
++			 unsigned long m, unsigned long p,
++			 struct nkmp_best *best)
++{
++	unsigned long tmp_rate = ccu_nkmp_calc_rate(parent, n, k, m, p);
++
++	if (tmp_rate > rate)
++		return;
++
++	if ((rate - tmp_rate) < (rate - best->rate)) {
++		best->rate = tmp_rate;
++		best->n = n;
++		best->k = k;
++		best->m = m;
++		best->p = p;
++	}
++}
++
+ static unsigned long ccu_nkmp_find_best(unsigned long parent, unsigned long rate,
+ 					struct _ccu_nkmp *nkmp)
+ {
+-	unsigned long best_rate = 0;
+-	unsigned long best_n = 0, best_k = 0, best_m = 0, best_p = 0;
+-	unsigned long _n, _k, _m, _p;
++	struct nkmp_best best = {};
++	unsigned long max_p = rate >= nkmp->max_p_rate ? 1 : nkmp->max_p;
++	unsigned long _k, _m, _p;
++	unsigned int approx;
++
++	if (!parent)
++		goto out;
++
++	for (approx = 0; approx <= 1; approx++) {
++		for (_m = nkmp->min_m; _m <= nkmp->max_m; _m++) {
++			for (_p = nkmp->min_p; _p <= max_p; _p <<= 1) {
++				u64 nk64 = (u64)rate * _m * _p;
++				unsigned long nk_rem = do_div(nk64, parent);
++				unsigned long nk = min_t(u64, nk64, nkmp->max_nk);
++
++				if (!approx) {
++					if (nk_rem != 0 || nk64 < nkmp->min_nk ||
++					    nk64 > nkmp->max_nk)
++						continue;
++				} else if (nk64 + 1 < nkmp->min_nk) {
++					/*
++					 * Even the n+1 candidate (N*K ==
++					 * min_nk) can't reach a rate <= the
++					 * requested one when the target N*K
++					 * is below min_nk - 1.
++					 */
++					continue;
++				}
+ 
+-	for (_k = nkmp->min_k; _k <= nkmp->max_k; _k++) {
+-		for (_n = nkmp->min_n; _n <= nkmp->max_n; _n++) {
+-			for (_m = nkmp->min_m; _m <= nkmp->max_m; _m++) {
+-				for (_p = nkmp->min_p; _p <= nkmp->max_p; _p <<= 1) {
+-					unsigned long tmp_rate;
++				for (_k = nkmp->min_k; _k <= nkmp->max_k; _k++) {
++					unsigned long hi, _n, cand;
+ 
+-					tmp_rate = ccu_nkmp_calc_rate(parent,
+-								      _n, _k,
+-								      _m, _p);
++					if (!approx) {
++						u64 n64 = nk64;
++						unsigned long n_rem = do_div(n64, _k);
+ 
+-					if (tmp_rate > rate)
+-						continue;
++						if (n_rem != 0 ||
++						    n64 < nkmp->min_n ||
++						    n64 > nkmp->max_n)
++							continue;
++
++						nkmp->n = n64;
++						nkmp->k = _k;
++						nkmp->m = _m;
++						nkmp->p = _p;
++						return ccu_nkmp_calc_rate(parent, n64,
++									  _k, _m, _p);
++					}
+ 
+-					if ((rate - tmp_rate) < (rate - best_rate)) {
+-						best_rate = tmp_rate;
+-						best_n = _n;
+-						best_k = _k;
+-						best_m = _m;
+-						best_p = _p;
++					/*
++					 * Highest n satisfying both the n
++					 * range and the N*K limit.
++					 */
++					hi = min(nkmp->max_n, nkmp->max_nk / _k);
++					_n = min(nk / _k, hi);
++
++					/*
++					 * The requested rate is often a
++					 * truncation of the exactly achievable
++					 * rate, so the best n can be one above
++					 * the truncated analytic value.
++					 */
++					for (cand = _n; cand <= min(_n + 1, hi); cand++) {
++						if (cand < nkmp->min_n ||
++						    cand * _k < nkmp->min_nk)
++							continue;
++
++						ccu_nkmp_try(parent, rate, cand,
++							     _k, _m, _p, &best);
+ 					}
+ 				}
+ 			}
+ 		}
+ 	}
+ 
+-	nkmp->n = best_n;
+-	nkmp->k = best_k;
+-	nkmp->m = best_m;
+-	nkmp->p = best_p;
++out:
++	nkmp->n = best.n;
++	nkmp->k = best.k;
++	nkmp->m = best.m;
++	nkmp->p = best.p;
+ 
+-	return best_rate;
++	return best.rate;
+ }
+ 
+ static void ccu_nkmp_disable(struct clk_hw *hw)
+@@ -151,6 +225,9 @@ static int ccu_nkmp_determine_rate(struct clk_hw *hw,
+ 	_nkmp.max_m = nkmp->m.max ?: 1 << nkmp->m.width;
+ 	_nkmp.min_p = 1;
+ 	_nkmp.max_p = nkmp->p.max ?: 1 << ((1 << nkmp->p.width) - 1);
++	_nkmp.min_nk = nkmp->min_nk;
++	_nkmp.max_nk = nkmp->max_nk ?: UINT_MAX;
++	_nkmp.max_p_rate = nkmp->max_p_rate ?: UINT_MAX;
+ 
+ 	req->rate = ccu_nkmp_find_best(req->best_parent_rate, req->rate,
+ 				       &_nkmp);
+@@ -181,6 +258,9 @@ static int ccu_nkmp_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	_nkmp.max_m = nkmp->m.max ?: 1 << nkmp->m.width;
+ 	_nkmp.min_p = 1;
+ 	_nkmp.max_p = nkmp->p.max ?: 1 << ((1 << nkmp->p.width) - 1);
++	_nkmp.min_nk = nkmp->min_nk;
++	_nkmp.max_nk = nkmp->max_nk ?: UINT_MAX;
++	_nkmp.max_p_rate = nkmp->max_p_rate ?: UINT_MAX;
+ 
+ 	ccu_nkmp_find_best(parent_rate, rate, &_nkmp);
+ 
+diff --git a/drivers/clk/sunxi-ng/ccu_nkmp.h b/drivers/clk/sunxi-ng/ccu_nkmp.h
+index 111111111111..222222222222 100644
+--- a/drivers/clk/sunxi-ng/ccu_nkmp.h
++++ b/drivers/clk/sunxi-ng/ccu_nkmp.h
+@@ -29,6 +29,15 @@ struct ccu_nkmp {
+ 	unsigned int		fixed_post_div;
+ 	unsigned int		max_rate;
+ 
++	/*
++	 * Valid range for the N*K product (VCO constraint) and the maximum
++	 * output rate at which the P divider may still be used. Zero means
++	 * unrestricted.
++	 */
++	unsigned int		min_nk;
++	unsigned int		max_nk;
++	unsigned int		max_p_rate;
++
+ 	struct ccu_common	common;
+ };
+ 
+-- 
+Armbian
+

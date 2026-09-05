@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 18 Aug 2026 22:03:07 +0200
+Subject: nfc: nxp-nci: Complete proprietary command requests
+
+nxp_nci_post_setup() sends NXP_ACT_PROP_EXTN with nci_prop_cmd(), a
+synchronous request. The generic NCI core routes the proprietary (GID
+0xF) response to the driver's prop_ops table, but the driver registered
+none, so the response was logged as "unsupported rsp opcode 0xf02" and
+the request was never completed. It then blocked until the command
+timeout (~5 s), delaying every bring-up, spamming
+wait_for_completion...failed, and leaving the request machinery in a bad
+state for the commands that followed.
+
+Register a prop_ops handler that completes the request with the
+controller's status byte, the same way the fdp driver does. Bring-up no
+longer stalls and the proprietary configuration is applied cleanly.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/nfc/nxp-nci/core.c | 24 ++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/nfc/nxp-nci/core.c b/drivers/nfc/nxp-nci/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/nfc/nxp-nci/core.c
++++ b/drivers/nfc/nxp-nci/core.c
+@@ -277,6 +277,28 @@ static const struct nci_driver_ops nxp_nci_core_ops[] = {
+ 	},
+ };
+ 
++/*
++ * Complete the request for a proprietary command. The generic core has
++ * no handler for a proprietary (GID 0xF) response, so without this the
++ * command sent from .post_setup never completes and blocks bring-up for
++ * a full command timeout.
++ */
++static int nxp_nci_prop_rsp(struct nci_dev *ndev, struct sk_buff *skb)
++{
++	__u8 status = skb->data[0];
++
++	nci_req_complete(ndev, status);
++	return 0;
++}
++
++static const struct nci_driver_ops nxp_nci_prop_ops[] = {
++	{
++		/* NXP_ACT_PROP_EXTN */
++		.opcode = nci_opcode_pack(NCI_GID_PROPRIETARY, 0x02),
++		.rsp = nxp_nci_prop_rsp,
++	},
++};
++
+ static const struct nci_ops nxp_nci_ops = {
+ 	.open = nxp_nci_open,
+ 	.close = nxp_nci_close,
+@@ -286,6 +308,8 @@ static const struct nci_ops nxp_nci_ops = {
+ 	.get_rfprotocol = nxp_nci_get_rfprotocol,
+ 	.core_ops = nxp_nci_core_ops,
+ 	.n_core_ops = ARRAY_SIZE(nxp_nci_core_ops),
++	.prop_ops = nxp_nci_prop_ops,
++	.n_prop_ops = ARRAY_SIZE(nxp_nci_prop_ops),
+ };
+ 
+ int nxp_nci_probe(void *phy_id, struct device *pdev,
+-- 
+Armbian
+

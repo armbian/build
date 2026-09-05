@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 17:26:13 +0200
+Subject: media: gc2145: Keep the AEC off the fixed-value test patterns
+
+Every solid colour except black came out white on hardware. The fixed
+value is a level, and it was being programmed with the update gain bit
+set while the AEC was still running: metering a flat field drives the
+gain up until anything above zero saturates.
+
+Drop the update gain bit in fixed value mode and hold the AEC while such
+a pattern is selected. The hold goes through gc2145_update_aec_enable(),
+which already weighs the exposure mode and the 3A lock, so all three
+reasons to stop the AEC agree with each other whatever order the control
+handler applies them in.
+
+The colour-bar patterns are generated downstream of the gain and keep
+metering as before.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 20 ++++++++--
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -414,6 +414,8 @@ struct gc2145_dev {
+ 
+ 	bool pending_mode_change;
+ 	bool flips_grabbed;
++	/* a fixed-value test pattern must not be metered, see s_ctrl */
++	bool test_pattern_holds_aec;
+ 
+ 	u8 current_bank;
+ 
+@@ -795,7 +797,8 @@ static int gc2145_update_aec_enable(struct gc2145_dev *sensor)
+ {
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	bool run = ctrls->auto_exposure->val != V4L2_EXPOSURE_MANUAL &&
+-		   !(ctrls->aaa_lock->val & V4L2_LOCK_EXPOSURE);
++		   !(ctrls->aaa_lock->val & V4L2_LOCK_EXPOSURE) &&
++		   !sensor->test_pattern_holds_aec;
+ 
+ 	return gc2145_write(sensor, GC2145_P0_AEC_ENABLE, run ? 1 : 0);
+ }
+@@ -1549,6 +1552,7 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_TEST_PATTERN:
+ 		test1 = 0;
+ 		test2 = GC2145_DEBUG_MODE3_UPDATE_GAIN;
++		sensor->test_pattern_holds_aec = false;
+ 
+ 		if (val == GC2145_TEST_PATTERN_VGA_COLOR_BARS)
+ 			test1 = GC2145_DEBUG_MODE2_TEST_IMAGE;
+@@ -1558,10 +1562,16 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		else if (val == GC2145_TEST_PATTERN_SKIN_MAP)
+ 			test1 = GC2145_DEBUG_MODE2_SKIN_MAP;
+ 		else if (val >= GC2145_TEST_PATTERN_SOLID_COLOR) {
++			/*
++			 * The fixed value is a level, and both the update
++			 * gain bit and the AEC would amplify it: metering a
++			 * flat field drives the gain up until everything
++			 * except the black level saturates to white.
++			 */
+ 			test1 = GC2145_DEBUG_MODE2_TEST_IMAGE;
+ 			test2 = ((val - GC2145_TEST_PATTERN_SOLID_COLOR) << 4) |
+-				GC2145_DEBUG_MODE3_FIX_VALUE_MODE |
+-				GC2145_DEBUG_MODE3_UPDATE_GAIN;
++				GC2145_DEBUG_MODE3_FIX_VALUE_MODE;
++			sensor->test_pattern_holds_aec = true;
+ 		} else if (val != GC2145_TEST_PATTERN_DISABLED) {
+ 			dev_err(&sensor->i2c_client->dev, "test pattern out of range\n");
+ 			ret = -EINVAL;
+@@ -1573,6 +1583,10 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 			break;
+ 
+ 		ret = gc2145_write(sensor, GC2145_P0_DEBUG_MODE3, test2);
++		if (ret)
++			break;
++
++		ret = gc2145_update_aec_enable(sensor);
+ 		break;
+ 
+ 	default:
+-- 
+Armbian
+

@@ -1,0 +1,218 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 18:25:13 +0200
+Subject: media: gc2145: Give the automatic exposure a working envelope
+
+The AEC's seven exposure levels are the gears it drops through as the
+light goes, and every one of them was longer than a frame - so the
+sensor stretched the frame to make room and the frame interval and
+exposure maximum this driver reports stopped describing it. Measured on
+an 800x600 preview: the controls said 30fps and the sensor ran at 17.75,
+and V4L2_CID_EXPOSURE read back 1136 against a maximum of 666.
+
+The levels were also computed once when the mode was set up, while
+userspace sets the frame rate afterwards through V4L2_CID_VBLANK, so
+they described a frame length that no longer existed.
+
+Cap every gear at what fits in the current frame, on the last whole
+multiple of the mains period so the flicker quantisation survives, and
+recompute them whenever the frame length changes. Userspace asks for a
+longer exposure by lowering the frame rate, which lands back here.
+
+The AEC's gain ceiling was pinned at 0x50, well under the total gain
+clamp: lifting it doubled the measured frame luminance in a dim room
+with the sensor otherwise starved. Let it follow the clamp instead, and
+name the registers involved while here.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 129 +++++++---
+ 1 file changed, 92 insertions(+), 37 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -261,6 +261,13 @@
+ #define GC2145_AEC_MODE3_CENTRE_WEIGHT		GENMASK(6, 4)
+ #define GC2145_P1_AEC_ANTI_FLICKER_HI	0x125
+ #define GC2145_P1_AEC_EXP_LEVEL(n)	(0x127 + 2 * (n))
++#define GC2145_AEC_EXP_LEVELS			7
++#define GC2145_P1_AEC_MAX_PREGAIN	0x11f
++#define GC2145_P1_AEC_MAX_POSTGAIN	0x120
++#define GC2145_AEC_MAX_POSTGAIN			0xe0
++#define GC2145_P1_AEC_MAX_EXP_LEVEL	0x13c
++#define GC2145_AEC_MAX_EXP_LEVEL		GENMASK(6, 5)
++#define GC2145_P1_AEC_LEVEL_MAX_GAIN(n)	(0x135 + (n))
+ #define GC2145_P0_OUT_BUF_ENABLE	0xc2
+ 
+ /* }}} */
+@@ -1425,6 +1432,9 @@ static int gc2145_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+ 	return ret;
+ }
+ 
++static int gc2145_setup_aec_range(struct gc2145_dev *sensor,
++				  struct gc2145_sensor_params *params);
++
+ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+@@ -1501,11 +1511,25 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 
+ 	case V4L2_CID_ANALOGUE_GAIN:
+ 		ret = gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
++		if (ret)
++			break;
++
++		/* the AEC has its own ceiling, under the same clamp */
++		ret = gc2145_setup_aec_range(sensor, &sensor->params);
+ 		break;
+ 
+ 	case V4L2_CID_VBLANK:
+ 		ret = gc2145_write16(sensor, GC2145_P0_VBLANK_DELAY_HI,
+ 				     sensor->params.vb);
++		if (ret)
++			break;
++
++		/*
++		 * The frame just changed length and the AEC gears are
++		 * measured against it. Userspace sets the frame rate after
++		 * the mode is up, so this is not a rare path.
++		 */
++		ret = gc2145_setup_aec_range(sensor, &sensor->params);
+ 		break;
+ 
+ 	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
+@@ -2184,18 +2208,80 @@ static int gc2145_setup_aec(struct gc2145_dev *sensor,
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
++/*
++ * The envelope the AEC is allowed to work in.
++ *
++ * The seven exposure levels are the gears it drops through as the light
++ * goes. Left to themselves they keep stretching the frame, and then the
++ * frame interval and the exposure maximum this driver reports no longer
++ * describe the sensor - the AEC was measured running a 800x600 preview
++ * at 17.75fps while the controls said 30. So every gear is capped at
++ * what fits in a frame. Userspace asks for a longer exposure by lowering
++ * the frame rate through V4L2_CID_VBLANK, which lands back here.
++ *
++ * The gears only avoid flicker if they are whole multiples of the mains
++ * period, so the cap is the last whole multiple that still fits.
++ *
++ * The gain ceilings are the AEC's own, separate from the gain controls,
++ * and the pre gain one has to respect the same total gain clamp: asking
++ * the AEC for gain the clamp swallows just leaves the picture dark.
++ */
++static int gc2145_setup_aec_range(struct gc2145_dev *sensor,
++				  struct gc2145_sensor_params *params)
++{
++	unsigned long a_gain = sensor->ctrls.a_gain->val;
++	unsigned long step, slots, level;
++	int i;
++
++	step = gc2145_params_flicker_step(params, sensor->power_line_freq,
++					  GC2145_PCLK_RATE);
++
++	slots = min_t(unsigned long, gc2145_params_frame_lines(params),
++		      GC2145_EXPOSURE_REG_MAX);
++	if (step && slots >= step)
++		slots = round_down(slots, step);
++
++	gc2145_tx_start(sensor);
++
++	gc2145_tx_write16(sensor, GC2145_P1_AEC_ANTI_FLICKER_HI, step);
++
++	for (i = 0; i < GC2145_AEC_EXP_LEVELS; i++) {
++		level = step ? step * (i + 1) : slots;
++
++		gc2145_tx_write16(sensor, GC2145_P1_AEC_EXP_LEVEL(i),
++				  min(level, slots));
++		gc2145_tx_write8(sensor, GC2145_P1_AEC_LEVEL_MAX_GAIN(i),
++				 gc2145_pregain_max(a_gain));
++	}
++
++	/*
++	 * Which gear the AEC may climb to. Only the first four levels are
++	 * selectable, and they are all capped at a frame now, so let it
++	 * have the highest one.
++	 */
++	gc2145_tx_update_bits(sensor, GC2145_P1_AEC_MAX_EXP_LEVEL,
++			      GC2145_AEC_MAX_EXP_LEVEL,
++			      GC2145_AEC_MAX_EXP_LEVEL);
++
++	gc2145_tx_write8(sensor, GC2145_P1_AEC_MAX_PREGAIN,
++			 gc2145_pregain_max(a_gain));
++	gc2145_tx_write8(sensor, GC2145_P1_AEC_MAX_POSTGAIN,
++			 GC2145_AEC_MAX_POSTGAIN);
++
++	return gc2145_tx_commit(sensor);
++}
++
+ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 			     struct v4l2_subdev_state *state)
+ {
+ 	const struct v4l2_mbus_framefmt *fmt =
+ 		v4l2_subdev_state_get_format(state, 0);
+-	int ret, pad, i;
++	int ret, pad;
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pclk2;
+ 	unsigned long width = fmt->width;
+ 	unsigned long height = fmt->height;
+ 	const struct gc2145_pixfmt *pix_fmt;
+-	unsigned long step, lines, level;
+ 
+ 	pix_fmt = gc2145_find_format(fmt->code);
+ 	if (!pix_fmt) {
+@@ -2235,42 +2321,11 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor,
+ 	if (ret)
+ 		return ret;
+ 
+-	gc2145_tx_start(sensor);
+-
+-	/*
+-	 * Quantise the exposure the AEC picks to whole periods of the
+-	 * lighting flicker. The row period was already fitted to the mains
+-	 * so that this comes out close to a whole number of lines.
+-	 */
+-	step = gc2145_params_flicker_step(&params, sensor->power_line_freq,
+-					  GC2145_PCLK_RATE);
+-
+-	gc2145_tx_write16(sensor, GC2145_P1_AEC_ANTI_FLICKER_HI, step);
+-
+-	/*
+-	 * The seven exposure levels are the gears the AEC drops through as
+-	 * the light goes, each one stretching the frame further than the
+-	 * last. They only avoid flicker if they are whole multiples of the
+-	 * step above, so start at the first multiple that covers a frame
+-	 * and climb from there.
+-	 */
+-	lines = gc2145_params_frame_lines(&params);
+-	level = step ? round_up(lines, step) : lines;
+-
+-	for (i = 0; i < 7; i++) {
+-		gc2145_tx_write16(sensor, GC2145_P1_AEC_EXP_LEVEL(i),
+-				  min_t(unsigned long, level,
+-					GC2145_EXPOSURE_REG_MAX));
+-		level += step ? step : lines / 4;
+-
+-		// max dg gains
+-		gc2145_tx_write8(sensor, 0x135 + i, 0x50);
+-	}
++	ret = gc2145_setup_aec_range(sensor, &params);
++	if (ret)
++		return ret;
+ 
+-	// AEC max pre digital gain
+-	gc2145_tx_write8(sensor, 0x11f, 0x50);
+-	// AEC max post digital gain
+-	gc2145_tx_write8(sensor, 0x120, 0xe0);
++	gc2145_tx_start(sensor);
+ 
+ 	gc2145_tx_write8(sensor, GC2145_P0_ISP_OUT_FORMAT, pix_fmt->fmt_setup);
+ 
+-- 
+Armbian
+

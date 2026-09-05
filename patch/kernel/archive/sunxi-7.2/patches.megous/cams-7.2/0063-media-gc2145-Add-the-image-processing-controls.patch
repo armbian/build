@@ -1,0 +1,226 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:29:52 +0200
+Subject: media: gc2145: Add the image processing controls
+
+The ISP has brightness, contrast, saturation, edge enhancement and the
+canned colour effects, and none of them were reachable. The vendor
+driver has controls for the first three but every one of its register
+tables is empty, so they have never done anything there either.
+
+Add them, along with the fixed chroma the tinted effects work through,
+and the pixel pitch, which is what turns the crop rectangle into a field
+of view.
+
+The colour effect values are the ones the previous generation's
+application note lists; this sensor's own register list documents the
+same effect enumeration in the top nibble.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 137 +++++++++-
+ 1 file changed, 135 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -159,6 +159,11 @@
+ #define GC2145_P0_ISP_BLK_ENABLE3	0x82
+ #define GC2145_ISP_BLK_ENABLE3_AWB		BIT(1)
+ #define GC2145_P0_ISP_SPECIAL_EFFECT	0x83
++#define GC2145_SPECIAL_EFFECT_INVERT		BIT(0)
++#define GC2145_SPECIAL_EFFECT_FIXED_CBCR	BIT(1)
++#define GC2145_SPECIAL_EFFECT_EDGE_MAP1		BIT(2)
++#define GC2145_SPECIAL_EFFECT_EDGE_MAP2		BIT(3)
++#define GC2145_SPECIAL_EFFECT_SELECT		GENMASK(7, 4)
+ #define GC2145_P0_ISP_OUT_FORMAT	0x84
+ #define GC2145_P0_FRAME_START		0x85
+ #define GC2145_P0_SYNC_MODE		0x86
+@@ -217,6 +222,20 @@
+ 
+ #define GC2145_P0_AEC_ENABLE		0xb6
+ 
++/* YCP, page 2 */
++#define GC2145_P2_GLOBAL_SATURATION	0x2d0
++#define GC2145_P2_SATURATION_CB		0x2d1
++#define GC2145_P2_SATURATION_CR		0x2d2
++#define GC2145_SATURATION_UNITY			0x20
++#define GC2145_P2_LUMA_CONTRAST		0x2d3
++#define GC2145_CONTRAST_UNITY			0x40
++#define GC2145_P2_LUMA_OFFSET		0x2d5
++#define GC2145_P2_FIXED_CB		0x2da
++#define GC2145_P2_FIXED_CR		0x2db
++
++/* interpolation and edge enhancement, page 2 */
++#define GC2145_P2_EDGE_EFFECT		0x297
++
+ /* AEC, page 1 */
+ #define GC2145_P1_AEC_MODE3		0x10c
+ #define GC2145_AEC_MODE3_CENTRE_WEIGHT		GENMASK(6, 4)
+@@ -313,10 +332,11 @@ struct gc2145_ctrls {
+ 	struct v4l2_ctrl *vflip;
+ 	struct v4l2_ctrl *pl_freq;
+ 	struct v4l2_ctrl *colorfx;
++	struct v4l2_ctrl *colorfx_cbcr;
+ 	struct v4l2_ctrl *brightness;
+ 	struct v4l2_ctrl *saturation;
+ 	struct v4l2_ctrl *contrast;
+-	struct v4l2_ctrl *gamma;
++	struct v4l2_ctrl *sharpness;
+ 	struct v4l2_ctrl *test_pattern;
+ };
+ 
+@@ -723,6 +743,37 @@ static inline struct v4l2_subdev *ctrl_to_sd(struct v4l2_ctrl *ctrl)
+ }
+ 
+ 
++/* Image processing */
++
++/*
++ * The special effect register selects one of a set of canned effects in
++ * its top nibble and turns on inversion, the edge maps and the fixed
++ * chroma in the bottom one. The values are the ones the application
++ * note for the previous generation lists, which the effect enumeration
++ * in this sensor's own register list agrees with.
++ */
++static int gc2145_set_colorfx(struct gc2145_dev *sensor, s32 val)
++{
++	static const u8 effects[] = {
++		[V4L2_COLORFX_NONE]		= 0x00,
++		[V4L2_COLORFX_BW]		= 0x12,
++		[V4L2_COLORFX_SEPIA]		= 0x82,
++		[V4L2_COLORFX_NEGATIVE]		= 0x01,
++		[V4L2_COLORFX_EMBOSS]		= 0x06,
++		[V4L2_COLORFX_SKETCH]		= 0x08,
++		[V4L2_COLORFX_SKY_BLUE]		= 0x62,
++		[V4L2_COLORFX_GRASS_GREEN]	= 0x52,
++		[V4L2_COLORFX_SOLARIZATION]	= 0x90,
++		[V4L2_COLORFX_ANTIQUE]		= 0x82,
++		[V4L2_COLORFX_SET_CBCR]		= GC2145_SPECIAL_EFFECT_FIXED_CBCR,
++	};
++
++	if (val < 0 || val >= ARRAY_SIZE(effects))
++		return -EINVAL;
++
++	return gc2145_write(sensor, GC2145_P0_ISP_SPECIAL_EFFECT, effects[val]);
++}
++
+ /* Exposure and white balance */
+ 
+ /*
+@@ -1422,6 +1473,39 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 			ret = gc2145_update_awb_enable(sensor);
+ 		break;
+ 
++	case V4L2_CID_BRIGHTNESS:
++		/* a signed offset added to the luma */
++		ret = gc2145_write(sensor, GC2145_P2_LUMA_OFFSET, val);
++		break;
++
++	case V4L2_CID_CONTRAST:
++		ret = gc2145_write(sensor, GC2145_P2_LUMA_CONTRAST, val);
++		break;
++
++	case V4L2_CID_SATURATION:
++		gc2145_tx_start(sensor);
++		gc2145_tx_write8(sensor, GC2145_P2_SATURATION_CB, val);
++		gc2145_tx_write8(sensor, GC2145_P2_SATURATION_CR, val);
++		ret = gc2145_tx_commit(sensor);
++		break;
++
++	case V4L2_CID_SHARPNESS:
++		/* the coarse and the fine edge effect share a register */
++		ret = gc2145_write(sensor, GC2145_P2_EDGE_EFFECT,
++				   val << 4 | val);
++		break;
++
++	case V4L2_CID_COLORFX:
++		ret = gc2145_set_colorfx(sensor, val);
++		break;
++
++	case V4L2_CID_COLORFX_CBCR:
++		gc2145_tx_start(sensor);
++		gc2145_tx_write8(sensor, GC2145_P2_FIXED_CB, val >> 8);
++		gc2145_tx_write8(sensor, GC2145_P2_FIXED_CR, val);
++		ret = gc2145_tx_commit(sensor);
++		break;
++
+ 	case V4L2_CID_EXPOSURE_METERING:
+ 		/*
+ 		 * The AEC weights a centre window against the rest of the
+@@ -1499,6 +1583,12 @@ static const struct v4l2_ctrl_ops gc2145_ctrl_ops = {
+ 	.s_ctrl = gc2145_s_ctrl,
+ };
+ 
++/* the pixel pitch, in nanometres */
++static const struct v4l2_area gc2145_cell_size = {
++	.width = 1750,
++	.height = 1750,
++};
++
+ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ {
+ 	const struct v4l2_ctrl_ops *ops = &gc2145_ctrl_ops;
+@@ -1514,7 +1604,7 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
+ 	unsigned int i;
+-	u64 wb_mask;
++	u64 wb_mask, colorfx_mask;
+ 	int ret;
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+@@ -1618,6 +1708,49 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 					 BIT(V4L2_EXPOSURE_METERING_CENTER_WEIGHTED)),
+ 				       V4L2_EXPOSURE_METERING_CENTER_WEIGHTED);
+ 
++	/*
++	 * Image processing. The saturation and contrast registers are
++	 * fixed point with the unity values below, the luma offset is a
++	 * signed byte and the edge effect is a plain strength.
++	 */
++	ctrls->brightness = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BRIGHTNESS,
++					      -128, 127, 1, 0);
++	ctrls->contrast = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_CONTRAST,
++					    0, 255, 1, GC2145_CONTRAST_UNITY);
++	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,
++					      0, 255, 1,
++					      GC2145_SATURATION_UNITY);
++	ctrls->sharpness = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SHARPNESS,
++					     0, 15, 1, 4);
++
++	colorfx_mask = ~(BIT(V4L2_COLORFX_NONE) |
++			 BIT(V4L2_COLORFX_BW) |
++			 BIT(V4L2_COLORFX_SEPIA) |
++			 BIT(V4L2_COLORFX_NEGATIVE) |
++			 BIT(V4L2_COLORFX_EMBOSS) |
++			 BIT(V4L2_COLORFX_SKETCH) |
++			 BIT(V4L2_COLORFX_SKY_BLUE) |
++			 BIT(V4L2_COLORFX_GRASS_GREEN) |
++			 BIT(V4L2_COLORFX_SOLARIZATION) |
++			 BIT(V4L2_COLORFX_ANTIQUE) |
++			 BIT(V4L2_COLORFX_SET_CBCR));
++
++	ctrls->colorfx = v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_COLORFX,
++						V4L2_COLORFX_SET_CBCR,
++						colorfx_mask,
++						V4L2_COLORFX_NONE);
++	ctrls->colorfx_cbcr = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_COLORFX_CBCR,
++						0, 0xffff, 1, 0);
++
++	/*
++	 * The pixel pitch, which is what turns the crop rectangle into a
++	 * field of view.
++	 */
++	v4l2_ctrl_new_std_compound(hdl, NULL, V4L2_CID_UNIT_CELL_SIZE,
++				   v4l2_ctrl_ptr_create((void *)&gc2145_cell_size),
++				   v4l2_ctrl_ptr_create(NULL),
++				   v4l2_ctrl_ptr_create(NULL));
++
+ 	/* V/H flips */
+ 	ctrls->hflip = v4l2_ctrl_new_std(hdl, ops,
+ 					 V4L2_CID_HFLIP, 0, 1, 1, 0);
+-- 
+Armbian
+

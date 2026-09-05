@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 21:47:32 +0200
+Subject: ASoC: sun8i-codec: Clear stale HMIC pendings when arming interrupts
+
+The HMIC pending bits latch regardless of the interrupt enable bits.
+Two consequences seen on the A711: a key-up latched by the insertion
+transient fires as a phantom key event the instant the button
+interrupts are armed for a freshly identified headset, and plug
+pendings latched before jack detection is set up replay as soon as
+the IRQ is requested.
+
+Write-1-clear the respective bits just before enabling them - in
+enable_jack_detect() for the plug pair (also fine on the A64, where
+this write previously only zeroed the MDATA discard field), and in
+set_button_irqs() for the AC100-only key-up/data pair.
+
+The plug in/out burst when the sense ADC first powers up stays: it is
+a real crossing, the 100ms debounce resolves it correctly, and it is
+also what detects a headset that was already inserted at boot.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/sun8i-codec.c | 22 +++++++++-
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -1555,6 +1555,17 @@ static void sun8i_codec_set_button_irqs(struct sun8i_codec *scodec,
+ 	int irq_mask = BIT(SUN8I_HMIC_CTRL1_HMIC_DATA_IRQ_EN) |
+ 		       BIT(SUN8I_HMIC_CTRL1_HMIC_KEYUP_IRQ_EN);
+ 
++	/*
++	 * The pending bits latch regardless of the enable bits, and the
++	 * insertion transient crosses the key threshold on its way -
++	 * clear the leftovers before arming, or the interrupt fires a
++	 * phantom key event the moment it is enabled.
++	 */
++	if (enable)
++		regmap_write(scodec->regmap, SUN8I_HMIC_STS,
++			     BIT(SUN8I_HMIC_STS_HMIC_KEYUP_IRQ_ST) |
++			     BIT(SUN8I_HMIC_STS_HMIC_DATA_IRQ_ST));
++
+ 	regmap_update_bits(scodec->regmap, SUN8I_HMIC_CTRL1,
+ 			   irq_mask, enable ? irq_mask : 0);
+ }
+@@ -1791,8 +1802,15 @@ static int sun8i_codec_enable_jack_detect(struct snd_soc_component *component,
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL1, variant->hmic_ctrl1);
+ 	regmap_write(scodec->regmap, SUN8I_HMIC_CTRL2, variant->hmic_ctrl2);
+ 
+-	/* Do not discard any MDATA, enable user written MDATA threshold. */
+-	regmap_write(scodec->regmap, SUN8I_HMIC_STS, 0);
++	/*
++	 * Do not discard any MDATA, enable user written MDATA threshold,
++	 * and clear plug pendings latched while nobody was listening, so
++	 * that requesting the IRQ does not replay stale events.
++	 */
++	regmap_write(scodec->regmap, SUN8I_HMIC_STS,
++		     BIT(SUN8I_HMIC_STS_JACK_OUT_IRQ_ST) |
++		     BIT(SUN8I_HMIC_STS_JACK_IN_IRQ_ST) |
++		     BIT(SUN8I_HMIC_STS_HMIC_DATA_IRQ_ST));
+ 
+ 	regmap_set_bits(scodec->regmap, SUN8I_HMIC_CTRL1,
+ 			BIT(SUN8I_HMIC_CTRL1_JACK_OUT_IRQ_EN) |
+-- 
+Armbian
+

@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 27 Jul 2026 21:58:56 +0200
+Subject: Input: goodix - enable runtime PM before registering input devices
+
+Input handlers can open the input device synchronously during
+input_register_device(), and the open callback resumes the controller
+via pm_runtime_resume_and_get(). With runtime PM enabled only at the
+end of goodix_configure_dev(), such an open fails with -EACCES.
+
+Enable runtime PM before registering the input devices and unwind it
+on the error paths. Note that a handler holding the device open (e.g.
+the VT keyboard on ACPI tablets with touchkeys) also holds a runtime
+PM reference, keeping the controller powered - same behavior as before
+the runtime PM conversion.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/input/touchscreen/goodix.c | 42 ++++++----
+ 1 file changed, 27 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/input/touchscreen/goodix.c b/drivers/input/touchscreen/goodix.c
+index 111111111111..222222222222 100644
+--- a/drivers/input/touchscreen/goodix.c
++++ b/drivers/input/touchscreen/goodix.c
+@@ -1308,11 +1308,27 @@ static int goodix_configure_dev(struct goodix_ts_data *ts)
+ 		input_set_poll_interval(ts->input_dev, GOODIX_POLL_INTERVAL_MS);
+ 	}
+ 
++	/*
++	 * Enable runtime power management before registering the input
++	 * devices: input handlers may open the device right during
++	 * registration and the open callback resumes the device through
++	 * runtime PM. The device is suspended when no one has the input
++	 * device open, and resumed on open. Keep it active across the
++	 * registration, then drop the reference so autosuspend can kick
++	 * in when the device stays unopened.
++	 */
++	pm_runtime_set_autosuspend_delay(&ts->client->dev,
++					 GOODIX_AUTOSUSPEND_DELAY_MS);
++	pm_runtime_use_autosuspend(&ts->client->dev);
++	pm_runtime_set_active(&ts->client->dev);
++	pm_runtime_get_noresume(&ts->client->dev);
++	pm_runtime_enable(&ts->client->dev);
++
+ 	error = input_register_device(ts->input_dev);
+ 	if (error) {
+ 		dev_err(&ts->client->dev,
+ 			"Failed to register input device: %d", error);
+-		return error;
++		goto err_pm;
+ 	}
+ 
+ 	/*
+@@ -1324,31 +1340,27 @@ static int goodix_configure_dev(struct goodix_ts_data *ts)
+ 	 */
+ 	error = goodix_create_pen_input(ts);
+ 	if (error)
+-		return error;
++		goto err_pm;
+ 
+ 	ts->irq_flags = goodix_irq_flags[ts->int_trigger_type] | IRQF_ONESHOT;
+ 	error = goodix_request_irq(ts);
+ 	if (error) {
+ 		dev_err(&ts->client->dev, "request IRQ failed: %d\n", error);
+-		return error;
++		goto err_pm;
+ 	}
+ 
+-	/*
+-	 * Enable runtime power management. The device is suspended when
+-	 * no userspace has the input device open, and resumed on open.
+-	 * Keep it active across the enable, then drop the reference so
+-	 * autosuspend can kick in when the device stays unopened.
+-	 */
+-	pm_runtime_set_autosuspend_delay(&ts->client->dev,
+-					 GOODIX_AUTOSUSPEND_DELAY_MS);
+-	pm_runtime_use_autosuspend(&ts->client->dev);
+-	pm_runtime_set_active(&ts->client->dev);
+-	pm_runtime_get_noresume(&ts->client->dev);
+-	pm_runtime_enable(&ts->client->dev);
+ 	pm_runtime_mark_last_busy(&ts->client->dev);
+ 	pm_runtime_put_autosuspend(&ts->client->dev);
+ 
+ 	return 0;
++
++err_pm:
++	/* The device is still powered on, keep the RPM status active. */
++	pm_runtime_put_noidle(&ts->client->dev);
++	pm_runtime_disable(&ts->client->dev);
++	pm_runtime_dont_use_autosuspend(&ts->client->dev);
++
++	return error;
+ }
+ 
+ /**
+-- 
+Armbian
+
