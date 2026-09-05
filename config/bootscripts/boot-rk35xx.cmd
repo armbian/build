@@ -34,7 +34,11 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-# get PARTUUID of first partition on SD/eMMC the boot script was loaded from
+# get PARTUUID of first partition on SD/eMMC the boot script was loaded from. Clear
+# it first: on a non-mmc devtype, or if the lookup itself fails, U-Boot leaves the
+# variable untouched rather than clearing it, so a stale PARTUUID from an earlier
+# successful lookup could otherwise be reused below.
+setenv partuuid
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
 
 # armbianEnv.txt normally sets rootdev explicitly (e.g. a UUID= override). If it
