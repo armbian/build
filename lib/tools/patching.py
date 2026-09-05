@@ -568,7 +568,7 @@ if apply_patches_to_git and readme_markdown is not None and git_repo is not None
 # Use Rich.
 from rich.console import Console
 from rich.table import Table
-from rich.syntax import Syntax
+from rich.text import Text
 
 CONSOLE_FALLBACK_WIDTH = 160   # no terminal to measure (CI logs, piped output)
 CONSOLE_WIDTH_MARGIN = 12      # columns reserved for table borders and cell padding
@@ -616,26 +616,26 @@ if True:
 # Use Rich to print a summary of the failed patches and their rejects
 if any_failed_to_apply:
 	summary_table = Table(title="Summary of failed patches", show_header=True, show_lines=True, box=rich.box.ROUNDED)
+	# Small minima so the three columns still fit (and fold) down to
+	# CONSOLE_MIN_WIDTH; with min_width=20 on the output column rich crops the
+	# Rejects column on terminals narrower than ~75 columns instead of folding.
 	summary_table.add_column("Patch", overflow="fold", min_width=5, max_width=20)
-	summary_table.add_column("Patching output", overflow="fold", min_width=20, max_width=40)
-	summary_table.add_column("Rejects")
+	summary_table.add_column("Patching output", overflow="fold", min_width=10, max_width=40)
+	# Rejects are full of long unbroken tokens (paths, dts identifiers); folding
+	# keeps every character on screen at any terminal width, where word-wrapping
+	# would elide them with an ellipsis.
+	summary_table.add_column("Rejects", overflow="fold")
 	for one_patch in failed_to_apply_list:
 		reject_compo = "No rejects"
 		if one_patch.rejects is not None:
-			reject_compo = Syntax(one_patch.rejects, "diff", line_numbers=False, word_wrap=True)
+			reject_compo = Text(one_patch.rejects)  # Text, not markup: rejects carry literal brackets
 
 		summary_table.add_row(
 			one_patch.rich_name_status(),
 			one_patch.rich_patch_output(),
 			reject_compo
 		)
-	# Reject diagnostics need room regardless of the reader's terminal: rich's
-	# Syntax word-wrap elides long unbroken diff lines with an ellipsis when the
-	# column is narrow. Give this table at least the fallback width (so a narrow
-	# terminal still gets room), but the full adaptive width when it is wider, so
-	# a wide terminal keeps every reject line it could show before.
-	console_failed = Console(color_system="standard", width=max(console_width, CONSOLE_FALLBACK_WIDTH), highlight=False)
-	console_failed.print(summary_table)
+	console.print(summary_table)
 
 if exit_with_exception is not None:
 	raise exit_with_exception
