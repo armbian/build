@@ -81,6 +81,8 @@ function post_family_tweaks_bsp__ayn-odin2_firmware() {
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/dropbear $destination/etc/initramfs-tools/scripts/init-premount/
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/kill-dropbear $destination/etc/initramfs-tools/scripts/init-bottom/
 
+	install -Dm755 $SRC/packages/bsp/ayn-odin2/zz-update-abl-kernel $destination/etc/kernel/postinst.d/zz-update-abl-kernel
+
 	return 0
 }
 
