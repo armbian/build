@@ -34,9 +34,10 @@ if [[ "${WITH_GRUB}" == "yes" ]]; then
 	enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
 else
 	declare -g BOOTFS_TYPE="fat"
-	declare -g BOOTSIZE="256"
+	declare -g BOOTSIZE="512"
 	declare -g IMAGE_PARTITION_TABLE="gpt"
 	declare -g BOOTIMG_CMDLINE_EXTRA="clk_ignore_unused pd_ignore_unused rw quiet rootwait"
+	declare -g BOOT_FDT_FILE="qcom/qcs8550-${BOARD}.dtb"
 
 	function pre_umount_final_image__update_ABL_settings() {
 		if [ -z "$BOOTFS_TYPE" ]; then
@@ -79,6 +80,8 @@ function post_family_tweaks_bsp__ayn-odin2_firmware() {
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/usb-gadget-initramfs-premount $destination/etc/initramfs-tools/scripts/init-premount/usb-gadget
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/dropbear $destination/etc/initramfs-tools/scripts/init-premount/
 	install -Dm655 $SRC/packages/bsp/usb-gadget-network/kill-dropbear $destination/etc/initramfs-tools/scripts/init-bottom/
+
+	install -Dm755 $SRC/packages/bsp/ayn-odin2/zz-update-abl-kernel $destination/etc/kernel/postinst.d/zz-update-abl-kernel
 
 	return 0
 }

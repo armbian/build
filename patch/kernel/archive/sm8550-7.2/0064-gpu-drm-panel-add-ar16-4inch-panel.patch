@@ -1,0 +1,464 @@
+From 894e7c87039d9eacc00188250aa6454907b91874 Mon Sep 17 00:00:00 2001
+From: danyi <mydanyi@users.noreply.github.com>
+Date: Mon, 10 Aug 2026 05:24:58 +0800
+Subject: [PATCH] drm/panel: add AYANEO Pocket S Mini AR16 panel
+
+Add support for the 1280x960 AR16 video-mode panel used by the AYANEO
+Pocket S Mini. The driver manages the three panel supplies, reset GPIO,
+backlight, orientation, and the stock four-lane MIPI DSI command sequence.
+
+The initialization data was recovered from the shipping device tree; no
+panel firmware is embedded or updated.
+
+Signed-off-by: danyi <mydanyi@users.noreply.github.com>
+---
+ drivers/gpu/drm/panel/Kconfig            |  14 +
+ drivers/gpu/drm/panel/Makefile           |   1 +
+ drivers/gpu/drm/panel/panel-ar16-4inch.c | 401 +++++++++++++++++++++++
+ 3 files changed, 416 insertions(+)
+ create mode 100644 drivers/gpu/drm/panel/panel-ar16-4inch.c
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 2365617..5d27a91 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -1312,6 +1312,20 @@ config DRM_PANEL_AYANEO_WT0600_1K
+ 
+ 	  To compile this driver as a module, choose M here.
+ 
++config DRM_PANEL_AYANEO_AR16_4INCH
++	tristate "AYANEO AR16 4-inch video mode panel"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	select DRM_DISPLAY_HELPER
++	help
++	  Say Y here if you want to enable support for the 1280x960 60 Hz
++	  AR16 4-inch video mode panel used by the AYANEO Pocket S Mini.
++	  The driver controls the panel reset, supply rails and backlight, and
++	  sends the stock initialization sequence over a four-lane DSI link.
++
++	  To compile this driver as a module, choose M here.
++
+ config DRM_PANEL_XINPENG_XPP055C272
+ 	tristate "Xinpeng XPP055C272 panel driver"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index 729a511..b005c4e 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -129,4 +129,5 @@ obj-$(CONFIG_DRM_PANEL_VISIONOX_R66451) += panel-visionox-r66451.o
+ obj-$(CONFIG_DRM_PANEL_WIDECHIPS_WS2401) += panel-widechips-ws2401.o
+ obj-$(CONFIG_DRM_PANEL_AYANEO_WT0600_2K) += panel-wt0600-2k.o
+ obj-$(CONFIG_DRM_PANEL_AYANEO_WT0600_1K) += panel-wt0600-1k.o
++obj-$(CONFIG_DRM_PANEL_AYANEO_AR16_4INCH) += panel-ar16-4inch.o
+ obj-$(CONFIG_DRM_PANEL_XINPENG_XPP055C272) += panel-xinpeng-xpp055c272.o
+diff --git a/drivers/gpu/drm/panel/panel-ar16-4inch.c b/drivers/gpu/drm/panel/panel-ar16-4inch.c
+new file mode 100644
+index 0000000..141da42
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-ar16-4inch.c
+@@ -0,0 +1,401 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * DRM driver for the AYANEO Pocket S Mini AR16 panel.
++ *
++ * The mode, reset sequence and DSI command stream were extracted from the
++ * live stock Android device tree. No panel firmware is embedded or updated.
++ *
++ * Copyright (c) 2026 ROCKNIX contributors
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct ar16_4inch {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data *supplies;
++	enum drm_panel_orientation orientation;
++};
++
++static const struct regulator_bulk_data ar16_4inch_supplies[] = {
++	{ .supply = "avdd" },
++	{ .supply = "vci" },
++	{ .supply = "vddio" },
++	{ .supply = "avee" },
++};
++
++static inline struct ar16_4inch *to_ar16_4inch(struct drm_panel *panel)
++{
++	return container_of(panel, struct ar16_4inch, panel);
++}
++
++static void ar16_4inch_reset(struct ar16_4inch *ctx)
++{
++	/* Stock physical sequence: high 10 ms, low 10 ms, high 10 ms. */
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++}
++
++static int ar16_4inch_on(struct ar16_4inch *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xea, 0x07);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xeb, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x05, 0x19);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0a, 0x86);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x14, 0x58);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x15, 0x58);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, 0x32);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x28, 0x1f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x29, 0x29);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x63);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2f, 0xf3);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x39, 0x70);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x01, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x02, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x09);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x04, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x05, 0x4c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x06, 0x0b);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x07, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x08, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x09, 0x0e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0a, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0b, 0x5f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0c, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0d, 0x17);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0e, 0x3e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0f, 0x3d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x3f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x20, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x21, 0x0b);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x22, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x23, 0x03);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x24, 0x08);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x25, 0x40);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x26, 0x0b);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x27, 0x0a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x28, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x29, 0x0e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x5f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2c, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2d, 0x17);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2e, 0x3e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2f, 0x3d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x30, 0x3f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x01, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x02, 0xe0);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x04, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x06, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x07, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x08, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x09, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0a, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0b, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x20, 0x40);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x40, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x41, 0x60);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x01, 0x09);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x02, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x07, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x08, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x09, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x08);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x11, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x12, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x13, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x19, 0x90);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x1a, 0x77);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x23, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x30, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x31, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x32, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x33, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x34, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0xb4);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x36, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x37, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x38, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x39, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x3a, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x40, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x41, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x43, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x44, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x45, 0x81);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x46, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x47, 0x03);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x23);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x01, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x02, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x06, 0xcd);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x08, 0x67);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x09, 0x45);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0a, 0x23);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0b, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x07);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x01, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x02, 0x16);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x16);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x04, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x05, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x06, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x07, 0x12);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x08, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x09, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0a, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0b, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0c, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0d, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0e, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0f, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x3c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x11, 0x3c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x12, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x13, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x14, 0x21);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x15, 0x21);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x20, 0x15);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x21, 0x15);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x22, 0x17);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x23, 0x17);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x24, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x25, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x26, 0x13);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x27, 0x13);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x28, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x29, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2c, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2d, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2e, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2f, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x30, 0x3c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x31, 0x3c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x32, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x33, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x34, 0x21);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x21);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x08);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x12, 0xda);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x13, 0x9b);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x18, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x20, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2c, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x4b, 0xa0);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x61, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x00, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xee, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xea, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xeb, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x36, 0x03);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 200);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	return dsi_ctx.accum_err;
++}
++
++static int ar16_4inch_off(struct ar16_4inch *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x28, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 10);
++
++	return dsi_ctx.accum_err;
++}
++
++static int ar16_4inch_prepare(struct drm_panel *panel)
++{
++	struct ar16_4inch *ctx = to_ar16_4inch(panel);
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(ar16_4inch_supplies),
++				    ctx->supplies);
++	if (ret < 0)
++		return ret;
++
++	msleep(20);
++	ar16_4inch_reset(ctx);
++
++	ret = ar16_4inch_on(ctx);
++	if (ret < 0) {
++		dev_err(panel->dev, "failed to initialize panel: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		regulator_bulk_disable(ARRAY_SIZE(ar16_4inch_supplies),
++				       ctx->supplies);
++	}
++
++	return ret;
++}
++
++static int ar16_4inch_unprepare(struct drm_panel *panel)
++{
++	struct ar16_4inch *ctx = to_ar16_4inch(panel);
++	int ret;
++
++	ret = ar16_4inch_off(ctx);
++	if (ret < 0)
++		dev_err(panel->dev, "failed to uninitialize panel: %d\n", ret);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ARRAY_SIZE(ar16_4inch_supplies), ctx->supplies);
++
++	return 0;
++}
++
++static const struct drm_display_mode ar16_4inch_mode = {
++	.clock = (1280 + 60 + 32 + 32) *
++		 (960 + 16 + 8 + 8) * 60 / 1000,
++	.hdisplay = 1280,
++	.hsync_start = 1280 + 60,
++	.hsync_end = 1280 + 60 + 32,
++	.htotal = 1280 + 60 + 32 + 32,
++	.vdisplay = 960,
++	.vsync_start = 960 + 16,
++	.vsync_end = 960 + 16 + 8,
++	.vtotal = 960 + 16 + 8 + 8,
++	.width_mm = 102,
++	.height_mm = 76,
++	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
++};
++
++static int ar16_4inch_get_modes(struct drm_panel *panel,
++				struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &ar16_4inch_mode);
++}
++
++static enum drm_panel_orientation
++ar16_4inch_get_orientation(struct drm_panel *panel)
++{
++	struct ar16_4inch *ctx = to_ar16_4inch(panel);
++
++	return ctx->orientation;
++}
++
++static const struct drm_panel_funcs ar16_4inch_panel_funcs = {
++	.prepare = ar16_4inch_prepare,
++	.unprepare = ar16_4inch_unprepare,
++	.get_modes = ar16_4inch_get_modes,
++	.get_orientation = ar16_4inch_get_orientation,
++};
++
++static int ar16_4inch_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct ar16_4inch *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct ar16_4inch, panel,
++				   &ar16_4inch_panel_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = devm_regulator_bulk_get_const(dev,
++					    ARRAY_SIZE(ar16_4inch_supplies),
++					    ar16_4inch_supplies, &ctx->supplies);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to get regulators\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "failed to get reset GPIO\n");
++
++	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	if (ret < 0 && ret != -ENODEV)
++		return dev_err_probe(dev, ret, "failed to get orientation\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO |
++			  MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
++			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
++
++	ctx->panel.prepare_prev_first = true;
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "failed to attach DSI device\n");
++	}
++
++	return 0;
++}
++
++static void ar16_4inch_remove(struct mipi_dsi_device *dsi)
++{
++	struct ar16_4inch *ctx = mipi_dsi_get_drvdata(dsi);
++
++	mipi_dsi_detach(dsi);
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id ar16_4inch_of_match[] = {
++	{ .compatible = "ayaneo,ar16-4inch-panel" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, ar16_4inch_of_match);
++
++static struct mipi_dsi_driver ar16_4inch_driver = {
++	.probe = ar16_4inch_probe,
++	.remove = ar16_4inch_remove,
++	.driver = {
++		.name = "panel-ar16-4inch",
++		.of_match_table = ar16_4inch_of_match,
++	},
++};
++module_mipi_dsi_driver(ar16_4inch_driver);
++
++MODULE_AUTHOR("ROCKNIX contributors");
++MODULE_DESCRIPTION("DRM driver for AYANEO Pocket S Mini AR16 panel");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0.windows.3
