@@ -435,7 +435,8 @@ class PatchInPatchFile:
 		# log.debug(f"Rejects file is going to be '{rejects_file}'...")
 
 		proc = subprocess.run(
-			["patch", "--batch", "-p1", "-N", f"--reject-file={rejects_file}", "--quoting-style=c"],
+			# Unified rejects regardless of the input patch format: rich_rejects() styles lines by their +/-/@@ prefix.
+			["patch", "--batch", "-p1", "-N", "--reject-format=unified", f"--reject-file={rejects_file}", "--quoting-style=c"],
 			cwd=working_dir,
 			input=real_input,
 			stdout=subprocess.PIPE,
