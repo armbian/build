@@ -568,7 +568,6 @@ if apply_patches_to_git and readme_markdown is not None and git_repo is not None
 # Use Rich.
 from rich.console import Console
 from rich.table import Table
-from rich.text import Text
 
 CONSOLE_FALLBACK_WIDTH = 160   # no terminal to measure (CI logs, piped output)
 CONSOLE_WIDTH_MARGIN = 12      # columns reserved for table borders and cell padding
@@ -628,7 +627,7 @@ if any_failed_to_apply:
 	for one_patch in failed_to_apply_list:
 		reject_compo = "No rejects"
 		if one_patch.rejects is not None:
-			reject_compo = Text(one_patch.rejects)  # Text, not markup: rejects carry literal brackets
+			reject_compo = one_patch.rich_rejects()
 
 		summary_table.add_row(
 			one_patch.rich_name_status(),
