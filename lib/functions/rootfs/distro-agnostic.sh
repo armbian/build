@@ -278,6 +278,11 @@ function install_distribution_agnostic() {
 			run_host_command_logged echo "fdtfile=${BOOT_FDT_FILE}" ">>" "${SDCARD}/boot/armbianEnv.txt"
 		fi
 
+		if [[ -n $BOOT_FDT_FILE_FALLBACK && -f "${SDCARD}"/boot/armbianEnv.txt ]]; then
+			display_alert "Adding to armbianEnv.txt" "fdtfile_fallback=${BOOT_FDT_FILE_FALLBACK}" "debug"
+			run_host_command_logged echo "fdtfile_fallback=${BOOT_FDT_FILE_FALLBACK}" ">>" "${SDCARD}/boot/armbianEnv.txt"
+		fi
+
 	fi
 
 	# initial date for fake-hwclock
