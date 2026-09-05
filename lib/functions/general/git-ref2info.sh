@@ -197,7 +197,7 @@ function memoized_git_ref_to_info() {
 					esac
 					;;
 
-				"https://gitlab.com/"* | "https://source.denx.de/"* | "https://gitlab.collabora.com/"*)
+				"https://gitlab.com/"* | "https://git.u-boot-project.org/"* | "https://source.denx.de/"* | "https://gitlab.collabora.com/"*)
 					# GitLab is more complex than GitHub, there can be more levels.
 					# This code is incomplete... but it works for now.
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git

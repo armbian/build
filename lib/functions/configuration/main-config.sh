@@ -275,6 +275,9 @@ function do_main_configuration() {
 		gitee)
 			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
 			;;
+		u-boot-project)
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://git.u-boot-project.org/u-boot/u-boot.git'
+			;;
 		denx)
 			declare -g -r MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 			;;
