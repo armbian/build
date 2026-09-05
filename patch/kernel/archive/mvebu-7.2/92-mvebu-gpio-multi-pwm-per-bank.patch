@@ -37,6 +37,14 @@ While reworking the request path:
   duplicate request before the sleeping descriptor request.
 - get_state() now reports the per-line blink-enable bit
   (GPIO_BLINK_EN & BIT(hwpwm)) instead of "any line on the bank enabled".
+- free() clears the line's blink-enable and routing bits before the
+  counter returns to the pool, so a released line does not keep blinking
+  to the duty its counter's next owner programs.
+- a request defers only while a bank that owes a counter has yet to
+  publish it. The pool sizes itself from the gpio0/gpio1 aliases that
+  carry a "pwm" register range - the same banks that can own a counter -
+  so once they have all published, an exhausted pool answers -EBUSY and a
+  sysfs export reports a real error rather than -EPROBE_DEFER.
 
 This is a fresh reimplementation of the Kobol fan patch, rebased onto the
 post-LTS gpio-mvebu.c rework (devm_pwmchip_alloc / pwmchip_get_drvdata).
@@ -45,14 +53,14 @@ Co-authored-by: Rosen Penev <rosenp@gmail.com>
 Assisted-by: Claude:claude-opus-4.8
 Signed-off-by: Igor Velkov <325961+iav@users.noreply.github.com>
 ---
- drivers/gpio/gpio-mvebu.c | 335 +++++++---
- 1 file changed, 253 insertions(+), 82 deletions(-)
+ drivers/gpio/gpio-mvebu.c | 389 ++++++++--
+ 1 file changed, 307 insertions(+), 82 deletions(-)
 
 diff --git a/drivers/gpio/gpio-mvebu.c b/drivers/gpio/gpio-mvebu.c
 index 111111111111..222222222222 100644
 --- a/drivers/gpio/gpio-mvebu.c
 +++ b/drivers/gpio/gpio-mvebu.c
-@@ -96,20 +96,69 @@
+@@ -96,20 +96,70 @@
  
  #define MVEBU_MAX_GPIO_PER_BANK		32
  
@@ -122,12 +130,13 @@ index 111111111111..222222222222 100644
 + * counter allocation and shared register access across all banks.
 + */
 +static struct mvebu_pwm_counter *mvebu_pwm_pool[MVEBU_PWM_COUNTER_NUM];
++static unsigned int mvebu_pwm_pool_expected;
 +static DEFINE_SPINLOCK(mvebu_pwm_lock);
 +
  struct mvebu_gpio_chip {
  	struct gpio_chip   chip;
  	struct regmap     *regs;
-@@ -286,14 +335,14 @@ mvebu_gpio_write_level_mask(struct mvebu_gpio_chip *mvchip, u32 val)
+@@ -286,14 +336,14 @@ mvebu_gpio_write_level_mask(struct mvebu_gpio_chip *mvchip, u32 val)
   * Functions returning offsets of individual registers for a given
   * PWM controller.
   */
@@ -146,7 +155,7 @@ index 111111111111..222222222222 100644
  }
  
  /*
-@@ -644,40 +693,90 @@ static int mvebu_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
+@@ -644,40 +694,105 @@ static int mvebu_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
  {
  	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
  	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
@@ -178,17 +187,20 @@ index 111111111111..222222222222 100644
 +	 */
 +	spin_lock_irqsave(&mvebu_pwm_lock, flags);
 +	if (mvpwm->shared) {
++		unsigned int published = 0;
++
 +		/* Claim whichever shared counter is published and free. */
 +		for (id = MVEBU_PWM_COUNTER_A; id < MVEBU_PWM_COUNTER_NUM; id++) {
-+			if (!mvebu_pwm_pool[id]) {
-+				incomplete = true;	/* peer bank not probed yet */
++			if (!mvebu_pwm_pool[id])
 +				continue;
-+			}
++			published++;
 +			if (!mvebu_pwm_pool[id]->in_use) {
 +				counter = mvebu_pwm_pool[id];
 +				break;
 +			}
  		}
++		/* An empty slot only fills in if a bank still owes a counter. */
++		incomplete = published < mvebu_pwm_pool_expected;
 +	} else if (!mvpwm->counter.in_use) {
 +		counter = &mvpwm->counter;
 +	}
@@ -199,8 +211,8 @@ index 111111111111..222222222222 100644
 +	if (!counter) {
 +		clear_bit(pwm->hwpwm, mvpwm->hwlock);
 +		/*
-+		 * A shared counter may still appear once the peer bank probes;
-+		 * ask the consumer to retry instead of failing permanently.
++		 * A counter a peer bank has yet to publish is worth waiting
++		 * for; a pool that will never grow is not.
 +		 */
 +		return incomplete ? -EPROBE_DEFER : -EBUSY;
 +	}
@@ -235,6 +247,7 @@ index 111111111111..222222222222 100644
  static void mvebu_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
  {
  	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
++	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
 +	struct mvebu_pwm_line *line = &mvpwm->line[pwm->hwpwm];
 +	struct gpio_desc *desc;
  	unsigned long flags;
@@ -244,6 +257,17 @@ index 111111111111..222222222222 100644
 -	mvpwm->gpiod = NULL;
 -	spin_unlock_irqrestore(&mvpwm->lock, flags);
 +	spin_lock_irqsave(&mvebu_pwm_lock, flags);
++	/*
++	 * Stop the line while the counter is still ours: whoever claims that
++	 * counter next programs its own duty, and a line left enabled would
++	 * follow it. The routing bit only matters for an enabled line, and
++	 * request() sets it again, so clearing it just keeps the register
++	 * readable.
++	 */
++	mvebu_gpio_blink(&mvchip->chip, pwm->hwpwm, 0);
++	regmap_update_bits(mvchip->regs,
++			   GPIO_BLINK_CNT_SELECT_OFF + mvchip->offset,
++			   BIT(pwm->hwpwm), 0);
 +	if (line->counter)
 +		line->counter->in_use = false;
 +	desc = line->gpiod;
@@ -257,7 +281,7 @@ index 111111111111..222222222222 100644
  }
  
  static int mvebu_pwm_get_state(struct pwm_chip *chip,
-@@ -687,36 +786,38 @@ static int mvebu_pwm_get_state(struct pwm_chip *chip,
+@@ -687,36 +802,38 @@ static int mvebu_pwm_get_state(struct pwm_chip *chip,
  
  	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
  	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
@@ -269,11 +293,11 @@ index 111111111111..222222222222 100644
  
 -	spin_lock_irqsave(&mvpwm->lock, flags);
 +	spin_lock_irqsave(&mvebu_pwm_lock, flags);
- 
--	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm), &u);
++
 +	/* Before the line is requested, report the bank's own counter. */
 +	counter = line->counter ? line->counter : &mvpwm->counter;
-+
+ 
+-	regmap_read(mvpwm->regs, mvebu_pwmreg_blink_on_duration(mvpwm), &u);
 +	regmap_read(counter->regs, mvebu_pwmreg_blink_on_duration(counter), &u);
  	/* Hardware treats zero as 2^32. See mvebu_pwm_apply(). */
  	if (u > 0)
@@ -306,7 +330,7 @@ index 111111111111..222222222222 100644
  
  	return 0;
  }
-@@ -726,6 +827,8 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+@@ -726,6 +843,8 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
  {
  	struct mvebu_pwm *mvpwm = to_mvebu_pwm(chip);
  	struct mvebu_gpio_chip *mvchip = mvpwm->mvchip;
@@ -315,7 +339,7 @@ index 111111111111..222222222222 100644
  	unsigned long long val;
  	unsigned long flags;
  	unsigned int on, off;
-@@ -733,7 +836,7 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+@@ -733,7 +852,7 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
  	if (state->polarity != PWM_POLARITY_NORMAL)
  		return -EINVAL;
  
@@ -324,7 +348,7 @@ index 111111111111..222222222222 100644
  	do_div(val, NSEC_PER_SEC);
  	if (val > UINT_MAX + 1ULL)
  		return -EINVAL;
-@@ -748,7 +851,7 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+@@ -748,7 +867,7 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
  	else
  		on = 1;
  
@@ -333,7 +357,7 @@ index 111111111111..222222222222 100644
  	do_div(val, NSEC_PER_SEC);
  	val -= on;
  	if (val > UINT_MAX + 1ULL)
-@@ -760,16 +863,16 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+@@ -760,16 +879,16 @@ static int mvebu_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
  	else
  		off = 1;
  
@@ -354,7 +378,7 @@ index 111111111111..222222222222 100644
  
  	return 0;
  }
-@@ -784,25 +887,38 @@ static const struct pwm_ops mvebu_pwm_ops = {
+@@ -784,25 +903,66 @@ static const struct pwm_ops mvebu_pwm_ops = {
  static void __maybe_unused mvebu_pwm_suspend(struct mvebu_gpio_chip *mvchip)
  {
  	struct mvebu_pwm *mvpwm = mvchip->mvpwm;
@@ -389,6 +413,34 @@ index 111111111111..222222222222 100644
 +		     counter->blink_off_duration);
 +}
 +
++/*
++ * How many counters the pool can ever hold: only the banks that own one, i.e.
++ * gpio aliases 0 and 1 carrying a "pwm" register range. A request that finds
++ * no free counter and an empty slot needs this to tell "not probed yet" from
++ * "never coming".
++ */
++static unsigned int mvebu_pwm_expected_counters(void)
++{
++	unsigned int count = 0;
++	unsigned int id;
++
++	for (id = 0; id < MVEBU_PWM_COUNTER_NUM; id++) {
++		struct device_node *np;
++		char alias[8];
++
++		snprintf(alias, sizeof(alias), "gpio%u", id);
++		np = of_find_node_by_path(alias);
++		if (!np)
++			continue;
++		if (of_device_is_available(np) &&
++		    of_property_match_string(np, "reg-names", "pwm") >= 0)
++			count++;
++		of_node_put(np);
++	}
++
++	return count;
++}
++
 +/* Withdraw a bank's counter from the shared pool when its chip goes away. */
 +static void mvebu_pwm_pool_remove(void *data)
 +{
@@ -401,7 +453,7 @@ index 111111111111..222222222222 100644
  }
  
  static int mvebu_pwm_probe(struct platform_device *pdev,
-@@ -810,15 +926,20 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
+@@ -810,15 +970,20 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
  			   int id)
  {
  	struct device *dev = &pdev->dev;
@@ -424,7 +476,7 @@ index 111111111111..222222222222 100644
  		if (ret < 0)
  			return 0;
  	} else {
-@@ -836,28 +957,21 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
+@@ -836,28 +1001,21 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
  	if (IS_ERR(mvchip->clk))
  		return PTR_ERR(mvchip->clk);
  
@@ -457,7 +509,7 @@ index 111111111111..222222222222 100644
  			break;
  		default:
  			return -EINVAL;
-@@ -867,37 +981,87 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
+@@ -867,37 +1025,97 @@ static int mvebu_pwm_probe(struct platform_device *pdev,
  		if (IS_ERR(base))
  			return PTR_ERR(base);
  
@@ -532,11 +584,21 @@ index 111111111111..222222222222 100644
  	chip->ops = &mvebu_pwm_ops;
  
 -	spin_lock_init(&mvpwm->lock);
++	if (mvpwm->shared) {
++		unsigned int expected = mvebu_pwm_expected_counters();
++		unsigned long flags;
+ 
+-	return devm_pwmchip_add(dev, chip);
++		spin_lock_irqsave(&mvebu_pwm_lock, flags);
++		if (expected > mvebu_pwm_pool_expected)
++			mvebu_pwm_pool_expected = expected;
++		spin_unlock_irqrestore(&mvebu_pwm_lock, flags);
++	}
++
 +	ret = devm_pwmchip_add(dev, chip);
 +	if (ret)
 +		return ret;
- 
--	return devm_pwmchip_add(dev, chip);
++
 +	/*
 +	 * On legacy SoCs the two counters are shared across banks: publish this
 +	 * bank's counter so the other bank can borrow it. Do so only once the
@@ -561,7 +623,7 @@ index 111111111111..222222222222 100644
  }
  
  #ifdef CONFIG_DEBUG_FS
-@@ -1337,6 +1501,13 @@ static struct platform_driver mvebu_gpio_driver = {
+@@ -1337,6 +1555,13 @@ static struct platform_driver mvebu_gpio_driver = {
  	.driver		= {
  		.name		= "mvebu-gpio",
  		.of_match_table = mvebu_gpio_of_match,
