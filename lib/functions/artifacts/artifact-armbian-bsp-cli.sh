@@ -73,7 +73,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	declare -a dirs_to_hash=(
-		"${SRC}/packages/bsp/common" # common stuff
+		"${SRC}/packages/bsp/common"   # common stuff
+		"${SRC}/packages/bsp/${BOARD}" # board-specific files copied by post_family_tweaks_bsp hooks
 		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
 		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
