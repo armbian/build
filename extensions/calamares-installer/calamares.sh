@@ -19,7 +19,7 @@ function post_repo_customize_image__install_calamares() {
 	# The copied branding.desc file still contains 'componentName: default'.
 	# We must change it to 'armbian' to match our directory name and settings.conf.
 	echo "Updating branding component name to 'armbian'..."
-	sed -i 's/componentName: default/componentName: armbian/g' "${DEST}/etc/calamares/branding/armbian/branding.desc"
+	sed -i 's/componentName: default/componentName: armbian/g' "${SDCARD}/etc/calamares/branding/armbian/branding.desc"
 
 	# --- Copy the QML Files ---
 	# The default branding theme is often incomplete and missing the 'qml' folder.
