@@ -1,3 +1,5 @@
+# @description Configures Bluetooth on boards that need manual `hciattach` serial attachment. Adds the `bluetooth`/`bluez` packages and installs a systemd service running `rfkill unblock` plus `hciattach` with `BLUETOOTH_HCIATTACH_PARAMS`/`BLUETOOTH_HCIATTACH_RKFILL_NUM`. Only deployed on `vendor*`/`legacy*` BSP branches, since mainline kernels bind Bluetooth via serdev.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

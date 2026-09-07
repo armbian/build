@@ -1,3 +1,6 @@
+# @description Enables Rust language support in the Linux kernel (`CONFIG_RUST`). Installs a rustup-managed toolchain (`RUST_VERSION`, `bindgen-cli`, `rust-src`) into `${SRC}/cache/tools/rustup/`, keyed by a content hash, and passes `RUSTC`/`RUSTFMT`/`BINDGEN` make params. Ships prebuilt Rust crate artifacts in `linux-headers` so out-of-tree DKMS Rust modules can build.
+# @doc-page /build-framework/extensions/kernel-rust/
+
 # Enable Rust support for Linux kernel compilation.
 #
 # Installs Rust toolchain via rustup into ${SRC}/cache/tools/rustup/ and

@@ -1,3 +1,5 @@
+# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn` and `netplan.io` (plus desktop, Ubuntu and VPN extras), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
+
 #
 # Extension to manage network interfaces with NetworkManager + Netplan
 #

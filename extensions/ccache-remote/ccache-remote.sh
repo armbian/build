@@ -1,3 +1,6 @@
+# @description Enables ccache with a remote Redis or HTTP/WebDAV backend so the compilation cache is shared across build hosts, and forces `USE_CCACHE=yes`. Set `CCACHE_REMOTE_STORAGE` explicitly, or let it auto-discover a server via DNS-SD/Avahi, DNS SRV (`CCACHE_REMOTE_DOMAIN`) or legacy `ccache.local`. Requires ccache 4.4+ and identical project paths on every host.
+# @doc-page /build-framework/extensions/ccache-remote/
+
 # Extension: ccache-remote
 # Enables ccache with remote storage for sharing compilation cache across build hosts.
 # Supports Redis and HTTP/WebDAV backends (ccache 4.4+).

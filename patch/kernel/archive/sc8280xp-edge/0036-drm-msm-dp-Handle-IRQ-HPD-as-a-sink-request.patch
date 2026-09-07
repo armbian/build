@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 14 May 2026 16:42:13 +0800
+Subject: drm/msm/dp: Handle IRQ HPD as a sink request
+
+IRQ HPD is a sink attention interrupt, not a connector hotplug event.
+It is used for link status and test requests, and can also be used by
+DisplayPort CEC tunneling to signal pending CEC messages.
+
+Do not report IRQ HPD through drm_bridge_hpd_notify(), as that makes
+the connector look hotplugged again and can trigger a full detect/EDID
+path for every sink attention interrupt. Handle it directly in the DP
+IRQ thread instead, with runtime PM held so that AUX and DP controller
+register accesses are valid.
+
+Some sink requests also require the main link registers to be accessible.
+Ignore link maintenance and PHY/link training requests when the link or
+stream clocks are off, since handling those requests would otherwise
+touch DP registers while the controller is not fully powered.
+
+This avoids spurious hotplug handling for CEC-over-AUX IRQs and prevents
+SError faults when a sink attention interrupt is handled while the main
+link is disabled.
+
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+
+(cherry picked from commit e8862314934adc5657897409ade09aa00fc5520f)
+[SuperKali: backported to sc8280xp edge from radxa/kernel linux-7.0.11]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c    | 12 ++++++++
+ drivers/gpu/drm/msm/dp/dp_display.c | 15 +++++++---
+ 2 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -2222,6 +2222,18 @@ void msm_dp_ctrl_handle_sink_request(struct msm_dp_ctrl *msm_dp_ctrl)
+ 	ctrl = container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
+ 	sink_request = ctrl->link->sink_request;
+ 
++	if (sink_request & (DP_TEST_LINK_PHY_TEST_PATTERN |
++			    DP_LINK_STATUS_UPDATED |
++			    DP_TEST_LINK_TRAINING)) {
++		if (!ctrl->link_clks_on || !ctrl->stream_clks_on) {
++			drm_dbg_dp(ctrl->drm_dev,
++				   "skip sink request %#x with link_clks=%d stream_clks=%d\n",
++				   sink_request, ctrl->link_clks_on,
++				   ctrl->stream_clks_on);
++			return;
++		}
++	}
++
+ 	if (sink_request & DP_TEST_LINK_PHY_TEST_PATTERN) {
+ 		drm_dbg_dp(ctrl->drm_dev, "PHY_TEST_PATTERN request\n");
+ 		if (msm_dp_ctrl_process_phy_test_request(ctrl)) {
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -926,9 +926,11 @@ static irqreturn_t msm_dp_display_irq_handler(int irq, void *dev_id)
+ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ {
+ 	struct msm_dp_display_private *dp = dev_id;
++	struct platform_device *pdev = dp->msm_dp_display.pdev;
+ 	irqreturn_t ret = IRQ_NONE;
+ 	unsigned long flags;
+ 	u32 hpd_isr_status;
++	int rc;
+ 
+ 	spin_lock_irqsave(&dp->irq_thread_lock, flags);
+ 	hpd_isr_status = dp->hpd_isr_status;
+@@ -943,10 +945,15 @@ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ 		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+ 				      connector_status_connected);
+ 
+-	/* Send HPD as connected and distinguish it in the notifier */
+-	if (hpd_isr_status & DP_DP_IRQ_HPD_INT_MASK)
+-		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+-				      connector_status_connected);
++	if (hpd_isr_status & DP_DP_IRQ_HPD_INT_MASK) {
++		rc = pm_runtime_resume_and_get(&pdev->dev);
++		if (rc)
++			DRM_ERROR("failed to pm_runtime_resume\n");
++		else
++			msm_dp_irq_hpd_handle(dp);
++		if (!rc)
++			pm_runtime_put_sync(&pdev->dev);
++	}
+ 
+ 	ret = IRQ_HANDLED;
+ 
+-- 
+Armbian
+

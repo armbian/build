@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 5 Aug 2026 11:00:00 +0200
+Subject: drm/msm/dp: do not deliver the unhandled PLL unlocked interrupt
+
+DP_INTR_PLL_UNLOCKED sits in the DP_INTERRUPT_STATUS1 group, which is
+unmasked and routed to the AUX ISR, but nothing consumes it. When the PLL
+relocks during link training the bit fires with no AUX transfer in flight
+and msm_dp_aux_isr() logs "Unexpected DP AUX IRQ 0x01000000 when not
+busy".
+
+Drop it from the group so it is no longer unmasked, but keep
+acknowledging it explicitly and strip it from the value handed on. The
+acknowledge word is derived from that same group, so removing the bit
+from the group alone would leave it latched in REG_DP_INTR_STATUS and
+handed to msm_dp_aux_isr() on every later AUX interrupt, where with a
+transfer in flight the ISR returns without completing it and the
+transfer only ends on the 250 ms timeout, forcing an AUX reset.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c | 12 +++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -41,7 +41,7 @@
+ 	DP_INTR_WRONG_ADDR | DP_INTR_TIMEOUT | \
+ 	DP_INTR_NACK_DEFER | DP_INTR_WRONG_DATA_CNT | \
+ 	DP_INTR_I2C_NACK | DP_INTR_I2C_DEFER | \
+-	DP_INTR_PLL_UNLOCKED | DP_INTR_AUX_ERROR)
++	DP_INTR_AUX_ERROR)
+ 
+ #define DP_INTERRUPT_STATUS1_ACK \
+ 	(DP_INTERRUPT_STATUS1 << DP_INTERRUPT_STATUS_ACK_SHIFT)
+@@ -229,12 +229,18 @@ static u32 msm_dp_ctrl_get_aux_interrupt(struct msm_dp_ctrl_private *ctrl)
+ 
+ 	intr = msm_dp_read_ahb(ctrl, REG_DP_INTR_STATUS);
+ 	intr &= ~DP_INTERRUPT_STATUS1_MASK;
+-	intr_ack = (intr & DP_INTERRUPT_STATUS1)
++	/*
++	 * PLL_UNLOCKED is left out of DP_INTERRUPT_STATUS1 because no handler
++	 * consumes it, but the hardware still latches its status bit. Keep
++	 * acknowledging it, or it stays asserted and is reported as an
++	 * unexpected interrupt on every later AUX transfer.
++	 */
++	intr_ack = (intr & (DP_INTERRUPT_STATUS1 | DP_INTR_PLL_UNLOCKED))
+ 			<< DP_INTERRUPT_STATUS_ACK_SHIFT;
+ 	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS,
+ 		     intr_ack | DP_INTERRUPT_STATUS1_MASK);
+ 
+-	return intr;
++	return intr & ~DP_INTR_PLL_UNLOCKED;
+ 
+ }
+ 
+-- 
+Armbian
+

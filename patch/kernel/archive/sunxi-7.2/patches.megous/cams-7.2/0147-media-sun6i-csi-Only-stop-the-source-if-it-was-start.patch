@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 12:48:49 +0200
+Subject: media: sun6i-csi: Only stop the source if it was started
+
+A pattern supplying the input means the source is never started, but it
+was still being stopped, and the v4l2 core tracks each sub-device's
+streaming state and warns on a stop that follows no start:
+
+  WARNING: drivers/media/v4l2-core/v4l2-subdev.c:484 at call_s_stream
+    call_s_stream from sun6i_csi_bridge_s_stream
+    sun6i_csi_bridge_s_stream from call_s_stream
+    call_s_stream from sun6i_csi_capture_stop_streaming
+
+That fired on every capture taken from a pattern.
+
+Remember whether the source was started rather than asking again on the
+way down. The knob that decides it lives in debugfs and can move while a
+stream is running, so the question does not necessarily have the same
+answer at both ends.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c |  8 +++++++-
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h | 10 ++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+@@ -481,7 +481,11 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 	}
+ 
+ 	if (!on) {
+-		v4l2_subdev_call(source_subdev, video, s_stream, 0);
++		if (bridge->source_streaming) {
++			v4l2_subdev_call(source_subdev, video, s_stream, 0);
++			bridge->source_streaming = false;
++		}
++
+ 		ret = 0;
+ 		goto disable;
+ 	}
+@@ -526,6 +530,8 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 		ret = v4l2_subdev_call(source_subdev, video, s_stream, 1);
+ 		if (ret && ret != -ENOIOCTLCMD)
+ 			goto disable;
++
++		bridge->source_streaming = true;
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+@@ -49,6 +49,16 @@ struct sun6i_csi_bridge {
+ 
+ 	struct sun6i_csi_bridge_source	source_parallel[SUN6I_CSI_SOURCE_PARALLEL_MAX];
+ 	struct sun6i_csi_bridge_source	source_mipi_csi2;
++
++	/*
++	 * Whether the source was actually started, which is not the same as
++	 * whether it should have been: a pattern leaves it alone. The v4l2
++	 * core tracks each sub-device's streaming state and warns if it is
++	 * stopped without having been started, and the knob that decides this
++	 * can move while a stream is running, so remember what was done rather
++	 * than work it out again on the way down.
++	 */
++	bool				source_streaming;
+ };
+ 
+ /* Format */
+-- 
+Armbian
+

@@ -1,3 +1,5 @@
+# @description Produces a UFS-sector-aligned image by setting `SECTOR_SIZE=4096` and appending a `-ufs` image suffix. Requires `sfdisk` >= 2.41 (util-linux), so the build host must be Debian Trixie (13) or newer; set `DOCKER_ARMBIAN_BASE_IMAGE=debian:trixie` when building in Docker. The version check is skipped unless actually building an image.
+
 # Create UFS aligned image (requires >= Debian 13 (Trixie) Host)
 # declare -g DOCKER_ARMBIAN_BASE_IMAGE=debian:trixie # Use this env variable manually
 function extension_prepare_config__ufs {

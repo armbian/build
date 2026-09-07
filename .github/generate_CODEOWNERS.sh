@@ -61,14 +61,22 @@ function generate_for_board() {
 					config/boards/${board_config}			${maintainers}
 					config/kernel/${LINUXCONFIG%-*}-*.config	${maintainers}
 					sources/families/${BOARDFAMILY}.conf		${maintainers}
-					patch/kernel/${KERNELPATCHDIR%-*}-*/		${maintainers}
 				EOF
 
-				local patch_archive="$(readlink "patch/kernel/${KERNELPATCHDIR}" || true)"
-				if [[ -n "${patch_archive}" ]]; then
-					patch_archive="${patch_archive%/}"
-					echo "patch/kernel/${patch_archive%-*}-*/	${maintainers}"
-				fi
+				# KERNELPATCHDIR may list several patch dirs (space-separated) - e.g.
+				# spacemit-k3 uses "archive/<fam>-<ver> archive/<fam>-<branch>-<ver>".
+				# Emit one owners line per dir (collapsing the trailing -<ver> to -*/),
+				# and follow a symlinked dir to its real target. Iterating avoids the
+				# old single-value bug where a 2nd dir leaked into the owners column.
+				while read -r kpd; do
+					[[ -n "${kpd}" ]] || continue
+					echo "patch/kernel/${kpd%-*}-*/		${maintainers}"
+					local patch_archive="$(readlink "patch/kernel/${kpd}" 2>/dev/null || true)"
+					if [[ -n "${patch_archive}" ]]; then
+						patch_archive="${patch_archive%/}"
+						echo "patch/kernel/${patch_archive%-*}-*/	${maintainers}"
+					fi
+				done < <(echo "${KERNELPATCHDIR}" | xargs -n1)
 
 				if [[ -n "${BOOTCONFIG}" && "${BOOTCONFIG}" != "none" ]]; then
 					while read -r d; do

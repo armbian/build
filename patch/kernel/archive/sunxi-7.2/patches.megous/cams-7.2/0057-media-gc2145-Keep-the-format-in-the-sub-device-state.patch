@@ -1,0 +1,439 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:05:18 +0200
+Subject: media: gc2145: Keep the format in the sub-device state
+
+The driver kept the active format in its own structure behind its own
+mutex, which predates the sub-device state API. That leaves get_fmt
+having to special case TRY versus ACTIVE, and it means nothing can look
+at the active format from a context that already holds a lock.
+
+Move the format into the sub-device state and add an .init_state that
+seeds it, so the generic v4l2_subdev_get_fmt() can serve get_fmt. The
+state lock becomes the control handler lock, which is what lets a
+control callback reach the active format directly - the timing controls
+in a later patch need exactly that.
+
+The private mutex goes away with it. The frame interval callbacks are
+handed an already locked state by the core, so they must not lock again.
+
+Also drop a dead #if 0 block in set_frame_interval() that referenced a
+register define which has never existed for this sensor.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 175 +++++-----
+ 1 file changed, 78 insertions(+), 97 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -86,6 +86,10 @@
+ #define GC2145_SENSOR_WIDTH_MAX		1600u
+ #define GC2145_SENSOR_HEIGHT_MAX	1200u
+ 
++#define GC2145_DEFAULT_WIDTH		GC2145_SENSOR_WIDTH_MAX
++#define GC2145_DEFAULT_HEIGHT		GC2145_SENSOR_HEIGHT_MAX
++#define GC2145_DEFAULT_FRAMERATE	10
++
+ /* {{{ Register definitions */
+ 
+ /* system registers */
+@@ -294,10 +298,10 @@ struct gc2145_dev {
+ 	struct gpio_desc *reset_gpio; // nrst pin
+ 	struct gpio_desc *enable_gpio; // ce pin
+ 
+-	/* lock to protect all members below */
+-	struct mutex lock;
+-
+-	struct v4l2_mbus_framefmt fmt;
++	/*
++	 * The sub-device state lock, which is the control handler lock,
++	 * protects all members below.
++	 */
+ 	struct v4l2_fract frame_interval;
+ 	struct gc2145_ctrls ctrls;
+ 
+@@ -1368,13 +1372,10 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+-	/* we can use our own mutex for the ctrl lock */
+-	hdl->lock = &sensor->lock;
+-
+ 	/* Clock related controls */
+ 	params = gc2145_get_sensor_params(sensor, sensor->frame_interval.denominator,
+-					  sensor->fmt.width,
+-					  sensor->fmt.height,
++					  GC2145_DEFAULT_WIDTH,
++					  GC2145_DEFAULT_HEIGHT,
+ 					  &pixel_rate);
+ 	ctrls->pixel_rate = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_PIXEL_RATE,
+ 			0, INT_MAX, 1,
+@@ -1853,21 +1854,24 @@ static int gc2145_setup_aec(struct gc2145_dev *sensor,
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
+-static int gc2145_setup_mode(struct gc2145_dev *sensor)
++static int gc2145_setup_mode(struct gc2145_dev *sensor,
++			     struct v4l2_subdev_state *state)
+ {
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
+ 	int ret, pad, i;
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pclk2;
+-	unsigned long width = sensor->fmt.width;
+-	unsigned long height = sensor->fmt.height;
++	unsigned long width = fmt->width;
++	unsigned long height = fmt->height;
+ 	unsigned long framerate = sensor->frame_interval.denominator;
+ 	const struct gc2145_pixfmt *pix_fmt;
+ 	unsigned long rt, ft, ft_rt;
+ 
+-	pix_fmt = gc2145_find_format(sensor->fmt.code);
++	pix_fmt = gc2145_find_format(fmt->code);
+ 	if (!pix_fmt) {
+ 		dev_err(&sensor->i2c_client->dev,
+-			"pixel format not supported %u\n", sensor->fmt.code);
++			"pixel format not supported %u\n", fmt->code);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -1948,7 +1952,8 @@ static int gc2145_set_stream(struct gc2145_dev *sensor, int enable)
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
+-static int gc2145_stream_on(struct gc2145_dev *sensor)
++static int gc2145_stream_on(struct gc2145_dev *sensor,
++			    struct v4l2_subdev_state *state)
+ {
+ 	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+@@ -1957,7 +1962,7 @@ static int gc2145_stream_on(struct gc2145_dev *sensor)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	ret = gc2145_setup_mode(sensor);
++	ret = gc2145_setup_mode(sensor, state);
+ 	if (ret)
+ 		goto err_rpm_put;
+ 
+@@ -1995,18 +2000,19 @@ static int gc2145_stream_off(struct gc2145_dev *sensor)
+ static int gc2145_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct v4l2_subdev_state *state;
+ 	int ret = 0;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 
+ 	if (sensor->streaming != !!enable) {
+-		ret = enable ? gc2145_stream_on(sensor)
++		ret = enable ? gc2145_stream_on(sensor, state)
+ 			     : gc2145_stream_off(sensor);
+ 		if (!ret)
+ 			sensor->streaming = !!enable;
+ 	}
+ 
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 	return ret;
+ }
+ 
+@@ -2022,9 +2028,7 @@ static int gc2145_get_frame_interval(struct v4l2_subdev *sd,
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
+ 	fi->interval = sensor->frame_interval;
+-	mutex_unlock(&sensor->lock);
+ 
+ 	return 0;
+ }
+@@ -2034,15 +2038,15 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 				     struct v4l2_subdev_frame_interval *fi)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	int ret = 0, fps;
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
++	int fps;
+ 
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
+-
+ 	/* user requested infinite frame rate */
+ 	if (fi->interval.numerator == 0)
+ 		fps = 60;
+@@ -2057,8 +2061,8 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 	fi->interval = sensor->frame_interval;
+ 	sensor->pending_mode_change = true;
+ 
+-	params = gc2145_get_sensor_params(sensor, fps, sensor->fmt.width,
+-					  sensor->fmt.height, &pixel_rate);
++	params = gc2145_get_sensor_params(sensor, fps, fmt->width,
++					  fmt->height, &pixel_rate);
+ 	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
+ 			gc2145_sensor_params_get_pixel_rate(&params,
+ 							    pixel_rate));
+@@ -2067,18 +2071,7 @@ static int gc2145_set_frame_interval(struct v4l2_subdev *sd,
+ 	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
+ 			   gc2145_sensor_params_get_vblank(&params));
+ 
+-#if 0
+-	if (sensor->streaming) {
+-		ret = gc2145_write16(sensor, GC2145_REG_DESIRED_FRAME_RATE_NUM,
+-				     fps);
+-		if (ret)
+-			goto err_unlock;
+-	}
+-err_unlock:
+-#endif
+-
+-	mutex_unlock(&sensor->lock);
+-	return ret;
++	return 0;
+ }
+ 
+ static int gc2145_enum_mbus_code(struct v4l2_subdev *sd,
+@@ -2123,29 +2116,6 @@ static int gc2145_enum_frame_interval(
+ 	return 0;
+ }
+ 
+-static int gc2145_get_fmt(struct v4l2_subdev *sd,
+-			  struct v4l2_subdev_state *sd_state,
+-			  struct v4l2_subdev_format *format)
+-{
+-	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	struct v4l2_mbus_framefmt *mf;
+-
+-	if (format->pad != 0)
+-		return -EINVAL;
+-
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+-		mf = v4l2_subdev_state_get_format(sd_state, format->pad);
+-		format->format = *mf;
+-		return 0;
+-	}
+-
+-	mutex_lock(&sensor->lock);
+-	format->format = sensor->fmt;
+-	mutex_unlock(&sensor->lock);
+-
+-	return 0;
+-}
+-
+ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 			  struct v4l2_subdev_state *sd_state,
+ 			  struct v4l2_subdev_format *format)
+@@ -2155,10 +2125,6 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	const struct gc2145_pixfmt *pixfmt;
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
+-	int ret = 0;
+-
+-	if (format->pad != 0)
+-		return -EINVAL;
+ 
+ 	/* check if we support requested mbus fmt */
+ 	pixfmt = gc2145_find_format(mf->code);
+@@ -2172,27 +2138,16 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	mf->quantization = V4L2_QUANTIZATION_DEFAULT;
+ 	mf->field = V4L2_FIELD_NONE;
+ 
+-	mutex_lock(&sensor->lock);
+-
+ 	mf->width = clamp(mf->width, GC2145_SENSOR_WIDTH_MIN,
+ 		      GC2145_SENSOR_WIDTH_MAX);
+ 	mf->height = clamp(mf->height, GC2145_SENSOR_HEIGHT_MIN,
+ 		       GC2145_SENSOR_HEIGHT_MAX);
+ 
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+-		struct v4l2_mbus_framefmt *try_mf;
++	*v4l2_subdev_state_get_format(sd_state, 0) = *mf;
+ 
+-		try_mf = v4l2_subdev_state_get_format(sd_state, format->pad);
+-		*try_mf = *mf;
+-		goto out;
+-	}
+-
+-	if (sensor->streaming) {
+-		ret = -EBUSY;
+-		goto out;
+-	}
++	if (format->which != V4L2_SUBDEV_FORMAT_ACTIVE)
++		return 0;
+ 
+-	sensor->fmt = *mf;
+ 	sensor->pending_mode_change = true;
+ 
+ 	params = gc2145_get_sensor_params(sensor,
+@@ -2205,9 +2160,24 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 			   gc2145_sensor_params_get_hblank(&params));
+ 	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
+ 			   gc2145_sensor_params_get_vblank(&params));
+-out:
+-	mutex_unlock(&sensor->lock);
+-	return ret;
++
++	return 0;
++}
++
++static int gc2145_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.code = gc2145_formats[0].code,
++			.width = GC2145_DEFAULT_WIDTH,
++			.height = GC2145_DEFAULT_HEIGHT,
++		},
++	};
++
++	return gc2145_set_fmt(sd, state, &fmt);
+ }
+ 
+ /* }}} */
+@@ -2374,6 +2344,7 @@ static int gc2145_g_register(struct v4l2_subdev *sd,
+ 			     struct v4l2_dbg_register *reg)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct v4l2_subdev_state *state;
+ 	int ret;
+ 	u8 val = 0;
+ 
+@@ -2382,9 +2353,9 @@ static int gc2145_g_register(struct v4l2_subdev *sd,
+ 
+ 	reg->size = 1;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 	ret = gc2145_read(sensor, reg->reg, &val);
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 	if (ret)
+ 		return -EIO;
+ 
+@@ -2396,14 +2367,15 @@ static int gc2145_s_register(struct v4l2_subdev *sd,
+ 			     const struct v4l2_dbg_register *reg)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct v4l2_subdev_state *state;
+ 	int ret;
+ 
+ 	if (reg->reg > 0xffff || reg->val > 0xff)
+ 		return -EINVAL;
+ 
+-	mutex_lock(&sensor->lock);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
+ 	ret = gc2145_write(sensor, reg->reg, reg->val);
+-	mutex_unlock(&sensor->lock);
++	v4l2_subdev_unlock_state(state);
+ 
+ 	return ret;
+ }
+@@ -2422,7 +2394,7 @@ static const struct v4l2_subdev_pad_ops gc2145_pad_ops = {
+ 	.enum_mbus_code = gc2145_enum_mbus_code,
+ 	.enum_frame_size = gc2145_enum_frame_size,
+ 	.enum_frame_interval = gc2145_enum_frame_interval,
+-	.get_fmt = gc2145_get_fmt,
++	.get_fmt = v4l2_subdev_get_fmt,
+ 	.set_fmt = gc2145_set_fmt,
+ 	.get_frame_interval = gc2145_get_frame_interval,
+ 	.set_frame_interval = gc2145_set_frame_interval,
+@@ -2438,6 +2410,10 @@ static const struct v4l2_subdev_ops gc2145_subdev_ops = {
+ 	.video = &gc2145_video_ops,
+ };
+ 
++static const struct v4l2_subdev_internal_ops gc2145_internal_ops = {
++	.init_state = gc2145_init_state,
++};
++
+ static int gc2145_get_regulators(struct gc2145_dev *sensor)
+ {
+ 	int i;
+@@ -2464,13 +2440,10 @@ static int gc2145_probe(struct i2c_client *client)
+ 	sensor->i2c_client = client;
+ 
+ 	v4l2_i2c_subdev_init(&sensor->sd, client, &gc2145_subdev_ops);
++	sensor->sd.internal_ops = &gc2145_internal_ops;
+ 
+-	sensor->fmt.code = gc2145_formats[0].code;
+-	sensor->fmt.width = 1600;
+-	sensor->fmt.height = 1200;
+-	sensor->fmt.field = V4L2_FIELD_NONE;
+ 	sensor->frame_interval.numerator = 1;
+-	sensor->frame_interval.denominator = 10;
++	sensor->frame_interval.denominator = GC2145_DEFAULT_FRAMERATE;
+ 	sensor->pending_mode_change = true;
+ 	sensor->current_bank = 0xff;
+ 	sensor->power_line_freq = 50;
+@@ -2524,8 +2497,6 @@ static int gc2145_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 
+-	mutex_init(&sensor->lock);
+-
+ 	ret = gc2145_get_regulators(sensor);
+ 	if (ret)
+ 		goto entity_cleanup;
+@@ -2543,6 +2514,16 @@ static int gc2145_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto power_off;
+ 
++	/*
++	 * Share one lock between the control handler and the sub-device
++	 * state, so that a control handler callback can look at the active
++	 * format without taking a second lock.
++	 */
++	sensor->sd.state_lock = sensor->ctrls.handler.lock;
++	ret = v4l2_subdev_init_finalize(&sensor->sd);
++	if (ret)
++		goto free_ctrls;
++
+ 	/*
+ 	 * Hand the power we are holding over to runtime PM, then let it go
+ 	 * idle once the sub-device is registered.
+@@ -2563,11 +2544,12 @@ static int gc2145_probe(struct i2c_client *client)
+ rpm_disable:
+ 	pm_runtime_disable(dev);
+ 	pm_runtime_set_suspended(dev);
++	v4l2_subdev_cleanup(&sensor->sd);
++free_ctrls:
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+ power_off:
+ 	gc2145_power_off(dev);
+ entity_cleanup:
+-	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	return ret;
+ }
+@@ -2579,6 +2561,7 @@ static void gc2145_remove(struct i2c_client *client)
+ 	struct device *dev = &client->dev;
+ 
+ 	v4l2_async_unregister_subdev(&sensor->sd);
++	v4l2_subdev_cleanup(&sensor->sd);
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+ 
+@@ -2586,8 +2569,6 @@ static void gc2145_remove(struct i2c_client *client)
+ 	if (!pm_runtime_status_suspended(dev))
+ 		gc2145_power_off(dev);
+ 	pm_runtime_set_suspended(dev);
+-
+-	mutex_destroy(&sensor->lock);
+ }
+ 
+ static DEFINE_RUNTIME_DEV_PM_OPS(gc2145_pm_ops, gc2145_runtime_suspend,
+-- 
+Armbian
+

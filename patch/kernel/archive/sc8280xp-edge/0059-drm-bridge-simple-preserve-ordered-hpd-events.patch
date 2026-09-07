@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 3 Sep 2026 12:09:48 +0200
+Subject: drm/bridge: simple: preserve ordered HPD events
+
+A single cached status lets back-to-back disconnect and reconnect
+notifications overwrite each other before work runs. Queue transitions
+under a spinlock so replug processing always delivers disconnect before
+reconnect and forces fresh EDID probing.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/bridge/simple-bridge.c | 38 +++++++++-
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/simple-bridge.c b/drivers/gpu/drm/bridge/simple-bridge.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/simple-bridge.c
++++ b/drivers/gpu/drm/bridge/simple-bridge.c
+@@ -13,6 +13,7 @@
+ #include <linux/of_graph.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/spinlock.h>
+ #include <linux/workqueue.h>
+ 
+ #include <drm/drm_atomic_helper.h>
+@@ -27,6 +28,8 @@ struct simple_bridge_info {
+ 	unsigned int connector_type;
+ };
+ 
++#define SIMPLE_BRIDGE_HPD_QUEUE_SIZE 8
++
+ struct simple_bridge {
+ 	struct drm_bridge	bridge;
+ 	struct drm_connector	connector;
+@@ -37,7 +40,10 @@ struct simple_bridge {
+ 	struct regulator	*vdd;
+ 	struct gpio_desc	*enable;
+ 	struct work_struct	hpd_work;
+-	enum drm_connector_status hpd_status;
++	spinlock_t		hpd_lock;
++	enum drm_connector_status hpd_queue[SIMPLE_BRIDGE_HPD_QUEUE_SIZE];
++	unsigned int		hpd_head;
++	unsigned int		hpd_tail;
+ 	bool			hpd_enabled;
+ 	bool			stream_enabled;
+ 	bool			powered;
+@@ -192,16 +198,41 @@ static void simple_bridge_upstream_hpd_work(struct work_struct *work)
+ {
+ 	struct simple_bridge *sbridge =
+ 		container_of(work, struct simple_bridge, hpd_work);
++	enum drm_connector_status status;
++	unsigned long flags;
++
++	for (;;) {
++		spin_lock_irqsave(&sbridge->hpd_lock, flags);
++		if (sbridge->hpd_head == sbridge->hpd_tail) {
++			spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
++			break;
++		}
+ 
+-	drm_bridge_hpd_notify(&sbridge->bridge, READ_ONCE(sbridge->hpd_status));
++		status = sbridge->hpd_queue[sbridge->hpd_tail];
++		sbridge->hpd_tail = (sbridge->hpd_tail + 1) %
++				    SIMPLE_BRIDGE_HPD_QUEUE_SIZE;
++		spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
++
++		drm_bridge_hpd_notify(&sbridge->bridge, status);
++	}
+ }
+ 
+ static void simple_bridge_upstream_hpd_cb(void *data,
+ 					  enum drm_connector_status status)
+ {
+ 	struct simple_bridge *sbridge = data;
++	unsigned long flags;
++	unsigned int next;
++
++	spin_lock_irqsave(&sbridge->hpd_lock, flags);
++	next = (sbridge->hpd_head + 1) % SIMPLE_BRIDGE_HPD_QUEUE_SIZE;
++	if (next == sbridge->hpd_tail)
++		sbridge->hpd_tail = (sbridge->hpd_tail + 1) %
++				    SIMPLE_BRIDGE_HPD_QUEUE_SIZE;
++	sbridge->hpd_queue[sbridge->hpd_head] = status;
++	sbridge->hpd_head = next;
++	spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
+ 
+-	WRITE_ONCE(sbridge->hpd_status, status);
+ 	schedule_work(&sbridge->hpd_work);
+ }
+ 
+@@ -306,6 +337,7 @@ static int simple_bridge_probe(struct platform_device *pdev)
+ 
+ 	sbridge->info = of_device_get_match_data(&pdev->dev);
+ 	mutex_init(&sbridge->lock);
++	spin_lock_init(&sbridge->hpd_lock);
+ 	INIT_WORK(&sbridge->hpd_work, simple_bridge_upstream_hpd_work);
+ 
+ 	/* Get the next bridge in the pipeline. */
+-- 
+Armbian
+

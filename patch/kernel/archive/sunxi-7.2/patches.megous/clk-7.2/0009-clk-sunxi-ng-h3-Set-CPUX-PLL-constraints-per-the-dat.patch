@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Thu, 12 Jan 2017 16:34:57 +0100
+Subject: clk: sunxi-ng: h3: Set CPUX PLL constraints per the datasheet
+
+The H3 and H5 datasheets limit the PLL output to 200 MHz - 2.6 GHz
+(N*K <= 108 with the 24 MHz parent) and allow use of the P divider
+only when the output is below 288 MHz. Use 10 for the N*K lower
+bound instead of 9 - the BSP kernels never program the VCO below
+240 MHz.
+
+Set maximum P and M factors to 1 for H3 pll-cpux clock. When using
+M factor greater than 1 system is experiencing occasional lockups.
+
+This change was verified to fix lockups with PLL stress tester available
+at https://xff.cz/git/arisc-firmware/.
+
+Run notifiers just once on H3. This avoids needing to patch U-Boot to
+select kernel compatible factors (ones not using M/P divider) to avoid
+lockup on first PLL frequency change. First change will simply use
+the switch to 24 MHz oscillator.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clk/sunxi-ng/ccu-sun8i-h3.c | 35 +++++++---
+ 1 file changed, 26 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun8i-h3.c b/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
++++ b/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
+@@ -25,15 +25,30 @@
+ 
+ #include "ccu-sun8i-h3.h"
+ 
+-static SUNXI_CCU_NKMP_WITH_GATE_LOCK(pll_cpux_clk, "pll-cpux",
+-				     "osc24M", 0x000,
+-				     8, 5,	/* N */
+-				     4, 2,	/* K */
+-				     0, 2,	/* M */
+-				     16, 2,	/* P */
+-				     BIT(31),	/* gate */
+-				     BIT(28),	/* lock */
+-				     CLK_SET_RATE_UNGATE);
++static struct ccu_nkmp pll_cpux_clk = {
++	.enable		= BIT(31),
++	.lock		= BIT(28),
++	.n		= _SUNXI_CCU_MULT(8, 5),
++	.k		= _SUNXI_CCU_MULT(4, 2),
++	.m		= _SUNXI_CCU_DIV_MAX(0, 2, 1),
++	.p		= _SUNXI_CCU_DIV_MAX(16, 2, 1),
++	/*
++	 * Per the H3/H5 datasheets: PLL output range 200 MHz - 2.6 GHz
++	 * (N*K <= 108 with the 24 MHz parent), P usable below 288 MHz
++	 * only. The BSP kernels never program the VCO below 240 MHz
++	 * (N*K >= 10), so use that as the lower bound.
++	 */
++	.min_nk		= 10,
++	.max_nk		= 108,
++	.max_p_rate	= 288000000,
++	.common		= {
++		.reg		= 0x000,
++		.hw.init	= CLK_HW_INIT("pll-cpux",
++					      "osc24M",
++					      &ccu_nkmp_ops,
++					      CLK_SET_RATE_UNGATE),
++	},
++};
+ 
+ /*
+  * The Audio PLL is supposed to have 4 outputs: 3 fixed factors from
+@@ -1028,6 +1043,7 @@ static struct ccu_pll_nb sun8i_h3_pll_cpu_nb = {
+ 	/* copy from pll_cpux_clk */
+ 	.enable	= BIT(31),
+ 	.lock	= BIT(28),
++	.once	= 1,
+ };
+ 
+ static struct ccu_mux_nb sun8i_h3_cpu_nb = {
+@@ -1035,6 +1051,7 @@ static struct ccu_mux_nb sun8i_h3_cpu_nb = {
+ 	.cm		= &cpux_clk.mux,
+ 	.delay_us	= 1, /* > 8 clock cycles at 24 MHz */
+ 	.bypass_index	= 1, /* index of 24 MHz oscillator */
++	.once		= 1,
+ };
+ 
+ static int sun8i_h3_ccu_probe(struct platform_device *pdev)
+-- 
+Armbian
+

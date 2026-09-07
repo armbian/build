@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:18:08 +0200
+Subject: media: hm5065: Add a focus zone control
+
+The face location window can feed the AF statistics engine instead of
+the default zones. Take a point of interest through the same private
+control the ov5640 grew - x << 16 | y in the frame's own pixels, zero
+for the default zones - put a window sized like one default zone
+around it and move all the zone weight to the windowed zone 0.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 79 ++++++++++
+ 1 file changed, 79 insertions(+)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -400,6 +400,9 @@
+ #define HM5065_REG_AF_IN_FOCUS			CCI_REG8(0x07ae) /* ro 0,1 */
+ #define HM5065_REG_AF_IS_STABLE			CCI_REG8(0x0725) /* ro 0,1 */
+ 
++/* statistics zone weights; the default eye shape uses zones 0-6 */
++#define HM5065_REG_AF_ZONE_WEIGHT(n)		CCI_REG8(0x0808 + (n))
++
+ /* reverse engineered registers */
+ #define HM5065_REG_BUS_DATA_FORMAT		CCI_REG8(0x7000)
+ #define HM5065_REG_COLORSPACE			CCI_REG8(0x5200)
+@@ -407,6 +410,13 @@
+ #define HM5065_REG_BUS_CONFIG_BT656		0x24
+ #define HM5065_REG_BUS_CONFIG_PARALLEL_HH_VL	0x44
+ 
++/*
++ * Where the autofocus should look. The same private control the ov5640
++ * driver has: the value packs the point of interest as x << 16 | y in
++ * the frame's own pixels, and zero restores the default zones.
++ */
++#define V4L2_CID_HM5065_FOCUS_ZONE	(V4L2_CID_USER_BASE | 0x1001)
++
+ /* }}} */
+ 
+ struct reg_value {
+@@ -553,6 +563,7 @@ struct hm5065_ctrls {
+ 		struct v4l2_ctrl *focus_relative;
+ 		struct v4l2_ctrl *focus_absolute;
+ 	};
++	struct v4l2_ctrl *focus_zone;
+ 	struct v4l2_ctrl *aaa_lock;
+ 	struct v4l2_ctrl *hflip;
+ 	struct v4l2_ctrl *vflip;
+@@ -1102,6 +1113,57 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ 	return ret;
+ }
+ 
++/*
++ * Point the autofocus at one place in the frame. The face location
++ * window feeds the statistics engine instead of the default zones, and
++ * zone 0 carries all the weight. Zero restores the default eye shaped
++ * seven zone setup.
++ */
++static int hm5065_set_focus_zone(struct hm5065_dev *sensor, u32 packed)
++{
++	const struct v4l2_mbus_framefmt *fmt;
++	struct regmap *map = sensor->regmap;
++	struct v4l2_subdev_state *state;
++	u32 x, y, x0, y0, w, h;
++	int ret = 0, i;
++
++	if (!packed) {
++		for (i = 0; i < 7; i++)
++			cci_write(map, HM5065_REG_AF_ZONE_WEIGHT(i), 1, &ret);
++		cci_write(map, HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE, 0,
++			  &ret);
++		return ret;
++	}
++
++	/* the handler lock is the state lock, so the state is ours already */
++	state = v4l2_subdev_get_locked_active_state(&sensor->sd);
++	fmt = v4l2_subdev_state_get_format(state, 0);
++
++	/* a window sized like one default zone, centred on the point */
++	w = fmt->width / 6;
++	h = fmt->height / 9;
++	x = min_t(u32, packed >> 16, fmt->width - 1);
++	y = min_t(u32, packed & 0xffff, fmt->height - 1);
++	x0 = x > w / 2 ? x - w / 2 : 0;
++	if (x0 + w > fmt->width)
++		x0 = fmt->width - w;
++	y0 = y > h / 2 ? y - h / 2 : 0;
++	if (y0 + h > fmt->height)
++		y0 = fmt->height - h;
++
++	for (i = 0; i < 7; i++)
++		cci_write(map, HM5065_REG_AF_ZONE_WEIGHT(i), i == 0 ? 1 : 0,
++			  &ret);
++	cci_write(map, HM5065_REG_AF_FACE_LOCATION_X_START, x0, &ret);
++	cci_write(map, HM5065_REG_AF_FACE_LOCATION_X_SIZE, w, &ret);
++	cci_write(map, HM5065_REG_AF_FACE_LOCATION_Y_START, y0, &ret);
++	cci_write(map, HM5065_REG_AF_FACE_LOCATION_Y_SIZE, h, &ret);
++	cci_write(map, HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE,
++		  HM5065_REG_AF_FACE_LOCATION_CTRL_ENABLE_AF, &ret);
++
++	return ret;
++}
++
+ static int hm5065_set_white_balance(struct hm5065_dev *sensor)
+ {
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+@@ -1182,6 +1244,9 @@ static int hm5065_s_ctrl_do(struct hm5065_dev *sensor,
+ 	case V4L2_CID_FOCUS_AUTO:
+ 		return hm5065_set_auto_focus(sensor);
+ 
++	case V4L2_CID_HM5065_FOCUS_ZONE:
++		return hm5065_set_focus_zone(sensor, val);
++
+ 	case V4L2_CID_CONTRAST:
+ 		return cci_write(sensor->regmap, HM5065_REG_CONTRAST, val,
+ 				 NULL);
+@@ -1282,6 +1347,17 @@ static const struct v4l2_ctrl_ops hm5065_ctrl_ops = {
+ 	.s_ctrl = hm5065_s_ctrl,
+ };
+ 
++static const struct v4l2_ctrl_config hm5065_ctrl_focus_zone = {
++	.ops = &hm5065_ctrl_ops,
++	.id = V4L2_CID_HM5065_FOCUS_ZONE,
++	.name = "Focus Zone",
++	.type = V4L2_CTRL_TYPE_INTEGER,
++	.min = 0,
++	.max = 0x7fffffff,
++	.step = 1,
++	.def = 0,
++};
++
+ static const char * const test_pattern_menu[] = {
+ 	"Disabled",
+ 	"Horizontal gray scale",
+@@ -1421,6 +1497,9 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 						  V4L2_CID_FOCUS_ABSOLUTE,
+ 						  0, 1023, 1, 508);
+ 
++	ctrls->focus_zone = v4l2_ctrl_new_custom(hdl, &hm5065_ctrl_focus_zone,
++						 NULL);
++
+ 	ctrls->brightness = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BRIGHTNESS,
+ 					      0, 200, 1, 90);
+ 	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,
+-- 
+Armbian
+

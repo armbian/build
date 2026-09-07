@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:09:18 +0200
+Subject: media: hm5065: Add automatic frame rate control
+
+The firmware can adapt the frame rate to the exposure status, which
+extends the integration time in low light instead of piling on gain -
+what vendor drivers call night mode. Map it to the auto priority
+exposure control: when set, the AE may drop the frame rate down to a
+third of the desired rate. The limits follow frame interval changes.
+The registers come from the vendor drivers, the datasheet does not
+document them.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 35 ++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -172,6 +172,11 @@
+ #define HM5065_REG_MAX_FRAME_RATE_HZ		CCI_REG16(0x00da) /* fp16 */
+ #define HM5065_REG_MIN_FRAME_RATE_HZ		CCI_REG16(0x00dc) /* fp16 */
+ 
++/* automatic frame rate control (reverse engineered, not in the datasheet) */
++#define HM5065_REG_AFR_ENABLE			CCI_REG8(0x00e8) /* 0,1 */
++#define HM5065_REG_AFR_MIN_FPS			CCI_REG8(0x00ed)
++#define HM5065_REG_AFR_MAX_FPS			CCI_REG8(0x00ee)
++
+ /* exposure controls */
+ #define HM5065_REG_EXPOSURE_MODE			CCI_REG8(0x0128)
+ #define HM5065_REG_EXPOSURE_MODE_AUTO			0x00
+@@ -530,6 +535,7 @@ struct hm5065_ctrls {
+ 		struct v4l2_ctrl *a_gain;
+ 	};
+ 	struct v4l2_ctrl *exposure_absolute;
++	struct v4l2_ctrl *auto_priority;
+ 	struct v4l2_ctrl *metering;
+ 	struct v4l2_ctrl *exposure_bias;
+ 	struct {
+@@ -950,6 +956,27 @@ static int hm5065_set_exposure(struct hm5065_dev *sensor)
+ 	return ret;
+ }
+ 
++/*
++ * With the automatic frame rate control the AE algorithm may drop the
++ * frame rate below the desired rate to extend the integration time in
++ * low light, down to a third of it.
++ */
++static int hm5065_set_afr(struct hm5065_dev *sensor, bool enable)
++{
++	int fps = sensor->frame_interval.denominator;
++	int ret = 0;
++
++	cci_write(sensor->regmap, HM5065_REG_AFR_ENABLE, enable ? 1 : 0, &ret);
++	if (!enable)
++		return ret;
++
++	cci_write(sensor->regmap, HM5065_REG_AFR_MIN_FPS, max(fps / 3, 1),
++		  &ret);
++	cci_write(sensor->regmap, HM5065_REG_AFR_MAX_FPS, fps, &ret);
++
++	return ret;
++}
++
+ static int hm5065_3a_lock(struct hm5065_dev *sensor, struct v4l2_ctrl *ctrl)
+ {
+ 	bool awb_lock = ctrl->val & V4L2_LOCK_WHITE_BALANCE;
+@@ -1117,6 +1144,9 @@ static int hm5065_s_ctrl_do(struct hm5065_dev *sensor,
+ 				 HM5065_REG_MANUAL_EXPOSURE_TIME_US,
+ 				 hm5065_mili_to_fp16(val * 100000), NULL);
+ 
++	case V4L2_CID_EXPOSURE_AUTO_PRIORITY:
++		return hm5065_set_afr(sensor, val);
++
+ 	case V4L2_CID_EXPOSURE_METERING:
+ 		if (val == V4L2_EXPOSURE_METERING_AVERAGE)
+ 			reg = HM5065_REG_EXPOSURE_METERING_FLAT;
+@@ -1271,6 +1301,9 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 	ctrls->exposure_absolute =
+ 		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE_ABSOLUTE,
+ 				  1, 10000, 1, 100);
++	ctrls->auto_priority =
++		v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE_AUTO_PRIORITY,
++				  0, 1, 1, 0);
+ 	ctrls->d_gain = v4l2_ctrl_new_std(hdl, ops,
+ 					  V4L2_CID_DIGITAL_GAIN,
+ 					  1000, 4000, 1, 1000);
+@@ -1491,6 +1524,8 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ 			  fps, &ret);
+ 		cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_DEN,
+ 			  1, &ret);
++		if (!ret && sensor->ctrls.auto_priority->cur.val)
++			ret = hm5065_set_afr(sensor, true);
+ 	}
+ 
+ 	return ret;
+-- 
+Armbian
+

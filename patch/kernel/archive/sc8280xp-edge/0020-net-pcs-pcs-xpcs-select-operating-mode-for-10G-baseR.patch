@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 26 Feb 2026 15:34:29 +0000
+Subject: net: pcs: pcs-xpcs: select operating mode for 10G-baseR capable PCS
+
+Currently the XPCS found on Toshiba TC9564 (a.k.a. Qualcomm QPS615)
+is unable to operate at 1000base-X and slower with a PHY connected
+using SGMII/2500base-X (in our case a Qualcomm QCA8081).
+
+The problem arises when the XPCS supports 10Gbase-R. That means that
+the reset value of SR_XS_PCS_CTRL2:PCS_TYPE_SEL (0) is valid and this
+suppresses the modal switching based on bit 13 of SR_PMA_CTRL1 or
+SR_XS_PCS_CTRL1.
+
+The reported XPCS dev ID on a TC9564 is exactly the same as every other
+XPCS supported by the kernel so we can't use the dev ID to automatically
+determine what operating mode to select. However we can use the feature
+bits in SR_XS_PCS_STS2 to detect 10Gbase-R support.
+
+Rather than introduce a quirk let's attempt to solve this generically by
+setting SR_XS_PCS_CTRL2:PCS_TYPE_SEL to a reserved value when we detect
+the right we detect the right combination of phy interface and XPCS
+feature support.
+
+Signed-off-by: Daniel Thompson <daniel@riscstar.com>
+Signed-off-by: Alex Elder <elder@riscstar.com>
+
+(cherry picked from commit d39ac384e506410a193b813d2c025fca0635eb3d)
+[SuperKali: backported to sc8280xp edge from radxa/kernel linux-7.0.11]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/net/pcs/pcs-xpcs.c | 39 ++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/drivers/net/pcs/pcs-xpcs.c b/drivers/net/pcs/pcs-xpcs.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/pcs/pcs-xpcs.c
++++ b/drivers/net/pcs/pcs-xpcs.c
+@@ -705,10 +705,49 @@ static void xpcs_get_interfaces(struct dw_xpcs *xpcs, unsigned long *interfaces)
+ static int xpcs_switch_interface_mode(struct dw_xpcs *xpcs,
+ 				      phy_interface_t interface)
+ {
++	int mdio_stat2, ret;
++
+ 	/* Wangxun provides a full alternative implementation to handle quirks */
+ 	if (xpcs->info.pma == WX_TXGBE_XPCS_PMA_10G_ID)
+ 		return txgbe_xpcs_switch_mode(xpcs, interface);
+ 
++	mdio_stat2 = xpcs_read(xpcs, MDIO_MMD_PCS, MDIO_STAT2);
++	if (mdio_stat2 < 0)
++		return mdio_stat2;
++
++	/*
++	 * If this XPCS supports 10Gbase-R then that will be the default
++	 * operating mode. There are several interface modes where this default
++	 * is unhelpful. Change the operating mode for interfaces were we know
++	 * the default is wrong, and restore the default otherwise.
++	 */
++	if (mdio_stat2 & MDIO_PCS_STAT2_10GBR) {
++		switch (interface) {
++		case PHY_INTERFACE_MODE_SGMII:
++		case PHY_INTERFACE_MODE_1000BASEX:
++		case PHY_INTERFACE_MODE_2500BASEX:
++			/*
++			 * Why are we writing MDIO_PCS_CTRL2_TYPE + 1? We want
++			 * the modal behaviour that comes when we pick a
++			 * reserved value. XPCS allocates extra bits to this
++			 * field and allocates values from 15 down so
++			 * MDIO_PCS_CTRL2_TYPE + 1 is the value likely to be
++			 * allocated last (and hopefully never).
++			 */
++			ret = xpcs_write(xpcs, MDIO_MMD_PCS, MDIO_CTRL2,
++					 MDIO_PCS_CTRL2_TYPE + 1);
++			if (ret < 0)
++				return ret;
++			break;
++		default:
++			ret = xpcs_write(xpcs, MDIO_MMD_PCS, MDIO_CTRL2,
++					 MDIO_PCS_CTRL2_10GBR);
++			if (ret < 0)
++				return ret;
++			break;
++		}
++	}
++
+ 	xpcs->interface = interface;
+ 
+ 	return 0;
+-- 
+Armbian
+

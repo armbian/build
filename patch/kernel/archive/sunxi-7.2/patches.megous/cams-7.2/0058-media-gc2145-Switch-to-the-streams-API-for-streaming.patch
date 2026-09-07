@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:06:49 +0200
+Subject: media: gc2145: Switch to the streams API for streaming
+
+Replace the .s_stream implementation with .enable_streams and
+.disable_streams and let v4l2_subdev_s_stream_helper() serve the legacy
+operation. The helper tracks which pads are streaming, so the private
+flag goes away, and the callbacks are handed a locked state instead of
+having to take one.
+
+Take the opportunity to grab the flip controls while streaming. Their
+register reorders the pixel array readout, and although the ISP hides
+that in the processed formats, it does not in the raw ones.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 64 ++++++----
+ 1 file changed, 40 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -221,6 +221,11 @@ static const struct gc2145_pixfmt gc2145_formats[] = {
+ 	},
+ };
+ 
++static bool gc2145_format_is_raw(u32 code)
++{
++	return code == MEDIA_BUS_FMT_SBGGR8_1X8;
++}
++
+ static const struct gc2145_pixfmt *gc2145_find_format(u32 code)
+ {
+ 	int i;
+@@ -309,7 +314,7 @@ struct gc2145_dev {
+ 	unsigned long power_line_freq;
+ 
+ 	bool pending_mode_change;
+-	bool streaming;
++	bool flips_grabbed;
+ 
+ 	u8 current_bank;
+ 
+@@ -1952,9 +1957,13 @@ static int gc2145_set_stream(struct gc2145_dev *sensor, int enable)
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
+-static int gc2145_stream_on(struct gc2145_dev *sensor,
+-			    struct v4l2_subdev_state *state)
++static int gc2145_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
+ {
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	const struct v4l2_mbus_framefmt *fmt =
++		v4l2_subdev_state_get_format(state, 0);
+ 	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+ 
+@@ -1979,6 +1988,18 @@ static int gc2145_stream_on(struct gc2145_dev *sensor,
+ 	if (ret)
+ 		goto err_rpm_put;
+ 
++	/*
++	 * A flip reorders the pixel array readout. The ISP compensates for
++	 * that in the processed formats, but in the raw ones it moves the
++	 * Bayer phase, which would no longer match the media bus code the
++	 * format describes. Hold the flips still there only.
++	 */
++	if (gc2145_format_is_raw(fmt->code)) {
++		__v4l2_ctrl_grab(sensor->ctrls.hflip, true);
++		__v4l2_ctrl_grab(sensor->ctrls.vflip, true);
++		sensor->flips_grabbed = true;
++	}
++
+ 	return 0;
+ 
+ err_rpm_put:
+@@ -1986,33 +2007,23 @@ static int gc2145_stream_on(struct gc2145_dev *sensor,
+ 	return ret;
+ }
+ 
+-static int gc2145_stream_off(struct gc2145_dev *sensor)
++static int gc2145_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
+ {
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	int ret;
+ 
+ 	ret = gc2145_set_stream(sensor, false);
+ 
+-	pm_runtime_put_autosuspend(&sensor->i2c_client->dev);
+-
+-	return ret;
+-}
+-
+-static int gc2145_s_stream(struct v4l2_subdev *sd, int enable)
+-{
+-	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	struct v4l2_subdev_state *state;
+-	int ret = 0;
+-
+-	state = v4l2_subdev_lock_and_get_active_state(sd);
+-
+-	if (sensor->streaming != !!enable) {
+-		ret = enable ? gc2145_stream_on(sensor, state)
+-			     : gc2145_stream_off(sensor);
+-		if (!ret)
+-			sensor->streaming = !!enable;
++	if (sensor->flips_grabbed) {
++		__v4l2_ctrl_grab(sensor->ctrls.hflip, false);
++		__v4l2_ctrl_grab(sensor->ctrls.vflip, false);
++		sensor->flips_grabbed = false;
+ 	}
+ 
+-	v4l2_subdev_unlock_state(state);
++	pm_runtime_put_autosuspend(&sensor->i2c_client->dev);
++
+ 	return ret;
+ }
+ 
+@@ -2126,6 +2137,9 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
+ 
++	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE && sd->enabled_pads)
++		return -EBUSY;
++
+ 	/* check if we support requested mbus fmt */
+ 	pixfmt = gc2145_find_format(mf->code);
+ 	if (!pixfmt)
+@@ -2398,10 +2412,12 @@ static const struct v4l2_subdev_pad_ops gc2145_pad_ops = {
+ 	.set_fmt = gc2145_set_fmt,
+ 	.get_frame_interval = gc2145_get_frame_interval,
+ 	.set_frame_interval = gc2145_set_frame_interval,
++	.enable_streams = gc2145_enable_streams,
++	.disable_streams = gc2145_disable_streams,
+ };
+ 
+ static const struct v4l2_subdev_video_ops gc2145_video_ops = {
+-	.s_stream = gc2145_s_stream,
++	.s_stream = v4l2_subdev_s_stream_helper,
+ };
+ 
+ static const struct v4l2_subdev_ops gc2145_subdev_ops = {
+-- 
+Armbian
+

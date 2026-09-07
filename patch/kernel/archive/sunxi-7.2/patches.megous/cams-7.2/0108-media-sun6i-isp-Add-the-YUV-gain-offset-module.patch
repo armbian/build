@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:10:51 +0200
+Subject: media: sun6i-isp: Add the YUV gain/offset module
+
+A per-component gain and offset in the YUV domain, which unlike the
+bayer gain/offset applies whatever the input format was.
+
+The registers are the ones the bayer gain/offset already uses. The
+hardware reinterprets that block as three components instead of four
+depending on which of the two enable bits is set, and the offsets are
+11 bits wide here against 13 in the bayer layout. This is not a guess:
+the vendor code has two separate setters, isp_set_bayer_gain_offset()
+and isp_set_yuv_gain_offset(), writing the same four addresses with
+those two different field layouts, and its headers carry a matching
+pair of structs.
+
+That makes the two mutually exclusive, so drop YUV_GAIN_OFFSET from the
+requested set when BAYER is also asked for, rather than program the
+block twice and enable both readings of it.
+
+The register offsets and the bit layout are identical on the A83T and
+the V3s, checked against both per-SoC objects in the vendor library, so
+this needs no variant handling. Worth noting for whoever adds the A80
+later: several registers further down that block do shift there.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 47 +++++++++-
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h         | 23 +++++
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h | 16 ++++
+ 3 files changed, 83 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -97,6 +97,28 @@ sun6i_isp_params_configure_bayer(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_BAYER_GAIN1_B(bayer->gain_b));
+ }
+ 
++static void
++sun6i_isp_params_configure_yuv_gain_offset(struct sun6i_isp_device *isp_dev,
++					   const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_yuv_gain_offset *yuv =
++		&config->yuv_gain_offset;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_YUV_OFFSET0_REG,
++			     SUN6I_ISP_YUV_OFFSET0_Y(yuv->offset_y) |
++			     SUN6I_ISP_YUV_OFFSET0_U(yuv->offset_u));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_YUV_OFFSET1_REG,
++			     SUN6I_ISP_YUV_OFFSET1_V(yuv->offset_v));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_YUV_GAIN0_REG,
++			     SUN6I_ISP_YUV_GAIN0_Y(yuv->gain_y) |
++			     SUN6I_ISP_YUV_GAIN0_U(yuv->gain_u));
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_YUV_GAIN1_REG,
++			     SUN6I_ISP_YUV_GAIN1_V(yuv->gain_v));
++}
++
+ static void sun6i_isp_params_configure_wb(struct sun6i_isp_device *isp_dev)
+ {
+ 	/* These are default values that need to be set to get an output. */
+@@ -152,6 +174,7 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 				   const struct sun6i_isp_params_config *config)
+ {
+ 	bool bayer = sun6i_isp_proc_bayer(isp_dev);
++	u32 modules = config->modules_used;
+ 	u32 value;
+ 
+ 	/*
+@@ -159,19 +182,37 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	 * to act on when the input is already YUV, so leave them alone.
+ 	 */
+ 
+-	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BDNF))
++	if (!bayer)
++		modules &= ~(SUN6I_ISP_MODULE_BDNF | SUN6I_ISP_MODULE_BAYER);
++
++	/*
++	 * The bayer and YUV gain/offset are the same registers behind two
++	 * enable bits, so let the bayer one win rather than program the
++	 * block twice and enable both interpretations of it.
++	 */
++
++	if (modules & SUN6I_ISP_MODULE_BAYER)
++		modules &= ~SUN6I_ISP_MODULE_YUV_GAIN_OFFSET;
++
++	if (modules & SUN6I_ISP_MODULE_BDNF)
+ 		sun6i_isp_params_configure_bdnf(isp_dev, config);
+ 
+-	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BAYER))
++	if (modules & SUN6I_ISP_MODULE_BAYER)
+ 		sun6i_isp_params_configure_bayer(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_YUV_GAIN_OFFSET)
++		sun6i_isp_params_configure_yuv_gain_offset(isp_dev, config);
++
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+ 	/* Clear all modules but keep input configuration. */
+ 	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1;
+ 
+-	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BDNF))
++	if (modules & SUN6I_ISP_MODULE_BDNF)
+ 		value |= SUN6I_ISP_MODULE_EN_BDNF;
+ 
++	if (modules & SUN6I_ISP_MODULE_YUV_GAIN_OFFSET)
++		value |= SUN6I_ISP_MODULE_EN_YUV_GAIN_OFFSET;
++
+ 	/* Bayer stage is always enabled. */
+ 
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_MODULE_EN_REG, value);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -206,6 +206,29 @@
+ #define SUN6I_ISP_BAYER_GAIN1_GB(v)		((v) & GENMASK(11, 0))
+ #define SUN6I_ISP_BAYER_GAIN1_B(v)		(((v) << 16) & GENMASK(27, 16))
+ 
++/*
++ * YUV gain/offset
++ *
++ * This is the same register block as the bayer gain/offset above, laid
++ * out for three components instead of four and with narrower offsets.
++ * MODULE_EN picks which of the two the hardware applies, so only one of
++ * them can be in use at a time.
++ */
++
++#define SUN6I_ISP_YUV_OFFSET0_REG		0xe0
++#define SUN6I_ISP_YUV_OFFSET0_Y(v)		((v) & GENMASK(10, 0))
++#define SUN6I_ISP_YUV_OFFSET0_U(v)		(((v) << 16) & GENMASK(26, 16))
++
++#define SUN6I_ISP_YUV_OFFSET1_REG		0xe4
++#define SUN6I_ISP_YUV_OFFSET1_V(v)		((v) & GENMASK(10, 0))
++
++#define SUN6I_ISP_YUV_GAIN0_REG			0xe8
++#define SUN6I_ISP_YUV_GAIN0_Y(v)		((v) & GENMASK(11, 0))
++#define SUN6I_ISP_YUV_GAIN0_U(v)		(((v) << 16) & GENMASK(27, 16))
++
++#define SUN6I_ISP_YUV_GAIN1_REG			0xec
++#define SUN6I_ISP_YUV_GAIN1_V(v)		((v) & GENMASK(11, 0))
++
+ /* WB */
+ 
+ #define SUN6I_ISP_WB_GAIN0_REG			0x140
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -12,6 +12,7 @@
+ 
+ #define SUN6I_ISP_MODULE_BAYER			(1U << 0)
+ #define SUN6I_ISP_MODULE_BDNF			(1U << 1)
++#define SUN6I_ISP_MODULE_YUV_GAIN_OFFSET	(1U << 2)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -33,11 +34,26 @@ struct sun6i_isp_params_config_bdnf {
+ 	__u8	coefficients_rb[5];
+ };
+ 
++/*
++ * Shares hardware registers with the bayer gain/offset, so BAYER and
++ * YUV_GAIN_OFFSET are mutually exclusive in modules_used.
++ */
++struct sun6i_isp_params_config_yuv_gain_offset {
++	__u16	gain_y;
++	__u16	gain_u;
++	__u16	gain_v;
++
++	__u16	offset_y;
++	__u16	offset_u;
++	__u16	offset_v;
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+ 	struct sun6i_isp_params_config_bayer	bayer;
+ 	struct sun6i_isp_params_config_bdnf	bdnf;
++	struct sun6i_isp_params_config_yuv_gain_offset	yuv_gain_offset;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

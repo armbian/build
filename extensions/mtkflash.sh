@@ -1,3 +1,5 @@
+# @description Clones and builds the Rust `mtk-flash` tool from `grinn-global/mtk-flash`, then flashes a MediaTek board over `/dev/ttyACMx` with the produced `lk.bin`, `fip.img` and disk image after the build. Needs the Rust toolchain and direct host USB access (no Docker); set `MTKFLASH_TTYACM_DEVICE` to pick the port.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2026 Ricardo Pardini <ricardo@pardini.net>

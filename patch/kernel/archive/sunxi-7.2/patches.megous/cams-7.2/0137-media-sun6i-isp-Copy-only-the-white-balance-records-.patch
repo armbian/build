@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 23:14:07 +0200
+Subject: media: sun6i-isp: Copy only the white balance records the hardware
+ writes
+
+The white balance region is allocated 0x1000, which would be 256 window
+records, and the whole of it was handed to userspace. The hardware only
+writes the first 0x200. The remaining 224 records were whatever the
+buffer held before, so a reader that summed the array got a number with
+no relation to the frame: 1869915597 pixels for a 1920000 pixel frame,
+which is what made the block look broken.
+
+It is not broken. Measured on a solid white field through the raw bayer
+path, every record from 0 to 31 satisfies sum == 254 * count on all
+three channels, and no record from 32 on does, at every window geometry
+tried. Copy the 0x200 the hardware fills and leave the rest of the
+member as the zeros it was already memset to, which is what the vendor's
+own "discard a window whose count >> 3 is zero" test expects.
+
+The populated records form a grid eight columns wide whose cell tracks
+the programmed window exactly up to 384 pixels of width and stops doing
+so above it; that, and the four rows that are missing from what the cell
+height implies, are recorded in the documentation rather than guessed at
+here.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c       | 13 +++++++++-
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h | 11 ++++++--
+ 2 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_stats.c
+@@ -33,6 +33,17 @@
+ #define SUN6I_ISP_STATS_AFS_OFFSET	0xf00
+ #define SUN6I_ISP_STATS_AWB_OFFSET	0x1100
+ 
++/*
++ * The white balance region is allocated 0x1000, which would be 256 window
++ * records, but the hardware only ever writes the first 0x200 of it. Copying
++ * the whole region hands userspace 224 records of whatever the buffer held
++ * before, and a reader that sums the array gets a number with no relation to
++ * the frame. Measured on a solid white field: records 0 to 31 all satisfy
++ * sum == 254 * count, and record 32 onwards does not, at every window
++ * geometry tried.
++ */
++#define SUN6I_ISP_STATS_AWB_SIZE	0x200
++
+ /* Stats */
+ 
+ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+@@ -74,7 +85,7 @@ static void sun6i_isp_stats_buffer_fill(struct sun6i_isp_device *isp_dev,
+ 
+ 	if (modules & SUN6I_ISP_MODULE_EN_AWB) {
+ 		memcpy(&stats->awb, base + SUN6I_ISP_STATS_AWB_OFFSET,
+-		       sizeof(stats->awb));
++		       SUN6I_ISP_STATS_AWB_SIZE);
+ 		blocks |= SUN6I_ISP_STAT_AWB;
+ 	}
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -302,8 +302,15 @@ struct sun6i_isp_stats_afs {
+ /*
+  * Per-window channel sums and the pixel count they cover. The vendor
+  * discards a window whose count is under 8 and otherwise normalises by
+- * count >> 3. Up to a 16 by 16 grid, with the origin depending on the
+- * bayer phase.
++ * count >> 3. The origin depends on the bayer phase.
++ *
++ * The array is sized for the region the hardware is given, but only the
++ * first 32 records are populated on the A83T; the rest are zeroed, so
++ * the vendor's own count test rejects them. The populated records form
++ * a grid eight columns wide whose cell size follows the programmed
++ * window, exactly, up to a window 384 pixels wide -- beyond that the
++ * relation breaks down and is not yet understood, so treat a wide
++ * window's numbers as unreliable rather than as a measurement.
+  */
+ struct sun6i_isp_stats_awb_window {
+ 	__u32	sum[3];
+-- 
+Armbian
+

@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:02:23 +0200
+Subject: media: sun6i-isp: Only configure the bayer modules for bayer input
+
+The bayer gain/offset and the bayer denoise filter sit in front of the
+demosaic, so they have nothing to act on once the input is already YUV.
+Enabling BDNF on YUV data would just run a bayer-shaped kernel over
+interleaved luma and chroma.
+
+Add a predicate for whether the configured input format is a raw bayer
+one and skip both modules when it is not.
+
+The optical black, AE and white balance defaults in configure_base()
+stay unconditional. OB is not really a bayer module here: OB_SIZE and
+OB_VALID carry the input geometry for the whole pipeline. The AE and WB
+writes are the fixed defaults the comments describe, and are inert while
+their module enable bits are clear.
+
+No functional change yet, the driver only accepts bayer input so far.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c | 13 +++--
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c   | 25 ++++++++++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h   |  1 +
+ 3 files changed, 36 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -13,6 +13,7 @@
+ 
+ #include "sun6i_isp.h"
+ #include "sun6i_isp_params.h"
++#include "sun6i_isp_proc.h"
+ #include "sun6i_isp_reg.h"
+ #include "uapi/sun6i-isp-config.h"
+ 
+@@ -150,19 +151,25 @@ static void
+ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 				   const struct sun6i_isp_params_config *config)
+ {
++	bool bayer = sun6i_isp_proc_bayer(isp_dev);
+ 	u32 value;
+ 
+-	if (config->modules_used & SUN6I_ISP_MODULE_BDNF)
++	/*
++	 * The bayer domain modules sit before the demosaic and have nothing
++	 * to act on when the input is already YUV, so leave them alone.
++	 */
++
++	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BDNF))
+ 		sun6i_isp_params_configure_bdnf(isp_dev, config);
+ 
+-	if (config->modules_used & SUN6I_ISP_MODULE_BAYER)
++	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BAYER))
+ 		sun6i_isp_params_configure_bayer(isp_dev, config);
+ 
+ 	value = sun6i_isp_load_read(isp_dev, SUN6I_ISP_MODULE_EN_REG);
+ 	/* Clear all modules but keep input configuration. */
+ 	value &= SUN6I_ISP_MODULE_EN_SRC0 | SUN6I_ISP_MODULE_EN_SRC1;
+ 
+-	if (config->modules_used & SUN6I_ISP_MODULE_BDNF)
++	if (bayer && (config->modules_used & SUN6I_ISP_MODULE_BDNF))
+ 		value |= SUN6I_ISP_MODULE_EN_BDNF;
+ 
+ 	/* Bayer stage is always enabled. */
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+@@ -75,6 +75,31 @@ const struct sun6i_isp_proc_format *sun6i_isp_proc_format_find(u32 mbus_code)
+ 	return NULL;
+ }
+ 
++static bool
++sun6i_isp_proc_format_bayer(const struct sun6i_isp_proc_format *format)
++{
++	switch (format->input_format) {
++	case SUN6I_ISP_INPUT_FMT_RAW_BGGR:
++	case SUN6I_ISP_INPUT_FMT_RAW_RGGB:
++	case SUN6I_ISP_INPUT_FMT_RAW_GBRG:
++	case SUN6I_ISP_INPUT_FMT_RAW_GRBG:
++		return true;
++	default:
++		return false;
++	}
++}
++
++bool sun6i_isp_proc_bayer(struct sun6i_isp_device *isp_dev)
++{
++	const struct sun6i_isp_proc_format *format;
++
++	format = sun6i_isp_proc_format_find(isp_dev->proc.mbus_format.code);
++	if (WARN_ON(!format))
++		return false;
++
++	return sun6i_isp_proc_format_bayer(format);
++}
++
+ /* Processor */
+ 
+ static void sun6i_isp_proc_irq_enable(struct sun6i_isp_device *isp_dev)
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
+@@ -57,6 +57,7 @@ void sun6i_isp_proc_dimensions(struct sun6i_isp_device *isp_dev,
+ /* Format */
+ 
+ const struct sun6i_isp_proc_format *sun6i_isp_proc_format_find(u32 mbus_code);
++bool sun6i_isp_proc_bayer(struct sun6i_isp_device *isp_dev);
+ 
+ /* Proc */
+ 
+-- 
+Armbian
+

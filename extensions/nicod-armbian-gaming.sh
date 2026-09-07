@@ -1,3 +1,5 @@
+# @description Adds a launcher for NicoD's `armbian-gaming` project to the image. Drops `/usr/local/bin/nicod-armbian-gaming`, a script that clones (or `git pull`s) `NicoD-SBC/armbian-gaming` on first run and executes its `armbian-gaming.sh`. Appends a `-gaming` suffix to the image name; enable it to ship a gaming-oriented image.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

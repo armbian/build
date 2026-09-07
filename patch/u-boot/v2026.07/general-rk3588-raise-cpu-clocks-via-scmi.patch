@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Sat, 4 Jul 2026 15:14:08 +0200
+Subject: clk: rockchip: rk3588: raise CPU clocks through SCMI in U-Boot proper
+
+The CPU clusters leave reset on the 24 MHz oscillator and nothing
+raises them before OS cpufreq takes over, so early boot work landing
+on a big core crawls: a 23 MiB initramfs unpack took 64 seconds, 0.7
+after this change. Raise the clusters to 1008 MHz via SCMI, letting
+BL31 handle the PVTPLL sequencing, as the vendor U-Boot does.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ arch/arm/include/asm/arch-rockchip/cru_rk3588.h |  6 ++
+ drivers/clk/rockchip/clk_rk3588.c               | 35 ++++++++++
+ 2 files changed, 41 insertions(+)
+
+diff --git a/arch/arm/include/asm/arch-rockchip/cru_rk3588.h b/arch/arm/include/asm/arch-rockchip/cru_rk3588.h
+index 111111111111..222222222222 100644
+--- a/arch/arm/include/asm/arch-rockchip/cru_rk3588.h
++++ b/arch/arm/include/asm/arch-rockchip/cru_rk3588.h
+@@ -17,6 +17,12 @@
+ #define NPLL_HZ         (850 * MHz)
+ #define PPLL_HZ		(1100 * MHz)
+ #define SPLL_HZ		(702 * MHz)
++#define CPU_PVTPLL_HZ	(1008 * MHz)
++
++/* SCMI clock ids, from dt-bindings/clock/rockchip,rk3588-cru.h */
++#define SCMI_CLK_CPUL		0
++#define SCMI_CLK_CPUB01		2
++#define SCMI_CLK_CPUB23		3
+ 
+ /* RK3588 pll id */
+ enum rk3588_pll_id {
+diff --git a/drivers/clk/rockchip/clk_rk3588.c b/drivers/clk/rockchip/clk_rk3588.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/rockchip/clk_rk3588.c
++++ b/drivers/clk/rockchip/clk_rk3588.c
+@@ -1958,6 +1958,37 @@ static void rk3588_clk_init(struct rk3588_clk_priv *priv)
+ 		     (ACLK_TOP_S200_SEL_200M << ACLK_TOP_S200_SEL_SHIFT));
+ }
+ 
++#if CONFIG_IS_ENABLED(CLK_SCMI) && !defined(CONFIG_XPL_BUILD)
++/*
++ * The CPU clusters leave reset clocked from the 24 MHz oscillator.
++ * Raise them through SCMI so BL31 handles the PVTPLL sequencing.
++ */
++static void rk3588_clk_raise_cpu_clocks(void)
++{
++	const ulong scmi_cpu_clks[] = {
++		SCMI_CLK_CPUL, SCMI_CLK_CPUB01, SCMI_CLK_CPUB23
++	};
++	struct udevice *scmi_dev;
++	struct clk clk;
++	int ret, i;
++
++	ret = uclass_get_device_by_driver(UCLASS_CLK,
++					  DM_DRIVER_GET(scmi_clock),
++					  &scmi_dev);
++	if (ret)
++		return;
++
++	clk.dev = scmi_dev;
++	for (i = 0; i < ARRAY_SIZE(scmi_cpu_clks); i++) {
++		clk.id = scmi_cpu_clks[i];
++		ret = clk_set_rate(&clk, CPU_PVTPLL_HZ);
++		if (ret < 0)
++			printf("Failed to set SCMI cpu clk %lu: %d\n",
++			       clk.id, ret);
++	}
++}
++#endif
++
+ static int rk3588_clk_probe(struct udevice *dev)
+ {
+ 	struct rk3588_clk_priv *priv = dev_get_priv(dev);
+@@ -1986,6 +2017,10 @@ static int rk3588_clk_probe(struct udevice *dev)
+ 
+ 	rk3588_clk_init(priv);
+ 
++#if CONFIG_IS_ENABLED(CLK_SCMI) && !defined(CONFIG_XPL_BUILD)
++	rk3588_clk_raise_cpu_clocks();
++#endif
++
+ 	/* Process 'assigned-{clocks/clock-parents/clock-rates}' properties */
+ 	ret = clk_set_defaults(dev, 1);
+ 	if (ret)
+-- 
+Armbian
+

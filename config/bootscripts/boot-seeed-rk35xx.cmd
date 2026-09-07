@@ -133,7 +133,11 @@ fi
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:${distro_bootpart} partuuid; fi
 if test "${devtype}" = "nvme"; then part uuid nvme ${devnum}:${distro_bootpart} partuuid; fi
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+# ${devtype}/${devnum} still point at the disk this script was loaded from, so
+# they anchor initramfs root/userdata resolution when several disks carry
+# identical cloned images (duplicate PARTLABEL/UUID); without the token the
+# first-match scan may assemble the root from the wrong disk.
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} ${extraargs} ${extraboardargs}"
 if test -n "${cryptdevice}"; then setenv bootargs "${bootargs} cryptdevice=${cryptdevice}"; fi
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory"; fi

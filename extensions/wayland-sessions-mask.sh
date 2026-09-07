@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Masks Wayland desktop session entries on boards with limited or unstable Wayland support due to GPU or driver constraints. Places empty marker files in `/usr/local/share/wayland-sessions/`, which overrides `/usr/share/wayland-sessions/`, in a desktop-agnostic, upgrade-safe way. Enable it via `enable_extension` in a board config; sessions stay enabled otherwise.
+
 # ------------------------------------------------------------------------------
 # Mask Wayland desktop sessions
 #

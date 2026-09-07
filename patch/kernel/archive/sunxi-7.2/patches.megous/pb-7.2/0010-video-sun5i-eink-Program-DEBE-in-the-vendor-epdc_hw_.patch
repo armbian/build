@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 14:39:12 +0200
+Subject: video: sun5i-eink: Program DEBE in the vendor epdc_hw_open order
+
+The palette RAM only takes effective CPU writes while the backend is
+completely disabled and register autoloading is in its enabled reset
+state - the vendor driver writes the palette first thing after zeroing
+the DEBE registers, and only then enables the backend, disables
+autoloading, configures the layer and enables it as the last step.
+Replicate that ordering at every stream start instead of enabling the
+backend once at probe time.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/video/fbdev/sun5i-eink.c | 68 +++++++---
+ 1 file changed, 48 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/video/fbdev/sun5i-eink.c b/drivers/video/fbdev/sun5i-eink.c
+index 111111111111..222222222222 100644
+--- a/drivers/video/fbdev/sun5i-eink.c
++++ b/drivers/video/fbdev/sun5i-eink.c
+@@ -287,12 +287,40 @@ static dma_addr_t eink_buf_addr(struct eink_buffer *buf)
+ 	return vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
+ }
+ 
+-/* Program the DEBE layer for the current format + palette. */
++/*
++ * Program the DEBE for the current format + palette.
++ *
++ * The ordering replicates the vendor epdc_hw_open() exactly: registers
++ * zeroed and the palette RAM written while the backend is completely
++ * disabled and register autoloading is in its enabled reset state; only
++ * then backend enable, autoload disable, layer configuration, and the
++ * layer enable bit dead last. CPU writes to the palette RAM in any
++ * other state don't reach the table the scan pipeline resolves
++ * through (they even read back differently depending on the autoload
++ * state).
++ */
+ static void eink_debe_setup(struct eink_dev *eink, struct eink_buffer *buf)
+ {
+ 	struct regmap *be = eink->be_regs;
+ 	bool pin32 = eink->pix.pixelformat == SUN5I_EINK_FMT_PIN32;
+ 	u32 w = eink->pix.width, h = eink->pix.height;
++	dma_addr_t paddr = eink_buf_addr(buf);
++	unsigned int i;
++
++	for (i = 0x800; i < 0xa00; i += 4)
++		regmap_write(be, i, 0);
++
++	if (!pin32)
++		regmap_bulk_write(be, SUN4I_BACKEND_PALETTE_REG,
++				  eink->palette, 256);
++
++	regmap_write(be, SUN4I_BACKEND_MODCTL_REG,
++		     SUN4I_BACKEND_MODCTL_START_CTL);
++	regmap_write(be, SUN4I_BACKEND_MODCTL_REG,
++		     SUN4I_BACKEND_MODCTL_START_CTL |
++		     SUN4I_BACKEND_MODCTL_DEBE_EN);
++	regmap_write(be, SUN4I_BACKEND_REGBUFFCTL_REG,
++		     SUN4I_BACKEND_REGBUFFCTL_AUTOLOAD_DIS);
+ 
+ 	regmap_write(be, SUN4I_BACKEND_DISSIZE_REG,
+ 		     SUN4I_BACKEND_DISSIZE(w, h));
+@@ -320,11 +348,20 @@ static void eink_debe_setup(struct eink_dev *eink, struct eink_buffer *buf)
+ 		     pin32 ? SUN4I_BACKEND_LAY_FBFMT_XRGB8888 :
+ 			     SUN4I_BACKEND_LAY_FBFMT_8BPP);
+ 
+-	if (!pin32)
+-		regmap_bulk_write(be, SUN4I_BACKEND_PALETTE_REG,
+-				  eink->palette, 256);
++	regmap_write(be, SUN4I_BACKEND_LAYFB_L32ADD_REG(0), paddr << 3);
++	regmap_write(be, SUN4I_BACKEND_LAYFB_H4ADD_REG,
++		     SUN4I_BACKEND_LAYFB_H4ADD(0, paddr >> 29));
+ 
+-	eink_debe_set_address(eink, eink_buf_addr(buf));
++	regmap_write(be, SUN4I_BACKEND_MODCTL_REG,
++		     SUN4I_BACKEND_MODCTL_START_CTL |
++		     SUN4I_BACKEND_MODCTL_DEBE_EN |
++		     SUN4I_BACKEND_MODCTL_OUT_LCD0 |
++		     SUN4I_BACKEND_MODCTL_LAY_EN(0));
++
++	/* transfer everything to the active register copy */
++	regmap_write(be, SUN4I_BACKEND_REGBUFFCTL_REG,
++		     SUN4I_BACKEND_REGBUFFCTL_AUTOLOAD_DIS |
++		     SUN4I_BACKEND_REGBUFFCTL_LOADCTL);
+ }
+ 
+ /*
+@@ -608,6 +645,10 @@ static void eink_stop_streaming(struct vb2_queue *q)
+ 			ret);
+ 	regmap_write(eink->tcon_regs, SUN4I_TCON0_IO_TRI_REG, ~0);
+ 
++	/* park the backend, as the vendor close does; the next stream
++	 * start reprograms it from scratch */
++	regmap_write(eink->be_regs, SUN4I_BACKEND_MODCTL_REG, 0);
++
+ 	flush_workqueue(eink->wq);
+ 	eink_return_buffers(eink, VB2_BUF_STATE_ERROR);
+ 
+@@ -934,24 +975,11 @@ static int eink_probe(struct platform_device *pdev)
+ 		goto err_reset;
+ 	}
+ 
+-	/* Clear DEBE registers */
++	/* Clear DEBE registers; the backend stays disabled with register
++	 * autoloading in its enabled reset state until stream start */
+ 	for (i = 0x800; i < 0x1000; i += 4)
+ 		regmap_write(eink->be_regs, i, 0);
+ 
+-	/* Disable registers autoloading */
+-	regmap_write(eink->be_regs, SUN4I_BACKEND_REGBUFFCTL_REG,
+-		     SUN4I_BACKEND_REGBUFFCTL_AUTOLOAD_DIS);
+-
+-	regmap_write(eink->be_regs, SUN4I_BACKEND_MODCTL_REG,
+-		     SUN4I_BACKEND_MODCTL_START_CTL);
+-
+-	/* Enable the backend */
+-	regmap_write(eink->be_regs, SUN4I_BACKEND_MODCTL_REG,
+-		     SUN4I_BACKEND_MODCTL_DEBE_EN |
+-		     SUN4I_BACKEND_MODCTL_START_CTL |
+-		     SUN4I_BACKEND_MODCTL_OUT_LCD0 |
+-		     SUN4I_BACKEND_MODCTL_LAY_EN(0));
+-
+ 	/* Make sure the TCON is disabled and all IRQs are off */
+ 	regmap_write(eink->tcon_regs, SUN4I_TCON_GCTL_REG, 0);
+ 	regmap_write(eink->tcon_regs, SUN4I_TCON_GINT0_REG, 0);
+-- 
+Armbian
+

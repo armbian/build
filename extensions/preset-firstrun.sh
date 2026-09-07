@@ -1,3 +1,5 @@
+# @description Writes a `/root/.not_logged_in_yet` file that preseeds the first-boot wizard so the image configures itself unattended. Sets network mode (Ethernet and WiFi are both enabled, with static addressing turned on via `PRESET_NET_USE_STATIC=1`), locale, timezone, shell, and default root/user names and passwords. Every value - the SSID and key, the static IP/mask/gateway/DNS, and the `RootPassword`/`UserPassword` placeholders - is an example that must be edited before enabling this extension.
+
 function post_family_tweaks__preset_configs() {
 	display_alert "$BOARD" "preset configs for rootfs" "info"
 	# Set PRESET_NET_CHANGE_DEFAULTS to 1 to apply any network related settings below

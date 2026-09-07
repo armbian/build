@@ -1,3 +1,5 @@
+# @description Installs the `watchdog` daemon package and configures it for hardware watchdog support. Uncomments `watchdog-device` in `/etc/watchdog.conf` so the daemon uses `/dev/watchdog` to reset a hung system. Enable it for boards with a hardware watchdog that should trigger automatic recovery on lockups.
+
 # for boards with watchdog support - add watchdog package and
 # enable hardware watchdog device (/dev/watchdog) support in config
 

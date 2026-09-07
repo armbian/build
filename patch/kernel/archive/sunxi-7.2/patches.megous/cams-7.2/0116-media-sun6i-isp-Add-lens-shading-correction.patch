@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:45:53 +0200
+Subject: media: sun6i-isp: Add lens shading correction
+
+Now that tables can be uploaded, this one becomes possible. It takes a
+centre for the falloff, a scale for how quickly it runs, and a
+correction curve per channel along the radius. The three curves are 256
+entries of 16 bits each and sit back to back at the start of the LUT
+buffer, which is exactly the 0x600 the vendor reserves for them.
+
+The register packs the centre into two 13 bit fields and the scale into
+five bits above them, matching the vendor's isp_lsc_config with its
+ct_x, ct_y and rs_val.
+
+Identical on the A83T and the V3s. The register does move on the A80,
+as noted with the chroma noise reduction.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 35 ++++++++++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h         |  7 ++
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h | 16 +++++
+ 3 files changed, 58 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -221,6 +221,35 @@ sun6i_isp_params_configure_gamma(struct sun6i_isp_device *isp_dev,
+ 				     sizeof(config->gamma.table));
+ }
+ 
++static void
++sun6i_isp_params_configure_lsc(struct sun6i_isp_device *isp_dev,
++			       const struct sun6i_isp_params_config *config)
++{
++	const struct sun6i_isp_params_config_lsc *lsc = &config->lsc;
++	unsigned int offset = SUN6I_ISP_TABLE_LENS_OFFSET;
++
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_LSC_CFG_REG,
++			     SUN6I_ISP_LSC_CFG_CENTER_X(lsc->center_x) |
++			     SUN6I_ISP_LSC_CFG_CENTER_Y(lsc->center_y) |
++			     SUN6I_ISP_LSC_CFG_SCALE(lsc->scale));
++
++	/* The three curves sit back to back at the start of the buffer. */
++
++	sun6i_isp_params_table_write(isp_dev, &isp_dev->tables.lut, offset,
++				     SUN6I_ISP_FE_CTRL_LENS_UPDATE,
++				     lsc->table_r, sizeof(lsc->table_r));
++	offset += sizeof(lsc->table_r);
++
++	sun6i_isp_params_table_write(isp_dev, &isp_dev->tables.lut, offset,
++				     SUN6I_ISP_FE_CTRL_LENS_UPDATE,
++				     lsc->table_g, sizeof(lsc->table_g));
++	offset += sizeof(lsc->table_g);
++
++	sun6i_isp_params_table_write(isp_dev, &isp_dev->tables.lut, offset,
++				     SUN6I_ISP_FE_CTRL_LENS_UPDATE,
++				     lsc->table_b, sizeof(lsc->table_b));
++}
++
+ static void
+ sun6i_isp_params_configure_cnr(struct sun6i_isp_device *isp_dev,
+ 			       const struct sun6i_isp_params_config *config)
+@@ -331,6 +360,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_GAMMA)
+ 		sun6i_isp_params_configure_gamma(isp_dev, config);
+ 
++	if (modules & SUN6I_ISP_MODULE_LSC)
++		sun6i_isp_params_configure_lsc(isp_dev, config);
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		sun6i_isp_params_configure_rgb2rgb(isp_dev, config);
+ 
+@@ -356,6 +388,9 @@ sun6i_isp_params_configure_modules(struct sun6i_isp_device *isp_dev,
+ 	if (modules & SUN6I_ISP_MODULE_SHARP)
+ 		value |= SUN6I_ISP_MODULE_EN_SAP;
+ 
++	if (modules & SUN6I_ISP_MODULE_LSC)
++		value |= SUN6I_ISP_MODULE_EN_LSC;
++
+ 	if (modules & SUN6I_ISP_MODULE_RGB2RGB)
+ 		value |= SUN6I_ISP_MODULE_EN_RGB2RGB;
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_reg.h
+@@ -290,6 +290,13 @@
+ #define SUN6I_ISP_SATURATION_CFG_B(v)		(((v) << 8) & GENMASK(11, 8))
+ #define SUN6I_ISP_SATURATION_CFG_GAIN(v)	(((v) << 16) & GENMASK(24, 16))
+ 
++/* LSC */
++
++#define SUN6I_ISP_LSC_CFG_REG			0x150
++#define SUN6I_ISP_LSC_CFG_CENTER_X(v)		((v) & GENMASK(12, 0))
++#define SUN6I_ISP_LSC_CFG_CENTER_Y(v)		(((v) << 13) & GENMASK(25, 13))
++#define SUN6I_ISP_LSC_CFG_SCALE(v)		(((v) << 26) & GENMASK(30, 26))
++
+ /* CNR */
+ 
+ #define SUN6I_ISP_CNR_REG			0x14c
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -19,6 +19,7 @@
+ #define SUN6I_ISP_MODULE_SHARP			(1U << 6)
+ #define SUN6I_ISP_MODULE_RGB2RGB		(1U << 7)
+ #define SUN6I_ISP_MODULE_GAMMA			(1U << 8)
++#define SUN6I_ISP_MODULE_LSC			(1U << 9)
+ 
+ struct sun6i_isp_params_config_bayer {
+ 	__u16	offset_r;
+@@ -90,6 +91,20 @@ struct sun6i_isp_params_config_gamma {
+ 	__u16	table[256];
+ };
+ 
++/*
++ * Lens shading: the centre the falloff is measured from, a scale for how
++ * fast it runs, and a per-channel correction curve along the radius.
++ */
++struct sun6i_isp_params_config_lsc {
++	__u16	center_x;
++	__u16	center_y;
++	__u16	scale;
++
++	__u16	table_r[256];
++	__u16	table_g[256];
++	__u16	table_b[256];
++};
++
+ struct sun6i_isp_params_config {
+ 	__u32					modules_used;
+ 
+@@ -102,6 +117,7 @@ struct sun6i_isp_params_config {
+ 	struct sun6i_isp_params_config_sharp	sharp;
+ 	struct sun6i_isp_params_config_rgb2rgb	rgb2rgb;
+ 	struct sun6i_isp_params_config_gamma	gamma;
++	struct sun6i_isp_params_config_lsc	lsc;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

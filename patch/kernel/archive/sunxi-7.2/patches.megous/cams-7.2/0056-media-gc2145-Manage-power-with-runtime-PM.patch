@@ -1,0 +1,601 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:01:06 +0200
+Subject: media: gc2145: Manage power with runtime PM
+
+The subdev .s_power operation is deprecated and bridges are moving away
+from calling it, which leaves the sensor powered down when its controls
+and its stream are set up. Switch to runtime PM as
+Documentation/driver-api/media/camera-sensor.rst requires.
+
+The chip id read moves to probe, where the device is powered explicitly
+for it, so that a resume no longer has to identify the part. Mode setup
+moves out of the power-on path and into stream start, which is where it
+belongs anyway and where the firmware load has a bound v4l2_device to
+take its parent from. Controls now check the runtime PM state instead of
+a private flag, and the ones that only update driver state are handled
+before that check so they work while the sensor is suspended.
+
+The system sleep handlers go away with it: the pipeline is responsible
+for stopping the stream over a suspend, and forcing the runtime state is
+enough to drop the rails.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 362 ++++++----
+ 1 file changed, 211 insertions(+), 151 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -23,6 +23,7 @@
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/of_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/slab.h>
+ #include <linux/types.h>
+ #include <linux/gpio/consumer.h>
+@@ -304,7 +305,6 @@ struct gc2145_dev {
+ 	unsigned long power_line_freq;
+ 
+ 	bool pending_mode_change;
+-	bool powered;
+ 	bool streaming;
+ 
+ 	u8 current_bank;
+@@ -1162,25 +1162,26 @@ static int gc2145_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct device *dev = &sensor->i2c_client->dev;
+ 	int ret;
+ 
+ 	/* v4l2_ctrl_lock() locks our own mutex */
+ 
+-	if (!sensor->powered)
++	if (!pm_runtime_get_if_in_use(dev))
+ 		return -EIO;
+ 
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		ret = gc2145_get_exposure(sensor);
+-		if (ret)
+-			return ret;
+ 		break;
+ 	default:
+-		dev_err(&sensor->i2c_client->dev, "getting unknown control %d\n", ctrl->id);
+-		return -EINVAL;
++		dev_err(dev, "getting unknown control %d\n", ctrl->id);
++		ret = -EINVAL;
++		break;
+ 	}
+ 
+-	return 0;
++	pm_runtime_put_autosuspend(dev);
++	return ret;
+ }
+ 
+ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+@@ -1195,21 +1196,7 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 
+ 	/* v4l2_ctrl_lock() locks our own mutex */
+ 
+-	/*
+-	 * If the device is not powered up by the host driver do
+-	 * not apply any controls to H/W at this time. Instead
+-	 * the controls will be restored right after power-up.
+-	 */
+-	if (!sensor->powered)
+-		return 0;
+-
+ 	switch (ctrl->id) {
+-	case V4L2_CID_EXPOSURE_AUTO:
+-		return gc2145_set_exposure(sensor);
+-
+-	case V4L2_CID_ANALOGUE_GAIN:
+-		return gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
+-
+ 	case V4L2_CID_POWER_LINE_FREQUENCY:
+ 		/*
+ 		 * The row period is fitted to a whole number of mains
+@@ -1221,20 +1208,54 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		sensor->pending_mode_change = true;
+ 		return 0;
+ 
++	case V4L2_CID_PIXEL_RATE:
++	case V4L2_CID_HBLANK:
++	case V4L2_CID_VBLANK:
++		/*
++		 * Read-only controls that only ever carry values computed
++		 * from the mode. They still reach us through the internal
++		 * s_ctrl helpers used to update them.
++		 */
++		return 0;
++	}
++
++	/*
++	 * Everything below touches registers. While the sensor is powered
++	 * down the values are simply kept in the control handler, and the
++	 * handler setup done when streaming starts applies them.
++	 */
++	if (!pm_runtime_get_if_in_use(&sensor->i2c_client->dev))
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE_AUTO:
++		ret = gc2145_set_exposure(sensor);
++		break;
++
++	case V4L2_CID_ANALOGUE_GAIN:
++		ret = gc2145_write(sensor, GC2145_P0_GLOBAL_GAIN, val);
++		break;
++
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values)) {
+ 			dev_err(&sensor->i2c_client->dev, "ae bias out of range\n");
+-			return -EINVAL;
++			ret = -EINVAL;
++			break;
+ 		}
+ 
+-		return gc2145_write(sensor, 0x113,
+-				    (u8)ae_bias_menu_reg_values[val]);
++		ret = gc2145_write(sensor, 0x113,
++				   (u8)ae_bias_menu_reg_values[val]);
++		break;
+ 
+ 	case V4L2_CID_VFLIP:
+-		return gc2145_update_bits(sensor, 0x17, BIT(1), val ? BIT(1) : 0);
++		ret = gc2145_update_bits(sensor, 0x17, BIT(1),
++					 val ? BIT(1) : 0);
++		break;
+ 
+ 	case V4L2_CID_HFLIP:
+-		return gc2145_update_bits(sensor, 0x17, BIT(0), val ? BIT(0) : 0);
++		ret = gc2145_update_bits(sensor, 0x17, BIT(0),
++					 val ? BIT(0) : 0);
++		break;
+ 
+ 	case V4L2_CID_TEST_PATTERN:
+ 		for (i = 0; i < ARRAY_SIZE(ctrls->test_data); i++)
+@@ -1258,24 +1279,16 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 				GC2145_DEBUG_MODE3_UPDATE_GAIN;
+ 		} else if (val != GC2145_TEST_PATTERN_DISABLED) {
+ 			dev_err(&sensor->i2c_client->dev, "test pattern out of range\n");
+-			return -EINVAL;
++			ret = -EINVAL;
++			break;
+ 		}
+ 
+ 		ret = gc2145_write(sensor, GC2145_P0_DEBUG_MODE2, test1);
+ 		if (ret)
+-			return ret;
+-
+-		return gc2145_write(sensor, GC2145_P0_DEBUG_MODE3, test2);
++			break;
+ 
+-	case V4L2_CID_PIXEL_RATE:
+-	case V4L2_CID_HBLANK:
+-	case V4L2_CID_VBLANK:
+-		/*
+-		 * Read-only controls that only ever carry values computed
+-		 * from the mode. They still reach us through the internal
+-		 * s_ctrl helpers used to update them.
+-		 */
+-		return 0;
++		ret = gc2145_write(sensor, GC2145_P0_DEBUG_MODE3, test2);
++		break;
+ 
+ #if 0
+ 	case V4L2_CID_EXPOSURE_METERING:
+@@ -1327,8 +1340,12 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ #endif
+ 	default:
+ 		dev_err(&sensor->i2c_client->dev, "setting unknown control %d\n", ctrl->id);
+-		return -EINVAL;
++		ret = -EINVAL;
++		break;
+ 	}
++
++	pm_runtime_put_autosuspend(&sensor->i2c_client->dev);
++	return ret;
+ }
+ 
+ static const struct v4l2_ctrl_ops gc2145_ctrl_ops = {
+@@ -1931,6 +1948,50 @@ static int gc2145_set_stream(struct gc2145_dev *sensor, int enable)
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
++static int gc2145_stream_on(struct gc2145_dev *sensor)
++{
++	struct device *dev = &sensor->i2c_client->dev;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0)
++		return ret;
++
++	ret = gc2145_setup_mode(sensor);
++	if (ret)
++		goto err_rpm_put;
++
++	/*
++	 * The mode setup rewrites the AEC and AWB blocks, so reapply the
++	 * controls on top of it. The handler lock is our own mutex, which
++	 * the caller already holds, hence the unlocked variant.
++	 */
++	ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = gc2145_set_stream(sensor, true);
++	if (ret)
++		goto err_rpm_put;
++
++	return 0;
++
++err_rpm_put:
++	pm_runtime_put_autosuspend(dev);
++	return ret;
++}
++
++static int gc2145_stream_off(struct gc2145_dev *sensor)
++{
++	int ret;
++
++	ret = gc2145_set_stream(sensor, false);
++
++	pm_runtime_put_autosuspend(&sensor->i2c_client->dev);
++
++	return ret;
++}
++
+ static int gc2145_s_stream(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+@@ -1938,21 +1999,13 @@ static int gc2145_s_stream(struct v4l2_subdev *sd, int enable)
+ 
+ 	mutex_lock(&sensor->lock);
+ 
+-	if (sensor->streaming == !enable) {
+-		if (enable && sensor->pending_mode_change) {
+-			ret = gc2145_setup_mode(sensor);
+-			if (ret)
+-				goto out;
+-		}
+-
+-		ret = gc2145_set_stream(sensor, enable);
+-		if (ret)
+-			goto out;
+-
+-		sensor->streaming = !!enable;
++	if (sensor->streaming != !!enable) {
++		ret = enable ? gc2145_stream_on(sensor)
++			     : gc2145_stream_off(sensor);
++		if (!ret)
++			sensor->streaming = !!enable;
+ 	}
+ 
+-out:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
+ }
+@@ -2160,10 +2213,8 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ /* }}} */
+ /* {{{ Core Ops */
+ 
+-static int gc2145_configure(struct gc2145_dev *sensor)
++static int gc2145_identify(struct gc2145_dev *sensor)
+ {
+-	struct v4l2_mbus_config_parallel *bus = &sensor->ep.bus.parallel;
+-	u8 sync_mode = 0;
+ 	u16 chip_id;
+ 	int ret;
+ 
+@@ -2171,16 +2222,25 @@ static int gc2145_configure(struct gc2145_dev *sensor)
+ 	if (ret)
+ 		return ret;
+ 
+-	dev_info(&sensor->i2c_client->dev, "device id: 0x%04x\n",
+-		 (unsigned int)chip_id);
+-
+ 	if (chip_id != GC2145_REG_CHIP_ID_VALUE) {
+ 		dev_err(&sensor->i2c_client->dev,
+ 			"unsupported device id: 0x%04x\n",
+ 			(unsigned int)chip_id);
+-		return -EINVAL;
++		return -ENODEV;
+ 	}
+ 
++	dev_dbg(&sensor->i2c_client->dev, "device id: 0x%04x\n",
++		(unsigned int)chip_id);
++
++	return 0;
++}
++
++static int gc2145_configure(struct gc2145_dev *sensor)
++{
++	struct v4l2_mbus_config_parallel *bus = &sensor->ep.bus.parallel;
++	u8 sync_mode = 0;
++	int ret;
++
+         // setup parallel bus
+ 
+ 	if (bus->flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
+@@ -2230,80 +2290,83 @@ static int gc2145_configure(struct gc2145_dev *sensor)
+ 	return 0;
+ }
+ 
+-static int gc2145_set_power(struct gc2145_dev *sensor, bool on)
++static void gc2145_power_off(struct device *dev)
+ {
+-	int ret = 0;
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 
+-	if (on) {
+-		ret = regulator_bulk_enable(GC2145_NUM_SUPPLIES,
+-					    sensor->supplies);
+-		if (ret)
+-			return ret;
++	clk_disable_unprepare(sensor->xclk);
++	gpiod_direction_input(sensor->reset_gpio);
++	gpiod_direction_input(sensor->enable_gpio);
++	regulator_bulk_disable(GC2145_NUM_SUPPLIES, sensor->supplies);
++	msleep(100);
+ 
+-		ret = clk_set_rate(sensor->xclk, 24000000);
+-		if (ret)
+-			goto power_off;
++	/* the register cache in the bank tracker is gone with the power */
++	sensor->current_bank = 0xff;
++}
+ 
+-		ret = clk_prepare_enable(sensor->xclk);
+-		if (ret)
+-			goto power_off;
++static int gc2145_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	int ret;
+ 
+-		usleep_range(10000, 12000);
+-		gpiod_direction_output(sensor->reset_gpio, 1);
+-		usleep_range(10000, 12000);
+-		gpiod_direction_output(sensor->enable_gpio, 1);
+-		usleep_range(10000, 12000);
+-		gpiod_direction_output(sensor->reset_gpio, 0);
+-		usleep_range(40000, 50000);
++	ret = regulator_bulk_enable(GC2145_NUM_SUPPLIES, sensor->supplies);
++	if (ret)
++		return ret;
+ 
+-		ret = gc2145_configure(sensor);
+-		if (ret)
+-			goto xclk_off;
++	ret = clk_set_rate(sensor->xclk, 24000000);
++	if (ret)
++		goto power_off;
+ 
+-		ret = gc2145_setup_mode(sensor);
+-		if (ret)
+-			goto xclk_off;
++	ret = clk_prepare_enable(sensor->xclk);
++	if (ret)
++		goto power_off;
+ 
+-		return 0;
+-	}
++	usleep_range(10000, 12000);
++	gpiod_direction_output(sensor->reset_gpio, 1);
++	usleep_range(10000, 12000);
++	gpiod_direction_output(sensor->enable_gpio, 1);
++	usleep_range(10000, 12000);
++	gpiod_direction_output(sensor->reset_gpio, 0);
++	usleep_range(40000, 50000);
++
++	sensor->current_bank = 0xff;
++	return 0;
+ 
+-xclk_off:
+-	clk_disable_unprepare(sensor->xclk);
+ power_off:
+ 	gpiod_direction_input(sensor->reset_gpio);
+ 	gpiod_direction_input(sensor->enable_gpio);
+ 	regulator_bulk_disable(GC2145_NUM_SUPPLIES, sensor->supplies);
+-	msleep(100);
+ 	return ret;
+ }
+ 
+-static int gc2145_s_power(struct v4l2_subdev *sd, int on)
++static int gc2145_runtime_resume(struct device *dev)
+ {
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	bool power_up, power_down;
+-	int ret = 0;
+-
+-	mutex_lock(&sensor->lock);
++	int ret;
+ 
+-	power_up = on && !sensor->powered;
+-	power_down = !on && sensor->powered;
++	ret = gc2145_power_on(dev);
++	if (ret)
++		return ret;
+ 
+-	if (power_up || power_down) {
+-		ret = gc2145_set_power(sensor, power_up);
+-		if (!ret)
+-			sensor->powered = on;
++	ret = gc2145_configure(sensor);
++	if (ret) {
++		gc2145_power_off(dev);
++		return ret;
+ 	}
+ 
+-	mutex_unlock(&sensor->lock);
++	/* the mode is applied when streaming starts */
++	sensor->pending_mode_change = true;
++	return 0;
++}
+ 
+-	if (!ret && power_up) {
+-		/* restore controls */
+-		ret = v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+-		if (ret)
+-			gc2145_s_power(sd, 0);
+-	}
++static int gc2145_runtime_suspend(struct device *dev)
++{
++	gc2145_power_off(dev);
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ #ifdef CONFIG_VIDEO_ADV_DEBUG
+@@ -2349,7 +2412,6 @@ static int gc2145_s_register(struct v4l2_subdev *sd,
+ /* }}} */
+ 
+ static const struct v4l2_subdev_core_ops gc2145_core_ops = {
+-	.s_power = gc2145_s_power,
+ #ifdef CONFIG_VIDEO_ADV_DEBUG
+ 	.g_register = gc2145_g_register,
+ 	.s_register = gc2145_s_register,
+@@ -2401,6 +2463,8 @@ static int gc2145_probe(struct i2c_client *client)
+ 
+ 	sensor->i2c_client = client;
+ 
++	v4l2_i2c_subdev_init(&sensor->sd, client, &gc2145_subdev_ops);
++
+ 	sensor->fmt.code = gc2145_formats[0].code;
+ 	sensor->fmt.width = 1600;
+ 	sensor->fmt.height = 1200;
+@@ -2453,8 +2517,6 @@ static int gc2145_probe(struct i2c_client *client)
+ 		return -EINVAL;
+ 	}
+ 
+-	v4l2_i2c_subdev_init(&sensor->sd, client, &gc2145_subdev_ops);
+-
+ 	sensor->sd.flags = V4L2_SUBDEV_FL_HAS_DEVNODE;
+ 	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
+ 	sensor->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+@@ -2468,18 +2530,42 @@ static int gc2145_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto entity_cleanup;
+ 
+-	ret = gc2145_init_controls(sensor);
++	/* the sensor has to be powered for the chip id to be readable */
++	ret = gc2145_power_on(dev);
+ 	if (ret)
+ 		goto entity_cleanup;
+ 
++	ret = gc2145_identify(sensor);
++	if (ret)
++		goto power_off;
++
++	ret = gc2145_init_controls(sensor);
++	if (ret)
++		goto power_off;
++
++	/*
++	 * Hand the power we are holding over to runtime PM, then let it go
++	 * idle once the sub-device is registered.
++	 */
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++
+ 	ret = v4l2_async_register_subdev(&sensor->sd);
+ 	if (ret)
+-		goto free_ctrls;
++		goto rpm_disable;
++
++	pm_runtime_idle(dev);
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
+ 
+ 	return 0;
+ 
+-free_ctrls:
++rpm_disable:
++	pm_runtime_disable(dev);
++	pm_runtime_set_suspended(dev);
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
++power_off:
++	gc2145_power_off(dev);
+ entity_cleanup:
+ 	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
+@@ -2490,48 +2576,22 @@ static void gc2145_remove(struct i2c_client *client)
+ {
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	struct device *dev = &client->dev;
+ 
+ 	v4l2_async_unregister_subdev(&sensor->sd);
+-	mutex_destroy(&sensor->lock);
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+-}
+ 
+-static int gc2145_sensor_suspend(struct device *dev)
+-{
+-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+-	struct gc2145_dev *sensor = to_gc2145_dev(sd);
++	pm_runtime_disable(dev);
++	if (!pm_runtime_status_suspended(dev))
++		gc2145_power_off(dev);
++	pm_runtime_set_suspended(dev);
+ 
+-	mutex_lock(&sensor->lock);
+-	if (sensor->streaming)
+-		gc2145_set_stream(sensor, false);
+-	mutex_unlock(&sensor->lock);
+-
+-	return 0;
+-}
+-
+-static int gc2145_sensor_resume(struct device *dev)
+-{
+-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+-	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+-	int ret = 0;
+-
+-	mutex_lock(&sensor->lock);
+-	if (sensor->streaming) {
+-		ret = gc2145_set_stream(sensor, true);
+-		if (ret) {
+-			gc2145_set_stream(sensor, false);
+-			sensor->streaming = false;
+-		}
+-	}
+-	mutex_unlock(&sensor->lock);
+-
+-	return ret;
++	mutex_destroy(&sensor->lock);
+ }
+ 
+-static const struct dev_pm_ops gc2145_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(gc2145_sensor_suspend, gc2145_sensor_resume)
+-};
++static DEFINE_RUNTIME_DEV_PM_OPS(gc2145_pm_ops, gc2145_runtime_suspend,
++				 gc2145_runtime_resume, NULL);
+ 
+ static const struct i2c_device_id gc2145_id[] = {
+ 	{"gc2145", 0},
+@@ -2549,7 +2609,7 @@ static struct i2c_driver gc2145_i2c_driver = {
+ 	.driver = {
+ 		.name  = "gc2145",
+ 		.of_match_table	= gc2145_dt_ids,
+-		.pm = &gc2145_pm_ops,
++		.pm = pm_ptr(&gc2145_pm_ops),
+ 	},
+ 	.id_table = gc2145_id,
+ 	.probe    = gc2145_probe,
+-- 
+Armbian
+

@@ -99,10 +99,14 @@ function cli_show_extensions_run() {
 		!seen[$1]++ { # dedup hook points called from more than one site
 			if (ENVIRON["format"] != "docs") { print $1; next }
 			nlines = split($3, bl, "\001")
+			summary = bl[1]
+			sub(/^[ \t]*#+[ \t]*/, "", summary) # strip leading "#" so the summary cannot become a heading inside the blockquote
 			print "### `" $1 "`"
-			print "> " bl[1]
-			print ""
-			for (j = 2; j <= nlines; j++) print bl[j]
+			print "> " summary
+			if (nlines >= 2) {
+				print ""
+				for (j = 2; j <= nlines; j++) print bl[j]
+			}
 			if ($2 != "") {
 				print ""
 				print "Also known as (for backwards compatibility only):"

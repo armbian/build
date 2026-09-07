@@ -1,3 +1,5 @@
+# @description Builds a Home Assistant Supervised image: enables `docker-ce`, installs `os-agent` and the Armbian-patched `homeassistant-supervised` deb, adds AppArmor to the kernel cmdline, and pulls in NetworkManager, AppArmor and CIFS/NFS support. Requires a full (non-`MINIMAL`) Debian image and appends a `-homeassistant` suffix to the output.
+
 enable_extension "docker-ce"
 
 function extension_prepare_config__home_assistant() {

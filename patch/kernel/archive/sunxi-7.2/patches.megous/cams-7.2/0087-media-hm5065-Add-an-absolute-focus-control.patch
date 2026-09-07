@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 15:08:05 +0200
+Subject: media: hm5065: Add an absolute focus control
+
+The FLA driver layer takes a target VCM DAC code at 0x0700 applied by
+the GOTO_TARGET_POSITION lens command, and reports the live position
+at 0x06f0 - so the control is volatile and reading it back while auto
+focus runs tells where the algorithm put the lens. The default is the
+firmware's recovery position.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 33 +++++++++-
+ 1 file changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -348,6 +348,10 @@
+ #define HM5065_REG_AF_V_RATIO_NUM		CCI_REG8(0x065d)
+ #define HM5065_REG_AF_V_RATIO_DEN		CCI_REG8(0x065e)
+ 
++#define HM5065_REG_AF_LENS_POSITION		CCI_REG16(0x06f0) /* ro, 0-1023 */
++#define HM5065_REG_AF_LENS_IS_MOVING		CCI_REG8(0x06f2) /* ro 0,1 */
++#define HM5065_REG_AF_TARGET_POSITION		CCI_REG16(0x0700) /* 0-1023 */
++
+ #define HM5065_REG_AF_RANGE			CCI_REG8(0x0709)
+ #define HM5065_REG_AF_RANGE_FULL		0x00
+ #define HM5065_REG_AF_RANGE_LANDSCAPE		0x01
+@@ -539,6 +543,7 @@ struct hm5065_ctrls {
+ 		struct v4l2_ctrl *af_status;
+ 		struct v4l2_ctrl *af_distance;
+ 		struct v4l2_ctrl *focus_relative;
++		struct v4l2_ctrl *focus_absolute;
+ 	};
+ 	struct v4l2_ctrl *aaa_lock;
+ 	struct v4l2_ctrl *hflip;
+@@ -708,13 +713,16 @@ static u16 hm5065_mili_to_fp16(s32 val)
+ static int hm5065_get_af_status(struct hm5065_dev *sensor)
+ {
+ 	struct hm5065_ctrls *ctrls = &sensor->ctrls;
+-	u64 in_focus, is_stable, mode;
++	u64 in_focus, is_stable, mode, position;
+ 	int ret = 0;
+ 
+-	ret = cci_read(sensor->regmap, HM5065_REG_AF_MODE_STATUS, &mode, NULL);
++	cci_read(sensor->regmap, HM5065_REG_AF_MODE_STATUS, &mode, &ret);
++	cci_read(sensor->regmap, HM5065_REG_AF_LENS_POSITION, &position, &ret);
+ 	if (ret)
+ 		return ret;
+ 
++	ctrls->focus_absolute->val = position;
++
+ 	if (mode == HM5065_REG_AF_MODE_MANUAL) {
+ 		ctrls->af_status->val = V4L2_AUTO_FOCUS_STATUS_IDLE;
+ 		return 0;
+@@ -978,6 +986,7 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ 		v4l2_ctrl_activate(ctrls->af_start, !auto_focus);
+ 		v4l2_ctrl_activate(ctrls->af_stop, !auto_focus);
+ 		v4l2_ctrl_activate(ctrls->focus_relative, !auto_focus);
++		v4l2_ctrl_activate(ctrls->focus_absolute, !auto_focus);
+ 
+ 		cci_write(map, HM5065_REG_AF_MODE,
+ 			  auto_focus ?
+@@ -1010,6 +1019,16 @@ static int hm5065_set_auto_focus(struct hm5065_dev *sensor)
+ 			  HM5065_REG_AF_MODE_MANUAL, &ret);
+ 	}
+ 
++	if (!auto_focus && ctrls->focus_absolute->is_new) {
++		cci_write(map, HM5065_REG_AF_MODE,
++			  HM5065_REG_AF_MODE_MANUAL, &ret);
++		cci_write(map, HM5065_REG_AF_TARGET_POSITION,
++			  ctrls->focus_absolute->val, &ret);
++		cci_write(map, HM5065_REG_AF_LENS_COMMAND,
++			  HM5065_REG_AF_LENS_COMMAND_GOTO_TARGET_POSITION,
++			  &ret);
++	}
++
+ 	if (!auto_focus && ctrls->focus_relative->is_new &&
+ 	    ctrls->focus_relative->val) {
+ 		s32 step = ctrls->focus_relative->val;
+@@ -1319,6 +1338,11 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 						  V4L2_CID_FOCUS_RELATIVE,
+ 						  -100, 100, 1, 0);
+ 
++	/* the VCM DAC code; the default is the firmware's recovery position */
++	ctrls->focus_absolute = v4l2_ctrl_new_std(hdl, ops,
++						  V4L2_CID_FOCUS_ABSOLUTE,
++						  0, 1023, 1, 508);
++
+ 	ctrls->brightness = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BRIGHTNESS,
+ 					      0, 200, 1, 90);
+ 	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,
+@@ -1354,11 +1378,14 @@ static int hm5065_init_controls(struct hm5065_dev *sensor)
+ 
+ 	ctrls->af_status->flags |= V4L2_CTRL_FLAG_VOLATILE |
+ 		V4L2_CTRL_FLAG_READ_ONLY;
++	/* reads report the live lens position */
++	ctrls->focus_absolute->flags |= V4L2_CTRL_FLAG_VOLATILE |
++		V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+ 
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->wb, V4L2_WHITE_BALANCE_MANUAL, false);
+ 	v4l2_ctrl_auto_cluster(4, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
+ 			       true);
+-	v4l2_ctrl_cluster(6, &ctrls->focus_auto);
++	v4l2_ctrl_cluster(7, &ctrls->focus_auto);
+ 
+ 	sensor->sd.ctrl_handler = hdl;
+ 	return 0;
+-- 
+Armbian
+

@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 5 Aug 2026 01:49:39 +0200
+Subject: media: sun6i-isp: Show the live registers and allow a poke, in
+ debugfs
+
+The register dump had two columns: the load buffer, which is what the
+driver offered, and the save region, which is what the hardware wrote
+back at the last frame end. Neither is the register.
+
+That gap matters whenever a register is written directly rather than
+staged, and it matters for a pipeline that has not produced a frame,
+where the save region is still all zeroes and says nothing at all. Add
+the register itself as a third column.
+
+Add a poke file alongside it, taking "offset value". Several fields of
+the frontend registers have no known meaning -- this driver names six
+bits of FE_CFG and nine of FE_CTRL, and the vendor library writes only
+the enable bit of one and four request bits of the other -- and finding
+out what one of them does is otherwise a kernel build per bit.
+
+Both earned their place immediately: the live column showed that a
+direct write to a staged register is honoured, which two columns could
+not distinguish, and a control write through the poke file showed that
+an earlier version of it had been silently writing zero.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c | 88 +++++++++-
+ 1 file changed, 86 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -16,6 +16,7 @@
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/seq_file.h>
++#include <linux/sizes.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-mc.h>
+ 
+@@ -311,6 +312,7 @@ static int sun6i_isp_debugfs_registers_show(struct seq_file *seq, void *data)
+ {
+ 	struct sun6i_isp_device *isp_dev = seq->private;
+ 	unsigned int i;
++	bool live;
+ 	u32 value;
+ 
+ 	/*
+@@ -326,27 +328,109 @@ static int sun6i_isp_debugfs_registers_show(struct seq_file *seq, void *data)
+ 		seq_puts(seq, "fe_ctrl (device suspended)\n\n");
+ 	}
+ 
+-	seq_printf(seq, "%-16s %8s %8s\n", "register", "staged", "running");
++	/*
++	 * Three views of the same register, and they answer different
++	 * questions. "staged" is the load buffer, what the driver has
++	 * offered. "running" is the save region, what the hardware wrote
++	 * back at the last frame end -- which stays zero if no frame has ever
++	 * completed, so it says nothing about a pipeline that has not run
++	 * yet. "live" is the register itself, and it is the only one that
++	 * shows whether a direct write to a normally staged register was
++	 * kept or discarded.
++	 */
++	live = pm_runtime_get_if_in_use(isp_dev->dev) > 0;
++
++	seq_printf(seq, "%-16s %8s %8s %8s\n", "register", "staged", "running",
++		   live ? "live" : "");
+ 
+ 	for (i = 0; i < ARRAY_SIZE(sun6i_isp_debugfs_registers); i++) {
+ 		u32 offset = sun6i_isp_debugfs_registers[i].offset;
+ 
+-		seq_printf(seq, "%-16s %08x %08x\n",
++		seq_printf(seq, "%-16s %08x %08x",
+ 			   sun6i_isp_debugfs_registers[i].name,
+ 			   sun6i_isp_load_read(isp_dev, offset),
+ 			   sun6i_isp_save_read(isp_dev, offset));
++
++		if (live) {
++			regmap_read(isp_dev->regmap, offset, &value);
++			seq_printf(seq, " %08x", value);
++		}
++
++		seq_puts(seq, "\n");
+ 	}
+ 
++	if (live)
++		pm_runtime_put(isp_dev->dev);
++
+ 	return 0;
+ }
+ DEFINE_SHOW_ATTRIBUTE(sun6i_isp_debugfs_registers);
+ 
++/*
++ * Write a frontend register directly: "offset value", both accepted in
++ * any base strtoul takes.
++ *
++ * This exists because several fields of FE_CFG and FE_CTRL have no known
++ * meaning -- the driver names six bits of one and nine of the other, and
++ * the rest were never identified -- and finding out what they do a bit at
++ * a time is otherwise a kernel build per bit.
++ *
++ * Any register in the block is allowed, not just the frontend ones below
++ * 0x040. A value poked into a staged register survives only until the
++ * next parameter load replaces it from the load region -- but the case
++ * this is for is a pipeline that is not loading at all, where a poke is
++ * the only way to change one.
++ */
++static ssize_t sun6i_isp_debugfs_poke_write(struct file *file,
++					    const char __user *buffer,
++					    size_t count, loff_t *ppos)
++{
++	struct sun6i_isp_device *isp_dev = file->private_data;
++	unsigned int offset, value;
++	char buf[64];
++
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, buffer, count))
++		return -EFAULT;
++	buf[count] = '\0';
++
++	/*
++	 * sscanf and not simple_strtoul: the latter does not skip leading
++	 * whitespace the way its userspace namesake does, so parsing the
++	 * value from just after the offset silently yields zero and every
++	 * poke writes zero instead of what was asked for.
++	 */
++	if (sscanf(buf, "%i %i", &offset, &value) != 2)
++		return -EINVAL;
++
++	if (offset >= SZ_4K || (offset & 3))
++		return -EINVAL;
++
++	if (pm_runtime_get_if_in_use(isp_dev->dev) <= 0)
++		return -EAGAIN;
++
++	regmap_write(isp_dev->regmap, offset, value);
++	pm_runtime_put(isp_dev->dev);
++
++	return count;
++}
++
++static const struct file_operations sun6i_isp_debugfs_poke_fops = {
++	.owner		= THIS_MODULE,
++	.open		= simple_open,
++	.write		= sun6i_isp_debugfs_poke_write,
++	.llseek		= noop_llseek,
++};
++
+ static void sun6i_isp_debugfs_setup(struct sun6i_isp_device *isp_dev)
+ {
+ 	isp_dev->debugfs = debugfs_create_dir(SUN6I_ISP_NAME, NULL);
+ 
+ 	debugfs_create_file("registers", 0444, isp_dev->debugfs, isp_dev,
+ 			    &sun6i_isp_debugfs_registers_fops);
++	debugfs_create_file("poke", 0200, isp_dev->debugfs, isp_dev,
++			    &sun6i_isp_debugfs_poke_fops);
+ }
+ 
+ static void sun6i_isp_debugfs_cleanup(struct sun6i_isp_device *isp_dev)
+-- 
+Armbian
+

@@ -26,10 +26,21 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}           # ← CRITICAL: fetch from the upstream run
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Validate here, at the point the value enters the job: everything below
+      # consumes it, starting with an action that parseInt()s it and then reads
+      # and writes labels. A check further down would run after those writes --
+      # and on the not-approved path would not run at all.
       - id: pr
-        run: echo "number=$(cat pr.txt)" >> $GITHUB_OUTPUT
+        run: |
+          number="$(tr -d '[:space:]' < pr.txt)"
+          case "${number}" in
+            '' | *[!0-9]*) echo "::error::pr.txt is not a PR number: '${number}'"; exit 1 ;;
+            0*)            echo "::error::pr.txt is not a canonical PR number: '${number}'"; exit 1 ;;
+          esac
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
 
       - name: Label when approved
+        id: approval
         uses: j-fulbright/label-when-approved-action@911c622c75f8ea99ee00cdd66e2cd888bac530c6 # v1.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,18 +51,28 @@ jobs:
           pullRequestNumber: ${{ steps.pr.outputs.number }}
 
       - name: Remove review-related labels
-        if: ${{ success() }}
+        # Not just success(): the action exits 0 and reports isApproved=false when
+        # the approval does not come from a committer (require_committers_approval),
+        # and anyone with read access can approve a PR on a public repo. Without
+        # this gate a drive-by approval clears the review-tracking labels below
+        # while "Ready to merge" is (correctly) never added.
+        if: ${{ success() && steps.approval.outputs.isApproved == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         with:
           script: |
             const { owner, repo } = context.repo;
-            const issue_number = Number.parseInt(process.env.PR_NUMBER || "", 10);
-            if (!Number.isInteger(issue_number) || issue_number <= 0) {
-              core.setFailed("Invalid PR number in PR_NUMBER");
+            // Belt and braces: the `pr` step above already rejects anything that
+            // is not canonical digits. Kept because Number.parseInt takes the
+            // longest valid prefix, so "123abc" and "1e3" would coerce to 123 and
+            // 1 and sail past an isInteger check if that gate ever moved.
+            const raw = (process.env.PR_NUMBER || "").trim();
+            if (!/^[1-9][0-9]*$/.test(raw)) {
+              core.setFailed(`Invalid PR number in PR_NUMBER: ${JSON.stringify(raw)}`);
               return;
             }
+            const issue_number = Number(raw);
             const labelsToRemove = ["Needs review", "Work in progress", "Backlog", "Can be closed?", "Help needed", "Needs Documentation"];
 
             for (const name of labelsToRemove) {

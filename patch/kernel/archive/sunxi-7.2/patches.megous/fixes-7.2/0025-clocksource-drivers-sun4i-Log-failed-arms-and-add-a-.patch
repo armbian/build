@@ -1,0 +1,156 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 10:17:03 +0200
+Subject: clocksource/drivers/sun4i: Log failed arms and add a SysRq-y state
+ dump
+
+Record the register state of every failed oneshot arm attempt in a
+small ring buffer and warn about it, and dump the current timer state
+plus the failure log on SysRq-y.  Userspace /dev/mem readback of this
+block was seen returning stale values on sun5i, so a kernel-side dump
+is the only trustworthy post-mortem when the tick dies.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clocksource/timer-sun4i.c | 87 +++++++++-
+ 1 file changed, 86 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i.c
+index 111111111111..222222222222 100644
+--- a/drivers/clocksource/timer-sun4i.c
++++ b/drivers/clocksource/timer-sun4i.c
+@@ -16,7 +16,9 @@
+ #include <linux/interrupt.h>
+ #include <linux/irq.h>
+ #include <linux/irqreturn.h>
++#include <linux/sched/clock.h>
+ #include <linux/sched_clock.h>
++#include <linux/sysrq.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/of_irq.h>
+@@ -42,6 +44,25 @@
+ /* The reload bit clears a couple of source clock cycles after it is set. */
+ #define TIMER_RELOAD_MAX_POLL	100
+ 
++/*
++ * Register state of failed oneshot arm attempts, for post-mortem over
++ * SysRq-y.  Userspace readback of this block over /dev/mem returns stale
++ * values, a kernel-side dump is the only trustworthy view.
++ */
++#define SUN4I_ARM_FAIL_LOG	8
++
++struct sun4i_arm_fail {
++	u64 clock;
++	unsigned long evt;
++	unsigned int attempt;
++	u32 ctl, intval, cnt1, cnt2, irq_st;
++};
++
++static struct sun4i_arm_fail sun4i_arm_fail_log[SUN4I_ARM_FAIL_LOG];
++static unsigned int sun4i_arm_fail_count;
++static unsigned int sun4i_arm_attempt;
++static unsigned long sun4i_arm_last_evt;
++
+ /*
+  * When we disable a timer, we need to wait at least for 2 cycles of
+  * the timer source clock. We will use for that the clocksource timer
+@@ -160,16 +181,44 @@ static int sun4i_clkevt_check_armed(void __iomem *base, u8 timer)
+ 	return -ETIME;
+ }
+ 
++static void sun4i_clkevt_record_arm_fail(void __iomem *base, u8 timer,
++					 unsigned long evt)
++{
++	struct sun4i_arm_fail *f;
++
++	f = &sun4i_arm_fail_log[sun4i_arm_fail_count++ % SUN4I_ARM_FAIL_LOG];
++	f->clock = local_clock();
++	f->evt = evt;
++	f->attempt = ++sun4i_arm_attempt;
++	f->ctl = readl(base + TIMER_CTL_REG(timer));
++	f->intval = readl(base + TIMER_INTVAL_REG(timer));
++	f->cnt1 = readl(base + TIMER_CNTVAL_REG(timer));
++	f->cnt2 = readl(base + TIMER_CNTVAL_REG(timer));
++	f->irq_st = readl(base + TIMER_IRQ_ST_REG);
++
++	pr_warn_ratelimited("sun4i-timer: arm failed, retrying (evt=%lu attempt=%u ctl=%08x intval=%08x cnt=%08x/%08x st=%08x)\n",
++			    evt, f->attempt, f->ctl, f->intval,
++			    f->cnt1, f->cnt2, f->irq_st);
++}
++
+ static int sun4i_clkevt_next_event(unsigned long evt,
+ 				   struct clock_event_device *clkevt)
+ {
+ 	struct timer_of *to = to_timer_of(clkevt);
++	int ret;
+ 
+ 	sun4i_clkevt_time_stop(timer_of_base(to), 0);
+ 	sun4i_clkevt_time_setup(timer_of_base(to), 0, evt - TIMER_SYNC_TICKS);
+ 	sun4i_clkevt_time_start(timer_of_base(to), 0, false);
+ 
+-	return sun4i_clkevt_check_armed(timer_of_base(to), 0);
++	ret = sun4i_clkevt_check_armed(timer_of_base(to), 0);
++	if (ret)
++		sun4i_clkevt_record_arm_fail(timer_of_base(to), 0, evt);
++	else
++		sun4i_arm_attempt = 0;
++	sun4i_arm_last_evt = evt;
++
++	return ret;
+ }
+ 
+ static void sun4i_timer_clear_interrupt(void __iomem *base)
+@@ -215,6 +264,40 @@ static u64 notrace sun4i_timer_sched_read(void)
+ 	return ~readl(timer_of_base(&to) + TIMER_CNTVAL_REG(1));
+ }
+ 
++static void sun4i_timer_sysrq_show(u8 key)
++{
++	void __iomem *base = timer_of_base(&to);
++	unsigned int i, n;
++
++	pr_info("sun4i-timer: irq_en=%08x irq_st=%08x ctl0=%08x intval0=%08x\n",
++		readl(base + TIMER_IRQ_EN_REG),
++		readl(base + TIMER_IRQ_ST_REG),
++		readl(base + TIMER_CTL_REG(0)),
++		readl(base + TIMER_INTVAL_REG(0)));
++	pr_info("sun4i-timer: cnt0=%08x,%08x cnt1=%08x,%08x last_evt=%lu arm_fails=%u\n",
++		readl(base + TIMER_CNTVAL_REG(0)),
++		readl(base + TIMER_CNTVAL_REG(0)),
++		readl(base + TIMER_CNTVAL_REG(1)),
++		readl(base + TIMER_CNTVAL_REG(1)),
++		sun4i_arm_last_evt, sun4i_arm_fail_count);
++
++	n = sun4i_arm_fail_count < SUN4I_ARM_FAIL_LOG ?
++		sun4i_arm_fail_count : SUN4I_ARM_FAIL_LOG;
++	for (i = 0; i < n; i++) {
++		struct sun4i_arm_fail *f = &sun4i_arm_fail_log[i];
++
++		pr_info("sun4i-timer: fail clock=%llu evt=%lu attempt=%u ctl=%08x intval=%08x cnt=%08x/%08x st=%08x\n",
++			f->clock, f->evt, f->attempt, f->ctl, f->intval,
++			f->cnt1, f->cnt2, f->irq_st);
++	}
++}
++
++static const struct sysrq_key_op sun4i_timer_sysrq_op = {
++	.handler = sun4i_timer_sysrq_show,
++	.help_msg = "sun4i-timer(y)",
++	.action_msg = "Show sun4i timer state",
++};
++
+ static int __init sun4i_timer_init(struct device_node *node)
+ {
+ 	int ret;
+@@ -264,6 +347,8 @@ static int __init sun4i_timer_init(struct device_node *node)
+ 	val = readl(timer_of_base(&to) + TIMER_IRQ_EN_REG);
+ 	writel(val | TIMER_IRQ_EN(0), timer_of_base(&to) + TIMER_IRQ_EN_REG);
+ 
++	register_sysrq_key('y', &sun4i_timer_sysrq_op);
++
+ 	return ret;
+ }
+ TIMER_OF_DECLARE(sun4i, "allwinner,sun4i-a10-timer",
+-- 
+Armbian
+

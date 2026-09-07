@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Thu, 30 Jul 2026 23:37:03 +0200
+Subject: riscv: dts: sophgo: mux the Milk-V Duo S eMMC pads from the DT
+
+On a Duo S with eMMC fitted, booting from a card leaves the eMMC invisible:
+the controller registers and then
+
+  mmc2: SDHCI controller on 4300000.mmc [4300000.mmc] using ADMA 64-bit
+  mmc2: Failed to initialize a non-removable card
+
+The chip is fine and it is not a bus conflict with the card slot - the two are
+separate controllers and the installer drives both in one U-Boot session. The
+eMMC's seven pads are simply never routed. In the vendor bootloader,
+board/cvitek/cv181x/board.c does
+
+  #if defined(CONFIG_NAND_SUPPORT)
+          pinmux_config(PINMUX_SPI_NAND);
+  #elif defined(CONFIG_SPI_FLASH)
+          pinmux_config(PINMUX_SPI_NOR);
+  #elif defined(CONFIG_EMMC_SUPPORT)
+          pinmux_config(PINMUX_EMMC);
+  #endif
+
+and CONFIG_EMMC_SUPPORT comes from STORAGE_TYPE=emmc at bootloader build time.
+So the eMMC build routes them and the SD build does not - the same seven pads
+carry SPI-NAND and SPI-NOR, which is why they are switched rather than fixed.
+Linux then inherits whatever the BootROM left, and our device tree said nothing
+about them, so nothing corrected it.
+
+Declaring them here makes it independent of which bootloader ran, exactly as the
+card slot already is: those pads happen to sit in their native function after
+either boot, which is why the slot works both ways today.
+
+Mux and power-source, nothing else. PINMUX_CONFIG() in the vendor bootloader
+sets the function select alone and the eMMC runs at those defaults when it is
+the boot device, but power-source is not optional:
+cv1800_dt_node_to_map_post() reads it with of_property_read_u32() and returns
+the error if it is absent, which fails the whole pin map - and then the
+consumer does not probe at all, so 4300000.mmc disappears from dmesg entirely
+rather than failing visibly.
+
+no-1-8-v is deliberately left alone. Dropping it and declaring mmc-hs200-1_8v
+with mmc-ddr-1_8v was tried, on the theory that the vendor bootloader tunes
+this controller and so must be running HS200; the eMMC then does not enumerate
+at all - the controller registers and no card line ever follows, which is what
+mmc_select_hs200() does when the voltage switch fails, since it returns an
+error other than -EBADMSG and mmc_select_timing() propagates it instead of
+falling back. High speed on a 4-bit bus stands until somebody establishes what
+VDDIO_EMMC actually is on this board. mmc-ddr-1_8v on its own is untried.
+
+One consequence worth stating: this device tree is shared with the Duo S that
+has no eMMC fitted, where it will now pin seven pads for a chip that is not
+there. That is inert unless those pads are wired to something else on that
+variant, which nothing in the vendor sources suggests - they carry SPI-NAND or
+SPI-NOR on boards that have such flash, and the Duo S has neither.
+
+Tested on a Duo S with eMMC, booted from a card: mmcblk2 appears with its
+partitions, plus the boot0/boot1/rpmb areas.
+
+Signed-off-by: Armbian <info@armbian.com>
+---
+ arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts | 45 +++++++++-
+ 1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+index 111111111111..222222222222 100644
+--- a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
++++ b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
+@@ -113,13 +113,56 @@ &dmac {
+ 	status = "okay";
+ };
+ 
++/*
++ * Route the eMMC pads ourselves instead of inheriting them. The vendor U-Boot
++ * only muxes this group when it was built for eMMC storage
++ * (board/cvitek/cv181x/board.c, guarded by CONFIG_EMMC_SUPPORT), and the same
++ * seven pads are shared with SPI-NAND and SPI-NOR. So after booting the SD build
++ * of the bootloader they are left in whatever the BootROM set, and Linux cannot
++ * talk to the eMMC: "mmc2: Failed to initialize a non-removable card".
++ *
++ * Mux and power-source only. PINMUX_CONFIG() in the vendor bootloader sets the
++ * function select and nothing else, and the eMMC works with those defaults when
++ * it is the boot device - but power-source is not optional here:
++ * cv1800_dt_node_to_map_post() rejects any group without it, which fails the
++ * consumer's probe outright.
++ *
++ * no-1-8-v stays. Dropping it and asking for mmc-hs200-1_8v was tried on a Duo
++ * S with the eMMC fitted, and the card then never enumerates at all: the
++ * controller registers and no card line ever follows, which is the non-graceful
++ * failure mmc_select_hs200() has when the voltage switch does not take. High
++ * speed on a 4-bit bus it is, until somebody establishes what VDDIO_EMMC
++ * actually is on this board. mmc-ddr-1_8v on its own is untried.
++ *
++ * max-frequency matches the vendor DTS. It is inert while no-1-8-v holds the
++ * card at high speed - the clock is set from ext_csd.hs_max_dtr either way -
++ * and is here because it was in the tree that was booted and verified.
++ */
++&pinctrl {
++	emmc_cfg: emmc-cfg {
++		emmc-pins {
++			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>,
++				 <PINMUX(PIN_EMMC_CMD, 0)>,
++				 <PINMUX(PIN_EMMC_DAT0, 0)>,
++				 <PINMUX(PIN_EMMC_DAT1, 0)>,
++				 <PINMUX(PIN_EMMC_DAT2, 0)>,
++				 <PINMUX(PIN_EMMC_DAT3, 0)>,
++				 <PINMUX(PIN_EMMC_RSTN, 0)>;
++			power-source = <1800>;
++		};
++	};
++};
++
+ &emmc {
+ 	bus-width = <4>;
+ 	no-1-8-v;
++	max-frequency = <200000000>;
+ 	cap-mmc-hw-reset;
+ 	no-sd;
+ 	no-sdio;
+ 	non-removable;
++	pinctrl-names = "default";
++	pinctrl-0 = <&emmc_cfg>;
+ 	status = "okay";
+ };
+ 
+@@ -307,4 +350,4 @@ &int_adc {
+ 
+ &remoteproc {
+ 	status = "okay";
+-};
+\ No newline at end of file
++};
+-- 
+Armbian
+

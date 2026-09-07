@@ -1,3 +1,5 @@
+# @description Builds a VMware-ready image by enabling the `image-output-ovf` extension (VMDK + OVF output) and installing `open-vm-tools` in the guest. On desktop builds it also adds `open-vm-tools-desktop` and the `xserver-xorg-video-vmware` driver for display integration. Enable it to run Armbian under VMware.
+
 enable_extension "image-output-ovf" # Enable the ovf+vmdk output image extension
 
 function extension_prepare_config__prepare_vmware_config() {

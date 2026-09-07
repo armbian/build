@@ -17,8 +17,8 @@ enable_extension "uboot-btrfs"
 enable_extension "watchdog"
 
 # Newer u-boot for the N2/N2+
-BOOTBRANCH_BOARD="tag:v2026.04"
-BOOTPATCHDIR="v2026.04"
+BOOTBRANCH_BOARD="tag:v2026.07"
+BOOTPATCHDIR="v2026.07"
 
 # Enable writing u-boot to SPI on the N2(+) for current and edge
 # @TODO: replace this with an overlay, after meson64 overlay revamp

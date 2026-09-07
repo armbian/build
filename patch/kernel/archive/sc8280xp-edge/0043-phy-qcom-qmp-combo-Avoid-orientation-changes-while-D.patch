@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 29 Jul 2026 13:49:57 +0800
+Subject: phy: qcom-qmp-combo: Avoid orientation changes while DP is active
+
+qmp_combo_typec_switch_set() force-cycles the common USB/DP PHY block
+when the Type-C orientation changes. During a quick disconnect followed
+by a reconnect in the opposite orientation, the new orientation can be
+reported before DRM has disabled the previous DP stream.
+
+Restarting the common PHY block while the DP PHY is still powered
+invalidates resources used by the active DP link. A later DP link register
+access, such as pushing the idle pattern during atomic disable, can then
+trigger an asynchronous SError.
+
+Check the applied orientation and dp_powered_on while holding phy_mutex.
+Keep the current orientation while the DP PHY is powered so that the
+common block is not restarted. A subsequent Type-C notification can apply
+the new orientation after the old DP stream has been powered off.
+
+Fixes: 2851117f8f42 ("phy: qcom-qmp-combo: Introduce orientation switching")
+Cc: stable@vger.kernel.org
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+
+(cherry picked from commit afb1e8a47a5417da92ee88e792de3a4cb67ae500)
+[SuperKali: backported to sc8280xp edge from radxa/kernel linux-7.0.11]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 12 +++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -4429,10 +4429,18 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
+ 	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
+-	if (orientation == qmp->orientation || orientation == TYPEC_ORIENTATION_NONE)
++	if (orientation == TYPEC_ORIENTATION_NONE)
+ 		return 0;
+ 
+ 	mutex_lock(&qmp->phy_mutex);
++
++	/*
++	 * Changing orientation force-cycles the common USB/DP PHY block.
++	 * Defer it until the active DP stream has been powered off.
++	 */
++	if (orientation == qmp->orientation || qmp->dp_powered_on)
++		goto out_unlock;
++
+ 	qmp->orientation = orientation;
+ 
+ 	if (qmp->init_count) {
+@@ -4446,6 +4454,8 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 		if (qmp->dp_init_count)
+ 			cfg->dp_aux_init(qmp);
+ 	}
++
++out_unlock:
+ 	mutex_unlock(&qmp->phy_mutex);
+ 
+ 	return 0;
+-- 
+Armbian
+

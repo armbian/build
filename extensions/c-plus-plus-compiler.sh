@@ -1,3 +1,5 @@
+# @description Adds a C++ compiler to the host build dependencies, no longer included by default in `prepare-host.sh`. Appends the native `g++` plus the `g++-aarch64-linux-gnu` arm64 cross-compiler (skipped on non-standard hosts like riscv64) to `EXTRA_BUILD_DEPS`. Enable it when the build requires a C++ compiler.
+
 # The C++ compiler is no longer included by default in prepare-host.sh.
 # Enable this extension if you need a C++ compiler during the build.
 

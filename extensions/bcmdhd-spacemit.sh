@@ -1,3 +1,5 @@
+# @description Installs the Broadcom `bcmdhd` WiFi driver for SpacemiT boards as a prebuilt DKMS `.deb`, downloaded from the `sven-ola/bcmdhd-spacemit-dkms` Codeberg releases and built in the chroot. Fetches the `pcie`, `sdio` or `usb` variant per `BCMDHD_SPACEMIT_TYPE`/`BCMDHD_SPACEMIT_TAG`. Forces `INSTALL_HEADERS=yes`, requiring a kernel with working headers.
+
 # shellcheck shell=bash
 
 function extension_finish_config__install_kernel_headers_for_bcmdhd_spacemit_dkms() {

@@ -1,3 +1,5 @@
+# @description Places the root filesystem on an LVM logical volume. Creates a PV/VG/LV on the root partition (`lvm2`), sizing the volume to ~130% of the rootfs, and forces a separate boot partition (`BOOTPART_REQUIRED=yes`) since many bootloaders cannot read LVM. Customise the group name via `${LVM_VG_NAME:-armbivg}`; a `-lvm` suffixed image is produced.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2024 Rafel del Valle <rvalle@privaz.io>

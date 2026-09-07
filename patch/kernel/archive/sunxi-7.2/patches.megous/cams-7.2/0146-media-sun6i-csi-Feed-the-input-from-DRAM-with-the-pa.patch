@@ -1,0 +1,762 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 10:59:21 +0200
+Subject: media: sun6i-csi: Feed the input from DRAM with the pattern generator
+
+The CSI can take its input from memory instead of from a sensor. The
+A83T manual documents the block on pages 350 and 353 to 356: a pattern
+generator with its own DMA master on the system bus, whose output enters
+the input mux as a peer of the parallel, BT656 and MIPI interfaces and
+which synthesises the sync signals itself. PTN_LEN is a byte count,
+PTN_ADDR is the DRAM address, the pattern repeats PTN_CYCLE+1 times, and
+PTN_START clears itself once generation has finished.
+
+No driver has ever programmed any of it, in this tree or in either
+vendor tree, so nothing here can be taken on trust -- and a documented
+register is not an implemented one. The ISP one block downstream has an
+equally complete DRAM input in its map that does nothing whatsoever.
+
+So this is a set of knobs rather than a policy. Everything that is not
+known -- whether the address wants the shift every other address
+register in this block takes, whether the length is a frame or a line,
+where the line breaks come from, whether the timing fields matter -- is
+reachable from debugfs, so that walking the unknowns does not cost a
+kernel build each time. Two of those fields are in the FIFO threshold
+register, which has nothing else to do with the generator and which the
+driver has never written.
+
+Arming holds a runtime PM reference, because otherwise the device
+suspends whenever nothing streams and no register could be touched at
+all: the first question, whether the block does anything, is then a
+single write and a read of PTN_START rather than a whole pipeline.
+Arming and starting are separate for the same reason -- the interesting
+observation sits between them.
+
+The one hook in the driver proper is that the source is not started when
+a pattern is supplying the input. It stays linked so that formats and
+the pipeline still validate; nothing it puts on the bus is used. Putting
+that in the bridge means the ISP path needs no changes of its own, since
+it already reaches the sensor through the bridge.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c        | 352 ++++++++++
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h        |  29 +
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c |  68 +-
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h |   4 +
+ drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h    |  15 +
+ 5 files changed, 465 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.c
+@@ -8,6 +8,7 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/debugfs.h>
++#include <linux/dma-mapping.h>
+ #include <linux/err.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+@@ -17,6 +18,7 @@
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/seq_file.h>
++#include <linux/sizes.h>
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-mc.h>
+ 
+@@ -247,6 +249,352 @@ static const struct file_operations sun6i_csi_debugfs_poke_fops = {
+ 	.llseek		= noop_llseek,
+ };
+ 
++/* Pattern */
++
++/*
++ * A cap on what a single debugfs write can ask the CMA pool for. A full
++ * 2592x1944 frame at two bytes a pixel is ten megabytes, so this leaves room
++ * without letting a typo try to allocate the machine.
++ */
++#define SUN6I_CSI_PATTERN_SIZE_MAX	SZ_32M
++
++bool sun6i_csi_pattern_replaces_source(struct sun6i_csi_device *csi_dev)
++{
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	bool replaces;
++
++	mutex_lock(&pattern->lock);
++	replaces = pattern->enabled && !pattern->keep_source;
++	mutex_unlock(&pattern->lock);
++
++	return replaces;
++}
++
++/* Called with the pattern lock held and a runtime PM reference taken. */
++static int sun6i_csi_pattern_arm(struct sun6i_csi_device *csi_dev)
++{
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct regmap *regmap = csi_dev->regmap;
++	u32 len = pattern->len;
++	int ret;
++
++	if (!len) {
++		ret = sun6i_csi_bridge_frame_bytes(csi_dev, &len);
++		if (ret)
++			return ret;
++	}
++
++	if (len > pattern->size)
++		return -EINVAL;
++
++	/*
++	 * Clearing CSI_EN resets the module, so it has to come out of reset
++	 * before any of the below would stick. The bridge sets this bit too
++	 * when it streams, and clears it when it stops -- so a pipeline that
++	 * has run and stopped leaves the generator needing to be armed again.
++	 */
++	regmap_update_bits(regmap, SUN6I_CSI_EN_REG, SUN6I_CSI_EN_CSI_EN,
++			   SUN6I_CSI_EN_CSI_EN);
++
++	regmap_write(regmap, SUN6I_CSI_PTN_LEN_REG, len);
++
++	/*
++	 * Every other address register in this block holds the address shifted
++	 * down by two and the manual describes those in the same words as this
++	 * one, so that is the encoding to try first. If the generator turns out
++	 * to want the address unshifted, poke it.
++	 */
++	regmap_write(regmap, SUN6I_CSI_PTN_ADDR_REG,
++		     SUN6I_CSI_ADDR_VALUE(pattern->address));
++
++	regmap_update_bits(regmap, SUN6I_CSI_FIFO_THRS_REG,
++			   SUN6I_CSI_FIFO_THRS_PTN_GEN_CLK_DIV_MASK |
++			   SUN6I_CSI_FIFO_THRS_PTN_GEN_DLY_MASK,
++			   SUN6I_CSI_FIFO_THRS_PTN_GEN_CLK_DIV(pattern->clk_div) |
++			   SUN6I_CSI_FIFO_THRS_PTN_GEN_DLY(pattern->dly));
++
++	/*
++	 * The generator reads through the CSI's SRAM, so make sure nothing has
++	 * left it powered down.
++	 */
++	regmap_update_bits(regmap, SUN6I_CSI_EN_REG,
++			   SUN6I_CSI_EN_PTN_CYCLE_MASK |
++			   SUN6I_CSI_EN_SRAM_PWDN | SUN6I_CSI_EN_PTN_GEN_EN,
++			   SUN6I_CSI_EN_PTN_CYCLE(pattern->cycle) |
++			   SUN6I_CSI_EN_PTN_GEN_EN);
++
++	return 0;
++}
++
++static int sun6i_csi_pattern_enable_get(void *data, u64 *value)
++{
++	struct sun6i_csi_device *csi_dev = data;
++
++	*value = csi_dev->pattern.enabled;
++
++	return 0;
++}
++
++/*
++ * Enabling arms the generator and holds a runtime PM reference for as long as
++ * it stays armed. Without that the device suspends whenever nothing streams,
++ * and no register here could be read or written at all -- which would make the
++ * first and most important experiment, whether the block does anything, need a
++ * whole capture pipeline to perform.
++ */
++static int sun6i_csi_pattern_enable_set(void *data, u64 value)
++{
++	struct sun6i_csi_device *csi_dev = data;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct device *dev = csi_dev->dev;
++	int ret = 0;
++
++	mutex_lock(&pattern->lock);
++
++	if (!!value == pattern->enabled)
++		goto complete;
++
++	if (!value) {
++		regmap_update_bits(csi_dev->regmap, SUN6I_CSI_EN_REG,
++				   SUN6I_CSI_EN_PTN_GEN_EN, 0);
++
++		pattern->enabled = false;
++		pm_runtime_put(dev);
++
++		goto complete;
++	}
++
++	if (!pattern->buffer) {
++		ret = -ENODEV;
++		goto complete;
++	}
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0)
++		goto complete;
++
++	ret = sun6i_csi_pattern_arm(csi_dev);
++	if (ret) {
++		pm_runtime_put(dev);
++		goto complete;
++	}
++
++	pattern->enabled = true;
++
++complete:
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(sun6i_csi_pattern_enable_fops,
++			 sun6i_csi_pattern_enable_get,
++			 sun6i_csi_pattern_enable_set, "%llu\n");
++
++/*
++ * Kicking the generator. The hardware clears this bit by itself when the
++ * pattern has been generated, so reading the enable register back afterwards
++ * is what says whether anything happened.
++ */
++static int sun6i_csi_pattern_start_set(void *data, u64 value)
++{
++	struct sun6i_csi_device *csi_dev = data;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	int ret = 0;
++
++	mutex_lock(&pattern->lock);
++
++	if (pattern->enabled)
++		regmap_update_bits(csi_dev->regmap, SUN6I_CSI_EN_REG,
++				   SUN6I_CSI_EN_PTN_START,
++				   value ? SUN6I_CSI_EN_PTN_START : 0);
++	else
++		ret = -EPERM;
++
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(sun6i_csi_pattern_start_fops, NULL,
++			 sun6i_csi_pattern_start_set, "%llu\n");
++
++static int sun6i_csi_pattern_size_get(void *data, u64 *value)
++{
++	struct sun6i_csi_device *csi_dev = data;
++
++	*value = csi_dev->pattern.size;
++
++	return 0;
++}
++
++static int sun6i_csi_pattern_size_set(void *data, u64 value)
++{
++	struct sun6i_csi_device *csi_dev = data;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct device *dev = csi_dev->dev;
++	int ret = 0;
++
++	if (value > SUN6I_CSI_PATTERN_SIZE_MAX)
++		return -EINVAL;
++
++	mutex_lock(&pattern->lock);
++
++	if (pattern->enabled) {
++		ret = -EBUSY;
++		goto complete;
++	}
++
++	if (pattern->buffer) {
++		dma_free_coherent(dev, pattern->size, pattern->buffer,
++				  pattern->address);
++
++		pattern->buffer = NULL;
++		pattern->size = 0;
++	}
++
++	if (value) {
++		pattern->buffer = dma_alloc_coherent(dev, value,
++						     &pattern->address,
++						     GFP_KERNEL);
++		if (!pattern->buffer) {
++			ret = -ENOMEM;
++			goto complete;
++		}
++
++		pattern->size = value;
++	}
++
++complete:
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(sun6i_csi_pattern_size_fops,
++			 sun6i_csi_pattern_size_get,
++			 sun6i_csi_pattern_size_set, "%llu\n");
++
++/* Both encodings, because which one the generator wants is not known. */
++static int sun6i_csi_pattern_address_show(struct seq_file *seq, void *data)
++{
++	struct sun6i_csi_device *csi_dev = seq->private;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++
++	mutex_lock(&pattern->lock);
++
++	if (pattern->buffer) {
++		seq_printf(seq, "address %pad\n", &pattern->address);
++		seq_printf(seq, "shifted %08x\n",
++			   (u32)SUN6I_CSI_ADDR_VALUE(pattern->address));
++	}
++
++	mutex_unlock(&pattern->lock);
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(sun6i_csi_pattern_address);
++
++static ssize_t sun6i_csi_pattern_data_read(struct file *file,
++					   char __user *buffer, size_t count,
++					   loff_t *ppos)
++{
++	struct sun6i_csi_device *csi_dev = file->private_data;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	ssize_t ret;
++
++	mutex_lock(&pattern->lock);
++
++	ret = pattern->buffer ?
++	      simple_read_from_buffer(buffer, count, ppos, pattern->buffer,
++				      pattern->size) : -ENODEV;
++
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++static ssize_t sun6i_csi_pattern_data_write(struct file *file,
++					    const char __user *buffer,
++					    size_t count, loff_t *ppos)
++{
++	struct sun6i_csi_device *csi_dev = file->private_data;
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	ssize_t ret;
++
++	mutex_lock(&pattern->lock);
++
++	ret = pattern->buffer ?
++	      simple_write_to_buffer(pattern->buffer, pattern->size, ppos,
++				     buffer, count) : -ENODEV;
++
++	mutex_unlock(&pattern->lock);
++
++	return ret;
++}
++
++static const struct file_operations sun6i_csi_pattern_data_fops = {
++	.owner		= THIS_MODULE,
++	.open		= simple_open,
++	.read		= sun6i_csi_pattern_data_read,
++	.write		= sun6i_csi_pattern_data_write,
++	.llseek		= default_llseek,
++};
++
++static void sun6i_csi_pattern_setup(struct sun6i_csi_device *csi_dev)
++{
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++	struct dentry *debugfs;
++
++	mutex_init(&pattern->lock);
++
++	/* The reset values of the two fields that share the FIFO register. */
++	pattern->clk_div = 0;
++	pattern->dly = 0x0f;
++
++	debugfs = debugfs_create_dir("pattern", csi_dev->debugfs);
++
++	debugfs_create_file_unsafe("size", 0644, debugfs, csi_dev,
++				   &sun6i_csi_pattern_size_fops);
++	debugfs_create_file("address", 0444, debugfs, csi_dev,
++			    &sun6i_csi_pattern_address_fops);
++	debugfs_create_file("data", 0644, debugfs, csi_dev,
++			    &sun6i_csi_pattern_data_fops);
++	debugfs_create_file_unsafe("enable", 0644, debugfs, csi_dev,
++				   &sun6i_csi_pattern_enable_fops);
++	debugfs_create_file_unsafe("start", 0200, debugfs, csi_dev,
++				   &sun6i_csi_pattern_start_fops);
++
++	/*
++	 * Plain storage, applied when the generator is armed: a length of zero
++	 * means one frame of the bridge's current format, and the two timing
++	 * fields are only worth moving if the defaults turn out not to work.
++	 */
++	debugfs_create_u32("len", 0644, debugfs, &pattern->len);
++	debugfs_create_u8("cycle", 0644, debugfs, &pattern->cycle);
++	debugfs_create_u8("clk_div", 0644, debugfs, &pattern->clk_div);
++	debugfs_create_u8("dly", 0644, debugfs, &pattern->dly);
++	debugfs_create_bool("keep_source", 0644, debugfs,
++			    &pattern->keep_source);
++}
++
++static void sun6i_csi_pattern_cleanup(struct sun6i_csi_device *csi_dev)
++{
++	struct sun6i_csi_pattern *pattern = &csi_dev->pattern;
++
++	/* Enabling took a runtime PM reference that has to go back. */
++	if (pattern->enabled) {
++		pattern->enabled = false;
++		pm_runtime_put(csi_dev->dev);
++	}
++
++	if (pattern->buffer)
++		dma_free_coherent(csi_dev->dev, pattern->size, pattern->buffer,
++				  pattern->address);
++
++	mutex_destroy(&pattern->lock);
++}
++
+ static void sun6i_csi_debugfs_setup(struct sun6i_csi_device *csi_dev)
+ {
+ 	/*
+@@ -259,12 +607,16 @@ static void sun6i_csi_debugfs_setup(struct sun6i_csi_device *csi_dev)
+ 			    &sun6i_csi_debugfs_registers_fops);
+ 	debugfs_create_file("poke", 0200, csi_dev->debugfs, csi_dev,
+ 			    &sun6i_csi_debugfs_poke_fops);
++
++	sun6i_csi_pattern_setup(csi_dev);
+ }
+ 
+ static void sun6i_csi_debugfs_cleanup(struct sun6i_csi_device *csi_dev)
+ {
+ 	debugfs_remove_recursive(csi_dev->debugfs);
+ 	csi_dev->debugfs = NULL;
++
++	sun6i_csi_pattern_cleanup(csi_dev);
+ }
+ 
+ /* Platform */
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi.h
+@@ -34,6 +34,30 @@ struct sun6i_csi_v4l2 {
+ 	struct media_device		media_dev;
+ };
+ 
++/*
++ * The pattern generator reads a DRAM buffer and drives it into the input mux
++ * in place of an interface, synthesising the sync signals itself, so it is a
++ * way to hand the CSI -- and the ISP behind it -- an image the driver chose.
++ *
++ * Nothing has ever programmed it, so what is here is deliberately a set of
++ * knobs rather than a policy: every field below is reachable from debugfs so
++ * that the unknowns can be walked without a kernel build each time.
++ */
++struct sun6i_csi_pattern {
++	struct mutex			lock; /* Buffer and register state. */
++
++	void				*buffer;
++	dma_addr_t			address;
++	size_t				size;
++
++	u32				len;
++	u8				cycle;
++	u8				clk_div;
++	u8				dly;
++	bool				enabled;
++	bool				keep_source;
++};
++
+ struct sun6i_csi_device {
+ 	struct device			*dev;
+ 	struct v4l2_device		*v4l2_dev;
+@@ -42,6 +66,7 @@ struct sun6i_csi_device {
+ 	struct sun6i_csi_v4l2		v4l2;
+ 	struct sun6i_csi_bridge		bridge;
+ 	struct sun6i_csi_capture	capture;
++	struct sun6i_csi_pattern	pattern;
+ 
+ 	struct regmap			*regmap;
+ 	struct clk			*clock_mod;
+@@ -61,4 +86,8 @@ struct sun6i_csi_variant {
+ int sun6i_csi_isp_complete(struct sun6i_csi_device *csi_dev,
+ 			   struct v4l2_device *v4l2_dev);
+ 
++/* Pattern */
++
++bool sun6i_csi_pattern_replaces_source(struct sun6i_csi_device *csi_dev);
++
+ #endif
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+@@ -19,118 +19,142 @@ static const struct sun6i_csi_bridge_format sun6i_csi_bridge_formats[] = {
+ 	/* Bayer */
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SBGGR8_1X8,
++		.bus_bpp		= 1,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGBRG8_1X8,
++		.bus_bpp		= 1,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGRBG8_1X8,
++		.bus_bpp		= 1,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SRGGB8_1X8,
++		.bus_bpp		= 1,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SBGGR10_1X10,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGBRG10_1X10,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGRBG10_1X10,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SRGGB10_1X10,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SBGGR12_1X12,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGBRG12_1X12,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SGRBG12_1X12,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_SRGGB12_1X12,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	/* RGB */
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_RGB565_2X8_LE,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_RGB565_2X8_BE,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ 	/* YUV422 */
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_YUYV8_2X8,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_YUYV,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_YVYU,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_UYVY8_2X8,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_YVYU8_2X8,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_YVYU,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_YUYV,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_UYVY8_2X8,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_VYUY8_2X8,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_YUYV8_1X16,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_YUYV,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_YVYU,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_UYVY8_1X16,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_YVYU8_1X16,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_YVYU,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_YUYV,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_UYVY8_1X16,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 	},
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_VYUY8_1X16,
++		.bus_bpp		= 2,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_YUV422,
+ 		.input_yuv_seq		= SUN6I_CSI_INPUT_YUV_SEQ_VYUY,
+ 		.input_yuv_seq_invert	= SUN6I_CSI_INPUT_YUV_SEQ_UYVY,
+@@ -138,6 +162,7 @@ static const struct sun6i_csi_bridge_format sun6i_csi_bridge_formats[] = {
+ 	/* Compressed */
+ 	{
+ 		.mbus_code		= MEDIA_BUS_FMT_JPEG_1X8,
++		.bus_bpp		= 1,
+ 		.input_format		= SUN6I_CSI_INPUT_FMT_RAW,
+ 	},
+ };
+@@ -154,6 +179,35 @@ sun6i_csi_bridge_format_find(u32 mbus_code)
+ 	return NULL;
+ }
+ 
++/*
++ * How many bytes one frame occupies on the bus, which is the length a pattern
++ * has to have in DRAM to stand in for one.
++ */
++int sun6i_csi_bridge_frame_bytes(struct sun6i_csi_device *csi_dev, u32 *bytes)
++{
++	struct v4l2_subdev *subdev = &csi_dev->bridge.subdev;
++	const struct sun6i_csi_bridge_format *format;
++	const struct v4l2_mbus_framefmt *mbus_format;
++	struct v4l2_subdev_state *state;
++	int ret = 0;
++
++	state = v4l2_subdev_lock_and_get_active_state(subdev);
++
++	mbus_format = v4l2_subdev_state_get_format(state,
++						   SUN6I_CSI_BRIDGE_PAD_SINK);
++
++	format = sun6i_csi_bridge_format_find(mbus_format->code);
++	if (format)
++		*bytes = mbus_format->width * mbus_format->height *
++			 format->bus_bpp;
++	else
++		ret = -EINVAL;
++
++	v4l2_subdev_unlock_state(state);
++
++	return ret;
++}
++
+ /* Bridge */
+ 
+ static void sun6i_csi_bridge_irq_enable(struct sun6i_csi_device *csi_dev)
+@@ -462,9 +516,17 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 
+ 	sun6i_csi_bridge_enable(csi_dev);
+ 
+-	ret = v4l2_subdev_call(source_subdev, video, s_stream, 1);
+-	if (ret && ret != -ENOIOCTLCMD)
+-		goto disable;
++	/*
++	 * With the pattern generator supplying the input, the source is left
++	 * alone: it stays linked so that formats and the pipeline still
++	 * validate, but nothing it puts on the bus is used. The generator
++	 * takes the input mux for itself and clocks the data out of DRAM.
++	 */
++	if (!sun6i_csi_pattern_replaces_source(csi_dev)) {
++		ret = v4l2_subdev_call(source_subdev, video, s_stream, 1);
++		if (ret && ret != -ENOIOCTLCMD)
++			goto disable;
++	}
+ 
+ 	return 0;
+ 
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+@@ -25,6 +25,8 @@ struct sun6i_csi_bridge_format {
+ 	u8	input_format;
+ 	u8	input_yuv_seq;
+ 	u8	input_yuv_seq_invert;
++	/* Bytes the bus carries per pixel, which a pattern has to supply. */
++	u8	bus_bpp;
+ };
+ 
+ struct sun6i_csi_bridge_source {
+@@ -54,6 +56,8 @@ struct sun6i_csi_bridge {
+ const struct sun6i_csi_bridge_format *
+ sun6i_csi_bridge_format_find(u32 mbus_code);
+ 
++int sun6i_csi_bridge_frame_bytes(struct sun6i_csi_device *csi_dev, u32 *bytes);
++
+ /* Bridge */
+ 
+ int sun6i_csi_bridge_setup(struct sun6i_csi_device *csi_dev);
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h
+@@ -15,6 +15,7 @@
+ 
+ #define SUN6I_CSI_EN_REG			0x0
+ #define SUN6I_CSI_EN_VER_EN			BIT(30)
++#define SUN6I_CSI_EN_PTN_CYCLE_MASK		GENMASK(23, 16)
+ #define SUN6I_CSI_EN_PTN_CYCLE(v)		(((v) << 16) & GENMASK(23, 16))
+ #define SUN6I_CSI_EN_SRAM_PWDN			BIT(8)
+ #define SUN6I_CSI_EN_PTN_START			BIT(4)
+@@ -59,7 +60,21 @@
+ #define SUN6I_CSI_CAP_SCAP_ON			BIT(0)
+ 
+ #define SUN6I_CSI_SYNC_CNT_REG			0xc
++
++/*
++ * Two of the pattern generator's fields live in the FIFO threshold register,
++ * which is otherwise nothing to do with it and which the driver never writes:
++ * its reset value 0x040f0400 is what runs, and it already carries a sane
++ * generator delay.
++ */
+ #define SUN6I_CSI_FIFO_THRS_REG			0x10
++#define SUN6I_CSI_FIFO_THRS_NEARLY_FULL(v)	(((v) << 26) & GENMASK(28, 26))
++#define SUN6I_CSI_FIFO_THRS_PTN_GEN_CLK_DIV_MASK	GENMASK(25, 24)
++#define SUN6I_CSI_FIFO_THRS_PTN_GEN_CLK_DIV(v)	(((v) << 24) & GENMASK(25, 24))
++#define SUN6I_CSI_FIFO_THRS_PTN_GEN_DLY_MASK	GENMASK(23, 16)
++#define SUN6I_CSI_FIFO_THRS_PTN_GEN_DLY(v)	(((v) << 16) & GENMASK(23, 16))
++#define SUN6I_CSI_FIFO_THRS_THRS(v)		((v) & GENMASK(11, 0))
++
+ #define SUN6I_CSI_BT656_HEAD_CFG_REG		0x14
+ 
+ #define SUN6I_CSI_PTN_LEN_REG			0x30
+-- 
+Armbian
+

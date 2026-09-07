@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 20 Jul 2026 01:49:20 +0200
+Subject: usb: musb: Don't skip host REQPKT cleanup without a DMA controller
+
+musb_host_rx() tests musb_dma_sw_mode_select() with no DMA guard at all,
+so the stale H_REQPKT cleanup is skipped purely because a glue declares
+the quirk. That is wrong whenever DMA is declared but not running:
+use_dma=0, or a glue whose dma_init() returns NULL because the SoC has no
+engine. The block is a PIO-path fixup, and those configurations need it.
+
+Require a live dma_controller. For glues that do have an engine this is
+the previous behavior, matching the CONFIG_USB_INVENTRA_DMA #ifdef this
+quirk replaced.
+
+While here, fix the comment above the accessors in musb_dma.h, which
+claimed all of them were already used inside guarded regions.
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/musb_dma.h  | 11 +++++++---
+ drivers/usb/musb/musb_host.c |  2 +-
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/usb/musb/musb_dma.h b/drivers/usb/musb/musb_dma.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_dma.h
++++ b/drivers/usb/musb/musb_dma.h
+@@ -52,9 +52,14 @@ struct musb_hw_ep;
+ /*
+  * DMA behavioral capability accessors. Generic core/host/gadget code asks what
+  * a DMA engine needs, never which engine it is; each glue driver declares these
+- * in its musb_platform_ops.quirks. They are only evaluated inside
+- * is_dma_capable() / musb->dma_controller guarded regions, so PIO-only builds
+- * still fold the surrounding block away.
++ * in its musb_platform_ops.quirks.
++ *
++ * A glue declares its quirks statically, so they say what its engine would need
++ * if it were driving the transfer -- not that it is. DMA may be off for this
++ * build (MUSB_PIO_ONLY), for this boot (use_dma=0), for this SoC (dma_init
++ * returned NULL) or just for this request (not mapped). Callers must therefore
++ * pair these with is_dma_capable(), musb->dma_controller, a live channel or
++ * is_buffer_mapped(), or PIO transfers end up taking DMA-shaped paths.
+  */
+ #define musb_dma_sw_mode_select(musb)	 ((musb)->ops->quirks & MUSB_DMA_SW_MODE_SELECT)
+ #define musb_dma_engine_managed(musb)	 ((musb)->ops->quirks & MUSB_DMA_ENGINE_MANAGED)
+diff --git a/drivers/usb/musb/musb_host.c b/drivers/usb/musb/musb_host.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_host.c
++++ b/drivers/usb/musb/musb_host.c
+@@ -1812,7 +1812,7 @@ void musb_host_rx(struct musb *musb, u8 epnum)
+ 	 */
+ 
+ 	/* FIXME this is _way_ too much in-line logic for Mentor DMA */
+-	if (!musb_dma_sw_mode_select(musb) &&
++	if (!(musb->dma_controller && musb_dma_sw_mode_select(musb)) &&
+ 	    (rx_csr & MUSB_RXCSR_H_REQPKT)) {
+ 		/* REVISIT this happened for a while on some short reads...
+ 		 * the cleanup still needs investigation... looks bad...
+-- 
+Armbian
+

@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Fri, 31 Jul 2026 00:42:10 +0200
+Subject: riscv: dts: sophgo: add a Milk-V Duo S C906L overlay
+
+The previous patch disables the C906L coprocessor and deletes its
+reserved-memory region, because Armbian ships no FreeRTOS image for it. That is
+the right default and the wrong permanent answer: the core is the whole point of
+Milk-V's "Arduino on the Duo", and somebody with a cvirtos.elf should be able to
+turn it back on without rebuilding a kernel.
+
+So put the two nodes back in an overlay, selectable at boot with
+
+    overlays=c906l
+
+in /boot/armbianEnv.txt. The region is pinned at CVIMMAP_FREERTOS_ADDR from the
+vendor's cvi_board_memmap.h, which is where a vendor-SDK firmware expects to be
+loaded. That is 0x9fe00000, the top 2MiB of the 512MiB the board DTS declares.
+
+Note the node is named region@9fe00000 here, not region@8fe00000 as in the
+sg2000.dtsi this restores it to. That node carries reg = <0x9fe00000 0x200000>
+under an @8fe00000 name - a mismatch arm64 does not share. reg is what reserves
+the memory, so the name is the part that is wrong; this overlay is consistent.
+
+The composite sg2000-milkv-duo-s-c906l.dtb target is never booted. It is there
+so the build applies the overlay to the base with fdtoverlay, which validates
+that the overlay still fits its base on every build, and - through the
+base-dtb-y rule in scripts/Makefile.dtbs - is what makes the base DTB get -@.
+Without those symbols U-Boot's "fdt apply" cannot resolve &remoteproc and the
+overlay is unusable at runtime.
+
+The #address-cells/#size-cells restated in the fragment match the base node.
+They are only there to stop dtc warning about the reg length: compiling an
+overlay on its own, it cannot see the target's cell counts and assumes <2>/<1>.
+
+Verified with scripts/dtc/fdtoverlay on both architectures: the region returns
+at 0x9fe00000 with no-map, and c906l-rproc comes back with status = "okay" and
+a memory-region pointing at it.
+
+Signed-off-by: Armbian <info@armbian.com>
+---
+ arch/riscv/boot/dts/sophgo/Makefile                  |  9 ++
+ arch/riscv/boot/dts/sophgo/overlay/sg2000-c906l.dtso | 51 ++++++++++
+ 2 files changed, 60 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/sophgo/Makefile b/arch/riscv/boot/dts/sophgo/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/boot/dts/sophgo/Makefile
++++ b/arch/riscv/boot/dts/sophgo/Makefile
+@@ -8,3 +8,12 @@ dtb-$(CONFIG_ARCH_SOPHGO) += sg2042-milkv-pioneer.dtb
+ dtb-$(CONFIG_ARCH_SOPHGO) += sg2042-evb-v1.dtb
+ dtb-$(CONFIG_ARCH_SOPHGO) += sg2042-evb-v2.dtb
+ dtb-$(CONFIG_ARCH_SOPHGO) += sg2044-sophgo-srd3-10.dtb
++
++# The C906L coprocessor overlay, selectable at runtime through armbianEnv.txt.
++# The composite target below is never booted: it exists so the build applies the
++# overlay to the base with fdtoverlay, which both validates that it still fits
++# and is what makes Makefile.dtbs pass -@ to the base DTB. Without those
++# symbols, "fdt apply" in U-Boot cannot resolve &remoteproc at boot.
++sg2000-milkv-duo-s-c906l-dtbs := sg2000-milkv-duo-s.dtb overlay/sg2000-c906l.dtbo
++dtb-$(CONFIG_ARCH_SOPHGO) += sg2000-milkv-duo-s-c906l.dtb
++dtb-$(CONFIG_ARCH_SOPHGO) += overlay/sg2000-c906l.dtbo
+diff --git a/arch/riscv/boot/dts/sophgo/overlay/sg2000-c906l.dtso b/arch/riscv/boot/dts/sophgo/overlay/sg2000-c906l.dtso
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/boot/dts/sophgo/overlay/sg2000-c906l.dtso
+@@ -0,0 +1,51 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++/*
++ * Milk-V Duo S: hand the C906L coprocessor back to Linux.
++ *
++ * The SG2000 carries a second, much smaller RISC-V core (C906L) meant for
++ * real-time work with no operating system in the way - it is what Milk-V's
++ * "Arduino on the Duo" runs sketches on, under FreeRTOS. remoteproc is how
++ * Linux loads firmware onto it and starts it.
++ *
++ * The base device tree disables it and deletes its reserved-memory region,
++ * because Armbian builds no FreeRTOS image and installs no cvirtos.elf, so the
++ * core never starts and the region is 2MiB of a 512MiB board held for nothing.
++ * This overlay puts both back for people who do have firmware to run.
++ *
++ * Enable with, in /boot/armbianEnv.txt:
++ *
++ *     overlays=c906l
++ *
++ * Then put your firmware at /lib/firmware/cvirtos.elf. Without it remoteproc
++ * still registers and simply reports the missing file:
++ *
++ *     remoteproc remoteproc0: c906l-rproc is available
++ *     remoteproc remoteproc0: Direct firmware load for cvirtos.elf failed with error -2
++ *
++ * The region is fixed at the top of DRAM to match CVIMMAP_FREERTOS_ADDR in the
++ * vendor's cvi_board_memmap.h, which is where the FSBL would load a C906L image
++ * from fip.bin, so a firmware built by the vendor SDK expects it there.
++ */
++
++/dts-v1/;
++/plugin/;
++
++&{/reserved-memory} {
++	/*
++	 * Restated to match the base node. dtc cannot see the target's cell counts
++	 * when an overlay is compiled on its own, and defaults to <2>/<1>, which
++	 * makes it warn that this reg is the wrong length.
++	 */
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	coprocessor_rtos: region@9fe00000 {
++		reg = <0x9fe00000 0x200000>;
++		no-map;
++	};
++};
++
++&remoteproc {
++	memory-region = <&coprocessor_rtos>;
++	status = "okay";
++};
+-- 
+Armbian
+

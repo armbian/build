@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 17:41:48 +0200
+Subject: media: gc2145: Hold the sensor in reset while it is powered down
+
+The supplies are shared with the other camera on the board, so this
+sensor is powered whenever either driver wants power, which at boot
+is decided by whichever probes first. The pins were requested as
+inputs and returned to inputs on power down, so the sensor could see
+its supplies come up with reset and power down floating, come out of
+the power on reset in an undefined state, and then not answer the
+first transfer of the identification - which is the probe failure
+seen on this board, and which does not reproduce once the supplies
+are already up.
+
+Drive both pins from the moment the driver binds, keep the sensor
+held in reset whenever it is not in use, and let the supplies settle
+before starting the clock.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 36 +++++++---
+ 1 file changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -2872,8 +2872,15 @@ static void gc2145_power_off(struct device *dev)
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 
+ 	clk_disable_unprepare(sensor->xclk);
+-	gpiod_direction_input(sensor->reset_gpio);
+-	gpiod_direction_input(sensor->enable_gpio);
++
++	/*
++	 * The supplies are shared with the other camera, so they may well
++	 * stay up. Keep the sensor held in reset instead of letting the
++	 * pins float, or it sits powered in an undefined state.
++	 */
++	gpiod_set_value(sensor->enable_gpio, 0);
++	gpiod_set_value(sensor->reset_gpio, 1);
++
+ 	regulator_bulk_disable(GC2145_NUM_SUPPLIES, sensor->supplies);
+ 	msleep(100);
+ 
+@@ -2887,10 +2894,13 @@ static int gc2145_power_on(struct device *dev)
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	int ret;
+ 
++	/* the sensor is held in reset already, see the pin request */
+ 	ret = regulator_bulk_enable(GC2145_NUM_SUPPLIES, sensor->supplies);
+ 	if (ret)
+ 		return ret;
+ 
++	usleep_range(10000, 12000);
++
+ 	ret = clk_set_rate(sensor->xclk, 24000000);
+ 	if (ret)
+ 		goto power_off;
+@@ -2900,19 +2910,17 @@ static int gc2145_power_on(struct device *dev)
+ 		goto power_off;
+ 
+ 	usleep_range(10000, 12000);
+-	gpiod_direction_output(sensor->reset_gpio, 1);
+-	usleep_range(10000, 12000);
+-	gpiod_direction_output(sensor->enable_gpio, 1);
++	gpiod_set_value(sensor->enable_gpio, 1);
+ 	usleep_range(10000, 12000);
+-	gpiod_direction_output(sensor->reset_gpio, 0);
++	gpiod_set_value(sensor->reset_gpio, 0);
+ 	usleep_range(40000, 50000);
+ 
+ 	sensor->current_bank = 0xff;
+ 	return 0;
+ 
+ power_off:
+-	gpiod_direction_input(sensor->reset_gpio);
+-	gpiod_direction_input(sensor->enable_gpio);
++	gpiod_set_value(sensor->enable_gpio, 0);
++	gpiod_set_value(sensor->reset_gpio, 1);
+ 	regulator_bulk_disable(GC2145_NUM_SUPPLIES, sensor->supplies);
+ 	return ret;
+ }
+@@ -3086,13 +3094,21 @@ static int gc2145_probe(struct i2c_client *client)
+ 		return PTR_ERR(sensor->xclk);
+ 	}
+ 
+-	sensor->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_IN);
++	/*
++	 * Drive the pins from the start: the supplies are shared with the
++	 * other camera on this bus, so this sensor can be powered long
++	 * before the driver first powers it on, and it must spend that
++	 * time held in reset rather than with its control pins floating.
++	 */
++	sensor->enable_gpio = devm_gpiod_get_optional(dev, "enable",
++						      GPIOD_OUT_LOW);
+ 	if (IS_ERR(sensor->enable_gpio)) {
+ 		dev_err(dev, "failed to get enable gpio\n");
+ 		return PTR_ERR(sensor->enable_gpio);
+ 	}
+ 
+-	sensor->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_IN);
++	sensor->reset_gpio = devm_gpiod_get_optional(dev, "reset",
++						     GPIOD_OUT_HIGH);
+ 	if (IS_ERR(sensor->reset_gpio)) {
+ 		dev_err(dev, "failed to get reset gpio\n");
+ 		return PTR_ERR(sensor->reset_gpio);
+-- 
+Armbian
+

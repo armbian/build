@@ -1,0 +1,623 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 15:27:21 +0200
+Subject: media: gc2145: Add the white balance and 3A lock controls
+
+Nothing could freeze the AEC and the AWB, and nothing could read out or
+set the white balance, so there was no way to settle a preview and then
+reproduce it on a full resolution still: switching format restarted both
+algorithms from scratch.
+
+Both of them hand their result registers back when switched off, keeping
+whatever they last converged on, so switching them off is a real 3A lock
+rather than an approximation of one, and it is also how manual mode is
+entered. Wire V4L2_CID_3A_LOCK to that, and add the white balance as an
+auto cluster whose gains read back what the AWB settled on.
+
+The preset gains are the ones every vendor register table carries.
+
+Also add exposure metering, which picks whether the AEC weights its
+centre window, and delete the block of controls that was disabled with
+an #if 0: it came from a different sensor and none of the registers it
+named exist on this one.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/gc2145.c | 435 ++++------
+ 1 file changed, 157 insertions(+), 278 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -12,6 +12,7 @@
+ //#define DEBUG
+ 
+ #include <asm/div64.h>
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
+ #include <linux/clkdev.h>
+@@ -156,6 +157,7 @@
+ #define GC2145_P0_ISP_BLK_ENABLE1	0x80
+ #define GC2145_P0_ISP_BLK_ENABLE2	0x81
+ #define GC2145_P0_ISP_BLK_ENABLE3	0x82
++#define GC2145_ISP_BLK_ENABLE3_AWB		BIT(1)
+ #define GC2145_P0_ISP_SPECIAL_EFFECT	0x83
+ #define GC2145_P0_ISP_OUT_FORMAT	0x84
+ #define GC2145_P0_FRAME_START		0x85
+@@ -208,9 +210,16 @@
+ #define GC2145_P0_AUTO_PREGAIN		0xb1
+ #define GC2145_P0_AUTO_POSTGAIN		0xb2
+ 
++#define GC2145_P0_AWB_R_GAIN		0xb3
++#define GC2145_P0_AWB_G_GAIN		0xb4
++#define GC2145_P0_AWB_B_GAIN		0xb5
++#define GC2145_AWB_GAIN_UNITY			0x40
++
+ #define GC2145_P0_AEC_ENABLE		0xb6
+ 
+ /* AEC, page 1 */
++#define GC2145_P1_AEC_MODE3		0x10c
++#define GC2145_AEC_MODE3_CENTRE_WEIGHT		GENMASK(6, 4)
+ #define GC2145_P1_AEC_ANTI_FLICKER_HI	0x125
+ #define GC2145_P1_AEC_EXP_LEVEL(n)	(0x127 + 2 * (n))
+ #define GC2145_P0_OUT_BUF_ENABLE	0xc2
+@@ -309,7 +318,6 @@ struct gc2145_ctrls {
+ 	struct v4l2_ctrl *contrast;
+ 	struct v4l2_ctrl *gamma;
+ 	struct v4l2_ctrl *test_pattern;
+-	struct v4l2_ctrl *test_data[4];
+ };
+ 
+ enum {
+@@ -714,186 +722,102 @@ static inline struct v4l2_subdev *ctrl_to_sd(struct v4l2_ctrl *ctrl)
+ 			     ctrls.handler)->sd;
+ }
+ 
+-#if 0
+-static const u8 gc2145_wb_opts[][2] = {
+-	{ V4L2_WHITE_BALANCE_MANUAL, GC2145_REG_WB_MODE_OFF },
+-	{ V4L2_WHITE_BALANCE_INCANDESCENT, GC2145_REG_WB_MODE_TUNGSTEN_PRESET },
+-	{ V4L2_WHITE_BALANCE_FLUORESCENT,
+-		GC2145_REG_WB_MODE_FLUORESCENT_PRESET },
+-	{ V4L2_WHITE_BALANCE_HORIZON, GC2145_REG_WB_MODE_HORIZON_PRESET },
+-	{ V4L2_WHITE_BALANCE_CLOUDY, GC2145_REG_WB_MODE_CLOUDY_PRESET },
+-	{ V4L2_WHITE_BALANCE_DAYLIGHT, GC2145_REG_WB_MODE_SUNNY_PRESET },
+-	{ V4L2_WHITE_BALANCE_AUTO, GC2145_REG_WB_MODE_AUTOMATIC },
+-};
+-
+-static int gc2145_set_power_line_frequency(struct gc2145_dev *sensor, s32 val)
+-{
+-	u16 freq;
+-	int ret;
+-
+-	switch (val) {
+-	case V4L2_CID_POWER_LINE_FREQUENCY_DISABLED:
+-		ret = gc2145_write(sensor, GC2145_REG_ANTI_FLICKER_MODE, 0);
+-		if (ret)
+-			return ret;
+-
+-		return gc2145_write(sensor, GC2145_REG_FD_ENABLE_DETECT, 0);
+-	case V4L2_CID_POWER_LINE_FREQUENCY_50HZ:
+-	case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
+-		ret = gc2145_write(sensor, GC2145_REG_ANTI_FLICKER_MODE, 1);
+-		if (ret)
+-			return ret;
+-
+-		ret = gc2145_write(sensor, GC2145_REG_FD_ENABLE_DETECT, 0);
+-		if (ret)
+-			return ret;
+-
+-		freq = (val == V4L2_CID_POWER_LINE_FREQUENCY_50HZ) ?
+-			0x4b20 : 0x4bc0;
+ 
+-		return gc2145_write16(sensor, GC2145_REG_FD_FLICKER_FREQUENCY,
+-				      freq);
+-	case V4L2_CID_POWER_LINE_FREQUENCY_AUTO:
+-		ret = gc2145_write(sensor, GC2145_REG_FD_ENABLE_DETECT, 1);
+-		if (ret)
+-			return ret;
++/* Exposure and white balance */
+ 
+-		ret = gc2145_write(sensor, GC2145_REG_ANTI_FLICKER_MODE, 1);
+-		if (ret)
+-			return ret;
++/*
++ * The AEC and the AWB own their result registers while they are running
++ * and hand them back when they are switched off, keeping whatever they
++ * last converged on. Switching the algorithm off is therefore both how
++ * manual mode is entered and how 3A is locked, and it is what lets a
++ * caller read out the exposure and gains a preview settled on and apply
++ * the same ones to a still.
++ */
++static int gc2145_update_aec_enable(struct gc2145_dev *sensor)
++{
++	struct gc2145_ctrls *ctrls = &sensor->ctrls;
++	bool run = ctrls->auto_exposure->val != V4L2_EXPOSURE_MANUAL &&
++		   !(ctrls->aaa_lock->val & V4L2_LOCK_EXPOSURE);
+ 
+-		ret = gc2145_write16(sensor, GC2145_REG_FD_MAX_NUMBER_ATTEMP,
+-				     100);
+-		if (ret)
+-			return ret;
++	return gc2145_write(sensor, GC2145_P0_AEC_ENABLE, run ? 1 : 0);
++}
+ 
+-		ret = gc2145_write16(sensor, GC2145_REG_FD_FLICKER_FREQUENCY,
+-				     0);
+-		if (ret)
+-			return ret;
++static int gc2145_update_awb_enable(struct gc2145_dev *sensor)
++{
++	struct gc2145_ctrls *ctrls = &sensor->ctrls;
++	bool run = ctrls->wb->val == V4L2_WHITE_BALANCE_AUTO &&
++		   !(ctrls->aaa_lock->val & V4L2_LOCK_WHITE_BALANCE);
+ 
+-		return gc2145_write(sensor, GC2145_REG_FD_DETECTION_START, 1);
+-	default:
+-		return -EINVAL;
+-	}
++	return gc2145_update_bits(sensor, GC2145_P0_ISP_BLK_ENABLE3,
++				  GC2145_ISP_BLK_ENABLE3_AWB,
++				  run ? GC2145_ISP_BLK_ENABLE3_AWB : 0);
+ }
+ 
+-static int gc2145_set_colorfx(struct gc2145_dev *sensor, s32 val)
++/*
++ * The presets the vendor register tables carry. They are the same in
++ * every GC2145 driver that has them, and are the gains the AWB settles
++ * on under each illuminant.
++ */
++static const struct {
++	u8 preset;
++	u8 r, g, b;
++} gc2145_wb_presets[] = {
++	{ V4L2_WHITE_BALANCE_INCANDESCENT,	0x50, 0x40, 0xa8 },
++	{ V4L2_WHITE_BALANCE_FLUORESCENT,	0x72, 0x40, 0x5b },
++	{ V4L2_WHITE_BALANCE_HORIZON,		0xa0, 0x45, 0x40 },
++	{ V4L2_WHITE_BALANCE_DAYLIGHT,		0x70, 0x40, 0x50 },
++	{ V4L2_WHITE_BALANCE_CLOUDY,		0x58, 0x40, 0x50 },
++};
++
++static int gc2145_get_white_balance(struct gc2145_dev *sensor)
+ {
++	struct gc2145_ctrls *ctrls = &sensor->ctrls;
++	u8 r, b;
+ 	int ret;
+ 
+-	ret = gc2145_write(sensor, GC2145_REG_EFFECTS_COLOR,
+-			   GC2145_REG_EFFECTS_COLOR_NORMAL);
++	ret = gc2145_read(sensor, GC2145_P0_AWB_R_GAIN, &r);
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = gc2145_write(sensor, GC2145_REG_EFFECTS_NEGATIVE, 0);
++	ret = gc2145_read(sensor, GC2145_P0_AWB_B_GAIN, &b);
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = gc2145_write(sensor, GC2145_REG_EFFECTS_SOLARISING, 0);
+-	if (ret)
+-		return ret;
+-
+-	ret = gc2145_write(sensor, GC2145_REG_EFFECTS_SKECTH, 0);
+-	if (ret)
+-		return ret;
+-
+-	switch (val) {
+-	case V4L2_COLORFX_NONE:
+-		return 0;
+-	case V4L2_COLORFX_NEGATIVE:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_NEGATIVE, 1);
+-	case V4L2_COLORFX_SOLARIZATION:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_SOLARISING, 1);
+-	case V4L2_COLORFX_SKETCH:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_SKECTH, 1);
+-	case V4L2_COLORFX_ANTIQUE:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_COLOR,
+-				    GC2145_REG_EFFECTS_COLOR_ANTIQUE);
+-	case V4L2_COLORFX_SEPIA:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_COLOR,
+-				    GC2145_REG_EFFECTS_COLOR_SEPIA);
+-	case V4L2_COLORFX_AQUA:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_COLOR,
+-				    GC2145_REG_EFFECTS_COLOR_AQUA);
+-	case V4L2_COLORFX_BW:
+-		return gc2145_write(sensor, GC2145_REG_EFFECTS_COLOR,
+-				    GC2145_REG_EFFECTS_COLOR_BLACK_WHITE);
+-	default:
+-		return -EINVAL;
+-	}
+-}
+-
+-static int gc2145_3a_lock(struct gc2145_dev *sensor, struct v4l2_ctrl *ctrl)
+-{
+-	bool awb_lock = ctrl->val & V4L2_LOCK_WHITE_BALANCE;
+-	bool ae_lock = ctrl->val & V4L2_LOCK_EXPOSURE;
+-	int ret = 0;
+-
+-	if ((ctrl->val ^ ctrl->cur.val) & V4L2_LOCK_EXPOSURE
+-	    && sensor->ctrls.auto_exposure->val == V4L2_EXPOSURE_AUTO) {
+-		ret = gc2145_write(sensor, GC2145_REG_FREEZE_AUTO_EXPOSURE,
+-				   ae_lock);
+-		if (ret)
+-			return ret;
+-	}
+-
+-	if (((ctrl->val ^ ctrl->cur.val) & V4L2_LOCK_WHITE_BALANCE)
+-	    && sensor->ctrls.wb->val == V4L2_WHITE_BALANCE_AUTO) {
+-		ret = gc2145_write(sensor, GC2145_REG_WB_MISC_SETTINGS,
+-				   awb_lock ?
+-				   GC2145_REG_WB_MISC_SETTINGS_FREEZE_ALGO : 0);
+-		if (ret)
+-			return ret;
+-	}
++	ctrls->red_balance->val = r;
++	ctrls->blue_balance->val = b;
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static int gc2145_set_white_balance(struct gc2145_dev *sensor)
+ {
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+-	bool manual_wb = ctrls->wb->val == V4L2_WHITE_BALANCE_MANUAL;
+-	int ret = 0, i;
+-	s32 val;
+-
+-	if (ctrls->wb->is_new) {
+-		for (i = 0; i < ARRAY_SIZE(gc2145_wb_opts); i++) {
+-			if (gc2145_wb_opts[i][0] != ctrls->wb->val)
+-				continue;
+-
+-			ret = gc2145_write(sensor, GC2145_REG_WB_MODE,
+-					    gc2145_wb_opts[i][1]);
+-			if (ret)
+-				return ret;
+-			goto next;
+-		}
+-
+-		return -EINVAL;
+-	}
++	u8 r = ctrls->red_balance->val, g = GC2145_AWB_GAIN_UNITY;
++	u8 b = ctrls->blue_balance->val;
++	unsigned int i;
++	int ret;
+ 
+-next:
+-	if (ctrls->wb->is_new || ctrls->blue_balance->is_new) {
+-		val = manual_wb ? ctrls->blue_balance->val : 1000;
+-		ret = gc2145_write16(sensor, GC2145_REG_WB_HUE_B_BIAS,
+-				     gc2145_mili_to_fp16(val));
+-		if (ret)
+-			return ret;
+-	}
++	for (i = 0; i < ARRAY_SIZE(gc2145_wb_presets); i++) {
++		if (gc2145_wb_presets[i].preset != ctrls->wb->val)
++			continue;
+ 
+-	if (ctrls->wb->is_new || ctrls->red_balance->is_new) {
+-		val = manual_wb ? ctrls->red_balance->val : 1000;
+-		ret = gc2145_write16(sensor, GC2145_REG_WB_HUE_R_BIAS,
+-				     gc2145_mili_to_fp16(val));
++		r = gc2145_wb_presets[i].r;
++		g = gc2145_wb_presets[i].g;
++		b = gc2145_wb_presets[i].b;
++		break;
+ 	}
+ 
+-	return ret;
+-}
++	ret = gc2145_update_awb_enable(sensor);
++	if (ret || ctrls->wb->val == V4L2_WHITE_BALANCE_AUTO)
++		return ret;
+ 
+-#endif
++	gc2145_tx_start(sensor);
++	gc2145_tx_write8(sensor, GC2145_P0_AWB_R_GAIN, r);
++	gc2145_tx_write8(sensor, GC2145_P0_AWB_G_GAIN, g);
++	gc2145_tx_write8(sensor, GC2145_P0_AWB_B_GAIN, b);
+ 
+-/* Exposure */
++	return gc2145_tx_commit(sensor);
++}
+ 
+ /*
+  * The exposure register counts array row slots, of which there are
+@@ -936,11 +860,13 @@ static int gc2145_set_exposure(struct gc2145_dev *sensor)
+ {
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	bool is_auto = (ctrls->auto_exposure->val != V4L2_EXPOSURE_MANUAL);
++	int ret;
+ 
+-	gc2145_tx_start(sensor);
++	ret = gc2145_update_aec_enable(sensor);
++	if (ret)
++		return ret;
+ 
+-	if (ctrls->auto_exposure->is_new)
+-		gc2145_tx_write8(sensor, GC2145_P0_AEC_ENABLE, is_auto ? 1 : 0);
++	gc2145_tx_start(sensor);
+ 
+ 	if (!is_auto && ctrls->exposure->is_new)
+ 		gc2145_tx_write16(sensor, GC2145_P0_EXPOSURE_HI,
+@@ -1401,6 +1327,10 @@ static int gc2145_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+ 	case V4L2_CID_EXPOSURE_AUTO:
+ 		ret = gc2145_get_exposure(sensor);
+ 		break;
++
++	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
++		ret = gc2145_get_white_balance(sensor);
++		break;
+ 	default:
+ 		dev_err(dev, "getting unknown control %d\n", ctrl->id);
+ 		ret = -EINVAL;
+@@ -1418,7 +1348,6 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	s32 val = ctrl->val;
+ 	unsigned long exposure_max;
+-	unsigned int i;
+ 	int ret;
+ 	u8 test1, test2;
+ 
+@@ -1483,6 +1412,28 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 				     sensor->params.vb);
+ 		break;
+ 
++	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
++		ret = gc2145_set_white_balance(sensor);
++		break;
++
++	case V4L2_CID_3A_LOCK:
++		ret = gc2145_update_aec_enable(sensor);
++		if (!ret)
++			ret = gc2145_update_awb_enable(sensor);
++		break;
++
++	case V4L2_CID_EXPOSURE_METERING:
++		/*
++		 * The AEC weights a centre window against the rest of the
++		 * measure window. Turning the weight off is the closest
++		 * this gets to a flat average.
++		 */
++		ret = gc2145_update_bits(sensor, GC2145_P1_AEC_MODE3,
++					 GC2145_AEC_MODE3_CENTRE_WEIGHT,
++					 val == V4L2_EXPOSURE_METERING_AVERAGE ?
++					 0 : FIELD_PREP(GC2145_AEC_MODE3_CENTRE_WEIGHT, 4));
++		break;
++
+ 	case V4L2_CID_AUTO_EXPOSURE_BIAS:
+ 		if (val < 0 || val >= ARRAY_SIZE(ae_bias_menu_reg_values)) {
+ 			dev_err(&sensor->i2c_client->dev, "ae bias out of range\n");
+@@ -1505,10 +1456,6 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		break;
+ 
+ 	case V4L2_CID_TEST_PATTERN:
+-		for (i = 0; i < ARRAY_SIZE(ctrls->test_data); i++)
+-			v4l2_ctrl_activate(ctrls->test_data[i],
+-					   val == 6); /* solid color */
+-
+ 		test1 = 0;
+ 		test2 = GC2145_DEBUG_MODE3_UPDATE_GAIN;
+ 
+@@ -1537,54 +1484,6 @@ static int gc2145_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		ret = gc2145_write(sensor, GC2145_P0_DEBUG_MODE3, test2);
+ 		break;
+ 
+-#if 0
+-	case V4L2_CID_EXPOSURE_METERING:
+-		if (val == V4L2_EXPOSURE_METERING_AVERAGE)
+-			reg = GC2145_REG_EXPOSURE_METERING_FLAT;
+-		else if (val == V4L2_EXPOSURE_METERING_CENTER_WEIGHTED)
+-			reg = GC2145_REG_EXPOSURE_METERING_CENTERED;
+-		else
+-			return -EINVAL;
+-
+-		return gc2145_write(sensor, GC2145_REG_EXPOSURE_METERING, reg);
+-
+-	case V4L2_CID_CONTRAST:
+-		return gc2145_write(sensor, GC2145_REG_CONTRAST, val);
+-
+-	case V4L2_CID_SATURATION:
+-		return gc2145_write(sensor, GC2145_REG_COLOR_SATURATION, val);
+-
+-	case V4L2_CID_BRIGHTNESS:
+-		return gc2145_write(sensor, GC2145_REG_BRIGHTNESS, val);
+-
+-	case V4L2_CID_POWER_LINE_FREQUENCY:
+-		return gc2145_set_power_line_frequency(sensor, val);
+-
+-	case V4L2_CID_GAMMA:
+-		return gc2145_write(sensor, GC2145_REG_P0_GAMMA_GAIN, val);
+-
+-	case V4L2_CID_COLORFX:
+-		return gc2145_set_colorfx(sensor, val);
+-
+-	case V4L2_CID_3A_LOCK:
+-		return gc2145_3a_lock(sensor, ctrl);
+-
+-	case V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE:
+-		return gc2145_set_white_balance(sensor);
+-
+-	case V4L2_CID_TEST_PATTERN_RED:
+-		return gc2145_write16(sensor, GC2145_REG_TESTDATA_RED, val);
+-
+-	case V4L2_CID_TEST_PATTERN_GREENR:
+-		return gc2145_write16(sensor, GC2145_REG_TESTDATA_GREEN_R, val);
+-
+-	case V4L2_CID_TEST_PATTERN_BLUE:
+-		return gc2145_write16(sensor, GC2145_REG_TESTDATA_BLUE, val);
+-
+-	case V4L2_CID_TEST_PATTERN_GREENB:
+-		return gc2145_write16(sensor, GC2145_REG_TESTDATA_GREEN_B, val);
+-
+-#endif
+ 	default:
+ 		dev_err(&sensor->i2c_client->dev, "setting unknown control %d\n", ctrl->id);
+ 		ret = -EINVAL;
+@@ -1606,18 +1505,17 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	struct gc2145_ctrls *ctrls = &sensor->ctrls;
+ 	struct v4l2_ctrl_handler *hdl = &ctrls->handler;
+ 	struct v4l2_fwnode_device_properties props;
+-	//u8 wb_max = 0;
+-	//u64 wb_mask = 0;
+-	//unsigned int i;
+ 	static const struct v4l2_rect default_crop = {
+ 		.left = GC2145_ACTIVE_LEFT,
+ 		.top = GC2145_ACTIVE_TOP,
+ 		.width = GC2145_SENSOR_WIDTH_MAX,
+ 		.height = GC2145_SENSOR_HEIGHT_MAX,
+ 	};
+-	int ret;
+ 	struct gc2145_sensor_params params;
+ 	unsigned long pixel_rate;
++	unsigned int i;
++	u64 wb_mask;
++	int ret;
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+@@ -1645,7 +1543,7 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 						      V4L2_EXPOSURE_MANUAL, 0,
+ 						      V4L2_EXPOSURE_AUTO);
+ 	ctrls->exposure = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE,
+-					    1, 0x1fff, 1, 0x80);
++					    1, GC2145_EXPOSURE_REG_MAX, 1, 0x80);
+ 	/*
+ 	 * The pre digital gain is only ours while the AEC is off, so it
+ 	 * belongs to the auto exposure cluster. Its scaling is not
+@@ -1677,6 +1575,49 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 						BIT(V4L2_CID_POWER_LINE_FREQUENCY_DISABLED),
+ 						V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
+ 
++	/*
++	 * White balance. Only the manual mode takes the two gain controls;
++	 * in the others the AWB owns them and they read back what it has
++	 * converged on, which is what a caller needs to freeze a preview
++	 * and reproduce it on a still.
++	 */
++	wb_mask = ~(BIT(V4L2_WHITE_BALANCE_MANUAL) |
++		    BIT(V4L2_WHITE_BALANCE_AUTO));
++	for (i = 0; i < ARRAY_SIZE(gc2145_wb_presets); i++)
++		wb_mask &= ~BIT(gc2145_wb_presets[i].preset);
++
++	ctrls->wb = v4l2_ctrl_new_std_menu(hdl, ops,
++					   V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE,
++					   V4L2_WHITE_BALANCE_SHADE, wb_mask,
++					   V4L2_WHITE_BALANCE_AUTO);
++
++	/*
++	 * The white balance gains, like the global gain, are 2.6 fixed
++	 * point with 0x40 for unity. The datasheet calls them 4.4, but the
++	 * reset values, the gain limit registers and the vendor
++	 * calibration procedure all agree that 0x40 is unity.
++	 */
++	ctrls->red_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_RED_BALANCE,
++					       0, 255, 1, GC2145_AWB_GAIN_UNITY);
++	ctrls->blue_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BLUE_BALANCE,
++						0, 255, 1,
++						GC2145_AWB_GAIN_UNITY);
++
++	/*
++	 * Switching an algorithm off leaves its results in place, so this
++	 * is a real lock and not an approximation of one.
++	 */
++	ctrls->aaa_lock = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_3A_LOCK, 0,
++					    V4L2_LOCK_EXPOSURE |
++					    V4L2_LOCK_WHITE_BALANCE, 0, 0);
++
++	ctrls->metering =
++		v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_EXPOSURE_METERING,
++				       V4L2_EXPOSURE_METERING_CENTER_WEIGHTED,
++				       ~(BIT(V4L2_EXPOSURE_METERING_AVERAGE) |
++					 BIT(V4L2_EXPOSURE_METERING_CENTER_WEIGHTED)),
++				       V4L2_EXPOSURE_METERING_CENTER_WEIGHTED);
++
+ 	/* V/H flips */
+ 	ctrls->hflip = v4l2_ctrl_new_std(hdl, ops,
+ 					 V4L2_CID_HFLIP, 0, 1, 1, 0);
+@@ -1697,70 +1638,6 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 		v4l2_ctrl_new_std_menu_items(hdl, ops, V4L2_CID_TEST_PATTERN,
+ 					     ARRAY_SIZE(test_pattern_menu) - 1,
+ 					     0, 0, test_pattern_menu);
+-#if 0
+-
+-	ctrls->metering =
+-		v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_EXPOSURE_METERING,
+-				       V4L2_EXPOSURE_METERING_CENTER_WEIGHTED,
+-				       0, V4L2_EXPOSURE_METERING_AVERAGE);
+-
+-	for (i = 0; i < ARRAY_SIZE(gc2145_wb_opts); i++) {
+-		if (wb_max < gc2145_wb_opts[i][0])
+-			wb_max = gc2145_wb_opts[i][0];
+-		wb_mask |= BIT(gc2145_wb_opts[i][0]);
+-	}
+-
+-	ctrls->wb = v4l2_ctrl_new_std_menu(hdl, ops,
+-			V4L2_CID_AUTO_N_PRESET_WHITE_BALANCE,
+-			wb_max, ~wb_mask, V4L2_WHITE_BALANCE_AUTO);
+-
+-	ctrls->blue_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BLUE_BALANCE,
+-						0, 4000, 1, 1000);
+-	ctrls->red_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_RED_BALANCE,
+-					       0, 4000, 1, 1000);
+-
+-	ctrls->gamma = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_GAMMA,
+-					 0, 31, 1, 20);
+-
+-	ctrls->colorfx =
+-		v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_COLORFX, 15,
+-				       ~(BIT(V4L2_COLORFX_NONE) |
+-					 BIT(V4L2_COLORFX_NEGATIVE) |
+-					 BIT(V4L2_COLORFX_SOLARIZATION) |
+-					 BIT(V4L2_COLORFX_SKETCH) |
+-					 BIT(V4L2_COLORFX_SEPIA) |
+-					 BIT(V4L2_COLORFX_ANTIQUE) |
+-					 BIT(V4L2_COLORFX_AQUA) |
+-					 BIT(V4L2_COLORFX_BW)),
+-				       V4L2_COLORFX_NONE);
+-
+-	ctrls->pl_freq =
+-		v4l2_ctrl_new_std_menu(hdl, ops, V4L2_CID_POWER_LINE_FREQUENCY,
+-				V4L2_CID_POWER_LINE_FREQUENCY_AUTO, 0,
+-				V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
+-
+-	ctrls->brightness = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BRIGHTNESS,
+-					      0, 200, 1, 90);
+-	ctrls->saturation = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_SATURATION,
+-					      0, 200, 1, 110);
+-	ctrls->contrast = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_CONTRAST,
+-					    0, 200, 1, 108);
+-
+-	ctrls->aaa_lock = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_3A_LOCK,
+-					    0, 0x7, 0, 0);
+-
+-	for (i = 0; i < ARRAY_SIZE(ctrls->test_data); i++)
+-		ctrls->test_data[i] =
+-			v4l2_ctrl_new_std(hdl, ops,
+-					  V4L2_CID_TEST_PATTERN_RED + i,
+-					  0, 1023, 1, 0);
+-
+-	ctrls->af_status->flags |= V4L2_CTRL_FLAG_VOLATILE |
+-		V4L2_CTRL_FLAG_READ_ONLY;
+-
+-	v4l2_ctrl_auto_cluster(3, &ctrls->wb, V4L2_WHITE_BALANCE_MANUAL, false);
+-#endif
+-
+ 	/*
+ 	 * The pixel rate is fixed and the horizontal blanking is picked to
+ 	 * fit the mains period, so only the vertical blanking is left for
+@@ -1771,6 +1648,8 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
+ 			       true);
++	v4l2_ctrl_auto_cluster(3, &ctrls->wb, V4L2_WHITE_BALANCE_MANUAL,
++			       true);
+ 
+ 	if (hdl->error) {
+ 		ret = hdl->error;
+-- 
+Armbian
+

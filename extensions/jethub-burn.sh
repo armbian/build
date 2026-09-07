@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Converts the finished `.img` into an Amlogic USB burn image for JetHub J80/J100/J200 boards. Fetches `jethome-iot/jethome-tools`, compiles the board DTB partition, extracts the rootfs and packs everything with `aml_image_v2_packer_new` using `u-boot.nosd.bin` from the U-Boot deb. Outputs `${version}.burn.img` alongside the normal image.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2025 JetHome

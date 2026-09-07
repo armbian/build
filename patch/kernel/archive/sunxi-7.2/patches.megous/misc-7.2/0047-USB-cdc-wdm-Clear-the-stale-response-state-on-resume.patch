@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 16 Aug 2026 16:51:22 +0200
+Subject: USB: cdc-wdm: Clear the stale response state on resume
+
+wdm_int_callback() sets WDM_RESPONDING and raises resp_count before it
+checks whether it may submit the response URB. If the notification
+arrives while WDM_SUSPENDING is set, no URB is submitted, rv stays 0,
+and the cleanup that would clear WDM_RESPONDING is skipped.
+
+wdm_resume() clears only WDM_SUSPENDING, so the pair survives the
+resume. Every later notification then finds the device already
+"responding" and never issues GET_ENCAPSULATED_RESPONSE, leaving the
+character device open and permanently silent - no error anywhere. Only
+the last close clears it, which is why reopening from another process
+does not help while anything still holds the device.
+
+Seen on a PinePhone with a Quectel EG25-G: after every system resume,
+QMI requests on /dev/cdc-wdm0 time out with no error, for existing
+client IDs, for a fresh QMI_CTL client ID allocation, and for a newly
+opened /dev/cdc-wdm0 alike, while the modem answers AT commands on its
+other interfaces normally. Closing every opener and reopening restores
+it, and so does unbinding the driver.
+
+Clear the stale response state on resume, before resubmitting the
+interrupt URB so a notification cannot race in and latch it again. The
+outstanding response is dropped rather than fetched: it no longer
+exists after the bus reset a system resume brings, and the next
+notification re-arms the endpoint normally.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/class/cdc-wdm.c | 23 ++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/usb/class/cdc-wdm.c b/drivers/usb/class/cdc-wdm.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/class/cdc-wdm.c
++++ b/drivers/usb/class/cdc-wdm.c
+@@ -1312,6 +1312,29 @@ static int wdm_resume(struct usb_interface *intf)
+ 	dev_dbg(&desc->intf->dev, "wdm%d_resume\n", intf->minor);
+ 
+ 	clear_bit(WDM_SUSPENDING, &desc->flags);
++
++	/*
++	 * A RESPONSE_AVAILABLE notification arriving while WDM_SUSPENDING was
++	 * set leaves WDM_RESPONDING set and resp_count raised by
++	 * wdm_int_callback(), without the response URB ever being submitted.
++	 * Nothing clears that pair until the last close, so every later
++	 * notification finds the device already "responding" and no
++	 * GET_ENCAPSULATED_RESPONSE is ever issued again: the character device
++	 * stays open, and silent, for good.
++	 *
++	 * Drop the stale response instead. It cannot be fetched anyway after
++	 * the bus reset that a system resume brings, and the next notification
++	 * then re-arms the endpoint normally. Do it before resubmitting the
++	 * interrupt URB, or a notification can race in and latch again.
++	 *
++	 * Nothing is in flight here: wdm_suspend() poisoned the URBs and
++	 * cancelled the work.
++	 */
++	spin_lock_irq(&desc->iuspin);
++	desc->resp_count = 0;
++	clear_bit(WDM_RESPONDING, &desc->flags);
++	spin_unlock_irq(&desc->iuspin);
++
+ 	rv = recover_from_urb_loss(desc);
+ 
+ 	return rv;
+-- 
+Armbian
+

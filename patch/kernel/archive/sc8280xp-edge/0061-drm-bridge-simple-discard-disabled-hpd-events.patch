@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 3 Sep 2026 12:24:08 +0200
+Subject: drm/bridge: simple: discard HPD events when disabled
+
+Queued bridge events can otherwise survive HPD disable and reach a later
+callback during suspend or re-enable. Serialize delivery with the bridge
+HPD mutex and clear the queue after disabling the upstream source.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/bridge/simple-bridge.c | 13 +++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/bridge/simple-bridge.c b/drivers/gpu/drm/bridge/simple-bridge.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/bridge/simple-bridge.c
++++ b/drivers/gpu/drm/bridge/simple-bridge.c
+@@ -202,9 +202,12 @@ static void simple_bridge_upstream_hpd_work(struct work_struct *work)
+ 	unsigned long flags;
+ 
+ 	for (;;) {
++		/* Match drm_bridge_hpd_notify() locking before consuming events. */
++		mutex_lock(&sbridge->bridge.hpd_mutex);
+ 		spin_lock_irqsave(&sbridge->hpd_lock, flags);
+ 		if (sbridge->hpd_head == sbridge->hpd_tail) {
+ 			spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
++			mutex_unlock(&sbridge->bridge.hpd_mutex);
+ 			break;
+ 		}
+ 
+@@ -213,7 +216,9 @@ static void simple_bridge_upstream_hpd_work(struct work_struct *work)
+ 				    SIMPLE_BRIDGE_HPD_QUEUE_SIZE;
+ 		spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
+ 
+-		drm_bridge_hpd_notify(&sbridge->bridge, status);
++		if (sbridge->bridge.hpd_cb)
++			sbridge->bridge.hpd_cb(sbridge->bridge.hpd_data, status);
++		mutex_unlock(&sbridge->bridge.hpd_mutex);
+ 	}
+ }
+ 
+@@ -284,6 +289,7 @@ static void simple_bridge_hpd_disable(struct drm_bridge *bridge)
+ {
+ 	struct simple_bridge *sbridge = drm_bridge_to_simple_bridge(bridge);
+ 	struct drm_bridge *prev __free(drm_bridge_put) = drm_bridge_get_prev_bridge(bridge);
++	unsigned long flags;
+ 	bool was_enabled;
+ 
+ 	mutex_lock(&sbridge->lock);
+@@ -294,6 +300,11 @@ static void simple_bridge_hpd_disable(struct drm_bridge *bridge)
+ 	if (was_enabled && prev && (prev->ops & DRM_BRIDGE_OP_HPD))
+ 		drm_bridge_hpd_disable(prev);
+ 
++	spin_lock_irqsave(&sbridge->hpd_lock, flags);
++	sbridge->hpd_head = 0;
++	sbridge->hpd_tail = 0;
++	spin_unlock_irqrestore(&sbridge->hpd_lock, flags);
++
+ 	mutex_lock(&sbridge->lock);
+ 	simple_bridge_update_power_locked(sbridge);
+ 	mutex_unlock(&sbridge->lock);
+-- 
+Armbian
+

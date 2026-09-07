@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 18 Aug 2026 02:05:41 +0200
+Subject: nfc: nxp-nci: Enable reading MIFARE Classic tags
+
+The generic NCI core maps only ISO-DEP and NFC-DEP to dedicated RF
+interfaces in RF_DISCOVER_MAP and leaves everything else, MIFARE Classic
+included, on the frame interface. There the controller just relays bytes
+to and from the card, so a Classic is typed correctly from its SAK but
+can never be read: authentication needs the CRYPTO1 stream cipher, which
+the card expects the reader to run, and on the frame interface the NFCC
+does not.
+
+The NPC100 (PN547) and its siblings can do it - they have the CRYPTO1
+engine - but only once the tag is activated on the vendor's proprietary
+MIFARE RF interface. NXP's own stack arranges that by adding a single
+RF_DISCOVER_MAP entry, mapping the proprietary MIFARE protocol (0x80) in
+poll mode to that interface (0x80).
+
+Do the same: append that mapping to the RF_DISCOVER_MAP command as it
+goes out, and translate the proprietary protocol id the controller then
+reports at activation back to NFC_PROTO_MIFARE_MASK via get_rfprotocol().
+With this a Classic activates on the MIFARE interface, and the CRYPTO1
+authenticate (0x40) and the block reads that follow it, sent over an
+AF_NFC raw socket, come back decrypted - the frame-interface data path
+already strips the trailing status byte the controller appends.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/nfc/nxp-nci/core.c | 66 ++++++++++
+ 1 file changed, 66 insertions(+)
+
+diff --git a/drivers/nfc/nxp-nci/core.c b/drivers/nfc/nxp-nci/core.c
+index 111111111111..222222222222 100644
+--- a/drivers/nfc/nxp-nci/core.c
++++ b/drivers/nfc/nxp-nci/core.c
+@@ -20,6 +20,24 @@
+ 
+ #define NXP_NCI_HDR_LEN	4
+ 
++/*
++ * MIFARE Classic support. The generic NCI core maps only ISO-DEP and
++ * NFC-DEP to dedicated RF interfaces and leaves everything else on the
++ * frame interface, where the controller relays bytes to the card
++ * without running Crypto1 - so a Classic can be typed but never read.
++ * NXP's own stack instead adds one RF_DISCOVER_MAP entry mapping the
++ * proprietary MIFARE protocol to the proprietary MIFARE RF interface;
++ * with it the controller activates a Classic on that interface and
++ * performs the authentication itself, after which an 0x40 authenticate
++ * frame and 0x30 reads sent over an AF_NFC raw socket come back
++ * decrypted. We append that one mapping to RF_DISCOVER_MAP on the way
++ * out, and teach the core to recognise the proprietary protocol id the
++ * controller then reports back at activation (.get_rfprotocol).
++ */
++#define NXP_NCI_RF_PROTOCOL_MIFARE	0x80
++#define NXP_NCI_RF_INTERFACE_MIFARE	0x80
++#define NXP_NCI_DISC_MAP_MODE_POLL	0x01
++
+ #define NXP_NCI_NFC_PROTOCOLS (NFC_PROTO_JEWEL_MASK | \
+ 			       NFC_PROTO_MIFARE_MASK | \
+ 			       NFC_PROTO_FELICA_MASK | \
+@@ -69,6 +87,51 @@ static int nxp_nci_close(struct nci_dev *ndev)
+ 	return r;
+ }
+ 
++static __u32 nxp_nci_get_rfprotocol(struct nci_dev *ndev, __u8 rf_protocol)
++{
++	return rf_protocol == NXP_NCI_RF_PROTOCOL_MIFARE ?
++	       NFC_PROTO_MIFARE_MASK : 0;
++}
++
++/*
++ * Append the MIFARE protocol->interface mapping to an outgoing
++ * RF_DISCOVER_MAP command. Returns the buffer to send, which may be a
++ * reallocated one; the original is consumed in that case. On any
++ * problem the command is sent unchanged - MIFARE just stays unmapped.
++ */
++static struct sk_buff *nxp_nci_add_mifare_map(struct sk_buff *skb)
++{
++	u8 *hdr = skb->data;
++	u8 *ent;
++
++	/* octet2 is the parameter length, octet3 the number of mapping
++	 * entries; guard that both are present before touching them */
++	if (skb->len < NCI_CTRL_HDR_SIZE + 1 ||
++	    nci_mt(hdr) != NCI_MT_CMD_PKT ||
++	    nci_opcode(hdr) != NCI_OP_RF_DISCOVER_MAP_CMD)
++		return skb;
++
++	if (skb_tailroom(skb) < 3) {
++		struct sk_buff *nskb;
++
++		nskb = skb_copy_expand(skb, skb_headroom(skb), 3, GFP_KERNEL);
++		if (!nskb)
++			return skb;
++		consume_skb(skb);
++		skb = nskb;
++		hdr = skb->data;
++	}
++
++	ent = skb_put(skb, 3);
++	ent[0] = NXP_NCI_RF_PROTOCOL_MIFARE;
++	ent[1] = NXP_NCI_DISC_MAP_MODE_POLL;
++	ent[2] = NXP_NCI_RF_INTERFACE_MIFARE;
++	hdr[2] += 3;		/* parameter length */
++	hdr[3] += 1;		/* number of mapping configurations */
++
++	return skb;
++}
++
+ static int nxp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
+ {
+ 	struct nxp_nci_info *info = nci_get_drvdata(ndev);
+@@ -84,6 +147,8 @@ static int nxp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
+ 		return -EINVAL;
+ 	}
+ 
++	skb = nxp_nci_add_mifare_map(skb);
++
+ 	r = info->phy_ops->write(info->phy_id, skb);
+ 	if (r < 0) {
+ 		kfree_skb(skb);
+@@ -128,6 +193,7 @@ static const struct nci_ops nxp_nci_ops = {
+ 	.close = nxp_nci_close,
+ 	.send = nxp_nci_send,
+ 	.fw_download = nxp_nci_fw_download,
++	.get_rfprotocol = nxp_nci_get_rfprotocol,
+ 	.core_ops = nxp_nci_core_ops,
+ 	.n_core_ops = ARRAY_SIZE(nxp_nci_core_ops),
+ };
+-- 
+Armbian
+

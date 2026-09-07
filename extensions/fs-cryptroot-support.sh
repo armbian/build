@@ -1,3 +1,5 @@
+# @description Encrypts the root partition with LUKS via `cryptsetup luksFormat`, adds `cryptsetup-initramfs` to the image and requires a separate boot partition. Supports a passphrase, an auto-generated autounlock keyfile, or `dropbear-initramfs` remote SSH unlock (`CRYPTROOT_SSH_UNLOCK`). Auto-enabled when `CRYPTROOT_ENABLE=yes`.
+
 # `cryptroot` / LUKS support is no longer included by default in prepare-host.sh.
 # Enable this extension to include the required dependencies for building.
 # This is automatically enabled if CRYPTROOT_ENABLE is set to yes in main-config.sh.

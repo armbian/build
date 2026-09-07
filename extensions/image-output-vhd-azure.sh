@@ -1,3 +1,5 @@
+# @description Produces a fixed-format VHD for Microsoft Azure via `qemu-img convert -O vpc`, first rounding the raw disk up to a whole megabyte plus 512 bytes as Azure requires. Forces `SKIP_QCOW2=yes`, making it incompatible with `image-output-qcow2`. Deletes the original `.img` unless `VHD_KEEP_IMG=yes`.
+
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/

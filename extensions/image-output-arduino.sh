@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Converts the Armbian image into a QDL-flashable `.tar` archive for the Arduino UNO Q (Qualcomm QRB2210). Splits the boot and root partitions with `dd` and extracts the U-Boot `boot.img` from the rootfs. Bundles Qualcomm firehose flash binaries fetched from the `armbian/qcombin` repo during image creation.
 
 declare -g ARDUINO_ROOTFS_LOOP=""
 declare -g ARDUINO_ROOTFS_MOUNT=""

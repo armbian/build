@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sun, 16 Aug 2026 19:20:00 +0300
+Subject: mmc: meson-gx: honour the busy timeout for R1b commands
+
+For a command without data the controller waits for the response and,
+for R1b, for the card to release busy, all within the CMD_CFG timeout
+field. The driver programs a fixed 1024 ms there and does not report a
+max_busy_timeout, so the core sends erase and cache-flush commands as
+R1b with the card's real timeout (seconds, up to 60 s for erase, 30 s
+for cache flush) and the controller gives up after one second:
+
+  mmc_erase: erase error -110, status 0x0
+  mmc1: cache flush error -110
+
+The same happens for an SD card in the SoC slot (DISCARD I/O errors),
+while the same card behind a USB reader is fine. On ODROID-N2+ (eMMC,
+btrfs) writing 20 GiB, deleting it and running fstrim gives 24 erase
+errors plus 24 cache flush errors, evenly spread over the fstrim; under
+build load the errors pile up and the modules get blamed and replaced.
+
+Program the timeout from cmd->busy_timeout, rounded up to a power of
+two and bounded by the field (2^15 ms), and report that bound as
+max_busy_timeout so the core sizes discards to fit and falls back to
+R1 + CMD13 polling for anything longer. This is what sdhci and
+meson-mx-sdhc already do. With the change the same fstrim test gives
+zero errors.
+
+Fixes: 51c5d8447bd7 ("MMC: meson: initial support for GX platforms")
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/mmc/host/meson-gx-mmc.c | 30 ++++++++++++++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/meson-gx-mmc.c b/drivers/mmc/host/meson-gx-mmc.c
+index 111111111111..222222222222 100644
+--- a/drivers/mmc/host/meson-gx-mmc.c
++++ b/drivers/mmc/host/meson-gx-mmc.c
+@@ -124,6 +124,7 @@
+ #define SD_EMMC_CFG_RESP_TIMEOUT 256 /* in clock cycles */
+ #define SD_EMMC_CMD_TIMEOUT 1024 /* in ms */
+ #define SD_EMMC_CMD_TIMEOUT_DATA 4096 /* in ms */
++#define SD_EMMC_CMD_TIMEOUT_MAX 32768 /* in ms, 2^15: limit of CMD_CFG_TIMEOUT_MASK */
+ #define SD_EMMC_CFG_CMD_GAP 16 /* in clock cycles */
+ #define SD_EMMC_DESC_BUF_LEN PAGE_SIZE
+ 
+@@ -210,7 +211,26 @@
+ 
+ 	timeout = roundup_pow_of_two(timeout);
+ 
+-	return min(timeout, 32768U); /* max. 2^15 ms */
++	return min_t(unsigned int, timeout, SD_EMMC_CMD_TIMEOUT_MAX);
++}
++
++/*
++ * For a command without data the controller waits for the response and, for
++ * R1b, for the busy signal to be released, within the same timeout. The core
++ * tells us how long the card may legitimately stay busy in cmd->busy_timeout;
++ * honour it (bounded by the field), otherwise fall back to the default.
++ */
++static unsigned int meson_mmc_get_cmd_timeout_msecs(struct mmc_command *cmd)
++{
++	unsigned int timeout = cmd->busy_timeout;
++
++	if (!timeout)
++		return SD_EMMC_CMD_TIMEOUT;
++
++	timeout = roundup_pow_of_two(timeout);
++
++	return clamp_t(unsigned int, timeout, SD_EMMC_CMD_TIMEOUT,
++		       SD_EMMC_CMD_TIMEOUT_MAX);
+ }
+ 
+ static struct mmc_command *meson_mmc_get_next_command(struct mmc_command *cmd)
+@@ -847,7 +867,7 @@
+ 		cmd_data = host->bounce_dma_addr & CMD_DATA_MASK;
+ 	} else {
+ 		cmd_cfg |= FIELD_PREP(CMD_CFG_TIMEOUT_MASK,
+-				      ilog2(SD_EMMC_CMD_TIMEOUT));
++				      ilog2(meson_mmc_get_cmd_timeout_msecs(cmd)));
+ 	}
+ 
+ 	/* Last descriptor */
+@@ -1173,6 +1193,14 @@
+ 
+ 	mmc->caps |= MMC_CAP_CMD23;
+ 
++	/*
++	 * The controller waits for R1b busy in hardware, but only up to the
++	 * CMD_CFG timeout field. Tell the core the limit so that longer erase
++	 * and cache-flush waits are done with R1 + CMD13 polling instead of
++	 * timing out here.
++	 */
++	mmc->max_busy_timeout = SD_EMMC_CMD_TIMEOUT_MAX;
++
+ 	if (mmc->caps & MMC_CAP_SDIO_IRQ)
+ 		mmc->caps2 |= MMC_CAP2_SDIO_IRQ_NOTHREAD;
+ 

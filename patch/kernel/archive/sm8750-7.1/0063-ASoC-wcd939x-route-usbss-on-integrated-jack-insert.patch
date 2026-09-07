@@ -1,0 +1,186 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: KONKR Pocket FIT Elite port <unknown-email@domain.tld>
+Date: Sat, 29 Aug 2026 11:27:39 +0200
+Subject: ASoC: wcd939x: route USBSS to audio on integrated-jack insert
+
+> X-Git-Archeology: > recovered message: > Bring over the patches ROCKNIX still carries on top of the set imported
+> X-Git-Archeology: > recovered message: > in the bringup: the integrated-jack USBSS routing with the HPH PCM HiFi
+> X-Git-Archeology: > recovered message: > path, USB-C redriver and probe-defer fixes, the hv-haptics driver with
+> X-Git-Archeology: > recovered message: > the rsinput force feedback bridge, UFS support for the SM8750
+> X-Git-Archeology: > recovered message: > controller and the thermal, capacity and RTC DT bits. Patches aimed at
+> X-Git-Archeology: > recovered message: > other devices (KONKR, Ayaneo) are left out; the collided 0052 rpmhpd
+> X-Git-Archeology: > recovered message: > patch is renumbered to 0053.
+> X-Git-Archeology: > recovered message: > Signed-off-by: SuperKali <hello@superkali.me>
+> X-Git-Archeology: - Revision d7ac3357efedd9f44916dc489e9727e95a34f0b9: https://github.com/armbian/build/commit/d7ac3357efedd9f44916dc489e9727e95a34f0b9
+> X-Git-Archeology:   Date: Sat, 29 Aug 2026 11:27:39 +0200
+> X-Git-Archeology:   From: SuperKali <hello@superkali.me>
+> X-Git-Archeology:   Subject: kernel/sm8750: sync the remaining ROCKNIX patches
+> X-Git-Archeology:
+---
+ drivers/usb/typec/mux/wcd939x-usbss.c | 30 +++++++
+ sound/soc/codecs/wcd-mbhc-v2.c        | 10 +++
+ sound/soc/codecs/wcd-mbhc-v2.h        |  7 ++
+ sound/soc/codecs/wcd939x.c            | 39 ++++++++++
+ 4 files changed, 86 insertions(+)
+
+diff --git a/drivers/usb/typec/mux/wcd939x-usbss.c b/drivers/usb/typec/mux/wcd939x-usbss.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/mux/wcd939x-usbss.c
++++ b/drivers/usb/typec/mux/wcd939x-usbss.c
+@@ -752,6 +752,36 @@ static void wcd939x_usbss_remove(struct i2c_client *client)
+ 	typec_mux_put(usbss->codec);
+ }
+ 
++/*
++ * wcd939x_usbss_audio_config - drive the analog switch into (or out of)
++ * audio-accessory routing on behalf of the WCD codec's MBHC.
++ *
++ * On boards with an *integrated* 3.5mm jack wired through this switch, the jack
++ * is detected by the codec's MBHC mechanical path and produces no Type-C
++ * connector event, so the normal connector -> mux_set(AUDIO) routing never
++ * runs.  Until the switch is in audio mode the codec's HPHL/HPHR sense lines
++ * float and MBHC mis-classifies the plug as a ground/mic swap.  The codec calls
++ * this on insert/removal so the same routing the connector would have applied
++ * is in place before MBHC measures the plug.  @dev is this USBSS i2c device.
++ */
++int wcd939x_usbss_audio_config(struct device *dev, bool enable)
++{
++	struct wcd939x_usbss *usbss = dev ? dev_get_drvdata(dev) : NULL;
++	int ret;
++
++	if (!usbss)
++		return -ENODEV;
++
++	mutex_lock(&usbss->lock);
++	usbss->mode = enable ? TYPEC_MODE_AUDIO : TYPEC_STATE_SAFE;
++	usbss->svid = 0;
++	ret = wcd939x_usbss_set(usbss);
++	mutex_unlock(&usbss->lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(wcd939x_usbss_audio_config);
++
+ static const struct i2c_device_id wcd939x_usbss_table[] = {
+ 	{ "wcd9390-usbss" },
+ 	{ }
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.c b/sound/soc/codecs/wcd-mbhc-v2.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -535,11 +535,21 @@ static void mbhc_plug_detect_fn(struct work_struct *work)
+ 	if (detection_type) {
+ 		if (mbhc->current_plug != MBHC_PLUG_TYPE_NONE)
+ 			goto exit;
++		/*
++		 * Route the external analog switch (if any) into audio mode so
++		 * an integrated jack presents a real HPHL/HPHR load to plug
++		 * detection instead of floating (which reads as a gnd/mic swap).
++		 */
++		if (mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
++			mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, true);
+ 		/* Make sure MASTER_BIAS_CTL is enabled */
+ 		mbhc->mbhc_cb->mbhc_bias(component, true);
+ 		mbhc->is_btn_press = false;
+ 		wcd_mbhc_adc_detect_plug_type(mbhc);
+ 	} else {
++		/* Jack removed: take the external analog switch out of audio. */
++		if (mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
++			mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, false);
+ 		/* Disable HW FSM */
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_BTN_ISRC_CTL, 0);
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.h b/sound/soc/codecs/wcd-mbhc-v2.h
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/wcd-mbhc-v2.h
++++ b/sound/soc/codecs/wcd-mbhc-v2.h
+@@ -265,6 +265,13 @@ struct wcd_mbhc_cb {
+ 	bool (*mbhc_get_moisture_status)(struct snd_soc_component *component);
+ 	void (*mbhc_moisture_polling_ctrl)(struct snd_soc_component *component, bool enable);
+ 	void (*mbhc_moisture_detect_en)(struct snd_soc_component *component, bool enable);
++	/*
++	 * Route an external analog switch (e.g. WCD939x USBSS) into/out of
++	 * audio-accessory mode when an integrated jack is detected via the
++	 * mechanical path.  Optional; only set on boards whose HP lines are
++	 * wired through such a switch.
++	 */
++	void (*mbhc_ext_switch_ctrl)(struct snd_soc_component *component, bool enable);
+ };
+ 
+ #if IS_ENABLED(CONFIG_SND_SOC_WCD_MBHC)
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -17,6 +17,7 @@
+ #include <sound/tlv.h>
+ #include <linux/of_graph.h>
+ #include <linux/of.h>
++#include <linux/i2c.h>
+ #include <sound/jack.h>
+ #include <sound/pcm.h>
+ #include <sound/pcm_params.h>
+@@ -187,6 +188,8 @@ struct wcd939x_priv {
+ 	unsigned long typec_mode;
+ 	struct typec_switch *typec_switch;
+ #endif /* CONFIG_TYPEC */
++	/* external analog switch (WCD939x USBSS) for an integrated jack */
++	struct device *usbss_dev;
+ 	/* mbhc module */
+ 	struct wcd_mbhc *wcd_mbhc;
+ 	struct wcd_mbhc_config mbhc_cfg;
+@@ -2411,8 +2414,27 @@ static void wcd939x_mbhc_moisture_polling_ctrl(struct snd_soc_component *compone
+ 				      enable);
+ }
+ 
++/* Provided by the WCD939x USBSS analog-switch driver (built-in). */
++int wcd939x_usbss_audio_config(struct device *dev, bool enable);
++
++/*
++ * Route the WCD939x USBSS into/out of audio-accessory mode when the MBHC
++ * detects an integrated 3.5mm jack via the mechanical path.  Without it the
++ * jack's HPHL/HPHR lines float through the switch and MBHC reports a gnd/mic
++ * swap.  No-op on boards without a USBSS (usbss_dev == NULL).
++ */
++static void wcd939x_mbhc_ext_switch_ctrl(struct snd_soc_component *component,
++					 bool enable)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++
++	if (wcd939x->usbss_dev)
++		wcd939x_usbss_audio_config(wcd939x->usbss_dev, enable);
++}
++
+ static const struct wcd_mbhc_cb mbhc_cb = {
+ 	.clk_setup = wcd939x_mbhc_clk_setup,
++	.mbhc_ext_switch_ctrl = wcd939x_mbhc_ext_switch_ctrl,
+ 	.mbhc_bias = wcd939x_mbhc_mbhc_bias_control,
+ 	.set_btn_thr = wcd939x_mbhc_program_btn_thr,
+ 	.micbias_enable_status = wcd939x_mbhc_micb_en_status,
+@@ -3224,6 +3246,23 @@ static int wcd939x_populate_dt_data(struct wcd939x_priv *wcd939x, struct device
+ 	}
+ #endif /* CONFIG_TYPEC */
+ 
++	/*
++	 * If an external analog switch (WCD939x USBSS) carries the HP lines to
++	 * an integrated jack, grab its device so MBHC can route it on insert.
++	 */
++	{
++		struct device_node *usbss_np;
++		struct i2c_client *usbss_client;
++
++		usbss_np = of_parse_phandle(dev->of_node, "qcom,usbss", 0);
++		if (usbss_np) {
++			usbss_client = of_find_i2c_device_by_node(usbss_np);
++			of_node_put(usbss_np);
++			if (usbss_client)
++				wcd939x->usbss_dev = &usbss_client->dev;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+Armbian
+

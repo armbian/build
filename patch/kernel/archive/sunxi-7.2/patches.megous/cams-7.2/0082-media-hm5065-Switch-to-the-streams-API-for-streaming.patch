@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 2 Aug 2026 13:36:29 +0200
+Subject: media: hm5065: Switch to the streams API for streaming
+
+enable_streams/disable_streams arrive with the state already locked
+and are only ever called for a real state change, so the streaming
+flag and the explicit state locking both go away; the core's
+enabled_pads answers the busy checks instead. s_stream stays
+available to the bridge through the helper that maps it onto the new
+ops.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/hm5065.c | 96 +++++-----
+ 1 file changed, 47 insertions(+), 49 deletions(-)
+
+diff --git a/drivers/media/i2c/hm5065.c b/drivers/media/i2c/hm5065.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/hm5065.c
++++ b/drivers/media/i2c/hm5065.c
+@@ -566,8 +566,6 @@ struct hm5065_dev {
+ 	 */
+ 	struct v4l2_fract frame_interval;
+ 	struct hm5065_ctrls ctrls;
+-
+-	bool streaming;
+ };
+ 
+ static inline struct hm5065_dev *to_hm5065_dev(struct v4l2_subdev *sd)
+@@ -1423,7 +1421,7 @@ static int hm5065_set_frame_interval(struct v4l2_subdev *sd,
+ 	sensor->frame_interval.denominator = fps;
+ 	fi->interval = sensor->frame_interval;
+ 
+-	if (sensor->streaming) {
++	if (sd->enabled_pads) {
+ 		cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_NUM,
+ 			  fps, &ret);
+ 		cci_write(sensor->regmap, HM5065_REG_DESIRED_FRAME_RATE_DEN,
+@@ -1489,63 +1487,62 @@ static int hm5065_set_stream(struct hm5065_dev *sensor, int enable)
+ 			 HM5065_REG_USER_COMMAND_STOP, NULL);
+ }
+ 
+-static int hm5065_s_stream(struct v4l2_subdev *sd, int enable)
++static int hm5065_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
+ {
+ 	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	struct device *dev = &sensor->i2c_client->dev;
+-	struct v4l2_subdev_state *state;
+-	int ret = 0;
+-
+-	state = v4l2_subdev_lock_and_get_active_state(sd);
+-
+-	if (sensor->streaming == !!enable)
+-		goto out;
++	int ret;
+ 
+-	if (enable) {
+-		ret = pm_runtime_resume_and_get(dev);
+-		if (ret < 0)
+-			goto out;
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0)
++		return ret;
+ 
+-		ret = hm5065_setup_mode(sensor, state);
+-		if (ret)
+-			goto err_rpm_put;
+-
+-		/*
+-		 * The mode setup soft power cycles the camera MCU, and the
+-		 * sensor may just have been powered up with the controls
+-		 * only cached, so reapply them on top of it. The handler
+-		 * lock is the state lock, which is already held.
+-		 */
+-		ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+-		if (ret)
+-			goto err_rpm_put;
++	ret = hm5065_setup_mode(sensor, state);
++	if (ret)
++		goto err_rpm_put;
+ 
+-		ret = hm5065_set_stream(sensor, true);
+-		if (ret)
+-			goto err_rpm_put;
++	/*
++	 * The mode setup soft power cycles the camera MCU, and the sensor
++	 * may just have been powered up with the controls only cached, so
++	 * reapply them on top of it. The handler lock is the state lock,
++	 * which the caller already holds.
++	 */
++	ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
++	if (ret)
++		goto err_rpm_put;
+ 
+-		if (sensor->ctrls.focus_auto->cur.val) {
+-			msleep(100);
++	ret = hm5065_set_stream(sensor, true);
++	if (ret)
++		goto err_rpm_put;
+ 
+-			/* checking error here is not super important */
+-			cci_write(sensor->regmap, HM5065_REG_AF_MODE,
+-				  HM5065_REG_AF_MODE_CONTINUOUS, NULL);
+-		}
++	if (sensor->ctrls.focus_auto->cur.val) {
++		msleep(100);
+ 
+-		sensor->streaming = true;
+-	} else {
+-		ret = hm5065_set_stream(sensor, false);
+-		sensor->streaming = false;
+-		pm_runtime_put_autosuspend(dev);
++		/* checking error here is not super important */
++		cci_write(sensor->regmap, HM5065_REG_AF_MODE,
++			  HM5065_REG_AF_MODE_CONTINUOUS, NULL);
+ 	}
+ 
+-out:
+-	v4l2_subdev_unlock_state(state);
+-	return ret;
++	return 0;
+ 
+ err_rpm_put:
+ 	pm_runtime_put_autosuspend(dev);
+-	v4l2_subdev_unlock_state(state);
++	return ret;
++}
++
++static int hm5065_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct hm5065_dev *sensor = to_hm5065_dev(sd);
++	int ret;
++
++	ret = hm5065_set_stream(sensor, false);
++
++	pm_runtime_put_autosuspend(&sensor->i2c_client->dev);
++
+ 	return ret;
+ }
+ 
+@@ -1616,14 +1613,13 @@ static int hm5065_set_fmt(struct v4l2_subdev *sd,
+ 			  struct v4l2_subdev_state *sd_state,
+ 			  struct v4l2_subdev_format *format)
+ {
+-	struct hm5065_dev *sensor = to_hm5065_dev(sd);
+ 	struct v4l2_mbus_framefmt *mf = &format->format;
+ 	const struct hm5065_pixfmt *pixfmt;
+ 
+ 	if (format->pad != 0)
+ 		return -EINVAL;
+ 
+-	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE && sensor->streaming)
++	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE && sd->enabled_pads)
+ 		return -EBUSY;
+ 
+ 	/* check if we support requested mbus fmt */
+@@ -1858,10 +1854,12 @@ static const struct v4l2_subdev_pad_ops hm5065_pad_ops = {
+ 	.set_fmt = hm5065_set_fmt,
+ 	.get_frame_interval = hm5065_get_frame_interval,
+ 	.set_frame_interval = hm5065_set_frame_interval,
++	.enable_streams = hm5065_enable_streams,
++	.disable_streams = hm5065_disable_streams,
+ };
+ 
+ static const struct v4l2_subdev_video_ops hm5065_video_ops = {
+-	.s_stream = hm5065_s_stream,
++	.s_stream = v4l2_subdev_s_stream_helper,
+ };
+ 
+ static const struct v4l2_subdev_ops hm5065_subdev_ops = {
+-- 
+Armbian
+

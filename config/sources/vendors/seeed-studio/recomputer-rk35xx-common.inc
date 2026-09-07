@@ -349,14 +349,23 @@ function post_family_tweaks__recomputer_add_sbin_to_path() {
 	chmod +x "${SDCARD}/etc/profile.d/custom-path.sh"
 }
 
-# DMA heap — Mali GBM requires /dev/dma_heap access.
+# DMA heap — the GPU stack needs /dev/dma_heap and render node access.
 function post_family_tweaks__recomputer_mali_dma_heap_permissions() {
 	display_alert "$BOARD" "Setting DMA heap permissions for Mali GPU" "info"
 
+	# Ubuntu's gdm greeter runs as dynamic users (gdm-greeter-XXXX) that no
+	# usermod can reach; uaccess ACLs are the only mechanism covering both
+	# them and regular logins. Tag the nodes so logind grants the active
+	# session user an ACL (nodes stay 0660). Without this the greeter cannot
+	# open /dev/dri/renderD* or /dev/dma_heap/* and mutter dies with
+	# "Failed to create gbm device" -> "No GPUs found".
 	mkdir -p "${SDCARD}/etc/udev/rules.d/"
-	echo 'SUBSYSTEM=="dma_heap", GROUP="render", MODE="0660"' > "${SDCARD}/etc/udev/rules.d/50-mali-dma-heap.rules"
+	cat > "${SDCARD}/etc/udev/rules.d/50-mali-dma-heap.rules" <<- 'EOF'
+		SUBSYSTEM=="dma_heap", GROUP="render", MODE="0660", TAG+="uaccess"
+		SUBSYSTEM=="drm", KERNEL=="renderD*", TAG+="uaccess"
+	EOF
 
-	# GDM greeter needs render+video groups for DRM and DMA heap access.
+	# Debian uses a static gdm user; group membership still helps there.
 	chroot_sdcard usermod -aG render Debian-gdm 2> /dev/null || true
 	chroot_sdcard usermod -aG video Debian-gdm 2> /dev/null || true
 }
@@ -376,15 +385,26 @@ function post_family_tweaks__recomputer_mali_x11_kms_config() {
 	EOF
 }
 
+# Open-source GPU driver (panthor / panfrost) needs a clean Mesa userspace:
+# libmali blob must be removed AND Mesa's libEGL/libGLES .so files restored.
+# The libmali deb's postinst deletes libEGL.so.1.1.0 and libGLESv2.so.2.1.0
+# (not just the symlinks) to force apps onto its own wrapper. A plain
+# ldconfig cannot bring them back; only a --reinstall of libegl1/libgles2
+# restores the .so files. Without this, GNOME Shell fails with
+# "Failed to create gbm device" → "No GPUs found".
 function post_family_tweaks__recomputer_panthor_userspace_cleanup() {
-	[[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]] || return 0
+	[[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" || "${RECOMPUTER_GPU_STACK:-mali}" == "panfrost" ]] || return 0
 
-	display_alert "$BOARD" "Removing Mali userspace wrappers for Panthor" "info"
+	display_alert "$BOARD" "Removing Mali userspace wrappers for ${RECOMPUTER_GPU_STACK}" "info"
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
 
 	rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
 	rm -rf "${LIB_DIR}/mali"
 	rm -f "${SDCARD}/usr/share/glvnd/egl_vendor.d/00_mali.json"
+
+	# libmali deb deleted Mesa's libEGL/libGLES .so bodies; restore them.
+	chroot_sdcard_apt_get_install --no-install-recommends \
+		--reinstall libegl1 libgles2 libegl-mesa0
 	chroot_sdcard ldconfig
 }
 
@@ -393,8 +413,8 @@ function post_family_tweaks__recomputer_panthor_userspace_cleanup() {
 # to prevent mali/ wrappers from shadowing our direct libmali.so.1 symlinks.
 # RK3588 keeps the ldconfig entry so libMaliOpenCL remains discoverable.
 function post_family_tweaks__recomputer_mali_egl_override() {
-	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
-		display_alert "$BOARD" "Skipping Mali EGL override for Panthor" "info"
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" || "${RECOMPUTER_GPU_STACK:-mali}" == "panfrost" ]]; then
+		display_alert "$BOARD" "Skipping Mali EGL override for ${RECOMPUTER_GPU_STACK}" "info"
 		return 0
 	fi
 
@@ -441,8 +461,8 @@ function post_family_tweaks__recomputer_mali_egl_override() {
 function pre_umount_final_image__recomputer_mali_gbm_fixup() {
 	local LIB_DIR="${SDCARD}/usr/lib/aarch64-linux-gnu"
 
-	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" ]]; then
-		display_alert "$BOARD" "Using Mesa GBM for Panthor" "info"
+	if [[ "${RECOMPUTER_GPU_STACK:-mali}" == "panthor" || "${RECOMPUTER_GPU_STACK:-mali}" == "panfrost" ]]; then
+		display_alert "$BOARD" "Using Mesa GBM for ${RECOMPUTER_GPU_STACK}" "info"
 		rm -f "${SDCARD}/etc/ld.so.conf.d/00-aarch64-mali.conf"
 		rm -rf "${LIB_DIR}/mali"
 		chroot_sdcard ldconfig

@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 6 Aug 2026 21:50:23 +0200
+Subject: media: sun6i-isp: Let the demosaic minimums be set apart
+
+The demosaic's minimum RGB occupies three separate ten bit fields
+across two registers. Every caller that has ever been seen writes the
+same value into all three -- the vendor library does it in one function,
+and this driver copied that -- so whether the three do different things
+has never been tested.
+
+Give each field its own value in the parameters, and while here let
+CFA_TEX be written too. That register is one the hardware writes its own
+measurement into; nothing is known to write it, and this is how to find
+out whether writing has any effect.
+
+Setting all three minimums alike reproduces the previous behaviour.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c      | 16 ++++-
+ drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h | 33 +++++++++-
+ 2 files changed, 45 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_params.c
+@@ -446,10 +446,20 @@ sun6i_isp_params_configure_cfa(struct sun6i_isp_device *isp_dev,
+ 			     SUN6I_ISP_CFA_CFG0_DIR_TH(cfa->direction_threshold) |
+ 			     SUN6I_ISP_CFA_CFG0_MIN_RGB(cfa->min_rgb));
+ 
+-	/* the same minimum again, in both halves of the second register */
++	/*
++	 * The other two copies of the minimum, which every caller so far has
++	 * set to the same value as the first. They are separate here so that
++	 * assumption can be tested rather than inherited.
++	 */
+ 	sun6i_isp_load_write(isp_dev, SUN6I_ISP_CFA_CFG1_REG,
+-			     SUN6I_ISP_CFA_CFG1_MIN_RGB_LOW(cfa->min_rgb) |
+-			     SUN6I_ISP_CFA_CFG1_MIN_RGB_HIGH(cfa->min_rgb));
++			     SUN6I_ISP_CFA_CFG1_MIN_RGB_LOW(cfa->min_rgb_low) |
++			     SUN6I_ISP_CFA_CFG1_MIN_RGB_HIGH(cfa->min_rgb_high));
++
++	/*
++	 * A register the hardware writes its own measurement into. Writing it
++	 * may do nothing at all; that is what this is for.
++	 */
++	sun6i_isp_load_write(isp_dev, SUN6I_ISP_CFA_TEX_REG, cfa->texture);
+ }
+ 
+ /*
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/uapi/sun6i-isp-config.h
+@@ -245,10 +245,23 @@ struct sun6i_isp_params_config_dpc {
+  * to an edge direction; the minimum is a floor applied to the channels,
+  * and the hardware writes its own measurement back over the same bits, so
+  * reading these registers returns a level rather than what was written.
++ *
++ * The minimum occupies three separate 10-bit fields across two registers.
++ * Every caller that has ever been seen -- the vendor library and this
++ * driver before it -- writes the same value into all three, so whether
++ * they do different things has never been tested. They are separate here
++ * so that it can be. Set all three alike for the vendor's behaviour.
++ *
++ * texture goes to CFA_TEX. That register is a measurement the hardware
++ * writes back; nothing is known to read it and nothing is known to write
++ * it, so this exists to find out whether writing has any effect at all.
+  */
+ struct sun6i_isp_params_config_cfa {
+ 	__u16	direction_threshold;
+-	__u16	min_rgb;
++	__u16	min_rgb;		/* CFA_CFG0, bits 25:16 */
++	__u16	min_rgb_low;		/* CFA_CFG1, bits 9:0 */
++	__u16	min_rgb_high;		/* CFA_CFG1, bits 25:16 */
++	__u32	texture;		/* CFA_TEX */
+ };
+ 
+ /*
+@@ -310,6 +323,7 @@ struct sun6i_isp_params_config {
+ #define SUN6I_ISP_STAT_AF			(1U << 2)
+ #define SUN6I_ISP_STAT_AFS			(1U << 3)
+ #define SUN6I_ISP_STAT_AWB			(1U << 4)
++#define SUN6I_ISP_STAT_CFA			(1U << 5)
+ 
+ /*
+  * 128 bins over a 256 level range, so bin i covers luminance 2 * i + 1.
+@@ -392,6 +406,22 @@ struct sun6i_isp_stats_awb {
+  * the rest are left zeroed. The sum ordering is believed to be red,
+  * green, blue.
+  */
++/*
++ * What the demosaic measured, taken from the save region rather than from
++ * the statistics DMA -- the hardware reports these by writing back over
++ * its own configuration registers.
++ *
++ * min_rgb is the minimum the block saw, which the vendor's 3A loop reads
++ * every frame. texture is the whole of CFA_TEX; the vendor exports a
++ * getter for it and never calls it, so what it counts is not known.
++ *
++ * The demosaic has no enable bit, so these are always reported.
++ */
++struct sun6i_isp_stats_cfa {
++	__u32				min_rgb;
++	__u32				texture;
++};
++
+ struct sun6i_isp_stats_buffer {
+ 	__u32				blocks_valid;
+ 	__u32				sequence;
+@@ -401,6 +431,7 @@ struct sun6i_isp_stats_buffer {
+ 	struct sun6i_isp_stats_af	af;
+ 	struct sun6i_isp_stats_afs	afs;
+ 	struct sun6i_isp_stats_awb	awb;
++	struct sun6i_isp_stats_cfa	cfa;
+ };
+ 
+ #endif /* _UAPI_SUN6I_ISP_CONFIG_H */
+-- 
+Armbian
+

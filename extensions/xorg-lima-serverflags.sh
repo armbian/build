@@ -1,3 +1,5 @@
+# @description Installs `40-serverflags.conf` into `/etc/X11/xorg.conf.d` to work around faulty GPU autodetection with the open-source Lima driver. Disables `AutoAddGPU`, enables the `dmabuf_capable` debug flag, and adds an `OutputClass` binding Rockchip to the `modesetting` driver with `glamor` acceleration as the primary GPU.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Armbian

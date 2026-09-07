@@ -410,6 +410,49 @@ function armbian_kernel_config__select_nftables() {
 	opts_m+=("IP_SET_BITMAP_PORT")    # IP set bitmap:port type
 }
 
+# Enables the IP tunnel and encapsulation drivers for every kernel we build.
+#
+# Armbian boards are routinely used as routers and VPN endpoints, and the tunnel
+# drivers are what that needs. They were never decided fleet-wide, so the shipped
+# configs drifted: across the 122 of them the IPv4 half is nearly universal
+# (NET_IPIP 85, NET_IPGRE 78) while the IPv6 half is patchy (IPV6_GRE 62,
+# IPV6_SIT 54) and IPV6_TUNNEL is enabled in only 24 -- with 8 configs setting it
+# to "not set" outright. Whether a given board can terminate a tunnel came down
+# to which family config it happened to be built from.
+#
+# The IPv6 side is the one that bites. DS-Lite (RFC 6333) terminates an
+# IPv4-in-IPv6 tunnel on the customer router and needs ip6_tnl; it is the
+# standard deployment on a large share of European fibre and cable lines, where
+# the carrier hands out CGNAT-only IPv4 that is not routed. Without it a board
+# used as a router there has working IPv6 and no IPv4 at all.
+#
+# All modules, so nothing is paid for until a tunnel is actually created. The two
+# built-ins are bool options extending a driver, not separate modules. Kernels
+# whose dependencies are unmet drop them at olddefconfig, so families without
+# IPv6 are unaffected. Note this also normalises the handful of configs that
+# built one of these in (=y) down to a module.
+#
+# Deliberately not here: NET_FOU (foo-over-UDP) is genuinely niche, and WIREGUARD
+# is a VPN rather than a tunnel driver -- and is already in 101 of 122 configs.
+function armbian_kernel_config__select_tunnels() {
+	# IPv4 tunnelling
+	opts_m+=("NET_IPIP")            # IP-in-IP tunnelling (ipip)
+	opts_m+=("NET_IPGRE_DEMUX")     # GRE demultiplexer, required by the GRE drivers
+	opts_m+=("NET_IPGRE")           # GRE tunnels over IPv4 (ip_gre)
+	opts_y+=("NET_IPGRE_BROADCAST") # bool: broadcast/multicast GRE
+
+	# IPv6 tunnelling
+	opts_m+=("IPV6_SIT")     # 6in4 / 6to4 tunnels (sit) -- HE tunnelbroker et al
+	opts_y+=("IPV6_SIT_6RD") # bool: 6RD extension to sit
+	opts_m+=("IPV6_TUNNEL")  # IP-in-IPv6 tunnel, RFC2473 (ip6_tnl) -- DS-Lite
+	opts_m+=("IPV6_GRE")     # GRE tunnels over IPv6 (ip6_gre)
+	opts_m+=("IPV6_VTI")     # virtual tunnel interface for IPsec over IPv6
+
+	# Overlay encapsulation. VXLAN is already forced by the Docker hook; GENEVE is
+	# its counterpart and was in only 68 configs, so pair them up.
+	opts_m+=("GENEVE") # Generic Network Virtualization Encapsulation
+}
+
 # Enables netfilter legacy xtables and ebtables support for kernels 6.18+.
 #
 # Linux 6.18 removed legacy xtables (iptables-legacy) support by default in favor

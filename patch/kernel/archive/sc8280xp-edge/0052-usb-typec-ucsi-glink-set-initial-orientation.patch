@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 3 Sep 2026 11:24:59 +0200
+Subject: usb: typec: ucsi: glink: Set initial orientation during probe
+
+The connector orientation GPIO and the Type-C switches are available
+before the UCSI PPM provided by the ADSP is running. However, the driver
+only propagates the GPIO state from connector_status(), which is not
+called until the PPM has started and UCSI registration has completed.
+
+When a device is connected in reverse orientation during boot, USB
+enumeration can therefore start before the orientation switches have been
+configured. This results in repeated USB protocol errors until the ADSP
+starts and the orientation is eventually propagated.
+
+Acquire the switches and propagate the GPIO state while probing each
+connector. This configures the orientation before USB enumeration while
+retaining connector_status() for subsequent connection state changes.
+Defer probing if an associated switch has not registered yet.
+
+Fixes: c6165ed2f425 ("usb: ucsi: glink: use the connector orientation GPIO to provide switch events")
+Cc: stable@vger.kernel.org
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+
+(cherry picked from commit d2360e56a23ebf0c18cc5761e11e3db5457783a6)
+[SuperKali: forward-ported from radxa/kernel linux-7.0.11 to Linux 7.2.3]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/usb/typec/ucsi/ucsi_glink.c | 37 ++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi_glink.c b/drivers/usb/typec/ucsi/ucsi_glink.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/typec/ucsi/ucsi_glink.c
++++ b/drivers/usb/typec/ucsi/ucsi_glink.c
+@@ -238,6 +238,38 @@ static const struct ucsi_operations pmic_glink_ucsi_ops = {
+ 	.connector_status = pmic_glink_ucsi_connector_status,
+ };
+ 
++static int pmic_glink_ucsi_set_initial_orientation(struct device *dev,
++						   struct fwnode_handle *fwnode,
++						   struct gpio_desc *desc)
++{
++	struct typec_switch *sw;
++	int orientation;
++	int ret;
++
++	sw = fwnode_typec_switch_get(fwnode);
++	if (IS_ERR(sw))
++		return dev_err_probe(dev, PTR_ERR(sw),
++				     "failed to acquire orientation switch\n");
++
++	orientation = gpiod_get_value(desc);
++	if (orientation < 0) {
++		ret = orientation;
++		goto out_put_switch;
++	}
++
++	ret = typec_switch_set(sw, orientation ? TYPEC_ORIENTATION_REVERSE :
++						 TYPEC_ORIENTATION_NORMAL);
++
++out_put_switch:
++	typec_switch_put(sw);
++
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to set initial orientation\n");
++
++	return 0;
++}
++
+ static void pmic_glink_ucsi_read_ack(struct pmic_glink_ucsi *ucsi, const void *data, int len)
+ {
+ 	u32 ret_code, resp_len, buf_len = 0;
+@@ -449,6 +481,11 @@ static int pmic_glink_ucsi_probe(struct auxiliary_device *adev,
+ 					     "unable to acquire orientation gpio\n");
+ 
+ 		ucsi->port_orientation[port] = desc;
++
++		/* The orientation GPIO is available before the PPM is running. */
++		ret = pmic_glink_ucsi_set_initial_orientation(dev, fwnode, desc);
++		if (ret)
++			return ret;
+ 	}
+ 
+ 	ucsi->client = devm_pmic_glink_client_alloc(dev, PMIC_GLINK_OWNER_USBC,
+-- 
+Armbian
+

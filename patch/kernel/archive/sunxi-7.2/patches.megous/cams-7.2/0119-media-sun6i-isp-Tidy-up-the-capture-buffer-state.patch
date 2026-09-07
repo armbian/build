@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:25:17 +0200
+Subject: media: sun6i-isp: Tidy up the capture buffer state
+
+state->complete is written, consumed and cleared inside
+sun6i_isp_capture_state_complete(). It never survives the call, so it is a
+local variable rather than state, and having it in the struct means
+sun6i_isp_capture_state_cleanup() walks a slot that is always NULL.
+
+state->current forces a #undef of the current macro on every file that
+includes this header, which is a lot to ask for one field name. Call it
+active instead: it is the buffer the hardware is writing right now, which
+is what the name should say.
+
+No functional change.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c | 21 +++++-----
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h |  5 +--
+ 2 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.c
+@@ -186,7 +186,7 @@ static void sun6i_isp_capture_state_cleanup(struct sun6i_isp_device *isp_dev,
+ {
+ 	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
+ 	struct sun6i_isp_buffer **isp_buffer_states[] = {
+-		&state->pending, &state->current, &state->complete,
++		&state->pending, &state->active,
+ 	};
+ 	struct sun6i_isp_buffer *isp_buffer;
+ 	struct vb2_buffer *vb2_buffer;
+@@ -252,6 +252,7 @@ void sun6i_isp_capture_state_update(struct sun6i_isp_device *isp_dev,
+ void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct sun6i_isp_capture_state *state = &isp_dev->capture.state;
++	struct sun6i_isp_buffer *done;
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&state->lock, flags);
+@@ -259,21 +260,21 @@ void sun6i_isp_capture_state_complete(struct sun6i_isp_device *isp_dev)
+ 	if (!state->pending)
+ 		goto complete;
+ 
+-	state->complete = state->current;
+-	state->current = state->pending;
++	/*
++	 * The hardware has taken the staged buffer, so the one it was writing
++	 * before is finished and goes back to userspace.
++	 */
++	done = state->active;
++	state->active = state->pending;
+ 	state->pending = NULL;
+ 
+-	if (state->complete) {
+-		struct sun6i_isp_buffer *isp_buffer = state->complete;
+-		struct vb2_buffer *vb2_buffer =
+-			&isp_buffer->v4l2_buffer.vb2_buf;
++	if (done) {
++		struct vb2_buffer *vb2_buffer = &done->v4l2_buffer.vb2_buf;
+ 
+ 		vb2_buffer->timestamp = ktime_get_ns();
+-		isp_buffer->v4l2_buffer.sequence = state->sequence;
++		done->v4l2_buffer.sequence = state->sequence;
+ 
+ 		vb2_buffer_done(vb2_buffer, VB2_BUF_STATE_DONE);
+-
+-		state->complete = NULL;
+ 	}
+ 
+ complete:
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_capture.h
+@@ -30,14 +30,13 @@ struct sun6i_isp_capture_format {
+ 	u8	output_format;
+ };
+ 
+-#undef current
+ struct sun6i_isp_capture_state {
+ 	struct list_head		queue;
+ 	spinlock_t			lock; /* Queue and buffers lock. */
+ 
++	/* Staged in the load buffer, and latched by the hardware. */
+ 	struct sun6i_isp_buffer		*pending;
+-	struct sun6i_isp_buffer		*current;
+-	struct sun6i_isp_buffer		*complete;
++	struct sun6i_isp_buffer		*active;
+ 
+ 	unsigned int			sequence;
+ 	bool				streaming;
+-- 
+Armbian
+

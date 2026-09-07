@@ -1,3 +1,5 @@
+# @description Builds a bootable live `.iso` from a UEFI image so it boots from a BMC/IPMI virtual CD-ROM. Packs the kernel, `live-boot` initrd and a squashfs rootfs into a hybrid ISO9660 with self-contained GRUB (`xorriso`/`mksquashfs`/`grub-mkstandalone`), dropping the `.img` by default. UEFI-only with Secure Boot off, restricted to `uefi-*` boards using the `grub` extension.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 #

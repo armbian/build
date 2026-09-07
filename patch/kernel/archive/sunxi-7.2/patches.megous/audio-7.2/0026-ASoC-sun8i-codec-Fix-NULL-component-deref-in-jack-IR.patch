@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 17 Aug 2026 23:20:13 +0200
+Subject: ASoC: sun8i-codec: Fix NULL component deref in jack IRQ
+
+On the AC100 the HMIC line can already be asserted when jack detection
+is armed, so the threaded IRQ fires before the ASoC core has bound the
+component and set scodec->component - and the handler dereferenced it
+for a struct device used only in logging, oopsing at boot.
+
+Stash the device at init_jack time (the same one the component is
+registered on) and use it from the IRQ and its work instead.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/sun8i-codec.c | 15 ++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -297,6 +297,7 @@ enum {
+ 
+ struct sun8i_codec {
+ 	struct snd_soc_component	*component;
++	struct device			*dev;
+ 	struct regmap			*regmap;
+ 	struct clk			*clk_bus;
+ 	struct clk			*clk_module;
+@@ -1575,7 +1576,7 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 	struct sun8i_codec *scodec = container_of(work, struct sun8i_codec,
+ 						  jack_work.work);
+ 	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+-	struct device *dev = scodec->component->dev;
++	struct device *dev = scodec->dev;
+ 	unsigned int mdata;
+ 	int type;
+ 
+@@ -1691,7 +1692,7 @@ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ {
+ 	struct sun8i_codec *scodec = dev_id;
+ 	const struct sun8i_codec_jack_variant *variant = scodec->quirks->jack;
+-	struct device *dev = scodec->component->dev;
++	struct device *dev = scodec->dev;
+ 	int type = SND_JACK_HEADSET;
+ 	unsigned int status, value;
+ 	unsigned btn_chg = 0;
+@@ -1934,6 +1935,16 @@ static struct regmap_config sun8i_codec_regmap_config = {
+ static void sun8i_codec_init_jack(struct sun8i_codec *scodec,
+ 				  struct device *dev)
+ {
++	/*
++	 * The jack interrupt handler and its delayed work run from
++	 * platform-probe time, before the ASoC core has bound the
++	 * component and populated scodec->component. On the AC100 the
++	 * HMIC line is asserted the moment enable_jack_detect() arms it,
++	 * so the very first interrupt can fire in that window. Keep our
++	 * own device handle - valid from probe - so those contexts never
++	 * dereference the not-yet-set component.
++	 */
++	scodec->dev = dev;
+ 	INIT_DELAYED_WORK(&scodec->jack_work, sun8i_codec_jack_work);
+ 	mutex_init(&scodec->jack_mutex);
+ 
+-- 
+Armbian
+

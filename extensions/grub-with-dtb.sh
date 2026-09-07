@@ -1,3 +1,5 @@
+# @description A superset of the `grub` extension that boots via DeviceTree instead of ACPI, for EFI-only ARM64 machines like the ThinkPad X13s or Phytium D2000. Requires `BOOT_FDT_FILE`/`GRUB_FDT_FILE`, and installs a kernel hook plus a custom `09_linux_with_dtb.sh` GRUB script that deploys the DTB to the boot partition.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

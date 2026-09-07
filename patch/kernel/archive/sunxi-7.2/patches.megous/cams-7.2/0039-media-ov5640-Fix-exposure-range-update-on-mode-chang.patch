@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 29 Jul 2026 02:27:38 +0200
+Subject: media: ov5640: Fix exposure range update on mode changes
+
+__v4l2_ctrl_modify_range() replaces the current value with the default
+passed to it when that value no longer fits the new range. The VBLANK
+handler was passing the vblank default there, so an exposure that did
+not survive a mode change was replaced by a number of vblank lines.
+
+The range was also only updated when the vblank value actually
+changed, as the control framework skips s_ctrl otherwise. Two modes
+can share a vblank default without sharing a height - 1080p and QSXGA
+both default to 24 lines on CSI-2 - and the exposure range then kept
+describing the mode we came from. update_pixel_rate() papered over
+that by redoing the range update itself, but only on the CSI-2 path,
+so DVP was left with both problems.
+
+Move the computation to a helper, clamp the current exposure to use as
+the fallback value, and run it on every vblank update instead of only
+on vblank changes.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 49 ++++++----
+ 1 file changed, 30 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -3120,6 +3120,26 @@ static int ov5640_try_fmt_internal(struct v4l2_subdev *sd,
+ 	return 0;
+ }
+ 
++static void ov5640_update_exposure_range(struct ov5640_dev *sensor, u32 vblank)
++{
++	const struct ov5640_mode_info *mode = sensor->current_mode;
++	s32 exp_max, exp_val;
++
++	/*
++	 * __v4l2_ctrl_modify_range() replaces the current value with the
++	 * default passed to it when that value no longer fits the new
++	 * range, so clamp the current exposure and hand that over rather
++	 * than an unrelated number.
++	 */
++	exp_max = mode->height + vblank - 4;
++	exp_val = clamp_t(s32, sensor->ctrls.exposure->val,
++			  sensor->ctrls.exposure->minimum, exp_max);
++
++	__v4l2_ctrl_modify_range(sensor->ctrls.exposure,
++				 sensor->ctrls.exposure->minimum, exp_max,
++				 sensor->ctrls.exposure->step, exp_val);
++}
++
+ static void __v4l2_ctrl_vblank_update(struct ov5640_dev *sensor, u32 vblank)
+ {
+ 	const struct ov5640_mode_info *mode = sensor->current_mode;
+@@ -3128,6 +3148,14 @@ static void __v4l2_ctrl_vblank_update(struct ov5640_dev *sensor, u32 vblank)
+ 				 OV5640_MAX_VTS - mode->height, 1, vblank);
+ 
+ 	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank, vblank);
++
++	/*
++	 * The control framework skips s_ctrl when the value does not
++	 * change, which happens when switching between two modes that
++	 * share a vblank default but not a height, so the exposure range
++	 * cannot be left to the VBLANK handler alone.
++	 */
++	ov5640_update_exposure_range(sensor, vblank);
+ }
+ 
+ static int ov5640_update_pixel_rate(struct ov5640_dev *sensor)
+@@ -3136,7 +3164,6 @@ static int ov5640_update_pixel_rate(struct ov5640_dev *sensor)
+ 	enum ov5640_pixel_rate_id pixel_rate_id = mode->pixel_rate;
+ 	struct v4l2_mbus_framefmt *fmt = &sensor->fmt;
+ 	const struct ov5640_timings *timings = ov5640_timings(sensor, mode);
+-	s32 exposure_val, exposure_max;
+ 	unsigned int hblank;
+ 	unsigned int i = 0;
+ 	u32 pixel_rate;
+@@ -3202,18 +3229,10 @@ static int ov5640_update_pixel_rate(struct ov5640_dev *sensor)
+ 	__v4l2_ctrl_modify_range(sensor->ctrls.hblank,
+ 				 hblank, hblank, 1, hblank);
+ 
++	/* This updates the exposure range through the VBLANK control. */
+ 	vblank = timings->vblank_def;
+ 	__v4l2_ctrl_vblank_update(sensor, vblank);
+ 
+-	exposure_max = timings->crop.height + vblank - 4;
+-	exposure_val = clamp_t(s32, sensor->ctrls.exposure->val,
+-			       sensor->ctrls.exposure->minimum,
+-			       exposure_max);
+-
+-	__v4l2_ctrl_modify_range(sensor->ctrls.exposure,
+-				 sensor->ctrls.exposure->minimum,
+-				 exposure_max, 1, exposure_val);
+-
+ 	return 0;
+ }
+ 
+@@ -3686,9 +3705,6 @@ static int ov5640_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+ 	struct ov5640_dev *sensor = to_ov5640_dev(sd);
+-	const struct ov5640_mode_info *mode = sensor->current_mode;
+-	const struct ov5640_timings *timings;
+-	unsigned int exp_max;
+ 	int ret;
+ 
+ 	/* v4l2_ctrl_lock() locks our own mutex */
+@@ -3696,12 +3712,7 @@ static int ov5640_s_ctrl(struct v4l2_ctrl *ctrl)
+ 	switch (ctrl->id) {
+ 	case V4L2_CID_VBLANK:
+ 		/* Update the exposure range to the newly programmed vblank. */
+-		timings = ov5640_timings(sensor, mode);
+-		exp_max = mode->height + ctrl->val - 4;
+-		__v4l2_ctrl_modify_range(sensor->ctrls.exposure,
+-					 sensor->ctrls.exposure->minimum,
+-					 exp_max, sensor->ctrls.exposure->step,
+-					 timings->vblank_def);
++		ov5640_update_exposure_range(sensor, ctrl->val);
+ 		break;
+ 	}
+ 
+-- 
+Armbian
+

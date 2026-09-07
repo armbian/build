@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 13 Aug 2026 10:16:17 +0200
+Subject: clocksource/drivers/sun4i: Verify that the counter runs after arming
+
+check_armed() checks reload completion, the enable bit and a non-zero
+CNTVAL, but that did not catch a tick death observed on sun5i under
+heavy interrupt load: the timer was left with ENABLE set and an
+interval that never expired, and the tick stopped for good.  Re-doing
+the whole INTVAL + CTRL sequence by hand over /dev/mem revived the
+wedged machine, so a failed arm is fully recoverable by retrying.
+
+Check the one thing that actually matters instead: that CNTVAL is
+counting down, or that the expiry is already latched in IRQ_ST.  On
+failure return -ETIME so the clockevents core retries the whole arm
+sequence.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/clocksource/timer-sun4i.c | 23 +++++++---
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/clocksource/timer-sun4i.c b/drivers/clocksource/timer-sun4i.c
+index 111111111111..222222222222 100644
+--- a/drivers/clocksource/timer-sun4i.c
++++ b/drivers/clocksource/timer-sun4i.c
+@@ -136,17 +136,28 @@ static int sun4i_clkevt_set_periodic(struct clock_event_device *evt)
+ 
+ static int sun4i_clkevt_check_armed(void __iomem *base, u8 timer)
+ {
++	u32 cnt;
++	int i;
++
+ 	if (sun4i_clkevt_wait_reload(base, timer))
+ 		return -ETIME;
+ 
+-	/* Single mode clears the enable bit once the interval is reached. */
+-	if (!(readl(base + TIMER_CTL_REG(timer)) & TIMER_CTL_ENABLE))
+-		return -ETIME;
++	/*
++	 * A register read takes several source clock periods, so a live
++	 * counter is seen moving within a poll or two.
++	 */
++	cnt = readl(base + TIMER_CNTVAL_REG(timer));
++	for (i = 0; i < TIMER_RELOAD_MAX_POLL; i++) {
++		if (readl(base + TIMER_CNTVAL_REG(timer)) != cnt)
++			return 0;
++		cpu_relax();
++	}
+ 
+-	if (!readl(base + TIMER_CNTVAL_REG(timer)))
+-		return -ETIME;
++	/* A short interval may have expired already; the irq is latched. */
++	if (readl(base + TIMER_IRQ_ST_REG) & TIMER_IRQ_CLEAR(timer))
++		return 0;
+ 
+-	return 0;
++	return -ETIME;
+ }
+ 
+ static int sun4i_clkevt_next_event(unsigned long evt,
+-- 
+Armbian
+

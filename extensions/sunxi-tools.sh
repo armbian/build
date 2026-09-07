@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Builds and installs `sunxi-tools` (e.g. `sunxi-fexc`) on the host from the `linux-sunxi/sunxi-tools` Git repo, recompiling only when the commit hash changes. Also adds 32-bit armhf (`gcc-arm-linux-gnueabi`) and OpenRISC (`gcc-or1k-elf`) cross-compilers for Allwinner bootloader and crust builds; those compilers are only needed outside Docker.
 
 # Most sunxi stuff, even if 64-bit, requires 32-bit compiler, add it.
 # This is only used for non-Docker, since the Docker image already has it, since it includes compilers for all architectures.

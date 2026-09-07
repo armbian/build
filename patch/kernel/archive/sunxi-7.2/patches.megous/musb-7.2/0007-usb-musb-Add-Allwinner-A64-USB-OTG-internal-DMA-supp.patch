@@ -1,0 +1,912 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 15 Jul 2026 00:35:36 +0200
+Subject: usb: musb: Add Allwinner A64 USB-OTG internal DMA support
+
+Offload bulk host<->device transfers on the A64 MUSB to the Allwinner
+"internal DMA" engine instead of PIO, in both directions. With this,
+g_mass_storage runs at ~42 MB/s (USB-HS line rate).
+
+The DMA engine's specifics that were discovered during implementation:
+
+* idma has no separate IRQ line: completion is polled from
+  sunxi_musb_interrupt() before calling musb_interrupt()
+
+* VEND0 (0x43) is a global PIO/DMA select for the FIFO datapath, not
+  per-endpoint. It must be switched to DMA around a transfer and back to
+  PIO once no channel is busy, or interleaved PIO traffic (mass-storage
+  CBW/CSW, ep0, short packets) is routed to the DMA interface and
+  breaks.
+
+* DMA_BC is NOT a residual counter. After completion it reads back the
+  programmed byte count, so "len - residual" is always 0. The engine
+  raises a single completion only once the whole programmed (whole-
+  packet) transfer is done, so we report the programmed length as
+  actual_len.
+
+* Whole maxpackets only. is_compatible() rejects <= maxpacket transfers
+  so CBWs, short SCSI status, control transfers and any sub-packet tail
+  stay on PIO; channel_program rounds the length down to whole packets.
+
+* RX needs the Mode 1 CSR setup (AUTOCLEAR | DMAENAB, DMAMODE toggled);
+  the Mentor "Mode 0" setup leaves AUTOCLEAR clear and the engine moves
+  nothing. f_mass_storage does not set short_not_ok, so a new gadget-RX
+  behavior quirk (MUSB_DMA_RX_MODE1_ALWAYS) makes rxstate() force Mode 1
+  for any full-packet DMA-mapped transfer.
+
+* TX is order-sensitive: the idma START bit begins moving data
+  immediately, so the full TXCSR DMA config (AUTOSET|MODE|DMAENAB|
+  DMAMODE) is programmed before START rather than after (where txstate
+  writes it). The completion also fires while the last packet is still
+  in the Tx FIFO; musb_g_tx() clears TxPktRdy on completion, which would
+  drop it, so we wait (time-bounded) for the FIFO to drain before
+  reporting completion.
+
+* EP1 bulk FIFO is double-buffered (2x512, TX and RX) so the controller
+  can hold/accept the next packet while the engine drains/fills the
+  current one. This helps get the performance of USB storage function
+  to the line rate, when it is configured on EP1.
+
+Allwinner SoC families are a babylon of small quirks and changes, so
+all of this is in this initial commit targeted at A64 SoC, to avoid
+breaking any other SoC I did not yet test, or have access to.
+
+I added a new A64 specific compatible "allwinner,sun50i-a64-musb" for
+this purpose. Existing A64 DTs that are using "allwinner,sun8i-a33-musb"
+keep running on PIO. People who upgrade their DTs along with their
+kernels will be the lucky ones. :)
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/Kconfig       |  11 +
+ drivers/usb/musb/musb_core.h   |  15 +-
+ drivers/usb/musb/musb_dma.h    |   1 +
+ drivers/usb/musb/musb_gadget.c |  55 +-
+ drivers/usb/musb/sunxi.c       | 546 +++++++++-
+ 5 files changed, 620 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/musb/Kconfig b/drivers/usb/musb/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/Kconfig
++++ b/drivers/usb/musb/Kconfig
+@@ -150,6 +150,17 @@ config USB_INVENTRA_DMA
+ 	help
+ 	  Enable DMA transfers using Mentor's engine.
+ 
++config USB_SUNXI_IDMA
++	bool 'Allwinner USB-OTG internal DMA'
++	depends on USB_MUSB_SUNXI
++	help
++	  Enable the Allwinner USB-OTG "internal DMA" engine, a vendor
++	  extension living in the USB controller's own register window.
++	  It is not Mentor's engine, but it is driven through the same
++	  software mode-select CSR paths.
++
++	  Only the A64 is supported; other sunxi SoCs fall back to PIO.
++
+ config USB_TI_CPPI41_DMA
+ 	bool 'TI CPPI 4.1'
+ 	depends on (ARCH_OMAP || ARCH_DAVINCI_DA8XX) && DMADEVICES
+diff --git a/drivers/usb/musb/musb_core.h b/drivers/usb/musb/musb_core.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_core.h
++++ b/drivers/usb/musb/musb_core.h
+@@ -162,9 +162,16 @@ struct musb_platform_ops {
+  * packets, so HW acks short RX and the driver must not (the only such engine is
+  * CPPI 4.1)
+  * MUSB_DMA_RX_MODE_AUTOCLEAR: gadget RX: AutoClear-then-mode sequence
++ * MUSB_DMA_RX_MODE1_ALWAYS: gadget RX: use DMA Mode 1 for any full-packet
++ * DMA-mapped transfer, not only when the function set short_not_ok. The
++ * Allwinner A64 idma only moves data with the Mode 1 (AUTOCLEAR) RXCSR setup;
++ * the Mentor Mode 0 setup leaves AUTOCLEAR clear and the engine transfers
++ * nothing. Only the Allwinner idma needs this, so it is gated on that engine
++ * and never alters RX handling for the other engines.
+  */
+ #ifndef CONFIG_MUSB_PIO_ONLY
+-#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_UX500_DMA)
++#if defined(CONFIG_USB_INVENTRA_DMA) || defined(CONFIG_USB_UX500_DMA) || \
++	defined(CONFIG_USB_SUNXI_IDMA)
+ #define MUSB_DMA_SW_MODE_SELECT		BIT(5)
+ #endif
+ #if defined(CONFIG_USB_TI_CPPI41_DMA) || defined(CONFIG_USB_TUSB_OMAP_DMA)
+@@ -176,6 +183,9 @@ struct musb_platform_ops {
+ #ifdef CONFIG_USB_UX500_DMA
+ #define MUSB_DMA_RX_MODE_AUTOCLEAR	BIT(2)
+ #endif
++#ifdef CONFIG_USB_SUNXI_IDMA
++#define MUSB_DMA_RX_MODE1_ALWAYS	BIT(6)
++#endif
+ #endif /* !CONFIG_MUSB_PIO_ONLY */
+ 
+ #ifndef MUSB_DMA_SW_MODE_SELECT
+@@ -190,6 +200,9 @@ struct musb_platform_ops {
+ #ifndef MUSB_DMA_RX_MODE_AUTOCLEAR
+ #define MUSB_DMA_RX_MODE_AUTOCLEAR	0
+ #endif
++#ifndef MUSB_DMA_RX_MODE1_ALWAYS
++#define MUSB_DMA_RX_MODE1_ALWAYS	0
++#endif
+ #define MUSB_IN_TUSB		BIT(1)
+ #define MUSB_INDEXED_EP		BIT(0)
+ 	u32	quirks;
+diff --git a/drivers/usb/musb/musb_dma.h b/drivers/usb/musb/musb_dma.h
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_dma.h
++++ b/drivers/usb/musb/musb_dma.h
+@@ -65,6 +65,7 @@ struct musb_hw_ep;
+ #define musb_dma_engine_managed(musb)	 ((musb)->ops->quirks & MUSB_DMA_ENGINE_MANAGED)
+ #define musb_dma_queue_autoadvance(musb) ((musb)->ops->quirks & MUSB_DMA_QUEUE_AUTOADVANCE)
+ #define musb_dma_rx_mode_autoclear(musb) ((musb)->ops->quirks & MUSB_DMA_RX_MODE_AUTOCLEAR)
++#define musb_dma_rx_mode1_always(musb)	 ((musb)->ops->quirks & MUSB_DMA_RX_MODE1_ALWAYS)
+ 
+ /*
+  * DMA channel status ... updated by the dma controller driver whenever that
+diff --git a/drivers/usb/musb/musb_gadget.c b/drivers/usb/musb/musb_gadget.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/musb_gadget.c
++++ b/drivers/usb/musb/musb_gadget.c
+@@ -690,9 +690,31 @@ static void rxstate(struct musb *musb, struct musb_request *req, bool defer_gb)
+ 		 * Enable Mode 1 on RX transfers only when short_not_ok flag
+ 		 * is set. Currently short_not_ok flag is set only from
+ 		 * file_storage and f_mass_storage drivers
++		 *
++		 * The Allwinner A64 idma (MUSB_DMA_RX_MODE1_ALWAYS, sunxi only)
++		 * only works with the Mode 1 RXCSR setup: AUTOCLEAR | DMAENAB
++		 * with DMAMODE toggled, which matches the proven p-boot
++		 * sequence.  The Mode 0 setup leaves AUTOCLEAR clear and the
++		 * engine transfers nothing (completes with residual == len).
++		 * The engine pumps whole multi-packet buffers autonomously, so
++		 * use Mode 1 for any full-packet DMA-mapped transfer even when
++		 * the gadget function did not set short_not_ok.  This is gated
++		 * on the sunxi glue and does not affect the other Inventra
++		 * DMA engines.
++		 *
++		 * The idma cannot detect short packets and has no readable
++		 * transfer progress (BC and the address register read back
++		 * their programmed values), so an armed span must always
++		 * complete exactly -- a longer arm swallows the following
++		 * transfer's packets.  Hosts may end an OUT transfer short
++		 * at any point, so arm a single packet at a time; each arm
++		 * completes by construction and sub-packet tails go through
++		 * PIO.
+ 		 */
+ 
+-		if (request->short_not_ok && fifo_count == musb_ep->packet_sz)
++		if (fifo_count == musb_ep->packet_sz &&
++		    (request->short_not_ok ||
++		     (musb_dma_rx_mode1_always(musb) && is_buffer_mapped(req))))
+ 			use_mode_1 = 1;
+ 		else
+ 			use_mode_1 = 0;
+@@ -752,6 +774,17 @@ static void rxstate(struct musb *musb, struct musb_request *req, bool defer_gb)
+ 							request->length -
+ 							request->actual,
+ 							channel->max_len);
++
++					/*
++					 * Single-packet arms, see above;
++					 * short_not_ok transfers are exact
++					 * and keep the full-size arm.
++					 */
++					if (musb_dma_rx_mode1_always(musb) &&
++					    !request->short_not_ok)
++						transfer_size =
++							musb_ep->packet_sz;
++
+ 					musb_ep->dma->desired_mode = 1;
+ 				} else {
+ 					if (!musb_ep->hb_mult &&
+@@ -950,9 +983,23 @@ void musb_g_rx(struct musb *musb, u8 epnum)
+ 	}
+ 
+ 	if (dma_channel_status(dma) == MUSB_DMA_STATUS_BUSY) {
+-		/* "should not happen"; likely RXPKTRDY pending for DMA */
+-		musb_dbg(musb, "%s busy, csr %04x",
+-			musb_ep->end_point.name, csr);
++		u16 count = musb_readw(epio, MUSB_RXCOUNT);
++
++		/*
++		 * On sunxi, endpoint interrupts fire for every received
++		 * packet while the channel runs (the DMAREQ latch toggle
++		 * leaves Mode 0 interrupt semantics; keeping DMAMODE set
++		 * does not suppress them), and RXCOUNT is only a live
++		 * snapshot of the packet being drained -- it cannot be used
++		 * to detect a pending short packet.  Armed transfers always
++		 * complete exactly (see rxstate()), so there is nothing to
++		 * service here.
++		 */
++		if ((csr & MUSB_RXCSR_RXPKTRDY) && count &&
++		    count < musb_ep->packet_sz)
++			musb_dbg(musb, "%s: short rx (%u) while DMA active, req %u/%u",
++				 musb_ep->end_point.name, count,
++				 request->actual, request->length);
+ 		return;
+ 	}
+ 
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -12,6 +12,7 @@
+ #include <linux/err.h>
+ #include <linux/extcon.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -24,6 +25,7 @@
+ #include <linux/usb/usb_phy_generic.h>
+ #include <linux/workqueue.h>
+ #include "musb_core.h"
++#include "musb_dma.h"
+ 
+ /*
+  * Register offsets, note sunxi musb has a different layout then most
+@@ -55,6 +57,7 @@
+ 
+ /* VEND0 bits */
+ #define SUNXI_MUSB_VEND0_PIO_MODE		0
++#define SUNXI_MUSB_VEND0_DMA_MODE		BIT(0)
+ 
+ /* flags */
+ #define SUNXI_MUSB_FL_ENABLED			0
+@@ -66,12 +69,14 @@
+ #define SUNXI_MUSB_FL_HAS_RESET			6
+ #define SUNXI_MUSB_FL_NO_CONFIGDATA		7
+ #define SUNXI_MUSB_FL_PHY_MODE_PEND		8
++#define SUNXI_MUSB_FL_HAS_IDMA			9
+ 
+ struct sunxi_musb_cfg {
+ 	const struct musb_hdrc_config *hdrc_config;
+ 	bool has_sram;
+ 	bool has_reset;
+ 	bool no_configdata;
++	bool has_idma;
+ };
+ 
+ /* Our read/write methods need access and do not get passed in a musb ref :| */
+@@ -81,6 +86,8 @@ struct sunxi_glue {
+ 	struct device		*dev;
+ 	struct musb		*musb;
+ 	struct platform_device	*musb_pdev;
++	struct musb_platform_ops ops;
++	void __iomem		*idma_base;
+ 	struct clk		*clk;
+ 	struct reset_control	*rst;
+ 	struct phy		*phy;
+@@ -171,6 +178,9 @@ static void sunxi_musb_post_root_reset_end(struct musb *musb)
+ 	sun4i_usb_phy_set_squelch_detect(glue->phy, true);
+ }
+ 
++static void sunxi_musb_dma_irq(struct musb *musb);
++static void sunxi_musb_idma_reset(struct musb *musb);
++
+ static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
+ {
+ 	struct musb *musb = __hci;
+@@ -181,6 +191,7 @@ static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
+ 	musb->int_usb = readb(musb->mregs + SUNXI_MUSB_INTRUSB);
+ 	if (musb->int_usb)
+ 		writeb(musb->int_usb, musb->mregs + SUNXI_MUSB_INTRUSB);
++	musb->int_usb &= ~MUSB_INTR_SOF;
+ 
+ 	if ((musb->int_usb & MUSB_INTR_RESET) && !is_host_active(musb)) {
+ 		/* ep0 FADDR must be 0 when (re)entering peripheral mode */
+@@ -196,6 +207,8 @@ static irqreturn_t sunxi_musb_interrupt(int irq, void *__hci)
+ 	if (musb->int_rx)
+ 		writew(musb->int_rx, musb->mregs + SUNXI_MUSB_INTRRX);
+ 
++	sunxi_musb_dma_irq(musb);
++
+ 	musb_interrupt(musb);
+ 
+ 	spin_unlock_irqrestore(&musb->lock, flags);
+@@ -244,6 +257,8 @@ static int sunxi_musb_init(struct musb *musb)
+ 			goto error_clk_disable;
+ 	}
+ 
++	sunxi_musb_idma_reset(musb);
++
+ 	writeb(SUNXI_MUSB_VEND0_PIO_MODE, musb->mregs + SUNXI_MUSB_VEND0);
+ 
+ 	/* Register notifier before calling phy_init() */
+@@ -316,16 +331,464 @@ static void sunxi_musb_disable(struct musb *musb)
+ 	clear_bit(SUNXI_MUSB_FL_ENABLED, &glue->flags);
+ }
+ 
++#if IS_ENABLED(CONFIG_USB_SUNXI_IDMA)
++/* ------------------------------------------------------------------ *
++ * Allwinner USB-OTG inner-DMA (idma) controller
++ *
++ * Unlike the Mentor HS DMA block (musbhsdma.c), this is a vendor
++ * extension integrated into the USB controller's own register window,
++ * with its own interrupt status that is delivered through the shared USB
++ * interrupt. A channel is pointed at an endpoint's FIFO and an SDRAM
++ * address + byte count, and moves whole max-packet-sized packets
++ * autonomously. (Vendor "SW_UDC_DMA_INNER".)
++ *
++ * The code below is modeled on musbhsdma.c, completing from the shared
++ * USB IRQ (sunxi_musb_dma_irq, below) since the idma has no separate irq
++ * line. The gadget core sets the standard RX/TX CSR DMA bits (DMAENAB
++ * etc.) around channel_program(); we only drive the idma engine and
++ * report completion via musb_dma_completion().
++ *
++ * Only the A64 has this engine; sunxi_musb_dma_controller_create()
++ * refuses to build a controller unless the matched SoC declares it, so
++ * every other sunxi SoC stays on PIO with a NULL dma_controller.
++ * ------------------------------------------------------------------ */
++
++/* Offsets into the "dma" register region, not the core's. */
++#define SUNXI_MUSB_DMA_INTE			0x00	/* per-channel IRQ enable */
++#define SUNXI_MUSB_DMA_INTS			0x04	/* per-channel status (W1C) */
++#define SUNXI_MUSB_DMA_CHAN_CFG(n)		(0x40 + 0x10 * (n))
++#define SUNXI_MUSB_DMA_SDRAM_ADDR(n)		(0x44 + 0x10 * (n))
++#define SUNXI_MUSB_DMA_BC(n)			(0x48 + 0x10 * (n)) /* residual on read */
++
++/* DMA_CHAN_CFG fields */
++#define SUNXI_DMA_CFG_EP(n)			((n) & 0xf)	/* bits 0-3 */
++#define SUNXI_DMA_CFG_DIR_RX			BIT(4)		/* FIFO -> SDRAM */
++#define SUNXI_DMA_CFG_BST(len)			(((len) & 0x7ff) << 16)
++#define SUNXI_DMA_CFG_START			BIT(31)
++
++#define SUNXI_MUSB_DMA_CHANNELS			5
++
++/*
++ * The idma byte counter is narrow; a single ~58 KiB transfer works but
++ * 1 MiB hangs the engine, so cap each programmed transfer well under that
++ * (a multiple of the 512-byte max packet) and let the gadget re-issue.
++ */
++#define SUNXI_MUSB_DMA_MAX_LEN			0x8000
++
++/*
++ * Return the idma to the state musb_platform_init() expects, discarding
++ * anything the bootloader left running. No-op unless we have the engine
++ * and a region to reach it through.
++ */
++static void sunxi_musb_idma_reset(struct musb *musb)
++{
++	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
++
++	if (!test_bit(SUNXI_MUSB_FL_HAS_IDMA, &glue->flags))
++		return;
++
++	writel(0, glue->idma_base + SUNXI_MUSB_DMA_INTE);
++	writel(0x1f, glue->idma_base + SUNXI_MUSB_DMA_INTS);
++}
++
++struct sunxi_dma_channel {
++	struct dma_channel		channel;
++	struct sunxi_dma_controller	*controller;
++	dma_addr_t			start_addr;
++	u32				len;
++	u16				max_packet_sz;
++	u8				idx;		/* idma hw channel */
++	u8				epnum;
++	u8				transmit;
++};
++
++struct sunxi_dma_controller {
++	struct dma_controller		controller;
++	struct sunxi_dma_channel	channel[SUNXI_MUSB_DMA_CHANNELS];
++	struct musb			*musb;
++	void __iomem			*base;		/* musb core regs */
++	void __iomem			*idma;		/* idma regs */
++	u8				used_channels;	/* bitmask */
++};
++
++static struct dma_channel *
++sunxi_dma_channel_allocate(struct dma_controller *c, struct musb_hw_ep *hw_ep,
++			   u8 transmit)
++{
++	struct sunxi_dma_controller *controller =
++		container_of(c, struct sunxi_dma_controller, controller);
++	struct sunxi_dma_channel *sunxi_channel;
++	u8 bit;
++
++	for (bit = 0; bit < SUNXI_MUSB_DMA_CHANNELS; bit++) {
++		if (controller->used_channels & (1 << bit))
++			continue;
++
++		controller->used_channels |= (1 << bit);
++		sunxi_channel = &controller->channel[bit];
++		sunxi_channel->controller = controller;
++		sunxi_channel->idx = bit;
++		sunxi_channel->epnum = hw_ep->epnum;
++		sunxi_channel->transmit = transmit;
++		sunxi_channel->channel.private_data = sunxi_channel;
++		sunxi_channel->channel.status = MUSB_DMA_STATUS_FREE;
++		sunxi_channel->channel.max_len = SUNXI_MUSB_DMA_MAX_LEN;
++		sunxi_channel->channel.desired_mode = transmit;
++		sunxi_channel->channel.actual_len = 0;
++
++		return &sunxi_channel->channel;
++	}
++
++	return NULL;
++}
++
++static void sunxi_dma_channel_release(struct dma_channel *channel)
++{
++	struct sunxi_dma_channel *sunxi_channel = channel->private_data;
++
++	channel->actual_len = 0;
++	sunxi_channel->start_addr = 0;
++	sunxi_channel->len = 0;
++	sunxi_channel->controller->used_channels &= ~(1 << sunxi_channel->idx);
++	channel->status = MUSB_DMA_STATUS_UNKNOWN;
++}
++
++static int sunxi_dma_channel_program(struct dma_channel *channel,
++				     u16 packet_sz, u8 mode,
++				     dma_addr_t dma_addr, u32 len)
++{
++	struct sunxi_dma_channel *sunxi_channel = channel->private_data;
++	struct sunxi_dma_controller *controller = sunxi_channel->controller;
++	void __iomem *base = controller->base;
++	void __iomem *idma = controller->idma;
++	u8 idx = sunxi_channel->idx;
++	u32 cfg;
++
++	BUG_ON(channel->status == MUSB_DMA_STATUS_UNKNOWN ||
++	       channel->status == MUSB_DMA_STATUS_BUSY);
++
++	/* The idma moves whole packets only; a short tail is left to PIO. */
++	len -= len % packet_sz;
++	if (!len)
++		return false;
++
++	channel->actual_len = 0;
++	sunxi_channel->start_addr = dma_addr;
++	sunxi_channel->len = len;
++	sunxi_channel->max_packet_sz = packet_sz;
++	channel->status = MUSB_DMA_STATUS_BUSY;
++
++	cfg = SUNXI_DMA_CFG_EP(sunxi_channel->epnum) |
++	      SUNXI_DMA_CFG_BST(packet_sz);
++	if (!sunxi_channel->transmit)
++		cfg |= SUNXI_DMA_CFG_DIR_RX;
++
++	dev_dbg(controller->musb->controller,
++		"idma%u ep%u %s start %u bytes @%pad pkt %u mode %u\n",
++		idx, sunxi_channel->epnum,
++		sunxi_channel->transmit ? "tx" : "rx",
++		len, &dma_addr, packet_sz, mode);
++
++	writeb(SUNXI_MUSB_VEND0_DMA_MODE, base + SUNXI_MUSB_VEND0);
++
++	/* enable this channel's completion status bit */
++	writel(readl(idma + SUNXI_MUSB_DMA_INTE) | (1 << idx),
++	       idma + SUNXI_MUSB_DMA_INTE);
++	writel(1 << idx, idma + SUNXI_MUSB_DMA_INTS);	/* clear stale */
++
++	writel(cfg, idma + SUNXI_MUSB_DMA_CHAN_CFG(idx));
++	writel(lower_32_bits(dma_addr), idma + SUNXI_MUSB_DMA_SDRAM_ADDR(idx));
++	writel(len, idma + SUNXI_MUSB_DMA_BC(idx));
++
++	/*
++	 * For TX the idma START bit kicks off the transfer immediately,
++	 * so the TXCSR DMA bits must already be set or the engine sees no
++	 * FIFO DMA request and completes 0 bytes.  txstate also writes
++	 * these bits *after* channel_program returns, but that is far too
++	 * late (and would only matter once the idma fills the first
++	 * packet, which is microseconds away).  Program the full vendor
++	 * Tx config up front: AUTOSET | MODE | DMAENAB (+ DMAMODE for the
++	 * multi-packet mode-1 path, which is the only one we DMA -- a
++	 * sub-packet Tx is rejected by is_compatible and stays PIO).
++	 */
++	if (sunxi_channel->transmit) {
++		struct musb *musb = controller->musb;
++		void __iomem *epio;
++		u16 txcsr;
++
++		musb->io.ep_select(base, sunxi_channel->epnum);
++		epio = base + musb->io.ep_offset(sunxi_channel->epnum, 0);
++		txcsr = musb_readw(epio, MUSB_TXCSR);
++		txcsr |= MUSB_TXCSR_DMAENAB | MUSB_TXCSR_MODE;
++		if (mode)
++			txcsr |= MUSB_TXCSR_AUTOSET | MUSB_TXCSR_DMAMODE;
++		musb_writew(epio, MUSB_TXCSR, txcsr);
++	}
++
++	writel(cfg | SUNXI_DMA_CFG_START, idma + SUNXI_MUSB_DMA_CHAN_CFG(idx));
++
++	return true;
++}
++
++/*
++ * Reject anything we won't actually DMA, so the gadget core keeps it
++ * unmapped and on PIO and never toggles the endpoint's DMA CSR bits.
++ *
++ * The sunxi idma handles whole packets only and cannot detect short
++ * packets (e.g. a 31-byte CBW delivered into a 512-byte buffer).  Such
++ * short completions must stay on PIO to avoid a deadlock where the idma
++ * waits for the remaining bytes while the host waits for the CSW.
++ *
++ * Only transfers larger than one maxpacket are DMA-worthy; single-packet
++ * requests (CBWs, small control transfers, short SCSI status) use PIO.
++ */
++static int sunxi_dma_is_compatible(struct dma_channel *channel, u16 maxpacket,
++				   void *buf, u32 length)
++{
++	if (length <= maxpacket)
++		return false;
++	return true;
++}
++
++static int sunxi_dma_channel_abort(struct dma_channel *channel)
++{
++	struct sunxi_dma_channel *sunxi_channel = channel->private_data;
++	struct sunxi_dma_controller *controller = sunxi_channel->controller;
++	void __iomem *base = controller->base;
++	void __iomem *idma = controller->idma;
++	struct musb *musb = controller->musb;
++	u8 idx = sunxi_channel->idx;
++	void __iomem *epio;
++	u16 csr;
++
++	if (channel->status == MUSB_DMA_STATUS_BUSY) {
++		/*
++		 * Halt the engine before touching the endpoint's DMA CSR
++		 * bits; clearing DMAENAB under a mid-burst engine desyncs
++		 * the FIFO datapath for good.
++		 */
++		writel(0, idma + SUNXI_MUSB_DMA_CHAN_CFG(idx));
++		writel(readl(idma + SUNXI_MUSB_DMA_INTE) & ~(1 << idx),
++		       idma + SUNXI_MUSB_DMA_INTE);
++		writel(1 << idx, idma + SUNXI_MUSB_DMA_INTS);	/* W1C any pending */
++
++		musb_ep_select(base, sunxi_channel->epnum);
++		epio = base + musb->io.ep_offset(sunxi_channel->epnum, 0);
++
++		if (sunxi_channel->transmit) {
++			csr = musb_readw(epio, MUSB_TXCSR);
++			csr &= ~(MUSB_TXCSR_AUTOSET | MUSB_TXCSR_DMAENAB);
++			musb_writew(epio, MUSB_TXCSR, csr);
++			csr &= ~MUSB_TXCSR_DMAMODE;
++			musb_writew(epio, MUSB_TXCSR, csr);
++		} else {
++			csr = musb_readw(epio, MUSB_RXCSR);
++			csr &= ~(MUSB_RXCSR_AUTOCLEAR | MUSB_RXCSR_DMAENAB |
++				 MUSB_RXCSR_DMAMODE);
++			musb_writew(epio, MUSB_RXCSR, csr);
++		}
++
++		/*
++		 * The engine has no readable progress (BC and SDRAM_ADDR
++		 * read back their programmed values); aborts only happen on
++		 * teardown, where the moved count no longer matters.
++		 */
++		channel->actual_len = 0;
++		channel->status = MUSB_DMA_STATUS_FREE;
++
++		/*
++		 * The completion IRQ normally restores the global VEND0
++		 * PIO/DMA select; do it here too, or aborting the only busy
++		 * channel leaves all PIO FIFO access (including ep0)
++		 * broken until another DMA transfer completes.
++		 */
++		for (idx = 0; idx < SUNXI_MUSB_DMA_CHANNELS; idx++)
++			if (controller->channel[idx].channel.status ==
++			    MUSB_DMA_STATUS_BUSY)
++				return 0;
++
++		writeb(SUNXI_MUSB_VEND0_PIO_MODE, base + SUNXI_MUSB_VEND0);
++	}
++
++	return 0;
++}
++
++/*
++ * Called from the USB interrupt (sunxi_musb_interrupt) with musb->lock
++ * held. Completes any idma channels whose status bit is set.
++ */
++static void sunxi_musb_dma_irq(struct musb *musb)
++{
++	struct dma_controller *c = musb->dma_controller;
++	struct sunxi_dma_controller *controller;
++	void __iomem *base = musb->mregs;
++	void __iomem *idma;
++	u32 ints;
++	u8 idx;
++
++	if (!c)
++		return;
++
++	controller = container_of(c, struct sunxi_dma_controller, controller);
++	idma = controller->idma;
++
++	ints = readl(idma + SUNXI_MUSB_DMA_INTS);
++	if (!ints)
++		return;
++	writel(ints, idma + SUNXI_MUSB_DMA_INTS);	/* W1C */
++
++	for (idx = 0; idx < SUNXI_MUSB_DMA_CHANNELS; idx++) {
++		struct sunxi_dma_channel *sunxi_channel;
++		struct dma_channel *channel;
++
++		if (!(ints & (1 << idx)))
++			continue;
++
++		sunxi_channel = &controller->channel[idx];
++		channel = &sunxi_channel->channel;
++		if (channel->status != MUSB_DMA_STATUS_BUSY)
++			continue;
++
++		/*
++		 * The idma raises its completion interrupt only once the
++		 * whole programmed (whole-packet) transfer is done, so the
++		 * full programmed length was moved.  DMA_BC is NOT a residual
++		 * counter on this controller -- after completion it reads back
++		 * the programmed byte count, so "len - residual" yields 0 and
++		 * wedges the transfer.  Match the vendor driver and p-boot:
++		 * report the programmed length.  (The short, sub-packet tail
++		 * is rounded off in channel_program and handled by PIO.)
++		 */
++		channel->actual_len = sunxi_channel->len;
++		channel->status = MUSB_DMA_STATUS_FREE;
++		writel(0, idma + SUNXI_MUSB_DMA_CHAN_CFG(idx));
++
++		dev_dbg(musb->controller,
++			"idma%u ep%u %s done %zu bytes (BC reads %u)\n",
++			idx, sunxi_channel->epnum,
++			sunxi_channel->transmit ? "tx" : "rx",
++			channel->actual_len,
++			readl(idma + SUNXI_MUSB_DMA_BC(idx)));
++
++		/*
++		 * Tx: the idma raises completion as soon as the last packet
++		 * has been written *into* the Tx FIFO -- the host may not have
++		 * collected it yet.  musb_g_tx() clears TxPktRdy on completion,
++		 * which would drop that in-flight packet, so wait for the FIFO
++		 * to drain first (TxPktRdy and FIFO-not-empty both clear), as
++		 * the vendor driver does.  Normally the host has already pulled
++		 * it and this falls straight through; the bound stops a stalled
++		 * or aborted host from wedging the IRQ.
++		 *
++		 * AUTOSET set TxPktRdy for every whole packet (including the
++		 * last, since channel_program rounds to whole packets), so no
++		 * manual last-packet hand-off is needed; a sub-packet tail is
++		 * left to PIO by txstate.
++		 */
++		if (sunxi_channel->transmit) {
++			void __iomem *txcsr;
++			u16 v;
++			int ret;
++
++			/* point the indexed EP window at this endpoint */
++			musb_ep_select(base, sunxi_channel->epnum);
++			txcsr = base +
++				musb->io.ep_offset(sunxi_channel->epnum, 0) +
++				MUSB_TXCSR;
++
++			/*
++			 * Poll TXCSR until the last packet has actually left
++			 * the FIFO.  Time-bounded (1 us poll, 1 ms cap) so a
++			 * stalled host can't spin the hardirq; a healthy host
++			 * has already drained it and this returns immediately.
++			 */
++			ret = readw_poll_timeout_atomic(txcsr, v,
++				!(v & (MUSB_TXCSR_TXPKTRDY |
++				       MUSB_TXCSR_FIFONOTEMPTY)),
++				1, 1000);
++			if (ret)
++				dev_warn(musb->controller,
++					 "idma ch%d ep%d Tx FIFO drain timeout\n",
++					 idx, sunxi_channel->epnum);
++		}
++
++		musb_dma_completion(musb, sunxi_channel->epnum,
++				    sunxi_channel->transmit);
++	}
++
++	/*
++	 * VEND0 is the global PIO/DMA select for the FIFO data path. Hand it
++	 * back to PIO once nothing is in flight, so interleaved PIO traffic
++	 * (short packets, mass-storage CBW/CSW, ep0) works. musb_dma_completion
++	 * above may have re-armed a channel (multi-chunk transfer), so only
++	 * restore when no channel is still busy.
++	 */
++	for (idx = 0; idx < SUNXI_MUSB_DMA_CHANNELS; idx++)
++		if (controller->channel[idx].channel.status ==
++		    MUSB_DMA_STATUS_BUSY)
++			return;
++
++	writeb(SUNXI_MUSB_VEND0_PIO_MODE, base + SUNXI_MUSB_VEND0);
++}
++
+ static struct dma_controller *
+ sunxi_musb_dma_controller_create(struct musb *musb, void __iomem *base)
+ {
+-	return NULL;
++	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
++	struct sunxi_dma_controller *controller;
++
++	if (!test_bit(SUNXI_MUSB_FL_HAS_IDMA, &glue->flags))
++		return NULL;
++
++	controller = kzalloc(sizeof(*controller), GFP_KERNEL);
++	if (!controller)
++		return NULL;
++
++	controller->musb = musb;
++	controller->base = base;
++	controller->idma = glue->idma_base;
++	controller->controller.musb = musb;
++	controller->controller.channel_alloc = sunxi_dma_channel_allocate;
++	controller->controller.channel_release = sunxi_dma_channel_release;
++	controller->controller.channel_program = sunxi_dma_channel_program;
++	controller->controller.channel_abort = sunxi_dma_channel_abort;
++	controller->controller.is_compatible = sunxi_dma_is_compatible;
++
++	return &controller->controller;
+ }
+ 
+ static void sunxi_musb_dma_controller_destroy(struct dma_controller *c)
+ {
++	struct sunxi_dma_controller *controller;
++
++	if (!c)
++		return;
++
++	controller = container_of(c, struct sunxi_dma_controller, controller);
++	writel(0, controller->idma + SUNXI_MUSB_DMA_INTE);
++	kfree(controller);
+ }
+ 
++#else /* !CONFIG_USB_SUNXI_IDMA: idma compiled out, PIO only */
++
++static void sunxi_musb_idma_reset(struct musb *musb) { }
++static void sunxi_musb_dma_irq(struct musb *musb) { }
++
++/*
++ * musb_init_controller() rejects a glue without dma_init/dma_exit unless
++ * the whole DMA framework is compiled out, so keep them around and just
++ * decline to provide a controller.
++ */
++static struct dma_controller *
++sunxi_musb_dma_controller_create(struct musb *musb, void __iomem *base)
++{
++	return NULL;
++}
++
++static void sunxi_musb_dma_controller_destroy(struct dma_controller *c) { }
++
++#endif /* CONFIG_USB_SUNXI_IDMA */
++
+ static int sunxi_musb_set_mode(struct musb *musb, u8 mode)
+ {
+ 	struct sunxi_glue *glue = dev_get_drvdata(musb->controller->parent);
+@@ -598,6 +1061,11 @@ static void sunxi_musb_writew(void __iomem *addr, unsigned offset, u16 data)
+ 		(int)(addr - sunxi_musb->mregs));
+ }
+ 
++/*
++ * Template only: sunxi_musb_probe() copies this into glue->ops and adds the
++ * idma quirks there, since whether we have an engine is a per-SoC property
++ * and quirks are read straight out of musb->ops.
++ */
+ static const struct musb_platform_ops sunxi_musb_ops = {
+ 	.quirks		= MUSB_INDEXED_EP,
+ 	.init		= sunxi_musb_init,
+@@ -636,6 +1104,28 @@ static const struct musb_fifo_cfg sunxi_musb_mode_cfg_5eps[] = {
+ 	MUSB_EP_FIFO_SINGLE(5, FIFO_RX, 512),
+ };
+ 
++/* Allwinner OTG supports up to 5 endpoints */
++static const struct musb_fifo_cfg sunxi_musb_mode_cfg_5eps_fast[] = {
++	/*
++	 * EP1 is the bulk hot path and the only endpoint the idma drives.
++	 * Double-buffer both halves (2x512) so the controller can accept /
++	 * present the next packet while the idma drains / fills the current
++	 * one, removing the per-packet bubble (matches the p-boot setup).
++	 * Only EP1 is doubled: 8 KiB FIFO RAM (ram_bits 11) fits ep0(64) +
++	 * ep1(2x1024) + the remaining single-buffered eps, but not all.
++	 */
++	MUSB_EP_FIFO_DOUBLE(1, FIFO_TX, 512),
++	MUSB_EP_FIFO_DOUBLE(1, FIFO_RX, 512),
++	MUSB_EP_FIFO_DOUBLE(2, FIFO_TX, 512),
++	MUSB_EP_FIFO_DOUBLE(2, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_RX, 512),
++};
++
+ /* H3/V3s OTG supports only 4 endpoints */
+ static const struct musb_fifo_cfg sunxi_musb_mode_cfg_4eps[] = {
+ 	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
+@@ -658,6 +1148,16 @@ static const struct musb_hdrc_config sunxi_musb_hdrc_config_5eps = {
+ 	.ram_bits	= SUNXI_MUSB_RAM_BITS,
+ };
+ 
++static const struct musb_hdrc_config sunxi_musb_hdrc_config_5eps_fast = {
++	.fifo_cfg       = sunxi_musb_mode_cfg_5eps_fast,
++	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_5eps_fast),
++	.multipoint	= true,
++	.dyn_fifo	= true,
++	/* Two FIFOs per endpoint, plus ep_0. */
++	.num_eps	= (ARRAY_SIZE(sunxi_musb_mode_cfg_5eps_fast) / 2) + 1,
++	.ram_bits	= SUNXI_MUSB_RAM_BITS,
++};
++
+ static const struct musb_hdrc_config sunxi_musb_hdrc_config_4eps = {
+ 	.fifo_cfg       = sunxi_musb_mode_cfg_4eps,
+ 	.fifo_cfg_size  = ARRAY_SIZE(sunxi_musb_mode_cfg_4eps),
+@@ -719,8 +1219,6 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "Invalid or missing 'dr_mode' property\n");
+ 		return -EINVAL;
+ 	}
+-	pdata.platform_ops	= &sunxi_musb_ops;
+-
+ 	cfg = of_device_get_match_data(&pdev->dev);
+ 	if (!cfg)
+ 		return -EINVAL;
+@@ -740,6 +1238,39 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 	if (cfg->no_configdata)
+ 		set_bit(SUNXI_MUSB_FL_NO_CONFIGDATA, &glue->flags);
+ 
++	/*
++	 * The idma registers sit above the USB PHY rather than inside the
++	 * core's own window, so they come from a second region.  DTs predating
++	 * it describe only the core; run those on PIO instead of poking
++	 * addresses we were never given.
++	 */
++	if (IS_ENABLED(CONFIG_USB_SUNXI_IDMA) && cfg->has_idma) {
++		glue->idma_base =
++			devm_platform_ioremap_resource_byname(pdev, "dma");
++		if (IS_ERR(glue->idma_base))
++			dev_warn(&pdev->dev,
++				 "no idma register region, using PIO: %pe\n",
++				 glue->idma_base);
++		else
++			set_bit(SUNXI_MUSB_FL_HAS_IDMA, &glue->flags);
++	}
++
++	/*
++	 * MUSB_DMA_SW_MODE_SELECT makes the gadget core drive our idma via the
++	 * standard software-mode-select RX/TX DMA paths (channel_program + the
++	 * matching RX/TXCSR DMA bits).  MUSB_DMA_RX_MODE1_ALWAYS forces the
++	 * Mode 1 (AUTOCLEAR) RXCSR setup the A64 idma requires for RX.  Only
++	 * declare them once we know we can actually drive the engine: they
++	 * describe how the DMA paths must behave, and generic code is entitled
++	 * to read them without first checking for a dma_controller.
++	 */
++	glue->ops = sunxi_musb_ops;
++	if (test_bit(SUNXI_MUSB_FL_HAS_IDMA, &glue->flags))
++		glue->ops.quirks |= MUSB_DMA_SW_MODE_SELECT |
++				    MUSB_DMA_RX_MODE1_ALWAYS;
++
++	pdata.platform_ops = &glue->ops;
++
+ 	glue->clk = devm_clk_get(&pdev->dev, NULL);
+ 	if (IS_ERR(glue->clk)) {
+ 		dev_err(&pdev->dev, "Error getting clock: %ld\n",
+@@ -849,6 +1380,13 @@ static const struct sunxi_musb_cfg sun8i_h3_musb_cfg = {
+ 	.no_configdata = true,
+ };
+ 
++static const struct sunxi_musb_cfg sun50i_a64_musb_cfg = {
++	.hdrc_config = &sunxi_musb_hdrc_config_5eps_fast,
++	.has_reset = true,
++	.no_configdata = true,
++	.has_idma = true,
++};
++
+ static const struct sunxi_musb_cfg suniv_f1c100s_musb_cfg = {
+ 	.hdrc_config = &sunxi_musb_hdrc_config_5eps,
+ 	.has_sram = true,
+@@ -865,6 +1403,8 @@ static const struct of_device_id sunxi_musb_match[] = {
+ 	  .data = &sun8i_a33_musb_cfg, },
+ 	{ .compatible = "allwinner,sun8i-h3-musb",
+ 	  .data = &sun8i_h3_musb_cfg, },
++	{ .compatible = "allwinner,sun50i-a64-musb",
++	  .data = &sun50i_a64_musb_cfg, },
+ 	{ .compatible = "allwinner,suniv-f1c100s-musb",
+ 	  .data = &suniv_f1c100s_musb_cfg, },
+ 	{}
+-- 
+Armbian
+

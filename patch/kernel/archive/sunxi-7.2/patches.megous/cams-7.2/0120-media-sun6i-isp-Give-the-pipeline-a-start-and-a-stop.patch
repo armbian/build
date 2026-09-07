@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 4 Aug 2026 02:42:11 +0200
+Subject: media: sun6i-isp: Give the pipeline a start and a stop of its own
+
+The sequence that brings the hardware up, and the one that takes it down,
+are both written inline in proc's .s_stream(). Lift them out into
+sun6i_isp_proc_start()/sun6i_isp_proc_stop() and a
+sun6i_isp_pipeline_start() that programs the load buffer and hands it
+over, so there is one copy of each rather than one per caller. The
+sub-device callback is left with what is actually its own: resolving the
+source, and runtime PM.
+
+Which source the pipeline was started against is remembered, since a
+restart cannot walk the media graph to find it again.
+
+sun6i_isp_proc_disable() gains a read-back and a synchronize_irq(). The
+frontend disable is a posted write and the interrupt mask does not wait
+for a handler already running on another CPU, so without either of them
+the caller can free the buffers while the hardware is still finishing a
+frame into them, and while the handler is still completing them. That
+shows up much later as a partial frame written across whatever those
+pages were handed to next.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c      |  24 ++
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h      |   5 +
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c | 120 +++++++---
+ drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h |  14 ++
+ 4 files changed, 128 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.c
+@@ -90,6 +90,27 @@ void sun6i_isp_state_update(struct sun6i_isp_device *isp_dev, bool ready_hold)
+ 	spin_unlock_irqrestore(&isp_dev->state_lock, flags);
+ }
+ 
++/* Pipeline */
++
++/*
++ * Program everything the driver has to say and start the pipeline against it.
++ *
++ * The load buffer is filled first and handed over as a whole by the PARA_READY
++ * that sun6i_isp_proc_start() sets, so the addresses and the configuration they
++ * belong to reach the hardware together. state_update() therefore stages a
++ * buffer but is told to leave PARA_READY alone.
++ */
++int sun6i_isp_pipeline_start(struct sun6i_isp_device *isp_dev)
++{
++	sun6i_isp_params_configure(isp_dev);
++	sun6i_isp_proc_configure(isp_dev);
++	sun6i_isp_capture_configure(isp_dev);
++
++	sun6i_isp_state_update(isp_dev, true);
++
++	return sun6i_isp_proc_start(isp_dev);
++}
++
+ /* Tables */
+ 
+ static int sun6i_isp_table_setup(struct sun6i_isp_device *isp_dev,
+@@ -398,6 +419,9 @@ static int sun6i_isp_resources_setup(struct sun6i_isp_device *isp_dev,
+ 		goto error_clock_rate_exclusive;
+ 	}
+ 
++	/* Kept for synchronize_irq() when the pipeline is taken down. */
++	isp_dev->irq = irq;
++
+ 	/* Runtime PM */
+ 
+ 	pm_runtime_enable(dev);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp.h
+@@ -75,6 +75,7 @@ struct sun6i_isp_device {
+ 	struct clk			*clock_mod;
+ 	struct clk			*clock_ram;
+ 	struct reset_control		*reset;
++	int				irq;
+ 
+ 	spinlock_t			state_lock; /* State helpers lock. */
+ };
+@@ -93,6 +94,10 @@ void sun6i_isp_load_write(struct sun6i_isp_device *isp_dev, u32 offset,
+ 			  u32 value);
+ u32 sun6i_isp_address_value(dma_addr_t address);
+ 
++/* Pipeline */
++
++int sun6i_isp_pipeline_start(struct sun6i_isp_device *isp_dev);
++
+ /* State */
+ 
+ void sun6i_isp_state_update(struct sun6i_isp_device *isp_dev, bool ready_hold);
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.c
+@@ -4,6 +4,7 @@
+  * Author: Paul Kocialkowski <paul.kocialkowski@bootlin.com>
+  */
+ 
++#include <linux/interrupt.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <media/v4l2-device.h>
+@@ -204,14 +205,81 @@ static void sun6i_isp_proc_enable(struct sun6i_isp_device *isp_dev,
+ static void sun6i_isp_proc_disable(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct regmap *regmap = isp_dev->regmap;
++	u32 value;
+ 
+ 	/* Frontend */
+ 
+ 	regmap_write(regmap, SUN6I_ISP_FE_CTRL_REG, 0);
+ 	regmap_write(regmap, SUN6I_ISP_FE_CFG_REG, 0);
++
++	/*
++	 * Read back, so that the frontend has really let go before the caller
++	 * acts on it being stopped - the buffers are handed back to userspace
++	 * right after this, and a posted write would let a frame still on its
++	 * way out to memory race the pages being freed.
++	 */
++	regmap_read(regmap, SUN6I_ISP_FE_CFG_REG, &value);
++
++	/*
++	 * Masking the interrupt, which the caller has done by now, does not
++	 * wait for a handler already running on another CPU, and that handler
++	 * completes buffers and stages new ones. The line is shared with the
++	 * CSI on some variants, so this waits for the handler to finish rather
++	 * than disabling the interrupt and stopping the other user with it.
++	 */
++	synchronize_irq(isp_dev->irq);
+ }
+ 
+-static void sun6i_isp_proc_configure(struct sun6i_isp_device *isp_dev)
++/*
++ * Start and stop the pipeline, source included.
++ *
++ * Kept apart from .s_stream() so that there is one sequence for bringing the
++ * hardware up and one for taking it down, rather than a copy of each inlined
++ * into the sub-device callback.
++ */
++int sun6i_isp_proc_start(struct sun6i_isp_device *isp_dev)
++{
++	struct sun6i_isp_proc *proc = &isp_dev->proc;
++	int ret;
++
++	if (WARN_ON(!proc->source_active))
++		return -EINVAL;
++
++	/*
++	 * The table addresses are plain registers rather than load buffer
++	 * entries, and the hardware does not keep them across a frontend stop.
++	 * A start that runs without them fetches its parameters from nowhere.
++	 */
++	sun6i_isp_tables_configure(isp_dev);
++
++	sun6i_isp_proc_irq_clear(isp_dev);
++	sun6i_isp_proc_irq_enable(isp_dev);
++
++	/* This sets PARA_READY, so the whole load buffer goes in at once. */
++	sun6i_isp_proc_enable(isp_dev, proc->source_active);
++
++	/* The source is started last, once there is something to receive it. */
++	ret = v4l2_subdev_call(proc->source_subdev_active, video, s_stream, 1);
++	if (ret && ret != -ENOIOCTLCMD) {
++		dev_err(isp_dev->dev, "failed to start the source: %d\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++void sun6i_isp_proc_stop(struct sun6i_isp_device *isp_dev)
++{
++	struct sun6i_isp_proc *proc = &isp_dev->proc;
++
++	sun6i_isp_proc_irq_disable(isp_dev);
++
++	v4l2_subdev_call(proc->source_subdev_active, video, s_stream, 0);
++
++	sun6i_isp_proc_disable(isp_dev);
++}
++
++void sun6i_isp_proc_configure(struct sun6i_isp_device *isp_dev)
+ {
+ 	struct v4l2_mbus_framefmt *mbus_format = &isp_dev->proc.mbus_format;
+ 	const struct sun6i_isp_proc_format *format;
+@@ -266,51 +334,33 @@ static int sun6i_isp_proc_s_stream(struct v4l2_subdev *subdev, int on)
+ 		source = &proc->source_csi1;
+ 
+ 	if (!on) {
+-		sun6i_isp_proc_irq_disable(isp_dev);
+-		v4l2_subdev_call(source_subdev, video, s_stream, 0);
+-		ret = 0;
+-		goto disable;
+-	}
++		sun6i_isp_proc_stop(isp_dev);
++
++		proc->source_active = NULL;
++		proc->source_subdev_active = NULL;
+ 
+-	/* PM */
++		pm_runtime_put(dev);
++
++		return 0;
++	}
+ 
+ 	ret = pm_runtime_resume_and_get(dev);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* Clear */
+-
+-	sun6i_isp_proc_irq_clear(isp_dev);
+-
+-	/* Configure */
+-
+-	sun6i_isp_tables_configure(isp_dev);
+-	sun6i_isp_params_configure(isp_dev);
+-	sun6i_isp_proc_configure(isp_dev);
+-	sun6i_isp_capture_configure(isp_dev);
++	proc->source_active = source;
++	proc->source_subdev_active = source_subdev;
+ 
+-	/* State Update */
+-
+-	sun6i_isp_state_update(isp_dev, true);
+-
+-	/* Enable */
++	ret = sun6i_isp_pipeline_start(isp_dev);
++	if (ret) {
++		sun6i_isp_proc_stop(isp_dev);
+ 
+-	sun6i_isp_proc_irq_enable(isp_dev);
+-	sun6i_isp_proc_enable(isp_dev, source);
++		proc->source_active = NULL;
++		proc->source_subdev_active = NULL;
+ 
+-	ret = v4l2_subdev_call(source_subdev, video, s_stream, 1);
+-	if (ret && ret != -ENOIOCTLCMD) {
+-		sun6i_isp_proc_irq_disable(isp_dev);
+-		goto disable;
++		pm_runtime_put(dev);
+ 	}
+ 
+-	return 0;
+-
+-disable:
+-	sun6i_isp_proc_disable(isp_dev);
+-
+-	pm_runtime_put(dev);
+-
+ 	return ret;
+ }
+ 
+diff --git a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
++++ b/drivers/staging/media/sunxi/sun6i-isp/sun6i_isp_proc.h
+@@ -47,6 +47,14 @@ struct sun6i_isp_proc {
+ 
+ 	struct sun6i_isp_proc_source	source_csi0;
+ 	struct sun6i_isp_proc_source	source_csi1;
++
++	/*
++	 * The source the pipeline was started against, so that it can be
++	 * stopped and started again without going back through the graph.
++	 * NULL while stopped.
++	 */
++	struct sun6i_isp_proc_source	*source_active;
++	struct v4l2_subdev		*source_subdev_active;
+ };
+ 
+ /* Helpers */
+@@ -59,6 +67,12 @@ void sun6i_isp_proc_dimensions(struct sun6i_isp_device *isp_dev,
+ const struct sun6i_isp_proc_format *sun6i_isp_proc_format_find(u32 mbus_code);
+ bool sun6i_isp_proc_bayer(struct sun6i_isp_device *isp_dev);
+ 
++/* Frontend */
++
++void sun6i_isp_proc_configure(struct sun6i_isp_device *isp_dev);
++int sun6i_isp_proc_start(struct sun6i_isp_device *isp_dev);
++void sun6i_isp_proc_stop(struct sun6i_isp_device *isp_dev);
++
+ /* Proc */
+ 
+ int sun6i_isp_proc_setup(struct sun6i_isp_device *isp_dev);
+-- 
+Armbian
+

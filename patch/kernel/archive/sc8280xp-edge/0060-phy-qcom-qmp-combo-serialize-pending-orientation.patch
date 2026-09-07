@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 3 Sep 2026 12:24:07 +0200
+Subject: phy: qcom-qmp-combo: serialize pending orientation
+
+Applying a saved orientation after releasing phy_mutex lets a newer
+Type-C event win first and then be overwritten by stale state. Move
+common orientation programming into a locked helper and consume pending
+state before releasing the mutex.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 57 +++++-----
+ 1 file changed, 26 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 111111111111..222222222222 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -2317,10 +2317,8 @@ struct qmp_combo {
+ 	struct typec_mux_dev *mux;
+ };
+ 
+-#if IS_ENABLED(CONFIG_TYPEC)
+-static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+-				      enum typec_orientation orientation);
+-#endif
++static int qmp_combo_usb_power_on(struct phy *phy);
++static int qmp_combo_usb_power_off(struct phy *phy);
+ 
+ static void qmp_v3_dp_aux_init(struct qmp_combo *qmp);
+ static void qmp_v3_configure_dp_tx(struct qmp_combo *qmp);
+@@ -3854,12 +3852,30 @@ static int qmp_combo_dp_power_on(struct phy *phy)
+ 	return 0;
+ }
+ 
++static void qmp_combo_apply_orientation_locked(struct qmp_combo *qmp,
++						enum typec_orientation orientation)
++{
++	const struct qmp_phy_cfg *cfg = qmp->cfg;
++
++	qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
++	qmp->orientation = orientation;
++
++	if (qmp->init_count) {
++		if (qmp->usb_init_count)
++			qmp_combo_usb_power_off(qmp->usb_phy);
++		qmp_combo_com_exit(qmp, true);
++
++		qmp_combo_com_init(qmp, true);
++		if (qmp->usb_init_count)
++			qmp_combo_usb_power_on(qmp->usb_phy);
++		if (qmp->dp_init_count)
++			cfg->dp_aux_init(qmp);
++	}
++}
++
+ static int qmp_combo_dp_power_off(struct phy *phy)
+ {
+ 	struct qmp_combo *qmp = phy_get_drvdata(phy);
+-#if IS_ENABLED(CONFIG_TYPEC)
+-	enum typec_orientation pending_orientation;
+-#endif
+ 
+ 	mutex_lock(&qmp->phy_mutex);
+ 
+@@ -3867,18 +3883,11 @@ static int qmp_combo_dp_power_off(struct phy *phy)
+ 	writel(DP_PHY_PD_CTL_PSR_PWRDN, qmp->dp_dp_phy + QSERDES_DP_PHY_PD_CTL);
+ 
+ 	qmp->dp_powered_on = false;
+-#if IS_ENABLED(CONFIG_TYPEC)
+-	pending_orientation = qmp->pending_orientation;
+-	qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
+-#endif
++	if (qmp->pending_orientation != TYPEC_ORIENTATION_NONE)
++		qmp_combo_apply_orientation_locked(qmp, qmp->pending_orientation);
+ 
+ 	mutex_unlock(&qmp->phy_mutex);
+ 
+-#if IS_ENABLED(CONFIG_TYPEC)
+-	if (pending_orientation != TYPEC_ORIENTATION_NONE)
+-		return qmp_combo_typec_switch_set(qmp->sw, pending_orientation);
+-#endif
+-
+ 	return 0;
+ }
+ 
+@@ -4445,7 +4454,6 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 				      enum typec_orientation orientation)
+ {
+ 	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
+-	const struct qmp_phy_cfg *cfg = qmp->cfg;
+ 
+ 	mutex_lock(&qmp->phy_mutex);
+ 
+@@ -4468,20 +4476,7 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
+ 		goto out_unlock;
+ 	}
+ 
+-	qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
+-	qmp->orientation = orientation;
+-
+-	if (qmp->init_count) {
+-		if (qmp->usb_init_count)
+-			qmp_combo_usb_power_off(qmp->usb_phy);
+-		qmp_combo_com_exit(qmp, true);
+-
+-		qmp_combo_com_init(qmp, true);
+-		if (qmp->usb_init_count)
+-			qmp_combo_usb_power_on(qmp->usb_phy);
+-		if (qmp->dp_init_count)
+-			cfg->dp_aux_init(qmp);
+-	}
++	qmp_combo_apply_orientation_locked(qmp, orientation);
+ 
+ out_unlock:
+ 	mutex_unlock(&qmp->phy_mutex);
+-- 
+Armbian
+

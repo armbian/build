@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Sets up the GRUB bootloader for UEFI-capable RISC-V 64-bit boards, using target `riscv64-efi` and a GPT/ESP layout instead of u-boot. Adds `grub-efi` and `efibootmgr` packages and copies the DTBs into the ESP. Mirrors the console/splash cmdline conventions of the standard `grub` extension.
+
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_grub-riscv64() {
 	display_alert "Extension: ${EXTENSION}: Prepare config" "${EXTENSION}" "info"

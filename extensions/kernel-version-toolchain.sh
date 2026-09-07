@@ -1,3 +1,5 @@
+# @description Appends the kernel compiler name and major.minor version (e.g. `gcc13.3`, `clang20.1`) to the kernel artifact version string. Auto-detects the binary from `KERNEL_COMPILER` and reads it via `-dumpfullversion`, adding a `_T` part to the artifact hash. Enable it so cached kernels rebuild when the host toolchain changes.
+
 # Add compiler (gcc/clang) identifier to kernel artifact version string.
 # This ensures cache invalidation when the toolchain changes.
 # Enable with: ENABLE_EXTENSIONS="kernel-version-toolchain"

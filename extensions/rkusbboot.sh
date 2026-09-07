@@ -1,3 +1,5 @@
+# @description Clones and builds Rockchip `rkusbboot` from `RadxaNaoki/rkusbboot`, adding host deps like `libusb`/`libudev` and enabling `rkbin-tools` for the loader blobs. After the build it RAMBoots the fresh image over USB into a Maskrom-mode device, enabling `CONFIG_ROCKCHIP_MASKROM_IMAGE` in mainline u-boot. Cannot run under Docker.
+
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>

@@ -1,3 +1,5 @@
+# @description Installs the `photonicat-pm` DKMS power-management driver for the Ariaboard Photonicat router. Fetches the latest `HackingGate/photonicat-pm` release deb and builds the kernel module in the chroot, forcing `INSTALL_HEADERS=yes`. Requires a kernel with a working headers package and is skipped on kernels ≥ 6.20.
+
 function extension_finish_config__install_kernel_headers_for_photonicat_pm_dkms() {
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then

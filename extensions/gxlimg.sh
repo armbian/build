@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @description Builds the `gxlimg` host tool for packaging Amlogic bootable images. Fetches `repk/gxlimg` at a pinned commit, compiles it and installs to `/usr/local/bin/gxlimg` (only when the commit changed). Provides `gxlimg_repack_fip_with_new_uboot`, which extracts BL2/BL3x from an existing FIP and repacks them with a fresh `u-boot.bin` for `gxl`/`g12a`/`g12b` SoCs.
 
 function fetch_sources_tools__gxlimg() {
 	# Branch: master, Commit date: Nov 10, 2025 (please update when updating commit ref)

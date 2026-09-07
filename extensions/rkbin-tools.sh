@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# @description Fetches the Rockchip `rkbin` repository (default `armbian/rkbin`) and installs the `loaderimage` and `trust_merger` host tools into `/usr/local/bin`, reinstalling only when the git commit changes. Needed to package Rockchip U-Boot/TPL/SPL images. Override the source with `RKBIN_GIT_URL` and `RKBIN_GIT_BRANCH`.
+
 function fetch_sources_tools__rkbin_tools() {
 	fetch_from_repo "${RKBIN_GIT_URL:-"https://github.com/armbian/rkbin"}" "rkbin-tools" "branch:${RKBIN_GIT_BRANCH:-"master"}"
 }

@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Sat, 29 Aug 2026 11:14:57 +0200
+Subject: clk: qcom: dispcc-sm8750: knock down display block resets on probe
+
+Some bootloaders (e.g. stock AYN UEFI on the AYN Odin 3) leave the
+display block fully active at ExitBootServices: dispcc PLLs locked,
+MDSS core/int2/rscc out of reset and downstream branches running.
+The kernel's later mdss_reset()/PLL configure happens on top of this
+live state and the DPU command-mode panel gets stuck (kickoff timeout
+/ encoder reset failure). Renegade LinuxLoader documents the same as
+the dispcc "DisableDisplayHW" workaround on the bootloader side.
+
+Mirror that workaround from the kernel: assert the three dispcc block
+resets so MDSS core / INT2 / RSCC come up in a known-zero state, hold
+for one full ~30 Hz frame, then release. clk_*_pll_configure() and
+qcom_cc_really_probe() then program the block from scratch the same
+way they would on a cold boot.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/clk/qcom/dispcc-sm8750.c | 24 ++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/drivers/clk/qcom/dispcc-sm8750.c b/drivers/clk/qcom/dispcc-sm8750.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/qcom/dispcc-sm8750.c
++++ b/drivers/clk/qcom/dispcc-sm8750.c
+@@ -5,6 +5,7 @@
+  */
+ 
+ #include <linux/clk-provider.h>
++#include <linux/delay.h>
+ #include <linux/err.h>
+ #include <linux/kernel.h>
+ #include <linux/mod_devicetable.h>
+@@ -1920,6 +1921,29 @@ static int disp_cc_sm8750_probe(struct platform_device *pdev)
+ 		goto err_put_rpm;
+ 	}
+ 
++	/*
++	 * Some bootloaders (e.g. stock AYN UEFI on the AYN Odin 3) leave the
++	 * display block fully active at ExitBootServices: dispcc PLLs locked,
++	 * MDSS core/int2/rscc out of reset and downstream branches running.
++	 * The kernel's later mdss_reset()/PLL configure happens on top of this
++	 * live state and the DPU command-mode panel gets stuck (kickoff timeout
++	 * / encoder reset failure). Renegade LinuxLoader documents the same as
++	 * the dispcc "DisableDisplayHW" workaround on the bootloader side.
++	 *
++	 * Mirror that workaround from the kernel: assert the three dispcc block
++	 * resets so MDSS core / INT2 / RSCC come up in a known-zero state, hold
++	 * for one full ~30 Hz frame, then release. clk_*_pll_configure() and
++	 * qcom_cc_really_probe() then program the block from scratch the same
++	 * way they would on a cold boot.
++	 */
++	regmap_write(regmap, 0x8000, 0x1); /* DISP_CC_MDSS_CORE_BCR */
++	regmap_write(regmap, 0xa000, 0x1); /* DISP_CC_MDSS_CORE_INT2_BCR */
++	regmap_write(regmap, 0xc000, 0x1); /* DISP_CC_MDSS_RSCC_BCR */
++	msleep(50);
++	regmap_write(regmap, 0xc000, 0x0);
++	regmap_write(regmap, 0xa000, 0x0);
++	regmap_write(regmap, 0x8000, 0x0);
++
+ 	clk_taycan_elu_pll_configure(&disp_cc_pll0, regmap, &disp_cc_pll0_config);
+ 	clk_taycan_elu_pll_configure(&disp_cc_pll1, regmap, &disp_cc_pll1_config);
+ 	clk_pongo_elu_pll_configure(&disp_cc_pll2, regmap, &disp_cc_pll2_config);
+-- 
+Armbian
+

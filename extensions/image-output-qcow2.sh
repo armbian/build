@@ -1,3 +1,5 @@
+# @description Converts the finished raw image to qcow2 for QEMU/KVM using `qemu-img convert`, adding `qemu-utils` to the host build dependencies. Optionally grows the disk by `QCOW2_RESIZE_AMOUNT` and deletes the original `.img` unless `QCOW2_KEEP_IMG=yes`. Skipped entirely when `SKIP_QCOW2=yes` (set by the Azure VHD extension).
+
 function add_host_dependencies__qcow2_host_deps() {
 	[[ "${SKIP_QCOW2}" == "yes" ]] && return 0
 	EXTRA_BUILD_DEPS+=("qemu::qemu-utils")
