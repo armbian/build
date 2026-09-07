@@ -34,10 +34,12 @@ function dialog_if_terminal_set_vars() {
 	set +o errtrace # do not trap errors inside a subshell/function
 	set +o errexit  # disable
 
-	exec 3>&1                              # open fd 3...
-	DIALOG_RESULT=$(dialog "$@" 2>&1 1>&3) # juggle fds and capture.
-	DIALOG_EXIT_CODE=$?                    # get the exit code.
-	exec 3>&-                              # close fd 3...
+	# Draw borders with Unicode box characters rather than the VT100 alternate charset:
+	# PuTTY and other emulators that report TERM=xterm but ignore that charset switch in UTF-8 mode show letters.
+	exec 3>&1                                                    # open fd 3...
+	DIALOG_RESULT=$(NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
+	DIALOG_EXIT_CODE=$?                                          # get the exit code.
+	exec 3>&-                                                    # close fd 3...
 
 	set -e          # back to normal
 	set -o errtrace # back to normal
