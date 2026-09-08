@@ -705,10 +705,6 @@ driver_rtl8723DS() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8723DS chipsets" "info"
