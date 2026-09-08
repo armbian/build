@@ -1,0 +1,229 @@
+From 28698be62b0d04c2dbc64d1239ef81e117a4d40d Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 11:02:09 +1000
+Subject: [PATCH 14/23] thermal: sun8i: Add Allwinner THS thermal sensor driver
+
+Add thermal sensor driver for the Allwinner Thermal Sensor Controller (THS)
+supporting the A733 SoC temperature sensors.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ drivers/thermal/Kconfig                       |   8 +
+ drivers/thermal/Makefile                      |   1 +
+ drivers/thermal/sun8i_thermal.c               | 154 ++++++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  12 ++
+ 4 files changed, 175 insertions(+)
+ create mode 100644 drivers/thermal/sun8i_thermal.c
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index 91c39aa4dee..785a03b4e11 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -55,4 +55,12 @@ config TI_LM74_THERMAL
+ 	 Enable thermal support for the Texas Instruments LM74 chip.
+ 	 The driver supports reading CPU temperature.
+ 
++config SUN8I_THERMAL
++	bool "Allwinner THS Temperature sensor driver"
++	depends on ARCH_SUNXI
++	help
++	  Enable thermal support for the Allwinner Thermal Sensor (THS) controller
++	  found on H6, H616, A523, A733 and newer Allwinner SoCs.
++
+ endif # if DM_THERMAL
++
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index b6f06c00ed9..d0beace2dc4 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -11,3 +11,4 @@ obj-$(CONFIG_RCAR_GEN3_THERMAL) += rcar_gen3_thermal.o
+ obj-$(CONFIG_SANDBOX) += thermal_sandbox.o
+ obj-$(CONFIG_TI_DRA7_THERMAL) += ti-bandgap.o
+ obj-$(CONFIG_TI_LM74_THERMAL) += ti-lm74.o
++obj-$(CONFIG_SUN8I_THERMAL) += sun8i_thermal.o
+diff --git a/drivers/thermal/sun8i_thermal.c b/drivers/thermal/sun8i_thermal.c
+new file mode 100644
+index 00000000000..efc9f3f46e2
+--- /dev/null
++++ b/drivers/thermal/sun8i_thermal.c
+@@ -0,0 +1,154 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (C) 2026 Antigravity
++ * Allwinner THS Thermal Sensor driver for U-Boot (UCLASS_THERMAL)
++ */
++
++#include <errno.h>
++#include <log.h>
++#include <linux/types.h>
++#include <clk.h>
++#include <dm.h>
++#include <thermal.h>
++#include <reset.h>
++#include <asm/io.h>
++#include <linux/delay.h>
++
++#define SUN50I_H616_THS_CTRL0			0x00
++#define SUN50I_H616_THS_ENABLE			0x04
++#define SUN50I_H616_THS_PC			0x08
++#define SUN50I_H616_THS_DATA_INTS		0x20
++#define SUN50I_H616_THS_MFC			0x30
++#define SUN50I_H616_THS_TEMP_CALIB		0xa0
++#define SUN50I_H616_THS_TEMP_DATA		0xc0
++
++#define SUN50I_THS_CTRL0_T_ACQ(x)		(GENMASK(15, 0) & (x))
++#define SUN50I_THS_CTRL0_FS_DIV(x)		((GENMASK(15, 0) & (x)) << 16)
++#define SUN50I_THS_FILTER_EN			BIT(2)
++#define SUN50I_THS_FILTER_TYPE(x)		(GENMASK(1, 0) & (x))
++#define SUN50I_H616_THS_PC_TEMP_PERIOD(x)	((GENMASK(19, 0) & (x)) << 12)
++
++#define SUN60I_A733_DELIMITER		1769
++#define SUN60I_A733_OFFSET_ABOVE	2835
++#define SUN60I_A733_OFFSET_BELOW	2822
++#define SUN60I_A733_SCALE_ABOVE		59
++#define SUN60I_A733_SCALE_BELOW		62
++
++struct sun8i_thermal_priv {
++	void __iomem *base;
++	struct clk bus_clk;
++	struct clk gpadc_clk;
++	struct reset_ctl reset;
++};
++
++static int sun8i_thermal_get_temp(struct udevice *dev, int *temp)
++{
++	struct sun8i_thermal_priv *priv = dev_get_priv(dev);
++	u32 val = 0;
++	u32 data_ints = 0;
++	int timeout = 500;
++
++	if (!priv->base)
++		return -EINVAL;
++
++	/* Sensor 0 is CPU Little: wait for conversion */
++	do {
++		val = readl(priv->base + SUN50I_H616_THS_TEMP_DATA) & 0xfff;
++		data_ints = readl(priv->base + SUN50I_H616_THS_DATA_INTS);
++		if (val != 0 && (data_ints & BIT(0)))
++			break;
++		if (val != 0)
++			break;
++		udelay(1000);
++	} while (--timeout);
++
++	if (val == 0) {
++		/* Fallback to sensor 1 or sensor 3 (CPU Big) */
++		val = readl(priv->base + SUN50I_H616_THS_TEMP_DATA + 4) & 0xfff;
++		if (val == 0)
++			val = readl(priv->base + SUN50I_H616_THS_TEMP_DATA + 12) & 0xfff;
++		if (val == 0) {
++			log_err("thermal sensor conversion timeout (ints=0x%x)\n", data_ints);
++			return -EAGAIN;
++		}
++	}
++
++	if (val > SUN60I_A733_DELIMITER)
++		*temp = SUN60I_A733_SCALE_BELOW * (SUN60I_A733_OFFSET_BELOW - (int)val);
++	else
++		*temp = SUN60I_A733_SCALE_ABOVE * (SUN60I_A733_OFFSET_ABOVE - (int)val);
++
++	return 0;
++}
++
++static int sun8i_thermal_probe(struct udevice *dev)
++{
++	struct sun8i_thermal_priv *priv = dev_get_priv(dev);
++	void __iomem *syscon;
++	int ret;
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -EINVAL;
++
++	/* 1. Enable GPADC analog 24M clock */
++	ret = clk_get_by_name(dev, "gpadc", &priv->gpadc_clk);
++	if (!ret)
++		clk_enable(&priv->gpadc_clk);
++	else {
++		ret = clk_get_by_index(dev, 1, &priv->gpadc_clk);
++		if (!ret)
++			clk_enable(&priv->gpadc_clk);
++	}
++
++	/* 2. Deassert reset */
++	ret = reset_get_by_index(dev, 0, &priv->reset);
++	if (!ret)
++		reset_deassert(&priv->reset);
++
++	/* 3. Enable bus clock */
++	ret = clk_get_by_name(dev, "bus", &priv->bus_clk);
++	if (!ret)
++		clk_enable(&priv->bus_clk);
++	else {
++		ret = clk_get_by_index(dev, 0, &priv->bus_clk);
++		if (!ret)
++			clk_enable(&priv->bus_clk);
++	}
++
++	/* 4. Clear SRAM bit 16 at 0x03000000 */
++	syscon = (void __iomem *)0x03000000;
++	writel(readl(syscon) & ~BIT(16), syscon);
++
++	/* 5. Initialize THS registers matching BSP sun60iw2_thermal_init */
++	writel(SUN50I_THS_CTRL0_T_ACQ(47) | SUN50I_THS_CTRL0_FS_DIV(479),
++	       priv->base + SUN50I_H616_THS_CTRL0);
++	writel(SUN50I_THS_FILTER_EN | SUN50I_THS_FILTER_TYPE(1),
++	       priv->base + SUN50I_H616_THS_MFC);
++	writel(SUN50I_H616_THS_PC_TEMP_PERIOD(28),
++	       priv->base + SUN50I_H616_THS_PC);
++	writel(0x1f, priv->base + SUN50I_H616_THS_DATA_INTS);
++	writel(0x1f, priv->base + SUN50I_H616_THS_ENABLE);
++
++	return 0;
++}
++
++static const struct dm_thermal_ops sun8i_thermal_ops = {
++	.get_temp = sun8i_thermal_get_temp,
++};
++
++static const struct udevice_id sun8i_thermal_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-ths" },
++	{ .compatible = "allwinner,sun60iw2p1-ths" },
++	{ .compatible = "allwinner,sun50i-h616-ths" },
++	{ }
++};
++
++U_BOOT_DRIVER(sun8i_thermal) = {
++	.name      = "sun8i_thermal",
++	.id        = UCLASS_THERMAL,
++	.of_match  = sun8i_thermal_ids,
++	.ops       = &sun8i_thermal_ops,
++	.probe     = sun8i_thermal_probe,
++	.priv_auto = sizeof(struct sun8i_thermal_priv),
++};
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index 6ac0290d828..1d6a2c4058b 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -387,5 +387,17 @@
+ 			status = "disabled";
+ 		};
+ 
++		ths: thermal-sensor@2522000 {
++			compatible = "allwinner,sun60i-a733-ths",
++				     "allwinner,sun50i-h616-ths";
++			reg = <0x02522000 0x500>;
++			interrupts = <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_THS0>, <&ccu CLK_GPADC0_24M>;
++			clock-names = "bus", "gpadc";
++			resets = <&ccu RST_BUS_THS0>;
++			#thermal-sensor-cells = <1>;
++			status = "disabled";
++		};
++
+ 	};
+ };
+-- 
+2.53.0
+
