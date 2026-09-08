@@ -1,0 +1,182 @@
+From fcbf51977cee7d60de9ef5fca77da5b3635305bd Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Mon, 17 Aug 2026 16:47:21 +1000
+Subject: [PATCH 09/23] net: dwc_eth_qos_sunxi: Fix MDIO clock frequency and
+ keep clocks running
+
+---
+ drivers/net/dwc_eth_qos_sunxi.c | 123 +++++++++++---------------------
+ 1 file changed, 42 insertions(+), 81 deletions(-)
+
+diff --git a/drivers/net/dwc_eth_qos_sunxi.c b/drivers/net/dwc_eth_qos_sunxi.c
+index e44ce0fe7a6..05236e80970 100644
+--- a/drivers/net/dwc_eth_qos_sunxi.c
++++ b/drivers/net/dwc_eth_qos_sunxi.c
+@@ -90,15 +90,12 @@ static int eqos_probe_resources_sunxi(struct udevice *dev)
+ 	writel(0x55555555, (void __iomem *)(SUNXI_PIO_BASE + 0x404));
+ 	writel(0x55555555, (void __iomem *)(SUNXI_PIO_BASE + 0x430));
+ 
+-	/* Pulse PHY reset on PH16 */
+-	clrsetbits_le32((void __iomem *)(SUNXI_PIO_BASE + 0x408), 0xf, 0x1);
+-	clrbits_le32((void __iomem *)(SUNXI_PIO_BASE + 0x410), BIT(16));
++	/* Pulse PHY reset on PH16 (PH_CFG2 bit 0..3 = 1 output, PH_DATA bit 16) */
++	clrsetbits_le32(ph_base + 0x08, 0xf, 0x1);
++	clrbits_le32(ph_base + 0x10, BIT(16));
+ 	mdelay(20);
+-	setbits_le32((void __iomem *)(SUNXI_PIO_BASE + 0x410), BIT(16));
+-	mdelay(50);
+-
+-	gpio_request_by_name(dev, "snps,reset-gpio", 0,
+-			     &eqos->phy_reset_gpio, GPIOD_IS_OUT);
++	setbits_le32(ph_base + 0x10, BIT(16));
++	mdelay(150);
+ 
+ 	return 0;
+ }
+@@ -115,81 +112,43 @@ static int eqos_remove_resources_sunxi(struct udevice *dev)
+ 	return 0;
+ }
+ 
+-static int eqos_start_resets_sunxi(struct udevice *dev)
++static int eqos_set_tx_clk_speed_sunxi(struct udevice *dev)
+ {
+-	struct eth_pdata *pdata = dev_get_plat(dev);
+-	struct sunxi_platform_data *data = pdata->priv_pdata;
+-
+-	return reset_deassert_bulk(&data->resets);
++	return 0;
+ }
+ 
+-static int eqos_stop_resets_sunxi(struct udevice *dev)
++static ulong eqos_get_tick_clk_rate_sunxi(struct udevice *dev)
+ {
+-	struct eth_pdata *pdata = dev_get_plat(dev);
+-	struct sunxi_platform_data *data = pdata->priv_pdata;
+-
+-	return reset_assert_bulk(&data->resets);
++	return 200000000;
+ }
+ 
+-static int eqos_start_clks_sunxi(struct udevice *dev)
++static int eqos_get_enetaddr_sunxi(struct udevice *dev)
+ {
+ 	struct eth_pdata *pdata = dev_get_plat(dev);
+-	struct sunxi_platform_data *data = pdata->priv_pdata;
+-	int ret;
+-
+-	ret = clk_enable_bulk(&data->clks);
+-	if (ret)
+-		return ret;
+-
+-	/* Enable GMAC0 MBUS clock gate (CCU offset 0x05E4, bit 11) for DMA */
+-	setbits_le32((void __iomem *)(SUNXI_CCM_BASE + 0x05E4), BIT(11));
+-
+-	if (data->syscon_regs) {
+-		u32 val = 0;
+-
+-		switch (data->interface) {
+-		case PHY_INTERFACE_MODE_RGMII:
+-		case PHY_INTERFACE_MODE_RGMII_ID:
+-		case PHY_INTERFACE_MODE_RGMII_RXID:
+-		case PHY_INTERFACE_MODE_RGMII_TXID:
+-			val = (3 << 10) | (10 << 5) | SUNXI_DWMAC210_MODE_RGMII | SUNXI_DWMAC210_ETCS_INT_GMII;
+-			break;
+-		case PHY_INTERFACE_MODE_RMII:
+-			val = SUNXI_DWMAC210_MODE_RMII;
+-			break;
+-		case PHY_INTERFACE_MODE_MII:
+-		default:
+-			val = SUNXI_DWMAC210_MODE_MII;
+-			break;
+-		}
+-
+-		writel(val, data->syscon_regs + SUNXI_DWMAC210_SYSCON);
+-		/* Active-low clock gate */
+-		writel(0x0, data->syscon_regs + SUNXI_DWMAC210_CLK_GATE);
++	uint8_t mac_addr[6];
++	uint32_t sid[4];
++
++	if (eth_env_get_enetaddr("ethaddr", mac_addr))
++		return 0;
++
++	sid[0] = readl((void __iomem *)(0x03006200));
++	sid[1] = readl((void __iomem *)(0x03006204));
++	sid[2] = readl((void __iomem *)(0x03006208));
++	sid[3] = readl((void __iomem *)(0x0300620c));
++
++	if (sid[0] || sid[1] || sid[2] || sid[3]) {
++		uint32_t hash = crc32(0, (const unsigned char *)sid, sizeof(sid));
++		pdata->enetaddr[0] = 0x02;
++		pdata->enetaddr[1] = (hash >> 24) & 0xff;
++		pdata->enetaddr[2] = (hash >> 16) & 0xff;
++		pdata->enetaddr[3] = (hash >> 8) & 0xff;
++		pdata->enetaddr[4] = (hash >> 0) & 0xff;
++		pdata->enetaddr[5] = (sid[0] >> 0) & 0xff;
++		eth_env_set_enetaddr("ethaddr", pdata->enetaddr);
++		return 0;
+ 	}
+ 
+-	return 0;
+-}
+-
+-static int eqos_stop_clks_sunxi(struct udevice *dev)
+-{
+-	struct eth_pdata *pdata = dev_get_plat(dev);
+-	struct sunxi_platform_data *data = pdata->priv_pdata;
+-
+-	if (data->syscon_regs)
+-		writel(0x1, data->syscon_regs + SUNXI_DWMAC210_CLK_GATE);
+-
+-	return clk_disable_bulk(&data->clks);
+-}
+-
+-static int eqos_set_tx_clk_speed_sunxi(struct udevice *dev)
+-{
+-	return 0;
+-}
+-
+-static ulong eqos_get_tick_clk_rate_sunxi(struct udevice *dev)
+-{
+-	return 200000000;
++	return -EINVAL;
+ }
+ 
+ static struct eqos_ops eqos_sunxi_ops = {
+@@ -199,24 +158,26 @@ static struct eqos_ops eqos_sunxi_ops = {
+ 	.eqos_flush_buffer = eqos_flush_buffer_generic,
+ 	.eqos_probe_resources = eqos_probe_resources_sunxi,
+ 	.eqos_remove_resources = eqos_remove_resources_sunxi,
+-	.eqos_stop_resets = eqos_stop_resets_sunxi,
+-	.eqos_start_resets = eqos_start_resets_sunxi,
+-	.eqos_stop_clks = eqos_stop_clks_sunxi,
+-	.eqos_start_clks = eqos_start_clks_sunxi,
++	.eqos_stop_resets = eqos_null_ops,
++	.eqos_start_resets = eqos_null_ops,
++	.eqos_stop_clks = eqos_null_ops,
++	.eqos_start_clks = eqos_null_ops,
+ 	.eqos_calibrate_pads = eqos_null_ops,
+ 	.eqos_disable_calibration = eqos_null_ops,
+ 	.eqos_set_tx_clk_speed = eqos_set_tx_clk_speed_sunxi,
+-	.eqos_get_enetaddr = eqos_null_ops,
++	.eqos_get_enetaddr = eqos_get_enetaddr_sunxi,
+ 	.eqos_get_tick_clk_rate = eqos_get_tick_clk_rate_sunxi,
+ };
+ 
+ struct eqos_config eqos_sunxi_config = {
+ 	.reg_access_always_ok = false,
+-	.mdio_wait = 10,
+-	.swr_wait = 50,
++	.mdio_wait = 20,
++	.swr_wait = 100,
+ 	.config_mac = EQOS_MAC_RXQ_CTRL0_RXQ0EN_ENABLED_DCB,
+-	.config_mac_mdio = EQOS_MAC_MDIO_ADDRESS_CR_100_150,
++	.config_mac_mdio = EQOS_MAC_MDIO_ADDRESS_CR_250_300,
+ 	.axi_bus_width = EQOS_AXI_WIDTH_64,
+ 	.interface = eqos_get_interface_sunxi,
+ 	.ops = &eqos_sunxi_ops
++};
++	.ops = &eqos_sunxi_ops
+ };
+-- 
+2.53.0
+
