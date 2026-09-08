@@ -8,9 +8,13 @@ setenv rootdev "/dev/mmcblk2p1"
 setenv rootfstype "ext4"
 setenv verbosity "1"
 setenv bootlogo "false"
+# Load map (2 GiB DRAM at 0x40000000). The arm64 Image base must be 2 MiB
+# aligned (booti requirement); 0x41000000 satisfies that and, unlike the old
+# 0x4a000000, leaves room so a large (edge) kernel cannot overlap the ramdisk
+# (kernel@0x4a000000 used to clobber a >16 MiB uInitrd@0x49000000 -> bad CRC).
+setenv kernel_addr_r "0x41000000"
 setenv fdt_addr "0x48000000"
 setenv ramdisk_addr_r "0x49000000"
-setenv kernel_addr_r "0x4a000000"
 
 # fdtfile should come from compile-time u-boot patches
 if test -z "${fdtfile}"; then
