@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 10:00:00 +1000
+Subject: clk: sunxi-ng: a733: Add Audio PLL0, SDM, and I2S4 clocks
+
+Add Audio PLL0, Sigma-Delta Modulator (SDM), and digital audio interface 4 (I2S4)
+clock and reset definitions to ccu-sun60i-a733.c, and export CLK_I2S4, CLK_BUS_I2S4,
+and RST_BUS_I2S4 in the binding headers.
+
+The Orange Pi 4 Pro routes analog audio output to an onboard Everest Semi ES8388
+codec connected via the SoC's I2S4 bus. Precise audio sample rates (44.1 kHz,
+48 kHz, and their multiples) require the low-jitter fractional synthesis
+provided by the SDM (reg 0x1268) and dedicated Audio PLL0 (reg 0x1260).
+
+This patch configures PLL_AUDIO0, the SDM fractional register, the I2S4 module
+clock (reg 0x2240) with M and N dividers and parent muxing, as well as the
+I2S4 bus gate and reset deassertion controls at reg 0x224c. This allows the ASoC
+simple-card and ES8388 codec drivers to probe, clock the BCLK/LRCK lines, and
+stream audio to the 3.5mm headphone jack.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 2639301..50d49ac 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -286,7 +286,7 @@ static CLK_FIXED_FACTOR_HWS(pll_video3_3x_clk, "pll-video3-3x",
+  * as 0), in the probe function below.
+  * The M factor must be an even number to produce a 50% duty cycle output.
+  */
+-#define SUN60I_A733_PLL_AUDIO0_REG		0x078
++#define SUN60I_A733_PLL_AUDIO0_REG		0x1260
+ static struct ccu_sdm_setting pll_audio0_sdm_table[] = {
+ 	{ .rate = 90316800, .pattern = 0xc000872b, .m = 20, .n = 75 },
+ 	{ .rate = 98304000, .pattern = 0xc0004dd3, .m = 12, .n = 49 },
+@@ -298,12 +298,12 @@ static struct ccu_nm pll_audio0_4x_clk = {
+ 	.lock		= BIT(28),
+ 	.n		= _SUNXI_CCU_MULT_MIN(8, 8, 11),
+ 	.m		= _SUNXI_CCU_DIV(16, 6),
+-	.sdm		= _SUNXI_CCU_SDM(pll_audio0_sdm_table, BIT(24),
+-					 0x178, BIT(31)),
++	.sdm		= _SUNXI_CCU_SDM(pll_audio0_sdm_table, 0,
++					 0x1268, BIT(31)),
+ 	.min_rate	= 90000000U,
+ 	.max_rate	= 3000000000U,
+ 	.common		= {
+-		.reg		= 0x078,
++		.reg		= 0x1260,
+ 		.features	= CCU_FEATURE_SIGMA_DELTA_MOD,
+ 		.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-audio0-4x",
+ 							   osc24M, &ccu_nm_ops,
+@@ -731,6 +731,20 @@ static SUNXI_CCU_GATE_HWS(bus_i2c5_clk, "bus-i2c5", apb1_hws, 0x1e94, BIT(0), 0)
+ static SUNXI_CCU_GATE_HWS(bus_i2c6_clk, "bus-i2c6", apb1_hws, 0x1e98, BIT(0), 0);
+ static SUNXI_CCU_GATE_HWS(bus_i2c7_clk, "bus-i2c7", apb1_hws, 0x1e9c, BIT(0), 0);
+ 
++static const char * const i2s_parents[] = {
++	"pll-audio0-4x",
++	"pll-periph0-200m",
++};
++
++static SUNXI_CCU_M_WITH_MUX_GATE(i2s4_clk, "i2s4",
++				 i2s_parents, 0x2240,
++				 0, 5,	/* M */
++				 24, 3,	/* mux */
++				 BIT(31),	/* gate */
++				 CLK_SET_RATE_PARENT);
++
++static SUNXI_CCU_GATE_HWS(bus_i2s4_clk, "bus-i2s4", apb1_hws, 0x224c, BIT(0), 0);
++
+ static SUNXI_CCU_GATE_HWS(bus_can_clk, "bus-can", apb1_hws, 0x92c, BIT(0), 0);
+ 
+ static const struct clk_parent_data spi_parents[] = {
+@@ -1329,6 +1343,8 @@ static struct ccu_common *sun60i_a733_ccu_clks[] = {
+ 	&bus_i2c5_clk.common,
+ 	&bus_i2c6_clk.common,
+ 	&bus_i2c7_clk.common,
++	&i2s4_clk.common,
++	&bus_i2s4_clk.common,
+ 	&bus_can_clk.common,
+ 	&spi0_clk.common,
+ 	&spi1_clk.common,
+@@ -1597,8 +1613,10 @@ static struct clk_hw_onecell_data sun60i_a733_hw_clks = {
+ 		[CLK_SERDES_PHY_CFG]	= &serdes_phy_cfg_clk.common.hw,
+ 		[CLK_PCIE_AXI_SLV]	= &pcie_axi_slv_clk.common.hw,
+ 		[CLK_PCIE_ITS]		= &pcie_its_clk.common.hw,
++		[CLK_I2S4]		= &i2s4_clk.common.hw,
++		[CLK_BUS_I2S4]		= &bus_i2s4_clk.common.hw,
+ 	},
+-	.num	= CLK_PCIE_ITS + 1,
++	.num	= CLK_BUS_I2S4 + 1,
+ };
+ 
+ static struct ccu_reset_map sun60i_a733_ccu_resets[] = {
+@@ -1641,6 +1659,7 @@ static struct ccu_reset_map sun60i_a733_ccu_resets[] = {
+ 	[RST_BUS_I2C5]		= { 0x1e94, BIT(16) },
+ 	[RST_BUS_I2C6]		= { 0x1e98, BIT(16) },
+ 	[RST_BUS_I2C7]		= { 0x1e9c, BIT(16) },
++	[RST_BUS_I2S4]		= { 0x224c, BIT(16) },
+ 	[RST_BUS_CAN]		= { 0x92c, BIT(16) },
+ 	[RST_BUS_SPI0]		= { 0x0f04, BIT(16) },
+ 	[RST_BUS_SPI1]		= { 0x0f0c, BIT(16) },
+diff --git a/include/dt-bindings/clock/sun60i-a733-ccu.h b/include/dt-bindings/clock/sun60i-a733-ccu.h
+index c22bdb4..4283e86 100644
+--- a/include/dt-bindings/clock/sun60i-a733-ccu.h
++++ b/include/dt-bindings/clock/sun60i-a733-ccu.h
+@@ -195,4 +195,7 @@
+ #define CLK_BUS_I2C6		185
+ #define CLK_BUS_I2C7		186
+ 
++#define CLK_I2S4		187
++#define CLK_BUS_I2S4		188
++
+ #endif /* _DT_BINDINGS_CLK_SUN60I_A733_CCU_H_ */
+diff --git a/include/dt-bindings/reset/sun60i-a733-ccu.h b/include/dt-bindings/reset/sun60i-a733-ccu.h
+index 8182930..4a55742 100644
+--- a/include/dt-bindings/reset/sun60i-a733-ccu.h
++++ b/include/dt-bindings/reset/sun60i-a733-ccu.h
+@@ -93,4 +93,6 @@
+ #define RST_BUS_I2C6		95
+ #define RST_BUS_I2C7		96
+ 
++#define RST_BUS_I2S4		97
++
+ #endif /* _DT_BINDINGS_RST_SUN60I_A733_CCU_H_ */
+
+-- 
+Armbian
