@@ -16,6 +16,7 @@ BOOTFS_TYPE="ext4"
 BOOTSIZE="512"
 
 function post_family_tweaks_bsp__nanopi_r28s_net_led() {
+	install -m 644 $SRC/packages/bsp/nanopi-r28s/aic8800-bt.conf $destination/etc/modprobe.d/
 	install -m 644 $SRC/packages/bsp/nanopi-r28s/nanopi-r28s-net-led.service $destination/etc/systemd/system/
 }
 
