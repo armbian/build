@@ -1,0 +1,218 @@
+From c61f55cd96071031f9e4a81105a31cc634972bb8 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 11:02:09 +1000
+Subject: [PATCH 13/23] adc: sun20i: Add Allwinner 12-bit GPADC driver
+
+Add driver for the Allwinner 12-bit General Purpose ADC (GPADC)
+found on D1, T113-S3, A523, A733 and newer SoCs.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ drivers/adc/Kconfig                           |   9 ++
+ drivers/adc/Makefile                          |   1 +
+ drivers/adc/sun20i_gpadc.c                    | 143 ++++++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  12 ++
+ 4 files changed, 165 insertions(+)
+ create mode 100644 drivers/adc/sun20i_gpadc.c
+
+diff --git a/drivers/adc/Kconfig b/drivers/adc/Kconfig
+index 2b45f9e5eba..99d5ac002cb 100644
+--- a/drivers/adc/Kconfig
++++ b/drivers/adc/Kconfig
+@@ -81,3 +81,12 @@ config ADC_IMX93
+ 	  It provides:
+ 	  - 4 analog input channels
+ 	  - 12-bit resolution
++
++config ADC_SUN20I
++	bool "Allwinner GPADC driver"
++	depends on ADC && ARCH_SUNXI
++	help
++	  Enable support for the Allwinner 12-bit General Purpose ADC (GPADC)
++	  found on D1, T113-S3, A523, A733 and newer SoCs. It provides up to
++	  8 analog input channels with 12-bit resolution.
++
+diff --git a/drivers/adc/Makefile b/drivers/adc/Makefile
+index 665a7965412..f1486514baa 100644
+--- a/drivers/adc/Makefile
++++ b/drivers/adc/Makefile
+@@ -11,3 +11,4 @@ obj-$(CONFIG_SARADC_ROCKCHIP) += rockchip-saradc.o
+ obj-$(CONFIG_SARADC_MESON) += meson-saradc.o
+ obj-$(CONFIG_STM32_ADC) += stm32-adc.o stm32-adc-core.o
+ obj-$(CONFIG_ADC_IMX93) += imx93-adc.o
++obj-$(CONFIG_ADC_SUN20I) += sun20i_gpadc.o
+diff --git a/drivers/adc/sun20i_gpadc.c b/drivers/adc/sun20i_gpadc.c
+new file mode 100644
+index 00000000000..b4c64368d15
+--- /dev/null
++++ b/drivers/adc/sun20i_gpadc.c
+@@ -0,0 +1,143 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (C) 2026 Antigravity
++ * Allwinner GPADC driver for U-Boot (UCLASS_ADC)
++ */
++
++#include <errno.h>
++#include <log.h>
++#include <linux/types.h>
++#include <adc.h>
++#include <clk.h>
++#include <dm.h>
++#include <reset.h>
++#include <asm/io.h>
++#include <linux/delay.h>
++
++#define SUN20I_GPADC_SR			0x00
++#define SUN20I_GPADC_CTRL		0x04
++#define SUN20I_GPADC_CS_EN		0x08
++#define SUN20I_GPADC_DATA_INTC		0x28
++#define SUN20I_GPADC_DATA_INTS		0x38
++#define SUN20I_GPADC_CH_DATA(x)		(0x80 + (x) * 4)
++
++#define SUN20I_GPADC_CTRL_ADC_EN	BIT(16)
++#define SUN20I_GPADC_CH_NUM		8
++
++struct sun20i_gpadc_priv {
++	void __iomem *base;
++	struct clk bus_clk;
++	struct reset_ctl reset;
++	int active_channel;
++};
++
++static int sun20i_gpadc_start_channel(struct udevice *dev, int channel)
++{
++	struct sun20i_gpadc_priv *priv = dev_get_priv(dev);
++	u32 val;
++
++	if (channel < 0 || channel >= SUN20I_GPADC_CH_NUM)
++		return -EINVAL;
++
++	priv->active_channel = channel;
++
++	/* Enable channel */
++	writel(BIT(channel), priv->base + SUN20I_GPADC_CS_EN);
++
++	/* Enable ADC conversion */
++	val = readl(priv->base + SUN20I_GPADC_CTRL);
++	val |= SUN20I_GPADC_CTRL_ADC_EN;
++	writel(val, priv->base + SUN20I_GPADC_CTRL);
++
++	return 0;
++}
++
++static int sun20i_gpadc_channel_data(struct udevice *dev, int channel, unsigned int *data)
++{
++	struct sun20i_gpadc_priv *priv = dev_get_priv(dev);
++	ulong start;
++
++	if (channel < 0 || channel >= SUN20I_GPADC_CH_NUM)
++		return -EINVAL;
++
++	/* Poll for data ready interrupt status */
++	start = get_timer(0);
++	while (!(readl(priv->base + SUN20I_GPADC_DATA_INTS) & BIT(channel))) {
++		if (get_timer(start) > 20) { /* 20ms timeout */
++			/* Even if status flag not set, read current channel data */
++			break;
++		}
++		udelay(10);
++	}
++
++	/* Clear status bit */
++	writel(BIT(channel), priv->base + SUN20I_GPADC_DATA_INTS);
++
++	/* Read 12-bit conversion value */
++	*data = readl(priv->base + SUN20I_GPADC_CH_DATA(channel)) & 0xfff;
++
++	return 0;
++}
++
++static int sun20i_gpadc_stop(struct udevice *dev)
++{
++	struct sun20i_gpadc_priv *priv = dev_get_priv(dev);
++
++	writel(0, priv->base + SUN20I_GPADC_CS_EN);
++	return 0;
++}
++
++static int sun20i_gpadc_of_to_plat(struct udevice *dev)
++{
++	struct adc_uclass_plat *uc_pdata = dev_get_uclass_plat(dev);
++
++	uc_pdata->data_mask = 0xfff; /* 12 bits */
++	uc_pdata->data_format = ADC_DATA_FORMAT_BIN;
++	uc_pdata->data_timeout_us = 10000;
++	uc_pdata->channel_mask = 0xff; /* 8 channels */
++
++	return 0;
++}
++
++static int sun20i_gpadc_probe(struct udevice *dev)
++{
++	struct sun20i_gpadc_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -EINVAL;
++
++	ret = clk_get_by_index(dev, 0, &priv->bus_clk);
++	if (!ret)
++		clk_enable(&priv->bus_clk);
++
++	ret = reset_get_by_index(dev, 0, &priv->reset);
++	if (!ret)
++		reset_deassert(&priv->reset);
++
++	return 0;
++}
++
++static const struct adc_ops sun20i_gpadc_ops = {
++	.start_channel = sun20i_gpadc_start_channel,
++	.channel_data  = sun20i_gpadc_channel_data,
++	.stop          = sun20i_gpadc_stop,
++};
++
++static const struct udevice_id sun20i_gpadc_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-gpadc" },
++	{ .compatible = "allwinner,sun55i-a523-gpadc" },
++	{ .compatible = "allwinner,sun20i-d1-gpadc" },
++	{ }
++};
++
++U_BOOT_DRIVER(sun20i_gpadc) = {
++	.name       = "sun20i_gpadc",
++	.id         = UCLASS_ADC,
++	.of_match   = sun20i_gpadc_ids,
++	.ops        = &sun20i_gpadc_ops,
++	.of_to_plat = sun20i_gpadc_of_to_plat,
++	.probe      = sun20i_gpadc_probe,
++	.priv_auto  = sizeof(struct sun20i_gpadc_priv),
++};
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index 97284524d2b..6ac0290d828 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -375,5 +375,17 @@
+ 			status = "disabled";
+ 		};
+ 
++		gpadc: adc@2521000 {
++			compatible = "allwinner,sun60i-a733-gpadc",
++				     "allwinner,sun55i-a523-gpadc",
++				     "allwinner,sun20i-d1-gpadc";
++			reg = <0x02521000 0x400>;
++			interrupts = <GIC_SPI 38 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_GPADC0>;
++			resets = <&ccu RST_BUS_GPADC0>;
++			#io-channel-cells = <1>;
++			status = "disabled";
++		};
++
+ 	};
+ };
+-- 
+2.53.0
+

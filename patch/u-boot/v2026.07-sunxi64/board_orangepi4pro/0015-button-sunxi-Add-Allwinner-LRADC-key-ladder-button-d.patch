@@ -1,0 +1,251 @@
+From 2a0ed11c1ff4dc0e53fb544d379c118d29c0f63d Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 11:02:09 +1000
+Subject: [PATCH 15/23] button: sunxi: Add Allwinner LRADC key ladder button
+ driver
+
+Add UCLASS_BUTTON driver for Low Resolution ADC (LRADC) key ladder buttons,
+used for Recovery key detection.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ drivers/button/Kconfig                        |   8 +
+ drivers/button/Makefile                       |   3 +-
+ drivers/button/button-sunxi-lradc.c           | 172 ++++++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  11 ++
+ 4 files changed, 193 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/button/button-sunxi-lradc.c
+
+diff --git a/drivers/button/Kconfig b/drivers/button/Kconfig
+index 6cae16fcc8b..7406cbe632b 100644
+--- a/drivers/button/Kconfig
++++ b/drivers/button/Kconfig
+@@ -48,4 +48,12 @@ config BUTTON_QCOM_PMIC
+ 	  on Qualcomm SoCs. These will be configured as the Enter and Down keys
+ 	  respectively, allowing navigation of bootmenu with buttons on device.
+ 
++config BUTTON_SUNXI_LRADC
++	bool "Allwinner LRADC Keys"
++	depends on BUTTON
++	help
++	  Enable support for buttons connected to the Allwinner Low Resolution
++	  ADC (LRADC), typically used for Recovery / Volume keys.
++
+ endmenu
++
+diff --git a/drivers/button/Makefile b/drivers/button/Makefile
+index 68555081a47..3e965205078 100644
+--- a/drivers/button/Makefile
++++ b/drivers/button/Makefile
+@@ -5,4 +5,5 @@
+ obj-$(CONFIG_BUTTON) += button-uclass.o
+ obj-$(CONFIG_BUTTON_ADC) += button-adc.o
+ obj-$(CONFIG_BUTTON_GPIO) += button-gpio.o
+-obj-$(CONFIG_BUTTON_QCOM_PMIC) += button-qcom-pmic.o
+\ No newline at end of file
++obj-$(CONFIG_BUTTON_QCOM_PMIC) += button-qcom-pmic.o
++obj-$(CONFIG_BUTTON_SUNXI_LRADC) += button-sunxi-lradc.o
+\ No newline at end of file
+diff --git a/drivers/button/button-sunxi-lradc.c b/drivers/button/button-sunxi-lradc.c
+new file mode 100644
+index 00000000000..78e176533a3
+--- /dev/null
++++ b/drivers/button/button-sunxi-lradc.c
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (C) 2026 Antigravity
++ * Allwinner LRADC Keys driver for U-Boot (UCLASS_BUTTON)
++ */
++
++#include <errno.h>
++#include <log.h>
++#include <linux/types.h>
++#include <button.h>
++#include <clk.h>
++#include <dm.h>
++#include <dm/device-internal.h>
++#include <dm/lists.h>
++#include <reset.h>
++#include <asm/io.h>
++#include <linux/delay.h>
++
++#define LRADC_CTRL		0x00
++#define LRADC_INTC		0x04
++#define LRADC_INTS		0x08
++#define LRADC_DATA0		0x0c
++#define LRADC_DATA1		0x10
++
++/* LRADC_CTRL bits */
++#define FIRST_CONVERT_DLY(x)	((x) << 24)
++#define LEVELA_B_CNT(x)		((x) << 8)
++#define HOLD_EN(x)		((x) << 6)
++#define SAMPLE_RATE(x)		((x) << 2)
++#define ENABLE(x)		((x) << 0)
++
++struct button_sunxi_lradc_priv {
++	void __iomem *base;
++	struct clk clk;
++	struct reset_ctl reset;
++};
++
++struct button_lradc_entry_priv {
++	struct button_sunxi_lradc_priv *parent_priv;
++	u32 channel;
++	u32 voltage;
++	u32 linux_code;
++};
++
++static enum button_state_t button_lradc_get_state(struct udevice *dev)
++{
++	struct button_lradc_entry_priv *priv = dev_get_priv(dev);
++	u32 val, uv;
++
++	if (!priv->parent_priv || !priv->parent_priv->base)
++		return -ENODEV;
++
++	/* 6-bit ADC value (0..63) where 63 represents unpressed (~3.3V) */
++	val = readl(priv->parent_priv->base + LRADC_DATA0) & 0x3f;
++	/* Voltage in microvolts: full scale is 3.3V (or 3/4 if scaled).
++	 * Unpressed: reading is 63 (or 62..63).
++	 * Pressed (Recovery key, ~0.2V): reading is ~3..5.
++	 */
++	uv = (val * 3300000U) / 63U;
++
++	/* If voltage is within 150mV of expected button threshold, consider pressed */
++	if (abs((int)uv - (int)priv->voltage) < 150000)
++		return BUTTON_ON;
++
++	/* Also if threshold is <= 200mV and uv <= 300mV */
++	if (priv->voltage <= 200000 && uv <= 300000)
++		return BUTTON_ON;
++
++	return BUTTON_OFF;
++}
++
++static int button_lradc_get_code(struct udevice *dev)
++{
++	struct button_lradc_entry_priv *priv = dev_get_priv(dev);
++
++	return priv->linux_code;
++}
++
++static int button_lradc_entry_probe(struct udevice *dev)
++{
++	struct button_lradc_entry_priv *priv = dev_get_priv(dev);
++	struct button_sunxi_lradc_priv *parent_priv = dev_get_priv(dev->parent);
++
++	priv->parent_priv = parent_priv;
++	dev_read_u32(dev, "channel", &priv->channel);
++	dev_read_u32(dev, "voltage", &priv->voltage);
++	dev_read_u32(dev, "linux,code", &priv->linux_code);
++
++	return 0;
++}
++
++static const struct button_ops button_lradc_ops = {
++	.get_state = button_lradc_get_state,
++	.get_code  = button_lradc_get_code,
++};
++
++U_BOOT_DRIVER(button_lradc_entry) = {
++	.name      = "button_lradc_entry",
++	.id        = UCLASS_BUTTON,
++	.ops       = &button_lradc_ops,
++	.probe     = button_lradc_entry_probe,
++	.priv_auto = sizeof(struct button_lradc_entry_priv),
++};
++
++static int button_sunxi_lradc_bind(struct udevice *parent)
++{
++	ofnode node;
++	int ret;
++
++	dev_for_each_subnode(node, parent) {
++		struct button_uc_plat *uc_plat;
++		const char *label;
++		struct udevice *dev;
++
++		label = ofnode_read_string(node, "label");
++		if (!label)
++			continue;
++
++		ret = device_bind_driver_to_node(parent, "button_lradc_entry",
++						 ofnode_get_name(node),
++						 node, &dev);
++		if (ret)
++			return ret;
++
++		uc_plat = dev_get_uclass_plat(dev);
++		uc_plat->label = label;
++	}
++
++	return 0;
++}
++
++static int button_sunxi_lradc_probe(struct udevice *dev)
++{
++	struct button_sunxi_lradc_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -EINVAL;
++
++	/* Enable clock & reset */
++	ret = clk_get_by_index(dev, 0, &priv->clk);
++	if (!ret)
++		clk_enable(&priv->clk);
++
++	ret = reset_get_by_index(dev, 0, &priv->reset);
++	if (!ret)
++		reset_deassert(&priv->reset);
++
++	/* Configure LRADC: sample rate 250Hz, hold enable, continuous enable */
++	writel(FIRST_CONVERT_DLY(2) | LEVELA_B_CNT(1) | HOLD_EN(1) |
++	       SAMPLE_RATE(0) | ENABLE(1), priv->base + LRADC_CTRL);
++
++	return 0;
++}
++
++static const struct udevice_id button_sunxi_lradc_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-lradc" },
++	{ .compatible = "allwinner,sun55i-a523-lradc" },
++	{ .compatible = "allwinner,sun50i-h616-lradc" },
++	{ }
++};
++
++U_BOOT_DRIVER(button_sunxi_lradc) = {
++	.name       = "button_sunxi_lradc",
++	.id         = UCLASS_NOP,
++	.of_match   = button_sunxi_lradc_ids,
++	.bind       = button_sunxi_lradc_bind,
++	.probe      = button_sunxi_lradc_probe,
++	.priv_auto  = sizeof(struct button_sunxi_lradc_priv),
++	.flags      = DM_FLAG_PROBE_AFTER_BIND,
++};
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index 1d6a2c4058b..73b32fe347f 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -399,5 +399,16 @@
+ 			status = "disabled";
+ 		};
+ 
++		lradc: lradc@2524000 {
++			compatible = "allwinner,sun60i-a733-lradc",
++				     "allwinner,sun55i-a523-lradc",
++				     "allwinner,sun50i-h616-lradc";
++			reg = <0x02524000 0x400>;
++			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_LRADC>;
++			resets = <&ccu RST_BUS_LRADC>;
++			status = "disabled";
++		};
++
+ 	};
+ };
+-- 
+2.53.0
+
