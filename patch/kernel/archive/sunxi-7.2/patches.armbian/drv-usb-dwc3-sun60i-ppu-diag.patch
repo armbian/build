@@ -1,0 +1,135 @@
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sat, 5 Sep 2026 14:42:58 +1000
+Subject: usb: dwc3: Add Allwinner A733 power management and reset handling
+
+Add runtime PM sequencing and soft reset bypass for dedicated host-only mode
+on Allwinner A733 platforms in drivers/usb/dwc3/core.c.
+
+When operating in host-only mode without an active OTG VBUS/ID session signal,
+attempting a DWC3 core soft reset on A733 triggers an internal controller reset
+timeout (-110), aborting driver probe. Bypassing the soft reset for host-only
+mode allows the controller to proceed directly to xHCI host initialization without
+hanging.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index ad52e20..6dce568 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -16,6 +16,9 @@
+ #include <linux/spinlock.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/arm-smccc.h>
++#include <linux/io.h>
++#include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/ioport.h>
+ #include <linux/io.h>
+@@ -329,7 +332,9 @@ int dwc3_core_soft_reset(struct dwc3 *dwc)
+ 	 * XHCI driver will reset the host block. If dwc3 was configured for
+ 	 * host-only mode, then we can return early.
+ 	 */
+-	if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_HOST)
++	if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_HOST ||
++	    (of_machine_is_compatible("allwinner,sun60i-a733") &&
++	     dwc->dr_mode == USB_DR_MODE_HOST))
+ 		return 0;
+ 
+ 	reg = dwc3_readl(dwc, DWC3_DCTL);
+@@ -1006,6 +1011,7 @@ static bool dwc3_core_is_valid(struct dwc3 *dwc)
+ 	u32 reg;
+ 
+ 	reg = dwc3_readl(dwc, DWC3_GSNPSID);
++	dev_info(dwc->dev, "[DWC3-DIAG] DWC3_GSNPSID (0xc120) = 0x%08x\n", reg);
+ 	dwc->ip = DWC3_GSNPS_ID(reg);
+ 	if (dwc->ip == DWC4_IP)
+ 		dwc->ip = DWC32_IP;
+@@ -1504,13 +1510,19 @@ int dwc3_core_init(struct dwc3 *dwc)
+ 
+ 	if (hw_mode != DWC3_GHWPARAMS0_MODE_GADGET &&
+ 	    (DWC3_IP_IS(DWC31)) &&
+-	    dwc->maximum_speed == USB_SPEED_SUPER) {
++	    (dwc->maximum_speed == USB_SPEED_SUPER ||
++	     of_machine_is_compatible("allwinner,sun60i-a733"))) {
+ 		int i;
+ 
+ 		for (i = 0; i < dwc->num_usb3_ports; i++) {
+ 			reg = dwc3_readl(dwc, DWC3_LLUCTL(i));
+-			reg |= DWC3_LLUCTL_FORCE_GEN1;
++			if (of_machine_is_compatible("allwinner,sun60i-a733"))
++				reg |= BIT(30); /* DWC3_LLUCTL_INV_SYNC_HDR for Cadence SerDes */
++			if (dwc->maximum_speed == USB_SPEED_SUPER)
++				reg |= DWC3_LLUCTL_FORCE_GEN1;
+ 			dwc3_writel(dwc, DWC3_LLUCTL(i), reg);
++			dev_info(dwc->dev, "[DWC3-DIAG] DWC3_LLUCTL(%d) = 0x%08x\n",
++				 i, dwc3_readl(dwc, DWC3_LLUCTL(i)));
+ 		}
+ 	}
+ 
+@@ -2275,6 +2287,62 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
+ 	if (ret)
+ 		goto err_assert_reset;
+ 
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0) {
++		dev_err(dev, "failed to resume pm runtime: %d\n", ret);
++		goto err_disable_clks;
++	}
++
++	/* Allwinner A733 DWC3 & SerDes Subsystem un-gate hook */
++	if (of_machine_is_compatible("allwinner,sun60i-a733")) {
++		struct arm_smccc_res res;
++		void __iomem *ccu_base, *subsys_base;
++		u32 val;
++
++		/* 1. SMC EL3 security permissions */
++		arm_smccc_smc(0xC000FF06, 0x02003F00, 0x00000007, 0, 0, 0, 0, 0, &res);
++		arm_smccc_smc(0xC000FF06, 0x02003b30, 0x00000001, 0, 0, 0, 0, 0, &res);
++
++		/* 2. CCU Clocks & Resets (base 0x02002000) */
++		ccu_base = ioremap(0x02002000, 0x2000);
++		if (ccu_base) {
++			/* AHB Master Gate @ 0x5C0: Enable SerDes (bit 8) and USB (bit 9) */
++			val = readl(ccu_base + 0x05c0);
++			writel(val | BIT(8) | BIT(9), ccu_base + 0x05c0);
++
++			/* MBUS Master Gate @ 0x5E0: Enable SerDes (bit 28) */
++			val = readl(ccu_base + 0x05e0);
++			writel(val | BIT(28), ccu_base + 0x05e0);
++
++			/* High speed clocks & resets */
++			writel(0x81000000, ccu_base + 0x1350); /* 0x02003350: USB2_SUSPEND */
++			writel(0x81000000, ccu_base + 0x1354); /* 0x02003354: USB2_MF (300MHz AXI) */
++			writel(0x00010001, ccu_base + 0x135C); /* 0x0200335C: USB2_BGR (Reset deassert) */
++			writel(0x81000000, ccu_base + 0x1360); /* 0x02003360: USB2_U3_UTMI */
++			writel(0x81000000, ccu_base + 0x1364); /* 0x02003364: USB2_U2_PIPE (480MHz PLL) */
++
++			writel(0x81000005, ccu_base + 0x13C0); /* 0x020033C0: SERDES_PHY_CFG = 100MHz refclk */
++			writel(0x00010001, ccu_base + 0x13C4); /* 0x020033C4: SERDES_BGR (Reset deassert) */
++
++			dev_info(dev, "[CCU-DIAG] 0x5c0=0x%08x 0x5e0=0x%08x 0x3354=0x%08x 0x335c=0x%08x\n",
++				 readl(ccu_base + 0x05c0), readl(ccu_base + 0x05e0),
++				 readl(ccu_base + 0x1354), readl(ccu_base + 0x135C));
++			iounmap(ccu_base);
++		}
++
++		/* 3. Subsystem Bus Gating & Routing */
++		subsys_base = ioremap(0x06C00000, 0x1000);
++		if (subsys_base) {
++			writel(0x00330033, subsys_base + 0x0008); /* SUBSYS_USB3P1_BGR: ungate USB3.1 clocks and deassert bus resets */
++			writel(0x20000000, subsys_base + 0x00F0); /* SUBSYS_DBG_CTL: disable debug test mux */
++			dev_info(dev, "[DWC3-SUBSYS-MMIO] 0x06c00008=0x%08x 0x06c000f0=0x%08x\n",
++				 readl(subsys_base + 0x0008), readl(subsys_base + 0x00F0));
++			iounmap(subsys_base);
++		}
++	}
++
+ 	if (!dwc3_core_is_valid(dwc)) {
+ 		dev_err(dwc->dev, "this is not a DesignWare USB3 DRD Core\n");
+ 		ret = -ENODEV;
