@@ -66,11 +66,22 @@ fi
 # EEPROM detection below will override it if a valid EEPROM is found.
 setenv eeprom_dtb_matched "no"
 
-# EEPROM format:
-#   [0..5]  = "rk35xx"
-#   [6..9]  = board code, e.g. 00A0 / 00B0
-#   [10.. ] = SN (ignored by boot logic)
-# Read EEPROM from i2c@0x57 and override fdtfile if format matches.
+# Board identification EEPROM.
+# Content layout — the detection below parses only the first 10 bytes:
+#
+#   offset  size  field        example   notes
+#   0x00     6    magic        "rk35xx"  ASCII; blank (0xFF) chips never match
+#   0x06     4    board code   "01A0"    [0..1]=board no, [2..3]=hw iteration
+#   0x0A     ..   serial no.   ASCII     ignored by boot logic
+#
+# Board codes — actual EEPROM contents (first 10 bytes) per board:
+#   00A0 = RK3576 Devkit         72 6b 33 35 78 78 30 30 41 30  ("rk35xx"+"00A0")
+#   01A0 = RK3576 Module Dev Kit 72 6b 33 35 78 78 30 31 41 30  ("rk35xx"+"01A0")
+#   00B0 = RK3588 Devkit         72 6b 33 35 78 78 30 30 42 30  ("rk35xx"+"00B0")
+#
+# On magic/board-code mismatch (or a blank 0xFF chip) the default
+# ${fdtfile} stays in effect.
+#
 # Bus number and chip address are board-specific: set via armbianEnv.txt or
 # board hook (eeprom_i2c_bus / eeprom_i2c_addr).
 #   rk3576/rk3588 devkit: I2C4, 0x57 (on-board EEPROM)
