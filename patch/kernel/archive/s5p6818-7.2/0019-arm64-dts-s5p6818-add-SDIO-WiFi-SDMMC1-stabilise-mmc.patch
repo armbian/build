@@ -1,0 +1,188 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 22:22:18 +0200
+Subject: [PATCH] arm64: dts: s5p6818: add SDIO WiFi (SDMMC1) + stabilise mmc
+ numbering
+
+Add the dw_mmc controller on SDMMC1 (@0xc0068000) for the on-board
+Broadcom SDIO WiFi (brcmfmac). Unlike SD/eMMC, u-boot never touches this
+channel, so it needs its pins muxed (sdmmc1 group), its clk-gen gate
+enabled (new sdhc1 clock, cell-id 19, clk-critical - the SDMMC1 module
+clock is off at boot) and its reset released. A mmc-pwrseq drives
+WL_REG_ON (gpiob-24) / BT_REG_ON (gpiob-8); the chip signals via an OOB
+IRQ on gpioc-17. HW-verified: the BCM43430 enumerates as an SDIO card
+(vendor 0x02d0 device 0xa9a6) and brcmfmac binds + loads firmware.
+
+Also pin the mmc host numbering via aliases: with the non-removable eMMC
+present it raced the polled SD for mmcblk0, making root=/dev/mmcblk0p1
+unreliable. SD=mmc0, WiFi=mmc1, eMMC=mmc2.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../boot/dts/nexell/s5p6818-nanopi-m3.dts     | 13 +++
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi       | 93 +++++++++++++++++++
+ 2 files changed, 106 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+index 7570375f4..43067553e 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
++++ b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+@@ -19,6 +19,15 @@ / {
+ 
+ 	aliases {
+ 		serial0 = &uart0;
++		/*
++		 * Pin the mmc host numbering so mmcblkN is stable: without this
++		 * the non-removable eMMC races the polled SD for mmcblk0 and
++		 * root=/dev/mmcblk0p1 becomes unreliable. SD=0, WiFi(SDIO)=1,
++		 * eMMC=2 -> SD is mmcblk0, eMMC is mmcblk2.
++		 */
++		mmc0 = &mmc0;	/* SD card   (c0062000) */
++		mmc1 = &mmc1;	/* SDIO WiFi (c0068000) */
++		mmc2 = &mmc2;	/* eMMC      (c0069000) */
+ 	};
+ 
+ 	chosen {
+@@ -77,6 +86,10 @@ &mmc2 {	/* on-board eMMC */
+ 	status = "okay";
+ };
+ 
++&mmc1 {	/* SDIO WiFi */
++	status = "okay";
++};
++
+ &gmac0 {
+ 	status = "okay";
+ 	phy-handle = <&rtl_phy>;
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 42da6b32f..8e4486257 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/gpio/gpio.h>
+ 
+ / {
+ 	compatible = "nexell,s5p6818";
+@@ -165,6 +166,18 @@ cpu_crit: cpu-crit {
+ 		};
+ 	};
+ 
++	/*
++	 * WiFi/BT power sequence: WL_REG_ON (gpiob-24) powers the SDIO WiFi,
++	 * BT_REG_ON (gpiob-8) the Bluetooth side of the same combo (BT data
++	 * goes over uart1). Both active-low.
++	 */
++	wifi_pwrseq: wifi-pwrseq {
++		compatible = "mmc-pwrseq-simple";
++		reset-gpios = <&gpio_b 24 GPIO_ACTIVE_LOW>,
++			      <&gpio_b 8 GPIO_ACTIVE_LOW>;
++		post-power-on-delay-ms = <50>;
++	};
++
+ 	soc {
+ 		compatible = "simple-bus";
+ 		#address-cells = <1>;
+@@ -320,6 +333,27 @@ i2s0_bus: i2s0-bus {
+ 				nexell,pin-pull = <0>;
+ 				nexell,pin-strength = <0>;
+ 			};
++
++			/* SDMMC1 (SDIO WiFi): CLK/CMD/DAT0-3 (bank D, function 1). */
++			sdmmc1_cclk: sdmmc1-cclk {
++				nexell,pins = "gpiod-22";
++				nexell,pin-function = <1>;
++				nexell,pin-pull = <2>;
++				nexell,pin-strength = <2>;
++			};
++			sdmmc1_cmd: sdmmc1-cmd {
++				nexell,pins = "gpiod-23";
++				nexell,pin-function = <1>;
++				nexell,pin-pull = <2>;
++				nexell,pin-strength = <1>;
++			};
++			sdmmc1_bus4: sdmmc1-bus4 {
++				nexell,pins = "gpiod-24", "gpiod-25",
++					      "gpiod-26", "gpiod-27";
++				nexell,pin-function = <1>;
++				nexell,pin-pull = <2>;
++				nexell,pin-strength = <1>;
++			};
+ 		};
+ 
+ 		gic: interrupt-controller@c0009000 {
+@@ -402,6 +436,46 @@ mmc2: mmc@c0069000 {
+ 			status = "disabled";
+ 		};
+ 
++		/*
++		 * SDIO WiFi on SDMMC1 (@0xc0068000): a Broadcom combo (brcmfmac).
++		 * u-boot does not touch these pins, so pinctrl is mandatory. The
++		 * chip is powered/reset by wifi_pwrseq (WL_REG_ON) and signals via
++		 * an out-of-band IRQ on gpioc-17.
++		 */
++		mmc1: mmc@c0068000 {
++			compatible = "snps,dw-mshc";
++			reg = <0xc0068000 0x1000>;
++			interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			clocks = <&mmc_clk>, <&sdhc1_clk>;
++			clock-names = "biu", "ciu";
++			/* u-boot never uses SDMMC1, so it is left held in reset. */
++			resets = <&nexell_reset 40>;	/* RESET_ID_SDMMC1 */
++			reset-names = "reset";
++			fifo-depth = <0x20>;
++			clock-frequency = <100000000>;
++			bus-width = <4>;
++			cap-sd-highspeed;
++			cap-sdio-irq;
++			keep-power-in-suspend;
++			non-removable;
++			disable-wp;
++			pinctrl-names = "default";
++			pinctrl-0 = <&sdmmc1_cclk &sdmmc1_cmd &sdmmc1_bus4>;
++			mmc-pwrseq = <&wifi_pwrseq>;
++			status = "disabled";
++
++			brcmf: wifi@1 {
++				compatible = "brcm,bcm4329-fmac";
++				reg = <1>;
++				interrupt-parent = <&gpio_c>;
++				interrupts = <17 IRQ_TYPE_LEVEL_HIGH>;
++				interrupt-names = "host-wake";
++				brcm,powersave-default-off;
++			};
++		};
++
+ 		/*
+ 		 * Nexell PLL provider (CLKPWR block @0xc0010000). Registers the
+ 		 * core PLLs as global clkdev names "pll0".."pll3" (+ sys clocks),
+@@ -518,6 +592,25 @@ i2s0_clk: i2s0-clk@c00b2000 {
+ 				clk-input1 = <0>;
+ 				#clock-cells = <0>;
+ 			};
++
++			/*
++			 * SDMMC1 (SDIO WiFi) module clock (clk-gen @0xc00cc000,
++			 * cell-id 19 = CLK_ID_SDHC_1). u-boot never powers SDMMC1, so
++			 * this gate is off at boot; keep it enabled (clk-critical) so
++			 * the controller is clocked (both the PLL-sourced card clock
++			 * and the PCLK for register access - clk-input 0x1007 =
++			 * CLK_INPUT_SDHC = I_PLL_0_2 | I_GATE_PCLK). ~100 MHz.
++			 */
++			sdhc1_clk: sdhc1-clk@c00cc000 {
++				reg = <0xc00cc000 0x100>;
++				clock-output-names = "sdhc1";
++				cell-id = <19>;
++				clk-step = <1>;
++				clk-input = <0x1007>;
++				clock-frequency = <100000000>;
++				nexell,clk-critical;
++				#clock-cells = <0>;
++			};
+ 		};
+ 
+ 		/*
