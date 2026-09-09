@@ -23,6 +23,11 @@ if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
+if test -z "${fdtfile}" && test -n "${fdtfile_fallback}"; then
+	echo "fdtfile is unset; using fallback ${fdtfile_fallback}"
+	setenv fdtfile "${fdtfile_fallback}"
+fi
+
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
