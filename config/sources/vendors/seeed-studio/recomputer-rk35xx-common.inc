@@ -302,11 +302,15 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		PrivateDevices=yes
 		DeviceAllow=/dev/ttyGS0 rw
 		ExecStart=
-		ExecStart=-/sbin/agetty -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
+		# -w: print nothing until the terminal sends CR, so boot-time output
+		# is not buffered and flushed as garbage on first connect
+		ExecStart=-/sbin/agetty -w -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
 	chroot_sdcard systemctl --no-reload enable dnsmasq.service
+	# The gadget getty ships configured but disabled: enable it or the ACM console stays dead
+	chroot_sdcard systemctl --no-reload enable serial-getty@ttyGS0.service
 
 	# usbdevice.service: retry on failure + tell NM to manage usb0 + bring link up
 	mkdir -p "${SDCARD}/etc/systemd/system/usbdevice.service.d"
