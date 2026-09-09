@@ -320,6 +320,21 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 }
 
+# Bound plymouth-quit-wait: stock TimeoutSec=0 waits for plymouthd forever, and
+# on headless boards nothing quits plymouthd — every unit After= it (all gettys,
+# multi-user/graphical target) deadlocks until reboot.
+function post_family_tweaks__recomputer_plymouth_quit_wait_timeout() {
+	display_alert "$BOARD" "Bounding plymouth-quit-wait timeout (headless boot deadlock)" "info"
+
+	mkdir -p "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d"
+	cat > "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d/10-timeout.conf" <<- EOF
+		[Service]
+		# Overrides the stock TimeoutSec=0 (infinite)
+		TimeoutStartSec=10
+	EOF
+
+}
+
 # Auto-mount USB storage under /media/<first-user>/ (DE-agnostic)
 function post_family_tweaks__recomputer_usb_auto_mount() {
 	if [[ "${SEEED_AUTOMOUNT_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
