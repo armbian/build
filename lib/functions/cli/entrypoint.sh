@@ -45,6 +45,13 @@ function cli_entrypoint() {
 	apply_cmdline_params_to_env "early" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
 	# From here on, no more ${1} or stuff. We've parsed it all into ARMBIAN_PARSED_CMDLINE_PARAMS or ARMBIAN_NON_PARAM_ARGS and ARMBIAN_COMMAND.
 
+	# Normalize renamed switches now, while the command line is all we have.
+	# The pre_run loop and the PREFER_DOCKER / DOCKER_NICE checks below read
+	# ARMBIAN_PARSED_CMDLINE_PARAMS directly, so an alias that only reached the
+	# environment would be invisible to them. Config files are handled by the
+	# second pass further down, once they have been sourced.
+	apply_deprecated_switch_aliases
+
 	# Re-initialize logging, to take into account the new environment after parsing cmdline params.
 	logging_init
 
@@ -210,6 +217,7 @@ function cli_entrypoint() {
 	done
 
 	# Early check for deprecations
+	apply_deprecated_switch_aliases # forward renamed switches to their new names, with a warning (backward compat)
 	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
