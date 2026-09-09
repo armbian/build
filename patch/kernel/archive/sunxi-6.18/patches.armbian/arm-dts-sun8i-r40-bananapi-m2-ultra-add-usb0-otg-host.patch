@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ell <guardwire2@gmail.com>
+Date: Tue, 9 Sep 2026 00:00:00 +0000
+Subject: arm: dts: sun8i-r40: bananapi-m2-ultra: enable USB0 OTG as host
+
+Mainline sun8i-r40.dtsi defines ehci1/ohci1 (USB1) etc. but has no
+ehci0/ohci0 nodes for USB0 (the OTG/micro-USB port) at all, so it
+cannot be used as a host port on any sun8i-r40 board.
+
+Add the missing ehci0/ohci0 nodes at 0x1c14000/0x1c14400 to the shared
+dtsi, disabled by default (matching every other USB controller in this
+file), then enable them for Banana Pi M2 Ultra specifically.
+
+Two fixes from review (CodeRabbit on PR #10636), both verified against
+real driver/board source, not just applied on trust:
+
+- Added `dr_mode = "host"` to both ehci0/ohci0. Confirmed by reading
+  drivers/phy/allwinner/phy-sun4i-usb.c: it calls
+  of_usb_get_dr_mode_by_phy() to find dr_mode from whichever consumer
+  references phy index 0, and sun4i_usb_phy0_get_id_det() treats the
+  unset/UNKNOWN case the same as USB_DR_MODE_PERIPHERAL (falls into
+  the `default:` case, returns 1 = id-not-grounded = device mode) -
+  without this property PHY0 would route to the peripheral/MUSB path
+  regardless of ehci0/ohci0 existing in the DT.
+- Wired VBUS through the AXP221 PMIC's dedicated `drivevbus` regulator
+  (`x-powers,drive-vbus-en` on &axp22x, `usb0_vbus-supply =
+  <&reg_drivevbus>` on &usbphy) instead of the board's generic
+  `reg_vcc5v0` rail used for USB1/USB2. This board's USB0_DRVVBUS
+  signal is wired to both the PMIC's N_VBUSEN pin and SoC GPIO PI13,
+  and upstream discussion for other sun4i-family boards with the same
+  PMIC (see linux-arm-kernel/devicetree list history for this exact
+  board) confirms VBUS control is meant to go through the PMIC here,
+  not a generic GPIO-switched rail - PI13 is left unconfigured
+  (defaults to tri-state/input at reset, matching the "leave as input,
+  shared signal" pattern from that discussion) since nothing else in
+  this tree claims it.
+
+Node definitions ported from a non-mainline Armbian legacy/BSP tree
+for this board, which does wire USB0 up as EHCI+OHCI host; clock/reset
+macros were cross-checked against the mainline CCU binding headers and
+match that tree's raw register values exactly. Added an
+RST_BUS_OHCI0 reset line the source tree's node was missing, matching
+the pattern already used by the OHCI1/OHCI2 nodes in this same file.
+
+Tested booting on a physical Banana Pi M2 Ultra with USB0 enabled as
+host and the original (pre-fix) VBUS wiring; the dr_mode/drivevbus
+corrections above are verified against driver source and upstream
+mailing-list precedent for this exact board but not yet re-tested
+physically with an actual USB device plugged into port 0 - will update
+if/when that's done.
+---
+--- a/arch/arm/boot/dts/allwinner/sun8i-r40-bananapi-m2-ultra.dts
++++ b/arch/arm/boot/dts/allwinner/sun8i-r40-bananapi-m2-ultra.dts
+@@ -123,4 +123,8 @@
+ };
+ 
++&ehci0 {
++	status = "okay";
++};
++
+ &ehci1 {
+ 	status = "okay";
+@@ -165,4 +169,5 @@
+ 		interrupt-parent = <&nmi_intc>;
+ 		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
++		x-powers,drive-vbus-en;
+ 	};
+ };
+@@ -200,4 +205,8 @@
+ };
+ 
++&ohci0 {
++	status = "okay";
++};
++
+ &ohci1 {
+ 	status = "okay";
+@@ -299,4 +308,8 @@
+ };
+ 
++&reg_drivevbus {
++	status = "okay";
++};
++
+ &reg_eldo3 {
+ 	regulator-min-microvolt = <1200000>;
+@@ -335,4 +348,5 @@
+ 
+ &usbphy {
++	usb0_vbus-supply = <&reg_drivevbus>;
+ 	usb1_vbus-supply = <&reg_vcc5v0>;
+ 	usb2_vbus-supply = <&reg_vcc5v0>;
+--- a/arch/arm/boot/dts/allwinner/sun8i-r40.dtsi
++++ b/arch/arm/boot/dts/allwinner/sun8i-r40.dtsi
+@@ -431,4 +431,29 @@
+ 		};
+ 
++		ehci0: usb@1c14000 {
++			compatible = "allwinner,sun8i-r40-ehci", "generic-ehci";
++			reg = <0x01c14000 0x100>;
++			interrupts = <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_EHCI0>;
++			resets = <&ccu RST_BUS_EHCI0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			dr_mode = "host";
++			status = "disabled";
++		};
++
++		ohci0: usb@1c14400 {
++			compatible = "allwinner,sun8i-r40-ohci", "generic-ohci";
++			reg = <0x01c14400 0x100>;
++			interrupts = <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI0>,
++				 <&ccu CLK_USB_OHCI0>;
++			resets = <&ccu RST_BUS_OHCI0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			dr_mode = "host";
++			status = "disabled";
++		};
++
+ 		crypto: crypto@1c15000 {
+ 			compatible = "allwinner,sun8i-r40-crypto";
+--
+Armbian
