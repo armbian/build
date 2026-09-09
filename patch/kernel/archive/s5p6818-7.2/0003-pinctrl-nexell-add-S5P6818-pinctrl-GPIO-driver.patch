@@ -1,0 +1,4295 @@
+From 2bddc0bbe925c34624a9ae4732ddf0d979eef30e Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 15:02:19 +0200
+Subject: [PATCH 03/12] pinctrl: nexell: add S5P6818 pinctrl + GPIO driver
+
+Pin controller and GPIO banks (A-E + ALIVE) for the Nexell S5P6818: ALTFN mux,
+pull, drive-strength and GPIO in/out. Ported from the vendor BSP to the mainline
+nexell pinctrl framework. Validated on hardware (RGMII pin mux for the GbE).
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/pinctrl/Kconfig                  |    1 +
+ drivers/pinctrl/Makefile                 |    1 +
+ drivers/pinctrl/nexell/Kconfig           |   12 +
+ drivers/pinctrl/nexell/Makefile          |    3 +
+ drivers/pinctrl/nexell/pinctrl-nexell.c  | 1203 ++++++++++++
+ drivers/pinctrl/nexell/pinctrl-nexell.h  |  222 +++
+ drivers/pinctrl/nexell/pinctrl-s5pxx18.c | 2143 ++++++++++++++++++++++
+ drivers/pinctrl/nexell/pinctrl-s5pxx18.h |   99 +
+ drivers/pinctrl/nexell/s5pxx18-gpio.h    |  520 ++++++
+ 9 files changed, 4204 insertions(+)
+ create mode 100644 drivers/pinctrl/nexell/Kconfig
+ create mode 100644 drivers/pinctrl/nexell/Makefile
+ create mode 100644 drivers/pinctrl/nexell/pinctrl-nexell.c
+ create mode 100644 drivers/pinctrl/nexell/pinctrl-nexell.h
+ create mode 100644 drivers/pinctrl/nexell/pinctrl-s5pxx18.c
+ create mode 100644 drivers/pinctrl/nexell/pinctrl-s5pxx18.h
+ create mode 100644 drivers/pinctrl/nexell/s5pxx18-gpio.h
+
+diff --git a/drivers/pinctrl/Kconfig b/drivers/pinctrl/Kconfig
+index eda54aa5f..2c645ace7 100644
+--- a/drivers/pinctrl/Kconfig
++++ b/drivers/pinctrl/Kconfig
+@@ -727,4 +727,5 @@ source "drivers/pinctrl/uniphier/Kconfig"
+ source "drivers/pinctrl/visconti/Kconfig"
+ source "drivers/pinctrl/vt8500/Kconfig"
+ 
++source "drivers/pinctrl/nexell/Kconfig"
+ endif
+diff --git a/drivers/pinctrl/Makefile b/drivers/pinctrl/Makefile
+index a35d71135..1db224d83 100644
+--- a/drivers/pinctrl/Makefile
++++ b/drivers/pinctrl/Makefile
+@@ -101,3 +101,4 @@ obj-$(CONFIG_PINCTRL_ULTRARISC)	+= ultrarisc/
+ obj-$(CONFIG_PINCTRL_UNIPHIER)	+= uniphier/
+ obj-$(CONFIG_PINCTRL_VISCONTI)	+= visconti/
+ obj-$(CONFIG_PINCTRL_WMT)	+= vt8500/
++obj-$(CONFIG_PINCTRL_NEXELL)	+= nexell/
+diff --git a/drivers/pinctrl/nexell/Kconfig b/drivers/pinctrl/nexell/Kconfig
+new file mode 100644
+index 000000000..fc5039fa5
+--- /dev/null
++++ b/drivers/pinctrl/nexell/Kconfig
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: GPL-2.0
++config PINCTRL_NEXELL
++	bool
++	select PINMUX
++	select PINCONF
++	select GENERIC_PINCONF
++
++config PINCTRL_S5PXX18
++	bool "Nexell S5PXX18 (S5P6818) pinctrl and GPIO driver"
++	depends on (ARCH_NEXELL || COMPILE_TEST) && OF
++	select PINCTRL_NEXELL
++	default ARCH_NEXELL
+diff --git a/drivers/pinctrl/nexell/Makefile b/drivers/pinctrl/nexell/Makefile
+new file mode 100644
+index 000000000..b7539bba7
+--- /dev/null
++++ b/drivers/pinctrl/nexell/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_PINCTRL_NEXELL)	+= pinctrl-nexell.o
++obj-$(CONFIG_PINCTRL_S5PXX18)	+= pinctrl-s5pxx18.o
+diff --git a/drivers/pinctrl/nexell/pinctrl-nexell.c b/drivers/pinctrl/nexell/pinctrl-nexell.c
+new file mode 100644
+index 000000000..f210836fe
+--- /dev/null
++++ b/drivers/pinctrl/nexell/pinctrl-nexell.c
+@@ -0,0 +1,1203 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Bon-gyu, KOO <freestyle@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/io.h>
++#include <linux/slab.h>
++#include <linux/err.h>
++#include <linux/gpio.h>
++#include <linux/gpio/driver.h>
++#include <linux/irqdomain.h>
++#include <linux/spinlock.h>
++#include <linux/syscore_ops.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++
++#include "../core.h"
++#include "s5pxx18-gpio.h"
++#include "pinctrl-nexell.h"
++
++/* list of all possible config options supported */
++static struct pin_config {
++	const char *property;
++	enum pincfg_type param;
++} cfg_params[] = {
++	{"nexell,pin-pull", PINCFG_TYPE_PULL},
++	{"nexell,pin-strength", PINCFG_TYPE_DRV},
++};
++
++/* Global list of devices (struct nexell_pinctrl_drv_data) */
++static LIST_HEAD(drvdata_list);
++
++static unsigned int pin_base;
++
++static inline struct nexell_pin_bank *gc_to_pin_bank(struct gpio_chip *gc)
++{
++	return container_of(gc, struct nexell_pin_bank, gpio_chip);
++}
++
++static int nexell_get_group_count(struct pinctrl_dev *pctldev)
++{
++	struct nexell_pinctrl_drv_data *pmx = pinctrl_dev_get_drvdata(pctldev);
++
++	return pmx->nr_groups;
++}
++
++static const char *nexell_get_group_name(struct pinctrl_dev *pctldev,
++					 unsigned group)
++{
++	struct nexell_pinctrl_drv_data *pmx = pinctrl_dev_get_drvdata(pctldev);
++
++	return pmx->pin_groups[group].name;
++}
++
++static int nexell_get_group_pins(struct pinctrl_dev *pctldev, unsigned group,
++				 const unsigned **pins, unsigned *num_pins)
++{
++	struct nexell_pinctrl_drv_data *pmx = pinctrl_dev_get_drvdata(pctldev);
++
++	*pins = pmx->pin_groups[group].pins;
++	*num_pins = pmx->pin_groups[group].num_pins;
++
++	return 0;
++}
++
++static int reserve_map(struct device *dev, struct pinctrl_map **map,
++		       unsigned *reserved_maps, unsigned *num_maps,
++		       unsigned reserve)
++{
++	unsigned old_num = *reserved_maps;
++	unsigned new_num = *num_maps + reserve;
++	struct pinctrl_map *new_map;
++
++	if (old_num >= new_num)
++		return 0;
++
++	new_map = krealloc(*map, sizeof(*new_map) * new_num, GFP_KERNEL);
++	if (!new_map) {
++		dev_err(dev, "krealloc(map) failed\n");
++		return -ENOMEM;
++	}
++
++	memset(new_map + old_num, 0, (new_num - old_num) * sizeof(*new_map));
++
++	*map = new_map;
++	*reserved_maps = new_num;
++
++	return 0;
++}
++
++static int add_map_mux(struct pinctrl_map **map, unsigned *reserved_maps,
++		       unsigned *num_maps, const char *group,
++		       const char *function)
++{
++	if (WARN_ON(*num_maps == *reserved_maps))
++		return -ENOSPC;
++
++	(*map)[*num_maps].type = PIN_MAP_TYPE_MUX_GROUP;
++	(*map)[*num_maps].data.mux.group = group;
++	(*map)[*num_maps].data.mux.function = function;
++	(*num_maps)++;
++
++	return 0;
++}
++
++static int add_map_configs(struct device *dev, struct pinctrl_map **map,
++			   unsigned *reserved_maps, unsigned *num_maps,
++			   const char *group, unsigned long *configs,
++			   unsigned num_configs)
++{
++	unsigned long *dup_configs;
++
++	if (WARN_ON(*num_maps == *reserved_maps))
++		return -ENOSPC;
++
++	dup_configs =
++	    kmemdup(configs, num_configs * sizeof(*dup_configs), GFP_KERNEL);
++	if (!dup_configs) {
++		dev_err(dev, "kmemdup(configs) failed\n");
++		return -ENOMEM;
++	}
++
++	(*map)[*num_maps].type = PIN_MAP_TYPE_CONFIGS_GROUP;
++	(*map)[*num_maps].data.configs.group_or_pin = group;
++	(*map)[*num_maps].data.configs.configs = dup_configs;
++	(*map)[*num_maps].data.configs.num_configs = num_configs;
++	(*num_maps)++;
++
++	return 0;
++}
++
++static int add_config(struct device *dev, unsigned long **configs,
++		      unsigned *num_configs, unsigned long config)
++{
++	unsigned old_num = *num_configs;
++	unsigned new_num = old_num + 1;
++	unsigned long *new_configs;
++
++	new_configs =
++	    krealloc(*configs, sizeof(*new_configs) * new_num, GFP_KERNEL);
++	if (!new_configs) {
++		dev_err(dev, "krealloc(configs) failed\n");
++		return -ENOMEM;
++	}
++
++	new_configs[old_num] = config;
++
++	*configs = new_configs;
++	*num_configs = new_num;
++
++	return 0;
++}
++
++static void nexell_dt_free_map(struct pinctrl_dev *pctldev,
++			       struct pinctrl_map *map, unsigned num_maps)
++{
++	int i;
++
++	for (i = 0; i < num_maps; i++)
++		if (map[i].type == PIN_MAP_TYPE_CONFIGS_GROUP)
++			kfree(map[i].data.configs.configs);
++
++	kfree(map);
++}
++
++static int nexell_dt_subnode_to_map(struct nexell_pinctrl_drv_data *drvdata,
++				    struct device *dev, struct device_node *np,
++				    struct pinctrl_map **map,
++				    unsigned *reserved_maps, unsigned *num_maps)
++{
++	int ret, i;
++	u32 val;
++	unsigned long config;
++	unsigned long *configs = NULL;
++	unsigned num_configs = 0;
++	unsigned reserve;
++	struct property *prop;
++	const char *group;
++	bool has_func = false;
++
++	ret = of_property_read_u32(np, "nexell,pin-function", &val);
++	if (!ret)
++		has_func = true;
++
++	for (i = 0; i < ARRAY_SIZE(cfg_params); i++) {
++		ret = of_property_read_u32(np, cfg_params[i].property, &val);
++		if (!ret) {
++			config = PINCFG_PACK(cfg_params[i].param, val);
++			ret = add_config(dev, &configs, &num_configs, config);
++			if (ret < 0)
++				goto exit;
++			/* EINVAL=missing, which is fine since it's optional */
++		} else if (ret != -EINVAL) {
++			dev_err(dev, "could not parse property %s\n",
++				cfg_params[i].property);
++		}
++	}
++
++	reserve = 0;
++	if (has_func)
++		reserve++;
++	if (num_configs)
++		reserve++;
++	ret = of_property_count_strings(np, "nexell,pins");
++	if (ret < 0) {
++		dev_err(dev, "could not parse property nexell,pins\n");
++		goto exit;
++	}
++	reserve *= ret;
++
++	ret = reserve_map(dev, map, reserved_maps, num_maps, reserve);
++	if (ret < 0)
++		goto exit;
++
++	of_property_for_each_string(np, "nexell,pins", prop, group) {
++		if (has_func) {
++			ret = add_map_mux(map, reserved_maps, num_maps, group,
++					  np->full_name);
++			if (ret < 0)
++				goto exit;
++		}
++
++		if (num_configs) {
++			ret = add_map_configs(dev, map, reserved_maps, num_maps,
++					      group, configs, num_configs);
++			if (ret < 0)
++				goto exit;
++		}
++	}
++
++	ret = 0;
++
++exit:
++	kfree(configs);
++	return ret;
++}
++
++static int nexell_dt_node_to_map(struct pinctrl_dev *pctldev,
++				 struct device_node *np_config,
++				 struct pinctrl_map **map, unsigned *num_maps)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	unsigned reserved_maps;
++	struct device_node *np;
++	int ret;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++
++	reserved_maps = 0;
++	*map = NULL;
++	*num_maps = 0;
++
++	if (!of_get_child_count(np_config))
++		return nexell_dt_subnode_to_map(drvdata, pctldev->dev,
++						np_config, map, &reserved_maps,
++						num_maps);
++
++	for_each_child_of_node(np_config, np) {
++		ret = nexell_dt_subnode_to_map(drvdata, pctldev->dev, np, map,
++					       &reserved_maps, num_maps);
++		if (ret < 0) {
++			nexell_dt_free_map(pctldev, *map, *num_maps);
++			return ret;
++		}
++	}
++
++	return 0;
++}
++
++/* list of pinctrl callbacks for the pinctrl core */
++static const struct pinctrl_ops nexell_pctrl_ops = {
++	.get_groups_count = nexell_get_group_count,
++	.get_group_name = nexell_get_group_name,
++	.get_group_pins = nexell_get_group_pins,
++	.dt_node_to_map = nexell_dt_node_to_map,
++	.dt_free_map = nexell_dt_free_map,
++};
++
++/* check if the selector is a valid pin function selector */
++static int nexell_get_functions_count(struct pinctrl_dev *pctldev)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	return drvdata->nr_functions;
++}
++
++/* return the name of the pin function specified */
++static const char *nexell_pinmux_get_fname(struct pinctrl_dev *pctldev,
++					   unsigned selector)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	return drvdata->pmx_functions[selector].name;
++}
++
++/* return the groups associated for the specified function selector */
++static int nexell_pinmux_get_groups(struct pinctrl_dev *pctldev,
++				    unsigned selector,
++				    const char *const **groups,
++				    unsigned *const num_groups)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	*groups = drvdata->pmx_functions[selector].groups;
++	*num_groups = drvdata->pmx_functions[selector].num_groups;
++	return 0;
++}
++
++/*
++ * given a pin number that is local to a pin controller, find out the pin bank
++ * and the register base of the pin bank.
++ */
++static void pin_to_reg_bank(struct nexell_pinctrl_drv_data *drvdata,
++			    unsigned pin, void __iomem **reg, u32 *offset,
++			    struct nexell_pin_bank **bank)
++{
++	struct nexell_pin_bank *b;
++
++	b = drvdata->ctrl->pin_banks;
++
++	while ((pin >= b->pin_base) && ((b->pin_base + b->nr_pins - 1) < pin))
++		b++;
++
++	*reg = b->virt_base;
++	*offset = pin - b->pin_base;
++	if (bank)
++		*bank = b;
++}
++
++/* enable or disable a pinmux function */
++static void nexell_pinmux_setup(struct pinctrl_dev *pctldev, unsigned selector,
++				unsigned group, bool enable)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	const struct nexell_pmx_func *func;
++	const struct nexell_pin_group *grp;
++	int io;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	func = &drvdata->pmx_functions[selector];
++	grp = &drvdata->pin_groups[group];
++
++	io = grp->pins[0];
++	nx_soc_gpio_set_io_func(io, func->val);
++}
++
++/* enable a specified pinmux by writing to registers */
++static int nexell_pinmux_set_mux(struct pinctrl_dev *pctldev, unsigned selector,
++				 unsigned group)
++{
++	nexell_pinmux_setup(pctldev, selector, group, true);
++	return 0;
++}
++
++/* list of pinmux callbacks for the pinmux vertical in pinctrl core */
++static const struct pinmux_ops nexell_pinmux_ops = {
++	.get_functions_count = nexell_get_functions_count,
++	.get_function_name = nexell_pinmux_get_fname,
++	.get_function_groups = nexell_pinmux_get_groups,
++	.set_mux = nexell_pinmux_set_mux,
++};
++
++/* set or get the pin config settings for a specified pin */
++static int nexell_soc_write_pin(unsigned int io,
++				enum pincfg_type cfg_type,
++				u32 data)
++{
++	if (cfg_type >= PINCFG_TYPE_NUM)
++		return -EINVAL;
++
++	switch (cfg_type) {
++	case PINCFG_TYPE_DAT:
++		nx_soc_gpio_set_out_value(io, data);
++		break;
++	case PINCFG_TYPE_PULL:
++		nx_soc_gpio_set_io_pull(io, data);
++		break;
++	case PINCFG_TYPE_DRV:
++		nx_soc_gpio_set_io_drv(io, data);
++		break;
++	case PINCFG_TYPE_FUNC:
++		nx_soc_gpio_set_io_func(io, data);
++		break;
++	case PINCFG_TYPE_DIR:
++		nx_soc_gpio_set_io_dir(io, data);
++		break;
++	default:
++		break;
++	}
++
++	return 0;
++}
++
++static int nexell_soc_read_pin(unsigned int io,
++			       enum pincfg_type cfg_type,
++			       u32 *data)
++{
++	if (cfg_type >= PINCFG_TYPE_NUM)
++		return -EINVAL;
++
++	switch (cfg_type) {
++	case PINCFG_TYPE_DAT:
++		*data = nx_soc_gpio_get_in_value(io);
++		break;
++	case PINCFG_TYPE_PULL:
++		*data = nx_soc_gpio_get_io_pull(io);
++		break;
++	case PINCFG_TYPE_DRV:
++		*data = nx_soc_gpio_get_io_drv(io);
++		break;
++	case PINCFG_TYPE_DIR:
++		*data = nx_soc_gpio_get_io_dir(io);
++		break;
++	case PINCFG_TYPE_FUNC:
++		*data = nx_soc_gpio_get_io_func(io);
++		break;
++	default:
++		break;
++	}
++
++	return 0;
++}
++
++static int nexell_pinconf_rw(struct pinctrl_dev *pctldev, unsigned int pin,
++			     unsigned long *config, bool set)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	struct nexell_pin_bank *bank;
++	void __iomem *reg_base;
++	enum pincfg_type cfg_type = PINCFG_UNPACK_TYPE(*config);
++	u32 pin_offset;
++	u32 cfg_value;
++	int io;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	pin_to_reg_bank(drvdata, pin - drvdata->ctrl->base, &reg_base,
++			&pin_offset, &bank);
++
++	io = bank->grange.pin_base + pin_offset;
++
++	if (cfg_type >= PINCFG_TYPE_NUM)
++		return -EINVAL;
++
++	if (set) {
++		cfg_value = PINCFG_UNPACK_VALUE(*config);
++		nexell_soc_write_pin(io, cfg_type, cfg_value);
++	} else {
++		nexell_soc_read_pin(io, cfg_type, &cfg_value);
++		*config = PINCFG_PACK(cfg_type, cfg_value);
++	}
++
++	return 0;
++}
++
++/* set the pin config settings for a specified pin */
++static int nexell_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
++			      unsigned long *configs, unsigned num_configs)
++{
++	int i, ret;
++
++	for (i = 0; i < num_configs; i++) {
++		ret = nexell_pinconf_rw(pctldev, pin, &configs[i], true);
++		if (ret < 0)
++			return ret;
++	} /* for each config */
++
++	return 0;
++}
++
++/* get the pin config settings for a specified pin */
++static int nexell_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
++			      unsigned long *config)
++{
++	return nexell_pinconf_rw(pctldev, pin, config, false);
++}
++
++/* set the pin config settings for a specified pin group */
++static int nexell_pinconf_group_set(struct pinctrl_dev *pctldev, unsigned group,
++				    unsigned long *configs,
++				    unsigned num_configs)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	const unsigned int *pins;
++	unsigned int cnt;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	pins = drvdata->pin_groups[group].pins;
++
++	for (cnt = 0; cnt < drvdata->pin_groups[group].num_pins; cnt++)
++		nexell_pinconf_set(pctldev, pins[cnt], configs, num_configs);
++
++	return 0;
++}
++
++/* get the pin config settings for a specified pin group */
++static int nexell_pinconf_group_get(struct pinctrl_dev *pctldev,
++				    unsigned int group, unsigned long *config)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	const unsigned int *pins;
++
++	drvdata = pinctrl_dev_get_drvdata(pctldev);
++	pins = drvdata->pin_groups[group].pins;
++	nexell_pinconf_get(pctldev, pins[0], config);
++	return 0;
++}
++
++/* list of pinconfig callbacks for pinconfig vertical in the pinctrl code */
++static const struct pinconf_ops nexell_pinconf_ops = {
++	.pin_config_get = nexell_pinconf_get,
++	.pin_config_set = nexell_pinconf_set,
++	.pin_config_group_get = nexell_pinconf_group_get,
++	.pin_config_group_set = nexell_pinconf_group_set,
++};
++
++/* gpiolib gpio_set callback function */
++static int nx_gpio_set(struct gpio_chip *gc, unsigned offset, int value)
++{
++	struct nexell_pin_bank *bank = gc_to_pin_bank(gc);
++	int io;
++
++	io = bank->grange.pin_base + offset;
++	nx_soc_gpio_set_out_value(io, value);
++	return 0;
++}
++
++/* gpiolib gpio_get callback function */
++static int nx_gpio_get(struct gpio_chip *gc, unsigned offset)
++{
++	u32 data;
++	struct nexell_pin_bank *bank = gc_to_pin_bank(gc);
++	int io;
++
++	io = bank->grange.pin_base + offset;
++	data = nx_soc_gpio_get_in_value(io);
++
++	return data;
++}
++
++/*
++ * The calls to gpio_direction_output() and gpio_direction_input()
++ * leads to this function call.
++ */
++static int nx_gpio_set_direction(struct gpio_chip *gc, unsigned offset,
++				 bool input)
++{
++	struct nexell_pin_bank *bank;
++	struct nexell_pinctrl_drv_data *drvdata;
++	int io;
++	int fn;
++
++	bank = gc_to_pin_bank(gc);
++	drvdata = bank->drvdata;
++
++	io = bank->grange.pin_base + offset;
++	fn = nx_soc_gpio_get_altnum(io);
++
++	/*nx_soc_gpio_set_io_func(io, fn);*/
++	nx_soc_gpio_set_io_dir(io, input ? 0 : 1);
++
++	return 0;
++}
++
++/* gpiolib gpio_direction_input callback function. */
++static int nx_gpio_direction_input(struct gpio_chip *gc, unsigned offset)
++{
++	return nx_gpio_set_direction(gc, offset, true);
++}
++
++/* gpiolib gpio_direction_output callback function. */
++static int nx_gpio_direction_output(struct gpio_chip *gc, unsigned offset,
++				    int value)
++{
++	nx_gpio_set(gc, offset, value);
++	return nx_gpio_set_direction(gc, offset, false);
++}
++
++/*
++ * gpiolib gpio_to_irq callback function. Creates a mapping between a GPIO pin
++ * and a virtual IRQ, if not already present.
++ */
++static int nx_gpio_to_irq(struct gpio_chip *gc, unsigned offset)
++{
++	struct nexell_pin_bank *bank = gc_to_pin_bank(gc);
++	unsigned int virq;
++
++	if (!bank->irq_domain)
++		return -ENXIO;
++
++	virq = irq_create_mapping(bank->irq_domain, offset);
++
++	return (virq) ?: -ENXIO;
++}
++
++static struct nexell_pin_group *
++nexell_pinctrl_create_groups(struct device *dev,
++			     struct nexell_pinctrl_drv_data *drvdata,
++			     unsigned int *cnt)
++{
++	struct pinctrl_desc *ctrldesc = &drvdata->pctl;
++	struct nexell_pin_group *groups, *grp;
++	const struct pinctrl_pin_desc *pdesc;
++	int i;
++
++	groups =
++	    devm_kzalloc(dev, ctrldesc->npins * sizeof(*groups), GFP_KERNEL);
++	if (!groups)
++		return ERR_PTR(-EINVAL);
++	grp = groups;
++
++	pdesc = ctrldesc->pins;
++	for (i = 0; i < ctrldesc->npins; ++i, ++pdesc, ++grp) {
++		grp->name = pdesc->name;
++		grp->pins = &pdesc->number;
++		grp->num_pins = 1;
++	}
++
++	*cnt = ctrldesc->npins;
++	return groups;
++}
++
++static int nexell_pinctrl_create_function(struct device *dev,
++				struct nexell_pinctrl_drv_data *drvdata,
++				struct device_node *func_np,
++				struct nexell_pmx_func *func)
++{
++	int npins;
++	int ret;
++	int i;
++
++	if (of_property_read_u32(func_np, "nexell,pin-function", &func->val))
++		return 0;
++
++	npins = of_property_count_strings(func_np, "nexell,pins");
++	if (npins < 1) {
++		dev_err(dev, "invalid pin list in %s node", func_np->name);
++		return -EINVAL;
++	}
++
++	func->name = func_np->full_name;
++
++	func->groups = devm_kzalloc(dev, npins * sizeof(char *), GFP_KERNEL);
++	if (!func->groups)
++		return -ENOMEM;
++
++	for (i = 0; i < npins; ++i) {
++		const char *gname;
++
++		ret = of_property_read_string_index(func_np, "nexell,pins", i,
++						    &gname);
++		if (ret) {
++			dev_err(dev,
++				"failed to read pin name %d from %s node\n", i,
++				func_np->name);
++			return ret;
++		}
++
++		func->groups[i] = gname;
++	}
++
++	func->num_groups = npins;
++	return 1;
++}
++
++static struct nexell_pmx_func *
++nexell_pinctrl_create_functions(struct device *dev,
++				struct nexell_pinctrl_drv_data *drvdata,
++				unsigned int *cnt)
++{
++	struct nexell_pmx_func *functions, *func;
++	struct device_node *dev_np = dev->of_node;
++	struct device_node *cfg_np;
++	unsigned int func_cnt = 0;
++	int ret;
++
++	/*
++	 * Iterate over all the child nodes of the pin controller node
++	 * and create pin groups and pin function lists.
++	 */
++	for_each_child_of_node(dev_np, cfg_np) {
++		struct device_node *func_np;
++
++		if (!of_get_child_count(cfg_np)) {
++			if (!of_find_property(cfg_np, "nexell,pin-function",
++					      NULL))
++				continue;
++			++func_cnt;
++			continue;
++		}
++
++		for_each_child_of_node(cfg_np, func_np) {
++			if (!of_find_property(func_np, "nexell,pin-function",
++					      NULL))
++				continue;
++			++func_cnt;
++		}
++	}
++
++	functions =
++	    devm_kzalloc(dev, func_cnt * sizeof(*functions), GFP_KERNEL);
++	if (!functions) {
++		dev_err(dev, "failed to allocate memory for function list\n");
++		return ERR_PTR(-EINVAL);
++	}
++	func = functions;
++
++	/*
++	 * Iterate over all the child nodes of the pin controller node
++	 * and create pin groups and pin function lists.
++	 */
++	func_cnt = 0;
++	for_each_child_of_node(dev_np, cfg_np) {
++		struct device_node *func_np;
++
++		if (!of_get_child_count(cfg_np)) {
++			ret = nexell_pinctrl_create_function(dev, drvdata,
++							     cfg_np, func);
++			if (ret < 0)
++				return ERR_PTR(ret);
++			if (ret > 0) {
++				++func;
++				++func_cnt;
++			}
++			continue;
++		}
++
++		for_each_child_of_node(cfg_np, func_np) {
++			ret = nexell_pinctrl_create_function(dev, drvdata,
++							     func_np, func);
++			if (ret < 0)
++				return ERR_PTR(ret);
++			if (ret > 0) {
++				++func;
++				++func_cnt;
++			}
++		}
++	}
++
++	*cnt = func_cnt;
++	return functions;
++}
++
++/*
++ * Parse the information about all the available pin groups and pin functions
++ * from device node of the pin-controller. A pin group is formed with all
++ * the pins listed in the "nexell,pins" property.
++ */
++static int nexell_pinctrl_parse_dt(struct platform_device *pdev,
++				   struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct device *dev = &pdev->dev;
++	struct nexell_pin_group *groups;
++	struct nexell_pmx_func *functions;
++	unsigned int grp_cnt = 0, func_cnt = 0;
++
++	groups = nexell_pinctrl_create_groups(dev, drvdata, &grp_cnt);
++	if (IS_ERR(groups)) {
++		dev_err(dev, "failed to parse pin groups\n");
++		return PTR_ERR(groups);
++	}
++
++	functions = nexell_pinctrl_create_functions(dev, drvdata, &func_cnt);
++	if (IS_ERR(functions)) {
++		dev_err(dev, "failed to parse pin functions\n");
++		return PTR_ERR(groups);
++	}
++
++	drvdata->pin_groups = groups;
++	drvdata->nr_groups = grp_cnt;
++	drvdata->pmx_functions = functions;
++	drvdata->nr_functions = func_cnt;
++
++	return 0;
++}
++
++/* register the pinctrl interface with the pinctrl subsystem */
++static int nexell_pinctrl_register(struct platform_device *pdev,
++				   struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct pinctrl_desc *ctrldesc = &drvdata->pctl;
++	struct pinctrl_pin_desc *pindesc, *pdesc;
++	struct nexell_pin_bank *pin_bank;
++	char *pin_names;
++	int pin, bank, ret;
++
++	ctrldesc->name = "nexell-pinctrl";
++	ctrldesc->owner = THIS_MODULE;
++	ctrldesc->pctlops = &nexell_pctrl_ops;
++	ctrldesc->pmxops = &nexell_pinmux_ops;
++	ctrldesc->confops = &nexell_pinconf_ops;
++
++	pindesc = devm_kzalloc(
++	    &pdev->dev, sizeof(*pindesc) * drvdata->ctrl->nr_pins, GFP_KERNEL);
++	if (!pindesc)
++		return -ENOMEM;
++	ctrldesc->pins = pindesc;
++	ctrldesc->npins = drvdata->ctrl->nr_pins;
++
++	/* dynamically populate the pin number and pin name for pindesc */
++	for (pin = 0, pdesc = pindesc; pin < ctrldesc->npins; pin++, pdesc++)
++		pdesc->number = pin + drvdata->ctrl->base;
++
++	/*
++	 * allocate space for storing the dynamically generated names for all
++	 * the pins which belong to this pin-controller.
++	 */
++	pin_names = devm_kzalloc(&pdev->dev, sizeof(char) * PIN_NAME_LENGTH *
++						 drvdata->ctrl->nr_pins,
++				 GFP_KERNEL);
++	if (!pin_names) {
++		dev_err(&pdev->dev, "mem alloc for pin names failed\n");
++		return -ENOMEM;
++	}
++
++	/* for each pin, the name of the pin is pin-bank name + pin number */
++	for (bank = 0; bank < drvdata->ctrl->nr_banks; bank++) {
++		pin_bank = &drvdata->ctrl->pin_banks[bank];
++		for (pin = 0; pin < pin_bank->nr_pins; pin++) {
++			sprintf(pin_names, "%s-%d", pin_bank->name, pin);
++			pdesc = pindesc + pin_bank->pin_base + pin;
++			pdesc->name = pin_names;
++			pin_names += PIN_NAME_LENGTH;
++		}
++	}
++
++	ret = nexell_pinctrl_parse_dt(pdev, drvdata);
++	if (ret)
++		return ret;
++
++	drvdata->pctl_dev = pinctrl_register(ctrldesc, &pdev->dev, drvdata);
++	if (!drvdata->pctl_dev) {
++		dev_err(&pdev->dev, "could not register pinctrl driver\n");
++		return -EINVAL;
++	}
++
++	for (bank = 0; bank < drvdata->ctrl->nr_banks; ++bank) {
++		pin_bank = &drvdata->ctrl->pin_banks[bank];
++		pin_bank->grange.name = pin_bank->name;
++		pin_bank->grange.id = bank;
++		pin_bank->grange.pin_base =
++		    drvdata->ctrl->base + pin_bank->pin_base;
++		pin_bank->grange.base = pin_bank->gpio_chip.base;
++		pin_bank->grange.npins = pin_bank->gpio_chip.ngpio;
++		pin_bank->grange.gc = &pin_bank->gpio_chip;
++		pinctrl_add_gpio_range(drvdata->pctl_dev, &pin_bank->grange);
++	}
++
++	return 0;
++}
++
++static int nx_gpio_request(struct gpio_chip *gc, unsigned offset)
++{
++	struct nexell_pin_bank *bank;
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	int io;
++	int fn;
++
++	bank = gc_to_pin_bank(gc);
++	drvdata = bank->drvdata;
++
++	io = bank->grange.pin_base + offset;
++	fn = nx_soc_gpio_get_altnum(io);
++
++	nx_soc_gpio_set_io_func(io, fn);
++
++	return pinctrl_gpio_request(gc, offset);
++}
++
++static void nx_gpio_free(struct gpio_chip *gc, unsigned offset)
++{
++	pinctrl_gpio_free(gc, offset);
++}
++
++static const struct gpio_chip nexell_gpiolib_chip = {
++	.request = nx_gpio_request,
++	.free = nx_gpio_free,
++	.set = nx_gpio_set,
++	.get = nx_gpio_get,
++	.direction_input = nx_gpio_direction_input,
++	.direction_output = nx_gpio_direction_output,
++	.to_irq = nx_gpio_to_irq,
++	.owner = THIS_MODULE,
++};
++
++/* register the gpiolib interface with the gpiolib subsystem */
++static int nexell_gpiolib_register(struct platform_device *pdev,
++				   struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++	struct nexell_pin_bank *bank = ctrl->pin_banks;
++	struct gpio_chip *gc;
++	int ret;
++	int i;
++
++	pr_debug("gpiolib register ctr: %p, nr banks: %d\n", ctrl,
++		 ctrl->nr_banks);
++
++	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
++		bank->gpio_chip = nexell_gpiolib_chip;
++
++		gc = &bank->gpio_chip;
++		gc->base = ctrl->base + bank->pin_base;
++		gc->ngpio = bank->nr_pins;
++		gc->parent = &pdev->dev;
++		gc->fwnode = of_fwnode_handle(bank->of_node);
++		gc->label = bank->name;
++
++		ret = gpiochip_add_data(gc, bank);
++		if (ret) {
++			dev_err(
++			    &pdev->dev,
++			    "failed to register gpio_chip %s, error code: %d\n",
++			    gc->label, ret);
++			goto fail;
++		}
++	}
++
++	return 0;
++
++fail:
++	for (--i, --bank; i >= 0; --i, --bank)
++		gpiochip_remove(&bank->gpio_chip);
++	return ret;
++}
++
++/* unregister the gpiolib interface with the gpiolib subsystem */
++static int nexell_gpiolib_unregister(struct platform_device *pdev,
++				     struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++	struct nexell_pin_bank *bank = ctrl->pin_banks;
++	int i;
++
++	for (i = 0; i < ctrl->nr_banks; ++i, ++bank)
++		gpiochip_remove(&bank->gpio_chip);
++	return 0;
++}
++
++static const struct of_device_id nexell_pinctrl_dt_match[];
++
++/* retrieve the soc specific data */
++static struct nexell_pin_ctrl *
++nexell_pinctrl_get_soc_data(struct nexell_pinctrl_drv_data *d,
++			    struct platform_device *pdev)
++{
++	int id;
++	const struct of_device_id *match;
++	struct device_node *node = pdev->dev.of_node;
++	struct device_node *np;
++	struct nexell_pin_ctrl *ctrl;
++	struct nexell_pin_bank *bank;
++	int i;
++
++	id = of_alias_get_id(node, "pinctrl");
++	if (id < 0) {
++		dev_err(&pdev->dev, "failed to get alias id\n");
++		return NULL;
++	}
++	match = of_match_node(nexell_pinctrl_dt_match, node);
++	ctrl = (struct nexell_pin_ctrl *)match->data + id;
++
++	bank = ctrl->pin_banks;
++	for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
++		spin_lock_init(&bank->slock);
++		bank->drvdata = d;
++		bank->pin_base = ctrl->nr_pins;
++		ctrl->nr_pins += bank->nr_pins;
++	}
++
++	for_each_child_of_node(node, np) {
++		if (!of_find_property(np, "gpio-controller", NULL))
++			continue;
++		bank = ctrl->pin_banks;
++		for (i = 0; i < ctrl->nr_banks; ++i, ++bank) {
++			if (!strcmp(bank->name, np->name)) {
++				bank->of_node = np;
++				break;
++			}
++		}
++	}
++
++	ctrl->base = pin_base;
++	pin_base += ctrl->nr_pins;
++
++	return ctrl;
++}
++
++static int nexell_pinctrl_probe(struct platform_device *pdev)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++	struct device *dev = &pdev->dev;
++	struct nexell_pin_ctrl *ctrl;
++	struct resource *res;
++	int irq;
++	int ret;
++	int i;
++
++	if (!dev->of_node) {
++		dev_err(dev, "device tree node not found\n");
++		return -ENODEV;
++	}
++
++	drvdata = devm_kzalloc(dev, sizeof(*drvdata), GFP_KERNEL);
++	if (!drvdata)
++		return -ENOMEM;
++
++	ctrl = nexell_pinctrl_get_soc_data(drvdata, pdev);
++	if (!ctrl) {
++		dev_err(&pdev->dev, "driver data not available\n");
++		return -EINVAL;
++	}
++	drvdata->ctrl = ctrl;
++	drvdata->dev = dev;
++
++	for (i = 0;; i++) {
++		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
++		if (!res)
++			break;
++	}
++	if (i != ctrl->nr_banks) {
++		dev_err(&pdev->dev, "bank count mismatch\n");
++		return -EINVAL;
++	}
++
++	for (i = 0; i < ctrl->nr_banks; i++) {
++		struct nexell_pin_bank *bank = &ctrl->pin_banks[i];
++
++		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
++		bank->virt_base = devm_ioremap_resource(&pdev->dev, res);
++		if (IS_ERR(bank->virt_base))
++			return PTR_ERR(bank->virt_base);
++	}
++
++	for (i = 0; i < ctrl->nr_banks; i++) {
++		struct nexell_pin_bank *bank = &ctrl->pin_banks[i];
++
++		if (bank->eint_type == EINT_TYPE_NONE)
++			continue;
++
++		irq = irq_of_parse_and_map(dev->of_node, i);
++		if (irq <= 0) {
++			dev_err(dev, "irq parsing failed\n");
++			return -EINVAL;
++		}
++
++		bank->irq = irq;
++	}
++
++	ret = nexell_gpiolib_register(pdev, drvdata);
++	if (ret)
++		return ret;
++
++	ret = nexell_pinctrl_register(pdev, drvdata);
++	if (ret) {
++		nexell_gpiolib_unregister(pdev, drvdata);
++		return ret;
++	}
++
++	if (ctrl->base_init)
++		ctrl->base_init(drvdata);
++	if (ctrl->gpio_irq_init)
++		ctrl->gpio_irq_init(drvdata);
++	if (ctrl->alive_irq_init)
++		ctrl->alive_irq_init(drvdata);
++
++	platform_set_drvdata(pdev, drvdata);
++
++	/* Add to the global list */
++	list_add_tail(&drvdata->node, &drvdata_list);
++
++	return 0;
++}
++
++#ifdef CONFIG_PM
++
++/**
++ * nexell_pinctrl_suspend_dev - save pinctrl state for suspend for a device
++ *
++ * Save data for all banks handled by this device.
++ */
++static void nexell_pinctrl_suspend_dev(
++	struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++
++	if (ctrl->suspend)
++		ctrl->suspend(drvdata);
++}
++
++/**
++ * nexell_pinctrl_resume_dev - restore pinctrl state from suspend for a device
++ *
++ * Restore one of the banks that was saved during suspend.
++ *
++ * We don't bother doing anything complicated to avoid glitching lines since
++ * we're called before pad retention is turned off.
++ */
++static void nexell_pinctrl_resume_dev(struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++
++	if (ctrl->resume)
++		ctrl->resume(drvdata);
++}
++
++/**
++ * nexell_pinctrl_suspend - save pinctrl state for suspend
++ *
++ * Save data for all banks across all devices.
++ */
++static int nexell_pinctrl_suspend(void)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	list_for_each_entry(drvdata, &drvdata_list, node) {
++		nexell_pinctrl_suspend_dev(drvdata);
++	}
++
++	return 0;
++}
++
++/**
++ * nexell_pinctrl_resume - restore pinctrl state for suspend
++ *
++ * Restore data for all banks across all devices.
++ */
++static void nexell_pinctrl_resume(void)
++{
++	struct nexell_pinctrl_drv_data *drvdata;
++
++	list_for_each_entry_reverse(drvdata, &drvdata_list, node) {
++		nexell_pinctrl_resume_dev(drvdata);
++	}
++}
++
++#else
++#define nexell_pinctrl_suspend		NULL
++#define nexell_pinctrl_resume		NULL
++#endif
++
++/* PM suspend/resume via syscore_ops dropped in the 7.2 port (not needed for
++ * basic pinmux/GPIO; the syscore API changed). Re-add later if suspend needed. */
++#if 0
++static struct syscore_ops nexell_pinctrl_syscore_ops = {
++	.suspend	= nexell_pinctrl_suspend,
++	.resume		= nexell_pinctrl_resume,
++};
++#endif
++
++static const struct of_device_id nexell_pinctrl_dt_match[] = {
++	{ .compatible = "nexell,s5p6818-pinctrl",
++		.data = (void *)s5pxx18_pin_ctrl },
++	{ .compatible = "nexell,s5pxx18-pinctrl",
++		.data = (void *)s5pxx18_pin_ctrl },
++	{},
++};
++MODULE_DEVICE_TABLE(of, nexell_pinctrl_dt_match);
++
++static struct platform_driver nexell_pinctrl_driver = {
++	.probe = nexell_pinctrl_probe,
++	.driver = {
++		.name = "nexell-pinctrl",
++		.owner = THIS_MODULE,
++		.of_match_table = nexell_pinctrl_dt_match,
++	},
++};
++
++static int __init nexell_pinctrl_drv_register(void)
++{
++	/* register_syscore_ops(&nexell_pinctrl_syscore_ops); disabled in 7.2 port */
++
++	return platform_driver_register(&nexell_pinctrl_driver);
++}
++postcore_initcall(nexell_pinctrl_drv_register);
++
++static void __exit nexell_pinctrl_drv_unregister(void)
++{
++	platform_driver_unregister(&nexell_pinctrl_driver);
++}
++module_exit(nexell_pinctrl_drv_unregister);
++
++MODULE_AUTHOR("Bon-gyu, KOO <freestyle@nexell.co.kr>");
++MODULE_DESCRIPTION("Nexell pinctrl driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/pinctrl/nexell/pinctrl-nexell.h b/drivers/pinctrl/nexell/pinctrl-nexell.h
+new file mode 100644
+index 000000000..9c8dc4e9f
+--- /dev/null
++++ b/drivers/pinctrl/nexell/pinctrl-nexell.h
+@@ -0,0 +1,222 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Bon-gyu, KOO <freestyle@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef __PINCTRL_NEXELL_H
++#define __PINCTRL_NEXELL_H
++
++#include <linux/pinctrl/pinctrl.h>
++#include <linux/pinctrl/pinmux.h>
++#include <linux/pinctrl/pinconf.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/pinctrl/machine.h>
++
++#include <linux/gpio.h>
++#include <linux/gpio/driver.h>
++
++/**
++ * enum pincfg_type - possible pin configuration types supported.
++ * @PINCFG_TYPE_FUNC: Function configuration.
++ * @PINCFG_TYPE_DAT: Pin value configuration.
++ * @PINCFG_TYPE_PULL: Pull up/down configuration.
++ * @PINCFG_TYPE_DRV: Drive strength configuration.
++ * @PINCFG_TYPE_DIR: pin direction for GPIO mode.
++ */
++enum pincfg_type {
++	PINCFG_TYPE_FUNC,
++	PINCFG_TYPE_DAT,
++	PINCFG_TYPE_PULL,
++	PINCFG_TYPE_DRV,
++	PINCFG_TYPE_DIR,
++
++	PINCFG_TYPE_NUM
++};
++
++/*
++ * pin configuration (pull up/down and drive strength) type and its value are
++ * packed together into a 16-bits. The upper 8-bits represent the configuration
++ * type and the lower 8-bits hold the value of the configuration type.
++ */
++#define PINCFG_TYPE_MASK		0xFF
++#define PINCFG_VALUE_SHIFT		8
++#define PINCFG_VALUE_MASK		(0xFF << PINCFG_VALUE_SHIFT)
++#define PINCFG_PACK(type, value)	(((value) << PINCFG_VALUE_SHIFT) | type)
++#define PINCFG_UNPACK_TYPE(cfg)		((cfg) & PINCFG_TYPE_MASK)
++#define PINCFG_UNPACK_VALUE(cfg)	(((cfg) & PINCFG_VALUE_MASK) >> \
++						PINCFG_VALUE_SHIFT)
++/**
++ * enum eint_type - possible external interrupt types.
++ * @EINT_TYPE_NONE: bank does not support external interrupts
++ * @EINT_TYPE_GPIO: bank supportes external gpio interrupts
++ * @EINT_TYPE_WKUP: bank supportes external wakeup interrupts
++ *
++ * GPIO controller groups all the available pins into banks. The pins
++ * in a pin bank can support external gpio interrupts or external wakeup
++ * interrupts or no interrupts at all. From a software perspective, the only
++ * difference between external gpio and external wakeup interrupts is that
++ * the wakeup interrupts can additionally wakeup the system if it is in
++ * suspended state.
++ */
++enum eint_type {
++	EINT_TYPE_NONE,
++	EINT_TYPE_GPIO,
++	EINT_TYPE_WKUP,
++};
++
++/* maximum length of a pin in pin descriptor (example: "gpioa-30") */
++#define PIN_NAME_LENGTH	10
++
++#define PIN_GROUP(n, p, f)				\
++	{						\
++		.name		= n,			\
++		.pins		= p,			\
++		.num_pins	= ARRAY_SIZE(p),	\
++		.func		= f			\
++	}
++
++#define PMX_FUNC(n, g)					\
++	{						\
++		.name		= n,			\
++		.groups		= g,			\
++		.num_groups	= ARRAY_SIZE(g),	\
++	}
++
++struct nexell_pinctrl_drv_data;
++
++/**
++ * struct nexell_pin_bank: represent a controller pin-bank.
++ * @pctl_offset: starting offset of the pin-bank registers.
++ * @pin_base: starting pin number of the bank.
++ * @nr_pins: number of pins included in this bank.
++ * @eint_func: function to set in CON register to configure pin as EINT.
++ * @eint_type: type of the external interrupt supported by the bank.
++ * @eint_mask: bit mask of pins which support EINT function.
++ * @name: name to be prefixed for each pin in this pin bank.
++ * @of_node: OF node of the bank.
++ * @drvdata: link to controller driver data
++ * @irq_domain: IRQ domain of the bank.
++ * @gpio_chip: GPIO chip of the bank.
++ * @grange: linux gpio pin range supported by this bank.
++ * @slock: spinlock protecting bank registers
++ */
++struct nexell_pin_bank {
++	u32		pctl_offset;
++	u32		pin_base;
++	u8		nr_pins;
++	u8		eint_func;
++	enum eint_type	eint_type;
++	u32		eint_mask;
++	void __iomem	*virt_base;
++	char		*name;
++	void		*soc_priv;
++	int		irq;
++	struct device_node *of_node;
++	struct nexell_pinctrl_drv_data *drvdata;
++	struct irq_domain *irq_domain;
++	struct gpio_chip gpio_chip;
++	struct pinctrl_gpio_range grange;
++	struct nexell_irq_chip *irq_chip;
++	spinlock_t slock;
++};
++
++/**
++ * struct nexell_pin_ctrl: represent a pin controller.
++ * @pin_banks: list of pin banks included in this controller.
++ * @nr_banks: number of pin banks.
++ * @base: starting system wide pin number.
++ * @nr_pins: number of pins supported by the controller.
++ * @eint_gpio_init: platform specific callback to setup the external gpio
++ *	interrupts for the controller.
++ * @eint_alive_init: platform specific callback to setup the external wakeup
++ *	interrupts for the controller.
++ * @label: for debug information.
++ */
++struct nexell_pin_ctrl {
++	struct nexell_pin_bank	*pin_banks;
++	u32		nr_banks;
++
++	u32		base;
++	u32		nr_pins;
++
++	int		(*base_init)(struct nexell_pinctrl_drv_data *);
++	int		(*gpio_irq_init)(struct nexell_pinctrl_drv_data *);
++	int		(*alive_irq_init)(struct nexell_pinctrl_drv_data *);
++	void		(*suspend)(struct nexell_pinctrl_drv_data *);
++	void		(*resume)(struct nexell_pinctrl_drv_data *);
++};
++
++/**
++ * struct nexell_pinctrl_drv_data: wrapper for holding driver data together.
++ * @node: global list node
++ * @virt_base: register base address of the controller.
++ * @dev: device instance representing the controller.
++ * @irq: interrpt number used by the controller to notify gpio interrupts.
++ * @ctrl: pin controller instance managed by the driver.
++ * @pctl: pin controller descriptor registered with the pinctrl subsystem.
++ * @pctl_dev: cookie representing pinctrl device instance.
++ * @pin_groups: list of pin groups available to the driver.
++ * @nr_groups: number of such pin groups.
++ * @pmx_functions: list of pin functions available to the driver.
++ * @nr_function: number of such pin functions.
++ */
++struct nexell_pinctrl_drv_data {
++	struct list_head		node;
++	void __iomem			*virt_base;
++	struct device			*dev;
++	int				irq;
++
++	struct nexell_pin_ctrl		*ctrl;
++	struct pinctrl_desc		pctl;
++	struct pinctrl_dev		*pctl_dev;
++
++	const struct nexell_pin_group	*pin_groups;
++	unsigned int			nr_groups;
++	const struct nexell_pmx_func	*pmx_functions;
++	unsigned int			nr_functions;
++};
++
++/**
++ * struct nexell_pin_group: represent group of pins of a pinmux function.
++ * @name: name of the pin group, used to lookup the group.
++ * @pins: the pins included in this group.
++ * @num_pins: number of pins included in this group.
++ * @func: the function number to be programmed when selected.
++ */
++struct nexell_pin_group {
++	const char		*name;
++	const unsigned int	*pins;
++	u8			num_pins;
++	u8			func;
++};
++
++/**
++ * struct nexell_pmx_func: represent a pin function.
++ * @name: name of the pin function, used to lookup the function.
++ * @groups: one or more names of pin groups that provide this function.
++ * @num_groups: number of groups included in @groups.
++ */
++struct nexell_pmx_func {
++	const char		*name;
++	const char		**groups;
++	u8			num_groups;
++	u32			val;
++};
++
++/* list of all exported SoC specific data */
++extern const struct nexell_pin_ctrl s5pxx18_pin_ctrl[];
++
++#endif	/* __PINCTRL_NEXELL_H */
+diff --git a/drivers/pinctrl/nexell/pinctrl-s5pxx18.c b/drivers/pinctrl/nexell/pinctrl-s5pxx18.c
+new file mode 100644
+index 000000000..65005dbca
+--- /dev/null
++++ b/drivers/pinctrl/nexell/pinctrl-s5pxx18.c
+@@ -0,0 +1,2143 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Bon-gyu, KOO <freestyle@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/module.h>
++#include <linux/device.h>
++#include <linux/interrupt.h>
++#include <linux/irqdomain.h>
++#include <linux/irq.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/of_irq.h>
++#include <linux/io.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++#include <linux/err.h>
++
++#include "pinctrl-nexell.h"
++#include "pinctrl-s5pxx18.h"
++#include "s5pxx18-gpio.h"
++
++static struct {
++	struct nx_gpio_reg_set *gpio_regs;
++	struct nx_gpio_reg_set gpio_save;
++} gpio_modules[NUMBER_OF_GPIO_MODULE];
++
++static struct nx_alive_reg_set *alive_regs;
++static struct nx_alive_reg_set alive_saves;
++
++/*
++ * gpio functions
++ */
++
++void nx_gpio_setbit(u32 *p, u32 bit, bool enable)
++{
++	u32 newvalue = readl(p);
++
++	newvalue &= ~(1UL << bit);
++	newvalue |= (u32)enable << bit;
++
++	writel(newvalue, p);
++}
++
++bool nx_gpio_getbit(u32 value, u32 bit)
++{
++	return (bool)((value >> bit) & (1UL));
++}
++
++void nx_gpio_setbit2(u32 *p, u32 bit, u32 value)
++{
++	u32 newvalue = readl(p);
++
++	newvalue = (u32)(newvalue & ~(3UL << (bit * 2)));
++	newvalue = (u32)(newvalue | (value << (bit * 2)));
++
++	writel(newvalue, p);
++}
++
++u32 nx_gpio_getbit2(u32 value, u32 bit)
++{
++	return (u32)((u32)(value >> (bit * 2)) & 3UL);
++}
++
++bool nx_gpio_open_module(u32 idx)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	writel(0xFFFFFFFF, &p_register->GPIOx_SLEW_DISABLE_DEFAULT);
++	writel(0xFFFFFFFF, &p_register->GPIOx_DRV1_DISABLE_DEFAULT);
++	writel(0xFFFFFFFF, &p_register->GPIOx_DRV0_DISABLE_DEFAULT);
++	writel(0xFFFFFFFF, &p_register->GPIOx_PULLSEL_DISABLE_DEFAULT);
++	writel(0xFFFFFFFF, &p_register->GPIOx_PULLENB_DISABLE_DEFAULT);
++
++	return true;
++}
++
++void nx_gpio_set_output_enable(u32 idx, u32 bitnum, bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOxOUTENB, bitnum, enable);
++}
++
++bool nx_gpio_get_detect_enable(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return nx_gpio_getbit(readl(&p_register->GPIOxDETENB), bitnum);
++}
++
++void nx_gpio_set_detect_enable(u32 idx, u32 bitnum, bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOxDETENB, bitnum, enable);
++}
++
++bool nx_gpio_get_output_enable(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return nx_gpio_getbit(readl(&p_register->GPIOxOUTENB), bitnum);
++}
++
++void nx_gpio_set_output_value(u32 idx, u32 bitnum, bool value)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOxOUT, bitnum, value);
++}
++
++bool nx_gpio_get_output_value(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return nx_gpio_getbit(readl(&p_register->GPIOxOUT), bitnum);
++}
++
++bool nx_gpio_get_input_value(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return nx_gpio_getbit(readl(&p_register->GPIOxPAD), bitnum);
++}
++
++void nx_gpio_set_pull_select(u32 idx, u32 bitnum, bool enable)
++{
++	nx_gpio_setbit(
++	    &gpio_modules[idx].gpio_regs->GPIOx_PULLSEL_DISABLE_DEFAULT,
++	    bitnum, true);
++	nx_gpio_setbit(&gpio_modules[idx].gpio_regs->GPIOx_PULLSEL, bitnum,
++		       enable);
++}
++
++bool nx_gpio_get_pull_select(u32 idx, u32 bitnum)
++{
++	return nx_gpio_getbit(gpio_modules[idx].gpio_regs->GPIOx_PULLSEL,
++			      bitnum);
++}
++
++void nx_gpio_set_pull_mode(u32 idx, u32 bitnum, int mode)
++{
++	nx_gpio_setbit(
++	    &gpio_modules[idx].gpio_regs->GPIOx_PULLSEL_DISABLE_DEFAULT,
++	    bitnum, true);
++	nx_gpio_setbit(
++	    &gpio_modules[idx].gpio_regs->GPIOx_PULLENB_DISABLE_DEFAULT,
++	    bitnum, true);
++
++	if (mode == nx_gpio_pull_off) {
++		nx_gpio_setbit(&gpio_modules[idx].gpio_regs->GPIOx_PULLENB,
++			       bitnum, false);
++		nx_gpio_setbit(&gpio_modules[idx].gpio_regs->GPIOx_PULLSEL,
++			       bitnum, false);
++	} else {
++		nx_gpio_setbit(&gpio_modules[idx].gpio_regs->GPIOx_PULLSEL,
++			       bitnum, (mode & 1 ? true : false));
++		nx_gpio_setbit(&gpio_modules[idx].gpio_regs->GPIOx_PULLENB,
++			       bitnum, true);
++	}
++}
++
++void nx_gpio_set_pad_function(u32 idx, u32 bitnum, int padfunc)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit2(&p_register->GPIOxALTFN[bitnum / 16], bitnum % 16,
++			(u32)padfunc);
++}
++
++int nx_gpio_get_pad_function(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return nx_gpio_getbit2(
++	    readl(&p_register->GPIOxALTFN[bitnum / 16]), bitnum % 16);
++}
++
++void nx_gpio_set_slew(u32 idx, u32 bitnum, bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOx_SLEW, bitnum, enable);
++}
++
++void nx_gpio_set_slew_disable_default(u32 idx, u32 bitnum, bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOx_SLEW_DISABLE_DEFAULT, bitnum,
++		       enable);
++}
++
++bool nx_gpio_get_slew(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	return (bool)nx_gpio_getbit(readl(&p_register->GPIOx_SLEW), bitnum);
++}
++
++void nx_gpio_set_drive_strength(u32 idx, u32 bitnum, int drvstrength)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOx_DRV1, bitnum,
++		       (bool)(((u32)drvstrength >> 0) & 0x1));
++	nx_gpio_setbit(&p_register->GPIOx_DRV0, bitnum,
++		       (bool)(((u32)drvstrength >> 1) & 0x1));
++}
++
++void nx_gpio_set_drive_strength_disable_default(u32 idx, u32 bitnum,
++						bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit(&p_register->GPIOx_DRV1_DISABLE_DEFAULT, bitnum,
++		       (bool)(enable));
++	nx_gpio_setbit(&p_register->GPIOx_DRV0_DISABLE_DEFAULT, bitnum,
++		       (bool)(enable));
++}
++
++int nx_gpio_get_drive_strength(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++	u32 retvalue;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	retvalue = nx_gpio_getbit(readl(&p_register->GPIOx_DRV0), bitnum)
++		   << 1;
++	retvalue |= nx_gpio_getbit(readl(&p_register->GPIOx_DRV1), bitnum)
++		    << 0;
++
++	return (int)retvalue;
++}
++
++void nx_gpio_set_pull_enable(u32 idx, u32 bitnum, int pullsel)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	if (pullsel == nx_gpio_pull_down || pullsel == nx_gpio_pull_up) {
++		nx_gpio_setbit(&p_register->GPIOx_PULLSEL, bitnum,
++			       (bool)pullsel);
++		nx_gpio_setbit(&p_register->GPIOx_PULLENB, bitnum, true);
++	} else
++		nx_gpio_setbit(&p_register->GPIOx_PULLENB, bitnum, false);
++}
++
++int nx_gpio_get_pull_enable(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++	bool enable;
++
++	p_register = gpio_modules[idx].gpio_regs;
++	enable = nx_gpio_getbit(readl(&p_register->GPIOx_PULLENB), bitnum);
++
++	if (enable == true)
++		return (int)nx_gpio_getbit(
++		    readl(&p_register->GPIOx_PULLSEL), bitnum);
++	else
++		return (int)(nx_gpio_pull_off);
++}
++
++void nx_gpio_set_input_mux_select0(u32 idx, u32 value)
++{
++	writel(value, &gpio_modules[idx].gpio_regs->GPIOx_InputMuxSelect0);
++}
++
++void nx_gpio_set_input_mux_select1(u32 idx, u32 value)
++{
++	writel(value, &gpio_modules[idx].gpio_regs->GPIOx_InputMuxSelect1);
++}
++
++void nx_gpio_set_interrupt_enable(u32 idx, s32 irqnum, bool enable)
++{
++	struct nx_gpio_reg_set *p_register;
++	u32 ReadValue;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	ReadValue = readl(&p_register->GPIOxINTENB);
++
++	ReadValue &= ~((u32)1 << irqnum);
++	ReadValue |= ((u32)enable << irqnum);
++
++	writel(ReadValue, &p_register->GPIOxINTENB);
++
++	nx_gpio_set_detect_enable(idx, irqnum, enable);
++}
++
++bool nx_gpio_get_interrupt_enable(u32 idx, s32 irqnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	if (readl(&p_register->GPIOxINTENB) & (1UL << irqnum))
++		return true;
++
++	return false;
++}
++
++bool nx_gpio_get_interrupt_pending(u32 idx, s32 irqnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	if (readl(&p_register->GPIOxDET) & (1UL << irqnum))
++		return true;
++
++	return false;
++}
++
++void nx_gpio_clear_interrupt_pending(u32 idx, s32 irqnum)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	writel(1UL << irqnum, &p_register->GPIOxDET);
++}
++
++s32 nx_gpio_get_interrupt_pending_number(u32 idx)
++{
++	struct nx_gpio_reg_set *p_register;
++	u32 intnum;
++	u32 intpend;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	intpend = readl(&p_register->GPIOxDET);
++
++	for (intnum = 0; intnum < 32; intnum++) {
++		if (0 != (intpend & (1UL << intnum)))
++			return intnum;
++	}
++
++	return -1;
++}
++
++/*
++ * GPIO Operation.
++ */
++
++void nx_gpio_set_interrupt_mode(u32 idx, u32 bitnum, int irqmode)
++{
++	struct nx_gpio_reg_set *p_register;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	nx_gpio_setbit2(&p_register->GPIOxDETMODE[bitnum / 16],
++			bitnum % 16, (u32)irqmode & 0x03);
++	nx_gpio_setbit(&p_register->GPIOxDETMODEEX, bitnum,
++		       (u32)(irqmode >> 2));
++}
++
++int nx_gpio_get_interrupt_mode(u32 idx, u32 bitnum)
++{
++	struct nx_gpio_reg_set *p_register;
++	u32 regvalue;
++
++	p_register = gpio_modules[idx].gpio_regs;
++
++	regvalue = nx_gpio_getbit2(
++	    readl(&p_register->GPIOxDETMODE[bitnum / 16]), bitnum % 16);
++	regvalue |=
++	    (nx_gpio_getbit(readl(&p_register->GPIOxDETMODEEX), bitnum) << 2);
++
++	return regvalue;
++}
++
++
++/*
++ * alive functions
++ */
++
++void nx_alive_set_interrupt_enable(s32 irqnum, bool enable)
++{
++	u32 INTENB_MASK;
++
++	INTENB_MASK = (1UL << irqnum);
++
++	if (enable)
++		writel(INTENB_MASK, &alive_regs->ALIVEGPIOINTENBSETREG);
++	else
++		writel(INTENB_MASK, &alive_regs->ALIVEGPIOINTENBRSTREG);
++}
++
++bool nx_alive_get_interrupt_enable(s32 irqnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOINTENBREADREG >> irqnum) & 0x01);
++}
++
++bool nx_alive_get_interrupt_pending(s32 irqnum)
++{
++	return ((alive_regs->ALIVEGPIODETECTPENDREG >> irqnum) & 0x01);
++}
++
++void nx_alive_clear_interrupt_pending(s32 irqnum)
++{
++	writel(1 << irqnum, &alive_regs->ALIVEGPIODETECTPENDREG);
++}
++
++s32 nx_alive_get_interrupt_pending_number(void)
++{
++	struct nx_alive_reg_set *p_register;
++	u32 Pend;
++	u32 int_num;
++
++	p_register = alive_regs;
++
++	Pend = (p_register->ALIVEGPIODETECTPENDREG &
++		p_register->ALIVEGPIOINTENBREADREG);
++
++	for (int_num = 0; int_num < 6; int_num++)
++		if (Pend & (1 << int_num))
++			return int_num;
++
++	return -1;
++}
++
++/*
++ * PAD Configuration
++ */
++
++void nx_alive_set_write_enable(bool enable)
++{
++	writel((u32)enable, &alive_regs->ALIVEPWRGATEREG);
++}
++
++bool nx_alive_get_write_enable(void)
++{
++	return (bool)(alive_regs->ALIVEPWRGATEREG & 0x01);
++}
++
++void nx_alive_set_scratch_reg(u32 data)
++{
++	writel(data, &alive_regs->ALIVESCRATCHSETREG);
++	writel(~data, &alive_regs->ALIVESCRATCHRSTREG);
++}
++
++u32 nx_alive_get_scratch_reg(void)
++{
++	return (u32)(alive_regs->ALIVESCRATCHREADREG);
++}
++
++void nx_alive_set_pullup_enable(u32 bitnum, bool enable)
++{
++	u32 PULLUP_MASK;
++
++	PULLUP_MASK = (1UL << bitnum);
++
++	if (enable)
++		writel(PULLUP_MASK, &alive_regs->ALIVEGPIOPADPULLUPSETREG);
++	else
++		writel(PULLUP_MASK, &alive_regs->ALIVEGPIOPADPULLUPRSTREG);
++}
++
++bool nx_alive_get_pullup_enable(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOPADPULLUPREADREG >> bitnum) &
++		      0x01);
++}
++
++/*
++ * Input Setting Function
++ */
++
++void nx_alive_set_detect_enable(u32 bitnum, bool enable)
++{
++	u32 detectenb_mask;
++
++	detectenb_mask = (1UL << bitnum);
++
++	if (enable)
++		writel(detectenb_mask, &alive_regs->ALIVEGPIODETECTENBSETREG);
++	else
++		writel(detectenb_mask, &alive_regs->ALIVEGPIODETECTENBRSTREG);
++}
++
++bool nx_alive_get_detect_enable(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIODETECTENBREADREG >> bitnum) &
++		      0x01);
++}
++
++void nx_alive_set_detect_mode(int detect_mode, u32 bitnum, bool enable)
++{
++	u32 *pSetReg = 0;
++	u32 *pRstReg = 0;
++
++	switch (detect_mode) {
++	case nx_alive_detect_mode_async_lowlevel:
++		pSetReg = &alive_regs->ALIVEGPIOASYNCDETECTMODESETREG0;
++		pRstReg = &alive_regs->ALIVEGPIOASYNCDETECTMODERSTREG0;
++		break;
++
++	case nx_alive_detect_mode_async_highlevel:
++		pSetReg = &alive_regs->ALIVEGPIOASYNCDETECTMODESETREG1;
++		pRstReg = &alive_regs->ALIVEGPIOASYNCDETECTMODERSTREG1;
++		break;
++
++	case nx_alive_detect_mode_sync_fallingedge:
++		pSetReg = &alive_regs->ALIVEGPIODETECTMODESETREG0;
++		pRstReg = &alive_regs->ALIVEGPIODETECTMODERSTREG0;
++		break;
++
++	case nx_alive_detect_mode_sync_risingedge:
++		pSetReg = &alive_regs->ALIVEGPIODETECTMODESETREG1;
++		pRstReg = &alive_regs->ALIVEGPIODETECTMODERSTREG1;
++		break;
++
++	case nx_alive_detect_mode_sync_lowlevel:
++		pSetReg = &alive_regs->ALIVEGPIODETECTMODESETREG2;
++		pRstReg = &alive_regs->ALIVEGPIODETECTMODERSTREG2;
++		break;
++
++	case nx_alive_detect_mode_sync_highlevel:
++		pSetReg = &alive_regs->ALIVEGPIODETECTMODESETREG3;
++		pRstReg = &alive_regs->ALIVEGPIODETECTMODERSTREG3;
++		break;
++
++	default:
++		break;
++	}
++
++	if (enable)
++		writel((1UL << bitnum), pSetReg);
++	else
++		writel((1UL << bitnum), pRstReg);
++}
++
++bool nx_alive_get_detect_mode(int detect_mode, u32 bitnum)
++{
++	switch (detect_mode) {
++	case nx_alive_detect_mode_async_lowlevel:
++		return (bool)((alive_regs->ALIVEGPIOLOWASYNCDETECTMODEREADREG >>
++			       bitnum) & 0x01);
++
++	case nx_alive_detect_mode_async_highlevel:
++		return (
++		    bool)((alive_regs->ALIVEGPIOHIGHASYNCDETECTMODEREADREG >>
++			   bitnum) & 0x01);
++
++	case nx_alive_detect_mode_sync_fallingedge:
++		return (bool)((alive_regs->ALIVEGPIOFALLDETECTMODEREADREG >>
++			       bitnum) & 0x01);
++
++	case nx_alive_detect_mode_sync_risingedge:
++		return (bool)((alive_regs->ALIVEGPIORISEDETECTMODEREADREG >>
++			       bitnum) & 0x01);
++
++	case nx_alive_detect_mode_sync_lowlevel:
++		return (bool)((alive_regs->ALIVEGPIOLOWDETECTMODEREADREG >>
++			       bitnum) & 0x01);
++
++	case nx_alive_detect_mode_sync_highlevel:
++		return (bool)((alive_regs->ALIVEGPIOHIGHDETECTMODEREADREG >>
++			       bitnum) & 0x01);
++
++	default:
++		break;
++	}
++
++	return false;
++}
++
++bool nx_alive_get_vdd_pwr_toggle(void)
++{
++	const u32 VDDPWRTOGGLE_BITPOS = 10;
++
++	return (bool)((alive_regs->VDDCTRLREADREG >> VDDPWRTOGGLE_BITPOS) &
++		      0x01);
++}
++
++/*
++ * Output Setting Function
++ */
++
++void nx_alive_set_output_enable(u32 bitnum, bool enable)
++{
++	u32 padoutenb_mask;
++
++	padoutenb_mask = (1UL << bitnum);
++
++	if (enable)
++		writel(padoutenb_mask, &alive_regs->ALIVEGPIOPADOUTENBSETREG);
++	else
++		writel(padoutenb_mask, &alive_regs->ALIVEGPIOPADOUTENBRSTREG);
++}
++
++bool nx_alive_get_output_enable(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOPADOUTENBREADREG >> bitnum) &
++		      0x01);
++}
++
++bool nx_alive_get_input_enable(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOPADOUTENBREADREG >> bitnum) &
++		      0x01)
++		   ? false
++		   : true;
++}
++
++void nx_alive_set_output_value(u32 bitnum, bool value)
++{
++	u32 padout_mask;
++
++	padout_mask = (1UL << bitnum);
++
++	if (value)
++		writel(padout_mask, &alive_regs->ALIVEGPIOPADOUTSETREG);
++	else
++		writel(padout_mask, &alive_regs->ALIVEGPIOPADOUTRSTREG);
++}
++
++bool nx_alive_get_output_value(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOPADOUTREADREG >> bitnum) & 0x01);
++}
++
++bool nx_alive_get_input_value(u32 bitnum)
++{
++	return (bool)((alive_regs->ALIVEGPIOINPUTVALUE >> bitnum) & 0x01);
++}
++
++u32 nx_alive_get_wakeup_status(void)
++{
++	u32 status;
++
++	status = alive_regs->WAKEUPSTATUS;
++	return status;
++}
++
++void nx_alive_clear_wakeup_status(void) { alive_regs->CLEARWAKEUPSTATUS = 1; }
++
++/*
++ * end of nx_alive
++ */
++
++const unsigned char (*gpio_fn_no)[GPIO_NUM_PER_BANK] = NULL;
++
++const unsigned char s5pxx18_pio_fn_no[][GPIO_NUM_PER_BANK] = {
++	ALT_NO_GPIO_A, ALT_NO_GPIO_B, ALT_NO_GPIO_C,
++	ALT_NO_GPIO_D, ALT_NO_GPIO_E, ALT_NO_ALIVE,
++};
++
++/*----------------------------------------------------------------------------*/
++#define ALIVE_INDEX 5			 /* number of gpio module */
++static spinlock_t lock[ALIVE_INDEX + 1]; /* A, B, C, D, E, alive */
++static unsigned long lock_flags[ALIVE_INDEX + 1];
++
++#define IO_LOCK_INIT(x) spin_lock_init(&lock[x])
++#define IO_LOCK(x) spin_lock_irqsave(&lock[x], lock_flags[x])
++#define IO_UNLOCK(x) spin_unlock_irqrestore(&lock[x], lock_flags[x])
++
++void nx_soc_gpio_set_io_func(unsigned int io, unsigned int func)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_pad_function(grp, bit, func);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_altnum(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	return gpio_fn_no[grp][bit];
++}
++
++unsigned int nx_soc_gpio_get_io_func(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	unsigned int fn = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		fn = nx_gpio_get_pad_function(grp, bit);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		fn = 0;
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return fn;
++}
++
++void nx_soc_gpio_set_io_dir(unsigned int io, int out)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_output_enable(grp, bit, out ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		nx_alive_set_output_enable(bit, out ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_io_dir(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int dir = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		dir = nx_gpio_get_output_enable(grp, bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		dir = nx_alive_get_output_enable(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return dir;
++}
++
++void nx_soc_gpio_set_io_pull(unsigned int io, int val)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d) sel:%d\n", __func__, grp, bit, val);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_pull_enable(grp, bit, val);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		if (val & 1)	/* up */
++			nx_alive_set_pullup_enable(bit, true);
++		else	/* down, off */
++			nx_alive_set_pullup_enable(bit, false);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++				__func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_io_pull(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int up = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		up = nx_gpio_get_pull_enable(grp, bit);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		up = nx_alive_get_pullup_enable(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++				__func__);
++		break;
++	};
++
++	return up;
++}
++
++void nx_soc_gpio_set_io_drv(int gpio, int mode)
++{
++	int grp, bit;
++
++	if (gpio > (PAD_GPIO_ALV - 1))
++		return;
++
++	grp = PAD_GET_GROUP(gpio);
++	bit = PAD_GET_BITNO(gpio);
++	pr_debug("%s (%d.%02d) mode:%d\n", __func__, grp, bit, mode);
++
++	nx_gpio_set_drive_strength(grp, bit, (int)mode);
++}
++
++int nx_soc_gpio_get_io_drv(int gpio)
++{
++	int grp, bit;
++
++	if (gpio > (PAD_GPIO_ALV - 1))
++		return -1;
++
++	grp = PAD_GET_GROUP(gpio);
++	bit = PAD_GET_BITNO(gpio);
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	return (int)nx_gpio_get_drive_strength(grp, bit);
++}
++
++void nx_soc_gpio_set_out_value(unsigned int io, int high)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_output_value(grp, bit, high ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		nx_alive_set_output_value(bit, high ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_out_value(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int val = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		val = nx_gpio_get_output_value(grp, bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		val = nx_alive_get_output_value(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return val;
++}
++
++int nx_soc_gpio_get_in_value(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int val = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		val = nx_gpio_get_input_value(grp, bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		val = nx_alive_get_input_value(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return val;
++}
++
++void nx_soc_gpio_set_int_enable(unsigned int io, int on)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_interrupt_enable(grp, bit, on ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		nx_alive_set_detect_enable(bit, on ? true : false);
++		nx_alive_set_interrupt_enable(bit, on ? true : false);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_int_enable(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int enb = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		enb = nx_gpio_get_interrupt_enable(grp, bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		enb = nx_alive_get_interrupt_enable(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return enb;
++}
++
++void nx_soc_gpio_set_int_mode(unsigned int io, unsigned int mode)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int det = 0;
++
++	pr_debug("%s (%d.%02d, %d)\n", __func__, grp, bit, mode);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_set_interrupt_mode(grp, bit, mode);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		/* all disable */
++		for (det = 0; 6 > det; det++)
++			nx_alive_set_detect_mode(det, bit, false);
++		/* enable */
++		nx_alive_set_detect_mode(mode, bit, true);
++		nx_alive_set_output_enable(bit, false);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++int nx_soc_gpio_get_int_mode(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int mod = -1;
++	int det = 0;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		mod = nx_gpio_get_interrupt_mode(grp, bit);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		for (det = 0; 6 > det; det++) {
++			if (nx_alive_get_detect_mode(det, bit)) {
++				mod = det;
++				break;
++			}
++		}
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return mod;
++}
++
++int nx_soc_gpio_get_int_pend(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++	int pend = -1;
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		pend = nx_gpio_get_interrupt_pending(grp, bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		pend = nx_alive_get_interrupt_pending(bit) ? 1 : 0;
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++	return pend;
++}
++
++void nx_soc_gpio_clr_int_pend(unsigned int io)
++{
++	unsigned int grp = PAD_GET_GROUP(io);
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d.%02d)\n", __func__, grp, bit);
++
++	switch (io & ~(32 - 1)) {
++	case PAD_GPIO_A:
++	case PAD_GPIO_B:
++	case PAD_GPIO_C:
++	case PAD_GPIO_D:
++	case PAD_GPIO_E:
++		IO_LOCK(grp);
++		nx_gpio_clear_interrupt_pending(grp, bit);
++		nx_gpio_get_interrupt_pending(grp, bit);
++		IO_UNLOCK(grp);
++		break;
++	case PAD_GPIO_ALV:
++		IO_LOCK(grp);
++		nx_alive_clear_interrupt_pending(bit);
++		nx_alive_get_interrupt_pending(bit);
++		IO_UNLOCK(grp);
++		break;
++	default:
++		pr_err("fail, soc gpio io:%d, group:%d (%s)\n", io, grp,
++		       __func__);
++		break;
++	};
++}
++
++void nx_soc_alive_set_det_enable(unsigned int io, int on)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++
++	nx_alive_set_output_enable(bit, false);
++	nx_alive_set_detect_enable(bit, on ? true : false);
++
++	IO_UNLOCK(ALIVE_INDEX);
++}
++
++int nx_soc_alive_get_det_enable(unsigned int io)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++	int mod = 0;
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++	mod = nx_alive_get_detect_enable(bit) ? 1 : 0;
++	IO_UNLOCK(ALIVE_INDEX);
++
++	return mod;
++}
++
++void nx_soc_alive_set_det_mode(unsigned int io, unsigned int mode, int on)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++	nx_alive_set_detect_mode(mode, bit, on ? true : false);
++	IO_UNLOCK(ALIVE_INDEX);
++}
++
++int nx_soc_alive_get_det_mode(unsigned int io, unsigned int mode)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++	int mod = 0;
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++	mod = nx_alive_get_detect_mode(mode, bit) ? 1 : 0;
++	IO_UNLOCK(ALIVE_INDEX);
++
++	return mod;
++}
++
++int nx_soc_alive_get_int_pend(unsigned int io)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++	int pend = -1;
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++	pend = nx_alive_get_interrupt_pending(bit);
++	IO_UNLOCK(ALIVE_INDEX);
++
++	return pend;
++}
++
++void nx_soc_alive_clr_int_pend(unsigned int io)
++{
++	unsigned int bit = PAD_GET_BITNO(io);
++
++	pr_debug("%s (%d)\n", __func__, bit);
++
++	IO_LOCK(ALIVE_INDEX);
++	nx_alive_clear_interrupt_pending(bit);
++	IO_UNLOCK(ALIVE_INDEX);
++}
++
++int s5pxx18_gpio_suspend(int idx)
++{
++	struct nx_gpio_reg_set *reg;
++	struct nx_gpio_reg_set *gpio_save;
++
++	if (idx < 0 || idx >= NUMBER_OF_GPIO_MODULE)
++		return -ENXIO;
++
++	reg = gpio_modules[idx].gpio_regs;
++	gpio_save = &gpio_modules[idx].gpio_save;
++
++	gpio_save->GPIOxOUT = readl(&reg->GPIOxOUT);
++	gpio_save->GPIOxOUTENB = readl(&reg->GPIOxOUTENB);
++	gpio_save->GPIOxALTFN[0] = readl(&reg->GPIOxALTFN[0]);
++	gpio_save->GPIOxALTFN[1] = readl(&reg->GPIOxALTFN[1]);
++	gpio_save->GPIOxDETMODE[0] = readl(&reg->GPIOxDETMODE[0]);
++	gpio_save->GPIOxDETMODE[1] = readl(&reg->GPIOxDETMODE[1]);
++	gpio_save->GPIOxDETMODEEX = readl(&reg->GPIOxDETMODEEX);
++	gpio_save->GPIOxINTENB = readl(&reg->GPIOxINTENB);
++
++	gpio_save->GPIOx_SLEW = readl(&reg->GPIOx_SLEW);
++	gpio_save->GPIOx_SLEW_DISABLE_DEFAULT =
++		readl(&reg->GPIOx_SLEW_DISABLE_DEFAULT);
++	gpio_save->GPIOx_DRV1 = readl(&reg->GPIOx_DRV1);
++	gpio_save->GPIOx_DRV1_DISABLE_DEFAULT =
++		readl(&reg->GPIOx_DRV1_DISABLE_DEFAULT);
++	gpio_save->GPIOx_DRV0 = readl(&reg->GPIOx_DRV0);
++	gpio_save->GPIOx_DRV0_DISABLE_DEFAULT =
++		readl(&reg->GPIOx_DRV0_DISABLE_DEFAULT);
++	gpio_save->GPIOx_PULLSEL = readl(&reg->GPIOx_PULLSEL);
++	gpio_save->GPIOx_PULLSEL_DISABLE_DEFAULT =
++		readl(&reg->GPIOx_PULLSEL_DISABLE_DEFAULT);
++	gpio_save->GPIOx_PULLENB = readl(&reg->GPIOx_PULLENB);
++	gpio_save->GPIOx_PULLENB_DISABLE_DEFAULT =
++		readl(&reg->GPIOx_PULLENB_DISABLE_DEFAULT);
++
++	return 0;
++}
++
++int s5pxx18_gpio_resume(int idx)
++{
++	struct nx_gpio_reg_set *reg;
++	struct nx_gpio_reg_set *gpio_save;
++
++	if (idx < 0 || idx >= NUMBER_OF_GPIO_MODULE)
++		return -ENXIO;
++
++	reg = gpio_modules[idx].gpio_regs;
++	gpio_save = &gpio_modules[idx].gpio_save;
++
++	writel(gpio_save->GPIOx_SLEW, &reg->GPIOx_SLEW);
++	writel(gpio_save->GPIOx_SLEW_DISABLE_DEFAULT,
++		&reg->GPIOx_SLEW_DISABLE_DEFAULT);
++	writel(gpio_save->GPIOx_DRV1, &reg->GPIOx_DRV1);
++	writel(gpio_save->GPIOx_DRV1_DISABLE_DEFAULT,
++		&reg->GPIOx_DRV1_DISABLE_DEFAULT);
++	writel(gpio_save->GPIOx_DRV0, &reg->GPIOx_DRV0);
++	writel(gpio_save->GPIOx_DRV0_DISABLE_DEFAULT,
++		&reg->GPIOx_DRV0_DISABLE_DEFAULT);
++	writel(gpio_save->GPIOx_PULLSEL, &reg->GPIOx_PULLSEL);
++	writel(gpio_save->GPIOx_PULLSEL_DISABLE_DEFAULT,
++		&reg->GPIOx_PULLSEL_DISABLE_DEFAULT);
++	writel(gpio_save->GPIOx_PULLENB, &reg->GPIOx_PULLENB);
++	writel(gpio_save->GPIOx_PULLENB_DISABLE_DEFAULT,
++		&reg->GPIOx_PULLENB_DISABLE_DEFAULT);
++
++	writel(gpio_save->GPIOxOUT, &reg->GPIOxOUT);
++	writel(gpio_save->GPIOxOUTENB, &reg->GPIOxOUTENB);
++	writel(gpio_save->GPIOxALTFN[0], &reg->GPIOxALTFN[0]);
++	writel(gpio_save->GPIOxALTFN[1], &reg->GPIOxALTFN[1]);
++	writel(gpio_save->GPIOxDETMODE[0], &reg->GPIOxDETMODE[0]);
++	writel(gpio_save->GPIOxDETMODE[1], &reg->GPIOxDETMODE[1]);
++	writel(gpio_save->GPIOxDETMODEEX, &reg->GPIOxDETMODEEX);
++	writel(gpio_save->GPIOxINTENB, &reg->GPIOxINTENB);
++	writel(gpio_save->GPIOxINTENB, &reg->GPIOxDETENB);/* DETECT ENABLE */
++	writel((u32)0xFFFFFFFF, &reg->GPIOxDET);	/* CLEAR PENDING */
++
++	return 0;
++}
++
++int s5pxx18_alive_suspend(void)
++{
++	struct nx_alive_reg_set *reg;
++	struct nx_alive_reg_set *alive_save;
++	u32 both_edge = 0;
++
++	reg = alive_regs;
++	alive_save = &alive_saves;
++
++	nx_alive_set_write_enable(true);
++
++	alive_save->ALIVEGPIOLOWASYNCDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIOLOWASYNCDETECTMODEREADREG);
++	alive_save->ALIVEGPIOHIGHASYNCDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIOHIGHASYNCDETECTMODEREADREG);
++	alive_save->ALIVEGPIOFALLDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIOFALLDETECTMODEREADREG);
++	alive_save->ALIVEGPIORISEDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIORISEDETECTMODEREADREG);
++	alive_save->ALIVEGPIOLOWDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIOLOWDETECTMODEREADREG);
++	alive_save->ALIVEGPIOHIGHDETECTMODEREADREG =
++		readl(&reg->ALIVEGPIOHIGHDETECTMODEREADREG);
++
++	alive_save->ALIVEGPIODETECTENBREADREG =
++		readl(&reg->ALIVEGPIODETECTENBREADREG);
++	alive_save->ALIVEGPIOINTENBREADREG =
++		readl(&reg->ALIVEGPIOINTENBREADREG);
++	alive_save->ALIVEGPIOPADOUTENBREADREG =
++		readl(&reg->ALIVEGPIOPADOUTENBREADREG);
++	alive_save->ALIVEGPIOPADOUTREADREG =
++		readl(&reg->ALIVEGPIOPADOUTREADREG);
++	alive_save->ALIVEGPIOPADPULLUPREADREG
++		= readl(&reg->ALIVEGPIOPADPULLUPREADREG);
++
++	/* change both edge detect to falling only */
++	both_edge = (alive_save->ALIVEGPIOFALLDETECTMODEREADREG &
++		    alive_save->ALIVEGPIORISEDETECTMODEREADREG);
++	writel((u32)both_edge, &reg->ALIVEGPIODETECTMODERSTREG1);
++
++	return 0;
++}
++
++int s5pxx18_alive_resume(void)
++{
++	struct nx_alive_reg_set *reg;
++	struct nx_alive_reg_set *alive_save;
++
++	reg = alive_regs;
++	alive_save = &alive_saves;
++
++	nx_alive_set_write_enable(true);
++
++	/* clear and set */
++	if (alive_save->ALIVEGPIOPADOUTENBREADREG !=
++			readl(&reg->ALIVEGPIOPADOUTENBREADREG)) {
++		writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOPADOUTENBRSTREG);
++		writel(alive_save->ALIVEGPIOPADOUTENBREADREG,
++				&reg->ALIVEGPIOPADOUTENBSETREG);
++	}
++	if (alive_save->ALIVEGPIOPADOUTREADREG !=
++			readl(&reg->ALIVEGPIOPADOUTREADREG)) {
++		writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOPADOUTRSTREG);
++		writel(alive_save->ALIVEGPIOPADOUTREADREG,
++				&reg->ALIVEGPIOPADOUTSETREG);
++	}
++	if (alive_save->ALIVEGPIOPADPULLUPREADREG !=
++			readl(&reg->ALIVEGPIOPADPULLUPREADREG)) {
++		writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOPADPULLUPRSTREG);
++		writel(alive_save->ALIVEGPIOPADPULLUPREADREG,
++				&reg->ALIVEGPIOPADPULLUPSETREG);
++	}
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIODETECTENBRSTREG);
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOINTENBRSTREG);
++
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOASYNCDETECTMODERSTREG0);
++	writel(alive_save->ALIVEGPIOLOWASYNCDETECTMODEREADREG,
++				&reg->ALIVEGPIOASYNCDETECTMODESETREG0);
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIOASYNCDETECTMODERSTREG1);
++	writel(alive_save->ALIVEGPIOHIGHASYNCDETECTMODEREADREG,
++				&reg->ALIVEGPIOASYNCDETECTMODESETREG1);
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIODETECTMODERSTREG0);
++	writel(alive_save->ALIVEGPIOFALLDETECTMODEREADREG,
++				&reg->ALIVEGPIODETECTMODESETREG0);
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIODETECTMODERSTREG1);
++	writel(alive_save->ALIVEGPIORISEDETECTMODEREADREG,
++				&reg->ALIVEGPIODETECTMODESETREG1);
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIODETECTMODERSTREG2);
++	writel(alive_save->ALIVEGPIOLOWDETECTMODEREADREG,
++				&reg->ALIVEGPIODETECTMODESETREG2);
++
++	writel((u32)0xFFFFFFFF, &reg->ALIVEGPIODETECTMODERSTREG3);
++	writel(alive_save->ALIVEGPIOHIGHDETECTMODEREADREG,
++				&reg->ALIVEGPIODETECTMODESETREG3);
++
++	writel(alive_save->ALIVEGPIODETECTENBREADREG,
++				&reg->ALIVEGPIODETECTENBSETREG);
++	writel(alive_save->ALIVEGPIOINTENBREADREG,
++				&reg->ALIVEGPIOINTENBSETREG);
++
++	return 0;
++}
++
++int s5pxx18_gpio_device_init(struct list_head *banks, int nr_banks)
++{
++	struct module_init_data *init_data;
++	int n = ALIVE_INDEX + 1;
++	int i;
++
++	for (i = 0; n > i; i++)
++		IO_LOCK_INIT(i);
++
++	gpio_fn_no = s5pxx18_pio_fn_no;
++
++	i = 0;
++	list_for_each_entry(init_data, banks, node) {
++		if (init_data->bank_type == 1) { /* gpio */
++			gpio_modules[i].gpio_regs =
++			    (struct nx_gpio_reg_set *)(init_data->bank_base);
++
++			nx_gpio_open_module(i);
++			i++;
++		} else if (init_data->bank_type == 2) { /* alive */
++			alive_regs =
++			    (struct nx_alive_reg_set *)(init_data->bank_base);
++
++			/*
++			 * ALIVE Power Gate must enable for RTC register access.
++			 * must be clear wfi jump address
++			 */
++			nx_alive_set_write_enable(true);
++		}
++	}
++
++	return 0;
++}
++
++/*
++ * irq_chip functions
++ */
++
++static void irq_gpio_ack(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: gpio irq=%d, %s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++
++	writel((1 << bit), base + GPIO_INT_STATUS); /* irq pend clear */
++	ARM_DMB();
++}
++
++static void irq_gpio_mask(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: gpio irq=%d, %s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++
++	/* mask:irq disable */
++	writel(readl(base + GPIO_INT_ENB) & ~(1 << bit), base + GPIO_INT_ENB);
++	writel(readl(base + GPIO_INT_DET) & ~(1 << bit), base + GPIO_INT_DET);
++}
++
++static void irq_gpio_unmask(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: gpio irq=%d, %s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++
++	/* unmask:irq enable */
++	writel(readl(base + GPIO_INT_ENB) | (1 << bit), base + GPIO_INT_ENB);
++	writel(readl(base + GPIO_INT_DET) | (1 << bit), base + GPIO_INT_DET);
++	ARM_DMB();
++}
++
++static int irq_gpio_set_type(struct irq_data *irqd, unsigned int type)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++	u32 val, alt;
++	ulong reg;
++
++	int mode = 0;
++
++	pr_debug("%s: gpio irq=%d, %s.%d, type=0x%x\n", __func__, bank->irq,
++		 bank->name, bit, type);
++
++	switch (type) {
++	case IRQ_TYPE_NONE:
++		pr_warn("%s: No edge setting!\n", __func__);
++		break;
++	case IRQ_TYPE_EDGE_RISING:
++		mode = NX_GPIO_INTMODE_RISINGEDGE;
++		break;
++	case IRQ_TYPE_EDGE_FALLING:
++		mode = NX_GPIO_INTMODE_FALLINGEDGE;
++		break;
++	case IRQ_TYPE_EDGE_BOTH:
++		mode = NX_GPIO_INTMODE_BOTHEDGE;
++		break;
++	case IRQ_TYPE_LEVEL_LOW:
++		mode = NX_GPIO_INTMODE_LOWLEVEL;
++		break;
++	case IRQ_TYPE_LEVEL_HIGH:
++		mode = NX_GPIO_INTMODE_HIGHLEVEL;
++		break;
++	default:
++		pr_err("%s: No such irq type %d", __func__, type);
++		return -1;
++	}
++
++	/*
++	 * must change mode to gpio to use gpio interrupt
++	 */
++
++	/* gpio out : output disable */
++	writel(readl(base + GPIO_INT_OUT) & ~(1 << bit), base + GPIO_INT_OUT);
++
++	/* gpio mode : interrupt mode */
++	reg = (ulong)(base + GPIO_INT_MODE0 + (bit / 16) * 4);
++	val = (readl((void *)reg) & ~(3 << ((bit & 0xf) * 2))) |
++	      ((mode & 0x3) << ((bit & 0xf) * 2));
++	writel(val, (void *)reg);
++
++	reg = (ulong)(base + GPIO_INT_MODE1);
++	val = (readl((void *)reg) & ~(1 << bit)) | (((mode >> 2) & 0x1) << bit);
++	writel(val, (void *)reg);
++
++	/* gpio alt : gpio mode for irq */
++	reg = (ulong)(base + GPIO_INT_ALT + (bit / 16) * 4);
++	val = readl((void *)reg) & ~(3 << ((bit & 0xf) * 2));
++	alt = nx_soc_gpio_get_altnum(bank->grange.pin_base + bit);
++	val |= alt << ((bit & 0xf) * 2);
++	writel(val, (void *)reg);
++	pr_debug("%s: set func to gpio. alt:%d, base:%d, bit:%d\n", __func__,
++		 alt, bank->grange.pin_base, bit);
++
++	return 0;
++}
++
++static void irq_gpio_enable(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: gpio irq=%d, %s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++
++	/* unmask:irq enable */
++	writel(readl(base + GPIO_INT_ENB) | (1 << bit), base + GPIO_INT_ENB);
++	writel(readl(base + GPIO_INT_DET) | (1 << bit), base + GPIO_INT_DET);
++}
++
++static void irq_gpio_disable(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: gpio irq=%d, %s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++
++	/* mask:irq disable */
++	writel(readl(base + GPIO_INT_ENB) & ~(1 << bit), base + GPIO_INT_ENB);
++	writel(readl(base + GPIO_INT_DET) & ~(1 << bit), base + GPIO_INT_DET);
++}
++
++/*
++ * irq_chip for gpio interrupts.
++ */
++static struct irq_chip s5pxx18_gpio_irq_chip = {
++	.name = "GPIO",
++	.irq_ack = irq_gpio_ack,
++	.irq_mask = irq_gpio_mask,
++	.irq_unmask = irq_gpio_unmask,
++	.irq_set_type = irq_gpio_set_type,
++	.irq_enable = irq_gpio_enable,
++	.irq_disable = irq_gpio_disable,
++	.flags = IRQCHIP_SKIP_SET_WAKE,
++};
++
++static int s5pxx18_gpio_irq_map(struct irq_domain *h, unsigned int virq,
++				irq_hw_number_t hw)
++{
++	struct nexell_pin_bank *b = h->host_data;
++
++	pr_debug("%s domain map: virq %d and hw %d\n", __func__, virq, (int)hw);
++
++	irq_set_chip_data(virq, b);
++	irq_set_chip_and_handler(virq, &s5pxx18_gpio_irq_chip,
++				 handle_level_irq);
++	return 0;
++}
++
++/*
++ * irq domain callbacks for external gpio interrupt controller.
++ */
++static const struct irq_domain_ops s5pxx18_gpio_irqd_ops = {
++	.map = s5pxx18_gpio_irq_map, .xlate = irq_domain_xlate_twocell,
++};
++
++static irqreturn_t s5pxx18_gpio_irq_handler(int irq, void *data)
++{
++	struct nexell_pin_bank *bank = data;
++	void __iomem *base = bank->virt_base;
++	u32 stat, mask;
++	unsigned int virq;
++	int bit;
++
++	mask = readl(base + GPIO_INT_ENB);
++	stat = readl(base + GPIO_INT_STATUS) & mask;
++	bit = ffs(stat) - 1;
++
++	if (-1 == bit) {
++		pr_err("Unknown gpio irq=%d, status=0x%08x, mask=0x%08x\r\n",
++		       irq, stat, mask);
++		writel(-1, (base + GPIO_INT_STATUS)); /* clear gpio status all*/
++		return IRQ_NONE;
++	}
++
++	virq = irq_find_mapping(bank->irq_domain, bit);
++	if (!virq)
++		return IRQ_NONE;
++
++	pr_debug("Gpio irq=%d [%d] (hw %u), stat=0x%08x, mask=0x%08x\n", irq,
++		 bit, virq, stat, mask);
++	generic_handle_irq(virq);
++
++	return IRQ_HANDLED;
++}
++
++/*
++ * s5pxx18_gpio_irq_init() - setup handling of external gpio interrupts.
++ * @d: driver data of nexell pinctrl driver.
++ */
++static int s5pxx18_gpio_irq_init(struct nexell_pinctrl_drv_data *d)
++{
++	struct nexell_pin_bank *bank;
++	struct device *dev = d->dev;
++	int ret;
++	int i;
++
++	bank = d->ctrl->pin_banks;
++	for (i = 0; i < d->ctrl->nr_banks; ++i, ++bank) {
++		if (bank->eint_type != EINT_TYPE_GPIO)
++			continue;
++
++		ret = devm_request_irq(dev, bank->irq, s5pxx18_gpio_irq_handler,
++				       0, dev_name(dev), bank);
++		if (ret) {
++			dev_err(dev, "irq request failed\n");
++			ret = -ENXIO;
++			goto err_domains;
++		}
++
++		bank->irq_domain = irq_domain_add_linear(
++		    bank->of_node, bank->nr_pins, &s5pxx18_gpio_irqd_ops, bank);
++		if (!bank->irq_domain) {
++			dev_err(dev, "gpio irq domain add failed\n");
++			ret = -ENXIO;
++			goto err_domains;
++		}
++	}
++
++	return 0;
++
++err_domains:
++	for (--i, --bank; i >= 0; --i, --bank) {
++		if (bank->eint_type != EINT_TYPE_GPIO)
++			continue;
++		irq_domain_remove(bank->irq_domain);
++		devm_free_irq(dev, bank->irq, d);
++	}
++
++	return ret;
++}
++
++static void irq_alive_ack(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: irq=%d, hwirq=%d\n", __func__, irqd->irq, bit);
++	/* ack: irq pend clear */
++	writel(1 << bit, base + ALIVE_INT_STATUS);
++
++	ARM_DMB();
++}
++
++static void irq_alive_mask(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: irq=%d, hwirq=%d\n", __func__, irqd->irq, bit);
++	/* mask: irq reset (disable) */
++	writel((1 << bit), base + ALIVE_INT_RESET);
++}
++
++static void irq_alive_unmask(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: irq=%d, hwirq=%d\n", __func__, irqd->irq, bit);
++	writel((1 << bit), base + ALIVE_INT_SET);
++	ARM_DMB();
++}
++
++static int irq_alive_set_type(struct irq_data *irqd, unsigned int type)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++	int offs = 0, i = 0;
++	int mode = 0;
++
++	pr_debug("%s: irq=%d, hwirq=%d, type=0x%x\n", __func__, irqd->irq, bit,
++		 type);
++
++	switch (type) {
++	case IRQ_TYPE_NONE:
++		pr_warn("%s: No edge setting!\n", __func__);
++		break;
++	case IRQ_TYPE_EDGE_FALLING:
++		mode = NX_ALIVE_DETECTMODE_SYNC_FALLINGEDGE;
++		break;
++	case IRQ_TYPE_EDGE_RISING:
++		mode = NX_ALIVE_DETECTMODE_SYNC_RISINGEDGE;
++		break;
++	case IRQ_TYPE_EDGE_BOTH:
++		mode = NX_ALIVE_DETECTMODE_SYNC_FALLINGEDGE;
++		break; /* and Rising Edge */
++	case IRQ_TYPE_LEVEL_LOW:
++		mode = NX_ALIVE_DETECTMODE_ASYNC_LOWLEVEL;
++		break;
++	case IRQ_TYPE_LEVEL_HIGH:
++		mode = NX_ALIVE_DETECTMODE_ASYNC_HIGHLEVEL;
++		break;
++	default:
++		pr_err("%s: No such irq type %d", __func__, type);
++		return -1;
++	}
++
++	/* setting all alive detect mode set/reset register */
++	for (; 6 > i; i++, offs += 0x0C) {
++		u32 reg = (i == mode ? ALIVE_MOD_SET : ALIVE_MOD_RESET);
++
++		writel(1 << bit, (base + reg + offs));
++	}
++
++	/*
++	 * set risingedge mode for both edge
++	 * 0x2C : Risingedge
++	 */
++	if (IRQ_TYPE_EDGE_BOTH == type)
++		writel(1 << bit, (base + 0x2C));
++
++	writel(1 << bit, base + ALIVE_DET_SET);
++	writel(1 << bit, base + ALIVE_INT_SET);
++	writel(1 << bit, base + ALIVE_OUT_RESET);
++
++	return 0;
++}
++
++static u32 alive_wake_mask = 0xffffffff;
++
++u32 get_wake_mask(void)
++{
++	return alive_wake_mask;
++}
++
++static int irq_set_alive_wake(struct irq_data *irqd, unsigned int on)
++{
++	int bit = (int)(irqd->hwirq);
++
++	pr_info("alive wake bit[%d] %s for irq %d\n",
++		       bit, on ? "enabled" : "disabled", irqd->irq);
++
++	if (!on)
++		alive_wake_mask |= bit;
++	else
++		alive_wake_mask &= ~bit;
++
++	return 0;
++}
++
++static void irq_alive_enable(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: irq=%d, io=%s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++	/* unmask:irq set (enable) */
++	writel((1 << bit), base + ALIVE_INT_SET);
++	ARM_DMB();
++}
++
++static void irq_alive_disable(struct irq_data *irqd)
++{
++	struct nexell_pin_bank *bank = irq_data_get_irq_chip_data(irqd);
++	int bit = (int)(irqd->hwirq);
++	void __iomem *base = bank->virt_base;
++
++	pr_debug("%s: irq=%d, io=%s.%d\n", __func__, bank->irq, bank->name,
++		 bit);
++	/* mask:irq reset (disable) */
++	writel((1 << bit), base + ALIVE_INT_RESET);
++}
++
++/*
++ * irq_chip for wakeup interrupts
++ */
++static struct irq_chip s5pxx18_alive_irq_chip = {
++	.name = "ALIVE",
++	.irq_ack = irq_alive_ack,
++	.irq_mask = irq_alive_mask,
++	.irq_unmask = irq_alive_unmask,
++	.irq_set_type = irq_alive_set_type,
++	.irq_set_wake = irq_set_alive_wake,
++	.irq_enable = irq_alive_enable,
++	.irq_disable = irq_alive_disable,
++};
++
++static irqreturn_t s5pxx18_alive_irq_handler(int irq, void *data)
++{
++	struct nexell_pin_bank *bank = data;
++	void __iomem *base = bank->virt_base;
++	u32 stat, mask;
++	unsigned int virq;
++	int bit;
++
++	mask = readl(base + ALIVE_INT_SET_READ);
++	stat = readl(base + ALIVE_INT_STATUS) & mask;
++	bit = ffs(stat) - 1;
++
++	if (-1 == bit) {
++		pr_err("Unknown alive irq=%d, status=0x%08x, mask=0x%08x\r\n",
++		       irq, stat, mask);
++		writel(-1, (base + ALIVE_INT_STATUS)); /* clear alive status */
++		return IRQ_NONE;
++	}
++
++	virq = irq_find_mapping(bank->irq_domain, bit);
++	pr_debug("alive irq=%d [%d] (hw %u), stat=0x%08x, mask=0x%08x\n", irq,
++		 bit, virq, stat, mask);
++	if (!virq)
++		return IRQ_NONE;
++
++	generic_handle_irq(virq);
++
++	return IRQ_HANDLED;
++}
++
++static int s5pxx18_alive_irq_map(struct irq_domain *h, unsigned int virq,
++				 irq_hw_number_t hw)
++{
++	pr_debug("%s domain map: virq %d and hw %d\n", __func__, virq, (int)hw);
++
++	irq_set_chip_and_handler(virq, &s5pxx18_alive_irq_chip,
++				 handle_level_irq);
++	irq_set_chip_data(virq, h->host_data);
++	return 0;
++}
++
++static const struct irq_domain_ops s5pxx18_alive_irqd_ops = {
++	.map = s5pxx18_alive_irq_map, .xlate = irq_domain_xlate_twocell,
++};
++
++/*
++ * s5pxx18_alive_irq_init() - setup handling of wakeup interrupts.
++ * @d: driver data of nexell pinctrl driver.
++ */
++static int s5pxx18_alive_irq_init(struct nexell_pinctrl_drv_data *d)
++{
++	struct nexell_pin_bank *bank;
++	struct device *dev = d->dev;
++	int ret;
++	int i;
++
++	bank = d->ctrl->pin_banks;
++	for (i = 0; i < d->ctrl->nr_banks; ++i, ++bank) {
++		void __iomem *base = bank->virt_base;
++
++		if (bank->eint_type != EINT_TYPE_WKUP)
++			continue;
++
++		/* clear pending, disable irq detect */
++		writel(-1, base + ALIVE_INT_RESET);
++		writel(-1, base + ALIVE_INT_STATUS);
++
++		ret =
++		    devm_request_irq(dev, bank->irq, s5pxx18_alive_irq_handler,
++				     0, dev_name(dev), bank);
++		if (ret) {
++			dev_err(dev, "irq request failed\n");
++			ret = -ENXIO;
++			goto err_domains;
++		}
++
++		bank->irq_domain =
++		    irq_domain_add_linear(bank->of_node, bank->nr_pins,
++					  &s5pxx18_alive_irqd_ops, bank);
++		if (!bank->irq_domain) {
++			dev_err(dev, "gpio irq domain add failed\n");
++			ret = -ENXIO;
++			goto err_domains;
++		}
++	}
++
++	return 0;
++
++err_domains:
++	for (--i, --bank; i >= 0; --i, --bank) {
++		if (bank->eint_type != EINT_TYPE_WKUP)
++			continue;
++		irq_domain_remove(bank->irq_domain);
++		devm_free_irq(dev, bank->irq, d);
++	}
++
++	return ret;
++}
++
++static void s5pxx18_suspend(struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++	int nr_banks = ctrl->nr_banks;
++	int i;
++
++	for (i = 0; i < nr_banks; i++) {
++		struct nexell_pin_bank *bank = &ctrl->pin_banks[i];
++
++		if (bank->eint_type == EINT_TYPE_WKUP) {
++			s5pxx18_alive_suspend();
++			continue;
++		}
++
++		if (bank->eint_type != EINT_TYPE_GPIO)
++			continue;
++
++		if (s5pxx18_gpio_suspend(i) < 0)
++			dev_err(drvdata->dev, "failed to suspend bank %d\n", i);
++	}
++
++	nx_alive_clear_wakeup_status();
++}
++
++
++static const char *wake_event_name[] = {
++	[0] = "VDDPOWER",
++	[1] = "RTC",
++	[2] = "ALIVE 0",
++	[3] = "ALIVE 1",
++	[4] = "ALIVE 2",
++	[5] = "ALIVE 3",
++	[6] = "ALIVE 4",
++	[7] = "ALIVE 5",
++};
++
++#define	WAKE_EVENT_NUM	ARRAY_SIZE(wake_event_name)
++
++static void print_wake_event(void)
++{
++	int i = 0;
++	u32 wake_status = nx_alive_get_wakeup_status();
++
++	for (i = 0; WAKE_EVENT_NUM > i; i++) {
++		if (wake_status & (1 << i))
++			pr_notice("WAKE SOURCE [%s]\n", wake_event_name[i]);
++	}
++}
++
++static void s5pxx18_resume(struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++	int nr_banks = ctrl->nr_banks;
++	int i;
++
++	for (i = 0; i < nr_banks; i++) {
++		struct nexell_pin_bank *bank = &ctrl->pin_banks[i];
++
++		if (bank->eint_type == EINT_TYPE_WKUP) {
++			s5pxx18_alive_resume();
++			continue;
++		}
++
++		if (bank->eint_type != EINT_TYPE_GPIO)
++			continue;
++
++		if (s5pxx18_gpio_resume(i) < 0)
++			dev_err(drvdata->dev, "failed to resume bank %d\n", i);
++	}
++
++	print_wake_event();
++}
++
++static int s5pxx18_base_init(struct nexell_pinctrl_drv_data *drvdata)
++{
++	struct nexell_pin_ctrl *ctrl = drvdata->ctrl;
++	int nr_banks = ctrl->nr_banks;
++	int ret;
++	int i;
++	struct module_init_data *init_data, *n;
++	LIST_HEAD(banks);
++
++	for (i = 0; i < nr_banks; i++) {
++		struct nexell_pin_bank *bank = &ctrl->pin_banks[i];
++
++		init_data = kmalloc(sizeof(*init_data), GFP_KERNEL);
++		if (!init_data) {
++			ret = -ENOMEM;
++			goto done;
++		}
++
++		INIT_LIST_HEAD(&init_data->node);
++		init_data->bank_base = bank->virt_base;
++		init_data->bank_type = bank->eint_type;
++
++		list_add_tail(&init_data->node, &banks);
++	}
++
++	s5pxx18_gpio_device_init(&banks, nr_banks);
++
++done:
++	/* free */
++	list_for_each_entry_safe(init_data, n, &banks, node) {
++		list_del(&init_data->node);
++		kfree(init_data);
++	}
++
++	return 0;
++}
++
++/* pin banks of s5pxx18 pin-controller 0 */
++static struct nexell_pin_bank s5pxx18_pin_banks[] = {
++	SOC_PIN_BANK_EINTG(32, 0xA000, "gpioa"),
++	SOC_PIN_BANK_EINTG(32, 0xB000, "gpiob"),
++	SOC_PIN_BANK_EINTG(32, 0xC000, "gpioc"),
++	SOC_PIN_BANK_EINTG(32, 0xD000, "gpiod"),
++	SOC_PIN_BANK_EINTG(32, 0xE000, "gpioe"),
++	SOC_PIN_BANK_EINTW(6, 0x0800, "alive"),
++};
++
++/*
++ * Nexell pinctrl driver data for SoC.
++ */
++const struct nexell_pin_ctrl s5pxx18_pin_ctrl[] = {
++	{
++		.pin_banks = s5pxx18_pin_banks,
++		.nr_banks = ARRAY_SIZE(s5pxx18_pin_banks),
++		.base_init = s5pxx18_base_init,
++		.gpio_irq_init = s5pxx18_gpio_irq_init,
++		.alive_irq_init = s5pxx18_alive_irq_init,
++		.suspend = s5pxx18_suspend,
++		.resume = s5pxx18_resume,
++	}
++};
+diff --git a/drivers/pinctrl/nexell/pinctrl-s5pxx18.h b/drivers/pinctrl/nexell/pinctrl-s5pxx18.h
+new file mode 100644
+index 000000000..2e1795558
+--- /dev/null
++++ b/drivers/pinctrl/nexell/pinctrl-s5pxx18.h
+@@ -0,0 +1,99 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Bon-gyu, KOO <freestyle@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#define SOC_PIN_BANK_EINTN(pins, reg, id)		\
++	{						\
++		.pctl_offset	= reg,			\
++		.nr_pins	= pins,			\
++		.eint_type	= EINT_TYPE_NONE,	\
++		.name		= id			\
++	}
++
++#define SOC_PIN_BANK_EINTG(pins, reg, id)	\
++	{							\
++		.pctl_offset	= reg,				\
++		.nr_pins	= pins,				\
++		.eint_type	= EINT_TYPE_GPIO,		\
++		.name		= id				\
++	}
++
++#define SOC_PIN_BANK_EINTW(pins, reg, id)	\
++	{							\
++		.pctl_offset	= reg,				\
++		.nr_pins	= pins,				\
++		.eint_type	= EINT_TYPE_WKUP,		\
++		.name		= id				\
++	}
++
++
++#define GPIO_INT_OUT (0x04)
++#define GPIO_INT_MODE0 (0x08) /* 0x08,0x0C */
++#define GPIO_INT_MODE1 (0x28)
++#define GPIO_INT_ENB (0x10)
++#define GPIO_INT_STATUS (0x14)
++#define GPIO_INT_ALT (0x20) /* 0x20,0x24 */
++#define GPIO_INT_DET (0x3C)
++
++#define ALIVE_MOD_RESET (0x04) /* detect mode reset */
++#define ALIVE_MOD_SET (0x08)   /* detect mode set */
++#define ALIVE_MOD_READ (0x0C)  /* detect mode read */
++#define ALIVE_DET_RESET (0x4C)
++#define ALIVE_DET_SET (0x50)
++#define ALIVE_DET_READ (0x54)
++#define ALIVE_INT_RESET (0x58)    /* interrupt reset : disable */
++#define ALIVE_INT_SET (0x5C)      /* interrupt set   : enable */
++#define ALIVE_INT_SET_READ (0x60) /* interrupt set read */
++#define ALIVE_INT_STATUS (0x64)   /* interrupt detect pending and clear */
++#define ALIVE_OUT_RESET (0x74)
++#define ALIVE_OUT_SET (0x78)
++#define ALIVE_OUT_READ (0x7C)
++
++/* alive interrupt detect type */
++#define NX_ALIVE_DETECTMODE_ASYNC_LOWLEVEL 0
++#define NX_ALIVE_DETECTMODE_ASYNC_HIGHLEVEL 1
++#define NX_ALIVE_DETECTMODE_SYNC_FALLINGEDGE 2
++#define NX_ALIVE_DETECTMODE_SYNC_RISINGEDGE 3
++#define NX_ALIVE_DETECTMODE_SYNC_LOWLEVEL 4
++#define NX_ALIVE_DETECTMODE_SYNC_HIGHLEVEL 5
++
++/* gpio interrupt detect type */
++#define NX_GPIO_INTMODE_LOWLEVEL 0
++#define NX_GPIO_INTMODE_HIGHLEVEL 1
++#define NX_GPIO_INTMODE_FALLINGEDGE 2
++#define NX_GPIO_INTMODE_RISINGEDGE 3
++#define NX_GPIO_INTMODE_BOTHEDGE 4
++
++#define NX_GPIO_PADFUNC_0 0
++#define NX_GPIO_PADFUNC_1 1
++#define NX_GPIO_PADFUNC_2 2
++#define NX_GPIO_PADFUNC_3 3
++
++#define NX_GPIO_DRVSTRENGTH_0 0
++#define NX_GPIO_DRVSTRENGTH_1 1
++#define NX_GPIO_DRVSTRENGTH_2 2
++#define NX_GPIO_DRVSTRENGTH_3 3
++
++#define NX_GPIO_PULL_DOWN 0
++#define NX_GPIO_PULL_UP 1
++#define NX_GPIO_PULL_OFF 2
++
++#ifdef CONFIG_ARM64
++#define ARM_DMB() dmb(sy)
++#else
++#define ARM_DMB() dmb()
++#endif
+diff --git a/drivers/pinctrl/nexell/s5pxx18-gpio.h b/drivers/pinctrl/nexell/s5pxx18-gpio.h
+new file mode 100644
+index 000000000..93b5c2f7c
+--- /dev/null
++++ b/drivers/pinctrl/nexell/s5pxx18-gpio.h
+@@ -0,0 +1,520 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Bon-gyu, KOO <freestyle@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef __S5Pxx18_GPIO_H
++#define __S5Pxx18_GPIO_H
++
++#define PAD_MD_POS 0
++#define PAD_MD_MASK 0xF
++
++#define PAD_FN_POS 4
++#define PAD_FN_MASK 0xF
++
++#define PAD_LV_POS 8
++#define PAD_LV_MASK 0xF
++
++#define PAD_PU_POS 12
++#define PAD_PU_MASK 0xF
++
++#define PAD_ST_POS 16
++#define PAD_ST_MASK 0xF
++
++#define PIN_MODE_ALT (0)
++#define PIN_MODE_IN (1)
++#define PIN_MODE_OUT (2)
++#define PIN_MODE_INT (3)
++
++#define PIN_FUNC_ALT0 (0)
++#define PIN_FUNC_ALT1 (1)
++#define PIN_FUNC_ALT2 (2)
++#define PIN_FUNC_ALT3 (3)
++
++#define PIN_LEVEL_LOW (0)		/* if alive, async lowlevel */
++#define PIN_LEVEL_HIGH (1)		/* if alive, async highlevel */
++#define PIN_LEVEL_FALLINGEDGE (2)	/* if alive, async fallingedge */
++#define PIN_LEVEL_RISINGEDGE (3)	/* if alive, async eisingedge */
++#define PIN_LEVEL_LOW_SYNC (4)		/* if gpio , not support */
++#define PIN_LEVEL_HIGH_SYNC (5)		/* if gpio , not support */
++#define PIN_LEVEL_BOTHEDGE (4)		/* if alive, not support */
++#define PIN_LEVEL_ALT (6)		/* if pad function is alt, not set */
++
++#define PIN_PULL_DN (0)			/* Do not support Alive-GPIO */
++#define PIN_PULL_UP (1)
++#define PIN_PULL_OFF (2)
++
++#define PIN_STRENGTH_0 (0)
++#define PIN_STRENGTH_1 (1)
++#define PIN_STRENGTH_2 (2)
++#define PIN_STRENGTH_3 (3)
++
++#define PAD_MODE_ALT ((PIN_MODE_ALT & PAD_MD_MASK) << PAD_MD_POS)
++#define PAD_MODE_IN ((PIN_MODE_IN & PAD_MD_MASK) << PAD_MD_POS)
++#define PAD_MODE_OUT ((PIN_MODE_OUT & PAD_MD_MASK) << PAD_MD_POS)
++#define PAD_MODE_INT ((PIN_MODE_INT & PAD_MD_MASK) << PAD_MD_POS)
++
++#define PAD_FUNC_ALT0 ((PIN_FUNC_ALT0 & PAD_FN_MASK) << PAD_FN_POS)
++#define PAD_FUNC_ALT1 ((PIN_FUNC_ALT1 & PAD_FN_MASK) << PAD_FN_POS)
++#define PAD_FUNC_ALT2 ((PIN_FUNC_ALT2 & PAD_FN_MASK) << PAD_FN_POS)
++#define PAD_FUNC_ALT3 ((PIN_FUNC_ALT3 & PAD_FN_MASK) << PAD_FN_POS)
++
++#define PAD_LEVEL_LOW                                                          \
++	((PIN_LEVEL_LOW & PAD_LV_MASK)                                         \
++	 << PAD_LV_POS) /* if alive, async lowlevel */
++#define PAD_LEVEL_HIGH                                                         \
++	((PIN_LEVEL_HIGH & PAD_LV_MASK)                                        \
++	 << PAD_LV_POS) /* if alive, async highlevel */
++#define PAD_LEVEL_FALLINGEDGE                                                  \
++	((PIN_LEVEL_FALLINGEDGE & PAD_LV_MASK)                                 \
++	 << PAD_LV_POS) /* if alive, async fallingedge */
++#define PAD_LEVEL_RISINGEDGE                                                   \
++	((PIN_LEVEL_RISINGEDGE & PAD_LV_MASK)                                  \
++	 << PAD_LV_POS) /* if alive, async eisingedge */
++#define PAD_LEVEL_LOW_SYNC                                                     \
++	((PIN_LEVEL_LOW_SYNC & PAD_LV_MASK)                                    \
++	 << PAD_LV_POS) /* if gpio , not support */
++#define PAD_LEVEL_HIGH_SYNC                                                    \
++	((PIN_LEVEL_HIGH_SYNC & PAD_LV_MASK)                                   \
++	 << PAD_LV_POS) /* if gpio , not support */
++#define PAD_LEVEL_BOTHEDGE                                                     \
++	((PIN_LEVEL_BOTHEDGE & PAD_LV_MASK)                                    \
++	 << PAD_LV_POS) /* if alive, not support */
++#define PAD_LEVEL_ALT                                                          \
++	((PIN_LEVEL_ALT & PAD_LV_MASK)                                         \
++	 << PAD_LV_POS) /* if pad function is alt, not set */
++
++#define PAD_PULL_DN                                                            \
++	((PIN_PULL_DN & PAD_PU_MASK)                                           \
++	 << PAD_PU_POS) /* Do not support Alive-GPIO */
++#define PAD_PULL_UP ((PIN_PULL_UP & PAD_PU_MASK) << PAD_PU_POS)
++#define PAD_PULL_OFF ((PIN_PULL_OFF & PAD_PU_MASK) << PAD_PU_POS)
++
++#define PAD_STRENGTH_0 ((PIN_STRENGTH_0 & PAD_ST_MASK) << PAD_ST_POS)
++#define PAD_STRENGTH_1 ((PIN_STRENGTH_1 & PAD_ST_MASK) << PAD_ST_POS)
++#define PAD_STRENGTH_2 ((PIN_STRENGTH_2 & PAD_ST_MASK) << PAD_ST_POS)
++#define PAD_STRENGTH_3 ((PIN_STRENGTH_3 & PAD_ST_MASK) << PAD_ST_POS)
++
++#define PAD_GET_GROUP(pin) ((pin >> 0x5) & 0x07) /* Divide 32 */
++#define PAD_GET_BITNO(pin) (pin & 0x1F)
++#define PAD_GET_FUNC(pin) ((pin >> PAD_FN_POS) & PAD_FN_MASK)
++#define PAD_GET_MODE(pin) ((pin >> PAD_MD_POS) & PAD_MD_MASK)
++#define PAD_GET_LEVEL(pin) ((pin >> PAD_LV_POS) & PAD_LV_MASK)
++#define PAD_GET_PULLUP(pin) ((pin >> PAD_PU_POS) & PAD_PU_MASK)
++#define PAD_GET_STRENGTH(pin) ((pin >> PAD_ST_POS) & PAD_ST_MASK)
++
++#define PAD_GPIO_A (0 * 32)
++#define PAD_GPIO_B (1 * 32)
++#define PAD_GPIO_C (2 * 32)
++#define PAD_GPIO_D (3 * 32)
++#define PAD_GPIO_E (4 * 32)
++#define PAD_GPIO_ALV (5 * 32)
++
++/*
++ * gpio descriptor
++ */
++#define IO_ALT_0 (0)
++#define IO_ALT_1 (1)
++#define IO_ALT_2 (2)
++#define IO_ALT_3 (3)
++
++/* s5pxx18 GPIO function number */
++
++#define ALT_NO_GPIO_A                                                          \
++	{                                                                      \
++		IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,    \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0,                                                  \
++	}
++
++#define ALT_NO_GPIO_B                                                          \
++	{                                                                      \
++		IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,    \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_2, IO_ALT_2, IO_ALT_1, IO_ALT_2, IO_ALT_1,          \
++		    IO_ALT_2, IO_ALT_1, IO_ALT_2, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1,                                                  \
++	}
++
++#define ALT_NO_GPIO_C                                                          \
++	{                                                                      \
++		IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,    \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0,                                                  \
++	}
++
++#define ALT_NO_GPIO_D                                                          \
++	{                                                                      \
++		IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,    \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0,                                                  \
++	}
++
++#define ALT_NO_GPIO_E                                                          \
++	{                                                                      \
++		IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,    \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_1,          \
++		    IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1, IO_ALT_1,          \
++		    IO_ALT_1,                                                  \
++	}
++
++#define ALT_NO_ALIVE                                                           \
++	{                                                                      \
++		IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,    \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0, IO_ALT_0,          \
++		    IO_ALT_0,                                                  \
++	}
++
++#define GPIO_NUM_PER_BANK (32)
++
++#define NUMBER_OF_GPIO_MODULE 5
++
++#define nx_gpio_intmode_lowlevel 1
++#define nx_gpio_intmode_highlevel 2
++#define nx_gpio_intmode_fallingedge 2
++#define nx_gpio_intmode_risingedge 3
++#define nx_gpio_intmode_bothedge 4
++
++#define nx_gpio_padfunc_0 0
++#define nx_gpio_padfunc_1 1
++#define nx_gpio_padfunc_2 2
++#define nx_gpio_padfunc_3 3
++
++#define nx_gpio_drvstrength_0 0
++#define nx_gpio_drvstrength_1 1
++#define nx_gpio_drvstrength_2 2
++#define nx_gpio_drvstrength_3 3
++
++#define nx_gpio_pull_down 0
++#define nx_gpio_pull_up 1
++#define nx_gpio_pull_off 2
++
++/* GPIO Module's Register List */
++struct nx_gpio_reg_set {
++	/* 0x00	: Output Register */
++	u32 GPIOxOUT;
++	/* 0x04	: Output Enable Register */
++	u32 GPIOxOUTENB;
++	/* 0x08	: Event Detect Mode Register */
++	u32 GPIOxDETMODE[2];
++	/* 0x10	: Interrupt Enable Register */
++	u32 GPIOxINTENB;
++	/* 0x14	: Event Detect Register */
++	u32 GPIOxDET;
++	/* 0x18	: PAD Status Register */
++	u32 GPIOxPAD;
++	/* 0x1C	: Pull Up Enable Register */
++	u32 GPIOxPUENB;
++	/* 0x20	: Alternate Function Select Register */
++	u32 GPIOxALTFN[2];
++	/* 0x28	: Event Detect Mode extended Register */
++	u32 GPIOxDETMODEEX;
++	/* 0x2B	: */
++	u32 __Reserved[4];
++	/* 0x3C	: IntPend Detect Enable Register */
++	u32 GPIOxDETENB;
++
++	/* 0x40	: Slew Register */
++	u32 GPIOx_SLEW;
++	/* 0x44	: Slew set On/Off Register */
++	u32 GPIOx_SLEW_DISABLE_DEFAULT;
++	/* 0x48	: drive strength LSB Register */
++	u32 GPIOx_DRV1;
++	/* 0x4C	: drive strength LSB set On/Off Register */
++	u32 GPIOx_DRV1_DISABLE_DEFAULT;
++	/* 0x50	: drive strength MSB Register */
++	u32 GPIOx_DRV0;
++	/* 0x54	: drive strength MSB set On/Off Register */
++	u32 GPIOx_DRV0_DISABLE_DEFAULT;
++	/* 0x58	: Pull UP/DOWN Selection Register */
++	u32 GPIOx_PULLSEL;
++	/* 0x5C	: Pull UP/DOWN Selection On/Off Register */
++	u32 GPIOx_PULLSEL_DISABLE_DEFAULT;
++	/* 0x60	: Pull Enable/Disable Register */
++	u32 GPIOx_PULLENB;
++	/* 0x64	: Pull Enable/Disable selection On/Off Register */
++	u32 GPIOx_PULLENB_DISABLE_DEFAULT;
++	/* 0x68 */
++	u32 GPIOx_InputMuxSelect0;
++	/* 0x6C */
++	u32 GPIOx_InputMuxSelect1;
++};
++
++struct module_init_data {
++	struct list_head node;
++	void *bank_base;
++	int bank_type;		/* 0: none, 1: gpio, 2: alive */
++};
++
++/*
++ * nx_alive
++ */
++
++/* ALIVE Interrupts for interrupt interface */
++#define nx_alive_int_alivegpio0 0
++#define nx_alive_int_alivegpio1 1
++#define nx_alive_int_alivegpio2 2
++#define nx_alive_int_alivegpio3 3
++#define nx_alive_int_alivegpio4 4
++#define nx_alive_int_alivegpio5 5
++#define nx_alive_int_alivegpio6 6
++#define nx_alive_int_alivegpio7 7
++
++/* ALIVE GPIO Detect Mode */
++#define nx_alive_detect_mode_async_lowlevel 0
++#define nx_alive_detect_mode_async_highlevel 1
++#define nx_alive_detect_mode_sync_fallingedge 2
++#define nx_alive_detect_mode_sync_risingedge 3
++#define nx_alive_detect_mode_sync_lowlevel 4
++#define nx_alive_detect_mode_sync_highlevel 5
++
++#define nx_alive_number_of_gpio 6
++
++struct nx_alive_reg_set {
++	/* 0x00 : Alive Power Gating Register */
++	u32 ALIVEPWRGATEREG;
++	/* 0x04 : Alive GPIO ASync Detect Mode Reset Register0 */
++	u32 ALIVEGPIOASYNCDETECTMODERSTREG0;
++	/* 0x08 : Alive GPIO gASync Detect Mode Set gRegister0 */
++	u32 ALIVEGPIOASYNCDETECTMODESETREG0;
++	/* 0x0C : Alive GPIO gLow ASync Detect gMode Read Register */
++	u32 ALIVEGPIOLOWASYNCDETECTMODEREADREG;
++
++	/* 0x10 : Alive GPIO gASync Detect Mode Reset gRegister1 */
++	u32 ALIVEGPIOASYNCDETECTMODERSTREG1;
++	/* 0x14 : Alive GPIO gASync Detect Mode Set gRegister1 */
++	u32 ALIVEGPIOASYNCDETECTMODESETREG1;
++	/* 0x18 : Alive GPIO gHigh ASync Detect gMode Read Register */
++	u32 ALIVEGPIOHIGHASYNCDETECTMODEREADREG;
++
++	/* 0x1C : Alive GPIO Detect gMode Reset Register0 */
++	u32 ALIVEGPIODETECTMODERSTREG0;
++	/* 0x20 : Alive GPIO Detect gMode Reset Register0 */
++	u32 ALIVEGPIODETECTMODESETREG0;
++	/* 0x24 : Alive GPIO gFalling Edge Detect Mode gRead Register */
++	u32 ALIVEGPIOFALLDETECTMODEREADREG;
++
++	/* 0x28 : Alive GPIO Detect Mode Reset Register1 */
++	u32 ALIVEGPIODETECTMODERSTREG1;
++	/* 0x2C : Alive GPIO Detect Mode Reset Register1 */
++	u32 ALIVEGPIODETECTMODESETREG1;
++	/* 0x30 : Alive GPIO Rising Edge Detect Mode Read Register */
++	u32 ALIVEGPIORISEDETECTMODEREADREG;
++
++	/* 0x34 : Alive GPIO Detect Mode Reset Register2 */
++	u32 ALIVEGPIODETECTMODERSTREG2;
++	/* 0x38 : Alive GPIO Detect Mode Reset Register2 */
++	u32 ALIVEGPIODETECTMODESETREG2;
++	/* 0x3C : Alive GPIO Low Level Detect Mode Read gRegister */
++	u32 ALIVEGPIOLOWDETECTMODEREADREG;
++
++	/* 0x40 : Alive GPIO Detect Mode Reset Register3 */
++	u32 ALIVEGPIODETECTMODERSTREG3;
++	/* 0x44 : Alive GPIO Detect Mode Reset Register3 */
++	u32 ALIVEGPIODETECTMODESETREG3;
++	/* 0x48 : Alive GPIO High Level Detect Mode Read gRegister */
++	u32 ALIVEGPIOHIGHDETECTMODEREADREG;
++
++	/* 0x4C : Alive GPIO Detect Enable Reset Register */
++	u32 ALIVEGPIODETECTENBRSTREG;
++	/* 0x50 : Alive GPIO Detect Enable Set Register */
++	u32 ALIVEGPIODETECTENBSETREG;
++	/* 0x54 : Alive GPIO Detect Enable Read Register */
++	u32 ALIVEGPIODETECTENBREADREG;
++
++	/* 0x58 : Alive GPIO Interrupt Enable Reset Register */
++	u32 ALIVEGPIOINTENBRSTREG;
++	/* 0x5C : Alive GPIO Interrupt Enable Set Register */
++	u32 ALIVEGPIOINTENBSETREG;
++	/* 0x60 : Alive GPIO Interrupt Enable Read Register */
++	u32 ALIVEGPIOINTENBREADREG;
++
++	/* 0x64 : Alive GPIO Detect Pending Register */
++	u32 ALIVEGPIODETECTPENDREG;
++
++	/* 0x68 : Alive Scratch Reset Register */
++	u32 ALIVESCRATCHRSTREG;
++	/* 0x6C : Alive Scratch Set Register */
++	u32 ALIVESCRATCHSETREG;
++	/* 0x70 : Alive Scratch Read Register */
++	u32 ALIVESCRATCHREADREG;
++
++	/* 0x74 : Alive GPIO PAD Out Enable Reset Register */
++	u32 ALIVEGPIOPADOUTENBRSTREG;
++	/* 0x78 : Alive GPIO PAD Out Enable Set Register */
++	u32 ALIVEGPIOPADOUTENBSETREG;
++	/* 0x7C : Alive GPIO PAD Out Enable Read Register */
++	u32 ALIVEGPIOPADOUTENBREADREG;
++
++	/* 0x80 : Alive GPIO PAD Pullup Reset Register */
++	u32 ALIVEGPIOPADPULLUPRSTREG;
++	/* 0x84 : Alive GPIO PAD Pullup Set Register */
++	u32 ALIVEGPIOPADPULLUPSETREG;
++	/* 0x88 : Alive GPIO PAD Pullup Read Register */
++	u32 ALIVEGPIOPADPULLUPREADREG;
++
++	/* 0x8C : Alive GPIO PAD Out Reset Register */
++	u32 ALIVEGPIOPADOUTRSTREG;
++	/* 0x90 : Alive GPIO PAD Out Set Register */
++	u32 ALIVEGPIOPADOUTSETREG;
++	/* 0x94 : Alive GPIO PAD Out Read Register */
++	u32 ALIVEGPIOPADOUTREADREG;
++
++	/*  0x98 : VDD Control Reset Register */
++	u32 VDDCTRLRSTREG;
++	/*  0x9C : VDD Control Set Register */
++	u32 VDDCTRLSETREG;
++	/* 0xA0 : VDD Control Read Register */
++	u32 VDDCTRLREADREG;
++
++	/* 0x0A4 :  wCS[41] */
++	u32 CLEARWAKEUPSTATUS;
++	/* 0x0A8 :  wCS[42] */
++	u32 WAKEUPSTATUS;
++
++	/* 0x0AC :  wCS[43] */
++	u32 ALIVESCRATCHRST1;
++	/* 0x0B0 :  wCS[44] */
++	u32 ALIVESCRATCHSET1;
++	/* 0x0B4 :  wCS[45] */
++	u32 ALIVESCRATCHVALUE1;
++
++	/* 0x0B8 :  wCS[46] */
++	u32 ALIVESCRATCHRST2;
++	/* 0x0BC :  wCS[47] */
++	u32 ALIVESCRATCHSET2;
++	/* 0x0C0 :  wCS[48] */
++	u32 ALIVESCRATCHVALUE2;
++
++	/* 0x0C4 :  wCS[49] */
++	u32 ALIVESCRATCHRST3;
++	/* 0x0C8 :  wCS[50] */
++	u32 ALIVESCRATCHSET3;
++	/* 0x0CC :  wCS[51] */
++	u32 ALIVESCRATCHVALUE3;
++
++	/* 0x0D0 :  wCS[52] */
++	u32 ALIVESCRATCHRST4;
++	/* 0x0D4 :  wCS[53] */
++	u32 ALIVESCRATCHSET4;
++	/* 0x0D8 :  wCS[54] */
++	u32 ALIVESCRATCHVALUE4;
++
++	/* 0x0DC :  wCS[55] */
++	u32 ALIVESCRATCHRST5;
++	/* 0x0E0 :  wCS[56] */
++	u32 ALIVESCRATCHSET5;
++	/* 0x0E4 :  wCS[57] */
++	u32 ALIVESCRATCHVALUE5;
++
++	/* 0x0E8 :  wCS[58] */
++	u32 ALIVESCRATCHRST6;
++	/* 0x0EC :  wCS[59] */
++	u32 ALIVESCRATCHSET6;
++	/* 0x0F0 :  wCS[60] */
++	u32 ALIVESCRATCHVALUE6;
++
++	/* 0x0F4 :  wCS[61] */
++	u32 ALIVESCRATCHRST7;
++	/* 0x0F8 :  wCS[62] */
++	u32 ALIVESCRATCHSET7;
++	/* 0x0FC :  wCS[63] */
++	u32 ALIVESCRATCHVALUE7;
++
++	/* 0x100 :  wCS[64] */
++	u32 ALIVESCRATCHRST8;
++	/* 0x104 :  wCS[65] */
++	u32 ALIVESCRATCHSET8;
++	/* 0x108 :  wCS[66] */
++	u32 ALIVESCRATCHVALUE8;
++
++	/* 0x10C :  wCS[67] */
++	u32 VDDOFFCNTVALUERST;
++	/* 0x110 :  wCS[68] */
++	u32 VDDOFFCNTVALUESET;
++
++	/* 0x114 :  wCS[69] */
++	u32 VDDOFFCNTVALUE0;
++	/* 0x118 :  wCS[70] */
++	u32 VDDOFFCNTVALUE1;
++
++	/* 0x11C :  wCS[71] */
++	u32 ALIVEGPIOINPUTVALUE;
++};
++
++/*
++ * nx_soc functions
++ */
++extern void nx_soc_gpio_set_io_func(unsigned int io, unsigned int func);
++extern int nx_soc_gpio_get_altnum(unsigned int io);
++extern unsigned int nx_soc_gpio_get_io_func(unsigned int io);
++extern void nx_soc_gpio_set_io_dir(unsigned int io, int out);
++extern int nx_soc_gpio_get_io_dir(unsigned int io);
++extern void nx_soc_gpio_set_io_pull(unsigned int io, int val);
++extern int nx_soc_gpio_get_io_pull(unsigned int io);
++extern void nx_soc_gpio_set_io_drv(int gpio, int mode);
++extern int nx_soc_gpio_get_io_drv(int gpio);
++extern void nx_soc_gpio_set_out_value(unsigned int io, int high);
++extern int nx_soc_gpio_get_out_value(unsigned int io);
++extern int nx_soc_gpio_get_in_value(unsigned int io);
++extern void nx_soc_gpio_set_int_enable(unsigned int io, int on);
++extern int nx_soc_gpio_get_int_enable(unsigned int io);
++extern void nx_soc_gpio_set_int_mode(unsigned int io, unsigned int mode);
++extern int nx_soc_gpio_get_int_mode(unsigned int io);
++extern int nx_soc_gpio_get_int_pend(unsigned int io);
++extern void nx_soc_gpio_clr_int_pend(unsigned int io);
++
++extern void nx_soc_alive_set_det_enable(unsigned int io, int on);
++extern int nx_soc_alive_get_det_enable(unsigned int io);
++extern void nx_soc_alive_set_det_mode(unsigned int io, unsigned int mode,
++				      int on);
++extern int nx_soc_alive_get_det_mode(unsigned int io, unsigned int mode);
++extern int nx_soc_alive_get_int_pend(unsigned int io);
++extern void nx_soc_alive_clr_int_pend(unsigned int io);
++
++extern int s5pxx18_gpio_device_init(struct list_head *banks, int nr_banks);
++
++extern int s5pxx18_gpio_suspend(int idx);
++extern int s5pxx18_gpio_resume(int idx);
++
++extern int s5pxx18_alive_suspend(void);
++extern int s5pxx18_alive_resume(void);
++
++extern u32 nx_alive_get_wakeup_status(void);
++extern void nx_alive_clear_wakeup_status(void);
++
++#endif /* __S5Pxx18_GPIO_H */
+-- 
+2.53.0
+
