@@ -33,7 +33,10 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-setenv bootargs "console=ttySAC0,115200n8 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+# earlycon: this SoC's arch-timer/console handover needs early serial to be
+# visible; without it the console is silent until ttySAC0 probes and the board
+# looks dead at "Starting kernel".
+setenv bootargs "console=ttySAC0,115200n8 earlycon=s5pv210,mmio32,0xc00a1000 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
 if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/${fdtfile} || ext4load mmc 1:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi3-rev07.dtb; then echo "Loading DTB"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd
