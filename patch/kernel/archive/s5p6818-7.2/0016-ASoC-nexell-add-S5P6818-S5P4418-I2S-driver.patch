@@ -83,7 +83,7 @@ new file mode 100644
 index 000000000..0d5095b9c
 --- /dev/null
 +++ b/sound/soc/nexell/nexell-i2s.c
-@@ -0,0 +1,566 @@
+@@ -0,0 +1,575 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Nexell S5P6818/S5P4418 I2S controller (ASoC CPU DAI).
@@ -200,18 +200,17 @@ index 000000000..0d5095b9c
 +struct nx_i2s {
 +	void __iomem *base;
 +	struct clk *clk;
-+	int master_mode;
-+	int mclk_in;
-+	int trans_mode;		/* 0 = I2S, 1 = left, 2 = right justified */
-+	int sample_rate;
-+	int frame_bit;		/* 32, 48 */
-+	int lr_pol_inv;
-+	int pre_supply_mclk;
-+	int in_clkgen;
++	u32 master_mode;
++	u32 mclk_in;
++	u32 trans_mode;		/* 0 = I2S, 1 = left, 2 = right justified */
++	u32 sample_rate;
++	u32 frame_bit;		/* 32, 48 */
++	u32 lr_pol_inv;
++	u32 pre_supply_mclk;
++	u32 in_clkgen;
 +	long clk_rate;
 +	u32 status;
 +	spinlock_t lock;
-+	unsigned long flags;
 +	/* shadow registers */
 +	u32 CON;
 +	u32 CSR;
@@ -265,12 +264,14 @@ index 000000000..0d5095b9c
 +static void i2s_start(struct snd_soc_dai *dai, int stream)
 +{
 +	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
 +	u32 fic = 0;
 +
-+	spin_lock_irqsave(&par->lock, par->flags);
-+
++	/* master-clock enable may sleep - keep it outside the spinlock */
 +	if (!par->pre_supply_mclk)
 +		supply_master_clock(par);
++
++	spin_lock_irqsave(&par->lock, flags);
 +
 +	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 +		fic |= (FIC_FLUSH_EN << FIC_TFULSH_POS);
@@ -297,14 +298,16 @@ index 000000000..0d5095b9c
 +	writel(par->CSR, par->base + I2S_CSR_OFFSET);
 +	writel(par->CON, par->base + I2S_CON_OFFSET);
 +
-+	spin_unlock_irqrestore(&par->lock, par->flags);
++	spin_unlock_irqrestore(&par->lock, flags);
 +}
 +
 +static void i2s_stop(struct snd_soc_dai *dai, int stream)
 +{
 +	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
++	bool do_cutoff;
 +
-+	spin_lock_irqsave(&par->lock, par->flags);
++	spin_lock_irqsave(&par->lock, flags);
 +
 +	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
 +		par->status &= ~SNDDEV_STATUS_PLAY;
@@ -327,10 +330,14 @@ index 000000000..0d5095b9c
 +	writel(par->CON, par->base + I2S_CON_OFFSET);
 +	writel(par->CSR, par->base + I2S_CSR_OFFSET);
 +
-+	if (!(par->status & SNDDEV_STATUS_RUNNING) && !par->pre_supply_mclk)
-+		cutoff_master_clock(par);
++	do_cutoff = !(par->status & SNDDEV_STATUS_RUNNING) &&
++		    !par->pre_supply_mclk;
 +
-+	spin_unlock_irqrestore(&par->lock, par->flags);
++	spin_unlock_irqrestore(&par->lock, flags);
++
++	/* master-clock disable may sleep - keep it outside the spinlock */
++	if (do_cutoff)
++		cutoff_master_clock(par);
 +}
 +
 +static int nx_i2s_check_param(struct nx_i2s *par, struct device *dev)
@@ -389,7 +396,7 @@ index 000000000..0d5095b9c
 +		request = clk_ratio[i].ratio_256;
 +		rate_hz = clk_round_rate(par->clk, request);
 +		clk_set_rate(par->clk, rate_hz);
-+		if (abs(request - (long)rate_hz) >
++		if (abs((long)request - (long)rate_hz) >
 +		    abs((long)clk_ratio[i].ratio_384 - (long)prev)) {
 +			rate_hz = prev;
 +			RFS = RATIO_384;
@@ -527,13 +534,15 @@ index 000000000..0d5095b9c
 +static int nx_i2s_dai_remove(struct snd_soc_dai *dai)
 +{
 +	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
 +
-+	spin_lock_irqsave(&par->lock, par->flags);
++	spin_lock_irqsave(&par->lock, flags);
 +	par->CON = 0;
 +	writel(par->CON, par->base + I2S_CON_OFFSET);
-+	cutoff_master_clock(par);
 +	par->status = SNDDEV_STATUS_CLEAR;
-+	spin_unlock_irqrestore(&par->lock, par->flags);
++	spin_unlock_irqrestore(&par->lock, flags);
++	/* master-clock disable may sleep - keep it outside the spinlock */
++	cutoff_master_clock(par);
 +	return 0;
 +}
 +
