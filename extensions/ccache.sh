@@ -14,8 +14,8 @@
 #
 # Enable explicitly via ENABLE_EXTENSIONS=ccache (or EXT=ccache).
 #
-# Mutually exclusive with other compile-cache extensions (sccache, …) — the
-# mutex is enforced in extension_prepare_config__ccache.
+# Mutually exclusive with other compile-cache extensions (sccache, …): each
+# backend registers in COMPILE_CACHE_BACKENDS and core rejects more than one.
 #
 # Ordering invariant: env wiring lives in compile_prepare_vars__ccache,
 # which fires from prepare_compilation_vars (start-end.sh) — late
@@ -28,23 +28,6 @@
 # Cross-hook state for SHOW_CCACHE pre→post (dir-size diff calculation).
 declare -g __ext_ccache_dir_actual=""
 declare -g __ext_ccache_dir_size_before=""
-
-# Mutually-exclusive list of compile-cache extensions. Update when a new
-# backend extension is added (sccache, …).
-declare -g -a __ext_ccache_conflicting_exts=("sccache")
-
-function extension_prepare_config__ccache() {
-	# Use the shared normalization (EXT fallback + comma/whitespace handling).
-	local _ext_list other
-	_ext_list="$(extension_list_normalized)"
-	for other in "${__ext_ccache_conflicting_exts[@]}"; do
-		if [[ "${_ext_list}" == *",${other},"* ]]; then
-			exit_with_error "${EXTENSION}: 'ccache' and '${other}' extensions are mutually exclusive — choose one compile-cache backend"
-		fi
-	done
-	# All env setup lives in compile_prepare_vars__ccache (called from
-	# prepare_compilation_vars). See ordering invariant in the file header.
-}
 
 # Core prepare-host currently installs ccache unconditionally (part of the
 # native-toolchain host dependency group) and refreshes the /usr/lib/ccache
@@ -62,6 +45,8 @@ function add_host_dependencies__ccache() {
 # enough that ${CCACHE} substitution in run_*_make_internal sees the
 # exported value.
 function compile_prepare_vars__ccache() {
+	COMPILE_CACHE_BACKENDS+=("ccache")
+
 	# Make the binary substitution available wherever scripts reference
 	# ${CCACHE} (kernel-make.sh, uboot.sh, atf.sh, crust.sh).
 	export CCACHE="ccache"

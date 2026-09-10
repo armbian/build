@@ -20,6 +20,9 @@ function prepare_compilation_vars() {
 	# does not silently leak the wrapper into a USE_CCACHE=no run. Any
 	# enabled backend extension will assign CCACHE inside its hook.
 	declare -g CCACHE=""
+	# Every backend appends its name here from its hook; two backends would
+	# fight over ${CCACHE} and PATH, so core rejects that combination.
+	declare -g -a COMPILE_CACHE_BACKENDS=()
 	call_extension_method "compile_prepare_vars" <<- 'COMPILE_PREPARE_VARS'
 		*compile-cache env setup hook for ccache / sccache / similar backends*
 		Called once early in default_build_start, after all extension
@@ -27,8 +30,12 @@ function prepare_compilation_vars() {
 		make invocations begin. Implementations export the env vars their
 		backend needs (CCACHE, CCACHE_DIR, CCACHE_UMASK, SCCACHE_DIR, …)
 		so later array-building code captures them, and tweak PATH if a
-		wrapper prefix directory is needed.
+		wrapper prefix directory is needed. A backend appends its name to
+		COMPILE_CACHE_BACKENDS; enabling more than one backend is an error.
 	COMPILE_PREPARE_VARS
+	if [[ ${#COMPILE_CACHE_BACKENDS[@]} -gt 1 ]]; then
+		exit_with_error "Multiple compile-cache backends enabled, choose one" "${COMPILE_CACHE_BACKENDS[*]}"
+	fi
 
 	# Migration reminder — remove after mid-2027.
 	# USE_CCACHE / PRIVATE_CCACHE do not enable any compile-cache backend;
