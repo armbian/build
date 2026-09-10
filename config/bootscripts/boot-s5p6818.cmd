@@ -16,9 +16,11 @@ setenv kernel_addr_r "0x41000000"
 setenv fdt_addr "0x48000000"
 setenv ramdisk_addr_r "0x49000000"
 
-# fdtfile should come from compile-time u-boot patches
+# fdtfile normally comes from armbianEnv.txt (written per board from the
+# board .conf BOOT_FDT_FILE, e.g. nexell/s5p6818-nanopi-fire3.dtb). Fall back
+# to the full M3/T3/T3+ tree if it is somehow unset.
 if test -z "${fdtfile}"; then
-	setenv fdtfile "s5p6818-nanopi-m3.dtb"
+	setenv fdtfile "nexell/s5p6818-nanopi-m3.dtb"
 fi
 
 echo "Boot script loaded from SD card ${devnum}"
@@ -38,7 +40,7 @@ fi
 # looks dead at "Starting kernel".
 setenv bootargs "console=ttySAC0,115200n8 earlycon=s5pv210,mmio32,0xc00a1000 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
-if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/${fdtfile} || ext4load mmc 1:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi3-rev07.dtb; then echo "Loading DTB"; fi
+if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/${fdtfile} || ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi-m3.dtb; then echo "Loading DTB ${fdtfile}"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd
 ext4load mmc ${devnum}:1 ${kernel_addr_r} ${prefix}Image
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr}
