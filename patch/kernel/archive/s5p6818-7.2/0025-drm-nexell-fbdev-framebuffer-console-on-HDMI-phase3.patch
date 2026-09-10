@@ -1,0 +1,239 @@
+From bb3389ca72ed3687691efffaf460b65edb782f78 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 18:05:00 +0200
+Subject: [PATCH] drm: nexell: register an fbdev - framebuffer console on HDMI
+ (phase 3)
+
+Expose the MLC framebuffer as /dev/fb0 (register_framebuffer, cfb_* helpers)
+so the framebuffer console binds to it: the kernel log and a getty login now
+render on the HDMI monitor. 1280x720 XRGB8888, fixed mode.
+
+HW-verified on a NanoPi Fire3: 'Console: switching to colour frame buffer
+device 160x45', /dev/fb0 = nexell 1280x720, getty@tty1 active, login prompt
+visible on the monitor.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/nexell/nx_display_drv.c | 134 ++++++++++++++++++------
+ 1 file changed, 100 insertions(+), 34 deletions(-)
+
+diff --git a/drivers/gpu/drm/nexell/nx_display_drv.c b/drivers/gpu/drm/nexell/nx_display_drv.c
+index 7bfa302..aab6bef 100644
+--- a/drivers/gpu/drm/nexell/nx_display_drv.c
++++ b/drivers/gpu/drm/nexell/nx_display_drv.c
+@@ -1,23 +1,17 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Nexell S5P6818 display bring-up driver (WIP, phase 2).
++ * Nexell S5P6818 display bring-up driver (WIP, phase 3).
+  *
+- * Phase 1 proved the HDMI block comes alive once the two DISPLAYTOP clkgen
+- * modules are ungated (resets are already released by the boot chain). This
+- * phase puts a real, stable picture up by piggy-backing on the display
+- * pipeline the FriendlyARM u-boot already programmed for its boot logo: the
+- * HDMI PHY/Link and the DPC video timing are running at 1280x720, so we only
+- * need to point an MLC RGB layer at our own framebuffer.
++ * Builds on:
++ *   phase 1 - ungate the HDMI clocks, report HPD;
++ *   phase 2 - piggy-back on the 1280x720 pipeline the FriendlyARM u-boot
++ *             already runs (HDMI PHY/Link + DPC timing) and point an MLC RGB
++ *             layer at our own framebuffer;
++ *   phase 3 - register that framebuffer as an fbdev so the framebuffer console
++ *             (and a getty login) appear on the HDMI monitor.
+  *
+- * probe():
+- *   - ungate the HDMI clocks, report HPD (phase 1);
+- *   - allocate a 720p XRGB8888 framebuffer, paint colour bars;
+- *   - disable the u-boot layer (it scans out now-reused kernel RAM = noise);
+- *   - program MLC RGB layer 0 over our framebuffer and enable it.
+- *
+- * Next phases replace the u-boot dependency by programming the DPC timing and
+- * the HDMI PHY preset ourselves, and wrap all this in a proper atomic-KMS
+- * driver.
++ * Next: program the DPC timing + HDMI PHY preset ourselves (drop the u-boot
++ * dependency, gain mode-setting) and wrap it all in atomic KMS.
+  */
+ 
+ #include <linux/module.h>
+@@ -25,6 +19,7 @@
+ #include <linux/of.h>
+ #include <linux/io.h>
+ #include <linux/dma-mapping.h>
++#include <linux/fb.h>
+ 
+ #include "soc/s5pxx18_soc_mlc.h"
+ 
+@@ -43,7 +38,7 @@
+ #define NX_MLC0_BASE			0xc0102000
+ #define NX_MLC0_SIZE			0x1000
+ 
+-/* Fixed mode = what u-boot set (read back from MLC screensize = 0x02cf04ff). */
++/* Fixed mode = what u-boot set (MLC screensize reg reads 0x02cf04ff). */
+ #define FB_W				1280
+ #define FB_H				720
+ #define FB_BPP				4
+@@ -58,20 +53,15 @@ struct nx_display {
+ 	void __iomem *mlc;
+ 	void *fb_cpu;
+ 	dma_addr_t fb_dma;
++	struct fb_info *fb_info;
+ };
+ 
+ /* Eight vertical colour bars (SMPTE-ish), XRGB8888 (0x00RRGGBB). */
+ static void nx_fill_bars(u32 *fb)
+ {
+ 	static const u32 bars[8] = {
+-		0x00ffffff, /* white   */
+-		0x00ffff00, /* yellow  */
+-		0x0000ffff, /* cyan    */
+-		0x0000ff00, /* green   */
+-		0x00ff00ff, /* magenta */
+-		0x00ff0000, /* red     */
+-		0x000000ff, /* blue    */
+-		0x00000000, /* black   */
++		0x00ffffff, 0x00ffff00, 0x0000ffff, 0x0000ff00,
++		0x00ff00ff, 0x00ff0000, 0x000000ff, 0x00000000,
+ 	};
+ 	int x, y;
+ 
+@@ -80,11 +70,77 @@ static void nx_fill_bars(u32 *fb)
+ 			fb[y * FB_W + x] = bars[(x * 8) / FB_W];
+ }
+ 
++static int nx_fb_setcolreg(unsigned int regno, unsigned int red,
++			   unsigned int green, unsigned int blue,
++			   unsigned int transp, struct fb_info *info)
++{
++	u32 *pal = info->pseudo_palette;
++
++	if (regno >= 16)
++		return -EINVAL;
++	/* 16-bit components -> X8R8G8B8 */
++	pal[regno] = ((red   >> 8) << 16) |
++		     ((green >> 8) <<  8) |
++		     ((blue  >> 8));
++	return 0;
++}
++
++static const struct fb_ops nx_fb_ops = {
++	.owner		= THIS_MODULE,
++	.fb_setcolreg	= nx_fb_setcolreg,
++	.fb_fillrect	= cfb_fillrect,
++	.fb_copyarea	= cfb_copyarea,
++	.fb_imageblit	= cfb_imageblit,
++};
++
++static int nx_register_fb(struct nx_display *nx)
++{
++	struct fb_info *info;
++	int ret;
++
++	info = framebuffer_alloc(16 * sizeof(u32), nx->dev);
++	if (!info)
++		return -ENOMEM;
++
++	nx->fb_info = info;
++	info->pseudo_palette = info->par;
++	info->screen_base = nx->fb_cpu;
++	info->screen_size = FB_SIZE;
++	info->fbops = &nx_fb_ops;
++
++	strscpy(info->fix.id, "nexell", sizeof(info->fix.id));
++	info->fix.type = FB_TYPE_PACKED_PIXELS;
++	info->fix.visual = FB_VISUAL_TRUECOLOR;
++	info->fix.smem_start = nx->fb_dma;
++	info->fix.smem_len = FB_SIZE;
++	info->fix.line_length = FB_STRIDE;
++
++	info->var.xres = FB_W;
++	info->var.yres = FB_H;
++	info->var.xres_virtual = FB_W;
++	info->var.yres_virtual = FB_H;
++	info->var.bits_per_pixel = 32;
++	info->var.activate = FB_ACTIVATE_NOW;
++	info->var.red   = (struct fb_bitfield){ 16, 8, 0 };
++	info->var.green = (struct fb_bitfield){  8, 8, 0 };
++	info->var.blue  = (struct fb_bitfield){  0, 8, 0 };
++	info->var.transp = (struct fb_bitfield){ 0, 0, 0 };
++
++	ret = register_framebuffer(info);
++	if (ret) {
++		framebuffer_release(info);
++		nx->fb_info = NULL;
++		return ret;
++	}
++	return 0;
++}
++
+ static int nx_display_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct nx_display *nx;
+ 	u32 hpd_status, hpd;
++	int ret;
+ 
+ 	nx = devm_kzalloc(dev, sizeof(*nx), GFP_KERNEL);
+ 	if (!nx)
+@@ -109,7 +165,7 @@ static int nx_display_probe(struct platform_device *pdev)
+ 		 hpd_status, hpd,
+ 		 (hpd_status & 1) ? "CONNECTED" : "not detected");
+ 
+-	/* Framebuffer for the test pattern. */
++	/* Framebuffer. */
+ 	if (dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32))) {
+ 		dev_err(dev, "no 32-bit DMA\n");
+ 		return -ENODEV;
+@@ -123,16 +179,12 @@ static int nx_display_probe(struct platform_device *pdev)
+ 	dev_info(dev, "framebuffer %dx%d @ dma 0x%08x (%d bytes)\n",
+ 		 FB_W, FB_H, (u32)nx->fb_dma, FB_SIZE);
+ 
+-	/* Drive MLC.0 RGB layer 0 over our framebuffer. */
++	/* Drive MLC.0 RGB layer 0 over our framebuffer (phase 2). */
+ 	nx_mlc_set_base_address(0, nx->mlc);
+-
+-	/* Turn off whatever layer u-boot left running (it now shows stale RAM). */
+-	nx_mlc_set_layer_enable(0, 1, 0);
++	nx_mlc_set_layer_enable(0, 1, 0);	/* kill the u-boot layer */
+ 	nx_mlc_set_dirty_flag(0, 1);
+-
+ 	nx_mlc_set_screen_size(0, FB_W, FB_H);
+ 	nx_mlc_set_layer_priority(0, nx_mlc_priority_videofirst);
+-
+ 	nx_mlc_set_lock_size(0, 0, 16);
+ 	nx_mlc_set_alpha_blending(0, 0, 0, 0);
+ 	nx_mlc_set_color_inversion(0, 0, 0, 0);
+@@ -146,7 +198,15 @@ static int nx_display_probe(struct platform_device *pdev)
+ 	nx_mlc_set_dirty_flag(0, 0);
+ 	nx_mlc_set_top_dirty_flag(0);
+ 
+-	dev_info(dev, "MLC RGB layer 0 enabled with colour-bar test pattern\n");
++	/* Expose it as an fbdev so the console (and a getty login) appear. */
++	ret = nx_register_fb(nx);
++	if (ret) {
++		dev_err(dev, "register_framebuffer failed (%d)\n", ret);
++		dma_free_coherent(dev, FB_SIZE, nx->fb_cpu, nx->fb_dma);
++		return ret;
++	}
++	dev_info(dev, "fb%d registered: %dx%d-32 framebuffer console on HDMI\n",
++		 nx->fb_info->node, FB_W, FB_H);
+ 
+ 	platform_set_drvdata(pdev, nx);
+ 	return 0;
+@@ -156,7 +216,13 @@ static void nx_display_remove(struct platform_device *pdev)
+ {
+ 	struct nx_display *nx = platform_get_drvdata(pdev);
+ 
+-	if (nx && nx->fb_cpu)
++	if (!nx)
++		return;
++	if (nx->fb_info) {
++		unregister_framebuffer(nx->fb_info);
++		framebuffer_release(nx->fb_info);
++	}
++	if (nx->fb_cpu)
+ 		dma_free_coherent(nx->dev, FB_SIZE, nx->fb_cpu, nx->fb_dma);
+ }
+ 
+-- 
+2.53.0
+
