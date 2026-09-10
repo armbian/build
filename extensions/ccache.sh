@@ -4,47 +4,11 @@
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 #
 # Compile-cache backend: ccache (https://ccache.dev/).
-#
-# Wraps compiler invocations for kernel / u-boot / ATF / Crust through the
-# `ccache` binary and emits per-build hit/miss stats. Implements the generic
-# `compile_prepare_vars` (env exports) and `compile_wrapper_pre/post` hooks
-# (stats, also fired on interrupt). Per-artifact `*_make_config` hooks
-# inject CCACHE_UMASK into the env-i make envs since the kernel/u-boot
-# auto-passthrough only covers CCACHE_DIR.
-#
-# Enable explicitly via ENABLE_EXTENSIONS=ccache (or EXT=ccache).
-#
-# Mutually exclusive with other compile-cache extensions (sccache, …) — the
-# mutex is enforced in extension_prepare_config__ccache.
-#
-# Ordering invariant: env wiring lives in compile_prepare_vars__ccache,
-# which fires from prepare_compilation_vars (start-end.sh) — late
-# enough that every extension_prepare_config_* and the userpatches /
-# user_config phases have settled values like PRIVATE_CCACHE, and early
-# enough that ${CCACHE} substitution and PATH prefix propagate into the
-# arrays built by run_*_make_internal. Order is fixed by core, not by
-# alphabetical hook name resolution.
+# Enable with ENABLE_EXTENSIONS=ccache; only one compile-cache backend may be enabled.
 
 # SHOW_CCACHE state shared by the pre and post hooks.
 declare -g __ext_ccache_dir_actual=""
 declare -g __ext_ccache_dir_size_before=""
-
-# Mutually-exclusive list of compile-cache extensions. Update when a new
-# backend extension is added (sccache, …).
-declare -g -a __ext_ccache_conflicting_exts=("sccache")
-
-function extension_prepare_config__ccache() {
-	# Use the shared normalization (EXT fallback + comma/whitespace handling).
-	local _ext_list other
-	_ext_list="$(extension_list_normalized)"
-	for other in "${__ext_ccache_conflicting_exts[@]}"; do
-		if [[ "${_ext_list}" == *",${other},"* ]]; then
-			exit_with_error "${EXTENSION}: 'ccache' and '${other}' extensions are mutually exclusive — choose one compile-cache backend"
-		fi
-	done
-	# All env setup lives in compile_prepare_vars__ccache (called from
-	# prepare_compilation_vars). See ordering invariant in the file header.
-}
 
 # Core installs ccache too; we declare it so the extension stands on its own.
 function add_host_dependencies__ccache() {
@@ -52,20 +16,13 @@ function add_host_dependencies__ccache() {
 	EXTRA_BUILD_DEPS+=("native-toolchain::ccache")
 }
 
-# Main env setup. Runs from prepare_compilation_vars — late enough that
-# values set by other extensions (PRIVATE_CCACHE from ccache-remote) and
-# by userpatches/lib.config / user_config hooks are settled, and early
-# enough that ${CCACHE} substitution in run_*_make_internal sees the
-# exported value.
 function compile_prepare_vars__ccache() {
-	# Make the binary substitution available wherever scripts reference
-	# ${CCACHE} (kernel-make.sh, uboot.sh, atf.sh, crust.sh).
+	COMPILE_CACHE_BACKENDS+=("ccache")
+
+	# Core prefixes ${CCACHE} to the compiler for kernel, u-boot, ATF and Crust.
 	export CCACHE="ccache"
 
-	# Drop a wrapper directory in front of PATH so bare `gcc` invocations
-	# also route through ccache via /usr/lib/ccache symlinks. This becomes
-	# part of the PATH captured by kernel-make.sh and uboot.sh when they
-	# build the env-i make environment.
+	# Bare `gcc` calls go through the /usr/lib/ccache symlinks.
 	export PATH="/usr/lib/ccache:${PATH}"
 
 	# private ccache dir avoids permission issues when build is run as root
