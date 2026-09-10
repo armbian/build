@@ -546,18 +546,12 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	done
 }
 
-# Clone/pull Seeed RK extension and enable it.
-# Must run during board config sourcing (before initialize_extension_manager),
-# because enable_extension() cannot be called after the extension manager initializes.
+# Enable Seeed's external extension via the extensions/seeed-extension.sh
+# wrapper (pinned-tag fetch + sub-extension cascade). Entry point for Seeed's
+# own builds; Armbian CI uses ENABLE_EXTENSIONS=seeed-extension instead.
+# Must run before initialize_extension_manager (enable_extension() bails after).
 if [[ "${ENABLE_SEEED_RK_EXTENSION:-no}" == "yes" ]]; then
-	# GITHUB_SOURCE is not set yet during board config sourcing; provide a default
-	# so fetch_from_repo's URL rewriting works correctly.
-	GITHUB_SOURCE="${GITHUB_SOURCE:-https://github.com}"
-	fetch_from_repo "https://github.com/Seeed-Studio/seeed_armbian_extension" "seeed_armbian_extension" "branch:main"
-	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
-	mkdir -p "${SRC}/extensions"
-	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
-	enable_extension "seeed_armbian_extension"
+	enable_extension "seeed-extension"
 fi
 
 # Disable armbian-hardware-optimize — the BSP kernel handles DVFS via DT OPP
