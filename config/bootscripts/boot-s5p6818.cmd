@@ -29,6 +29,15 @@ if ext4load mmc ${devnum}:1 ${kernel_addr_r} ${prefix}/armbianEnv.txt; then
 	env import -t ${kernel_addr_r} ${filesize}
 fi
 
+# Honour the console= selection from armbianEnv.txt / s5p6818.txt (serial,
+# display or both; defaults to both). earlycon below is unconditional.
+if test "${console}" = "display" || test "${console}" = "both"; then
+	setenv consoleargs "console=tty1"
+fi
+if test "${console}" = "serial" || test "${console}" = "both"; then
+	setenv consoleargs "console=ttySAC0,115200n8 ${consoleargs}"
+fi
+
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
 else
@@ -48,7 +57,7 @@ fi
 # thermal/power/DRAM). Restricting Linux to cluster0 (4 cores) is fully stable
 # (0 failures under stress vs ~10% with all 8). Drop this once the boot blob's
 # PSCI is fixed to enable CCI coherency for cluster1 (recovers all 8 cores).
-setenv bootargs "console=ttySAC0,115200n8 earlycon=s5pv210,mmio32,0xc00a1000 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} nr_cpus=4 ${extraargs}"
+setenv bootargs "earlycon=s5pv210,mmio32,0xc00a1000 ${consoleargs} root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} nr_cpus=4 ${extraargs}"
 
 if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/${fdtfile} || ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi-m3.dtb; then echo "Loading DTB ${fdtfile}"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd
