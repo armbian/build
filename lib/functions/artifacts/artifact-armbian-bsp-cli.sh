@@ -80,6 +80,22 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
 		"${SRC}/config/optional/boards/${BOARD}/_packages/bsp-cli"
 	)
+
+	# The hooks are hashed above only as source text: `install ${SRC}/packages/bsp/foo/bar` reads the
+	# same whether bar changed or not. So also hash the directory of every packages/ path they name,
+	# shared ones like packages/bsp/rk3399 or packages/blobs/riscv64/spacemit included.
+	declare hooks_text="${hooks_to_hash[*]}" hook_path
+	hooks_text="${hooks_text//'${BOARD}'/${BOARD}}"
+	hooks_text="${hooks_text//'$BOARD'/${BOARD}}"
+	declare -A hook_dirs=()
+	while read -r hook_path; do
+		hook_path="${hook_path%/}"
+		[[ -d "${SRC}/${hook_path}" ]] || hook_path="${hook_path%/*}" # a file, or a name cut short by a variable
+		[[ "${hook_path}" == packages/*/* ]] || continue              # never all of packages/bsp
+		hook_dirs["${SRC}/${hook_path}"]=1
+	done < <(grep -oE 'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
+	dirs_to_hash+=("${!hook_dirs[@]}")
+
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
 	packages_config_hash="${hash_files}"
