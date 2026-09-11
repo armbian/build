@@ -97,6 +97,9 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 
 	# Add Gamepad udev rule
 	echo 'SUBSYSTEM=="input", ATTRS{name}=="AYN Odin2 Gamepad", MODE="0666", ENV{ID_INPUT_JOYSTICK}="1"' > "${SDCARD}"/etc/udev/rules.d/99-ignore-gamepad.rules
+	# Add Gamepad SDL mapping
+	mkdir -p "${SDCARD}"/etc/environment.d
+	echo 'SDL_GAMECONTROLLERCONFIG="03000000202000000130000001000000,AYN Odin2 Gamepad,platform:Linux,crc:05b6,a:b0,b:b1,x:b3,y:b2,back:b6,guide:b8,start:b7,leftstick:b9,rightstick:b10,leftshoulder:b4,rightshoulder:b5,dpup:b11,dpdown:b12,dpleft:b13,dpright:b14,misc1:b15,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,righttrigger:a5,"' > "${SDCARD}"/etc/environment.d/99-sdl-gamepad.conf
 	# Not Any driver support suspend mode
 	chroot_sdcard systemctl mask suspend.target
 
