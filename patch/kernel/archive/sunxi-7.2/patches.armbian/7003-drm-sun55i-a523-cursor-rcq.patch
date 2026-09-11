@@ -1,8 +1,8 @@
 diff --git a/drivers/gpu/drm/sun4i/sun55i_de.c b/drivers/gpu/drm/sun4i/sun55i_de.c
-index 19206b747..9b66fe2c0 100644
+index 19206b7..fb8e731 100644
 --- a/drivers/gpu/drm/sun4i/sun55i_de.c
 +++ b/drivers/gpu/drm/sun4i/sun55i_de.c
-@@ -912,19 +912,35 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+@@ -912,19 +912,71 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
   * background-colour flashes (the bug the vendor avoids by arming in blanking).
   * Defer the arm to the next blanking window in sun55i_de_vblank_quirk().
   */
@@ -30,8 +30,6 @@ index 19206b747..9b66fe2c0 100644
 -		if (i == SUN55I_DE_BLK_CH(c, SUN55I_DE_BLKCH_OVL_LAY0) ||
 -		    i == SUN55I_DE_BLK_CH(c, SUN55I_DE_BLKCH_OVL_PARA))
 -			return true;
--	}
--	return false;
 +
 +	/* channel maps: 0 == primary (fb-address only), 1/2 == dynamic */
 +	c = (i - SUN55I_DE_BLK_UI_BASE_IDX) / SUN55I_DE_BLK_PER_UI_CH;
@@ -42,6 +40,72 @@ index 19206b747..9b66fe2c0 100644
 +	/* overlay/cursor: reload the whole channel register file every flip */
 +	return i >= SUN55I_DE_BLK_CH(c, 0) &&
 +	       i < SUN55I_DE_BLK_CH(c, SUN55I_DE_BLK_PER_UI_CH);
++}
++
++static u32 sun55i_de_arm_target(struct sun55i_de *de);
++
++/*
++ * Backstop arm: program the RCQ load to land in the next leading-blanking
++ * window via the hrtimer, so a staged commit is armed even when the TCON
++ * vblank IRQ is not enabled (Xorg cursor-only updates never enable the
++ * vblank IRQ, and the beam-gated arm in sun55i_de_vblank_quirk() then never
++ * runs, freezing the cursor). Mirrors that quirk's line math. Idempotent:
++ * if the vblank IRQ already armed this commit, do_arm() finds arm_pending
++ * clear and the extra load is a no-op. Caller must hold arm_lock.
++ */
++static void sun55i_de_schedule_arm(struct sun55i_de *de)
++{
++	u32 target, cur_line;
++	u64 lines;
++
++	if (!de->ns_per_line || !tcon_curline_io)
++		return;
++
++	target = sun55i_de_arm_target(de);
++	cur_line = readl(tcon_curline_io) & 0xfff;
++
++	if (cur_line <= target) {
++		lines = target - cur_line;
++	} else {
++		u32 ahead = cur_line < de->line_total ?
++			    de->line_total - cur_line : 0;
++
++		lines = ahead + target;
+ 	}
+-	return false;
++
++	hrtimer_start(&de->arm_timer,
++		      ns_to_ktime(lines * de->ns_per_line),
++		      HRTIMER_MODE_REL);
  }
  
  void sun55i_de_commit(struct sun8i_mixer *mixer)
+@@ -960,6 +1012,14 @@ void sun55i_de_commit(struct sun8i_mixer *mixer)
+ 	de->commit_seq++;
+ 	dbg_commits++;
+ 	de->arm_pending = true;
++
++	/*
++	 * Backstop arm: the TCON vblank IRQ is not enabled for cursor-only
++	 * updates, so arm via the hrtimer to the next blanking target. If an
++	 * arm is already pending from a previous commit, that timer covers it.
++	 */
++	if (!hrtimer_active(&de->arm_timer))
++		sun55i_de_schedule_arm(de);
+ 	spin_unlock_irqrestore(&de->arm_lock, flags);
+ }
+ 
+@@ -1042,8 +1102,12 @@ static enum hrtimer_restart sun55i_de_arm_timer(struct hrtimer *t)
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&de->arm_lock, flags);
+-	if (de->arm_pending)
++	if (de->arm_pending) {
+ 		sun55i_de_do_arm(de);
++		/* RCQ still busy (arm_busy_gate): retry at the next blanking */
++		if (de->arm_pending)
++			sun55i_de_schedule_arm(de);
++	}
+ 	spin_unlock_irqrestore(&de->arm_lock, flags);
+ 
+ 	return HRTIMER_NORESTART;
