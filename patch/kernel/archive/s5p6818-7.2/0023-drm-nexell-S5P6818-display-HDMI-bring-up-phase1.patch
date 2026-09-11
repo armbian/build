@@ -1,0 +1,233 @@
+From 446bad8e8c785a43308161994c1641d41e155075 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 17:00:00 +0200
+Subject: [PATCH] drm: nexell: add S5P6818 display/HDMI bring-up driver (phase
+ 1)
+
+First step of HDMI support for the Nexell S5P6818. Mainline has no Nexell
+display driver; this adds a minimal platform driver under a new
+drivers/gpu/drm/nexell/ that does the hardware-proven foundation: the HDMI
+block is clock-gated out of reset (its resets are already released by the
+boot chain), so probe() ungates the two DISPLAYTOP clkgen modules feeding
+HDMI and then reads the HDMI hotplug (HPD) state.
+
+HW-verified on a NanoPi Fire3 with a monitor attached:
+  nexell-display c0100000.display: S5P6818 display: HDMI clocks enabled;
+  HPD_STATUS=0x00000001 HPD=0x00000001 -> monitor CONNECTED
+
+DT: a 'nexell,s5p6818-display' node in s5p6818.dtsi (disabled), enabled in
+s5p6818-nanopi3-common.dtsi since every board in the family has HDMI.
+Kconfig CONFIG_DRM_NEXELL is a bool for now (plain platform driver); it
+becomes tristate + depends on DRM when the DPC/HDMI/plane modeset path and
+the atomic-KMS glue land. Config symbol added to linux-s5p6818-edge.config
+separately.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../dts/nexell/s5p6818-nanopi3-common.dtsi    |  5 +
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi       | 14 +++
+ drivers/gpu/drm/Kconfig                       |  1 +
+ drivers/gpu/drm/Makefile                      |  1 +
+ drivers/gpu/drm/nexell/Kconfig                |  9 ++
+ drivers/gpu/drm/nexell/Makefile               |  9 ++
+ drivers/gpu/drm/nexell/nx_display_drv.c       | 94 +++++++++++++++++++
+ 7 files changed, 133 insertions(+)
+ create mode 100644 drivers/gpu/drm/nexell/Kconfig
+ create mode 100644 drivers/gpu/drm/nexell/Makefile
+ create mode 100644 drivers/gpu/drm/nexell/nx_display_drv.c
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi b/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
+index 8afc108..f42f413 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
+@@ -91,3 +91,8 @@
+ 	pinctrl-0 = <&pwm0_pins &pwm1_pins &pwm2_pins &pwm3_pins>;
+ 	status = "okay";
+ };
++
++/* HDMI is present on all these boards (WIP bring-up). */
++&display {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index a324ca3..34e0799 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -196,6 +196,20 @@
+ 			#reset-cells = <1>;
+ 		};
+ 
++		/*
++		 * Display / HDMI (WIP bring-up). Covers DISPLAYTOP (DPC/MLC +
++		 * the disptop clkgen) and the HDMI LINK/CORE block. Phase-1
++		 * driver only ungates the HDMI clocks and reports HPD; the reg
++		 * range is informational for now (the driver maps fixed bases).
++		 */
++		display: display@c0100000 {
++			compatible = "nexell,s5p6818-display";
++			reg = <0xc0100000 0x10000>,	/* DISPLAYTOP */
++			      <0xc0200000 0x30000>;	/* HDMI LINK/CORE/PHY window */
++			reg-names = "displaytop", "hdmi";
++			status = "disabled";
++		};
++
+ 		/*
+ 		 * Nexell pin controller + GPIO banks (A-E + ALIVE). Provides pin
+ 		 * muxing (nexell,pin-function) and the GPIO banks used e.g. for the
+diff --git a/drivers/gpu/drm/Kconfig b/drivers/gpu/drm/Kconfig
+index 3234228..40c988a 100644
+--- a/drivers/gpu/drm/Kconfig
++++ b/drivers/gpu/drm/Kconfig
+@@ -309,6 +309,7 @@ source "drivers/gpu/drm/atmel-hlcdc/Kconfig"
+ source "drivers/gpu/drm/bridge/Kconfig"
+ source "drivers/gpu/drm/etnaviv/Kconfig"
+ source "drivers/gpu/drm/exynos/Kconfig"
++source "drivers/gpu/drm/nexell/Kconfig"
+ source "drivers/gpu/drm/fsl-dcu/Kconfig"
+ source "drivers/gpu/drm/gma500/Kconfig"
+ source "drivers/gpu/drm/gud/Kconfig"
+diff --git a/drivers/gpu/drm/Makefile b/drivers/gpu/drm/Makefile
+index e97faab..935b275 100644
+--- a/drivers/gpu/drm/Makefile
++++ b/drivers/gpu/drm/Makefile
+@@ -215,6 +215,7 @@ obj-$(CONFIG_DRM_FSL_DCU) += fsl-dcu/
+ obj-$(CONFIG_DRM_ETNAVIV) += etnaviv/
+ obj-y			+= hisilicon/
+ obj-y			+= mxsfb/
++obj-$(CONFIG_DRM_NEXELL) += nexell/
+ obj-y			+= sysfb/
+ obj-y			+= tiny/
+ obj-$(CONFIG_DRM_PL111) += pl111/
+diff --git a/drivers/gpu/drm/nexell/Kconfig b/drivers/gpu/drm/nexell/Kconfig
+new file mode 100644
+index 0000000..aedeccd
+--- /dev/null
++++ b/drivers/gpu/drm/nexell/Kconfig
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: GPL-2.0
++config DRM_NEXELL
++	bool "Nexell S5P6818/S5P4418 display bring-up (WIP)"
++	depends on ARCH_NEXELL || COMPILE_TEST
++	help
++	  Bring-up driver for the Nexell S5Pxx18 display controller (DPC/MLC)
++	  and HDMI output. Work in progress: phase 1 only ungates the HDMI
++	  clocks and reports hotplug; it will grow into a full DRM/KMS driver
++	  (at which point this becomes tristate and depends on DRM again).
+diff --git a/drivers/gpu/drm/nexell/Makefile b/drivers/gpu/drm/nexell/Makefile
+new file mode 100644
+index 0000000..002da94
+--- /dev/null
++++ b/drivers/gpu/drm/nexell/Makefile
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Phase 1: self-contained bring-up driver only. The vendor SoC layer
++# (soc/s5pxx18_*.o) is added back incrementally as the DPC/HDMI programming
++# path is written (some of those objects still reference the not-yet-ported
++# soc_dp control layer, so linking them into the module now would fail).
++nexell-drm-y := nx_display_drv.o
++
++obj-$(CONFIG_DRM_NEXELL) += nexell-drm.o
+diff --git a/drivers/gpu/drm/nexell/nx_display_drv.c b/drivers/gpu/drm/nexell/nx_display_drv.c
+new file mode 100644
+index 0000000..af63b0b
+--- /dev/null
++++ b/drivers/gpu/drm/nexell/nx_display_drv.c
+@@ -0,0 +1,94 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Nexell S5P6818 display bring-up driver (WIP, phase 1).
++ *
++ * For now this only does the "foundation" step proven on hardware: ungate the
++ * HDMI display clocks (the two DISPLAYTOP clkgen modules) and report the HDMI
++ * hotplug (HPD) state. The display/HDMI resets are already released by the boot
++ * chain, so the disptop clock-gate is the only thing standing between a dead
++ * (all-zero) HDMI register block and a live one.
++ *
++ * Next phases extend probe() to program the DPC video timing, the HDMI PHY
++ * preset + Link/Core, and an MLC plane over a CMA framebuffer for real output.
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/of.h>
++#include <linux/io.h>
++
++/* DISPLAYTOP clkgen modules feeding HDMI: spdif = module 2, vclk = module 4. */
++#define NX_DISPTOP_CLKGEN_HDMI_SPDIF	0xc0105000
++#define NX_DISPTOP_CLKGEN_HDMI_VCLK	0xc0109000
++/* clkenb: bits[1:0] bclk-mode (3 = always), bit2 clkgen-enable, bit3 pclk-mode */
++#define NX_CLKGEN_ON			0x0000000f
++
++/* HDMI LINK/CTRL block. */
++#define NX_HDMI_CTRL_BASE		0xc0200000
++#define NX_HDMI_CTRL_SIZE		0x1000
++#define NX_HDMI_HPD_STATUS		0x000c
++#define NX_HDMI_HPD			0x0044
++
++struct nx_display {
++	struct device *dev;
++	void __iomem *clk_spdif;
++	void __iomem *clk_vclk;
++	void __iomem *hdmi_ctrl;
++};
++
++static int nx_display_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct nx_display *nx;
++	u32 hpd_status, hpd;
++
++	nx = devm_kzalloc(dev, sizeof(*nx), GFP_KERNEL);
++	if (!nx)
++		return -ENOMEM;
++	nx->dev = dev;
++
++	nx->clk_spdif = devm_ioremap(dev, NX_DISPTOP_CLKGEN_HDMI_SPDIF, 0x100);
++	nx->clk_vclk  = devm_ioremap(dev, NX_DISPTOP_CLKGEN_HDMI_VCLK, 0x100);
++	nx->hdmi_ctrl = devm_ioremap(dev, NX_HDMI_CTRL_BASE, NX_HDMI_CTRL_SIZE);
++	if (!nx->clk_spdif || !nx->clk_vclk || !nx->hdmi_ctrl)
++		return -ENOMEM;
++
++	/* Ungate the HDMI display clocks (proven on HW). */
++	writel(NX_CLKGEN_ON, nx->clk_spdif);
++	writel(NX_CLKGEN_ON, nx->clk_vclk);
++
++	/* Now the HDMI register block is alive - read hotplug state. */
++	hpd_status = readl(nx->hdmi_ctrl + NX_HDMI_HPD_STATUS);
++	hpd	   = readl(nx->hdmi_ctrl + NX_HDMI_HPD);
++
++	dev_info(dev,
++		 "S5P6818 display: HDMI clocks enabled; HPD_STATUS=0x%08x HPD=0x%08x -> monitor %s\n",
++		 hpd_status, hpd,
++		 (hpd_status & 1) ? "CONNECTED" : "not detected");
++
++	platform_set_drvdata(pdev, nx);
++	return 0;
++}
++
++static void nx_display_remove(struct platform_device *pdev)
++{
++}
++
++static const struct of_device_id nx_display_of_match[] = {
++	{ .compatible = "nexell,s5p6818-display" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nx_display_of_match);
++
++static struct platform_driver nx_display_driver = {
++	.probe = nx_display_probe,
++	.remove = nx_display_remove,
++	.driver = {
++		.name = "nexell-display",
++		.of_match_table = nx_display_of_match,
++	},
++};
++module_platform_driver(nx_display_driver);
++
++MODULE_DESCRIPTION("Nexell S5P6818 display/HDMI bring-up driver");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

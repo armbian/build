@@ -1,0 +1,2550 @@
+From cbab7fbe862b1ca4dd9d4198f1217b6fe8290ce7 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 17:40:00 +0200
+Subject: [PATCH] drm: nexell: put up a test pattern via MLC over HDMI (phase
+ 2)
+
+Phase 1 proved the HDMI block comes alive; this puts a real, stable picture
+on the screen. The FriendlyARM u-boot already programs the full display
+pipeline (HDMI PHY/Link + DPC video timing) at 1280x720 for its boot logo,
+so the driver piggy-backs on that running output and only needs to point an
+MLC layer at its own framebuffer:
+
+  - allocate a 720p XRGB8888 CMA framebuffer, paint colour bars;
+  - disable the layer u-boot left running (it scans out now-reused kernel
+    RAM = on-screen noise);
+  - program MLC.0 RGB layer 0 over the framebuffer and enable it.
+
+Adds the self-contained vendor MLC register layer (soc/s5pxx18_soc_mlc.c,
+DRM-free, ported as-is) for the layer programming.
+
+HW-verified on a NanoPi Fire3 + HDMI monitor: eight stable colour bars.
+First HDMI output from this SoC on a mainline kernel. Next: program the DPC
+timing + HDMI PHY preset ourselves (drop the u-boot dependency), then wrap
+in atomic KMS.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/nexell/Makefile              |    7 +-
+ drivers/gpu/drm/nexell/nx_display_drv.c      |  114 +-
+ drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.c | 1871 ++++++++++++++++++
+ drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.h |  439 ++++
+ 4 files changed, 2412 insertions(+), 19 deletions(-)
+ create mode 100644 drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.c
+ create mode 100644 drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.h
+
+diff --git a/drivers/gpu/drm/nexell/Makefile b/drivers/gpu/drm/nexell/Makefile
+index 002da94..e888051 100644
+--- a/drivers/gpu/drm/nexell/Makefile
++++ b/drivers/gpu/drm/nexell/Makefile
+@@ -1,9 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
+ #
+-# Phase 1: self-contained bring-up driver only. The vendor SoC layer
+-# (soc/s5pxx18_*.o) is added back incrementally as the DPC/HDMI programming
+-# path is written (some of those objects still reference the not-yet-ported
+-# soc_dp control layer, so linking them into the module now would fail).
+-nexell-drm-y := nx_display_drv.o
++# Phase 2: bring-up driver + the self-contained MLC register layer.
++nexell-drm-y := nx_display_drv.o soc/s5pxx18_soc_mlc.o
+ 
+ obj-$(CONFIG_DRM_NEXELL) += nexell-drm.o
+diff --git a/drivers/gpu/drm/nexell/nx_display_drv.c b/drivers/gpu/drm/nexell/nx_display_drv.c
+index af63b0b..7bfa302 100644
+--- a/drivers/gpu/drm/nexell/nx_display_drv.c
++++ b/drivers/gpu/drm/nexell/nx_display_drv.c
+@@ -1,26 +1,36 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Nexell S5P6818 display bring-up driver (WIP, phase 1).
++ * Nexell S5P6818 display bring-up driver (WIP, phase 2).
+  *
+- * For now this only does the "foundation" step proven on hardware: ungate the
+- * HDMI display clocks (the two DISPLAYTOP clkgen modules) and report the HDMI
+- * hotplug (HPD) state. The display/HDMI resets are already released by the boot
+- * chain, so the disptop clock-gate is the only thing standing between a dead
+- * (all-zero) HDMI register block and a live one.
++ * Phase 1 proved the HDMI block comes alive once the two DISPLAYTOP clkgen
++ * modules are ungated (resets are already released by the boot chain). This
++ * phase puts a real, stable picture up by piggy-backing on the display
++ * pipeline the FriendlyARM u-boot already programmed for its boot logo: the
++ * HDMI PHY/Link and the DPC video timing are running at 1280x720, so we only
++ * need to point an MLC RGB layer at our own framebuffer.
+  *
+- * Next phases extend probe() to program the DPC video timing, the HDMI PHY
+- * preset + Link/Core, and an MLC plane over a CMA framebuffer for real output.
++ * probe():
++ *   - ungate the HDMI clocks, report HPD (phase 1);
++ *   - allocate a 720p XRGB8888 framebuffer, paint colour bars;
++ *   - disable the u-boot layer (it scans out now-reused kernel RAM = noise);
++ *   - program MLC RGB layer 0 over our framebuffer and enable it.
++ *
++ * Next phases replace the u-boot dependency by programming the DPC timing and
++ * the HDMI PHY preset ourselves, and wrap all this in a proper atomic-KMS
++ * driver.
+  */
+ 
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+ #include <linux/io.h>
++#include <linux/dma-mapping.h>
++
++#include "soc/s5pxx18_soc_mlc.h"
+ 
+ /* DISPLAYTOP clkgen modules feeding HDMI: spdif = module 2, vclk = module 4. */
+ #define NX_DISPTOP_CLKGEN_HDMI_SPDIF	0xc0105000
+ #define NX_DISPTOP_CLKGEN_HDMI_VCLK	0xc0109000
+-/* clkenb: bits[1:0] bclk-mode (3 = always), bit2 clkgen-enable, bit3 pclk-mode */
+ #define NX_CLKGEN_ON			0x0000000f
+ 
+ /* HDMI LINK/CTRL block. */
+@@ -29,13 +39,47 @@
+ #define NX_HDMI_HPD_STATUS		0x000c
+ #define NX_HDMI_HPD			0x0044
+ 
++/* MLC.0 (multi-layer controller feeding DPC.0). */
++#define NX_MLC0_BASE			0xc0102000
++#define NX_MLC0_SIZE			0x1000
++
++/* Fixed mode = what u-boot set (read back from MLC screensize = 0x02cf04ff). */
++#define FB_W				1280
++#define FB_H				720
++#define FB_BPP				4
++#define FB_STRIDE			(FB_W * FB_BPP)
++#define FB_SIZE				(FB_STRIDE * FB_H)
++
+ struct nx_display {
+ 	struct device *dev;
+ 	void __iomem *clk_spdif;
+ 	void __iomem *clk_vclk;
+ 	void __iomem *hdmi_ctrl;
++	void __iomem *mlc;
++	void *fb_cpu;
++	dma_addr_t fb_dma;
+ };
+ 
++/* Eight vertical colour bars (SMPTE-ish), XRGB8888 (0x00RRGGBB). */
++static void nx_fill_bars(u32 *fb)
++{
++	static const u32 bars[8] = {
++		0x00ffffff, /* white   */
++		0x00ffff00, /* yellow  */
++		0x0000ffff, /* cyan    */
++		0x0000ff00, /* green   */
++		0x00ff00ff, /* magenta */
++		0x00ff0000, /* red     */
++		0x000000ff, /* blue    */
++		0x00000000, /* black   */
++	};
++	int x, y;
++
++	for (y = 0; y < FB_H; y++)
++		for (x = 0; x < FB_W; x++)
++			fb[y * FB_W + x] = bars[(x * 8) / FB_W];
++}
++
+ static int nx_display_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -50,28 +94,70 @@ static int nx_display_probe(struct platform_device *pdev)
+ 	nx->clk_spdif = devm_ioremap(dev, NX_DISPTOP_CLKGEN_HDMI_SPDIF, 0x100);
+ 	nx->clk_vclk  = devm_ioremap(dev, NX_DISPTOP_CLKGEN_HDMI_VCLK, 0x100);
+ 	nx->hdmi_ctrl = devm_ioremap(dev, NX_HDMI_CTRL_BASE, NX_HDMI_CTRL_SIZE);
+-	if (!nx->clk_spdif || !nx->clk_vclk || !nx->hdmi_ctrl)
++	nx->mlc       = devm_ioremap(dev, NX_MLC0_BASE, NX_MLC0_SIZE);
++	if (!nx->clk_spdif || !nx->clk_vclk || !nx->hdmi_ctrl || !nx->mlc)
+ 		return -ENOMEM;
+ 
+-	/* Ungate the HDMI display clocks (proven on HW). */
++	/* Ungate the HDMI display clocks (phase 1). */
+ 	writel(NX_CLKGEN_ON, nx->clk_spdif);
+ 	writel(NX_CLKGEN_ON, nx->clk_vclk);
+ 
+-	/* Now the HDMI register block is alive - read hotplug state. */
+ 	hpd_status = readl(nx->hdmi_ctrl + NX_HDMI_HPD_STATUS);
+ 	hpd	   = readl(nx->hdmi_ctrl + NX_HDMI_HPD);
+-
+ 	dev_info(dev,
+-		 "S5P6818 display: HDMI clocks enabled; HPD_STATUS=0x%08x HPD=0x%08x -> monitor %s\n",
++		 "HDMI clocks enabled; HPD_STATUS=0x%08x HPD=0x%08x -> monitor %s\n",
+ 		 hpd_status, hpd,
+ 		 (hpd_status & 1) ? "CONNECTED" : "not detected");
+ 
++	/* Framebuffer for the test pattern. */
++	if (dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32))) {
++		dev_err(dev, "no 32-bit DMA\n");
++		return -ENODEV;
++	}
++	nx->fb_cpu = dma_alloc_coherent(dev, FB_SIZE, &nx->fb_dma, GFP_KERNEL);
++	if (!nx->fb_cpu) {
++		dev_err(dev, "framebuffer alloc (%d bytes) failed\n", FB_SIZE);
++		return -ENOMEM;
++	}
++	nx_fill_bars(nx->fb_cpu);
++	dev_info(dev, "framebuffer %dx%d @ dma 0x%08x (%d bytes)\n",
++		 FB_W, FB_H, (u32)nx->fb_dma, FB_SIZE);
++
++	/* Drive MLC.0 RGB layer 0 over our framebuffer. */
++	nx_mlc_set_base_address(0, nx->mlc);
++
++	/* Turn off whatever layer u-boot left running (it now shows stale RAM). */
++	nx_mlc_set_layer_enable(0, 1, 0);
++	nx_mlc_set_dirty_flag(0, 1);
++
++	nx_mlc_set_screen_size(0, FB_W, FB_H);
++	nx_mlc_set_layer_priority(0, nx_mlc_priority_videofirst);
++
++	nx_mlc_set_lock_size(0, 0, 16);
++	nx_mlc_set_alpha_blending(0, 0, 0, 0);
++	nx_mlc_set_color_inversion(0, 0, 0, 0);
++	nx_mlc_set_format_rgb(0, 0, nx_mlc_rgbfmt_x8r8g8b8);
++	nx_mlc_set_position(0, 0, 0, 0, FB_W - 1, FB_H - 1);
++	nx_mlc_set_rgblayer_invalid_position(0, 0, 0, 0, 0, 0, 0, 0);
++	nx_mlc_set_rgblayer_invalid_position(0, 0, 1, 0, 0, 0, 0, 0);
++	nx_mlc_set_rgblayer_stride(0, 0, FB_BPP, FB_STRIDE);
++	nx_mlc_set_rgblayer_address(0, 0, (u32)nx->fb_dma);
++	nx_mlc_set_layer_enable(0, 0, 1);
++	nx_mlc_set_dirty_flag(0, 0);
++	nx_mlc_set_top_dirty_flag(0);
++
++	dev_info(dev, "MLC RGB layer 0 enabled with colour-bar test pattern\n");
++
+ 	platform_set_drvdata(pdev, nx);
+ 	return 0;
+ }
+ 
+ static void nx_display_remove(struct platform_device *pdev)
+ {
++	struct nx_display *nx = platform_get_drvdata(pdev);
++
++	if (nx && nx->fb_cpu)
++		dma_free_coherent(nx->dev, FB_SIZE, nx->fb_cpu, nx->fb_dma);
+ }
+ 
+ static const struct of_device_id nx_display_of_match[] = {
+diff --git a/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.c b/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.c
+new file mode 100644
+index 0000000..433c5ff
+--- /dev/null
++++ b/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.c
+@@ -0,0 +1,1871 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: junghyun, kim <jhkim@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include <linux/types.h>
++#include <linux/io.h>
++
++#include "s5pxx18_soc_mlc.h"
++
++static struct {
++	struct nx_mlc_register_set *pregister;
++} __g_module_variables[NUMBER_OF_MLC_MODULE] = { { NULL, },};
++
++int nx_mlc_initialize(void)
++{
++	static int binit;
++	u32 i;
++
++	if (0 == binit) {
++		for (i = 0; i < NUMBER_OF_MLC_MODULE; i++)
++			__g_module_variables[i].pregister = NULL;
++		binit = 1;
++	}
++	return 1;
++}
++
++u32 nx_mlc_get_physical_address(u32 module_index)
++{
++	const u32 physical_addr[] = PHY_BASEADDR_MLC_LIST;
++
++	return physical_addr[module_index];
++}
++
++void nx_mlc_set_base_address(u32 module_index, void *base_address)
++{
++	__g_module_variables[module_index].pregister =
++	    (struct nx_mlc_register_set *)base_address;
++}
++
++void *nx_mlc_get_base_address(u32 module_index)
++{
++	return (void *)__g_module_variables[module_index].pregister;
++}
++
++void nx_mlc_set_clock_pclk_mode(u32 module_index, enum nx_pclkmode mode)
++{
++	const u32 pclkmode_pos = 3;
++	u32 clkmode = 0;
++
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	switch (mode) {
++	case nx_pclkmode_dynamic:
++		clkmode = 0;
++		break;
++	case nx_pclkmode_always:
++		clkmode = 1;
++		break;
++	default:
++		break;
++	}
++	regvalue = pregister->mlcclkenb;
++	regvalue &= ~(1ul << pclkmode_pos);
++	regvalue |= (clkmode & 0x01) << pclkmode_pos;
++
++	writel(regvalue, &pregister->mlcclkenb);
++}
++
++enum nx_pclkmode nx_mlc_get_clock_pclk_mode(u32 module_index)
++{
++	const u32 pclkmode_pos = 3;
++
++	if (__g_module_variables[module_index].pregister->mlcclkenb &
++	    (1ul << pclkmode_pos)) {
++		return nx_pclkmode_always;
++	}
++	return nx_pclkmode_dynamic;
++}
++
++void nx_mlc_set_clock_bclk_mode(u32 module_index, enum nx_bclkmode mode)
++{
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++	u32 clkmode = 0;
++
++	pregister = __g_module_variables[module_index].pregister;
++	switch (mode) {
++	case nx_bclkmode_disable:
++		clkmode = 0;
++		break;
++	case nx_bclkmode_dynamic:
++		clkmode = 2;
++		break;
++	case nx_bclkmode_always:
++		clkmode = 3;
++		break;
++	default:
++		break;
++	}
++	regvalue = pregister->mlcclkenb;
++	regvalue &= ~(0x3);
++	regvalue |= clkmode & 0x3;
++
++	writel(regvalue, &pregister->mlcclkenb);
++}
++
++enum nx_bclkmode nx_mlc_get_clock_bclk_mode(u32 module_index)
++{
++	const u32 bclkmode = 3ul << 0;
++
++	switch (__g_module_variables[module_index].pregister->mlcclkenb &
++		bclkmode) {
++	case 0:
++		return nx_bclkmode_disable;
++	case 2:
++		return nx_bclkmode_dynamic;
++	case 3:
++		return nx_bclkmode_always;
++	}
++	return nx_bclkmode_disable;
++}
++
++void nx_mlc_set_top_power_mode(u32 module_index, int bpower)
++{
++	const u32 pixelbuffer_pwd_pos = 11;
++	const u32 pixelbuffer_pwd_mask = 1ul << pixelbuffer_pwd_pos;
++	const u32 dittyflag_mask = 1ul << 3;
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue &= ~(pixelbuffer_pwd_mask | dittyflag_mask);
++	regvalue |= (bpower << pixelbuffer_pwd_pos);
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++int nx_mlc_get_top_power_mode(u32 module_index)
++{
++	const u32 pixelbuffer_pwd_pos = 11;
++	const u32 pixelbuffer_pwd_mask = 1ul << pixelbuffer_pwd_pos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlccontrolt & pixelbuffer_pwd_mask) >>
++		     pixelbuffer_pwd_pos);
++}
++
++void nx_mlc_set_top_sleep_mode(u32 module_index, int bsleep)
++{
++	const u32 pixelbuffer_sld_pos = 10;
++	const u32 pixelbuffer_sld_mask = 1ul << pixelbuffer_sld_pos;
++	const u32 dittyflag_mask = 1ul << 3;
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	bsleep = (int)((u32) bsleep ^ 1);
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue &= ~(pixelbuffer_sld_mask | dittyflag_mask);
++	regvalue |= (bsleep << pixelbuffer_sld_pos);
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++int nx_mlc_get_top_sleep_mode(u32 module_index)
++{
++	const u32 pixelbuffer_sld_pos = 11;
++	const u32 pixelbuffer_sld_mask = 1ul << pixelbuffer_sld_pos;
++
++	return (int)(((__g_module_variables[module_index].pregister->
++		       mlccontrolt & pixelbuffer_sld_mask) >>
++		      pixelbuffer_sld_pos) ^ 0x01);
++}
++
++void nx_mlc_set_top_dirty_flag(u32 module_index)
++{
++	const u32 dirtyflag = 1ul << 3;
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue |= dirtyflag;
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++int nx_mlc_get_top_dirty_flag(u32 module_index)
++{
++	const u32 dirtyflag_pos = 3;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++
++	return (int)((readl(&__g_module_variables[module_index]
++			    .pregister->mlccontrolt) &
++		      dirtyflag_mask) >> dirtyflag_pos);
++}
++
++void nx_mlc_set_mlc_enable(u32 module_index, int benb)
++{
++	const u32 mlcenb_pos = 1;
++	const u32 mlcenb_mask = 1ul << mlcenb_pos;
++	const u32 dirtyflag_pos = 3;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue &= ~(mlcenb_mask | dirtyflag_mask);
++	regvalue |= (benb << mlcenb_pos);
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++int nx_mlc_get_mlc_enable(u32 module_index)
++{
++	const u32 mlcenb_pos = 1;
++	const u32 mlcenb_mask = 1ul << mlcenb_pos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlccontrolt & mlcenb_mask) >> mlcenb_pos);
++}
++
++void nx_mlc_set_field_enable(u32 module_index, int benb)
++{
++	const u32 fieldenb_pos = 0;
++	const u32 fieldenb_mask = 1ul << fieldenb_pos;
++	const u32 dirtyflag_pos = 3;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue &= ~(fieldenb_mask | dirtyflag_mask);
++	regvalue |= (benb << fieldenb_pos);
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++int nx_mlc_get_field_enable(u32 module_index)
++{
++	const u32 fieldenb_pos = 0;
++	const u32 fieldenb_mask = 1ul << fieldenb_pos;
++
++	return (int)(__g_module_variables[module_index].pregister->mlccontrolt &
++		     fieldenb_mask);
++}
++
++void nx_mlc_set_layer_priority(u32 module_index, enum nx_mlc_priority priority)
++{
++	const u32 priority_pos = 8;
++	const u32 priority_mask = 0x03 << priority_pos;
++	const u32 dirtyflag_pos = 3;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlccontrolt;
++	regvalue &= ~(priority_mask | dirtyflag_mask);
++	regvalue |= (priority << priority_pos);
++
++	writel(regvalue, &pregister->mlccontrolt);
++}
++
++void nx_mlc_set_screen_size(u32 module_index, u32 width, u32 height)
++{
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = ((height - 1) << 16) | (width - 1);
++
++	writel(regvalue, &pregister->mlcscreensize);
++}
++
++void nx_mlc_get_screen_size(u32 module_index, u32 *pwidth, u32 *pheight)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	if (NULL != pwidth)
++		*pwidth = (pregister->mlcscreensize & 0x0fff) + 1;
++
++	if (NULL != pheight)
++		*pheight = ((pregister->mlcscreensize >> 16) & 0x0fff) + 1;
++}
++
++void nx_mlc_set_background(u32 module_index, u32 color)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(color, &pregister->mlcbgcolor);
++}
++
++void nx_mlc_set_dirty_flag(u32 module_index, u32 layer)
++{
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++	const u32 dirtyflg_mask = 1ul << 4;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue |= dirtyflg_mask;
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++	} else if (3 == layer) {
++		regvalue = pregister->mlcvideolayer.mlccontrol;
++		regvalue |= dirtyflg_mask;
++
++		writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++	}
++}
++
++int nx_mlc_get_dirty_flag(u32 module_index, u32 layer)
++{
++	const u32 dirtyflg_pos = 4;
++	const u32 dirtyflg_mask = 1ul << dirtyflg_pos;
++
++	if (0 == layer || 1 == layer) {
++		return (int)((__g_module_variables[module_index]
++			      .pregister->mlcrgblayer[layer]
++			      .mlccontrol & dirtyflg_mask) >> dirtyflg_pos);
++	} else if (2 == layer) {
++		return (int)((__g_module_variables[module_index]
++			      .pregister->mlcrgblayer2.mlccontrol &
++			      dirtyflg_mask) >> dirtyflg_pos);
++	} else if (3 == layer) {
++		return (int)((__g_module_variables[module_index]
++			      .pregister->mlcvideolayer.mlccontrol &
++			      dirtyflg_mask) >> dirtyflg_pos);
++	}
++	return 0;
++}
++
++void nx_mlc_set_layer_enable(u32 module_index, u32 layer, int benb)
++{
++	const u32 layerenb_pos = 5;
++	const u32 layerenb_mask = 0x01 << layerenb_pos;
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(layerenb_mask | dirtyflag_mask);
++		regvalue |= (benb << layerenb_pos);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++	} else if (3 == layer) {
++		regvalue = pregister->mlcvideolayer.mlccontrol;
++		regvalue &= ~(layerenb_mask | dirtyflag_mask);
++		regvalue |= (benb << layerenb_pos);
++
++		writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++	}
++}
++
++int nx_mlc_get_layer_enable(u32 module_index, u32 layer)
++{
++	const u32 layerenb_pos = 5;
++	const u32 layerenb_mask = 0x01 << layerenb_pos;
++
++	if (0 == layer || 1 == layer) {
++		return (int)((__g_module_variables[module_index]
++			      .pregister->mlcrgblayer[layer]
++			      .mlccontrol & layerenb_mask) >> layerenb_pos);
++	} else if (3 == layer) {
++		return (int)((__g_module_variables[module_index]
++			      .pregister->mlcvideolayer.mlccontrol &
++			      layerenb_mask) >> layerenb_pos);
++	}
++	return 0;
++}
++
++void nx_mlc_set_lock_size(u32 module_index, u32 layer, u32 locksize)
++{
++	const u32 locksize_mask = 3ul << 12;
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	register struct nx_mlc_register_set *pregister;
++	register u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	locksize >>= 3;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(locksize_mask | dirtyflag_mask);
++		regvalue |= (locksize << 12);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++	}
++}
++
++void nx_mlc_set_alpha_blending(u32 module_index, u32 layer, int benb, u32 alpha)
++{
++	const u32 blendenb_pos = 2;
++	const u32 blendenb_mask = 0x01 << blendenb_pos;
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	const u32 alpha_pos = 28;
++	const u32 alpha_mask = 0xf << alpha_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(blendenb_mask | dirtyflag_mask);
++		regvalue |= (benb << blendenb_pos);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++		regvalue = pregister->mlcrgblayer[layer].mlctpcolor;
++		regvalue &= ~alpha_mask;
++		regvalue |= alpha << alpha_pos;
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlctpcolor);
++	} else if (3 == layer) {
++		regvalue = pregister->mlcvideolayer.mlccontrol;
++		regvalue &= ~(blendenb_mask | dirtyflag_mask);
++		regvalue |= (benb << blendenb_pos);
++
++		writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++
++		writel(alpha << alpha_pos,
++		       &pregister->mlcvideolayer.mlctpcolor);
++	}
++}
++
++void nx_mlc_set_transparency(u32 module_index, u32 layer, int benb, u32 color)
++{
++	const u32 tpenb_pos = 0;
++	const u32 tpenb_mask = 0x01 << tpenb_pos;
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	const u32 tpcolor_pos = 0;
++	const u32 tpcolor_mask = ((1 << 24) - 1) << tpcolor_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(tpenb_mask | dirtyflag_mask);
++		regvalue |= (benb << tpenb_pos);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++		regvalue = pregister->mlcrgblayer[layer].mlctpcolor;
++		regvalue &= ~tpcolor_mask;
++		regvalue |= (color & tpcolor_mask);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlctpcolor);
++	}
++}
++
++void nx_mlc_set_color_inversion(u32 module_index, u32 layer, int benb,
++				u32 color)
++{
++	const u32 invenb_pos = 1;
++	const u32 invenb_mask = 0x01 << invenb_pos;
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	const u32 invcolor_pos = 0;
++	const u32 invcolor_mask = ((1 << 24) - 1) << invcolor_pos;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(invenb_mask | dirtyflag_mask);
++		regvalue |= (benb << invenb_pos);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++		regvalue = pregister->mlcrgblayer[layer].mlcinvcolor;
++		regvalue &= ~invcolor_mask;
++		regvalue |= (color & invcolor_mask);
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlcinvcolor);
++	}
++}
++
++u32 nx_mlc_get_extended_color(u32 module_index, u32 color,
++			      enum nx_mlc_rgbfmt format)
++{
++	u32 rgb[3] = {
++		0,
++	};
++	u32 bw[3] = {
++		0,
++	};
++	u32 bp[3] = {
++		0,
++	};
++	u32 blank = 0;
++	u32 fill = 0;
++	u32 i = 0;
++
++	switch (format) {
++	case nx_mlc_rgbfmt_r5g6b5:
++		bw[0] = 5;
++		bw[1] = 6;
++		bw[2] = 5;
++		bp[0] = 11;
++		bp[1] = 5;
++		bp[2] = 0;
++		break;
++	case nx_mlc_rgbfmt_b5g6r5:
++		bw[0] = 5;
++		bw[1] = 6;
++		bw[2] = 5;
++		bp[0] = 0;
++		bp[1] = 5;
++		bp[2] = 11;
++		break;
++	case nx_mlc_rgbfmt_x1r5g5b5:
++	case nx_mlc_rgbfmt_a1r5g5b5:
++		bw[0] = 5;
++		bw[1] = 5;
++		bw[2] = 5;
++		bp[0] = 10;
++		bp[1] = 5;
++		bp[2] = 0;
++		break;
++	case nx_mlc_rgbfmt_x1b5g5r5:
++	case nx_mlc_rgbfmt_a1b5g5r5:
++		bw[0] = 5;
++		bw[1] = 5;
++		bw[2] = 5;
++		bp[0] = 0;
++		bp[1] = 5;
++		bp[2] = 10;
++		break;
++	case nx_mlc_rgbfmt_x4r4g4b4:
++	case nx_mlc_rgbfmt_a4r4g4b4:
++		bw[0] = 4;
++		bw[1] = 4;
++		bw[2] = 4;
++		bp[0] = 8;
++		bp[1] = 4;
++		bp[2] = 0;
++		break;
++	case nx_mlc_rgbfmt_x4b4g4r4:
++	case nx_mlc_rgbfmt_a4b4g4r4:
++		bw[0] = 4;
++		bw[1] = 4;
++		bw[2] = 4;
++		bp[0] = 0;
++		bp[1] = 4;
++		bp[2] = 8;
++		break;
++	case nx_mlc_rgbfmt_x8r3g3b2:
++	case nx_mlc_rgbfmt_a8r3g3b2:
++		bw[0] = 3;
++		bw[1] = 3;
++		bw[2] = 2;
++		bp[0] = 5;
++		bp[1] = 2;
++		bp[2] = 0;
++		break;
++	case nx_mlc_rgbfmt_x8b3g3r2:
++	case nx_mlc_rgbfmt_a8b3g3r2:
++		bw[0] = 2;
++		bw[1] = 3;
++		bw[2] = 3;
++		bp[0] = 0;
++		bp[1] = 2;
++		bp[2] = 5;
++		break;
++	case nx_mlc_rgbfmt_r8g8b8:
++	case nx_mlc_rgbfmt_a8r8g8b8:
++		bw[0] = 8;
++		bw[1] = 8;
++		bw[2] = 8;
++		bp[0] = 16;
++		bp[1] = 8;
++		bp[2] = 0;
++		break;
++	case nx_mlc_rgbfmt_b8g8r8:
++	case nx_mlc_rgbfmt_a8b8g8r8:
++		bw[0] = 8;
++		bw[1] = 8;
++		bw[2] = 8;
++		bp[0] = 0;
++		bp[1] = 8;
++		bp[2] = 16;
++		break;
++	default:
++		break;
++	}
++	for (i = 0; i < 3; i++) {
++		rgb[i] = (color >> bp[i]) & ((u32) (1 << bw[i]) - 1);
++		fill = bw[i];
++		blank = 8 - fill;
++		rgb[i] <<= blank;
++		while (blank > 0) {
++			rgb[i] |= (rgb[i] >> fill);
++			blank -= fill;
++			fill += fill;
++		}
++	}
++
++	return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2] << 0);
++}
++
++void nx_mlc_set_format_rgb(u32 module_index, u32 layer,
++			   enum nx_mlc_rgbfmt format)
++{
++	const u32 dirtyflag_pos = 4;
++	const u32 dirtyflag_mask = 1ul << dirtyflag_pos;
++	const u32 format_mask = 0xffff0000ul;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		regvalue = pregister->mlcrgblayer[layer].mlccontrol;
++		regvalue &= ~(format_mask | dirtyflag_mask);
++		regvalue |= (u32) format;
++
++		writel(regvalue, &pregister->mlcrgblayer[layer].mlccontrol);
++	}
++}
++
++void nx_mlc_set_format_yuv(u32 module_index, enum nx_mlc_yuvfmt format)
++{
++	const u32 format_mask = 0xffff0000ul;
++	register u32 temp;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	temp = pregister->mlcvideolayer.mlccontrol;
++	temp &= ~format_mask;
++	temp |= (u32) format;
++
++	writel(temp, &pregister->mlcvideolayer.mlccontrol);
++}
++
++void nx_mlc_set_position(u32 module_index, u32 layer, int32_t sx, int32_t sy,
++			 int32_t ex, int32_t ey)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		writel((((u32) sx & 0xffful) << 16) | ((u32) ex & 0xffful),
++		       &pregister->mlcrgblayer[layer].mlcleftright);
++
++		writel((((u32) sy & 0xffful) << 16) | ((u32) ey & 0xffful),
++		       &pregister->mlcrgblayer[layer].mlctopbottom);
++	} else if (2 == layer) {
++		writel((((u32) sx & 0xffful) << 16) | ((u32) ex & 0xffful),
++		       &pregister->mlcrgblayer2.mlcleftright);
++
++		writel((((u32) sy & 0xffful) << 16) | ((u32) ey & 0xffful),
++		       &pregister->mlcrgblayer2.mlctopbottom);
++	} else if (3 == layer) {
++		writel((((u32) sx & 0xffful) << 16) | ((u32) ex & 0xffful),
++		       &pregister->mlcvideolayer.mlcleftright);
++
++		writel((((u32) sy & 0xffful) << 16) | ((u32) ey & 0xffful),
++		       &pregister->mlcvideolayer.mlctopbottom);
++	}
++}
++
++void nx_mlc_set_dither_enable_when_using_gamma(u32 module_index, int benable)
++{
++	const u32 ditherenb_bitpos = 0;
++	const u32 ditherenb_mask = 1 << ditherenb_bitpos;
++	register struct nx_mlc_register_set *pregister;
++	register u32 read_value;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~ditherenb_mask;
++	read_value |= ((u32) benable << ditherenb_bitpos);
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++int nx_mlc_get_dither_enable_when_using_gamma(u32 module_index)
++{
++	const u32 ditherenb_bitpos = 0;
++	const u32 ditherenb_mask = 1 << ditherenb_bitpos;
++
++	return (int)(__g_module_variables[module_index].pregister->
++		     mlcgammacont & ditherenb_mask);
++}
++
++void nx_mlc_set_gamma_priority(u32 module_index, int bvideolayer)
++{
++	const u32 alphaselect_bitpos = 5;
++	const u32 alphaselect_mask = 1 << alphaselect_bitpos;
++	register struct nx_mlc_register_set *pregister;
++	register u32 read_value;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~alphaselect_mask;
++	read_value |= ((u32) bvideolayer << alphaselect_bitpos);
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++int nx_mlc_get_gamma_priority(u32 module_index)
++{
++	const u32 alphaselect_bitpos = 5;
++	const u32 alphaselect_mask = 1 << alphaselect_bitpos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlcgammacont & alphaselect_mask) >> alphaselect_bitpos);
++}
++
++void nx_mlc_set_rgblayer_invalid_position(u32 module_index, u32 layer,
++					  u32 region, int32_t sx, int32_t sy,
++					  int32_t ex, int32_t ey, int benb)
++{
++	const u32 invalidenb_pos = 28;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		if (0 == region) {
++			writel(((benb << invalidenb_pos) |
++				((sx & 0x7ff) << 16) | (ex & 0x7ff)),
++			       &pregister->mlcrgblayer[layer]
++			       .mlcinvalidleftright0);
++
++			writel((((sy & 0x7ff) << 16) | (ey & 0x7ff)),
++			       &pregister->mlcrgblayer[layer]
++			       .mlcinvalidtopbottom0);
++		} else {
++			writel(((benb << invalidenb_pos) |
++				((sx & 0x7ff) << 16) | (ex & 0x7ff)),
++			       &pregister->mlcrgblayer[layer]
++			       .mlcinvalidleftright1);
++
++			writel((((sy & 0x7ff) << 16) | (ey & 0x7ff)),
++			       &pregister->mlcrgblayer[layer]
++			       .mlcinvalidtopbottom1);
++		}
++	}
++}
++
++void nx_mlc_set_rgblayer_stride(u32 module_index, u32 layer, int32_t hstride,
++				int32_t vstride)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer) {
++		writel(hstride, &pregister->mlcrgblayer[layer].mlchstride);
++		writel(vstride, &pregister->mlcrgblayer[layer].mlcvstride);
++	} else if (2 == layer) {
++		writel(hstride, &pregister->mlcrgblayer2.mlchstride);
++		writel(vstride, &pregister->mlcrgblayer2.mlcvstride);
++	}
++}
++
++void nx_mlc_set_rgblayer_address(u32 module_index, u32 layer, u32 addr)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (0 == layer || 1 == layer)
++		writel(addr, &pregister->mlcrgblayer[layer].mlcaddress);
++	else if (2 == layer)
++		writel(addr, &pregister->mlcrgblayer2.mlcaddress);
++}
++
++void nx_mlc_set_rgblayer_gama_table_power_mode(u32 module_index, int bred,
++					       int bgreen, int bblue)
++{
++	const u32 bgammatable_pwd_bitpos = 11;
++	const u32 ggammatable_pwd_bitpos = 9;
++	const u32 rgammatable_pwd_bitpos = 3;
++	const u32 bgammatable_pwd_mask = (1 << bgammatable_pwd_bitpos);
++	const u32 ggammatable_pwd_mask = (1 << ggammatable_pwd_bitpos);
++	const u32 rgammatable_pwd_mask = (1 << rgammatable_pwd_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~(bgammatable_pwd_mask | ggammatable_pwd_mask |
++			rgammatable_pwd_mask);
++	read_value |= (((u32) bred << rgammatable_pwd_bitpos) |
++		       ((u32) bgreen << ggammatable_pwd_bitpos) |
++		       ((u32) bblue << bgammatable_pwd_bitpos));
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++void nx_mlc_get_rgblayer_gama_table_power_mode(u32 module_index, int *pbred,
++					       int *pbgreen, int *pbblue)
++{
++	const u32 bgammatable_pwd_bitpos = 11;
++	const u32 ggammatable_pwd_bitpos = 9;
++	const u32 rgammatable_pwd_bitpos = 3;
++	const u32 bgammatable_pwd_mask = (1 << bgammatable_pwd_bitpos);
++	const u32 ggammatable_pwd_mask = (1 << ggammatable_pwd_bitpos);
++	const u32 rgammatable_pwd_mask = (1 << rgammatable_pwd_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	if (NULL != pbred)
++		*pbred = (read_value & rgammatable_pwd_mask) ? 1 : 0;
++
++	if (NULL != pbgreen)
++		*pbgreen = (read_value & ggammatable_pwd_mask) ? 1 : 0;
++
++	if (NULL != pbblue)
++		*pbblue = (read_value & bgammatable_pwd_mask) ? 1 : 0;
++}
++
++void nx_mlc_set_rgblayer_gama_table_sleep_mode(u32 module_index, int bred,
++					       int bgreen, int bblue)
++{
++	const u32 bgammatable_sld_bitpos = 10;
++	const u32 ggammatable_sld_bitpos = 8;
++	const u32 rgammatable_sld_bitpos = 2;
++	const u32 bgammatable_sld_mask = (1 << bgammatable_sld_bitpos);
++	const u32 ggammatable_sld_mask = (1 << ggammatable_sld_bitpos);
++	const u32 rgammatable_sld_mask = (1 << rgammatable_sld_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	if (bred)
++		read_value &= ~rgammatable_sld_mask;
++	else
++		read_value |= rgammatable_sld_mask;
++
++	if (bgreen)
++		read_value &= ~ggammatable_sld_mask;
++	else
++		read_value |= ggammatable_sld_mask;
++
++	if (bblue)
++		read_value &= ~bgammatable_sld_mask;
++	else
++		read_value |= bgammatable_sld_mask;
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++void nx_mlc_get_rgblayer_gama_table_sleep_mode(u32 module_index, int *pbred,
++					       int *pbgreen, int *pbblue)
++{
++	const u32 bgammatable_sld_bitpos = 10;
++	const u32 ggammatable_sld_bitpos = 8;
++	const u32 rgammatable_sld_bitpos = 2;
++	const u32 bgammatable_sld_mask = (1 << bgammatable_sld_bitpos);
++	const u32 ggammatable_sld_mask = (1 << ggammatable_sld_bitpos);
++	const u32 rgammatable_sld_mask = (1 << rgammatable_sld_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++
++	if (NULL != pbred)
++		*pbred = (read_value & rgammatable_sld_mask) ? 0 : 1;
++
++	if (NULL != pbgreen)
++		*pbgreen = (read_value & ggammatable_sld_mask) ? 0 : 1;
++
++	if (NULL != pbblue)
++		*pbblue = (read_value & bgammatable_sld_mask) ? 0 : 1;
++}
++
++void nx_mlc_set_rgblayer_rgamma_table(u32 module_index, u32 dwaddress,
++				      u32 dwdata)
++{
++	register struct nx_mlc_register_set *pregister;
++	const u32 tableaddr_bitpos = 24;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(((dwaddress << tableaddr_bitpos) | dwdata),
++	       &pregister->mlcrgammatablewrite);
++}
++
++void nx_mlc_set_rgblayer_ggamma_table(u32 module_index, u32 dwaddress,
++				      u32 dwdata)
++{
++	register struct nx_mlc_register_set *pregister;
++	const u32 tableaddr_bitpos = 24;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(((dwaddress << tableaddr_bitpos) | dwdata),
++	       &pregister->mlcggammatablewrite);
++}
++
++void nx_mlc_set_rgblayer_bgamma_table(u32 module_index, u32 dwaddress,
++				      u32 dwdata)
++{
++	register struct nx_mlc_register_set *pregister;
++	const u32 tableaddr_bitpos = 24;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(((dwaddress << tableaddr_bitpos) | dwdata),
++	       &pregister->mlcbgammatablewrite);
++}
++
++void nx_mlc_set_rgblayer_gamma_enable(u32 module_index, int benable)
++{
++	const u32 rgbgammaemb_bitpos = 1;
++	const u32 rgbgammaemb_mask = 1 << rgbgammaemb_bitpos;
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~rgbgammaemb_mask;
++	read_value |= (u32) benable << rgbgammaemb_bitpos;
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++int nx_mlc_get_rgblayer_gamma_enable(u32 module_index)
++{
++	const u32 rgbgammaemb_bitpos = 1;
++	const u32 rgbgammaemb_mask = 1 << rgbgammaemb_bitpos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlcgammacont & rgbgammaemb_mask) >> rgbgammaemb_bitpos);
++}
++
++void nx_mlc_set_video_layer_stride(u32 module_index, int32_t lu_stride,
++				   int32_t cb_stride, int32_t cr_stride)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	writel(lu_stride, &pregister->mlcvideolayer.mlcvstride);
++	writel(cb_stride, &pregister->mlcvideolayer.mlcvstridecb);
++	writel(cr_stride, &pregister->mlcvideolayer.mlcvstridecr);
++}
++
++void nx_mlc_set_video_layer_address(u32 module_index, u32 lu_addr, u32 cb_addr,
++				    u32 cr_addr)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(lu_addr, &pregister->mlcvideolayer.mlcaddress);
++	writel(cb_addr, &pregister->mlcvideolayer.mlcaddresscb);
++	writel(cr_addr, &pregister->mlcvideolayer.mlcaddresscr);
++}
++
++void nx_mlc_set_video_layer_address_yuyv(u32 module_index, u32 addr,
++					 int32_t stride)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel(addr, &pregister->mlcvideolayer.mlcaddress);
++	writel(stride, &pregister->mlcvideolayer.mlcvstride);
++}
++
++void nx_mlc_set_video_layer_scale_factor(u32 module_index, u32 hscale,
++					 u32 vscale, int bhlumaenb,
++					 int bhchromaenb, int bvlumaenb,
++					 int bvchromaenb)
++{
++	const u32 filter_luma_pos = 28;
++	const u32 filter_choma_pos = 29;
++	const u32 scale_mask = ((1 << 23) - 1);
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	writel(((bhlumaenb << filter_luma_pos) |
++		(bhchromaenb << filter_choma_pos) | (hscale & scale_mask)),
++	       &pregister->mlcvideolayer.mlchscale);
++
++	writel(((bvlumaenb << filter_luma_pos) |
++		(bvchromaenb << filter_choma_pos) | (vscale & scale_mask)),
++	       &pregister->mlcvideolayer.mlcvscale);
++}
++
++void nx_mlc_set_video_layer_scale_filter(u32 module_index, int bhlumaenb,
++					 int bhchromaenb, int bvlumaenb,
++					 int bvchromaenb)
++{
++	const u32 filter_luma_pos = 28;
++	const u32 filter_choma_pos = 29;
++	const u32 scale_mask = ((1 << 23) - 1);
++	register struct nx_mlc_register_set *pregister;
++	register u32 read_value;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcvideolayer.mlchscale;
++	read_value &= scale_mask;
++	read_value |=
++	    (bhlumaenb << filter_luma_pos) | (bhchromaenb << filter_choma_pos);
++
++	writel(read_value, &pregister->mlcvideolayer.mlchscale);
++	read_value = pregister->mlcvideolayer.mlcvscale;
++	read_value &= scale_mask;
++	read_value |=
++	    (bvlumaenb << filter_luma_pos) | (bvchromaenb << filter_choma_pos);
++
++	writel(read_value, &pregister->mlcvideolayer.mlcvscale);
++}
++
++void nx_mlc_get_video_layer_scale_filter(u32 module_index, int *bhlumaenb,
++					 int *bhchromaenb, int *bvlumaenb,
++					 int *bvchromaenb)
++{
++	const u32 filter_luma_pos = 28;
++	const u32 filter_choma_pos = 29;
++	const u32 filter_mask = 1ul;
++	register struct nx_mlc_register_set *pregister;
++	register u32 read_value;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcvideolayer.mlchscale;
++	*bhlumaenb = (read_value >> filter_luma_pos) & filter_mask;
++	*bhchromaenb = (read_value >> filter_choma_pos) & filter_mask;
++	read_value = pregister->mlcvideolayer.mlcvscale;
++	*bvlumaenb = (read_value >> filter_luma_pos) & filter_mask;
++	*bvchromaenb = (read_value >> filter_choma_pos) & filter_mask;
++}
++
++void nx_mlc_set_video_layer_scale(u32 module_index, u32 sw, u32 sh, u32 dw,
++				  u32 dh, int bhlumaenb, int bhchromaenb,
++				  int bvlumaenb, int bvchromaenb)
++{
++	const u32 filter_luma_pos = 28;
++	const u32 filter_choma_pos = 29;
++	const u32 scale_mask = ((1 << 23) - 1);
++	register u32 hscale, vscale, cal_sh;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	if ((bhlumaenb || bhchromaenb) && (dw > sw)) {
++		sw--;
++		dw--;
++	}
++	hscale = (sw << 11) / dw;
++
++	if ((bvlumaenb || bvchromaenb) && (dh > sh)) {
++		sh--;
++		dh--;
++		vscale = (sh << 11) / dh;
++
++		cal_sh = ((vscale * dh) >> 11);
++		if (sh <= cal_sh)
++			vscale--;
++
++	} else {
++		vscale = (sh << 11) / dh;
++	}
++
++	writel(((bhlumaenb << filter_luma_pos) |
++		(bhchromaenb << filter_choma_pos) | (hscale & scale_mask)),
++	       &pregister->mlcvideolayer.mlchscale);
++
++	writel(((bvlumaenb << filter_luma_pos) |
++		(bvchromaenb << filter_choma_pos) | (vscale & scale_mask)),
++	       &pregister->mlcvideolayer.mlcvscale);
++}
++
++void nx_mlc_set_video_layer_luma_enhance(u32 module_index, u32 contrast,
++					 int32_t brightness)
++{
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	writel((((u32) brightness & 0xfful) << 8) | contrast,
++	       &pregister->mlcvideolayer.mlcluenh);
++}
++
++void nx_mlc_set_video_layer_chroma_enhance(u32 module_index, u32 quadrant,
++					   int32_t cb_a, int32_t cb_b,
++					   int32_t cr_a, int32_t cr_b)
++{
++	register struct nx_mlc_register_set *pregister;
++	register u32 temp;
++
++	pregister = __g_module_variables[module_index].pregister;
++	temp = (((u32) cr_b & 0xfful) << 24) | (((u32) cr_a & 0xfful) << 16) |
++	    (((u32) cb_b & 0xfful) << 8) | (((u32) cb_a & 0xfful) << 0);
++	if (0 < quadrant) {
++		writel(temp, &pregister->mlcvideolayer.mlcchenh[quadrant - 1]);
++	} else {
++		writel(temp, &pregister->mlcvideolayer.mlcchenh[0]);
++		writel(temp, &pregister->mlcvideolayer.mlcchenh[1]);
++		writel(temp, &pregister->mlcvideolayer.mlcchenh[2]);
++		writel(temp, &pregister->mlcvideolayer.mlcchenh[3]);
++	}
++}
++
++void nx_mlc_set_video_layer_line_buffer_power_mode(u32 module_index,
++						   int benable)
++{
++	const u32 linebuff_pwd_pos = 15;
++	const u32 linebuff_pwd_mask = 1ul << linebuff_pwd_pos;
++	const u32 dirtyflag_mask = 1ul << 4;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlcvideolayer.mlccontrol;
++	regvalue &= ~(linebuff_pwd_mask | dirtyflag_mask);
++	regvalue |= ((u32) benable << linebuff_pwd_pos);
++
++	writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++}
++
++int nx_mlc_get_video_layer_line_buffer_power_mode(u32 module_index)
++{
++	const u32 linebuff_pwd_pos = 15;
++	const u32 linebuff_pwd_mask = 1ul << linebuff_pwd_pos;
++
++	return (int)((__g_module_variables[module_index]
++		      .pregister->mlcvideolayer.mlccontrol &
++		      linebuff_pwd_mask) >> linebuff_pwd_pos);
++}
++
++void nx_mlc_set_video_layer_line_buffer_sleep_mode(u32 module_index,
++						   int benable)
++{
++	const u32 linebuff_slmd_pos = 14;
++	const u32 linebuff_slmd_mask = 1ul << linebuff_slmd_pos;
++	const u32 dirtyflag_mask = 1ul << 4;
++	register u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	benable = (int)((u32) benable ^ 1);
++	pregister = __g_module_variables[module_index].pregister;
++	regvalue = pregister->mlcvideolayer.mlccontrol;
++	regvalue &= ~(linebuff_slmd_mask | dirtyflag_mask);
++	regvalue |= (benable << linebuff_slmd_pos);
++
++	writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++}
++
++int nx_mlc_get_video_layer_line_buffer_sleep_mode(u32 module_index)
++{
++	const u32 linebuff_slmd_pos = 14;
++	const u32 linebuff_slmd_mask = 1ul << linebuff_slmd_pos;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (linebuff_slmd_mask & pregister->mlcvideolayer.mlccontrol)
++		return 0;
++	else
++		return 1;
++}
++
++void nx_mlc_set_video_layer_gama_table_power_mode(u32 module_index, int by,
++						  int bu, int bv)
++{
++	const u32 vgammatable_pwd_bitpos = 17;
++	const u32 ugammatable_pwd_bitpos = 15;
++	const u32 ygammatable_pwd_bitpos = 13;
++	const u32 vgammatable_pwd_mask = (1 << vgammatable_pwd_bitpos);
++	const u32 ugammatable_pwd_mask = (1 << ugammatable_pwd_bitpos);
++	const u32 ygammatable_pwd_mask = (1 << ygammatable_pwd_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~(ygammatable_pwd_mask | ugammatable_pwd_mask |
++			vgammatable_pwd_mask);
++	read_value |= (((u32) by << ygammatable_pwd_bitpos) |
++		       ((u32) bu << ugammatable_pwd_bitpos) |
++		       ((u32) bv << vgammatable_pwd_bitpos));
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++void nx_mlc_get_video_layer_gama_table_power_mode(u32 module_index, int *pby,
++						  int *pbu, int *pbv)
++{
++	const u32 vgammatable_pwd_bitpos = 17;
++	const u32 ugammatable_pwd_bitpos = 15;
++	const u32 ygammatable_pwd_bitpos = 13;
++	const u32 vgammatable_pwd_mask = (1 << vgammatable_pwd_bitpos);
++	const u32 ugammatable_pwd_mask = (1 << ugammatable_pwd_bitpos);
++	const u32 ygammatable_pwd_mask = (1 << ygammatable_pwd_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	if (NULL != pby)
++		*pby = (read_value & ygammatable_pwd_mask) ? 1 : 0;
++
++	if (NULL != pbu)
++		*pbu = (read_value & ugammatable_pwd_mask) ? 1 : 0;
++
++	if (NULL != pbv)
++		*pbv = (read_value & vgammatable_pwd_mask) ? 1 : 0;
++}
++
++void nx_mlc_set_video_layer_gama_table_sleep_mode(u32 module_index, int by,
++						  int bu, int bv)
++{
++	const u32 vgammatable_sld_bitpos = 16;
++	const u32 ugammatable_sld_bitpos = 14;
++	const u32 ygammatable_sld_bitpos = 12;
++	const u32 vgammatable_sld_mask = (1 << vgammatable_sld_bitpos);
++	const u32 ugammatable_sld_mask = (1 << ugammatable_sld_bitpos);
++	const u32 ygammatable_sld_mask = (1 << ygammatable_sld_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	if (by)
++		read_value &= ~ygammatable_sld_mask;
++	else
++		read_value |= ygammatable_sld_mask;
++
++	if (bu)
++		read_value &= ~ugammatable_sld_mask;
++	else
++		read_value |= ugammatable_sld_mask;
++
++	if (bv)
++		read_value &= ~vgammatable_sld_mask;
++	else
++		read_value |= vgammatable_sld_mask;
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++void nx_mlc_get_video_layer_gama_table_sleep_mode(u32 module_index, int *pby,
++						  int *pbu, int *pbv)
++{
++	const u32 vgammatable_sld_bitpos = 16;
++	const u32 ugammatable_sld_bitpos = 14;
++	const u32 ygammatable_sld_bitpos = 12;
++	const u32 vgammatable_sld_mask = (1 << vgammatable_sld_bitpos);
++	const u32 ugammatable_sld_mask = (1 << ugammatable_sld_bitpos);
++	const u32 ygammatable_sld_mask = (1 << ygammatable_sld_bitpos);
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++
++	if (NULL != pby)
++		*pby = (read_value & vgammatable_sld_mask) ? 0 : 1;
++
++	if (NULL != pbu)
++		*pbu = (read_value & ugammatable_sld_mask) ? 0 : 1;
++
++	if (NULL != pbv)
++		*pbv = (read_value & ygammatable_sld_mask) ? 0 : 1;
++}
++
++void nx_mlc_set_video_layer_gamma_enable(u32 module_index, int benable)
++{
++	const u32 yuvgammaemb_bitpos = 4;
++	const u32 yuvgammaemb_mask = 1 << yuvgammaemb_bitpos;
++	register u32 read_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	read_value = pregister->mlcgammacont;
++	read_value &= ~yuvgammaemb_mask;
++	read_value |= (u32) benable << yuvgammaemb_bitpos;
++
++	writel(read_value, &pregister->mlcgammacont);
++}
++
++int nx_mlc_get_video_layer_gamma_enable(u32 module_index)
++{
++	const u32 yuvgammaemb_bitpos = 4;
++	const u32 yuvgammaemb_mask = 1 << yuvgammaemb_bitpos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlcgammacont & yuvgammaemb_mask) >> yuvgammaemb_bitpos);
++}
++
++void nx_mlc_set_gamma_table_poweroff(u32 module_index, int enb)
++{
++	register struct nx_mlc_register_set *pregister;
++	u32 regvalue;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (enb == 1) {
++		regvalue = pregister->mlcgammacont;
++		regvalue = regvalue & 0xf3;
++		writel(regvalue, &pregister->mlcgammacont);
++	}
++}
++
++void nx_mlc_set_mlctop_control_parameter(u32 module_index, int field_enable,
++					 int mlcenable, u8 priority,
++					 enum g3daddrchangeallowed
++					 g3daddr_change_allowed)
++{
++	register u32 mlctopcontrolreg;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	mlctopcontrolreg = (readl(&pregister->mlccontrolt)) & 0xfffffcfc;
++	mlctopcontrolreg = (u32) (mlctopcontrolreg |
++				  ((priority << 8) | ((1 == mlcenable) << 1) |
++				   (1 ==
++				    field_enable)) | (g3daddr_change_allowed <<
++						      12));
++	writel(mlctopcontrolreg, &pregister->mlccontrolt);
++}
++
++void nx_mlc_set_rgb0layer_control_parameter(u32 module_index, int layer_enable,
++					    int grp3denable, int tp_enable,
++					    u32 transparency_color,
++					    int inv_enable, u32 inverse_color,
++					    int blend_enable, u8 alpha_value,
++					    enum mlc_rgbfmt rbgformat,
++					    enum locksizesel lock_size_select)
++{
++	u32 layer_format;
++	u32 control_enb;
++	u32 alpha_argument;
++	u32 lock_size = (u32) (lock_size_select & 0x3);
++	u32 rgb0controlreg;
++	u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	layer_format = nx_mlc_get_rgbformat(rbgformat);
++	pregister = __g_module_variables[module_index].pregister;
++	control_enb =
++	    (u32) ((grp3denable << 8) | (layer_enable << 5) |
++		   (blend_enable << 2) | (inv_enable << 1) | tp_enable) & 0x127;
++	alpha_argument = (u32) (alpha_value & 0xf);
++
++	rgb0controlreg = readl(&pregister->mlcrgblayer[0].mlccontrol) & 0x10;
++	regvalue =
++	    (u32) (((layer_format << 16) | control_enb | (lock_size << 12)) |
++		   rgb0controlreg);
++	writel(regvalue, &pregister->mlcrgblayer[0].mlccontrol);
++
++	regvalue = (u32) ((alpha_argument << 28) | transparency_color);
++	writel(regvalue, &pregister->mlcrgblayer[0].mlctpcolor);
++	regvalue = inverse_color;
++	writel(regvalue, &pregister->mlcrgblayer[0].mlcinvcolor);
++}
++
++u32 nx_mlc_get_rgbformat(enum mlc_rgbfmt rbgformat)
++{
++	u32 rgbformatvalue;
++	const u32 format_table[] = {
++		0x4432ul, 0x4342ul, 0x4211ul, 0x4120ul, 0x4003ul, 0x4554ul,
++		0x3342ul, 0x2211ul, 0x1120ul, 0x1003ul, 0x4653ul, 0x4653ul,
++		0x0653ul, 0x4ed3ul, 0x4f84ul, 0xc432ul, 0xc342ul, 0xc211ul,
++		0xc120ul, 0xb342ul, 0xa211ul, 0x9120ul, 0xc653ul, 0xc653ul,
++		0x8653ul, 0xced3ul, 0xcf84ul, 0x443aul
++	};
++
++	return rgbformatvalue = format_table[rbgformat];
++}
++
++void nx_mlc_set_rgb1layer_control_parameter(u32 module_index, int layer_enable,
++					    int grp3denable, int tp_enable,
++					    u32 transparency_color,
++					    int inv_enable, u32 inverse_color,
++					    int blend_enable, u8 alpha_value,
++					    enum mlc_rgbfmt rbgformat,
++					    enum locksizesel lock_size_select)
++{
++	u32 layer_format;
++	u32 control_enb;
++	u32 alpha_argument;
++	u32 lock_size = (u32) (lock_size_select & 0x3);
++	u32 rgb0controlreg;
++	u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	layer_format = nx_mlc_get_rgbformat(rbgformat);
++	pregister = __g_module_variables[module_index].pregister;
++
++	rgb0controlreg = readl(&pregister->mlcrgblayer[1].mlccontrol) & 0x10;
++	control_enb =
++	    (u32) ((grp3denable << 8) | (layer_enable << 5) |
++		   (blend_enable << 2) | (inv_enable << 1) | tp_enable) & 0x127;
++	alpha_argument = (u32) (alpha_value & 0xf);
++	regvalue =
++	    (u32) (((layer_format << 16) | control_enb | (lock_size << 12)) |
++		   rgb0controlreg);
++	writel(regvalue, &pregister->mlcrgblayer[1].mlccontrol);
++	regvalue = (u32) ((alpha_argument << 28) | transparency_color);
++	writel(regvalue, &pregister->mlcrgblayer[1].mlctpcolor);
++	regvalue = inverse_color;
++	writel(regvalue, &pregister->mlcrgblayer[1].mlcinvcolor);
++}
++
++void nx_mlc_set_rgb2layer_control_parameter(u32 module_index, int layer_enable,
++					    int grp3denable, int tp_enable,
++					    u32 transparency_color,
++					    int inv_enable, u32 inverse_color,
++					    int blend_enable, u8 alpha_value,
++					    enum mlc_rgbfmt rbgformat,
++					    enum locksizesel lock_size_select)
++{
++	u32 layer_format;
++	u32 control_enb;
++	u32 alpha_argument;
++	u32 lock_size = (u32) (lock_size_select & 0x3);
++	u32 rgb0controlreg;
++	u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++
++	layer_format = nx_mlc_get_rgbformat(rbgformat);
++	pregister = __g_module_variables[module_index].pregister;
++
++	rgb0controlreg = readl(&pregister->mlcrgblayer2.mlccontrol) & 0x10;
++	control_enb =
++	    (u32) ((grp3denable << 8) | (layer_enable << 5) |
++		   (blend_enable << 2) | (inv_enable << 1) | tp_enable) & 0x127;
++	alpha_argument = (u32) (alpha_value & 0xf);
++	regvalue =
++	    (u32) (((layer_format << 16) | control_enb | (lock_size << 12)) |
++		   rgb0controlreg);
++	writel(regvalue, &pregister->mlcrgblayer2.mlccontrol);
++	regvalue = (u32) ((alpha_argument << 28) | transparency_color);
++	writel(regvalue, &pregister->mlcrgblayer2.mlctpcolor);
++	regvalue = inverse_color;
++	writel(regvalue, &pregister->mlcrgblayer2.mlcinvcolor);
++}
++
++void nx_mlc_set_video_layer_control_parameter(u32 module_index,
++					      int layer_enable, int tp_enable,
++					      u32 transparency_color,
++					      int inv_enable, u32 inverse_color,
++					      int blend_enable, u8 alpha_value,
++					      enum nx_mlc_yuvfmt yuvformat)
++{
++	u32 control_enb;
++	u32 alpha_argument;
++	u32 regvalue;
++	register struct nx_mlc_register_set *pregister;
++	u32 video_control_reg;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	video_control_reg = readl(&pregister->mlcvideolayer.mlccontrol);
++	control_enb =
++	    (u32) ((yuvformat) | (layer_enable << 5) | (blend_enable << 2) |
++		   (inv_enable << 1) | tp_enable) & 0x30027;
++	alpha_argument = (u32) (alpha_value & 0xf);
++	regvalue = (u32) (control_enb | video_control_reg);
++	writel(regvalue, &pregister->mlcvideolayer.mlccontrol);
++	regvalue = (u32) ((alpha_argument << 28) | transparency_color);
++	writel(regvalue, &pregister->mlcvideolayer.mlctpcolor);
++	regvalue = (u32) ((alpha_argument << 28) | transparency_color);
++	writel(regvalue, &pregister->mlcvideolayer.mlcinvcolor);
++}
++
++void nx_mlc_set_srammode(u32 module_index, enum latyername layer_name,
++			 enum srammode sram_mode)
++{
++	u32 control_reg_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	switch (layer_name) {
++	case topmlc:
++		control_reg_value = readl(&pregister->mlccontrolt);
++		writel((u32) (control_reg_value | (sram_mode << 10)),
++		       &pregister->mlccontrolt);
++		control_reg_value = 0;
++		break;
++	case rgb0:
++		control_reg_value =
++		    readl(&pregister->mlcrgblayer[0].mlccontrol);
++		writel((u32) (control_reg_value | (sram_mode << 14)),
++		       &pregister->mlcrgblayer[0].mlccontrol);
++		control_reg_value = 0;
++		break;
++	case rgb1:
++		control_reg_value =
++		    readl(&pregister->mlcrgblayer[1].mlccontrol);
++		writel((u32) (control_reg_value | (sram_mode << 14)),
++		       &pregister->mlcrgblayer[1].mlccontrol);
++		control_reg_value = 0;
++		break;
++	case rgb2:
++		control_reg_value = readl(&pregister->mlcrgblayer2.mlccontrol);
++		writel((u32) (control_reg_value | (sram_mode << 14)),
++		       &pregister->mlcrgblayer2.mlccontrol);
++		control_reg_value = 0;
++		break;
++	case video:
++		control_reg_value = readl(&pregister->mlcvideolayer.mlccontrol);
++		writel((u32) (control_reg_value | (sram_mode << 14)),
++		       &pregister->mlcvideolayer.mlccontrol);
++		control_reg_value = 0;
++		break;
++	default:
++		break;
++	}
++}
++
++void nx_mlc_set_layer_reg_finish(u32 module_index, enum latyername layer_name)
++{
++	u32 control_reg_value;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	switch (layer_name) {
++	case topmlc:
++		control_reg_value = readl(&pregister->mlccontrolt);
++		writel((u32) (control_reg_value | (1ul << 3)),
++		       &pregister->mlccontrolt);
++		control_reg_value = 0;
++		break;
++	case rgb0:
++		control_reg_value =
++		    readl(&pregister->mlcrgblayer[0].mlccontrol);
++		writel((u32) (control_reg_value | (1ul << 4)),
++		       &pregister->mlcrgblayer[0].mlccontrol);
++		control_reg_value = 0;
++		break;
++	case rgb1:
++		control_reg_value =
++		    readl(&pregister->mlcrgblayer[1].mlccontrol);
++		writel((u32) (control_reg_value | (1ul << 4)),
++		       &pregister->mlcrgblayer[1].mlccontrol);
++		control_reg_value = 0;
++		break;
++	case rgb2:
++		control_reg_value = readl(&pregister->mlcrgblayer2.mlccontrol);
++		writel((u32) (control_reg_value | (1ul << 4)),
++		       &pregister->mlcrgblayer2.mlccontrol);
++		control_reg_value = 0;
++		break;
++	case video:
++		control_reg_value = readl(&pregister->mlcvideolayer.mlccontrol);
++		writel((u32) (control_reg_value | (1ul << 4)),
++		       &pregister->mlcvideolayer.mlccontrol);
++		control_reg_value = 0;
++		break;
++	default:
++		break;
++	}
++}
++
++void nx_mlc_set_video_layer_coordinate(u32 module_index, int vfilterenable,
++				       int hfilterenable, int vfilterenable_c,
++				       int hfilterenable_c,
++				       u16 video_layer_with,
++				       u16 video_layer_height, int16_t left,
++				       int16_t right, int16_t top,
++				       int16_t bottom)
++{
++	int32_t source_width, source_height;
++	int32_t destination_width;
++	int32_t destination_height;
++	int32_t hscale, vscale;
++	int32_t hfilterenb, vfilterenb;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	writel((int32_t) (((left & 0x0fff) << 16) | (right & 0x0fff)),
++	       &pregister->mlcvideolayer.mlcleftright);
++	writel((int32_t) (((top & 0x0fff) << 16) | (bottom & 0x0fff)),
++	       &pregister->mlcvideolayer.mlctopbottom);
++	source_width = (int32_t) (video_layer_with - 1);
++	source_height = (int32_t) (video_layer_height - 1);
++	destination_width = (int32_t) (right - left);
++	destination_height = (int32_t) (bottom - top);
++
++	hscale =
++	    (int32_t) ((source_width * (1ul << 11) + (destination_width / 2)) /
++		       destination_width);
++	vscale =
++	    (int32_t) ((source_height * (1ul << 11) +
++			(destination_height / 2)) / destination_height);
++
++	hfilterenb = (u32) (((hfilterenable_c << 29) | (hfilterenable) << 28)) &
++	    0x30000000;
++	vfilterenb = (u32) (((vfilterenable_c << 29) | (vfilterenable) << 28)) &
++	    0x30000000;
++	writel((u32) (hfilterenb | (hscale & 0x00ffffff)),
++	       &pregister->mlcvideolayer.mlchscale);
++	writel((u32) (vfilterenb | (vscale & 0x00ffffff)),
++	       &pregister->mlcvideolayer.mlcvscale);
++}
++
++void nx_mlc_set_video_layer_filter_scale(u32 module_index, u32 hscale,
++					 u32 vscale)
++{
++	register struct nx_mlc_register_set *pregister;
++	u32 mlchscale = 0;
++	u32 mlcvscale = 0;
++
++	pregister = __g_module_variables[module_index].pregister;
++	mlchscale = readl(&pregister->mlcvideolayer.mlchscale) & (~0x00ffffff);
++	mlcvscale = readl(&pregister->mlcvideolayer.mlcvscale) & (~0x00ffffff);
++
++	writel((u32) (mlchscale | (hscale & 0x00ffffff)),
++	       &pregister->mlcvideolayer.mlchscale);
++	writel((u32) (mlcvscale | (vscale & 0x00ffffff)),
++	       &pregister->mlcvideolayer.mlcvscale);
++}
++
++void nx_mlc_set_gamma_control_parameter(u32 module_index, int rgbgammaenb,
++					int yuvgammaenb, int yuvalphaarray,
++					int dither_enb)
++{
++	u32 register_data;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	register_data = readl(&pregister->mlcgammacont);
++	register_data = (register_data & 0xf0c) |
++	    ((yuvalphaarray << 5) | (yuvgammaenb << 4) |
++	     (rgbgammaenb << 1) | (dither_enb << 0));
++	writel(register_data, &pregister->mlcgammacont);
++}
++
++void nx_mlc_set_layer_alpha256(u32 module_index, u32 layer, u32 alpha)
++{
++	u32 register_data;
++	register struct nx_mlc_register_set *pregister;
++
++	if (alpha < 0)
++		alpha = 0;
++	if (alpha > 255)
++		alpha = 255;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (layer == 0) {
++		register_data =
++		    readl(&pregister->mlcrgblayer[0].mlctpcolor) & 0x00ffffff;
++		register_data = register_data | (alpha << 24);
++		writel(register_data, &pregister->mlcrgblayer[0].mlctpcolor);
++	} else if (layer == 1) {
++		register_data =
++		    readl(&pregister->mlcrgblayer[1].mlctpcolor) & 0x00ffffff;
++		register_data = register_data | (alpha << 24);
++		writel(register_data, &pregister->mlcrgblayer[1].mlctpcolor);
++	} else if (layer == 2) {
++		register_data =
++		    readl(&pregister->mlcrgblayer[1].mlctpcolor) & 0x00ffffff;
++		register_data = register_data | (alpha << 24);
++		writel(register_data, &pregister->mlcrgblayer2.mlctpcolor);
++	} else {
++		register_data =
++		    readl(&pregister->mlcvideolayer.mlctpcolor) & 0x00ffffff;
++		register_data = register_data | (alpha << 24);
++		writel(register_data, &pregister->mlcvideolayer.mlctpcolor);
++	}
++}
++
++int nx_mlc_is_under_flow(u32 module_index)
++{
++	const u32 underflow_pend_pos = 31;
++	const u32 underflow_pend_mask = 1ul << underflow_pend_pos;
++
++	return (int)((__g_module_variables[module_index].pregister->
++		      mlccontrolt & underflow_pend_mask) >> underflow_pend_pos);
++}
++
++void nx_mlc_set_gamma_table(u32 module_index, int enb,
++		struct nx_mlc_gamma_table_parameter *p_gammatable)
++{
++	register struct nx_mlc_register_set *pregister;
++	u32 i, regval = 0;
++
++	pregister = __g_module_variables[module_index].pregister;
++	if (enb == 1) {
++		regval = readl(&pregister->mlcgammacont);
++
++		regval = (1 << 11) | (1 << 9) | (1 << 3);
++		writel(regval, &pregister->mlcgammacont);
++
++		regval = regval | (1 << 10) | (1 << 8) | (1 << 2);
++		writel(regval, &pregister->mlcgammacont);
++
++		for (i = 0; i < 256; i++) {
++			nx_mlc_set_rgblayer_rgamma_table(
++				module_index, i, p_gammatable->r_table[i]);
++			nx_mlc_set_rgblayer_ggamma_table(
++				module_index, i, p_gammatable->g_table[i]);
++			nx_mlc_set_rgblayer_bgamma_table(
++				module_index, i, p_gammatable->b_table[i]);
++		}
++
++		regval = regval | (p_gammatable->alphaselect << 5) |
++		    (p_gammatable->yuvgammaenb << 4 |
++		     p_gammatable->allgammaenb << 4) |
++		    (p_gammatable->rgbgammaenb << 1 |
++		     p_gammatable->allgammaenb << 1) |
++		    (p_gammatable->ditherenb << 1);
++		writel(regval, &pregister->mlcgammacont);
++	} else {
++		regval = regval & ~(1 << 10) & ~(1 << 8) & ~(1 << 2);
++		writel(regval, &pregister->mlcgammacont);
++
++		regval = regval & ~(1 << 11) & ~(1 << 9) & ~(1 << 3);
++		writel(regval, &pregister->mlcgammacont);
++	}
++}
++
++void nx_mlc_get_rgblayer_stride(u32 module_index, u32 layer, int32_t *hstride,
++				int32_t *vstride)
++{
++	unsigned int hs, vs;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	hs = readl(&pregister->mlcrgblayer[layer].mlchstride);
++	vs = readl(&pregister->mlcrgblayer[layer].mlcvstride);
++
++	if (hstride)
++		*(int32_t *)hstride = hs;
++
++	if (vstride)
++		*(int32_t *)vstride = vs;
++}
++
++void nx_mlc_get_rgblayer_address(u32 module_index, u32 layer,
++				 u32 *phys_address)
++{
++	u32 pa;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	pa = readl(&pregister->mlcrgblayer[layer].mlcaddress);
++
++	if (phys_address)
++		*(u32 *)phys_address = pa;
++}
++
++void nx_mlc_get_position(u32 module_index, u32 layer, int *left, int *top,
++			 int *right, int *bottom)
++{
++	int lr, tb;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	lr = readl(&pregister->mlcrgblayer[layer].mlcleftright);
++	tb = readl(&pregister->mlcrgblayer[layer].mlctopbottom);
++
++	if (left)
++		*(int *)left = ((lr >> 16) & 0xFFUL);
++
++	if (top)
++		*(int *)top = ((tb >> 16) & 0xFFUL);
++
++	if (right)
++		*(int *)right = ((lr >> 0) & 0xFFUL);
++
++	if (bottom)
++		*(int *)bottom = ((tb >> 0) & 0xFFUL);
++}
++
++void nx_mlc_get_video_layer_address_yuyv(u32 module_index, u32 *address,
++					 u32 *stride)
++{
++	u32 a, s;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++	a = readl(&pregister->mlcvideolayer.mlcaddress);
++	s = readl(&pregister->mlcvideolayer.mlcvstride);
++
++	if (address)
++		*(u32 *)address = a;
++
++	if (stride)
++		*(u32 *)stride = s;
++}
++
++void nx_mlc_get_video_layer_address(u32 module_index, u32 *lu_address,
++				    u32 *cb_address, u32 *cr_address)
++{
++	u32 lua, cba, cra;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	lua = readl(&pregister->mlcvideolayer.mlcaddress);
++	cba = readl(&pregister->mlcvideolayer.mlcaddresscb);
++	cra = readl(&pregister->mlcvideolayer.mlcaddresscr);
++
++	if (lu_address)
++		*(u32 *)lu_address = lua;
++
++	if (cb_address)
++		*(u32 *)cb_address = cba;
++
++	if (cr_address)
++		*(u32 *)cr_address = cra;
++}
++
++void nx_mlc_get_video_layer_stride(u32 module_index, u32 *lu_stride,
++				   u32 *cb_stride, u32 *cr_stride)
++{
++	u32 lus, cbs, crs;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	lus = readl(&pregister->mlcvideolayer.mlcvstride);
++	cbs = readl(&pregister->mlcvideolayer.mlcvstridecb);
++	crs = readl(&pregister->mlcvideolayer.mlcvstridecr);
++
++	if (lu_stride)
++		*(u32 *)lu_stride = lus;
++
++	if (cb_stride)
++		*(u32 *)cb_stride = cbs;
++
++	if (cr_stride)
++		*(u32 *)cr_stride = crs;
++}
++
++void nx_mlc_get_video_position(u32 module_index, int *left, int *top,
++			       int *right, int *bottom)
++{
++	int lr, tb;
++	register struct nx_mlc_register_set *pregister;
++
++	pregister = __g_module_variables[module_index].pregister;
++
++	lr = readl(&pregister->mlcvideolayer.mlcleftright);
++	tb = readl(&pregister->mlcvideolayer.mlctopbottom);
++
++	if (left)
++		*(int *)left = ((lr >> 16) & 0xFFUL);
++
++	if (top)
++		*(int *)top = ((tb >> 16) & 0xFFUL);
++
++	if (right)
++		*(int *)right = ((lr >> 0) & 0xFFUL);
++
++	if (bottom)
++		*(int *)bottom = ((tb >> 0) & 0xFFUL);
++}
+diff --git a/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.h b/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.h
+new file mode 100644
+index 0000000..b0aac54
+--- /dev/null
++++ b/drivers/gpu/drm/nexell/soc/s5pxx18_soc_mlc.h
+@@ -0,0 +1,439 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: junghyun, kim <jhkim@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#ifndef _S5PXX18_SOC_MLC_H_
++#define _S5PXX18_SOC_MLC_H_
++
++#include "s5pxx18_soc_disp.h"
++
++#define NUMBER_OF_MLC_MODULE 2
++#define PHY_BASEADDR_MLC0	0xC0102000
++#define PHY_BASEADDR_MLC1	0xC0102400
++
++#define	PHY_BASEADDR_MLC_LIST	\
++		{ PHY_BASEADDR_MLC0, PHY_BASEADDR_MLC1 }
++
++struct nx_mlc_register_set {
++	u32 mlccontrolt;
++	u32 mlcscreensize;
++	u32 mlcbgcolor;
++	struct {
++		u32 mlcleftright;
++		u32 mlctopbottom;
++		u32 mlcinvalidleftright0;
++		u32 mlcinvalidtopbottom0;
++		u32 mlcinvalidleftright1;
++		u32 mlcinvalidtopbottom1;
++		u32 mlccontrol;
++		int32_t mlchstride;
++		int32_t mlcvstride;
++		u32 mlctpcolor;
++		u32 mlcinvcolor;
++		u32 mlcaddress;
++		u32 __reserved0;
++	} mlcrgblayer[2];
++	struct {
++		u32 mlcleftright;
++		u32 mlctopbottom;
++		u32 mlccontrol;
++		u32 mlcvstride;
++		u32 mlctpcolor;
++
++		u32 mlcinvcolor;
++		u32 mlcaddress;
++		u32 mlcaddresscb;
++		u32 mlcaddresscr;
++		int32_t mlcvstridecb;
++		int32_t mlcvstridecr;
++		u32 mlchscale;
++		u32 mlcvscale;
++		u32 mlcluenh;
++		u32 mlcchenh[4];
++	} mlcvideolayer;
++	struct {
++		u32 mlcleftright;
++		u32 mlctopbottom;
++		u32 mlcinvalidleftright0;
++		u32 mlcinvalidtopbottom0;
++		u32 mlcinvalidleftright1;
++		u32 mlcinvalidtopbottom1;
++		u32 mlccontrol;
++		int32_t mlchstride;
++		int32_t mlcvstride;
++		u32 mlctpcolor;
++		u32 mlcinvcolor;
++		u32 mlcaddress;
++	} mlcrgblayer2;
++	u32 mlcpaletetable2;
++	u32 mlcgammacont;
++	u32 mlcrgammatablewrite;
++	u32 mlcggammatablewrite;
++	u32 mlcbgammatablewrite;
++	u32 yuvlayergammatable_red;
++	u32 yuvlayergammatable_green;
++	u32 yuvlayergammatable_blue;
++
++	u32 dimctrl;
++	u32 dimlut0;
++	u32 dimlut1;
++	u32 dimbusyflag;
++	u32 dimprdarrr0;
++	u32 dimprdarrr1;
++	u32 dimram0rddata;
++	u32 dimram1rddata;
++	u32 __reserved2[(0x3c0 - 0x12c) / 4];
++	u32 mlcclkenb;
++};
++
++enum nx_mlc_priority {
++	nx_mlc_priority_videofirst = 0ul,
++	nx_mlc_priority_videosecond = 1ul,
++	nx_mlc_priority_videothird = 2ul,
++	nx_mlc_priority_videofourth = 3ul
++};
++
++enum nx_mlc_rgbfmt {
++	nx_mlc_rgbfmt_r5g6b5 = 0x44320000ul,
++	nx_mlc_rgbfmt_b5g6r5 = 0xc4320000ul,
++	nx_mlc_rgbfmt_x1r5g5b5 = 0x43420000ul,
++	nx_mlc_rgbfmt_x1b5g5r5 = 0xc3420000ul,
++	nx_mlc_rgbfmt_x4r4g4b4 = 0x42110000ul,
++	nx_mlc_rgbfmt_x4b4g4r4 = 0xc2110000ul,
++	nx_mlc_rgbfmt_x8r3g3b2 = 0x41200000ul,
++	nx_mlc_rgbfmt_x8b3g3r2 = 0xc1200000ul,
++	nx_mlc_rgbfmt_a1r5g5b5 = 0x33420000ul,
++	nx_mlc_rgbfmt_a1b5g5r5 = 0xb3420000ul,
++	nx_mlc_rgbfmt_a4r4g4b4 = 0x22110000ul,
++	nx_mlc_rgbfmt_a4b4g4r4 = 0xa2110000ul,
++	nx_mlc_rgbfmt_a8r3g3b2 = 0x11200000ul,
++	nx_mlc_rgbfmt_a8b3g3r2 = 0x91200000ul,
++	nx_mlc_rgbfmt_r8g8b8 = 0x46530000ul,
++	nx_mlc_rgbfmt_b8g8r8 = 0xc6530000ul,
++	nx_mlc_rgbfmt_x8r8g8b8 = 0x46530000ul,
++	nx_mlc_rgbfmt_x8b8g8r8 = 0xc6530000ul,
++	nx_mlc_rgbfmt_a8r8g8b8 = 0x06530000ul,
++	nx_mlc_rgbfmt_a8b8g8r8 = 0x86530000ul
++};
++
++enum nx_mlc_yuvfmt {
++	nx_mlc_yuvfmt_420 = 0ul << 16,
++	nx_mlc_yuvfmt_422 = 1ul << 16,
++	nx_mlc_yuvfmt_444 = 3ul << 16,
++	nx_mlc_yuvfmt_yuyv = 2ul << 16,
++	nx_mlc_yuvfmt_422_cbcr = 4ul << 16,
++	nx_mlc_yuvfmt_420_cbcr = 5ul << 16,
++};
++
++#ifdef __arm
++#pragma diag_default 66
++#endif
++
++int nx_mlc_initialize(void);
++u32 nx_mlc_get_number_of_module(void);
++u32 nx_mlc_get_physical_address(u32 module_index);
++u32 nx_mlc_get_size_of_register_set(void);
++void nx_mlc_set_base_address(u32 module_index, void *base_address);
++void *nx_mlc_get_base_address(u32 module_index);
++int nx_mlc_open_module(u32 module_index);
++int nx_mlc_close_module(u32 module_index);
++int nx_mlc_check_busy(u32 module_index);
++int nx_mlc_can_power_down(u32 module_index);
++void nx_mlc_set_clock_pclk_mode(u32 module_index, enum nx_pclkmode mode);
++enum nx_pclkmode nx_mlc_get_clock_pclk_mode(u32 module_index);
++void nx_mlc_set_clock_bclk_mode(u32 module_index, enum nx_bclkmode mode);
++enum nx_bclkmode nx_mlc_get_clock_bclk_mode(u32 module_index);
++
++void nx_mlc_set_top_power_mode(u32 module_index, int bpower);
++int nx_mlc_get_top_power_mode(u32 module_index);
++void nx_mlc_set_top_sleep_mode(u32 module_index, int bsleep);
++int nx_mlc_get_top_sleep_mode(u32 module_index);
++void nx_mlc_set_top_dirty_flag(u32 module_index);
++int nx_mlc_get_top_dirty_flag(u32 module_index);
++void nx_mlc_set_mlc_enable(u32 module_index, int benb);
++int nx_mlc_get_mlc_enable(u32 module_index);
++void nx_mlc_set_field_enable(u32 module_index, int benb);
++int nx_mlc_get_field_enable(u32 module_index);
++void nx_mlc_set_layer_priority(u32 module_index,
++				      enum nx_mlc_priority priority);
++void nx_mlc_set_screen_size(u32 module_index, u32 width, u32 height);
++void nx_mlc_get_screen_size(u32 module_index, u32 *pwidth,
++				   u32 *pheight);
++void nx_mlc_set_background(u32 module_index, u32 color);
++
++void nx_mlc_set_dirty_flag(u32 module_index, u32 layer);
++int nx_mlc_get_dirty_flag(u32 module_index, u32 layer);
++void nx_mlc_set_layer_enable(u32 module_index, u32 layer, int benb);
++int nx_mlc_get_layer_enable(u32 module_index, u32 layer);
++void nx_mlc_set_lock_size(u32 module_index, u32 layer, u32 locksize);
++void nx_mlc_set_alpha_blending(u32 module_index, u32 layer, int benb,
++				      u32 alpha);
++void nx_mlc_set_transparency(u32 module_index, u32 layer, int benb,
++				    u32 color);
++void nx_mlc_set_color_inversion(u32 module_index, u32 layer, int benb,
++				       u32 color);
++u32 nx_mlc_get_extended_color(u32 module_index, u32 color,
++				     enum nx_mlc_rgbfmt format);
++void nx_mlc_set_format_rgb(u32 module_index, u32 layer,
++				  enum nx_mlc_rgbfmt format);
++void nx_mlc_set_format_yuv(u32 module_index, enum nx_mlc_yuvfmt format);
++void nx_mlc_set_position(u32 module_index, u32 layer, int32_t sx,
++				int32_t sy, int32_t ex, int32_t ey);
++void nx_mlc_set_dither_enable_when_using_gamma(u32 module_index,
++						      int benable);
++int nx_mlc_get_dither_enable_when_using_gamma(u32 module_index);
++void nx_mlc_set_gamma_priority(u32 module_index, int bvideolayer);
++int nx_mlc_get_gamma_priority(u32 module_index);
++
++void nx_mlc_set_rgblayer_invalid_position(u32 module_index, u32 layer,
++						 u32 region, int32_t sx,
++						 int32_t sy, int32_t ex,
++						 int32_t ey, int benb);
++void nx_mlc_set_rgblayer_stride(u32 module_index, u32 layer,
++				       int32_t hstride, int32_t vstride);
++void nx_mlc_set_rgblayer_address(u32 module_index, u32 layer, u32 addr);
++void nx_mlc_set_rgblayer_gama_table_power_mode(u32 module_index,
++						      int bred, int bgreen,
++						      int bblue);
++void nx_mlc_get_rgblayer_gama_table_power_mode(u32 module_index,
++						      int *pbred, int *pbgreen,
++						      int *pbblue);
++void nx_mlc_set_rgblayer_gama_table_sleep_mode(u32 module_index,
++						      int bred, int bgreen,
++						      int bblue);
++void nx_mlc_get_rgblayer_gama_table_sleep_mode(u32 module_index,
++						      int *pbred, int *pbgreen,
++						      int *pbblue);
++void nx_mlc_set_rgblayer_rgamma_table(u32 module_index, u32 dwaddress,
++					     u32 dwdata);
++void nx_mlc_set_rgblayer_ggamma_table(u32 module_index, u32 dwaddress,
++					     u32 dwdata);
++void nx_mlc_set_rgblayer_bgamma_table(u32 module_index, u32 dwaddress,
++					     u32 dwdata);
++void nx_mlc_set_rgblayer_gamma_enable(u32 module_index, int benable);
++int nx_mlc_get_rgblayer_gamma_enable(u32 module_index);
++
++void nx_mlc_set_video_layer_stride(u32 module_index, int32_t lu_stride,
++					  int32_t cb_stride, int32_t cr_stride);
++void nx_mlc_set_video_layer_address(u32 module_index, u32 lu_addr,
++					   u32 cb_addr, u32 cr_addr);
++void nx_mlc_set_video_layer_address_yuyv(u32 module_index, u32 addr,
++						int32_t stride);
++void nx_mlc_set_video_layer_scale_factor(u32 module_index, u32 hscale,
++						u32 vscale, int bhlumaenb,
++						int bhchromaenb, int bvlumaenb,
++						int bvchromaenb);
++void nx_mlc_set_video_layer_scale_filter(u32 module_index, int bhlumaenb,
++						int bhchromaenb, int bvlumaenb,
++						int bvchromaenb);
++void nx_mlc_get_video_layer_scale_filter(u32 module_index,
++						int *bhlumaenb,
++						int *bhchromaenb,
++						int *bvlumaenb,
++						int *bvchromaenb);
++void nx_mlc_set_video_layer_scale(u32 module_index, u32 sw, u32 sh,
++					 u32 dw, u32 dh, int bhlumaenb,
++					 int bhchromaenb, int bvlumaenb,
++					 int bvchromaenb);
++void nx_mlc_set_video_layer_luma_enhance(u32 module_index, u32 contrast,
++						int32_t brightness);
++void nx_mlc_set_video_layer_chroma_enhance(u32 module_index,
++						  u32 quadrant, int32_t cb_a,
++						  int32_t cb_b, int32_t cr_a,
++						  int32_t cr_b);
++void nx_mlc_set_video_layer_line_buffer_power_mode(u32 module_index,
++							  int benable);
++int nx_mlc_get_video_layer_line_buffer_power_mode(u32 module_index);
++void nx_mlc_set_video_layer_line_buffer_sleep_mode(u32 module_index,
++							  int benable);
++int nx_mlc_get_video_layer_line_buffer_sleep_mode(u32 module_index);
++void nx_mlc_set_video_layer_gamma_enable(u32 module_index, int benable);
++int nx_mlc_get_video_layer_gamma_enable(u32 module_index);
++
++void nx_mlc_set_gamma_table_poweroff(u32 module_index, int enb);
++
++enum mlc_rgbfmt {
++	rgbfmt_r5g6b5 = 0,
++	rgbfmt_x1r5g5b5 = 1,
++	rgbfmt_x4r4g4b4 = 2,
++	rgbfmt_x8r3g3b2 = 3,
++	rgbfmt_x8l8 = 4,
++	rgbfmt_l16 = 5,
++	rgbfmt_a1r5g5b5 = 6,
++	rgbfmt_a4r4g4b4 = 7,
++	rgbfmt_a8r3g3b2 = 8,
++	rgbfmt_a8l8 = 9,
++	rgbfmt_r8g8b8 = 10,
++	rgbfmt_x8r8g8b8 = 11,
++	rgbfmt_a8r8g8b8 = 12,
++	rgbfmt_g8r8_g8b8 = 13,
++	rgbfmt_r8g8_b8g8 = 14,
++	rgbfmt_b5g6r5 = 15,
++	rgbfmt_x1b5g5r5 = 16,
++	rgbfmt_x4b4g4r4 = 17,
++	rgbfmt_x8b3g3r2 = 18,
++	rgbfmt_a1b5g5r5 = 19,
++	rgbfmt_a4b4g4r4 = 20,
++	rgbfmt_a8b3g3r2 = 21,
++	rgbfmt_b8g8r8 = 22,
++	rgbfmt_x8b8g8r8 = 23,
++	rgbfmt_a8b8g8r8 = 24,
++	rgbfmt_g8b8_g8r8 = 25,
++	rgbfmt_b8g8_r8g8 = 26,
++	rgbfmt_pataletb = 27
++};
++
++enum latyername {
++	topmlc = 0,
++	rgb0 = 1,
++	rgb1 = 2,
++	rgb2 = 3,
++	video = 4
++};
++
++enum srammode {
++	poweroff = 0,
++	sleepmode = 2,
++	run = 3
++};
++
++enum locksizesel {
++	locksize_4 = 0,
++	locksize_8 = 1,
++	locksize_16 = 2
++};
++
++enum g3daddrchangeallowed {
++	prim = 0,
++	secon = 1,
++	primorsecon = 2,
++	primandsecon = 3
++};
++
++void nx_mlc_set_mlctop_control_parameter(u32 module_index,
++						int field_enable, int mlcenable,
++						u8 priority,
++						enum g3daddrchangeallowed
++						g3daddr_change_allowed);
++void nx_mlc_set_rgb0layer_control_parameter(u32 module_index,
++						   int layer_enable,
++						   int grp3denable,
++						   int tp_enable,
++						   u32 transparency_color,
++						   int inv_enable,
++						   u32 inverse_color,
++						   int blend_enable,
++						   u8 alpha_value,
++						   enum mlc_rgbfmt rbgformat,
++						   enum locksizesel
++						   lock_size_select);
++
++u32 nx_mlc_get_rgbformat(enum mlc_rgbfmt rbgformat);
++void nx_mlc_set_rgb1layer_control_parameter(u32 module_index,
++						   int layer_enable,
++						   int grp3denable,
++						   int tp_enable,
++						   u32 transparency_color,
++						   int inv_enable,
++						   u32 inverse_color,
++						   int blend_enable,
++						   u8 alpha_value,
++						   enum mlc_rgbfmt rbgformat,
++						   enum locksizesel
++						   lock_size_select);
++
++void nx_mlc_set_rgb2layer_control_parameter(u32 module_index,
++						   int layer_enable,
++						   int grp3denable,
++						   int tp_enable,
++						   u32 transparency_color,
++						   int inv_enable,
++						   u32 inverse_color,
++						   int blend_enable,
++						   u8 alpha_value,
++						   enum mlc_rgbfmt rbgformat,
++						   enum locksizesel
++						   lock_size_select);
++
++void nx_mlc_set_video_layer_control_parameter(u32 module_index,
++						     int layer_enable,
++						     int tp_enable,
++						     u32 transparency_color,
++						     int inv_enable,
++						     u32 inverse_color,
++						     int blend_enable,
++						     u8 alpha_value,
++						     enum nx_mlc_yuvfmt
++						     yuvformat);
++
++void nx_mlc_set_srammode(u32 module_index, enum latyername layer_name,
++				enum srammode sram_mode);
++
++void nx_mlc_set_layer_reg_finish(u32 module_index,
++					enum latyername layer_name);
++
++void nx_mlc_set_video_layer_coordinate(u32 module_index,
++					      int vfilterenable,
++					      int hfilterenable,
++					      int vfilterenable_c,
++					      int hfilterenable_c,
++					      u16 video_layer_with,
++					      u16 video_layer_height,
++					      int16_t left, int16_t right,
++					      int16_t top, int16_t bottom);
++
++void nx_mlc_set_video_layer_filter_scale(u32 module_index, u32 hscale,
++						u32 vscale);
++void nx_mlcsetgammasrammode(u32 module_index, enum srammode sram_mode);
++void nx_mlc_set_gamma_control_parameter(u32 module_index,
++					       int rgbgammaenb, int yuvgammaenb,
++					       int yuvalphaarray,
++					       int dither_enb);
++
++void nx_mlc_set_layer_alpha256(u32 module_index, u32 layer, u32 alpha);
++int nx_mlc_is_under_flow(u32 module_index);
++
++struct nx_mlc_gamma_table_parameter {
++	u32 r_table[256];
++	u32 g_table[256];
++	u32 b_table[256];
++	u32 ditherenb;
++	u32 alphaselect;
++	u32 yuvgammaenb;
++	u32 rgbgammaenb;
++	u32 allgammaenb;
++};
++
++void nx_mlc_set_gamma_table(u32 module_index, int enb,
++		struct nx_mlc_gamma_table_parameter *p_gammatable);
++void nx_mlc_get_rgblayer_stride(u32 module_index, u32 layer,
++				       int32_t *hstride, int32_t *vstride);
++void nx_mlc_get_rgblayer_address(u32 module_index, u32 layer,
++					u32 *phys_address);
++void nx_mlc_get_position(u32 module_index, u32 layer, int *left,
++				int *top, int *right, int *bottom);
++void nx_mlc_get_video_layer_address_yuyv(u32 module_index, u32 *address,
++						u32 *stride);
++void nx_mlc_get_video_layer_address(u32 module_index, u32 *lu_address,
++					   u32 *cb_address, u32 *cr_address);
++void nx_mlc_get_video_layer_stride(u32 module_index, u32 *lu_stride,
++					  u32 *cb_stride, u32 *cr_stride);
++void nx_mlc_get_video_layer_stride(u32 module_index, u32 *lu_stride,
++					  u32 *cb_stride, u32 *cr_stride);
++void nx_mlc_get_video_position(u32 module_index, int *left, int *top,
++				      int *right, int *bottom);
++
++#endif
+-- 
+2.53.0
+

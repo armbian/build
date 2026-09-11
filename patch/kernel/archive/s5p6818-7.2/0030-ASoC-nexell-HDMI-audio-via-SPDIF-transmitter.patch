@@ -1,0 +1,431 @@
+From b49b02c307b3876831afa080af702450687e4aee Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 19:45:00 +0200
+Subject: [PATCH] ASoC: nexell: HDMI audio via S/PDIF transmitter
+
+Add the Nexell S/PDIF-TX ASoC CPU DAI (nexell-spdiftx.c, ported from the 4.14
+BSP to the mainline generic dmaengine-PCM). On the S5P6818 the SPDIF-TX output
+is wired internally to the HDMI controller's S/PDIF input, so this is the audio
+source for HDMI audio. A simple-audio-card links it to a spdif-dit codec, and
+the DRM display driver already sets up the HDMI-side audio (ACR/infoframe) on
+modeset.
+
+DT: spdiftx@c0059000 (DMA = PL080 #2 signal 6, clock cell-id 11, reset 43),
+the SPDIF master clock, and the sound-hdmi card + spdif-dit in the shared
+common dtsi (HDMI is on every board).
+
+HW-verified on a NanoPi Fire3: card 'S5P6818-HDMI' appears and a 440 Hz tone is
+audible on the HDMI monitor's speakers.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../dts/nexell/s5p6818-nanopi3-common.dtsi    |  25 ++
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi       |  24 ++
+ sound/soc/nexell/Kconfig                      |   8 +
+ sound/soc/nexell/Makefile                     |   3 +
+ sound/soc/nexell/nexell-spdiftx.c             | 280 ++++++++++++++++++
+ 5 files changed, 340 insertions(+)
+ create mode 100644 sound/soc/nexell/nexell-spdiftx.c
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi b/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
+index f42f413..c1525a2 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818-nanopi3-common.dtsi
+@@ -96,3 +96,28 @@
+ &display {
+ 	status = "okay";
+ };
++
++/* HDMI audio: SoC S/PDIF-TX -> HDMI S/PDIF input -> monitor. */
++&spdiftx {
++	status = "okay";
++};
++
++/ {
++	spdif_dit: spdif-dit {
++		compatible = "linux,spdif-dit";
++		#sound-dai-cells = <0>;
++	};
++
++	sound_hdmi: sound-hdmi {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "S5P6818-HDMI";
++
++		simple-audio-card,cpu {
++			sound-dai = <&spdiftx>;
++		};
++
++		simple-audio-card,codec {
++			sound-dai = <&spdif_dit>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 4dcee43..c93e30f 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -246,6 +246,20 @@
+ 			status = "okay";
+ 		};
+ 
++		/* S/PDIF transmitter - wired to the HDMI audio input. */
++		spdiftx: spdiftx@c0059000 {
++			compatible = "nexell,nexell-spdif-tx";
++			reg = <0xc0059000 0x1000>;
++			#sound-dai-cells = <0>;
++			dmas = <&dma1 6 0>;	/* PL080 #2, signal 6 (global req 22) */
++			dma-names = "tx";
++			clocks = <&spdiftx_clk>;
++			clock-names = "spdif-tx";
++			resets = <&nexell_reset 43>;
++			reset-names = "spdiftx-reset";
++			status = "disabled";
++		};
++
+ 		/*
+ 		 * Nexell pin controller + GPIO banks (A-E + ALIVE). Provides pin
+ 		 * muxing (nexell,pin-function) and the GPIO banks used e.g. for the
+@@ -651,6 +665,16 @@
+ 				clk-input = <0x2000>;	/* I_GATE_BCLK */
+ 				#clock-cells = <0>;
+ 			};
++
++			/* S/PDIF-TX master clock (HDMI audio source), cell-id 11. */
++			spdiftx_clk: spdiftx-clk@c00b8000 {
++				reg = <0xc00b8000 0x100>;
++				clock-output-names = "spdif-tx";
++				cell-id = <11>;
++				clk-step = <1>;
++				clk-input = <0x7>;	/* I_PLL_0_2 */
++				#clock-cells = <0>;
++			};
+ 			i2c1_clk: i2c1-clk@c00af000 {
+ 				reg = <0xc00af000 0x100>;
+ 				clock-output-names = "i2c1";
+diff --git a/sound/soc/nexell/Kconfig b/sound/soc/nexell/Kconfig
+index 1ac20ee..8a125e1 100644
+--- a/sound/soc/nexell/Kconfig
++++ b/sound/soc/nexell/Kconfig
+@@ -14,3 +14,11 @@ config SND_SOC_NEXELL_I2S
+ 	help
+ 	  Say Y or M if you want to add support for the I2S controller found
+ 	  on Nexell S5P6818/S5P4418 SoCs (uses the PL080 DMA engine).
++
++config SND_SOC_NEXELL_SPDIF
++	tristate "Nexell S5P6818/S5P4418 S/PDIF-TX (HDMI audio) driver"
++	depends on SND_SOC_NEXELL
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	help
++	  Say Y or M for the S/PDIF transmitter, wired internally to the HDMI
++	  controller - this is the audio source for HDMI audio.
+diff --git a/sound/soc/nexell/Makefile b/sound/soc/nexell/Makefile
+index abbeae5..eca69f2 100644
+--- a/sound/soc/nexell/Makefile
++++ b/sound/soc/nexell/Makefile
+@@ -2,3 +2,6 @@
+ snd-soc-nexell-i2s-objs := nexell-i2s.o
+ 
+ obj-$(CONFIG_SND_SOC_NEXELL_I2S) += snd-soc-nexell-i2s.o
++
++snd-soc-nexell-spdiftx-objs := nexell-spdiftx.o
++obj-$(CONFIG_SND_SOC_NEXELL_SPDIF) += snd-soc-nexell-spdiftx.o
+diff --git a/sound/soc/nexell/nexell-spdiftx.c b/sound/soc/nexell/nexell-spdiftx.c
+new file mode 100644
+index 0000000..8c4b4a6
+--- /dev/null
++++ b/sound/soc/nexell/nexell-spdiftx.c
+@@ -0,0 +1,291 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Nexell S5P6818/S5P4418 S/PDIF transmitter (ASoC CPU DAI).
++ *
++ * Ported from the Nexell 4.14 BSP (nexell-spdiftx.c) to the mainline generic
++ * dmaengine-PCM. On the S5P6818 the SPDIF-TX output is wired internally to the
++ * HDMI controller's S/PDIF input, so this DAI is the audio source for HDMI
++ * audio (paired with a spdif-transmitter codec via simple-audio-card).
++ *
++ * Original author: Hyunseok Jung <hsjung@nexell.co.kr>, Nexell Co., Ltd.
++ */
++
++#include <linux/module.h>
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/dmaengine_pcm.h>
++
++#define SND_SOC_SPDIF_TX_FORMATS \
++	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE)
++#define SND_SOC_SPDIF_RATES \
++	(SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_96000)
++
++#define SPDIF_DAT_OFFSET	0x10
++#define SPDIF_CLKCON_OFFSET	0x00
++#define SPDIF_CON_OFFSET	0x04
++#define SPDIF_CSTAS_OFFSET	0x0c
++
++#define CLKCON_POWER_POS	0
++#define CON_FIFO_TH_POS		19
++#define CON_FIFO_TR_POS		17
++#define CON_ENDIAN_POS		13
++#define CON_USERDATA_POS	12
++#define CON_SW_RESET_POS	5
++#define CON_RATIO_POS		3
++#define CON_PCM_BIT_POS		1
++#define CON_PCM_POS		0
++
++#define CSTAS_FREQUENCY_POS	24
++#define CSTAS_CATEGORY_POS	8
++#define CSTAS_COPYRIGHT_POS	2
++#define CSTAS_PCM_TYPE_POS	1
++
++#define CON_FIFO_LEVEL_15	7
++#define CON_FIFO_TR_DMA		0
++#define CON_ENDIAN_BIG		0
++#define PCM_16BIT		0
++#define PCM_24BIT		2
++#define RATIO_256		0
++#define RATIO_384		1
++#define CATEGORY_CD		1
++#define NO_COPYRIGHT		1
++#define LINEAR_PCM		0
++
++#define SPDIF_MAX_BURST		4	/* bytes */
++
++struct clock_ratio {
++	unsigned int sample_rate;
++	unsigned int ratio_256;
++	unsigned int ratio_384;
++	int reg_val;
++};
++
++static const struct clock_ratio clk_ratio[] = {
++	{  32000,  8192000, 12288000,  3, },
++	{  44100, 11289600, 16934400,  0, },
++	{  48000, 12288000, 18432000,  2, },
++	{  96000, 24576000, 36864000, 10, },
++};
++
++struct nx_spdif {
++	struct device *dev;
++	void __iomem *base;
++	struct clk *clk;
++	struct reset_control *rst;
++	struct snd_dmaengine_dai_dma_data play_dma;
++	long master_clock;
++	int master_ratio;
++	u32 con;
++	u32 cstas;
++};
++
++/* Compute the clock rate/ratio + CON/CSTAS for a rate + PCM width. */
++static int nx_spdif_cfg(struct nx_spdif *nx, unsigned int rate, int pcm_bits)
++{
++	unsigned long request, rate_hz;
++	int ratio, sample_hz = -1, pcm, i;
++
++	pcm = (pcm_bits == 16) ? PCM_16BIT : PCM_24BIT;
++
++	for (i = 0; i < ARRAY_SIZE(clk_ratio); i++) {
++		if (rate == clk_ratio[i].sample_rate) {
++			sample_hz = clk_ratio[i].reg_val;
++			break;
++		}
++	}
++	if (sample_hz < 0) {
++		dev_err(nx->dev, "unsupported spdif rate %u\n", rate);
++		return -EINVAL;
++	}
++
++	ratio = RATIO_384;
++	request = clk_ratio[i].ratio_384;
++	rate_hz = clk_round_rate(nx->clk, request);
++	if (rate_hz != request && pcm == PCM_16BIT) {
++		unsigned long o_rate = rate_hz;
++
++		ratio = RATIO_256;
++		request = clk_ratio[i].ratio_256;
++		rate_hz = clk_round_rate(nx->clk, request);
++		if (abs((long)(request - rate_hz)) > abs((long)(request - o_rate))) {
++			rate_hz = o_rate;
++			ratio = RATIO_384;
++		}
++	}
++
++	nx->master_clock = rate_hz;
++	nx->master_ratio = ratio;
++
++	nx->con = (CON_FIFO_LEVEL_15 << CON_FIFO_TH_POS) |
++		  (CON_FIFO_TR_DMA << CON_FIFO_TR_POS) |
++		  (CON_ENDIAN_BIG << CON_ENDIAN_POS) |
++		  (1 << CON_USERDATA_POS) |
++		  (ratio << CON_RATIO_POS) |
++		  (pcm << CON_PCM_BIT_POS) |
++		  (1 << CON_PCM_POS);
++	nx->cstas = (sample_hz << CSTAS_FREQUENCY_POS) |
++		    (CATEGORY_CD << CSTAS_CATEGORY_POS) |
++		    (LINEAR_PCM << CSTAS_PCM_TYPE_POS) |
++		    (NO_COPYRIGHT << CSTAS_COPYRIGHT_POS);
++	return 0;
++}
++
++static int nx_spdif_hw_params(struct snd_pcm_substream *substream,
++			      struct snd_pcm_hw_params *params,
++			      struct snd_soc_dai *dai)
++{
++	struct nx_spdif *nx = snd_soc_dai_get_drvdata(dai);
++	int bits = (params_format(params) == SNDRV_PCM_FORMAT_S16_LE) ? 16 : 24;
++	int ret;
++
++	nx->play_dma.addr_width = (bits == 16) ?
++		DMA_SLAVE_BUSWIDTH_2_BYTES : DMA_SLAVE_BUSWIDTH_4_BYTES;
++	nx->play_dma.maxburst = SPDIF_MAX_BURST / (bits == 16 ? 2 : 4);
++
++	ret = nx_spdif_cfg(nx, params_rate(params), bits);
++	if (ret)
++		return ret;
++
++	/* Apply the clock + program the block for this mode. */
++	clk_set_rate(nx->clk, nx->master_clock);
++	clk_prepare_enable(nx->clk);
++
++	if (nx->rst && reset_control_status(nx->rst))
++		reset_control_reset(nx->rst);
++	writel(1 << CON_SW_RESET_POS, nx->base + SPDIF_CON_OFFSET);
++
++	writel(nx->con, nx->base + SPDIF_CON_OFFSET);
++	writel(nx->cstas | (readl(nx->base + SPDIF_CSTAS_OFFSET) & 0x3fffffff),
++	       nx->base + SPDIF_CSTAS_OFFSET);
++	return 0;
++}
++
++static int nx_spdif_trigger(struct snd_pcm_substream *substream, int cmd,
++			    struct snd_soc_dai *dai)
++{
++	struct nx_spdif *nx = snd_soc_dai_get_drvdata(dai);
++	u32 clkcon = readl(nx->base + SPDIF_CLKCON_OFFSET);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		writel(nx->con, nx->base + SPDIF_CON_OFFSET);
++		writel(clkcon | (1 << CLKCON_POWER_POS),
++		       nx->base + SPDIF_CLKCON_OFFSET);
++		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++	case SNDRV_PCM_TRIGGER_STOP:
++		writel(clkcon & ~(1 << CLKCON_POWER_POS),
++		       nx->base + SPDIF_CLKCON_OFFSET);
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static int nx_spdif_hw_free(struct snd_pcm_substream *substream,
++			    struct snd_soc_dai *dai)
++{
++	struct nx_spdif *nx = snd_soc_dai_get_drvdata(dai);
++
++	/* Balance the clk_prepare_enable() from hw_params(). */
++	clk_disable_unprepare(nx->clk);
++	return 0;
++}
++
++static int nx_spdif_dai_probe(struct snd_soc_dai *dai)
++{
++	struct nx_spdif *nx = snd_soc_dai_get_drvdata(dai);
++
++	snd_soc_dai_init_dma_data(dai, &nx->play_dma, NULL);
++	return 0;
++}
++
++static const struct snd_soc_dai_ops nx_spdif_dai_ops = {
++	.probe		= nx_spdif_dai_probe,
++	.hw_params	= nx_spdif_hw_params,
++	.hw_free	= nx_spdif_hw_free,
++	.trigger	= nx_spdif_trigger,
++};
++
++static struct snd_soc_dai_driver nx_spdif_dai = {
++	.name = "nexell-spdif-tx",
++	.playback = {
++		.channels_min = 2,
++		.channels_max = 2,
++		.formats = SND_SOC_SPDIF_TX_FORMATS,
++		.rates = SND_SOC_SPDIF_RATES,
++	},
++	.ops = &nx_spdif_dai_ops,
++};
++
++static const struct snd_soc_component_driver nx_spdif_component = {
++	.name = "nexell-spdif-tx",
++	.legacy_dai_naming = 1,
++};
++
++static int nx_spdif_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct nx_spdif *nx;
++	struct resource *res;
++	int ret;
++
++	nx = devm_kzalloc(dev, sizeof(*nx), GFP_KERNEL);
++	if (!nx)
++		return -ENOMEM;
++	nx->dev = dev;
++
++	nx->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(nx->base))
++		return PTR_ERR(nx->base);
++
++	nx->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(nx->clk))
++		return dev_err_probe(dev, PTR_ERR(nx->clk), "no clock\n");
++
++	nx->rst = devm_reset_control_get_optional(dev, "spdiftx-reset");
++	if (IS_ERR(nx->rst))
++		return PTR_ERR(nx->rst);
++
++	nx->play_dma.addr = res->start + SPDIF_DAT_OFFSET;
++	nx->play_dma.addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
++	nx->play_dma.maxburst = SPDIF_MAX_BURST / 2;
++
++	dev_set_drvdata(dev, nx);
++
++	ret = devm_snd_soc_register_component(dev, &nx_spdif_component,
++					      &nx_spdif_dai, 1);
++	if (ret)
++		return ret;
++
++	return devm_snd_dmaengine_pcm_register(dev, NULL, 0);
++}
++
++static const struct of_device_id nx_spdif_match[] = {
++	{ .compatible = "nexell,nexell-spdif-tx" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nx_spdif_match);
++
++static struct platform_driver nx_spdif_driver = {
++	.probe = nx_spdif_probe,
++	.driver = {
++		.name = "nexell-spdif-tx",
++		.of_match_table = nx_spdif_match,
++	},
++};
++module_platform_driver(nx_spdif_driver);
++
++MODULE_DESCRIPTION("Nexell S5P6818 S/PDIF transmitter (HDMI audio source)");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

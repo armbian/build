@@ -1,0 +1,187 @@
+From cb6a76bac91a3ac78fe1063bcade4696873e9200 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 20:13:55 +0200
+Subject: [PATCH] power: reset: nexell: software-reset restart handler for
+ S5P6818
+
+Register a restart handler that performs the CLKPWR software reset the
+vendor u-boot's reset_cpu() does: arm PWRCONT bit3, then trigger PWRMODE
+bit12. Priority 192 so it wins over the firmware PSCI restart handler
+(129), which returns less reliably on this SoC.
+
+Both software-reset paths are only best-effort: they leave DDR in
+self-refresh and the boot ROM's self-refresh-exit is marginal, so a warm
+reboot hangs roughly half the time (reset button / power cycle always
+recovers). A fully reliable reset needs the ATF/FIP secure boot chain,
+which this bring-up does not use. This handler is the best mechanism
+available with the current chain.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi | 12 ++++
+ drivers/power/reset/Kconfig             |  8 +++
+ drivers/power/reset/Makefile            |  1 +
+ drivers/power/reset/nexell-restart.c    | 94 +++++++++++++++++++++++++
+ 4 files changed, 115 insertions(+)
+ create mode 100644 drivers/power/reset/nexell-restart.c
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 25be6b4e1..8d7f2150a 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -708,5 +708,17 @@ rtc: rtc@c0010c00 {
+ 			interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
+ 			status = "okay";
+ 		};
++
++		/*
++		 * Full software-reset restart handler (CLKPWR PWRCONT@0xc0010224 +
++		 * PWRMODE@0xc0010228). Preferred over PSCI SYSTEM_RESET, which only
++		 * does a partial reset on this SoC and reboots unreliably. The
++		 * window overlaps the RTC's clkpwr mapping (PWRCONT is shared) - the
++		 * driver uses a non-reserving of_iomap.
++		 */
++		reboot: reboot@c0010224 {
++			compatible = "nexell,s5p6818-reboot";
++			reg = <0xc0010224 0x8>;
++		};
+ 	};
+ };
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index 124afb99f..8de874ac1 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -364,4 +364,12 @@ config POWER_RESET_QEMU_VIRT_CTRL
+ 	  Say Y here if you are running Linux on a QEMU virtual machine that
+ 	  provides this controller, such as the m68k virt machine.
+ 
++config POWER_RESET_NEXELL
++	bool "Nexell S5P6818 restart driver"
++	depends on ARCH_NEXELL || COMPILE_TEST
++	help
++	  Full software-reset restart handler for the Nexell S5P6818 (CLKPWR
++	  PWRCONT/PWRMODE). Preferred over PSCI SYSTEM_RESET, which only does a
++	  partial reset on this SoC and reboots unreliably.
++
+ endif
+diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
+index d7ae97241..d9132a513 100644
+--- a/drivers/power/reset/Makefile
++++ b/drivers/power/reset/Makefile
+@@ -42,3 +42,4 @@ obj-$(CONFIG_POWER_RESET_SC27XX) += sc27xx-poweroff.o
+ obj-$(CONFIG_NVMEM_REBOOT_MODE) += nvmem-reboot-mode.o
+ obj-$(CONFIG_POWER_MLXBF) += pwr-mlxbf.o
+ obj-$(CONFIG_POWER_RESET_QEMU_VIRT_CTRL) += qemu-virt-ctrl.o
++obj-$(CONFIG_POWER_RESET_NEXELL) += nexell-restart.o
+diff --git a/drivers/power/reset/nexell-restart.c b/drivers/power/reset/nexell-restart.c
+new file mode 100644
+index 000000000..b54e2e457
+--- /dev/null
++++ b/drivers/power/reset/nexell-restart.c
+@@ -0,0 +1,103 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Nexell S5P6818 restart handler.
++ *
++ * PSCI SYSTEM_RESET (via the fork bootloader's secure monitor) only performs a
++ * partial reset on this SoC and comes back unreliably. Do the same full
++ * software reset the vendor u-boot's reset_cpu() does: arm the software-reset
++ * enable in CLKPWR PWRCONT, then trigger it in PWRMODE. That is a full SoC
++ * reset and reboots cleanly.
++ *
++ * Copyright (C) 2026 Igor Pecovnik <igor@armbian.com>
++ */
++
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/notifier.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <linux/reboot.h>
++
++/* offsets within the CLKPWR block (reg base points at PWRCONT) */
++#define NX_PWRCONT		0x00	/* 0xc0010224 */
++#define NX_PWRMODE		0x04	/* 0xc0010228 */
++#define NX_SWRST_ENABLE		BIT(3)	/* in PWRCONT: arm software reset */
++#define NX_SWRST_TRIGGER	BIT(12)	/* in PWRMODE: fire software reset */
++
++struct nx_restart {
++	void __iomem *base;
++	struct notifier_block nb;
++};
++
++static int nx_restart_notify(struct notifier_block *nb, unsigned long action,
++			     void *data)
++{
++	struct nx_restart *priv = container_of(nb, struct nx_restart, nb);
++	u32 val;
++
++	val = readl(priv->base + NX_PWRCONT);
++	writel(val | NX_SWRST_ENABLE, priv->base + NX_PWRCONT);
++	writel(NX_SWRST_TRIGGER, priv->base + NX_PWRMODE);
++
++	/* give the reset time to take effect before falling through */
++	mdelay(500);
++
++	return NOTIFY_DONE;
++}
++
++static int nx_restart_probe(struct platform_device *pdev)
++{
++	struct nx_restart *priv;
++	int ret;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	/*
++	 * of_iomap() (not a reserving mapping): PWRCONT is shared with the RTC
++	 * wakeup bit, so this window overlaps the RTC's clkpwr mapping.
++	 */
++	priv->base = of_iomap(pdev->dev.of_node, 0);
++	if (!priv->base)
++		return -ENOMEM;
++
++	priv->nb.notifier_call = nx_restart_notify;
++	priv->nb.priority = 192;	/* above PSCI's restart handler (129) */
++
++	ret = register_restart_handler(&priv->nb);
++	if (ret) {
++		iounmap(priv->base);
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, priv);
++	return 0;
++}
++
++static void nx_restart_remove(struct platform_device *pdev)
++{
++	struct nx_restart *priv = platform_get_drvdata(pdev);
++
++	unregister_restart_handler(&priv->nb);
++	iounmap(priv->base);
++}
++
++static const struct of_device_id nx_restart_of_match[] = {
++	{ .compatible = "nexell,s5p6818-reboot" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, nx_restart_of_match);
++
++static struct platform_driver nx_restart_driver = {
++	.probe = nx_restart_probe,
++	.remove = nx_restart_remove,
++	.driver = {
++		.name = "nexell-restart",
++		.of_match_table = nx_restart_of_match,
++	},
++};
++builtin_platform_driver(nx_restart_driver);
+-- 
+2.53.0
+

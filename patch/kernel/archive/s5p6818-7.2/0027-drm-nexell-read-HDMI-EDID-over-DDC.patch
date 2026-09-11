@@ -1,0 +1,155 @@
+From 73ed323c641a22dba3771834eda797f1cb3f125b Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 18:15:00 +0200
+Subject: [PATCH] drm: nexell: read HDMI EDID over the DDC (i2c_1)
+
+The connector now reads the monitor EDID over the HDMI DDC (i2c_1, address
+0x50 - confirmed present) and reports the real modes and physical size,
+instead of a hardcoded mode list. A ddc-i2c-bus phandle is added to the
+display DT node.
+
+Output still rides on the bootloader-programmed fixed pipeline, so a
+mode_valid restricts the usable mode to 1280x720 for now (EDID may advertise
+more); this lifts once the driver programmes the DPC timing + HDMI PHY preset
+itself. HW-verified on a NanoPi Fire3: modetest shows the monitor size
+600x340mm and its EDID 720p timings.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi |  1 +
+ drivers/gpu/drm/nexell/nx_display_drv.c | 55 +++++++++++++++++++++++--
+ 2 files changed, 52 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 34e0799..bfffe30 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -207,6 +207,7 @@
+ 			reg = <0xc0100000 0x10000>,	/* DISPLAYTOP */
+ 			      <0xc0200000 0x30000>;	/* HDMI LINK/CORE/PHY window */
+ 			reg-names = "displaytop", "hdmi";
++			ddc-i2c-bus = <&i2c_1>;		/* HDMI DDC/EDID */
+ 			status = "disabled";
+ 		};
+ 
+diff --git a/drivers/gpu/drm/nexell/nx_display_drv.c b/drivers/gpu/drm/nexell/nx_display_drv.c
+index 3226446..3cdac1c 100644
+--- a/drivers/gpu/drm/nexell/nx_display_drv.c
++++ b/drivers/gpu/drm/nexell/nx_display_drv.c
+@@ -29,6 +29,7 @@
+ #include <drm/drm_simple_kms_helper.h>
+ 
+ #include <linux/dma-mapping.h>
++#include <linux/i2c.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -62,16 +63,36 @@ struct nx_drm {
+ 	void __iomem *mlc;
+ 	struct drm_simple_display_pipe pipe;
+ 	struct drm_connector conn;
++	struct i2c_adapter *ddc;
+ };
+ 
+ #define pipe_to_nx(p)	container_of(p, struct nx_drm, pipe)
++#define conn_to_nx(c)	container_of(c, struct nx_drm, conn)
+ 
+-/* ---- connector: fixed 720p HDMI (u-boot's mode) ---- */
++/* ---- connector: HDMI, EDID from the DDC (i2c_1) ---- */
+ 
+ static int nx_conn_get_modes(struct drm_connector *conn)
+ {
+-	int n = drm_add_modes_noedid(conn, FB_W, FB_H);
++	struct nx_drm *nx = conn_to_nx(conn);
++	const struct drm_edid *drm_edid;
++	int n;
++
++	if (nx->ddc) {
++		drm_edid = drm_edid_read_ddc(conn, nx->ddc);
++		drm_edid_connector_update(conn, drm_edid);
++		if (drm_edid) {
++			n = drm_edid_connector_add_modes(conn);
++			drm_edid_free(drm_edid);
++			if (n) {
++				/* Guarantee the fixed 720p mode is offered too. */
++				drm_add_modes_noedid(conn, FB_W, FB_H);
++				return n;
++			}
++		}
++	}
+ 
++	/* No EDID (or empty): fall back to the bootloader's fixed mode. */
++	n = drm_add_modes_noedid(conn, FB_W, FB_H);
+ 	drm_set_preferred_mode(conn, FB_W, FB_H);
+ 	return n;
+ }
+@@ -145,7 +166,23 @@ static void nx_pipe_update(struct drm_simple_display_pipe *pipe,
+ 	nx_mlc_set_top_dirty_flag(0);
+ }
+ 
++static enum drm_mode_status
++nx_pipe_mode_valid(struct drm_simple_display_pipe *pipe,
++		   const struct drm_display_mode *mode)
++{
++	/*
++	 * Output currently rides on the fixed 1280x720 pipeline the bootloader
++	 * programmed (HDMI PHY + DPC). Until the driver programmes the DPC
++	 * timing and HDMI PHY preset itself, only that mode actually works, so
++	 * reject everything else even though EDID may advertise more.
++	 */
++	if (mode->hdisplay == FB_W && mode->vdisplay == FB_H)
++		return MODE_OK;
++	return MODE_BAD;
++}
++
+ static const struct drm_simple_display_pipe_funcs nx_pipe_funcs = {
++	.mode_valid = nx_pipe_mode_valid,
+ 	.enable = nx_pipe_enable,
+ 	.disable = nx_pipe_disable,
+ 	.update = nx_pipe_update,
+@@ -177,6 +214,7 @@ static const struct drm_driver nx_drm_driver = {
+ static int nx_load(struct nx_drm *nx)
+ {
+ 	struct drm_device *drm = &nx->drm;
++	struct device_node *ddc_node;
+ 	u32 hpd;
+ 	int ret;
+ 
+@@ -213,9 +251,18 @@ static int nx_load(struct nx_drm *nx)
+ 	drm->mode_config.max_height = FB_H;
+ 	drm->mode_config.funcs = &nx_modecfg_funcs;
+ 
++	/* HDMI DDC for EDID (optional). */
++	ddc_node = of_parse_phandle(drm->dev->of_node, "ddc-i2c-bus", 0);
++	if (ddc_node) {
++		nx->ddc = of_get_i2c_adapter_by_node(ddc_node);
++		of_node_put(ddc_node);
++		if (!nx->ddc)
++			return -EPROBE_DEFER;
++	}
++
+ 	drm_connector_helper_add(&nx->conn, &nx_conn_helper_funcs);
+-	ret = drm_connector_init(drm, &nx->conn, &nx_conn_funcs,
+-				 DRM_MODE_CONNECTOR_HDMIA);
++	ret = drm_connector_init_with_ddc(drm, &nx->conn, &nx_conn_funcs,
++					  DRM_MODE_CONNECTOR_HDMIA, nx->ddc);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -255,9 +302,13 @@ static int nx_display_probe(struct platform_device *pdev)
+ static void nx_display_remove(struct platform_device *pdev)
+ {
+ 	struct drm_device *drm = platform_get_drvdata(pdev);
++	struct nx_drm *nx = container_of(drm, struct nx_drm, drm);
+ 
+ 	drm_dev_unregister(drm);
++	drm_kms_helper_poll_fini(drm);
+ 	drm_atomic_helper_shutdown(drm);
++	if (nx->ddc)
++		i2c_put_adapter(nx->ddc);
+ }
+ 
+ static const struct of_device_id nx_display_of_match[] = {
+-- 
+2.53.0
+

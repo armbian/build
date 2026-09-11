@@ -1,0 +1,670 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 21:44:31 +0200
+Subject: [PATCH 16/17] ASoC: nexell: add S5P6818/S5P4418 I2S driver
+
+Port the Nexell I2S controller (a variant of the Samsung I2S with
+CON/CSR/FIC/TXD/RXD registers, so mainline samsung/i2s.c does not apply)
+to a modern ASoC CPU DAI. Data movement uses the generic dmaengine PCM
+over the ARM PL080 DMA, replacing the vendor's private PCM component.
+Master mode, MCLK out to the codec, 256/384 fs. Enabled via
+SND_SOC_NEXELL / SND_SOC_NEXELL_I2S and wired into sound/soc.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ sound/soc/Kconfig             |   1 +
+ sound/soc/Makefile            |   1 +
+ sound/soc/nexell/Kconfig      |  16 +
+ sound/soc/nexell/Makefile     |   4 +
+ sound/soc/nexell/nexell-i2s.c | 566 ++++++++++++++++++++++++++++++++++
+ 5 files changed, 588 insertions(+)
+ create mode 100644 sound/soc/nexell/Kconfig
+ create mode 100644 sound/soc/nexell/Makefile
+ create mode 100644 sound/soc/nexell/nexell-i2s.c
+
+diff --git a/sound/soc/Kconfig b/sound/soc/Kconfig
+index edfdcbf73..a6f9c5b56 100644
+--- a/sound/soc/Kconfig
++++ b/sound/soc/Kconfig
+@@ -121,6 +121,7 @@ source "sound/soc/intel/Kconfig"
+ source "sound/soc/mediatek/Kconfig"
+ source "sound/soc/meson/Kconfig"
+ source "sound/soc/mxs/Kconfig"
++source "sound/soc/nexell/Kconfig"
+ source "sound/soc/pxa/Kconfig"
+ source "sound/soc/qcom/Kconfig"
+ source "sound/soc/renesas/Kconfig"
+diff --git a/sound/soc/Makefile b/sound/soc/Makefile
+index 21d840676..75ed00850 100644
+--- a/sound/soc/Makefile
++++ b/sound/soc/Makefile
+@@ -62,6 +62,7 @@ obj-$(CONFIG_SND_SOC)	+= intel/
+ obj-$(CONFIG_SND_SOC)	+= mediatek/
+ obj-$(CONFIG_SND_SOC)	+= meson/
+ obj-$(CONFIG_SND_SOC)	+= mxs/
++obj-$(CONFIG_SND_SOC)	+= nexell/
+ obj-$(CONFIG_SND_SOC)	+= kirkwood/
+ obj-$(CONFIG_SND_SOC)	+= pxa/
+ obj-$(CONFIG_SND_SOC)	+= qcom/
+diff --git a/sound/soc/nexell/Kconfig b/sound/soc/nexell/Kconfig
+new file mode 100644
+index 000000000..1ac20ee5b
+--- /dev/null
++++ b/sound/soc/nexell/Kconfig
+@@ -0,0 +1,16 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config SND_SOC_NEXELL
++	tristate "ASoC support for Nexell S5P6818/S5P4418 SoCs"
++	depends on ARCH_NEXELL || COMPILE_TEST
++	help
++	  Say Y or M if you want to add support for codecs attached to the
++	  Nexell S5Pxx18 I2S interface. You will also need to select the
++	  audio interfaces to support below.
++
++config SND_SOC_NEXELL_I2S
++	tristate "Nexell S5P6818/S5P4418 I2S driver"
++	depends on SND_SOC_NEXELL
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	help
++	  Say Y or M if you want to add support for the I2S controller found
++	  on Nexell S5P6818/S5P4418 SoCs (uses the PL080 DMA engine).
+diff --git a/sound/soc/nexell/Makefile b/sound/soc/nexell/Makefile
+new file mode 100644
+index 000000000..abbeae5a9
+--- /dev/null
++++ b/sound/soc/nexell/Makefile
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0
++snd-soc-nexell-i2s-objs := nexell-i2s.o
++
++obj-$(CONFIG_SND_SOC_NEXELL_I2S) += snd-soc-nexell-i2s.o
+diff --git a/sound/soc/nexell/nexell-i2s.c b/sound/soc/nexell/nexell-i2s.c
+new file mode 100644
+index 000000000..0d5095b9c
+--- /dev/null
++++ b/sound/soc/nexell/nexell-i2s.c
+@@ -0,0 +1,584 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Nexell S5P6818/S5P4418 I2S controller (ASoC CPU DAI).
++ *
++ * Ported to mainline from the Nexell 4.14 vendor BSP. The register block is a
++ * Nexell variant of the Samsung I2S (CON/CSR/FIC/TXD/RXD), so the mainline
++ * samsung/i2s.c does not apply. Data movement uses the generic dmaengine PCM
++ * (ARM PL080 DMA), replacing the vendor's private PCM component.
++ *
++ * Copyright (C) 2016 Nexell Co., Ltd. (Hyunseok Jung)
++ * Copyright (C) 2026 Igor Pecovnik <igor@armbian.com>
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++
++#include <sound/dmaengine_pcm.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++
++#define DEF_SAMPLE_RATE		48000
++#define DEF_FRAME_BIT		32	/* 32, 48 (BFS) */
++
++#define I2S_BUS_WIDTH		4	/* bytes */
++#define I2S_PERI_BURST		4	/* bytes */
++
++/* register offsets */
++#define I2S_CON_OFFSET		0x00
++#define I2S_CSR_OFFSET		0x04
++#define I2S_FIC_OFFSET		0x08
++#define I2S_TXD_OFFSET		0x10
++#define I2S_RXD_OFFSET		0x14
++
++/* CON */
++#define CON_TXDMAPAUSE_POS	6
++#define CON_RXDMAPAUSE_POS	5
++#define CON_TXCHPAUSE_POS	4
++#define CON_RXCHPAUSE_POS	3
++#define CON_TXDMACTIVE_POS	2
++#define CON_RXDMACTIVE_POS	1
++#define CON_I2SACTIVE_POS	0
++
++/* CSR */
++#define CSR_BLC_POS		13
++#define CSR_CDCLKCON_POS	12
++#define CSR_IMS_POS		11	/* S5P6818 */
++#define CSR_TXR_POS		8
++#define CSR_LRP_POS		7
++#define CSR_SDF_POS		5
++#define CSR_RFS_POS		3
++#define CSR_BFS_POS		1
++
++#define IMS_BIT_EXTCLK		(0 << 0)	/* S5P6818: master, internal */
++#define IMS_BIT_SLAVE		(1 << 0)
++
++#define BLC_16BIT		0
++#define BLC_8BIT		1
++#define BLC_24BIT		2
++
++#define TX_MODE			0
++#define RX_MODE			1
++#define TXRX_MODE		2
++#define TRANS_MODE_MASK		3
++
++#define BFS_32BIT		0
++#define BFS_48BIT		1
++#define BFS_16BIT		2
++#define BFS_24BIT		3
++
++#define RATIO_256		0
++#define RATIO_384		2
++
++#define FIC_TFULSH_POS		15
++#define FIC_RFULSH_POS		7
++#define FIC_FLUSH_EN		1
++
++/* device status bits */
++#define SNDDEV_STATUS_CLEAR	0
++#define SNDDEV_STATUS_SETUP	BIT(0)
++#define SNDDEV_STATUS_POWER	BIT(1)
++#define SNDDEV_STATUS_PLAY	BIT(2)
++#define SNDDEV_STATUS_CAPT	BIT(3)
++#define SNDDEV_STATUS_RUNNING	(SNDDEV_STATUS_PLAY | SNDDEV_STATUS_CAPT)
++
++struct clock_ratio {
++	unsigned int sample_rate;
++	unsigned int ratio_256;
++	unsigned int ratio_384;
++};
++
++static const struct clock_ratio clk_ratio[] = {
++	{   8000,  2048000,  3072000 },
++	{  11025,  2822400,  4233600 },
++	{  16000,  4096000,  6144000 },
++	{  22050,  5644800,  8467200 },
++	{  32000,  8192000, 12288000 },
++	{  44100, 11289600, 16934400 },
++	{  48000, 12288000, 18432000 },
++	{  64000, 16384000, 24576000 },
++	{  88200, 22579200, 33868800 },
++	{  96000, 24576000, 36864000 },
++	{ 192000, 49152000, 73728000 },
++};
++
++struct nx_i2s {
++	void __iomem *base;
++	struct clk *clk;
++	u32 master_mode;
++	u32 mclk_in;
++	u32 trans_mode;		/* 0 = I2S, 1 = left, 2 = right justified */
++	u32 sample_rate;
++	u32 frame_bit;		/* 32, 48 */
++	u32 lr_pol_inv;
++	u32 pre_supply_mclk;
++	u32 in_clkgen;
++	long clk_rate;
++	u32 status;
++	spinlock_t lock;
++	/* shadow registers */
++	u32 CON;
++	u32 CSR;
++	/* dmaengine data */
++	struct snd_dmaengine_dai_dma_data play_dma;
++	struct snd_dmaengine_dai_dma_data capt_dma;
++	/* dynamic format masking (mirrors the DAI driver template) */
++	struct snd_soc_dai_driver dai_drv;
++};
++
++static void supply_master_clock(struct nx_i2s *par)
++{
++	if (!par->master_mode || (par->status & SNDDEV_STATUS_POWER))
++		return;
++
++	if (par->in_clkgen)
++		clk_prepare_enable(par->clk);
++
++	par->CSR &= ~(1 << CSR_CDCLKCON_POS);
++	writel(par->CSR, par->base + I2S_CSR_OFFSET);
++
++	par->status |= SNDDEV_STATUS_POWER;
++}
++
++static void cutoff_master_clock(struct nx_i2s *par)
++{
++	if (!par->master_mode || !(par->status & SNDDEV_STATUS_POWER))
++		return;
++
++	if (par->in_clkgen)
++		clk_disable_unprepare(par->clk);
++
++	/* high = MCLK OUT enable (i.e. stop driving the codec clock) */
++	par->CSR |= (1 << CSR_CDCLKCON_POS);
++	writel(par->CSR, par->base + I2S_CSR_OFFSET);
++
++	par->status &= ~SNDDEV_STATUS_POWER;
++}
++
++static void i2s_reset(struct nx_i2s *par, struct device *dev)
++{
++	struct reset_control *rst;
++
++	rst = devm_reset_control_get_optional(dev, "i2s-reset");
++	if (!IS_ERR_OR_NULL(rst)) {
++		if (reset_control_status(rst))
++			reset_control_reset(rst);
++	}
++}
++
++static void i2s_start(struct snd_soc_dai *dai, int stream)
++{
++	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
++	u32 fic = 0;
++
++	/* master-clock enable may sleep - keep it outside the spinlock */
++	if (!par->pre_supply_mclk)
++		supply_master_clock(par);
++
++	spin_lock_irqsave(&par->lock, flags);
++
++	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		fic |= (FIC_FLUSH_EN << FIC_TFULSH_POS);
++		par->CON |= (1 << CON_TXDMACTIVE_POS) | (1 << CON_I2SACTIVE_POS);
++		par->CSR &= ~(TRANS_MODE_MASK << CSR_TXR_POS);
++		par->CSR |= (TX_MODE << CSR_TXR_POS);
++		par->status |= SNDDEV_STATUS_PLAY;
++	} else {
++		fic |= (FIC_FLUSH_EN << FIC_RFULSH_POS);
++		par->CON |= (1 << CON_RXDMACTIVE_POS) | (1 << CON_I2SACTIVE_POS);
++		par->CSR &= ~(TRANS_MODE_MASK << CSR_TXR_POS);
++		par->CSR |= (RX_MODE << CSR_TXR_POS);
++		par->status |= SNDDEV_STATUS_CAPT;
++	}
++
++	if ((par->status & SNDDEV_STATUS_PLAY) &&
++	    (par->status & SNDDEV_STATUS_CAPT)) {
++		par->CSR &= ~(TRANS_MODE_MASK << CSR_TXR_POS);
++		par->CSR |= (TXRX_MODE << CSR_TXR_POS);
++	}
++
++	writel(fic, par->base + I2S_FIC_OFFSET);	/* flush FIFO */
++	writel(0x0, par->base + I2S_FIC_OFFSET);	/* clear flush bit */
++	writel(par->CSR, par->base + I2S_CSR_OFFSET);
++	writel(par->CON, par->base + I2S_CON_OFFSET);
++
++	spin_unlock_irqrestore(&par->lock, flags);
++}
++
++static void i2s_stop(struct snd_soc_dai *dai, int stream)
++{
++	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
++	bool do_cutoff;
++
++	spin_lock_irqsave(&par->lock, flags);
++
++	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		par->status &= ~SNDDEV_STATUS_PLAY;
++		par->CON &= ~(1 << CON_TXDMACTIVE_POS);
++		par->CSR &= ~(TRANS_MODE_MASK << CSR_TXR_POS);
++		par->CSR |= (RX_MODE << CSR_TXR_POS);
++	} else {
++		par->status &= ~SNDDEV_STATUS_CAPT;
++		par->CON &= ~(1 << CON_RXDMACTIVE_POS);
++		par->CSR &= ~(TRANS_MODE_MASK << CSR_TXR_POS);
++		par->CSR |= (TX_MODE << CSR_TXR_POS);
++	}
++
++	if (!(par->status & SNDDEV_STATUS_RUNNING)) {
++		if (!par->pre_supply_mclk)
++			par->CON &= ~(1 << CON_I2SACTIVE_POS);
++		par->CSR |= (TRANS_MODE_MASK << CSR_TXR_POS);
++	}
++
++	writel(par->CON, par->base + I2S_CON_OFFSET);
++	writel(par->CSR, par->base + I2S_CSR_OFFSET);
++
++	do_cutoff = !(par->status & SNDDEV_STATUS_RUNNING) &&
++		    !par->pre_supply_mclk;
++
++	spin_unlock_irqrestore(&par->lock, flags);
++
++	/* master-clock disable may sleep - keep it outside the spinlock */
++	if (do_cutoff)
++		cutoff_master_clock(par);
++}
++
++static int nx_i2s_check_param(struct nx_i2s *par, struct device *dev)
++{
++	struct snd_soc_dai_driver *dai = &par->dai_drv;
++	unsigned long request, rate_hz = 0;
++	int i;
++	int LRP, IMS, BLC = BLC_16BIT, BFS, RFS = RATIO_256;
++	int SDF, OEN;
++
++	IMS = par->master_mode ? IMS_BIT_EXTCLK : IMS_BIT_SLAVE;
++	SDF = par->trans_mode & 0x03;	/* 0:I2S 1:left 2:right justified */
++	LRP = par->lr_pol_inv ? 1 : 0;
++	OEN = !par->master_mode ? 1 : par->mclk_in;
++
++	switch (par->frame_bit) {
++	case 32:
++		BFS = BFS_32BIT;
++		break;
++	case 48:
++		BFS = BFS_48BIT;
++		break;
++	default:
++		dev_err(dev, "unsupported i2s frame bits %d (32, 48)\n",
++			par->frame_bit);
++		return -EINVAL;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(clk_ratio); i++) {
++		if (par->sample_rate == clk_ratio[i].sample_rate)
++			break;
++	}
++	if (i >= ARRAY_SIZE(clk_ratio)) {
++		dev_err(dev, "unsupported i2s sample rate %d\n",
++			par->sample_rate);
++		return -EINVAL;
++	}
++
++	if (!par->master_mode) {
++		RFS = RATIO_384;
++		if (BFS == BFS_32BIT)
++			RFS = RATIO_256;
++		goto done;
++	}
++
++	/* try 384fs, then 256fs; keep whichever the clk-gen lands closest */
++	RFS = RATIO_384;
++	request = clk_ratio[i].ratio_384;
++	rate_hz = clk_round_rate(par->clk, request);
++	clk_set_rate(par->clk, rate_hz);
++
++	if (rate_hz != request && BFS == BFS_32BIT) {
++		unsigned long prev = rate_hz;
++
++		RFS = RATIO_256;
++		request = clk_ratio[i].ratio_256;
++		rate_hz = clk_round_rate(par->clk, request);
++		clk_set_rate(par->clk, rate_hz);
++		if (abs((long)request - (long)rate_hz) >
++		    abs((long)clk_ratio[i].ratio_384 - (long)prev)) {
++			rate_hz = prev;
++			RFS = RATIO_384;
++			clk_set_rate(par->clk, rate_hz);
++		}
++	}
++
++	par->clk_rate = rate_hz;
++	par->in_clkgen = 1;
++
++done:
++	par->CSR = (BLC << CSR_BLC_POS) |
++		   (OEN << CSR_CDCLKCON_POS) |
++		   (IMS << CSR_IMS_POS) |
++		   (LRP << CSR_LRP_POS) |
++		   (SDF << CSR_SDF_POS) |
++		   (RFS << CSR_RFS_POS) |
++		   (BFS << CSR_BFS_POS);
++	i2s_reset(par, dev);
++
++	if (par->pre_supply_mclk) {
++		supply_master_clock(par);
++		par->CON |= 1 << CON_I2SACTIVE_POS;
++		writel(par->CON, par->base + I2S_CON_OFFSET);
++	}
++
++	dev_info(dev, "snd i2s: %s, %s mode, %d hz, MCLK=%ld hz, RFS=%d, %d FBITs\n",
++		 par->master_mode ? "master" : "slave",
++		 par->trans_mode == 0 ? "iis" :
++		 (par->trans_mode == 1 ? "left-justified" : "right-justified"),
++		 par->sample_rate, rate_hz, RFS == RATIO_256 ? 256 : 384,
++		 par->frame_bit);
++
++	/* 24-bit needs 48-BFS + 384fs */
++	if (RFS == RATIO_256 || BFS != BFS_48BIT) {
++		dai->playback.formats &= ~(SNDRV_PCM_FMTBIT_S24_LE |
++					   SNDRV_PCM_FMTBIT_U24_LE);
++		dai->capture.formats &= ~(SNDRV_PCM_FMTBIT_S24_LE |
++					  SNDRV_PCM_FMTBIT_U24_LE);
++	}
++
++	return 0;
++}
++
++/* DAI ops */
++static int nx_i2s_trigger(struct snd_pcm_substream *substream,
++			  int cmd, struct snd_soc_dai *dai)
++{
++	int stream = substream->stream;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++	case SNDRV_PCM_TRIGGER_START:
++		i2s_start(dai, stream);
++		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++	case SNDRV_PCM_TRIGGER_STOP:
++		i2s_stop(dai, stream);
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static void nx_i2s_shutdown(struct snd_pcm_substream *substream,
++			    struct snd_soc_dai *dai)
++{
++	i2s_stop(dai, substream->stream);
++}
++
++static int nx_i2s_hw_params(struct snd_pcm_substream *substream,
++			    struct snd_pcm_hw_params *params,
++			    struct snd_soc_dai *dai)
++{
++	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned int format = params_format(params);
++	int RFS = (par->CSR >> CSR_RFS_POS) & 0x3;
++	int BFS = (par->CSR >> CSR_BFS_POS) & 0x3;
++	int BLC = (par->CSR >> CSR_BLC_POS) & 0x3;
++
++	switch (format) {
++	case SNDRV_PCM_FORMAT_S8:
++		if (BLC != BLC_8BIT) {
++			par->CSR &= ~(0x3 << CSR_BLC_POS);
++			par->CSR |= (BLC_8BIT << CSR_BLC_POS);
++		}
++		break;
++	case SNDRV_PCM_FORMAT_S16_LE:
++		if (BLC != BLC_16BIT) {
++			par->CSR &= ~(0x3 << CSR_BLC_POS);
++			par->CSR |= (BLC_16BIT << CSR_BLC_POS);
++		}
++		break;
++	case SNDRV_PCM_FORMAT_S24_LE:
++		if (RFS == RATIO_256 || BFS != BFS_48BIT) {
++			dev_err(dai->dev,
++				"i2s RFS 256/BFS 32 does not support 24-bit\n");
++			return -EINVAL;
++		}
++		if (BLC != BLC_24BIT) {
++			par->CSR &= ~(0x3 << CSR_BLC_POS);
++			par->CSR |= (BLC_24BIT << CSR_BLC_POS);
++		}
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int nx_i2s_set_sysclk(struct snd_soc_dai *dai, int clk_id,
++			     unsigned int freq, int dir)
++{
++	return 0;
++}
++
++static int nx_i2s_dai_probe(struct snd_soc_dai *dai)
++{
++	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++
++	snd_soc_dai_init_dma_data(dai, &par->play_dma, &par->capt_dma);
++
++	/* write the initial control word derived at probe */
++	if (!(par->status & SNDDEV_STATUS_SETUP)) {
++		writel(par->CSR, par->base + I2S_CSR_OFFSET);
++		par->status |= SNDDEV_STATUS_SETUP;
++	}
++	return 0;
++}
++
++static int nx_i2s_dai_remove(struct snd_soc_dai *dai)
++{
++	struct nx_i2s *par = snd_soc_dai_get_drvdata(dai);
++	unsigned long flags;
++
++	spin_lock_irqsave(&par->lock, flags);
++	par->CON = 0;
++	writel(par->CON, par->base + I2S_CON_OFFSET);
++	spin_unlock_irqrestore(&par->lock, flags);
++	/*
++	 * Disable the master clock (may sleep, so outside the spinlock) BEFORE
++	 * clearing status - cutoff_master_clock() bails if SNDDEV_STATUS_POWER
++	 * is already gone, which would leak the clk_prepare_enable() count.
++	 */
++	cutoff_master_clock(par);
++	par->status = SNDDEV_STATUS_CLEAR;
++	return 0;
++}
++
++static const struct snd_soc_dai_ops nx_i2s_ops = {
++	.probe		= nx_i2s_dai_probe,
++	.remove		= nx_i2s_dai_remove,
++	.shutdown	= nx_i2s_shutdown,
++	.trigger	= nx_i2s_trigger,
++	.hw_params	= nx_i2s_hw_params,
++	.set_sysclk	= nx_i2s_set_sysclk,
++};
++
++/* template; the per-device copy in nx_i2s.dai_drv is what gets registered */
++static const struct snd_soc_dai_driver nx_i2s_dai_template = {
++	.playback	= {
++		.channels_min	= 2,
++		.channels_max	= 2,
++		.formats	= (SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_S16_LE |
++				   SNDRV_PCM_FMTBIT_S24_LE),
++		.rates		= SNDRV_PCM_RATE_8000_192000,
++	},
++	.capture	= {
++		.channels_min	= 2,
++		.channels_max	= 2,
++		.formats	= (SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_S16_LE |
++				   SNDRV_PCM_FMTBIT_S24_LE),
++		.rates		= SNDRV_PCM_RATE_8000_192000,
++	},
++	.ops = &nx_i2s_ops,
++	.symmetric_rate = 1,
++};
++
++static const struct snd_soc_component_driver nx_i2s_component = {
++	.name = "nx-i2sc",
++	.legacy_dai_naming = 1,
++};
++
++static int nx_i2s_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct nx_i2s *par;
++	struct resource *res;
++	int ret;
++
++	par = devm_kzalloc(dev, sizeof(*par), GFP_KERNEL);
++	if (!par)
++		return -ENOMEM;
++
++	spin_lock_init(&par->lock);
++	par->dai_drv = nx_i2s_dai_template;
++
++	par->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
++	if (IS_ERR(par->base))
++		return PTR_ERR(par->base);
++
++	par->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(par->clk))
++		return dev_err_probe(dev, PTR_ERR(par->clk), "no i2s clock\n");
++
++	of_property_read_u32(dev->of_node, "master-mode", &par->master_mode);
++	of_property_read_u32(dev->of_node, "mclk-in", &par->mclk_in);
++	of_property_read_u32(dev->of_node, "trans-mode", &par->trans_mode);
++	of_property_read_u32(dev->of_node, "frame-bit", &par->frame_bit);
++	if (!par->frame_bit)
++		par->frame_bit = DEF_FRAME_BIT;
++	of_property_read_u32(dev->of_node, "sample-rate", &par->sample_rate);
++	if (!par->sample_rate)
++		par->sample_rate = DEF_SAMPLE_RATE;
++	/* The master clock is programmed once from sample-rate and hw_params
++	 * does not reprogram it, so advertise only that rate - otherwise an
++	 * open at a different rate would play at the wrong pitch. */
++	par->dai_drv.playback.rates = snd_pcm_rate_to_rate_bit(par->sample_rate);
++	par->dai_drv.capture.rates = par->dai_drv.playback.rates;
++	of_property_read_u32(dev->of_node, "pre-supply-mclk",
++			     &par->pre_supply_mclk);
++	of_property_read_u32(dev->of_node, "LR-pol-inv", &par->lr_pol_inv);
++
++	/* dmaengine slave data: TXD/RXD FIFO registers, 32-bit words */
++	par->play_dma.addr = res->start + I2S_TXD_OFFSET;
++	par->play_dma.addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
++	par->play_dma.maxburst = I2S_PERI_BURST / I2S_BUS_WIDTH;
++	par->capt_dma.addr = res->start + I2S_RXD_OFFSET;
++	par->capt_dma.addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
++	par->capt_dma.maxburst = I2S_PERI_BURST / I2S_BUS_WIDTH;
++
++	dev_set_drvdata(dev, par);
++
++	ret = nx_i2s_check_param(par, dev);
++	if (ret)
++		return ret;
++
++	ret = devm_snd_soc_register_component(dev, &nx_i2s_component,
++					      &par->dai_drv, 1);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to register DAI\n");
++
++	ret = devm_snd_dmaengine_pcm_register(dev, NULL, 0);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to register PCM\n");
++
++	return 0;
++}
++
++static const struct of_device_id nx_i2s_match[] = {
++	{ .compatible = "nexell,nexell-i2s" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, nx_i2s_match);
++
++static struct platform_driver nx_i2s_driver = {
++	.probe = nx_i2s_probe,
++	.driver = {
++		.name = "nexell-i2s",
++		.of_match_table = nx_i2s_match,
++	},
++};
++module_platform_driver(nx_i2s_driver);
++
++MODULE_AUTHOR("Hyunseok Jung <hsjung@nexell.co.kr>");
++MODULE_DESCRIPTION("Nexell S5P6818 I2S ASoC driver");
++MODULE_LICENSE("GPL");

@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 10 Sep 2026 07:52:17 +0200
+Subject: [PATCH 21/21] arm64: dts: s5p6818: add UART1 + on-board Bluetooth
+
+Wire up UART1 (@0xc00a0000) for the on-board AP6212 (BCM43430) Bluetooth.
+Like SDMMC1/WiFi, u-boot never uses UART1, so it needs its clk-gen gate
+kept on (new uart1 clock, cell-id 24, clk-critical) and its reset released
+(samsung_tty now deasserts it). RTS/CTS flow-control pins for BT.
+
+The bluetooth serdev node (brcm,bcm43430a1-bt) under uart1 is driven by
+hci_uart/hci_bcm: it powers the chip via BT_REG_ON (gpiob-8, moved here
+from the WiFi pwrseq) and loads brcm/BCM43430A1.hcd. HW-verified: hci0
+comes up (BCM43430A1, BT4.0) and an LE scan discovers nearby devices.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../boot/dts/nexell/s5p6818-nanopi-m3.dts     | 10 ++++
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi       | 60 +++++++++++++++++--
+ 2 files changed, 65 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+index 43067553e..0fe93f029 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
++++ b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+@@ -90,6 +90,16 @@ &mmc1 {	/* SDIO WiFi */
+ 	status = "okay";
+ };
+ 
++&uart1 {	/* Bluetooth (AP6212 / BCM43430) */
++	status = "okay";
++
++	bluetooth {
++		compatible = "brcm,bcm43430a1-bt";
++		shutdown-gpios = <&gpio_b 8 GPIO_ACTIVE_HIGH>;	/* BT_REG_ON */
++		max-speed = <2000000>;
++	};
++};
++
+ &gmac0 {
+ 	status = "okay";
+ 	phy-handle = <&rtl_phy>;
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 8e4486257..a324ca382 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -167,14 +167,13 @@ cpu_crit: cpu-crit {
+ 	};
+ 
+ 	/*
+-	 * WiFi/BT power sequence: WL_REG_ON (gpiob-24) powers the SDIO WiFi,
+-	 * BT_REG_ON (gpiob-8) the Bluetooth side of the same combo (BT data
+-	 * goes over uart1). Both active-low.
++	 * WiFi power sequence: WL_REG_ON (gpiob-24, active-low) powers the SDIO
++	 * WiFi. BT_REG_ON (gpiob-8) powers the Bluetooth side of the same combo
++	 * and is owned by the bluetooth serdev node under uart1.
+ 	 */
+ 	wifi_pwrseq: wifi-pwrseq {
+ 		compatible = "mmc-pwrseq-simple";
+-		reset-gpios = <&gpio_b 24 GPIO_ACTIVE_LOW>,
+-			      <&gpio_b 8 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&gpio_b 24 GPIO_ACTIVE_LOW>;
+ 		post-power-on-delay-ms = <50>;
+ 	};
+ 
+@@ -354,6 +353,21 @@ sdmmc1_bus4: sdmmc1-bus4 {
+ 				nexell,pin-pull = <2>;
+ 				nexell,pin-strength = <1>;
+ 			};
++
++			/* UART1 (Bluetooth): TXD gpiod-15, RXD gpiod-19 (fn1). */
++			serial1_pins: serial1-pins {
++				nexell,pins = "gpiod-15", "gpiod-19";
++				nexell,pin-function = <1>;
++				nexell,pin-pull = <2>;
++				nexell,pin-strength = <0>;
++			};
++			/* UART1 flow control: RTSn/CTSn gpioc-5/gpioc-6 (fn2). */
++			serial1_flow: serial1-flow {
++				nexell,pins = "gpioc-5", "gpioc-6";
++				nexell,pin-function = <2>;
++				nexell,pin-pull = <2>;
++				nexell,pin-strength = <0>;
++			};
+ 		};
+ 
+ 		gic: interrupt-controller@c0009000 {
+@@ -397,6 +411,25 @@ uart0: serial@c00a1000 {
+ 			status = "disabled";
+ 		};
+ 
++		/*
++		 * UART1 (@0xc00a1000-1 = 0xc00a0000) for on-board Bluetooth (AP6212
++		 * BCM43430, brcm). u-boot leaves it in reset + ungated: its clk-gen
++		 * gate is kept on via uart1_clk (clk-critical) and the reset is
++		 * released by the driver (resets below). RTS/CTS flow control for BT.
++		 */
++		uart1: serial@c00a0000 {
++			compatible = "nexell,s5p6818-uart";
++			reg = <0xc00a0000 0x1000>;
++			interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&uart1_clk>, <&uart1_clk>;
++			clock-names = "uart", "clk_uart_baud0";
++			resets = <&nexell_reset 51>;	/* RESET_ID_UART1 */
++			samsung,uart-fifosize = <16>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&serial1_pins &serial1_flow>;
++			status = "disabled";
++		};
++
+ 		mmc0: mmc@c0062000 {
+ 			compatible = "snps,dw-mshc";
+ 			reg = <0xc0062000 0x1000>;
+@@ -611,6 +644,23 @@ sdhc1_clk: sdhc1-clk@c00cc000 {
+ 				nexell,clk-critical;
+ 				#clock-cells = <0>;
+ 			};
++
++			/*
++			 * UART1 module clock (clk-gen @0xc00a8000, cell-id 24 =
++			 * CLK_ID_UART_1) for the Bluetooth UART. u-boot only uses the
++			 * console (UART0), so UART1's gate is off at boot - keep it on
++			 * (clk-critical). clk-input 0x1007 = PLL0-2 + PCLK gate; ~100 MHz.
++			 */
++			uart1_clk: uart1-clk@c00a8000 {
++				reg = <0xc00a8000 0x100>;
++				clock-output-names = "uart1";
++				cell-id = <24>;
++				clk-step = <1>;
++				clk-input = <0x1007>;
++				clock-frequency = <100000000>;
++				nexell,clk-critical;
++				#clock-cells = <0>;
++			};
+ 		};
+ 
+ 		/*
