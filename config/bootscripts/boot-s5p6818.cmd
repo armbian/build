@@ -38,7 +38,17 @@ fi
 # earlycon: this SoC's arch-timer/console handover needs early serial to be
 # visible; without it the console is silent until ttySAC0 probes and the board
 # looks dead at "Starting kernel".
-setenv bootargs "console=ttySAC0,115200n8 earlycon=s5pv210,mmio32,0xc00a1000 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
+#
+# nr_cpus=4: the S5P6818 is octa-core = two Cortex-A53 quad-clusters joined by a
+# coherent interconnect (CCI-400). The 2016 fork u-boot that ships as the boot
+# blob brings cluster1 online via PSCI CPU_ON but never enables the interconnect
+# snoop/DVM for it, so cluster1's caches run NON-COHERENT with cluster0. Under
+# multi-core load that silently corrupts memory (segfaults, malloc/tcache aborts,
+# stack-smashing, SIGILL - proven load-dependent, frequency-independent, and NOT
+# thermal/power/DRAM). Restricting Linux to cluster0 (4 cores) is fully stable
+# (0 failures under stress vs ~10% with all 8). Drop this once the boot blob's
+# PSCI is fixed to enable CCI coherency for cluster1 (recovers all 8 cores).
+setenv bootargs "console=ttySAC0,115200n8 earlycon=s5pv210,mmio32,0xc00a1000 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} nr_cpus=4 ${extraargs}"
 
 if ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/${fdtfile} || ext4load mmc ${devnum}:1 ${fdt_addr} ${prefix}dtb/nexell/s5p6818-nanopi-m3.dtb; then echo "Loading DTB ${fdtfile}"; fi
 ext4load mmc ${devnum}:1 ${ramdisk_addr_r} ${prefix}uInitrd
