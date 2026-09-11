@@ -14,6 +14,8 @@ BOOT_FDT_FILE="rockchip/rk3588-friendlyelec-cm3588-nas.dtb"
 BOOT_SCENARIO="tpl-blob-atf-mainline"
 UEFI_EDK2_BOARD_ID="nanopc-cm3588-nas" # This _only_ used for uefi-edk2-rk3588 extension; cm3588-nas was introduced in v0.12 of edk2-porting/edk2-rk3588
 
+enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
+
 # @TODO: revisit this as it's probably just for vendor kernel
 function post_family_tweaks__cm3588_nas_udev_naming_audios() {
 	display_alert "$BOARD" "Renaming CM3588 audio interfaces to human-readable form" "info"
@@ -123,6 +125,12 @@ function post_config_uboot_target__extra_configs_for_cm3588-nas_uboot() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable LWIP (new networking stack)" "info"
 	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
 	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable MBed TLS stuff" "info"
+	run_host_command_logged scripts/config --enable CONFIG_WGET_HTTPS
+	run_host_command_logged scripts/config --enable CONFIG_WGET_CACERT
+	#run_host_command_logged scripts/config --enable CONFIG_WGET_BUILTIN_CACERT # not yet
+	run_host_command_logged scripts/config --enable CONFIG_MBEDTLS_LIB
 
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
