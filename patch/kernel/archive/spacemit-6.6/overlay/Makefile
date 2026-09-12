@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_RV64I) += \
 	k1-can0.dtbo \
+	k1-csi.dtbo \
 	k1-i2c3.dtbo \
 	k1-i2c4.dtbo \
 	k1-lcd.dtbo \
