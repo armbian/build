@@ -10,7 +10,15 @@ OVERLAY_PREFIX="sun55i-a527"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current,edge"
 BOOT_FDT_FILE="sun55i-a527-cubie-a5e.dtb"
-HAS_VIDEO_OUTPUT="no" # quoted so the build-list inventory (it parses only quoted values) sees it
+HAS_VIDEO_OUTPUT="yes"
+
+# GPT is overwritten by the eGON bootloader image at 0x2000 (issue #10647):
+# use msdos partition table with the boot partition after the bootloader
+IMAGE_PARTITION_TABLE="msdos"
+BOOTFS_TYPE="fat"
+BOOTSTART="8192"
+BOOTSIZE="512"
+ROOTSTART="1056768"
 
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
