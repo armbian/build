@@ -8,6 +8,10 @@ function extension_finish_config__build_nvidia_kernel_module() {
 		return 0
 	fi
 
+	if [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]]; then
+		display_alert "Kernel cannot build DKMS modules" "skipping ${EXTENSION}: ${KERNEL_DKMS_UNBUILDABLE_REASON}" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping nVidia for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
@@ -31,7 +35,7 @@ function extension_finish_config__build_nvidia_kernel_module() {
 }
 
 function post_install_kernel_debs__build_nvidia_kernel_module() {
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 
 	# Pre-ship the modprobe blacklist BEFORE installing nvidia packages.
 	# nvidia-dkms postinst triggers update-initramfs; with the file already
@@ -136,7 +140,7 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 # this is the right hook for writing extension-owned auxiliary files
 # into the chroot's final filesystem.
 function post_family_tweaks__build_nvidia_kernel_module_autodetect() {
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 	install_armbian_nvidia_autodetect_helper
 }
 

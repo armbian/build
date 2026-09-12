@@ -1,7 +1,11 @@
-# @description Installs the AIC8800 WiFi DKMS driver and firmware for Radxa boards. Downloads the `aic8800-<type>-dkms` and firmware debs (`pcie`/`sdio`/`usb` per `AIC8800_TYPE`) from the latest `radxa-pkg/aic8800` release and builds the module in the chroot. Forces `INSTALL_HEADERS=yes`, needs working kernel headers, and skips kernels ≥ 7.3.
+# @description Installs the AIC8800 WiFi DKMS driver and firmware for Radxa boards. Downloads the `aic8800-<type>-dkms` and firmware debs (`pcie`/`sdio`/`usb` per `AIC8800_TYPE`) from the latest `radxa-pkg/aic8800` release and builds the module in the chroot. Forces `INSTALL_HEADERS=yes`, needs working kernel headers, and skips kernels ≥ 7.3. Also skipped on kernels built with clang/LLVM, where DKMS cannot build modules.
 
 function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
+	if [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]]; then
+		display_alert "Kernel cannot build DKMS modules" "skipping ${EXTENSION}: ${KERNEL_DKMS_UNBUILDABLE_REASON}" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
@@ -16,7 +20,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		display_alert "Kernel version is too recent" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
 	fi
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 	[[ -z $AIC8800_TYPE ]] && return 0
 	api_url="https://api.github.com/repos/radxa-pkg/aic8800/releases/latest"
 	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
