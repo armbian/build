@@ -110,7 +110,24 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 # Returns:
 #   0 on successful configuration application.
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
+	# A DTB-only build never links vmlinux, so the debug package is dropped there anyway; such a
+	# build must not gain options for it, nor fail on the conflict below.
+	declare dbg_package_effective="no"
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" && "${KERNEL_DTB_ONLY:-"no"}" != "yes" ]]; then
+		dbg_package_effective="yes"
+	fi
+
+	if [[ "${dbg_package_effective}" == "yes" ]]; then
+		opts_y+=("PROC_KCORE") # crash/drgn read /proc/kcore to inspect a running kernel, not just a dump
+	fi
 	if [[ "${KERNEL_BTF}" == "no" ]]; then # If user is explicit by passing "KERNEL_BTF=no", then actually disable all debug info.
+		# Reject the conflict instead of overriding it: the debug package exists to ship the very
+		# debug info this branch turns off. Checked here, where both values are final -- config
+		# hooks running after main-config can still set either one.
+		if [[ "${dbg_package_effective}" == "yes" ]]; then
+			exit_with_error "KERNEL_BTF=no conflicts with KERNEL_DBG_PACKAGE=yes" \
+				"KERNEL_BTF=no disables CONFIG_DEBUG_INFO, leaving vmlinux without the debug info that crash, drgn and gdb need; either set KERNEL_BTF=yes (or leave it unset for Armbian's default) or drop KERNEL_DBG_PACKAGE=yes"
+		fi
 		display_alert "Disabling eBPF and BTF info for kernel" "as requested by KERNEL_BTF=no" "info"
 		opts_y+=("DEBUG_INFO_NONE")        # Enable the "none" option
 		opts_n+=("DEBUG_INFO")             # Disables debug information
