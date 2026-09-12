@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yusuke Shinozaki <vin.bleu@gmail.com>
+Date: Sat, 12 Sep 2026 09:03:57 +0900
+Subject: net: stmmac: tc956x: select the MAC speed before the first PMA init
+
+The MAC speed selector (EMAC_CTL.SP_SEL) is only programmed from
+tc956x_fix_mac_speed(), i.e. after phylink has seen the link come up.
+Out of reset SP_SEL holds a value that is neither an SGMII rate nor
+2500BASE-X.
+
+For 2500BASE-X that is harmless: the PHY drives the link and
+fix_mac_speed() then programs SP_SEL.  For SGMII it is fatal: the
+in-band autonegotiation between the XPCS and the PHY cannot complete
+while SP_SEL is invalid, phylink never sees the link, fix_mac_speed()
+is never called, and the port stays without carrier forever.  On a
+Radxa Dragon Q8B (QPS615) a port whose first link after boot is SGMII
+(1000/100/10 Mbit/s partner) never links; a port that first linked at
+2.5 Gbit/s links fine at 1 Gbit/s afterwards because SP_SEL was
+programmed by then.
+
+Program SP_SEL for the interface's native rate (SGMII: 1000,
+2500BASE-X: 2500) in tc956x_mac_enable(), before the PMA is initialised
+and the XPCS reset is released.  fix_mac_speed() still reprograms it
+with the negotiated speed once the link is up.
+
+Tested on a Radxa Dragon Q8B (Armbian 7.2.3-edge-sc8280xp) against a
+Netgear M4250 (1000BASE-T) and a 2.5GBASE-T switch: both ports now link
+at 1000/100/10 and 2500 from cold boot without any intervention.
+
+Signed-off-by: Yusuke Shinozaki <vin.bleu@gmail.com>
+---
+ .../ethernet/stmicro/stmmac/dwmac-tc956x.c    | 29 +++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
+index 81c0bd4..b1cf2e6 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
+@@ -337,10 +337,34 @@ static int tc956x_mac_configure(struct tc956x_data *td,
+ 	return 0;
+ }
+ 
++/*
++ * Speed to select before the first link comes up.
++ *
++ * EMAC_CTL.SP_SEL resets to a value that is neither an SGMII rate nor
++ * 2500BASE-X.  For SGMII the in-band autonegotiation cannot complete
++ * until SP_SEL selects an SGMII rate, so the link never comes up and
++ * fix_mac_speed() (which is what programs SP_SEL) is never called.
++ * Select the interface's native rate here; fix_mac_speed() reprograms
++ * it once the PHY reports the negotiated speed.
++ */
++static int tc956x_mac_initial_speed(phy_interface_t interface)
++{
++	switch (interface) {
++	case PHY_INTERFACE_MODE_SGMII:
++		return SPEED_1000;
++	case PHY_INTERFACE_MODE_2500BASEX:
++		return SPEED_2500;
++	default:
++		return -EOPNOTSUPP;
++	}
++}
++
+ static void tc956x_mac_enable(struct tc956x_data *td)
+ {
+ 	const struct tc956x_chip *chip = td->auxbus_data->chip;
++	phy_interface_t interface = td->plat->phy_interface;
+ 	u32 id = td->auxbus_data->mac_id;
++	int speed;
+ 
+ 	tc956x_clock_enable(chip, id, MAC_CLOCK_TX);
+ 	tc956x_clock_enable(chip, id, MAC_CLOCK_RX);
+@@ -349,6 +373,11 @@ static void tc956x_mac_enable(struct tc956x_data *td)
+ 		tc956x_clock_enable(chip, id, MAC_CLOCK_RMII);
+ 
+ 	tc956x_reset_deassert(chip, id, MAC_RESET_MAC);
++
++	speed = tc956x_mac_initial_speed(interface);
++	if (speed > 0)
++		tc956x_mac_configure(td, interface, speed);
++
+ 	tc956x_pma_init(td);
+ 	tc956x_reset_deassert(chip, id, MAC_RESET_XPCS);
+ }
+-- 
+Armbian
+
