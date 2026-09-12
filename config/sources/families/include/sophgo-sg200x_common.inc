@@ -23,12 +23,12 @@ declare -g SERIALCON="ttyS0"
 case "${BRANCH}" in
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="7.1"
+		declare -g KERNEL_MAJOR_MINOR="7.2"
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-edge"
 		;;
 
 	bleedingedge)
-		declare -g KERNEL_MAJOR_MINOR="7.2"
+		declare -g KERNEL_MAJOR_MINOR="7.3"
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-bleedingedge"
 		;;
 

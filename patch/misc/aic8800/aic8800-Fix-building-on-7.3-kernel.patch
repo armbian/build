@@ -1,0 +1,334 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Wed, 9 Sep 2026 09:52:11 +0200
+Subject: [PATCH] aic8800: fix building on 7.3 kernels
+
+Two cfg80211 changes in 7.3 break the vendor driver, and one of them is
+not just a signature change.
+
+ - cfg80211_probe_status() gained a link_id between the cookie and the
+   acked flag, naming the MLO link the probe went out on. This driver
+   has no MLO, so -1, which is what the other non-MLO drivers pass.
+
+ - The remain_on_channel, mgmt_tx and probe_client ops took a u64
+   *cookie the driver filled in. cfg80211 now assigns the cookie itself
+   before it calls in, so the parameter is a plain u64 the driver has to
+   use as given, and probe_client is renamed probe_peer along the way.
+
+   Compiling was the easy half. Each of the three cookies also travels
+   to a completion that reports it back, and those were all reporting a
+   value the driver had made up, which cfg80211 no longer knows:
+
+     remain_on_channel: rwnx_msg_rx.c reports roc_cookie_cnt in
+     cfg80211_ready_on_channel() and cfg80211_remain_on_channel_expired().
+     That counter still serves the RoC that rwnx_cfg80211_mgmt_tx()
+     starts for itself, which cfg80211 never sees, so it stays; the
+     assigned cookie is kept beside it in rwnx_hw and the two events
+     report that one.
+
+     mgmt_tx: rwnx_start_mgmt_xmit() used the skb address, and
+     rwnx_txdatacfm() recomputed it for cfg80211_mgmt_tx_status(). The
+     assigned cookie rides on the sw_txhdr instead, which is what
+     reaches the confirm. Its other caller is the TDLS discovery
+     response, whose cookie cfg80211 has nothing to match against; that
+     one now passes 0 rather than an uninitialised stack slot, since
+     the argument is read rather than written from 7.3 on.
+
+     probe_client: the cookie is a per-vif counter that
+     apm_probe_sta_work_process() hands to cfg80211_probe_status().
+     It now holds the assigned cookie, stored before the work is queued
+     rather than after - the worker can run as soon as queue_work()
+     returns - and is no longer incremented, because it is no longer
+     the driver's to choose.
+
+   Reporting a cookie cfg80211 did not assign compiles and loads, and
+   then quietly costs off-channel action frames their TX status and
+   remain-on-channel its ready/expired events, which is P2P and ACS.
+
+Everything is guarded on LINUX_VERSION_CODE, so the 7.2 (edge) build is
+unaffected. Both were built against 7.3-rc1 and 7.2 before and after.
+
+Signed-off-by: Lukasz Sobala <lsobala1@gmail.com>
+---
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_defs.h b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_defs.h
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_defs.h
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_defs.h
+@@ -623,6 +623,9 @@ struct rwnx_hw {
+ 	/* RoC Management */
+ 	struct rwnx_roc_elem *roc_elem;             /* Information provided by cfg80211 in its remain on channel request */
+ 	u32 roc_cookie_cnt;                         /* Counter used to identify RoC request sent by cfg80211 */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	u64 roc_cookie;                             /* From 7.3 on cfg80211 assigns it; the one it gave us */
++#endif
+ 
+ 	struct rwnx_cmd_mgr *cmd_mgr;
+ 
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -4512,7 +4512,17 @@ void apm_probe_sta_work_process(struct work_struct *work)
+ 	   spin_unlock_bh(&rwnx_vif->rwnx_hw->cb_lock);
+ 
+        printk("sta %pM found = %d\n", mac, found);
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++       /*
++        * 7.3 put a link_id between the cookie and the acked flag, naming the
++        * MLO link the probe went out on. This driver has no MLO, so -1, which
++        * is what the other non-MLO drivers pass.
++        */
++       if(found)
++               cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, -1, 1, 0, false, GFP_ATOMIC);
++       else
++               cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, -1, 0, 0, false, GFP_ATOMIC);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+        if(found)
+                cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, 1, 0, false, GFP_ATOMIC);
+        else
+@@ -4524,7 +4534,13 @@ void apm_probe_sta_work_process(struct work_struct *work)
+                 cfg80211_probe_status(rwnx_vif->ndev, mac, (u64)rwnx_vif->sta_probe.probe_id, 0, GFP_ATOMIC);
+ 
+ #endif
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
++       /*
++        * From 7.3 on the cookie is cfg80211's and probe_id holds whichever one
++        * rwnx_cfg80211_probe_client() was handed, so there is nothing to count.
++        */
+        rwnx_vif->sta_probe.probe_id ++;
++#endif
+ }
+ /**
+  * @change_station: Modify a given station. Note that flags changes are not much
+@@ -4947,10 +4963,17 @@ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy, struct net_dev
+ 
+ /**
+  * @probe_client: probe an associated client, must return a cookie that it
+- *	later passes to cfg80211_probe_status().
++ *	later passes to cfg80211_probe_status(). Renamed to @probe_peer in 7.3,
++ *	where cfg80211 assigns the cookie and the driver has to use the one it
++ *	was given.
+  */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++int rwnx_cfg80211_probe_client(struct wiphy *wiphy, struct net_device *dev,
++			const u8 *peer, u64 cookie)
++#else
+ int rwnx_cfg80211_probe_client(struct wiphy *wiphy, struct net_device *dev,
+ 			const u8 *peer, u64 *cookie)
++#endif
+ {
+ //       struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+        struct rwnx_vif *vif = netdev_priv(dev);
+@@ -4973,9 +4996,20 @@ int rwnx_cfg80211_probe_client(struct wiphy *wiphy, struct net_device *dev,
+ 
+ 
+        memcpy(vif->sta_probe.sta_mac_addr, peer, 6);
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++       /*
++        * Store it before the work is queued, not after: apm_probe_sta_work_process()
++        * is what hands the cookie back to cfg80211_probe_status(), and it can run
++        * as soon as queue_work() returns.
++        */
++       vif->sta_probe.probe_id = cookie;
++       queue_work(vif->sta_probe.apmprobesta_wq, &vif->sta_probe.apmprobestaWork);
++#else
+        queue_work(vif->sta_probe.apmprobesta_wq, &vif->sta_probe.apmprobestaWork);
+ 
+        *cookie = vif->sta_probe.probe_id;
++#endif
+ 
+        return 0;
+ 
+@@ -5225,6 +5259,35 @@ rwnx_cfg80211_remain_on_channel_(struct wiphy *wiphy, struct wireless_dev *wdev,
+ }
+ 
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++/*
++ * 7.3 has cfg80211 pick the cookie before it calls in, so the op takes it by
++ * value and the driver has to report that value back rather than one of its
++ * own. The helper above still takes its cookie from roc_cookie_cnt, which is
++ * what the RoC that rwnx_cfg80211_mgmt_tx() starts for itself uses and which
++ * cfg80211 never sees, so let it write that into a scratch variable and keep
++ * the assigned one in rwnx_hw for the two events in rwnx_msg_rx.c.
++ *
++ * rx_addr is the 7.2 receive address filter, always NULL here; see below.
++ */
++static int
++rwnx_cfg80211_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
++								struct ieee80211_channel *chan,
++								unsigned int duration, u64 cookie,
++								const u8 *rx_addr)
++{
++	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
++	u64 drv_cookie;
++	int error;
++
++	error = rwnx_cfg80211_remain_on_channel_(wiphy, wdev, chan, duration,
++											 &drv_cookie, false);
++	if (!error)
++		rwnx_hw->roc_cookie = cookie;
++
++	return error;
++}
++#else
+ static int
+ rwnx_cfg80211_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 								struct ieee80211_channel *chan,
+@@ -5243,6 +5306,7 @@ rwnx_cfg80211_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
+ {
+ 	return rwnx_cfg80211_remain_on_channel_(wiphy, wdev, chan, duration, cookie, false);
+ }
++#endif
+ 
+ /**
+  * @cancel_remain_on_channel: Cancel an on-going remain-on-channel operation.
+@@ -5376,7 +5440,12 @@ static int rwnx_cfg80211_get_channel(struct wiphy *wiphy,
+ /**
+  * @mgmt_tx: Transmit a management frame.
+  */
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
++/* 7.3: cfg80211 assigns the cookie, so it comes in by value. */
++static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
++								 struct cfg80211_mgmt_tx_params *params,
++								 u64 cookie)
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 								 struct cfg80211_mgmt_tx_params *params,
+ 								 u64 *cookie)
+@@ -5478,7 +5547,13 @@ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 	#endif
+ 
+ send_frame:
+-	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
++	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0))
++	/*
++	 * By value now, and rwnx_start_mgmt_xmit() reads rather than writes it:
++	 * it has to travel to the confirm, which reports it to cfg80211.
++	 */
++	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, params, offchan, &cookie);
++	#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ 	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, params, offchan, cookie);
+ 	#else
+ 	return rwnx_start_mgmt_xmit(rwnx_vif, rwnx_sta, channel, offchan, wait, buf, len, no_cck, dont_wait_for_ack, cookie);
+@@ -6644,7 +6719,11 @@ static struct cfg80211_ops rwnx_cfg80211_ops = {
+ 	.change_beacon = rwnx_cfg80211_change_beacon,
+ 	.stop_ap = rwnx_cfg80211_stop_ap,
+ 	.set_monitor_channel = rwnx_cfg80211_set_monitor_channel,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	.probe_peer = rwnx_cfg80211_probe_client,
++#else
+ 	.probe_client = rwnx_cfg80211_probe_client,
++#endif
+ //	.mgmt_frame_register = rwnx_cfg80211_mgmt_frame_register,
+ 	.set_wiphy_params = rwnx_cfg80211_set_wiphy_params,
+ 	.set_txq_params = rwnx_cfg80211_set_txq_params,
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_rx.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_rx.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_rx.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_msg_rx.c
+@@ -121,7 +121,12 @@ static inline int rwnx_rx_chan_switch_ind(struct rwnx_hw *rwnx_hw,
+ 			/* If mgmt_roc is true, remain on channel has been started by ourself */
+ 			if (!roc_elem->mgmt_roc) {
+ 				/* Inform the host that we have switch on the indicated off-channel */
+-				cfg80211_ready_on_channel(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
++				cfg80211_ready_on_channel(roc_elem->wdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++									  rwnx_hw->roc_cookie,
++#else
++									  (u64)(rwnx_hw->roc_cookie_cnt),
++#endif
+ 									  roc_elem->chan, roc_elem->duration, GFP_ATOMIC);
+ 			}
+ 
+@@ -230,7 +235,12 @@ static inline int rwnx_rx_remain_on_channel_exp_ind(struct rwnx_hw *rwnx_hw,
+ 	/* If RoC has been cancelled before we switched on channel, do not call cfg80211 */
+ 	if (!roc_elem->mgmt_roc && roc_elem->on_chan) {
+ 		/* Inform the host that off-channel period has expired */
+-		cfg80211_remain_on_channel_expired(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
++		cfg80211_remain_on_channel_expired(roc_elem->wdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++										   rwnx_hw->roc_cookie,
++#else
++										   (u64)(rwnx_hw->roc_cookie_cnt),
++#endif
+ 										   roc_elem->chan, GFP_ATOMIC);
+ 	}
+ 
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tdls.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tdls.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tdls.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tdls.c
+@@ -763,7 +763,12 @@ rwnx_tdls_send_mgmt_packet_data(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_v
+ 					  initiator, extra_ies, extra_ies_len, oper_class, chandef);
+ 
+ 	if (action_code == WLAN_PUB_ACTION_TDLS_DISCOVER_RES) {
+-		u64 cookie;
++		/*
++		 * Written by rwnx_start_mgmt_xmit() before 7.3 and read by it from 7.3
++		 * on; initialised either way. cfg80211 has no pending transmission to
++		 * match this one against, so the value only has to be defined.
++		 */
++		u64 cookie = 0;
+ 		#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ 		struct cfg80211_mgmt_tx_params params;
+ 
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.c
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.c
+@@ -1657,7 +1657,9 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
+ 		return -ENOMEM;
+ 	}
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
+ 	*cookie = (unsigned long)skb;
++#endif
+ 
+ 	/*
+ 	 * Move skb->data pointer in order to reserve room for rwnx_txhdr
+@@ -1724,6 +1726,15 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
+ 	sw_txhdr->rwnx_sta = sta;
+ 	sw_txhdr->rwnx_vif = vif;
+ 	sw_txhdr->skb = skb;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	/*
++	 * 7.3 hands the cookie in instead of asking for one, so it has to survive
++	 * as far as rwnx_txdatacfm(), which reports it to cfg80211. The only other
++	 * caller is the TDLS discovery response, whose cookie cfg80211 never
++	 * matches against anything - it passes 0.
++	 */
++	sw_txhdr->mgmt_cookie = *cookie;
++#endif
+ 	sw_txhdr->headroom = headroom;
+ 	sw_txhdr->map_len = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
+ #ifdef CONFIG_RWNX_AMSDUS_TX
+@@ -1847,7 +1858,11 @@ int rwnx_txdatacfm(void *pthis, void *host_id)
+ #endif
+ 		/* Confirm transmission to CFG80211 */
+ 		cfg80211_mgmt_tx_status(&sw_txhdr->rwnx_vif->wdev,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++								sw_txhdr->mgmt_cookie,
++#else
+ 								(unsigned long)skb,
++#endif
+ 								(skb->data + sw_txhdr->headroom),
+ 								sw_txhdr->frame_len,
+ 								rwnx_txst.acknowledged,
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.h b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.h
+index 1111111..2222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.h
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_tx.h
+@@ -125,6 +125,9 @@ struct rwnx_sw_txhdr {
+ #endif
+ 	u32 need_cfm;
+ 	struct sk_buff *skb;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++	u64 mgmt_cookie;	/* cfg80211's mgmt_tx cookie, handed back in the confirm */
++#endif
+ 
+ 	size_t map_len;
+ 	dma_addr_t dma_addr;
