@@ -57,8 +57,8 @@ function run_kernel_make_internal() {
 		"ARCH=${ARCHITECTURE}"                   # Key param. Everything depends on this.
 		"LOCALVERSION=-${BRANCH}-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change hack at .config; that might handles mtime better
 
-		"${cc_name}=${CCACHE} ${DISTCC_CROSS_COMPILE_PREFIX[@]} ${KERNEL_COMPILER}"                                         # added as prefix to every compiler invocation by make
-		"KCFLAGS=-fdiagnostics-color=always -Wno-error=misleading-indentation ${extra_warnings} ${KERNEL_EXTRA_CFLAGS:-""}" # Force GCC colored messages, downgrade misleading indentation to warning
+		"${cc_name}=${CCACHE:+${CCACHE} }${DISTCC_CROSS_COMPILE_PREFIX[*]:+${DISTCC_CROSS_COMPILE_PREFIX[*]} }${KERNEL_COMPILER}" # added as prefix to every compiler invocation by make
+		"KCFLAGS=-fdiagnostics-color=always -Wno-error=misleading-indentation ${extra_warnings} ${KERNEL_EXTRA_CFLAGS:-""}"       # Force GCC colored messages, downgrade misleading indentation to warning
 
 		"SOURCE_DATE_EPOCH=${kernel_base_revision_ts}"        # https://reproducible-builds.org/docs/source-date-epoch/ and https://www.kernel.org/doc/html/latest/kbuild/reproducible-builds.html
 		"KBUILD_BUILD_TIMESTAMP=${kernel_base_revision_date}" # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-timestamp
