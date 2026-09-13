@@ -68,6 +68,14 @@ function chroot_sdcard_apt_get() {
 		display_alert "Not using apt-cacher-ng, nor proxy" "no proxy/acng" "debug"
 	fi
 
+	# Going through a caching proxy (apt-cacher-ng): disable HTTP pipelining.
+	# Pipelined responses can get mismatched against fast-changing repo indexes
+	# (e.g. beta.armbian.com), producing "File has unexpected size" / hash-sum
+	# mismatch errors. Serial requests cost a little throughput but are reliable.
+	if [[ "${MANAGE_ACNG}" == "yes" || -n "${APT_PROXY_ADDR}" ]]; then
+		apt_params+=(-o "Acquire::http::Pipeline-Depth=0")
+	fi
+
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 
 	# Prevent dpkg from prompting about modified conffiles in non-interactive chroot builds.
