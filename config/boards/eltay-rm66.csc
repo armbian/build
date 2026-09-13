@@ -45,3 +45,10 @@ function post_family_config_branch_vendor__eltay_rm66_kernel() {
 	declare -g LINUXCONFIG="linux-rk35xx-vendor"
 	display_alert "$BOARD" "EXPERIMENTAL vendor BSP 6.1: camera/NPU DT nodes are not enabled yet" "wrn"
 }
+
+function pre_install_kernel_debs__eltay_rm66_vendor_bootargs() {
+	[[ "${BRANCH}" == "vendor" ]] || return 0
+	display_alert "$BOARD" "Add pm_domains.always_on=1 to extraboardargs" "info"
+	run_host_command_logged echo "extraboardargs=pm_domains.always_on=1" >> "${SDCARD}"/boot/armbianEnv.txt
+	return 0
+}

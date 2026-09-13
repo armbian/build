@@ -1,35 +1,69 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Sergey Braumann <ripetitor@proton.me>
-Date: Sun, 13 Sep 2026 16:30:00 +0500
-Subject: [PATCH] rockchip: pm_domains: continue boot on set-idle/set-domain
- timeout
+Date: Sun, 13 Sep 2026 17:20:00 +0500
+Subject: [PATCH] rockchip: pm_domains: survive domain handshake failures
+ during RM66 bring-up
 
-The BSP driver calls panic() unconditionally when a power domain does not
-reach the requested idle/on state within 10 ms. During early probe on
-ELTAY RM66 this aborts the boot before init runs, and the dev_err naming
-the failing domain is lost because the FIQ console is not printing yet.
-The dev_err paths already report the domain; return the timeout error and
-let the system reach userspace for diagnosis instead of panicking.
+Two issues observed on ELTAY RM66 over UART with the BSP 6.1 kernel:
+
+1. The driver calls panic() unconditionally when a power domain does not
+   reach the requested idle/on state within 10 ms. The first probe-time
+   failure aborts the boot before init runs, and the dev_err naming the
+   domain is lost because the FIQ console is not printing yet.
+2. With the panic removed the boot advances, but a genpd power-off work
+   has been observed stuck on the PMU mutex (RCU stall from
+   genpd_power_off_work_fn, boot never reaches init).
+
+Report handshake failures through the existing dev_err paths and make the
+whole workaround opt-in: "always_on" stays off by default and the historic
+panics are kept unless it is set, since this patch directory is shared with
+every other vendor 6.1 board. ELTAY RM66 enables it per board with
+pm_domains.always_on=1 in its extra kernel arguments, so power-off requests
+are skipped and the domains stay powered until the root cause is identified
+on a booting system.
+This is a bring-up mitigation; revert once the failing domain is fixed.
 
 Signed-off-by: Sergey Braumann <ripetitor@proton.me>
 ---
- drivers/soc/rockchip/pm_domains.c | 4 ----
- 1 file changed, 4 deletions(-)
+ drivers/soc/rockchip/pm_domains.c | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
 --- a/drivers/soc/rockchip/pm_domains.c
 +++ b/drivers/soc/rockchip/pm_domains.c
-@@ -633,7 +633,6 @@
+@@ -132,7 +132,15 @@
+ };
+ 
+ static struct rockchip_pmu *g_pmu;
+-static bool pm_domain_always_on;
++/*
++ * RM66 bring-up: genpd power-off work has been observed stuck on the PMU
++ * mutex (RCU stall from genpd_power_off_work_fn), and the same handshakes
++ * abort early probes. Boards that hit this can skip power-off requests and
++ * the panics below by booting with pm_domains.always_on=1 (ELTAY RM66 does
++ * that from its board config); the default stays off because this patch
++ * directory is shared with other vendor 6.1 boards.
++ */
++static bool pm_domain_always_on;
+ 
+ module_param_named(always_on, pm_domain_always_on, bool, 0644);
+ MODULE_PARM_DESC(always_on,
+@@ -633,7 +641,8 @@
  
  	return ret;
  error:
 -	panic("panic_on_set_idle set ...\n");
++	if (!pm_domain_always_on)
++		panic("panic_on_set_idle set ...\n");
  	return ret;
  }
  
-@@ -971,7 +970,6 @@
+@@ -971,7 +980,8 @@
  	return ret;
  
  error:
 -	panic("panic_on_set_domain set ...\n");
++	if (!pm_domain_always_on)
++		panic("panic_on_set_domain set ...\n");
  	return ret;
  }
  
