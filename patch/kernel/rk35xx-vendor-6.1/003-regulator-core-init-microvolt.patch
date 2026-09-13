@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sergey Braumann <ripetitor@proton.me>
+Date: Sun, 13 Sep 2026 21:40:00 +0500
+Subject: [PATCH] regulator: apply regulator-init-microvolt DT property
+
+Rockchip vendor BSP device trees carry "regulator-init-microvolt" on rails
+whose boot voltage must not stay at the PMIC register floor, but the kernel
+does not parse the property, so it is silently ignored.
+
+On ELTAY RM66 this leaves vdd_npu (RK809-5 DCDC4) at 500 mV - the
+table minimum - when rknpu_probe powers the NPU domain: the island
+bus is dead and the first rk_iommu_enable_stall register read dies
+with a synchronous external abort before init. With the rail at its
+900 mV init value the same probe completes and /sys/class/devfreq/
+fde40000.npu appears (verified on hardware, warm reboot).
+
+Parse the property into the constraints and apply it inside
+set_machine_constraints after the generic voltage constraints, with
+a range check against min/max. A failure to apply the initial voltage is
+reported and propagated like the other mandatory machine-constraint
+operations, instead of being overwritten by the following call. This
+restores the semantics the reference device trees were written for.
+
+Signed-off-by: Sergey Braumann <ripetitor@proton.me>
+---
+--- a/include/linux/regulator/machine.h
++++ b/include/linux/regulator/machine.h
+@@ -164,6 +164,9 @@
+ 
+ 	int uV_offset;
+ 
++	/* explicit initial voltage applied at registration */
++	int init_uV;
++
+ 	/* current output range (inclusive) - for current control */
+ 	int min_uA;
+ 	int max_uA;
+--- a/drivers/regulator/of_regulator.c
++++ b/drivers/regulator/of_regulator.c
+@@ -127,6 +127,8 @@
+ 
+ 	constraints->boot_on = of_property_read_bool(np, "regulator-boot-on");
+ 	constraints->always_on = of_property_read_bool(np, "regulator-always-on");
++	if (!of_property_read_u32(np, "regulator-init-microvolt", &pval))
++		constraints->init_uV = pval;
+ 	if (!constraints->always_on) /* status change should be possible. */
+ 		constraints->valid_ops_mask |= REGULATOR_CHANGE_STATUS;
+ 
+--- a/drivers/regulator/core.c
++++ b/drivers/regulator/core.c
+@@ -1483,6 +1483,35 @@
+ 	if (ret != 0)
+ 		return ret;
+ 
++	/*
++	 * Apply an explicit initial voltage from the constraints (the
++	 * "regulator-init-microvolt" device tree property). Rails whose
++	 * boot voltage is the PMIC register floor (e.g. vdd_npu on
++	 * RK809 boards) rely on this to reach their operating point
++	 * before their consumer probes.
++	 */
++	if (rdev->constraints->init_uV) {
++		int uv = rdev->constraints->init_uV;
++		bool in_range = !rdev->constraints->min_uV &&
++				!rdev->constraints->max_uV;
++
++		if (!in_range)
++			in_range = uv >= rdev->constraints->min_uV &&
++				   uv <= rdev->constraints->max_uV;
++
++		if (!in_range) {
++			rdev_warn(rdev, "init voltage %d uV outside constraints, ignoring\n",
++				  uv);
++		} else {
++			ret = _regulator_do_set_voltage(rdev, uv, uv);
++			if (ret < 0) {
++				rdev_err(rdev, "failed to apply init voltage: %pe\n",
++					 ERR_PTR(ret));
++				return ret;
++			}
++		}
++	}
++
+ 	ret = machine_constraints_current(rdev, rdev->constraints);
+ 	if (ret != 0)
+ 		return ret;
