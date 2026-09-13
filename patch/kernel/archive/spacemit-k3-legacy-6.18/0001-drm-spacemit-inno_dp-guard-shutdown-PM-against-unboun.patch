@@ -1,0 +1,89 @@
+From: Igor Pecovnik <igor@armbian.com>
+Date: Sat, 13 Sep 2026 15:40:00 +0200
+Subject: [PATCH] drm/spacemit: inno_dp: guard shutdown/PM against unbound
+ device
+
+inno_dp_probe() only does component_add(); the struct soc_dp_dev is allocated
+and platform_set_drvdata() + INIT_DELAYED_WORK() run later in the component
+.bind callback (soc_dp_bind). The platform driver's .shutdown and system-sleep
+PM callbacks, however, fire for the platform device regardless of whether the
+component ever bound (e.g. headless K3 Pico-ITX with no DRM master up). In that
+case platform_get_drvdata() returns NULL and the callbacks dereference it:
+
+  cancel_delayed_work_sync(&dp->hpd_work)  with dp == NULL
+
+so &dp->hpd_work is a tiny offset from NULL and timer_delete() faults, which on
+the reboot path (systemd-shutdown, PID 1) turns into:
+
+  Unable to handle kernel access ... at virtual address 0x1000
+  inno_dp_shutdown+0x24 / cancel_delayed_work_sync / platform_shutdown
+  Kernel panic - not syncing: Attempted to kill init!
+
+Because nothing sets panic-on-reboot, the machine then hangs at the panic and
+only recovers via the physical reset button - i.e. OS-initiated reboot/shutdown
+never actually restarts the board.
+
+Bail out early when drvdata is NULL in inno_dp_shutdown() and the four system
+sleep PM callbacks (soc_dp_unbind is only reached after a successful bind, so it
+is left untouched).
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/spacemit/spacemit_inno_dp.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+--- a/drivers/gpu/drm/spacemit/spacemit_inno_dp.c
++++ b/drivers/gpu/drm/spacemit/spacemit_inno_dp.c
+@@ -3020,6 +3020,12 @@
+ {
+ 	struct soc_dp_dev *dp = platform_get_drvdata(pdev);
+ 
++	/* .shutdown/PM callbacks fire even when the component never bound
++	 * (no DRM master); drvdata is then NULL and hpd_work etc. are
++	 * uninitialised. Bail out instead of dereferencing NULL. */
++	if (!dp)
++		return;
++
+ #if HOT_PLUG_THREAD_ENABLED
+ 	cancel_delayed_work_sync(&dp->hpd_work);
+ #endif
+@@ -3033,6 +3039,9 @@
+ 	struct platform_device *pdev = to_platform_device(dev);
+ 	struct soc_dp_dev *dp = platform_get_drvdata(pdev);
+ 
++	if (!dp)
++		return 0;
++
+ 	DRM_INFO("%s()\n", __func__);
+ 
+ #if HOT_PLUG_THREAD_ENABLED
+@@ -3051,6 +3060,9 @@
+ 	struct platform_device *pdev = to_platform_device(dev);
+ 	struct soc_dp_dev *dp = platform_get_drvdata(pdev);
+ 
++	if (!dp)
++		return 0;
++
+ 	DRM_INFO("%s()\n", __func__);
+ 
+ 	mutex_lock(&dp->mode_lock);
+@@ -3082,6 +3094,9 @@
+ 	struct soc_dp_dev *dp = platform_get_drvdata(pdev);
+ 	int ret;
+ 
++	if (!dp)
++		return 0;
++
+ 	DRM_INFO("%s()\n", __func__);
+ 
+ 	mutex_lock(&dp->mode_lock);
+@@ -3109,6 +3124,9 @@
+ 	struct soc_dp_dev *dp = platform_get_drvdata(pdev);
+ 	int ret;
+ 
++	if (!dp)
++		return 0;
++
+ 	DRM_INFO("%s()\n", __func__);
+ 
+ 	mutex_lock(&dp->mode_lock);
