@@ -93,7 +93,11 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		hooks_text="$(LC_ALL=C sed -E 's/\$(\{'"${hook_var}"'\}|'"${hook_var}"'\b)/'"${hook_value}"'/g' <<< "${hooks_text}")"
 	done
 	declare -A hook_dirs=() hook_paths_unhashed=()
+	# packages/ must follow ${SRC}/ or start a word: not dist-packages/foo/bar or /var/lib/packages/foo/bar.
+	# Not ${SRC}/ alone, so a relative packages/bsp/foo after a cd "${SRC}" is still seen.
+	declare hook_path_start='(^|[^A-Za-z0-9._/-]|\$\{?SRC\}?"?/)'
 	while read -r hook_match; do
+		hook_match="packages/${hook_match#*packages/}" # drop what matched hook_path_start
 		hook_path="${hook_match%/}"
 		[[ -d "${SRC}/${hook_path}" ]] || hook_path="${hook_path%/*}" # a file, or a name cut short by a variable
 		if [[ "${hook_path}" != packages/[!/]*/[!/]* ]]; then         # never all of packages/bsp
@@ -101,11 +105,11 @@ function artifact_armbian-bsp-cli_prepare_version() {
 			continue
 		fi
 		hook_dirs["${SRC}/${hook_path}"]=1
-	done < <(LC_ALL=C grep -oE 'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
+	done < <(LC_ALL=C grep -oE "${hook_path_start}"'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
 	# A variable right after packages/ or packages/<x>/ stops the grep above before it matches at all.
 	while read -r hook_match; do
-		hook_paths_unhashed["${hook_match}"]=1
-	done < <(LC_ALL=C grep -oE 'packages/([A-Za-z0-9._-]+/)?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?' <<< "${hooks_text}" || true)
+		hook_paths_unhashed["packages/${hook_match#*packages/}"]=1
+	done < <(LC_ALL=C grep -oE "${hook_path_start}"'packages/([A-Za-z0-9._-]+/)?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?' <<< "${hooks_text}" || true)
 	for hook_match in "${!hook_paths_unhashed[@]}"; do
 		display_alert "bsp-cli: a hook installs from a path that does not version the package" "'${hook_match}': changes there will not rebuild it; spell the directory out, or use \${BOARD}, \${BOARDFAMILY}, \${LINUXFAMILY} or \${ARCH}" "wrn"
 	done
