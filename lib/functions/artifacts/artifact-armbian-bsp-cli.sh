@@ -94,8 +94,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	done
 	declare -A hook_dirs=() hook_paths_unhashed=()
 	# packages/ must follow ${SRC}/ or start a word: not dist-packages/foo/bar or /var/lib/packages/foo/bar.
-	# Not ${SRC}/ alone, so a relative packages/bsp/foo after a cd "${SRC}" is still seen.
-	declare hook_path_start='(^|[^A-Za-z0-9._/-]|\$\{?SRC\}?"?/)'
+	# Not ${SRC}/ alone, so a relative packages/bsp/foo or ./packages/bsp/foo after a cd "${SRC}" is still seen.
+	declare hook_path_start='((^|[^A-Za-z0-9._/-])(\./)?|\$\{?SRC\}?"?/)'
 	while read -r hook_match; do
 		hook_match="packages/${hook_match#*packages/}" # drop what matched hook_path_start
 		hook_path="${hook_match%/}"
