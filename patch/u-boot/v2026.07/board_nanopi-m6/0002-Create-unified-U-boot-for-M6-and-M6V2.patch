@@ -1,0 +1,250 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Muhammed Efe Cetin <efectn@protonmail.com>
+Date: Sat, 22 Aug 2026 21:04:17 +0200
+Subject: Create unified U-boot for M6 and M6V2
+
+---
+ arch/arm/mach-rockchip/rk3588/Kconfig                    |   7 +
+ board/friendlyelec/nanopi-m6-rk3588s/Kconfig             |  12 +
+ board/friendlyelec/nanopi-m6-rk3588s/Makefile            |   3 +
+ board/friendlyelec/nanopi-m6-rk3588s/nanopi-m6-rk3588s.c | 158 ++++++++++
+ include/configs/nanopi-m6-rk3588s.h                      |  12 +
+ 5 files changed, 192 insertions(+)
+
+diff --git a/arch/arm/mach-rockchip/rk3588/Kconfig b/arch/arm/mach-rockchip/rk3588/Kconfig
+index 111111111111..222222222222 100644
+--- a/arch/arm/mach-rockchip/rk3588/Kconfig
++++ b/arch/arm/mach-rockchip/rk3588/Kconfig
+@@ -174,6 +174,12 @@ config TARGET_NANOPI_R6S_RK3588S
+ 	  12-pin GPIO FPC connector, a fan connector, IR receiver as well
+ 	  as some buttons and LEDs.
+ 
++config TARGET_NANOPI_M6_RK3588S
++	bool "FriendlyElec NanoPi M6/M6V2 RK3588S boards"
++	help
++	  U-Boot image for FriendlyElec NanoPi M6 and M6V2 boards with
++	  SARADC board detection.
++
+ config TARGET_NOVA_RK3588
+ 	bool "Indiedroid Nova RK3588"
+ 	help
+@@ -425,6 +431,7 @@ source "board/friendlyelec/cm3588-nas-rk3588/Kconfig"
+ source "board/friendlyelec/nanopc-t6-rk3588/Kconfig"
+ source "board/friendlyelec/nanopi-r6c-rk3588s/Kconfig"
+ source "board/friendlyelec/nanopi-r6s-rk3588s/Kconfig"
++source "board/friendlyelec/nanopi-m6-rk3588s/Kconfig"
+ source "board/gameforce/ace-rk3588s/Kconfig"
+ source "board/hardkernel/odroid_m2/Kconfig"
+ source "board/indiedroid/nova/Kconfig"
+diff --git a/board/friendlyelec/nanopi-m6-rk3588s/Kconfig b/board/friendlyelec/nanopi-m6-rk3588s/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/friendlyelec/nanopi-m6-rk3588s/Kconfig
+@@ -0,0 +1,12 @@
++if TARGET_NANOPI_M6_RK3588S
++
++config SYS_BOARD
++	default "nanopi-m6-rk3588s"
++
++config SYS_VENDOR
++	default "friendlyelec"
++
++config SYS_CONFIG_NAME
++	default "nanopi-m6-rk3588s"
++
++endif
+diff --git a/board/friendlyelec/nanopi-m6-rk3588s/Makefile b/board/friendlyelec/nanopi-m6-rk3588s/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/friendlyelec/nanopi-m6-rk3588s/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0+
++
++obj-y += nanopi-m6-rk3588s.o
+diff --git a/board/friendlyelec/nanopi-m6-rk3588s/nanopi-m6-rk3588s.c b/board/friendlyelec/nanopi-m6-rk3588s/nanopi-m6-rk3588s.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/friendlyelec/nanopi-m6-rk3588s/nanopi-m6-rk3588s.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++#include <adc.h>
++#include <env.h>
++#include <env_internal.h>
++#include <fdt_support.h>
++#include <asm/arch-rockchip/bootrom.h>
++#include <asm/global_data.h>
++#include <asm/io.h>
++#include <linux/errno.h>
++#include <linux/kernel.h>
++
++DECLARE_GLOBAL_DATA_PTR; // Necessary for gd->fdt_blob access in spl_board_fixup_fdt()
++
++#define HW_ID_CHANNEL	5 // ADC channel used to detect the board model in NanoPi 6 series boards
++
++// RK3588 BootROM boot source ID for SPI flash
++#define RK3588_BROM_BOOTSOURCE_FSPI_M0	3
++enum board_type { BOARD_M6 };
++
++struct board_model {
++	unsigned int low;
++	unsigned int high;
++	const char *fdtfile;
++	const char *cmdline_arg;
++	enum board_type type;
++};
++
++// List of supported board models with their ADC voltage ranges, FDT file names, and kernel command line arguments.
++static const struct board_model board_models[] = {
++	{ 2704, 2932, "rockchip/rk3588s-nanopi-m6.dtb", "nanopi6_model=m6", BOARD_M6 },
++	{ 3184, 3444, "rockchip/rk3588s-nanopi-m6v2.dtb", "nanopi6_model=m6v2", BOARD_M6 },
++};
++
++static const struct board_model *cached_board_model;
++
++static const struct board_model *get_board_model(void)
++{
++	unsigned int val;
++	int i, ret;
++
++	if (cached_board_model)
++		return cached_board_model;
++
++	ret = adc_channel_single_shot("adc@fec10000", HW_ID_CHANNEL, &val);
++	if (ret)
++		return NULL;
++
++	for (i = 0; i < ARRAY_SIZE(board_models); i++) {
++		unsigned int min = board_models[i].low;
++		unsigned int max = board_models[i].high;
++
++		if (min <= val && val <= max) {
++			cached_board_model = &board_models[i];
++			return cached_board_model;
++		}
++	}
++
++	return NULL;
++}
++
++// Return the boot source ID from the RK3588 BootROM. This is used to determine if the board booted from SPI or eMMC/SD.
++static unsigned int bootrom_boot_source(void)
++{
++	return readl(BROM_BOOTSOURCE_ID_ADDR);
++}
++
++// Return true if the board bootes is NanoPi M6/M6V2, based on the detected board model.
++static bool is_m6(const struct board_model *model)
++{
++	return model && model->type == BOARD_M6;
++}
++
++enum env_location env_get_location(enum env_operation op, int prio)
++{
++	(void)op;
++	return prio == 0 ? ENVL_NOWHERE : ENVL_UNKNOWN;
++}
++
++// Return true if the board booted from SPI, based on the BootROM boot source ID.
++static bool booted_from_spi(void)
++{
++	return bootrom_boot_source() == RK3588_BROM_BOOTSOURCE_FSPI_M0;
++}
++
++// Return true if the board booted from M6 with SPI flash, based on the detected board model and BootROM boot source ID.
++static bool booted_from_m6_spi(const struct board_model *model)
++{
++	return is_m6(model) && booted_from_spi();
++}
++
++// Board-specific control-FDT fixups which must run before DM discovers it.
++// Otherwise, DM may probe the SPI controller and fail if the board booted from eMMC/SD.
++void spl_board_fixup_fdt(void)
++{
++	void *blob = (void *)gd->fdt_blob;
++	bool from_spi = booted_from_spi();
++
++	if (!blob)
++		return;
++
++	/* M6 FSPI-M0 shares pins with eMMC. */
++	do_fixup_by_path(blob, "/mmc@fe2e0000", "status",
++			 from_spi ? "disabled" : "okay",
++			 from_spi ? sizeof("disabled") : sizeof("okay"), 1);
++	do_fixup_by_path(blob, "/spi@fe2b0000", "status",
++			 from_spi ? "okay" : "disabled",
++			 from_spi ? sizeof("okay") : sizeof("disabled"), 1);
++}
++
++// Board-specific SPL initialization, called after DM is initialized.
++// Left-empty on purpose.
++void spl_board_init(void)
++{
++}
++
++// Set some board-specific environment variables based on the detected model and boot source.
++// Used to set kernel FDT file name, bootargs, and boot order for the board.
++int rk_board_late_init(void)
++{
++	const struct board_model *model = get_board_model();
++	const char *boot_targets;
++	const char *fdtfile;
++
++	boot_targets = "mmc1 nvme mmc0 scsi usb pxe dhcp spi";
++	env_set("boot_targets", boot_targets);
++
++	env_set("extraboardargs", model ? model->cmdline_arg : NULL);
++
++	// Set the FDT file name for the board model, if not detected use R6S.
++	fdtfile = model ? model->fdtfile : "rockchip/rk3588s-nanopi-m6.dtb";
++	env_set("fdtfile", fdtfile);
++
++	return 0;
++}
++
++// Choose the correct FIT configuration name based on the detected board model and boot source.
++// Used to choose U-Boot's FIT configuration when loading the image.
++int board_fit_config_name_match(const char *name)
++{
++	const struct board_model *model = get_board_model();
++	const char *fit_name;
++
++	if (!model)
++		return -EINVAL;
++
++	/* Keep SFC active in U-Boot proper when SPL loaded it from M6 FSPI-M0. */
++	if (booted_from_m6_spi(model)) {
++		fit_name = !strcmp(model->cmdline_arg, "nanopi6_model=m6v2") ?
++			"rockchip/rk3588s-nanopi-m6v2-spi.dtb" : "rockchip/rk3588s-nanopi-m6-spi.dtb";
++	} else {
++		fit_name = model->fdtfile;
++	}
++	if (!strcmp(name, fit_name))
++		return 0;
++
++	return -EINVAL;
++}
+diff --git a/include/configs/nanopi-m6-rk3588s.h b/include/configs/nanopi-m6-rk3588s.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/configs/nanopi-m6-rk3588s.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++
++#ifndef __NANOPI_M6_RK3588S_H
++#define __NANOPI_M6_RK3588S_H
++
++#define ROCKCHIP_DEVICE_SETTINGS \
++		"stdout=serial,vidconsole\0" \
++		"stderr=serial,vidconsole\0"
++
++#include <configs/rk3588_common.h>
++
++#endif /* __NANOPI_M6_RK3588S_H */
+-- 
+Armbian
+
