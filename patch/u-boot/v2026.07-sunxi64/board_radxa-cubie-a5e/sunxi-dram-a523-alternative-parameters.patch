@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guation <guation@163.com>
+Date: Mon, 14 Sep 2026 13:43:12 +0800
+Subject: sunxi: dram: a523: fall back to alternative DRAM parameters when
+ the memory check fails
+
+The DRAM timing parameters of the radxa-cubie-a5e defconfig are tuned
+for the DRAM variants the board is commonly shipped with. Boards fitted
+with other variants can fail the memory probe that mctl_calc_size() has
+been running since v2026.07: the DRAM initializes and a size is
+reported, but the probe fails, mctl_calc_size() returns 0 and the board
+halts ("### ERROR ### Please RESET the board ###").
+
+Provide an alternative DRAM parameter set behind a new switch
+(CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS), with the values
+(CONFIG_DRAM_SUNXI_TPR*_ALT, defaulting to 0x0 like the other TPR
+symbols) filled in by the board defconfig, and use it at runtime: when
+the built-in memory check fails, retrain the DRAM from scratch with the
+alternative set and re-run the check. The init sequence is factored
+into dram_init_with_para() and reused for both passes. Boards that pass
+the check with the default parameters never take the fallback and are
+unaffected; boards falling back pay one extra DRAM training cycle.
+
+Signed-off-by: Guation <guation@163.com>
+---
+ arch/arm/mach-sunxi/Kconfig            | 42 +++++++++++++++++++++++++++
+ arch/arm/mach-sunxi/dram_sun55i_a523.c | 53 ++++++++++++++++++++++++++++------
+ configs/radxa-cubie-a5e_defconfig      |  6 ++++
+ 3 files changed, 92 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index ceba96b61a5..5be69d10342 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -186,6 +186,48 @@ config DRAM_SUNXI_TPR14
+ 	help
+ 	  TPR14 value from vendor DRAM settings.
+ 
++config DRAM_SUNXI_TPR_ALT_PARAMETERS
++	bool "DRAM alternative TPR parameter set (memory check retry)"
++	depends on MACH_SUN55I_A523
++	help
++	  Enable the DRAM init fallback: sunxi_dram_init() retrains the DRAM
++	  from scratch with the alternative parameter set below and re-runs
++	  the built-in memory check when that check fails with the default
++	  parameters.
++
++config DRAM_SUNXI_TPR6_ALT
++	hex "DRAM TPR6 parameter (alternative set)"
++	depends on DRAM_SUNXI_TPR_ALT_PARAMETERS
++	default 0x0
++	help
++	  Alternative TPR6 value, used when
++	  CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS is enabled and the built-in
++	  memory check fails with the default parameters.
++
++config DRAM_SUNXI_TPR10_ALT
++	hex "DRAM TPR10 parameter (alternative set)"
++	depends on DRAM_SUNXI_TPR_ALT_PARAMETERS
++	default 0x0
++	help
++	  Alternative TPR10 value, used together with TPR6_ALT, TPR11_ALT
++	  and TPR12_ALT.
++
++config DRAM_SUNXI_TPR11_ALT
++	hex "DRAM TPR11 parameter (alternative set)"
++	depends on DRAM_SUNXI_TPR_ALT_PARAMETERS
++	default 0x0
++	help
++	  Alternative TPR11 value, used together with TPR6_ALT, TPR10_ALT
++	  and TPR12_ALT.
++
++config DRAM_SUNXI_TPR12_ALT
++	hex "DRAM TPR12 parameter (alternative set)"
++	depends on DRAM_SUNXI_TPR_ALT_PARAMETERS
++	default 0x0
++	help
++	  Alternative TPR12 value, used together with TPR6_ALT, TPR10_ALT
++	  and TPR11_ALT.
++
+ choice
+ 	prompt "DRAM PHY pin mapping selection"
+ 	default DRAM_SUNXI_PHY_ADDR_MAP_0
+diff --git a/arch/arm/mach-sunxi/dram_sun55i_a523.c b/arch/arm/mach-sunxi/dram_sun55i_a523.c
+index 1ffb62863e2..0c6b4b73f2f 100644
+--- a/arch/arm/mach-sunxi/dram_sun55i_a523.c
++++ b/arch/arm/mach-sunxi/dram_sun55i_a523.c
+@@ -1468,13 +1468,13 @@ static void init_something(void)
+ 	writel(7, 0x07102008);
+ }
+ 
+-unsigned long sunxi_dram_init(void)
++static unsigned long dram_init_with_para(const struct dram_para *para,
++					 u32 tpr11, u32 tpr12)
+ {
+ 	struct dram_config config;
+-	unsigned long size;
+ 
+ 	config.clk = 360;
+-	switch (para.type) {
++	switch (para->type) {
+ 	case SUNXI_DRAM_TYPE_DDR3:
+ 		config.odt_en = 0x90909090;
+ 		config.tpr11 = 0x8f919190;
+@@ -1494,18 +1494,53 @@ unsigned long sunxi_dram_init(void)
+ 	setbits_le32(0x03000160, BIT(8));
+ 	clrbits_le32(0x03000168, 0x3f);
+ 
+-	mctl_auto_detect_rank_width(&para, &config);
+-	mctl_auto_detect_dram_size(&para, &config);
++	mctl_auto_detect_rank_width(para, &config);
++	mctl_auto_detect_dram_size(para, &config);
+ 
+ 	config.clk = CONFIG_DRAM_CLK;
+ 	config.odt_en = CONFIG_DRAM_SUNXI_ODT_EN;
+-	config.tpr11 = CONFIG_DRAM_SUNXI_TPR11;
+-	config.tpr12 = CONFIG_DRAM_SUNXI_TPR12;
++	config.tpr11 = tpr11;
++	config.tpr12 = tpr12;
+ 	config.tpr14 = CONFIG_DRAM_SUNXI_TPR14;
+ 
+-	mctl_core_init(&para, &config);
++	mctl_core_init(para, &config);
++
++	return mctl_calc_size(&config);
++}
++
++unsigned long sunxi_dram_init(void)
++{
++	unsigned long size;
++#if IS_ENABLED(CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS)
++	struct dram_para para_alt;
++#endif
+ 
+-	size = mctl_calc_size(&config);
++	size = dram_init_with_para(&para, CONFIG_DRAM_SUNXI_TPR11,
++				   CONFIG_DRAM_SUNXI_TPR12);
++
++#if IS_ENABLED(CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS)
++	if (size == 0) {
++		/*
++		 * The memory probe built into mctl_calc_size() failed with
++		 * the default parameters. The defconfig can provide an
++		 * alternative set of PHY timings
++		 * (CONFIG_DRAM_SUNXI_TPR*_ALT) for boards whose DRAM
++		 * variants need them; retrain the DRAM with that set and
++		 * re-run the probe.
++		 */
++		printf("DRAM memory check failed, retrying with alternative parameters\n");
++
++		para_alt = para;
++		para_alt.tpr6 = CONFIG_DRAM_SUNXI_TPR6_ALT;
++		para_alt.tpr10 = CONFIG_DRAM_SUNXI_TPR10_ALT;
++
++		size = dram_init_with_para(&para_alt,
++					   CONFIG_DRAM_SUNXI_TPR11_ALT,
++					   CONFIG_DRAM_SUNXI_TPR12_ALT);
++		if (size == 0)
++			panic("DRAM unstable with both parameter sets\n");
++	}
++#endif
+ 
+ 	sunxi_nsi_init();
+ 	init_something();
+diff --git a/configs/radxa-cubie-a5e_defconfig b/configs/radxa-cubie-a5e_defconfig
+index 52a23615e60..674d349f184 100644
+--- a/configs/radxa-cubie-a5e_defconfig
++++ b/configs/radxa-cubie-a5e_defconfig
+@@ -12,6 +12,12 @@ CONFIG_DRAM_SUNXI_TPR6=0x38000000
+ CONFIG_DRAM_SUNXI_TPR10=0x802f3333
+ CONFIG_DRAM_SUNXI_TPR11=0xc7c5c4c2
+ CONFIG_DRAM_SUNXI_TPR12=0x3533302f
++# Alternative parameters, used when the built-in DRAM memory check fails
++CONFIG_DRAM_SUNXI_TPR_ALT_PARAMETERS=y
++CONFIG_DRAM_SUNXI_TPR6_ALT=0x3a000000
++CONFIG_DRAM_SUNXI_TPR10_ALT=0x882f3333
++CONFIG_DRAM_SUNXI_TPR11_ALT=0xe6e6e2e3
++CONFIG_DRAM_SUNXI_TPR12_ALT=0x38383031
+ CONFIG_MACH_SUN55I_A523=y
+ CONFIG_MMC_SUNXI_SLOT_EXTRA=2
+ CONFIG_R_I2C_ENABLE=y
+-- 
+Armbian
