@@ -1,0 +1,90 @@
+diff --git a/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-video-engine.yaml b/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-video-engine.yaml
+index 01f2afa02..05ecc664e 100644
+--- a/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-video-engine.yaml
++++ b/Documentation/devicetree/bindings/media/allwinner,sun4i-a10-video-engine.yaml
+@@ -24,6 +24,7 @@ properties:
+       - allwinner,sun50i-a64-video-engine
+       - allwinner,sun50i-h5-video-engine
+       - allwinner,sun50i-h6-video-engine
++      - allwinner,sun55i-a523-video-engine
+ 
+   reg:
+     maxItems: 1
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 77d73c0d3..abf24d6a3 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -660,6 +660,22 @@ static const struct cedrus_variant sun50i_h616_cedrus_variant = {
+ 	.mod_rate	= 600000000,
+ };
+ 
++/*
++ * A523 (sun55iw3) shares the H264/H265/MPEG2 register layout with the
++ * H6/D1 family; the per-frame register programming matches cedrus 1:1
++ * (see RE notes). VE module clock parent runs at 432 MHz like the D1.
++ * Start minimal: 8-bit H264/H265/MPEG2 only. VP8 and 10-bit HEVC not
++ * yet validated on this SoC.
++ */
++static const struct cedrus_variant sun55i_a523_cedrus_variant = {
++	.capabilities	= CEDRUS_CAPABILITY_UNTILED |
++			  CEDRUS_CAPABILITY_MPEG2_DEC |
++			  CEDRUS_CAPABILITY_H264_DEC |
++			  CEDRUS_CAPABILITY_H265_DEC,
++	.mod_rate	= 432000000,
++	.quirk_no_sram	= true,
++};
++
+ static const struct of_device_id cedrus_dt_match[] = {
+ 	{
+ 		.compatible = "allwinner,sun4i-a10-video-engine",
+@@ -709,6 +725,10 @@ static const struct of_device_id cedrus_dt_match[] = {
+ 		.compatible = "allwinner,sun50i-h616-video-engine",
+ 		.data = &sun50i_h6_cedrus_variant,
+ 	},
++	{
++		.compatible = "allwinner,sun55i-a523-video-engine",
++		.data = &sun55i_a523_cedrus_variant,
++	},
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, cedrus_dt_match);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 38f28f092..d2e038407 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -175,6 +175,13 @@ struct cedrus_dec_ops {
+ struct cedrus_variant {
+ 	unsigned int	capabilities;
+ 	unsigned int	mod_rate;
++	/*
++	 * Newer SoCs (e.g. A523/sun55iw3) have no dedicated VE SRAM region to
++	 * remap via the system-control block; the VE does physical DMA from
++	 * the CMA pool with the IOMMU in bypass. Skip sunxi_sram_claim() for
++	 * those, which would otherwise fail with -ENOENT (no allwinner,sram).
++	 */
++	bool		quirk_no_sram;
+ };
+ 
+ struct cedrus_dev {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index bb9bb6771..eb28cde49 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -289,11 +289,13 @@ int cedrus_hw_probe(struct cedrus_dev *dev)
+ 		return ret;
+ 	}
+ 
+-	ret = sunxi_sram_claim(dev->dev);
+-	if (ret) {
+-		dev_err(dev->dev, "Failed to claim SRAM\n");
++	if (!variant->quirk_no_sram) {
++		ret = sunxi_sram_claim(dev->dev);
++		if (ret) {
++			dev_err(dev->dev, "Failed to claim SRAM\n");
+ 
+-		goto err_mem;
++			goto err_mem;
++		}
+ 	}
+ 
+ 	dev->ahb_clk = devm_clk_get(dev->dev, "ahb");
