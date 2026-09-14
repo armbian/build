@@ -1,12 +1,15 @@
 # Rockchip RK3566 quad-core ELTAY RM66 compute module
 #
 # Kernel branches:
-#   current — mainline; the framework auto-tracks the newest 6.18.x tag.
+#   current — mainline desktop baseline; auto-tracks the newest 6.18.x tag.
+#             NPU and the camera Media stack are outside this branch's scope.
 #   vendor  — Rockchip BSP 6.1 from armbian/linux-rockchip, tracking the head
 #             of branch rk-6.1-rkr5.1 (no commit pin). Selected for the camera
 #             (CIF/ISP) and NPU (RKNPU) stack; the BSP DT under
 #             patch/kernel/rk35xx-vendor-6.1/dt is generic only: camera/CSI/ISP
 #             nodes are added after the CAM1 carrier wiring is validated.
+# Both branches are hardware-tested on RM66 + BB CM4. Vendor 6.1.115 is
+# the NPU/Media reference; retain its always_on workaround in working builds.
 BOARD_NAME="ELTAY RM66"
 BOARD_VENDOR="elron"
 BOARDFAMILY="rk35xx"
@@ -24,7 +27,7 @@ BOOT_SUPPORT_SPI="no"
 function post_family_config__eltay_rm66_uboot() {
 	# Mainline U-Boot for both kernel branches; one generic RM66 DT in the FIT.
 	# The rk35xx family defaults to the Radxa vendor U-Boot; this overrides it.
-	display_alert "$BOARD" "EXPERIMENTAL: generic DT default; carrier wiring requires validation" "wrn"
+	display_alert "$BOARD" "Tested on ELTAY BB CM4; generic DT default, other carriers require validation" "info"
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2026.01"
 	declare -g BOOTPATCHDIR="v2026.01"
@@ -43,7 +46,7 @@ function post_family_config_branch_vendor__eltay_rm66_kernel() {
 	declare -g KERNELBRANCH="branch:rk-6.1-rkr5.1"
 	declare -g LINUXFAMILY="rk35xx"
 	declare -g LINUXCONFIG="linux-rk35xx-vendor"
-	display_alert "$BOARD" "EXPERIMENTAL vendor BSP 6.1: camera/NPU DT nodes are not enabled yet" "wrn"
+	display_alert "$BOARD" "Vendor NPU/Media reference: NPU enabled; camera DT integration pending; PM domains always_on retained" "info"
 }
 
 function pre_install_kernel_debs__eltay_rm66_vendor_bootargs() {
