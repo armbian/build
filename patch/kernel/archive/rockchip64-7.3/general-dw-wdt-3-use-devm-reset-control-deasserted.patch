@@ -1,0 +1,82 @@
+From 1dad1c601a85065930e180883a0e7171d501f94f Mon Sep 17 00:00:00 2001
+From: Artem Shimko <a.shimko.dev@gmail.com>
+Date: Fri, 20 Mar 2026 16:56:20 +0300
+Subject: [PATCH 3/8] watchdog: dw_wdt: Use
+ devm_reset_control_get_optional_shared_deasserted
+
+The driver currently manually manages reset control by calling
+reset_control_deassert() during probe and reset_control_assert() in
+error paths and remove. This approach is error-prone and requires
+explicit cleanup in multiple places.
+
+Replace devm_reset_control_get_optional_shared() with
+devm_reset_control_get_optional_shared_deasserted() which automatically
+deasserts the reset line on acquisition and ensures it will be asserted
+again when the device is removed. This eliminates the need for manual
+reset control in probe error paths, remove, and allows simplifying the
+code by removing out_assert_rst label and related assertions. Use
+dev_err_probe() for consistent error reporting.
+
+Signed-off-by: Artem Shimko <a.shimko.dev@gmail.com>
+Link: https://lore.kernel.org/r/20260320135624.223863-4-a.shimko.dev@gmail.com
+---
+ drivers/watchdog/dw_wdt.c | 17 ++++-------------
+ 1 file changed, 4 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/watchdog/dw_wdt.c b/drivers/watchdog/dw_wdt.c
+index 6dc5824795e4..2cffe337b4ea 100644
+--- a/drivers/watchdog/dw_wdt.c
++++ b/drivers/watchdog/dw_wdt.c
+@@ -588,13 +588,9 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
+ 	if (IS_ERR(dw_wdt->pclk))
+ 		return PTR_ERR(dw_wdt->pclk);
+ 
+-	dw_wdt->rst = devm_reset_control_get_optional_shared(dev, NULL);
++	dw_wdt->rst = devm_reset_control_get_optional_shared_deasserted(dev, NULL);
+ 	if (IS_ERR(dw_wdt->rst))
+-		return PTR_ERR(dw_wdt->rst);
+-
+-	ret = reset_control_deassert(dw_wdt->rst);
+-	if (ret)
+-		return ret;
++		return dev_err_probe(dev, PTR_ERR(dw_wdt->rst), "failed to acquire reset\n");
+ 
+ 	/* Enable normal reset without pre-timeout by default. */
+ 	dw_wdt_update_mode(dw_wdt, DW_WDT_RMOD_RESET);
+@@ -623,7 +619,7 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
+ 
+ 	ret = dw_wdt_init_timeouts(dw_wdt, dev);
+ 	if (ret)
+-		goto out_assert_rst;
++		return ret;
+ 
+ 	wdd = &dw_wdt->wdd;
+ 	wdd->ops = &dw_wdt_ops;
+@@ -657,15 +653,11 @@ static int dw_wdt_drv_probe(struct platform_device *pdev)
+ 
+ 	ret = watchdog_register_device(wdd);
+ 	if (ret)
+-		goto out_assert_rst;
++		return ret;
+ 
+ 	dw_wdt_dbgfs_init(dw_wdt);
+ 
+ 	return 0;
+-
+-out_assert_rst:
+-	reset_control_assert(dw_wdt->rst);
+-	return ret;
+ }
+ 
+ static void dw_wdt_drv_remove(struct platform_device *pdev)
+@@ -675,7 +667,6 @@ static void dw_wdt_drv_remove(struct platform_device *pdev)
+ 	dw_wdt_dbgfs_clear(dw_wdt);
+ 
+ 	watchdog_unregister_device(&dw_wdt->wdd);
+-	reset_control_assert(dw_wdt->rst);
+ }
+ 
+ #ifdef CONFIG_OF
+-- 
+2.43.0
+
