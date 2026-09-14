@@ -93,8 +93,21 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		[[ -d "${SRC}/${hook_path}" ]] || hook_path="${hook_path%/*}" # a file, or a name cut short by a variable
 		[[ "${hook_path}" == packages/*/* ]] || continue              # never all of packages/bsp
 		hook_dirs["${SRC}/${hook_path}"]=1
-	done < <(grep -oE 'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
-	dirs_to_hash+=("${!hook_dirs[@]}")
+	done < <(LC_ALL=C grep -oE 'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
+
+	# Skip a dir that is, or is inside, one already listed (packages/bsp/${BOARD}/rtl_bt, jethub/jethubj100
+	# under jethub): its files would be hashed twice, and the version would depend on how hooks spell paths.
+	# Sorted, so a parent is always listed before its children.
+	declare -a hook_dirs_sorted=()
+	declare hook_dir listed_dir
+	mapfile -t hook_dirs_sorted < <(printf '%s\n' "${!hook_dirs[@]}" | LC_ALL=C sort)
+	for hook_dir in "${hook_dirs_sorted[@]}"; do
+		[[ -n "${hook_dir}" ]] || continue # printf prints an empty line when there are no hook dirs
+		for listed_dir in "${dirs_to_hash[@]}"; do
+			[[ "${hook_dir}" == "${listed_dir}" || "${hook_dir}" == "${listed_dir}/"* ]] && continue 2
+		done
+		dirs_to_hash+=("${hook_dir}")
+	done
 
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
