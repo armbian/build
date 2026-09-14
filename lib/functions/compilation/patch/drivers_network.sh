@@ -139,7 +139,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:84c4bfdefd54d8d2d56706ae01d65c2a68728ed9' # Commit date: Sep 2nd 2026 (please update when updating commit ref)
+		local rtl8192euver='commit:e84384b5c7b2931a10c50f50c8426da4e24e1934' # Commit date: Sep 14th 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -163,9 +163,6 @@ driver_rtl8192EU() {
 		echo "obj-\$(CONFIG_RTL8192EU) += rtl8192eu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# cfg80211 set_monitor_channel gained a net_device arg (6.13 mainline; backported to 6.12.101)
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-set-monitor-channel-6.12.101.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8192EU chipsets" "info"
