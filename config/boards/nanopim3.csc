@@ -8,7 +8,7 @@
 BOARD_NAME="NanoPi M3 / NanoPC-T3"
 BOARDFAMILY="s5p6818"
 BOARD_VENDOR="friendlyelec"
-BOARD_MAINTAINER="igorpecovnik"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopim3_defconfig"
 BOOT_FDT_FILE="nexell/s5p6818-nanopi-m3.dtb"
 MODULES_CURRENT="g_serial"

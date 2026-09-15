@@ -2,7 +2,7 @@
 BOARD_NAME="LubanCat 3 v2"
 BOARD_VENDOR="embedfire"
 BOARDFAMILY="rk35xx"
-BOARD_MAINTAINER="hqnicolas"
+BOARD_MAINTAINER=""
 INTRODUCED="2026"
 BOOTCONFIG="lubancat-3-v2-rk3576_defconfig"
 BOOT_SOC="rk3576"
