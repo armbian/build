@@ -18,19 +18,16 @@ function compile_firmware() {
 	declare fw_dir="armbian-firmware${FULL}"
 	mkdir -p "${fw_temp_dir}/${fw_dir}/lib/firmware"
 
-	local ARMBIAN_FIRMWARE_GIT_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}"
-	local ARMBIAN_FIRMWARE_GIT_BRANCH="${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
-
 	# Fetch Armbian firmware from git.
 	declare fetched_revision
-	do_checkout="no" fetch_from_repo "${ARMBIAN_FIRMWARE_GIT_SOURCE}" "armbian-firmware-git" "branch:${ARMBIAN_FIRMWARE_GIT_BRANCH}"
+	do_checkout="no" fetch_from_repo "${ARMBIAN_FIRMWARE_SOURCE}" "armbian-firmware-git" "${ARMBIAN_FIRMWARE_BRANCH}"
 	declare -r armbian_firmware_git_sha1="${fetched_revision}"
 
 	declare extra_conflicts_comma=""
 	if [[ -n $FULL ]]; then
 		# Fetch kernel firmware from git. This is large, but we don't have two copies of it anymore. So more manageable.
 		declare fetched_revision
-		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:main"
+		fetch_from_repo "${MAINLINE_FIRMWARE_SOURCE}" "linux-firmware-git" "${MAINLINE_FIRMWARE_BRANCH}"
 		declare -r mainline_firmware_git_sha1="${fetched_revision}"
 
 		# Usage of make install ensures proper symlink creation
