@@ -1,0 +1,554 @@
+From c9b9ecddb12855c3a32c2993183e436aa4b03fc2 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Tue, 15 Sep 2026 23:05:08 +0200
+Subject: [PATCH 1/4] dt-bindings: thermal: rockchip: Add RK3528 compatible
+
+The RK3528 TSADC has a single channel and needs the GRF to enable the
+sensor's analog part, like RK3568 does. Its calibration trim is stored
+in OTP and described per sensor, like RK3576.
+
+It also gates the sensor's analog part with a clock of its own, so
+describe a third clock for it.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Assisted-by: Claude:claude-opus-5
+---
+ .../bindings/thermal/rockchip-thermal.yaml    | 32 ++++++++++++++++---
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml b/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
+index f623f1fd8dc57..704ac08f6fd4e 100644
+--- a/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
++++ b/Documentation/devicetree/bindings/thermal/rockchip-thermal.yaml
+@@ -21,6 +21,7 @@ properties:
+       - rockchip,rk3328-tsadc
+       - rockchip,rk3368-tsadc
+       - rockchip,rk3399-tsadc
++      - rockchip,rk3528-tsadc
+       - rockchip,rk3568-tsadc
+       - rockchip,rk3576-tsadc
+       - rockchip,rk3588-tsadc
+@@ -34,12 +35,11 @@ properties:
+ 
+   clocks:
+     minItems: 2
+-    maxItems: 2
++    maxItems: 3
+ 
+   clock-names:
+-    items:
+-      - const: tsadc
+-      - const: apb_pclk
++    minItems: 2
++    maxItems: 3
+ 
+   nvmem-cells:
+     items:
+@@ -120,6 +120,28 @@ required:
+   - resets
+ 
+ allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: rockchip,rk3528-tsadc
++    then:
++      properties:
++        clocks:
++          minItems: 3
++        clock-names:
++          items:
++            - const: tsadc
++            - const: tsadc_tsen
++            - const: apb_pclk
++    else:
++      properties:
++        clocks:
++          maxItems: 2
++        clock-names:
++          items:
++            - const: tsadc
++            - const: apb_pclk
+   - if:
+       properties:
+         compatible:
+@@ -128,6 +150,7 @@ allOf:
+               - rockchip,px30-tsadc
+               - rockchip,rk3366-tsadc
+               - rockchip,rk3399-tsadc
++              - rockchip,rk3528-tsadc
+               - rockchip,rk3568-tsadc
+     then:
+       required:
+@@ -151,6 +174,7 @@ allOf:
+           compatible:
+             contains:
+               enum:
++                - rockchip,rk3528-tsadc
+                 - rockchip,rk3568-tsadc
+                 - rockchip,rk3576-tsadc
+     then:
+-- 
+2.55.0
+
+
+From a04e8ba8ef8d101d976b8da29249fff928fd164a Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Tue, 15 Sep 2026 23:05:09 +0200
+Subject: [PATCH 2/4] thermal/drivers/rockchip: Support RK3528 SoC in the
+ thermal driver
+
+Add the conversion table, chip data and init sequence for the single
+TSADC channel on RK3528.
+
+The controller is the same generation as the one on RK3576, so the
+register access, alarm and tshut helpers are reused as-is. Two details
+differ: the sensor runs in Q mode, so the code is inverted against
+TSADCV3_Q_MAX_VAL before the OTP trim is applied, and the analog part
+is enabled through the VPU GRF rather than a dedicated register.
+
+RK3528 also gates the analog part with a clock of its own. Claim it as
+an optional clock, as leaving it disabled does not stop the sensor from
+converting, it just biases every reading low. On a Radxa E24C the
+readings come out about 9 degrees below what the vendor kernel, which
+enables all of the tsadc clocks, reports for the same load.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Assisted-by: Claude:claude-opus-5
+---
+ drivers/thermal/rockchip_thermal.c | 149 +++++++++++++++++++++++++++++
+ 1 file changed, 149 insertions(+)
+
+diff --git a/drivers/thermal/rockchip_thermal.c b/drivers/thermal/rockchip_thermal.c
+index 26685505bb42f..df80995e8b40d 100644
+--- a/drivers/thermal/rockchip_thermal.c
++++ b/drivers/thermal/rockchip_thermal.c
+@@ -146,6 +146,7 @@ struct rockchip_thermal_sensor {
+  * @sensors: array of thermal sensors
+  * @clk: the controller clock is divided by the exteral 24MHz
+  * @pclk: the advanced peripherals bus clock
++ * @tsen_clk: the optional clock of the sensor's analog part
+  * @grf: the general register file will be used to do static set by software
+  * @regs: the base address of tsadc controller
+  * @trim_base: major component of sensor trim value, in Celsius
+@@ -165,6 +166,7 @@ struct rockchip_thermal_data {
+ 
+ 	struct clk *clk;
+ 	struct clk *pclk;
++	struct clk *tsen_clk;
+ 
+ 	struct regmap *grf;
+ 	void __iomem *regs;
+@@ -210,6 +212,7 @@ struct rockchip_thermal_data {
+ #define TSADCV2_AUTO_PERIOD_HT			0x6c
+ #define TSADCV3_AUTO_PERIOD			0x154
+ #define TSADCV3_AUTO_PERIOD_HT			0x158
++#define TSADCV9_Q_MAX				0x210
+ 
+ #define TSADCV2_AUTO_EN				BIT(0)
+ #define TSADCV2_AUTO_EN_MASK			BIT(16)
+@@ -220,6 +223,7 @@ struct rockchip_thermal_data {
+ #define TSADCV2_AUTO_TSHUT_POLARITY_MASK	BIT(24)
+ 
+ #define TSADCV3_AUTO_Q_SEL_EN			BIT(1)
++#define TSADCV3_AUTO_Q_SEL_EN_MASK		BIT(17)
+ 
+ #define TSADCV2_INT_SRC_EN(chn)			BIT(chn)
+ #define TSADCV2_INT_SRC_EN_MASK(chn)		BIT(16 + (chn))
+@@ -233,6 +237,7 @@ struct rockchip_thermal_data {
+ #define TSADCV2_DATA_MASK			0xfff
+ #define TSADCV3_DATA_MASK			0x3ff
+ #define TSADCV4_DATA_MASK			0x1ff
++#define TSADCV5_DATA_MASK			0x7ff
+ 
+ #define TSADCV2_HIGHT_INT_DEBOUNCE_COUNT	4
+ #define TSADCV2_HIGHT_TSHUT_DEBOUNCE_COUNT	4
+@@ -245,6 +250,10 @@ struct rockchip_thermal_data {
+ #define TSADCV5_AUTO_PERIOD_HT_TIME		1622 /* 2.5ms */
+ #define TSADCV6_AUTO_PERIOD_TIME		5000 /* 2.5ms */
+ #define TSADCV6_AUTO_PERIOD_HT_TIME		5000 /* 2.5ms */
++#define TSADCV7_AUTO_PERIOD_TIME		3000 /* 2.5ms */
++#define TSADCV7_AUTO_PERIOD_HT_TIME		3000 /* 2.5ms */
++
++#define TSADCV3_Q_MAX_VAL			0x7ff /* 11bit 2047 */
+ 
+ #define TSADCV2_USER_INTER_PD_SOC		0x340 /* 13 clocks */
+ #define TSADCV5_USER_INTER_PD_SOC		0xfc0 /* 97us, at least 90us */
+@@ -255,6 +264,8 @@ struct rockchip_thermal_data {
+ 
+ #define PX30_GRF_SOC_CON2			0x0408
+ 
++#define RK3528_VPU_GRF_TSADC_CON		0x0030
++
+ #define RK3568_GRF_TSADC_CON			0x0600
+ #define RK3568_GRF_TSADC_ANA_REG0		(0x10001 << 0)
+ #define RK3568_GRF_TSADC_ANA_REG1		(0x10001 << 1)
+@@ -275,6 +286,7 @@ struct rockchip_thermal_data {
+ #define GRF_CON_TSADC_CH_INV			(0x10001 << 1)
+ 
+ 
++#define RK_MIN_TEMP				(-60000)
+ #define RK_MAX_TEMP				(180000)
+ 
+ /**
+@@ -526,6 +538,47 @@ static const struct tsadc_table rk3399_code_table[] = {
+ 	{TSADCV3_DATA_MASK, 125000},
+ };
+ 
++static const struct tsadc_table rk3528_code_table[] = {
++	{0, RK_MIN_TEMP},
++	{1386, RK_MIN_TEMP},
++	{1410, -40000},
++	{1419, -35000},
++	{1428, -30000},
++	{1436, -25000},
++	{1445, -20000},
++	{1454, -15000},
++	{1463, -10000},
++	{1471, -5000},
++	{1480, 0},
++	{1489, 5000},
++	{1498, 10000},
++	{1506, 15000},
++	{1515, 20000},
++	{1524, 25000},
++	{1533, 30000},
++	{1541, 35000},
++	{1550, 40000},
++	{1558, 45000},
++	{1567, 50000},
++	{1575, 55000},
++	{1584, 60000},
++	{1593, 65000},
++	{1602, 70000},
++	{1610, 75000},
++	{1619, 80000},
++	{1628, 85000},
++	{1637, 90000},
++	{1646, 95000},
++	{1654, 100000},
++	{1663, 105000},
++	{1672, 110000},
++	{1680, 115000},
++	{1689, 120000},
++	{1697, 125000},
++	{1790, RK_MAX_TEMP},
++	{TSADCV5_DATA_MASK, RK_MAX_TEMP},
++};
++
+ static const struct tsadc_table rk3568_code_table[] = {
+ 	{0, -40000},
+ 	{1584, -40000},
+@@ -863,6 +916,47 @@ static void rk_tsadcv8_initialize(struct regmap *grf, void __iomem *regs,
+ 			       regs + TSADCV2_AUTO_CON);
+ }
+ 
++static void rk_tsadcv11_initialize(struct regmap *grf, void __iomem *regs,
++				   enum tshut_polarity tshut_polarity)
++{
++	writel_relaxed(TSADCV7_AUTO_PERIOD_TIME, regs + TSADCV3_AUTO_PERIOD);
++	writel_relaxed(TSADCV7_AUTO_PERIOD_HT_TIME,
++		       regs + TSADCV3_AUTO_PERIOD_HT);
++	writel_relaxed(TSADCV2_HIGHT_INT_DEBOUNCE_COUNT,
++		       regs + TSADCV3_HIGHT_INT_DEBOUNCE);
++	writel_relaxed(TSADCV2_HIGHT_TSHUT_DEBOUNCE_COUNT,
++		       regs + TSADCV3_HIGHT_TSHUT_DEBOUNCE);
++	writel_relaxed(TSADCV3_Q_MAX_VAL, regs + TSADCV9_Q_MAX);
++	writel_relaxed(TSADCV3_AUTO_Q_SEL_EN | TSADCV3_AUTO_Q_SEL_EN_MASK,
++		       regs + TSADCV2_AUTO_CON);
++
++	if (tshut_polarity == TSHUT_HIGH_ACTIVE)
++		writel_relaxed(TSADCV2_AUTO_TSHUT_POLARITY_HIGH |
++			       TSADCV2_AUTO_TSHUT_POLARITY_MASK,
++			       regs + TSADCV2_AUTO_CON);
++	else
++		writel_relaxed(TSADCV2_AUTO_TSHUT_POLARITY_MASK,
++			       regs + TSADCV2_AUTO_CON);
++
++	if (!IS_ERR(grf)) {
++		regmap_write(grf, RK3528_VPU_GRF_TSADC_CON,
++			     RK3568_GRF_TSADC_TSEN);
++		/*
++		 * The tsadc analog registers require a delay of no less than
++		 * 10us after the rising edge of tsadc_tsen_en, as on RK3568.
++		 */
++		udelay(15);
++		regmap_write(grf, RK3528_VPU_GRF_TSADC_CON,
++			     RK3568_GRF_TSADC_ANA_REG0);
++		regmap_write(grf, RK3528_VPU_GRF_TSADC_CON,
++			     RK3568_GRF_TSADC_ANA_REG1);
++		regmap_write(grf, RK3528_VPU_GRF_TSADC_CON,
++			     RK3568_GRF_TSADC_ANA_REG2);
++		/* And no less than 90us after the analog registers are set. */
++		usleep_range(100, 200);
++	}
++}
++
+ static void rk_tsadcv2_irq_ack(void __iomem *regs)
+ {
+ 	u32 val;
+@@ -1098,6 +1192,15 @@ static int rk_tsadcv2_get_trim_code(const struct chip_tsadc_table *table,
+ 	return code - base_code;
+ }
+ 
++static int rk_tsadcv3_get_trim_code(const struct chip_tsadc_table *table,
++				    int code, int trim_base, int trim_base_frac)
++{
++	int temp = trim_base * 1000 + trim_base_frac * 100;
++	u32 base_code = rk_tsadcv2_temp_to_code(table, temp);
++
++	return (TSADCV3_Q_MAX_VAL - code) - base_code;
++}
++
+ static const struct rockchip_tsadc_chip rk3308_tsadc_data = {
+ 	.chn_num = 2, /* 2 channels for tsadc */
+ 
+@@ -1302,6 +1405,31 @@ static const struct rockchip_tsadc_chip rk3399_tsadc_data = {
+ 	},
+ };
+ 
++static const struct rockchip_tsadc_chip rk3528_tsadc_data = {
++	/* cpu */
++	.chn_offset = 0,
++	.chn_num = 1, /* one channel for tsadc */
++	.grf_required = true,
++	.tshut_mode = TSHUT_MODE_GPIO, /* default TSHUT via GPIO give PMIC */
++	.tshut_polarity = TSHUT_LOW_ACTIVE, /* default TSHUT LOW ACTIVE */
++	.tshut_temp = 95000,
++	.initialize = rk_tsadcv11_initialize,
++	.irq_ack = rk_tsadcv4_irq_ack,
++	.control = rk_tsadcv4_control,
++	.get_temp = rk_tsadcv4_get_temp,
++	.set_alarm_temp = rk_tsadcv3_alarm_temp,
++	.set_tshut_temp = rk_tsadcv3_tshut_temp,
++	.set_tshut_mode = rk_tsadcv4_tshut_mode,
++	.get_trim_code = rk_tsadcv3_get_trim_code,
++	.trim_slope = 574,
++	.table = {
++		.id = rk3528_code_table,
++		.length = ARRAY_SIZE(rk3528_code_table),
++		.data_mask = TSADCV2_DATA_MASK,
++		.mode = ADC_INCREMENT,
++	},
++};
++
+ static const struct rockchip_tsadc_chip rk3568_tsadc_data = {
+ 	/* cpu, gpu */
+ 	.chn_offset = 0,
+@@ -1409,6 +1537,10 @@ static const struct of_device_id of_rockchip_thermal_match[] = {
+ 		.compatible = "rockchip,rk3399-tsadc",
+ 		.data = (void *)&rk3399_tsadc_data,
+ 	},
++	{
++		.compatible = "rockchip,rk3528-tsadc",
++		.data = (void *)&rk3528_tsadc_data,
++	},
+ 	{
+ 		.compatible = "rockchip,rk3568-tsadc",
+ 		.data = (void *)&rk3568_tsadc_data,
+@@ -1763,6 +1895,15 @@ static int rockchip_thermal_probe(struct platform_device *pdev)
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(thermal->pclk),
+ 				     "failed to get apb_pclk clock.\n");
+ 
++	/*
++	 * Some SoCs gate the sensor's analog part separately, and the readings
++	 * are off if it is left disabled.
++	 */
++	thermal->tsen_clk = devm_clk_get_optional_enabled(&pdev->dev, "tsadc_tsen");
++	if (IS_ERR(thermal->tsen_clk))
++		return dev_err_probe(&pdev->dev, PTR_ERR(thermal->tsen_clk),
++				     "failed to get tsadc_tsen clock.\n");
++
+ 	rockchip_thermal_reset_controller(thermal->reset);
+ 
+ 	error = rockchip_configure_from_dt(&pdev->dev, np, thermal);
+@@ -1843,6 +1984,7 @@ static int __maybe_unused rockchip_thermal_suspend(struct device *dev)
+ 
+ 	thermal->chip->control(thermal->regs, false);
+ 
++	clk_disable(thermal->tsen_clk);
+ 	clk_disable(thermal->pclk);
+ 	clk_disable(thermal->clk);
+ 
+@@ -1870,6 +2012,13 @@ static int __maybe_unused rockchip_thermal_resume(struct device *dev)
+ 		return error;
+ 	}
+ 
++	error = clk_enable(thermal->tsen_clk);
++	if (error) {
++		clk_disable(thermal->pclk);
++		clk_disable(thermal->clk);
++		return error;
++	}
++
+ 	rockchip_thermal_reset_controller(thermal->reset);
+ 
+ 	tsadc->initialize(thermal->grf, thermal->regs, thermal->tshut_polarity);
+-- 
+2.55.0
+
+
+From 07b0960121a772fc6b52965541db6b24991006cb Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Tue, 15 Sep 2026 23:05:09 +0200
+Subject: [PATCH 3/4] arm64: dts: rockchip: Add TSADC node and thermal zones
+ for RK3528
+
+The SoC has a single temperature sensor, whose calibration trim is
+already described as an OTP cell. Add the controller, one thermal zone
+for it, and mark the CPUs and the GPU as cooling devices so that the
+zone can throttle them.
+
+The passive trip points are the ones from the vendor kernel. The
+critical trip is kept below the hardware shutdown temperature, so an
+orderly shutdown is attempted before the hardware resets the SoC.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Assisted-by: Claude:claude-opus-5
+---
+ arch/arm64/boot/dts/rockchip/rk3528.dtsi | 80 ++++++++++++++++++++++++
+ 1 file changed, 80 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3528.dtsi b/arch/arm64/boot/dts/rockchip/rk3528.dtsi
+index 2c0c3c03972ae..72a3eb5b723f7 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3528.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3528.dtsi
+@@ -12,6 +12,7 @@
+ #include <dt-bindings/clock/rockchip,rk3528-cru.h>
+ #include <dt-bindings/power/rockchip,rk3528-power.h>
+ #include <dt-bindings/reset/rockchip,rk3528-cru.h>
++#include <dt-bindings/thermal/thermal.h>
+ 
+ / {
+ 	compatible = "rockchip,rk3528";
+@@ -56,6 +57,7 @@ cpu0: cpu@0 {
+ 			enable-method = "psci";
+ 			clocks = <&scmi_clk SCMI_CLK_CPU>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu1: cpu@1 {
+@@ -65,6 +67,7 @@ cpu1: cpu@1 {
+ 			enable-method = "psci";
+ 			clocks = <&scmi_clk SCMI_CLK_CPU>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu2: cpu@2 {
+@@ -74,6 +77,7 @@ cpu2: cpu@2 {
+ 			enable-method = "psci";
+ 			clocks = <&scmi_clk SCMI_CLK_CPU>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 
+ 		cpu3: cpu@3 {
+@@ -83,6 +87,7 @@ cpu3: cpu@3 {
+ 			enable-method = "psci";
+ 			clocks = <&scmi_clk SCMI_CLK_CPU>;
+ 			operating-points-v2 = <&cpu_opp_table>;
++			#cooling-cells = <2>;
+ 		};
+ 	};
+ 
+@@ -255,6 +260,52 @@ scmi_shmem: shmem@10f000 {
+ 		};
+ 	};
+ 
++	thermal_zones: thermal-zones {
++		soc_thermal: soc-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <1000>;
++
++			thermal-sensors = <&tsadc 0>;
++
++			trips {
++				soc_alert0: trip-point-0 {
++					temperature = <95000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
++				soc_alert1: trip-point-1 {
++					temperature = <110000>;
++					hysteresis = <2000>;
++					type = "passive";
++				};
++
++				soc_crit: soc-crit {
++					temperature = <115000>;
++					hysteresis = <2000>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&soc_alert1>;
++					cooling-device =
++						<&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++
++				map1 {
++					trip = <&soc_alert1>;
++					cooling-device =
++						<&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++	};
++
+ 	timer {
+ 		compatible = "arm,armv8-timer";
+ 		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
+@@ -708,6 +759,7 @@ gpu: gpu@ff700000 {
+ 					  "ppmmu1";
+ 			operating-points-v2 = <&gpu_opp_table>;
+ 			power-domains = <&power RK3528_PD_GPU>;
++			#cooling-cells = <2>;
+ 			resets = <&cru SRST_A_GPU>;
+ 			status = "disabled";
+ 		};
+@@ -1042,6 +1094,34 @@ wdt: watchdog@ffac0000 {
+ 			interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
++		tsadc: tsadc@ffad0000 {
++			compatible = "rockchip,rk3528-tsadc";
++			reg = <0x0 0xffad0000 0x0 0x400>;
++			assigned-clocks = <&cru CLK_TSADC_TSEN>, <&cru CLK_TSADC>;
++			assigned-clock-rates = <12000000>, <1200000>;
++			clocks = <&cru CLK_TSADC>, <&cru CLK_TSADC_TSEN>,
++				 <&cru PCLK_TSADC>;
++			clock-names = "tsadc", "tsadc_tsen", "apb_pclk";
++			interrupts = <GIC_SPI 139 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&power RK3528_PD_VPU>;
++			resets = <&cru SRST_P_TSADC>, <&cru SRST_TSADC>;
++			reset-names = "tsadc-apb", "tsadc";
++			rockchip,grf = <&vpu_grf>;
++			rockchip,hw-tshut-mode = <0>; /* tshut mode 0:CRU 1:GPIO */
++			rockchip,hw-tshut-polarity = <0>; /* tshut polarity 0:LOW 1:HIGH */
++			rockchip,hw-tshut-temp = <120000>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			#thermal-sensor-cells = <1>;
++			status = "disabled";
++
++			sensor@0 {
++				reg = <0>;
++				nvmem-cells = <&tsadc_trim>;
++				nvmem-cell-names = "trim";
++			};
++		};
++
+ 		saradc: adc@ffae0000 {
+ 			compatible = "rockchip,rk3528-saradc";
+ 			reg = <0x0 0xffae0000 0x0 0x10000>;
+-- 
+2.55.0
