@@ -14,7 +14,18 @@ function post_install_kernel_debs__install_yt6801_dkms_package() {
 
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 	api_url="https://api.github.com/repos/amazingfate/yt6801-dkms/releases/latest"
-	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	declare api_output
+	if ! api_output=$(curl -f --silent --show-error --location "${api_url}" 2>&1); then
+		display_alert "Failed to fetch the latest release from GitHub" "${api_output}" "error"
+		return 1
+	fi
+	latest_version=$(printf '%s' "${api_output}" | jq -r '.tag_name' 2> /dev/null || true)
+	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
+		# 60 requests/hour per IP unauthenticated; a busy runner hits that, and an
+		# unchecked null used to end up inside the download filename.
+		display_alert "GitHub API returned no release tag (rate limited?)" "${api_url}" "error"
+		return 1
+	fi
 	yt6801_dkms_url="https://github.com/amazingfate/yt6801-dkms/releases/download/${latest_version}/yt6801-dkms_${latest_version}_all.deb"
 	if [[ "${GITHUB_MIRROR}" == "ghproxy" ]]; then
 		ghproxy_header="https://ghfast.top/"
