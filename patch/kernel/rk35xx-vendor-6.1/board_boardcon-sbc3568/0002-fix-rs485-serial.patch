@@ -1,0 +1,203 @@
+diff --git a/drivers/tty/serial/8250/8250.h b/drivers/tty/serial/8250/8250.h
+index a1c9b0002..b3886ca27 100644
+--- a/drivers/tty/serial/8250/8250.h
++++ b/drivers/tty/serial/8250/8250.h
+@@ -185,7 +185,10 @@ static inline bool serial8250_set_THRI(struct uart_8250_port *up)
+ 		return false;
+ 	up->ier |= UART_IER_THRI;
+ #if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
+-	up->ier |= UART_IER_PTIME;
++//	up->ier |= UART_IER_PTIME;
++	/* Disable PTIME when it is rs485 mode*/
++	if (!up->em485)
++		up->ier |= UART_IER_PTIME;
+ #endif
+ 	serial_out(up, UART_IER, up->ier);
+ 	return true;
+@@ -197,7 +200,9 @@ static inline bool serial8250_clear_THRI(struct uart_8250_port *up)
+ 		return false;
+ 	up->ier &= ~UART_IER_THRI;
+ #if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
+-	up->ier &= ~UART_IER_PTIME;
++//	up->ier &= ~UART_IER_PTIME;
++	if (!up->em485)
++		up->ier &= ~UART_IER_PTIME;
+ #endif
+ 	serial_out(up, UART_IER, up->ier);
+ 	return true;
+diff --git a/drivers/tty/serial/8250/8250_dw.c b/drivers/tty/serial/8250/8250_dw.c
+index 88025c347..0ba4d0dfc 100644
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -599,6 +599,12 @@ static int dw8250_probe(struct platform_device *pdev)
+ 	p->set_ldisc	= dw8250_set_ldisc;
+ 	p->set_termios	= dw8250_set_termios;
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	p->rs485_config = serial8250_em485_config;
++	uart.rs485_start_tx = serial8250_em485_start_tx;
++	uart.rs485_stop_tx = serial8250_em485_stop_tx;
++#endif
++
+ 	p->membase = devm_ioremap(dev, regs->start, resource_size(regs));
+ 	if (!p->membase)
+ 		return -ENOMEM;
+diff --git a/drivers/tty/serial/8250/8250_port.c b/drivers/tty/serial/8250/8250_port.c
+index 47d601e0e..d35191e14 100644
+--- a/drivers/tty/serial/8250/8250_port.c
++++ b/drivers/tty/serial/8250/8250_port.c
+@@ -55,6 +55,13 @@
+ #define DEBUG_AUTOCONF(fmt...)	do { } while (0)
+ #endif
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++#if 0
++#define DEBUG_EM485(fmt...)	printk(fmt)
++#else
++#define DEBUG_EM485(fmt...)	do { } while (0)
++#endif
++#endif
+ /*
+  * Here we define the default xmit fifo size used for each type of UART.
+  */
+@@ -612,6 +619,11 @@ EXPORT_SYMBOL_GPL(serial8250_rpm_put);
+  */
+ static int serial8250_em485_init(struct uart_8250_port *p)
+ {
++	
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	DEBUG_EM485("%s ttyS%d\n", __func__, p->port.line);
++#endif
++
+ 	if (p->em485)
+ 		goto deassert_rts;
+ 
+@@ -1445,12 +1457,32 @@ void serial8250_em485_stop_tx(struct uart_8250_port *p)
+ {
+ 	unsigned char mcr = serial8250_in_MCR(p);
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	int value = 0;
++
++	if (p->port.rs485_de_gpio) {
++		if (p->port.rs485.flags & SER_RS485_RTS_AFTER_SEND)
++			value = 0;
++		else
++			value = 1;
++
++		gpiod_set_value(p->port.rs485_de_gpio, value);
++		DEBUG_EM485("%s ttyS%d gpio:%d\n", __func__, p->port.line, value);
++	} else {
++		if (p->port.rs485.flags & SER_RS485_RTS_AFTER_SEND)
++			mcr |= UART_MCR_RTS;
++		else
++			mcr &= ~UART_MCR_RTS;
++		serial8250_out_MCR(p, mcr);
++		DEBUG_EM485("%s ttyS%d mcr:%02x\n", __func__, p->port.line, mcr);
++	}
++#else
+ 	if (p->port.rs485.flags & SER_RS485_RTS_AFTER_SEND)
+ 		mcr |= UART_MCR_RTS;
+ 	else
+ 		mcr &= ~UART_MCR_RTS;
+ 	serial8250_out_MCR(p, mcr);
+-
++#endif
+ 	/*
+ 	 * Empty the RX FIFO, we are not interested in anything
+ 	 * received during the half-duplex transmission.
+@@ -1494,6 +1526,10 @@ static void __stop_tx_rs485(struct uart_8250_port *p, u64 stop_delay)
+ {
+ 	struct uart_8250_em485 *em485 = p->em485;
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	DEBUG_EM485("%s ttyS%d\n", __func__, p->port.line);
++#endif
++
+ 	stop_delay += (u64)p->port.rs485.delay_rts_after_send * NSEC_PER_MSEC;
+ 
+ 	/*
+@@ -1531,6 +1567,9 @@ static inline void __stop_tx(struct uart_8250_port *p)
+ 		 * for emptying of the shift register.
+ 		 */
+ 		if (!(lsr & UART_LSR_TEMT)) {
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++			stop_delay = p->port.frame_time + 10000;
++#else
+ 			if (!(p->capabilities & UART_CAP_NOTEMT))
+ 				return;
+ 			/*
+@@ -1541,6 +1580,7 @@ static inline void __stop_tx(struct uart_8250_port *p)
+ 			 * Roughly estimate 1 extra bit here with / 7.
+ 			 */
+ 			stop_delay = p->port.frame_time + DIV_ROUND_UP(p->port.frame_time, 7);
++#endif
+ 		}
+ 
+ 		__stop_tx_rs485(p, stop_delay);
+@@ -1611,14 +1651,33 @@ void serial8250_em485_start_tx(struct uart_8250_port *up)
+ {
+ 	unsigned char mcr = serial8250_in_MCR(up);
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	int value = 0;
++#endif
++
+ 	if (!(up->port.rs485.flags & SER_RS485_RX_DURING_TX))
+ 		serial8250_stop_rx(&up->port);
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	if (up->port.rs485_de_gpio) {
++		if (up->port.rs485.flags & SER_RS485_RTS_ON_SEND)
++			value = 0;
++		else
++			value = 1;
++		gpiod_set_value(up->port.rs485_de_gpio, value);
++		DEBUG_EM485("%s ttyS%d gpio:%d\n", __func__, up->port.line, value);
++		return;
++	}
++#endif
++
+ 	if (up->port.rs485.flags & SER_RS485_RTS_ON_SEND)
+ 		mcr |= UART_MCR_RTS;
+ 	else
+ 		mcr &= ~UART_MCR_RTS;
+ 	serial8250_out_MCR(up, mcr);
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	DEBUG_EM485("%s ttyS%d mcr:%02x\n", __func__, up->port.line, mcr);
++#endif
+ }
+ EXPORT_SYMBOL_GPL(serial8250_em485_start_tx);
+ 
+diff --git a/drivers/tty/serial/serial_core.c b/drivers/tty/serial/serial_core.c
+index 19a53801f..991c2f6bb 100644
+--- a/drivers/tty/serial/serial_core.c
++++ b/drivers/tty/serial/serial_core.c
+@@ -3500,6 +3500,13 @@ int uart_get_rs485_mode(struct uart_port *port)
+ 	if (port->rs485_term_gpio)
+ 		port->rs485_supported.flags |= SER_RS485_TERMINATE_BUS;
+ 
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	port->rs485_de_gpio = devm_gpiod_get_optional(dev, "rs485-de",
++							GPIOD_OUT_LOW);
++	if (IS_ERR(port->rs485_de_gpio))
++		port->rs485_de_gpio = NULL;
++#endif
++
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(uart_get_rs485_mode);
+diff --git a/include/linux/serial_core.h b/include/linux/serial_core.h
+index 5a83db0ac..5157e59fe 100644
+--- a/include/linux/serial_core.h
++++ b/include/linux/serial_core.h
+@@ -580,6 +580,9 @@ struct uart_port {
+ 	struct serial_rs485     rs485;
+ 	struct serial_rs485	rs485_supported;	/* Supported mask for serial_rs485 */
+ 	struct gpio_desc	*rs485_term_gpio;	/* enable RS485 bus termination */
++#if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
++	struct gpio_desc	*rs485_de_gpio;		/* enable RS485 de */
++#endif
+ 	struct serial_iso7816   iso7816;
+ 	void			*private_data;		/* generic platform data pointer */
+ };
