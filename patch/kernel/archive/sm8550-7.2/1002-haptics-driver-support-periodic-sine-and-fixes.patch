@@ -1,0 +1,246 @@
+diff -Naur a/drivers/input/misc/qcom-hv-haptics.c b/drivers/input/misc/qcom-hv-haptics.c
+--- a/drivers/input/misc/qcom-hv-haptics.c	2025-04-21 18:43:59.380092857 +0300
++++ b/drivers/input/misc/qcom-hv-haptics.c	2025-04-21 19:17:15.328117222 +0300
+@@ -4,6 +4,8 @@
+  * Copyright (c) 2021-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
++
+ #include <linux/atomic.h>
+ #include <linux/debugfs.h>
+ #include <linux/device.h>
+@@ -629,6 +631,9 @@
+ 	struct notifier_block		hboost_nb;
+ 	struct mutex			vmax_lock;
+ 	struct work_struct		set_gain_work;
++
++	volatile bool			chip_effect_loaded;
++	volatile bool			chip_is_playing;
+ 	int				fifo_empty_irq;
+ 	u32				hpwr_voltage_mv;
+ 	u32				effects_count;
+@@ -1254,12 +1259,12 @@
+ 	 * delay before updating HAPTICS_EN for hBoost to have enough time
+ 	 * to handle its power transition.
+ 	 */
+-	usleep_range(100, 101);
++	udelay(100);
+ 	rc = haptics_module_enable(chip, false);
+ 	if (rc < 0)
+ 		return rc;
+ 
+-	usleep_range(100, 101);
++	udelay(100);
+ 	return haptics_module_enable(chip, true);
+ }
+ 
+@@ -1698,7 +1703,7 @@
+ 
+ 	/* poll HPWR_DISABLED to guarantee the brake pattern has been played completely */
+ 	do {
+-		usleep_range(delay_us, delay_us + 1);
++		udelay(delay_us);
+ 		rc = haptics_read(chip, chip->cfg_addr_base, HAP_CFG_HPWR_INTF_REG, &val, 1);
+ 		if (rc < 0) {
+ 			dev_err(chip->dev, "read HPWR_INTF failed, rc=%d\n", rc);
+@@ -1730,6 +1735,8 @@
+ 	u8 val;
+ 
+ 	if (en) {
++		chip->chip_is_playing = true;
++
+ 		rc = haptics_clear_fault(chip);
+ 		if (rc < 0)
+ 			return rc;
+@@ -1756,9 +1763,12 @@
+ 		return rc;
+ 	}
+ 
+-	if (!en)
++	if (!en) {
+ 		haptics_wait_brake_complete(chip);
+ 
++		chip->chip_is_playing = false;
++	}
++
+ 	if (chip->wa_flags & SW_CTRL_HBST) {
+ 		if (en) {
+ 			rc = haptics_boost_vreg_enable(chip, true);
+@@ -1771,6 +1781,7 @@
+ 			hrtimer_start(&chip->hbst_off_timer,
+ 					ktime_set(BOOST_VREG_OFF_DELAY_SECONDS, 0),
+ 					HRTIMER_MODE_REL);
++
+ 		}
+ 	}
+ 
+@@ -2679,14 +2690,70 @@
+ }
+ 
+ static int haptics_upload_effect(struct input_dev *dev,
++		struct ff_effect *effect, struct ff_effect *old);
++
++static int haptics_upload_ff_periodic_sine(struct input_dev *dev,
++		struct ff_effect *effect, struct ff_effect *old)
++{
++	//This function just converts FF_PERIODIC (Sine) into FF_CONSTANT
++	struct ff_effect new_effect;
++
++	memset(&new_effect, 0, sizeof(new_effect));
++	new_effect.type = FF_CONSTANT;
++	new_effect.id = effect->id; //Not used
++
++	if (effect->replay.length != 0)
++		new_effect.replay.length = effect->replay.length;
++	else
++		new_effect.replay.length = 30000; //30 s (it should be infinite)
++
++	new_effect.u.constant.level = clamp(effect->u.periodic.magnitude, 0, 0x7FFF); //Maximum is 0x7FFF
++
++	return haptics_upload_effect(dev, &new_effect, old);
++}
++
++static int haptics_upload_effect(struct input_dev *dev,
+ 		struct ff_effect *effect, struct ff_effect *old)
+ {
+ 	struct haptics_chip *chip = input_get_drvdata(dev);
+ 	u32 length_ms, tmp;
+ 	s16 level;
+ 	u8 amplitude;
++	u16 gain;
+ 	int rc = 0;
+ 
++	if (chip->chip_is_playing && effect->type == FF_CONSTANT) {
++		gain = effect->u.constant.level;
++
++		cancel_delayed_work_sync(&chip->stop_work);
++
++		pr_debug("tried to upload an effect while the chip was busy playing, setting gain...\n");
++
++		if (gain == 0) {
++			//The purpose of scheduling a stop_work work is that if the program calls playback afterwards, it will play
++			// for a very short time using the previous gain
++			// ( Like Aethersx2, it likes to call playback with zero value EVEN when amplitude is zero)
++			//We cant stop the playback now, so schedule rumble stop after 5s
++			//and set the gain to a low value (essentially zero)
++
++			dev_dbg(chip->dev, "scheduling stop after 500ms, because gain is zero\n");
++
++			dev->ff->set_gain(dev, 1);
++			schedule_delayed_work(&chip->stop_work, msecs_to_jiffies(5000));
++		} else {
++			dev_dbg(chip->dev, "Setting gain to %hu...\n", gain);
++
++			dev->ff->set_gain(dev, gain);
++
++			//Also, reschedule the stop_work timer
++			schedule_delayed_work(&chip->stop_work, msecs_to_jiffies(effect->replay.length));
++		}
++
++		return 0;
++
++		//return -EBUSY;
++	}
++
+ 	switch (effect->type) {
+ 	case FF_CONSTANT:
+ 		length_ms = effect->replay.length;
+@@ -2706,9 +2773,16 @@
+ 
+ 		break;
+ 	case FF_PERIODIC:
+-		if (effect->u.periodic.waveform != FF_CUSTOM) {
+-			dev_err(chip->dev, "Only support custom waveforms\n");
+-			return -EINVAL;
++		switch (effect->u.periodic.waveform) {
++			case FF_SINE:
++				return haptics_upload_ff_periodic_sine(dev, effect, old);
++
++			case FF_CUSTOM:
++				break;
++
++			default:
++				dev_err(chip->dev, "Only support custom waveforms\n");
++				return -EINVAL;
+ 		}
+ 
+ 		if (effect->u.periodic.custom_len ==
+@@ -2763,6 +2837,8 @@
+ 		return rc;
+ 	}
+ 
++	chip->chip_effect_loaded = true;
++
+ 	return 0;
+ }
+ 
+@@ -2771,8 +2847,13 @@
+ 	struct haptics_chip *chip = input_get_drvdata(dev);
+ 
+ 	dev_dbg(chip->dev, "playback val = %d\n", val);
+-	if (!!val)
++
++	if (!!val && !chip->chip_is_playing) {
++		if (!chip->chip_effect_loaded)
++			dev_warn(chip->dev, "Trying to playback while no effect is loaded!\n");
++
+ 		return haptics_enable_play(chip, true);
++	}
+ 
+ 	return 0;
+ }
+@@ -2808,6 +2889,9 @@
+ 			return rc;
+ 		}
+ 	}
++
++	chip->chip_effect_loaded = false;
++
+ 	mutex_unlock(&play->lock);
+ 
+ 	rc = haptics_enable_hpwr_vreg(chip, false);
+@@ -4766,6 +4850,13 @@
+ 	if (config->is_erm) {
+ 		config->drv_wf = WF_NO_MODULATION;
+ 		config->brake.brake_wf = WF_NO_MODULATION;
++
++		rc = of_property_read_u32(node, "qcom,lra-period-us", &config->t_lra_us); //Used internally by the driver
++		if (rc < 0) {
++			dev_warn(chip->dev, "Parse device-tree for LRA period failed (rc=%d), using default 5880\n", rc);
++
++			config->t_lra_us = 5880;
++		}
+ 	} else {
+ 		rc = haptics_parse_lra_dt(chip);
+ 		if (rc < 0) {
+@@ -5931,18 +6022,25 @@
+ 	input_set_drvdata(input_dev, chip);
+ 	chip->input_dev = input_dev;
+ 
++	chip->chip_effect_loaded = false;
++	chip->chip_is_playing = false;
++
+ 	input_set_capability(input_dev, EV_FF, FF_CONSTANT);
++	//if ((chip->effects_count != 0) || (chip->primitives_count != 0)) {
++	input_set_capability(input_dev, EV_FF, FF_PERIODIC);
++	//input_set_capability(input_dev, EV_FF, FF_CUSTOM); //Drop FF_CUSTOM
++	//}
+ 	input_set_capability(input_dev, EV_FF, FF_GAIN);
+-	if ((chip->effects_count != 0) || (chip->primitives_count != 0)) {
+-		input_set_capability(input_dev, EV_FF, FF_PERIODIC);
+-		input_set_capability(input_dev, EV_FF, FF_CUSTOM);
+-	}
+ 
+ 	if (chip->effects_count + chip->primitives_count > MAX_EFFECT_COUNT)
+ 		dev_err(chip->dev, "Effects count cannot be more than %d\n", MAX_EFFECT_COUNT);
+ 
+ 	count = min_t(u32, chip->effects_count + chip->primitives_count + 1, MAX_EFFECT_COUNT);
+ 
++	//This driver does not actually support multiple effects
++	//effect_id is not used ANYWHERE
++	count = 1;
++
+ 	rc = input_ff_create(input_dev, count);
+ 	if (rc < 0) {
+ 		dev_err(chip->dev, "create input FF device failed, rc=%d\n",

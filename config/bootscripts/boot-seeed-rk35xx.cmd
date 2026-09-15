@@ -42,7 +42,7 @@ fi
 # fdtfile, overlays, ...) from the clean baseline maintained by the
 # build hook and OTA sync.
 if load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}; then
-	:
+	true
 else
 	echo "WARNING: armbianEnv.txt fdtfile ${fdtfile} not loadable, loading .dist fallback"
 	setenv rootdev
@@ -66,14 +66,31 @@ fi
 # EEPROM detection below will override it if a valid EEPROM is found.
 setenv eeprom_dtb_matched "no"
 
-# EEPROM format:
-#   [0..5]  = "rk35xx"
-#   [6..9]  = board code, e.g. 00A0 / 00B0
-#   [10.. ] = SN (ignored by boot logic)
-# Read EEPROM from i2c4@0x57 and override fdtfile if format matches.
+# Board identification EEPROM.
+# Content layout — the detection below parses only the first 10 bytes:
+#
+#   offset  size  field        example   notes
+#   0x00     6    magic        "rk35xx"  ASCII; blank (0xFF) chips never match
+#   0x06     4    board code   "01A0"    [0..1]=board no, [2..3]=hw iteration
+#   0x0A     ..   serial no.   ASCII     ignored by boot logic
+#
+# Board codes — actual EEPROM contents (first 10 bytes) per board:
+#   00A0 = RK3576 Devkit         72 6b 33 35 78 78 30 30 41 30  ("rk35xx"+"00A0")
+#   01A0 = RK3576 Module Dev Kit 72 6b 33 35 78 78 30 31 41 30  ("rk35xx"+"01A0")
+#   00B0 = RK3588 Devkit         72 6b 33 35 78 78 30 30 42 30  ("rk35xx"+"00B0")
+#
+# On magic/board-code mismatch (or a blank 0xFF chip) the default
+# ${fdtfile} stays in effect.
+#
+# Bus number and chip address are board-specific: set via armbianEnv.txt or
+# board hook (eeprom_i2c_bus / eeprom_i2c_addr).
+#   rk3576/rk3588 devkit: I2C4, 0x57 (on-board EEPROM)
+#   rk3576 module devkit: I2C2, 0x50 (on-module EEPROM)
+test -n "${eeprom_i2c_bus}" || setenv eeprom_i2c_bus 4
+test -n "${eeprom_i2c_addr}" || setenv eeprom_i2c_addr 0x57
 if test "${eeprom_dtb_select}" = "on"; then
-	if i2c dev 4; then
-		if i2c read 0x57 0x0.2 10 ${load_addr}; then
+	if i2c dev ${eeprom_i2c_bus}; then
+		if i2c read ${eeprom_i2c_addr} 0x0.2 10 ${load_addr}; then
 			setexpr.b ee0 *${load_addr}
 			setexpr tmp ${load_addr} + 1
 			setexpr.b ee1 *${tmp}
@@ -101,6 +118,11 @@ if test "${eeprom_dtb_select}" = "on"; then
 					setenv fdtfile "rockchip/rk3576-recomputer-rk3576-devkit.dtb"
 					setenv eeprom_dtb_matched "yes"
 					echo "Detected board: reComputer RK3576 Devkit, using DTB: ${fdtfile}"
+				# 01A0 -> rk3576 module devkit dtb
+				elif test "${code0}" = "0x30" && test "${code1}" = "0x31" && test "${code2}" = "0x41" && test "${code3}" = "0x30"; then
+					setenv fdtfile "rockchip/rk3576-recomputer-rk3576-module-devkit.dtb"
+					setenv eeprom_dtb_matched "yes"
+					echo "Detected board: reComputer RK3576 Module Dev Kit, using DTB: ${fdtfile}"
 				# 00B0 -> rk3588 dtb
 				elif test "${code0}" = "0x30" && test "${code1}" = "0x30" && test "${code2}" = "0x42" && test "${code3}" = "0x30"; then
 					setenv fdtfile "rockchip/rk3588-recomputer-rk3588-devkit.dtb"

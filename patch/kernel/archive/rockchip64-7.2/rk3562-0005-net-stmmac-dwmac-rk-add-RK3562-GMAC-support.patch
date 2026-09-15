@@ -1,0 +1,241 @@
+From 010ef39ca4cf78a8b17d7587db9312a83f2d1f86 Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sun, 16 Aug 2026 18:28:14 +0800
+Subject: [PATCH 05/18] net: stmmac: dwmac-rk: add RK3562 GMAC support
+
+---
+ .../net/ethernet/stmicro/stmmac/dwmac-rk.c    | 176 ++++++++++++++++++
+ 1 file changed, 176 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+index 8d7042e68..86bf9c654 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+@@ -21,6 +21,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/regmap.h>
+ #include <linux/pm_runtime.h>
++#include <soc/rockchip/rockchip_csu.h>
+ 
+ #include "stmmac_platform.h"
+ 
+@@ -111,6 +112,9 @@ struct rk_priv_data {
+ 	struct regmap *grf;
+ 	struct regmap *php_grf;
+ 
++	struct csu_clk *csu_aclk;
++	struct csu_clk *csu_pclk;
++
+ 	u16 gmac_grf_reg;
+ 	u16 gmac_phy_intf_sel_mask;
+ 	u16 gmac_rmii_mode_mask;
+@@ -803,6 +807,162 @@ static const struct rk_gmac_ops rk3528_ops = {
+ 	},
+ };
+ 
++/* sys_grf */
++#define RK3562_GRF_SYS_SOC_CON0			0x0400
++#define RK3562_GRF_SYS_SOC_CON1			0x0404
++
++#define RK3562_GMAC0_CLK_RMII_MODE		GRF_BIT(5)
++#define RK3562_GMAC0_CLK_RGMII_MODE		GRF_CLR_BIT(5)
++
++#define RK3562_GMAC1_RMII_SPEED100		GRF_BIT(11)
++#define RK3562_GMAC1_RMII_SPEED10		GRF_CLR_BIT(11)
++
++/* ioc_grf */
++/*
++ * GMAC0 M1 and GMAC1 registers live in GPIO2_IOC (0xff060000), while the
++ * GMAC0 M0 registers live in GPIO4_IOC (0xff070000).  php_grf points at
++ * ioc_grf (GPIO2_IOC), so the 0x10000 offset reaches the GPIO4_IOC block.
++ */
++#define RK3562_GRF_IOC_GMAC_IOFUNC0_CON0	0x10400
++#define RK3562_GRF_IOC_GMAC_IOFUNC0_CON1	0x10404
++#define RK3562_GRF_IOC_GMAC_IOFUNC1_CON0	0x00400
++#define RK3562_GRF_IOC_GMAC_IOFUNC1_CON1	0x00404
++
++#define RK3562_GMAC_RXCLK_DLY_ENABLE		GRF_BIT(1)
++#define RK3562_GMAC_RXCLK_DLY_DISABLE		GRF_CLR_BIT(1)
++#define RK3562_GMAC_TXCLK_DLY_ENABLE		GRF_BIT(0)
++#define RK3562_GMAC_TXCLK_DLY_DISABLE		GRF_CLR_BIT(0)
++
++#define RK3562_GMAC_CLK_RX_DL_CFG(val)		GRF_FIELD(15, 8, val)
++#define RK3562_GMAC_CLK_TX_DL_CFG(val)		GRF_FIELD(7, 0, val)
++
++#define RK3562_GMAC0_IO_EXTCLK_SELET_CRU	GRF_CLR_BIT(2)
++#define RK3562_GMAC0_IO_EXTCLK_SELET_IO		GRF_BIT(2)
++
++#define RK3562_GMAC1_IO_EXTCLK_SELET_CRU	GRF_CLR_BIT(3)
++#define RK3562_GMAC1_IO_EXTCLK_SELET_IO		GRF_BIT(3)
++
++static int rk3562_init(struct rk_priv_data *bsp_priv)
++{
++	unsigned int extclk;
++
++	/* Select the RMII reference clock source: IO (external crystal)
++	 * for clock_in_out = "input", CRU otherwise.
++	 */
++	switch (bsp_priv->id) {
++	case 0:
++		bsp_priv->gmac_grf_reg = RK3562_GRF_SYS_SOC_CON0;
++		bsp_priv->clock_grf_reg = RK3562_GRF_SYS_SOC_CON0;
++		bsp_priv->clock.io_clksel_io_mask = BIT_U16(9);
++		bsp_priv->clock.gmii_clk_sel_mask = GENMASK_U16(8, 7);
++		bsp_priv->clock.rmii_clk_sel_mask = BIT_U16(7);
++		bsp_priv->clock.rmii_gate_en_mask = BIT_U16(6);
++
++		/* GMAC0 M0 and M1 extclk select, configured simultaneously
++		 * with GRF_SYS_SOC_CON0[9].
++		 */
++		extclk = bsp_priv->clock_input ?
++			 RK3562_GMAC0_IO_EXTCLK_SELET_IO :
++			 RK3562_GMAC0_IO_EXTCLK_SELET_CRU;
++		regmap_write(bsp_priv->php_grf,
++			     RK3562_GRF_IOC_GMAC_IOFUNC0_CON1, extclk);
++		regmap_write(bsp_priv->php_grf,
++			     RK3562_GRF_IOC_GMAC_IOFUNC1_CON1, extclk);
++		return 0;
++
++	case 1:
++		bsp_priv->gmac_grf_reg = RK3562_GRF_SYS_SOC_CON1;
++		bsp_priv->clock_grf_reg = RK3562_GRF_SYS_SOC_CON1;
++		bsp_priv->clock.io_clksel_io_mask = BIT_U16(15);
++		bsp_priv->clock.rmii_clk_sel_mask = BIT_U16(13);
++		bsp_priv->clock.rmii_gate_en_mask = BIT_U16(12);
++
++		/* MAC100 is RMII-only */
++		bsp_priv->supports_rgmii = false;
++
++		/* MAC100 extclk select, configured simultaneously with
++		 * GRF_SYS_SOC_CON1[15].
++		 */
++		extclk = bsp_priv->clock_input ?
++			 RK3562_GMAC1_IO_EXTCLK_SELET_IO :
++			 RK3562_GMAC1_IO_EXTCLK_SELET_CRU;
++		regmap_write(bsp_priv->php_grf,
++			     RK3562_GRF_IOC_GMAC_IOFUNC1_CON1, extclk);
++		return 0;
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static void rk3562_set_to_rgmii(struct rk_priv_data *bsp_priv,
++				int tx_delay, int rx_delay)
++{
++	unsigned int offset_con;
++
++	if (bsp_priv->id > 0)
++		return;
++
++	regmap_write(bsp_priv->grf, RK3562_GRF_SYS_SOC_CON0,
++		     RK3562_GMAC0_CLK_RGMII_MODE);
++
++	/* m0 && m1 delay enabled */
++	offset_con = RK3562_GRF_IOC_GMAC_IOFUNC0_CON1;
++	regmap_write(bsp_priv->php_grf, offset_con,
++		     DELAY_ENABLE(RK3562, tx_delay, rx_delay));
++	offset_con = RK3562_GRF_IOC_GMAC_IOFUNC1_CON1;
++	regmap_write(bsp_priv->php_grf, offset_con,
++		     DELAY_ENABLE(RK3562, tx_delay, rx_delay));
++
++	/* m0 && m1 delay value */
++	offset_con = RK3562_GRF_IOC_GMAC_IOFUNC0_CON0;
++	regmap_write(bsp_priv->php_grf, offset_con,
++		     RK3562_GMAC_CLK_TX_DL_CFG(tx_delay) |
++		     RK3562_GMAC_CLK_RX_DL_CFG(rx_delay));
++	offset_con = RK3562_GRF_IOC_GMAC_IOFUNC1_CON0;
++	regmap_write(bsp_priv->php_grf, offset_con,
++		     RK3562_GMAC_CLK_TX_DL_CFG(tx_delay) |
++		     RK3562_GMAC_CLK_RX_DL_CFG(rx_delay));
++}
++
++static void rk3562_set_to_rmii(struct rk_priv_data *bsp_priv)
++{
++	if (!bsp_priv->id)
++		regmap_write(bsp_priv->grf, RK3562_GRF_SYS_SOC_CON0,
++			     RK3562_GMAC0_CLK_RMII_MODE);
++}
++
++static int rk3562_set_gmac_speed(struct rk_priv_data *bsp_priv,
++				 phy_interface_t interface, int speed)
++{
++	if (interface != PHY_INTERFACE_MODE_RMII || !bsp_priv->id)
++		return 0;
++
++	/* MAC100 speed indication/status, GRF_SYS_SOC_CON0[11] */
++	regmap_write(bsp_priv->grf, RK3562_GRF_SYS_SOC_CON0,
++		     speed == SPEED_100 ? RK3562_GMAC1_RMII_SPEED100 :
++					 RK3562_GMAC1_RMII_SPEED10);
++
++	return 0;
++}
++
++static const struct rk_gmac_ops rk3562_ops = {
++	.init = rk3562_init,
++	.set_to_rgmii = rk3562_set_to_rgmii,
++	.set_to_rmii = rk3562_set_to_rmii,
++	.set_speed = rk3562_set_gmac_speed,
++
++	.supports_rmii = true,
++
++	.php_grf_required = true,
++	.regs_valid = true,
++	.regs = {
++		0xffa80000, /* gmac0 */
++		0xffb30000, /* gmac1 */
++		0x0, /* sentinel */
++	},
++};
++
+ #define RK3568_GRF_GMAC0_CON0		0x0380
+ #define RK3568_GRF_GMAC0_CON1		0x0384
+ #define RK3568_GRF_GMAC1_CON0		0x0388
+@@ -1168,6 +1328,9 @@ static int gmac_clk_enable(struct rk_priv_data *bsp_priv, bool enable)
+ 			rk_configure_io_clksel(bsp_priv);
+ 			rk_ungate_rmii_clock(bsp_priv);
+ 
++			rockchip_csu_disable(bsp_priv->csu_aclk);
++			rockchip_csu_disable(bsp_priv->csu_pclk);
++
+ 			mdelay(5);
+ 			bsp_priv->clk_enabled = true;
+ 		}
+@@ -1179,6 +1342,9 @@ static int gmac_clk_enable(struct rk_priv_data *bsp_priv, bool enable)
+ 						   bsp_priv->clks);
+ 			clk_disable_unprepare(bsp_priv->clk_phy);
+ 
++			rockchip_csu_enable(bsp_priv->csu_aclk);
++			rockchip_csu_enable(bsp_priv->csu_pclk);
++
+ 			bsp_priv->clk_enabled = false;
+ 		}
+ 	}
+@@ -1319,6 +1485,15 @@ static struct rk_priv_data *rk_gmac_setup(struct platform_device *pdev,
+ 
+ 	bsp_priv->dev = dev;
+ 
++	if (of_property_present(dev->of_node, "rockchip,csu")) {
++		bsp_priv->csu_aclk = rockchip_csu_get(dev, "aclk");
++		if (IS_ERR(bsp_priv->csu_aclk))
++			bsp_priv->csu_aclk = NULL;
++		bsp_priv->csu_pclk = rockchip_csu_get(dev, "pclk");
++		if (IS_ERR(bsp_priv->csu_pclk))
++			bsp_priv->csu_pclk = NULL;
++	}
++
+ 	/* Set the default phy_intf_sel and RMII mode register parameters. */
+ 	bsp_priv->gmac_grf_reg = ops->gmac_grf_reg;
+ 	bsp_priv->gmac_phy_intf_sel_mask = ops->gmac_phy_intf_sel_mask;
+@@ -1625,6 +1800,7 @@ static const struct of_device_id rk_gmac_dwmac_match[] = {
+ 	{ .compatible = "rockchip,rk3399-gmac", .data = &rk3399_ops },
+ 	{ .compatible = "rockchip,rk3506-gmac", .data = &rk3506_ops },
+ 	{ .compatible = "rockchip,rk3528-gmac", .data = &rk3528_ops },
++	{ .compatible = "rockchip,rk3562-gmac", .data = &rk3562_ops },
+ 	{ .compatible = "rockchip,rk3568-gmac", .data = &rk3568_ops },
+ 	{ .compatible = "rockchip,rk3576-gmac", .data = &rk3576_ops },
+ 	{ .compatible = "rockchip,rk3588-gmac", .data = &rk3588_ops },
+-- 
+2.55.0
+

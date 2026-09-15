@@ -105,6 +105,11 @@ function post_family_tweaks__xiaomi-sheng_enable_services() {
 	display_alert "$BOARD" "Installing board tweaks" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf qbootctl qrtr-tools unudhcpd mkbootimg dropbear-bin
 
+	# Local .deb packages: libssc (Qualcomm SSC userspace lib) then xiaomi-sheng-thp (NT36532E touch host processor daemon)
+	# install_deb_chroot copies the deb into the rootfs and installs via apt-get, so repo deps (bluez, libprotobuf-c1, etc.) resolve.
+	install_deb_chroot "${SRC}/packages/bsp/xiaomi-sheng/libssc_0.4.2-1_arm64.deb"
+	install_deb_chroot "${SRC}/packages/bsp/xiaomi-sheng/xiaomi-sheng-thp_0.3.9_arm64.deb"
+
 	# disable armbian repo back
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled
 	do_with_retries 3 chroot_sdcard_apt_get_update

@@ -20,6 +20,7 @@ import tempfile
 import git  # GitPython
 from unidecode import unidecode
 from unidiff import PatchSet
+from rich.text import Text
 
 from common.patching_config import PatchingConfig
 from common.term_colors import background_dark_or_light
@@ -434,7 +435,8 @@ class PatchInPatchFile:
 		# log.debug(f"Rejects file is going to be '{rejects_file}'...")
 
 		proc = subprocess.run(
-			["patch", "--batch", "-p1", "-N", f"--reject-file={rejects_file}", "--quoting-style=c"],
+			# Unified rejects regardless of the input patch format: rich_rejects() styles lines by their +/-/@@ prefix.
+			["patch", "--batch", "-p1", "-N", "--reject-format=unified", f"--reject-file={rejects_file}", "--quoting-style=c"],
 			cwd=working_dir,
 			input=real_input,
 			stdout=subprocess.PIPE,
@@ -740,6 +742,18 @@ class PatchInPatchFile:
 			for tag in color_tags[color]:
 				ret = ret.replace(tag, f"[{bold} {color}]{tag}[/{bold} {color}]")
 		return ret
+
+	def rich_rejects(self) -> Text:
+		"""Reject hunks as foldable Text, coloured per line like a diff pager."""
+		line_styles = {"+": "green", "-": "red", "@": "cyan"}
+		text = Text()
+		for line in self.rejects.splitlines(keepends=True):
+			text.append(line, style=line_styles.get(line[:1], ""))
+		# Expand on the Text, not the str: rich counts terminal cells, so wide
+		# characters before a tab keep the columns aligned. 4 instead of rich's
+		# default 8 keeps diff indentation readable in a narrow cell.
+		text.expand_tabs(4)
+		return text
 
 	def apply_patch_date_to_files(self, working_dir, options):
 		# The date applied to the patched files is:

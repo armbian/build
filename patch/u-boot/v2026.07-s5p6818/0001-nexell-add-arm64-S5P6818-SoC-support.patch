@@ -1,0 +1,318 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 7 Sep 2026 17:50:38 +0200
+Subject: [PATCH 1/2] nexell: add arm64 (S5P6818) SoC support
+
+Mainline mach-nexell only ever built the 32-bit S5P4418; the S5P6818
+Kconfig symbol selected ARM64 but nothing consumed it and several pieces
+did not compile/link for arm64:
+
+  * boot0.h emitted the 32-bit ARM_VECTORS + embedded-NSIH layout, which
+    is meaningless on arm64. The S5P6818 boot.img wrapper prepends the
+    NSIH+BL1 externally, so on ARM64 the raw binary only needs a reset
+    branch at its entry point.
+  * nx_i2c.c selected the S5P4418/S5P6818 stop-condition path with a
+    runtime IS_ENABLED(), so the inactive branch (referencing members
+    that only exist for the other SoC) still had to compile and failed.
+    Use preprocessor guards instead.
+  * ARCH_S5P6818 did not select OF_CONTROL/NX_GPIO/DM_SERIAL/PL01X_SERIAL
+    the way ARCH_S5P4418 does.
+  * No arm64 SoC glue existed (arch_cpu_init, reset_cpu, print_cpuinfo,
+    enable_caches, the MMU mem_map). Add cpu-s5p6818.c, the armv8
+    counterpart of arch/arm/cpu/armv7/s5p4418/cpu.c, and build the
+    nexell PWM timer only on S5P4418 (arm64 uses the generic timer).
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/dts/Makefile                     |   3 +-
+ arch/arm/mach-nexell/Kconfig              |  14 ++-
+ arch/arm/mach-nexell/Makefile             |   3 +-
+ arch/arm/mach-nexell/cpu-s5p6818.c        | 116 ++++++++++++++++++++++
+ arch/arm/mach-nexell/include/mach/boot0.h |   9 ++
+ drivers/i2c/nx_i2c.c                      |  48 +++++----
+ 6 files changed, 169 insertions(+), 24 deletions(-)
+ create mode 100644 arch/arm/mach-nexell/cpu-s5p6818.c
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 2b65cd91..6573d5a5 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -51,7 +51,8 @@ dtb-$(CONFIG_ROCKCHIP_RK3368) += \
+ 	rk3368-px5-evb.dtb \
+ 
+ dtb-$(CONFIG_ARCH_S5P4418) += \
+-	s5p4418-nanopi2.dtb
++	s5p4418-nanopi2.dtb \
++	s5p6818-nanopim3.dtb
+ 
+ dtb-$(CONFIG_ARCH_MESON) += \
+ 	meson-a1-ad401.dtb
+diff --git a/arch/arm/mach-nexell/Kconfig b/arch/arm/mach-nexell/Kconfig
+index b43dd5a5..4f2c9637 100644
+--- a/arch/arm/mach-nexell/Kconfig
++++ b/arch/arm/mach-nexell/Kconfig
+@@ -14,6 +14,10 @@ config ARCH_S5P6818
+ 	bool "Nexell S5P6818 SoC"
+ 	select ARM64
+ 	select ARMV8_MULTIENTRY
++	select OF_CONTROL
++	select NX_GPIO
++	select DM_SERIAL
++	select PL01X_SERIAL
+ 	help
+ 	  Enable support for Nexell S5P6818 SoC.
+ 
+@@ -30,6 +34,13 @@ config TARGET_NANOPI2
+ 	help
+ 	  Enable support for FriendlyARM NanoPi2 and NanoPC-T2 Boards.
+ 
++config TARGET_NANOPI3
++	bool "FriendlyARM NanoPi3 / NanoPC-T3 / NanoPi M3 Board (S5P6818)"
++	select ARCH_S5P6818
++	help
++	  Enable support for FriendlyARM S5P6818 boards (NanoPi3, NanoPC-T3/T3+,
++	  NanoPi M3).
++
+ endchoice
+ 
+ config SYS_PLLFIN
+@@ -48,7 +59,8 @@ config SYS_SOC
+ 	default "nexell"
+ 
+ config SYS_CONFIG_NAME
+-	default "s5p4418_nanopi2"
++	default "s5p4418_nanopi2" if TARGET_NANOPI2
++	default "s5p6818_nanopim3" if TARGET_NANOPI3
+ 
+ config SYS_PLLFIN
+ 	default 24000000
+diff --git a/arch/arm/mach-nexell/Makefile b/arch/arm/mach-nexell/Makefile
+index dda16dbb..21143f44 100644
+--- a/arch/arm/mach-nexell/Makefile
++++ b/arch/arm/mach-nexell/Makefile
+@@ -4,9 +4,10 @@
+ # Hyunseok, Jung <hsjung@nexell.co.kr>
+ 
+ obj-y				+= clock.o
+-obj-y				+= timer.o
++obj-$(CONFIG_ARCH_S5P4418)	+= timer.o
+ obj-y				+= reset.o
+ obj-y				+= nx_gpio.o
+ obj-y				+= tieoff.o
++obj-$(CONFIG_ARCH_S5P6818)	+= cpu-s5p6818.o
+ obj-$(CONFIG_ARCH_S5P4418)	+= reg-call.o
+ obj-$(CONFIG_ARCH_S5P4418)	+= nx_sec_reg.o
+diff --git a/arch/arm/mach-nexell/cpu-s5p6818.c b/arch/arm/mach-nexell/cpu-s5p6818.c
+new file mode 100644
+index 00000000..c24b636e
+--- /dev/null
++++ b/arch/arm/mach-nexell/cpu-s5p6818.c
+@@ -0,0 +1,116 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2016 Nexell
++ * Hyunseok, Jung <hsjung@nexell.co.kr>
++ *
++ * S5P6818 (arm64) SoC support: CPU init, cache enable and software reset.
++ * The register layout (ALIVE, SCR, CLKPWR) is shared with the 32-bit S5P4418;
++ * this is the armv8 counterpart of arch/arm/cpu/armv7/s5p4418/cpu.c.
++ */
++
++#include <command.h>
++#include <asm/system.h>
++#include <asm/cache.h>
++#include <asm/sections.h>
++#include <asm/io.h>
++#include <asm/arch/nexell.h>
++#include <asm/arch/clk.h>
++#include <asm/armv8/mmu.h>
++#include <cpu_func.h>
++
++#ifndef	CONFIG_ARCH_CPU_INIT
++#error must be define the macro "CONFIG_ARCH_CPU_INIT"
++#endif
++
++/*
++ * MMU memory map. DRAM starts at 0x40000000 and can be up to 2 GiB (mapping
++ * more than is fitted is harmless as long as it is not accessed); the Nexell
++ * on-chip peripherals live at 0xC0000000 and up and must be device memory.
++ */
++static struct mm_region s5p6818_mem_map[] = {
++	{
++		.virt = 0x40000000UL,
++		.phys = 0x40000000UL,
++		.size = 0x80000000UL,
++		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
++			 PTE_BLOCK_INNER_SHARE,
++	}, {
++		.virt = 0xC0000000UL,
++		.phys = 0xC0000000UL,
++		.size = 0x40000000UL,
++		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
++			 PTE_BLOCK_NON_SHARE |
++			 PTE_BLOCK_PXN | PTE_BLOCK_UXN,
++	}, {
++		/* list terminator */
++		0,
++	}
++};
++
++struct mm_region *mem_map = s5p6818_mem_map;
++
++void s_init(void)
++{
++}
++
++static void cpu_soc_init(void)
++{
++	/*
++	 * NOTE> ALIVE Power Gate must enable for Alive register access.
++	 *	     must be clear wfi jump address
++	 */
++	writel(1, ALIVEPWRGATEREG);
++	writel(0xFFFFFFFF, SCR_ARM_SECOND_BOOT);
++
++	/* write 0xf0 on alive scratchpad reg for boot success check */
++	writel(readl(SCR_SIGNAGURE_READ) | 0xF0, (SCR_SIGNAGURE_SET));
++}
++
++int arch_cpu_init(void)
++{
++	flush_dcache_all();
++	cpu_soc_init();
++	clk_init();
++
++	return 0;
++}
++
++#if defined(CONFIG_DISPLAY_CPUINFO)
++int print_cpuinfo(void)
++{
++	return 0;
++}
++#endif
++
++#if defined(CONFIG_ARCH_MISC_INIT)
++int arch_misc_init(void)
++{
++	return 0;
++}
++#endif
++
++void reset_cpu(void)
++{
++	void *clkpwr_reg = (void *)PHY_BASEADDR_CLKPWR;
++	const u32 sw_rst_enb_bitpos = 3;
++	const u32 sw_rst_enb_mask = 1 << sw_rst_enb_bitpos;
++	const u32 sw_rst_bitpos = 12;
++	const u32 sw_rst_mask = 1 << sw_rst_bitpos;
++	int pwrcont = 0x224;
++	int pwrmode = 0x228;
++	u32 read_value;
++
++	read_value = readl((void *)(clkpwr_reg + pwrcont));
++
++	read_value &= ~sw_rst_enb_mask;
++	read_value |= 1 << sw_rst_enb_bitpos;
++
++	writel(read_value, (void *)(clkpwr_reg + pwrcont));
++	writel(sw_rst_mask, (void *)(clkpwr_reg + pwrmode));
++}
++
++void enable_caches(void)
++{
++	/* Enable D-cache. I-cache is already enabled in start.S */
++	dcache_enable();
++}
+diff --git a/arch/arm/mach-nexell/include/mach/boot0.h b/arch/arm/mach-nexell/include/mach/boot0.h
+index 29f37d3b..87fc7511 100644
+--- a/arch/arm/mach-nexell/include/mach/boot0.h
++++ b/arch/arm/mach-nexell/include/mach/boot0.h
+@@ -18,6 +18,14 @@
+ #ifndef __BOOT0_H
+ #define __BOOT0_H
+ 
++#ifdef CONFIG_ARM64
++	/*
++	 * S5P6818 (arm64): the NSIH header and BL1 are prepended to u-boot.bin
++	 * externally (by the board's boot.img build step), so the raw binary just
++	 * needs a standard reset branch at its entry point.
++	 */
++	b	reset
++#else
+ 	ARM_VECTORS
+ 	.space	0x30
+ 	.word	(_end - _start) + 20 * 1024	/* 0x50: load size
+@@ -36,5 +44,6 @@
+ 	.space	0x200
+ _start:
+ 	ARM_VECTORS
++#endif /* CONFIG_ARM64 */
+ 
+ #endif /* __BOOT0_H */
+diff --git a/drivers/i2c/nx_i2c.c b/drivers/i2c/nx_i2c.c
+index 706b7ade..5836f886 100644
+--- a/drivers/i2c/nx_i2c.c
++++ b/drivers/i2c/nx_i2c.c
+@@ -309,34 +309,40 @@ static void i2c_send_stop(struct nx_i2c_bus *bus)
+ {
+ 	struct nx_i2c_regs *i2c = bus->regs;
+ 
+-	if (IS_ENABLED(CONFIG_ARCH_S5P6818)) {
+-		unsigned int reg;
++	/*
++	 * Preprocessor guards, not IS_ENABLED(): the S5P4418 branch touches
++	 * struct/register members (iicstopcon, tsu_stop, STOPCON_*) that only
++	 * exist when CONFIG_ARCH_S5P6818 is unset, and vice-versa, so the
++	 * inactive branch must be textually excluded to compile.
++	 */
++#if IS_ENABLED(CONFIG_ARCH_S5P6818)
++	unsigned int reg;
+ 
+-		reg = readl(&i2c->iicstat);
+-		reg |= I2CSTAT_MRM | I2CSTAT_RXTXEN;
+-		reg &= (~I2CSTAT_SS);
++	reg = readl(&i2c->iicstat);
++	reg |= I2CSTAT_MRM | I2CSTAT_RXTXEN;
++	reg &= (~I2CSTAT_SS);
+ 
+-		writel(reg, &i2c->iicstat);
+-		i2c_clear_irq(i2c);
+-	} else {  /* S5P4418 */
+-		writel(STOPCON_NAG, &i2c->iicstopcon);
++	writel(reg, &i2c->iicstat);
++	i2c_clear_irq(i2c);
++#else	/* S5P4418 */
++	writel(STOPCON_NAG, &i2c->iicstopcon);
+ 
+-		i2c_clear_irq(i2c);
++	i2c_clear_irq(i2c);
+ 
+-		/*
+-		 * Clock Line Release --> SDC changes from Low to High and
+-		 * SDA from High to Low
+-		 */
+-		writel(STOPCON_CLR, &i2c->iicstopcon);
++	/*
++	 * Clock Line Release --> SDC changes from Low to High and
++	 * SDA from High to Low
++	 */
++	writel(STOPCON_CLR, &i2c->iicstopcon);
+ 
+-		/* Hold SDA Low (Setup Time for Stop condition) */
+-		udelay(bus->tsu_stop);
++	/* Hold SDA Low (Setup Time for Stop condition) */
++	udelay(bus->tsu_stop);
+ 
+-		i2c_clear_irq(i2c);
++	i2c_clear_irq(i2c);
+ 
+-		/* Master Receive Mode Stop --> SDA becomes High */
+-		writel(I2CSTAT_MRM, &i2c->iicstat);
+-	}
++	/* Master Receive Mode Stop --> SDA becomes High */
++	writel(I2CSTAT_MRM, &i2c->iicstat);
++#endif
+ }
+ 
+ static int wait_for_xfer(struct nx_i2c_regs *i2c)

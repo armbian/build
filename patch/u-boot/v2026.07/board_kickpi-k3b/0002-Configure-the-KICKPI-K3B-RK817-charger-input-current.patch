@@ -1,0 +1,135 @@
+From eab8622993367ccb7ab7eda4f668b371e7a27555 Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sat, 29 Aug 2026 19:43:37 +0800
+Subject: [PATCH 2/2] Configure the KICKPI K3B RK817 charger input current
+ limit to 3 A
+
+---
+ drivers/power/pmic/rk8xx.c                    | 63 +++++++++++++++++++
+ .../src/arm64/rockchip/rk3562-kickpi-k3b.dts  | 14 +++++
+ include/power/rk8xx_pmic.h                    |  3 +
+ 3 files changed, 80 insertions(+)
+
+diff --git a/drivers/power/pmic/rk8xx.c b/drivers/power/pmic/rk8xx.c
+index 95b71d2f..1672ae4e 100644
+--- a/drivers/power/pmic/rk8xx.c
++++ b/drivers/power/pmic/rk8xx.c
+@@ -96,6 +96,63 @@ static struct reg_data rk817_init_reg[] = {
+ 	{ RK817_BUCK4_CMIN, 0x60, 0x60},
+ };
+ 
++struct rk817_usb_input_current_limit {
++	u32 microamp;
++	u8 reg;
++};
++
++static const struct rk817_usb_input_current_limit
++rk817_usb_input_current_limits[] = {
++	{ 80000, 0x1 },
++	{ 450000, 0x0 },
++	{ 850000, 0x2 },
++	{ 1500000, 0x3 },
++	{ 1750000, 0x4 },
++	{ 2000000, 0x5 },
++	{ 2500000, 0x6 },
++	{ 3000000, 0x7 },
++};
++
++static int rk817_usb_input_current_to_reg(u32 microamp)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rk817_usb_input_current_limits); i++)
++		if (microamp == rk817_usb_input_current_limits[i].microamp)
++			return rk817_usb_input_current_limits[i].reg;
++
++	return -EINVAL;
++}
++
++static int rk817_configure_usb_input_current(struct udevice *dev)
++{
++	ofnode charger;
++	u32 microamp;
++	int reg;
++	int ret;
++
++	charger = dev_read_subnode(dev, "charger");
++	if (!ofnode_valid(charger))
++		return 0;
++
++	ret = ofnode_read_u32(charger, "rockchip,input-current-limit-microamp", &microamp);
++	if (ret == -EINVAL)
++		return 0;
++	if (ret)
++		return ret;
++
++	reg = rk817_usb_input_current_to_reg(microamp);
++	if (reg < 0) {
++		printf("RK817: unsupported USB input current limit %u uA\n",
++		       microamp);
++		return reg;
++	}
++
++	return pmic_clrsetbits(dev, RK817_PMIC_CHRG_IN,
++				      RK817_USB_ILIM_SEL | RK817_USB_ILIM_EN,
++				      reg | RK817_USB_ILIM_EN);
++}
++
+ static const struct pmic_child_info pmic_children_info[] = {
+ 	{ .prefix = "DCDC_REG", .driver = "rk8xx_buck"},
+ 	{ .prefix = "dcdc-reg", .driver = "rk8xx_buck"},
+@@ -336,6 +393,12 @@ static int rk8xx_probe(struct udevice *dev)
+ 		      pmic_reg_read(dev, init_data[i].reg));
+ 	}
+ 
++	if (priv->variant == RK817_ID) {
++		ret = rk817_configure_usb_input_current(dev);
++		if (ret)
++			return ret;
++	}
++
+ 	if (!IS_ENABLED(CONFIG_XPL_BUILD)) {
+ 		printf("PMIC:  RK%x ", show_variant);
+ 		if (on_source && off_source)
+diff --git a/dts/upstream/src/arm64/rockchip/rk3562-kickpi-k3b.dts b/dts/upstream/src/arm64/rockchip/rk3562-kickpi-k3b.dts
+index 9350826e..d0936375 100644
+--- a/dts/upstream/src/arm64/rockchip/rk3562-kickpi-k3b.dts
++++ b/dts/upstream/src/arm64/rockchip/rk3562-kickpi-k3b.dts
+@@ -269,6 +269,20 @@
+ 				};
+ 			};
+ 		};
++
++		rk817_charger: charger {
++			/*
++			 * The mainline RK817 driver sets the USB input current
++			 * limit to 1.5 A during probe.  When no battery is
++			 * connected and the K3B is powered solely through Type-C,
++			 * the total peripheral current during boot can exceed 1.5 A
++			 * and cause the system to reboot.  Raise the limit to 3 A.
++			 *
++			 * It is preferable to apply this setting in the bootloader
++			 * as well, because Linux may configure the RK817 too late.
++			 */
++			rockchip,input-current-limit-microamp = <3000000>;
++		};
+ 	};
+ };
+ 
+diff --git a/include/power/rk8xx_pmic.h b/include/power/rk8xx_pmic.h
+index 913b6ebe..6e96906c 100644
+--- a/include/power/rk8xx_pmic.h
++++ b/include/power/rk8xx_pmic.h
+@@ -228,6 +228,9 @@ enum {
+ 
+ #define RK817_PMIC_SYS_CFG3	0xf4
+ #define RK817_GPIO_INT_CFG	0xfe
++#define RK817_PMIC_CHRG_IN	0xe5
++#define RK817_USB_ILIM_EN	BIT(3)
++#define RK817_USB_ILIM_SEL	GENMASK(2, 0)
+ 
+ #define RK8XX_ON_SOURCE		0xae
+ #define RK8XX_OFF_SOURCE	0xaf
+-- 
+2.55.0
+

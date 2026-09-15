@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pedro Santos <hartmnn.p@gmail.com>
+Date: Sat, 22 Aug 2026 02:00:00 -0300
+Subject: drv:net:stmmac:dwmac-sun8i: reset the EMAC when opening, not probing
+
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c | 49 ++++++----
+ 1 file changed, 30 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun8i.c
+@@ -288,8 +288,34 @@ static const struct emac_variant emac_variant_h6 = {
+ /* sun8i_dwmac_dma_reset() - reset the EMAC
+  * Called from stmmac via stmmac_dma_ops->reset
+  */
++static int sun8i_dwmac_soft_reset(void __iomem *ioaddr)
++{
++	u32 v;
++
++	v = readl(ioaddr + EMAC_BASIC_CTL1);
++	writel(v | 0x01, ioaddr + EMAC_BASIC_CTL1);
++
++	/* The timeout was previously set to 10ms, but some board (OrangePI0)
++	 * need more if no cable plugged. 100ms seems OK
++	 */
++	return readl_poll_timeout(ioaddr + EMAC_BASIC_CTL1, v,
++				  !(v & 0x01), 100, 100000);
++}
++
+ static int sun8i_dwmac_dma_reset(void __iomem *ioaddr)
+ {
++	int err;
++
++	/* The MAC soft reset only completes once the PHY is driving the RX
++	 * clock. Doing it here rather than at probe means phylib has already
++	 * attached and resumed the PHY, so the clock is running by
++	 * construction -- including after a warm reboot that left the PHY
++	 * powered down.
++	 */
++	err = sun8i_dwmac_soft_reset(ioaddr);
++	if (err)
++		return err;
++
+ 	writel(0, ioaddr + EMAC_RX_CTL1);
+ 	writel(0, ioaddr + EMAC_TX_CTL1);
+ 	writel(0, ioaddr + EMAC_RX_FRM_FLT);
+@@ -767,23 +793,12 @@ static void sun8i_dwmac_flow_ctrl(struct mac_device_info *hw,
+ 
+ static int sun8i_dwmac_reset(struct stmmac_priv *priv)
+ {
+-	u32 v;
+-	int err;
+-
+-	v = readl(priv->ioaddr + EMAC_BASIC_CTL1);
+-	writel(v | 0x01, priv->ioaddr + EMAC_BASIC_CTL1);
+-
+-	/* The timeout was previously set to 10ms, but some board (OrangePI0)
+-	 * need more if no cable plugged. 100ms seems OK
+-	 */
+-	err = readl_poll_timeout(priv->ioaddr + EMAC_BASIC_CTL1, v,
+-				 !(v & 0x01), 100, 100000);
++	int err = sun8i_dwmac_soft_reset(priv->ioaddr);
+ 
+-	if (err) {
++	if (err)
+ 		dev_err(priv->device, "EMAC reset timeout\n");
+-		return err;
+-	}
+-	return 0;
++
++	return err;
+ }
+ 
+ /* Search in mdio-mux node for internal PHY node and get its clk/reset */
+@@ -1286,10 +1301,6 @@ static int sun8i_dwmac_probe(struct platform_device *pdev)
+ 			dev_err(&pdev->dev, "Failed to register mux\n");
+ 			goto dwmac_mux;
+ 		}
+-	} else {
+-		ret = sun8i_dwmac_reset(priv);
+-		if (ret)
+-			goto dwmac_remove;
+ 	}
+ 
+ 	pm_runtime_put(&pdev->dev);
+-- 
+Armbian
+

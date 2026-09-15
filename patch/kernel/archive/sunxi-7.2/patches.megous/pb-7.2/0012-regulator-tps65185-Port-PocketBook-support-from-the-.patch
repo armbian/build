@@ -18,14 +18,14 @@ Subject: regulator: tps65185: Port PocketBook support from the tp65185x driver
 
 Signed-off-by: Ondrej Jirman <megi@xff.cz>
 ---
- drivers/regulator/tps65185.c | 284 +++++++++-
- 1 file changed, 261 insertions(+), 23 deletions(-)
+ drivers/regulator/tps65185.c | 295 +++++++++-
+ 1 file changed, 269 insertions(+), 26 deletions(-)
 
 diff --git a/drivers/regulator/tps65185.c b/drivers/regulator/tps65185.c
 index 111111111111..222222222222 100644
 --- a/drivers/regulator/tps65185.c
 +++ b/drivers/regulator/tps65185.c
-@@ -49,8 +49,57 @@ struct tps65185_data {
+@@ -50,8 +50,57 @@ struct tps65185_data {
  	struct completion pgood_completion;
  	int pgood_irq;
  	struct completion tmst_completion;
@@ -83,7 +83,7 @@ index 111111111111..222222222222 100644
  static const struct hwmon_channel_info *tps65185_info[] = {
  	HWMON_CHANNEL_INFO(chip, HWMON_C_REGISTER_TZ),
  	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
-@@ -64,6 +113,10 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+@@ -65,6 +114,10 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
  	unsigned int val;
  	int ret;
  
@@ -94,7 +94,7 @@ index 111111111111..222222222222 100644
  	reinit_completion(&data->tmst_completion);
  	/* start acquisition */
  	regmap_update_bits(data->regmap, TPS65185_REG_TMST1,
-@@ -71,16 +124,21 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+@@ -72,16 +125,21 @@ static int tps65185_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
  	wait_for_completion_timeout(&data->tmst_completion,
  				    msecs_to_jiffies(PGOOD_TIMEOUT_MSECS));
  	ret = regmap_read(data->regmap, TPS65185_REG_TMST1, &val);
@@ -120,7 +120,7 @@ index 111111111111..222222222222 100644
  }
  
  static umode_t tps65185_hwmon_is_visible(const void *data,
-@@ -123,11 +181,49 @@ static const struct regmap_config regmap_config = {
+@@ -124,11 +182,49 @@ static const struct regmap_config regmap_config = {
  	.volatile_reg = tps65185_volatile_reg,
  };
  
@@ -173,7 +173,7 @@ index 111111111111..222222222222 100644
  };
  
  static int tps65185_check_powergood(struct regulator_dev *rdev)
-@@ -137,6 +233,26 @@ static int tps65185_check_powergood(struct regulator_dev *rdev)
+@@ -138,6 +234,26 @@ static int tps65185_check_powergood(struct regulator_dev *rdev)
  	return gpiod_get_value_cansleep(data->pgood_gpio);
  }
  
@@ -200,27 +200,35 @@ index 111111111111..222222222222 100644
  static int tps65185_vposneg_get_voltage_sel(struct regulator_dev *rdev)
  {
  	int ret;
-@@ -163,11 +279,39 @@ static irqreturn_t pgood_handler(int irq, void *dev_id)
+@@ -164,11 +280,47 @@ static irqreturn_t pgood_handler(int irq, void *dev_id)
  	return IRQ_HANDLED;
  }
  
 +static int tps65185_wait_powergood(struct tps65185_data *data)
 +{
 +	int timeout = PGOOD_TIMEOUT_MSECS;
++	int ret;
 +
 +	if (data->pgood_irq > 0) {
 +		wait_for_completion_timeout(&data->pgood_completion,
 +					    msecs_to_jiffies(timeout));
 +	} else {
 +		/* PG pin on an irq-less gpio (e.g. sun5i ports != B/G) */
-+		while (timeout > 0 &&
-+		       gpiod_get_value_cansleep(data->pgood_gpio) != 1) {
++		while (timeout > 0) {
++			ret = gpiod_get_value_cansleep(data->pgood_gpio);
++			if (ret < 0)
++				return ret;
++			if (ret)
++				break;
 +			msleep(5);
 +			timeout -= 5;
 +		}
 +	}
 +
-+	if (gpiod_get_value_cansleep(data->pgood_gpio) != 1) {
++	ret = gpiod_get_value_cansleep(data->pgood_gpio);
++	if (ret < 0)
++		return ret;
++	if (!ret) {
 +		tps65185_report_power_bad(data);
 +		return -ETIMEDOUT;
 +	}
@@ -240,7 +248,7 @@ index 111111111111..222222222222 100644
  	reinit_completion(&data->pgood_completion);
  	if (data->pwrup_gpio)
  		ret = gpiod_set_value_cansleep(data->pwrup_gpio, 1);
-@@ -177,16 +321,27 @@ static int tps65185_vposneg_enable(struct regulator_dev *rdev)
+@@ -178,19 +330,27 @@ static int tps65185_vposneg_enable(struct regulator_dev *rdev)
  					 TPS65185_ENABLE_ACTIVE);
  
  	if (ret)
@@ -254,7 +262,10 @@ index 111111111111..222222222222 100644
 +	if (ret)
 +		goto err_powerdown;
  	dev_dbg(data->dev, "turned on");
--	if (gpiod_get_value_cansleep(data->pgood_gpio) != 1)
+-	ret = gpiod_get_value_cansleep(data->pgood_gpio);
+-	if (ret < 0)
+-		return ret;
+-	if (!ret)
 -		return -ETIMEDOUT;
  
  	return 0;
@@ -273,7 +284,7 @@ index 111111111111..222222222222 100644
  }
  
  static int tps65185_vposneg_disable(struct regulator_dev *rdev)
-@@ -200,8 +355,14 @@ static int tps65185_vposneg_disable(struct regulator_dev *rdev)
+@@ -204,8 +364,14 @@ static int tps65185_vposneg_disable(struct regulator_dev *rdev)
  		ret = regmap_update_bits(data->regmap, TPS65185_REG_ENABLE,
  					 TPS65185_ENABLE_STANDBY,
  					 TPS65185_ENABLE_STANDBY);
@@ -289,7 +300,7 @@ index 111111111111..222222222222 100644
  }
  
  static int tps65185_vcom_set_voltage_sel(struct regulator_dev *rdev, unsigned int selector)
-@@ -209,6 +370,12 @@ static int tps65185_vcom_set_voltage_sel(struct regulator_dev *rdev, unsigned in
+@@ -213,6 +379,12 @@ static int tps65185_vcom_set_voltage_sel(struct regulator_dev *rdev, unsigned in
  	struct tps65185_data *data = rdev_get_drvdata(rdev);
  	int ret;
  
@@ -302,7 +313,7 @@ index 111111111111..222222222222 100644
  	ret = regmap_update_bits(data->regmap, TPS65185_REG_VCOM2, BIT(0), selector >> 8);
  	if (ret < 0)
  		return ret;
-@@ -222,6 +389,9 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
+@@ -226,6 +398,9 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
  	int ret;
  	unsigned int sel, sel2;
  
@@ -312,7 +323,7 @@ index 111111111111..222222222222 100644
  	ret = regmap_read(data->regmap, TPS65185_REG_VCOM1, &sel);
  	if (ret < 0)
  		return ret;
-@@ -236,11 +406,51 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
+@@ -240,11 +415,51 @@ static int tps65185_vcom_get_voltage_sel(struct regulator_dev *rdev)
  	return sel;
  }
  
@@ -364,7 +375,7 @@ index 111111111111..222222222222 100644
  };
  
  static const struct regulator_ops tps65185_vposneg_ops = {
-@@ -264,6 +474,7 @@ static const struct regulator_desc regulators[] = {
+@@ -268,6 +483,7 @@ static const struct regulator_desc regulators[] = {
  		.owner = THIS_MODULE,
  		.enable_reg = TPS65185_REG_ENABLE,
  		.enable_mask = BIT(5),
@@ -372,7 +383,7 @@ index 111111111111..222222222222 100644
  		.n_voltages = 1,
  		.min_uV = 3300000,
  	},
-@@ -292,6 +503,7 @@ static const struct regulator_desc vcom_regulator_desc = {
+@@ -296,6 +512,7 @@ static const struct regulator_desc vcom_regulator_desc = {
  	.ops = &tps65185_vcom_ops,
  	.type = REGULATOR_VOLTAGE,
  	.owner = THIS_MODULE,
@@ -380,7 +391,7 @@ index 111111111111..222222222222 100644
  	.n_voltages = 511,
  	.min_uV = 0,
  	.uV_step = 10000,
-@@ -328,6 +540,8 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -332,6 +549,8 @@ static int tps65185_probe(struct i2c_client *client)
  	struct tps65185_data *data;
  	struct regulator_config config = { };
  	struct regulator_dev *rdev;
@@ -389,7 +400,7 @@ index 111111111111..222222222222 100644
  	int ret = 0;
  	int i;
  
-@@ -346,9 +560,8 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -350,9 +569,8 @@ static int tps65185_probe(struct i2c_client *client)
  				     PTR_ERR(data->pgood_gpio),
  				     "failed to get power good gpio\n");
  
@@ -400,7 +411,7 @@ index 111111111111..222222222222 100644
  
  	data->pwrup_gpio = devm_gpiod_get_optional(&client->dev, "enable", GPIOD_OUT_LOW);
  	if (IS_ERR(data->pwrup_gpio))
-@@ -377,14 +590,17 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -386,14 +604,17 @@ static int tps65185_probe(struct i2c_client *client)
  
  	init_completion(&data->pgood_completion);
  	init_completion(&data->tmst_completion);
@@ -425,7 +436,7 @@ index 111111111111..222222222222 100644
  
  	if (client->irq) {
  		ret = devm_request_threaded_irq(&client->dev, client->irq,
-@@ -396,6 +612,23 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -405,6 +626,23 @@ static int tps65185_probe(struct i2c_client *client)
  					     "failed to request irq\n");
  	}
  
@@ -449,7 +460,7 @@ index 111111111111..222222222222 100644
  	ret = regmap_update_bits(data->regmap, TPS65185_REG_INT_EN2, BIT(0), BIT(0));
  	if (ret)
  		return dev_err_probe(&client->dev, ret,
-@@ -414,7 +647,6 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -423,7 +661,6 @@ static int tps65185_probe(struct i2c_client *client)
  					     regulators[i].name);
  	}
  
@@ -457,7 +468,7 @@ index 111111111111..222222222222 100644
  	rdev = devm_regulator_register(&client->dev, &vcom_regulator_desc, &config);
  	if (IS_ERR(rdev))
  		return dev_err_probe(&client->dev, PTR_ERR(rdev),
-@@ -429,6 +661,12 @@ static int tps65185_probe(struct i2c_client *client)
+@@ -438,6 +675,12 @@ static int tps65185_probe(struct i2c_client *client)
  			dev_notice(&client->dev, "failed to register hwmon\n");
  	}
  

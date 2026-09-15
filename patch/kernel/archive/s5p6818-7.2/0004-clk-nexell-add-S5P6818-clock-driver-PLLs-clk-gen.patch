@@ -1,0 +1,1813 @@
+From 6aec4700c9c3ae01eda0037c4f17387e04f1c1a7 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 15:02:19 +0200
+Subject: [PATCH 04/12] clk: nexell: add S5P6818 clock driver (PLLs + clk-gen)
+
+Registers the core PLLs (pll0..3 + sys bus clocks) and peripheral clock
+generators. 'nexell,clk-critical' keeps a gate enabled for IP whose consumer
+never calls clk_prepare_enable (e.g. GbE TX clock). pll_rate/bus_rate guard an
+unregistered parent; recalc_rate derives PCLK-gated rates (e.g. I2C). Validated.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/clk/Kconfig                  |   1 +
+ drivers/clk/Makefile                 |   1 +
+ drivers/clk/nexell/Kconfig           |   5 +
+ drivers/clk/nexell/Makefile          |   2 +
+ drivers/clk/nexell/clk-s5pxx18-pll.c | 851 +++++++++++++++++++++++++++
+ drivers/clk/nexell/clk-s5pxx18-pll.h |  76 +++
+ drivers/clk/nexell/clk-s5pxx18.c     | 632 ++++++++++++++++++++
+ drivers/clk/nexell/clk-s5pxx18.h     | 159 +++++
+ 8 files changed, 1727 insertions(+)
+ create mode 100644 drivers/clk/nexell/Kconfig
+ create mode 100644 drivers/clk/nexell/Makefile
+ create mode 100644 drivers/clk/nexell/clk-s5pxx18-pll.c
+ create mode 100644 drivers/clk/nexell/clk-s5pxx18-pll.h
+ create mode 100644 drivers/clk/nexell/clk-s5pxx18.c
+ create mode 100644 drivers/clk/nexell/clk-s5pxx18.h
+
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+index 1717ce75a..241d51300 100644
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -546,6 +546,7 @@ source "drivers/clk/visconti/Kconfig"
+ source "drivers/clk/x86/Kconfig"
+ source "drivers/clk/xilinx/Kconfig"
+ source "drivers/clk/zynqmp/Kconfig"
++source "drivers/clk/nexell/Kconfig"
+ 
+ # Kunit test cases
+ config CLK_KUNIT_TEST
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index cc108a75a..81d9180d3 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -169,3 +169,4 @@ endif
+ obj-y					+= xilinx/
+ obj-$(CONFIG_ARCH_ZYNQ)			+= zynq/
+ obj-$(CONFIG_COMMON_CLK_ZYNQMP)         += zynqmp/
++obj-$(CONFIG_COMMON_CLK_S5PXX18)	+= nexell/
+diff --git a/drivers/clk/nexell/Kconfig b/drivers/clk/nexell/Kconfig
+new file mode 100644
+index 000000000..03fa384f9
+--- /dev/null
++++ b/drivers/clk/nexell/Kconfig
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0
++config COMMON_CLK_S5PXX18
++	bool "Nexell S5PXX18 (S5P6818) clock support"
++	depends on ARCH_NEXELL || COMPILE_TEST
++	default ARCH_NEXELL
+diff --git a/drivers/clk/nexell/Makefile b/drivers/clk/nexell/Makefile
+new file mode 100644
+index 000000000..9edbb85ef
+--- /dev/null
++++ b/drivers/clk/nexell/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++obj-$(CONFIG_COMMON_CLK_S5PXX18)	+= clk-s5pxx18.o clk-s5pxx18-pll.o
+diff --git a/drivers/clk/nexell/clk-s5pxx18-pll.c b/drivers/clk/nexell/clk-s5pxx18-pll.c
+new file mode 100644
+index 000000000..26c242d6f
+--- /dev/null
++++ b/drivers/clk/nexell/clk-s5pxx18-pll.c
+@@ -0,0 +1,851 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Youngbok, Park <ybpark@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/clk.h>
++#include <linux/clkdev.h>
++#include <linux/clk-provider.h>
++#include <linux/err.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <asm/tlbflush.h>
++#include "clk-s5pxx18.h"
++
++/* CPUFREQ bus-freq SMC helper - not implemented in the 7.2 port (no cpufreq yet) */
++static inline int __invoke_nexell_fn_smc(u64 fn, u64 a1, u64 a2, u64 a3)
++{
++	return 0;
++}
++#include "clk-s5pxx18-pll.h"
++
++#define PLL_LOCKING_TIME 100
++
++struct pll_pms {
++	long rate; /* unint Khz */
++	int P;
++	int M;
++	int S;
++};
++
++struct clk_core {
++	const char *name;
++	int id, div, pll;
++	unsigned long rate;
++	struct clk_hw hw;
++	struct pll_pms pms;
++};
++
++#ifdef CONFIG_ARCH_S5P4418
++/* PLL 0,1 */
++static struct pll_pms pll0_1_pms[] = {
++	[0] = {
++		.rate = 1200000, .P = 3, .M = 300, .S = 1,
++	},
++	[1] = {
++		.rate = 1100000, .P = 3, .M = 275, .S = 1,
++	},
++	[2] = {
++		.rate = 1000000, .P = 3, .M = 250, .S = 1,
++	},
++	[3] = {
++		.rate = 900000, .P = 3, .M = 225, .S = 1,
++	},
++	[4] = {
++		.rate = 800000, .P = 3, .M = 200, .S = 1,
++	},
++	[5] = {
++		.rate = 700000, .P = 3, .M = 175, .S = 1,
++	},
++	[6] = {
++		.rate = 600000, .P = 2, .M = 200, .S = 2,
++	},
++	[7] = {
++		.rate = 500000, .P = 3, .M = 250, .S = 2,
++	},
++	[8] = {
++		.rate = 400000, .P = 3, .M = 200, .S = 2,
++	},
++	[9] = {
++		.rate = 300000, .P = 2, .M = 200, .S = 3,
++	},
++	[10] = {
++		.rate = 200000, .P = 3, .M = 200, .S = 3,
++	},
++	[11] = {
++		.rate = 100000, .P = 3, .M = 200, .S = 4,
++	},
++};
++
++/* PLL 2,3 */
++static struct pll_pms pll2_3_pms[] = {
++	[0] = {
++		.rate = 1200000, .P = 3, .M = 300, .S = 1,
++	},
++	[1] = {
++		.rate = 1100000, .P = 3, .M = 275, .S = 1,
++	},
++	[2] = {
++		.rate = 1000000, .P = 3, .M = 250, .S = 1,
++	},
++	[3] = {
++		.rate = 900000, .P = 3, .M = 225, .S = 1,
++	},
++	[4] = {
++		.rate = 800000, .P = 3, .M = 200, .S = 1,
++	},
++	[5] = {
++		.rate = 700000, .P = 3, .M = 175, .S = 1,
++	},
++	[6] = {
++		.rate = 600000, .P = 3, .M = 150, .S = 1,
++	},
++	[7] = {
++		.rate = 500000, .P = 3, .M = 250, .S = 2,
++	},
++	[8] = {
++		.rate = 400000, .P = 3, .M = 200, .S = 2,
++	},
++	[9] = {
++		.rate = 300000, .P = 3, .M = 150, .S = 2,
++	},
++	[10] = {
++		.rate = 200000, .P = 3, .M = 200, .S = 3,
++	},
++	[11] = {
++		.rate = 100000, .P = 3, .M = 200, .S = 4,
++	},
++};
++#else	/* S5P6818 */
++/* PLL 0,1 */
++static struct pll_pms pll0_1_pms[] = {
++	[0] = {
++		.rate = 1600000, .P = 6, .M = 400, .S = 0,
++	},
++	[1] = {
++		.rate = 1500000, .P = 6, .M = 375, .S = 0,
++	},
++	[2] = {
++		.rate = 1400000, .P = 6, .M = 350, .S = 0,
++	},
++	[3] = {
++		.rate = 1300000, .P = 6, .M = 325, .S = 0,
++	},
++	[4] = {
++		.rate = 1200000, .P = 3, .M = 300, .S = 1,
++	},
++	[5] = {
++		.rate = 1100000, .P = 3, .M = 275, .S = 1,
++	},
++	[6] = {
++		.rate = 1000000, .P = 3, .M = 250, .S = 1,
++	},
++	[7] = {
++		.rate = 900000, .P = 3, .M = 225, .S = 1,
++	},
++	[8] = {
++		.rate = 800000, .P = 3, .M = 200, .S = 1,
++	},
++	[9] = {
++		.rate = 700000, .P = 3, .M = 175, .S = 1,
++	},
++	[10] = {
++		.rate = 600000, .P = 2, .M = 200, .S = 2,
++	},
++	[11] = {
++		.rate = 500000, .P = 3, .M = 250, .S = 2,
++	},
++	[12] = {
++		.rate = 400000, .P = 3, .M = 200, .S = 2,
++	},
++	[13] = {
++		.rate = 300000, .P = 2, .M = 200, .S = 3,
++	},
++	[14] = {
++		.rate = 200000, .P = 3, .M = 200, .S = 3,
++	},
++	[15] = {
++		.rate = 100000, .P = 3, .M = 200, .S = 4,
++	},
++};
++
++/* PLL 2,3 */
++static struct pll_pms pll2_3_pms[] = {
++	[0] = {
++		.rate = 1600000, .P = 3, .M = 400, .S = 1,
++	},
++	[1] = {
++		.rate = 1500000, .P = 3, .M = 375, .S = 1,
++	},
++	[2] = {
++		.rate = 1400000, .P = 3, .M = 350, .S = 1,
++	},
++	[3] = {
++		.rate = 1300000, .P = 3, .M = 325, .S = 1,
++	},
++	[4] = {
++		.rate = 1200000, .P = 3, .M = 300, .S = 1,
++	},
++	[5] = {
++		.rate = 1100000, .P = 3, .M = 275, .S = 1,
++	},
++	[6] = {
++		.rate = 1000000, .P = 3, .M = 250, .S = 1,
++	},
++	[7] = {
++		.rate = 900000, .P = 3, .M = 225, .S = 1,
++	},
++	[8] = {
++		.rate = 800000, .P = 3, .M = 200, .S = 1,
++	},
++	[9] = {
++		.rate = 700000, .P = 3, .M = 175, .S = 1,
++	},
++	[10] = {
++		.rate = 600000, .P = 3, .M = 150, .S = 1,
++	},
++	[11] = {
++		.rate = 500000, .P = 3, .M = 250, .S = 2,
++	},
++	[12] = {
++		.rate = 400000, .P = 3, .M = 200, .S = 2,
++	},
++	[13] = {
++		.rate = 300000, .P = 3, .M = 150, .S = 2,
++	},
++	[14] = {
++		.rate = 200000, .P = 3, .M = 200, .S = 3,
++	},
++	[15] = {
++		.rate = 100000, .P = 3, .M = 200, .S = 4,
++	},
++};
++#endif
++
++#define PLL0_1_SIZE ARRAY_SIZE(pll0_1_pms)
++#define PLL2_3_SIZE ARRAY_SIZE(pll2_3_pms)
++
++#define PMS_RATE(p, i) ((&p[i])->rate)
++#define PMS_P(p, i) ((&p[i])->P)
++#define PMS_M(p, i) ((&p[i])->M)
++#define PMS_S(p, i) ((&p[i])->S)
++
++#define PLL_S_BITPOS 0
++#define PLL_M_BITPOS 8
++#define PLL_P_BITPOS 18
++
++static void *ref_clk_base;
++static spinlock_t pll_lock = __SPIN_LOCK_UNLOCKED(pll_lock);
++
++static void nx_pll_set_rate(int PLL, int P, int M, int S)
++{
++	struct reg_clkpwr *reg = ref_clk_base;
++	unsigned long flags;
++
++	spin_lock_irqsave(&pll_lock, flags);
++
++	/*
++	 * 1. change PLL0 clock to Oscillator Clock
++	 */
++	reg->PLLSETREG[PLL] &= ~(1 << 28); /* pll bypass on, xtal clock use */
++	reg->CLKMODEREG0 = (1 << PLL);     /* update pll */
++
++	while (readl(&reg->CLKMODEREG0) & (1 << 31))
++		;/* wait for change update pll*/
++
++	/*
++	 * 2. PLL Power Down & PMS value setting
++	 */
++	reg->PLLSETREG[PLL] =
++		((1UL << 29 |   /* power down */
++		  (0UL << 28) | /* clock bypass on, xtal clock use */
++		  (S << PLL_S_BITPOS) |
++		  (M << PLL_M_BITPOS) |
++		  (P << PLL_P_BITPOS)));
++	reg->CLKMODEREG0 = (1 << PLL); /* update pll */
++
++	while (readl(&reg->CLKMODEREG0) & (1 << 31))
++		; /* wait for change update pll */
++
++	udelay(10);
++
++	/*
++	 * 3. Update PLL & wait PLL locking
++	 */
++	reg->PLLSETREG[PLL] &= ~((u32)(1UL << 29));/* pll power up */
++	reg->CLKMODEREG0 = (1 << PLL);		   /* update pll */
++
++	while (readl(&reg->CLKMODEREG0) & (1 << 31))
++		;/* wait for change update pll */
++
++	udelay(PLL_LOCKING_TIME);/* 1000us */
++
++	/*
++	 * 4. Change to PLL clock
++	 */
++	reg->PLLSETREG[PLL] |= (1 << 28);/* pll bypass off, pll clock use */
++	reg->CLKMODEREG0 = (1 << PLL);   /* update pll */
++
++	while (readl(&reg->CLKMODEREG0) & (1 << 31))
++		;/* wait for change update pll */
++
++	spin_unlock_irqrestore(&pll_lock, flags);
++}
++
++#if defined(CONFIG_ARCH_S5P4418)
++asmlinkage int __invoke_nexell_fn_smc(u32, u32, u32, u32);
++#endif
++
++int nx_change_bus_freq(u32 pll_data)
++{
++#if defined(CONFIG_ARCH_S5P6818)
++	uint32_t pll_num = pll_data & 0x00000003;
++	uint32_t s       = (pll_data & 0x000000fc) >> 2;
++	uint32_t m       = (pll_data & 0x00ffff00) >> 8;
++	uint32_t p       = (pll_data & 0xff000000) >> 24;
++
++	nx_pll_set_rate(pll_num, p, m, s);
++	return 0;
++#else
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&pll_lock, flags);
++	ret = __invoke_nexell_fn_smc(0x82000009, pll_data, 0, 0);
++	spin_unlock_irqrestore(&pll_lock, flags);
++
++	return ret;
++#endif
++}
++EXPORT_SYMBOL(nx_change_bus_freq);
++
++static unsigned long pll_round_rate(int pllno, unsigned long rate, int *p,
++				    int *m, int *s)
++{
++	struct pll_pms *pms;
++	int len, idx = 0, n = 0, l = 0;
++	long freq = 0;
++
++	rate /= 1000;
++	pr_debug("PLL.%d, %ld", pllno, rate);
++
++	switch (pllno) {
++	case 0:
++	case 1:
++		pms = pll0_1_pms;
++		len = PLL0_1_SIZE;
++		break;
++	case 2:
++	case 3:
++		pms = pll2_3_pms;
++		len = PLL2_3_SIZE;
++		break;
++	default:
++		pr_info("Not support pll.%d (0~3)\n", pllno);
++		return 0;
++	}
++
++	/* array index so -1 */
++	idx = (len / 2) - 1;
++
++	while (1) {
++		l = n + idx;
++		freq = PMS_RATE(pms, l);
++		if (freq == rate)
++			break;
++
++		if (rate > freq)
++			len -= idx, idx >>= 1;
++		else
++			n += idx, idx = (len - n - 1) >> 1;
++
++		if (0 == idx) {
++			int k = l;
++
++			if (abs(rate - freq) > abs(rate - PMS_RATE(pms, k + 1)))
++				k += 1;
++
++			if (abs(rate - PMS_RATE(pms, k)) >=
++			    abs(rate - PMS_RATE(pms, k - 1)))
++				k -= 1;
++
++			l = k;
++			break;
++		}
++	}
++
++	if (p)
++		*p = PMS_P(pms, l);
++	if (m)
++		*m = PMS_M(pms, l);
++	if (s)
++		*s = PMS_S(pms, l);
++
++	pr_debug("(real %ld Khz, P=%d ,M=%3d, S=%d)\n", PMS_RATE(pms, l),
++		 PMS_P(pms, l), PMS_M(pms, l), PMS_S(pms, l));
++
++	return (PMS_RATE(pms, l) * 1000);
++}
++
++static unsigned long ref_clk = 24000000UL;
++
++#define getquotient(v, d) (v / d)
++
++#define DIV_CPUG0 0
++#define DIV_BUS 1
++#define DIV_MEM 2
++#define DIV_G3D 3
++#define DIV_VPU 4
++#define DIV_DISP 5
++#define DIV_HDMI 6
++#define DIV_CPUG1 7
++#define DIV_CCI4 8
++
++#define DVO0 3
++#define DVO1 9
++#define DVO2 15
++#define DVO3 21
++
++static inline unsigned int pll_rate(unsigned int pllN, unsigned int xtal)
++{
++	struct reg_clkpwr *reg = ref_clk_base;
++	unsigned int val, val1, nP, nM, nS, nK;
++	unsigned int temp = 0;
++
++	val = reg->PLLSETREG[pllN];
++	val1 = reg->PLLSETREG_SSCG[pllN];
++	xtal /= 1000; /* Unit Khz */
++
++	nP = (val >> 18) & 0x03F;
++	nM = (val >> 8) & 0x3FF;
++	nS = (val >> 0) & 0x0FF;
++	nK = (val1 >> 16) & 0xFFFF;
++
++	if ((pllN > 1) && nK)
++		temp =	(unsigned int)(
++			getquotient((getquotient((nK * 1000), 65536) * xtal),
++			nP) >>  nS);
++
++	return (unsigned int)((getquotient((nM * xtal), nP) >> nS) * 1000) +
++		temp;
++}
++
++static inline unsigned int pll_dvo(int dvo)
++{
++	struct reg_clkpwr *reg = ref_clk_base;
++
++	return (reg->DVOREG[dvo] & 0x7);
++}
++
++static inline unsigned int pll_div(int dvo)
++{
++	struct reg_clkpwr *reg = ref_clk_base;
++	unsigned int val = reg->DVOREG[dvo];
++
++	return ((((val >> DVO3) & 0x3F) + 1) << 24) |
++		((((val >> DVO2) & 0x3F) + 1) << 16) |
++		((((val >> DVO1) & 0x3F) + 1) << 8) |
++		((((val >> DVO0) & 0x3F) + 1) << 0);
++}
++
++#define PLLN_RATE(n) (pll_rate(n, ref_clk)) /* 0~ 3 */
++#define CPU_FCLK_RATE(n)                                                       \
++	(pll_rate(pll_dvo(n), ref_clk) / ((pll_div(n) >> 0) & 0x3F))
++#define CPU_HCLK_RATE(n)                                                       \
++	(pll_rate(pll_dvo(n), ref_clk) / ((pll_div(n) >> 0) & 0x3F) /          \
++	 ((pll_div(n) >> 8) & 0x3F))
++#define MEM_FCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_MEM), ref_clk) /                                 \
++	 ((pll_div(DIV_MEM) >> 0) & 0x3F) / ((pll_div(DIV_MEM) >> 8) & 0x3F))
++#define MEM_DCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_MEM), ref_clk) / ((pll_div(DIV_MEM) >> 0) & 0x3F))
++#define MEM_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_MEM), ref_clk) /                                 \
++	 ((pll_div(DIV_MEM) >> 0) & 0x3F) / ((pll_div(DIV_MEM) >> 8) & 0x3F) / \
++	 ((pll_div(DIV_MEM) >> 16) & 0x3F))
++#define MEM_PCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_MEM), ref_clk) /                                 \
++	 ((pll_div(DIV_MEM) >> 0) & 0x3F) / ((pll_div(DIV_MEM) >> 8) & 0x3F) / \
++	 ((pll_div(DIV_MEM) >> 16) & 0x3F) /                                   \
++	 ((pll_div(DIV_MEM) >> 24) & 0x3F))
++#define BUS_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_BUS), ref_clk) / ((pll_div(DIV_BUS) >> 0) & 0x3F))
++#define BUS_PCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_BUS), ref_clk) /                                 \
++	 ((pll_div(DIV_BUS) >> 0) & 0x3F) / ((pll_div(DIV_BUS) >> 8) & 0x3F))
++#define G3D_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_G3D), ref_clk) / ((pll_div(DIV_G3D) >> 0) & 0x3F))
++#define VPU_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_VPU), ref_clk) / ((pll_div(DIV_VPU) >> 0) & 0x3F))
++#define VPU_PCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_VPU), ref_clk) /                                 \
++	 ((pll_div(DIV_VPU) >> 0) & 0x3F) / ((pll_div(DIV_VPU) >> 8) & 0x3F))
++#define DIS_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_DISP), ref_clk) /                                \
++	 ((pll_div(DIV_DISP) >> 0) & 0x3F))
++#define DIS_PCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_DISP), ref_clk) /                                \
++	 ((pll_div(DIV_DISP) >> 0) & 0x3F) /                                   \
++	 ((pll_div(DIV_DISP) >> 8) & 0x3F))
++#define HDMI_PCLK_RATE()                                                       \
++	(pll_rate(pll_dvo(DIV_HDMI), ref_clk) /                                \
++	 ((pll_div(DIV_HDMI) >> 0) & 0x3F))
++#define CCI_BCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_CCI4), ref_clk) /                                \
++	 ((pll_div(DIV_CCI4) >> 0) & 0x3F))
++#define CCI_PCLK_RATE()                                                        \
++	(pll_rate(pll_dvo(DIV_CCI4), ref_clk) /                                \
++	 ((pll_div(DIV_CCI4) >> 0) & 0x3F) /                                   \
++	 ((pll_div(DIV_CCI4) >> 8) & 0x3F))
++
++/*
++ *	core frequency clk interface
++ */
++static struct clk_core clk_pll_dev[] = {
++	[ID_CPU_PLL0] =	{
++		.id = ID_CPU_PLL0, .name = CLK_CPU_PLL0,
++	},
++	[ID_CPU_PLL1] =	{
++		.id = ID_CPU_PLL1, .name = CLK_CPU_PLL1,
++	},
++	[ID_CPU_PLL2] =	{
++		.id = ID_CPU_PLL2, .name = CLK_CPU_PLL2,
++	},
++	[ID_CPU_PLL3] =	{
++		.id = ID_CPU_PLL3, .name = CLK_CPU_PLL3,
++	},
++	[ID_CPU_FCLK] = {.id = ID_CPU_FCLK,
++		.name = CLK_CPU_FCLK,
++		.div = DIV_CPUG0},
++	[ID_CPU_HCLK] = {.id = ID_CPU_HCLK,
++		.name = CLK_CPU_HCLK,
++		.div = DIV_CPUG0},
++	[ID_MEM_FCLK] = {.id = ID_MEM_FCLK,
++		.name = CLK_MEM_FCLK,
++		.div = DIV_MEM},
++	[ID_MEM_DCLK] = {.id = ID_MEM_DCLK,
++		.name = CLK_MEM_DCLK,
++		.div = DIV_MEM},
++	[ID_MEM_BCLK] = {.id = ID_MEM_BCLK,
++		.name = CLK_MEM_BCLK,
++		.div = DIV_MEM},
++	[ID_MEM_PCLK] = {.id = ID_MEM_PCLK,
++		.name = CLK_MEM_PCLK,
++		.div = DIV_MEM},
++	[ID_BUS_BCLK] = {.id = ID_BUS_BCLK,
++		.name = CLK_BUS_BCLK,
++		.div = DIV_BUS},
++	[ID_BUS_PCLK] = {.id = ID_BUS_PCLK,
++		.name = CLK_BUS_PCLK,
++		.div = DIV_BUS},
++	[ID_VPU_BCLK] = {.id = ID_VPU_BCLK,
++		.name = CLK_VPU_BCLK,
++		.div = DIV_VPU},
++	[ID_VPU_PCLK] = {.id = ID_VPU_PCLK,
++		.name = CLK_VPU_PCLK,
++		.div = DIV_VPU},
++	[ID_DIS_BCLK] = {.id = ID_DIS_BCLK,
++		.name = CLK_DIS_BCLK,
++		.div = DIV_DISP},
++	[ID_DIS_PCLK] = {.id = ID_DIS_PCLK,
++		.name = CLK_DIS_PCLK,
++		.div = DIV_DISP},
++	[ID_CCI_BCLK] = {.id = ID_CCI_BCLK,
++		.name = CLK_CCI_BCLK,
++		.div = DIV_CCI4},
++	[ID_CCI_PCLK] = {.id = ID_CCI_PCLK,
++		.name = CLK_CCI_PCLK,
++		.div = DIV_CCI4},
++	[ID_G3D_BCLK] = {.id = ID_G3D_BCLK,
++		.name = CLK_G3D_BCLK,
++		.div = DIV_G3D},
++};
++
++static unsigned long clk_pll_recalc_rate(struct clk_hw *hw, unsigned long rate)
++{
++	struct clk_core *clk_data = to_clk_core(hw);
++	int id = clk_data->id;
++
++	switch (id) {
++	case ID_CPU_PLL0:
++		rate = PLLN_RATE(0);
++		break;
++	case ID_CPU_PLL1:
++		rate = PLLN_RATE(1);
++		break;
++	case ID_CPU_PLL2:
++		rate = PLLN_RATE(2);
++		break;
++	case ID_CPU_PLL3:
++		rate = PLLN_RATE(3);
++		break;
++	case ID_CPU_FCLK:
++		rate = CPU_FCLK_RATE(DIV_CPUG0);
++		break;
++	case ID_CPU_HCLK:
++		rate = CPU_HCLK_RATE(DIV_CPUG0);
++		break;
++	case ID_MEM_FCLK:
++		rate = MEM_FCLK_RATE();
++		break;
++	case ID_BUS_BCLK:
++		rate = BUS_BCLK_RATE();
++		break;
++	case ID_BUS_PCLK:
++		rate = BUS_PCLK_RATE();
++		break;
++	case ID_MEM_DCLK:
++		rate = MEM_DCLK_RATE();
++		break;
++	case ID_MEM_BCLK:
++		rate = MEM_BCLK_RATE();
++		break;
++	case ID_MEM_PCLK:
++		rate = MEM_PCLK_RATE();
++		break;
++	case ID_G3D_BCLK:
++		rate = G3D_BCLK_RATE();
++		break;
++	case ID_VPU_BCLK:
++		rate = VPU_BCLK_RATE();
++		break;
++	case ID_VPU_PCLK:
++		rate = VPU_PCLK_RATE();
++		break;
++	case ID_DIS_BCLK:
++		rate = DIS_BCLK_RATE();
++		break;
++	case ID_DIS_PCLK:
++		rate = DIS_PCLK_RATE();
++		break;
++	case ID_CCI_BCLK:
++		rate = CCI_BCLK_RATE();
++		break;
++	case ID_CCI_PCLK:
++		rate = CCI_PCLK_RATE();
++		break;
++	default:
++		pr_info("Unknown clock ID [%d] ...\n", id);
++		break;
++	}
++
++	pr_debug("%s: name %s id %d rate %ld\n", __func__, clk_data->name,
++		 clk_data->id, rate);
++	return rate;
++}
++
++static long clk_pll_round_rate(struct clk_hw *hw, unsigned long drate,
++			       unsigned long *prate)
++{
++	struct clk_core *clk_data = to_clk_core(hw);
++	struct pll_pms *pms = &clk_data->pms;
++	int id = clk_data->id;
++	long rate = 0;
++
++	/* clear P,M,S */
++	pms->P = 0, pms->M = 0, pms->S = 0;
++	rate = pll_round_rate(id, drate, &pms->P, &pms->M, &pms->S);
++
++	pr_debug("%s: name %s id %d (%lu, %lu) <%d,%d,%d>\n", __func__,
++		 clk_data->name, id, drate, rate, pms->P, pms->M, pms->S);
++	return rate;
++}
++
++static int clk_pll_set_rate(struct clk_hw *hw, unsigned long drate,
++			    unsigned long prate)
++{
++	struct clk_core *clk_data = to_clk_core(hw);
++	struct pll_pms *pms = &clk_data->pms;
++	int id = clk_data->id;
++	long rate = drate;
++
++	if (!pms->P && !pms->M && !pms->S)
++		rate = pll_round_rate(id, drate, &pms->P, &pms->M, &pms->S);
++
++	pr_debug("%s: name %s id %d (%lu, %lu) <%d,%d,%d>\n", __func__,
++		 clk_data->name, id, drate, rate, pms->P, pms->M, pms->S);
++	nx_pll_set_rate(id, pms->P, pms->M, pms->S);
++
++	/* clear P,M,S */
++	pms->P = 0, pms->M = 0, pms->S = 0;
++
++	return 0;
++}
++
++static int clk_pll_determine_rate(struct clk_hw *hw,
++				 struct clk_rate_request *req)
++{
++	req->rate = clk_pll_round_rate(hw, req->rate, &req->best_parent_rate);
++	return 0;
++}
++
++static const struct clk_ops clk_pll_ops = {
++	.recalc_rate = clk_pll_recalc_rate,
++	.determine_rate = clk_pll_determine_rate,
++	.set_rate = clk_pll_set_rate,
++};
++
++static const struct clk_ops clk_dev_ops = {
++	.recalc_rate = clk_pll_recalc_rate,
++};
++
++static struct clk *clk_pll_clock_register(const char *name,
++					  const char *parent_name,
++					  struct clk_hw *hw,
++					  const struct clk_ops *ops,
++					  unsigned long flags)
++{
++	struct clk *clk;
++	struct clk_init_data init;
++
++	init.name = name;
++	init.ops = ops;
++	init.flags = flags;
++	init.parent_names = (parent_name ? &parent_name : NULL);
++	init.num_parents = parent_name ? 1 : 0;
++	hw->init = &init;
++
++	clk = clk_register(NULL, hw);
++	if (IS_ERR(clk)) {
++		pr_err("%s: failed to register pll clock %s\n", __func__,
++		       init.name);
++		return NULL;
++	}
++
++	if (clk_register_clkdev(clk, init.name, NULL))
++		pr_err("%s: failed to register lookup for %s", __func__,
++		       init.name);
++
++	return clk;
++}
++
++static void __init clk_pll_sysclk_setup(struct device_node *np)
++{
++	struct clk *clk;
++	unsigned long flags = 0;/* | CLK_GET_RATE_NOCACHE; */
++	unsigned long rate[ID_CPU_FCLK];
++	int i;
++
++	for (i = 0; i < ID_CPU_FCLK; i++) {
++		clk = clk_pll_clock_register(clk_pll_dev[i].name, NULL,
++					     &clk_pll_dev[i].hw, &clk_pll_ops,
++					     flags);
++		if (NULL == clk)
++			continue;
++		rate[i] = clk_get_rate(clk);
++	}
++	pr_info("PLL : [0] = %10lu, [1] = %10lu, [2] = %10lu, [3] = %10lu\n",
++	       rate[0], rate[1], rate[2], rate[3]);
++}
++
++static void __init clk_pll_of_clocks_setup(struct device_node *node)
++{
++	struct clk_core *clk_data = NULL;
++	struct clk *clk;
++	unsigned long flags = 0 /*CLK_IS_BASIC*/;
++	const char *parent_name = NULL;
++	int i, div, pll;
++
++	for (i = ID_CPU_FCLK; ID_END > i; i++) {
++		clk_data = &clk_pll_dev[i];
++		div = clk_data->div;
++		pll = pll_dvo(div);
++		clk_data->pll = pll;
++		parent_name = clk_pll_dev[pll].name;
++
++		clk = clk_pll_clock_register(clk_data->name, parent_name,
++				       &clk_data->hw, &clk_dev_ops, flags);
++		if (clk)
++			clk_data->rate = clk_get_rate(clk);
++	}
++}
++
++static void __init clk_pll_of_clocks_dump(struct device_node *np)
++{
++	struct clk_core *clk_data = clk_pll_dev;
++	int pll = pll_dvo(DIV_CPUG1);
++
++	/* cpu 0, 1  : div 0, 7 */
++	pr_info("(%d) PLL%d: CPU  FCLK = %10lu, HCLK = %9lu (G0)\n",
++	       clk_data[ID_CPU_FCLK].div, clk_data[ID_CPU_FCLK].pll,
++	       clk_data[ID_CPU_FCLK].rate, clk_data[ID_CPU_HCLK].rate);
++
++	pr_info("(%d) PLL%d: CPU  FCLK = %10lu, HCLK = %9lu (G1)\n", DIV_CPUG1,
++	       pll, (ulong)CPU_FCLK_RATE(DIV_CPUG1),
++	       (ulong)CPU_HCLK_RATE(DIV_CPUG1));
++
++	/* memory */
++	pr_info("(%d) PLL%d: MEM  FCLK = %10lu, DCLK = %9lu, BCLK = %9lu,",
++	       clk_data[ID_MEM_FCLK].div, clk_data[ID_MEM_FCLK].pll,
++	       clk_data[ID_MEM_FCLK].rate, clk_data[ID_MEM_DCLK].rate,
++	       clk_data[ID_MEM_BCLK].rate);
++
++	pr_info("PCLK = %9lu\n", clk_data[ID_MEM_PCLK].rate);
++
++	/* bus */
++	pr_info("(%d) PLL%d: BUS  BCLK = %10lu, PCLK = %9lu\n",
++	       clk_data[ID_BUS_BCLK].div, clk_data[ID_BUS_BCLK].pll,
++	       clk_data[ID_BUS_BCLK].rate, clk_data[ID_BUS_PCLK].rate);
++
++	/* cci400 */
++	pr_info("(%d) PLL%d: CCI4 BCLK = %10lu, PCLK = %9lu\n",
++	       clk_data[ID_CCI_BCLK].div, clk_data[ID_CCI_BCLK].pll,
++	       clk_data[ID_CCI_BCLK].rate, clk_data[ID_CCI_PCLK].rate);
++
++	/* 3d graphic */
++	pr_info("(%d) PLL%d: G3D  BCLK = %10lu\n", clk_data[ID_G3D_BCLK].div,
++	       clk_data[ID_G3D_BCLK].pll, clk_data[ID_G3D_BCLK].rate);
++
++	/* coda (vpu) */
++	pr_info("(%d) PLL%d: VPU  BCLK = %10lu, PCLK = %9lu\n",
++	       clk_data[ID_VPU_BCLK].div, clk_data[ID_VPU_BCLK].pll,
++	       clk_data[ID_VPU_BCLK].rate, clk_data[ID_VPU_PCLK].rate);
++
++	/* display */
++	pr_info("(%d) PLL%d: DISP BCLK = %10lu, PCLK = %9lu\n",
++	       clk_data[ID_DIS_BCLK].div, clk_data[ID_DIS_BCLK].pll,
++	       clk_data[ID_DIS_BCLK].rate, clk_data[ID_DIS_PCLK].rate);
++}
++
++static void __init clk_pll_of_setup(struct device_node *node)
++{
++	unsigned int pllin;
++	struct resource regs;
++
++	if (of_address_to_resource(node, 0, &regs) < 0) {
++		pr_err("fail get clock pll regsister\n");
++		return;
++	}
++
++	ref_clk_base = ioremap(regs.start, resource_size(&regs));
++	if (ref_clk_base == NULL) {
++		pr_err("fail get Clock control base address\n");
++		return;
++	}
++	if (0 == of_property_read_u32(node, "ref-freuecny", &pllin))
++		ref_clk = pllin;
++
++	clk_pll_sysclk_setup(node);
++	clk_pll_of_clocks_setup(node);
++	clk_pll_of_clocks_dump(node);
++
++	pr_info("CPU REF HZ: %lu hz (0x%08x:0x%p)\n", ref_clk, 0xc0010000,
++		ref_clk_base);
++}
++
++CLK_OF_DECLARE(s5pxx18, "nexell,s5pxx18,pll", clk_pll_of_setup);
+diff --git a/drivers/clk/nexell/clk-s5pxx18-pll.h b/drivers/clk/nexell/clk-s5pxx18-pll.h
+new file mode 100644
+index 000000000..329dc3a4d
+--- /dev/null
++++ b/drivers/clk/nexell/clk-s5pxx18-pll.h
+@@ -0,0 +1,76 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Youngbok, Park <ybpark@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef _CLK_S5P4818_PLL_H
++#define _CLK_S5P4818_PLL_H
++
++enum { ID_CPU_PLL0 = 0,
++	ID_CPU_PLL1,
++	ID_CPU_PLL2,
++	ID_CPU_PLL3,
++	ID_CPU_FCLK,
++	ID_CPU_HCLK,
++	ID_BUS_BCLK,
++	ID_BUS_PCLK,
++	ID_MEM_FCLK,
++	ID_MEM_DCLK,
++	ID_MEM_BCLK,
++	ID_MEM_PCLK,
++	ID_G3D_BCLK,
++	ID_VPU_BCLK,
++	ID_VPU_PCLK,
++	ID_DIS_BCLK,
++	ID_DIS_PCLK,
++	ID_CCI_BCLK,
++	ID_CCI_PCLK,
++	ID_END,
++};
++
++struct  reg_clkpwr {
++	unsigned int CLKMODEREG0;
++	unsigned int __Reserved0;
++	unsigned int PLLSETREG[4];
++	unsigned int __Reserved1[2];
++	unsigned int DVOREG[9];
++	unsigned int __Reserved2;
++	unsigned int PLLSETREG_SSCG[6];
++	unsigned int __reserved3[8];
++	unsigned char __Reserved4[0x200 - 0x80];
++	unsigned int GPIOWAKEUPRISEENB;
++	unsigned int GPIOWAKEUPFALLENB;
++	unsigned int GPIORSTENB;
++	unsigned int GPIOWAKEUPENB;
++	unsigned int GPIOINTENB;
++	unsigned int GPIOINTPEND;
++	unsigned int RESETSTATUS;
++	unsigned int INTENABLE;
++	unsigned int INTPEND;
++	unsigned int PWRCONT;
++	unsigned int PWRMODE;
++	unsigned int __Reserved5;
++	unsigned int SCRATCH[3];
++	unsigned int SYSRSTCONFIG;
++	unsigned int __Reserved6[0x100-0x80];
++	unsigned int PADSTRENGTHGPIO[5][2];
++	unsigned int __Reserved7[2];
++	unsigned int PADSTRENGTHBUS;
++};
++
++#define to_clk_core(_hw) container_of(_hw, struct clk_core, hw)
++
++#endif
+diff --git a/drivers/clk/nexell/clk-s5pxx18.c b/drivers/clk/nexell/clk-s5pxx18.c
+new file mode 100644
+index 000000000..e76b5ded2
+--- /dev/null
++++ b/drivers/clk/nexell/clk-s5pxx18.c
+@@ -0,0 +1,632 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Youngbok, Park <ybpark@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <linux/clk.h>
++#include <linux/clkdev.h>
++#include <linux/clk-provider.h>
++#include <linux/slab.h>
++#include <linux/err.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/syscore_ops.h>
++
++#include "clk-s5pxx18.h"
++
++#define to_clk_dev(_hw) container_of(_hw, struct clk_dev, hw)
++
++struct clk_dev_peri {
++	const char *parent_name;
++	const char *name;
++	void __iomem *base;
++	int id;
++	int clk_step; /* 1S or 2S */
++	bool enable;
++	long rate;
++	u32 in_mask;
++	u32 in_mask1;
++	/* clock register */
++	int div_src_0;
++	int div_val_0;
++	int invert_0;
++	int div_src_1;
++	int div_val_1;
++	int invert_1;
++	int in_extclk_1;
++	int in_extclk_2;
++	int fix_src;
++	bool critical;	/* register CLK_IS_CRITICAL (keep enabled) */
++};
++
++struct clk_dev {
++	struct device_node *node;
++	struct clk *clk;
++	struct clk_hw hw;
++	struct clk_dev_peri *peri;
++	unsigned int rate;
++	spinlock_t lock;
++};
++
++struct clk_dev_map {
++	unsigned int con_enb;
++	unsigned int con_gen[4];
++};
++
++#define MAX_DIVIDER ((1 << 8) - 1) /* 256, align 2 */
++
++static inline void clk_dev_bclk(void *base, int on)
++{
++	struct clk_dev_map *reg = base;
++	unsigned int val = readl(&reg->con_enb) & ~(0x3);
++
++	val |= (on ? 3 : 0) & 0x3; /* always BCLK */
++	writel(val, &reg->con_enb);
++}
++
++static inline void clk_dev_pclk(void *base, int on)
++{
++	struct clk_dev_map *reg = base;
++	unsigned int val = 0;
++
++	if (!on)
++		return;
++
++	val = readl(&reg->con_enb) & ~(1 << 3);
++	val |= (1 << 3);
++	writel(val, &reg->con_enb);
++}
++
++static inline void clk_dev_rate(void *base, int step, int src, int div)
++{
++	struct clk_dev_map *reg = base;
++	unsigned int val = 0;
++
++	val = readl(&reg->con_gen[step << 1]);
++	val &= ~(0x07 << 2);
++	val |= (src << 2); /* source */
++	val &= ~(0xFF << 5);
++	val |= (div - 1) << 5; /* divider */
++	writel(val, &reg->con_gen[step << 1]);
++}
++
++static inline void clk_dev_inv(void *base, int step, int inv)
++{
++	struct clk_dev_map *reg = base;
++	unsigned int val = readl(&reg->con_gen[step << 1]) & ~(1 << 1);
++
++	val |= (inv << 1);
++	writel(val, &reg->con_gen[step << 1]);
++}
++
++static inline void clk_dev_enb(void *base, int on)
++{
++	struct clk_dev_map *reg = base;
++	unsigned int val = readl(&reg->con_enb) & ~(1 << 2);
++
++	val |= ((on ? 1 : 0) << 2);
++	writel(val, &reg->con_enb);
++}
++
++static inline long clk_dev_divide(long rate, long request, int align,
++				  int *divide)
++{
++	int div = (rate / request);
++	int max = MAX_DIVIDER & ~(align - 1);
++	int adv = (div & ~(align - 1)) + align;
++
++	if (!div) {
++		if (divide)
++			*divide = 1;
++		return rate;
++	}
++
++	if (1 != div)
++		div &= ~(align - 1);
++
++	if (div != adv && abs(request - rate / div) > abs(request - rate / adv))
++		div = adv;
++
++	div = (div > max ? max : div);
++	if (divide)
++		*divide = div;
++
++	return (rate / div);
++}
++
++static long clk_dev_bus_rate(struct clk_dev_peri *peri)
++{
++	struct clk *clk;
++	const char *name = NULL;
++	long rate = 0;
++
++	if (I_PCLK_MASK & peri->in_mask)
++		name = CLK_BUS_PCLK;
++	else if (I_BCLK_MASK & peri->in_mask)
++		name = CLK_BUS_PCLK;
++
++	if (name) {
++		clk = clk_get(NULL, name);
++		/* Same ERR_PTR guard as clk_dev_pll_rate: the bus (pclk/bclk)
++		 * clocks come from the "nexell,s5pxx18,pll" provider; if absent
++		 * clk_get returns an ERR_PTR that must not be dereferenced. */
++		if (IS_ERR_OR_NULL(clk))
++			return -EINVAL;
++		rate = clk_get_rate(clk);
++		clk_put(clk);
++	}
++
++	return rate ?: -EINVAL;
++}
++
++static long clk_dev_pll_rate(int no)
++{
++	struct clk *clk;
++	char name[16];
++	long rate = 0;
++
++	sprintf(name, "pll%d", no);
++	clk = clk_get(NULL, name);
++	/*
++	 * The PLLs are registered by the separate "nexell,s5pxx18,pll" provider.
++	 * If that node is absent (or not yet initialised), clk_get returns an
++	 * ERR_PTR - must NOT dereference it via clk_get_rate (that faulted at
++	 * boot for any peripheral clock without a fixed src, e.g. the USB clock).
++	 * Treat a missing PLL as "rate 0" so the source is simply skipped.
++	 */
++	if (IS_ERR_OR_NULL(clk))
++		return 0;
++	rate = clk_get_rate(clk);
++	clk_put(clk);
++
++	return rate;
++}
++
++static long dev_round_rate(struct clk_hw *hw, unsigned long rate)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++	unsigned long request = rate, new_rate = 0;
++	unsigned long clock_hz, freq_hz = 0;
++	unsigned int mask;
++	int step, div[2] = {
++		0,
++	};
++	int i, n, start_src = 0, max_src = 0, clk2 = 0;
++	short s1 = 0, s2 = 0, d1 = 0, d2 = 0;
++
++	step = peri->clk_step;
++	mask = peri->in_mask;
++	pr_debug("clk: %s request = %ld [input=0x%x]\n", peri->name, rate,
++		 mask);
++
++	if (!(mask & I_CLOCK_MASK))
++		return clk_dev_bus_rate(peri);
++
++next:
++	if (peri->fix_src >= 0) {
++		start_src = peri->fix_src;
++		max_src = start_src + 1;
++	} else {
++		start_src = 0;
++		max_src = I_CLOCK_NUM;
++	}
++
++	for (n = start_src ; n < max_src ; n++) {
++		if (!(((mask & I_CLOCK_MASK) >> n) & 0x1))
++			continue;
++
++		if (I_EXT1_BIT == n)
++			rate = peri->in_extclk_1;
++		else if (I_EXT2_BIT == n)
++			rate = peri->in_extclk_2;
++		else
++			rate = clk_dev_pll_rate(n);
++
++		if (!rate)
++			continue;
++
++		clock_hz = rate;
++		for (i = 0; step > i; i++)
++			rate = clk_dev_divide(rate, request, 2, &div[i]);
++
++		if (new_rate && (abs(rate - request) > abs(new_rate - request)))
++			continue;
++
++		pr_debug("clk: %s, pll.%d request[%ld] calc[%ld]\n", peri->name,
++			 n, request, rate);
++
++		if (clk2) {
++			s1 = -1, d1 = -1; /* not use */
++			s2 = n, d2 = div[0];
++		} else {
++			s1 = n, d1 = div[0];
++			s2 = I_CLKn_BIT, d2 = div[1];
++		}
++
++		new_rate = rate;
++		freq_hz = clock_hz;
++
++		if (request == rate)
++			break;
++	}
++
++	/* search 2th clock from input */
++	if (!clk2 && abs(new_rate - request) &&
++	    peri->in_mask1 & ((1 << I_CLOCK_NUM) - 1)) {
++		clk2 = 1;
++		mask = peri->in_mask1;
++		step = 1;
++		goto next;
++	}
++
++	peri->div_src_0 = s1, peri->div_val_0 = d1;
++	peri->div_src_1 = s2, peri->div_val_1 = d2;
++
++	pr_debug("clk: %s, step[%d] src[%d,%d] %ld /(div0: %d * div1: %d) ",
++		 peri->name, peri->clk_step, peri->div_src_0, peri->div_src_1,
++		 freq_hz, peri->div_val_0, peri->div_val_1);
++	pr_debug("=  %ld, %ld diff (%ld)\n", new_rate, request,
++		 (long)abs(new_rate - request));
++
++	return new_rate;
++}
++
++static int dev_set_rate(struct clk_hw *hw, unsigned long rate)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++	int i;
++
++	rate = dev_round_rate(hw, rate);
++
++	for (i = 0; peri->clk_step > i; i++) {
++		int s = (0 == i ? peri->div_src_0 : peri->div_src_1);
++		int d = (0 == i ? peri->div_val_0 : peri->div_val_1);
++
++		if (-1 == s)
++			continue;
++
++		/* change rate */
++#ifdef CONFIG_EARLY_PRINTK
++		if (!strcmp(peri->name, "uart0"))
++			break;
++#endif
++		clk_dev_rate((void *)peri->base, i, s, d);
++
++		pr_debug("clk: %s (%p) set_rate [%d] src[%d] div[%d]\n",
++			 peri->name, peri->base, i, s, d);
++	}
++	peri->rate = rate;
++	return rate;
++}
++
++/*
++ *	clock devices interface
++ */
++static int clk_dev_enable(struct clk_hw *hw)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++	int i = 0, inv = 0;
++
++	pr_debug("clk: %s enable (BCLK=%s, PCLK=%s)\n", peri->name,
++		 I_GATE_BCLK & peri->in_mask ? "ON" : "PASS",
++		 I_GATE_PCLK & peri->in_mask ? "ON" : "PASS");
++
++	if (peri->in_mask & I_GATE_BCLK)
++		clk_dev_bclk((void *)peri->base, 1);
++
++	if (peri->in_mask & I_GATE_PCLK)
++		clk_dev_pclk((void *)peri->base, 1);
++
++	if (!(peri->in_mask & I_CLOCK_MASK))
++		return 0;
++
++	for (i = 0, inv = peri->invert_0; peri->clk_step > i;
++		i++, inv = peri->invert_1)
++		clk_dev_inv((void *)peri->base, i, inv);
++
++	/* restore clock rate */
++	for (i = 0; peri->clk_step > i; i++) {
++		if (peri->fix_src < 0) {
++			int s = (0 == i ? peri->div_src_0 : peri->div_src_1);
++			int d = (0 == i ? peri->div_val_0 : peri->div_val_1);
++
++			if (s == -1)
++				continue;
++
++			clk_dev_rate((void *)peri->base, i, s, d);
++		} else {
++			int s = peri->fix_src;
++			int d = (0 == i ? peri->div_val_0 : peri->div_val_1);
++			if(d == 0)
++				d = 1;
++			clk_dev_rate((void *)peri->base, i, s, d);
++		}
++	}
++
++	clk_dev_enb((void *)peri->base, 1);
++	peri->enable = true;
++
++	return 0;
++}
++
++static void clk_dev_disable(struct clk_hw *hw)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++
++	pr_debug("clk: %s disable\n", peri->name);
++
++	if (peri->in_mask & I_GATE_BCLK)
++		clk_dev_bclk((void *)peri->base, 0);
++
++	if (peri->in_mask & I_GATE_PCLK)
++		clk_dev_pclk((void *)peri->base, 0);
++
++	if (!(peri->in_mask & I_CLOCK_MASK))
++		return;
++
++	clk_dev_rate((void *)peri->base, 0, 7, 256); /* for power save */
++	clk_dev_enb((void *)peri->base, 0);
++
++	peri->enable = false;
++
++}
++
++static unsigned long clk_dev_recalc_rate(struct clk_hw *hw, unsigned long rate)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++
++	/*
++	 * Bus-gated clocks (e.g. I2C: clk-input = I_GATE_PCLK, no PLL source in
++	 * I_CLOCK_MASK) have no clk_set_rate() caller, so peri->rate stays 0 and
++	 * clk_get_rate() would report 0 - which makes the i2c-s3c2410 SCL divider
++	 * come out as "0 KHz". Derive the rate from the parent bus (pclk/bclk).
++	 */
++	if (!peri->rate && !(peri->in_mask & I_CLOCK_MASK)) {
++		long bus = clk_dev_bus_rate(peri);
++
++		if (bus > 0)
++			peri->rate = bus;
++	}
++
++	pr_debug("%s: name %s, (%lu)\n", __func__, peri->name, peri->rate);
++	return peri->rate;
++}
++
++static int clk_dev_determine_rate(struct clk_hw *hw,
++				  struct clk_rate_request *req)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++	long rate = dev_round_rate(hw, req->rate);
++
++	pr_debug("%s: name %s, (%lu, %ld)\n", __func__, peri->name,
++		 req->rate, rate);
++	req->rate = rate;
++	return 0;
++}
++
++static int clk_dev_set_rate(struct clk_hw *hw, unsigned long drate,
++			    unsigned long prate)
++{
++	struct clk_dev_peri *peri = to_clk_dev(hw)->peri;
++	long rate = dev_set_rate(hw, drate);
++
++	pr_debug("%s: name %s, rate %lu:%ld\n", __func__, peri->name, drate,
++		 rate);
++	return 0;	/* set_rate must return 0 on success, not the rate */
++}
++
++static const struct clk_ops clk_dev_ops = {
++	.recalc_rate = clk_dev_recalc_rate,
++	.determine_rate = clk_dev_determine_rate,
++	.set_rate = clk_dev_set_rate,
++	.enable = clk_dev_enable,
++	.disable = clk_dev_disable,
++};
++
++static const struct clk_ops clk_empty_ops = {};
++
++struct clk *clk_dev_get_provider(struct of_phandle_args *clkspec, void *data)
++{
++	struct clk_dev *clk_data = data;
++
++	pr_debug("%s: name %s\n", __func__, clk_data->peri->name);
++	return clk_data->clk;
++}
++
++static void __init clk_dev_parse_device_data(struct device_node *np,
++					     struct clk_dev *clk_data,
++					     struct device *dev)
++{
++	struct clk_dev_peri *peri = clk_data->peri;
++	unsigned int frequency = 0;
++	u32 value;
++
++	if (of_property_read_string(np, "clock-output-names", &peri->name)) {
++		pr_err("clock node is missing 'clock-output-names'\n");
++		return;
++	}
++
++	if (!of_property_read_string(np, "clock-names", &peri->parent_name))
++		return;
++
++	if (of_property_read_u32(np, "cell-id", &peri->id)) {
++		pr_err("clock node is missing 'cell-id'\n");
++		return;
++	}
++
++	if (of_property_read_u32(np, "clk-step", &peri->clk_step)) {
++		pr_err("clock node is missing 'clk-step'\n");
++		return;
++	}
++
++	if (of_property_read_u32(np, "clk-input", &peri->in_mask)) {
++		pr_err("clock node is missing 'clk-input'\n");
++		return;
++	}
++
++	if (2 == peri->clk_step &&
++	    of_property_read_u32(np, "clk-input1", &peri->in_mask1)) {
++		pr_err("clock node is missing 'clk-input1'\n");
++		return;
++	}
++
++	if (!of_property_read_u32(np, "src-force", &value))
++		peri->fix_src = value;
++	else
++		peri->fix_src = -1;
++
++	if (!of_property_read_u32(np, "clk-input-ext1", &value))
++		peri->in_extclk_1 = value;
++
++	if (!of_property_read_u32(np, "clk-input-ext2", &value))
++		peri->in_extclk_2 = value;
++
++	if (!of_property_read_u32(np, "clock-frequency", &frequency))
++		clk_data->rate = frequency;
++
++	/*
++	 * Clocks that no Linux consumer explicitly enables (e.g. the GMAC RGMII
++	 * TX clock - stmmac/dwmac-generic never enables a "tx_clk") but which the
++	 * IP needs running would be gated by "disable unused clocks". Mark such a
++	 * clock critical so the framework enables and keeps it (this is what the
++	 * 4.14 BSP's dwmac-nexell glue achieved with clk_prepare_enable()).
++	 */
++	peri->critical = of_property_read_bool(np, "nexell,clk-critical");
++
++	peri->base = of_iomap(np, 0);
++	if (!peri->base) {
++		pr_err("Can't map registers for clock %s!\n", peri->name);
++		return;
++	}
++
++	pr_debug("%8s: id=%2d, base=%p, step=%d, m=0x%04x, m1=0x%04x\n",
++		 peri->name, peri->id, peri->base, peri->clk_step,
++		 peri->in_mask, peri->in_mask1);
++}
++
++struct clk *clk_dev_clock_register(const char *name, const char *parent_name,
++				   struct clk_hw *hw, const struct clk_ops *ops,
++				   unsigned long flags)
++{
++	struct clk *clk;
++	struct clk_init_data init;
++
++	init.name = name;
++	init.ops = ops;
++	init.flags = flags;
++	init.parent_names = (parent_name ? &parent_name : NULL);
++	init.num_parents = parent_name ? 1 : 0;
++	hw->init = &init;
++	pr_debug("Register clk %8s: parent %s\n", name, parent_name);
++
++	clk = clk_register(NULL, hw);
++	if (IS_ERR(clk)) {
++		pr_err("%s: failed to register pll clock %s\n", __func__,
++		       init.name);
++		return NULL;
++	}
++
++	if (clk_register_clkdev(clk, init.name, NULL))
++		pr_err("%s: failed to register lookup for %s", __func__,
++		       init.name);
++
++	return clk;
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int clk_syscore_suspend(void) { return 0; }
++
++static void clk_syscore_resume(void) {}
++
++#if 0
++static struct syscore_ops clk_syscore_ops = {
++	.suspend = clk_syscore_suspend, .resume = clk_syscore_resume,
++};
++#endif
++#endif /* CONFIG_PM_SLEEP */
++
++static void __init clk_dev_of_setup(struct device_node *node)
++{
++	struct device_node *np;
++	struct clk_dev *clk_data = NULL;
++	struct clk_dev_peri *peri = NULL;
++	struct clk *clk;
++	int i = 0, size = (sizeof(*clk_data) + sizeof(*peri));
++	int num_clks;
++
++#ifdef CONFIG_ARM_NEXELL_CPUFREQ
++	char pll[16];
++
++	sprintf(pll, "sys-pll%d", CONFIG_NEXELL_CPUFREQ_PLLDEV);
++#endif
++
++	num_clks = of_get_child_count(node);
++	if (!num_clks) {
++		pr_err("Failed to clocks count for clock generator!\n");
++		return;
++	}
++
++	clk_data = kzalloc(size * num_clks, GFP_KERNEL);
++	if (!clk_data) {
++		WARN_ON(1);
++		return;
++	}
++	peri = (struct clk_dev_peri *)(clk_data + num_clks);
++
++	for_each_child_of_node(node, np) {
++		clk_data[i].peri = &peri[i];
++		clk_data[i].node = np;
++		clk_dev_parse_device_data(np, &clk_data[i], NULL);
++		of_clk_add_provider(np, clk_dev_get_provider, &clk_data[i++]);
++	}
++
++	for (i = 0; num_clks > i; i++, clk_data++) {
++		unsigned long flags = 0;
++		const struct clk_ops *ops = &clk_dev_ops;
++
++		if (peri[i].parent_name) {
++			ops = &clk_empty_ops;
++			flags = 0; /* CLK_IS_BASIC removed upstream */
++#ifdef CONFIG_ARM_NEXELL_CPUFREQ
++			if (!strcmp(pll, peri[i].parent_name))
++				flags |= CLK_SET_RATE_PARENT;
++#endif
++		}
++
++		if (peri[i].critical)
++			flags |= CLK_IS_CRITICAL;
++
++		clk = clk_dev_clock_register(peri[i].name, peri[i].parent_name,
++					     &clk_data->hw, ops, flags);
++		if (NULL == clk)
++			continue;
++
++		clk_data->clk = clk;
++		if (clk_data->rate) {
++			pr_debug("[%s set boot rate %u]\n", node->name,
++				 clk_data->rate);
++			clk_set_rate(clk, clk_data->rate);
++		}
++	}
++
++#ifdef CONFIG_PM_SLEEP
++	/* register_syscore_ops(&clk_syscore_ops); syscore API changed in 7.2 */
++#endif
++
++	pr_debug("[%s:%d] %s (%d)\n", __func__, __LINE__, node->name, num_clks);
++}
++CLK_OF_DECLARE(s5pxx18, "nexell,s5pxx18,clocks", clk_dev_of_setup);
+diff --git a/drivers/clk/nexell/clk-s5pxx18.h b/drivers/clk/nexell/clk-s5pxx18.h
+new file mode 100644
+index 000000000..899759bfa
+--- /dev/null
++++ b/drivers/clk/nexell/clk-s5pxx18.h
+@@ -0,0 +1,159 @@
++/*
++ * Copyright (C) 2016  Nexell Co., Ltd.
++ * Author: Youngbok, Park <ybpark@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef _CLK_S5PXX18_H
++#define _CLK_S5PXX18_H
++
++#define I_PLL0_BIT (0)
++#define I_PLL1_BIT (1)
++#define I_PLL2_BIT (2)
++#define I_PLL3_BIT (3)
++#define I_EXT1_BIT (4)
++#define I_EXT2_BIT (5)
++#define I_CLKn_BIT (7)
++
++#define I_CLOCK_NUM 6 /* PLL0, PLL1, PLL2, PLL3, EXT1, EXT2 */
++
++#ifdef CONFIG_ARM_NEXELL_CPUFREQ
++#define I_EXECEPT_CLK (1 << CONFIG_NEXELL_CPUFREQ_PLLDEV)
++#else
++#define I_EXECEPT_CLK (0)
++#endif
++
++#define I_CLOCK_MASK (((1 << I_CLOCK_NUM) - 1) & ~I_EXECEPT_CLK)
++/*
++ * clock
++ */
++#define CLK_CPU_PLL0 "sys-pll0"
++#define CLK_CPU_PLL1 "sys-pll1"
++#define CLK_CPU_PLL2 "sys-pll2"
++#define CLK_CPU_PLL3 "sys-pll3"
++#define CLK_CPU_FCLK "sys-cfclk"
++#define CLK_CPU_HCLK "sys-chclk"
++#define CLK_MEM_FCLK "sys-mfclk"
++#define CLK_MEM_DCLK "sys-mdclk"
++#define CLK_MEM_BCLK "sys-mbclk"
++#define CLK_MEM_PCLK "sys-mpclk"
++#define CLK_BUS_BCLK "sys-bbclk"
++#define CLK_BUS_PCLK "sys-bpclk"
++#define CLK_VPU_BCLK "sys-vpubclk"
++#define CLK_VPU_PCLK "sys-vpupclk"
++#define CLK_DIS_BCLK "sys-disbclk"
++#define CLK_DIS_PCLK "sys-disspclk"
++#define CLK_CCI_BCLK "sys-ccibclk"
++#define CLK_CCI_PCLK "sys-ccipclk"
++#define CLK_G3D_BCLK "sys-g3dbclk"
++
++#define CLK_ID_TIMER_1 0
++#define CLK_ID_TIMER_2 1
++#define CLK_ID_TIMER_3 2
++#define CLK_ID_PWM_1 3
++#define CLK_ID_PWM_2 4
++#define CLK_ID_PWM_3 5
++#define CLK_ID_I2C_0 6
++#define CLK_ID_I2C_1 7
++#define CLK_ID_I2C_2 8
++#define CLK_ID_MIPI 9
++#define CLK_ID_GMAC 10 /* External Clock 1 */
++#define CLK_ID_SPDIF_TX 11
++#define CLK_ID_MPEGTSI 12
++#define CLK_ID_PWM_0 13
++#define CLK_ID_TIMER_0 14
++#define CLK_ID_I2S_0 15 /* External Clock 1 */
++#define CLK_ID_I2S_1 16 /* External Clock 1 */
++#define CLK_ID_I2S_2 17 /* External Clock 1 */
++#define CLK_ID_SDHC_0 18
++#define CLK_ID_SDHC_1 19
++#define CLK_ID_SDHC_2 20
++#define CLK_ID_VR 21
++#define CLK_ID_UART_0 22 /* UART0_MODULE */
++#define CLK_ID_UART_2 23 /* UART1_MODULE */
++#define CLK_ID_UART_1 24 /* pl01115_Uart_modem_MODULE  */
++#define CLK_ID_UART_3 25 /* pl01115_Uart_nodma0_MODULE */
++#define CLK_ID_UART_4 26 /* pl01115_Uart_nodma1_MODULE */
++#define CLK_ID_UART_5 27 /* pl01115_Uart_nodma2_MODULE */
++#define CLK_ID_DIT 28
++#define CLK_ID_PPM 29
++#define CLK_ID_VIP_0 30    /* External Clock 1 */
++#define CLK_ID_VIP_1 31    /* External Clock 1, 2 */
++#define CLK_ID_USB2HOST 32 /* External Clock 2 */
++#define CLK_ID_CODA 33
++#define CLK_ID_CRYPTO 34
++#define CLK_ID_SCALER 35
++#define CLK_ID_PDM 36
++#define CLK_ID_SPI_0 37
++#define CLK_ID_SPI_1 38
++#define CLK_ID_SPI_2 39
++#define CLK_ID_MAX 39
++#define CLK_ID_USBOTG 40 /* Shared with USB2HOST */
++
++#define I_PLL0_BIT (0)
++#define I_PLL1_BIT (1)
++#define I_PLL2_BIT (2)
++#define I_PLL3_BIT (3)
++#define I_EXT1_BIT (4)
++#define I_EXT2_BIT (5)
++#define I_CLKn_BIT (7)
++
++#define I_PLL0 (1 << I_PLL0_BIT)
++#define I_PLL1 (1 << I_PLL1_BIT)
++#define I_PLL2 (1 << I_PLL2_BIT)
++#define I_PLL3 (1 << I_PLL3_BIT)
++#define I_EXTCLK1 (1 << I_EXT1_BIT)
++#define I_EXTCLK2 (1 << I_EXT2_BIT)
++
++#define I_PLL_0_1 (I_PLL0 | I_PLL1)
++#define I_PLL_0_2 (I_PLL_0_1 | I_PLL2)
++#define I_PLL_0_3 (I_PLL_0_2 | I_PLL3)
++#define I_CLKnOUT (0)
++
++#define I_PCLK (1 << 8)
++#define I_BCLK (1 << 9)
++#define I_GATE_PCLK (1 << 12)
++#define I_GATE_BCLK (1 << 13)
++#define I_PCLK_MASK (I_GATE_PCLK | I_PCLK)
++#define I_BCLK_MASK (I_GATE_BCLK | I_BCLK)
++
++#define CLK_INPUT_TIMER (I_PLL_0_2)
++#define CLK_INPUT_UART (I_PLL_0_2)
++#define CLK_INPUT_PWM (I_PLL_0_2)
++#define CLK_INPUT_I2C (I_GATE_PCLK)
++#define CLK_INPUT_SDHC (I_PLL_0_2 | I_GATE_PCLK)
++#define CLK_INPUT_I2S (I_PLL_0_3 | I_EXTCLK1)
++#define CLK_INPUT_I2S_IN1 (I_CLKnOUT)
++#define CLK_INPUT_SPI (I_PLL_0_2)
++#define CLK_INPUT_VIP0 (I_PLL_0_3 | I_EXTCLK1 | I_GATE_BCLK)
++#define CLK_INPUT_VIP1 (I_PLL_0_3 | I_EXTCLK1 | I_EXTCLK2 | I_GATE_BCLK)
++#define CLK_INPUT_MIPI (I_PLL_0_2)
++#define CLK_INPUT_GMAC (I_PLL_0_3 | I_EXTCLK1)
++#define CLK_INPUT_GMAC_IN1 (I_CLKnOUT)
++#define CLK_INPUT_SPDIFTX (I_PLL_0_2)
++#define CLK_INPUT_MPEGTS (I_GATE_BCLK)
++#define CLK_INPUT_VR (I_GATE_BCLK)
++#define CLK_INPUT_DIT (I_GATE_BCLK)
++#define CLK_INPUT_PPM (I_PLL_0_2)
++#define CLK_INPUT_EHCI (I_PLL_0_3)
++#define CLK_INPUT_EHCI_IN1 (I_PLL_0_3 | I_EXTCLK1)
++#define CLK_INPUT_VPU (I_GATE_PCLK | I_GATE_BCLK)
++#define CLK_INPUT_CRYPTO (I_GATE_PCLK)
++#define CLK_INPUT_SCALER (I_GATE_BCLK)
++#define CLK_INPUT_OTG (I_PLL_0_3)
++#define CLK_INPUT_OTG_IN1 (I_PLL_0_3 | I_EXTCLK1)
++#define CLK_INPUT_PDM (I_GATE_PCLK)
++
++#endif
+-- 
+2.53.0
+

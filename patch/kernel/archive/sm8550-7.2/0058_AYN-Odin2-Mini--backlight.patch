@@ -1,0 +1,225 @@
+From 36b23d2e44b4c350adaa34a5bc57967ab1baef41 Mon Sep 17 00:00:00 2001
+From: Teguh Sobirin <teguh@sobir.in>
+Date: Fri, 28 Feb 2025 16:18:06 +0800
+Subject: [PATCH] backlight: odin2mini-backlight: Add support for AYN Odin2
+ Mini backlight
+
+Signed-off-by: Teguh Sobirin <teguh@sobir.in>
+---
+ drivers/video/backlight/Kconfig               |   7 +
+ drivers/video/backlight/Makefile              |   1 +
+ drivers/video/backlight/odin2mini-backlight.c | 174 ++++++++++++++++++
+ 3 files changed, 182 insertions(+)
+ create mode 100644 drivers/video/backlight/odin2mini-backlight.c
+
+diff --git a/drivers/video/backlight/Kconfig b/drivers/video/backlight/Kconfig
+index 3614a5d29c716e..2eaa2f21c1e644 100644
+--- a/drivers/video/backlight/Kconfig
++++ b/drivers/video/backlight/Kconfig
+@@ -217,6 +217,13 @@ config BACKLIGHT_LOCOMO
+ 	  If you have a Sharp Zaurus SL-5500 (Collie) or SL-5600 (Poodle) say y to
+ 	  enable the LCD/backlight driver.
+ 
++config BACKLIGHT_ODIN2MINI
++	tristate "Backlight Driver for AYN Odin2 Mini"
++	depends on I2C
++	select REGMAP_I2C
++	help
++		Say Y to enable the backlight driver for the AYN Odin2 Mini.
++
+ config BACKLIGHT_OMAP1
+ 	tristate "OMAP1 PWL-based LCD Backlight"
+ 	depends on ARCH_OMAP1 || COMPILE_TEST
+diff --git a/drivers/video/backlight/Makefile b/drivers/video/backlight/Makefile
+index 8fc98f760a8ad4..74d57b312a72c3 100644
+--- a/drivers/video/backlight/Makefile
++++ b/drivers/video/backlight/Makefile
+@@ -47,6 +47,7 @@ obj-$(CONFIG_BACKLIGHT_LV5207LP)	+= lv5207lp.o
+ obj-$(CONFIG_BACKLIGHT_MAX8925)		+= max8925_bl.o
+ obj-$(CONFIG_BACKLIGHT_MP3309C)		+= mp3309c.o
+ obj-$(CONFIG_BACKLIGHT_MT6370)		+= mt6370-backlight.o
++obj-$(CONFIG_BACKLIGHT_ODIN2MINI)	+= odin2mini-backlight.o
+ obj-$(CONFIG_BACKLIGHT_OMAP1)		+= omap1_bl.o
+ obj-$(CONFIG_BACKLIGHT_PANDORA)		+= pandora_bl.o
+ obj-$(CONFIG_BACKLIGHT_PCF50633)	+= pcf50633-backlight.o
+diff --git a/drivers/video/backlight/odin2mini-backlight.c b/drivers/video/backlight/odin2mini-backlight.c
+new file mode 100644
+index 00000000000000..8f377cf3f642cf
+--- /dev/null
++++ b/drivers/video/backlight/odin2mini-backlight.c
+@@ -0,0 +1,174 @@
++/*
++ * Odin2Mini Backlight Driver
++ *
++ * Copyright (c) 2025 Teguh Sobirin <teguh@sobir.in>
++ */
++
++#include <linux/backlight.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/regmap.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define MAX_BRIGHTNESS      255
++#define	ODIN2MINI_REG_0     0x0000
++
++struct odin2miniled {
++	struct i2c_client *client;
++	struct regmap *regmap;
++	struct gpio_desc *enable;
++	struct regulator_bulk_data *supplies;
++};
++
++static const struct regulator_bulk_data miniled_supplies[] = {
++	{ .supply = "vcc_1v2" },
++	{ .supply = "vcc_3v3" },
++};
++
++static u16 gain_lut[256] = {
++    0x011F, 0x081F, 0x0F1F, 0x161F, 0x1D1F, 0x241F, 0x2B1F, 0x321F,
++    0x391F, 0x401F, 0x471F, 0x4E1F, 0x551F, 0x5C1F, 0x631F, 0x6A1F,
++    0x711F, 0x781F, 0x7F1F, 0x831F, 0x881F, 0x8D1F, 0x921F, 0x971F,
++    0x9C1F, 0xA11F, 0xA61F, 0xAB1F, 0xB01F, 0xB51F, 0xBA1F, 0xBF1F,
++    0xC41F, 0xC91F, 0xCE1F, 0xD31F, 0xD81F, 0xDD1F, 0xE21F, 0xE71F,
++    0xEC1F, 0xF11F, 0xF61F, 0xFB1F, 0x0C03, 0x0D03, 0x0E03, 0x0F03,
++    0x1003, 0x1103, 0x1203, 0x1303, 0x1403, 0x1503, 0x1603, 0x1703,
++    0x1803, 0x1903, 0x1A03, 0x1B03, 0x1C03, 0x1D03, 0x1E03, 0x1F03,
++    0x2003, 0x2103, 0x2203, 0x2303, 0x2403, 0x2503, 0x2603, 0x2703,
++    0x2803, 0x2903, 0x2A03, 0x2B03, 0x2C03, 0x2D03, 0x2E03, 0x2F03,
++    0x3003, 0x3103, 0x3203, 0x3303, 0x3403, 0x3503, 0x3603, 0x3703,
++    0x3803, 0x3903, 0x3A03, 0x3B03, 0x3C03, 0x3D03, 0x3E03, 0x3F03,
++    0x8005, 0x8105, 0x8205, 0x8305, 0x8405, 0x8505, 0x8605, 0x8705,
++    0x8805, 0x8905, 0x8A05, 0x8B05, 0x8C05, 0x8D05, 0x8E05, 0x8F05,
++    0x9005, 0x9105, 0x9205, 0x9305, 0x9405, 0x9505, 0x9605, 0x9705,
++    0x9805, 0x9905, 0x9A05, 0x9B05, 0x9C05, 0x9D05, 0x9E05, 0x9F05,
++    0xA005, 0xA105, 0xA205, 0xA305, 0xA405, 0xA505, 0xA605, 0xA705,
++    0xA805, 0xA905, 0xAA05, 0xAB05, 0xAC05, 0xAD05, 0xAE05, 0xAF05,
++    0xB005, 0xB105, 0xB205, 0xB305, 0xB405, 0xB505, 0xB605, 0xB705,
++    0xB805, 0xB905, 0xBA05, 0xBB05, 0xBC05, 0xBD05, 0xBE05, 0xBF05,
++    0xC005, 0xC105, 0xC205, 0xC305, 0xC405, 0xC505, 0xC605, 0xC705,
++    0xC805, 0xC905, 0xCA05, 0xCB05, 0xCC05, 0xCD05, 0xCE05, 0xCF05,
++    0xD005, 0xD105, 0xD205, 0xD305, 0xD405, 0xD505, 0xD605, 0xD705,
++    0xD805, 0xD905, 0xDA05, 0xDB05, 0xDC05, 0xDD05, 0xDE05, 0xDF05,
++    0xE005, 0xE105, 0xE205, 0xE305, 0xE405, 0xE505, 0xE605, 0xE705,
++    0xE805, 0xE905, 0xEA05, 0xEB05, 0xEC05, 0xED05, 0xEE05, 0xEF05,
++    0xF005, 0xF105, 0xF205, 0xF305, 0xF405, 0xF505, 0xF605, 0xF705,
++    0xF805, 0xF905, 0xFA05, 0xFB05, 0xFC05, 0xFD05, 0xFE05, 0xFF05,
++    0xC003, 0xC103, 0xC203, 0xC303, 0xC403, 0xC503, 0xC603, 0xC703,
++    0xC803, 0xC903, 0xCA03, 0xCB03, 0xCC03, 0xCD03, 0xCE03, 0xCF03,
++    0xD003, 0xD103, 0xD203, 0xD303, 0xD403, 0xD503, 0xD603, 0xD703,
++    0xD803, 0xD903, 0xDA03, 0xDB03, 0xDC03, 0xDD03, 0xDE03, 0xDF03
++};
++
++static const struct regmap_config odin2miniled_regmap_config = {
++    .reg_bits = 16,
++    .val_bits = 16,
++    .max_register = 0x0600,
++};
++
++static int odin2miniled_backlight_update_status(struct backlight_device *backlight_dev)
++{
++	struct odin2miniled *miniled = bl_get_data(backlight_dev);
++	unsigned int brightness = backlight_get_brightness(backlight_dev);
++	unsigned int reg_value = gain_lut[brightness];
++
++    return regmap_write(miniled->regmap, ODIN2MINI_REG_0, reg_value);
++}
++
++static const struct backlight_ops odin2miniled_backlight_ops = {
++    .update_status = odin2miniled_backlight_update_status,
++};
++
++static int odin2miniled_probe(struct i2c_client *client)
++{
++	struct backlight_device *backlight_dev;
++	struct backlight_properties props;
++	struct odin2miniled *miniled;
++	int ret = 0;
++
++	miniled = devm_kzalloc(&client->dev, sizeof(*miniled), GFP_KERNEL);
++	if (!miniled)
++		return -ENOMEM;
++
++    ret = devm_regulator_bulk_get_const(&client->dev, ARRAY_SIZE(miniled_supplies),
++        miniled_supplies, &miniled->supplies);
++	if (ret < 0){
++		return dev_err_probe(&client->dev, ret, "Failed to get regulators\n");
++	}
++
++    ret = regulator_bulk_enable(ARRAY_SIZE(miniled_supplies), miniled->supplies);
++    if (ret < 0) {
++        dev_err(&client->dev, "Failed to enable regulators: %d\n", ret);
++        return ret;
++    }
++
++    miniled->enable = devm_gpiod_get(&client->dev, "enable", GPIOD_OUT_HIGH);
++    if (PTR_ERR(miniled->enable) == -EPROBE_DEFER){
++        return -EPROBE_DEFER;
++    }
++
++	gpiod_set_value_cansleep(miniled->enable, 1);
++	usleep_range(10000, 11000);
++
++    miniled->client = client;
++    miniled->regmap = devm_regmap_init_i2c(client, &odin2miniled_regmap_config);
++	if (IS_ERR(miniled->regmap))
++		return dev_err_probe(&client->dev, PTR_ERR(miniled->regmap), "failed to init regmap\n");
++
++	memset(&props, 0, sizeof(props));
++	props.type = BACKLIGHT_RAW;
++	props.max_brightness = MAX_BRIGHTNESS;
++	props.brightness = MAX_BRIGHTNESS;
++	props.scale = BACKLIGHT_SCALE_LINEAR;
++
++	backlight_dev = devm_backlight_device_register(&client->dev, "odin2miniled-backlight",
++					&client->dev, miniled, &odin2miniled_backlight_ops, &props);
++	if (IS_ERR(backlight_dev))
++		return dev_err_probe(&client->dev, PTR_ERR(backlight_dev),
++				"failed to register backlight device\n");
++
++	i2c_set_clientdata(client, backlight_dev);
++	backlight_update_status(backlight_dev);
++
++	return 0;
++}
++
++static void odin2miniled_remove(struct i2c_client *client)
++{
++	struct backlight_device *backlight_dev = i2c_get_clientdata(client);
++	backlight_dev->props.power = BACKLIGHT_POWER_OFF;
++	backlight_dev->props.brightness = 0;
++	backlight_update_status(backlight_dev);
++}
++
++static const struct i2c_device_id odin2miniled_id[] = {
++    { "odin2miniled" },
++    { }
++};
++MODULE_DEVICE_TABLE(i2c, odin2miniled_id);
++
++static const struct of_device_id odin2miniled_match_table[] = {
++	{
++		.compatible = "ayn,odin2miniled",
++	},
++	{},
++};
++MODULE_DEVICE_TABLE(of, odin2miniled_match_table);
++
++static struct i2c_driver odin2miniled_driver = {
++    .driver = {
++        .name = "odin2miniled",
++		.of_match_table = odin2miniled_match_table,
++    },
++    .probe = odin2miniled_probe,
++    .remove = odin2miniled_remove,
++    .id_table = odin2miniled_id,
++};
++
++module_i2c_driver(odin2miniled_driver);
++
++MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
++MODULE_DESCRIPTION("Odin2Mini Backlight Driver");
++MODULE_LICENSE("GPL");
+\ No newline at end of file

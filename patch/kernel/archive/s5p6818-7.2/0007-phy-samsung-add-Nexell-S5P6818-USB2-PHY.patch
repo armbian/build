@@ -1,0 +1,576 @@
+From bee6343c4fb706598b7db89ca913718424065a1a Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 15:02:19 +0200
+Subject: [PATCH 07/12] phy: samsung: add Nexell S5P6818 USB2 PHY
+
+PHY_NEXELL_USB2: the vendor nexell USB2 PHY (otg/host/hsic) on the mainline
+samsung-usb2 framework, plus an is_nexell path (self-contained tieoff regs, no
+PMU/ref-clk/vbus, 16-bit UTMI). Validated: EHCI/OHCI/dwc2 + on-board hub.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/phy/samsung/Kconfig            |   9 +
+ drivers/phy/samsung/Makefile           |   1 +
+ drivers/phy/samsung/phy-nexell-usb2.c  | 398 +++++++++++++++++++++++++
+ drivers/phy/samsung/phy-samsung-usb2.c |  42 ++-
+ drivers/phy/samsung/phy-samsung-usb2.h |   2 +
+ 5 files changed, 446 insertions(+), 6 deletions(-)
+ create mode 100644 drivers/phy/samsung/phy-nexell-usb2.c
+
+diff --git a/drivers/phy/samsung/Kconfig b/drivers/phy/samsung/Kconfig
+index b7ab40290..a6bd063a0 100644
+--- a/drivers/phy/samsung/Kconfig
++++ b/drivers/phy/samsung/Kconfig
+@@ -77,6 +77,15 @@ config PHY_S5PV210_USB2
+ 	  particular SoC is compiled in the driver. In case of S5PV210 two phys
+ 	  are available - device and host.
+ 
++config PHY_NEXELL_USB2
++	bool "Support for Nexell S5P6818"
++	depends on PHY_SAMSUNG_USB2
++	depends on ARCH_NEXELL || COMPILE_TEST
++	help
++	  Enable USB PHY support for the Nexell S5P6818 SoC. Requires the Samsung
++	  USB 2.0 PHY driver. The S5P6818 exposes three phys through its tieoff
++	  register block: OTG, host and HSIC.
++
+ config PHY_EXYNOS5_USBDRD
+ 	tristate "Exynos5 SoC series USB DRD PHY driver"
+ 	depends on (ARCH_EXYNOS && OF) || COMPILE_TEST
+diff --git a/drivers/phy/samsung/Makefile b/drivers/phy/samsung/Makefile
+index 342682638..fd7fb945c 100644
+--- a/drivers/phy/samsung/Makefile
++++ b/drivers/phy/samsung/Makefile
+@@ -15,5 +15,6 @@ phy-exynos-usb2-$(CONFIG_PHY_EXYNOS4210_USB2)	+= phy-exynos4210-usb2.o
+ phy-exynos-usb2-$(CONFIG_PHY_EXYNOS4X12_USB2)	+= phy-exynos4x12-usb2.o
+ phy-exynos-usb2-$(CONFIG_PHY_EXYNOS5250_USB2)	+= phy-exynos5250-usb2.o
+ phy-exynos-usb2-$(CONFIG_PHY_S5PV210_USB2)	+= phy-s5pv210-usb2.o
++phy-exynos-usb2-$(CONFIG_PHY_NEXELL_USB2)	+= phy-nexell-usb2.o
+ obj-$(CONFIG_PHY_EXYNOS5_USBDRD)	+= phy-exynos5-usbdrd.o
+ obj-$(CONFIG_PHY_EXYNOS5250_SATA)	+= phy-exynos5250-sata.o
+diff --git a/drivers/phy/samsung/phy-nexell-usb2.c b/drivers/phy/samsung/phy-nexell-usb2.c
+new file mode 100644
+index 000000000..7aec2dd06
+--- /dev/null
++++ b/drivers/phy/samsung/phy-nexell-usb2.c
+@@ -0,0 +1,398 @@
++/*
++ * Nexell SoC USB 1.1/2.0 PHY driver
++ *
++ * Copyright (C) 2016 Nexell Co., Ltd.
++ * Author: Hyunseok Jung <hsjung@nexell.co.kr>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ */
++
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/phy/phy.h>
++#include <linux/regmap.h>
++#include "phy-samsung-usb2.h"
++
++/* Nexell USBHOST PHY registers */
++
++/* USBHOST Configuration 0 Register */
++#define NX_HOST_CON0				0x14
++#define NX_HOST_CON0_SS_WORD_IF			BIT(26)
++#define NX_HOST_CON0_SS_WORD_IF_ENB		BIT(25)
++#define NX_HOST_CON0_SS_WORD_IF_16 ( \
++	NX_HOST_CON0_SS_WORD_IF | \
++	NX_HOST_CON0_SS_WORD_IF_ENB)
++
++#define NX_HOST_CON0_HSIC_480M_FROM_OTG_PHY	BIT(24)
++#define NX_HOST_CON0_HSIC_FREE_CLOCK_ENB	BIT(23)
++#define NX_HOST_CON0_HSIC_CLK_MASK		(0x3 << 23)
++
++#define NX_HOST_CON0_N_HOST_HSIC_RESET_SYNC	BIT(22)
++#define NX_HOST_CON0_N_HOST_UTMI_RESET_SYNC	BIT(21)
++#define NX_HOST_CON0_N_HOST_PHY_RESET_SYNC	BIT(20)
++#define NX_HOST_CON0_UTMI_RESET_SYNC ( \
++	NX_HOST_CON0_N_HOST_HSIC_RESET_SYNC | \
++	NX_HOST_CON0_N_HOST_UTMI_RESET_SYNC | \
++	NX_HOST_CON0_N_HOST_PHY_RESET_SYNC)
++
++#define NX_HOST_CON0_N_AUXWELL_RESET_SYNC	BIT(19)
++#define NX_HOST_CON0_N_OHCI_RESET_SYNC		BIT(18)
++#define NX_HOST_CON0_N_RESET_SYNC		BIT(17)
++#define NX_HOST_CON0_AHB_RESET_SYNC ( \
++	NX_HOST_CON0_N_AUXWELL_RESET_SYNC | \
++	NX_HOST_CON0_N_OHCI_RESET_SYNC | \
++	NX_HOST_CON0_N_RESET_SYNC)
++
++#define NX_HOST_CON0_HSIC_EN_PORT1		(0x2 << 14)
++#define NX_HOST_CON0_HSIC_EN_MASK		(0x7 << 14)
++
++/* USBHOST Configuration 1 Register */
++#define NX_HOST_CON1				0x18
++
++/* USBHOST Configuration 2 Register */
++#define NX_HOST_CON2				0x1C
++#define NX_HOST_CON2_SS_ENA_INCRX_ALIGN		(0x1 << 28)
++#define NX_HOST_CON2_SS_ENA_INCR4		(0x1 << 27)
++#define NX_HOST_CON2_SS_ENA_INCR8		(0x1 << 26)
++#define NX_HOST_CON2_SS_ENA_INCR16		(0x1 << 25)
++#define NX_HOST_CON2_SS_DMA_BURST_MASK  \
++	(NX_HOST_CON2_SS_ENA_INCR16 | NX_HOST_CON2_SS_ENA_INCR8 | \
++	 NX_HOST_CON2_SS_ENA_INCR4 | NX_HOST_CON2_SS_ENA_INCRX_ALIGN)
++
++#define NX_HOST_CON2_EHCI_SS_ENABLE_DMA_BURST \
++	(NX_HOST_CON2_SS_ENA_INCR16 | NX_HOST_CON2_SS_ENA_INCR8 | \
++	 NX_HOST_CON2_SS_ENA_INCR4 | NX_HOST_CON2_SS_ENA_INCRX_ALIGN)
++
++#define NX_HOST_CON2_OHCI_SS_ENABLE_DMA_BURST \
++	(NX_HOST_CON2_SS_ENA_INCR4 | NX_HOST_CON2_SS_ENA_INCRX_ALIGN)
++
++#define NX_HOST_CON2_SS_FLADJ_VAL_0_OFFSET	(21)
++#define NX_HOST_CON2_SS_FLADJ_VAL_OFFSET	(3)
++#define NX_HOST_CON2_SS_FLADJ_VAL_NUM		(6)
++#define NX_HOST_CON2_SS_FLADJ_VAL_0_SEL		BIT(5)
++#define NX_HOST_CON2_SS_FLADJ_VAL_MAX		0x7
++
++/* USBHOST Configuration 3 Register */
++#define NX_HOST_CON3				0x20
++#define NX_HOST_CON3_POR			BIT(8)
++#define NX_HOST_CON3_POR_ENB			BIT(7)
++#define NX_HOST_CON3_POR_MASK			(0x3 << 7)
++#define NX_HOST_OHCI_SUSP_LGCY			(0x1 << 3)
++
++/* USBHOST Configuration 4 Register */
++#define NX_HOST_CON4				0x24
++#define NX_HOST_CON4_WORDINTERFACE		BIT(9)
++#define NX_HOST_CON4_WORDINTERFACE_ENB		BIT(8)
++#define NX_HOST_CON4_WORDINTERFACE_16 ( \
++	NX_HOST_CON4_WORDINTERFACE | \
++	NX_HOST_CON4_WORDINTERFACE_ENB)
++
++/* USBHOST Configuration 5 Register */
++#define NX_HOST_CON5				0x28
++#define NX_HOST_CON5_HSIC_POR			BIT(19)
++#define NX_HOST_CON5_HSIC_POR_ENB		BIT(18)
++#define NX_HOST_CON5_HSIC_POR_MASK		(0x3 << 18)
++
++/* USBHOST Configuration 6 Register */
++#define NX_HOST_CON6				0x2C
++#define NX_HOST_CON6_HSIC_WORDINTERFACE		BIT(13)
++#define NX_HOST_CON6_HSIC_WORDINTERFACE_ENB	BIT(12)
++#define NX_HOST_CON6_HSIC_WORDINTERFACE_16 ( \
++	NX_HOST_CON6_HSIC_WORDINTERFACE | \
++	NX_HOST_CON6_HSIC_WORDINTERFACE_ENB)
++
++/* Nexell USBOTG PHY registers */
++
++/* USBOTG Configuration 0 Register */
++#define NX_OTG_CON0				0x30
++#define NX_OTG_CON0_SS_SCALEDOWN_MODE		(3 << 0)
++
++/* USBOTG Configuration 1 Register */
++#define NX_OTG_CON1				0x34
++#define NX_OTG_CON1_VBUSVLDEXTSEL		BIT(25)
++#define NX_OTG_CON1_VBUSVLDEXT			BIT(24)
++#define NX_OTG_CON1_VBUS_INTERNAL ~( \
++	NX_OTG_CON1_VBUSVLDEXTSEL | \
++	NX_OTG_CON1_VBUSVLDEXT)
++#define NX_OTG_CON1_VBUS_VLDEXT0 ( \
++	NX_OTG_CON1_VBUSVLDEXTSEL | \
++	NX_OTG_CON1_VBUSVLDEXT)
++
++#define NX_OTG_CON1_POR				BIT(8)
++#define NX_OTG_CON1_POR_ENB			BIT(7)
++#define NX_OTG_CON1_POR_MASK			(0x3 << 7)
++#define NX_OTG_CON1_RST				BIT(3)
++#define NX_OTG_CON1_UTMI_RST			BIT(2)
++
++/* USBOTG Configuration 2 Register */
++#define NX_OTG_CON2				0x38
++#define NX_OTG_CON2_OTGTUNE_MASK		(0x7 << 23)
++#define NX_OTG_CON2_WORDINTERFACE		BIT(9)
++#define NX_OTG_CON2_WORDINTERFACE_ENB		BIT(8)
++#define NX_OTG_CON2_WORDINTERFACE_16 ( \
++	NX_OTG_CON2_WORDINTERFACE | \
++	NX_OTG_CON2_WORDINTERFACE_ENB)
++
++/* USBOTG Configuration 3 Register */
++#define NX_OTG_CON3				0x3C
++#define NX_OTG_CON3_ACAENB			BIT(15)
++#define NX_OTG_CON3_DCDENB			BIT(14)
++#define NX_OTG_CON3_VDATSRCENB			BIT(13)
++#define NX_OTG_CON3_VDATDETENB			BIT(12)
++#define NX_OTG_CON3_CHRGSEL			BIT(11)
++#define NX_OTG_CON3_DET_N_CHG ( \
++	NX_OTG_CON3_ACAENB | \
++	NX_OTG_CON3_DCDENB | \
++	NX_OTG_CON3_VDATSRCENB | \
++	NX_OTG_CON3_VDATDETENB | \
++	NX_OTG_CON3_CHRGSEL)
++
++enum nx_phy_id {
++	NX_OTG,
++	NX_HOST,
++	NX_HSIC,
++	NX_NUM_PHYS,
++};
++
++static int nx_otg_power_on(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++	u32 reg;
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON3)) &
++	       ~NX_OTG_CON3_DET_N_CHG,
++	       (void *)(drv->reg_phy + NX_OTG_CON3));
++
++	reg  = readl((void *)(drv->reg_phy + NX_OTG_CON2)) &
++		~NX_OTG_CON2_OTGTUNE_MASK;
++	writel(reg, (void *)(drv->reg_phy +  NX_OTG_CON2));
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON0)) &
++	       ~NX_OTG_CON0_SS_SCALEDOWN_MODE,
++	       (void *)(drv->reg_phy + NX_OTG_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON2)) |
++	       NX_OTG_CON2_WORDINTERFACE_16,
++	       (void *)(drv->reg_phy + NX_OTG_CON2));
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) &
++	       NX_OTG_CON1_VBUS_INTERNAL,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++
++	reg = readl((void *)(drv->reg_phy + NX_OTG_CON1));
++	reg &= ~NX_OTG_CON1_POR_MASK;
++	reg |= NX_OTG_CON1_POR_ENB;
++	writel(reg, (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(1);
++	reg |= NX_OTG_CON1_POR_MASK;
++	writel(reg, (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(1);
++	reg &= ~NX_OTG_CON1_POR;
++	writel(reg, (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(10);
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) | NX_OTG_CON1_RST,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(50);
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) |
++	       NX_OTG_CON1_UTMI_RST,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(1);
++
++	return 0;
++}
++
++static int nx_otg_power_off(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) |
++	       NX_OTG_CON1_VBUS_VLDEXT0,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) & ~NX_OTG_CON1_RST,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(10);
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) &
++	       ~NX_OTG_CON1_UTMI_RST,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(10);
++
++	writel(readl((void *)(drv->reg_phy + NX_OTG_CON1)) |
++	       NX_OTG_CON1_POR_MASK,
++	       (void *)(drv->reg_phy + NX_OTG_CON1));
++	udelay(10);
++
++	return 0;
++}
++
++static int nx_host_power_on(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++	u32 reg;
++	u32 reg1, reg2;
++	u32 fladj_val, bit_num, bit_pos = NX_HOST_CON2_SS_FLADJ_VAL_0_OFFSET;
++
++	fladj_val = NX_HOST_CON2_SS_FLADJ_VAL_0_SEL;
++
++	reg = fladj_val;
++
++	for (bit_num = 0; bit_num < NX_HOST_CON2_SS_FLADJ_VAL_NUM; bit_num++) {
++		if (fladj_val & (1 << bit_num))
++			reg |= (NX_HOST_CON2_SS_FLADJ_VAL_MAX << bit_pos);
++		bit_pos -= NX_HOST_CON2_SS_FLADJ_VAL_OFFSET;
++	}
++
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON2));
++
++	reg = readl((void *)(drv->reg_phy + NX_HOST_CON2)) &
++		~NX_HOST_CON2_SS_DMA_BURST_MASK;
++	writel(reg | NX_HOST_CON2_EHCI_SS_ENABLE_DMA_BURST,
++	       (void *)(drv->reg_phy +	NX_HOST_CON2));
++
++	reg1 = readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++		NX_HOST_CON0_SS_WORD_IF_16;
++	reg2 = readl((void *)(drv->reg_phy + NX_HOST_CON4)) |
++		NX_HOST_CON4_WORDINTERFACE_16;
++
++	writel(reg1, (void *)(drv->reg_phy + NX_HOST_CON0));
++	writel(reg2, (void *)(drv->reg_phy + NX_HOST_CON4));
++
++	reg = readl((void *)(drv->reg_phy + NX_HOST_CON3));
++	reg |= NX_HOST_OHCI_SUSP_LGCY;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON3));
++
++	reg   = readl((void *)(drv->reg_phy + NX_HOST_CON3));
++	reg  &= ~NX_HOST_CON3_POR_MASK;
++	reg  |=  NX_HOST_CON3_POR_ENB;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON3));
++	udelay(10);
++
++	reg = readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++		NX_HOST_CON0_N_HOST_UTMI_RESET_SYNC |
++		NX_HOST_CON0_N_HOST_PHY_RESET_SYNC;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++	       NX_HOST_CON0_AHB_RESET_SYNC,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	return 0;
++}
++
++static int nx_host_power_off(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++	u32 reg;
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) &
++	       ~NX_HOST_CON0_AHB_RESET_SYNC,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) &
++	       ~NX_HOST_CON0_UTMI_RESET_SYNC,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	reg    = readl((void *)(drv->reg_phy + NX_HOST_CON3));
++	reg   &= ~NX_HOST_CON3_POR_MASK;
++	reg   |=  NX_HOST_CON3_POR_ENB;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON3));
++	udelay(1);
++	reg   |=  NX_HOST_CON3_POR_MASK;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON3));
++	udelay(1);
++	reg   &= ~(NX_HOST_CON3_POR);
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON3));
++
++	udelay(10);
++
++	return 0;
++}
++
++static int nx_hsic_power_on(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++	u32 reg;
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) &
++	       ~NX_HOST_CON0_HSIC_CLK_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++	       NX_HOST_CON0_HSIC_480M_FROM_OTG_PHY,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) &
++	       ~NX_HOST_CON0_HSIC_EN_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++	       NX_HOST_CON0_HSIC_EN_PORT1,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	reg = readl((void *)(drv->reg_phy + NX_HOST_CON6)) |
++		NX_HOST_CON6_HSIC_WORDINTERFACE_16;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON6));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++	       NX_HOST_CON0_HSIC_CLK_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON5)) &
++	       ~NX_HOST_CON5_HSIC_POR_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON5));
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON5)) |
++	       NX_HOST_CON5_HSIC_POR_ENB,
++	       (void *)(drv->reg_phy + NX_HOST_CON5));
++
++	udelay(100);
++
++	reg = readl((void *)(drv->reg_phy + NX_HOST_CON0)) |
++		NX_HOST_CON0_N_HOST_HSIC_RESET_SYNC;
++	writel(reg, (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	return 0;
++}
++
++static int nx_hsic_power_off(struct samsung_usb2_phy_instance *inst)
++{
++	struct samsung_usb2_phy_driver *drv = inst->drv;
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON0)) &
++	       ~NX_HOST_CON0_HSIC_CLK_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON0));
++
++	writel(readl((void *)(drv->reg_phy + NX_HOST_CON5)) |
++	       NX_HOST_CON5_HSIC_POR_MASK,
++	       (void *)(drv->reg_phy + NX_HOST_CON5));
++
++	return 0;
++}
++
++static const struct samsung_usb2_common_phy nx_phys[] = {
++	{
++		.label		= "otg",
++		.id		= NX_OTG,
++		.power_on	= nx_otg_power_on,
++		.power_off	= nx_otg_power_off,
++	},
++	{
++		.label		= "host",
++		.id		= NX_HOST,
++		.power_on	= nx_host_power_on,
++		.power_off	= nx_host_power_off,
++	},
++	{
++		.label		= "hsic",
++		.id		= NX_HSIC,
++		.power_on	= nx_hsic_power_on,
++		.power_off	= nx_hsic_power_off,
++	},
++};
++
++const struct samsung_usb2_phy_config nexell_usb2_phy_config = {
++	.num_phys		= NX_NUM_PHYS,
++	.phys			= nx_phys,
++};
+diff --git a/drivers/phy/samsung/phy-samsung-usb2.c b/drivers/phy/samsung/phy-samsung-usb2.c
+index d2749b67c..16d827da2 100644
+--- a/drivers/phy/samsung/phy-samsung-usb2.c
++++ b/drivers/phy/samsung/phy-samsung-usb2.c
+@@ -33,9 +33,12 @@ static int samsung_usb2_phy_power_on(struct phy *phy)
+ 	ret = clk_prepare_enable(drv->clk);
+ 	if (ret)
+ 		goto err_main_clk;
+-	ret = clk_prepare_enable(drv->ref_clk);
+-	if (ret)
+-		goto err_instance_clk;
++	/* Nexell has no separate PHY reference clock. */
++	if (!drv->is_nexell) {
++		ret = clk_prepare_enable(drv->ref_clk);
++		if (ret)
++			goto err_instance_clk;
++	}
+ 	if (inst->cfg->power_on) {
+ 		spin_lock(&drv->lock);
+ 		ret = inst->cfg->power_on(inst);
+@@ -47,7 +50,8 @@ static int samsung_usb2_phy_power_on(struct phy *phy)
+ 	return 0;
+ 
+ err_power_on:
+-	clk_disable_unprepare(drv->ref_clk);
++	if (!drv->is_nexell)
++		clk_disable_unprepare(drv->ref_clk);
+ err_instance_clk:
+ 	clk_disable_unprepare(drv->clk);
+ err_main_clk:
+@@ -72,7 +76,8 @@ static int samsung_usb2_phy_power_off(struct phy *phy)
+ 		if (ret)
+ 			return ret;
+ 	}
+-	clk_disable_unprepare(drv->ref_clk);
++	if (!drv->is_nexell)
++		clk_disable_unprepare(drv->ref_clk);
+ 	clk_disable_unprepare(drv->clk);
+ 	if (drv->vbus)
+ 		ret = regulator_disable(drv->vbus);
+@@ -135,6 +140,12 @@ static const struct of_device_id samsung_usb2_phy_of_match[] = {
+ 		.compatible = "samsung,s5pv210-usb2-phy",
+ 		.data = &s5pv210_usb2_phy_config,
+ 	},
++#endif
++#ifdef CONFIG_PHY_NEXELL_USB2
++	{
++		.compatible = "nexell,nexell-usb2-phy",
++		.data = &nexell_usb2_phy_config,
++	},
+ #endif
+ 	{ },
+ };
+@@ -168,12 +179,29 @@ static int samsung_usb2_phy_probe(struct platform_device *pdev)
+ 	drv->cfg = cfg;
+ 	drv->dev = dev;
+ 
++	drv->is_nexell = of_device_is_compatible(pdev->dev.of_node,
++						 "nexell,nexell-usb2-phy");
++
+ 	drv->reg_phy = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(drv->reg_phy)) {
+ 		dev_err(dev, "Failed to map register memory (phy)\n");
+ 		return PTR_ERR(drv->reg_phy);
+ 	}
+ 
++	/*
++	 * Nexell (S5P6818) has no PMU/sysreg syscon, no separate PHY reference
++	 * clock and no vbus regulator - it drives everything through its own
++	 * tieoff registers (reg_phy) and a single "phy" gate clock.
++	 */
++	if (drv->is_nexell) {
++		drv->clk = devm_clk_get(dev, "phy");
++		if (IS_ERR(drv->clk)) {
++			dev_err(dev, "Failed to get clock of phy controller\n");
++			return PTR_ERR(drv->clk);
++		}
++		goto skip_syscon_refclk;
++	}
++
+ 	drv->reg_pmu = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
+ 		"samsung,pmureg-phandle");
+ 	if (IS_ERR(drv->reg_pmu)) {
+@@ -217,6 +245,7 @@ static int samsung_usb2_phy_probe(struct platform_device *pdev)
+ 		drv->vbus = NULL;
+ 	}
+ 
++skip_syscon_refclk:
+ 	for (i = 0; i < drv->cfg->num_phys; i++) {
+ 		char *label = drv->cfg->phys[i].label;
+ 		struct samsung_usb2_phy_instance *p = &drv->instances[i];
+@@ -231,7 +260,8 @@ static int samsung_usb2_phy_probe(struct platform_device *pdev)
+ 
+ 		p->cfg = &drv->cfg->phys[i];
+ 		p->drv = drv;
+-		phy_set_bus_width(p->phy, 8);
++		/* Nexell PHY uses a 16-bit UTMI+ word interface. */
++		phy_set_bus_width(p->phy, drv->is_nexell ? 16 : 8);
+ 		phy_set_drvdata(p->phy, p);
+ 	}
+ 
+diff --git a/drivers/phy/samsung/phy-samsung-usb2.h b/drivers/phy/samsung/phy-samsung-usb2.h
+index ebaf43bfc..73db291fd 100644
+--- a/drivers/phy/samsung/phy-samsung-usb2.h
++++ b/drivers/phy/samsung/phy-samsung-usb2.h
+@@ -43,6 +43,7 @@ struct samsung_usb2_phy_driver {
+ 	struct regmap *reg_pmu;
+ 	struct regmap *reg_sys;
+ 	spinlock_t lock;
++	bool is_nexell;		/* S5P6818: self-contained tieoff regs, no PMU/ref-clk */
+ 	struct samsung_usb2_phy_instance instances[];
+ };
+ 
+@@ -68,4 +69,5 @@ extern const struct samsung_usb2_phy_config exynos4x12_usb2_phy_config;
+ extern const struct samsung_usb2_phy_config exynos5250_usb2_phy_config;
+ extern const struct samsung_usb2_phy_config exynos5420_usb2_phy_config;
+ extern const struct samsung_usb2_phy_config s5pv210_usb2_phy_config;
++extern const struct samsung_usb2_phy_config nexell_usb2_phy_config;
+ #endif
+-- 
+2.53.0
+

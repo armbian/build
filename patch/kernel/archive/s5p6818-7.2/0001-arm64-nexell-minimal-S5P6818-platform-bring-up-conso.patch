@@ -1,0 +1,260 @@
+From 8f662c996a73d3e38556c60ffad8512c295217e4 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 7 Sep 2026 18:37:02 +0200
+Subject: [PATCH 1/2] arm64: nexell: minimal S5P6818 platform bring-up (console
+ + SD)
+
+Mainline has never carried the Nexell S5PXX18 (S5P6818) platform. This
+adds a minimal, from-scratch bring-up sufficient to boot to a serial
+console and access SD/eMMC using only generic drivers:
+
+  * ARCH_NEXELL platform Kconfig + arm64 dts subdir
+  * s5p6818.dtsi / s5p6818-nanopi-m3.dts: single-core (secondaries need
+    PSCI/SMP glue, later), GIC-400, ARM arch timer, fixed-rate clocks
+    (SoC PLLs left as configured by u-boot), samsung,s5pv210-uart console
+    and a generic snps,dw-mshc SD controller. Pin muxing is inherited
+    from u-boot for now.
+  * samsung_tty: the S5P6818 UART is register-compatible with S5PV210, so
+    reuse s5pv210 drvdata on ARCH_NEXELL (CONFIG_CPU_S5PV210 is 32-bit
+    only) and allow SERIAL_SAMSUNG to be selected on ARCH_NEXELL.
+
+SoC-specific clk/pinctrl/reset drivers, SMP and the remaining peripherals
+are added in follow-up stages. GPU/VPU/display are out of scope.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/Kconfig.platforms                  |   9 ++
+ arch/arm64/boot/dts/Makefile                  |   1 +
+ arch/arm64/boot/dts/nexell/Makefile           |   2 +
+ .../boot/dts/nexell/s5p6818-nanopi-m3.dts     |  34 ++++++
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi       | 102 ++++++++++++++++++
+ drivers/tty/serial/Kconfig                    |   2 +-
+ drivers/tty/serial/samsung_tty.c              |   8 +-
+ 7 files changed, 156 insertions(+), 2 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/nexell/Makefile
+ create mode 100644 arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+ create mode 100644 arch/arm64/boot/dts/nexell/s5p6818.dtsi
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index d2acfac73..db310bca2 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -300,6 +300,15 @@ config ARCH_MA35
+ 	help
+ 	  This enables support for the ARMv8 based Nuvoton MA35 series SoCs.
+ 
++config ARCH_NEXELL
++	bool "Nexell/Samsung S5PXX18 SoC Support"
++	select GPIOLIB
++	help
++	  This enables support for the ARMv8 based Nexell S5PXX18 SoCs,
++	  such as the S5P6818 (octa-core Cortex-A53) used on FriendlyARM
++	  NanoPi/NanoPC boards. Mainline bring-up: console and SD/eMMC via
++	  generic drivers; SoC-specific clk/pinctrl are added incrementally.
++
+ config ARCH_NPCM
+ 	bool "Nuvoton NPCM Architecture"
+ 	select PINCTRL
+diff --git a/arch/arm64/boot/dts/Makefile b/arch/arm64/boot/dts/Makefile
+index fc726b215..a7edb39fe 100644
+--- a/arch/arm64/boot/dts/Makefile
++++ b/arch/arm64/boot/dts/Makefile
+@@ -25,6 +25,7 @@ subdir-y += lg
+ subdir-y += marvell
+ subdir-y += mediatek
+ subdir-y += microchip
++subdir-y += nexell
+ subdir-y += nuvoton
+ subdir-y += nvidia
+ subdir-y += qcom
+diff --git a/arch/arm64/boot/dts/nexell/Makefile b/arch/arm64/boot/dts/nexell/Makefile
+new file mode 100644
+index 000000000..cc919ea4c
+--- /dev/null
++++ b/arch/arm64/boot/dts/nexell/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++dtb-$(CONFIG_ARCH_NEXELL) += s5p6818-nanopi-m3.dtb
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+new file mode 100644
+index 000000000..0c567100b
+--- /dev/null
++++ b/arch/arm64/boot/dts/nexell/s5p6818-nanopi-m3.dts
+@@ -0,0 +1,34 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * FriendlyARM S5P6818 board (NanoPi M3 / NanoPC-T3 / NanoPC-T3+).
++ * Minimal mainline bring-up device tree - see s5p6818.dtsi.
++ */
++
++/dts-v1/;
++#include "s5p6818.dtsi"
++
++/ {
++	model = "FriendlyARM NanoPC-T3+ (S5P6818)";
++	compatible = "friendlyarm,nanopc-t3", "nexell,s5p6818";
++
++	aliases {
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	memory@40000000 {
++		device_type = "memory";
++		reg = <0x0 0x40000000 0x0 0x80000000>;	/* 2 GiB */
++	};
++};
++
++&uart0 {
++	status = "okay";
++};
++
++&mmc0 {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+new file mode 100644
+index 000000000..975b5665d
+--- /dev/null
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -0,0 +1,102 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Minimal mainline device tree for the Nexell S5P6818 (octa Cortex-A53).
++ *
++ * v1 bring-up: console + SD/eMMC using only generic drivers. The SoC PLLs are
++ * left as configured by u-boot and modelled here as fixed-rate clocks; pin
++ * muxing is inherited from u-boot. The SoC-specific nexell clk/pinctrl/reset
++ * drivers are added in later stages. Addresses/IRQs taken from the running
++ * 4.14 BSP device tree of a NanoPC-T3+.
++ */
++
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++
++/ {
++	compatible = "nexell,s5p6818";
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		/* v1 boots a single core; secondaries need PSCI/SMP glue (later). */
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a53";
++			reg = <0x0>;
++		};
++	};
++
++	/* ARM architected timer. CNTFRQ is programmed by u-boot; clock-frequency
++	 * is a fallback in case firmware left it unset. */
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++		clock-frequency = <200000000>;
++	};
++
++	/* UART baud/pclk source (nexell PLL output, fixed from Linux' view). */
++	uart_clk: uart-clk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <153598500>;
++		clock-output-names = "uart";
++	};
++
++	/* SD/MMC controller clock (ciu/biu), 100 MHz on the SD port. */
++	mmc_clk: mmc-clk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <100000000>;
++		clock-output-names = "mmc";
++	};
++
++	soc {
++		compatible = "simple-bus";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges = <0xc0000000 0x0 0xc0000000 0x10000000>;
++
++		gic: interrupt-controller@c0009000 {
++			compatible = "arm,gic-400";
++			#interrupt-cells = <3>;
++			#address-cells = <0>;
++			interrupt-controller;
++			reg = <0xc0009000 0x1000>,	/* GICD */
++			      <0xc000a000 0x2000>;	/* GICC */
++			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
++		};
++
++		uart0: serial@c00a1000 {
++			compatible = "samsung,s5pv210-uart";
++			reg = <0xc00a1000 0x1000>;
++			interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&uart_clk>, <&uart_clk>;
++			clock-names = "uart", "clk_uart_baud0";
++			samsung,uart-fifosize = <256>;
++			status = "disabled";
++		};
++
++		mmc0: mmc@c0062000 {
++			compatible = "snps,dw-mshc";
++			reg = <0xc0062000 0x1000>;
++			interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			clocks = <&mmc_clk>, <&mmc_clk>;
++			clock-names = "biu", "ciu";
++			fifo-depth = <0x20>;
++			clock-frequency = <100000000>;
++			bus-width = <4>;
++			cap-sd-highspeed;
++			broken-cd;
++			disable-wp;
++			status = "disabled";
++		};
++	};
++};
+diff --git a/drivers/tty/serial/Kconfig b/drivers/tty/serial/Kconfig
+index cf7dba473..69c47389e 100644
+--- a/drivers/tty/serial/Kconfig
++++ b/drivers/tty/serial/Kconfig
+@@ -219,7 +219,7 @@ config SERIAL_CLPS711X_CONSOLE
+ 
+ config SERIAL_SAMSUNG
+ 	tristate "Samsung SoC serial support"
+-	depends on PLAT_SAMSUNG || ARCH_S5PV210 || ARCH_EXYNOS || ARCH_APPLE || ARCH_ARTPEC || COMPILE_TEST
++	depends on PLAT_SAMSUNG || ARCH_S5PV210 || ARCH_EXYNOS || ARCH_APPLE || ARCH_ARTPEC || ARCH_NEXELL || COMPILE_TEST
+ 	select SERIAL_CORE
+ 	help
+ 	  Support for the on-chip UARTs on the Samsung
+diff --git a/drivers/tty/serial/samsung_tty.c b/drivers/tty/serial/samsung_tty.c
+index 63d0232df..177d40b29 100644
+--- a/drivers/tty/serial/samsung_tty.c
++++ b/drivers/tty/serial/samsung_tty.c
+@@ -2416,7 +2416,13 @@ static const struct s3c24xx_serial_drv_data s3c6400_serial_drv_data = {
+ #define S3C6400_SERIAL_DRV_DATA NULL
+ #endif
+ 
+-#ifdef CONFIG_CPU_S5PV210
++/*
++ * The Nexell S5P6818 UART is register-compatible with the S5PV210 UART, so it
++ * reuses this drvdata (bound via the "samsung,s5pv210-uart" compatible). Keep
++ * it available on ARCH_NEXELL even though CONFIG_CPU_S5PV210 (a 32-bit symbol)
++ * is never set there.
++ */
++#if defined(CONFIG_CPU_S5PV210) || defined(CONFIG_ARCH_NEXELL)
+ static const struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
+ 	.info = {
+ 		.name		= "Samsung S5PV210 UART",
+-- 
+2.53.0
+

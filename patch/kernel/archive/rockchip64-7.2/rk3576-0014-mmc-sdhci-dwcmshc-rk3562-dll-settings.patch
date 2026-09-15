@@ -1,0 +1,245 @@
+From eb7da337d4e16ecc9674054649b57ef00875797c Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sat, 29 Aug 2026 15:59:16 +0800
+Subject: [PATCH 17/20] mmc: sdhci-of-dwcmshc: add RK3562 DLL settings
+
+Add a dedicated RK3562 match entry and per-SoC DLL configuration for the DesignWare MMC host. Use the vendor-derived HS200/HS400 tap values, dynamic DLL lock calibration, HS400 CMDOUT edge selection, and the RK3562 low-speed DLL bypass behavior while preserving the existing RK3576 calibration and other SoC paths.
+---
+ drivers/mmc/host/sdhci-of-dwcmshc.c | 115 ++++++++++++++++++++++++----
+ 1 file changed, 102 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-dwcmshc.c b/drivers/mmc/host/sdhci-of-dwcmshc.c
+index 5ec590663..b3ff0fcf7 100644
+--- a/drivers/mmc/host/sdhci-of-dwcmshc.c
++++ b/drivers/mmc/host/sdhci-of-dwcmshc.c
+@@ -332,6 +332,18 @@ struct k230_pltfm_data {
+ 	u32 write_prot_bit;
+ };
+ 
++struct rockchip_emmc_data {
++	u8 hs200_tx_tapnum;
++	u8 hs400_tx_tapnum;
++	u8 hs400_cmd_tapnum;
++	u8 hs400_strbin_tapnum;
++	u8 ddr50_strbin_delay_num;
++	bool dll_cmd_out;
++	bool tap_value_sel;
++	/* Allow DLL bypass during HS200/HS400 clock transitions. */
++	bool allow_low_clock;
++};
++
+ struct rockchip_pltfm_data {
+ 	struct dwcmshc_pltfm_data dwcmshc_pdata;
+ 	/*
+@@ -340,6 +352,7 @@ struct rockchip_pltfm_data {
+ 	 * - Revision 1: Implemented in all other Rockchip SoCs, including RK3576, RK3588, etc.
+ 	 */
+ 	int revision;
++	const struct rockchip_emmc_data *emmc_data;
+ 	/*
+ 	 * rk3576 additionally needs the vendor HS400 DLL tap calibration
+ 	 * (see dwcmshc_phy_1_8v_init()). Other revision-1 SoCs such as rk3588
+@@ -769,7 +782,9 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 	struct dwcmshc_priv *dwc_priv = sdhci_pltfm_priv(pltfm_host);
+ 	struct rk35xx_priv *priv = dwc_priv->priv;
+ 	const struct rockchip_pltfm_data *rockchip_pdata = to_pltfm_data(dwc_priv, rockchip);
++	const struct rockchip_emmc_data *emmc_data = rockchip_pdata->emmc_data;
+ 	u8 txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT;
++	u8 strbin_delay_num = DLL_STRBIN_DELAY_NUM_DEFAULT;
+ 	u32 extra, reg, dll_lock_value;
+ 	int err;
+ 
+@@ -802,8 +817,9 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 	sdhci_writew(host, 0, SDHCI_CLOCK_CONTROL);
+ 
+ 	if (clock <= 52000000) {
+-		if (host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
+-		    host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
++		if ((!emmc_data || !emmc_data->allow_low_clock) &&
++		    (host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
++		     host->mmc->ios.timing == MMC_TIMING_MMC_HS400)) {
+ 			dev_err(mmc_dev(host->mmc),
+ 				"Can't reduce the clock below 52MHz in HS200/HS400 mode");
+ 			goto enable_clk;
+@@ -822,9 +838,12 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 		 * enhanced strobe first. PHY needs to configure the parameters
+ 		 * of enhanced strobe first.
+ 		 */
++		if (emmc_data)
++			strbin_delay_num = emmc_data->ddr50_strbin_delay_num;
++
+ 		extra = DWCMSHC_EMMC_DLL_DLYENA |
+ 			DLL_STRBIN_DELAY_NUM_SEL |
+-			DLL_STRBIN_DELAY_NUM_DEFAULT << DLL_STRBIN_DELAY_NUM_OFFSET;
++			strbin_delay_num << DLL_STRBIN_DELAY_NUM_OFFSET;
+ 		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_STRBIN);
+ 		goto enable_clk;
+ 	}
+@@ -863,6 +882,15 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 		0x3 << 19;  /* post-change delay */
+ 	sdhci_writel(host, extra, dwc_priv->vendor_specific_area1 + DWCMSHC_EMMC_ATCTRL);
+ 
++	/* RK3562 uses the vendor DLL tap configuration. */
++	if (emmc_data) {
++		extra = DWCMSHC_EMMC_DLL_DLYENA | DLL_RXCLK_ORI_GATE;
++		if (emmc_data->tap_value_sel)
++			extra |= DLL_TAP_VALUE_SEL |
++				dll_lock_value << DLL_TAP_VALUE_OFFSET;
++		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
++	}
++
+ 	/*
+ 	 * rk3576 feeds the measured DLL lock value back as the tap-value
+ 	 * select on every DLL clock line. Without that calibration the HS400
+@@ -870,19 +898,36 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 	 * waiting for hardware interrupt". Other revision-1 SoCs (rk3588, ...)
+ 	 * keep their existing taps, so gate this on the dedicated flag.
+ 	 */
+-	if (rockchip_pdata->needs_hs400_dll_calibration &&
+-	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
++	if (!emmc_data && rockchip_pdata->needs_hs400_dll_calibration &&
++		   host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
+ 		extra = DWCMSHC_EMMC_DLL_DLYENA |
+ 			DLL_TAP_VALUE_SEL |
+ 			dll_lock_value << DLL_TAP_VALUE_OFFSET;
+ 		sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
+ 	}
+ 
+-	if (host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
++	if (emmc_data || host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
+ 	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
+ 		txclk_tapnum = priv->txclk_tapnum;
+ 
+-	if (rockchip_pdata->revision == 1 && host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
++	if (emmc_data && host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
++		txclk_tapnum = emmc_data->hs400_tx_tapnum;
++
++		if (emmc_data->dll_cmd_out) {
++			extra = DLL_CMDOUT_SRC_CLK_NEG |
++				DLL_CMDOUT_BOTH_CLK_EDGE |
++				DWCMSHC_EMMC_DLL_DLYENA |
++				emmc_data->hs400_cmd_tapnum |
++				DLL_CMDOUT_TAPNUM_FROM_SW;
++			if (emmc_data->tap_value_sel)
++				extra |= DLL_TAP_VALUE_SEL |
++					dll_lock_value << DLL_TAP_VALUE_OFFSET;
++			sdhci_writel(host, extra, DECMSHC_EMMC_DLL_CMDOUT);
++		}
++	}
++
++	if (!emmc_data && rockchip_pdata->revision == 1 &&
++		   host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
+ 		if (rockchip_pdata->needs_hs400_dll_calibration) {
+ 			/* rk3576: calibrated taps plus the measured DLL lock value */
+ 			txclk_tapnum = DLL_TXCLK_TAPNUM_RK3576;
+@@ -911,21 +956,28 @@ static void dwcmshc_rk3568_set_clock(struct sdhci_host *host, unsigned int clock
+ 		DLL_TXCLK_TAPNUM_FROM_SW |
+ 		DLL_RXCLK_NO_INVERTER << DWCMSHC_EMMC_DLL_RXCLK_SRCSEL |
+ 		txclk_tapnum;
+-	if (rockchip_pdata->needs_hs400_dll_calibration &&
+-	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
++	if ((emmc_data && emmc_data->tap_value_sel) ||
++	    (rockchip_pdata->needs_hs400_dll_calibration &&
++	     host->mmc->ios.timing == MMC_TIMING_MMC_HS400))
+ 		extra |= DLL_TAP_VALUE_SEL |
+ 			 dll_lock_value << DLL_TAP_VALUE_OFFSET;
+ 	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_TXCLK);
+ 
+ 	extra = DWCMSHC_EMMC_DLL_DLYENA |
+ 		DLL_STRBIN_TAPNUM_FROM_SW;
+-	if (rockchip_pdata->needs_hs400_dll_calibration &&
+-	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
++	if (emmc_data) {
++		extra |= emmc_data->hs400_strbin_tapnum;
++		if (emmc_data->tap_value_sel)
++			extra |= DLL_TAP_VALUE_SEL |
++				dll_lock_value << DLL_TAP_VALUE_OFFSET;
++	} else if (rockchip_pdata->needs_hs400_dll_calibration &&
++		   host->mmc->ios.timing == MMC_TIMING_MMC_HS400) {
+ 		extra |= DLL_STRBIN_TAPNUM_RK3576 |
+ 			 DLL_TAP_VALUE_SEL |
+ 			 dll_lock_value << DLL_TAP_VALUE_OFFSET;
+-	else
++	} else {
+ 		extra |= DLL_STRBIN_TAPNUM_DEFAULT;
++	}
+ 	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_STRBIN);
+ 
+ enable_clk:
+@@ -965,6 +1017,8 @@ static int dwcmshc_rk35xx_init(struct device *dev, struct sdhci_host *host,
+ 			       struct dwcmshc_priv *dwc_priv)
+ {
+ 	static const char * const clk_ids[] = {"axi", "block", "timer"};
++	const struct rockchip_pltfm_data *rockchip_pdata =
++		to_pltfm_data(dwc_priv, rockchip);
+ 	struct rk35xx_priv *priv;
+ 	int err;
+ 
+@@ -984,7 +1038,9 @@ static int dwcmshc_rk35xx_init(struct device *dev, struct sdhci_host *host,
+ 
+ 	if (of_property_read_u8(mmc_dev(host->mmc)->of_node, "rockchip,txclk-tapnum",
+ 				&priv->txclk_tapnum))
+-		priv->txclk_tapnum = DLL_TXCLK_TAPNUM_DEFAULT;
++		priv->txclk_tapnum = rockchip_pdata->emmc_data ?
++			rockchip_pdata->emmc_data->hs200_tx_tapnum :
++			DLL_TXCLK_TAPNUM_DEFAULT;
+ 
+ 	/* Disable cmd conflict check */
+ 	sdhci_writel(host, 0x0, dwc_priv->vendor_specific_area1 + DWCMSHC_HOST_CTRL3);
+@@ -2177,6 +2233,18 @@ static const struct cqhci_host_ops rk35xx_cqhci_ops = {
+ 	.set_tran_desc	= dwcmshc_set_tran_desc,
+ };
+ 
++/* RK3562 DLL settings from the Rockchip vendor driver. */
++static const struct rockchip_emmc_data rk3562_emmc_data = {
++	.hs200_tx_tapnum = 12,
++	.hs400_tx_tapnum = 6,
++	.hs400_cmd_tapnum = 6,
++	.hs400_strbin_tapnum = 3,
++	.ddr50_strbin_delay_num = 10,
++	.dll_cmd_out = true,
++	.tap_value_sel = true,
++	.allow_low_clock = true,
++};
++
+ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3568_pdata = {
+ 	.dwcmshc_pdata = {
+ 		.pdata = {
+@@ -2193,6 +2261,23 @@ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3568_pdata = {
+ 	.revision = 0,
+ };
+ 
++static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3562_pdata = {
++	.dwcmshc_pdata = {
++		.pdata = {
++			.ops = &sdhci_dwcmshc_rk35xx_ops,
++			.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN |
++				  SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
++			.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
++				   SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN,
++		},
++		.cqhci_host_ops = &rk35xx_cqhci_ops,
++		.init = dwcmshc_rk35xx_init,
++		.postinit = dwcmshc_rk35xx_postinit,
++	},
++	.revision = 1,
++	.emmc_data = &rk3562_emmc_data,
++};
++
+ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3576_pdata = {
+ 	.dwcmshc_pdata = {
+ 		.pdata = {
+@@ -2392,6 +2477,10 @@ static const struct of_device_id sdhci_dwcmshc_dt_ids[] = {
+ 		.compatible = "canaan,k230-sdio",
+ 		.data = &k230_sdio_data.dwcmshc_pdata,
+ 	},
++	{
++		.compatible = "rockchip,rk3562-dwcmshc",
++		.data = &sdhci_dwcmshc_rk3562_pdata,
++	},
+ 	{
+ 		.compatible = "rockchip,rk3588-dwcmshc",
+ 		.data = &sdhci_dwcmshc_rk3588_pdata,
+-- 
+2.55.0
+

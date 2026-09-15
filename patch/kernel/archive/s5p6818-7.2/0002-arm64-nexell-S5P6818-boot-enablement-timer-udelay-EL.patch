@@ -1,0 +1,309 @@
+From 3724745a020d87295f6de370ecf9b80dd3f8d200 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 8 Sep 2026 18:07:36 +0200
+Subject: [PATCH 2/2] arm64: nexell: S5P6818 boot enablement (timer, udelay,
+ EL2, UART clock)
+
+Bring the mainline S5P6818 platform to a working boot on the fork
+(2016 Nexell) u-boot. Fixes, all needed to reach a serial login:
+
+- hyp-stub: the fork u-boot's EL2 handoff leaves the hvc trap broken,
+  so finalise_el2's hvc faults and never returns. On this ARMv8.0 A53
+  (nVHE) EL2 finalisation is a no-op, so return early. (KVM, the other
+  hvc user, is disabled in the defconfig for the same reason.)
+
+- The ARM generic-timer PPIs are not delivered to the non-secure kernel
+  on this SoC, and the system counter (CNTVCT) is frozen by design.
+  Drive the kernel clockevent/clocksource from the Nexell PWM timer
+  (register-compatible with samsung,s5p6440-pwm; ARCH_NEXELL selects
+  CLKSRC_SAMSUNG_PWM), keep the arm,armv8-timer node counter-only (rate
+  only, no interrupts) so time_init() does not panic, and redirect
+  arm64 get_cycles()/__delay() to the PWM via arch_timer_read_counter
+  so udelay() does not spin forever on the frozen CNTVCT.
+
+- Add a dedicated nexell,s5p6818-uart samsung_tty drvdata (clksel_mask=0,
+  has_fracval) and set the UART fixed-clock to the real 50.688 MHz the
+  UART generator runs at (u-boot UBRDIV=26/UDIVSLOT=8), so the baud
+  divisor is correct and the console is not garbage.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/Kconfig.platforms            |  1 +
+ arch/arm64/boot/dts/nexell/s5p6818.dtsi | 69 +++++++++++++++++++++----
+ arch/arm64/kernel/hyp-stub.S            |  6 +++
+ arch/arm64/lib/delay.c                  | 12 +++++
+ drivers/clocksource/samsung_pwm_timer.c | 16 ++++++
+ drivers/tty/serial/samsung_tty.c        | 53 ++++++++++++++++---
+ 6 files changed, 141 insertions(+), 16 deletions(-)
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index db310bca2..01f169e1e 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -303,6 +303,7 @@ config ARCH_MA35
+ config ARCH_NEXELL
+ 	bool "Nexell/Samsung S5PXX18 SoC Support"
+ 	select GPIOLIB
++	select CLKSRC_SAMSUNG_PWM
+ 	help
+ 	  This enables support for the ARMv8 based Nexell S5PXX18 SoCs,
+ 	  such as the S5P6818 (octa-core Cortex-A53) used on FriendlyARM
+diff --git a/arch/arm64/boot/dts/nexell/s5p6818.dtsi b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+index 975b5665d..2fc11debe 100644
+--- a/arch/arm64/boot/dts/nexell/s5p6818.dtsi
++++ b/arch/arm64/boot/dts/nexell/s5p6818.dtsi
+@@ -29,22 +29,52 @@ cpu0: cpu@0 {
+ 		};
+ 	};
+ 
+-	/* ARM architected timer. CNTFRQ is programmed by u-boot; clock-frequency
+-	 * is a fallback in case firmware left it unset. */
++	/*
++	 * ARM architected timer - COUNTER ONLY (deliberately no "interrupts").
++	 * This SoC's firmware does not route the generic-timer PPIs to the
++	 * non-secure kernel (only GIC SPIs are delivered; the 4.14 BSP avoids the
++	 * arch timer entirely for the same reason). arm64 time_init() panics if
++	 * arch_timer_get_rate() is 0, so this node supplies clock-frequency for
++	 * the rate; with no PPI the arch-timer driver then bails
++	 * (arch_timer_of_init -> "No interrupt available, giving up") BEFORE
++	 * registering any clockevent/clocksource - so it cannot install a
++	 * never-firing clockevent that would freeze jiffies. Real timekeeping
++	 * (clocksource + clockevent) comes from the Nexell PWM timer below
++	 * (samsung,s5p6440-pwm) on GIC SPI 24.
++	 */
+ 	timer {
+ 		compatible = "arm,armv8-timer";
+-		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+-			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+-			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+-			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++		/* The S5P6818 ARM generic system counter is frozen by design (never
++		 * enabled by firmware; CNTVCT_EL0 reads 0). arm64 time_init() panics
++		 * if arch_timer_get_rate() is 0, so this node supplies a rate and no
++		 * "interrupts" (PPIs are not delivered; the Nexell PWM timer provides
++		 * the clockevent). The get_cycles()/udelay path is redirected to the
++		 * PWM clocksource (CLKSRC_SAMSUNG_PWM sets arch_timer_read_counter),
++		 * which runs at 100 MHz - so the rate here MUST match that. */
++		clock-frequency = <100000000>;
++	};
++
++	/* pclk feeding the PWM timer block (sys-bpclk, fixed from Linux' view). */
++	pwm_timer_clk: pwm-timer-clk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
+ 		clock-frequency = <200000000>;
++		clock-output-names = "pwm-timers";
+ 	};
+ 
+-	/* UART baud/pclk source (nexell PLL output, fixed from Linux' view). */
++	/*
++	 * UART baud clock. This is the ACTUAL rate the SoC's UART clock generator
++	 * runs at as left by u-boot (50.688 MHz), NOT the 153.6 MHz the 4.14 BSP
++	 * reprograms it to via the nexell clk driver. Since this mainline port
++	 * models it as a fixed-clock and does not touch the clock hardware, the
++	 * samsung_tty driver MUST see the real rate so its baud divisor matches
++	 * u-boot's (UBRDIV=26, UDIVSLOT=8 for 115200) - otherwise the console is
++	 * garbage. 50688000 = 440 * 115200 (u-boot's effective 27.5x divisor).
++	 */
+ 	uart_clk: uart-clk {
+ 		compatible = "fixed-clock";
+ 		#clock-cells = <0>;
+-		clock-frequency = <153598500>;
++		clock-frequency = <50688000>;
+ 		clock-output-names = "uart";
+ 	};
+ 
+@@ -72,8 +102,29 @@ gic: interrupt-controller@c0009000 {
+ 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
++		/*
++		 * Nexell PWM/system timer - register-compatible with the Samsung
++		 * S5P PWM timer (TCFG0/1, TCON, TINT_CSTAT@0x44, TCNTB/TCMPB stride
++		 * 12). Drives the kernel clocksource + clockevent. Per-channel GIC
++		 * SPIs (IRQ_TIMERn = SPI 23+n). samsung,pwm-outputs reserves ch0/3/4
++		 * so the driver uses ch2 (free-running clocksource) and ch1 (clock
++		 * event on SPI 24 - the interrupt proven delivered on this SoC).
++		 */
++		timer@c0017000 {
++			compatible = "samsung,s5p6440-pwm";
++			reg = <0xc0017000 0x1000>;
++			interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 24 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 25 IRQ_TYPE_LEVEL_HIGH>,
++				     <GIC_SPI 26 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&pwm_timer_clk>;
++			clock-names = "timers";
++			samsung,pwm-outputs = <0>, <3>, <4>;
++			#pwm-cells = <3>;
++		};
++
+ 		uart0: serial@c00a1000 {
+-			compatible = "samsung,s5pv210-uart";
++			compatible = "nexell,s5p6818-uart";
+ 			reg = <0xc00a1000 0x1000>;
+ 			interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&uart_clk>, <&uart_clk>;
+diff --git a/arch/arm64/kernel/hyp-stub.S b/arch/arm64/kernel/hyp-stub.S
+index 37c6976e4..d9f16b599 100644
+--- a/arch/arm64/kernel/hyp-stub.S
++++ b/arch/arm64/kernel/hyp-stub.S
+@@ -244,6 +244,12 @@ SYM_FUNC_END(__hyp_reset_vectors)
+  * w0: boot mode, as returned by init_kernel_el()
+  */
+ SYM_FUNC_START(finalise_el2)
++	// S5P6818: the fork u-boot's EL2 handoff leaves the hvc trap broken, so
++	// the hvc to __finalise_el2 faults and never returns. On a plain ARMv8.0
++	// A53 (nVHE, no VHE/SVE/SME/MPAM/GCS) the EL2 finalisation is a no-op
++	// anyway, so skip it entirely and stay at EL1.
++	ret
++
+ 	// Need to have booted at EL2
+ 	cmp	w0, #BOOT_CPU_MODE_EL2
+ 	b.ne	1f
+diff --git a/arch/arm64/lib/delay.c b/arch/arm64/lib/delay.c
+index e278e060e..467467603 100644
+--- a/arch/arm64/lib/delay.c
++++ b/arch/arm64/lib/delay.c
+@@ -35,7 +35,19 @@ static inline unsigned long xloops_to_cycles(unsigned long xloops)
+ static cycles_t notrace __delay_cycles(void)
+ {
+ 	guard(preempt_notrace)();
++#if defined(CONFIG_ARCH_NEXELL)
++	/*
++	 * The Nexell S5P6818 ARM generic system counter is frozen by design
++	 * (CNTVCT_EL0 reads 0), so the direct sysreg read below would make every
++	 * udelay()/__delay() spin forever. Use the arch_timer_read_counter
++	 * pointer instead, which CLKSRC_SAMSUNG_PWM redirects to the on-SoC PWM
++	 * clocksource. loops_per_jiffy is calibrated to the same (arm,armv8-timer
++	 * clock-frequency) rate, so the delays stay correctly scaled.
++	 */
++	return arch_timer_read_counter();
++#else
+ 	return __arch_counter_get_cntvct_stable();
++#endif
+ }
+ 
+ void __delay(unsigned long cycles)
+diff --git a/drivers/clocksource/samsung_pwm_timer.c b/drivers/clocksource/samsung_pwm_timer.c
+index b9561e3f1..0ab28f9c6 100644
+--- a/drivers/clocksource/samsung_pwm_timer.c
++++ b/drivers/clocksource/samsung_pwm_timer.c
+@@ -21,6 +21,9 @@
+ #include <linux/sched_clock.h>
+ 
+ #include <clocksource/samsung_pwm.h>
++#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_NEXELL)
++#include <clocksource/arm_arch_timer.h>
++#endif
+ 
+ /*
+  * Clocksource driver
+@@ -351,6 +354,19 @@ static int __init samsung_clocksource_init(void)
+ 	sched_clock_register(samsung_read_sched_clock,
+ 			     pwm.variant.bits, clock_rate);
+ 
++#if defined(CONFIG_ARM64) && defined(CONFIG_ARCH_NEXELL)
++	/*
++	 * On the Nexell S5P6818 the ARM generic system counter is frozen by
++	 * design (never enabled by firmware; CNTVCT_EL0 reads 0), so arm64's
++	 * get_cycles()/__delay()/udelay() - which read arch_timer_read_counter -
++	 * would hang. Redirect that pointer to this PWM clocksource, mirroring the
++	 * vendor 4.14 BSP (which overrode arch_counter_get_cntvct()). The DT
++	 * arm,armv8-timer clock-frequency MUST equal clock_rate for udelay to be
++	 * correctly scaled.
++	 */
++	arch_timer_read_counter = samsung_read_sched_clock;
++#endif
++
+ 	samsung_clocksource.mask = CLOCKSOURCE_MASK(pwm.variant.bits);
+ 	return clocksource_register_hz(&samsung_clocksource, clock_rate);
+ }
+diff --git a/drivers/tty/serial/samsung_tty.c b/drivers/tty/serial/samsung_tty.c
+index 177d40b29..2674d9517 100644
+--- a/drivers/tty/serial/samsung_tty.c
++++ b/drivers/tty/serial/samsung_tty.c
+@@ -2416,13 +2416,7 @@ static const struct s3c24xx_serial_drv_data s3c6400_serial_drv_data = {
+ #define S3C6400_SERIAL_DRV_DATA NULL
+ #endif
+ 
+-/*
+- * The Nexell S5P6818 UART is register-compatible with the S5PV210 UART, so it
+- * reuses this drvdata (bound via the "samsung,s5pv210-uart" compatible). Keep
+- * it available on ARCH_NEXELL even though CONFIG_CPU_S5PV210 (a 32-bit symbol)
+- * is never set there.
+- */
+-#if defined(CONFIG_CPU_S5PV210) || defined(CONFIG_ARCH_NEXELL)
++#if defined(CONFIG_CPU_S5PV210)
+ static const struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
+ 	.info = {
+ 		.name		= "Samsung S5PV210 UART",
+@@ -2452,6 +2446,47 @@ static const struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
+ #define S5PV210_SERIAL_DRV_DATA	NULL
+ #endif
+ 
++#if defined(CONFIG_ARCH_NEXELL)
++/*
++ * Nexell S5P6818 UART. The register layout matches the S5PV210 UART (256-byte
++ * FIFO, fractional UDIVSLOT divider), but this SoC has a SINGLE baud clock and
++ * no UART clock mux. clksel_mask/shift MUST be 0 so s3c24xx_serial_setsource()
++ * is a no-op and never rewrites the UCON clock-select bits: doing so (as the
++ * s5pv210 profile does, num_clks=2 + clksel_mask=1<<10) routes UART0 to a clock
++ * source the S5P6818 does not provide, so at the earlycon->ttySAC0 handover the
++ * UART loses its clock and the console hangs. Also use the raw fractional
++ * UDIVSLOT encoding (has_fracval). Mirrors the vendor 4.14 BSP drvdata.
++ */
++static const struct s3c24xx_serial_drv_data nexell_s5p6818_serial_drv_data = {
++	.info = {
++		.name		= "Nexell S5P6818 UART",
++		.type		= TYPE_S3C6400,
++		.port_type	= PORT_S3C6400,
++		.iotype		= UPIO_MEM,
++		.has_divslot	= true,
++		.rx_fifomask	= S5PV210_UFSTAT_RXMASK,
++		.rx_fifoshift	= S5PV210_UFSTAT_RXSHIFT,
++		.rx_fifofull	= S5PV210_UFSTAT_RXFULL,
++		.tx_fifofull	= S5PV210_UFSTAT_TXFULL,
++		.tx_fifomask	= S5PV210_UFSTAT_TXMASK,
++		.tx_fifoshift	= S5PV210_UFSTAT_TXSHIFT,
++		.def_clk_sel	= S3C2410_UCON_CLKSEL0,
++		.num_clks	= 1,
++		.clksel_mask	= 0,
++		.clksel_shift	= 0,
++	},
++	.def_cfg = {
++		.ucon		= S5PV210_UCON_DEFAULT,
++		.ufcon		= S5PV210_UFCON_DEFAULT,
++		.has_fracval	= 1,
++	},
++	.fifosize = { 256, 64, 16, 16, 16, 16 },
++};
++#define NEXELL_S5P6818_SERIAL_DRV_DATA (&nexell_s5p6818_serial_drv_data)
++#else
++#define NEXELL_S5P6818_SERIAL_DRV_DATA NULL
++#endif
++
+ #if defined(CONFIG_ARCH_EXYNOS)
+ #define EXYNOS_COMMON_SERIAL_DRV_DATA				\
+ 	.info = {						\
+@@ -2639,6 +2674,8 @@ static const struct of_device_id s3c24xx_uart_dt_match[] = {
+ 		.data = S3C6400_SERIAL_DRV_DATA },
+ 	{ .compatible = "samsung,s5pv210-uart",
+ 		.data = S5PV210_SERIAL_DRV_DATA },
++	{ .compatible = "nexell,s5p6818-uart",
++		.data = NEXELL_S5P6818_SERIAL_DRV_DATA },
+ 	{ .compatible = "samsung,exynos4210-uart",
+ 		.data = EXYNOS4210_SERIAL_DRV_DATA },
+ 	{ .compatible = "samsung,exynos5433-uart",
+@@ -2818,6 +2855,8 @@ static int __init s5pv210_early_console_setup(struct earlycon_device *device,
+ 
+ OF_EARLYCON_DECLARE(s5pv210, "samsung,s5pv210-uart",
+ 			s5pv210_early_console_setup);
++OF_EARLYCON_DECLARE(s5p6818, "nexell,s5p6818-uart",
++			s5pv210_early_console_setup);
+ OF_EARLYCON_DECLARE(exynos4210, "samsung,exynos4210-uart",
+ 			s5pv210_early_console_setup);
+ OF_EARLYCON_DECLARE(artpec8, "axis,artpec8-uart",
+-- 
+2.53.0
+

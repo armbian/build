@@ -1,0 +1,133 @@
+From b1557660b40f79f85158c69b57cf9a3b277c0b02 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 15:02:20 +0200
+Subject: [PATCH 11/12] thermal: exynos_tmu: add S5P6818 TMU
+
+exynos4412-class TMU with moved interrupt registers (translated in
+update_bit + clear_irqs) and a SoC TIEOFF sensing-start bit set inline at probe.
+Validated: cpu-thermal ~51 C.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/thermal/samsung/exynos_tmu.c | 59 ++++++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+diff --git a/drivers/thermal/samsung/exynos_tmu.c b/drivers/thermal/samsung/exynos_tmu.c
+index 47a99b3c5..15a0902e7 100644
+--- a/drivers/thermal/samsung/exynos_tmu.c
++++ b/drivers/thermal/samsung/exynos_tmu.c
+@@ -116,6 +116,16 @@
+ #define EXYNOS7_EMUL_DATA_SHIFT			7
+ #define EXYNOS7_EMUL_DATA_MASK			0x1ff
+ 
++/* s5p6818 specific registers (interrupt block moved vs exynos) */
++#define S5P6818_TMU_REG_INTEN			0xB0
++#define S5P6818_TMU_REG_INTSTAT			0xB4
++#define S5P6818_TMU_REG_INTCLEAR		0xB8
++
++/* TIEOFF "sensing start" bits (tieoff block @0xc0011000, reg 76 = +0x130) */
++#define S5P6818_TMU_TIEOFF_BASE			0xc0011130
++#define S5P6818_TMU0_SENSING_START_BIT		0
++#define S5P6818_TMU1_SENSING_START_BIT		1
++
+ #define EXYNOS_FIRST_POINT_TRIM			25
+ #define EXYNOS_SECOND_POINT_TRIM		85
+ 
+@@ -133,6 +143,7 @@ enum soc_type {
+ 	SOC_ARCH_EXYNOS5420_TRIMINFO,
+ 	SOC_ARCH_EXYNOS5433,
+ 	SOC_ARCH_EXYNOS7,
++	SOC_ARCH_S5P6818,
+ };
+ 
+ /**
+@@ -340,6 +351,10 @@ static void exynos_tmu_update_bit(struct exynos_tmu_data *data, int reg_off,
+ {
+ 	u32 interrupt_en;
+ 
++	/* S5P6818 keeps the interrupt-enable register at a different offset. */
++	if (data->soc == SOC_ARCH_S5P6818 && reg_off == EXYNOS_TMU_REG_INTEN)
++		reg_off = S5P6818_TMU_REG_INTEN;
++
+ 	interrupt_en = readl(data->base + reg_off);
+ 	if (enable)
+ 		interrupt_en |= BIT(bit_off);
+@@ -788,6 +803,9 @@ static void exynos4210_tmu_clear_irqs(struct exynos_tmu_data *data)
+ 	} else if (data->soc == SOC_ARCH_EXYNOS5433) {
+ 		tmu_intstat = EXYNOS5433_TMU_REG_INTPEND;
+ 		tmu_intclear = EXYNOS5433_TMU_REG_INTPEND;
++	} else if (data->soc == SOC_ARCH_S5P6818) {
++		tmu_intstat = S5P6818_TMU_REG_INTSTAT;
++		tmu_intclear = S5P6818_TMU_REG_INTCLEAR;
+ 	} else {
+ 		tmu_intstat = EXYNOS_TMU_REG_INTSTAT;
+ 		tmu_intclear = EXYNOS_TMU_REG_INTCLEAR;
+@@ -833,6 +851,9 @@ static const struct of_device_id exynos_tmu_match[] = {
+ 	}, {
+ 		.compatible = "samsung,exynos7-tmu",
+ 		.data = (const void *)SOC_ARCH_EXYNOS7,
++	}, {
++		.compatible = "nexell,s5p6818-tmu",
++		.data = (const void *)SOC_ARCH_S5P6818,
+ 	},
+ 	{ },
+ };
+@@ -865,6 +886,30 @@ static int exynos_map_dt_data(struct platform_device *pdev)
+ 
+ 	data->soc = (uintptr_t)of_device_get_match_data(&pdev->dev);
+ 
++	/*
++	 * S5P6818: the TMU sensor only starts converting once its "sensing
++	 * start" bit is set in the SoC TIEOFF block (the vendor drives this via
++	 * a soc,tieoff property + a separate tieoff driver; do the single-bit
++	 * write inline here). TMU0 @0xc0096000 = bit 0, TMU1 @0xc0097000 = bit 1.
++	 */
++	if (data->soc == SOC_ARCH_S5P6818) {
++		void __iomem *tieoff = ioremap(S5P6818_TMU_TIEOFF_BASE, 4);
++
++		if (tieoff) {
++			int bit = (res.start == 0xc0097000) ?
++				S5P6818_TMU1_SENSING_START_BIT :
++				S5P6818_TMU0_SENSING_START_BIT;
++
++			writel(readl(tieoff) | BIT(bit), tieoff);
++			iounmap(tieoff);
++		} else {
++			/* Without the sensing-start bit the sensor never
++			 * converts and would report bogus temperatures. */
++			pr_err("S5P6818 TMU: cannot map TIEOFF; sensor disabled\n");
++			return -ENOMEM;
++		}
++	}
++
+ 	switch (data->soc) {
+ 	case SOC_ARCH_EXYNOS4210:
+ 		data->tmu_set_low_temp = exynos4210_tmu_set_low_temp;
+@@ -908,6 +953,24 @@ static int exynos_map_dt_data(struct platform_device *pdev)
+ 			data->min_efuse_value = 0;
+ 		data->max_efuse_value = 100;
+ 		break;
++	case SOC_ARCH_S5P6818:
++		/* exynos4412-class core, S5P6818 trim/gain (one-point trim). */
++		data->tmu_set_low_temp = exynos4412_tmu_set_low_temp;
++		data->tmu_set_high_temp = exynos4412_tmu_set_high_temp;
++		data->tmu_disable_low = exynos4412_tmu_disable_low;
++		data->tmu_disable_high = exynos4210_tmu_disable_high;
++		data->tmu_set_crit_temp = exynos4412_tmu_set_crit_temp;
++		data->tmu_initialize = exynos4412_tmu_initialize;
++		data->tmu_control = exynos4210_tmu_control;
++		data->tmu_read = exynos4412_tmu_read;
++		data->tmu_set_emulation = exynos4412_tmu_set_emulation;
++		data->tmu_clear_irqs = exynos4210_tmu_clear_irqs;
++		data->gain = 5;
++		data->reference_voltage = 16;
++		data->efuse_value = 55;
++		data->min_efuse_value = 16;
++		data->max_efuse_value = 76;
++		break;
+ 	case SOC_ARCH_EXYNOS5433:
+ 		data->tmu_set_low_temp = exynos5433_tmu_set_low_temp;
+ 		data->tmu_set_high_temp = exynos5433_tmu_set_high_temp;
+-- 
+2.53.0
+

@@ -130,6 +130,25 @@ function try_download_oras_tooling() {
 	run_host_command_logged chmod +x "${ORAS_BIN}"
 }
 
+# Derive "https://github.com/<owner>/<repo>" from OCI coordinates shaped like
+# "ghcr.io/<owner>/<repo>/<package>[:<tag>]". Echoes nothing for anything else.
+#
+# Only ghcr.io: the org.opencontainers.image.source link is a GitHub Container
+# Registry feature, and other registries ignore it.
+#
+# At least three path segments are required. A flat "ghcr.io/<owner>/<package>"
+# would otherwise resolve to a repository that does not exist, so it is skipped
+# rather than pointed somewhere wrong.
+function oci_derive_source_url() {
+	declare coords="${1}"
+	[[ "${coords}" != "ghcr.io/"* ]] && return 0
+	coords="${coords%:*}" # drop the :tag, if any
+	declare -a seg
+	IFS='/' read -r -a seg <<< "${coords#ghcr.io/}"
+	[[ ${#seg[@]} -lt 3 ]] && return 0
+	echo "https://github.com/${seg[0]}/${seg[1]}"
+}
+
 function oras_push_artifact_file() {
 	declare image_full_oci="${1}" # Something like "ghcr.io/rpardini/armbian-git-shallow/kernel-git:latest"
 	declare upload_file="${2}"    # Absolute path to the file to upload including the path and name
@@ -141,6 +160,23 @@ function oras_push_artifact_file() {
 	oras_add_param_plain_http
 	oras_add_param_insecure
 	extra_params+=("--annotation" "org.opencontainers.image.description=${description}")
+
+	# Connect the package to its GitHub repository. GHCR links a package to a repo
+	# automatically ONLY when it is pushed with GITHUB_TOKEN; Armbian's CI pushes
+	# with a PAT (the builtin token cannot write org packages), so nothing links
+	# these and each package inherits no repository access permissions at all.
+	# This annotation does the linking explicitly.
+	#
+	# It does NOT make packages public: GitHub publishes every new package as
+	# private and offers no API to change that -- visibility is a web-UI action.
+	# This only fixes the permissions half.
+	#
+	# OCI_SOURCE_URL overrides the derived value; set it to the empty string to
+	# skip the annotation entirely.
+	declare oci_source_url="${OCI_SOURCE_URL-$(oci_derive_source_url "${image_full_oci}")}"
+	if [[ -n "${oci_source_url}" ]]; then
+		extra_params+=("--annotation" "org.opencontainers.image.source=${oci_source_url}")
+	fi
 
 	# make sure file exists
 	if [[ ! -f "${upload_file}" ]]; then

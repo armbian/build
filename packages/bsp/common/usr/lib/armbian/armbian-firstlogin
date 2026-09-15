@@ -1020,6 +1020,22 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
 
+	# Heal host keys torn by power loss during firstrun's regeneration: the
+	# teardown (rm/truncate) can be durable while recreation is lost. -A skips
+	# files that exist, so drop empties first; it is a no-op on intact keys.
+	for _k in /etc/ssh/ssh_host_*_key; do
+		[[ -e "$_k" && ! -s "$_k" ]] || continue
+		if rm -f "$_k" "$_k.pub"; then
+			EMPTY_KEYS=1
+		else
+			echo "WARNING: failed to remove empty host key ${_k}" >&2
+		fi
+	done
+	if [[ -n "${EMPTY_KEYS:-}" ]]; then
+		echo -e "\nRegenerating SSH host keys lost to power failure..."
+	fi
+	ssh-keygen -A > /dev/null 2>&1 && sync
+
 	# re-enable passing locale environment via ssh (atomic write)
 	_f="/etc/ssh/sshd_config"
 	if sed -E '/^[[:blank:]]*#[[:blank:]]*AcceptEnv[[:blank:]]+LANG/ s/^[[:blank:]]*#[[:blank:]]*//' "${_f}" > "${_f}.tmp"; then
@@ -1093,9 +1109,21 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		[[ -x $(command -v sway) ]] && sed -i "s/user-session.*/user-session=sway/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 		[[ -x $(command -v sway) ]] && sed -i "s/user-session.*/user-session=sway/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-		# select xmonad session
-		[[ -x $(command -v xmonad) ]] && sed -i "s/user-session.*/user-session=xmonad/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-		[[ -x $(command -v xmonad) ]] && sed -i "s/user-session.*/user-session=xmonad/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select xmonad session. The xmonad package ships two of them:
+		# xmonad.desktop runs the window manager bare, while
+		# gnome-flashback-xmonad.desktop runs it inside a GNOME Flashback
+		# session and so gets a session dbus, a polkit agent and session
+		# management. Prefer the latter when it can actually start -- its
+		# TryExec is gnome-flashback, which comes from gnome-session-flashback
+		# and is not always installed -- and fall back to the bare session.
+		if [[ -x $(command -v xmonad) ]]; then
+			xmonad_session="xmonad"
+			if [[ -f /usr/share/xsessions/gnome-flashback-xmonad.desktop && -x $(command -v gnome-flashback) ]]; then
+				xmonad_session="gnome-flashback-xmonad"
+			fi
+			sed -i "s/user-session.*/user-session=${xmonad_session}/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+			sed -i "s/user-session.*/user-session=${xmonad_session}/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		fi
 
 		ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 

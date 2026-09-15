@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 21:44:17 +0200
+Subject: [PATCH 15/17] clk: nexell: fix PLL lookup name so peripheral clocks
+ derive PLL rates
+
+clk_dev_pll_rate() looked up the core PLLs as clk_get(NULL, "pll%d"), but
+the PLL provider registers them under the clkdev names "sys-pll0".."sys-pll3"
+(CLK_CPU_PLLn). The lookup always failed, so every PLL source was skipped
+and any peripheral clock that must derive its rate from a PLL came out 0.
+GMAC (fixed src-force EXT1) and USB (gate-only) never hit this path; the
+I2S master clock is the first that does. Use the correct "sys-pll%d" name;
+the I2S MCLK now derives exactly (614.4 MHz audio PLL / 50 = 12.288 MHz).
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/clk/nexell/clk-s5pxx18.c | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/clk/nexell/clk-s5pxx18.c b/drivers/clk/nexell/clk-s5pxx18.c
+index e76b5ded2..e7e62e32c 100644
+--- a/drivers/clk/nexell/clk-s5pxx18.c
++++ b/drivers/clk/nexell/clk-s5pxx18.c
+@@ -179,14 +179,20 @@ static long clk_dev_pll_rate(int no)
+ 	char name[16];
+ 	long rate = 0;
+ 
+-	sprintf(name, "pll%d", no);
++	/*
++	 * The PLL provider ("nexell,s5pxx18,pll") registers the core PLLs under
++	 * the clkdev names "sys-pll0".."sys-pll3" (CLK_CPU_PLLn) - NOT "pll0..3".
++	 * Look them up by the correct name so peripheral clocks that must derive
++	 * their rate from a PLL (e.g. the I2S master clock) actually find a
++	 * source; otherwise every PLL is skipped and the rate comes out 0.
++	 */
++	sprintf(name, "sys-pll%d", no);
+ 	clk = clk_get(NULL, name);
+ 	/*
+-	 * The PLLs are registered by the separate "nexell,s5pxx18,pll" provider.
+-	 * If that node is absent (or not yet initialised), clk_get returns an
+-	 * ERR_PTR - must NOT dereference it via clk_get_rate (that faulted at
+-	 * boot for any peripheral clock without a fixed src, e.g. the USB clock).
+-	 * Treat a missing PLL as "rate 0" so the source is simply skipped.
++	 * If the provider node is absent (or not yet initialised), clk_get
++	 * returns an ERR_PTR - must NOT dereference it via clk_get_rate (that
++	 * faulted at boot for any peripheral clock without a fixed src). Treat a
++	 * missing PLL as "rate 0" so the source is simply skipped.
+ 	 */
+ 	if (IS_ERR_OR_NULL(clk))
+ 		return 0;

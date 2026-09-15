@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 9 Sep 2026 21:44:17 +0200
+Subject: [PATCH 14/17] reset: reset-simple: nexell: set reset_us so reset()
+ releases blocks
+
+reset_simple_reset() returns -ENOTSUPP when reset_us is 0, so
+reset_control_reset() was a silent no-op for the Nexell controller.
+u-boot leaves several blocks (I2C, I2S) held in reset, and their drivers
+release them via reset_control_reset(); without a non-zero reset_us those
+blocks stayed wedged in reset (I2C transactions timed out, never ACKing).
+GMAC/USB/MMC were unaffected because they use reset_control_deassert().
+
+Add a reset_us field to reset_simple_devdata and a nexell variant with
+reset_us=10, so the assert+deassert pulse actually fires and leaves the
+line deasserted.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/reset/reset-simple.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/reset/reset-simple.c b/drivers/reset/reset-simple.c
+index 6d6fbc247..bddcf1e1c 100644
+--- a/drivers/reset/reset-simple.c
++++ b/drivers/reset/reset-simple.c
+@@ -112,12 +112,15 @@ EXPORT_SYMBOL_GPL(reset_simple_ops);
+  * @status_active_low: if true, bits read back as cleared while the reset is
+  *                     asserted. Otherwise, bits read back as set while the
+  *                     reset is asserted.
++ * @reset_us: pulse width in microseconds for the .reset (assert+deassert)
++ *            operation. If 0, .reset is unsupported (-ENOTSUPP).
+  */
+ struct reset_simple_devdata {
+ 	u32 reg_offset;
+ 	u32 nr_resets;
+ 	bool active_low;
+ 	bool status_active_low;
++	u32 reset_us;
+ };
+ 
+ #define SOCFPGA_NR_BANKS	8
+@@ -133,6 +136,19 @@ static const struct reset_simple_devdata reset_simple_active_low = {
+ 	.status_active_low = true,
+ };
+ 
++/*
++ * Nexell S5P6818: same active-low semantics, but a non-zero reset_us so the
++ * .reset (assert+deassert pulse) actually fires. u-boot leaves some blocks
++ * (I2C, I2S) held in reset, and their drivers call reset_control_reset() to
++ * release them; without a reset_us that pulse is a silent no-op and the block
++ * stays wedged in reset.
++ */
++static const struct reset_simple_devdata reset_simple_nexell = {
++	.active_low = true,
++	.status_active_low = true,
++	.reset_us = 10,
++};
++
+ static const struct of_device_id reset_simple_dt_ids[] = {
+ 	{ .compatible = "altr,stratix10-rst-mgr",
+ 		.data = &reset_simple_socfpga },
+@@ -155,7 +171,7 @@ static const struct of_device_id reset_simple_dt_ids[] = {
+ 	 * active-low, exactly reset-simple's active_low mode.
+ 	 */
+ 	{ .compatible = "nexell,s5pxx18-reset",
+-		.data = &reset_simple_active_low },
++		.data = &reset_simple_nexell },
+ 	{ .compatible = "snps,dw-high-reset" },
+ 	{ .compatible = "snps,dw-low-reset",
+ 		.data = &reset_simple_active_low },
+@@ -198,6 +214,7 @@ static int reset_simple_probe(struct platform_device *pdev)
+ 			data->rcdev.nr_resets = devdata->nr_resets;
+ 		data->active_low = devdata->active_low;
+ 		data->status_active_low = devdata->status_active_low;
++		data->reset_us = devdata->reset_us;
+ 	}
+ 
+ 	data->membase += reg_offset;

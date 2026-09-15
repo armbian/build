@@ -1,0 +1,189 @@
+From: gh123man <gh123man@users.noreply.github.com>
+Subject: [PATCH] input: qcom-hv-haptics: defer rsinput playback bridge
+
+The rsinput force-feedback playback callback runs below input_event(), with
+the input device event spinlock held and interrupts disabled.  The global
+Qualcomm haptics bridge calls haptics_erase() directly from that callback.
+haptics_erase() takes a mutex and synchronously cancels delayed work, which
+can sleep and produces "BUG: scheduling while atomic" during game rumble.
+
+Keep playback submission atomic by recording the latest request and applying
+it from a workqueue.  Serialize uploads, playback, and gain changes with a
+mutex in process context, and drain both playback work and delayed stop work
+before suspending the haptics device.
+
+---
+--- a/drivers/input/misc/qcom-hv-haptics.c
++++ b/drivers/input/misc/qcom-hv-haptics.c
+@@ -632,6 +632,12 @@ struct haptics_chip {
+ 	struct notifier_block		hboost_nb;
+ 	struct mutex			vmax_lock;
+ 	struct work_struct		set_gain_work;
++	struct mutex			global_ff_lock;
++	struct work_struct		global_playback_work;
++	spinlock_t			global_playback_lock;
++	u32				global_playback_seq;
++	int				global_effect_id;
++	int				global_playback_val;
+ 
+ 	volatile bool			chip_effect_loaded;
+ 	volatile bool			chip_is_playing;
+@@ -670,6 +676,7 @@ struct haptics_reg_info {
+ };
+ 
+ static struct haptics_chip *global_haptics = NULL;
++static void haptics_global_playback_work(struct work_struct *work);
+ 
+ static inline int get_max_fifo_samples(struct haptics_chip *chip)
+ {
+@@ -6016,6 +6023,9 @@ static int haptics_probe(struct platform_device *pdev)
+ 	hrtimer_setup(&chip->hbst_off_timer, haptics_disable_hbst_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+ 	INIT_DELAYED_WORK(&chip->stop_work, haptics_stop_constant_effect_play);
+ 	INIT_WORK(&chip->set_gain_work, haptics_set_gain_work);
++	mutex_init(&chip->global_ff_lock);
++	spin_lock_init(&chip->global_playback_lock);
++	INIT_WORK(&chip->global_playback_work, haptics_global_playback_work);
+ 
+ 	atomic_set(&chip->play.fifo_status.is_busy, 0);
+ 	atomic_set(&chip->play.fifo_status.written_done, 0);
+@@ -6096,6 +6106,7 @@ static void haptics_remove(struct platform_device *pdev)
+ 
+ 	if (global_haptics == chip)
+ 		global_haptics = NULL;
++	cancel_work_sync(&chip->global_playback_work);
+ 
+ 	unregister_hboost_event_notifier(&chip->hboost_nb);
+ 	class_unregister(&chip->hap_class);
+@@ -6151,6 +6162,9 @@ static int haptics_suspend_config(struct device *dev)
+ 	struct haptics_play_info *play = &chip->play;
+ 	int rc;
+ 
++	cancel_work_sync(&chip->global_playback_work);
++	cancel_delayed_work_sync(&chip->stop_work);
++
+ 	mutex_lock(&play->lock);
+ 	if ((play->pattern_src == FIFO) &&
+ 			atomic_read(&play->fifo_status.is_busy)) {
+@@ -6294,56 +6308,92 @@ static struct platform_driver haptics_driver = {
+ };
+ module_platform_driver(haptics_driver);
+ 
+-//
+-int qcom_spmi_haptics_global_upload(struct ff_effect *effect) {
+-	int ret;
++static void haptics_global_playback_work(struct work_struct *work)
++{
++	struct haptics_chip *chip = container_of(work, struct haptics_chip,
++						 global_playback_work);
++	unsigned long flags;
++	u32 sequence;
++	int effect_id, val, ret;
+ 
+-	if (!global_haptics)
+-		return -ENODEV;
+-
+-	spin_lock_irq(&global_haptics->input_dev->event_lock);
+-
+-	ret = global_haptics->input_dev->ff->upload(global_haptics->input_dev, effect, NULL);
+-
+-	spin_unlock_irq(&global_haptics->input_dev->event_lock);
++	/*
++	 * Force-feedback playback is called with the input device event lock held,
++	 * so it cannot invoke the haptics callbacks directly: erase waits for the
++	 * delayed stop work and takes a mutex.  Apply the latest requested state
++	 * here instead, in sleepable workqueue context.  Loop if another event was
++	 * delivered while the hardware operation was in progress.
++	 */
++	do {
++		spin_lock_irqsave(&chip->global_playback_lock, flags);
++		sequence = chip->global_playback_seq;
++		effect_id = chip->global_effect_id;
++		val = chip->global_playback_val;
++		spin_unlock_irqrestore(&chip->global_playback_lock, flags);
+ 
+-	return ret;
++		mutex_lock(&chip->global_ff_lock);
++		if (val)
++			ret = haptics_playback(chip->input_dev, effect_id, val);
++		else
++			ret = haptics_erase(chip->input_dev, effect_id);
++		mutex_unlock(&chip->global_ff_lock);
++
++		if (ret)
++			dev_warn(chip->dev, "global %s failed: %d\n",
++				 val ? "playback" : "erase", ret);
++
++		spin_lock_irqsave(&chip->global_playback_lock, flags);
++		ret = sequence != chip->global_playback_seq;
++		spin_unlock_irqrestore(&chip->global_playback_lock, flags);
++	} while (ret);
+ }
+ 
+-int qcom_spmi_haptics_global_playback(int effect_id, int val) {
++int qcom_spmi_haptics_global_upload(struct ff_effect *effect)
++{
++	struct haptics_chip *chip = READ_ONCE(global_haptics);
+ 	int ret;
+ 
+-	if (!global_haptics)
++	if (!chip)
+ 		return -ENODEV;
+ 
+-	spin_lock_irq(&global_haptics->input_dev->event_lock);
++	mutex_lock(&chip->global_ff_lock);
++	ret = haptics_upload_effect(chip->input_dev, effect, NULL);
++	mutex_unlock(&chip->global_ff_lock);
+ 
+-	if (val != 0)
+-		ret = global_haptics->input_dev->ff->playback(global_haptics->input_dev, effect_id, val);
+-	else
+-		ret = global_haptics->input_dev->ff->erase(global_haptics->input_dev, effect_id);
++	return ret;
++}
+ 
+-	if (ret)
+-		pr_warn("%s called for %s, error in return (%d)\n", __func__, (val!=0 ? "Playback" : "Erase"), ret);
++int qcom_spmi_haptics_global_playback(int effect_id, int val)
++{
++	struct haptics_chip *chip = READ_ONCE(global_haptics);
++	unsigned long flags;
+ 
+-	spin_unlock_irq(&global_haptics->input_dev->event_lock);
++	if (!chip)
++		return -ENODEV;
+ 
+-	return ret;
++	spin_lock_irqsave(&chip->global_playback_lock, flags);
++	chip->global_effect_id = effect_id;
++	chip->global_playback_val = val;
++	chip->global_playback_seq++;
++	spin_unlock_irqrestore(&chip->global_playback_lock, flags);
++
++	schedule_work(&chip->global_playback_work);
++	return 0;
+ }
+ 
+-int qcom_spmi_haptics_global_set_gain(u16 gain) {
+-	if (!global_haptics)
++int qcom_spmi_haptics_global_set_gain(u16 gain)
++{
++	struct haptics_chip *chip = READ_ONCE(global_haptics);
++
++	if (!chip)
+ 		return -ENODEV;
+ 
+-	spin_lock_irq(&global_haptics->input_dev->event_lock);
+-
+ 	//max is 0x7fff, and minimum is 0x4000 the same values android uses
+ 	gain = clamp(gain, 0x4000, 0x7fff);
+ 
+-	global_haptics->input_dev->ff->set_gain(global_haptics->input_dev, gain);
++	mutex_lock(&chip->global_ff_lock);
++	haptics_set_gain(chip->input_dev, gain);
++	mutex_unlock(&chip->global_ff_lock);
+ 
+-	spin_unlock_irq(&global_haptics->input_dev->event_lock);
+-
+ 	return 0;
+ }
+ 

@@ -1,0 +1,65 @@
+From 53842b92d99b9bcd98a5ff3e8893ec5a6cc9ea2c Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sun, 13 Sep 2026 23:15:28 +0300
+Subject: [PATCH] watchdog: dw_wdt: keep the reset deasserted when resume
+ fails
+
+dw_wdt_suspend() asserts the reset line and dw_wdt_resume() deasserts
+it after the clocks are enabled again. When enabling a clock fails,
+resume returns with the line still asserted. The reset control is
+acquired with devm_reset_control_get_optional_shared_deasserted(), so
+the devres release asserts it once more at unbind; on a shared line
+reset_control_assert() then finds deassert_count at zero, warns and
+returns -EINVAL. The next suspend runs into the same imbalance.
+
+Deassert the reset before enabling the clocks, so every exit from
+resume leaves the line deasserted, which is the state the devres
+release and dw_wdt_suspend() expect.
+
+Assisted-by: Claude:claude-fable-5.1
+---
+ drivers/watchdog/dw_wdt.c | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/watchdog/dw_wdt.c b/drivers/watchdog/dw_wdt.c
+index c89e1fb91b1f..754b3faafe7b 100644
+--- a/drivers/watchdog/dw_wdt.c
++++ b/drivers/watchdog/dw_wdt.c
+@@ -395,6 +395,14 @@ static int dw_wdt_resume(struct device *dev)
+ 	struct dw_wdt *dw_wdt = dev_get_drvdata(dev);
+ 	int err;
+ 
++	/*
++	 * Every exit must leave the reset deasserted: the devres release
++	 * asserts it once more at unbind and the next suspend asserts it again.
++	 */
++	err = reset_control_deassert(dw_wdt->rst);
++	if (err)
++		return err;
++
+ 	err = clk_prepare_enable(dw_wdt->clk);
+ 	if (err)
+ 		return err;
+@@ -403,10 +411,6 @@ static int dw_wdt_resume(struct device *dev)
+ 	if (err)
+ 		goto unprepare_clk;
+ 
+-	err = reset_control_deassert(dw_wdt->rst);
+-	if (err)
+-		goto unprepare_pclk;
+-
+ 	writel(dw_wdt->timeout, dw_wdt->regs + WDOG_TIMEOUT_RANGE_REG_OFFSET);
+ 	writel(dw_wdt->control, dw_wdt->regs + WDOG_CONTROL_REG_OFFSET);
+ 
+@@ -414,8 +418,6 @@ static int dw_wdt_resume(struct device *dev)
+ 
+ 	return 0;
+ 
+-unprepare_pclk:
+-	clk_disable_unprepare(dw_wdt->pclk);
+ unprepare_clk:
+ 	clk_disable_unprepare(dw_wdt->clk);
+ 
+-- 
+2.43.0
+

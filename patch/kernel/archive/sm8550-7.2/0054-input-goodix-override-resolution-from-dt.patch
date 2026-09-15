@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <dev@rocknix.org>
+Date: Sun, 15 Jun 2025 00:00:00 +0000
+Subject: [PATCH] input: goodix: runtime coordinate scaling when flash config differs from DT
+
+Some devices (e.g. AYANEO Pocket S) share OTA firmware between 1K
+(1080x1920) and 2K (1440x2560) panel variants.  The GT911 flash config
+is programmed for 2K resolution and cannot be rewritten from the kernel
+driver (I2C config reads return garbage on some platforms).
+
+Detect the mismatch in goodix_read_config and store the GT911 native
+resolution and the DT panel resolution.  Apply runtime coordinate
+scaling in the touch report functions: scaled = raw * scale_to / native.
+
+New struct fields:
+  scale_to_x/y — DT panel resolution (scaling target)
+  native_x/y   — GT911 native resolution (scaling divisor)
+
+---
+ drivers/input/touchscreen/goodix.c | 53 +++++++++++++++++++++++++++++++++++++
+ drivers/input/touchscreen/goodix.h |  9 ++++++
+ 2 files changed, 62 insertions(+)
+
+diff --git a/drivers/input/touchscreen/goodix.h b/drivers/input/touchscreen/goodix.h
+index abcdef01..abcdef02 100644
+--- a/drivers/input/touchscreen/goodix.h
++++ b/drivers/input/touchscreen/goodix.h
+@@ -101,6 +101,15 @@ struct goodix_ts_data {
+ 	unsigned short keymap[GOODIX_MAX_KEYS];
+ 	u8 main_clk[GOODIX_MAIN_CLK_LEN];
+ 	int bak_ref_len;
++	/*
++	 * Runtime coordinate scaling for panel variants that share
++	 * OTA firmware.  When the GT911 flash config resolution
++	 * differs from the physical panel, scale_to_* stores the DT
++	 * resolution and native_* stores the GT911 native range.
++	 * Touch coordinates are scaled by scale_to / native before
++	 * reporting.  scale_to_x == 0 means no scaling.
++	 */
++	u16 scale_to_x, scale_to_y, native_x, native_y;
+ 	u8 *bak_ref;
+ };
+ 
+diff --git a/drivers/input/touchscreen/goodix.c b/drivers/input/touchscreen/goodix.c
+index f8798d11ec03..a1b2c3d4e5f6 100644
+--- a/drivers/input/touchscreen/goodix.c
++++ b/drivers/input/touchscreen/goodix.c
+@@ -408,7 +408,11 @@ static void goodix_ts_report_touch_8b(struct goodix_ts_data *ts, u8 *coor_data)
+ 	int input_y = get_unaligned_le16(&coor_data[3]);
+ 	int input_w = get_unaligned_le16(&coor_data[5]);
+ 
+ 	input_mt_slot(ts->input_dev, id);
++	if (ts->scale_to_x) {
++		input_x = (u32)input_x * ts->scale_to_x / ts->native_x;
++		input_y = (u32)input_y * ts->scale_to_y / ts->native_y;
++	}
+ 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
+ 	touchscreen_report_pos(ts->input_dev, &ts->prop,
+ 			       input_x, input_y, true);
+@@ -423,7 +427,11 @@ static void goodix_ts_report_touch_9b(struct goodix_ts_data *ts, u8 *coor_data)
+ 	int input_y = get_unaligned_le16(&coor_data[5]);
+ 	int input_w = get_unaligned_le16(&coor_data[7]);
+ 
+ 	input_mt_slot(ts->input_dev, id);
++	if (ts->scale_to_x) {
++		input_x = (u32)input_x * ts->scale_to_x / ts->native_x;
++		input_y = (u32)input_y * ts->scale_to_y / ts->native_y;
++	}
+ 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
+ 	touchscreen_report_pos(ts->input_dev, &ts->prop,
+ 			       input_x, input_y, true);
+@@ -1065,5 +1079,38 @@
+ 		input_abs_set_max(ts->input_dev, ABS_MT_POSITION_Y, y_max - 1);
+ 	}
+ 
++	/*
++	 * Detect mismatch between GT911 flash config resolution and
++	 * the DT panel resolution, and store parameters for runtime
++	 * coordinate scaling.
++	 */
++	if (!ts->firmware_name) {
++		u32 dt_x = 0, dt_y = 0;
++		struct device *dev = &ts->client->dev;
++
++		device_property_read_u32(dev, "touchscreen-size-x", &dt_x);
++		device_property_read_u32(dev, "touchscreen-size-y", &dt_y);
++
++		if (dt_x && dt_y && (dt_x != x_max || dt_y != y_max)) {
++			if (!x_max || x_max > GOODIX_MAX_WIDTH ||
++			    !y_max || y_max > GOODIX_MAX_HEIGHT) {
++				dev_info(dev,
++					 "goodix: config read garbage (%dx%d), assuming 1440x2560 native\n",
++					 x_max, y_max);
++				x_max = 1440;
++				y_max = 2560;
++			}
++
++			dev_info(dev,
++				 "goodix: scaling %dx%d -> DT %dx%d\n",
++				 x_max, y_max, dt_x, dt_y);
++
++			ts->native_x = (u16)x_max;
++			ts->native_y = (u16)y_max;
++			ts->scale_to_x = (u16)dt_x;
++			ts->scale_to_y = (u16)dt_y;
++		}
++	}
++
+ 	ts->chip->calc_config_checksum(ts);
+ }

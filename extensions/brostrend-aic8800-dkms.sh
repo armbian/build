@@ -14,6 +14,10 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	if [[ "${INSTALL_HEADERS}" != "yes" || "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		return 0
 	fi
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" gt 7.2; then
+		display_alert "Kernel version is too recent" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
+		return 0
+	fi
 
 	local api_url="https://api.github.com/repos/Shadowrom2020/aic8800-dkms/releases/latest"
 	local latest_version
