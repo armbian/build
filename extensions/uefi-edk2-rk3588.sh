@@ -43,9 +43,8 @@ function post_umount_final_image__write_edk2_to_image() {
 	display_alert "Finding edk2 latest version" "from GitHub" "info"
 
 	# Find the latest version of edk2-porting from GitHub, using JSON API, curl and jq.
-	declare api_url="https://api.github.com/repos/edk2-porting/edk2-rk3588/releases/latest"
 	declare latest_version
-	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	latest_version="$(github_latest_release_tag "edk2-porting/edk2-rk3588")" || return 1
 	display_alert "Latest version of edk2-porting is" "${latest_version}" "info"
 
 	# Prepare the cache dir

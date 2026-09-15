@@ -17,8 +17,7 @@ function post_install_kernel_debs__install_photonicat_pm_dkms_package() {
 		return 0
 	fi
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
-	api_url="https://api.github.com/repos/HackingGate/photonicat-pm/releases/latest"
-	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	latest_version="$(github_latest_release_tag "HackingGate/photonicat-pm")" || return 1
 	# Get the Debian version from changelog
 	changelog_url="https://raw.githubusercontent.com/HackingGate/photonicat-pm/refs/tags/${latest_version}/debian/changelog"
 	debian_version=$(curl -s "${changelog_url}" | head -1 | grep -oP 'photonicat-pm \(\K[^)]+')
