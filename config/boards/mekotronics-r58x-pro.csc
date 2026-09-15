@@ -12,6 +12,8 @@ declare -g BOOT_SOC="rk3588"
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does not have a UEFI_EDK2_BOARD_ID
 
+enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
+
 if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
 	# Attention: does _not_ use the vendor/mekotronics shared config anymore; mainline u-boot also for vendor kernel.
 
@@ -108,6 +110,12 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 	run_host_command_logged scripts/config --enable CONFIG_CMD_MII
 	run_host_command_logged scripts/config --enable CONFIG_NET_LWIP
 
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable MBed TLS stuff" "info"
+	run_host_command_logged scripts/config --enable CONFIG_WGET_HTTPS
+	run_host_command_logged scripts/config --enable CONFIG_WGET_CACERT
+	#run_host_command_logged scripts/config --enable CONFIG_WGET_BUILTIN_CACERT # not yet
+	run_host_command_logged scripts/config --enable CONFIG_MBEDTLS_LIB
+
 	# UMS, RockUSB, gadget stuff
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
 	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB")
@@ -116,6 +124,8 @@ function post_config_uboot_target__extra_configs_for_meko_r58x_pro_mainline_envi
 	done
 	# Auto-enabled by the above, force off...
 	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+	return 0
 }
 
 # Small systemd service and timer to drive the LCD display with the hour-minute of the current time.
