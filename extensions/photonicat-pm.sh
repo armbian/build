@@ -17,19 +17,7 @@ function post_install_kernel_debs__install_photonicat_pm_dkms_package() {
 		return 0
 	fi
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
-	api_url="https://api.github.com/repos/HackingGate/photonicat-pm/releases/latest"
-	declare api_output
-	if ! api_output=$(curl -f --silent --show-error --location "${api_url}" 2>&1); then
-		display_alert "Failed to fetch the latest release from GitHub" "${api_output}" "error"
-		return 1
-	fi
-	latest_version=$(printf '%s' "${api_output}" | jq -r '.tag_name' 2> /dev/null || true)
-	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
-		# 60 requests/hour per IP unauthenticated; a busy runner hits that, and an
-		# unchecked null used to end up inside the download filename.
-		display_alert "GitHub API returned no release tag (rate limited?)" "${api_url}" "error"
-		return 1
-	fi
+	latest_version="$(github_latest_release_tag "HackingGate/photonicat-pm")" || return 1
 	# Get the Debian version from changelog
 	changelog_url="https://raw.githubusercontent.com/HackingGate/photonicat-pm/refs/tags/${latest_version}/debian/changelog"
 	debian_version=$(curl -s "${changelog_url}" | head -1 | grep -oP 'photonicat-pm \(\K[^)]+')

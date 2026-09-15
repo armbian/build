@@ -541,6 +541,10 @@ function docker_cli_prepare_launch() {
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
 		"--env" "CI=${CI}"                         # All CI's, hopefully
 		"--env" "GITHUB_ACTIONS=${GITHUB_ACTIONS}" # GHA
+		# The builtin Actions token, when the workflow exposes it. Raises the
+		# GitHub API budget from 60 requests/hour per IP to 1000/hour per repo,
+		# which is what the extensions resolving "latest release" depend on.
+		"--env" "GITHUB_TOKEN=${GITHUB_TOKEN:-}"
 		# All known valid Github Actions env vars
 		"--env" "GITHUB_ACTION=${GITHUB_ACTION}"
 		"--env" "GITHUB_ACTOR=${GITHUB_ACTOR}"
