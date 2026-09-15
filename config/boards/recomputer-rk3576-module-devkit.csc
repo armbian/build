@@ -2,7 +2,7 @@
 BOARD_NAME="reComputer RK3576 Module Dev Kit"
 BOARDFAMILY="seeed-rk3576"
 BOOT_SOC="rk3576"
-BOARD_MAINTAINER="Pillar1989"
+BOARD_MAINTAINER=""
 BOARD_VENDOR="seeed-studio"
 INTRODUCED="2026"
 BOOTCONFIG="recomputer-rk3576-module-devkit_defconfig"
