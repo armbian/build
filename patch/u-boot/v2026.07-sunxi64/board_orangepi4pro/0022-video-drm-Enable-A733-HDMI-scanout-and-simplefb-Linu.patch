@@ -1,0 +1,807 @@
+From 57dd5c907fd4c4adc60351fe24eea543eed0195a Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Wed, 9 Sep 2026 19:16:11 +1000
+Subject: [PATCH 22/23] video: drm: Enable A733 HDMI scanout and simplefb Linux
+ handoff
+
+- Power on PCK600 R_PPU power domains 1 (DE_SYS), 9 (VO/TCON3), and 10 (VO1/HDMI).
+- Add AXP8191 PMIC regulator mappings for DCDC2 (0.8V) and CLDO1-5 / DLDO1-2,
+  wiring DCDC2 and CLDO2 (1.8V) to HDMI and PHY supplies.
+- Un-gate and deassert VO1, DPSS_TOP1, TCON_TV0, and DW-HDMI clocks and resets.
+- Wire DM_VIDEO pre-allocated framebuffer plat->base directly to
+  drm_framebuffer_alloc() rather than allocating dynamically from the low heap.
+- Truncate DRAM Bank 0 at plat->base via fdt_fixup_memory_banks() and increase
+  FDT blob buffer size so simplefb handoff to Linux simpledrm succeeds without
+  ioremap RAM conflict or FDT_ERR_NOSPACE errors.
+- Add mode selection fallback to first probed mode or 1080p60 default when no
+  probed mode has the PREFERRED flag set.
+- Fix black/invisible screen issue by defaulting overlay blend mode to
+  DRM_MODE_BLEND_PIXEL_NONE so DE3.5 ignores zero pixel-alpha and renders text/pixels
+  at full opacity, and hand off x8r8g8b8 to Linux simplefb/simpledrm.
+- Expand CCU gates/resets count to u16.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ arch/arm/mach-sunxi/Kconfig                   |   8 ++
+ drivers/clk/sunxi/clk_a733.c                  |   1 +
+ drivers/power/regulator/axp_regulator.c       |   9 +-
+ drivers/video/drm/drm_framebuffer.c           |  22 +++-
+ .../hardware/lowlevel_de/sunxi_de.c           |  11 +-
+ .../hardware/lowlevel_hdmi20/dw_dev.c         |   6 +-
+ .../hardware/lowlevel_lcd/tcon_lcd.c          |   2 +-
+ .../hardware/lowlevel_tcon/tcon_top.c         |  15 ++-
+ .../hardware/lowlevel_tcon/tcon_tv_reg.c      |   2 +-
+ .../hardware/lowlevel_tcon/tcon_tv_reg.h      |   2 +-
+ drivers/video/drm/sunxi_device/sunxi_hdmi.c   |  12 +-
+ drivers/video/drm/sunxi_device/sunxi_tcon.c   |   2 +
+ .../video/drm/sunxi_device/sunxi_tcon_top.c   |   6 +
+ drivers/video/drm/sunxi_drm_crtc.c            |   4 +-
+ drivers/video/drm/sunxi_drm_drv.c             | 114 ++++++++++++++++--
+ drivers/video/drm/sunxi_drm_hdmi.c            |  55 ++++++++-
+ .../allwinner/sun60i-a733-orangepi-4-pro.dts  |  10 +-
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  33 +++--
+ include/clk/sunxi.h                           |   4 +-
+ include/drm/drm_print.h                       |   2 +-
+ 20 files changed, 251 insertions(+), 69 deletions(-)
+
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index 38a17eb5d6e..d7e54b55687 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -567,10 +567,18 @@ config MACH_SUN60I_A733
+ 	select DRAM_SUN60I_A733
+ 	select FIT
+ 	select SPL_LOAD_FIT if SPL
++	select ARCH_SUN60IW2
++	select MACH_SUN60IW2
+ 	imply OF_UPSTREAM
+ 
+ endchoice
+ 
++config ARCH_SUN60IW2
++	bool
++
++config MACH_SUN60IW2
++	bool
++
+ # The sun8i SoCs share a lot, this helps to avoid a lot of "if A23 || A33"
+ config MACH_SUN8I
+ 	bool
+diff --git a/drivers/clk/sunxi/clk_a733.c b/drivers/clk/sunxi/clk_a733.c
+index 4db62a75ec5..43fcb077dd1 100644
+--- a/drivers/clk/sunxi/clk_a733.c
++++ b/drivers/clk/sunxi/clk_a733.c
+@@ -77,6 +77,7 @@ static struct ccu_clk_gate a733_gates[] = {
+ 	[CLK_HDMI]		= GATE(0x168c, BIT(0)),
+ 	[CLK_HDMI_TV]		= GATE(0x1684, BIT(31)),
+ 	[CLK_HDMI_SFR]		= GATE(0x1690, BIT(31)),
++	[CLK_VID_OUT1_AHB_GATE]	= GATE(0x16ec, BIT(0)),
+ };
+ 
+ static struct ccu_reset a733_resets[] = {
+diff --git a/drivers/power/regulator/axp_regulator.c b/drivers/power/regulator/axp_regulator.c
+index 558efe91345..cf1b33185ca 100644
+--- a/drivers/power/regulator/axp_regulator.c
++++ b/drivers/power/regulator/axp_regulator.c
+@@ -361,12 +361,19 @@ static const struct axp_regulator_plat axp813_regulators[] = {
+ };
+ 
+ static const struct axp_regulator_plat axp8191_regulators[] = {
++	{ "dcdc2",  0x10, BIT(1), 0x13, 0x7f,  500, 1540,  10, 70 },
+ 	{ "dc1sw1", 0x11, BIT(3),   NA,   NA,   NA,   NA,  NA, NA },
+ 	{ "dc1sw2", 0x11, BIT(4),   NA,   NA,   NA,   NA,  NA, NA },
+ 	{ "bldo1",  0x20, BIT(6), 0x2a, 0x1f,  500, 3500, 100, NA },
+ 	{ "bldo2",  0x20, BIT(7), 0x2b, 0x1f,  500, 3500, 100, NA },
+ 	{ "bldo4",  0x21, BIT(1), 0x2d, 0x1f,  500, 3500, 100, NA },
+-	{ "dldo1",  0x21, BIT(4), 0x32, 0x1f,  500, 3500, 100, NA },
++	{ "cldo1",  0x21, BIT(3), 0x2f, 0x1f,  500, 3500, 100, NA },
++	{ "cldo2",  0x21, BIT(4), 0x30, 0x1f,  500, 3500, 100, NA },
++	{ "cldo3",  0x21, BIT(5), 0x31, 0x1f,  500, 3500, 100, NA },
++	{ "cldo4",  0x21, BIT(6), 0x32, 0x1f,  500, 3500, 100, NA },
++	{ "cldo5",  0x21, BIT(7), 0x33, 0x1f,  500, 3500, 100, NA },
++	{ "dldo1",  0x22, BIT(0), 0x34, 0x1f,  500, 3500, 100, NA },
++	{ "dldo2",  0x22, BIT(1), 0x35, 0x1f,  500, 3500, 100, NA },
+ 	{ }
+ };
+ 
+diff --git a/drivers/video/drm/drm_framebuffer.c b/drivers/video/drm/drm_framebuffer.c
+index 7719db7d8fd..23cef17124a 100644
+--- a/drivers/video/drm/drm_framebuffer.c
++++ b/drivers/video/drm/drm_framebuffer.c
+@@ -20,6 +20,7 @@
+ #include "sunxi_drm_drv.h"
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_util.h>
++#include <video.h>
+ 
+ 
+ 
+@@ -239,11 +240,17 @@ int drm_framebuffer_alloc(struct sunxi_drm_device *drm, struct drm_mode_fb_cmd2
+ 	if (ret)
+ 		goto FREE_FB;
+ 
+-	cpp = DIV_ROUND_UP(info->depth, 8);
+-
+ 	fb->buf_size = ALIGN(cpp * r->width * r->height, 4096);
+ 
+-	fb->dma_addr = (unsigned long)memalign(4096, fb->buf_size);
++	if (drm->dev) {
++		struct video_uc_plat *plat = dev_get_uclass_plat(drm->dev);
++		if (plat && plat->base && plat->size >= fb->buf_size)
++			fb->dma_addr = plat->base;
++	}
++
++	if (!fb->dma_addr)
++		fb->dma_addr = (unsigned long)memalign(4096, fb->buf_size);
++
+ 	if (!fb->dma_addr) {
+ 		ret = -ENOMEM;
+ 		goto FREE_FB;
+@@ -285,7 +292,14 @@ int drm_framebuffer_free(struct sunxi_drm_device *drm, struct drm_framebuffer *f
+ 
+ 	list_del(&fb->head);
+ 	if (fb->dma_addr) {
+-		kfree((void *)fb->dma_addr);
++		bool is_plat_base = false;
++		if (drm->dev) {
++			struct video_uc_plat *plat = dev_get_uclass_plat(drm->dev);
++			if (plat && plat->base == fb->dma_addr)
++				is_plat_base = true;
++		}
++		if (!is_plat_base)
++			kfree((void *)fb->dma_addr);
+ 	}
+ 	id_manager_free(&g_id_mgr, fb->fb_id);
+ 
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
+index 537d150879c..6350c144281 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
+@@ -668,7 +668,7 @@ static int sunxi_de_parse_dts(struct udevice *dev,
+ 
+ 	engine->mclk_ahb = sunxi_clk_get(dev, "clk_ahb_de");
+ 	if (IS_ERR_OR_NULL(engine->mclk_ahb)) {
+-		DRM_ERROR("Fail to get ahb clk for de\n");
++		engine->mclk_ahb = NULL;
+ 	}
+ 
+ 	engine->irq_no = sunxi_of_get_irq_number(dev, 0);
+@@ -833,12 +833,11 @@ static int sunxi_de_get_disp_sys(struct sunxi_display_engine *engine)
+ {
+ 	ofnode topnode;
+ 	struct udevice *top_dev = NULL;
+-	u32 phandle = -1;
++	u32 phandle = 0;
+ 
+-	ofnode_read_u32(dev_ofnode(engine->dev), "sys", &phandle);
+-	if (phandle < 0) {
+-		DRM_ERROR("%s:Get top phandle fail!\n", __func__);
+-		return -1;
++	if (ofnode_read_u32(dev_ofnode(engine->dev), "sys", &phandle) != 0) {
++		/* sys property is optional (not needed on all SoCs) */
++		return 0;
+ 	}
+ 	topnode = ofnode_get_by_phandle(phandle);
+ 	if (!ofnode_valid(topnode)) {
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_dev.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_dev.c
+index a1f7766b033..7960c9b6f47 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_dev.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_hdmi20/dw_dev.c
+@@ -262,15 +262,15 @@ ssize_t dw_hdmi_dump(char *buf)
+ 		i2cm->mode ? "fast" : "standard", i2cm->sfrClock / 100,
+ 		dw_i2cm_get_rate() / 10, dw_i2cm_get_rate() % 10);
+ 		printf("%s\n", buf);
+-	memset(buf, 0x0, ARRAY_SIZE(buf));
++	buf[0] = '\0';
+ 	n = 0;
+ 	n += dw_avp_dump(buf + n);
+ 	printf("%s\n", buf);
+-	memset(buf, 0x0, ARRAY_SIZE(buf));
++	buf[0] = '\0';
+ 	n = 0;
+ 	n += dw_phy_dump(buf + n);
+ 	printf("%s\n", buf);
+-	memset(buf, 0x0, ARRAY_SIZE(buf));
++	buf[0] = '\0';
+ 	n = 0;
+ 	return n;
+ }
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_lcd/tcon_lcd.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_lcd/tcon_lcd.c
+index 43252e322ad..17ede1339d8 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_lcd/tcon_lcd.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_lcd/tcon_lcd.c
+@@ -294,7 +294,7 @@ void lvds_default_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+ 
+ s32 lvds_open(struct sunxi_tcon_lcd *tcon, struct disp_lvds_para *para)
+ {
+-#if IS_ENABLED(CONFIG_ARCH_SUN60IW2)
++#if IS_ENABLED(CONFIG_ARCH_SUN60IW2) || IS_ENABLED(CONFIG_MACH_SUN60I_A733)
+ 	lvds_1903_open(tcon, para);
+ #elif IS_ENABLED(CONFIG_ARCH_SUN65IW1)
+ 	lvds_1919_open(tcon, para);
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
+index 66be64cb678..eee77984aa9 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
+@@ -126,7 +126,7 @@ s32 tcon1_edp_clk_enable(u32 sel, u32 en)
+ {
+ 	if (sel >= TCON_DEVICE_MAX)
+ 		return -1;
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
+ 		tcon_top[(sel > 2) ? 1 : 0]->tcon_tv_setup.bits.tv1_clk_src = en;
+ 		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv1_clk_gate = en;
+ #else
+@@ -156,9 +156,11 @@ s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
+ 	if (sel >= TCON_DEVICE_MAX)
+ 		return -1;
+ 
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1))
+-	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv0_clk_gate = en;
+-	tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.hdmi_src = en;
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
++	if (tcon_top[(sel > 2) ? 1 : 0]) {
++		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv0_clk_gate = en;
++		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.hdmi_src = en;
++	}
+ #else
+ 	if (sel == 2)
+ 		tcon_top[0]->tcon_clk_gate.bits.tv0_clk_gate = en;
+@@ -177,14 +179,15 @@ s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
+ 
+ s32 tcon_hdmi_clk_src_sel(u32 sel, u32 src)
+ {
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
+ 	/* next do: use platform data check version id */
+ 	u8 bank = 0;
+ 
+ 	if (sel > 2)
+ 		bank = 1;
+ 
+-	tcon_top[bank]->tcon_tv_setup.ver1_bits.tv0_hdmiphy_ccu_sel = src;
++	if (tcon_top[bank])
++		tcon_top[bank]->tcon_tv_setup.ver1_bits.tv0_hdmiphy_ccu_sel = src;
+ #endif
+ 	return 0;
+ }
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
+index edeb7e55285..eebaaf8a0e7 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
+@@ -113,7 +113,7 @@ s32 tcon_tv_close(struct sunxi_tcon_tv *tcon)
+ s32 tcon_tv_cfg(struct sunxi_tcon_tv *tcon, struct disp_video_timings *timing)
+ {
+ 	u32 start_delay;
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
+ 	if (timing->vic == 39) {
+ 		tcon->reg->tcon_tv_basic1.bits.vic39 = 0x1;
+ 		tcon->reg->tcon_tv_basic1.bits.vt = timing->ver_total_time;
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.h b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.h
+index 572245e2ff7..3e7636f1d3e 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.h
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.h
+@@ -84,7 +84,7 @@ union tcon_tv_basic0_reg_t {
+ union tcon_tv_basic1_reg_t {
+ 	u32 dwval;
+ 	struct {
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
+ 		u32 vt:17;
+ 		u32 res0:14;
+ 		u32 vic39:1;
+diff --git a/drivers/video/drm/sunxi_device/sunxi_hdmi.c b/drivers/video/drm/sunxi_device/sunxi_hdmi.c
+index 99ff757da8b..6b00982286e 100644
+--- a/drivers/video/drm/sunxi_device/sunxi_hdmi.c
++++ b/drivers/video/drm/sunxi_device/sunxi_hdmi.c
+@@ -833,6 +833,7 @@ static const struct udevice_id hdmi_plat_match[] = {
+ 	{ .compatible = "arm,sun50iw9p1", .data = (ulong)&sun50i_hdmi },
+ 	{ .compatible = "arm,sun55iw3p1", .data = (ulong)&sun55i_hdmi },
+ 	{ .compatible = "arm,sun60iw2p1", .data = (ulong)&sun60i_hdmi },
++	{ .compatible = "allwinner,sun60i-a733", .data = (ulong)&sun60i_hdmi },
+ 	{ },
+ };
+ 
+@@ -840,22 +841,15 @@ int sunxi_hdmi_init(struct sunxi_hdmi_s *hdmi)
+ {
+ 	int ret = 0, i = 0;
+ 	ofnode root_node;
+-	const char *compatible = NULL;
+ 
+ 	root_node = ofnode_path("/");
+ 	if (!ofnode_valid(root_node)) {
+ 		hdmi_err("failed to find root node\n");
+ 		return -1;
+-    }
+-
+-	ret = ofnode_read_string_index(root_node, "compatible", 0x1, &compatible);
+-    if (ret != 0) {
+-		hdmi_err("failed to read root node compatible value\n");
+-		return -1;
+-    }
++	}
+ 
+ 	for (i = 0; hdmi_plat_match[i].compatible; i++) {
+-		if (!strcmp(compatible, hdmi_plat_match[i].compatible)) {
++		if (ofnode_device_is_compatible(root_node, hdmi_plat_match[i].compatible)) {
+ 			hdmi->plat_data = (struct sunxi_hdmi_plat_s *)hdmi_plat_match[i].data;
+ 			break;
+ 		}
+diff --git a/drivers/video/drm/sunxi_device/sunxi_tcon.c b/drivers/video/drm/sunxi_device/sunxi_tcon.c
+index e8a6727d6e4..1992070a59c 100644
+--- a/drivers/video/drm/sunxi_device/sunxi_tcon.c
++++ b/drivers/video/drm/sunxi_device/sunxi_tcon.c
+@@ -1046,6 +1046,8 @@ static int sunxi_tcon_probe(struct udevice *dev)
+ 	if (tcon->type == TCON_TV) {
+ 		tcon->tcon_tv.tcon_index = tcon->id;
+ 		tcon_tv_set_reg_base(&tcon->tcon_tv, tcon->reg_base);
++		/* Un-gate and deassert TCON_TV0 */
++		setbits_le32((void *)0x02003604, BIT(0) | BIT(16));
+ 	}
+ 
+ 	if (tcon->type == TCON_LCD) {
+diff --git a/drivers/video/drm/sunxi_device/sunxi_tcon_top.c b/drivers/video/drm/sunxi_device/sunxi_tcon_top.c
+index 1851be07d63..58eeff807df 100644
+--- a/drivers/video/drm/sunxi_device/sunxi_tcon_top.c
++++ b/drivers/video/drm/sunxi_device/sunxi_tcon_top.c
+@@ -74,6 +74,12 @@ static int sunxi_tcon_top_probe(struct udevice *dev)
+ 
+ 	tcon_top_set_reg_base(top->top_data->id, top->reg_base);
+ 
++	if (top->top_data->id == 1) {
++		/* Deassert and ungate VO1 and DPSS_TOP1 */
++		setbits_le32((void *)0x020036ec, BIT(0) | BIT(16));
++		setbits_le32((void *)0x020036cc, BIT(0) | BIT(16));
++	}
++
+ 	of_periph_clk_config_setup(ofnode_to_offset(dev_ofnode(dev)));
+ 	DRM_INFO("%s:end\n", __func__);
+ 	return 0;
+diff --git a/drivers/video/drm/sunxi_drm_crtc.c b/drivers/video/drm/sunxi_drm_crtc.c
+index c0ccb6b6492..079bcaf6fb4 100644
+--- a/drivers/video/drm/sunxi_drm_crtc.c
++++ b/drivers/video/drm/sunxi_drm_crtc.c
+@@ -279,12 +279,12 @@ static void sunxi_plane_reset(struct drm_plane *plane)
+ 	ch_state->base.plane = plane;
+ 	ch_state->base.rotation = DRM_MODE_ROTATE_0;
+ 	ch_state->base.alpha = DRM_BLEND_ALPHA_OPAQUE;
+-	ch_state->base.pixel_blend_mode = DRM_MODE_BLEND_PREMULTI;
++	ch_state->base.pixel_blend_mode = DRM_MODE_BLEND_PIXEL_NONE;
+ 	plane->state = &ch_state->base;
+ 
+ 	for (i = 0; i < MAX_LAYER_NUM_PER_CHN - 1; i++) {
+ 		ch_state->alpha[i] = DRM_BLEND_ALPHA_OPAQUE;
+-		ch_state->pixel_blend_mode[i] = DRM_MODE_BLEND_PREMULTI;
++		ch_state->pixel_blend_mode[i] = DRM_MODE_BLEND_PIXEL_NONE;
+ 	}
+ 	ch_state->eotf = DE_EOTF_BT709;
+ 	ch_state->color_space = DE_COLOR_SPACE_BT709;
+diff --git a/drivers/video/drm/sunxi_drm_drv.c b/drivers/video/drm/sunxi_drm_drv.c
+index 45c19bcf3dc..8c5a5d5cade 100644
+--- a/drivers/video/drm/sunxi_drm_drv.c
++++ b/drivers/video/drm/sunxi_drm_drv.c
+@@ -172,6 +172,7 @@ int sunxi_drm_kernel_para_flush(void)
+ }
+ 
+ static int display_init(struct display_state *state);
++static int display_enable(struct display_state *state);
+ #define SUNXI_DISPLAY_MAX_WIDTH 4096
+ #define SUNXI_DISPLAY_MAX_HEIGHT 4096
+ 
+@@ -533,6 +534,56 @@ err:
+ 	return 0;
+ }
+ 
++static void sun60i_pck600_power_on_domain(u32 domain)
++{
++	void __iomem *base = (void __iomem *)(0x07060000UL + domain * 0x1000UL);
++	u32 val;
++	int timeout = 10000;
++
++	/* Configure delay registers */
++	writel(0x1f1f1f, base + 0x170);   /* PPU_DCDR0 */
++	writel(0x1f1f, base + 0x174);     /* PPU_DCDR1 */
++	writel(0x8080808, base + 0xc00);  /* logic_power_switch0_delay */
++	writel(0x808, base + 0xc04);      /* logic_power_switch1_delay */
++	writel(0x8, base + 0xc10);        /* off2on_delay */
++
++	/* Check if already powered on */
++	if ((readl(base + 0x8) & 0xf) == 0x8)
++		return;
++
++	/* Set PPU_PWPR bit [3:0] = 0x8 (PPU_POWER_MODE_ON) */
++	val = readl(base + 0x0);
++	val = (val & ~0xf) | 0x8;
++	writel(val, base + 0x0);
++	readl(base + 0x0); /* push write out */
++
++	/* Wait for PPU_PWSR bit [3:0] == 0x8 */
++	while (((readl(base + 0x8) & 0xf) != 0x8) && --timeout)
++		udelay(10);
++
++	if (!timeout)
++		pr_err("sunxi_drm: PCK600 domain %u power on timeout! PWSR=0x%x\n",
++		       domain, readl(base + 0x8));
++}
++
++static void sun60i_pck600_power_on_display(void)
++{
++	if (!of_machine_is_compatible("allwinner,sun60i-a733") &&
++	    !of_machine_is_compatible("allwinner,sun55i-a523"))
++		return;
++
++	/* Enable R_CCU CLK_BUS_R_PPU0 (bit 0) and deassert RST_BUS_R_PPU0 (bit 16) */
++	setbits_le32((void __iomem *)0x070101ac, BIT(0) | BIT(16));
++	udelay(100);
++
++	/* Domain 1: DE_SYS */
++	sun60i_pck600_power_on_domain(1);
++	/* Domain 9: VO (TCON3) */
++	sun60i_pck600_power_on_domain(9);
++	/* Domain 10: VO1 (HDMI) */
++	sun60i_pck600_power_on_domain(10);
++}
++
+ static int sunxi_drm_drv_probe(struct udevice *dev)
+ {
+ 	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
+@@ -553,6 +604,8 @@ static int sunxi_drm_drv_probe(struct udevice *dev)
+ 
+ 	memset(&cmd2, 0, sizeof(struct drm_mode_fb_cmd2));
+ 
++	sun60i_pck600_power_on_display();
++
+ 	route_node = dev_read_subnode(dev, "route");
+ 	if (!ofnode_valid(route_node))
+ 		return -ENODEV;
+@@ -710,6 +763,19 @@ static int sunxi_drm_drv_probe(struct udevice *dev)
+ 			plat->base = fb->dma_addr;
+ 			plat->size = fb->buf_size;
+ 		}
++
++		/* Clear framebuffer scanout memory to black */
++		if (fb && fb->dma_addr)
++			memset((void *)fb->dma_addr, 0, fb->buf_size);
++
++		ret = display_enable(tmp_s);
++		if (ret)
++			pr_err("sunxi_drm: display_enable failed: %d\n", ret);
++		else
++			printf("Display: %s (%dx%d)\n",
++				 ofnode_get_name(tmp_s->node),
++				 tmp_s->conn_state.mode.hdisplay,
++				 tmp_s->conn_state.mode.vdisplay);
+ 	}
+ 
+ 	if (!uc_priv->xsize || !uc_priv->ysize) {
+@@ -1616,7 +1682,6 @@ int sunxi_simplefb_setup(void *blob)
+ 	struct video_priv *uc_priv;
+ 	struct video_uc_plat *plat;
+ 	int offset, ret;
+-	u64 start, size;
+ 
+ 	ret = uclass_get_device_by_driver(UCLASS_VIDEO, DM_DRIVER_GET(sunxi_display), &dev);
+ 	if (ret) {
+@@ -1635,26 +1700,59 @@ int sunxi_simplefb_setup(void *blob)
+ 		return 0;
+ 	}
+ 
++	fdt_increase_size(blob, 4096);
++
+ 	offset = fdt_path_offset(blob, "/chosen/framebuffer@bbf12000");
+ 	if (offset < 0)
+ 		offset = fdt_path_offset(blob, "/chosen/framebuffer");
+ 	if (offset < 0)
+ 		offset = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
++	if (offset < 0) {
++		int chosen = fdt_path_offset(blob, "/chosen");
++		if (chosen < 0)
++			chosen = fdt_add_subnode(blob, 0, "chosen");
++		if (chosen >= 0) {
++			fdt_setprop_u32(blob, chosen, "#address-cells", 2);
++			fdt_setprop_u32(blob, chosen, "#size-cells", 2);
++			fdt_setprop_empty(blob, chosen, "ranges");
++			offset = fdt_add_subnode(blob, chosen, "framebuffer");
++			if (offset >= 0)
++				fdt_setprop_string(blob, offset, "compatible", "simple-framebuffer");
++		}
++	}
++
++	u64 start[CONFIG_NR_DRAM_BANKS];
++	u64 size[CONFIG_NR_DRAM_BANKS];
++	int banks;
++
++	for (banks = 0; banks < CONFIG_NR_DRAM_BANKS; banks++) {
++		if (!gd->bd->bi_dram[banks].size)
++			break;
++		start[banks] = gd->bd->bi_dram[banks].start;
++		size[banks] = gd->bd->bi_dram[banks].size;
++
++		/* If the framebuffer resides inside this bank, truncate this bank at plat->base */
++		if (plat->base >= start[banks] && plat->base < (start[banks] + size[banks])) {
++			size[banks] = plat->base - start[banks];
++		}
++	}
++
++	ret = fdt_fixup_memory_banks(blob, start, size, banks);
++	if (ret)
++		printf("simplefb: error fixing up memory banks: %d\n", ret);
+ 
+-	start = gd->bd->bi_dram[0].start;
+-	size = plat->base - start;
+-	ret = fdt_fixup_memory_banks(blob, &start, &size, 1);
++	ret = fdt_add_mem_rsv(blob, plat->base, plat->size);
+ 	if (ret)
+-		printf("simplefb: error reserving memory\n");
++		printf("simplefb: error adding mem reservation: %d\n", ret);
+ 
+ 	if (offset >= 0) {
+ 		ret = fdt_setup_simplefb_node(blob, offset, plat->base,
+ 					      uc_priv->xsize, uc_priv->ysize,
+-					      uc_priv->xsize * 4, "a8r8g8b8");
++					      uc_priv->xsize * 4, "x8r8g8b8");
+ 		if (ret)
+-			printf("simplefb: error setting properties\n");
++			printf("simplefb: error setting properties: %d (%s)\n", ret, fdt_strerror(ret));
+ 		else
+-			printf("simplefb: handoff 0x%lx (%dx%d a8r8g8b8) to Linux OK\n",
++			printf("simplefb: handoff 0x%lx (%dx%d x8r8g8b8) to Linux OK\n",
+ 			       (unsigned long)plat->base, uc_priv->xsize, uc_priv->ysize);
+ 	}
+ 
+diff --git a/drivers/video/drm/sunxi_drm_hdmi.c b/drivers/video/drm/sunxi_drm_hdmi.c
+index 7b9a1dd5148..5e4f250a61c 100644
+--- a/drivers/video/drm/sunxi_drm_hdmi.c
++++ b/drivers/video/drm/sunxi_drm_hdmi.c
+@@ -13,6 +13,7 @@
+ #include <drm/drm_modes.h>
+ 
+ #include <dm.h>
++#include <reset.h>
+ #include <power/regulator.h>
+ 
+ #include "sunxi_device/sunxi_hdmi.h"
+@@ -58,6 +59,8 @@ struct sunxi_hdmi_res_s {
+ 	struct clk  *clk_cec_parent;
+ 	struct clk  *rst_bus_sub;
+ 	struct clk  *rst_bus_main;
++	struct reset_ctl rst_ctl_main;
++	struct reset_ctl rst_ctl_sub;
+ 
+ 	char  power_name[SUNXI_HDMI_POWER_CNT][SUNXI_HDMI_POWER_NAME];
+ 	struct udevice *hdmi_regu[SUNXI_HDMI_POWER_CNT];
+@@ -196,8 +199,10 @@ static int _sunxi_drv_hdmi_regulator_on(struct sunxi_drm_hdmi *hdmi)
+ 			continue;
+ 
+ 		ret = regulator_set_enable(hdmi->hdmi_res.hdmi_regu[loop], 0x1);
+-		hdmi_trace("hdmi drv enable regulator %s %s\n",
+-			hdmi->hdmi_res.power_name[loop], ret != 0 ? "failed" : "success");
++		hdmi_inf("hdmi drv enable regulator %s (dev=%s): %s\n",
++			hdmi->hdmi_res.power_name[loop],
++			hdmi->hdmi_res.hdmi_regu[loop]->name,
++			ret != 0 ? "failed" : "success");
+ 	}
+ 	return 0;
+ }
+@@ -212,6 +217,19 @@ static int _sunxi_drv_hdmi_clock_on(struct sunxi_drm_hdmi *hdmi)
+ 		return 0;
+ 	}
+ 
++	setbits_le32((void *)0x020036ec, BIT(0) | BIT(16)); /* VIDEO_OUT1 */
++	setbits_le32((void *)0x020036cc, BIT(0) | BIT(16)); /* DPSS_TOP1 */
++	setbits_le32((void *)0x02003604, BIT(0) | BIT(16)); /* TCON_TV0 */
++	setbits_le32((void *)0x02003684, BIT(31));          /* HDMI_TV */
++	setbits_le32((void *)0x0200368c, BIT(0) | BIT(16) | BIT(17) | BIT(18)); /* HDMI_BUS */
++	setbits_le32((void *)0x02003690, BIT(31));          /* HDMI_SFR (24M) */
++
++	if (reset_valid(&pclk->rst_ctl_main))
++		reset_deassert(&pclk->rst_ctl_main);
++
++	if (reset_valid(&pclk->rst_ctl_sub))
++		reset_deassert(&pclk->rst_ctl_sub);
++
+ 	if (!IS_ERR_OR_NULL(pclk->rst_bus_main)) {
+ 		hdmi_trace("hdmi drv main bus gating enable\n");
+ 		clk_prepare_enable(pclk->rst_bus_main);
+@@ -880,6 +898,15 @@ int _sunxi_drm_hdmi_get_modes(struct sunxi_drm_connector *conn,
+ 		}
+ 	}
+ 
++	if (!sel_mode->hdisplay && !list_empty(&conn->probed_modes)) {
++		mode = list_first_entry(&conn->probed_modes, struct drm_display_mode, head);
++		memcpy(sel_mode, mode, sizeof(struct drm_display_mode));
++	}
++
++	if (!sel_mode->hdisplay)
++		memcpy(sel_mode, &_sunxi_hdmi_default_modes[0],
++				sizeof(struct drm_display_mode));
++
+ exit:
+ 	rate = drm_mode_vrefresh(sel_mode);
+ 	pr_err("drm hdmi get mode: %dx%d@%dHz\n",
+@@ -1019,6 +1046,10 @@ int __sunxi_hdmi_init_dts(struct sunxi_drm_hdmi *hdmi)
+ 	if (IS_ERR_OR_NULL(pclk->clk_hdmi_bus))
+ 		pclk->clk_hdmi_bus = NULL;
+ 
++	/* parse hdmi resets */
++	reset_get_by_name(dev, "rst_main", &pclk->rst_ctl_main);
++	reset_get_by_name(dev, "rst_sub", &pclk->rst_ctl_sub);
++
+ 	/* parse hdmi ddc clock */
+ 	pclk->rst_bus_main = sunxi_clk_get(dev, "rst_main");
+ 	if (IS_ERR_OR_NULL(pclk->rst_bus_main))
+@@ -1043,22 +1074,34 @@ int __sunxi_hdmi_init_resource(struct sunxi_drm_hdmi *hdmi)
+ 		sprintf(power_name, "hdmi_power%d", loop);
+ 		ret = uclass_get_device_by_phandle(UCLASS_REGULATOR, hdmi->dev,
+ 				power_name, &pres->hdmi_regu[loop]);
++		if (ret) {
++			const char *str = ofnode_read_string(dev_ofnode(hdmi->dev), power_name);
++			if (str) {
++				char supply_name[48];
++				snprintf(supply_name, sizeof(supply_name), "%s-supply", str);
++				ret = uclass_get_device_by_phandle(UCLASS_REGULATOR, hdmi->dev,
++						supply_name, &pres->hdmi_regu[loop]);
++				if (ret)
++					ret = regulator_get_by_platname(str, &pres->hdmi_regu[loop]);
++			}
++		}
+ 		if (ret) {
+ 			hdmi_wrn("failed to request regulator(%s): %d\n", power_name, ret);
+ 			continue;
+ 		}
+ 
+-		hdmi_inf("hdmi drv power name: %s\n", power_name);
++		strncpy(pres->power_name[loop], power_name, sizeof(pres->power_name[loop]) - 1);
++		hdmi_inf("hdmi drv power name: %s -> %s\n", power_name, pres->hdmi_regu[loop]->name);
+ 	}
+ 
++	_sunxi_drv_hdmi_regulator_on(hdmi);
++	_sunxi_drv_hdmi_clock_on(hdmi);
++
+ 	if (hdmi->tcon_dev) {
+ 		sunxi_tcon_hdmi_open(hdmi->tcon_dev);
+ 		sunxi_tcon_hdmi_src(hdmi->tcon_dev, 0x0);
+ 	}
+ 
+-	_sunxi_drv_hdmi_regulator_on(hdmi);
+-	_sunxi_drv_hdmi_clock_on(hdmi);
+-
+ 	mutex_init(&hdmi->hdmi_ctrl.drv_edid_lock);
+ 
+ 	return 0;
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts b/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
+index 71d70574e13..b993ae2ce3b 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
+@@ -100,8 +100,8 @@
+ 				regulator-boot-on;
+ 			};
+ 
+-			reg_dldo2: dldo2 {
+-				regulator-name = "axp8191-dldo2";
++			reg_cldo2: cldo2 {
++				regulator-name = "axp8191-cldo2";
+ 				regulator-min-microvolt = <1800000>;
+ 				regulator-max-microvolt = <1800000>;
+ 				regulator-always-on;
+@@ -272,9 +272,9 @@
+ 
+ &hdmi0 {
+ 	dcdc2-supply = <&reg_dcdc2>;
+-	dldo2-supply = <&reg_dldo2>;
+-	hdmi_power0 = "dcdc2-supply";
+-	hdmi_power1 = "dldo2-supply";
++	cldo2-supply = <&reg_cldo2>;
++	hdmi_power0 = <&reg_dcdc2>;
++	hdmi_power1 = <&reg_cldo2>;
+ 	uhdmi_power_count = <2>;
+ 
+ 	uhdmi_fast_output = <0>;
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index 71f6cad3ab6..a5fbfeb3284 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -460,7 +460,6 @@
+ 
+ 		sunxi_drm: sunxi-drm {
+ 			compatible = "allwinner,sunxi-drm";
+-			bootph-all;
+ 			status = "disabled";
+ 
+ 			route {
+@@ -475,7 +474,7 @@
+ 
+ 		de: de@5000000 {
+ 			compatible = "allwinner,display-engine-v352";
+-			reg = <0x0 0x05000000 0x0 0x400000>;
++			reg = <0x05000000 0x400000>;
+ 			interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&ccu CLK_DE0>, <&ccu CLK_BUS_DE0>;
+@@ -501,18 +500,26 @@
+ 
+ 		vo1: vo1@5510000 {
+ 			compatible = "allwinner,tcon-top1";
+-			reg = <0x0 0x05510000 0x0 0x1000>;
+-			clocks = <&ccu CLK_DPSS_TOP1>;
+-			clock-names = "clk_bus_dpss_top";
++			reg = <0x05510000 0x1000>;
++			clocks = <&ccu CLK_DPSS_TOP1>,
++				 <&ccu CLK_VID_OUT1_AHB_GATE>;
++			clock-names = "clk_bus_dpss_top",
++				      "clk_ahb_gate";
++			resets = <&ccu RST_BUS_DPSS_TOP1>,
++				 <&ccu RST_BUS_VIDEO_OUT1>;
++			reset-names = "rst_bus_dpss_top",
++				      "rst_bus_reg";
+ 			status = "disabled";
+ 		};
+ 
+ 		tv0: tcon3@5730000 {
+ 			compatible = "allwinner,tcon-tv";
+-			reg = <0x0 0x05730000 0x0 0x1000>;
++			reg = <0x05730000 0x1000>;
+ 			interrupts = <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&ccu CLK_TCONTV0>;
+-			clock-names = "rst_bus_tcon";
++			clock-names = "clk_bus_tcon";
++			resets = <&ccu RST_BUS_TCONTV0>;
++			reset-names = "rst_bus_tcon";
+ 			top = <&vo1>;
+ 			status = "disabled";
+ 
+@@ -546,15 +553,15 @@
+ 
+ 		hdmi0: hdmi0@5520000 {
+ 			compatible = "allwinner,sunxi-hdmi";
+-			reg = <0x0 0x05520000 0x0 0x100000>;
++			reg = <0x05520000 0x100000>;
+ 			interrupts = <GIC_SPI 61 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&ccu CLK_HDMI>,
+-				 <&ccu CLK_HDMI_SFR>,
+-				 <&ccu RST_BUS_HDMI_MAIN>,
+-				 <&ccu RST_BUS_HDMI_SUB>;
++				 <&ccu CLK_HDMI_SFR>;
+ 			clock-names = "clk_hdmi",
+-				      "clk_hdmi_24M",
+-				      "rst_main",
++				      "clk_hdmi_24M";
++			resets = <&ccu RST_BUS_HDMI_MAIN>,
++				 <&ccu RST_BUS_HDMI_SUB>;
++			reset-names = "rst_main",
+ 				      "rst_sub";
+ 			status = "disabled";
+ 
+diff --git a/include/clk/sunxi.h b/include/clk/sunxi.h
+index c298195c51e..c80b6436e58 100644
+--- a/include/clk/sunxi.h
++++ b/include/clk/sunxi.h
+@@ -70,8 +70,8 @@ struct ccu_reset {
+ struct ccu_desc {
+ 	const struct ccu_clk_gate *gates;
+ 	const struct ccu_reset *resets;
+-	u8 num_gates;
+-	u8 num_resets;
++	u16 num_gates;
++	u16 num_resets;
+ };
+ 
+ /**
+diff --git a/include/drm/drm_print.h b/include/drm/drm_print.h
+index bc436bf4668..8cab0aadd3c 100644
+--- a/include/drm/drm_print.h
++++ b/include/drm/drm_print.h
+@@ -45,7 +45,7 @@ struct drm_printer {
+ #define drm_printf_indent(printer, indent, fmt, ...) \
+ 	drm_printf((printer), "%.*s" fmt, (indent), "\t\t\t\t\tX", ##__VA_ARGS__)
+ 
+-#define DRM_WARN(fmt, args...) pr_err(fmt, ##args)
++#define DRM_WARN(fmt, args...) pr_warn(fmt, ##args)
+ #define DRM_ERROR(fmt, args...) pr_err(fmt, ##args)
+ #define DRM_INFO(fmt, args...) pr_info(fmt, ##args)
+ #define DRM_NOTE(fmt, args...) pr_info(fmt, ##args)
+-- 
+2.53.0
+

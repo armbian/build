@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 10:00:00 +1000
+Subject: thermal: sun8i: Add Allwinner A733 5-sensor THS support
+
+Add sun60i_a733_ths_data configuration matching "allwinner,sun60i-a733-ths"
+in drivers/thermal/sun8i_thermal.c.
+
+The A733 features 5 internal thermal sensing channels: Sensor 0 (CPU-Little),
+Sensor 1 (CPU-Big), Sensor 2 (GPU), Sensor 3 (NPU/VE), and Sensor 4 (DRAM/SYS).
+This patch configures sensor calibration formulas, interrupt handling, and
+multi-cell NVMEM parsing to extract factory calibration offsets from SID eFuse,
+enabling the kernel thermal framework to monitor junction temperatures and
+apply dynamic frequency scaling under load.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+ drivers/thermal/sun8i_thermal.c | 85 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 84 insertions(+), 1 deletion(-)
+
+--- a/drivers/thermal/sun8i_thermal.c
++++ b/drivers/thermal/sun8i_thermal.c
+@@ -25,7 +25,7 @@
+ 
+ #include "thermal_hwmon.h"
+ 
+-#define MAX_SENSOR_NUM	4
++#define MAX_SENSOR_NUM	8
+ 
+ #define FT_TEMP_MASK				GENMASK(11, 0)
+ #define TEMP_CALIB_MASK				GENMASK(11, 0)
+@@ -65,6 +65,12 @@
+ #define SUN55I_A523_SCALE_ABOVE			74
+ #define SUN55I_A523_SCALE_BELOW			65
+ 
++#define SUN60I_A733_DELIMITER			1769
++#define SUN60I_A733_OFFSET_ABOVE		2835
++#define SUN60I_A733_OFFSET_BELOW		2822
++#define SUN60I_A733_SCALE_ABOVE			59
++#define SUN60I_A733_SCALE_BELOW			62
++
+ struct tsensor {
+ 	struct ths_device		*tmdev;
+ 	struct thermal_zone_device	*tzd;
+@@ -131,6 +137,17 @@
+ 		       (SUN55I_A523_OFFSET_BELOW - reg);
+ }
+ 
++static int sun60i_a733_calc_temp(struct ths_device *tmdev,
++				 int id, int reg)
++{
++	if (reg > SUN60I_A733_DELIMITER)
++		return SUN60I_A733_SCALE_BELOW *
++		       (SUN60I_A733_OFFSET_BELOW - reg);
++	else
++		return SUN60I_A733_SCALE_ABOVE *
++		       (SUN60I_A733_OFFSET_ABOVE - reg);
++}
++
+ static int sun8i_ths_get_temp(struct thermal_zone_device *tz, int *temp)
+ {
+ 	struct tsensor *s = thermal_zone_device_priv(tz);
+@@ -407,6 +424,61 @@
+ 	return 0;
+ }
+ 
++static int sun60i_a733_ths_calibrate(struct ths_device *tmdev,
++				     u16 *caldata, int callen)
++{
++	struct device *dev = tmdev->dev;
++	u32 *ths_cal = (u32 *)caldata;
++	int i, ft_temp;
++
++	if (callen < 3 * sizeof(u32) || !ths_cal[0])
++		return -EINVAL;
++
++	ft_temp = (ths_cal[0] & FT_TEMP_MASK) * 100;
++
++	for (i = 0; i < tmdev->chip->sensor_num; i++) {
++		int sensor_reg, sensor_temp, cdata, offset;
++
++		switch (i) {
++		case 0:
++			sensor_reg = (ths_cal[0] >> 12) & TEMP_CALIB_MASK;
++			break;
++		case 1:
++			sensor_reg = ((ths_cal[0] >> 24) | (ths_cal[1] << 8)) & TEMP_CALIB_MASK;
++			break;
++		case 2:
++			sensor_reg = (ths_cal[1] >> 4) & TEMP_CALIB_MASK;
++			break;
++		case 3:
++			sensor_reg = (ths_cal[1] >> 16) & TEMP_CALIB_MASK;
++			break;
++		case 4:
++			sensor_reg = ((ths_cal[1] >> 28) | (ths_cal[2] << 4)) & TEMP_CALIB_MASK;
++			break;
++		default:
++			sensor_reg = 0;
++			break;
++		}
++
++		sensor_temp = tmdev->chip->calc_temp(tmdev, i, sensor_reg);
++		cdata = CALIBRATE_DEFAULT -
++			((sensor_temp - ft_temp) / SUN60I_A733_SCALE_BELOW);
++
++		if (cdata & ~TEMP_CALIB_MASK) {
++			dev_warn(dev, "sensor%d is not calibrated.\n", i);
++			continue;
++		}
++
++		offset = (i % 2) * 16;
++		regmap_update_bits(tmdev->regmap,
++				   SUN50I_H6_THS_TEMP_CALIB + (i / 2 * 4),
++				   TEMP_CALIB_MASK << offset,
++				   cdata << offset);
++	}
++
++	return 0;
++}
++
+ static int sun8i_ths_calibrate(struct ths_device *tmdev)
+ {
+ 	struct device_node *np = dev_of_node(tmdev->dev);
+@@ -906,6 +978,17 @@
+ 	.calc_temp = sun55i_a523_calc_temp,
+ };
+ 
++static const struct ths_thermal_chip sun60i_a733_ths = {
++	.sensor_num = 5,
++	.has_mod_clk = true,
++	.has_bus_clk_reset = true,
++	.temp_data_base = SUN50I_H6_THS_TEMP_DATA,
++	.calibrate = sun60i_a733_ths_calibrate,
++	.init = sun50i_h6_thermal_init,
++	.irq_ack = sun50i_h6_irq_ack,
++	.calc_temp = sun60i_a733_calc_temp,
++};
++
+ static const struct of_device_id of_ths_match[] = {
+ 	{ .compatible = "allwinner,sun8i-a83t-ths", .data = &sun8i_a83t_ths },
+ 	{ .compatible = "allwinner,sun8i-h3-ths", .data = &sun8i_h3_ths },
+@@ -918,6 +1001,7 @@
+ 	{ .compatible = "allwinner,sun50i-h616-ths", .data = &sun50i_h616_ths },
+ 	{ .compatible = "allwinner,sun55i-a523-ths0", .data = &sun55i_a523_ths0 },
+ 	{ .compatible = "allwinner,sun55i-a523-ths1", .data = &sun55i_a523_ths1 },
++	{ .compatible = "allwinner,sun60i-a733-ths", .data = &sun60i_a733_ths },
+ 	{ /* sentinel */ },
+ };
+ MODULE_DEVICE_TABLE(of, of_ths_match);
+
+-- 
+Armbian

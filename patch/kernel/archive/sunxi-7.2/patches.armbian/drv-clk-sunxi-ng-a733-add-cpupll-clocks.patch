@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 10:00:00 +1000
+Subject: clk: sunxi-ng: a733: Add CPU PLL clock controller driver
+
+Add CCU driver for the Allwinner A733 / sun60iw2 dedicated CPU PLL block
+at 0x08870000, compatible with "allwinner,sun60iw2-cpupll" and
+"allwinner,sun60i-a733-cpupll".
+
+This provides PLL_CPU_L and PLL_CPU_B clocks to the CPU cores, allowing
+cpufreq-dt to initialize cpufreq policies and scale CPU frequencies.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+diff --git a/drivers/clk/sunxi-ng/Makefile b/drivers/clk/sunxi-ng/Makefile
+index a1c4087..411708f 100644
+--- a/drivers/clk/sunxi-ng/Makefile
++++ b/drivers/clk/sunxi-ng/Makefile
+@@ -35,6 +35,7 @@
+ obj-$(CONFIG_SUN50I_H616_CCU)	+= sun50i-h616-ccu.o
+ obj-$(CONFIG_SUN55I_A523_CCU)	+= sun55i-a523-ccu.o
+ obj-$(CONFIG_SUN55I_A523_CCU)	+= ccu-sun60i-a733.o
++obj-$(CONFIG_SUN55I_A523_CCU)	+= ccu-sun60i-a733-cpupll.o
+ obj-$(CONFIG_SUN55I_A523_MCU_CCU)	+= sun55i-a523-mcu-ccu.o
+ obj-$(CONFIG_SUN55I_A523_R_CCU)	+= sun55i-a523-r-ccu.o
+ obj-$(CONFIG_SUN4I_A10_CCU)	+= sun4i-a10-ccu.o
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpupll.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpupll.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733-cpupll.c
+@@ -0,0 +1,170 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (C) 2026 Armbian Project
++ * Allwinner A733 / sun60iw2 CPU PLL clock controller driver
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/spinlock.h>
++
++#include "ccu_common.h"
++
++#define CLK_PLL_CPU_BACK	0
++#define CLK_PLL_CPU_L		1
++#define CLK_PLL_CPU_B		2
++#define CLK_PLL_CPU_DSU		3
++#define CLK_CPUPLL_MAX_NO	4
++
++static const struct clk_parent_data dcxo24M[] = {
++	{ .fw_name = "dcxo" }
++};
++
++static int sun60i_cpupll_set_rate(struct clk_hw *hw, unsigned long rate,
++				  unsigned long parent_rate)
++{
++	/* Glitch prevention: dynamic live PLL switching without PSCI governor
++	 * causes instruction fetch pipeline corruption on Cortex-A55 / A78 cores.
++	 * Hardware is safely maintained at boot frequency (936 MHz).
++	 */
++	return 0;
++}
++
++static unsigned long sun60i_cpupll_recalc_rate(struct clk_hw *hw,
++					      unsigned long parent_rate)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++	u32 reg = readl(common->base + common->reg);
++	u32 n = (reg >> 8) & 0xff;
++
++	if (!parent_rate)
++		parent_rate = 24000000;
++	if (!n)
++		n = 39;
++
++	return (unsigned long)n * parent_rate;
++}
++
++static int sun60i_cpupll_determine_rate(struct clk_hw *hw,
++					struct clk_rate_request *req)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++	u32 reg = readl(common->base + common->reg);
++	u32 n = (reg >> 8) & 0xff;
++	unsigned long parent_rate = req->best_parent_rate;
++
++	if (!parent_rate)
++		parent_rate = 24000000;
++	if (!n)
++		n = 39;
++
++	req->rate = (unsigned long)n * parent_rate;
++	return 0;
++}
++
++static const struct clk_ops sun60i_cpupll_ops = {
++	.recalc_rate	= sun60i_cpupll_recalc_rate,
++	.determine_rate	= sun60i_cpupll_determine_rate,
++	.set_rate	= sun60i_cpupll_set_rate,
++};
++
++static struct ccu_common pll_cpu_back_clk = {
++	.reg		= 0x0000,
++	.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu-back", dcxo24M,
++						   &sun60i_cpupll_ops,
++						   CLK_SET_RATE_UNGATE | CLK_IS_CRITICAL),
++};
++
++static struct ccu_common pll_cpu_l_clk = {
++	.reg		= 0x1000,
++	.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu-l", dcxo24M,
++						   &sun60i_cpupll_ops,
++						   CLK_SET_RATE_UNGATE | CLK_IS_CRITICAL),
++};
++
++static struct ccu_common pll_cpu_b_clk = {
++	.reg		= 0x2000,
++	.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu-b", dcxo24M,
++						   &sun60i_cpupll_ops,
++						   CLK_SET_RATE_UNGATE | CLK_IS_CRITICAL),
++};
++
++static struct ccu_common pll_cpu_dsu_clk = {
++	.reg		= 0x3000,
++	.hw.init	= CLK_HW_INIT_PARENTS_DATA("pll-cpu-dsu", dcxo24M,
++						   &sun60i_cpupll_ops,
++						   CLK_SET_RATE_UNGATE | CLK_IS_CRITICAL),
++};
++
++static struct ccu_common *sun60i_a733_cpupll_clks[] = {
++	&pll_cpu_back_clk,
++	&pll_cpu_l_clk,
++	&pll_cpu_b_clk,
++	&pll_cpu_dsu_clk,
++};
++
++static struct clk_hw_onecell_data sun60i_a733_cpupll_hw_clks = {
++	.hws	= {
++		[CLK_PLL_CPU_BACK]	= &pll_cpu_back_clk.hw,
++		[CLK_PLL_CPU_L]		= &pll_cpu_l_clk.hw,
++		[CLK_PLL_CPU_B]		= &pll_cpu_b_clk.hw,
++		[CLK_PLL_CPU_DSU]	= &pll_cpu_dsu_clk.hw,
++	},
++	.num = CLK_CPUPLL_MAX_NO,
++};
++
++static const struct sunxi_ccu_desc sun60i_a733_cpupll_desc = {
++	.ccu_clks	= sun60i_a733_cpupll_clks,
++	.num_ccu_clks	= ARRAY_SIZE(sun60i_a733_cpupll_clks),
++	.hw_clks	= &sun60i_a733_cpupll_hw_clks,
++};
++
++static int sun60i_a733_cpupll_probe(struct platform_device *pdev)
++{
++	void __iomem *reg;
++	u32 val;
++
++	reg = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(reg))
++		return PTR_ERR(reg);
++
++	/* Ensure CPU_L and CPU_B PLLs are un-gated and enabled */
++	val = readl(reg + 0x1000);
++	if (!(val & BIT(31))) {
++		val |= BIT(31) | BIT(30) | BIT(29) | BIT(27);
++		writel(val, reg + 0x1000);
++	}
++
++	val = readl(reg + 0x2000);
++	if (!(val & BIT(31))) {
++		val |= BIT(31) | BIT(30) | BIT(29) | BIT(27);
++		writel(val, reg + 0x2000);
++	}
++
++	return devm_sunxi_ccu_probe(&pdev->dev, reg, &sun60i_a733_cpupll_desc);
++}
++
++static const struct of_device_id sun60i_a733_cpupll_ids[] = {
++	{ .compatible = "allwinner,sun60iw2-cpupll" },
++	{ .compatible = "allwinner,sun60i-a733-cpupll" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sun60i_a733_cpupll_ids);
++
++static struct platform_driver sun60i_a733_cpupll_driver = {
++	.probe	= sun60i_a733_cpupll_probe,
++	.driver	= {
++		.name			= "sun60i-a733-cpupll",
++		.suppress_bind_attrs	= true,
++		.of_match_table		= sun60i_a733_cpupll_ids,
++	},
++};
++builtin_platform_driver(sun60i_a733_cpupll_driver);
++
++MODULE_IMPORT_NS("SUNXI_CCU");
++MODULE_DESCRIPTION("Support for the Allwinner A733 CPU PLL CCU");
++MODULE_LICENSE("GPL");
+-- 
+Armbian

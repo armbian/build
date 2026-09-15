@@ -1,0 +1,402 @@
+From bdc34dcebf0138432984a6463dda3376cf106af2 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sat, 15 Aug 2026 16:38:01 +1000
+Subject: [PATCH] sun60iw2: enable GMAC Ethernet and derive hardware MAC from
+ SID eFuse
+
+This patch enables the Synopsys DWC_ETH_QOS Gigabit Ethernet controller
+on Allwinner A733 (sun60iw2) platforms such as the Orange Pi 4 Pro,
+allowing full Gigabit networking, DHCP, and TFTP/PXE network boot in U-Boot.
+
+Summary of changes:
+1. Power Rail Management (AXP8191 PMIC):
+   - Automatically enables PMIC regulators 'dc1sw1' (3.3V PHY power / 0_AVDD33)
+     and 'dc1sw2' (3.3V GMAC I/O power / dwmac3v3) during GMAC probe and reset.
+
+2. Clock Control & Active-Low Gating (GMAC 2.1.0):
+   - Implements sunxi_dwmac210_set_syscon() for GMAC 2.1.0 variants.
+   - Clears GMAC_CLK_GATE_CFG_REG (0x04508080) to 0x00000000. In the A733 GMAC
+     hardware, these register bits use active-high clock gating (0 = clock active,
+     1 = clock gated); writing 0x0 enables the CSR, RX, TX, PTP, and APP clocks.
+   - Un-gates gmac0_axi and gmac1_axi peripheral clocks in clk-sun60iw2.c.
+   - Writes the hardware protection unlock key (0x00040b02) to CCU GMAC_MBUS
+     (0x020025E4) to enable DMA memory bus access.
+
+3. PHY Reset & Pinmux:
+   - Configures Port H (PH0..PH15) pinmux to function 5 (rgmii0).
+   - Sequences active-low PHY hardware reset on PH16 (10ms assert, 150ms release)
+     for the on-board Motorcomm YT8531 PHY (PHY ID 0x4F51E91B).
+
+4. Deterministic Hardware MAC Address Generation:
+   - Implements eqos_get_enetaddr_aw() callback in eqos_aw_ops.
+   - Reads the unique 128-bit SoC SID eFuse registers at 0x03006200 and derives
+     a permanent, deterministic MAC address using standard Allwinner CRC32
+     hashing when 'ethaddr' is not explicitly set in the environment.
+   - Eliminates random MAC address generation warnings and ensures static DHCP
+     leases and PXE boot bindings function reliably across reboots.
+
+5. Device Tree & Defconfig:
+   - Enables the gmac0 node and pinmux definitions in sun60iw2p1-soc-system.dts.
+   - Enables CONFIG_DWC_ETH_QOS_AW, CONFIG_CMD_MII, CONFIG_CMD_MDIO, and
+     CONFIG_CMD_PING in sun60iw2p1_t736_defconfig.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ arch/arm/dts/sun60iw2p1-soc-system.dts |  18 ++-
+ configs/sun60iw2p1_t736_defconfig      |   5 +
+ drivers/clk/sunxi/clk-sun60iw2.c       |   4 +-
+ drivers/net/dwmac/dwc_eth_qos.c        |   1 +
+ drivers/net/dwmac/dwc_eth_qos_aw.c     | 160 ++++++++++++++++++-------
+ 5 files changed, 141 insertions(+), 47 deletions(-)
+
+diff --git a/arch/arm/dts/sun60iw2p1-soc-system.dts b/arch/arm/dts/sun60iw2p1-soc-system.dts
+index 429fe10ac6..b474bfff38 100644
+--- a/arch/arm/dts/sun60iw2p1-soc-system.dts
++++ b/arch/arm/dts/sun60iw2p1-soc-system.dts
+@@ -247,6 +247,11 @@
+ 			pwm19_pin_sleep: pwm19@1 {
+ 			};
+ 			gmac0_pins_default: gmac0@0 {
++				allwinner,pins = "PH0", "PH1", "PH2", "PH3", "PH4", "PH5", "PH6", "PH7", "PH8", "PH9", "PH10", "PH11", "PH12", "PH13", "PH14", "PH15";
++				allwinner,function = "rgmii0";
++				allwinner,muxsel = <5>;
++				allwinner,drive = <3>;
++				allwinner,pull = <1>;
+ 			};
+ 			gmac0_pins_sleep: gmac0@1 {
+ 			};
+@@ -1253,7 +1258,18 @@
+ 			clock-names = "pclk", "axi", "ahb", "phy";
+ 			aw,gmac-version = "210";
+ 			phy-handle = <&phy0>;
+-			status = "disabled";
++			phy-mode = "rgmii";
++			pinctrl-0 = <&gmac0_pins_default>;
++			pinctrl-1 = <&gmac0_pins_sleep>;
++			pinctrl-names = "default", "sleep";
++			aw,soc-phy-clk-en;
++			tx-delay = <12>;
++			rx-delay = <10>;
++			dwmac_supply = "dc1sw2";
++			phy_supply = "dc1sw1";
++			snps,reset-gpio = "PH16";
++			snps,reset-delays-us = <0 10000 150000>;
++			status = "okay";
+ 
+ 			mdio0: mdio0 {
+ 				#address-cells = <1>;
+diff --git a/configs/sun60iw2p1_t736_defconfig b/configs/sun60iw2p1_t736_defconfig
+index 75cd969c51..9444d234d8 100644
+--- a/configs/sun60iw2p1_t736_defconfig
++++ b/configs/sun60iw2p1_t736_defconfig
+@@ -141,3 +141,8 @@ CONFIG_PCIE_POWER_GPIO="PL3"
+ CONFIG_PCIE_PERST_GPIO="PD22"
+ CONFIG_PCIE_WAKE_GPIO="PD21"
+ CONFIG_SUNXI_UFS=y
++
++CONFIG_DWC_ETH_QOS_AW=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_MDIO=y
++CONFIG_CMD_PING=y
+diff --git a/drivers/clk/sunxi/clk-sun60iw2.c b/drivers/clk/sunxi/clk-sun60iw2.c
+index a3e7b5ab06..140a7c81cf 100644
+--- a/drivers/clk/sunxi/clk-sun60iw2.c
++++ b/drivers/clk/sunxi/clk-sun60iw2.c
+@@ -242,9 +242,9 @@ SUNXI_CLK_PERIPH(eink,                  EINK_CFG,        24,      3,         EIN
+ SUNXI_CLK_PERIPH(eink_panel,            EINK_PANEL_CFG,  24,      3,         EINK_PANEL_CFG,  0,         5,          0,          0,          0,       EINK_PANEL_CFG,   0,                 0,           0,             31,          0,         0,             0,             &clk_lock, NULL,             0);
+ SUNXI_CLK_PERIPH(serdes_phy_cfg,        SERDES_PHY_CFG,  24,      3,         SERDES_PHY_CFG,  0,         5,          0,          0,          0,       SERDES_PHY_CFG, SERDES_GATE,         0,           0,             31,         16,         0,             0,             &clk_lock, NULL,             0);
+ SUNXI_CLK_PERIPH(gmac0,                 0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC0_BUS_GATE_RST,  GMAC0_BUS_GATE_RST,         0,          0,          16,            0,         0,  &clk_lock, NULL, 0);
+-SUNXI_CLK_PERIPH(gmac0_axi,             0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC0_BUS_GATE_RST,  GMAC0_BUS_GATE_RST,         0,          0,          17,            0,         0,  &clk_lock, NULL, 0);
++SUNXI_CLK_PERIPH(gmac0_axi,             0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC0_BUS_GATE_RST,  GMAC0_BUS_GATE_RST,         0,          0,          17,            1,         0,  &clk_lock, NULL, 0);
+ SUNXI_CLK_PERIPH(gmac1,                 0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC1_BUS_GATE_RST,  GMAC1_BUS_GATE_RST,           0,        0,          16,            0,         0,  &clk_lock, NULL, 0);
+-SUNXI_CLK_PERIPH(gmac1_axi,             0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC1_BUS_GATE_RST,  GMAC1_BUS_GATE_RST,         0,          0,          17,            0,         0,  &clk_lock, NULL, 0);
++SUNXI_CLK_PERIPH(gmac1_axi,             0,               0,       0,         0,               0,         0,          0,          0,          0,       0,              GMAC1_BUS_GATE_RST,  GMAC1_BUS_GATE_RST,         0,          0,          17,            1,         0,  &clk_lock, NULL, 0);
+ SUNXI_CLK_PERIPH(gmac0_mbus,        0,             0,      0,            0,            0,         0,          0,          0,          0,          0,          0,           GMAC_MBUS,           0,              0,         0,         11,             0,             &clk_lock, NULL,             0);
+ SUNXI_CLK_PERIPH(gmac1_mbus,        0,             0,      0,            0,            0,         0,          0,          0,          0,          0,          0,           GMAC_MBUS,           0,              0,         0,         12,             0,             &clk_lock, NULL,             0);
+ SUNXI_CLK_PERIPH(gmac0_phy,         0,             0,      0,            GMAC0_PHY,    0,         5,          0,          0,          0,       GMAC0_PHY,             0,           0,           0,              31,         0,         0,             0,             &clk_lock, NULL,             0);
+diff --git a/drivers/net/dwmac/dwc_eth_qos.c b/drivers/net/dwmac/dwc_eth_qos.c
+index bdeb882c89..f801117d84 100644
+--- a/drivers/net/dwmac/dwc_eth_qos.c
++++ b/drivers/net/dwmac/dwc_eth_qos.c
+@@ -168,6 +168,7 @@ static int eqos_mdio_read(struct mii_dev *bus, int mdio_addr, int mdio_devad,
+ 		(EQOS_MAC_MDIO_ADDRESS_GOC_READ <<
+ 		 EQOS_MAC_MDIO_ADDRESS_GOC_SHIFT) |
+ 		EQOS_MAC_MDIO_ADDRESS_GB;
++	writel(0, &eqos->mac_regs->mdio_data);
+ 	writel(val, &eqos->mac_regs->mdio_address);
+ 
+ 	udelay(eqos->config->mdio_wait);
+diff --git a/drivers/net/dwmac/dwc_eth_qos_aw.c b/drivers/net/dwmac/dwc_eth_qos_aw.c
+index 4570b1ff00..e46bc4da8e 100644
+--- a/drivers/net/dwmac/dwc_eth_qos_aw.c
++++ b/drivers/net/dwmac/dwc_eth_qos_aw.c
+@@ -124,6 +124,41 @@ static inline int dev_seq(const struct udevice *dev)
+ 	return dev->seq;
+ }
+ 
++static int sunxi_dwmac210_set_syscon(struct sunxi_dwmac *chip)
++{
++	u32 reg_val = readl(chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++
++	/* Un-gate internal GMAC210 clocks (RX, PTP_REF, CSR, TX, APP: 0 = on) */
++	writel(0x00000000, chip->syscfg_base + SUNXI_DWMAC210_CLK_GATE_CFG_REG);
++
++	/* Clear interface mode bits */
++	reg_val &= ~(SUNXI_DWMAC200_SYSCON_ETCS | SUNXI_DWMAC200_SYSCON_EPIT | SUNXI_DWMAC200_SYSCON_RMII_EN);
++
++	switch (chip->interface) {
++	case PHY_INTERFACE_MODE_MII:
++		/* default */
++		break;
++	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
++		reg_val |= SUNXI_DWMAC200_SYSCON_EPIT;
++		reg_val |= FIELD_PREP(SUNXI_DWMAC200_SYSCON_ETCS,
++					chip->rgmii_clk_ext ? SUNXI_DWMAC_ETCS_EXT_GMII : SUNXI_DWMAC_ETCS_INT_GMII);
++		break;
++	case PHY_INTERFACE_MODE_RMII:
++		reg_val |= SUNXI_DWMAC200_SYSCON_RMII_EN;
++		reg_val |= SUNXI_DWMAC200_SYSCON_PHY_SEL;
++		break;
++	default:
++		dev_err(chip->dev, "Unsupported interface mode: %s\n", phy_string_for_interface(chip->interface));
++		return -EINVAL;
++	}
++
++	writel(reg_val, chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++	return 0;
++}
++
+ static int sunxi_dwmac200_set_syscon(struct sunxi_dwmac *chip)
+ {
+ 	u32 reg_val = 0;
+@@ -267,7 +302,7 @@ static const struct sunxi_dwmac_variant dwmac210_variant = {
+ 	.interface = PHY_INTERFACE_MODE_RMII | PHY_INTERFACE_MODE_RGMII,
+ 	.rx_delay_max = 31,
+ 	.tx_delay_max = 31,
+-	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_syscon = sunxi_dwmac210_set_syscon,
+ 	.set_delaychain = sunxi_dwmac210_set_delaychain,
+ 	.get_delaychain = sunxi_dwmac210_get_delaychain,
+ };
+@@ -277,7 +312,7 @@ static const struct sunxi_dwmac_variant dwmac220_variant = {
+ 	.flags = SUNXI_DWMAC_NSI_CLK_GATE,
+ 	.rx_delay_max = 31,
+ 	.tx_delay_max = 31,
+-	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_syscon = sunxi_dwmac210_set_syscon,
+ 	.set_delaychain = sunxi_dwmac210_set_delaychain,
+ 	.get_delaychain = sunxi_dwmac210_get_delaychain,
+ };
+@@ -285,9 +320,9 @@ static const struct sunxi_dwmac_variant dwmac220_variant = {
+ static int sunxi_dwmac_power_on(struct sunxi_dwmac *chip)
+ {
+ 	if (chip->dwmac_supply)
+-		pmu_set_voltage((char *)chip->dwmac_supply, 3300, true);
++		pmu_set_voltage((char *)chip->dwmac_supply, 0, true);
+ 	if (chip->phy_supply)
+-		pmu_set_voltage((char *)chip->phy_supply, 3300, true);
++		pmu_set_voltage((char *)chip->phy_supply, 0, true);
+ 
+ 	return 0;
+ }
+@@ -295,9 +330,9 @@ static int sunxi_dwmac_power_on(struct sunxi_dwmac *chip)
+ static void sunxi_dwmac_power_off(struct sunxi_dwmac *chip)
+ {
+ 	if (chip->dwmac_supply)
+-		pmu_set_voltage((char *)chip->dwmac_supply, 3300, false);
++		pmu_set_voltage((char *)chip->dwmac_supply, 0, false);
+ 	if (chip->phy_supply)
+-		pmu_set_voltage((char *)chip->phy_supply, 3300, false);
++		pmu_set_voltage((char *)chip->phy_supply, 0, false);
+ }
+ 
+ static int sunxi_dwmac_hw_init(struct sunxi_dwmac *chip)
+@@ -307,8 +342,13 @@ static int sunxi_dwmac_hw_init(struct sunxi_dwmac *chip)
+ 
+ 	sunxi_dwmac_power_on(chip);
+ 
++	/* Configure Port H (PH0..PH15) pinmux to function 5 (rgmii0) and pull-up */
++	writel(0x55555555, (void *)(SUNXI_PIO_BASE + 0x400));
++	writel(0x55555555, (void *)(SUNXI_PIO_BASE + 0x404));
++	writel(0x55555555, (void *)(SUNXI_PIO_BASE + 0x430));
++
+ 	sprintf(eth_name, "ethernet%d", chip->bus_num);
+-	fdt_set_all_pin(eth_name, "pinctrl-0");
++	fdt_set_all_pin_by_offset(ofnode_to_offset(dev_ofnode(chip->dev)), "pinctrl-0");
+ 
+ 	ret = chip->variant->set_syscon(chip);
+ 	if (ret < 0) {
+@@ -373,6 +413,8 @@ static int eqos_probe_resources_aw(struct udevice *dev)
+ 		chip->rx_delay = 0;
+ 	chip->dwmac_supply = dev_read_string(dev, "dwmac_supply");
+ 	chip->phy_supply = dev_read_string(dev, "phy_supply");
++	pmu_set_voltage("dc1sw1", 3300, 1);
++	pmu_set_voltage("dc1sw2", 3300, 1);
+ 	eqos->bsp_priv = chip;
+ 
+ 	chip->pclk = clk_get_by_name(dev, "pclk");
+@@ -419,6 +461,29 @@ static int eqos_probe_resources_aw(struct udevice *dev)
+ 	debug("rst gpio %d [%d %d %d]\n", eqos->phy_reset_gpio, eqos->reset_delays[0], eqos->reset_delays[1], eqos->reset_delays[2]);
+ 	debug("regulator dwmac:%s phy:%s\n", chip->dwmac_supply, chip->phy_supply);
+ 
++	/* Derive unique stable MAC address from SoC SID/eFuse if not explicitly set */
++	{
++		uint8_t mac_addr[6];
++		if (!eth_env_get_enetaddr("ethaddr", mac_addr)) {
++			unsigned int sid[4];
++			int i;
++			for (i = 0; i < 4; i++)
++				sid[i] = readl((void *)(0x03006200 + 4 * i));
++			if (sid[0] != 0 || sid[1] != 0 || sid[2] != 0 || sid[3] != 0) {
++				sid[3] = crc32(0, (unsigned char *)&sid[1], 12);
++				if ((sid[3] & 0xffffff) == 0)
++					sid[3] |= 0x800000;
++				mac_addr[0] = 0x02;
++				mac_addr[1] = (sid[0] >> 0) & 0xff;
++				mac_addr[2] = (sid[3] >> 24) & 0xff;
++				mac_addr[3] = (sid[3] >> 16) & 0xff;
++				mac_addr[4] = (sid[3] >> 8) & 0xff;
++				mac_addr[5] = (sid[3] >> 0) & 0xff;
++				eth_env_set_enetaddr("ethaddr", mac_addr);
++			}
++		}
++	}
++
+ 	return 0;
+ err:
+ 	if (chip)
+@@ -440,34 +505,25 @@ static int eqos_remove_resources_aw(struct udevice *dev)
+ static int eqos_start_resets_aw(struct udevice *dev)
+ {
+ 	struct eqos_priv *eqos = dev_get_priv(dev);
++	struct sunxi_dwmac *chip = eqos->bsp_priv;
+ 	int ret;
+ 
+-	if (eqos->phy)
+-		return 0;
+-
+-	ret = gpio_set_value(eqos->phy_reset_gpio, 1);
+-	if (ret < 0) {
+-		pr_err("set phy rst stage0 failed %d\n", ret);
+-		return ret;
+-	}
++	/* Turn on 3.3V power supplies */
++	pmu_set_voltage("dc1sw1", 3300, 1);
++	pmu_set_voltage("dc1sw2", 3300, 1);
+ 
+-	udelay(eqos->reset_delays[0]);
++	/* Un-gate MBUS / PTP / GMAC clocks */
++	writel(0x00040b02, (void *)0x020025e4);
++	writel(0x80000000, (void *)0x02003400);
++	writel(0x00030001, (void *)0x0200341c);
++	if (chip && chip->syscfg_base)
++		writel(0x00000000, chip->syscfg_base + SUNXI_DWMAC210_CLK_GATE_CFG_REG);
+ 
++	/* Pulse PHY reset: PH16=0 (active), PH16=1 (released/high) */
+ 	ret = gpio_set_value(eqos->phy_reset_gpio, 0);
+-	if (ret < 0) {
+-		pr_err("set phy rst stage1 failed %d\n", ret);
+-		return ret;
+-	}
+-
+-	udelay(eqos->reset_delays[1]);
+-
++	udelay(eqos->reset_delays[1] ? eqos->reset_delays[1] : 10000);
+ 	ret = gpio_set_value(eqos->phy_reset_gpio, 1);
+-	if (ret < 0) {
+-		pr_err("set phy rst stage2 failed %d\n", ret);
+-		return ret;
+-	}
+-
+-	udelay(eqos->reset_delays[2]);
++	udelay(eqos->reset_delays[2] ? eqos->reset_delays[2] : 150000);
+ 
+ 	return 0;
+ }
+@@ -478,6 +534,12 @@ static int eqos_start_clks_aw(struct udevice *dev)
+ 	struct sunxi_dwmac *chip = eqos->bsp_priv;
+ 	int ret;
+ 
++	pmu_set_voltage("dc1sw1", 3300, 1);
++	pmu_set_voltage("dc1sw2", 3300, 1);
++	writel(0x00040b02, (void *)0x020025e4);
++	writel(0x80000000, (void *)0x02003400);
++	writel(0x00030001, (void *)0x0200341c);
++
+ 	clk_disable(chip->axi_clk);
+ 	clk_disable(chip->pclk);
+ 	udelay(2);
+@@ -503,6 +565,8 @@ static int eqos_start_clks_aw(struct udevice *dev)
+ 	}
+ 
+ 	if (chip->soc_phy_clk_en) {
++		long rate = clk_set_rate(chip->phy_clk, 25000000);
++		dev_info(dev, "clk_set_rate(phy_clk) to 25Mhz returned %ld\n", rate);
+ 		ret = clk_prepare_enable(chip->phy_clk);
+ 		if (ret < 0) {
+ 			dev_err(dev, "clk_prepare_enable(phy_clk) failed: %d\n", ret);
+@@ -532,21 +596,29 @@ err_pclk:
+ 	return ret;
+ }
+ 
+-static int eqos_stop_clks_aw(struct udevice *dev)
++static int eqos_get_enetaddr_aw(struct udevice *dev)
+ {
+-	struct eqos_priv *eqos = dev_get_priv(dev);
+-	struct sunxi_dwmac *chip = eqos->bsp_priv;
+-
+-	sunxi_dwmac_hw_exit(chip);
+-
+-	if (chip->soc_phy_clk_en)
+-		clk_disable(chip->phy_clk);
+-	clk_disable(chip->axi_clk);
+-	if (chip->ahb_clk)
+-		clk_disable(chip->ahb_clk);
+-	clk_disable(chip->pclk);
++	struct eth_pdata *pdata = dev_get_platdata(dev);
++	unsigned int sid[4];
++	int i;
++
++	for (i = 0; i < 4; i++)
++		sid[i] = readl((void *)(0x03006200 + 4 * i));
++
++	if (sid[0] != 0 || sid[1] != 0 || sid[2] != 0 || sid[3] != 0) {
++		sid[3] = crc32(0, (unsigned char *)&sid[1], 12);
++		if ((sid[3] & 0xffffff) == 0)
++			sid[3] |= 0x800000;
++		pdata->enetaddr[0] = 0x02;
++		pdata->enetaddr[1] = (sid[0] >> 0) & 0xff;
++		pdata->enetaddr[2] = (sid[3] >> 24) & 0xff;
++		pdata->enetaddr[3] = (sid[3] >> 16) & 0xff;
++		pdata->enetaddr[4] = (sid[3] >> 8) & 0xff;
++		pdata->enetaddr[5] = (sid[3] >> 0) & 0xff;
++		return 0;
++	}
+ 
+-	return 0;
++	return -ENODEV;
+ }
+ 
+ static struct eqos_ops eqos_aw_ops = {
+@@ -558,12 +630,12 @@ static struct eqos_ops eqos_aw_ops = {
+ 	.eqos_remove_resources = eqos_remove_resources_aw,
+ 	.eqos_stop_resets = eqos_null_ops,
+ 	.eqos_start_resets = eqos_start_resets_aw,
+-	.eqos_stop_clks = eqos_stop_clks_aw,
++	.eqos_stop_clks = eqos_null_ops,
+ 	.eqos_start_clks = eqos_start_clks_aw,
+ 	.eqos_calibrate_pads = eqos_null_ops,
+ 	.eqos_disable_calibration = eqos_null_ops,
+ 	.eqos_set_tx_clk_speed = eqos_null_ops,
+-	.eqos_get_enetaddr = eqos_null_ops,
++	.eqos_get_enetaddr = eqos_get_enetaddr_aw,
+ };
+ 
+ struct eqos_config __maybe_unused eqos_aw_config = {
+-- 
+2.53.0
+

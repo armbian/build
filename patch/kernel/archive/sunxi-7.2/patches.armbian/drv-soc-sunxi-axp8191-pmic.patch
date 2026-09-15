@@ -1,0 +1,130 @@
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sun, 6 Sep 2026 12:00:00 +1000
+Subject: soc: sunxi: Add helper driver for X-Powers AXP8191 PMIC
+
+Add a helper driver (drivers/soc/sunxi/axp8191-pmic.c) matching "x-powers,axp8191"
+to ensure essential power rails remain permanently energized on the Orange Pi 4 Pro.
+
+On the Orange Pi 4 Pro, key onboard components are powered by switch and
+low-dropout regulators from the secondary AXP8191 companion PMIC:
+- DC1SW1: 3.3V power supply for the Motorcomm YT8531 Ethernet PHY (VCC-EPHY)
+- DC1SW2: 3.3V I/O domain supply
+- BLDO1:  1.8V power supply for PCIe and high-speed I/O
+- BLDO2:  3.3V power supply for Port J and the Everest ES8388 audio codec (VCC-PJ)
+
+In mainline Linux, if these regulators lack active device-tree consumer references
+during boot, the generic regulator core's late unused-regulator sweep shuts them
+down ~30 seconds after boot. This causes sudden loss of Ethernet link, audio codec
+failure, and PCIe bus aborts. This driver probes early via I2C and marks these
+supplies always-on to prevent unexpected power drops.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+diff --git a/drivers/soc/sunxi/axp8191.c b/drivers/soc/sunxi/axp8191.c
+--- a/drivers/soc/sunxi/axp8191.c
++++ b/drivers/soc/sunxi/axp8191.c
+@@ -0,0 +1,94 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * X-Powers AXP8191 PMIC helper driver for Allwinner A733
++ *
++ * Ensures BLDO2 (1.8V for VCC-PJ and Audio ES8388) and BLDO1 (1.8V) are enabled
++ * on Orange Pi 4 Pro.
++ */
++
++#include <linux/i2c.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/of.h>
++
++#define AXP8191_DCDC_CTL2	0x11
++#define AXP8191_LDO_ON_OFF1	0x20
++#define AXP8191_LDO_ON_OFF2	0x21
++#define AXP8191_BLDO1_VOL	0x2a
++#define AXP8191_BLDO2_VOL	0x2b
++#define AXP8191_BLDO4_VOL	0x2d
++
++static int axp8191_probe(struct i2c_client *client)
++{
++	int ret, val;
++
++	/* Ensure DC1SW1 (bit 3, VCC-EPHY) and DC1SW2 (bit 4, BLDO-INPUT) are enabled */
++	val = i2c_smbus_read_byte_data(client, AXP8191_DCDC_CTL2);
++	if (val >= 0) {
++		val |= BIT(4) | BIT(3);
++		ret = i2c_smbus_write_byte_data(client, AXP8191_DCDC_CTL2, val);
++		if (ret < 0)
++			dev_warn(&client->dev, "failed to set DCDC_CTL2: %d\n", ret);
++	}
++
++	/* Configure BLDO2 to 1.8V (500mV base + 13 * 100mV = 1800mV, 0x0d for VCC-PJ) */
++	ret = i2c_smbus_write_byte_data(client, AXP8191_BLDO2_VOL, 0x0d);
++	if (ret < 0)
++		dev_warn(&client->dev, "failed to set BLDO2 voltage: %d\n", ret);
++
++	/* Configure BLDO1 to 1.8V (VCC-PK) */
++	ret = i2c_smbus_write_byte_data(client, AXP8191_BLDO1_VOL, 0x0d);
++	if (ret < 0)
++		dev_warn(&client->dev, "failed to set BLDO1 voltage: %d\n", ret);
++
++	/* Configure BLDO4 to 1.8V (VCC-1V8-AUDIO / ES8388 DVDD/PVDD) */
++	ret = i2c_smbus_write_byte_data(client, AXP8191_BLDO4_VOL, 0x0d);
++	if (ret < 0)
++		dev_warn(&client->dev, "failed to set BLDO4 voltage: %d\n", ret);
++
++	/* Read LDO on/off control register 1 */
++	val = i2c_smbus_read_byte_data(client, AXP8191_LDO_ON_OFF1);
++	if (val < 0) {
++		dev_err(&client->dev, "failed to read LDO_ON_OFF1: %d\n", val);
++		return val;
++	}
++
++	/* Enable BLDO2 (bit 7) and BLDO1 (bit 6) */
++	val |= BIT(7) | BIT(6);
++	ret = i2c_smbus_write_byte_data(client, AXP8191_LDO_ON_OFF1, val);
++	if (ret < 0) {
++		dev_err(&client->dev, "failed to write LDO_ON_OFF1: %d\n", ret);
++		return ret;
++	}
++
++	/* Read LDO on/off control register 2 */
++	val = i2c_smbus_read_byte_data(client, AXP8191_LDO_ON_OFF2);
++	if (val >= 0) {
++		/* Enable BLDO4 (bit 1) */
++		val |= BIT(1);
++		ret = i2c_smbus_write_byte_data(client, AXP8191_LDO_ON_OFF2, val);
++		if (ret < 0)
++			dev_warn(&client->dev, "failed to write LDO_ON_OFF2: %d\n", ret);
++	}
++
++	dev_info(&client->dev, "AXP8191 PMIC: BLDO1/2/4 enabled at 1.8V, DC1SW1/2 enabled\n");
++	return 0;
++}
++
++static const struct of_device_id axp8191_of_match[] = {
++	{ .compatible = "x-powers,axp8191" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, axp8191_of_match);
++
++static struct i2c_driver axp8191_driver = {
++	.driver = {
++		.name = "axp8191",
++		.of_match_table = axp8191_of_match,
++	},
++	.probe = axp8191_probe,
++};
++module_i2c_driver(axp8191_driver);
++
++MODULE_DESCRIPTION("X-Powers AXP8191 PMIC Helper Driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/sunxi/Makefile b/drivers/soc/sunxi/Makefile
+--- a/drivers/soc/sunxi/Makefile
++++ b/drivers/soc/sunxi/Makefile
+@@ -2,3 +2,4 @@
+ obj-$(CONFIG_SUNXI_MBUS) +=	sunxi_mbus.o
+ obj-$(CONFIG_SUNXI_SRAM) +=	sunxi_sram.o
+ obj-$(CONFIG_ALLWINNER_VIPCORE) += vipcore/
++obj-y += axp8191.o

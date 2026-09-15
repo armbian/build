@@ -1,0 +1,335 @@
+From a71d6f07fc2f9e80c32966a390e00a908d264bab Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Fri, 11 Sep 2026 18:00:01 +1000
+Subject: [PATCH] video: drm: Fix Allwinner A733 DE3.5 clock matrix, PLL gates,
+ and TCON tri-state
+
+- Un-gate PLL_DE (0x020022E0) output gates 0 and 1 (0xEC125600) to supply
+  DEPLL3X (696 MHz) and DEPLL4X to DE3.5, fixing the AXI bus stall when
+  reading DE3.5 registers (e.g. DE_VER_CTL_OFFSET 0x05008014).
+- Configure Clock Matrix interconnects (CM_DESYS 0x02003B04, CM_VO 0x02003B34,
+  CM_VO1 0x02003B38) in module mode (0x00020001).
+- Un-tri-state TCON_TV0 I/O sync lines and RGB data lanes (0x0573008C,
+  0x05730338, 0x0573033C = 0x0) with 8-bit truecolor mode (0x05730340 = 0x1).
+- Un-gate VO1 module clock gating (0x05510020 bits 28 and 20).
+- Early un-gating of CCMU clock registers and SPC bus master firewalls in
+  EL3 via ARM SMC fastcall (0xC000FF06).
+- Zero fb_cmd2 in sunxi_drm_drv_probe() to prevent uninitialized stack modifier
+  garbage from failing drm_framebuffer_alloc() with 'bad fb modifier'.
+- Enable CONFIG_EXT4_WRITE=y and CONFIG_CMD_EXT4_WRITE=y.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ board/sunxi/board.c                           | 40 +++++++++++++---
+ configs/orangepi_4_pro_defconfig              |  4 +-
+ .../hardware/lowlevel_de/sunxi_de.c           |  5 ++
+ .../hardware/lowlevel_tcon/tcon_top.c         |  8 +++-
+ .../hardware/lowlevel_tcon/tcon_tv_reg.c      | 13 ++++-
+ drivers/video/drm/sunxi_drm_drv.c             | 48 ++++++++++++-------
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  3 ++
+ 7 files changed, 92 insertions(+), 29 deletions(-)
+
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index fe5968d2bb6..9d0aa56ce2a 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -37,6 +37,10 @@
+ #include <linux/types.h>
+ #ifndef CONFIG_ARM64
+ #include <asm/armv7.h>
++#else
++#ifndef CONFIG_SPL_BUILD
++#include <linux/arm-smccc.h>
++#endif
+ #endif
+ #include <asm/gpio.h>
+ #include <sunxi_gpio.h>
+@@ -379,7 +383,7 @@ static const struct cphy_reg cphy_regs[] = {
+ 	{ 0x216, 0x7f },
+ };
+ 
+-static void sunxi_a733_usb_init(void)
++__maybe_unused static void sunxi_a733_usb_init(void)
+ {
+ 	void __iomem *ccu = (void __iomem *)0x02002000;
+ 	void __iomem *subsys = (void __iomem *)0x06c00000;
+@@ -529,8 +533,34 @@ int board_init(void)
+ 	if (ret)
+ 		return ret;
+ 
+-#if defined(CONFIG_MACH_SUN60I_A733)
+-	sunxi_a733_usb_init();
++#if defined(CONFIG_MACH_SUN60I_A733) && !defined(CONFIG_SPL_BUILD)
++	{
++		/* Unlock Non-Secure access to CCMU clock registers and SPC ports early */
++		struct arm_smccc_res smc_res;
++		int spc_idx;
++
++		/* CCMU_SEC_SWITCH_REG: unlock MBUS, BUS, PLL clock registers */
++		arm_smccc_smc(0xC000FF06, 0x02003F00, 0x00000007, 0, 0, 0, 0, 0, &smc_res);
++
++		/* SPC_SETTING_REGs: enable non-secure access to all 24 master ports */
++		for (spc_idx = 0; spc_idx <= 0x5C; spc_idx += 4)
++			arm_smccc_smc(0xC000FF06, 0x02054000 + spc_idx, 0xFFFFFFFF, 0, 0, 0, 0, 0, &smc_res);
++
++		/* Enable PLL_DE (0x020022E0) with output gates 0 and 1 un-gated (0xEC125600) for DE3.5 */
++		writel(0xEC125600, (void *)0x020022E0);
++
++		/* Enable Clock Matrix for DE and Video Out: CM_DESYS (0x02003B04), CM_VO (0x02003B34), CM_VO1 (0x02003B38) */
++		writel(0x00020001, (void *)0x02003B04);
++		writel(0x00020001, (void *)0x02003B34);
++		writel(0x00020001, (void *)0x02003B38);
++
++		/* Deassert DE resets and enable bus gating and module clock */
++		writel(0x00010001, (void *)0x02002A74); /* DE_SYS_BGR_REG */
++		writel(0x00010001, (void *)0x02002A04); /* DE0_BGR_REG */
++		writel(0x80000000, (void *)0x02002A00); /* DE0_CLK_REG: DEPLL3X, div 1, gate ON */
++
++		sunxi_a733_usb_init();
++	}
+ #endif
+ 
+ 	eth_init_board();
+@@ -1178,15 +1208,13 @@ int misc_init_r(void)
+ 	return 0;
+ }
+ 
+-#include <linux/arm-smccc.h>
+-
+ int board_late_init(void)
+ {
+ #ifdef CONFIG_USB_ETHER
+ 	usb_ether_init();
+ #endif
+ 
+-#if defined(CONFIG_MACH_SUN60I_A733)
++#if defined(CONFIG_MACH_SUN60I_A733) && !defined(CONFIG_SPL_BUILD)
+ 	/* Unlock Non-Secure access to CCMU clock registers and SPC ports */
+ 	struct arm_smccc_res smc_res;
+ 	int spc_idx;
+diff --git a/configs/orangepi_4_pro_defconfig b/configs/orangepi_4_pro_defconfig
+index 0792d95bc58..eecbc4ac768 100644
+--- a/configs/orangepi_4_pro_defconfig
++++ b/configs/orangepi_4_pro_defconfig
+@@ -127,5 +127,5 @@ CONFIG_BMP=y
+ CONFIG_BMP_16BPP=y
+ CONFIG_BMP_24BPP=y
+ CONFIG_BMP_32BPP=y
+-
+-
++CONFIG_EXT4_WRITE=y
++CONFIG_CMD_EXT4_WRITE=y
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
+index 6350c144281..aa13c5affca 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_de/sunxi_de.c
+@@ -649,6 +649,8 @@ int sunxi_de_event_proc(struct sunxi_de_out *hwde)
+ static int sunxi_de_parse_dts(struct udevice *dev,
+ 			      struct sunxi_display_engine *engine)
+ {
++	struct reset_ctl_bulk resets;
++
+ 	engine->reg_base = (uintptr_t)dev_read_addr_ptr(dev);
+ 
+ 	if (!engine->reg_base) {
+@@ -671,6 +673,9 @@ static int sunxi_de_parse_dts(struct udevice *dev,
+ 		engine->mclk_ahb = NULL;
+ 	}
+ 
++	if (!reset_get_bulk(dev, &resets))
++		reset_deassert_bulk(&resets);
++
+ 	engine->irq_no = sunxi_of_get_irq_number(dev, 0);
+ 	if (!engine->irq_no) {
+ 		DRM_ERROR("irq_of_parse_and_map de irq fail\n");
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
+index eee77984aa9..d05affed69b 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_top.c
+@@ -9,6 +9,8 @@
+  * License version 2.  This program is licensed "as is" without any
+  * warranty of any kind, whether express or implied.
+  */
++#include <asm/io.h>
++#include <linux/bitops.h>
+ #include "tcon_top_type.h"
+ #include "tcon_top.h"
+ 
+@@ -156,11 +158,13 @@ s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
+ 	if (sel >= TCON_DEVICE_MAX)
+ 		return -1;
+ 
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733)) || (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+ 	if (tcon_top[(sel > 2) ? 1 : 0]) {
+ 		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.tv0_clk_gate = en;
+ 		tcon_top[(sel > 2) ? 1 : 0]->tcon_clk_gate.bits.hdmi_src = en;
+ 	}
++	if (en)
++		setbits_le32((void *)0x05510020, BIT(28) | BIT(20));
+ #else
+ 	if (sel == 2)
+ 		tcon_top[0]->tcon_clk_gate.bits.tv0_clk_gate = en;
+@@ -179,7 +183,7 @@ s32 tcon1_hdmi_clk_enable(u32 sel, u32 en)
+ 
+ s32 tcon_hdmi_clk_src_sel(u32 sel, u32 src)
+ {
+-#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733))
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733)) || (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
+ 	/* next do: use platform data check version id */
+ 	u8 bank = 0;
+ 
+diff --git a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
+index eebaaf8a0e7..b19795cee16 100644
+--- a/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
++++ b/drivers/video/drm/sunxi_device/hardware/lowlevel_tcon/tcon_tv_reg.c
+@@ -36,7 +36,11 @@ s32 tcon_tv_init(struct sunxi_tcon_tv *tcon)
+ 	tcon->reg->tv_data_io_pol1.dwval = 0x0;
+ 	tcon->reg->tv_data_io_tri0.dwval = 0x0;
+ 	tcon->reg->tv_data_io_tri1.dwval = 0x0;
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733)) || (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
++	tcon->reg->pixel_depth_mode.dwval = 0x1; /* 8-bit RGB mode for A733 */
++#else
+ 	tcon->reg->pixel_depth_mode.dwval = 0x0;
++#endif
+ 
+ 	return 0;
+ }
+@@ -215,7 +219,14 @@ s32 tcon_tv_set_timming(struct sunxi_tcon_tv *tcon, struct disp_video_timings *t
+ {
+ 	tcon_tv_cfg(tcon, timming);
+ 
+-#if defined(HAVE_DEVICE_COMMON_MODULE)
++#if (IS_ENABLED(CONFIG_MACH_SUN60IW2)) || (IS_ENABLED(CONFIG_MACH_SUN65IW1)) || (IS_ENABLED(CONFIG_MACH_SUN60I_A733)) || (IS_ENABLED(CONFIG_ARCH_SUN60IW2))
++	/* A733 / sun60iw2: 0 = Enable / Pass, 1 = Disable / Tri-state */
++	tcon->reg->tcon_tv_io_pol.bits.io2_inv = 0;
++	tcon->reg->tcon_tv_io_tri.dwval = 0x00000000;
++	tcon->reg->tv_data_io_tri0.dwval = 0x00000000;
++	tcon->reg->tv_data_io_tri1.dwval = 0x00000000;
++	tcon->reg->pixel_depth_mode.dwval = 0x00000001; /* 8-bit mode */
++#elif defined(HAVE_DEVICE_COMMON_MODULE)
+ 	/* these register in tv_tcon1 maping to tcon1's tcon0 position */
+ 	tcon->reg->tcon_tv_io_tri.bits.io0_output_tri_en = 0;
+ 	tcon->reg->tcon_tv_io_tri.bits.io1_output_tri_en = 0;
+diff --git a/drivers/video/drm/sunxi_drm_drv.c b/drivers/video/drm/sunxi_drm_drv.c
+index 8c5a5d5cade..8d273877428 100644
+--- a/drivers/video/drm/sunxi_drm_drv.c
++++ b/drivers/video/drm/sunxi_drm_drv.c
+@@ -606,6 +606,18 @@ static int sunxi_drm_drv_probe(struct udevice *dev)
+ 
+ 	sun60i_pck600_power_on_display();
+ 
++#if defined(CONFIG_MACH_SUN60I_A733) && !defined(CONFIG_SPL_BUILD)
++	/* Defensive un-gate: PLL_DE output gates 0/1 and Clock Matrix interconnects */
++	writel(0xEC125600, (void *)0x020022E0);
++	writel(0x00020001, (void *)0x02003B04);
++	writel(0x00020001, (void *)0x02003B34);
++	writel(0x00020001, (void *)0x02003B38);
++	writel(0x00010001, (void *)0x02002A74);
++	writel(0x00010001, (void *)0x02002A04);
++	writel(0x80000000, (void *)0x02002A00);
++#endif
++
++
+ 	route_node = dev_read_subnode(dev, "route");
+ 	if (!ofnode_valid(route_node))
+ 		return -ENODEV;
+@@ -742,6 +754,7 @@ static int sunxi_drm_drv_probe(struct udevice *dev)
+ 	display_pre_init();
+ 
+ 	sunxi_drm_for_each_display(tmp_s, drm) {
++		memset(&cmd2, 0, sizeof(cmd2));
+ 		cmd2.width = tmp_s->conn_state.mode.hdisplay;
+ 		cmd2.height = tmp_s->conn_state.mode.vdisplay;
+ 		cmd2.pixel_format = DRM_FORMAT_ARGB8888;
+@@ -809,10 +822,10 @@ U_BOOT_DRIVER(sunxi_display) = {
+ 	.bind	= sunxi_drm_drv_bind,
+ 	.probe	= sunxi_drm_drv_probe,
+ 	.priv_auto = sizeof(struct sunxi_drm_device),
+-	.flags = DM_FLAG_PRE_RELOC,
+ };
+ 
+ 
++
+ struct sunxi_drm_crtc *sunxi_drm_crtc_find(struct sunxi_drm_device *drm, int crtc_id)
+ {
+ 	struct display_state *state;
+@@ -1681,7 +1694,9 @@ int sunxi_simplefb_setup(void *blob)
+ 	struct udevice *dev;
+ 	struct video_priv *uc_priv;
+ 	struct video_uc_plat *plat;
+-	int offset, ret;
++	u64 start[CONFIG_NR_DRAM_BANKS];
++	u64 size[CONFIG_NR_DRAM_BANKS];
++	int offset, ret, banks, chosen;
+ 
+ 	ret = uclass_get_device_by_driver(UCLASS_VIDEO, DM_DRIVER_GET(sunxi_display), &dev);
+ 	if (ret) {
+@@ -1702,29 +1717,26 @@ int sunxi_simplefb_setup(void *blob)
+ 
+ 	fdt_increase_size(blob, 4096);
+ 
++	chosen = fdt_path_offset(blob, "/chosen");
++	if (chosen < 0)
++		chosen = fdt_add_subnode(blob, 0, "chosen");
++	if (chosen >= 0) {
++		fdt_setprop_u32(blob, chosen, "#address-cells", 2);
++		fdt_setprop_u32(blob, chosen, "#size-cells", 2);
++		fdt_setprop_empty(blob, chosen, "ranges");
++	}
++
+ 	offset = fdt_path_offset(blob, "/chosen/framebuffer@bbf12000");
+ 	if (offset < 0)
+ 		offset = fdt_path_offset(blob, "/chosen/framebuffer");
+ 	if (offset < 0)
+ 		offset = fdt_node_offset_by_compatible(blob, -1, "simple-framebuffer");
+-	if (offset < 0) {
+-		int chosen = fdt_path_offset(blob, "/chosen");
+-		if (chosen < 0)
+-			chosen = fdt_add_subnode(blob, 0, "chosen");
+-		if (chosen >= 0) {
+-			fdt_setprop_u32(blob, chosen, "#address-cells", 2);
+-			fdt_setprop_u32(blob, chosen, "#size-cells", 2);
+-			fdt_setprop_empty(blob, chosen, "ranges");
+-			offset = fdt_add_subnode(blob, chosen, "framebuffer");
+-			if (offset >= 0)
+-				fdt_setprop_string(blob, offset, "compatible", "simple-framebuffer");
+-		}
++	if (offset < 0 && chosen >= 0) {
++		offset = fdt_add_subnode(blob, chosen, "framebuffer");
++		if (offset >= 0)
++			fdt_setprop_string(blob, offset, "compatible", "simple-framebuffer");
+ 	}
+ 
+-	u64 start[CONFIG_NR_DRAM_BANKS];
+-	u64 size[CONFIG_NR_DRAM_BANKS];
+-	int banks;
+-
+ 	for (banks = 0; banks < CONFIG_NR_DRAM_BANKS; banks++) {
+ 		if (!gd->bd->bi_dram[banks].size)
+ 			break;
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index a5fbfeb3284..4912974893e 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -460,6 +460,7 @@
+ 
+ 		sunxi_drm: sunxi-drm {
+ 			compatible = "allwinner,sunxi-drm";
++			bootph-all;
+ 			status = "disabled";
+ 
+ 			route {
+@@ -479,6 +480,8 @@
+ 				     <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
+ 			clocks = <&ccu CLK_DE0>, <&ccu CLK_BUS_DE0>;
+ 			clock-names = "clk_de", "clk_bus_de";
++			resets = <&ccu RST_BUS_DE0>, <&ccu RST_BUS_DE_SY>;
++			reset-names = "rst_bus_de", "rst_bus_de_sys";
+ 			status = "disabled";
+ 
+ 			ports {
+-- 
+2.53.0
+

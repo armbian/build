@@ -1,0 +1,197 @@
+From e60efe5e9e3ee39af01b5e3e5b8b8ae9b709cc08 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 11:02:10 +1000
+Subject: [PATCH 19/23] board: sunxi: orangepi_4_pro: Enable Tier 1 and 2
+ peripherals and board autostart
+
+Enable all Tier 1 and Tier 2 peripherals in defconfig, configure late board init
+(CCU/SPC un-gating, PMIC rails, CPU temp display), and enable board DTS nodes.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ board/sunxi/board.c                           | 42 +++++++++++++++
+ configs/orangepi_4_pro_defconfig              | 36 +++++++++++++
+ .../allwinner/sun60i-a733-orangepi-4-pro.dts  | 51 +++++++++++++++++++
+ 3 files changed, 129 insertions(+)
+
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index f5718d1f6e6..424533dd7e0 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -50,6 +50,12 @@
+ #include <spl.h>
+ #include <sy8106a.h>
+ #include <asm/setup.h>
++#if CONFIG_IS_ENABLED(DM_REGULATOR)
++#include <power/regulator.h>
++#endif
++#if CONFIG_IS_ENABLED(DM_THERMAL)
++#include <thermal.h>
++#endif
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+ 
+@@ -1166,12 +1172,48 @@ int misc_init_r(void)
+ 	return 0;
+ }
+ 
++#include <linux/arm-smccc.h>
++
+ int board_late_init(void)
+ {
+ #ifdef CONFIG_USB_ETHER
+ 	usb_ether_init();
+ #endif
+ 
++#if defined(CONFIG_MACH_SUN60I_A733)
++	/* Unlock Non-Secure access to CCMU clock registers and SPC ports */
++	struct arm_smccc_res smc_res;
++	int spc_idx;
++
++	/* CCMU_SEC_SWITCH_REG: unlock MBUS, BUS, PLL clock registers */
++	arm_smccc_smc(0xC000FF06, 0x02003F00, 0x00000007, 0, 0, 0, 0, 0, &smc_res);
++
++	/* SPC_SETTING_REGs: enable non-secure access to all 24 master ports */
++	for (spc_idx = 0; spc_idx <= 0x5C; spc_idx += 4)
++		arm_smccc_smc(0xC000FF06, 0x02054000 + spc_idx, 0xFFFFFFFF, 0, 0, 0, 0, 0, &smc_res);
++
++#if CONFIG_IS_ENABLED(DM_REGULATOR)
++	/* Ensure all critical PMIC rails are active */
++	struct udevice *reg;
++	regulator_autoset_by_name("vcc-pk", &reg);
++	regulator_autoset_by_name("vcc-pj", &reg);
++	regulator_autoset_by_name("vcc-1v8-audio", &reg);
++	regulator_autoset_by_name("vcc-ephy", &reg);
++	regulator_autoset_by_name("vcc-gmac-io", &reg);
++#endif
++
++#if CONFIG_IS_ENABLED(DM_THERMAL)
++	/* Read and display CPU temperature */
++	struct udevice *thermal_dev;
++	int temp;
++
++	if (!uclass_first_device_err(UCLASS_THERMAL, &thermal_dev)) {
++		if (!thermal_get_temp(thermal_dev, &temp))
++			printf("CPU Temperature: %d C\n", temp / 1000);
++	}
++#endif
++#endif
++
+ 	return 0;
+ }
+ 
+diff --git a/configs/orangepi_4_pro_defconfig b/configs/orangepi_4_pro_defconfig
+index a274ce643a3..367c89cd11e 100644
+--- a/configs/orangepi_4_pro_defconfig
++++ b/configs/orangepi_4_pro_defconfig
+@@ -63,4 +63,40 @@ CONFIG_NVME=y
+ CONFIG_NVME_PCI=y
+ CONFIG_CMD_PCI=y
+ CONFIG_CMD_NVME=y
++CONFIG_PWM=y
++CONFIG_DM_PWM=y
++CONFIG_PWM_SUN50I=y
++CONFIG_CMD_PWM=y
++CONFIG_DM_I2C=y
++CONFIG_DM_PMIC=y
++CONFIG_PMIC_AXP=y
++CONFIG_REGULATOR_AXP=y
++CONFIG_CMD_I2C=y
++CONFIG_CMD_PMIC=y
++CONFIG_CMD_REGULATOR=y
++CONFIG_DM_RNG=y
++CONFIG_RNG_SUN8I_CE=y
++CONFIG_CMD_RNG=y
++CONFIG_KASLR_SEED=y
++CONFIG_DM_THERMAL=y
++CONFIG_SUN8I_THERMAL=y
++CONFIG_CMD_TEMPERATURE=y
++CONFIG_ADC=y
++CONFIG_ADC_SUN20I=y
++CONFIG_CMD_ADC=y
++CONFIG_SPI=y
++CONFIG_DM_SPI=y
++CONFIG_SPI_SUNXI=y
++CONFIG_MTD=y
++CONFIG_DM_MTD=y
++CONFIG_DM_SPI_FLASH=y
++CONFIG_SPI_FLASH=y
++CONFIG_SPI_FLASH_SFDP_SUPPORT=y
++CONFIG_SPI_FLASH_MACRONIX=y
++CONFIG_SPI_FLASH_WINBOND=y
++CONFIG_SPI_FLASH_GIGADEVICE=y
++CONFIG_CMD_SF=y
++CONFIG_CMD_SPI=y
++CONFIG_CMD_SMC=y
++
+ 
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts b/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
+index fa87d1b98a8..d2819b14669 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733-orangepi-4-pro.dts
+@@ -97,6 +97,30 @@
+ 				regulator-min-microvolt = <3300000>;
+ 				regulator-max-microvolt = <3300000>;
+ 			};
++
++			reg_bldo1: bldo1 {
++				regulator-name = "vcc-pk";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-always-on;
++				regulator-boot-on;
++			};
++
++			reg_bldo2: bldo2 {
++				regulator-name = "vcc-pj";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-always-on;
++				regulator-boot-on;
++			};
++
++			reg_bldo4: bldo4 {
++				regulator-name = "vcc-1v8-audio";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <1800000>;
++				regulator-always-on;
++				regulator-boot-on;
++			};
+ 		};
+ 	};
+ };
+@@ -158,3 +182,30 @@
+ 	reset-gpios = <&pio 3 22 GPIO_ACTIVE_HIGH>;
+ 	wake-gpios = <&pio 3 21 GPIO_ACTIVE_HIGH>;
+ };
++
++&s_pwm {
++	status = "okay";
++};
++
++&spi0 {
++	status = "okay";
++
++	flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <50000000>;
++	};
++};
++
++&ths {
++	status = "okay";
++};
++
++&gpadc {
++	status = "okay";
++};
++
++&ce {
++	status = "okay";
++};
++
+-- 
+2.53.0
+

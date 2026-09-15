@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sun, 13 Sep 2026 21:00:00 +1000
+Subject: [PATCH] mmc: sunxi: add support for Allwinner A733 / A523 MMC controller
+
+1. U-Boot sets SUNXI_MMC_THLDC (0x100) to 0x02000005 (WRITE_EN bit 2).
+   Upstream Linux never clears REG_THLDC. In High-Speed SD mode, WRITE_EN
+   stalls IDMAC writes indefinitely in D state, hanging multi-block writes.
+   Clear REG_THLDC in reset and init, and configure REG_CSDC to 3.
+2. In sunxi_mmc_start_dma(), wait for SDXC_IDMAC_SOFT_RESET to clear and
+   reload REG_DLBA on every transfer because soft-reset clears it.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+---
+ drivers/mmc/host/sunxi-mmc.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/mmc/host/sunxi-mmc.c b/drivers/mmc/host/sunxi-mmc.c
+index fe4c0f6d73f3..9ddac9adbfe7 100644
+--- a/drivers/mmc/host/sunxi-mmc.c
++++ b/drivers/mmc/host/sunxi-mmc.c
+@@ -58,6 +58,7 @@
+ #define SDXC_REG_CBCR	(0x48) /* SMC CIU Byte Count Register */
+ #define SDXC_REG_BBCR	(0x4C) /* SMC BIU Byte Count Register */
+ #define SDXC_REG_DBGC	(0x50) /* SMC Debug Enable Register */
++#define SDXC_REG_CSDC	(0x54) /* SMC CRC status detect control register */
+ #define SDXC_REG_HWRST	(0x78) /* SMC Card Hardware Reset for Register */
+ #define SDXC_REG_DMAC	(0x80) /* SMC IDMAC Control Register */
+ #define SDXC_REG_DLBA	(0x84) /* SMC IDMAC Descriptor List Base Addre */
+@@ -72,6 +73,7 @@
+ #define SDXC_REG_DRV_DL		0x140 /* Drive Delay Control Register */
+ #define SDXC_REG_SAMP_DL_REG	0x144 /* SMC sample delay control */
+ #define SDXC_REG_DS_DL_REG	0x148 /* SMC data strobe delay control */
++#define SDXC_REG_THLDC		0x100 /* SMC Card Threshold Control Register */
+ 
+ #define mmc_readl(host, reg) \
+ 	readl((host)->reg_base + SDXC_##reg)
+@@ -317,6 +319,8 @@ static int sunxi_mmc_reset_host(struct sunxi_mmc_host *host)
+ 		return -EIO;
+ 	}
+ 
++	mmc_writel(host, REG_THLDC, 0);
++
+ 	return 0;
+ }
+ 
+@@ -341,6 +345,9 @@ static int sunxi_mmc_init_host(struct sunxi_mmc_host *host)
+ 	mmc_writel(host, REG_RINTR, 0xffffffff);
+ 	/* Debug register? undocumented */
+ 	mmc_writel(host, REG_DBGC, 0xdeb);
++	/* Clear card read/write threshold control inherited from U-Boot */
++	mmc_writel(host, REG_THLDC, 0);
++	mmc_writel(host, REG_CSDC, 3);
+ 	/* Enable CEATA support */
+ 	mmc_writel(host, REG_FUNS, SDXC_CEATA_ON);
+ 	/* Set DMA descriptor list base address */
+@@ -433,6 +440,10 @@ static void sunxi_mmc_start_dma(struct sunxi_mmc_host *host,
+ 	mmc_writel(host, REG_GCTRL, rval);
+ 
+ 	mmc_writel(host, REG_DMAC, SDXC_IDMAC_SOFT_RESET);
++	while (mmc_readl(host, REG_DMAC) & SDXC_IDMAC_SOFT_RESET)
++		cpu_relax();
++
++	mmc_writel(host, REG_DLBA, host->sg_dma >> host->cfg->idma_des_shift);
+ 
+ 	if (!(data->flags & MMC_DATA_WRITE))
+ 		mmc_writel(host, REG_IDIE, SDXC_IDMAC_RECEIVE_INTERRUPT);
+-- 
+Armbian

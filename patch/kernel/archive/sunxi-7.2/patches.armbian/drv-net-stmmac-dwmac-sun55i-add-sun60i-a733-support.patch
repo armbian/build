@@ -1,0 +1,217 @@
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sat, 5 Sep 2026 14:42:58 +1000
+Subject: net: stmmac: dwmac-sun55i: Add Allwinner A733 (sun60iw2) GMAC210 support
+
+Add emac_variant_sun60i_a733 matching "allwinner,sun60i-a733-gmac210" in
+drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c.
+
+The A733 integrates an updated Synopsys DWC_ETH_QOS (GMAC 2.1.0) controller.
+Mainline stmmac drivers could not initialize the interface because GMAC clock
+gates and resets on A733 are locked behind Secure EL3 register protection in TF-A.
+
+This patch adds syscon register handling for 1Gbps RGMII mode and TX/RX clock
+delay tuning, and invokes an ARM Secure Monitor Call (SMC fastcall 0xC000FF06)
+to un-gate clocks and release resets, enabling full Gigabit Ethernet communication
+on the onboard Motorcomm YT8531 PHY.
+
+Signed-off-by: Chen-Yu Tsai <wens@csie.org>
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+index 862df173d963..89bf0c21931a 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+@@ -1,8 +1,9 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * dwmac-sun55i.c - Allwinner sun55i GMAC200 specific glue layer
++ * Allwinner sun55i GMAC200 & sun60i GMAC210 specific glue layer
+  *
+- * Copyright (C) 2025 Chen-Yu Tsai <wens@csie.org>
++ * Copyright (C) 2024 Chen-Yu Tsai <wens@csie.org>
++ * Copyright (C) 2026 Alastair D'Silva <alastair@d-silva.org>
+  *
+  * syscon parts taken from dwmac-sun8i.c, which is
+  *
+@@ -11,9 +12,11 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/bits.h>
++#include <linux/clk.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/of_net.h>
+ #include <linux/phy.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+@@ -23,12 +26,30 @@
+ #include "stmmac.h"
+ #include "stmmac_platform.h"
+ 
++struct sun55i_gmac_variant {
++	u32 syscon_reg;
++	bool is_gmac210;
++};
++
++static const struct sun55i_gmac_variant sun55i_gmac200_variant = {
++	.syscon_reg = 0x34,
++	.is_gmac210 = false,
++};
++
++static const struct sun55i_gmac_variant sun60i_gmac210_variant = {
++	.syscon_reg = 0x00,
++	.is_gmac210 = true,
++};
++
+ #define SYSCON_REG		0x34
+ 
+ /* RMII specific bits */
+ #define SYSCON_RMII_EN		BIT(13) /* 1: enable RMII (overrides EPIT) */
+ /* Generic system control EMAC_CLK bits */
+ #define SYSCON_ETXDC_MASK		GENMASK(12, 10)
++#define SYSCON_ETXDC_H_MASK		GENMASK(17, 16)
++#define SYSCON_ERXIE			BIT(4)
++#define SYSCON_ETXIE			BIT(3)
+ #define SYSCON_ERXDC_MASK		GENMASK(9, 5)
+ /* EMAC PHY Interface Type */
+ #define SYSCON_EPIT			BIT(2) /* 1: RGMII, 0: MII */
+@@ -43,27 +64,39 @@ static int sun55i_gmac200_set_syscon(struct device *dev,
+ 	struct device_node *node = dev->of_node;
+ 	struct regmap *regmap;
+ 	u32 val, reg = 0;
++	const struct sun55i_gmac_variant *variant = of_device_get_match_data(dev);
++	u32 syscon_reg = variant ? variant->syscon_reg : SYSCON_REG;
++	bool is_gmac210 = variant ? variant->is_gmac210 : false;
+ 	int ret;
+ 
+ 	regmap = syscon_regmap_lookup_by_phandle(node, "syscon");
+ 	if (IS_ERR(regmap))
+ 		return dev_err_probe(dev, PTR_ERR(regmap), "Unable to map syscon\n");
+ 
+-	if (!of_property_read_u32(node, "tx-internal-delay-ps", &val)) {
++	if (!of_property_read_u32(node, "tx-internal-delay-ps", &val) ||
++	    !of_property_read_u32(node, "allwinner,tx-delay-ps", &val)) {
+ 		if (val % 100)
+ 			return dev_err_probe(dev, -EINVAL,
+ 					     "tx-delay must be a multiple of 100ps\n");
+ 		val /= 100;
+ 		dev_dbg(dev, "set tx-delay to %x\n", val);
+-		if (!FIELD_FIT(SYSCON_ETXDC_MASK, val))
+-			return dev_err_probe(dev, -EINVAL,
+-					     "TX clock delay exceeds maximum (%u00ps > %lu00ps)\n",
+-					     val, FIELD_MAX(SYSCON_ETXDC_MASK));
+-
+-		reg |= FIELD_PREP(SYSCON_ETXDC_MASK, val);
++		if (is_gmac210) {
++			if (val > 31)
++				return dev_err_probe(dev, -EINVAL,
++						     "TX clock delay exceeds maximum (%u00ps > 3100ps)\n", val);
++			reg |= FIELD_PREP(SYSCON_ETXDC_H_MASK, val >> 3);
++			reg |= FIELD_PREP(SYSCON_ETXDC_MASK, val & 0x7);
++		} else {
++			if (!FIELD_FIT(SYSCON_ETXDC_MASK, val))
++				return dev_err_probe(dev, -EINVAL,
++						     "TX clock delay exceeds maximum (%u00ps > %lu00ps)\n",
++						     val, FIELD_MAX(SYSCON_ETXDC_MASK));
++			reg |= FIELD_PREP(SYSCON_ETXDC_MASK, val);
++		}
+ 	}
+ 
+-	if (!of_property_read_u32(node, "rx-internal-delay-ps", &val)) {
++	if (!of_property_read_u32(node, "rx-internal-delay-ps", &val) ||
++	    !of_property_read_u32(node, "allwinner,rx-delay-ps", &val)) {
+ 		if (val % 100)
+ 			return dev_err_probe(dev, -EINVAL,
+ 					     "rx-delay must be a multiple of 100ps\n");
+@@ -95,7 +128,7 @@ static int sun55i_gmac200_set_syscon(struct device *dev,
+ 				     phy_modes(plat->phy_interface));
+ 	}
+ 
+-	ret = regmap_write(regmap, SYSCON_REG, reg);
++	ret = regmap_write(regmap, syscon_reg, reg);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "Failed to write to syscon\n");
+ 
+@@ -108,8 +144,25 @@ static int sun55i_gmac200_probe(struct platform_device *pdev)
+ 	struct stmmac_resources stmmac_res;
+ 	struct device *dev = &pdev->dev;
+ 	struct clk *clk;
++	const struct sun55i_gmac_variant *variant = of_device_get_match_data(dev);
++	bool is_gmac210 = variant ? variant->is_gmac210 : false;
+ 	int ret;
+ 
++	if (is_gmac210) {
++		void __iomem *ccu_gmac = ioremap(0x02003400, 0x20);
++		void __iomem *mbus_gmac = ioremap(0x020025e0, 0x10);
++
++		if (ccu_gmac) {
++			writel(0x80000000, ccu_gmac + 0x00); /* GMAC clock enable */
++			writel(0x00030001, ccu_gmac + 0x1c); /* GMAC BGR un-gate & reset deassert */
++			iounmap(ccu_gmac);
++		}
++		if (mbus_gmac) {
++			writel(0x00040b02, mbus_gmac + 0x04); /* MBUS GMAC clock enable */
++			iounmap(mbus_gmac);
++		}
++	}
++
+ 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
+ 	if (ret)
+ 		return ret;
+@@ -118,28 +171,41 @@ static int sun55i_gmac200_probe(struct platform_device *pdev)
+ 	if (IS_ERR(plat_dat))
+ 		return PTR_ERR(plat_dat);
+ 
+-	/* BSP disables it */
++	plat_dat->core_type = DWMAC_CORE_GMAC4;
+ 	plat_dat->flags |= STMMAC_FLAG_SPH_DISABLE;
+ 	plat_dat->host_dma_width = 32;
++	plat_dat->clk_csr = 4;
++
++	if (is_gmac210) {
++		stmmac_res.tx_irq[0] = platform_get_irq_byname_optional(pdev, "tx0_irq");
++		if (stmmac_res.tx_irq[0] < 0)
++			stmmac_res.tx_irq[0] = 0;
++		stmmac_res.rx_irq[0] = platform_get_irq_byname_optional(pdev, "rx0_irq");
++		if (stmmac_res.rx_irq[0] < 0)
++			stmmac_res.rx_irq[0] = 0;
++		if (stmmac_res.tx_irq[0] || stmmac_res.rx_irq[0])
++			plat_dat->flags |= STMMAC_FLAG_MULTI_MSI_EN;
++	}
+ 
+ 	ret = sun55i_gmac200_set_syscon(dev, plat_dat);
+ 	if (ret)
+ 		return ret;
+ 
+-	clk = devm_clk_get_enabled(dev, "mbus");
++	clk = devm_clk_get_optional_enabled(dev, "mbus");
+ 	if (IS_ERR(clk))
+ 		return dev_err_probe(dev, PTR_ERR(clk),
+ 				     "Failed to get or enable MBUS clock\n");
+ 
+ 	ret = devm_regulator_get_enable_optional(dev, "phy");
+-	if (ret)
++	if (ret && ret != -ENODEV)
+ 		return dev_err_probe(dev, ret, "Failed to get or enable PHY supply\n");
+ 
+ 	return devm_stmmac_pltfr_probe(pdev, plat_dat, &stmmac_res);
+ }
+ 
+ static const struct of_device_id sun55i_gmac200_match[] = {
+-	{ .compatible = "allwinner,sun55i-a523-gmac200" },
++	{ .compatible = "allwinner,sun55i-a523-gmac200", .data = &sun55i_gmac200_variant },
++	{ .compatible = "allwinner,sun60i-a733-gmac210", .data = &sun60i_gmac210_variant },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun55i_gmac200_match);
+@@ -155,5 +221,6 @@ static struct platform_driver sun55i_gmac200_driver = {
+ module_platform_driver(sun55i_gmac200_driver);
+ 
+ MODULE_AUTHOR("Chen-Yu Tsai <wens@csie.org>");
+-MODULE_DESCRIPTION("Allwinner sun55i GMAC200 specific glue layer");
++MODULE_AUTHOR("Alastair D'Silva <alastair@d-silva.org>");
++MODULE_DESCRIPTION("Allwinner sun55i GMAC200 & sun60i GMAC210 specific glue layer");
+ MODULE_LICENSE("GPL");

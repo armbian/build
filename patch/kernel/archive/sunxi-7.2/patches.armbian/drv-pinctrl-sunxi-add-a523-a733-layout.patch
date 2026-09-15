@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Sat, 5 Sep 2026 14:42:58 +1000
+Subject: pinctrl: sunxi: Add Allwinner A523 and A733 register layout and IO bias support
+
+Add SUNXI_PINCTRL_A523_REG_LAYOUT supporting 0x80 byte GPIO bank spacing, and
+add SUNXI_PINCTRL_A733_POW_MOD with BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT for 2-bit
+IO bias voltage selection in register 0x040.
+
+Modern Allwinner NCAT2 SoCs (A523, T527, A733) space GPIO banks by 0x80 bytes
+(A523_BANK_MEM_SIZE 0x80, A523_BANK_BASE_OFFSET 0x80) rather than the 0x24/0x30
+byte spacing used on older generations. Furthermore, the A733 configures bank
+voltage levels (1.8V vs 3.3V) using 2-bit fields per bank in register 0x040
+(0x2 for 3.3V, 0x3 for 1.8V).
+
+This patch ensures pinctrl reads and writes to the correct physical registers
+and accurately programs IO bias voltage levels when switching signal voltages
+on Port C (eMMC) and Port E (SD card).
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+
+---
+ drivers/pinctrl/sunxi/pinctrl-sun55i-a523.c | 20 ++++++++++++++---
+ drivers/pinctrl/sunxi/pinctrl-sunxi.c       | 33 ++++++++++++++++++++++++++++-
+ drivers/pinctrl/sunxi/pinctrl-sunxi.h       | 18 ++++++++++++++++
+ 3 files changed, 67 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sun55i-a523.c b/drivers/pinctrl/sunxi/pinctrl-sun55i-a523.c
+index 88d8acd..5c27ede 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sun55i-a523.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sun55i-a523.c
+@@ -29,17 +29,31 @@ static struct sunxi_pinctrl_desc a523_pinctrl_data = {
+ 	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_CTL_INV,
+ };
+ 
++static struct sunxi_pinctrl_desc a733_pinctrl_data = {
++	.irq_banks = ARRAY_SIZE(a523_irq_bank_map),
++	.irq_bank_map = a523_irq_bank_map,
++	.io_bias_cfg_variant = BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT,
++};
++
+ static int a523_pinctrl_probe(struct platform_device *pdev)
+ {
++	unsigned long flags = SUNXI_PINCTRL_A523_REG_LAYOUT |
++			      SUNXI_PINCTRL_ELEVEN_BANKS;
++	struct sunxi_pinctrl_desc *desc = &a523_pinctrl_data;
++
++	if (of_device_is_compatible(pdev->dev.of_node, "allwinner,sun60i-a733-pinctrl")) {
++		flags |= SUNXI_PINCTRL_A733_POW_MOD;
++		desc = &a733_pinctrl_data;
++	}
++
+ 	return sunxi_pinctrl_dt_table_init(pdev, a523_nr_bank_pins,
+ 					   a523_irq_bank_muxes,
+-					   &a523_pinctrl_data,
+-					   SUNXI_PINCTRL_NEW_REG_LAYOUT |
+-					   SUNXI_PINCTRL_ELEVEN_BANKS);
++					   desc, flags);
+ }
+ 
+ static const struct of_device_id a523_pinctrl_match[] = {
+ 	{ .compatible = "allwinner,sun55i-a523-pinctrl", },
++	{ .compatible = "allwinner,sun60i-a733-pinctrl", },
+ 	{}
+ };
+ 
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.c b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+index 3d51eae..7611fe0 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.c
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.c
+@@ -67,6 +67,9 @@ static u32 sunxi_bank_offset(const struct sunxi_pinctrl *pctl, u32 pin)
+ {
+ 	u32 offset = 0;
+ 
++	if (pctl->flags & SUNXI_PINCTRL_A523_REG_LAYOUT)
++		return A523_BANK_BASE_OFFSET + (pin / PINS_PER_BANK) * A523_BANK_MEM_SIZE;
++
+ 	if (pin >= PK_BASE) {
+ 		pin -= PK_BASE;
+ 		offset = PIO_BANK_K_OFFSET;
+@@ -101,8 +104,9 @@ static void sunxi_dlevel_reg(const struct sunxi_pinctrl *pctl,
+ 			     u32 pin, u32 *reg, u32 *shift, u32 *mask)
+ {
+ 	u32 offset = pin % PINS_PER_BANK * pctl->dlevel_field_width;
++	u32 dlevel_offset = pctl->dlevel_regs_offset ? pctl->dlevel_regs_offset : DLEVEL_REGS_OFFSET;
+ 
+-	*reg   = sunxi_bank_offset(pctl, pin) + DLEVEL_REGS_OFFSET +
++	*reg   = sunxi_bank_offset(pctl, pin) + dlevel_offset +
+ 		 offset / BITS_PER_TYPE(u32) * sizeof(u32);
+ 	*shift = offset % BITS_PER_TYPE(u32);
+ 	*mask  = (BIT(pctl->dlevel_field_width) - 1) << *shift;
+@@ -796,6 +800,18 @@ static int sunxi_pinctrl_set_io_bias_cfg(struct sunxi_pinctrl *pctl,
+ 		       pctl->membase + pctl->pow_mod_sel_offset);
+ 		raw_spin_unlock_irqrestore(&pctl->lock, flags);
+ 		return 0;
++	case BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT:
++		val = uV <= 1800000 ? 0x3 : 0x2;
++
++		raw_spin_lock_irqsave(&pctl->lock, flags);
++		reg = readl(pctl->membase + pctl->pow_mod_sel_offset);
++		reg &= ~(0x3 << (bank * 2));
++		writel(reg | (val << (bank * 2)),
++		       pctl->membase + pctl->pow_mod_sel_offset);
++		raw_spin_unlock_irqrestore(&pctl->lock, flags);
++		dev_info(pctl->dev, "bank P%c bias voltage set to %d uV (val=0x%x, reg=0x%08x)\n",
++			 'A' + bank, uV, val, readl(pctl->membase + pctl->pow_mod_sel_offset));
++		return 0;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -1597,16 +1613,25 @@ int sunxi_pinctrl_init_with_flags(struct platform_device *pdev,
+ 	pctl->dev = &pdev->dev;
+ 	pctl->desc = desc;
+ 	pctl->flags = flags;
+-	if (flags & SUNXI_PINCTRL_NEW_REG_LAYOUT) {
++	if (flags & SUNXI_PINCTRL_A523_REG_LAYOUT) {
++		pctl->bank_mem_size = A523_BANK_MEM_SIZE;
++		pctl->pull_regs_offset = A523_PULL_REGS_OFFSET;
++		pctl->dlevel_regs_offset = A523_DLEVEL_REGS_OFFSET;
++		pctl->dlevel_field_width = D1_DLEVEL_FIELD_WIDTH;
++	} else if (flags & SUNXI_PINCTRL_NEW_REG_LAYOUT) {
+ 		pctl->bank_mem_size = D1_BANK_MEM_SIZE;
+ 		pctl->pull_regs_offset = D1_PULL_REGS_OFFSET;
++		pctl->dlevel_regs_offset = DLEVEL_REGS_OFFSET;
+ 		pctl->dlevel_field_width = D1_DLEVEL_FIELD_WIDTH;
+ 	} else {
+ 		pctl->bank_mem_size = BANK_MEM_SIZE;
+ 		pctl->pull_regs_offset = PULL_REGS_OFFSET;
++		pctl->dlevel_regs_offset = DLEVEL_REGS_OFFSET;
+ 		pctl->dlevel_field_width = DLEVEL_FIELD_WIDTH;
+ 	}
+-	if (flags & SUNXI_PINCTRL_ELEVEN_BANKS)
++	if (flags & SUNXI_PINCTRL_A733_POW_MOD)
++		pctl->pow_mod_sel_offset = PIO_A733_POW_MOD_SEL_REG;
++	else if (flags & SUNXI_PINCTRL_ELEVEN_BANKS)
+ 		pctl->pow_mod_sel_offset = PIO_11B_POW_MOD_SEL_REG;
+ 	else
+ 		pctl->pow_mod_sel_offset = PIO_POW_MOD_SEL_REG;
+diff --git a/drivers/pinctrl/sunxi/pinctrl-sunxi.h b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+index 7f81015..c855c36 100644
+--- a/drivers/pinctrl/sunxi/pinctrl-sunxi.h
++++ b/drivers/pinctrl/sunxi/pinctrl-sunxi.h
+@@ -93,9 +93,17 @@
+ #define SUNXI_PINCTRL_NEW_REG_LAYOUT	BIT(8)
+ #define SUNXI_PINCTRL_PORTF_SWITCH	BIT(9)
+ #define SUNXI_PINCTRL_ELEVEN_BANKS	BIT(10)
++#define SUNXI_PINCTRL_A523_REG_LAYOUT	BIT(11)
++#define SUNXI_PINCTRL_A733_POW_MOD	BIT(12)
++
++#define A523_BANK_MEM_SIZE		0x80
++#define A523_BANK_BASE_OFFSET		0x80
++#define A523_DLEVEL_REGS_OFFSET		0x20
++#define A523_PULL_REGS_OFFSET		0x30
+ 
+ #define PIO_POW_MOD_SEL_REG		0x340
+ #define PIO_11B_POW_MOD_SEL_REG		0x380
++#define PIO_A733_POW_MOD_SEL_REG	0x040
+ #define PIO_POW_MOD_CTL_OFS		0x004
+ 
+ #define PIO_BANK_K_OFFSET		0x500
+@@ -112,6 +120,11 @@ enum sunxi_desc_bias_voltage {
+ 	 * register, as seen on H6 SoC, for example.
+ 	 */
+ 	BIAS_VOLTAGE_PIO_POW_MODE_SEL,
++	/*
++	 * Bias voltage is set through 2-bit fields per bank, as seen on
++	 * Allwinner A733 SoC (0x2=3.3V, 0x3=1.8V).
++	 */
++	BIAS_VOLTAGE_PIO_POW_MODE_SEL_2BIT,
+ 	/*
+ 	 * Bias voltage is set through PIO_POW_MOD_SEL_REG
+ 	 * and PIO_POW_MOD_CTL_REG register, as seen on
+@@ -180,6 +193,7 @@ struct sunxi_pinctrl {
+ 	unsigned long			flags;
+ 	u32				bank_mem_size;
+ 	u32				pull_regs_offset;
++	u32				dlevel_regs_offset;
+ 	u32				dlevel_field_width;
+ 	u32				pow_mod_sel_offset;
+ };
+-- 
+Armbian

@@ -1,0 +1,281 @@
+From 6fc7f3fd573a0fc2ef8de9240e61d8c35286b45f Mon Sep 17 00:00:00 2001
+From: Alastair D'Silva <alastair@d-silva.org>
+Date: Tue, 8 Sep 2026 11:02:10 +1000
+Subject: [PATCH 18/23] pwm: sun50i: Add Allwinner modern enhanced PWM
+ controller driver
+
+Add UCLASS_PWM driver for modern Allwinner enhanced PWM controllers
+(H616, A523, A733), supporting modern enhanced PWM controllers.
+
+Signed-off-by: Alastair D'Silva <alastair@d-silva.org>
+Assisted-by: Antigravity <antigravity@google.com>
+---
+ drivers/pwm/Kconfig                           |   9 +
+ drivers/pwm/Makefile                          |   1 +
+ drivers/pwm/sun50i_pwm.c                      | 198 ++++++++++++++++++
+ .../src/arm64/allwinner/sun60i-a733.dtsi      |  14 ++
+ 4 files changed, 222 insertions(+)
+ create mode 100644 drivers/pwm/sun50i_pwm.c
+
+diff --git a/drivers/pwm/Kconfig b/drivers/pwm/Kconfig
+index a69fe37caff..1c5172868fa 100644
+--- a/drivers/pwm/Kconfig
++++ b/drivers/pwm/Kconfig
+@@ -120,6 +120,15 @@ config PWM_SUNXI
+ 	  This PWM is found on H3, A64 and other Allwinner SoCs. It supports a
+ 	  programmable period and duty cycle. A 16-bit counter is used.
+ 
++config PWM_SUN50I
++	bool "Enable support for Allwinner Modern Enhanced PWM"
++	depends on ARCH_SUNXI
++	help
++	  This PWM controller is found on H616, A523, A733 and newer Allwinner SoCs.
++	  It features independent channels with up to 10 channels per controller,
++	  per-pair clock gating, and high-resolution period/duty cycle programming.
++
++
+ config PWM_TI_EHRPWM
+ 	bool "Enable support for EHRPWM PWM"
+ 	depends on ARCH_OMAP2PLUS
+diff --git a/drivers/pwm/Makefile b/drivers/pwm/Makefile
+index 2682c536c6f..5fb5a000f1a 100644
+--- a/drivers/pwm/Makefile
++++ b/drivers/pwm/Makefile
+@@ -24,5 +24,6 @@ obj-$(CONFIG_PWM_SIFIVE)	+= pwm-sifive.o
+ obj-$(CONFIG_PWM_TEGRA)		+= tegra_pwm.o
+ obj-$(CONFIG_PWM_STM32)		+= pwm-stm32.o
+ obj-$(CONFIG_PWM_SUNXI)		+= sunxi_pwm.o
++obj-$(CONFIG_PWM_SUN50I)	+= sun50i_pwm.o
+ obj-$(CONFIG_PWM_TI_EHRPWM)	+= pwm-ti-ehrpwm.o
+ obj-$(CONFIG_PWM_TI_ECAP)	+= pwm-tiecap.o
+diff --git a/drivers/pwm/sun50i_pwm.c b/drivers/pwm/sun50i_pwm.c
+new file mode 100644
+index 00000000000..5e0f6354081
+--- /dev/null
++++ b/drivers/pwm/sun50i_pwm.c
+@@ -0,0 +1,198 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (C) 2026 Antigravity
++ * Allwinner sun50i/sun60i Enhanced PWM driver for U-Boot (UCLASS_PWM)
++ */
++
++#include <errno.h>
++#include <log.h>
++#include <linux/types.h>
++#include <clk.h>
++#include <dm.h>
++#include <div64.h>
++#include <pwm.h>
++#include <reset.h>
++#include <asm/io.h>
++
++#define PWM_PCCR01	0x0020
++#define PWM_PCCR23	0x0024
++#define PWM_PCCR45	0x0028
++#define PWM_PCCR67	0x002c
++#define PWM_PCCR8	0x0300
++#define PWM_PER		0x0040
++
++#define PWM_PCR_BASE	0x0060
++#define PWM_PPR_BASE	0x0064
++
++#define PWM_CLK_GATING_SHIFT	4
++#define PWM_ACT_STA_SHIFT	8
++
++struct sun50i_pwm_priv {
++	void __iomem *base;
++	struct clk bus_clk;
++	struct clk mod_clk;
++	struct reset_ctl reset;
++	u32 pwm_base;
++	u32 pwm_number;
++};
++
++static u32 get_pccr_offset(u32 ch)
++{
++	switch (ch) {
++	case 0:
++	case 1:
++		return PWM_PCCR01;
++	case 2:
++	case 3:
++		return PWM_PCCR23;
++	case 4:
++	case 5:
++		return PWM_PCCR45;
++	case 6:
++	case 7:
++		return PWM_PCCR67;
++	case 8:
++	case 9:
++		return PWM_PCCR8;
++	default:
++		return PWM_PCCR01;
++	}
++}
++
++static int sun50i_pwm_set_invert(struct udevice *dev, uint channel, bool polarity)
++{
++	struct sun50i_pwm_priv *priv = dev_get_priv(dev);
++	u32 pcr_offset = PWM_PCR_BASE + 0x20 * channel;
++	u32 val;
++
++	val = readl(priv->base + pcr_offset);
++	if (polarity)
++		val &= ~BIT(PWM_ACT_STA_SHIFT);
++	else
++		val |= BIT(PWM_ACT_STA_SHIFT);
++	writel(val, priv->base + pcr_offset);
++
++	return 0;
++}
++
++static int sun50i_pwm_set_config(struct udevice *dev, uint channel,
++				 uint period_ns, uint duty_ns)
++{
++	struct sun50i_pwm_priv *priv = dev_get_priv(dev);
++	u32 pccr = get_pccr_offset(channel);
++	u64 clk_hz = 24000000ULL;
++	u64 entire_cycles, active_cycles;
++	u32 prescale = 0;
++	u32 val;
++
++	if (period_ns == 0)
++		return -EINVAL;
++
++	/* Select 24MHz clock (clk_src = 0) */
++	val = readl(priv->base + pccr);
++	val &= ~(0x3 << 7); /* clk_src = 0 (24MHz) */
++	val &= ~(0xf << 0); /* div_m = 0 (div 1) */
++	writel(val, priv->base + pccr);
++
++	/* Calculate total cycles = 24M * period_ns / 1e9 */
++	entire_cycles = clk_hz * period_ns;
++	do_div(entire_cycles, 1000000000ULL);
++
++	/* Prescaler search if entire_cycles > 65536 */
++	while (entire_cycles > 65536 && prescale < 255) {
++		prescale++;
++		entire_cycles = (clk_hz * period_ns) / (1000000000ULL * (prescale + 1));
++	}
++
++	if (entire_cycles == 0)
++		entire_cycles = 1;
++
++	active_cycles = entire_cycles * duty_ns;
++	do_div(active_cycles, period_ns);
++
++	/* Write prescale to PCR */
++	val = readl(priv->base + PWM_PCR_BASE + 0x20 * channel);
++	val &= ~0xff;
++	val |= (prescale & 0xff);
++	/* Default active high */
++	val |= BIT(PWM_ACT_STA_SHIFT);
++	writel(val, priv->base + PWM_PCR_BASE + 0x20 * channel);
++
++	/* Write active and period cycles to PPR */
++	writel(((entire_cycles - 1) << 16) | (active_cycles & 0xffff),
++	       priv->base + PWM_PPR_BASE + 0x20 * channel);
++
++	return 0;
++}
++
++static int sun50i_pwm_set_enable(struct udevice *dev, uint channel, bool enable)
++{
++	struct sun50i_pwm_priv *priv = dev_get_priv(dev);
++	u32 pccr = get_pccr_offset(channel);
++	u32 val;
++
++	/* Enable clock gating in PCCR */
++	val = readl(priv->base + pccr);
++	if (enable)
++		val |= BIT(PWM_CLK_GATING_SHIFT);
++	writel(val, priv->base + pccr);
++
++	/* Enable/disable channel in PER */
++	val = readl(priv->base + PWM_PER);
++	if (enable)
++		val |= BIT(channel);
++	else
++		val &= ~BIT(channel);
++	writel(val, priv->base + PWM_PER);
++
++	return 0;
++}
++
++static int sun50i_pwm_probe(struct udevice *dev)
++{
++	struct sun50i_pwm_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -EINVAL;
++
++	dev_read_u32(dev, "pwm-base", &priv->pwm_base);
++	dev_read_u32(dev, "pwm-number", &priv->pwm_number);
++
++	ret = clk_get_by_name(dev, "bus", &priv->bus_clk);
++	if (!ret)
++		clk_enable(&priv->bus_clk);
++
++	ret = clk_get_by_name(dev, "mod", &priv->mod_clk);
++	if (!ret)
++		clk_enable(&priv->mod_clk);
++
++	ret = reset_get_by_index(dev, 0, &priv->reset);
++	if (!ret)
++		reset_deassert(&priv->reset);
++
++	return 0;
++}
++
++static const struct pwm_ops sun50i_pwm_ops = {
++	.set_invert = sun50i_pwm_set_invert,
++	.set_config = sun50i_pwm_set_config,
++	.set_enable = sun50i_pwm_set_enable,
++};
++
++static const struct udevice_id sun50i_pwm_ids[] = {
++	{ .compatible = "allwinner,sun60i-a733-pwm" },
++	{ .compatible = "allwinner,sun55i-a523-pwm" },
++	{ .compatible = "allwinner,sun50i-h616-pwm" },
++	{ }
++};
++
++U_BOOT_DRIVER(sun50i_pwm) = {
++	.name       = "sun50i_pwm",
++	.id         = UCLASS_PWM,
++	.of_match   = sun50i_pwm_ids,
++	.ops        = &sun50i_pwm_ops,
++	.probe      = sun50i_pwm_probe,
++	.priv_auto  = sizeof(struct sun50i_pwm_priv),
++};
+diff --git a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+index 891c2842c50..8032a34d3bf 100644
+--- a/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
++++ b/dts/upstream/src/arm64/allwinner/sun60i-a733.dtsi
+@@ -435,5 +435,19 @@
+ 			status = "disabled";
+ 		};
+ 
++		s_pwm: pwm@7023000 {
++			compatible = "allwinner,sun60i-a733-pwm",
++				     "allwinner,sun55i-a523-pwm",
++				     "allwinner,sun50i-h616-pwm";
++			reg = <0x07023000 0x400>;
++			interrupts = <GIC_SPI 207 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_R_BUS_PWM>, <&r_ccu CLK_R_PWM>;
++			clock-names = "bus", "mod";
++			resets = <&r_ccu RST_BUS_R_PWM>;
++			pwm-number = <10>;
++			pwm-base = <20>;
++			#pwm-cells = <3>;
++			status = "disabled";
++		};
+ 	};
+ };
+-- 
+2.53.0
+
