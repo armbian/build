@@ -60,5 +60,14 @@ function github_latest_release_tag() {
 		return 1
 	fi
 
+	# Callers interpolate the tag into URLs, filenames, and command strings that
+	# chroot_sdcard runs through `bash -c`, so a tag is only ever allowed to look
+	# like a version. Requiring the first character to be alphanumeric also keeps
+	# a leading "-" from being read as an option by wget and friends.
+	if [[ ! "${tag}" =~ ^[A-Za-z0-9][A-Za-z0-9._+~/-]*$ ]]; then
+		display_alert "Refusing release tag with unexpected characters for ${repo}" "'${tag}'" "error"
+		return 1
+	fi
+
 	echo "${tag}"
 }
