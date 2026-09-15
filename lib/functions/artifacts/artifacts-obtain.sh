@@ -311,6 +311,24 @@ function obtain_complete_artifact() {
 		# reversioning removes the original in packages-hashed.
 		debug_dict artifact_map_debs_reversioned
 		LOG_SECTION="artifact_reversion_for_deployment" do_with_logging artifact_reversion_for_deployment
+
+		# Reversioned .debs now sit under ${DEB_STORAGE} with their canonical
+		# names; converging point for build-from-sources, local-cache hit, and
+		# remote-cache fetch. Skipped on deploy_to_remote=yes — that path
+		# uploads to OCI and tears down ${artifact_base_dir} without leaving
+		# usable .debs on disk for downstream hooks to consume.
+		call_extension_method "artifact_ready" <<- 'ARTIFACT_READY'
+			*hook fired once an artifact is reversioned and ready to consume*
+			Called after `artifact_reversion_for_deployment` on the local-build
+			path (`deploy_to_remote!=yes`). The reversioned `.deb` filenames
+			are listed in `artifact_map_debs_reversioned_*`; the originals
+			under `${DEB_STORAGE}` no longer exist by this point. Context:
+			`WHAT` (CLI command), `artifact_name`, `artifact_version`,
+			`artifact_final_file`, `artifact_base_dir`, and the hash-keyed
+			`artifact_map_debs_*` / `artifact_map_packages_*` /
+			`artifact_map_debs_reversioned_*` arrays. Use this for side
+			effects that need a ready artifact (deploy, notification, …).
+		ARTIFACT_READY
 	fi
 }
 
