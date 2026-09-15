@@ -136,7 +136,7 @@
 
 --- a/drivers/gpu/drm/sun4i/sun55i_de.c
 +++ b/drivers/gpu/drm/sun4i/sun55i_de.c
-@@ -0,0 +1,1119 @@
+@@ -0,0 +1,1136 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Allwinner sun55iw3 v35x display engine RCQ backend.
@@ -363,15 +363,16 @@
 +		 "v35x RCQ arm target scanline; <0 = derive from mode");
 +
 +/*
-+ * The TV-TCON programs its vertical total as ver_total*2 for progressive modes
-+ * (vendor tcon1_cfg; mainline sun4i_tcon: V_TOTAL(crtc_vtotal * 2)), so the line
-+ * counter (TCON+0xfc) runs 0..2*vtotal. This matches the vendor's own arm-target
-+ * math (disp_mgr_protect_reg_for_rcq targets ~line 69 at 1080p60, which is only
-+ * in blanking when the counter is doubled). Default on; left as a live knob in
-+ * case a specific output path differs - flip it and watch arm_line_max vs
-+ * de_line_total. Takes effect at the next modetest (mode_set).
++ * The TV-TCON vertical total is programmed as ver_total*2 for progressive
++ * modes (vendor tcon1_cfg), so it was assumed the line counter (TCON+0xfc)
++ * runs 0..2*vtotal. Measured on Avaota A1 (HDMI 1080p60, /dev/mem sampling,
++ * 114944 samples): the counter runs RAW 0..vtotal (max 1125). With the
++ * doubled math the deferred arms land anywhere in 39..591 (mid active video,
++ * tearing); with raw math they cluster in the leading blanking. Default off;
++ * live knob in case a specific output path differs. Takes effect at the next
++ * modetest (mode_set).
 + */
-+static bool tcon_line_double = true;
++static bool tcon_line_double = false;
 +module_param(tcon_line_double, bool, 0644);
 +MODULE_PARM_DESC(tcon_line_double,
 +		 "TCON line counter runs 0..2*vtotal (half-lines)");
@@ -687,19 +688,25 @@
 +	/*
 +	 * Beam-gated arm timing (see sun55i_de_vblank_quirk). The TV-TCON line
 +	 * counter (cur_line, TCON+0xfc) is zeroed at the start of vertical sync
-+	 * and counts up to the programmed vertical total, which is doubled for
-+	 * progressive modes (ver_total*2) -> 0..2*vtotal. The RCQ must be armed
-+	 * during the leading blanking. We replicate the vendor target exactly
-+	 * (disp_mgr_protect_reg_for_rcq): arm_target = ver_back_porch + 3% of
-+	 * ver_total, where the Allwinner ver_back_porch = vtotal - vsync_end.
++	 * and counts up to the programmed vertical total (measured RAW
++	 * 0..vtotal on HDMI 1080p60). The RCQ must be armed during the leading
++	 * blanking, i.e. before active video starts at line_active. Target =
++	 * vendor math (disp_mgr_protect_reg_for_rcq): ver_back_porch + 3% of
++	 * ver_total, where the Allwinner ver_back_porch = vtotal - vsync_end -
++	 * clamped to half the leading blanking so the vendor's ~line-69 target
++	 * at 1080p60 cannot arm inside active video.
 +	 * ns_per_line = htotal / pixel_clock, per counter tick.
 +	 */
 +	hrtimer_cancel(&de->arm_timer);
++	de->arm_sched = false;	/* the canceled timer will never clear it */
 +	de->armed_once = false;	/* re-stage the whole datapath for the new mode */
 +	de->full_arms_left = 4;	/* re-issue the full reload on the next vblanks */
 +	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
 +	de->line_total = vtotal ? vtotal : 1;
++	de->line_active = vtotal - mode->crtc_vsync_start;
 +	de->arm_target = vbp + (vtotal * 3) / 100;
++	if (de->arm_target > de->line_active / 2)
++		de->arm_target = de->line_active / 2;
 +	de->ns_per_line = clock ?
 +		div_u64((u64)mode->crtc_htotal * NSEC_PER_MSEC, clock) : 0;
 +
@@ -710,6 +717,7 @@
 +	 */
 +	if (tcon_line_double) {
 +		de->line_total  *= 2;
++		de->line_active *= 2;
 +		de->ns_per_line /= 2;
 +	}
 +
@@ -719,8 +727,7 @@
 +	 * observed arm line be sanity-checked against it: a tear-free arm needs
 +	 * arm_line_max < de_active_line.
 +	 */
-+	dbg_line_active = (tcon_line_double ? 2 : 1) *
-+			  (mode->crtc_vtotal - mode->crtc_vsync_start);
++	dbg_line_active = de->line_active;
 +	dbg_line_total  = de->line_total;
 +	dbg_ns_per_line = de->ns_per_line;
 +	dbg_arm_target  = sun55i_de_arm_target(de);
@@ -951,12 +958,22 @@
 +	dma_addr_t addr;
 +	u32 fmt, attctl;
 +
++	/*
++	 * de352 logical->phys map {0, 6, 8, 7}: since 0039 the mixer creates UI
++	 * planes with logical channels (vi_num + i = 1..3); translate to the
++	 * physical channel the v35x datapath uses. The cursor (logical 3) lands
++	 * on phys 7 - phys 8 fetches black on this die, keep it for the overlay
++	 * Xorg leaves unused.
++	 */
++	static const unsigned int ui_phys[SUN55I_DE_UI_CHANNELS + 1] = {
++		0, 6, 8, 7
++	};
++
 +	if (layer->type != SUN8I_LAYER_TYPE_UI ||
-+	    layer->channel < SUN55I_DE_OVL_UI_PHYS_CHN ||
-+	    layer->channel >= SUN55I_DE_OVL_UI_PHYS_CHN + SUN55I_DE_UI_CHANNELS)
++	    !layer->channel || layer->channel > SUN55I_DE_UI_CHANNELS)
 +		return;
 +
-+	chn = layer->channel;
++	chn = ui_phys[layer->channel];
 +	uich = chn - SUN55I_DE_OVL_UI_PHYS_CHN;
 +	pipe = uich;
 +
@@ -1259,7 +1276,7 @@
 
 --- a/drivers/gpu/drm/sun4i/sun55i_de.h
 +++ b/drivers/gpu/drm/sun4i/sun55i_de.h
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,161 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +/*
 + * Allwinner sun55iw3 (A523/A527/T527/H728) v35x display engine ("DE33"/v350).
@@ -1401,6 +1418,7 @@
 +	 */
 +	unsigned int			full_arms_left;
 +	u32				line_total;	/* TCON line counter modulus */
++	u32				line_active;	/* line where active video starts */
 +	u32				arm_target;	/* safe arm line (vendor calc) */
 +	u32				ns_per_line;	/* counter-tick period (ns) */
 +

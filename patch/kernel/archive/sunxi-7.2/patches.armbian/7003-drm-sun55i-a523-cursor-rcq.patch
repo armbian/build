@@ -2,7 +2,7 @@ diff --git a/drivers/gpu/drm/sun4i/sun55i_de.c b/drivers/gpu/drm/sun4i/sun55i_de
 index 644d3ca..2cf3fd9 100644
 --- a/drivers/gpu/drm/sun4i/sun55i_de.c
 +++ b/drivers/gpu/drm/sun4i/sun55i_de.c
-@@ -912,19 +912,72 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
+@@ -929,19 +929,72 @@ void sun55i_de_layer_update(struct sun8i_mixer *mixer, struct sun8i_layer *layer
   * background-colour flashes (the bug the vendor avoids by arming in blanking).
   * Defer the arm to the next blanking window in sun55i_de_vblank_quirk().
   */
@@ -81,7 +81,7 @@ index 644d3ca..2cf3fd9 100644
  }
  
  void sun55i_de_commit(struct sun8i_mixer *mixer)
-@@ -960,6 +1013,14 @@ void sun55i_de_commit(struct sun8i_mixer *mixer)
+@@ -977,6 +1030,14 @@ void sun55i_de_commit(struct sun8i_mixer *mixer)
  	de->commit_seq++;
  	dbg_commits++;
  	de->arm_pending = true;
@@ -96,18 +96,31 @@ index 644d3ca..2cf3fd9 100644
  	spin_unlock_irqrestore(&de->arm_lock, flags);
  }
  
-@@ -1042,8 +1103,14 @@ static enum hrtimer_restart sun55i_de_arm_timer(struct hrtimer *t)
+@@ -1059,8 +1120,26 @@ static enum hrtimer_restart sun55i_de_arm_timer(struct hrtimer *t)
  	unsigned long flags;
  
  	spin_lock_irqsave(&de->arm_lock, flags);
 -	if (de->arm_pending)
+-		sun55i_de_do_arm(de);
 +	/* hrtimer fired: a racing commit must see this and re-schedule itself */
 +	de->arm_sched = false;
 +	if (de->arm_pending) {
- 		sun55i_de_do_arm(de);
-+		/* RCQ still busy (arm_busy_gate): retry at the next blanking */
-+		if (de->arm_pending)
++		u32 cur = tcon_curline_io ? readl(tcon_curline_io) & 0xfff : 0;
++
++		/*
++		 * Beam-gated self-correction: the timer was aimed at the
++		 * blanking target, but IRQ/scheduling latency may have it
++		 * fire with the beam in active video - arming there tears.
++		 * Re-check and defer to the next blanking window instead.
++		 */
++		if (de->ns_per_line && cur >= de->line_active) {
 +			sun55i_de_schedule_arm(de);
++		} else {
++			sun55i_de_do_arm(de);
++			/* RCQ still busy (arm_busy_gate): retry at the next blanking */
++			if (de->arm_pending)
++				sun55i_de_schedule_arm(de);
++		}
 +	}
  	spin_unlock_irqrestore(&de->arm_lock, flags);
  
