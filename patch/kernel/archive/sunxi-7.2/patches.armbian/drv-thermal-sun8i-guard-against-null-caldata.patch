@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ell <guardwire2@gmail.com>
+Date: Mon, 15 Sep 2026 21:00:00 +0300
+Subject: drv:thermal:sun8i: guard against NULL caldata in calibrate functions
+
+sun8i_h3_ths_calibrate() and sun50i_h6_ths_calibrate() dereference
+caldata[0] as their very first action, without checking that caldata
+itself is non-NULL:
+
+    if (!caldata[0] || callen < 2 * tmdev->chip->sensor_num)
+            return -EINVAL;
+
+sun8i_h3_ths_calibrate() is also used directly as the R40 chip's
+.calibrate callback (sun8i_r40_ths.calibrate), so this affects boards
+beyond H3.
+
+On a Banana Pi M2 Ultra (Allwinner R40), this crashes with a NULL
+pointer Oops on every single boot:
+
+    Unable to handle kernel NULL pointer dereference at virtual
+    address 00000000 when read
+    ...
+    PC is at sun8i_h3_ths_calibrate+0xc/0x6c [sun8i_thermal]
+    LR is at sun8i_ths_probe+0x221/0x398 [sun8i_thermal]
+    ...
+    Call trace:
+     sun8i_h3_ths_calibrate [sun8i_thermal] from sun8i_ths_probe+0x221/0x398 [sun8i_thermal]
+
+Practical effect on this board: no thermal_zone is ever registered
+(/sys/class/thermal only shows a cooling_device, no thermal_zone0),
+so there is zero temperature monitoring and no automatic thermal
+throttling.
+
+There is a second, much more serious effect. This Oops happens while
+sun8i_thermal.ko is being loaded (finit_module()). The kernel's
+concurrent-module-load dedup mechanism (kernel/module/main.c,
+idempotent()/idempotent_complete(), added by commit 9b9879fc0327
+"modules: catch concurrent module loads, treat them as idempotent")
+uses a stack-allocated struct linked into a global idem_hash list
+while the load is in progress. When the loading task is abnormally
+terminated by an Oops mid-load, that stack-allocated node can be left
+dangling in the list (this exact failure mode has been reported
+upstream via KASAN/syzkaller against idempotent(), e.g. slab-use-
+after-free and wild-memory-access reports against this same code
+path). On this board, the corruption doesn't crash immediately
+(no KASAN in a normal build) - instead a later concurrent module-load
+attempt spins forever walking the corrupted list while holding
+idem_lock. In practice, this reliably hangs `reboot`: the kernel's
+shutdown path calls usermodehelper_disable() (kernel/reboot.c) before
+device_shutdown(), which itself waits on module-loading-adjacent
+locking, and gets stuck on the corrupted state left behind by this
+Oops - every single time, with no dmesg output whatsoever past
+"Rebooting." (not even the kernel's own "reboot: Restarting system"
+line, since the hang happens earlier in kernel_restart_prepare()).
+
+Root-caused and verified on hardware (Banana Pi M2 Ultra, Armbian
+rolling, kernel 6.18.51-current-sunxi on the sunxi-6.18 branch - this
+sunxi-7.2 patch ports the same fix, verified against the raw
+linux-7.2.y source; the driver code at these two sites is identical):
+ - Ruled out via targeted driver unbind + reboot test: WiFi
+   (brcmfmac), Bluetooth (hci_uart_bcm), the watchdog driver
+   (sunxi-wdt), and cpufreq-dt are NOT the cause.
+ - Booting with `initcall_debug` (which makes device_shutdown()
+   print the name of every device right before calling its
+   .shutdown()) showed *zero* such prints during a hung reboot,
+   proving the hang happens before the per-device shutdown loop
+   even starts - i.e. in usermodehelper_disable(), consistent with
+   the corrupted idem_hash theory above.
+ - Serial-BREAK-triggered magic SysRq gets no response during the
+   hang, consistent with the stuck CPU spinning with local IRQs
+   disabled inside the corrupted-list walk.
+ - This exact fix, built into a full kernel with the complete
+   sunxi-6.18 patch set applied, was confirmed to fix reboot on this
+   board: 3/3 clean reboots with no workaround, versus 0/many
+   without this fix (previously worked around with a
+   /usr/lib/systemd/system-shutdown/ hook forcing `echo b >
+   /proc/sysrq-trigger`, which bypasses usermodehelper_disable()
+   and device_shutdown() entirely and always worked - confirming the
+   platform's actual SoC reset path is fine, and the hang is purely
+   this software issue).
+
+Note: sunxi-7.2 also carries drv-thermal-sun8i-sun55i-a523-ths.patch,
+which adds a third calibrate function (sun55i_a523_ths_calibrate)
+with the same unguarded caldata[0] pattern - the companion sunxi-6.18
+fix (same subject line) also covers that third function; not
+repeated here to keep this patch a minimal, direct port of the
+upstream two-site issue against the raw linux-7.2.y base.
+
+Fix: check caldata itself (not just caldata[0]) before dereferencing
+it. This is a one-line, no-behavior-change fix for the normal
+(calibration data present) path, and turns the crash into the same
+graceful "-EINVAL, run uncalibrated" path already used elsewhere in
+this file when calibration data is genuinely unavailable.
+
+Signed-off-by: ell <guardwire2@gmail.com>
+---
+ drivers/thermal/sun8i_thermal.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/thermal/sun8i_thermal.c b/drivers/thermal/sun8i_thermal.c
+index 111111111..222222222 100644
+--- a/drivers/thermal/sun8i_thermal.c
++++ b/drivers/thermal/sun8i_thermal.c
+@@ -211,7 +211,7 @@ static int sun8i_h3_ths_calibrate(struct ths_device *tmdev,
+ {
+ 	int i;
+
+-	if (!caldata[0] || callen < 2 * tmdev->chip->sensor_num)
++	if (!caldata || !caldata[0] || callen < 2 * tmdev->chip->sensor_num)
+ 		return -EINVAL;
+
+ 	for (i = 0; i < tmdev->chip->sensor_num; i++) {
+@@ -232,7 +232,7 @@ static int sun50i_h6_ths_calibrate(struct ths_device *tmdev,
+ 	struct device *dev = tmdev->dev;
+ 	int i, ft_temp;
+
+-	if (!caldata[0])
++	if (!caldata || !caldata[0])
+ 		return -EINVAL;
+
+ 	/*
