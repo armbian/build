@@ -1,0 +1,124 @@
+name: "Maintenance: Predict build artifacts"
+
+run-name: 'Predict artifacts - PR #${{ github.event.pull_request.number }} ("${{ github.event.pull_request.title }}")'
+
+# Works out which artifacts a pull request would require the CI to rebuild, and
+# posts that as a comment. It is ADVISORY: nothing is built, nothing is
+# dispatched, no repository is published.
+#
+# Next step (not implemented here): feed plan.json into the artifact matrix in
+# armbian/os, build with generateRepository=yes (armbian/ci#35), and edit this
+# same comment with the per-PR apt repository URL.
+#
+# Security note: pull_request_target runs with repository secrets, so this
+# workflow deliberately never checks out or executes pull-request code. It
+# checks out the BASE branch for the framework facts and reads the PR only as a
+# list of file names through the API.
+#
+# Requires the ANTHROPIC_API_KEY secret. Without it the job explains itself in
+# the summary and exits green rather than failing every PR.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  predict:
+    name: "Predict artifacts"
+    if: ${{ github.repository_owner == 'armbian' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: "Checkout base branch (never the pull request)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: "Install the Anthropic SDK"
+        run: pip install --quiet 'anthropic>=0.40.0'
+
+      - name: "Collect changed files"
+        id: changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files" \
+            --jq '.[].filename' > changed.txt
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          echo "Changed files: $(wc -l < changed.txt)"
+
+      - name: "Collect framework facts"
+        run: python3 .github/scripts/predict-artifacts/collect_facts.py --out facts.json
+
+      - name: "Predict"
+        id: predict
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo "ANTHROPIC_API_KEY is not available to this repository - skipping." \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # PR_TITLE is untrusted; passed as an argument, never interpolated
+          # into the script, and treated as data by the prompt itself.
+          python3 .github/scripts/predict-artifacts/predict.py \
+            --facts facts.json \
+            --changed changed.txt \
+            --pr-title "${PR_TITLE}" \
+            --out-plan plan.json \
+            --out-comment comment.md
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+      - name: "Publish to the job summary"
+        if: ${{ steps.predict.outputs.skipped == 'false' }}
+        run: cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Comment on the pull request"
+        if: ${{ steps.predict.outputs.skipped == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # One comment per PR: find the marker and edit it, so a push does not
+          # add another copy.
+          marker='<!-- armbian:predict-artifacts -->'
+          id="$(gh api --paginate "repos/${REPO}/issues/${PR}/comments" \
+                 --jq "[.[] | select(.body | startswith(\"${marker}\")) | .id] | first // empty")"
+          if [[ -n "${id}" ]]; then
+            gh api -X PATCH "repos/${REPO}/issues/comments/${id}" -F body=@comment.md >/dev/null
+            echo "Updated comment ${id}"
+          else
+            gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+            echo "Created comment"
+          fi
+
+      - name: "Upload the plan"
+        if: ${{ steps.predict.outputs.skipped == 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifact-prediction-${{ github.event.pull_request.number }}
+          path: |
+            plan.json
+            changed.txt
+          retention-days: 7
