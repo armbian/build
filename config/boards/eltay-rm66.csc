@@ -40,10 +40,12 @@ PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 function post_family_config__eltay_rm66_uboot() {
 	# Mainline U-Boot for both kernel branches; one generic RM66 DT in the FIT.
 	# The rk35xx family defaults to the Radxa vendor U-Boot; this overrides it.
+	# Tag and patch dir must stay in sync: the framework applies
+	# patch/u-boot/<BOOTPATCHDIR>/board_eltay-rm66/ on top of the tag.
 	display_alert "$BOARD" "Tested on ELTAY BB CM4; generic DT default, other carriers require validation" "info"
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.01"
-	declare -g BOOTPATCHDIR="v2026.01"
+	declare -g BOOTBRANCH="tag:v2026.07"
+	declare -g BOOTPATCHDIR="v2026.07"
 	declare -g BOOTDELAY=1
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 }
