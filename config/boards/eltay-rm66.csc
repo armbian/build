@@ -20,6 +20,13 @@ BOOT_SOC="rk3566"
 KERNEL_TARGET="current,vendor"
 KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="rockchip/rk3566-eltay-rm66.dtb"
+# Both board DTs set /chosen/stdout-path = "serial2:1500000n8", so the debug
+# console is UART2 (ttyS2). The mainline branch resolves to ttyS2 anyway
+# (rockchip64_common picks it by BOOT_SOC), but for BRANCH=vendor the framework
+# defaults SERIALCON to ttyFIQ0 - and this board has no fiq-debugger node, so
+# systemd waits for dev-ttyFIQ0.device and times out (~110 s) with a failing
+# serial-getty@ttyFIQ0. Pin it explicitly instead.
+SERIALCON="ttyS2"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="binman"
 BOOT_SUPPORT_SPI="no"
