@@ -56,6 +56,16 @@ function custom_kernel_config__enable_rtl88x2cs_driver() {
 	opts_m+=("CONFIG_RTL8822CS")
 }
 
+# ODROID-HC4, Khadas VIM3 and VIM3L, Banana Pi M2S and CM4IO enable PCIe in their
+# device tree. Without the port services their root port has no driver: nothing
+# moves it to D3hot for suspend, and AER stays unserviced.
+function custom_kernel_config__meson64_pcie_port_services() {
+	opts_y+=(
+		CONFIG_PCIEPORTBUS
+		CONFIG_PCIEAER
+	)
+}
+
 # this helper function includes postprocess for s400 and its variants.
 # $1 PATH for uboot blob repo
 # $2 dir name in uboot blob repo
