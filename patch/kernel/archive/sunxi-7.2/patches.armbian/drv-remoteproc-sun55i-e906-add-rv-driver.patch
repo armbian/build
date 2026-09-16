@@ -175,13 +175,14 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/remoteproc/sun55i_e906_rproc.c
-@@ -0,0 +1,615 @@
+@@ -0,0 +1,646 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include <linux/clk.h>
 +#include <linux/dma-mapping.h>
 +#include <linux/firmware.h>
 +#include <linux/io.h>
 +#include <linux/mailbox_client.h>
++#include <linux/bitmap.h>
 +#include <linux/module.h>
 +#include <linux/of.h>
 +#include <linux/of_reserved_mem.h>
@@ -204,6 +205,8 @@ index 000000000000..111111111111
 +	struct mbox_chan *chan;
 +	struct mbox_client client;
 +	struct work_struct vq_work;
++	unsigned long vq_pending;
++	spinlock_t vq_lock;
 +	int vq_id;
 +};
 +
@@ -281,9 +284,22 @@ index 000000000000..111111111111
 +{
 +	struct sun55i_mbox *mb = container_of(work, struct sun55i_mbox, vq_work);
 +	struct rproc *rproc = dev_get_drvdata(mb->client.dev);
++	unsigned long pending, flags;
++	int vq_id, oflow_vq;
 +
-+	if (rproc_vq_interrupt(rproc, mb->vq_id) == IRQ_NONE)
-+		dev_dbg(&rproc->dev, "no message in vq%d\n", mb->vq_id);
++	spin_lock_irqsave(&mb->vq_lock, flags);
++	pending = mb->vq_pending;
++	mb->vq_pending = 0;
++	oflow_vq = mb->vq_id;
++	mb->vq_id = -1;
++	spin_unlock_irqrestore(&mb->vq_lock, flags);
++
++	for_each_set_bit(vq_id, &pending, BITS_PER_LONG)
++		if (rproc_vq_interrupt(rproc, vq_id) == IRQ_NONE)
++			dev_dbg(&rproc->dev, "no message in vq%d\n", vq_id);
++
++	if (oflow_vq >= 0 && rproc_vq_interrupt(rproc, oflow_vq) == IRQ_NONE)
++		dev_dbg(&rproc->dev, "no message in vq%d\n", oflow_vq);
 +}
 +
 +static void sun55i_mb_rx_callback(struct mbox_client *cl, void *data)
@@ -291,8 +307,18 @@ index 000000000000..111111111111
 +	struct rproc *rproc = dev_get_drvdata(cl->dev);
 +	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
 +	struct sun55i_mbox *mb = container_of(cl, struct sun55i_mbox, client);
++	u32 vq_id = *(u32 *)data;
++	unsigned long flags;
 +
-+	mb->vq_id = *(u32 *)data;
++	if (vq_id < BITS_PER_LONG) {
++		spin_lock_irqsave(&mb->vq_lock, flags);
++		mb->vq_pending |= BIT(vq_id);
++		spin_unlock_irqrestore(&mb->vq_lock, flags);
++	} else {
++		spin_lock_irqsave(&mb->vq_lock, flags);
++		mb->vq_id = vq_id;
++		spin_unlock_irqrestore(&mb->vq_lock, flags);
++	}
 +	queue_work(priv->workqueue, &mb->vq_work);
 +}
 +
@@ -326,6 +352,8 @@ index 000000000000..111111111111
 +		return 0;
 +	}
 +	INIT_WORK(&priv->mb.vq_work, sun55i_mb_vq_work);
++	spin_lock_init(&priv->mb.vq_lock);
++	priv->mb.vq_id = -1;
 +	return 0;
 +}
 +
@@ -397,6 +425,7 @@ index 000000000000..111111111111
 +	ret = clk_prepare_enable(priv->bus_clk);
 +	if (ret) {
 +		dev_err(dev, "bus clk enable failed\n");
++		sun55i_e906_assert(priv);
 +		return ret;
 +	}
 +
@@ -406,6 +435,8 @@ index 000000000000..111111111111
 +	ret = clk_prepare_enable(priv->core_clk);
 +	if (ret) {
 +		dev_err(dev, "core clk enable failed\n");
++		clk_disable_unprepare(priv->bus_clk);
++		sun55i_e906_assert(priv);
 +		return ret;
 +	}
 +
@@ -743,8 +774,8 @@ index 000000000000..111111111111
 +	ret = rproc_add(rproc);
 +	if (ret) {
 +		pm_runtime_disable(dev);
-+		destroy_workqueue(priv->workqueue);
 +		sun55i_free_mbox(rproc);
++		destroy_workqueue(priv->workqueue);
 +		rproc_free(rproc);
 +		return ret;
 +	}
@@ -766,8 +797,8 @@ index 000000000000..111111111111
 +	struct sun55i_e906_rproc *priv = sun55i_rproc_priv(rproc);
 +
 +	rproc_del(rproc);
-+	destroy_workqueue(priv->workqueue);
 +	sun55i_free_mbox(rproc);
++	destroy_workqueue(priv->workqueue);
 +	pm_runtime_disable(&pdev->dev);
 +	rproc_free(rproc);
 +}
