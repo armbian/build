@@ -24,6 +24,12 @@ IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="binman"
 BOOT_SUPPORT_SPI="no"
 
+# Onboard AP6256 provides Wi-Fi + Bluetooth. Carry the Bluetooth userspace for
+# every image of this board (Minimal/CLI included) instead of relying on
+# whatever desktop pulls bluedevil in; same pattern as other boards with
+# onboard BT (indiedroid-nova, bananapi*, ...).
+PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
+
 function post_family_config__eltay_rm66_uboot() {
 	# Mainline U-Boot for both kernel branches; one generic RM66 DT in the FIT.
 	# The rk35xx family defaults to the Radxa vendor U-Boot; this overrides it.
