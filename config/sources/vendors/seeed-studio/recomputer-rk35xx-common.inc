@@ -302,11 +302,15 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		PrivateDevices=yes
 		DeviceAllow=/dev/ttyGS0 rw
 		ExecStart=
-		ExecStart=-/sbin/agetty -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
+		# -w: print nothing until the terminal sends CR, so boot-time output
+		# is not buffered and flushed as garbage on first connect
+		ExecStart=-/sbin/agetty -w -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
 	chroot_sdcard systemctl --no-reload enable dnsmasq.service
+	# The gadget getty ships configured but disabled: enable it or the ACM console stays dead
+	chroot_sdcard systemctl --no-reload enable serial-getty@ttyGS0.service
 
 	# usbdevice.service: retry on failure + tell NM to manage usb0 + bring link up
 	mkdir -p "${SDCARD}/etc/systemd/system/usbdevice.service.d"
@@ -316,6 +320,21 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		RestartSec=5
 		ExecStartPost=/usr/bin/nmcli device set usb0 managed yes
 		ExecStartPost=/sbin/ip link set usb0 up
+	EOF
+
+}
+
+# Bound plymouth-quit-wait: stock TimeoutSec=0 waits for plymouthd forever, and
+# on headless boards nothing quits plymouthd — every unit After= it (all gettys,
+# multi-user/graphical target) deadlocks until reboot.
+function post_family_tweaks__recomputer_plymouth_quit_wait_timeout() {
+	display_alert "$BOARD" "Bounding plymouth-quit-wait timeout (headless boot deadlock)" "info"
+
+	mkdir -p "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d"
+	cat > "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d/10-timeout.conf" <<- EOF
+		[Service]
+		# Overrides the stock TimeoutSec=0 (infinite)
+		TimeoutStartSec=10
 	EOF
 
 }
@@ -546,18 +565,12 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	done
 }
 
-# Clone/pull Seeed RK extension and enable it.
-# Must run during board config sourcing (before initialize_extension_manager),
-# because enable_extension() cannot be called after the extension manager initializes.
+# Enable Seeed's external extension via the extensions/seeed-extension.sh
+# wrapper (pinned-tag fetch + sub-extension cascade). Entry point for Seeed's
+# own builds; Armbian CI uses ENABLE_EXTENSIONS=seeed-extension instead.
+# Must run before initialize_extension_manager (enable_extension() bails after).
 if [[ "${ENABLE_SEEED_RK_EXTENSION:-no}" == "yes" ]]; then
-	# GITHUB_SOURCE is not set yet during board config sourcing; provide a default
-	# so fetch_from_repo's URL rewriting works correctly.
-	GITHUB_SOURCE="${GITHUB_SOURCE:-https://github.com}"
-	fetch_from_repo "https://github.com/Seeed-Studio/seeed_armbian_extension" "seeed_armbian_extension" "branch:main"
-	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
-	mkdir -p "${SRC}/extensions"
-	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
-	enable_extension "seeed_armbian_extension"
+	enable_extension "seeed-extension"
 fi
 
 # Disable armbian-hardware-optimize — the BSP kernel handles DVFS via DT OPP

@@ -163,6 +163,10 @@ driver_rtl8192EU() {
 		echo "obj-\$(CONFIG_RTL8192EU) += rtl8192eu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-6.6.157.patch" "applying"
+
 		display_alert "Done adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8192EU chipsets" "info"
@@ -215,6 +219,9 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-Fix-6.16.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-set-monitor-channel-6.12.101.patch" "applying"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-Fix-6.6.157.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
@@ -263,6 +270,10 @@ driver_rtl8812EU_rtl8822EU() {
 		echo "obj-\$(CONFIG_RTL8822EU) += rtl8822eu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8822eu-Fix-6.6.157.patch" "applying"
+
 		display_alert "Done adding" "Wireless drivers for Realtek 8812EU and 8822EU chipsets ${rtl8822euver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8812EU and 8822EU chipsets" "info"
@@ -351,6 +362,9 @@ driver_rtl8811CU_rtl8821C() {
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-6.16.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-set-monitor-channel-6.12.101.patch" "applying"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-6.6.157.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets" "info"
@@ -397,6 +411,9 @@ driver_rtl88x2bu() {
 		# fix compilation for kernels >= 6.16
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-6.16.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-set-monitor-channel-6.12.101.patch" "applying"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-6.6.157.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 88x2bu chipsets" "info"
@@ -758,6 +775,9 @@ driver_rtl8723DU() {
 
 		# fix compilation for kernels >=  6.3
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-6.3.patch" "applying"
+
+		# fix compilation for kernels >= 6.6.157
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-6.6.157.patch" "applying"
 
 	fi
 }
