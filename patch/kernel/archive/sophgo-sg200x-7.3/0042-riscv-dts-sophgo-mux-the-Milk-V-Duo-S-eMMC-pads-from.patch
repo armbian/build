@@ -32,13 +32,16 @@ Declaring them here makes it independent of which bootloader ran, exactly as the
 card slot already is: those pads happen to sit in their native function after
 either boot, which is why the slot works both ways today.
 
-Mux and power-source, nothing else. PINMUX_CONFIG() in the vendor bootloader
-sets the function select alone and the eMMC runs at those defaults when it is
-the boot device, but power-source is not optional:
-cv1800_dt_node_to_map_post() reads it with of_property_read_u32() and returns
-the error if it is absent, which fails the whole pin map - and then the
-consumer does not probe at all, so 4300000.mmc disappears from dmesg entirely
-rather than failing visibly.
+Mux, pulls and power-source. PINMUX_CONFIG() in the vendor bootloader sets the
+function select alone, and cvi_emmc_pad_setting() in its eMMC host driver adds
+the pulls - down on CLK, up on CMD, DAT0-DAT3 and RSTN - and leaves drive
+strength at its reset value. The group declares exactly that, so the pads are
+in the state the eMMC is known to work in whichever bootloader ran.
+
+power-source is not optional: cv1800_dt_node_to_map_post() reads it with
+of_property_read_u32() and returns the error if it is absent, which fails the
+whole pin map - and then the consumer does not probe at all, so 4300000.mmc
+disappears from dmesg entirely rather than failing visibly.
 
 The value is 3300, and mainline's 1800 is a bug that keeps a 7.3 kernel from
 booting off the eMMC. The driver keeps a single power-source per domain and
@@ -50,15 +53,10 @@ waits for a root device that never appears, with every EMMC_* pad UNCLAIMED in
 debugfs. 3300 is also the right value rather than just the agreeing one - the
 UART0 pads are the console on the 3.3V pin header.
 
-no-1-8-v is deliberately left alone. Dropping it and declaring mmc-hs200-1_8v
-with mmc-ddr-1_8v was tried, on the theory that the vendor bootloader tunes
-this controller and so must be running HS200; the eMMC then does not enumerate
-at all - the controller registers and no card line ever follows, which is what
-mmc_select_hs200() does when the voltage switch fails, since it returns an
-error other than -EBADMSG and mmc_select_timing() propagates it instead of
-falling back. That is expected now that VDDIO_EMMC is known to be the 3.3V
-rail: there is no 1.8V to switch to. High speed on a 4-bit bus stands, and
-mmc-ddr-1_8v would need 1.8V I/O just as much.
+Mainline 7.3 does carry an eMMC group for this board, and this replaces it.
+Beyond the power-source, it pulls CLK up where the vendor bootloader pulls it
+down, and forces drive-strength-microamp = <10800> where the bootloader leaves
+the reset value - not the pad state the eMMC has been verified in.
 
 One consequence worth stating: this device tree is shared with the Duo S that
 has no eMMC fitted, where it will now pin seven pads for a chip that is not
@@ -71,8 +69,8 @@ partitions, plus the boot0/boot1/rpmb areas.
 
 Signed-off-by: Armbian <info@armbian.com>
 ---
- arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts | 84 +++++-----
- 1 file changed, 50 insertions(+), 34 deletions(-)
+ arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts | 79 +++++++++++++----------
+ 1 file changed, 45 insertions(+), 34 deletions(-)
 
 diff --git a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
 index 111111111111..222222222222 100644
@@ -118,7 +116,7 @@ index 111111111111..222222222222 100644
  	i2c4_cfg: i2c4-cfg {
  		i2c4-pins {
  			pinmux = <PINMUX(PIN_VIVO_D1, 7)>,
-@@ -250,9 +217,58 @@ &dmac {
+@@ -250,6 +217,50 @@ &dmac {
  	status = "okay";
  };
  
@@ -130,11 +128,12 @@ index 111111111111..222222222222 100644
 + * of the bootloader they are left in whatever the BootROM set, and Linux cannot
 + * talk to the eMMC: "mmc2: Failed to initialize a non-removable card".
 + *
-+ * Mux and power-source only. PINMUX_CONFIG() in the vendor bootloader sets the
-+ * function select and nothing else, and the eMMC works with those defaults when
-+ * it is the boot device - but power-source is not optional here:
-+ * cv1800_dt_node_to_map_post() rejects any group without it, which fails the
-+ * consumer's probe outright.
++ * Mux, pulls and power-source. The pulls are the ones the eMMC build of the
++ * bootloader writes in cvi_emmc_pad_setting(): down on CLK, up on the other
++ * six. It leaves drive strength at its reset value and so does this group, so
++ * the pads end up in the state the eMMC is known to work in, whichever
++ * bootloader ran. power-source is not optional: cv1800_dt_node_to_map_post()
++ * rejects any group without it, which fails the consumer's probe outright.
 + *
 + * power-source is 3300 because VDDIO_EMMC is the 3.3V rail on this board: the
 + * domain also holds UART0_TX/RX, the console on header pins 8 and 10, along
@@ -143,28 +142,23 @@ index 111111111111..222222222222 100644
 + * group that disagrees fails its pin map and never probes, silently. Mainline
 + * declares this group 1800 and uart0 3300, so there uart0 wins and the eMMC is
 + * simply gone.
-+ *
-+ * no-1-8-v stays. Dropping it and asking for mmc-hs200-1_8v was tried on a Duo
-+ * S with the eMMC fitted, and the card then never enumerates at all: the
-+ * controller registers and no card line ever follows, which is the non-graceful
-+ * failure mmc_select_hs200() has when the voltage switch does not take - as it
-+ * cannot, on pads powered from a 3.3V rail. High speed on a 4-bit bus it is.
-+ * mmc-ddr-1_8v on its own is untried, and would need 1.8V I/O just the same.
-+ *
-+ * max-frequency matches the vendor DTS. It is inert while no-1-8-v holds the
-+ * card at high speed - the clock is set from ext_csd.hs_max_dtr either way -
-+ * and is here because it was in the tree that was booted and verified.
 + */
 +&pinctrl {
 +	emmc_cfg: emmc-cfg {
-+		emmc-pins {
-+			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>,
-+				 <PINMUX(PIN_EMMC_CMD, 0)>,
++		emmc-clk-pins {
++			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>;
++			bias-pull-down;
++			power-source = <3300>;
++		};
++
++		emmc-bus-pins {
++			pinmux = <PINMUX(PIN_EMMC_CMD, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT0, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT1, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT2, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT3, 0)>,
 +				 <PINMUX(PIN_EMMC_RSTN, 0)>;
++			bias-pull-up;
 +			power-source = <3300>;
 +		};
 +	};
@@ -173,11 +167,7 @@ index 111111111111..222222222222 100644
  &emmc {
  	bus-width = <4>;
  	no-1-8-v;
-+	max-frequency = <200000000>;
- 	cap-mmc-hw-reset;
- 	no-sd;
- 	no-sdio;
-@@ -467,4 +483,4 @@ &int_adc {
+@@ -472,4 +483,4 @@ &int_adc {
  
  &remoteproc {
  	status = "okay";
