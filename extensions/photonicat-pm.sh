@@ -1,7 +1,11 @@
-# @description Installs the `photonicat-pm` DKMS power-management driver for the Ariaboard Photonicat router. Fetches the latest `HackingGate/photonicat-pm` release deb and builds the kernel module in the chroot, forcing `INSTALL_HEADERS=yes`. Requires a kernel with a working headers package and is skipped on kernels ≥ 6.20.
+# @description Installs the `photonicat-pm` DKMS power-management driver for the Ariaboard Photonicat router. Fetches the latest `HackingGate/photonicat-pm` release deb and builds the kernel module in the chroot, forcing `INSTALL_HEADERS=yes`. Requires a kernel with a working headers package and is skipped on kernels ≥ 6.20. Also skipped on kernels built with clang/LLVM, where DKMS cannot build modules.
 
 function extension_finish_config__install_kernel_headers_for_photonicat_pm_dkms() {
 
+	if [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]]; then
+		display_alert "Kernel cannot build DKMS modules" "skipping ${EXTENSION}: ${KERNEL_DKMS_UNBUILDABLE_REASON}" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping photonicat-pm dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
@@ -16,7 +20,7 @@ function post_install_kernel_debs__install_photonicat_pm_dkms_package() {
 		display_alert "Kernel version is too recent" "skipping photonicat-pm dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
 	fi
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 	api_url="https://api.github.com/repos/HackingGate/photonicat-pm/releases/latest"
 	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
 	# Get the Debian version from changelog

@@ -1,7 +1,11 @@
-# @description Installs the Broadcom `bcmdhd` WiFi driver as a DKMS module. Downloads the latest `pcie`, `sdio`, or `usb` variant `.deb` (selected by `BCMDHD_TYPE`) from the `armbian/bcmdhd-dkms` GitHub releases and builds it in the chroot. Forces `INSTALL_HEADERS=yes`; skips when `BCMDHD_TYPE` is unset or the kernel lacks working headers.
+# @description Installs the Broadcom `bcmdhd` WiFi driver as a DKMS module. Downloads the latest `pcie`, `sdio`, or `usb` variant `.deb` (selected by `BCMDHD_TYPE`) from the `armbian/bcmdhd-dkms` GitHub releases and builds it in the chroot. Forces `INSTALL_HEADERS=yes`; skips when `BCMDHD_TYPE` is unset or the kernel lacks working headers. Also skipped on kernels built with clang/LLVM, where DKMS cannot build modules.
 
 function extension_finish_config__install_kernel_headers_for_bcmdhd_dkms() {
 
+	if [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]]; then
+		display_alert "Kernel cannot build DKMS modules" "skipping ${EXTENSION}: ${KERNEL_DKMS_UNBUILDABLE_REASON}" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping bcmdhd dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
@@ -12,7 +16,7 @@ function extension_finish_config__install_kernel_headers_for_bcmdhd_dkms() {
 
 function post_install_kernel_debs__install_bcmdhd_dkms_package() {
 
-	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
+	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] || [[ "${KERNEL_DKMS_BUILDABLE}" != "yes" ]] && return 0
 	[[ -z $BCMDHD_TYPE ]] && return 0
 	api_url="https://api.github.com/repos/armbian/bcmdhd-dkms/releases/latest"
 	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
