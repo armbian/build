@@ -19,21 +19,10 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 		return 0
 	fi
 
-	local api_url="https://api.github.com/repos/Shadowrom2020/aic8800-dkms/releases/latest"
 	local latest_version
 	local aic8800_dkms_url
 
-	local api_output
-	if ! api_output=$(curl -f --silent --show-error --location "${api_url}" 2>&1); then
-		display_alert "Failed to fetch latest aic8800-dkms release from GitHub: ${api_output}" "${EXTENSION}" "error"
-		return 1
-	fi
-
-	latest_version=$(printf '%s' "${api_output}" | jq -r '.tag_name' 2> /dev/null || true)
-	if [[ -z "${latest_version}" || "${latest_version}" == "null" ]]; then
-		display_alert "Invalid latest_version from GitHub API: '${latest_version}'" "${EXTENSION}" "error"
-		return 1
-	fi
+	latest_version="$(github_latest_release_tag "Shadowrom2020/aic8800-dkms")" || return 1
 
 	aic8800_dkms_url="https://github.com/Shadowrom2020/aic8800-dkms/releases/download/${latest_version}/aic8800-dkms.deb"
 	if [[ "${GITHUB_MIRROR}" == "ghproxy" ]]; then

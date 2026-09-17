@@ -13,8 +13,7 @@ function extension_finish_config__install_kernel_headers_for_yt6801_dkms() {
 function post_install_kernel_debs__install_yt6801_dkms_package() {
 
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
-	api_url="https://api.github.com/repos/amazingfate/yt6801-dkms/releases/latest"
-	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	latest_version="$(github_latest_release_tag "amazingfate/yt6801-dkms")" || return 1
 	yt6801_dkms_url="https://github.com/amazingfate/yt6801-dkms/releases/download/${latest_version}/yt6801-dkms_${latest_version}_all.deb"
 	if [[ "${GITHUB_MIRROR}" == "ghproxy" ]]; then
 		ghproxy_header="https://ghfast.top/"

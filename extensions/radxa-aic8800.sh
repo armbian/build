@@ -18,8 +18,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	fi
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 	[[ -z $AIC8800_TYPE ]] && return 0
-	api_url="https://api.github.com/repos/radxa-pkg/aic8800/releases/latest"
-	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
+	latest_version="$(github_latest_release_tag "radxa-pkg/aic8800")" || return 1
 
 	# Determine the DKMS package name based on the requested AIC8800_TYPE.
 	declare aic8800_dkms_file_name
