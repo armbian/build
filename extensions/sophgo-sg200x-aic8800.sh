@@ -19,15 +19,15 @@
 # tree already has two other extensions for it. Both of those install prebuilt
 # DKMS debs from third-party release pages - brostrend-aic8800-dkms.sh from
 # Shadowrom2020/aic8800-dkms, radxa-aic8800.sh from radxa-pkg/aic8800, the latter
-# skipping itself on kernels 7.2 and newer. Neither can serve this board, so this
+# skipping itself on kernels 7.3 and newer. Neither can serve this board, so this
 # extension takes the other route: the vendor driver out of Milk-V's
 # duo-buildroot-sdk-v2, as cleaned up for modern kernels by queenkjuul, copied
 # into the kernel tree and built as ordinary in-tree modules. That is much
 # cheaper than DKMS under qemu, needs no headers package on the target, and is
-# what makes 7.2 work.
+# what makes 7.2 and 7.3 work.
 #
-# What is not board-specific is shared rather than duplicated: the two build
-# fixes live in patch/misc/aic8800/ next to the other driver patches. The
+# What is not board-specific is shared rather than duplicated: the build fixes
+# live in patch/misc/aic8800/ next to the other driver patches. The
 # Bluetooth attach script and unit are not shared - they resolve the UART by
 # hardware address, which only this board needs - so they sit with the rest of
 # the family's BSP files in packages/bsp/sophgo-sg200x/ rather than in the
@@ -199,10 +199,6 @@ function post_family_tweaks__sophgo_sg200x_aic8800_modprobe() {
 # baud rate the patch table announces. These go into the BSP package rather than
 # straight into ${SDCARD} because they are executable assets: dpkg then owns them
 # and an armbian-bsp-cli upgrade carries fixes to installed systems.
-#
-# packages/bsp/sophgo-sg200x is hashed into the bsp-cli version by the family
-# config, so edits to either file below give the deb a new version; see the
-# BSP_CLI_EXTRA_HASH_DIRS comment in sophgo-sg200x_common.inc.
 function post_family_tweaks_bsp__sophgo_sg200x_aic8800_bluetooth() {
 	display_alert "SG200x AIC8800" "installing Bluetooth attach service" "info"
 
