@@ -10,7 +10,7 @@ OVERLAY_PREFIX="sun55i-t527"
 KERNEL_TARGET="edge"
 KERNEL_TEST_TARGET="edge"
 BOOT_FDT_FILE="allwinner/sun55i-t527-avaota-a1.dtb"
-HAS_VIDEO_OUTPUT="no"
+HAS_VIDEO_OUTPUT="yes"
 
 # Mainline U-Boot needs FAT boot + ext4 root
 IMAGE_PARTITION_TABLE="msdos"
