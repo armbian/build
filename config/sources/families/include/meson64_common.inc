@@ -209,13 +209,13 @@ uboot_gxl_postprocess_ng() {
 		$1/bl21_zero.bin \
 		$1/bl2_new.bin bl2
 
-	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl30_new.bin
-	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl31.img
-	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input bl33.bin
-	run_host_command_logged $1/aml_encrypt_gxl --bl2sig --input $1/bl2_new.bin \
+	run_host_x86_binary_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl30_new.bin
+	run_host_x86_binary_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl31.img
+	run_host_x86_binary_logged $1/aml_encrypt_gxl --bl3enc --input bl33.bin
+	run_host_x86_binary_logged $1/aml_encrypt_gxl --bl2sig --input $1/bl2_new.bin \
 		--output bl2.n.bin.sig
 
-	run_host_command_logged $1/aml_encrypt_gxl --bootmk --output u-boot.bin \
+	run_host_x86_binary_logged $1/aml_encrypt_gxl --bootmk --output u-boot.bin \
 		--bl2 bl2.n.bin.sig \
 		--bl30 $1/bl30_new.bin.enc \
 		--bl31 $1/bl31.img.enc \
