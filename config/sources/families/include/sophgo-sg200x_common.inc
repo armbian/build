@@ -381,10 +381,16 @@ function sophgo_sg200x_build_opensbi() {
 # ---------------------------------------------------------------------------
 
 # MBR, with a bootable FAT16 (0x0c) p1 the BootROM can read fip.bin out of by
-# name - not the 0xea type Armbian would use by default. 128MiB matches the
-# vendor image.
+# name - not the 0xea type Armbian would use by default. 256MiB rather than the vendor's 128MiB.
+#
+# mkfs.vfat still lays down FAT16 at this size (it only switches to FAT32 past 384MiB).
 declare -g BOOTFS_TYPE="fat"
-declare -g BOOTSIZE="128"
+declare -g BOOTSIZE="256"
+
+# Shrinking the ~22MiB MODULES=most initramfs with MODULES_INITRD was considered
+# and rejected: it only takes effect on newly built images, which now have the
+# room anyway, and MODULES=list would give up NFS root and xfs to be the first
+# board in the tree not using MODULES=most.
 
 function pre_prepare_partitions__sophgo_sg200x_msdos_layout() {
 	# riscv64.conf declares GPT, arm64 defaults to msdos; set both the same.
