@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Mon, 22 Jun 2026 22:41:33 +0200
+Subject: ASoC: cix: skip HDMI links whose codec device is absent
+
+cix_card_parse_acpi() built a DAI link for every entry in the HDMI topology.
+If a DP TX is held in deferred probe (for example stuck on a supplier that
+has no driver) it never registers its hdmi-audio-codec, and then
+snd_soc_register_card() would defer the whole card forever, leaving the board
+with no HDMI audio at all.
+
+Look up the codec platform device first and skip the link when it is absent,
+mirroring the existing handling of a missing I2S device. The card comes up
+with the outputs that are actually available. Reuse the codec name for the
+link component instead of formatting it twice.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ sound/soc/cix/card-utils.c | 24 ++++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/sound/soc/cix/card-utils.c b/sound/soc/cix/card-utils.c
+index 15080dd..ef7c3a2 100644
+--- a/sound/soc/cix/card-utils.c
++++ b/sound/soc/cix/card-utils.c
+@@ -689,9 +689,11 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
+ 
+ 	for (i = 0; i < SKY1_HDMI_LINKS; i++) {
+ 		const char *i2s_name = sky1_hdmi_topology[i].i2s_name;
++		int codec_id = sky1_hdmi_topology[i].codec_id;
+ 		struct snd_soc_dai_link_component *cpu, *codec, *plat;
+ 		struct snd_soc_dai_link *link;
+-		struct device *i2s_dev;
++		struct device *i2s_dev, *codec_dev;
++		char *codec_name;
+ 
+ 		/* Skip links whose I2S platform device doesn't exist */
+ 		i2s_dev = bus_find_device_by_name(&platform_bus_type, NULL,
+@@ -703,6 +705,20 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
+ 		}
+ 		put_device(i2s_dev);
+ 
++		codec_name = devm_kasprintf(dev, GFP_KERNEL,
++					    "hdmi-audio-codec.%d", codec_id);
++		if (!codec_name)
++			return -ENOMEM;
++
++		/* No codec means the parent DP TX is absent or stuck; skip instead of failing the card */
++		codec_dev = bus_find_device_by_name(&platform_bus_type, NULL,
++						    codec_name);
++		if (!codec_dev) {
++			dev_info(dev, "%s not present, skipping\n", codec_name);
++			continue;
++		}
++		put_device(codec_dev);
++
+ 		cpu = &comps[num_links * 3];
+ 		codec = &comps[num_links * 3 + 1];
+ 		plat = &comps[num_links * 3 + 2];
+@@ -713,11 +729,7 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
+ 		cpu->dai_name = "i2s-mc-aif1";
+ 
+ 		/* Codec DAI: hdmi-audio-codec */
+-		codec->name = devm_kasprintf(dev, GFP_KERNEL,
+-					     "hdmi-audio-codec.%d",
+-					     sky1_hdmi_topology[i].codec_id);
+-		if (!codec->name)
+-			return -ENOMEM;
++		codec->name = codec_name;
+ 		codec->dai_name = "i2s-hifi";
+ 
+ 		/* Platform: DMA is co-located with CPU */
+-- 
+Armbian
+
