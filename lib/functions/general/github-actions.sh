@@ -50,10 +50,18 @@ function github_latest_release_tag() {
 		auth_args=("--header" "@-")
 	fi
 
+	# Said in both failure messages below. An exhausted quota answers 403, which reads exactly
+	# like a dead URL or a private repo unless the message says which pool was being spent:
+	# anonymous is 60/hour *per IP*, shared by every lookup from that host.
+	declare auth_state="unauthenticated - 60 requests/hour per IP"
+	if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+		auth_state="authenticated"
+	fi
+
 	declare api_output
 	if ! api_output="$(printf '%s' "${GITHUB_TOKEN:+Authorization: Bearer ${GITHUB_TOKEN}}" \
 		| curl -f --silent --show-error --location "${auth_args[@]}" "${api_url}" 2>&1)"; then
-		display_alert "Failed to fetch the latest release of ${repo}" "${api_output}" "error"
+		display_alert "Failed to fetch the latest release of ${repo}" "${api_output} (${auth_state})" "error"
 		return 1
 	fi
 
@@ -61,7 +69,7 @@ function github_latest_release_tag() {
 	tag="$(printf '%s' "${api_output}" | jq -r '.tag_name' 2> /dev/null || true)"
 	if [[ -z "${tag}" || "${tag}" == "null" ]]; then
 		display_alert "GitHub API returned no release tag for ${repo}" \
-			"${GITHUB_TOKEN:+authenticated; }rate limited, or no releases published" "error"
+			"${auth_state}; rate limited, or no releases published" "error"
 		return 1
 	fi
 
