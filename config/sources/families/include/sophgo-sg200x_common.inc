@@ -23,12 +23,12 @@ declare -g SERIALCON="ttyS0"
 case "${BRANCH}" in
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="7.1"
+		declare -g KERNEL_MAJOR_MINOR="7.2"
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-edge"
 		;;
 
 	bleedingedge)
-		declare -g KERNEL_MAJOR_MINOR="7.2"
+		declare -g KERNEL_MAJOR_MINOR="7.3"
 		declare -g LINUXCONFIG="linux-${LINUXFAMILY}-bleedingedge"
 		;;
 
@@ -552,11 +552,6 @@ function write_uboot_platform() {
 if [[ "${NETWORKING_STACK}" == "network-manager" ]]; then
 	declare -g PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY} dnsmasq-base"
 fi
-
-# Everything the post_family_tweaks_bsp hooks below install comes out of
-# packages/bsp/sophgo-sg200x.
-declare -g -a BSP_CLI_EXTRA_HASH_DIRS
-BSP_CLI_EXTRA_HASH_DIRS+=("${SRC}/packages/bsp/sophgo-sg200x")
 
 # Shipped on both storage variants; it refuses to touch its own root device.
 function post_family_tweaks_bsp__sophgo_sg200x_emmc_install_tool() {

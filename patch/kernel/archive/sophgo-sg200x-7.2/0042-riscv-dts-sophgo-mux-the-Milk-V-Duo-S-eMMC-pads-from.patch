@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Lukasz Sobala <lsobala1@gmail.com>
 Date: Thu, 30 Jul 2026 23:37:03 +0200
-Subject: [PATCH] riscv: dts: sophgo: mux the Milk-V Duo S eMMC pads from the DT
+Subject: riscv: dts: sophgo: mux the Milk-V Duo S eMMC pads from the DT
 
 On a Duo S with eMMC fitted, booting from a card leaves the eMMC invisible:
 the controller registers and then
@@ -32,22 +32,25 @@ Declaring them here makes it independent of which bootloader ran, exactly as the
 card slot already is: those pads happen to sit in their native function after
 either boot, which is why the slot works both ways today.
 
-Mux and power-source, nothing else. PINMUX_CONFIG() in the vendor bootloader
-sets the function select alone and the eMMC runs at those defaults when it is
-the boot device, but power-source is not optional:
-cv1800_dt_node_to_map_post() reads it with of_property_read_u32() and returns
-the error if it is absent, which fails the whole pin map - and then the
-consumer does not probe at all, so 4300000.mmc disappears from dmesg entirely
-rather than failing visibly.
+Mux, pulls and power-source. PINMUX_CONFIG() in the vendor bootloader sets the
+function select alone, and cvi_emmc_pad_setting() in its eMMC host driver adds
+the pulls - down on CLK, up on CMD, DAT0-DAT3 and RSTN - and leaves drive
+strength at its reset value. The group declares exactly that, so the pads are
+in the state the eMMC is known to work in whichever bootloader ran.
 
-no-1-8-v is deliberately left alone. Dropping it and declaring mmc-hs200-1_8v
-with mmc-ddr-1_8v was tried, on the theory that the vendor bootloader tunes
-this controller and so must be running HS200; the eMMC then does not enumerate
-at all - the controller registers and no card line ever follows, which is what
-mmc_select_hs200() does when the voltage switch fails, since it returns an
-error other than -EBADMSG and mmc_select_timing() propagates it instead of
-falling back. High speed on a 4-bit bus stands until somebody establishes what
-VDDIO_EMMC actually is on this board. mmc-ddr-1_8v on its own is untried.
+power-source is not optional: cv1800_dt_node_to_map_post() reads it with
+of_property_read_u32() and returns the error if it is absent, which fails the
+whole pin map - and then the consumer does not probe at all, so 4300000.mmc
+disappears from dmesg entirely rather than failing visibly.
+
+The value is 3300. VDDIO_EMMC also holds UART0_TX/RX, the console on the 3.3V
+pin header, so that is the rail's voltage. It also has to be the value every
+other group in the domain declares: the driver keeps a single power-source per
+domain, and cv1800_set_power_cfg() rejects any group that disagrees with the one
+already recorded, with nothing logged at any loglevel. 7.2 has no other group
+in the domain to disagree with, but 7.3 gives uart0 one at 3300, and there a
+1800 here left a Duo S booting from eMMC in the initramfs, waiting for a root
+device that never appeared, with every EMMC_* pad UNCLAIMED in debugfs.
 
 One consequence worth stating: this device tree is shared with the Duo S that
 has no eMMC fitted, where it will now pin seven pads for a chip that is not
@@ -60,11 +63,14 @@ partitions, plus the boot0/boot1/rpmb areas.
 
 Signed-off-by: Armbian <info@armbian.com>
 ---
+ arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts | 48 ++++++++++++++++++++++-
+ 1 file changed, 47 insertions(+), 1 deletion(-)
+
 diff --git a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
-index dbab941..f7aab78 100644
+index 111111111111..222222222222 100644
 --- a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
 +++ b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
-@@ -113,13 +113,56 @@
+@@ -113,6 +113,50 @@ &dmac {
  	status = "okay";
  };
  
@@ -76,34 +82,38 @@ index dbab941..f7aab78 100644
 + * of the bootloader they are left in whatever the BootROM set, and Linux cannot
 + * talk to the eMMC: "mmc2: Failed to initialize a non-removable card".
 + *
-+ * Mux and power-source only. PINMUX_CONFIG() in the vendor bootloader sets the
-+ * function select and nothing else, and the eMMC works with those defaults when
-+ * it is the boot device - but power-source is not optional here:
-+ * cv1800_dt_node_to_map_post() rejects any group without it, which fails the
-+ * consumer's probe outright.
++ * Mux, pulls and power-source. The pulls are the ones the eMMC build of the
++ * bootloader writes in cvi_emmc_pad_setting(): down on CLK, up on the other
++ * six. It leaves drive strength at its reset value and so does this group, so
++ * the pads end up in the state the eMMC is known to work in, whichever
++ * bootloader ran. power-source is not optional: cv1800_dt_node_to_map_post()
++ * rejects any group without it, which fails the consumer's probe outright.
 + *
-+ * no-1-8-v stays. Dropping it and asking for mmc-hs200-1_8v was tried on a Duo
-+ * S with the eMMC fitted, and the card then never enumerates at all: the
-+ * controller registers and no card line ever follows, which is the non-graceful
-+ * failure mmc_select_hs200() has when the voltage switch does not take. High
-+ * speed on a 4-bit bus it is, until somebody establishes what VDDIO_EMMC
-+ * actually is on this board. mmc-ddr-1_8v on its own is untried.
-+ *
-+ * max-frequency matches the vendor DTS. It is inert while no-1-8-v holds the
-+ * card at high speed - the clock is set from ext_csd.hs_max_dtr either way -
-+ * and is here because it was in the tree that was booted and verified.
++ * power-source is 3300 because VDDIO_EMMC is the 3.3V rail on this board: the
++ * domain also holds UART0_TX/RX, the console on header pins 8 and 10, along
++ * with AUX0, SD0_CD, SD0_PWR_EN and the JTAG_CPU pads. cv1800_set_power_cfg()
++ * keeps one value per domain - the first group to probe sets it, and any later
++ * group that disagrees fails its pin map and never probes, silently. Mainline
++ * 7.3 adds a uart0 group at 3300, and against it a 1800 here leaves the eMMC
++ * simply gone.
 + */
 +&pinctrl {
 +	emmc_cfg: emmc-cfg {
-+		emmc-pins {
-+			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>,
-+				 <PINMUX(PIN_EMMC_CMD, 0)>,
++		emmc-clk-pins {
++			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>;
++			bias-pull-down;
++			power-source = <3300>;
++		};
++
++		emmc-bus-pins {
++			pinmux = <PINMUX(PIN_EMMC_CMD, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT0, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT1, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT2, 0)>,
 +				 <PINMUX(PIN_EMMC_DAT3, 0)>,
 +				 <PINMUX(PIN_EMMC_RSTN, 0)>;
-+			power-source = <1800>;
++			bias-pull-up;
++			power-source = <3300>;
 +		};
 +	};
 +};
@@ -111,8 +121,7 @@ index dbab941..f7aab78 100644
  &emmc {
  	bus-width = <4>;
  	no-1-8-v;
-+	max-frequency = <200000000>;
- 	cap-mmc-hw-reset;
+@@ -120,6 +164,8 @@ &emmc {
  	no-sd;
  	no-sdio;
  	non-removable;
@@ -121,7 +130,7 @@ index dbab941..f7aab78 100644
  	status = "okay";
  };
  
-@@ -307,4 +350,4 @@
+@@ -312,4 +358,4 @@ &int_adc {
  
  &remoteproc {
  	status = "okay";
@@ -129,4 +138,5 @@ index dbab941..f7aab78 100644
 \ No newline at end of file
 +};
 -- 
-2.34.1
+Armbian
+
