@@ -314,13 +314,33 @@ function kernel_package_callback_linux_image() {
 		mkdir -p "${package_directory}${debian_kernel_hook_dir}/${script}.d" # create kernel hook dir, make sure.
 
 		kernel_package_hook_helper "${script}" <(
-			# Common for all of postinst/postrm/preinst/prerm
-			cat <<- KERNEL_HOOK_DELEGATION # Reference: linux-image-6.1.0-7-amd64.postinst from Debian
+			# Common for all of postinst/postrm/preinst/prerm: export the params the
+			# hook scripts expect. Reference: linux-image-6.1.0-7-amd64.postinst from Debian
+			cat <<- KERNEL_HOOK_ENV
 				export DEB_MAINT_PARAMS="\$*" # Pass maintainer script parameters to hook scripts
 				export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No) # Tell initramfs builder whether it's wanted
-				# Run the same hooks Debian/Ubuntu would for their kernel packages.
-				test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
-			KERNEL_HOOK_DELEGATION
+			KERNEL_HOOK_ENV
+
+			# Run the same hooks Debian/Ubuntu would for their kernel packages.
+			if [[ "${script}" == "postinst" ]]; then
+				# For postinst these hooks include the DKMS module builds and
+				# update-initramfs. A failure here (e.g. an out-of-tree DKMS module that
+				# won't build against the freshly installed kernel yet) must NOT abort the
+				# script before the boot-symlink relink below (the postinst runs under
+				# 'set -e') -- otherwise /boot/${image_name} is left dangling / pointing at
+				# a kernel that is being removed, and the board won't boot. So capture the
+				# hook exit status, always do the relink, and re-surface the failure at the
+				# very end (see HOOK_FOR_PROPAGATE_HOOK_RC) so apt/dpkg still reports it and
+				# retries -- it self-heals once linux-headers is configured.
+				cat <<- KERNEL_HOOK_DELEGATION_POSTINST
+					hook_rc=0
+					test -d ${debian_kernel_hook_dir}/${script}.d && { run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d || hook_rc=\$?; }
+				KERNEL_HOOK_DELEGATION_POSTINST
+			else
+				cat <<- KERNEL_HOOK_DELEGATION
+					test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
+				KERNEL_HOOK_DELEGATION
+			fi
 
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
@@ -353,6 +373,17 @@ function kernel_package_callback_linux_image() {
 						linux-update-symlinks install "${kernel_version_family}" "${installed_image_path}" || true
 					fi
 				HOOK_FOR_DEBIAN_COMPAT_SYMLINK
+
+				# The boot symlinks now point at this kernel, so the board is bootable.
+				# Re-surface any failure from the kernel postinst.d hooks above, so
+				# apt/dpkg still reports it and retries (e.g. a DKMS build that succeeds
+				# once the matching linux-headers package is configured).
+				cat <<- HOOK_FOR_PROPAGATE_HOOK_RC
+					if [[ "\${hook_rc:-0}" != "0" ]]; then
+						echo "Armbian: kernel postinst.d hooks failed (rc=\${hook_rc}), but boot symlinks were updated so the board stays bootable. Run 'apt-get -f install' (or reinstall the matching linux-headers package) to finish any pending DKMS builds." >&2
+						exit "\${hook_rc}"
+					fi
+				HOOK_FOR_PROPAGATE_HOOK_RC
 			fi
 		)
 	done
