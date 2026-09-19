@@ -3,7 +3,7 @@
 BOARD_NAME="MBa67xx"
 BOARD_VENDOR="tqgroup"
 BOARDFAMILY="k3-tq"
-BOARD_MAINTAINER="schmiedelm"
+BOARD_MAINTAINER=""
 INTRODUCED="2026"
 HAS_VIDEO_OUTPUT="yes"
 # KNOWN LIMITATION: no video output (DP or LVDS) and no GPU on "edge" -

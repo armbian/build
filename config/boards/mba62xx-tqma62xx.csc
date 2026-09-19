@@ -3,7 +3,7 @@
 BOARD_NAME="MBa62xx"
 BOARD_VENDOR="tqgroup"
 BOARDFAMILY="k3-tq"
-BOARD_MAINTAINER="schmiedelm"
+BOARD_MAINTAINER=""
 INTRODUCED="2026"
 HAS_VIDEO_OUTPUT="yes"
 # Default armbian-firmware doesn't ship mrvl/sdsd8997_combo_v4.bin (SD8997 WiFi/BT); -full does.
