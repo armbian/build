@@ -1,4 +1,4 @@
-# RISC-V StarFive Visionfive V2
+# StarFive JH7110 quad core (SiFive U74) 2/4/8GB RAM eMMC NVMe 2x GBE HDMI 4x USB3
 BOARD_NAME="VisionFive2"
 BOARD_VENDOR="star-five"
 BOARDFAMILY="starfive2"
