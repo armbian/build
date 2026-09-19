@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Ling <ling_kasim@hotmail.com>
+Date: Sun, 13 Sep 2026 13:00:00 +0200
+Subject: drm/msm/dsi: don't round byte clock before reparenting to the PLL
+
+dsi_calc_clk_rate_6g() rounds the computed byte clock through
+clk_round_rate() while the byte_src RCG is still parented to the TCXO.
+clk_byte2_determine_rate() derives the achievable rate from the *current*
+parent, so for a DSC panel that needs 72.77 MHz it returns the TCXO-derived
+38.4 MHz instead.  That value is then used both for the PHY timing
+(byte_clk_rate * 8) and for dev_pm_opp_set_rate(), which programs the DSI
+PLL VCO for the wrong byte clock.
+
+The source clock is only reparented to the DSI PHY PLL later, in
+dsi_link_clk_set_rate_6g_v2_9().  Once the PLL is the parent the rounding is
+harmless; before that it corrupts the rate.  The v2 path
+(dsi_calc_clk_rate_v2) does not round at all, and clk_set_rate() rounds to an
+achievable rate on its own, so drop the premature rounding.
+
+Fixes (on AYN Odin 3 / Chipone ICNA3520, 1080x1920@120 with 3:1 DSC):
+
+  dsi_link_clk_set_rate_6g: Failed to set rate pixel clk, -22
+  msm_dsi_host_power_on: failed to enable link clocks. ret=-22
+  msm_dsi ae94000.dsi: Power on failed: -22
+  panel-chipone-icna35xx ae94000.dsi.0: failed to initialize panel: -22
+
+which leaves the DSI link down and the DPU command-mode encoder timing out.
+
+Signed-off-by: Alex Ling <ling_kasim@hotmail.com>
+---
+ drivers/gpu/drm/msm/dsi/dsi_host.c | 11 ----------
+ 1 file changed, 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -677,8 +677,6 @@ static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ 
+ int dsi_calc_clk_rate_6g(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ {
+-	long rounded_byte_clk_rate;
+-
+ 	if (!msm_host->mode) {
+ 		pr_err("%s: mode not set\n", __func__);
+ 		return -EINVAL;
+@@ -686,15 +684,6 @@ int dsi_calc_clk_rate_6g(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ 
+ 	dsi_calc_pclk(msm_host, is_bonded_dsi);
+ 
+-	rounded_byte_clk_rate = clk_round_rate(msm_host->byte_clk,
+-					       msm_host->byte_clk_rate);
+-	if (rounded_byte_clk_rate < 0) {
+-		pr_err("%s: failed to round byte clock rate, %ld\n",
+-		       __func__, rounded_byte_clk_rate);
+-		return rounded_byte_clk_rate;
+-	}
+-
+-	msm_host->byte_clk_rate = rounded_byte_clk_rate;
+ 	msm_host->esc_clk_rate = clk_get_rate(msm_host->esc_clk);
+ 	return 0;
+ }
+-- 
+Armbian
+
