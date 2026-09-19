@@ -1,4 +1,4 @@
-# Retroid Pocket RP5 Configuration
+# Qualcomm SM8250 Snapdragon 865 octa core 8/12GB RAM 128GB UFS WiFi6/BT handheld
 declare -g BOARD_NAME="Retroid Pocket RP5"
 declare -g BOARD_VENDOR="retroid"
 declare -g BOARD_MAINTAINER=""
