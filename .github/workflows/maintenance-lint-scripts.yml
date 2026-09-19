@@ -186,6 +186,80 @@ jobs:
           # still ship to the post step.
           shfmt -d $(shfmt -f .) > shfmt.diff 2>/dev/null || true
 
+      - name: shfmt — name the files it reports without a hunk
+        run: |
+          # `shfmt -d` shows a missing final newline or CRLF as a header
+          # with no hunk, which tells nobody anything and which reviewdog's
+          # diff parser rejects. Name the problem per file, drop the section.
+          python3 - <<'PY'
+          import json, os, re
+
+          hunk = re.compile(r'^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@')
+          src = open('shfmt.diff').read().splitlines(keepends=True)
+          out, bare, i = [], [], 0
+          while i < len(src):
+              m = hunk.match(src[i])
+              if m:
+                  old, new = int(m.group(1) or 1), int(m.group(2) or 1)
+                  out.append(src[i])
+                  i += 1
+                  # Hunk body: count lines so none is mistaken for a header
+                  while (old > 0 or new > 0) and i < len(src):
+                      line = src[i]
+                      out.append(line)
+                      i += 1
+                      if line.startswith('-'):
+                          old -= 1
+                      elif line.startswith('+'):
+                          new -= 1
+                      elif not line.startswith('\\'):
+                          old -= 1
+                          new -= 1
+                  continue
+              if src[i].startswith('--- ') and i + 1 < len(src) and src[i + 1].startswith('+++ '):
+                  if i + 2 < len(src) and hunk.match(src[i + 2]):
+                      out += src[i:i + 2]
+                  else:
+                      bare.append(src[i + 1][4:].rstrip('\n'))
+                  i += 2
+                  continue
+              out.append(src[i])
+              i += 1
+          open('shfmt.diff', 'w').write(''.join(out))
+
+          findings = []
+          for path in bare:
+              data = open(path, 'rb').read()
+              if b'\r' in data:
+                  findings.append((path, data[:data.index(b'\r')].count(b'\n') + 1,
+                                   'CRLF line endings; use LF'))
+              if data and not data.endswith(b'\n'):
+                  findings.append((path, data.count(b'\n') + 1,
+                                   'no newline at end of file'))
+              if not findings or findings[-1][0] != path:
+                  findings.append((path, 1, 'shfmt reports a whitespace-only difference'))
+
+          with open('shfmt-whole-file.txt', 'w') as f:
+              for path, line, msg in findings:
+                  f.write(f'{path}:{line}: {msg}\n')
+
+          pr_files = {json.loads(l) for l in open('pr-changed-files.lines') if l.strip()}
+
+          def prop(s):
+              return (s.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                       .replace(':', '%3A').replace(',', '%2C'))
+
+          for path, line, msg in findings:
+              if path in pr_files:
+                  print(f'::warning file={prop(path)},line={line},title=shfmt::{msg}')
+
+          if findings:
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as s:
+                  s.write('\n### shfmt: whole-file issues in the tree\n\n')
+                  for path, line, msg in findings:
+                      s.write(f'* `{path}:{line}` — {msg}\n')
+          PY
+
       - name: Stash PR metadata for the post workflow
         run: |
           echo "${{ github.event.pull_request.number }}" > pr-number.txt
@@ -209,6 +283,7 @@ jobs:
             shellcheck-findings.txt
             shellcheck-fix.diff
             shfmt.diff
+            shfmt-whole-file.txt
             pr-number.txt
             head-sha.txt
             head-repo.txt
