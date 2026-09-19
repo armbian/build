@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sat, 19 Sep 2026 04:23:31 +0000
+Subject: PCI: meson: Rebuild the root complex after a link down
+
+A link down resets the root complex behind the driver's back: its config space
+returns to the power-on defaults (COMMAND 0x0000, secondary bus 0, LNKSTA
+0x1011) and everything behind the port answers with ones.  The controller has a
+single interrupt, taken by MSI, and reports no link down event, so nothing
+notices.  On ODROID-HC4 this happens when a disk is swapped on the SATA
+controller sitting behind the port, and the disks stay gone until the driver is
+unbound and bound again.
+
+Poll the link once a second and, when a link that carried a device goes down,
+rebuild the root complex the way pciehp handles a surprise removal: mark the
+devices behind it disconnected, so their drivers see them gone instead of
+timing out on them, remove them, run the same path system resume uses and scan
+the bus again.  The MSI interrupt is masked while the controller is in reset,
+where its handler would read registers that are not there.
+
+An empty slot never trains and is left alone.  Once the devices are removed the
+port looks empty, so a flag keeps the poll going, and after three failed
+rebuilds the port is left alone rather than reset once a second forever.  A
+system resume trains the link again and gives such a port three more tries;
+when the poll finds the link back up, it scans the bus again.
+
+A link seen down is read again 100 ms later and rebuilt only if it is still
+down.  The warning carries COMMAND and LNKSTA of the root port and the controller's
+STATUS12, to tell a real link down from a misread.
+
+The poll stops in .prepare, before the devices behind the port suspend, and
+restarts from .complete, once they have resumed.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/pci/controller/dwc/pci-meson.c | 131 +++++++++-
+ 1 file changed, 129 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pci-meson.c b/drivers/pci/controller/dwc/pci-meson.c
+index 10585dac7393..87c00ba21104 100644
+--- a/drivers/pci/controller/dwc/pci-meson.c
++++ b/drivers/pci/controller/dwc/pci-meson.c
+@@ -42,10 +42,18 @@
+ #define PCIE_NORMAL_RESET		0
+ 
+ /* Link training attempts, the first one included */
+ #define PCIE_LINK_TRAIN_TRIES		3
+ 
++#define PCIE_LINK_WATCH_MS		1000
++
++/* Delay before reading a link seen down again */
++#define PCIE_LINK_CONFIRM_MS		100
++
++/* Rebuild attempts before the port is left alone */
++#define PCIE_LINK_RECOVER_TRIES		3
++
+ enum pcie_data_rate {
+ 	PCIE_GEN1,
+ 	PCIE_GEN2,
+ 	PCIE_GEN3,
+ 	PCIE_GEN4
+@@ -67,10 +75,13 @@ struct meson_pcie {
+ 	void __iomem *cfg_base;
+ 	struct meson_pcie_clk_res clk_res;
+ 	struct meson_pcie_rc_reset mrst;
+ 	struct gpio_desc *reset_gpio;
+ 	struct phy *phy;
++	struct delayed_work link_watch;
++	bool link_lost;
++	unsigned int recover_tries;
+ };
+ 
+ static struct reset_control *meson_pcie_get_reset(struct meson_pcie *mp,
+ 						  const char *id,
+ 						  u32 reset_type)
+@@ -436,10 +447,97 @@ static int meson_pcie_link_restart(struct meson_pcie *mp, bool endpoint)
+ 		gpiod_set_value_cansleep(mp->reset_gpio, 1);
+ 		msleep(PCIE_T_PVPERL_MS);
+ 	}
+ }
+ 
++/* Rebuild the root complex after a link down; pci_lock_rescan_remove() held */
++static void meson_pcie_link_recover(struct meson_pcie *mp)
++{
++	struct dw_pcie *pci = &mp->pci;
++	struct pci_bus *bus = pci->pp.bridge->bus;
++	int msi_irq = pci->pp.msi_irq[0];
++	u8 exp = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++	struct pci_dev *pdev, *tmp;
++	int ret;
++
++	if (!mp->link_lost) {
++		dev_warn(pci->dev,
++			 "link down (COMMAND %#06x LNKSTA %#06x STATUS12 %#010x), rebuilding the root complex\n",
++			 dw_pcie_readw_dbi(pci, PCI_COMMAND),
++			 dw_pcie_readw_dbi(pci, exp + PCI_EXP_LNKSTA),
++			 meson_cfg_readl(mp, PCIE_CFG_STATUS12));
++
++		/* Let the drivers fail at once instead of timing out */
++		pci_walk_bus(bus, pci_dev_set_disconnected, NULL);
++
++		list_for_each_entry_safe_reverse(pdev, tmp, &bus->devices,
++						 bus_list)
++			pci_stop_and_remove_bus_device(pdev);
++
++		mp->link_lost = true;
++	}
++
++	/* The MSI handler would read registers the reset takes away */
++	if (msi_irq > 0)
++		disable_irq(msi_irq);
++
++	ret = meson_pcie_link_restart(mp, true);
++
++	if (msi_irq > 0)
++		enable_irq(msi_irq);
++
++	if (ret) {
++		if (++mp->recover_tries == PCIE_LINK_RECOVER_TRIES)
++			dev_err(pci->dev,
++				"link down after %u rebuilds, giving up\n",
++				mp->recover_tries);
++		return;
++	}
++
++	pci_rescan_bus(bus);
++	mp->link_lost = false;
++	mp->recover_tries = 0;
++
++	dev_info(pci->dev, "root complex rebuilt after a link down\n");
++}
++
++/* Read a link seen down once more before acting on it */
++static bool meson_pcie_link_down(struct dw_pcie *pci)
++{
++	if (dw_pcie_link_up(pci) && meson_pcie_dll_active(pci))
++		return false;
++
++	msleep(PCIE_LINK_CONFIRM_MS);
++
++	return !dw_pcie_link_up(pci) || !meson_pcie_dll_active(pci);
++}
++
++/* This controller reports no link down event, so poll for one */
++static void meson_pcie_link_watch(struct work_struct *work)
++{
++	struct meson_pcie *mp = container_of(work, struct meson_pcie,
++					     link_watch.work);
++	struct dw_pcie *pci = &mp->pci;
++
++	pci_lock_rescan_remove();
++	if (mp->recover_tries < PCIE_LINK_RECOVER_TRIES &&
++	    (mp->link_lost || meson_pcie_had_endpoint(mp))) {
++		if (meson_pcie_link_down(pci)) {
++			meson_pcie_link_recover(mp);
++		} else if (mp->link_lost) {
++			pci_rescan_bus(pci->pp.bridge->bus);
++			mp->link_lost = false;
++			mp->recover_tries = 0;
++			dev_info(pci->dev, "link back up, bus scanned again\n");
++		}
++	}
++	pci_unlock_rescan_remove();
++
++	schedule_delayed_work(&mp->link_watch,
++			      msecs_to_jiffies(PCIE_LINK_WATCH_MS));
++}
++
+ static int meson_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct dw_pcie *pci;
+ 	struct meson_pcie *mp;
+@@ -503,10 +601,14 @@ static int meson_pcie_probe(struct platform_device *pdev)
+ 	if (ret < 0) {
+ 		dev_err(dev, "Add PCIe port failed, %d\n", ret);
+ 		goto err_phy;
+ 	}
+ 
++	INIT_DELAYED_WORK(&mp->link_watch, meson_pcie_link_watch);
++	schedule_delayed_work(&mp->link_watch,
++			      msecs_to_jiffies(PCIE_LINK_WATCH_MS));
++
+ 	return 0;
+ 
+ err_phy:
+ 	meson_pcie_power_off(mp);
+ 	return ret;
+@@ -514,10 +616,11 @@ static int meson_pcie_probe(struct platform_device *pdev)
+ 
+ static void meson_pcie_remove(struct platform_device *pdev)
+ {
+ 	struct meson_pcie *mp = platform_get_drvdata(pdev);
+ 
++	cancel_delayed_work_sync(&mp->link_watch);
+ 	dw_pcie_host_deinit(&mp->pci.pp);
+ 	meson_pcie_power_off(mp);
+ }
+ 
+ static int meson_pcie_suspend_noirq(struct device *dev)
+@@ -551,12 +654,36 @@ static int meson_pcie_resume_noirq(struct device *dev)
+ 	}
+ 
+ 	return meson_pcie_link_restart(mp, meson_pcie_had_endpoint(mp));
+ }
+ 
+-static DEFINE_NOIRQ_DEV_PM_OPS(meson_pcie_pm_ops, meson_pcie_suspend_noirq,
+-			       meson_pcie_resume_noirq);
++static int meson_pcie_pm_prepare(struct device *dev)
++{
++	struct meson_pcie *mp = dev_get_drvdata(dev);
++
++	/* The poll must not run while the devices behind the port suspend */
++	cancel_delayed_work_sync(&mp->link_watch);
++
++	return 0;
++}
++
++/* Watch the link again only once the devices behind it have resumed */
++static void meson_pcie_pm_complete(struct device *dev)
++{
++	struct meson_pcie *mp = dev_get_drvdata(dev);
++
++	/* A resume retrains the link, so a port given up on gets new tries */
++	mp->recover_tries = 0;
++	schedule_delayed_work(&mp->link_watch, 0);
++}
++
++static const struct dev_pm_ops meson_pcie_pm_ops = {
++	NOIRQ_SYSTEM_SLEEP_PM_OPS(meson_pcie_suspend_noirq,
++				  meson_pcie_resume_noirq)
++	.prepare = meson_pcie_pm_prepare,
++	.complete = meson_pcie_pm_complete,
++};
+ 
+ static const struct of_device_id meson_pcie_of_match[] = {
+ 	{
+ 		.compatible = "amlogic,axg-pcie",
+ 	},
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+

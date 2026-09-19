@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Fri, 18 Sep 2026 16:15:54 +0000
+Subject: PCI: meson: Retrain the link on resume if the data link layer is down
+
+meson_pcie_link_up() reports the controller's own SMLH and RDLH bits.  After
+a resume that does not train the link both of them read as up while the data
+link layer is down: LNKSTA comes back as 0x1011 with DLL Active clear, config
+access to the endpoint returns 0xffffffff, and the devices behind the port
+stay gone until something rebuilds the root complex.  On ODROID-HC4, where a
+SATA controller and its disks sit behind the port, this happens about once in
+twenty s2idle cycles.
+
+Ask the link status register instead once the root complex is back, and while
+the data link layer is down rebuild it and train the link again, holding the
+endpoint in reset for T_PVPERL first.  A dw_pcie_resume_noirq() that fails
+counts as an attempt as well; after three of them resume gives up rather than
+reporting a link that carries nothing.
+
+A slot that had no device before the suspend gets a single attempt and no
+error: an empty slot never trains, and host init leaves it alone too.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/pci/controller/dwc/pci-meson.c | 77 +++++++++-
+ 1 file changed, 70 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pci-meson.c b/drivers/pci/controller/dwc/pci-meson.c
+index ff6c1645cc46..2ed367625afc 100644
+--- a/drivers/pci/controller/dwc/pci-meson.c
++++ b/drivers/pci/controller/dwc/pci-meson.c
+@@ -17,10 +17,11 @@
+ #include <linux/phy/phy.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
+ 
+ #include "pcie-designware.h"
++#include "../../pci.h"
+ 
+ #define to_meson_pcie(x) dev_get_drvdata((x)->dev)
+ 
+ #define PCIE_CAP_MAX_PAYLOAD_SIZE(x)	((x) << 5)
+ #define PCIE_CAP_MAX_READ_REQ_SIZE(x)	((x) << 12)
+@@ -43,10 +44,13 @@
+ #define MAX_READ_REQ_SIZE		256
+ #define PCIE_RESET_DELAY		500
+ #define PCIE_SHARED_RESET		1
+ #define PCIE_NORMAL_RESET		0
+ 
++/* Link training attempts, the first one included */
++#define PCIE_LINK_TRAIN_TRIES		3
++
+ enum pcie_data_rate {
+ 	PCIE_GEN1,
+ 	PCIE_GEN2,
+ 	PCIE_GEN3,
+ 	PCIE_GEN4
+@@ -407,10 +411,75 @@ static const struct dw_pcie_ops dw_pcie_ops = {
+ 	.link_up = meson_pcie_link_up,
+ 	.start_link = meson_pcie_start_link,
+ 	.stop_link = meson_pcie_stop_link,
+ };
+ 
++/* SMLH and RDLH can both read as up while the data link layer stays down */
++static bool meson_pcie_dll_active(struct dw_pcie *pci)
++{
++	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
++
++	return dw_pcie_readw_dbi(pci, offset + PCI_EXP_LNKSTA) &
++	       PCI_EXP_LNKSTA_DLLLA;
++}
++
++/* An empty slot never trains, so only a link that carried a device is lost */
++static bool meson_pcie_had_endpoint(struct meson_pcie *mp)
++{
++	struct pci_bus *bus = mp->pci.pp.bridge->bus;
++	struct pci_dev *port;
++
++	port = list_first_entry_or_null(&bus->devices, struct pci_dev,
++					bus_list);
++
++	return port && port->subordinate &&
++	       !list_empty(&port->subordinate->devices);
++}
++
++/*
++ * Program the root complex and train the link, retrying while the data link
++ * layer stays down.  With no endpoint behind the port there is nothing to
++ * wait for: one attempt is made and its result ignored, as at host init.
++ */
++static int meson_pcie_link_restart(struct meson_pcie *mp, bool endpoint)
++{
++	struct dw_pcie *pci = &mp->pci;
++	struct device *dev = pci->dev;
++	int try, ret;
++
++	for (try = 1; ; try++) {
++		ret = meson_pcie_reset(mp);
++		if (ret) {
++			dev_err(dev, "reset failed, %d\n", ret);
++			return ret;
++		}
++
++		/* dw_pcie_resume_noirq() is what programs the root complex */
++		pci->suspended = true;
++		ret = dw_pcie_resume_noirq(pci);
++		if (!ret && meson_pcie_dll_active(pci))
++			return 0;
++
++		if (!endpoint)
++			return 0;
++
++		if (try == PCIE_LINK_TRAIN_TRIES) {
++			dev_err(dev, "data link layer down after %d tries\n",
++				try);
++			return ret ? ret : -ETIMEDOUT;
++		}
++
++		dev_warn(dev, "data link layer down, training the link again\n");
++		if (!ret)
++			dw_pcie_stop_link(pci);
++
++		/* Hold the endpoint in reset for T_PVPERL before it restarts */
++		gpiod_set_value_cansleep(mp->reset_gpio, 1);
++		msleep(PCIE_T_PVPERL_MS);
++	}
++}
++
+ static int meson_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct dw_pcie *pci;
+ 	struct meson_pcie *mp;
+@@ -520,17 +589,11 @@ static int meson_pcie_resume_noirq(struct device *dev)
+ 	if (ret) {
+ 		dev_err(dev, "phy power on failed, %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	ret = meson_pcie_reset(mp);
+-	if (ret) {
+-		dev_err(dev, "reset failed, %d\n", ret);
+-		return ret;
+-	}
+-
+-	return dw_pcie_resume_noirq(&mp->pci);
++	return meson_pcie_link_restart(mp, meson_pcie_had_endpoint(mp));
+ }
+ 
+ static DEFINE_NOIRQ_DEV_PM_OPS(meson_pcie_pm_ops, meson_pcie_suspend_noirq,
+ 			       meson_pcie_resume_noirq);
+ 
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
