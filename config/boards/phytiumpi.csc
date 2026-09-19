@@ -1,4 +1,4 @@
-# Phytium PhytiumPi quad core 4GB SoC GBe USB3
+# Phytium E2000Q quad core 2/4GB RAM 2x GBE USB3 HDMI WiFi/BT mini-PCIe
 BOARD_NAME="Phytium Pi"
 BOARD_VENDOR="phytium"
 BOARDFAMILY="phytium-embedded"

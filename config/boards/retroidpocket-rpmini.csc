@@ -1,5 +1,5 @@
-# Retroid Pocket RPMini Configuration
-declare -g BOARD_NAME="Retroid Pocket RPMini"
+# Qualcomm SM8250 Snapdragon 865 octa core 6GB RAM 128GB UFS WiFi6/BT handheld
+declare -g BOARD_NAME="Pocket RPMini"
 declare -g BOARD_VENDOR="retroid"
 declare -g BOARD_MAINTAINER=""
 declare -g INTRODUCED="2024"
