@@ -6,6 +6,16 @@ SEEED_APT_REPO_URL="https://seeed-studio.github.io/seeed_armbian_extension"
 SEEED_DEFAULT_ENABLE="${SEEED_DEFAULT_ENABLE:-"yes"}" # default all Seeed vendor features on unless explicitly disabled
 display_alert "$BOARD" "SEEED_DEFAULT_ENABLE is set to '${SEEED_DEFAULT_ENABLE}'" "info"
 
+# Ship kernel headers in the image. DKMS packages from the Seeed APT repo
+# (morse-fgh100m, wq9201s, maxio-phy, r8125, ...) register their module during
+# pre_install_distribution_specific — which runs BEFORE the kernel debs enter
+# the chroot (rootfs-image.sh runs install_distribution_specific before
+# install_distribution_agnostic) — so their postinst can only leave the module
+# in "added" state. Headers plus the post_install_kernel_debs autoinstall hook
+# below build them once the kernel is in place. Headers also stay in the image
+# so a kernel upgrade on the board can rebuild the modules via dkms.
+declare -g INSTALL_HEADERS="yes"
+
 # Configure Seeed APT repository in the image (persists for apt upgrade)
 function post_family_tweaks_bsp__seeed_configure_apt_source() {
 	display_alert "$BOARD" "Configuring Seeed APT repository" "info"
@@ -62,6 +72,30 @@ function seeed_recomputer_install_from_apt() {
 	chroot_sdcard_apt_get_update
 	chroot_sdcard_apt_get_install_download_only "$@"
 	chroot_sdcard_apt_get_install "$@"
+}
+
+# Build all DKMS modules registered by Seeed APT packages, now that the
+# kernel and headers are installed in the chroot. dkms autoinstall alone
+# fails quietly on build errors (module stays "added" and the image ships
+# without the driver), so verify every registered module reached
+# "installed" and fail the build loudly otherwise. The check runs inside a
+# single chroot invocation: capturing chroot_sdcard output via $( ) on the
+# host would pick up build-log noise.
+function post_install_kernel_debs__recomputer_dkms_autoinstall() {
+	[[ -d "${SDCARD}/var/lib/dkms" ]] || return 0 # no DKMS package installed
+
+	display_alert "$BOARD" "Building registered DKMS modules" "dkms autoinstall" "info"
+	# uname -r in the qemu-user chroot reports the x86 host kernel, so bare
+	# "dkms autoinstall" looks for 6.8.0-*-generic headers and fails with
+	# exit 21. Target the arm64 vendor kernels installed in the chroot
+	# instead; kernels without a headers tree (/lib/modules/*/build) are
+	# skipped. Per-kernel failures are swallowed here and caught by the
+	# status verification below.
+	use_clean_environment="yes" chroot_sdcard 'for k in /lib/modules/*; do [ -e "$k/build" ] || continue; dkms autoinstall -k "${k##*/}" || true; done'
+	# All-healthy is the expected outcome, so the grep must not fail the
+	# assignment when it finds nothing (bash -e would abort on the
+	# substitution's exit code before the check even runs).
+	use_clean_environment="yes" chroot_sdcard "bad=\$(dkms status 2>/dev/null | grep -E ':(added|built|failed)' || true); [ -z \"\$bad\" ] || { echo \"DKMS module(s) did not build: \$bad\" >&2; exit 1; }"
 }
 
 # Install Seeed common packages (USB gadget, Morse tools).
