@@ -37,9 +37,30 @@ if [[ -z "${GITHUB_SOURCE:-}" ]]; then
 	GITHUB_SOURCE="https://github.com"
 fi
 
-fetch_from_repo "${SEEED_EXTENSION_REPO}" "seeed_armbian_extension" "${SEEED_EXTENSION_REF}"
+# Don't fetch during config-dump-json (CONFIG_DEFS_ONLY=yes). The board×branch
+# inventory runs many config dumps in parallel; a real git fetch here has no tree
+# to feed yet and races on the global git config (`git config --global --add
+# safe.directory ...` -> exit 128), which then breaks the whole inventory -- the
+# same reason other extensions (e.g. sophgo-sg200x-aic8800, gateway-dk-ask) skip
+# fetching in this mode. Reuse the cached clone if one is present so the config
+# dump still sees the extension; with no cache yet, skip it for the dump. The
+# repo is fetched for real on an actual build.
+seeed_ext_enable="yes"
+if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+	if [[ -e "${SRC}/cache/sources/seeed_armbian_extension/.git" ]]; then
+		display_alert "seeed-extension" "config-dump-json: reusing cached clone, skipping fetch" "debug"
+	else
+		display_alert "seeed-extension" "config-dump-json: no cached clone, skipping fetch and enable" "debug"
+		seeed_ext_enable="no"
+	fi
+else
+	fetch_from_repo "${SEEED_EXTENSION_REPO}" "seeed_armbian_extension" "${SEEED_EXTENSION_REF}"
+fi
 
-SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
-mkdir -p "${SRC}/extensions"
-ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
-enable_extension "seeed_armbian_extension"
+if [[ "${seeed_ext_enable}" == "yes" ]]; then
+	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
+	mkdir -p "${SRC}/extensions"
+	ln -sf "${SEEED_EXT_DIR}" "${SRC}/extensions/seeed_armbian_extension"
+	enable_extension "seeed_armbian_extension"
+fi
+unset seeed_ext_enable
