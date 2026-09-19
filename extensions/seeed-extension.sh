@@ -47,7 +47,7 @@ fi
 # repo is fetched for real on an actual build.
 seeed_ext_enable="yes"
 if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-	if [[ -d "${SRC}/cache/sources/seeed_armbian_extension/.git" ]]; then
+	if [[ -e "${SRC}/cache/sources/seeed_armbian_extension/.git" ]]; then
 		display_alert "seeed-extension" "config-dump-json: reusing cached clone, skipping fetch" "debug"
 	else
 		display_alert "seeed-extension" "config-dump-json: no cached clone, skipping fetch and enable" "debug"
