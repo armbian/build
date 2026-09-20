@@ -144,8 +144,8 @@ function parse_each_cmdline_arg_as_command_param_or_config() {
 	fi
 
 	# see if we can find config file in userpatches. can be either config-${argument}.conf or config-${argument}.conf.sh
-	conf_path="${SRC}/userpatches/config-${argument}.conf"
-	conf_sh_path="${SRC}/userpatches/config-${argument}.conf.sh"
+	conf_path="${USERPATCHES_PATH}/config-${argument}.conf"
+	conf_sh_path="${USERPATCHES_PATH}/config-${argument}.conf.sh"
 
 	# early safety net: immediately bomb if we find both forms of config. it's too confusing. choose one.
 	if [[ -f ${conf_path} && -f ${conf_sh_path} ]]; then

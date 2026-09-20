@@ -136,7 +136,7 @@ function cli_json_info_run() {
 		# Board/branch inventory.
 		if [[ ! -f "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" ]]; then
 			display_alert "Generating board/branch inventory" "all_boards_all_branches.json" "info"
-			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/board-inventory.py ">" "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "USERPATCHES_PATH=${USERPATCHES_PATH@Q}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/board-inventory.py ">" "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}"
 		fi
 
 		if [[ "${ARMBIAN_COMMAND}" == "inventory" ]]; then

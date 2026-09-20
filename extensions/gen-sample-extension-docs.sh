@@ -7,13 +7,13 @@ function extension_metadata_ready__499_display_docs_generation_start_info() {
 }
 
 function extension_metadata_ready__docs_markdown() {
-	mkdir -p "${SRC}/userpatches/extensions"
-	generate_markdown_docs_to_stdout > "${SRC}/userpatches/extensions/hooks.auto.docs.md"
+	mkdir -p "${USERPATCHES_PATH}/extensions"
+	generate_markdown_docs_to_stdout > "${USERPATCHES_PATH}/extensions/hooks.auto.docs.md"
 }
 
 function extension_metadata_ready__docs_sample_extension() {
-	mkdir -p "${SRC}/userpatches/extensions"
-	generate_sample_extension_to_stdout > "${SRC}/userpatches/extensions/sample-extension.sh"
+	mkdir -p "${USERPATCHES_PATH}/extensions"
+	generate_sample_extension_to_stdout > "${USERPATCHES_PATH}/extensions/sample-extension.sh"
 }
 
 ## Internal functions
