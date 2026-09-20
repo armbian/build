@@ -42,6 +42,43 @@ function parse_cmdline_params() {
 	done
 }
 
+# Determines USERPATCHES_PATH, once, and makes it read-only. It defaults to ${SRC}/userpatches, and can be pointed
+# elsewhere with USERPATCHES_PATH=xx, either as a cmdline param or in the environment. It is frozen afterwards, so that
+# config lookup, patching, artifact hashing and the Docker mount can never disagree about which directory is in use.
+# Call this after the early apply_cmdline_params_to_env, and before anything looks at USERPATCHES_PATH.
+function cli_determine_userpatches_path() {
+	declare default_userpatches_path="${SRC}/userpatches"
+	declare userpatches_path="${USERPATCHES_PATH:-"${default_userpatches_path}"}"
+
+	# Relative paths are relative to ${SRC}; compile.sh has already cd'ed there. Lose any trailing slashes too.
+	if [[ "${userpatches_path}" != /* ]]; then
+		userpatches_path="${SRC}/${userpatches_path}"
+	fi
+	while [[ "${userpatches_path}" == */ && "${userpatches_path}" != "/" ]]; do
+		userpatches_path="${userpatches_path%/}"
+	done
+
+	# Absolute, physical and normalized, just like ${SRC} itself is; the Docker bind-mount needs that.
+	if [[ "${userpatches_path}" != "${default_userpatches_path}" && -d "${userpatches_path}" ]]; then
+		userpatches_path="$(realpath "${userpatches_path}")"
+	fi
+
+	# Keep the cmdline param, if any, in sync with the normalized value. The params are applied again after each config file
+	# is sourced, and a different value there would try to change the read-only variable. Also used when relaunching under sudo.
+	if [[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]+x}" ]]; then
+		ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]="${userpatches_path}"
+		ARMBIAN_CLI_RELAUNCH_PARAMS["USERPATCHES_PATH"]="${userpatches_path}"
+	fi
+
+	declare -g -r USERPATCHES_PATH="${userpatches_path}"
+
+	if [[ "${USERPATCHES_PATH}" != "${default_userpatches_path}" ]]; then
+		display_alert "Using custom userpatches directory" "${USERPATCHES_PATH}" "info"
+	elif [[ -n "${ARMBIAN_HOST_USERPATCHES_PATH:-}" ]]; then # under Docker; see cli_docker_run
+		display_alert "Using custom userpatches directory, bind-mounted from the host" "${ARMBIAN_HOST_USERPATCHES_PATH}" "info"
+	fi
+}
+
 # This can be called early on, or later after having sourced the config. Show what is happening.
 # This is called:
 # apply_cmdline_params_to_env "reason" # reads from global ARMBIAN_PARSED_CMDLINE_PARAMS

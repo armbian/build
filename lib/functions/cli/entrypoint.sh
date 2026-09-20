@@ -56,9 +56,9 @@ function cli_entrypoint() {
 	logging_init
 
 	# USERPATCHES_PATH is the userpatches dir. read-only. This is the single definition; everything else uses the variable.
-	# Defined after the early cmdline params (so a stray USERPATCHES_PATH=xx param can't hit the readonly var there),
-	# but before the arguments loop below, which looks for config files in it. The directory itself is created further down.
-	declare -g -r USERPATCHES_PATH="${SRC}"/userpatches
+	# Done after the early cmdline params (which might carry an USERPATCHES_PATH=xx to point it elsewhere), but before the
+	# arguments loop below, which looks for config files in it. The default directory is created further down, if missing.
+	cli_determine_userpatches_path
 
 	declare -a -g ARMBIAN_CONFIG_FILES=()                                            # fully validated, complete paths to config files.
 	declare -g ARMBIAN_COMMAND_HANDLER="" ARMBIAN_COMMAND="" ARMBIAN_COMMAND_VARS="" # only valid command and handler will ever be set here.
