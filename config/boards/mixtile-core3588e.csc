@@ -1,4 +1,4 @@
-# Rockchip RK3588 SoC octa core Jetson SoM
+# Rockchip RK3588 octa core 4-32GB RAM 32-256GB eMMC GBE SoM (260-pin SO-DIMM, Jetson TX2 NX compatible)
 declare -g BOARD_NAME="Mixtile Core3588E"
 declare -g BOARD_VENDOR="mixtile"
 declare -g BOARDFAMILY="rockchip-rk3588"

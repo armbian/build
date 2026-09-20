@@ -1,4 +1,4 @@
-# Rockchip RK3588S octa core SoC LPDDR4x GBe eMMC USB3 mini-PCIe HDMI
+# Rockchip RK3588S octa core SoC 4-16GB RAM GBe eMMC USB3 mini-PCIe HDMI
 BOARD_NAME="LubanCat 4"
 BOARD_VENDOR="embedfire"
 BOARDFAMILY="rockchip-rk3588"
