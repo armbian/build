@@ -55,13 +55,16 @@ function calculate_hash_for_files() {
 	for file in "${files_to_hash[@]}"; do
 		# Files in a custom USERPATCHES_PATH are hashed under the name they would have in the default location. That way the
 		# hash does not depend on where that directory is, and matches what a Docker build (which bind-mounts it there) gets.
+		declare real_file=""
 		if [[ -n "${USERPATCHES_PATH:-}" && "${USERPATCHES_PATH}" != "${SRC}/userpatches" && "${file}" == "${USERPATCHES_PATH}/"* ]]; then
-			declare real_file="${file}"
+			real_file="${file}"
 			file="${SRC}/userpatches/${file#"${USERPATCHES_PATH}/"}"
-			userpatches_real_files["${file#${SRC}/}"]="${real_file}"
 		fi
 		# remove the SRC/ from the file name
 		file="${file#${SRC}/}"
+		if [[ -n "${real_file}" ]]; then
+			userpatches_real_files["${file}"]="${real_file}" # keyed by the very name it is sorted and hashed under
+		fi
 		files_to_hash_relativized+=("${file}")
 	done
 
