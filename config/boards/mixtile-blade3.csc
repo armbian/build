@@ -5,7 +5,7 @@ declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER="rpardini"
 declare -g INTRODUCED="2023"
 declare -g KERNEL_TARGET="vendor,edge"
-declare -g BOOT_FDT_FILE="rockchip/rk3588-blade3-v101-linux.dtb" # vendor DTB / mainline is changed below
+declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb" # same name vendor and edge
 declare -g BOOT_SCENARIO="tpl-blob-atf-mainline"
 declare -g BOOT_SOC="rk3588"
 declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # mainline u-boot
@@ -33,12 +33,6 @@ function post_family_config__blade3_use_mainline_uboot() {
 	}
 
 	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
-}
-
-function post_family_config__different_dtb_for_edge() {
-	[[ "${BRANCH}" == *"edge" ]] || return 0 # only for edge/bleedingedge
-	declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb"
-	display_alert "$BOARD" "Using ${BOOT_FDT_FILE} for ${BRANCH}" "warn"
 }
 
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
