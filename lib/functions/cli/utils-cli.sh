@@ -58,9 +58,46 @@ function cli_determine_userpatches_path() {
 		userpatches_path="${userpatches_path%/}"
 	done
 
-	# Absolute, physical and normalized, just like ${SRC} itself is; the Docker bind-mount needs that.
-	if [[ "${userpatches_path}" != "${default_userpatches_path}" && -d "${userpatches_path}" ]]; then
+	# The default location is used as-is, and is created later on if missing. Anything else is checked thoroughly:
+	if [[ "${userpatches_path}" != "${default_userpatches_path}" ]]; then
+		# It has to exist already. A typo would otherwise silently produce a build without any of the user's customizations.
+		if [[ ! -d "${userpatches_path}" ]]; then
+			exit_with_error "USERPATCHES_PATH does not exist, or is not a directory. Create it first" "${userpatches_path}"
+		fi
+
+		# Absolute, physical and normalized, just like ${SRC} itself is; the checks below and the Docker bind-mount need that.
 		userpatches_path="$(realpath "${userpatches_path}")"
+	fi
+
+	if [[ "${userpatches_path}" != "${default_userpatches_path}" ]]; then # still not the default, after resolving it?
+		# Templates and a directory skeleton are created in this directory, and the owner of what is in there is reset to
+		# the calling user later on (see prepare_host_noninteractive), so refuse the obviously wrong locations.
+		if [[ "${userpatches_path}" == "/" || "${SRC}/" == "${userpatches_path}/"* ]]; then
+			exit_with_error "USERPATCHES_PATH can't be '/', nor the build directory itself or one of its parents" "${userpatches_path}"
+		fi
+
+		# Inside the build directory is fine (eg: userpatches-myproject), but not in the framework's own directories.
+		if [[ "${userpatches_path}/" == "${SRC}/"* ]]; then
+			declare inside_src="${userpatches_path#"${SRC}/"}"
+			case "${inside_src%%/*}" in
+				lib | config | extensions | packages | patch | tools | cache | output | .tmp | .git | .github)
+					exit_with_error "USERPATCHES_PATH can't be inside the '${inside_src%%/*}' directory of the build framework" "${userpatches_path}"
+					;;
+			esac
+		fi
+
+		# The path ends up in Docker --mount specs, sed expressions and re-parsed command lines. Letters (of any language),
+		# digits and the likes of ./_-+@ are fine; whitespace and anything special to those is not.
+		declare forbidden_chars_regex='[][[:space:][:cntrl:]%&,:;|<>()*?{}!#=$`\\"'"'"']'
+		if [[ "${userpatches_path}" =~ ${forbidden_chars_regex} ]]; then
+			exit_with_error "USERPATCHES_PATH can't contain whitespace or special characters" "'${userpatches_path}'"
+		fi
+
+		# It must already belong to the user its contents will be chown'ed to; this keeps system and other people's directories out.
+		declare owner_uid="${SET_OWNER_TO_UID:-"${EUID}"}"
+		if [[ "${owner_uid}" != "0" && -z "$(find "${userpatches_path}" -maxdepth 0 -uid "${owner_uid}")" ]]; then
+			exit_with_error "USERPATCHES_PATH must be owned by the user running the build (uid ${owner_uid})" "${userpatches_path}"
+		fi
 	fi
 
 	# Keep the cmdline param, if any, in sync with the normalized value. The params are applied again after each config file
@@ -73,7 +110,11 @@ function cli_determine_userpatches_path() {
 	declare -g -r USERPATCHES_PATH="${userpatches_path}"
 
 	if [[ "${USERPATCHES_PATH}" != "${default_userpatches_path}" ]]; then
-		display_alert "Using custom userpatches directory" "${USERPATCHES_PATH}" "info"
+		if [[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]+x}" ]]; then
+			display_alert "Using custom userpatches directory" "${USERPATCHES_PATH}" "info"
+		else # not asked for on the command line, so make sure it doesn't go unnoticed.
+			display_alert "Using custom userpatches directory, from the USERPATCHES_PATH environment variable" "${USERPATCHES_PATH}" "warn"
+		fi
 	elif [[ -n "${ARMBIAN_HOST_USERPATCHES_PATH:-}" ]]; then # under Docker; see cli_docker_run
 		display_alert "Using custom userpatches directory, bind-mounted from the host" "${ARMBIAN_HOST_USERPATCHES_PATH}" "info"
 	fi
