@@ -651,6 +651,24 @@ function kernel_package_callback_linux_headers() {
 				rm -f include/generated/.armbian-build.tar.gz
 			fi
 		EOT_POSTINST_FINISH
+
+		# Now that the header tree is compiled, run the same header hooks Debian runs
+		# from its linux-headers postinst. dkms ships /etc/kernel/header_postinst.d/dkms,
+		# which (re)builds DKMS modules for this kernel version. This is the safety net
+		# that makes the linux-image / linux-headers configure ORDER irrelevant: if the
+		# image is configured first (e.g. in a single apt transaction), its DKMS
+		# autoinstall runs with no headers present and fails; building here, when the
+		# headers land, completes the module on the first pass. Without this hook Armbian
+		# only ever built DKMS from the linux-image postinst, so a transaction that
+		# configured the image before its headers left the module unbuilt -- and,
+		# pre-#10766, could abort the image postinst before the boot-symlink relink and
+		# leave the board unbootable. Non-fatal: a broken out-of-tree module must not
+		# stop the headers package from installing.
+		cat <<- EOT_POSTINST_HEADER_HOOKS
+			if [ -d /etc/kernel/header_postinst.d ]; then
+				DEB_MAINT_PARAMS="\$*" run-parts --arg="${kernel_version_family}" /etc/kernel/header_postinst.d || true
+			fi
+		EOT_POSTINST_HEADER_HOOKS
 	)
 }
 
