@@ -564,8 +564,9 @@ function post_family_tweaks_bsp__sophgo_sg200x_emmc_install_tool() {
 }
 
 # Nothing gives the SG200x ethernet a MAC address, so derive one from the chip's
-# efuse serial. Shared with the wifi side, whose udev rule
-# extensions/sophgo-sg200x-aic8800.sh installs.
+# efuse serial. Also used by the USB gadget, which needs two addresses before
+# there is an interface to put them on. The wifi derives its own in the driver;
+# see patch/misc/aic8800/aic8800-Derive-the-fallback-MAC-from-the-SoC-efuse.patch.
 function post_family_tweaks_bsp__sophgo_sg200x_stable_mac() {
 	display_alert "Sophgo SG200x" "installing stable MAC address helper" "info"
 
@@ -577,21 +578,6 @@ function post_family_tweaks_bsp__sophgo_sg200x_stable_mac() {
 	run_host_command_logged install -m 0644 \
 		"${SRC}/packages/bsp/sophgo-sg200x/etc/udev/rules.d/70-sg200x-stable-mac.rules" \
 		"${destination}/etc/udev/rules.d/70-sg200x-stable-mac.rules"
-}
-
-# Sends the ethernet's DHCPv4 lease request under its MAC address rather than
-# under networkd's default DUID; see the drop-in itself for why. Installed
-# unconditionally - it is a drop-in for a file netplan generates, so it is inert
-# on the NetworkManager images, which have no netplan.
-function post_family_tweaks_bsp__sophgo_sg200x_dhcp_clientid() {
-	display_alert "Sophgo SG200x" "installing DHCP client identifier drop-in" "info"
-
-	declare dropin="etc/systemd/network/10-netplan-all-eth-interfaces.network.d"
-
-	run_host_command_logged install -d -m 0755 "${destination}/${dropin}"
-	run_host_command_logged install -m 0644 \
-		"${SRC}/packages/bsp/sophgo-sg200x/${dropin}/10-sg200x-dhcp-clientid.conf" \
-		"${destination}/${dropin}/10-sg200x-dhcp-clientid.conf"
 }
 
 # The userspace half of the "usb-device" overlay, installed on every image; it is
