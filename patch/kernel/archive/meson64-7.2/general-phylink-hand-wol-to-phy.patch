@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sat, 19 Sep 2026 23:45:19 +0000
+Subject: net: phylink: hand Wake-on-Lan to the PHY when it attaches
+
+A MAC that wakes the system needs its interrupt alive through suspend; a PHY
+that can wake it does not.  When both can wake, offer the PHY as it attaches
+the modes it claims to support - it refuses a whole request over a single
+mode it does not know - and keep at the MAC whatever the PHY did not take.
+Modes the PHY already wakes on that the MAC cannot hold travel along, with
+the SecureOn password the PHY keeps, since set_wol takes a complete mask and
+would clear them.
+
+A PHY on its way out - an SFP pulled, the interface taken down - takes its
+Wake-on-Lan with it, so ask it what it wakes on while it is still there and
+arm the MAC for as much of that as the MAC supports; the next PHY is then
+offered everything the MAC holds.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/net/phy/phylink.c | 63 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 7397169236fd..a387f967c4c3 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -2085,6 +2085,10 @@
+ 	return phylink_validate(pl, supported, state);
+ }
+ 
++static void phylink_phy_take_wol(struct phylink *pl, struct phy_device *phy);
++static void phylink_phy_give_back_wol(struct phylink *pl,
++				      struct phy_device *phy);
++
+ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy,
+ 			       phy_interface_t interface)
+ {
+@@ -2196,6 +2200,9 @@
+ 			ret = 0;
+ 	}
+ 
++	if (ret == 0)
++		phylink_phy_take_wol(pl, phy);
++
+ 	if (ret == 0 && phy_interrupt_is_valid(phy))
+ 		phy_request_interrupt(phy);
+ 
+@@ -2365,6 +2372,7 @@
+ 	if (phy) {
+ 		flush_work(&pl->resolve);
++		phylink_phy_give_back_wol(pl, phy);
+ 		phy_disconnect(phy);
+ 	}
+ }
+ EXPORT_SYMBOL_GPL(phylink_disconnect_phy);
+@@ -2589,6 +2597,61 @@
+ 	return phydev && (pl->config->wol_phy_legacy || phy_can_wakeup(phydev));
+ }
+ 
++/* Offer the MAC's Wake-on-Lan to a PHY that can wake the system itself */
++static void phylink_phy_take_wol(struct phylink *pl, struct phy_device *phy)
++{
++	struct ethtool_wolinfo can = { .cmd = ETHTOOL_GWOL };
++	struct ethtool_wolinfo took = { .cmd = ETHTOOL_GWOL };
++	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_SWOL };
++	u32 wolopts;
++
++	if (!phylink_mac_supports_wol(pl) || !pl->wolopts_mac ||
++	    !phylink_phy_supports_wol(pl, phy))
++		return;
++
++	/* set_wol takes a complete mask: offer what the PHY claims, and carry
++	 * along what it wakes on already and the MAC cannot hold.
++	 */
++	phy_ethtool_get_wol(phy, &can);
++	wol.wolopts = (pl->wolopts_mac & can.supported) |
++		      (can.wolopts & ~pl->config->wol_mac_support);
++	if (!wol.wolopts)
++		return;
++
++	if (wol.wolopts & ~pl->wolopts_mac & WAKE_MAGICSECURE)
++		memcpy(wol.sopass, can.sopass, sizeof(wol.sopass));
++	else
++		memcpy(wol.sopass, pl->wol_sopass, sizeof(wol.sopass));
++	if (phy_ethtool_set_wol(phy, &wol))
++		return;
++
++	phy_ethtool_get_wol(phy, &took);
++	wolopts = pl->wolopts_mac & ~took.wolopts;
++	if (wolopts != pl->wolopts_mac &&
++	    !pl->mac_ops->mac_wol_set(pl->config, wolopts, pl->wol_sopass))
++		pl->wolopts_mac = wolopts;
++}
++
++/* Take back what the PHY wakes on before it goes away */
++static void phylink_phy_give_back_wol(struct phylink *pl,
++				      struct phy_device *phy)
++{
++	struct ethtool_wolinfo w = { .cmd = ETHTOOL_GWOL };
++	u32 wolopts;
++
++	if (!phylink_mac_supports_wol(pl))
++		return;
++
++	phy_ethtool_get_wol(phy, &w);
++
++	wolopts = (pl->wolopts_mac | w.wolopts) & pl->config->wol_mac_support;
++	if (wolopts == pl->wolopts_mac)
++		return;
++
++	if (!pl->mac_ops->mac_wol_set(pl->config, wolopts, pl->wol_sopass))
++		pl->wolopts_mac = wolopts;
++}
++
+ static bool phylink_phy_pm_speed_ctrl(struct phylink *pl)
+ {
+ 	return pl->config->wol_phy_speed_ctrl && !pl->wolopts_mac &&
+-- 
+Created with Armbian build tools https://github.com/armbian/build
