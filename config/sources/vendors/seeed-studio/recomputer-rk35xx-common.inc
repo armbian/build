@@ -548,7 +548,7 @@ function post_family_config__recomputer_stage_kernel_patches() {
 	fi
 
 	local ext_patch_dir="${SRC}/extensions/seeed_armbian_extension/patches/kernel"
-	local user_patch_dir="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	local user_patch_dir="${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 
 	if [[ ! -d "${ext_patch_dir}" ]]; then
 		display_alert "Seeed kernel patches" "Directory not found: ${ext_patch_dir}" "warn"

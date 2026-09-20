@@ -260,7 +260,9 @@ def find_armbian_src_path():
 		configng_yaml_dir = None
 		configng_parser = None
 
-	userpatches_boards_path = os.path.realpath(os.path.join(armbian_src_path, "userpatches", "config", "boards"))
+	# USERPATCHES_PATH is passed down by the bash side; fall back to the default location if unset or empty (eg: run standalone).
+	userpatches_path = get_from_env("USERPATCHES_PATH") or os.path.join(armbian_src_path, "userpatches")
+	userpatches_boards_path = os.path.realpath(os.path.join(userpatches_path, "config", "boards"))
 	log.debug(f"Real path to userpatches boards '{userpatches_boards_path}'")
 	has_userpatches_path = os.path.exists(userpatches_boards_path)
 
