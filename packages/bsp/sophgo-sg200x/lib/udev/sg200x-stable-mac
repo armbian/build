@@ -16,6 +16,17 @@
 #             whose last two bytes are get_random_bytes(), once per module load.
 #             See rwnx_cfg80211_init() in aic8800_fdrv/rwnx_main.c.
 #
+# What this script sets is the *operational* address, and that is not the whole
+# of a network identity. The wifi's fallback address above is also copied into
+# wiphy->perm_addr, which is what ethtool -P reports, what udev's net_id turns
+# into ID_NET_NAME_MAC, and what systemd-networkd hashes into the DHCP IAID - so
+# a per-module-load random perm_addr means a new DHCP client identifier, and a
+# new lease, on every boot, no matter what address this script then installs on
+# top. Nothing in userspace can write perm_addr, so that half is fixed in the
+# driver instead: see
+# patch/misc/aic8800/aic8800-Derive-the-fallback-MAC-from-the-SoC-efuse.patch,
+# which seeds those two bytes from the same efuse serial used below.
+#
 # systemd's own answer to this, MACAddressPolicy=persistent in 99-default.link,
 # rescues neither. For wifi the driver installs the address with a plain memcpy
 # rather than eth_hw_addr_set(), so addr_assign_type stays NET_ADDR_PERM and
@@ -48,9 +59,16 @@
 # it, because RUN+= programs execute after 80-net-setup-link.rules has had its
 # turn and this would just overwrite it again.
 #
-# Called from udev, so anything printed lands in the journal against
-# systemd-udevd. One line per interface, recording the decision taken - the
-# address assigned, or why the existing one was left alone - and nothing else.
+# One line per interface, recording the decision taken - the address assigned,
+# or why the existing one was left alone - and nothing else.
+#
+# That line goes to the journal through logger(1), not through udev. udev does
+# capture a RUN program's stdout and stderr, but logs both at debug priority, so
+# at the default log level the decision never reaches the journal at all - which
+# is precisely the trail wanted when an address turns out to have moved several
+# reboots ago. It is still written to stderr as well, so that
+# `udevadm control --log-priority=debug` shows it in context with the rest of
+# the event. Never to stdout: --print below has to be safe to capture.
 
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -58,6 +76,17 @@ export PATH
 set -e
 
 me="${0##*/}"
+
+# See the note above on why this does not simply print to stdout.
+log() {
+	logger -t "${me}" -p daemon.info -- "$*" 2> /dev/null || true
+	echo "${me}: $*" >&2
+}
+
+warn() {
+	logger -t "${me}" -p daemon.warning -- "$*" 2> /dev/null || true
+	echo "${me}: $*" >&2
+}
 
 usage() {
 	echo "usage: ${me} <interface> <role> [expected-mac-prefix]" >&2
@@ -88,7 +117,7 @@ if [ "${print_only}" = "no" ]; then
 		# Neither of these devices gets renamed in practice, precisely because
 		# net_id produces no ID_NET_NAME_* for them, but say so plainly if it ever
 		# starts happening rather than failing off in the weeds.
-		echo "${me}: no interface ${iface} (renamed since the udev rule matched?)" >&2
+		warn "no interface ${iface} (renamed since the udev rule matched?)"
 		exit 1
 	}
 
@@ -98,14 +127,14 @@ if [ "${print_only}" = "no" ]; then
 		case "${current}" in
 			"${want_prefix}"*) ;;
 			*)
-				echo "${me}: ${iface} is ${current}, not ${want_prefix}* - leaving it alone"
+				log "${iface} is ${current}, not ${want_prefix}* - leaving it alone"
 				exit 0
 				;;
 		esac
 	elif [ "$(cat "${sysfs}/addr_assign_type" 2> /dev/null || true)" = "0" ]; then
 		# NET_ADDR_PERM: the driver says this address is burned into the hardware,
 		# so it is not ours to overwrite.
-		echo "${me}: ${iface} has a permanent address (${current}) - leaving it alone"
+		log "${iface} has a permanent address (${current}) - leaving it alone"
 		exit 0
 	fi
 fi
@@ -142,7 +171,7 @@ else
 	seed=$(cat /etc/machine-id 2> /dev/null || true)
 	seed_kind="machine-id"
 	[ -n "${seed}" ] || {
-		echo "${me}: no chip serial in efuse and no machine-id - cannot derive a MAC for ${iface:-${role}}" >&2
+		warn "no chip serial in efuse and no machine-id - cannot derive a MAC for ${iface:-${role}}"
 		exit 1
 	}
 fi
@@ -175,8 +204,8 @@ fi
 # waits for udev to finish initialising a device before it manages it, so this
 # lands before anything tries to bring the link up.
 ip link set dev "${iface}" address "${mac}" || {
-	echo "${me}: could not set ${mac} on ${iface} (already up?)" >&2
+	warn "could not set ${mac} on ${iface} (already up?)"
 	exit 1
 }
 
-echo "${me}: ${iface} (${role}) ${current} -> ${mac}, derived from ${seed_kind}"
+log "${iface} (${role}) ${current} -> ${mac}, derived from ${seed_kind}"

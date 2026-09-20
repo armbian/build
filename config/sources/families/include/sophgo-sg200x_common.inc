@@ -579,6 +579,21 @@ function post_family_tweaks_bsp__sophgo_sg200x_stable_mac() {
 		"${destination}/etc/udev/rules.d/70-sg200x-stable-mac.rules"
 }
 
+# Sends the ethernet's DHCPv4 lease request under its MAC address rather than
+# under networkd's default DUID; see the drop-in itself for why. Installed
+# unconditionally - it is a drop-in for a file netplan generates, so it is inert
+# on the NetworkManager images, which have no netplan.
+function post_family_tweaks_bsp__sophgo_sg200x_dhcp_clientid() {
+	display_alert "Sophgo SG200x" "installing DHCP client identifier drop-in" "info"
+
+	declare dropin="etc/systemd/network/10-netplan-all-eth-interfaces.network.d"
+
+	run_host_command_logged install -d -m 0755 "${destination}/${dropin}"
+	run_host_command_logged install -m 0644 \
+		"${SRC}/packages/bsp/sophgo-sg200x/${dropin}/10-sg200x-dhcp-clientid.conf" \
+		"${destination}/${dropin}/10-sg200x-dhcp-clientid.conf"
+}
+
 # The userspace half of the "usb-device" overlay, installed on every image; it is
 # inert until a UDC exists. Both network stacks are configured, since which one
 # is running is not known here.

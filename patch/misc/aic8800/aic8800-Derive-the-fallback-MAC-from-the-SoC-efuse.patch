@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Sun, 20 Sep 2026 18:40:00 +0200
+Subject: [PATCH] aic8800: derive the fallback MAC from the SoC efuse
+
+aic8800_fdrv asks the chip for its efuse MAC address and, when that comes
+back blank - which it is on every Milk-V Duo S - falls back to a
+compiled-in 88:00:33:77 with the last two bytes filled in by
+get_random_bytes(), once per module load.
+
+That fallback address is copied into wiphy->perm_addr, and a random
+perm_addr costs more than a random-looking address:
+
+ - It is what ethtool -P reports, so nothing on the board can tell you
+   what the hardware address "is".
+
+ - udev's net_id turns a permanent address into ID_NET_NAME_MAC, because
+   88:00:33:77 has the locally-administered bit clear and so reads as a
+   real OUI.
+
+ - systemd-networkd derives the DHCP IAID by hashing the interface's
+   persistent name, which is that ID_NET_NAME_MAC. The IAID is half of
+   the RFC 4361 client identifier it sends, so the client identifier is
+   different on every boot: the DHCP server files each boot under a new
+   client, never reuses the lease, and the board's address moves.
+
+The stable-MAC helper this family already ships cannot fix it. It pins
+the *operational* address, which is why the DUID half of the identifier
+stays put, but perm_addr is a different thing and userspace cannot write
+it.
+
+So fill the two bytes from the SoC's Final Test Serial Number instead,
+read out of the efuse exactly as /lib/udev/sg200x-stable-mac reads it in
+userspace - nvmem offset 4, four words, all-zero meaning "not
+programmed" - and hashed so that chips with adjacent serials do not get
+adjacent addresses. Unique per chip, identical on every boot, and
+unchanged by rewriting the SD card.
+
+Platforms without that efuse keep the random bytes: nvmem_device_find()
+returns NULL under !CONFIG_NVMEM and an ERR_PTR when no matching device
+is registered, and both fall through to the original call.
+
+Signed-off-by: Lukasz Sobala <lsobala1@gmail.com>
+---
+ drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c | 80 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 79 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
++++ b/drivers/net/wireless/aicsemi/aic8800/aic8800_fdrv/rwnx_main.c
+@@ -23,6 +23,9 @@
+ #include <linux/ctype.h>
+ #include <linux/random.h>
+ #include <linux/vmalloc.h>
++#include <linux/jhash.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/of.h>
+ #include "rwnx_defs.h"
+ #include "rwnx_dini.h"
+ #include "rwnx_msg_tx.h"
+@@ -6836,6 +6839,80 @@ int rwnx_get_custom_mac_addr(u8_l *mac_a
+ }
+ #endif
+ 
++/*
++ * The chip's efuse is blank on the Milk-V Duo S, so the fallback address in
++ * rwnx_cfg80211_init() below is the one the interface actually ends up with,
++ * and its last two bytes used to be whatever get_random_bytes() returned this
++ * module load.
++ *
++ * That address becomes wiphy->perm_addr. It is therefore what ethtool -P
++ * reports, what udev's net_id turns into ID_NET_NAME_MAC, and - because
++ * systemd-networkd hashes ID_NET_NAME_MAC into the DHCP IAID - half of the
++ * DHCPv4 client identifier. A perm_addr that is random per module load means a
++ * different client identifier on every boot, so the DHCP server sees a brand
++ * new client each time and the board's address moves under anything trying to
++ * reach it. Pinning the operational MAC from userspace does not help:
++ * perm_addr is not the operational MAC, and nothing in userspace can write it.
++ *
++ * Derive the two bytes from the SoC's Final Test Serial Number instead, read
++ * out of the efuse exactly as /lib/udev/sg200x-stable-mac reads it: nvmem
++ * offset 4, four words, all-zero meaning "not programmed". Unique per chip,
++ * identical on every boot, and - unlike /etc/machine-id - unchanged by
++ * rewriting the SD card.
++ *
++ * Any platform without that efuse, which is every other board this driver
++ * builds for, falls through to the original random bytes.
++ */
++#define RWNX_SOC_EFUSE_COMPATIBLE	"sophgo,cv1800b-efuse"
++#define RWNX_SOC_FTSN_OFFSET		4
++#define RWNX_SOC_FTSN_LEN		16
++
++static int rwnx_soc_efuse_match(struct device *dev, const void *data)
++{
++	/* nvmem_device_find() matches against the nvmem device; the efuse that
++	 * registered it is its parent, and that is what carries the compatible. */
++	return dev->parent && of_device_is_compatible(dev->parent->of_node, data);
++}
++
++static bool rwnx_dflt_mac_suffix_from_soc(u8 *suffix)
++{
++	struct nvmem_device *nvmem;
++	u8 ftsn[RWNX_SOC_FTSN_LEN];
++	bool programmed = false;
++	size_t i;
++	u32 hash;
++	int ret;
++
++	nvmem = nvmem_device_find((void *)RWNX_SOC_EFUSE_COMPATIBLE,
++				  rwnx_soc_efuse_match);
++	/* NULL is the !CONFIG_NVMEM stub; an ERR_PTR means there is no such device. */
++	if (!nvmem || IS_ERR(nvmem))
++		return false;
++
++	ret = nvmem_device_read(nvmem, RWNX_SOC_FTSN_OFFSET, sizeof(ftsn), ftsn);
++	nvmem_device_put(nvmem);
++	if (ret != (int)sizeof(ftsn))
++		return false;
++
++	/* The vendor FSBL's own test for an unprogrammed serial: every word zero. */
++	for (i = 0; i < sizeof(ftsn); i++) {
++		if (ftsn[i]) {
++			programmed = true;
++			break;
++		}
++	}
++	if (!programmed)
++		return false;
++
++	/* Hashed rather than used directly, so that chips with adjacent serial
++	 * numbers do not come out with adjacent addresses. */
++	hash = jhash(ftsn, sizeof(ftsn), 0);
++	suffix[0] = hash & 0xff;
++	suffix[1] = (hash >> 8) & 0xff;
++
++	return true;
++}
++
+ extern void *aicwf_prealloc_txq_alloc(size_t size);
+ int rwnx_cfg80211_init(struct rwnx_plat *rwnx_plat, void **platform_data)
+ {
+@@ -6863,7 +6940,8 @@ int rwnx_cfg80211_init(struct rwnx_plat
+ 	memset(fw_path, 0, 200);
+ 	aicbsp_get_feature(&feature, fw_path);
+ 
+-	get_random_bytes(&dflt_mac[4], 2);
++	if (!rwnx_dflt_mac_suffix_from_soc(&dflt_mac[4]))
++		get_random_bytes(&dflt_mac[4], 2);
+ 
+ 	/* create a new wiphy for use with cfg80211 */
+     AICWFDBG(LOGINFO, "%s sizeof(struct rwnx_hw):%d \r\n", __func__, (int)sizeof(struct rwnx_hw));
+-- 
+Armbian
+
