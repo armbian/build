@@ -1,0 +1,2738 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Wellken Chen <wellken.chen@cvitek.com.tw>
+Date: Thu, 17 Sep 2026 10:08:26 +0000
+Subject: drivers: soc: sophgo: add CV181x/SG200x TPU driver
+
+Port of the Cvitek TPU character-device driver from the vendor
+duo-buildroot-sdk-v2 (Linux 5.10) to mainline. The uAPI is kept
+binary-compatible with the vendor SDK so the Cvitek TPU runtime
+(libcviruntime) works with minimal changes.
+
+Differences from the vendor driver:
+- Android ION replaced with the standard dma-buf importer API; buffers
+  come from the CMA dma-buf heap (the TPU has no IOMMU and needs
+  physically contiguous memory).
+- New GET_DMABUF_PADDR/RELEASE_DMABUF ioctls so userspace can learn a
+  buffer's bus address, which vendor ION exposed but mainline heaps do
+  not.
+- Cache maintenance uses dma_sync_sgtable_*() on the driver's own
+  mapping instead of vendor-patched arch symbol exports.
+- TEE paths dropped (stubs on cv181x in the vendor tree), 5.10 compat
+  ifdefs collapsed, error-path bugs in open()/submit() fixed.
+
+- Hardening beyond the vendor driver: the command-buffer header and
+  the descriptor tables it points at are bounds-checked against the
+  dma-buf (and the header is consumed from a kernel snapshot), PIO
+  copies must lie inside a dma-buf the caller registered, the
+  completion interrupt is gated on an executing job instead of open
+  file handles, and profiling-timer teardown cannot race the handler
+  re-arming it.
+
+Signed-off-by: Wellken Chen <wellken.chen@cvitek.com.tw>
+---
+ drivers/soc/sophgo/Kconfig                 |    2 ++
+ drivers/soc/sophgo/Makefile                |    1 +
+ drivers/soc/sophgo/tpu/Kconfig             |   13 +++++++++++++
+ drivers/soc/sophgo/tpu/Makefile            |    3 +++
+ drivers/soc/sophgo/tpu/cvi_tpu_interface.c | 1342 ++++++++++++++++++++++++++++++
+ drivers/soc/sophgo/tpu/cvi_tpu_interface.h |   74 ++
+ drivers/soc/sophgo/tpu/cvi_tpu_ioctl.h     |   69 ++++++++++++++++++++
+ drivers/soc/sophgo/tpu/reg_tdma.h          |   75 ++
+ drivers/soc/sophgo/tpu/reg_tiu.h           |   35 +
+ drivers/soc/sophgo/tpu/tpu_platform.c      |  791 ++++++++++++++++++++
+ drivers/soc/sophgo/tpu/tpu_platform.h      |   72 ++
+ drivers/soc/sophgo/tpu/tpu_pmu.c           |   87 ++++++++++++++++++++
+ drivers/soc/sophgo/tpu/tpu_pmu.h           |   41 ++++++++++++++++++++
+ 13 files changed, 2605 insertions(+)
+
+diff --git a/drivers/soc/sophgo/Kconfig b/drivers/soc/sophgo/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/soc/sophgo/Kconfig
++++ b/drivers/soc/sophgo/Kconfig
+@@ -30,5 +30,7 @@ config SOPHGO_SG2044_TOPSYS
+ 	  This driver can also be built as a module.  If so, the module
+ 	  will be called sg2044-topsys.
+ 
++source "drivers/soc/sophgo/tpu/Kconfig"
++
+ endmenu
+ endif
+diff --git a/drivers/soc/sophgo/Makefile b/drivers/soc/sophgo/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/soc/sophgo/Makefile
++++ b/drivers/soc/sophgo/Makefile
+@@ -2,3 +2,4 @@
+ 
+ obj-$(CONFIG_SOPHGO_CV1800_RTCSYS)	+= cv1800-rtcsys.o
+ obj-$(CONFIG_SOPHGO_SG2044_TOPSYS)	+= sg2044-topsys.o
++obj-$(CONFIG_SOPHGO_CV181X_TPU)		+= tpu/
+diff --git a/drivers/soc/sophgo/tpu/Kconfig b/drivers/soc/sophgo/tpu/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/Kconfig
+@@ -0,0 +1,13 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config SOPHGO_CV181X_TPU
++	tristate "Sophgo/Cvitek CV181x (SG200x) TPU support"
++	depends on ARCH_SOPHGO || COMPILE_TEST
++	depends on DMA_SHARED_BUFFER
++	help
++	  Character-device driver for the tensor processing unit found in
++	  Sophgo/Cvitek CV180x/CV181x/SG200x SoCs. Userspace submits
++	  command buffers built by the Cvitek TPU runtime (libcviruntime)
++	  through /dev/cvi-tpu0. Buffers are dma-bufs, typically allocated
++	  from the CMA dma-buf heap as the TPU has no IOMMU.
++
++	  If unsure, say N.
+diff --git a/drivers/soc/sophgo/tpu/Makefile b/drivers/soc/sophgo/tpu/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_SOPHGO_CV181X_TPU) += cv181x_tpu.o
++cv181x_tpu-y := cvi_tpu_interface.o tpu_platform.o tpu_pmu.o
+diff --git a/drivers/soc/sophgo/tpu/cvi_tpu_interface.c b/drivers/soc/sophgo/tpu/cvi_tpu_interface.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/cvi_tpu_interface.c
+@@ -0,0 +1,1342 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Sophgo/Cvitek CV181x (SG200x) TPU driver - chardev interface.
++ *
++ * Ported to mainline from the Cvitek duo-buildroot-sdk-v2 vendor driver
++ * (osdrv/interdrv/tpu, GPL-2.0-or-later, author Wellken Chen).
++ *
++ * Differences from the vendor driver:
++ *  - Android ION is gone; buffers are dma-bufs from the CMA dma-buf heap.
++ *    The driver is a plain dma-buf importer (attach/map/vmap), no poking
++ *    at exporter internals.
++ *  - New CVITPU_GET_DMABUF_PADDR/CVITPU_RELEASE_DMABUF ioctls: with no
++ *    IOMMU the userspace runtime builds descriptors with raw bus
++ *    addresses, which mainline heaps do not expose on their own.
++ *  - Cache flush/invalidate ioctls use dma_sync_sgtable_*() on the
++ *    driver's own mapping instead of vendor-exported arch flush symbols.
++ *  - TEE paths dropped (stubs returning 0 on cv181x in the vendor tree).
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/sched.h>
++#include <linux/fs.h>
++#include <linux/mm.h>
++#include <linux/freezer.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/uaccess.h>
++#include <linux/dma-buf.h>
++#include <linux/dma-direction.h>
++#include <linux/dma-mapping.h>
++#include <linux/iosys-map.h>
++#include <linux/interrupt.h>
++#include <linux/device.h>
++#include <linux/delay.h>
++#include <linux/timer.h>
++#include <linux/cdev.h>
++#include <linux/kthread.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/clk.h>
++#include <linux/of.h>
++#include <linux/sched/signal.h>
++#include <linux/proc_fs.h>
++#include <linux/seq_file.h>
++
++#include "cvi_tpu_interface.h"
++#include "cvi_tpu_ioctl.h"
++#include "tpu_platform.h"
++
++#define CVI_TPU_CDEV_NAME "cvi-tpu"
++#define CVI_TPU_CLASS_NAME "cvi-tpu"
++
++enum tpu_submit_path {
++	TPU_PATH_DESNORMAL = 0,
++	TPU_PATH_PIOTDMA = 2,
++};
++
++struct cvi_list_node {
++	struct device *dev;
++	struct list_head list;
++	pid_t pid;
++	uint32_t seq_no;
++	uint32_t pio_seq_no;
++	int dmabuf_fd;
++	struct dma_buf *dma_buf;
++	struct dma_buf_attachment *dma_attach;
++	struct sg_table *dma_sgt;
++	struct iosys_map dma_map;
++	void *dmabuf_vaddr;
++	uint64_t dmabuf_paddr;
++	enum tpu_submit_path tpu_path;
++	int ret;
++	struct tpu_tdma_pio_info pio_info;
++	/*
++	 * Validated snapshot of the command-buffer header. The submitter
++	 * keeps a mapping of the dma-buf, so the copy in the buffer can
++	 * change after validation; the run works from this one.
++	 */
++	struct dma_hdr_t hdr;
++	/* Pins on the buffers a PIO copy reads and writes. */
++	struct dma_buf *pio_src_buf;
++	struct dma_buf *pio_dst_buf;
++};
++
++/* One imported buffer registered through CVITPU_GET_DMABUF_PADDR. */
++struct cvi_tpu_buf {
++	struct list_head list;
++	struct dma_buf *dmabuf;
++	struct dma_buf_attachment *attach;
++	struct sg_table *sgt;
++	dma_addr_t daddr;
++};
++
++/* Per-open context. */
++struct cvi_tpu_ctx {
++	struct cvi_tpu_device *ndev;
++	struct list_head bufs;
++	struct mutex bufs_lock;
++};
++
++struct tpu_profiling_info {
++	uint32_t enable_usage_profiling;
++	uint32_t run_current_us;
++	uint64_t run_sum_us;
++	struct timespec64 timer_start;
++	uint32_t timer_current_us;
++	uint32_t usage;
++};
++
++struct tpu_suspend_info {
++	spinlock_t spin_lock;
++	uint8_t running_cnt;
++};
++
++static struct class *npu_class;
++static dev_t npu_cdev_id;
++static struct proc_dir_entry *tpu_proc_dir;
++static struct tpu_suspend_info tpu_suspend;
++
++#define TASK_LIST_MAX 100
++#define DONE_LIST_MAX 1000
++
++static struct tpu_profiling_info info;
++static struct timer_list profile_timer;
++#define PROFILING_INTERVAL_MS 1000
++
++static uint32_t get_duration_us(const struct timespec64 *start,
++				const struct timespec64 *end)
++{
++	return (uint32_t)((end->tv_sec - start->tv_sec) * 1000000 +
++			  (end->tv_nsec - start->tv_nsec) / 1000);
++}
++
++#define SUAGE_LOOP 2
++static void tpu_profile_timer_handler(struct timer_list *t)
++{
++	struct timespec64 timer_end;
++	static uint64_t last_sum_us, dividend;
++
++	ktime_get_ts64(&timer_end);
++	info.timer_current_us = get_duration_us(&info.timer_start, &timer_end);
++
++	if (info.timer_current_us) {
++		dividend = (info.run_sum_us - last_sum_us) * 100;
++		last_sum_us = info.run_sum_us;
++		do_div(dividend, info.timer_current_us);
++		info.usage = (uint32_t)dividend;
++	} else {
++		info.usage = 0;
++	}
++	if (info.enable_usage_profiling == SUAGE_LOOP)
++		pr_err("timer_dur=%d, sum_us=%lld, usage=%d%%\n",
++		       info.timer_current_us, last_sum_us, info.usage);
++
++	mod_timer(&profile_timer, jiffies + msecs_to_jiffies(PROFILING_INTERVAL_MS));
++	ktime_get_ts64(&info.timer_start);
++}
++
++static void tpu_profile_timer_remove(void)
++{
++	/*
++	 * No timer_pending() guard: it does not see a handler that is
++	 * already running, and the handler re-arms the timer.
++	 */
++	timer_delete_sync(&profile_timer);
++}
++
++static int tpu_profile_timer_init(void)
++{
++	tpu_profile_timer_remove();
++	profile_timer.expires = jiffies + msecs_to_jiffies(PROFILING_INTERVAL_MS);
++	add_timer(&profile_timer);
++	return 0;
++}
++
++static int tpu_proc_show(struct seq_file *m, void *v)
++{
++	if (info.enable_usage_profiling) {
++		seq_puts(m, "profiling is running\n");
++		seq_printf(m, "interval=%dms usage=%d%%\n",
++			   PROFILING_INTERVAL_MS, info.usage);
++	} else {
++		seq_puts(m, "profiling is disabled\n");
++	}
++	return 0;
++}
++
++static ssize_t tpu_proc_write(struct file *file, const char __user *user_buf,
++			      size_t count, loff_t *ppos)
++{
++	uint32_t input_param = 0;
++
++	if (kstrtouint_from_user(user_buf, count, 0, &input_param)) {
++		pr_err("input parameter incorrect, e.g.: echo 1 > /proc/tpu/usage_profiling\n");
++		return count;
++	}
++
++	tpu_profile_timer_remove();
++	memset(&info, 0, sizeof(struct tpu_profiling_info));
++
++	info.enable_usage_profiling = input_param;
++	if (info.enable_usage_profiling) {
++		tpu_profile_timer_init();
++		ktime_get_ts64(&info.timer_start);
++		pr_info("tpu usage profiling started\n");
++	} else {
++		pr_info("tpu usage profiling ended\n");
++	}
++
++	return count;
++}
++
++static int tpu_proc_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, tpu_proc_show, pde_data(inode));
++}
++
++static const struct proc_ops tpu_proc_ops = {
++	.proc_open = tpu_proc_open,
++	.proc_read = seq_read,
++	.proc_write = tpu_proc_write,
++	.proc_release = single_release,
++};
++
++static irqreturn_t cvi_tpu_tdma_irq(int irq, void *data)
++{
++	struct cvi_tpu_device *ndev = data;
++
++	/*
++	 * The TPU clocks are only on while the worker executes a job
++	 * (platform_tpu_init/deinit bracket every run), so gate on that,
++	 * not on open file handles: a job whose submitter has already
++	 * closed its fd still needs its completion interrupt acknowledged,
++	 * or this level-triggered line is never deasserted.
++	 */
++	if (!READ_ONCE(tpu_suspend.running_cnt))
++		return IRQ_NONE;
++
++	return platform_tdma_irq(ndev);
++}
++
++/* Import a dma-buf for one submit: map for DMA and vmap for the CPU. */
++static int cvi_tpu_prepare_buffer(struct cvi_list_node *node)
++{
++	struct dma_hdr_t *header;
++	size_t buf_size;
++	int ret;
++
++	node->dma_buf = dma_buf_get(node->dmabuf_fd);
++	if (IS_ERR(node->dma_buf)) {
++		pr_err("cvi-tpu: bad dmabuf fd %d\n", node->dmabuf_fd);
++		return PTR_ERR(node->dma_buf);
++	}
++
++	node->dma_attach = dma_buf_attach(node->dma_buf, node->dev);
++	if (IS_ERR(node->dma_attach)) {
++		ret = PTR_ERR(node->dma_attach);
++		goto err_put;
++	}
++
++	node->dma_sgt = dma_buf_map_attachment_unlocked(node->dma_attach,
++							DMA_BIDIRECTIONAL);
++	if (IS_ERR(node->dma_sgt)) {
++		ret = PTR_ERR(node->dma_sgt);
++		goto err_detach;
++	}
++
++	if (node->dma_sgt->nents != 1) {
++		pr_err("cvi-tpu: dmabuf is not contiguous (nents=%d), use the CMA heap\n",
++		       node->dma_sgt->nents);
++		ret = -EINVAL;
++		goto err_unmap;
++	}
++	node->dmabuf_paddr = sg_dma_address(node->dma_sgt->sgl);
++
++	ret = dma_buf_vmap_unlocked(node->dma_buf, &node->dma_map);
++	if (ret) {
++		pr_err("cvi-tpu: vmap failed (%d)\n", ret);
++		goto err_unmap;
++	}
++	node->dmabuf_vaddr = node->dma_map.vaddr;
++
++	/*
++	 * Validate the header against the buffer's real size, then work
++	 * from a snapshot: the submitter still has the buffer mapped, so
++	 * the live copy can change after these checks.
++	 */
++	buf_size = node->dma_buf->size;
++	if (buf_size < sizeof(struct dma_hdr_t)) {
++		pr_err("cvi-tpu: dmabuf (%zu bytes) smaller than the header\n",
++		       buf_size);
++		ret = -EINVAL;
++		goto err_vunmap;
++	}
++	node->hdr = *(struct dma_hdr_t *)node->dmabuf_vaddr;
++	header = &node->hdr;
++
++	if (header->dmabuf_magic_m != TPU_DMABUF_HEADER_M) {
++		pr_err("cvi-tpu: bad dmabuf header magic 0x%x\n",
++		       header->dmabuf_magic_m);
++		ret = -EINVAL;
++		goto err_vunmap;
++	}
++
++	if ((u64)header->cpu_desc_count >
++	    (buf_size - sizeof(struct dma_hdr_t)) /
++		    sizeof(struct cvi_cpu_sync_desc_t)) {
++		pr_err("cvi-tpu: %u sync descriptors do not fit a %zu-byte dmabuf\n",
++		       header->cpu_desc_count, buf_size);
++		ret = -EINVAL;
++		goto err_vunmap;
++	}
++
++	if ((header->pmubuf_offset || header->pmubuf_size) &&
++	    (header->pmubuf_offset > buf_size ||
++	     header->pmubuf_size > buf_size - header->pmubuf_offset)) {
++		pr_err("cvi-tpu: pmu buffer 0x%x+0x%x outside the dmabuf\n",
++		       header->pmubuf_offset, header->pmubuf_size);
++		ret = -EINVAL;
++		goto err_vunmap;
++	}
++
++	if ((header->pmubuf_offset & 0xF) || (header->pmubuf_size & 0xF))
++		pr_err("cvi-tpu: pmubuf_offset=0x%x pmubuf_size=0x%x misaligned\n",
++		       header->pmubuf_offset, header->pmubuf_size);
++
++	if (node->dmabuf_paddr & 0xFFF)
++		pr_err("cvi-tpu: dmabuf_paddr=0x%llx misaligned\n",
++		       node->dmabuf_paddr);
++
++	return 0;
++
++err_vunmap:
++	dma_buf_vunmap_unlocked(node->dma_buf, &node->dma_map);
++err_unmap:
++	dma_buf_unmap_attachment_unlocked(node->dma_attach, node->dma_sgt,
++					  DMA_BIDIRECTIONAL);
++err_detach:
++	dma_buf_detach(node->dma_buf, node->dma_attach);
++err_put:
++	dma_buf_put(node->dma_buf);
++	node->dma_buf = NULL;
++	return ret;
++}
++
++static void cvi_tpu_cleanup_buffer(struct cvi_list_node *node)
++{
++	if (node->tpu_path == TPU_PATH_PIOTDMA) {
++		if (node->pio_src_buf)
++			dma_buf_put(node->pio_src_buf);
++		if (node->pio_dst_buf)
++			dma_buf_put(node->pio_dst_buf);
++		node->pio_src_buf = NULL;
++		node->pio_dst_buf = NULL;
++		return;
++	}
++
++	if (node->tpu_path != TPU_PATH_DESNORMAL || !node->dma_buf)
++		return;
++
++	/*
++	 * The run wrote tpu_clk_rate into the header through the vmap;
++	 * write it back to DRAM before the unmap invalidates CPU caches.
++	 */
++	dma_sync_sgtable_for_device(node->dev, node->dma_sgt, DMA_TO_DEVICE);
++
++	dma_buf_vunmap_unlocked(node->dma_buf, &node->dma_map);
++	dma_buf_unmap_attachment_unlocked(node->dma_attach, node->dma_sgt,
++					  DMA_BIDIRECTIONAL);
++	dma_buf_detach(node->dma_buf, node->dma_attach);
++	dma_buf_put(node->dma_buf);
++	node->dma_buf = NULL;
++}
++
++/* Look up and unlink atomically; the caller owns and frees the node. */
++static struct cvi_list_node *
++take_from_done_list(struct cvi_kernel_work *kernel_work, u32 seq_no,
++		    enum tpu_submit_path path)
++{
++	struct cvi_list_node *node;
++
++	spin_lock(&kernel_work->done_list_lock);
++	node = NULL;
++	{
++		struct cvi_list_node *pos;
++
++		list_for_each_entry(pos, &kernel_work->done_list, list) {
++			u32 pos_seq = (path == TPU_PATH_PIOTDMA) ?
++					      pos->pio_seq_no : pos->seq_no;
++
++			if (pos->pid == current->pid &&
++			    pos->tpu_path == path && pos_seq == seq_no) {
++				node = pos;
++				list_del(&pos->list);
++				break;
++			}
++		}
++	}
++	spin_unlock(&kernel_work->done_list_lock);
++
++	return node;
++}
++
++static int wait_task_list_space(struct cvi_tpu_device *ndev)
++{
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++	struct cvi_list_node *pos;
++	u32 task_list_count;
++
++	while (1) {
++		task_list_count = 0;
++		spin_lock(&kernel_work->task_list_lock);
++		list_for_each_entry(pos, &kernel_work->task_list, list)
++			task_list_count++;
++		spin_unlock(&kernel_work->task_list_lock);
++		if (task_list_count <= TASK_LIST_MAX)
++			return 0;
++		dev_info(ndev->dev, "too many tasks in task list\n");
++		/* Jobs drain at up to 60s each; stay killable meanwhile. */
++		if (msleep_interruptible(20))
++			return -EINTR;
++	}
++}
++
++static void queue_task(struct cvi_tpu_device *ndev, struct cvi_list_node *node)
++{
++	spin_lock(&ndev->kernel_work.task_list_lock);
++	list_add_tail(&node->list, &ndev->kernel_work.task_list);
++	wake_up_interruptible(&ndev->kernel_work.task_wait_queue);
++	spin_unlock(&ndev->kernel_work.task_list_lock);
++}
++
++static int cvi_tpu_submit(struct cvi_tpu_device *ndev, unsigned long arg)
++{
++	int ret = 0;
++	struct cvi_submit_dma_arg run_dmabuf_arg;
++	struct cvi_list_node *node;
++
++	ret = copy_from_user(&run_dmabuf_arg,
++			     (struct cvi_submit_dma_arg __user *)arg,
++			     sizeof(struct cvi_submit_dma_arg));
++	if (ret) {
++		dev_err(ndev->dev, "copy from user fail\n");
++		return -EFAULT;
++	}
++
++	ret = wait_task_list_space(ndev);
++	if (ret)
++		return ret;
++
++	node = vmalloc(sizeof(struct cvi_list_node));
++	if (!node)
++		return -ENOMEM;
++	memset(node, 0, sizeof(struct cvi_list_node));
++
++	node->pid = current->pid;
++	node->seq_no = run_dmabuf_arg.seq_no;
++	node->dmabuf_fd = run_dmabuf_arg.fd;
++	node->dev = ndev->dev;
++	node->tpu_path = TPU_PATH_DESNORMAL;
++	ret = cvi_tpu_prepare_buffer(node);
++	if (ret) {
++		vfree(node);
++		return ret;
++	}
++
++	queue_task(ndev, node);
++
++	return 0;
++}
++
++static int cvi_tpu_run_dmabuf(struct cvi_tpu_device *ndev,
++			      struct cvi_list_node *node)
++{
++	int ret = 0;
++	struct timespec64 ts_start, ts_end;
++
++	mutex_lock(&ndev->dev_lock);
++
++	if (info.enable_usage_profiling)
++		ktime_get_ts64(&ts_start);
++
++	switch (node->tpu_path) {
++	case TPU_PATH_DESNORMAL:
++		ret = platform_run_dmabuf(ndev, node->dmabuf_vaddr,
++					  node->dmabuf_paddr, &node->hdr,
++					  node->dma_buf->size);
++		break;
++	case TPU_PATH_PIOTDMA:
++		ret = platform_run_pio(ndev, &node->pio_info);
++		break;
++	default:
++		break;
++	}
++
++	if (info.enable_usage_profiling) {
++		ktime_get_ts64(&ts_end);
++		info.run_current_us = get_duration_us(&ts_start, &ts_end);
++		info.run_sum_us += info.run_current_us;
++	}
++
++	if (ret == -ETIMEDOUT)
++		platform_tpu_reset(ndev);
++	mutex_unlock(&ndev->dev_lock);
++
++	return ret;
++}
++
++static int cvi_tpu_wait_generic(struct cvi_tpu_device *ndev, unsigned long arg,
++				enum tpu_submit_path path)
++{
++	int ret = 0;
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++	struct cvi_wait_dma_arg wait_arg;
++	struct cvi_list_node *node;
++
++	ret = copy_from_user(&wait_arg, (struct cvi_wait_dma_arg __user *)arg,
++			     sizeof(struct cvi_wait_dma_arg));
++	if (ret) {
++		dev_err(ndev->dev, "copy from user fail\n");
++		return -EFAULT;
++	}
++
++	/*
++	 * take_from_done_list() looks up and unlinks in one locked
++	 * section: two threads waiting on the same seq_no must not both
++	 * get the same node, or it is freed twice.
++	 */
++	ret = wait_event_interruptible(
++		kernel_work->done_wait_queue,
++		(node = take_from_done_list(kernel_work, wait_arg.seq_no,
++					    path)));
++	if (ret)
++		return -EINTR;
++
++	wait_arg.ret = node->ret;
++	ret = copy_to_user((void __user *)arg, &wait_arg, sizeof(wait_arg));
++	if (ret)
++		dev_err(ndev->dev, "copy to user fail\n");
++
++	vfree(node);
++	return ret ? -EFAULT : 0;
++}
++
++/*
++ * The TPU sits on the bus with no IOMMU, so a PIO copy is DMA to
++ * caller-chosen physical addresses. Only accept a range that lies
++ * entirely inside a dma-buf this fd has registered through
++ * CVITPU_GET_DMABUF_PADDR, and take a reference so the pages cannot
++ * be freed and reused while the copy is still queued or running.
++ */
++static struct dma_buf *cvi_tpu_pin_pio_range(struct cvi_tpu_ctx *ctx,
++					     u64 paddr, u64 len)
++{
++	struct cvi_tpu_buf *pos;
++	struct dma_buf *found = NULL;
++
++	mutex_lock(&ctx->bufs_lock);
++	list_for_each_entry(pos, &ctx->bufs, list) {
++		u64 base = pos->daddr;
++		u64 size = pos->dmabuf->size;
++
++		if (paddr >= base && len <= size &&
++		    paddr - base <= size - len) {
++			found = pos->dmabuf;
++			get_dma_buf(found);
++			break;
++		}
++	}
++	mutex_unlock(&ctx->bufs_lock);
++
++	return found;
++}
++
++static int cvi_tpu_submit_pio(struct cvi_tpu_ctx *ctx, unsigned long arg)
++{
++	struct cvi_tpu_device *ndev = ctx->ndev;
++	int ret = 0;
++	struct cvi_tdma_copy_arg ioctl_arg;
++	struct cvi_list_node *node;
++	struct dma_buf *src_buf, *dst_buf;
++	u64 src_len, dst_len;
++
++	ret = copy_from_user(&ioctl_arg,
++			     (struct cvi_tdma_copy_arg __user *)arg,
++			     sizeof(struct cvi_tdma_copy_arg));
++	if (ret) {
++		dev_err(ndev->dev, "copy from user fail\n");
++		return -EFAULT;
++	}
++
++	if (ioctl_arg.enable_2d) {
++		if (!ioctl_arg.h || !ioctl_arg.w_bytes ||
++		    ioctl_arg.stride_bytes_src < ioctl_arg.w_bytes ||
++		    ioctl_arg.stride_bytes_dst < ioctl_arg.w_bytes)
++			return -EINVAL;
++		/* The TDMA descriptor keeps 16 bits of each of these. */
++		if (ioctl_arg.h > 0xFFFF || ioctl_arg.w_bytes > 0xFFFF ||
++		    ioctl_arg.stride_bytes_src > 0xFFFF ||
++		    ioctl_arg.stride_bytes_dst > 0xFFFF)
++			return -EINVAL;
++		src_len = (u64)(ioctl_arg.h - 1) * ioctl_arg.stride_bytes_src +
++			  ioctl_arg.w_bytes;
++		dst_len = (u64)(ioctl_arg.h - 1) * ioctl_arg.stride_bytes_dst +
++			  ioctl_arg.w_bytes;
++	} else {
++		if (!ioctl_arg.leng_bytes)
++			return -EINVAL;
++		src_len = ioctl_arg.leng_bytes;
++		dst_len = ioctl_arg.leng_bytes;
++	}
++
++	src_buf = cvi_tpu_pin_pio_range(ctx, ioctl_arg.paddr_src, src_len);
++	dst_buf = cvi_tpu_pin_pio_range(ctx, ioctl_arg.paddr_dst, dst_len);
++	if (!src_buf || !dst_buf) {
++		dev_err(ndev->dev,
++			"pio range src 0x%llx+0x%llx / dst 0x%llx+0x%llx not within a registered dmabuf\n",
++			ioctl_arg.paddr_src, src_len, ioctl_arg.paddr_dst,
++			dst_len);
++		ret = -EINVAL;
++		goto err_put;
++	}
++
++	ret = wait_task_list_space(ndev);
++	if (ret)
++		goto err_put;
++
++	node = vmalloc(sizeof(struct cvi_list_node));
++	if (!node) {
++		ret = -ENOMEM;
++		goto err_put;
++	}
++	memset(node, 0, sizeof(struct cvi_list_node));
++
++	node->pid = current->pid;
++	node->pio_seq_no = ioctl_arg.seq_no;
++	node->dev = ndev->dev;
++	node->tpu_path = TPU_PATH_PIOTDMA;
++	node->pio_src_buf = src_buf;
++	node->pio_dst_buf = dst_buf;
++	if (ioctl_arg.enable_2d) {
++		node->pio_info.enable_2d = 1;
++		node->pio_info.paddr_src = ioctl_arg.paddr_src;
++		node->pio_info.paddr_dst = ioctl_arg.paddr_dst;
++		node->pio_info.h = ioctl_arg.h;
++		node->pio_info.w_bytes = ioctl_arg.w_bytes;
++		node->pio_info.stride_bytes_src = ioctl_arg.stride_bytes_src;
++		node->pio_info.stride_bytes_dst = ioctl_arg.stride_bytes_dst;
++	} else {
++		node->pio_info.paddr_src = ioctl_arg.paddr_src;
++		node->pio_info.paddr_dst = ioctl_arg.paddr_dst;
++		node->pio_info.leng_bytes = ioctl_arg.leng_bytes;
++	}
++
++	queue_task(ndev, node);
++	return 0;
++
++err_put:
++	if (src_buf)
++		dma_buf_put(src_buf);
++	if (dst_buf)
++		dma_buf_put(dst_buf);
++	return ret;
++}
++
++static void cvi_tpu_cleanup_done_list(struct cvi_tpu_device *ndev,
++				      struct cvi_kernel_work *kernel_work)
++{
++	u32 done_list_count = 0;
++	struct cvi_list_node *pos, *tmp;
++	bool alive;
++
++	spin_lock(&kernel_work->done_list_lock);
++
++	list_for_each_entry(pos, &kernel_work->done_list, list)
++		done_list_count++;
++
++	if (done_list_count < DONE_LIST_MAX) {
++		spin_unlock(&kernel_work->done_list_lock);
++		return;
++	}
++
++	dev_info(ndev->dev, "done list has too many nodes, cleaning up\n");
++
++	list_for_each_entry_safe(pos, tmp, &kernel_work->done_list, list) {
++		rcu_read_lock();
++		alive = pid_task(find_vpid(pos->pid), PIDTYPE_PID) != NULL;
++		rcu_read_unlock();
++		if (!alive) {
++			list_del(&pos->list);
++			vfree(pos);
++		}
++	}
++
++	spin_unlock(&kernel_work->done_list_lock);
++}
++
++static void work_thread_run(struct cvi_tpu_device *ndev)
++{
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++	struct cvi_list_node *first_node;
++	int ret = 0;
++
++	spin_lock(&kernel_work->task_list_lock);
++	first_node = list_first_entry(&kernel_work->task_list,
++				      struct cvi_list_node, list);
++	list_del(&first_node->list);
++	spin_unlock(&kernel_work->task_list_lock);
++
++	/*
++	 * Clocks on before the interrupt handler is ungated: with
++	 * running_cnt set, the handler touches TDMA registers, and a
++	 * register access while the clocks are gated stalls the bus.
++	 */
++	platform_tpu_init(ndev);
++	WRITE_ONCE(tpu_suspend.running_cnt, 1);
++
++	ret = cvi_tpu_run_dmabuf(ndev, first_node);
++	first_node->ret = ret;
++	cvi_tpu_cleanup_buffer(first_node);
++
++	WRITE_ONCE(tpu_suspend.running_cnt, 0);
++	platform_tpu_deinit(ndev);
++
++	spin_lock(&kernel_work->done_list_lock);
++	list_add_tail(&first_node->list, &kernel_work->done_list);
++	spin_unlock(&kernel_work->done_list_lock);
++
++	wake_up_all(&kernel_work->done_wait_queue);
++
++	cvi_tpu_cleanup_done_list(ndev, kernel_work);
++}
++
++static int task_list_empty(struct cvi_kernel_work *kernel_work)
++{
++	int ret;
++
++	spin_lock(&kernel_work->task_list_lock);
++	ret = list_empty(&kernel_work->task_list);
++	spin_unlock(&kernel_work->task_list_lock);
++
++	return ret;
++}
++
++static void work_thread_exit(struct cvi_tpu_device *ndev)
++{
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++	struct cvi_list_node *pos, *tmp;
++	LIST_HEAD(reap);
++
++	spin_lock(&kernel_work->task_list_lock);
++	list_splice_init(&kernel_work->task_list, &reap);
++	spin_unlock(&kernel_work->task_list_lock);
++
++	spin_lock(&kernel_work->done_list_lock);
++	list_splice_tail_init(&kernel_work->done_list, &reap);
++	spin_unlock(&kernel_work->done_list_lock);
++
++	/*
++	 * Cleanup outside the spinlocks - it unmaps and sleeps. Never-run
++	 * task nodes still hold their buffer references; for already-run
++	 * nodes the cleanup is a no-op.
++	 */
++	list_for_each_entry_safe(pos, tmp, &reap, list) {
++		cvi_tpu_cleanup_buffer(pos);
++		vfree(pos);
++	}
++}
++
++static int work_thread_main(void *data)
++{
++	struct cvi_tpu_device *ndev = data;
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++
++	set_freezable();
++	while (!kthread_should_stop()) {
++		wait_event_freezable(kernel_work->task_wait_queue,
++				     !task_list_empty(kernel_work) ||
++					     kthread_should_stop());
++
++		if (!task_list_empty(kernel_work))
++			work_thread_run(ndev);
++	}
++
++	work_thread_exit(ndev);
++
++	return 0;
++}
++
++static int work_thread_init(struct cvi_tpu_device *ndev)
++{
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++
++	init_waitqueue_head(&kernel_work->task_wait_queue);
++	init_waitqueue_head(&kernel_work->done_wait_queue);
++	INIT_LIST_HEAD(&kernel_work->task_list);
++	spin_lock_init(&kernel_work->task_list_lock);
++	INIT_LIST_HEAD(&kernel_work->done_list);
++	spin_lock_init(&kernel_work->done_list_lock);
++
++	kernel_work->work_thread =
++		kthread_run(work_thread_main, ndev, "cvitask_tpu_wor");
++	if (IS_ERR(kernel_work->work_thread)) {
++		dev_err(ndev->dev, "kthread run fail\n");
++		return PTR_ERR(kernel_work->work_thread);
++	}
++
++	return 0;
++}
++
++/* --- imported-buffer registry (GET_PADDR / RELEASE / FLUSH / INVLD) --- */
++
++static struct cvi_tpu_buf *cvi_tpu_find_buf(struct cvi_tpu_ctx *ctx,
++					    struct dma_buf *dmabuf)
++{
++	struct cvi_tpu_buf *pos;
++
++	list_for_each_entry(pos, &ctx->bufs, list) {
++		if (pos->dmabuf == dmabuf)
++			return pos;
++	}
++	return NULL;
++}
++
++static void cvi_tpu_release_buf(struct cvi_tpu_buf *buf)
++{
++	list_del(&buf->list);
++	dma_buf_unmap_attachment_unlocked(buf->attach, buf->sgt,
++					  DMA_BIDIRECTIONAL);
++	dma_buf_detach(buf->dmabuf, buf->attach);
++	dma_buf_put(buf->dmabuf);
++	kfree(buf);
++}
++
++static int cvi_tpu_get_paddr(struct cvi_tpu_ctx *ctx, unsigned long arg)
++{
++	struct cvi_tpu_device *ndev = ctx->ndev;
++	struct cvi_dmabuf_paddr_arg ioctl_arg;
++	struct cvi_tpu_buf *buf;
++	struct dma_buf *dmabuf;
++	int ret;
++
++	ret = copy_from_user(&ioctl_arg,
++			     (struct cvi_dmabuf_paddr_arg __user *)arg,
++			     sizeof(ioctl_arg));
++	if (ret)
++		return -EFAULT;
++
++	dmabuf = dma_buf_get(ioctl_arg.fd);
++	if (IS_ERR(dmabuf))
++		return PTR_ERR(dmabuf);
++
++	mutex_lock(&ctx->bufs_lock);
++
++	buf = cvi_tpu_find_buf(ctx, dmabuf);
++	if (buf) {
++		dma_buf_put(dmabuf);
++		goto found;
++	}
++
++	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
++	if (!buf) {
++		ret = -ENOMEM;
++		goto err_put;
++	}
++
++	buf->dmabuf = dmabuf;
++	buf->attach = dma_buf_attach(dmabuf, ndev->dev);
++	if (IS_ERR(buf->attach)) {
++		ret = PTR_ERR(buf->attach);
++		goto err_free;
++	}
++
++	buf->sgt = dma_buf_map_attachment_unlocked(buf->attach,
++						   DMA_BIDIRECTIONAL);
++	if (IS_ERR(buf->sgt)) {
++		ret = PTR_ERR(buf->sgt);
++		dma_buf_detach(dmabuf, buf->attach);
++		goto err_free;
++	}
++
++	if (buf->sgt->nents != 1) {
++		dev_err(ndev->dev,
++			"dmabuf not contiguous (nents=%d), use the CMA heap\n",
++			buf->sgt->nents);
++		dma_buf_unmap_attachment_unlocked(buf->attach, buf->sgt,
++						  DMA_BIDIRECTIONAL);
++		dma_buf_detach(dmabuf, buf->attach);
++		ret = -EINVAL;
++		goto err_free;
++	}
++
++	buf->daddr = sg_dma_address(buf->sgt->sgl);
++	list_add_tail(&buf->list, &ctx->bufs);
++
++found:
++	/* Read before unlock: a concurrent RELEASE_DMABUF frees buf. */
++	ioctl_arg.paddr = buf->daddr;
++	mutex_unlock(&ctx->bufs_lock);
++	if (copy_to_user((struct cvi_dmabuf_paddr_arg __user *)arg, &ioctl_arg,
++			 sizeof(ioctl_arg)))
++		return -EFAULT;
++	return 0;
++
++err_free:
++	kfree(buf);
++err_put:
++	dma_buf_put(dmabuf);
++	mutex_unlock(&ctx->bufs_lock);
++	return ret;
++}
++
++static int cvi_tpu_release_dmabuf(struct cvi_tpu_ctx *ctx, unsigned long arg)
++{
++	struct cvi_tpu_buf *buf;
++	struct dma_buf *dmabuf;
++	int fd, ret = 0;
++
++	if (get_user(fd, (int __user *)arg))
++		return -EFAULT;
++
++	dmabuf = dma_buf_get(fd);
++	if (IS_ERR(dmabuf))
++		return PTR_ERR(dmabuf);
++
++	mutex_lock(&ctx->bufs_lock);
++	buf = cvi_tpu_find_buf(ctx, dmabuf);
++	if (buf)
++		cvi_tpu_release_buf(buf);
++	else
++		ret = -ENOENT;
++	mutex_unlock(&ctx->bufs_lock);
++
++	dma_buf_put(dmabuf);
++	return ret;
++}
++
++/*
++ * Flush/invalidate through the registered mapping. Falls back to a
++ * transient attach/map cycle (whose implicit syncs do the same job)
++ * when the fd was never registered with GET_PADDR.
++ */
++static int cvi_tpu_cache_sync(struct cvi_tpu_ctx *ctx, unsigned long arg,
++			      bool to_device)
++{
++	struct cvi_tpu_device *ndev = ctx->ndev;
++	struct cvi_cache_op_arg sync_arg;
++	struct cvi_tpu_buf *buf;
++	struct dma_buf *dmabuf;
++	int ret;
++
++	ret = copy_from_user(&sync_arg, (struct cvi_cache_op_arg __user *)arg,
++			     sizeof(sync_arg));
++	if (ret)
++		return -EFAULT;
++
++	dmabuf = dma_buf_get(sync_arg.dma_fd);
++	if (IS_ERR(dmabuf))
++		return -EINVAL;
++
++	mutex_lock(&ctx->bufs_lock);
++	buf = cvi_tpu_find_buf(ctx, dmabuf);
++	if (buf) {
++		if (to_device)
++			dma_sync_sgtable_for_device(ndev->dev, buf->sgt,
++						    DMA_TO_DEVICE);
++		else
++			dma_sync_sgtable_for_cpu(ndev->dev, buf->sgt,
++						 DMA_FROM_DEVICE);
++	}
++	mutex_unlock(&ctx->bufs_lock);
++
++	if (!buf) {
++		struct dma_buf_attachment *attach;
++		struct sg_table *sgt;
++		enum dma_data_direction dir =
++			to_device ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
++
++		attach = dma_buf_attach(dmabuf, ndev->dev);
++		if (IS_ERR(attach)) {
++			ret = PTR_ERR(attach);
++			goto out;
++		}
++		sgt = dma_buf_map_attachment_unlocked(attach, dir);
++		if (IS_ERR(sgt)) {
++			ret = PTR_ERR(sgt);
++			dma_buf_detach(dmabuf, attach);
++			goto out;
++		}
++		dma_buf_unmap_attachment_unlocked(attach, sgt, dir);
++		dma_buf_detach(dmabuf, attach);
++	}
++
++out:
++	dma_buf_put(dmabuf);
++	return ret;
++}
++
++/* Vendor FLUSH_FD/INVLD_FD: transient map/unmap for its sync side effect. */
++static int cvi_tpu_map_dmabuf(struct cvi_tpu_device *ndev, unsigned long arg,
++			      enum dma_data_direction direction)
++{
++	int ret = 0;
++	int dmabuf_fd;
++	struct dma_buf *dma_buf;
++	struct dma_buf_attachment *attachment;
++	struct sg_table *sgt;
++
++	ret = get_user(dmabuf_fd, (int __user *)arg);
++	if (ret)
++		return ret;
++
++	dma_buf = dma_buf_get(dmabuf_fd);
++	if (IS_ERR(dma_buf))
++		return -EINVAL;
++
++	attachment = dma_buf_attach(dma_buf, ndev->dev);
++	if (IS_ERR(attachment)) {
++		ret = -EINVAL;
++		goto err_attach;
++	}
++
++	sgt = dma_buf_map_attachment_unlocked(attachment, direction);
++	if (IS_ERR(sgt)) {
++		ret = -EINVAL;
++		goto err_map;
++	}
++
++	dma_buf_unmap_attachment_unlocked(attachment, sgt, direction);
++
++err_map:
++	dma_buf_detach(dma_buf, attachment);
++
++err_attach:
++	dma_buf_put(dma_buf);
++
++	return ret;
++}
++
++static int cvi_tpu_usage_get(struct cvi_tpu_device *ndev, unsigned long arg)
++{
++	if (copy_to_user((uint64_t __user *)arg, &info.run_sum_us,
++			 sizeof(uint64_t)))
++		return -EFAULT;
++	return 0;
++}
++
++static long cvi_tpu_ioctl(struct file *filp, unsigned int cmd,
++			  unsigned long arg)
++{
++	struct cvi_tpu_ctx *ctx = filp->private_data;
++	struct cvi_tpu_device *ndev = ctx->ndev;
++	long ret = 0;
++
++	switch (cmd) {
++	case CVITPU_SUBMIT_DMABUF:
++		ret = cvi_tpu_submit(ndev, arg);
++		break;
++	case CVITPU_DMABUF_FLUSH_FD:
++		ret = cvi_tpu_map_dmabuf(ndev, arg, DMA_TO_DEVICE);
++		break;
++	case CVITPU_DMABUF_INVLD_FD:
++		ret = cvi_tpu_map_dmabuf(ndev, arg, DMA_FROM_DEVICE);
++		break;
++	case CVITPU_DMABUF_FLUSH:
++		ret = cvi_tpu_cache_sync(ctx, arg, true);
++		break;
++	case CVITPU_DMABUF_INVLD:
++		ret = cvi_tpu_cache_sync(ctx, arg, false);
++		break;
++	case CVITPU_WAIT_DMABUF:
++		ret = cvi_tpu_wait_generic(ndev, arg, TPU_PATH_DESNORMAL);
++		break;
++	case CVITPU_SUBMIT_PIO:
++		ret = cvi_tpu_submit_pio(ctx, arg);
++		break;
++	case CVITPU_WAIT_PIO:
++		ret = cvi_tpu_wait_generic(ndev, arg, TPU_PATH_PIOTDMA);
++		break;
++	case CVITPU_GET_USAGE:
++		ret = cvi_tpu_usage_get(ndev, arg);
++		break;
++	case CVITPU_GET_DMABUF_PADDR:
++		ret = cvi_tpu_get_paddr(ctx, arg);
++		break;
++	case CVITPU_RELEASE_DMABUF:
++		ret = cvi_tpu_release_dmabuf(ctx, arg);
++		break;
++	default:
++		return -ENOTTY;
++	}
++
++	return ret;
++}
++
++static int cvi_tpu_open(struct inode *inode, struct file *filp)
++{
++	struct cvi_tpu_device *ndev =
++		container_of(inode->i_cdev, struct cvi_tpu_device, cdev);
++	struct cvi_tpu_ctx *ctx;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++	ctx->ndev = ndev;
++	INIT_LIST_HEAD(&ctx->bufs);
++	mutex_init(&ctx->bufs_lock);
++
++	filp->private_data = ctx;
++
++	return 0;
++}
++
++static int cvi_tpu_close(struct inode *inode, struct file *filp)
++{
++	struct cvi_tpu_ctx *ctx = filp->private_data;
++	struct cvi_tpu_buf *pos, *tmp;
++
++	mutex_lock(&ctx->bufs_lock);
++	list_for_each_entry_safe(pos, tmp, &ctx->bufs, list)
++		cvi_tpu_release_buf(pos);
++	mutex_unlock(&ctx->bufs_lock);
++
++	kfree(ctx);
++	filp->private_data = NULL;
++
++	return 0;
++}
++
++static const struct file_operations npu_fops = {
++	.owner = THIS_MODULE,
++	.open = cvi_tpu_open,
++	.release = cvi_tpu_close,
++	.unlocked_ioctl = cvi_tpu_ioctl,
++	.compat_ioctl = cvi_tpu_ioctl,
++};
++
++static int cvi_tpu_register_cdev(struct cvi_tpu_device *ndev)
++{
++	struct device *cd;
++	int ret;
++
++	npu_class = class_create(CVI_TPU_CLASS_NAME);
++	if (IS_ERR(npu_class)) {
++		pr_err("create class failed\n");
++		return PTR_ERR(npu_class);
++	}
++
++	ret = alloc_chrdev_region(&npu_cdev_id, 0, 1, CVI_TPU_CDEV_NAME);
++	if (ret < 0) {
++		pr_err("alloc chrdev failed\n");
++		goto err_class;
++	}
++
++	cdev_init(&ndev->cdev, &npu_fops);
++	ndev->cdev.owner = THIS_MODULE;
++	ret = cdev_add(&ndev->cdev, npu_cdev_id, 1);
++	if (ret < 0) {
++		pr_err("cdev_add failed\n");
++		goto err_region;
++	}
++
++	cd = device_create(npu_class, ndev->dev, npu_cdev_id, NULL, "%s%d",
++			   CVI_TPU_CDEV_NAME, 0);
++	if (IS_ERR(cd)) {
++		ret = PTR_ERR(cd);
++		goto err_cdev;
++	}
++
++	return 0;
++
++err_cdev:
++	cdev_del(&ndev->cdev);
++err_region:
++	unregister_chrdev_region(npu_cdev_id, 1);
++err_class:
++	class_destroy(npu_class);
++	return ret;
++}
++
++static void cvi_tpu_unregister_cdev(struct cvi_tpu_device *ndev)
++{
++	device_destroy(npu_class, npu_cdev_id);
++	cdev_del(&ndev->cdev);
++	unregister_chrdev_region(npu_cdev_id, 1);
++	class_destroy(npu_class);
++}
++
++static int cvi_tpu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cvi_tpu_device *ndev;
++	int ret;
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
++	if (ret)
++		return ret;
++
++	ndev = devm_kzalloc(dev, sizeof(*ndev), GFP_KERNEL);
++	if (!ndev)
++		return -ENOMEM;
++	ndev->dev = dev;
++
++	ndev->tdma_vaddr = devm_platform_ioremap_resource_byname(pdev, "tdma");
++	if (IS_ERR(ndev->tdma_vaddr))
++		return PTR_ERR(ndev->tdma_vaddr);
++
++	ndev->tiu_vaddr = devm_platform_ioremap_resource_byname(pdev, "tiu");
++	if (IS_ERR(ndev->tiu_vaddr))
++		return PTR_ERR(ndev->tiu_vaddr);
++
++	ndev->tdma_irq = platform_get_irq(pdev, 1);
++	if (ndev->tdma_irq < 0)
++		return ndev->tdma_irq;
++
++	ret = devm_request_irq(dev, ndev->tdma_irq, cvi_tpu_tdma_irq, 0,
++			       "cvi-tpu-tdma", ndev);
++	if (ret)
++		return ret;
++
++	ndev->clk_tpu_axi = devm_clk_get(dev, "clk_tpu_axi");
++	if (IS_ERR(ndev->clk_tpu_axi)) {
++		dev_warn(dev, "cannot get clk_tpu_axi\n");
++		ndev->clk_tpu_axi = NULL;
++	}
++
++	ndev->clk_tpu_fab = devm_clk_get(dev, "clk_tpu_fab");
++	if (IS_ERR(ndev->clk_tpu_fab)) {
++		dev_warn(dev, "cannot get clk_tpu_fab\n");
++		ndev->clk_tpu_fab = NULL;
++	}
++
++	/* Resets are only used for timeout recovery; optional. */
++	ndev->rst_tdma = devm_reset_control_get_optional(dev, "res_tdma");
++	if (IS_ERR(ndev->rst_tdma))
++		ndev->rst_tdma = NULL;
++	ndev->rst_tpu = devm_reset_control_get_optional(dev, "res_tpu");
++	if (IS_ERR(ndev->rst_tpu))
++		ndev->rst_tpu = NULL;
++	ndev->rst_tpusys = devm_reset_control_get_optional(dev, "res_tpusys");
++	if (IS_ERR(ndev->rst_tpusys))
++		ndev->rst_tpusys = NULL;
++
++	spin_lock_init(&tpu_suspend.spin_lock);
++	tpu_suspend.running_cnt = 0;
++
++	platform_tpu_probe_setting();
++
++	init_completion(&ndev->tdma_done);
++	mutex_init(&ndev->dev_lock);
++
++	ret = cvi_tpu_register_cdev(ndev);
++	if (ret < 0)
++		return ret;
++
++	ret = work_thread_init(ndev);
++	if (ret < 0) {
++		cvi_tpu_unregister_cdev(ndev);
++		return ret;
++	}
++
++	platform_set_drvdata(pdev, ndev);
++
++	timer_setup(&profile_timer, tpu_profile_timer_handler, 0);
++
++	tpu_proc_dir = proc_mkdir("tpu", NULL);
++	if (proc_create_data("usage_profiling", 0644, tpu_proc_dir,
++			     &tpu_proc_ops, ndev) == NULL)
++		dev_warn(dev, "tpu usage_profiling proc creation failed\n");
++
++	dev_info(dev, "cvitek tpu registered (/dev/%s0)\n", CVI_TPU_CDEV_NAME);
++	return 0;
++}
++
++static void cvi_tpu_remove(struct platform_device *pdev)
++{
++	struct cvi_tpu_device *ndev = platform_get_drvdata(pdev);
++	struct cvi_kernel_work *kernel_work = &ndev->kernel_work;
++
++	/*
++	 * The proc file goes first: a write there re-arms the profiling
++	 * timer, which must not happen after the shutdown below.
++	 */
++	proc_remove(tpu_proc_dir);
++
++	/* Final teardown: also keep the handler from ever re-arming. */
++	timer_shutdown_sync(&profile_timer);
++	kthread_stop(kernel_work->work_thread);
++
++	cvi_tpu_unregister_cdev(ndev);
++
++	platform_set_drvdata(pdev, NULL);
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int cvi_tpu_suspend(struct device *dev)
++{
++	if (tpu_suspend.running_cnt) {
++		struct cvi_tpu_device *ndev = dev_get_drvdata(dev);
++
++		platform_tpu_suspend(ndev);
++	}
++
++	return 0;
++}
++
++static int cvi_tpu_resume(struct device *dev)
++{
++	if (tpu_suspend.running_cnt) {
++		struct cvi_tpu_device *ndev = dev_get_drvdata(dev);
++
++		platform_tpu_resume(ndev);
++	}
++	return 0;
++}
++#endif
++
++static SIMPLE_DEV_PM_OPS(cvi_tpu_pm_ops, cvi_tpu_suspend, cvi_tpu_resume);
++
++static const struct of_device_id cvi_tpu_match[] = {
++	{ .compatible = "cvitek,tpu" },
++	{},
++};
++MODULE_DEVICE_TABLE(of, cvi_tpu_match);
++
++static struct platform_driver cvi_tpu_driver = {
++	.probe = cvi_tpu_probe,
++	.remove = cvi_tpu_remove,
++	.driver = {
++			.name = "cvi-tpu",
++			.pm = &cvi_tpu_pm_ops,
++			.of_match_table = cvi_tpu_match,
++		},
++};
++module_platform_driver(cvi_tpu_driver);
++
++MODULE_IMPORT_NS("DMA_BUF");
++MODULE_AUTHOR("Wellken Chen<wellken.chen@cvitek.com.tw>");
++MODULE_DESCRIPTION("Cvitek SoC TPU driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/soc/sophgo/tpu/cvi_tpu_interface.h b/drivers/soc/sophgo/tpu/cvi_tpu_interface.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/cvi_tpu_interface.h
+@@ -0,0 +1,74 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * TPU driver interface header.
++ */
++
++#ifndef __CVI_TPU_INTERFACE_H__
++#define __CVI_TPU_INTERFACE_H__
++
++#include <linux/cdev.h>
++#include <linux/completion.h>
++#include <linux/wait.h>
++#include <linux/list.h>
++#include <linux/dma-direction.h>
++
++#define CPU_ENGINE_DESCRIPTOR_NUM 56
++
++/* CPU_OP_SYNC descriptor embedded in the command buffer. */
++struct cvi_cpu_sync_desc_t {
++	u32 op_type;
++	u32 num_bd;
++	u32 num_gdma;
++	u32 offset_bd;
++	u32 offset_gdma;
++	u32 reserved[2];
++	char str[(CPU_ENGINE_DESCRIPTOR_NUM - 7) * sizeof(u32)];
++};
++
++struct cvi_kernel_work {
++	struct task_struct *work_thread;
++	wait_queue_head_t task_wait_queue;
++	wait_queue_head_t done_wait_queue;
++	struct list_head task_list;
++	spinlock_t task_list_lock;
++	struct list_head done_list;
++	spinlock_t done_list_lock;
++};
++
++struct cvi_tpu_device {
++	struct device *dev;
++	struct reset_control *rst_tdma;
++	struct reset_control *rst_tpu;
++	struct reset_control *rst_tpusys;
++	struct clk *clk_tpu_axi;
++	struct clk *clk_tpu_fab;
++	dev_t cdev_id;
++	struct cdev cdev;
++	struct completion tdma_done;
++	u8 __iomem *tdma_vaddr;
++	u8 __iomem *tiu_vaddr;
++	int tdma_irq;
++	struct mutex dev_lock;
++	void *private_data;
++	struct cvi_kernel_work kernel_work;
++};
++
++struct CMD_ID_NODE {
++	unsigned int bd_cmd_id;
++	unsigned int tdma_cmd_id;
++};
++
++struct tpu_tdma_pio_info {
++	uint64_t paddr_src;
++	uint64_t paddr_dst;
++	uint32_t h;
++	uint32_t w_bytes;
++	uint32_t stride_bytes_src;
++	uint32_t stride_bytes_dst;
++	uint32_t enable_2d;
++	uint32_t leng_bytes;
++};
++
++#endif /* __CVI_TPU_INTERFACE_H__ */
+diff --git a/drivers/soc/sophgo/tpu/cvi_tpu_ioctl.h b/drivers/soc/sophgo/tpu/cvi_tpu_ioctl.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/cvi_tpu_ioctl.h
+@@ -0,0 +1,69 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later WITH Linux-syscall-note */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2020. All rights reserved.
++ *
++ * TPU chardev ioctl ABI. Kept binary-compatible with the vendor SDK,
++ * extended with GET_DMABUF_PADDR/RELEASE_DMABUF for mainline dma-buf
++ * heaps (which, unlike vendor ION, do not expose physical addresses).
++ */
++
++#ifndef __CVI_TPU_IOCTL_H__
++#define __CVI_TPU_IOCTL_H__
++
++struct cvi_cache_op_arg {
++	unsigned long long paddr;
++	unsigned long long size;
++	int dma_fd;
++};
++
++struct cvi_submit_dma_arg {
++	int fd;
++	unsigned int seq_no;
++};
++
++struct cvi_wait_dma_arg {
++	unsigned int seq_no;
++	int ret;
++};
++
++struct cvi_tdma_copy_arg {
++	unsigned long long paddr_src;
++	unsigned long long paddr_dst;
++	unsigned int h;
++	unsigned int w_bytes;
++	unsigned int stride_bytes_src;
++	unsigned int stride_bytes_dst;
++	unsigned int enable_2d;
++	unsigned int leng_bytes;
++	unsigned int seq_no;
++};
++
++struct cvi_tdma_wait_arg {
++	unsigned int seq_no;
++	int ret;
++};
++
++struct cvi_dmabuf_paddr_arg {
++	int fd;
++	unsigned int reserved;
++	unsigned long long paddr;
++};
++
++#define IOCTL_TPU_BASE 'p'
++#define CVITPU_SUBMIT_DMABUF _IOW(IOCTL_TPU_BASE, 0x01, unsigned long long)
++#define CVITPU_DMABUF_FLUSH_FD _IOW(IOCTL_TPU_BASE, 0x02, unsigned long long)
++#define CVITPU_DMABUF_INVLD_FD _IOW(IOCTL_TPU_BASE, 0x03, unsigned long long)
++#define CVITPU_DMABUF_FLUSH _IOW(IOCTL_TPU_BASE, 0x04, unsigned long long)
++#define CVITPU_DMABUF_INVLD _IOW(IOCTL_TPU_BASE, 0x05, unsigned long long)
++#define CVITPU_WAIT_DMABUF _IOWR(IOCTL_TPU_BASE, 0x06, unsigned long long)
++#define CVITPU_PIO_MODE _IOW(IOCTL_TPU_BASE, 0x07, unsigned long long)
++
++#define CVITPU_SUBMIT_PIO _IOW(IOCTL_TPU_BASE, 0x0B, unsigned long long)
++#define CVITPU_WAIT_PIO _IOWR(IOCTL_TPU_BASE, 0x0C, unsigned long long)
++#define CVITPU_GET_USAGE _IOWR(IOCTL_TPU_BASE, 0x0D, unsigned long long)
++
++/* mainline-port additions */
++#define CVITPU_GET_DMABUF_PADDR _IOWR(IOCTL_TPU_BASE, 0x0E, unsigned long long)
++#define CVITPU_RELEASE_DMABUF _IOW(IOCTL_TPU_BASE, 0x0F, unsigned long long)
++
++#endif /* __CVI_TPU_IOCTL_H__ */
+diff --git a/drivers/soc/sophgo/tpu/reg_tdma.h b/drivers/soc/sophgo/tpu/reg_tdma.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/reg_tdma.h
+@@ -0,0 +1,75 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * File Name: reg_tdma.h
++ * Description: tdma register define header file
++ */
++
++#ifndef __REG_TDMA_H__
++#define __REG_TDMA_H__
++
++#define TDMA_DESC_REG_BYTES           (0x40)
++#define TDMA_ENGINE_DESCRIPTOR_NUM    (TDMA_DESC_REG_BYTES >> 2)
++#define TDMA_DESCRIPTOR_ALIGNED_BIT   6
++#define TDMA_NUM_BASE_REGS            (0x8)
++
++//backward compatible?
++#define GDMA_TYPE_f32           0
++#define GDMA_TYPE_f16           1
++#define GDMA_TYPE_i32           2
++#define GDMA_TYPE_i16           3
++#define GDMA_TYPE_i8            4
++#define GDMA_TYPE_i4            5
++#define GDMA_TYPE_i2            6
++#define GDMA_TYPE_i1            7
++#define LAST_GDMA_TYPE_i1       8
++
++//tdma control define
++#define TDMA_ENGINE_BASE_ADDR   0   //base related virual address
++#define TDMA_CTRL               (TDMA_ENGINE_BASE_ADDR + 0x0)
++#define TDMA_DES_BASE           (TDMA_ENGINE_BASE_ADDR + 0x4)
++#define TDMA_INT_MASK           (TDMA_ENGINE_BASE_ADDR + 0x8)
++#define TDMA_SYNC_STATUS        (TDMA_ENGINE_BASE_ADDR + 0xC)
++#define TDMA_CMD_ACCP0          (TDMA_ENGINE_BASE_ADDR + 0x10)
++#define TDMA_CMD_ACCP1          (TDMA_ENGINE_BASE_ADDR + 0x14)
++#define TDMA_CMD_ACCP2          (TDMA_ENGINE_BASE_ADDR + 0x18)
++#define TDMA_CMD_ACCP3          (TDMA_ENGINE_BASE_ADDR + 0x1C)
++#define TDMA_CMD_ACCP4          (TDMA_ENGINE_BASE_ADDR + 0x20)
++#define TDMA_CMD_ACCP5          (TDMA_ENGINE_BASE_ADDR + 0x24)
++#define TDMA_CMD_ACCP6          (TDMA_ENGINE_BASE_ADDR + 0x28)
++#define TDMA_CMD_ACCP7          (TDMA_ENGINE_BASE_ADDR + 0x2C)
++#define TDMA_CMD_ACCP8          (TDMA_ENGINE_BASE_ADDR + 0x30)
++#define TDMA_CMD_ACCP9          (TDMA_ENGINE_BASE_ADDR + 0x34)
++#define TDMA_CMD_ACCP10         (TDMA_ENGINE_BASE_ADDR + 0x38)
++#define TDMA_CMD_ACCP11         (TDMA_ENGINE_BASE_ADDR + 0x3C)
++#define TDMA_CMD_ACCP12         (TDMA_ENGINE_BASE_ADDR + 0x40)
++#define TDMA_CMD_ACCP13         (TDMA_ENGINE_BASE_ADDR + 0x44)
++#define TDMA_CMD_ACCP14         (TDMA_ENGINE_BASE_ADDR + 0x48)
++#define TDMA_CMD_ACCP15         (TDMA_ENGINE_BASE_ADDR + 0x4C)
++#define TDMA_ARRAYBASE0_L       (TDMA_ENGINE_BASE_ADDR + 0x70)
++#define TDMA_ARRAYBASE1_L       (TDMA_ENGINE_BASE_ADDR + 0x74)
++#define TDMA_ARRAYBASE2_L       (TDMA_ENGINE_BASE_ADDR + 0x78)
++#define TDMA_ARRAYBASE3_L       (TDMA_ENGINE_BASE_ADDR + 0x7C)
++#define TDMA_ARRAYBASE4_L       (TDMA_ENGINE_BASE_ADDR + 0x80)
++#define TDMA_ARRAYBASE5_L       (TDMA_ENGINE_BASE_ADDR + 0x84)
++#define TDMA_ARRAYBASE6_L       (TDMA_ENGINE_BASE_ADDR + 0x88)
++#define TDMA_ARRAYBASE7_L       (TDMA_ENGINE_BASE_ADDR + 0x8C)
++#define TDMA_ARRAYBASE0_H       (TDMA_ENGINE_BASE_ADDR + 0x90)
++#define TDMA_ARRAYBASE1_H       (TDMA_ENGINE_BASE_ADDR + 0x94)
++#define TDMA_DEBUG_MODE         (TDMA_ENGINE_BASE_ADDR + 0xA0)
++#define TDMA_DCM_DISABLE        (TDMA_ENGINE_BASE_ADDR + 0xA4)
++#define TDMA_STATUS             (TDMA_ENGINE_BASE_ADDR + 0xEC)
++
++
++#define TDMA_CTRL_ENABLE_BIT        0
++#define TDMA_CTRL_MODESEL_BIT       1
++#define TDMA_CTRL_RESET_SYNCID_BIT  2
++#define TDMA_CTRL_FORCE_1ARRAY      5
++#define TDMA_CTRL_FORCE_2ARRAY      6
++#define TDMA_CTRL_BURSTLEN_BIT      8
++#define TDMA_CTRL_64BYTE_ALIGN_EN   10
++#define TDMA_CTRL_INTRA_CMD_OFF     13
++#define TDMA_CTRL_DESNUM_BIT        16
++
++#endif /* REG_TDMA_H */
+diff --git a/drivers/soc/sophgo/tpu/reg_tiu.h b/drivers/soc/sophgo/tpu/reg_tiu.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/reg_tiu.h
+@@ -0,0 +1,35 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * File Name: reg_tiu.h
++ * Description: tiu register define header file
++ */
++
++#ifndef __REG_BDCAST_H__
++#define __REG_BDCAST_H__
++
++#define BDC_ENGINE_CMD_ALIGNED_BIT	8
++#define TIU_DESC_REG_BYTES		0x70
++
++//base related virtual address
++#define TIU_ENGINE_BASE_ADDR		0
++#define BD_CMD_BASE_ADDR			(TIU_ENGINE_BASE_ADDR + 0)
++#define BD_CTRL_BASE_ADDR			(TIU_ENGINE_BASE_ADDR + 0x100)
++
++// BD control bits base on BD_CTRL_BASE_ADDR
++#define BD_TPU_EN					0    // TPU Enable bit
++#define BD_LANE_NUM					22   // Lane number bit[29:22]
++#define BD_DES_ADDR_VLD				30   // enable descriptor mode
++#define BD_INTR_ENABLE				31   // TIU interrupt global enable
++
++enum TIU_LANNUM {
++	TIU_LANNUM_2		= 0x1,
++	TIU_LANNUM_4		= 0x2,
++	TIU_LANNUM_8		= 0x3,
++	TIU_LANNUM_16		= 0x4,
++	TIU_LANNUM_32		= 0x5,
++	TIU_LANNUM_64		= 0x6,
++};
++
++#endif /* __REG_TIU_H__ */
+diff --git a/drivers/soc/sophgo/tpu/tpu_platform.c b/drivers/soc/sophgo/tpu/tpu_platform.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/tpu_platform.c
+@@ -0,0 +1,791 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * TPU hardware control (CV181x TIU + TDMA engines).
++ */
++
++#include <linux/kernel.h>
++#include <linux/io.h>
++#include <linux/dma-mapping.h>
++#include <linux/delay.h>
++#include <linux/clk.h>
++#include <linux/reset.h>
++
++#include "cvi_tpu_interface.h"
++#include "reg_tiu.h"
++#include "reg_tdma.h"
++#include "tpu_platform.h"
++#include "tpu_pmu.h"
++
++struct tpu_reg_backup_info {
++	uint32_t tdma_int_mask;
++	uint32_t tdma_sync_status;
++	uint32_t tiu_ctrl_base_address;
++
++	uint32_t tdma_arraybase0_l;
++	uint32_t tdma_arraybase1_l;
++	uint32_t tdma_arraybase2_l;
++	uint32_t tdma_arraybase3_l;
++	uint32_t tdma_arraybase4_l;
++	uint32_t tdma_arraybase5_l;
++	uint32_t tdma_arraybase6_l;
++	uint32_t tdma_arraybase7_l;
++	uint32_t tdma_arraybase0_h;
++	uint32_t tdma_arraybase1_h;
++
++	uint32_t tdma_des_base;
++	uint32_t tdma_dbg_mode;
++	uint32_t tdma_dcm_disable;
++	uint32_t tdma_ctrl;
++};
++
++typedef struct {
++	uint32_t vld;
++	uint32_t compress_en;
++	uint32_t eod;
++	uint32_t intp_en;
++	uint32_t bar_en;
++	uint32_t check_bf16_value;
++	uint32_t trans_dir;
++	uint32_t rsv00;
++	uint32_t trans_fmt;
++	uint32_t transpose_md;
++	uint32_t rsv01;
++	uint32_t intra_cmd_paral;
++	uint32_t outstanding_en;
++	uint32_t cmd_id;
++	uint32_t spec_func;
++	uint32_t dst_fmt;
++	uint32_t src_fmt;
++	uint32_t cmprs_fmt;
++	uint32_t sys_dtype;
++	uint32_t rsv2_1;
++	uint32_t int8_sign;
++	uint32_t compress_zero_guard;
++	uint32_t int8_rnd_mode;
++	uint32_t wait_id_tpu;
++	uint32_t wait_id_other_tdma;
++	uint32_t wait_id_sdma;
++	uint32_t const_val;
++	uint32_t src_base_reg_sel;
++	uint32_t mv_lut_idx;
++	uint32_t dst_base_reg_sel;
++	uint32_t mv_lut_base;
++	uint32_t rsv4_5;
++	uint32_t dst_h_stride;
++	uint32_t dst_c_stride_low;
++	uint32_t dst_n_stride;
++	uint32_t src_h_stride;
++	uint32_t src_c_stride_low;
++	uint32_t src_n_stride;
++	uint32_t dst_c;
++	uint32_t src_c;
++	uint32_t dst_w;
++	uint32_t dst_h;
++	uint32_t src_w;
++	uint32_t src_h;
++	uint32_t dst_base_addr_low;
++	uint32_t src_base_addr_low;
++	uint32_t src_n;
++	uint32_t dst_base_addr_high;
++	uint32_t src_base_addr_high;
++	uint32_t src_c_stride_high;
++	uint32_t dst_c_stride_high;
++	uint32_t compress_bias0;
++	uint32_t compress_bias1;
++	uint32_t layer_ID;
++} tdma_reg_t;
++
++#define TIMEOUT_MS			(60 * 1000)
++
++#define TDMA_MASK_INIT	0x20	/* ignore descriptor nchw/stride=0 error */
++#define TDMA_INT_EOD		0x1
++#define TDMA_INT_EOPMU	0x8000
++#define TDMA_ALL_IDLE		0X1F
++
++static spinlock_t tpu_int_got_spinlock;
++static uint8_t tpu_sync_backup;
++static uint8_t tpu_suspend_handle_int;
++static struct tpu_reg_backup_info tpu_reg_backup;
++
++static void platform_clear_int(struct cvi_tpu_device *ndev)
++{
++	u32 reg_value, int_status;
++
++	reg_value = RAW_READ32(ndev->tdma_vaddr + TDMA_INT_MASK);
++	int_status = (reg_value >> 16) & ~(TDMA_MASK_INIT);
++	pr_debug("platform_tdma_irq()=0x%x int_status=0x%x\n", reg_value,
++		 int_status);
++
++	if (int_status != TDMA_INT_EOD && int_status != TDMA_INT_EOPMU) {
++		pr_err("platform_tdma_irq() got error = 0x%x\n", reg_value);
++		pr_err("TDMA_SYNC_STATUS reg=0x%x\n",
++		       RAW_READ32(ndev->tdma_vaddr + TDMA_SYNC_STATUS));
++	}
++
++	RAW_WRITE32(ndev->tdma_vaddr + TDMA_INT_MASK, 0xFFFF0000);
++
++	tpu_reg_backup.tdma_int_mask =
++		RAW_READ32(ndev->tdma_vaddr + TDMA_INT_MASK);
++	tpu_reg_backup.tdma_sync_status =
++		RAW_READ32(ndev->tdma_vaddr + TDMA_SYNC_STATUS);
++	tpu_reg_backup.tiu_ctrl_base_address =
++		RAW_READ32(ndev->tiu_vaddr + BD_CTRL_BASE_ADDR);
++
++	spin_lock(&tpu_int_got_spinlock);
++	tpu_sync_backup = 1;
++	spin_unlock(&tpu_int_got_spinlock);
++}
++
++irqreturn_t platform_tdma_irq(struct cvi_tpu_device *ndev)
++{
++	platform_clear_int(ndev);
++	complete(&ndev->tdma_done);
++	return IRQ_HANDLED;
++}
++
++static void set_tdma_descriptor_Fire(struct TPU_PLATFORM_CFG *pCfg,
++				     u64 desc_offset, u32 num_tdma)
++{
++	u8 __iomem *iomem_tdmaBase = pCfg->iomem_tdmaBase;
++
++	/* set TDMA descriptor address */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_DES_BASE, desc_offset);
++
++	/* make sure that debug mode is disabled */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_DEBUG_MODE, 0x0);
++
++	/* tdma dcm enable */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_DCM_DISABLE, 0x0);
++
++	/* init interrupt mask */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_INT_MASK, TDMA_MASK_INIT);
++
++	spin_lock(&tpu_int_got_spinlock);
++	tpu_sync_backup = 0;
++	spin_unlock(&tpu_int_got_spinlock);
++
++	RAW_WRITE32(iomem_tdmaBase + TDMA_CTRL,
++			(0x1 << TDMA_CTRL_ENABLE_BIT) |
++			(0x1 << TDMA_CTRL_MODESEL_BIT) |
++			(num_tdma << TDMA_CTRL_DESNUM_BIT) |
++			(0x3 << TDMA_CTRL_BURSTLEN_BIT) |
++			(0x1 << TDMA_CTRL_FORCE_1ARRAY) |
++			(0x1 << TDMA_CTRL_INTRA_CMD_OFF) |
++			(0x1 << TDMA_CTRL_64BYTE_ALIGN_EN));
++}
++
++static void set_tiu_descriptor(struct TPU_PLATFORM_CFG *pCfg, u64 desc_offset,
++			       u32 num_bd)
++{
++	u32 regVal = 0;
++	u64 desc_addr = 0;
++	u8 __iomem *iomem_tiuBase = pCfg->iomem_tiuBase;
++
++	desc_addr = (u64)(desc_offset << BDC_ENGINE_CMD_ALIGNED_BIT);
++
++	/* set TIU descriptor address */
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0x4,
++		    desc_addr & 0xFFFFFFFF);
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0x8);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0x8,
++		    (regVal & 0xFFFFFF00) | (desc_addr >> 32 & 0xFF));
++
++	/* disable tiu pre_exe */
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0xC);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0xC,
++		    (regVal | (0x1 << 11)));
++
++	/* set 1 array, lane=8 */
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR);
++	regVal &= ~0x3FC00000;
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR,
++		    regVal | (TIU_LANNUM_8 << BD_LANE_NUM));
++
++	/* fire TIU */
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR,
++		    regVal | (0x1 << BD_DES_ADDR_VLD) |
++			    (0x1 << BD_INTR_ENABLE) | (0x1 << BD_TPU_EN));
++}
++
++static void resync_cmd_id(struct TPU_PLATFORM_CFG *pCfg)
++{
++	u32 regVal = 0;
++	u8 __iomem *iomem_tiuBase = pCfg->iomem_tiuBase;
++	u8 __iomem *iomem_tdmaBase = pCfg->iomem_tdmaBase;
++
++	/* reset TIU ID */
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0xC);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0xC, regVal | 0x1);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR + 0xC, regVal & ~0x1);
++
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR,
++		    regVal & ~((0x1 << BD_TPU_EN) | (0x1 << BD_DES_ADDR_VLD)));
++
++	/* reset TIU interrupt status */
++	regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR);
++	RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR, regVal | (0x1 << 1));
++
++	/* reset DMA ID */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_CTRL,
++		    0x1 << TDMA_CTRL_RESET_SYNCID_BIT);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_CTRL, 0x0);
++
++	/* reset DMA interrupt status */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_INT_MASK, 0xFFFF0000);
++}
++
++static int poll_cmdbuf_done(struct TPU_PLATFORM_CFG *pCfg,
++			    struct CMD_ID_NODE *id_node)
++{
++	u32 regVal = 0, regVal2 = 0;
++	u8 __iomem *iomem_tiuBase = pCfg->iomem_tiuBase;
++	unsigned long expire = jiffies + msecs_to_jiffies(TIMEOUT_MS);
++
++	if (id_node->tdma_cmd_id > 0) {
++		regVal = tpu_reg_backup.tdma_int_mask;
++		regVal2 = tpu_reg_backup.tdma_sync_status;
++
++		if ((regVal2 >> 16) < id_node->tdma_cmd_id) {
++			pr_err("got tdma int but tdma id is not the last one, maybe not finished\n");
++			return -1;
++		}
++	}
++
++	if (id_node->bd_cmd_id > 0) {
++		/* poll until bd done */
++		while (1) {
++			regVal = RAW_READ32(iomem_tiuBase + BD_CTRL_BASE_ADDR);
++			if ((((regVal >> 6) & 0xFFFF) >= id_node->bd_cmd_id) &&
++			    ((regVal & (0x1 << 1)) != 0)) {
++				RAW_WRITE32(iomem_tiuBase + BD_CTRL_BASE_ADDR,
++					    regVal | (0x1 << 1));
++				break;
++			}
++
++			cpu_relax();
++
++			if (time_after(jiffies, expire)) {
++				pr_err("poll tiu timeout, BD_CTRL_BASE_ADDR=0x%x\n",
++				       regVal);
++				return -ETIMEDOUT;
++			}
++		}
++	}
++
++	return 0;
++}
++
++static void platform_run_dmabuf_setArrayBase(struct TPU_PLATFORM_CFG *pCfg,
++					     const struct dma_hdr_t *header)
++{
++	u8 __iomem *iomem_tdmaBase = pCfg->iomem_tdmaBase;
++
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE0_L, header->arraybase_0_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE1_L, header->arraybase_1_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE2_L, header->arraybase_2_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE3_L, header->arraybase_3_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE4_L, header->arraybase_4_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE5_L, header->arraybase_5_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE6_L, header->arraybase_6_L);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE7_L, header->arraybase_7_L);
++
++	/* assume high bits always 0 */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE0_H, 0);
++	RAW_WRITE32(iomem_tdmaBase + TDMA_ARRAYBASE1_H, 0);
++}
++
++int platform_run_dmabuf(struct cvi_tpu_device *ndev, void *dmabuf_v,
++			uint64_t dmabuf_p, const struct dma_hdr_t *hdr,
++			size_t buf_size)
++{
++	int i = 0, ret = -1;
++	u8 u8pmu_enable = 0;
++	uint64_t buf_end = dmabuf_p + buf_size;
++
++	struct cvi_cpu_sync_desc_t *desc =
++		(struct cvi_cpu_sync_desc_t *)(dmabuf_v +
++					       sizeof(struct dma_hdr_t));
++
++	struct TPU_PLATFORM_CFG cfg;
++	struct CMD_ID_NODE id_node = {0};
++
++	pr_debug("dmabuf_v=0x%p, dmabuf_p=0x%llx\n", dmabuf_v, dmabuf_p);
++
++	if (hdr->dmabuf_magic_m != TPU_DMABUF_HEADER_M) {
++		pr_err("bad dmabuf header magic 0x%x\n",
++		       hdr->dmabuf_magic_m);
++		return -1;
++	}
++
++	spin_lock(&tpu_int_got_spinlock);
++	tpu_sync_backup = 0;
++	tpu_suspend_handle_int = 0;
++	spin_unlock(&tpu_int_got_spinlock);
++
++	cfg.iomem_tdmaBase = ndev->tdma_vaddr;
++	cfg.iomem_tiuBase = ndev->tiu_vaddr;
++	cfg.pmubuf_addr_p = dmabuf_p + (uint64_t)(hdr->pmubuf_offset);
++	cfg.pmubuf_size = hdr->pmubuf_size;
++
++	platform_run_dmabuf_setArrayBase(&cfg, hdr);
++
++	if ((hdr->pmubuf_offset) && (hdr->pmubuf_size))
++		u8pmu_enable = 1;
++
++	if (u8pmu_enable)
++		TPUPMU_Enable(&cfg, 1, TPU_PMUEVENT_TDMABW);
++
++	for (i = 0; i < hdr->cpu_desc_count; i++, desc++) {
++		/*
++		 * Copy the fields out of the shared buffer once, and
++		 * validate the copies: the descriptor "offsets" are
++		 * pre-shifted absolute bus addresses filled in by the
++		 * userspace relocator, and the engines fetch from them
++		 * without an IOMMU in the way.
++		 */
++		int bd_num = desc->num_bd & 0xFFFF;
++		int tdma_num = desc->num_gdma & 0xFFFF;
++		u32 bd_offset = desc->offset_bd;
++		u32 tdma_offset = desc->offset_gdma;
++		u64 bd_addr = (u64)bd_offset << BDC_ENGINE_CMD_ALIGNED_BIT;
++		u64 tdma_addr = (u64)tdma_offset << TDMA_DESCRIPTOR_ALIGNED_BIT;
++
++		if (bd_num > 0 &&
++		    (bd_addr < dmabuf_p || bd_addr > buf_end ||
++		     (u64)bd_num * TIU_DESC_REG_BYTES > buf_end - bd_addr)) {
++			pr_err("tiu descriptors 0x%llx+%d outside the dmabuf\n",
++			       bd_addr, bd_num);
++			if (u8pmu_enable)
++				TPUPMU_Enable(&cfg, 0, TPU_PMUEVENT_TDMABW);
++			return -EINVAL;
++		}
++		if (tdma_num > 0 &&
++		    (tdma_addr < dmabuf_p || tdma_addr > buf_end ||
++		     (u64)tdma_num * TDMA_DESC_REG_BYTES > buf_end - tdma_addr)) {
++			pr_err("tdma descriptors 0x%llx+%d outside the dmabuf\n",
++			       tdma_addr, tdma_num);
++			if (u8pmu_enable)
++				TPUPMU_Enable(&cfg, 0, TPU_PMUEVENT_TDMABW);
++			return -EINVAL;
++		}
++
++		reinit_completion(&ndev->tdma_done);
++		resync_cmd_id(&cfg);
++
++		id_node.bd_cmd_id = bd_num;
++		id_node.tdma_cmd_id = tdma_num;
++
++		pr_debug("num <bd: %d, gdma: %d>, offset <0x%08x, 0x%08x>\n",
++			 bd_num, tdma_num, bd_offset, tdma_offset);
++
++		if (bd_num > 0)
++			set_tiu_descriptor(&cfg, bd_offset, bd_num);
++
++		if (tdma_num > 0)
++			set_tdma_descriptor_Fire(&cfg, tdma_offset, tdma_num);
++
++		if (tdma_num > 0) {
++			ret = wait_for_completion_interruptible_timeout(
++				&ndev->tdma_done,
++				msecs_to_jiffies(TIMEOUT_MS));
++
++			if (ret == 0) {
++				dev_err(ndev->dev, "run dmabuf timeout\n");
++				return -ETIMEDOUT;
++			}
++
++			if (ret < 0) {
++				dev_err(ndev->dev, "run dmabuf interrupted\n");
++				return ret;
++			}
++		}
++
++		/* check tdma/tiu current descriptor */
++		if (!tpu_suspend_handle_int) {
++			ret = poll_cmdbuf_done(&cfg, &id_node);
++			if (ret < 0) {
++				dev_err(ndev->dev, "poll dmabuf timeout\n");
++				return -ETIMEDOUT;
++			}
++		}
++	}
++
++	if (u8pmu_enable) {
++		reinit_completion(&ndev->tdma_done);
++
++		TPUPMU_Enable(&cfg, 0, TPU_PMUEVENT_TDMABW);
++
++		if (!tpu_suspend_handle_int) {
++			ret = wait_for_completion_interruptible_timeout(
++				&ndev->tdma_done,
++				msecs_to_jiffies(TIMEOUT_MS));
++
++			if (ret == 0) {
++				dev_err(ndev->dev, "stop pmu timeout\n");
++				return -ETIMEDOUT;
++			}
++
++			if (ret < 0) {
++				dev_err(ndev->dev, "stop pmu interrupted\n");
++				return ret;
++			}
++		}
++	}
++
++	/* Reported back to the profiler through the live buffer. */
++	if (ndev->clk_tpu_axi)
++		((struct dma_hdr_t *)dmabuf_v)->tpu_clk_rate =
++			clk_get_rate(ndev->clk_tpu_axi);
++
++	return 0;
++}
++
++int platform_tpu_suspend(struct cvi_tpu_device *ndev)
++{
++	u8 __iomem *iomem_tdma_base = ndev->tdma_vaddr;
++	u8 __iomem *iomem_tiu_base = ndev->tiu_vaddr;
++
++	tpu_reg_backup.tdma_int_mask =
++		RAW_READ32(iomem_tdma_base + TDMA_INT_MASK);
++	tpu_reg_backup.tdma_sync_status =
++		RAW_READ32(iomem_tdma_base + TDMA_SYNC_STATUS);
++	tpu_reg_backup.tiu_ctrl_base_address =
++		RAW_READ32(iomem_tiu_base + BD_CTRL_BASE_ADDR);
++
++	tpu_reg_backup.tdma_arraybase0_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE0_L);
++	tpu_reg_backup.tdma_arraybase1_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE1_L);
++	tpu_reg_backup.tdma_arraybase2_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE2_L);
++	tpu_reg_backup.tdma_arraybase3_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE3_L);
++	tpu_reg_backup.tdma_arraybase4_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE4_L);
++	tpu_reg_backup.tdma_arraybase5_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE5_L);
++	tpu_reg_backup.tdma_arraybase6_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE6_L);
++	tpu_reg_backup.tdma_arraybase7_l =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE7_L);
++	tpu_reg_backup.tdma_arraybase0_h =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE0_H);
++	tpu_reg_backup.tdma_arraybase1_h =
++		RAW_READ32(iomem_tdma_base + TDMA_ARRAYBASE1_H);
++
++	tpu_reg_backup.tdma_des_base =
++		RAW_READ32(iomem_tdma_base + TDMA_DES_BASE);
++	tpu_reg_backup.tdma_dbg_mode =
++		RAW_READ32(iomem_tdma_base + TDMA_DEBUG_MODE);
++	tpu_reg_backup.tdma_dcm_disable =
++		RAW_READ32(iomem_tdma_base + TDMA_DCM_DISABLE);
++	tpu_reg_backup.tdma_ctrl = RAW_READ32(iomem_tdma_base + TDMA_CTRL);
++
++	if (tpu_reg_backup.tdma_ctrl & (0x1 << TDMA_CTRL_ENABLE_BIT)) {
++		/* a transfer is in flight; poll for its interrupt */
++		if (!tpu_sync_backup) {
++			uint32_t reg_value, int_status;
++			unsigned long expire =
++				jiffies + msecs_to_jiffies(TIMEOUT_MS);
++
++			while (1) {
++				reg_value = RAW_READ32(iomem_tdma_base +
++						       TDMA_INT_MASK);
++				int_status =
++					(reg_value >> 16) & ~(TDMA_MASK_INIT);
++
++				if (int_status == TDMA_INT_EOD ||
++				    int_status == TDMA_INT_EOPMU)
++					break;
++
++				cpu_relax();
++				if (time_after(jiffies, expire)) {
++					pr_err("polling for tdma INT failed before suspend\n");
++					break;
++				}
++			}
++
++			tpu_reg_backup.tdma_int_mask =
++				RAW_READ32(iomem_tdma_base + TDMA_INT_MASK);
++			tpu_reg_backup.tdma_sync_status =
++				RAW_READ32(iomem_tdma_base + TDMA_SYNC_STATUS);
++			tpu_reg_backup.tiu_ctrl_base_address =
++				RAW_READ32(iomem_tiu_base + BD_CTRL_BASE_ADDR);
++
++			spin_lock(&tpu_int_got_spinlock);
++			tpu_sync_backup = 1;
++			tpu_suspend_handle_int = 1;
++			spin_unlock(&tpu_int_got_spinlock);
++		}
++	}
++
++	if (ndev->clk_tpu_axi && ndev->clk_tpu_fab) {
++		clk_disable_unprepare(ndev->clk_tpu_axi);
++		clk_disable_unprepare(ndev->clk_tpu_fab);
++	}
++
++	return 0;
++}
++
++int platform_tpu_resume(struct cvi_tpu_device *ndev)
++{
++	u8 __iomem *iomem_tdma_base = ndev->tdma_vaddr;
++	u8 __iomem *iomem_tiu_base = ndev->tiu_vaddr;
++
++	if (ndev->clk_tpu_axi && ndev->clk_tpu_fab) {
++		clk_prepare_enable(ndev->clk_tpu_axi);
++		clk_prepare_enable(ndev->clk_tpu_fab);
++	}
++
++	RAW_WRITE32(iomem_tdma_base + TDMA_INT_MASK,
++		    tpu_reg_backup.tdma_int_mask);
++	RAW_WRITE32(iomem_tdma_base + TDMA_SYNC_STATUS,
++		    tpu_reg_backup.tdma_sync_status);
++	RAW_WRITE32(iomem_tiu_base + BD_CTRL_BASE_ADDR,
++		    tpu_reg_backup.tiu_ctrl_base_address);
++
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE0_L,
++		    tpu_reg_backup.tdma_arraybase0_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE1_L,
++		    tpu_reg_backup.tdma_arraybase1_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE2_L,
++		    tpu_reg_backup.tdma_arraybase2_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE3_L,
++		    tpu_reg_backup.tdma_arraybase3_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE4_L,
++		    tpu_reg_backup.tdma_arraybase4_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE5_L,
++		    tpu_reg_backup.tdma_arraybase5_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE6_L,
++		    tpu_reg_backup.tdma_arraybase6_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE7_L,
++		    tpu_reg_backup.tdma_arraybase7_l);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE0_H,
++		    tpu_reg_backup.tdma_arraybase0_h);
++	RAW_WRITE32(iomem_tdma_base + TDMA_ARRAYBASE1_H,
++		    tpu_reg_backup.tdma_arraybase1_h);
++
++	RAW_WRITE32(iomem_tdma_base + TDMA_DES_BASE,
++		    tpu_reg_backup.tdma_des_base);
++	RAW_WRITE32(iomem_tdma_base + TDMA_DEBUG_MODE,
++		    tpu_reg_backup.tdma_dbg_mode);
++	RAW_WRITE32(iomem_tdma_base + TDMA_DCM_DISABLE,
++		    tpu_reg_backup.tdma_dcm_disable);
++
++	return 0;
++}
++
++int platform_tpu_reset(struct cvi_tpu_device *ndev)
++{
++	if (ndev->rst_tdma && ndev->rst_tpu && ndev->rst_tpusys) {
++		reset_control_assert(ndev->rst_tdma);
++		reset_control_assert(ndev->rst_tpu);
++		reset_control_assert(ndev->rst_tpusys);
++
++		reset_control_deassert(ndev->rst_tdma);
++		reset_control_deassert(ndev->rst_tpu);
++		reset_control_deassert(ndev->rst_tpusys);
++	}
++	return 0;
++}
++
++int platform_tpu_init(struct cvi_tpu_device *ndev)
++{
++	if (ndev->clk_tpu_axi && ndev->clk_tpu_fab) {
++		clk_prepare_enable(ndev->clk_tpu_axi);
++		clk_prepare_enable(ndev->clk_tpu_fab);
++	}
++
++	platform_tpu_reset(ndev);
++	return 0;
++}
++
++void platform_tpu_deinit(struct cvi_tpu_device *ndev)
++{
++	if (ndev->clk_tpu_axi && ndev->clk_tpu_fab) {
++		clk_disable_unprepare(ndev->clk_tpu_axi);
++		clk_disable_unprepare(ndev->clk_tpu_fab);
++	}
++}
++
++static void emit_tdma_reg(const tdma_reg_t *r, uint32_t *_p)
++{
++	uint32_t *p = _p;
++
++	p[15] = (r->compress_bias0 & ((1u << 8) - 1)) |
++		((r->compress_bias1 & ((1u << 8) - 1)) << 8) |
++		((r->layer_ID & ((1u << 16) - 1)) << 16);
++	p[14] = (r->src_c_stride_high & ((1u << 16) - 1)) |
++		((r->dst_c_stride_high & ((1u << 16) - 1)) << 16);
++	p[13] = (r->src_n & ((1u << 16) - 1)) |
++		((r->dst_base_addr_high & ((1u << 8) - 1)) << 16) |
++		((r->src_base_addr_high & ((1u << 8) - 1)) << 24);
++	p[12] = (r->src_base_addr_low & (((uint64_t)1 << 32) - 1));
++	p[11] = (r->dst_base_addr_low & (((uint64_t)1 << 32) - 1));
++	p[10] = (r->src_w & ((1u << 16) - 1)) |
++		((r->src_h & ((1u << 16) - 1)) << 16);
++	p[9] = (r->dst_w & ((1u << 16) - 1)) |
++		((r->dst_h & ((1u << 16) - 1)) << 16);
++	p[8] = (r->dst_c & ((1u << 16) - 1)) |
++		((r->src_c & ((1u << 16) - 1)) << 16);
++	p[7] = (r->src_n_stride & (((uint64_t)1 << 32) - 1));
++	p[6] = (r->src_h_stride & ((1u << 16) - 1)) |
++		((r->src_c_stride_low & ((1u << 16) - 1)) << 16);
++	p[5] = (r->dst_n_stride & (((uint64_t)1 << 32) - 1));
++	p[4] = (r->dst_h_stride & ((1u << 16) - 1)) |
++		((r->dst_c_stride_low & ((1u << 16) - 1)) << 16);
++	p[3] = (r->const_val & ((1u << 16) - 1)) |
++		((r->src_base_reg_sel & ((1u << 3) - 1)) << 16) |
++		((r->mv_lut_idx & 1) << 19) |
++		((r->dst_base_reg_sel & ((1u << 3) - 1)) << 20) |
++		((r->mv_lut_base & 1) << 23) |
++		((r->rsv4_5 & ((1u << 8) - 1)) << 24);
++	p[2] = (r->wait_id_other_tdma & ((1u << 16) - 1)) |
++		((r->wait_id_sdma & ((1u << 16) - 1)) << 16);
++	p[1] = (r->spec_func & ((1u << 3) - 1)) |
++		((r->dst_fmt & ((1u << 2) - 1)) << 3) |
++		((r->src_fmt & ((1u << 2) - 1)) << 5) |
++		((r->cmprs_fmt & 1) << 7) |
++		((r->sys_dtype & 1) << 8) |
++		((r->rsv2_1 & ((1u << 4) - 1)) << 9) |
++		((r->int8_sign & 1) << 13) |
++		((r->compress_zero_guard & 1) << 14) |
++		((r->int8_rnd_mode & 1) << 15) |
++		((r->wait_id_tpu & ((1u << 16) - 1)) << 16);
++	p[0] = (r->vld & 1) |
++		((r->compress_en & 1) << 1) |
++		((r->eod & 1) << 2) |
++		((r->intp_en & 1) << 3) |
++		((r->bar_en & 1) << 4) |
++		((r->check_bf16_value & 1) << 5) |
++		((r->trans_dir & ((1u << 2) - 1)) << 6) |
++		((r->rsv00 & ((1u << 2) - 1)) << 8) |
++		((r->trans_fmt & 1) << 10) |
++		((r->transpose_md & ((1u << 2) - 1)) << 11) |
++		((r->rsv01 & 1) << 13) |
++		((r->intra_cmd_paral & 1) << 14) |
++		((r->outstanding_en & 1) << 15) |
++		((r->cmd_id & ((1u << 16) - 1)) << 16);
++}
++
++static void reset_tdma_reg(tdma_reg_t *r)
++{
++	memset(r, 0, sizeof(*r));
++	r->dst_fmt = 0x1;
++	r->src_fmt = 0x1;
++	r->dst_h_stride = 0x1;
++	r->dst_c_stride_low = 0x1;
++	r->dst_n_stride = 0x1;
++	r->src_h_stride = 0x1;
++	r->src_c_stride_low = 0x1;
++	r->src_n_stride = 0x1;
++	r->dst_c = 0x1;
++	r->src_c = 0x1;
++	r->dst_w = 0x1;
++	r->dst_h = 0x1;
++	r->src_w = 0x1;
++	r->src_h = 0x1;
++	r->src_n = 0x1;
++}
++
++static void set_tdma_pio(struct cvi_tpu_device *ndev, uint32_t *pio_array)
++{
++	uint32_t i = 0;
++	u8 __iomem *iomem_tdmaBase = ndev->tdma_vaddr;
++	struct TPU_PLATFORM_CFG cfg = {0};
++
++	cfg.iomem_tdmaBase = ndev->tdma_vaddr;
++	cfg.iomem_tiuBase = ndev->tiu_vaddr;
++	resync_cmd_id(&cfg);
++
++	for (i = 0; i < 16; i++)
++		RAW_WRITE32(iomem_tdmaBase + TDMA_CMD_ACCP0 + (i << 2),
++			    pio_array[i]);
++
++	/* make sure that debug mode is disabled */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_DEBUG_MODE, 0x0);
++
++	/* tdma dcm enable */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_DCM_DISABLE, 0x0);
++
++	/* init interrupt mask */
++	RAW_WRITE32(iomem_tdmaBase + TDMA_INT_MASK, TDMA_MASK_INIT);
++
++	RAW_WRITE32(iomem_tdmaBase + TDMA_CTRL,
++		(0x1 << TDMA_CTRL_ENABLE_BIT) |
++		(0x1 << TDMA_CTRL_DESNUM_BIT) |
++		(0x3 << TDMA_CTRL_BURSTLEN_BIT) |
++		(0x1 << TDMA_CTRL_FORCE_1ARRAY) |
++		(0x1 << TDMA_CTRL_INTRA_CMD_OFF) |
++		(0x1 << TDMA_CTRL_64BYTE_ALIGN_EN));
++}
++
++int platform_run_pio(struct cvi_tpu_device *ndev,
++		     struct tpu_tdma_pio_info *pio_info)
++{
++	tdma_reg_t reg;
++	uint32_t pio_array[16] = {0};
++	int32_t ret = -1;
++
++	reset_tdma_reg(&reg);
++	reinit_completion(&ndev->tdma_done);
++
++	reg.vld = 1;
++	reg.trans_dir = 2; /* 0:tg2l, 1:l2tg, 2:g2g, 3:l2l */
++	reg.src_base_addr_low = (uint32_t)(pio_info->paddr_src);
++	reg.src_base_addr_high = (pio_info->paddr_src) >> 32;
++	reg.dst_base_addr_low = (uint32_t)(pio_info->paddr_dst);
++	reg.dst_base_addr_high = (pio_info->paddr_dst) >> 32;
++	reg.eod = 1;
++	reg.intp_en = 1;
++
++	if (pio_info->enable_2d) {
++		reg.trans_fmt = 0; /* 0:tensor, 1:common */
++		reg.src_n = 1;
++		reg.src_c = 1;
++		reg.src_h = pio_info->h;
++		reg.src_w = pio_info->w_bytes;
++
++		reg.dst_c = 1;
++		reg.dst_h = reg.src_h;
++		reg.dst_w = reg.src_w;
++
++		reg.src_n_stride = pio_info->stride_bytes_src * pio_info->h;
++		reg.src_h_stride = pio_info->stride_bytes_src;
++
++		reg.dst_n_stride = pio_info->stride_bytes_dst * pio_info->h;
++		reg.dst_h_stride = pio_info->stride_bytes_dst;
++	} else {
++		reg.trans_fmt = 1; /* 0:tensor, 1:common */
++		reg.src_n_stride = pio_info->leng_bytes;
++	}
++	emit_tdma_reg(&reg, pio_array);
++	set_tdma_pio(ndev, pio_array);
++
++	ret = wait_for_completion_interruptible_timeout(
++		&ndev->tdma_done, msecs_to_jiffies(TIMEOUT_MS));
++
++	if (ret == 0) {
++		pr_err("run pio timeout\n");
++		return -ETIMEDOUT;
++	}
++
++	if (ret < 0) {
++		pr_err("run pio interrupted\n");
++		return ret;
++	}
++	return 0;
++}
++
++int platform_tpu_probe_setting(void)
++{
++	spin_lock_init(&tpu_int_got_spinlock);
++	tpu_sync_backup = 0;
++	tpu_suspend_handle_int = 0;
++
++	return 0;
++}
+diff --git a/drivers/soc/sophgo/tpu/tpu_platform.h b/drivers/soc/sophgo/tpu/tpu_platform.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/tpu_platform.h
+@@ -0,0 +1,72 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * TPU hardware layer header (CV181x).
++ */
++
++#ifndef __TPU_PLATFORM_H__
++#define __TPU_PLATFORM_H__
++
++#include <linux/kernel.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include "cvi_tpu_interface.h"
++
++struct dma_hdr_t {
++	uint16_t dmabuf_magic_m;
++	uint16_t dmabuf_magic_s;
++	uint32_t dmabuf_size;
++	uint32_t cpu_desc_count;
++	uint32_t bd_desc_count; /* 16 bytes */
++	uint32_t tdma_desc_count;
++	uint32_t tpu_clk_rate;
++	uint32_t pmubuf_size;
++	uint32_t pmubuf_offset; /* 32 bytes */
++	uint32_t arraybase_0_L;
++	uint32_t arraybase_0_H;
++	uint32_t arraybase_1_L;
++	uint32_t arraybase_1_H; /* 48 bytes */
++	uint32_t arraybase_2_L;
++	uint32_t arraybase_2_H;
++	uint32_t arraybase_3_L;
++	uint32_t arraybase_3_H; /* 64 bytes */
++
++	uint32_t arraybase_4_L;
++	uint32_t arraybase_4_H;
++	uint32_t arraybase_5_L;
++	uint32_t arraybase_5_H;
++	uint32_t arraybase_6_L;
++	uint32_t arraybase_6_H;
++	uint32_t arraybase_7_L;
++	uint32_t arraybase_7_H;
++	uint32_t reserve[8]; /* 128 bytes, 128-byte aligned */
++};
++
++struct TPU_PLATFORM_CFG {
++	u8 __iomem *iomem_tdmaBase;
++	u8 __iomem *iomem_tiuBase;
++	uint32_t pmubuf_size;
++	uint64_t pmubuf_addr_p;
++};
++
++#define TPU_DMABUF_HEADER_M		0xB5B5
++
++irqreturn_t platform_tdma_irq(struct cvi_tpu_device *ndev);
++int platform_run_dmabuf(struct cvi_tpu_device *ndev, void *dmabuf_v,
++			uint64_t dmabuf_p, const struct dma_hdr_t *hdr,
++			size_t buf_size);
++
++int platform_tpu_suspend(struct cvi_tpu_device *ndev);
++int platform_tpu_resume(struct cvi_tpu_device *ndev);
++int platform_tpu_reset(struct cvi_tpu_device *ndev);
++int platform_tpu_init(struct cvi_tpu_device *ndev);
++void platform_tpu_deinit(struct cvi_tpu_device *ndev);
++int platform_tpu_probe_setting(void);
++int platform_run_pio(struct cvi_tpu_device *ndev,
++		     struct tpu_tdma_pio_info *pio_info);
++
++#define RAW_READ32(addr) readl(addr)
++#define RAW_WRITE32(addr, value) writel(value, addr)
++
++#endif
+diff --git a/drivers/soc/sophgo/tpu/tpu_pmu.c b/drivers/soc/sophgo/tpu/tpu_pmu.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/tpu_pmu.c
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * TPU performance-monitor control.
++ */
++
++#include <linux/kernel.h>
++#include "tpu_pmu.h"
++#include "reg_tdma.h"
++
++struct TPU_PMUCONFIG {
++	u8 enable;
++	u8 enable_tpu;
++	u8 enable_tdma;
++	enum TPU_PMUEVENT event;
++	u16 tpu_syncID_start;
++	u16 tpu_syncID_end;
++	u16 tdma_syncID_start;
++	u16 tdma_syncID_end;
++	u32 bufBaseAddr;	/* register value is addr >> 4 */
++	u32 bufSize;		/* register value is size >> 4 */
++};
++
++#define TPUPMU_CTRL		(TDMA_ENGINE_BASE_ADDR + 0x200)
++#define TPUPMU_BUFBASE		(TDMA_ENGINE_BASE_ADDR + 0x20C)
++#define TPUPMU_BUFSIZE		(TDMA_ENGINE_BASE_ADDR + 0x210)
++
++static void TPUPMU_Config(struct TPU_PLATFORM_CFG *pCfg,
++			  struct TPU_PMUCONFIG *pconfig)
++{
++	u32 regValue = 0;
++
++	if (pconfig->enable) {
++		/* set buffer start and size */
++		RAW_WRITE32(pCfg->iomem_tdmaBase + TPUPMU_BUFBASE,
++			    pconfig->bufBaseAddr);
++		RAW_WRITE32(pCfg->iomem_tdmaBase + TPUPMU_BUFSIZE,
++			    pconfig->bufSize);
++
++		regValue |= 0x1;
++		if (pconfig->enable_tpu)
++			regValue |= 0x8;
++
++		if (pconfig->enable_tdma)
++			regValue |= 0x10;
++
++		/* set event type */
++		regValue |= (pconfig->event << 5);
++
++		/* set burst length = 16 */
++		regValue |= (0x3 << 8);
++
++		/* enable pmu ring buffer mode */
++		regValue |= (0x1 << 10);
++
++		/* enable pmu dcm */
++		regValue &= ~0xFFFF0000;
++
++		RAW_WRITE32(pCfg->iomem_tdmaBase + TPUPMU_CTRL, regValue);
++	} else {
++		regValue = RAW_READ32(pCfg->iomem_tdmaBase + TPUPMU_CTRL);
++		RAW_WRITE32(pCfg->iomem_tdmaBase + TPUPMU_CTRL,
++			    regValue & ~(0x1));
++	}
++}
++
++int TPUPMU_Enable(struct TPU_PLATFORM_CFG *pCfg, u8 enable,
++		  enum TPU_PMUEVENT event)
++{
++	struct TPU_PMUCONFIG config = {0};
++
++	if (enable) {
++		u64 bufAddr = pCfg->pmubuf_addr_p >> 4;
++		u64 bufSize = pCfg->pmubuf_size >> 4;
++
++		config.enable = 1;
++		config.event = event;
++		config.enable_tdma = 1;
++		config.enable_tpu = 1;
++		config.bufBaseAddr = bufAddr;
++		config.bufSize = bufSize;
++	}
++
++	TPUPMU_Config(pCfg, &config);
++	return 0;
++}
+diff --git a/drivers/soc/sophgo/tpu/tpu_pmu.h b/drivers/soc/sophgo/tpu/tpu_pmu.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/soc/sophgo/tpu/tpu_pmu.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) Cvitek Co., Ltd. 2019-2021. All rights reserved.
++ *
++ * File Name: tpu_pmu.h
++ * Description: tpu pmu control header file
++ */
++
++#ifndef __TPU_PMU_H__
++#define __TPU_PMU_H__
++
++#include "tpu_platform.h"
++
++enum TPU_PMUEVENT {
++	TPU_PMUEVENT_BANKCONFLICT	= 0x0,
++	TPU_PMUEVENT_STALLCNT		= 0x1,
++	TPU_PMUEVENT_TDMABW			= 0x2,
++	TPU_PMUEVENT_TDMAWSTRB		= 0x3,
++};
++
++enum TPU_PMUTYPE {
++	TPU_PMUTYPE_TDMALOAD		= 1,
++	TPU_PMUTYPE_TDMASTORE		= 2,
++	TPU_PMUTYPE_TDMAMOVE		= 3,
++	TPU_PMUTYPE_TIU				= 4,
++};
++
++struct TPU_PMU_DOUBLEEVENT {
++	u64 type:4;
++	u64 desID:16;
++	u64 eventCnt0:22;
++	u64 eventCnt1:22;
++	u32 endTime;
++	u32 startTime;
++};
++
++int TPUPMU_Enable(struct TPU_PLATFORM_CFG *pCfg, u8 enable, enum TPU_PMUEVENT event);
++int TPUPMU_ParsingResult(u8 *pbuf_start);
++
++
++#endif
+-- 
+Armbian

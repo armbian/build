@@ -1,0 +1,106 @@
+From: David Frankel <davidhfrankelcodes@gmail.com>
+Date: Mon, 14 Sep 2026 14:10:11 +0000
+Subject: [PATCH] arm64: dts: sun60iw2/orangepizero3w: fix GPU 600MHz clock cap
+
+The PowerVR GPU on every sun60iw2 board runs at a hardcoded 600MHz
+regardless of the DTS's own gpu-opp-table, which already lists a
+1008MHz step with a real vendor voltage. Every boot logs:
+
+  pvrsrvkm 1800000.gpu: warning: default clk_rate is NOT set in DTS,
+  set it to default:600000000
+
+pvrsrvkm (rgx_sunxi/sunxi_platform.c, sunxi_parse_dts()) reads a plain
+clk_rate DT property directly off the gpu node -- not the standard
+operating-points-v2/devfreq framework -- and hardcodes 600MHz
+(DEFAULT_GPU_RATE) whenever it's absent. Sets it to 1008000000, the top
+step this SoC's own gpu-opp-table already lists (opp@1008000000).
+
+That OPP table specifies 960mV for the 1008MHz step, but pvrsrvkm never
+applies it: SUPPORT_LINUX_DVFS is compiled out in this build, so
+sunxi_parse_dts() just reads back whatever voltage the gpu-supply
+regulator (axp8191-dcdc4) already has (800mV, this rail's power-on
+default) and re-affirms it, leaving clock and voltage mismatched.
+dcdc4 has no other consumer in this board's dts besides gpu-supply, so
+it's safe to pin: narrowing regulator-min-microvolt ==
+regulator-max-microvolt to 960000 makes the Linux regulator core apply
+that voltage at registration (set_machine_constraints(),
+drivers/regulator/core.c), no pvrsrvkm/DVFS changes needed.
+
+Verified on an Orange Pi Zero 3W:
+
+  pvrsrvkm 1800000.gpu: sunxi_parse_dts clk_rate:1008000000
+  pvrsrvkm 1800000.gpu: succeed to get gpu regulator, default volt value:960000
+  pvrsrvkm 1800000.gpu: sunxiSetVoltage:960000
+
+/sys/class/regulator/*/microvolts for axp8191-dcdc4 reads 960000.
+clpeak passes cleanly at 1008MHz/960mV -- throughput scales ~1:1 with
+the clock ratio vs. the 600MHz baseline (35 -> 59.9 GFLOPS float4,
+1.68x clock -> 1.71x GFLOPS), no crashes, no bad results.
+
+Only the Orange Pi Zero 3W's own gpu-supply wiring is patched here
+(sun60i-a733-orangepi-zero3w.dts); the shared sun60iw2p1.dtsi clk_rate
+change benefits the Orange Pi 4 Pro and Cubie A7Z too, but their own
+gpu-supply regulator nodes weren't touched -- whoever maintains those
+boards should verify the equivalent voltage before assuming full
+1008MHz stability there.
+
+Upstream PRs also open against the two vendor trees this board's
+sources come from: orangepi-xunlong/linux-orangepi#138 (clk_rate +
+this exact voltage fix) and radxa/allwinner-bsp#23 (clk_rate only, for
+the Cubie boards' shared dtsi).
+
+Full writeup: https://github.com/davidhfrankelcodes/pvr-a733-armbian
+(ARMBIAN-REPLICATION.md section 9, dts-overlay/sun60i-a733-gpu-clk-1008m.dts
+has the equivalent standalone overlay for anyone who wants this without
+a kernel rebuild).
+
+Signed-off-by: David Frankel <davidhfrankelcodes@gmail.com>
+---
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60iw2p1.dtsi b/arch/arm64/boot/dts/allwinner/sun60iw2p1.dtsi
+--- a/arch/arm64/boot/dts/allwinner/sun60iw2p1.dtsi
++++ b/arch/arm64/boot/dts/allwinner/sun60iw2p1.dtsi
+@@ -4621,3 +4621,15 @@
+ 			operating-points-v2 = <&gpu_opp_table>;
+ 			#cooling-cells = <2>;
++			/* Vendor OPP table (below) tops out at 1008 MHz with a matching
++			 * voltage entry, but the driver never applies it: pvrsrvkm reads
++			 * this raw clk_rate property directly (sunxi_parse_dts() in
++			 * rgx_sunxi/sunxi_platform.c) and falls back to a hardcoded
++			 * 600 MHz (DEFAULT_GPU_RATE) whenever it is absent -- confirmed
++			 * on this board (Orange Pi Zero 3W): pvrsrvkm.ko prints
++			 * "default clk_rate is NOT set in DTS" on every boot without
++			 * this. Set it to the OPP table's own top step.
++			 * See opp@1008000000 below for the matching voltage this needs
++			 * on gpu-supply (board .dts's dcdc4 regulator, not here).
++			 */
++			clk_rate = <1008000000>;
+ 		};
+
+diff --git a/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts b/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
+--- a/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
++++ b/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
+@@ -2140,8 +2140,19 @@
+ 			};
+ 			reg_dcdc4: dcdc4 {
+ 				regulator-name = "axp8191-dcdc4";
+-				regulator-min-microvolt = <500000>;
+-				regulator-max-microvolt = <1540000>;
++				/* gpu-supply is the ONLY consumer of this rail (checked: no other
++				 * -supply reference to reg_dcdc4 in this file besides gpu-supply
++				 * below). Pinned to exactly 960mV -- the vendor OPP table's
++				 * (sun60iw2p1.dtsi gpu-opp-table) voltage for the 1008MHz step --
++				 * because pvrsrvkm (SUPPORT_LINUX_DVFS compiled out on this
++				 * board) never applies the OPP table's voltage itself; it just
++				 * re-affirms whatever this regulator already reads back as its
++				 * current voltage. min_uV == max_uV makes the regulator core
++				 * apply this voltage at registration (set_machine_constraints(),
++				 * drivers/regulator/core.c), no DVFS needed. Verified: clpeak at
++				 * 1008MHz/960mV scales ~1:1 with the clock ratio, no crashes. */
++				regulator-min-microvolt = <960000>;
++				regulator-max-microvolt = <960000>;
+ 				regulator-ramp-delay = <250>;
+ 				regulator-enable-ramp-delay = <1000>;
+ 				regulator-boot-on;
+-- 
+2.53.0

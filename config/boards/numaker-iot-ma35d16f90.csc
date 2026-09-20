@@ -1,4 +1,4 @@
-# Dual-core Cortex-A35 + Cortex-M4, 512MB DDR
+# Nuvoton MA35D1 dual core (Cortex-A35) + Cortex-M4 512MB RAM NAND GBE 100M Ethernet 2x USB2 CAN
 BOARD_NAME="NuMaker IoT MA35D16F90"
 BOARD_VENDOR="nuvoton"
 BOARD_MAINTAINER="TuAFBogey"

@@ -1,4 +1,4 @@
-# Allwinner Cortex-A55 octa-core 2/4GB SoC
+# Allwinner T527 octa core 2/4GB RAM eMMC NVMe GBE WiFi/BT HDMI 4x USB2
 BOARD_NAME="Orange Pi 4A"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun55iw3"
