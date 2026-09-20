@@ -51,7 +51,15 @@ function calculate_hash_for_files() {
 	# relativize the files to SRC
 	declare -a files_to_hash=("$@")
 	declare -a files_to_hash_relativized=()
+	declare -A userpatches_real_files=() # name-to-hash-under => real file; only for files in a non-default USERPATCHES_PATH
 	for file in "${files_to_hash[@]}"; do
+		# Files in a custom USERPATCHES_PATH are hashed under the name they would have in the default location. That way the
+		# hash does not depend on where that directory is, and matches what a Docker build (which bind-mounts it there) gets.
+		if [[ -n "${USERPATCHES_PATH:-}" && "${USERPATCHES_PATH}" != "${SRC}/userpatches" && "${file}" == "${USERPATCHES_PATH}/"* ]]; then
+			declare real_file="${file}"
+			file="${SRC}/userpatches/${file#"${USERPATCHES_PATH}/"}"
+			userpatches_real_files["${file#${SRC}/}"]="${real_file}"
+		fi
 		# remove the SRC/ from the file name
 		file="${file#${SRC}/}"
 		files_to_hash_relativized+=("${file}")
@@ -71,7 +79,23 @@ function calculate_hash_for_files() {
 	fi
 
 	declare full_hash
-	full_hash="$(cd "${SRC}" && sha256sum "${files_to_hash_sorted[@]}")"
+	if [[ ${#userpatches_real_files[@]} -eq 0 ]]; then
+		full_hash="$(cd "${SRC}" && sha256sum "${files_to_hash_sorted[@]}")"
+	else
+		# Same, but some files are not where their name says: hash the real ones, in the sorted order, then swap their directory
+		# for the default one in sha256sum's output. The rest of each line is kept, as sha256sum escapes unusual file names.
+		declare one full_hash_real_files line
+		declare -a files_to_hash_real=()
+		for one in "${files_to_hash_sorted[@]}"; do
+			files_to_hash_real+=("${userpatches_real_files["${one}"]:-"${one}"}")
+		done
+		full_hash_real_files="$(cd "${SRC}" && sha256sum "${files_to_hash_real[@]}")"
+		full_hash=""
+		while IFS= read -r line; do
+			full_hash+="${line/"  ${USERPATCHES_PATH}/"/"  userpatches/"}"$'\n'
+		done <<< "${full_hash_real_files}"
+		full_hash="${full_hash%$'\n'}"
+	fi
 	hash_files="$(sha256sum <<< "${full_hash}" | cut -d' ' -f1)" # hash of hashes
 	hash_files="${hash_files:0:16}"                              # shorten it to 16 characters
 
