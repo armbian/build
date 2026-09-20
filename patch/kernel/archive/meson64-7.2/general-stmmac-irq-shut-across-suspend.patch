@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sun, 20 Sep 2026 21:30:27 +0000
+Subject: net: stmmac: shut the MAC interrupt while resume resets the MAC
+
+Resume resets the MAC, and every core interrupt stays unmasked until the
+mask is written again: a link change in that window storms the CPU with
+interrupts nobody has asked for yet. Shut the line for as long as that
+takes, from the start of resume until the hardware is set up again.
+
+The line is requested with IRQF_SHARED, so disabling it stops every
+handler on it, not only this one; a line closed for the whole sleep would
+silence a co-owner that wakes the system. Closing it in resume alone also
+covers a MAC that owns a wake source itself: such a MAC needs the line
+alive while asleep, and the same reset waits for it on the way back.
+
+Resume gives the line back on every path out, not just the successful
+one: the PM core clears the suspended flag whatever the callback
+returns, so a resume that failed early would otherwise leave the
+interrupt disabled one level deeper each cycle, and the interface would
+run without interrupts. A local flag carries the decision from the
+disable to the matching enable, so the two cannot disagree about an
+interface that stops in between.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 27 +++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -8261,11 +8261,21 @@
+ 	int ret;
++	bool irq_off;
+ 
++	/* Resume resets the MAC, leaving every core interrupt unmasked until
++	 * the mask is written again: a link change in that window would storm.
++	 */
++	irq_off = netif_running(ndev);
++	if (irq_off)
++		disable_irq(ndev->irq);
++
+ 	if (priv->plat->resume) {
+ 		ret = priv->plat->resume(dev, priv->plat->bsp_priv);
+ 		if (ret)
+-			return ret;
++			goto out;
+ 	}
+ 
+-	if (!netif_running(ndev))
+-		return 0;
++	if (!netif_running(ndev)) {
++		ret = 0;
++		goto out;
++	}
+ 
+@@ -8288,11 +8298,11 @@
+ 	}
+ 
+ 	if (!(priv->plat->flags & STMMAC_FLAG_SERDES_UP_AFTER_PHY_LINKUP)) {
+ 		ret = stmmac_legacy_serdes_power_up(priv);
+ 		if (ret < 0)
+-			return ret;
++			goto out;
+ 	}
+ 
+ 	rtnl_lock();
+ 
+ 	/* Prepare the PHY to resume, ensuring that its clocks which are
+@@ -8311,11 +8321,11 @@
+ 	if (ret < 0) {
+ 		netdev_err(priv->dev, "%s: Hw setup failed\n", __func__);
+ 		stmmac_legacy_serdes_power_down(priv);
+ 		mutex_unlock(&priv->lock);
+ 		rtnl_unlock();
+-		return ret;
++		goto out;
+ 	}
+ 
+ 	stmmac_init_timestamping(priv);
+ 
+ 	stmmac_init_coalesce(priv);
+@@ -8337,11 +8347,16 @@
+ 	phylink_resume(priv->phylink);
+ 	rtnl_unlock();
+ 
+ 	netif_device_attach(ndev);
+ 
+-	return 0;
++	ret = 0;
++out:
++	if (irq_off)
++		enable_irq(ndev->irq);
++
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(stmmac_resume);
+ 
+ /* This is not the same as EXPORT_GPL_SIMPLE_DEV_PM_OPS() when CONFIG_PM=n */
+ DEFINE_SIMPLE_DEV_PM_OPS(stmmac_simple_pm_ops, stmmac_suspend, stmmac_resume);
+-- 
+Created with Armbian build tools https://github.com/armbian/build
