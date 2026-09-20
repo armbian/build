@@ -28,7 +28,7 @@ def download_using_armbian(exec_cmd: list[str], params: dict, counter: int, tota
 	try:
 		log.debug(f"Start calling Armbian command: {' '.join(exec_cmd)}")
 		result = subprocess.run(
-			exec_cmd,
+			exec_cmd + armbian_utils.get_userpatches_path_params(),  # same userpatches directory as us, if it was pointed elsewhere
 			stdout=subprocess.PIPE,
 			check=True,
 			universal_newlines=False,  # universal_newlines messes up bash encoding, don't use, instead decode utf8 manually;

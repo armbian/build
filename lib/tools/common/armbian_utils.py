@@ -59,6 +59,13 @@ def get_from_env_or_bomb(env_name):
 	return value
 
 
+# Child compile.sh invocations get a minimal environment, so USERPATCHES_PATH does not reach them by itself; this is the
+# cmdline param that makes them look at the same userpatches directory we do. Empty if not set: children use the default.
+def get_userpatches_path_params() -> list[str]:
+	userpatches_path = get_from_env("USERPATCHES_PATH")
+	return [f"USERPATCHES_PATH={userpatches_path}"] if userpatches_path else []
+
+
 def yes_or_no_or_bomb(value):
 	if value == "yes":
 		return True
@@ -485,7 +492,7 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	try:
 		log.debug(f"Start calling Armbian command: {' '.join(exec_cmd)}")
 		result = subprocess.run(
-			exec_cmd,
+			exec_cmd + get_userpatches_path_params(),  # same userpatches directory as us, if it was pointed elsewhere
 			stdout=subprocess.PIPE,
 			check=True,
 			universal_newlines=False,  # universal_newlines messes up bash encoding, don't use, instead decode utf8 manually;

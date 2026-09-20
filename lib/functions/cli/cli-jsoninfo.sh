@@ -30,6 +30,9 @@ function cli_json_info_run() {
 
 		display_alert "Here we go" "generating JSON info :: ${ARMBIAN_COMMAND} " "info"
 
+		# The Python info tools, and the compile.sh children they spawn, have to look at the same userpatches directory we do.
+		export USERPATCHES_PATH
+
 		# Targets inventory. Will do all-by-all if no targets file is provided.
 		declare TARGETS_FILE="${TARGETS_FILE-"${USERPATCHES_PATH}/${TARGETS_FILENAME:-"targets.yaml"}"}"
 
@@ -136,7 +139,7 @@ function cli_json_info_run() {
 		# Board/branch inventory.
 		if [[ ! -f "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" ]]; then
 			display_alert "Generating board/branch inventory" "all_boards_all_branches.json" "info"
-			run_host_command_logged "${PYTHON3_VARS[@]}" "USERPATCHES_PATH=${USERPATCHES_PATH@Q}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/board-inventory.py ">" "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/board-inventory.py ">" "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}"
 		fi
 
 		if [[ "${ARMBIAN_COMMAND}" == "inventory" ]]; then
