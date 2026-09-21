@@ -4,26 +4,6 @@
 
 declare -g INSTALL_KSRC="${INSTALL_KSRC:-no}"
 
-# The framework has no hook for adding a package to the kernel artifact: artifact_kernel_prepare_version()
-# assigns artifact_map_packages after its only hook has run. So keep the original under a new name and
-# wrap it; done here, when the extension is sourced. The name of the copy must not contain "__", that
-# would make it a hook.
-if [[ "$(type -t linux_source_package_orig_prepare_version)" != "function" ]]; then
-	if [[ "$(type -t artifact_kernel_prepare_version)" != "function" ]]; then
-		exit_with_error "artifact_kernel_prepare_version() is gone, extension needs an update" "linux-source-package"
-	fi
-
-	eval "$(
-		echo "linux_source_package_orig_prepare_version ()"
-		declare -f artifact_kernel_prepare_version | tail -n +2
-	)"
-
-	function artifact_kernel_prepare_version() {
-		linux_source_package_orig_prepare_version "$@"
-		linux_source_package_add_to_artifact
-	}
-fi
-
 # dtb-only and this extension are mutual exclusive.
 function linux_source_package_is_active() {
 	[[ "${KERNEL_DTB_ONLY:-"no"}" != "yes" ]]
@@ -43,13 +23,13 @@ function extension_prepare_config__linux_source_package() {
 	display_alert "${EXTENSION}: packaging kernel sources" "linux-source-${BRANCH}-${LINUXFAMILY}; INSTALL_KSRC=${INSTALL_KSRC}" "info"
 }
 
-# Called by the artifact_kernel_prepare_version() wrapper, once the original has filled artifact_map_packages.
 # A different set of packages needs a different artifact version, or it would clash with stock kernels in
 # the caches; the pre_package_kernel_image hook below takes care of that.
-function linux_source_package_add_to_artifact() {
+function artifact_kernel_extra_packages__linux_source_package() {
 	linux_source_package_is_active || return 0
 
 	# Plain +=, not declare -g: during image builds this is a local of the caller.
+	# shellcheck disable=SC2034 # artifact_map_packages is obtain_complete_artifact()'s
 	artifact_map_packages+=(["linux-source"]="linux-source-${BRANCH}-${LINUXFAMILY}")
 
 	return 0
