@@ -563,23 +563,6 @@ function post_family_tweaks_bsp__sophgo_sg200x_emmc_install_tool() {
 		"${destination}/usr/sbin/sophgo-emmc-install"
 }
 
-# Nothing gives the SG200x ethernet a MAC address, so derive one from the chip's
-# efuse serial. Also used by the USB gadget, which needs two addresses before
-# there is an interface to put them on. The wifi derives its own in the driver;
-# see patch/misc/aic8800/aic8800-Derive-the-fallback-MAC-from-the-SoC-efuse.patch.
-function post_family_tweaks_bsp__sophgo_sg200x_stable_mac() {
-	display_alert "Sophgo SG200x" "installing stable MAC address helper" "info"
-
-	run_host_command_logged install -d -m 0755 "${destination}/lib/udev" \
-		"${destination}/etc/udev/rules.d"
-	run_host_command_logged install -m 0755 \
-		"${SRC}/packages/bsp/sophgo-sg200x/lib/udev/sg200x-stable-mac" \
-		"${destination}/lib/udev/sg200x-stable-mac"
-	run_host_command_logged install -m 0644 \
-		"${SRC}/packages/bsp/sophgo-sg200x/etc/udev/rules.d/70-sg200x-stable-mac.rules" \
-		"${destination}/etc/udev/rules.d/70-sg200x-stable-mac.rules"
-}
-
 # The userspace half of the "usb-device" overlay, installed on every image; it is
 # inert until a UDC exists. Both network stacks are configured, since which one
 # is running is not known here.

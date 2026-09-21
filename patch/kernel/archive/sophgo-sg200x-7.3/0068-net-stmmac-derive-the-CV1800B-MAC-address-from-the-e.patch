@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lukaszsobala <lsobala1@gmail.com>
+Date: Mon, 21 Sep 2026 10:20:00 +0200
+Subject: net: stmmac: derive the CV1800B MAC address from the efuse serial
+
+The CV1800B/SG2000 DWMAC has no MAC address anywhere. The device tree
+carries no mac-address and the address filter comes out of reset empty,
+so stmmac_check_ether_addr() falls through to eth_hw_addr_random() and
+the interface comes up with a fresh address on every boot. U-Boot cannot
+supply one either: the vendor defconfig sets CONFIG_NET_RANDOM_ETHADDR=y
+and there is no ethernet0 alias for fdt_fixup_ethernet() to write into.
+
+A moving MAC address moves the DHCP identity with it, so the board takes
+a new lease - and usually a new IP - every time it boots.
+
+The SoC does have something unique and permanent: the Final Test Serial
+Number, four words in the efuse at nvmem offset 4. The vendor FSBL reads
+it from the same place to build the USB serial number
+(plat/cv180x/usb/usb_tty.c, usb_patch_serial) and treats all four words
+being zero as "not programmed", so that is the test used here too. Hash
+it into a locally administered address: unique per chip, identical on
+every boot, and - unlike anything derived from the rootfs - unchanged by
+rewriting the SD card.
+
+This replaces the /lib/udev/sg200x-stable-mac helper the Armbian BSP
+shipped for this family, which did the same derivation from userspace
+after the interface had already come up with a random address.
+
+The efuse is read through nvmem, which means the ethernet can probe
+before the efuse driver has registered its nvmem device. The lookup is
+therefore gated on the efuse node existing and being enabled, and
+returns -EPROBE_DEFER when it is there but not yet bound; every other
+failure falls through to the random address the driver would have used
+anyway, so no other platform is affected. The compatible check keeps the
+whole thing inert outside CV1800B/SG2000.
+
+The alternative placement is drivers/net/ethernet/stmicro/stmmac/dwmac-
+sophgo.c, which would be the natural home, but "sophgo,cv1800b-dwmac"
+is not in its match table and the node's "snps,dwmac-3.70a" fallback is
+what binds it to dwmac-generic today. Adding the compatible there would
+leave two built-in drivers matching one device, with link order
+deciding which wins, so the hook goes where the address is already read
+instead.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c | 104 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 103 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c
+@@ -13,6 +13,8 @@
+ #include <linux/pm_runtime.h>
+ #include <linux/module.h>
+ #include <linux/io.h>
++#include <linux/jhash.h>
++#include <linux/nvmem-consumer.h>
+ #include <linux/of.h>
+ #include <linux/of_net.h>
+ #include <linux/of_mdio.h>
+@@ -402,6 +404,102 @@ static const char * const stmmac_gmac4_c
+ 	NULL
+ };
+ 
++/*
++ * The CV1800B/SG2000 DWMAC has no MAC address anywhere: the device tree carries
++ * no mac-address, and the address filter comes out of reset empty, so
++ * stmmac_check_ether_addr() falls through to eth_hw_addr_random() and the
++ * interface comes up with a different address on every boot. U-Boot cannot help
++ * either - the vendor defconfig sets CONFIG_NET_RANDOM_ETHADDR=y, and there is
++ * no ethernet0 alias for fdt_fixup_ethernet() to write into.
++ *
++ * The SoC does have something unique and permanent: the Final Test Serial
++ * Number, four words in the efuse at nvmem offset 4, which the vendor FSBL
++ * reads from the same place to build the USB serial (plat/cv180x/usb/usb_tty.c,
++ * usb_patch_serial) and treats as unprogrammed when all four words are zero.
++ * Hash that into a locally administered address: unique per chip, identical on
++ * every boot, and - unlike anything kept in the rootfs - unchanged by rewriting
++ * the SD card.
++ *
++ * Returns 0 and fills mac, -EPROBE_DEFER while the efuse has not registered its
++ * nvmem device yet, or another error to mean "no address from here", which
++ * leaves the caller with the random one it would have had anyway.
++ */
++#define SOPHGO_CV1800B_DWMAC_COMPAT	"sophgo,cv1800b-dwmac"
++#define SOPHGO_CV1800B_EFUSE_COMPAT	"sophgo,cv1800b-efuse"
++#define SOPHGO_CV1800B_FTSN_OFFSET	4
++#define SOPHGO_CV1800B_FTSN_LEN		16
++#define SOPHGO_CV1800B_MAC_INITVAL	0x736d6163 /* "smac" */
++
++static int sophgo_cv1800b_efuse_match(struct device *dev, const void *data)
++{
++	/* nvmem_device_find() matches against the nvmem device; the efuse that
++	 * registered it is its parent, and that is what carries the compatible.
++	 */
++	return dev->parent && of_device_is_compatible(dev->parent->of_node, data);
++}
++
++static int sophgo_cv1800b_mac_from_efuse(struct device_node *np, u8 *mac)
++{
++	struct nvmem_device *nvmem;
++	struct device_node *efuse;
++	u8 ftsn[SOPHGO_CV1800B_FTSN_LEN];
++	bool programmed = false;
++	size_t i;
++	u32 hash;
++	int ret;
++
++	if (!of_device_is_compatible(np, SOPHGO_CV1800B_DWMAC_COMPAT))
++		return -ENODEV;
++
++	/* Whether to wait for the efuse or give up on it: only a board that
++	 * actually has one, and has it enabled, is worth deferring the probe
++	 * for.
++	 */
++	efuse = of_find_compatible_node(NULL, NULL, SOPHGO_CV1800B_EFUSE_COMPAT);
++	if (!efuse)
++		return -ENODEV;
++	ret = of_device_is_available(efuse) ? 0 : -ENODEV;
++	of_node_put(efuse);
++	if (ret)
++		return ret;
++
++	nvmem = nvmem_device_find((void *)SOPHGO_CV1800B_EFUSE_COMPAT,
++				  sophgo_cv1800b_efuse_match);
++	if (!nvmem)
++		return -ENODEV; /* the !CONFIG_NVMEM stub */
++	if (IS_ERR(nvmem))
++		return -EPROBE_DEFER; /* the node is there; its driver is not, yet */
++
++	ret = nvmem_device_read(nvmem, SOPHGO_CV1800B_FTSN_OFFSET, sizeof(ftsn),
++				ftsn);
++	nvmem_device_put(nvmem);
++	if (ret != (int)sizeof(ftsn))
++		return -EIO;
++
++	for (i = 0; i < sizeof(ftsn); i++) {
++		if (ftsn[i]) {
++			programmed = true;
++			break;
++		}
++	}
++	if (!programmed)
++		return -ENODEV;
++
++	/* Hashed rather than used directly, so that chips with adjacent serial
++	 * numbers do not come out with adjacent addresses.
++	 */
++	hash = jhash(ftsn, sizeof(ftsn), SOPHGO_CV1800B_MAC_INITVAL);
++	mac[0] = (hash & 0xfe) | 0x02; /* unicast, locally administered */
++	mac[1] = (hash >> 8) & 0xff;
++	mac[2] = (hash >> 16) & 0xff;
++	mac[3] = (hash >> 24) & 0xff;
++	hash = jhash(ftsn, sizeof(ftsn), SOPHGO_CV1800B_MAC_INITVAL + 1);
++	mac[4] = hash & 0xff;
++	mac[5] = (hash >> 8) & 0xff;
++
++	return 0;
++}
++
+ /**
+  * stmmac_probe_config_dt - parse device-tree driver parameters
+  * @pdev: platform_device structure
+@@ -430,7 +528,11 @@ stmmac_probe_config_dt(struct platform_d
+ 		if (rc == -EPROBE_DEFER)
+ 			return ERR_PTR(rc);
+ 
+-		eth_zero_addr(mac);
++		rc = sophgo_cv1800b_mac_from_efuse(np, mac);
++		if (rc == -EPROBE_DEFER)
++			return ERR_PTR(rc);
++		if (rc)
++			eth_zero_addr(mac);
+ 	}
+ 
+ 	phy_mode = device_get_phy_mode(&pdev->dev);
+-- 
+Armbian
