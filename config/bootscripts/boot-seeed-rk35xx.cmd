@@ -73,6 +73,7 @@ setenv eeprom_dtb_matched "no"
 #   0x00     6    magic        "rk35xx"  ASCII; blank (0xFF) chips never match
 #   0x06     4    board code   "01A0"    [0..1]=board no, [2..3]=hw iteration
 #   0x0A     ..   serial no.   ASCII     ignored by boot logic
+#   0x20     ..   extra cfg    ASCII     first entry = unit MAC (17 bytes)
 #
 # Board codes — actual EEPROM contents (first 10 bytes) per board:
 #   00A0 = RK3576 Devkit         72 6b 33 35 78 78 30 30 41 30  ("rk35xx"+"00A0")
