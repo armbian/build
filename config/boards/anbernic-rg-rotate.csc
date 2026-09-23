@@ -87,9 +87,10 @@ function post_family_config__anbernic_rg_rotate_vendor_uboot() {
 	# ${cross_compile} from scratch right before the build pass, dropping it.
 	# ums512_rg_rotate is this board's own tree, not generic ums512_1h10.
 	# Build u-boot-dtb.bin explicitly, the way the vendor tree is known to be
-	# built, rather than the default "all". The file collected for packaging is
-	# the DHTB image from uboot_custom_postprocess.
-	declare -g UBOOT_TARGET_MAP="ARCH=arm DEVICE_TREE=ums512_rg_rotate u-boot-dtb.bin;;uboot_dhtb.img"
+	# built, rather than the default "all". The files collected for packaging
+	# are the DHTB image from uboot_custom_postprocess and the SPL the family's
+	# post_uboot_custom_postprocess hook builds next to it.
+	declare -g UBOOT_TARGET_MAP="ARCH=arm DEVICE_TREE=ums512_rg_rotate u-boot-dtb.bin;;uboot_dhtb.img spl.img"
 	# Vendor tree builds as ARCH=arm with an aarch64 cross compiler.
 	declare -g BOOTSCRIPT=""
 }
