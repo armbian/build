@@ -12,19 +12,25 @@
 . /lib/lsb/init-functions
 . /usr/lib/armbian/armbian-common
 
-# Apply a new system hostname once and mirror it in /etc/hosts. Replaces the
-# previous hostname only where it stands as a whole word (the 127.0.1.1 and ::1
-# records written at build time), leaving loopback names, aliases and comments
-# untouched. No-op when the target is empty or already current; the /etc/hosts
-# edit runs only after the rename itself succeeds.
+# Apply a new system hostname once and reconcile the 127.0.1.1/::1 records in
+# /etc/hosts written at build time (loopback names, aliases and comments are
+# left untouched). No-op only when the target is empty. The /etc/hosts
+# reconciliation runs even when new==old (skipping only the hostnamectl call
+# itself): a prior run can have set the hostname successfully but failed the
+# /etc/hosts edit, and a retry must still repair those records rather than
+# short-circuit on "already current".
 set_new_hostname() {
-	local new="$1" old esc_old esc_new
+	local new="$1" old esc_new
 	old="$(hostname)"
-	[[ -z "$new" || "$new" == "$old" ]] && return 0
-	hostnamectl set-hostname "$new" || return 1
-	esc_old=$(printf '%s' "$old" | sed 's#[][\\.*^$/]#\\&#g')
+	[[ -z "$new" ]] && return 0
+	if [[ "$new" != "$old" ]]; then
+		hostnamectl set-hostname "$new" || return 1
+	fi
 	esc_new=$(printf '%s' "$new" | sed 's#[\\/&]#\\&#g')
-	sed -i "s/\b${esc_old}\b/${esc_new}/g" /etc/hosts
+	sed -i -E \
+		-e "s|^(127\.0\.1\.1[[:space:]]+)[^[:space:]#]+|\1${esc_new}|" \
+		-e "s|^(::1[[:space:]]+localhost[[:space:]]+)[^[:space:]#]+|\1${esc_new}|" \
+		/etc/hosts
 }
 
 case "$1" in
@@ -169,7 +175,10 @@ case "$1" in
 			*"Pi 5"*) NEW_HOSTNAME="rpi5b" ;;
 		esac
 		# Leaves the default rpi4b hostname in place when no model matched.
-		set_new_hostname "$NEW_HOSTNAME"
+		# A failure here must not reach the service-disable below - if it did, a
+		# transient hostnamectl/sed failure would strand the board on the wrong
+		# hostname forever instead of retrying on the next boot.
+		set_new_hostname "$NEW_HOSTNAME" || exit 1
 	fi
 
 	# adjust hostname for the FriendlyElec NanoPi 6-series unified image.
@@ -194,7 +203,9 @@ case "$1" in
 			t6-lts) NEW_HOSTNAME="nanopct6-lts" ;;
 			t6-lts-plus) NEW_HOSTNAME="nanopct6-lts-plus" ;;
 		esac
-		set_new_hostname "$NEW_HOSTNAME"
+		# Same reasoning as the rpi4b case above: don't let a failed hostname
+		# update reach the service-disable, or first-run never gets to retry.
+		set_new_hostname "$NEW_HOSTNAME" || exit 1
 	fi
 
 	# Remove KDE Neon base files upgrade pin
