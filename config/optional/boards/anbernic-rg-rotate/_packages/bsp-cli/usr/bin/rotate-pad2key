@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+# RG Rotate: gamepad buttons -> keyboard keys (evdev/uinput, X11/Wayland-safe).
+#
+# There is no keyboard on this board and no broken-out UART, so without this
+# the desktop cannot be driven at all once X is up - the touchscreen alone
+# cannot reach a menu or a text field. Off by default is not an option here
+# the way it is on a machine with a keyboard attached.
+#
+# This SKU is stickless: every input is a discrete GPIO carrying a BTN_* code
+# straight from gpio-keys, so matching on capabilities is enough to pick the
+# pad out and leave the volume and power keys alone.
+#
+# The events are read, not grabbed, so the raw pad still reaches whatever is
+# running - which is why this is worth turning off for games, and why
+# rotate-pad2key-toggle exists.
+import time, select, evdev
+from evdev import ecodes as e, UInput
+
+# Every code here is one this board actually reports - evtest on the
+# gpio-keys pad gives SOUTH EAST NORTH WEST, TL TR TL2 TR2, SELECT START
+# MODE THUMBR and the four DPAD buttons (the d-pad is discrete buttons on
+# this SKU, not a hat). Tab is on the triggers because focus movement is the
+# one thing a desktop cannot be driven without and there is no keyboard to
+# fall back on.
+MAP = {
+    e.BTN_DPAD_UP: e.KEY_UP,     e.BTN_DPAD_DOWN: e.KEY_DOWN,
+    e.BTN_DPAD_LEFT: e.KEY_LEFT, e.BTN_DPAD_RIGHT: e.KEY_RIGHT,
+    e.BTN_SOUTH:  e.KEY_ENTER,
+    e.BTN_EAST:   e.KEY_ESC,
+    e.BTN_WEST:   e.KEY_HOME,
+    e.BTN_SELECT: e.KEY_SPACE,
+    e.BTN_START:  e.KEY_LEFTMETA,
+    e.BTN_TL:     e.KEY_PAGEUP,
+    e.BTN_TR:     e.KEY_PAGEDOWN,
+    e.BTN_TL2:    e.KEY_TAB,
+}
+
+COMBO = {
+    e.BTN_MODE:   (e.KEY_LEFTALT,   e.KEY_TAB),
+    e.BTN_NORTH:  (e.KEY_LEFTCTRL,  e.KEY_F4),
+    e.BTN_TR2:    (e.KEY_LEFTSHIFT, e.KEY_TAB),
+}
+ALL = set(MAP) | set(COMBO)
+
+def sources():
+    out = {}
+    for p in evdev.list_devices():
+        try:
+            d = evdev.InputDevice(p)
+        except Exception:
+            continue
+        if d.name == "rotate-pad2key":
+            continue
+        if any(k in d.capabilities().get(e.EV_KEY, []) for k in ALL):
+            out[d.fd] = d
+    return out
+
+devs = {}
+while not devs:
+    devs = sources()
+    if not devs:
+        time.sleep(2)
+
+_keys = set(MAP.values())
+for _seq in COMBO.values():
+    _keys.update(_seq)
+
+ui = UInput({e.EV_KEY: sorted(_keys)}, name="rotate-pad2key")
+
+while True:
+    if not devs:
+        devs = sources()
+        if not devs:
+            time.sleep(2)
+            continue
+    r, _, _ = select.select(devs, [], [])
+    for fd in r:
+        try:
+            events = list(devs[fd].read())
+        except OSError:
+            try: devs[fd].close()
+            except Exception: pass
+            del devs[fd]
+            continue
+        for ev in events:
+            if ev.type != e.EV_KEY:
+                continue
+            if ev.code in COMBO:
+                if ev.value == 1:
+                    seq = COMBO[ev.code]
+                    for k in seq: ui.write(e.EV_KEY, k, 1)
+                    for k in reversed(seq): ui.write(e.EV_KEY, k, 0)
+                    ui.syn()
+            elif ev.code in MAP:
+                ui.write(e.EV_KEY, MAP[ev.code], ev.value)
+                ui.syn()

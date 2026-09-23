@@ -1,0 +1,55 @@
+#!/bin/sh
+# Spend this session's first PipeWire playback start on nothing.
+#
+# The audio DSP swallows one VBC scene start per boot. The driver sends it and
+# the send succeeds - nothing reports an error - but the DSP never begins
+# draining the VBC fifo, so the DMA callback never fires, the ring never empties
+# and the writer either gets -EIO or blocks forever having moved no audio.
+#
+# The start that goes missing is the one PipeWire issues when it resumes the
+# sink from SUSPENDED, and it is specific to that stream: opening hw:0,3
+# directly beforehand, with different parameters and outside PipeWire, does not
+# stand in for it. So whatever the user plays first is what loses it, and the
+# board looks like it has no sound at all.
+#
+# This is also why opening pavucontrol "fixes" it, which is how the problem was
+# found. pavucontrol plays nothing; it attaches a monitor stream to every sink
+# to draw its level meters. That resumes the sink, the resume loses the start,
+# and pavucontrol neither notices nor cares - a meter that does not move looks
+# no different from silence. It quietly spends the bad start, and the next
+# thing played works.
+#
+# Do the same thing deliberately, once, at session start: a second of silence
+# through PipeWire, with the result thrown away. Suspend behaviour is left
+# alone, so if this ever runs at the wrong moment the sink can still suspend
+# and be resumed again - the recovery path stays available.
+#
+# Everything here is on the path between logging in and having sound, so it is
+# kept short. The lost start does not return an error, it wedges the writer, so
+# the timeout is what ends this - and it needs -k, because a wedged pw-cat sits
+# in the kernel and does not act on SIGTERM.
+set -u
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export PATH
+
+command -v pw-cat >/dev/null 2>&1 || exit 0
+
+# The node may not exist yet; wait for it rather than racing the session. Each
+# probe forks pw-cat, so keep the count low and the interval coarse - this
+# whole loop only has to outlast wireplumber publishing the sink.
+i=0
+while [ "$i" -lt 20 ]; do
+	pw-cat --list-targets --playback 2>/dev/null | grep -q . && break
+	i=$((i + 1))
+	sleep 0.25
+done
+
+# 5 s is well past the point where the stream has started - one second of audio
+# against a fifth of a second of buffer - so if it has not returned by then it
+# is wedged on the start we came here to spend, which is success. SIGKILL two
+# seconds later because SIGTERM does not move it.
+dd if=/dev/zero bs=4096 count=48 2>/dev/null |
+	timeout -k 2 5 pw-cat --playback --format=s16 --rate=48000 --channels=2 --raw - \
+		>/dev/null 2>&1
+
+exit 0
