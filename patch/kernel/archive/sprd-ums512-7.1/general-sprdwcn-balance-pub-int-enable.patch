@@ -1,0 +1,61 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] sprdwcn: only toggle pub_int on an actual power transition
+
+sdio_pub_int_poweron() enables or disables the public interrupt every time it
+is called, without looking at what it did last time. Wi-Fi, Bluetooth and GNSS
+each bring marlin up through their own start_marlin() -> chip_power_on(), and
+marlin refcounts the power rails but not this IRQ, so the second subsystem to
+come up enables an interrupt that is already enabled:
+
+  Unbalanced enable for IRQ 41
+  WARNING: kernel/irq/manage.c:774 at __enable_irq+0x4c/0x7c
+   enable_irq+0x6c/0xd8
+   sdio_pub_int_poweron+0x28/0x44
+   chip_power_on.isra.0+0x290/0x440
+   marlin_set_power+0x598/0xa24
+   start_marlin+0x13c/0x174
+   btsprdsdio_open+0x1c/0x60 [btsprdsdio]
+
+The state is already tracked: sdio_int.chip_power_on starts at 0 and
+sdio_pub_int_register() leaves the IRQ disabled after request_irq(), so the
+two agree from the outset. Swap it in and return early when nothing changed.
+
+The threaded handler's own disable/enable pair around the callback dispatch is
+self-balancing and is deliberately not routed through here.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/drivers/net/wireless/sprdwcn/sleep/sdio_int.c b/drivers/net/wireless/sprdwcn/sleep/sdio_int.c
+--- a/drivers/net/wireless/sprdwcn/sleep/sdio_int.c
++++ b/drivers/net/wireless/sprdwcn/sleep/sdio_int.c
+@@ -280,7 +280,29 @@ EXPORT_SYMBOL(sdio_pub_int_gnss_en0);
+ 
+ void sdio_pub_int_poweron(bool state)
+ {
+-	atomic_set(&(sdio_int.chip_power_on), state);
++	/*
++	 * chip_power_on doubles as the recorded enable state of pub_int:
++	 * sdio_pub_int_register() leaves the IRQ disabled after request_irq(),
++	 * which matches the initial value of 0.
++	 *
++	 * Wi-Fi, Bluetooth and GNSS each reach here through their own
++	 * start_marlin() -> chip_power_on(), and marlin only refcounts the power
++	 * rails, not this IRQ. Without a guard the second subsystem to come up
++	 * enables an already enabled interrupt and the core complains:
++	 *
++	 *   Unbalanced enable for IRQ 41
++	 *    enable_irq+0x6c/0xd8
++	 *    sdio_pub_int_poweron+0x28/0x44
++	 *    chip_power_on.isra.0+0x290/0x440
++	 *    marlin_set_power+0x598/0xa24
++	 *    start_marlin+0x13c/0x174
++	 *    btsprdsdio_open+0x1c/0x60 [btsprdsdio]
++	 *
++	 * Only act on an actual transition. The threaded handler's own
++	 * disable/enable pair is self-balancing and deliberately left alone.
++	 */
++	if (atomic_xchg(&(sdio_int.chip_power_on), state) == state)
++		return;
+ 
+ 	if (state)
+ 		enable_irq(sdio_int.pub_int_num);

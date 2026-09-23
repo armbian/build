@@ -1,0 +1,97 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: wait for audcp rather than dropping the write
+
+The digital half of the codec lives in the audcp power domain and only
+answers while the audio DSP is out of deep sleep, so sprd_codec_write()
+checks agdsp_can_access() before touching it. When that check fails it
+discards the write and returns 0 - success - so the caller carries on
+believing it has programmed a route it has not.
+
+agdsp_access_enable(), called immediately above, is not enough of a
+guarantee. It polls for the power domain to come up, but only when it is
+taking the first reference (ap_enable_cnt == 0); a later caller just
+increments the count and returns. And the thing it polls for -
+audcp_pmu_pwr_status4 reaching PD_WAKEUP_STATE - is the domain being
+powered, which is not the same condition agdsp_can_access() tests: that
+one also wants the deep-sleep bit clear in audcp_pmu_sleep_ctrl and the
+sleep status clear. A write can therefore land in the window where the
+domain is up but the core has not finished waking.
+
+The result is a bring-up that works or does not depending on timing. On
+RG Rotate the speaker path came up perhaps half the time, and reliably
+came up when anything was run alongside it that added latency - starting
+"dmesg -w" in another shell was enough to make it work every time.
+
+Give the write the same bounded wait the wake path uses instead, and
+report -EIO if the core never becomes reachable, so a genuinely
+unreachable DSP is a visible failure rather than a silent one. 20 ms is
+generous next to the wake poll's own 5 s ceiling and short enough not to
+matter if it is ever hit.
+
+The read side already does the right thing here: it returns the shadowed
+value rather than a false zero, because its caller is usually
+snd_soc_component_update_bits() and a zero would corrupt the register.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/sound/soc/sprd/vendor/sprd-codec.c b/sound/soc/sprd/vendor/sprd-codec.c
+index d32459d9a1e4..d9bef0f7b4b8 100755
+--- a/sound/soc/sprd/vendor/sprd-codec.c
++++ b/sound/soc/sprd/vendor/sprd-codec.c
+@@ -199,6 +199,26 @@ static void sprd_codec_psg_state_exit(struct snd_soc_component *codec);
+ 
+ static unsigned long sprd_codec_dp_base;
+ 
++/*
++ * Wait for the audio DSP to be reachable. agdsp_access_enable() has already
++ * asked for it; this only covers the window between the power domain coming
++ * up and the core leaving deep sleep. Returns true once the DP register
++ * window can be touched.
++ */
++#define SPRD_CODEC_AGDSP_WAIT_US	20000
++static bool sprd_codec_wait_agdsp_access(void)
++{
++	unsigned int waited;
++
++	for (waited = 0; waited < SPRD_CODEC_AGDSP_WAIT_US; waited += 50) {
++		if (agdsp_can_access())
++			return true;
++		udelay(50);
++	}
++
++	return agdsp_can_access();
++}
++
+ /*
+  * Write-through shadow of the digital (DP) register window.
+  *
+@@ -3414,12 +3434,24 @@ static int sprd_codec_write(struct snd_soc_component *codec, unsigned int reg,
+ 			pr_err("%s, agdsp_access_enable failed!\n", __func__);
+ 			return ret;
+ 		}
+-		/* see sprd_codec_read(): don't touch DP regs if audcp is asleep */
+-		if (!agdsp_can_access()) {
+-			pr_warn_ratelimited("%s: audcp not accessible, DP reg 0x%x write dropped\n",
+-					    __func__, reg);
++		/*
++		 * see sprd_codec_read(): the DP window only answers while
++		 * audcp is out of deep sleep. agdsp_access_enable() polls the
++		 * power domain, but only when it is the first reference, and
++		 * the domain being powered is not the same thing as the core
++		 * being awake - so a write can still arrive here while the
++		 * core is asleep. Give it the same bounded wait rather than
++		 * dropping the write: a dropped register write used to be
++		 * reported as success, which left the caller believing it had
++		 * programmed a route it had not, and turned speaker bring-up
++		 * into a coin flip that anything adding latency (even running
++		 * dmesg -w alongside it) would "fix".
++		 */
++		if (!sprd_codec_wait_agdsp_access()) {
++			pr_err_ratelimited("%s: audcp still asleep, DP reg 0x%x not written\n",
++					   __func__, reg);
+ 			agdsp_access_disable();
+-			return 0;
++			return -EIO;
+ 		}
+ 		codec_digital_reg_enable(codec);
+ 		sp_asoc_pr_reg("D[0x%04x] R:[0x%08x]\n",

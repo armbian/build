@@ -1,0 +1,95 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] wifi: sc23xx: finish the scan when the interface goes down
+
+Taking wlan0 down while a scan is outstanding trips two cfg80211 WARNs in a
+row, both from the same orphaned request:
+
+  WARNING: net/wireless/core.c:1703 cfg80211_netdev_notifier_call+0x3f4/0x45c
+   __dev_notify_flags / netif_change_flags / do_setlink / rtnl_newlink
+	(NetworkManager bringing the interface down)
+
+  WARNING: net/wireless/scan.c:1192 cfg80211_scan_done+0x5c/0xd8
+   sc23xx_notify_scan_done+0x4c/0x88 [sc23xx_wlan]
+   sc23xx_handle_event+0x784/0xad0 [sc23xx_wlan]
+
+sc23xx_close() flushes the event workqueue and closes the vif but never
+retires vif->scan_req, so cfg80211 reaches NETDEV_DOWN with rdev->scan_req
+still un-notified and warns before force-completing it itself. The firmware's
+scan-done event then arrives on the event kworker and hands that same, now
+stale, request back through cfg80211_scan_done() - the second WARN, on a
+request cfg80211 has already finished with.
+
+Complete the scan from ndo_stop instead. sc23xx_notify_scan_done() already
+takes scan_lock and clears vif->scan_req, and cfg80211_scan_done() only
+stamps the request and queues rdev->scan_done_wk, so it is safe here; running
+it before NETDEV_DOWN sets ->notified and both WARNs go away.
+
+While here, fix the error path in sc23xx_scan(). Once vif->scan_req has been
+published the mutex is already dropped, so the "goto err_out" taken when
+sc23xx_cmd_set_probe_req_ie() fails unlocks scan_lock a second time and
+leaves vif->scan_req pointing at a request cfg80211 frees as soon as ->scan()
+returns an error - the same stale pointer the WARNs above are about, reached
+by a different route. Split the two failure cases apart.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/drivers/net/wireless/unisoc/main.c b/drivers/net/wireless/unisoc/main.c
+--- a/drivers/net/wireless/unisoc/main.c
++++ b/drivers/net/wireless/unisoc/main.c
+@@ -141,8 +141,8 @@ static int sc23xx_scan(struct wiphy *wiphy, struct cfg80211_scan_request *reques
+ 
+ 	mutex_lock(&vif->scan_lock);
+ 	if (vif->scan_req) {
+-		ret = -EBUSY;
+-		goto err_out;
++		mutex_unlock(&vif->scan_lock);
++		return -EBUSY;
+ 	}
+ 
+ 	vif->scan_req = request;
+@@ -152,18 +152,23 @@ static int sc23xx_scan(struct wiphy *wiphy, struct cfg80211_scan_request *reques
+ 		ret = sc23xx_cmd_set_probe_req_ie(vif, request->ie,
+ 						  request->ie_len);
+ 		if (ret)
+-			goto err_out;
++			goto err_drop;
+ 	}
+ 
+ 	ret = sc23xx_cmd_scan(vif, request);
+-	if (ret) {
+-		sc23xx_notify_scan_done(vif, true);
+-		return ret;
+-	}
++	if (ret)
++		goto err_drop;
+ 
+ 	return 0;
+ 
+-err_out:
++err_drop:
++	/*
++	 * cfg80211 owns the request again the moment ->scan() returns an
++	 * error, so drop our pointer rather than handing it back later
++	 * through cfg80211_scan_done().
++	 */
++	mutex_lock(&vif->scan_lock);
++	vif->scan_req = NULL;
+ 	mutex_unlock(&vif->scan_lock);
+ 	return ret;
+ }
+diff --git a/drivers/net/wireless/unisoc/vif.c b/drivers/net/wireless/unisoc/vif.c
+--- a/drivers/net/wireless/unisoc/vif.c
++++ b/drivers/net/wireless/unisoc/vif.c
+@@ -90,6 +90,12 @@ static int sc23xx_close(struct net_device *ndev)
+ 	struct sc23xx_vif *vif = netdev_priv(ndev);
+ 	int ret;
+ 
++	/*
++	 * Retire any outstanding scan before cfg80211 gets NETDEV_DOWN and
++	 * finds rdev->scan_req un-notified (WARN in core.c), and before the
++	 * firmware's scan-done event can hand the stale request back.
++	 */
++	sc23xx_notify_scan_done(vif, true);
+ 	flush_workqueue(vif->sdev->evt_wq);
+ 
+ 	ret = sc23xx_cmd_close(vif);

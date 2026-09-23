@@ -1,0 +1,168 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] wifi: sc23xx: do not enable the firmware multicast filter
+
+The board is unreachable from the network after a few minutes: ssh and
+ping from another host time out until the board itself sends something,
+and mDNS never finds it. Unicast is fine throughout - the AP's own ARP
+refreshes (which Linux sends unicast) are answered, and any host that
+already has the board in its ARP cache can talk to it. What never arrives
+is broadcast: a tcpdump on wlan0 over ten minutes on a busy LAN shows not
+a single ff:ff:ff:ff:ff:ff frame, so the ARP request a peer sends once
+its cache entry expires (20 minutes on macOS) is never answered, and the
+board looks dead from outside.
+
+Cause is the firmware multicast filter. ndo_set_rx_mode pushed the
+netdev's multicast list to the firmware with CMD_MULTICAST_FILTER
+(subtype 1), and the SC2355 firmware treats that as "deliver only these
+group addresses": everything else group-addressed is dropped, broadcast
+included. Adding 01:00:5e:00:00:fb to the list on a running system made
+the LAN's mDNS traffic appear on wlan0 immediately while broadcast ARP
+stayed absent, which pins it on the filter rather than on the GTK, power
+save or the RX path. The filter does not accept ff:ff:ff:ff:ff:ff as an
+entry (the vendor driver rejects anything outside 33:33:xx and
+01:00:5e:00-7f before sending), so the list cannot be used to let
+broadcast through.
+
+The vendor driver pushes the same list, but Android does not depend on
+inbound broadcast: the firmware answers ARP itself once it has been told
+the IP (CMD_NOTIFY_IP_ACQUIRED, which this driver does not implement),
+and a phone initiates its connections, so peers learn its MAC from its
+own frames. A Linux host expects the NIC to receive broadcast and every
+joined group unconditionally. Drop the filter push and leave the
+firmware at its default, which passes group traffic.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+DISABLED: built and tested on hardware 2026-09-19 - broadcast still does not
+reach wlan0 with the filter push removed (neither a peer's ARP request nor a
+UDP datagram to the subnet broadcast address), so the firmware drops
+broadcast regardless of the host's multicast list. The mDNS observation
+above is real but only shows the list is honoured additively for the groups
+it names. Kept for the reasoning; the vendor driver pushes the list too, so
+leaving the push in place is the known-good state. See the notify-ip patch
+for the next hypothesis.
+diff --git a/drivers/net/wireless/unisoc/cmd.c b/drivers/net/wireless/unisoc/cmd.c
+index d31ff3f85af1..97434d69088e 100644
+--- a/drivers/net/wireless/unisoc/cmd.c
++++ b/drivers/net/wireless/unisoc/cmd.c
+@@ -782,27 +782,6 @@ int sc23xx_cmd_mgmt_tx(struct sc23xx_vif *vif, struct cfg80211_mgmt_tx_params *p
+ 	return sc23xx_send_cmd_wait(vif->sdev, skb, NULL, 0);
+ }
+ 
+-int sc23xx_cmd_set_multicast(struct sc23xx_vif *vif)
+-{
+-	struct net_device *ndev = vif->wdev.netdev;
+-	struct netdev_hw_addr *ha;
+-	struct sk_buff *skb;
+-
+-	skb = sc23xx_cmd_alloc_skb(CMD_MULTICAST_FILTER,
+-				   2 + ETH_ALEN * ndev->mc.count,
+-				   vif->idx);
+-	if (!skb)
+-		return -ENOMEM;
+-
+-	skb_put_u8(skb, 1);
+-	skb_put_u8(skb, ndev->mc.count);
+-
+-	netdev_for_each_mc_addr(ha, ndev)
+-		skb_put_data(skb, ha->addr, ETH_ALEN);
+-
+-	return sc23xx_send_cmd_wait(vif->sdev, skb, NULL, 0);
+-}
+-
+ int sc23xx_cmd_set_mac_addr(struct sc23xx_vif *vif, const u8 *mac_addr)
+ {
+ 	struct sc23xx_req_set_mac_addr *req;
+diff --git a/drivers/net/wireless/unisoc/cmd.h b/drivers/net/wireless/unisoc/cmd.h
+index c0de369f9c4f..fe4cb595cbdf 100644
+--- a/drivers/net/wireless/unisoc/cmd.h
++++ b/drivers/net/wireless/unisoc/cmd.h
+@@ -31,7 +31,6 @@ int sc23xx_cmd_set_rekey_data(struct sc23xx_vif *vif,
+ 			      struct cfg80211_gtk_rekey_data *data);
+ int sc23xx_cmd_mgmt_tx(struct sc23xx_vif *vif, struct cfg80211_mgmt_tx_params *params,
+ 		       u64 *cookie);
+-int sc23xx_cmd_set_multicast(struct sc23xx_vif *vif);
+ int sc23xx_cmd_set_mac_addr(struct sc23xx_vif *vif, const u8 *mac_addr);
+ int sc23xx_cmd_addba_rsp(struct sc23xx_dev *sdev, struct sc23xx_sta *sta,
+ 			 u8 tid);
+diff --git a/drivers/net/wireless/unisoc/main.c b/drivers/net/wireless/unisoc/main.c
+index c54bd0f88a1b..2fe86b9a3e08 100644
+--- a/drivers/net/wireless/unisoc/main.c
++++ b/drivers/net/wireless/unisoc/main.c
+@@ -246,8 +246,6 @@ static int sc23xx_del_virtual_intf(struct wiphy *wiphy, struct wireless_dev *wde
+ 	mutex_unlock(&sdev->vif_lock);
+ 	synchronize_srcu(&sdev->vif_srcu);
+ 
+-	cancel_work_sync(&vif->mc_work);
+-
+ 	cfg80211_unregister_wdev(wdev);
+ 
+ 	return 0;
+diff --git a/drivers/net/wireless/unisoc/vif.c b/drivers/net/wireless/unisoc/vif.c
+index 98a2064cbc51..ed73b47d0f87 100644
+--- a/drivers/net/wireless/unisoc/vif.c
++++ b/drivers/net/wireless/unisoc/vif.c
+@@ -103,33 +103,6 @@ static int sc23xx_close(struct net_device *ndev)
+ 	return 0;
+ }
+ 
+-static void sc23xx_multicast_work(struct work_struct *work)
+-{
+-	struct sc23xx_vif *vif = container_of(work, struct sc23xx_vif, mc_work);
+-	struct net_device *ndev = vif->wdev.netdev;
+-	int ret;
+-
+-	if (!vif->sdev->max_mc_mac_addrs ||
+-	    !test_bit(SC23XX_FLAG_OPENED, &vif->flags))
+-		return;
+-
+-	if (ndev->mc.count > vif->sdev->max_mc_mac_addrs) {
+-		netdev_err(ndev, "too many multicast addresses set\n");
+-		return;
+-	}
+-
+-	ret = sc23xx_cmd_set_multicast(vif);
+-	if (ret)
+-		netdev_err(ndev, "failed to set multicast list\n");
+-}
+-
+-static void sc23xx_set_multicast(struct net_device *ndev)
+-{
+-	struct sc23xx_vif *vif = netdev_priv(ndev);
+-
+-	schedule_work(&vif->mc_work);
+-}
+-
+ static int sc23xx_set_mac_addr(struct net_device *ndev, void *addr)
+ {
+ 	struct sc23xx_vif *vif = netdev_priv(ndev);
+@@ -182,7 +155,6 @@ static const struct net_device_ops sc23xx_netdev_ops = {
+ 	.ndo_stop = sc23xx_close,
+ 	.ndo_start_xmit = sc23xx_start_xmit,
+ 	.ndo_set_mac_address = sc23xx_set_mac_addr,
+-	.ndo_set_rx_mode = sc23xx_set_multicast,
+ };
+ 
+ struct sc23xx_vif *sc23xx_vif_new(struct sc23xx_dev *sdev, const char *name,
+@@ -202,8 +174,6 @@ struct sc23xx_vif *sc23xx_vif_new(struct sc23xx_dev *sdev, const char *name,
+ 	mutex_init(&vif->scan_lock);
+ 	vif->sdev = sdev;
+ 
+-	INIT_WORK(&vif->mc_work, sc23xx_multicast_work);
+-
+ 	ret = sc23xx_iftype_to_mode(iftype, &vif->mode, &vif->idx);
+ 	if (ret)
+ 		goto err_free_netdev;
+diff --git a/drivers/net/wireless/unisoc/vif.h b/drivers/net/wireless/unisoc/vif.h
+index a48de06f1103..6523ff96d48b 100644
+--- a/drivers/net/wireless/unisoc/vif.h
++++ b/drivers/net/wireless/unisoc/vif.h
+@@ -45,8 +45,6 @@ struct sc23xx_vif {
+ 	struct cfg80211_scan_request *scan_req;
+ 	struct mutex scan_lock;
+ 
+-	struct work_struct mc_work;
+-
+ 	enum sc23xx_connect_state state;
+ 	u8 bssid[ETH_ALEN];
+ };

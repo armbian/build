@@ -1,0 +1,140 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] wifi: sc23xx: notify the firmware of the interface's IPv4 address
+
+The vendor driver hands the station's IP address to the SC2355 firmware
+with CMD_NOTIFY_IP_ACQUIRED from an inetaddr notifier as soon as the
+stack configures it. The firmware uses that to handle ARP on the host's
+behalf (it answers requests for that address itself), and its data path
+is gated on having seen it: the vendor driver also holds off TX block-ack
+setup until "ip_acquired". This driver defines the command but never
+sends it, so the firmware runs with no idea what address the host has.
+
+On the RG Rotate that shows up as the board being unreachable from the
+LAN: no broadcast frame ever reaches wlan0 (a peer's ARP request after
+its cache entry expires, a UDP datagram to 192.168.1.255 - nothing), while
+group-addressed multicast and all unicast are delivered. Another client
+on the same AP does receive the same broadcasts, so it is not the AP.
+With the firmware never told an address, the only thing that can answer
+a broadcast ARP for the board is the host, and the firmware does not
+deliver it.
+
+Send the address the way the vendor does: register an inetaddr notifier
+in the core module, and on NETDEV_UP for one of our station interfaces
+push the raw 4-byte address as the CMD_NOTIFY_IP_ACQUIRED payload (the
+firmware tells IPv4 from IPv6 by length). The notifier runs under RTNL
+and the command waits for the firmware's response, as in the vendor
+driver. IPv6 is left for later.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/drivers/net/wireless/unisoc/cmd.c b/drivers/net/wireless/unisoc/cmd.c
+index d31ff3f85af1..80f3730b35b9 100644
+--- a/drivers/net/wireless/unisoc/cmd.c
++++ b/drivers/net/wireless/unisoc/cmd.c
+@@ -803,6 +803,25 @@ int sc23xx_cmd_set_multicast(struct sc23xx_vif *vif)
+ 	return sc23xx_send_cmd_wait(vif->sdev, skb, NULL, 0);
+ }
+ 
++/*
++ * Tell the firmware the interface's IP address. The vendor driver sends this
++ * from an inetaddr notifier as soon as the address is configured; the
++ * payload is just the raw address, 4 bytes for IPv4 and 16 for IPv6, and the
++ * firmware tells them apart by length.
++ */
++int sc23xx_cmd_notify_ip(struct sc23xx_vif *vif, const u8 *ip, u8 len)
++{
++	struct sk_buff *skb;
++
++	skb = sc23xx_cmd_alloc_skb(CMD_NOTIFY_IP_ACQUIRED, len, vif->idx);
++	if (!skb)
++		return -ENOMEM;
++
++	skb_put_data(skb, ip, len);
++
++	return sc23xx_send_cmd_wait(vif->sdev, skb, NULL, 0);
++}
++
+ int sc23xx_cmd_set_mac_addr(struct sc23xx_vif *vif, const u8 *mac_addr)
+ {
+ 	struct sc23xx_req_set_mac_addr *req;
+diff --git a/drivers/net/wireless/unisoc/cmd.h b/drivers/net/wireless/unisoc/cmd.h
+index c0de369f9c4f..ad9ba9aa3d2b 100644
+--- a/drivers/net/wireless/unisoc/cmd.h
++++ b/drivers/net/wireless/unisoc/cmd.h
+@@ -41,6 +41,7 @@ int sc23xx_download_config_section(struct sc23xx_dev *sdev, u32 section,
+ int sc23xx_download_ini_section(struct sc23xx_dev *sdev, u32 section,
+ 				const void *data, u16 size);
+ int sc23xx_get_fw_info(struct sc23xx_dev *sdev);
++int sc23xx_cmd_notify_ip(struct sc23xx_vif *vif, const u8 *ip, u8 len);
+ 
+ void sc23xx_cmd_tx_addba_req(struct work_struct *work);
+ 
+diff --git a/drivers/net/wireless/unisoc/vif.c b/drivers/net/wireless/unisoc/vif.c
+index 98a2064cbc51..732bdab7eeb8 100644
+--- a/drivers/net/wireless/unisoc/vif.c
++++ b/drivers/net/wireless/unisoc/vif.c
+@@ -3,6 +3,9 @@
+  * Copyright (C) 2025 Otto Pflüger
+  */
+ 
++#include <linux/inetdevice.h>
++#include <linux/module.h>
++
+ #include "cmd.h"
+ #include "txrx.h"
+ #include "vif.h"
+@@ -347,3 +350,54 @@ struct sc23xx_vif *sc23xx_get_vif(struct sc23xx_dev *sdev, int idx)
+ 
+ 	return vif;
+ }
++
++/*
++ * Hand the station's IPv4 address to the firmware once the stack configures
++ * it (CMD_NOTIFY_IP_ACQUIRED). The vendor driver does this from the same
++ * notifier; without it the firmware never learns the host's address.
++ */
++static int sc23xx_inetaddr_event(struct notifier_block *nb,
++				 unsigned long event, void *ptr)
++{
++	struct in_ifaddr *ifa = ptr;
++	struct net_device *ndev = ifa->ifa_dev->dev;
++	struct sc23xx_vif *vif;
++	int ret;
++
++	if (ndev->netdev_ops != &sc23xx_netdev_ops || event != NETDEV_UP)
++		return NOTIFY_DONE;
++
++	vif = netdev_priv(ndev);
++	if (vif->wdev.iftype != NL80211_IFTYPE_STATION &&
++	    vif->wdev.iftype != NL80211_IFTYPE_P2P_CLIENT)
++		return NOTIFY_DONE;
++	if (!test_bit(SC23XX_FLAG_OPENED, &vif->flags))
++		return NOTIFY_DONE;
++
++	ret = sc23xx_cmd_notify_ip(vif, (const u8 *)&ifa->ifa_address,
++				   sizeof(ifa->ifa_address));
++	if (ret)
++		netdev_warn(ndev, "failed to notify firmware of %pI4: %d\n",
++			    &ifa->ifa_address, ret);
++	else
++		netdev_dbg(ndev, "notified firmware of %pI4\n",
++			   &ifa->ifa_address);
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block sc23xx_inetaddr_nb = {
++	.notifier_call = sc23xx_inetaddr_event,
++};
++
++static int __init sc23xx_vif_init(void)
++{
++	return register_inetaddr_notifier(&sc23xx_inetaddr_nb);
++}
++module_init(sc23xx_vif_init);
++
++static void __exit sc23xx_vif_exit(void)
++{
++	unregister_inetaddr_notifier(&sc23xx_inetaddr_nb);
++}
++module_exit(sc23xx_vif_exit);

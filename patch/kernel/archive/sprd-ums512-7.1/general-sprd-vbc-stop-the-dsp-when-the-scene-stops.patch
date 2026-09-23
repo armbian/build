@@ -1,0 +1,51 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: stop the DSP when the fast scene stops
+
+scene_fast_trigger() sends SND_VBC_DSP_FUNC_HW_TRIGGER with up_down=1
+when the trigger refcount reaches one, and on the way down it only
+decrements the refcount. The DSP is never told to stop until the stream
+is closed and scene_fast_shutdown() runs.
+
+For this scene the DSP owns the read side of the MCDT fifo and keeps
+draining it until it is told otherwise, so that gap is audible. A player
+that pauses or is killed leaves the PCM open in SETUP - PipeWire holds
+the device for its suspend timeout, which is seconds - and for all of it
+the DSP is pulling from a fifo the AP has stopped filling. It replays
+whatever stale samples are left as a continuous square-wave buzz.
+
+The firmware is not missing anything here: up_down is a parameter of
+SND_VBC_DSP_FUNC_HW_TRIGGER, so the stop half of the pair is part of the
+command, and vbc_dsp_func_trigger() reaches it with
+aud_send_cmd_no_wait(), which is safe from the atomic trigger path the
+start already uses. Send it when the refcount reaches zero.
+
+Only the fast scene is changed. It is the one this board plays through,
+and the others carry no exposure here.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/sound/soc/sprd/vendor/vbc-dai.c b/sound/soc/sprd/vendor/vbc-dai.c
+index cd4e6be7c240..39f10bd00581 100755
+--- a/sound/soc/sprd/vendor/vbc-dai.c
++++ b/sound/soc/sprd/vendor/vbc-dai.c
+@@ -8353,8 +8353,20 @@ static int scene_fast_trigger(struct snd_pcm_substream *substream, int cmd,
+ 
+ 		trigger_unlock_spin(scene_id, stream);
+ 	} else {
++		/*
++		 * The DSP owns the MCDT read side for this scene and keeps
++		 * draining it until it is told to stop. Without a matching
++		 * down trigger it runs on past every STOP - PipeWire drops the
++		 * stream but holds the PCM open, so the DSP starves on an
++		 * empty FIFO and replays stale samples as a continuous buzz
++		 * until the suspend timeout finally closes the device.
++		 * SND_VBC_DSP_FUNC_HW_TRIGGER takes up_down as a parameter, so
++		 * the firmware already expects this half of the pair.
++		 */
+ 		trigger_lock_spin(scene_id, stream);
+ 		trigger_dec_ref(scene_id, stream);
++		if (trigger_get_ref(scene_id, stream) == 0)
++			ret = dsp_trigger(vbc_codec, scene_id, stream, up_down);
+ 		trigger_unlock_spin(scene_id, stream);
+ 	}
+ 

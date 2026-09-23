@@ -1,0 +1,195 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: re-send a DSP start that went missing
+
+The scene triggers hand the start to the audio DSP with
+aud_send_cmd_no_wait() - they have no choice, they run under a spinlock -
+so nothing ever confirms the DSP acted on it. When one goes missing the
+failure is silent and total: the PCM sits in RUNNING, the DSP never drains
+the VBC fifo, the ring never empties, and the writer eventually gives up
+with -EIO having moved no audio at all.
+
+It is rare but it is not theoretical. On RG Rotate a probe every five
+seconds from boot catches exactly one, reproducibly, at around 22 s -
+which is when the desktop session opens the card, so it is also the one
+that matters. Userspace has no way to tell this apart from a dead device;
+what it looks like in practice is a machine that has no sound until
+something happens to re-open the stream.
+
+The dma callback firing is proof the fifo is being drained, and
+sprd_runtime_data already tracks it for its own logging. So: after a
+start, look again a moment later, and if nothing has moved, send the
+start again. The scene trigger refcount is at one by then and would
+swallow a second trigger, hence sprd_vbc_retrigger_be() going straight to
+the DSP.
+
+One re-send is not enough: measured on the device, the DSP ignores that
+one as well. Keep re-sending on the same interval for about as long as a
+writer will sit there before it gives up, and say so in the log if it
+never takes.
+
+This is a rescue, not a fix - the DSP side is where the start is being
+dropped and that is not reachable from here - but it turns a stream that
+never plays into one that starts late.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+index 2bce85075ae1..aaf346ba663e 100755
+--- a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
++++ b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+@@ -34,6 +34,7 @@
+ #include <linux/string.h>
+ #include <linux/sysfs.h>
+ #include <linux/suspend.h>
++#include <linux/workqueue.h>
+ #include <sound/core.h>
+ #include <sound/initval.h>
+ #include <sound/soc.h>
+@@ -89,6 +90,7 @@ static inline u32 sprd_pcm_dma_get_addr(struct dma_chan *dma_chn,
+ 
+ static int sprd_pcm_preallocate_dma_ddr32_buffer(struct snd_pcm *pcm,
+ 						int stream);
++static void sprd_pcm_start_retry(struct work_struct *work);
+ 
+ #ifndef DMA_LINKLIST_CFG_NODE_SIZE
+ #define DMA_LINKLIST_CFG_NODE_SIZE  (sizeof(struct sprd_dma_cfg))
+@@ -127,6 +129,9 @@ struct sprd_runtime_data {
+ 	int dma_pos_wrapped[2];
+ 	int interleaved;
+ 	int cb_called;
++	/* see sprd_pcm_start_retry(): rescue for a lost DSP start */
++	struct delayed_work start_retry_work;
++	int start_retry_left;
+ #ifdef CONFIG_SND_VERBOSE_PROCFS
+ 	struct snd_info_entry *proc_info_entry;
+ #endif
+@@ -426,6 +431,7 @@ static int sprd_pcm_open(struct snd_pcm_substream *substream)
+ 		goto out;
+ 	runtime->private_data = rtd;
+ 	rtd->substream = substream;
++	INIT_DELAYED_WORK(&rtd->start_retry_work, sprd_pcm_start_retry);
+ 	mutex_lock(&pm_dma->pm_mtx_cnt);
+ 	/* dma related need to access auio dsp sys */
+ 	if (!is_no_pcm_dai(snd_soc_rtd_to_cpu(srtd, 0)->id)) {
+@@ -633,6 +639,8 @@ static int sprd_pcm_close(struct snd_pcm_substream *substream)
+ 	if (!rtd)
+ 		return -EINVAL;
+ 
++	cancel_delayed_work_sync(&rtd->start_retry_work);
++
+ 	mutex_lock(&pm_dma->pm_mtx_cnt);
+ 	if (!sprd_is_normal_playback(snd_soc_rtd_to_cpu(srtd, 0)->id,
+ 		substream->stream)) {
+@@ -1537,6 +1545,62 @@ static int sprd_pcm_prepare(struct snd_pcm_substream *substream)
+ 	return ret;
+ }
+ 
++int sprd_vbc_retrigger_be(int be_dai_id, int stream);
++
++/* How long to give the DSP before deciding the start went missing. One
++ * period at the sizes this path uses is a few tens of ms; 150 ms is well
++ * clear of that and still short enough to pass for a hiccup.
++ *
++ * One re-send is not enough - measured: the DSP ignores that one too - so
++ * keep going for about as long as a writer will wait before it gives up.
++ */
++#define SPRD_PCM_START_RETRY_MS		150
++#define SPRD_PCM_START_RETRIES		6
++
++/*
++ * The DSP start is sent fire-and-forget (aud_send_cmd_no_wait(), because
++ * the scene trigger runs under a spinlock), so a lost one is invisible:
++ * the PCM reports RUNNING, the DSP never drains the vbc fifo, the buffer
++ * stays full and the writer eventually fails with -EIO. It is rare but
++ * reproducible - on RG Rotate it lands once per boot, around the time the
++ * desktop session opens the card.
++ *
++ * The dma callback firing is proof the fifo is being drained, so if it has
++ * not fired by now, send the start again. The scene refcount is already at
++ * one and would swallow a second trigger, hence going straight to the DSP.
++ */
++static void sprd_pcm_start_retry(struct work_struct *work)
++{
++	struct sprd_runtime_data *rtd = container_of(to_delayed_work(work),
++			struct sprd_runtime_data, start_retry_work);
++	struct snd_pcm_substream *substream = rtd->substream;
++	struct snd_soc_pcm_runtime *be_rtd;
++	int ret;
++
++	if (!substream || !substream->runtime)
++		return;
++	if (rtd->cb_called)
++		return;
++	if (substream->runtime->state != SNDRV_PCM_STATE_RUNNING)
++		return;
++
++	be_rtd = sprd_get_be_soc_runtime(substream);
++	if (!be_rtd)
++		return;
++	if (rtd->start_retry_left-- <= 0) {
++		pr_err("%s: dma still has not moved, giving up\n", __func__);
++		return;
++	}
++
++	ret = sprd_vbc_retrigger_be(snd_soc_rtd_to_cpu(be_rtd, 0)->id,
++				    substream->stream);
++	pr_warn("%s: no dma progress, dsp start re-sent (%d), %d left\n",
++		__func__, ret, rtd->start_retry_left);
++
++	schedule_delayed_work(&rtd->start_retry_work,
++		msecs_to_jiffies(SPRD_PCM_START_RETRY_MS));
++}
++
+ static int sprd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ {
+ 	struct sprd_runtime_data *rtd = substream->runtime->private_data;
+@@ -1582,7 +1646,10 @@ static int sprd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ 		}
+ 
+ 		pr_info("pcm Start\n");
++		rtd->start_retry_left = SPRD_PCM_START_RETRIES;
+ 		normal_dma_protect_spin_unlock(substream);
++		schedule_delayed_work(&rtd->start_retry_work,
++			msecs_to_jiffies(SPRD_PCM_START_RETRY_MS));
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+@@ -1602,6 +1669,7 @@ static int sprd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ 		rtd->cb_called = 0;
+ 		pr_info("pcm E\n");
+ 		normal_dma_protect_spin_unlock(substream);
++		cancel_delayed_work(&rtd->start_retry_work);
+ 		break;
+ 	default:
+ 		ret = -EINVAL;
+diff --git a/sound/soc/sprd/vendor/vbc-dai.c b/sound/soc/sprd/vendor/vbc-dai.c
+index cd4e6be7c240..7c48c65a1315 100755
+--- a/sound/soc/sprd/vendor/vbc-dai.c
++++ b/sound/soc/sprd/vendor/vbc-dai.c
+@@ -5777,6 +5777,26 @@ static int check_be_dai_id(int be_dai_id)
+ 	return scene_id;
+ }
+ 
++/*
++ * Re-send the DSP start for a backend that has not begun moving data.
++ *
++ * scene_*_trigger() hands the start to the DSP through
++ * aud_send_cmd_no_wait() - it has to, it runs under a spinlock - so nothing
++ * confirms the DSP acted on it. When one goes missing the FIFO is never
++ * drained, the buffer never empties, and the writer wedges with -EIO. The
++ * scene trigger refcount is already at one by then and would not send it
++ * again, so the retry goes straight to the DSP.
++ */
++int sprd_vbc_retrigger_be(int be_dai_id, int stream)
++{
++	int scene_id = check_be_dai_id(be_dai_id);
++
++	if (scene_id >= VBC_DAI_ID_MAX)
++		return -EINVAL;
++
++	return vbc_dsp_func_trigger(scene_id, stream, 1);
++}
++
+ #define SPRD_VBC_DAI_PCM_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | \
+ 				  SNDRV_PCM_FMTBIT_S24_LE)
+ 

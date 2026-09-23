@@ -1,0 +1,48 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: step the non-interleaved DMA by the sample width
+
+sprd_pcm_dma_step_config() derives the DMA address step from the sample
+width for interleaved access, but hard-codes two bytes for non-interleaved:
+
+  step = (dma_data->use_mcdt == 1) ?
+  	DMA_SLAVE_BUSWIDTH_4_BYTES : DMA_SLAVE_BUSWIDTH_2_BYTES;
+
+Both widths do reach this path. sprd-fe-dai.c picks the datawidth from the
+format, DMA_SLAVE_BUSWIDTH_4_BYTES for S24_LE and _2_BYTES otherwise, and
+the platform advertises S16_LE, S24_LE and S32_LE together with
+SNDRV_PCM_INFO_NONINTERLEAVED. So an S24_LE non-interleaved stream walks a
+four-byte-per-sample buffer two bytes at a time: every frame is fed to the
+VBC FIFO twice, once as its low half and once as its high half, and the
+stream runs at half speed with the sample noise on top of it.
+
+That is what a stock PipeWire session negotiates on RG Rotate - it opens
+hw:0,0 as MMAP_NONINTERLEAVED / S24_LE - and it is why playback there is
+loud broadband crackle while speaker-test, which takes RW_INTERLEAVED /
+S16_LE, is clean on the same card.
+
+Use desc->datawidth, which for the two-byte case is the value that was
+already being written.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+diff --git a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+index 2bce85075ae1..8f49e096ba44 100755
+--- a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
++++ b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+@@ -835,8 +835,15 @@ static int sprd_pcm_dma_step_config(struct sprd_pcm_dma_params *dma_data,
+ 		       desc->datawidth);
+ 	} else {
+ 		sp_asoc_pr_dbg("Non-interleaved Access\n");
++		/*
++		 * One channel per buffer, so consecutive samples are
++		 * desc->datawidth apart. The literal 2 bytes here was only
++		 * ever right for S16_LE; with S24_LE (datawidth 4) the DMA
++		 * walked the buffer at half stride and replayed every frame's
++		 * low half as a sample of its own.
++		 */
+ 		step = (dma_data->use_mcdt == 1) ?
+-			DMA_SLAVE_BUSWIDTH_4_BYTES : DMA_SLAVE_BUSWIDTH_2_BYTES;
++			DMA_SLAVE_BUSWIDTH_4_BYTES : desc->datawidth;
+ 		desc->src_step = playback ? step : 0;
+ 		desc->des_step = playback ? 0 : step;
+ 		sp_asoc_pr_info("desc->src_step=%d, dest_step=%d\n",

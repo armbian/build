@@ -1,0 +1,105 @@
+From: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+Subject: sprdwcn: fail fast when the BTWF firmware is missing
+
+pre_btwifi_download_sdio() only completes marlin_dev->download_done when
+btwifi_download_firmware() and marlin_start_run() both succeed. When the
+firmware is not there the completion is never signalled, so every caller
+sits out the full POWERUP_WAIT_MS - 60 seconds - before printing
+"marlin download timeout" and giving up anyway.
+
+The WCN core is built in on this board (CONFIG_UNISOC_WCN_BSP=y), so it
+probes from the initramfs, where wcnmodem.bin is deliberately absent: with
+it present marlin commits to a full chip bring-up while udev is still
+settling, which stalls the initramfs scripts. The result was two of these
+60-second waits back to back, before the rootfs was even mounted:
+
+  [    5.81] WCN BASEno find wcnmodem.bin errno:(-2)(ignore!!)
+  [   66.53] WCN BASEmarlin download timeout
+  [  126.64] EXT4-fs (mmcblk0p3): mounted filesystem ...
+
+That is 120 of the 137 seconds this board spent before reaching systemd.
+
+Signal the completion on the failure path as well, and record that it was
+a failure so the waiters still take the error path. Wi-Fi is unaffected:
+sc23xx_wlan_sdio calls start_marlin() again after switch_root, where the
+firmware is on the rootfs and the download succeeds as before.
+
+Signed-off-by: Tomonori Nakagawa <jack@supremeoverlordjabs.co>
+---
+--- a/drivers/net/wireless/sprdwcn/platform/wcn_boot.c	2026-09-03 00:21:36
++++ b/drivers/net/wireless/sprdwcn/platform/wcn_boot.c	2026-09-03 00:21:36
+@@ -2167,6 +2167,13 @@
+ }
+ #endif /* GNSS download path disabled */
+ 
++/*
++ * Set when pre_btwifi_download_sdio() could not bring the chip up, so the
++ * waiters below can tell a real completion from the one we now signal on the
++ * failure path. Only ever touched under marlin_dev->power_lock.
++ */
++static bool marlin_btwf_download_failed;
++
+ static void pre_btwifi_download_sdio(struct work_struct *work)
+ {
+ 	struct wcn_match_data *g_match_config = get_wcn_match_config();
+@@ -2185,6 +2192,16 @@
+ 		check_cp_ready();
+ 		complete(&marlin_dev->download_done);
+ 		wcn_slpinfo_statistics(WCN_SOURCE_BTWF, true);
++	} else {
++		/*
++		 * Without this the completion is never signalled and every
++		 * caller burns the full POWERUP_WAIT_MS (60s). The built-in WCN
++		 * core probes from the initramfs, where wcnmodem.bin is absent
++		 * on purpose, so that cost the boot two 60-second stalls before
++		 * the rootfs was even mounted.
++		 */
++		marlin_btwf_download_failed = true;
++		complete(&marlin_dev->download_done);
+ 	}
+ 	/* Runtime PM is useless, mainly to enable sdio_func1 and rx irq */
+ 	sprdwcn_bus_runtime_get();
+@@ -2519,11 +2536,12 @@
+ 			marlin_dev->first_power_on_ready = 1;
+ 
+ 			pr_info("then marlin start to download\n");
++			marlin_btwf_download_failed = false;
+ 			schedule_work(&marlin_dev->download_wq);
+ 			timeleft = wait_for_completion_timeout(
+ 				&marlin_dev->download_done,
+ 				msecs_to_jiffies(POWERUP_WAIT_MS));
+-			if (!timeleft) {
++			if (!timeleft || marlin_btwf_download_failed) {
+ 				pr_err("marlin download timeout\n");
+ 				goto out;
+ 			}
+@@ -2622,11 +2640,12 @@
+ 			/* 5.1 first download marlin, and then download gnss */
+ 			if ((subsys == WCN_AUTO || subsys == MARLIN_GNSS)) {
+ 				pr_info("marlin start to download\n");
+-				schedule_work(&marlin_dev->download_wq);
++				marlin_btwf_download_failed = false;
++			schedule_work(&marlin_dev->download_wq);
+ 				timeleft = wait_for_completion_timeout(
+ 					&marlin_dev->download_done,
+ 					msecs_to_jiffies(POWERUP_WAIT_MS));
+-				if (!timeleft) {
++				if (!timeleft || marlin_btwf_download_failed) {
+ 					pr_err("marlin download timeout\n");
+ 					goto out;
+ 				}
+@@ -2650,11 +2669,12 @@
+ 			 */
+ 			else {
+ 				pr_info("only marlin start to download\n");
+-				schedule_work(&marlin_dev->download_wq);
++				marlin_btwf_download_failed = false;
++			schedule_work(&marlin_dev->download_wq);
+ 				if (wait_for_completion_timeout(
+ 					&marlin_dev->download_done,
+ 					msecs_to_jiffies(POWERUP_WAIT_MS))
+-					<= 0) {
++					<= 0 || marlin_btwf_download_failed) {
+ 
+ 					pr_err("marlin download timeout\n");
+ 					goto out;
