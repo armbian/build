@@ -60,6 +60,24 @@ function gxlimg_repack_fip_with_new_uboot() {
 				u-boot.bin
 			;;
 
+		gxm)
+			# same as gxl, but no bl301.
+			display_alert "${BOARD} gxlimg gxm" "Encrypting new bl33 from incoming u-boot" "info"
+			run_host_command_logged "${glximg_bin}" \
+				-t bl3x \
+				-c raw-u-boot.bin \
+				"${gxlimg_extract_temp_dir}/bl33.enc"
+
+			display_alert "${BOARD} gxlimg gxm" "Repacking FIP with new bl33" "info"
+			run_host_command_logged "${glximg_bin}" \
+				-t fip \
+				--bl2 "${gxlimg_extract_temp_dir}/bl2.sign" \
+				--bl30 "${gxlimg_extract_temp_dir}/bl30.enc" \
+				--bl31 "${gxlimg_extract_temp_dir}/bl31.enc" \
+				--bl33 "${gxlimg_extract_temp_dir}/bl33.enc" \
+				u-boot.bin
+			;;
+
 		g12a | g12b)
 			run_host_command_logged "${glximg_bin}" \
 				-t bl3x \
