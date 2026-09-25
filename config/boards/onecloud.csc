@@ -11,7 +11,7 @@ BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
 BOOTENV_FILE="onecloud.txt"
 
 OFFSET="16"
-BOOTSIZE="256"
+BOOTSIZE="512"
 BOOTFS_TYPE="fat"
 
 # ROOTFS_TYPE="f2fs"
