@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
@@ -1189,10 +1190,10 @@ def process_patches_parallel(
         actual_workers = len(mounts)
         log.debug(f"Using {actual_workers} workers")
 
-        # Prepare work items for all patches
-        # Assign entire groups to workers (not individual patches)
+        # Prepare work items for all patches, one list per group
+        # Entire groups are handed to workers (not individual patches)
         # This preserves sequential dependencies within groups
-        worktree_patch_groups = [[] for _ in range(actual_workers)]
+        group_work_items = []
         total_patches = 0
         timestamp = int(time.time())
 
@@ -1200,12 +1201,8 @@ def process_patches_parallel(
         # All patches assigned to a worker will use the same branch for sequential processing
         worker_branch_names = [f"patch-worker-{worker_id}-{timestamp}" for worker_id in range(actual_workers)]
 
-        # Assign entire groups to workers using round-robin
-        # Each worker processes all patches in its assigned groups sequentially
         for group_idx, group in enumerate(patch_groups):
-            # Assign entire group to one worker using round-robin
-            worker_id = group_idx % actual_workers
-            mount = mounts[worker_id]
+            group_items = []
 
             for patch in group:
                 total_patches += 1
@@ -1219,15 +1216,22 @@ def process_patches_parallel(
                     patch_index=original_patch_index,
                     patch_id=f"{patch.parent.relative_dirs_and_base_file_name}(:{patch.counter})",
                     patch_data=patch_data,
-                    mount_path=mount.mount_path,
+                    mount_path="",  # Filled in at dispatch time, once it is known which worker is free
                     base_revision=base_revision,
-                    worker_branch_name=worker_branch_names[worker_id],  # Shared across ALL patches in this worker
+                    worker_branch_name="",  # Filled in at dispatch time, shared across ALL patches in that worker
                     group_id=group_idx  # Track which group this patch belongs to (for reset detection)
                 )
-                worktree_patch_groups[worker_id].append(work_item)
+                group_items.append(work_item)
+
+            group_work_items.append(group_items)
+
+        # Dispatch largest groups first. A chain is inherently serial, so a long chain started late
+        # would keep a single worker busy while all others sit idle. Independent patches go last
+        # and fill the gaps. sorted() is stable, so equally sized groups keep their original order.
+        pending_groups = deque(sorted(group_work_items, key=len, reverse=True))
 
         log.debug(f"Starting parallel processing with {actual_workers} workers...")
-        log.debug("Each worker processes its assigned patches sequentially")
+        log.debug(f"Dispatching {len(pending_groups)} groups largest-first, each group is processed sequentially by one worker")
         start_time = time.time()
 
         # Process each worker's patches in parallel using processes (not threads)
@@ -1239,16 +1243,28 @@ def process_patches_parallel(
         progress_queue = manager.Queue() if progress_callback else None
 
         with ProcessPoolExecutor(max_workers=actual_workers) as executor:
-            # Submit each worker's patch group to be processed sequentially
             future_to_worker = {}
-            for worker_id, worker_items in enumerate(worktree_patch_groups):
-                if worker_items:  # Only submit if there are patches to process
-                    future = executor.submit(_process_worker_patches_sequential, worker_items, progress_queue)
-                    future_to_worker[future] = worker_id
+            pending_futures = set()
+
+            def dispatch_next_group(worker_id):
+                """Hand the next pending group to an idle worker, using that worker's mount and branch."""
+                worker_items = pending_groups.popleft()
+                for work_item in worker_items:
+                    work_item.mount_path = mounts[worker_id].mount_path
+                    work_item.worker_branch_name = worker_branch_names[worker_id]
+                future = executor.submit(_process_worker_patches_sequential, worker_items, progress_queue)
+                future_to_worker[future] = worker_id
+                pending_futures.add(future)
+
+            # Start every worker on one of the largest groups
+            # A mount is only ever used by one in-flight group: the next group is dispatched
+            # to a worker only after its previous group has finished (see below)
+            for worker_id in range(actual_workers):
+                if pending_groups:
+                    dispatch_next_group(worker_id)
 
             # Monitor progress queue for real-time updates while workers run
             # This gives immediate feedback instead of waiting for batch completion
-            pending_futures = set(future_to_worker.keys())
             reported_indices = set()  # Track which patches we've already reported
 
             while pending_futures:
@@ -1283,9 +1299,16 @@ def process_patches_parallel(
                                 if progress_callback:
                                     progress_callback(completed_count, total_patches, result)
 
-                        log.debug(f"Worker {worker_id} completed {len(worker_results)} patches")
+                        log.debug(f"Worker {worker_id} completed a group of {len(worker_results)} patches")
                     except Exception as e:
                         log.error(f"Exception in worker {worker_id}: {e}")
+
+                    # This worker (and its mount) is free again: hand it the next largest pending group
+                    if pending_groups:
+                        try:
+                            dispatch_next_group(worker_id)
+                        except Exception as e:
+                            log.error(f"Failed to dispatch next group to worker {worker_id}: {e}")
 
                 # Small sleep to avoid busy-waiting if nothing to do
                 if not done_futures and (not progress_queue or progress_queue.empty()):
