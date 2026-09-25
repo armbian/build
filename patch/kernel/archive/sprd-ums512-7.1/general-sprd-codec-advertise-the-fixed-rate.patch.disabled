@@ -1,0 +1,114 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: advertise the rate the converter is fixed to
+
+A board that sets fixed-sample-rate in DT pins the codec's converters to
+that rate: sprd_codec_pcm_hw_params() throws params_rate() away and
+programs the fixed value instead. Nothing resamples for it, because the
+AP path's SRC is programmed for capture only:
+
+  static bool ap_ad_src_check(int scene_id, int stream)
+  {
+  	if (stream == SNDRV_PCM_STREAM_CAPTURE &&
+  		scene_id == VBC_DAI_ID_NORMAL_AP01)
+  		return true;
+  	return false;
+  }
+
+codec_reconfig_dai_rate() nevertheless answers SNDRV_PCM_RATE_CONTINUOUS
+for such a board, so the DAI claims every rate it will in fact refuse to
+honour. Android never noticed - its HAL only ever opens the fixed rate -
+but any userspace that trusts the advertised range gets a stream played
+out at the converter's speed instead of its own. On RG Rotate, whose DT
+has fixed-sample-rate = <48000 48000 48000>, requesting 32 kHz plays
+1.5x fast and 96 kHz plays an octave down, with no error anywhere:
+
+  [ASoC:SC2730] Playback rate is [48000], ivsence_dmic_type 0
+  [ASoC: VBC ] scene_normal_hw_params: data_fmt=VBC_DAT_L16, chan=2, rate =32000
+
+Advertise the fixed rate and only the fixed rate, and let the core
+resample into it. The rate that is actually programmed does not change.
+
+Reporting it is not enough on its own: the sprd card builds its frontends
+without dpcm_merged_rate, so a backend's rate constraint never reaches the
+PCM userspace opens, and hw:0,0 kept offering 8000-192000 however narrow
+the codec behind it was. Merge it for the dynamic links.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+DISABLED: correct as an analysis but not needed here, and it narrows what the
+DAI advertises for every board in the family rather than just this one. On RG
+Rotate nothing asks for a rate other than 48 kHz: the WirePlumber rules the
+board ships pin PipeWire to S16LE/48000, and the UCM profile points plain ALSA
+users at the same front end. Kept for the explanation of why a mismatched rate
+plays at the converter's speed with no error reported anywhere, which is worth
+having written down if another ums512 board turns up without those rules.
+diff --git a/sound/soc/sprd/vendor/sprd-asoc-card-utils.c b/sound/soc/sprd/vendor/sprd-asoc-card-utils.c
+index cba59647bf0b..e4ec1f1af65c 100755
+--- a/sound/soc/sprd/vendor/sprd-asoc-card-utils.c
++++ b/sound/soc/sprd/vendor/sprd-asoc-card-utils.c
+@@ -285,6 +285,15 @@ static int asoc_sprd_card_dai_link_of_misc(struct device_node *node,
+ 		dai_link->dynamic = !!val[0];
+ 	pr_debug("%s dynamic: %u\n", __func__, dai_link->dynamic);
+ 
++	/*
++	 * A frontend that does not merge its backends' rate constraint
++	 * advertises the raw FE range (8k-192k continuous) whatever the
++	 * codec behind it can actually do, and userspace picks a rate the
++	 * hardware then silently ignores.
++	 */
++	if (dai_link->dynamic)
++		dai_link->dpcm_merged_rate = 1;
++
+ 	ret = of_property_read_u32(node, "no-pcm", val);
+ 	if (ret) {
+ 		if (ret != -EINVAL)
+diff --git a/sound/soc/sprd/vendor/sprd-codec.c b/sound/soc/sprd/vendor/sprd-codec.c
+index d32459d9a1e4..92cec59f5f5b 100755
+--- a/sound/soc/sprd/vendor/sprd-codec.c
++++ b/sound/soc/sprd/vendor/sprd-codec.c
+@@ -3855,19 +3855,35 @@ static void codec_reconfig_dai_rate(struct snd_soc_component *codec)
+ 	}
+ 
+ 	/*
+-	 * If fixed_rates is provided, tell user that this codec supports
+-	 * all kinds of rates.
++	 * If fixed_rates is provided, the converter runs at that rate and
++	 * nothing else: sprd_codec_pcm_hw_params() discards params_rate()
++	 * in favour of it, and the AP playback path has no SRC to make up
++	 * the difference (ap_hw_params() only programs one for capture).
++	 * Advertise the fixed rate alone so the core resamples for us -
++	 * claiming SNDRV_PCM_RATE_CONTINUOUS here let any other rate be
++	 * accepted and then played back at the converter's speed.
+ 	 */
+ 	list_for_each_entry(dai, &codec->dai_list, list) {
+-		if (fixed_rates[CODEC_PATH_DA])
+-			dai->driver->playback.rates = SNDRV_PCM_RATE_CONTINUOUS;
+-		if ((dai->driver->id == SPRD_CODEC_IIS0_ID &&
+-		     fixed_rates[CODEC_PATH_AD]) ||
+-		    (dai->driver->id != SPRD_CODEC_IIS0_ID &&
+-		     fixed_rates[CODEC_PATH_AD1]))
+-			dai->driver->capture.rates = SNDRV_PCM_RATE_CONTINUOUS;
+-		else
++		unsigned int ad_fixed =
++			(dai->driver->id == SPRD_CODEC_IIS0_ID) ?
++			fixed_rates[CODEC_PATH_AD] : fixed_rates[CODEC_PATH_AD1];
++
++		if (fixed_rates[CODEC_PATH_DA]) {
++			dai->driver->playback.rates = snd_pcm_rate_to_rate_bit(
++				fixed_rates[CODEC_PATH_DA]);
++			dai->driver->playback.rate_min =
++				fixed_rates[CODEC_PATH_DA];
++			dai->driver->playback.rate_max =
++				fixed_rates[CODEC_PATH_DA];
++		}
++		if (ad_fixed) {
++			dai->driver->capture.rates =
++				snd_pcm_rate_to_rate_bit(ad_fixed);
++			dai->driver->capture.rate_min = ad_fixed;
++			dai->driver->capture.rate_max = ad_fixed;
++		} else {
+ 			dai->driver->capture.rates &= ~unsupported_rates;
++		}
+ 	}
+ }
+ 

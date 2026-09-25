@@ -1,0 +1,61 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] arm64: dts: sprd: rg-rotate: wire the goodix touchscreen IRQ
+
+The touchscreen node carries irq-gpios but no interrupts property. The
+mainline goodix driver only uses irq-gpios for the reset-time I2C address
+selection; the interrupt it hands to devm_request_threaded_irq() comes from
+i2c_client::irq, which on DT is populated from interrupts/interrupt-parent.
+With neither present, client->irq stays 0 and goodix_configure_dev() falls
+back to I2C polling:
+
+	if (!ts->client->irq) {
+		error = input_setup_polling(ts->input_dev,
+					    goodix_ts_work_i2c_poll);
+		...
+		input_set_poll_interval(ts->input_dev, GOODIX_POLL_INTERVAL_MS);
+	}
+
+GOODIX_POLL_INTERVAL_MS is 17, so the panel is read over I2C 60 times a
+second forever, whether or not anything is touching it. Each poll is a work
+item on the shared events_freezable workqueue that sleeps inside
+goodix_process_events(), which is why the board always shows a kworker
+parked in D state:
+
+  task:kworker/2:4     state:D
+  Workqueue: events_freezable input_dev_poller_work
+  Call trace:
+   usleep_range_state+0x110/0x140
+   goodix_process_events+0x8c/0x49c
+   goodix_ts_work_i2c_poll+0x30/0x78
+   input_dev_poller_work+0x20/0x40
+
+ap_gpio is already an interrupt-controller (#interrupt-cells = <2>), and the
+INT line is the same pad irq-gpios names, so point the client at it. The
+trigger type here is only a placeholder: goodix_configure_dev() overrides it
+with goodix_irq_flags[ts->int_trigger_type] read back from the controller's
+own configuration before requesting the IRQ.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+ arch/arm64/boot/dts/sprd/ums512-rg-rotate.dts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/arch/arm64/boot/dts/sprd/ums512-rg-rotate.dts
++++ b/arch/arm64/boot/dts/sprd/ums512-rg-rotate.dts
+@@ -8,6 +8,7 @@
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
+ #include <dt-bindings/input/gpio-keys.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ #include <dt-bindings/clock/sprd,ums512-clk.h>
+ #include <dt-bindings/mfd/sprd,sc2730-regs.h>
+ #include <dt-bindings/mfd/sprd,sc2730-mask.h>
+@@ -779,6 +780,8 @@
+ 	touchscreen@14 {
+ 		compatible = "goodix,gt911";
+ 		reg = <0x14>;
++		interrupt-parent = <&ap_gpio>;
++		interrupts = <144 IRQ_TYPE_EDGE_FALLING>;
+ 		AVDD28-supply = <&touch_vdd>;
+ 		VDDIO-supply = <&touch_vdd>;
+ 		irq-gpios = <&ap_gpio 144 GPIO_ACTIVE_HIGH>;
