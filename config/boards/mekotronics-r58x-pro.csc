@@ -14,10 +14,10 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 
 enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
 
-if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
+if [[ "${BRANCH}" == "vendor" ]]; then
 	# Attention: does _not_ use the vendor/mekotronics shared config anymore; mainline u-boot also for vendor kernel.
 
-	display_alert "$BOARD" "vendor/legacy configuration applied for $BOARD / $BRANCH" "info"
+	display_alert "$BOARD" "vendor configuration applied for $BOARD / $BRANCH" "info"
 	declare -g BOOT_FDT_FILE="rockchip/rk3588-blueberry-edge-v12-maizhuo-linux.dtb" # different for vendor
 
 	# For the bluetooth
