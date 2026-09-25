@@ -417,7 +417,7 @@ function ask_strip_staging_wiring_hunks() {
 # immediately before patching, after hashing (staging here does not perturb the kernel hash).
 function kernel_extra_create_patches__ask_kernel_patches() {
 	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # cache not populated during config-dump-json
-	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst="${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	declare manifest="${patch_dst}/.ask-staged"
 	run_host_command_logged mkdir -pv "${patch_dst}"
 
@@ -456,7 +456,7 @@ function kernel_extra_create_patches__ask_kernel_patches() {
 # blanket-rm *.patch there. Runs in post_family_config (pre-hashing) so stale staged patches
 # never perturb the patch-dir hash; the current build re-stages + re-writes the manifest later.
 function post_family_config__cleanup_ask_kernel_patch() {
-	declare patch_dst="${SRC}/userpatches/kernel/${KERNELPATCHDIR}"
+	declare patch_dst="${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	declare manifest="${patch_dst}/.ask-staged"
 	[[ -f "${manifest}" ]] || {
 		display_alert "ASK extension" "no ASK-staged patch manifest, nothing to remove" "info"

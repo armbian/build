@@ -55,6 +55,11 @@ function cli_entrypoint() {
 	# Re-initialize logging, to take into account the new environment after parsing cmdline params.
 	logging_init
 
+	# USERPATCHES_PATH is the userpatches dir. read-only. This is the single definition; everything else uses the variable.
+	# Done after the early cmdline params (which might carry an USERPATCHES_PATH=xx to point it elsewhere), but before the
+	# arguments loop below, which looks for config files in it. The default directory is created further down, if missing.
+	cli_determine_userpatches_path
+
 	declare -a -g ARMBIAN_CONFIG_FILES=()                                            # fully validated, complete paths to config files.
 	declare -g ARMBIAN_COMMAND_HANDLER="" ARMBIAN_COMMAND="" ARMBIAN_COMMAND_VARS="" # only valid command and handler will ever be set here.
 	declare -g ARMBIAN_HAS_UNKNOWN_ARG="no"                                          # if any unknown params, bomb.
@@ -131,8 +136,8 @@ function cli_entrypoint() {
 	# Also form here, UUID will be generated, output created, logging enabled, etc.
 
 	# Init basic dirs.
-	declare -g -r DEST="${SRC}/output" USERPATCHES_PATH="${SRC}"/userpatches # DEST is the main output dir, and USERPATCHES_PATH is the userpatches dir. read-only.
-	mkdir -p "${DEST}" "${USERPATCHES_PATH}"                                 # Create output and userpatches directory if not already there
+	declare -g -r DEST="${SRC}/output"       # DEST is the main output dir. read-only. (USERPATCHES_PATH is defined further up)
+	mkdir -p "${DEST}" "${USERPATCHES_PATH}" # Create output and userpatches directory if not already there
 	display_alert "Output directory created! DEST:" "${DEST}" "debug"
 
 	# set unique mounting directory for this execution.

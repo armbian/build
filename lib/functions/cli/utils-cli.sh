@@ -42,6 +42,84 @@ function parse_cmdline_params() {
 	done
 }
 
+# Determines USERPATCHES_PATH, once, and makes it read-only. It defaults to ${SRC}/userpatches, and can be pointed
+# elsewhere with USERPATCHES_PATH=xx, either as a cmdline param or in the environment. It is frozen afterwards, so that
+# config lookup, patching, artifact hashing and the Docker mount can never disagree about which directory is in use.
+# Call this after the early apply_cmdline_params_to_env, and before anything looks at USERPATCHES_PATH.
+function cli_determine_userpatches_path() {
+	declare default_userpatches_path="${SRC}/userpatches"
+	declare userpatches_path="${USERPATCHES_PATH:-"${default_userpatches_path}"}"
+
+	# Relative paths are relative to ${SRC}; compile.sh has already cd'ed there. Lose any trailing slashes too.
+	if [[ "${userpatches_path}" != /* ]]; then
+		userpatches_path="${SRC}/${userpatches_path}"
+	fi
+	while [[ "${userpatches_path}" == */ && "${userpatches_path}" != "/" ]]; do
+		userpatches_path="${userpatches_path%/}"
+	done
+
+	# The default location is used as-is, and is created later on if missing. Anything else is checked thoroughly:
+	if [[ "${userpatches_path}" != "${default_userpatches_path}" ]]; then
+		# It has to exist already. A typo would otherwise silently produce a build without any of the user's customizations.
+		if [[ ! -d "${userpatches_path}" ]]; then
+			exit_with_error "USERPATCHES_PATH does not exist, or is not a directory. Create it first" "${userpatches_path}"
+		fi
+
+		# Absolute, physical and normalized, just like ${SRC} itself is; the checks below and the Docker bind-mount need that.
+		userpatches_path="$(realpath "${userpatches_path}")"
+	fi
+
+	if [[ "${userpatches_path}" != "${default_userpatches_path}" ]]; then # still not the default, after resolving it?
+		# Templates and a directory skeleton are created in this directory, and the owner of what is in there is reset to
+		# the calling user later on (see prepare_host_noninteractive), so refuse the obviously wrong locations.
+		if [[ "${userpatches_path}" == "/" || "${SRC}/" == "${userpatches_path}/"* ]]; then
+			exit_with_error "USERPATCHES_PATH can't be '/', nor the build directory itself or one of its parents" "${userpatches_path}"
+		fi
+
+		# Inside the build directory is fine (eg: userpatches-myproject), but not in the framework's own directories.
+		if [[ "${userpatches_path}/" == "${SRC}/"* ]]; then
+			declare inside_src="${userpatches_path#"${SRC}/"}"
+			case "${inside_src%%/*}" in
+				lib | config | extensions | packages | patch | tools | cache | output | .tmp | .git | .github)
+					exit_with_error "USERPATCHES_PATH can't be inside the '${inside_src%%/*}' directory of the build framework" "${userpatches_path}"
+					;;
+			esac
+		fi
+
+		# The path ends up in Docker --mount specs, sed expressions and re-parsed command lines. Letters (of any language),
+		# digits and the likes of ./_-+@ are fine; whitespace and anything special to those is not.
+		declare forbidden_chars_regex='[][[:space:][:cntrl:]%&,:;|<>()*?{}!#=$`\\"'"'"']'
+		if [[ "${userpatches_path}" =~ ${forbidden_chars_regex} ]]; then
+			exit_with_error "USERPATCHES_PATH can't contain whitespace or special characters" "'${userpatches_path}'"
+		fi
+
+		# It must already belong to the user its contents will be chown'ed to; this keeps system and other people's directories out.
+		declare owner_uid="${SET_OWNER_TO_UID:-"${EUID}"}"
+		if [[ "${owner_uid}" != "0" && -z "$(find "${userpatches_path}" -maxdepth 0 -uid "${owner_uid}")" ]]; then
+			exit_with_error "USERPATCHES_PATH must be owned by the user running the build (uid ${owner_uid})" "${userpatches_path}"
+		fi
+	fi
+
+	# Keep the cmdline param, if any, in sync with the normalized value. The params are applied again after each config file
+	# is sourced, and a different value there would try to change the read-only variable. Also used when relaunching under sudo.
+	if [[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]+x}" ]]; then
+		ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]="${userpatches_path}"
+		ARMBIAN_CLI_RELAUNCH_PARAMS["USERPATCHES_PATH"]="${userpatches_path}"
+	fi
+
+	declare -g -r USERPATCHES_PATH="${userpatches_path}"
+
+	if [[ "${USERPATCHES_PATH}" != "${default_userpatches_path}" ]]; then
+		if [[ -n "${ARMBIAN_PARSED_CMDLINE_PARAMS["USERPATCHES_PATH"]+x}" ]]; then
+			display_alert "Using custom userpatches directory" "${USERPATCHES_PATH}" "info"
+		else # not asked for on the command line, so make sure it doesn't go unnoticed.
+			display_alert "Using custom userpatches directory, from the USERPATCHES_PATH environment variable" "${USERPATCHES_PATH}" "warn"
+		fi
+	elif [[ -n "${ARMBIAN_HOST_USERPATCHES_PATH:-}" ]]; then # under Docker; see cli_docker_run
+		display_alert "Using custom userpatches directory, bind-mounted from the host" "${ARMBIAN_HOST_USERPATCHES_PATH}" "info"
+	fi
+}
+
 # This can be called early on, or later after having sourced the config. Show what is happening.
 # This is called:
 # apply_cmdline_params_to_env "reason" # reads from global ARMBIAN_PARSED_CMDLINE_PARAMS
@@ -144,8 +222,8 @@ function parse_each_cmdline_arg_as_command_param_or_config() {
 	fi
 
 	# see if we can find config file in userpatches. can be either config-${argument}.conf or config-${argument}.conf.sh
-	conf_path="${SRC}/userpatches/config-${argument}.conf"
-	conf_sh_path="${SRC}/userpatches/config-${argument}.conf.sh"
+	conf_path="${USERPATCHES_PATH}/config-${argument}.conf"
+	conf_sh_path="${USERPATCHES_PATH}/config-${argument}.conf.sh"
 
 	# early safety net: immediately bomb if we find both forms of config. it's too confusing. choose one.
 	if [[ -f ${conf_path} && -f ${conf_sh_path} ]]; then

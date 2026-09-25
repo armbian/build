@@ -154,6 +154,12 @@ function produce_repeat_args_array() {
 		display_alert "Added repeat parameter from interactive config" "'${param_name}'" "debug"
 	done
 
+	# Under Docker, a custom USERPATCHES_PATH is bind-mounted and not passed down as a param (see cli_docker_run); add it back,
+	# as it was on the host, otherwise repeating the build would silently use the default userpatches directory.
+	if [[ -n "${ARMBIAN_HOST_USERPATCHES_PATH:-}" ]]; then
+		repeat_params+=(["USERPATCHES_PATH"]="${ARMBIAN_HOST_USERPATCHES_PATH}")
+	fi
+
 	# get the sorted keys of the repeat_params associative array into an array
 	declare -a repeat_params_keys_sorted=($(printf '%s\0' "${!repeat_params[@]}" | sort -z | xargs -0 -n 1 printf '%s\n'))
 

@@ -75,6 +75,14 @@ function cli_docker_run() {
 		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["DOCKER_NICE"]="${DOCKER_NICE}") # propagated `nice` value
 	fi
 
+	# Wherever USERPATCHES_PATH is on the host, it is bind-mounted at the default location inside the container.
+	# Don't pass the host's path down as a param; it does not exist in there, and the default is the right one.
+	# Do tell the container what it was, though, so its logs and "Repeat Build Options" are still complete.
+	unset "ARMBIAN_CLI_RELAUNCH_PARAMS[USERPATCHES_PATH]"
+	if [[ "${USERPATCHES_PATH}" != "${SRC}/userpatches" ]]; then
+		ARMBIAN_CLI_RELAUNCH_ENVS+=(["ARMBIAN_HOST_USERPATCHES_PATH"]="${USERPATCHES_PATH}")
+	fi
+
 	# Produce the re-launch params.
 	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
 	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()

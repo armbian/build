@@ -7,7 +7,7 @@ function extension_prepare_config__prepare_localmodconfig() {
 	display_alert "${EXTENSION}: lsmod enabled" "${LSMOD}" "warn"
 
 	# If there, make sure it exists
-	declare -g -r lsmod_file="${SRC}/userpatches/lsmod/${LSMOD}.lsmod"
+	declare -g -r lsmod_file="${USERPATCHES_PATH}/lsmod/${LSMOD}.lsmod"
 	if [[ ! -f "${lsmod_file}" ]]; then
 		exit_with_error "Can't find lsmod file ${lsmod_file}, create it by running lsmod on target HW or configure with LSMOD=xxx"
 	fi

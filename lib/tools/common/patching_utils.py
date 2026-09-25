@@ -950,6 +950,10 @@ def perform_git_archeology(
 	all_commits: list = []
 	for found_file in patch_file_paths:
 		relative_file_path = os.path.relpath(found_file, base_armbian_src_dir)
+		if relative_file_path.startswith(".."):
+			# Not in the repo at all (eg: a patch in an USERPATCHES_PATH elsewhere); git has no history for it, and would bomb.
+			log.info(f"- Skipping archeology for {found_file}, it is outside of the repo")
+			continue
 		hexshas = armbian_git_repo.git.log('--pretty=%H', '--follow', '--find-copies-harder', '--', relative_file_path) \
 			.split('\n')
 		log.info(f"- Trying to recover description for {relative_file_path} from {len(hexshas)} commits")
