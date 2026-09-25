@@ -1,8 +1,8 @@
-# @description Builds the arm64 kernel with `CONFIG_COMPAT`, `CONFIG_COMPAT_VDSO` and `CONFIG_ARM64_32BIT_EL0`, letting a host on this kernel run armhf userspace natively at full speed. This lets armhf rootfs/chroot steps build native instead of through `qemu-user-static` (~10× faster); the framework auto-detects it via `PREFER_NATIVE_ARMHF`. Needs a 32-bit ARM cross-compiler for GCC builds.
+# @description Builds the arm64 kernel with `CONFIG_COMPAT` and `CONFIG_COMPAT_VDSO`, letting a host on this kernel run armhf userspace natively at full speed. This lets armhf rootfs/chroot steps build native instead of through `qemu-user-static` (~10× faster); the framework auto-detects it via `PREFER_NATIVE_ARMHF`. Needs a 32-bit ARM cross-compiler for GCC builds.
 
 # Enable 32-bit compat vDSO for arm64 kernels with GCC or clang.
 #
-# Builds the kernel with CONFIG_COMPAT + COMPAT_VDSO + ARM64_32BIT_EL0, letting
+# Builds the kernel with CONFIG_COMPAT + COMPAT_VDSO, letting
 # an arm64 host running this kernel execute armhf (32-bit ARM) userspace
 # natively at full speed. One concrete use case is Armbian's rootfs phase: on
 # such a host, armhf chroot / package post-install steps run native instead of
@@ -12,19 +12,29 @@
 # Note: aarch64 silicon without 32-bit ARM userspace support at EL0 (notably
 # Apple M-series) cannot run armhf even with this kernel option enabled.
 #
+# On any other target the extension does nothing, so it can stay enabled for all builds.
+#
 # Requirements:
-# - arm64 build target (ARCH=arm64, ARCHITECTURE=arm64).
 # - For GCC builds: a 32-bit ARM cross-compiler (default prefix arm-linux-gnueabi-),
 #   available as ${CROSS_COMPILE_COMPAT}gcc; install gcc-arm-linux-gnueabi or set CROSS_COMPILE_COMPAT.
 # - For clang builds: clang present; compat vDSO is built via clang --target=arm-linux-gnueabi.
 
+# ARCH is still empty on the host while the Dockerfile is generated; we skip only a known non-arm64 target.
+function _arm64_compat_vdso_not_arm64() {
+	[[ -n "${ARCH:-}" && "${ARCH}" != "arm64" ]]
+}
+
 function extension_prepare_config__arm64_compat_vdso() {
-	if [[ "${ARCH}" != "arm64" || "${ARCHITECTURE}" != "arm64" ]]; then
-		exit_with_error "arm64-only extension: ARCH=${ARCH} ARCHITECTURE=${ARCHITECTURE}"
+	if _arm64_compat_vdso_not_arm64; then
+		display_alert "${EXTENSION}" "not needed for ARCH=${ARCH}, doing nothing" "info"
 	fi
 }
 
 function add_host_dependencies__arm64_compat_vdso() {
+	if _arm64_compat_vdso_not_arm64; then
+		return 0
+	fi
+
 	# Skip cross-compilers that don't exist on non-standard host architectures (e.g., riscv64)
 	if [[ "${host_arch}" == "riscv64" ]]; then
 		display_alert "Skipping arm64-compat-vdso extension" "gcc-arm-linux-gnueabi not available on ${host_arch}" "warn"
@@ -39,7 +49,7 @@ function add_host_dependencies__arm64_compat_vdso() {
 }
 
 function host_dependencies_ready__arm64_compat_vdso() {
-	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+	if _arm64_compat_vdso_not_arm64 || [[ "${KERNEL_COMPILER}" == "clang" ]]; then
 		return 0
 	fi
 
@@ -50,7 +60,7 @@ function host_dependencies_ready__arm64_compat_vdso() {
 }
 
 function custom_kernel_make_params__arm64_compat_vdso() {
-	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+	if _arm64_compat_vdso_not_arm64 || [[ "${KERNEL_COMPILER}" == "clang" ]]; then
 		return 0
 	fi
 
@@ -62,7 +72,11 @@ function custom_kernel_make_params__arm64_compat_vdso() {
 function custom_kernel_config__arm64_compat_vdso() {
 	local kconfig_hit=""
 
-	opts_y+=("COMPAT" "COMPAT_VDSO" "ARM64_32BIT_EL0")
+	if _arm64_compat_vdso_not_arm64; then
+		return 0
+	fi
+
+	opts_y+=("COMPAT" "COMPAT_VDSO")
 
 	if [[ -f .config ]]; then
 		kconfig_hit="$(grep -R -n -m1 "COMPAT_VDSO" arch/arm64 Kconfig* 2> /dev/null || true)"
