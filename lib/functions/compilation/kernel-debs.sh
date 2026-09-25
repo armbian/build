@@ -345,7 +345,7 @@ function kernel_package_callback_linux_image() {
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 					if is_boot_dev_vfat; then
-						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
+						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/$image_name.tmp /boot/uImage
 					fi
 				HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 			fi
@@ -355,8 +355,12 @@ function kernel_package_callback_linux_image() {
 				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
 					touch /boot/.next
 					if is_boot_dev_vfat; then
-						echo "Armbian: FAT32 /boot: move last-installed kernel to '$image_name'..."
-						mv -v /${installed_image_path} /boot/${image_name}
+						# Copy, not move: the postinst is re-run after a failing
+						# postinst.d hook, and a move leaves nothing for the retry.
+						# Temp + rename so an interrupted write can't leave a torn image.
+						echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
+						cp -v /${installed_image_path} /boot/${image_name}.tmp
+						mv -f /boot/${image_name}.tmp /boot/${image_name}
 					else
 						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 						ln -sfv $(basename "${installed_image_path}") /boot/$image_name

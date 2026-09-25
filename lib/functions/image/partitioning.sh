@@ -92,6 +92,11 @@ function prepare_partitions() {
 
 	# default BOOTSIZE to use if not specified
 	DEFAULT_BOOTSIZE=256 # MiB
+	# FAT32 /boot has no symlinks, so the kernel package copies the image into
+	# place rather than linking it: /boot has to hold both vmlinuz-<ver> and the
+	# copy u-boot boots. 256 MiB does not fit that for two installed branches on
+	# arm64, which is what leaves a kernel package stuck in iF.
+	DEFAULT_BOOTSIZE_FAT=512 # MiB
 	SECTOR_SIZE=${SECTOR_SIZE:-512}
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
@@ -119,7 +124,13 @@ function prepare_partitions() {
 	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $BOOTPART_REQUIRED == yes) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
+		if [[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]]; then
+			if [[ $bootfs == fat ]]; then
+				BOOTSIZE=${DEFAULT_BOOTSIZE_FAT}
+			else
+				BOOTSIZE=${DEFAULT_BOOTSIZE}
+			fi
+		fi
 	else
 		BOOTSIZE=0
 	fi
