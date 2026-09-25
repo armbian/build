@@ -1,0 +1,79 @@
+#!/bin/sh
+# RG Rotate: take the Unisoc WCN and audio-DSP firmware off the device's own eMMC.
+#
+# Armbian ships neither blob. They carry no redistributable licence, and they do
+# not need to be shipped: this board keeps its stock Android on the eMMC by
+# design - the SPL loads the secure world from there, so an Armbian image only
+# ever owns the SD card - and the firmware lives in raw GPT partitions that every
+# unit therefore has. The a and b slots hold the same image; either will do.
+#
+# The lengths are the vendor driver's own, not the file sizes from a stock
+# rootfs. marlin_download_from_partition() reads get_firmware_max_size() bytes,
+# and the unsigned path in btwifi_download_firmware() pushes firmware->size
+# verbatim, so the file must not be longer than that window.
+set -u
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export PATH
+
+DEST=/lib/firmware/updates
+WCN_LEN=947200   # M3L_FIRMWARE_MAX_SIZE, 0xe7400; also inside M3's 0xf0c00
+DSP_LEN=5242880  # what the stock agdsp image occupies
+
+log() { echo "rotate-extract-firmware: $*"; }
+
+# The symlinks come from udev, which may still be settling this early.
+i=0
+while [ ! -d /dev/disk/by-partlabel ] && [ "$i" -lt 30 ]; do
+	i=$((i + 1))
+	sleep 1
+done
+
+slot() {
+	for p in "/dev/disk/by-partlabel/$1_a" "/dev/disk/by-partlabel/$1_b"; do
+		[ -r "$p" ] && { echo "$p"; return 0; }
+	done
+	return 1
+}
+
+# Refuse anything that is not the image we expect: an empty or re-flashed slot
+# would otherwise be handed to the DSP as firmware.
+valid() {
+	case "$2" in
+		wcnmodem) [ "$(od -An -tx1 -N4 "$1" | tr -d ' ')" = "a00a1a00" ] ;;
+		agdsp) [ "$(dd "if=$1" bs=14 count=1 status=none)" = "SharkL5_AUDCP_" ] ;;
+	esac
+}
+
+extract() {
+	name=$1 label=$2 len=$3
+	[ -s "$DEST/$name.bin" ] && return 1
+
+	src=$(slot "$label") || { log "no $label partition, cannot provide $name.bin"; return 1; }
+	if ! dd "if=$src" "of=$DEST/$name.bin.new" bs=512 count=$((len / 512)) status=none; then
+		log "read failed: $src"
+		rm -f "$DEST/$name.bin.new"
+		return 1
+	fi
+	if ! valid "$DEST/$name.bin.new" "$name"; then
+		log "$src does not look like $name firmware, discarding"
+		rm -f "$DEST/$name.bin.new"
+		return 1
+	fi
+
+	mv "$DEST/$name.bin.new" "$DEST/$name.bin"
+	log "installed $DEST/$name.bin from $src"
+	return 0
+}
+
+mkdir -p "$DEST"
+extract wcnmodem wcnmodem "$WCN_LEN"
+
+# The audio DSP boots from the initramfs - sprd-audcp-boot is built in and probes
+# before the rootfs is mounted - so a freshly extracted agdsp.bin only takes
+# effect on the next boot.
+if extract agdsp l_agdsp "$DSP_LEN"; then
+	log "regenerating the initramfs so the audio DSP can boot"
+	update-initramfs -u || log "update-initramfs failed; audio will stay silent"
+fi
+
+exit 0
