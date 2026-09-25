@@ -35,7 +35,7 @@ function post_family_config__anbernic_rg_rotate_vendor_uboot() {
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	# Drops -ansi from the cpp rules; the Spreadtrum headers use // comments.
 	declare -g BOOTPATCHDIR="u-boot-ums512"
-	declare -g UBOOT_TARGET_MAP="ARCH=arm DEVICE_TREE=ums512_rg_rotate u-boot-dtb.bin;;uboot_dhtb.img"
+	declare -g UBOOT_TARGET_MAP="ARCH=arm DEVICE_TREE=ums512_rg_rotate u-boot-dtb.bin;;uboot_dhtb.img spl.img"
 	declare -g BOOTSCRIPT=""
 }
 
