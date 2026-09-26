@@ -34,11 +34,6 @@ gadget_name="sg200x"
 configfs="/sys/kernel/config"
 g="${configfs}/usb_gadget/${gadget_name}"
 
-# Shared with the ethernet and wifi interfaces, which have the same problem for
-# different reasons: nothing on this board has an address of its own. See the
-# script itself for how one is derived from the chip's efuse serial.
-stable_mac="/lib/udev/sg200x-stable-mac"
-
 # The first (and, on this SoC, only) device controller. Empty when the port is in
 # host mode, which is the case this script exists to do nothing in.
 first_udc() {
@@ -49,6 +44,33 @@ first_udc() {
 	done
 }
 
+# FTSN1..FTSN4, the chip's Final Test Serial Number, and the one thing on this
+# board that is both unique and permanent. nvmem offset 0 is the efuse shadow
+# register - the device tree reg is 0x3050000 and the driver adds its own
+# CV1800B_EFUSE_CONTENT_BASE of 0x100 - which is where the vendor FSBL reads the
+# serial from as EFUSE_SHADOW_REG + 0x04, four words (plat/cv180x/usb/usb_tty.c,
+# usb_patch_serial). Its test for "not programmed" is that all four words are
+# zero, so that is the test used here too.
+#
+# The ethernet gets its address from the same serial, but in the kernel; see
+# patch/kernel/archive/sophgo-sg200x-*/0068-net-stmmac-derive-the-CV1800B-MAC-
+# address-from-the-e.patch. There is nothing equivalent for a gadget, because
+# the addresses below have to exist before the interface does.
+soc_serial() {
+	set -- /sys/bus/nvmem/devices/sophgo_efuse_nvmem*/nvmem
+	nvmem="${1}"
+	[ -r "${nvmem}" ] || return 1
+
+	hex=$(od -An -vtx1 -j 4 -N 16 "${nvmem}" 2> /dev/null) || return 1
+	hex=$(printf '%s' "${hex}" | tr -d ' \n\t')
+
+	case "${hex}" in
+		'') return 1 ;;
+		*[!0]*) printf '%s' "${hex}" ;;
+		*) return 1 ;;
+	esac
+}
+
 # A MAC for one end of the link, stable across boots and unique to this chip.
 #
 # Both ends matter. The device end is the board's own usb0; the host end is the
@@ -56,11 +78,41 @@ first_udc() {
 # every boot then NetworkManager, netplan and Windows all file the board as a
 # brand new adapter every time and forget whatever was configured for it.
 #
+# Hashed rather than used directly, so that chips with adjacent serial numbers
+# do not come out with adjacent addresses, and so the role tag spreads the two
+# ends across the whole address rather than one byte of it. The
+# "sg200x-stable-mac/" salt is the one the udev helper that used to do this
+# mixed in; it is kept verbatim so that boards already in the field keep the
+# gadget addresses they have.
+#
 # Falls back to letting u_ether invent random ones, which still works - it is
 # only the remembering that suffers.
 derived_mac() {
-	[ -x "${stable_mac}" ] || return 1
-	"${stable_mac}" --print "${1}" 2> /dev/null
+	role="${1}"
+
+	if seed=$(soc_serial); then
+		seed_kind="efuse-ftsn"
+	else
+		# Still unique and still stable, it just does not survive rewriting
+		# the card.
+		seed=$(cat /etc/machine-id 2> /dev/null || true)
+		seed_kind="machine-id"
+		[ -n "${seed}" ] || return 1
+	fi
+
+	hash=$(printf 'sg200x-stable-mac/%s/%s/%s' "${seed_kind}" "${seed}" "${role}" |
+		sha256sum | cut -c1-12)
+
+	# Locally administered (0x02 set) and unicast (0x01 clear): these addresses
+	# were synthesised rather than assigned to anybody, and saying so in the
+	# address keeps them clear of every real vendor OUI.
+	printf '%02x:%s:%s:%s:%s:%s\n' \
+		"$(((0x$(printf '%s' "${hash}" | cut -c1-2) & 0xfe) | 0x02))" \
+		"$(printf '%s' "${hash}" | cut -c3-4)" \
+		"$(printf '%s' "${hash}" | cut -c5-6)" \
+		"$(printf '%s' "${hash}" | cut -c7-8)" \
+		"$(printf '%s' "${hash}" | cut -c9-10)" \
+		"$(printf '%s' "${hash}" | cut -c11-12)"
 }
 
 write() {

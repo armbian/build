@@ -213,21 +213,6 @@ function post_family_tweaks_bsp__sophgo_sg200x_aic8800_bluetooth() {
 		"${destination}/usr/lib/systemd/system/aic8800-bluetooth.service"
 }
 
-# The chip has nothing in its efuse, so the driver falls back to a compiled-in MAC
-# address with two random bytes on the end and wlan0 comes up different on every
-# boot. The helper that fixes it belongs to the SoC, not to this chip - the
-# ethernet has the same problem - so it is installed by
-# sophgo-sg200x_common.inc and only the rule is added here. Both land in the same
-# armbian-bsp-cli, so there is no ordering or packaging dependency between them.
-function post_family_tweaks_bsp__sophgo_sg200x_aic8800_stable_mac() {
-	display_alert "SG200x AIC8800" "installing stable Wi-Fi MAC address rule" "info"
-
-	run_host_command_logged install -d -m 0755 "${destination}/etc/udev/rules.d"
-	run_host_command_logged install -m 0644 \
-		"${SRC}/packages/bsp/sophgo-sg200x/etc/udev/rules.d/70-sg200x-stable-mac-wifi.rules" \
-		"${destination}/etc/udev/rules.d/70-sg200x-stable-mac-wifi.rules"
-}
-
 function post_family_tweaks__sophgo_sg200x_aic8800_bluetooth_enable() {
 	display_alert "SG200x AIC8800" "enabling Bluetooth attach service" "info"
 	chroot_sdcard systemctl --no-reload enable aic8800-bluetooth.service
