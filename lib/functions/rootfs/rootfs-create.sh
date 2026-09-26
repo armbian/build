@@ -23,7 +23,8 @@ function create_new_rootfs_cache_tarball() {
 	declare compression_ratio_rootfs="${ROOTFS_COMPRESSION_RATIO:-"5"}"
 
 	display_alert "zstd tarball of rootfs" "${RELEASE}:: ${cache_name} :: compression ${compression_ratio_rootfs}" "info"
-	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
+	tar cp --numeric-owner --xattrs --xattrs-include="${ROOTFS_TAR_XATTR_INCLUDE:-security.*}" --acls --selinux --sparse \
+		--directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
 		--exclude='./tmp/*' --exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . |
 		pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" |
 		zstdmt "-${compression_ratio_rootfs}" -c > "${cache_fname}"
