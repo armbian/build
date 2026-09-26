@@ -10,7 +10,7 @@ BOOT_SOC="mt7981"
 BOOTCONFIG="mt7981_glinet_gl-mt2500_defconfig"
 BOOT_FDT_FILE="mediatek/mt7981b-glinet-gl-mt2500-v1.dtb"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS0,115200n8 rootwait rootdelay=10 cgroup_enable cgroup_memory=1 init=/sbin/init"
+SRC_CMDLINE="console=ttyS0,115200n8 rootwait cgroup_enable cgroup_memory=1 init=/sbin/init"
 HAS_VIDEO_OUTPUT="no"
 
 function post_family_tweaks_bsp__gl_mt2500_usb_modules_in_initrd() {
