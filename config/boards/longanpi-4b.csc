@@ -9,7 +9,7 @@ BOOT_FDT_FILE="allwinner/sun55i-t527-longanpi-4b-pcie.dtb"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="earlycon=uart8250,mmio32,0x02500000 clk_ignore_unused initcall_debug=0 console=ttyAS0,115200 loglevel=8 cma=64M init=/sbin/init"
 BOOTFS_TYPE="fat"
-BOOTSIZE="256"
+BOOTSIZE="512"
 SERIALCON="ttyAS0"
 declare -g SYTERKIT_BOARD_ID="longanpi-4b" # This _only_ used for syterkit-allwinner extension
 
