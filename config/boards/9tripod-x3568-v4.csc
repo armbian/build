@@ -20,6 +20,7 @@ function post_family_config__9tripod_x3568_v4_use_mainline_uboot() {
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
 	declare -g BOOTBRANCH="tag:v2026.10-rc1"
+	declare -g BOOTPATCHDIR="v2026.10" # board is upstream; avoid inheriting legacy u-boot-rockchip64 patches
 
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 
