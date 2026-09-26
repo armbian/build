@@ -1,0 +1,73 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] ASoC: sprd: resume the DMA channel instead of re-submitting
+
+sprd_pcm_trigger() folds PAUSE_RELEASE and RESUME in with START and
+answers all three by submitting a fresh descriptor and issuing pending.
+That works for START and cannot work for the other two.
+
+dmaengine_pause() sets SPRD_DMA_CHN_PAUSE and leaves schan->cur_desc
+alone. The only place that clears that register again is
+sprd_dma_start(), and sprd_dma_issue_pending() calls it only while
+cur_desc is NULL. So after a pause the channel is never restarted: the
+submit merely queues a second descriptor behind the paused one and the
+hardware stays stopped for the rest of the stream's life. There is no
+dmaengine_resume() anywhere in this driver.
+
+What that costs on RG Rotate is not a missing pause button. This SKU
+plays through the DSP scene, where the DSP owns the read side of the
+MCDT fifo and keeps draining it on its own. Pause the AP side and the
+fifo starves while the DSP runs on, so the pause is audible as a
+sustained buzz rather than silence, and the resume never arrives.
+
+The in-tree driver for the same controller, sound/soc/sprd/sprd-pcm-dma.c,
+already splits the four cases the way the dmaengine API intends and calls
+dmaengine_resume() here. Do the same.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+diff --git a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+index 2bce85075ae1..54543999b4f3 100755
+--- a/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
++++ b/sound/soc/sprd/vendor/sprd-dmaengine-pcm.c
+@@ -1561,8 +1561,6 @@ static int sprd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ 	 */
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+-	case SNDRV_PCM_TRIGGER_RESUME:
+-	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 		normal_dma_protect_spin_lock(substream);
+ 		if (rtd->dma_tx_des[0] == NULL) {
+ 			normal_dma_protect_spin_unlock(substream);
+@@ -1584,6 +1582,32 @@ static int sprd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ 		pr_info("pcm Start\n");
+ 		normal_dma_protect_spin_unlock(substream);
+ 		break;
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		/*
++		 * PAUSE_PUSH and SUSPEND leave the hardware pause bit set with
++		 * the descriptor still loaded, so there is nothing to submit
++		 * here. Only sprd_dma_start() rewrites SPRD_DMA_CHN_PAUSE, and
++		 * sprd_dma_issue_pending() skips it while cur_desc is still
++		 * set - re-submitting therefore queues a second descriptor and
++		 * leaves the channel paused for good. Lift the pause instead,
++		 * which is what the in-tree sprd-pcm-dma.c does for the same
++		 * controller.
++		 */
++		normal_dma_protect_spin_lock(substream);
++		if (rtd->dma_chn[0] == NULL) {
++			normal_dma_protect_spin_unlock(substream);
++			pr_info("%s dma_chn[0] is null ret=%#x, %d\n",
++				__func__, -ENODATA, -ENODATA);
++			return -ENODATA;
++		}
++		for (i = 0; i < rtd->hw_chan; i++) {
++			if (rtd->dma_chn[i])
++				dmaengine_resume(rtd->dma_chn[i]);
++		}
++		pr_info("pcm Resume\n");
++		normal_dma_protect_spin_unlock(substream);
++		break;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:

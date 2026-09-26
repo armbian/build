@@ -1,0 +1,71 @@
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Subject: [PATCH] wifi: sc23xx: report the fallback MAC address as random
+
+When neither the DT, the die UID nor the firmware supply a MAC address the
+driver makes one up with eth_random_addr() - and, as its own comment says,
+a different one on every boot. It then installs it with eth_hw_addr_set(),
+which leaves addr_assign_type at NET_ADDR_PERM, so from userspace it is
+indistinguishable from a burned-in address and nothing touches it.
+
+On RG Rotate that is every boot: the SC2355 keeps its address in a
+per-unit vendor file on the Android data partition which this driver does
+not read. The consequences are what a changing MAC always brings - a new
+DHCP lease each time the board comes up, and a stale ARP entry on every
+host that talked to the previous boot, which shows up as "No route to
+host" until the entry ages out.
+
+Flag the fallback as NET_ADDR_RANDOM. That is what the flag is for:
+systemd-udevd's default MACAddressPolicy=persistent (99-default.link) then
+replaces it before the interface is brought up with an address derived
+from the machine-id and the interface name, stable for the life of the
+install. The driver already forwards whatever the netdev holds to the
+firmware at open time, so nothing else is needed. Addresses that did come
+from the platform or the firmware are unaffected.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+diff --git a/drivers/net/wireless/unisoc/main.c b/drivers/net/wireless/unisoc/main.c
+index c54bd0f88a1b..7b10dd680801 100644
+--- a/drivers/net/wireless/unisoc/main.c
++++ b/drivers/net/wireless/unisoc/main.c
+@@ -657,6 +657,7 @@ int sc23xx_register_device(struct sc23xx_dev *sdev)
+ 	 */
+ 	if (is_zero_ether_addr(sdev->mac_addr)) {
+ 		eth_random_addr(sdev->mac_addr);
++		sdev->mac_addr_random = true;
+ 		wiphy_info(sdev->wiphy, "using random MAC address %pM\n",
+ 			   sdev->mac_addr);
+ 	}
+diff --git a/drivers/net/wireless/unisoc/sc23xx.h b/drivers/net/wireless/unisoc/sc23xx.h
+index 6198a942994d..bbd52960f7e8 100644
+--- a/drivers/net/wireless/unisoc/sc23xx.h
++++ b/drivers/net/wireless/unisoc/sc23xx.h
+@@ -114,6 +114,7 @@ struct sc23xx_dev {
+ 	u8 credit_capa;
+ 
+ 	u8 mac_addr[ETH_ALEN];
++	bool mac_addr_random;
+ 	struct ieee80211_supported_band band_2ghz;
+ 	struct ieee80211_supported_band band_5ghz;
+ 	u8 max_mc_mac_addrs;
+diff --git a/drivers/net/wireless/unisoc/vif.c b/drivers/net/wireless/unisoc/vif.c
+index 98a2064cbc51..72b4344b4e37 100644
+--- a/drivers/net/wireless/unisoc/vif.c
++++ b/drivers/net/wireless/unisoc/vif.c
+@@ -252,6 +252,16 @@ struct sc23xx_vif *sc23xx_vif_new(struct sc23xx_dev *sdev, const char *name,
+ 	if (test_bit(SC23XX_FLAG_USE_ALT_MAC, &vif->flags))
+ 		mac_addr[5] ^= 0x70;
+ 	eth_hw_addr_set(ndev, mac_addr);
++	/*
++	 * A made-up address has to be reported as such, or userspace takes it
++	 * for a burned-in one and leaves it alone. With NET_ADDR_RANDOM set,
++	 * systemd's default MACAddressPolicy=persistent replaces it before the
++	 * interface comes up with one derived from the machine-id, so the
++	 * address - and with it the DHCP lease and every peer's ARP entry -
++	 * stops changing on each boot.
++	 */
++	if (sdev->mac_addr_random)
++		ndev->addr_assign_type = NET_ADDR_RANDOM;
+ 
+ 	ret = cfg80211_register_netdevice(ndev);
+ 	if (ret)
