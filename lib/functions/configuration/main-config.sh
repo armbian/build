@@ -245,6 +245,15 @@ function do_main_configuration() {
 			;;
 	esac
 
+	# Mainline firmware git version
+	# used to be 'branch:master', but that caused a lot of churn. Bump this when needed. Use the latest published tag's SHA1.
+	# Important: use the tag's ref commit, not the the sha1 for the signed tag itself.
+	declare -g -r MAINLINE_FIRMWARE_BRANCH="${MAINLINE_FIRMWARE_BRANCH:-"commit:2135b2f7714a3a514c989b9728f51f36144cab6f"}" # ref: 'tag:20260810'
+
+	# Armbian firmware
+	declare -g -r ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_SOURCE:-"https://github.com/armbian/firmware"}"
+	declare -g -r ARMBIAN_FIRMWARE_BRANCH="${ARMBIAN_FIRMWARE_BRANCH:-"branch:master"}"
+
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
 	# A CI runner that advertises a pass-through git proxy (GITPROXY_ADDRESS,
