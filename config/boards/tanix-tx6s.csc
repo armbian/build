@@ -2,7 +2,7 @@
 BOARD_NAME="Tanix TX6s"
 BOARD_VENDOR="allwinner"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER="lagosproject"
+BOARD_MAINTAINER=""
 INTRODUCED="2020"
 BOOTCONFIG="tanix_tx6s_defconfig"
 BOOT_LOGO="desktop"
