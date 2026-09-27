@@ -357,10 +357,20 @@ function kernel_package_callback_linux_image() {
 					if is_boot_dev_vfat; then
 						# Copy, not move: the postinst is re-run after a failing
 						# postinst.d hook, and a move leaves nothing for the retry.
-						# Temp + rename so an interrupted write can't leave a torn image.
-						echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
-						cp -v /${installed_image_path} /boot/${image_name}.tmp
-						mv -f /boot/${image_name}.tmp /boot/${image_name}
+						# Temp + sync + rename so an interrupted write can't leave a torn image.
+						# Existing installs keep their old, smaller /boot: if the copy does not
+						# fit, fall back to the move, which is a rename within /boot.
+						if [ -f /${installed_image_path} ]; then
+							echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
+							if ! { cp -v /${installed_image_path} /boot/${image_name}.tmp && sync && mv -f /boot/${image_name}.tmp /boot/${image_name}; }; then
+								rm -f /boot/${image_name}.tmp
+								echo "Armbian: FAT32 /boot: no room to copy, moving kernel to '$image_name' instead..."
+								mv -v /${installed_image_path} /boot/${image_name}
+							fi
+						elif [ ! -f /boot/${image_name} ]; then
+							echo "Armbian: FAT32 /boot: neither /${installed_image_path} nor /boot/${image_name} exists" >&2
+							exit 1
+						fi
 					else
 						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 						ln -sfv $(basename "${installed_image_path}") /boot/$image_name
