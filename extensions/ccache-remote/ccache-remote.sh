@@ -1,4 +1,4 @@
-# @description Enables ccache with a remote Redis or HTTP/WebDAV backend so the compilation cache is shared across build hosts, and forces `USE_CCACHE=yes`. Set `CCACHE_REMOTE_STORAGE` explicitly, or let it auto-discover a server via DNS-SD/Avahi, DNS SRV (`CCACHE_REMOTE_DOMAIN`) or legacy `ccache.local`. Requires ccache 4.4+ and identical project paths on every host.
+# @description Enables ccache with a remote Redis or HTTP/WebDAV backend so the compilation cache is shared across build hosts, and enables the `ccache` extension it builds on. Set `CCACHE_REMOTE_STORAGE` explicitly, or let it auto-discover a server via DNS-SD/Avahi, DNS SRV (`CCACHE_REMOTE_DOMAIN`) or legacy `ccache.local`. Requires ccache 4.4+ and identical project paths on every host.
 # @doc-page /build-framework/extensions/ccache-remote/
 
 # Extension: ccache-remote
@@ -26,7 +26,7 @@
 #   # Disable local cache, use remote only (saves local disk space):
 #   ./compile.sh ENABLE_EXTENSIONS=ccache-remote CCACHE_REMOTE_ONLY=yes BOARD=...
 #
-# Automatically sets USE_CCACHE=yes
+# Automatically enables the `ccache` backend extension and sets PRIVATE_CCACHE=yes.
 #
 # Supported ccache environment variables (passed through to builds):
 # See: https://ccache.dev/manual/latest.html#_configuration_options
@@ -105,6 +105,9 @@
 #   path must be identical on all machines (e.g., /home/build/armbian).
 #   This is because ccache includes the working directory in the cache key.
 #   Docker builds automatically use consistent paths (/armbian/...).
+
+# ccache-remote is a storage layer over the ccache backend, not a backend itself.
+enable_extension "ccache"
 
 # Default Redis connection timeout in milliseconds (can be overridden by user)
 # Note: Must be set before extension loads (e.g., via environment or command line)
@@ -510,10 +513,8 @@ function ccache_post_compilation__show_remote_stats() {
 
 # This runs inside Docker (or native build) during configuration
 function extension_prepare_config__setup_remote_ccache() {
-	# Enable ccache with a consistent cache directory ($SRC/cache/ccache).
 	# PRIVATE_CCACHE ensures the same CCACHE_DIR is used in native and Docker builds,
 	# avoiding fragmented caches in /root/.cache/ccache vs $SRC/cache/ccache.
-	declare -g USE_CCACHE=yes
 	declare -g PRIVATE_CCACHE=yes
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
