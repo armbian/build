@@ -1304,11 +1304,10 @@ def process_patches_parallel(
                         log.error(f"Exception in worker {worker_id}: {e}")
 
                     # This worker (and its mount) is free again: hand it the next largest pending group
+                    # submit() only raises when the pool is broken (a worker process died); the group was
+                    # already popped, so let the exception propagate and fail the run instead of losing it
                     if pending_groups:
-                        try:
-                            dispatch_next_group(worker_id)
-                        except Exception as e:
-                            log.error(f"Failed to dispatch next group to worker {worker_id}: {e}")
+                        dispatch_next_group(worker_id)
 
                 # Small sleep to avoid busy-waiting if nothing to do
                 if not done_futures and (not progress_queue or progress_queue.empty()):
@@ -1321,7 +1320,7 @@ def process_patches_parallel(
         successful = [r for r in results if r.success]
         failed = [r for r in results if not r.success]
 
-        log.info(f"Completed {total_patches} patches in {elapsed:.1f} seconds ({total_patches/elapsed:.2f} patches/sec)")
+        log.info(f"Completed {len(results)} of {total_patches} patches in {elapsed:.1f} seconds ({len(results)/elapsed:.2f} patches/sec)")
         log.info(f"Successful: {len(successful)}, Failed: {len(failed)}")
 
         # Memory statistics
