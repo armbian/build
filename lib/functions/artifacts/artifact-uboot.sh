@@ -87,13 +87,13 @@ function artifact_uboot_prepare_version() {
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
 
-	# Hash the old-timey hooks and regular core functions (atf code, used by u-boot build process)
+	# Hash the old-timey hooks and regular core functions (atf and crust code, used by u-boot build process)
 	# calculate_hash_for_function_bodies skips functions that don't exist, so family-specific
 	# builders (e.g. K3's compile_k3_bootgen/optee, which are called from a hashed hook but whose
 	# bodies would otherwise not be hashed) can be listed here without affecting other families.
 	declare hash_functions="undetermined"
 	calculate_hash_for_function_bodies "uboot_custom_postprocess" "write_uboot_platform" "write_uboot_platform_mtd" \
-		"setup_write_uboot_platform" "compile_atf" \
+		"setup_write_uboot_platform" "compile_atf" "compile_crust" \
 		"compile_k3_bootgen" "compile_k3_optee"
 	declare hash_uboot_functions="${hash_functions}"
 
