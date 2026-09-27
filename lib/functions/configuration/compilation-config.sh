@@ -8,24 +8,8 @@
 # https://github.com/armbian/build/
 
 function prepare_compilation_vars() {
-	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE == yes || ${PRIVATE_CCACHE} == yes ]]; then
-		display_alert "using CCACHE" "USE_CCACHE or PRIVATE_CCACHE is set to yes" "warn"
-
-		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing
-		# private ccache directory to avoid permission issues when using build script with "sudo"
-		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache # actual export
-
-		# Set default umask for ccache to allow write access for all users (enables cache sharing)
-		# CCACHE_UMASK=000 creates files with permissions 666 (rw-rw-rw-) and dirs with 777 (rwxrwxrwx)
-		# Only set this for shared cache, not for private cache
-		[[ -z "${CCACHE_UMASK}" && "${PRIVATE_CCACHE}" != "yes" ]] && export CCACHE_UMASK=000
-	else
-		CCACHE=""
-	fi
-
+	# Only an enabled backend extension sets CCACHE, never the caller's environment.
+	declare -g CCACHE=""
 	# Two backends would fight over ${CCACHE} and PATH.
 	declare -g -a COMPILE_CACHE_BACKENDS=()
 	call_extension_method "compile_prepare_vars" <<- 'COMPILE_PREPARE_VARS'
@@ -40,6 +24,12 @@ function prepare_compilation_vars() {
 	COMPILE_PREPARE_VARS
 	if [[ ${#COMPILE_CACHE_BACKENDS[@]} -gt 1 ]]; then
 		exit_with_error "Multiple compile-cache backends enabled, choose one" "${COMPILE_CACHE_BACKENDS[*]}"
+	fi
+
+	# Migration reminder — remove after mid-2027.
+	if [[ ("${USE_CCACHE:-}" == "yes" || "${PRIVATE_CCACHE:-}" == "yes") && -z "${CCACHE}" ]]; then
+		display_alert "USE_CCACHE / PRIVATE_CCACHE are ignored" \
+			"compile-cache backends are now extensions; use ENABLE_EXTENSIONS=ccache (or another backend)" "wrn"
 	fi
 
 	# moved from config: this does not belong in configuration. it's a compilation thing.
