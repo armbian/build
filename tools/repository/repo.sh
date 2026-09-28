@@ -20,9 +20,17 @@ run_aptly() {
         return 0
     fi
 
-    if ! aptly "$@"; then
-        local exit_code=$?
-        log "ERROR: aptly $* failed with exit code $exit_code"
+    # Run aptly and send its output to syslog, but preserve the real exit code.
+    # Do NOT let callers pipe this into `logger`: on the left of a pipe run_aptly
+    # runs in a subshell, so `exit 1` only leaves that subshell and the pipeline
+    # status is logger's (0) -- aptly failures would be silently ignored and the
+    # repo could publish stale/missing snapshots. Capturing here keeps them fatal.
+    local aptly_output aptly_rc
+    aptly_output="$(aptly "$@" 2>&1)"
+    aptly_rc=$?
+    [[ -n "$aptly_output" ]] && printf '%s\n' "$aptly_output" | logger -t repo-management
+    if [[ $aptly_rc -ne 0 ]]; then
+        log "ERROR: aptly $* failed with exit code $aptly_rc"
         exit 1
     fi
 }
@@ -153,6 +161,7 @@ adding_packages() {
 		# If package with same name+arch but different version exists in repo, remove it first
 		# This prevents "file already exists and is different" errors during publish
 		# Skip removal for kernel, dtb, u-boot, headers, and libc packages if KEEP_MULTIPLE_VERSIONS is enabled
+		local skip_downgrade=false
 		if [[ "$FORCE_ADD" != true ]]; then
 			for existing_key in "${!repo_packages_map[@]}"; do
 				# existing_key format: name|version|arch
@@ -176,13 +185,27 @@ adding_packages() {
 					fi
 
 					if [[ "$keep_multiple" == false ]]; then
-						log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding new version"
-						run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
-						# Remove from map so we don't try to remove it again
-						unset "repo_packages_map[$existing_key]"
+						# Only replace when the incoming .deb is strictly newer. Removing an
+						# existing NEWER version to add an older one would silently downgrade
+						# the published repo (apt clients would see a downgrade); guard against it.
+						if dpkg --compare-versions "$deb_version" gt "$existing_version"; then
+							log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding newer ${deb_version}"
+							run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
+							# Remove from map so we don't try to remove it again
+							unset "repo_packages_map[$existing_key]"
+						else
+							log "Skipping downgrade: repo already has newer ${existing_name}_${existing_version}_${existing_arch} (incoming ${deb_version})"
+							skip_downgrade=true
+						fi
 					fi
 				fi
 			done
+		fi
+
+		# Do not publish a downgrade: repo holds a newer version of this package
+		if [[ "$skip_downgrade" == true ]]; then
+			echo "[-] SKIP (downgrade): $deb_display"
+			continue
 		fi
 
 		# Skip if exact package (name+version+arch) already exists in repo (unless FORCE_ADD is true)
@@ -242,10 +265,10 @@ process_release() {
 
 	# Create release-specific repositories if they don't exist
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
-		run_aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -component="${release}-utils" -distribution="${release}" -comment="Armbian ${release}-utils repository" "${release}-utils"
 	fi
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
-		run_aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -component="${release}-desktop" -distribution="${release}" -comment="Armbian ${release}-desktop repository" "${release}-desktop"
 	fi
 
 	# Run db cleanup before adding packages to avoid "file already exists and is different" errors
@@ -279,7 +302,7 @@ process_release() {
 	# Always publish - even if no release-specific packages, we still need to publish common/main
 	# Check if this release was previously published for logging
 	if [[ "$utils_count" -eq 0 && "$desktop_count" -eq 0 && "$FORCE_PUBLISH" != true ]]; then
-		if ! aptly publish list -config="${CONFIG}" 2>/dev/null | grep -q "^\[${release}\]"; then
+		if ! aptly publish list -config="${CONFIG}" --raw 2>/dev/null | awk '{print $NF}' | grep -qx "${release}"; then
 			log "No release-specific packages for $release. Publishing common/main component only."
 		else
 			log "No new packages but $release was previously published. Will publish with common only."
@@ -292,7 +315,7 @@ process_release() {
 
 	# Drop the existing publish first: aptly refuses to drop a snapshot that is still
 	# referenced by a publish, so unpublish before recreating the snapshots below.
-	if aptly publish list -config="${CONFIG}" 2>/dev/null | grep -q "^\[${release}\]"; then
+	if aptly publish list -config="${CONFIG}" --raw 2>/dev/null | awk '{print $NF}' | grep -qx "${release}"; then
 		log "Dropping existing publish for $release"
 		run_aptly publish drop -config="${CONFIG}" "${release}"
 	fi
@@ -301,11 +324,11 @@ process_release() {
 	# This ensures that even empty repos are properly published
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 		log "Dropping existing ${release}-utils snapshot"
-		run_aptly -config="${CONFIG}" snapshot drop ${release}-utils | logger -t repo-management 2>/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop "${release}-utils"
 	fi
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 		log "Dropping existing ${release}-desktop snapshot"
-		run_aptly -config="${CONFIG}" snapshot drop ${release}-desktop | logger -t repo-management 2>/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop "${release}-desktop"
 	fi
 
 	# Create snapshots for all repos (even empty ones) to ensure they're included in publish
@@ -318,13 +341,13 @@ process_release() {
 
 	# Always create utils snapshot and include in publish (even if empty)
 	log "Creating ${release}-utils snapshot (packages: $utils_count)"
-	run_aptly -config="${CONFIG}" snapshot create ${release}-utils from repo ${release}-utils | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create "${release}-utils" from repo "${release}-utils"
 	components_to_publish+=("${release}-utils")
 	snapshots_to_publish+=("${release}-utils")
 
 	# Always create desktop snapshot and include in publish (even if empty)
 	log "Creating ${release}-desktop snapshot (packages: $desktop_count)"
-	run_aptly -config="${CONFIG}" snapshot create ${release}-desktop from repo ${release}-desktop | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create "${release}-desktop" from repo "${release}-desktop"
 	components_to_publish+=("${release}-desktop")
 	snapshots_to_publish+=("${release}-desktop")
 
@@ -431,7 +454,7 @@ process_release() {
 publishing() {
 	# Build common repo - this repository contains packages that are the same in all releases
 	if [[ -z $(aptly repo list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep common) ]]; then
-		run_aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common" | logger -t repo-management >/dev/null
+		run_aptly repo create -config="${CONFIG}" -distribution="common" -component="main" -comment="Armbian common packages" "common"
 	fi
 
 	# Run db cleanup before adding packages to avoid "file already exists and is different" errors
@@ -452,11 +475,11 @@ publishing() {
 	# Drop existing snapshot if it exists
 	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "^common$") ]]; then
 		log "Dropping existing common snapshot"
-		run_aptly -config="${CONFIG}" snapshot drop common | logger -t repo-management 2>/dev/null
+		run_aptly -config="${CONFIG}" snapshot drop "common"
 	fi
 
 	log "Creating common snapshot"
-	run_aptly -config="${CONFIG}" snapshot create common from repo common | logger -t repo-management >/dev/null
+	run_aptly -config="${CONFIG}" snapshot create "common" from repo "common"
 
 	# Get all distributions
 	local distributions=($(grep -rw config/distributions/*/support -ve '' | cut -d"/" -f3))
@@ -487,7 +510,8 @@ publishing() {
 # Resolve GPG keys and build signing parameters
 # Sets global GPG_PARAMS array
 # Arguments:
-#   $1 - GPG password (optional, currently unused)
+#   $1 - GPG password (optional; used for passphrase-protected keys, fed to gpg
+#        via a mode-0600 --passphrase-file so it never appears in the process table)
 # Returns:
 #   0 on success, 1 if no keys found
 get_gpg_signing_params() {
@@ -505,7 +529,11 @@ get_gpg_signing_params() {
 	# If a passphrase was supplied, feed it to gpg non-interactively (keys may be
 	# protected). Without this the -p/--password option was silently ignored.
 	if [[ -n "$gpg_password" ]]; then
-		GPG_PARAMS+=("--pinentry-mode" "loopback" "--passphrase" "$gpg_password")
+		# Pass the passphrase via a mode-0600 file, not on the command line:
+		# --passphrase "$gpg_password" would be world-readable in `ps`/proc.
+		local passfile="${TempDir}/gpg-passphrase"
+		( umask 077; printf '%s' "$gpg_password" > "$passfile" )
+		GPG_PARAMS+=("--pinentry-mode" "loopback" "--passphrase-file" "$passfile")
 	fi
 	local keys_found=0
 
@@ -830,7 +858,7 @@ done
 
 # redefine output folder in Aptly
 TempDir="$(mktemp -d || exit 1)"
-sed 's|"rootDir": ".*"|"rootDir": "'$output'"|g' tools/repository/aptly.conf > "${TempDir}"/aptly.conf
+sed 's|"rootDir": ".*"|"rootDir": "'"$output"'"|g' tools/repository/aptly.conf > "${TempDir}"/aptly.conf
 CONFIG="${TempDir}/aptly.conf"
 
 # Display configuration status
