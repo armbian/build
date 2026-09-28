@@ -49,7 +49,10 @@ drop_unsupported_releases() {
 		supported_releases=()
 	else
 		log "Cleanup: dropping unsupported releases"
-		supported_releases=($(grep -rw config/distributions/*/support | cut -d"/" -f3))
+		# Same release list publishing() uses. The old `grep -rw <files>` had no
+		# pattern, so grep took the first file as the pattern, matched nothing, and
+		# every release was treated as unsupported and unpublished on each update.
+		supported_releases=($(grep -l . config/distributions/*/support | cut -d"/" -f3))
 	fi
 
 	# Get currently published repositories
@@ -337,7 +340,7 @@ process_release() {
 
 	# Add common/main component
 	components_to_publish=("main")
-	snapshots_to_publish=("common")
+	snapshots_to_publish=("${COMMON_SNAPSHOT:?}")
 
 	# Always create utils snapshot and include in publish (even if empty)
 	log "Creating ${release}-utils snapshot (packages: $utils_count)"
@@ -471,15 +474,15 @@ publishing() {
 	log "Running database cleanup after adding common packages"
 	run_aptly db cleanup -config="${CONFIG}"
 
-	# Create or update the common snapshot
-	# Drop existing snapshot if it exists
-	if [[ -n $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "^common$") ]]; then
-		log "Dropping existing common snapshot"
-		run_aptly -config="${CONFIG}" snapshot drop "common"
-	fi
-
-	log "Creating common snapshot"
-	run_aptly -config="${CONFIG}" snapshot create "common" from repo "common"
+	# Snapshot common under a name unique to this run. The previous common snapshot
+	# is still referenced by every supported release that is published, and aptly
+	# refuses to drop a published snapshot, so it cannot be dropped and recreated
+	# here. Each release is switched to the new snapshot by process_release, and
+	# the old ones are dropped once no publish references them any more.
+	declare -g COMMON_SNAPSHOT
+	COMMON_SNAPSHOT="common-$(date -u +%Y%m%d%H%M%S)-$$"
+	log "Creating common snapshot ${COMMON_SNAPSHOT}"
+	run_aptly -config="${CONFIG}" snapshot create "${COMMON_SNAPSHOT}" from repo "common"
 
 	# Get all distributions
 	local distributions=($(grep -rw config/distributions/*/support -ve '' | cut -d"/" -f3))
@@ -487,7 +490,27 @@ publishing() {
 	# Process releases sequentially
 	log "Processing ${#distributions[@]} releases sequentially"
 	for release in "${distributions[@]}"; do
-		process_release "$release" "$1" "$2" "$4"
+		# Stop before finalization: a failed release (e.g. signing) must not end in a
+		# written public/control and a successful exit.
+		if ! process_release "$release" "$1" "$2" "$4"; then
+			log "ERROR: processing release $release failed, aborting"
+			exit 1
+		fi
+	done
+
+	# Drop common snapshots from earlier runs (including the old fixed-name "common")
+	# now that every supported release publishes ${COMMON_SNAPSHOT}. Not fatal: a
+	# snapshot still referenced by some publish is kept and retried next run.
+	local old_snapshot
+	for old_snapshot in $(aptly snapshot list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep -E '^common(-[0-9]+-[0-9]+)?$'); do
+		[[ "$old_snapshot" == "$COMMON_SNAPSHOT" ]] && continue
+		if [[ "$DRY_RUN" == true ]]; then
+			log "[DRY-RUN] Would drop old common snapshot ${old_snapshot}"
+		elif aptly -config="${CONFIG}" snapshot drop "$old_snapshot" > /dev/null 2>&1; then
+			log "Dropped old common snapshot ${old_snapshot}"
+		else
+			log "WARNING: could not drop old common snapshot ${old_snapshot} (still published?)"
+		fi
 	done
 
 	# Cleanup database
@@ -579,7 +602,7 @@ signing() {
 
 	# Sign top-level Release files for each distribution
 	find "$output_folder/public/dists" -maxdepth 2 -type f -name Release | while read -r release_file; do
-		local rel_path="${release_file#$output_folder/public/dists/}"
+		local rel_path="${release_file#"$output_folder"/public/dists/}"
 		local slash_count=$(echo "$rel_path" | tr -cd '/' | wc -c)
 
 		if [[ $slash_count -eq 1 ]]; then
@@ -732,7 +755,7 @@ input="output/debs-beta"
 output="output/repository"
 command="show"
 if [[ -d "config/distributions" ]]; then
-	releases=$(grep -rw config/distributions/*/support 2>/dev/null | cut -d"/" -f3 | xargs | sed -e 's/ /,/g')
+	releases=$(grep -l . config/distributions/*/support 2>/dev/null | cut -d"/" -f3 | xargs | sed -e 's/ /,/g')
 	if [[ -z "$releases" ]]; then
 		log "WARNING: No releases found in config/distributions"
 	fi
