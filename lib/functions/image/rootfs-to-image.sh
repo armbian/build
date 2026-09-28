@@ -62,7 +62,28 @@ function create_image_from_sdcard_rootfs() {
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot (MOUNT /boot)"
-	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
+	# Most boards mount a real, dedicated /boot partition (BOOTSIZE>0, see
+	# lib/functions/image/partitioning.sh) directly at "$MOUNT/boot", so checking
+	# that path for its actual filesystem type is correct. But some board families
+	# (eg: bcm2711/Raspberry Pi, see config/sources/families/bcm2711.conf) have no
+	# separate /boot partition (BOOTSIZE=0) and instead mount their FAT32 boot
+	# content at UEFI_MOUNT_POINT (eg: /boot/firmware) -- in that case "$MOUNT/boot"
+	# itself isn't a mountpoint at all (it's just a directory on the rootfs), so the
+	# vfat check below always misses it and this rsync wrongly uses xattr-preserving
+	# ext4 flags (-X) against what is actually a FAT32 filesystem, which errors out
+	# when the source tree carries xattrs (eg: SELinux labels from a samba-shared
+	# parent directory).
+	#
+	# Deliberately exclude UEFI_MOUNT_POINT's own generic default ("/boot/efi", set
+	# unconditionally by partitioning.sh for every board) from this check: for
+	# standard UEFI/grub boards (BOOTSIZE=0, UEFISIZE>0, no separate /boot), only a
+	# small ESP is mounted under /boot/efi while the rest of /boot lives on the
+	# (non-vfat) rootfs -- so those boards must keep checking plain "$MOUNT/boot".
+	declare boot_vfat_check_target="$MOUNT/boot"
+	if [[ "${BOOTSIZE:-0}" == "0" && -n "${UEFI_MOUNT_POINT}" && "${UEFI_MOUNT_POINT}" != "/boot/efi" ]]; then
+		boot_vfat_check_target="${MOUNT}${UEFI_MOUNT_POINT}"
+	fi
+	if [[ $(findmnt --noheadings --output FSTYPE --target "${boot_vfat_check_target}" --uniq) == vfat ]]; then
 		# FAT filesystems can't have symlinks; rsync, below, will replace them with copies (-L)...
 		# ... unless they're dangling symlinks, in which case rsync will fail.
 		# Find dangling symlinks in "$MOUNT/boot", warn, and remove them.
