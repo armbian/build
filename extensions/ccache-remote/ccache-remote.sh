@@ -449,10 +449,13 @@ function host_pre_docker_launch__setup_remote_ccache() {
 		local _host
 		_host=$(ccache_extract_url_host "${CCACHE_REMOTE_STORAGE}")
 		if [[ -n "${_host}" ]]; then
-			# Loopback addresses: rewrite to host.docker.internal
-			if [[ "${_host}" == "localhost" || "${_host}" == "127.0.0.1" || "${_host}" == "::1" ]]; then
+			# Loopback addresses: rewrite to host.docker.internal. 0.0.0.0 counts too:
+			# as a destination it means "this host", which works on the host itself but
+			# inside the build container would be the container, not the host's service.
+			if [[ "${_host}" == "localhost" || "${_host}" == "127.0.0.1" || "${_host}" == "0.0.0.0" || "${_host}" == "::1" ]]; then
 				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//localhost/host.docker.internal}"
 				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//127.0.0.1/host.docker.internal}"
+				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//0.0.0.0/host.docker.internal}"
 				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//\[::1\]/host.docker.internal}"
 				DOCKER_EXTRA_ARGS+=("--add-host=host.docker.internal:host-gateway")
 				display_alert "Rewriting loopback URL for Docker" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
