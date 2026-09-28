@@ -518,6 +518,22 @@ function extension_prepare_config__setup_remote_ccache() {
 
 	# If CCACHE_REMOTE_STORAGE was passed from host (via Docker env), it's already set
 	if [[ -n "${CCACHE_REMOTE_STORAGE}" ]]; then
+		# The host hook rewrote a loopback URL to host.docker.internal, but only in the
+		# env it hands to Docker. Given as a compile.sh parameter (as CI does), the
+		# original loopback URL is parsed again in here and wins - and in the container
+		# loopback is the container, so every lookup fails. Redo the rewrite; the host
+		# already added --add-host=host.docker.internal:host-gateway for it.
+		if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
+			local _host
+			_host=$(ccache_extract_url_host "${CCACHE_REMOTE_STORAGE}")
+			if [[ "${_host}" == "localhost" || "${_host}" == "127.0.0.1" || "${_host}" == "::1" ]] &&
+				getent hosts host.docker.internal > /dev/null 2>&1; then
+				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//localhost/host.docker.internal}"
+				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//127.0.0.1/host.docker.internal}"
+				CCACHE_REMOTE_STORAGE="${CCACHE_REMOTE_STORAGE//\[::1\]/host.docker.internal}"
+				display_alert "Rewriting loopback URL inside Docker" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
+			fi
+		fi
 		ccache_validate_storage_url "${CCACHE_REMOTE_STORAGE}" || return 1
 		display_alert "Remote ccache configured" "$(ccache_mask_storage_url "${CCACHE_REMOTE_STORAGE}")" "info"
 		return 0
