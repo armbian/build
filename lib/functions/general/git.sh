@@ -103,7 +103,16 @@ function git_ensure_safe_directory() {
 				[[ "$existing" == "$git_dir" ]] && { found=yes; break; }
 			done < <(git config --global --get-all safe.directory 2> /dev/null \
 				|| { rc=$?; [[ "$rc" == 1 || "$rc" == 141 ]]; })
-			[[ "$found" == yes ]] || regular_git config --global --add safe.directory "$git_dir"
+			# The global git config can be unwritable (eg NixOS' ~/.gitconfig is a symlink into
+			# the read-only Nix store): don't let that hard-abort the whole build (#7907), just
+			# warn. A per-repo/--local safe.directory is not an option here: other code paths
+			# (vendor kernel/u-boot build scripts, etc) invoke git themselves from directories
+			# we don't control, so only a global setting is visible to them (see #7910/#7956,
+			# both reverted for exactly this).
+			if [[ "$found" != yes ]] && ! regular_git config --global --add safe.directory "$git_dir"; then
+				display_alert "git: could not add '${git_dir}' to the global safe.directory list" \
+					"your global git config may be read-only; subsequent git operations there may still fail with 'unsafe repository'" "wrn"
+			fi
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
