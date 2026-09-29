@@ -280,6 +280,8 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
 
+	report_uboot_spl_size_usage
+
 	# Save a defconfig, as that will be included as reference in the .deb package
 	# Do not fail here; some very (very!) old u-boots like 2011 do not have 'savedefconfig'
 	run_host_command_logged "env" "-i" "${uboot_make_envs[@]}" pipetty make savedefconfig "$CTHREADS" "${cross_compile}" ||
@@ -327,6 +329,34 @@ function compile_uboot_target() {
 	fi
 
 	display_alert "${uboot_prefix}Done with u-boot target" "${version} ${target_make}"
+	return 0
+}
+
+# Report SPL/TPL size against CONFIG_SPL_MAX_SIZE / CONFIG_TPL_MAX_SIZE. Warn when close.
+function report_uboot_spl_size_usage() {
+	[[ -f .config ]] || return 0
+	declare -i warn_percent="${UBOOT_SPL_SIZE_WARN_PERCENT:-90}"
+	declare stage prefix max_size bin
+	declare -i size limit percent
+	for stage in SPL TPL; do
+		prefix="${stage,,}"
+		max_size="$(sed -n "s/^CONFIG_${stage}_MAX_SIZE=//p" .config)"
+		[[ -n "${max_size}" ]] || continue
+		limit=$((max_size))
+		((limit > 0)) || continue
+		# The limit applies to the image without the device tree
+		for bin in "${prefix}/u-boot-${prefix}-nodtb.bin" "${prefix}/u-boot-${prefix}.bin"; do
+			[[ -f "${bin}" ]] && break
+		done
+		[[ -f "${bin}" ]] || continue
+		size=$(stat -c %s "${bin}")
+		percent=$((size * 100 / limit))
+		if ((percent >= warn_percent)); then
+			display_alert "${uboot_prefix:-}u-boot ${stage} size close to limit" "${size} / ${limit} bytes (${percent}%)" "warn"
+		else
+			display_alert "${uboot_prefix:-}u-boot ${stage} size" "${size} / ${limit} bytes (${percent}%)" "info"
+		fi
+	done
 	return 0
 }
 
