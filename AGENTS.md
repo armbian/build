@@ -1,6 +1,6 @@
 # General LLM instructions
 
-Generated prose: keep very brief. Includes commit messages, pull request text, issue reports, patch cover letters. Reviewers read many. Walls of text waste their time.
+Generated prose: keep very brief. Includes code comments, commit messages, pull request text, issue reports, patch cover letters. Reviewers read many. Walls of text waste their time.
 
 Clarity register: ASD-STE100 Simplified Technical English. Apply to all generated text:
 
