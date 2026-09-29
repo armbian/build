@@ -287,18 +287,28 @@ function do_main_configuration() {
 			;;
 	esac
 
+	# OCI storage for artifacts (OCI_PATH) and git trees (OCI_GIT_PATH).
+	declare -g OCI_SERVER="${OCI_SERVER:-"ghcr.io"}"
+	declare -g OCI_PATH="${OCI_PATH:-"armbian/os"}"
+	declare -g OCI_GIT_PATH="${OCI_GIT_PATH:-"armbian/shallow"}"
+
+	# OCI_PROXY: optional read-only cache of OCI_SERVER (host[:port]). Never used for uploads.
+	# GHCR_MIRROR selects a public ghcr.io mirror as OCI_PROXY.
 	case $GHCR_MIRROR in
 		dockerproxy)
-			GHCR_MIRROR_ADDRESS="${GHCR_MIRROR_ADDRESS:-"ghcr.dockerproxy.net"}"
-			declare -g -r GHCR_SOURCE=$GHCR_MIRROR_ADDRESS
+			OCI_PROXY="${OCI_PROXY:-"${GHCR_MIRROR_ADDRESS:-"ghcr.dockerproxy.net"}"}"
 			;;
 		nju)
-			declare -g -r GHCR_SOURCE='ghcr.nju.edu.cn'
-			;;
-		*)
-			declare -g -r GHCR_SOURCE='ghcr.io'
+			OCI_PROXY="${OCI_PROXY:-"ghcr.nju.edu.cn"}"
 			;;
 	esac
+	declare -g OCI_PROXY="${OCI_PROXY:-}"
+
+	# Deprecated overrides: OCI_TARGET_BASE, GIT_ORAS_TARBALLS_SHALLOW_BASE_REF.
+	declare -g GIT_ORAS_TARBALLS_SHALLOW_BASE_REF="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:-"${OCI_SERVER}/${OCI_GIT_PATH}"}"
+
+	# Deprecated. Kept for extensions and userpatches.
+	declare -g -r GHCR_SOURCE="${OCI_PROXY:-"${OCI_SERVER}"}"
 
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)

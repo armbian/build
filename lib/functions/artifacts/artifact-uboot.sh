@@ -219,7 +219,7 @@ function artifact_uboot_cli_adapter_config_prep() {
 }
 
 function artifact_uboot_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
+	artifact_oci_target_base="${OCI_SERVER}/${OCI_PATH}/"
 }
 
 function artifact_uboot_is_available_in_local_cache() {
