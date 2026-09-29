@@ -1,0 +1,73 @@
+From ed5b44bf1e0816d339ca5ccfebad9a6c16aa046a Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Date: Thu, 24 Sep 2026 03:51:03 +0300
+Subject: [PATCH] drm/msm/dsi/phy: power up the digital top before starting the
+ 7nm PLL
+
+dsi_pll_7nm_vco_prepare() de-asserts PLL_SHUTDOWNB and starts the PLL,
+but leaves the PHY digital top powered down; only dsi_7nm_phy_enable()
+sets DIGTOP_PWRDN_B.  The PLL cannot lock in that state.  This went
+unnoticed for as long as the PLL was only ever prepared from the DSI
+host's enable path, after the PHY had been enabled.
+
+Since commit acf7a91d0b0e ("clk: qcom: dispcc-sm8250: Enable parents for
+pixel clocks") the clock framework enables the PHY PLL on its own while
+applying the DT's assigned-clock-parents from of_clk_set_defaults(), at
+probe time, before the PHY has been touched.  The lock fails, the failed
+enable leaves the pixel clock with an unbalanced enable count, and the
+retries on every probe attempt stall the boot for tens of seconds:
+
+  DSI PLL(0) lock failed, status=0x00000000
+  PLL(0) lock failed
+  dsi0_phy_pll_out_dsiclk already disabled
+  WARNING: drivers/clk/clk.c:1188 at clk_core_disable+0x244/0x24c
+   clk_core_disable
+   __clk_set_parent_after
+   clk_core_set_parent_nolock
+   clk_set_parent
+   of_clk_set_defaults
+   platform_probe
+
+CMN_CTRL_0 reads 0x20 at the failing attempt: PLL_SHUTDOWNB set,
+DIGTOP_PWRDN_B clear.  Setting DIGTOP_PWRDN_B alone makes the same PLL
+lock, with no rate change and no other register touched.
+
+Power up the digital top together with the PLL bias, and power it down
+again with it.  The normal enable path is unaffected: dsi_7nm_phy_enable()
+holds the bias reference and writes CMN_CTRL_0 in full anyway.
+
+Fixes: 1ef7c99d145c ("drm/msm/dsi: add support for 7nm DSI PHY/PLL")
+Fixes: acf7a91d0b0e ("clk: qcom: dispcc-sm8250: Enable parents for pixel clocks")
+Assisted-by: LLM
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+index 8f4b03713..a720631c1 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -413,7 +413,8 @@ static void dsi_pll_disable_pll_bias(struct dsi_pll_7nm *pll)
+ 	} /* else: == 0 */
+ 
+ 	data = readl(pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+-	data &= ~DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
++	data &= ~(DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
++		  DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB);
+ 	writel(0, pll->phy->pll_base + REG_DSI_7nm_PHY_PLL_SYSTEM_MUXES);
+ 	writel(data, pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+ 	spin_unlock_irqrestore(&pll->pll_enable_lock, flags);
+@@ -430,7 +431,8 @@ static void dsi_pll_enable_pll_bias(struct dsi_pll_7nm *pll)
+ 	WARN_ON(pll->pll_enable_cnt == INT_MAX);
+ 
+ 	data = readl(pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+-	data |= DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
++	data |= DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
++		DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB;
+ 	writel(data, pll->phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+ 
+ 	writel(0xc0, pll->phy->pll_base + REG_DSI_7nm_PHY_PLL_SYSTEM_MUXES);
+-- 
+2.55.0
+

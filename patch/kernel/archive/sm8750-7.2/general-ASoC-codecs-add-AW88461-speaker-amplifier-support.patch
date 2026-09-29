@@ -1,0 +1,679 @@
+From 023af7b3773add2f47a261fb7e88acc92822b3e2 Mon Sep 17 00:00:00 2001
+From: GEEKiDoS <geek_ds@foxmail.com>
+Date: Sun, 27 Sep 2026 17:05:28 +0800
+Subject: [PATCH] ASoC: codecs: add AW88461 speaker amplifier support
+
+from https://github.com/GEEKiDoS/linux/blob/ba28ec16f01f59ba8f5099e8af9e95b061fc5c78/sound/soc/codecs/aw88461.c
+
+Retain the validated tuning section to recover from a latched fault on a
+subsequent playback attempt. Replay the muted profile and cached I2S format
+before normal startup checks; any recovery failure keeps reset asserted.
+Do not retry continuously or bypass PLL and amplifier fault checks.
+---
+ sound/soc/codecs/Kconfig   |  13 +
+ sound/soc/codecs/Makefile  |   2 +
+ sound/soc/codecs/aw88461.c | 610 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 625 insertions(+)
+ create mode 100644 sound/soc/codecs/aw88461.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 269c31ce0..7a333a49d 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -658,6 +658,19 @@ config SND_SOC_AW8738
+ 	  SND_SOC_SIMPLE_AMPLIFIER, but additionally allows setting the
+ 	  operation mode using the Awinic-specific one-wire pulse control.
+ 
++config SND_SOC_AW88461
++	tristate "Awinic AW88461 I2S amplifier"
++	depends on I2C
++	select REGMAP_I2C
++	select GPIOLIB
++	select FW_LOADER
++	select SND_SOC_AW88395_LIB
++	help
++	  Enable playback through the Awinic AW88461 amplifier, using the
++	  speaker tuning image named in devicetree.
++	  To compile this driver as a module, choose M here: the module
++	  will be called snd-soc-aw88461.
++
+ config SND_SOC_AW88395_LIB
+ 	select CRC8
+ 	tristate
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index 172861d17..073278a68 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -55,6 +55,7 @@ snd-soc-aw88395-y := aw88395/aw88395.o
+ snd-soc-aw88166-y := aw88166.o
+ snd-soc-aw88261-y := aw88261.o
+ snd-soc-aw88399-y := aw88399.o
++snd-soc-aw88461-y := aw88461.o
+ snd-soc-bd28623-y := bd28623.o
+ snd-soc-bt-sco-y := bt-sco.o
+ snd-soc-chv3-codec-y := chv3-codec.o
+@@ -492,6 +493,7 @@ obj-$(CONFIG_SND_SOC_AW88395)	+=snd-soc-aw88395.o
+ obj-$(CONFIG_SND_SOC_AW88166)	+=snd-soc-aw88166.o
+ obj-$(CONFIG_SND_SOC_AW88261)	+=snd-soc-aw88261.o
+ obj-$(CONFIG_SND_SOC_AW88399)	+= snd-soc-aw88399.o
++obj-$(CONFIG_SND_SOC_AW88461)	+= snd-soc-aw88461.o
+ obj-$(CONFIG_SND_SOC_BD28623)	+= snd-soc-bd28623.o
+ obj-$(CONFIG_SND_SOC_BT_SCO)	+= snd-soc-bt-sco.o
+ obj-$(CONFIG_SND_SOC_CHV3_CODEC) += snd-soc-chv3-codec.o
+diff --git a/sound/soc/codecs/aw88461.c b/sound/soc/codecs/aw88461.c
+new file mode 100644
+--- /dev/null
++++ b/sound/soc/codecs/aw88461.c
+@@ -0,0 +1,610 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Awinic AW88461 I2S amplifier (PID 0x2308).
++ * Register layout and power sequencing follow the AWINIC PID 2308 driver.
++ */
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++
++#include "aw88395/aw88395_device.h"
++
++#define AW88461_ID		0x00
++#define AW88461_SYSST		0x01
++#define AW88461_SYSINTM		0x03
++#define AW88461_SYSCTRL		0x04
++#define AW88461_SYSCTRL2		0x05
++#define AW88461_I2SCTRL1		0x06
++#define AW88461_NGCTRL3		0x5e
++#define AW88461_CHIP_ID		0x2308
++#define AW88461_SOFT_RESET	0x55aa
++#define AW88461_PWDN		BIT(0)
++#define AW88461_AMPPD		BIT(1)
++#define AW88461_HMUTE		BIT(8)
++#define AW88461_TXEN		BIT(13)
++#define AW88461_ULS_HMUTE	BIT(15)
++#define AW88461_VOLUME		GENMASK(9, 0)
++#define AW88461_NOISE_GATE	BIT(0)
++#define AW88461_PLL_LOCK		(BIT(4) | BIT(0))
++#define AW88461_BOOST_READY	BIT(9)
++#define AW88461_SWITCHING	BIT(8)
++#define AW88461_FAULTS		(BIT(14) | BIT(11) | BIT(5) | BIT(3) | BIT(1))
++
++struct aw88461 {
++	struct aw_device aw_dev;
++	struct gpio_desc *reset;
++	struct aw_sec_data_desc *regs;
++	/* Serialize DAPM power transitions and mixer/DAI register access. */
++	struct mutex lock;
++	struct work_struct start_work;
++	unsigned int volume;
++	unsigned int profile_volume;
++	unsigned int profile_txen;
++	unsigned int i2sctrl1;
++	bool i2s_configured;
++	bool enabled;
++	bool running;
++	bool powered;
++	bool faulted;
++};
++
++static const struct regmap_config aw88461_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 16,
++	.val_format_endian = REGMAP_ENDIAN_BIG,
++	.max_register = 0x7f,
++};
++
++static void aw88461_reset(void *data)
++{
++	struct aw88461 *amp = data;
++
++	gpiod_set_value_cansleep(amp->reset, 1);
++}
++
++static int aw88461_fault(struct aw88461 *amp, int error)
++{
++	amp->powered = false;
++	amp->faulted = true;
++	aw88461_reset(amp);
++	return error;
++}
++
++static int aw88461_set_volume(struct aw88461 *amp, unsigned int attenuation)
++{
++	return regmap_update_bits(amp->aw_dev.regmap, AW88461_SYSCTRL2,
++				  AW88461_VOLUME, min(attenuation, 1023U));
++}
++
++static int aw88461_fade(struct aw88461 *amp, int from, int to,
++			unsigned int delay_us)
++{
++	int step = from < to ? 64 : -64;
++	int ret;
++
++	while (from != to) {
++		ret = aw88461_set_volume(amp, from);
++		if (ret)
++			return ret;
++		usleep_range(delay_us, delay_us + 10);
++		from = step > 0 ? min(from + step, to) : max(from + step, to);
++	}
++	return aw88461_set_volume(amp, to);
++}
++
++static int aw88461_stop(struct aw88461 *amp)
++{
++	struct regmap *map = amp->aw_dev.regmap;
++	int ret;
++
++	if (!amp->powered)
++		return 0;
++	amp->powered = false;
++	ret = regmap_update_bits(map, AW88461_SYSCTRL,
++				 AW88461_ULS_HMUTE, AW88461_ULS_HMUTE);
++	if (ret)
++		return aw88461_fault(amp, ret);
++	ret = aw88461_fade(amp, min(amp->profile_volume + 1023 - amp->volume, 1023U),
++			   1023, 500);
++	if (ret)
++		return aw88461_fault(amp, ret);
++	ret = regmap_update_bits(map, AW88461_SYSCTRL, AW88461_HMUTE, AW88461_HMUTE);
++	if (ret)
++		return aw88461_fault(amp, ret);
++	usleep_range(10000, 10500);
++	ret = regmap_update_bits(map, AW88461_SYSCTRL, AW88461_TXEN, 0);
++	if (ret)
++		return aw88461_fault(amp, ret);
++	usleep_range(1000, 1200);
++	ret = regmap_update_bits(map, AW88461_SYSCTRL,
++				 AW88461_AMPPD | AW88461_PWDN,
++				 AW88461_AMPPD | AW88461_PWDN);
++	return ret ? aw88461_fault(amp, ret) : 0;
++}
++
++static bool aw88461_active(struct aw88461 *amp)
++{
++	return READ_ONCE(amp->enabled) && READ_ONCE(amp->running);
++}
++
++static int aw88461_write_profile(struct aw88461 *amp);
++
++/* Called with lock held, once per new playback setup/start, never in a loop. */
++static int aw88461_recover(struct aw88461 *amp)
++{
++	unsigned int id;
++	int ret;
++
++	if (!amp->faulted)
++		return 0;
++
++	/* A transient bus error may have left the amplifier held in reset. */
++	usleep_range(1000, 1200);
++	gpiod_set_value_cansleep(amp->reset, 0);
++	usleep_range(2000, 2500);
++	ret = regmap_read(amp->aw_dev.regmap, AW88461_ID, &id);
++	if (ret)
++		goto fault;
++	if (id != AW88461_CHIP_ID) {
++		ret = -ENODEV;
++		goto fault;
++	}
++	/* Replay tuning with mute and power-down forced, before enabling output. */
++	ret = aw88461_write_profile(amp);
++	if (ret)
++		goto fault;
++	/* Reset also loses the stream format programmed by hw_params. */
++	if (amp->i2s_configured) {
++		ret = regmap_update_bits(amp->aw_dev.regmap, AW88461_I2SCTRL1,
++					 GENMASK(9, 0), amp->i2sctrl1);
++		if (ret)
++			goto fault;
++	}
++	amp->faulted = false;
++	return 0;
++fault:
++	return aw88461_fault(amp, ret);
++}
++
++static int aw88461_start(struct aw88461 *amp)
++{
++	struct regmap *map = amp->aw_dev.regmap;
++	unsigned int status = 0, noise_gate, ready;
++	int ret;
++
++	if (amp->powered || !aw88461_active(amp))
++		return 0;
++	ret = aw88461_recover(amp);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(map, AW88461_SYSCTRL, AW88461_PWDN, 0);
++	if (ret)
++		goto stop;
++	amp->powered = true;
++	usleep_range(2000, 2200);
++	ret = regmap_read_poll_timeout(map, AW88461_SYSST, status,
++				       (status & AW88461_PLL_LOCK) == AW88461_PLL_LOCK ||
++				       !aw88461_active(amp),
++				       2000, 100000);
++	if (ret) {
++		dev_err(amp->aw_dev.dev, "PLL lock failed: %d, status %#x\n", ret, status);
++		goto stop;
++	}
++	if (!aw88461_active(amp))
++		return aw88461_stop(amp);
++	ret = regmap_update_bits(map, AW88461_SYSCTRL, AW88461_AMPPD, 0);
++	if (ret)
++		goto stop;
++	usleep_range(1000, 1200);
++	ret = regmap_read(map, AW88461_NGCTRL3, &noise_gate);
++	if (ret)
++		goto stop;
++	ready = AW88461_PLL_LOCK | AW88461_BOOST_READY;
++	if (!(noise_gate & AW88461_NOISE_GATE))
++		ready |= AW88461_SWITCHING;
++	ret = regmap_read_poll_timeout(map, AW88461_SYSST, status,
++				       (status & ready) == ready || !aw88461_active(amp),
++				       2000, 20000);
++	if (ret) {
++		dev_err(amp->aw_dev.dev, "amplifier ready failed: %d, status %#x\n", ret, status);
++		goto stop;
++	}
++	if (!aw88461_active(amp))
++		return aw88461_stop(amp);
++	if (status & AW88461_FAULTS) {
++		ret = -EIO;
++		goto stop;
++	}
++	ret = regmap_update_bits(map, AW88461_SYSCTRL, AW88461_TXEN,
++				 amp->profile_txen);
++	if (ret)
++		goto stop;
++	ret = regmap_update_bits(map, AW88461_SYSCTRL,
++				 AW88461_HMUTE | AW88461_ULS_HMUTE, 0);
++	if (ret)
++		goto stop;
++	ret = aw88461_fade(amp, 1023,
++			   min(amp->profile_volume + 1023 - amp->volume, 1023U), 100);
++	if (ret)
++		goto stop;
++	return 0;
++stop:
++	return aw88461_fault(amp, ret);
++}
++
++static int aw88461_write_profile(struct aw88461 *amp)
++{
++	struct regmap *map = amp->aw_dev.regmap;
++	struct aw_sec_data_desc *regs = amp->regs;
++	unsigned int i, address, value;
++	int ret;
++
++	ret = regmap_write(map, AW88461_ID, AW88461_SOFT_RESET);
++	if (ret)
++		return ret;
++	usleep_range(1000, 1200);
++	for (i = 0; i < regs->len; i += 4) {
++		address = get_unaligned_le16(regs->data + i);
++		value = get_unaligned_le16(regs->data + i + 2);
++		/* PID 2308 has no software VCALB register; ff is its sentinel. */
++		if (address == 0xff)
++			continue;
++		if (address == AW88461_SYSINTM)
++			value = 0xffff;
++		if (address == AW88461_SYSCTRL) {
++			amp->profile_txen = value & AW88461_TXEN;
++			value |= AW88461_PWDN | AW88461_AMPPD |
++				 AW88461_HMUTE | AW88461_ULS_HMUTE;
++			value &= ~AW88461_TXEN;
++		}
++		if (address == AW88461_SYSCTRL2) {
++			amp->profile_volume = value & AW88461_VOLUME;
++			value |= AW88461_VOLUME;
++		}
++		ret = regmap_write(map, address, value);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static int aw88461_load_profile(struct aw88461 *amp)
++{
++	struct aw_device *aw_dev = &amp->aw_dev;
++	const struct firmware *fw;
++	struct aw_container *cfg;
++	struct aw_sec_data_desc *regs = NULL;
++	const char *name;
++	unsigned int i, address, value;
++	int ret;
++
++	ret = device_property_read_string(aw_dev->dev, "firmware-name", &name);
++	if (ret)
++		return ret;
++	ret = request_firmware(&fw, name, aw_dev->dev);
++	if (ret)
++		return ret;
++	if (fw->size < sizeof(struct aw_cfg_hdr)) {
++		ret = -EINVAL;
++		goto release;
++	}
++	if (fw->size > INT_MAX) {
++		ret = -EFBIG;
++		goto release;
++	}
++	cfg = devm_kzalloc(aw_dev->dev, struct_size(cfg, data, fw->size), GFP_KERNEL);
++	if (!cfg) {
++		ret = -ENOMEM;
++		goto release;
++	}
++	cfg->len = fw->size;
++	memcpy(cfg->data, fw->data, fw->size);
++	ret = aw88395_dev_load_acf_check(aw_dev, cfg);
++	if (ret)
++		goto release;
++	ret = aw88395_dev_cfg_load(aw_dev, cfg);
++	if (ret)
++		goto release;
++	for (i = 0; i < aw_dev->prof_info.count; i++) {
++		struct aw_prof_desc *profile = &aw_dev->prof_info.prof_desc[i];
++
++		if (profile->id == AW88395_PROFILE_MUSIC) {
++			regs = &profile->sec_desc[AW88395_DATA_TYPE_REG];
++			break;
++		}
++	}
++	ret = -EINVAL;
++	if (!regs || !regs->len || regs->len % 4)
++		goto release;
++	/* Validate the entire section before writing any of its registers. */
++	for (i = 0; i < regs->len; i += 4) {
++		address = get_unaligned_le16(regs->data + i);
++		value = get_unaligned_le16(regs->data + i + 2);
++		if (address == 0xff && !value)
++			continue;
++		if (!((address >= 3 && address <= 0x1f) ||
++		      (address >= 0x30 && address <= 0x38) ||
++		      (address >= 0x3a && address <= 0x3f) ||
++		      (address >= 0x50 && address <= 0x6d)))
++			goto release;
++	}
++	/* The parser and cfg storage are devm-managed, not owned by fw. */
++	amp->regs = regs;
++	ret = aw88461_write_profile(amp);
++release:
++	release_firmware(fw);
++	return ret;
++}
++
++static int aw88461_hw_params(struct snd_pcm_substream *substream,
++			     struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
++{
++	struct aw88461 *amp = snd_soc_component_get_drvdata(dai->component);
++	unsigned int frame, width, i2sctrl1;
++	int ret;
++
++	if (params_rate(params) != 48000 || params_channels(params) != 2)
++		return -EINVAL;
++	switch (params_width(params)) {
++	case 16:
++		width = 0;
++		break;
++	case 24:
++		width = 2;
++		break;
++	case 32:
++		width = 3;
++		break;
++	default:
++		return -EINVAL;
++	}
++	frame = params_physical_width(params) == 16 ? 0 : 2;
++	i2sctrl1 = FIELD_PREP(GENMASK(7, 6), width) |
++		   FIELD_PREP(GENMASK(5, 4), frame) | 8;
++	guard(mutex)(&amp->lock);
++	/* hw_params precedes start and must not block a new playback attempt. */
++	ret = aw88461_recover(amp);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(amp->aw_dev.regmap, AW88461_I2SCTRL1,
++				 GENMASK(9, 0), i2sctrl1);
++	if (ret)
++		return aw88461_fault(amp, ret);
++	amp->i2sctrl1 = i2sctrl1;
++	amp->i2s_configured = true;
++	return 0;
++}
++
++static int aw88461_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) != SND_SOC_DAIFMT_I2S ||
++	    (fmt & SND_SOC_DAIFMT_INV_MASK) != SND_SOC_DAIFMT_NB_NF ||
++	    (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_BC_FC)
++		return -EINVAL;
++	return 0;
++}
++
++static int aw88461_trigger(struct snd_pcm_substream *substream, int cmd,
++			   struct snd_soc_dai *dai)
++{
++	struct aw88461 *amp = snd_soc_component_get_drvdata(dai->component);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		WRITE_ONCE(amp->running, true);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		WRITE_ONCE(amp->running, false);
++		break;
++	default:
++		return -EINVAL;
++	}
++	/* Trigger may be atomic; all I2C and power sequencing runs in work. */
++	schedule_work(&amp->start_work);
++	return 0;
++}
++
++static const struct snd_soc_dai_ops aw88461_dai_ops = {
++	.hw_params = aw88461_hw_params,
++	.set_fmt = aw88461_set_fmt,
++	.trigger = aw88461_trigger,
++};
++
++static struct snd_soc_dai_driver aw88461_dai = {
++	.name = "aw88461-aif",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE |
++			   SNDRV_PCM_FMTBIT_S32_LE,
++	},
++	.ops = &aw88461_dai_ops,
++};
++
++static int aw88461_volume_get(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *value)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct aw88461 *amp = snd_soc_component_get_drvdata(component);
++
++	guard(mutex)(&amp->lock);
++	value->value.integer.value[0] = amp->volume;
++	return 0;
++}
++
++static int aw88461_volume_put(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *value)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct aw88461 *amp = snd_soc_component_get_drvdata(component);
++	long volume = value->value.integer.value[0];
++	int ret;
++
++	if (volume < 0 || volume > 1023)
++		return -EINVAL;
++	guard(mutex)(&amp->lock);
++	if (amp->faulted)
++		return -EIO;
++	if (amp->volume == volume)
++		return 0;
++	if (amp->powered) {
++		ret = aw88461_set_volume(amp, amp->profile_volume + 1023 - volume);
++		if (ret)
++			return aw88461_fault(amp, ret);
++	}
++	amp->volume = volume;
++	return 1;
++}
++
++static const struct snd_kcontrol_new aw88461_controls[] = {
++	SOC_SINGLE_EXT("Playback Volume", SND_SOC_NOPM, 0, 1023, 0,
++		       aw88461_volume_get, aw88461_volume_put),
++};
++
++static int aw88461_event(struct snd_soc_dapm_widget *w,
++			 struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
++	struct aw88461 *amp = snd_soc_component_get_drvdata(component);
++
++	if (event == SND_SOC_DAPM_POST_PMU) {
++		/* The I2S source may not start its clocks until PCM trigger. */
++		WRITE_ONCE(amp->enabled, true);
++		schedule_work(&amp->start_work);
++		return 0;
++	}
++	WRITE_ONCE(amp->enabled, false);
++	cancel_work_sync(&amp->start_work);
++	guard(mutex)(&amp->lock);
++	return aw88461_stop(amp);
++}
++
++static void aw88461_start_work(struct work_struct *work)
++{
++	struct aw88461 *amp = container_of(work, struct aw88461, start_work);
++	int ret;
++
++	guard(mutex)(&amp->lock);
++	ret = aw88461_active(amp) ? aw88461_start(amp) : aw88461_stop(amp);
++	if (ret)
++		dev_err(amp->aw_dev.dev, "amplifier power transition failed: %d\n", ret);
++}
++
++static void aw88461_cancel_work(void *data)
++{
++	struct aw88461 *amp = data;
++
++	WRITE_ONCE(amp->enabled, false);
++	disable_work_sync(&amp->start_work);
++}
++
++static const struct snd_soc_dapm_widget aw88461_widgets[] = {
++	SND_SOC_DAPM_AIF_IN("AIFIN", "Playback", 0, SND_SOC_NOPM, 0, 0),
++	SND_SOC_DAPM_PGA_E("Amplifier", SND_SOC_NOPM, 0, 0, NULL, 0,
++			   aw88461_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
++	SND_SOC_DAPM_OUTPUT("OUT"),
++};
++
++static const struct snd_soc_dapm_route aw88461_routes[] = {
++	{ "Amplifier", NULL, "AIFIN" },
++	{ "OUT", NULL, "Amplifier" },
++};
++
++static const struct snd_soc_component_driver aw88461_component = {
++	.controls = aw88461_controls,
++	.num_controls = ARRAY_SIZE(aw88461_controls),
++	.dapm_widgets = aw88461_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(aw88461_widgets),
++	.dapm_routes = aw88461_routes,
++	.num_dapm_routes = ARRAY_SIZE(aw88461_routes),
++};
++
++static int aw88461_probe(struct i2c_client *client)
++{
++	struct aw88461 *amp;
++	unsigned int id;
++	int ret;
++
++	amp = devm_kzalloc(&client->dev, sizeof(*amp), GFP_KERNEL);
++	if (!amp)
++		return -ENOMEM;
++	amp->aw_dev.dev = &client->dev;
++	amp->aw_dev.i2c = client;
++	amp->aw_dev.chip_id = AW88461_CHIP_ID;
++	amp->aw_dev.prof_info.prof_type = AW88395_DEV_NONE_TYPE_ID;
++	ret = device_property_read_u32(&client->dev, "awinic,audio-channel", &amp->aw_dev.channel);
++	if (ret && device_property_present(&client->dev, "awinic,audio-channel"))
++		return ret;
++	mutex_init(&amp->lock);
++	INIT_WORK(&amp->start_work, aw88461_start_work);
++	i2c_set_clientdata(client, amp);
++	amp->aw_dev.regmap = devm_regmap_init_i2c(client, &aw88461_regmap_config);
++	if (IS_ERR(amp->aw_dev.regmap))
++		return PTR_ERR(amp->aw_dev.regmap);
++	amp->reset = devm_gpiod_get(&client->dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(amp->reset))
++		return dev_err_probe(&client->dev, PTR_ERR(amp->reset), "reset GPIO unavailable\n");
++	ret = devm_add_action_or_reset(&client->dev, aw88461_reset, amp);
++	if (ret)
++		return ret;
++	usleep_range(1000, 1200);
++	gpiod_set_value_cansleep(amp->reset, 0);
++	usleep_range(2000, 2500);
++	ret = regmap_read(amp->aw_dev.regmap, AW88461_ID, &id);
++	if (ret)
++		return ret;
++	if (id != AW88461_CHIP_ID)
++		return dev_err_probe(&client->dev, -ENODEV, "unexpected chip ID %#x\n", id);
++	ret = aw88461_load_profile(amp);
++	if (ret)
++		return dev_err_probe(&client->dev, ret, "amplifier profile load failed\n");
++	ret = devm_add_action_or_reset(&client->dev, aw88461_cancel_work, amp);
++	if (ret)
++		return ret;
++	return devm_snd_soc_register_component(&client->dev, &aw88461_component,
++					       &aw88461_dai, 1);
++}
++
++static void aw88461_shutdown(struct i2c_client *client)
++{
++	struct aw88461 *amp = i2c_get_clientdata(client);
++
++	aw88461_cancel_work(amp);
++	guard(mutex)(&amp->lock);
++	aw88461_reset(amp);
++}
++
++static const struct of_device_id aw88461_of_match[] = {
++	{ .compatible = "awinic,aw88461" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, aw88461_of_match);
++
++static struct i2c_driver aw88461_driver = {
++	.driver = {
++		.name = "aw88461",
++		.of_match_table = aw88461_of_match,
++	},
++	.probe = aw88461_probe,
++	.shutdown = aw88461_shutdown,
++};
++module_i2c_driver(aw88461_driver);
++
++MODULE_DESCRIPTION("Awinic AW88461 I2S amplifier driver");
++MODULE_LICENSE("GPL");
+-- 
+2.55.0
