@@ -1,0 +1,47 @@
+#!/bin/bash
+set -ex
+# Debian kernel hooks pass the kernel version as the first argument.
+# Fall back to the newest installed kernel when invoked manually without it,
+# so wildcard expansion never matches multiple kernel versions (see armbian/build#10108).
+version="$1"
+if [ -z "${version}" ]; then
+	version=$(ls -1 /boot/vmlinuz-*-sm8750* 2>/dev/null | sed 's|^/boot/vmlinuz-||' | sort -V | tail -n1)
+fi
+kernel="/boot/vmlinuz-${version}"
+ramdisk="/boot/initrd.img-${version}"
+if [ ! -f "${kernel}" ]; then
+	echo "Kernel image not found: ${kernel}" >&2
+	exit 1
+fi
+if [ ! -f "${ramdisk}" ]; then
+	echo "Ramdisk not found: ${ramdisk}" >&2
+	exit 1
+fi
+# This is a text environment, not shell code; values may contain unquoted spaces.
+abl_boot_partition_label="$(sed -n 's/^abl_boot_partition_label=//p' /boot/armbianEnv.txt)"
+extraargs="$(sed -n 's/^extraargs=//p' /boot/armbianEnv.txt)"
+if [ -z "$abl_boot_partition_label" ]; then
+	echo "ABL boot partition label is not configured" >&2
+	exit 1
+fi
+
+workdir="$(mktemp -d)"
+trap 'rm -rf -- "$workdir"' EXIT
+new_rootfs_image_uuid=$(sed -e 's/^.*root=UUID=//' -e 's/ .*$//' < /proc/cmdline)
+gzip -c "${kernel}" > "${workdir}/Image.gz"
+
+cat "${workdir}/Image.gz" "/usr/lib/linux-image-${version}/qcom/sm8750-lenovo-elden.dtb" > "${workdir}/Image.gz-dtb"
+
+/usr/bin/mkbootimg \
+        --kernel "${workdir}/Image.gz-dtb" \
+        --ramdisk "${ramdisk}" \
+        --base 0x0 \
+        --second_offset 0x00f00000 \
+        --cmdline "rootwait rw console=tty0 quiet clk_ignore_unused regulator_ignore_unused pd_ignore_unused root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot} ${extraargs}" \
+        --kernel_offset 0x8000 \
+        --ramdisk_offset 0x1000000 \
+        --tags_offset 0x100 \
+        --pagesize 4096 \
+        -o /boot/armbian-kernel.img
+echo "abl boot partition label is $abl_boot_partition_label"
+dd if=/boot/armbian-kernel.img "of=/dev/disk/by-partlabel/${abl_boot_partition_label}"
