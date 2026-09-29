@@ -332,30 +332,39 @@ function compile_uboot_target() {
 	return 0
 }
 
-# Report SPL/TPL size against CONFIG_SPL_MAX_SIZE / CONFIG_TPL_MAX_SIZE. Warn when close.
+# Report SPL/TPL size against CONFIG_*_MAX_SIZE and CONFIG_*_SIZE_LIMIT. Warn when close.
 function report_uboot_spl_size_usage() {
 	[[ -f .config ]] || return 0
-	declare -i warn_percent="${UBOOT_SPL_SIZE_WARN_PERCENT:-90}"
-	declare stage prefix max_size bin
+	declare -i warn_percent=90
+	[[ "${UBOOT_SPL_SIZE_WARN_PERCENT:-}" =~ ^[0-9]+$ ]] && warn_percent="$((10#${UBOOT_SPL_SIZE_WARN_PERCENT}))"
+	declare stage prefix kind value bin
 	declare -i size limit percent
 	for stage in SPL TPL; do
 		prefix="${stage,,}"
-		max_size="$(sed -n "s/^CONFIG_${stage}_MAX_SIZE=//p" .config)"
-		[[ -n "${max_size}" ]] || continue
-		limit=$((max_size))
-		((limit > 0)) || continue
-		# The limit applies to the image without the device tree
-		for bin in "${prefix}/u-boot-${prefix}-nodtb.bin" "${prefix}/u-boot-${prefix}.bin"; do
-			[[ -f "${bin}" ]] && break
+		# MAX_SIZE: the linker checks the image without the device tree.
+		# SIZE_LIMIT: the Makefile checks the final .bin, device tree included.
+		for kind in MAX_SIZE SIZE_LIMIT; do
+			value="$(sed -n "s/^CONFIG_${stage}_${kind}=//p" .config)"
+			[[ "${value}" =~ ^(0[xX][0-9a-fA-F]+|[0-9]+)$ ]] || continue
+			limit=$((value))
+			# The Makefile subtracts reserved space from the SPL limit; this tool prints the result.
+			if [[ "${stage}_${kind}" == SPL_SIZE_LIMIT && -x tools/spl_size_limit ]]; then
+				limit="$(tools/spl_size_limit)"
+			fi
+			((limit > 0)) || continue
+			bin="${prefix}/u-boot-${prefix}.bin"
+			if [[ "${kind}" == MAX_SIZE && -f "${prefix}/u-boot-${prefix}-nodtb.bin" ]]; then
+				bin="${prefix}/u-boot-${prefix}-nodtb.bin"
+			fi
+			[[ -f "${bin}" ]] || continue
+			size=$(stat -c %s "${bin}")
+			percent=$((size * 100 / limit))
+			if ((percent >= warn_percent)); then
+				display_alert "${uboot_prefix:-}u-boot ${stage} size close to CONFIG_${stage}_${kind}" "${size} / ${limit} bytes (${percent}%)" "warn"
+			else
+				display_alert "${uboot_prefix:-}u-boot ${stage} size vs CONFIG_${stage}_${kind}" "${size} / ${limit} bytes (${percent}%)" "info"
+			fi
 		done
-		[[ -f "${bin}" ]] || continue
-		size=$(stat -c %s "${bin}")
-		percent=$((size * 100 / limit))
-		if ((percent >= warn_percent)); then
-			display_alert "${uboot_prefix:-}u-boot ${stage} size close to limit" "${size} / ${limit} bytes (${percent}%)" "warn"
-		else
-			display_alert "${uboot_prefix:-}u-boot ${stage} size" "${size} / ${limit} bytes (${percent}%)" "info"
-		fi
 	done
 	return 0
 }
