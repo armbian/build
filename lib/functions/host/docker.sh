@@ -582,6 +582,10 @@ function docker_cli_prepare_launch() {
 		"--env" "NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
 		"--env" "APT_PROXY_ADDR=${APT_PROXY_ADDR:-}"
 		"--env" "GITPROXY_ADDRESS=${GITPROXY_ADDRESS:-}"
+		"--env" "OCI_PROXY=${OCI_PROXY:-}"
+		"--env" "OCI_SERVER=${OCI_SERVER:-}"
+		"--env" "OCI_PATH=${OCI_PATH:-}"
+		"--env" "OCI_GIT_PATH=${OCI_GIT_PATH:-}"
 	)
 
 	# Pass in host DNS server so container can resolve hostnames on proxy
