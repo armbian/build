@@ -16,25 +16,19 @@ IMX_FIRMWARE="${IMX_FIRMWARE:-"firmware-imx-8.26-d4c33ab"}"
 # ATF_UART_BASE musst set in board
 # MAP = target_make,target_patchdir,target_files
 # use xxx:xxx to rename files after build
-ATF_TARGET_MAP="PLAT=${ATF_PLAT} IMX_BOOT_UART_BASE=${ATF_UART_BASE} bl31;;build/imx8mp/release/bl31.bin"
+ATF_TARGET_MAP="PLAT=${ATF_PLAT} IMX_BOOT_UART_BASE=${ATF_UART_BASE} bl31;;build/${ATF_PLAT}/release/bl31.bin"
 UBOOT_TARGET_MAP="flash.bin;;flash.bin"
 
-# linux releated
-case $BOARD in
+# linux related
+LINUXCONFIG="linux-imx8m-${BRANCH}"
+case $BRANCH in
 
-	mba8mpxl* | tq-smarc2-*)
-		LINUXCONFIG='linux-tq-imx8m-'$BRANCH # one config for "tq arm modules"
-		case $BRANCH in
+	current) # mainline stable kernel
+		KERNEL_MAJOR_MINOR="6.18"
+		;;
 
-			current) # mainline stable kernel
-				KERNEL_MAJOR_MINOR="6.18"
-				;;
-
-			edge) # linux 7.1 RC
-				KERNEL_MAJOR_MINOR="7.1"
-				;;
-
-		esac
+	edge) # Linux 7.1 RC
+		KERNEL_MAJOR_MINOR="7.1"
 		;;
 
 esac
