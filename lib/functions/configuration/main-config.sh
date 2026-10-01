@@ -442,15 +442,10 @@ function do_extra_configuration() {
 	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
-	# @TODO this is _very legacy_ and should be removed. Old-time users might have a lib.config lying around and it will mess up things.
-	# For (late) user override.
-	# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
-	#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
+	# lib.config was soft-deprecated with the next-gen framework. Its documentation was removed over a year ago.
+	# @TODO: remove this check end of 2027.
 	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
-		display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
-		# shellcheck source=/dev/null
-		source "$USERPATCHES_PATH"/lib.config
-		track_general_config_variables "after sourcing lib.config"
+		exit_with_error "lib.config is not supported anymore." "Remove ${USERPATCHES_PATH}/lib.config. Use https://docs.armbian.com/build-framework/user-configurations/ instead."
 	fi
 
 	# Prepare array for extensions to fill in.
@@ -460,8 +455,6 @@ function do_extra_configuration() {
 	call_extension_method "user_config" <<- 'USER_CONFIG'
 		*Invoke function with user override*
 		Allows for overriding configuration values set anywhere else.
-		It is called after sourcing the `lib.config` file if it exists,
-		but before assembling any package lists.
 	USER_CONFIG
 	track_general_config_variables "after user_config hooks"
 
