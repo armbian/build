@@ -367,6 +367,14 @@ function fetch_from_repo() {
 					surl=$(git config -f .gitmodules --get "submodule.${name}.url")
 					sref=$(git config -f .gitmodules --get "submodule.${name}.branch" || true)
 
+					# Some build hosts cannot reach trustedfirmware.org. Use its official
+					# read-only GitHub mirrors for the shared libraries (TF-A submodules).
+					case "${surl%/}" in
+						https://*.trustedfirmware.org/shared/transfer-list-library) surl="https://github.com/TF-Shared/transfer-list-library" ;;
+						https://*.trustedfirmware.org/shared/libEventLog) surl="https://github.com/TF-Shared/event-log-library" ;;
+						https://*.trustedfirmware.org/shared/libTPM) surl="https://github.com/TF-Shared/libTPM" ;;
+					esac
+
 					if [[ -n $sref ]]; then
 						sref="branch:$sref"
 					else
