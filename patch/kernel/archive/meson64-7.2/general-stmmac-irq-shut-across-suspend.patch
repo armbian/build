@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sun, 20 Sep 2026 21:30:27 +0000
+Subject: net: stmmac: shut the MAC interrupt while resume resets the MAC
+
+Resume resets the MAC, and every core interrupt stays unmasked until the
+mask is written again: a link change in that window storms the CPU with
+interrupts nobody has asked for yet. Shut the line for as long as that
+takes, from the start of resume until the hardware is set up again.
+
+The line is requested with IRQF_SHARED, so disabling it stops every
+handler on it, not only this one; a line closed for the whole sleep would
+silence a co-owner that wakes the system. Closing it in resume alone also
+covers a MAC that owns a wake source itself: such a MAC needs the line
+alive while asleep, and the same reset waits for it on the way back.
+
+Resume gives the line back on every path out, not just the successful
+one: the PM core clears the suspended flag whatever the callback
+returns, so a resume that failed early would otherwise leave the
+interrupt disabled one level deeper each cycle, and the interface would
+run without interrupts. A local flag carries the decision from the
+disable to the matching enable, so the two cannot disagree about an
+interface that stops in between.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c | 27 +++++++---
+ 1 file changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -8302,15 +8302,25 @@ int stmmac_resume(struct device *dev)
+ 	struct net_device *ndev = dev_get_drvdata(dev);
+ 	struct stmmac_priv *priv = netdev_priv(ndev);
+ 	int ret;
++	bool irq_off;
++
++	/* Resume resets the MAC, leaving every core interrupt unmasked until
++	 * the mask is written again: a link change in that window would storm.
++	 */
++	irq_off = netif_running(ndev);
++	if (irq_off)
++		disable_irq(ndev->irq);
+ 
+ 	if (priv->plat->resume) {
+ 		ret = priv->plat->resume(dev, priv->plat->bsp_priv);
+ 		if (ret)
+-			return ret;
++			goto out;
+ 	}
+ 
+-	if (!netif_running(ndev))
+-		return 0;
++	if (!netif_running(ndev)) {
++		ret = 0;
++		goto out;
++	}
+ 
+ 	/* Power Down bit, into the PM register, is cleared
+ 	 * automatically as soon as a magic packet or a Wake-up frame
+@@ -8333,7 +8343,7 @@ int stmmac_resume(struct device *dev)
+ 	if (!(priv->plat->flags & STMMAC_FLAG_SERDES_UP_AFTER_PHY_LINKUP)) {
+ 		ret = stmmac_legacy_serdes_power_up(priv);
+ 		if (ret < 0)
+-			return ret;
++			goto out;
+ 	}
+ 
+ 	rtnl_lock();
+@@ -8356,7 +8366,7 @@ int stmmac_resume(struct device *dev)
+ 		stmmac_legacy_serdes_power_down(priv);
+ 		mutex_unlock(&priv->lock);
+ 		rtnl_unlock();
+-		return ret;
++		goto out;
+ 	}
+ 
+ 	stmmac_init_timestamping(priv);
+@@ -8382,7 +8392,12 @@ int stmmac_resume(struct device *dev)
+ 
+ 	netif_device_attach(ndev);
+ 
+-	return 0;
++	ret = 0;
++out:
++	if (irq_off)
++		enable_irq(ndev->irq);
++
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(stmmac_resume);
+ 
+-- 
+Armbian
+

@@ -31,8 +31,6 @@ compile_atf() {
 
 	display_alert "Compiling ATF" "" "info"
 
-	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env "${ATF_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
-
 	local target_make target_patchdir target_files
 	target_make=$(cut -d';' -f1 <<< "${ATF_TARGET_MAP}")
 	target_patchdir=$(cut -d';' -f2 <<< "${ATF_TARGET_MAP}")
@@ -45,6 +43,15 @@ compile_atf() {
 		userpatch_create "atf"
 		return 0
 	fi
+
+	call_extension_method "atf_make_config" <<- 'ATF_MAKE_CONFIG'
+		*Hook to customize the ATF (TF-A) build environment*
+		Called before the compiler checks and make for ATF. make inherits the
+		build environment: export or unset variables to change it, or set
+		CCACHE / ATF_COMPILER, from which CC and CROSS_COMPILE are built.
+	ATF_MAKE_CONFIG
+
+	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env "${ATF_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
 
 	# - "--no-warn-rwx-segment" is *required* for binutils 2.39 - see https://developer.trustedfirmware.org/T996
 	#   - but *not supported* by 2.38, brilliant...
@@ -83,7 +90,7 @@ compile_atf() {
 
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
-	run_host_command_logged "CROSS_COMPILE='ccache ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='ccache ${ATF_COMPILER}gcc'" \
+	run_host_command_logged "CROSS_COMPILE='${CCACHE:+${CCACHE} }${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='${CCACHE:+${CCACHE} }${ATF_COMPILER}gcc'" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
 		make ENABLE_BACKTRACE="0" LOG_LEVEL="${ATF_LOG_LEVEL:-40}" BUILD_STRING="armbian" $target_make "${CTHREADS}"

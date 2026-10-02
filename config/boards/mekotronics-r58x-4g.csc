@@ -12,8 +12,8 @@ declare -g BOOT_SOC="rk3588"
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does not have a UEFI_EDK2_BOARD_ID
 
-if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
-	display_alert "$BOARD" "vendor/legacy configuration applied for $BOARD / $BRANCH" "info"
+if [[ "${BRANCH}" == "vendor" ]]; then
+	display_alert "$BOARD" "vendor configuration applied for $BOARD / $BRANCH" "info"
 	declare -g BOOTCONFIG="mekotronics_r58x-rk3588_defconfig" # vendor u-boot; with NVMe and a DTS
 	# Source shared vendor configuration; it does BOOT_SCENARIO="spl-blobs" & hciattach - common to all vendor-kernel Meko's
 	source "${SRC}/config/sources/vendors/mekotronics/mekotronics-rk3588.conf.sh"

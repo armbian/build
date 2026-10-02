@@ -20,7 +20,7 @@ function post_family_config__vendor_uboot_mekotronics() {
 	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
 }
 
-# Conditional hook to allow experimenting with this against legacy/vendor branches
+# Conditional hook to allow experimenting with this against vendor branches
 if [[ "${MEKO_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]]; then
 	# Mainline u-boot with generic rk3588 support; no pci/usb/ethernet but should work SD/eMMC and UMS/Gadget mode
 

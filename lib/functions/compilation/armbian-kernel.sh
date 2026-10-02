@@ -250,7 +250,6 @@ function armbian_kernel_config__select_nftables() {
 	opts_y+=("NETFILTER_NETLINK_GLUE_CT")       # Netfilter netlink glue for conntrack
 	opts_m+=("NETFILTER_NETLINK_HOOK")          # Netfilter base hook dump support
 	opts_m+=("NETFILTER_NETLINK_LOG")           # Netfilter LOG over NFNETLINK interface
-	opts_m+=("NETFILTER_NETLINK")               # Netfilter netlink interface
 	opts_m+=("NETFILTER_NETLINK_OSF")           # Netfilter OSF over NFNETLINK interface
 	opts_m+=("NETFILTER_NETLINK_QUEUE")         # Netfilter NFQUEUE over NFNETLINK interface
 	opts_m+=("NETFILTER_SYNPROXY")              # TCP SYN proxy support

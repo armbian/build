@@ -37,6 +37,10 @@ index_from_zero = f"index {'0' * 12}..{'1' * 12}"
 index_not_zero = f"index {'1' * 12}..{'2' * 12}"
 index_rewrite_regexp: re.Pattern = re.compile(r"index ([0-9a-f]{12})\.\.([0-9a-f]{12})")
 
+# What follows the description separator in a patch: optional diffstat lines (they start
+# with a space) and blank lines, then a file diff (a git header, or a "--- "/"+++ " pair).
+patch_start_regexp: re.Pattern = re.compile(r"(?:[ ][^\n]*\n|\n)*(?:diff --git |--- \S[^\n]*\n\+\+\+ )")
+
 
 # Callback used for rewriting index lines.
 def rewrite_indexes_callback(x: re.Match):  # Preserve zero from's for new file creations.
@@ -245,8 +249,14 @@ class PatchFileInDir:
 		separator = "\n---\n"
 		# check if the separator is in the patch, if so, split
 		if separator in full_message_text:
-			# find the _last_ occurrence of the separator, and split two chunks from that position
+			# Split at the last separator that the patch itself follows, so a footer after the
+			# diff (b4 sends "---" / base-commit / change-id) stays out of it; else at the last one.
 			separator_pos = full_message_text.rfind(separator)
+			candidate_pos = separator_pos
+			while candidate_pos != -1 and not patch_start_regexp.match(full_message_text, candidate_pos + len(separator)):
+				candidate_pos = full_message_text.rfind(separator, 0, candidate_pos)
+			if candidate_pos != -1:
+				separator_pos = candidate_pos
 			desc = full_message_text[:separator_pos]
 			patch = full_message_text[separator_pos + len(separator):]
 			return desc, patch

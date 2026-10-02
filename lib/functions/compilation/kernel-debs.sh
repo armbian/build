@@ -345,7 +345,7 @@ function kernel_package_callback_linux_image() {
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 					if is_boot_dev_vfat; then
-						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
+						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/$image_name.tmp /boot/uImage
 					fi
 				HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 			fi
@@ -355,8 +355,22 @@ function kernel_package_callback_linux_image() {
 				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
 					touch /boot/.next
 					if is_boot_dev_vfat; then
-						echo "Armbian: FAT32 /boot: move last-installed kernel to '$image_name'..."
-						mv -v /${installed_image_path} /boot/${image_name}
+						# Copy, not move: the postinst is re-run after a failing
+						# postinst.d hook, and a move leaves nothing for the retry.
+						# Temp + sync + rename so an interrupted write can't leave a torn image.
+						# Existing installs keep their old, smaller /boot: if the copy does not
+						# fit, fall back to the move, which is a rename within /boot.
+						if [ -f /${installed_image_path} ]; then
+							echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
+							if ! { cp -v /${installed_image_path} /boot/${image_name}.tmp && sync && mv -f /boot/${image_name}.tmp /boot/${image_name}; }; then
+								rm -f /boot/${image_name}.tmp
+								echo "Armbian: FAT32 /boot: no room to copy, moving kernel to '$image_name' instead..."
+								mv -v /${installed_image_path} /boot/${image_name}
+							fi
+						elif [ ! -f /boot/${image_name} ]; then
+							echo "Armbian: FAT32 /boot: neither /${installed_image_path} nor /boot/${image_name} exists" >&2
+							exit 1
+						fi
 					else
 						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 						ln -sfv $(basename "${installed_image_path}") /boot/$image_name
@@ -585,7 +599,7 @@ function kernel_package_callback_linux_headers() {
 		Architecture: ${ARCH}
 		Priority: optional
 		Provides: linux-headers (= ${kernel_version}), linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole | dwarves
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev, pahole | dwarves, python3-minimal
 		Description: Armbian Linux $BRANCH headers ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
@@ -651,6 +665,24 @@ function kernel_package_callback_linux_headers() {
 				rm -f include/generated/.armbian-build.tar.gz
 			fi
 		EOT_POSTINST_FINISH
+
+		# Now that the header tree is compiled, run the same header hooks Debian runs
+		# from its linux-headers postinst. dkms ships /etc/kernel/header_postinst.d/dkms,
+		# which (re)builds DKMS modules for this kernel version. This is the safety net
+		# that makes the linux-image / linux-headers configure ORDER irrelevant: if the
+		# image is configured first (e.g. in a single apt transaction), its DKMS
+		# autoinstall runs with no headers present and fails; building here, when the
+		# headers land, completes the module on the first pass. Without this hook Armbian
+		# only ever built DKMS from the linux-image postinst, so a transaction that
+		# configured the image before its headers left the module unbuilt -- and,
+		# pre-#10766, could abort the image postinst before the boot-symlink relink and
+		# leave the board unbootable. Non-fatal: a broken out-of-tree module must not
+		# stop the headers package from installing.
+		cat <<- EOT_POSTINST_HEADER_HOOKS
+			if [ -d /etc/kernel/header_postinst.d ]; then
+				DEB_MAINT_PARAMS="\$*" run-parts --arg="${kernel_version_family}" /etc/kernel/header_postinst.d || true
+			fi
+		EOT_POSTINST_HEADER_HOOKS
 	)
 }
 

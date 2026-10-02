@@ -10,11 +10,7 @@
 function obtain_and_check_host_release_and_arch() {
 
 	obtain_hostrelease_only
-
-	# obtain the host arch, from dpkg
-	declare -g HOSTARCH
-	HOSTARCH="$(dpkg --print-architecture)"
-	display_alert "Build host architecture" "${HOSTARCH:-(unknown)}" "info"
+	obtain_hostarch_only
 
 	case "${HOSTARCH}" in
 		amd64 | arm64) ;;          # officially supported
@@ -41,6 +37,13 @@ function obtain_and_check_host_release_and_arch() {
 			exit_with_error "Unsupported build system: '${HOSTRELEASE:-(unknown)}'"
 		fi
 	fi
+}
+
+function obtain_hostarch_only() {
+	# obtain the host arch, from dpkg
+	declare -g HOSTARCH
+	HOSTARCH="$(dpkg --print-architecture)"
+	display_alert "Build host architecture" "${HOSTARCH:-(unknown)}" "info"
 }
 
 function obtain_hostrelease_only() {

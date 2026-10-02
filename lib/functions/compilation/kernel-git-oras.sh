@@ -138,7 +138,7 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 	# GIT_ORAS_TARBALLS_SHALLOW_BASE_REF points the premade-git-tree pulls at a different registry/namespace;
 	# the same variable serves u-boot. It selects a mirror, not content, so it is deliberately
 	# NOT part of any artifact version hash.
-	declare base_oras_ref="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:-"${GHCR_SOURCE}/armbian/shallow"}"
+	declare base_oras_ref="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:?}" # set in main-config.sh from OCI_SERVER/OCI_GIT_PATH
 	declare estimated_dl_size_mib=0 benefits="" cons=""
 	case "${decision}" in
 		shallow)

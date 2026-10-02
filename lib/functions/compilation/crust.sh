@@ -31,8 +31,6 @@ compile_crust() {
 
 	display_alert "Compiling Crust" "" "info"
 
-	display_alert "Compiler version" "${CRUST_COMPILER}gcc $(eval env "${CRUST_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
-
 	local target_make target_patchdir target_files
 	target_make=$(cut -d';' -f1 <<< "${CRUST_TARGET_MAP}")
 	target_patchdir=$(cut -d';' -f2 <<< "${CRUST_TARGET_MAP}")
@@ -46,17 +44,27 @@ compile_crust() {
 		return 0
 	fi
 
-	declare binutils_version binutils_flags_crust=""
-	binutils_version=$(env or1k-elf-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
+	call_extension_method "crust_make_config" <<- 'CRUST_MAKE_CONFIG'
+		*Hook to customize the Crust build environment*
+		Called before the compiler checks and make for Crust (defconfig, then
+		the target). make inherits the build environment: export or unset
+		variables to change it, or set CCACHE / CRUST_COMPILER, from which
+		CROSS_COMPILE is built.
+	CRUST_MAKE_CONFIG
+
+	display_alert "Compiler version" "${CRUST_COMPILER}gcc $(eval env "${CRUST_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
+
+	declare binutils_version
+	binutils_version=$(env "${CRUST_COMPILER}ld.bfd" --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
 	display_alert "Binutils version for Crust" "${binutils_version}" "info"
 
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
-		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
+		make ${CRUSTCONFIG} "${CTHREADS}" "CROSS_COMPILE='${CCACHE:+${CCACHE} }${CRUST_COMPILER}'"
 
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
-		make $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $CRUST_COMPILER'"
+		make $target_make "${CTHREADS}" "CROSS_COMPILE='${CCACHE:+${CCACHE} }${CRUST_COMPILER}'"
 
 	# @TODO: severely missing logging
 	[[ $(type -t crust_custom_postprocess) == function ]] && crust_custom_postprocess 2>&1
