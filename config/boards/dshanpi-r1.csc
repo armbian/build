@@ -23,6 +23,18 @@ BOARD_FIRMWARE_INSTALL="-full"
 # The R1 has a soldered AP6256.
 # The R1+ routes the same wiring to the M.2 E-key slot.
 # PCIe cards in that slot leave the SDIO wiring unused.
+# Use overlays=disable-pcie when both M.2 slots are empty.
+# The overlay also disables any card in the E-key slot.
+# An unused mainline PCIe PHY draws about 0.6 W.
+# The overlay exists on current and edge kernels only.
+
+function post_family_config__dshanpi-r1_overlay_prefix() {
+	# The rk35xx family config sets OVERLAY_PREFIX to rk35xx.
+	# The board prefix hides the overlays of other RK3568 boards.
+	if [[ $BRANCH == current || $BRANCH == edge ]]; then
+		declare -g OVERLAY_PREFIX="rockchip-rk3568-dshanpi-r1"
+	fi
+}
 
 # Put the serial console after HDMI tty1.
 # /dev/console then stays on the debug UART.
