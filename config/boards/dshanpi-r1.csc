@@ -5,13 +5,24 @@ BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 INTRODUCED="2024"
 BOOTCONFIG="dshanpi-r1-rk3568_defconfig"
-KERNEL_TARGET="vendor"
-KERNEL_TEST_TARGET="vendor"
+KERNEL_TARGET="current,edge,vendor"
+KERNEL_TEST_TARGET="current,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3568-dshanpi-r1.dtb"
 BOOT_SCENARIO="binman"
 IMAGE_PARTITION_TABLE="gpt"
+# vdd_cpu is a fixed 0.9 V rail.
+# The CPU OPPs stop at 1.104 GHz.
+CPUMAX="1104000"
+# The R1+ M.2 E-key slot takes any WiFi card.
+# Ship the full linux-firmware set.
+BOARD_FIRMWARE_INSTALL="-full"
+
+# The DTS enables WiFi and BT on SDMMC2 and UART8.
+# The R1 has a soldered AP6256.
+# The R1+ routes the same wiring to the M.2 E-key slot.
+# PCIe cards in that slot leave the SDIO wiring unused.
 
 function post_family_tweaks__dshanpi-r1_serial_console_last() {
 	# Put the serial console after HDMI tty1.
