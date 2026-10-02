@@ -13,6 +13,19 @@ BOOT_FDT_FILE="rockchip/rk3568-dshanpi-r1.dtb"
 BOOT_SCENARIO="binman"
 IMAGE_PARTITION_TABLE="gpt"
 
+function post_family_tweaks__dshanpi-r1_serial_console_last() {
+	# Put the serial console after HDMI tty1.
+	# /dev/console then stays on the debug UART.
+	local serial_console="ttyS2,1500000"
+	[[ $BRANCH == legacy || $BRANCH == vendor ]] && serial_console="ttyFIQ0,1500000"
+	display_alert "$BOARD" "Putting console=${serial_console%%,*} last in boot.cmd cmdline" "info"
+	if ! grep -qF 'setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"' "${SDCARD}/boot/boot.cmd"; then
+		exit_with_error "dshanpi-r1: boot.cmd console template changed; update the sed in post_family_tweaks__dshanpi-r1_serial_console_last"
+	fi
+	sed -i "s/setenv consoleargs \"console=ttyS2,1500000 \${consoleargs}\"/setenv consoleargs \"\${consoleargs} console=${serial_console}\"/" \
+		"${SDCARD}/boot/boot.cmd"
+}
+
 function post_family_config__dshanpi-r1_use_mainline_uboot() {
 	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
 	declare -g BOOTCONFIG="dshanpi-r1-rk3568_defconfig"
