@@ -518,7 +518,11 @@ function armbian_kernel_config__enable_smb_cifs() {
 	opts_y+=("CIFS_POSIX")          # POSIX extensions
 	opts_y+=("CIFS_UPCALL")         # Kerberos through cifs.upcall
 	opts_y+=("CIFS_DFS_UPCALL")     # DFS referrals
-	opts_m+=("SMB_SERVER")          # ksmbd, in-kernel SMB3 server
+
+	# ksmbd does not exist before kernel 5.15.
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 5.15; then
+		opts_m+=("SMB_SERVER") # ksmbd, in-kernel SMB3 server
+	fi
 }
 
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
