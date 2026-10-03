@@ -33,30 +33,41 @@ if [[ ! -f "${src}/Makefile" ]]; then
 	mkdir -p "${src}"
 	url="https://cdn.kernel.org/pub/linux/kernel/v${version%%.*}.x/linux-${version}.tar.xz"
 	if ! curl -fsSL "${url}" | tar -xJ --strip-components=1 -C "${src}"; then
-		# Not released yet (rc): use mainline
+		# Not released yet: use the latest rc tag of this version, never another version
 		rm -rf "${src}"
-		git clone -q --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git "${src}"
+		mainline="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+		tag="$(git ls-remote --tags --refs "${mainline}" "v${version}-rc*" | sed 's|.*refs/tags/||' | sort -V | tail -n 1)"
+		[[ -n "${tag}" ]] || {
+			echo "No source for linux-${version}" >&2
+			exit 1
+		}
+		git clone -q --depth 1 --branch "${tag}" "${mainline}" "${src}"
 	fi
 fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
-grep -E '^CONFIG_[A-Za-z0-9_]+=' "${in}" | sort -u > "${work}/wanted"
+grep -E '^(CONFIG_[A-Za-z0-9_]+=|# CONFIG_[A-Za-z0-9_]+ is not set$)' "${in}" | sort -u > "${work}/wanted"
+wanted="$(wc -l < "${work}/wanted")"
 
-best="" best_kept=-1
+# Pick the architecture that keeps the most explicit settings. Require a clear
+# winner that keeps at least 90%, else the checker would assess another architecture.
+best="" best_kept=-1 second_kept=-1
 for arch in arm64 arm x86 riscv loongarch; do
 	mkdir -p "${work}/${arch}"
 	cp "${in}" "${work}/${arch}/.config"
 	make -s -C "${src}" O="${work}/${arch}" ARCH="${arch}" olddefconfig > /dev/null 2>&1 || continue
 	kept="$(grep -cxFf "${work}/wanted" "${work}/${arch}/.config" || true)"
 	if ((kept > best_kept)); then
-		best="${arch}" best_kept="${kept}"
+		second_kept="${best_kept}" best="${arch}" best_kept="${kept}"
+	elif ((kept > second_kept)); then
+		second_kept="${kept}"
 	fi
 done
 
-[[ -n "${best}" ]] || {
-	echo "olddefconfig failed for ${in}" >&2
+if [[ -z "${best}" ]] || ((best_kept * 10 < wanted * 9 || best_kept == second_kept)); then
+	echo "${in}: cannot identify the architecture (best ${best:-none} kept ${best_kept}/${wanted})" >&2
 	exit 1
-}
-echo "${in}: linux-${version}, ARCH=${best}, kept ${best_kept}/$(wc -l < "${work}/wanted") options" >&2
+fi
+echo "${in}: linux-${version}, ARCH=${best}, kept ${best_kept}/${wanted} settings" >&2
 cp "${work}/${best}/.config" "${out}"
