@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Elias Bakken <elias@iagent.no>
+Date: Sun, 27 Sep 2026 16:48:21 +0200
+Subject: [PATCH] phy: sun4i-usb: do not assert the phy reset on exit
+
+Asserting the USB phy reset in sun4i_usb_phy_exit() disturbs the display
+output timing during the u-boot -> Linux handover. On a Recore A7 driving a
+Manga Screen 2 (720x1280@57Hz, TC358870 HDMI->DSI bridge) the panel loses
+HDMI lock roughly 40ms before "Starting kernel", which the user sees as a
+flicker and sometimes a blank or stale image.
+
+The panel reports "(Input side) HV counter change", "DE size and position
+change" and "(Output side) H counter change", with no TMDS-amplitude, no
+DDC-power and no PHY-PLL bits: the signal and its clock are intact and only
+the output timing moves. Nothing in Linux reprograms the display afterwards
+because the framebuffer is handed to simpledrm, so the disturbance is not
+masked and the panel has to re-lock.
+
+Isolated by bracketing each step of the teardown with 2s stalls: in 2 of 3
+boots the panel reacted inside the ~3ms window where reset_assert() runs,
+while disable_interrupts(), passby-off, clk_disable and the identical
+reset_assert() on phy0 were silent across every boot. phy0 is the idle OTG
+phy; phy1 serves the populated bus, which is why only phy1 shows it.
+
+Dropping the reset is safe. usb_stop() has already removed the EHCI/OHCI
+controllers by this point, and halting them is what stops OHCI busmastering
+into SDRAM - the reason usb_stop() exists. The reset contributes nothing to
+that, and Linux re-initialises the phy on probe regardless.
+
+Measured on a Recore A7: 9 of 11 boots disturbed before, 0 of 12 after, with
+no change in USB device enumeration or ehci/ohci errors.
+
+Signed-off-by: Elias Bakken <elias@iagent.no>
+---
+ drivers/phy/allwinner/phy-sun4i-usb.c | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 3acffb40..2d182578 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -357,13 +357,6 @@ static int sun4i_usb_phy_exit(struct phy *phy)
+ 		return ret;
+ 	}
+ 
+-	ret = reset_assert(&usb_phy->resets);
+-	if (ret) {
+-		dev_err(phy->dev, "failed to assert usb_%ldreset reset\n",
+-			phy->id);
+-		return ret;
+-	}
+-
+ 	return 0;
+ }
+ 
+-- 
+2.47.3
+
