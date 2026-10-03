@@ -8,17 +8,25 @@ Without this driver the Generic PHY does not program the clock-mode
 registers, so the PHY never drives the RGMII RX clock and
 sun8i_dwmac_soft_reset() times out with "Failed to reset the dma".
 
-Also call phy_init_hw() before stmmac_hw_setup() on open/resume so the
-Maxio config_init has run even if the PHY was suspended.
+Also call phy_init_hw() before stmmac_hw_setup() in __stmmac_open() and
+stmmac_resume(), so the Maxio config_init has run even if the PHY was
+suspended. The Maxio resume callbacks issue BMCR_RESET, which drops the
+vendor clock configuration, so config_init() has to run again after
+phylink_prepare_resume().
+
+Remaining review fixes: make the file-local helpers static, never write
+a negative page number back to MAXIO_PAGE_SELECT, propagate
+config_init() failures as -EIO instead of always returning 0, and use
+msleep() rather than mdelay() in probe().
 
 Ported from rockchip64 general-drv-net-phy-Add-maxio-phys-driver.patch
 https://github.com/zuyih/linux-cubie
 ---
- drivers/net/ethernet/stmicro/stmmac/stmmac_main.c |  19 +
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c |  36 +
  drivers/net/phy/Kconfig                           |   5 +
  drivers/net/phy/Makefile                          |   1 +
- drivers/net/phy/maxio.c                           | 436 +
- 4 files changed, 461 insertions(+)
+ drivers/net/phy/maxio.c                           | 465 +
+ 4 files changed, 507 insertions(+)
  create mode 100644 drivers/net/phy/maxio.c
 
 diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
@@ -57,6 +65,30 @@ diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/eth
  
  	stmmac_reset_queues_param(priv);
  
+@@ -7975,6 +7975,23 @@ int stmmac_resume(struct device *dev)
+ 	 */
+ 	phylink_prepare_resume(priv->phylink);
+ 
++	/*
++	 * The Maxio resume callbacks issue BMCR_RESET, which drops the
++	 * vendor clock configuration that provides the RX clock. Run
++	 * the vendor config_init again before the DMA reset below,
++	 * otherwise the controller can fail with "DMA engine
++	 * initialization failed" after resume. Same as in __stmmac_open().
++	 */
++	if (ndev->phydev) {
++		if (ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q2C_ID ||
++		    ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q3C_ID) {
++			int pret = phy_init_hw(ndev->phydev);
++			if (pret)
++				netdev_err(ndev, "PHY initialization failed: %d\n",
++					   pret);
++		}
++	}
++
+ 	mutex_lock(&priv->lock);
+ 
+ 	stmmac_reset_queues_param(priv);
 diff --git a/drivers/net/phy/Kconfig b/drivers/net/phy/Kconfig
 --- a/drivers/net/phy/Kconfig
 +++ b/drivers/net/phy/Kconfig
@@ -87,7 +119,7 @@ diff --git a/drivers/net/phy/maxio.c b/drivers/net/phy/maxio.c
 new file mode 100644
 --- /dev/null
 +++ b/drivers/net/phy/maxio.c
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,465 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* drivers/net/phy/maxio.c
 + *
@@ -127,36 +159,37 @@ new file mode 100644
 +#define PHY_READ(a,b)		phy_read((a),(b))
 +#define PHY_WRITE(a,b,c)	phy_write((a),(b),(c))
 +
-+int maxio_read_paged(struct phy_device *phydev, int page, u32 regnum)
++static int maxio_read_paged(struct phy_device *phydev, int page, u32 regnum)
 +{
 +	int ret = 0, oldpage;
 +
 +	oldpage = PHY_READ(phydev, MAXIO_PAGE_SELECT);
-+	if (oldpage >= 0) {
-+		PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
-+		ret = PHY_READ(phydev, regnum);
-+	}
++	if (oldpage < 0)
++		return oldpage;
++
++	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	ret = PHY_READ(phydev, regnum);
 +	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
 +
 +	return ret;
 +}
 +
-+int maxio_write_paged(struct phy_device *phydev, int page, u32 regnum, u16 val)
++static int maxio_write_paged(struct phy_device *phydev, int page, u32 regnum, u16 val)
 +{
 +	int ret = 0, oldpage;
 +
 +	oldpage = PHY_READ(phydev, MAXIO_PAGE_SELECT);
-+	if (oldpage >= 0) {
-+		PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
-+		ret = PHY_WRITE(phydev, regnum, val);
-+	}
++	if (oldpage < 0)
++		return oldpage;
 +
++	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	ret = PHY_WRITE(phydev, regnum, val);
 +	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
 +
 +	return ret;
 +}
 +
-+int maxio_adcc_check(struct phy_device *phydev)
++static int maxio_adcc_check(struct phy_device *phydev)
 +{
 +	int ret = 0;
 +	int adcvalue;
@@ -181,7 +214,7 @@ new file mode 100644
 +	return ret;
 +}
 +
-+int maxio_self_check(struct phy_device *phydev, int checknum)
++static int maxio_self_check(struct phy_device *phydev, int checknum)
 +{
 +	int ret = 0;
 +	int i;
@@ -229,7 +262,7 @@ new file mode 100644
 +	return ret;
 +}
 +
-+int maxio_restart_aneg(struct phy_device *phydev)
++static int maxio_restart_aneg(struct phy_device *phydev)
 +{
 +	int ctl = PHY_READ(phydev, MII_BMCR);
 +
@@ -271,7 +304,7 @@ new file mode 100644
 +#endif
 +}
 +
-+void phy_resolve_link_compatibility_maxio(struct phy_device *phydev)
++static void phy_resolve_link_compatibility_maxio(struct phy_device *phydev)
 +{
 +	int *paras = (int *)phydev->priv;
 +	int maxio_an_times = paras[0];
@@ -386,19 +419,20 @@ new file mode 100644
 +		int v;
 +
 +		v = maxio_read_paged(phydev, 0xd08, 0x11);
-+		if (v >= 0 && (v & BIT(8))) {
++		if (v >= 0 && (v & BIT(8)))
 +			maxio_write_paged(phydev, 0xd08, 0x11, v & ~BIT(8));
-+			ret |= 1;
-+		}
 +		v = maxio_read_paged(phydev, 0xd08, 0x15);
-+		if (v >= 0 && (v & BIT(3))) {
++		if (v >= 0 && (v & BIT(3)))
 +			maxio_write_paged(phydev, 0xd08, 0x15, v & ~BIT(3));
-+			ret |= 1;
-+		}
 +	}
 +
-+	ret |= maxio_self_check(phydev,50);
++	ret |= maxio_self_check(phydev, 50);
 +	msleep(100);
++
++	if (ret) {
++		pr_err("maxio: MAE0621A config_init failed (%d)\n", ret);
++		return -EIO;
++	}
 +
 +	return 0;
 +}
@@ -422,7 +456,7 @@ new file mode 100644
 +	printk("maxio_mae0621a_probe clkmode(oscillator) PHY_ID: 0x%x\n", phydev->phy_id);
 +
 +	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, 0x0);
-+	mdelay(100);
++	msleep(100);
 +
 +	return 0;
 +}
@@ -475,6 +509,11 @@ new file mode 100644
 +	ret |= maxio_write_paged(phydev, 0x0, 0x0, 0x9140);
 +
 +	ret |= PHY_WRITE(phydev, MAXIO_PAGE_SELECT, 0);
++
++	if (ret) {
++		pr_err("maxio: MAE0621AQ3C config_init failed (%d)\n", ret);
++		return -EIO;
++	}
 +
 +	return 0;
 +}
