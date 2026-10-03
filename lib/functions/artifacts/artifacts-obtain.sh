@@ -221,6 +221,9 @@ function obtain_complete_artifact() {
 
 	declare -g artifact_full_oci_target="${artifact_oci_target_base}${artifact_name}:${artifact_version}"
 
+	# Uploads use artifact_full_oci_target. Reads can use OCI_PROXY.
+	declare -g artifact_full_oci_pull_target="${artifact_full_oci_target}"
+
 	# if CONFIG_DEFS_ONLY, dump JSON and exit
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
 		display_alert "artifact" "CONFIG_DEFS_ONLY is set, skipping artifact creation" "warn"
@@ -524,17 +527,20 @@ function is_artifact_available_in_remote_cache() {
 	declare oras_has_manifest="undetermined"
 	declare oras_manifest_json="undetermined"
 	declare oras_manifest_description="undetermined"
-	oras_get_artifact_manifest "${artifact_full_oci_target}"
+	declare oras_manifest_error=""
+	declare oci_read_ref=""
+	oci_read_ref_for "${artifact_full_oci_target}" # via OCI_PROXY if set, falling back to the storage
+	artifact_full_oci_pull_target="${oci_read_ref}"  # the download uses the same source as the check
 
 	display_alert "oras_has_manifest" "${oras_has_manifest}" "debug"
 	display_alert "oras_manifest_description" "${oras_manifest_description}" "debug"
 	display_alert "oras_manifest_json" "${oras_manifest_json}" "debug"
 
 	if [[ "${oras_has_manifest}" == "yes" ]]; then
-		display_alert "Artifact is available in remote cache" "${artifact_full_oci_target} - '${oras_manifest_description}'" "info"
+		display_alert "Artifact is available in remote cache" "${artifact_full_oci_pull_target} - '${oras_manifest_description}'" "info"
 		artifact_exists_in_remote_cache="yes"
 	else
-		display_alert "Artifact is not available in remote cache" "${artifact_full_oci_target}" "info"
+		display_alert "Artifact is not available in remote cache" "${artifact_full_oci_pull_target}" "info"
 		artifact_exists_in_remote_cache="no"
 	fi
 
@@ -542,8 +548,8 @@ function is_artifact_available_in_remote_cache() {
 }
 
 function obtain_artifact_from_remote_cache() {
-	display_alert "Obtaining artifact from remote cache" "${artifact_full_oci_target} into ${artifact_final_file_basename}" "info"
-	oras_pull_artifact_file "${artifact_full_oci_target}" "${artifact_base_dir}" "${artifact_final_file_basename}"
+	display_alert "Obtaining artifact from remote cache" "${artifact_full_oci_pull_target} into ${artifact_final_file_basename}" "info"
+	oci_pull_file "${artifact_full_oci_target}" "${artifact_full_oci_pull_target:-${artifact_full_oci_target}}" "${artifact_base_dir}" "${artifact_final_file_basename}"
 
 	# if this is a 'deb', (not deb-tar, not tar.zst), OCI hasn't kept the directory structure, so move it into place.
 	if [[ "${artifact_type}" == "deb" ]]; then
