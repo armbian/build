@@ -77,7 +77,7 @@ function artifact_armbian-zsh_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-zsh_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
+	artifact_oci_target_base="${OCI_SERVER}/${OCI_PATH}/"
 }
 
 function artifact_armbian-zsh_is_available_in_local_cache() {

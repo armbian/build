@@ -196,7 +196,40 @@ function oras_push_artifact_file() {
 	return 0
 }
 
-# Outer scope: oras_has_manifest (yes/no) and oras_manifest_json (json)
+# oci_read_ref_for <storage_ref>: set oci_read_ref to OCI_PROXY if it has the manifest, else to the storage.
+function oci_read_ref_for() {
+	declare storage_ref="${1}"
+	oci_read_ref="${storage_ref}"
+	if [[ -n "${OCI_PROXY}" && "${storage_ref%%/*}" == "${OCI_SERVER}" ]]; then
+		oci_read_ref="${OCI_PROXY}/${storage_ref#*/}"
+	fi
+	oras_get_artifact_manifest "${oci_read_ref}"
+	if [[ "${oras_has_manifest}" != "yes" && "${oci_read_ref}" != "${storage_ref}" ]]; then
+		declare proxy_result="${oras_manifest_error}"
+		oci_read_ref="${storage_ref}"
+		oras_get_artifact_manifest "${oci_read_ref}"
+		if [[ "${proxy_result}" == "error" ]]; then
+			display_alert "OCI proxy failed, reading from storage" "${OCI_PROXY} -> ${storage_ref}" "warn"
+		elif [[ "${oras_has_manifest}" == "yes" ]]; then
+			display_alert "OCI proxy does not have it, reading from storage" "${OCI_PROXY} -> ${storage_ref}" "warn"
+		fi
+	fi
+	return 0
+}
+
+# oci_pull_file <storage_ref> <read_ref> <target_dir> <target_fn>: download from read_ref, else from the storage.
+function oci_pull_file() {
+	declare storage_ref="${1}" read_ref="${2}" target_dir="${3}" target_fn="${4}"
+	if [[ "${read_ref}" != "${storage_ref}" ]]; then
+		if oras_pull_may_fail="yes" oras_pull_retries="2" oras_pull_artifact_file "${read_ref}" "${target_dir}" "${target_fn}"; then
+			return 0
+		fi
+		display_alert "OCI proxy download failed, downloading from storage" "${read_ref} -> ${storage_ref}" "warn"
+	fi
+	oras_pull_artifact_file "${storage_ref}" "${target_dir}" "${target_fn}"
+}
+
+# Outer scope: oras_has_manifest (yes/no), oras_manifest_json (json) and oras_manifest_error
 function oras_get_artifact_manifest() {
 	declare image_full_oci="${1}" # Something like "ghcr.io/rpardini/armbian-git-shallow/kernel-git:latest"
 	display_alert "Getting ORAS manifest" "ORAS manifest from ${image_full_oci}" "info"
@@ -218,8 +251,14 @@ function oras_get_artifact_manifest() {
 	local oras_stderr
 	oras_stderr=$(< "${oras_stderr_file}")
 	rm -f "${oras_stderr_file}"
-	if [[ "${oras_has_manifest}" == "no" && -n "${oras_stderr}" && "${oras_stderr}" != *"not found"* ]]; then
-		display_alert "ORAS manifest fetch error" "${oras_stderr}" "wrn"
+	# Outer scope: oras_manifest_error is empty, "not_found" or "error".
+	oras_manifest_error=""
+	if [[ "${oras_has_manifest}" == "no" ]]; then
+		oras_manifest_error="not_found"
+		if [[ -n "${oras_stderr}" && "${oras_stderr}" != *"not found"* ]]; then
+			oras_manifest_error="error"
+			display_alert "ORAS manifest fetch error" "${oras_stderr}" "wrn"
+		fi
 	fi
 	display_alert "oras_has_manifest after: ${oras_has_manifest}" "ORAS manifest yes/no" "debug"
 	display_alert "oras_manifest_json after: ${oras_manifest_json}" "ORAS manifest json" "debug"
@@ -245,16 +284,23 @@ function oras_pull_artifact_file() {
 
 	declare full_temp_dir="${target_dir}/${target_fn}.oras.pull.tmp"
 	declare full_tmp_file_path="${full_temp_dir}/${target_fn}"
+	run_host_command_logged rm -rf "${full_temp_dir}" # never reuse output of an earlier attempt
 	run_host_command_logged mkdir -p "${full_temp_dir}"
 
 	# @TODO: this needs retries...
 	pushd "${full_temp_dir}" &> /dev/null || exit_with_error "Failed to pushd to ${full_temp_dir} - ORAS download"
-	retries=3 run_tool_oras pull "${extra_params[@]}" "${image_full_oci}"
+	declare oras_pull_ok="yes"
+	retries="${oras_pull_retries:-3}" run_tool_oras pull "${extra_params[@]}" "${image_full_oci}" || oras_pull_ok="no"
 	popd &> /dev/null || exit_with_error "Failed to popd - ORAS download"
 
 	# sanity check; did we get the file we expected?
-	if [[ ! -f "${full_tmp_file_path}" ]]; then
-		exit_with_error "File not found after ORAS pull: ${full_tmp_file_path} - ORAS download"
+	if [[ "${oras_pull_ok}" != "yes" || ! -f "${full_tmp_file_path}" ]]; then
+		# oras_pull_may_fail=yes: return 1 so the caller can try another source.
+		if [[ "${oras_pull_may_fail:-no}" == "yes" ]]; then
+			run_host_command_logged rm -rf "${full_temp_dir}"
+			return 1
+		fi
+		exit_with_error "ORAS download failed: ${image_full_oci} - ORAS download"
 		return 1
 	fi
 
