@@ -99,13 +99,15 @@ function chroot_sdcard_apt_get() {
 	apt_params+=(-o "Acquire::Retries=3")
 	apt_params+=(-o "APT::Update::Error-Mode=any")
 
-	# DPkg::Lock::Timeout: wait for the dpkg/apt-archives lock instead of failing
-	# instantly. The per-build apt cache dir is persistent and shared with the
-	# host; a build killed mid-apt (e.g. by a runner-cleanup _work wipe) can leave
-	# its archives lock behind, and the next build then dies with
+	# DPkg::Lock::Timeout: wait for the apt-archives lock instead of failing
+	# instantly. The apt cache dir (cache/aptcache/<release>-<arch>) is shared by
+	# concurrent builds of the same release+arch; when another build (in a
+	# different runner/PID namespace) holds the lock, apt otherwise dies at once
+	# with
 	#   E: Could not get lock /var/cache/apt/archives/lock. It is held by process 0
 	#   E: Unable to lock directory /var/cache/apt/archives/
-	# Waiting rides over a transient/stale lock rather than aborting the build.
+	# ("process 0" = the real holder is in another namespace). Waiting lets apt
+	# acquire the lock once that build finishes, instead of aborting this one.
 	apt_params+=(-o "DPkg::Lock::Timeout=300")
 
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
@@ -125,15 +127,6 @@ function chroot_sdcard_apt_get() {
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
 		# prepare and mount apt cache dir at /var/cache/apt/archives in the SDCARD.
 		skip_error_info="yes" run_host_command_logged mkdir -pv "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
-		# Clear any apt lock left in this persistent host cache dir by an earlier
-		# build that was killed mid-apt (e.g. a runner-cleanup _work wipe). The
-		# cache is used by one build at a time, so no live apt owns it here;
-		# a leftover lock would otherwise fail this build with "Could not get lock
-		# .../archives/lock ... held by process 0 / Unable to lock directory".
-		skip_error_info="yes" run_host_command_logged rm -fv \
-			"${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}/lock" \
-			"${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}/archives/lock" \
-			"${LOCAL_APT_CACHE_INFO[HOST_LISTS_DIR]}/lock"
 		display_alert "Mounting local apt deb cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "debug"
 		skip_error_info="yes" run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
 		display_alert "Mounting local apt list cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}" "debug"
