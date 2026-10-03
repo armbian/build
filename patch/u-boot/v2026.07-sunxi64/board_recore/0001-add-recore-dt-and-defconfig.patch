@@ -1,19 +1,55 @@
-From 0d986679b1a17d80ce2cef42b36b0ee5a5e42aa7 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Elias Bakken <elias@iagent.no>
-Date: Tue, 7 Feb 2023 21:56:20 +0100
+Date: Sun, 27 Sep 2026 19:51:24 +0200
 Subject: [PATCH] Add support for Recore
 
+Device tree and defconfig for the Iagent Recore A5-A8, an Allwinner A64
+board for 3D printers.
+
+USB: the type-A port is the only USB host. The USB-C port is a
+peripheral, so ehci0, ohci0 and usb_otg stay disabled and U-Boot does
+not scan it for boot devices. PD7 enables the load switch that would
+source VBUS on USB-C; the usb0-vbus regulator has neither
+regulator-always-on nor regulator-boot-on, so probing it drives PD7
+low. A7 has no pull-down on that enable input.
+
+AR100: the PREBOOT write switches the AR100 (CPUS) clock to PLL_PERIPH0
+before Linux starts. The same clock feeds AHB0/APB0 and with them the
+RSB bus to the PMIC, so Linux has to read the final rate when it sets
+the RSB divider. Changing it from Linux later overclocks RSB, and doing
+it with assigned-clock-parents in the device tree hangs the board,
+because the parent is switched before the dividers are.
+
+Boot: a USB stick in the type-A port is tried before the eMMC, so the
+board can always be reflashed from USB. If nothing boots, the video
+console is enabled again and a message says so, instead of leaving the
+panel black.
+The boot targets are FEL, USB and MMC, in that order, so a board
+started over FEL still runs its FEL script first. PXE and DHCP are
+left out: when nothing bootable is found, each waits out a PHY
+auto-negotiation timeout, adding about a minute before the failure is
+reported. The dhcp, tftp and pxe commands stay available.
+
+Display: PG9 enables HDMI VBUS, which the panel needs before U-Boot
+reads its EDID. The U-Boot logo is disabled, and CMD_BMP is enabled so
+a boot script can show a splash image.
+
+CPU: the board has no PMIC driver in the SPL (SUNXI_NO_PMIC), so
+nothing checks the CPU rail before the SPL raises the clock. Run the
+firmware phase at 648 MHz instead of 816 MHz. At 816 MHz some boards
+see EHCI timeouts and eMMC errors in U-Boot; Linux sets its own OPP.
+
+Signed-off-by: Elias Bakken <elias@iagent.no>
 ---
- arch/arm/dts/Makefile              |   1 +
  arch/arm/dts/sun50i-a64-recore.dts | 271 +++++++++++++++++++++++++++++
- configs/recore_defconfig           |  32 ++++
- 3 files changed, 304 insertions(+)
+ configs/recore_defconfig           |  38 ++++
+ 2 files changed, 309 insertions(+)
  create mode 100644 arch/arm/dts/sun50i-a64-recore.dts
  create mode 100644 configs/recore_defconfig
 
 diff --git a/arch/arm/dts/sun50i-a64-recore.dts b/arch/arm/dts/sun50i-a64-recore.dts
 new file mode 100644
-index 0000000000..d704731873
+index 00000000..096d220f
 --- /dev/null
 +++ b/arch/arm/dts/sun50i-a64-recore.dts
 @@ -0,0 +1,271 @@
@@ -113,7 +149,27 @@ index 0000000000..d704731873
 +	reg_usb1_vbus6: usb1-vbus6 {
 +		compatible = "regulator-fixed";
 +		regulator-name = "usb1-vbus6";
-+		gpio = <&pio 3 6 GPIO_ACTIVE_HIGH> ; /* PD6 */
++		gpio = <&pio 3 6 GPIO_ACTIVE_HIGH>; /* PD6 */
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		regulator-always-on;
++		regulator-boot-on;
++		enable-active-high;
++	};
++
++	reg_usb0_vbus: usb0-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usb0-vbus";
++		gpio = <&pio 3 7 GPIO_ACTIVE_HIGH>; /* PD7 */
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		enable-active-high;
++	};
++
++	reg_hdmi_vbus: hdmi-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "hdmi-vbus";
++		gpio = <&pio 6 9 GPIO_ACTIVE_HIGH>; /* PG9 */
 +		regulator-min-microvolt = <5000000>;
 +		regulator-max-microvolt = <5000000>;
 +		regulator-always-on;
@@ -155,26 +211,18 @@ index 0000000000..d704731873
 +
 +&mmc2 {
 +	pinctrl-names = "default";
-+  pinctrl-0 = <&mmc2_pins>, <&mmc2_ds_pin>;
++	pinctrl-0 = <&mmc2_pins>, <&mmc2_ds_pin>;
 +	vmmc-supply = <&reg_dcdc1>;
-+  vqmmc-supply = <&reg_eldo1>;
-+  non-removable;
-+  cap-mmc-hw-reset;
++	vqmmc-supply = <&reg_eldo1>;
++	non-removable;
++	cap-mmc-hw-reset;
 +	bus-width = <8>;
 +	status = "okay";
-+  mmc-hs200-1_8v;
-+  max-frequency = <100000000>;
-+};
-+
-+&ohci0 {
-+	status = "okay";
++	mmc-hs200-1_8v;
++	max-frequency = <100000000>;
 +};
 +
 +&ohci1 {
-+  status = "okay";
-+};
-+
-+&ehci0 {
 +	status = "okay";
 +};
 +
@@ -203,7 +251,7 @@ index 0000000000..d704731873
 +};
 +
 +&reg_dc1sw {
-+  regulator-always-on;
++	regulator-always-on;
 +	regulator-name = "vcc-phy";
 +};
 +
@@ -242,7 +290,7 @@ index 0000000000..d704731873
 +};
 +
 +&reg_eldo1 {
-+  regulator-always-on;
++	regulator-always-on;
 +	regulator-min-microvolt = <1800000>;
 +	regulator-max-microvolt = <1800000>;
 +	regulator-name = "cpvdd";
@@ -273,27 +321,15 @@ index 0000000000..d704731873
 +	status = "okay";
 +};
 +
-+&usb_otg {
-+  dr_mode = "peripheral";
-+  vcc-supply = <&reg_dcdc1>;
-+	status = "okay";
-+};
-+
-+&usb_power_supply {
-+	status = "okay";
-+};
-+
 +&usbphy {
-+	usb0_vbus_power-supply = <&usb_power_supply>;
-+  vcc-supply = <&reg_dcdc1>;
 +	status = "okay";
 +};
 diff --git a/configs/recore_defconfig b/configs/recore_defconfig
 new file mode 100644
-index 0000000000..2a7c40d276
+index 00000000..d07d1dc1
 --- /dev/null
 +++ b/configs/recore_defconfig
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,38 @@
 +CONFIG_ARM=y
 +CONFIG_ARCH_SUNXI=y
 +CONFIG_SPL=y
@@ -318,7 +354,7 @@ index 0000000000..2a7c40d276
 +CONFIG_LED=y
 +CONFIG_LED_GPIO=y
 +CONFIG_SPLASH_SCREEN_ALIGN=y
-+CONFIG_VIDEO_LOGO=y
++# CONFIG_VIDEO_LOGO is not set
 +CONFIG_SPLASH_SCREEN=y
 +CONFIG_BMP_16BPP=y
 +CONFIG_BMP_24BPP=y
@@ -327,6 +363,11 @@ index 0000000000..2a7c40d276
 +CONFIG_DM_REGULATOR=y
 +CONFIG_DM_REGULATOR_FIXED=y
 +CONFIG_CMD_REGULATOR=y
++CONFIG_SYS_CLK_FREQ=648000000
++CONFIG_USE_PREBOOT=y
++CONFIG_PREBOOT="mw.l 0x01f01400 0x00020102"
++CONFIG_CMD_BMP=y
++CONFIG_BOOTCOMMAND="setenv boot_targets \"fel usb0 mmc_auto\"; run distro_bootcmd; setenv stdout serial,vidconsole; echo; echo 'BOOT FAILED: nothing to boot from'; echo 'The eMMC did not answer. Connect the serial header for detail.'"
 -- 
-2.34.1
+2.47.3
 

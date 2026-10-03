@@ -30,6 +30,9 @@ function cli_json_info_run() {
 
 		display_alert "Here we go" "generating JSON info :: ${ARMBIAN_COMMAND} " "info"
 
+		# The Python info tools, and the compile.sh children they spawn, have to look at the same userpatches directory we do.
+		export USERPATCHES_PATH
+
 		# Targets inventory. Will do all-by-all if no targets file is provided.
 		declare TARGETS_FILE="${TARGETS_FILE-"${USERPATCHES_PATH}/${TARGETS_FILENAME:-"targets.yaml"}"}"
 

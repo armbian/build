@@ -28,7 +28,7 @@ class BuildJob(gha.BaseWorkflowJob):
 		self.add_ghcr_login_step()
 
 	def add_default_envs(self):
-		self.envs["OCI_TARGET_BASE"] = "ghcr.io/${{ github.repository }}/"  # This is picked up by the Docker launcher automatically
+		self.envs["OCI_PATH"] = "${{ github.repository }}"  # artifacts in ghcr.io/<repo>; forwarded into the build container
 		self.envs["DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX"] = "ghcr.io/${{ github.repository }}:armbian-next-"  # Use Docker image in same repo
 		self.envs[
 			"DOCKER_SKIP_UPDATE"] = "yes"  # Do not apt update/install/requirements/etc during Dockerfile build, trust DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX's images are up-to-date

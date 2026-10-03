@@ -31,25 +31,17 @@ function extension_prepare_config__arm64_compat_vdso() {
 }
 
 function add_host_dependencies__arm64_compat_vdso() {
-	if _arm64_compat_vdso_not_arm64; then
+	# The framework installs clang itself; riscv64 hosts have no ARM gcc cross-compilers.
+	if _arm64_compat_vdso_not_arm64 || [[ "${KERNEL_COMPILER}" == "clang" || "${host_arch}" == "riscv64" ]]; then
 		return 0
 	fi
 
-	# Skip cross-compilers that don't exist on non-standard host architectures (e.g., riscv64)
-	if [[ "${host_arch}" == "riscv64" ]]; then
-		display_alert "Skipping arm64-compat-vdso extension" "gcc-arm-linux-gnueabi not available on ${host_arch}" "warn"
-		return 0
-	fi
-
-	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
-		EXTRA_BUILD_DEPS+=("clang::clang")
-	else
-		EXTRA_BUILD_DEPS+=("cross-armhf::gcc-arm-linux-gnueabi")
-	fi
+	EXTRA_BUILD_DEPS+=("cross-armhf::gcc-arm-linux-gnueabi")
 }
 
 function host_dependencies_ready__arm64_compat_vdso() {
-	if _arm64_compat_vdso_not_arm64 || [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+	# On riscv64 the arm64 gcc itself is missing; the kernel build reports that.
+	if _arm64_compat_vdso_not_arm64 || [[ "${KERNEL_COMPILER}" == "clang" || "${HOSTARCH}" == "riscv64" ]]; then
 		return 0
 	fi
 

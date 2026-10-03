@@ -42,7 +42,7 @@ function uboot_prepare_bare_repo() {
 	fi
 
 	# GIT_ORAS_TARBALLS_SHALLOW_BASE_REF also drives the Kernel gitball; see kernel-git-oras.sh.
-	declare base_oras_ref="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:-"${GHCR_SOURCE}/armbian/shallow"}"
+	declare base_oras_ref="${GIT_ORAS_TARBALLS_SHALLOW_BASE_REF:?}" # set in main-config.sh from OCI_SERVER/OCI_GIT_PATH
 
 	# There is no shallow/full prompt for u-boot, so this alert is the only warning a first-time
 	# user on a slow link gets before a few hundred MiB starts moving.
