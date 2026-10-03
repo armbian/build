@@ -62,41 +62,32 @@ function create_image_from_sdcard_rootfs() {
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot (MOUNT /boot)"
-	# Most boards mount a real, dedicated /boot partition (BOOTSIZE>0, see
-	# lib/functions/image/partitioning.sh) directly at "$MOUNT/boot", so checking
-	# that path for its actual filesystem type is correct. But some board families
-	# (eg: bcm2711/Raspberry Pi, see config/sources/families/bcm2711.conf) have no
-	# separate /boot partition (BOOTSIZE=0) and instead mount their FAT32 boot
-	# content at UEFI_MOUNT_POINT (eg: /boot/firmware) -- in that case "$MOUNT/boot"
-	# itself isn't a mountpoint at all (it's just a directory on the rootfs), so the
-	# vfat check below always misses it and this rsync wrongly uses xattr-preserving
-	# ext4 flags (-X) against what is actually a FAT32 filesystem, which errors out
-	# when the source tree carries xattrs (eg: SELinux labels from a samba-shared
-	# parent directory).
-	#
-	# Deliberately exclude UEFI_MOUNT_POINT's own generic default ("/boot/efi", set
-	# unconditionally by partitioning.sh for every board) from this check: for
-	# standard UEFI/grub boards (BOOTSIZE=0, UEFISIZE>0, no separate /boot), only a
-	# small ESP is mounted under /boot/efi while the rest of /boot lives on the
-	# (non-vfat) rootfs -- so those boards must keep checking plain "$MOUNT/boot".
-	declare boot_vfat_check_target="$MOUNT/boot"
-	if [[ "${BOOTSIZE:-0}" == "0" && -n "${UEFI_MOUNT_POINT}" && "${UEFI_MOUNT_POINT}" != "/boot/efi" ]]; then
-		boot_vfat_check_target="${MOUNT}${UEFI_MOUNT_POINT}"
+	# FAT32 holds either all of /boot, or only UEFI_MOUNT_POINT inside an ext4 /boot (eg bcm2711 /boot/firmware).
+	# The generic /boot/efi ESP keeps the ext4 copy.
+	declare fat_dir=""
+	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
+		fat_dir="/boot"
+	elif [[ "${BOOTSIZE:-0}" == "0" && -n "${UEFI_MOUNT_POINT}" && "${UEFI_MOUNT_POINT}" != "/boot/efi" &&
+		$(findmnt --noheadings --output FSTYPE --target "${MOUNT}${UEFI_MOUNT_POINT}" --uniq) == vfat ]]; then
+		fat_dir="${UEFI_MOUNT_POINT}"
 	fi
-	if [[ $(findmnt --noheadings --output FSTYPE --target "${boot_vfat_check_target}" --uniq) == vfat ]]; then
+	if [[ -n "${fat_dir}" ]]; then
 		# FAT filesystems can't have symlinks; rsync, below, will replace them with copies (-L)...
 		# ... unless they're dangling symlinks, in which case rsync will fail.
-		# Find dangling symlinks in "$MOUNT/boot", warn, and remove them.
-		display_alert "Checking for dangling symlinks" "in FAT32 /boot" "info"
+		# Find dangling symlinks in the FAT32 part, warn, and remove them.
+		display_alert "Checking for dangling symlinks" "in FAT32 ${fat_dir}" "info"
 		declare -a dangling_symlinks=()
 		while IFS= read -r -d '' symlink; do
 			dangling_symlinks+=("$symlink")
-		done < <(find "$SDCARD/boot" -xtype l -print0)
+		done < <(find "$SDCARD${fat_dir}" -xtype l -print0)
 		if [[ ${#dangling_symlinks[@]} -gt 0 ]]; then
-			display_alert "Dangling symlinks in /boot" "$(printf '%s ' "${dangling_symlinks[@]}")" "warning"
+			display_alert "Dangling symlinks in ${fat_dir}" "$(printf '%s ' "${dangling_symlinks[@]}")" "warning"
 			run_host_command_logged rm -fv "${dangling_symlinks[@]}"
 		fi
-		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # fat32
+		if [[ "${fat_dir}" != "/boot" ]]; then
+			run_host_command_logged rsync -aHWXh --info=progress0,stats1 --exclude="${fat_dir}/" "$SDCARD/boot" "$MOUNT" # ext4 part of /boot
+		fi
+		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD${fat_dir}/" "$MOUNT${fat_dir}/" # fat32
 	else
 		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # ext4
 	fi
