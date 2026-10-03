@@ -294,15 +294,6 @@ source "${SRC}"/lib/functions/compilation/atf.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/compilation/ccache.sh
-# shellcheck source=lib/functions/compilation/ccache.sh
-source "${SRC}"/lib/functions/compilation/ccache.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/compilation/compile-wrapper.sh
 # shellcheck source=lib/functions/compilation/compile-wrapper.sh
 source "${SRC}"/lib/functions/compilation/compile-wrapper.sh
