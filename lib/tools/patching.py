@@ -82,25 +82,27 @@ exit_with_exception: "Exception | None" = None
 CONST_PATCH_ROOT_DIRS = []
 
 for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
-	if USERPATCHES_PATH is not None:
+	# regular patchset
+	CONST_PATCH_ROOT_DIRS.append(
+		patching_utils.PatchRootDir(f"{SRC}/patch/{PATCH_TYPE}/{patch_dir_to_apply}", "core", PATCH_TYPE, SRC))
+
+if USERPATCHES_PATH is not None:
+	for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
 		CONST_PATCH_ROOT_DIRS.append(
 			patching_utils.PatchRootDir(
 				f"{USERPATCHES_PATH}/{PATCH_TYPE}/{patch_dir_to_apply}", "user", PATCH_TYPE,
 				USERPATCHES_PATH))
 
-	# regular patchset
-	CONST_PATCH_ROOT_DIRS.append(
-		patching_utils.PatchRootDir(f"{SRC}/patch/{PATCH_TYPE}/{patch_dir_to_apply}", "core", PATCH_TYPE, SRC))
-
 # Some sub-path possibilities:
 CONST_PATCH_SUB_DIRS = []
-if TARGET is not None:
-	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"target_{TARGET}", "target"))
+CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir("", "common"))
 if BOARD is not None:
 	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"board_{BOARD}", "board"))
-CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir("", "common"))
+if TARGET is not None:
+	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"target_{TARGET}", "target"))
 
-# Prepare the full list of patch directories to apply
+# Prepare the full list of patch directories to apply, lowest priority first:
+# a same-named patch file in a later directory replaces the one found earlier.
 ALL_DIRS: list[patching_utils.PatchDir] = []
 for patch_root_dir in CONST_PATCH_ROOT_DIRS:
 	for patch_sub_dir in CONST_PATCH_SUB_DIRS:
@@ -178,6 +180,13 @@ for one_patch_file in ALL_DIR_PATCH_FILES:
 # For series-based patches, we want to apply the serie'd patches first.
 # The other patches are separately sorted.
 NORMAL_PATCH_FILES = list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+
+# An empty patch file disables the same-named patch from a lower priority directory.
+for one_patch_file in NORMAL_PATCH_FILES:
+	if os.path.getsize(one_patch_file.full_file_path()) == 0:
+		log.info(f"Skipping empty patch file '{one_patch_file.relative_to_src_filepath()}'")
+NORMAL_PATCH_FILES = [f for f in NORMAL_PATCH_FILES if os.path.getsize(f.full_file_path()) > 0]
+
 ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + NORMAL_PATCH_FILES
 
 patch_counter_desc_arr = []
