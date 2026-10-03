@@ -19,14 +19,20 @@ a negative page number back to MAXIO_PAGE_SELECT, propagate
 config_init() failures as -EIO instead of always returning 0, and use
 msleep() rather than mdelay() in probe().
 
+Further review fixes: check both page-select writes in the paged
+helpers, count failures when clearing the PHY-side RGMII delays and on
+negative ADC reads, and propagate a failed phy_init_hw() out of
+__stmmac_open() and stmmac_resume() instead of continuing into the DMA
+reset with an unconfigured PHY.
+
 Ported from rockchip64 general-drv-net-phy-Add-maxio-phys-driver.patch
 https://github.com/zuyih/linux-cubie
 ---
- drivers/net/ethernet/stmicro/stmmac/stmmac_main.c |  36 +
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c |  41 +
  drivers/net/phy/Kconfig                           |   5 +
  drivers/net/phy/Makefile                          |   1 +
- drivers/net/phy/maxio.c                           | 465 +
- 4 files changed, 507 insertions(+)
+ drivers/net/phy/maxio.c                           | 492 +
+ 4 files changed, 539 insertions(+)
  create mode 100644 drivers/net/phy/maxio.c
 
 diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
@@ -42,7 +48,7 @@ diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/eth
  
  /* As long as the interface is active, we keep the timestamping counter enabled
   * with fine resolution and binary rollover. This avoid non-monotonic behavior
-@@ -3917,6 +3920,22 @@ static int __stmmac_open(struct net_device *dev,
+@@ -3917,6 +3920,24 @@ static int __stmmac_open(struct net_device *dev,
  	 * hardware setup. Resume a suspended PHY here first.
  	 */
  	phylink_prepare_resume(priv->phylink);
@@ -55,17 +61,19 @@ diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/eth
 +	if (dev->phydev) {
 +		if (dev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q2C_ID ||
 +		    dev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q3C_ID) {
-+			int pret = phy_init_hw(dev->phydev);
-+			if (pret)
++			ret = phy_init_hw(dev->phydev);
++			if (ret < 0) {
 +				netdev_err(priv->dev,
 +					   "PHY initialization failed: %d\n",
-+					   pret);
++					   ret);
++				goto init_error;
++			}
 +		}
 +	}
  
  	stmmac_reset_queues_param(priv);
  
-@@ -7975,6 +7975,23 @@ int stmmac_resume(struct device *dev)
+@@ -7975,6 +7975,26 @@ int stmmac_resume(struct device *dev)
  	 */
  	phylink_prepare_resume(priv->phylink);
  
@@ -79,10 +87,13 @@ diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/eth
 +	if (ndev->phydev) {
 +		if (ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q2C_ID ||
 +		    ndev->phydev->phy_id == MAXIO_PHY_MAE0621A_Q3C_ID) {
-+			int pret = phy_init_hw(ndev->phydev);
-+			if (pret)
++			ret = phy_init_hw(ndev->phydev);
++			if (ret < 0) {
 +				netdev_err(ndev, "PHY initialization failed: %d\n",
-+					   pret);
++					   ret);
++				rtnl_unlock();
++				return ret;
++			}
 +		}
 +	}
 +
@@ -119,7 +130,7 @@ diff --git a/drivers/net/phy/maxio.c b/drivers/net/phy/maxio.c
 new file mode 100644
 --- /dev/null
 +++ b/drivers/net/phy/maxio.c
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,492 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* drivers/net/phy/maxio.c
 + *
@@ -161,30 +172,42 @@ new file mode 100644
 +
 +static int maxio_read_paged(struct phy_device *phydev, int page, u32 regnum)
 +{
-+	int ret = 0, oldpage;
++	int ret = 0, oldpage, sel;
 +
 +	oldpage = PHY_READ(phydev, MAXIO_PAGE_SELECT);
 +	if (oldpage < 0)
 +		return oldpage;
 +
-+	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	sel = PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	if (sel < 0)
++		return sel;
++
 +	ret = PHY_READ(phydev, regnum);
-+	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
++
++	sel = PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
++	if (ret >= 0 && sel < 0)
++		ret = sel;
 +
 +	return ret;
 +}
 +
 +static int maxio_write_paged(struct phy_device *phydev, int page, u32 regnum, u16 val)
 +{
-+	int ret = 0, oldpage;
++	int ret = 0, oldpage, sel;
 +
 +	oldpage = PHY_READ(phydev, MAXIO_PAGE_SELECT);
 +	if (oldpage < 0)
 +		return oldpage;
 +
-+	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	sel = PHY_WRITE(phydev, MAXIO_PAGE_SELECT, page);
++	if (sel < 0)
++		return sel;
++
 +	ret = PHY_WRITE(phydev, regnum, val);
-+	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
++
++	sel = PHY_WRITE(phydev, MAXIO_PAGE_SELECT, oldpage);
++	if (ret >= 0 && sel < 0)
++		ret = sel;
 +
 +	return ret;
 +}
@@ -203,6 +226,10 @@ new file mode 100644
 +		regval = 0xf908 + i * 0x100;
 +		maxio_write_paged(phydev, 0xd8f, 0xb, regval );
 +		adcvalue = maxio_read_paged(phydev, 0xd92, 0xb);
++		if (adcvalue < 0) {
++			ret = adcvalue;
++			break;
++		}
 +		if (adcvalue & 0x1ff) {
 +			 continue;
 +		} else {
@@ -416,14 +443,25 @@ new file mode 100644
 +	 * Same layout as RTL8211F: page 0xd08, TXCR 0x11 bit8, RXCR 0x15 bit3.
 +	 */
 +	{
-+		int v;
++		int v, w;
 +
 +		v = maxio_read_paged(phydev, 0xd08, 0x11);
-+		if (v >= 0 && (v & BIT(8)))
-+			maxio_write_paged(phydev, 0xd08, 0x11, v & ~BIT(8));
++		if (v < 0)
++			ret |= v;
++		else if (v & BIT(8)) {
++			w = maxio_write_paged(phydev, 0xd08, 0x11, v & ~BIT(8));
++			if (w < 0)
++				ret |= w;
++		}
++
 +		v = maxio_read_paged(phydev, 0xd08, 0x15);
-+		if (v >= 0 && (v & BIT(3)))
-+			maxio_write_paged(phydev, 0xd08, 0x15, v & ~BIT(3));
++		if (v < 0)
++			ret |= v;
++		else if (v & BIT(3)) {
++			w = maxio_write_paged(phydev, 0xd08, 0x15, v & ~BIT(3));
++			if (w < 0)
++				ret |= w;
++		}
 +	}
 +
 +	ret |= maxio_self_check(phydev, 50);
