@@ -510,6 +510,21 @@ function armbian_kernel_config__enable_various_filesystems() {
 	opts_m+=("EROFS_FS")           # Enhanced Read-Only FS (useful for Docker images)
 }
 
+# Enables SMB/CIFS file sharing as modules: the client and the ksmbd server.
+function armbian_kernel_config__enable_smb_cifs() {
+	opts_y+=("NETWORK_FILESYSTEMS") # Parent menu, off in some minimal configs
+	opts_m+=("CIFS")                # SMB client (mount -t cifs)
+	opts_y+=("CIFS_XATTR")          # Extended attributes
+	opts_y+=("CIFS_POSIX")          # POSIX extensions
+	opts_y+=("CIFS_UPCALL")         # Kerberos through cifs.upcall
+	opts_y+=("CIFS_DFS_UPCALL")     # DFS referrals
+
+	# ksmbd does not exist before kernel 5.15.
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 5.15; then
+		opts_m+=("SMB_SERVER") # ksmbd, in-kernel SMB3 server
+	fi
+}
+
 # Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
 #   sets a wide range of kernel configuration options necessary for Docker, including support for
 #   control groups (cgroups), networking, security, and various netfilter

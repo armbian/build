@@ -99,6 +99,17 @@ function chroot_sdcard_apt_get() {
 	apt_params+=(-o "Acquire::Retries=3")
 	apt_params+=(-o "APT::Update::Error-Mode=any")
 
+	# DPkg::Lock::Timeout: wait for the apt-archives lock instead of failing
+	# instantly. The apt cache dir (cache/aptcache/<release>-<arch>) is shared by
+	# concurrent builds of the same release+arch; when another build (in a
+	# different runner/PID namespace) holds the lock, apt otherwise dies at once
+	# with
+	#   E: Could not get lock /var/cache/apt/archives/lock. It is held by process 0
+	#   E: Unable to lock directory /var/cache/apt/archives/
+	# ("process 0" = the real holder is in another namespace). Waiting lets apt
+	# acquire the lock once that build finishes, instead of aborting this one.
+	apt_params+=(-o "DPkg::Lock::Timeout=300")
+
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
 		# Configure Clean-Installed to off
 		display_alert "Configuring APT to not clean up the cache" "APT will not clean up the cache" "debug"
