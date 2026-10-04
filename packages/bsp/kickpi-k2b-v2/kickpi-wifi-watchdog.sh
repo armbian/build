@@ -8,7 +8,8 @@
 # so ping -I always failed and the watchdog force-restarted wlan0 every ~94s
 # (3 * 30s), causing reason=3 / setup TXBA failed disconnects.
 
-LOG="/tmp/kickpi-wifi-watchdog.log"
+# Log to stdout: the systemd unit captures it in the journal.
+# A /tmp file would grow without bound on tmpfs.
 CHECK_INTERVAL=30
 MAX_FAILED_PINGS=3
 # Carrier-absence guard (review 2026-10-04): do not count an absent
@@ -17,7 +18,7 @@ STARTUP_GRACE=180     # seconds after service start
 RECONNECT_GRACE=120   # seconds after carrier was last seen
 
 log_msg() {
-    echo "$(date "+%Y-%m-%d %H:%M:%S") $1" >> "$LOG"
+    echo "$(date "+%Y-%m-%d %H:%M:%S") $1"
 }
 
 first_wlan() {
@@ -78,8 +79,7 @@ check_wifi_responding() {
     ping -c 1 -W 2 -I "$iface" "$gw" >/dev/null 2>&1 && return 0
     # Some routers drop ICMP echo: a probe that traverses the router proves the
     # WiFi path still forwards traffic, so echo-blocked gateway != WiFi hang.
-    if ip -4 route show default dev "$iface" >/dev/null 2>&1 &&
-        ping -c 1 -W 2 -I "$iface" 1.1.1.1 >/dev/null 2>&1; then
+    if ping -c 1 -W 2 -I "$iface" 1.1.1.1 >/dev/null 2>&1; then
         return 0
     fi
     # Last resort: the gateway ARP entry still resolves over this interface
@@ -98,9 +98,9 @@ restart_wifi() {
         [ -e "$iface" ] || continue
         iface=$(basename "$iface")
         log_msg "Restarting $iface"
-        ip link set "$iface" down 2>>"$LOG"
+        ip link set "$iface" down
         sleep 1
-        ip link set "$iface" up 2>>"$LOG"
+        ip link set "$iface" up
     done
     sleep 3
     log_msg "WiFi restart complete"
