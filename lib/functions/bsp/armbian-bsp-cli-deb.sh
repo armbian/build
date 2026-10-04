@@ -299,6 +299,11 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		VERSION=${REVISION}
 		REVISION=$REVISION
 	EOF
+	if [[ -f "${control_dir}/md5sums" ]]; then
+		local release_checksum
+		release_checksum=$(md5sum "${data_dir}/etc/armbian-release")
+		sed -i "s|^[[:xdigit:]]\{32\}  etc/armbian-release$|${release_checksum%% *}  etc/armbian-release|" "${control_dir}/md5sums"
+	fi
 
 	# Show results if debugging
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
