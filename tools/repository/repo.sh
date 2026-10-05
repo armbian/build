@@ -372,9 +372,11 @@ process_release() {
 		return 0
 	fi
 
+	# Acquire-By-Hash: clients fetch indexes by hash, so caches cannot serve stale ones
 	run_aptly publish \
 		-skip-signing \
 		-skip-contents \
+		-acquire-by-hash \
 		-architectures="armhf,arm64,amd64,riscv64,i386,loong64,all" \
 		-passphrase="${gpg_password}" \
 		-origin="Armbian" \
