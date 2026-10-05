@@ -675,6 +675,26 @@ function armbian_kernel_config__enable_ntsync() {
 # All changes are logged via display_alert for debugging purposes.
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+# Forces kernel options to "n", also over an Armbian default from armbian_kernel_config.
+# Use it in a custom_kernel_config hook. A plain opts_n entry loses: opts_y and opts_m apply later.
+# Parameters:
+#   $@ - options: kernel option names without the CONFIG_ prefix
+function kernel_config_force_n() {
+	declare opt keep o
+	declare -a filtered
+	for opt in "$@"; do
+		for keep in opts_y opts_m; do
+			declare -n arr="${keep}"
+			filtered=()
+			for o in "${arr[@]}"; do [[ "${o}" == "${opt}" ]] || filtered+=("${o}"); done
+			arr=("${filtered[@]}")
+			unset -n arr
+		done
+		unset 'opts_val[$opt]'
+		opts_n+=("${opt}")
+	done
+}
+
 # Sets a kernel configuration option to build as a loadable module (=m).
 # Parameters:
 #   $1 - module: The name of the kernel option to set as module
