@@ -125,6 +125,9 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 
 	if [[ "${dbg_package_effective}" == "yes" ]]; then
 		opts_y+=("PROC_KCORE") # crash/drgn read /proc/kcore to inspect a running kernel, not just a dump
+		# With kexec_load, arm64 kexec-tools takes the vmcore page_offset from _text; _text lies
+		# before _stext, so only KALLSYMS_ALL keeps it in kallsyms. It depends on DEBUG_KERNEL.
+		opts_y+=("DEBUG_KERNEL" "KALLSYMS_ALL")
 	fi
 	if [[ "${KERNEL_BTF}" == "no" ]]; then # If user is explicit by passing "KERNEL_BTF=no", then actually disable all debug info.
 		# Reject the conflict instead of overriding it: the debug package exists to ship the very
