@@ -1,37 +1,24 @@
-#!/bin/bash
-# KickPi K2B V2: install the prebuilt FFmpeg v4l2-request build (Kwiboo FFmpeg 8.1,
-# cedrus HW decode + libx264 encode) into the image at build time.
+# @description Installs the prebuilt Kwiboo FFmpeg 8.1 v4l2-request build (cedrus hardware
+# decode + libx264 encode) into the image for boards that enable this extension via
+# ENABLE_EXTENSIONS. Follow-up to #10902/#10915: the ~40 MB pack is a GitHub Release asset on
+# the contributor fork and never enters git; the primary download source follows the
+# framework's ${GITHUB_SOURCE} mirror (with two hardcoded fallbacks for proxy-less builders)
+# and the sha256 is pinned. Guards: dpkg status present, glibc >= 2.41 (prebuilt = aarch64/
+# trixie), Ubuntu "resolute" skipped (x264 ABI rename). Failure paths are currently fail-soft
+# (warn, roll back, continue) — see the PR #10915 discussion about making network failures
+# hard errors instead.
 #
-# Sourced by config/boards/kickpi-k2b-v2.csc from its post_family_tweaks__ hook, so it
-# runs with build-framework context: ${SDCARD}, display_alert and chroot_sdcard.
-#
-# Follow-up to #10902:
-# - the 41 MB pack is a GitHub Release asset on the contributor fork, never in git
-# - guards: Debian dpkg status present, glibc >= 2.41 (prebuilt = aarch64/trixie)
-# - every failure path is fail-soft: warn, clean up, and let the image build continue
-# - the replacement is verified in-chroot BEFORE distro ffmpeg is purged; a failing
-#   verification rolls the replacement back and keeps the distro package
-#
-# shellcheck disable=SC2154 # build-framework globals: SDCARD
+# shellcheck disable=SC2154 # build-framework globals: SDCARD, RELEASE, BOARD, PACKAGE_LIST_BOARD
 
 # sha256 of ffmpeg-v4l2-request-pack.tar.gz (contents: README-BUILD.md, SHA256SUMS,
 # bin/{ffmpeg,ffprobe}, scripts/*, src/kwiboo-ffmpeg-v4l2-request-n8.1.tgz)
-kickpi_k2b_v2_ffmpeg_pack_sha256="4b20d322778030d685e690e5c08e48a7091234e1506f2357401f478fac508b01"
-# Primary source follows the framework's ${GITHUB_SOURCE} github mirror (set from
-# GITPROXY/GHPROXY in lib/functions/configuration/main-config.sh — same pattern as
-# lib/tools/shellcheck.sh and friends).
-kickpi_k2b_v2_ffmpeg_pack_rel="Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
-kickpi_k2b_v2_ffmpeg_pack_release="${GITHUB_SOURCE:-https://github.com}/${kickpi_k2b_v2_ffmpeg_pack_rel}"
-# Fallbacks for builders that configure neither GITPROXY nor GHPROXY and cannot
-# reach github.com directly; the gh.acmsz prefix measured ~10x faster than
-# gh-proxy for this 41 MB asset on the target board.
-kickpi_k2b_v2_ffmpeg_pack_mirror="https://gh.acmsz.top/https://github.com/${kickpi_k2b_v2_ffmpeg_pack_rel}"
-kickpi_k2b_v2_ffmpeg_pack_mirror2="https://gh-proxy.com/https://github.com/${kickpi_k2b_v2_ffmpeg_pack_rel}"
+ffmpeg_v4l2_request_pack_sha256="4b20d322778030d685e690e5c08e48a7091234e1506f2357401f478fac508b01"
+ffmpeg_v4l2_request_pack_rel="Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
 
 # Remove anything this installer may have put into the image, so a failed run leaves
 # the image exactly as it was and a later run can retry from scratch. Only symlinks
 # that actually point into /opt/ffmpeg-v4l2 are touched.
-function kickpi_k2b_v2_ffmpeg_remove_partial() {
+function ffmpeg_v4l2_request_remove_partial() {
 	rm -rf "${SDCARD}/opt/ffmpeg-v4l2" || true
 	local link_name="" link_target=""
 	for link_name in ffmpeg ffprobe; do
@@ -45,14 +32,33 @@ function kickpi_k2b_v2_ffmpeg_remove_partial() {
 
 # True only for a complete installation: both binaries executable and both symlinks
 # pointing at them (a partial install must fall through and be repaired, not skipped).
-function kickpi_k2b_v2_ffmpeg_is_complete() {
+function ffmpeg_v4l2_request_is_complete() {
 	[[ -x "${SDCARD}/opt/ffmpeg-v4l2/bin/ffmpeg" &&
 		-x "${SDCARD}/opt/ffmpeg-v4l2/bin/ffprobe" &&
 		"$(readlink "${SDCARD}/usr/local/bin/ffmpeg" 2> /dev/null)" == "/opt/ffmpeg-v4l2/bin/ffmpeg" &&
 		"$(readlink "${SDCARD}/usr/local/bin/ffprobe" 2> /dev/null)" == "/opt/ffmpeg-v4l2/bin/ffprobe" ]]
 }
 
-function kickpi_k2b_v2_ffmpeg_install() {
+# Config phase: bring in the x264 encode runtime the prebuilt links against. Ubuntu
+# "resolute" renamed the x264 ABI (package name and libx264.so.164 both unavailable
+# there), and the install hook below skips that release entirely — so don't ask apt
+# for a package that would fail the build.
+function extension_prepare_config__ffmpeg_v4l2_request() {
+	if [[ "${RELEASE}" != "resolute" ]]; then
+		declare -g PACKAGE_LIST_BOARD+=" libx264-164"
+	fi
+	display_alert "${EXTENSION}" "ffmpeg-v4l2-request configured for RELEASE=${RELEASE}" "debug"
+}
+
+# Install phase (same stage as post_family_tweaks board hooks): everything below is
+# fail-soft for now — see the header and PR #10915 for the hard-fail proposal.
+function post_family_tweaks__ffmpeg_v4l2_request() {
+	if [[ "${RELEASE}" == "resolute" ]]; then
+		display_alert "${EXTENSION}" "Skipping prebuilt FFmpeg v4l2-request on ${RELEASE} (x264 ABI rename)" "warn"
+		return 0
+	fi
+	display_alert "${EXTENSION}" "Installing prebuilt FFmpeg v4l2-request (fail-soft)" "info"
+
 	# ---- guards (all fail-soft: skip install, keep building) ----
 	if [[ ! -f "${SDCARD}/var/lib/dpkg/status" ]]; then
 		display_alert "ffmpeg-v4l2" "no dpkg status in image, skipping" "warn"
@@ -74,7 +80,7 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		return 0
 	fi
 
-	if kickpi_k2b_v2_ffmpeg_is_complete; then
+	if ffmpeg_v4l2_request_is_complete; then
 		display_alert "ffmpeg-v4l2" "already present in image" "info"
 		return 0
 	fi
@@ -93,14 +99,16 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		fi
 	done
 
-	# ---- download + checksum: every source is validated before it is accepted, so a
-	# ---- corrupt or tampered response just moves on to the next mirror ----
+	# ---- download + checksum: primary source follows the framework's ${GITHUB_SOURCE}
+	# ---- github mirror (GITPROXY/GHPROXY, same pattern as lib/tools/shellcheck.sh);
+	# ---- every source is validated before it is accepted, so a corrupt or tampered
+	# ---- response just moves on to the next mirror ----
 	local -a pack_urls=()
 	[[ -n "${FFMPEG_PACK_URL:-}" ]] && pack_urls+=("${FFMPEG_PACK_URL}")
 	pack_urls+=(
-		"${kickpi_k2b_v2_ffmpeg_pack_release}"
-		"${kickpi_k2b_v2_ffmpeg_pack_mirror}"
-		"${kickpi_k2b_v2_ffmpeg_pack_mirror2}"
+		"${GITHUB_SOURCE:-https://github.com}/${ffmpeg_v4l2_request_pack_rel}"
+		"https://gh.acmsz.top/https://github.com/${ffmpeg_v4l2_request_pack_rel}"
+		"https://gh-proxy.com/https://github.com/${ffmpeg_v4l2_request_pack_rel}"
 	)
 
 	local tmp_dir="" pack_url="" valid_pack="" actual_sha256="" source_no=0
@@ -112,11 +120,11 @@ function kickpi_k2b_v2_ffmpeg_install() {
 	for pack_url in "${pack_urls[@]}"; do
 		source_no=$((source_no + 1))
 		if ! curl -fsSL --connect-timeout 15 --max-time 600 -o "${tmp_dir}/pack.tar.gz" "${pack_url}"; then
-			display_alert "ffmpeg-v4l2" "download failed (source $((source_no)) of ${#pack_urls[@]}), trying next" "warn"
+			display_alert "ffmpeg-v4l2" "download failed (source ${source_no} of ${#pack_urls[@]}), trying next" "warn"
 			continue
 		fi
 		actual_sha256="$(sha256sum "${tmp_dir}/pack.tar.gz" | cut -d ' ' -f 1)" || actual_sha256=""
-		if [[ "${actual_sha256}" == "${kickpi_k2b_v2_ffmpeg_pack_sha256}" ]]; then
+		if [[ "${actual_sha256}" == "${ffmpeg_v4l2_request_pack_sha256}" ]]; then
 			valid_pack="${pack_url}"
 			break
 		fi
@@ -141,7 +149,7 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		! install -m 0755 "${tmp_dir}/ffmpeg-v4l2-request-pack/bin/ffprobe" "${SDCARD}/opt/ffmpeg-v4l2/bin/ffprobe" ||
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffmpeg "${SDCARD}/usr/local/bin/ffmpeg" ||
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffprobe "${SDCARD}/usr/local/bin/ffprobe"; then
-		kickpi_k2b_v2_ffmpeg_remove_partial
+		ffmpeg_v4l2_request_remove_partial
 		display_alert "ffmpeg-v4l2" "copy into image failed, partial install removed" "warn"
 		rm -rf "${tmp_dir}" || true
 		return 0
@@ -152,13 +160,13 @@ function kickpi_k2b_v2_ffmpeg_install() {
 	# ---- (missing shared libraries fail loudly here); rollback on failure so the ----
 	# ---- image keeps whatever distro ffmpeg it had ----
 	if ! chroot_sdcard /usr/local/bin/ffmpeg -version; then
-		kickpi_k2b_v2_ffmpeg_remove_partial
+		ffmpeg_v4l2_request_remove_partial
 		display_alert "ffmpeg-v4l2" "verification failed, replacement removed; distro ffmpeg untouched" "warn"
 		return 0
 	fi
 
 	# ---- now that the replacement works: drop distro FFmpeg so /usr/local/bin wins
-	# ---- PATH (fail-soft). libx264-164 runtime comes from PACKAGE_LIST_BOARD
+	# ---- PATH (fail-soft). libx264-164 runtime comes from the config hook above
 	# ---- (installed during package installation, before this hook runs).
 	chroot_sdcard apt-get purge -y ffmpeg ||
 		display_alert "ffmpeg-v4l2" "distro ffmpeg not purged (not installed?), continuing" "warn"
@@ -168,5 +176,3 @@ function kickpi_k2b_v2_ffmpeg_install() {
 	display_alert "ffmpeg-v4l2" "installed and verified (glibc ${libc6_version})" "info"
 	return 0
 }
-
-kickpi_k2b_v2_ffmpeg_install
