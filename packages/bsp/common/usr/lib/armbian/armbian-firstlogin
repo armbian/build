@@ -110,7 +110,10 @@ do_firstrun_automated_network_configuration()
 		source "$fp_config"
 
 		# Obtain backward configuration compatibility
-		PRESET_NET_STATIC_DNS=${PRESET_NET_STATIC_DNS// /,}
+		# DNS may be separated by spaces, commas or both ("8.8.8.8, 1.1.1.1", as
+		# Armbian Imager suggests); netplan needs a plain comma list, an empty
+		# element ("8.8.8.8,,1.1.1.1") is invalid YAML and breaks the network.
+		PRESET_NET_STATIC_DNS=$(tr -s ', ' ',' <<< "${PRESET_NET_STATIC_DNS}" | sed 's/^,//; s/,$//')
 		PRESET_NET_STATIC_MASK=$(mask2cidr $PRESET_NET_STATIC_MASK)
 
 		#-----------------------------------------------------------------------------
@@ -250,7 +253,7 @@ set_shell() {
 					echo "$i) $o"
 					((i++)) || true
 				done
-				if [ -z $PRESET_USER_SHELL ];then
+				if [[ -z $PRESET_USER_SHELL && $preset_unattended != 1 ]]; then
 					read -r reply
 				else
 					reply=1
@@ -321,7 +324,7 @@ set_timezone_and_locales() {
 			echo ""
 			unset response
 			while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-				if [ -z $PRESET_CONNECT_WIRELESS ];then
+				if [[ -z $PRESET_CONNECT_WIRELESS && $preset_unattended != 1 ]]; then
 					read -r -p "Connect via wireless? [Y/n] " response
 					response=${response:-Y}
 				else
@@ -479,13 +482,14 @@ set_timezone_and_locales() {
 
 	unset response
 	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-		if [ -z "${SET_LANG_BASED_ON_LOCATION}" ] && [ -n "${TZDATA}" ];then
+		if [ -z "${SET_LANG_BASED_ON_LOCATION}" ] && [ -n "${TZDATA}" ] && [[ $preset_unattended != 1 ]]; then
 			echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
 			echo ""
 			read -r -p "Set user language based on your location? [Y/n] " response
 			response=${response:-Y}
 		else
-			response=$SET_LANG_BASED_ON_LOCATION
+			# unattended without an answer: take the prompt's default (Y)
+			response=${SET_LANG_BASED_ON_LOCATION:-Y}
 			break
 		fi
 	done
@@ -502,8 +506,16 @@ set_timezone_and_locales() {
 	readarray -t options <<< "${LOCALES}"
 
 	if [ -z $PRESET_LOCALE ];then
-		# when having more locales, prompt for choosing one
-		if [[ "${#options[@]}" -gt 1 ]]; then
+		# when having more locales, prompt for choosing one (unattended: the first)
+		if [[ "${#options[@]}" -gt 1 && $preset_unattended == 1 ]]; then
+			# no country code: the search matched all locales, so keep the image locale
+			if [[ -n "${CCODE}" ]]; then
+				LOCALES=${options[0]}
+			else
+				LOCALES=$(sed -n 's/^LANG=//p' /etc/default/locale | tr -d '"')
+				LOCALES=${LOCALES:-C.UTF-8}
+			fi
+		elif [[ "${#options[@]}" -gt 1 ]]; then
 			options+=("Skip generating locales")
 			echo -e "\nAt your location, more locales are possible:\n"
 			PS3='Please enter your choice:'
@@ -521,8 +533,9 @@ set_timezone_and_locales() {
 	if [[ "${LOCALES}" != *Skip* ]]; then
 
 		if [ -z $PRESET_TIMEZONE ];then
-			# if TZDATA was not detected, we need to select one
-			if [[ -z ${TZDATA} ]]; then
+			# if TZDATA was not detected, we need to select one (unattended:
+			# keep the image's timezone rather than wait on tzselect)
+			if [[ -z ${TZDATA} && $preset_unattended != 1 ]]; then
 				TZDATA=$(tzselect | tail -1)
 			fi
 			echo ""
@@ -530,8 +543,10 @@ set_timezone_and_locales() {
 			TZDATA=$PRESET_TIMEZONE
 		fi
 
-		timedatectl set-timezone "${TZDATA}"
-		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
+		if [[ -n ${TZDATA} ]]; then
+			timedatectl set-timezone "${TZDATA}"
+			dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
+		fi
 
 		# change default locales (atomic write)
 		local _f="/etc/default/locale"
@@ -664,11 +679,12 @@ add_user() {
 					echo -e "\n\e[0;31mWarning:\x1B[0m Weak password, $okay \b!"
 				fi
 			fi
-			if [ -z "$PRESET_DEFAULT_REALNAME" ];then
+			if [[ -z "$PRESET_DEFAULT_REALNAME" && $preset_unattended != 1 ]]; then
 				echo -e ""
 				read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
 			else
-				RealName="$PRESET_DEFAULT_REALNAME"
+				# unattended without a real name: use the prompt's default
+				RealName="${PRESET_DEFAULT_REALNAME:-${RealUserName^}}"
 			fi
 
 			# Skip user creation if already exists (power-loss re-run). If the user
@@ -790,7 +806,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	# most autologin consoles have nobody at them, so wait for Enter;
 	# a preset run has nobody to wait for, an ssh login already has a user
-	if [[ -z "${PRESET_ROOT_PASSWORD}${PRESET_CONFIGURATION}${SSH_CONNECTION}" ]]; then
+	if [[ -z "${PRESET_ROOT_PASSWORD}${PRESET_USER_NAME}${PRESET_CONFIGURATION}${SSH_CONNECTION}" ]]; then
 		echo -e "\nPress Enter to start the first login setup on this console."
 		until read -r -t 1 _; do
 			(($? > 128)) || exit 0 # not a timeout: the terminal is gone
@@ -825,6 +841,13 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 			exit 1
 		fi
 	fi
+
+	# A preset (e.g. written by Armbian Imager) drives an unattended run: on a
+	# headless board the autologin console has nobody at it, so any question the
+	# preset doesn't answer would block first login forever. With one, questions
+	# the preset leaves open take their default instead of waiting for input.
+	preset_unattended=0
+	[[ -n "${PRESET_ROOT_PASSWORD}${PRESET_USER_NAME}" ]] && preset_unattended=1
 
 	do_firstrun_automated_network_configuration || exit 1
 
