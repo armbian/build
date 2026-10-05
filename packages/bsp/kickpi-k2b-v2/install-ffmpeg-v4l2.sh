@@ -74,6 +74,20 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		return 0
 	fi
 
+	# ---- never clobber somebody else's binaries: if /usr/local/bin/{ffmpeg,ffprobe}
+	# ---- exists and is not one of our own symlinks, it belongs to another
+	# ---- installation — skip (a later rollback could not restore it) ----
+	local pre_link_name="" pre_link_target=""
+	for pre_link_name in ffmpeg ffprobe; do
+		if [[ -e "${SDCARD}/usr/local/bin/${pre_link_name}" || -L "${SDCARD}/usr/local/bin/${pre_link_name}" ]]; then
+			pre_link_target="$(readlink "${SDCARD}/usr/local/bin/${pre_link_name}" 2> /dev/null || true)"
+			if [[ "${pre_link_target}" != /opt/ffmpeg-v4l2/* ]]; then
+				display_alert "ffmpeg-v4l2" "pre-existing ${pre_link_name} in image belongs to another installation, skipping" "warn"
+				return 0
+			fi
+		fi
+	done
+
 	# ---- download + checksum: every source is validated before it is accepted, so a
 	# ---- corrupt or tampered response just moves on to the next mirror ----
 	local -a pack_urls=()
@@ -84,15 +98,16 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		"${kickpi_k2b_v2_ffmpeg_pack_mirror2}"
 	)
 
-	local tmp_dir="" pack_url="" valid_pack="" actual_sha256=""
+	local tmp_dir="" pack_url="" valid_pack="" actual_sha256="" source_no=0
 	tmp_dir="$(mktemp -d)" || {
 		display_alert "ffmpeg-v4l2" "mktemp failed, skipping" "warn"
 		return 0
 	}
 
 	for pack_url in "${pack_urls[@]}"; do
+		source_no=$((source_no + 1))
 		if ! curl -fsSL --connect-timeout 15 --max-time 600 -o "${tmp_dir}/pack.tar.gz" "${pack_url}"; then
-			display_alert "ffmpeg-v4l2" "download failed: ${pack_url}" "warn"
+			display_alert "ffmpeg-v4l2" "download failed (source $((source_no)) of ${#pack_urls[@]}), trying next" "warn"
 			continue
 		fi
 		actual_sha256="$(sha256sum "${tmp_dir}/pack.tar.gz" | cut -d ' ' -f 1)" || actual_sha256=""
@@ -100,7 +115,7 @@ function kickpi_k2b_v2_ffmpeg_install() {
 			valid_pack="${pack_url}"
 			break
 		fi
-		display_alert "ffmpeg-v4l2" "sha256 mismatch from ${pack_url} (${actual_sha256}), trying next source" "warn"
+		display_alert "ffmpeg-v4l2" "sha256 mismatch (${actual_sha256}), trying next source" "warn"
 	done
 
 	if [[ -z "${valid_pack}" ]]; then
