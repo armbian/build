@@ -39,12 +39,15 @@ function ffmpeg_v4l2_request_is_complete() {
 		"$(readlink "${SDCARD}/usr/local/bin/ffprobe" 2> /dev/null)" == "/opt/ffmpeg-v4l2/bin/ffprobe" ]]
 }
 
-# Config phase: bring in the x264 encode runtime the prebuilt links against. Ubuntu
-# "resolute" renamed the x264 ABI (package name and libx264.so.164 both unavailable
-# there), and the install hook below skips that release entirely — so don't ask apt
-# for a package that would fail the build.
+# Config phase: bring in the x264 encode runtime the prebuilt links against.
+# Package names verified against packages.ubuntu.com / packages.debian.org:
+# - Ubuntu jammy ships libx264-163 only (no -164): a -164 request would fail the
+#   build at package-install time, which runs before any guard in the install hook
+# - Ubuntu resolute renamed the ABI to libx264-165 (no -164); the install hook
+#   skips that release entirely (the prebuilt links libx264.so.164)
+# Debian bookworm/trixie and Ubuntu noble all provide libx264-164 and keep it.
 function extension_prepare_config__ffmpeg_v4l2_request() {
-	if [[ "${RELEASE}" != "resolute" ]]; then
+	if [[ "${RELEASE}" != "resolute" && "${RELEASE}" != "jammy" ]]; then
 		declare -g PACKAGE_LIST_BOARD+=" libx264-164"
 	fi
 	display_alert "${EXTENSION}" "ffmpeg-v4l2-request configured for RELEASE=${RELEASE}" "debug"
