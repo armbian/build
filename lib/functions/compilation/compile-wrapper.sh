@@ -14,8 +14,7 @@ function do_with_compile_wrapper() {
 	add_cleanup_handler _do_with_compile_wrapper_run_post
 
 	call_extension_method "compile_wrapper_pre" <<- 'COMPILE_WRAPPER_PRE'
-		*pre-compilation hook for cache wrappers (ccache, sccache, …) and
-		similar backend-agnostic setup*
+		*pre-compilation hook for cache wrappers (ccache, sccache, …) and similar backend-agnostic setup*
 		Called once right before the wrapped compilation command runs.
 		Implementations may zero stats counters, start a long-lived helper
 		process, validate that a remote backend is reachable, etc.
