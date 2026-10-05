@@ -5,10 +5,12 @@
 # Sourced by config/boards/kickpi-k2b-v2.csc from its post_family_tweaks__ hook, so it
 # runs with build-framework context: ${SDCARD}, display_alert and chroot_sdcard.
 #
-# Follow-up to #10902 ("Plan C"):
-# - the 40 MB pack is a GitHub Release asset on the contributor fork, never in git
+# Follow-up to #10902:
+# - the 41 MB pack is a GitHub Release asset on the contributor fork, never in git
 # - guards: Debian dpkg status present, glibc >= 2.41 (prebuilt = aarch64/trixie)
 # - every failure path is fail-soft: warn, clean up, and let the image build continue
+# - the replacement is verified in-chroot BEFORE distro ffmpeg is purged; a failing
+#   verification rolls the replacement back and keeps the distro package
 #
 # shellcheck disable=SC2154 # build-framework globals: SDCARD
 
@@ -20,6 +22,30 @@ kickpi_k2b_v2_ffmpeg_pack_release="https://github.com/Novice-PG/build/releases/d
 # prefix measured ~10x faster than gh-proxy for this 41 MB asset on the target board.
 kickpi_k2b_v2_ffmpeg_pack_mirror="https://gh.acmsz.top/https://github.com/Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
 kickpi_k2b_v2_ffmpeg_pack_mirror2="https://gh-proxy.com/https://github.com/Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
+
+# Remove anything this installer may have put into the image, so a failed run leaves
+# the image exactly as it was and a later run can retry from scratch. Only symlinks
+# that actually point into /opt/ffmpeg-v4l2 are touched.
+function kickpi_k2b_v2_ffmpeg_remove_partial() {
+	rm -rf "${SDCARD}/opt/ffmpeg-v4l2" || true
+	local link_name="" link_target=""
+	for link_name in ffmpeg ffprobe; do
+		link_target="$(readlink "${SDCARD}/usr/local/bin/${link_name}" 2> /dev/null || true)"
+		if [[ "${link_target}" == /opt/ffmpeg-v4l2/* ]]; then
+			rm -f "${SDCARD}/usr/local/bin/${link_name}" || true
+		fi
+	done
+	return 0
+}
+
+# True only for a complete installation: both binaries executable and both symlinks
+# pointing at them (a partial install must fall through and be repaired, not skipped).
+function kickpi_k2b_v2_ffmpeg_is_complete() {
+	[[ -x "${SDCARD}/opt/ffmpeg-v4l2/bin/ffmpeg" &&
+		-x "${SDCARD}/opt/ffmpeg-v4l2/bin/ffprobe" &&
+		"$(readlink "${SDCARD}/usr/local/bin/ffmpeg" 2> /dev/null)" == "/opt/ffmpeg-v4l2/bin/ffmpeg" &&
+		"$(readlink "${SDCARD}/usr/local/bin/ffprobe" 2> /dev/null)" == "/opt/ffmpeg-v4l2/bin/ffprobe" ]]
+}
 
 function kickpi_k2b_v2_ffmpeg_install() {
 	# ---- guards (all fail-soft: skip install, keep building) ----
@@ -43,12 +69,13 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		return 0
 	fi
 
-	if [[ -x "${SDCARD}/opt/ffmpeg-v4l2/bin/ffmpeg" ]]; then
+	if kickpi_k2b_v2_ffmpeg_is_complete; then
 		display_alert "ffmpeg-v4l2" "already present in image" "info"
 		return 0
 	fi
 
-	# ---- download (fail-soft: env override first, then release asset, then mirror) ----
+	# ---- download + checksum: every source is validated before it is accepted, so a
+	# ---- corrupt or tampered response just moves on to the next mirror ----
 	local -a pack_urls=()
 	[[ -n "${FFMPEG_PACK_URL:-}" ]] && pack_urls+=("${FFMPEG_PACK_URL}")
 	pack_urls+=(
@@ -57,36 +84,32 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		"${kickpi_k2b_v2_ffmpeg_pack_mirror2}"
 	)
 
-	local tmp_dir="" pack_url="" downloaded_from=""
+	local tmp_dir="" pack_url="" valid_pack="" actual_sha256=""
 	tmp_dir="$(mktemp -d)" || {
 		display_alert "ffmpeg-v4l2" "mktemp failed, skipping" "warn"
 		return 0
 	}
 
 	for pack_url in "${pack_urls[@]}"; do
-		if curl -fsSL --connect-timeout 15 --max-time 600 -o "${tmp_dir}/pack.tar.gz" "${pack_url}"; then
-			downloaded_from="${pack_url}"
+		if ! curl -fsSL --connect-timeout 15 --max-time 600 -o "${tmp_dir}/pack.tar.gz" "${pack_url}"; then
+			display_alert "ffmpeg-v4l2" "download failed: ${pack_url}" "warn"
+			continue
+		fi
+		actual_sha256="$(sha256sum "${tmp_dir}/pack.tar.gz" | cut -d ' ' -f 1)" || actual_sha256=""
+		if [[ "${actual_sha256}" == "${kickpi_k2b_v2_ffmpeg_pack_sha256}" ]]; then
+			valid_pack="${pack_url}"
 			break
 		fi
-		display_alert "ffmpeg-v4l2" "download failed: ${pack_url}" "warn"
+		display_alert "ffmpeg-v4l2" "sha256 mismatch from ${pack_url} (${actual_sha256}), trying next source" "warn"
 	done
 
-	if [[ -z "${downloaded_from}" ]]; then
+	if [[ -z "${valid_pack}" ]]; then
 		rm -rf "${tmp_dir}" || true
-		display_alert "ffmpeg-v4l2" "all sources failed, continuing without FFmpeg" "warn"
+		display_alert "ffmpeg-v4l2" "no valid archive from any source, continuing without FFmpeg" "warn"
 		return 0
 	fi
 
-	# ---- verify checksum (fail-soft) ----
-	local actual_sha256=""
-	actual_sha256="$(sha256sum "${tmp_dir}/pack.tar.gz" | cut -d ' ' -f 1)" || true
-	if [[ "${actual_sha256}" != "${kickpi_k2b_v2_ffmpeg_pack_sha256}" ]]; then
-		display_alert "ffmpeg-v4l2" "sha256 mismatch (${actual_sha256}), skipping" "warn"
-		rm -rf "${tmp_dir}" || true
-		return 0
-	fi
-
-	# ---- extract and install into the image rootfs (fail-soft) ----
+	# ---- extract and install into the image rootfs; clean up partial copies ----
 	if ! tar -xzf "${tmp_dir}/pack.tar.gz" -C "${tmp_dir}"; then
 		display_alert "ffmpeg-v4l2" "extract failed, skipping" "warn"
 		rm -rf "${tmp_dir}" || true
@@ -98,27 +121,31 @@ function kickpi_k2b_v2_ffmpeg_install() {
 		! install -m 0755 "${tmp_dir}/ffmpeg-v4l2-request-pack/bin/ffprobe" "${SDCARD}/opt/ffmpeg-v4l2/bin/ffprobe" ||
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffmpeg "${SDCARD}/usr/local/bin/ffmpeg" ||
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffprobe "${SDCARD}/usr/local/bin/ffprobe"; then
-		display_alert "ffmpeg-v4l2" "copy into image failed, skipping" "warn"
+		kickpi_k2b_v2_ffmpeg_remove_partial
+		display_alert "ffmpeg-v4l2" "copy into image failed, partial install removed" "warn"
 		rm -rf "${tmp_dir}" || true
 		return 0
 	fi
 	rm -rf "${tmp_dir}" || true
 
-	# ---- image hygiene: drop distro FFmpeg so /usr/local/bin wins PATH (fail-soft).
-	# ---- libx264-164 runtime comes from PACKAGE_LIST_BOARD (installed way earlier,
-	# ---- during package installation), so no chroot apt download is needed here.
+	# ---- verify the replacement in the image chroot BEFORE touching distro ffmpeg ----
+	# ---- (missing shared libraries fail loudly here); rollback on failure so the ----
+	# ---- image keeps whatever distro ffmpeg it had ----
+	if ! chroot_sdcard /usr/local/bin/ffmpeg -version; then
+		kickpi_k2b_v2_ffmpeg_remove_partial
+		display_alert "ffmpeg-v4l2" "verification failed, replacement removed; distro ffmpeg untouched" "warn"
+		return 0
+	fi
+
+	# ---- now that the replacement works: drop distro FFmpeg so /usr/local/bin wins
+	# ---- PATH (fail-soft). libx264-164 runtime comes from PACKAGE_LIST_BOARD
+	# ---- (installed during package installation, before this hook runs).
 	chroot_sdcard apt-get purge -y ffmpeg ||
 		display_alert "ffmpeg-v4l2" "distro ffmpeg not purged (not installed?), continuing" "warn"
 	chroot_sdcard apt-mark hold ffmpeg ||
 		display_alert "ffmpeg-v4l2" "apt-mark hold ffmpeg failed, continuing" "warn"
 
-	# ---- verify inside the image chroot; missing shared libs fail loudly here ----
-	if chroot_sdcard /usr/local/bin/ffmpeg -version; then
-		display_alert "ffmpeg-v4l2" "installed and verified (glibc ${libc6_version})" "info"
-	else
-		display_alert "ffmpeg-v4l2" "installed, but in-chroot verification failed" "warn"
-	fi
-
+	display_alert "ffmpeg-v4l2" "installed and verified (glibc ${libc6_version})" "info"
 	return 0
 }
 
