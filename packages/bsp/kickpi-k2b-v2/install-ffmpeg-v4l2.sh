@@ -17,11 +17,16 @@
 # sha256 of ffmpeg-v4l2-request-pack.tar.gz (contents: README-BUILD.md, SHA256SUMS,
 # bin/{ffmpeg,ffprobe}, scripts/*, src/kwiboo-ffmpeg-v4l2-request-n8.1.tgz)
 kickpi_k2b_v2_ffmpeg_pack_sha256="4b20d322778030d685e690e5c08e48a7091234e1506f2357401f478fac508b01"
-kickpi_k2b_v2_ffmpeg_pack_release="https://github.com/Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
-# Fallback mirrors for builders where direct github.com is unreachable; the gh.acmsz
-# prefix measured ~10x faster than gh-proxy for this 41 MB asset on the target board.
-kickpi_k2b_v2_ffmpeg_pack_mirror="https://gh.acmsz.top/https://github.com/Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
-kickpi_k2b_v2_ffmpeg_pack_mirror2="https://gh-proxy.com/https://github.com/Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
+# Primary source follows the framework's ${GITHUB_SOURCE} github mirror (set from
+# GITPROXY/GHPROXY in lib/functions/configuration/main-config.sh — same pattern as
+# lib/tools/shellcheck.sh and friends).
+kickpi_k2b_v2_ffmpeg_pack_rel="Novice-PG/build/releases/download/ffmpeg-v4l2-request-v1/ffmpeg-v4l2-request-pack.tar.gz"
+kickpi_k2b_v2_ffmpeg_pack_release="${GITHUB_SOURCE:-https://github.com}/${kickpi_k2b_v2_ffmpeg_pack_rel}"
+# Fallbacks for builders that configure neither GITPROXY nor GHPROXY and cannot
+# reach github.com directly; the gh.acmsz prefix measured ~10x faster than
+# gh-proxy for this 41 MB asset on the target board.
+kickpi_k2b_v2_ffmpeg_pack_mirror="https://gh.acmsz.top/https://github.com/${kickpi_k2b_v2_ffmpeg_pack_rel}"
+kickpi_k2b_v2_ffmpeg_pack_mirror2="https://gh-proxy.com/https://github.com/${kickpi_k2b_v2_ffmpeg_pack_rel}"
 
 # Remove anything this installer may have put into the image, so a failed run leaves
 # the image exactly as it was and a later run can retry from scratch. Only symlinks
