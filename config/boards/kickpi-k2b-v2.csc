@@ -13,7 +13,9 @@ KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 BOOTBRANCH_BOARD="tag:v2026.07"
 BOOTPATCHDIR="v2026.07-sunxi64"
-PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
+# libx264-164 = runtime for the prebuilt FFmpeg v4l2-request x264 encoder (see the
+# fail-soft installer hook at the bottom of this file)
+PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools libx264-164"
 
 # KickPi ships a WiFi watchdog in their image; carry the fixed version
 # (interface-name extraction bug caused ~94s periodic restarts, see
@@ -34,4 +36,14 @@ function post_family_tweaks__enable_kickpi_k2b_v2_wifi_watchdog() {
 	else
 		display_alert "$BOARD" "kickpi-wifi-watchdog.service not found in image" "warn"
 	fi
+}
+
+# Install prebuilt FFmpeg v4l2-request (Kwiboo FFmpeg 8.1, cedrus HW decode) — the
+# follow-up to #10902 ("Plan C"): artifact is a Release asset on the contributor fork
+# (40 MB stays out of git); install is fail-soft (glibc >= 2.41 guard, download and
+# verify failures only warn, image build always continues). See
+# packages/bsp/kickpi-k2b-v2/install-ffmpeg-v4l2.sh for the implementation.
+function post_family_tweaks__kickpi_k2b_v2_ffmpeg_v4l2() {
+	display_alert "$BOARD" "Installing prebuilt FFmpeg v4l2-request (fail-soft)" "info"
+	source "${SRC}/packages/bsp/kickpi-k2b-v2/install-ffmpeg-v4l2.sh"
 }
