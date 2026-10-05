@@ -4,9 +4,13 @@
 # the contributor fork and never enters git; the primary download source follows the
 # framework's ${GITHUB_SOURCE} mirror (with two hardcoded fallbacks for proxy-less builders)
 # and the sha256 is pinned. Guards: dpkg status present, glibc >= 2.41 (prebuilt = aarch64/
-# trixie), Ubuntu "resolute" skipped (x264 ABI rename). Failure paths are currently fail-soft
-# (warn, roll back, continue) — see the PR #10915 discussion about making network failures
-# hard errors instead.
+# trixie), Ubuntu "resolute" skipped (x264 ABI rename). Failure semantics (per PR #10915
+# discussion): configuration-class conditions (unsupported release, missing or old glibc,
+# foreign binaries in /usr/local/bin, already installed) warn and skip; download, checksum,
+# extract, copy and verify failures abort the build via exit_with_error after rolling back
+# any partial install, so a network or disk problem can never silently produce an image
+# without the promised FFmpeg. Set SKIP_FFMPEG_V4L2=yes to deliberately build without the
+# prebuilt pack.
 #
 # shellcheck disable=SC2154 # build-framework globals: SDCARD, RELEASE, BOARD, PACKAGE_LIST_BOARD
 
@@ -47,22 +51,31 @@ function ffmpeg_v4l2_request_is_complete() {
 #   skips that release entirely (the prebuilt links libx264.so.164)
 # Debian bookworm/trixie and Ubuntu noble all provide libx264-164 and keep it.
 function extension_prepare_config__ffmpeg_v4l2_request() {
+	if [[ "${SKIP_FFMPEG_V4L2:-}" == "yes" ]]; then
+		display_alert "${EXTENSION}" "SKIP_FFMPEG_V4L2=yes — not adding libx264-164 to the package list" "info"
+		return 0
+	fi
 	if [[ "${RELEASE}" != "resolute" && "${RELEASE}" != "jammy" ]]; then
 		declare -g PACKAGE_LIST_BOARD+=" libx264-164"
 	fi
 	display_alert "${EXTENSION}" "ffmpeg-v4l2-request configured for RELEASE=${RELEASE}" "debug"
 }
 
-# Install phase (same stage as post_family_tweaks board hooks): everything below is
-# fail-soft for now — see the header and PR #10915 for the hard-fail proposal.
+# Install phase (same stage as post_family_tweaks board hooks): configuration-class
+# conditions warn and skip; download, integrity and install failures abort the build
+# (exit_with_error) after rolling back any partial install — see the header.
 function post_family_tweaks__ffmpeg_v4l2_request() {
+	if [[ "${SKIP_FFMPEG_V4L2:-}" == "yes" ]]; then
+		display_alert "${EXTENSION}" "SKIP_FFMPEG_V4L2=yes — skipping prebuilt FFmpeg install" "info"
+		return 0
+	fi
 	if [[ "${RELEASE}" == "resolute" ]]; then
 		display_alert "${EXTENSION}" "Skipping prebuilt FFmpeg v4l2-request on ${RELEASE} (x264 ABI rename)" "warn"
 		return 0
 	fi
-	display_alert "${EXTENSION}" "Installing prebuilt FFmpeg v4l2-request (fail-soft)" "info"
+	display_alert "${EXTENSION}" "Installing prebuilt FFmpeg v4l2-request" "info"
 
-	# ---- guards (all fail-soft: skip install, keep building) ----
+	# ---- configuration-class guards: warn + skip, keep building ----
 	if [[ ! -f "${SDCARD}/var/lib/dpkg/status" ]]; then
 		display_alert "ffmpeg-v4l2" "no dpkg status in image, skipping" "warn"
 		return 0
@@ -116,8 +129,7 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 
 	local tmp_dir="" pack_url="" valid_pack="" actual_sha256="" source_no=0
 	tmp_dir="$(mktemp -d)" || {
-		display_alert "ffmpeg-v4l2" "mktemp failed, skipping" "warn"
-		return 0
+		exit_with_error "ffmpeg-v4l2: mktemp failed on the builder (local disk problem)"
 	}
 
 	for pack_url in "${pack_urls[@]}"; do
@@ -136,15 +148,13 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 
 	if [[ -z "${valid_pack}" ]]; then
 		rm -rf "${tmp_dir}" || true
-		display_alert "ffmpeg-v4l2" "no valid archive from any source, continuing without FFmpeg" "warn"
-		return 0
+		exit_with_error "ffmpeg-v4l2: no valid pack from ${#pack_urls[@]} sources (download or sha256 failed); set SKIP_FFMPEG_V4L2=yes to build without the prebuilt FFmpeg"
 	fi
 
 	# ---- extract and install into the image rootfs; clean up partial copies ----
 	if ! tar -xzf "${tmp_dir}/pack.tar.gz" -C "${tmp_dir}"; then
-		display_alert "ffmpeg-v4l2" "extract failed, skipping" "warn"
 		rm -rf "${tmp_dir}" || true
-		return 0
+		exit_with_error "ffmpeg-v4l2: archive extract failed (corrupt download or builder disk problem)"
 	fi
 
 	if ! install -d "${SDCARD}/opt/ffmpeg-v4l2/bin" "${SDCARD}/usr/local/bin" ||
@@ -153,9 +163,8 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffmpeg "${SDCARD}/usr/local/bin/ffmpeg" ||
 		! ln -sfn /opt/ffmpeg-v4l2/bin/ffprobe "${SDCARD}/usr/local/bin/ffprobe"; then
 		ffmpeg_v4l2_request_remove_partial
-		display_alert "ffmpeg-v4l2" "copy into image failed, partial install removed" "warn"
 		rm -rf "${tmp_dir}" || true
-		return 0
+		exit_with_error "ffmpeg-v4l2: copy into image failed; partial install rolled back"
 	fi
 	rm -rf "${tmp_dir}" || true
 
@@ -164,12 +173,12 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 	# ---- image keeps whatever distro ffmpeg it had ----
 	if ! chroot_sdcard /usr/local/bin/ffmpeg -version; then
 		ffmpeg_v4l2_request_remove_partial
-		display_alert "ffmpeg-v4l2" "verification failed, replacement removed; distro ffmpeg untouched" "warn"
-		return 0
+		exit_with_error "ffmpeg-v4l2: in-image verification failed; replacement rolled back, distro ffmpeg untouched"
 	fi
 
 	# ---- now that the replacement works: drop distro FFmpeg so /usr/local/bin wins
-	# ---- PATH (fail-soft). libx264-164 runtime comes from the config hook above
+	# ---- PATH (non-fatal cleanup: if this fails, distro ffmpeg stays but /usr/local/bin
+	# ---- still wins PATH). libx264-164 runtime comes from the config hook above
 	# ---- (installed during package installation, before this hook runs).
 	chroot_sdcard apt-get purge -y ffmpeg ||
 		display_alert "ffmpeg-v4l2" "distro ffmpeg not purged (not installed?), continuing" "warn"
