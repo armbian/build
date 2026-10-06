@@ -1,5 +1,5 @@
 # Rockchip RK3506J triple core 512MB SoC 2x100MBe NAND USB2
-BOARD_NAME="ArmSoM Forge1"
+BOARD_NAME="Forge1"
 BOARD_VENDOR="armsom"
 BOARDFAMILY="rockchip"
 BOOTCONFIG="forge1-rk3506j_defconfig"

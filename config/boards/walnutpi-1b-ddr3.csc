@@ -1,7 +1,7 @@
 # Allwinner H618 quad core 1GB DDR3 RAM SoC WiFi/BT
 # Early 1B revision with 2x 512MB DDR3 (vendor schematic v1.0); newer 1GB
 # boards use LPDDR4 and are covered by walnutpi-1b. Untested on hardware.
-BOARD_NAME="Walnut Pi 1B DDR3"
+BOARD_NAME="Pi 1B DDR3"
 BOARD_VENDOR="walnut"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER="TallGuy74"
