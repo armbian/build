@@ -12,8 +12,8 @@
 
 # Download and prepare tools
 function bootstrap_tools() {
-	local repo_url="https://github.com/jethome-iot/jethome-tools.git"
-	local ref="commit:87be932dceb6135c99dfc5a105a6345eff954f2c"
+	local repo_url="${JETHOME_TOOLS_URL:-https://github.com/jethome-iot/jethome-tools.git}"
+	local ref="${JETHOME_TOOLS_REF:-branch:convert_jhos}"
 
 	display_alert "jethub-burn" "Fetching jethome-tools (${ref})..." "info"
 	fetch_from_repo "${repo_url}" "jethome-tools" "${ref}"
@@ -26,6 +26,11 @@ function bootstrap_tools() {
 	declare -g IMAGE_CFG="${BINS_DIR}/image.armbian.cfg"
 
 	[[ -x "${PACKER}" ]] || exit_with_error "aml_image_v2_packer_new not found at ${PACKER}"
+
+	declare -g JETHOME_TOOLS_CACHE="${SRC}/cache/jethome"
+	export JETHOME_TOOLS_CACHE
+	run_host_command_logged mkdir -p "${JETHOME_TOOLS_CACHE}/recovery"
+	source "${TOOLS_DIR}/lib.sh"
 
 	display_alert "jethub-burn" "Tools ready (packer: ${PACKER})" "ok"
 }
@@ -49,8 +54,23 @@ function make_burn__run() {
 	local -r dts_name="$3"
 	local -r bins_subdir="$4"
 	local -r uboot_bin="$5"
+	local -r soc_family="$6"
+	local -r recovery_slots="$7"
 
 	local -r bins="${BINS_DIR}/${bins_subdir}"
+	[[ -d "${bins}" ]] || exit_with_error "bins directory not found: ${bins}"
+
+	# s7 (j310) packs a different file set
+	local dtsi_name image_cfg packer
+	dtsi_name="partition_arm.dtsi"
+	if [[ "${soc_family}" == "s7" ]]; then
+		image_cfg="${BINS_DIR}/image.armbian.s7.cfg"
+		packer="${TOOLS_DIR}/tools/aml_image_v2_packer_new.s7"
+	else
+		image_cfg="${IMAGE_CFG}"
+		packer="${PACKER}"
+	fi
+	[[ -x "${packer}" ]] || exit_with_error "packer not found at ${packer}"
 	JETHUB_BURN_TMPDIR="$(mktemp -d)"
 	local -r tmpdir="${JETHUB_BURN_TMPDIR}"
 	add_cleanup_handler cleanup_burn_tmpdir
@@ -63,8 +83,8 @@ function make_burn__run() {
 	# build _aml_dtb.PARTITION
 	mkdir -p "$tmpdir/dts"
 	cp "$DTS_DIR/$dts_name" "$tmpdir/dts/$dts_name"
-	cp "$DTS_DIR/partition_arm.dtsi" "$tmpdir/dts/partition_arm.dtsi"
-	sed -i 's#partition\.dtsi#partition_arm.dtsi#g' "$tmpdir/dts/$dts_name"
+	cp "$DTS_DIR/$dtsi_name" "$tmpdir/dts/$dtsi_name"
+	sed -i "s#partition\.dtsi#${dtsi_name}#g" "$tmpdir/dts/$dts_name"
 
 	cpp -nostdinc -I "$DTS_DIR" -I "$DTS_DIR/include" -undef -x assembler-with-cpp "$tmpdir/dts/$dts_name" "$tmpdir/${dts_name}.pre"
 	dtc -I dts -O dtb -p 0x1000 -qqq "$tmpdir/${dts_name}.pre" -o "$tmpdir/board.dtb"
@@ -95,14 +115,38 @@ function make_burn__run() {
 		exit_with_error "Expected 1 partition, found ${partition_count}"
 	fi
 
+	# Boards with a recovery system keep two 102 MiB raw slots ahead of rootfs
+	if [[ "${recovery_slots}" == "yes" ]]; then
+		local recovery_fit fit_bytes
+		local -r slot_bytes=$((102 * 1024 * 1024))
+		recovery_fit="$(ensure_recovery_fit "${board#jethub}")" || exit_with_error "Could not obtain recovery.fit for ${board}"
+		fit_bytes=$(stat -c%s "${recovery_fit}")
+		[[ ${fit_bytes} -le ${slot_bytes} ]] || exit_with_error "recovery.fit is ${fit_bytes} bytes, does not fit the ${slot_bytes} byte slot"
+
+		display_alert "make_burn" "Prepending 2x recovery slots (102 MiB each)" "info"
+		cp "${recovery_fit}" "$tmpdir/recovery_a.bin"
+		cp "${recovery_fit}" "$tmpdir/recovery_b.bin"
+		truncate -s ${slot_bytes} "$tmpdir/recovery_a.bin"
+		truncate -s ${slot_bytes} "$tmpdir/recovery_b.bin"
+		cat "$tmpdir/recovery_a.bin" "$tmpdir/recovery_b.bin" "$tmpdir/part-1.img" > "$tmpdir/part-1.img.new"
+		mv "$tmpdir/part-1.img.new" "$tmpdir/part-1.img"
+		rm -f "$tmpdir/recovery_a.bin" "$tmpdir/recovery_b.bin"
+	fi
+
 	cp "$bins/platform.conf" "$tmpdir/"
-	cp "$bins/DDR.USB" "$tmpdir/"
-	cp "$bins/UBOOT.USB" "$tmpdir/"
-	cp "$IMAGE_CFG" "$tmpdir/image.cfg"
-	cp "$uboot_bin" "$tmpdir/u-boot.bin"
+	cp "$image_cfg" "$tmpdir/image.cfg"
+	if [[ "${soc_family}" == "s7" ]]; then
+		cp "$bins/u-boot.bin" "$tmpdir/"
+		cp "$bins/u-boot.bin.usb" "$tmpdir/"
+		cp "$bins/usb_flow.aml" "$tmpdir/"
+	else
+		cp "$bins/DDR.USB" "$tmpdir/"
+		cp "$bins/UBOOT.USB" "$tmpdir/"
+		cp "$uboot_bin" "$tmpdir/u-boot.bin"
+	fi
 
 	display_alert "make_burn" "Packing burn image..." "info"
-	run_host_x86_binary_logged "$PACKER" -r "$tmpdir/image.cfg" "$tmpdir" "$OUT_IMG" || exit_with_error "Image pack FAILED"
+	run_host_x86_binary_logged "$packer" -r "$tmpdir/image.cfg" "$tmpdir" "$OUT_IMG" || exit_with_error "Image pack FAILED"
 
 	[[ -f "$OUT_IMG" ]] || exit_with_error "Burn image not produced"
 	display_alert "make_burn" "Burn image created: $(basename "$OUT_IMG")" "ok"
@@ -116,35 +160,46 @@ function post_build_image__900_jethub_burn() {
 	local -r original_image_file="${DESTIMG}/${version}.img"
 	[[ -f "$original_image_file" ]] || exit_with_error "Original image not found: $original_image_file"
 
-	local dts_name
+	local dts_name bins_subdir
+	local soc_family="legacy" recovery_slots="no"
 	case "${BOARD}" in
-		jethubj80) dts_name="meson-gxl-s905w-jethome-jethub-j80.dts" ;;
-		jethubj100) dts_name="meson-axg-jethome-jethub-j100.dts" ;;
-		jethubj200) dts_name="meson-sm1-jethome-jethub-j200.dts" ;;
-		*) exit_with_error "Unsupported board: ${BOARD} (supported: j80, j100, j200)" ;;
+		jethubj80) dts_name="meson-gxl-s905w-jethome-jethub-j80.dts" bins_subdir="j80" ;;
+		jethubj100) dts_name="meson-axg-jethome-jethub-j100.dts" bins_subdir="j100" ;;
+		jethubj200) dts_name="meson-sm1-jethome-jethub-j200.dts" bins_subdir="j200" ;;
+		jethubj310)
+			dts_name="meson-s7-jethub-j310.dts" bins_subdir="j310-armbian"
+			soc_family="s7" recovery_slots="yes"
+			;;
+		*) exit_with_error "Unsupported board: ${BOARD} (supported: j80, j100, j200, j310)" ;;
 	esac
-	local -r bins_subdir="${BOARD#jethub}" # jethubj80 → j80
 
 	display_alert "Converting image to Amlogic burn format" "jethub-burn :: ${BOARD}" "info"
 
 	bootstrap_tools
 
-	local -r debs_dir="${DEB_STORAGE:-${SRC}/output/debs}"
-	local uboot_deb uboot_bin
-	uboot_deb=$(find "${debs_dir}" -maxdepth 1 -type f -name "linux-u-boot-${BOARD}-*.deb" | sort -V | tail -n1)
-	[[ -n "${uboot_deb}" ]] || exit_with_error "u-boot deb not found for ${BOARD}"
-	JETHUB_UBOOT_TMPDIR="$(mktemp -d)"
-	local -r tmp_dir="${JETHUB_UBOOT_TMPDIR}"
-	add_cleanup_handler cleanup_uboot_tmpdir
+	# s7 flashes the bootloader shipped with jethome-tools, there is no deb for it
+	local uboot_bin=""
+	if [[ "${soc_family}" != "s7" ]]; then
+		local -r debs_dir="${DEB_STORAGE:-${SRC}/output/debs}"
+		local uboot_deb
+		uboot_deb=$(find "${debs_dir}" -maxdepth 1 -type f -name "linux-u-boot-${BOARD}-*.deb" | sort -V | tail -n1)
+		[[ -n "${uboot_deb}" ]] || exit_with_error "u-boot deb not found for ${BOARD}"
+		JETHUB_UBOOT_TMPDIR="$(mktemp -d)"
+		local -r tmp_dir="${JETHUB_UBOOT_TMPDIR}"
+		add_cleanup_handler cleanup_uboot_tmpdir
 
-	mkdir -p "${tmp_dir}/deb-uboot"
-	dpkg -x "${uboot_deb}" "${tmp_dir}/deb-uboot"
-	uboot_bin=$(find "${tmp_dir}/deb-uboot/usr/lib" -type f -name "u-boot.nosd.bin" | head -n1)
-	[[ -n "${uboot_bin}" ]] || exit_with_error "u-boot.nosd.bin not found in deb"
+		mkdir -p "${tmp_dir}/deb-uboot"
+		dpkg -x "${uboot_deb}" "${tmp_dir}/deb-uboot"
+		uboot_bin=$(find "${tmp_dir}/deb-uboot/usr/lib" -type f -name "u-boot.nosd.bin" | head -n1)
+		[[ -n "${uboot_bin}" ]] || exit_with_error "u-boot.nosd.bin not found in deb"
+	fi
 
-	make_burn__run "${original_image_file}" "${BOARD}" "${dts_name}" "${bins_subdir}" "${uboot_bin}"
+	make_burn__run "${original_image_file}" "${BOARD}" "${dts_name}" "${bins_subdir}" \
+		"${uboot_bin}" "${soc_family}" "${recovery_slots}"
 
-	execute_and_remove_cleanup_handler cleanup_uboot_tmpdir
+	if [[ "${soc_family}" != "s7" ]]; then
+		execute_and_remove_cleanup_handler cleanup_uboot_tmpdir
+	fi
 
 	display_alert "jethub-burn" "Burn image prepared (pre-checksum stage)" "ok"
 }

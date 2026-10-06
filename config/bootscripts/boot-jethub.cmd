@@ -32,7 +32,19 @@ if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 
 echo "Current fdtfile after armbianEnv: ${fdtfile}"
 
-if test "${console}" = "serial"; then setenv consoleargs "console=ttyAML0,115200n8"; fi
+if test "$board" = "jethub_j310"; then
+    if test -z "${fdtfile}"; then
+        setenv fdtfile "amlogic/meson-s7-jethub-j310.dtb"
+        echo "Set fdtfile for J310: ${fdtfile}"
+    fi
+fi
+
+# Set console based on board type
+if test "$board" = "jethub_j310"; then
+    setenv consoleargs "console=ttyS0,921600n8 earlycon=aml_uart,0xfe07a000"
+else
+    setenv consoleargs "console=ttyAML0,115200n8"
+fi
 
 setenv bootargs "root=${rootdev} rootwait rootflags=data=writeback rootfstype=${rootfstype} ${consoleargs} no_console_suspend consoleblank=0 coherent_pool=2M loglevel=${verbosity} fsck.mode=force fsck.repair=yes net.ifnames=0 ${extraargs} ${extraboardargs}"
 
