@@ -12,3 +12,6 @@ BOOTCONFIG="nezha_defconfig"
 
 enable_extension "mangopi-source-boot"
 enable_extension "mangopi-rtc"
+
+enable_extension "grub-riscv64"
+enable_extension "mangopi-grub"
