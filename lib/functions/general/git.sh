@@ -48,7 +48,8 @@ function regular_git() {
 function improved_git_fetch() {
 	declare -a verbose_params=() && if_user_on_terminal_and_not_logging_add verbose_params "--verbose" "--progress"
 	# --no-auto-maintenance requires a recent git version, not available on focal-like host OSs
-	improved_git fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
+	# git's upload-pack sends a keepalive every 5 seconds while it packs; 30 seconds of silence means the remote is gone.
+	improved_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
 }
 
 # Every 'git ls-remote' is a hit to the remote: it is slow, and it might hang; let the user know before we do it.
@@ -56,7 +57,8 @@ function improved_git_fetch() {
 function git_ls_remote_logged() {
 	declare what="${1}" && shift
 	display_alert "Querying git remote for ${what}" "${*}" "info" # display_alert writes to stderr, so this is safe inside $(...)
-	git ls-remote "$@"
+	# A remote that accepts the connection and then goes silent must not hang the build.
+	git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 ls-remote "$@"
 }
 
 # Resolve a tag to the COMMIT it points at, in a single hit to the remote.
