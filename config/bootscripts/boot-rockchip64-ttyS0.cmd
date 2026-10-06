@@ -47,21 +47,54 @@ load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
+# overlays that applied cleanly: a failed fdt apply leaves the working FDT
+# unusable, so they are re-applied after the DTB has been reloaded
+setenv applied_overlays ""
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
-		fdt apply ${load_addr} || setenv overlay_error "true"
+		if fdt apply ${load_addr}; then
+			setenv applied_overlays "${applied_overlays} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-${overlay_file}.dtbo"
+		else
+			echo "Could not apply kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo, reloading DT and re-applying the overlays that worked"
+			setenv overlay_error "true"
+			load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+			fdt addr ${fdt_addr_r}
+			fdt resize 65536
+			for applied_overlay in ${applied_overlays}; do
+				if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${applied_overlay}; then
+					fdt apply ${load_addr} || setenv overlay_error "true"
+				fi
+			done
+		fi
 	fi
 done
 for overlay_file in ${user_overlays}; do
 	if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
-		fdt apply ${load_addr} || setenv overlay_error "true"
+		if fdt apply ${load_addr}; then
+			setenv applied_overlays "${applied_overlays} ${prefix}overlay-user/${overlay_file}.dtbo"
+		else
+			echo "Could not apply user provided DT overlay ${overlay_file}.dtbo, reloading DT and re-applying the overlays that worked"
+			setenv overlay_error "true"
+			load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+			fdt addr ${fdt_addr_r}
+			fdt resize 65536
+			for applied_overlay in ${applied_overlays}; do
+				if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${applied_overlay}; then
+					fdt apply ${load_addr} || setenv overlay_error "true"
+				fi
+			done
+		fi
 	fi
 done
 if test "${overlay_error}" = "true"; then
-	echo "Error applying DT overlays, restoring original DT"
-	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	if fdt addr ${fdt_addr_r}; then
+		echo "Could not apply every DT overlay, keeping the ones that were applied"
+	else
+		echo "Error applying DT overlays, restoring original DT"
+		load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	fi
 else
 	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
 		load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr
