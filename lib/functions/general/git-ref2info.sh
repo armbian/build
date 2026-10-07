@@ -73,11 +73,24 @@ function memoized_git_ref_to_info() {
 		fi
 	fi
 
+	# remote_sources[i] is a source as configured, remote_urls[i] the URL to contact for it.
+	declare -a remote_sources=() remote_urls=()
+	declare one_url i
+	while read -r one_url; do
+		remote_sources+=("${one_url}")
+		remote_urls+=("$(git_remote_url_for_mirror "${one_url}")")
+	done < <(git_remote_candidates "${MEMO_DICT[GIT_SOURCE]}" "${ref_type}")
+	# The Makefile is read from the source that answered.
+	declare answered_source="${MEMO_DICT[GIT_SOURCE]}"
+
 	# Tags: one ls-remote resolves annotated and lightweight tags alike; no try-list, no wasted round-trips.
 	# Guarded on the sha1 not being valid yet, so the OFFLINE_WORK pinned-sha1 above still wins.
 	if [[ "${ref_type}" == "tag" && ! "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
-		sha1="$(git_ls_remote_tag_commit_sha1 "$(git_remote_url_for_mirror "${MEMO_DICT[GIT_SOURCE]}")" "${ref_name}")"
-		display_alert "SHA1 of tag ${ref_name}" "'${sha1}'" "info"
+		read -r sha1 i <<< "$(git_ls_remote_tag_commit_sha1 "${ref_name}" "${remote_urls[@]}")"
+		if [[ -n "${i}" ]]; then
+			answered_source="${remote_sources[i]}"
+		fi
+		display_alert "SHA1 of tag ${ref_name}" "'${sha1}'${sha1:+ from ${answered_source}}" "info"
 	fi
 
 	# Enter loop. The first that resolves to a valid sha1 wins.
@@ -89,7 +102,14 @@ function memoized_git_ref_to_info() {
 				sha1="${to_try}"
 				;;
 			*)
-				sha1="$(git_ls_remote_logged "${ref_type} '${to_try}'" --exit-code "$(git_remote_url_for_mirror "${MEMO_DICT[GIT_SOURCE]}")" "${to_try}" | cut -f1)"
+				for i in "${!remote_urls[@]}"; do
+					# '|| true': a remote that lacks the ref or does not answer is not an error; the next one is asked.
+					sha1="$({ git_ls_remote_logged "${ref_type} '${to_try}'" --exit-code "${remote_urls[i]}" "${to_try}" || true; } | cut -f1)"
+					if [[ "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
+						answered_source="${remote_sources[i]}"
+						break
+					fi
+				done
 				;;
 		esac
 
@@ -295,7 +315,7 @@ function memoized_git_ref_to_info() {
 		display_alert "Fetching Makefile body" "${ref_name}" "debug"
 		declare makefile_body makefile_url
 		declare makefile_version makefile_codename makefile_full_version
-		obtain_makefile_body_from_git "${MEMO_DICT[GIT_SOURCE]}" "${sha1}"
+		obtain_makefile_body_from_git "${answered_source}" "${sha1}"
 		MEMO_DICT+=(["MAKEFILE_URL"]="${makefile_url}")
 		#MEMO_DICT+=(["MAKEFILE_BODY"]="${makefile_body}") # large, don't store
 		MEMO_DICT+=(["MAKEFILE_VERSION"]="${makefile_version}")

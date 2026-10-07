@@ -78,6 +78,12 @@ function armbian_kernel_config__disable_various_options() {
 	opts_val["LOCALVERSION"]='""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
 }
 
+# Disable DMABUF_DEBUG, which is enabled by default by DEBUG_KERNEL (which is enabled by EXPERT) since v7.3-rc4.
+# It breaks video rendering on rockchip and msm, at least.
+function armbian_kernel_config__disable_dmabuf_debug() {
+	opts_n+=("DMABUF_DEBUG")
+}
+
 # Forces 48-bit virtual and physical addressing on ARM64 architectures.
 # Ensures consistent memory addressing across all ARM64 builds by setting
 # both virtual address (VA) and physical address (PA) bits to 48.

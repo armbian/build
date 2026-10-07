@@ -1,6 +1,4 @@
-# @description Gives SPI-less boards a persistent mainline U-Boot environment on the eMMC/SD card, plus a working
-# `/etc/fw_env.config` so `fw_printenv`/`fw_setenv` work from Linux. The eMMC counterpart of what boards like
-# `nanopct6` and `rock-5b` already do in SPI NOR. Targets recent (2026+) mainline u-boot only.
+# @description Gives SPI-less boards a persistent mainline U-Boot environment on the eMMC/SD card. A matching `/etc/fw_env.config` lets `fw_printenv`/`fw_setenv` work from Linux. It does on eMMC what boards like `nanopct6` and `rock-5b` already do in SPI NOR. Targets recent (2026+) mainline u-boot only. On Rockchip the default `hwpart` mode needs eMMC; for SD boot set `UBOOT_MMC_ENV_MODE=offset`.
 # Two storage modes, selected with `UBOOT_MMC_ENV_MODE`:
 #
 #   hwpart (default on rockchip) -- one env copy in each of the eMMC hardware boot areas, boot0 and boot1.

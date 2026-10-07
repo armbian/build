@@ -1,3 +1,5 @@
+# @description Compile-cache backend that wraps kernel, U-Boot, ATF and Crust compiles in ccache. Enable only one compile-cache backend at a time. `PRIVATE_CCACHE=yes` keeps the cache in the build tree unless `CCACHE_DIR` is set. The `ccache-remote` extension enables this one.
+# @doc-page /build-framework/switches/performance/
 #
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2013-2026 Igor Pecovnik, igor@armbian.com
