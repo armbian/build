@@ -682,12 +682,12 @@ driver_rtl8723cs() {
 
 ###  The vendor's RTL8723DS driver is still required for RockPI-S support because
 ###  the RTW88 driver for the chip configures its RF gains incorrectly
-###  so restrict application to rockchip64 family
+###  D1's vendor kernel also needs this driver for the MangoPi MQ Pro's SDIO Wi-Fi.
 driver_rtl8723DS() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && [[ "$LINUXFAMILY" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 5.0 && [[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == d1 ]]; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8723dsver='commit:b5c8a00c52918c2f98c000551b0c5fc5e365f87e' # Commit date: Sep 9th 2026 (please update when updating commit ref)

@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Wed, 30 Sep 2026 03:25:14 +0000
+Subject: net: stmmac: dwmac-rk: keep the GMAC powered when the PHY wakes the
+ system
+
+When the PHY handles Wake-on-LAN, phylink passes no wake modes to the
+MAC, so the MAC device never gets its wakeup flag. rk_gmac_suspend()
+then powers the GMAC down: its clocks go off and phy-supply is released.
+
+On Helios64 (RTL8211F, WoL in the PHY) the board hung on the first or
+second suspend with a magic-packet wake; with the MAC wakeup flag set
+by hand it suspended and woke 20 times out of 20.
+
+Also check phy_may_wakeup() and remember the decision for resume.
+
+Assisted-by: LLM
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c | 11 ++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-rk.c
+@@ -98,6 +98,7 @@ struct rk_priv_data {
+ 	bool integrated_phy;
+ 	bool supports_rgmii;
+ 	bool supports_rmii;
++	bool suspend_powerdown;
+ 
+ 	struct clk_bulk_data *clks;
+ 	int num_clks;
+@@ -1530,10 +1531,13 @@ static int rk_set_clk_tx_rate(void *bsp_priv_, struct clk *clk_tx_i,
+ 
+ static int rk_gmac_suspend(struct device *dev, void *bsp_priv_)
+ {
++	struct net_device *ndev = dev_get_drvdata(dev);
+ 	struct rk_priv_data *bsp_priv = bsp_priv_;
+ 
+-	/* Keep the PHY up if we use Wake-on-Lan. */
+-	if (!device_may_wakeup(dev))
++	/* Keep the MAC and PHY powered if either of them wakes the system. */
++	bsp_priv->suspend_powerdown = !device_may_wakeup(dev) &&
++		!(ndev->phydev && phy_may_wakeup(ndev->phydev));
++	if (bsp_priv->suspend_powerdown)
+ 		rk_gmac_powerdown(bsp_priv);
+ 
+ 	return 0;
+@@ -1543,8 +1547,7 @@ static int rk_gmac_resume(struct device *dev, void *bsp_priv_)
+ {
+ 	struct rk_priv_data *bsp_priv = bsp_priv_;
+ 
+-	/* The PHY was up for Wake-on-Lan. */
+-	if (!device_may_wakeup(dev))
++	if (bsp_priv->suspend_powerdown)
+ 		rk_gmac_powerup(bsp_priv);
+ 
+ 	return 0;
+-- 
+Armbian
+

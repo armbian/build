@@ -48,7 +48,8 @@ function regular_git() {
 function improved_git_fetch() {
 	declare -a verbose_params=() && if_user_on_terminal_and_not_logging_add verbose_params "--verbose" "--progress"
 	# --no-auto-maintenance requires a recent git version, not available on focal-like host OSs
-	improved_git fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
+	# git's upload-pack sends a keepalive every 5 seconds while it packs; 30 seconds of silence means the remote is gone.
+	improved_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
 }
 
 # Every 'git ls-remote' is a hit to the remote: it is slow, and it might hang; let the user know before we do it.
@@ -56,29 +57,76 @@ function improved_git_fetch() {
 function git_ls_remote_logged() {
 	declare what="${1}" && shift
 	display_alert "Querying git remote for ${what}" "${*}" "info" # display_alert writes to stderr, so this is safe inside $(...)
-	git ls-remote "$@"
+	# A remote that accepts the connection and then goes silent must not hang the build.
+	git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=15 ls-remote "$@"
 }
 
-# Resolve a tag to the COMMIT it points at, in a single hit to the remote.
+# Resolve a tag to the COMMIT it points at, in a single hit per remote.
 # Annotated tags advertise both 'refs/tags/X' (the tag object) and 'refs/tags/X^{}' (the commit);
 # lightweight tags advertise only 'refs/tags/X', which already is the commit. ls-remote takes more
 # than one pattern at a time, so ask for both and prefer the peeled one -- one round-trip, correct
-# for either kind of tag. Echoes the sha1, or nothing if the remote does not have the tag.
-# <url> <tag_name>
+# for either kind of tag. Remotes are asked in turn: one that does not answer, or answers without
+# the tag (a mirror lagging behind), hands over to the next.
+# Echoes '<sha1> <index of the url that has the tag>', or nothing if none of the remotes has the tag.
+# <tag_name> <url>...
 function git_ls_remote_tag_commit_sha1() {
-	declare url="${1}" tag_name="${2}"
-	declare ls_remote_output peeled="" plain="" one_sha1 one_ref
-	# '|| true': not finding the tag is a normal answer here, not an error; the caller decides what to do.
-	ls_remote_output="$(git_ls_remote_logged "tag '${tag_name}' (annotated or not)" --tags "${url}" "${tag_name}" "${tag_name}^{}" || true)"
-	# Match the full ref name: ls-remote patterns match the tail on a slash boundary, so asking for
-	# 'v2026.07' also matches a 'refs/tags/vendor/v2026.07', which is not the tag we asked for.
-	while read -r one_sha1 one_ref; do
-		case "${one_ref}" in
-			"refs/tags/${tag_name}^{}") peeled="${one_sha1}" ;;
-			"refs/tags/${tag_name}") plain="${one_sha1}" ;;
-		esac
-	done <<< "${ls_remote_output}"
-	echo -n "${peeled:-${plain}}"
+	declare tag_name="${1}" && shift
+	declare -a urls=("$@")
+	declare i url ls_remote_output peeled plain one_sha1 one_ref
+	for i in "${!urls[@]}"; do
+		url="${urls[i]}"
+		if ! ls_remote_output="$(git_ls_remote_logged "tag '${tag_name}' (annotated or not)" --tags "${url}" "${tag_name}" "${tag_name}^{}")"; then
+			display_alert "Git remote did not answer, trying the next one" "${url}" "warn"
+			continue
+		fi
+		# Match the full ref name: ls-remote patterns match the tail on a slash boundary, so asking for
+		# 'v2026.07' also matches a 'refs/tags/vendor/v2026.07', which is not the tag we asked for.
+		peeled="" plain=""
+		while read -r one_sha1 one_ref; do
+			case "${one_ref}" in
+				"refs/tags/${tag_name}^{}") peeled="${one_sha1}" ;;
+				"refs/tags/${tag_name}") plain="${one_sha1}" ;;
+			esac
+		done <<< "${ls_remote_output}"
+		if [[ -n "${peeled}${plain}" ]]; then
+			echo -n "${peeled:-${plain}} ${i}"
+			return 0
+		fi
+		display_alert "Git remote has no tag '${tag_name}', trying the next one" "${url}" "info"
+	done
+}
+
+# The remote itself first, then remotes carrying the same refs, one per line. Mirrors of one kernel
+# tree stand in for each other for any ref; Linus' tree and the stable tree share only the mainline
+# tags, and their branches of the same name differ, so the other tree is added for tags alone.
+# <url> <ref_type>
+function git_remote_candidates() {
+	declare url="${1}" ref_type="${2}" one
+	declare -a torvalds=(
+		"https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+		"https://github.com/torvalds/linux.git"
+	)
+	declare -a stable=(
+		"${MAINLINE_KERNEL_SOURCE}"
+		"https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
+		"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git"
+	)
+	declare -a same=() other=()
+	if [[ " ${torvalds[*]} " == *" ${url} "* ]]; then
+		same=("${torvalds[@]}") other=("${stable[@]}")
+	elif [[ " ${stable[*]} " == *" ${url} "* ]]; then
+		same=("${stable[@]}") other=("${torvalds[@]}")
+	fi
+	if [[ "${ref_type}" != "tag" ]]; then
+		other=()
+	fi
+	declare -A seen=()
+	for one in "${url}" "${same[@]}" "${other[@]}"; do
+		if [[ -n "${one}" && -z "${seen["${one}"]:-}" ]]; then
+			seen["${one}"]=1
+			echo "${one}"
+		fi
+	done
 }
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
@@ -103,7 +151,16 @@ function git_ensure_safe_directory() {
 				[[ "$existing" == "$git_dir" ]] && { found=yes; break; }
 			done < <(git config --global --get-all safe.directory 2> /dev/null \
 				|| { rc=$?; [[ "$rc" == 1 || "$rc" == 141 ]]; })
-			[[ "$found" == yes ]] || regular_git config --global --add safe.directory "$git_dir"
+			# The global git config can be unwritable (eg NixOS' ~/.gitconfig is a symlink into
+			# the read-only Nix store): don't let that hard-abort the whole build (#7907), just
+			# warn. A per-repo/--local safe.directory is not an option here: other code paths
+			# (vendor kernel/u-boot build scripts, etc) invoke git themselves from directories
+			# we don't control, so only a global setting is visible to them (see #7910/#7956,
+			# both reverted for exactly this).
+			if [[ "$found" != yes ]] && ! regular_git config --global --add safe.directory "$git_dir"; then
+				display_alert "git: could not add '${git_dir}' to the global safe.directory list" \
+					"your global git config may be read-only; subsequent git operations there may still fail with 'unsafe repository'" "wrn"
+			fi
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
@@ -132,9 +189,15 @@ function fetch_from_repo() {
 	local git_work_dir
 
 	# Set GitHub mirror before anything else touches $url
-	if [[ "${url}" == https://github.com/* ]]; then
-		url="${GITHUB_SOURCE}/${url#https://github.com/}"
-	fi
+	declare -a remote_urls=()
+	declare one_url
+	while read -r one_url; do
+		if [[ "${one_url}" == https://github.com/* ]]; then
+			one_url="${GITHUB_SOURCE}/${one_url#https://github.com/}"
+		fi
+		remote_urls+=("${one_url}")
+	done < <(git_remote_candidates "${url}" "${ref%%:*}")
+	url="${remote_urls[0]}"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	local offline=false
@@ -237,7 +300,12 @@ function fetch_from_repo() {
 				# One hit resolves both annotated and lightweight tags, and always yields a commit, so it is
 				# directly comparable to local_hash (which is 'git rev-parse @', also a commit). Comparing
 				# against the annotated tag's own sha1 could never match, and thus never cache-hit.
-				remote_hash="$(git_ls_remote_tag_commit_sha1 "${url}" "${ref_name}")"
+				declare i
+				read -r remote_hash i <<< "$(git_ls_remote_tag_commit_sha1 "${ref_name}" "${remote_urls[@]}")"
+				# Fetch from the remote that has the tag first; the rest stay as backups.
+				if [[ -n "${i}" ]]; then
+					remote_urls=("${remote_urls[@]:i}" "${remote_urls[@]:0:i}")
+				fi
 				if [[ -z $local_hash || -z $remote_hash || "${local_hash}" != "${remote_hash}" ]]; then
 					changed=true
 				else
@@ -262,6 +330,11 @@ function fetch_from_repo() {
 				;;
 		esac
 
+		# A tree other than the commit the caller versioned the build with is no cache hit.
+		if [[ -n "${GIT_EXPECTED_SHA1:-}" && "${local_hash}" != "${GIT_EXPECTED_SHA1}" ]]; then
+			changed=true
+		fi
+
 		display_alert "Git local_hash vs remote_hash" "${local_hash} vs ${remote_hash}" "git"
 
 	else
@@ -280,23 +353,36 @@ function fetch_from_repo() {
 		else
 			# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
 			display_alert "Fetching updates from remote repository" "$dir $ref_name"
+			declare fetch_ref
 			case $ref_type in
-				branch)
-					improved_git_fetch --no-tags "${url}" "${ref_name}"
-					;;
-				tag)
-					improved_git_fetch --no-tags "${url}" tags/"${ref_name}"
-					;;
-				head)
-					improved_git_fetch --no-tags "${url}" HEAD
-					;;
+				branch) fetch_ref="${ref_name}" ;;
+				tag) fetch_ref="tags/${ref_name}" ;;
+				head) fetch_ref="HEAD" ;;
 				commit)
 					display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
-					improved_git_fetch --no-tags "${url}" "${ref_name}"
+					fetch_ref="${ref_name}"
 					;;
 			esac
+			declare fetched=no
+			for one_url in "${remote_urls[@]}"; do
+				if ! improved_git_fetch --no-tags "${one_url}" "${fetch_ref}"; then
+					display_alert "Git fetch failed, trying the next remote" "${one_url}" "warn"
+					continue
+				fi
+				# A branch tip can differ from the commit the caller versioned the build with;
+				# take a remote only if that commit is here after the fetch, and check out that very commit.
+				if [[ -n "${GIT_EXPECTED_SHA1:-}" ]] && ! git cat-file -e "${GIT_EXPECTED_SHA1}^{commit}" 2> /dev/null; then
+					display_alert "Git remote does not have ${GIT_EXPECTED_SHA1}, trying the next remote" "${one_url}" "warn"
+					continue
+				fi
+				fetched=yes
+				break
+			done
+			if [[ "${fetched}" != "yes" ]]; then
+				exit_with_error "Git fetch failed from all remotes" "${remote_urls[*]} ${fetch_ref}${GIT_EXPECTED_SHA1:+ (expected ${GIT_EXPECTED_SHA1})}"
+			fi
 
-			checkout_from="FETCH_HEAD"
+			checkout_from="${GIT_EXPECTED_SHA1:-FETCH_HEAD}"
 		fi
 	else
 		display_alert "Local copy is up to date, skipping git fetch" "$dir ${ref_type}:${ref_name}" "cachehit"
@@ -367,6 +453,14 @@ function fetch_from_repo() {
 					surl=$(git config -f .gitmodules --get "submodule.${name}.url")
 					sref=$(git config -f .gitmodules --get "submodule.${name}.branch" || true)
 
+					# Some build hosts cannot reach trustedfirmware.org. Use its official
+					# read-only GitHub mirrors for the shared libraries (TF-A submodules).
+					case "${surl%/}" in
+						https://*.trustedfirmware.org/shared/transfer-list-library) surl="https://github.com/TF-Shared/transfer-list-library" ;;
+						https://*.trustedfirmware.org/shared/libEventLog) surl="https://github.com/TF-Shared/event-log-library" ;;
+						https://*.trustedfirmware.org/shared/libTPM) surl="https://github.com/TF-Shared/libTPM" ;;
+					esac
+
 					if [[ -n $sref ]]; then
 						sref="branch:$sref"
 					else
@@ -376,10 +470,11 @@ function fetch_from_repo() {
 					display_alert "Updating submodule" "${name} - ${surl} - ${sref}" "git"
 					git_ensure_safe_directory "$workdir/$path"
 
+					# The expected commit belongs to the outer repo, not to its submodules.
 					if [[ "${GIT_FIXED_WORKDIR}" != "" ]]; then
-						GIT_FIXED_WORKDIR="${GIT_FIXED_WORKDIR}/${path}" fetch_from_repo "$surl" "$workdir/$path" "$sref"
+						GIT_EXPECTED_SHA1="" GIT_FIXED_WORKDIR="${GIT_FIXED_WORKDIR}/${path}" fetch_from_repo "$surl" "$workdir/$path" "$sref"
 					else
-						fetch_from_repo "$surl" "$workdir/$path" "$sref"
+						GIT_EXPECTED_SHA1="" fetch_from_repo "$surl" "$workdir/$path" "$sref"
 					fi
 
 				done < <(git config -f .gitmodules --get-regexp 'submodule\..*\.path')

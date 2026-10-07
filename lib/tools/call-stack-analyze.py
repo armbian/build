@@ -15,7 +15,7 @@ import graphviz
 # define an array with some functions which do callbacks; those complicate the 
 # graph too much, and you don't need them in to understand the flow.
 skip_functions = [
-	"call_extension_method", "do_with_logging", "do_with_hooks", "do_with_ccache_statistics",
+	"call_extension_method", "do_with_logging", "do_with_hooks", "do_with_compile_wrapper",
 	"write_hook_point_metadata"  # this one does no callbacks, but is called a lot, and not in logging module
 ]
 # same logic, but per-group.

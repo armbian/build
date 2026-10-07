@@ -108,8 +108,11 @@ function git_oras_tree_download_gitball() {
 		return 0
 	fi
 
+	declare oras_has_manifest="" oras_manifest_json="" oras_manifest_description="" oras_manifest_error="" oci_read_ref=""
+	oci_read_ref_for "${oci_ref}"
+
 	# do_with_retries 5 xxx ? -- no -- oras_pull_artifact_file should do it's own retries.
-	oras_pull_artifact_file "${oci_ref}" "${bundles_dir}" "${ball_fn}"
+	oci_pull_file "${oci_ref}" "${oci_read_ref}" "${bundles_dir}" "${ball_fn}"
 
 	# sanity check
 	if [[ ! -f "${git_oras_tree_tar_file}" ]]; then

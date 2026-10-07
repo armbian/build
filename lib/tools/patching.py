@@ -94,15 +94,16 @@ for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
 
 # Some sub-path possibilities:
 CONST_PATCH_SUB_DIRS = []
-if TARGET is not None:
-	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"target_{TARGET}", "target"))
+CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir("", "common"))
 if BOARD is not None:
 	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"board_{BOARD}", "board"))
-CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir("", "common"))
+if TARGET is not None:
+	CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir(f"target_{TARGET}", "target"))
 
-# Prepare the full list of patch directories to apply
+# Prepare the full list of patch directories to apply, lowest priority first:
+# a same-named patch file in a later directory replaces the one found earlier.
 ALL_DIRS: list[patching_utils.PatchDir] = []
-for patch_root_dir in CONST_PATCH_ROOT_DIRS:
+for patch_root_dir in sorted(CONST_PATCH_ROOT_DIRS, key=lambda root: root.root_type == "user"):
 	for patch_sub_dir in CONST_PATCH_SUB_DIRS:
 		ALL_DIRS.append(patching_utils.PatchDir(patch_root_dir, patch_sub_dir, SRC))
 
@@ -151,8 +152,8 @@ for patch_file in EXTRA_PATCH_FILES_FIRST:
 log.debug(f"Found {len(PATCH_FILES_FIRST)} kernel driver patches.")
 
 SERIES_PATCH_FILES: list[patching_utils.PatchFileInDir] = []
-# Now, loop over ALL_DIRS, and find the patch files in each directory
-for one_dir in ALL_DIRS:
+# Find the patch files in each directory; series apply in CONST_PATCH_ROOT_DIRS order.
+for one_dir in sorted(ALL_DIRS, key=lambda d: CONST_PATCH_ROOT_DIRS.index(d.patch_root_dir)):
 	if one_dir.patch_sub_dir.sub_type == "common":
 		# Handle series; those are directly added to SERIES_PATCH_FILES which is not sorted.
 		series_patches = one_dir.find_series_patch_files()
@@ -178,6 +179,13 @@ for one_patch_file in ALL_DIR_PATCH_FILES:
 # For series-based patches, we want to apply the serie'd patches first.
 # The other patches are separately sorted.
 NORMAL_PATCH_FILES = list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+
+# An empty patch file disables the same-named patch from a lower priority directory.
+for one_patch_file in NORMAL_PATCH_FILES:
+	if os.path.getsize(one_patch_file.full_file_path()) == 0:
+		log.info(f"Skipping empty patch file '{one_patch_file.relative_to_src_filepath()}'")
+NORMAL_PATCH_FILES = [f for f in NORMAL_PATCH_FILES if os.path.getsize(f.full_file_path()) > 0]
+
 ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + NORMAL_PATCH_FILES
 
 patch_counter_desc_arr = []

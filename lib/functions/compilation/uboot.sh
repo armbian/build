@@ -274,11 +274,13 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	do_with_ccache_statistics run_host_command_logged_long_running \
+	do_with_compile_wrapper run_host_command_logged_long_running \
 		"env" "-i" "${uboot_make_envs[@]}" \
 		pipetty make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
+
+	report_uboot_spl_size_usage
 
 	# Save a defconfig, as that will be included as reference in the .deb package
 	# Do not fail here; some very (very!) old u-boots like 2011 do not have 'savedefconfig'
@@ -327,6 +329,43 @@ function compile_uboot_target() {
 	fi
 
 	display_alert "${uboot_prefix}Done with u-boot target" "${version} ${target_make}"
+	return 0
+}
+
+# Report SPL/TPL size against CONFIG_*_MAX_SIZE and CONFIG_*_SIZE_LIMIT. Warn when close.
+function report_uboot_spl_size_usage() {
+	[[ -f .config ]] || return 0
+	declare -i warn_percent=90
+	[[ "${UBOOT_SPL_SIZE_WARN_PERCENT:-}" =~ ^[0-9]+$ ]] && warn_percent="$((10#${UBOOT_SPL_SIZE_WARN_PERCENT}))"
+	declare stage prefix kind value bin
+	declare -i size limit percent
+	for stage in SPL TPL; do
+		prefix="${stage,,}"
+		# MAX_SIZE: the linker checks the image without the device tree.
+		# SIZE_LIMIT: the Makefile checks the final .bin, device tree included.
+		for kind in MAX_SIZE SIZE_LIMIT; do
+			value="$(sed -n "s/^CONFIG_${stage}_${kind}=//p" .config)"
+			[[ "${value}" =~ ^(0[xX][0-9a-fA-F]+|[0-9]+)$ ]] || continue
+			limit=$((value))
+			# The Makefile subtracts reserved space from the SPL limit; this tool prints the result.
+			if [[ "${stage}_${kind}" == SPL_SIZE_LIMIT && -x tools/spl_size_limit ]]; then
+				limit="$(tools/spl_size_limit)"
+			fi
+			((limit > 0)) || continue
+			bin="${prefix}/u-boot-${prefix}.bin"
+			if [[ "${kind}" == MAX_SIZE && -f "${prefix}/u-boot-${prefix}-nodtb.bin" ]]; then
+				bin="${prefix}/u-boot-${prefix}-nodtb.bin"
+			fi
+			[[ -f "${bin}" ]] || continue
+			size=$(stat -c %s "${bin}")
+			percent=$((size * 100 / limit))
+			if ((percent >= warn_percent)); then
+				display_alert "${uboot_prefix:-}u-boot ${stage} size close to CONFIG_${stage}_${kind}" "${size} / ${limit} bytes (${percent}%)" "warn"
+			else
+				display_alert "${uboot_prefix:-}u-boot ${stage} size vs CONFIG_${stage}_${kind}" "${size} / ${limit} bytes (${percent}%)" "info"
+			fi
+		done
+	done
 	return 0
 }
 

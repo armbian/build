@@ -3,7 +3,7 @@ BOARD_NAME="Iagent Recore"
 BOARD_VENDOR="recore"
 BOARDFAMILY="sun50iw1"
 BOOTCONFIG="recore_defconfig"
-KERNEL_TARGET="current,edge,legacy"
+KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 MODULES="g_serial"
 BOOT_LOGO="yes"
@@ -11,14 +11,8 @@ BOARD_MAINTAINER="eliasbakken"
 INTRODUCED="2021"
 
 function post_family_config__shrink_atf() {
-	display_alert "Choose ATF branch 🍰" "recore"
-	declare -g ATFBRANCH="tag:v2.8.0"
-
-	# ATF v2.8.0 passes TF_LDFLAGS directly to the linker (ld.bfd), not to gcc,
-	# so the '-Wl,' prefix on --no-warn-rwx-segment is rejected. Drop the prefix.
-	declare -g ATF_SKIP_LDFLAGS_WL="yes"
-
-	declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=0 SUNXI_PSCI_USE_SCPI=0 bl31;;build/$ATF_PLAT/release/bl31.bin"
+	display_alert "Put BL31 in DRAM to free SRAM A2 for the AR100 🍰" "recore"
+	declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=0 SUNXI_PSCI_USE_SCPI=0 SUNXI_BL31_IN_DRAM=1 SEPARATE_NOBITS_REGION=0 bl31;;build/$ATF_PLAT/release/bl31.bin"
 	display_alert "Compile without SCP binary 🍰" "recore"
 	UBOOT_TARGET_MAP="SCP=/dev/null;;u-boot-sunxi-with-spl.bin"
 }
