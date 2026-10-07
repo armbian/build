@@ -36,6 +36,7 @@ function mangopi_build_firmware_dtb() {
 }
 
 function post_family_config__mangopi_source_boot() {
+    declare -g ATFBRANCH="tag:v1.9" ATFPATCHDIR="atf-opensbi-v1.9"
     declare -g BOOTBRANCH="commit:2e89b706f5c956a70c989cd31665f1429e9a0b48"
     declare -g UBOOT_TARGET_MAP="u-boot.bin u-boot.dtb u-boot.img;;u-boot.img u-boot.toc1 boot0_sdcard_sun20iw1p1.bin"
     # Disk layout: one ext4 partition starts at 4 MiB. Reserve space for GPT and firmware.
