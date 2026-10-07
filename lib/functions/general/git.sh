@@ -49,7 +49,12 @@ function improved_git_fetch() {
 	declare -a verbose_params=() && if_user_on_terminal_and_not_logging_add verbose_params "--verbose" "--progress"
 	# --no-auto-maintenance requires a recent git version, not available on focal-like host OSs
 	# git's upload-pack sends a keepalive every 5 seconds while it packs; 30 seconds of silence means the remote is gone.
-	improved_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
+	# The runner git proxy (git_cdn) sends nothing until its pack is complete: minutes for a large repository.
+	declare low_speed_time=30 arg
+	for arg in "$@"; do
+		[[ -n "${GITPROXY_ADDRESS:-}" && "${arg}" == "${GITPROXY_ADDRESS%/}/"* ]] && low_speed_time=900
+	done
+	improved_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime="${low_speed_time}" fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
 }
 
 # Every 'git ls-remote' is a hit to the remote: it is slow, and it might hang; let the user know before we do it.
