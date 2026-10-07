@@ -5,6 +5,7 @@
 
 setenv load_addr "0x9000000"
 setenv overlay_error "false"
+setenv skip_fixups "false"
 # default values
 setenv rootdev "/dev/mmcblk0p1"
 setenv verbosity "1"
@@ -91,16 +92,25 @@ done
 if test "${overlay_error}" = "true"; then
 	if fdt addr ${fdt_addr_r}; then
 		echo "Could not apply every DT overlay, keeping the ones that were applied"
+		# nothing was kept: the DTB is untouched, so skip the fixups
+		test -n "${applied_overlays}" || setenv skip_fixups "true"
 	else
 		echo "Error applying DT overlays, restoring original DT"
 		load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+		setenv skip_fixups "true"
 	fi
-else
+fi
+# the kernel fixup script also implements the overlay arguments, so it must
+# still run for the overlays that were kept when another one failed
+if test "${skip_fixups}" != "true"; then
 	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
 		load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr
 		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 		source ${load_addr}
 	fi
+fi
+# the user fixup script is opaque, so it stays on the no-error path only
+if test "${overlay_error}" = "false"; then
 	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}fixup.scr; then
 		load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}fixup.scr
 		echo "Applying user provided fixup script (fixup.scr)"
