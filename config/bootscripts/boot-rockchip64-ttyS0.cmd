@@ -62,9 +62,17 @@ for overlay_file in ${overlays}; do
 			load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 			fdt addr ${fdt_addr_r}
 			fdt resize 65536
-			for applied_overlay in ${applied_overlays}; do
+			# a replay load can fail too: rebuild the list so it names what is
+			# actually on the DT
+			setenv replay_list "${applied_overlays}"
+			setenv applied_overlays ""
+			for applied_overlay in ${replay_list}; do
 				if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${applied_overlay}; then
-					fdt apply ${load_addr} || setenv overlay_error "true"
+					if fdt apply ${load_addr}; then
+						setenv applied_overlays "${applied_overlays} ${applied_overlay}"
+					else
+						setenv overlay_error "true"
+					fi
 				fi
 			done
 		fi
@@ -81,9 +89,17 @@ for overlay_file in ${user_overlays}; do
 			load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 			fdt addr ${fdt_addr_r}
 			fdt resize 65536
-			for applied_overlay in ${applied_overlays}; do
+			# a replay load can fail too: rebuild the list so it names what is
+			# actually on the DT
+			setenv replay_list "${applied_overlays}"
+			setenv applied_overlays ""
+			for applied_overlay in ${replay_list}; do
 				if load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${applied_overlay}; then
-					fdt apply ${load_addr} || setenv overlay_error "true"
+					if fdt apply ${load_addr}; then
+						setenv applied_overlays "${applied_overlays} ${applied_overlay}"
+					else
+						setenv overlay_error "true"
+					fi
 				fi
 			done
 		fi
