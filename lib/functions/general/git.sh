@@ -192,8 +192,9 @@ function fetch_from_repo() {
 	declare -a remote_urls=()
 	declare one_url
 	while read -r one_url; do
-		if [[ "${one_url}" == https://github.com/* ]]; then
-			one_url="${GITHUB_SOURCE}/${one_url#https://github.com/}"
+		# Mirror first. Keep GitHub as fallback: a slow or cold mirror must not fail the build.
+		if [[ "${one_url}" == https://github.com/* && "${GITHUB_SOURCE}" != "https://github.com" ]]; then
+			remote_urls+=("${GITHUB_SOURCE}/${one_url#https://github.com/}")
 		fi
 		remote_urls+=("${one_url}")
 	done < <(git_remote_candidates "${url}" "${ref%%:*}")
