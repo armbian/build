@@ -14,6 +14,7 @@ enable_extension "mangopi-rtc"
 
 # Build MQ Pro SPL/FIT with the existing firmware package functions.
 function post_family_config__mangopi_source_boot() {
+	declare -g ATFBRANCH="tag:v1.9" ATFPATCHDIR="atf-opensbi-v1.9"
 	declare -g BOOTPATCHDIR="u-boot-mangopi-mq-spl"
 	declare -g BOOTBRANCH="commit:2e89b706f5c956a70c989cd31665f1429e9a0b48"
 	declare -g UBOOT_TARGET_MAP=";;u-boot-sunxi-with-spl.bin"
