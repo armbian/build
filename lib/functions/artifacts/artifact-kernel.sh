@@ -269,6 +269,14 @@ function artifact_kernel_prepare_version() {
 
 	artifact_map_packages+=(["linux-libc-dev"]="linux-libc-dev-${BRANCH}-${LINUXFAMILY}")
 
+	# Allow extensions to add more packages to the kernel artifact
+	call_extension_method "artifact_kernel_extra_packages" <<- 'ARTIFACT_KERNEL_EXTRA_PACKAGES'
+		*add extra .deb packages to the kernel artifact*
+		Add with: artifact_map_packages+=(["my-deb-id"]="my-package-${BRANCH}-${LINUXFAMILY}")
+		Each id _must_ be built via `create_kernel_deb` during kernel packaging, and _must_ change the artifact version:
+		build it from a hashed hook (eg `pre_package_kernel_image`) or add a part via `artifact_kernel_version_parts`.
+	ARTIFACT_KERNEL_EXTRA_PACKAGES
+
 	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}" # default name of regular artifact
 
 	# Separate artifact name if we're in DTB-only mode, so stuff doesn't get mixed up later
