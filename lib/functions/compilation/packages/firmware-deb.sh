@@ -7,22 +7,27 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# Resolve an empty MAINLINE_FIRMWARE_BRANCH to the newest linux-firmware release tag (YYYYMMDD).
+# Newest linux-firmware release tag (YYYYMMDD), from the first reachable mirror.
+function memoized_mainline_firmware_latest_tag() {
+	declare remote tags="" listed="no"
+	[[ "${OFFLINE_WORK}" == "yes" ]] && MEMO_DICT+=(["TAG"]="") && return 0
+	while read -r remote; do
+		tags="$(timeout 120 git ls-remote --tags --refs "${remote}" 'refs/tags/2*')" && listed="yes" && break
+		display_alert "Cannot list linux-firmware tags, trying the next remote" "${remote}" "wrn"
+	done < <(git_remote_candidates "${MEMO_DICT[GIT_SOURCE]}" "tag")
+	[[ "${listed}" == "yes" ]] || exit_with_error "Cannot list linux-firmware tags from any remote" "${MEMO_DICT[GIT_SOURCE]}"
+	MEMO_DICT+=(["TAG"]="$(sed -n 's|.*refs/tags/\([0-9]\{8\}\)$|\1|p' <<< "${tags}" | sort -n | tail -1)")
+}
+
+# Resolve an empty MAINLINE_FIRMWARE_BRANCH to the newest linux-firmware release tag.
 # Branch main moves daily; then the full firmware version changes before CI rebuilds it.
+# Cache the tag for 6 hours: tags appear about once per month.
 function mainline_firmware_resolve_git_ref() {
 	[[ -n "${MAINLINE_FIRMWARE_BRANCH:-}" ]] && return 0
-	declare tags="" latest_tag="" remote listed="no"
-	if [[ "${OFFLINE_WORK}" != "yes" ]]; then
-		# First reachable mirror wins; one host down must not stop the build.
-		while read -r remote; do
-			tags="$(timeout 120 git ls-remote --tags --refs "${remote}" 'refs/tags/2*')" && listed="yes" && break
-			display_alert "Cannot list linux-firmware tags, trying the next remote" "${remote}" "wrn"
-		done < <(git_remote_candidates "${MAINLINE_FIRMWARE_SOURCE}" "tag")
-		[[ "${listed}" == "yes" ]] || exit_with_error "Cannot list linux-firmware tags from any remote" "${MAINLINE_FIRMWARE_SOURCE}"
-		latest_tag="$(sed -n 's|.*refs/tags/\([0-9]\{8\}\)$|\1|p' <<< "${tags}" | sort -n | tail -1)"
-	fi
-	if [[ -n "${latest_tag}" ]]; then
-		declare -g MAINLINE_FIRMWARE_BRANCH="tag:${latest_tag}"
+	declare -A FIRMWARE_TAG=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}")
+	memoize_cache_ttl=$((6 * 3600)) run_memoized FIRMWARE_TAG "firmware-tag" memoized_mainline_firmware_latest_tag
+	if [[ -n "${FIRMWARE_TAG[TAG]}" ]]; then
+		declare -g MAINLINE_FIRMWARE_BRANCH="tag:${FIRMWARE_TAG[TAG]}"
 	else
 		display_alert "No linux-firmware release tag found, using branch main" "${MAINLINE_FIRMWARE_SOURCE}" "wrn"
 		declare -g MAINLINE_FIRMWARE_BRANCH="branch:main"
