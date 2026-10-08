@@ -110,6 +110,7 @@ function git_remote_candidates() {
 		"${MAINLINE_KERNEL_SOURCE}"
 		"https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
 		"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git"
+		"https://github.com/gregkh/linux.git"
 	)
 	declare -a same=() other=()
 	if [[ " ${torvalds[*]} " == *" ${url} "* ]]; then
