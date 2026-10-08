@@ -250,10 +250,9 @@ function do_main_configuration() {
 			;;
 	esac
 
-	# Mainline firmware git version
-	# used to be 'branch:master', but that caused a lot of churn. Bump this when needed. Use the latest published tag's SHA1.
-	# Important: use the tag's ref commit, not the the sha1 for the signed tag itself.
-	declare -g -r MAINLINE_FIRMWARE_BRANCH="${MAINLINE_FIRMWARE_BRANCH:-"commit:2135b2f7714a3a514c989b9728f51f36144cab6f"}" # ref: 'tag:20260810'
+	# Mainline firmware git ref. Empty: use the newest linux-firmware release tag (mainline_firmware_resolve_git_ref).
+	# Set it to pin a version, for example "tag:20260916" or "commit:<sha1>"; "branch:main" follows upstream daily.
+	declare -g MAINLINE_FIRMWARE_BRANCH="${MAINLINE_FIRMWARE_BRANCH:-}"
 
 	# Armbian firmware
 	declare -g -r ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_SOURCE:-"https://github.com/armbian/firmware"}"
