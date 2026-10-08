@@ -7,6 +7,42 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Newest linux-firmware release tag (YYYYMMDD), from the first reachable mirror.
+function memoized_mainline_firmware_latest_tag() {
+	declare remote tags tag="" listed="no"
+	# Offline: run_memoized serves a stale cached tag; without one, stop like git2info does.
+	# No mirror with release tags caches an empty TAG. Online and offline builds then both use branch:main.
+	[[ "${OFFLINE_WORK}" == "yes" ]] && exit_with_error "OFFLINE_WORK=yes but no cached linux-firmware tag - run online once, or set MAINLINE_FIRMWARE_BRANCH"
+	while read -r remote; do
+		if ! tags="$(git_ls_remote_logged "linux-firmware release tags" --tags --refs "${remote}" 'refs/tags/2*')"; then
+			display_alert "Cannot list linux-firmware tags, trying the next remote" "${remote}" "wrn"
+			continue
+		fi
+		listed="yes"
+		tag="$(sed -n 's|.*refs/tags/\([0-9]\{8\}\)$|\1|p' <<< "${tags}" | sort -n | tail -1)"
+		[[ -n "${tag}" ]] && break
+		display_alert "No linux-firmware release tag, trying the next remote" "${remote}" "wrn"
+	done < <(git_remote_candidates "${MEMO_DICT[GIT_SOURCE]}" "tag")
+	[[ "${listed}" == "yes" ]] || exit_with_error "Cannot list linux-firmware tags from any remote" "${MEMO_DICT[GIT_SOURCE]}"
+	MEMO_DICT+=(["TAG"]="${tag}")
+}
+
+# Resolve an empty MAINLINE_FIRMWARE_BRANCH to the newest linux-firmware release tag.
+# Branch main moves daily; then the full firmware version changes before CI rebuilds it.
+# Cache the tag for 6 hours: tags appear about once per month.
+function mainline_firmware_resolve_git_ref() {
+	[[ -n "${MAINLINE_FIRMWARE_BRANCH:-}" ]] && return 0
+	declare -A FIRMWARE_TAG=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}")
+	memoize_cache_ttl=$((6 * 3600)) run_memoized FIRMWARE_TAG "firmware-tag" memoized_mainline_firmware_latest_tag
+	if [[ -n "${FIRMWARE_TAG[TAG]}" ]]; then
+		declare -g MAINLINE_FIRMWARE_BRANCH="tag:${FIRMWARE_TAG[TAG]}"
+	else
+		display_alert "No linux-firmware release tag found, using branch main" "${MAINLINE_FIRMWARE_SOURCE}" "wrn"
+		declare -g MAINLINE_FIRMWARE_BRANCH="branch:main"
+	fi
+	display_alert "Mainline firmware ref" "${MAINLINE_FIRMWARE_BRANCH}" "info"
+}
+
 function compile_firmware() {
 	: "${artifact_version:?artifact_version is not set}"
 
@@ -27,6 +63,7 @@ function compile_firmware() {
 	if [[ -n $FULL ]]; then
 		# Fetch kernel firmware from git. This is large, but we don't have two copies of it anymore. So more manageable.
 		declare fetched_revision
+		mainline_firmware_resolve_git_ref
 		fetch_from_repo "${MAINLINE_FIRMWARE_SOURCE}" "linux-firmware-git" "${MAINLINE_FIRMWARE_BRANCH}"
 		declare -r mainline_firmware_git_sha1="${fetched_revision}"
 
