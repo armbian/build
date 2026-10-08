@@ -7,6 +7,29 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Resolve an empty MAINLINE_FIRMWARE_BRANCH to the newest linux-firmware release tag (YYYYMMDD).
+# Branch main moves daily; then the full firmware version changes before CI rebuilds it.
+function mainline_firmware_resolve_git_ref() {
+	[[ -n "${MAINLINE_FIRMWARE_BRANCH:-}" ]] && return 0
+	declare tags="" latest_tag="" remote listed="no"
+	if [[ "${OFFLINE_WORK}" != "yes" ]]; then
+		# First reachable mirror wins; one host down must not stop the build.
+		while read -r remote; do
+			tags="$(timeout 120 git ls-remote --tags --refs "${remote}" 'refs/tags/2*')" && listed="yes" && break
+			display_alert "Cannot list linux-firmware tags, trying the next remote" "${remote}" "wrn"
+		done < <(git_remote_candidates "${MAINLINE_FIRMWARE_SOURCE}" "tag")
+		[[ "${listed}" == "yes" ]] || exit_with_error "Cannot list linux-firmware tags from any remote" "${MAINLINE_FIRMWARE_SOURCE}"
+		latest_tag="$(sed -n 's|.*refs/tags/\([0-9]\{8\}\)$|\1|p' <<< "${tags}" | sort -n | tail -1)"
+	fi
+	if [[ -n "${latest_tag}" ]]; then
+		declare -g MAINLINE_FIRMWARE_BRANCH="tag:${latest_tag}"
+	else
+		display_alert "No linux-firmware release tag found, using branch main" "${MAINLINE_FIRMWARE_SOURCE}" "wrn"
+		declare -g MAINLINE_FIRMWARE_BRANCH="branch:main"
+	fi
+	display_alert "Mainline firmware ref" "${MAINLINE_FIRMWARE_BRANCH}" "info"
+}
+
 function compile_firmware() {
 	: "${artifact_version:?artifact_version is not set}"
 
@@ -27,6 +50,7 @@ function compile_firmware() {
 	if [[ -n $FULL ]]; then
 		# Fetch kernel firmware from git. This is large, but we don't have two copies of it anymore. So more manageable.
 		declare fetched_revision
+		mainline_firmware_resolve_git_ref
 		fetch_from_repo "${MAINLINE_FIRMWARE_SOURCE}" "linux-firmware-git" "${MAINLINE_FIRMWARE_BRANCH}"
 		declare -r mainline_firmware_git_sha1="${fetched_revision}"
 

@@ -19,7 +19,6 @@ function artifact_full_firmware_prepare_version() {
 	debug_var ARMBIAN_FIRMWARE_SOURCE
 	debug_var ARMBIAN_FIRMWARE_BRANCH
 	debug_var MAINLINE_FIRMWARE_SOURCE
-	debug_var MAINLINE_FIRMWARE_BRANCH
 
 	declare short_hash_size=4
 
@@ -30,6 +29,7 @@ function artifact_full_firmware_prepare_version() {
 	# Sanity check, the SHA1 gotta be sane.
 	[[ "${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}'"
 
+	mainline_firmware_resolve_git_ref
 	declare -A GIT_INFO_MAINLINE_FIRMWARE=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}" [GIT_REF]="${MAINLINE_FIRMWARE_BRANCH}")
 	run_memoized GIT_INFO_MAINLINE_FIRMWARE "git2info" memoized_git_ref_to_info
 	debug_dict GIT_INFO_MAINLINE_FIRMWARE
