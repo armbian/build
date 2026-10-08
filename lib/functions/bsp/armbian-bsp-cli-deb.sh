@@ -446,6 +446,11 @@ function board_side_bsp_cli_postrm() { # not run here
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
 		systemctl disable armbian-live-patch.service > /dev/null 2>&1
+		if [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]] &&
+			[[ "$(dpkg-divert --listpackage /usr/lib/sysctl.d/50-default.conf 2> /dev/null)" == "${DPKG_MAINTSCRIPT_PACKAGE}" ]]; then
+			dpkg-divert --package "${DPKG_MAINTSCRIPT_PACKAGE}" --rename \
+				--divert /usr/lib/sysctl.d/50-default.conf.systemd --remove /usr/lib/sysctl.d/50-default.conf
+		fi
 	fi
 }
 
