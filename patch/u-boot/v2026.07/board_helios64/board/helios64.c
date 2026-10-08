@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <dm.h>
 #include <env.h>
+#include <event.h>
 #include <log.h>
 #include <led.h>
 #include <pci.h>
@@ -300,6 +301,20 @@ int last_stage_init(void)
 
 	return 0;
 }
+
+#ifndef CONFIG_XPL_BUILD
+/*
+ * We arm auto power-on alone, without the HDD power-up and SCSI scan
+ * of last_stage_init().
+ */
+static int helios64_auto_power_on(void)
+{
+	auto_power_enable();
+
+	return 0;
+}
+EVENT_SPY_SIMPLE(EVT_LAST_STAGE_INIT, helios64_auto_power_on);
+#endif
 #endif
 
 #if defined(CONFIG_DISPLAY_BOARDINFO_LATE)
