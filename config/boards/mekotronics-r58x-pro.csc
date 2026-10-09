@@ -4,7 +4,7 @@ declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""
 declare -g INTRODUCED="2024"
-declare -g KERNEL_TARGET="edge,vendor"
+declare -g KERNEL_TARGET="edge,vendor,legacy"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mekotronics-r58x-pro.dtb" # mainline name; see below for vendor
 declare -g DISPLAY_MANAGER="wayland"
 declare -g ASOUND_STATE="asound.state.rk3588hd"
@@ -14,7 +14,7 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 
 enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
 
-if [[ "${BRANCH}" == "vendor" ]]; then
+if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
 	# Attention: does _not_ use the vendor/mekotronics shared config anymore; mainline u-boot also for vendor kernel.
 
 	display_alert "$BOARD" "vendor configuration applied for $BOARD / $BRANCH" "info"

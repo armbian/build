@@ -7,7 +7,42 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Ghostty sets TERM=xterm-ghostty. Older ncurses has no such entry.
+# ncurses then prints "'xterm-ghostty': unknown terminal type."
+# dialog and clear fail. Pick an entry this system ships.
+function ensure_known_terminal() {
+	[[ -z "${TERM:-}" || "${TERM}" == "dumb" ]] && return 0
+	if ! command -v tput > /dev/null 2>&1; then
+		return 0
+	fi
+	if tput -T "${TERM}" longname > /dev/null 2>&1; then
+		return 0
+	fi
+
+	declare original_term="${TERM}"
+	declare fallback="" candidate
+	declare -a candidates=()
+	# Old name of the Ghostty entry, before ncurses renamed it.
+	[[ "${original_term}" == "xterm-ghostty" ]] && candidates+=("ghostty")
+	# xterm-* terminals implement the xterm-256color baseline.
+	[[ "${original_term}" == xterm-* ]] && candidates+=("xterm-256color")
+	candidates+=("xterm-256color" "xterm" "ansi" "dumb")
+
+	for candidate in "${candidates[@]}"; do
+		if tput -T "${candidate}" longname > /dev/null 2>&1; then
+			fallback="${candidate}"
+			break
+		fi
+	done
+	[[ -z "${fallback}" ]] && fallback="dumb"
+
+	export TERM="${fallback}"
+	display_alert "Unknown terminal type '${original_term}'" "using '${fallback}'" "debug"
+}
+
 function cli_entrypoint() {
+	ensure_known_terminal
+
 	# array, readonly, global, for future reference, "exported" to shutup shellcheck
 	declare -rg -x -a ARMBIAN_ORIGINAL_ARGV=("${@}")
 

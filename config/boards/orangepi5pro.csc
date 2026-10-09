@@ -7,7 +7,7 @@ INTRODUCED="2024"
 BOOTCONFIG="orangepi_5_pro_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOTCONFIG_SATA="orangepi_5_pro_sata_defconfig"
 BOOT_SOC="rk3588"
-KERNEL_TARGET="current,edge,vendor"
+KERNEL_TARGET="current,edge,vendor,legacy"
 KERNEL_TEST_TARGET="vendor,current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
@@ -49,7 +49,7 @@ function post_uboot_custom_postprocess__create_sata_spi_image() {
 }
 
 function post_family_config__orangepi5pro_use_mainline_uboot() {
-	[[ "${BRANCH}" == "vendor" ]] && return 0 # skip for vendor branch
+	[[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]] && return 0 # skip on a BSP branch
 
 	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
 	declare -g BOOTCONFIG="orangepi-5-pro-rk3588s_defconfig"

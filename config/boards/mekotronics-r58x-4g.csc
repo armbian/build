@@ -4,7 +4,7 @@ declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""
 declare -g INTRODUCED="2024"
-declare -g KERNEL_TARGET="edge,vendor"
+declare -g KERNEL_TARGET="edge,vendor,legacy"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-blueberry-edge-v12-linux.dtb" # same name for mainline and vendor
 declare -g DISPLAY_MANAGER="wayland"
 declare -g ASOUND_STATE="asound.state.rk3588hd"
@@ -12,7 +12,7 @@ declare -g BOOT_SOC="rk3588"
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does not have a UEFI_EDK2_BOARD_ID
 
-if [[ "${BRANCH}" == "vendor" ]]; then
+if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
 	display_alert "$BOARD" "vendor configuration applied for $BOARD / $BRANCH" "info"
 	declare -g BOOTCONFIG="mekotronics_r58x-rk3588_defconfig" # vendor u-boot; with NVMe and a DTS
 	# Source shared vendor configuration; it does BOOT_SCENARIO="spl-blobs" & hciattach - common to all vendor-kernel Meko's
@@ -56,7 +56,7 @@ function pre_config_uboot_target__mekor58x_4g_patch_rockchip_common_boot_order()
 }
 
 function pre_config_uboot_target__ekor58x_4g_patch_uboot_dtsi_for_ums() {
-	[[ "${BRANCH}" == "vendor" ]] && return 0 # Not for 'vendor' branch, which uses 2017.09 vendor u-boot from Radxa
+	[[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]] && return 0 # BSP branch uses Radxa u-boot
 
 	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
 	# Append to the t6 u-boot dtsi file with stuff for enabling gadget/otg/peripheral mode
