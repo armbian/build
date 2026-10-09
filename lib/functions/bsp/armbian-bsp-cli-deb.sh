@@ -382,6 +382,16 @@ function board_side_bsp_cli_postinst_update_uboot_bootscript() {
 }
 
 function board_side_bsp_cli_preinst() {
+	# Jammy's systemd package owns this file instead of linux-sysctl-defaults.
+	if [[ -r /etc/os-release ]]; then
+		# shellcheck source=/dev/null
+		. /etc/os-release
+	fi
+	if [[ "${VERSION_CODENAME:-}" == "jammy" ]] && [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
+		dpkg-divert --package "${DPKG_MAINTSCRIPT_PACKAGE}" --rename \
+			--divert /usr/lib/sysctl.d/50-default.conf.systemd --add /usr/lib/sysctl.d/50-default.conf
+	fi
+
 	# tell people to reboot at next login
 	[[ "$1" == "upgrade" ]] && touch /var/run/.reboot_required
 
