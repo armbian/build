@@ -12,6 +12,9 @@ BOOTCONFIG="nezha_defconfig"
 
 enable_extension "mangopi-rtc"
 
+enable_extension "grub-riscv64"
+enable_extension "mangopi-grub"
+
 # Build MQ Pro SPL/FIT with the existing firmware package functions.
 function post_family_config__mangopi_source_boot() {
 	declare -g ATFBRANCH="tag:v1.9" ATFPATCHDIR="atf-opensbi-v1.9"
