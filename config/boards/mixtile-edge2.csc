@@ -6,7 +6,7 @@ BOOTCONFIG="mixtile-edge2-rk3568_defconfig"
 BOARD_MAINTAINER=""
 INTRODUCED="2024"
 BOOT_SOC="rk3568"
-KERNEL_TARGET="current,edge,vendor"
+KERNEL_TARGET="current,edge,vendor,legacy"
 BOOT_FDT_FILE="rockchip/rk3568-mixtile-edge2.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 FULL_DESKTOP="yes"
@@ -15,7 +15,7 @@ SRC_CMDLINE="earlycon=uart8250,mmio32,0xfe660000 loglevel=7 console=ttyS2,150000
 
 # Mainline U-Boot
 function post_family_config__h96_max_use_mainline_uboot() {
-	if [[ "${BRANCH}" == "vendor" ]]; then
+	if [[ "${BRANCH}" == "vendor" || "${BRANCH}" == "legacy" ]]; then
 		display_alert "$BOARD" "Using vendor U-Boot for $BOARD / $BRANCH" "info" # See below hook
 		return
 	fi

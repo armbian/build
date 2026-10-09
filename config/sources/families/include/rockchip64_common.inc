@@ -490,25 +490,34 @@ function post_family_config__900_late_default_serial_console_by_branch() {
 		return 0
 	fi
 
-	case $BRANCH in
-		vendor)
-			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyFIQ0 for BRANCH='${BRANCH}'" "info"
-			SERIALCON="ttyFIQ0"
-			;;
-		*)
-			# Different Rockchip SoCs use different UART for debug console
-			case $BOOT_SOC in
-				rk3576 | rk3562)
-					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS0 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
-					SERIALCON="ttyS0"
-					;;
-				*)
-					display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
-					SERIALCON="ttyS2"
-					;;
-			esac
-			;;
-	esac
+	# BSP kernels use the FIQ debugger. Legacy is the 6.1 BSP on rk35xx families.
+	declare bsp_serial="no"
+	if [[ "${BRANCH}" == "vendor" ]]; then
+		bsp_serial="yes"
+	elif [[ "${BRANCH}" == "legacy" ]]; then
+		case "${BOARDFAMILY}" in
+			rk35xx | rockchip-rk3588 | seeed-rk3588 | seeed-rk3576)
+				bsp_serial="yes"
+				;;
+		esac
+	fi
+
+	if [[ "${bsp_serial}" == "yes" ]]; then
+		display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyFIQ0 for BRANCH='${BRANCH}'" "info"
+		SERIALCON="ttyFIQ0"
+	else
+		# Different Rockchip SoCs use different UART for debug console
+		case $BOOT_SOC in
+			rk3576 | rk3562)
+				display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS0 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+				SERIALCON="ttyS0"
+				;;
+			*)
+				display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for SoC='${BOOT_SOC}' BRANCH='${BRANCH}'" "info"
+				SERIALCON="ttyS2"
+				;;
+		esac
+	fi
 
 	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}' SOC='${BOOT_SOC}'" "debug"
 }
