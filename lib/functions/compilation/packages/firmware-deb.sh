@@ -10,7 +10,8 @@
 # Newest linux-firmware release tag (YYYYMMDD), from the first reachable mirror.
 function memoized_mainline_firmware_latest_tag() {
 	declare remote tags="" listed="no"
-	[[ "${OFFLINE_WORK}" == "yes" ]] && MEMO_DICT+=(["TAG"]="") && return 0
+	# Offline: run_memoized serves a stale cached tag; without one, stop like git2info does. Never cache an empty tag.
+	[[ "${OFFLINE_WORK}" == "yes" ]] && exit_with_error "OFFLINE_WORK=yes but no cached linux-firmware tag - run online once, or set MAINLINE_FIRMWARE_BRANCH"
 	while read -r remote; do
 		tags="$(timeout 120 git ls-remote --tags --refs "${remote}" 'refs/tags/2*')" && listed="yes" && break
 		display_alert "Cannot list linux-firmware tags, trying the next remote" "${remote}" "wrn"
