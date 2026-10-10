@@ -1,0 +1,178 @@
+From 166a2686ab97d6bc92a58cdbd3c3cfa493c3b5c2 Mon Sep 17 00:00:00 2001
+From: Junhui Liu <junhui.liu@pigmoral.tech>
+Date: Wed, 30 Sep 2026 01:26:12 +0800
+Subject: [PATCH 09/58] clk: sunxi-ng: a733: Add bus clocks support
+
+Add the essential bus clocks in the Allwinner A733 CCU, including AHB,
+APB0, APB1, APB_UART, and MBUS. These buses are necessary for many other
+functional modules. Additional clocks such as trace and gic are also
+added as they fall within the register address range of the bus clocks,
+even though they are not strictly bus clocks.
+
+The MBUS clock is marked as critical to ensure the memory bus remains
+operational at all times. And the hardware requires an update bit
+(bit 27) to be set so that the configuration takes effect and the
+updated parameters can be correctly read back for the MBUS clock.
+
+The GIC clock is also marked as critical. The bootloader may leave the
+GIC running on a PLL parent, and disabling that PLL during
+clk_disable_unused would hang the interrupt controller and the system.
+
+Tested-by: Jerome Brunet <jbrunet@baylibre.com>
+Signed-off-by: Junhui Liu <junhui.liu@pigmoral.tech>
+---
+ drivers/clk/sunxi-ng/ccu-sun60i-a733.c | 105 +++++++++++++++++++++++++
+ 1 file changed, 105 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+index 430a535919c6..eda4b347c540 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
++++ b/drivers/clk/sunxi-ng/ccu-sun60i-a733.c
+@@ -18,6 +18,7 @@
+ 
+ #include "ccu_div.h"
+ #include "ccu_gate.h"
++#include "ccu_mp.h"
+ #include "ccu_mult.h"
+ #include "ccu_nkmp.h"
+ #include "ccu_nm.h"
+@@ -68,6 +69,16 @@ static const struct clk_hw *pll_ref_hws[] = {
+ 	&pll_ref_clk.common.hw
+ };
+ 
++/*
++ * There is a non-software-configurable mux selecting between the DCXO and the
++ * PLL_REF in hardware, whose output is fed to the sys-24M clock. Although both
++ * sys-24M and pll-ref are fixed at 24 MHz, define a 1:1 fixed factor clock to
++ * provide logical separation:
++ * - pll-ref is dedicated to feeding other PLLs
++ * - sys-24M serves as reference clock for downstream functional modules
++ */
++static CLK_FIXED_FACTOR_HWS(sys_24M_clk, "sys-24M", pll_ref_hws, 1, 1, 0);
++
+ #define SUN60I_A733_PLL_DDR_REG		0x020
+ static struct ccu_nkmp pll_ddr_clk = {
+ 	.enable		= BIT(27),
+@@ -414,6 +425,85 @@ static SUNXI_CCU_M_HWS_WITH_GATE(pll_de_3x_clk, "pll-de-3x", pll_de_hws,
+ 				 SUN60I_A733_PLL_DE_REG,
+ 				 16, 3, BIT(26), 0);
+ 
++/**************************************************************************
++ *                           bus clocks                                   *
++ **************************************************************************/
++
++static const struct clk_parent_data ahb_apb_parents[] = {
++	{ .hw = &sys_24M_clk.hw },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_periph0_600M_clk.hw },
++};
++
++static SUNXI_CCU_M_DATA_WITH_MUX(ahb_clk, "ahb", ahb_apb_parents, 0x500,
++				 0, 5,		/* M */
++				 24, 2,		/* mux */
++				 0);
++
++static SUNXI_CCU_M_DATA_WITH_MUX(apb0_clk, "apb0", ahb_apb_parents, 0x510,
++				 0, 5,		/* M */
++				 24, 2,		/* mux */
++				 0);
++
++static SUNXI_CCU_M_DATA_WITH_MUX(apb1_clk, "apb1", ahb_apb_parents, 0x518,
++				 0, 5,		/* M */
++				 24, 2,		/* mux */
++				 0);
++
++static const struct clk_parent_data apb_uart_parents[] = {
++	{ .hw = &sys_24M_clk.hw },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_periph0_600M_clk.hw },
++	{ .hw = &pll_periph0_480M_clk.common.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX(apb_uart_clk, "apb-uart", apb_uart_parents, 0x538,
++				 0, 5,		/* M */
++				 24, 3,		/* mux */
++				 0);
++
++static const struct clk_parent_data trace_parents[] = {
++	{ .hw = &sys_24M_clk.hw },
++	{ .fw_name = "losc" },
++	{ .fw_name = "iosc" },
++	{ .hw = &pll_periph0_300M_clk.hw },
++	{ .hw = &pll_periph0_400M_clk.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(trace_clk, "trace", trace_parents, 0x540,
++				      0, 5,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      0);
++
++static const struct clk_parent_data gic_parents[] = {
++	{ .hw = &sys_24M_clk.hw },
++	{ .fw_name = "losc" },
++	{ .hw = &pll_periph0_600M_clk.hw },
++	{ .hw = &pll_periph0_480M_clk.common.hw },
++	{ .hw = &pll_periph0_400M_clk.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE(gic_clk, "gic", gic_parents, 0x560,
++				      0, 5,	/* M */
++				      24, 3,	/* mux */
++				      BIT(31),	/* gate */
++				      CLK_IS_CRITICAL);
++
++static const struct clk_parent_data mbus_parents[] = {
++	{ .hw = &sys_24M_clk.hw },
++	{ .hw = &pll_periph1_600M_clk.hw },
++	{ .hw = &pll_ddr_clk.common.hw },
++	{ .hw = &pll_periph1_480M_clk.common.hw },
++	{ .hw = &pll_periph1_400M_clk.hw },
++	{ .hw = &pll_npu_clk.common.hw },
++};
++static SUNXI_CCU_M_DATA_WITH_MUX_GATE_FEAT(mbus_clk, "mbus", mbus_parents, 0x588,
++					   0, 5,	/* M */
++					   24, 3,	/* mux */
++					   BIT(31),	/* gate */
++					   CLK_IS_CRITICAL,
++					   CCU_FEATURE_UPDATE_BIT);
++
+ /*
+  * Contains all clocks that are controlled by a hardware register. They
+  * have a (sunxi) .common member, which needs to be initialised by the common
+@@ -448,11 +538,19 @@ static struct ccu_common *sun60i_a733_ccu_clks[] = {
+ 	&pll_de_clk.common,
+ 	&pll_de_4x_clk.common,
+ 	&pll_de_3x_clk.common,
++	&ahb_clk.common,
++	&apb0_clk.common,
++	&apb1_clk.common,
++	&apb_uart_clk.common,
++	&trace_clk.common,
++	&gic_clk.common,
++	&mbus_clk.common,
+ };
+ 
+ static struct clk_hw_onecell_data sun60i_a733_hw_clks = {
+ 	.hws	= {
+ 		[CLK_PLL_REF]		= &pll_ref_clk.common.hw,
++		[CLK_SYS_24M]		= &sys_24M_clk.hw,
+ 		[CLK_PLL_DDR]		= &pll_ddr_clk.common.hw,
+ 		[CLK_PLL_PERIPH0_4X]	= &pll_periph0_4x_clk.common.hw,
+ 		[CLK_PLL_PERIPH0_2X]	= &pll_periph0_2x_clk.common.hw,
+@@ -494,6 +592,13 @@ static struct clk_hw_onecell_data sun60i_a733_hw_clks = {
+ 		[CLK_PLL_DE]		= &pll_de_clk.common.hw,
+ 		[CLK_PLL_DE_4X]		= &pll_de_4x_clk.common.hw,
+ 		[CLK_PLL_DE_3X]		= &pll_de_3x_clk.common.hw,
++		[CLK_AHB]		= &ahb_clk.common.hw,
++		[CLK_APB0]		= &apb0_clk.common.hw,
++		[CLK_APB1]		= &apb1_clk.common.hw,
++		[CLK_APB_UART]		= &apb_uart_clk.common.hw,
++		[CLK_TRACE]		= &trace_clk.common.hw,
++		[CLK_GIC]		= &gic_clk.common.hw,
++		[CLK_MBUS]		= &mbus_clk.common.hw,
+ 	},
+ 	.num	= CLK_FANOUT3 + 1,
+ };
+-- 
+2.53.0
+

@@ -1,0 +1,124 @@
+From 97754c5620bdf82b37d98770c09fbbd8917aefe4 Mon Sep 17 00:00:00 2001
+From: Yuanshen Cao <alex.caoys@gmail.com>
+Date: Wed, 26 Aug 2026 02:40:29 +0000
+Subject: [PATCH 34/58] dmaengine: sun6i-dma: Add num_channels_per_reg for
+ flexible interrupt mapping
+
+The `sun6i-dma` driver previously assumed a fixed number of channels
+per interrupt register. For example, `sun6i_kill_tasklet` was hardcoded
+to disable interrupts only for registers 0 and 1. `DMA_MAX_CHANNELS` was
+also not in used previously, and the old SoCs never has more than 16
+channels.
+
+The A733 has a different interrupt structure where the number of
+channels per register may differ. Add `num_channels_per_reg` to `struct
+sun6i_dma_config` to make the interrupt handling logic handware-agnostic
+Update `sun6i_dma_interrupt`, `sun6i_dma_start_desc`, and
+`sun6i_kill_tasklet` to use this value.
+
+Additionally, set `DMA_MAX_CHANNELS` to 16 to ensure loops over
+interrupts are correctly bounded, aligning with the hardware
+specifications.
+
+Signed-off-by: Yuanshen Cao <alex.caoys@gmail.com>
+---
+ drivers/dma/sun6i-dma.c | 21 ++++++++++++---------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/dma/sun6i-dma.c b/drivers/dma/sun6i-dma.c
+index 1ffd870d9594..ffb63212bea7 100644
+--- a/drivers/dma/sun6i-dma.c
++++ b/drivers/dma/sun6i-dma.c
+@@ -32,14 +32,13 @@
+ #define DMA_IRQ_PKG			BIT(1)
+ #define DMA_IRQ_QUEUE			BIT(2)
+ 
+-#define DMA_IRQ_CHAN_NR			8
+ #define DMA_IRQ_CHAN_WIDTH		4
+ 
+ 
+ #define DMA_STAT		0x30
+ 
+ /* Offset between DMA_IRQ_EN and DMA_IRQ_STAT limits number of channels */
+-#define DMA_MAX_CHANNELS	(DMA_IRQ_CHAN_NR * 0x10 / 4)
++#define DMA_MAX_CHANNELS	16
+ 
+ /*
+  * sun8i specific registers
+@@ -58,6 +57,8 @@
+ #define DMA_IRQ_EN_OFFSET_A31		0x00
+ #define DMA_IRQ_STAT_OFFSET_A31		0x10
+ 
++#define DMA_IRQ_CHAN_NR_A31		8
++
+ /*
+  * Channels specific registers
+  */
+@@ -154,6 +155,7 @@ struct sun6i_dma_config {
+ 	u32 irq_stride;
+ 	u32 irq_en_offset;
+ 	u32 irq_stat_offset;
++	u32 num_channels_per_reg;
+ };
+ 
+ /*
+@@ -268,7 +270,7 @@ static inline void sun6i_dma_dump_com_regs(struct sun6i_dma_dev *sdev)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < 2; i++) {
++	for (i = 0; i < DIV_ROUND_UP(sdev->num_pchans, sdev->cfg->num_channels_per_reg); i++) {
+ 		dev_dbg(sdev->slave.dev, "Common register:\n"
+ 			"chan num %d\n"
+ 			"\tmask(%04x): 0x%08x\n"
+@@ -489,8 +491,8 @@ static int sun6i_dma_start_desc(struct sun6i_vchan *vchan)
+ 
+ 	sun6i_dma_dump_lli(vchan, pchan->desc->v_lli, pchan->desc->p_lli);
+ 
+-	irq_reg = pchan->idx / DMA_IRQ_CHAN_NR;
+-	irq_offset = pchan->idx % DMA_IRQ_CHAN_NR;
++	irq_reg = pchan->idx / sdev->cfg->num_channels_per_reg;
++	irq_offset = pchan->idx % sdev->cfg->num_channels_per_reg;
+ 
+ 	vchan->irq_type = vchan->cyclic ? DMA_IRQ_PKG : DMA_IRQ_QUEUE;
+ 
+@@ -582,7 +584,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+ 	int i, j, ret = IRQ_NONE;
+ 	u32 status;
+ 
+-	for (i = 0; i < sdev->num_pchans / DMA_IRQ_CHAN_NR; i++) {
++	for (i = 0; i < sdev->num_pchans / sdev->cfg->num_channels_per_reg; i++) {
+ 		status = sun6i_read_irq_stat(sdev, i);
+ 		if (!status)
+ 			continue;
+@@ -592,7 +594,7 @@ static irqreturn_t sun6i_dma_interrupt(int irq, void *dev_id)
+ 
+ 		sun6i_write_irq_stat(sdev, i, status);
+ 
+-		for (j = 0; (j < DMA_IRQ_CHAN_NR) && status; j++) {
++		for (j = 0; (j < sdev->cfg->num_channels_per_reg) && status; j++) {
+ 			pchan = sdev->pchans + j;
+ 			vchan = pchan->vchan;
+ 			if (vchan && (status & vchan->irq_type)) {
+@@ -1110,7 +1112,7 @@ static inline void sun6i_kill_tasklet(struct sun6i_dma_dev *sdev)
+ 	int i;
+ 
+ 	/* Disable all interrupts from DMA */
+-	for (i = 0; i < 2; i++)
++	for (i = 0; i < DMA_MAX_CHANNELS / sdev->cfg->num_channels_per_reg; i++)
+ 		sun6i_write_irq_en(sdev, i, 0);
+ 
+ 	/* Prevent spurious interrupts from scheduling the tasklet */
+@@ -1138,7 +1140,8 @@ static inline void sun6i_dma_free(struct sun6i_dma_dev *sdev)
+ #define SUN6I_DMA_IRQ_A31_COMMON_CFG	\
+ 	.irq_stride      = DMA_IRQ_STRIDE_A31,	\
+ 	.irq_en_offset   = DMA_IRQ_EN_OFFSET_A31,	\
+-	.irq_stat_offset = DMA_IRQ_STAT_OFFSET_A31,
++	.irq_stat_offset = DMA_IRQ_STAT_OFFSET_A31,	\
++	.num_channels_per_reg = DMA_IRQ_CHAN_NR_A31,
+ 
+ /*
+  * For A31:
+-- 
+2.53.0
+
