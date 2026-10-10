@@ -404,11 +404,6 @@ function install_distribution_agnostic() {
 	fi
 
 	# install board support packages
-	# Jammy's systemd package owns this file instead of linux-sysctl-defaults.
-	if [[ "${RELEASE}" == "jammy" ]]; then
-		chroot_sdcard dpkg-divert --package "armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}" --rename \
-			--divert /usr/lib/sysctl.d/50-default.conf.systemd --add /usr/lib/sysctl.d/50-default.conf
-	fi
 	install_artifact_deb_chroot "armbian-bsp-cli"
 
 	# install armbian-zsh
