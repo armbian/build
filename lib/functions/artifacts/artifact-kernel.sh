@@ -19,6 +19,18 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
 	artifact_input_variables[ARCH]="${ARCH}"
 	artifact_input_variables[EXTRAWIFI]="${EXTRAWIFI:-"yes"}"
+	artifact_input_variables[KERNEL_DBG_PACKAGE]="${KERNEL_DBG_PACKAGE:-"no"}" # keeps the artifact reducer from merging dbg and non-dbg targets
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		# The dbg version hashes these inputs; the reducer must see them to keep such targets apart.
+		artifact_input_variables[KERNEL_COMPILER]="${KERNEL_COMPILER}"
+		artifact_input_variables[KERNEL_EXTRA_CFLAGS]="${KERNEL_EXTRA_CFLAGS:-""}"
+		artifact_input_variables[KERNEL_DBG_MODULES]="${KERNEL_DBG_MODULES:-""}"
+		# The dbg version also hashes the sources of the make-time hooks.
+		# We mirror that hash here, or the reducer merges targets that differ only in these hooks.
+		declare dbg_make_hooks_hash=""
+		dbg_make_hooks_hash="$(dump_extension_method_sources_functions kernel_make_config custom_kernel_make_params | sha256sum | cut -d' ' -f1)"
+		artifact_input_variables[KERNEL_DBG_MAKE_HOOKS_HASH]="${dbg_make_hooks_hash}"
+	fi
 }
 
 # This is run in a logging section.
@@ -153,6 +165,32 @@ function artifact_kernel_prepare_version() {
 	# Extra stubble DTBs change the packaged UKI. Appended ONLY when set, so
 	# families that don't use them keep their exact previous -V hash (no churn).
 	[[ ${#EXTRA_STUBBLE_DEVICETREES[@]} -gt 0 ]] && vars_to_hash+=("${EXTRA_STUBBLE_DEVICETREES[*]}")
+	# We hash these inputs only with KERNEL_DBG_PACKAGE=yes, so default builds keep their hash.
+	# Dbg builds get their own cache entry. Otherwise the cache can serve a tarball without the dbg deb.
+	# The dbg package pairs with its image by artifact_version.
+	# Builds with other cflags, compiler or linker must not share that version: their symbol addresses differ.
+	# We read the tool versions here, not via the kernel-version-toolchain extension.
+	# post_family_config and user_config can set KERNEL_DBG_PACKAGE after the framework enables extensions.
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		declare dbg_compiler_bin="${KERNEL_COMPILER}gcc"
+		declare dbg_linker_bin="${KERNEL_COMPILER}ld" # CROSS_COMPILE prefix; LLVM=1 uses ld.lld instead
+		if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+			dbg_compiler_bin="clang"
+			dbg_linker_bin="ld.lld"
+		fi
+		declare dbg_compiler_version=""
+		dbg_compiler_version="$("${dbg_compiler_bin}" -dumpfullversion -dumpversion 2> /dev/null || true)"
+		declare dbg_linker_version=""
+		dbg_linker_version="$("${dbg_linker_bin}" --version 2> /dev/null | head -1 || true)"
+		vars_to_hash+=(
+			"KERNEL_DBG_PACKAGE=yes"
+			"KERNEL_COMPILER=${KERNEL_COMPILER}"
+			"KERNEL_COMPILER_VERSION=${dbg_compiler_version}"
+			"KERNEL_LINKER_VERSION=${dbg_linker_version}"
+			"KERNEL_EXTRA_CFLAGS=${KERNEL_EXTRA_CFLAGS:-""}"
+			"KERNEL_DBG_MODULES=${KERNEL_DBG_MODULES:-""}"
+		)
+	fi
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
@@ -163,6 +201,10 @@ function artifact_kernel_prepare_version() {
 		"pre_package_kernel_image" "kernel_copy_extra_sources" "pre_package_kernel_headers"
 		"kernel_extra_create_patches"
 	)
+	# Make-time hooks can change compile flags, so the dbg version hashes their sources too.
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+		extension_hooks_to_hash+=("kernel_make_config" "custom_kernel_make_params")
+	fi
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
@@ -204,6 +246,22 @@ function artifact_kernel_prepare_version() {
 		  - Remove: remove entry from array or unset the key in artifact_version_parts
 		  Keys starting with "_" are not included in output (only value is used).
 	ARTIFACT_KERNEL_VERSION_PARTS
+
+	# The dbg package pairs with its image by artifact_version, so the version names the toolchain.
+	# We add _T here and do not enable kernel-version-toolchain.
+	# post_family_config runs after the framework enables extensions, and it can still set KERNEL_DBG_PACKAGE.
+	# We skip this when the extension already set _T.
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" && -z "${artifact_version_parts[_T]:-}" ]]; then
+		declare dbg_toolchain_id="unknown"
+		if [[ -n "${dbg_compiler_version}" ]]; then
+			declare dbg_compiler_short
+			dbg_compiler_short="$(cut -d'.' -f1-2 <<< "${dbg_compiler_version}")" # 13.3.0 -> 13.3
+			dbg_toolchain_id="gcc${dbg_compiler_short}"
+			[[ "${KERNEL_COMPILER}" == "clang" ]] && dbg_toolchain_id="clang${dbg_compiler_short}"
+		fi
+		artifact_version_parts["_T"]="${dbg_toolchain_id}"
+		artifact_version_part_order+=("0085-_T")
+	fi
 
 	# Sort and validate: keys after stripping numeric prefixes must be unique
 	mapfile -t artifact_version_part_order < <(printf '%s\n' "${artifact_version_part_order[@]}" | LC_ALL=C sort)
@@ -260,6 +318,16 @@ function artifact_kernel_prepare_version() {
 		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 			artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
 		fi
+
+		# opt-in debug package: unstripped vmlinux for crash/drgn/gdb analysis of vmcores.
+		# Debian-style name: the name of the complemented package plus "-dbg".
+		if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+			artifact_map_packages+=(["linux-dbg"]="linux-image-${BRANCH}-${LINUXFAMILY}-dbg")
+			# a separate package: KERNEL_DBG_MODULES=all needs gigabytes
+			if [[ -n "${KERNEL_DBG_MODULES:-}" ]]; then
+				artifact_map_packages+=(["linux-modules-dbg"]="linux-modules-${BRANCH}-${LINUXFAMILY}-dbg")
+			fi
+		fi
 	fi
 
 	# x86, specially, does not have working dtbs...
@@ -274,6 +342,11 @@ function artifact_kernel_prepare_version() {
 	# Separate artifact name if we're in DTB-only mode, so stuff doesn't get mixed up later
 	if [[ "${KERNEL_DTB_ONLY}" == "yes" ]]; then
 		artifact_name="kernel-dtb-only-${LINUXFAMILY}-${BRANCH}"
+		# We warn and do not fail: KERNEL_DBG_PACKAGE can come from the family config.
+		# A DTB-only build must not break because of an inherited setting.
+		if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
+			display_alert "Ignoring KERNEL_DBG_PACKAGE=yes" "KERNEL_DTB_ONLY=yes never links vmlinux" "warn"
+		fi
 	fi
 
 	artifact_type="deb-tar" # this triggers processing of .deb files in the maps to produce a tarball

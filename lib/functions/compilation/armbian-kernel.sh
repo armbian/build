@@ -116,7 +116,28 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 # Returns:
 #   0 on successful configuration application.
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
+	# A DTB-only build never links vmlinux and ships no debug package.
+	# Such a build must not gain the dbg options or fail on the conflict below.
+	declare dbg_package_effective="no"
+	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" && "${KERNEL_DTB_ONLY:-"no"}" != "yes" ]]; then
+		dbg_package_effective="yes"
+	fi
+
+	if [[ "${dbg_package_effective}" == "yes" ]]; then
+		opts_y+=("PROC_KCORE") # crash/drgn read /proc/kcore to inspect a running kernel, not just a dump
+		# With kexec_load, arm64 kexec-tools reads the vmcore page_offset from the _text symbol.
+		# _text lies before _stext, and only KALLSYMS_ALL keeps it in kallsyms.
+		# KALLSYMS_ALL depends on DEBUG_KERNEL.
+		opts_y+=("DEBUG_KERNEL" "KALLSYMS_ALL")
+	fi
 	if [[ "${KERNEL_BTF}" == "no" ]]; then # If user is explicit by passing "KERNEL_BTF=no", then actually disable all debug info.
+		# We reject the conflict and do not override it.
+		# The debug package exists to ship the debug info that this branch turns off.
+		# We check here because both values are final: config hooks after main-config can still set either.
+		if [[ "${dbg_package_effective}" == "yes" ]]; then
+			exit_with_error "KERNEL_BTF=no conflicts with KERNEL_DBG_PACKAGE=yes" \
+				"KERNEL_BTF=no removes the debug info that KERNEL_DBG_PACKAGE=yes ships. Keep only one of them."
+		fi
 		display_alert "Disabling eBPF and BTF info for kernel" "as requested by KERNEL_BTF=no" "info"
 		opts_y+=("DEBUG_INFO_NONE")        # Enable the "none" option
 		opts_n+=("DEBUG_INFO")             # Disables debug information
