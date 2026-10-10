@@ -1,5 +1,5 @@
 # Rockchip RV1126 quad-core Cortex-A7 EASY-EAI Nano
-BOARD_NAME="EASY-EAI Nano"
+BOARD_NAME="Nano"
 BOARD_VENDOR="easy-eai"
 BOARDFAMILY="rockchip-rv1126"
 BOARD_MAINTAINER="hqnicolas"

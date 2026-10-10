@@ -1,5 +1,5 @@
 # Rockchip RK3588 SoC octa core 4-16GB SoC 2.5GBe PoE eMMC USB3 NVME
-BOARD_NAME="CoolPi CM5"
+BOARD_NAME="CM5"
 BOARD_VENDOR="cool-pi"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="andyshrk"

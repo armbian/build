@@ -1,5 +1,5 @@
 # Rockchip RK3568 quad core 1-8GB SoC GBe eMMC USB3
-BOARD_NAME="ArmSom Sige3"
+BOARD_NAME="Sige3"
 BOARD_VENDOR="armsom"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER="amazingfate"

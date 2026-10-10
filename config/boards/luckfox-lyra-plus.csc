@@ -1,5 +1,5 @@
 # Rockchip RK3506G2 triple core 128MB SoC 1x100MBe NAND SD USB2
-BOARD_NAME="Luckfox Lyra Plus"
+BOARD_NAME="Lyra Plus"
 BOARD_VENDOR="luckfox"
 BOARDFAMILY="rockchip"
 BOOTCONFIG="luckfox-lyra-rk3506_defconfig"

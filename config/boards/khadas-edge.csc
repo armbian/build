@@ -1,5 +1,5 @@
 # Rockchip RK3399 hexa core 2G/4GB SoC GBe eMMC USB3 WiFi
-BOARD_NAME="Khadas Edge"
+BOARD_NAME="Edge"
 BOARD_VENDOR="khadas"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
