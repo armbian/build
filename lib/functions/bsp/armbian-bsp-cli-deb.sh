@@ -388,8 +388,33 @@ function board_side_bsp_cli_preinst() {
 		. /etc/os-release
 	fi
 	if [[ "${VERSION_CODENAME:-}" == "jammy" ]] && [[ -n "${DPKG_MAINTSCRIPT_PACKAGE:-}" ]]; then
-		dpkg-divert --package "${DPKG_MAINTSCRIPT_PACKAGE}" --rename \
-			--divert /usr/lib/sysctl.d/50-default.conf.systemd --add /usr/lib/sysctl.d/50-default.conf
+		local sysctl_file="/usr/lib/sysctl.d/50-default.conf"
+		local diverted_file="${sysctl_file}.systemd"
+		local diversion_owner diversion_target
+		diversion_owner="$(dpkg-divert --listpackage "${sysctl_file}" 2> /dev/null)"
+		if [[ -z "${diversion_owner}" ]]; then
+			dpkg-divert --package "${DPKG_MAINTSCRIPT_PACKAGE}" --rename \
+				--divert "${diverted_file}" --add "${sysctl_file}"
+		else
+			diversion_target="$(dpkg-divert --truename "${sysctl_file}")"
+			if [[ "${diversion_target}" != "${diverted_file}" ]]; then
+				echo "Unexpected diversion target for ${sysctl_file}: ${diversion_target}" >&2
+				return 1
+			fi
+			case "${diversion_owner}" in
+				"${DPKG_MAINTSCRIPT_PACKAGE}") ;;
+				armbian-bsp-cli-*)
+					dpkg-divert --package "${diversion_owner}" --no-rename \
+						--divert "${diverted_file}" --remove "${sysctl_file}"
+					dpkg-divert --package "${DPKG_MAINTSCRIPT_PACKAGE}" --no-rename \
+						--divert "${diverted_file}" --add "${sysctl_file}"
+					;;
+				*)
+					echo "Unexpected diversion owner for ${sysctl_file}: ${diversion_owner}" >&2
+					return 1
+					;;
+			esac
+		fi
 	fi
 
 	# tell people to reboot at next login
