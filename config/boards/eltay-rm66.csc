@@ -28,10 +28,3 @@ function post_family_config_branch_vendor__eltay_rm66_kernel() {
 	[[ "${KERNEL_MAJOR_MINOR}" == "6.1" ]] || exit_with_error "Eltay RM66 vendor branch requires the Rockchip BSP 6.1 series"
 	display_alert "$BOARD" "Vendor BSP 6.1 (family branch): NPU, Media and CAM1 enabled" "info"
 }
-
-function pre_install_kernel_debs__eltay_rm66_vendor_bootargs() {
-	[[ "${BRANCH}" == "vendor" ]] || return 0
-	display_alert "$BOARD" "Add pm_domains.always_on=1 to extraboardargs" "info"
-	run_host_command_logged echo "extraboardargs=pm_domains.always_on=1" >> "${SDCARD}"/boot/armbianEnv.txt
-	return 0
-}
