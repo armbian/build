@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Mon, 22 Jun 2026 22:27:15 +0200
+Subject: drm/cix/dptx: program audio Maud/Naud and clock mode for recovery
+
+The DP audio path set channel-status but never wrote Maud/Naud or the audio
+clock mode, so the sink could not recover the audio sample clock: the on-wire
+clock free-ran and strict sinks (HDMI capture/KVM) dropped samples. The only
+Maud/Naud writer, trilin_dp_panel_config_msa(), is dead code, gated on video
+sync-lock and fed by trilin_dp_get_audio_clk_rate() which is a stub returning 0.
+
+Program the values in dptx_audio_setup() where the sample rate is known: select
+the audio sync clock mode (SEC0_AUDIO_CLOCK_MODE bit 0) and write the reduced
+Maud/Naud from 512*fs : link rate, matching the IP vendor values. This also
+covers link retrain since dptx_audio_reconfig_and_enable() re-runs setup.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+index ae35f92..d2bc54c 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+@@ -2,6 +2,7 @@
+ /* Copyright 2024 Cix Technology Group Co., Ltd. */
+ #include <linux/kernel.h>
+ #include <linux/version.h>
++#include <linux/gcd.h>
+ #include "trilin_dptx_reg.h"
+ #include "trilin_dptx.h"
+ 
+@@ -18,6 +19,8 @@ static void dptx_audio_setup(struct trilin_dp *dp, int source, int freq,
+ 	unsigned int offset;
+ 	unsigned int cs_length_orig_freq;
+ 	unsigned int cs_freq_clock_accuracy;
++	unsigned long maud, naud, g;
++	int link_rate;
+ 
+ 	if (!dp)
+ 		return;
+@@ -78,6 +81,18 @@ static void dptx_audio_setup(struct trilin_dp *dp, int source, int freq,
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_CHANNEL_COUNT + offset,
+ 			channel_count);
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_INPUT_SELECT + offset, source);
++
++	/* Audio clock: sync mode + reduced Maud/Naud (512*fs : link rate) so the sink recovers fs */
++	link_rate = drm_dp_bw_code_to_link_rate(dp->mode.bw_code);
++	if (link_rate > 0) {
++		g = gcd(512UL * freq, 1000UL * link_rate);
++		maud = (512UL * freq) / g;
++		naud = (1000UL * link_rate) / g;
++		trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_CLOCK_MODE + offset,
++				trilin_dp_read(dp, TRILIN_DPTX_SEC0_AUDIO_CLOCK_MODE + offset) | BIT(0));
++		trilin_dp_write(dp, TRILIN_DPTX_SEC0_MAUD + offset, maud);
++		trilin_dp_write(dp, TRILIN_DPTX_SEC0_NAUD + offset, naud);
++	}
+ }
+ 
+ static int dptx_audio_startup(struct device *dev, void *data)
+-- 
+Armbian
+
