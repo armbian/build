@@ -24,7 +24,7 @@ function post_family_config__eltay_rm66_uboot() {
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 }
 
-function post_family_config_branch_vendor__eltay_rm66_kernel() {
-	[[ "${KERNEL_MAJOR_MINOR}" == "6.1" ]] || exit_with_error "Eltay RM66 vendor branch requires the Rockchip BSP 6.1 series"
-	display_alert "$BOARD" "Vendor BSP 6.1 (family branch): NPU, Media and CAM1 enabled" "info"
+function post_family_config__eltay_rm66_kernel() {
+	[[ "${BRANCH}" == vendor* ]] || return 0
+	display_alert "$BOARD" "Vendor BSP ${KERNEL_MAJOR_MINOR} (family branch): NPU, Media and CAM1 enabled" "info"
 }

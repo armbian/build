@@ -14,7 +14,7 @@ BOOT_SCENARIO="spl-blobs"
 enable_extension "uboot-btrfs"
 
 function post_family_config__use_mainline_uboot() {
-	if [[ "$BRANCH" == "vendor" ]]; then
+	if [[ "$BRANCH" == vendor* ]]; then
 		return 0
 	fi
 
