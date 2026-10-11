@@ -25,7 +25,8 @@ function post_family_tweaks__orangepi5pro_fix() {
 	return 0
 }
 
-function post_family_config_branch_vendor__orangepi5pro_uboot_add_sata_target() {
+function post_family_config__orangepi5pro_uboot_add_sata_target() {
+	[[ "${BRANCH}" == vendor* ]] || return 0
 	display_alert "$BOARD" "Configuring ($BOARD) standard and sata uboot target map" "info"
 	# Note: whitespace/newlines are significant; BOOT_SUPPORT_SPI & BOOT_SPI_RKSPI_LOADER influence the postprocess step that runs for _every_ target and produces rkspi_loader.img
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb rkspi_loader.img
@@ -49,7 +50,7 @@ function post_uboot_custom_postprocess__create_sata_spi_image() {
 }
 
 function post_family_config__orangepi5pro_use_mainline_uboot() {
-	[[ "${BRANCH}" == "vendor" ]] && return 0 # skip for vendor branch
+	[[ "${BRANCH}" == vendor* ]] && return 0 # skip for vendor branch
 
 	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
 	declare -g BOOTCONFIG="orangepi-5-pro-rk3588s_defconfig"
@@ -62,7 +63,8 @@ function post_family_config__orangepi5pro_use_mainline_uboot() {
 }
 
 # Override family config for this board; let's avoid conditionals in family config.
-function post_family_config_branch_vendor__orangepi5pro_use_vendor_uboot() {
+function post_family_config__orangepi5pro_use_vendor_uboot() {
+	[[ "${BRANCH}" == vendor* ]] || return 0
 	BOOTSOURCE='https://github.com/orangepi-xunlong/u-boot-orangepi.git'
 	BOOTBRANCH='branch:v2017.09-rk3588'
 	BOOTPATCHDIR="legacy"

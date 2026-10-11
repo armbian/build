@@ -491,7 +491,7 @@ function post_family_config__900_late_default_serial_console_by_branch() {
 	fi
 
 	case $BRANCH in
-		vendor)
+		vendor*)
 			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyFIQ0 for BRANCH='${BRANCH}'" "info"
 			SERIALCON="ttyFIQ0"
 			;;

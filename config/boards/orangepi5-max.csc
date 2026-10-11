@@ -53,7 +53,7 @@ function post_family_tweaks__orangepi5max_naming_audios() {
 }
 
 function post_family_tweaks_bsp__orangepi5max_bluetooth() {
-	[[ "$BRANCH" != "vendor" ]] && return 0
+	[[ "$BRANCH" != vendor* ]] && return 0
 	display_alert "$BOARD" "Installing ap6611s-bluetooth.service" "info"
 
 	# Vendor kernels require the user-space patchram loader.
@@ -68,7 +68,7 @@ function post_family_tweaks_bsp__orangepi5max_bluetooth() {
 
 function post_family_tweaks__orangepi5max_enable_bluetooth_service() {
 	# Mainline kernels use the hci_bcm SerDev driver.
-	[[ "$BRANCH" != "vendor" ]] && return 0
+	[[ "$BRANCH" != vendor* ]] && return 0
 
 	display_alert "$BOARD" "Enabling ap6611s-bluetooth.service" "info"
 	chroot_sdcard systemctl enable ap6611s-bluetooth.service
@@ -77,7 +77,7 @@ function post_family_tweaks__orangepi5max_enable_bluetooth_service() {
 
 # hci_bcm derives the firmware name from the board compatible string.
 function post_family_tweaks_bsp__orangepi5max_bt_firmware_symlink() {
-	[[ "$BRANCH" == "vendor" ]] && return 0
+	[[ "$BRANCH" == vendor* ]] && return 0
 	display_alert "$BOARD" "Creating BT firmware symlink for hci_bcm" "info"
 	mkdir -p "$destination/lib/firmware/brcm"
 	ln -sf SYN43711A0.hcd "$destination/lib/firmware/brcm/BCM.xunlong,orangepi-5-max.hcd"
