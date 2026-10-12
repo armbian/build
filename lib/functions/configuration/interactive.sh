@@ -317,7 +317,7 @@ function interactive_config_ask_branch() {
 				cloud)
 					description="Cloud optimized minimal LTS kernel"
 					;;
-				vendor)
+				vendor*)
 					description="Vendor BSP kernel"
 					;;
 				*)

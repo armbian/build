@@ -14,6 +14,9 @@ FORCE_BOOTSCRIPT_UPDATE="yes"
 BOOTBRANCH_BOARD="tag:v2026.07"
 BOOTPATCHDIR="v2026.07-sunxi64"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
+# Prebuilt FFmpeg v4l2-request (userspace app) lives in an extension per review; the
+# extension adds its own libx264 runtime to the package list in its config hook.
+ENABLE_EXTENSIONS="ffmpeg-v4l2-request"
 
 # KickPi ships a WiFi watchdog in their image; carry the fixed version
 # (interface-name extraction bug caused ~94s periodic restarts, see

@@ -1,0 +1,64 @@
+#!/bin/sh
+# rotate-audio-test [device]
+#
+# Tells apart the ways audio fails on this board:
+#
+#   OPEN-FAIL  the PCM will not open - either the scene switch for this front
+#              end is off (S_FAST_P_CODEC SWITCH for hw:0,3), or something
+#              else already has it, which on a desktop is normally PipeWire
+#   NO-DRAIN   it opens and starts, but the buffer never empties: the DMA is
+#              not moving. Seen when a channel is left paused by an earlier
+#              stream and never resumed
+#   WRONG-RATE it drains, but not at one second per second - the AP-direct
+#              device 0 does this, an octave low
+#   PLAYS      real time playback
+#
+# Opening this path costs a fixed 400-600 ms (sdm ramp, dapm, waking the dsp),
+# which swamps a short measurement - so time two different lengths and take
+# the slope. The offset cancels and what is left is the true rate.
+set -u
+DEV=${1:-hw:0,3}
+RAW=/tmp/rotate-audio-test.raw
+
+play() { # play() <seconds> -> prints elapsed ms, or a verdict on stderr
+	python3 - "$1" > "$RAW" <<'PY'
+import math, struct, sys, io
+sec = float(sys.argv[1]); r = 48000
+o = io.BytesIO()
+for i in range(int(r * sec)):
+	v = int(8000 * math.sin(2 * math.pi * 1000 * i / r))
+	o.write(struct.pack('<hh', v, v))
+sys.stdout.buffer.write(o.getvalue())
+PY
+	t0=$(date +%s%N)
+	# period 1280 frames is a whole number of the 80-frame vbc fifo fragments
+	out=$(timeout $(( $1 * 4 + 8 )) aplay -D "$DEV" -f S16_LE -c 2 -r 48000 \
+		--period-size=1280 --buffer-size=10240 -t raw "$RAW" 2>&1)
+	rc=$?
+	t1=$(date +%s%N)
+	ms=$(( (t1 - t0) / 1000000 ))
+
+	case "$out" in
+		*"audio open error"*)
+			echo "OPEN-FAIL  $(echo "$out" | tail -1)" >&2; return 1 ;;
+		*"write error"*)
+			echo "NO-DRAIN   ${ms}ms  $(echo "$out" | tail -1)" >&2; return 1 ;;
+	esac
+	[ "$rc" -eq 124 ] && { echo "NO-DRAIN   timed out" >&2; return 1; }
+
+	echo "$ms"
+}
+
+a=$(play 1) || exit 1
+b=$(play 3) || exit 1
+
+# (b - a) covers exactly 2 s of material; anything the open costs is in both
+span=$(( b - a ))
+pct=$(( span * 100 / 2000 ))
+
+if [ "$pct" -lt 85 ] || [ "$pct" -gt 115 ]; then
+	echo "WRONG-RATE ${pct}% of real time (1s->${a}ms, 3s->${b}ms)"
+	exit 1
+fi
+
+echo "PLAYS      ${pct}% of real time (1s->${a}ms, 3s->${b}ms)"

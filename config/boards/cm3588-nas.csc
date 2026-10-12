@@ -49,7 +49,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	# If BRANCH==vendor, use rkbin BL31 ${RKBIN_DIR}/${BL31_BLOB}, otherwise, bl31.elf from mainline ATF/TF-A
 	declare bl31_blob="undetermined"
-	if [[ "${BRANCH}" == "vendor" ]]; then
+	if [[ "${BRANCH}" == vendor* ]]; then
 		display_alert "${BOARD}/${BRANCH}" "Using Rockchip rkbin BL31 blob : ${RKBIN_DIR}/${BL31_BLOB}" "info"
 		bl31_blob="${RKBIN_DIR}/${BL31_BLOB}"
 		declare -g ATF_COMPILE="no" # no need to build mainline it either

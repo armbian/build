@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 7 Oct 2026 17:06:54 +0200
+Subject: [PATCH] rockchip64-7.3: fix RK3568 PCIe Root Port reset loop
+
+RK3568 boards with NVMe (Odroid M1) loop in Root Port reset on edge 7.3
+and never mount the rootfs. The 7.3 link-down recovery resets the Root
+Port on every LINK_REQ_RST_NOT interrupt; the reset re-raises that
+interrupt after the link is already up, so recovery repeats forever.
+
+Recover only when the link is genuinely down. Keep the feature.
+
+Tested on: Odroid M1 (RK3568) with NVMe, edge 7.3.0-rc6. Boots to login,
+nvme0n1 enumerates, zero Root Port resets.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index af26a07..2f32540 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -658,9 +658,20 @@ static irqreturn_t rockchip_pcie_rc_sys_irq_thread(int irq, void *arg)
+ 
+ 	if (reg & PCIE_LINK_REQ_RST_NOT_INT) {
+ 		dev_dbg(dev, "hot reset or link-down reset\n");
+-		for_each_pci_bridge(port, pp->bridge->bus) {
+-			if (pci_pcie_type(port) == PCI_EXP_TYPE_ROOT_PORT)
+-				pci_host_handle_link_down(port);
++		/*
++		 * reset_root_port() recovers the link by asserting the
++		 * controller reset, which itself re-raises LINK_REQ_RST_NOT
++		 * once the link retrains. On RK3568 that self-induced event is
++		 * delivered after the link is already back up, so acting on it
++		 * resets the Root Port again and loops forever. Only recover
++		 * when the link is actually down, mirroring the link_up() check
++		 * the endpoint IRQ thread already uses.
++		 */
++		if (!rockchip_pcie_link_up(pci)) {
++			for_each_pci_bridge(port, pp->bridge->bus) {
++				if (pci_pcie_type(port) == PCI_EXP_TYPE_ROOT_PORT)
++					pci_host_handle_link_down(port);
++			}
+ 		}
+ 	}
+ 
+-- 
+2.53.0
+

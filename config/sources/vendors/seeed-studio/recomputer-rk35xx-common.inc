@@ -537,34 +537,6 @@ function post_family_tweaks__recomputer_disable_gdm_autologin() {
 		"${SDCARD}/usr/lib/armbian/armbian-firstlogin"
 }
 
-#
-
-# Stage kernel patches from Seeed extension into userpatches so the
-# Armbian framework applies them during kernel build. Uses the same
-# pattern as gateway-dk-ask.sh: copy to userpatches/kernel/${KERNELPATCHDIR}/.
-function post_family_config__recomputer_stage_kernel_patches() {
-	if [[ "${ENABLE_SEEED_RK_EXTENSION}" != "yes" ]]; then
-		return 0
-	fi
-
-	local ext_patch_dir="${SRC}/extensions/seeed_armbian_extension/patches/kernel"
-	local user_patch_dir="${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
-
-	if [[ ! -d "${ext_patch_dir}" ]]; then
-		display_alert "Seeed kernel patches" "Directory not found: ${ext_patch_dir}" "warn"
-		return 0
-	fi
-
-	install -d -m 0755 "${user_patch_dir}"
-
-	local patch_file
-	for patch_file in "${ext_patch_dir}"/*.patch; do
-		[[ -f "${patch_file}" ]] || continue
-		cp "${patch_file}" "${user_patch_dir}/"
-		display_alert "Seeed kernel patch staged" "$(basename "${patch_file}")" "info"
-	done
-}
-
 # Enable Seeed's external extension via the extensions/seeed-extension.sh
 # wrapper (pinned-tag fetch + sub-extension cascade). Entry point for Seeed's
 # own builds; Armbian CI uses ENABLE_EXTENSIONS=seeed-extension instead.

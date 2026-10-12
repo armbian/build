@@ -280,15 +280,12 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
 		depends_base_files=""
 	fi
-	# Provides/Conflicts/Replaces linux-sysctl-defaults: the BSP ships
-	# /usr/lib/sysctl.d/50-default.conf itself (armbian's copy of the distro
-	# defaults), so it satisfies that dependency without pulling the external
-	# package, and cleanly takes over its file if it was ever installed.
+	# The BSP ships 55-bsp-default.conf after the distro defaults.
+	# It provides linux-sysctl-defaults without replacing the distro package.
 	cat <<- EOF >> "${control_file_new}"
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}${EXTRA_BSPDEPS:+, ${EXTRA_BSPDEPS}}
-		Replaces: zram-config, linux-sysctl-defaults, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
-		Conflicts: linux-sysctl-defaults
 		Provides: armbian-bsp-cli, linux-sysctl-defaults
 	EOF
 
@@ -399,7 +396,7 @@ function board_side_bsp_cli_preinst() {
 			;;
 	esac
 	# --system (not -p) so the change to /etc/sysctl.conf above *and* the
-	# drop-ins under /usr/lib/sysctl.d (our 50-default.conf) are applied on
+	# drop-ins under /usr/lib/sysctl.d (our 55-bsp-default.conf) are applied on
 	# upgrade; -p reads only /etc/sysctl.conf and would leave them to next boot.
 	sysctl --system > /dev/null 2>&1
 	# replace canonical advertisement

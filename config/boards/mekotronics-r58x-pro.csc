@@ -14,7 +14,7 @@ declare -g IMAGE_PARTITION_TABLE="gpt"
 
 enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
 
-if [[ "${BRANCH}" == "vendor" ]]; then
+if [[ "${BRANCH}" == vendor* ]]; then
 	# Attention: does _not_ use the vendor/mekotronics shared config anymore; mainline u-boot also for vendor kernel.
 
 	display_alert "$BOARD" "vendor configuration applied for $BOARD / $BRANCH" "info"

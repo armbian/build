@@ -20,6 +20,9 @@ from common import gha
 armbian_utils.setup_logging()
 log: logging.Logger = logging.getLogger("output-gha-matrix")
 
+# Global per name-arch job counter for 'by-name-and-arch-overflow-max'; spans all targets and chunks.
+overflow_max_counts: dict[str, int] = {}
+
 
 def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: str, artifact_arch: str):
 	log.debug(f"Resolving GHA runner tags for artifact/image '{artifact_name}' '{artifact_arch}'")
@@ -63,6 +66,22 @@ def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: 
 		if artifact_name_and_arch in by_names_and_archs:
 			ret = by_names_and_archs[artifact_name_and_arch]
 			log.debug(f"Found 'by-name-and-arch' value '{artifact_name_and_arch}' config in input.pipeline.gha.runners, using '{ret}'")
+
+	# Now, 'by-name-and-arch-overflow-max' last: first 'max' jobs get 'runs-on', the rest get 'runs-on-over-max'.
+	if "by-name-and-arch-overflow-max" in runners:
+		overflow_maxes = runners["by-name-and-arch-overflow-max"]
+		if artifact_name_and_arch in overflow_maxes:
+			overflow_max = overflow_maxes[artifact_name_and_arch]
+			for field in ["max", "runs-on", "runs-on-over-max"]:
+				if field not in overflow_max:
+					log.error(f"Missing '{field}' in input.pipeline.gha.runners.by-name-and-arch-overflow-max.{artifact_name_and_arch}")
+					sys.exit(1)
+			overflow_max_counts[artifact_name_and_arch] = overflow_max_counts.get(artifact_name_and_arch, 0) + 1
+			if overflow_max_counts[artifact_name_and_arch] <= overflow_max["max"]:
+				ret = overflow_max["runs-on"]
+			else:
+				ret = overflow_max["runs-on-over-max"]
+				log.debug(f"'{artifact_name_and_arch}' over max {overflow_max['max']}, using '{ret}'")
 
 	log.debug(f"Resolved GHA runs_on for name:'{artifact_name}' arch:'{artifact_arch}' to runs_on:'{ret}'")
 
@@ -152,6 +171,9 @@ else:
 	log.error(f"Unknown type: {type_gen}")
 	sys.exit(1)
 
+for name_and_arch, count in overflow_max_counts.items():
+	log.info(f"by-name-and-arch-overflow-max '{name_and_arch}': {count} jobs total")
+
 # third argument is the number of chunks wanted.
 ideal_chunk_size = 150
 max_chunk_size = 250
@@ -201,7 +223,7 @@ for i, chunk in enumerate(chunks):
 			# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
 			# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
 			# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
-			if item["runs_on"] == "ubuntu-latest":
+			if not (isinstance(item["runs_on"], list) and "self-hosted" in item["runs_on"]):
 				item["shost"] = "no"
 				item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
 			else:
