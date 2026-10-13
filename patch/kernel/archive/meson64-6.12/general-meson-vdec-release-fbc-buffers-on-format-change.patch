@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Wed, 14 Oct 2026 00:44:13 +0300
+Subject: [PATCH] media: meson: vdec: release the FBC buffers on a format
+ change
+
+codec_hevc_setup_buffers() runs on every resume after a source change
+and allocates the FBC buffers, MMU headers and MMU map without
+freeing those of the old format, which leaks them.
+codec_hevc_free_fbc_buffers() computes the buffer size from the
+current width, height and bit depth, so buffers of an old format are
+freed with a size they were not allocated with.
+
+Free the old buffers before allocating and remember the allocated size.
+
+Assisted-by: LLM
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ .../staging/media/meson/vdec/codec_hevc_common.c  | 15 +++++----------
+ .../staging/media/meson/vdec/codec_hevc_common.h  |  1 +
+ 2 files changed, 6 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.c b/drivers/staging/media/meson/vdec/codec_hevc_common.c
+index d6ed82d..599e2e3 100644
+--- a/drivers/staging/media/meson/vdec/codec_hevc_common.c
++++ b/drivers/staging/media/meson/vdec/codec_hevc_common.c
+@@ -207,20 +207,11 @@ void codec_hevc_free_fbc_buffers(struct amvdec_session *sess,
+ 				 struct codec_hevc_common *comm)
+ {
+ 	struct device *dev = sess->core->dev;
+-	u32 use_mmu;
+-	u32 am21_size;
+ 	int i;
+ 
+-	use_mmu = codec_hevc_use_mmu(sess->core->platform->revision,
+-					 sess->pixfmt_cap,
+-					 sess->bitdepth == 10 ? 1 : 0);
+-
+-	am21_size = amvdec_amfbc_size(sess->width, sess->height,
+-					  sess->bitdepth == 10 ? 1 : 0,  use_mmu);
+-
+ 	for (i = 0; i < MAX_REF_PIC_NUM; ++i) {
+ 		if (comm->fbc_buffer_vaddr[i]) {
+-			dma_free_coherent(dev, am21_size,
++			dma_free_coherent(dev, comm->fbc_buffer_size,
+ 					  comm->fbc_buffer_vaddr[i],
+ 					  comm->fbc_buffer_paddr[i]);
+ 			comm->fbc_buffer_vaddr[i] = NULL;
+@@ -254,6 +245,7 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess,
+ 
+ 	am21_size = amvdec_amfbc_size(sess->width, sess->height,
+ 					  is_10bit, use_mmu);
++	comm->fbc_buffer_size = am21_size;
+ 
+ 	v4l2_m2m_for_each_dst_buf(sess->m2m_ctx, buf) {
+ 		u32 idx = buf->vb.vb2_buf.index;
+@@ -289,6 +281,9 @@ int codec_hevc_setup_buffers(struct amvdec_session *sess,
+     struct device *dev = core->dev;
+ 	int ret;
+ 
++	/* Every format change lands here: drop the buffers of the old one */
++	codec_hevc_free_fbc_buffers(sess, comm);
++
+ 	if (codec_hevc_use_mmu(core->platform->revision,
+ 			       sess->pixfmt_cap, is_10bit)) {
+ 		comm->mmu_map_vaddr = dma_alloc_coherent(dev, MMU_MAP_SIZE,
+diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.h b/drivers/staging/media/meson/vdec/codec_hevc_common.h
+index 13f9f1d..a3915f7 100644
+--- a/drivers/staging/media/meson/vdec/codec_hevc_common.h
++++ b/drivers/staging/media/meson/vdec/codec_hevc_common.h
+@@ -21,6 +21,7 @@ extern const u16 vdec_hevc_parser_cmd[VDEC_HEVC_PARSER_CMD_LEN];
+ struct codec_hevc_common {
+ 	void      *fbc_buffer_vaddr[MAX_REF_PIC_NUM];
+ 	dma_addr_t fbc_buffer_paddr[MAX_REF_PIC_NUM];
++	u32        fbc_buffer_size;
+ 
+ 	void      *mmu_header_vaddr[MAX_REF_PIC_NUM];
+ 	dma_addr_t mmu_header_paddr[MAX_REF_PIC_NUM];
