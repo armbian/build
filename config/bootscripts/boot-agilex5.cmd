@@ -47,7 +47,7 @@ echo "Booting Agilex 5 with ${bootargs}"
 
 fatload mmc 0:1 ${kernel_addr_r} Image
 if fatload mmc 0:1 ${ramdisk_addr_r} uInitrd; then
-	setenv ramdisk_arg "${ramdisk_addr_r}:${filesize}"
+	setenv ramdisk_arg "${ramdisk_addr_r}"
 else
 	echo "No uInitrd, continuing without an initramfs"
 	setenv ramdisk_arg "-"
