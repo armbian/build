@@ -69,11 +69,12 @@ setenv eeprom_dtb_matched "no"
 # Board identification EEPROM.
 # Content layout — the detection below parses only the first 10 bytes:
 #
-#   offset  size  field        example   notes
-#   0x00     6    magic        "rk35xx"  ASCII; blank (0xFF) chips never match
-#   0x06     4    board code   "01A0"    [0..1]=board no, [2..3]=hw iteration
-#   0x0A     ..   serial no.   ASCII     ignored by boot logic
-#   0x20     ..   extra cfg    ASCII     first entry = unit MAC (17 bytes)
+#   offset  size  field        notes                                     example
+#   0x00     6    magic        ASCII; blank (0xFF) chips never match     "rk35xx"
+#   0x06     4    board code   [0..1]=board no, [2..3]=hw iteration      "01A0"
+#   0x0A     20   serial no.   "SN" + ASCII digits                       "SNAAAAAAAAABBBBBBBBB"
+#   0x1E     2    reserved     not parsed                                0xFF 0xFF
+#   0x20     ..   extra cfg    eg: mac addr, product info                ASCII
 #
 # Board codes — actual EEPROM contents (first 10 bytes) per board:
 #   00A0 = RK3576 Devkit         72 6b 33 35 78 78 30 30 41 30  ("rk35xx"+"00A0")
