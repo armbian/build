@@ -1,0 +1,612 @@
+From f68b80264856f5c82052b67137dea53b5cc7c2f4 Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Sun, 4 Oct 2026 13:02:36 +0000
+Subject: [PATCH 196/210] clk: meson: s4-pll: add the CPU clocks
+
+The S4 CPU clock follows the G12A layout: cpu_clk selects either sys_pll
+or a dynamic clock derived from xtal, fclk_div2 or fclk_div3. Unlike on
+G12A, the sys_pll and CPU clock registers can only be written from the
+secure world, so the BL31 firmware programs them on behalf of Linux
+through the secure monitor.
+
+The sys_pll registers remain readable, so its rate and lock state are
+read directly and only writes go through the firmware. The CPU clock
+control register is not readable either, and is read back through the
+firmware, which switches between the two halves of the dynamic clock
+without a glitch. As on G12A, a notifier parks the CPU on the dynamic
+clock while sys_pll relocks. The bootloader leaves the dynamic clock on
+xtal, so set it to 1GHz at probe to avoid parking the CPU at 24MHz.
+
+The CPU clocks are only registered when the controller node references
+the secure monitor, so existing device trees keep working.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/clk/meson/Kconfig  |   1 +
+ drivers/clk/meson/s4-pll.c | 527 ++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 527 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/meson/Kconfig b/drivers/clk/meson/Kconfig
+index d460514bb8a1..2ac673ade702 100644
+--- a/drivers/clk/meson/Kconfig
++++ b/drivers/clk/meson/Kconfig
+@@ -207,6 +207,7 @@ config COMMON_CLK_G12A
+ config COMMON_CLK_S4_PLL
+ 	tristate "S4 SoC PLL clock controllers support"
+ 	depends on ARM64
++	depends on MESON_SM
+ 	default ARCH_MESON
+ 	select COMMON_CLK_MESON_CLKC_UTILS
+ 	select COMMON_CLK_MESON_MPLL
+diff --git a/drivers/clk/meson/s4-pll.c b/drivers/clk/meson/s4-pll.c
+index 065c3a3acbb2..ff8ed15f51a3 100644
+--- a/drivers/clk/meson/s4-pll.c
++++ b/drivers/clk/meson/s4-pll.c
+@@ -6,7 +6,12 @@
+  * Author: Yu Tu <yu.tu@amlogic.com>
+  */
+ 
++#include <linux/bitfield.h>
++#include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/firmware/meson/meson_sm.h>
++#include <linux/iopoll.h>
+ #include <linux/of_device.h>
+ #include <linux/platform_device.h>
+ 
+@@ -16,6 +21,7 @@
+ #include "meson-clkc-utils.h"
+ #include <dt-bindings/clock/amlogic,s4-pll-clkc.h>
+ 
++#define ANACTRL_SYSPLL_CTRL0                       0x000
+ #define ANACTRL_FIXPLL_CTRL0                       0x040
+ #define ANACTRL_FIXPLL_CTRL1                       0x044
+ #define ANACTRL_FIXPLL_CTRL3                       0x04c
+@@ -759,6 +765,475 @@ static struct clk_regmap s4_mpll3 = {
+ 	},
+ };
+ 
++/*
++ * The sys_pll and CPU clock registers can only be written by the secure
++ * firmware. BL31 exposes them through the SM_PLL_CLK and SM_CPU_CLK
++ * services, which take one of these sub-functions as first argument.
++ */
++#define S4_SECID_SYS_DCO_PLL		0
++#define S4_SECID_SYS_DCO_PLL_DIS	1
++#define S4_SECID_SYS_PLL_OD		2
++#define S4_SECID_CPU_CLK_SEL		6
++#define S4_SECID_CPU_CLK_RD		7
++#define S4_SECID_CPU_CLK_DYN		8
++
++/* Layout of the CPU clock control register returned by S4_SECID_CPU_CLK_RD */
++#define S4_CPU_CLK_FINAL_SEL		BIT(11)
++#define S4_CPU_CLK_DYN_SEL		BIT(10)
++#define S4_CPU_CLK_DYN1_SHIFT		16
++#define S4_CPU_CLK_DYN_PREMUX		GENMASK(1, 0)
++#define S4_CPU_CLK_DYN_POSTMUX		BIT(2)
++#define S4_CPU_CLK_DYN_DIV		GENMASK(9, 4)
++
++static struct meson_sm_firmware *s4_sm_fw;
++
++static int s4_sm_call(unsigned int cmd, u32 *val, u32 secid,
++		      u32 arg0, u32 arg1, u32 arg2)
++{
++	s32 ret;
++	int err;
++
++	err = meson_sm_call(s4_sm_fw, cmd, &ret, secid, arg0, arg1, arg2, 0);
++	if (err)
++		return err;
++
++	if (val)
++		*val = ret;
++
++	return 0;
++}
++
++static int s4_sys_pll_dco_wait_lock(struct clk_hw *hw)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_pll_data *pll = clk->data;
++	unsigned int locked;
++
++	return read_poll_timeout_atomic(meson_parm_read, locked, locked, 20,
++					100000, false, clk->map, &pll->l);
++}
++
++static int s4_sys_pll_dco_enable(struct clk_hw *hw)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_pll_data *pll = clk->data;
++	int ret;
++
++	if (meson_clk_pll_ro_ops.is_enabled(hw))
++		return 0;
++
++	ret = s4_sm_call(SM_PLL_CLK, NULL, S4_SECID_SYS_DCO_PLL,
++			 meson_parm_read(clk->map, &pll->m),
++			 meson_parm_read(clk->map, &pll->n), 0);
++	if (ret)
++		return ret;
++
++	return s4_sys_pll_dco_wait_lock(hw);
++}
++
++static void s4_sys_pll_dco_disable(struct clk_hw *hw)
++{
++	s4_sm_call(SM_PLL_CLK, NULL, S4_SECID_SYS_DCO_PLL_DIS, 0, 0, 0);
++}
++
++static int s4_sys_pll_dco_set_rate(struct clk_hw *hw, unsigned long rate,
++				   unsigned long parent_rate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_pll_data *pll = clk->data;
++	const struct pll_params_table *p;
++	int ret;
++
++	for (p = pll->table; p->n; p++)
++		if (DIV_ROUND_UP_ULL((u64)parent_rate * p->m, p->n) == rate)
++			break;
++
++	if (!p->n)
++		return -EINVAL;
++
++	if (meson_clk_pll_ro_ops.is_enabled(hw))
++		s4_sys_pll_dco_disable(hw);
++
++	ret = s4_sm_call(SM_PLL_CLK, NULL, S4_SECID_SYS_DCO_PLL,
++			 p->m, p->n, 0);
++	if (ret)
++		return ret;
++
++	return s4_sys_pll_dco_wait_lock(hw);
++}
++
++static unsigned long s4_sys_pll_dco_recalc_rate(struct clk_hw *hw,
++						unsigned long parent_rate)
++{
++	return meson_clk_pll_ro_ops.recalc_rate(hw, parent_rate);
++}
++
++static int s4_sys_pll_dco_determine_rate(struct clk_hw *hw,
++					 struct clk_rate_request *req)
++{
++	return meson_clk_pll_ops.determine_rate(hw, req);
++}
++
++static int s4_sys_pll_dco_is_enabled(struct clk_hw *hw)
++{
++	return meson_clk_pll_ro_ops.is_enabled(hw);
++}
++
++static const struct clk_ops s4_sys_pll_dco_ops = {
++	.init		= clk_regmap_init,
++	.recalc_rate	= s4_sys_pll_dco_recalc_rate,
++	.determine_rate	= s4_sys_pll_dco_determine_rate,
++	.set_rate	= s4_sys_pll_dco_set_rate,
++	.is_enabled	= s4_sys_pll_dco_is_enabled,
++	.enable		= s4_sys_pll_dco_enable,
++	.disable	= s4_sys_pll_dco_disable,
++};
++
++static int s4_sys_pll_set_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long parent_rate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct clk_regmap_div_data *div = clk_get_regmap_div_data(clk);
++	int val;
++
++	val = divider_get_val(rate, parent_rate, div->table, div->width,
++			      div->flags);
++	if (val < 0)
++		return val;
++
++	return s4_sm_call(SM_PLL_CLK, NULL, S4_SECID_SYS_PLL_OD,
++			  clk_div_mask(div->width) << div->shift,
++			  val << div->shift, 0);
++}
++
++static unsigned long s4_sys_pll_recalc_rate(struct clk_hw *hw,
++					    unsigned long parent_rate)
++{
++	return clk_regmap_divider_ro_ops.recalc_rate(hw, parent_rate);
++}
++
++static int s4_sys_pll_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct clk_regmap_div_data *div = clk_get_regmap_div_data(clk);
++
++	return divider_determine_rate(hw, req, div->table, div->width,
++				      div->flags);
++}
++
++static const struct clk_ops s4_sys_pll_ops = {
++	.init		= clk_regmap_init,
++	.recalc_rate	= s4_sys_pll_recalc_rate,
++	.determine_rate	= s4_sys_pll_determine_rate,
++	.set_rate	= s4_sys_pll_set_rate,
++};
++
++static const struct pll_params_table s4_sys_pll_params_table[] = {
++	PLL_PARAMS(168, 1), /* DCO = 4032M */
++	PLL_PARAMS(184, 1), /* DCO = 4416M */
++	PLL_PARAMS(200, 1), /* DCO = 4800M */
++	PLL_PARAMS(216, 1), /* DCO = 5184M */
++	PLL_PARAMS(233, 1), /* DCO = 5592M */
++	PLL_PARAMS(234, 1), /* DCO = 5616M */
++	PLL_PARAMS(249, 1), /* DCO = 5976M */
++	PLL_PARAMS(125, 1), /* DCO = 3000M */
++	PLL_PARAMS(126, 1), /* DCO = 3024M */
++	PLL_PARAMS(134, 1), /* DCO = 3216M */
++	PLL_PARAMS(142, 1), /* DCO = 3408M */
++	PLL_PARAMS(150, 1), /* DCO = 3600M */
++	PLL_PARAMS(158, 1), /* DCO = 3792M */
++	PLL_PARAMS(159, 1), /* DCO = 3816M */
++	PLL_PARAMS(160, 1), /* DCO = 3840M */
++	PLL_PARAMS(167, 1), /* DCO = 4008M */
++	{ /* sentinel */ }
++};
++
++static struct clk_regmap s4_sys_pll_dco = {
++	.data = &(struct meson_clk_pll_data){
++		.en = {
++			.reg_off = ANACTRL_SYSPLL_CTRL0,
++			.shift   = 28,
++			.width   = 1,
++		},
++		.m = {
++			.reg_off = ANACTRL_SYSPLL_CTRL0,
++			.shift   = 0,
++			.width   = 8,
++		},
++		.n = {
++			.reg_off = ANACTRL_SYSPLL_CTRL0,
++			.shift   = 10,
++			.width   = 5,
++		},
++		.l = {
++			.reg_off = ANACTRL_SYSPLL_CTRL0,
++			.shift   = 31,
++			.width   = 1,
++		},
++		.rst = {
++			.reg_off = ANACTRL_SYSPLL_CTRL0,
++			.shift   = 29,
++			.width   = 1,
++		},
++		.table = s4_sys_pll_params_table,
++	},
++	.hw.init = &(struct clk_init_data){
++		.name = "sys_pll_dco",
++		.ops = &s4_sys_pll_dco_ops,
++		.parent_data = &(const struct clk_parent_data) {
++			.fw_name = "xtal",
++		},
++		.num_parents = 1,
++		/* This clock feeds the CPU, avoid disabling it */
++		.flags = CLK_IS_CRITICAL,
++	},
++};
++
++static struct clk_regmap s4_sys_pll = {
++	.data = &(struct clk_regmap_div_data){
++		.offset = ANACTRL_SYSPLL_CTRL0,
++		.shift = 16,
++		.width = 3,
++		.flags = CLK_DIVIDER_POWER_OF_TWO,
++	},
++	.hw.init = &(struct clk_init_data){
++		.name = "sys_pll",
++		.ops = &s4_sys_pll_ops,
++		.parent_hws = (const struct clk_hw *[]) {
++			&s4_sys_pll_dco.hw
++		},
++		.num_parents = 1,
++		.flags = CLK_SET_RATE_PARENT,
++	},
++};
++
++struct s4_cpu_dyn_param {
++	u8 premux;
++	u8 postmux;
++	u8 div;
++};
++
++/* Settings used by the vendor firmware for the low CPU frequencies */
++static const struct s4_cpu_dyn_param s4_cpu_dyn_params[] = {
++	{ .premux = 0, .postmux = 0, .div = 0 },	/* 24M */
++	{ .premux = 1, .postmux = 1, .div = 9 },	/* 100M */
++	{ .premux = 1, .postmux = 1, .div = 3 },	/* 250M */
++	{ .premux = 2, .postmux = 1, .div = 1 },	/* 333M */
++	{ .premux = 1, .postmux = 1, .div = 1 },	/* 500M */
++	{ .premux = 2, .postmux = 0, .div = 0 },	/* 666M */
++	{ .premux = 1, .postmux = 0, .div = 0 },	/* 1G */
++};
++
++static u32 s4_cpu_clk_read(void)
++{
++	u32 val = 0;
++
++	s4_sm_call(SM_CPU_CLK, &val, S4_SECID_CPU_CLK_RD, 0, 0, 0);
++
++	return val;
++}
++
++/* Settings of the dynamic clock path currently feeding the CPU */
++static u32 s4_cpu_dyn_active(void)
++{
++	u32 val = s4_cpu_clk_read();
++
++	if (val & S4_CPU_CLK_DYN_SEL)
++		val >>= S4_CPU_CLK_DYN1_SHIFT;
++
++	return val;
++}
++
++static unsigned long s4_cpu_dyn_param_rate(const struct s4_cpu_dyn_param *p,
++					   unsigned long parent_rate)
++{
++	if (!p->postmux)
++		return parent_rate;
++
++	return DIV_ROUND_UP_ULL((u64)parent_rate, p->div + 1);
++}
++
++static const struct s4_cpu_dyn_param *
++s4_cpu_dyn_find(struct clk_hw *hw, unsigned long rate, u8 index)
++{
++	struct clk_hw *parent = clk_hw_get_parent_by_index(hw, index);
++	unsigned long parent_rate = clk_hw_get_rate(parent);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(s4_cpu_dyn_params); i++) {
++		const struct s4_cpu_dyn_param *p = &s4_cpu_dyn_params[i];
++
++		if (p->premux == index &&
++		    s4_cpu_dyn_param_rate(p, parent_rate) == rate)
++			return p;
++	}
++
++	return NULL;
++}
++
++static unsigned long s4_cpu_dyn_recalc_rate(struct clk_hw *hw,
++					    unsigned long parent_rate)
++{
++	u32 val = s4_cpu_dyn_active();
++	struct s4_cpu_dyn_param p = {
++		.postmux = FIELD_GET(S4_CPU_CLK_DYN_POSTMUX, val),
++		.div = FIELD_GET(S4_CPU_CLK_DYN_DIV, val),
++	};
++
++	return s4_cpu_dyn_param_rate(&p, parent_rate);
++}
++
++static u8 s4_cpu_dyn_get_parent(struct clk_hw *hw)
++{
++	return FIELD_GET(S4_CPU_CLK_DYN_PREMUX, s4_cpu_dyn_active());
++}
++
++static int s4_cpu_dyn_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	const struct s4_cpu_dyn_param *best = NULL;
++	unsigned long best_rate = 0;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(s4_cpu_dyn_params); i++) {
++		const struct s4_cpu_dyn_param *p = &s4_cpu_dyn_params[i];
++		struct clk_hw *parent = clk_hw_get_parent_by_index(hw, p->premux);
++		unsigned long rate;
++
++		if (!parent)
++			continue;
++
++		rate = s4_cpu_dyn_param_rate(p, clk_hw_get_rate(parent));
++		if (!best ||
++		    abs_diff(rate, req->rate) < abs_diff(best_rate, req->rate)) {
++			best = p;
++			best_rate = rate;
++		}
++	}
++
++	if (!best)
++		return -EINVAL;
++
++	req->best_parent_hw = clk_hw_get_parent_by_index(hw, best->premux);
++	req->best_parent_rate = clk_hw_get_rate(req->best_parent_hw);
++	req->rate = best_rate;
++
++	return 0;
++}
++
++static int s4_cpu_dyn_set_rate_and_parent(struct clk_hw *hw,
++					  unsigned long rate,
++					  unsigned long parent_rate, u8 index)
++{
++	const struct s4_cpu_dyn_param *p = s4_cpu_dyn_find(hw, rate, index);
++
++	if (!p)
++		return -EINVAL;
++
++	return s4_sm_call(SM_CPU_CLK, NULL, S4_SECID_CPU_CLK_DYN,
++			  p->premux, p->postmux, p->div);
++}
++
++static int s4_cpu_dyn_set_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long parent_rate)
++{
++	return s4_cpu_dyn_set_rate_and_parent(hw, rate, parent_rate,
++					      s4_cpu_dyn_get_parent(hw));
++}
++
++static int s4_cpu_dyn_set_parent(struct clk_hw *hw, u8 index)
++{
++	u32 val = s4_cpu_dyn_active();
++
++	return s4_sm_call(SM_CPU_CLK, NULL, S4_SECID_CPU_CLK_DYN, index,
++			  FIELD_GET(S4_CPU_CLK_DYN_POSTMUX, val),
++			  FIELD_GET(S4_CPU_CLK_DYN_DIV, val));
++}
++
++static const struct clk_ops s4_cpu_dyn_ops = {
++	.recalc_rate		= s4_cpu_dyn_recalc_rate,
++	.determine_rate		= s4_cpu_dyn_determine_rate,
++	.set_rate		= s4_cpu_dyn_set_rate,
++	.get_parent		= s4_cpu_dyn_get_parent,
++	.set_parent		= s4_cpu_dyn_set_parent,
++	.set_rate_and_parent	= s4_cpu_dyn_set_rate_and_parent,
++};
++
++static struct clk_hw s4_cpu_dyn_clk = {
++	.init = &(struct clk_init_data){
++		.name = "cpu_dyn_clk",
++		.ops = &s4_cpu_dyn_ops,
++		.parent_data = (const struct clk_parent_data []) {
++			{ .fw_name = "xtal", },
++			{ .hw = &s4_fclk_div2.hw },
++			{ .hw = &s4_fclk_div3.hw },
++		},
++		.num_parents = 3,
++	},
++};
++
++static u8 s4_cpu_clk_get_parent(struct clk_hw *hw)
++{
++	return !!(s4_cpu_clk_read() & S4_CPU_CLK_FINAL_SEL);
++}
++
++static int s4_cpu_clk_set_parent(struct clk_hw *hw, u8 index)
++{
++	return s4_sm_call(SM_CPU_CLK, NULL, S4_SECID_CPU_CLK_SEL,
++			  S4_CPU_CLK_FINAL_SEL,
++			  index ? S4_CPU_CLK_FINAL_SEL : 0, 0);
++}
++
++static int s4_cpu_clk_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	return clk_mux_determine_rate_flags(hw, req, CLK_MUX_ROUND_CLOSEST);
++}
++
++static const struct clk_ops s4_cpu_clk_ops = {
++	.get_parent	= s4_cpu_clk_get_parent,
++	.set_parent	= s4_cpu_clk_set_parent,
++	.determine_rate	= s4_cpu_clk_determine_rate,
++};
++
++static struct clk_hw s4_cpu_clk = {
++	.init = &(struct clk_init_data){
++		.name = "cpu_clk",
++		.ops = &s4_cpu_clk_ops,
++		.parent_hws = (const struct clk_hw *[]) {
++			&s4_cpu_dyn_clk,
++			&s4_sys_pll.hw,
++		},
++		.num_parents = 2,
++		.flags = CLK_SET_RATE_PARENT,
++	},
++};
++
++static int s4_sys_pll_notifier_cb(struct notifier_block *nb,
++				  unsigned long event, void *data)
++{
++	switch (event) {
++	case PRE_RATE_CHANGE:
++		/* Run the CPU from the dynamic clock while sys_pll relocks */
++		clk_hw_set_parent(&s4_cpu_clk, &s4_cpu_dyn_clk);
++		udelay(100);
++		return NOTIFY_OK;
++
++	case POST_RATE_CHANGE:
++		clk_hw_set_parent(&s4_cpu_clk, &s4_sys_pll.hw);
++		udelay(100);
++		return NOTIFY_OK;
++
++	default:
++		return NOTIFY_DONE;
++	}
++}
++
++static struct notifier_block s4_sys_pll_nb = {
++	.notifier_call = s4_sys_pll_notifier_cb,
++};
++
+ /* Array of all clocks provided by this provider */
+ static struct clk_hw *s4_pll_hw_clks[] = {
+ 	[CLKID_FIXED_PLL_DCO]		= &s4_fixed_pll_dco.hw,
+@@ -793,6 +1268,10 @@ static struct clk_hw *s4_pll_hw_clks[] = {
+ 	[CLKID_MPLL2]			= &s4_mpll2.hw,
+ 	[CLKID_MPLL3_DIV]		= &s4_mpll3_div.hw,
+ 	[CLKID_MPLL3]			= &s4_mpll3.hw,
++	[CLKID_SYS_PLL_DCO]		= &s4_sys_pll_dco.hw,
++	[CLKID_SYS_PLL]			= &s4_sys_pll.hw,
++	[CLKID_CPU_DYN_CLK]		= &s4_cpu_dyn_clk,
++	[CLKID_CPU_CLK]			= &s4_cpu_clk,
+ };
+ 
+ static const struct reg_sequence s4_pll_init_regs[] = {
+@@ -817,8 +1296,54 @@ static const struct of_device_id s4_pll_clkc_match_table[] = {
+ };
+ MODULE_DEVICE_TABLE(of, s4_pll_clkc_match_table);
+ 
++static int s4_pll_clkc_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *sm_np;
++	struct clk *clk;
++	int ret;
++
++	sm_np = of_parse_phandle(dev->of_node, "amlogic,secure-monitor", 0);
++	if (sm_np) {
++		s4_sm_fw = meson_sm_get(sm_np);
++		of_node_put(sm_np);
++		if (!s4_sm_fw)
++			return dev_err_probe(dev, -EPROBE_DEFER,
++					     "secure monitor not ready\n");
++	} else {
++		s4_pll_hw_clks[CLKID_SYS_PLL_DCO] = NULL;
++		s4_pll_hw_clks[CLKID_SYS_PLL] = NULL;
++		s4_pll_hw_clks[CLKID_CPU_DYN_CLK] = NULL;
++		s4_pll_hw_clks[CLKID_CPU_CLK] = NULL;
++	}
++
++	ret = meson_clkc_mmio_probe(pdev);
++	if (ret || !s4_sm_fw)
++		return ret;
++
++	clk = devm_clk_hw_get_clk(dev, &s4_sys_pll.hw, "dvfs");
++	if (IS_ERR(clk))
++		return PTR_ERR(clk);
++
++	ret = devm_clk_notifier_register(dev, clk, &s4_sys_pll_nb);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to register the sys_pll notifier\n");
++
++	clk = devm_clk_hw_get_clk(dev, &s4_cpu_dyn_clk, "dvfs");
++	if (IS_ERR(clk))
++		return PTR_ERR(clk);
++
++	ret = clk_set_rate(clk, 1000000000);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to set the cpu_dyn_clk rate\n");
++
++	return 0;
++}
++
+ static struct platform_driver s4_pll_clkc_driver = {
+-	.probe		= meson_clkc_mmio_probe,
++	.probe		= s4_pll_clkc_probe,
+ 	.driver		= {
+ 		.name	= "s4-pll-clkc",
+ 		.of_match_table = s4_pll_clkc_match_table,
+-- 
+2.43.0
+
