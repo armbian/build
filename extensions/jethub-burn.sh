@@ -12,8 +12,8 @@
 
 # Download and prepare tools
 function bootstrap_tools() {
-	local repo_url="${JETHOME_TOOLS_URL:-https://github.com/jethome-iot/jethome-tools.git}"
-	local ref="${JETHOME_TOOLS_REF:-branch:convert_jhos}"
+	local repo_url="https://github.com/jethome-iot/jethome-tools.git"
+	local ref="commit:38f121847b4d8c72b57241b81bfeeddc335d1be5"
 
 	display_alert "jethub-burn" "Fetching jethome-tools (${ref})..." "info"
 	fetch_from_repo "${repo_url}" "jethome-tools" "${ref}"
