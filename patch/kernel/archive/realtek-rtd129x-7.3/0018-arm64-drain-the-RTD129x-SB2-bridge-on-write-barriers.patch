@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:59 +0200
+Subject: [PATCH 18/22] arm64: drain the RTD129x SB2 bridge on write barriers
+
+The RTD129x's SB2 bridge holds CPU writes to DDR back until its sync
+register is written, so a device told to fetch a descriptor can read
+what was there before. Realtek's 4.9 kernel drains it in wmb()
+(CONFIG_RTK_RBUS_BARRIER), and on 4.9 every writel() starts with a
+wmb(), so every driver drained it before each register write. Mainline's
+writel() starts with dma_wmb() and its wmb() is a dsb alone.
+
+Do as Realtek did: wmb() and writel()'s barrier also write SB2's sync
+register when rtd_sb2_sync_reg is set. rtd129x-sb2-sync.c, kept in
+kernel/src and copied in by scripts/build-kernel.sh, sets
+it on RTD129x only; it stays NULL elsewhere. Code that links on its own
+(the nVHE hypervisor, the EFI stub and early PI code, the vDSO) is left
+as it was.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/Kconfig.platforms         | 10 ++++
+ arch/arm64/include/asm/barrier.h     | 36 +++++++++++-
+ arch/arm64/include/asm/io.h          |  2 +-
+ arch/arm64/kernel/Makefile           |  1 +
+ arch/arm64/kernel/rtd129x-sb2-sync.c | 83 ++++++++++++++++++++++++++++
+ 5 files changed, 130 insertions(+), 2 deletions(-)
+ create mode 100644 arch/arm64/kernel/rtd129x-sb2-sync.c
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index d2acfac73003..916eaeb8b445 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -339,6 +339,16 @@ config ARCH_REALTEK
+ 	  This enables support for the ARMv8 based Realtek chipsets,
+ 	  like the RTD1295.
+ 
++config RTD129X_SB2_SYNC
++	bool "Drain the RTD129x SB2 bridge on write barriers"
++	depends on ARCH_REALTEK
++	default y
++	help
++	  The RTD129x's SB2 bridge holds CPU writes to DDR back until it is
++	  told to sync, so a device can read stale descriptors. Realtek's
++	  kernels drain it in wmb() and so in every writel(). This does the
++	  same, on RTD129x only (found at boot; other SoCs are unaffected).
++
+ config ARCH_RENESAS
+ 	bool "Renesas SoC Platforms"
+ 	help
+diff --git a/arch/arm64/include/asm/barrier.h b/arch/arm64/include/asm/barrier.h
+index 9495c4441a46..2a201342dbb3 100644
+--- a/arch/arm64/include/asm/barrier.h
++++ b/arch/arm64/include/asm/barrier.h
+@@ -60,9 +60,43 @@
+ #define pmr_sync()	do {} while (0)
+ #endif
+ 
++/*
++ * RTD129x: SB2 holds CPU writes to DDR back until its sync register is
++ * written. Realtek's kernels drain it in wmb(), and so in every writel();
++ * see arch/arm64/kernel/rtd129x-sb2-sync.c. rtd_sb2_sync_reg stays NULL on
++ * every other SoC. Not in the hypervisor, the EFI stub, early position-
++ * independent code (all __DISABLE_EXPORTS) or the vDSO, which link alone.
++ */
++#if defined(CONFIG_RTD129X_SB2_SYNC) && !defined(__KVM_NVHE_HYPERVISOR__) && \
++	!defined(__KVM_VHE_HYPERVISOR__) && !defined(__DISABLE_EXPORTS) && \
++	!defined(BUILD_VDSO)
++extern void __iomem *rtd_sb2_sync_reg;
++
++static __always_inline void rtd_sb2_sync(void)
++{
++	void __iomem *reg = rtd_sb2_sync_reg;
++
++	if (reg)
++		asm volatile("str %w0, [%1]\n\tdsb st"
++			     : : "r" (0x1234), "r" (reg) : "memory");
++}
++#define __rtd_sb2_io_bw()					\
++	do {							\
++		if (rtd_sb2_sync_reg) {				\
++			dsb(st);				\
++			rtd_sb2_sync();				\
++		} else {					\
++			dma_wmb();				\
++		}						\
++	} while (0)
++#else
++static __always_inline void rtd_sb2_sync(void) { }
++#define __rtd_sb2_io_bw()	dma_wmb()
++#endif
++
+ #define __mb()		dsb(sy)
+ #define __rmb()		dsb(ld)
+-#define __wmb()		dsb(st)
++#define __wmb()		do { dsb(st); rtd_sb2_sync(); } while (0)
+ 
+ #define __dma_mb()	dmb(osh)
+ #define __dma_rmb()	dmb(oshld)
+diff --git a/arch/arm64/include/asm/io.h b/arch/arm64/include/asm/io.h
+index 9aa0bb08ab60..ab9586184c62 100644
+--- a/arch/arm64/include/asm/io.h
++++ b/arch/arm64/include/asm/io.h
+@@ -121,7 +121,7 @@ static __always_inline u64 __raw_readq(const volatile void __iomem *addr)
+ 		     : "memory");					\
+ })
+ 
+-#define __io_bw()		dma_wmb()
++#define __io_bw()		__rtd_sb2_io_bw()
+ #define __io_br(v)
+ #define __io_aw(v)
+ 
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index ea66339435bf..e8871a6d9218 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -39,6 +39,7 @@ obj-y			:= debug-monitors.o entry.o irq.o fpsimd.o		\
+ 			   syscall.o proton-pack.o idle.o patching.o pi/	\
+ 			   rsi.o jump_label.o
+ 
++obj-$(CONFIG_RTD129X_SB2_SYNC)	+= rtd129x-sb2-sync.o
+ obj-$(CONFIG_COMPAT)			+= sys32.o signal32.o			\
+ 					   sys_compat.o
+ obj-$(CONFIG_COMPAT)			+= sigreturn32.o
+diff --git a/arch/arm64/kernel/rtd129x-sb2-sync.c b/arch/arm64/kernel/rtd129x-sb2-sync.c
+new file mode 100644
+index 000000000000..0c425787c457
+--- /dev/null
++++ b/arch/arm64/kernel/rtd129x-sb2-sync.c
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * RTD129x: drain the SB2 bus bridge on every write barrier.
++ *
++ * SB2 holds CPU writes to DDR back until its sync register is written. A
++ * device told to fetch a descriptor (a doorbell, a TRB, an OWN bit) can
++ * otherwise read what was there before. Realtek's 4.9 kernel hides this in
++ * the barriers: its wmb() is dsb(st) plus a write of 0x1234 to SB2's sync
++ * register (CONFIG_RTK_RBUS_BARRIER), and on 4.9 every writel() begins with
++ * a wmb(). Every driver got the drain for free before each register write.
++ * Mainline's writel() begins with dma_wmb() and its wmb() is a dsb alone,
++ * so none does: the eMMC DMAC read stale descriptors, eth0's transmitter
++ * wedged, and the USB gadget left the host waiting until it reset the bus.
++ *
++ * asm/barrier.h and asm/io.h (patch 0018) call rtd_sb2_sync() from wmb()
++ * and writel()'s barrier. It does nothing until rtd_sb2_sync_reg is set,
++ * here, on RTD129x only. "rtd_sb2_sync=off" on the command line leaves it
++ * off; debugfs/rtd_sb2_sync switches it at run time (for A/B tests).
++ */
++
++#include <linux/debugfs.h>
++#include <linux/export.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/printk.h>
++#include <linux/string.h>
++
++#define RTD129X_SB2_SYNC	0x9801a020	/* SB2 base 0x9801a000 + 0x20 */
++
++void __iomem *rtd_sb2_sync_reg __read_mostly;
++EXPORT_SYMBOL(rtd_sb2_sync_reg);
++
++static void __iomem *sb2_sync_map;
++static bool sb2_sync_off __initdata;
++
++static int __init rtd_sb2_sync_param(char *s)
++{
++	sb2_sync_off = s && !strcmp(s, "off");
++	return 0;
++}
++early_param("rtd_sb2_sync", rtd_sb2_sync_param);
++
++static int sb2_sync_get(void *data, u64 *val)
++{
++	*val = !!READ_ONCE(rtd_sb2_sync_reg);
++	return 0;
++}
++
++static int sb2_sync_set(void *data, u64 val)
++{
++	WRITE_ONCE(rtd_sb2_sync_reg, val ? sb2_sync_map : NULL);
++	return 0;
++}
++DEFINE_DEBUGFS_ATTRIBUTE(sb2_sync_fops, sb2_sync_get, sb2_sync_set, "%llu\n");
++
++static int __init rtd_sb2_sync_init(void)
++{
++	if (!of_machine_is_compatible("realtek,rtd1293") &&
++	    !of_machine_is_compatible("realtek,rtd1295") &&
++	    !of_machine_is_compatible("realtek,rtd1296"))
++		return 0;
++
++	sb2_sync_map = ioremap(RTD129X_SB2_SYNC, 4);
++	if (!sb2_sync_map)
++		return -ENOMEM;
++
++	if (!sb2_sync_off)
++		WRITE_ONCE(rtd_sb2_sync_reg, sb2_sync_map);
++	pr_info("rtd129x: SB2 sync on write barriers %s\n",
++		sb2_sync_off ? "off (rtd_sb2_sync=off)" : "on");
++	return 0;
++}
++early_initcall(rtd_sb2_sync_init);
++
++static int __init rtd_sb2_sync_debugfs(void)
++{
++	if (sb2_sync_map)
++		debugfs_create_file_unsafe("rtd_sb2_sync", 0600, NULL, NULL,
++					   &sb2_sync_fops);
++	return 0;
++}
++late_initcall(rtd_sb2_sync_debugfs);
