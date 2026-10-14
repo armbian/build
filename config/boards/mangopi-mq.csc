@@ -1,10 +1,11 @@
 # Allwinner D1 single core (C906) 512MB/1GB RAM WiFi/BT HDMI
-BOARD_NAME="Mangopi-MQ"
+BOARD_NAME="MQ Pro"
 BOARD_VENDOR="mangopi"
 BOARDFAMILY="d1"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="khaliforce"
 INTRODUCED="2021"
 KERNEL_TARGET="edge"
+KERNEL_TEST_TARGET="edge"
 BOOT_FDT_FILE="allwinner/sun20i-d1-mangopi-mq-pro.dtb"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw"
