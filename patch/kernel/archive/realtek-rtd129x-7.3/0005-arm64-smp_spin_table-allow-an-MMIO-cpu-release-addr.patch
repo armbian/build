@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:57 +0200
+Subject: [PATCH 05/22] arm64: smp_spin_table: allow an MMIO cpu-release-addr
+
+The spin-table boot protocol says cpu-release-addr is a memory location, and
+mainline maps it with ioremap_cache and stores 64 bits to it. Some SoCs point
+it at a register instead: the Realtek RTD129x has its secondary CPUs wait on
+a 32-bit register in the SB2 block at 0x9801aa44, and mapping that cacheable
+and storing a doubleword across it does not bring them up.
+
+Pick the access by asking memblock whether the address is mapped RAM. When it
+is not, map it as device memory and store one 32-bit word -- which is what
+Realtek's own BSP does in drivers/soc/realtek/rtd129x/rtd129x_spin_table.c.
+Platforms whose release address really is RAM are unaffected.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/kernel/smp_spin_table.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/arch/arm64/kernel/smp_spin_table.c b/arch/arm64/kernel/smp_spin_table.c
+index 49029eace3ad..0566b68815c2 100644
+--- a/arch/arm64/kernel/smp_spin_table.c
++++ b/arch/arm64/kernel/smp_spin_table.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/delay.h>
+ #include <linux/init.h>
++#include <linux/memblock.h>
+ #include <linux/of.h>
+ #include <linux/smp.h>
+ #include <linux/types.h>
+@@ -71,6 +72,29 @@ static int smp_spin_table_cpu_prepare(unsigned int cpu)
+ 	if (!cpu_release_addr[cpu])
+ 		return -ENODEV;
+ 
++	/*
++	 * Some SoCs point cpu-release-addr at an MMIO register rather than at
++	 * RAM -- the Realtek RTD129x writes the secondary entry point to a
++	 * 32-bit register in its SB2 block. Mapping that cacheable and storing
++	 * 64 bits to it does not work, so map it as device memory and store a
++	 * single 32-bit word. The holding pen is well inside the low 4 GiB on
++	 * such systems.
++	 */
++	if (!memblock_is_map_memory(cpu_release_addr[cpu])) {
++		void __iomem *reg;
++
++		reg = ioremap(cpu_release_addr[cpu], sizeof(u32));
++		if (!reg)
++			return -ENOMEM;
++
++		writel_relaxed(pa_holding_pen, reg);
++		iounmap(reg);
++
++		sev();
++
++		return 0;
++	}
++
+ 	/*
+ 	 * The cpu-release-addr may or may not be inside the linear mapping.
+ 	 * As ioremap_cache will either give us a new mapping or reuse the

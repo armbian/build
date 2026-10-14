@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 13 Oct 2026 12:12:01 +0200
+Subject: [PATCH 09/13] mmc: rtd129x: set the eMMC pin function
+
+As first stage, U-Boot finds the eMMC pins in another function, and
+the card does not answer. Set the pins to the eMMC function, as the
+vendor U-Boot does. Linux relies on this too.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/dts/rtd1296-bananapi-w2.dts |  3 ++-
+ drivers/mmc/rtd129x_dw_mmc.c         | 25 +++++++++++++++++++++++--
+ 2 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/dts/rtd1296-bananapi-w2.dts b/arch/arm/dts/rtd1296-bananapi-w2.dts
+index 0db317385b..89a39fd170 100644
+--- a/arch/arm/dts/rtd1296-bananapi-w2.dts
++++ b/arch/arm/dts/rtd1296-bananapi-w2.dts
+@@ -70,7 +70,8 @@
+ 
+ 		emmc: mmc@98012000 {
+ 			compatible = "realtek,rtd1295-emmc";
+-			reg = <0x98012000 0x600>;
++			/* the host, then the pads it shares with the SD card */
++			reg = <0x98012000 0x600>, <0x98012600 0x40>;
+ 			realtek,crt = <&crt>;
+ 			realtek,sb2 = <&sb2>;
+ 			bus-width = <8>;
+diff --git a/drivers/mmc/rtd129x_dw_mmc.c b/drivers/mmc/rtd129x_dw_mmc.c
+index b3cf3bd56a..e5be546afc 100644
+--- a/drivers/mmc/rtd129x_dw_mmc.c
++++ b/drivers/mmc/rtd129x_dw_mmc.c
+@@ -10,7 +10,7 @@
+  *    that ended the previous chain, and DBADDR does not move it;
+  *  - on a read, a wait until the DMAC has moved every byte to DDR.
+  *
+- * The boot loader has set up the pins, pad drive and the 1.8 V I/O.
++ * The pins come up in another function; this sets them to the eMMC.
+  *
+  * Based on the Linux driver emmc-rtd129x.c by JalenLin
+  * (https://github.com/JalenLin/BPI-W2-linux), which follows the BSP's
+@@ -44,6 +44,13 @@
+ #define EM_DQS_CTRL1		0x498
+ #define EM_SWC_SEL		0x4d4
+ 
++/* Pads, shared with the SD card reader */
++#define PAD_MUXPAD0		0x00	/* NAND or eMMC */
++#define  MUXPAD0_EMMC_MASK	0xffff0c3c
++#define  MUXPAD0_EMMC		0xaaaa0828
++#define PAD_PFUNC_NF1		0x0c
++#define  PFUNC_NF1_EMMC		0x33333333
++
+ /* UHS_REG: 1.8 V signalling */
+ #define UHS_18V			BIT(0)
+ 
+@@ -70,6 +77,7 @@ struct rtd129x_dwmmc_priv {
+ 	struct dwmci_host host;
+ 	void __iomem *crt;
+ 	void __iomem *sb2;
++	void __iomem *pad;
+ };
+ 
+ /*
+@@ -97,6 +105,16 @@ static void rtd129x_dwmmc_pll_set(struct rtd129x_dwmmc_priv *priv)
+ 	udelay(400);
+ }
+ 
++/* The pins to the eMMC function, as the BSP's set_emmc_pin_mux() */
++static void rtd129x_dwmmc_pinmux(struct rtd129x_dwmmc_priv *priv)
++{
++	if (!priv->pad)
++		return;
++	clrsetbits_le32(priv->pad + PAD_MUXPAD0, MUXPAD0_EMMC_MASK,
++			MUXPAD0_EMMC);
++	writel(PFUNC_NF1_EMMC, priv->pad + PAD_PFUNC_NF1);
++}
++
+ static void rtd129x_dwmmc_wrapper_init(struct dwmci_host *host)
+ {
+ 	void __iomem *base = host->ioaddr;
+@@ -168,7 +186,7 @@ static int rtd129x_dwmmc_probe(struct udevice *dev)
+ 	struct dwmci_host *host = &priv->host;
+ 	ofnode node;
+ 
+-	host->ioaddr = dev_read_addr_ptr(dev);
++	host->ioaddr = dev_read_addr_index_ptr(dev, 0);
+ 	if (!host->ioaddr)
+ 		return -EINVAL;
+ 
+@@ -182,6 +200,9 @@ static int rtd129x_dwmmc_probe(struct udevice *dev)
+ 		return -EINVAL;
+ 	priv->sb2 = (void __iomem *)ofnode_get_addr(node);
+ 
++	priv->pad = dev_read_addr_index_ptr(dev, 1);
++
++	rtd129x_dwmmc_pinmux(priv);
+ 	rtd129x_dwmmc_pll_set(priv);
+ 	rtd129x_dwmmc_wrapper_init(host);
+ 

@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 14 Oct 2026 07:06:12 +0200
+Subject: [PATCH] extcon: rtk-type-c: support RTD1295 without a SoC info
+ driver, switch VBUS
+
+Mainline has no SoC info driver for RTD1295 (Kylin), so the Kylin check
+never matched. Use the compatible instead.
+
+Look up the rd control GPIO as "realtek,rd-ctrl". The GPIO core adds the
+"-gpios" suffix, so the old name never matched the binding.
+
+Keep a pending connect change in detect_type_c_state(). A second
+interrupt before the work ran cleared it, so a detach was lost and
+the port stayed in host mode.
+
+Add an optional vbus supply. The driver enables it in host mode.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/extcon/extcon-rtk-type-c.c | 58 ++++++++++++++++++++++++------
+ 1 file changed, 47 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/extcon/extcon-rtk-type-c.c b/drivers/extcon/extcon-rtk-type-c.c
+index 82b60b9..8b507c7 100644
+--- a/drivers/extcon/extcon-rtk-type-c.c
++++ b/drivers/extcon/extcon-rtk-type-c.c
+@@ -23,6 +23,7 @@
+ #include <linux/sys_soc.h>
+ #include <linux/nvmem-consumer.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/regulator/consumer.h>
+ #include <linux/usb/otg.h>
+ #include <linux/usb/typec.h>
+ 
+@@ -62,6 +63,13 @@ struct type_c_data {
+ 	/* rd control GPIO only for rtd1295 */
+ 	struct gpio_desc *rd_ctrl_gpio_desc;
+ 
++	/* rtd1295 (Kylin): CC switch and rd control GPIO */
++	bool kylin;
++
++	/* optional VBUS supply, on in host mode */
++	struct regulator *vbus;
++	bool vbus_on;
++
+ 	/* Parameters */
+ 	struct type_c_cfg *type_c_cfg;
+ 	u32 dfp_mode_rp_en;
+@@ -232,11 +240,6 @@ enum usb_data_roles {
+ 	DR_DEVICE,
+ };
+ 
+-static const struct soc_device_attribute rtk_soc_kylin[] = {
+-	{ .family = "Realtek Kylin", },
+-	{ /* empty */ }
+-};
+-
+ static int rtd129x_switch_type_c_plug_config(struct type_c_data *type_c,
+ 					     int dr_mode, int cc)
+ {
+@@ -279,7 +282,7 @@ static inline void switch_type_c_plug_config(struct type_c_data *type_c,
+ {
+ 	int ret = 0;
+ 
+-	if (soc_device_match(rtk_soc_kylin))
++	if (type_c->kylin)
+ 		ret = rtd129x_switch_type_c_plug_config(type_c, dr_mode, cc);
+ 
+ 	if (ret < 0)
+@@ -287,6 +290,22 @@ static inline void switch_type_c_plug_config(struct type_c_data *type_c,
+ 			__func__);
+ }
+ 
++static void switch_type_c_vbus(struct type_c_data *type_c, bool on)
++{
++	int ret;
++
++	if (!type_c->vbus || type_c->vbus_on == on)
++		return;
++
++	ret = on ? regulator_enable(type_c->vbus) : regulator_disable(type_c->vbus);
++	if (ret) {
++		dev_err(type_c->dev, "failed to switch VBUS %s: %d\n",
++			on ? "on" : "off", ret);
++		return;
++	}
++	type_c->vbus_on = on;
++}
++
+ static void switch_type_c_dr_mode(struct type_c_data *type_c, int dr_mode, int cc)
+ {
+ 	bool is_host = false;
+@@ -296,6 +315,7 @@ static void switch_type_c_dr_mode(struct type_c_data *type_c, int dr_mode, int c
+ 	bool ss = true;
+ 
+ 	switch_type_c_plug_config(type_c, dr_mode, cc);
++	switch_type_c_vbus(type_c, dr_mode == USB_DR_MODE_HOST);
+ 	if (cc == ENABLE_CC2)
+ 		polarity = true;
+ 
+@@ -408,7 +428,7 @@ static int __detect_host_device(struct type_c_data *type_c, u32 rp_or_rd_en)
+ 	writel(cc1_config, reg_base + USB_TYPEC_CTRL_CC1_0);
+ 	writel(cc2_config, reg_base + USB_TYPEC_CTRL_CC2_0);
+ 
+-	if (soc_device_match(rtk_soc_kylin))
++	if (type_c->kylin)
+ 		cc1_switch = cc1_config & CC_SWITCH_MASK;
+ 
+ 	cc1_config &= CC_CODE_MASK;
+@@ -419,7 +439,7 @@ static int __detect_host_device(struct type_c_data *type_c, u32 rp_or_rd_en)
+ 	writel(cc1_config, reg_base + USB_TYPEC_CTRL_CC1_0);
+ 
+ 	/* For kylin to disable external rd control gpio */
+-	if (soc_device_match(rtk_soc_kylin)) {
++	if (type_c->kylin) {
+ 		struct gpio_desc *gpio = type_c->rd_ctrl_gpio_desc;
+ 
+ 		if (gpio && gpiod_direction_output(gpio, 1))
+@@ -469,7 +489,11 @@ static int detect_type_c_state(struct type_c_data *type_c)
+ 	int_status = readl(reg_base + USB_TYPEC_CTRL);
+ 	cc_status = readl(reg_base + USB_TYPEC_STS);
+ 
+-	type_c->connect_change = CONNECT_NO_CHANGE;
++	/*
++	 * Keep a pending change. host_device_switch() clears it when it
++	 * handles it. Clearing it here lost a detach when a second interrupt
++	 * came before the work ran.
++	 */
+ 
+ 	switch (type_c->cc_mode | type_c->is_attach) {
+ 	case IN_HOST_MODE | IN_ATTACH:
+@@ -1331,6 +1355,16 @@ static int extcon_rtk_type_c_probe(struct platform_device *pdev)
+ 
+ 	type_c->dev = dev;
+ 
++	type_c->kylin = of_device_is_compatible(dev->of_node, "realtek,rtd1295-type-c");
++
++	type_c->vbus = devm_regulator_get_optional(dev, "vbus");
++	if (IS_ERR(type_c->vbus)) {
++		ret = PTR_ERR(type_c->vbus);
++		if (ret != -ENODEV)
++			return dev_err_probe(dev, ret, "failed to get VBUS supply\n");
++		type_c->vbus = NULL;
++	}
++
+ 	type_c->irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
+ 	if (type_c->irq <= 0) {
+ 		dev_err(&pdev->dev, "Type C driver with no IRQ. Check %s setup!\n",
+@@ -1345,11 +1379,11 @@ static int extcon_rtk_type_c_probe(struct platform_device *pdev)
+ 	spin_lock_init(&type_c->lock);
+ 
+ 	type_c->rd_ctrl_gpio_desc = NULL;
+-	if (soc_device_match(rtk_soc_kylin)) {
++	if (type_c->kylin) {
+ 		struct gpio_desc *gpio;
+ 
+ 		gpio = fwnode_gpiod_get_index(of_fwnode_handle(dev->of_node),
+-					      "realtek,rd-ctrl-gpios",
++					      "realtek,rd-ctrl",
+ 					      0, GPIOD_OUT_HIGH, "rd-ctrl-gpio");
+ 		if (IS_ERR(gpio)) {
+ 			dev_err(dev, "Error rd_ctrl-gpios no found (err=%d)\n",
+@@ -1432,6 +1466,8 @@ static void extcon_rtk_type_c_remove(struct platform_device *pdev)
+ 
+ 	spin_unlock_irqrestore(&type_c->lock, flags);
+ 
++	switch_type_c_vbus(type_c, false);
++
+ 	if (type_c->rd_ctrl_gpio_desc)
+ 		gpiod_put(type_c->rd_ctrl_gpio_desc);
+ 	type_c->rd_ctrl_gpio_desc = NULL;
+-- 
+2.53.0
+
