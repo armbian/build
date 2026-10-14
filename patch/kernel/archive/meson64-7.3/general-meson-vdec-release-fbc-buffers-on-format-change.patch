@@ -4,28 +4,41 @@ Date: Wed, 14 Oct 2026 00:44:13 +0300
 Subject: [PATCH] media: meson: vdec: release the FBC buffers on a format
  change
 
-codec_hevc_setup_buffers() runs on every resume after a source change
-and allocates the FBC buffers, MMU headers and MMU map without
-freeing those of the old format, which leaks them.
-codec_hevc_free_fbc_buffers() computes the buffer size from the
-current width, height and bit depth, so buffers of an old format are
-freed with a size they were not allocated with.
+codec_hevc_setup_buffers() runs on every resume and allocates the FBC
+buffers, MMU headers and MMU map without freeing those of the previous
+format. codec_hevc_free_fbc_buffers() frees every FBC buffer with a
+size computed from the current width, height and bit depth, which can
+differ from the size the buffer was allocated with.
 
-Free the old buffers before allocating and remember the allocated size.
+Record the size of each FBC buffer and free it with that size. Keep the
+MMU map across resumes, its size is fixed. Free the FBC buffers and MMU
+headers at the start of codec_hevc_setup_buffers() when every capture
+buffer is queued: the ANC2AXI table is then rewritten for every buffer
+index, so the earlier allocations are out of use. This is the case on
+the resume from vdec_start_streaming(), where vb2 requires all capture
+buffers to be queued. On the resume from amvdec_src_change() the
+decoder may still hold buffers; on GXL and later the table rewrite
+covers only the queued ones, so nothing is freed then.
 
 Assisted-by: LLM
 Signed-off-by: Igor Velkov <iav@iav.lv>
 ---
- .../staging/media/meson/vdec/codec_hevc_common.c  | 15 +++++----------
- .../staging/media/meson/vdec/codec_hevc_common.h  |  1 +
- 2 files changed, 6 insertions(+), 10 deletions(-)
+ .../media/meson/vdec/codec_hevc_common.c      | 40 ++++++++++++-------
+ .../media/meson/vdec/codec_hevc_common.h      |  1 +
+ 2 files changed, 26 insertions(+), 15 deletions(-)
 
 diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.c b/drivers/staging/media/meson/vdec/codec_hevc_common.c
-index d6ed82d..599e2e3 100644
+index d6ed82d..6bd7831 100644
 --- a/drivers/staging/media/meson/vdec/codec_hevc_common.c
 +++ b/drivers/staging/media/meson/vdec/codec_hevc_common.c
-@@ -207,20 +207,11 @@ void codec_hevc_free_fbc_buffers(struct amvdec_session *sess,
- 				 struct codec_hevc_common *comm)
+@@ -203,38 +203,37 @@ static int codec_hevc_alloc_mmu_headers(struct amvdec_session *sess,
+ 	return 0;
+ }
+ 
+-void codec_hevc_free_fbc_buffers(struct amvdec_session *sess,
+-				 struct codec_hevc_common *comm)
++static void codec_hevc_free_frame_buffers(struct amvdec_session *sess,
++					  struct codec_hevc_common *comm)
  {
  	struct device *dev = sess->core->dev;
 -	u32 use_mmu;
@@ -42,37 +55,73 @@ index d6ed82d..599e2e3 100644
  	for (i = 0; i < MAX_REF_PIC_NUM; ++i) {
  		if (comm->fbc_buffer_vaddr[i]) {
 -			dma_free_coherent(dev, am21_size,
-+			dma_free_coherent(dev, comm->fbc_buffer_size,
++			dma_free_coherent(dev, comm->fbc_buffer_size[i],
  					  comm->fbc_buffer_vaddr[i],
  					  comm->fbc_buffer_paddr[i]);
  			comm->fbc_buffer_vaddr[i] = NULL;
-@@ -254,6 +245,7 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess,
+ 		}
+ 	}
  
- 	am21_size = amvdec_amfbc_size(sess->width, sess->height,
- 					  is_10bit, use_mmu);
-+	comm->fbc_buffer_size = am21_size;
++	codec_hevc_free_mmu_headers(sess, comm);
++}
++
++void codec_hevc_free_fbc_buffers(struct amvdec_session *sess,
++				 struct codec_hevc_common *comm)
++{
++	struct device *dev = sess->core->dev;
++
++	codec_hevc_free_frame_buffers(sess, comm);
++
+ 	if (comm->mmu_map_vaddr) {
+ 		dma_free_coherent(dev, MMU_MAP_SIZE,
+ 				  comm->mmu_map_vaddr,
+ 				  comm->mmu_map_paddr);
+ 		comm->mmu_map_vaddr = NULL;
+ 	}
+-
+-    codec_hevc_free_mmu_headers(sess, comm);
+ }
+ EXPORT_SYMBOL_GPL(codec_hevc_free_fbc_buffers);
  
- 	v4l2_m2m_for_each_dst_buf(sess->m2m_ctx, buf) {
- 		u32 idx = buf->vb.vb2_buf.index;
-@@ -289,6 +281,9 @@ int codec_hevc_setup_buffers(struct amvdec_session *sess,
+@@ -267,6 +266,7 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess,
+ 
+ 		comm->fbc_buffer_vaddr[idx] = vaddr;
+ 		comm->fbc_buffer_paddr[idx] = paddr;
++		comm->fbc_buffer_size[idx] = am21_size;
+ 	}
+ 
+ 	if (codec_hevc_use_mmu(revision, sess->pixfmt_cap, is_10bit) &&
+@@ -287,10 +287,20 @@ int codec_hevc_setup_buffers(struct amvdec_session *sess,
+ {
+ 	struct amvdec_core *core = sess->core;
      struct device *dev = core->dev;
++	struct vb2_queue *dst_vq = v4l2_m2m_get_dst_vq(sess->m2m_ctx);
  	int ret;
  
-+	/* Every format change lands here: drop the buffers of the old one */
-+	codec_hevc_free_fbc_buffers(sess, comm);
++	/*
++	 * With every capture buffer queued, the table rewrite below covers
++	 * every buffer index, so no earlier per-buffer allocation stays in use.
++	 */
++	if (v4l2_m2m_num_dst_bufs_ready(sess->m2m_ctx) ==
++	    vb2_get_num_buffers(dst_vq))
++		codec_hevc_free_frame_buffers(sess, comm);
 +
  	if (codec_hevc_use_mmu(core->platform->revision,
- 			       sess->pixfmt_cap, is_10bit)) {
+-			       sess->pixfmt_cap, is_10bit)) {
++			       sess->pixfmt_cap, is_10bit) &&
++	    !comm->mmu_map_vaddr) {
  		comm->mmu_map_vaddr = dma_alloc_coherent(dev, MMU_MAP_SIZE,
+ 							 &comm->mmu_map_paddr,
+ 							 GFP_KERNEL);
 diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.h b/drivers/staging/media/meson/vdec/codec_hevc_common.h
-index 13f9f1d..a3915f7 100644
+index 13f9f1d..fd96419 100644
 --- a/drivers/staging/media/meson/vdec/codec_hevc_common.h
 +++ b/drivers/staging/media/meson/vdec/codec_hevc_common.h
 @@ -21,6 +21,7 @@ extern const u16 vdec_hevc_parser_cmd[VDEC_HEVC_PARSER_CMD_LEN];
  struct codec_hevc_common {
  	void      *fbc_buffer_vaddr[MAX_REF_PIC_NUM];
  	dma_addr_t fbc_buffer_paddr[MAX_REF_PIC_NUM];
-+	u32        fbc_buffer_size;
++	u32        fbc_buffer_size[MAX_REF_PIC_NUM];
  
  	void      *mmu_header_vaddr[MAX_REF_PIC_NUM];
  	dma_addr_t mmu_header_paddr[MAX_REF_PIC_NUM];
