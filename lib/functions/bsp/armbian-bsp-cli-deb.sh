@@ -195,6 +195,7 @@ function compile_armbian-bsp-cli() {
 	cat <<- EOF > "${destination}"/DEBIAN/conffiles
 		/usr/lib/armbian/armbian-apt-updates
 		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
+		/etc/apt/apt.conf.d/02-armbian-periodic
 	EOF
 
 	# trigger uInitrd creation after installation, to apply
