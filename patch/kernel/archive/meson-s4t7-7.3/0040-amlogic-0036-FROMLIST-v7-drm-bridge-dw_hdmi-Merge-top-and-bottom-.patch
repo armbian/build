@@ -1,0 +1,91 @@
+From a21b8281f28b71c0bcc83858a6aafbcbbc58b509 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 18 May 2026 18:01:59 +0000
+Subject: [PATCH 036/210] FROMLIST(v7): drm: bridge: dw_hdmi: Merge top and
+ bottom half IRQ handlers
+
+The bottom half IRQ handler only modify delay of or queue a delayed work
+used for HPD handling. The mod_delayed_work() called is documented as
+being safe to call from any context including IRQ handler.
+
+Merge top and bottom half IRQ handlers to simplify IRQ handling now that
+HPD event is handled using a delayed work.
+
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # Rock64, RockPro64, Quartz64-B
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 34 ++++++++---------------
+ 1 file changed, 11 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index d9f16ecb70c7..540afa581a2a 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -2991,30 +2991,18 @@ static irqreturn_t dw_hdmi_hardirq(int irq, void *dev_id)
+ 	if (hdmi->i2c)
+ 		ret = dw_hdmi_i2c_irq(hdmi);
+ 
+-	intr_stat = hdmi_readb(hdmi, HDMI_IH_PHY_STAT0);
+-	if (intr_stat) {
+-		hdmi_writeb(hdmi, ~0, HDMI_IH_MUTE_PHY_STAT0);
+-		return IRQ_WAKE_THREAD;
+-	}
+-
+-	return ret;
+-}
+-
+-static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+-{
+-	struct dw_hdmi *hdmi = dev_id;
+-	u8 intr_stat;
+-
+ 	/*
+ 	 * Interrupt generation is accomplished in the following way:
+ 	 *   interrupt = (mask == 0) && (polarity == status)
+ 	 * All interrupts are forwarded to the Interrupt Handler sticky bit
+ 	 * register ih_phy_stat0 and muted using the register ih_mute_phy_stat0.
+ 	 */
+-	intr_stat = hdmi_readb(hdmi, HDMI_IH_PHY_STAT0);
+-	if (intr_stat & HDMI_IH_PHY_STAT0_HPD) {
++	intr_stat = hdmi_readb(hdmi, HDMI_IH_PHY_STAT0) & HDMI_IH_PHY_STAT0_HPD;
++	if (intr_stat) {
+ 		enum drm_connector_status status;
+ 
++		hdmi_writeb(hdmi, ~0, HDMI_IH_MUTE_PHY_STAT0);
++
+ 		/* Set HPD interrupt polarity based on current HPD status. */
+ 		status = dw_hdmi_phy_read_hpd(hdmi, hdmi->phy.data);
+ 		hdmi_modb(hdmi, status == connector_status_connected ?
+@@ -3026,12 +3014,13 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+ 
+ 		mod_delayed_work(system_percpu_wq, &hdmi->hpd_work,
+ 				 msecs_to_jiffies(HOTPLUG_DEBOUNCE_MS));
+-	}
+ 
+-	hdmi_writeb(hdmi, intr_stat, HDMI_IH_PHY_STAT0);
+-	hdmi_writeb(hdmi, ~HDMI_IH_PHY_STAT0_HPD, HDMI_IH_MUTE_PHY_STAT0);
++		hdmi_writeb(hdmi, intr_stat, HDMI_IH_PHY_STAT0);
++		hdmi_writeb(hdmi, ~HDMI_IH_PHY_STAT0_HPD, HDMI_IH_MUTE_PHY_STAT0);
++		ret = IRQ_HANDLED;
++	}
+ 
+-	return IRQ_HANDLED;
++	return ret;
+ }
+ 
+ static void dw_hdmi_hpd_work(struct work_struct *work)
+@@ -3342,9 +3331,8 @@ struct dw_hdmi *dw_hdmi_probe(struct platform_device *pdev,
+ 	INIT_DELAYED_WORK(&hdmi->hpd_work, dw_hdmi_hpd_work);
+ 	disable_delayed_work(&hdmi->hpd_work);
+ 
+-	ret = devm_request_threaded_irq(dev, irq, dw_hdmi_hardirq,
+-					dw_hdmi_irq, IRQF_SHARED,
+-					dev_name(dev), hdmi);
++	ret = devm_request_irq(dev, irq, dw_hdmi_hardirq, IRQF_SHARED,
++			       dev_name(dev), hdmi);
+ 	if (ret)
+ 		goto err_res;
+ 
+-- 
+2.43.0
+
