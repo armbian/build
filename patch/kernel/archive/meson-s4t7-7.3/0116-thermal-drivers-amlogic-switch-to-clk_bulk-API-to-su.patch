@@ -1,0 +1,70 @@
+From f15136a55449607062ff3e22b48e5130e76f7ef2 Mon Sep 17 00:00:00 2001
+From: Ronald Claveau <linux-kernel-dev@aliel.fr>
+Date: Wed, 23 Sep 2026 16:37:51 +0200
+Subject: [PATCH 116/117] thermal/drivers/amlogic: switch to clk_bulk API to
+ support multiple clocks
+
+The t7-thermal variant now exposes two clocks (bus and core) in its
+devicetree binding, but the driver only knows how to get and manage
+a single struct clk. Using devm_clk_get() would silently ignore the
+second clock, so switch to devm_clk_bulk_get_all() and the matching
+clk_bulk_prepare_enable()/clk_bulk_disable_unprepare() calls. This
+lets the driver transparently handle however many clocks a given
+compatible declares, without needing per-variant clock-handling code,
+and keeps working for existing SoCs that only have one.
+
+Fixes: 18d65de8157c ("thermal/drivers/amlogic: Add support for secure monitor calibration readout")
+Signed-off-by: Ronald Claveau <linux-kernel-dev@aliel.fr>
+---
+ drivers/thermal/amlogic_thermal.c | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/thermal/amlogic_thermal.c b/drivers/thermal/amlogic_thermal.c
+index a0b530624b60..60728de6968a 100644
+--- a/drivers/thermal/amlogic_thermal.c
++++ b/drivers/thermal/amlogic_thermal.c
+@@ -100,7 +100,8 @@ struct amlogic_thermal {
+ 	const struct amlogic_thermal_data *data;
+ 	struct regmap *regmap;
+ 	struct regmap *sec_ao_map;
+-	struct clk *clk;
++	struct clk_bulk_data *clks;
++	int num_clks;
+ 	struct thermal_zone_device *tzd;
+ 	u32 trim_info;
+ 	struct meson_sm_firmware *sm_fw;
+@@ -142,7 +143,7 @@ static int amlogic_thermal_enable(struct amlogic_thermal *data)
+ {
+ 	int ret;
+ 
+-	ret = clk_prepare_enable(data->clk);
++	ret = clk_bulk_prepare_enable(data->num_clks, data->clks);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -156,7 +157,7 @@ static void amlogic_thermal_disable(struct amlogic_thermal *data)
+ {
+ 	regmap_update_bits(data->regmap, TSENSOR_CFG_REG1,
+ 			   TSENSOR_CFG_REG1_ENABLE, 0);
+-	clk_disable_unprepare(data->clk);
++	clk_bulk_disable_unprepare(data->num_clks, data->clks);
+ }
+ 
+ static int amlogic_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
+@@ -323,9 +324,10 @@ static int amlogic_thermal_probe(struct platform_device *pdev)
+ 	if (IS_ERR(pdata->regmap))
+ 		return PTR_ERR(pdata->regmap);
+ 
+-	pdata->clk = devm_clk_get(dev, NULL);
+-	if (IS_ERR(pdata->clk))
+-		return dev_err_probe(dev, PTR_ERR(pdata->clk), "failed to get clock\n");
++	ret = devm_clk_bulk_get_all(dev, &pdata->clks);
++	if (ret <= 0)
++		return dev_err_probe(dev, ret ?: -ENOENT, "failed to get clocks\n");
++	pdata->num_clks = ret;
+ 
+ 	if (pdata->data->use_sm)
+ 		ret = amlogic_thermal_probe_sm(pdev, pdata);
+-- 
+2.55.0
+
