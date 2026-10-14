@@ -1,0 +1,288 @@
+From 98de80c99307a7f58d16902d9ea410edf7220a62 Mon Sep 17 00:00:00 2001
+From: Gus Bourg <gus@bourg.net>
+Date: Wed, 2 Sep 2026 17:30:00 -0700
+Subject: [PATCH 104/210] drm/meson: encoder_hdmi: add deep color output
+
+Offer 10-bit and 12-bit YUV444 and YUV420 output on the G12A family.
+
+- Compute the TMDS clock from the output depth: 1.25x the pixel clock at
+  10 bits and 1.5x at 12, except YUV422, which carries deep color at the
+  8-bit rate.
+- Program VPU_HDMI_FMT_CTRL and VPU_HDMI_DITH_CNTL to pass deep color
+  through unchanged, and to round and dither 8-bit output instead of
+  truncating it. Move the sync flags to VPU_HDMI_DITH_CNTL while the
+  dither block is in the data path.
+- Offer a deep color format only for CEA modes with a clock entry at the
+  deeper TMDS rate, and only while that rate is within the sink's limit.
+  Add the scrambled_deep parameter to restrict deep color to the
+  unscrambled 340 MHz domain.
+- Add the deep_422 parameter to offer YUV422 above 8 bits. Leave it off
+  by default: YUV422 bypasses the clock entry check, so a mode with no
+  YUV444 entry would otherwise negotiate it.
+- Attach the max bpc property with a range of 8 to 12.
+
+Signed-off-by: Gus Bourg <gus@bourg.net>
+Assisted-by: Claude:claude-opus-5
+Co-developed-by: Christian Hewitt <christianshewitt@gmail.com>
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/gpu/drm/meson/meson_encoder_hdmi.c | 156 ++++++++++++++++++---
+ drivers/gpu/drm/meson/meson_registers.h    |   1 +
+ 2 files changed, 140 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/meson/meson_encoder_hdmi.c b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+index aa61dd2b5e8d..599e64c1311d 100644
+--- a/drivers/gpu/drm/meson/meson_encoder_hdmi.c
++++ b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+@@ -33,6 +33,16 @@
+ #include "meson_venc.h"
+ #include "meson_encoder_hdmi.h"
+ 
++static bool scrambled_deep = true;
++module_param(scrambled_deep, bool, 0644);
++MODULE_PARM_DESC(scrambled_deep,
++		 "Offer deep color above 340 MHz TMDS (default Y; N restricts to the unscrambled domain)");
++
++static bool deep_422;
++module_param(deep_422, bool, 0644);
++MODULE_PARM_DESC(deep_422,
++		 "Offer YUV422 above 8 bits (default N; it bypasses the deep-color clock gate)");
++
+ struct meson_encoder_hdmi {
+ 	struct drm_encoder encoder;
+ 	struct drm_bridge bridge;
+@@ -54,6 +64,45 @@ static int meson_encoder_hdmi_attach(struct drm_bridge *bridge,
+ 				 &encoder_hdmi->bridge, flags);
+ }
+ 
++static bool meson_encoder_hdmi_fmt_is_420(u32 fmt)
++{
++	return fmt == MEDIA_BUS_FMT_UYYVYY8_0_5X24 ||
++	       fmt == MEDIA_BUS_FMT_UYYVYY10_0_5X30 ||
++	       fmt == MEDIA_BUS_FMT_UYYVYY12_0_5X36;
++}
++
++static bool meson_encoder_hdmi_fmt_is_422(u32 fmt)
++{
++	return fmt == MEDIA_BUS_FMT_UYVY8_1X16 ||
++	       fmt == MEDIA_BUS_FMT_UYVY10_1X20;
++}
++
++static unsigned int meson_encoder_hdmi_fmt_depth(u32 fmt)
++{
++	switch (fmt) {
++	case MEDIA_BUS_FMT_YUV10_1X30:
++	case MEDIA_BUS_FMT_UYVY10_1X20:
++	case MEDIA_BUS_FMT_UYYVYY10_0_5X30:
++		return 10;
++	case MEDIA_BUS_FMT_YUV12_1X36:
++	case MEDIA_BUS_FMT_UYYVYY12_0_5X36:
++		return 12;
++	default:
++		return 8;
++	}
++}
++
++static unsigned long long
++meson_encoder_hdmi_phy_freq(unsigned long long vclk_freq, u32 fmt)
++{
++	unsigned int depth = meson_encoder_hdmi_fmt_depth(fmt);
++
++	if (meson_encoder_hdmi_fmt_is_422(fmt) || depth == 8)
++		return vclk_freq * 10;
++
++	return DIV_ROUND_CLOSEST_ULL(vclk_freq * 10 * depth, 8);
++}
++
+ static void meson_encoder_hdmi_set_vclk(struct meson_encoder_hdmi *encoder_hdmi,
+ 					const struct drm_display_mode *mode)
+ {
+@@ -67,11 +116,12 @@ static void meson_encoder_hdmi_set_vclk(struct meson_encoder_hdmi *encoder_hdmi,
+ 	vclk_freq = mode->clock * 1000ULL;
+ 
+ 	/* For 420, pixel clock is half unlike venc clock */
+-	if (encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
++	if (meson_encoder_hdmi_fmt_is_420(encoder_hdmi->output_bus_fmt))
+ 		vclk_freq /= 2;
+ 
+-	/* TMDS clock is pixel_clock * 10 */
+-	phy_freq = vclk_freq * 10;
++	/* TMDS clock is pixel_clock * 10 (* depth/8 for deep color) */
++	phy_freq = meson_encoder_hdmi_phy_freq(vclk_freq,
++					       encoder_hdmi->output_bus_fmt);
+ 
+ 	if (!vic) {
+ 		meson_vclk_setup(priv, MESON_VCLK_TARGET_DMT, phy_freq,
+@@ -88,7 +138,7 @@ static void meson_encoder_hdmi_set_vclk(struct meson_encoder_hdmi *encoder_hdmi,
+ 
+ 	/* VENC double pixels for 1080i, 720p and YUV420 modes */
+ 	if (meson_venc_hdmi_venc_repeat(vic) ||
+-	    encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
++	    meson_encoder_hdmi_fmt_is_420(encoder_hdmi->output_bus_fmt))
+ 		venc_freq *= 2;
+ 
+ 	vclk_freq = max(venc_freq, hdmi_freq);
+@@ -188,6 +238,8 @@ static void meson_encoder_hdmi_atomic_enable(struct drm_bridge *bridge,
+ 	struct drm_crtc_state *crtc_state;
+ 	struct drm_connector *connector;
+ 	bool yuv420_mode = false;
++	unsigned int depth;
++	u32 fmt, hs_flag;
+ 	int vic;
+ 
+ 	connector = drm_atomic_get_new_connector_for_encoder(state, bridge->encoder);
+@@ -208,11 +260,12 @@ static void meson_encoder_hdmi_atomic_enable(struct drm_bridge *bridge,
+ 
+ 	dev_dbg(priv->dev, "\"%s\" vic %d\n", mode->name, vic);
+ 
+-	if (encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYYVYY8_0_5X24) {
++	if (meson_encoder_hdmi_fmt_is_420(encoder_hdmi->output_bus_fmt)) {
+ 		ycrcb_map = VPU_HDMI_OUTPUT_CRYCB;
+ 		yuv420_mode = true;
+-	} else if (encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYVY8_1X16)
++	} else if (meson_encoder_hdmi_fmt_is_422(encoder_hdmi->output_bus_fmt)) {
+ 		ycrcb_map = VPU_HDMI_OUTPUT_CRYCB;
++	}
+ 
+ 	/* VENC + VENC-DVI Mode setup */
+ 	meson_venc_hdmi_mode_set(priv, vic, ycrcb_map, yuv420_mode, mode);
+@@ -220,17 +273,36 @@ static void meson_encoder_hdmi_atomic_enable(struct drm_bridge *bridge,
+ 	/* VCLK Set clock */
+ 	meson_encoder_hdmi_set_vclk(encoder_hdmi, mode);
+ 
+-	if (encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
+-		/* Setup YUV420 to HDMI-TX, no 10bit diphering */
+-		writel_relaxed(2 | (2 << 2),
+-			       priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
+-	else if (encoder_hdmi->output_bus_fmt == MEDIA_BUS_FMT_UYVY8_1X16)
+-		/* Setup YUV422 to HDMI-TX, no 10bit diphering */
+-		writel_relaxed(1 | (2 << 2),
+-				priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
++	/*
++	 * VPU_HDMI_FMT_CTRL: [1:0] chroma format (0 = 444, 1 = 422, 2 = 420),
++	 * [3:2] chroma downsampling (2 = average), [4] 12 to 10-bit dither,
++	 * [10] 12 to 10-bit rounding.
++	 * VPU_HDMI_DITH_CNTL: [4] 10 to 8-bit dither, [3:2] sync flags.
++	 */
++	depth = meson_encoder_hdmi_fmt_depth(encoder_hdmi->output_bus_fmt);
++
++	if (meson_encoder_hdmi_fmt_is_420(encoder_hdmi->output_bus_fmt))
++		fmt = 2;
++	else if (meson_encoder_hdmi_fmt_is_422(encoder_hdmi->output_bus_fmt))
++		fmt = 1;
+ 	else
+-		/* Setup YUV444 to HDMI-TX, no 10bit diphering */
+-		writel_relaxed(0, priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
++		fmt = 0;
++
++	if (depth > 8) {
++		writel_relaxed(fmt | (2 << 2),
++			       priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
++		hs_flag = (readl_relaxed(priv->io_base +
++					 _REG(VPU_HDMI_SETTING)) >> 2) & 0x3;
++		writel_bits_relaxed(0x3 << 2, 0,
++				    priv->io_base + _REG(VPU_HDMI_SETTING));
++		writel_bits_relaxed(BIT(4) | (0x3 << 2), hs_flag << 2,
++				    priv->io_base + _REG(VPU_HDMI_DITH_CNTL));
++	} else {
++		writel_relaxed(fmt | (2 << 2) | BIT(10),
++			       priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
++		writel_bits_relaxed(BIT(4) | (0x3 << 2), BIT(4),
++				    priv->io_base + _REG(VPU_HDMI_DITH_CNTL));
++	}
+ 
+ 	dev_dbg(priv->dev, "%s\n", priv->venc.hdmi_use_enci ? "VENCI" : "VENCP");
+ 
+@@ -257,6 +329,11 @@ static const u32 meson_encoder_hdmi_out_bus_fmts[] = {
+ 	MEDIA_BUS_FMT_YUV8_1X24,
+ 	MEDIA_BUS_FMT_UYVY8_1X16,
+ 	MEDIA_BUS_FMT_UYYVYY8_0_5X24,
++	MEDIA_BUS_FMT_YUV10_1X30,
++	MEDIA_BUS_FMT_UYVY10_1X20,
++	MEDIA_BUS_FMT_UYYVYY10_0_5X30,
++	MEDIA_BUS_FMT_YUV12_1X36,
++	MEDIA_BUS_FMT_UYYVYY12_0_5X36,
+ };
+ 
+ static u32 *
+@@ -267,11 +344,56 @@ meson_encoder_hdmi_get_inp_bus_fmts(struct drm_bridge *bridge,
+ 					u32 output_fmt,
+ 					unsigned int *num_input_fmts)
+ {
++	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
+ 	u32 *input_fmts = NULL;
+ 	int i;
+ 
+ 	*num_input_fmts = 0;
+ 
++	if (meson_encoder_hdmi_fmt_is_422(output_fmt) &&
++	    meson_encoder_hdmi_fmt_depth(output_fmt) > 8 && !deep_422)
++		return NULL;
++
++	if (meson_encoder_hdmi_fmt_depth(output_fmt) > 8 &&
++	    !meson_vpu_is_compatible(encoder_hdmi->priv, VPU_COMPATIBLE_G12A))
++		return NULL;
++
++	if (meson_encoder_hdmi_fmt_depth(output_fmt) > 8) {
++		const struct drm_display_mode *mode = &crtc_state->adjusted_mode;
++		const struct drm_display_info *info =
++			&conn_state->connector->display_info;
++		unsigned long long vclk_freq = mode->clock * 1000ULL;
++		unsigned long long phy_freq;
++		unsigned long long tmds_khz;
++		unsigned int max_tmds_khz = scrambled_deep ? 600000 : 340000;
++		int vic = drm_match_cea_mode(mode);
++
++		if (!vic)
++			return NULL;
++
++		if (meson_encoder_hdmi_fmt_is_420(output_fmt)) {
++			/* For 420, pixel clock is half unlike venc clock */
++			phy_freq = meson_encoder_hdmi_phy_freq(vclk_freq / 2,
++							       output_fmt);
++		} else {
++			phy_freq = meson_encoder_hdmi_phy_freq(vclk_freq,
++							       output_fmt);
++		}
++
++		tmds_khz = div_u64(phy_freq, 10000);
++		if (info->max_tmds_clock &&
++		    info->max_tmds_clock < max_tmds_khz)
++			max_tmds_khz = info->max_tmds_clock;
++		if (tmds_khz > max_tmds_khz)
++			return NULL;
++
++		if (!meson_encoder_hdmi_fmt_is_422(output_fmt) &&
++		    meson_vclk_vic_supported_freq(encoder_hdmi->priv,
++						  phy_freq,
++						  vclk_freq) != MODE_OK)
++			return NULL;
++	}
++
+ 	for (i = 0 ; i < ARRAY_SIZE(meson_encoder_hdmi_out_bus_fmts) ; ++i) {
+ 		if (output_fmt == meson_encoder_hdmi_out_bus_fmts[i]) {
+ 			*num_input_fmts = 1;
+@@ -412,7 +534,7 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
+ 			drm_connector_attach_colorspace_property(meson_encoder_hdmi->connector);
+ 	}
+ 
+-	drm_connector_attach_max_bpc_property(meson_encoder_hdmi->connector, 8, 8);
++	drm_connector_attach_max_bpc_property(meson_encoder_hdmi->connector, 8, 12);
+ 
+ 	priv->encoders[MESON_ENC_HDMI] = meson_encoder_hdmi;
+ 
+diff --git a/drivers/gpu/drm/meson/meson_registers.h b/drivers/gpu/drm/meson/meson_registers.h
+index 3d73d00a1f4c..8f55efe891a8 100644
+--- a/drivers/gpu/drm/meson/meson_registers.h
++++ b/drivers/gpu/drm/meson/meson_registers.h
+@@ -1637,6 +1637,7 @@
+ #define VPU_ISP_GCLK_CTRL0 0x2741
+ #define VPU_ISP_GCLK_CTRL1 0x2742
+ #define VPU_HDMI_FMT_CTRL 0x2743
++#define VPU_HDMI_DITH_CNTL 0x27fc
+ #define VPU_VDIN_ASYNC_HOLD_CTRL 0x2743
+ #define VPU_VDISP_ASYNC_HOLD_CTRL 0x2744
+ #define VPU_VPUARB2_ASYNC_HOLD_CTRL 0x2745
+-- 
+2.43.0
+
