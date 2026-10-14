@@ -1,0 +1,1088 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: morikon <leafpmpmp@gmail.com>
+Date: Tue, 13 Oct 2026 14:00:00 +0800
+Subject: media: sophgo: add the CV1800/SG2000 MIPI CSI-2 receiver
+
+Add a driver for the MIPI CSI-2 receiver MAC 0 and its D-PHY. The lane
+order comes from the device tree. The driver derives the D-PHY HS
+settle time from the link frequency of the sensor.
+---
+ drivers/media/platform/Kconfig              |    1 +
+ drivers/media/platform/Makefile             |    1 +
+ drivers/media/platform/sophgo/Kconfig       |   20 +
+ drivers/media/platform/sophgo/Makefile      |    2 +
+ drivers/media/platform/sophgo/cv1800-csi2.c | 1002 +++++++++++++++++++
+ 5 files changed, 1026 insertions(+)
+ create mode 100644 drivers/media/platform/sophgo/Kconfig
+ create mode 100644 drivers/media/platform/sophgo/Makefile
+ create mode 100644 drivers/media/platform/sophgo/cv1800-csi2.c
+
+diff --git a/drivers/media/platform/Kconfig b/drivers/media/platform/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/Kconfig
++++ b/drivers/media/platform/Kconfig
+@@ -85,6 +85,7 @@ source "drivers/media/platform/raspberrypi/Kconfig"
+ source "drivers/media/platform/renesas/Kconfig"
+ source "drivers/media/platform/rockchip/Kconfig"
+ source "drivers/media/platform/samsung/Kconfig"
++source "drivers/media/platform/sophgo/Kconfig"
+ source "drivers/media/platform/st/Kconfig"
+ source "drivers/media/platform/sunxi/Kconfig"
+ source "drivers/media/platform/synopsys/Kconfig"
+diff --git a/drivers/media/platform/Makefile b/drivers/media/platform/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/media/platform/Makefile
++++ b/drivers/media/platform/Makefile
+@@ -28,6 +28,7 @@ obj-y += raspberrypi/
+ obj-y += renesas/
+ obj-y += rockchip/
+ obj-y += samsung/
++obj-y += sophgo/
+ obj-y += st/
+ obj-y += sunxi/
+ obj-y += synopsys/
+diff --git a/drivers/media/platform/sophgo/Kconfig b/drivers/media/platform/sophgo/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/platform/sophgo/Kconfig
+@@ -0,0 +1,20 @@
++# SPDX-License-Identifier: GPL-2.0-only
++
++comment "Sophgo media platform drivers"
++
++config VIDEO_SOPHGO_CV1800_CSI2
++	tristate "Sophgo CV1800/SG2000 MIPI CSI-2 receiver"
++	depends on V4L_PLATFORM_DRIVERS
++	depends on VIDEO_DEV && COMMON_CLK && RESET_CONTROLLER && OF
++	depends on ARCH_SOPHGO || COMPILE_TEST
++	depends on PM
++	select MEDIA_CONTROLLER
++	select MFD_SYSCON
++	select V4L2_FWNODE
++	select VIDEO_V4L2_SUBDEV_API
++	help
++	  MIPI CSI-2 receiver MAC 0 and its D-PHY on Sophgo CV1800 and
++	  SG2000 SoCs.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called cv1800-csi2.
+diff --git a/drivers/media/platform/sophgo/Makefile b/drivers/media/platform/sophgo/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/platform/sophgo/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_VIDEO_SOPHGO_CV1800_CSI2) += cv1800-csi2.o
+diff --git a/drivers/media/platform/sophgo/cv1800-csi2.c b/drivers/media/platform/sophgo/cv1800-csi2.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/platform/sophgo/cv1800-csi2.c
+@@ -0,0 +1,1002 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Sophgo CV1800/SG2000 MIPI CSI-2 receiver
++ *
++ * The receiver is a six-lane D-PHY, split into two three-lane ports
++ * (physical lanes 0-2 and 3-5), followed by CSI-2 MACs. MAC 0 reaches
++ * every lane through the PHY's four-lane digital block and feeds the VI
++ * front end 0 bridge. This driver handles MAC 0 only.
++ *
++ * Any physical lane can carry the clock or any data lane, so a board's
++ * wiring is described with clock-lanes and data-lanes in the endpoint
++ * (Milk-V Duo S J2: clock-lanes = <5>, data-lanes = <3 4>).
++ *
++ * Copyright (C) 2026 morikon <leafpmpmp@gmail.com>
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/debugfs.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++
++#include <media/mipi-csi2.h>
++#include <media/v4l2-async.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-mc.h>
++#include <media/v4l2-subdev.h>
++
++#define CV1800_CSI2_NAME		"cv1800-csi2"
++
++/* vip_sys, shared with the VI */
++#define VIP_SYS_RESETS			0x00
++#define   VIP_RST_CSI_MAC0		BIT(12)
++#define VIP_SYS_CLK_CTRL1		0x1c
++#define   VIP_CLK_MAC0_SRC		GENMASK(5, 4)
++#define     VIP_CLK_SRC_VIP_SYS_2	2
++#define VIP_SYS_DIV_CSI_MAC0		0x38
++#define   VIP_DIV_EN			BIT(0)
++#define   VIP_DIV_UPDATE		BIT(2)
++#define   VIP_DIV_RATIO			GENMASK(20, 16)
++
++/* MAC: sensor interface top */
++#define MAC_MODE			0x000
++#define   MAC_SENSOR_MAC_MODE		GENMASK(2, 0)
++#define     MAC_MODE_CSI		1
++#define   MAC_CSI_CTRL_ENABLE		BIT(4)
++#define   MAC_CSI_VS_INV		BIT(5)
++#define   MAC_CSI_HS_INV		BIT(6)
++
++/* MAC: CSI-2 controller */
++#define CSI_CTRL			0x400
++#define   CSI_LANE_MODE			GENMASK(2, 0)
++#define CSI_INTR			0x404
++#define   CSI_INTR_MASK			GENMASK(7, 0)
++#define   CSI_INTR_CLR			GENMASK(15, 8)
++#define   CSI_HDR_EN			BIT(16)
++#define   CSI_HDR_MODE			BIT(17)
++#define CSI_VC_MAP			0x418
++#define   CSI_VC_MAP_IDENTITY		0x3210
++#define CSI_STATUS			0x440
++#define   CSI_ECC_NO_ERROR		BIT(0)
++#define   CSI_ECC_CORRECTED_ERROR	BIT(1)
++#define   CSI_ECC_ERROR			BIT(2)
++#define   CSI_CRC_ERROR			BIT(4)
++#define   CSI_WC_ERROR			BIT(5)
++#define   CSI_FIFO_FULL			BIT(8)
++#define   CSI_DECODE_FORMAT		GENMASK(21, 16)
++#define CSI_INTR_STATUS			0x460
++#define   CSI_INT_ECC_ERR		BIT(0)
++#define   CSI_INT_CRC_ERR		BIT(1)
++#define   CSI_INT_HDR_ERR		BIT(2)
++#define   CSI_INT_WC_ERR		BIT(3)
++#define   CSI_INT_FIFO_FULL		BIT(4)
++#define CSI_VS_GEN			0x470
++#define   CSI_VS_GEN_MODE		GENMASK(1, 0)
++
++/* PHY: analog top */
++#define PHY_TOP_PWR			0x000
++#define   PHY_PD_IBIAS			BIT(14)
++#define   PHY_PD_RXLP			GENMASK(21, 16)
++#define PHY_TOP_CLK			0x004
++#define   PHY_SEL_CLK_P0TOP1		BIT(6)
++#define   PHY_SEL_CLK_P1TOP0		BIT(7)
++#define   PHY_SEL_CLK_CHANNEL		GENMASK(21, 16)
++#define PHY_TOP_AD_DATA0		0x070
++#define PHY_TOP_AD_DATA1		0x074
++#define PHY_TOP_LPOUT			0x07c
++#define   PHY_AD_LPOUTN			GENMASK(5, 0)
++#define   PHY_AD_LPOUTP			GENMASK(21, 16)
++#define PHY_TOP_DESKEW_CTRL		0x080
++#define   PHY_AD_CLK_INV		GENMASK(5, 0)
++#define   PHY_FORCE_DESKEW(n)		BIT(16 + (n))
++#define PHY_TOP_DESKEW_CODE(n)		(0x084 + 4 * ((n) / 4))
++#define   PHY_DESKEW_CODE_SHIFT(n)	(8 * ((n) % 4))
++
++/* PHY: four-lane digital block, used by MAC 0 */
++#define PHY_4L_MODE			0x300
++#define   PHY_4L_SENSOR_MODE		GENMASK(1, 0)
++#define PHY_4L_LANE_SEL			0x304
++#define   PHY_4L_D_SEL(n)		(GENMASK(2, 0) << (4 * (n)))
++#define PHY_4L_LANE_CFG			0x308
++#define   PHY_4L_CK_SEL			GENMASK(2, 0)
++#define   PHY_4L_CK_PNSWAP		BIT(4)
++#define   PHY_4L_D_PNSWAP(n)		BIT(8 + (n))
++#define PHY_4L_LANE_EN			0x30c
++#define   PHY_4L_DESKEW_LANE_EN		GENMASK(3, 0)
++#define PHY_4L_TIMING			0x310
++#define   PHY_4L_T_HS_SETTLE		GENMASK(7, 0)
++#define   PHY_4L_AUTO_IGNORE		BIT(16)
++#define   PHY_4L_AUTO_SYNC		BIT(17)
++
++/*
++ * Pad configuration of the MIPIRX pins: lane n has its N pad at
++ * (5 - n) * 8 and its P pad 4 bytes later. They come up with the pull-down
++ * on, which would load the lanes.
++ */
++#define PAD_CONF(lane)			((5 - (lane)) * 8)
++#define   PAD_PULL_UP			BIT(2)
++#define   PAD_PULL_DOWN			BIT(3)
++
++#define CV1800_CSI2_PHY_LANES		6
++#define CV1800_CSI2_MAX_DATA_LANES	4
++
++/* Lanes 0-2 are PHY port 0, lanes 3-5 port 1 */
++#define LANE_PORT(l)			((l) > 2)
++
++/*
++ * Deskew codes the vendor stack uses, by where a lane sits relative to the
++ * clock: clock lane, data lane on the clock's port, data lane on the other
++ * port, and the same two when the clock is not forwarded across ports.
++ */
++#define DESKEW_CROSS_CLK		0x00
++#define DESKEW_CROSS_DATA_NEAR		0x03
++#define DESKEW_CROSS_DATA_FAR		0x08
++#define DESKEW_CLK			0x00
++#define DESKEW_DATA			0x03
++
++/*
++ * The HS settle counter runs on the lane byte clock, a quarter of the link
++ * frequency. 142 ns sits inside the D-PHY settle window (85 ns + 6 UI to
++ * 145 ns + 10 UI) from about 300 Mbps to 2 Gbps per lane. Some sensors time
++ * the HS entry in UI, so never go below 8 byte clocks. Measured: 16 works at
++ * 900 Mbps (IMX708); 5 to 11 at 437.5 Mbps and 6 to 11 at 291.6 Mbps (OV5647).
++ */
++#define CV1800_CSI2_SETTLE_NS		142
++#define CV1800_CSI2_SETTLE_MIN		8
++
++static unsigned int hs_settle;
++module_param(hs_settle, uint, 0644);
++MODULE_PARM_DESC(hs_settle, "D-PHY HS settle count; 0 derives it from the link frequency");
++
++static unsigned int mac_mhz = 400;
++module_param(mac_mhz, uint, 0644);
++MODULE_PARM_DESC(mac_mhz, "CSI MAC clock in MHz (at most the vip_sys_2 rate)");
++
++enum {
++	CV1800_CSI2_PAD_SINK,
++	CV1800_CSI2_PAD_SOURCE,
++	CV1800_CSI2_NUM_PADS
++};
++
++static const u32 cv1800_csi2_codes[] = {
++	MEDIA_BUS_FMT_SBGGR8_1X8, MEDIA_BUS_FMT_SGBRG8_1X8,
++	MEDIA_BUS_FMT_SGRBG8_1X8, MEDIA_BUS_FMT_SRGGB8_1X8,
++	MEDIA_BUS_FMT_SBGGR10_1X10, MEDIA_BUS_FMT_SGBRG10_1X10,
++	MEDIA_BUS_FMT_SGRBG10_1X10, MEDIA_BUS_FMT_SRGGB10_1X10,
++	MEDIA_BUS_FMT_SBGGR12_1X12, MEDIA_BUS_FMT_SGBRG12_1X12,
++	MEDIA_BUS_FMT_SGRBG12_1X12, MEDIA_BUS_FMT_SRGGB12_1X12,
++};
++
++struct cv1800_csi2 {
++	struct device *dev;
++	void __iomem *mac;
++	void __iomem *phy;
++	void __iomem *pad;		/* optional: owned by pinctrl, see below */
++	struct regmap *vip_sys;
++	struct clk_bulk_data *clks;
++	int num_clks;
++	struct clk *mac_src;
++	struct reset_control *rst_phy;
++	struct reset_control *rst_apb;
++	int irq;
++
++	struct v4l2_subdev sd;
++	struct media_pad pads[CV1800_CSI2_NUM_PADS];
++	struct v4l2_async_notifier notifier;
++	struct v4l2_subdev *source;
++	u32 source_pad;
++
++	unsigned int clock_lane;
++	unsigned int data_lanes[CV1800_CSI2_MAX_DATA_LANES];
++	unsigned int num_lanes;
++	unsigned int settle;		/* HS settle count of this stream */
++	bool pnswap[1 + CV1800_CSI2_MAX_DATA_LANES];	/* clock, then data */
++
++	bool debug_on;			/* receiver powered from debugfs */
++
++	/* error counters, updated from the interrupt */
++	unsigned int ecc, crc, hdr, wc, fifo_full;
++	struct dentry *debugfs;
++};
++
++static inline struct cv1800_csi2 *sd_to_csi2(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct cv1800_csi2, sd);
++}
++
++static void mac_update(struct cv1800_csi2 *csi2, u32 reg, u32 mask, u32 val)
++{
++	writel((readl(csi2->mac + reg) & ~mask) | (val & mask), csi2->mac + reg);
++}
++
++static void phy_update(struct cv1800_csi2 *csi2, u32 reg, u32 mask, u32 val)
++{
++	writel((readl(csi2->phy + reg) & ~mask) | (val & mask), csi2->phy + reg);
++}
++
++/* -----------------------------------------------------------------------------
++ * Hardware
++ */
++
++static void cv1800_csi2_reset(struct cv1800_csi2 *csi2)
++{
++	reset_control_assert(csi2->rst_phy);
++	reset_control_assert(csi2->rst_apb);
++	udelay(5);
++	reset_control_deassert(csi2->rst_phy);
++	reset_control_deassert(csi2->rst_apb);
++
++	regmap_set_bits(csi2->vip_sys, VIP_SYS_RESETS, VIP_RST_CSI_MAC0);
++	udelay(20);
++	regmap_clear_bits(csi2->vip_sys, VIP_SYS_RESETS, VIP_RST_CSI_MAC0);
++}
++
++static void cv1800_csi2_mac_clock(struct cv1800_csi2 *csi2)
++{
++	unsigned long src = clk_get_rate(csi2->mac_src);
++	u32 ratio;
++
++	/* rate = src * (ratio + 1) / 32, rounded up to reach mac_mhz */
++	ratio = DIV_ROUND_UP_ULL((u64)mac_mhz * 1000000 * 32, src);
++	ratio = clamp(ratio, 1U, 32U) - 1;
++
++	regmap_update_bits(csi2->vip_sys, VIP_SYS_CLK_CTRL1, VIP_CLK_MAC0_SRC,
++			   FIELD_PREP(VIP_CLK_MAC0_SRC, VIP_CLK_SRC_VIP_SYS_2));
++	regmap_update_bits(csi2->vip_sys, VIP_SYS_DIV_CSI_MAC0,
++			   VIP_DIV_RATIO | VIP_DIV_EN,
++			   FIELD_PREP(VIP_DIV_RATIO, ratio) | VIP_DIV_EN);
++	regmap_write_bits(csi2->vip_sys, VIP_SYS_DIV_CSI_MAC0, VIP_DIV_UPDATE,
++			  VIP_DIV_UPDATE);
++	udelay(5);
++
++	dev_dbg(csi2->dev, "MAC clock %lu Hz\n", src / 32 * (ratio + 1));
++}
++
++/*
++ * Pinctrl should do this, but its binding wants a mux function for every pin
++ * and these pads keep whatever function firmware left them in, as the vendor
++ * stack does. Until that is sorted out, clear the pulls here.
++ */
++static void cv1800_csi2_pad_bias(struct cv1800_csi2 *csi2)
++{
++	unsigned int i, lane;
++	unsigned long used = BIT(csi2->clock_lane);
++
++	if (!csi2->pad)
++		return;
++
++	for (i = 0; i < csi2->num_lanes; i++)
++		used |= BIT(csi2->data_lanes[i]);
++	for_each_set_bit(lane, &used, CV1800_CSI2_PHY_LANES) {
++		void __iomem *n = csi2->pad + PAD_CONF(lane);
++
++		writel(readl(n) & ~(PAD_PULL_UP | PAD_PULL_DOWN), n);
++		writel(readl(n + 4) & ~(PAD_PULL_UP | PAD_PULL_DOWN), n + 4);
++	}
++}
++
++static void cv1800_csi2_phy_power(struct cv1800_csi2 *csi2, bool on)
++{
++	phy_update(csi2, PHY_4L_LANE_EN, PHY_4L_DESKEW_LANE_EN, 0);
++	phy_update(csi2, PHY_TOP_PWR, PHY_PD_IBIAS | PHY_PD_RXLP,
++		   PHY_PD_IBIAS | PHY_PD_RXLP);
++	if (!on)
++		return;
++
++	phy_update(csi2, PHY_TOP_PWR, PHY_PD_IBIAS | PHY_PD_RXLP, 0);
++	udelay(20);
++	phy_update(csi2, PHY_4L_LANE_EN, PHY_4L_DESKEW_LANE_EN,
++		   GENMASK(csi2->num_lanes - 1, 0));
++}
++
++static void cv1800_csi2_set_deskew(struct cv1800_csi2 *csi2, unsigned int lane,
++				   u8 code)
++{
++	phy_update(csi2, PHY_TOP_DESKEW_CODE(lane),
++		   0xff << PHY_DESKEW_CODE_SHIFT(lane),
++		   code << PHY_DESKEW_CODE_SHIFT(lane));
++	phy_update(csi2, PHY_TOP_DESKEW_CTRL, PHY_FORCE_DESKEW(lane),
++		   code ? PHY_FORCE_DESKEW(lane) : 0);
++}
++
++static void cv1800_csi2_phy_config(struct cv1800_csi2 *csi2)
++{
++	unsigned int clk = csi2->clock_lane, clk_port = LANE_PORT(clk);
++	bool same_port = true;
++	u32 used = BIT(clk), sel = 0, cfg;
++	unsigned int i, spare;
++
++	/* Sample on the falling edge, as the vendor stack does on every lane */
++	phy_update(csi2, PHY_TOP_DESKEW_CTRL, PHY_AD_CLK_INV, PHY_AD_CLK_INV);
++
++	phy_update(csi2, PHY_TOP_CLK, PHY_SEL_CLK_CHANNEL,
++		   FIELD_PREP(PHY_SEL_CLK_CHANNEL, BIT(clk)));
++	cfg = FIELD_PREP(PHY_4L_CK_SEL, clk);
++	if (csi2->pnswap[0])
++		cfg |= PHY_4L_CK_PNSWAP;
++
++	for (i = 0; i < csi2->num_lanes; i++) {
++		unsigned int lane = csi2->data_lanes[i];
++
++		sel |= lane << (4 * i);
++		if (csi2->pnswap[i + 1])
++			cfg |= PHY_4L_D_PNSWAP(i);
++		used |= BIT(lane);
++		if (LANE_PORT(lane) != clk_port)
++			same_port = false;
++	}
++	/* Park unused logical lanes on physical lanes nobody drives */
++	for (; i < CV1800_CSI2_MAX_DATA_LANES; i++) {
++		spare = ffz(used);
++		used |= BIT(spare);
++		sel |= spare << (4 * i);
++	}
++	writel(sel, csi2->phy + PHY_4L_LANE_SEL);
++	phy_update(csi2, PHY_4L_LANE_CFG,
++		   PHY_4L_CK_SEL | PHY_4L_CK_PNSWAP | GENMASK(11, 8), cfg);
++
++	/*
++	 * Each port has its own clock buffer. Forward the clock to the other
++	 * port unless clock and data all sit on port 0, which needs nothing.
++	 */
++	if (same_port && !clk_port && csi2->num_lanes < 4)
++		cfg = 0;
++	else
++		cfg = clk_port ? PHY_SEL_CLK_P1TOP0 : PHY_SEL_CLK_P0TOP1;
++	phy_update(csi2, PHY_TOP_CLK, PHY_SEL_CLK_P0TOP1 | PHY_SEL_CLK_P1TOP0, cfg);
++
++	if (same_port && clk_port && csi2->num_lanes < 4) {
++		cv1800_csi2_set_deskew(csi2, clk, DESKEW_CLK);
++		for (i = 0; i < csi2->num_lanes; i++)
++			cv1800_csi2_set_deskew(csi2, csi2->data_lanes[i], DESKEW_DATA);
++	} else {
++		cv1800_csi2_set_deskew(csi2, clk, DESKEW_CROSS_CLK);
++		for (i = 0; i < csi2->num_lanes; i++) {
++			unsigned int lane = csi2->data_lanes[i];
++
++			cv1800_csi2_set_deskew(csi2, lane,
++					       LANE_PORT(lane) == clk_port ?
++					       DESKEW_CROSS_DATA_NEAR :
++					       DESKEW_CROSS_DATA_FAR);
++		}
++	}
++
++	phy_update(csi2, PHY_4L_TIMING,
++		   PHY_4L_T_HS_SETTLE | PHY_4L_AUTO_IGNORE | PHY_4L_AUTO_SYNC,
++		   FIELD_PREP(PHY_4L_T_HS_SETTLE, csi2->settle));
++	phy_update(csi2, PHY_4L_MODE, PHY_4L_SENSOR_MODE, 0);
++}
++
++static void cv1800_csi2_mac_config(struct cv1800_csi2 *csi2)
++{
++	mac_update(csi2, MAC_MODE,
++		   MAC_SENSOR_MAC_MODE | MAC_CSI_VS_INV | MAC_CSI_HS_INV |
++		   MAC_CSI_CTRL_ENABLE,
++		   FIELD_PREP(MAC_SENSOR_MAC_MODE, MAC_MODE_CSI) | MAC_CSI_VS_INV |
++		   MAC_CSI_HS_INV | MAC_CSI_CTRL_ENABLE);
++	mac_update(csi2, CSI_CTRL, CSI_LANE_MODE,
++		   FIELD_PREP(CSI_LANE_MODE, csi2->num_lanes - 1));
++	mac_update(csi2, CSI_VS_GEN, CSI_VS_GEN_MODE, 0);
++	writel(CSI_VC_MAP_IDENTITY, csi2->mac + CSI_VC_MAP);
++	mac_update(csi2, CSI_INTR, CSI_HDR_EN | CSI_HDR_MODE, 0);
++}
++
++static void cv1800_csi2_irq_ack(struct cv1800_csi2 *csi2)
++{
++	mac_update(csi2, CSI_INTR, CSI_INTR_CLR, CSI_INTR_CLR);
++	mac_update(csi2, CSI_INTR, CSI_INTR_CLR, 0);
++}
++
++static irqreturn_t cv1800_csi2_irq(int irq, void *data)
++{
++	struct cv1800_csi2 *csi2 = data;
++	u32 status = readl(csi2->mac + CSI_INTR_STATUS) & 0xff;
++
++	if (!status)
++		return IRQ_NONE;
++
++	if (status & CSI_INT_ECC_ERR)
++		csi2->ecc++;
++	if (status & CSI_INT_CRC_ERR)
++		csi2->crc++;
++	if (status & CSI_INT_HDR_ERR)
++		csi2->hdr++;
++	if (status & CSI_INT_WC_ERR)
++		csi2->wc++;
++	if (status & CSI_INT_FIFO_FULL)
++		csi2->fifo_full++;
++	cv1800_csi2_irq_ack(csi2);
++
++	return IRQ_HANDLED;
++}
++
++static int cv1800_csi2_start(struct cv1800_csi2 *csi2)
++{
++	int ret;
++
++	ret = pm_runtime_resume_and_get(csi2->dev);
++	if (ret)
++		return ret;
++
++	cv1800_csi2_reset(csi2);
++	cv1800_csi2_pad_bias(csi2);
++	cv1800_csi2_mac_clock(csi2);
++	cv1800_csi2_phy_power(csi2, false);
++	cv1800_csi2_phy_config(csi2);
++	cv1800_csi2_mac_config(csi2);
++	cv1800_csi2_phy_power(csi2, true);
++
++	csi2->ecc = csi2->crc = csi2->hdr = csi2->wc = csi2->fifo_full = 0;
++	cv1800_csi2_irq_ack(csi2);
++	mac_update(csi2, CSI_INTR, CSI_INTR_MASK, 0);
++
++	return 0;
++}
++
++static void cv1800_csi2_stop(struct cv1800_csi2 *csi2)
++{
++	mac_update(csi2, CSI_INTR, CSI_INTR_MASK, CSI_INTR_MASK);
++	cv1800_csi2_phy_power(csi2, false);
++	mac_update(csi2, MAC_MODE, MAC_CSI_CTRL_ENABLE, 0);
++	dev_dbg(csi2->dev, "errors: ecc %u crc %u hdr %u wc %u fifo %u\n",
++		csi2->ecc, csi2->crc, csi2->hdr, csi2->wc, csi2->fifo_full);
++	pm_runtime_put_sync(csi2->dev);
++}
++
++/* -----------------------------------------------------------------------------
++ * Subdevice
++ */
++
++/* Bits per pixel of a code in cv1800_csi2_codes[]: four each of 8, 10, 12 */
++static unsigned int cv1800_csi2_bpp(u32 code)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(cv1800_csi2_codes); i++)
++		if (cv1800_csi2_codes[i] == code)
++			return 8 + 2 * (i / 4);
++
++	return 0;
++}
++
++static int cv1800_csi2_set_settle(struct cv1800_csi2 *csi2,
++				  struct v4l2_subdev_state *state)
++{
++	unsigned int forced = READ_ONCE(hs_settle);
++	const struct v4l2_mbus_framefmt *fmt;
++	s64 freq;
++
++	if (forced) {
++		csi2->settle = min(forced, 255U);
++		return 0;
++	}
++
++	fmt = v4l2_subdev_state_get_format(state, CV1800_CSI2_PAD_SINK);
++	freq = v4l2_get_link_freq(&csi2->source->entity.pads[csi2->source_pad],
++				  cv1800_csi2_bpp(fmt->code), 2 * csi2->num_lanes);
++	if (freq < 0) {
++		dev_err(csi2->dev, "no link frequency from the sensor: %lld\n", freq);
++		return freq;
++	}
++
++	csi2->settle = clamp_t(u64, DIV_ROUND_CLOSEST_ULL((u64)freq * CV1800_CSI2_SETTLE_NS / 4,
++							  NSEC_PER_SEC),
++			       CV1800_CSI2_SETTLE_MIN, 255);
++	dev_dbg(csi2->dev, "link %lld Hz, HS settle %u\n", freq, csi2->settle);
++
++	return 0;
++}
++
++static bool cv1800_csi2_code_ok(u32 code)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(cv1800_csi2_codes); i++)
++		if (cv1800_csi2_codes[i] == code)
++			return true;
++	return false;
++}
++
++static int cv1800_csi2_init_state(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state)
++{
++	struct v4l2_mbus_framefmt *fmt;
++	unsigned int pad;
++
++	for (pad = 0; pad < CV1800_CSI2_NUM_PADS; pad++) {
++		fmt = v4l2_subdev_state_get_format(state, pad);
++		*fmt = (struct v4l2_mbus_framefmt) {
++			.width = 1920,
++			.height = 1080,
++			.code = MEDIA_BUS_FMT_SBGGR10_1X10,
++			.field = V4L2_FIELD_NONE,
++			.colorspace = V4L2_COLORSPACE_RAW,
++			.ycbcr_enc = V4L2_YCBCR_ENC_601,
++			.quantization = V4L2_QUANTIZATION_FULL_RANGE,
++			.xfer_func = V4L2_XFER_FUNC_NONE,
++		};
++	}
++
++	return 0;
++}
++
++static int cv1800_csi2_enum_mbus_code(struct v4l2_subdev *sd,
++				      struct v4l2_subdev_state *state,
++				      struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->pad == CV1800_CSI2_PAD_SOURCE) {
++		if (code->index)
++			return -EINVAL;
++		code->code = v4l2_subdev_state_get_format(state,
++							  CV1800_CSI2_PAD_SINK)->code;
++		return 0;
++	}
++
++	if (code->index >= ARRAY_SIZE(cv1800_csi2_codes))
++		return -EINVAL;
++	code->code = cv1800_csi2_codes[code->index];
++
++	return 0;
++}
++
++static int cv1800_csi2_set_fmt(struct v4l2_subdev *sd,
++			       struct v4l2_subdev_state *state,
++			       struct v4l2_subdev_format *format)
++{
++	struct v4l2_mbus_framefmt *fmt;
++
++	/* The output is the input */
++	if (format->pad == CV1800_CSI2_PAD_SOURCE)
++		return v4l2_subdev_get_fmt(sd, state, format);
++
++	if (!cv1800_csi2_code_ok(format->format.code))
++		format->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
++	format->format.field = V4L2_FIELD_NONE;
++
++	fmt = v4l2_subdev_state_get_format(state, CV1800_CSI2_PAD_SINK);
++	*fmt = format->format;
++	fmt = v4l2_subdev_state_get_format(state, CV1800_CSI2_PAD_SOURCE);
++	*fmt = format->format;
++
++	return 0;
++}
++
++static int cv1800_csi2_enable_streams(struct v4l2_subdev *sd,
++				      struct v4l2_subdev_state *state,
++				      u32 pad, u64 streams_mask)
++{
++	struct cv1800_csi2 *csi2 = sd_to_csi2(sd);
++	int ret;
++
++	if (!csi2->source)
++		return -ENOLINK;
++	/* The debugfs power file holds the receiver */
++	if (csi2->debug_on)
++		return -EBUSY;
++
++	ret = cv1800_csi2_set_settle(csi2, state);
++	if (ret)
++		return ret;
++
++	ret = cv1800_csi2_start(csi2);
++	if (ret)
++		return ret;
++
++	ret = v4l2_subdev_enable_streams(csi2->source, csi2->source_pad, BIT_ULL(0));
++	if (ret)
++		cv1800_csi2_stop(csi2);
++
++	return ret;
++}
++
++static int cv1800_csi2_disable_streams(struct v4l2_subdev *sd,
++				       struct v4l2_subdev_state *state,
++				       u32 pad, u64 streams_mask)
++{
++	struct cv1800_csi2 *csi2 = sd_to_csi2(sd);
++
++	/* The sensor may have been unbound while streaming */
++	if (csi2->source)
++		v4l2_subdev_disable_streams(csi2->source, csi2->source_pad, BIT_ULL(0));
++	cv1800_csi2_stop(csi2);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_pad_ops cv1800_csi2_pad_ops = {
++	.enum_mbus_code = cv1800_csi2_enum_mbus_code,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.set_fmt = cv1800_csi2_set_fmt,
++	.link_validate = v4l2_subdev_link_validate_default,
++	.enable_streams = cv1800_csi2_enable_streams,
++	.disable_streams = cv1800_csi2_disable_streams,
++};
++
++static const struct v4l2_subdev_video_ops cv1800_csi2_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_ops cv1800_csi2_ops = {
++	.video = &cv1800_csi2_video_ops,
++	.pad = &cv1800_csi2_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops cv1800_csi2_internal_ops = {
++	.init_state = cv1800_csi2_init_state,
++};
++
++static const struct media_entity_operations cv1800_csi2_entity_ops = {
++	.link_validate = v4l2_subdev_link_validate,
++	.get_fwnode_pad = v4l2_subdev_get_fwnode_pad_1_to_1,
++};
++
++/* -----------------------------------------------------------------------------
++ * Debug
++ */
++
++static int cv1800_csi2_status_show(struct seq_file *s, void *unused)
++{
++	struct cv1800_csi2 *csi2 = s->private;
++	u32 st, lp;
++
++	if (pm_runtime_get_if_active(csi2->dev) <= 0) {
++		seq_puts(s, "powered down\n");
++		return 0;
++	}
++
++	st = readl(csi2->mac + CSI_STATUS);
++	lp = readl(csi2->phy + PHY_TOP_LPOUT);
++	seq_printf(s, "decoded data type  0x%02lx\n", FIELD_GET(CSI_DECODE_FORMAT, st));
++	seq_printf(s, "status             %08x%s%s%s%s%s\n", st,
++		   st & CSI_ECC_ERROR ? " ecc" : "",
++		   st & CSI_ECC_CORRECTED_ERROR ? " ecc-corrected" : "",
++		   st & CSI_CRC_ERROR ? " crc" : "",
++		   st & CSI_WC_ERROR ? " wc" : "",
++		   st & CSI_FIFO_FULL ? " fifo-full" : "");
++	seq_printf(s, "lane LP p/n        %02lx/%02lx (bit = physical lane)\n",
++		   FIELD_GET(PHY_AD_LPOUTP, lp), FIELD_GET(PHY_AD_LPOUTN, lp));
++	seq_printf(s, "lane data          %08x %08x\n",
++		   readl(csi2->phy + PHY_TOP_AD_DATA0), readl(csi2->phy + PHY_TOP_AD_DATA1));
++	seq_printf(s, "phy top            %08x %08x deskew %08x %08x %08x\n",
++		   readl(csi2->phy + PHY_TOP_PWR), readl(csi2->phy + PHY_TOP_CLK),
++		   readl(csi2->phy + PHY_TOP_DESKEW_CTRL),
++		   readl(csi2->phy + PHY_TOP_DESKEW_CODE(0)),
++		   readl(csi2->phy + PHY_TOP_DESKEW_CODE(4)));
++	seq_printf(s, "phy 4l             %08x %08x %08x %08x %08x\n",
++		   readl(csi2->phy + PHY_4L_MODE), readl(csi2->phy + PHY_4L_LANE_SEL),
++		   readl(csi2->phy + PHY_4L_LANE_CFG), readl(csi2->phy + PHY_4L_LANE_EN),
++		   readl(csi2->phy + PHY_4L_TIMING));
++	seq_printf(s, "mac                %08x csi %08x %08x\n",
++		   readl(csi2->mac + MAC_MODE), readl(csi2->mac + CSI_CTRL),
++		   readl(csi2->mac + CSI_INTR));
++	seq_printf(s, "errors             ecc %u crc %u hdr %u wc %u fifo %u\n",
++		   csi2->ecc, csi2->crc, csi2->hdr, csi2->wc, csi2->fifo_full);
++
++	pm_runtime_put(csi2->dev);
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(cv1800_csi2_status);
++
++/*
++ * Bring-up aid: write 1 to power and configure the receiver without a stream,
++ * 0 to turn it off again. With the sensor powered but idle its lanes should
++ * then read LP-11 in the status file.
++ */
++static ssize_t cv1800_csi2_power_write(struct file *file, const char __user *ubuf,
++				       size_t count, loff_t *ppos)
++{
++	struct cv1800_csi2 *csi2 = file->private_data;
++	struct v4l2_subdev_state *state;
++	bool on;
++	int ret;
++
++	ret = kstrtobool_from_user(ubuf, count, &on);
++	if (ret)
++		return ret;
++
++	state = v4l2_subdev_lock_and_get_active_state(&csi2->sd);
++	if (v4l2_subdev_is_streaming(&csi2->sd))
++		ret = -EBUSY;
++	else if (on && !csi2->debug_on) {
++		/* With no sensor the settle count does not matter: nothing streams */
++		if (csi2->source)
++			ret = cv1800_csi2_set_settle(csi2, state);
++		else
++			csi2->settle = hs_settle ?: 16;
++		if (!ret)
++			ret = cv1800_csi2_start(csi2);
++	} else if (!on && csi2->debug_on)
++		cv1800_csi2_stop(csi2);
++	if (!ret)
++		csi2->debug_on = on;
++	v4l2_subdev_unlock_state(state);
++
++	return ret ? ret : count;
++}
++
++static const struct file_operations cv1800_csi2_power_fops = {
++	.open = simple_open,
++	.write = cv1800_csi2_power_write,
++	.llseek = noop_llseek,
++};
++
++/* -----------------------------------------------------------------------------
++ * Probe
++ */
++
++static int cv1800_csi2_notify_bound(struct v4l2_async_notifier *notifier,
++				    struct v4l2_subdev *sd,
++				    struct v4l2_async_connection *asc)
++{
++	struct cv1800_csi2 *csi2 = container_of(notifier, struct cv1800_csi2, notifier);
++	int pad;
++
++	pad = media_entity_get_fwnode_pad(&sd->entity, asc->match.fwnode,
++					  MEDIA_PAD_FL_SOURCE);
++	if (pad < 0)
++		return dev_err_probe(csi2->dev, pad, "no source pad on %s\n", sd->name);
++
++	csi2->source = sd;
++	csi2->source_pad = pad;
++
++	return media_create_pad_link(&sd->entity, pad, &csi2->sd.entity,
++				     CV1800_CSI2_PAD_SINK,
++				     MEDIA_LNK_FL_ENABLED | MEDIA_LNK_FL_IMMUTABLE);
++}
++
++static void cv1800_csi2_notify_unbind(struct v4l2_async_notifier *notifier,
++				      struct v4l2_subdev *sd,
++				      struct v4l2_async_connection *asc)
++{
++	struct cv1800_csi2 *csi2 = container_of(notifier, struct cv1800_csi2, notifier);
++
++	csi2->source = NULL;
++}
++
++static const struct v4l2_async_notifier_operations cv1800_csi2_notify_ops = {
++	.bound = cv1800_csi2_notify_bound,
++	.unbind = cv1800_csi2_notify_unbind,
++};
++
++static int cv1800_csi2_parse_dt(struct cv1800_csi2 *csi2)
++{
++	struct v4l2_fwnode_endpoint vep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
++	struct v4l2_async_connection *asc;
++	struct fwnode_handle *ep;
++	u32 used;
++	unsigned int i;
++	int ret;
++
++	ep = fwnode_graph_get_endpoint_by_id(dev_fwnode(csi2->dev),
++					     CV1800_CSI2_PAD_SINK, 0, 0);
++	if (!ep)
++		return dev_err_probe(csi2->dev, -ENODEV, "no sink endpoint\n");
++
++	ret = v4l2_fwnode_endpoint_parse(ep, &vep);
++	if (ret) {
++		dev_err_probe(csi2->dev, ret, "sink endpoint\n");
++		goto out;
++	}
++
++	csi2->num_lanes = vep.bus.mipi_csi2.num_data_lanes;
++	csi2->clock_lane = vep.bus.mipi_csi2.clock_lane;
++	used = BIT(csi2->clock_lane);
++	ret = -EINVAL;
++	if (!csi2->num_lanes || csi2->num_lanes > CV1800_CSI2_MAX_DATA_LANES ||
++	    csi2->clock_lane >= CV1800_CSI2_PHY_LANES) {
++		dev_err(csi2->dev, "bad lane setup\n");
++		goto out;
++	}
++	for (i = 0; i < csi2->num_lanes; i++) {
++		unsigned int lane = vep.bus.mipi_csi2.data_lanes[i];
++
++		if (lane >= CV1800_CSI2_PHY_LANES || used & BIT(lane)) {
++			dev_err(csi2->dev, "bad data lane %u\n", lane);
++			goto out;
++		}
++		used |= BIT(lane);
++		csi2->data_lanes[i] = lane;
++	}
++	for (i = 0; i <= csi2->num_lanes; i++)
++		csi2->pnswap[i] = vep.bus.mipi_csi2.lane_polarities[i];
++
++	v4l2_async_subdev_nf_init(&csi2->notifier, &csi2->sd);
++	csi2->notifier.ops = &cv1800_csi2_notify_ops;
++	asc = v4l2_async_nf_add_fwnode_remote(&csi2->notifier, ep,
++					      struct v4l2_async_connection);
++	if (IS_ERR(asc)) {
++		ret = PTR_ERR(asc);
++		goto out;
++	}
++	ret = v4l2_async_nf_register(&csi2->notifier);
++	if (ret)
++		v4l2_async_nf_cleanup(&csi2->notifier);
++
++out:
++	fwnode_handle_put(ep);
++	return ret;
++}
++
++static int cv1800_csi2_runtime_suspend(struct device *dev)
++{
++	struct cv1800_csi2 *csi2 = dev_get_drvdata(dev);
++
++	disable_irq(csi2->irq);
++	clk_bulk_disable_unprepare(csi2->num_clks, csi2->clks);
++
++	return 0;
++}
++
++static int cv1800_csi2_runtime_resume(struct device *dev)
++{
++	struct cv1800_csi2 *csi2 = dev_get_drvdata(dev);
++	int ret;
++
++	ret = clk_bulk_prepare_enable(csi2->num_clks, csi2->clks);
++	if (ret)
++		return ret;
++	enable_irq(csi2->irq);
++
++	return 0;
++}
++
++static int cv1800_csi2_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct cv1800_csi2 *csi2;
++	struct v4l2_subdev *sd;
++	struct resource *res;
++	int ret, i;
++
++	csi2 = devm_kzalloc(dev, sizeof(*csi2), GFP_KERNEL);
++	if (!csi2)
++		return -ENOMEM;
++	csi2->dev = dev;
++	platform_set_drvdata(pdev, csi2);
++
++	csi2->mac = devm_platform_ioremap_resource_byname(pdev, "mac");
++	if (IS_ERR(csi2->mac))
++		return PTR_ERR(csi2->mac);
++	csi2->phy = devm_platform_ioremap_resource_byname(pdev, "phy");
++	if (IS_ERR(csi2->phy))
++		return PTR_ERR(csi2->phy);
++
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pad");
++	if (res) {
++		/* Shared with pinctrl: map without claiming the region */
++		csi2->pad = devm_ioremap(dev, res->start, resource_size(res));
++		if (!csi2->pad)
++			return -ENOMEM;
++	}
++
++	csi2->vip_sys = syscon_regmap_lookup_by_phandle(dev->of_node, "sophgo,vip-sys");
++	if (IS_ERR(csi2->vip_sys))
++		return dev_err_probe(dev, PTR_ERR(csi2->vip_sys), "vip_sys syscon\n");
++
++	csi2->num_clks = devm_clk_bulk_get_all(dev, &csi2->clks);
++	if (csi2->num_clks < 0)
++		return dev_err_probe(dev, csi2->num_clks, "clocks\n");
++	for (i = 0; i < csi2->num_clks; i++)
++		if (!strcmp(csi2->clks[i].id, "sys2"))
++			csi2->mac_src = csi2->clks[i].clk;
++	if (!csi2->mac_src)
++		return dev_err_probe(dev, -EINVAL, "no sys2 clock\n");
++
++	csi2->rst_phy = devm_reset_control_get_exclusive(dev, "phy");
++	if (IS_ERR(csi2->rst_phy))
++		return dev_err_probe(dev, PTR_ERR(csi2->rst_phy), "phy reset\n");
++	csi2->rst_apb = devm_reset_control_get_exclusive(dev, "phy-apb");
++	if (IS_ERR(csi2->rst_apb))
++		return dev_err_probe(dev, PTR_ERR(csi2->rst_apb), "phy-apb reset\n");
++
++	csi2->irq = platform_get_irq(pdev, 0);
++	if (csi2->irq < 0)
++		return csi2->irq;
++	ret = devm_request_irq(dev, csi2->irq, cv1800_csi2_irq, IRQF_NO_AUTOEN,
++			       dev_name(dev), csi2);
++	if (ret)
++		return ret;
++
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	sd = &csi2->sd;
++	v4l2_subdev_init(sd, &cv1800_csi2_ops);
++	sd->internal_ops = &cv1800_csi2_internal_ops;
++	sd->owner = THIS_MODULE;
++	sd->dev = dev;
++	sd->fwnode = dev_fwnode(dev);
++	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	strscpy(sd->name, CV1800_CSI2_NAME, sizeof(sd->name));
++	v4l2_set_subdevdata(sd, csi2);
++
++	sd->entity.function = MEDIA_ENT_F_VID_IF_BRIDGE;
++	sd->entity.ops = &cv1800_csi2_entity_ops;
++	csi2->pads[CV1800_CSI2_PAD_SINK].flags = MEDIA_PAD_FL_SINK |
++						 MEDIA_PAD_FL_MUST_CONNECT;
++	csi2->pads[CV1800_CSI2_PAD_SOURCE].flags = MEDIA_PAD_FL_SOURCE |
++						   MEDIA_PAD_FL_MUST_CONNECT;
++	ret = media_entity_pads_init(&sd->entity, CV1800_CSI2_NUM_PADS, csi2->pads);
++	if (ret)
++		return ret;
++
++	ret = v4l2_subdev_init_finalize(sd);
++	if (ret)
++		goto err_entity;
++
++	ret = cv1800_csi2_parse_dt(csi2);
++	if (ret)
++		goto err_state;
++
++	ret = v4l2_async_register_subdev(sd);
++	if (ret)
++		goto err_notifier;
++
++	csi2->debugfs = debugfs_create_dir(dev_name(dev), NULL);
++	debugfs_create_file("status", 0444, csi2->debugfs, csi2,
++			    &cv1800_csi2_status_fops);
++	debugfs_create_file("power", 0200, csi2->debugfs, csi2,
++			    &cv1800_csi2_power_fops);
++
++	return 0;
++
++err_notifier:
++	v4l2_async_nf_unregister(&csi2->notifier);
++	v4l2_async_nf_cleanup(&csi2->notifier);
++err_state:
++	v4l2_subdev_cleanup(sd);
++err_entity:
++	media_entity_cleanup(&sd->entity);
++	return ret;
++}
++
++static void cv1800_csi2_remove(struct platform_device *pdev)
++{
++	struct cv1800_csi2 *csi2 = platform_get_drvdata(pdev);
++
++	debugfs_remove_recursive(csi2->debugfs);
++	if (csi2->debug_on)
++		cv1800_csi2_stop(csi2);
++	v4l2_async_unregister_subdev(&csi2->sd);
++	v4l2_async_nf_unregister(&csi2->notifier);
++	v4l2_async_nf_cleanup(&csi2->notifier);
++	v4l2_subdev_cleanup(&csi2->sd);
++	media_entity_cleanup(&csi2->sd.entity);
++}
++
++static DEFINE_RUNTIME_DEV_PM_OPS(cv1800_csi2_pm_ops, cv1800_csi2_runtime_suspend,
++				 cv1800_csi2_runtime_resume, NULL);
++
++static const struct of_device_id cv1800_csi2_of_match[] = {
++	{ .compatible = "sophgo,sg2000-csi2" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cv1800_csi2_of_match);
++
++static struct platform_driver cv1800_csi2_driver = {
++	.probe = cv1800_csi2_probe,
++	.remove = cv1800_csi2_remove,
++	.driver = {
++		.name = CV1800_CSI2_NAME,
++		.of_match_table = cv1800_csi2_of_match,
++		.pm = pm_ptr(&cv1800_csi2_pm_ops),
++	},
++};
++module_platform_driver(cv1800_csi2_driver);
++
++MODULE_DESCRIPTION("Sophgo CV1800/SG2000 MIPI CSI-2 receiver");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+
