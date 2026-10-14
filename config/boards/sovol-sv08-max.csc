@@ -1,5 +1,5 @@
 # Allwinner H616 quad core 1GB RAM SoC WiFi eMMC (Sovol SV08 Max printer host)
-BOARD_NAME="Sovol SV08 Max"
+BOARD_NAME="SV08 Max"
 BOARD_VENDOR="sovol"
 BOARDFAMILY="sun50iw9"
 BOARD_MAINTAINER="lexfrei"

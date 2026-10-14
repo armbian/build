@@ -1,5 +1,5 @@
 # Allwinner D1 single core (C906) 512MB/1GB RAM WiFi/BT HDMI
-BOARD_NAME="Mangopi-MQ"
+BOARD_NAME="MQ"
 BOARD_VENDOR="mangopi"
 BOARDFAMILY="d1"
 BOARD_MAINTAINER=""

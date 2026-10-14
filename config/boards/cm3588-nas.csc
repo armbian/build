@@ -1,5 +1,5 @@
 # Rockchip RK3588 octa core 16GB RAM SoC eMMC 4x NVMe 2x USB3 USB2 USB-C 2.5GbE
-BOARD_NAME="FriendlyElec CM3588 NAS"
+BOARD_NAME="CM3588 NAS"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="ColorfulRhino"

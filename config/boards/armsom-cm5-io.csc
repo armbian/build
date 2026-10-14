@@ -1,5 +1,5 @@
 # Rockchip RK3576 SoC octa core 8-64GB SoC GBe eMMC USB3 NvME WIFI
-BOARD_NAME="ArmSoM CM5 IO"
+BOARD_NAME="CM5 IO"
 BOARD_VENDOR="armsom"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="armsom-cm5-io-rk3576_defconfig"
