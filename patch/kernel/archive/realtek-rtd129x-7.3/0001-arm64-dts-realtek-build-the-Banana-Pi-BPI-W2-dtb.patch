@@ -1,0 +1,1033 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:56 +0200
+Subject: [PATCH 01/22] arm64: dts: realtek: build the Banana Pi BPI-W2 dtb
+
+The board .dts itself is kept outside the kernel tree, in
+dts/board/rtd1296-bananapi-w2.dts, and copied in by
+scripts/build-kernel.sh. It changes on nearly every bring-up step,
+so carrying it as a patch would mean regenerating that patch constantly.
+This Makefile line does not change, so it is a patch.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm64/boot/dts/realtek/Makefile          |   1 +
+ .../boot/dts/realtek/rtd1296-bananapi-w2.dts  | 995 ++++++++++++++++++
+ 2 files changed, 996 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/realtek/rtd1296-bananapi-w2.dts
+
+diff --git a/arch/arm64/boot/dts/realtek/Makefile b/arch/arm64/boot/dts/realtek/Makefile
+index 60a37d5a948c..a9cc94e9fc7d 100644
+--- a/arch/arm64/boot/dts/realtek/Makefile
++++ b/arch/arm64/boot/dts/realtek/Makefile
+@@ -5,6 +5,7 @@ dtb-$(CONFIG_ARCH_REALTEK) += rtd1295-mele-v9.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1295-probox2-ava.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1295-xnano-x5.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1295-zidoo-x9s.dtb
++dtb-$(CONFIG_ARCH_REALTEK) += rtd1296-bananapi-w2.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1296-ds418.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1395-bpi-m4.dtb
+ dtb-$(CONFIG_ARCH_REALTEK) += rtd1395-lionskin.dtb
+diff --git a/arch/arm64/boot/dts/realtek/rtd1296-bananapi-w2.dts b/arch/arm64/boot/dts/realtek/rtd1296-bananapi-w2.dts
+new file mode 100644
+index 000000000000..30edc2da2f6d
+--- /dev/null
++++ b/arch/arm64/boot/dts/realtek/rtd1296-bananapi-w2.dts
+@@ -0,0 +1,995 @@
++// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-2-Clause)
++/*
++ * Banana Pi BPI-W2 (Realtek RTD1296), 2 GiB variant
++ *
++ * Bring-up board file for the mainline/LTS kernel line. It is deliberately
++ * minimal: mainline already carries rtd1296.dtsi, and the BSP's own
++ * rtd-1296-bananapi-w2-2GB.dts is ~400 lines of vendor-only bindings that
++ * have no driver here. Nodes get added back as each milestone in
++ * docs/09-mainline-bringup.md is reached.
++ *
++ * Boot chain is unchanged: the BSP u-boot 2015.07 loads this DTB to
++ * 0x02100000, the Image to 0x03000000 and the initramfs to 0x02200000, then
++ * runs `booti`. u-boot writes both bootargs and linux,initrd-start/end into
++ * /chosen itself, so neither is set here.
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/thermal/thermal.h>
++#include "rtd1296.dtsi"
++
++/ {
++	compatible = "bananapi,bpi-w2", "realtek,rtd1296";
++	model = "Banana Pi BPI-W2";
++
++	aliases {
++		ethernet0 = &gmac;
++		/* fixed names: the SD card is mmcblk0, the eMMC mmcblk1 */
++		mmc0 = &sdmmc;
++		mmc1 = &emmc;
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	/* Same 2 GiB layout as the DS418; the first 0x1f000 is boot ROM. */
++	memory@1f000 {
++		device_type = "memory";
++		reg = <0x1f000 0x7ffe1000>;
++	};
++
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		/*
++		 * The BSP u-boot loads bluecore.audio to CONFIG_FW_LOADADDR
++		 * (0x0f900000) and starts the audio CPU on it ("go a"). The
++		 * image is 3.8 MiB; its BSS, heap and stacks follow it, up to
++		 * ACPU_FIREWARE_SIZE in the BSP's memory.h, 5 MiB. With only
++		 * 4 MiB reserved Linux took the last one, and the ACPU stopped
++		 * answering RPCs.
++		 */
++		acpu_fw: audio-firmware@f900000 {
++			reg = <0x0f900000 0x00500000>;
++			no-map;
++		};
++
++		/* ACPU_BOOTCODE_PHYS: the MIPS reset vector, 0xbfc00000 */
++		acpu_bootcode: acpu-bootcode@1fc00000 {
++			reg = <0x1fc00000 0x1000>;
++			no-map;
++		};
++
++		/* ACPU_IDMEM_PHYS / ACPU_IDMEM_SIZE in the BSP's memory.h */
++		/*
++		 * The audio core's ION heap. `boot a` hands the ACPU its
++		 * firmware and it runs alongside Linux from then on, writing
++		 * here -- but mainline reserves nothing for it, so the page
++		 * allocator hands the same 12 MiB out and the two scribble
++		 * over each other. It shows up late and far from the cause,
++		 * as a corrupted SLUB pointer:
++		 *
++		 *   Unable to handle kernel paging request at virtual address 0000000080000018
++		 *   pc : put_cpu_partial+0x7c/0x140
++		 *   Call trace: __slab_free / kfree / bucket_table_free_rcu
++		 *
++		 * Values from the BSP's ION_AUDIO_HEAP_PHYS/SIZE.
++		 */
++		acpu_audio_heap: audio-heap@2600000 {
++			reg = <0x02600000 0x00c00000>;
++			no-map;
++		};
++
++		/*
++		 * The video firmware's ION heaps. The ACPU's video path runs
++		 * the whole time -- VO_SetVideoStandard, HDMI infoframes --
++		 * and writes here. Until these were reserved the kernel was
++		 * loaded at 0x08000000, i.e. inside heap 1, so the firmware
++		 * was writing over the kernel's own image and the memory
++		 * after it. Values from ION_MEDIA_HEAP_PHYS1/SIZE1 and
++		 * ION_MEDIA_HEAP_PHYS2/SIZE2 in the BSP.
++		 */
++		ion_media1: media-heap@3200000 {
++			reg = <0x03200000 0x0b800000>;
++			no-map;
++		};
++
++		/*
++		 * The BSP's second media heap, 0x11000000 + 146 MiB, is not
++		 * handed to the firmware, so it is ours. Three pools, so that
++		 * buffers allocated when a stream starts never wait on CMA:
++		 * with the SD card busy, CMA is full of page cache that it
++		 * cannot always move, and coda's 3 MiB frame buffer once
++		 * failed that way (docs/09 §22).
++		 *
++		 * The video output's: scanout buffers for the HDMI out
++		 * (rtd129x-vo), which the audio CPU reads and so must be
++		 * below 512 MiB. fbdev takes 8 MiB.
++		 */
++		ion_media2: media-heap@11000000 {
++			compatible = "shared-dma-pool";
++			reg = <0x11000000 0x03200000>;
++			no-map;
++		};
++
++		/* coda (VE1): ~15 MiB while encoding 1080p */
++		vpu_pool: vpu-pool@14200000 {
++			compatible = "shared-dma-pool";
++			reg = <0x14200000 0x02000000>;
++			no-map;
++		};
++
++		/*
++		 * The HDMI receiver's capture buffers: ustreamer's five plus
++		 * the driver's scratch frame, 19 MiB at 1080p NV12 and 51 MiB
++		 * at 1080p ARGB.
++		 */
++		hdmirx_pool: hdmirx-pool@16200000 {
++			compatible = "shared-dma-pool";
++			reg = <0x16200000 0x04000000>;
++			no-map;
++		};
++
++		/*
++		 * The two regions the BSP u-boot hands the OS as /memreserve/
++		 * entries before it jumps -- seen on the serial console as
++		 *
++		 *   reserving fdt memory region: addr=1f000 size=e1000
++		 *   reserving fdt memory region: addr=1b00000 size=4be000
++		 *
++		 * LK adds neither. On the eMMC path FSBL puts the bootcode at
++		 * 0x20000..0xb37e0 and starts BL31 and OP-TEE, and with only
++		 * 0x20000..0x2ffff reserved here Linux handed the rest out;
++		 * the page allocator then died a few seconds into userspace.
++		 * rtd129x.dtsi already has 0x1f000..0x1ffff as rpc@1f000, so
++		 * the first region starts after it.
++		 */
++		bootcode: bootcode@20000 {
++			reg = <0x00020000 0x000e0000>;
++			no-map;
++		};
++
++		fw_reserved: firmware@1b00000 {
++			reg = <0x01b00000 0x004be000>;
++			no-map;
++		};
++
++		acpu_idmem: acpu-idmem@10000000 {
++			reg = <0x10000000 0x00014000>;
++			no-map;
++		};
++	};
++
++	/*
++	 * The BSP's table (rtd-129x-cpu-dvfs.dtsi): the CPU rail is the
++	 * G2227's DCDC2 (cpu-supply), and g2227-regulator.c moves the L2 rail
++	 * with it.
++	 *
++	 * Except that nothing goes below 1.0 V, the G2227's power-on level.
++	 * The reset button (RESET# to the PMIC's PWRGD) and the watchdog reset
++	 * the SoC but leave the PMIC's outputs where Linux put them, and the
++	 * boot ROM does not start at the BSP's 0.8 V: a reset from an idle
++	 * system hung the board without a single character on the console
++	 * (2026-10-04), while from 1.0125 V it booted. So up to 1.1 GHz only
++	 * the clock scales; the BSP's 800-962.5 mV are not used.
++	 */
++	cpu_opp: opp-table-cpu {
++		compatible = "operating-points-v2";
++		opp-shared;
++
++		opp-300000000 {
++			opp-hz = /bits/ 64 <300000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-400000000 {
++			opp-hz = /bits/ 64 <400000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-500000000 {
++			opp-hz = /bits/ 64 <500000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-600000000 {
++			opp-hz = /bits/ 64 <600000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-700000000 {
++			opp-hz = /bits/ 64 <700000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-800000000 {
++			opp-hz = /bits/ 64 <800000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-900000000 {
++			opp-hz = /bits/ 64 <900000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-1000000000 {
++			opp-hz = /bits/ 64 <1000000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-1100000000 {
++			opp-hz = /bits/ 64 <1100000000>;
++			opp-microvolt = <1000000>;
++			clock-latency-ns = <150000>;
++		};
++		opp-1200000000 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <1012500>;
++			clock-latency-ns = <150000>;
++		};
++		opp-1300000000 {
++			opp-hz = /bits/ 64 <1300000000>;
++			opp-microvolt = <1062500>;
++			clock-latency-ns = <150000>;
++		};
++		opp-1400000000 {
++			opp-hz = /bits/ 64 <1400000000>;
++			opp-microvolt = <1100000>;
++			clock-latency-ns = <150000>;
++		};
++	};
++
++	/* The BSP's cpu-alert0 throttles the CPUs; 130 C is its cpu-crit. */
++	thermal-zones {
++		cpu-thermal {
++			polling-delay-passive = <250>;
++			polling-delay = <1000>;
++			thermal-sensors = <&cpu_tm>;
++
++			trips {
++				cpu_alert: cpu-alert {
++					temperature = <105000>;
++					hysteresis = <3000>;
++					type = "passive";
++				};
++				cpu-crit {
++					temperature = <130000>;
++					hysteresis = <2000>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&cpu_alert>;
++					cooling-device =
++						<&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
++						<&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++	};
++};
++
++/* The sensor next to the CPUs; the wrapper syscon does not claim its range. */
++&scpu_wrapper {
++	cpu_tm: thermal-sensor@150 {
++		compatible = "realtek,rtd1295-thermal";
++		reg = <0x150 0x20>;
++		#thermal-sensor-cells = <0>;
++	};
++};
++
++/*
++ * Shared with the audio CPU, which reads and writes them uncached: the IPC
++ * block (rpc_comm) and the RPC rings. Out of the linear map, so that they
++ * can be mapped uncached on this side too.
++ */
++&rpc_comm {
++	no-map;
++};
++
++&rpc_ringbuf {
++	no-map;
++};
++
++&uart0 {
++	status = "okay";
++};
++
++&crt {
++	/*
++	 * CLK_EN1/CLK_EN2 as gates; kernel/mainline/clk-rtd129x-crt.c.
++	 * Specifier n is bit n of CLK_EN1, or bit n-32 of CLK_EN2.
++	 */
++	crt_clk: clock-controller@c {
++		compatible = "realtek,rtd1295-crt-clk";
++		reg = <0xc 0x8>;
++		#clock-cells = <1>;
++	};
++
++	/*
++	 * The CPU clock, PLL_SCPU (0x500) and its divider (0x30);
++	 * kernel/mainline/clk-rtd129x-scpu.c, through this syscon's regmap.
++	 */
++	scpu_clk: clock-controller@500 {
++		compatible = "realtek,rtd1295-scpu-clk";
++		reg = <0x500 0x20>;
++		#clock-cells = <0>;
++	};
++};
++
++&cpu0 {
++	clocks = <&scpu_clk>;
++	cpu-supply = <&cpu_supply>;
++	operating-points-v2 = <&cpu_opp>;
++	#cooling-cells = <2>;
++};
++
++&cpu1 {
++	clocks = <&scpu_clk>;
++	cpu-supply = <&cpu_supply>;
++	operating-points-v2 = <&cpu_opp>;
++	#cooling-cells = <2>;
++};
++
++&cpu2 {
++	clocks = <&scpu_clk>;
++	cpu-supply = <&cpu_supply>;
++	operating-points-v2 = <&cpu_opp>;
++	#cooling-cells = <2>;
++};
++
++&cpu3 {
++	clocks = <&scpu_clk>;
++	cpu-supply = <&cpu_supply>;
++	operating-points-v2 = <&cpu_opp>;
++	#cooling-cells = <2>;
++};
++
++&iso {
++	/* The ISO clock gates (0x9800708c), same driver; specifier = bit. */
++	iso_clk: clock-controller@8c {
++		compatible = "realtek,rtd1295-iso-clk";
++		reg = <0x8c 0x4>;
++		#clock-cells = <1>;
++	};
++
++	/*
++	 * ISO_MUXPAD0/1: two bits per pin, 0 = GPIO. Mainline has no RTD1295
++	 * pinctrl driver; pinctrl-single covers the few pins needed here.
++	 */
++	iso_pinmux: pinmux@310 {
++		compatible = "pinctrl-single";
++		reg = <0x310 0x8>;
++		#pinctrl-cells = <2>;
++		pinctrl-single,bit-per-mux;
++		pinctrl-single,register-width = <32>;
++		pinctrl-single,function-mask = <0x3>;
++
++		/* i2c_scl_0 bits 23:22, i2c_sda_0 bits 25:24, function 1 */
++		i2c0_pins: i2c0-pins {
++			pinctrl-single,bits = <0x0 0x01400000 0x03c00000>;
++		};
++	};
++
++	/*
++	 * The bus to the G2227 PMIC (schematic page 7). A DesignWare I2C
++	 * (IC_COMP_TYPE 0x44570140, v1.14a) clocked from the 27 MHz crystal.
++	 * The boot loader leaves its pins as GPIOs.
++	 */
++	i2c0: i2c@d00 {
++		compatible = "snps,designware-i2c";
++		reg = <0xd00 0x100>;
++		interrupt-parent = <&iso_irq_mux>;
++		interrupts = <8>;
++		clocks = <&osc27M>, <&iso_clk 9>;
++		clock-names = "ref", "pclk";
++		resets = <&iso_reset RTD1295_ISO_RSTN_I2C_0>;
++		clock-frequency = <100000>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&i2c0_pins>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		/*
++		 * kernel/mainline/g2227-regulator.c. Only DCDC2 can be set;
++		 * the rest are listed for their names and read back as they
++		 * are. The limits are the BSP's OPP table's, not the chip's.
++		 */
++		pmic@12 {
++			compatible = "gmt,g2227";
++			reg = <0x12>;
++
++			regulators {
++				dcdc1 {
++					regulator-name = "vd33";
++				};
++				cpu_supply: dcdc2 {
++					regulator-name = "vdd-cpu";
++					/* never below the power-on level: see cpu_opp */
++					regulator-min-microvolt = <1000000>;
++					regulator-max-microvolt = <1100000>;
++					regulator-always-on;
++					regulator-boot-on;
++				};
++				dcdc3 {
++					regulator-name = "vdd-gpu";
++				};
++				dcdc5 {
++					regulator-name = "vdd-iso";
++				};
++				dcdc6 {
++					regulator-name = "vdd-top";
++				};
++				ldo2 {
++					regulator-name = "vd18";
++				};
++				ldo3 {
++					regulator-name = "vdd-l2";
++				};
++			};
++		};
++	};
++};
++
++&misc {
++	/*
++	 * MISC GPIO 0-100: most of the 40-pin header (docs/10 §7). Realtek's
++	 * mainline driver (gpio-rtd). No gpio-ranges: mainline has no RTD1295
++	 * pinctrl, and the header pins are GPIOs from reset (function 0 in
++	 * MUXPAD 0x9801a908-910; read so on the board after the eMMC u-boot).
++	 *
++	 * The ISO GPIOs (header pins 7, 8, 10, 16, 18, 22) are left out: the
++	 * driver claims 0x98007000-0x980070ff for their interrupt status,
++	 * which overlaps the ISO reset and clock controllers at 0x88/0x8c.
++	 */
++	misc_gpio: gpio@100 {
++		compatible = "realtek,rtd1295-misc-gpio";
++		reg = <0x100 0x100>, <0x0 0xc0>;
++		interrupt-parent = <&misc_irq_mux>;
++		interrupts = <19>, <20>;	/* assert, deassert */
++		gpio-controller;
++		#gpio-cells = <2>;
++	};
++};
++
++/* CLK_EN_USB, CLK_EN1 bit 4 */
++#define RTD129X_CLK_EN_USB	4
++
++/*
++ * Every reset line the BSP u-boot releases in `usb start`
++ * (arch/arm/cpu/armv8/rtd1295/usb.c, rtk_usb_clock_init). They are shared
++ * by all the controllers, so each dwc3 lists all of them; dwc3 takes them
++ * as a shared array and releases them before it touches the core.
++ */
++#define RTD129X_USB_RESETS \
++	<&reset1 RTD1295_RSTN_USB3_PHY0_POW>, \
++	<&reset1 RTD1295_RSTN_USB3_P0_MDIO>, \
++	<&reset1 RTD1295_RSTN_USB>, \
++	<&reset1 RTD1295_RSTN_USB_PHY0>, \
++	<&reset1 RTD1295_RSTN_USB_PHY1>, \
++	<&reset2 RTD1295_RSTN_USB_PHY3>, \
++	<&reset2 RTD1295_RSTN_USB_PHY2>, \
++	<&reset2 RTD1295_RSTN_USB3_PHY1_POW>, \
++	<&reset2 RTD1295_RSTN_USB3_P1_MDIO>
++
++/*
++ * USB host ports.
++ *
++ * These belong in rtd129x.dtsi/rtd1296.dtsi eventually -- they describe the
++ * SoC, not the board -- but they are still moving, and the board .dts is a
++ * plain file while the .dtsi changes are patches. They move once they work.
++ *
++ * Addresses come from the BSP's rtd-129x-usb.dtsi, but the wrapper length
++ * is 0x140, not the BSP's 0x200: the second reg entry (the pm control
++ * register) sits at wrapper+0x160, so a 0x200 window swallows it and the
++ * driver's own second request collides with its first --
++ *   rtk-dwc3 98013c00.usb: error -EBUSY: can't request region for resource
++ *   [mem 0x98013d60-0x98013d63]
++ * which is why the upstream binding example uses 0x140.
++ * Note the usb2phy reg
++ * order is the reverse of the BSP's: mainline's binding is
++ * <PHY data (wrapper)>, <PHY control (dwc3 core)>, and phy-rtk-usb2.c maps
++ * index 0 to reg_wrap_vstatus and index 1 to reg_gusb2phyacc0.
++ *
++ * Port 0 is the Type-C port, as a device (below). Port 2, the EHCI/OHCI
++ * pair, is not here: mainline has no driver for the BSP's
++ * "Realtek,rtd129x-ehci".
++ *
++ * The USB clock gate and resets used to be left to the bootloader. LK runs
++ * `usb start` and leaves them open, but the BSP u-boot on an SD boot does
++ * not, and dwc3 then read garbage from GSNPSID. They are now claimed below
++ * through crt_clk and reset1/reset2. Port power (VBUS) is still whatever
++ * the bootloader set, since the BSP drives it from its "Realtek,usb-manager"
++ * through GPIOs and mainline has no equivalent. It measured on after an SD
++ * boot: the onboard hub enumerated.
++ */
++&rbus {
++	/*
++	 * The SD card slot.
++	 *
++	 * Only the card reader core is claimed. The BSP's node also maps the
++	 * CRT/PLL block, SB2 and the DMA engine shared with the eMMC
++	 * controller, but the first three overlap nodes rtd129x.dtsi already
++	 * has -- CRT is `crt: syscon@0`, which requests its region, so asking
++	 * for it here fails:
++	 *
++	 *   rtd129x-sdmmc 98000000.mmc: error -EBUSY: can't request region for
++	 *   resource [mem 0x98000000-0x980003ff]
++	 *
++	 * The clock generator, CR_SD_CKGEN_CTL, is inside the core at offset
++	 * 0x78. The SD PLL in CRT is reached through the crt syscon
++	 * (realtek,crt) rather than a second mapping.
++	 *
++	 * No clocks or resets either: there is no clk or reset driver for this
++	 * SoC in mainline and the driver treats both as optional, because the
++	 * bootloader has already used this controller to read the kernel.
++	 */
++	sdmmc: mmc@10400 {
++		compatible = "realtek,rtd1295-sdmmc";
++		/*
++		 * The second range is the card reader's pads, in the eMMC
++		 * block but outside its node: PFUNC_CR, the pad of the SD
++		 * power switch (prob_2) and the drive strength.
++		 */
++		reg = <0x10400 0x200>, <0x12600 0x40>;
++		clocks = <&crt_clk 25>, <&crt_clk 31>;	/* CLK_EN1: CR, SD_IP */
++		clock-names = "cr", "sd_ip";
++		resets = <&reset2 RTD1295_RSTN_CR>;
++		/*
++		 * The SD PLL (PLL_SD3/4) is in CRT. The driver sets it to a
++		 * known 100 MHz, which is what makes high speed (50 MHz)
++		 * possible; without this it stays at its slow settings.
++		 */
++		realtek,crt = <&crt>;
++		interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
++		bus-width = <4>;
++		cap-sd-highspeed;
++	};
++
++	/*
++	 * The mini DisplayPort output. The audio firmware's video output
++	 * feeds it; rtd129x-vo (kernel/mainline/acpu/acpu-dp.c) sets up the
++	 * transmitter and trains the link when the HPD line (ISO GPIO 7)
++	 * goes high. Registers: the transmitter, the LVDS/AIF timing
++	 * generator in front of it, and VO's DP output switch. Mapped, not
++	 * claimed: VO is the firmware's.
++	 */
++	dptx: dp@3d000 {
++		compatible = "realtek,rtd1295-dptx";
++		reg = <0x3d000 0x1000>, <0x9400 0x600>, <0x5000 0x1000>;
++		clocks = <&crt_clk 14>, <&crt_clk 16>;	/* CLK_EN1: TVE, LVDS */
++		clock-names = "tve", "lvds";
++		resets = <&reset1 RTD1295_RSTN_TVE>, <&reset1 RTD1295_RSTN_LVDS>;
++		reset-names = "tve", "lvds";
++		realtek,crt = <&crt>;	/* the pixel and link PLLs */
++		realtek,iso = <&iso>;	/* HPD, ISO GPIO 7 */
++	};
++
++	/*
++	 * The 8 GB eMMC: a DesignWare MSHC with a Realtek wrapper at +0x400
++	 * (kernel/mainline/emmc-rtd129x.c). The boot loader has set up its
++	 * pins, pads and 1.8 V; the driver sets the EMMC PLL in CRT, and
++	 * syncs SB2 before each DMA. No resets: RSTN_EMMC would also reset
++	 * the wrapper's clock generator that the boot loader set.
++	 */
++	emmc: mmc@12000 {
++		compatible = "realtek,rtd1295-emmc";
++		reg = <0x12000 0x600>;
++		interrupts = <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&crt_clk 24>, <&crt_clk 28>;	/* CLK_EN1: EMMC, EMMC_IP */
++		clock-names = "biu", "ip";
++		realtek,crt = <&crt>;	/* the EMMC PLL */
++		realtek,sb2 = <&sb2>;	/* to sync posted writes before DMA */
++		bus-width = <8>;
++		max-frequency = <200000000>;
++		cap-mmc-highspeed;
++		mmc-hs200-1_8v;
++		non-removable;
++		no-sd;
++		no-sdio;
++	};
++
++	/*
++	 * The RJ45 next to the USB ports: the SoC's own gigabit MAC and PHY.
++	 * (The second RJ45 is the hwnat switch, which has no usable driver --
++	 * see docs/06-changes.md.)
++	 *
++	 * Realtek's binding, from the BSP's rtd-1296.dtsi, with the clocks
++	 * dropped: there is no clock driver for this SoC in mainline and
++	 * r8169soc gates the ETN clocks through the ISO block itself. The
++	 * second reg is that ISO block. rtd129x.dtsi already has it as
++	 * `iso: syscon@7000`, but the driver maps it with of_iomap(), which
++	 * does not request the region, so the overlap does not collide the
++	 * way the SD host's CRT window did.
++	 */
++	gmac: ethernet@16000 {
++		compatible = "Realtek,r8168";
++		reg = <0x16000 0x1000>, <0x7000 0x1000>;
++		interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>;
++		resets = <&iso_reset RTD1295_ISO_RSTN_GMAC>,
++			 <&iso_reset RTD1295_ISO_RSTN_GPHY>;
++		reset-names = "gmac", "gphy";
++		realtek,sb2 = <&sb2>;	/* to sync descriptors out to DDR */
++		rtl-config = <1>;
++		mac-version = <42>;	/* RTL_GIGA_MAC_VER_42 */
++		output-mode = <0>;	/* embedded PHY */
++		rgmii-voltage = <1>;
++		rgmii-tx-delay = <0>;
++		rgmii-rx-delay = <0>;
++		ext-phy-id = <1>;
++	};
++
++	/*
++	 * The audio CPU's RPC (rtk_rpc in the BSP). The registers are SB2's
++	 * CPU_INT/CPU_INT_EN, inside the sb2 syscon, so the driver maps them
++	 * without claiming them. The audio firmware's memory requests are
++	 * served from media heap 1, as the BSP's ION does; buffers shared
++	 * with it come from the audio heap.
++	 */
++	acpu: audio-cpu@1a104 {
++		compatible = "realtek,rtd1295-acpu";
++		reg = <0x1a104 0xc>;
++		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
++		memory-region = <&rpc_comm>, <&rpc_ringbuf>,
++				<&acpu_audio_heap>, <&ion_media1>, <&acpu_fw>,
++				<&ion_media2>;
++		memory-region-names = "comm", "ring", "audio", "media",
++				      "firmware", "vo";
++	};
++
++	/*
++	 * HDMI input. kernel/mainline/hdmirx is Realtek's BSP driver with its
++	 * V4L2 side rewritten for mainline; see docs/09 §10.
++	 *
++	 * Registers, in the order the driver indexes them: CBUS, the HDMI RX
++	 * MAC/PHY, the RX wrapper, DDC, the MIPI PHY and the MIPI wrapper, from
++	 * the BSP's rtd-1296.dtsi. "iso" and "crt" are mapped without being
++	 * requested (both blocks belong to syscons in rtd129x.dtsi): the driver
++	 * drives HPD and the DDC pin mux in ISO, and powers the RX SRAM in CRT.
++	 */
++	hdmirx: hdmirx@34000 {
++		compatible = "realtek,rtd1295-hdmirx";
++		memory-region = <&hdmirx_pool>;
++		reg = <0x37000 0xe0>,
++		      <0x34000 0xf54>,
++		      <0x35f00 0x2c>,
++		      <0x37700 0x98>,
++		      <0x04000 0xf0>,
++		      <0x04100 0x104>,
++		      <0x07000 0x1000>,
++		      <0x00000 0x1000>;
++		reg-names = "cbus", "mac", "wrapper", "ddc", "mipi-phy", "mipi",
++			    "iso", "crt";
++		interrupts = <GIC_SPI 23 IRQ_TYPE_LEVEL_HIGH>;
++
++		clocks = <&crt_clk 56>,		/* CLK_EN2 24: HDMIRX */
++			 <&crt_clk 27>,		/* CLK_EN1 27: MIPI */
++			 <&crt_clk 39>,		/* CLK_EN2 7: CBUS_TX */
++			 <&iso_clk 6>,		/* CBUS_OSC */
++			 <&iso_clk 5>,		/* CBUS_SYS */
++			 <&iso_clk 4>,		/* CBUSTX_SYS */
++			 <&iso_clk 3>;		/* CBUSRX_SYS */
++		clock-names = "hdmirx", "mipi", "cbus_tx", "cbus_osc",
++			      "cbus_sys", "cbustx_sys", "cbusrx_sys";
++		resets = <&reset4 RTD1295_RSTN_HDMIRX>,
++			 <&reset4 RTD1295_RSTN_HDMIRX_WRAP>,
++			 <&reset1 RTD1295_RSTN_MIPI>,
++			 <&reset2 RTD1295_RSTN_CBUS_TX>,
++			 <&iso_reset RTD1295_ISO_RSTN_CBUS>,
++			 <&iso_reset RTD1295_ISO_RSTN_CBUSTX>,
++			 <&iso_reset RTD1295_ISO_RSTN_CBUSRX>,
++			 <&reset4 RTD1295_RSTN_DISP>;	/* see hdmirx_clk_ctrl.c */
++		reset-names = "hdmirx", "hdmirx_wrap", "mipi", "cbus_tx",
++			      "cbus", "cbustx", "cbusrx", "disp";
++
++		/*
++		 * HPD: ISO GPIO 22, through an inverter. Source 5V is sensed
++		 * over CBUS, not on a GPIO -- the BSP's BPI board file put
++		 * 5V-detect on this same pin, which deadlocked HPD
++		 * (docs/04-hdmi-rx-bringup.md, blocker 1).
++		 */
++		realtek,hpd-iso-pin = <22>;
++
++		/*
++		 * EDID served to the source: Realtek's default table from the
++		 * BSP's rtd-1295-hdmirxEDID.dtsi (1080p60 preferred, the CEA
++		 * block with an HDMI VSDB), and its HDMI 2.0 variant.
++		 */
++		realtek,edid = [
++			00 ff ff ff ff ff ff 00 4a 8b 95 12 00 00 00 00
++			ff 1a 01 03 81 46 27 78 8a a5 8e a6 54 4a 9c 26
++			12 45 46 21 08 00 d1 c0 81 c0 01 01 01 01 01 01
++			01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++			45 00 20 c2 31 00 00 1e 01 1d 00 72 51 d0 1e 20
++			6e 28 55 00 20 c2 31 00 00 1e 00 00 00 fd 00 32
++			4b 18 3c 0b 00 0a 20 20 20 20 20 20 00 00 00 fc
++			00 52 54 44 31 32 39 35 0a 20 20 20 20 20 01 ac
++			02 03 29 71 83 01 00 00 6e 03 0c 00 10 00 00 3c
++			20 00 80 01 02 03 04 49 90 1f 22 20 05 14 04 11
++			02 23 09 7f 07 e3 05 03 00 02 3a 80 18 71 38 2d
++			40 58 2c 45 00 20 c2 31 00 00 1e 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 7f
++		];
++		realtek,edid-hdmi20 = [
++			00 ff ff ff ff ff ff 00 4a 8b 95 12 00 00 00 00
++			ff 1a 01 03 81 46 27 78 8a a5 8e a6 54 4a 9c 26
++			12 45 46 21 08 00 d1 c0 81 c0 01 01 01 01 01 01
++			01 01 01 01 01 01 02 3a 80 18 71 38 2d 40 58 2c
++			45 00 20 c2 31 00 00 1e 01 1d 00 72 51 d0 1e 20
++			6e 28 55 00 20 c2 31 00 00 1e 00 00 00 fd 00 32
++			4b 18 3c 0b 00 0a 20 20 20 20 20 20 00 00 00 fc
++			00 52 54 44 31 32 39 35 0a 20 20 20 20 20 01 ac
++			02 03 3a 71 83 01 00 00 6e 03 0c 00 10 00 00 3c
++			20 00 80 01 02 03 04 67 d8 5d c4 01 77 80 00 4f
++			5d 5e 5f 60 61 62 90 1f 22 20 05 14 04 11 02 23
++			09 7f 07 e3 05 03 00 e2 0f 18 08 e8 00 30 f2 70
++			5a 80 b0 58 8a 00 20 c2 31 00 00 1e 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++			00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 8f
++		];
++	};
++
++	/*
++	 * VE1: a Chips&Media CODA980 (product code 0x9800 at +0x1044), the
++	 * H.264 encoder ustreamer uses through the mainline coda driver. VE2,
++	 * a WAVE410 decoder at +0x4000, is left alone. Only the clock gate and
++	 * reset come through the clock and reset drivers; the SRAM power domain
++	 * and isolation are CRT registers the driver writes through the syscon.
++	 * From the BSP's rtd-1296.dtsi (ve1@98040000).
++	 */
++	vpu: video-codec@40000 {
++		compatible = "realtek,rtd1295-vpu";
++		reg = <0x40000 0x4000>;
++		interrupts = <GIC_SPI 53 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-names = "bit";
++		clocks = <&crt_clk 12>, <&crt_clk 12>;	/* CLK_EN1 12: VE1 */
++		clock-names = "per", "ahb";
++		resets = <&reset1 RTD1295_RSTN_VE1>;
++		realtek,crt = <&crt>;
++		memory-region = <&vpu_pool>;
++	};
++
++	/*
++	 * Port 0: the Type-C connector, as a USB device. It is how PiKVM
++	 * presents its keyboard, mouse and mass storage to the target (kvmd-otg
++	 * builds the gadget through configfs), so it is pinned to peripheral.
++	 * No role switching and no CC handling: the port is meant to be cabled
++	 * to the target, which supplies VBUS, and the board is powered from the
++	 * DC jack. The BSP ended up in the same place on the main branch
++	 * (docs/06-changes.md, patch 0006) after its Type-C driver kept flipping
++	 * the port to host.
++	 *
++	 * Addresses from the BSP's rtd-129x-usb.dtsi, arranged like the host
++	 * ports below (wrapper length 0x140; usb2phy reg order is <wrapper>,
++	 * <dwc3 core>).
++	 */
++	usb_drd_usb2phy: usb-phy@13214 {
++		compatible = "realtek,rtd1295-usb2phy";
++		reg = <0x13214 0x4>, <0x28280 0x4>;
++		#phy-cells = <0>;
++	};
++
++	usb_drd_usb3phy: usb-phy@13210 {
++		compatible = "realtek,rtd1295-usb3phy";
++		reg = <0x13210 0x4>;
++		#phy-cells = <0>;
++	};
++
++	usb@13200 {
++		compatible = "realtek,rtd1295-dwc3", "realtek,rtd-dwc3";
++		reg = <0x13200 0x140>, <0x13360 0x4>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		usb@20000 {
++			compatible = "snps,dwc3";
++			clocks = <&crt_clk RTD129X_CLK_EN_USB>;
++			clock-names = "bus_early";
++			resets = RTD129X_USB_RESETS;
++			reg = <0x20000 0x9000>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++			phys = <&usb_drd_usb2phy>, <&usb_drd_usb3phy>;
++			phy-names = "usb2-phy", "usb3-phy";
++			dr_mode = "peripheral";
++			snps,dis_u2_susphy_quirk;
++		};
++	};
++
++	/* Port 1: USB 2.0 host */
++	usb_u2host_usb2phy: usb-phy@13c14 {
++		compatible = "realtek,rtd1295-usb2phy";
++		reg = <0x13c14 0x4>, <0x31280 0x4>;
++		#phy-cells = <0>;
++	};
++
++	usb@13c00 {
++		compatible = "realtek,rtd1295-dwc3", "realtek,rtd-dwc3";
++		reg = <0x13c00 0x140>, <0x13d60 0x4>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		usb@29000 {
++			compatible = "snps,dwc3";
++			clocks = <&crt_clk RTD129X_CLK_EN_USB>;
++			clock-names = "bus_early";
++			resets = RTD129X_USB_RESETS;
++			reg = <0x29000 0x9000>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++			phys = <&usb_u2host_usb2phy>;
++			phy-names = "usb2-phy";
++			dr_mode = "host";
++			maximum-speed = "high-speed";
++			snps,dis_u2_susphy_quirk;
++		};
++	};
++
++	/* Port 3: USB 3.0 host */
++	usb_u3host_usb2phy: usb-phy@13e14 {
++		compatible = "realtek,rtd1295-usb2phy";
++		reg = <0x13e14 0x4>, <0x1f8280 0x4>;
++		#phy-cells = <0>;
++	};
++
++	usb_u3host_usb3phy: usb-phy@13e10 {
++		compatible = "realtek,rtd1295-usb3phy";
++		reg = <0x13e10 0x4>;
++		#phy-cells = <0>;
++	};
++
++	usb@13e00 {
++		compatible = "realtek,rtd1295-dwc3", "realtek,rtd-dwc3";
++		reg = <0x13e00 0x140>, <0x13f60 0x4>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		usb@1f0000 {
++			compatible = "snps,dwc3";
++			clocks = <&crt_clk RTD129X_CLK_EN_USB>;
++			clock-names = "bus_early";
++			resets = RTD129X_USB_RESETS;
++			reg = <0x1f0000 0x9000>;
++			interrupts = <GIC_SPI 21 IRQ_TYPE_LEVEL_HIGH>;
++			phys = <&usb_u3host_usb2phy>, <&usb_u3host_usb3phy>;
++			phy-names = "usb2-phy", "usb3-phy";
++			dr_mode = "host";
++			snps,dis_u2_susphy_quirk;
++		};
++	};
++};
++
++/*
++ * The second RJ45 (dts/nat-eth.dtsi): port 5 of the NAT engine, driver
++ * rtd1295-hwnat (kernel/src, patch 0019).
++ */
++&rbus {
++	nat: ethernet@60000 {
++		compatible = "realtek,rtd1295-hwnat";
++		reg = <0x60000 0x170000>;
++		interrupts = <GIC_SPI 24 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&crt_clk 32>;			/* CLK_EN2 0: NAT */
++		resets = <&reset1 RTD1295_RSTN_NAT>;
++		realtek,sb2 = <&sb2>;			/* RGMII0 pad control */
++		/* the RTL8211F's RX delay is strapped on, TX delay is set by its driver */
++		phy-mode = "rgmii-id";
++		phy-handle = <&nat_phy>;
++
++		mdio {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			nat_phy: ethernet-phy@1 {
++				reg = <1>;
++				realtek,clkout-disable;
++			};
++		};
++	};
++};
++
++/*
++ * SATA and the IR receiver (dts/sata.dtsi, dts/ir.dtsi): the generic AHCI
++ * driver with phy-rtd1295-sata (patch 0020), and rtd1295-ir (patch 0021).
++ */
++/*
++ * BPI-W2: SATA (docs/sata.md). Appended to the board DTS, which already
++ * includes the GIC and RTD1295 reset headers.
++ *
++ * The AHCI controller is the generic one (ahci_platform); its PHYs need
++ * phy-rtd1295-sata (kernel/src). Both ports are described; the board
++ * has a connector for each (CN12/CN15, schematic "SATA/USB HUB").
++ */
++#include <dt-bindings/gpio/gpio.h>
++
++/ {
++	/* 5VS_HDD and 12VS_HDD: load switches enabled by HDD0_PWR = GPIO 56 */
++	hdd_power: regulator-hdd-power {
++		compatible = "regulator-fixed";
++		regulator-name = "hdd-power";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&misc_gpio 56 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++};
++
++&rbus {
++	/* the AHCI block's wrapper registers, with the PHYs' MDIO */
++	sata_phy: phy@3ff00 {
++		compatible = "realtek,rtd1295-sata-phy";
++		reg = <0x3ff00 0x100>;
++		clocks = <&crt_clk 7>, <&crt_clk 58>;	/* CLK_EN1 7, CLK_EN2 26: SATA_ALIVE_0/1 */
++		clock-names = "alive0", "alive1";
++		resets = <&reset1 RTD1295_RSTN_SATA_PHY_0>,
++			 <&reset1 RTD1295_RSTN_SATA_PHY_POW_0>,
++			 <&reset4 RTD1295_RSTN_SATA_PHY_1>,
++			 <&reset4 RTD1295_RSTN_SATA_PHY_POW_1>;
++		reset-names = "phy0", "pow0", "phy1", "pow1";
++		realtek,sb2 = <&sb2>;			/* SATA_PHY_CTRL, chip revision */
++		#phy-cells = <1>;
++	};
++
++	sata: sata@3f000 {
++		compatible = "realtek,rtd1295-ahci", "generic-ahci";
++		reg = <0x3f000 0xf00>;
++		interrupts = <GIC_SPI 28 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&crt_clk 2>, <&crt_clk 57>;	/* CLK_EN1 2, CLK_EN2 25: SATA_0/1 */
++		resets = <&reset1 RTD1295_RSTN_SATA_0>,
++			 <&reset4 RTD1295_RSTN_SATA_1>;
++		ports-implemented = <0x3>;		/* reads 0 out of reset */
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		sata-port@0 {
++			reg = <0>;
++			phys = <&sata_phy 0>;
++			target-supply = <&hdd_power>;
++		};
++
++		sata-port@1 {
++			reg = <1>;
++			phys = <&sata_phy 1>;
++			target-supply = <&hdd_power>;
++		};
++	};
++};
++
++/*
++ * BPI-W2: the IR receiver (docs/ir.md). Appended to the board DTS, which
++ * already has the ISO clock gates and pin mux nodes it refers to.
++ */
++
++&iso_pinmux {
++	/* IR_RX: ISO_MUXPAD0 bits 7:6, function 1 */
++	ir_rx_pins: ir-rx-pins {
++		pinctrl-single,bits = <0x0 0x00000040 0x000000c0>;
++	};
++};
++
++&iso {
++	ir: ir@400 {
++		compatible = "realtek,rtd1295-ir";
++		reg = <0x400 0x100>;
++		interrupt-parent = <&iso_irq_mux>;
++		interrupts = <5>;
++		clocks = <&iso_clk 7>, <&osc27M>;	/* ISO CLK_EN bit 7: IR; sampling */
++		clock-names = "bus", "ref";
++		resets = <&iso_reset RTD1295_ISO_RSTN_IR>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&ir_rx_pins>;
++	};
++};

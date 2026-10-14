@@ -1,0 +1,617 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:58 +0200
+Subject: [PATCH 12/22] media: coda: add the Realtek RTD129x CODA980 (VE1)
+
+VE1 on the RTD1295/1296 is a Chips&Media CODA980 (product code 0x9800)
+behind a Realtek wrapper. It runs as a CODA960 -- same CODA9 register map and
+command set -- with these differences, found against Realtek's BSP driver and
+the Android libvpu (both in BPI's trees):
+
+- Power: the SRAM power domain, reset and isolation are CRT registers, and
+  the wrapper must enable its command interface (CTI) before any core
+  register answers; until then reads end in an SB2 timeout (0xdeadbeef).
+  The reset controller (snps,dw-low-reset) has no .reset, so the reset in
+  coda_hw_reset() -- run after every SEQ_END on a CODA960 -- returned early
+  and left the GDI bus stopped: every later SEQ_INIT hung.
+- FRAME_MEM_CTRL: bits 12:9 are the frame map type and BWB moved to bit 15.
+  The CODA960 BWB bit selected a tiled field map, and every pixel was read
+  from the frame's first address.
+- GDI 2.0: the GDI 1.0 tables have other registers at those offsets; leave
+  the GDI alone for linear frames, as libvpu does. No tiled maps.
+- The firmware reads command parameters the CODA960 path never writes
+  (the SPS came out as High profile with a bogus bit depth); zero them
+  first. The SPS frame-crop flag is bit 2, not 3.
+- No subsampled frames, a 470 KiB temp buffer, no JPEG engine, no IRAM.
+- The source's chroma layout is a per-picture flag (ENC_PIC_ROT_MODE bit
+  18): without it NV12 is read as planar and Cr comes from elsewhere in the
+  picture.
+- The CODA960 frame cache settings make it read stale reference data, so
+  colour edges drift with every P-frame; leave the cache alone, as libvpu
+  does.
+- Early in boot the first power-on of its SRAM domain is not acked; power
+  it off and on again.
+- The firmware reports product 0xe428 (CODA980), version 3.0.1.
+
+Also create V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, which coda_s_ctrl()
+handles but nothing registered.
+
+Only the H.264 encoder is exposed: it is what was verified (1080p at about
+60 fps, from the HDMI receiver through DMA-BUF).
+
+Also: take a memory-region if the device tree gives one. Frame buffers
+are allocated when a stream starts, and on a board whose SD card is busy
+CMA can fail to move page cache out of the way in time (-ENOMEM with
+three quarters of the area free); a pool of its own never has to.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../media/platform/chips-media/coda/Kconfig   |   3 +-
+ .../platform/chips-media/coda/coda-bit.c      |  75 ++++++--
+ .../platform/chips-media/coda/coda-common.c   | 160 +++++++++++++++++-
+ .../platform/chips-media/coda/coda-gdi.c      |  10 ++
+ .../media/platform/chips-media/coda/coda.h    |  10 ++
+ .../platform/chips-media/coda/coda_regs.h     |   7 +
+ 6 files changed, 244 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/Kconfig b/drivers/media/platform/chips-media/coda/Kconfig
+index cb7b66c71380..60b3d0a79e29 100644
+--- a/drivers/media/platform/chips-media/coda/Kconfig
++++ b/drivers/media/platform/chips-media/coda/Kconfig
+@@ -3,7 +3,8 @@
+ config VIDEO_CODA
+ 	tristate "Chips&Media Coda multi-standard codec IP"
+ 	depends on V4L_MEM2MEM_DRIVERS
+-	depends on VIDEO_DEV && OF && (ARCH_MXC || COMPILE_TEST)
++	depends on VIDEO_DEV && OF && (ARCH_MXC || ARCH_REALTEK || COMPILE_TEST)
++	select MFD_SYSCON if ARCH_REALTEK
+ 	select SRAM
+ 	select VIDEOBUF2_DMA_CONTIG
+ 	select VIDEOBUF2_VMALLOC
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index 84ded154adfe..32f4b5b8b859 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -132,9 +132,14 @@ int coda_hw_reset(struct coda_ctx *ctx)
+ 		}
+ 	}
+ 
+-	ret = reset_control_reset(dev->rstc);
+-	if (ret < 0)
+-		return ret;
++	if (dev->devtype->rtd129x) {
++		/* no .reset on its reset controller; this also redoes the wrapper */
++		coda_rtd129x_power_on(dev);
++	} else {
++		ret = reset_control_reset(dev->rstc);
++		if (ret < 0)
++			return ret;
++	}
+ 
+ 	if (dev->devtype->product == CODA_960)
+ 		coda_write(dev, 0x00, CODA9_GDI_BUS_CTRL);
+@@ -619,6 +624,27 @@ static int coda_alloc_context_buffers(struct coda_ctx *ctx,
+ 	return ret;
+ }
+ 
++/*
++ * The CODA980 firmware reads command parameters the CODA960 code never
++ * writes, and the parameter registers are shared with the previous command's
++ * parameters and return values. Zero them before a command's parameters go
++ * in, so nothing stale is taken as an option. The ENCODE_HEADER command, for
++ * one, reads CABAC, 8x8 transform, chroma format, field and profile settings
++ * at 0x194-0x1a8, where SEQ_INIT left the frame rate, 264_PARA, slice mode
++ * and GOP size: the SPS came out as High profile with a bogus bit depth.
++ * Zero is what is wanted there: CAVLC, 4x4, 4:2:0, frames, Baseline.
++ */
++static void coda980_clear_params(struct coda_dev *dev)
++{
++	int reg;
++
++	if (dev->devtype->fw_product != CODA_980)
++		return;
++
++	for (reg = 0x180; reg < 0x200; reg += 4)
++		coda_write(dev, 0, reg);
++}
++
+ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 			      int header_code, u8 *header, int *size)
+ {
+@@ -633,6 +659,7 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 	if (dev->devtype->product == CODA_960)
+ 		memset(vb2_plane_vaddr(vb, 0), 0, 64);
+ 
++	coda980_clear_params(dev);
+ 	coda_write(dev, vb2_dma_contig_plane_dma_addr(vb, 0),
+ 		   CODA_CMD_ENC_HEADER_BB_START);
+ 	bufsize = vb2_plane_size(vb, 0);
+@@ -653,7 +680,9 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 				   CODA9_CMD_ENC_HEADER_FRAME_CROP_H);
+ 			coda_write(dev, crop_bottom,
+ 				   CODA9_CMD_ENC_HEADER_FRAME_CROP_V);
+-			header_code |= CODA9_HEADER_FRAME_CROP;
++			header_code |= dev->devtype->fw_product == CODA_980 ?
++				       CODA980_HEADER_FRAME_CROP :
++				       CODA9_HEADER_FRAME_CROP;
+ 		}
+ 	}
+ 	coda_write(dev, header_code, CODA_CMD_ENC_HEADER_CODE);
+@@ -977,7 +1006,7 @@ int coda_check_firmware(struct coda_dev *dev)
+ 	clk_disable_unprepare(dev->clk_per);
+ 	clk_disable_unprepare(dev->clk_ahb);
+ 
+-	if (product != dev->devtype->product) {
++	if (product != (dev->devtype->fw_product ?: dev->devtype->product)) {
+ 		v4l2_err(&dev->v4l2_dev,
+ 			 "Wrong firmware. Hw: %s, Fw: %s, Version: %u.%u.%u\n",
+ 			 coda_product_name(dev->devtype->product),
+@@ -1099,6 +1128,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 
+ 	mutex_lock(&dev->coda_mutex);
+ 
++	coda980_clear_params(dev);
+ 	coda_write(dev, ctx->parabuf.paddr, CODA_REG_BIT_PARA_BUF_ADDR);
+ 	coda_write(dev, bitstream_buf, CODA_REG_BIT_RD_PTR(ctx->reg_idx));
+ 	coda_write(dev, bitstream_buf, CODA_REG_BIT_WR_PTR(ctx->reg_idx));
+@@ -1342,6 +1372,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		num_fb = 0;
+ 		stride = 0;
+ 	}
++	coda980_clear_params(dev);
+ 	coda_write(dev, num_fb, CODA_CMD_SET_FRAME_BUF_NUM);
+ 	coda_write(dev, stride, CODA_CMD_SET_FRAME_BUF_STRIDE);
+ 
+@@ -1365,13 +1396,25 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 			coda_write(dev, ctx->iram_info.buf_btp_use,
+ 					CODA9_CMD_SET_FRAME_AXI_BTP_ADDR);
+ 
+-			coda9_set_frame_cache(ctx, q_data_src->fourcc);
++			/*
++			 * The CODA960 frame cache settings make the CODA980
++			 * read stale reference data: colour edges drift, a bit
++			 * more with every P-frame. libvpu leaves the cache
++			 * alone in this configuration, and so does this.
++			 */
++			if (dev->devtype->fw_product != CODA_980)
++				coda9_set_frame_cache(ctx, q_data_src->fourcc);
+ 
+-			/* FIXME */
+-			coda_write(dev, ctx->internal_frames[2].buf.paddr,
+-				   CODA9_CMD_SET_FRAME_SUBSAMP_A);
+-			coda_write(dev, ctx->internal_frames[3].buf.paddr,
+-				   CODA9_CMD_SET_FRAME_SUBSAMP_B);
++			/*
++			 * FIXME. The CODA980 has no subsampled frames; these
++			 * offsets are its slice buffer there, left at zero.
++			 */
++			if (dev->devtype->fw_product != CODA_980) {
++				coda_write(dev, ctx->internal_frames[2].buf.paddr,
++					   CODA9_CMD_SET_FRAME_SUBSAMP_A);
++				coda_write(dev, ctx->internal_frames[3].buf.paddr,
++					   CODA9_CMD_SET_FRAME_SUBSAMP_B);
++			}
+ 		}
+ 	}
+ 
+@@ -1587,8 +1630,18 @@ static int coda_prepare_encode(struct coda_ctx *ctx)
+ 	}
+ 
+ 	/* submit */
++	coda980_clear_params(dev);
+ 	if (ctx->params.rot_mode)
+ 		rot_mode = CODA_ROT_MIR_ENABLE | ctx->params.rot_mode;
++	/*
++	 * The CODA980 takes the source's chroma layout per picture, not from
++	 * FRAME_MEM_CTRL: without this flag NV12's interleaved chroma is read
++	 * as planar, and Cr comes from elsewhere in the picture (Realtek's
++	 * libvpu, Coda9VpuEncode: FrameBuffer.cbcrInterleave << 18).
++	 */
++	if (dev->devtype->fw_product == CODA_980 &&
++	    q_data_src->fourcc == V4L2_PIX_FMT_NV12)
++		rot_mode |= CODA980_ROT_SRC_CBCR_INTERLEAVE;
+ 	coda_write(dev, rot_mode, CODA_CMD_ENC_PIC_ROT_MODE);
+ 	coda_write(dev, quant_param, CODA_CMD_ENC_PIC_QS);
+ 
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index 9a57b042d9fd..4b2f7bcc9ba0 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -7,6 +7,7 @@
+  *    Xavier Duret
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
+@@ -18,6 +19,7 @@
+ #include <linux/io.h>
+ #include <linux/irq.h>
+ #include <linux/kfifo.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
+@@ -26,6 +28,7 @@
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ #include <linux/ratelimit.h>
++#include <linux/regmap.h>
+ #include <linux/reset.h>
+ 
+ #include <media/v4l2-ctrls.h>
+@@ -36,6 +39,7 @@
+ #include <media/videobuf2-v4l2.h>
+ #include <media/videobuf2-dma-contig.h>
+ #include <media/videobuf2-vmalloc.h>
++#include <linux/of_reserved_mem.h>
+ 
+ #include "coda.h"
+ #include "imx-vdoa.h"
+@@ -298,6 +302,18 @@ static const struct coda_video_device *coda9_video_devices[] = {
+ 	&coda_bit_decoder,
+ };
+ 
++/*
++ * The RTD129x CODA980: only what has been verified on it, the H.264 encoder.
++ * It has no JPEG engine either; Realtek put a separate JPU next to it.
++ */
++static const struct coda_codec coda980_rtd129x_codecs[] = {
++	CODA_CODEC(CODA9_MODE_ENCODE_H264, V4L2_PIX_FMT_YUV420, V4L2_PIX_FMT_H264,   1920, 1088),
++};
++
++static const struct coda_video_device *coda980_rtd129x_video_devices[] = {
++	&coda_bit_encoder,
++};
++
+ /*
+  * Normalize all supported YUV 4:2:0 formats to the value used in the codec
+  * tables.
+@@ -390,6 +406,8 @@ const char *coda_product_name(int product)
+ 		return "CODA7541";
+ 	case CODA_960:
+ 		return "CODA960";
++	case CODA_980:
++		return "CODA980";
+ 	default:
+ 		snprintf(buf, sizeof(buf), "(0x%04x)", product);
+ 		return buf;
+@@ -822,8 +840,10 @@ static int coda_s_fmt(struct coda_ctx *ctx, struct v4l2_format *f,
+ 		ctx->tiled_map_type = GDI_TILED_FRAME_MB_RASTER_MAP;
+ 		break;
+ 	case V4L2_PIX_FMT_NV12:
++		/* the CODA980 tiled maps are GDI 2.0, not implemented */
+ 		if (!disable_tiling && ctx->use_bit &&
+-		    ctx->dev->devtype->product == CODA_960) {
++		    ctx->dev->devtype->product == CODA_960 &&
++		    ctx->dev->devtype->fw_product != CODA_980) {
+ 			ctx->tiled_map_type = GDI_TILED_FRAME_MB_RASTER_MAP;
+ 			break;
+ 		}
+@@ -2319,6 +2339,9 @@ static void coda_encode_ctrls(struct coda_ctx *ctx)
+ 		V4L2_CID_MPEG_VIDEO_BITRATE, 0, 32767000, 1000, 0);
+ 	v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
+ 		V4L2_CID_MPEG_VIDEO_GOP_SIZE, 0, max_gop_size, 1, 16);
++	/* coda_s_ctrl() handles it, but nothing created it */
++	v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
++		V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 0, 0, 0, 0);
+ 	v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
+ 		V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP, 0, 51, 1, 25);
+ 	v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
+@@ -2657,7 +2680,9 @@ static int coda_open(struct file *file)
+ 		 * The enable_bwb module parameter allows to override this.
+ 		 */
+ 		if (enable_bwb || ctx->inst_type == CODA_INST_ENCODER)
+-			ctx->frame_mem_ctrl = CODA9_FRAME_ENABLE_BWB;
++			ctx->frame_mem_ctrl =
++				dev->devtype->fw_product == CODA_980 ?
++				CODA980_FRAME_ENABLE_BWB : CODA9_FRAME_ENABLE_BWB;
+ 		fallthrough;
+ 	case CODA_HX4:
+ 	case CODA_7541:
+@@ -2783,6 +2808,67 @@ static const struct v4l2_file_operations coda_fops = {
+ 	.mmap		= v4l2_m2m_fop_mmap,
+ };
+ 
++/*
++ * Realtek RTD129x: VE1 is a CODA980 behind a Realtek wrapper. Its SRAM power
++ * domain, reset and isolation live in the CRT block, and the wrapper has to
++ * enable its bus command interface (CTI) before any core register answers:
++ * until then every read ends in an SB2 timeout (0xdeadbeef). Realtek's BSP
++ * does this in rtk_ve/ve1/ve1.c, vpu_pctrl_on() and ve1_wrapper_setup().
++ */
++#define RTD129X_CRT_VE1_SRAM_PWR	0x390	/* 0xf00 on, 0xf01 off */
++#define RTD129X_CRT_VE1_SRAM_ACK	0x3a8	/* 4 when done; write 4 to ack */
++#define RTD129X_CRT_ISO			0x400
++#define RTD129X_CRT_ISO_VE1		BIT(0)
++#define RTD129X_VE_CTRL			0x3000
++#define RTD129X_VE_CTRL_CTI_EN		BIT(1)
++#define RTD129X_VE_CTI_GRP		0x3004
++#define RTD129X_VE_CTI_CMD_DEPTH	GENMASK(29, 24)
++
++void coda_rtd129x_power_on(struct coda_dev *dev)
++{
++	u32 val;
++	int i, ret;
++
++	/*
++	 * Early in boot the first power-on of the SRAM domain is not acked,
++	 * not even after 50 ms; powered off and on again it acks within some
++	 * 50 us. The BIT's code RAM must not take the firmware download
++	 * unpowered. A stale ack, from powering off, would end the wait at
++	 * once, so it is cleared first.
++	 */
++	regmap_read(dev->crt, RTD129X_CRT_VE1_SRAM_PWR, &val);
++	for (i = 0; val != 0xf00 && i < 3; i++) {
++		regmap_write(dev->crt, RTD129X_CRT_VE1_SRAM_ACK, 4);
++		regmap_write(dev->crt, RTD129X_CRT_VE1_SRAM_PWR, 0xf00);
++		ret = regmap_read_poll_timeout(dev->crt,
++					       RTD129X_CRT_VE1_SRAM_ACK, val,
++					       val == 4, 10, 10000);
++		regmap_write(dev->crt, RTD129X_CRT_VE1_SRAM_ACK, 4);
++		if (!ret)
++			break;
++		dev_dbg(dev->dev, "VE1 SRAM power-on not acked, retrying\n");
++		regmap_write(dev->crt, RTD129X_CRT_VE1_SRAM_PWR, 0xf01);
++		regmap_read_poll_timeout(dev->crt, RTD129X_CRT_VE1_SRAM_ACK,
++					 val, val == 4, 10, 10000);
++		val = 0xf01;
++	}
++	if (i == 3)
++		dev_err(dev->dev, "VE1 SRAM power-on not acked\n");
++
++	reset_control_assert(dev->rstc);
++	reset_control_deassert(dev->rstc);
++
++	regmap_update_bits(dev->crt, RTD129X_CRT_ISO, RTD129X_CRT_ISO_VE1, 0);
++
++	/* the wrapper; the command depth works around a 1296 timing issue */
++	val = readl(dev->regs_base + RTD129X_VE_CTRL);
++	writel(val | RTD129X_VE_CTRL_CTI_EN, dev->regs_base + RTD129X_VE_CTRL);
++	val = readl(dev->regs_base + RTD129X_VE_CTI_GRP);
++	val &= ~RTD129X_VE_CTI_CMD_DEPTH;
++	val |= FIELD_PREP(RTD129X_VE_CTI_CMD_DEPTH, 0x1a);
++	writel(val, dev->regs_base + RTD129X_VE_CTI_GRP);
++}
++
+ static int coda_hw_init(struct coda_dev *dev)
+ {
+ 	u32 data;
+@@ -2797,7 +2883,10 @@ static int coda_hw_init(struct coda_dev *dev)
+ 	if (ret)
+ 		goto err_clk_ahb;
+ 
+-	reset_control_reset(dev->rstc);
++	if (dev->devtype->rtd129x)
++		coda_rtd129x_power_on(dev);
++	else
++		reset_control_reset(dev->rstc);
+ 
+ 	/*
+ 	 * Copy the first CODA_ISRAM_SIZE in the internal SRAM.
+@@ -2850,7 +2939,10 @@ static int coda_hw_init(struct coda_dev *dev)
+ 		coda_write(dev, CODA7_STREAM_BUF_PIC_FLUSH,
+ 			   CODA_REG_BIT_STREAM_CTRL);
+ 	}
+-	if (dev->devtype->product == CODA_960)
++	if (dev->devtype->fw_product == CODA_980)
++		coda_write(dev, CODA980_FRAME_ENABLE_BWB,
++			   CODA_REG_BIT_FRAME_MEM_CTRL);
++	else if (dev->devtype->product == CODA_960)
+ 		coda_write(dev, CODA9_FRAME_ENABLE_BWB,
+ 				CODA_REG_BIT_FRAME_MEM_CTRL);
+ 	else
+@@ -3057,6 +3149,7 @@ enum coda_platform {
+ 	CODA_IMX53,
+ 	CODA_IMX6Q,
+ 	CODA_IMX6DL,
++	CODA_RTD1295,
+ };
+ 
+ static const struct coda_devtype coda_devdata[] = {
+@@ -3134,6 +3227,24 @@ static const struct coda_devtype coda_devdata[] = {
+ 		.tempbuf_size = 204 * 1024,
+ 		.iram_size    = 0x1f000, /* leave 4k for suspend code */
+ 	},
++	[CODA_RTD1295] = {
++		.firmware     = {
++			"v4l-coda980-rtd1295.bin",
++			"vpu/v4l-coda980-rtd1295.bin",
++			"ve1.bin"
++		},
++		/* CODA9 register map and command set, same as the CODA960 */
++		.product      = CODA_960,
++		.fw_product   = CODA_980,
++		.codecs       = coda980_rtd129x_codecs,
++		.num_codecs   = ARRAY_SIZE(coda980_rtd129x_codecs),
++		.vdevs        = coda980_rtd129x_video_devices,
++		.num_vdevs    = ARRAY_SIZE(coda980_rtd129x_video_devices),
++		.workbuf_size = 80 * 1024,
++		/* libvpu's coda9_vpuconfig.h; the CODA960 size is overrun */
++		.tempbuf_size = 470 * 1024,
++		.rtd129x      = true,
++	},
+ };
+ 
+ static const struct of_device_id coda_dt_ids[] = {
+@@ -3142,10 +3253,16 @@ static const struct of_device_id coda_dt_ids[] = {
+ 	{ .compatible = "fsl,imx53-vpu", .data = &coda_devdata[CODA_IMX53] },
+ 	{ .compatible = "fsl,imx6q-vpu", .data = &coda_devdata[CODA_IMX6Q] },
+ 	{ .compatible = "fsl,imx6dl-vpu", .data = &coda_devdata[CODA_IMX6DL] },
++	{ .compatible = "realtek,rtd1295-vpu", .data = &coda_devdata[CODA_RTD1295] },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, coda_dt_ids);
+ 
++static void coda_release_mem(void *dev)
++{
++	of_reserved_mem_device_release(dev);
++}
++
+ static int coda_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -3172,6 +3289,21 @@ static int coda_probe(struct platform_device *pdev)
+ 		return PTR_ERR(dev->clk_ahb);
+ 	}
+ 
++	/*
++	 * A memory-region of its own, if the board gives one: frame buffers
++	 * come at stream start, and on a busy system CMA can fail to free
++	 * a contiguous range in time.
++	 */
++	ret = of_reserved_mem_device_init(&pdev->dev);
++	if (!ret) {
++		ret = devm_add_action_or_reset(&pdev->dev, coda_release_mem,
++					       &pdev->dev);
++		if (ret)
++			return ret;
++	} else if (ret != -ENODEV) {
++		return dev_err_probe(&pdev->dev, ret, "memory-region\n");
++	}
++
+ 	/* Get  memory for physical registers */
+ 	dev->regs_base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(dev->regs_base))
+@@ -3192,7 +3324,7 @@ static int coda_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	/* JPEG IRQ */
+-	if (dev->devtype->product == CODA_960) {
++	if (dev->devtype->product == CODA_960 && !dev->devtype->rtd129x) {
+ 		irq = platform_get_irq_byname(pdev, "jpeg");
+ 		if (irq < 0)
+ 			return irq;
+@@ -3215,9 +3347,16 @@ static int coda_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	if (dev->devtype->rtd129x) {
++		dev->crt = syscon_regmap_lookup_by_phandle(np, "realtek,crt");
++		if (IS_ERR(dev->crt))
++			return dev_err_probe(&pdev->dev, PTR_ERR(dev->crt),
++					     "no realtek,crt syscon\n");
++	}
++
+ 	/* Get IRAM pool from device tree */
+ 	pool = of_gen_pool_get(np, "iram", 0);
+-	if (!pool) {
++	if (!pool && dev->devtype->iram_size) {
+ 		dev_err(&pdev->dev, "iram pool not available\n");
+ 		return -ENOMEM;
+ 	}
+@@ -3257,10 +3396,13 @@ static int coda_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	dev->iram.size = dev->devtype->iram_size;
+-	dev->iram.vaddr = gen_pool_dma_alloc(dev->iram_pool, dev->iram.size,
+-					     &dev->iram.paddr);
++	if (dev->iram_pool)
++		dev->iram.vaddr = gen_pool_dma_alloc(dev->iram_pool,
++						     dev->iram.size,
++						     &dev->iram.paddr);
+ 	if (!dev->iram.vaddr) {
+-		dev_warn(&pdev->dev, "unable to alloc iram\n");
++		if (dev->iram.size)
++			dev_warn(&pdev->dev, "unable to alloc iram\n");
+ 	} else {
+ 		memset(dev->iram.vaddr, 0, dev->iram.size);
+ 		dev->iram.blob.data = dev->iram.vaddr;
+diff --git a/drivers/media/platform/chips-media/coda/coda-gdi.c b/drivers/media/platform/chips-media/coda/coda-gdi.c
+index 59d65daca153..7e7000fea7a7 100644
+--- a/drivers/media/platform/chips-media/coda/coda-gdi.c
++++ b/drivers/media/platform/chips-media/coda/coda-gdi.c
+@@ -114,6 +114,16 @@ void coda_set_gdi_regs(struct coda_ctx *ctx)
+ 	u32 xy2rbc_config;
+ 	int i;
+ 
++	/*
++	 * The CODA980 has GDI 2.0: where GDI 1.0 keeps the tables below, it
++	 * has x/y-to-AXI bit maps for luma (0x1800) and chroma (0x1880) and a
++	 * config register (0x1900), used only for its own tiled maps. Frames
++	 * are linear here (see coda_s_fmt), and Realtek's libvpu leaves the
++	 * GDI alone for those, so do the same.
++	 */
++	if (dev->devtype->fw_product == CODA_980)
++		return;
++
+ 	switch (ctx->tiled_map_type) {
+ 	case GDI_LINEAR_FRAME_MAP:
+ 	default:
+diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
+index ddfd0a32c653..92656f8a91c1 100644
+--- a/drivers/media/platform/chips-media/coda/coda.h
++++ b/drivers/media/platform/chips-media/coda/coda.h
+@@ -53,6 +53,12 @@ enum coda_product {
+ 	CODA_960 = 0xf020,
+ };
+ 
++/*
++ * The product the Realtek RTD129x CODA980 firmware reports. Only ever a
++ * firmware product: the driver runs that core as a CODA_960.
++ */
++#define CODA_980	0xe428
++
+ struct coda_video_device;
+ 
+ struct coda_devtype {
+@@ -65,6 +71,8 @@ struct coda_devtype {
+ 	size_t			workbuf_size;
+ 	size_t			tempbuf_size;
+ 	size_t			iram_size;
++	u16			fw_product;	/* if the firmware reports another */
++	bool			rtd129x;	/* Realtek RTD129x VE1 glue */
+ };
+ 
+ struct coda_aux_buf {
+@@ -87,6 +95,7 @@ struct coda_dev {
+ 	struct clk		*clk_per;
+ 	struct clk		*clk_ahb;
+ 	struct reset_control	*rstc;
++	struct regmap		*crt;		/* rtd129x: power domain, isolation */
+ 
+ 	struct coda_aux_buf	codebuf;
+ 	struct coda_aux_buf	tempbuf;
+@@ -336,6 +345,7 @@ static inline struct coda_q_data *get_q_data(struct coda_ctx *ctx,
+ }
+ 
+ const char *coda_product_name(int product);
++void coda_rtd129x_power_on(struct coda_dev *dev);
+ 
+ int coda_check_firmware(struct coda_dev *dev);
+ 
+diff --git a/drivers/media/platform/chips-media/coda/coda_regs.h b/drivers/media/platform/chips-media/coda/coda_regs.h
+index db81a904cf3f..91ed783b6f12 100644
+--- a/drivers/media/platform/chips-media/coda/coda_regs.h
++++ b/drivers/media/platform/chips-media/coda/coda_regs.h
+@@ -48,6 +48,11 @@
+ #define		CODA_STREAM_ENDIAN_SELECT	(1 << 0)
+ #define CODA_REG_BIT_FRAME_MEM_CTRL		0x110
+ #define		CODA9_FRAME_ENABLE_BWB		(1 << 12)
++/*
++ * The CODA980 moved it: its bits 12:9 are the frame map type, and the CODA960
++ * BWB bit there selects a tiled field map (Realtek's libvpu, Coda9VpuEncSetup).
++ */
++#define		CODA980_FRAME_ENABLE_BWB	(1 << 15)
+ #define		CODA9_FRAME_TILED2LINEAR	(1 << 11)
+ #define		CODA_FRAME_CHROMA_INTERLEAVE	(1 << 2)
+ #define		CODA_IMAGE_ENDIAN_SELECT	(1 << 0)
+@@ -372,6 +377,7 @@
+ #define CODA_CMD_ENC_PIC_SRC_ADDR_CR	0x188
+ #define CODA_CMD_ENC_PIC_QS		0x18c
+ #define CODA_CMD_ENC_PIC_ROT_MODE	0x190
++#define		CODA980_ROT_SRC_CBCR_INTERLEAVE		BIT(18)
+ #define		CODA_ROT_MIR_ENABLE				(1 << 4)
+ #define		CODA_ROT_0					(0x0 << 0)
+ #define		CODA_ROT_90					(0x1 << 0)
+@@ -434,6 +440,7 @@
+ #define		CODA_HEADER_MP4V_VOS	1
+ #define		CODA_HEADER_MP4V_VIS	2
+ #define		CODA9_HEADER_FRAME_CROP	(1 << 3)
++#define		CODA980_HEADER_FRAME_CROP	(1 << 2)
+ #define CODA_CMD_ENC_HEADER_BB_START	0x184
+ #define CODA_CMD_ENC_HEADER_BB_SIZE	0x188
+ #define CODA9_CMD_ENC_HEADER_FRAME_CROP_H	0x18c
