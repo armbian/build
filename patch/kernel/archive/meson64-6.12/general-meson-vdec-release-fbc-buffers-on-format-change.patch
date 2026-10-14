@@ -19,75 +19,91 @@ the resume from vdec_start_streaming(), where vb2 requires all capture
 buffers to be queued. On the resume from amvdec_src_change() the
 decoder may still hold buffers; on GXL and later the table rewrite
 covers only the queued ones, so nothing is freed then. The allocator
-moves the FBC buffers and MMU headers it replaces to a retired store,
+moves the FBC buffers and MMU headers it replaces to a retired list,
 which codec_hevc_free_fbc_buffers() and the free on a full queue
-release; once the store is full, a replaced allocation is dropped
-unfreed.
+release. An allocation failure leaves the slots as they are; codec
+stop frees them together with the retired list.
 
 Assisted-by: LLM
 Signed-off-by: Igor Velkov <iav@iav.lv>
 ---
- .../media/meson/vdec/codec_hevc_common.c      | 85 +++++++++++++++----
- .../media/meson/vdec/codec_hevc_common.h      | 12 +++
- 2 files changed, 82 insertions(+), 15 deletions(-)
+ .../media/meson/vdec/codec_hevc_common.c      | 102 ++++++++++++++----
+ .../media/meson/vdec/codec_hevc_common.h      |  11 ++
+ 2 files changed, 91 insertions(+), 22 deletions(-)
 
 diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.c b/drivers/staging/media/meson/vdec/codec_hevc_common.c
-index d6ed82d..d943ab8 100644
+index d6ed82d..c0d7372 100644
 --- a/drivers/staging/media/meson/vdec/codec_hevc_common.c
 +++ b/drivers/staging/media/meson/vdec/codec_hevc_common.c
-@@ -163,6 +163,38 @@ static void codec_hevc_setup_buffers_gxl(struct amvdec_session *sess,
+@@ -3,6 +3,7 @@
+  * Copyright (C) 2018 Maxime Jourdan <mjourdan@baylibre.com>
+  */
+ 
++#include <linux/slab.h>
+ #include <media/v4l2-mem2mem.h>
+ #include <media/videobuf2-dma-contig.h>
+ 
+@@ -163,6 +164,41 @@ static void codec_hevc_setup_buffers_gxl(struct amvdec_session *sess,
  		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR, 0);
  }
  
-+/*
-+ * Hold a replaced allocation until a free that is known to be safe; a full
-+ * store leaves the allocation to leak.
-+ */
-+static void codec_hevc_retire_buffer(struct codec_hevc_common *comm,
-+				     void *vaddr, dma_addr_t paddr, u32 size)
++/* Hold a replaced allocation until a free that is known to be safe */
++static int codec_hevc_retire_buffer(struct codec_hevc_common *comm,
++				    void *vaddr, dma_addr_t paddr, u32 size)
 +{
 +	struct codec_hevc_retired_buffer *retired;
 +
-+	if (comm->retired_num >= ARRAY_SIZE(comm->retired))
-+		return;
++	retired = kmalloc(sizeof(*retired), GFP_KERNEL);
++	if (!retired)
++		return -ENOMEM;
 +
-+	retired = &comm->retired[comm->retired_num++];
 +	retired->vaddr = vaddr;
 +	retired->paddr = paddr;
 +	retired->size = size;
++	retired->next = comm->retired;
++	comm->retired = retired;
++
++	return 0;
 +}
 +
 +static void codec_hevc_free_retired_buffers(struct amvdec_session *sess,
 +					    struct codec_hevc_common *comm)
 +{
 +	struct device *dev = sess->core->dev;
-+	u32 i;
++	struct codec_hevc_retired_buffer *retired, *next;
 +
-+	for (i = 0; i < comm->retired_num; ++i)
-+		dma_free_coherent(dev, comm->retired[i].size,
-+				  comm->retired[i].vaddr,
-+				  comm->retired[i].paddr);
++	for (retired = comm->retired; retired; retired = next) {
++		next = retired->next;
++		dma_free_coherent(dev, retired->size, retired->vaddr,
++				  retired->paddr);
++		kfree(retired);
++	}
 +
-+	comm->retired_num = 0;
++	comm->retired = NULL;
 +}
 +
  void codec_hevc_free_mmu_headers(struct amvdec_session *sess,
  				 struct codec_hevc_common *comm)
  {
-@@ -196,6 +228,12 @@ static int codec_hevc_alloc_mmu_headers(struct amvdec_session *sess,
+@@ -191,8 +227,15 @@ static int codec_hevc_alloc_mmu_headers(struct amvdec_session *sess,
+ 		dma_addr_t paddr;
+ 		void *vaddr = dma_alloc_coherent(dev, MMU_COMPRESS_HEADER_SIZE,
+ 						 &paddr, GFP_KERNEL);
+-		if (!vaddr) {
+-			codec_hevc_free_mmu_headers(sess, comm);
++		if (!vaddr)
++			return -ENOMEM;
++
++		if (comm->mmu_header_vaddr[idx] &&
++		    codec_hevc_retire_buffer(comm, comm->mmu_header_vaddr[idx],
++					     comm->mmu_header_paddr[idx],
++					     MMU_COMPRESS_HEADER_SIZE)) {
++			dma_free_coherent(dev, MMU_COMPRESS_HEADER_SIZE,
++					  vaddr, paddr);
  			return -ENOMEM;
  		}
  
-+		if (comm->mmu_header_vaddr[idx])
-+			codec_hevc_retire_buffer(comm,
-+						 comm->mmu_header_vaddr[idx],
-+						 comm->mmu_header_paddr[idx],
-+						 MMU_COMPRESS_HEADER_SIZE);
-+
- 		comm->mmu_header_vaddr[idx] = vaddr;
- 		comm->mmu_header_paddr[idx] = paddr;
- 	}
-@@ -203,38 +241,38 @@ static int codec_hevc_alloc_mmu_headers(struct amvdec_session *sess,
+@@ -203,38 +246,38 @@ static int codec_hevc_alloc_mmu_headers(struct amvdec_session *sess,
  	return 0;
  }
  
@@ -140,23 +156,40 @@ index d6ed82d..d943ab8 100644
  }
  EXPORT_SYMBOL_GPL(codec_hevc_free_fbc_buffers);
  
-@@ -265,8 +303,15 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess,
+@@ -260,22 +303,27 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess,
+ 		dma_addr_t paddr;
+ 		void *vaddr = dma_alloc_coherent(dev, am21_size, &paddr,
+ 						 GFP_KERNEL);
+-		if (!vaddr) {
+-			codec_hevc_free_fbc_buffers(sess, comm);
++		if (!vaddr)
++			return -ENOMEM;
++
++		if (comm->fbc_buffer_vaddr[idx] &&
++		    codec_hevc_retire_buffer(comm, comm->fbc_buffer_vaddr[idx],
++					     comm->fbc_buffer_paddr[idx],
++					     comm->fbc_buffer_size[idx])) {
++			dma_free_coherent(dev, am21_size, vaddr, paddr);
  			return -ENOMEM;
  		}
  
-+		if (comm->fbc_buffer_vaddr[idx])
-+			codec_hevc_retire_buffer(comm,
-+						 comm->fbc_buffer_vaddr[idx],
-+						 comm->fbc_buffer_paddr[idx],
-+						 comm->fbc_buffer_size[idx]);
-+
  		comm->fbc_buffer_vaddr[idx] = vaddr;
  		comm->fbc_buffer_paddr[idx] = paddr;
 +		comm->fbc_buffer_size[idx] = am21_size;
  	}
  
  	if (codec_hevc_use_mmu(revision, sess->pixfmt_cap, is_10bit) &&
-@@ -287,10 +332,20 @@ int codec_hevc_setup_buffers(struct amvdec_session *sess,
+ 	    codec_hevc_use_downsample(sess->pixfmt_cap, is_10bit)) {
+ 		ret = codec_hevc_alloc_mmu_headers(sess, comm);
+-		if (ret) {
+-			codec_hevc_free_fbc_buffers(sess, comm);
++		if (ret)
+ 			return ret;
+-		}
+ 	}
+ 
+ 	return 0;
+@@ -287,10 +335,20 @@ int codec_hevc_setup_buffers(struct amvdec_session *sess,
  {
  	struct amvdec_core *core = sess->core;
      struct device *dev = core->dev;
@@ -179,22 +212,21 @@ index d6ed82d..d943ab8 100644
  							 &comm->mmu_map_paddr,
  							 GFP_KERNEL);
 diff --git a/drivers/staging/media/meson/vdec/codec_hevc_common.h b/drivers/staging/media/meson/vdec/codec_hevc_common.h
-index 13f9f1d..5cafae4 100644
+index 13f9f1d..b3d9992 100644
 --- a/drivers/staging/media/meson/vdec/codec_hevc_common.h
 +++ b/drivers/staging/media/meson/vdec/codec_hevc_common.h
-@@ -17,16 +17,28 @@
- extern const u16 vdec_hevc_parser_cmd[VDEC_HEVC_PARSER_CMD_LEN];
+@@ -18,15 +18,26 @@ extern const u16 vdec_hevc_parser_cmd[VDEC_HEVC_PARSER_CMD_LEN];
  
  #define MAX_REF_PIC_NUM	24
-+#define RETIRED_BUFFERS_MAX	(4 * MAX_REF_PIC_NUM)
-+
+ 
 +/* A replaced allocation that the hardware may still address */
 +struct codec_hevc_retired_buffer {
++	struct codec_hevc_retired_buffer *next;
 +	void      *vaddr;
 +	dma_addr_t paddr;
 +	u32        size;
 +};
- 
++
  struct codec_hevc_common {
  	void      *fbc_buffer_vaddr[MAX_REF_PIC_NUM];
  	dma_addr_t fbc_buffer_paddr[MAX_REF_PIC_NUM];
@@ -206,8 +238,7 @@ index 13f9f1d..5cafae4 100644
  	void      *mmu_map_vaddr;
  	dma_addr_t mmu_map_paddr;
 +
-+	struct codec_hevc_retired_buffer retired[RETIRED_BUFFERS_MAX];
-+	u32 retired_num;
++	struct codec_hevc_retired_buffer *retired;
  };
  
  /* Returns 1 if we must use framebuffer compression */
