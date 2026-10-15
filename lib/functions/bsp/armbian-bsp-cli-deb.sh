@@ -192,11 +192,6 @@ function compile_armbian-bsp-cli() {
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
-	cat <<- EOF > "${destination}"/DEBIAN/conffiles
-		/usr/lib/armbian/armbian-apt-updates
-		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
-		/etc/apt/apt.conf.d/02-armbian-periodic
-	EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -226,6 +221,25 @@ function compile_armbian-bsp-cli() {
 		You can also append to the `preinst_functions`, `postinst_functions` and `postrm` array, and the _content_
 		of those functions will be added to the preinst, postinst and postrm scripts respectively.
 	POST_FAMILY_TWEAKS_BSP
+
+	# Conffiles, after the hooks: family_tweaks_bsp and post_family_tweaks_bsp both
+	# write to $destination, so the tree is only final here.
+	#
+	# All three ship from packages/bsp/common, which is rsynced unconditionally, so
+	# every board must have them. A missing one means something removed it, and the
+	# board would then ship without that configuration. Say which file and stop,
+	# rather than leave dpkg-deb to fail with "does not appear in package".
+	declare -a bsp_conffiles=(
+		"/usr/lib/armbian/armbian-apt-updates"
+		"/etc/X11/xorg.conf.d/01-armbian-defaults.conf"
+		"/etc/apt/apt.conf.d/02-armbian-periodic"
+	)
+	declare bsp_conffile
+	for bsp_conffile in "${bsp_conffiles[@]}"; do
+		[[ -f "${destination}${bsp_conffile}" ]] ||
+			exit_with_error "bsp-cli: conffile missing from the package: ${bsp_conffile} - something removed it after packages/bsp/common was copied"
+	done
+	printf '%s\n' "${bsp_conffiles[@]}" > "${destination}"/DEBIAN/conffiles
 
 	# Render the postinst/postrm/etc
 	# set up pre install script; use inline functions
