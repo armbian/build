@@ -1,6 +1,6 @@
 # Rockchip RK3576 octa core 4/8GB RAM SoC
 BOARD_NAME="reComputer RK3576 Module Dev Kit"
-BOARDFAMILY="seeed-rk3576"
+BOARDFAMILY="rk35xx"
 BOOT_SOC="rk3576"
 BOARD_MAINTAINER="Pillar1989"
 BOARD_VENDOR="seeed-studio"
