@@ -302,6 +302,9 @@ function kernel_package_callback_linux_image() {
 	if [[ "${KERNEL_DBG_PACKAGE:-"no"}" == "yes" ]]; then
 		provides_dbg_pair=", linux-image-${BRANCH}-${LINUXFAMILY}-build (= ${artifact_version})"
 	fi
+	# A debug package of another build loses its pinned image when this one replaces it.
+	# Breaks makes apt remove such a package, and dpkg -i refuse to install over it.
+	declare breaks_other_dbg="linux-image-${BRANCH}-${LINUXFAMILY}-dbg-build (<< ${artifact_version}), linux-image-${BRANCH}-${LINUXFAMILY}-dbg-build (>> ${artifact_version})"
 
 	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
@@ -316,6 +319,7 @@ function kernel_package_callback_linux_image() {
 		Priority: optional
 		Depends: initramfs-tools | linux-initramfs-tool
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules${provides_dbg_pair}
+		Breaks: ${breaks_other_dbg}
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
 		 ${artifact_version_reason:-"${kernel_version_family}"}
