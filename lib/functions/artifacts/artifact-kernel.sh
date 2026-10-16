@@ -180,7 +180,7 @@ function artifact_kernel_prepare_version() {
 			dbg_linker_bin="ld.lld"
 		fi
 		declare dbg_compiler_version=""
-		dbg_compiler_version="$("${dbg_compiler_bin}" -dumpfullversion -dumpversion 2> /dev/null || true)"
+		dbg_compiler_version="$("${dbg_compiler_bin}" --version 2> /dev/null | head -1 || true)"
 		declare dbg_linker_version=""
 		dbg_linker_version="$("${dbg_linker_bin}" --version 2> /dev/null | head -1 || true)"
 		vars_to_hash+=(
