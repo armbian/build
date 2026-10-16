@@ -124,3 +124,22 @@ function post_family_tweaks__recomputer_rk3576_industrial_plymouth_quit_timeout(
 	mkdir -p "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d"
 	printf "[Service]\nTimeoutSec=2\n" > "${SDCARD}/etc/systemd/system/plymouth-quit-wait.service.d/timeout.conf"
 }
+
+# External PCF8563T watchdog on I2C3 (nxp,timer-watchdog, INT wired to the SoC
+# reset line): have systemd (PID 1) own /dev/watchdog and ping it at half the
+# timeout. RuntimeWatchdogSec=30 bounds hang-detection latency at a 15 s ping
+# cadence (keep in sync with the kernel DTS timeout-sec). The external chip
+# keeps counting across the SoC reset and nobody
+# pings it until the next boot's PID 1 re-arms /dev/watchdog, so
+# RebootWatchdogSec must cover reboot + U-Boot + kernel boot (~10 s here) with
+# margin -- 30 s, still well below upstream's 10-minute default.
+function post_family_tweaks__recomputer_rk3576_industrial_watchdog_systemd() {
+	display_alert "$BOARD" "Enabling systemd hardware watchdog (PCF8563T)" "info"
+
+	mkdir -p "${SDCARD}/etc/systemd/system.conf.d"
+	cat > "${SDCARD}/etc/systemd/system.conf.d/watchdog.conf" <<-'EOF'
+		[Manager]
+		RuntimeWatchdogSec=30
+		RebootWatchdogSec=30
+	EOF
+}
