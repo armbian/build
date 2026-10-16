@@ -222,7 +222,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		# fix compilation for kernels >= 6.6.157
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-Fix-6.6.157.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu-Fix-6.6.157.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
