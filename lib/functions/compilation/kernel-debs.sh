@@ -761,8 +761,9 @@ function kernel_package_callback_linux_dbg() {
 	CONTROL_FILE
 }
 
-# KERNEL_DBG_MODULES picks the modules whose debug info this package ships:
-# "all" - every in-tree module, otherwise module names ("dwmac_meson stmmac").
+# KERNEL_DBG_MODULES picks the modules whose debug info this package ships.
+# "all" selects every in-tree module.
+# A list of module names selects only those modules, for example "dwmac_meson stmmac".
 # We take the list from the installed modules, so the debug copies match the image package.
 function kernel_package_callback_linux_modules_dbg() {
 	display_alert "linux-modules-dbg packaging" "${package_directory}" "debug"
