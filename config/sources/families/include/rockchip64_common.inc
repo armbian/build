@@ -380,12 +380,22 @@ write_uboot_platform_ufs() {
 	fi
 }
 
+# The SATA SPI image (BOOTCONFIG_SATA) switches the shared M.2 slot to SATA.
+# Flash it only when the install target is a SATA disk.
 write_uboot_platform_mtd() {
-	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
+	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \) | sort)
 	if [ -z "$FILES" ]; then
 		echo "No SPI image found."
 		exit 1
 	fi
+
+	# Transport of the install target: the installer exports MOUNT (target rootfs).
+	local src disk tran want_sata=0 preferred=1 idx is_sata label state
+	src=$(findmnt -n -o SOURCE --target "${MOUNT:-/}" 2> /dev/null)
+	src="${src%%[*}"
+	disk=$(lsblk -n -o PKNAME "$src" 2> /dev/null | head -n 1)
+	[[ -n "$disk" ]] && tran=$(lsblk -d -n -o TRAN "/dev/${disk}" 2> /dev/null | xargs)
+	[[ "$tran" == sata ]] && want_sata=1
 
 	MENU_ITEMS=()
 	i=1
@@ -393,21 +403,36 @@ write_uboot_platform_mtd() {
 
 	# Read the files into an array
 	while IFS= read -r file; do
-		filename=$(basename "$file")
-		MENU_ITEMS+=("$i" "$filename" "")
 		FILE_ARRAY+=("$file")
 		((i++))
 	done <<< "$FILES"
 
+	for idx in "${!FILE_ARRAY[@]}"; do
+		is_sata=0
+		[[ "${FILE_ARRAY[$idx]}" == *sata* ]] && is_sata=1
+		if [[ $is_sata -eq $want_sata ]]; then
+			preferred=$((idx + 1))
+			break
+		fi
+	done
+
 	if [[ ! -t 1 || $i -eq 2 ]]; then
-		first_file="${FILE_ARRAY[0]}"
-		if [[ "$first_file" == *rkspi_loader*.img ]]; then
-			dd if="$first_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
+		chosen_file="${FILE_ARRAY[$((preferred - 1))]}"
+		if [[ "$chosen_file" == *rkspi_loader*.img ]]; then
+			dd if="$chosen_file" of="$2" conv=notrunc status=none > /dev/null 2>&1
 		else
-			flashcp -v -p "$first_file" /dev/mtd0
+			flashcp -v -p "$chosen_file" /dev/mtd0
 		fi
 		return
 	fi
+
+	for idx in "${!FILE_ARRAY[@]}"; do
+		label="$(basename "${FILE_ARRAY[$idx]}")"
+		[[ "$label" == *sata* ]] && label="${label} (SATA disk)"
+		state=off
+		[[ $((idx + 1)) -eq $preferred ]] && state=on
+		MENU_ITEMS+=("$((idx + 1))" "$label" "$state")
+	done
 
 	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
 	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
