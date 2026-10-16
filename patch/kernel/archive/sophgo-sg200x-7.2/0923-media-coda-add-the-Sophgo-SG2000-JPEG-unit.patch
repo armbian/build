@@ -12,33 +12,36 @@ JPU takes the frame addresses and strides in its own registers, and the
 CbCr interleave value 2 for NV12.
 
 Support the JPEG encoder. Reset the JPU with its INIT command, where the
-CODA960 resets the whole CODA.
+CODA960 resets the whole CODA. After a timeout, also pulse the reset
+line: after a stalled frame, INIT leaves state behind and the next frame
+has wrong DC predictions. Give the JPU its own debugfs directory.
 
 The register sequence follows Sophgo's vendor driver.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Signed-off-by: Lukasz Sobala <lsobala1@gmail.com>
 ---
- .../platform/chips-media/coda/coda-bit.c      |  27 ++++
- .../platform/chips-media/coda/coda-common.c   | 138 +++++++++++++-----
- .../platform/chips-media/coda/coda-jpeg.c     |  50 ++++++-
- .../media/platform/chips-media/coda/coda.h    |   2 +
+ .../platform/chips-media/coda/coda-bit.c      |  42 ++++++
+ .../platform/chips-media/coda/coda-common.c   | 142 +++++++++++++-----
+ .../platform/chips-media/coda/coda-jpeg.c     |  64 +++++++-
+ .../media/platform/chips-media/coda/coda.h    |   3 +
  .../platform/chips-media/coda/coda_regs.h     |   8 +
- 5 files changed, 183 insertions(+), 42 deletions(-)
+ 5 files changed, 214 insertions(+), 45 deletions(-)
 
 diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
-index 252043b..f318988 100644
+index 3373ba8..94fba2d 100644
 --- a/drivers/media/platform/chips-media/coda/coda-bit.c
 +++ b/drivers/media/platform/chips-media/coda/coda-bit.c
-@@ -9,6 +9,7 @@
+@@ -9,6 +9,8 @@
   */
  
  #include <linux/clk.h>
++#include <linux/delay.h>
 +#include <linux/iopoll.h>
  #include <linux/irqreturn.h>
  #include <linux/kernel.h>
  #include <linux/log2.h>
-@@ -108,6 +109,16 @@ static int coda_command_sync(struct coda_ctx *ctx, int cmd)
+@@ -108,6 +110,30 @@ static int coda_command_sync(struct coda_ctx *ctx, int cmd)
  	return ret;
  }
  
@@ -52,10 +55,24 @@ index 252043b..f318988 100644
 +				  val, !(val & CODA9_JPEG_START_INIT), 1, 10000);
 +}
 +
++/*
++ * After a stalled frame INIT is not enough: the next frame has wrong DC
++ * predictions. Pulse the reset line too.
++ */
++int coda_jpu_hard_reset(struct coda_dev *dev)
++{
++	if (dev->rstc) {
++		reset_control_assert(dev->rstc);
++		usleep_range(10, 20);
++		reset_control_deassert(dev->rstc);
++	}
++	return coda_jpu_reset(dev);
++}
++
  int coda_hw_reset(struct coda_ctx *ctx)
  {
  	struct coda_dev *dev = ctx->dev;
-@@ -117,6 +128,9 @@ int coda_hw_reset(struct coda_ctx *ctx)
+@@ -117,6 +143,9 @@ int coda_hw_reset(struct coda_ctx *ctx)
  
  	lockdep_assert_held(&dev->coda_mutex);
  
@@ -65,7 +82,7 @@ index 252043b..f318988 100644
  	if (!dev->rstc)
  		return -ENOENT;
  
-@@ -1217,6 +1231,9 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+@@ -1202,6 +1231,9 @@ static int coda_start_encoding(struct coda_ctx *ctx)
  		coda_write(dev, CODA7_STREAM_BUF_DYNALLOC_EN |
  			CODA7_STREAM_BUF_PIC_RESET, CODA_REG_BIT_STREAM_CTRL);
  		break;
@@ -75,7 +92,7 @@ index 252043b..f318988 100644
  	}
  
  	ctx->frame_mem_ctrl &= ~(CODA_FRAME_CHROMA_INTERLEAVE | (0x3 << 9) |
-@@ -1258,6 +1275,10 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+@@ -1243,6 +1275,10 @@ static int coda_start_encoding(struct coda_ctx *ctx)
  			<< CODA7_PICWIDTH_OFFSET;
  		value |= (q_data_src->rect.height & CODA7_PICHEIGHT_MASK)
  			 << CODA_PICHEIGHT_OFFSET;
@@ -86,7 +103,7 @@ index 252043b..f318988 100644
  	}
  	coda_write(dev, value, CODA_CMD_ENC_SEQ_SRC_SIZE);
  	if (dst_fourcc == V4L2_PIX_FMT_JPEG)
-@@ -1440,6 +1461,9 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+@@ -1425,6 +1461,9 @@ static int coda_start_encoding(struct coda_ctx *ctx)
  			coda_write(dev, 2 << 2 | 3, CODA9_CMD_ENC_SEQ_ME_OPTION);
  			coda_write(dev, 0, CODA9_CMD_ENC_SEQ_INTRA_WEIGHT);
  			break;
@@ -96,7 +113,7 @@ index 252043b..f318988 100644
  		}
  	}
  
-@@ -2412,6 +2436,9 @@ static int coda_prepare_decode(struct coda_ctx *ctx)
+@@ -2397,6 +2436,9 @@ static int coda_prepare_decode(struct coda_ctx *ctx)
  		/* 'hardcode to use interrupt disable mode'? */
  		coda_write(dev, (1 << 10), CODA_CMD_DEC_PIC_OPTION);
  		break;
@@ -107,7 +124,7 @@ index 252043b..f318988 100644
  
  	coda_write(dev, 0, CODA_CMD_DEC_PIC_SKIP_NUM);
 diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
-index a6a2428..0307d4c 100644
+index a6a2428..54cbc87 100644
 --- a/drivers/media/platform/chips-media/coda/coda-common.c
 +++ b/drivers/media/platform/chips-media/coda/coda-common.c
 @@ -172,6 +172,11 @@ static const struct coda_codec coda980_codecs[] = {
@@ -335,7 +352,18 @@ index a6a2428..0307d4c 100644
  		dev_err(&pdev->dev, "iram pool not available\n");
  		return -ENOMEM;
  	}
-@@ -3372,6 +3424,12 @@ static int coda_probe(struct platform_device *pdev)
+@@ -3317,7 +3369,9 @@ static int coda_probe(struct platform_device *pdev)
+ 	mutex_init(&dev->coda_mutex);
+ 	ida_init(&dev->ida);
+ 
+-	dev->debugfs_root = debugfs_create_dir("coda", NULL);
++	/* The SG2000 has two coda devices: the JPU gets its own directory */
++	dev->debugfs_root = debugfs_create_dir(dev->devtype->product == CODA_JPU ?
++					       "coda-jpu" : "coda", NULL);
+ 
+ 	/* allocate auxiliary per-device buffers for the BIT processor */
+ 	if (dev->devtype->product == CODA_DX6) {
+@@ -3372,6 +3426,12 @@ static int coda_probe(struct platform_device *pdev)
  	pm_runtime_set_active(&pdev->dev);
  	pm_runtime_enable(&pdev->dev);
  
@@ -349,10 +377,10 @@ index a6a2428..0307d4c 100644
  	if (ret)
  		goto err_alloc_workqueue;
 diff --git a/drivers/media/platform/chips-media/coda/coda-jpeg.c b/drivers/media/platform/chips-media/coda/coda-jpeg.c
-index 8352253..1018084 100644
+index 8352253..60c5c5f 100644
 --- a/drivers/media/platform/chips-media/coda/coda-jpeg.c
 +++ b/drivers/media/platform/chips-media/coda/coda-jpeg.c
-@@ -1064,9 +1064,42 @@ static int coda9_jpeg_start_encoding(struct coda_ctx *ctx)
+@@ -1064,9 +1064,48 @@ static int coda9_jpeg_start_encoding(struct coda_ctx *ctx)
  	}
  	coda_set_jpeg_compression_quality(ctx, ctx->params.jpeg_quality);
  
@@ -388,6 +416,12 @@ index 8352253..1018084 100644
 +	coda_write(dev, cstride, JPU_REG_DPB_CSTRIDE);
 +	coda_write(dev, 0, JPU_REG_CLP_INFO);
 +	coda_write(dev, 0, JPU_REG_INTR_MASK);
++	/* Start the restart markers and the DC predictions from zero */
++	coda_write(dev, 0, CODA9_REG_JPEG_RST_INDEX);
++	coda_write(dev, 0, CODA9_REG_JPEG_RST_COUNT);
++	coda_write(dev, 0, CODA9_REG_JPEG_DPCM_DIFF_Y);
++	coda_write(dev, 0, CODA9_REG_JPEG_DPCM_DIFF_CB);
++	coda_write(dev, 0, CODA9_REG_JPEG_DPCM_DIFF_CR);
 +	coda_write(dev, coda_read(dev, CODA9_REG_JPEG_PIC_STATUS),
 +		   CODA9_REG_JPEG_PIC_STATUS);
 +}
@@ -395,7 +429,7 @@ index 8352253..1018084 100644
  static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
  {
  	struct coda_q_data *q_data_src;
-@@ -1095,7 +1128,8 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
+@@ -1095,7 +1134,8 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
  	src_buf->flags |= V4L2_BUF_FLAG_KEYFRAME;
  	src_buf->flags &= ~V4L2_BUF_FLAG_PFRAME;
  
@@ -405,7 +439,7 @@ index 8352253..1018084 100644
  
  	start_addr = vb2_dma_contig_plane_dma_addr(&dst_buf->vb2_buf, 0);
  	end_addr = start_addr + vb2_plane_size(&dst_buf->vb2_buf, 0);
-@@ -1145,7 +1179,12 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
+@@ -1145,7 +1185,12 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
  	coda_write(dev, CODA9_JPEG_PIC_CTRL_TC_DIRECTION |
  		   CODA9_JPEG_PIC_CTRL_ENCODER_EN, CODA9_REG_JPEG_PIC_CTRL);
  	coda_write(dev, 0, CODA9_REG_JPEG_SCL_INFO);
@@ -419,7 +453,7 @@ index 8352253..1018084 100644
  	coda_write(dev, ctx->params.jpeg_restart_interval,
  		   CODA9_REG_JPEG_RST_INTVAL);
  	coda_write(dev, 1, CODA9_REG_JPEG_BBC_CTRL);
-@@ -1172,6 +1211,12 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
+@@ -1172,6 +1217,12 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
  
  	coda_write(dev, mcu_info[chroma_format], CODA9_REG_JPEG_MCU_INFO);
  
@@ -432,7 +466,7 @@ index 8352253..1018084 100644
  	coda_write(dev, 1, CODA9_GDI_CONTROL);
  	timeout = ktime_add_us(ktime_get(), 100000);
  	do {
-@@ -1197,6 +1242,7 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
+@@ -1197,6 +1248,7 @@ static int coda9_jpeg_prepare_encode(struct coda_ctx *ctx)
  	coda_write(dev, 1, CODA9_GDI_WPROT_ERR_CLR);
  	coda_write(dev, 0, CODA9_GDI_WPROT_RGN_EN);
  
@@ -440,31 +474,49 @@ index 8352253..1018084 100644
  	trace_coda_jpeg_run(ctx, src_buf);
  
  	coda_write(dev, 1, CODA9_REG_JPEG_PIC_START);
+@@ -1275,10 +1327,14 @@ static void coda9_jpeg_encode_timeout(struct coda_ctx *ctx)
+ 	if (wr_ptr >= end_addr - 256) {
+ 		v4l2_err(&dev->v4l2_dev, "JPEG too large for capture buffer\n");
+ 		coda9_jpeg_finish_encode(ctx);
+-		return;
++	} else {
++		coda_hw_reset(ctx);
+ 	}
+ 
+-	coda_hw_reset(ctx);
++	if (dev->devtype->product == CODA_JPU) {
++		v4l2_warn(&dev->v4l2_dev, "JPEG timeout: reset the JPU\n");
++		coda_jpu_hard_reset(dev);
++	}
+ }
+ 
+ static void coda9_jpeg_release(struct coda_ctx *ctx)
 diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
-index 29a6b1b..3767bcf 100644
+index 966dcf6..ce43429 100644
 --- a/drivers/media/platform/chips-media/coda/coda.h
 +++ b/drivers/media/platform/chips-media/coda/coda.h
 @@ -52,6 +52,7 @@ enum coda_product {
  	CODA_7541 = 0xf012,
  	CODA_960 = 0xf020,
- 	CODA_980 = 0xf030,
+ 	CODA_980 = 0xcc28,
 +	CODA_JPU = 0xf0f0,	/* standalone JPEG unit, no BIT processor */
  };
  
  struct coda_video_device;
-@@ -320,6 +321,7 @@ int coda_decoder_queue_init(void *priv, struct vb2_queue *src_vq,
+@@ -320,6 +321,8 @@ int coda_decoder_queue_init(void *priv, struct vb2_queue *src_vq,
  			    struct vb2_queue *dst_vq);
  
  int coda_hw_reset(struct coda_ctx *ctx);
 +int coda_jpu_reset(struct coda_dev *dev);
++int coda_jpu_hard_reset(struct coda_dev *dev);
  
  void coda_fill_bitstream(struct coda_ctx *ctx, struct list_head *buffer_list);
  
 diff --git a/drivers/media/platform/chips-media/coda/coda_regs.h b/drivers/media/platform/chips-media/coda/coda_regs.h
-index 48239f1..2497c8b 100644
+index 96ba192..6d49c0c 100644
 --- a/drivers/media/platform/chips-media/coda/coda_regs.h
 +++ b/drivers/media/platform/chips-media/coda/coda_regs.h
-@@ -510,6 +510,7 @@
+@@ -509,6 +509,7 @@
  
  #define CODA9_JPEG_BASE				0x3000
  #define CODA9_REG_JPEG_PIC_START		(CODA9_JPEG_BASE + 0x000)
@@ -472,7 +524,7 @@ index 48239f1..2497c8b 100644
  #define CODA9_REG_JPEG_PIC_STATUS		(CODA9_JPEG_BASE + 0x004)
  #define		CODA9_JPEG_STATUS_OVERFLOW		BIT(3)
  #define		CODA9_JPEG_STATUS_BBC_INT		BIT(2)
-@@ -545,6 +546,13 @@
+@@ -544,6 +545,13 @@
  #define		CODA9_JPEG_BUS_REQ_NUM_MASK		0x7
  #define CODA9_REG_JPEG_DPB_CONFIG		(CODA9_JPEG_BASE + 0x030)
  #define CODA9_REG_JPEG_DPB_BASE00		(CODA9_JPEG_BASE + 0x040)
