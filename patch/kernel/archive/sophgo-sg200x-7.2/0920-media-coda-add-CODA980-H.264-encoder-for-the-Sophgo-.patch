@@ -1,0 +1,826 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Lukasz Sobala <lsobala1@gmail.com>
+Date: Fri, 16 Oct 2026 02:48:25 +0200
+Subject: [PATCH] media: coda: add CODA980 H.264 encoder for the Sophgo SG2000
+
+The Sophgo SG2000 has a Chips&Media CODA980 for H.264. The CODA980 has
+the CODA960 command interface, with these differences:
+
+- frame memory control: BWB in bit 15, 128-bit little endian frames
+- SPS header: the host gives the level
+- PPS header: the host sets CABAC and 8x8 transform off
+- rate control takes other parameters
+- no subsampled reference frames
+- one frame cache configuration register
+
+Support the H.264 encoder only, at constant QP. The SG2000 also needs its
+codec control block, to give the shared SRAM to the H.264 core, and three
+bus and source clocks. Run without the SRAM for now.
+
+The register sequence follows Sophgo's vendor driver.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: Lukasz Sobala <lsobala1@gmail.com>
+---
+ .../media/platform/chips-media/coda/Kconfig   |   2 +-
+ .../platform/chips-media/coda/coda-bit.c      | 222 +++++++++++++++---
+ .../platform/chips-media/coda/coda-common.c   | 108 ++++++++-
+ .../media/platform/chips-media/coda/coda.h    |  10 +
+ .../platform/chips-media/coda/coda_regs.h     |  29 +++
+ 5 files changed, 329 insertions(+), 42 deletions(-)
+
+diff --git a/drivers/media/platform/chips-media/coda/Kconfig b/drivers/media/platform/chips-media/coda/Kconfig
+index cb7b66c..1c13b93 100644
+--- a/drivers/media/platform/chips-media/coda/Kconfig
++++ b/drivers/media/platform/chips-media/coda/Kconfig
+@@ -3,7 +3,7 @@
+ config VIDEO_CODA
+ 	tristate "Chips&Media Coda multi-standard codec IP"
+ 	depends on V4L_MEM2MEM_DRIVERS
+-	depends on VIDEO_DEV && OF && (ARCH_MXC || COMPILE_TEST)
++	depends on VIDEO_DEV && OF && (ARCH_MXC || ARCH_SOPHGO || COMPILE_TEST)
+ 	select SRAM
+ 	select VIDEOBUF2_DMA_CONTIG
+ 	select VIDEOBUF2_VMALLOC
+diff --git a/drivers/media/platform/chips-media/coda/coda-bit.c b/drivers/media/platform/chips-media/coda/coda-bit.c
+index b055930..3941e6a 100644
+--- a/drivers/media/platform/chips-media/coda/coda-bit.c
++++ b/drivers/media/platform/chips-media/coda/coda-bit.c
+@@ -67,7 +67,7 @@ static void coda_command_async(struct coda_ctx *ctx, int cmd)
+ 
+ 	if (dev->devtype->product == CODA_HX4 ||
+ 	    dev->devtype->product == CODA_7541 ||
+-	    dev->devtype->product == CODA_960) {
++	    coda_is_coda9(dev)) {
+ 		/* Restore context related registers to CODA */
+ 		coda_write(dev, ctx->bit_stream_param,
+ 				CODA_REG_BIT_BIT_STREAM_PARAM);
+@@ -78,7 +78,7 @@ static void coda_command_async(struct coda_ctx *ctx, int cmd)
+ 		coda_write(dev, ctx->workbuf.paddr, CODA_REG_BIT_WORK_BUF_ADDR);
+ 	}
+ 
+-	if (dev->devtype->product == CODA_960) {
++	if (coda_is_coda9(dev)) {
+ 		coda_write(dev, 1, CODA9_GDI_WPROT_ERR_CLR);
+ 		coda_write(dev, 0, CODA9_GDI_WPROT_RGN_EN);
+ 	}
+@@ -619,6 +619,41 @@ static int coda_alloc_context_buffers(struct coda_ctx *ctx,
+ 	return ret;
+ }
+ 
++/*
++ * The CODA980 firmware writes the level into the SPS but does not choose it.
++ * Use the lowest level that allows the frame size and macroblock rate.
++ */
++static u32 coda980_h264_level_idc(struct coda_ctx *ctx)
++{
++	static const struct {
++		u32 level_idc;
++		u32 max_mbps;
++		u32 max_fs;
++	} levels[] = {
++		{ 10, 1485, 99 }, { 11, 3000, 396 }, { 12, 6000, 396 },
++		{ 13, 11880, 396 }, { 20, 11880, 396 }, { 21, 19800, 792 },
++		{ 22, 20250, 1620 }, { 30, 40500, 1620 }, { 31, 108000, 3600 },
++		{ 32, 216000, 5120 }, { 40, 245760, 8192 }, { 42, 522240, 8704 },
++		{ 50, 589824, 22080 }, { 51, 983040, 36864 },
++	};
++	struct coda_q_data *q_data_src;
++	u32 num, den, fs, mbps;
++	int i;
++
++	q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
++	fs = DIV_ROUND_UP(q_data_src->rect.width, 16) *
++	     DIV_ROUND_UP(q_data_src->rect.height, 16);
++	num = ctx->params.framerate & 0xffff;
++	den = (ctx->params.framerate >> 16) + 1;
++	mbps = DIV_ROUND_UP(fs * num, den);
++
++	for (i = 0; i < ARRAY_SIZE(levels); i++)
++		if (fs <= levels[i].max_fs && mbps <= levels[i].max_mbps)
++			return levels[i].level_idc;
++
++	return 51;
++}
++
+ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 			      int header_code, u8 *header, int *size)
+ {
+@@ -630,16 +665,39 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 	int ret;
+ 	int i;
+ 
+-	if (dev->devtype->product == CODA_960)
++	if (coda_is_coda9(dev))
+ 		memset(vb2_plane_vaddr(vb, 0), 0, 64);
+ 
+ 	coda_write(dev, vb2_dma_contig_plane_dma_addr(vb, 0),
+ 		   CODA_CMD_ENC_HEADER_BB_START);
+ 	bufsize = vb2_plane_size(vb, 0);
+-	if (dev->devtype->product == CODA_960)
++	if (coda_is_coda9(dev))
+ 		bufsize /= 1024;
+ 	coda_write(dev, bufsize, CODA_CMD_ENC_HEADER_BB_SIZE);
+-	if (dev->devtype->product == CODA_960 &&
++
++	/*
++	 * The CODA980 header registers share their addresses with the
++	 * parameters of other commands. Write all of them: baseline profile,
++	 * 4:2:0, progressive, CAVLC, no 8x8 transform.
++	 */
++	if (dev->devtype->product == CODA_980 &&
++	    ctx->codec->dst_fourcc == V4L2_PIX_FMT_H264) {
++		if (header_code == CODA_HEADER_H264_SPS) {
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_PROFILE);
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_CHROMA_FORMAT);
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_FIELD_FLAG);
++			coda_write(dev, 0, CODA9_CMD_ENC_HEADER_FRAME_CROP_H);
++			coda_write(dev, 0, CODA9_CMD_ENC_HEADER_FRAME_CROP_V);
++			header_code |= coda980_h264_level_idc(ctx) <<
++				       CODA980_HEADER_LEVEL_OFFSET;
++		} else if (header_code == CODA_HEADER_H264_PPS) {
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_CABAC_MODE);
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_CABAC_INIT_IDC);
++			coda_write(dev, 0, CODA980_CMD_ENC_HEADER_TRANSFORM_8X8);
++		}
++	}
++
++	if (coda_is_coda9(dev) &&
+ 	    ctx->codec->dst_fourcc == V4L2_PIX_FMT_H264 &&
+ 	    header_code == CODA_HEADER_H264_SPS) {
+ 		q_data_src = get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+@@ -663,7 +721,7 @@ static int coda_encode_header(struct coda_ctx *ctx, struct vb2_v4l2_buffer *buf,
+ 		return ret;
+ 	}
+ 
+-	if (dev->devtype->product == CODA_960) {
++	if (coda_is_coda9(dev)) {
+ 		for (i = 63; i > 0; i--)
+ 			if (((char *)vb2_plane_vaddr(vb, 0))[i] != 0)
+ 				break;
+@@ -695,6 +753,11 @@ static u32 coda_slice_mode(struct coda_ctx *ctx)
+ 		break;
+ 	}
+ 
++	/* CODA980: 1 = slices of size bits, 2 = slices of size macroblocks */
++	if (ctx->dev->devtype->product == CODA_980)
++		return ((size & CODA_SLICING_SIZE_MASK) <<
++			CODA_SLICING_SIZE_OFFSET) | (unit + 1);
++
+ 	return ((size & CODA_SLICING_SIZE_MASK) << CODA_SLICING_SIZE_OFFSET) |
+ 	       ((unit & CODA_SLICING_UNIT_MASK) << CODA_SLICING_UNIT_OFFSET) |
+ 	       ((1 & CODA_SLICING_MODE_MASK) << CODA_SLICING_MODE_OFFSET);
+@@ -707,6 +770,12 @@ static int coda_enc_param_change(struct coda_ctx *ctx)
+ 	u32 success;
+ 	int ret;
+ 
++	/* The CODA980 runs without rate control for now */
++	if (dev->devtype->product == CODA_980) {
++		ctx->params.bitrate_changed = false;
++		ctx->params.h264_intra_qp_changed = false;
++	}
++
+ 	if (ctx->params.gop_size_changed) {
+ 		change_enable |= CODA_PARAM_CHANGE_RC_GOP;
+ 		coda_write(dev, ctx->params.gop_size,
+@@ -820,6 +889,7 @@ static void coda_setup_iram(struct coda_ctx *ctx)
+ 		me_bits = CODA7_USE_HOST_ME_ENABLE | CODA7_USE_ME_ENABLE;
+ 		break;
+ 	case CODA_960:
++	case CODA_980:
+ 		dbk_bits = CODA9_USE_HOST_DBK_ENABLE | CODA9_USE_DBK_ENABLE;
+ 		bit_bits = CODA9_USE_HOST_BIT_ENABLE | CODA7_USE_BIT_ENABLE;
+ 		ip_bits = CODA9_USE_HOST_IP_ENABLE | CODA7_USE_IP_ENABLE;
+@@ -961,7 +1031,7 @@ int coda_check_firmware(struct coda_dev *dev)
+ 		goto err_run_cmd;
+ 	}
+ 
+-	if (dev->devtype->product == CODA_960) {
++	if (coda_is_coda9(dev)) {
+ 		data = coda_read(dev, CODA9_CMD_FIRMWARE_CODE_REV);
+ 		v4l2_info(&dev->v4l2_dev, "Firmware code revision: %d\n",
+ 			  data);
+@@ -974,9 +1044,25 @@ int coda_check_firmware(struct coda_dev *dev)
+ 	minor = CODA_FIRMWARE_MINOR(data);
+ 	release = CODA_FIRMWARE_RELEASE(data);
+ 
++	if (dev->devtype->product == CODA_980)
++		v4l2_info(&dev->v4l2_dev,
++			  "Hardware product code 0x%04x, firmware 0x%08x\n",
++			  coda_read(dev, CODA980_GDI_PRODUCT_CODE), data);
++
+ 	clk_disable_unprepare(dev->clk_per);
+ 	clk_disable_unprepare(dev->clk_ahb);
+ 
++	/*
++	 * The product code that the CODA980 firmware reports is not known yet.
++	 * Accept it and print it.
++	 */
++	if (dev->devtype->product == CODA_980) {
++		v4l2_info(&dev->v4l2_dev,
++			  "Initialized CODA980, firmware product 0x%04x, version %u.%u.%u\n",
++			  product, major, minor, release);
++		return 0;
++	}
++
+ 	if (product != dev->devtype->product) {
+ 		v4l2_err(&dev->v4l2_dev,
+ 			 "Wrong firmware. Hw: %s, Fw: %s, Version: %u.%u.%u\n",
+@@ -1033,6 +1119,20 @@ static void coda9_set_frame_cache(struct coda_ctx *ctx, u32 fourcc)
+ 	coda_write(ctx->dev, cache_config, CODA9_CMD_SET_FRAME_CACHE_CONFIG);
+ }
+ 
++/*
++ * The CODA980 has one cache configuration register:
++ * merge[10:9], way shape[8:5], burst[3], tiled map[2], bypass[1:0].
++ * These are the vendor's encoder values for a linear frame map.
++ */
++static void coda980_set_frame_cache(struct coda_ctx *ctx)
++{
++	u32 cache_config = 3 << 9 | 15 << 5;
++
++	if (ctx->tiled_map_type != GDI_LINEAR_FRAME_MAP)
++		cache_config |= BIT(2);
++	coda_write(ctx->dev, cache_config, CODA9_CMD_SET_FRAME_CACHE_CONFIG);
++}
++
+ /*
+  * Encoder context operations
+  */
+@@ -1108,6 +1208,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 			CODADX6_STREAM_BUF_PIC_RESET, CODA_REG_BIT_STREAM_CTRL);
+ 		break;
+ 	case CODA_960:
++	case CODA_980:
+ 		coda_write(dev, 0, CODA9_GDI_WPROT_RGN_EN);
+ 		fallthrough;
+ 	case CODA_HX4:
+@@ -1151,6 +1252,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		}
+ 		fallthrough;
+ 	case CODA_960:
++	case CODA_980:
+ 		value = (q_data_src->rect.width & CODA7_PICWIDTH_MASK)
+ 			<< CODA7_PICWIDTH_OFFSET;
+ 		value |= (q_data_src->rect.height & CODA7_PICHEIGHT_MASK)
+@@ -1165,7 +1267,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 	ctx->params.codec_mode = ctx->codec->mode;
+ 	switch (dst_fourcc) {
+ 	case V4L2_PIX_FMT_MPEG4:
+-		if (dev->devtype->product == CODA_960)
++		if (coda_is_coda9(dev))
+ 			coda_write(dev, CODA9_STD_MPEG4,
+ 				   CODA_CMD_ENC_SEQ_COD_STD);
+ 		else
+@@ -1174,7 +1276,8 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		coda_write(dev, 0, CODA_CMD_ENC_SEQ_MP4_PARA);
+ 		break;
+ 	case V4L2_PIX_FMT_H264:
+-		if (dev->devtype->product == CODA_960)
++		/* CODA980: profile in bits 7:4, 0 is baseline */
++		if (coda_is_coda9(dev))
+ 			coda_write(dev, CODA9_STD_H264,
+ 				   CODA_CMD_ENC_SEQ_COD_STD);
+ 		else
+@@ -1223,8 +1326,17 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		coda_write(dev, value, CODA_CMD_ENC_SEQ_GOP_SIZE);
+ 	}
+ 
+-	if (ctx->params.bitrate && (ctx->params.frame_rc_enable ||
+-				    ctx->params.mb_rc_enable)) {
++	/*
++	 * The CODA980 firmware takes different rate control parameters, and the
++	 * vendor computes part of the rate control on the host. Use constant
++	 * QP until that is implemented.
++	 */
++	if (dev->devtype->product == CODA_980) {
++		if (ctx->params.bitrate)
++			coda_dbg(1, ctx, "no rate control, constant QP\n");
++		value = 0;
++	} else if (ctx->params.bitrate && (ctx->params.frame_rc_enable ||
++					   ctx->params.mb_rc_enable)) {
+ 		ctx->params.bitrate_changed = false;
+ 		ctx->params.h264_intra_qp_changed = false;
+ 
+@@ -1251,27 +1363,38 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 
+ 
+ 	value = 0;
+-	if (dev->devtype->product == CODA_960)
+-		gamma = CODA9_DEFAULT_GAMMA;
+-	else
+-		gamma = CODA_DEFAULT_GAMMA;
+-	if (gamma > 0) {
+-		coda_write(dev, (gamma & CODA_GAMMA_MASK) << CODA_GAMMA_OFFSET,
+-			   CODA_CMD_ENC_SEQ_RC_GAMMA);
+-	}
++	if (dev->devtype->product == CODA_980) {
++		/* No intra QP, QP limit or gamma without rate control */
++		coda_write(dev, 0, CODA980_CMD_ENC_SEQ_QP_RANGE_SET);
++		coda_write(dev, 0, CODA980_CMD_ENC_SEQ_RC_PARA2);
++		coda_write(dev, ~0, CODA7_CMD_ENC_SEQ_INTRA_QP);
++		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_QP_MIN_MAX);
++		coda_write(dev, 0, CODA_CMD_ENC_SEQ_RC_GAMMA);
++	} else {
++		if (dev->devtype->product == CODA_960)
++			gamma = CODA9_DEFAULT_GAMMA;
++		else
++			gamma = CODA_DEFAULT_GAMMA;
++		if (gamma > 0) {
++			coda_write(dev, (gamma & CODA_GAMMA_MASK) <<
++				   CODA_GAMMA_OFFSET,
++				   CODA_CMD_ENC_SEQ_RC_GAMMA);
++		}
+ 
+-	if (ctx->params.h264_min_qp || ctx->params.h264_max_qp) {
+-		coda_write(dev,
+-			   ctx->params.h264_min_qp << CODA_QPMIN_OFFSET |
+-			   ctx->params.h264_max_qp << CODA_QPMAX_OFFSET,
+-			   CODA_CMD_ENC_SEQ_RC_QP_MIN_MAX);
++		if (ctx->params.h264_min_qp || ctx->params.h264_max_qp) {
++			coda_write(dev,
++				   ctx->params.h264_min_qp << CODA_QPMIN_OFFSET |
++				   ctx->params.h264_max_qp << CODA_QPMAX_OFFSET,
++				   CODA_CMD_ENC_SEQ_RC_QP_MIN_MAX);
++		}
+ 	}
++	/* The CODA980 options stay 0: no AUD, no QP limit, no gamma */
+ 	if (dev->devtype->product == CODA_960) {
+ 		if (ctx->params.h264_max_qp)
+ 			value |= 1 << CODA9_OPTION_RCQPMAX_OFFSET;
+ 		if (CODA_DEFAULT_GAMMA > 0)
+ 			value |= 1 << CODA9_OPTION_GAMMA_OFFSET;
+-	} else {
++	} else if (dev->devtype->product != CODA_980) {
+ 		if (CODA_DEFAULT_GAMMA > 0) {
+ 			if (dev->devtype->product == CODA_DX6)
+ 				value |= 1 << CODADX6_OPTION_GAMMA_OFFSET;
+@@ -1285,7 +1408,8 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 	}
+ 	coda_write(dev, value, CODA_CMD_ENC_SEQ_OPTION);
+ 
+-	if (ctx->params.frame_rc_enable && !ctx->params.mb_rc_enable)
++	if (ctx->params.frame_rc_enable && !ctx->params.mb_rc_enable &&
++	    dev->devtype->product != CODA_980)
+ 		value = 1;
+ 	else
+ 		value = 0;
+@@ -1309,6 +1433,12 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		case CODA_960:
+ 			coda_write(dev, 0, CODA9_CMD_ENC_SEQ_ME_OPTION);
+ 			coda_write(dev, 0, CODA9_CMD_ENC_SEQ_INTRA_WEIGHT);
++			break;
++		case CODA_980:
++			/* Vendor default: search range Y 2, X 3 */
++			coda_write(dev, 2 << 2 | 3, CODA9_CMD_ENC_SEQ_ME_OPTION);
++			coda_write(dev, 0, CODA9_CMD_ENC_SEQ_INTRA_WEIGHT);
++			break;
+ 		}
+ 	}
+ 
+@@ -1318,14 +1448,18 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		goto out;
+ 	}
+ 
+-	if (coda_read(dev, CODA_RET_ENC_SEQ_SUCCESS) == 0) {
+-		v4l2_err(v4l2_dev, "CODA_COMMAND_SEQ_INIT failed\n");
++	value = coda_read(dev, CODA_RET_ENC_SEQ_SUCCESS);
++	if (value == 0 || (dev->devtype->product == CODA_980 &&
++			   value & CODA9_RET_ENC_SEQ_MEM_VIOLATION)) {
++		v4l2_err(v4l2_dev, "CODA_COMMAND_SEQ_INIT failed: 0x%08x\n",
++			 value);
+ 		ret = -EFAULT;
+ 		goto out;
+ 	}
+ 	ctx->initialized = 1;
+ 
+ 	if (dst_fourcc != V4L2_PIX_FMT_JPEG) {
++		/* The CODA960 needs two extra subsampled frames */
+ 		if (dev->devtype->product == CODA_960)
+ 			ctx->num_internal_frames = 4;
+ 		else
+@@ -1372,6 +1506,8 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 				   CODA9_CMD_SET_FRAME_SUBSAMP_A);
+ 			coda_write(dev, ctx->internal_frames[3].buf.paddr,
+ 				   CODA9_CMD_SET_FRAME_SUBSAMP_B);
++		} else if (dev->devtype->product == CODA_980) {
++			coda980_set_frame_cache(ctx);
+ 		}
+ 	}
+ 
+@@ -1410,7 +1546,7 @@ static int coda_start_encoding(struct coda_ctx *ctx)
+ 		 * fix up the SPS RBSP (Sequence Parameter Set Raw Byte
+ 		 * Sequence Payload) ourselves.
+ 		 */
+-		if (ctx->dev->devtype->product != CODA_960 &&
++		if (!coda_is_coda9(ctx->dev) &&
+ 		    ((q_data_src->rect.width % 16) ||
+ 		     (q_data_src->rect.height % 16))) {
+ 			ret = coda_h264_sps_fixup(ctx, q_data_src->rect.width,
+@@ -1524,6 +1660,7 @@ static int coda_prepare_encode(struct coda_ctx *ctx)
+ 		src_buf->flags &= ~V4L2_BUF_FLAG_PFRAME;
+ 	}
+ 
++	/* The CODA980 firmware sets up the GDI itself for linear frames */
+ 	if (dev->devtype->product == CODA_960)
+ 		coda_set_gdi_regs(ctx);
+ 
+@@ -1589,11 +1726,30 @@ static int coda_prepare_encode(struct coda_ctx *ctx)
+ 	/* submit */
+ 	if (ctx->params.rot_mode)
+ 		rot_mode = CODA_ROT_MIR_ENABLE | ctx->params.rot_mode;
++	/* The CODA980 takes the source chroma layout here, as the vendor does */
++	if (dev->devtype->product == CODA_980) {
++		rot_mode |= CODA_ROT_MIR_ENABLE;
++		if (q_data_src->fourcc == V4L2_PIX_FMT_NV12)
++			rot_mode |= CODA980_ROT_CHROMA_INTERLEAVE;
++	}
+ 	coda_write(dev, rot_mode, CODA_CMD_ENC_PIC_ROT_MODE);
+ 	coda_write(dev, quant_param, CODA_CMD_ENC_PIC_QS);
+ 
+-	if (dev->devtype->product == CODA_960) {
+-		coda_write(dev, 4/*FIXME: 0*/, CODA9_CMD_ENC_PIC_SRC_INDEX);
++	if (dev->devtype->product == CODA_980) {
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_TARGET_BIT);
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_RC_BUF_LEVEL);
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_RC_BUF_SIZE);
++		coda_write(dev, quant_param << CODA980_RC_QP_OFFSET,
++			   CODA980_CMD_ENC_PIC_RC_QP);
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_SRC_BOTTOM_Y);
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_SRC_BOTTOM_CB);
++		coda_write(dev, 0, CODA980_CMD_ENC_PIC_SRC_BOTTOM_CR);
++	}
++
++	if (coda_is_coda9(dev)) {
++		/* Source index: after the internal frames */
++		coda_write(dev, ctx->num_internal_frames,
++			   CODA9_CMD_ENC_PIC_SRC_INDEX);
+ 		coda_write(dev, q_data_src->bytesperline,
+ 			   CODA9_CMD_ENC_PIC_SRC_STRIDE);
+ 		coda_write(dev, 0, CODA9_CMD_ENC_PIC_SUB_FRAME_SYNC);
+@@ -1622,6 +1778,9 @@ static int coda_prepare_encode(struct coda_ctx *ctx)
+ 		coda_write(dev, ctx->iram_info.axi_sram_use,
+ 				CODA7_REG_BIT_AXI_SRAM_USE);
+ 
++	if (dev->devtype->product == CODA_980)
++		coda_write(dev, 0, CODA980_ME_LINEBUFFER_MODE);
++
+ 	trace_coda_enc_pic_run(ctx, src_buf);
+ 
+ 	coda_command_async(ctx, CODA_COMMAND_PIC_RUN);
+@@ -2248,6 +2407,7 @@ static int coda_prepare_decode(struct coda_ctx *ctx)
+ 		coda_write(dev, CODA_PRE_SCAN_EN, CODA_CMD_DEC_PIC_OPTION);
+ 		break;
+ 	case CODA_960:
++	case CODA_980:
+ 		/* 'hardcode to use interrupt disable mode'? */
+ 		coda_write(dev, (1 << 10), CODA_CMD_DEC_PIC_OPTION);
+ 		break;
+diff --git a/drivers/media/platform/chips-media/coda/coda-common.c b/drivers/media/platform/chips-media/coda/coda-common.c
+index be37ea5..a6a2428 100644
+--- a/drivers/media/platform/chips-media/coda/coda-common.c
++++ b/drivers/media/platform/chips-media/coda/coda-common.c
+@@ -167,6 +167,11 @@ static const struct coda_codec coda9_codecs[] = {
+ 	CODA_CODEC(CODA9_MODE_DECODE_MJPG, V4L2_PIX_FMT_JPEG,	V4L2_PIX_FMT_YUV420, 8192, 8192),
+ };
+ 
++/* Only the H.264 encoder is supported on the CODA980 for now */
++static const struct coda_codec coda980_codecs[] = {
++	CODA_CODEC(CODA9_MODE_ENCODE_H264, V4L2_PIX_FMT_YUV420, V4L2_PIX_FMT_H264,   1920, 1088),
++};
++
+ struct coda_video_device {
+ 	const char *name;
+ 	enum coda_inst_type type;
+@@ -298,6 +303,24 @@ static const struct coda_video_device *coda9_video_devices[] = {
+ 	&coda_bit_decoder,
+ };
+ 
++static const struct coda_video_device coda980_bit_encoder = {
++	.name = "coda-video-encoder",
++	.type = CODA_INST_ENCODER,
++	.ops = &coda_bit_encode_ops,
++	.src_formats = {
++		V4L2_PIX_FMT_NV12,
++		V4L2_PIX_FMT_YUV420,
++		V4L2_PIX_FMT_YVU420,
++	},
++	.dst_formats = {
++		V4L2_PIX_FMT_H264,
++	},
++};
++
++static const struct coda_video_device *coda980_video_devices[] = {
++	&coda980_bit_encoder,
++};
++
+ /*
+  * Normalize all supported YUV 4:2:0 formats to the value used in the codec
+  * tables.
+@@ -390,6 +413,8 @@ const char *coda_product_name(int product)
+ 		return "CODA7541";
+ 	case CODA_960:
+ 		return "CODA960";
++	case CODA_980:
++		return "CODA980";
+ 	default:
+ 		snprintf(buf, sizeof(buf), "(0x%04x)", product);
+ 		return buf;
+@@ -2319,7 +2344,7 @@ static void coda_encode_ctrls(struct coda_ctx *ctx)
+ 		V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP, 0, 51, 1, 25);
+ 	v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
+ 		V4L2_CID_MPEG_VIDEO_H264_P_FRAME_QP, 0, 51, 1, 25);
+-	if (ctx->dev->devtype->product != CODA_960) {
++	if (!coda_is_coda9(ctx->dev)) {
+ 		v4l2_ctrl_new_std(&ctx->ctrls, &coda_ctrl_ops,
+ 			V4L2_CID_MPEG_VIDEO_H264_MIN_QP, 0, 51, 1, 12);
+ 	}
+@@ -2356,7 +2381,7 @@ static void coda_encode_ctrls(struct coda_ctx *ctx)
+ 			  (1 << V4L2_MPEG_VIDEO_H264_LEVEL_3_1)),
+ 			V4L2_MPEG_VIDEO_H264_LEVEL_3_1);
+ 	}
+-	if (ctx->dev->devtype->product == CODA_960) {
++	if (coda_is_coda9(ctx->dev)) {
+ 		v4l2_ctrl_new_std_menu(&ctx->ctrls, &coda_ctrl_ops,
+ 			V4L2_CID_MPEG_VIDEO_H264_LEVEL,
+ 			V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
+@@ -2645,6 +2670,12 @@ static int coda_open(struct file *file)
+ 	coda_dbg(1, ctx, "open instance (%p)\n", ctx);
+ 
+ 	switch (dev->devtype->product) {
++	case CODA_980:
++		/* The vendor uses BWB and 128-bit little endian frames */
++		ctx->frame_mem_ctrl = CODA980_FRAME_ENABLE_BWB |
++				      CODA980_FRAME_ENDIAN_128BIT;
++		ctx->reg_idx = 0;
++		break;
+ 	case CODA_960:
+ 		/*
+ 		 * Enabling the BWB when decoding can hang the firmware with
+@@ -2795,6 +2826,11 @@ static int coda_hw_init(struct coda_dev *dev)
+ 
+ 	reset_control_reset(dev->rstc);
+ 
++	/* Give the SRAM that the codecs share to the H.264 core */
++	if (dev->ctrl_base)
++		writel(SG2000_VC_SRAM_TO_H264,
++		       dev->ctrl_base + SG2000_VC_SRAM_SHARE);
++
+ 	/*
+ 	 * Copy the first CODA_ISRAM_SIZE in the internal SRAM.
+ 	 * The 16-bit chars in the code buffer are in memory access
+@@ -2822,7 +2858,7 @@ static int coda_hw_init(struct coda_dev *dev)
+ 		coda_write(dev, 0, CODA_REG_BIT_CODE_BUF_ADDR + i * 4);
+ 
+ 	/* Tell the BIT where to find everything it needs */
+-	if (dev->devtype->product == CODA_960 ||
++	if (coda_is_coda9(dev) ||
+ 	    dev->devtype->product == CODA_7541 ||
+ 	    dev->devtype->product == CODA_HX4) {
+ 		coda_write(dev, dev->tempbuf.paddr,
+@@ -2849,6 +2885,9 @@ static int coda_hw_init(struct coda_dev *dev)
+ 	if (dev->devtype->product == CODA_960)
+ 		coda_write(dev, CODA9_FRAME_ENABLE_BWB,
+ 				CODA_REG_BIT_FRAME_MEM_CTRL);
++	else if (dev->devtype->product == CODA_980)
++		coda_write(dev, CODA980_FRAME_ENDIAN_128BIT,
++				CODA_REG_BIT_FRAME_MEM_CTRL);
+ 	else
+ 		coda_write(dev, 0, CODA_REG_BIT_FRAME_MEM_CTRL);
+ 
+@@ -3002,8 +3041,9 @@ static void coda_fw_callback(const struct firmware *fw, void *context)
+ 	}
+ 
+ 	/* allocate auxiliary per-device code buffer for the BIT processor */
+-	ret = coda_alloc_aux_buf(dev, &dev->codebuf, fw->size, "codebuf",
+-				 dev->debugfs_root);
++	ret = coda_alloc_aux_buf(dev, &dev->codebuf,
++				 max_t(size_t, fw->size, dev->devtype->codebuf_size),
++				 "codebuf", dev->debugfs_root);
+ 	if (ret < 0)
+ 		goto put_pm;
+ 
+@@ -3053,6 +3093,7 @@ enum coda_platform {
+ 	CODA_IMX53,
+ 	CODA_IMX6Q,
+ 	CODA_IMX6DL,
++	CODA_SG2000,
+ };
+ 
+ static const struct coda_devtype coda_devdata[] = {
+@@ -3130,6 +3171,22 @@ static const struct coda_devtype coda_devdata[] = {
+ 		.tempbuf_size = 204 * 1024,
+ 		.iram_size    = 0x1f000, /* leave 4k for suspend code */
+ 	},
++	[CODA_SG2000] = {
++		.firmware     = {
++			"v4l-coda980-sg2000.bin",
++			"sophgo/coda980.bin",
++			"coda980.bin"
++		},
++		.product      = CODA_980,
++		.codecs       = coda980_codecs,
++		.num_codecs   = ARRAY_SIZE(coda980_codecs),
++		.vdevs        = coda980_video_devices,
++		.num_vdevs    = ARRAY_SIZE(coda980_video_devices),
++		/* Sizes from the vendor driver */
++		.codebuf_size = 272 * 1024,
++		.workbuf_size = 80 * 1024,
++		.tempbuf_size = 470 * 1024,
++	},
+ };
+ 
+ static const struct of_device_id coda_dt_ids[] = {
+@@ -3138,6 +3195,7 @@ static const struct of_device_id coda_dt_ids[] = {
+ 	{ .compatible = "fsl,imx53-vpu", .data = &coda_devdata[CODA_IMX53] },
+ 	{ .compatible = "fsl,imx6q-vpu", .data = &coda_devdata[CODA_IMX6Q] },
+ 	{ .compatible = "fsl,imx6dl-vpu", .data = &coda_devdata[CODA_IMX6DL] },
++	{ .compatible = "sophgo,sg2000-vpu", .data = &coda_devdata[CODA_SG2000] },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, coda_dt_ids);
+@@ -3173,6 +3231,29 @@ static int coda_probe(struct platform_device *pdev)
+ 	if (IS_ERR(dev->regs_base))
+ 		return PTR_ERR(dev->regs_base);
+ 
++	/* SG2000: codec control block and the bus and source clocks */
++	if (dev->devtype->product == CODA_980) {
++		struct clk *clk;
++
++		dev->ctrl_base = devm_platform_ioremap_resource_byname(pdev,
++								       "ctrl");
++		if (IS_ERR(dev->ctrl_base))
++			return PTR_ERR(dev->ctrl_base);
++
++		clk = devm_clk_get_enabled(&pdev->dev, "axi");
++		if (IS_ERR(clk))
++			return dev_err_probe(&pdev->dev, PTR_ERR(clk),
++					     "Could not get axi clock\n");
++		clk = devm_clk_get_enabled(&pdev->dev, "src");
++		if (IS_ERR(clk))
++			return dev_err_probe(&pdev->dev, PTR_ERR(clk),
++					     "Could not get src clock\n");
++		clk = devm_clk_get_enabled(&pdev->dev, "cfg");
++		if (IS_ERR(clk))
++			return dev_err_probe(&pdev->dev, PTR_ERR(clk),
++					     "Could not get cfg clock\n");
++	}
++
+ 	/* IRQ */
+ 	irq = platform_get_irq_byname(pdev, "bit");
+ 	if (irq < 0)
+@@ -3211,9 +3292,12 @@ static int coda_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
+-	/* Get IRAM pool from device tree */
++	/*
++	 * Get IRAM pool from device tree. The CODA980 SRAM is not in the CPU
++	 * address space, so it runs without one for now.
++	 */
+ 	pool = of_gen_pool_get(np, "iram", 0);
+-	if (!pool) {
++	if (!pool && dev->devtype->product != CODA_980) {
+ 		dev_err(&pdev->dev, "iram pool not available\n");
+ 		return -ENOMEM;
+ 	}
+@@ -3253,9 +3337,13 @@ static int coda_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	dev->iram.size = dev->devtype->iram_size;
+-	dev->iram.vaddr = gen_pool_dma_alloc(dev->iram_pool, dev->iram.size,
+-					     &dev->iram.paddr);
+-	if (!dev->iram.vaddr) {
++	if (dev->iram_pool)
++		dev->iram.vaddr = gen_pool_dma_alloc(dev->iram_pool,
++						     dev->iram.size,
++						     &dev->iram.paddr);
++	if (!dev->iram_pool) {
++		dev_info(&pdev->dev, "no iram, running without it\n");
++	} else if (!dev->iram.vaddr) {
+ 		dev_warn(&pdev->dev, "unable to alloc iram\n");
+ 	} else {
+ 		memset(dev->iram.vaddr, 0, dev->iram.size);
+diff --git a/drivers/media/platform/chips-media/coda/coda.h b/drivers/media/platform/chips-media/coda/coda.h
+index ddfd0a3..29a6b1b 100644
+--- a/drivers/media/platform/chips-media/coda/coda.h
++++ b/drivers/media/platform/chips-media/coda/coda.h
+@@ -51,6 +51,7 @@ enum coda_product {
+ 	CODA_HX4 = 0xf00a,
+ 	CODA_7541 = 0xf012,
+ 	CODA_960 = 0xf020,
++	CODA_980 = 0xf030,
+ };
+ 
+ struct coda_video_device;
+@@ -62,6 +63,7 @@ struct coda_devtype {
+ 	unsigned int		num_codecs;
+ 	const struct coda_video_device **vdevs;
+ 	unsigned int		num_vdevs;
++	size_t			codebuf_size;
+ 	size_t			workbuf_size;
+ 	size_t			tempbuf_size;
+ 	size_t			iram_size;
+@@ -84,6 +86,7 @@ struct coda_dev {
+ 	struct vdoa_data	*vdoa;
+ 
+ 	void __iomem		*regs_base;
++	void __iomem		*ctrl_base;
+ 	struct clk		*clk_per;
+ 	struct clk		*clk_ahb;
+ 	struct reset_control	*rstc;
+@@ -335,6 +338,13 @@ static inline struct coda_q_data *get_q_data(struct coda_ctx *ctx,
+ 	}
+ }
+ 
++/* CODA960 and CODA980 share the BIT processor interface */
++static inline bool coda_is_coda9(struct coda_dev *dev)
++{
++	return dev->devtype->product == CODA_960 ||
++	       dev->devtype->product == CODA_980;
++}
++
+ const char *coda_product_name(int product);
+ 
+ int coda_check_firmware(struct coda_dev *dev);
+diff --git a/drivers/media/platform/chips-media/coda/coda_regs.h b/drivers/media/platform/chips-media/coda/coda_regs.h
+index db81a90..48239f1 100644
+--- a/drivers/media/platform/chips-media/coda/coda_regs.h
++++ b/drivers/media/platform/chips-media/coda/coda_regs.h
+@@ -47,8 +47,10 @@
+ #define		CODA7_STREAM_SEL_64BITS_ENDIAN	(1 << 1)
+ #define		CODA_STREAM_ENDIAN_SELECT	(1 << 0)
+ #define CODA_REG_BIT_FRAME_MEM_CTRL		0x110
++#define		CODA980_FRAME_ENABLE_BWB	(1 << 15)
+ #define		CODA9_FRAME_ENABLE_BWB		(1 << 12)
+ #define		CODA9_FRAME_TILED2LINEAR	(1 << 11)
++#define		CODA980_FRAME_ENDIAN_128BIT	(1 << 4)
+ #define		CODA_FRAME_CHROMA_INTERLEAVE	(1 << 2)
+ #define		CODA_IMAGE_ENDIAN_SELECT	(1 << 0)
+ #define CODA_REG_BIT_BIT_STREAM_PARAM		0x114
+@@ -334,7 +336,10 @@
+ #define CODA_CMD_ENC_SEQ_RC_INTERVAL_MODE			0x1d0
+ #define CODA9_CMD_ENC_SEQ_INTRA_WEIGHT				0x1d4
+ #define CODA9_CMD_ENC_SEQ_ME_OPTION				0x1d8
++#define CODA980_CMD_ENC_SEQ_RC_PARA2				0x1dc
++#define CODA980_CMD_ENC_SEQ_QP_RANGE_SET			0x1e0
+ #define CODA_RET_ENC_SEQ_SUCCESS				0x1c0
++#define		CODA9_RET_ENC_SEQ_MEM_VIOLATION			BIT(31)
+ 
+ #define CODA_CMD_ENC_SEQ_JPG_PARA				0x198
+ #define CODA_CMD_ENC_SEQ_JPG_RST_INTERVAL			0x19C
+@@ -367,11 +372,20 @@
+ #define CODA9_CMD_ENC_PIC_SRC_ADDR_Y		0x1a8
+ #define CODA9_CMD_ENC_PIC_SRC_ADDR_CB		0x1ac
+ #define CODA9_CMD_ENC_PIC_SRC_ADDR_CR		0x1b0
++#define CODA980_CMD_ENC_PIC_TARGET_BIT		0x1c0
++#define CODA980_CMD_ENC_PIC_RC_BUF_LEVEL	0x1c8
++#define CODA980_CMD_ENC_PIC_RC_BUF_SIZE		0x1cc
++#define CODA980_CMD_ENC_PIC_RC_QP		0x1d4
++#define		CODA980_RC_QP_OFFSET				12
++#define CODA980_CMD_ENC_PIC_SRC_BOTTOM_Y	0x1e8
++#define CODA980_CMD_ENC_PIC_SRC_BOTTOM_CB	0x1ec
++#define CODA980_CMD_ENC_PIC_SRC_BOTTOM_CR	0x1f0
+ #define CODA_CMD_ENC_PIC_SRC_ADDR_Y	0x180
+ #define CODA_CMD_ENC_PIC_SRC_ADDR_CB	0x184
+ #define CODA_CMD_ENC_PIC_SRC_ADDR_CR	0x188
+ #define CODA_CMD_ENC_PIC_QS		0x18c
+ #define CODA_CMD_ENC_PIC_ROT_MODE	0x190
++#define		CODA980_ROT_CHROMA_INTERLEAVE			(1 << 18)
+ #define		CODA_ROT_MIR_ENABLE				(1 << 4)
+ #define		CODA_ROT_0					(0x0 << 0)
+ #define		CODA_ROT_90					(0x1 << 0)
+@@ -438,6 +452,13 @@
+ #define CODA_CMD_ENC_HEADER_BB_SIZE	0x188
+ #define CODA9_CMD_ENC_HEADER_FRAME_CROP_H	0x18c
+ #define CODA9_CMD_ENC_HEADER_FRAME_CROP_V	0x190
++#define CODA980_CMD_ENC_HEADER_CABAC_MODE	0x194
++#define CODA980_CMD_ENC_HEADER_CABAC_INIT_IDC	0x198
++#define CODA980_CMD_ENC_HEADER_TRANSFORM_8X8	0x19c
++#define CODA980_CMD_ENC_HEADER_CHROMA_FORMAT	0x1a0
++#define CODA980_CMD_ENC_HEADER_FIELD_FLAG	0x1a4
++#define CODA980_CMD_ENC_HEADER_PROFILE		0x1a8
++#define		CODA980_HEADER_LEVEL_OFFSET	8
+ 
+ /* Get Version */
+ #define CODA_CMD_FIRMWARE_VERNUM		0x1c0
+@@ -459,6 +480,7 @@
+ 
+ #define CODA9_GDI_BUS_CTRL			(CODA9_GDMA_BASE + 0x0f0)
+ #define CODA9_GDI_BUS_STATUS			(CODA9_GDMA_BASE + 0x0f4)
++#define CODA980_GDI_PRODUCT_CODE		(CODA9_GDMA_BASE + 0x044)
+ 
+ #define CODA9_GDI_INFO_CONTROL			(CODA9_GDMA_BASE + 0x400)
+ #define CODA9_GDI_INFO_PIC_SIZE			(CODA9_GDMA_BASE + 0x404)
+@@ -560,4 +582,11 @@
+ #define CODA9_REG_JPEG_BBC_STRM_CTRL		(CODA9_JPEG_BASE + 0x234)
+ #define CODA9_REG_JPEG_BBC_FLUSH_CMD		(CODA9_JPEG_BASE + 0x238)
+ 
++/* CODA980 motion estimation */
++#define CODA980_ME_LINEBUFFER_MODE		0x604
++
++/* SG2000 video codec control block, separate from the CODA registers */
++#define SG2000_VC_SRAM_SHARE			0x24
++#define		SG2000_VC_SRAM_TO_H264		1
++
+ #endif
