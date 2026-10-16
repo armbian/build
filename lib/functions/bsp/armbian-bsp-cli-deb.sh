@@ -192,10 +192,6 @@ function compile_armbian-bsp-cli() {
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
-	cat <<- EOF > "${destination}"/DEBIAN/conffiles
-		/usr/lib/armbian/armbian-apt-updates
-		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
-	EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -225,6 +221,28 @@ function compile_armbian-bsp-cli() {
 		You can also append to the `preinst_functions`, `postinst_functions` and `postrm` array, and the _content_
 		of those functions will be added to the preinst, postinst and postrm scripts respectively.
 	POST_FAMILY_TWEAKS_BSP
+
+	# Conffiles, after the hooks: family_tweaks_bsp, post_family_tweaks_bsp and the
+	# extensions all write to $destination, so the tree is only final here.
+	#
+	# List a path only when the package really contains it. Extensions strip BSP
+	# files on purpose -- a cloud image has no use for the apt periodic config, for
+	# instance -- and the framework cannot know which. A listed path that is not in
+	# the tree makes dpkg-deb refuse: "does not appear in package".
+	declare -a bsp_conffile_candidates=(
+		"/usr/lib/armbian/armbian-apt-updates"
+		"/etc/X11/xorg.conf.d/01-armbian-defaults.conf"
+		"/etc/apt/apt.conf.d/02-armbian-periodic"
+	)
+	declare bsp_conffile
+	: > "${destination}"/DEBIAN/conffiles
+	for bsp_conffile in "${bsp_conffile_candidates[@]}"; do
+		if [[ -f "${destination}${bsp_conffile}" ]]; then
+			echo "${bsp_conffile}" >> "${destination}"/DEBIAN/conffiles
+		else
+			display_alert "Not shipping conffile, removed from the BSP" "${bsp_conffile}" "debug"
+		fi
+	done
 
 	# Render the postinst/postrm/etc
 	# set up pre install script; use inline functions

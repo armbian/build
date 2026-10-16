@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 13 Oct 2026 13:10:18 +0200
+Subject: [PATCH 10/13] mmc: rtd129x: make eMMC writes work
+
+After a write, the next transfer failed. Two causes:
+- The data-busy status stays set after a write or an R1b command, so
+  a command that waits for it never starts. Add the dw_mmc host flag
+  busy_stuck: wait only before data reads, and let the MMC core poll
+  the card status.
+- With burst transfers, the DMAC stops fetching descriptors after the
+  first write. Use single transfers, as the vendor driver does.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/mmc/dw_mmc.c         | 10 +++++++---
+ drivers/mmc/rtd129x_dw_mmc.c | 13 ++++++++++++-
+ include/dwmmc.h              |  4 ++++
+ 3 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/mmc/dw_mmc.c b/drivers/mmc/dw_mmc.c
+index 553fa0ccad..019ffb84aa 100644
+--- a/drivers/mmc/dw_mmc.c
++++ b/drivers/mmc/dw_mmc.c
+@@ -380,7 +380,8 @@ static int dwmci_send_cmd_common(struct dwmci_host *host, struct mmc_cmd *cmd,
+ 	u32 mask;
+ 	struct bounce_buffer bbstate;
+ 
+-	dwmci_wait_while_busy(host, cmd);
++	if (!host->busy_stuck)
++		dwmci_wait_while_busy(host, cmd);
+ 	dwmci_writel(host, DWMCI_RINTSTS, DWMCI_INTMSK_ALL);
+ 
+ 	if (data) {
+@@ -420,7 +421,9 @@ static int dwmci_send_cmd_common(struct dwmci_host *host, struct mmc_cmd *cmd,
+ 
+ 	if (cmd->cmdidx == MMC_CMD_STOP_TRANSMISSION)
+ 		flags |= DWMCI_CMD_ABORT_STOP;
+-	else
++	else if (!host->busy_stuck ||
++		 (data && data->flags == MMC_DATA_READ &&
++		  cmd->cmdidx != MMC_CMD_SEND_EXT_CSD))
+ 		flags |= DWMCI_CMD_PRV_DAT_WAIT;
+ 
+ 	if (cmd->resp_type & MMC_RSP_PRESENT) {
+@@ -528,7 +531,8 @@ static int dwmci_send_cmd(struct mmc *mmc, struct mmc_cmd *cmd,
+ static int dwmci_control_clken(struct dwmci_host *host, bool on)
+ {
+ 	const u32 val = on ? DWMCI_CLKEN_ENABLE | DWMCI_CLKEN_LOW_PWR : 0;
+-	const u32 cmd_only_clk = DWMCI_CMD_PRV_DAT_WAIT | DWMCI_CMD_UPD_CLK;
++	const u32 cmd_only_clk = (host->busy_stuck ? 0 : DWMCI_CMD_PRV_DAT_WAIT) |
++				 DWMCI_CMD_UPD_CLK;
+ 	int i, timeout = 10000;
+ 	u32 flags, mask;
+ 
+diff --git a/drivers/mmc/rtd129x_dw_mmc.c b/drivers/mmc/rtd129x_dw_mmc.c
+index e5be546afc..569ebc427c 100644
+--- a/drivers/mmc/rtd129x_dw_mmc.c
++++ b/drivers/mmc/rtd129x_dw_mmc.c
+@@ -8,7 +8,9 @@
+  *  - a sync of the bus bridge (SB2), else the DMAC reads stale descriptors;
+  *  - a DMAC reset before each transfer: it stays parked on the descriptor
+  *    that ended the previous chain, and DBADDR does not move it;
+- *  - on a read, a wait until the DMAC has moved every byte to DDR.
++ *  - on a read, a wait until the DMAC has moved every byte to DDR;
++ *  - no wait on the data-busy status, which stays set after a write;
++ *  - single DMA transfers, as the BSP uses.
+  *
+  * The pins come up in another function; this sets them to the eMMC.
+  *
+@@ -29,6 +31,12 @@
+ /* DesignWare core, beyond dwmmc.h */
+ #define EM_DDR_REG		0x10c
+ 
++/*
++ * FIFOTH as the BSP sets it: single transfers. With bursts, the DMAC
++ * stops fetching descriptors after the first write.
++ */
++#define EM_FIFOTH_SINGLE	0x0001007f
++
+ /* SB2: writing SYNC drains the CPU's posted writes to DDR */
+ #define SB2_SYNC		0x020
+ 
+@@ -138,6 +146,8 @@ static void rtd129x_dwmmc_idmac_start(struct dwmci_host *host, void *desc)
+ 	writel(0, priv->sb2 + SB2_SYNC);
+ 	dmb();
+ 
++	dwmci_writel(host, DWMCI_FIFOTH, EM_FIFOTH_SINGLE);
++
+ 	dwmci_writel(host, DWMCI_CTRL,
+ 		     dwmci_readl(host, DWMCI_CTRL) | DWMCI_CTRL_DMA_RESET);
+ 	readl_poll_timeout(host->ioaddr + DWMCI_CTRL, val,
+@@ -212,6 +222,7 @@ static int rtd129x_dwmmc_probe(struct udevice *dev)
+ 	host->dev_index = 0;
+ 	host->priv = priv;
+ 	host->fifo_depth = EM_FIFO_DEPTH;
++	host->busy_stuck = true;
+ 	host->idmac_start = rtd129x_dwmmc_idmac_start;
+ 	host->idmac_wait = rtd129x_dwmmc_idmac_wait;
+ 
+diff --git a/include/dwmmc.h b/include/dwmmc.h
+index 0bcb09720d..b00c6a73c6 100644
+--- a/include/dwmmc.h
++++ b/include/dwmmc.h
+@@ -191,6 +191,9 @@ struct dwmci_idmac_regs {
+  * @board_init:	(Optional) Platform function to run on init
+  * @cfg:	Internal MMC configuration, for !CONFIG_BLK cases
+  * @fifo_mode:	Use FIFO mode (not DMA) to read and write data
++ * @busy_stuck:	The data-busy status does not clear after a write or an R1b
++ *		command. Wait for it only before a data read; the MMC core
++ *		polls the card status instead.
+  * @idmac_start: (Optional) Platform function to run once the descriptors
+  *		are written, before the IDMAC starts
+  * @idmac_wait:	(Optional) Platform function to wait until the IDMAC has
+@@ -237,6 +240,7 @@ struct dwmci_host {
+ #endif
+ 
+ 	bool fifo_mode;
++	bool busy_stuck;
+ 	bool dma_64bit_address;
+ 	bool volt_switching;
+ 	const struct dwmci_idmac_regs *regs;

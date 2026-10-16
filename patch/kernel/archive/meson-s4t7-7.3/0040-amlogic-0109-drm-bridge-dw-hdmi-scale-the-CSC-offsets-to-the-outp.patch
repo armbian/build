@@ -1,0 +1,65 @@
+From 5b81834bf9af3699cfbeaa4d845e49e8e7a8480d Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Sat, 26 Sep 2026 16:14:30 +0000
+Subject: [PATCH 109/210] drm/bridge: dw-hdmi: scale the CSC offsets to the
+ output color depth
+
+The CSC coefficients are gains and do not depend on the color depth,
+but the offset column is added in LSBs of the depth the converter runs
+at. The tables are encoded for 8 bits per component, so at 10 or 12
+bits the offsets are a quarter or a sixteenth of what they should be:
+limited range RGB and YCbCr to RGB conversion lose their black level
+and chroma centering in deep color.
+
+Scale the offsets from 8 bits to the output depth, clamped to the
+register range.
+
+Fixes: def23aa7e982 ("drm: bridge: dw-hdmi: Switch to V4L bus format and encodings")
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index eab2fce90eb3..83e234548a07 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -1104,9 +1104,21 @@ static bool is_csc_needed(struct dw_hdmi *hdmi)
+ 	       is_color_space_interpolation(hdmi);
+ }
+ 
++static u16 dw_hdmi_csc_offset(u16 offset, unsigned int depth)
++{
++	int val = sign_extend32(offset, 14);
++
++	if (depth > 8)
++		val = clamp(val * (1 << (depth - 8)), -0x4000, 0x3fff);
++
++	return val & 0x7fff;
++}
++
+ static void dw_hdmi_update_csc_coeffs(struct dw_hdmi *hdmi)
+ {
+ 	const u16 (*csc_coeff)[3][4] = &csc_coeff_default;
++	unsigned int depth =
++		hdmi_bus_fmt_color_depth(hdmi->hdmi_data.enc_out_bus_format);
+ 	bool is_input_rgb, is_output_rgb;
+ 	unsigned i;
+ 	u32 csc_scale = 1;
+@@ -1136,6 +1148,12 @@ static void dw_hdmi_update_csc_coeffs(struct dw_hdmi *hdmi)
+ 		u16 coeff_b = (*csc_coeff)[1][i];
+ 		u16 coeff_c = (*csc_coeff)[2][i];
+ 
++		if (i == ARRAY_SIZE(csc_coeff_default[0]) - 1) {
++			coeff_a = dw_hdmi_csc_offset(coeff_a, depth);
++			coeff_b = dw_hdmi_csc_offset(coeff_b, depth);
++			coeff_c = dw_hdmi_csc_offset(coeff_c, depth);
++		}
++
+ 		hdmi_writeb(hdmi, coeff_a & 0xff, HDMI_CSC_COEF_A1_LSB + i * 2);
+ 		hdmi_writeb(hdmi, coeff_a >> 8, HDMI_CSC_COEF_A1_MSB + i * 2);
+ 		hdmi_writeb(hdmi, coeff_b & 0xff, HDMI_CSC_COEF_B1_LSB + i * 2);
+-- 
+2.43.0
+

@@ -365,6 +365,14 @@ driver_rtl8811CU_rtl8821C() {
 
 		# fix compilation for kernels >= 6.6.157
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-6.6.157.patch" "applying"
+
+		# HardKernel's odroidxu4 vendor kernel slipstreams its own copy of this
+		# driver in drivers/net/wireless/rtl8821cu, and builds it from the
+		# in-tree Makefile. Patch that copy too, but only where it exists.
+		if [[ -f "${kerneldir}/drivers/net/wireless/rtl8821cu/os_dep/linux/usb_intf.c" ]]; then
+			process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu-Fix-6.6.157.patch" "applying"
+		fi
+
 		display_alert "Done adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets" "info"
@@ -552,7 +560,7 @@ driver_uwe5622() {
 	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sun* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local uwe5622ver='commit:6eb218457c35cc4862f43a694708f74cf03370eb' # Commit date: Sep 9, 2026 (please update when updating commit ref)
+		local uwe5622ver='commit:fa9d1a6703a93a85bcf68e865ebc2726474076ad' # Commit date: Oct 13, 2026 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Unisoc uwe5622 driver ${uwe5622ver}" "info"
 

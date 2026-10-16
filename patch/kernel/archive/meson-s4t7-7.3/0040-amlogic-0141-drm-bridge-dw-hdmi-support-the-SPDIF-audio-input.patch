@@ -1,0 +1,146 @@
+From 24258ac7d2de804f4cabf039ba4118f67ae1480c Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Mon, 14 Sep 2026 16:39:38 +0000
+Subject: [PATCH 141/210] drm/bridge: dw-hdmi: support the SPDIF audio input
+
+The controller can sample audio from its I2S or SPDIF input, but only
+I2S is driven: hw_params rejects HDMI_SPDIF and the codec registers no
+spdif DAI, so a source wired to the SPDIF input cannot be used.
+
+Program the SPDIF sampler when the DAI format asks for it: reset its
+FIFO alongside the I2S one, clear AUD_CONF0, set the width in AUD_SPDIF1
+and expect a 128FS input clock for a stereo frame. Register the spdif
+DAI after i2s so a link that binds the codec without an index still
+gets i2s.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ .../drm/bridge/synopsys/dw-hdmi-i2s-audio.c   | 40 ++++++++++++++++++-
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.h     |  9 +++++
+ 2 files changed, 47 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index 2c903c9fe805..c1fba57d772b 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -43,16 +43,29 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	u8 conf0 = 0;
+ 	u8 conf1 = 0;
+ 	u8 inputclkfs = 0;
++	bool spdif = fmt->fmt == HDMI_SPDIF;
++	u8 spdif0 = 0;
+ 
+ 	/* it cares I2S only */
+-	if (fmt->bit_clk_provider | fmt->frame_clk_provider) {
++	if (!spdif && (fmt->bit_clk_provider | fmt->frame_clk_provider)) {
+ 		dev_err(dev, "unsupported clock settings\n");
+ 		return -EINVAL;
+ 	}
+ 
+ 	/* Reset the FIFOs before applying new params */
+ 	hdmi_write(audio, HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
+-	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
++	if (spdif) {
++		spdif0 = hdmi_read(audio, HDMI_AUD_SPDIF0);
++		hdmi_write(audio, spdif0 | HDMI_AUD_SPDIF0_SW_RESET,
++			   HDMI_AUD_SPDIF0);
++		hdmi_write(audio, spdif0, HDMI_AUD_SPDIF0);
++		hdmi_write(audio, (u8)~(HDMI_MC_SWRSTZ_I2SSWRST_REQ |
++					HDMI_MC_SWRSTZ_SPDIFSWRST_REQ),
++			   HDMI_MC_SWRSTZ);
++	} else {
++		hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ,
++			   HDMI_MC_SWRSTZ);
++	}
+ 
+ 	inputclkfs	= HDMI_AUD_INPUTCLKFS_64FS;
+ 	conf0		= (HDMI_AUD_CONF0_I2S_SELECT | HDMI_AUD_CONF0_I2S_EN0);
+@@ -81,6 +94,8 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	}
+ 
+ 	switch (fmt->fmt) {
++	case HDMI_SPDIF:
++		break;
+ 	case HDMI_I2S:
+ 		conf1 |= HDMI_AUD_CONF1_MODE_I2S;
+ 		break;
+@@ -101,6 +116,19 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 		return -EINVAL;
+ 	}
+ 
++	if (spdif) {
++		switch (hparms->channels) {
++		case 1 ... 2:
++			inputclkfs = HDMI_AUD_INPUTCLKFS_128FS;
++			break;
++		default:
++			dev_err(dev, "unsupported channel count for spdif: %u\n",
++				hparms->channels);
++			return -EINVAL;
++		}
++		conf0 = 0;
++	}
++
+ 	dw_hdmi_set_sample_rate(hdmi, hparms->sample_rate);
+ 	dw_hdmi_set_channel_status(hdmi, hparms->iec.status);
+ 	dw_hdmi_set_channel_count(hdmi, hparms->channels);
+@@ -109,6 +137,13 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	hdmi_write(audio, inputclkfs, HDMI_AUD_INPUTCLKFS);
+ 	hdmi_write(audio, conf0, HDMI_AUD_CONF0);
+ 	hdmi_write(audio, conf1, HDMI_AUD_CONF1);
++	if (spdif) {
++		hdmi_write(audio, 24 & HDMI_AUD_SPDIF1_WIDTH_MASK,
++			   HDMI_AUD_SPDIF1);
++		hdmi_write(audio, spdif0 | HDMI_AUD_SPDIF0_SW_RESET,
++			   HDMI_AUD_SPDIF0);
++		hdmi_write(audio, spdif0, HDMI_AUD_SPDIF0);
++	}
+ 
+ 	return 0;
+ }
+@@ -198,6 +233,7 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
+ 	pdata.ops		= &dw_hdmi_i2s_ops;
+ 	pdata.i2s		= 1;
+ 	pdata.max_i2s_channels	= 8;
++	pdata.spdif		= 1;
+ 	pdata.data		= audio;
+ 
+ 	memset(&pdevinfo, 0, sizeof(pdevinfo));
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+index af43a0414b78..92ed388fbe2c 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+@@ -402,6 +402,8 @@
+ #define HDMI_AUD_CTS2                           0x3204
+ #define HDMI_AUD_CTS3                           0x3205
+ #define HDMI_AUD_INPUTCLKFS                     0x3206
++#define HDMI_AUD_SPDIF0				0x3300
++#define HDMI_AUD_SPDIF1				0x3301
+ #define HDMI_AUD_SPDIFINT			0x3302
+ #define HDMI_AUD_CONF0_HBR                      0x3400
+ #define HDMI_AUD_HBR_STATUS                     0x3401
+@@ -951,6 +953,12 @@ enum {
+ 	HDMI_AUD_INPUTCLKFS_512FS = 2,
+ 	HDMI_AUD_INPUTCLKFS_64FS = 4,
+ 
++/* HDMI_AUD_SPDIF0 field values */
++	HDMI_AUD_SPDIF0_SW_RESET = 0x80,
++
++/* HDMI_AUD_SPDIF1 field values */
++	HDMI_AUD_SPDIF1_WIDTH_MASK = 0x1f,
++
+ /* AHB_DMA_CONF0 field values */
+ 	HDMI_AHB_DMA_CONF0_SW_FIFO_RST_OFFSET = 7,
+ 	HDMI_AHB_DMA_CONF0_SW_FIFO_RST_MASK = 0x80,
+@@ -996,6 +1004,7 @@ enum {
+ 
+ /* MC_SWRSTZ field values */
+ 	HDMI_MC_SWRSTZ_I2SSWRST_REQ = 0x08,
++	HDMI_MC_SWRSTZ_SPDIFSWRST_REQ = 0x10,
+ 	HDMI_MC_SWRSTZ_TMDSSWRST_REQ = 0x02,
+ 
+ /* MC_FLOWCTRL field values */
+-- 
+2.43.0
+

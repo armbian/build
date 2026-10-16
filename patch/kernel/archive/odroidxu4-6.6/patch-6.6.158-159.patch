@@ -1,0 +1,219 @@
+diff --git a/Makefile b/Makefile
+index fb0678c1bcfbc5..59b8cecf471fb5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 158
++SUBLEVEL = 159
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/include/net/ip.h b/include/net/ip.h
+index baea9acd7e85fd..32825e2ac43d35 100644
+--- a/include/net/ip.h
++++ b/include/net/ip.h
+@@ -72,6 +72,13 @@ static inline unsigned int ip_hdrlen(const struct sk_buff *skb)
+ 	return ip_hdr(skb)->ihl * 4;
+ }
+ 
++static inline int ip_check_csum_start(const struct sk_buff *skb)
++{
++	if (unlikely(skb->csum_start < skb->network_header + ip_hdrlen(skb)))
++		return -EINVAL;
++	return 0;
++}
++
+ struct ipcm_cookie {
+ 	struct sockcm_cookie	sockc;
+ 	__be32			addr;
+diff --git a/net/bridge/netfilter/nf_conntrack_bridge.c b/net/bridge/netfilter/nf_conntrack_bridge.c
+index 8834a45f697b8d..3b75d5b2161717 100644
+--- a/net/bridge/netfilter/nf_conntrack_bridge.c
++++ b/net/bridge/netfilter/nf_conntrack_bridge.c
+@@ -40,9 +40,13 @@ static int nf_br_ip_fragment(struct net *net, struct sock *sk,
+ 	int err = 0;
+ 
+ 	/* for offloaded checksums cleanup checksum before fragmentation */
+-	if (skb->ip_summed == CHECKSUM_PARTIAL &&
+-	    (err = skb_checksum_help(skb)))
+-		goto blackhole;
++	if (skb->ip_summed == CHECKSUM_PARTIAL) {
++		err = ip_check_csum_start(skb);
++		if (!err)
++			err = skb_checksum_help(skb);
++		if (err)
++			goto blackhole;
++	}
+ 
+ 	iph = ip_hdr(skb);
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 2fdef07b7b93b3..39ae673773581b 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3431,6 +3431,7 @@ int skb_crc32c_csum_help(struct sk_buff *skb)
+ out:
+ 	return ret;
+ }
++EXPORT_SYMBOL(skb_crc32c_csum_help);
+ 
+ __be16 skb_network_protocol(struct sk_buff *skb, int *depth)
+ {
+diff --git a/net/ipv4/af_inet.c b/net/ipv4/af_inet.c
+index f336b2ddf97243..c3dcdee3f21244 100644
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -154,7 +154,7 @@ void inet_sock_destruct(struct sock *sk)
+ 	WARN_ON_ONCE(sk->sk_wmem_queued);
+ 	WARN_ON_ONCE(sk_forward_alloc_get(sk));
+ 
+-	kfree(rcu_dereference_protected(inet->inet_opt, 1));
++	kfree_rcu(rcu_dereference_protected(inet->inet_opt, 1), rcu);
+ 	dst_release(rcu_dereference_protected(sk->sk_dst_cache, 1));
+ 	dst_release(rcu_dereference_protected(sk->sk_rx_dst, 1));
+ }
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index 3bb198b2c101c7..c8f966d8c77f9b 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -778,9 +778,13 @@ int ip_do_fragment(struct net *net, struct sock *sk, struct sk_buff *skb,
+ 	int err = 0;
+ 
+ 	/* for offloaded checksums cleanup checksum before fragmentation */
+-	if (skb->ip_summed == CHECKSUM_PARTIAL &&
+-	    (err = skb_checksum_help(skb)))
+-		goto fail;
++	if (skb->ip_summed == CHECKSUM_PARTIAL) {
++		err = ip_check_csum_start(skb);
++		if (!err)
++			err = skb_checksum_help(skb);
++		if (err)
++			goto fail;
++	}
+ 
+ 	/*
+ 	 *	Point into the IP datagram header.
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 638303d6691eb0..5120db6c5f1371 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1059,7 +1059,7 @@ static int tcp_v4_send_synack(const struct sock *sk, struct dst_entry *dst,
+  */
+ static void tcp_v4_reqsk_destructor(struct request_sock *req)
+ {
+-	kfree(rcu_dereference_protected(inet_rsk(req)->ireq_opt, 1));
++	kfree_rcu(rcu_dereference_protected(inet_rsk(req)->ireq_opt, 1), rcu);
+ }
+ 
+ #ifdef CONFIG_TCP_MD5SIG
+diff --git a/net/netfilter/nfnetlink_queue.c b/net/netfilter/nfnetlink_queue.c
+index 2237dd0939358e..1944fba91b0218 100644
+--- a/net/netfilter/nfnetlink_queue.c
++++ b/net/netfilter/nfnetlink_queue.c
+@@ -31,6 +31,7 @@
+ #include <linux/list.h>
+ #include <linux/cgroup-defs.h>
+ #include <net/gso.h>
++#include <net/ip.h>
+ #include <net/sock.h>
+ #include <net/tcp_states.h>
+ #include <net/netfilter/nf_queue.h>
+@@ -385,6 +386,20 @@ nla_put_failure:
+ 	return -1;
+ }
+ 
++static int nf_queue_checksum_help(struct sk_buff *entskb)
++{
++	if (entskb->protocol == htons(ETH_P_IP)) {
++		if (!pskb_network_may_pull(entskb, sizeof(struct iphdr)) ||
++		    ip_check_csum_start(entskb))
++			return -EINVAL;
++	}
++
++	if (skb_csum_is_sctp(entskb))
++		return skb_crc32c_csum_help(entskb);
++
++	return skb_checksum_help(entskb);
++}
++
+ static struct sk_buff *
+ nfqnl_build_packet_message(struct net *net, struct nfqnl_instance *queue,
+ 			   struct nf_queue_entry *entry,
+@@ -447,7 +462,7 @@ nfqnl_build_packet_message(struct net *net, struct nfqnl_instance *queue,
+ 	case NFQNL_COPY_PACKET:
+ 		if (!(queue->flags & NFQA_CFG_F_GSO) &&
+ 		    entskb->ip_summed == CHECKSUM_PARTIAL &&
+-		    skb_checksum_help(entskb))
++		    nf_queue_checksum_help(entskb))
+ 			return NULL;
+ 
+ 		data_len = READ_ONCE(queue->copy_range);
+@@ -859,7 +874,7 @@ nfqnl_enqueue_packet(struct nf_queue_entry *entry, unsigned int queuenum)
+ 		break;
+ 	}
+ 
+-	if ((queue->flags & NFQA_CFG_F_GSO) || !skb_is_gso(skb))
++	if (!skb_is_gso(skb) || ((queue->flags & NFQA_CFG_F_GSO) && !skb_is_gso_sctp(skb)))
+ 		return __nfqnl_enqueue_packet(net, queue, entry);
+ 
+ 	nf_bridge_adjust_skb_data(skb);
+diff --git a/net/netfilter/xt_CHECKSUM.c b/net/netfilter/xt_CHECKSUM.c
+index 9d99f5a3d1764b..1fb0f8118404d6 100644
+--- a/net/netfilter/xt_CHECKSUM.c
++++ b/net/netfilter/xt_CHECKSUM.c
+@@ -15,6 +15,7 @@
+ 
+ #include <linux/netfilter_ipv4/ip_tables.h>
+ #include <linux/netfilter_ipv6/ip6_tables.h>
++#include <net/ip.h>
+ 
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Michael S. Tsirkin <mst@redhat.com>");
+@@ -25,8 +26,11 @@ MODULE_ALIAS("ip6t_CHECKSUM");
+ static unsigned int
+ checksum_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ {
+-	if (skb->ip_summed == CHECKSUM_PARTIAL && !skb_is_gso(skb))
++	if (skb->ip_summed == CHECKSUM_PARTIAL && !skb_is_gso(skb)) {
++		if (xt_family(par) == NFPROTO_IPV4 && ip_check_csum_start(skb))
++			return NF_DROP;
+ 		skb_checksum_help(skb);
++	}
+ 
+ 	return XT_CONTINUE;
+ }
+diff --git a/net/xfrm/xfrm_output.c b/net/xfrm/xfrm_output.c
+index 53654c5fa9e988..21aa65caf0c696 100644
+--- a/net/xfrm/xfrm_output.c
++++ b/net/xfrm/xfrm_output.c
+@@ -810,16 +810,22 @@ int xfrm_output(struct sock *sk, struct sk_buff *skb)
+ 	}
+ 
+ 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+-		err = skb_checksum_help(skb);
+-		if (err) {
+-			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
+-			kfree_skb(skb);
+-			return err;
++		if (skb->protocol == htons(ETH_P_IP)) {
++			err = ip_check_csum_start(skb);
++			if (err)
++				goto error;
+ 		}
++		err = skb_checksum_help(skb);
++		if (err)
++			goto error;
+ 	}
+ 
+ out:
+ 	return xfrm_output2(net, sk, skb);
++error:
++	XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
++	kfree_skb(skb);
++	return err;
+ }
+ EXPORT_SYMBOL_GPL(xfrm_output);
+ 

@@ -1,0 +1,447 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:56 +0200
+Subject: [PATCH 03/22] irqchip: add the Realtek RTD1295/RTD1296 peripheral irq
+ mux
+
+The driver itself is kept outside the kernel tree, in
+kernel/src/irq-rtd129x.c, and copied in by
+scripts/build-kernel.sh -- same reasoning as the board .dts: it is
+still changing, and regenerating a 300-line patch on every edit is noise.
+These two build-system lines do not change, so they are a patch.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ .../realtek,rtd1295-irq-mux.yaml              |  63 ++++
+ drivers/irqchip/Kconfig                       |  12 +
+ drivers/irqchip/Makefile                      |   1 +
+ drivers/irqchip/irq-rtd129x.c                 | 313 ++++++++++++++++++
+ 4 files changed, 389 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/interrupt-controller/realtek,rtd1295-irq-mux.yaml
+ create mode 100644 drivers/irqchip/irq-rtd129x.c
+
+diff --git a/Documentation/devicetree/bindings/interrupt-controller/realtek,rtd1295-irq-mux.yaml b/Documentation/devicetree/bindings/interrupt-controller/realtek,rtd1295-irq-mux.yaml
+new file mode 100644
+index 000000000000..48a49e0ef7f9
+--- /dev/null
++++ b/Documentation/devicetree/bindings/interrupt-controller/realtek,rtd1295-irq-mux.yaml
+@@ -0,0 +1,63 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/interrupt-controller/realtek,rtd1295-irq-mux.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Realtek RTD1295/RTD1296 peripheral interrupt mux
++
++description: >
++  The SoC folds a block of peripheral interrupts onto a single GIC SPI. There
++  are two such muxes, one in the MISC register block and one in the ISO block,
++  each with a status register showing the pending sources and an enable
++  register gating them.
++
++  A source is identified by its bit in the status register, which is what goes
++  in a child's "interrupts" property. The matching bit in the enable register
++  is often a different number, so the mapping lives in the driver rather than
++  in the device tree.
++
++maintainers:
++  - Jalen Lin <jalen.lin@gmail.com>
++
++properties:
++  compatible:
++    enum:
++      - realtek,rtd1295-misc-irq-mux
++      - realtek,rtd1295-iso-irq-mux
++
++  reg:
++    items:
++      - description: interrupt status register
++      - description: interrupt enable register
++
++  interrupts:
++    maxItems: 1
++    description: the GIC SPI this mux is folded onto
++
++  interrupt-controller: true
++
++  "#interrupt-cells":
++    const: 1
++    description: the source's bit number in the status register
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - interrupt-controller
++  - "#interrupt-cells"
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++
++    interrupt-controller@0 {
++      compatible = "realtek,rtd1295-iso-irq-mux";
++      reg = <0x0 0x4>, <0x40 0x4>;
++      interrupts = <GIC_SPI 41 IRQ_TYPE_LEVEL_HIGH>;
++      interrupt-controller;
++      #interrupt-cells = <1>;
++    };
+diff --git a/drivers/irqchip/Kconfig b/drivers/irqchip/Kconfig
+index a61c6dc63c29..1093cdc72f66 100644
+--- a/drivers/irqchip/Kconfig
++++ b/drivers/irqchip/Kconfig
+@@ -814,6 +814,18 @@ config SOPHGO_SG2042_MSI
+ 	  This on-chip interrupt controller enables MSI sources to be
+ 	  routed to the primary PLIC controller on SoC.
+ 
++config REALTEK_RTD129X_IRQ_MUX
++	bool "Realtek RTD1295/RTD1296 peripheral interrupt mux"
++	depends on ARCH_REALTEK || COMPILE_TEST
++	default ARCH_REALTEK
++	select IRQ_DOMAIN
++	help
++	  Support for the two peripheral interrupt muxes on the Realtek
++	  RTD1295/RTD1296, which fold the MISC and ISO peripheral interrupts
++	  onto one GIC SPI each. Without it the UARTs, I2C controllers and
++	  GPIO blocks on these SoCs have no interrupt and fall back to
++	  polling, where they have a driver that can.
++
+ config SUNPLUS_SP7021_INTC
+ 	bool "Sunplus SP7021 interrupt controller" if COMPILE_TEST
+ 	default SOC_SP7021
+diff --git a/drivers/irqchip/Makefile b/drivers/irqchip/Makefile
+index 3de083f5484c..cc5afc39d67e 100644
+--- a/drivers/irqchip/Makefile
++++ b/drivers/irqchip/Makefile
+@@ -130,6 +130,7 @@ obj-$(CONFIG_LOONGSON_PCH_LPC)		+= irq-loongson-pch-lpc.o
+ obj-$(CONFIG_MST_IRQ)			+= irq-mst-intc.o
+ obj-$(CONFIG_SL28CPLD_INTC)		+= irq-sl28cpld.o
+ obj-$(CONFIG_MACH_REALTEK_RTL)		+= irq-realtek-rtl.o
++obj-$(CONFIG_REALTEK_RTD129X_IRQ_MUX)	+= irq-rtd129x.o
+ obj-$(CONFIG_WPCM450_AIC)		+= irq-wpcm450-aic.o
+ obj-$(CONFIG_IRQ_IDT3243X)		+= irq-idt3243x.o
+ obj-$(CONFIG_APPLE_AIC)			+= irq-apple-aic.o
+diff --git a/drivers/irqchip/irq-rtd129x.c b/drivers/irqchip/irq-rtd129x.c
+new file mode 100644
+index 000000000000..40403cca24a5
+--- /dev/null
++++ b/drivers/irqchip/irq-rtd129x.c
+@@ -0,0 +1,313 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD1295/RTD1296 peripheral interrupt mux
++ *
++ * The SoC folds a block of peripheral interrupts onto a single GIC SPI. Each
++ * mux has a status register whose bits show the pending sources and an enable
++ * register that gates them, and the two are *not* bit-aligned: MISC status bit
++ * 8 (UART2) is gated by enable bit 7, status bit 13 (UART2 timeout) by enable
++ * bit 6, status bit 23 (I2C3) by enable bit 28. Hence the per-mux table.
++ *
++ * Derived from the register layout in Realtek's BSP driver
++ * (drivers/irqchip/irq-rtd129x.[ch] in the BPI-W2 BSP, GPL-2.0-or-later).
++ * Rewritten against the modern irqdomain API: there, .irq_mask wrote the
++ * status register -- an acknowledge, not a mask -- and only .irq_disable
++ * touched the enable bits. Here mask/unmask gate the source and .irq_ack
++ * clears the status latch, which is what genirq expects of a level chip.
++ *
++ * Copyright (C) 2017 Realtek Semiconductor Corporation
++ */
++
++#include <linux/bits.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqchip.h>
++#include <linux/irqchip/chained_irq.h>
++#include <linux/irqdomain.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_irq.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++
++#define RTD129X_MUX_NR_IRQS	32
++
++/* Entries in enable_bit[] that are not an enable bit number. */
++#define RTD129X_IRQ_NONE	0xff	/* status bit is not wired to anything */
++#define RTD129X_IRQ_UNGATED	0xfe	/* source exists but has no enable bit */
++
++struct rtd129x_irq_mux_info {
++	const char *name;
++	u8 enable_bit[RTD129X_MUX_NR_IRQS];
++};
++
++struct rtd129x_irq_mux {
++	void __iomem *status;
++	void __iomem *enable;
++	const struct rtd129x_irq_mux_info *info;
++	struct irq_domain *domain;
++	raw_spinlock_t lock;
++};
++
++/*
++ * status bit -> enable bit. Index is the number a device puts in its
++ * "interrupts" property.
++ */
++static const struct rtd129x_irq_mux_info rtd1295_misc_irq_mux = {
++	.name = "misc",
++	.enable_bit = {
++		[0]  = RTD129X_IRQ_NONE,
++		[1]  = RTD129X_IRQ_NONE,
++		[2]  = RTD129X_IRQ_UNGATED,
++		[3]  = 3,			/* UART1 */
++		[4]  = RTD129X_IRQ_NONE,
++		[5]  = 5,			/* UART1 timeout */
++		[6]  = RTD129X_IRQ_UNGATED,
++		[7]  = RTD129X_IRQ_UNGATED,
++		[8]  = 7,			/* UART2 */
++		[9]  = RTD129X_IRQ_UNGATED,
++		[10] = 10,			/* RTC minute */
++		[11] = 11,			/* RTC hour */
++		[12] = 12,			/* RTC date */
++		[13] = 6,			/* UART2 timeout */
++		[14] = 14,			/* I2C5 */
++		[15] = 15,			/* I2C4 */
++		[16] = RTD129X_IRQ_NONE,
++		[17] = RTD129X_IRQ_NONE,
++		[18] = RTD129X_IRQ_NONE,
++		[19] = 19,			/* GPIO assert */
++		[20] = 20,			/* GPIO deassert */
++		[21] = 21,			/* LSADC0 */
++		[22] = 22,			/* LSADC1 */
++		[23] = 28,			/* I2C3 */
++		[24] = 24,			/* smartcard 0 */
++		[25] = RTD129X_IRQ_NONE,
++		[26] = 26,			/* I2C2 */
++		[27] = 27,			/* GSPI */
++		[28] = RTD129X_IRQ_NONE,
++		[29] = 29,			/* fan */
++		[30] = RTD129X_IRQ_NONE,
++		[31] = RTD129X_IRQ_NONE,
++	},
++};
++
++static const struct rtd129x_irq_mux_info rtd1295_iso_irq_mux = {
++	.name = "iso",
++	.enable_bit = {
++		[0]  = RTD129X_IRQ_NONE,
++		[1]  = RTD129X_IRQ_UNGATED,
++		[2]  = 2,			/* UART0 */
++		[3]  = RTD129X_IRQ_NONE,
++		[4]  = RTD129X_IRQ_NONE,
++		[5]  = 5,			/* IrDA */
++		[6]  = RTD129X_IRQ_NONE,
++		[7]  = RTD129X_IRQ_UNGATED,
++		[8]  = 8,			/* I2C0 */
++		[9]  = RTD129X_IRQ_UNGATED,
++		[10] = RTD129X_IRQ_NONE,
++		[11] = 11,			/* I2C1 */
++		[12] = 12,			/* RTC half-second */
++		[13] = 13,			/* RTC alarm */
++		[14] = RTD129X_IRQ_NONE,
++		[15] = RTD129X_IRQ_NONE,
++		[16] = RTD129X_IRQ_NONE,
++		[17] = RTD129X_IRQ_NONE,
++		[18] = RTD129X_IRQ_NONE,
++		[19] = 19,			/* GPIO assert */
++		[20] = 20,			/* GPIO deassert */
++		[21] = RTD129X_IRQ_UNGATED,
++		[22] = RTD129X_IRQ_UNGATED,
++		[23] = RTD129X_IRQ_UNGATED,
++		[24] = RTD129X_IRQ_UNGATED,
++		[25] = RTD129X_IRQ_NONE,
++		[26] = RTD129X_IRQ_NONE,
++		[27] = RTD129X_IRQ_NONE,
++		[28] = RTD129X_IRQ_NONE,
++		[29] = 29,			/* GPHY digital */
++		[30] = 30,			/* GPHY analog */
++		[31] = 31,			/* I2C1 request */
++	},
++};
++
++static void rtd129x_irq_mux_gate(struct irq_data *d, bool on)
++{
++	struct rtd129x_irq_mux *mux = irq_data_get_irq_chip_data(d);
++	u8 bit = mux->info->enable_bit[d->hwirq];
++	unsigned long flags;
++	u32 val;
++
++	/* Nothing to gate: the source is either absent or always delivered. */
++	if (bit >= RTD129X_MUX_NR_IRQS)
++		return;
++
++	raw_spin_lock_irqsave(&mux->lock, flags);
++	val = readl_relaxed(mux->enable);
++	if (on)
++		val |= BIT(bit);
++	else
++		val &= ~BIT(bit);
++	writel_relaxed(val, mux->enable);
++	raw_spin_unlock_irqrestore(&mux->lock, flags);
++}
++
++static void rtd129x_irq_mux_mask(struct irq_data *d)
++{
++	rtd129x_irq_mux_gate(d, false);
++}
++
++static void rtd129x_irq_mux_unmask(struct irq_data *d)
++{
++	rtd129x_irq_mux_gate(d, true);
++}
++
++static void rtd129x_irq_mux_ack(struct irq_data *d)
++{
++	struct rtd129x_irq_mux *mux = irq_data_get_irq_chip_data(d);
++
++	/* The status register is write-one-to-clear. */
++	writel_relaxed(BIT(d->hwirq), mux->status);
++}
++
++static struct irq_chip rtd129x_irq_mux_chip = {
++	.name		= "rtd129x-irq-mux",
++	.irq_mask	= rtd129x_irq_mux_mask,
++	.irq_unmask	= rtd129x_irq_mux_unmask,
++	.irq_ack	= rtd129x_irq_mux_ack,
++	.flags		= IRQCHIP_SKIP_SET_WAKE,
++};
++
++static void rtd129x_irq_mux_handle(struct irq_desc *desc)
++{
++	struct rtd129x_irq_mux *mux = irq_desc_get_handler_data(desc);
++	struct irq_chip *chip = irq_desc_get_chip(desc);
++	unsigned long pending;
++	u32 enable;
++	int bit;
++
++	chained_irq_enter(chip, desc);
++
++	enable = readl_relaxed(mux->enable);
++	pending = readl_relaxed(mux->status);
++
++	for_each_set_bit(bit, &pending, RTD129X_MUX_NR_IRQS) {
++		u8 en = mux->info->enable_bit[bit];
++
++		/*
++		 * A status bit whose enable bit is clear is not ours to
++		 * deliver -- the source is masked and the bit is stale.
++		 */
++		if (en < RTD129X_MUX_NR_IRQS && !(enable & BIT(en)))
++			continue;
++		if (en == RTD129X_IRQ_NONE)
++			continue;
++
++		generic_handle_domain_irq(mux->domain, bit);
++	}
++
++	chained_irq_exit(chip, desc);
++}
++
++static int rtd129x_irq_mux_domain_map(struct irq_domain *d, unsigned int virq,
++				      irq_hw_number_t hw)
++{
++	struct rtd129x_irq_mux *mux = d->host_data;
++
++	if (mux->info->enable_bit[hw] == RTD129X_IRQ_NONE)
++		return -EINVAL;
++
++	irq_set_chip_and_handler(virq, &rtd129x_irq_mux_chip, handle_level_irq);
++	irq_set_chip_data(virq, mux);
++
++	return 0;
++}
++
++static const struct irq_domain_ops rtd129x_irq_mux_domain_ops = {
++	.map	= rtd129x_irq_mux_domain_map,
++	.xlate	= irq_domain_xlate_onecell,
++};
++
++static int __init rtd129x_irq_mux_init(struct device_node *np,
++				       struct device_node *parent,
++				       const struct rtd129x_irq_mux_info *info)
++{
++	struct rtd129x_irq_mux *mux;
++	unsigned int parent_irq;
++	int ret;
++
++	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
++	if (!mux)
++		return -ENOMEM;
++
++	mux->info = info;
++	raw_spin_lock_init(&mux->lock);
++
++	/* reg 0 is the status register, reg 1 the enable register. */
++	mux->status = of_iomap(np, 0);
++	if (!mux->status) {
++		ret = -ENOMEM;
++		goto err_free;
++	}
++
++	mux->enable = of_iomap(np, 1);
++	if (!mux->enable) {
++		ret = -ENOMEM;
++		goto err_unmap_status;
++	}
++
++	parent_irq = irq_of_parse_and_map(np, 0);
++	if (!parent_irq) {
++		ret = -EINVAL;
++		goto err_unmap_enable;
++	}
++
++	mux->domain = irq_domain_create_linear(of_fwnode_handle(np),
++					       RTD129X_MUX_NR_IRQS,
++					       &rtd129x_irq_mux_domain_ops, mux);
++	if (!mux->domain) {
++		ret = -ENOMEM;
++		goto err_dispose;
++	}
++
++	/*
++	 * The boot firmware leaves sources enabled -- notably UART0, which it
++	 * has been using as its console. Start from a known state.
++	 *
++	 * The enable register is this CPU's alone, but the status register is
++	 * shared with the audio CPU, so leave its bits alone: clearing them
++	 * all here once stopped the audio firmware's OS tick for good, and it
++	 * never answered an RPC after that.
++	 */
++	writel_relaxed(0, mux->enable);
++
++	irq_set_chained_handler_and_data(parent_irq, rtd129x_irq_mux_handle,
++					 mux);
++
++	return 0;
++
++err_dispose:
++	irq_dispose_mapping(parent_irq);
++err_unmap_enable:
++	iounmap(mux->enable);
++err_unmap_status:
++	iounmap(mux->status);
++err_free:
++	kfree(mux);
++	return ret;
++}
++
++static int __init rtd1295_misc_irq_mux_init(struct device_node *np,
++					    struct device_node *parent)
++{
++	return rtd129x_irq_mux_init(np, parent, &rtd1295_misc_irq_mux);
++}
++
++static int __init rtd1295_iso_irq_mux_init(struct device_node *np,
++					   struct device_node *parent)
++{
++	return rtd129x_irq_mux_init(np, parent, &rtd1295_iso_irq_mux);
++}
++
++IRQCHIP_DECLARE(rtd1295_misc_irq_mux, "realtek,rtd1295-misc-irq-mux",
++		rtd1295_misc_irq_mux_init);
++IRQCHIP_DECLARE(rtd1295_iso_irq_mux, "realtek,rtd1295-iso-irq-mux",
++		rtd1295_iso_irq_mux_init);

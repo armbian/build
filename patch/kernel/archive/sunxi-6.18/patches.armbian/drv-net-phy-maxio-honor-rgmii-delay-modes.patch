@@ -1,0 +1,107 @@
+From: Novice-PG <rg40xxv-dev@users.noreply.github.com>
+Subject: phy: maxio: do not clear strapped RGMII delays
+
+The MAE0621A driver clears the PHY-side 2ns RGMII delay bits
+unconditionally at probe. Boards whose MAC delay chain is too small
+then lose the delay entirely: the H618 GMAC provides at most 700ps,
+below the RGMII minimum, and the K2B V2 1G link drops 30-100 percent
+of packets. 100M is unaffected because RGMII delays do not apply
+there.
+
+Leave the delay bits alone unless the DT phy-mode explicitly assigns
+them (rgmii-txid/rgmii-rxid/rgmii-id): plain "rgmii" keeps the reset
+strapping, which carries the vendor-used PHY TX delay on the KickPi
+K2B V2.
+
+Tested on KickPi K2B V2 (H618 + MAE0621A-Q2C) with the vendor DTS
+(rgmii, tx-delay-ps 700, rx-delay-ps 2000): 1G ping 0/200 packets
+lost both directions, TCP 310/225 Mbps, UDP 260 Mbps at 0.5 percent
+loss and 0.016ms jitter, all MAC error counters zero.
+
+---
+ 1 file changed, 48 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/phy/maxio.c b/drivers/net/phy/maxio.c
+index da7e0ec..c2a64e0 100644
+--- a/drivers/net/phy/maxio.c
++++ b/drivers/net/phy/maxio.c
+@@ -303,31 +303,60 @@ static int maxio_mae0621a_config_init(struct phy_device *phydev)
+ 	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, 0x0);
+ 
+ 	/*
+-	 * MAE0621A is RTL8211F-compatible. phy-mode = "rgmii" means all
+-	 * RGMII delay belongs to the MAC (allwinner,tx/rx-delay-ps).
+-	 * Clear PHY-side 2ns TX/RX delays if enabled by strapping, else
+-	 * double delay corrupts large frames at 1G.
+-	 * Same layout as RTL8211F: page 0xd08, TXCR 0x11 bit8, RXCR 0x15 bit3.
++	 * MAE0621A is RTL8211F-compatible. Page 0xd08, TXCR 0x11 bit8
++	 * and RXCR 0x15 bit3 enable a 2ns PHY-side delay each.
++	 *
++	 * Do not clear these bits when the DT does not assign delays:
++	 * the reset straps are the board's choice. The KickPi K2B V2
++	 * (H618) relies on the strapped PHY TX delay together with the
++	 * 700ps MAC delay; clearing it leaves only 700ps, below the
++	 * RGMII setup window, and the 1G link drops 30-100% of packets.
++	 * Only the RGMII_*ID phy-modes assign the delays explicitly,
++	 * so only then is each bit forced to match.
+ 	 */
+ 	{
+ 		int v, w;
++		bool set_delays = false;
++		u16 want_tx = 0, want_rx = 0;
+ 
+-		v = maxio_read_paged(phydev, 0xd08, 0x11);
+-		if (v < 0)
+-			ret |= v;
+-		else if (v & BIT(8)) {
+-			w = maxio_write_paged(phydev, 0xd08, 0x11, v & ~BIT(8));
+-			if (w < 0)
+-				ret |= w;
++		switch (phydev->interface) {
++		case PHY_INTERFACE_MODE_RGMII_TXID:
++			want_tx = BIT(8);
++			set_delays = true;
++			break;
++		case PHY_INTERFACE_MODE_RGMII_RXID:
++			want_rx = BIT(3);
++			set_delays = true;
++			break;
++		case PHY_INTERFACE_MODE_RGMII_ID:
++			want_tx = BIT(8);
++			want_rx = BIT(3);
++			set_delays = true;
++			break;
++		default:
++			break;
+ 		}
+ 
+-		v = maxio_read_paged(phydev, 0xd08, 0x15);
+-		if (v < 0)
+-			ret |= v;
+-		else if (v & BIT(3)) {
+-			w = maxio_write_paged(phydev, 0xd08, 0x15, v & ~BIT(3));
+-			if (w < 0)
+-				ret |= w;
++		if (set_delays) {
++			v = maxio_read_paged(phydev, 0xd08, 0x11);
++			if (v < 0)
++				ret |= v;
++			else if ((v & BIT(8)) != want_tx) {
++				w = maxio_write_paged(phydev, 0xd08, 0x11,
++						       (v & ~BIT(8)) | want_tx);
++				if (w < 0)
++					ret |= w;
++			}
++
++			v = maxio_read_paged(phydev, 0xd08, 0x15);
++			if (v < 0)
++				ret |= v;
++			else if ((v & BIT(3)) != want_rx) {
++				w = maxio_write_paged(phydev, 0xd08, 0x15,
++						       (v & ~BIT(3)) | want_rx);
++				if (w < 0)
++					ret |= w;
++			}
+ 		}
+ 	}
+ 
