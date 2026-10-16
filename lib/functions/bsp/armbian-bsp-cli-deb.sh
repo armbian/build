@@ -222,24 +222,27 @@ function compile_armbian-bsp-cli() {
 		of those functions will be added to the preinst, postinst and postrm scripts respectively.
 	POST_FAMILY_TWEAKS_BSP
 
-	# Conffiles, after the hooks: family_tweaks_bsp and post_family_tweaks_bsp both
-	# write to $destination, so the tree is only final here.
+	# Conffiles, after the hooks: family_tweaks_bsp, post_family_tweaks_bsp and the
+	# extensions all write to $destination, so the tree is only final here.
 	#
-	# All three ship from packages/bsp/common, which is rsynced unconditionally, so
-	# every board must have them. A missing one means something removed it, and the
-	# board would then ship without that configuration. Say which file and stop,
-	# rather than leave dpkg-deb to fail with "does not appear in package".
-	declare -a bsp_conffiles=(
+	# List a path only when the package really contains it. Extensions strip BSP
+	# files on purpose -- a cloud image has no use for the apt periodic config, for
+	# instance -- and the framework cannot know which. A listed path that is not in
+	# the tree makes dpkg-deb refuse: "does not appear in package".
+	declare -a bsp_conffile_candidates=(
 		"/usr/lib/armbian/armbian-apt-updates"
 		"/etc/X11/xorg.conf.d/01-armbian-defaults.conf"
 		"/etc/apt/apt.conf.d/02-armbian-periodic"
 	)
 	declare bsp_conffile
-	for bsp_conffile in "${bsp_conffiles[@]}"; do
-		[[ -f "${destination}${bsp_conffile}" ]] ||
-			exit_with_error "bsp-cli: conffile missing from the package: ${bsp_conffile} - something removed it after packages/bsp/common was copied"
+	: > "${destination}"/DEBIAN/conffiles
+	for bsp_conffile in "${bsp_conffile_candidates[@]}"; do
+		if [[ -f "${destination}${bsp_conffile}" ]]; then
+			echo "${bsp_conffile}" >> "${destination}"/DEBIAN/conffiles
+		else
+			display_alert "Not shipping conffile, removed from the BSP" "${bsp_conffile}" "debug"
+		fi
 	done
-	printf '%s\n' "${bsp_conffiles[@]}" > "${destination}"/DEBIAN/conffiles
 
 	# Render the postinst/postrm/etc
 	# set up pre install script; use inline functions
