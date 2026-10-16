@@ -180,13 +180,15 @@ function artifact_kernel_prepare_version() {
 			dbg_linker_bin="ld.lld"
 		fi
 		declare dbg_compiler_version=""
-		dbg_compiler_version="$("${dbg_compiler_bin}" --version 2> /dev/null | head -1 || true)"
+		dbg_compiler_version="$("${dbg_compiler_bin}" -dumpfullversion -dumpversion 2> /dev/null || true)"
+		declare dbg_compiler_id="" # carries the distro package revision that -dumpfullversion drops
+		dbg_compiler_id="$("${dbg_compiler_bin}" --version 2> /dev/null | head -1 || true)"
 		declare dbg_linker_version=""
 		dbg_linker_version="$("${dbg_linker_bin}" --version 2> /dev/null | head -1 || true)"
 		vars_to_hash+=(
 			"KERNEL_DBG_PACKAGE=yes"
 			"KERNEL_COMPILER=${KERNEL_COMPILER}"
-			"KERNEL_COMPILER_VERSION=${dbg_compiler_version}"
+			"KERNEL_COMPILER_VERSION=${dbg_compiler_id}"
 			"KERNEL_LINKER_VERSION=${dbg_linker_version}"
 			"KERNEL_EXTRA_CFLAGS=${KERNEL_EXTRA_CFLAGS:-""}"
 			"KERNEL_DBG_MODULES=${KERNEL_DBG_MODULES:-""}"
