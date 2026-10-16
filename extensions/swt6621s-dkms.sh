@@ -41,7 +41,7 @@ function post_install_kernel_debs__install_swt6621s_dkms_packages() {
 		full_deb_path="${down_dir}/${deb_file}"
 		if [[ ! -f "${full_deb_path}" ]]; then
 			display_alert "Will download ${full_deb_path} from latest release..." "${EXTENSION}" "info"
-			wget --progress=dot:mega --local-encoding=UTF-8 --output-document="${full_deb_path}.tmp" "${base_url}/${deb_file}"
+			run_host_command_logged curl -fsSL --progress-bar "${base_url}/${deb_file}" -o "${full_deb_path}.tmp"
 			mv -v "${full_deb_path}.tmp" "${full_deb_path}"
 		fi
 		cp -v "${full_deb_path}" "${SDCARD}/tmp/${deb_file}"
