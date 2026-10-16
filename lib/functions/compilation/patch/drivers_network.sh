@@ -222,7 +222,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		# fix compilation for kernels >= 6.6.157
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-Fix-6.6.157.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu-Fix-6.6.157.patch" "applying"
 		display_alert "Done adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets" "info"
@@ -366,6 +365,14 @@ driver_rtl8811CU_rtl8821C() {
 
 		# fix compilation for kernels >= 6.6.157
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-6.6.157.patch" "applying"
+
+		# HardKernel's odroidxu4 vendor kernel slipstreams its own copy of this
+		# driver in drivers/net/wireless/rtl8821cu, and builds it from the
+		# in-tree Makefile. Patch that copy too, but only where it exists.
+		if [[ -f "${kerneldir}/drivers/net/wireless/rtl8821cu/os_dep/linux/usb_intf.c" ]]; then
+			process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu-Fix-6.6.157.patch" "applying"
+		fi
+
 		display_alert "Done adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 	else
 		display_alert "Skipping" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets" "info"
