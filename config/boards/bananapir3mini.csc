@@ -104,10 +104,11 @@ function post_family_tweaks_bsp__bananapir3mini_phy_firmware_helper() {
 			exit 0
 		fi
 
+		ro_was=$(cat "${force_ro}")
+		trap 'echo "${ro_was}" > "${force_ro}"' EXIT
 		echo 0 > "${force_ro}"
 		dd if="${dm}" of="${dev}" bs=16384 count=1 conv=fsync status=none
 		dd if="${dsp}" of="${dev}" bs=16384 seek=1 conv=fsync status=none
-		echo 1 > "${force_ro}"
 		echo "Airoha EN8811H firmware written to ${dev}"
 	PHY_FW_INSTALLER
 	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
