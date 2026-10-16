@@ -119,6 +119,8 @@ function artifact_uboot_prepare_version() {
 	# UBOOT_HASH_EXTRA when the blob changes to force a repackage. Appended ONLY when
 	# set, so boards that don't use it keep their exact previous version (no churn).
 	[[ -n "${UBOOT_HASH_EXTRA:-}" ]] && vars_to_hash+=("${UBOOT_HASH_EXTRA}")
+	# Disk roles the board's u-boot loads /boot from, shipped in platform_install.sh for armbian-install.
+	[[ -n "${BOOTLOADER_BOOTS_FROM:-}" ]] && vars_to_hash+=("${BOOTLOADER_BOOTS_FROM}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
