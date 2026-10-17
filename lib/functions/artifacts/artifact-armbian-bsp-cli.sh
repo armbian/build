@@ -80,6 +80,54 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
 		"${SRC}/config/optional/boards/${BOARD}/_packages/bsp-cli"
 	)
+
+	# The hooks are hashed above only as source text: `install ${SRC}/packages/bsp/foo/bar` reads the
+	# same whether bar changed or not. So also hash the directory of every packages/ path they name,
+	# shared ones like packages/bsp/rk3399 or packages/blobs/riscv64/spacemit included.
+	declare hooks_text="${hooks_to_hash[*]}" hook_match hook_path hook_var hook_value
+	# Resolve the variables hooks build packages/ paths from. \b keeps $BOARD off $BOARDFAMILY. An empty or
+	# unusual value stays unresolved, and is warned about below rather than put into a path.
+	for hook_var in BOARD BOARDFAMILY LINUXFAMILY ARCH; do
+		hook_value="${!hook_var:-}"
+		[[ "${hook_value}" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+		hooks_text="$(LC_ALL=C sed -E 's/\$(\{'"${hook_var}"'\}|'"${hook_var}"'\b)/'"${hook_value}"'/g' <<< "${hooks_text}")"
+	done
+	declare -A hook_dirs=() hook_paths_unhashed=()
+	# packages/ must follow ${SRC}/ or start a word: not dist-packages/foo/bar or /var/lib/packages/foo/bar.
+	# Not ${SRC}/ alone, so a relative packages/bsp/foo or ./packages/bsp/foo after a cd "${SRC}" is still seen.
+	declare hook_path_start='((^|[^A-Za-z0-9._/-])(\./)?|\$\{?SRC\}?"?/)'
+	while read -r hook_match; do
+		hook_match="packages/${hook_match#*packages/}" # drop what matched hook_path_start
+		hook_path="${hook_match%/}"
+		[[ -d "${SRC}/${hook_path}" ]] || hook_path="${hook_path%/*}" # a file, or a name cut short by a variable
+		if [[ "${hook_path}" != packages/[!/]*/[!/]* ]]; then         # never all of packages/bsp
+			hook_paths_unhashed["${hook_match}"]=1
+			continue
+		fi
+		hook_dirs["${SRC}/${hook_path}"]=1
+	done < <(LC_ALL=C grep -oE "${hook_path_start}"'packages/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+' <<< "${hooks_text}" || true)
+	# A variable right after packages/ or packages/<x>/ stops the grep above before it matches at all.
+	while read -r hook_match; do
+		hook_paths_unhashed["packages/${hook_match#*packages/}"]=1
+	done < <(LC_ALL=C grep -oE "${hook_path_start}"'packages/([A-Za-z0-9._-]+/)?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?' <<< "${hooks_text}" || true)
+	for hook_match in "${!hook_paths_unhashed[@]}"; do
+		display_alert "bsp-cli: a hook installs from a path that does not version the package" "'${hook_match}': changes there will not rebuild it; spell the directory out, or use \${BOARD}, \${BOARDFAMILY}, \${LINUXFAMILY} or \${ARCH}" "wrn"
+	done
+
+	# Skip a dir that is, or is inside, one already listed (packages/bsp/${BOARD}/rtl_bt, jethub/jethubj100
+	# under jethub): its files would be hashed twice, and the version would depend on how hooks spell paths.
+	# Sorted, so a parent is always listed before its children.
+	declare -a hook_dirs_sorted=()
+	declare hook_dir listed_dir
+	mapfile -t hook_dirs_sorted < <(printf '%s\n' "${!hook_dirs[@]}" | LC_ALL=C sort)
+	for hook_dir in "${hook_dirs_sorted[@]}"; do
+		[[ -n "${hook_dir}" ]] || continue # printf prints an empty line when there are no hook dirs
+		for listed_dir in "${dirs_to_hash[@]}"; do
+			[[ "${hook_dir}" == "${listed_dir}" || "${hook_dir}" == "${listed_dir}/"* ]] && continue 2
+		done
+		dirs_to_hash+=("${hook_dir}")
+	done
+
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
 	packages_config_hash="${hash_files}"
