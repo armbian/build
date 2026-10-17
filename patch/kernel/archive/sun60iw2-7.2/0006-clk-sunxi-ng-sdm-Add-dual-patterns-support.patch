@@ -1,0 +1,161 @@
+From 66bf84e4725c44d5f0a24e787a7d85064e1d03fd Mon Sep 17 00:00:00 2001
+From: Junhui Liu <junhui.liu@pigmoral.tech>
+Date: Wed, 30 Sep 2026 01:26:09 +0800
+Subject: [PATCH 06/58] clk: sunxi-ng: sdm: Add dual patterns support
+
+On newer Allwinner platforms like the A733, the Sigma-Delta Modulation
+(SDM) control logic is more complex. The SDM enable bit, which was
+previously located in the PLL register, is now moved to a second
+pattern register (PATTERN1).
+
+To support this, rename the existing "tuning" members to "pattern0" to
+align with the datasheet, and introduce the _SUNXI_CCU_SDM_DUAL_PAT
+macro to provide pattern1 register support. Related operations are also
+updated.
+
+Tested-by: Jerome Brunet <jbrunet@baylibre.com>
+Reviewed-by: Chen-Yu Tsai <wens@kernel.org>
+Signed-off-by: Junhui Liu <junhui.liu@pigmoral.tech>
+---
+ drivers/clk/sunxi-ng/ccu_sdm.c | 52 ++++++++++++++++++++++++----------
+ drivers/clk/sunxi-ng/ccu_sdm.h | 29 ++++++++++++-------
+ 2 files changed, 55 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu_sdm.c b/drivers/clk/sunxi-ng/ccu_sdm.c
+index c564e5f9e610..7e13ffd246d3 100644
+--- a/drivers/clk/sunxi-ng/ccu_sdm.c
++++ b/drivers/clk/sunxi-ng/ccu_sdm.c
+@@ -18,7 +18,11 @@ bool ccu_sdm_helper_is_enabled(struct ccu_common *common,
+ 	if (sdm->enable && !(readl(common->base + common->reg) & sdm->enable))
+ 		return false;
+ 
+-	return !!(readl(common->base + sdm->tuning_reg) & sdm->tuning_enable);
++	if (sdm->pat1_enable &&
++	    (readl(common->base + sdm->pat1_reg) & sdm->pat1_enable) != sdm->pat1_enable)
++		return false;
++
++	return !!(readl(common->base + sdm->pat0_reg) & sdm->pat0_enable);
+ }
+ EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_is_enabled, "SUNXI_CCU");
+ 
+@@ -37,18 +41,27 @@ void ccu_sdm_helper_enable(struct ccu_common *common,
+ 	for (i = 0; i < sdm->table_size; i++)
+ 		if (sdm->table[i].rate == rate)
+ 			writel(sdm->table[i].pattern,
+-			       common->base + sdm->tuning_reg);
++			       common->base + sdm->pat0_reg);
+ 
+ 	/* Make sure SDM is enabled */
+ 	spin_lock_irqsave(common->lock, flags);
+-	reg = readl(common->base + sdm->tuning_reg);
+-	writel(reg | sdm->tuning_enable, common->base + sdm->tuning_reg);
++	reg = readl(common->base + sdm->pat0_reg);
++	writel(reg | sdm->pat0_enable, common->base + sdm->pat0_reg);
+ 	spin_unlock_irqrestore(common->lock, flags);
+ 
+-	spin_lock_irqsave(common->lock, flags);
+-	reg = readl(common->base + common->reg);
+-	writel(reg | sdm->enable, common->base + common->reg);
+-	spin_unlock_irqrestore(common->lock, flags);
++	if (sdm->enable) {
++		spin_lock_irqsave(common->lock, flags);
++		reg = readl(common->base + common->reg);
++		writel(reg | sdm->enable, common->base + common->reg);
++		spin_unlock_irqrestore(common->lock, flags);
++	}
++
++	if (sdm->pat1_enable) {
++		spin_lock_irqsave(common->lock, flags);
++		reg = readl(common->base + sdm->pat1_reg);
++		writel(reg | sdm->pat1_enable, common->base + sdm->pat1_reg);
++		spin_unlock_irqrestore(common->lock, flags);
++	}
+ }
+ EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_enable, "SUNXI_CCU");
+ 
+@@ -61,14 +74,23 @@ void ccu_sdm_helper_disable(struct ccu_common *common,
+ 	if (!(common->features & CCU_FEATURE_SIGMA_DELTA_MOD))
+ 		return;
+ 
+-	spin_lock_irqsave(common->lock, flags);
+-	reg = readl(common->base + common->reg);
+-	writel(reg & ~sdm->enable, common->base + common->reg);
+-	spin_unlock_irqrestore(common->lock, flags);
++	if (sdm->enable) {
++		spin_lock_irqsave(common->lock, flags);
++		reg = readl(common->base + common->reg);
++		writel(reg & ~sdm->enable, common->base + common->reg);
++		spin_unlock_irqrestore(common->lock, flags);
++	}
++
++	if (sdm->pat1_enable) {
++		spin_lock_irqsave(common->lock, flags);
++		reg = readl(common->base + sdm->pat1_reg);
++		writel(reg & ~sdm->pat1_enable, common->base + sdm->pat1_reg);
++		spin_unlock_irqrestore(common->lock, flags);
++	}
+ 
+ 	spin_lock_irqsave(common->lock, flags);
+-	reg = readl(common->base + sdm->tuning_reg);
+-	writel(reg & ~sdm->tuning_enable, common->base + sdm->tuning_reg);
++	reg = readl(common->base + sdm->pat0_reg);
++	writel(reg & ~sdm->pat0_enable, common->base + sdm->pat0_reg);
+ 	spin_unlock_irqrestore(common->lock, flags);
+ }
+ EXPORT_SYMBOL_NS_GPL(ccu_sdm_helper_disable, "SUNXI_CCU");
+@@ -123,7 +145,7 @@ unsigned long ccu_sdm_helper_read_rate(struct ccu_common *common,
+ 	pr_debug("%s: clock is sigma-delta modulated\n",
+ 		 clk_hw_get_name(&common->hw));
+ 
+-	reg = readl(common->base + sdm->tuning_reg);
++	reg = readl(common->base + sdm->pat0_reg);
+ 
+ 	pr_debug("%s: pattern reg is 0x%x",
+ 		 clk_hw_get_name(&common->hw), reg);
+diff --git a/drivers/clk/sunxi-ng/ccu_sdm.h b/drivers/clk/sunxi-ng/ccu_sdm.h
+index c1a7159b89c3..e94cef141c7d 100644
+--- a/drivers/clk/sunxi-ng/ccu_sdm.h
++++ b/drivers/clk/sunxi-ng/ccu_sdm.h
+@@ -33,21 +33,28 @@ struct ccu_sdm_internal {
+ 	u32		table_size;
+ 	/* early SoCs don't have the SDM enable bit in the PLL register */
+ 	u32		enable;
+-	/* second enable bit in tuning register */
+-	u32		tuning_enable;
+-	u16		tuning_reg;
++	/* second enable bit in pattern0 register */
++	u32		pat0_enable;
++	u16		pat0_reg;
++	/* on some platforms, the sdm enable bit in pattern1 register */
++	u32		pat1_enable;
++	u16		pat1_reg;
+ };
+ 
+-#define _SUNXI_CCU_SDM(_table, _enable,			\
+-		       _reg, _reg_enable)		\
+-	{						\
+-		.table		= _table,		\
+-		.table_size	= ARRAY_SIZE(_table),	\
+-		.enable		= _enable,		\
+-		.tuning_enable	= _reg_enable,		\
+-		.tuning_reg	= _reg,			\
++#define _SUNXI_CCU_SDM_DUAL_PAT(_table, _enable, _pat0, _pat0_enable, _pat1, _pat1_enable) \
++	{								\
++		.table			= _table,			\
++		.table_size		= ARRAY_SIZE(_table),		\
++		.enable			= _enable,			\
++		.pat0_enable		= _pat0_enable,			\
++		.pat0_reg		= _pat0,			\
++		.pat1_enable		= _pat1_enable,			\
++		.pat1_reg		= _pat1,			\
+ 	}
+ 
++#define _SUNXI_CCU_SDM(_table, _enable, _pat0, _pat0_enable)	\
++	_SUNXI_CCU_SDM_DUAL_PAT(_table, _enable, _pat0, _pat0_enable, 0, 0)
++
+ bool ccu_sdm_helper_is_enabled(struct ccu_common *common,
+ 			       struct ccu_sdm_internal *sdm);
+ void ccu_sdm_helper_enable(struct ccu_common *common,
+-- 
+2.53.0
+

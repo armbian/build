@@ -1,0 +1,117 @@
+From f130d260b4fb33eff2974b4fff84fa435aa26750 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Wed, 23 Sep 2026 22:47:33 +0200
+Subject: [PATCH 26/58] net: stmmac: sun55i: Make the delay step configurable
+
+The driver assumes a 100ps step for both TX and RX clock delays, which
+does not match the A733 GMAC210.
+
+Move the TX and RX delay steps to the match data and factor the delay
+validation into a helper. The A523 keeps the 100ps step to preserve the DT
+ABI, although the vendor reports actual steps of 180ps for TX and 530ps
+for RX.
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ .../ethernet/stmicro/stmmac/dwmac-sun55i.c    | 58 +++++++++++++------
+ 1 file changed, 39 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+index c4df53285007..e759311f40fc 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+@@ -42,6 +42,8 @@ struct sun55i_gmac_data {
+ 	int (*init_resources)(struct platform_device *pdev,
+ 			      struct sun55i_gmac *gmac);
+ 	unsigned int flags;
++	u32 txdly_step_ps;
++	u32 rxdly_step_ps;
+ 	u32 offset;
+ };
+ 
+@@ -62,38 +64,47 @@ static int sun55i_gmac200_init_resources(struct platform_device *pdev,
+ 	return 0;
+ }
+ 
++static int sun55i_gmac200_validate_delay(struct device *dev, const char *dir,
++					 u32 *val, u32 step, u32 max)
++{
++	if (*val % step)
++		return dev_err_probe(dev, -EINVAL,
++				     "%s-delay must be a multiple of %ups\n", dir, step);
++	max *= step;
++	if (*val > max)
++		return dev_err_probe(dev, -EINVAL,
++				     "%s clock delay exceeds maximum (%ups > %ups)\n",
++				     dir, *val, max);
++	*val /= step;
++	dev_dbg(dev, "set %s-delay to %x\n", dir, *val);
++
++	return 0;
++}
++
+ static int sun55i_gmac200_setup(struct device *dev,
+ 				struct plat_stmmacenet_data *plat,
+ 				const struct sun55i_gmac *gmac)
+ {
+ 	struct device_node *node = dev->of_node;
+-	u32 val, reg = 0;
++	u32 val, step, max, reg = 0;
+ 	int ret;
+ 
+ 	if (!of_property_read_u32(node, "tx-internal-delay-ps", &val)) {
+-		if (val % 100)
+-			return dev_err_probe(dev, -EINVAL,
+-					     "tx-delay must be a multiple of 100ps\n");
+-		val /= 100;
+-		dev_dbg(dev, "set tx-delay to %x\n", val);
+-		if (!FIELD_FIT(SYSCON_ETXDC_MASK, val))
+-			return dev_err_probe(dev, -EINVAL,
+-					     "TX clock delay exceeds maximum (%u00ps > %lu00ps)\n",
+-					     val, FIELD_MAX(SYSCON_ETXDC_MASK));
++		step = gmac->data->txdly_step_ps;
++		max = FIELD_MAX(SYSCON_ETXDC_MASK);
++		ret = sun55i_gmac200_validate_delay(dev, "tx", &val, step, max);
++		if (ret)
++			return ret;
+ 
+ 		reg |= FIELD_PREP(SYSCON_ETXDC_MASK, val);
+ 	}
+ 
+ 	if (!of_property_read_u32(node, "rx-internal-delay-ps", &val)) {
+-		if (val % 100)
+-			return dev_err_probe(dev, -EINVAL,
+-					     "rx-delay must be a multiple of 100ps\n");
+-		val /= 100;
+-		dev_dbg(dev, "set rx-delay to %x\n", val);
+-		if (!FIELD_FIT(SYSCON_ERXDC_MASK, val))
+-			return dev_err_probe(dev, -EINVAL,
+-					     "RX clock delay exceeds maximum (%u00ps > %lu00ps)\n",
+-					     val, FIELD_MAX(SYSCON_ERXDC_MASK));
++		step = gmac->data->rxdly_step_ps;
++		max = FIELD_MAX(SYSCON_ERXDC_MASK);
++		ret = sun55i_gmac200_validate_delay(dev, "rx", &val, step, max);
++		if (ret)
++			return ret;
+ 
+ 		reg |= FIELD_PREP(SYSCON_ERXDC_MASK, val);
+ 	}
+@@ -175,6 +186,15 @@ static const struct sun55i_gmac_data sun55i_a523_gmac200_data = {
+ 	.init_resources = sun55i_gmac200_init_resources,
+ 	.flags = STMMAC_FLAG_SPH_DISABLE,
+ 	.offset = 0x34,
++	/*
++	 * The actual delay steps reported by the manufacturer are:
++	 * - Tx: 180ps
++	 * - Rx: 530ps
++	 *
++	 * Correcting them would break the DT ABI of the published DTs.
++	 */
++	.txdly_step_ps = 100,
++	.rxdly_step_ps = 100,
+ };
+ 
+ static const struct of_device_id sun55i_gmac200_match[] = {
+-- 
+2.53.0
+
