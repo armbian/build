@@ -16,9 +16,6 @@ function artifact_firmware_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
-	local ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}"
-	local ARMBIAN_FIRMWARE_BRANCH="branch:${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
-
 	debug_var ARMBIAN_FIRMWARE_SOURCE
 	debug_var ARMBIAN_FIRMWARE_BRANCH
 
