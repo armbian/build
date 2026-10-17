@@ -56,6 +56,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3566-uart3-m0.dtbo \
 	rockchip-rk3566-uart7-m2.dtbo \
 	rockchip-rk3566-uart9-m2.dtbo \
+	rockchip-rk3568-dshanpi-r1-disable-pcie.dtbo \
 	rockchip-rk3568-nanopi-r5c-leds.dtbo \
 	rockchip-rk3568-nanopi-r5s-leds.dtbo \
 	rockchip-rk3568-hk-i2c0.dtbo \
