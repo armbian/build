@@ -62,20 +62,32 @@ function create_image_from_sdcard_rootfs() {
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot (MOUNT /boot)"
+	# FAT32 holds either all of /boot, or only UEFI_MOUNT_POINT inside an ext4 /boot (eg bcm2711 /boot/firmware).
+	# The generic /boot/efi ESP keeps the ext4 copy.
+	declare fat_dir=""
 	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
+		fat_dir="/boot"
+	elif [[ "${BOOTSIZE:-0}" == "0" && -n "${UEFI_MOUNT_POINT}" && "${UEFI_MOUNT_POINT}" != "/boot/efi" &&
+		$(findmnt --noheadings --output FSTYPE --target "${MOUNT}${UEFI_MOUNT_POINT}" --uniq) == vfat ]]; then
+		fat_dir="${UEFI_MOUNT_POINT}"
+	fi
+	if [[ -n "${fat_dir}" ]]; then
 		# FAT filesystems can't have symlinks; rsync, below, will replace them with copies (-L)...
 		# ... unless they're dangling symlinks, in which case rsync will fail.
-		# Find dangling symlinks in "$MOUNT/boot", warn, and remove them.
-		display_alert "Checking for dangling symlinks" "in FAT32 /boot" "info"
+		# Find dangling symlinks in the FAT32 part, warn, and remove them.
+		display_alert "Checking for dangling symlinks" "in FAT32 ${fat_dir}" "info"
 		declare -a dangling_symlinks=()
 		while IFS= read -r -d '' symlink; do
 			dangling_symlinks+=("$symlink")
-		done < <(find "$SDCARD/boot" -xtype l -print0)
+		done < <(find "$SDCARD${fat_dir}" -xtype l -print0)
 		if [[ ${#dangling_symlinks[@]} -gt 0 ]]; then
-			display_alert "Dangling symlinks in /boot" "$(printf '%s ' "${dangling_symlinks[@]}")" "warning"
+			display_alert "Dangling symlinks in ${fat_dir}" "$(printf '%s ' "${dangling_symlinks[@]}")" "warning"
 			run_host_command_logged rm -fv "${dangling_symlinks[@]}"
 		fi
-		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # fat32
+		if [[ "${fat_dir}" != "/boot" ]]; then
+			run_host_command_logged rsync -aHWXh --info=progress0,stats1 --exclude="${fat_dir}/" "$SDCARD/boot" "$MOUNT" # ext4 part of /boot
+		fi
+		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD${fat_dir}/" "$MOUNT${fat_dir}/" # fat32
 	else
 		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # ext4
 	fi
