@@ -35,6 +35,7 @@ function pre_umount_final_image__100_mangopi_grub_dtb() {
 	chroot_custom "${MOUNT}" 'dpkg-statoverride --list /etc/grub.d/10_linux >/dev/null || dpkg-statoverride --add --update root root 0644 /etc/grub.d/10_linux'
 	chroot_custom "${MOUNT}" 'uuid=$(grub-probe --target=fs_uuid /); path="/dev/disk/by-uuid/$uuid"; test -e "$path" || mkdir -p "$path"'
 	chroot_custom "${MOUNT}" 'for k in $(linux-version list); do /etc/kernel/postinst.d/armbian-grub-with-dtb "$k"; done'
+	undeploy_qemu_binary_from_chroot "${MOUNT}" "mangopi-grub"
 	umount_chroot "${MOUNT}/"
 	# Remove direct boot files so the ESP EFI loader is the boot path.
 	rm -f "${MOUNT}/boot/boot.scr" "${MOUNT}/boot/boot.cmd" "${MOUNT}/boot/extlinux/extlinux.conf"
