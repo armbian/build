@@ -1,5 +1,5 @@
+# @description Boots the MQ Pro through GRUB EFI with a per-kernel devicetree on top of `grub-riscv64`. Restores `BOOTSOURCE`/`BOOTCONFIG`, which `grub-riscv64` clears, so the board still builds its own SPL and U-Boot firmware. Installs a `grub.d` script and a kernel hook that copy the DTB to `/boot/armbian-dtb-<version>` and add it to every `linux` entry. Enable it together with `grub-riscv64`.
 # SPDX-License-Identifier: GPL-2.0-only
-# Keep source firmware while using the common RISC-V GRUB layout.
 function post_family_config__950_mangopi_grub_firmware() {
     declare -g MANGOPI_GRUB_BOOTSOURCE="${BOOTSOURCE}"
     declare -g MANGOPI_GRUB_BOOTCONFIG="${BOOTCONFIG}"
