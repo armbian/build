@@ -1,0 +1,318 @@
+From c40c9e1b442e8c8a42f23c4be5efd6fde755f961 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 5 Sep 2026 16:50:06 +0200
+Subject: [PATCH 34/35] irqchip/gic: Take the hardware spinlock around GIC
+ accesses on the A83T
+
+On the A83T, GIC and CPUCFG accesses made at the same time can be lost,
+which can leave a CPU's timer interrupt stuck after a CPU_ON. CPUCFG is
+driven by the secure monitor, so both sides serialise on hardware
+spinlock 31.
+
+It is built only with CONFIG_ARM_GIC_SUN8I_A83T_HWSPINLOCK and enabled
+only on the A83T.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/irqchip/Kconfig   |   8 +++
+ drivers/irqchip/irq-gic.c | 137 ++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 140 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/irqchip/Kconfig b/drivers/irqchip/Kconfig
+index 20b77fbc51ee..f60454e7f7df 100644
+--- a/drivers/irqchip/Kconfig
++++ b/drivers/irqchip/Kconfig
+@@ -16,6 +16,14 @@ config ARM_GIC_PM
+ 	depends on PM
+ 	select ARM_GIC
+ 
++config ARM_GIC_SUN8I_A83T_HWSPINLOCK
++	bool "Serialise GIC accesses with CPUCFG on Allwinner A83T"
++	depends on ARM_GIC && MACH_SUN8I
++	help
++	  On the A83T, GIC and CPUCFG accesses made at the same time can
++	  be lost. This serialises them with hardware spinlock 31, which
++	  the secure monitor also takes. If unsure, say N.
++
+ config ARM_GIC_MAX_NR
+ 	int
+ 	depends on ARM_GIC
+diff --git a/drivers/irqchip/irq-gic.c b/drivers/irqchip/irq-gic.c
+index f6bc29f515fb..581e8bcdba94 100644
+--- a/drivers/irqchip/irq-gic.c
++++ b/drivers/irqchip/irq-gic.c
+@@ -173,21 +173,75 @@ static inline bool cascading_gic_irq(struct irq_data *d)
+ 	return data != NULL;
+ }
+ 
++#ifdef CONFIG_ARM_GIC_SUN8I_A83T_HWSPINLOCK
++/*
++ * On the A83T, GIC and CPUCFG accesses made at the same time can be
++ * lost. CPUCFG is driven by the secure monitor, so both sides take
++ * hardware spinlock 31 around their accesses. The key is enabled only
++ * by the A83T quirk, at boot.
++ */
++#define GIC_SUNXI_HWSPIN_PHYS 0x01c18000
++#define GIC_SUNXI_HWSPIN_SIZE 0x1000
++#define GIC_SUNXI_LOCK_REG    (0x100 + 31 * 4)
++
++static DEFINE_STATIC_KEY_FALSE(gic_sunxi_hwspin_key);
++static void __iomem *gic_sunxi_hwspin;
++
++static unsigned long gic_sunxi_lock(void)
++{
++	unsigned long flags;
++
++	if (!static_branch_unlikely(&gic_sunxi_hwspin_key))
++		return 0;
++
++	local_irq_save(flags);
++	while (readl_relaxed(gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG))
++		cpu_relax();
++
++	return flags;
++}
++
++static void gic_sunxi_unlock(unsigned long flags)
++{
++	if (!static_branch_unlikely(&gic_sunxi_hwspin_key))
++		return;
++
++	writel_relaxed(0, gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG);
++	local_irq_restore(flags);
++}
++#else
++static inline unsigned long gic_sunxi_lock(void)
++{
++	return 0;
++}
++
++static inline void gic_sunxi_unlock(unsigned long flags)
++{
++}
++#endif
++
+ /*
+  * Routines to acknowledge, disable and enable interrupts
+  */
+ static void gic_poke_irq(struct irq_data *d, u32 offset)
+ {
+ 	u32 mask = 1 << (irqd_to_hwirq(d) % 32);
++	unsigned long flags = gic_sunxi_lock();
+ 
+ 	writel_relaxed(mask, gic_dist_base(d) + offset + (irqd_to_hwirq(d) / 32) * 4);
++	gic_sunxi_unlock(flags);
+ }
+ 
+ static int gic_peek_irq(struct irq_data *d, u32 offset)
+ {
+ 	u32 mask = 1 << (irqd_to_hwirq(d) % 32);
++	unsigned long flags = gic_sunxi_lock();
++	int val;
+ 
+-	return !!(readl_relaxed(gic_dist_base(d) + offset + (irqd_to_hwirq(d) / 32) * 4) & mask);
++	val = !!(readl_relaxed(gic_dist_base(d) + offset + (irqd_to_hwirq(d) / 32) * 4) & mask);
++	gic_sunxi_unlock(flags);
++
++	return val;
+ }
+ 
+ static void gic_mask_irq(struct irq_data *d)
+@@ -218,16 +272,20 @@ static void gic_unmask_irq(struct irq_data *d)
+ static void gic_eoi_irq(struct irq_data *d)
+ {
+ 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
++	unsigned long flags;
+ 
+ 	if (hwirq < 16)
+ 		hwirq = this_cpu_read(sgi_intid);
+ 
++	flags = gic_sunxi_lock();
+ 	writel_relaxed(hwirq, gic_cpu_base(d) + GIC_CPU_EOI);
++	gic_sunxi_unlock(flags);
+ }
+ 
+ static void gic_eoimode1_eoi_irq(struct irq_data *d)
+ {
+ 	irq_hw_number_t hwirq = irqd_to_hwirq(d);
++	unsigned long flags;
+ 
+ 	/* Do not deactivate an IRQ forwarded to a vcpu. */
+ 	if (irqd_is_forwarded_to_vcpu(d))
+@@ -236,7 +294,9 @@ static void gic_eoimode1_eoi_irq(struct irq_data *d)
+ 	if (hwirq < 16)
+ 		hwirq = this_cpu_read(sgi_intid);
+ 
++	flags = gic_sunxi_lock();
+ 	writel_relaxed(hwirq, gic_cpu_base(d) + GIC_CPU_DEACTIVATE);
++	gic_sunxi_unlock(flags);
+ }
+ 
+ static int gic_irq_set_irqchip_state(struct irq_data *d,
+@@ -290,6 +350,7 @@ static int gic_irq_get_irqchip_state(struct irq_data *d,
+ 
+ static int gic_set_type(struct irq_data *d, unsigned int type)
+ {
++	unsigned long sunxi_flags;
+ 	irq_hw_number_t gicirq = irqd_to_hwirq(d);
+ 	void __iomem *base = gic_dist_base(d);
+ 	int ret;
+@@ -303,7 +364,9 @@ static int gic_set_type(struct irq_data *d, unsigned int type)
+ 			    type != IRQ_TYPE_EDGE_RISING)
+ 		return -EINVAL;
+ 
++	sunxi_flags = gic_sunxi_lock();
+ 	ret = gic_configure_irq(gicirq, type, base + GIC_DIST_CONFIG);
++	gic_sunxi_unlock(sunxi_flags);
+ 	if (ret && gicirq < 32) {
+ 		/* Misconfigured PPIs are usually not fatal */
+ 		pr_warn("GIC: PPI%ld is secure or misconfigured\n", gicirq - 16);
+@@ -338,14 +401,19 @@ static void __exception_irq_entry gic_handle_irq(struct pt_regs *regs)
+ 	void __iomem *cpu_base = gic_data_cpu_base(gic);
+ 
+ 	do {
++		unsigned long flags = gic_sunxi_lock();
++
+ 		irqstat = readl_relaxed(cpu_base + GIC_CPU_INTACK);
+ 		irqnr = irqstat & GICC_IAR_INT_ID_MASK;
+ 
+-		if (unlikely(irqnr >= 1020))
++		if (unlikely(irqnr >= 1020)) {
++			gic_sunxi_unlock(flags);
+ 			break;
++		}
+ 
+ 		if (static_branch_likely(&supports_deactivate_key))
+ 			writel_relaxed(irqstat, cpu_base + GIC_CPU_EOI);
++		gic_sunxi_unlock(flags);
+ 		isb();
+ 
+ 		/*
+@@ -489,6 +557,7 @@ static int gic_cpu_init(struct gic_chip_data *gic)
+ 	void __iomem *dist_base = gic_data_dist_base(gic);
+ 	void __iomem *base = gic_data_cpu_base(gic);
+ 	unsigned int cpu_mask, cpu = smp_processor_id();
++	unsigned long flags;
+ 	int i;
+ 
+ 	/*
+@@ -516,10 +585,12 @@ static int gic_cpu_init(struct gic_chip_data *gic)
+ 				gic_cpu_map[i] &= ~cpu_mask;
+ 	}
+ 
++	flags = gic_sunxi_lock();
+ 	gic_cpu_config(dist_base, 32, GICD_INT_DEF_PRI);
+ 
+ 	writel_relaxed(GICC_INT_PRI_THRESHOLD, base + GIC_CPU_PRIMASK);
+ 	gic_cpu_if_up(gic);
++	gic_sunxi_unlock(flags);
+ 
+ 	return 0;
+ }
+@@ -808,10 +879,14 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
+ 	if (cpu >= NR_GIC_CPU_IF || cpu >= nr_cpu_ids)
+ 		return -EINVAL;
+ 
+-	if (static_branch_unlikely(&needs_rmw_access))
++	if (static_branch_unlikely(&needs_rmw_access)) {
+ 		rmw_writeb(gic_cpu_map[cpu], reg);
+-	else
++	} else {
++		unsigned long flags = gic_sunxi_lock();
++
+ 		writeb_relaxed(gic_cpu_map[cpu], reg);
++		gic_sunxi_unlock(flags);
++	}
+ 	irq_data_update_effective_affinity(d, cpumask_of(cpu));
+ 
+ 	return IRQ_SET_MASK_OK_DONE;
+@@ -820,12 +895,14 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
+ static void gic_ipi_send_mask(struct irq_data *d, const struct cpumask *mask)
+ {
+ 	int cpu;
+-	unsigned long flags, map = 0;
++	unsigned long flags, sunxi_flags, map = 0;
+ 
+ 	if (unlikely(nr_cpu_ids == 1)) {
+ 		/* Only one CPU? let's do a self-IPI... */
++		sunxi_flags = gic_sunxi_lock();
+ 		writel_relaxed(2 << 24 | d->hwirq,
+ 			       gic_data_dist_base(&gic_data[0]) + GIC_DIST_SOFTINT);
++		gic_sunxi_unlock(sunxi_flags);
+ 		return;
+ 	}
+ 
+@@ -842,7 +919,9 @@ static void gic_ipi_send_mask(struct irq_data *d, const struct cpumask *mask)
+ 	dmb(ishst);
+ 
+ 	/* this always happens on GIC0 */
++	sunxi_flags = gic_sunxi_lock();
+ 	writel_relaxed(map << 16 | d->hwirq, gic_data_dist_base(&gic_data[0]) + GIC_DIST_SOFTINT);
++	gic_sunxi_unlock(sunxi_flags);
+ 
+ 	gic_unlock_irqrestore(flags);
+ }
+@@ -1377,12 +1456,60 @@ static bool gic_enable_rmw_access(void *data)
+ 	return false;
+ }
+ 
++#ifdef CONFIG_ARM_GIC_SUN8I_A83T_HWSPINLOCK
++/* A lock block with its clock off reads 0, i.e. "granted" to everyone. */
++static bool gic_sunxi_hwspin_works(void)
++{
++	u32 taken, again;
++
++	writel_relaxed(0, gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG);
++	taken = readl_relaxed(gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG);
++	again = readl_relaxed(gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG);
++	writel_relaxed(0, gic_sunxi_hwspin + GIC_SUNXI_LOCK_REG);
++
++	if (taken == 0 && again != 0)
++		return true;
++
++	pr_err("GIC: hardware spinlock does not arbitrate (%u then %u); GIC and CPUCFG will race\n",
++	       taken, again);
++	return false;
++}
++
++static bool gic_enable_sunxi_hwspin(void *data)
++{
++	if (!of_machine_is_compatible("allwinner,sun8i-a83t"))
++		return false;
++
++	gic_sunxi_hwspin = ioremap(GIC_SUNXI_HWSPIN_PHYS, GIC_SUNXI_HWSPIN_SIZE);
++	if (!gic_sunxi_hwspin) {
++		pr_err("GIC: no hardware spinlock; GIC and CPUCFG will race\n");
++		return false;
++	}
++
++	if (!gic_sunxi_hwspin_works()) {
++		iounmap(gic_sunxi_hwspin);
++		gic_sunxi_hwspin = NULL;
++		return false;
++	}
++
++	static_branch_enable(&gic_sunxi_hwspin_key);
++	return true;
++}
++#endif
++
+ static const struct gic_quirk gic_quirks[] = {
+ 	{
+ 		.desc		= "broken byte access",
+ 		.compatible	= "arm,pl390",
+ 		.init		= gic_enable_rmw_access,
+ 	},
++#ifdef CONFIG_ARM_GIC_SUN8I_A83T_HWSPINLOCK
++	{
++		.desc		= "A83T hardware spinlock against CPUCFG",
++		.compatible	= "arm,gic-400",
++		.init		= gic_enable_sunxi_hwspin,
++	},
++#endif
+ 	{ },
+ };
+ 
+-- 
+2.43.0
+
