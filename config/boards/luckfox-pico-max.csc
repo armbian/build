@@ -8,7 +8,6 @@ INTRODUCED="2024"
 KERNEL_TARGET="vendor"
 BOOT_FDT_FILE="rv1106g-luckfox-pico-pro-max.dtb"
 IMAGE_PARTITION_TABLE="gpt"
-BOOT_SOC="rv1106"
 
 # Board has 128MB - 256MB RAM; use 'lowmem' extension to optimize for this.
 enable_extension "lowmem"

@@ -5,7 +5,6 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 INTRODUCED="2023"
 BOOTCONFIG="cm3588-nas-rk3588_defconfig" # Mainline defconfig, enables booting from NVMe
-BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

@@ -7,7 +7,6 @@ declare -g INTRODUCED="2023"
 declare -g KERNEL_TARGET="edge,vendor"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-core3588e.dtb" # same name vendor and edge
 declare -g BOOT_SCENARIO="spl-blobs"
-declare -g BOOT_SOC="rk3588"
 declare -g BOOTCONFIG="mixtile-core3588e-rk3588_defconfig" # edge/mainline
 declare -g IMAGE_PARTITION_TABLE="gpt"
 # Does NOT have a UEFI_EDK2_BOARD_ID
