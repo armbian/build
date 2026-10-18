@@ -7,7 +7,49 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Some terminals set TERM to a name this ncurses does not ship.
+# Ghostty uses xterm-ghostty. dialog and clear then fail.
+# Pick a terminfo entry this system has.
+function ensure_known_terminal() {
+	# Remember Ghostty before a fallback replaces TERM. menu.sh reads this.
+	case "${TERM_PROGRAM:-}" in
+		ghostty) declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty" ;;
+	esac
+	case "${TERM:-}" in
+		xterm-ghostty | ghostty) declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty" ;;
+	esac
+
+	[[ -z "${TERM:-}" || "${TERM}" == "dumb" ]] && return 0
+	if ! command -v tput > /dev/null 2>&1; then
+		return 0
+	fi
+	if tput -T "${TERM}" longname > /dev/null 2>&1; then
+		return 0
+	fi
+
+	declare original_term="${TERM}"
+	declare fallback="" candidate
+	declare -a candidates=()
+	# Old name of the Ghostty entry, before ncurses renamed it.
+	[[ "${original_term}" == "xterm-ghostty" ]] && candidates+=("ghostty")
+	candidates+=("xterm-256color" "xterm" "ansi" "dumb")
+
+	for candidate in "${candidates[@]}"; do
+		if tput -T "${candidate}" longname > /dev/null 2>&1; then
+			fallback="${candidate}"
+			break
+		fi
+	done
+	[[ -z "${fallback}" ]] && fallback="dumb"
+
+	export TERM="${fallback}"
+	display_alert "Unknown terminal type '${original_term}'" "using '${fallback}'" "debug"
+}
+
 function cli_entrypoint() {
+	# Fix TERM before tput reads the terminal width.
+	ensure_known_terminal
+
 	# array, readonly, global, for future reference, "exported" to shutup shellcheck
 	declare -rg -x -a ARMBIAN_ORIGINAL_ARGV=("${@}")
 
@@ -224,6 +266,9 @@ function cli_entrypoint() {
 	# Early check for deprecations
 	apply_deprecated_switch_aliases # forward renamed switches to their new names, with a warning (backward compat)
 	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
+
+	# Cmdline and config can replace TERM. Validate the final value before dialog.
+	ensure_known_terminal
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command
