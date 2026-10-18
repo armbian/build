@@ -13,6 +13,11 @@ env:
   BOARD_IMAGES_DIR: "board-images"
   VENDOR_LOGOS_DIR: "board-vendor-logos"
 
+  # Optional assets. A missing one is reported, but never fails the check.
+  PINOUTS_DIR: "board-pinouts"
+  SCHEMATICS_DIR: "board-schematics"
+  INSTRUCTIONS_DIR: "board-instructions"
+
 permissions:
   contents: read
 
@@ -81,7 +86,7 @@ jobs:
             echo "none=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: "Validate board image + vendor logo exist on website repo"
+      - name: "Validate board assets exist on website repo"
         id: validate
         if: ${{ steps.added.outputs.none != 'true' }}
         shell: bash
@@ -91,7 +96,9 @@ jobs:
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
           missing_any=0
+          optional_missing=0
           comment_file="$(mktemp)"
+          optional_file="$(mktemp)"
 
           {
             echo "This PR adds new board configuration(s). Required assets must already exist in [github/${WEBSITE_REPO}](https://github.com/${WEBSITE_REPO})."
@@ -103,6 +110,8 @@ jobs:
             echo "### Missing items"
             echo ""
           } > "$comment_file"
+
+          : > "$optional_file"
 
           while IFS= read -r cfg; do
             [[ -z "${cfg}" ]] && continue
@@ -156,34 +165,83 @@ jobs:
               } >> "$comment_file"
               missing_any=1
             fi
+
+            # Optional assets. They improve the board page, but a board ships
+            # without them. Never set missing_any here.
+            for spec in "${PINOUTS_DIR}|png|pinout" \
+                        "${SCHEMATICS_DIR}|pdf|schematic" \
+                        "${INSTRUCTIONS_DIR}|md|instructions"; do
+              IFS='|' read -r dir ext label <<< "${spec}"
+              if ! find "website/${dir}" -maxdepth 1 -type f -iname "${board}.${ext}" 2>/dev/null | grep -q .; then
+                echo "- \`${board}\`: no ${label} (\`${dir}/${board}.${ext}\`)" >> "$optional_file"
+                optional_missing=1
+              fi
+            done
           done < added-files.txt
+
+          if [[ "${optional_missing}" -ne 0 ]]; then
+            {
+              echo "### Optional items"
+              echo ""
+              echo "These are not required and do not block this PR. They add a pinout"
+              echo "drawing, a schematic and board notes to the download page."
+              echo ""
+              cat "$optional_file"
+              echo ""
+            } >> "$comment_file"
+          fi
 
           if [[ "${missing_any}" -ne 0 ]]; then
             echo "missing=true" >> "$GITHUB_OUTPUT"
-            echo 'comment<<EOF' >> "$GITHUB_OUTPUT"
-            cat "$comment_file" >> "$GITHUB_OUTPUT"
-            echo 'EOF' >> "$GITHUB_OUTPUT"
-            echo "::error::Missing required board assets (see PR comment)."
-            exit 1
           else
             echo "missing=false" >> "$GITHUB_OUTPUT"
           fi
 
+          if [[ "${optional_missing}" -ne 0 ]]; then
+            echo "optional=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "optional=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [[ "${missing_any}" -ne 0 || "${optional_missing}" -ne 0 ]]; then
+            echo 'comment<<EOF' >> "$GITHUB_OUTPUT"
+            cat "$comment_file" >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+          fi
+
+          # Only the required assets fail the check.
+          if [[ "${missing_any}" -ne 0 ]]; then
+            echo "::error::Missing required board assets (see PR comment)."
+            exit 1
+          fi
+
       - name: "Comment on PR with missing asset instructions"
-        if: always() && github.event_name == 'pull_request_target' && steps.validate.outputs.missing == 'true'
+        if: always() && github.event_name == 'pull_request_target' && (steps.validate.outputs.missing == 'true' || steps.validate.outputs.optional == 'true')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           COMMENT_BODY: ${{ steps.validate.outputs.comment }}
+          MISSING_REQUIRED: ${{ steps.validate.outputs.missing }}
           WEBSITE_REPO: ${{ env.WEBSITE_REPO }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const missingRequired = process.env.MISSING_REQUIRED === 'true';
+
+            // A missing optional asset must not look like a failure.
+            const header = missingRequired
+              ? '### 🚫 Missing required board assets'
+              : '### 💡 Optional board assets';
+
+            const footer = missingRequired
+              ? `Once the missing files are added (or a PR is opened in **${process.env.WEBSITE_REPO}**), re-run this check.`
+              : `This check passed. The items above are optional and do not block this PR.`;
+
             const body =
-            `### 🚫 Missing required board assets
+            `${header}
 
             ${process.env.COMMENT_BODY}
 
-            Once the missing files are added (or a PR is opened in **${process.env.WEBSITE_REPO}**), re-run this check.
+            ${footer}
             `;
 
             // Check if a comment with the same header already exists to avoid flooding
@@ -197,7 +255,8 @@ jobs:
 
               const botComment = comments.find(comment =>
                 comment.user.type === 'Bot' &&
-                comment.body.includes('### 🚫 Missing required board assets')
+                (comment.body.includes('### 🚫 Missing required board assets') ||
+                 comment.body.includes('### 💡 Optional board assets'))
               );
 
               if (!botComment) {
