@@ -71,6 +71,8 @@ esac
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr "${BOOTCONFIG}" : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
+# rk3588 is 6 characters. Longer names use the same boot path.
+[[ ${#BOOT_SOC} -gt 6 && ${BOOT_SOC::6} == rk3588 ]] && BOOT_SOC=rk3588
 
 if [[ "a${BOOT_SOC}a" == "aa" ]]; then
 	if [[ "${BOOTCONFIG}" != "" && "${BOOTCONFIG}" != " none" ]]; then # only warn if BOOTCONFIG set and not 'none'
