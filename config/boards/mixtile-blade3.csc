@@ -7,7 +7,6 @@ declare -g INTRODUCED="2023"
 declare -g KERNEL_TARGET="vendor,edge"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb" # same name vendor and edge
 declare -g BOOT_SCENARIO="tpl-blob-atf-mainline"
-declare -g BOOT_SOC="rk3588"
 declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # mainline u-boot
 declare -g IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 extension
