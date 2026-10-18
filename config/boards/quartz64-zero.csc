@@ -1,12 +1,13 @@
 # Rockchip RK3566T quad core 1GB RAM WiFi6/BT USB3 HDMI
-BOARD_NAME="Pine64 Quartz64 Zero"
+BOARD_NAME="Quartz64 Zero"
 BOARD_VENDOR="pine64"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 INTRODUCED="2024"
 BOOT_SOC="rk3566"
 BOOTCONFIG="quartz64-zero-rk3566_defconfig"
-# The AIC8800 SDIO DKMS driver does not build for kernel 7.3+.
+# No Ethernet on this board: Wi-Fi is the only network. The radxa-aic8800
+# extension skips the driver on kernel 7.3+ (edge), so offer current only.
 KERNEL_TARGET="current"
 KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="rockchip/rk3566-quartz64-zero.dtb"
