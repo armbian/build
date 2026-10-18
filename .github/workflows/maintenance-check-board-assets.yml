@@ -216,16 +216,20 @@ jobs:
           fi
 
       - name: "Comment on PR with missing asset instructions"
-        if: always() && github.event_name == 'pull_request_target' && (steps.validate.outputs.missing == 'true' || steps.validate.outputs.optional == 'true')
+        if: always() && github.event_name == 'pull_request_target' && steps.added.outputs.none != 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           COMMENT_BODY: ${{ steps.validate.outputs.comment }}
           MISSING_REQUIRED: ${{ steps.validate.outputs.missing }}
+          OPTIONAL_MISSING: ${{ steps.validate.outputs.optional }}
+          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
           WEBSITE_REPO: ${{ env.WEBSITE_REPO }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const missingRequired = process.env.MISSING_REQUIRED === 'true';
+            const optionalMissing = process.env.OPTIONAL_MISSING === 'true';
+            const hasFindings = missingRequired || optionalMissing;
 
             // A missing optional asset must not look like a failure.
             const header = missingRequired
@@ -236,16 +240,21 @@ jobs:
               ? `Once the missing files are added (or a PR is opened in **${process.env.WEBSITE_REPO}**), re-run this check.`
               : `This check passed. The items above are optional and do not block this PR.`;
 
+            // Hidden marker: identifies our own comment without matching the
+            // headings, which other bots quote when they review this workflow.
+            const MARKER = '<!-- armbian-board-assets-check -->';
+
             const body =
-            `${header}
+            `${MARKER}
+            ${header}
 
             ${process.env.COMMENT_BODY}
 
             ${footer}
             `;
 
-            // Check if a comment with the same header already exists to avoid flooding
-            // Use paginate to fetch all comments (listComments only returns first page)
+            // A later push can change the result. Keep one comment per PR and
+            // make it match the current state.
             try {
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner: context.repo.owner,
@@ -254,20 +263,39 @@ jobs:
               });
 
               const botComment = comments.find(comment =>
-                comment.user.type === 'Bot' &&
-                (comment.body.includes('### 🚫 Missing required board assets') ||
-                 comment.body.includes('### 💡 Optional board assets'))
+                comment.user.login === 'github-actions[bot]' &&
+                (comment.body.includes(MARKER) ||
+                 // Comments written before the marker existed.
+                 comment.body.trimStart().startsWith('### 🚫 Missing required board assets'))
               );
 
-              if (!botComment) {
-                await github.rest.issues.createComment({
+              if (hasFindings) {
+                if (botComment) {
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: botComment.id,
+                    body
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    body
+                  });
+                }
+              } else if (botComment && process.env.VALIDATION_OUTCOME === 'success') {
+                // Nothing is missing any more. Only drop the comment when the
+                // validation really ran; a crashed step writes no outputs.
+                await github.rest.issues.deleteComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body
+                  comment_id: botComment.id,
                 });
               }
             } catch (error) {
-              // Log error but don't fail the step - the validation already failed with exit 1
-              core.warning(`Failed to post PR comment: ${error.message}`);
+              // Never fail this step. A missing required asset already failed
+              // the validation step, and an optional one must not fail at all.
+              core.warning(`Failed to update PR comment: ${error.message}`);
             }
