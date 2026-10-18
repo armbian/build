@@ -1,0 +1,11 @@
+# Samsung Exynos4412 Prime quad core 2GB RAM SoC eMMC microSD 1x100MBe 3xUSB2 micro-HDMI
+BOARD_NAME="Odroid U3"
+BOARD_VENDOR="hardkernel"
+BOARDFAMILY="odroidu2"
+INTRODUCED="2013"
+BOOTCONFIG="odroid_defconfig"
+BOOT_FDT_FILE="exynos4412-odroidu3.dtb"
+SERIALCON="ttySAC1"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+FULL_DESKTOP="no"
