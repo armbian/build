@@ -2,6 +2,11 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
+# Used by Seeed reComputer RK35xx boards:
+#   - recomputer-rk3588-devkit        (RK3588)
+#   - recomputer-rk3576-module-devkit (RK3576)
+#   - recomputer-rk3576-industrial    (RK3576 industrial carrier)
+#
 
 # Use U-Boot's per-SoC overlay address as scratch buffer.
 # RK3576: 0x48200000, RK3588: 0x08200000 (set in ENV_MEM_LAYOUT_SETTINGS)
@@ -74,11 +79,13 @@ setenv eeprom_dtb_matched "no"
 #   0x06     4    board code   [0..1]=board no, [2..3]=hw iteration      "01A0"
 #   0x0A     20   serial no.   "SN" + ASCII digits                       "SNAAAAAAAAABBBBBBBBB"
 #   0x1E     2    reserved     not parsed                                0xFF 0xFF
-#   0x20     ..   extra cfg    eg: mac addr, product info                ASCII
+#   0x20     17   extra cfg    MAC ASCII "xx:xx:xx:xx:xx:xx" (ethaddr)   "AA:BB:CC:DD:EE:00"
+#   0x40     17   extra cfg    MAC ASCII "xx:xx:xx:xx:xx:xx" (eth1addr)  "AA:BB:CC:DD:EE:01"
 #
 # Board codes — actual EEPROM contents (first 10 bytes) per board:
 #   00A0 = RK3576 Devkit         72 6b 33 35 78 78 30 30 41 30  ("rk35xx"+"00A0")
 #   01A0 = RK3576 Module Dev Kit 72 6b 33 35 78 78 30 31 41 30  ("rk35xx"+"01A0")
+#   02A0 = RK3576 Industrial     72 6b 33 35 78 78 30 32 41 30  ("rk35xx"+"02A0")
 #   00B0 = RK3588 Devkit         72 6b 33 35 78 78 30 30 42 30  ("rk35xx"+"00B0")
 #
 # On magic/board-code mismatch (or a blank 0xFF chip) the default
@@ -88,6 +95,7 @@ setenv eeprom_dtb_matched "no"
 # board hook (eeprom_i2c_bus / eeprom_i2c_addr).
 #   rk3576/rk3588 devkit: I2C4, 0x57 (on-board EEPROM)
 #   rk3576 module devkit: I2C2, 0x50 (on-module EEPROM)
+#   rk3576 industrial:    I2C2, 0x50 (on-module 24c32 EEPROM)
 test -n "${eeprom_i2c_bus}" || setenv eeprom_i2c_bus 4
 test -n "${eeprom_i2c_addr}" || setenv eeprom_i2c_addr 0x57
 if test "${eeprom_dtb_select}" = "on"; then
@@ -125,6 +133,11 @@ if test "${eeprom_dtb_select}" = "on"; then
 					setenv fdtfile "rockchip/rk3576-recomputer-rk3576-module-devkit.dtb"
 					setenv eeprom_dtb_matched "yes"
 					echo "Detected board: reComputer RK3576 Module Dev Kit, using DTB: ${fdtfile}"
+				# 02A0 -> rk3576 industrial dtb
+				elif test "${code0}" = "0x30" && test "${code1}" = "0x32" && test "${code2}" = "0x41" && test "${code3}" = "0x30"; then
+					setenv fdtfile "rockchip/rk3576-recomputer-industrial.dtb"
+					setenv eeprom_dtb_matched "yes"
+					echo "Detected board: reComputer RK3576 industrial, using DTB: ${fdtfile}"
 				# 00B0 -> rk3588 dtb
 				elif test "${code0}" = "0x30" && test "${code1}" = "0x30" && test "${code2}" = "0x42" && test "${code3}" = "0x30"; then
 					setenv fdtfile "rockchip/rk3588-recomputer-rk3588-devkit.dtb"
