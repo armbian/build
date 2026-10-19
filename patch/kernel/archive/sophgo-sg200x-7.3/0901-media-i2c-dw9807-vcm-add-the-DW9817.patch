@@ -1,0 +1,279 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: morikon <leafpmpmp@gmail.com>
+Date: Tue, 13 Oct 2026 14:00:00 +0800
+Subject: media: i2c: dw9807-vcm: add the DW9817
+
+The DW9817 drives current in both directions. Its zero-current lens
+position is mid-scale, not 0. The Raspberry Pi Camera Module 3 uses it.
+
+Add the dongwoon,dw9817-vcm compatible with a mid-scale rest position,
+and an optional vdd supply. Move the lens to its rest position before
+power-off, and back after power-on. The DW9807 keeps its behaviour.
+---
+ .../media/i2c/dongwoon,dw9807-vcm.yaml        |  12 +-
+ drivers/media/i2c/dw9807-vcm.c                | 122 +++++++++++++-----
+ 2 files changed, 100 insertions(+), 34 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/media/i2c/dongwoon,dw9807-vcm.yaml b/Documentation/devicetree/bindings/media/i2c/dongwoon,dw9807-vcm.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/media/i2c/dongwoon,dw9807-vcm.yaml
++++ b/Documentation/devicetree/bindings/media/i2c/dongwoon,dw9807-vcm.yaml
+@@ -5,22 +5,28 @@
+ $id: http://devicetree.org/schemas/media/i2c/dongwoon,dw9807-vcm.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Dongwoon Anatech DW9807 voice coil lens driver
++title: Dongwoon Anatech DW9807 and DW9817 voice coil lens drivers
+ 
+ maintainers:
+   - Sakari Ailus <sakari.ailus@linux.intel.com>
+ 
+ description: |
+   DW9807 is a 10-bit DAC with current sink capability. It is intended for
+-  controlling voice coil lenses.
++  controlling voice coil lenses. DW9817 drives current in both directions,
++  so its zero-current lens position is mid-scale.
+ 
+ properties:
+   compatible:
+-    const: dongwoon,dw9807-vcm
++    enum:
++      - dongwoon,dw9807-vcm
++      - dongwoon,dw9817-vcm
+ 
+   reg:
+     maxItems: 1
+ 
++  vdd-supply:
++    description: VDD supply
++
+ required:
+   - compatible
+   - reg
+diff --git a/drivers/media/i2c/dw9807-vcm.c b/drivers/media/i2c/dw9807-vcm.c
+index 111111111111..222222222222 100644
+--- a/drivers/media/i2c/dw9807-vcm.c
++++ b/drivers/media/i2c/dw9807-vcm.c
+@@ -7,6 +7,8 @@
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/pm_runtime.h>
++#include <linux/property.h>
++#include <linux/regulator/consumer.h>
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+ 
+@@ -38,9 +40,19 @@
+ 
+ #define MAX_RETRY		10
+ 
++/* Supply on to first I2C command, datasheet power-up sequence */
++#define DW9807_PW_DELAY_US	12000
++
++struct dw9807_cfg {
++	u16 idle_pos;		/* zero-current position */
++	u16 default_pos;	/* initial control value */
++};
++
+ struct dw9807_device {
+ 	struct v4l2_ctrl_handler ctrls_vcm;
+ 	struct v4l2_subdev sd;
++	struct regulator *vdd;
++	u16 idle_pos;
+ 	u16 current_val;
+ };
+ 
+@@ -109,19 +121,42 @@ static int dw9807_set_dac(struct i2c_client *client, u16 data)
+ 	return 0;
+ }
+ 
++/* Move in DW9807_CTRL_STEPS steps; always ends exactly on @to */
++static void dw9807_ramp(struct i2c_client *client, int from, int to)
++{
++	int step = from < to ? DW9807_CTRL_STEPS : -DW9807_CTRL_STEPS;
++	int val = from, ret;
++
++	do {
++		val += step;
++		if ((step > 0 && val > to) || (step < 0 && val < to))
++			val = to;
++		ret = dw9807_set_dac(client, val);
++		if (ret)
++			dev_err_ratelimited(&client->dev, "I2C failure: %d\n", ret);
++		usleep_range(DW9807_CTRL_DELAY_US, DW9807_CTRL_DELAY_US + 10);
++	} while (val != to);
++}
++
+ static int dw9807_set_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct dw9807_device *dev_vcm = container_of(ctrl->handler,
+ 		struct dw9807_device, ctrls_vcm);
++	struct i2c_client *client = v4l2_get_subdevdata(&dev_vcm->sd);
++	int ret;
+ 
+-	if (ctrl->id == V4L2_CID_FOCUS_ABSOLUTE) {
+-		struct i2c_client *client = v4l2_get_subdevdata(&dev_vcm->sd);
++	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
++		return -EINVAL;
+ 
+-		dev_vcm->current_val = ctrl->val;
+-		return dw9807_set_dac(client, ctrl->val);
+-	}
++	dev_vcm->current_val = ctrl->val;
+ 
+-	return -EINVAL;
++	/* Powered down: the position is applied on resume */
++	if (!pm_runtime_get_if_in_use(&client->dev))
++		return 0;
++	ret = dw9807_set_dac(client, ctrl->val);
++	pm_runtime_put(&client->dev);
++
++	return ret;
+ }
+ 
+ static const struct v4l2_ctrl_ops dw9807_vcm_ctrl_ops = {
+@@ -163,7 +198,8 @@ static int dw9807_init_controls(struct dw9807_device *dev_vcm)
+ 	v4l2_ctrl_handler_init(hdl, 1);
+ 
+ 	v4l2_ctrl_new_std(hdl, ops, V4L2_CID_FOCUS_ABSOLUTE,
+-			  0, DW9807_MAX_FOCUS_POS, DW9807_FOCUS_STEPS, 0);
++			  0, DW9807_MAX_FOCUS_POS, DW9807_FOCUS_STEPS,
++			  dev_vcm->current_val);
+ 
+ 	dev_vcm->sd.ctrl_handler = hdl;
+ 	if (hdl->error) {
+@@ -177,6 +213,7 @@ static int dw9807_init_controls(struct dw9807_device *dev_vcm)
+ 
+ static int dw9807_probe(struct i2c_client *client)
+ {
++	const struct dw9807_cfg *cfg = device_get_match_data(&client->dev);
+ 	struct dw9807_device *dw9807_dev;
+ 	int rval;
+ 
+@@ -185,6 +222,19 @@ static int dw9807_probe(struct i2c_client *client)
+ 	if (dw9807_dev == NULL)
+ 		return -ENOMEM;
+ 
++	if (cfg) {
++		dw9807_dev->idle_pos = cfg->idle_pos;
++		dw9807_dev->current_val = cfg->default_pos;
++	}
++
++	dw9807_dev->vdd = devm_regulator_get_optional(&client->dev, "vdd");
++	if (IS_ERR(dw9807_dev->vdd)) {
++		if (PTR_ERR(dw9807_dev->vdd) != -ENODEV)
++			return dev_err_probe(&client->dev, PTR_ERR(dw9807_dev->vdd),
++					     "vdd supply\n");
++		dw9807_dev->vdd = NULL;
++	}
++
+ 	v4l2_i2c_subdev_init(&dw9807_dev->sd, client, &dw9807_ops);
+ 	dw9807_dev->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+ 	dw9807_dev->sd.internal_ops = &dw9807_int_ops;
+@@ -203,7 +253,9 @@ static int dw9807_probe(struct i2c_client *client)
+ 	if (rval < 0)
+ 		goto err_cleanup;
+ 
+-	pm_runtime_set_active(&client->dev);
++	/* With a supply the chip starts unpowered, otherwise assume it is on */
++	if (!dw9807_dev->vdd)
++		pm_runtime_set_active(&client->dev);
+ 	pm_runtime_enable(&client->dev);
+ 	pm_runtime_idle(&client->dev);
+ 
+@@ -237,22 +289,17 @@ static int __maybe_unused dw9807_vcm_suspend(struct device *dev)
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct dw9807_device *dw9807_dev = sd_to_dw9807_vcm(sd);
+ 	const char tx_data[2] = { DW9807_CTL_ADDR, 0x01 };
+-	int ret, val;
++	int ret;
+ 
+-	for (val = dw9807_dev->current_val & ~(DW9807_CTRL_STEPS - 1);
+-	     val >= 0; val -= DW9807_CTRL_STEPS) {
+-		ret = dw9807_set_dac(client, val);
+-		if (ret)
+-			dev_err_once(dev, "%s I2C failure: %d", __func__, ret);
+-		usleep_range(DW9807_CTRL_DELAY_US, DW9807_CTRL_DELAY_US + 10);
+-	}
++	dw9807_ramp(client, dw9807_dev->current_val, dw9807_dev->idle_pos);
+ 
+ 	/* Power down */
+ 	ret = i2c_master_send(client, tx_data, sizeof(tx_data));
+-	if (ret < 0) {
++	if (ret < 0)
+ 		dev_err(&client->dev, "I2C write CTL fail ret = %d\n", ret);
+-		return ret;
+-	}
++
++	if (dw9807_dev->vdd)
++		regulator_disable(dw9807_dev->vdd);
+ 
+ 	return 0;
+ }
+@@ -269,30 +316,43 @@ static int  __maybe_unused dw9807_vcm_resume(struct device *dev)
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct dw9807_device *dw9807_dev = sd_to_dw9807_vcm(sd);
+ 	const char tx_data[2] = { DW9807_CTL_ADDR, 0x00 };
+-	int ret, val;
++	int ret;
++
++	if (dw9807_dev->vdd) {
++		ret = regulator_enable(dw9807_dev->vdd);
++		if (ret)
++			return ret;
++		usleep_range(DW9807_PW_DELAY_US, DW9807_PW_DELAY_US + 1000);
++	}
+ 
+ 	/* Power on */
+ 	ret = i2c_master_send(client, tx_data, sizeof(tx_data));
+ 	if (ret < 0) {
+ 		dev_err(&client->dev, "I2C write CTL fail ret = %d\n", ret);
++		if (dw9807_dev->vdd)
++			regulator_disable(dw9807_dev->vdd);
+ 		return ret;
+ 	}
+ 
+-	for (val = dw9807_dev->current_val % DW9807_CTRL_STEPS;
+-	     val < dw9807_dev->current_val + DW9807_CTRL_STEPS - 1;
+-	     val += DW9807_CTRL_STEPS) {
+-		ret = dw9807_set_dac(client, val);
+-		if (ret)
+-			dev_err_ratelimited(dev, "%s I2C failure: %d",
+-						__func__, ret);
+-		usleep_range(DW9807_CTRL_DELAY_US, DW9807_CTRL_DELAY_US + 10);
+-	}
++	dw9807_ramp(client, dw9807_dev->idle_pos, dw9807_dev->current_val);
+ 
+ 	return 0;
+ }
+ 
++static const struct dw9807_cfg dw9807_cfg = {
++	.idle_pos = 0,
++	.default_pos = 0,
++};
++
++/* The DW9817 drives current both ways: zero current is mid-scale */
++static const struct dw9807_cfg dw9817_cfg = {
++	.idle_pos = 512,
++	.default_pos = 480,
++};
++
+ static const struct of_device_id dw9807_of_table[] = {
+-	{ .compatible = "dongwoon,dw9807-vcm" },
++	{ .compatible = "dongwoon,dw9807-vcm", .data = &dw9807_cfg },
++	{ .compatible = "dongwoon,dw9817-vcm", .data = &dw9817_cfg },
+ 	/* Compatibility for older firmware, NEVER USE THIS IN FIRMWARE! */
+ 	{ .compatible = "dongwoon,dw9807" },
+ 	{ /* sentinel */ }
+@@ -300,7 +360,7 @@ static const struct of_device_id dw9807_of_table[] = {
+ MODULE_DEVICE_TABLE(of, dw9807_of_table);
+ 
+ static const struct dev_pm_ops dw9807_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(dw9807_vcm_suspend, dw9807_vcm_resume)
++	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	SET_RUNTIME_PM_OPS(dw9807_vcm_suspend, dw9807_vcm_resume, NULL)
+ };
+ 
+-- 
+Armbian
+

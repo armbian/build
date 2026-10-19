@@ -1,0 +1,142 @@
+From dac4ece570fe006764017fcf16b0c1c4d8453f37 Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Thu, 1 Oct 2026 10:33:08 +0000
+Subject: [PATCH 112/210] drm/bridge: dw-hdmi: implement the HDR DRM infoframe
+ callbacks
+
+The Dynamic Range and Mastering infoframe is only programmed when the
+bridge is enabled, so new HDR metadata reaches the sink only through a
+full modeset.
+
+Split the infoframe programming into clear and write helpers and expose
+them through the hdmi_clear_hdr_drm_infoframe and
+hdmi_write_hdr_drm_infoframe bridge callbacks, so the display driver can
+update the infoframe on an enabled output.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 68 +++++++++++++++++++----
+ 1 file changed, 56 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 83608ee3756e..03b4c7ce15d6 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -1947,6 +1947,29 @@ static void hdmi_config_vendor_specific_infoframe(struct dw_hdmi *hdmi,
+ 			HDMI_FC_DATAUTO0_VSD_MASK);
+ }
+ 
++static void hdmi_clear_drm_infoframe(struct dw_hdmi *hdmi)
++{
++	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_DISABLE,
++		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
++}
++
++static void hdmi_write_drm_infoframe(struct dw_hdmi *hdmi, const u8 *buffer)
++{
++	int i;
++
++	hdmi_clear_drm_infoframe(hdmi);
++
++	hdmi_writeb(hdmi, buffer[1], HDMI_FC_DRM_HB0);
++	hdmi_writeb(hdmi, buffer[2], HDMI_FC_DRM_HB1);
++
++	for (i = 0; i < buffer[2]; i++)
++		hdmi_writeb(hdmi, buffer[4 + i], HDMI_FC_DRM_PB0 + i);
++
++	hdmi_writeb(hdmi, 1, HDMI_FC_DRM_UP);
++	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_ENABLE,
++		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
++}
++
+ static void hdmi_config_drm_infoframe(struct dw_hdmi *hdmi,
+ 				      const struct drm_connector *connector)
+ {
+@@ -1954,13 +1977,11 @@ static void hdmi_config_drm_infoframe(struct dw_hdmi *hdmi,
+ 	struct hdmi_drm_infoframe frame;
+ 	u8 buffer[30];
+ 	ssize_t err;
+-	int i;
+ 
+ 	if (!hdmi->plat_data->use_drm_infoframe)
+ 		return;
+ 
+-	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_DISABLE,
+-		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
++	hdmi_clear_drm_infoframe(hdmi);
+ 
+ 	err = drm_hdmi_infoframe_set_hdr_metadata(&frame, conn_state);
+ 	if (err < 0)
+@@ -1972,15 +1993,7 @@ static void hdmi_config_drm_infoframe(struct dw_hdmi *hdmi,
+ 		return;
+ 	}
+ 
+-	hdmi_writeb(hdmi, frame.version, HDMI_FC_DRM_HB0);
+-	hdmi_writeb(hdmi, frame.length, HDMI_FC_DRM_HB1);
+-
+-	for (i = 0; i < frame.length; i++)
+-		hdmi_writeb(hdmi, buffer[4 + i], HDMI_FC_DRM_PB0 + i);
+-
+-	hdmi_writeb(hdmi, 1, HDMI_FC_DRM_UP);
+-	hdmi_modb(hdmi, HDMI_FC_PACKET_TX_EN_DRM_ENABLE,
+-		  HDMI_FC_PACKET_TX_EN_DRM_MASK, HDMI_FC_PACKET_TX_EN);
++	hdmi_write_drm_infoframe(hdmi, buffer);
+ }
+ 
+ static void hdmi_av_composer(struct dw_hdmi *hdmi,
+@@ -2969,6 +2982,33 @@ static void dw_hdmi_bridge_hpd_disable(struct drm_bridge *bridge)
+ 	disable_delayed_work_sync(&hdmi->hpd_work);
+ }
+ 
++static int dw_hdmi_bridge_hdmi_clear_hdr_drm_infoframe(struct drm_bridge *bridge)
++{
++	struct dw_hdmi *hdmi = bridge->driver_private;
++
++	mutex_lock(&hdmi->mutex);
++	hdmi_clear_drm_infoframe(hdmi);
++	mutex_unlock(&hdmi->mutex);
++
++	return 0;
++}
++
++static int dw_hdmi_bridge_hdmi_write_hdr_drm_infoframe(struct drm_bridge *bridge,
++							const u8 *buffer, size_t len)
++{
++	struct dw_hdmi *hdmi = bridge->driver_private;
++
++	if (len < HDMI_INFOFRAME_HEADER_SIZE ||
++	    len < HDMI_INFOFRAME_HEADER_SIZE + buffer[2])
++		return -EINVAL;
++
++	mutex_lock(&hdmi->mutex);
++	hdmi_write_drm_infoframe(hdmi, buffer);
++	mutex_unlock(&hdmi->mutex);
++
++	return 0;
++}
++
+ static const struct drm_bridge_funcs dw_hdmi_bridge_funcs = {
+ 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+ 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+@@ -2984,6 +3024,8 @@ static const struct drm_bridge_funcs dw_hdmi_bridge_funcs = {
+ 	.edid_read = dw_hdmi_bridge_edid_read,
+ 	.hpd_enable = dw_hdmi_bridge_hpd_enable,
+ 	.hpd_disable = dw_hdmi_bridge_hpd_disable,
++	.hdmi_clear_hdr_drm_infoframe = dw_hdmi_bridge_hdmi_clear_hdr_drm_infoframe,
++	.hdmi_write_hdr_drm_infoframe = dw_hdmi_bridge_hdmi_write_hdr_drm_infoframe,
+ };
+ 
+ /* -----------------------------------------------------------------------------
+@@ -3409,6 +3451,8 @@ struct dw_hdmi *dw_hdmi_probe(struct platform_device *pdev,
+ 	hdmi->bridge.driver_private = hdmi;
+ 	hdmi->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID
+ 			 | DRM_BRIDGE_OP_HPD;
++	if (hdmi->version >= 0x200a && hdmi->plat_data->use_drm_infoframe)
++		hdmi->bridge.ops |= DRM_BRIDGE_OP_HDMI_HDR_DRM_INFOFRAME;
+ 	hdmi->bridge.interlace_allowed = true;
+ 	hdmi->bridge.ddc = hdmi->ddc;
+ 	hdmi->bridge.of_node = pdev->dev.of_node;
+-- 
+2.43.0
+

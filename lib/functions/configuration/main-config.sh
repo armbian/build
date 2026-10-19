@@ -235,6 +235,11 @@ function do_main_configuration() {
 			declare -g -r MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git'
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
+		github)
+			# Greg Kroah-Hartman's mirror of the stable tree; firmware stays on kernel.org
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/gregkh/linux.git'
+			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			;;
 		gitverse)
 			declare -g -r MAINLINE_KERNEL_SOURCE='https://gitverse.ru/pbs-sunflower/linux-stable.git'
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://gitverse.ru/pbs-sunflower/linux-firmware.git'
@@ -360,10 +365,6 @@ function do_main_configuration() {
 			display_alert "NETWORKING_STACK=${NETWORKING_STACK}" "Invalid value? Not adding networking extensions" "wrn"
 			;;
 	esac
-
-	# enable APA extension for Debian Unstable release
-	# loong64 is not supported now
-	#  [ "$RELEASE" = "sid" ] && [ "$ARCH" != "loong64" ] && enable_extension "apa"
 
 	## Extensions: at this point we've sourced all the config files that will be used,
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect

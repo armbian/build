@@ -1,0 +1,166 @@
+From ef5ac7b3f597086b083a27858262b913416c9eae Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Mon, 14 Sep 2026 16:39:38 +0000
+Subject: [PATCH 142/210] drm/bridge: dw-hdmi: support HBR on the SPDIF audio
+ input
+
+An HBR stream (TrueHD, DTS-HD MA) arrives on the SPDIF input as eight
+channels of IEC61937 at four times the stereo frame rate. The sampler
+cannot infer it, the input clock ratio only covers a stereo frame, and
+the channel status and allocation describe the nominal stream rather
+than the transport, so the sink cannot lock to it.
+
+Treat a non-PCM stream of eight channels as HBR: set SETNLPCM and HBR in
+AUD_SPDIF1, scale the input clock with the channel count, use the eight
+channel allocation, and declare 768 kHz with no original rate in the
+channel status, as dw-hdmi-qp does.
+
+Co-developed-by: Gus Bourg <gus@bourg.net>
+Signed-off-by: Gus Bourg <gus@bourg.net>
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ .../drm/bridge/synopsys/dw-hdmi-i2s-audio.c   | 26 +++++++++++++++----
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c     | 16 +++++++++---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.h     |  2 ++
+ include/drm/bridge/dw_hdmi.h                  |  3 ++-
+ 4 files changed, 38 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+index c1fba57d772b..3c6173fcdbef 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi-i2s-audio.c
+@@ -34,6 +34,8 @@ static inline u8 hdmi_read(struct dw_hdmi_i2s_audio_data *audio, int offset)
+ 	return audio->read(hdmi, offset);
+ }
+ 
++#define DW_HDMI_HBR_CHANNEL_ALLOCATION	0x13
++
+ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 				 struct hdmi_codec_daifmt *fmt,
+ 				 struct hdmi_codec_params *hparms)
+@@ -44,7 +46,8 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	u8 conf1 = 0;
+ 	u8 inputclkfs = 0;
+ 	bool spdif = fmt->fmt == HDMI_SPDIF;
+-	u8 spdif0 = 0;
++	u8 spdif0 = 0, spdif1;
++	bool hbr;
+ 
+ 	/* it cares I2S only */
+ 	if (!spdif && (fmt->bit_clk_provider | fmt->frame_clk_provider)) {
+@@ -116,11 +119,20 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 		return -EINVAL;
+ 	}
+ 
++	hbr = (hparms->iec.status[0] & IEC958_AES0_NONAUDIO) &&
++	      hparms->channels == 8;
++
+ 	if (spdif) {
+ 		switch (hparms->channels) {
+ 		case 1 ... 2:
+ 			inputclkfs = HDMI_AUD_INPUTCLKFS_128FS;
+ 			break;
++		case 4:
++			inputclkfs = HDMI_AUD_INPUTCLKFS_256FS;
++			break;
++		case 8:
++			inputclkfs = HDMI_AUD_INPUTCLKFS_512FS;
++			break;
+ 		default:
+ 			dev_err(dev, "unsupported channel count for spdif: %u\n",
+ 				hparms->channels);
+@@ -130,16 +142,20 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
+ 	}
+ 
+ 	dw_hdmi_set_sample_rate(hdmi, hparms->sample_rate);
+-	dw_hdmi_set_channel_status(hdmi, hparms->iec.status);
++	dw_hdmi_set_channel_status(hdmi, hparms->iec.status, hbr);
+ 	dw_hdmi_set_channel_count(hdmi, hparms->channels);
+-	dw_hdmi_set_channel_allocation(hdmi, hparms->cea.channel_allocation);
++	dw_hdmi_set_channel_allocation(hdmi, hbr ? DW_HDMI_HBR_CHANNEL_ALLOCATION :
++					     hparms->cea.channel_allocation);
+ 
+ 	hdmi_write(audio, inputclkfs, HDMI_AUD_INPUTCLKFS);
+ 	hdmi_write(audio, conf0, HDMI_AUD_CONF0);
+ 	hdmi_write(audio, conf1, HDMI_AUD_CONF1);
+ 	if (spdif) {
+-		hdmi_write(audio, 24 & HDMI_AUD_SPDIF1_WIDTH_MASK,
+-			   HDMI_AUD_SPDIF1);
++		spdif1 = 24 & HDMI_AUD_SPDIF1_WIDTH_MASK;
++		if (hbr)
++			spdif1 |= HDMI_AUD_SPDIF1_SETNLPCM |
++				  HDMI_AUD_SPDIF1_HBR;
++		hdmi_write(audio, spdif1, HDMI_AUD_SPDIF1);
+ 		hdmi_write(audio, spdif0 | HDMI_AUD_SPDIF0_SW_RESET,
+ 			   HDMI_AUD_SPDIF0);
+ 		hdmi_write(audio, spdif0, HDMI_AUD_SPDIF0);
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index 03b4c7ce15d6..dd07773b27b9 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -23,6 +23,8 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/spinlock.h>
+ 
++#include <sound/asoundef.h>
++
+ #include <linux/media-bus-format.h>
+ #include <linux/videodev2.h>
+ 
+@@ -617,14 +619,22 @@ static unsigned int hdmi_compute_n(unsigned int freq, unsigned long pixel_clk)
+  * (for S/PDIF interface this information comes from the stream).
+  */
+ void dw_hdmi_set_channel_status(struct dw_hdmi *hdmi,
+-				u8 *channel_status)
++				u8 *channel_status, bool hbr)
+ {
++	u8 cs3 = channel_status[3];
++	u8 cs4 = channel_status[4];
++
++	if (hbr) {
++		cs3 = (cs3 & 0xf0) | IEC958_AES3_CON_FS_768000;
++		cs4 = (cs4 & 0x0f) | IEC958_AES4_CON_ORIGFS_NOTID;
++	}
++
+ 	/*
+ 	 * Set channel status register for frequency and word length.
+ 	 * Use default values for other registers.
+ 	 */
+-	hdmi_writeb(hdmi, channel_status[3], HDMI_FC_AUDSCHNLS7);
+-	hdmi_writeb(hdmi, channel_status[4], HDMI_FC_AUDSCHNLS8);
++	hdmi_writeb(hdmi, cs3, HDMI_FC_AUDSCHNLS7);
++	hdmi_writeb(hdmi, cs4, HDMI_FC_AUDSCHNLS8);
+ }
+ EXPORT_SYMBOL_GPL(dw_hdmi_set_channel_status);
+ 
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+index 92ed388fbe2c..f04dbfba09b9 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.h
+@@ -957,6 +957,8 @@ enum {
+ 	HDMI_AUD_SPDIF0_SW_RESET = 0x80,
+ 
+ /* HDMI_AUD_SPDIF1 field values */
++	HDMI_AUD_SPDIF1_SETNLPCM = 0x80,
++	HDMI_AUD_SPDIF1_HBR = 0x40,
+ 	HDMI_AUD_SPDIF1_WIDTH_MASK = 0x1f,
+ 
+ /* AHB_DMA_CONF0 field values */
+diff --git a/include/drm/bridge/dw_hdmi.h b/include/drm/bridge/dw_hdmi.h
+index 046968cf348a..366dd9229619 100644
+--- a/include/drm/bridge/dw_hdmi.h
++++ b/include/drm/bridge/dw_hdmi.h
+@@ -193,7 +193,8 @@ void dw_hdmi_set_sample_iec958(struct dw_hdmi *hdmi, unsigned int iec958);
+ void dw_hdmi_set_sample_width(struct dw_hdmi *hdmi, unsigned int width);
+ void dw_hdmi_set_sample_rate(struct dw_hdmi *hdmi, unsigned int rate);
+ void dw_hdmi_set_channel_count(struct dw_hdmi *hdmi, unsigned int cnt);
+-void dw_hdmi_set_channel_status(struct dw_hdmi *hdmi, u8 *channel_status);
++void dw_hdmi_set_channel_status(struct dw_hdmi *hdmi, u8 *channel_status,
++				bool hbr);
+ void dw_hdmi_set_channel_allocation(struct dw_hdmi *hdmi, unsigned int ca);
+ void dw_hdmi_audio_enable(struct dw_hdmi *hdmi);
+ void dw_hdmi_audio_disable(struct dw_hdmi *hdmi);
+-- 
+2.43.0
+

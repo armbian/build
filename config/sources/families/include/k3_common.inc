@@ -22,7 +22,6 @@ if [[ "${CC33XX_SUPPORT}" == "yes" ]]; then
 fi
 
 enable_extension "ti-debpkgs"
-enable_extension "apa"
 
 case "${BRANCH}" in
 

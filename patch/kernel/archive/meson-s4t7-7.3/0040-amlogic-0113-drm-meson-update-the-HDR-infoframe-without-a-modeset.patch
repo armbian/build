@@ -1,0 +1,150 @@
+From 4cd17c893c697d418621a8e17ba7cc22e9894089 Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Thu, 1 Oct 2026 10:34:18 +0000
+Subject: [PATCH 113/210] drm/meson: update the HDR infoframe without a modeset
+
+The HDMI encoder forces a modeset whenever the HDR output metadata
+changes, so the output is torn down and the sink resynchronises. Players
+update the metadata during playback, for example when a stream restarts
+its coded video sequence without repeating the mastering display SEI,
+and each update drops the picture while the sink resynchronises.
+
+Program the Dynamic Range and Mastering infoframe from the CRTC flush
+through the bridge HDR infoframe callbacks instead, and keep the modeset
+for colorspace changes, which also reprogram the colour conversion.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/gpu/drm/meson/Kconfig              |  1 +
+ drivers/gpu/drm/meson/meson_crtc.c         |  3 ++
+ drivers/gpu/drm/meson/meson_encoder_hdmi.c | 49 +++++++++++++++++++++-
+ drivers/gpu/drm/meson/meson_encoder_hdmi.h |  4 ++
+ 4 files changed, 55 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/meson/Kconfig b/drivers/gpu/drm/meson/Kconfig
+index 0dc5ca21e4fc..ffc3077c9eac 100644
+--- a/drivers/gpu/drm/meson/Kconfig
++++ b/drivers/gpu/drm/meson/Kconfig
+@@ -6,6 +6,7 @@ config DRM_MESON
+ 	select DRM_CLIENT_SELECTION
+ 	select DRM_KMS_HELPER
+ 	select DRM_DISPLAY_HELPER
++	select DRM_DISPLAY_HDMI_HELPER
+ 	select DRM_BRIDGE_CONNECTOR
+ 	select DRM_GEM_DMA_HELPER
+ 	select DRM_DISPLAY_CONNECTOR
+diff --git a/drivers/gpu/drm/meson/meson_crtc.c b/drivers/gpu/drm/meson/meson_crtc.c
+index b77d2d24ead1..8b6fb51c8d80 100644
+--- a/drivers/gpu/drm/meson/meson_crtc.c
++++ b/drivers/gpu/drm/meson/meson_crtc.c
+@@ -19,6 +19,7 @@
+ #include <drm/drm_vblank.h>
+ 
+ #include "meson_crtc.h"
++#include "meson_encoder_hdmi.h"
+ #include "meson_plane.h"
+ #include "meson_registers.h"
+ #include "meson_venc.h"
+@@ -224,6 +225,8 @@ static void meson_crtc_atomic_flush(struct drm_crtc *crtc,
+ 
+ 	priv->viu.osd1_commit = true;
+ 	priv->viu.vd1_commit = true;
++
++	meson_encoder_hdmi_update_hdr(priv, state);
+ }
+ 
+ static const struct drm_crtc_helper_funcs meson_crtc_helper_funcs = {
+diff --git a/drivers/gpu/drm/meson/meson_encoder_hdmi.c b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+index f383df2b067e..2238c287a666 100644
+--- a/drivers/gpu/drm/meson/meson_encoder_hdmi.c
++++ b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+@@ -23,6 +23,7 @@
+ #include <drm/drm_edid.h>
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_simple_kms_helper.h>
++#include <drm/display/drm_hdmi_helper.h>
+ 
+ #include <linux/media-bus-format.h>
+ #include <linux/videodev2.h>
+@@ -431,8 +432,7 @@ static int meson_encoder_hdmi_atomic_check(struct drm_bridge *bridge,
+ 
+ 	dev_dbg(priv->dev, "output_bus_fmt %lx\n", encoder_hdmi->output_bus_fmt);
+ 
+-	if (!drm_connector_atomic_hdr_metadata_equal(old_conn_state, conn_state) ||
+-	    old_conn_state->colorspace != conn_state->colorspace)
++	if (old_conn_state->colorspace != conn_state->colorspace)
+ 		crtc_state->mode_changed = true;
+ 
+ 	return 0;
+@@ -548,6 +548,51 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
+ 	return 0;
+ }
+ 
++void meson_encoder_hdmi_update_hdr(struct meson_drm *priv,
++				   struct drm_atomic_commit *state)
++{
++	struct meson_encoder_hdmi *encoder_hdmi = priv->encoders[MESON_ENC_HDMI];
++	struct drm_connector_state *old_conn_state, *new_conn_state;
++	u8 buffer[HDMI_INFOFRAME_SIZE(DRM)];
++	struct drm_crtc_state *crtc_state;
++	struct hdmi_drm_infoframe frame;
++	struct drm_bridge *next_bridge;
++	ssize_t len;
++
++	if (!encoder_hdmi)
++		return;
++
++	next_bridge = encoder_hdmi->bridge.next_bridge;
++	if (!(next_bridge->ops & DRM_BRIDGE_OP_HDMI_HDR_DRM_INFOFRAME))
++		return;
++
++	new_conn_state = drm_atomic_get_new_connector_state(state,
++							    encoder_hdmi->connector);
++	if (!new_conn_state || !new_conn_state->crtc)
++		return;
++
++	crtc_state = drm_atomic_get_new_crtc_state(state, new_conn_state->crtc);
++	if (!crtc_state || !crtc_state->active ||
++	    drm_atomic_crtc_needs_modeset(crtc_state))
++		return;
++
++	old_conn_state = drm_atomic_get_old_connector_state(state,
++							    encoder_hdmi->connector);
++	if (drm_connector_atomic_hdr_metadata_equal(old_conn_state, new_conn_state))
++		return;
++
++	if (drm_hdmi_infoframe_set_hdr_metadata(&frame, new_conn_state) < 0) {
++		next_bridge->funcs->hdmi_clear_hdr_drm_infoframe(next_bridge);
++		return;
++	}
++
++	len = hdmi_drm_infoframe_pack(&frame, buffer, sizeof(buffer));
++	if (len < 0)
++		return;
++
++	next_bridge->funcs->hdmi_write_hdr_drm_infoframe(next_bridge, buffer, len);
++}
++
+ void meson_encoder_hdmi_remove(struct meson_drm *priv)
+ {
+ 	struct meson_encoder_hdmi *meson_encoder_hdmi;
+diff --git a/drivers/gpu/drm/meson/meson_encoder_hdmi.h b/drivers/gpu/drm/meson/meson_encoder_hdmi.h
+index fd5485875db8..cc7edaacf861 100644
+--- a/drivers/gpu/drm/meson/meson_encoder_hdmi.h
++++ b/drivers/gpu/drm/meson/meson_encoder_hdmi.h
+@@ -7,7 +7,11 @@
+ #ifndef __MESON_ENCODER_HDMI_H
+ #define __MESON_ENCODER_HDMI_H
+ 
++struct drm_atomic_commit;
++
+ int meson_encoder_hdmi_probe(struct meson_drm *priv);
++void meson_encoder_hdmi_update_hdr(struct meson_drm *priv,
++				   struct drm_atomic_commit *state);
+ void meson_encoder_hdmi_remove(struct meson_drm *priv);
+ 
+ #endif /* __MESON_ENCODER_HDMI_H */
+-- 
+2.43.0
+

@@ -2,7 +2,7 @@
 BOARD_NAME="FriendlyElec CM3588 NAS"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER="ColorfulRhino"
+BOARD_MAINTAINER=""
 INTRODUCED="2023"
 BOOTCONFIG="cm3588-nas-rk3588_defconfig" # Mainline defconfig, enables booting from NVMe
 BOOT_SOC="rk3588"
@@ -49,7 +49,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	# If BRANCH==vendor, use rkbin BL31 ${RKBIN_DIR}/${BL31_BLOB}, otherwise, bl31.elf from mainline ATF/TF-A
 	declare bl31_blob="undetermined"
-	if [[ "${BRANCH}" == "vendor" ]]; then
+	if [[ "${BRANCH}" == vendor* ]]; then
 		display_alert "${BOARD}/${BRANCH}" "Using Rockchip rkbin BL31 blob : ${RKBIN_DIR}/${BL31_BLOB}" "info"
 		bl31_blob="${RKBIN_DIR}/${BL31_BLOB}"
 		declare -g ATF_COMPILE="no" # no need to build mainline it either
@@ -60,8 +60,8 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.07"
-	declare -g BOOTPATCHDIR="v2026.07"
+	declare -g BOOTBRANCH="tag:v2026.10"
+	declare -g BOOTPATCHDIR="v2026.10"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=${bl31_blob} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # Disable stuff from rockchip64_common; we're using binman here which does all the work

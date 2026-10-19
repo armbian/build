@@ -1,0 +1,52 @@
+From: Seeed Studio <techsupport@seeed.cc>
+Subject: [PATCH] rockchip: misc: read MAC from on-module EEPROM, fall back to cpuid
+
+The on-module EEPROM (I2C2, 0x50) holds the unit MAC as ASCII at offset
+0x20. Two gates before it is applied: is_valid_ethaddr() rejects blank
+or multicast records, env_set() rejects malformed strings. The
+cpuid-derived MAC stays as the fallback so ethaddr (write-once) always
+gets a stable value; rejections are logged for field diagnostics.
+
+--- a/arch/arm/mach-rockchip/misc.c	2026-10-12 10:24:47.551955747 +0800
++++ b/arch/arm/mach-rockchip/misc.c	2026-10-12 10:27:09.233106531 +0800
+@@ -12,7 +12,9 @@
+ #include <common.h>
+ #include <dm.h>
+ #include <hash.h>
++#include <i2c.h>
+ #include <log.h>
++#include <net.h>
+ #include <dm/uclass-internal.h>
+ #include <misc.h>
+ #include <u-boot/crc.h>
+@@ -40,6 +42,30 @@
+ 	if (env_get("ethaddr"))
+ 		return 0;
+ 
++	/* Module EEPROM (bus 2, 0x50): unit MAC as ASCII at offset 0x20.
++	 * Two gates before it is applied: is_valid_ethaddr() rejects
++	 * blank or multicast records, env_set() rejects malformed
++	 * strings; either way fall through to the cpuid-derived MAC
++	 * below.
++	 */
++	{
++		struct udevice *eeprom;
++		char buf[18];
++
++		if (i2c_get_chip_for_busnum(2, 0x50, 2, &eeprom) ||
++		    dm_i2c_read(eeprom, 0x20, (u8 *)buf, 17)) {
++			printf("Module EEPROM not readable, fallback to cpuid\n");
++		} else {
++			buf[17] = '\0';
++			eth_parse_enetaddr(buf, mac_addr);
++			if (is_valid_ethaddr(mac_addr) && !env_set("ethaddr", buf)) {
++				printf("MAC from EEPROM: %s\n", buf);
++				return 0;
++			}
++			printf("EEPROM MAC rejected: \"%s\", fallback to cpuid\n", buf);
++		}
++	}
++
+ 	if (!cpuid) {
+ 		debug("%s: could not retrieve 'cpuid#'\n", __func__);
+ 		return -1;

@@ -1,0 +1,804 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 12 Oct 2026 19:37:58 +0200
+Subject: [PATCH 02/13] mmc: add the Realtek RTD129x SD host; rtd129x: watchdog
+ reset
+
+The SD host is the Realtek card reader core, memory-mapped into the SoC.
+Polled, DMA through a bounce buffer, 4-bit at 25 MHz. Ported from the
+Linux driver by JalenLin (BPI-W2-linux).
+
+reset_cpu() restarts through the ISO watchdog.
+
+Tested on the BPI-W2: reads FAT and ext4 from SD at 7.5 MiB/s and boots
+Armbian with booti.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/dts/rtd1296-bananapi-w2.dts |  15 +
+ arch/arm/mach-rtd129x/soc.c          |  25 +-
+ configs/bananapi-w2_defconfig        |  21 +-
+ drivers/mmc/Kconfig                  |   7 +
+ drivers/mmc/Makefile                 |   1 +
+ drivers/mmc/rtd129x_sdmmc.c          | 627 +++++++++++++++++++++++++++
+ 6 files changed, 686 insertions(+), 10 deletions(-)
+ create mode 100644 drivers/mmc/rtd129x_sdmmc.c
+
+diff --git a/arch/arm/dts/rtd1296-bananapi-w2.dts b/arch/arm/dts/rtd1296-bananapi-w2.dts
+index 2006e06605..b2caa80a72 100644
+--- a/arch/arm/dts/rtd1296-bananapi-w2.dts
++++ b/arch/arm/dts/rtd1296-bananapi-w2.dts
+@@ -13,6 +13,7 @@
+ 
+ 	aliases {
+ 		serial0 = &uart0;
++		mmc0 = &sdmmc;
+ 	};
+ 
+ 	chosen {
+@@ -46,6 +47,20 @@
+ 		#size-cells = <1>;
+ 		ranges;
+ 
++		crt: syscon@98000000 {
++			compatible = "syscon";
++			reg = <0x98000000 0x1000>;
++			bootph-all;
++		};
++
++		sdmmc: mmc@98010400 {
++			compatible = "realtek,rtd1295-sdmmc";
++			/* the card reader core, then its pads */
++			reg = <0x98010400 0x200>, <0x98012600 0x40>;
++			realtek,crt = <&crt>;
++			bus-width = <4>;
++		};
++
+ 		uart0: serial@98007800 {
+ 			compatible = "snps,dw-apb-uart";
+ 			reg = <0x98007800 0x400>;
+diff --git a/arch/arm/mach-rtd129x/soc.c b/arch/arm/mach-rtd129x/soc.c
+index d9b9577249..104c5f70f6 100644
+--- a/arch/arm/mach-rtd129x/soc.c
++++ b/arch/arm/mach-rtd129x/soc.c
+@@ -11,6 +11,8 @@
+ #include <init.h>
+ #include <asm/armv8/mmu.h>
+ #include <asm/global_data.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
+ #include <asm/system.h>
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+@@ -59,9 +61,30 @@ int print_cpuinfo(void)
+ 	return 0;
+ }
+ 
++/*
++ * Restart through the ISO watchdog, as Realtek's kernel does: it fires after
++ * 0x800000 ticks of the 27 MHz clock, ~310 ms, and holds reset as long.
++ */
++#define RTD129X_WDT		0x98007680
++#define  WDT_TCWCR		0x00
++#define   TCWCR_WDEN_MASK	0xff
++#define   TCWCR_WDEN_DISABLED	0xa5
++#define   TCWCR_WDEN_ENABLED	0xff
++#define  WDT_TCWTR		0x04
++#define   TCWTR_WDCLR		BIT(0)
++#define  WDT_TCWOV		0x0c
++#define  WDT_TCWRSTB_CNT	0x40
++
+ void reset_cpu(void)
+ {
+-	/* TODO: restart through the RTD119x/RTD129x watchdog */
++	void __iomem *wdt = (void __iomem *)RTD129X_WDT;
++
++	clrsetbits_le32(wdt + WDT_TCWCR, TCWCR_WDEN_MASK, TCWCR_WDEN_DISABLED);
++	writel(0x00800000, wdt + WDT_TCWRSTB_CNT);
++	writel(TCWTR_WDCLR, wdt + WDT_TCWTR);
++	writel(0x00800000, wdt + WDT_TCWOV);
++	clrsetbits_le32(wdt + WDT_TCWCR, TCWCR_WDEN_MASK, TCWCR_WDEN_ENABLED);
++
+ 	while (1)
+ 		;
+ }
+diff --git a/configs/bananapi-w2_defconfig b/configs/bananapi-w2_defconfig
+index f6d8a4d009..a552280dd6 100644
+--- a/configs/bananapi-w2_defconfig
++++ b/configs/bananapi-w2_defconfig
+@@ -1,20 +1,23 @@
+ CONFIG_ARM=y
++CONFIG_COUNTER_FREQUENCY=27000000
+ CONFIG_ARCH_RTD129X=y
+-CONFIG_TEXT_BASE=0x10000000
+ CONFIG_NR_DRAM_BANKS=1
+ CONFIG_DEFAULT_DEVICE_TREE="rtd1296-bananapi-w2"
+ CONFIG_SYS_LOAD_ADDR=0x3000000
+ CONFIG_DEBUG_UART_BASE=0x98007800
+ CONFIG_DEBUG_UART_CLOCK=27000000
++CONFIG_IDENT_STRING=" BPI-W2"
+ CONFIG_DEBUG_UART=y
+-CONFIG_DEBUG_UART_NS16550=y
++CONFIG_SUPPORT_RAW_INITRD=y
++CONFIG_CMD_MMC=y
++CONFIG_CMD_PART=y
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_FAT=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_EFI_PARTITION=y
++# CONFIG_NET is not set
++CONFIG_MMC_RTD129X=y
+ CONFIG_DEBUG_UART_SHIFT=2
+-CONFIG_DEBUG_UART_SKIP_INIT=y
+ CONFIG_DEBUG_UART_ANNOUNCE=y
+-CONFIG_COUNTER_FREQUENCY=27000000
+-CONFIG_IDENT_STRING=" BPI-W2"
+-CONFIG_SYS_PROMPT="=> "
+-CONFIG_ENV_IS_NOWHERE=y
++CONFIG_DEBUG_UART_SKIP_INIT=y
+ CONFIG_SYS_NS16550=y
+-CONFIG_BAUDRATE=115200
+-# CONFIG_NET is not set
+diff --git a/drivers/mmc/Kconfig b/drivers/mmc/Kconfig
+index f9f7aa5cf9..65cc1c9015 100644
+--- a/drivers/mmc/Kconfig
++++ b/drivers/mmc/Kconfig
+@@ -470,6 +470,13 @@ config MMC_SANDBOX
+ 	  improves build coverage for sandbox and makes it easier to detect
+ 	  MMC build errors with sandbox.
+ 
++config MMC_RTD129X
++	bool "Realtek RTD129x SD host"
++	depends on DM_MMC && ARCH_RTD129X
++	help
++	  Support for the SD card host on the Realtek RTD1295/RTD1296, the
++	  Realtek card reader core memory-mapped into the SoC.
++
+ config MMC_SDHCI
+ 	bool "Secure Digital Host Controller Interface support"
+ 	help
+diff --git a/drivers/mmc/Makefile b/drivers/mmc/Makefile
+index a23336d7d8..28194cf39a 100644
+--- a/drivers/mmc/Makefile
++++ b/drivers/mmc/Makefile
+@@ -53,6 +53,7 @@ obj-$(CONFIG_JZ47XX_MMC) += jz_mmc.o
+ obj-$(CONFIG_NEXELL_DWMMC) += nexell_dw_mmc.o
+ 
+ # SDHCI
++obj-$(CONFIG_MMC_RTD129X)		+= rtd129x_sdmmc.o
+ obj-$(CONFIG_MMC_SDHCI)			+= sdhci.o
+ obj-$(CONFIG_MMC_SDHCI_ASPEED)		+= aspeed_sdhci.o
+ obj-$(CONFIG_MMC_SDHCI_ATMEL)		+= atmel_sdhci.o
+diff --git a/drivers/mmc/rtd129x_sdmmc.c b/drivers/mmc/rtd129x_sdmmc.c
+new file mode 100644
+index 0000000000..00a5836097
+--- /dev/null
++++ b/drivers/mmc/rtd129x_sdmmc.c
+@@ -0,0 +1,627 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Realtek RTD129x SD host
++ *
++ * The RTD129x embeds a Realtek RTS-family card reader core, memory-mapped
++ * into the SoC. Commands and data are polled; data moves by DMA through a
++ * bounce buffer.
++ *
++ * Based on the Linux driver sdmmc-rtd129x.c by JalenLin
++ * (https://github.com/JalenLin/BPI-W2-linux), which follows the BSP's
++ * rtk-sdmmc.c.
++ */
++
++#include <cpu_func.h>
++#include <dm.h>
++#include <log.h>
++#include <malloc.h>
++#include <mmc.h>
++#include <time.h>
++#include <asm/cache.h>
++#include <asm/io.h>
++#include <dm/ofnode.h>
++#include <linux/bitfield.h>
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/sizes.h>
++#include <linux/unaligned/be_byteshift.h>
++
++/* The card reader core */
++#define CR_SD_DMA_CTL1		0x0004	/* buffer address / 8 */
++#define CR_SD_DMA_CTL2		0x0008	/* length, in blocks */
++#define CR_SD_DMA_CTL3		0x000c	/* direction and go */
++#define CR_SD_ISR		0x0024
++#define CR_SD_ISREN		0x0028
++#define CR_SD_PAD_CTL		0x0074	/* 0 = 3.3 V signalling */
++#define CR_SD_CKGEN_CTL		0x0078
++#define CR_CARD_STOP		0x0103
++#define CR_CARD_OE		0x0104
++#define CARD_SELECT		0x010e
++#define CARD_EXIST		0x011f
++#define CR_SD_INT_EN		0x0120
++#define CARD_INT_PEND		0x0121
++#define CARD_CLOCK_EN_CTL	0x0129
++#define SD_CONFIGURE1		0x0180
++#define SD_CONFIGURE2		0x0181
++#define SD_CONFIGURE3		0x0182
++#define SD_STATUS1		0x0183
++#define SD_STATUS2		0x0184
++#define SD_SAMPLE_POINT_CTL	0x0187
++#define SD_PUSH_POINT_CTL	0x0188
++#define SD_CMD0			0x0189	/* command out, short response back */
++#define SD_CMD5			0x018e	/* the 17th byte of an R2 */
++#define SD_BYTE_CNT_L		0x018f
++#define SD_BYTE_CNT_H		0x0190
++#define SD_BLOCK_CNT_L		0x0191
++#define SD_BLOCK_CNT_H		0x0192
++#define SD_TRANSFER		0x0193
++
++/* CR_SD_DMA_CTL3 */
++#define DMA_XFER		BIT(0)
++#define DDR_WR			BIT(1)	/* card -> memory */
++#define RSP17_SEL		BIT(4)	/* this transfer is an R2 response */
++#define RSP64_SEL		BIT(5)	/* a short read: SCR, SD status, switch */
++
++/* CR_SD_ISR / CR_SD_ISREN; writing with bit 0 clear clears the given bits */
++#define ISR_WRITE_DATA		BIT(0)
++#define ISR_CARD_END		BIT(1)
++#define ISR_CARD_ERR		BIT(2)
++#define ISR_DMA_DONE		BIT(4)
++#define ISR_ALL			(ISR_CARD_END | ISR_CARD_ERR | ISR_DMA_DONE)
++
++#define SD_EXISTENCE		BIT(2)
++#define CARD_INT_SD		BIT(2)
++#define CARD_INT_ALL		(BIT(4) | BIT(3) | BIT(2))
++
++#define SD_MOD_SEL		0x02
++#define SD_MOD_OE		BIT(2)
++#define SD_MOD_CLK_EN		BIT(2)
++
++/* SD_CONFIGURE1 */
++#define SD_CFG1_BUS_WIDTH_MASK	0x03
++#define SD_CFG1_BUS_WIDTH_1	0x00
++#define SD_CFG1_BUS_WIDTH_4	0x01
++#define SD_CFG1_BUS_WIDTH_8	0x02
++#define SD_CLOCK_DIV_MASK	(0x03 << 6)
++#define SD_CLOCK_DIV_256	BIT(6)
++#define SD_CLOCK_DIV_EN		BIT(7)
++
++/* SD_CONFIGURE2 */
++#define SD_CRC7_CAL_DIS		BIT(7)
++#define SD_CRC16_CAL_DIS	BIT(6)
++#define SD_WAIT_BUSY_EN		BIT(3)
++#define SD_CRC7_CHK_DIS		BIT(2)
++#define SD_RESP_TYPE_6B		0x01
++#define SD_RESP_TYPE_17B	0x02
++
++/* SD_CONFIGURE3 */
++#define SD_CMD_RSP_TO		BIT(0)
++#define SD_RESP_CHK_EN		BIT(2)
++
++/* SD_TRANSFER */
++#define SD_TRANSFER_START	BIT(7)
++#define SD_TRANSFER_END		BIT(6)
++#define SD_TRANSFER_IDLE	BIT(5)
++#define SD_TRANSFER_ERR		BIT(4)
++#define SD_AUTOWRITE2		0x0a	/* command, then data out */
++#define SD_NORMALREAD		0x0c	/* command, then a short data read */
++#define SD_AUTOREAD2		0x0e	/* command, then data in */
++#define SD_SENDCMDGETRSP	0x08
++
++/* SD_STATUS1 */
++#define SD_CRC_TIMEOUT		BIT(1)
++
++/* The SD PLL, in CRT */
++#define CR_PLL_SD1		0x1e0
++#define  PLL_SD1_SEL3318	GENMASK(14, 13)
++#define  PLL_SD1_SEL3318_VAL	2
++#define CR_PLL_SD3		0x1e8
++#define CR_PLL_SD4		0x1ec
++#define PLL_SD3_100MHZ		0x00564388
++#define SD_PLL_HZ		100000000
++#define CKGEN_SRC_4MHZ		(0x7 << 16)
++
++/* The card reader's pads */
++#define PAD_PFUNC_CR		0x10
++#define  PFUNC_CR_ON		0x33333323
++#define PAD_PCONF_PROB		0x18	/* prob_2 (card power switch) */
++#define  PROB2_PULL_EN		BIT(21)
++#define  PROB2_PULL_UP		BIT(20)
++#define PAD_DRIVE0		0x34
++#define  PAD_DRIVE0_VAL		0x0000bbbb
++#define PAD_DRIVE1		0x38
++#define  PAD_DRIVE1_VAL		0xbbbbbbbb
++
++#define RTD129X_RSP17_LEN	0x200
++#define RTD129X_BUF_LEN		SZ_64K
++
++struct rtd129x_sdmmc_plat {
++	struct mmc_config cfg;
++	struct mmc mmc;
++};
++
++struct rtd129x_sdmmc {
++	void __iomem *sd;
++	void __iomem *pad;	/* may be NULL */
++	void __iomem *crt;	/* may be NULL */
++	u8 *buf;		/* DMA bounce buffer */
++};
++
++/* Writes to the core are posted; read one back before relying on it */
++static void rtd129x_sync(struct rtd129x_sdmmc *host)
++{
++	readb(host->sd + SD_CONFIGURE1);
++}
++
++static int rtd129x_get_cd(struct udevice *dev)
++{
++	struct rtd129x_sdmmc *host = dev_get_priv(dev);
++
++	return !!(readb(host->sd + CARD_EXIST) & SD_EXISTENCE);
++}
++
++static void rtd129x_set_pll(struct rtd129x_sdmmc *host)
++{
++	u32 ckgen = readl(host->sd + CR_SD_CKGEN_CTL);
++
++	clrsetbits_le32(host->crt + CR_PLL_SD1, PLL_SD1_SEL3318,
++			FIELD_PREP(PLL_SD1_SEL3318, PLL_SD1_SEL3318_VAL));
++
++	writel(ckgen | CKGEN_SRC_4MHZ, host->sd + CR_SD_CKGEN_CTL);
++	writel(0x6, host->crt + CR_PLL_SD4);
++	writel(PLL_SD3_100MHZ, host->crt + CR_PLL_SD3);
++	mdelay(2);
++	writel(0x7, host->crt + CR_PLL_SD4);
++	writel(ckgen & ~CKGEN_SRC_4MHZ, host->sd + CR_SD_CKGEN_CTL);
++	rtd129x_sync(host);
++}
++
++/*
++ * Card clock = PLL / 2 / 2^n, n from CR_SD_CKGEN_CTL bits 1:0, and a further
++ * /256 when the SD_CONFIGURE1 divider is on. The PLL is 100 MHz.
++ */
++static void rtd129x_set_clock(struct rtd129x_sdmmc *host, unsigned int hz)
++{
++	u8 cfg1 = readb(host->sd + SD_CONFIGURE1) & ~SD_CLOCK_DIV_MASK;
++	unsigned int n;
++	u32 ckgen;
++
++	if (hz <= 400000) {
++		writeb(cfg1 | SD_CLOCK_DIV_256 | SD_CLOCK_DIV_EN,
++		       host->sd + SD_CONFIGURE1);
++		ckgen = 0x00002100;
++	} else {
++		/* the fastest rate not above what was asked for */
++		for (n = 0; n < 3; n++)
++			if ((SD_PLL_HZ / 2 >> n) <= hz)
++				break;
++		writeb(cfg1, host->sd + SD_CONFIGURE1);
++		ckgen = 0x00002100 | n;
++	}
++
++	rtd129x_sync(host);
++	writel(ckgen, host->sd + CR_SD_CKGEN_CTL);
++	rtd129x_sync(host);
++}
++
++static void rtd129x_reset(struct rtd129x_sdmmc *host)
++{
++	writel(0, host->sd + CR_SD_DMA_CTL3);
++	writel(ISR_ALL, host->sd + CR_SD_ISREN);
++	writel(ISR_ALL, host->sd + CR_SD_ISR);
++	writeb(0, host->sd + SD_TRANSFER);
++	writeb(0xff, host->sd + CR_CARD_STOP);
++	writeb(0x00, host->sd + CR_CARD_STOP);
++	rtd129x_sync(host);
++}
++
++static void rtd129x_hw_init(struct rtd129x_sdmmc *host)
++{
++	/* The SD module clock: without it the SD_* registers drop writes */
++	writeb(0xff, host->sd + CR_CARD_STOP);
++	writeb(0x00, host->sd + CR_CARD_STOP);
++	writeb(SD_MOD_SEL, host->sd + CARD_SELECT);
++	writeb(SD_MOD_OE, host->sd + CR_CARD_OE);
++	writeb(SD_MOD_CLK_EN, host->sd + CARD_CLOCK_EN_CTL);
++	writeb(0xd0, host->sd + SD_CONFIGURE1);		/* /256, 1 bit */
++	writeb(0x00, host->sd + SD_STATUS2);
++	writel(0, host->sd + CR_SD_PAD_CTL);		/* 3.3 V */
++	writeb(0x00, host->sd + SD_SAMPLE_POINT_CTL);
++	writeb(0x00, host->sd + SD_PUSH_POINT_CTL);
++	rtd129x_sync(host);
++
++	writel(0, host->sd + CR_SD_DMA_CTL3);
++	writel(ISR_ALL, host->sd + CR_SD_ISR);
++	writel(ISR_ALL, host->sd + CR_SD_ISREN);
++
++	/* Card insert/remove interrupt off; detection is polled */
++	writeb(0, host->sd + CR_SD_INT_EN);
++	if (readb(host->sd + CR_SD_INT_EN) & CARD_INT_SD)
++		writeb(CARD_INT_SD, host->sd + CR_SD_INT_EN);
++	writeb(CARD_INT_ALL, host->sd + CARD_INT_PEND);
++	rtd129x_sync(host);
++}
++
++/* Card supply on, pads to the card reader function, drive strength */
++static void rtd129x_power_on(struct rtd129x_sdmmc *host)
++{
++	u32 pconf;
++
++	if (!host->pad)
++		return;
++
++	pconf = readl(host->pad + PAD_PCONF_PROB) | PROB2_PULL_EN;
++	writel(PFUNC_CR_ON, host->pad + PAD_PFUNC_CR);
++	writel(PAD_DRIVE0_VAL, host->pad + PAD_DRIVE0);
++	writel(PAD_DRIVE1_VAL, host->pad + PAD_DRIVE1);
++	writel(pconf & ~PROB2_PULL_UP, host->pad + PAD_PCONF_PROB);
++	mdelay(10);
++}
++
++/*
++ * Wait for the ISR bit that ends this command, then for the transfer state
++ * machine to reach END and IDLE: DMA_DONE fires while the core is still
++ * clocking the rest of the block.
++ */
++static int rtd129x_wait(struct rtd129x_sdmmc *host, u32 wait_for,
++			unsigned int ms)
++{
++	ulong start = get_timer(0);
++	u32 isr = 0;
++	u8 xfer;
++
++	for (;;) {
++		isr |= readl(host->sd + CR_SD_ISR) & ISR_ALL;
++		if (isr & (wait_for | ISR_CARD_ERR))
++			break;
++		if (get_timer(start) > ms)
++			return -ETIMEDOUT;
++	}
++	writel(isr, host->sd + CR_SD_ISR);	/* bit 0 clear: clear these */
++
++	start = get_timer(0);
++	for (;;) {
++		rtd129x_sync(host);
++		xfer = readb(host->sd + SD_TRANSFER);
++		if (xfer & SD_TRANSFER_ERR)
++			break;
++		if ((xfer & (SD_TRANSFER_END | SD_TRANSFER_IDLE)) ==
++		    (SD_TRANSFER_END | SD_TRANSFER_IDLE))
++			break;
++		if (get_timer(start) > 300)
++			return -ETIMEDOUT;
++		udelay(10);
++	}
++
++	if (!(isr & ISR_CARD_ERR) && !(xfer & SD_TRANSFER_ERR))
++		return 0;
++
++	/* No response at all is how an SD 1.x card answers CMD8 */
++	if (readb(host->sd + SD_STATUS1) & SD_CRC_TIMEOUT)
++		return -ETIMEDOUT;
++	return -EILSEQ;
++}
++
++static void rtd129x_write_cmd(struct rtd129x_sdmmc *host, struct mmc_cmd *cmd)
++{
++	writeb(0x40 | cmd->cmdidx,          host->sd + SD_CMD0);
++	writeb((cmd->cmdarg >> 24) & 0xff,  host->sd + SD_CMD0 + 1);
++	writeb((cmd->cmdarg >> 16) & 0xff,  host->sd + SD_CMD0 + 2);
++	writeb((cmd->cmdarg >> 8) & 0xff,   host->sd + SD_CMD0 + 3);
++	writeb(cmd->cmdarg & 0xff,          host->sd + SD_CMD0 + 4);
++	writeb(0,                           host->sd + SD_CMD0 + 5);
++}
++
++static void rtd129x_arm_isr(struct rtd129x_sdmmc *host, u32 wait_for)
++{
++	writel(ISR_ALL, host->sd + CR_SD_ISR);
++	writel(ISR_ALL, host->sd + CR_SD_ISREN);
++	writel(ISR_WRITE_DATA | ISR_CARD_ERR | wait_for,
++	       host->sd + CR_SD_ISREN);
++}
++
++static void rtd129x_read_short_resp(struct rtd129x_sdmmc *host,
++				    struct mmc_cmd *cmd)
++{
++	/* One status byte, then the four payload bytes */
++	cmd->response[0] = (readb(host->sd + SD_CMD0 + 1) << 24) |
++			   (readb(host->sd + SD_CMD0 + 2) << 16) |
++			   (readb(host->sd + SD_CMD0 + 3) << 8) |
++			    readb(host->sd + SD_CMD0 + 4);
++}
++
++static int rtd129x_send_cmd_nodata(struct rtd129x_sdmmc *host,
++				   struct mmc_cmd *cmd)
++{
++	bool is_r2 = false;
++	u32 wait_for;
++	u8 cfg2, cfg3;
++	int ret, i;
++
++	if (!(cmd->resp_type & MMC_RSP_PRESENT)) {
++		cfg2 = 0x74;
++		cfg3 = 0;
++	} else if (cmd->resp_type & MMC_RSP_136) {
++		cfg2 = SD_CRC16_CAL_DIS | SD_RESP_TYPE_17B;
++		cfg3 = SD_RESP_CHK_EN | SD_CMD_RSP_TO;
++		is_r2 = true;
++	} else {
++		cfg2 = SD_CRC16_CAL_DIS | SD_RESP_TYPE_6B;
++		if (!(cmd->resp_type & MMC_RSP_CRC))
++			cfg2 |= SD_CRC7_CHK_DIS;
++		if (cmd->resp_type & MMC_RSP_BUSY)
++			cfg2 |= SD_WAIT_BUSY_EN;
++		if ((cmd->resp_type & MMC_RSP_CRC) &&
++		    cmd->cmdidx != SD_CMD_SEND_IF_COND)
++			cfg3 = SD_RESP_CHK_EN | SD_CMD_RSP_TO;
++		else
++			cfg3 = 0;
++	}
++
++	writeb(cfg2, host->sd + SD_CONFIGURE2);
++	writeb(cfg3, host->sd + SD_CONFIGURE3);
++	rtd129x_write_cmd(host, cmd);
++
++	/* An R2 comes back by DMA; END fires before it has landed */
++	wait_for = is_r2 ? ISR_DMA_DONE : ISR_CARD_END;
++	rtd129x_arm_isr(host, wait_for);
++
++	if (is_r2) {
++		memset(host->buf, 0, RTD129X_RSP17_LEN);
++		flush_dcache_range((ulong)host->buf,
++				   (ulong)host->buf + RTD129X_RSP17_LEN);
++
++		writeb(RTD129X_RSP17_LEN & 0xff, host->sd + SD_BYTE_CNT_L);
++		writeb(RTD129X_RSP17_LEN >> 8,   host->sd + SD_BYTE_CNT_H);
++		writeb(1, host->sd + SD_BLOCK_CNT_L);
++		writeb(0, host->sd + SD_BLOCK_CNT_H);
++
++		writel((ulong)host->buf / 8, host->sd + CR_SD_DMA_CTL1);
++		writel(1, host->sd + CR_SD_DMA_CTL2);
++		writel(RSP17_SEL | DDR_WR | DMA_XFER, host->sd + CR_SD_DMA_CTL3);
++	}
++
++	writeb(SD_TRANSFER_START | SD_SENDCMDGETRSP, host->sd + SD_TRANSFER);
++	rtd129x_sync(host);
++
++	ret = rtd129x_wait(host, wait_for, 1000);
++	if (ret) {
++		debug("%s: cmd%u: %d (status1 0x%02x, xfer 0x%02x)\n",
++		      __func__, cmd->cmdidx, ret,
++		      readb(host->sd + SD_STATUS1),
++		      readb(host->sd + SD_TRANSFER));
++		rtd129x_reset(host);
++		return ret;
++	}
++
++	if (!(cmd->resp_type & MMC_RSP_PRESENT))
++		return 0;
++
++	if (is_r2) {
++		/*
++		 * Sixteen of the seventeen bytes are DMA'd: the 0x3f header,
++		 * then 15 payload bytes. The last one stays in SD_CMD5.
++		 */
++		const u8 *p = host->buf;
++		u8 last[4];
++
++		invalidate_dcache_range((ulong)host->buf,
++					(ulong)host->buf + RTD129X_RSP17_LEN);
++		for (i = 0; i < 3; i++)
++			cmd->response[i] = get_unaligned_be32(p + 1 + i * 4);
++		last[0] = p[13];
++		last[1] = p[14];
++		last[2] = p[15];
++		last[3] = readb(host->sd + SD_CMD5);
++		cmd->response[3] = get_unaligned_be32(last);
++		return 0;
++	}
++
++	rtd129x_read_short_resp(host, cmd);
++	return 0;
++}
++
++/*
++ * A command with data: the command goes out, then the core moves the data
++ * by DMA. 512-byte blocks use the "command then data" modes, which do not
++ * send CMD12; the MMC core sends it. Short reads (SCR, SD status, switch)
++ * use NORMALREAD with a 64-byte count.
++ */
++static int rtd129x_send_cmd_data(struct rtd129x_sdmmc *host,
++				 struct mmc_cmd *cmd, struct mmc_data *data)
++{
++	bool read = data->flags & MMC_DATA_READ;
++	size_t len = data->blocksize * data->blocks;
++	u16 byte_cnt, blk_cnt;
++	u32 dma3, wait_for;
++	u8 cfg2, tm;
++	int ret;
++
++	if (len > RTD129X_BUF_LEN)
++		return -EINVAL;
++
++	if (data->blocksize == 512) {
++		byte_cnt = 512;
++		blk_cnt = data->blocks;
++		dma3 = 0;
++		tm = read ? SD_AUTOREAD2 : SD_AUTOWRITE2;
++		cfg2 = SD_RESP_TYPE_6B;
++	} else {
++		if (!read)
++			return -EINVAL;
++		byte_cnt = 0x40;
++		blk_cnt = 1;
++		dma3 = RSP64_SEL;
++		tm = SD_NORMALREAD;
++		cfg2 = SD_RESP_TYPE_6B;
++		if (data->blocksize < 0x40)
++			cfg2 |= SD_CRC16_CAL_DIS;
++	}
++
++	if (read)
++		flush_dcache_range((ulong)host->buf,
++				   (ulong)host->buf + RTD129X_BUF_LEN);
++	else {
++		memcpy(host->buf, data->src, len);
++		flush_dcache_range((ulong)host->buf,
++				   (ulong)host->buf + RTD129X_BUF_LEN);
++	}
++
++	writeb(cfg2, host->sd + SD_CONFIGURE2);
++	writeb(SD_RESP_CHK_EN | SD_CMD_RSP_TO, host->sd + SD_CONFIGURE3);
++	rtd129x_write_cmd(host, cmd);
++
++	writeb(byte_cnt & 0xff, host->sd + SD_BYTE_CNT_L);
++	writeb(byte_cnt >> 8,   host->sd + SD_BYTE_CNT_H);
++	writeb(blk_cnt & 0xff,  host->sd + SD_BLOCK_CNT_L);
++	writeb(blk_cnt >> 8,    host->sd + SD_BLOCK_CNT_H);
++
++	writel((ulong)host->buf / 8, host->sd + CR_SD_DMA_CTL1);
++	writel(blk_cnt, host->sd + CR_SD_DMA_CTL2);
++	writel(dma3 | (read ? DDR_WR : 0) | DMA_XFER, host->sd + CR_SD_DMA_CTL3);
++
++	/* Reads are done when the data has landed; writes when the card acks */
++	wait_for = read ? ISR_DMA_DONE : ISR_CARD_END;
++	rtd129x_arm_isr(host, wait_for);
++
++	writeb(SD_TRANSFER_START | tm, host->sd + SD_TRANSFER);
++	rtd129x_sync(host);
++
++	ret = rtd129x_wait(host, wait_for, 2000);
++	writel(0, host->sd + CR_SD_DMA_CTL3);
++	if (ret) {
++		debug("%s: cmd%u data %zu%s: %d (status1 0x%02x, xfer 0x%02x)\n",
++		      __func__, cmd->cmdidx, len, read ? "r" : "w", ret,
++		      readb(host->sd + SD_STATUS1),
++		      readb(host->sd + SD_TRANSFER));
++		rtd129x_reset(host);
++		return ret;
++	}
++
++	rtd129x_read_short_resp(host, cmd);
++
++	if (read) {
++		invalidate_dcache_range((ulong)host->buf,
++					(ulong)host->buf + RTD129X_BUF_LEN);
++		memcpy(data->dest, host->buf, len);
++	}
++
++	return 0;
++}
++
++static int rtd129x_send_cmd(struct udevice *dev, struct mmc_cmd *cmd,
++			    struct mmc_data *data)
++{
++	struct rtd129x_sdmmc *host = dev_get_priv(dev);
++	struct mmc *mmc = mmc_get_mmc_dev(dev);
++
++	if (!rtd129x_get_cd(dev))
++		return -ENOMEDIUM;
++
++	if (data) {
++		/*
++		 * The data path does not work behind the /256 divider: move
++		 * to 6.25 MHz once a card is selected, as the BSP does.
++		 */
++		if (mmc->clock <= 400000)
++			rtd129x_set_clock(host, 6250000);
++		return rtd129x_send_cmd_data(host, cmd, data);
++	}
++
++	return rtd129x_send_cmd_nodata(host, cmd);
++}
++
++static int rtd129x_set_ios(struct udevice *dev)
++{
++	struct rtd129x_sdmmc *host = dev_get_priv(dev);
++	struct mmc *mmc = mmc_get_mmc_dev(dev);
++	u8 cfg1;
++
++	cfg1 = readb(host->sd + SD_CONFIGURE1) & ~SD_CFG1_BUS_WIDTH_MASK;
++	switch (mmc->bus_width) {
++	case 8:
++		cfg1 |= SD_CFG1_BUS_WIDTH_8;
++		break;
++	case 4:
++		cfg1 |= SD_CFG1_BUS_WIDTH_4;
++		break;
++	default:
++		cfg1 |= SD_CFG1_BUS_WIDTH_1;
++		break;
++	}
++	writeb(cfg1, host->sd + SD_CONFIGURE1);
++	rtd129x_sync(host);
++
++	if (mmc->clock)
++		rtd129x_set_clock(host, mmc->clock);
++
++	return 0;
++}
++
++static const struct dm_mmc_ops rtd129x_sdmmc_ops = {
++	.send_cmd	= rtd129x_send_cmd,
++	.set_ios	= rtd129x_set_ios,
++	.get_cd		= rtd129x_get_cd,
++};
++
++static int rtd129x_sdmmc_probe(struct udevice *dev)
++{
++	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
++	struct rtd129x_sdmmc_plat *plat = dev_get_plat(dev);
++	struct rtd129x_sdmmc *host = dev_get_priv(dev);
++	struct mmc_config *cfg = &plat->cfg;
++	ofnode crt;
++
++	host->sd = dev_read_addr_index_ptr(dev, 0);
++	if (!host->sd)
++		return -EINVAL;
++	host->pad = dev_read_addr_index_ptr(dev, 1);
++
++	crt = ofnode_parse_phandle(dev_ofnode(dev), "realtek,crt", 0);
++	if (ofnode_valid(crt))
++		host->crt = (void __iomem *)ofnode_get_addr(crt);
++
++	host->buf = memalign(ARCH_DMA_MINALIGN, RTD129X_BUF_LEN);
++	if (!host->buf)
++		return -ENOMEM;
++
++	rtd129x_power_on(host);
++	rtd129x_hw_init(host);
++	if (host->crt)
++		rtd129x_set_pll(host);
++
++	cfg->name = dev->name;
++	cfg->voltages = MMC_VDD_32_33 | MMC_VDD_33_34;
++	cfg->host_caps = MMC_MODE_4BIT;
++	cfg->f_min = 400000;
++	/* 50 MHz needs PLL phase tuning, which is not done yet */
++	cfg->f_max = 25000000;
++	cfg->b_max = RTD129X_BUF_LEN / 512;
++
++	upriv->mmc = &plat->mmc;
++
++	return 0;
++}
++
++static int rtd129x_sdmmc_bind(struct udevice *dev)
++{
++	struct rtd129x_sdmmc_plat *plat = dev_get_plat(dev);
++
++	return mmc_bind(dev, &plat->mmc, &plat->cfg);
++}
++
++static const struct udevice_id rtd129x_sdmmc_ids[] = {
++	{ .compatible = "realtek,rtd1295-sdmmc" },
++	{ }
++};
++
++U_BOOT_DRIVER(rtd129x_sdmmc) = {
++	.name		= "rtd129x_sdmmc",
++	.id		= UCLASS_MMC,
++	.of_match	= rtd129x_sdmmc_ids,
++	.bind		= rtd129x_sdmmc_bind,
++	.probe		= rtd129x_sdmmc_probe,
++	.ops		= &rtd129x_sdmmc_ops,
++	.priv_auto	= sizeof(struct rtd129x_sdmmc),
++	.plat_auto	= sizeof(struct rtd129x_sdmmc_plat),
++};

@@ -1,0 +1,1051 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:58 +0200
+Subject: [PATCH 14/22] mmc: host: add the Realtek RTD129x eMMC host
+
+The RTD1295/RTD1296 eMMC controller is a DesignWare MSHC with a Realtek
+wrapper, driven the way Realtek's BSP does (see the driver's comment for
+why not dw_mmc). The driver, emmc-rtd129x.c, is kept outside the kernel
+tree in kernel/src and copied in by scripts/build-kernel.sh;
+these lines hook it in.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/mmc/host/Kconfig        |  11 +
+ drivers/mmc/host/Makefile       |   1 +
+ drivers/mmc/host/emmc-rtd129x.c | 990 ++++++++++++++++++++++++++++++++
+ 3 files changed, 1002 insertions(+)
+ create mode 100644 drivers/mmc/host/emmc-rtd129x.c
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index cd8d053ad551..c40b85291620 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -77,6 +77,17 @@ config MMC_SDMMC_RTD129X
+ 	  Without it there is no SD card on these SoCs and the rootfs has to
+ 	  come from USB.
+ 
++config MMC_RTD129X_EMMC
++	tristate "Realtek RTD129x eMMC host"
++	depends on ARCH_REALTEK || COMPILE_TEST
++	depends on HAS_DMA
++	select MFD_SYSCON
++	help
++	  Support for the eMMC host on the Realtek RTD1295/RTD1296, a
++	  Synopsys DesignWare MSHC behind a Realtek wrapper that dw_mmc
++	  cannot drive: its DMA engine does not hand descriptors back and
++	  its busy status does not clear.
++
+ config MMC_SDHCI
+ 	tristate "Secure Digital Host Controller Interface support"
+ 	depends on HAS_DMA
+diff --git a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
+index a15cf00a1ed9..ff8111b197b7 100644
+--- a/drivers/mmc/host/Makefile
++++ b/drivers/mmc/host/Makefile
+@@ -12,6 +12,7 @@ obj-$(CONFIG_MMC_MXC)		+= mxcmmc.o
+ obj-$(CONFIG_MMC_MXS)		+= mxs-mmc.o
+ obj-$(CONFIG_MMC_SDHCI)		+= sdhci.o
+ obj-$(CONFIG_MMC_SDMMC_RTD129X)	+= sdmmc-rtd129x.o
++obj-$(CONFIG_MMC_RTD129X_EMMC)	+= emmc-rtd129x.o
+ obj-$(CONFIG_MMC_SDHCI_UHS2)	+= sdhci-uhs2.o
+ obj-$(CONFIG_MMC_SDHCI_PCI)	+= sdhci-pci.o
+ sdhci-pci-y			+= sdhci-pci-core.o sdhci-pci-o2micro.o sdhci-pci-arasan.o \
+diff --git a/drivers/mmc/host/emmc-rtd129x.c b/drivers/mmc/host/emmc-rtd129x.c
+new file mode 100644
+index 000000000000..f69c66104582
+--- /dev/null
++++ b/drivers/mmc/host/emmc-rtd129x.c
+@@ -0,0 +1,990 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Realtek RTD1295/RTD1296 eMMC host
++ *
++ * The controller is a Synopsys DesignWare MSHC (VERID 2.70a, internal DMAC,
++ * 32-bit descriptors) with a Realtek wrapper at +0x400. Commands work as
++ * dw_mmc expects; its DMAC and what is around it do not:
++ *
++ *  - The bus bridge (SB2) holds CPU writes back from DDR until it is told
++ *    to sync. Descriptors the DMAC fetches without that are the previous
++ *    ones.
++ *  - After the last descriptor the DMAC still follows the next pointer and
++ *    takes whatever descriptor it finds there that says OWN -- and it never
++ *    hands a descriptor back, so old ones keep saying it. It stays parked
++ *    there, and DBADDR does not move it.
++ *  - Data-transfer-over comes when the card is done; on a read the DMAC is
++ *    still emptying the FIFO into DDR then.
++ *  - The data-busy status does not clear after an R1b command.
++ *
++ * Each of these turned into DMA to stale buffers, freed memory or random
++ * addresses, i.e. memory corruption and resets of the SoC. So this driver
++ * does it the way Realtek's BSP and u-boot do (rtkemmc.c), plus what they
++ * get away without: fresh descriptors for every transfer behind a sync,
++ * ended on one the DMAC does not own; the DMAC restarted from DBADDR for
++ * every transfer; reads complete only once the DMAC has moved every byte
++ * and the wrapper says DMA_DONE; and busy left to the MMC core's CMD13
++ * polling.
++ *
++ * The boot loader -- the SD and the eMMC builds of the BSP u-boot alike --
++ * has set up the pins, pad drive and the 1.8 V I/O LDO, and this relies on
++ * that. It also leaves the EMMC PLL at 200 MHz with the phases it tuned for
++ * HS200; the driver sets it to 100 MHz with the phases at 0, as the BSP
++ * does before it starts on the card, and the core divides that for the
++ * slower modes. For HS200 the PLL goes to 200 MHz, undivided, and the TX
++ * and RX phases are tuned the way the BSP does it (em_execute_tuning()).
++ */
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/mmc/host.h>
++#include <linux/mmc/mmc.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/mfd/syscon.h>
++#include <linux/regmap.h>
++#include <linux/workqueue.h>
++
++/* DesignWare core */
++#define EM_CTRL			0x000
++#define  CTRL_RESET		BIT(0)
++#define  CTRL_FIFO_RESET	BIT(1)
++#define  CTRL_DMA_RESET		BIT(2)
++#define  CTRL_INT_ENABLE	BIT(4)
++#define  CTRL_USE_IDMAC		BIT(25)
++#define  CTRL_RESETS		(CTRL_RESET | CTRL_FIFO_RESET | CTRL_DMA_RESET)
++#define EM_PWREN		0x004
++#define EM_CLKDIV		0x008
++#define EM_CLKSRC		0x00c
++#define EM_CLKENA		0x010
++#define EM_TMOUT		0x014
++#define EM_CTYPE		0x018
++#define  CTYPE_4BIT		BIT(0)
++#define  CTYPE_8BIT		BIT(16)
++#define EM_BLKSIZ		0x01c
++#define EM_BYTCNT		0x020
++#define EM_INTMASK		0x024
++#define EM_CMDARG		0x028
++#define EM_CMD			0x02c
++#define  CMD_START		BIT(31)
++#define  CMD_USE_HOLD_REG	BIT(29)
++#define  CMD_UPD_CLK		BIT(21)
++#define  CMD_INIT		BIT(15)
++#define  CMD_STOP		BIT(14)
++#define  CMD_AUTO_STOP		BIT(12)
++#define  CMD_PRV_DAT_WAIT	BIT(13)
++#define  CMD_DAT_WR		BIT(10)
++#define  CMD_DAT_EXP		BIT(9)
++#define  CMD_RESP_CRC		BIT(8)
++#define  CMD_RESP_LONG		BIT(7)
++#define  CMD_RESP_EXP		BIT(6)
++#define EM_RESP0		0x030
++#define EM_RESP1		0x034	/* the auto-stop's response */
++#define EM_MINTSTS		0x040
++#define EM_RINTSTS		0x044
++#define  INT_RE			BIT(1)
++#define  INT_CD			BIT(2)
++#define  INT_DTO		BIT(3)
++#define  INT_RCRC		BIT(6)
++#define  INT_DCRC		BIT(7)
++#define  INT_RTO		BIT(8)
++#define  INT_DRTO		BIT(9)
++#define  INT_HTO		BIT(10)
++#define  INT_FRUN		BIT(11)
++#define  INT_HLE		BIT(12)
++#define  INT_SBE		BIT(13)
++#define  INT_ACD		BIT(14)	/* auto-stop done */
++#define  INT_EBE		BIT(15)
++#define  INT_CMD_ERR		(INT_RE | INT_RCRC | INT_RTO | INT_HLE)
++#define  INT_DATA_ERR		(INT_DCRC | INT_DRTO | INT_HTO | INT_FRUN | \
++				 INT_SBE | INT_EBE)
++#define EM_STATUS		0x048
++#define  STATUS_FIFO_COUNT	GENMASK(29, 17)
++#define EM_TBBCNT		0x060	/* bytes between memory and the FIFO */
++#define EM_FIFOTH		0x04c
++#define EM_UHS_REG		0x074
++#define  UHS_18V		BIT(0)
++#define EM_BMOD			0x080
++#define  BMOD_SWR		BIT(0)
++#define  BMOD_DE		BIT(7)
++#define EM_DBADDR		0x088
++#define EM_IDSTS		0x08c
++#define EM_IDINTEN		0x090
++#define EM_CARDTHRCTL		0x100
++#define EM_DATA			0x200	/* the FIFO */
++
++/* Realtek wrapper */
++#define EM_ISR			0x424
++#define  ISR_WRITE_DATA		BIT(0)	/* 1: set the bits given, 0: clear */
++#define  ISR_DMA_DONE		BIT(1)
++#define  ISR_DMA_INT_MASK	BIT(2)
++#define  ISR_DESC_INT_MASK	BIT(3)
++#define  ISR_IP_INT_MASK	BIT(4)
++#define EM_CP			0x41c
++#define EM_SWC_SEL		0x4d4
++
++/* 32-bit IDMAC descriptors, chained */
++struct em_desc {
++	__le32 des0;
++#define DES0_OWN		BIT(31)
++#define DES0_CH			BIT(4)
++#define DES0_FS			BIT(3)
++#define DES0_LD			BIT(2)
++#define DES0_DIC		BIT(1)
++	__le32 des1;		/* buffer size */
++	__le32 des2;		/* buffer address */
++	__le32 des3;		/* next descriptor */
++};
++
++#define EM_DESC_LEN		4096		/* per descriptor, as the BSP */
++#define EM_NR_DESC		256
++#define EM_TIMEOUT_MS		2000
++#define EM_TUNING_TIMEOUT_MS	50
++
++/* SB2, the bus bridge: writing SYNC drains the CPU's posted writes to DDR */
++#define SB2_SYNC		0x020
++
++/* CRT: the EMMC PLL */
++#define CRT_PLL_EMMC1		0x1f0
++#define  PLL_TX_PHASE		GENMASK(7, 3)
++#define  PLL_RX_PHASE		GENMASK(12, 8)
++#define  PLL_RSTB		BIT(1)
++#define CRT_PLL_EMMC3		0x1f8	/* bits 31:16 frequency code */
++#define CRT_PLL_EMMC4		0x1fc	/* bit 0 output enable */
++#define EM_PLL_100MHZ		0x57	/* the BSP's codes */
++#define EM_PLL_200MHZ		0xa6
++#define EM_NR_PHASES		32
++#define EM_DUMMY_SYS		0x42c
++#define EM_CKGEN_CTL		0x478
++#define  CKGEN_CLK_4MHZ		GENMASK(18, 16)	/* off the PLL, to 4 MHz */
++#define EM_DDR_REG		0x10c
++#define EM_DQS_CTRL1		0x498
++
++enum em_state { ST_IDLE, ST_CMD, ST_DATA, ST_STOP };
++
++struct em_host {
++	struct device *dev;
++	struct mmc_host *mmc;
++	void __iomem *base;
++	unsigned long bus_hz;
++	u32 clock;			/* the card clock set, Hz */
++
++	struct regmap *sb2;
++	struct regmap *crt;
++	struct clk *clk_ip;
++	struct em_desc *desc;
++	dma_addr_t desc_dma;
++
++	spinlock_t lock;
++	struct mmc_request *mrq;
++	struct mmc_command *cmd;	/* the command in flight */
++	enum em_state state;
++	struct mmc_request *done;	/* to report once the lock is dropped */
++	u32 rint;			/* status collected by the hard irq */
++	u32 got, need;			/* data phase: seen, and needed to end */
++	u32 last_rint;
++	int sg_count;
++	int nr_desc;
++	bool pio;			/* a short block, through the FIFO */
++	u32 pio_buf[512 / 4];
++	struct delayed_work timeout;
++};
++
++static u32 em_read(struct em_host *h, u32 reg)
++{
++	return readl(h->base + reg);
++}
++
++static void em_write(struct em_host *h, u32 reg, u32 val)
++{
++	writel(val, h->base + reg);
++}
++
++static int em_reset(struct em_host *h, u32 bits)
++{
++	u32 val;
++
++	em_write(h, EM_CTRL, em_read(h, EM_CTRL) | bits);
++	return readl_poll_timeout_atomic(h->base + EM_CTRL, val,
++					 !(val & bits), 1, 500000);
++}
++
++/* Send a command that only updates the card clock */
++static int em_update_clock(struct em_host *h)
++{
++	u32 val;
++
++	em_write(h, EM_CMD, CMD_START | CMD_USE_HOLD_REG | CMD_UPD_CLK);
++	return readl_poll_timeout_atomic(h->base + EM_CMD, val,
++					 !(val & CMD_START), 1, 500000);
++}
++
++/*
++ * The whole controller, DMAC and state machines, back to idle; the clock
++ * logic has to be told again after that, as dw_mmc does.
++ */
++static void em_full_reset(struct em_host *h)
++{
++	em_reset(h, CTRL_RESETS);
++	em_update_clock(h);
++}
++
++static void em_set_clock(struct em_host *h, unsigned int clock)
++{
++	u32 div;
++
++	if (clock == h->clock)
++		return;
++	/* the core divides by 2 * div; 0 passes the clock through */
++	div = clock ? DIV_ROUND_UP(h->bus_hz, 2 * clock) : 0;
++	if (clock && clock >= h->bus_hz)
++		div = 0;
++
++	em_write(h, EM_CLKENA, 0);
++	em_update_clock(h);
++	if (!clock) {
++		h->clock = 0;
++		return;
++	}
++	em_write(h, EM_CLKDIV, div);
++	em_update_clock(h);
++	/* enable; bit 16 would gate the clock when idle */
++	em_write(h, EM_CLKENA, BIT(0));
++	em_update_clock(h);
++	h->clock = clock;
++	dev_dbg(h->dev, "card clock %u Hz (div %u)\n",
++		div ? (u32)(h->bus_hz / (2 * div)) : (u32)h->bus_hz, div);
++}
++
++/*
++ * The PLL to 100 MHz, which the core's divider makes the slower modes
++ * from, or to 200 MHz for HS200; the phases to 0. As the BSP does it, with
++ * the core's clock stopped meanwhile. The boot loader leaves it at 200 MHz
++ * with the phases it tuned for HS200.
++ */
++static void em_pll_set(struct em_host *h, unsigned long hz)
++{
++	u32 val;
++
++	em_write(h, EM_DDR_REG, 0);
++	writel(0, h->base + EM_DQS_CTRL1);
++
++	clk_disable_unprepare(h->clk_ip);
++	regmap_write(h->crt, CRT_PLL_EMMC1, PLL_RSTB | BIT(0));
++	regmap_read(h->crt, CRT_PLL_EMMC4, &val);
++	regmap_write(h->crt, CRT_PLL_EMMC4, val & 0x6);
++	regmap_read(h->crt, CRT_PLL_EMMC3, &val);
++	regmap_write(h->crt, CRT_PLL_EMMC3, (val & 0xffff) |
++		     (hz > 100000000 ? EM_PLL_200MHZ : EM_PLL_100MHZ) << 16);
++	regmap_read(h->crt, CRT_PLL_EMMC4, &val);
++	regmap_write(h->crt, CRT_PLL_EMMC4, val | 1);
++	/* the A01 ECO: toggled whenever the frequency code changes */
++	writel(readl(h->base + EM_DUMMY_SYS) ^ BIT(30), h->base + EM_DUMMY_SYS);
++	udelay(400);
++	clk_prepare_enable(h->clk_ip);
++	h->bus_hz = hz;
++	h->clock = ~0;		/* the divider has to be set again */
++}
++
++/*
++ * The TX (card clock out) and RX (sampling) phases, 0-31 each, or -1 to
++ * leave one as it is. The PLL is held in reset while they change, with the
++ * core running off 4 MHz meanwhile, as the BSP's phase().
++ */
++static void em_set_phase(struct em_host *h, int tx, int rx)
++{
++	u32 mask = 0, val = 0;
++
++	if (tx >= 0) {
++		mask |= PLL_TX_PHASE;
++		val |= FIELD_PREP(PLL_TX_PHASE, tx);
++	}
++	if (rx >= 0) {
++		mask |= PLL_RX_PHASE;
++		val |= FIELD_PREP(PLL_RX_PHASE, rx);
++	}
++	writel(readl(h->base + EM_CKGEN_CTL) | CKGEN_CLK_4MHZ,
++	       h->base + EM_CKGEN_CTL);
++	regmap_update_bits(h->crt, CRT_PLL_EMMC1, PLL_RSTB, 0);
++	regmap_update_bits(h->crt, CRT_PLL_EMMC1, mask, val);
++	regmap_update_bits(h->crt, CRT_PLL_EMMC1, PLL_RSTB, PLL_RSTB);
++	udelay(200);
++	writel(readl(h->base + EM_CKGEN_CTL) & ~CKGEN_CLK_4MHZ,
++	       h->base + EM_CKGEN_CTL);
++}
++
++static void em_hw_init(struct em_host *h)
++{
++	/* the wrapper: pass only the core's interrupt */
++	writel(ISR_WRITE_DATA | ISR_DMA_INT_MASK | ISR_DESC_INT_MASK,
++	       h->base + EM_ISR);
++	writel(ISR_DMA_DONE, h->base + EM_ISR);
++	writel(ISR_IP_INT_MASK, h->base + EM_ISR);
++	writel(0, h->base + EM_SWC_SEL);
++	writel(0, h->base + EM_CP);
++
++	/* As the BSP's mmc_host_reset(), step for step */
++	em_write(h, EM_BMOD, BMOD_SWR | BMOD_DE);
++	em_write(h, EM_CTRL, CTRL_USE_IDMAC);
++	em_write(h, EM_PWREN, 1);
++	em_write(h, EM_INTMASK, 0);
++	em_write(h, EM_RINTSTS, 0xffffffff);
++	em_write(h, EM_CLKSRC, 0);
++	em_write(h, EM_TMOUT, 0xffffff40);
++	em_write(h, EM_CTYPE, 0);
++	em_write(h, EM_FIFOTH, 0x0001007f);	/* single transfers */
++	em_write(h, EM_CTRL, CTRL_USE_IDMAC | CTRL_INT_ENABLE);
++	em_write(h, EM_BMOD, BMOD_DE);
++	em_write(h, EM_DBADDR, h->desc_dma);
++	em_write(h, EM_IDINTEN, 0);
++	em_write(h, EM_IDSTS, 0xffffffff);
++	em_write(h, EM_UHS_REG, UHS_18V);
++	em_write(h, EM_CARDTHRCTL, 0x02000001);	/* read threshold, 512 B */
++	h->clock = ~0;
++	em_set_clock(h, 400000);
++}
++
++static void em_prepare_data(struct em_host *h, struct mmc_data *data)
++{
++	struct scatterlist *sg;
++	struct em_desc *d = h->desc;
++	int i, n = 0;
++	u32 val;
++
++	/*
++	 * The DMAC cannot do a block shorter than 512 bytes (the BSP: "the
++	 * smallest DMA size is 512 byte"). After a DMA of the 128-byte HS200
++	 * tuning block, the next transfer went to a buffer address made of
++	 * tuning data (0xcc33ccc8) while the descriptors in memory were
++	 * right, and no reset of the controller set it straight. Such a block
++	 * is read from the FIFO instead, with the DMAC left alone; on eMMC
++	 * only tuning reads one.
++	 */
++	if (data->blksz < 512) {
++		h->pio = true;
++		em_reset(h, CTRL_FIFO_RESET);
++		em_write(h, EM_CTRL, em_read(h, EM_CTRL) & ~CTRL_USE_IDMAC);
++		em_write(h, EM_BLKSIZ, data->blksz);
++		em_write(h, EM_BYTCNT, data->blksz * data->blocks);
++		return;
++	}
++
++	h->sg_count = dma_map_sg(h->dev, data->sg, data->sg_len,
++				 mmc_get_dma_dir(data));
++	for_each_sg(data->sg, sg, h->sg_count, i) {
++		u32 addr = sg_dma_address(sg), len = sg_dma_len(sg);
++
++		while (len) {
++			u32 n_len = min_t(u32, len, EM_DESC_LEN);
++
++			d[n].des0 = cpu_to_le32(DES0_OWN | DES0_CH | DES0_DIC);
++			d[n].des1 = cpu_to_le32(n_len);
++			d[n].des2 = cpu_to_le32(addr);
++			d[n].des3 = cpu_to_le32(h->desc_dma +
++						(n + 1) * sizeof(*d));
++			addr += n_len;
++			len -= n_len;
++			n++;
++		}
++	}
++	dev_dbg(h->dev, "xfer %s %u x %u, sg %d, desc %d, first %08x last %08x+%x\n",
++		data->flags & MMC_DATA_WRITE ? "W" : "R", data->blocks, data->blksz,
++		h->sg_count, n, le32_to_cpu(d[0].des2), le32_to_cpu(d[n - 1].des2),
++		le32_to_cpu(d[n - 1].des1));
++	d[0].des0 |= cpu_to_le32(DES0_FS);
++	d[n - 1].des0 |= cpu_to_le32(DES0_LD);
++	/*
++	 * After the last descriptor the DMAC still follows its next pointer
++	 * and takes what it finds there if it says OWN: a stale descriptor
++	 * from an earlier, longer transfer, or garbage at 0 without CH -- a
++	 * DMA to anywhere. End the chain on one it does not own.
++	 */
++	d[n].des0 = 0;
++	d[n].des3 = cpu_to_le32(h->desc_dma + n * sizeof(*d));
++	h->nr_desc = n;
++
++	/*
++	 * Descriptors, and the data of a write, have to be in DDR before the
++	 * DMAC reads them. A barrier is not enough on this SoC: the bus
++	 * bridge holds CPU writes back until told to sync. The BSP syncs
++	 * the same way.
++	 */
++	wmb();
++	regmap_write(h->sb2, SB2_SYNC, 0);
++	dmb(sy);
++
++	/*
++	 * The DMAC is parked on that last descriptor from the previous
++	 * transfer and would go on from there: start it over from DBADDR.
++	 */
++	em_reset(h, CTRL_DMA_RESET);
++	em_write(h, EM_BMOD, BMOD_SWR);
++	readl_poll_timeout_atomic(h->base + EM_BMOD, val, !(val & BMOD_SWR),
++				  1, 1000);
++	em_write(h, EM_DBADDR, h->desc_dma);
++	em_write(h, EM_BMOD, BMOD_DE);
++
++	writel(0, h->base + EM_SWC_SEL);
++	writel(0, h->base + EM_CP);
++	em_write(h, EM_BLKSIZ, data->blksz);
++	em_write(h, EM_BYTCNT, data->blksz * data->blocks);
++}
++
++static void em_start_cmd(struct em_host *h, struct mmc_command *cmd,
++			 enum em_state state)
++{
++	struct mmc_data *data = state == ST_CMD ? cmd->data : NULL;
++	u32 flags = CMD_START | CMD_USE_HOLD_REG | cmd->opcode;
++
++	if (cmd->opcode == MMC_GO_IDLE_STATE)
++		flags |= CMD_INIT;
++	if (state == ST_STOP)
++		flags |= CMD_STOP;
++	if (cmd->flags & MMC_RSP_PRESENT) {
++		flags |= CMD_RESP_EXP;
++		if (cmd->flags & MMC_RSP_136)
++			flags |= CMD_RESP_LONG;
++	}
++	if (cmd->flags & MMC_RSP_CRC)
++		flags |= CMD_RESP_CRC;
++	if (data) {
++		flags |= CMD_DAT_EXP;
++		/*
++		 * As the BSP: only block reads wait for the previous data to
++		 * be over. A command that waits while the core still believes
++		 * DAT0 busy -- it does after an R1b -- never starts.
++		 */
++		if (data->flags & MMC_DATA_WRITE)
++			flags |= CMD_DAT_WR;
++		else if (cmd->opcode != MMC_SEND_EXT_CSD)
++			flags |= CMD_PRV_DAT_WAIT;
++		/* without CMD23, the core sends CMD12 by itself */
++		h->need = INT_DTO;
++		if (data->stop && !h->mrq->sbc) {
++			flags |= CMD_AUTO_STOP;
++			h->need |= INT_ACD;
++		}
++		h->got = 0;
++		em_prepare_data(h, data);
++	}
++
++	h->cmd = cmd;
++	h->state = state;
++	h->rint = 0;
++	em_write(h, EM_RINTSTS, 0xffffffff);
++	writel(ISR_DMA_DONE, h->base + EM_ISR);
++	em_write(h, EM_INTMASK, INT_CD | INT_CMD_ERR |
++		 (data ? h->need | INT_DATA_ERR : 0));
++	em_write(h, EM_CMDARG, cmd->arg);
++	wmb();
++	em_write(h, EM_CMD, flags);
++	/*
++	 * A tuning block sampled at a bad phase can leave the data state
++	 * machine waiting for good without the data timeout ever coming; the
++	 * reset in em_end_data() gets it out.
++	 */
++	schedule_delayed_work(&h->timeout, msecs_to_jiffies(
++			      cmd->opcode == MMC_SEND_TUNING_BLOCK_HS200 ?
++			      EM_TUNING_TIMEOUT_MS : EM_TIMEOUT_MS));
++}
++
++static void em_read_resp(struct em_host *h, struct mmc_command *cmd)
++{
++	if (!(cmd->flags & MMC_RSP_PRESENT))
++		return;
++	if (cmd->flags & MMC_RSP_136) {
++		cmd->resp[3] = em_read(h, EM_RESP0);
++		cmd->resp[2] = em_read(h, EM_RESP0 + 4);
++		cmd->resp[1] = em_read(h, EM_RESP0 + 8);
++		cmd->resp[0] = em_read(h, EM_RESP0 + 12);
++	} else {
++		cmd->resp[0] = em_read(h, EM_RESP0);
++	}
++}
++
++static void em_finish(struct em_host *h)
++{
++	struct mmc_request *mrq = h->mrq;
++
++	cancel_delayed_work(&h->timeout);
++	em_write(h, EM_INTMASK, 0);
++	dev_dbg(h->dev, "CMD%u arg %08x: %d resp %08x%s data %d rint %08x status %08x\n",
++		mrq->cmd->opcode, mrq->cmd->arg, mrq->cmd->error, mrq->cmd->resp[0],
++		mrq->data ? "" : " (none)", mrq->data ? mrq->data->error : 0,
++		h->last_rint, em_read(h, EM_STATUS));
++	h->mrq = NULL;
++	h->cmd = NULL;
++	h->state = ST_IDLE;
++	h->done = mrq;
++}
++
++/* With h->lock held on entry; drops it */
++static void em_unlock_and_report(struct em_host *h, unsigned long flags)
++{
++	struct mmc_request *mrq = h->done;
++
++	h->done = NULL;
++	spin_unlock_irqrestore(&h->lock, flags);
++	if (mrq)
++		mmc_request_done(h->mmc, mrq);
++}
++
++/* A short block, all in the FIFO once the card is done */
++static int em_read_fifo(struct em_host *h, struct mmc_data *data)
++{
++	u32 len = data->blksz * data->blocks;
++	int i;
++
++	/*
++	 * The FIFO is 64 bits wide (HCON H_DATA_WIDTH = 2), and the bus takes
++	 * only 32-bit reads: an entry is its low half at DATA and its high
++	 * half at DATA + 4. (A 64-bit read gives the low half twice.)
++	 */
++	if (FIELD_GET(STATUS_FIFO_COUNT, em_read(h, EM_STATUS)) < len / 8)
++		return -EIO;
++	for (i = 0; i < len / 4; i += 2) {
++		h->pio_buf[i] = readl(h->base + EM_DATA);
++		h->pio_buf[i + 1] = readl(h->base + EM_DATA + 4);
++	}
++	sg_pcopy_from_buffer(data->sg, data->sg_len, h->pio_buf, len, 0);
++	return 0;
++}
++
++static void em_end_data(struct em_host *h, struct mmc_data *data, int err)
++{
++	int i;
++
++	if (h->pio) {
++		h->pio = false;
++		if (!err)
++			err = em_read_fifo(h, data);
++		em_write(h, EM_CTRL, em_read(h, EM_CTRL) | CTRL_USE_IDMAC);
++	} else {
++		/* the DMAC never clears OWN itself */
++		for (i = 0; i < h->nr_desc; i++)
++			h->desc[i].des0 = 0;
++		dma_unmap_sg(h->dev, data->sg, data->sg_len,
++			     mmc_get_dma_dir(data));
++	}
++	data->error = err;
++	data->bytes_xfered = err ? 0 : data->blksz * data->blocks;
++	/*
++	 * After an error the FIFO may be half full and the data state
++	 * machine still waiting: reset all of it.
++	 */
++	if (err)
++		em_full_reset(h);
++	if (data->stop && err)
++		em_start_cmd(h, data->stop, ST_STOP);
++	else
++		em_finish(h);
++}
++
++/*
++ * Data-transfer-over is the card's side. On a read the DMAC may still be
++ * emptying the FIFO into DDR then, and the data is not there to read, nor
++ * may the next transfer start. It is done once it has moved every byte and
++ * the wrapper has raised DMA_DONE -- which the BSP and u-boot wait for, but
++ * which comes for every descriptor. A write's data has all been read by
++ * the time the card has it.
++ */
++static int em_wait_dma(struct em_host *h, struct mmc_data *data)
++{
++	u32 total = data->blksz * data->blocks, isr;
++	int ret;
++
++	if (data->flags & MMC_DATA_WRITE)
++		return 0;
++	ret = read_poll_timeout_atomic(readl, isr, (isr & ISR_DMA_DONE) &&
++				       em_read(h, EM_TBBCNT) == total,
++				       1, 5000, false, h->base + EM_ISR);
++	writel(ISR_DMA_DONE, h->base + EM_ISR);
++	if (ret) {
++		dev_err(h->dev, "read DMA not done: %u of %u bytes, ISR %08x\n",
++			em_read(h, EM_TBBCNT), total, isr);
++		return -EIO;
++	}
++	return 0;
++}
++
++/* Runs the request on from what the hard irq or the timeout found */
++static void em_advance(struct em_host *h, u32 rint, bool timeout)
++{
++	struct mmc_command *cmd = h->cmd;
++	struct mmc_data *data = cmd ? cmd->data : NULL;
++
++	switch (h->state) {
++	case ST_CMD:
++		if (timeout || (rint & INT_CMD_ERR)) {
++			cmd->error = timeout ? -ETIMEDOUT :
++				     rint & INT_RTO ? -ETIMEDOUT : -EILSEQ;
++			if (data) {
++				em_end_data(h, data, cmd->error);
++				return;
++			}
++			if (timeout)	/* it may never have started */
++				em_full_reset(h);
++			em_finish(h);
++			return;
++		}
++		if (!(rint & INT_CD))
++			return;
++		em_read_resp(h, cmd);
++		if (cmd == h->mrq->sbc) {
++			em_start_cmd(h, h->mrq->cmd, ST_CMD);
++			return;
++		}
++		if (!data) {
++			em_finish(h);
++			return;
++		}
++		h->state = ST_DATA;
++		fallthrough;
++	case ST_DATA:
++		if (timeout || (rint & INT_DATA_ERR)) {
++			em_end_data(h, data, timeout ? -ETIMEDOUT :
++				    rint & (INT_DRTO | INT_HTO) ? -ETIMEDOUT :
++				    -EILSEQ);
++			return;
++		}
++		h->got |= rint;
++		if ((h->got & h->need) != h->need)
++			return;
++		if (data->stop && !h->mrq->sbc)
++			data->stop->resp[0] = em_read(h, EM_RESP1);
++		em_end_data(h, data, h->pio ? 0 : em_wait_dma(h, data));
++		return;
++	case ST_STOP:
++		if (timeout || (rint & INT_CMD_ERR))
++			cmd->error = -ETIMEDOUT;
++		else if (!(rint & INT_CD))
++			return;
++		else
++			em_read_resp(h, cmd);
++		em_finish(h);
++		return;
++	case ST_IDLE:
++		return;
++	}
++}
++
++static irqreturn_t em_irq(int irq, void *dev_id)
++{
++	struct em_host *h = dev_id;
++	u32 rint = em_read(h, EM_RINTSTS) & em_read(h, EM_INTMASK);
++
++	if (!rint)
++		return IRQ_NONE;
++	em_write(h, EM_RINTSTS, rint);
++	spin_lock(&h->lock);
++	h->rint |= rint;
++	spin_unlock(&h->lock);
++	return IRQ_WAKE_THREAD;
++}
++
++static irqreturn_t em_irq_thread(int irq, void *dev_id)
++{
++	struct em_host *h = dev_id;
++	unsigned long flags;
++	u32 rint;
++
++	spin_lock_irqsave(&h->lock, flags);
++	rint = h->rint;
++	h->rint = 0;
++	h->last_rint = rint;
++	if (h->mrq)
++		em_advance(h, rint, false);
++	em_unlock_and_report(h, flags);
++	return IRQ_HANDLED;
++}
++
++static void em_timeout(struct work_struct *work)
++{
++	struct em_host *h = container_of(work, struct em_host, timeout.work);
++	unsigned long flags;
++
++	spin_lock_irqsave(&h->lock, flags);
++	if (h->mrq) {
++		dev_err(h->dev, "CMD%u timed out: RINTSTS %08x STATUS %08x IDSTS %08x\n",
++			h->cmd->opcode, em_read(h, EM_RINTSTS),
++			em_read(h, EM_STATUS), em_read(h, EM_IDSTS));
++		em_advance(h, 0, true);
++	}
++	em_unlock_and_report(h, flags);
++}
++
++static void em_request(struct mmc_host *mmc, struct mmc_request *mrq)
++{
++	struct em_host *h = mmc_priv(mmc);
++	unsigned long flags;
++
++	/* nothing writes a short block to an eMMC; the FIFO path only reads */
++	if (mrq->data && mrq->data->blksz < 512 &&
++	    (mrq->data->flags & MMC_DATA_WRITE)) {
++		mrq->cmd->error = -EINVAL;
++		mmc_request_done(mmc, mrq);
++		return;
++	}
++
++	spin_lock_irqsave(&h->lock, flags);
++	h->mrq = mrq;
++	em_start_cmd(h, mrq->sbc ? mrq->sbc : mrq->cmd, ST_CMD);
++	em_unlock_and_report(h, flags);
++}
++
++static void em_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
++{
++	struct em_host *h = mmc_priv(mmc);
++	/* HS200 runs the PLL at 200 MHz; everything else divides 100 MHz */
++	unsigned long bus_hz = ios->timing == MMC_TIMING_MMC_HS200 ?
++			       200000000 : 100000000;
++
++	if (bus_hz != h->bus_hz)
++		em_pll_set(h, bus_hz);
++
++	switch (ios->bus_width) {
++	case MMC_BUS_WIDTH_8:
++		em_write(h, EM_CTYPE, CTYPE_8BIT);
++		break;
++	case MMC_BUS_WIDTH_4:
++		em_write(h, EM_CTYPE, CTYPE_4BIT);
++		break;
++	default:
++		em_write(h, EM_CTYPE, 0);
++	}
++	if (ios->power_mode != MMC_POWER_OFF)
++		em_set_clock(h, ios->clock);
++}
++
++/* The pads are wired for 1.8 V; the core asks for 3.3 V first */
++static int em_switch_voltage(struct mmc_host *mmc, struct mmc_ios *ios)
++{
++	return ios->signal_voltage == MMC_SIGNAL_VOLTAGE_180 ? 0 : -EINVAL;
++}
++
++/*
++ * The middle of the longest run of passing phases, which may wrap around
++ * from 31 to 0; -1 if none passed.
++ */
++static int em_best_phase(u32 window)
++{
++	int i, run = 0, best = -1, best_run = 0;
++
++	if (window == GENMASK(EM_NR_PHASES - 1, 0))
++		return EM_NR_PHASES / 2;
++	/* twice round, so that a run across 31 -> 0 is seen whole */
++	for (i = 0; i < 2 * EM_NR_PHASES; i++) {
++		if (!(window & BIT(i % EM_NR_PHASES))) {
++			run = 0;
++			continue;
++		}
++		if (++run > best_run) {
++			best_run = run;
++			best = i - (run - 1) / 2;
++		}
++	}
++	return best < 0 ? -1 : best % EM_NR_PHASES;
++}
++
++/*
++ * HS200 tuning, in the BSP's three steps (rtkemmc_phase_tuning()):
++ *
++ *  1. TX: each TX phase with the RX phase at 0, passing if the card
++ *     answers the command.
++ *  2. RX: each RX phase with the TX phase from step 1, passing if the
++ *     tuning block reads back right.
++ *  3. TX again over the phases that passed step 1, with the RX phase from
++ *     step 2, now on the whole tuning command.
++ *
++ * The BSP checks its steps with CMD13, a 1 KiB read at block 0x100 and a
++ * 1 KiB write at block 0xfe. The write would destroy what is there, so
++ * steps 2 and 3 use the tuning block (CMD21) instead, as other hosts do.
++ */
++static int em_execute_tuning(struct mmc_host *mmc, u32 opcode)
++{
++	struct em_host *h = mmc_priv(mmc);
++	u32 tx = 0, rx = 0, tx2 = 0;
++	int i, err, cmd_err, best_tx, best_rx;
++
++	em_set_phase(h, 0, 0);
++	for (i = 0; i < EM_NR_PHASES; i++) {
++		em_set_phase(h, i, -1);
++		mmc_send_tuning(mmc, opcode, &cmd_err);
++		if (!cmd_err)
++			tx |= BIT(i);
++	}
++	best_tx = em_best_phase(tx);
++	if (best_tx < 0)
++		goto fail;
++
++	em_set_phase(h, best_tx, -1);
++	for (i = 0; i < EM_NR_PHASES; i++) {
++		em_set_phase(h, -1, i);
++		if (!mmc_send_tuning(mmc, opcode, NULL))
++			rx |= BIT(i);
++	}
++	best_rx = em_best_phase(rx);
++	if (best_rx < 0)
++		goto fail;
++
++	em_set_phase(h, -1, best_rx);
++	for (i = 0; i < EM_NR_PHASES; i++) {
++		if (!(tx & BIT(i)))
++			continue;
++		em_set_phase(h, i, -1);
++		if (!mmc_send_tuning(mmc, opcode, NULL))
++			tx2 |= BIT(i);
++	}
++	best_tx = em_best_phase(tx2);
++	if (best_tx < 0)
++		goto fail;
++
++	em_set_phase(h, best_tx, -1);
++	err = mmc_send_tuning(mmc, opcode, NULL);
++	dev_info(h->dev, "HS200 tuning: TX %08x/%08x -> %d, RX %08x -> %d%s\n",
++		 tx, tx2, best_tx, rx, best_rx, err ? ", fails" : "");
++	if (!err)
++		return 0;
++fail:
++	dev_err(h->dev, "HS200 tuning failed (TX %08x/%08x, RX %08x), using High Speed\n",
++		tx, tx2, rx);
++	/*
++	 * The card is in HS200 now and cannot be brought back from here:
++	 * the core gives up on it. It tries once more from f_min (see
++	 * em_probe()), and without the capability that is High Speed.
++	 */
++	mmc->caps2 &= ~MMC_CAP2_HS200;
++	return -EIO;
++}
++
++static const struct mmc_host_ops em_ops = {
++	.request			= em_request,
++	.set_ios			= em_set_ios,
++	.start_signal_voltage_switch	= em_switch_voltage,
++	.execute_tuning			= em_execute_tuning,
++	/* no card_busy: the core then polls with CMD13, as the BSP does */
++};
++
++static int em_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mmc_host *mmc;
++	struct em_host *h;
++	struct clk *clk;
++	int irq, ret;
++	u32 val;
++
++	mmc = devm_mmc_alloc_host(dev, sizeof(*h));
++	if (!mmc)
++		return -ENOMEM;
++	h = mmc_priv(mmc);
++	h->dev = dev;
++	h->mmc = mmc;
++	spin_lock_init(&h->lock);
++	INIT_DELAYED_WORK(&h->timeout, em_timeout);
++
++	h->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(h->base))
++		return PTR_ERR(h->base);
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++
++	/* CLK_EN1: EMMC (bus) and EMMC_IP (the core) */
++	clk = devm_clk_get_optional_enabled(dev, "biu");
++	if (IS_ERR(clk))
++		return PTR_ERR(clk);
++	h->clk_ip = devm_clk_get_optional_enabled(dev, "ip");
++	if (IS_ERR(h->clk_ip))
++		return PTR_ERR(h->clk_ip);
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++	h->sb2 = syscon_regmap_lookup_by_phandle(dev->of_node, "realtek,sb2");
++	if (IS_ERR(h->sb2))
++		return dev_err_probe(dev, PTR_ERR(h->sb2), "no realtek,sb2\n");
++	h->crt = syscon_regmap_lookup_by_phandle(dev->of_node, "realtek,crt");
++	if (IS_ERR(h->crt))
++		return dev_err_probe(dev, PTR_ERR(h->crt), "no realtek,crt\n");
++
++	h->desc = dmam_alloc_coherent(dev, EM_NR_DESC * sizeof(*h->desc),
++				      &h->desc_dma, GFP_KERNEL);
++	if (!h->desc)
++		return -ENOMEM;
++
++	ret = mmc_of_parse(mmc);
++	if (ret)
++		return ret;
++	mmc->ops = &em_ops;
++	/*
++	 * The core starts a non-removable card from 400 kHz, and once more
++	 * from each lower step of its list down to f_min if that fails. A
++	 * failed HS200 tuning drops the capability, and the second attempt,
++	 * from 300 kHz, comes up at High Speed.
++	 */
++	mmc->f_min = 300000;
++	if (!mmc->f_max || mmc->f_max > 200000000)
++		mmc->f_max = 200000000;
++	if (!(mmc->caps2 & MMC_CAP2_HS200) && mmc->f_max > 52000000)
++		mmc->f_max = 52000000;
++	mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34 | MMC_VDD_165_195;
++	mmc->max_segs = EM_NR_DESC - 1;	/* and one to end the chain */
++	mmc->max_seg_size = EM_DESC_LEN;
++	mmc->max_blk_size = 512;
++	mmc->max_req_size = (EM_NR_DESC - 1) * EM_DESC_LEN;
++	mmc->max_blk_count = mmc->max_req_size / 512;
++
++	regmap_read(h->crt, CRT_PLL_EMMC1, &val);
++	dev_dbg(dev, "boot loader phases: TX %lu RX %lu\n",
++		FIELD_GET(PLL_TX_PHASE, val), FIELD_GET(PLL_RX_PHASE, val));
++	em_pll_set(h, 100000000);
++	em_hw_init(h);
++
++	ret = devm_request_threaded_irq(dev, irq, em_irq, em_irq_thread, 0,
++					dev_name(dev), h);
++	if (ret)
++		return ret;
++
++	platform_set_drvdata(pdev, h);
++	ret = mmc_add_host(mmc);
++	if (ret)
++		return ret;
++	dev_info(dev, "RTD129x eMMC (DW MSHC %04x), %lu MHz PLL\n",
++		 em_read(h, 0x06c) & 0xffff, h->bus_hz / 1000000);
++	return 0;
++}
++
++static void em_remove(struct platform_device *pdev)
++{
++	struct em_host *h = platform_get_drvdata(pdev);
++
++	mmc_remove_host(h->mmc);
++	cancel_delayed_work_sync(&h->timeout);
++	em_write(h, EM_INTMASK, 0);
++}
++
++static const struct of_device_id em_of_match[] = {
++	{ .compatible = "realtek,rtd1295-emmc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, em_of_match);
++
++static struct platform_driver em_driver = {
++	.probe = em_probe,
++	.remove = em_remove,
++	.driver = {
++		.name = "rtd129x-emmc",
++		.of_match_table = em_of_match,
++		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++	},
++};
++module_platform_driver(em_driver);
++
++MODULE_DESCRIPTION("Realtek RTD1295/RTD1296 eMMC host");
++MODULE_LICENSE("GPL");
