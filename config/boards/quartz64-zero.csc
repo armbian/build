@@ -6,9 +6,7 @@ BOARD_MAINTAINER=""
 INTRODUCED="2024"
 BOOT_SOC="rk3566"
 BOOTCONFIG="quartz64-zero-rk3566_defconfig"
-# No Ethernet on this board: Wi-Fi is the only network. The radxa-aic8800
-# extension skips the driver on kernel 7.3+ (edge), so offer current only.
-KERNEL_TARGET="current"
+KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="rockchip/rk3566-quartz64-zero.dtb"
 IMAGE_PARTITION_TABLE="gpt"
@@ -89,13 +87,15 @@ function post_family_tweaks__quartz64_zero_enable_bluetooth() {
 	chroot_sdcard systemctl --no-reload enable aic8800-bluetooth.service
 }
 
-# Mainline U-Boot, as for the Quartz64 B.
+# Mainline U-Boot. The board DT, -u-boot.dtsi and defconfig are plain files in
+# patch/u-boot/v2026.10/{dt_upstream_rockchip,dt_uboot,defconfig}; only the
+# RK817 input-limit change is a patch (board_quartz64-zero).
 function post_family_config__quartz64_zero_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2024.07"
-	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
+	declare -g BOOTBRANCH="tag:v2026.10"
+	declare -g BOOTPATCHDIR="v2026.10"
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 
 	# Disable stuff from rockchip64_common; we're using binman here which does all the work already
