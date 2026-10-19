@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: khaliforce <kforce@gmail.com>
+Date: Fri, 9 Oct 2026 19:15:07 +0900
+Subject: drm/sun4i: sun8i: quiesce D1 display DMA during modesets
+
+Prevent reads from released D1 framebuffer mappings during modesets.
+Stop DMA before the timing controller stops.
+Resume DMA when the timing controller starts.
+Disable the VI layer too, as the modeset helper requires.
+---
+ drivers/gpu/drm/sun4i/sun4i_crtc.c     |  6 ++
+ drivers/gpu/drm/sun4i/sun8i_mixer.c    | 36 ++++++++++
+ drivers/gpu/drm/sun4i/sun8i_mixer.h    |  1 +
+ drivers/gpu/drm/sun4i/sun8i_ui_layer.c |  7 ++
+ drivers/gpu/drm/sun4i/sun8i_vi_layer.c |  7 +++++++
+ drivers/gpu/drm/sun4i/sunxi_engine.h   |  8 +++
+ 6 files changed, 65 insertions(+)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_crtc.c b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_crtc.c
++++ b/drivers/gpu/drm/sun4i/sun4i_crtc.c
+@@ -113,6 +113,9 @@ static void sun4i_crtc_atomic_disable(struct drm_crtc *crtc,
+ 
+ 	DRM_DEBUG_DRIVER("Disabling the CRTC\n");
+ 
++	if (scrtc->engine->ops->atomic_disable)
++		scrtc->engine->ops->atomic_disable(scrtc->engine, crtc, state);
++
+ 	drm_crtc_vblank_off(crtc);
+ 
+ 	sun4i_tcon_set_status(scrtc->tcon, encoder, false);
+@@ -134,6 +137,9 @@ static void sun4i_crtc_atomic_enable(struct drm_crtc *crtc,
+ 
+ 	DRM_DEBUG_DRIVER("Enabling the CRTC\n");
+ 
++	if (scrtc->engine->ops->atomic_enable)
++		scrtc->engine->ops->atomic_enable(scrtc->engine);
++
+ 	sun4i_tcon_set_status(scrtc->tcon, encoder, true);
+ 
+ 	drm_crtc_vblank_on(crtc);
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -23,6 +23,7 @@
+ #include <drm/drm_gem_dma_helper.h>
+ #include <drm/drm_print.h>
+ #include <drm/drm_probe_helper.h>
++#include <drm/drm_vblank.h>
+ 
+ #include "sun4i_drv.h"
+ #include "sun8i_mixer.h"
+@@ -412,7 +413,41 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 			 interlaced ? "on" : "off");
+ }
+ 
++static void sun8i_mixer_atomic_enable(struct sunxi_engine *engine)
++{
++	struct sun8i_mixer *mixer = engine_to_sun8i_mixer(engine);
++
++	if (!mixer->cfg->stop_dma_on_modeset)
++		return;
++
++	regmap_update_bits(engine->regs, SUN8I_MIXER_GLOBAL_CTL,
++			   SUN8I_MIXER_GLOBAL_CTL_RT_EN,
++			   SUN8I_MIXER_GLOBAL_CTL_RT_EN);
++}
++
++static void sun8i_mixer_atomic_disable(struct sunxi_engine *engine,
++				       struct drm_crtc *crtc,
++				       struct drm_atomic_commit *state)
++{
++	struct sun8i_mixer *mixer = engine_to_sun8i_mixer(engine);
++	struct drm_crtc_state *old_state;
++
++	if (!mixer->cfg->stop_dma_on_modeset)
++		return;
++
++	old_state = drm_atomic_get_old_crtc_state(state, crtc);
++	drm_atomic_helper_disable_planes_on_crtc(old_state, false);
++	regmap_write(engine->regs, SUN8I_MIXER_GLOBAL_DBUFF,
++		     SUN8I_MIXER_GLOBAL_DBUFF_ENABLE);
++	if (old_state->active)
++		drm_crtc_wait_one_vblank(crtc);
++	regmap_update_bits(engine->regs, SUN8I_MIXER_GLOBAL_CTL,
++			   SUN8I_MIXER_GLOBAL_CTL_RT_EN, 0);
++}
++
+ static const struct sunxi_engine_ops sun8i_engine_ops = {
++	.atomic_enable	= sun8i_mixer_atomic_enable,
++	.atomic_disable	= sun8i_mixer_atomic_disable,
+ 	.commit		= sun8i_mixer_commit,
+ 	.layers_init	= sun8i_layers_init,
+ 	.mode_set	= sun8i_mixer_mode_set,
+@@ -794,6 +829,7 @@ static const struct sun8i_mixer_cfg sun8i_v3s_mixer_cfg = {
+ };
+ 
+ static const struct sun8i_mixer_cfg sun20i_d1_mixer0_cfg = {
++	.stop_dma_on_modeset = true,
+ 	.lay_cfg = {
+ 		.ccsc		= CCSC_D1_MIXER0_LAYOUT,
+ 		.de_type	= SUN8I_MIXER_DE2,
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
+@@ -203,6 +203,7 @@ struct sun8i_mixer_cfg {
+ 	unsigned int		de_type;
+ 	unsigned long		mod_rate;
+ 	unsigned int		map[6];
++	bool stop_dma_on_modeset;
+ };
+ 
+ struct sun8i_mixer {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_ui_layer.c
+@@ -203,7 +203,14 @@ static void sun8i_ui_layer_atomic_update(struct drm_plane *plane,
+ 	sun8i_ui_layer_update_buffer(layer, plane);
+ }
+ 
++static void sun8i_ui_layer_atomic_disable(struct drm_plane *plane,
++					  struct drm_atomic_commit *state)
++{
++	sun8i_ui_layer_disable(plane_to_sun8i_layer(plane));
++}
++
+ static const struct drm_plane_helper_funcs sun8i_ui_layer_helper_funcs = {
++	.atomic_disable	= sun8i_ui_layer_atomic_disable,
+ 	.atomic_check	= sun8i_ui_layer_atomic_check,
+ 	.atomic_update	= sun8i_ui_layer_atomic_update,
+ };
+diff --git a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_vi_layer.c
+@@ -283,7 +283,14 @@ static void sun8i_vi_layer_atomic_update(struct drm_plane *plane,
+ 	sun8i_vi_layer_update_buffer(layer, plane);
+ }
+ 
++static void sun8i_vi_layer_atomic_disable(struct drm_plane *plane,
++					  struct drm_atomic_commit *state)
++{
++	sun8i_vi_layer_disable(plane_to_sun8i_layer(plane));
++}
++
+ static const struct drm_plane_helper_funcs sun8i_vi_layer_helper_funcs = {
++	.atomic_disable	= sun8i_vi_layer_atomic_disable,
+ 	.atomic_check	= sun8i_vi_layer_atomic_check,
+ 	.atomic_update	= sun8i_vi_layer_atomic_update,
+ };
+diff --git a/drivers/gpu/drm/sun4i/sunxi_engine.h b/drivers/gpu/drm/sun4i/sunxi_engine.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sunxi_engine.h
++++ b/drivers/gpu/drm/sun4i/sunxi_engine.h
+@@ -21,6 +21,14 @@ struct sunxi_engine;
+  * implement the proper behaviour.
+  */
+ struct sunxi_engine_ops {
++	/** @atomic_enable: Optional engine enable before the timing controller starts. */
++	void (*atomic_enable)(struct sunxi_engine *engine);
++
++	/** @atomic_disable: Optional DMA stop before the timing controller stops. */
++	void (*atomic_disable)(struct sunxi_engine *engine,
++			       struct drm_crtc *crtc,
++			       struct drm_atomic_commit *state);
++
+ 	/**
+ 	 * @atomic_begin:
+ 	 *
+-- 
+Armbian
+
