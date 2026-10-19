@@ -1,0 +1,422 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: khaliforce <kforce@gmail.com>
+Date: Mon, 5 Oct 2026 13:55:46 +0900
+Subject: sunxi: add the D1 SPL and FIT handoff
+
+Load OpenSBI and U-Boot from SD.
+Pass the detected DRAM size through the firmware DT.
+Based on Samuel Holland's D1 board implementation.
+
+Link: https://github.com/smaeul/u-boot/tree/2e89b706f5c956a70c989cd31665f1429e9a0b48
+Signed-off-by: khaliforce <kforce@gmail.com>
+---
+ arch/riscv/dts/sunxi-u-boot.dtsi |  90 +++++
+ board/sunxi/Kconfig-riscv        |  22 ++
+ board/sunxi/Makefile             |   3 +-
+ board/sunxi/d1.c                 | 173 ++++++++++
+ common/spl/Kconfig               |  13 +-
+ scripts/Makefile.xpl             |   2 +-
+ 6 files changed, 295 insertions(+), 8 deletions(-)
+
+diff --git a/arch/riscv/dts/sunxi-u-boot.dtsi b/arch/riscv/dts/sunxi-u-boot.dtsi
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/dts/sunxi-u-boot.dtsi
+@@ -0,0 +1,90 @@
++// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
++
++#include "binman.dtsi"
++
++/ {
++	cpus {
++		bootph-all;
++	};
++
++	soc {
++		bootph-all;
++#ifdef CONFIG_TARGET_SUN20I_D1
++		/* OpenSBI requires machine-mode timer and IPI nodes in the FIT DTB. */
++		clint@14000000 {
++			compatible = "allwinner,sun20i-d1-clint", "thead,c900-clint";
++			reg = <0x14000000 0xc000>;
++			reg-io-width = <4>;
++			interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
++		};
++#endif
++	};
++};
++
++&binman {
++	u-boot-sunxi-with-spl {
++		filename = "u-boot-sunxi-with-spl.bin";
++		pad-byte = <0xff>;
++
++		blob@0 {
++			/*
++			 * This value matches SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR
++			 * and SYS_SPI_U_BOOT_OFFS if those are defined.
++			 */
++			min-size = <0x8000>;
++			filename = "spl/sunxi-spl.bin";
++		};
++
++		blob@1 {
++			filename = "u-boot.itb";
++		};
++	};
++};
++
++&ccu {
++	bootph-all;
++};
++
++&cpu0 {
++	bootph-all;
++};
++
++&dcxo {
++	bootph-all;
++};
++
++&mbus {
++	bootph-all;
++};
++
++&mmc0 {
++	bootph-all;
++};
++
++&mmc0_pins {
++	bootph-all;
++};
++
++&pio {
++	bootph-all;
++
++	uart0-pb8-pins {
++		bootph-all;
++	};
++
++	uart3-pb-pins {
++		bootph-all;
++	};
++};
++
++&rtc {
++	bootph-all;
++};
++
++&uart0 {
++	bootph-all;
++};
++
++&uart3 {
++	bootph-all;
++};
+diff --git a/board/sunxi/Kconfig-riscv b/board/sunxi/Kconfig-riscv
+index 111111111111..222222222222 100644
+--- a/board/sunxi/Kconfig-riscv
++++ b/board/sunxi/Kconfig-riscv
+@@ -48,4 +48,26 @@ config DRAM_ZQ
+ 	  Set the ZQ calibration value for the fitted memory chips.
+ 	  Use the value tested for the board.
+ 
++config SPL_IMAGE_TYPE
++	string
++	default "sunxi_egon"
++
++config SPL_TEXT_BASE
++	default 0x20060
++
++config SPL_STACK
++	default 0x48000
++
++config SPL_BSS_START_ADDR
++	default 0x43f80000
++
++config SPL_BSS_MAX_SIZE
++	default 0x100000
++
++config SPL_OPENSBI_LOAD_ADDR
++	default 0x40000000
++
++config IDENT_STRING
++	default " Allwinner Technology"
++
+ endif
+diff --git a/board/sunxi/Makefile b/board/sunxi/Makefile
+index 111111111111..222222222222 100644
+--- a/board/sunxi/Makefile
++++ b/board/sunxi/Makefile
+@@ -6,7 +6,8 @@
+ #
+ # (C) Copyright 2000-2003
+ # Wolfgang Denk, DENX Software Engineering, wd@denx.de.
+-obj-y	+= board.o
++obj-$(CONFIG_ARM) += board.o
++obj-$(CONFIG_TARGET_SUN20I_D1) += d1.o
+ obj-$(CONFIG_SUN7I_GMAC)	+= gmac.o
+ obj-$(CONFIG_MACH_SUN4I)	+= dram_sun4i_auto.o
+ obj-$(CONFIG_MACH_SUN5I)	+= dram_sun5i_auto.o
+diff --git a/board/sunxi/d1.c b/board/sunxi/d1.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/board/sunxi/d1.c
+@@ -0,0 +1,173 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2012-2013 Henrik Nordstrom <henrik@henriknordstrom.net>
++ * (C) Copyright 2013 Luke Kenneth Casson Leighton <lkcl@lkcl.net>
++ *
++ * (C) Copyright 2007-2011
++ * Allwinner Technology Co., Ltd. <www.allwinnertech.com>
++ * Tom Cubie <tangliang@allwinnertech.com>
++ *
++ * Copyright (C) 2018 Bin Meng <bmeng.cn@gmail.com>
++ * Copyright (C) 2026 khaliforce <kforce@gmail.com>
++ */
++
++#include <cpu.h>
++#include <dm.h>
++#include <fdt_support.h>
++#include <fdtdec.h>
++#include <init.h>
++#include <ram.h>
++#include <spl.h>
++#include <sunxi_image.h>
++#include <linux/string.h>
++#include <asm/csr.h>
++#include <asm/global_data.h>
++#include <asm/io.h>
++
++#define D1_SPL_HEADER ((struct boot_file_head *)CONFIG_SUNXI_SRAM_ADDRESS)
++#define D1_TOC_HEADER ((struct toc0_main_info *)CONFIG_SUNXI_SRAM_ADDRESS)
++#define D1_BOOT_MMC0 0
++#define D1_BOOT_MMC2 2
++#define D1_BOOT_SPI 3
++#define D1_BOOT_MMC0_HIGH 0x10
++#define D1_BOOT_MMC2_HIGH 0x12
++
++DECLARE_GLOBAL_DATA_PTR;
++
++static int d1_boot_source(void)
++{
++	if (!memcmp(D1_SPL_HEADER->magic, BOOT0_MAGIC, 8))
++		return readb(&D1_SPL_HEADER->boot_media);
++	if (!memcmp(D1_TOC_HEADER->name, TOC0_MAIN_INFO_NAME, 8))
++		return readb(&D1_TOC_HEADER->platform[0]);
++
++	return -1;
++}
++
++u32 spl_boot_device(void)
++{
++	switch (d1_boot_source()) {
++	case D1_BOOT_MMC0:
++	case D1_BOOT_MMC0_HIGH:
++		return BOOT_DEVICE_MMC1;
++	case D1_BOOT_MMC2:
++	case D1_BOOT_MMC2_HIGH:
++		return BOOT_DEVICE_MMC2;
++	case D1_BOOT_SPI:
++		return BOOT_DEVICE_SPI;
++	default:
++		return BOOT_DEVICE_BOARD;
++	}
++}
++
++static unsigned long d1_spl_size(void)
++{
++	if (!memcmp(D1_SPL_HEADER->magic, BOOT0_MAGIC, 8))
++		return readl(&D1_SPL_HEADER->length);
++	if (!memcmp(D1_TOC_HEADER->name, TOC0_MAIN_INFO_NAME, 8))
++		return readl(&D1_TOC_HEADER->length);
++
++	return 0;
++}
++
++unsigned long spl_mmc_get_uboot_raw_sector(struct mmc *mmc,
++					unsigned long raw_sector)
++{
++	unsigned long size = d1_spl_size();
++	unsigned long sector = max(raw_sector, size / 512);
++	int source = d1_boot_source();
++
++	if (source == D1_BOOT_MMC0_HIGH || source == D1_BOOT_MMC2_HIGH)
++		sector += (128 - 8) * 2;
++
++	printf("SPL size = %lu, sector = %lu\n", size, sector);
++
++	return sector;
++}
++
++#if defined(CONFIG_XPL_BUILD)
++int spl_board_init_f(void)
++{
++	struct udevice *dev;
++	int ret;
++
++	ret = cpu_probe_all();
++	if (ret)
++		debug("CPU init failed: %d\n", ret);
++
++	ret = uclass_get_device(UCLASS_RAM, 0, &dev);
++	if (ret)
++		return ret;
++
++	/* Preserve the tested cache and prefetch state. */
++	csr_set(0x7c0, 0x638000);
++	csr_write(0x7c2, 0x70013);
++	csr_write(0x7c1, 0x11ff);
++	csr_write(0x7c5, 0x16e30c);
++
++	return 0;
++}
++
++void spl_perform_board_fixups(struct spl_image_info *image)
++{
++	struct ram_info info;
++	struct udevice *dev;
++	int ret;
++
++	ret = uclass_get_device(UCLASS_RAM, 0, &dev);
++	if (ret)
++		panic("No RAM device\n");
++	ret = ram_get_info(dev, &info);
++	if (ret)
++		panic("No RAM info\n");
++	ret = fdt_fixup_memory(image->fdt_addr, info.base, info.size);
++	if (ret)
++		panic("Failed to update memory DT\n");
++}
++#else
++int board_init(void)
++{
++	return cpu_probe_all();
++}
++
++int dram_init(void)
++{
++	return fdtdec_setup_mem_size_base();
++}
++
++int dram_init_banksize(void)
++{
++	return fdtdec_setup_memory_banksize();
++}
++
++int ft_board_setup(void *blob, struct bd_info *bd)
++{
++	return fdt_fixup_memory(blob, gd->ram_base, gd->ram_size);
++}
++#endif
++
++int board_fit_config_name_match(const char *name)
++{
++	struct boot_file_head *header = D1_SPL_HEADER;
++	const char *wanted = CONFIG_DEFAULT_DEVICE_TREE;
++
++	if (!memcmp(header->spl_signature, SPL_SIGNATURE, 3) &&
++	    header->spl_signature[3] >= SPL_DT_HEADER_VERSION &&
++	    header->dt_name_offset)
++		wanted = (char *)header + header->dt_name_offset;
++
++	if (strcmp(name, wanted))
++		return -1;
++
++	if (!memcmp(header->spl_signature, SPL_SIGNATURE, 3) &&
++	    header->spl_signature[3] >= SPL_ENV_HEADER_VERSION) {
++		if (strlen(name) >= sizeof(header->string_pool))
++			return -EINVAL;
++		if (header->spl_signature[3] < SPL_DT_HEADER_VERSION)
++			header->spl_signature[3] = SPL_DT_HEADER_VERSION;
++		strcpy((char *)&header->string_pool, name);
++		header->dt_name_offset = offsetof(struct boot_file_head, string_pool);
++	}
++
++	return 0;
++}
+diff --git a/common/spl/Kconfig b/common/spl/Kconfig
+index 111111111111..222222222222 100644
+--- a/common/spl/Kconfig
++++ b/common/spl/Kconfig
+@@ -74,6 +74,7 @@ config SPL_MAX_SIZE
+ 	default 0x10000 if ARCH_MX6 && !MX6_OCRAM_256KB
+ 	default 0xbfa0 if MACH_SUN50I_H616 || MACH_SUN50I_A133 || MACH_SUN55I_A523
+ 	default 0x7000 if RCAR_GEN3
++	default 0x27fa0 if TARGET_SUN20I_D1
+ 	default 0x5fa0 if SUNXI_SRAM_ADDRESS = 0x0
+ 	default 0x7fa0 if ARCH_SUNXI
+ 	default 0x10000 if ASPEED_AST2600
+@@ -92,7 +93,7 @@ config SPL_PAD_TO
+ 	default 0x31000 if ARCH_MX6 && MX6_OCRAM_256KB
+ 	default 0x11000 if ARCH_MX7 || (ARCH_MX6 && !MX6_OCRAM_256KB)
+ 	default 0x10000 if ARCH_KEYSTONE
+-	default 0x0 if ARCH_MTMIPS || ARCH_SUNXI
++	default 0x0 if ARCH_MTMIPS || ARCH_SUNXI || TARGET_SUN20I_D1
+ 	default TPL_MAX_SIZE if TPL_MAX_SIZE > SPL_MAX_SIZE
+ 	default SPL_MAX_SIZE
+ 	help
+@@ -389,7 +390,7 @@ config SPL_SYS_MALLOC_SIMPLE
+ config SPL_SHARES_INIT_SP_ADDR
+ 	bool "SPL and U-Boot use the same initial stack pointer location"
+ 	depends on (ARM || ARCH_JZ47XX || MICROBLAZE || RISCV) && SPL_FRAMEWORK
+-	default n if ARCH_SUNXI || ARCH_MX6 || ARCH_MX7 || ARCH_SC5XX
++	default n if ARCH_SUNXI || TARGET_SUN20I_D1 || ARCH_MX6 || ARCH_MX7 || ARCH_SC5XX
+ 	default y
+ 	help
+ 	  In many cases, we can use the same initial stack pointer address for
+@@ -407,7 +408,7 @@ config SPL_HAVE_INIT_STACK
+ 	default y if MACH_SUN50I_H6 || MACH_SUN50I_H616 || MACH_SUN8I_R528
+ 	default y if MACH_SUN50I || MACH_SUN50I_H5
+ 	default y if MACH_SUN9I
+-	default y if ARCH_SUNXI
++	default y if ARCH_SUNXI || TARGET_SUN20I_D1
+ 	default y if ARCH_SC5XX && (SC59X_64 || SC59X)
+ 	default y if ARCH_SC5XX && SC58X
+ 	default y if ARCH_SC5XX && SC57X
+@@ -537,7 +538,7 @@ config SPL_DISPLAY_PRINT
+ config SPL_SYS_MMCSD_RAW_MODE
+ 	bool "Use raw reads to locate the next boot phase"
+ 	depends on SPL_DM_MMC || SPL_MMC
+-	default y if ARCH_SUNXI || ARCH_DAVINCI || ARCH_UNIPHIER || \
++	default y if ARCH_SUNXI || TARGET_SUN20I_D1 || ARCH_DAVINCI || ARCH_UNIPHIER || \
+ 		     ARCH_MX6 || ARCH_MX7 || \
+ 		     ARCH_ROCKCHIP || ARCH_MVEBU || ARCH_SOCFPGA_GEN5 || \
+ 		     ARCH_AT91 || ARCH_ZYNQ || ARCH_KEYSTONE || OMAP34XX || \
+@@ -579,7 +580,7 @@ endchoice
+ config SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR
+ 	hex "Address on the MMC to load U-Boot from"
+ 	depends on SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR
+-	default 0x40 if ARCH_SUNXI
++	default 0x40 if ARCH_SUNXI || TARGET_SUN20I_D1
+ 	default 0x75 if ARCH_DAVINCI
+ 	default 0x8a if ARCH_MX6 || ARCH_MX7
+ 	default 0x100 if ARCH_UNIPHIER
+@@ -596,7 +597,7 @@ config SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR
+ config SYS_MMCSD_RAW_MODE_U_BOOT_DATA_PART_OFFSET
+ 	hex "U-Boot main hardware partition image offset"
+ 	depends on SYS_MMCSD_RAW_MODE_U_BOOT_USE_SECTOR
+-	default 0x10 if ARCH_SUNXI
++	default 0x10 if ARCH_SUNXI || TARGET_SUN20I_D1
+ 	default 0x0
+ 	help
+ 	  On some platforms SPL location depends on hardware partition. The ROM
+diff --git a/scripts/Makefile.xpl b/scripts/Makefile.xpl
+index 111111111111..222222222222 100644
+--- a/scripts/Makefile.xpl
++++ b/scripts/Makefile.xpl
+@@ -275,7 +275,7 @@ endif
+ 
+ INPUTS-$(CONFIG_ARCH_SOCFPGA_SOC64) += $(obj)/u-boot-spl-dtb.hex
+ 
+-ifdef CONFIG_ARCH_SUNXI
++ifneq ($(CONFIG_ARCH_SUNXI)$(CONFIG_TARGET_SUN20I_D1),)
+ INPUTS-y	+= $(obj)/sunxi-spl.bin
+ 
+ ifdef CONFIG_NAND_SUNXI
+-- 
+Armbian
+

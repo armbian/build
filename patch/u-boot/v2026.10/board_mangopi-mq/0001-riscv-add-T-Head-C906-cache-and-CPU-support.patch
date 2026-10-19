@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Mon, 5 Oct 2026 13:24:53 +0900
+Subject: riscv: add T-Head C906 cache and CPU support
+
+Provide C906 cache operations and early ISA setup.
+Keep the CPU startup state that the D1 firmware uses.
+
+Link: https://github.com/smaeul/u-boot/tree/2e89b706f5c956a70c989cd31665f1429e9a0b48
+Link: https://github.com/smaeul/u-boot/commit/a2615b3b161929df1ae151585d4638cc4ab09bf9
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+Co-developed-by: khaliforce <kforce@gmail.com>
+Signed-off-by: khaliforce <kforce@gmail.com>
+---
+ arch/riscv/Kconfig             |  1 +
+ arch/riscv/cpu/c906/Kconfig    |  5 +
+ arch/riscv/cpu/c906/Makefile   |  3 +
+ arch/riscv/cpu/c906/c906_csr.h | 15 ++
+ arch/riscv/cpu/c906/cache.c    | 96 ++++++++++
+ arch/riscv/cpu/c906/cpu.c      | 16 ++
+ 6 files changed, 136 insertions(+)
+
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+index 111111111111..222222222222 100644
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -130,6 +130,7 @@ source "board/xilinx/mbv/Kconfig"
+ 
+ # platform-specific options below
+ source "arch/riscv/cpu/andes/Kconfig"
++source "arch/riscv/cpu/c906/Kconfig"
+ source "arch/riscv/cpu/cv1800b/Kconfig"
+ source "arch/riscv/cpu/fu540/Kconfig"
+ source "arch/riscv/cpu/fu740/Kconfig"
+diff --git a/arch/riscv/cpu/c906/Kconfig b/arch/riscv/cpu/c906/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/cpu/c906/Kconfig
+@@ -0,0 +1,5 @@
++# SPDX-License-Identifier: GPL-2.0+
++
++config THEAD_C906
++	bool
++	select SYS_CACHE_SHIFT_6
+diff --git a/arch/riscv/cpu/c906/Makefile b/arch/riscv/cpu/c906/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/cpu/c906/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0+
++
++obj-y += cache.o cpu.o
+diff --git a/arch/riscv/cpu/c906/c906_csr.h b/arch/riscv/cpu/c906/c906_csr.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/cpu/c906/c906_csr.h
+@@ -0,0 +1,15 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/* Copyright (C) 2026 khaliforce <kforce@gmail.com> */
++
++#ifndef _C906_CSR_H_
++#define _C906_CSR_H_
++
++#define CSR_MXSTATUS		0x7c0
++#define CSR_MHCR		0x7c1
++
++#define MXSTATUS_THEADISAEE	BIT(22)
++#define MXSTATUS_MM		BIT(15)
++#define MHCR_IE			BIT(0)
++#define MHCR_DE			BIT(1)
++
++#endif
+diff --git a/arch/riscv/cpu/c906/cache.c b/arch/riscv/cpu/c906/cache.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/cpu/c906/cache.c
+@@ -0,0 +1,96 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++#include <cpu_func.h>
++#include <asm/cache.h>
++#include <asm/csr.h>
++#include <linux/bitops.h>
++
++#include "c906_csr.h"
++
++#define THEAD_SYNC_I		".long 0x01a0000b"
++#define THEAD_DCACHE_CIALL	".long 0x0030000b"
++#define THEAD_DCACHE_CIPA_A0	".long 0x02b5000b"
++#define THEAD_DCACHE_IALL	".long 0x0020000b"
++#define THEAD_DCACHE_IPA_A0	".long 0x02a5000b"
++#define THEAD_ICACHE_IPA_A0	".long 0x0385000b"
++
++static inline void sync_i(void)
++{
++	asm volatile (THEAD_SYNC_I ::: "memory");
++}
++
++void flush_dcache_all(void)
++{
++	asm volatile (THEAD_DCACHE_CIALL ::: "memory");
++	sync_i();
++}
++
++void flush_dcache_range(unsigned long start, unsigned long end)
++{
++	register ulong addr asm("a0") = start & -CONFIG_SYS_CACHELINE_SIZE;
++
++	for (; addr < end; addr += CONFIG_SYS_CACHELINE_SIZE)
++		asm volatile (THEAD_DCACHE_CIPA_A0 :: "r"(addr) : "memory");
++	sync_i();
++}
++
++void invalidate_dcache_all(void)
++{
++	asm volatile (THEAD_DCACHE_IALL ::: "memory");
++	sync_i();
++}
++
++void invalidate_dcache_range(unsigned long start, unsigned long end)
++{
++	register ulong addr asm("a0") = start & -CONFIG_SYS_CACHELINE_SIZE;
++
++	for (; addr < end; addr += CONFIG_SYS_CACHELINE_SIZE)
++		asm volatile (THEAD_DCACHE_IPA_A0 :: "r"(addr) : "memory");
++	sync_i();
++}
++
++void invalidate_icache_range(unsigned long start, unsigned long end)
++{
++	register ulong addr asm("a0") = start & -CONFIG_SYS_CACHELINE_SIZE;
++
++	for (; addr < end; addr += CONFIG_SYS_CACHELINE_SIZE)
++		asm volatile (THEAD_ICACHE_IPA_A0 :: "r"(addr) : "memory");
++	sync_i();
++}
++
++#if CONFIG_IS_ENABLED(RISCV_MMODE)
++
++void icache_enable(void)
++{
++	invalidate_icache_all();
++	csr_set(CSR_MHCR, MHCR_IE);
++}
++
++void icache_disable(void)
++{
++	csr_clear(CSR_MHCR, MHCR_IE);
++}
++
++int icache_status(void)
++{
++	return csr_read(CSR_MHCR) & MHCR_IE;
++}
++
++void dcache_enable(void)
++{
++	invalidate_dcache_all();
++	csr_set(CSR_MHCR, MHCR_DE);
++}
++
++void dcache_disable(void)
++{
++	flush_dcache_all();
++	csr_clear(CSR_MHCR, MHCR_DE);
++}
++
++int dcache_status(void)
++{
++	return csr_read(CSR_MHCR) & MHCR_DE;
++}
++
++#endif
+diff --git a/arch/riscv/cpu/c906/cpu.c b/arch/riscv/cpu/c906/cpu.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/cpu/c906/cpu.c
+@@ -0,0 +1,16 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (C) 2018, Bin Meng <bmeng.cn@gmail.com>
++ * Copyright (C) 2026 khaliforce <kforce@gmail.com>
++ */
++
++#include <asm/csr.h>
++#include <linux/bitops.h>
++
++#include "c906_csr.h"
++
++void harts_early_init(void)
++{
++	if (CONFIG_IS_ENABLED(RISCV_MMODE))
++		csr_set(CSR_MXSTATUS, MXSTATUS_THEADISAEE | MXSTATUS_MM);
++}
+-- 
+Armbian
+
