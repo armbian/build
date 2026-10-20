@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 19 Oct 2026 16:31:06 +0200
+Subject: clk: sunxi-ng: a80: prepare the CPU clusters for cpufreq
+
+Reparent each cluster to the 24 MHz oscillator while its PLL changes
+rate, as other sunxi SoCs do. Set the AXI dividers to the vendor values,
+CPU/3 for cluster 0 and CPU/4 for cluster 1, and ATB to CPU/4, so that
+they stay in range at the highest cluster rates.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+Assisted-by: Claude Opus 5.5
+---
+ drivers/clk/sunxi-ng/ccu-sun9i-a80.c | 51 +++++++++-
+ 1 file changed, 50 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun9i-a80.c b/drivers/clk/sunxi-ng/ccu-sun9i-a80.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun9i-a80.c
++++ b/drivers/clk/sunxi-ng/ccu-sun9i-a80.c
+@@ -14,6 +14,7 @@
+ #include "ccu_div.h"
+ #include "ccu_gate.h"
+ #include "ccu_mp.h"
++#include "ccu_mux.h"
+ #include "ccu_nkmp.h"
+ #include "ccu_nm.h"
+ #include "ccu_phase.h"
+@@ -1225,8 +1226,42 @@ static void sun9i_a80_cpu_pll_fixup(void __iomem *reg)
+ 	writel(val, reg);
+ }
+ 
++#define SUN9I_A80_C0_CFG_REG		0x054
++#define SUN9I_A80_C1_CFG_REG		0x058
++#define SUN9I_A80_CX_CFG_AXI_MASK	GENMASK(2, 0)
++#define SUN9I_A80_CX_CFG_ATB_MASK	GENMASK(9, 8)
++
++/*
++ * cpufreq raises the cluster clocks well above the boot rate. Keep AXI in
++ * range with the vendor dividers: CPU/3 for cluster 0, CPU/4 for cluster 1.
++ * Run ATB at CPU/4 on both clusters.
++ */
++static void sun9i_a80_cpu_bus_div_fixup(void __iomem *reg, u32 axi, u32 atb)
++{
++	u32 val = readl(reg);
++
++	val &= ~(SUN9I_A80_CX_CFG_AXI_MASK | SUN9I_A80_CX_CFG_ATB_MASK);
++	val |= axi | (atb << 8);
++	writel(val, reg);
++}
++
++static struct ccu_mux_nb sun9i_a80_c0cpux_nb = {
++	.common		= &c0cpux_clk.common,
++	.cm		= &c0cpux_clk.mux,
++	.delay_us	= 1, /* > 8 clock cycles at 24 MHz */
++	.bypass_index	= 0, /* index of 24 MHz oscillator */
++};
++
++static struct ccu_mux_nb sun9i_a80_c1cpux_nb = {
++	.common		= &c1cpux_clk.common,
++	.cm		= &c1cpux_clk.mux,
++	.delay_us	= 1, /* > 8 clock cycles at 24 MHz */
++	.bypass_index	= 0, /* index of 24 MHz oscillator */
++};
++
+ static int sun9i_a80_ccu_probe(struct platform_device *pdev)
+ {
++	int ret;
+ 	void __iomem *reg;
+ 	u32 val;
+ 
+@@ -1243,7 +1278,21 @@ static int sun9i_a80_ccu_probe(struct platform_device *pdev)
+ 	sun9i_a80_cpu_pll_fixup(reg + SUN9I_A80_PLL_C0CPUX_REG);
+ 	sun9i_a80_cpu_pll_fixup(reg + SUN9I_A80_PLL_C1CPUX_REG);
+ 
+-	return devm_sunxi_ccu_probe(&pdev->dev, reg, &sun9i_a80_ccu_desc);
++	/* AXI: 2 = /3, 3 = /4. ATB: M - 1 */
++	sun9i_a80_cpu_bus_div_fixup(reg + SUN9I_A80_C0_CFG_REG, 2, 3);
++	sun9i_a80_cpu_bus_div_fixup(reg + SUN9I_A80_C1_CFG_REG, 3, 3);
++
++	ret = devm_sunxi_ccu_probe(&pdev->dev, reg, &sun9i_a80_ccu_desc);
++	if (ret)
++		return ret;
++
++	/* Reparent the clusters to 24 MHz while their PLL changes rate */
++	ccu_mux_notifier_register(pll_c0cpux_clk.common.hw.clk,
++				  &sun9i_a80_c0cpux_nb);
++	ccu_mux_notifier_register(pll_c1cpux_clk.common.hw.clk,
++				  &sun9i_a80_c1cpux_nb);
++
++	return 0;
+ }
+ 
+ static const struct of_device_id sun9i_a80_ccu_ids[] = {
+-- 
+Armbian
+
