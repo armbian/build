@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+# Overlay names: see "Device tree overlay names" in config/boards/README.md of armbian/build.
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	hinlink-h88k-240x135-lcd.dtbo \
 	rk35xx-radxa-zero-3w-ext-ant.dtbo \
