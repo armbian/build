@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 20 Oct 2026 19:53:20 +0200
+Subject: [PATCH] sunxi: H3: report SCP start errors, keep MPIDR read secure
+
+Print an error when the SCP firmware does not load or start. PSCI waits
+for the SCP, so Linux hangs without it.
+Use a local __secure MPIDR helper. The generic read_mpidr() may be
+emitted out of line in normal .text.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/cpu/armv7/sunxi/psci-scpi.c | 14 ++++++++++++--
+ board/sunxi/board.c                  | 13 ++++++++++---
+ 2 files changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/sunxi/psci-scpi.c b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+index 639a18a32b..f3a33e1f27 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci-scpi.c
++++ b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+@@ -109,11 +109,21 @@ struct scpi_shmem {
+ 
+ static bool __secure_data gic_dist_init;
+ 
++/* Keep this in the secure section; a plain inline may be emitted out of line. */
++static inline u32 __secure scpi_read_mpidr(void)
++{
++	u32 val;
++
++	asm volatile ("mrc p15, 0, %0, c0, c0, 5" : "=r" (val));
++
++	return val;
++}
++
+ static u32 __secure_data lock;
+ 
+ static void __secure scpi_begin_command(void)
+ {
+-	u32 mpidr = read_mpidr();
++	u32 mpidr = scpi_read_mpidr();
+ 
+ 	do {
+ 		while (readl(&lock));
+@@ -220,7 +230,7 @@ static s32 __secure psci_suspend_common(u32 pc, u32 context_id, u32 core_state,
+ 					u32 cluster_state, u32 css_state)
+ 
+ {
+-	u32 target_cpu = read_mpidr();
++	u32 target_cpu = scpi_read_mpidr();
+ 
+ 	if (core_state == SCPI_POWER_OFF)
+ 		psci_save(MPIDR_AFFLVL0(target_cpu), pc, context_id);
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 4adc7b61d4..6119d44b7f 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -874,9 +874,16 @@ int board_late_init(void)
+ #endif
+ 
+ #ifdef CONFIG_REMOTEPROC_SUN6I_AR100
+-	if (!rproc_load(0, CONFIG_SUNXI_SCP_BASE, 1)) {
+-		puts("Starting SCP...\n");
+-		rproc_start(0);
++	{
++		int ret = rproc_load(0, CONFIG_SUNXI_SCP_BASE, 1);
++
++		if (!ret) {
++			puts("Starting SCP...\n");
++			ret = rproc_start(0);
++		}
++		/* PSCI waits for the SCP, so Linux will hang without it. */
++		if (ret)
++			printf("SCP: failed to start firmware: %d\n", ret);
+ 	}
+ #endif
+ 
