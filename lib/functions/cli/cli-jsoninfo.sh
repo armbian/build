@@ -303,6 +303,7 @@ function cli_json_info_run() {
 				export SKIP_IMAGES="${SKIP_IMAGES:-"no"}"
 				export IMAGES_ONLY_OUTDATED_ARTIFACTS="${IMAGES_ONLY_OUTDATED_ARTIFACTS:-"no"}"
 				export MATRIX_ARTIFACT_CHUNKS # the images matrix shares the job outputs with the artifacts matrix
+				export MATRIX_IMAGE_OUTPUT_JOBS="${MATRIX_IMAGE_OUTPUT_JOBS:-"0"}"
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
 
