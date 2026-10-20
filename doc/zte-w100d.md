@@ -44,6 +44,9 @@ BUILD_DESKTOP=yes BUILD_MINIMAL=no   # 桌面
 
 不要同时给 `BUILD_DESKTOP=yes` 和 `BUILD_MINIMAL=yes`。
 
+`BUILD_MINIMAL=yes` 使用 systemd-networkd，没有 NetworkManager/`nmcli`。
+需要 WiFi 联网测试时用 `BUILD_MINIMAL=no`（NetworkManager）。
+
 产物在 `output/images/`，文件名为
 `Armbian-unofficial_*_Zte-w100d_trixie_current_*_*.img`。
 
@@ -53,9 +56,14 @@ BUILD_DESKTOP=yes BUILD_MINIMAL=no   # 桌面
 
 - `aml_autoscript`：vendor bootloader 首先执行的脚本，负责扫描 SD/USB。
 - `s905_autoscript`、`emmc_autoscript`：`booti` 启动脚本。设备树默认为
-  `dtb/amlogic/meson-g12a-x96-max.dtb`。
+  `dtb/amlogic/meson-g12a-w100d.dtb`。
 - `Image`、`uInitrd`、`dtb/amlogic/`：内核、initrd、设备树。
 - `extlinux/extlinux.conf`：构建系统生成，vendor u-boot 不使用。
+
+rootfs 中 WiFi/蓝牙相关文件：
+
+- `/usr/lib/firmware/mediatek/mt7663_n9_v3.bin`、`mt7663pr2h.bin`：固件。
+- `mt7663s.ko`、`btmtksdio.ko`：内核模块（`/lib/modules/<版本>/`）。
 
 ## 5. 写入 SD 卡
 
@@ -95,32 +103,109 @@ sudo /root/install-aml.sh
 
 原 u-boot 备份在 `/root/u-boot-default-aml.img`。
 
-## 8. 调整设备树
+## 8. 设备树
 
-默认使用通用 G12A 设备树 `amlogic/meson-g12a-x96-max.dtb`。
-WiFi、蓝牙、声卡可能不工作。
+默认使用专用设备树 `amlogic/meson-g12a-w100d.dtb`。它由
+`patch/kernel/archive/meson64-6.18/dt/meson-g12a-w100d.dts` 提供，
+与 W103D 移植共用板级定义：
 
-修改 `config/boards/zte-w100d.tvb` 中的 `BOOT_FDT_FILE`：
+- 2 GB 内存，SD_EMMC_B 作为 SDIO（WiFi/蓝牙），SD_EMMC_C 为 eMMC。
+- `compatible = "zte,w100d", "zte,w103d", "amlogic,g12a"`。
+  `zte,w103d` 必须保留：MT7663 combo 驱动按它判断板型。
+- 蓝牙走 SDIO（`btmtksdio`），不走 UART。
 
-```
-BOOT_FDT_FILE="amlogic/meson-g12a-x96-max.dtb"
-```
-
-可选设备树在 `/boot/dtb/amlogic/`：
+其他 G12A 设备树仍保留在 `/boot/dtb/amlogic/`，可作对照：
 
 - `meson-g12a-x96-max.dtb`
 - `meson-g12a-sei510.dtb`
 - `meson-g12a-u200.dtb`
 
-修改后重新构建。也可在已安装系统上改 `/boot/s905_autoscript` 里的 `setenv fdtfile`
-（脚本为 uImage，需用 `mkimage` 重新编译）。
+在已安装系统上可改 `/boot/armbianEnv.txt` 的 `fdtfile`，或改
+`/boot/s905_autoscript` 里的 `setenv fdtfile`（脚本为 uImage，需用 `mkimage`
+重新编译）。
 
-## 9. 常见问题
+## 9. WiFi 与蓝牙
+
+W100D 使用 MediaTek MT7661LSN（MT7663 SDIO combo）。内核补丁
+`zz-board-zte-w100d-mt7663.patch` 增加 `mt7663s` 驱动和
+`btmtksdio` combo 协调。BSP 包安装两个固件：
+
+| 文件 | sha256 |
+| --- | --- |
+| `mt7663_n9_v3.bin` | `223f73f17f0f986dc4e7167daa6eef14ffb41c713f22d70f9645eb049bdec80a` |
+| `mt7663pr2h.bin` | `534f2152f9b0f48dfcec9c1727b0bab9a3727a655d76d5ec818cc39a55602336` |
+
+启动后检查：
+
+```bash
+dmesg | grep -iE "mt7663|btmtk|sdio"
+ip link
+nmcli device wifi list
+rfkill list
+bluetoothctl show
+```
+
+连 WiFi（NetworkManager）：
+
+```bash
+sudo rfkill unblock wifi
+nmcli radio wifi on
+nmcli device wifi list
+sudo nmcli device wifi connect "SSID" password "PASSWORD"
+nmcli connection show
+ip addr show wlan0
+```
+
+隐藏网络加 `hidden yes`。也可用 `sudo armbian-config` → Network → WiFi。
+
+连蓝牙：
+
+```bash
+bluetoothctl
+power on
+scan on
+pair XX:XX:XX:XX:XX:XX
+connect XX:XX:XX:XX:XX:XX
+trust XX:XX:XX:XX:XX:XX
+```
+
+`mt7663s` 未加载时：
+
+```bash
+sudo modprobe mt7663s
+dmesg | tail -50
+```
+
+`modprobe mt7663s` 会先加载 `btmtksdio`，两者共用同一张 SDIO 卡。
+若只有蓝牙或只有 WiFi，检查 DTB 中 `sd_emmc_b` 是否为 `okay`，
+以及 `zte,w103d` 是否仍在 compatible 列表中。
+
+`ip link` 没有 `wlan0` 时：
+
+```bash
+lsmod | grep -E "mt7663|btmtk|mt76"
+sudo modprobe mt7663s
+dmesg | grep -iE "mt7663|mt76|sdio|firmware"
+cat /proc/device-tree/model          # 应为 ZTE W100D
+ls -l /lib/firmware/mediatek/mt7663*
+```
+
+旧 eMMC 系统没有驱动和固件，必须启动新镜像或重新执行
+`/root/install-aml.sh`。`dmesg` 无 SDIO 枚举时，确认启动的是
+`meson-g12a-w100d.dtb`，不是 `x96-max`。
+
+## 10. 常见问题
 
 - 不启动：确认已顶 Reset 进入 SD 启动；确认 boot 分区类型为 `0x0c` 且有 `aml_autoscript`。
 - 反复重启：多为 boot 分区类型为 `0xea`，vendor u-boot 读不到脚本。
 - 无显示：尝试另一个 G12A 设备树。
-- 无 WiFi：通用设备树不含 W100D 的 WiFi 节点，需要专用设备树。
+- 无 WiFi/蓝牙：确认使用 `meson-g12a-w100d.dtb`；`dmesg | grep -i sdio` 查看
+  SDIO 枚举；确认 `mt7663_n9_v3.bin` 与 `mt7663pr2h.bin` 位于
+  `/usr/lib/firmware/mediatek/`。
+- 没有 `nmcli`：镜像是 `BUILD_MINIMAL=yes`（systemd-networkd）。改用
+  `BUILD_MINIMAL=no` 重新构建，或用 `wpa_supplicant` 手动联网。
+- `wlan0` 不存在且 `modprobe mt7663s` 报 “module not found”：当前运行的是旧
+  eMMC 系统。启动新镜像，或在新系统中执行 `/root/install-aml.sh`。
 - 构建报 binfmt 错误：WSL2 环境需先注册 qemu binfmt。
 - USB Burning Tool 提示“解析烧录固件失败”：工具不支持 Armbian 镜像，
   请改用 SD 卡或 U 盘刷写（见第 5 节）。
