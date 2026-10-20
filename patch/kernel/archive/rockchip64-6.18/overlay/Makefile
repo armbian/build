@@ -128,7 +128,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-orangepi-5-ap6275p.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
-       rockchip-fixup.scr
+       rockchip-fixup.scr \
+       rockchip-rk3399-fixup.scr
 
 dtbotxt-$(CONFIG_ARCH_ROCKCHIP) += \
        README.rockchip-overlays

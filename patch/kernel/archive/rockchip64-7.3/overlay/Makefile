@@ -130,7 +130,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-orangepi5-pro-restore-fan-param.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
-       rockchip-fixup.scr
+       rockchip-fixup.scr \
+       rockchip-rk3399-fixup.scr
 
 dtbotxt-$(CONFIG_ARCH_ROCKCHIP) += \
        README.rockchip-overlays
