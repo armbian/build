@@ -11,8 +11,8 @@ BOOT_LOGO="desktop"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
-BOOTBRANCH_BOARD="tag:v2026.07"
-BOOTPATCHDIR="v2026.07-sunxi64"
+BOOTBRANCH_BOARD="tag:v2026.10"
+BOOTPATCHDIR="v2026.10-sunxi64"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 # Prebuilt FFmpeg v4l2-request (userspace app) lives in an extension per review; the
 # extension adds its own libx264 runtime to the package list in its config hook.

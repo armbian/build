@@ -1,4 +1,9 @@
-# `v2026.07-sunxi64` — 64-bit sunxi u-boot patch dir (migration target)
+# `v2026.10-sunxi64` — 64-bit sunxi u-boot patch dir
+
+Moved from `v2026.07-sunxi64` to u-boot **v2026.10**. The A523 SPI and SPI-boot
+patches are dropped: v2026.10 has them upstream. The other patches are rebased.
+
+## History
 
 The 64-bit sunxi family (`sunxi64_common.inc`, sun50i: A64/H5/H6/H616/…) moved from
 u-boot **v2024.01** to **v2026.07-rc4** so it builds on Debian trixie hosts (old
