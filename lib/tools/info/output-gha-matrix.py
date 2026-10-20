@@ -188,10 +188,10 @@ def utf16_bytes(text):
 	return len(text.encode("utf-16-le"))
 
 
-def limit_matrix_bytes(matrix, max_bytes, type_name):
+def limit_matrix_bytes(matrix, max_bytes, type_name, chunk_count):
 	# Each item is serialized with a ", " separator; each chunk adds its wrapper and three outputs.
-	chunk_outputs = f'{type_name}-chunk-json-{num_chunks}={{"include": []}}\n{type_name}-chunk-not-empty-{num_chunks}=yes\n{type_name}-chunk-size-{num_chunks}={max_chunk_size}\n'
-	total = num_chunks * utf16_bytes(chunk_outputs)
+	chunk_outputs = f'{type_name}-chunk-json-{chunk_count}={{"include": []}}\n{type_name}-chunk-not-empty-{chunk_count}=yes\n{type_name}-chunk-size-{chunk_count}={max_chunk_size}\n'
+	total = chunk_count * utf16_bytes(chunk_outputs)
 	for index, item in enumerate(matrix):
 		total += utf16_bytes(json.dumps(item) + ", ")
 		if total > max_bytes:
@@ -207,9 +207,11 @@ max_chunk_size = 250
 matrix_max_bytes = job_outputs_max_bytes
 if type_gen == "images":
 	# Generate the artifacts matrix again, only to measure it. Hide its log; the artifacts run shows it.
-	num_chunks = int(sys.argv[3]) if len(sys.argv) >= 4 else 1
 	logging.disable(logging.WARNING)
-	_, artifacts_bytes = limit_matrix_bytes([add_job_fields(item) for item in generate_matrix_artifacts(info)], job_outputs_max_bytes, "artifacts")
+	artifacts_matrix = [add_job_fields(item) for item in generate_matrix_artifacts(info)]
+	# MATRIX_ARTIFACT_CHUNKS: the chunk count of the artifacts run; the same automatic count when not set.
+	artifact_chunks = int(armbian_utils.get_from_env("MATRIX_ARTIFACT_CHUNKS") or int(len(artifacts_matrix) / ideal_chunk_size) + 1)
+	_, artifacts_bytes = limit_matrix_bytes(artifacts_matrix, job_outputs_max_bytes, "artifacts", artifact_chunks)
 	logging.disable(logging.NOTSET)
 	overflow_max_counts.clear()
 	matrix_max_bytes -= artifacts_bytes
@@ -237,7 +239,7 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
-matrix, matrix_bytes = limit_matrix_bytes(matrix, matrix_max_bytes, type_gen)
+matrix, matrix_bytes = limit_matrix_bytes(matrix, matrix_max_bytes, type_gen, num_chunks)
 
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
