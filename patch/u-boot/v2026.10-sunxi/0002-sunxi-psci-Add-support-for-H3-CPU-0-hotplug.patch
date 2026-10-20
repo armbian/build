@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 17:12:57 -0500
+Subject: [PATCH] sunxi: psci: Add support for H3 CPU 0 hotplug
+
+Due to a bug in the H3 SoC, where the CPU 0 hotplug flag cannot be
+written, resuming CPU 0 requires using the "Super Standby" code path in
+the BROM instead of the hotplug path. This path requires jumping to an
+eGON image in SRAM.
+
+Add support to the build system to generate this eGON image and include
+it in the FIT, and add code to direct the BROM to its location in SRAM.
+
+Since the Super Standby code path in the BROM initializes the CPU and
+AHB1 clocks to 24 MHz, those registers need to be restored after control
+passes back to U-Boot. Furthermore, because the BROM lowers the AHB1
+clock divider to /1 before switching to the lower-frequency parent,
+PLL_PERIPH0 must be bypassed to prevent AHB1 from temporarily running at
+600 MHz. Otherwise, this locks up the SoC.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+(cherry picked from commit e814c64fcbd08fb588b7e52b7e968ed9feb2d747)
+(cherry picked from commit e6271271b940f3cfab4573b33575dabd7568ccd0)
+---
+ Makefile                        | 17 +++++++++++++++++
+ arch/arm/cpu/armv7/sunxi/psci.c | 32 ++++++++++++++++++++++++++++++++
+ arch/arm/dts/sunxi-u-boot.dtsi  | 23 ++++++++++++++++++++---
+ arch/arm/mach-sunxi/Kconfig     |  7 +++++++
+ 4 files changed, 76 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 51014fe47a..af453fcf2d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1301,6 +1301,23 @@ ifeq ($(CONFIG_ARCH_ROCKCHIP)_$(CONFIG_SPL_FRAMEWORK),y_)
+ INPUTS-y += u-boot.img
+ endif
+ 
++ifeq ($(CONFIG_MACH_SUN8I_H3)$(CONFIG_ARMV7_PSCI),yy)
++INPUTS-$(CONFIG_ARMV7_PSCI) += u-boot-resume.img
++
++MKIMAGEFLAGS_u-boot-resume.img := -B 0x400 -T sunxi_egon
++
++u-boot-resume.img: u-boot-resume.bin
++	$(call if_changed,mkimage)
++
++OBJCOPYFLAGS_u-boot-resume.bin := -O binary
++
++u-boot-resume.bin: u-boot-resume.o
++	$(call if_changed,objcopy)
++
++u-boot-resume.S: u-boot
++	@sed -En 's/(0x[[:xdigit:]]+) +psci_cpu_entry/ldr pc, =\1/p' $<.map > $@
++endif
++
+ INPUTS-$(CONFIG_X86) += u-boot-x86-start16.bin u-boot-x86-reset16.bin \
+ 	$(if $(CONFIG_SPL_X86_16BIT_INIT),spl/u-boot-spl.bin) \
+ 	$(if $(CONFIG_TPL_X86_16BIT_INIT),tpl/u-boot-tpl.bin)
+diff --git a/arch/arm/cpu/armv7/sunxi/psci.c b/arch/arm/cpu/armv7/sunxi/psci.c
+index ac1d1a5a8c..367c45a259 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci.c
++++ b/arch/arm/cpu/armv7/sunxi/psci.c
+@@ -9,6 +9,7 @@
+ #include <config.h>
+ #include <asm/cache.h>
+ 
++#include <asm/arch/clock.h>
+ #include <asm/arch/cpu.h>
+ #include <asm/armv7.h>
+ #include <asm/gic.h>
+@@ -30,7 +31,9 @@
+ #define SUNXI_CPU_RST(cpu)			(0x40 + (cpu) * 0x40 + 0x0)
+ #define SUNXI_CPU_STATUS(cpu)			(0x40 + (cpu) * 0x40 + 0x8)
+ #define SUNXI_GEN_CTRL				(0x184)
++#define SUNXI_SUPER_STANDBY_FLAG		(0x1a0)
+ #define SUNXI_PRIV0				(0x1a4)
++#define SUNXI_PRIV1				(0x1a8)
+ #define SUN7I_CPU1_PWR_CLAMP			(0x1b0)
+ #define SUN7I_CPU1_PWROFF			(0x1b4)
+ #define SUNXI_DBG_CTRL1				(0x1e4)
+@@ -138,6 +141,13 @@ static void __secure sunxi_cpu_set_entry(int __always_unused cpu, void *entry)
+ 	} else {
+ 		writel((u32)entry, SUNXI_CPUCFG_BASE + SUNXI_PRIV0);
+ 	}
++
++	if (CONFIG_SUNXI_RESUME_BASE) {
++		/* Redirect CPU 0 to the secure monitor via the resume shim. */
++		writel(0x16aaefe8, SUNXI_R_CPUCFG_BASE + SUNXI_SUPER_STANDBY_FLAG);
++		writel(0xaa16efe8, SUNXI_R_CPUCFG_BASE + SUNXI_SUPER_STANDBY_FLAG);
++		writel(CONFIG_SUNXI_RESUME_BASE, SUNXI_R_CPUCFG_BASE + SUNXI_PRIV1);
++	}
+ }
+ 
+ static void __secure sunxi_cpu_set_power(int cpu, bool on)
+@@ -306,7 +316,9 @@ out:
+ int __secure psci_cpu_on(u32 __always_unused unused, u32 mpidr, u32 pc,
+ 			 u32 context_id)
+ {
++	struct sunxi_ccm_reg *ccu = (struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
+ 	u32 cpu = (mpidr & 0x3);
++	u32 bus_clk, cpu_clk;
+ 
+ 	/* store target PC and context id */
+ 	psci_save(cpu, pc, context_id);
+@@ -323,12 +335,32 @@ int __secure psci_cpu_on(u32 __always_unused unused, u32 mpidr, u32 pc,
+ 	/* Lock CPU (Disable external debug access) */
+ 	sunxi_cpu_set_locking(cpu, true);
+ 
++	if (IS_ENABLED(CONFIG_MACH_SUN8I_H3) && cpu == 0) {
++		/* Save registers that will be clobbered by the BROM. */
++		cpu_clk = readl(&ccu->cpu_axi_cfg);
++		bus_clk = readl(&ccu->ahb1_apb1_div);
++
++		/* Bypass PLL_PERIPH0 so AHB1 frequency does not spike. */
++		setbits_le32(&ccu->pll6_cfg, BIT(25));
++	}
++
+ 	/* Power up target CPU */
+ 	sunxi_cpu_set_power(cpu, true);
+ 
+ 	/* De-assert reset on target CPU */
+ 	sunxi_cpu_set_reset(cpu, false);
+ 
++	if (IS_ENABLED(CONFIG_MACH_SUN8I_H3) && cpu == 0) {
++		/* Spin until the BROM has clobbered the clock registers. */
++		while (readl(&ccu->ahb1_apb1_div) != 0x00001100);
++
++		/* Restore the registers and turn off PLL_PERIPH0 bypass. */
++		writel(cpu_clk, &ccu->cpu_axi_cfg);
++		writel(bus_clk, &ccu->ahb1_apb1_div);
++
++		clrbits_le32(&ccu->pll6_cfg, BIT(25));
++	}
++
+ 	/* Unlock CPU (Reenable external debug access) */
+ 	sunxi_cpu_set_locking(cpu, false);
+ 
+diff --git a/arch/arm/dts/sunxi-u-boot.dtsi b/arch/arm/dts/sunxi-u-boot.dtsi
+index e1a9a7f5d4..bbc6a0f8bc 100644
+--- a/arch/arm/dts/sunxi-u-boot.dtsi
++++ b/arch/arm/dts/sunxi-u-boot.dtsi
+@@ -79,6 +79,20 @@
+ 				};
+ #endif
+ 
++#if CONFIG_SUNXI_RESUME_BASE
++				resume {
++					description = "Super Standby resume image";
++					type = "standalone";
++					arch = ARCH;
++					compression = "none";
++					load = <CONFIG_SUNXI_RESUME_BASE>;
++
++					blob-ext {
++						filename = "u-boot-resume.img";
++					};
++				};
++#endif
++
+ #if CONFIG_SUNXI_SCP_BASE
+ 				scp {
+ 					description = "SCP firmware";
+@@ -111,12 +125,15 @@
+ 					firmware = "atf";
+ #else
+ 					firmware = "uboot";
++#endif
++					loadables =
++#if CONFIG_SUNXI_RESUME_BASE
++						    "resume",
+ #endif
+ #if CONFIG_SUNXI_SCP_BASE
+-					loadables = "scp", "uboot";
+-#else
+-					loadables = "uboot";
++						    "scp",
+ #endif
++						    "uboot";
+ 					fdt = "fdt-SEQ";
+ 				};
+ 			};
+diff --git a/arch/arm/mach-sunxi/Kconfig b/arch/arm/mach-sunxi/Kconfig
+index b0c5d3cd90..6326bd5cfa 100644
+--- a/arch/arm/mach-sunxi/Kconfig
++++ b/arch/arm/mach-sunxi/Kconfig
+@@ -274,6 +274,13 @@ config SUNXI_BL31_BASE
+ 	help
+ 	  Address where BL31 (TF-A) is loaded, or zero if BL31 is not used.
+ 
++config SUNXI_RESUME_BASE
++	hex
++	default 0x00047c00 if MACH_SUN8I_H3
++	default 0x0
++	help
++	  Address where the resume shim is loaded, or zero if it is not used.
++
+ config SUNXI_SCP_BASE
+ 	hex
+ 	default 0x00050000 if MACH_SUN50I || MACH_SUN50I_H5
