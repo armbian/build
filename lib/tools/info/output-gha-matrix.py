@@ -187,11 +187,17 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
-matrix_hard_limit = 17 * 30  # @TODO: maybe 17*50 later
-# if over the limit, just slice to the limit, add warning about lost jobs
-if len(matrix) > matrix_hard_limit:
-	log.warning(f"Matrix size is over the hard limit of {matrix_hard_limit}, slicing to that limit. Matrix is incomplete.")
-	matrix = matrix[:matrix_hard_limit]
+# GitHub limits the outputs of one job to 1 MiB. The artifacts and the images
+# matrices are outputs of the same job, so each one gets less than half.
+# Count the bytes, not the jobs: a fixed job count dropped valid images.
+matrix_max_bytes = 450 * 1024
+matrix_bytes = 0
+for index, item in enumerate(matrix):
+	matrix_bytes += len(json.dumps(item)) + 64  # 64: fields added below and separators
+	if matrix_bytes > matrix_max_bytes:
+		log.warning(f"Matrix is over {matrix_max_bytes} bytes, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
+		matrix = matrix[:index]
+		break
 
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
