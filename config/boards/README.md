@@ -124,6 +124,7 @@ Follow these rules for new overlays. Then each **OVERLAY_PREFIX** list matches r
 	- RK3566 and RK3568 boards get both SoC prefixes. Use `rockchip-rk3566-` for an overlay that works on both. Use `rockchip-rk3568-` only for hardware that RK3566 does not have.
 - Mainline board overlays: use `rockchip-<soc>-<board>-<name>`, for example `rockchip-rk3588-nanopi-m6-display-dsi1-yx35`. The SoC prefix then covers it. The board needs no **OVERLAY_PREFIX_BOARD**. All boards with that SoC see the overlay; the `<board>` part tells users which board it is for.
 - Vendor kernel overlays (armbian/linux-rockchip): use `<soc>-<name>` and `<soc>-<board>-<name>`, for example `rk3588-rock-5b-sata`.
+	- Exception: the 32-bit vendor kernel names SoC overlays `rockchip-<soc>-<name>`. The `rockchip-rv1106` and `rockchip-rv1126` families use the prefixes `rockchip-rv1106` and `rockchip-rv1126`.
 - Do not use a prefix that covers several SoCs, for example `rk35xx-` or `rockchip-` alone. Do not add an overlay without a prefix.
 - Do not rename an existing overlay, even if its name does not follow these guidelines. Installed systems keep the old name in `armbianEnv.txt`, so a rename breaks them after a kernel upgrade. If an old name does not fit the rules, you can add its prefix to **OVERLAY_PREFIX_BOARD** of the boards that use it.
 - Use **OVERLAY_PREFIX_BOARD** only for such old names. A board prefix also matches longer board names: `rock-5b` also matches `rock-5b-plus-*`.
