@@ -2,6 +2,7 @@
 declare -g BOARD_NAME="Mixtile Core3588E"
 declare -g BOARD_VENDOR="mixtile"
 declare -g BOARDFAMILY="rockchip-rk3588"
+OVERLAY_PREFIX_BOARD="mixtile-core3588e"
 declare -g BOARD_MAINTAINER="rpardini"
 declare -g INTRODUCED="2023"
 declare -g KERNEL_TARGET="edge,vendor"

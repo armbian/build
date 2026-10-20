@@ -11,6 +11,7 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588-turing-rk1.dtb"
+OVERLAY_PREFIX_BOARD="turing-rk1"
 BOOT_SCENARIO="spl-blobs"
 DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_uart9_115200_v1.16.bin'
 
