@@ -1,0 +1,98 @@
+# Amlogic S905X2 quad core, 2GB RAM, 8GB eMMC, WiFi5 + BT5.0, microSD, 3x USB2, HDMI
+# ZTE W100D thin client / cloud terminal (uSmart W100D, W102D, W103D, W105D are similar).
+#
+# This board relies on the vendor u-boot already present on the box. Armbian does
+# not build nor flash u-boot: the vendor u-boot loads Image/uInitrd/dtb directly
+# and boots with booti. No chainloaded u-boot.ext is used.
+BOARD_NAME="ZTE W100D"
+BOARD_VENDOR="zte"
+BOARDFAMILY="meson-gxl" # s905x2 is meson-g12a; the gxl TV-box path is used on purpose
+BOARD_MAINTAINER="yq"
+INTRODUCED="2026"
+
+BOOTSIZE="512"
+BOOTFS_TYPE="fat"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+SERIALCON="ttyAML0"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
+
+# S905X2: pick a generic G12A device tree. Change this if your box's WiFi/audio
+# is not detected; other candidates in /boot/dtb/amlogic: meson-g12a-sei510.dtb,
+# meson-g12a-u200.dtb.
+BOOT_FDT_FILE="amlogic/meson-g12a-x96-max.dtb"
+
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="rootflags=data=writeback console=ttyAML0,115200n8 console=tty0"
+
+# Use the vendor bootloader: no u-boot is built or installed by Armbian.
+function post_family_config__uboot_zte-w100d() {
+	display_alert "$BOARD" "Configuring ($BOARD) non-u-boot" "info"
+	unset BOOTSOURCE
+	declare -g BOOTCONFIG="none"
+}
+
+# The Amlogic vendor u-boot only scans FAT-typed primary partitions.
+# Armbian defaults the boot partition to type 0xea (Linux extended boot),
+# which the vendor u-boot ignores. Use 0x0c (W95 FAT32 LBA) and mark it active.
+function post_create_partitions__zte-w100d_boot_partition() {
+	display_alert "$BOARD" "Setting boot partition type to FAT32 LBA" "info"
+	run_host_command_logged sfdisk --part-type "${SDCARD}.raw" 1 c
+	run_host_command_logged sfdisk --activate "${SDCARD}.raw" 1
+}
+
+function post_family_tweaks_bsp__config_zte-w100d_bsp() {
+	: "${destination:?destination is not set}"
+
+	# Board-specific bsp-cli files live in config/optional/boards/zte-w100d/_packages/bsp-cli
+	display_alert "${BOARD}" "Adjusting perms of bsp-cli files for ${BOARD} in /root" "info"
+	run_host_command_logged chmod -v 744 "${destination}"/root/install-aml.sh
+	run_host_command_logged chmod -v 644 "${destination}"/root/fstab.template
+
+	display_alert "${BOARD}" "Removing armbian-install" "info"
+	run_host_command_logged rm -v "${destination}"/usr/bin/armbian-install
+
+	# X11: G12A uses Panfrost (Mali-G31), so use the glamor/modesetting config.
+	display_alert "${BOARD}" "Installing X11 meson (Panfrost) config" "info"
+	mkdir -p "${destination}"/etc/X11/xorg.conf.d
+	cat <<- 'EOF' > "${destination}"/etc/X11/xorg.conf.d/02-driver.conf
+		Section "Device"
+		    Identifier  "DRM Graphics Accelerated"
+		    Driver      "modesetting"
+		    Option      "AccelMethod"    "glamor"
+		    Option      "DRI"            "2"
+		    Option      "Dri2Vsync"      "true"
+		    Option      "TripleBuffer"   "True"
+		EndSection
+
+		Section "OutputClass"
+		    Identifier "Amlogic"
+		    MatchDriver "meson"
+		    Driver "modesetting"
+		    Option "PrimaryGPU" "true"
+		EndSection
+
+		Section "Screen"
+		    Identifier "Default Screen"
+		    SubSection "Display"
+		        Depth 24
+		    EndSubSection
+		EndSection
+	EOF
+
+	display_alert "${BOARD}" "Adding bsp-cli preinst logic" "info"
+	# Inline function! So this function is automatically hashed when this hook is hashed.
+	function zte-w100d-bsp-cli-preinst() {
+		# update of the board bsp-cli package fails because the filesystem type is
+		# fat and dpkg tries to create a hard link for the existing files as backup,
+		# so rm the files instead in a preinst step
+		[ -f /boot/aml_autoscript ] && rm /boot/aml_autoscript
+		[ -f /boot/emmc_autoscript ] && rm /boot/emmc_autoscript
+		[ -f /boot/s905_autoscript ] && rm /boot/s905_autoscript
+		return 0 # short-circuits above, avoid errors
+	}
+	preinst_functions+=('zte-w100d-bsp-cli-preinst')
+	if false; then zte-w100d-bsp-cli-preinst; fi # so shellcheck stops complaining the function is unused. sorry
+}
