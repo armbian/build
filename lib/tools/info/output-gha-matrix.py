@@ -162,6 +162,59 @@ type_gen = sys.argv[1]
 with open(sys.argv[2]) as f:
 	info = json.load(f)
 
+# GitHub limits the outputs of one job to 1 MB, measured in UTF-16.
+# The artifacts and the images matrices are outputs of the same job and share this limit.
+# The artifacts matrix comes first; the images matrix gets the rest.
+# Count the bytes, not the jobs: a fixed job count dropped valid images.
+job_outputs_max_bytes = 1_000_000 - 16 * 1024  # margin for the other outputs of the job
+
+
+def add_job_fields(item):
+	item["really"] = "yes"
+	# For each item, check if it is going to run in a GH-hosted runner or self-hosted, and set some matrix variables
+	# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
+	# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
+	# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
+	if not (isinstance(item["runs_on"], list) and "self-hosted" in item["runs_on"]):
+		item["shost"] = "no"
+		item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
+	else:
+		item["shost"] = "yes"
+		item["fdepth"] = "0"  # use a string; 1 is shallow, 0 is full
+	return item
+
+
+def utf16_bytes(text):
+	return len(text.encode("utf-16-le"))
+
+
+def limit_matrix_bytes(matrix, max_bytes, type_name):
+	# Each item is serialized with a ", " separator; each chunk adds its wrapper and three outputs.
+	chunk_outputs = f'{type_name}-chunk-json-{num_chunks}={{"include": []}}\n{type_name}-chunk-not-empty-{num_chunks}=yes\n{type_name}-chunk-size-{num_chunks}={max_chunk_size}\n'
+	total = num_chunks * utf16_bytes(chunk_outputs)
+	for index, item in enumerate(matrix):
+		total += utf16_bytes(json.dumps(item) + ", ")
+		if total > max_bytes:
+			log.warning(f"Matrix '{type_name}' is over {max_bytes} bytes, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
+			return matrix[:index], total - utf16_bytes(json.dumps(item) + ", ")
+	return matrix, total
+
+
+# third argument is the number of chunks wanted.
+ideal_chunk_size = 150
+max_chunk_size = 250
+
+matrix_max_bytes = job_outputs_max_bytes
+if type_gen == "images":
+	# Generate the artifacts matrix again, only to measure it. Hide its log; the artifacts run shows it.
+	num_chunks = int(sys.argv[3]) if len(sys.argv) >= 4 else 1
+	logging.disable(logging.WARNING)
+	_, artifacts_bytes = limit_matrix_bytes([add_job_fields(item) for item in generate_matrix_artifacts(info)], job_outputs_max_bytes, "artifacts")
+	logging.disable(logging.NOTSET)
+	overflow_max_counts.clear()
+	matrix_max_bytes -= artifacts_bytes
+	log.info(f"Artifacts matrix uses {artifacts_bytes} bytes; images matrix gets {matrix_max_bytes} bytes.")
+
 matrix = None
 if type_gen == "artifacts":
 	matrix = generate_matrix_artifacts(info)
@@ -170,13 +223,10 @@ elif type_gen == "images":
 else:
 	log.error(f"Unknown type: {type_gen}")
 	sys.exit(1)
+matrix = [add_job_fields(item) for item in matrix]
 
 for name_and_arch, count in overflow_max_counts.items():
 	log.info(f"by-name-and-arch-overflow-max '{name_and_arch}': {count} jobs total")
-
-# third argument is the number of chunks wanted.
-ideal_chunk_size = 150
-max_chunk_size = 250
 
 # check is sys.argv[3] exists...
 if len(sys.argv) >= 4:
@@ -187,17 +237,7 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
-# GitHub limits the outputs of one job to 1 MiB. The artifacts and the images
-# matrices are outputs of the same job, so each one gets less than half.
-# Count the bytes, not the jobs: a fixed job count dropped valid images.
-matrix_max_bytes = 450 * 1024
-matrix_bytes = 0
-for index, item in enumerate(matrix):
-	matrix_bytes += len(json.dumps(item)) + 64  # 64: fields added below and separators
-	if matrix_bytes > matrix_max_bytes:
-		log.warning(f"Matrix is over {matrix_max_bytes} bytes, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
-		matrix = matrix[:index]
-		break
+matrix, matrix_bytes = limit_matrix_bytes(matrix, matrix_max_bytes, type_gen)
 
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
@@ -222,19 +262,6 @@ for i, chunk in enumerate(chunks):
 			{"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
 			 "shost": "no", "fdepth": "1"}
 		]
-	else:
-		for item in chunk:
-			item["really"] = "yes"
-			# For each item in chunk, check if it is going to run in a GH-hosted runner or self-hosted, and set some matrix variables
-			# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
-			# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
-			# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
-			if not (isinstance(item["runs_on"], list) and "self-hosted" in item["runs_on"]):
-				item["shost"] = "no"
-				item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
-			else:
-				item["shost"] = "yes"
-				item["fdepth"] = "0"  # use a string; 1 is shallow, 0 is full
 
 	# Directly set outputs for _each_ GHA chunk here.
 	gha.set_gha_output(f"{type_gen}-chunk-json-{i + 1}", json.dumps({"include": chunk}))
