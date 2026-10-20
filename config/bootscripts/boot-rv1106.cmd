@@ -50,15 +50,13 @@ fdt resize 65536
 for overlay_file in ${overlays}; do
 	setenv overlay_found "false"
 	for overlay_prefix_item in ${overlay_prefix}; do
-		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
 			setenv overlay_found "true"
-			load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix_item}-${overlay_file}.dtbo
 			echo "Applying kernel provided DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo"
 			fdt apply ${load_addr} || setenv overlay_error "true"
 		fi
 	done
-	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_file}.dtbo; then
-		load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_file}.dtbo
+	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
@@ -74,8 +72,7 @@ if test "${overlay_error}" = "true"; then
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
 	for overlay_prefix_item in ${overlay_prefix}; do
-		if test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix_item}-fixup.scr; then
-			load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix_item}-fixup.scr
+		if test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix_item}-fixup.scr && load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix_item}-fixup.scr; then
 			echo "Applying kernel provided DT fixup script (${overlay_prefix_item}-fixup.scr)"
 			source ${load_addr}
 		fi
