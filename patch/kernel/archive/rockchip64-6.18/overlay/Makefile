@@ -41,6 +41,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3399-helios64-cpu-stability.dtbo \
 	rockchip-rk3399-opp-2ghz.dtbo \
 	rockchip-rk3399-pcie-gen2.dtbo \
+	rockchip-rk3399-rock-pi-4-spdif.dtbo \
 	rockchip-rk3399-spi-jedec-nor.dtbo \
 	rockchip-rk3399-spi-spidev.dtbo \
 	rockchip-rk3399-uart4.dtbo \
