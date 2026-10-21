@@ -31,7 +31,9 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g UEFISIZE="${UEFISIZE:-512}" # user config wins
 		# A zero or non-numeric size gives no EFI partition, but GRUB is still
 		# installed: the image would not boot. Fail here, not at first boot.
-		if [[ ! "${UEFISIZE}" =~ ^[0-9]+$ ]] || [[ "${UEFISIZE}" -lt 1 ]]; then
+		# The pattern carries the whole check, so no arithmetic runs on the value:
+		# bash reads a leading zero as octal, where "010" is 8 and "08" is an error.
+		if [[ ! "${UEFISIZE}" =~ ^[1-9][0-9]*$ ]]; then
 			exit_with_error "UEFISIZE must be a positive size in MiB when GRUB is used" "got '${UEFISIZE}'"
 		fi
 		if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
