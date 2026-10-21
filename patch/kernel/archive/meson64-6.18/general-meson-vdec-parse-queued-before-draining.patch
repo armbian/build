@@ -1,0 +1,192 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John O'Callaghan <johnocallaghan@gmail.com>
+Date: Wed, 21 Oct 2026 18:25:10 +0100
+Subject: media: meson: vdec: parse queued buffers before draining
+
+V4L2_DEC_CMD_STOP stops the parser at once.
+OUTPUT buffers still in the queue are never decoded.
+FFmpeg queues 16 buffers ahead, so VP9 loses 16 frames.
+H.264 and MPEG-1/2 can also fail to end the stream.
+
+Keep parsing until the OUTPUT queue is empty.
+Then write the EOS sequence, or flush the codec.
+
+Run the flush under sess->lock, so stream-off cannot free what it uses.
+Cancel the work when the file closes.
+
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: John O'Callaghan <johnocallaghan@gmail.com>
+---
+ drivers/staging/media/meson/vdec/esparser.c   | 33 ++++++++++++++++++-
+ drivers/staging/media/meson/vdec/vdec.c       | 24 ++++++++------
+ drivers/staging/media/meson/vdec/vdec.h       |  4 +++
+ .../staging/media/meson/vdec/vdec_helpers.c   |  2 +-
+ 4 files changed, 51 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/esparser.c b/drivers/staging/media/meson/vdec/esparser.c
+index 96e14cd..fec2710 100644
+--- a/drivers/staging/media/meson/vdec/esparser.c
++++ b/drivers/staging/media/meson/vdec/esparser.c
+@@ -381,16 +381,47 @@ void esparser_queue_all_src(struct work_struct *work)
+ 	struct v4l2_m2m_buffer *buf, *n;
+ 	struct amvdec_session *sess =
+ 		container_of(work, struct amvdec_session, esparser_queue_work);
++	struct amvdec_codec_ops *codec_ops;
++	bool flush = false;
+ 
+ 	mutex_lock(&sess->lock);
+ 	v4l2_m2m_for_each_src_buf_safe(sess->m2m_ctx, buf, n) {
+-		if (sess->should_stop)
++		if (sess->should_stop && !sess->draining)
+ 			break;
+ 
+ 		if (esparser_queue(sess, &buf->vb) < 0)
+ 			break;
+ 	}
++
++	/*
++	 * V4L2_DEC_CMD_STOP is being handled and all the src buffers queued
++	 * before it have been parsed: finish the drain.
++	 */
++	if (sess->draining && !v4l2_m2m_num_src_bufs_ready(sess->m2m_ctx)) {
++		codec_ops = sess->fmt_out->codec_ops;
++
++		sess->draining = 0;
++		if (codec_ops->drain) {
++			flush = true;
++		} else if (codec_ops->eos_sequence) {
++			const u8 *data;
++			u32 len;
++
++			data = codec_ops->eos_sequence(&len);
++			esparser_queue_eos(sess->core, data, len);
++		}
++	}
+ 	mutex_unlock(&sess->lock);
++
++	if (flush) {
++		vdec_wait_inactive(sess);
++
++		/* stop_streaming() frees what the drain uses: take the lock */
++		mutex_lock(&sess->lock);
++		if (sess->status >= STATUS_RUNNING)
++			codec_ops->drain(sess);
++		mutex_unlock(&sess->lock);
++	}
+ }
+ 
+ int esparser_power_up(struct amvdec_session *sess)
+diff --git a/drivers/staging/media/meson/vdec/vdec.c b/drivers/staging/media/meson/vdec/vdec.c
+index f694ad3..9648ce4 100644
+--- a/drivers/staging/media/meson/vdec/vdec.c
++++ b/drivers/staging/media/meson/vdec/vdec.c
+@@ -104,7 +104,7 @@ disable_dos_parser:
+ 	return ret;
+ }
+ 
+-static void vdec_wait_inactive(struct amvdec_session *sess)
++void vdec_wait_inactive(struct amvdec_session *sess)
+ {
+ 	/* We consider 50ms with no IRQ to be inactive. */
+ 	while (time_is_after_jiffies64(sess->last_irq_jiffies +
+@@ -118,6 +118,7 @@ static void vdec_poweroff(struct amvdec_session *sess)
+ 	struct amvdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
+ 
+ 	sess->should_stop = 1;
++	sess->draining = 0;
+ 	vdec_wait_inactive(sess);
+ 	if (codec_ops->drain)
+ 		codec_ops->drain(sess);
+@@ -340,6 +341,7 @@ static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	}
+ 
+ 	sess->should_stop = 0;
++	sess->draining = 0;
+ 	sess->keyframe_found = 0;
+ 	sess->last_offset = 0;
+ 	sess->wrap_count = 0;
+@@ -740,6 +742,7 @@ vdec_decoder_cmd(struct file *file, void *fh, struct v4l2_decoder_cmd *cmd)
+ 	if (cmd->cmd == V4L2_DEC_CMD_START) {
+ 		v4l2_m2m_clear_state(sess->m2m_ctx);
+ 		sess->should_stop = 0;
++		sess->draining = 0;
+ 		return 0;
+ 	}
+ 
+@@ -753,15 +756,14 @@ vdec_decoder_cmd(struct file *file, void *fh, struct v4l2_decoder_cmd *cmd)
+ 
+ 	v4l2_m2m_mark_stopped(sess->m2m_ctx);
+ 
+-	if (codec_ops->drain) {
+-		vdec_wait_inactive(sess);
+-		codec_ops->drain(sess);
+-	} else if (codec_ops->eos_sequence) {
+-		u32 len;
+-		const u8 *data = codec_ops->eos_sequence(&len);
+-
+-		esparser_queue_eos(sess->core, data, len);
+-		vdec_wait_inactive(sess);
++	if (codec_ops->drain || codec_ops->eos_sequence) {
++		/*
++		 * The src buffers queued before the command still have to be
++		 * decoded: the ESPARSER work parses them all, then finishes the
++		 * drain.
++		 */
++		sess->draining = 1;
++		schedule_work(&sess->esparser_queue_work);
+ 	}
+ 
+ 	return ret;
+@@ -943,7 +945,9 @@ static int vdec_close(struct file *file)
+ {
+ 	struct amvdec_session *sess = file_to_amvdec_session(file);
+ 
++	cancel_work_sync(&sess->esparser_queue_work);
+ 	v4l2_m2m_ctx_release(sess->m2m_ctx);
++	cancel_work_sync(&sess->esparser_queue_work);
+ 	v4l2_m2m_release(sess->m2m_dev);
+ 	v4l2_fh_del(&sess->fh, file);
+ 	v4l2_fh_exit(&sess->fh);
+diff --git a/drivers/staging/media/meson/vdec/vdec.h b/drivers/staging/media/meson/vdec/vdec.h
+index ca8a872..a0449c7 100644
+--- a/drivers/staging/media/meson/vdec/vdec.h
++++ b/drivers/staging/media/meson/vdec/vdec.h
+@@ -206,6 +206,8 @@ enum amvdec_status {
+  * @sequence_out: output sequence counter
+  * @should_stop: flag set if userspace signaled EOS via command
+  *		 or empty buffer
++ * @draining: flag set by V4L2_DEC_CMD_STOP until the EOS sequence has been
++ *	      written to the ESPARSER, after the remaining src buffers
+  * @keyframe_found: flag set once a keyframe has been parsed
+  * @num_dst_bufs: number of destination buffers
+  * @changed_format: the format changed
+@@ -256,6 +258,7 @@ struct amvdec_session {
+ 	unsigned int streamon_cap, streamon_out;
+ 	unsigned int sequence_cap, sequence_out;
+ 	unsigned int should_stop;
++	unsigned int draining;
+ 	unsigned int keyframe_found;
+ 	unsigned int num_dst_bufs;
+ 	unsigned int changed_format;
+@@ -289,5 +292,6 @@ static inline struct amvdec_session *file_to_amvdec_session(struct file *filp)
+ }
+ 
+ u32 amvdec_get_output_size(struct amvdec_session *sess);
++void vdec_wait_inactive(struct amvdec_session *sess);
+ 
+ #endif
+diff --git a/drivers/staging/media/meson/vdec/vdec_helpers.c b/drivers/staging/media/meson/vdec/vdec_helpers.c
+index d684057..6c2e9a2 100644
+--- a/drivers/staging/media/meson/vdec/vdec_helpers.c
++++ b/drivers/staging/media/meson/vdec/vdec_helpers.c
+@@ -303,7 +303,7 @@ static void dst_buf_done(struct amvdec_session *sess,
+ 	vbuf->flags = flags;
+ 	vbuf->timecode = timecode;
+ 
+-	if (sess->should_stop &&
++	if (sess->should_stop && !sess->draining &&
+ 	    atomic_read(&sess->esparser_queued_bufs) <= 1) {
+ 		const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
+ 
+-- 
+Armbian

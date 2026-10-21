@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John O'Callaghan <johnocallaghan@gmail.com>
+Date: Wed, 21 Oct 2026 18:25:10 +0100
+Subject: media: meson: vdec: end MPEG-1/2 streams reliably
+
+Three faults stop an MPEG-1/2 stream before its last frames.
+
+The firmware needs more picture start codes after the sequence end code.
+Add three.
+
+A buffer with no picture, such as a bare sequence header, counted as
+in flight. The EOS test never passed. Skip such buffers.
+
+The firmware can report an offset that matches no timestamp.
+Use the oldest timestamp then.
+
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: John O'Callaghan <johnocallaghan@gmail.com>
+---
+ .../staging/media/meson/vdec/codec_mpeg12.c   |  2 +-
+ drivers/staging/media/meson/vdec/esparser.c   | 46 ++++++++++++++++---
+ .../staging/media/meson/vdec/vdec_helpers.c   | 11 +++++
+ 3 files changed, 51 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/codec_mpeg12.c b/drivers/staging/media/meson/vdec/codec_mpeg12.c
+index 48869cc..fbf3890 100644
+--- a/drivers/staging/media/meson/vdec/codec_mpeg12.c
++++ b/drivers/staging/media/meson/vdec/codec_mpeg12.c
+@@ -42,7 +42,7 @@ struct codec_mpeg12 {
+ 	dma_addr_t workspace_paddr;
+ };
+ 
+-static const u8 eos_sequence[SZ_1K] = { 0x00, 0x00, 0x01, 0xB7 };
++static const u8 eos_sequence[SZ_1K] = { 0x00, 0x00, 0x01, 0xB7, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0F, 0xFF, 0xF8, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0F, 0xFF, 0xF8, 0x00, 0x00, 0x01, 0x00, 0x00, 0x0F, 0xFF, 0xF8, };
+ 
+ static const u8 *codec_mpeg12_eos_sequence(u32 *len)
+ {
+diff --git a/drivers/staging/media/meson/vdec/esparser.c b/drivers/staging/media/meson/vdec/esparser.c
+index fec2710..a2c96c9 100644
+--- a/drivers/staging/media/meson/vdec/esparser.c
++++ b/drivers/staging/media/meson/vdec/esparser.c
+@@ -287,6 +287,26 @@ static u32 esparser_get_offset(struct amvdec_session *sess)
+ 	return offset;
+ }
+ 
++/*
++ * A buffer of an MPEG-1/2 stream can hold no picture at all (only a sequence
++ * header, for instance). No frame is going to come out for it, so it must not
++ * count as one waiting to be decoded.
++ */
++static bool esparser_has_picture(const u8 *data, u32 len)
++{
++	u32 i;
++
++	/* No kernel mapping to look at: assume there is a picture */
++	if (!data)
++		return true;
++
++	for (i = 0; i + 3 < len; i++)
++		if (!data[i] && !data[i + 1] && data[i + 2] == 1 && !data[i + 3])
++			return true;
++
++	return false;
++}
++
+ static int
+ esparser_queue(struct amvdec_session *sess, struct vb2_v4l2_buffer *vbuf)
+ {
+@@ -295,6 +315,7 @@ esparser_queue(struct amvdec_session *sess, struct vb2_v4l2_buffer *vbuf)
+ 	struct amvdec_core *core = sess->core;
+ 	struct amvdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
+ 	u32 payload_size = vb2_get_plane_payload(vb, 0);
++	bool has_picture = true;
+ 	dma_addr_t phy = vb2_dma_contig_plane_dma_addr(vb, 0);
+ 	u32 num_dst_bufs = 0;
+ 	u32 offset;
+@@ -328,10 +349,18 @@ esparser_queue(struct amvdec_session *sess, struct vb2_v4l2_buffer *vbuf)
+ 
+ 	offset = esparser_get_offset(sess);
+ 
+-	ret = amvdec_add_ts(sess, vb->timestamp, vbuf->timecode, offset, vbuf->flags);
+-	if (ret) {
+-		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
+-		return ret;
++	if (sess->fmt_out->pixfmt == V4L2_PIX_FMT_MPEG1 ||
++	    sess->fmt_out->pixfmt == V4L2_PIX_FMT_MPEG2)
++		has_picture = esparser_has_picture(vb2_plane_vaddr(vb, 0),
++						   payload_size);
++
++	if (has_picture) {
++		ret = amvdec_add_ts(sess, vb->timestamp, vbuf->timecode,
++				    offset, vbuf->flags);
++		if (ret) {
++			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
++			return ret;
++		}
+ 	}
+ 
+ 	dev_dbg(core->dev, "esparser: ts = %llu pld_size = %u offset = %08X flags = %08X\n",
+@@ -346,7 +375,8 @@ esparser_queue(struct amvdec_session *sess, struct vb2_v4l2_buffer *vbuf)
+ 
+ 		/* If unable to alter buffer to add headers */
+ 		if (payload_size == 0) {
+-			amvdec_remove_ts(sess, vb->timestamp);
++			if (has_picture)
++				amvdec_remove_ts(sess, vb->timestamp);
+ 			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
+ 
+ 			return 0;
+@@ -363,14 +393,16 @@ esparser_queue(struct amvdec_session *sess, struct vb2_v4l2_buffer *vbuf)
+ 
+ 		if (ret < 0 || wp2 == wp) {
+ 			dev_err(core->dev, "esparser: input parsing error ret %d (%x <=> %x)\n", ret, wp, wp2);
+-			amvdec_remove_ts(sess, vb->timestamp);
++			if (has_picture)
++				amvdec_remove_ts(sess, vb->timestamp);
+ 			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
+ 
+ 			return 0;
+ 		}
+ 	}
+ 
+-	atomic_inc(&sess->esparser_queued_bufs);
++	if (has_picture)
++		atomic_inc(&sess->esparser_queued_bufs);
+ 	v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_DONE);
+ 
+ 	return 0;
+diff --git a/drivers/staging/media/meson/vdec/vdec_helpers.c b/drivers/staging/media/meson/vdec/vdec_helpers.c
+index 6c2e9a2..ed589bf 100644
+--- a/drivers/staging/media/meson/vdec/vdec_helpers.c
++++ b/drivers/staging/media/meson/vdec/vdec_helpers.c
+@@ -393,6 +393,17 @@ void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
+ 		match = tmp;
+ 	}
+ 
++	/*
++	 * The offset the MPEG-1/2 firmware reports can be a few bytes off: below
++	 * the offset of the buffer that holds the picture for the first one, and
++	 * the same as the previous picture's for the last ones. Such a picture
++	 * matches no record, but it is the one of the oldest buffer left.
++	 */
++	if (!match && !(sess->fmt_out->flags & V4L2_FMT_FLAG_DYN_RESOLUTION) &&
++	    !list_empty(&sess->timestamps))
++		match = list_first_entry(&sess->timestamps,
++					 struct amvdec_timestamp, list);
++
+ 	if (!match) {
+ 		dev_err(dev, "Buffer %u done but can't match offset (%08X)\n",
+ 			vbuf->vb2_buf.index, offset);
+-- 
+Armbian
