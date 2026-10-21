@@ -233,7 +233,7 @@ function kernel_package_callback_linux_image() {
 			exit_with_error "finddtbs.py failed" "${stubble_find_dtbs}"
 		fi
 		stubble_dtbs=$(echo "${stubble_dtbs_raw}" | sed 's|.*|--devicetree-auto=&|' | tr '\n' ' ')
-		# EXTRA_STUBBLE_DEVICETREES: family-supplied DTBs not yet in stubble hwids (see uefidt.conf).
+		# EXTRA_STUBBLE_DEVICETREES: family-supplied DTBs not yet in stubble hwids (see uefi-arm64-dt.conf).
 		for extra_dtb in "${EXTRA_STUBBLE_DEVICETREES[@]}"; do
 			stubble_dtbs+=" --devicetree-auto=${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}/${extra_dtb}"
 		done
