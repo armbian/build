@@ -153,6 +153,8 @@ function artifact_kernel_prepare_version() {
 	# Extra stubble DTBs change the packaged UKI. Appended ONLY when set, so
 	# families that don't use them keep their exact previous -V hash (no churn).
 	[[ ${#EXTRA_STUBBLE_DEVICETREES[@]} -gt 0 ]] && vars_to_hash+=("${EXTRA_STUBBLE_DEVICETREES[*]}")
+	# Armbian's stubble machdb selects the DTBs in the UKI. Stubble families only.
+	[[ "${KERNEL_DO_STUBBLE}" == "yes" ]] && vars_to_hash+=("$(sha256sum < "${SRC}"/packages/blobs/stubble/machdb.txt | cut -d' ' -f1)")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
