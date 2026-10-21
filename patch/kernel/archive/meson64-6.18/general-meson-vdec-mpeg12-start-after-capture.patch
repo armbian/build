@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John O'Callaghan <johnocallaghan@gmail.com>
+Date: Wed, 21 Oct 2026 18:25:10 +0100
+Subject: media: meson: vdec: start MPEG-1/2 only when CAPTURE
+ streams
+
+MPEG-1/2 reads its CAPTURE buffers once, when the decoder starts.
+GStreamer starts the OUTPUT queue first, so no CAPTURE buffer exists yet.
+The firmware then writes every picture to canvas 0.
+On G12A, canvas 0 is the console framebuffer. Decoding also stalls.
+
+Wait for the CAPTURE queue before the start, as before 876f123b8956.
+
+Fixes: 876f123b8956 ("media: meson: vdec: bring up to compliance")
+Assisted-by: Claude
+Signed-off-by: John O'Callaghan <johnocallaghan@gmail.com>
+---
+ drivers/staging/media/meson/vdec/vdec.c | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/vdec.c b/drivers/staging/media/meson/vdec/vdec.c
+index 8545d62..f694ad3 100644
+--- a/drivers/staging/media/meson/vdec/vdec.c
++++ b/drivers/staging/media/meson/vdec/vdec.c
+@@ -259,6 +259,23 @@ static int vdec_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
+ 	return 0;
+ }
+ 
++/*
++ * The session starts once the OUTPUT queue is streaming. Codecs without
++ * dynamic resolution support (MPEG-1/2) program the canvases of the queued
++ * CAPTURE buffers when they start, so for them the CAPTURE queue has to be
++ * streaming as well.
++ */
++static bool vdec_can_start(struct amvdec_session *sess)
++{
++	if (!sess->streamon_out)
++		return false;
++
++	if (!(sess->fmt_out->flags & V4L2_FMT_FLAG_DYN_RESOLUTION))
++		return sess->streamon_cap;
++
++	return true;
++}
++
+ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
+ {
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+@@ -267,7 +284,7 @@ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
+ 
+ 	v4l2_m2m_buf_queue(m2m_ctx, vbuf);
+ 
+-	if (!sess->streamon_out)
++	if (!vdec_can_start(sess))
+ 		return;
+ 
+ 	if (sess->streamon_cap &&
+@@ -296,7 +313,7 @@ static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
+ 	else
+ 		sess->streamon_cap = 1;
+ 
+-	if (!sess->streamon_out)
++	if (!vdec_can_start(sess))
+ 		return 0;
+ 
+ 	if (sess->status == STATUS_NEEDS_RESUME &&
+-- 
+Armbian
