@@ -21,11 +21,25 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g BOOTCONFIG="none"               # To try and convince lib/ to not build or install u-boot.
 		unset BOOTSOURCE                           # To try and convince lib/ to not build or install u-boot.
 		declare -g IMAGE_PARTITION_TABLE="gpt"     # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		declare -g UEFISIZE=260                    # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-		declare -g BOOTSIZE=0                      # No separate /boot when using UEFI.
+		# in MiB. GRUB's own EFI payload is tiny, but some EFI BIOSes ignore a
+		# partition that is too small.
+		declare -g uefisize_default=260
 		if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
 			declare -g UEFI_MOUNT_POINT=/boot
+			# The EFI partition is now /boot as well. FAT32 has no symlinks, so
+			# the kernel package copies the image in rather than linking it, and
+			# /boot holds a full copy per installed branch. 260 MiB does not fit
+			# two on arm64; the upgrade then dies with "No space left on device"
+			# and leaves the kernel package in iF. Same reasoning, and the same
+			# number, as DEFAULT_BOOTSIZE_FAT in partitioning.sh.
+			uefisize_default=512
 		fi
+		declare -g UEFISIZE="${UEFISIZE:-${uefisize_default}}" # user config wins
+		# No separate /boot when using UEFI: the EFI partition carries it.
+		if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
+			display_alert "BOOTSIZE is ignored with GRUB" "the EFI partition is /boot here; use UEFISIZE=${BOOTSIZE} instead" "wrn"
+		fi
+		declare -g BOOTSIZE=0
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
