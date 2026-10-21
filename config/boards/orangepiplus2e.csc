@@ -5,8 +5,12 @@ BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 INTRODUCED="2017"
 BOOTCONFIG="orangepi_plus2e_defconfig"
+BOOTBRANCH="tag:v2026.10"
+BOOTPATCHDIR="v2026.10-sunxi"
+# Use the generic Crust H3 config, as on Orange Pi PC Plus. It resumes from suspend.
+CRUSTCONFIG="h3_defconfig"
 KERNEL_TARGET="current,edge,legacy"
-KERNEL_TEST_TARGET="legacy"
+KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 
 function post_config_uboot_target__extra_configs_for_orangepi_plus2e() {
