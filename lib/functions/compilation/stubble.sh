@@ -18,6 +18,14 @@ function add_host_dependencies__stubble_dependencies() {
 	EXTRA_BUILD_DEPS+=("systemd-ukify")
 }
 
+# Stubble source configuration. Globals, because artifact_prepare_version() needs
+# the same values to resolve the upstream revision long before compile_stubble()
+# runs. Keep the defaults here only.
+function stubble_declare_git_source() {
+	declare -g STUBBLE_GIT_URL="${STUBBLE_GIT_URL:-"https://github.com/ubuntu/stubble.git"}"
+	declare -g STUBBLE_GIT_BRANCH="${STUBBLE_GIT_BRANCH:-"branch:main"}"
+}
+
 function compile_stubble() {
 	if [[ "${KERNEL_DO_STUBBLE}" != "yes" ]]; then
 		return 0
@@ -26,17 +34,18 @@ function compile_stubble() {
 	display_alert "Preparing stubble" "EFI stub with device-tree loading capability" "info"
 
 	# Stubble source configuration
-	declare STUBBLE_GIT_URL="${STUBBLE_GIT_URL:-"https://github.com/ubuntu/stubble.git"}"
-	declare STUBBLE_GIT_BRANCH="${STUBBLE_GIT_BRANCH:-"branch:main"}"
+	stubble_declare_git_source
 	declare STUBBLE_GIT_DIR="stubble"
 
 	# Fetch stubble source
 	display_alert "Downloading stubble sources" "stubble" "git"
 	fetch_from_repo "${STUBBLE_GIT_URL}" "${STUBBLE_GIT_DIR}" "${STUBBLE_GIT_BRANCH}" "yes"
 
-	# When ref_subdir="yes", fetch_from_repo puts sources in subdirectory named after branch
-	declare stubble_branch_name="${STUBBLE_GIT_BRANCH#branch:}"
-	declare stubble_source_dir="${SRC}/cache/sources/${STUBBLE_GIT_DIR}/${stubble_branch_name}"
+	# With ref_subdir="yes", fetch_from_repo puts the sources under the bare ref
+	# name. Strip any prefix, the way git_parse_ref() does, so a tag: or commit:
+	# ref finds its directory too.
+	declare stubble_ref_name="${STUBBLE_GIT_BRANCH##*:}"
+	declare stubble_source_dir="${SRC}/cache/sources/${STUBBLE_GIT_DIR}/${stubble_ref_name}"
 
 	# Use overlayfs if enabled
 	if [[ "${USE_OVERLAYFS}" == "yes" ]]; then
