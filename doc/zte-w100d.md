@@ -120,9 +120,53 @@ sudo /root/install-aml.sh
 - `meson-g12a-sei510.dtb`
 - `meson-g12a-u200.dtb`
 
-在已安装系统上可改 `/boot/armbianEnv.txt` 的 `fdtfile`，或改
+需要改 `fdtfile` 时，按 8.1 节创建 `/boot/armbianEnv.txt`；也可改
 `/boot/s905_autoscript` 里的 `setenv fdtfile`（脚本为 uImage，需用 `mkimage`
 重新编译）。
+
+### 8.1 启动参数与 armbianEnv.txt
+
+镜像默认没有 `/boot/armbianEnv.txt`。板级配置为 `SRC_EXTLINUX=yes`，
+构建时会删除该文件；`s905_autoscript` / `emmc_autoscript` 使用内置默认值。
+
+需要追加内核参数时，可手动创建该文件。它会整体替换启动脚本的默认
+`extraargs`，因此必须写全：
+
+```bash
+sudo tee /boot/armbianEnv.txt >/dev/null <<'EOF'
+verbosity=1
+bootlogo=false
+console=both
+fdtfile=amlogic/meson-g12a-w100d.dtb
+rootdev=LABEL=armbi_root
+extraargs=rootflags=data=writeback rw no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0
+EOF
+```
+
+`rootdev` 必须与 `blkid` 显示的根分区标签或 UUID 一致。标签不是
+`armbi_root` 时，写成 `rootdev=UUID=<uuid>`。
+
+不要用 Windows 编辑器保存该文件，避免 CRLF。检查：
+
+```bash
+cat -A /boot/armbianEnv.txt
+```
+
+`rootdev` 值后出现 `^M` 时，删除文件或改成 Unix 换行。
+
+EDID 读取失败时可固定 HDMI 模式，在 `extraargs` 末尾追加：
+
+```text
+video=HDMI-A-1:2560x1440@60e
+```
+
+该参数固定输出分辨率，换其他显示器时可能黑屏。只在对应显示器上使用。
+
+### 8.2 开机 logo 与花屏
+
+启动初期的 logo 来自 vendor u-boot，通常是安卓系统遗留的 logo，不是
+`/boot/boot.bmp`。内核 `meson-drm` 接管显示时会有约 2 秒花屏，然后显示
+启动 log。这是 u-boot framebuffer 到 DRM 的交接，不是故障。
 
 ## 9. WiFi 与蓝牙
 
@@ -199,6 +243,11 @@ ls -l /lib/firmware/mediatek/mt7663*
 - 不启动：确认已顶 Reset 进入 SD 启动；确认 boot 分区类型为 `0x0c` 且有 `aml_autoscript`。
 - 反复重启：多为 boot 分区类型为 `0xea`，vendor u-boot 读不到脚本。
 - 无显示：尝试另一个 G12A 设备树。
+- 反复出现 `Begin: Running /scripts/local-block ...` 后停在 `(initramfs)`：
+  initramfs 找不到根分区。多为手动创建的 `/boot/armbianEnv.txt` 中
+  `rootdev` 错误，或文件带 CRLF。从 U 盘启动，挂载 boot 分区并删除该文件，
+  或按 8.1 节修正。应急时在 initramfs 中执行 `blkid`，找到根分区后执行
+  `mount -o rw /dev/mmcblk2p2 /root` 和 `exit`（设备名以实际为准）。
 - 无 WiFi/蓝牙：确认使用 `meson-g12a-w100d.dtb`；`dmesg | grep -i sdio` 查看
   SDIO 枚举；确认 `mt7663_n9_v3.bin` 与 `mt7663pr2h.bin` 位于
   `/usr/lib/firmware/mediatek/`。
