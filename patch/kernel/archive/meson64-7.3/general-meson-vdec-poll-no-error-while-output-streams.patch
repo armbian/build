@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John O'Callaghan <johnocallaghan@gmail.com>
+Date: Wed, 21 Oct 2026 18:25:10 +0100
+Subject: media: meson: vdec: do not fail poll() while OUTPUT
+ streams
+
+The parser consumes OUTPUT buffers at once.
+H.264, VP9 and HEVC start the CAPTURE queue later, after the source
+change event. In that window v4l2_m2m_poll() returns EPOLLERR.
+
+GStreamer then fails to start about one time in two.
+FFmpeg loops on POLLERR.
+
+Ignore the error while the OUTPUT queue streams without errors.
+
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: John O'Callaghan <johnocallaghan@gmail.com>
+---
+ drivers/staging/media/meson/vdec/vdec.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/meson/vdec/vdec.c b/drivers/staging/media/meson/vdec/vdec.c
+index 9648ce4..72785de 100644
+--- a/drivers/staging/media/meson/vdec/vdec.c
++++ b/drivers/staging/media/meson/vdec/vdec.c
+@@ -960,12 +960,33 @@ static int vdec_close(struct file *file)
+ 	return 0;
+ }
+ 
++/*
++ * The ESPARSER consumes the OUTPUT buffers as soon as they are queued, so the
++ * OUTPUT queue is usually empty, and codecs with dynamic resolution support
++ * (H.264, VP9) only start the CAPTURE queue after the source change event.
++ * v4l2_m2m_poll() takes that for a stalled session and returns EPOLLERR,
++ * although events and decoded buffers are still going to arrive. Whether
++ * userspace polls in that window is a race, so don't report an error as long
++ * as the OUTPUT queue is streaming without errors.
++ */
++static __poll_t vdec_poll(struct file *file, struct poll_table_struct *wait)
++{
++	struct amvdec_session *sess = file_to_amvdec_session(file);
++	struct vb2_queue *src_q = v4l2_m2m_get_src_vq(sess->m2m_ctx);
++	__poll_t rc = v4l2_m2m_fop_poll(file, wait);
++
++	if ((rc & EPOLLERR) && vb2_is_streaming(src_q) && !src_q->error)
++		rc &= ~EPOLLERR;
++
++	return rc;
++}
++
+ static const struct v4l2_file_operations vdec_fops = {
+ 	.owner = THIS_MODULE,
+ 	.open = vdec_open,
+ 	.release = vdec_close,
+ 	.unlocked_ioctl = video_ioctl2,
+-	.poll = v4l2_m2m_fop_poll,
++	.poll = vdec_poll,
+ 	.mmap = v4l2_m2m_fop_mmap,
+ };
+ 
+-- 
+Armbian

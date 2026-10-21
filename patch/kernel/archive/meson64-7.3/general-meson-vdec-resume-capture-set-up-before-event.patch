@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: John O'Callaghan <johnocallaghan@gmail.com>
+Date: Wed, 21 Oct 2026 18:25:10 +0100
+Subject: media: meson: vdec: resume when CAPTURE is already set up
+
+FFmpeg sets up CAPTURE before the source change event.
+It then only calls STREAMON.
+
+The driver waits for S_FMT or REQBUFS to set changed_format.
+It never resumes, and no frame arrives.
+
+Keep changed_format set when the allocated CAPTURE buffers already
+fit the reported size. Check their real plane sizes: S_FMT can change
+the size the session remembers after the buffers exist.
+
+Assisted-by: Claude:claude-sonnet-5-5
+Signed-off-by: John O'Callaghan <johnocallaghan@gmail.com>
+---
+ .../staging/media/meson/vdec/vdec_helpers.c   | 52 ++++++++++++++++++-
+ 1 file changed, 50 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/vdec_helpers.c b/drivers/staging/media/meson/vdec/vdec_helpers.c
+index ed589bf..d4895ce 100644
+--- a/drivers/staging/media/meson/vdec/vdec_helpers.c
++++ b/drivers/staging/media/meson/vdec/vdec_helpers.c
+@@ -458,6 +458,48 @@ void amvdec_set_par_from_dar(struct amvdec_session *sess,
+ }
+ EXPORT_SYMBOL_GPL(amvdec_set_par_from_dar);
+ 
++/*
++ * Check the planes of the allocated capture buffers, not the size the session
++ * remembers: S_FMT can change that one after the buffers exist.
++ */
++static bool amvdec_capture_fits(struct amvdec_session *sess, u32 width,
++				u32 height, u32 dpb_size)
++{
++	struct vb2_queue *q = v4l2_m2m_get_dst_vq(sess->m2m_ctx);
++	u32 size = ALIGN(width * height, SZ_64K);
++	unsigned int i, num = vb2_get_num_buffers(q);
++
++	if (!num || num < dpb_size)
++		return false;
++
++	for (i = 0; i < num; i++) {
++		struct vb2_buffer *vb = vb2_get_buffer(q, i);
++
++		if (!vb)
++			return false;
++
++		switch (sess->pixfmt_cap) {
++		case V4L2_PIX_FMT_NV12M:
++			if (vb->num_planes != 2 ||
++			    vb2_plane_size(vb, 0) < size ||
++			    vb2_plane_size(vb, 1) < size / 2)
++				return false;
++			break;
++		case V4L2_PIX_FMT_YUV420M:
++			if (vb->num_planes != 3 ||
++			    vb2_plane_size(vb, 0) < size ||
++			    vb2_plane_size(vb, 1) < size / 4 ||
++			    vb2_plane_size(vb, 2) < size / 4)
++				return false;
++			break;
++		default:
++			return false;
++		}
++	}
++
++	return true;
++}
++
+ void amvdec_src_change(struct amvdec_session *sess, u32 width,
+ 		       u32 height, u32 dpb_size, u32 bitdepth)
+ {
+@@ -480,8 +522,14 @@ void amvdec_src_change(struct amvdec_session *sess, u32 width,
+ 		sess->fmt_out->codec_ops->resume(sess);
+ 	} else {
+ 		sess->status = STATUS_NEEDS_RESUME;
+-		sess->changed_format = 0;
+- 	}
++		/*
++		 * Userspace that has set up the capture queue for this size
++		 * before the event (FFmpeg does) has nothing to reconfigure
++		 * and only starts streaming, which resumes the decoder.
++		 */
++		sess->changed_format = amvdec_capture_fits(sess, width, height,
++							   dpb_size);
++	}
+ 
+ 	sess->width = width;
+ 	sess->height = height;
+-- 
+Armbian
