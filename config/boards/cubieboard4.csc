@@ -1,0 +1,18 @@
+# Allwinner A80 SoC 8 cores 2GB RAM Wi-Fi
+BOARD_NAME="Cubieboard 4"
+BOARD_VENDOR="cubietech"
+BOARDFAMILY="sun9i"
+BOARD_MAINTAINER=""
+INTRODUCED="2015"
+BOOTCONFIG=Cubieboard4_defconfig
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+BOOTBRANCH="tag:v2026.10"
+BOOTPATCHDIR="v2026.10-sunxi"
+
+function post_family_tweaks_bsp__cubieboard4_brcmfmac_no_p2p() {
+	display_alert "$BOARD" "Disabling brcmfmac P2P" "info"
+	# The AP6330 firmware reports P2P, but never creates the P2P device: boot logs a timeout.
+	mkdir -p "${destination}"/etc/modprobe.d
+	echo "options brcmfmac feature_disable=0x10" > "${destination}"/etc/modprobe.d/brcmfmac-cubieboard4.conf
+}

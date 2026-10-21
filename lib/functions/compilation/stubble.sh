@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 
 function add_host_dependencies__stubble_dependencies() {
-	# Only stubble-using configs (KERNEL_DO_STUBBLE=yes, e.g. the uefidt family)
+	# Only stubble-using configs (KERNEL_DO_STUBBLE=yes, e.g. the uefi-arm64-dt family)
 	# need these. systemd-ukify and python3-libfdt aren't in older hosts' repos
 	# (Ubuntu Jammy ships systemd 249 — no ukify), so adding them unconditionally
 	# breaks host-prep for EVERY other build on such a host. Gate on the flag.
@@ -16,6 +16,14 @@ function add_host_dependencies__stubble_dependencies() {
 	EXTRA_BUILD_DEPS+=("python3-pyelftools")
 	EXTRA_BUILD_DEPS+=("python3-libfdt")
 	EXTRA_BUILD_DEPS+=("systemd-ukify")
+}
+
+# Stubble source configuration. Globals, because artifact_prepare_version() needs
+# the same values to resolve the upstream revision long before compile_stubble()
+# runs. Keep the defaults here only.
+function stubble_declare_git_source() {
+	declare -g STUBBLE_GIT_URL="${STUBBLE_GIT_URL:-"https://github.com/ubuntu/stubble.git"}"
+	declare -g STUBBLE_GIT_BRANCH="${STUBBLE_GIT_BRANCH:-"branch:main"}"
 }
 
 function compile_stubble() {
@@ -26,17 +34,18 @@ function compile_stubble() {
 	display_alert "Preparing stubble" "EFI stub with device-tree loading capability" "info"
 
 	# Stubble source configuration
-	declare STUBBLE_GIT_URL="${STUBBLE_GIT_URL:-"https://github.com/ubuntu/stubble.git"}"
-	declare STUBBLE_GIT_BRANCH="${STUBBLE_GIT_BRANCH:-"branch:main"}"
+	stubble_declare_git_source
 	declare STUBBLE_GIT_DIR="stubble"
 
 	# Fetch stubble source
 	display_alert "Downloading stubble sources" "stubble" "git"
 	fetch_from_repo "${STUBBLE_GIT_URL}" "${STUBBLE_GIT_DIR}" "${STUBBLE_GIT_BRANCH}" "yes"
 
-	# When ref_subdir="yes", fetch_from_repo puts sources in subdirectory named after branch
-	declare stubble_branch_name="${STUBBLE_GIT_BRANCH#branch:}"
-	declare stubble_source_dir="${SRC}/cache/sources/${STUBBLE_GIT_DIR}/${stubble_branch_name}"
+	# With ref_subdir="yes", fetch_from_repo puts the sources under the bare ref
+	# name. Strip any prefix, the way git_parse_ref() does, so a tag: or commit:
+	# ref finds its directory too.
+	declare stubble_ref_name="${STUBBLE_GIT_BRANCH##*:}"
+	declare stubble_source_dir="${SRC}/cache/sources/${STUBBLE_GIT_DIR}/${stubble_ref_name}"
 
 	# Use overlayfs if enabled
 	if [[ "${USE_OVERLAYFS}" == "yes" ]]; then
@@ -96,6 +105,15 @@ function compile_stubble() {
 	declare -g STUBBLE_EFI_PATH="${stubble_efi_path}"
 	declare -g STUBBLE_FIND_DTBS="${stubble_source_dir}/hwids/finddtbs.py"
 	declare -g STUBBLE_HWIDS_DIR="${stubble_source_dir}/hwids/json"
+
+	# stubble's machdb plus Armbian's: maps a firmware DT /model to a UKI DTB
+	# compatible, for firmware that passes its own (vendor) device tree.
+	# finddtbs.py also embeds the DTBs that machdb names.
+	declare -g STUBBLE_MACHDB_PATH="${stubble_source_dir}/machdb-armbian.txt"
+	{
+		[[ -f "${stubble_source_dir}/machdb.txt" ]] && cat "${stubble_source_dir}/machdb.txt" && echo
+		cat "${SRC}/packages/blobs/stubble/machdb.txt"
+	} > "${STUBBLE_MACHDB_PATH}"
 
 	# Generate sbat file from template (similar to debian/rules)
 	declare sbat_template="${stubble_source_dir}/debian/sbat.in"

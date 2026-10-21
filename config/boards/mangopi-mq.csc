@@ -16,6 +16,11 @@ enable_extension "mangopi-rtc"
 enable_extension "grub-riscv64"
 enable_extension "mangopi-grub"
 
+# The hardware monitor walks /sys at each boot and triggers the tracefs automount notice.
+function post_customize_image__mangopi_disable_hw_monitor() {
+	chroot_sdcard systemctl disable armbian-hardware-monitor.service "||" true
+}
+
 # Build MQ Pro SPL/FIT with the existing firmware package functions.
 function post_family_config__mangopi_source_boot() {
 	declare -g ATFBRANCH="tag:v1.9" ATFPATCHDIR="atf-opensbi-v1.9"
