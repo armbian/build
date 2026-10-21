@@ -188,16 +188,31 @@ def utf16_bytes(text):
 	return len(text.encode("utf-16-le"))
 
 
+# A chunk can't be empty; it gets this fake item instead.
+fake_chunk_item = {"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none",
+                   "really": "no", "shost": "no", "fdepth": "1"}
+
+
 def limit_matrix_bytes(matrix, max_bytes, type_name, chunk_count):
 	# Each item is serialized with a ", " separator; each chunk adds its wrapper and three outputs.
 	chunk_outputs = f'{type_name}-chunk-json-{chunk_count}={{"include": []}}\n{type_name}-chunk-not-empty-{chunk_count}=yes\n{type_name}-chunk-size-{chunk_count}={max_chunk_size}\n'
+	fake_bytes = utf16_bytes(json.dumps(fake_chunk_item))
+	max_items = chunk_count * max_chunk_size
+
+	def fakes(kept):  # chunks that stay empty get a fake item
+		return max(0, chunk_count - kept) * fake_bytes
+
 	total = chunk_count * utf16_bytes(chunk_outputs)
 	for index, item in enumerate(matrix):
-		total += utf16_bytes(json.dumps(item) + ", ")
-		if total > max_bytes:
+		if index >= max_items:
+			log.warning(f"Matrix '{type_name}' is over {chunk_count} chunks of {max_chunk_size}, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
+			return matrix[:index], total + fakes(index)
+		item_bytes = utf16_bytes(json.dumps(item) + ", ")
+		if total + item_bytes + fakes(index + 1) > max_bytes:
 			log.warning(f"Matrix '{type_name}' is over {max_bytes} bytes, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
-			return matrix[:index], total - utf16_bytes(json.dumps(item) + ", ")
-	return matrix, total
+			return matrix[:index], total + fakes(index)
+		total += item_bytes
+	return matrix, total + fakes(len(matrix))
 
 
 # third argument is the number of chunks wanted.
@@ -260,10 +275,7 @@ for i, chunk in enumerate(chunks):
 	# For the full matrix, we can't have empty chunks; use a "really" field to indicate a fake entry added to make it non-empty.
 	if len(chunk) == 0:
 		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
-		chunks[i] = [
-			{"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
-			 "shost": "no", "fdepth": "1"}
-		]
+		chunks[i] = [fake_chunk_item]
 
 	# Directly set outputs for _each_ GHA chunk here.
 	gha.set_gha_output(f"{type_gen}-chunk-json-{i + 1}", json.dumps({"include": chunk}))
