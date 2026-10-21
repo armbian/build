@@ -97,6 +97,15 @@ function compile_stubble() {
 	declare -g STUBBLE_FIND_DTBS="${stubble_source_dir}/hwids/finddtbs.py"
 	declare -g STUBBLE_HWIDS_DIR="${stubble_source_dir}/hwids/json"
 
+	# stubble's machdb plus Armbian's: maps a firmware DT /model to a UKI DTB
+	# compatible, for firmware that passes its own (vendor) device tree.
+	# finddtbs.py also embeds the DTBs that machdb names.
+	declare -g STUBBLE_MACHDB_PATH="${stubble_source_dir}/machdb-armbian.txt"
+	{
+		[[ -f "${stubble_source_dir}/machdb.txt" ]] && cat "${stubble_source_dir}/machdb.txt" && echo
+		cat "${SRC}/packages/blobs/stubble/machdb.txt"
+	} > "${STUBBLE_MACHDB_PATH}"
+
 	# Generate sbat file from template (similar to debian/rules)
 	declare sbat_template="${stubble_source_dir}/debian/sbat.in"
 	declare sbat_output="${stubble_source_dir}/sbat"
