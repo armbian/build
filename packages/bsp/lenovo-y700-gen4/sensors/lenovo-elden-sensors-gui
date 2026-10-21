@@ -1,0 +1,231 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Touch-friendly GTK dashboard for lenovo-elden sensors."""
+import datetime
+import json
+import os
+from pathlib import Path
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk, Gdk
+
+SENSORS = [
+    ("accelerometer", "Accelerometer", "Tilt the tablet. XYZ should change; the magnitude at rest should be about 9.81 m/s²."),
+    ("gyroscope", "Gyroscope", "Rotate the tablet, then hold still. Angular velocity should change, then approach zero."),
+    ("light", "Ambient light", "Cover and uncover the light sensor. The lux reading should decrease and increase."),
+    ("proximity", "Proximity", "Move your hand toward and away from the sensor. Near should switch between 1 and 0."),
+    ("hall", "Hall / Magnetic cover", "Close and open the magnetic cover. Check that CLOSED and OPEN match the cover."),
+    ("compass", "Compass", "Rotate the tablet horizontally. Heading should change; this alone does not prove calibration accuracy."),
+    ("orientation", "Screen orientation", "Hold upright and rotate through four orientations. A flat tablet can report undefined."),
+    ("gravity", "Gravity", "Tilt slowly. XYZ should change while the vector magnitude stays near 9.81 m/s²."),
+    ("linear_acceleration", "Linear acceleration", "Move gently without rotating, then stop. Values should change, then approach zero."),
+    ("rotv", "Rotation vector", "Rotate slowly. Quaternion XYZW should change; norm should stay near 1. Accuracy 0 means unreliable."),
+    ("game_rv", "Game rotation vector", "Rotate slowly. Quaternion XYZW should change; norm should stay near 1."),
+    ("geomag_rv", "Geomagnetic rotation vector", "Rotate slowly. Quaternion XYZW should change; accuracy 0 means unreliable."),
+    ("pedometer", "Step counter", "Walk normally and count your steps. Compare with DELTA; shaking is not a valid walking test."),
+    ("step_detect", "Step detector", "Walk normally. Report count should increase. Non-walking movements can cause false detections."),
+    ("sig_motion", "Significant motion", "Press Rearm, rest for 15 seconds, then pick up and walk. Fires once; rearm to repeat."),
+    ("tilt", "Tilt detector", "Start flat, then lift upright. Watch for TRIGGERED and an increased report count."),
+    ("amd", "Absolute motion detector", "Alternate between resting and moving. Watch stationary / motion transitions."),
+    ("rmd", "Relative motion detector", "Alternate between resting and moving. Watch stationary / motion transitions."),
+]
+
+
+class SensorWindow(Gtk.Window):
+    def __init__(self, smoke=False):
+        super().__init__(title="lenovo-elden Sensor Test")
+        self.set_default_size(960, 1000)
+        self.maximize()
+        self.process = None
+        self.collector_error = ""
+        self.messages = queue.Queue()
+        self.last = {}
+        self.log_directory = None
+        self.closing = False
+        self.cards = {}
+        self.session_dir = Path.home() / "lenovo-elden-sensor-tests" / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.log = open(self.session_dir / "snapshots.jsonl", "a", buffering=1)
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            window { background: #eef2f6; }
+            button { min-height: 44px; padding: 8px 14px; font-size: 18px; }
+            .card { background: white; border-radius: 12px; padding: 16px; }
+            .title { font-size: 22px; font-weight: bold; color: #123450; }
+            .value { font-size: 19px; color: #123450; }
+            .hint { font-size: 15px; color: #536375; }
+            .status { font-size: 18px; padding: 8px; }
+        """)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_border_width(12)
+        self.add(box)
+        toolbar = Gtk.FlowBox()
+        toolbar.set_selection_mode(Gtk.SelectionMode.NONE)
+        toolbar.set_max_children_per_line(4)
+        box.pack_start(toolbar, False, False, 0)
+        self.start_button = Gtk.Button(label="Start")
+        self.start_button.connect("clicked", self.toggle)
+        toolbar.add(self.start_button)
+        self.rearm_button = Gtk.Button(label="Rearm significant motion")
+        self.rearm_button.connect("clicked", lambda *_: self.command("rearm"))
+        self.rearm_button.set_sensitive(False)
+        toolbar.add(self.rearm_button)
+        save = Gtk.Button(label="Save results")
+        save.connect("clicked", self.save)
+        toolbar.add(save)
+        close = Gtk.Button(label="Quit")
+        close.connect("clicked", lambda *_: self.close_window())
+        toolbar.add(close)
+        self.status_label = self.label("Press Start. Administrator authentication may be required. Report counts do not mean a test passed.", "status")
+        box.pack_start(self.status_label, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box.pack_start(scroll, True, True, 0)
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_min_children_per_line(1)
+        flow.set_max_children_per_line(2)
+        flow.set_column_spacing(12)
+        flow.set_row_spacing(12)
+        scroll.add(flow)
+        for key, title, hint in SENSORS:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            card.get_style_context().add_class("card")
+            card.set_size_request(370, 155)
+            card.pack_start(self.label(title, "title"), False, False, 0)
+            value = self.label("Not started", "value")
+            count = self.label("Reports: 0", "hint")
+            card.pack_start(value, False, False, 0)
+            card.pack_start(count, False, False, 0)
+            card.pack_start(self.label(hint, "hint"), False, False, 0)
+            flow.add(card)
+            self.cards[key] = (value, count)
+        self.connect("delete-event", self.close_window)
+        GLib.timeout_add(200, self.poll)
+        self.show_all()
+        if smoke:
+            GLib.timeout_add_seconds(3, self.close_window)
+
+    @staticmethod
+    def label(text, style):
+        label = Gtk.Label(label=text, xalign=0)
+        label.set_line_wrap(True)
+        label.set_max_width_chars(42)
+        label.get_style_context().add_class(style)
+        return label
+
+    def reader(self, stream, kind):
+        for line in stream:
+            self.messages.put((kind, line.rstrip()))
+        stream.close()
+
+    def command(self, text):
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.stdin.write(text + "\n")
+                self.process.stdin.flush()
+                self.log.write(json.dumps({"action": text}) + "\n")
+            except (BrokenPipeError, ValueError):
+                self.status_label.set_text("Collector exited. Press Start to try again.")
+
+    def toggle(self, *_):
+        if self.process and self.process.poll() is None:
+            self.command("stop")
+            self.start_button.set_sensitive(False)
+            return
+        command = ["/usr/libexec/lenovo-elden-sensors-test-backend"]
+        if not os.access(command[0], os.X_OK):
+            self.status_label.set_text(
+                f"Collector missing or not executable: {command[0]}. Install the complete sensor package.")
+            return
+        if os.geteuid() != 0:
+            if not shutil.which("pkexec"):
+                self.status_label.set_text("pkexec is missing. Install the pkexec package.")
+                return
+            command.insert(0, "pkexec")
+        self.collector_error = ""
+        try:
+            self.process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            text=True, bufsize=1)
+        except OSError as error:
+            self.status_label.set_text(str(error))
+            return
+        for stream, kind in [(self.process.stdout, "data"), (self.process.stderr, "error")]:
+            threading.Thread(target=self.reader, args=(stream, kind), daemon=True).start()
+        self.start_button.set_label("Stop")
+        self.rearm_button.set_sensitive(True)
+        self.status_label.set_text("Connecting. Enter your password if an authentication dialog appears.")
+
+    def poll(self):
+        if self.closing:
+            return False
+        for _ in range(100):
+            try:
+                kind, line = self.messages.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "error":
+                self.collector_error = line[-500:]
+                self.log.write(json.dumps({"collector_error": line}) + "\n")
+                self.status_label.set_text(line[-240:])
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                self.status_label.set_text("Invalid collector output: " + line[-160:])
+                continue
+            self.log.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            if "log" in obj:
+                self.log_directory = obj["log"]
+                self.status_label.set_text("Collecting. Scroll for all sensors. Event sensors may stay silent until you move.")
+                continue
+            self.last = obj
+            for key, (value, count) in self.cards.items():
+                state = obj.get("values", {}).get(key)
+                if state:
+                    value.set_text(state["text"].replace("discovered; waiting for data", "Discovered; waiting for data / trigger"))
+                    count.set_text(f"Reports: {obj['counts'].get(key, 0)}    Last update: {state['age']:.1f}s ago")
+        if self.process and self.process.poll() is not None:
+            detail = self.collector_error or "Save results or restart."
+            self.status_label.set_text(f"Collector stopped (exit code {self.process.returncode}). {detail}")
+            self.process.stdin.close()
+            self.process = None
+            self.start_button.set_label("Start")
+            self.start_button.set_sensitive(True)
+            self.rearm_button.set_sensitive(False)
+        return True
+
+    def save(self, *_):
+        result = dict(self.last)
+        result["backend_log"] = self.log_directory
+        result["warning"] = "Received data does not prove physical correctness or accuracy."
+        (self.session_dir / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        self.log.flush()
+        self.status_label.set_text(f"Saved to: {self.session_dir}")
+
+    def close_window(self, *_):
+        if self.closing:
+            return True
+        self.closing = True
+        self.command("stop")
+        # EOF also stops the privileged collector after window closure.
+        if self.process:
+            self.process.stdin.close()
+        self.save()
+        self.log.close()
+        Gtk.main_quit()
+        return True
+
+
+if __name__ == "__main__":
+    window = SensorWindow(smoke="--smoke-test" in sys.argv)
+    Gtk.main()
