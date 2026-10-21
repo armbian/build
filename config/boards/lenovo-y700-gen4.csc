@@ -54,6 +54,44 @@ function post_family_tweaks_bsp__lenovo-y700-gen4_alsa_ucm_conf() {
 		"${alsa_ucm_dir}/conf.d/sm8750/Lenovo-Y700-Gen4.conf"
 }
 
+function post_family_tweaks_bsp__lenovo-y700-gen4_sensors() {
+	local sensor_src="${SRC}/packages/bsp/lenovo-y700-gen4/sensors"
+	local units="${destination}/usr/lib/systemd/system"
+	local service
+	for service in lenovo-elden-sensors-rpc lenovo-elden-sensors-motion lenovo-elden-sensors-hall lenovo-elden-sensors-init; do
+		install -Dm644 "${sensor_src}/${service}.service" "${units}/${service}.service"
+	done
+	install -Dm755 "${sensor_src}/lenovo-elden-sensors-init" "${destination}/usr/libexec/lenovo-elden-sensors-init"
+	install -Dm644 "${sensor_src}/lenovo-elden-sensors.conf" "${destination}/etc/systemd/system/iio-sensor-proxy.service.d/lenovo-elden-sensors.conf"
+	install -Dm644 "${sensor_src}/81-lenovo-elden-sensors.rules" "${destination}/usr/lib/udev/rules.d/81-lenovo-elden-sensors.rules"
+	# Development testing only; install dependencies manually: apt install python3 python3-gi gir1.2-gtk-3.0 pkexec
+	install -Dm755 "${sensor_src}/lenovo-elden-sensors-gui" "${destination}/usr/bin/lenovo-elden-sensors-gui"
+	install -Dm755 "${sensor_src}/lenovo-elden-sensors-test-backend" "${destination}/usr/libexec/lenovo-elden-sensors-test-backend"
+	install -Dm644 "${sensor_src}/lenovo-elden-sensors-test.desktop" "${destination}/usr/share/applications/lenovo-elden-sensors-test.desktop"
+	mkdir -p "${destination}/etc/systemd/system/multi-user.target.wants"
+	for service in lenovo-elden-sensors-rpc lenovo-elden-sensors-motion lenovo-elden-sensors-hall; do
+		ln -sfn "/usr/lib/systemd/system/${service}.service" \
+			"${destination}/etc/systemd/system/multi-user.target.wants/${service}.service"
+	done
+}
+
+function post_family_tweaks__lenovo-y700-gen4_sensors() {
+	if [[ "${RELEASE}" != trixie ]]; then
+		display_alert "Skipping Lenovo Elden sensor deb" "unsupported release: ${RELEASE}" "warn"
+		return 0
+	fi
+	local url="https://github.com/retro98boy/lenovo-elden-sensors/releases/download/v0.4.0/lenovo-elden-sensors_0.4.0_arm64.deb"
+	local deb
+	mkdir -p "${SRC}/cache/download/lenovo-elden-sensors"
+	deb="$(mktemp "${SRC}/cache/download/lenovo-elden-sensors/package.XXXXXX.deb")"
+	run_host_command_logged curl --fail --location --retry 3 --connect-timeout 15 --max-time 300 \
+		--proto '=https' --proto-redir '=https' \
+		--output "${deb}" "${url}"
+	install_deb_chroot "${deb}"
+	# Sensor initialization uses debugfs to read persist calibration and flock to prevent concurrent initialization.
+	do_with_retries 3 chroot_sdcard_apt_get_install e2fsprogs util-linux
+}
+
 function post_family_tweaks_bsp__lenovo-y700-gen4_usb_gadget() {
 	display_alert "Install firmwares for ${BOARD}" "${RELEASE}" "warn"
 
@@ -96,6 +134,18 @@ function post_family_tweaks__lenovo-y700-gen4_enable_services() {
 	chroot_sdcard systemctl enable usbgadget-rndis.service
 
 	return 0
+}
+
+function post_family_tweaks_bsp__lenovo-y700-gen4_auto_brightness() {
+	install -Dm644 "${SRC}/packages/bsp/lenovo-y700-gen4/99-lenovo-elden-auto-brightness.gschema.override" \
+		"${destination}/usr/share/glib-2.0/schemas/99-lenovo-elden-auto-brightness.gschema.override"
+	postinst_functions+=(board_side_bsp_cli_postinst_lenovo_elden_schemas)
+}
+
+function board_side_bsp_cli_postinst_lenovo_elden_schemas() {
+	if command -v glib-compile-schemas >/dev/null 2>&1; then
+		glib-compile-schemas /usr/share/glib-2.0/schemas
+	fi
 }
 
 function post_family_tweaks__lenovo-y700-gen4_mesa_backports() {

@@ -1,0 +1,234 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Privileged sensor collector for the GUI. Counts are not test results."""
+import collections
+import fcntl
+import json
+import math
+import os
+from pathlib import Path
+import queue
+import select
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+TYPES = "gravity,rotv,game_rv,geomag_rv,pedometer,step_detect,tilt,amd,rmd"
+
+
+def vector(values):
+    return " ".join(f"{v:+.3f}" for v in values)
+
+
+class Collector:
+    def __init__(self, directory):
+        self.directory = directory
+        self.log = open(directory / "events.jsonl", "a", buffering=1)
+        self.events = queue.Queue()
+        self.stop = threading.Event()
+        self.processes = []
+        self.threads = []
+        self.state = {}
+        self.counts = collections.Counter()
+        self.notes = collections.deque(maxlen=4)
+        self.initial_steps = None
+        self.sig_process = None
+
+    def record(self, source, data):
+        self.log.write(json.dumps({"time": time.time(), "source": source,
+                                   "data": data}, ensure_ascii=False) + "\n")
+
+    def update(self, key, text):
+        self.counts[key] += 1
+        self.state[key] = (time.monotonic(), text)
+
+    def reader(self, stream, source):
+        try:
+            for line in stream:
+                self.events.put((source, line.rstrip()))
+        finally:
+            stream.close()
+            self.events.put(("notice", f"{source}: stream closed"))
+
+    def launch(self, command, source):
+        env = dict(os.environ)
+        env.pop("G_MESSAGES_DEBUG", None)
+        env["LC_ALL"] = "C"
+        process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, env=env)
+        self.processes.append(process)
+        for stream, name in [(process.stdout, source),
+                             (process.stderr, source + "-stderr")]:
+            thread = threading.Thread(target=self.reader, args=(stream, name), daemon=True)
+            thread.start()
+            self.threads.append(thread)
+        return process
+
+    def rearm(self):
+        if self.sig_process and self.sig_process.poll() is None:
+            self.sig_process.terminate()
+            try:
+                self.sig_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.sig_process.kill()
+                self.sig_process.wait()
+        self.sig_process = self.launch(
+            ["lenovo-elden-sensors-virtual", "--sensor", "sig_motion", "--timeout", "0"], "sig")
+        self.record("action", "significant motion rearmed")
+        self.notes.append("Significant motion rearmed; wait still, then walk.")
+
+    def input_reader(self, name):
+        path = "/dev/input/lenovo-y700-gen4-" + name
+        axes = [0] * 6
+        event = struct.Struct("@llHHi")
+        try:
+            with open(path, "rb", buffering=0) as device:
+                if name == "motion":
+                    for axis in range(6):
+                        raw = fcntl.ioctl(device, 0x80184540 + axis, bytes(24))
+                        axes[axis] = struct.unpack("=6i", raw)[0]
+                    self.events.put(("motion", axes.copy()))
+                else:
+                    raw = fcntl.ioctl(device, 0x8004451b, bytes(4))
+                    self.events.put(("hall", bool(raw[0] & 1)))
+                while not self.stop.is_set():
+                    if not select.select([device], [], [], 0.25)[0]:
+                        continue
+                    data = device.read(event.size * 64)
+                    if not data:
+                        raise OSError("input device disconnected")
+                    for offset in range(0, len(data), event.size):
+                        _, _, kind, code, value = event.unpack_from(data, offset)
+                        if name == "motion":
+                            if kind == 3 and code < 6:
+                                axes[code] = value
+                            elif kind == 0 and code == 0:
+                                self.events.put(("motion", axes.copy()))
+                        elif kind == 5 and code == 0:
+                            self.events.put(("hall", bool(value)))
+        except OSError as error:
+            self.events.put(("notice", f"{path}: {error}"))
+
+    def start(self):
+        self.launch(["lenovo-elden-sensors-virtual", "--sensor", TYPES, "--timeout", "0"], "virtual")
+        self.rearm()
+        self.launch(["stdbuf", "-oL", "/usr/share/lenovo-elden-sensors/bin/monitor-sensor"], "proxy")
+        for name in ("motion", "hall"):
+            thread = threading.Thread(target=self.input_reader, args=(name,), daemon=True)
+            thread.start()
+            self.threads.append(thread)
+
+    def consume(self):
+        for _ in range(2000):
+            try:
+                source, data = self.events.get_nowait()
+            except queue.Empty:
+                return
+            self.record(source, data)
+            if source in ("virtual", "sig"):
+                try:
+                    obj = json.loads(data)
+                    name = obj["sensor"]
+                    if obj.get("discovered"):
+                        self.state.setdefault(name, (time.monotonic(), "discovered; waiting for data"))
+                        continue
+                    if name == "gravity":
+                        self.update(name, vector(obj["gravity"]) + " m/s^2")
+                        self.update("linear_acceleration",
+                                    vector(obj["linear_acceleration"]) + " m/s^2")
+                    elif "quaternion_xyzw" in obj:
+                        q = obj["quaternion_xyzw"]
+                        self.update(name, vector(q) +
+                                    f" norm={math.sqrt(sum(x*x for x in q)):.3f} acc={obj['accuracy']}")
+                    elif name == "pedometer":
+                        steps = obj["steps"]
+                        if self.initial_steps is None:
+                            self.initial_steps = steps
+                        self.update(name, f"SSC={steps} DELTA={steps-self.initial_steps}")
+                    elif "state" in obj:
+                        self.update(name, obj["state"])
+                    elif obj.get("triggered"):
+                        self.update(name, "TRIGGERED" + (" (use Rearm)" if name == "sig_motion" else ""))
+                except (ValueError, KeyError, TypeError) as error:
+                    self.notes.append(f"{source}: invalid JSON/data: {error}")
+            elif source == "motion":
+                self.update("accelerometer", vector([v * 9.80665 / 256 for v in data[:3]]) + " m/s^2")
+                self.update("gyroscope", vector([v / 1024 for v in data[3:]]) + " rad/s")
+            elif source == "hall":
+                self.update("hall", "CLOSED" if data else "OPEN")
+            elif source == "proxy":
+                text = data.strip()
+                lower = text.lower()
+                for token, name in [("light", "light"), ("proximity", "proximity"),
+                                    ("compass", "compass"), ("orientation", "orientation")]:
+                    if token in lower:
+                        self.update(name, text)
+                        break
+            else:
+                self.notes.append(str(data))
+
+    def close(self):
+        self.stop.set()
+        for process in self.processes:
+            if process.poll() is None:
+                process.terminate()
+        for process in self.processes:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        for thread in self.threads:
+            thread.join(timeout=1)
+        self.consume()
+        summary = {"counts": dict(self.counts),
+                   "last_values": {key: value[1] for key, value in self.state.items()},
+                   "warning": "Received data does not prove physical correctness."}
+        (self.directory / "summary.json").write_text(json.dumps(summary, indent=2))
+        self.log.close()
+
+
+def interrupted(_signal, _frame):
+    raise KeyboardInterrupt
+
+
+def main():
+    if os.geteuid() != 0:
+        raise SystemExit("Root access required")
+    with open("/run/lenovo-elden-sensors-test.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        directory = Path(tempfile.mkdtemp(prefix="lenovo-elden-sensor-gui-", dir="/var/tmp"))
+        collector = Collector(directory)
+        signal.signal(signal.SIGTERM, interrupted)
+        try:
+            collector.start()
+            print(json.dumps({"log": str(directory)}), flush=True)
+            while True:
+                collector.consume()
+                print(json.dumps({
+                    "counts": dict(collector.counts),
+                    "values": {key: {"text": value[1],
+                                     "age": round(time.monotonic() - value[0], 1)}
+                               for key, value in collector.state.items()},
+                    "notes": list(collector.notes),
+                }), flush=True)
+                if select.select([sys.stdin], [], [], 0.3)[0]:
+                    command = sys.stdin.readline()
+                    if not command or command.strip() == "stop":
+                        break
+                    if command.strip() == "rearm":
+                        collector.rearm()
+                    elif command.strip() == "mark":
+                        collector.record("action", "GUI manual marker")
+        except (KeyboardInterrupt, BrokenPipeError):
+            pass
+        finally:
+            collector.close()
+
+
+if __name__ == "__main__":
+    main()

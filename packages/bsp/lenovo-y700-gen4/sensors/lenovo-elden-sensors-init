@@ -1,0 +1,127 @@
+#!/bin/bash
+# Run before hexagonrpcd. Never modify Android persist.
+set -euo pipefail
+umask 077
+runtime=${SENSOR_RUNTIME:-/usr/share/lenovo-elden-sensors/runtime}
+dsp=${SENSOR_DSP:-$runtime/dsp}
+fallback=${SENSOR_FALLBACK:-/usr/share/lenovo-elden-sensors/fallback-registry}
+calibration=${SENSOR_CALIBRATION:-/var/lib/lenovo-elden-sensors/calibration}
+root=${SENSOR_ROOT:-/var/lib/hexagonrpc}
+persist=${SENSOR_PERSIST:-/dev/disk/by-partlabel/persist}
+compatible=${SENSOR_COMPATIBLE:-/proc/device-tree/compatible}
+socinfo=${SENSOR_SOCINFO:-/sys/devices/soc0}
+log() { echo "lenovo-elden-sensors: $*" >&2; }
+fail() { log "ERROR: $*"; exit 1; }
+trap 'log "ERROR: initialization failed at line $LINENO"' ERR
+tmp=""
+cleanup() {
+    if [[ -n "$tmp" && -d "$tmp" ]]; then
+        rm -rf -- "$tmp"
+    fi
+}
+trap cleanup EXIT
+[[ $EUID == 0 ]] || fail "Run as root."
+tr '\0' '\n' < "$compatible" | grep -qx 'lenovo,elden' || fail "Unsupported device."
+# Only the registry is writable. Mapped root paths may be symlinks; DSP-created paths cannot escape them.
+[[ -s "$runtime/sensors/sns_reg.conf" && -d "$runtime/sensors/config" && -d "$dsp/adsp" ]] ||
+    fail "Missing vendor runtime resources in $runtime."
+[[ -n "$(find "$runtime/sensors/config" -type f -name '*.json' -print -quit)" &&
+   -n "$(find "$dsp/adsp" -type f -print -quit)" ]] || fail "Incomplete vendor runtime resources."
+valid_registry() {
+    [[ -d "$1/registry" && -s "$1/sns_reg_version" ]] &&
+    [[ -n "$(find "$1/registry" -type f -size +0c -print -quit)" ]] &&
+    [[ -z "$(find "$1" ! -type f ! -type d -print -quit)" ]]
+}
+wait_for_persist() {
+    local deadline=$((SECONDS + 10))
+    [[ -b "$persist" ]] && return 0
+    # UFS discovery and creation of the by-partlabel link may finish after init.
+    # Bound the wait so a missing partition cannot prevent fallback startup.
+    log "Waiting up to 10 seconds for persist block device: $persist"
+    while [[ ! -b "$persist" ]] && (( SECONDS < deadline )); do
+        sleep 1
+    done
+    [[ -b "$persist" ]]
+}
+mkdir -p "$root/sensors" "$(dirname "$calibration")"
+chmod 700 "$root"
+exec 9>"$root/init.lock"
+flock -x 9
+# Do not replace an existing nonempty user directory.
+if ! valid_registry "$calibration"; then
+    if [[ ! -e "$calibration" || ( -d "$calibration" && -z "$(ls -A "$calibration")" ) ]]; then
+        if wait_for_persist; then
+            tmp="$(mktemp -d "$(dirname "$calibration")/.extract.XXXXXX")"
+            if debugfs -R "rdump /sensors $tmp" "$persist" >"$tmp/extract.log" 2>&1 &&
+               valid_registry "$tmp/sensors/registry"; then
+                [[ ! -d "$calibration" ]] || rmdir "$calibration"
+                mv "$tmp/sensors/registry" "$calibration"
+                log "Copied this device's persist registry into $calibration."
+            else
+                cp "$tmp/extract.log" "$root/persist-extract.log"
+                log "Persist extraction failed. Details: $root/persist-extract.log"
+            fi
+        else
+            log "Persist block device unavailable: $persist"
+        fi
+    else
+        log "Invalid user registry at $calibration; leaving it unchanged."
+    fi
+fi
+previous=""
+[[ ! -f "$root/registry-current/origin" ]] || previous="$(< "$root/registry-current/origin")"
+if valid_registry "$calibration"; then
+    selected=local
+    template="$calibration"
+elif [[ "$previous" == local ]] && valid_registry "$root/registry-current/state"; then
+    # Keep working local calibration if persist later becomes unavailable.
+    selected=local
+    template=""
+else
+    selected=fallback
+    template="$fallback"
+fi
+if [[ "$selected" == fallback ]]; then
+    log "WARNING: Using fallback calibration from another Lenovo Elden; accuracy is not guaranteed."
+    log "Provide this device's complete registry in $calibration and reboot."
+fi
+# Compare input templates, never the DSP's writable working copy.
+digest=""
+if [[ -n "$template" ]] && valid_registry "$template"; then
+    digest=$(cd "$template" && find . -type f -print0 | LC_ALL=C sort -z |
+        xargs -0 sha256sum | sha256sum)
+fi
+previous_digest=""
+[[ ! -f "$root/registry-current/template.sha256" ]] ||
+    previous_digest=$(< "$root/registry-current/template.sha256")
+# Establish a baseline without replacing an existing valid working copy.
+if [[ "$previous" == "$selected" && -n "$digest" && -z "$previous_digest" ]] &&
+   valid_registry "$root/registry-current/state"; then
+    printf '%s\n' "$digest" > "$root/registry-current/template.sha256"
+    previous_digest=$digest
+fi
+if [[ "$previous" != "$selected" ]] || ! valid_registry "$root/registry-current/state" ||
+   [[ -n "$digest" && "$digest" != "$previous_digest" ]]; then
+    valid_registry "$template" || fail "Missing or invalid $selected registry: $template"
+    generation="$(mktemp -d "$root/registry.XXXXXX")"
+    cp -a "$template" "$generation/state"
+    chown -R root:root "$generation"
+    printf '%s\n' "$selected" > "$generation/origin"
+    printf '%s\n' "$digest" > "$generation/template.sha256"
+    ln -s "$(basename "$generation")" "$generation-link"
+    mv -Tf "$generation-link" "$root/registry-current"
+    log "Initialized registry from $selected. Previous generations remain as backups."
+fi
+link_resource() {
+    local source="$1" target="$2"
+    if [[ -e "$target" && ! -L "$target" ]]; then
+        fail "Expected a symlink or an absent path: $target"
+    fi
+    ln -sfn "$source" "$target"
+}
+link_resource "$dsp" "$root/dsp"
+link_resource "$runtime/sensors/config" "$root/sensors/config"
+link_resource "$runtime/sensors/sns_reg.conf" "$root/sensors/sns_reg.conf"
+link_resource "../registry-current/state" "$root/sensors/state"
+link_resource "$socinfo" "$root/socinfo"
+log "Registry source: $selected; existing DSP changes are preserved."
