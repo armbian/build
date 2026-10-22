@@ -238,7 +238,91 @@ ls -l /lib/firmware/mediatek/mt7663*
 `/root/install-aml.sh`。`dmesg` 无 SDIO 枚举时，确认启动的是
 `meson-g12a-w100d.dtb`，不是 `x96-max`。
 
-## 10. 常见问题
+## 10. 有线网络（USB 网卡）
+
+W100D 无 RJ45，有线网络由 USB 网卡提供。启动后可能同时出现多个 `eth*`，
+未插线的显示 `NO-CARRIER`，忽略即可。
+
+minimal 镜像由 **netplan** 管理 systemd-networkd。不要直接编辑
+`/etc/systemd/network/*.network`：netplan 生成的
+`/run/systemd/network/10-netplan-*.network` 文件序在前，总是覆盖它。
+如必须写原生配置，文件名需排在 `10-netplan-*` 之前（如 `05-wired.network`）。
+
+默认文件 `/etc/netplan/10-dhcp-all-interfaces.yaml` 对所有 `e*` 接口做
+DHCPv4/v6。接口只有 IPv6 链路本地地址、没有 IPv4，说明对端网络无
+DHCP 服务器。
+
+### 10.1 静态 IPv4
+
+以 MAC 匹配，避免重启后 eth0/eth1 互换。MAC 用 `ip link show eth1` 查看。
+
+```bash
+sudo rm -f /etc/netplan/10-dhcp-all-interfaces.yaml
+sudo tee /etc/netplan/30-ethernets-static.yaml >/dev/null <<'EOF'
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    eth1:
+      match:
+        macaddress: "6c:1f:f7:c7:bb:d8"
+      set-name: eth1
+      addresses: [192.168.137.2/24]
+      nameservers:
+        addresses: [223.5.5.5, 8.8.8.8]
+EOF
+sudo chmod 600 /etc/netplan/30-ethernets-static.yaml
+sudo netplan apply
+```
+
+wlan0 已有默认路由时，不要给 eth1 再配 `routes: default`，避免抢默认路由。
+确需备用出口时用较大 metric：
+
+```yaml
+      routes:
+        - to: default
+          via: 192.168.137.1
+          metric: 700
+```
+
+### 10.2 Windows ICS
+
+接 Windows 网络共享（ICS，网关 192.168.137.1）时直接用 DHCP，
+让 ICS 分配地址，勿用静态（静态 .2 可能与 ICS 租约冲突）：
+
+```bash
+sudo tee /etc/netplan/30-ethernets-dhcp.yaml >/dev/null <<'EOF'
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    eth1:
+      match:
+        macaddress: "6c:1f:f7:c7:bb:d8"
+      set-name: eth1
+      dhcp4: true
+EOF
+sudo chmod 600 /etc/netplan/30-ethernets-dhcp.yaml
+sudo netplan apply
+```
+
+### 10.3 验证
+
+```bash
+networkctl status eth1 | grep -E "Network File|State"
+ip -br addr show eth1
+ip route
+ping -c 3 192.168.137.1
+ss -ltnp | grep :22
+```
+
+`Network File` 应指向 `/run/systemd/network/10-netplan-eth1.network`
+（netplan 按配置 id 生成文件名）。若 `/etc/netplan/20-eth-fixed-mac.yaml`
+存在并改写过网卡 MAC，`match` 里的 MAC 要以其生效后的值为准。
+`ping` 不通但已有 IPv4 时，检查对端设备、网线和防火墙（Windows 默认
+可能屏蔽 ICMP）。
+
+## 11. 常见问题
 
 - 不启动：确认已顶 Reset 进入 SD 启动；确认 boot 分区类型为 `0x0c` 且有 `aml_autoscript`。
 - 反复重启：多为 boot 分区类型为 `0xea`，vendor u-boot 读不到脚本。
@@ -253,6 +337,8 @@ ls -l /lib/firmware/mediatek/mt7663*
   `/usr/lib/firmware/mediatek/`。
 - 没有 `nmcli`：镜像是 `BUILD_MINIMAL=yes`（systemd-networkd）。改用
   `BUILD_MINIMAL=no` 重新构建，或用 `wpa_supplicant` 手动联网。
+- 有线口只有 IPv6、没有 IPv4：netplan 默认配置做 DHCP，对端无 DHCP
+  服务器。见第 10 节，改用静态或确认对端提供 DHCP。
 - `wlan0` 不存在且 `modprobe mt7663s` 报 “module not found”：当前运行的是旧
   eMMC 系统。启动新镜像，或在新系统中执行 `/root/install-aml.sh`。
 - 构建报 binfmt 错误：WSL2 环境需先注册 qemu binfmt。
