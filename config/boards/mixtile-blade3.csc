@@ -13,25 +13,33 @@ declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 e
 
 enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
 
+# Mainline U-Boot
 function post_family_config__blade3_use_mainline_uboot() {
-	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
+	display_alert "${BOARD}/${BRANCH}" "Using mainline U-Boot for ${BOARD}/${BRANCH}" "info"
+
+	# If BRANCH==vendor, use rkbin BL31 ${RKBIN_DIR}/${BL31_BLOB}, otherwise, bl31.elf from mainline ATF/TF-A
+	declare bl31_blob="undetermined"
+	if [[ "${BRANCH}" == vendor* ]]; then
+		display_alert "${BOARD}/${BRANCH}" "Using Rockchip rkbin BL31 blob : ${RKBIN_DIR}/${BL31_BLOB}" "info"
+		bl31_blob="${RKBIN_DIR}/${BL31_BLOB}"
+		declare -g ATF_COMPILE="no" # no need to build mainline it either
+	else
+		display_alert "${BOARD}/${BRANCH}" "Using mainline BL31: bl31.elf from mainline ATF/TF-A" "info"
+		bl31_blob="bl31.elf"
+	fi
+
 	declare -g BOOTDELAY=1
-
-	BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.07"
-	declare -g BOOTPATCHDIR="v2026.07" # with 000.patching_config.yaml - no patching, straight .dts/defconfigs et al
-
-	BOOTDIR="u-boot-${BOARD}"
-
-	UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin" # NOT u-boot-rockchip-spi.bin
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd                # disable stuff from rockchip64_common; we're using binman here which does all the work already
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+	declare -g BOOTBRANCH="tag:v2026.10"
+	declare -g BOOTPATCHDIR="v2026.10"
+	declare -g BOOTDIR="u-boot-${BOARD}"
+	declare -g UBOOT_TARGET_MAP="BL31=${bl31_blob} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # Disable stuff from rockchip64_common; we're using binman here which does all the work
 
 	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
-
-	declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
 }
 
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
