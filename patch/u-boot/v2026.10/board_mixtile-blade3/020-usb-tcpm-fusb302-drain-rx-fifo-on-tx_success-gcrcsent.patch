@@ -1,0 +1,100 @@
+From d92ab23bb722d9b3386172df9981c637d7e497f1 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Thu, 22 Oct 2026 20:56:03 +0200
+Subject: [PATCH] usb: tcpm: fusb302: drain RX FIFO on TX_SUCCESS/GCRCSENT
+
+- TX_SUCCESS/GCRCSENT are latched: messages arriving back to back before
+  the interrupt registers are read show up as a single event
+- only one message was read per event, leaving the rest in the RX FIFO
+  already acknowledged with a GoodCRC by the chip
+- happens after a sink Soft_Reset, where the source sends Accept then
+  Source_Capabilities a few ms later: Source_Capabilities is never seen,
+  no Request is sent and the source Hard Resets (VBUS drops)
+- read messages until STATUS1.RX_EMPTY instead, bounded by FIFO size
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/tcpm/fusb302.c | 38 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/tcpm/fusb302.c b/drivers/usb/tcpm/fusb302.c
+index 5ef5732f620..28370340573 100644
+--- a/drivers/usb/tcpm/fusb302.c
++++ b/drivers/usb/tcpm/fusb302.c
+@@ -17,6 +17,8 @@
+ 
+ #define FUSB302_MAX_MSG_LEN 0x1F
+ #define T_BC_LVL_DEBOUNCE_DELAY_MS 30
++/* 80 byte RX FIFO, smallest message is SOP token + header + CRC = 7 bytes */
++#define FUSB302_RX_FIFO_MAX_MSGS 11
+ 
+ enum toggling_mode {
+ 	TOGGLING_MODE_OFF,
+@@ -1162,6 +1164,37 @@ static int fusb302_pd_read_message(struct udevice *dev,
+ 	return ret;
+ }
+ 
++/*
++ * The TX_SUCCESS and GCRCSENT interrupt bits are latched, so if the partner
++ * sends several messages back to back (e.g. Accept followed by
++ * Source_Capabilities after a Soft_Reset) before the interrupt registers are
++ * read, only one event is seen. Reading a single message per event would then
++ * leave the others, already acknowledged by the chip with a GoodCRC, unread
++ * in the RX FIFO, and the partner would eventually Hard Reset. Drain the
++ * whole FIFO instead.
++ */
++static int fusb302_pd_read_messages(struct udevice *dev)
++{
++	struct pd_message pd_msg;
++	u8 status1;
++	int i, ret;
++
++	for (i = 0; i < FUSB302_RX_FIFO_MAX_MSGS; i++) {
++		ret = fusb302_i2c_read(dev, FUSB_REG_STATUS1, &status1);
++		if (ret)
++			return ret;
++		if (status1 & FUSB_REG_STATUS1_RX_EMPTY)
++			break;
++		ret = fusb302_pd_read_message(dev, &pd_msg);
++		if (ret)
++			return ret;
++	}
++	if (i > 1)
++		dev_dbg(dev, "read %d PD messages from RX FIFO\n", i);
++
++	return 0;
++}
++
+ static void fusb302_interrupt_handle(struct udevice *dev)
+ {
+ 	struct fusb302_chip *chip = dev_get_priv(dev);
+@@ -1174,7 +1207,6 @@ static void fusb302_interrupt_handle(struct udevice *dev)
+ 	bool intr_togdone;
+ 	bool intr_bc_lvl;
+ 	bool intr_comp_chng;
+-	struct pd_message pd_msg;
+ 	int ret;
+ 
+ 	/* grab a snapshot of intr flags */
+@@ -1261,7 +1293,7 @@ static void fusb302_interrupt_handle(struct udevice *dev)
+ 
+ 	if (interrupta & FUSB_REG_INTERRUPTA_TX_SUCCESS) {
+ 		dev_dbg(dev, "IRQ: PD tx success\n");
+-		ret = fusb302_pd_read_message(dev, &pd_msg);
++		ret = fusb302_pd_read_messages(dev);
+ 		if (ret) {
+ 			dev_err(dev, "cannot read in PD message, ret=%d\n", ret);
+ 			return;
+@@ -1280,7 +1312,7 @@ static void fusb302_interrupt_handle(struct udevice *dev)
+ 
+ 	if (interruptb & FUSB_REG_INTERRUPTB_GCRCSENT) {
+ 		dev_dbg(dev, "IRQ: PD sent good CRC\n");
+-		ret = fusb302_pd_read_message(dev, &pd_msg);
++		ret = fusb302_pd_read_messages(dev);
+ 		if (ret) {
+ 			dev_err(dev, "cannot read in PD message, ret=%d\n", ret);
+ 			return;
+-- 
+2.56.0
+
