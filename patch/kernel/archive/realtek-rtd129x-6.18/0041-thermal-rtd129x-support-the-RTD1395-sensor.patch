@@ -1,0 +1,111 @@
+From df28d3f62e0edd756ff701bcbb75c1560321d205 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 15:40:34 +0000
+Subject: [PATCH 41/43] thermal: rtd129x: support the RTD1395 sensor
+
+The RTD1395 sensor needs CTRL0 and CTRL1 set and other CTRL2 values,
+as the vendor driver does. Its STATUS2 reports nothing, so check the
+temperature range only.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/thermal/rtd129x-thermal.c | 43 ++++++++++++++++++++++++++-----
+ 1 file changed, 36 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/thermal/rtd129x-thermal.c b/drivers/thermal/rtd129x-thermal.c
+index cbb5a1de7..31b2bab39 100644
+--- a/drivers/thermal/rtd129x-thermal.c
++++ b/drivers/thermal/rtd129x-thermal.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * Realtek RTD1295/RTD1296 thermal sensor
++ * Realtek RTD1295/RTD1296/RTD1395 thermal sensor
+  *
+  * One sensor next to the CPUs (0x9801d150). The BSP's DT lists a second one
+  * at 0x980124b4, inside the eMMC wrapper, which reads nothing but zeroes and
+@@ -22,21 +22,33 @@
+ 
+ #include "thermal_hwmon.h"
+ 
++#define TM_CTRL0	0x00
++#define TM_CTRL1	0x04
+ #define TM_CTRL2	0x08
+-#define  TM_CTRL2_RESET		0x01904001
+-#define  TM_CTRL2_RUN		0x01924001
+ #define TM_STATUS1	0x18	/* temperature, signed, bits 18:0 */
+ #define TM_STATUS2	0x1c	/* 0 or 0x3fffff when the sensor is not running */
+ 
++/* CTRL2 values that hold the sensor in reset and run it */
++struct rtd_tm_soc {
++	u32 ctrl2_reset;
++	u32 ctrl2_run;
++	bool init;		/* CTRL0/CTRL1 need setting, as on the RTD1395 */
++};
++
+ struct rtd129x_thermal {
+ 	struct device *dev;
+ 	void __iomem *base;
++	const struct rtd_tm_soc *soc;
+ };
+ 
+ static void rtd129x_thermal_reset(struct rtd129x_thermal *tm)
+ {
+-	writel(TM_CTRL2_RESET, tm->base + TM_CTRL2);
+-	writel(TM_CTRL2_RUN, tm->base + TM_CTRL2);
++	if (tm->soc->init) {
++		writel(0x081fc000, tm->base + TM_CTRL0);
++		writel(0x05772000, tm->base + TM_CTRL1);
++	}
++	writel(tm->soc->ctrl2_reset, tm->base + TM_CTRL2);
++	writel(tm->soc->ctrl2_run, tm->base + TM_CTRL2);
+ 	usleep_range(25000, 26000);
+ }
+ 
+@@ -51,7 +63,10 @@ static bool rtd129x_thermal_valid(struct rtd129x_thermal *tm, int t)
+ {
+ 	u32 st = readl(tm->base + TM_STATUS2);
+ 
+-	return st != 0 && st != 0x3fffff && t >= -3000 && t <= 150000;
++	/* the RTD1395 does not report a status: check the range only */
++	if (!tm->soc->init && (st == 0 || st == 0x3fffff))
++		return false;
++	return t >= -3000 && t <= 150000;
+ }
+ 
+ static int rtd129x_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
+@@ -87,6 +102,7 @@ static int rtd129x_thermal_probe(struct platform_device *pdev)
+ 	if (!tm)
+ 		return -ENOMEM;
+ 	tm->dev = dev;
++	tm->soc = of_device_get_match_data(dev);
+ 	platform_set_drvdata(pdev, tm);
+ 
+ 	tm->base = devm_platform_ioremap_resource(pdev, 0);
+@@ -112,8 +128,21 @@ static int rtd129x_thermal_resume(struct device *dev)
+ 
+ static DEFINE_SIMPLE_DEV_PM_OPS(rtd129x_thermal_pm, NULL, rtd129x_thermal_resume);
+ 
++static const struct rtd_tm_soc rtd1295_tm_soc = {
++	.ctrl2_reset = 0x01904001,
++	.ctrl2_run = 0x01924001,
++};
++
++/* As the BSP's sensor-rtd139x.c */
++static const struct rtd_tm_soc rtd1395_tm_soc = {
++	.ctrl2_reset = 0x11904000,
++	.ctrl2_run = 0x11924000,
++	.init = true,
++};
++
+ static const struct of_device_id rtd129x_thermal_of_match[] = {
+-	{ .compatible = "realtek,rtd1295-thermal" },
++	{ .compatible = "realtek,rtd1295-thermal", .data = &rtd1295_tm_soc },
++	{ .compatible = "realtek,rtd1395-thermal", .data = &rtd1395_tm_soc },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, rtd129x_thermal_of_match);
+-- 
+2.53.0
+

@@ -1,0 +1,796 @@
+From 5b1f3600d2e4e090683b53217510913a43a91188 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 22 Oct 2026 07:20:12 +0000
+Subject: [PATCH 53/55] sound: rtd129x-acpu: add HDMI audio playback
+
+Add an ALSA playback device for HDMI on boards that run the audio CPU
+firmware. It plays stereo S16_LE and S32_LE PCM from 32 kHz to 192 kHz.
+The firmware decodes the PCM and sends it to HDMI, as in the BSP.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ sound/realtek-rtd129x-acpu/Kconfig   |   9 +
+ sound/realtek-rtd129x-acpu/Makefile  |   3 +
+ sound/realtek-rtd129x-acpu/acpu-ao.c | 736 +++++++++++++++++++++++++++
+ 3 files changed, 748 insertions(+)
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-ao.c
+
+diff --git a/sound/realtek-rtd129x-acpu/Kconfig b/sound/realtek-rtd129x-acpu/Kconfig
+index a2cea41b6..3e268fb50 100644
+--- a/sound/realtek-rtd129x-acpu/Kconfig
++++ b/sound/realtek-rtd129x-acpu/Kconfig
+@@ -18,6 +18,15 @@ config SND_RTD129X_HDMIRX
+ 	  The audio of the RTD1295/RTD1296 HDMI input, captured by the audio
+ 	  firmware, as an ALSA capture device.
+ 
++config SND_RTD129X_HDMI_OUT
++	tristate "Realtek RTD129x HDMI audio output"
++	depends on RTD129X_ACPU && SND
++	select SND_PCM
++	help
++	  Stereo PCM playback to HDMI, through the audio firmware, as an
++	  ALSA playback device. The board's DT enables it with the
++	  realtek,hdmi-audio-out property on the audio CPU node.
++
+ config RTD129X_VO
+ 	tristate "Realtek RTD129x video output"
+ 	depends on RTD129X_ACPU && DRM && OF_RESERVED_MEM
+diff --git a/sound/realtek-rtd129x-acpu/Makefile b/sound/realtek-rtd129x-acpu/Makefile
+index 4e6a91e21..732ad7355 100644
+--- a/sound/realtek-rtd129x-acpu/Makefile
++++ b/sound/realtek-rtd129x-acpu/Makefile
+@@ -5,5 +5,8 @@ rtd129x-acpu-y := acpu-rpc.o
+ obj-$(CONFIG_SND_RTD129X_HDMIRX) += snd-rtd129x-hdmirx.o
+ snd-rtd129x-hdmirx-y := acpu-pcm.o
+ 
++obj-$(CONFIG_SND_RTD129X_HDMI_OUT) += snd-rtd129x-hdmi.o
++snd-rtd129x-hdmi-y := acpu-ao.o
++
+ obj-$(CONFIG_RTD129X_VO) += rtd129x-vo.o
+ rtd129x-vo-y := acpu-vo.o acpu-dp.o
+diff --git a/sound/realtek-rtd129x-acpu/acpu-ao.c b/sound/realtek-rtd129x-acpu/acpu-ao.c
+new file mode 100644
+index 000000000..c3731f433
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-ao.c
+@@ -0,0 +1,736 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD129x/RTD1395 HDMI audio output, through the audio CPU
++ *
++ * The audio firmware owns the audio output (AO) and sends it to HDMI.
++ * Playback is the BSP's sequence (sound/arm/snd-realtek.c,
++ * snd_card_playback_open() and snd_card_playback_prepare()): take one of
++ * the AO's "flash" input pins, create an LPCM decoder, chain the decoder's
++ * PCM output into that pin, give the decoder an input ring and an in-band
++ * command ring, tell it the format with an in-band NEW_FORMAT command, and
++ * run both.
++ *
++ * The BSP lets the firmware read the ALSA buffer itself. Here the ALSA
++ * buffer is ordinary memory and the input ring is in the audio heap, as
++ * large as the ALSA buffer: a timer copies what the application has
++ * written into the ring, at the same offsets, and moves the write pointer.
++ * The firmware's read pointer in the ring gives the hardware position.
++ */
++#include <linux/auxiliary_bus.h>
++#include <linux/hrtimer.h>
++#include <linux/module.h>
++#include <sound/core.h>
++#include <sound/initval.h>
++#include <sound/pcm.h>
++
++#include "rtd129x-acpu.h"
++
++/* enum AUDIO_MODULE_TYPE */
++#define AGENT_ALSA_OUT		12
++#define AGENT_DECODER		16
++
++/* enum AUDIO_IO_PIN */
++#define PIN_BASE_BS_IN		0
++#define PIN_PCM_OUT		5
++#define PIN_INBAND_QUEUE	9
++#define PIN_FLASH_FIRST		15	/* FLASH_AUDIO_PIN_1 */
++#define PIN_FLASH_LAST		17	/* FLASH_AUDIO_PIN_3 */
++
++/* enum AUDIO_ENUM_PRIVAETINFO */
++#define INFO_GET_FLASH_PIN	6
++#define INFO_RELEASE_FLASH_PIN	7
++
++/* In-band commands to the decoder (AUDIO_INBAND_CMD_TYPE) */
++#define INBAND_NEW_FORMAT	2
++#define INBAND_EOS		3
++#define DEC_TYPE_LPCM		3		/* AUDIO_LPCM_DECODER_TYPE */
++#define LPCM_LITTLE_ENDIAN	1		/* AUDIO_LITTLE_ENDIAN */
++#define CHMASK_STEREO		(0x3 << 6)	/* snd_choose_channel_mapping() */
++
++#define CHANNELS		2
++#define DEC_OUT_RING_SIZE	(7 * SZ_1K)	/* RTK_DEC_AO_BUFFER_SIZE */
++#define INBAND_RING_SIZE	256
++#define BUFFER_BYTES_MAX	SZ_64K
++
++/* How long the firmware may hold back data before we say so */
++#define STALL_MS		1000
++/* ...and before a drain gives up on the rest */
++#define DRAIN_STALL_MS		500
++
++/* RINGBUFFER_HEADER, big-endian, 64 bytes */
++struct ring_hdr {
++	__be32 magic;
++	__be32 begin;
++	__be32 size;
++	__be32 buffer_id;
++	__be32 write;
++	__be32 num_read;
++	__be32 reserved[2];
++	__be32 read[4];
++	__be32 file[4];
++};
++
++/*
++ * What the firmware reads and writes, in one block of the audio heap. The
++ * decoder's output rings come first, as in the BSP's snd_card_RTK_pcm_t.
++ */
++struct ao_shared {
++	struct ring_hdr dec_out[CHANNELS];	/* decoder out, AO pin in */
++	struct ring_hdr in;			/* the PCM the decoder reads */
++	struct ring_hdr inband;			/* commands to the decoder */
++	u8 inband_data[INBAND_RING_SIZE];
++};
++
++/* AUDIO_DEC_NEW_FORMAT */
++struct inband_new_format {
++	__be32 type;
++	__be32 size;
++	__be32 wptr;
++	__be32 audio_type;
++	__be32 info[8];
++};
++
++/* AUDIO_DEC_EOS */
++struct inband_eos {
++	__be32 type;
++	__be32 size;
++	__be32 wptr;
++	__be32 eos_id;
++};
++
++/* The call block: the results at the start, the arguments after them */
++#define PARAM_RES		0
++#define PARAM_ARG		128
++#define PARAM_SIZE		256
++
++struct hdmi_out {
++	struct rtd_acpu *acpu;
++	struct device *dev;
++	struct snd_card *card;
++	struct snd_pcm_substream *substream;
++
++	struct rtd_acpu_buf param;
++	struct rtd_acpu_buf shared;		/* struct ao_shared */
++	struct rtd_acpu_buf dec_out[CHANNELS];
++	struct rtd_acpu_buf in;			/* BUFFER_BYTES_MAX */
++
++	u32 ao;					/* the AO agent */
++	bool have_ao;
++	u32 pin;				/* our flash pin on it */
++	u32 dec;				/* the decoder agent */
++	bool flow;				/* the decoder is set up */
++
++	struct hrtimer timer;
++	ktime_t tick;
++	bool active;				/* between trigger start and stop */
++	u32 ring_size;				/* the ALSA buffer, in bytes */
++	u32 rp;					/* firmware read offset, last seen */
++	snd_pcm_uframes_t written;		/* frames copied, mod boundary */
++	snd_pcm_uframes_t hw_ptr;
++	snd_pcm_uframes_t since_period;
++	ktime_t last_move;			/* when rp last moved */
++	bool eos_sent;
++	bool drained;
++	bool stall_warned;
++	bool bad_rp_warned;
++};
++
++static __be32 *ho_arg(struct hdmi_out *ho, int i)
++{
++	return ho->param.vaddr + PARAM_ARG + 4 * i;
++}
++
++static u32 ho_res(struct hdmi_out *ho, int i)
++{
++	return be32_to_cpu(((__be32 *)(ho->param.vaddr + PARAM_RES))[i]);
++}
++
++/* An address in one of our buffers, as the firmware wants it */
++static u32 ho_addr(struct hdmi_out *ho, const struct rtd_acpu_buf *buf,
++		   size_t offset)
++{
++	return rtd_acpu_addr(ho->acpu, buf->phys + offset);
++}
++
++static void ho_begin(struct hdmi_out *ho)
++{
++	memset(ho->param.vaddr, 0, PARAM_SIZE);
++}
++
++/*
++ * Make a call with the arguments set since ho_begin(). With @check, the
++ * first result word is an HRESULT as well, and has to be S_OK.
++ */
++static int ho_call(struct hdmi_out *ho, u32 cmd, bool check)
++{
++	u32 ret;
++	int err;
++
++	/* the firmware reads it uncached; make sure it has all landed */
++	wmb();
++	err = rtd_acpu_call(ho->acpu, cmd, ho_addr(ho, &ho->param, PARAM_ARG),
++			    ho_addr(ho, &ho->param, PARAM_RES), &ret);
++	if (err)
++		return err;
++	if (ret != RTD_ACPU_S_OK || (check && ho_res(ho, 0) != RTD_ACPU_S_OK)) {
++		dev_err(ho->dev, "command %u (%#x): %#x/%#x\n", cmd,
++			be32_to_cpu(*ho_arg(ho, 0)), ret, ho_res(ho, 0));
++		return -EIO;
++	}
++	dev_dbg(ho->dev, "command %u (%#x): ok, %#x %#x\n", cmd,
++		be32_to_cpu(*ho_arg(ho, 0)), ho_res(ho, 0), ho_res(ho, 1));
++	return 0;
++}
++
++/* RPC_DEFAULT_INPUT_T: the firmware sets info when it is ready */
++static int ho_check_ready(struct hdmi_out *ho)
++{
++	int ret;
++
++	ho_begin(ho);
++	ret = ho_call(ho, RTD_ACPU_CHECK_READY, false);
++	if (!ret && !*ho_arg(ho, 0))
++		dev_warn(ho->dev, "audio firmware not ready\n");
++	return ret;
++}
++
++/* AUDIO_RPC_INSTANCE { instanceID, type }, RPCRES_LONG { result, data } */
++static int ho_create(struct hdmi_out *ho, u32 type, u32 id, bool check,
++		     u32 *agent)
++{
++	int ret;
++
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(id);
++	*ho_arg(ho, 1) = cpu_to_be32(type);
++	ret = ho_call(ho, RTD_ACPU_CREATE_AGENT, check);
++	if (ret)
++		return ret;
++	*agent = ho_res(ho, 1);
++	return 0;
++}
++
++/*
++ * AUDIO_RPC_PRIVATEINFO_PARAMETERS { instanceID, type, privateInfo[16] };
++ * the result is AUDIO_RPC_PRIVATEINFO_RETURNVAL { instanceID,
++ * privateInfo[16] }. The BSP fills the unused words with 0xff, unswapped.
++ */
++static void ho_private(struct hdmi_out *ho, u32 type, int first_unused)
++{
++	int i;
++
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(ho->ao);
++	*ho_arg(ho, 1) = cpu_to_be32(type);
++	for (i = 2 + first_unused; i < 8; i++)
++		*ho_arg(ho, i) = (__force __be32)0xff;
++}
++
++static int ho_get_pin(struct hdmi_out *ho)
++{
++	int ret;
++
++	ho_private(ho, INFO_GET_FLASH_PIN, 0);
++	ret = ho_call(ho, RTD_ACPU_PRIVATEINFO, false);
++	if (ret)
++		return ret;
++	ho->pin = ho_res(ho, 1);
++	if (ho->pin < PIN_FLASH_FIRST || ho->pin > PIN_FLASH_LAST) {
++		dev_err(ho->dev, "no free AO input pin (%u)\n", ho->pin);
++		ho->pin = 0;
++		return -EBUSY;
++	}
++	return 0;
++}
++
++static void ho_release_pin(struct hdmi_out *ho)
++{
++	if (!ho->pin)
++		return;
++	ho_private(ho, INFO_RELEASE_FLASH_PIN, 1);
++	*ho_arg(ho, 2) = cpu_to_be32(ho->pin);
++	ho_call(ho, RTD_ACPU_PRIVATEINFO, false);
++	ho->pin = 0;
++}
++
++/* RUN, PAUSE, STOP, DESTROY: the instance; RPCRES_LONG (PAUSE: HRESULT) */
++static int ho_agent(struct hdmi_out *ho, u32 cmd, u32 id, bool check)
++{
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(id);
++	return ho_call(ho, cmd, check);
++}
++
++/* AUDIO_RPC_SENDIO { instanceID, pinID } */
++static int ho_flush(struct hdmi_out *ho)
++{
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(ho->dec);
++	*ho_arg(ho, 1) = cpu_to_be32(PIN_BASE_BS_IN);
++	return ho_call(ho, RTD_ACPU_FLUSH, true);
++}
++
++/* AUDIO_RPC_CONNECTION { src, srcPin, des, desPin, mediaType } */
++static int ho_connect(struct hdmi_out *ho)
++{
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(ho->dec);
++	*ho_arg(ho, 1) = cpu_to_be32(PIN_PCM_OUT);
++	*ho_arg(ho, 2) = cpu_to_be32(ho->ao);
++	*ho_arg(ho, 3) = cpu_to_be32(ho->pin);
++	return ho_call(ho, RTD_ACPU_CONNECT, true);
++}
++
++/*
++ * AUDIO_RPC_RINGBUFFER_HEADER { instanceID, pinID, list[8], readIdx,
++ * listSize }; no headers clears the pin's rings.
++ */
++static int ho_init_ring(struct hdmi_out *ho, u32 id, u32 pin,
++			const struct ring_hdr *hdrs, int count, int read_idx)
++{
++	int i;
++
++	ho_begin(ho);
++	*ho_arg(ho, 0) = cpu_to_be32(id);
++	*ho_arg(ho, 1) = cpu_to_be32(pin);
++	for (i = 0; i < count; i++)
++		*ho_arg(ho, 2 + i) = cpu_to_be32(ho_addr(ho, &ho->shared,
++				(const void *)&hdrs[i] - ho->shared.vaddr));
++	*ho_arg(ho, 10) = cpu_to_be32(read_idx);
++	*ho_arg(ho, 11) = cpu_to_be32(count);
++	return ho_call(ho, RTD_ACPU_INIT_RINGBUF, true);
++}
++
++static void ring_hdr_init(struct ring_hdr *h, u32 begin, u32 size)
++{
++	int i;
++
++	memset(h, 0, sizeof(*h));
++	h->begin = cpu_to_be32(begin);
++	h->size = cpu_to_be32(size);
++	h->write = h->begin;
++	for (i = 0; i < ARRAY_SIZE(h->read); i++)
++		h->read[i] = h->begin;
++	h->num_read = cpu_to_be32(1);
++}
++
++static void ho_inband(struct hdmi_out *ho, const void *cmd, u32 len)
++{
++	struct ao_shared *sh = ho->shared.vaddr;
++	u32 begin = be32_to_cpu(sh->inband.begin);
++	u32 off = be32_to_cpu(sh->inband.write) - begin;
++	u32 n = min_t(u32, len, INBAND_RING_SIZE - off);
++
++	memcpy(sh->inband_data + off, cmd, n);
++	memcpy(sh->inband_data, cmd + n, len - n);
++	off = (off + len) % INBAND_RING_SIZE;
++	/* the command before the pointer that hands it over */
++	wmb();
++	WRITE_ONCE(sh->inband.write, cpu_to_be32(begin + off));
++}
++
++static void ho_new_format(struct hdmi_out *ho, struct snd_pcm_runtime *rt)
++{
++	struct ao_shared *sh = ho->shared.vaddr;
++	struct inband_new_format cmd = {
++		.type = cpu_to_be32(INBAND_NEW_FORMAT),
++		.size = cpu_to_be32(sizeof(cmd)),
++		.wptr = sh->in.write,
++		.audio_type = cpu_to_be32(DEC_TYPE_LPCM),
++		.info = {
++			cpu_to_be32(rt->channels),
++			cpu_to_be32(rt->sample_bits),
++			cpu_to_be32(rt->rate),
++			0,
++			cpu_to_be32(CHMASK_STEREO),
++			0,
++			0,
++			cpu_to_be32(LPCM_LITTLE_ENDIAN),
++		},
++	};
++
++	ho_inband(ho, &cmd, sizeof(cmd));
++}
++
++static void ho_eos(struct hdmi_out *ho)
++{
++	struct ao_shared *sh = ho->shared.vaddr;
++	struct inband_eos cmd = {
++		.type = cpu_to_be32(INBAND_EOS),
++		.size = cpu_to_be32(sizeof(cmd)),
++		.wptr = READ_ONCE(sh->in.write),
++	};
++
++	ho_inband(ho, &cmd, sizeof(cmd));
++}
++
++/* Undo ho_setup(), as far as it went; as snd_card_playback_close() */
++static void ho_teardown(struct hdmi_out *ho)
++{
++	if (!ho->flow)
++		return;
++	ho_agent(ho, RTD_ACPU_STOP, ho->dec, true);
++	ho_agent(ho, RTD_ACPU_PAUSE, ho->ao | ho->pin, false);
++	ho_flush(ho);
++	ho_init_ring(ho, ho->ao, ho->pin, NULL, 0, 0);
++	ho_agent(ho, RTD_ACPU_DESTROY, ho->dec, true);
++	ho->flow = false;
++	dev_dbg(ho->dev, "decoder %#x destroyed\n", ho->dec);
++}
++
++/* As snd_card_playback_prepare() */
++static int ho_setup(struct hdmi_out *ho, struct snd_pcm_runtime *rt)
++{
++	struct ao_shared *sh = ho->shared.vaddr;
++	int i, ret;
++
++	ret = ho_create(ho, AGENT_DECODER, -1, false, &ho->dec);
++	if (ret)
++		return ret;
++	ho->flow = true;
++
++	for (i = 0; i < CHANNELS; i++)
++		ring_hdr_init(&sh->dec_out[i], ho_addr(ho, &ho->dec_out[i], 0),
++			      DEC_OUT_RING_SIZE);
++	ring_hdr_init(&sh->in, ho_addr(ho, &ho->in, 0), ho->ring_size);
++	ring_hdr_init(&sh->inband, ho_addr(ho, &ho->shared,
++			offsetof(struct ao_shared, inband_data)),
++		      INBAND_RING_SIZE);
++
++	ret = ho_init_ring(ho, ho->dec, PIN_PCM_OUT, sh->dec_out, CHANNELS, -1) ?:
++	      ho_init_ring(ho, ho->ao, ho->pin, sh->dec_out, CHANNELS, 0) ?:
++	      ho_connect(ho) ?:
++	      ho_init_ring(ho, ho->dec, PIN_BASE_BS_IN, &sh->in, 1, 0) ?:
++	      ho_init_ring(ho, ho->dec, PIN_INBAND_QUEUE, &sh->inband, 1, 0) ?:
++	      /* snd_realtek_hw_init_decoder_info() */
++	      ho_agent(ho, RTD_ACPU_PAUSE, ho->ao | ho->pin, false) ?:
++	      ho_agent(ho, RTD_ACPU_STOP, ho->dec, true) ?:
++	      ho_flush(ho) ?:
++	      ho_agent(ho, RTD_ACPU_RUN, ho->dec, true);
++	if (ret)
++		return ret;
++	ho_new_format(ho, rt);
++
++	/* snd_realtek_hw_resume() */
++	return ho_agent(ho, RTD_ACPU_RUN, ho->dec, true) ?:
++	       ho_agent(ho, RTD_ACPU_RUN, ho->ao | ho->pin, true);
++}
++
++/* Copy what the application wrote since the last time into the ring */
++static void ho_copy(struct hdmi_out *ho, struct snd_pcm_runtime *rt, u32 wp,
++		    u32 len)
++{
++	u32 n = min(len, ho->ring_size - wp);
++
++	memcpy(ho->in.vaddr + wp, rt->dma_area + wp, n);
++	memcpy(ho->in.vaddr, rt->dma_area, len - n);
++}
++
++static enum hrtimer_restart ho_timer(struct hrtimer *t)
++{
++	struct hdmi_out *ho = container_of(t, struct hdmi_out, timer);
++	struct snd_pcm_substream *ss = ho->substream;
++	struct snd_pcm_runtime *rt = ss->runtime;
++	struct ao_shared *sh = ho->shared.vaddr;
++	u32 begin = ho_addr(ho, &ho->in, 0);
++	u32 size = ho->ring_size;
++	u32 frame = frames_to_bytes(rt, 1);
++	snd_pcm_uframes_t appl, pending;
++	ktime_t now = ktime_get();
++	bool draining, elapsed = false;
++	u32 rp, wp, used, room, n;
++
++	if (!READ_ONCE(ho->active))
++		return HRTIMER_NORESTART;
++	draining = READ_ONCE(rt->state) == SNDRV_PCM_STATE_DRAINING;
++
++	/* how far the firmware has read */
++	rp = be32_to_cpu(READ_ONCE(sh->in.read[0])) - begin;
++	if (rp >= size || rp % frame) {
++		if (!ho->bad_rp_warned)
++			dev_warn(ho->dev, "read pointer %#x not in ring %#x+%#x\n",
++				 rp + begin, begin, size);
++		ho->bad_rp_warned = true;
++		rp = ho->rp;
++	}
++	if (rp != ho->rp && !ho->drained) {
++		ho->since_period += bytes_to_frames(rt, (rp - ho->rp + size) % size);
++		ho->rp = rp;
++		WRITE_ONCE(ho->hw_ptr, bytes_to_frames(rt, rp));
++		ho->last_move = now;
++		ho->stall_warned = false;
++		elapsed = draining;
++	}
++
++	/* hand over what the application has written since */
++	wp = frames_to_bytes(rt, ho->written % rt->buffer_size);
++	appl = READ_ONCE(rt->control->appl_ptr);
++	pending = appl >= ho->written ? appl - ho->written :
++				       appl + rt->boundary - ho->written;
++	pending = min(pending, rt->buffer_size);
++	used = (wp - ho->rp + size) % size;
++	/* a full ring would look empty */
++	room = size - used - frame;
++	n = min_t(u32, frames_to_bytes(rt, pending), room);
++	if (n) {
++		ho_copy(ho, rt, wp, n);
++		ho->written = (ho->written + bytes_to_frames(rt, n)) %
++			      rt->boundary;
++		wp = (wp + n) % size;
++		/* the data before the pointer that hands it over */
++		wmb();
++		WRITE_ONCE(sh->in.write, cpu_to_be32(begin + wp));
++		used += n;
++	}
++
++	if (draining && pending == bytes_to_frames(rt, n)) {
++		/* all handed over: tell the decoder there is no more */
++		if (!ho->eos_sent) {
++			ho_eos(ho);
++			ho->eos_sent = true;
++			dev_dbg(ho->dev, "drain: EOS at %#x\n", begin + wp);
++		}
++		/* do not wait forever on what the firmware keeps back */
++		if (used && !ho->drained &&
++		    ktime_ms_delta(now, ho->last_move) > DRAIN_STALL_MS) {
++			dev_dbg(ho->dev, "drain: %u bytes left unread\n", used);
++			ho->drained = true;
++			ho->rp = wp;
++			WRITE_ONCE(ho->hw_ptr, bytes_to_frames(rt, wp));
++			elapsed = true;
++		}
++	} else if (used && !ho->stall_warned &&
++		   ktime_ms_delta(now, ho->last_move) > STALL_MS) {
++		dev_warn(ho->dev, "firmware reads nothing: rp %#x wp %#x\n",
++			 begin + ho->rp, begin + wp);
++		ho->stall_warned = true;
++	}
++
++	if (ho->since_period >= rt->period_size) {
++		ho->since_period %= rt->period_size;
++		elapsed = true;
++	}
++	if (elapsed)
++		snd_pcm_period_elapsed(ss);
++	hrtimer_forward_now(t, ho->tick);
++	return HRTIMER_RESTART;
++}
++
++static const struct snd_pcm_hardware ho_hw = {
++	.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_MMAP_VALID |
++		SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_BLOCK_TRANSFER |
++		SNDRV_PCM_INFO_NO_REWINDS,
++	.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE,
++	.rates = SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |
++		 SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_88200 |
++		 SNDRV_PCM_RATE_96000 | SNDRV_PCM_RATE_176400 |
++		 SNDRV_PCM_RATE_192000,
++	.rate_min = 32000,
++	.rate_max = 192000,
++	.channels_min = CHANNELS,
++	.channels_max = CHANNELS,
++	.buffer_bytes_max = BUFFER_BYTES_MAX,
++	.period_bytes_min = SZ_1K,
++	.period_bytes_max = BUFFER_BYTES_MAX / 2,
++	.periods_min = 2,
++	.periods_max = 64,
++};
++
++/* As snd_card_playback_open(): the AO agent, then a pin on it */
++static int ho_open(struct snd_pcm_substream *ss)
++{
++	struct hdmi_out *ho = snd_pcm_substream_chip(ss);
++	int ret;
++
++	ss->runtime->hw = ho_hw;
++	ret = ho_check_ready(ho);
++	if (ret)
++		return ret;
++	if (!ho->have_ao) {
++		ret = ho_create(ho, AGENT_ALSA_OUT, 0, true, &ho->ao);
++		if (ret)
++			return ret;
++		ho->have_ao = true;
++	}
++	ret = ho_get_pin(ho);
++	if (ret)
++		return ret;
++	ho->substream = ss;
++	ho->flow = false;
++	dev_info(ho->dev, "AO agent %#x, pin %u\n", ho->ao, ho->pin);
++	return 0;
++}
++
++static int ho_close(struct snd_pcm_substream *ss)
++{
++	struct hdmi_out *ho = snd_pcm_substream_chip(ss);
++
++	hrtimer_cancel(&ho->timer);
++	ho_teardown(ho);
++	ho_release_pin(ho);
++	ho->substream = NULL;
++	return 0;
++}
++
++static int ho_prepare(struct snd_pcm_substream *ss)
++{
++	struct hdmi_out *ho = snd_pcm_substream_chip(ss);
++	struct snd_pcm_runtime *rt = ss->runtime;
++	int ret;
++
++	hrtimer_cancel(&ho->timer);
++	/* as snd_realtek_reprepare(): a new decoder for the new format */
++	ho_teardown(ho);
++
++	ho->ring_size = frames_to_bytes(rt, rt->buffer_size);
++	ho->rp = 0;
++	ho->written = 0;
++	ho->hw_ptr = 0;
++	ho->since_period = 0;
++	ho->eos_sent = false;
++	ho->drained = false;
++	ho->stall_warned = false;
++	ho->bad_rp_warned = false;
++	ho->tick = ns_to_ktime(div_u64((u64)rt->period_size * NSEC_PER_SEC,
++				       rt->rate) / 2);
++
++	ret = ho_setup(ho, rt);
++	if (ret) {
++		dev_err(ho->dev, "setting up the decoder failed: %d\n", ret);
++		ho_teardown(ho);
++		return ret;
++	}
++	dev_info(ho->dev, "%u Hz, %u bits, %u ch: decoder %#x, ring %#x+%#x, period %lu frames\n",
++		 rt->rate, rt->sample_bits, rt->channels, ho->dec,
++		 ho_addr(ho, &ho->in, 0), ho->ring_size, rt->period_size);
++	return 0;
++}
++
++static int ho_trigger(struct snd_pcm_substream *ss, int cmd)
++{
++	struct hdmi_out *ho = snd_pcm_substream_chip(ss);
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++		ho->last_move = ktime_get();
++		WRITE_ONCE(ho->active, true);
++		/* hand over what is there now, then every half period */
++		hrtimer_start(&ho->timer, 0, HRTIMER_MODE_REL_SOFT);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++		/* the timer may be what is calling us, through an xrun */
++		WRITE_ONCE(ho->active, false);
++		hrtimer_try_to_cancel(&ho->timer);
++		return 0;
++	}
++	return -EINVAL;
++}
++
++static snd_pcm_uframes_t ho_pointer(struct snd_pcm_substream *ss)
++{
++	struct hdmi_out *ho = snd_pcm_substream_chip(ss);
++
++	return READ_ONCE(ho->hw_ptr);
++}
++
++static const struct snd_pcm_ops ho_ops = {
++	.open = ho_open,
++	.close = ho_close,
++	.prepare = ho_prepare,
++	.trigger = ho_trigger,
++	.pointer = ho_pointer,
++};
++
++static void ho_free(void *data)
++{
++	struct hdmi_out *ho = data;
++	int i;
++
++	rtd_acpu_free(ho->acpu, &ho->in);
++	for (i = 0; i < CHANNELS; i++)
++		rtd_acpu_free(ho->acpu, &ho->dec_out[i]);
++	rtd_acpu_free(ho->acpu, &ho->shared);
++	rtd_acpu_free(ho->acpu, &ho->param);
++}
++
++static int ho_alloc(struct hdmi_out *ho)
++{
++	int i, ret;
++
++	ret = rtd_acpu_alloc(ho->acpu, SZ_4K, &ho->param) ?:
++	      rtd_acpu_alloc(ho->acpu, sizeof(struct ao_shared), &ho->shared) ?:
++	      rtd_acpu_alloc(ho->acpu, BUFFER_BYTES_MAX, &ho->in);
++	for (i = 0; !ret && i < CHANNELS; i++)
++		ret = rtd_acpu_alloc(ho->acpu, DEC_OUT_RING_SIZE,
++				     &ho->dec_out[i]);
++	if (ret)
++		ho_free(ho);
++	return ret;
++}
++
++static int ho_probe(struct auxiliary_device *adev,
++		    const struct auxiliary_device_id *id)
++{
++	struct rtd_acpu_adev *radev = container_of(adev, struct rtd_acpu_adev,
++						   adev);
++	struct device *dev = &adev->dev;
++	struct hdmi_out *ho;
++	struct snd_card *card;
++	struct snd_pcm *pcm;
++	int ret;
++
++	ho = devm_kzalloc(dev, sizeof(*ho), GFP_KERNEL);
++	if (!ho)
++		return -ENOMEM;
++	ho->acpu = radev->acpu;
++	ho->dev = dev;
++	hrtimer_setup(&ho->timer, ho_timer, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL_SOFT);
++	ret = ho_alloc(ho);
++	if (ret)
++		return ret;
++	/*
++	 * Before the card, so that it is freed after it: a stream still open
++	 * at removal calls into the firmware when it closes.
++	 */
++	ret = devm_add_action_or_reset(dev, ho_free, ho);
++	if (ret)
++		return ret;
++
++	ret = snd_devm_card_new(dev, SNDRV_DEFAULT_IDX1, "HDMI", THIS_MODULE,
++				0, &card);
++	if (ret)
++		return ret;
++	ho->card = card;
++
++	strscpy(card->driver, "rtd129x-hdmi", sizeof(card->driver));
++	strscpy(card->shortname, "HDMI", sizeof(card->shortname));
++	strscpy(card->longname, "RTD129x HDMI audio output",
++		sizeof(card->longname));
++
++	ret = snd_pcm_new(card, "HDMI", 0, 1, 0, &pcm);
++	if (ret)
++		return ret;
++	pcm->private_data = ho;
++	strscpy(pcm->name, "HDMI", sizeof(pcm->name));
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &ho_ops);
++	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL,
++				       0, BUFFER_BYTES_MAX);
++
++	return snd_card_register(card);
++}
++
++static const struct auxiliary_device_id ho_ids[] = {
++	{ .name = "rtd129x_acpu." RTD_ACPU_AO_NAME },
++	{ }
++};
++MODULE_DEVICE_TABLE(auxiliary, ho_ids);
++
++static struct auxiliary_driver ho_driver = {
++	.probe = ho_probe,
++	.id_table = ho_ids,
++};
++module_auxiliary_driver(ho_driver);
++
++MODULE_DESCRIPTION("Realtek RTD129x HDMI audio output");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+
