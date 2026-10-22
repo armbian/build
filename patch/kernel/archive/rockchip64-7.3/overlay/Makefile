@@ -49,6 +49,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3562-kickpi-k3b-demo-dsi-panel.dtbo \
 	rockchip-rk3566-sata2.dtbo \
 	rockchip-rk3566-i2c2-m1.dtbo \
+	rockchip-rk3566-eltay-rm66-pocketterm35-touch-5d.dtbo \
 	rockchip-rk3566-i2c3-m0.dtbo \
 	rockchip-rk3566-i2c4-m0.dtbo \
 	rockchip-rk3566-pwm7.dtbo \
