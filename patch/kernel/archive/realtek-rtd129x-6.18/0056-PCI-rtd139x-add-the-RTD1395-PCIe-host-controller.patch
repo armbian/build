@@ -1,0 +1,649 @@
+From c778dc636a2f3baf74fab71e483d765561b59ca7 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 22 Oct 2026 07:47:00 +0000
+Subject: [PATCH 56/60] PCI: rtd139x: add the RTD1395 PCIe host controller
+
+Add a host driver for the RTD1395 PCIe controller.
+The init sequence follows the Realtek BSP driver.
+The driver supports INTx only, as the BSP driver does.
+The CPU window is 120 KiB. Devices with a larger BAR do not get it.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/pci/controller/Kconfig        |   8 +
+ drivers/pci/controller/Makefile       |   1 +
+ drivers/pci/controller/pcie-rtd139x.c | 590 ++++++++++++++++++++++++++
+ 3 files changed, 599 insertions(+)
+ create mode 100644 drivers/pci/controller/pcie-rtd139x.c
+
+diff --git a/drivers/pci/controller/Kconfig b/drivers/pci/controller/Kconfig
+index 0452151a7..84da0f44f 100644
+--- a/drivers/pci/controller/Kconfig
++++ b/drivers/pci/controller/Kconfig
+@@ -223,6 +223,14 @@ config PCIE_MT7621
+ 	help
+ 	  This selects a driver for the MediaTek MT7621 PCIe Controller.
+ 
++config PCIE_RTD139X
++	bool "Realtek RTD1395 PCIe controller"
++	depends on ARCH_REALTEK || COMPILE_TEST
++	depends on OF
++	help
++	  Say Y here to enable the PCIe host controller of the Realtek
++	  RTD1395 SoC, as used on the Banana Pi BPI-M4.
++
+ config PCI_HYPERV_INTERFACE
+ 	tristate "Microsoft Hyper-V PCI Interface"
+ 	depends on ((X86 && X86_64) || ARM64) && HYPERV && PCI_MSI
+diff --git a/drivers/pci/controller/Makefile b/drivers/pci/controller/Makefile
+index 038ccbd9e..db5a0d5de 100644
+--- a/drivers/pci/controller/Makefile
++++ b/drivers/pci/controller/Makefile
+@@ -39,6 +39,7 @@ obj-$(CONFIG_PCI_LOONGSON) += pci-loongson.o
+ obj-$(CONFIG_PCIE_HISI_ERR) += pcie-hisi-error.o
+ obj-$(CONFIG_PCIE_APPLE) += pcie-apple.o
+ obj-$(CONFIG_PCIE_MT7621) += pcie-mt7621.o
++obj-$(CONFIG_PCIE_RTD139X) += pcie-rtd139x.o
+ 
+ # pcie-hisi.o quirks are needed even without CONFIG_PCIE_DW
+ obj-y				+= dwc/
+diff --git a/drivers/pci/controller/pcie-rtd139x.c b/drivers/pci/controller/pcie-rtd139x.c
+new file mode 100644
+index 000000000..95b6f39f2
+--- /dev/null
++++ b/drivers/pci/controller/pcie-rtd139x.c
+@@ -0,0 +1,590 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Realtek RTD1395 PCIe host controller
++ *
++ * The root complex is a DesignWare core (port logic at 0x700) behind a
++ * Realtek bridge at 0xc00. The bridge sends configuration requests through
++ * an indirect register engine and decodes one CPU window to PCI memory.
++ * There is no iATU setup and no root port on the bus: the endpoint is the
++ * only device on the root bus, as in the vendor driver.
++ *
++ * Based on the Realtek BSP driver pcie-rtd139x.c (James Tai).
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/iopoll.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_pci.h>
++#include <linux/pci.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/sizes.h>
++
++#include "../pci.h"
++
++/* DesignWare root complex registers (DBI) */
++#define RTD_RC_COMMAND			0x004
++#define RTD_RC_MEM_BASE_LIMIT		0x020
++#define RTD_RC_PREF_BASE_LIMIT		0x024
++#define RTD_RC_LNKCTL_LNKSTA		0x080	/* PCIe capability at 0x70 */
++#define RTD_RC_LNKCTL2			0x0a0
++#define  RTD_RC_LNKCTL2_TLS		GENMASK(3, 0)
++#define RTD_RC_PORT_LINK_CTRL		0x710
++#define RTD_RC_PORT_DEBUG0		0x728
++#define RTD_RC_PORT_DEBUG1		0x72c
++
++/* Realtek bridge registers */
++#define RTD_SYS_CTR			0xc00
++#define  RTD_SYS_CTR_PHY_SETUP		0x00140010	/* TRANS, MDIO_OE, DIR_CFG */
++#define  RTD_SYS_CTR_RUN		0x001e0022	/* + MMIO, MDIO_RSTN, INDIR_CFG, LTSSM */
++#define RTD_INDIR_CTR			0xc14
++#define  RTD_INDIR_CFG_RD0		0x10		/* TLP type CfgRd0 */
++#define  RTD_INDIR_CFG_WR0		0x12		/* TLP type CfgWr0, with data */
++#define RTD_MDIO_CTR			0xc1c
++#define RTD_CFG_CT			0xc38
++#define  RTD_CFG_CT_GO			BIT(0)
++#define RTD_CFG_EN			0xc3c
++#define  RTD_CFG_EN_BYTE_CNT		GENMASK(7, 4)
++#define  RTD_CFG_EN_BYTE_EN		BIT(1)
++#define  RTD_CFG_EN_WRITE		BIT(0)
++#define RTD_CFG_ST			0xc40
++#define  RTD_CFG_ST_ERROR		BIT(1)
++#define  RTD_CFG_ST_DONE		BIT(0)
++#define RTD_CFG_ADDR			0xc44
++#define RTD_CFG_WDATA			0xc48
++#define RTD_CFG_RDATA			0xc4c
++#define RTD_DIR_EN			0xc78
++#define  RTD_DIR_EN_TIMEOUT		0x00200001	/* vendor: no hang on DLLP error */
++#define RTD_DLLP_ERR			0xc7c
++#define  RTD_DLLP_ERR_MASK		GENMASK(4, 0)
++#define RTD_MAC_ST			0xcb4
++#define  RTD_MAC_ST_LINK_UP		BIT(11)
++#define RTD_MEM_BASE0			0xcfc
++#define RTD_MEM_MASK0			0xd00
++#define RTD_MEM_TRAN0			0xd04
++
++/* System registers at 0x9801c800 */
++#define RTD_SYS_PHY_14			0x14
++#define RTD_SYS_PHY_04			0x04
++#define RTD_SYS_PHY_08			0x08
++
++/* ISO pin mux 0x9804e00c: gpio_46 is CLKREQ# in function 1 */
++#define RTD_PMUX_GPIO46_REG		0x0c
++#define RTD_PMUX_GPIO46			GENMASK(17, 15)
++#define RTD_PMUX_GPIO46_PCIE		1
++
++/* The vendor sends config TLPs to bus 1, device 0 */
++#define RTD_EP_BUS			1
++
++#define RTD_LINK_TIMEOUT_US		(100 * USEC_PER_MSEC)
++#define RTD_CFG_POLL_US			50
++/* config accesses busy-wait with IRQs off: keep the timeouts short */
++#define RTD_CFG_WR_TIMEOUT_US		(10 * USEC_PER_MSEC)
++#define RTD_CFG_RD_TIMEOUT_US		(10 * USEC_PER_MSEC)
++#define RTD_DLLP_RETRIES		5
++
++static bool rtd139x_debug;
++module_param_named(debug, rtd139x_debug, bool, 0444);
++MODULE_PARM_DESC(debug, "Keep the controller powered when the link stays down");
++
++/*
++ * PHY MDIO writes, from the vendor rtd-139x-pcie.dtsi "phys" property.
++ * Format: data[31:16], PHY address[15:13], register[12:8], write bit 0.
++ */
++static const u32 rtd139x_phy_mdio[] = {
++	0x00000003,	/* soft reset */
++	0x27710301,
++	0x52f50401,	/* F code, SSC off */
++	0xead70501,	/* N code */
++	0x00080601,	/* CMU ICP (TX jitter) */
++	0xb6530a01,	/* CMU RS (TX jitter) */
++	0xc4552001,	/* amplitude */
++	0x8ea01b01,
++	0x8ea05b01,
++	0x55552101,
++	0x505c0101,	/* RX parameters */
++	0xa8032b01,	/* clock driving */
++	0x27e94301,	/* EQ */
++	0x52f54401,	/* Gen2: F code, SSC off */
++	0xead74501,	/* Gen2: N code */
++	0x00004601,	/* Gen2: CMU ICP */
++	0x86534a01,	/* Gen2: CMU RS */
++	0xc4666001,	/* Gen2: amplitude */
++	0x55556101,
++	0xa84a4101,	/* Gen2: RX parameters */
++	0xa8036b01,	/* Gen2: clock driving */
++	0x01225a01,
++	0xf8022801,
++	0x521c0901,
++	0x501c0901,
++	0x521c0901,
++};
++
++/* Deassert order of the vendor driver */
++static const char * const rtd139x_reset_names[] = {
++	"stitch", "rstn", "core", "power", "nonstitch",
++	"phy", "phy-mdio", "sgmii-mdio",
++};
++
++struct rtd139x_pcie {
++	struct device *dev;
++	void __iomem *base;
++	void __iomem *sys;
++	void __iomem *pmux;
++	struct clk *clk;
++	struct reset_control_bulk_data resets[ARRAY_SIZE(rtd139x_reset_names)];
++	struct gpio_desc *perst;
++	int irq;
++	int max_speed;
++	u32 win_base;
++	u32 win_mask;
++	u32 win_tran;
++};
++
++static inline u32 rtd_readl(struct rtd139x_pcie *p, u32 reg)
++{
++	return readl(p->base + reg);
++}
++
++static inline void rtd_writel(struct rtd139x_pcie *p, u32 reg, u32 val)
++{
++	writel(val, p->base + reg);
++}
++
++static u32 rtd139x_byte_mask(int where, int size)
++{
++	return (BIT(size) - 1) << (where & 3);
++}
++
++static u32 rtd139x_cfg_addr(unsigned int devfn, int where)
++{
++	return (RTD_EP_BUS << 24) | (PCI_SLOT(devfn) << 19) |
++	       (PCI_FUNC(devfn) << 16) | where;
++}
++
++static bool rtd139x_valid_device(struct pci_bus *bus, unsigned int devfn)
++{
++	return pci_is_root_bus(bus) && devfn == 0;
++}
++
++/* Vendor pcie-rtd139x.c:370 _indirect_cfg_read() */
++static int rtd139x_cfg_read_once(struct rtd139x_pcie *p, u32 addr,
++				 int where, int size, u32 *val)
++{
++	u32 bmask = rtd139x_byte_mask(where, size);
++	u32 shift = (where & 3) * 8;
++	u32 st;
++	int ret;
++
++	rtd_writel(p, RTD_INDIR_CTR, RTD_INDIR_CFG_RD0);
++	rtd_writel(p, RTD_CFG_ST, RTD_CFG_ST_ERROR | RTD_CFG_ST_DONE);
++	rtd_writel(p, RTD_CFG_ADDR, addr & ~3);
++	rtd_writel(p, RTD_CFG_EN, FIELD_PREP(RTD_CFG_EN_BYTE_CNT, bmask) |
++				  RTD_CFG_EN_BYTE_EN);
++	rtd_writel(p, RTD_CFG_CT, RTD_CFG_CT_GO);
++
++	ret = readl_poll_timeout_atomic(p->base + RTD_CFG_ST, st,
++					st & RTD_CFG_ST_DONE, RTD_CFG_POLL_US,
++					RTD_CFG_RD_TIMEOUT_US);
++	if (ret || (st & RTD_CFG_ST_ERROR)) {
++		dev_dbg(p->dev, "config read 0x%08x: %s, status 0x%08x\n",
++			addr, ret ? "timeout" : "error", st);
++		rtd_writel(p, RTD_CFG_ST, RTD_CFG_ST_ERROR | RTD_CFG_ST_DONE);
++		return ret ? -ETIMEDOUT : -EIO;
++	}
++
++	rtd_writel(p, RTD_CFG_ST, RTD_CFG_ST_ERROR | RTD_CFG_ST_DONE);
++	*val = (rtd_readl(p, RTD_CFG_RDATA) >> shift) &
++	       (size == 4 ? 0xffffffff : BIT(size * 8) - 1);
++
++	return 0;
++}
++
++/* Vendor pcie-rtd139x.c:426 rtk_pcie_139x_rd_conf(), with the DLLP retry */
++static int rtd139x_cfg_read(struct pci_bus *bus, unsigned int devfn,
++			    int where, int size, u32 *val)
++{
++	struct rtd139x_pcie *p = bus->sysdata;
++	u32 addr = rtd139x_cfg_addr(devfn, where);
++	int retries = RTD_DLLP_RETRIES;
++	u32 err;
++	int ret;
++
++	if (!rtd139x_valid_device(bus, devfn)) {
++		PCI_SET_ERROR_RESPONSE(val);
++		return PCIBIOS_DEVICE_NOT_FOUND;
++	}
++
++	if ((where & 3) + size > 4) {
++		PCI_SET_ERROR_RESPONSE(val);
++		return PCIBIOS_BAD_REGISTER_NUMBER;
++	}
++
++	for (;;) {
++		ret = rtd139x_cfg_read_once(p, addr, where, size, val);
++		/* no retry after a timeout: each one costs the full wait */
++		if (ret == -ETIMEDOUT)
++			break;
++		err = rtd_readl(p, RTD_DLLP_ERR);
++		if (!(err & RTD_DLLP_ERR_MASK) || !retries--)
++			break;
++		rtd_writel(p, RTD_DLLP_ERR, err);
++		dev_warn_ratelimited(p->dev,
++				     "DLLP error 0x%x on config read 0x%03x, retry\n",
++				     err, where);
++	}
++
++	if (ret) {
++		PCI_SET_ERROR_RESPONSE(val);
++		return PCIBIOS_SET_FAILED;
++	}
++
++	return PCIBIOS_SUCCESSFUL;
++}
++
++/* Vendor pcie-rtd139x.c:302 _indirect_cfg_write() */
++static int rtd139x_cfg_write(struct pci_bus *bus, unsigned int devfn,
++			     int where, int size, u32 val)
++{
++	struct rtd139x_pcie *p = bus->sysdata;
++	u32 addr = rtd139x_cfg_addr(devfn, where);
++	u32 bmask = rtd139x_byte_mask(where, size);
++	u32 shift = (where & 3) * 8;
++	u32 st;
++	int ret;
++
++	if (!rtd139x_valid_device(bus, devfn))
++		return PCIBIOS_DEVICE_NOT_FOUND;
++
++	if ((where & 3) + size > 4)
++		return PCIBIOS_BAD_REGISTER_NUMBER;
++
++	if (size != 4)
++		val = (val << shift) & GENMASK(shift + size * 8 - 1, shift);
++
++	rtd_writel(p, RTD_INDIR_CTR, RTD_INDIR_CFG_WR0);
++	rtd_writel(p, RTD_CFG_ST, RTD_CFG_ST_ERROR | RTD_CFG_ST_DONE);
++	rtd_writel(p, RTD_CFG_ADDR, addr);
++	rtd_writel(p, RTD_CFG_WDATA, val);
++	if (size == 4)
++		rtd_writel(p, RTD_CFG_EN, RTD_CFG_EN_WRITE);
++	else
++		rtd_writel(p, RTD_CFG_EN,
++			   FIELD_PREP(RTD_CFG_EN_BYTE_CNT, bmask) |
++			   RTD_CFG_EN_BYTE_EN | RTD_CFG_EN_WRITE);
++	rtd_writel(p, RTD_CFG_CT, RTD_CFG_CT_GO);
++
++	ret = readl_poll_timeout_atomic(p->base + RTD_CFG_ST, st,
++					st & RTD_CFG_ST_DONE, RTD_CFG_POLL_US,
++					RTD_CFG_WR_TIMEOUT_US);
++	rtd_writel(p, RTD_CFG_ST, RTD_CFG_ST_ERROR | RTD_CFG_ST_DONE);
++	if (ret || (st & RTD_CFG_ST_ERROR)) {
++		dev_dbg(p->dev, "config write 0x%08x: %s, status 0x%08x\n",
++			addr, ret ? "timeout" : "error", st);
++		return PCIBIOS_SET_FAILED;
++	}
++
++	return PCIBIOS_SUCCESSFUL;
++}
++
++static struct pci_ops rtd139x_pcie_ops = {
++	.read = rtd139x_cfg_read,
++	.write = rtd139x_cfg_write,
++};
++
++/* All INTx lines share one SoC interrupt, as in the vendor interrupt-map */
++static int rtd139x_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
++{
++	struct rtd139x_pcie *p = dev->bus->sysdata;
++
++	return p->irq;
++}
++
++static void rtd139x_power_off(struct rtd139x_pcie *p)
++{
++	gpiod_set_value_cansleep(p->perst, 1);
++	reset_control_bulk_assert(ARRAY_SIZE(p->resets), p->resets);
++	clk_disable_unprepare(p->clk);
++}
++
++static void rtd139x_log_link_down(struct rtd139x_pcie *p)
++{
++	u32 st = rtd_readl(p, RTD_MAC_ST);
++	u32 dbg0 = rtd_readl(p, RTD_RC_PORT_DEBUG0);
++
++	dev_err(p->dev,
++		"link down: MAC_ST 0x%08x, DEBUG0 0x%08x (LTSSM 0x%02x), DEBUG1 0x%08x\n",
++		st, dbg0, dbg0 & 0x3f, rtd_readl(p, RTD_RC_PORT_DEBUG1));
++}
++
++/* Vendor pcie-rtd139x.c:517 rtk_pcie_139x_hw_initial() */
++static int rtd139x_hw_init(struct rtd139x_pcie *p)
++{
++	u32 val;
++	int ret, i;
++
++	/* Vendor :526: 0x9801c814[2:0] = 1 */
++	val = readl(p->sys + RTD_SYS_PHY_14);
++	writel((val & ~0x7) | 0x1, p->sys + RTD_SYS_PHY_14);
++
++	/*
++	 * Vendor :532: 0x9801c804[3:0] = 0, select PCIe. The 139x driver
++	 * writes the result to 0x9801c800; the 13xx and 16xx drivers write
++	 * it back to 0x9801c804, as the comment says.
++	 */
++	val = readl(p->sys + RTD_SYS_PHY_04);
++	writel(val & ~0xf, p->sys + RTD_SYS_PHY_04);
++
++	/* Vendor :537: 0x9801c808[7:0] = 1 */
++	writeb(0x1, p->sys + RTD_SYS_PHY_08);
++
++	/* Vendor :540 */
++	ret = reset_control_bulk_deassert(ARRAY_SIZE(p->resets), p->resets);
++	if (ret)
++		return dev_err_probe(p->dev, ret, "cannot deassert resets\n");
++
++	/* Vendor :549 */
++	ret = clk_prepare_enable(p->clk);
++	if (ret) {
++		reset_control_bulk_assert(ARRAY_SIZE(p->resets), p->resets);
++		return dev_err_probe(p->dev, ret, "cannot enable clock\n");
++	}
++
++	/* Vendor :558 */
++	rtd_writel(p, RTD_SYS_CTR, RTD_SYS_CTR_PHY_SETUP);
++
++	/* Vendor :560: the vendor default is Gen1 */
++	if (p->max_speed != 2) {
++		val = rtd_readl(p, RTD_RC_LNKCTL2);
++		val &= ~RTD_RC_LNKCTL2_TLS;
++		val |= PCI_EXP_LNKCTL2_TLS_2_5GT;
++		rtd_writel(p, RTD_RC_LNKCTL2, val);
++	}
++
++	/* Vendor :566 */
++	for (i = 0; i < ARRAY_SIZE(rtd139x_phy_mdio); i++) {
++		rtd_writel(p, RTD_MDIO_CTR, rtd139x_phy_mdio[i]);
++		usleep_range(1000, 1100);
++	}
++	dev_info(p->dev, "PHY init done (%zu MDIO writes), target Gen%d\n",
++		 ARRAY_SIZE(rtd139x_phy_mdio), p->max_speed == 2 ? 2 : 1);
++
++	/* Vendor :577: PERST# */
++	gpiod_set_value_cansleep(p->perst, 1);
++	msleep(100);
++	gpiod_set_value_cansleep(p->perst, 0);
++
++	/* Vendor :586: MMIO, indirect config, LTSSM enable */
++	rtd_writel(p, RTD_SYS_CTR, RTD_SYS_CTR_RUN);
++	msleep(50);
++
++	/* Vendor :591: link initial setting */
++	rtd_writel(p, RTD_RC_PORT_LINK_CTRL, 0x00010120);
++
++	/* Vendor :593: the vendor waits 60 ms */
++	ret = readl_poll_timeout(p->base + RTD_MAC_ST, val,
++				 val & RTD_MAC_ST_LINK_UP, 1000,
++				 RTD_LINK_TIMEOUT_US);
++	if (ret) {
++		rtd139x_log_link_down(p);
++		if (rtd139x_debug)
++			dev_info(p->dev, "debug: controller stays powered\n");
++		else
++			rtd139x_power_off(p);
++		return -ENODEV;
++	}
++
++	/* Vendor :623: DBI memory, I/O and bus master enable */
++	rtd_writel(p, RTD_RC_COMMAND, 0x00000007);
++
++	/* Vendor :636: outbound window */
++	rtd_writel(p, RTD_MEM_BASE0, p->win_base);
++	rtd_writel(p, RTD_MEM_MASK0, p->win_mask);
++	rtd_writel(p, RTD_MEM_TRAN0, p->win_tran);
++
++	/* Vendor :649 */
++	rtd_writel(p, RTD_DIR_EN, RTD_DIR_EN_TIMEOUT);
++
++	/* Vendor :652: RC memory windows */
++	rtd_writel(p, RTD_RC_MEM_BASE_LIMIT, 0x0000fff0);
++	rtd_writel(p, RTD_RC_PREF_BASE_LIMIT, 0x0000fff0);
++
++	val = rtd_readl(p, RTD_RC_LNKCTL_LNKSTA) >> 16;
++	dev_info(p->dev, "link up: Gen%u x%u, MAC_ST 0x%08x\n",
++		 (u32)FIELD_GET(PCI_EXP_LNKSTA_CLS, val),
++		 (u32)FIELD_GET(PCI_EXP_LNKSTA_NLW, val),
++		 rtd_readl(p, RTD_MAC_ST));
++
++	return 0;
++}
++
++/*
++ * The bridge decodes CPU addresses that match BASE0 under MASK0 and sends
++ * them to PCI address (cpu & ~MASK0) | (TRAN0 & MASK0). The vendor uses a
++ * 1 MiB mask and sets TRAN0 from each BAR write; with an identity range a
++ * fixed TRAN0 gives the same translation for all BARs.
++ */
++static int rtd139x_parse_window(struct rtd139x_pcie *p,
++				struct pci_host_bridge *bridge)
++{
++	struct resource_entry *win;
++	resource_size_t cpu, pci, size;
++	u32 gran;
++
++	win = resource_list_first_type(&bridge->windows, IORESOURCE_MEM);
++	if (!win)
++		return dev_err_probe(p->dev, -EINVAL, "no memory range\n");
++
++	cpu = win->res->start;
++	pci = cpu - win->offset;
++	size = resource_size(win->res);
++	gran = max_t(u32, SZ_1M, roundup_pow_of_two(size));
++
++	if (upper_32_bits(cpu) || upper_32_bits(pci) ||
++	    (cpu & ~(u64)(gran - 1)) != ((cpu + size - 1) & ~(u64)(gran - 1)) ||
++	    (cpu & (gran - 1)) != (pci & (gran - 1)))
++		return dev_err_probe(p->dev, -EINVAL,
++				     "memory range %pR cannot be translated\n",
++				     win->res);
++
++	p->win_base = cpu;
++	p->win_mask = ~(gran - 1);
++	p->win_tran = pci & p->win_mask;
++
++	dev_dbg(p->dev, "window %pR: base 0x%08x mask 0x%08x tran 0x%08x\n",
++		win->res, p->win_base, p->win_mask, p->win_tran);
++
++	return 0;
++}
++
++/* Vendor pinctrl-rtd139x.h: gpio_46 function "pcie" (pcie_clk_pins) */
++static void rtd139x_pinmux(struct rtd139x_pcie *p)
++{
++	u32 val;
++
++	if (!p->pmux)
++		return;
++
++	val = readl(p->pmux + RTD_PMUX_GPIO46_REG);
++	if (FIELD_GET(RTD_PMUX_GPIO46, val) != RTD_PMUX_GPIO46_PCIE) {
++		dev_info(p->dev, "set gpio_46 to PCIe, pin mux was 0x%08x\n",
++			 val);
++		val &= ~RTD_PMUX_GPIO46;
++		val |= FIELD_PREP(RTD_PMUX_GPIO46, RTD_PMUX_GPIO46_PCIE);
++		writel(val, p->pmux + RTD_PMUX_GPIO46_REG);
++	}
++}
++
++static int rtd139x_pcie_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct pci_host_bridge *bridge;
++	struct rtd139x_pcie *p;
++	struct resource *res;
++	int ret, i;
++
++	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*p));
++	if (!bridge)
++		return -ENOMEM;
++
++	p = pci_host_bridge_priv(bridge);
++	p->dev = dev;
++
++	p->base = devm_platform_ioremap_resource_byname(pdev, "ctrl");
++	if (IS_ERR(p->base))
++		return PTR_ERR(p->base);
++
++	p->sys = devm_platform_ioremap_resource_byname(pdev, "sys");
++	if (IS_ERR(p->sys))
++		return PTR_ERR(p->sys);
++
++	/* Shared with the SD card pad control: map, do not request */
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pinmux");
++	if (res) {
++		p->pmux = devm_ioremap(dev, res->start, resource_size(res));
++		if (!p->pmux)
++			return -ENOMEM;
++	}
++
++	p->irq = platform_get_irq(pdev, 0);
++	if (p->irq < 0)
++		return p->irq;
++
++	p->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(p->clk))
++		return dev_err_probe(dev, PTR_ERR(p->clk), "no clock\n");
++
++	for (i = 0; i < ARRAY_SIZE(p->resets); i++)
++		p->resets[i].id = rtd139x_reset_names[i];
++	ret = devm_reset_control_bulk_get_exclusive(dev, ARRAY_SIZE(p->resets),
++						    p->resets);
++	if (ret)
++		return dev_err_probe(dev, ret, "no resets\n");
++
++	/* Low active in DT: requesting it high asserts PERST# */
++	p->perst = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(p->perst))
++		return dev_err_probe(dev, PTR_ERR(p->perst), "no reset GPIO\n");
++
++	p->max_speed = of_pci_get_max_link_speed(dev->of_node);
++
++	ret = rtd139x_parse_window(p, bridge);
++	if (ret)
++		return ret;
++
++	/* Vendor pcie-rtd139x.c:823 */
++	ret = reset_control_bulk_assert(ARRAY_SIZE(p->resets), p->resets);
++	if (ret)
++		return ret;
++
++	rtd139x_pinmux(p);
++
++	ret = rtd139x_hw_init(p);
++	if (ret)
++		return ret;
++
++	bridge->sysdata = p;
++	bridge->ops = &rtd139x_pcie_ops;
++	bridge->map_irq = rtd139x_map_irq;
++	bridge->swizzle_irq = pci_common_swizzle;
++
++	platform_set_drvdata(pdev, p);
++
++	ret = pci_host_probe(bridge);
++	if (ret) {
++		rtd139x_power_off(p);
++		return dev_err_probe(dev, ret, "cannot probe host bridge\n");
++	}
++
++	return 0;
++}
++
++/* Vendor pcie-rtd139x.c:956 rtk_pcie_139x_shutdown() */
++static void rtd139x_pcie_shutdown(struct platform_device *pdev)
++{
++	struct rtd139x_pcie *p = platform_get_drvdata(pdev);
++
++	if (p)
++		rtd139x_power_off(p);
++}
++
++static const struct of_device_id rtd139x_pcie_of_match[] = {
++	{ .compatible = "realtek,rtd1395-pcie" },
++	{ }
++};
++
++static struct platform_driver rtd139x_pcie_driver = {
++	.probe = rtd139x_pcie_probe,
++	.shutdown = rtd139x_pcie_shutdown,
++	.driver = {
++		.name = "pcie-rtd139x",
++		.of_match_table = rtd139x_pcie_of_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(rtd139x_pcie_driver);
+-- 
+2.53.0
+
