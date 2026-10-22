@@ -1,0 +1,168 @@
+From f272de0bfd3cda93a76602d2c27741ee4a96f9f9 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 20:09:29 +0200
+Subject: [PATCH] arm: rtd129x: start the RTD1395 audio CPU
+
+The audio firmware runs the HDMI output. On the RTD1395 the IPC block
+is at 0x2f000, and the audio CPU has its own boot ROM: it waits for a
+magic value in ACPU_STARTUP_FLAG, then jumps to the firmware. It needs
+no boot stubs.
+
+With acpu_fb set, the firmware shows that buffer as its boot logo and
+keeps reading it: a framebuffer for the OS. The BPI-M4 sets it.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/mach-rtd129x/acpu.c     | 74 +++++++++++++++++++++++++++++---
+ board/bananapi/bpi-m4/bpi-m4.env |  2 +
+ 2 files changed, 71 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm/mach-rtd129x/acpu.c b/arch/arm/mach-rtd129x/acpu.c
+index 0988e32f25..a248e513b0 100644
+--- a/arch/arm/mach-rtd129x/acpu.c
++++ b/arch/arm/mach-rtd129x/acpu.c
+@@ -10,9 +10,17 @@
+  * The audio CPU boots from small stubs in the first 0x2100 bytes of DRAM.
+  * The ARM side sees the boot ROM there, not the DRAM: only the MD (memory
+  * DMA) engine can put the stubs in place.
++ *
++ * With acpu_fb set, the firmware shows that buffer as its boot logo and
++ * keeps showing it: a framebuffer for the OS.
++ *
++ * RTD1395: the IPC block is at 0x2f000. The audio CPU has a boot ROM of its
++ * own: it waits for a magic value in ACPU_STARTUP_FLAG and then jumps to
++ * the firmware entry in the IPC block. No stubs.
+  */
+ 
+ #include <command.h>
++#include <env.h>
+ #include <malloc.h>
+ #include <cpu_func.h>
+ #include <string.h>
+@@ -24,18 +32,27 @@
+ #include <linux/bitops.h>
+ #include <linux/delay.h>
+ #include <linux/errno.h>
++#include <linux/sizes.h>
+ 
++#ifdef CONFIG_RTD1395
++#define IPC_BASE		0x2f000
++#else
+ #define IPC_BASE		0x1f000
++#endif
+ #define IPC_SIZE		0x1000
+ #define IPC_MAGIC		0x000	/* 0x16803001 once set up */
+ #define IPC_OFFSET		0x004	/* where the block is */
+ #define IPC_UART		0x0c4	/* the UART the firmware prints to */
+ #define IPC_VO_STD		0x0c8	/* where the video format is */
+ #define IPC_FW_ENTRY		0x0e0
++#define IPC_BOOT_AV_INFO	0x0cc	/* where the boot logo info is */
+ #define IPC_UBOOT_MAGIC		0x130
++#define IPC_BOOT_AV		0x600	/* the boot logo info, boot_av_info_t */
+ #define IPC_VO_RESOLUTION	0x800
+ 
+ #define ISO_RESERVED_USE_3	0x9800701c	/* the ACPU boot address */
++#define ACPU_STARTUP_FLAG	0x98081340	/* RTD1395 */
++#define  ACPU_MAGIC1		0xacd1
+ #define CRT_CLOCK_ENABLE2	0x98000010
+ #define  CLK_EN_ACPU		BIT(4)
+ 
+@@ -129,6 +146,46 @@ static void ipc_write(unsigned int off, u32 val)
+ 	writel(cpu_to_be32(val), (void *)(uintptr_t)(IPC_BASE + off));
+ }
+ 
++/*
++ * The firmware shows a boot logo from a buffer and keeps reading it: a
++ * framebuffer, 1920x1080, 4 bytes per pixel, R in the lowest byte. The
++ * logo info is the BSP's boot_av_info_t; the firmware also wants a cleared
++ * area for secure VO after the logo.
++ */
++#define FB_WIDTH		1920
++#define FB_HEIGHT		1080
++#define FB_SIZE			(FB_WIDTH * FB_HEIGHT * 4)
++#define FB_VO_SECURE_SIZE	0x5a00
++#define BOOT_AV_MAGIC		0x2452544d	/* "$RTK" */
++#define BOOT_AV_LOGO_ENABLE	56
++#define BOOT_AV_LOGO_ADDR	60
++#define BOOT_AV_SRC_WIDTH	64
++#define BOOT_AV_SRC_HEIGHT	68
++#define BOOT_AV_DST_WIDTH	72
++#define BOOT_AV_DST_HEIGHT	76
++#define BOOT_AV_VO_SECURE	84
++
++static void acpu_set_fb(ulong fb)
++{
++	u8 *av = (u8 *)(IPC_BASE + IPC_BOOT_AV);
++	ulong secure = fb + ALIGN(FB_SIZE, SZ_1M);
++
++	memset((void *)fb, 0, FB_SIZE);
++	memset((void *)secure, 0, FB_VO_SECURE_SIZE);
++
++	memset(av, 0, 0x100);
++	ipc_write(IPC_BOOT_AV, BOOT_AV_MAGIC);
++	av[BOOT_AV_LOGO_ENABLE] = 1;
++	ipc_write(IPC_BOOT_AV + BOOT_AV_LOGO_ADDR, fb);
++	ipc_write(IPC_BOOT_AV + BOOT_AV_SRC_WIDTH, FB_WIDTH);
++	ipc_write(IPC_BOOT_AV + BOOT_AV_SRC_HEIGHT, FB_HEIGHT);
++	ipc_write(IPC_BOOT_AV + BOOT_AV_DST_WIDTH, FB_WIDTH);
++	ipc_write(IPC_BOOT_AV + BOOT_AV_DST_HEIGHT, FB_HEIGHT);
++	ipc_write(IPC_BOOT_AV + BOOT_AV_VO_SECURE, secure);
++	ipc_write(IPC_BOOT_AV_INFO, IPC_BASE + IPC_BOOT_AV);
++	printf("ACPU: framebuffer at 0x%lx\n", fb);
++}
++
+ static int do_acpu(struct cmd_tbl *cmdtp, int flag, int argc,
+ 		   char *const argv[])
+ {
+@@ -143,11 +200,13 @@ static int do_acpu(struct cmd_tbl *cmdtp, int flag, int argc,
+ 		return CMD_RET_FAILURE;
+ 	}
+ 
+-	if (acpu_put_stubs()) {
+-		printf("ACPU: cannot place the boot stubs\n");
+-		return CMD_RET_FAILURE;
++	if (!IS_ENABLED(CONFIG_RTD1395)) {
++		if (acpu_put_stubs()) {
++			printf("ACPU: cannot place the boot stubs\n");
++			return CMD_RET_FAILURE;
++		}
++		writel(cpu_to_be32(ACPU_BOOT | KSEG1), (void *)ACPU_JUMP_ADDR);
+ 	}
+-	writel(cpu_to_be32(ACPU_BOOT | KSEG1), (void *)ACPU_JUMP_ADDR);
+ 
+ 	memset((void *)IPC_BASE, 0, IPC_SIZE);
+ 	ipc_write(IPC_UART, UART0_BASE | 0xc0000000);
+@@ -156,13 +215,18 @@ static int do_acpu(struct cmd_tbl *cmdtp, int flag, int argc,
+ 	ipc_write(IPC_UBOOT_MAGIC, 0x73766e00);		/* "svn" */
+ 	ipc_write(IPC_OFFSET, IPC_BASE);
+ 	ipc_write(IPC_MAGIC, 0x16803001);
++	if (env_get_hex("acpu_fb", 0))
++		acpu_set_fb(env_get_hex("acpu_fb", 0));
+ 
+ 	/* The ACPU reads DDR: not our cache, nor the bus bridge's buffer */
+ 	flush_dcache_all();
+ 	writel(0, (void *)SB2_SYNC);
+ 	dsb();
+ 
+-	writel(ACPU_BOOT | KSEG1, (void *)ISO_RESERVED_USE_3);
++	if (IS_ENABLED(CONFIG_RTD1395))
++		writel(ACPU_MAGIC1, (void *)ACPU_STARTUP_FLAG);
++	else
++		writel(ACPU_BOOT | KSEG1, (void *)ISO_RESERVED_USE_3);
+ 	setbits_le32((void *)CRT_CLOCK_ENABLE2, CLK_EN_ACPU);
+ 	printf("ACPU started on firmware at 0x%lx\n", fw);
+ 
+diff --git a/board/bananapi/bpi-m4/bpi-m4.env b/board/bananapi/bpi-m4/bpi-m4.env
+index ea6ad3620e..9ccdb59516 100644
+--- a/board/bananapi/bpi-m4/bpi-m4.env
++++ b/board/bananapi/bpi-m4/bpi-m4.env
+@@ -10,3 +10,5 @@ kernel_comp_addr_r=0x38000000
+ kernel_comp_size=0x4000000
+ ramdisk_addr_r=0x30000000
+ fdtfile=realtek/rtd1395-bpi-m4.dtb
++/* the HDMI framebuffer the audio firmware shows; reserved in the kernel DT */
++acpu_fb=0x14200000
+-- 
+2.53.0
+
