@@ -1,0 +1,196 @@
+From 14978f4d9f9e04692d23fb3569adb527da81bc0e Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 10:37:08 +0000
+Subject: [PATCH 32/46] mmc: host: sdmmc-rtd129x: support the RTD1395
+
+On the RTD1395 the card pads are in the ISO pin controller. The card
+supply is on a GPIO. The SD PLL takes another value for 3.3 V.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/mmc/host/sdmmc-rtd129x.c | 94 ++++++++++++++++++++++++++++----
+ 1 file changed, 83 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/mmc/host/sdmmc-rtd129x.c b/drivers/mmc/host/sdmmc-rtd129x.c
+index 49a1ff223..caf3faf06 100644
+--- a/drivers/mmc/host/sdmmc-rtd129x.c
++++ b/drivers/mmc/host/sdmmc-rtd129x.c
+@@ -30,6 +30,7 @@
+ #include <linux/bitops.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/regmap.h>
+ #include <linux/dma-mapping.h>
+@@ -41,6 +42,7 @@
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/reset.h>
+ #include <linux/scatterlist.h>
+ #include <linux/sizes.h>
+@@ -162,12 +164,25 @@
+ #define RTD129X_RSP17_LEN	0x200
+ #define RTD129X_BUF_LEN		SZ_64K
+ 
++struct rtd129x_sdmmc;
++
++/*
++ * RTD1295: the pads sit in the eMMC wrapper, the supply switch on a pad pull.
++ * RTD1395: the pads sit in the ISO pin controller, the supply on ISO GPIO 30.
++ */
++struct rtd_sd_soc {
++	u32 sel3318;		/* PLL_SD1 SEL3318 for 3.3 V signalling */
++	void (*power)(struct rtd129x_sdmmc *host, bool on);
++};
++
+ struct rtd129x_sdmmc {
+ 	struct device		*dev;
+ 	struct mmc_host		*mmc;
+ 
+ 	void __iomem		*sd;	/* the card reader core */
+ 	void __iomem		*pad;	/* its pads, 0x98012600; may be NULL */
++	const struct rtd_sd_soc	*soc;
++	struct gpio_desc	*power;	/* RTD1395: the card supply */
+ 	unsigned char		power_mode;
+ 	struct regmap		*crt;	/* CRT syscon, for the SD PLL; may be NULL */
+ 
+@@ -213,7 +228,6 @@ static int rtd129x_get_cd(struct mmc_host *mmc)
+  */
+ #define CR_PLL_SD1		0x1e0
+ #define  PLL_SD1_SEL3318	GENMASK(14, 13)
+-#define  PLL_SD1_SEL3318_VAL	2
+ #define CR_PLL_SD3		0x1e8
+ #define CR_PLL_SD4		0x1ec
+ #define PLL_SD3_100MHZ		0x00564388
+@@ -235,9 +249,10 @@ static void rtd129x_set_pll(struct rtd129x_sdmmc *host)
+ 	 * with 1 a 1-bit read works at every sampling phase and a 4-bit read
+ 	 * at none; with 2 both do. So 2 it is -- the value the board booted
+ 	 * from its SD card has always run with, since u-boot left it.
++	 * The RTD1395 numbers these steps differently: see rtd1395_sd_soc.
+ 	 */
+ 	regmap_update_bits(host->crt, CR_PLL_SD1, PLL_SD1_SEL3318,
+-			   FIELD_PREP(PLL_SD1_SEL3318, PLL_SD1_SEL3318_VAL));
++			   FIELD_PREP(PLL_SD1_SEL3318, host->soc->sel3318));
+ 
+ 	writel(ckgen | CKGEN_SRC_4MHZ, host->sd + CR_SD_CKGEN_CTL);
+ 	regmap_write(host->crt, CR_PLL_SD4, 0x6);
+@@ -718,18 +733,55 @@ static void rtd129x_hw_init(struct rtd129x_sdmmc *host)
+ #define PAD_DRIVE1		0x38
+ #define  PAD_DRIVE1_VAL		0xbbbbbbbb
+ 
+-static void rtd129x_power(struct rtd129x_sdmmc *host, unsigned char mode)
++static void rtd1295_power(struct rtd129x_sdmmc *host, bool on)
+ {
+-	u32 pconf;
++	u32 pconf = readl(host->pad + PAD_PCONF_PROB) | PROB2_PULL_EN;
+ 
+-	if (!host->pad || mode == host->power_mode || mode == MMC_POWER_ON)
+-		return;
+-	pconf = readl(host->pad + PAD_PCONF_PROB) | PROB2_PULL_EN;
+-	if (mode == MMC_POWER_UP) {
++	if (on) {
+ 		writel(PFUNC_CR_ON, host->pad + PAD_PFUNC_CR);
+ 		writel(PAD_DRIVE0_VAL, host->pad + PAD_DRIVE0);
+ 		writel(PAD_DRIVE1_VAL, host->pad + PAD_DRIVE1);
+ 		writel(pconf & ~PROB2_PULL_UP, host->pad + PAD_PCONF_PROB);
++	} else {
++		writel(PFUNC_CR_OFF, host->pad + PAD_PFUNC_CR);
++		writel(pconf | PROB2_PULL_UP, host->pad + PAD_PCONF_PROB);
++	}
++}
++
++/*
++ * RTD1395, as the BSP's rtk_sdmmc_card_power(): the pad control of the
++ * clock, command and data pins (ISO pin controller +0x34..+0x3c) and the
++ * supply switch. Off clears the pins' input enable (bits 0 and 11).
++ */
++#define RTD1395_PAD_SD0		0x34
++#define  RTD1395_PAD_SD0_VAL	0x198cd99b
++#define RTD1395_PAD_SD1		0x38
++#define RTD1395_PAD_SD2		0x3c
++#define  RTD1395_PAD_SD12_VAL	0x000cf99f
++#define  RTD1395_PAD_SD_IE	(BIT(11) | BIT(0))
++
++static void rtd1395_power(struct rtd129x_sdmmc *host, bool on)
++{
++	int reg;
++
++	gpiod_set_value_cansleep(host->power, on);
++	if (on) {
++		writel(RTD1395_PAD_SD0_VAL, host->pad + RTD1395_PAD_SD0);
++		writel(RTD1395_PAD_SD12_VAL, host->pad + RTD1395_PAD_SD1);
++		writel(RTD1395_PAD_SD12_VAL, host->pad + RTD1395_PAD_SD2);
++	} else {
++		for (reg = RTD1395_PAD_SD0; reg <= RTD1395_PAD_SD2; reg += 4)
++			writel(readl(host->pad + reg) & ~RTD1395_PAD_SD_IE,
++			       host->pad + reg);
++	}
++}
++
++static void rtd129x_power(struct rtd129x_sdmmc *host, unsigned char mode)
++{
++	if (!host->pad || mode == host->power_mode || mode == MMC_POWER_ON)
++		return;
++	if (mode == MMC_POWER_UP) {
++		host->soc->power(host, true);
+ 		msleep(10);		/* the BSP's delay after power on */
+ 		/*
+ 		 * Start the core over, as the BSP's hw_reset does. Without
+@@ -742,8 +794,7 @@ static void rtd129x_power(struct rtd129x_sdmmc *host, unsigned char mode)
+ 		if (host->crt)
+ 			rtd129x_set_pll(host);
+ 	} else {
+-		writel(PFUNC_CR_OFF, host->pad + PAD_PFUNC_CR);
+-		writel(pconf | PROB2_PULL_UP, host->pad + PAD_PCONF_PROB);
++		host->soc->power(host, false);
+ 	}
+ 	host->power_mode = mode;
+ 	dev_dbg(host->dev, "card power %s\n", mode == MMC_POWER_UP ? "on" : "off");
+@@ -981,9 +1032,15 @@ static int rtd129x_sdmmc_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	/* Optional: without them it all hangs on what u-boot left */
++	host->soc = device_get_match_data(dev);
+ 	host->pad = devm_platform_ioremap_resource(pdev, 1);
+ 	if (IS_ERR(host->pad))
+ 		host->pad = NULL;
++	host->power = devm_gpiod_get_optional(dev, "power", GPIOD_ASIS);
++	if (IS_ERR(host->power)) {
++		ret = PTR_ERR(host->power);
++		goto err_free;
++	}
+ 	host->power_mode = 0xff;
+ 
+ 	/*
+@@ -1084,8 +1141,23 @@ static void rtd129x_sdmmc_remove(struct platform_device *pdev)
+ 	writel(ISR_ALL, host->sd + CR_SD_ISREN);	/* disable all */
+ }
+ 
++/*
++ * SEL3318: the BSP takes a card to 1.8 V with 2 on RTD1295 and with 3 on
++ * RTD1395, where 1 is 3.3 V. On RTD1395, 2 leaves the card silent.
++ */
++static const struct rtd_sd_soc rtd1295_sd_soc = {
++	.sel3318 = 2,
++	.power = rtd1295_power,
++};
++
++static const struct rtd_sd_soc rtd1395_sd_soc = {
++	.sel3318 = 1,
++	.power = rtd1395_power,
++};
++
+ static const struct of_device_id rtd129x_sdmmc_of_match[] = {
+-	{ .compatible = "realtek,rtd1295-sdmmc" },
++	{ .compatible = "realtek,rtd1295-sdmmc", .data = &rtd1295_sd_soc },
++	{ .compatible = "realtek,rtd1395-sdmmc", .data = &rtd1395_sd_soc },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, rtd129x_sdmmc_of_match);
+-- 
+2.53.0
+

@@ -1,0 +1,220 @@
+From 158fd9faac651bb0a1edb338006a5d0740004b00 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 16:02:10 +0000
+Subject: [PATCH 45/46] regulator: add the GMT G2237 PMIC
+
+The BPI-M4 has a G2237 PMIC. Only DC3, the CPU rail, can be set. The
+other outputs are read-only, and no output can be switched off.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/regulator/Kconfig           |   9 ++
+ drivers/regulator/Makefile          |   1 +
+ drivers/regulator/g2237-regulator.c | 162 ++++++++++++++++++++++++++++
+ 3 files changed, 172 insertions(+)
+ create mode 100644 drivers/regulator/g2237-regulator.c
+
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index 64b41ab9a..61e5dda0b 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -428,6 +428,15 @@ config REGULATOR_G2227
+ 	  changed, with the L2 rail following it; the other outputs are
+ 	  read-only, and no output can be switched on or off.
+ 
++config REGULATOR_G2237
++	tristate "GMT G2237 PMIC"
++	depends on I2C && OF
++	select REGMAP_I2C
++	help
++	  The G2237 PMIC of Realtek RTD1395 boards. Only the CPU rail can be
++	  changed; the other outputs are read-only, and no output can be
++	  switched on or off.
++
+ config REGULATOR_FAN53555
+ 	tristate "Fairchild FAN53555 Regulator"
+ 	depends on I2C
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index f7da250ff..6417b9469 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -53,6 +53,7 @@ obj-$(CONFIG_REGULATOR_DB8500_PRCMU) += db8500-prcmu.o
+ obj-$(CONFIG_REGULATOR_FAN53555) += fan53555.o
+ obj-$(CONFIG_REGULATOR_FAN53880) += fan53880.o
+ obj-$(CONFIG_REGULATOR_G2227) += g2227-regulator.o
++obj-$(CONFIG_REGULATOR_G2237) += g2237-regulator.o
+ obj-$(CONFIG_REGULATOR_GPIO) += gpio-regulator.o
+ obj-$(CONFIG_REGULATOR_HI6421) += hi6421-regulator.o
+ obj-$(CONFIG_REGULATOR_HI6421V530) += hi6421v530-regulator.o
+diff --git a/drivers/regulator/g2237-regulator.c b/drivers/regulator/g2237-regulator.c
+new file mode 100644
+index 000000000..33d5e870d
+--- /dev/null
++++ b/drivers/regulator/g2237-regulator.c
+@@ -0,0 +1,162 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * GMT G2237 PMIC, as used on Realtek RTD1395 boards (Banana Pi BPI-M4)
++ *
++ * Register layout and voltage tables are those of Realtek's BSP
++ * (drivers/regulator/g2237-regulator.c, include/linux/mfd/g2237.h).
++ *
++ * As narrow as the G2227 driver: only DC3, the CPU rail, can be changed.
++ * The other outputs are registered read-only, so that their voltages show
++ * up in the regulator summary. There are no enable/disable ops: register
++ * 0x05 holds every output's on bit and the board's supplies hang off them.
++ * The output modes stay as the boot firmware set them.
++ */
++
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++#include <linux/regulator/driver.h>
++
++#define G2237_ONOFF	0x05	/* never written */
++#define G2237_VO_DC1	0x0a
++#define G2237_VO_DC2	0x0b
++#define G2237_VO_DC3	0x0c
++#define G2237_VO_DC5	0x0d
++#define G2237_VO_LDO1	0x0e
++#define G2237_ID	0x14
++#define  G2237_CHIP_ID	0x25
++#define G2237_VERSION	0x15
++
++static const unsigned int dc1_vtbl[] = {
++	2200000, 2300000, 2400000, 2500000, 2600000, 2700000, 2800000, 2900000,
++	3000000, 3100000, 3200000, 3300000, 3400000, 3500000, 3600000, 3700000,
++};
++
++static const unsigned int dcx_vtbl[] = {
++	 800000,  812500,  825000,  837500,  850000,  862500,  875000,  887500,
++	 900000,  912500,  925000,  937500,  950000,  962500,  975000,  987500,
++	1000000, 1012500, 1025000, 1037500, 1050000, 1062500, 1075000, 1087500,
++	1100000, 1112500, 1125000, 1137500, 1150000, 1162500, 1175000, 1187500,
++};
++
++static const unsigned int dc5_vtbl[] = {
++	 800000,  850000,  900000,  950000, 1000000, 1050000, 1100000, 1200000,
++	1300000, 1500000, 1600000, 1700000, 1800000, 1900000, 2000000, 2500000,
++};
++
++static const unsigned int ldo1_vtbl[] = {
++	2200000, 2300000, 2400000, 2500000, 2600000, 2700000, 2800000, 2900000,
++	3000000, 3000000, 3000000, 3000000, 3000000, 3000000, 3000000, 3000000,
++};
++
++/* A margin for the rail to settle after going up: 100 us */
++static int g2237_set_voltage_time_sel(struct regulator_dev *rdev,
++				      unsigned int old_sel, unsigned int new_sel)
++{
++	return new_sel > old_sel ? 100 : 0;
++}
++
++static const struct regulator_ops g2237_cpu_ops = {
++	.list_voltage		= regulator_list_voltage_table,
++	.map_voltage		= regulator_map_voltage_iterate,
++	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
++	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
++	.set_voltage_time_sel	= g2237_set_voltage_time_sel,
++};
++
++static const struct regulator_ops g2237_ro_ops = {
++	.list_voltage		= regulator_list_voltage_table,
++	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
++};
++
++#define G2237_REG(_id, _name, _ops, _tbl, _reg, _mask) {	\
++	.name		= _name,				\
++	.of_match	= _name,				\
++	.regulators_node = "regulators",			\
++	.id		= _id,					\
++	.ops		= &_ops,				\
++	.type		= REGULATOR_VOLTAGE,			\
++	.owner		= THIS_MODULE,				\
++	.volt_table	= _tbl,					\
++	.n_voltages	= ARRAY_SIZE(_tbl),			\
++	.vsel_reg	= _reg,					\
++	.vsel_mask	= _mask,				\
++}
++
++static const struct regulator_desc g2237_regs[] = {
++	G2237_REG(0, "dc1",  g2237_ro_ops,  dc1_vtbl,  G2237_VO_DC1,  0x0f),
++	G2237_REG(1, "dc2",  g2237_ro_ops,  dcx_vtbl,  G2237_VO_DC2,  0x1f),
++	G2237_REG(2, "dc3",  g2237_cpu_ops, dcx_vtbl,  G2237_VO_DC3,  0x1f),
++	G2237_REG(4, "dc5",  g2237_ro_ops,  dc5_vtbl,  G2237_VO_DC5,  0x0f),
++	G2237_REG(5, "ldo1", g2237_ro_ops,  ldo1_vtbl, G2237_VO_LDO1, 0x0f),
++};
++
++static bool g2237_writeable(struct device *dev, unsigned int reg)
++{
++	/* the only register this driver ever writes */
++	return reg == G2237_VO_DC3;
++}
++
++static const struct regmap_config g2237_regmap_config = {
++	.reg_bits	= 8,
++	.val_bits	= 8,
++	.max_register	= G2237_VERSION,
++	.writeable_reg	= g2237_writeable,
++	.cache_type	= REGCACHE_NONE,
++};
++
++static int g2237_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct regulator_config config = { };
++	struct regulator_dev *rdev;
++	unsigned int id, ver, dc3;
++	struct regmap *map;
++	int i, ret;
++
++	map = devm_regmap_init_i2c(client, &g2237_regmap_config);
++	if (IS_ERR(map))
++		return PTR_ERR(map);
++
++	ret = regmap_read(map, G2237_ID, &id);
++	if (ret)
++		return dev_err_probe(dev, ret, "cannot read the chip id\n");
++	if (id != G2237_CHIP_ID)
++		return dev_err_probe(dev, -ENODEV, "chip id 0x%02x is not a G2237\n", id);
++	regmap_read(map, G2237_VERSION, &ver);
++	regmap_read(map, G2237_VO_DC3, &dc3);
++
++	config.dev = dev;
++	config.regmap = map;
++
++	for (i = 0; i < ARRAY_SIZE(g2237_regs); i++) {
++		rdev = devm_regulator_register(dev, &g2237_regs[i], &config);
++		if (IS_ERR(rdev))
++			return dev_err_probe(dev, PTR_ERR(rdev), "cannot register %s\n",
++					     g2237_regs[i].name);
++	}
++
++	/* the CPU rail as the boot firmware left it: a reset keeps the PMIC */
++	dev_info(dev, "G2237 version %u, CPU rail %u uV\n", ver,
++		 dcx_vtbl[dc3 & 0x1f]);
++	return 0;
++}
++
++static const struct of_device_id g2237_of_match[] = {
++	{ .compatible = "gmt,g2237" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, g2237_of_match);
++
++static struct i2c_driver g2237_driver = {
++	.driver = {
++		.name = "g2237",
++		.of_match_table = g2237_of_match,
++	},
++	.probe = g2237_probe,
++};
++module_i2c_driver(g2237_driver);
++
++MODULE_DESCRIPTION("GMT G2237 PMIC");
++MODULE_LICENSE("GPL");
+-- 
+2.53.0
+

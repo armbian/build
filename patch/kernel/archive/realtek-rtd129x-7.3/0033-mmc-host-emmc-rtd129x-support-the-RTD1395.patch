@@ -1,0 +1,83 @@
+From 842f36e3eab16b203c3fd5a2401f7d7a06e9f74f Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 10:37:08 +0000
+Subject: [PATCH 33/46] mmc: host: emmc-rtd129x: support the RTD1395
+
+The RTD1395 needs no ECO toggle after a PLL change. It needs an L4
+gate pulse after a phase change, as the vendor driver does.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/mmc/host/emmc-rtd129x.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/emmc-rtd129x.c b/drivers/mmc/host/emmc-rtd129x.c
+index f69c66104..ea0242e2f 100644
+--- a/drivers/mmc/host/emmc-rtd129x.c
++++ b/drivers/mmc/host/emmc-rtd129x.c
+@@ -159,6 +159,8 @@ struct em_desc {
+ #define EM_PLL_100MHZ		0x57	/* the BSP's codes */
+ #define EM_PLL_200MHZ		0xa6
+ #define EM_NR_PHASES		32
++#define EM_OTHER1		0x420
++#define  OTHER1_L4_GATE		BIT(3)
+ #define EM_DUMMY_SYS		0x42c
+ #define EM_CKGEN_CTL		0x478
+ #define  CKGEN_CLK_4MHZ		GENMASK(18, 16)	/* off the PLL, to 4 MHz */
+@@ -193,6 +195,7 @@ struct em_host {
+ 	bool pio;			/* a short block, through the FIFO */
+ 	u32 pio_buf[512 / 4];
+ 	struct delayed_work timeout;
++	bool rtd1395;
+ };
+ 
+ static u32 em_read(struct em_host *h, u32 reg)
+@@ -283,8 +286,10 @@ static void em_pll_set(struct em_host *h, unsigned long hz)
+ 		     (hz > 100000000 ? EM_PLL_200MHZ : EM_PLL_100MHZ) << 16);
+ 	regmap_read(h->crt, CRT_PLL_EMMC4, &val);
+ 	regmap_write(h->crt, CRT_PLL_EMMC4, val | 1);
+-	/* the A01 ECO: toggled whenever the frequency code changes */
+-	writel(readl(h->base + EM_DUMMY_SYS) ^ BIT(30), h->base + EM_DUMMY_SYS);
++	/* the RTD1295 A01 ECO: toggled whenever the frequency code changes */
++	if (!h->rtd1395)
++		writel(readl(h->base + EM_DUMMY_SYS) ^ BIT(30),
++		       h->base + EM_DUMMY_SYS);
+ 	udelay(400);
+ 	clk_prepare_enable(h->clk_ip);
+ 	h->bus_hz = hz;
+@@ -316,6 +321,14 @@ static void em_set_phase(struct em_host *h, int tx, int rx)
+ 	udelay(200);
+ 	writel(readl(h->base + EM_CKGEN_CTL) & ~CKGEN_CLK_4MHZ,
+ 	       h->base + EM_CKGEN_CTL);
++	/* RTD1395: pulse the L4 gate after a phase change, as the BSP */
++	if (h->rtd1395) {
++		writel(readl(h->base + EM_OTHER1) & ~OTHER1_L4_GATE,
++		       h->base + EM_OTHER1);
++		udelay(1);
++		writel(readl(h->base + EM_OTHER1) | OTHER1_L4_GATE,
++		       h->base + EM_OTHER1);
++	}
+ }
+ 
+ static void em_hw_init(struct em_host *h)
+@@ -884,6 +897,8 @@ static int em_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 	h = mmc_priv(mmc);
+ 	h->dev = dev;
++	h->rtd1395 = of_device_is_compatible(dev->of_node,
++					     "realtek,rtd1395-emmc");
+ 	h->mmc = mmc;
+ 	spin_lock_init(&h->lock);
+ 	INIT_DELAYED_WORK(&h->timeout, em_timeout);
+@@ -971,6 +986,7 @@ static void em_remove(struct platform_device *pdev)
+ 
+ static const struct of_device_id em_of_match[] = {
+ 	{ .compatible = "realtek,rtd1295-emmc" },
++	{ .compatible = "realtek,rtd1395-emmc" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, em_of_match);
+-- 
+2.53.0
+
