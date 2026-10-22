@@ -6,15 +6,42 @@ declare -g BOARD_MAINTAINER="rpardini"
 declare -g INTRODUCED="2023"
 declare -g KERNEL_TARGET="vendor,edge"
 declare -g BOOT_FDT_FILE="rockchip/rk3588-mixtile-blade3.dtb" # same name vendor and edge
-declare -g BOOT_SCENARIO="tpl-blob-atf-mainline"
-declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # mainline u-boot
+declare -g BOOT_SOC="rk3588" # vendor blade3_defconfig name has no SoC to derive it from
 declare -g IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 extension
 
-enable_extension "uboot-mainline-mmc-env-storage" # store u-boot env in mmc (boot0/boot1)
+# vendor* gets vendor u-boot, unless BLADE3_USE_MAINLINE_UBOOT=yes
+# others get mainline u-boot, unless BLADE3_USE_VENDOR_UBOOT=yes
+declare -g BLADE3_UBOOT="mainline"
+if [[ "${BRANCH}" == vendor* ]]; then
+	[[ "${BLADE3_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]] || BLADE3_UBOOT="vendor"
+else
+	[[ "${BLADE3_USE_VENDOR_UBOOT:-"no"}" != "yes" ]] || BLADE3_UBOOT="vendor"
+fi
+
+if [[ "${BLADE3_UBOOT}" == "vendor" ]]; then
+	declare -g BOOT_SCENARIO="spl-blobs"
+	declare -g BOOTCONFIG="blade3_defconfig" # vendor u-boot; there is also blade3_sata_defconfig available
+else
+	declare -g BOOT_SCENARIO="tpl-blob-atf-mainline"
+	declare -g BOOTCONFIG="mixtile-blade3-rk3588_defconfig" # mainline u-boot
+	enable_extension "uboot-mainline-mmc-env-storage"       # store u-boot env in mmc (boot0/boot1)
+fi
+
+# Vendor U-Boot; override the rockchip-rk3588 family's. Meko's stable MAC patch breaks with Radxa's next-dev-v2024.10+
+function post_family_config__blade3_use_vendor_uboot() {
+	[[ "${BLADE3_UBOOT}" == "vendor" ]] || return 0
+	display_alert "${BOARD}/${BRANCH}" "Using vendor U-Boot (Radxa next-dev-v2024.03) for ${BOARD}/${BRANCH}" "info"
+
+	declare -g BOOTDELAY=1 # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
+	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
+	declare -g BOOTBRANCH='branch:next-dev-v2024.03' # NOT next-dev-v2024.10
+	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
+}
 
 # Mainline U-Boot
 function post_family_config__blade3_use_mainline_uboot() {
+	[[ "${BLADE3_UBOOT}" == "mainline" ]] || return 0
 	display_alert "${BOARD}/${BRANCH}" "Using mainline U-Boot for ${BOARD}/${BRANCH}" "info"
 
 	# If BRANCH==vendor, use rkbin BL31 ${RKBIN_DIR}/${BL31_BLOB}, otherwise, bl31.elf from mainline ATF/TF-A
@@ -47,6 +74,7 @@ function post_family_config__blade3_use_mainline_uboot() {
 # On the mixtile-blade3: mmc0 is eMMC; mmc1 is microSD
 # Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
 function pre_config_uboot_target__blade3_patch_rockchip_common_boot_order() {
+	[[ "${BLADE3_UBOOT}" == "mainline" ]] || return 0
 	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
@@ -55,6 +83,7 @@ function pre_config_uboot_target__blade3_patch_rockchip_common_boot_order() {
 
 # Fancy up config
 function post_config_uboot_target__mixtile_blade3_fancy_mainline_uboot_config() {
+	[[ "${BLADE3_UBOOT}" == "mainline" ]] || return 0
 	display_alert "mainline u-boot" "Extra mainline u-boot configs for ${BOARD}/${BRANCH}" "info"
 
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
