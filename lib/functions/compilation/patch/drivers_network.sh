@@ -439,6 +439,19 @@ driver_rtw88() {
 	fi
 }
 
+driver_rtl8723bs() {
+
+	# AP mode for the upstream rtw88 RTL8723BS driver. Upstream from 7.5 on.
+	# Remove this function, its drivers-harness.sh entry and patch/misc/rtw8723bs when no branch uses 7.4 anymore.
+	# https://github.com/armbian/build/issues/11080
+
+	if linux-version compare "${version}" eq 7.4; then
+		display_alert "Adding" "AP mode for rtw88 RTL8723BS" "info"
+		process_patch_file "${SRC}/patch/misc/rtw8723bs/0001-wifi-rtw88-move-the-bmc-high-queue-decision-to-tx.c.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw8723bs/0002-wifi-rtw88-sdio-limit-the-high-queue-to-DTIM-delivery.patch" "applying"
+	fi
+}
+
 driver_rtl8852bs() {
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
 	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx || "${LINUXFAMILY}" == rockchip64 ]]; then
