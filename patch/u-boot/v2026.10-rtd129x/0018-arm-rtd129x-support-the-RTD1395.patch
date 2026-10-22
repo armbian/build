@@ -1,0 +1,305 @@
+From 6bc7ee3a6f6f4f2c73bd452b6655c7544bc2e18d Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 12:25:46 +0200
+Subject: [PATCH 18/19] arm: rtd129x: support the RTD1395
+
+The RTD1395 boot firmware loads U-Boot at 0x30000. Its secondary CPUs
+use another release register and power-up sequence. The SD PLL takes
+another 3.3 V value. The eMMC needs no ECO toggle.
+
+A 1 GiB board can get boot firmware that reports 2 GiB. The upper
+1 GiB then aliases the lower 1 GiB, and Linux corrupts its memory.
+Probe for the alias and use 1 GiB then.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/Kconfig              |  2 +-
+ arch/arm/mach-rtd129x/Kconfig | 22 ++++++++++++++
+ arch/arm/mach-rtd129x/smp.S   | 14 ++++-----
+ arch/arm/mach-rtd129x/soc.c   | 55 +++++++++++++++++++++++++++++++----
+ drivers/mmc/rtd129x_dw_mmc.c  |  8 ++++-
+ drivers/mmc/rtd129x_sdmmc.c   | 16 ++++++++--
+ include/configs/rtd129x.h     |  7 +++++
+ 7 files changed, 106 insertions(+), 18 deletions(-)
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index 7035a00a7f..0128d3aa4a 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -1097,7 +1097,7 @@ config ARCH_OWL
+ 	imply CMD_DM
+ 
+ config ARCH_RTD129X
+-	bool "Realtek RTD1295/RTD1296 SoCs"
++	bool "Realtek RTD1295/RTD1296/RTD1395 SoCs"
+ 	select ARCH_CPU_INIT
+ 	select ARM64
+ 	select ARMV8_SET_SMPEN
+diff --git a/arch/arm/mach-rtd129x/Kconfig b/arch/arm/mach-rtd129x/Kconfig
+index bc80c1688c..db9c02977a 100644
+--- a/arch/arm/mach-rtd129x/Kconfig
++++ b/arch/arm/mach-rtd129x/Kconfig
+@@ -1,6 +1,27 @@
+ if ARCH_RTD129X
+ 
++choice
++	prompt "Realtek RTD129x board"
++	default TARGET_BANANAPI_W2
++
++config TARGET_BANANAPI_W2
++	bool "Banana Pi BPI-W2 (RTD1296)"
++
++config TARGET_BANANAPI_M4
++	bool "Banana Pi BPI-M4 (RTD1395)"
++	select RTD1395
++
++endchoice
++
++config RTD1395
++	bool
++	help
++	  The RTD1395, a later SoC of the same family. The boot firmware
++	  loads U-Boot at 0x30000, and the secondary CPUs wait on another
++	  release register.
++
+ config TEXT_BASE
++	default 0x30000 if RTD1395
+ 	default 0x20000
+ 
+ config SYS_CONFIG_NAME
+@@ -13,6 +34,7 @@ config SYS_VENDOR
+ 	default "bananapi"
+ 
+ config SYS_BOARD
++	default "bpi-m4" if TARGET_BANANAPI_M4
+ 	default "bpi-w2"
+ 
+ endif
+diff --git a/arch/arm/mach-rtd129x/smp.S b/arch/arm/mach-rtd129x/smp.S
+index c6a0ff889f..443711bb1a 100644
+--- a/arch/arm/mach-rtd129x/smp.S
++++ b/arch/arm/mach-rtd129x/smp.S
+@@ -2,18 +2,18 @@
+ /*
+  * Secondary CPUs on the Realtek RTD129x.
+  *
+- * Once powered, the secondary cores always start at 0x20000, where the
+- * Realtek loader puts U-Boot. Linux cannot run at EL3, so each core sets
+- * itself up here, drops to EL2 and waits until the boot ROM's release
+- * register holds an address. Linux writes it there: the register is the
+- * cpu-release-addr of the spin-table method. This code stays at 0x20000,
+- * which Linux does not use.
++ * Once powered, the secondary cores always start where the Realtek
++ * loader puts U-Boot: 0x20000, or 0x30000 on the RTD1395. Linux cannot
++ * run at EL3, so each core sets itself up here, drops to EL2 and waits
++ * until the boot ROM's release register holds an address. Linux writes
++ * it there: the register is the cpu-release-addr of the spin-table
++ * method. Linux does not use the memory of this code.
+  */
+ 
+ #include <config.h>
+ #include <linux/linkage.h>
+ 
+-#define CPU_RELEASE_ADDR	0x9801aa44
++#define CPU_RELEASE_ADDR	RTD_CPU_RELEASE_ADDR
+ /* each core sets its word here once it holds; see soc.c */
+ #define CPU_ARRIVED		0xfe000
+ 
+diff --git a/arch/arm/mach-rtd129x/soc.c b/arch/arm/mach-rtd129x/soc.c
+index 8b40ce0359..4cfd6f7cd4 100644
+--- a/arch/arm/mach-rtd129x/soc.c
++++ b/arch/arm/mach-rtd129x/soc.c
+@@ -76,8 +76,44 @@ int arch_cpu_init(void)
+ #define DC_SYS_MISC		0x98008004
+ #define  TWO_DCSYS_EN		BIT(0)
+ 
++/*
++ * The RTD1395 has one controller. The BPI-M4 comes with 1 or 2 GiB, and
++ * the boot firmware of a 1 GiB board can report and set up 2 GiB: most of
++ * the upper 1 GiB then aliases the lower 1 GiB. Look for that alias at a
++ * few addresses; some of them do not alias. This runs before relocation,
++ * with the caches off.
++ */
++static const ulong rtd1395_probe[] = {
++	0x01123460, 0x02abcde0, 0x03333330, 0x04ffffe0,
++	0x05a5a5a0, 0x08abcde0, 0x0a123460, 0x0c555550,
++};
++
++static bool rtd1395_upper_aliases(void)
++{
++	bool alias = false;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(rtd1395_probe) && !alias; i++) {
++		u32 *lo = (u32 *)rtd1395_probe[i];
++		u32 *hi = (u32 *)(rtd1395_probe[i] + SZ_1G);
++		u32 save_lo = readl(lo), save_hi = readl(hi);
++
++		writel(0x5a5a1395, lo);
++		writel(0xa5a51395, hi);
++		dsb();
++		alias = readl(lo) != 0x5a5a1395;
++		writel(save_hi, hi);
++		writel(save_lo, lo);
++	}
++
++	return alias;
++}
++
+ static bool rtd129x_one_dc(void)
+ {
++	if (IS_ENABLED(CONFIG_RTD1395))
++		return rtd1395_upper_aliases();
++
+ 	return !(readl(DC_SYS_MISC) & TWO_DCSYS_EN);
+ }
+ 
+@@ -144,9 +180,9 @@ void reset_cpu(void)
+  * Secondary CPUs: smp.S holds them at EL2 until CPU_RELEASE_ADDR holds an
+  * address, and Linux writes it there.
+  */
+-#define CPU_RELEASE_ADDR	0x9801aa44
++#define CPU_RELEASE_ADDR	RTD_CPU_RELEASE_ADDR
+ /* the U-Boot image the secondary cores run from; Linux must keep off it */
+-#define SECONDARY_CODE		0x20000
++#define SECONDARY_CODE		CONFIG_TEXT_BASE
+ #define SECONDARY_CODE_SIZE	0xe0000
+ /* smp.S sets a word per core here once the core holds */
+ #define CPU_ARRIVED		0xfe000
+@@ -174,10 +210,17 @@ static void rtd129x_release_secondaries(void)
+ 	writel(0, SB2_SYNC);
+ 	dsb();
+ 	writel(SECONDARY_CODE, CPU_RELEASE_ADDR);
+-	writel(0x00010000, 0x9801d104);
+-	writel(0x03ffff00, 0x9801d530);
+-	writel(0x011f3bff, 0x9801d100);
+-	writel(0x0f1f3bff, 0x9801d100);
++	if (IS_ENABLED(CONFIG_RTD1395)) {
++		/* as the BSP's RTD1395 bootup_slave_cpu() */
++		writel(0x00000ff0, 0x9801d538);
++		writel(0x00000000, 0x9801d510);
++		writel(0x8f1f3bff, 0x9801d100);
++	} else {
++		writel(0x00010000, 0x9801d104);
++		writel(0x03ffff00, 0x9801d530);
++		writel(0x011f3bff, 0x9801d100);
++		writel(0x0f1f3bff, 0x9801d100);
++	}
+ 
+ 	/*
+ 	 * Keep the address until every core is in smp.S. Booted from eMMC,
+diff --git a/drivers/mmc/rtd129x_dw_mmc.c b/drivers/mmc/rtd129x_dw_mmc.c
+index 569ebc427c..cb1266e237 100644
+--- a/drivers/mmc/rtd129x_dw_mmc.c
++++ b/drivers/mmc/rtd129x_dw_mmc.c
+@@ -86,6 +86,7 @@ struct rtd129x_dwmmc_priv {
+ 	void __iomem *crt;
+ 	void __iomem *sb2;
+ 	void __iomem *pad;
++	bool eco_toggle;	/* RTD129x only */
+ };
+ 
+ /*
+@@ -109,7 +110,9 @@ static void rtd129x_dwmmc_pll_set(struct rtd129x_dwmmc_priv *priv)
+ 	val = readl(priv->crt + CRT_PLL_EMMC4);
+ 	writel(val | 1, priv->crt + CRT_PLL_EMMC4);
+ 	/* the A01 ECO: toggled whenever the frequency code changes */
+-	writel(readl(base + EM_DUMMY_SYS) ^ BIT(30), base + EM_DUMMY_SYS);
++	if (priv->eco_toggle)
++		writel(readl(base + EM_DUMMY_SYS) ^ BIT(30),
++		       base + EM_DUMMY_SYS);
+ 	udelay(400);
+ }
+ 
+@@ -211,6 +214,7 @@ static int rtd129x_dwmmc_probe(struct udevice *dev)
+ 	priv->sb2 = (void __iomem *)ofnode_get_addr(node);
+ 
+ 	priv->pad = dev_read_addr_index_ptr(dev, 1);
++	priv->eco_toggle = !dev_get_driver_data(dev);
+ 
+ 	rtd129x_dwmmc_pinmux(priv);
+ 	rtd129x_dwmmc_pll_set(priv);
+@@ -248,6 +252,8 @@ static int rtd129x_dwmmc_bind(struct udevice *dev)
+ 
+ static const struct udevice_id rtd129x_dwmmc_ids[] = {
+ 	{ .compatible = "realtek,rtd1295-emmc" },
++	/* no ECO toggle; the pins are in the ISO pin controller */
++	{ .compatible = "realtek,rtd1395-emmc", .data = 1 },
+ 	{ }
+ };
+ 
+diff --git a/drivers/mmc/rtd129x_sdmmc.c b/drivers/mmc/rtd129x_sdmmc.c
+index 00a5836097..69c251ddc1 100644
+--- a/drivers/mmc/rtd129x_sdmmc.c
++++ b/drivers/mmc/rtd129x_sdmmc.c
+@@ -114,7 +114,9 @@
+ /* The SD PLL, in CRT */
+ #define CR_PLL_SD1		0x1e0
+ #define  PLL_SD1_SEL3318	GENMASK(14, 13)
+-#define  PLL_SD1_SEL3318_VAL	2
++/* 3.3 V; the RTD1395 numbers the steps differently */
++#define  PLL_SD1_SEL3318_RTD1295	2
++#define  PLL_SD1_SEL3318_RTD1395	1
+ #define CR_PLL_SD3		0x1e8
+ #define CR_PLL_SD4		0x1ec
+ #define PLL_SD3_100MHZ		0x00564388
+@@ -144,6 +146,7 @@ struct rtd129x_sdmmc {
+ 	void __iomem *sd;
+ 	void __iomem *pad;	/* may be NULL */
+ 	void __iomem *crt;	/* may be NULL */
++	u32 sel3318;
+ 	u8 *buf;		/* DMA bounce buffer */
+ };
+ 
+@@ -165,7 +168,7 @@ static void rtd129x_set_pll(struct rtd129x_sdmmc *host)
+ 	u32 ckgen = readl(host->sd + CR_SD_CKGEN_CTL);
+ 
+ 	clrsetbits_le32(host->crt + CR_PLL_SD1, PLL_SD1_SEL3318,
+-			FIELD_PREP(PLL_SD1_SEL3318, PLL_SD1_SEL3318_VAL));
++			FIELD_PREP(PLL_SD1_SEL3318, host->sel3318));
+ 
+ 	writel(ckgen | CKGEN_SRC_4MHZ, host->sd + CR_SD_CKGEN_CTL);
+ 	writel(0x6, host->crt + CR_PLL_SD4);
+@@ -575,7 +578,13 @@ static int rtd129x_sdmmc_probe(struct udevice *dev)
+ 	host->sd = dev_read_addr_index_ptr(dev, 0);
+ 	if (!host->sd)
+ 		return -EINVAL;
+-	host->pad = dev_read_addr_index_ptr(dev, 1);
++	/* The RTD1395 has no pad wrapper; the boot firmware set the pins */
++	if (dev_get_driver_data(dev)) {
++		host->sel3318 = PLL_SD1_SEL3318_RTD1395;
++	} else {
++		host->sel3318 = PLL_SD1_SEL3318_RTD1295;
++		host->pad = dev_read_addr_index_ptr(dev, 1);
++	}
+ 
+ 	crt = ofnode_parse_phandle(dev_ofnode(dev), "realtek,crt", 0);
+ 	if (ofnode_valid(crt))
+@@ -612,6 +621,7 @@ static int rtd129x_sdmmc_bind(struct udevice *dev)
+ 
+ static const struct udevice_id rtd129x_sdmmc_ids[] = {
+ 	{ .compatible = "realtek,rtd1295-sdmmc" },
++	{ .compatible = "realtek,rtd1395-sdmmc", .data = 1 },
+ 	{ }
+ };
+ 
+diff --git a/include/configs/rtd129x.h b/include/configs/rtd129x.h
+index facb371191..0e652ed2b9 100644
+--- a/include/configs/rtd129x.h
++++ b/include/configs/rtd129x.h
+@@ -13,4 +13,11 @@
+ #define GICD_BASE		0xff011000
+ #define GICC_BASE		0xff012000
+ 
++/* The spin-table release register; the secondary CPUs poll it */
++#ifdef CONFIG_RTD1395
++#define RTD_CPU_RELEASE_ADDR	0x98007f30
++#else
++#define RTD_CPU_RELEASE_ADDR	0x9801aa44
++#endif
++
+ #endif
+-- 
+2.53.0
+
