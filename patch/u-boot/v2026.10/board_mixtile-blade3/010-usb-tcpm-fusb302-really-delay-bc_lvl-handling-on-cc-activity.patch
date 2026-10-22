@@ -1,0 +1,90 @@
+From e6d3a560de18fd1726b4e156341a6cbae1d87649 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Thu, 22 Oct 2026 16:45:05 +0200
+Subject: [PATCH] usb: tcpm: fusb302: really delay BC_LVL handling on CC
+ activity
+
+- BC_LVL is invalid while PD packets are on CC; the handler logged
+  "delay handling" but used the value anyway
+- a sample taken during Request/GoodCRC read CC as open, TCPM detached
+  mid-negotiation and the source issued a Hard Reset, dropping VBUS on
+  boards powered through USB-C
+- skip the sample and re-check after 30 ms from poll_event, as the
+  Linux driver does
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/usb/tcpm/fusb302.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/tcpm/fusb302.c b/drivers/usb/tcpm/fusb302.c
+index fe93ff3d339..5ef5732f620 100644
+--- a/drivers/usb/tcpm/fusb302.c
++++ b/drivers/usb/tcpm/fusb302.c
+@@ -7,6 +7,7 @@
+ 
+ #include <dm.h>
+ #include <i2c.h>
++#include <time.h>
+ #include <asm/gpio.h>
+ #include <linux/delay.h>
+ #include <linux/err.h>
+@@ -15,6 +16,7 @@
+ #include "fusb302_reg.h"
+ 
+ #define FUSB302_MAX_MSG_LEN 0x1F
++#define T_BC_LVL_DEBOUNCE_DELAY_MS 30
+ 
+ enum toggling_mode {
+ 	TOGGLING_MODE_OFF,
+@@ -47,6 +49,9 @@ struct fusb302_chip {
+ 	bool intr_togdone;
+ 	bool intr_bc_lvl;
+ 	bool intr_comp_chng;
++	/* BC_LVL re-check pending, delayed due to CC activity */
++	bool bc_lvl_pending;
++	ulong bc_lvl_start;
+ 
+ 	/* port status */
+ 	bool vconn_on;
+@@ -758,6 +763,7 @@ static void fusb302_bc_lvl_handler(struct udevice *dev)
+ 	u8 status0, bc_lvl;
+ 	int ret;
+ 
++	chip->bc_lvl_pending = false;
+ 	if (!chip->intr_bc_lvl) {
+ 		dev_err(dev, "BC_LVL interrupt is turned off, abort\n");
+ 		goto done;
+@@ -767,8 +773,13 @@ static void fusb302_bc_lvl_handler(struct udevice *dev)
+ 		goto done;
+ 
+ 	dev_dbg(dev, "BC_LVL handler, status0 = 0x%02x\n", status0);
+-	if (status0 & FUSB_REG_STATUS0_ACTIVITY)
++	/* BC_LVL is not valid while PD packets are on CC, check again later */
++	if (status0 & FUSB_REG_STATUS0_ACTIVITY) {
+ 		dev_info(dev, "CC activities detected, delay handling\n");
++		chip->bc_lvl_pending = true;
++		chip->bc_lvl_start = get_timer(0);
++		goto done;
++	}
+ 	bc_lvl = status0 & FUSB_REG_STATUS0_BC_LVL_MASK;
+ 	cc_status = fusb302_bc_lvl_to_cc(bc_lvl);
+ 	if (chip->cc_polarity == TYPEC_POLARITY_CC1) {
+@@ -1279,7 +1290,13 @@ static void fusb302_interrupt_handle(struct udevice *dev)
+ 
+ static void fusb302_poll_event(struct udevice *dev)
+ {
++	struct fusb302_chip *chip = dev_get_priv(dev);
++
+ 	fusb302_interrupt_handle(dev);
++
++	if (chip->bc_lvl_pending &&
++	    get_timer(chip->bc_lvl_start) >= T_BC_LVL_DEBOUNCE_DELAY_MS)
++		fusb302_bc_lvl_handler(dev);
+ }
+ 
+ static int fusb302_get_connector_node(struct udevice *dev, ofnode *connector_node)
+-- 
+2.56.0
+
