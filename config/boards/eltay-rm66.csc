@@ -24,6 +24,7 @@ function post_family_config__eltay_rm66_uboot() {
 }
 
 function post_family_config__eltay_rm66_kernel() {
+	[[ "${BRANCH}" != vendor* ]] && declare -g OVERLAY_PREFIX="rockchip"
 	[[ "${BRANCH}" == vendor* ]] || return 0
 	display_alert "$BOARD" "Vendor BSP ${KERNEL_MAJOR_MINOR} (family branch): NPU, Media and CAM1 enabled" "info"
 }
