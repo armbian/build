@@ -12,5 +12,4 @@ BOOT_LOGO="desktop"
 BOOTCONFIG="rock-4c-plus-rk3399_defconfig"
 BOOT_SUPPORT_SPI=yes
 
-DDR_BLOB="rk33/rk3399_ddr_933MHz_v1.30.bin"
 source "${SRC}/config/sources/vendors/radxa/rk3399-uboot.conf.sh"

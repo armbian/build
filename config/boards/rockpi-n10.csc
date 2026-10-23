@@ -11,5 +11,5 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399pro-rock-pi-n10.dtb"
 # Application processor DDR blob, as in Rockchip RKBOOT/RK3399PROMINIALL.ini. The family default is the NPU blob.
-DDR_BLOB="rk33/rk3399pro_ddr_800MHz_v1.24.bin"
+DDR_BLOB="rk33/rk3399pro_ddr_800MHz_v1.30.bin"
 source "${SRC}/config/sources/vendors/radxa/rk3399-uboot.conf.sh"
