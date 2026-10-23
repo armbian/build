@@ -503,6 +503,22 @@ function board_side_bsp_cli_postinst_finish() {
 	if [[ ! -f "/etc/default/armbian-firstrun" ]]; then
 		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
+	# Groups that every new normal user joins: hardware and desktop access.
+	# armbian-firstlogin adds the first user to these and to the admin groups.
+	armbian_user_groups="audio video plugdev input dialout netdev bluetooth render users games i2c gpio spi"
+	# Create missing groups. This changes no user. udev rules use i2c, gpio and spi.
+	for group in ${armbian_user_groups} docker; do
+		getent group "${group}" > /dev/null || groupadd --system "${group}" || echo "Warning: Failed to create group ${group}" >&2
+	done
+	# First install only (also the image build): adduser adds new normal users to these groups.
+	# Not GROUPS= in /etc/default/useradd: useradd also applies it to system accounts.
+	# Upgrades keep the local defaults and the groups of existing users.
+	if [[ -z "$2" ]]; then
+		if [[ -f /etc/adduser.conf ]]; then
+			sed -i -e '/^#\?ADD_EXTRA_GROUPS=/d' -e '/^#\?EXTRA_GROUPS=/d' /etc/adduser.conf
+			printf 'ADD_EXTRA_GROUPS=1\nEXTRA_GROUPS="%s"\n' "${armbian_user_groups}" >> /etc/adduser.conf
+		fi
+	fi
 
 	# Reload services
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service > /dev/null 2>&1
