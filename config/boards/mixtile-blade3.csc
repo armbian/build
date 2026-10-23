@@ -72,10 +72,11 @@ function post_family_config__blade3_use_mainline_uboot() {
 # "rockchip-common: boot SD card first, then NVMe, then mmc"
 # include/configs/rockchip-common.h
 # On the mixtile-blade3: mmc0 is eMMC; mmc1 is microSD
-# Also the usb is non-functional in mainline u-boot right now, so we skip:  "scsi" "usb"
+# Also the usb is non-functional in mainline u-boot right now, so we skip: "usb"
+# scsi covers sata0 and sata2 (mSATA in the mini-PCIe socket; Linux needs overlays=sata2)
 function pre_config_uboot_target__blade3_patch_rockchip_common_boot_order() {
 	[[ "${BLADE3_UBOOT}" == "mainline" ]] || return 0
-	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "scsi" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
 	regular_git diff -u include/configs/rockchip-common.h || true
