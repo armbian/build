@@ -47,12 +47,7 @@ function post_family_tweaks__m4() {
 function post_family_tweaks_bsp__M4() {
 	display_alert "Installing BSP firmware and fixups"
 
-	# Bluetooth for most of others (custom patchram is needed only in legacy)
-	install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-	cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
-
-	# Swap out the chip for some boards
-	sed -i s%BCM4345C5%BCM4356A2%g $destination/lib/systemd/system/rk3399-bluetooth.service
+	# No brcm_patchram service: the kernel's hci_uart driver loads the BCM4356A2 firmware.
 
 	# Fan support
 	cp $SRC/packages/bsp/nanopim4/nanopim4-pwm-fan.service $destination/lib/systemd/system/
