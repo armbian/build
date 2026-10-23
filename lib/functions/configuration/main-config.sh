@@ -255,9 +255,9 @@ function do_main_configuration() {
 	# Important: use the tag's ref commit, not the the sha1 for the signed tag itself.
 	declare -g -r MAINLINE_FIRMWARE_BRANCH="${MAINLINE_FIRMWARE_BRANCH:-"commit:2135b2f7714a3a514c989b9728f51f36144cab6f"}" # ref: 'tag:20260810'
 
-	# Armbian firmware
-	declare -g -r ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_SOURCE:-"https://github.com/armbian/firmware"}"
-	declare -g -r ARMBIAN_FIRMWARE_BRANCH="${ARMBIAN_FIRMWARE_BRANCH:-"branch:master"}"
+	# Armbian firmware. Also read the old names ARMBIAN_FIRMWARE_GIT_SOURCE and ARMBIAN_FIRMWARE_GIT_BRANCH (plain branch name).
+	declare -g -r ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_SOURCE:-${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}}"
+	declare -g -r ARMBIAN_FIRMWARE_BRANCH="${ARMBIAN_FIRMWARE_BRANCH:-"branch:${ARMBIAN_FIRMWARE_GIT_BRANCH:-master}"}"
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
