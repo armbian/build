@@ -2,10 +2,10 @@
 BOARD_NAME="Orange Pi Zero3"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun50iw9"
-BOARD_MAINTAINER="alexl83 chraac"
+BOARD_MAINTAINER="chraac"
 INTRODUCED="2023"
 BOOTCONFIG="orangepi_zero3_defconfig"
-# u-boot rides the sunxi64 family default (v2026.07 / v2026.07-sunxi64);
+# u-boot rides the sunxi64 family default (v2026.10 / v2026.10-sunxi64);
 # defconfig + DT are upstream. Was self-pinned to v2025.04 (H616 DRAM patches
 # it needed are now upstream: size-detection rework + 1.5GB).
 BOOT_LOGO="desktop"

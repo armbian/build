@@ -5,7 +5,6 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 INTRODUCED="2024"
 BOOTCONFIG="turing-rk1-rk3588_defconfig"
-BOOT_SOC="rk3588"
 KERNEL_TARGET="current,edge,vendor"
 KERNEL_TEST_TARGET="vendor"
 FULL_DESKTOP="yes"
@@ -19,7 +18,7 @@ function post_family_config__turing-rk1_default_serial_console_by_branch() {
 	display_alert "$BOARD" "Declare serialcon for $BOARD / $BRANCH" "info"
 
 	case $BRANCH in
-		vendor)
+		vendor*)
 			declare -g SERIALCON="ttyS9"
 			;;
 		*)
@@ -34,7 +33,7 @@ function post_family_tweaks__turing-rk1_default_serial_console_by_branch() {
 	display_alert "$BOARD" "Modify bootscript serial console for $BOARD / $BRANCH" "info"
 
 	case $BRANCH in
-		vendor)
+		vendor*)
 			sed -i 's/console=ttyS2,1500000/console=ttyS9,115200/g' $SDCARD/boot/boot.cmd
 			;;
 		*)

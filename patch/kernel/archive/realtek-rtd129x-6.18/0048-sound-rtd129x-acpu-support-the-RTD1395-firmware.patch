@@ -1,0 +1,148 @@
+From 2871f58e75264e3663cb424d3e0a13ceb50e4893 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 18:38:12 +0000
+Subject: [PATCH 48/51] sound: rtd129x-acpu: support the RTD1395 firmware
+
+The RTD1395 audio firmware takes physical addresses as they are: in the
+RPC ring records, in its memory requests and in parameter blocks. The
+RTD129x firmware wants them in KSEG0 or KSEG1. Pick the form by SoC.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ sound/realtek-rtd129x-acpu/acpu-pcm.c     |  2 +-
+ sound/realtek-rtd129x-acpu/acpu-rpc.c     | 20 ++++++++++++++++----
+ sound/realtek-rtd129x-acpu/acpu-vo.c      |  2 +-
+ sound/realtek-rtd129x-acpu/rtd129x-acpu.h | 10 ++++------
+ 4 files changed, 22 insertions(+), 12 deletions(-)
+
+diff --git a/sound/realtek-rtd129x-acpu/acpu-pcm.c b/sound/realtek-rtd129x-acpu/acpu-pcm.c
+index 023cb7b4d..dae5ee9ed 100644
+--- a/sound/realtek-rtd129x-acpu/acpu-pcm.c
++++ b/sound/realtek-rtd129x-acpu/acpu-pcm.c
+@@ -85,7 +85,7 @@ struct hdmi_audio {
+ 
+ static u32 param_addr(struct hdmi_audio *ha, size_t offset)
+ {
+-	return rtd_acpu_addr(ha->param.phys + offset);
++	return rtd_acpu_addr(ha->acpu, ha->param.phys + offset);
+ }
+ 
+ static __be32 *param_word(struct hdmi_audio *ha, size_t offset)
+diff --git a/sound/realtek-rtd129x-acpu/acpu-rpc.c b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+index 1f4fb538e..72974188a 100644
+--- a/sound/realtek-rtd129x-acpu/acpu-rpc.c
++++ b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+@@ -101,8 +101,9 @@ struct rpc_hdr {
+ #define REMOTE_ALLOC		1
+ #define REMOTE_FREE		2
+ #define REMOTE_ALLOC_SECURE	3
+-/* ...and the address it gets back is in KSEG0 */
++/* ...and the address it gets back is in KSEG0, on the RTD129x */
+ #define REMOTE_KSEG0		0x80000000
++#define REMOTE_KSEG1		0xa0000000
+ 
+ #define CALL_TIMEOUT		msecs_to_jiffies(1000)
+ 
+@@ -131,6 +132,7 @@ struct rtd_acpu {
+ 	void __iomem *comm;
+ 	void __iomem *ring;
+ 	u32 ring_acpu;			/* ACPU address of the ring area */
++	bool kseg;			/* RTD129x: addresses in KSEG0/KSEG1 */
+ 
+ 	struct gen_pool *audio;		/* buffers we share with it */
+ 	struct gen_pool *media;		/* what it asks us for */
+@@ -304,12 +306,12 @@ static u32 acpu_remote_alloc(struct rtd_acpu *acpu, u32 size, bool page_align)
+ 	ra->size = size;
+ 	list_add(&ra->list, &acpu->remote);
+ 	dev_dbg(acpu->dev, "remote alloc %#x at %#lx\n", size, phys);
+-	return phys + REMOTE_KSEG0;
++	return phys + (acpu->kseg ? REMOTE_KSEG0 : 0);
+ }
+ 
+ static void acpu_remote_free(struct rtd_acpu *acpu, u32 addr)
+ {
+-	phys_addr_t phys = addr - REMOTE_KSEG0;
++	phys_addr_t phys = addr - (acpu->kseg ? REMOTE_KSEG0 : 0);
+ 	struct remote_alloc *ra;
+ 
+ 	list_for_each_entry(ra, &acpu->remote, list)
+@@ -728,6 +730,8 @@ static int acpu_probe(struct platform_device *pdev)
+ 	if (!acpu)
+ 		return -ENOMEM;
+ 	acpu->dev = dev;
++	acpu->kseg = !of_device_is_compatible(dev->of_node,
++					      "realtek,rtd1395-acpu");
+ 	INIT_LIST_HEAD(&acpu->remote);
+ 	spin_lock_init(&acpu->sa_lock);
+ 	INIT_WORK(&acpu->work, acpu_work);
+@@ -755,7 +759,7 @@ static int acpu_probe(struct platform_device *pdev)
+ 				   MEMREMAP_WC);
+ 	if (!acpu->comm || !acpu->ring || IS_ERR(audio_virt))
+ 		return -ENOMEM;
+-	acpu->ring_acpu = rtd_acpu_addr(ring.start);
++	acpu->ring_acpu = rtd_acpu_addr(acpu, ring.start);
+ 	acpu->fw_size = resource_size(&fw);
+ 	acpu->fw = devm_ioremap(dev, fw.start, acpu->fw_size);
+ 	if (!acpu->fw)
+@@ -801,8 +805,16 @@ static int acpu_probe(struct platform_device *pdev)
+ 	       acpu_add_adev(acpu, RTD_ACPU_VO_NAME, &acpu->vo);
+ }
+ 
++/* A physical address as the firmware wants it */
++u32 rtd_acpu_addr(struct rtd_acpu *acpu, phys_addr_t phys)
++{
++	return acpu->kseg ? (u32)phys | REMOTE_KSEG1 : (u32)phys;
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_addr);
++
+ static const struct of_device_id acpu_of_match[] = {
+ 	{ .compatible = "realtek,rtd1295-acpu" },
++	{ .compatible = "realtek,rtd1395-acpu" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, acpu_of_match);
+diff --git a/sound/realtek-rtd129x-acpu/acpu-vo.c b/sound/realtek-rtd129x-acpu/acpu-vo.c
+index 263cbcf50..bbcd9320d 100644
+--- a/sound/realtek-rtd129x-acpu/acpu-vo.c
++++ b/sound/realtek-rtd129x-acpu/acpu-vo.c
+@@ -188,7 +188,7 @@ static int vo_call(struct rtd_vo *vo, u32 procedure, const u32 *args, u32 n)
+ /* A kernel RPC with a TV system as its argument and as its result */
+ static int vo_tv_system_call(struct rtd_vo *vo, u32 cmd, u8 *tv)
+ {
+-	u32 param = rtd_acpu_addr(vo->param.phys), ret;
++	u32 param = rtd_acpu_addr(vo->acpu, vo->param.phys), ret;
+ 	int err;
+ 
+ 	memcpy(vo->param.vaddr, tv, VO_TV_SYSTEM_SIZE);
+diff --git a/sound/realtek-rtd129x-acpu/rtd129x-acpu.h b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+index ca591b4d8..2733f8b80 100644
+--- a/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
++++ b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+@@ -7,8 +7,9 @@
+  * the same firmware.
+  *
+  * The firmware is big-endian MIPS: everything it reads in a message or in
+- * a ring buffer header is big-endian. It addresses memory through KSEG1,
+- * so a physical address is passed to it as phys | 0xa0000000.
++ * a ring buffer header is big-endian. On the RTD129x it addresses memory
++ * through KSEG1, so a physical address is passed to it as phys | 0xa0000000;
++ * the RTD1395 firmware takes physical addresses as they are.
+  */
+ #ifndef _RTD129X_ACPU_H
+ #define _RTD129X_ACPU_H
+@@ -25,10 +26,7 @@ struct rtd_acpu_buf {
+ 	size_t size;
+ };
+ 
+-static inline u32 rtd_acpu_addr(phys_addr_t phys)
+-{
+-	return (u32)phys | 0xa0000000;
+-}
++u32 rtd_acpu_addr(struct rtd_acpu *acpu, phys_addr_t phys);
+ 
+ /* The firmware's success code, in the reply and in its result structures */
+ #define RTD_ACPU_S_OK		0x10000000
+-- 
+2.53.0
+

@@ -1,0 +1,111 @@
+From 90d520aba6c3d2ff0f0d84e956a0d98950842753 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 18 May 2026 18:01:54 +0000
+Subject: [PATCH 031/210] FROMLIST(v7): drm: bridge: dw_hdmi: Drop call to
+ drm_bridge_hpd_notify()
+
+The use of calls to both drm_helper_hpd_irq_event() and
+drm_bridge_hpd_notify() from the HPD IRQ handler may cause multiple
+hotplug uevents and modesets when the bridge connector is used.
+
+Use of drm_helper_hpd_irq_event() cause the internal DRM function
+check_connector_changed() to be called, which in turn calls the
+connector detect()/force() funcs to detect any connection status or
+epoch changes, and when changed trigger a hotplug uevent. This also
+help ensure that EDID and CEC phys addr is updated.
+
+If only a call drm_bridge_hpd_notify() would be used, a custom connector
+status/EDID change detection logic needs to be implemented, to fully
+match what check_connector_changed() already provides.
+
+The bridge connector detect() func also ensures that any hpd_notify()
+funcs are called for all bridges in the chain, so there is not really
+any need to have a call to drm_bridge_hpd_notify() here.
+
+With both calls there is two hotplug uevents, two modesets and a total
+of four .hpd_notify() calls (using a bridge connector):
+
+  dw_hdmi_irq(): EVENT=plugout
+  drm_helper_hpd_irq_event():
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:check_connector_changed] [CONNECTOR:46:HDMI-A-1] status updated from connected to disconnected
+    [drm:check_connector_changed] [CONNECTOR:46:HDMI-A-1] Changed epoch counter 1 => 2
+    [drm:drm_sysfs_connector_hotplug_event] [CONNECTOR:46:HDMI-A-1] generating connector hotplug event
+   drm_client_hotplug():
+    [drm:drm_fb_helper_hotplug_event]
+    [drm:drm_client_modeset_probe]
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1]
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1] disconnected
+    [drm:drm_edid_connector_update] [CONNECTOR:46:HDMI-A-1] EDID changed, epoch counter 3
+    [drm:drm_client_modeset_probe] No connectors reported connected with modes
+    [drm:drm_client_modeset_probe] [CONNECTOR:46:HDMI-A-1] enabled? no
+    [drm:drm_client_firmware_config.isra.0] Not using firmware configuration
+    [drm:drm_client_modeset_probe] picking CRTCs for 3840x2160 config
+    [drm:drm_client_hotplug] fbdev: ret=0
+  drm_bridge_hpd_notify():
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:drm_sysfs_connector_hotplug_event] [CONNECTOR:46:HDMI-A-1] generating connector hotplug event
+   drm_client_hotplug():
+    [drm:drm_fb_helper_hotplug_event]
+    [drm:drm_client_modeset_probe]
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1]
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1] disconnected
+    [drm:drm_client_modeset_probe] No connectors reported connected with modes
+    [drm:drm_client_modeset_probe] [CONNECTOR:46:HDMI-A-1] enabled? no
+    [drm:drm_client_firmware_config.isra.0] Not using firmware configuration
+    [drm:drm_client_modeset_probe] picking CRTCs for 3840x2160 config
+    [drm:drm_client_hotplug] fbdev: ret=0
+
+Change to only call drm_helper_hpd_irq_event() from HPD IRQ handler to
+ensure that only one hotplug uevent is sent to userspace when connection
+status or EDID changes.
+
+With only a call the drm_helper_hpd_irq_event() there is only a single
+hotplug uevent and only two .hpd_notify() calls:
+
+  dw_hdmi_irq(): EVENT=plugout
+  drm_helper_hpd_irq_event():
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:check_connector_changed] [CONNECTOR:46:HDMI-A-1] status updated from connected to disconnected
+    [drm:check_connector_changed] [CONNECTOR:46:HDMI-A-1] Changed epoch counter 1 => 2
+    [drm:drm_sysfs_connector_hotplug_event] [CONNECTOR:46:HDMI-A-1] generating connector hotplug event
+   drm_client_hotplug():
+    [drm:drm_fb_helper_hotplug_event]
+    [drm:drm_client_modeset_probe]
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1]
+    dw_hdmi_bridge_hpd_notify(status=2)
+    [drm:drm_helper_probe_single_connector_modes] [CONNECTOR:46:HDMI-A-1] disconnected
+    [drm:drm_edid_connector_update] [CONNECTOR:46:HDMI-A-1] EDID changed, epoch counter 3
+    [drm:drm_client_modeset_probe] No connectors reported connected with modes
+    [drm:drm_client_modeset_probe] [CONNECTOR:46:HDMI-A-1] enabled? no
+    [drm:drm_client_firmware_config.isra.0] Not using firmware configuration
+    [drm:drm_client_modeset_probe] picking CRTCs for 3840x2160 config
+    [drm:drm_client_hotplug] fbdev: ret=0
+
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # Rock64, RockPro64, Quartz64-B
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+index adc699226912..6d96fa3d7ba2 100644
+--- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
++++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
+@@ -3099,10 +3099,8 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
+ 			status == connector_status_connected ?
+ 			"plugin" : "plugout");
+ 
+-		if (hdmi->bridge.dev) {
++		if (hdmi->bridge.dev)
+ 			drm_helper_hpd_irq_event(hdmi->bridge.dev);
+-			drm_bridge_hpd_notify(&hdmi->bridge, status);
+-		}
+ 	}
+ 
+ 	hdmi_writeb(hdmi, intr_stat, HDMI_IH_PHY_STAT0);
+-- 
+2.43.0
+

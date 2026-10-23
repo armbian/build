@@ -1,0 +1,709 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 14 Oct 2026 05:37:04 +0000
+Subject: [PATCH] clk: meson: add the T7 CPU clock controller
+
+The A73 cluster runs from sys0_pll and the A53 cluster from sys1_pll,
+or from a dynamic clock. The secure firmware programs these clocks
+through the secure monitor. The SCMI clocks of the firmware stop at
+1.704 GHz, but the PLLs run up to 2.208 GHz.
+
+Program the PLLs, the dynamic clocks and the CPU clock muxes through the
+secure monitor. Run a cluster from its dynamic clock while its PLL
+relocks.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/clk/meson/Kconfig       |  14 +
+ drivers/clk/meson/Makefile      |   1 +
+ drivers/clk/meson/t7-cpu-clkc.c | 645 ++++++++++++++++++++++++++++++++
+ 3 files changed, 660 insertions(+)
+ create mode 100644 drivers/clk/meson/t7-cpu-clkc.c
+
+diff --git a/drivers/clk/meson/Kconfig b/drivers/clk/meson/Kconfig
+index d460514bb8a1..ae031b812fad 100644
+--- a/drivers/clk/meson/Kconfig
++++ b/drivers/clk/meson/Kconfig
+@@ -229,6 +229,20 @@ config COMMON_CLK_S4_PERIPHERALS
+ 	  Support for the peripherals clock controller on Amlogic S805X2 and S905Y4
+ 	  devices, AKA S4. Say Y if you want S4 peripherals clock controller to work.
+ 
++config COMMON_CLK_T7_CPU
++	tristate "Amlogic T7 SoC CPU clock controller support"
++	depends on ARM64 && MESON_SM
++	default ARCH_MESON
++	select COMMON_CLK_MESON_REGMAP
++	select COMMON_CLK_MESON_CLKC_UTILS
++	select COMMON_CLK_MESON_PLL
++	help
++	  Support for the CPU clock controller on Amlogic A311D2 based
++	  device, AKA T7. The A73 and A53 clusters run from their own PLL
++	  or from a dynamic clock. Only the secure firmware can write these
++	  clocks, so the driver programs them through the secure monitor.
++	  Say Y if you want CPU frequency scaling on T7.
++
+ config COMMON_CLK_T7_PLL
+ 	tristate "Amlogic T7 SoC PLL controller support"
+ 	depends on ARM64
+diff --git a/drivers/clk/meson/Makefile b/drivers/clk/meson/Makefile
+index 56b04254eb1a..bc1adadc27d8 100644
+--- a/drivers/clk/meson/Makefile
++++ b/drivers/clk/meson/Makefile
+@@ -28,5 +28,6 @@ obj-$(CONFIG_COMMON_CLK_G12A) += g12a.o g12a-aoclk.o
+ obj-$(CONFIG_COMMON_CLK_MESON8B) += meson8b.o meson8-ddr.o
+ obj-$(CONFIG_COMMON_CLK_S4_PLL) += s4-pll.o
+ obj-$(CONFIG_COMMON_CLK_S4_PERIPHERALS) += s4-peripherals.o
++obj-$(CONFIG_COMMON_CLK_T7_CPU) += t7-cpu-clkc.o
+ obj-$(CONFIG_COMMON_CLK_T7_PLL) += t7-pll.o
+ obj-$(CONFIG_COMMON_CLK_T7_PERIPHERALS) += t7-peripherals.o
+diff --git a/drivers/clk/meson/t7-cpu-clkc.c b/drivers/clk/meson/t7-cpu-clkc.c
+new file mode 100644
+index 000000000000..d096069babfb
+--- /dev/null
++++ b/drivers/clk/meson/t7-cpu-clkc.c
+@@ -0,0 +1,645 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
++/*
++ * Amlogic T7 CPU clock controller
++ *
++ * The A73 cluster runs from sys0_pll and the A53 cluster from sys1_pll,
++ * or from a dynamic clock derived from xtal or the fixed PLL dividers.
++ * Only the secure world can write the PLL and CPU clock registers: the
++ * BL31 firmware programs them through the SM_PLL_CLK and SM_CPU_CLK
++ * services. The PLL registers stay readable. The CPU clock control
++ * registers are read through the firmware.
++ *
++ * Based on the S4 CPU clock support by Christian Hewitt.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/firmware/meson/meson_sm.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++#include "clk-regmap.h"
++#include "clk-pll.h"
++#include "meson-clkc-utils.h"
++
++#include <dt-bindings/clock/amlogic,t7-cpu-clkc.h>
++
++#define SYS0PLL_CTRL0		0x00
++#define SYS1PLL_CTRL0		0x20
++
++/* Layout of the CPU clock control registers */
++#define CPU_CLK_FINAL_SEL	BIT(11)
++#define CPU_CLK_DYN_SEL		BIT(10)
++#define CPU_CLK_DYN1_SHIFT	16
++#define CPU_CLK_DYN_PREMUX	GENMASK(1, 0)
++#define CPU_CLK_DYN_POSTMUX	BIT(2)
++#define CPU_CLK_DYN_DIV		GENMASK(9, 4)
++
++/* Sub-functions of the SM_PLL_CLK and SM_CPU_CLK services, per cluster */
++struct t7_cpu_secid {
++	u8 dco;
++	u8 dco_dis;
++	u8 od;
++	u8 sel;
++	u8 rd;
++	u8 dyn;
++};
++
++static const struct t7_cpu_secid t7_a73_secid = {
++	.dco = 0, .dco_dis = 1, .od = 2, .sel = 9, .rd = 10, .dyn = 11,
++};
++
++static const struct t7_cpu_secid t7_a53_secid = {
++	.dco = 3, .dco_dis = 4, .od = 5, .sel = 6, .rd = 7, .dyn = 8,
++};
++
++struct t7_pll_dco_data {
++	struct meson_clk_pll_data pll;
++	const struct t7_cpu_secid *secid;
++};
++
++struct t7_pll_od_data {
++	struct clk_regmap_div_data div;
++	const struct t7_cpu_secid *secid;
++};
++
++struct t7_cpu_hw {
++	struct clk_hw hw;
++	const struct t7_cpu_secid *secid;
++};
++
++#define to_t7_cpu_hw(_hw) container_of(_hw, struct t7_cpu_hw, hw)
++
++static struct meson_sm_firmware *t7_sm_fw;
++
++static int t7_sm_call(unsigned int cmd, u32 *val, u32 secid,
++		      u32 arg0, u32 arg1, u32 arg2)
++{
++	s32 ret;
++	int err;
++
++	err = meson_sm_call(t7_sm_fw, cmd, &ret, secid, arg0, arg1, arg2, 0);
++	if (err)
++		return err;
++
++	if (val)
++		*val = ret;
++
++	return 0;
++}
++
++/* PLL DCO: the firmware writes m and n */
++
++static struct t7_pll_dco_data *t7_pll_dco_data(struct clk_regmap *clk)
++{
++	return container_of((struct meson_clk_pll_data *)clk->data,
++			    struct t7_pll_dco_data, pll);
++}
++
++static int t7_pll_dco_wait_lock(struct clk_hw *hw)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct meson_clk_pll_data *pll = clk->data;
++	unsigned int locked;
++
++	return read_poll_timeout_atomic(meson_parm_read, locked, locked, 20,
++					100000, false, clk->map, &pll->l);
++}
++
++static int t7_pll_dco_enable(struct clk_hw *hw)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct t7_pll_dco_data *data = t7_pll_dco_data(clk);
++	int ret;
++
++	if (meson_clk_pll_ro_ops.is_enabled(hw))
++		return 0;
++
++	ret = t7_sm_call(SM_PLL_CLK, NULL, data->secid->dco,
++			 meson_parm_read(clk->map, &data->pll.m),
++			 meson_parm_read(clk->map, &data->pll.n), 0);
++	if (ret)
++		return ret;
++
++	return t7_pll_dco_wait_lock(hw);
++}
++
++static void t7_pll_dco_disable(struct clk_hw *hw)
++{
++	struct t7_pll_dco_data *data = t7_pll_dco_data(to_clk_regmap(hw));
++
++	t7_sm_call(SM_PLL_CLK, NULL, data->secid->dco_dis, 0, 0, 0);
++}
++
++static int t7_pll_dco_set_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long parent_rate)
++{
++	struct t7_pll_dco_data *data = t7_pll_dco_data(to_clk_regmap(hw));
++	const struct pll_params_table *p;
++	int ret;
++
++	for (p = data->pll.table; p->n; p++)
++		if (DIV_ROUND_UP_ULL((u64)parent_rate * p->m, p->n) == rate)
++			break;
++
++	if (!p->n)
++		return -EINVAL;
++
++	if (meson_clk_pll_ro_ops.is_enabled(hw))
++		t7_pll_dco_disable(hw);
++
++	ret = t7_sm_call(SM_PLL_CLK, NULL, data->secid->dco, p->m, p->n, 0);
++	if (ret)
++		return ret;
++
++	return t7_pll_dco_wait_lock(hw);
++}
++
++static unsigned long t7_pll_dco_recalc_rate(struct clk_hw *hw,
++					    unsigned long parent_rate)
++{
++	return meson_clk_pll_ro_ops.recalc_rate(hw, parent_rate);
++}
++
++static int t7_pll_dco_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	return meson_clk_pll_ops.determine_rate(hw, req);
++}
++
++static int t7_pll_dco_is_enabled(struct clk_hw *hw)
++{
++	return meson_clk_pll_ro_ops.is_enabled(hw);
++}
++
++static const struct clk_ops t7_pll_dco_ops = {
++	.init		= clk_regmap_init,
++	.recalc_rate	= t7_pll_dco_recalc_rate,
++	.determine_rate	= t7_pll_dco_determine_rate,
++	.set_rate	= t7_pll_dco_set_rate,
++	.is_enabled	= t7_pll_dco_is_enabled,
++	.enable		= t7_pll_dco_enable,
++	.disable	= t7_pll_dco_disable,
++};
++
++/* PLL output divider: the firmware writes it */
++
++static int t7_pll_od_set_rate(struct clk_hw *hw, unsigned long rate,
++			      unsigned long parent_rate)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct t7_pll_od_data *data =
++		container_of(clk_get_regmap_div_data(clk),
++			     struct t7_pll_od_data, div);
++	int val;
++
++	val = divider_get_val(rate, parent_rate, data->div.table,
++			      data->div.width, data->div.flags);
++	if (val < 0)
++		return val;
++
++	return t7_sm_call(SM_PLL_CLK, NULL, data->secid->od,
++			  clk_div_mask(data->div.width) << data->div.shift,
++			  val << data->div.shift, 0);
++}
++
++static unsigned long t7_pll_od_recalc_rate(struct clk_hw *hw,
++					   unsigned long parent_rate)
++{
++	return clk_regmap_divider_ro_ops.recalc_rate(hw, parent_rate);
++}
++
++static int t7_pll_od_determine_rate(struct clk_hw *hw,
++				    struct clk_rate_request *req)
++{
++	struct clk_regmap *clk = to_clk_regmap(hw);
++	struct clk_regmap_div_data *div = clk_get_regmap_div_data(clk);
++
++	return divider_determine_rate(hw, req, div->table, div->width,
++				      div->flags);
++}
++
++static const struct clk_ops t7_pll_od_ops = {
++	.init		= clk_regmap_init,
++	.recalc_rate	= t7_pll_od_recalc_rate,
++	.determine_rate	= t7_pll_od_determine_rate,
++	.set_rate	= t7_pll_od_set_rate,
++};
++
++/* Dynamic clock: a glitch-free pair of xtal / fclk dividers */
++
++struct t7_cpu_dyn_param {
++	u8 premux;
++	u8 postmux;
++	u8 div;
++};
++
++/* Settings used by the vendor firmware for the low CPU frequencies */
++static const struct t7_cpu_dyn_param t7_cpu_dyn_params[] = {
++	{ .premux = 0, .postmux = 0, .div = 0 },	/* 24M */
++	{ .premux = 1, .postmux = 1, .div = 9 },	/* 100M */
++	{ .premux = 1, .postmux = 1, .div = 3 },	/* 250M */
++	{ .premux = 2, .postmux = 1, .div = 1 },	/* 333M */
++	{ .premux = 1, .postmux = 1, .div = 1 },	/* 500M */
++	{ .premux = 2, .postmux = 0, .div = 0 },	/* 666M */
++	{ .premux = 1, .postmux = 0, .div = 0 },	/* 1G */
++};
++
++static u32 t7_cpu_clk_read(struct t7_cpu_hw *cpu)
++{
++	u32 val = 0;
++
++	t7_sm_call(SM_CPU_CLK, &val, cpu->secid->rd, 0, 0, 0);
++
++	return val;
++}
++
++/* Settings of the dynamic clock half that currently feeds the CPU */
++static u32 t7_cpu_dyn_active(struct t7_cpu_hw *cpu)
++{
++	u32 val = t7_cpu_clk_read(cpu);
++
++	if (val & CPU_CLK_DYN_SEL)
++		val >>= CPU_CLK_DYN1_SHIFT;
++
++	return val;
++}
++
++static unsigned long t7_cpu_dyn_param_rate(const struct t7_cpu_dyn_param *p,
++					   unsigned long parent_rate)
++{
++	if (!p->postmux)
++		return parent_rate;
++
++	return DIV_ROUND_UP_ULL((u64)parent_rate, p->div + 1);
++}
++
++static const struct t7_cpu_dyn_param *
++t7_cpu_dyn_find(struct clk_hw *hw, unsigned long rate, u8 index)
++{
++	struct clk_hw *parent = clk_hw_get_parent_by_index(hw, index);
++	unsigned long parent_rate = clk_hw_get_rate(parent);
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(t7_cpu_dyn_params); i++) {
++		const struct t7_cpu_dyn_param *p = &t7_cpu_dyn_params[i];
++
++		if (p->premux == index &&
++		    t7_cpu_dyn_param_rate(p, parent_rate) == rate)
++			return p;
++	}
++
++	return NULL;
++}
++
++static unsigned long t7_cpu_dyn_recalc_rate(struct clk_hw *hw,
++					    unsigned long parent_rate)
++{
++	u32 val = t7_cpu_dyn_active(to_t7_cpu_hw(hw));
++	struct t7_cpu_dyn_param p = {
++		.postmux = FIELD_GET(CPU_CLK_DYN_POSTMUX, val),
++		.div = FIELD_GET(CPU_CLK_DYN_DIV, val),
++	};
++
++	return t7_cpu_dyn_param_rate(&p, parent_rate);
++}
++
++static u8 t7_cpu_dyn_get_parent(struct clk_hw *hw)
++{
++	return FIELD_GET(CPU_CLK_DYN_PREMUX,
++			 t7_cpu_dyn_active(to_t7_cpu_hw(hw)));
++}
++
++static int t7_cpu_dyn_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	const struct t7_cpu_dyn_param *best = NULL;
++	unsigned long best_rate = 0;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(t7_cpu_dyn_params); i++) {
++		const struct t7_cpu_dyn_param *p = &t7_cpu_dyn_params[i];
++		struct clk_hw *parent = clk_hw_get_parent_by_index(hw, p->premux);
++		unsigned long rate;
++
++		if (!parent)
++			continue;
++
++		rate = t7_cpu_dyn_param_rate(p, clk_hw_get_rate(parent));
++		if (!best ||
++		    abs_diff(rate, req->rate) < abs_diff(best_rate, req->rate)) {
++			best = p;
++			best_rate = rate;
++		}
++	}
++
++	if (!best)
++		return -EINVAL;
++
++	req->best_parent_hw = clk_hw_get_parent_by_index(hw, best->premux);
++	req->best_parent_rate = clk_hw_get_rate(req->best_parent_hw);
++	req->rate = best_rate;
++
++	return 0;
++}
++
++static int t7_cpu_dyn_set_rate_and_parent(struct clk_hw *hw,
++					  unsigned long rate,
++					  unsigned long parent_rate, u8 index)
++{
++	const struct t7_cpu_dyn_param *p = t7_cpu_dyn_find(hw, rate, index);
++
++	if (!p)
++		return -EINVAL;
++
++	return t7_sm_call(SM_CPU_CLK, NULL, to_t7_cpu_hw(hw)->secid->dyn,
++			  p->premux, p->postmux, p->div);
++}
++
++static int t7_cpu_dyn_set_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long parent_rate)
++{
++	return t7_cpu_dyn_set_rate_and_parent(hw, rate, parent_rate,
++					      t7_cpu_dyn_get_parent(hw));
++}
++
++static int t7_cpu_dyn_set_parent(struct clk_hw *hw, u8 index)
++{
++	struct t7_cpu_hw *cpu = to_t7_cpu_hw(hw);
++	u32 val = t7_cpu_dyn_active(cpu);
++
++	return t7_sm_call(SM_CPU_CLK, NULL, cpu->secid->dyn, index,
++			  FIELD_GET(CPU_CLK_DYN_POSTMUX, val),
++			  FIELD_GET(CPU_CLK_DYN_DIV, val));
++}
++
++static const struct clk_ops t7_cpu_dyn_ops = {
++	.recalc_rate		= t7_cpu_dyn_recalc_rate,
++	.determine_rate		= t7_cpu_dyn_determine_rate,
++	.set_rate		= t7_cpu_dyn_set_rate,
++	.get_parent		= t7_cpu_dyn_get_parent,
++	.set_parent		= t7_cpu_dyn_set_parent,
++	.set_rate_and_parent	= t7_cpu_dyn_set_rate_and_parent,
++};
++
++/* CPU clock: selects the dynamic clock or the PLL */
++
++static u8 t7_cpu_clk_get_parent(struct clk_hw *hw)
++{
++	return !!(t7_cpu_clk_read(to_t7_cpu_hw(hw)) & CPU_CLK_FINAL_SEL);
++}
++
++static int t7_cpu_clk_set_parent(struct clk_hw *hw, u8 index)
++{
++	return t7_sm_call(SM_CPU_CLK, NULL, to_t7_cpu_hw(hw)->secid->sel,
++			  CPU_CLK_FINAL_SEL, index ? CPU_CLK_FINAL_SEL : 0, 0);
++}
++
++static int t7_cpu_clk_determine_rate(struct clk_hw *hw,
++				     struct clk_rate_request *req)
++{
++	return clk_mux_determine_rate_flags(hw, req, CLK_MUX_ROUND_CLOSEST);
++}
++
++static const struct clk_ops t7_cpu_clk_ops = {
++	.get_parent	= t7_cpu_clk_get_parent,
++	.set_parent	= t7_cpu_clk_set_parent,
++	.determine_rate	= t7_cpu_clk_determine_rate,
++};
++
++/*
++ * The DCO runs from 1.6 GHz to 3 GHz. Rates below 1.6 GHz use the DCO
++ * at twice the rate and the output divider.
++ */
++static const struct pll_params_table t7_sys_pll_params_table[] = {
++	PLL_PARAMS(67, 1),	/* DCO = 1608M */
++	PLL_PARAMS(71, 1),	/* DCO = 1704M */
++	PLL_PARAMS(75, 1),	/* DCO = 1800M */
++	PLL_PARAMS(79, 1),	/* DCO = 1896M */
++	PLL_PARAMS(84, 1),	/* DCO = 2016M */
++	PLL_PARAMS(92, 1),	/* DCO = 2208M */
++	PLL_PARAMS(100, 1),	/* DCO = 2400M */
++	PLL_PARAMS(116, 1),	/* DCO = 2784M */
++	PLL_PARAMS(126, 1),	/* DCO = 3024M */
++	{ /* sentinel */ }
++};
++
++static const struct clk_parent_data t7_cpu_dyn_parents[] = {
++	{ .fw_name = "xtal", },
++	{ .fw_name = "fclk_div2", },
++	{ .fw_name = "fclk_div3", },
++	{ .fw_name = "fclk_div2p5", },
++};
++
++#define T7_SYS_PLL_DCO(_name, _reg, _secid)				\
++static struct t7_pll_dco_data _name##_data = {				\
++	.pll = {							\
++		.en = { .reg_off = (_reg), .shift = 28, .width = 1 },	\
++		.m = { .reg_off = (_reg), .shift = 0, .width = 8 },	\
++		.n = { .reg_off = (_reg), .shift = 16, .width = 5 },	\
++		.l = { .reg_off = (_reg), .shift = 31, .width = 1 },	\
++		.rst = { .reg_off = (_reg), .shift = 29, .width = 1 },	\
++		.table = t7_sys_pll_params_table,			\
++	},								\
++	.secid = (_secid),						\
++};									\
++static struct clk_regmap _name = {					\
++	.data = &_name##_data.pll,					\
++	.hw.init = &(struct clk_init_data){				\
++		.name = #_name,						\
++		.ops = &t7_pll_dco_ops,					\
++		.parent_data = &(const struct clk_parent_data) {	\
++			.fw_name = "xtal",				\
++		},							\
++		.num_parents = 1,					\
++		/* This clock feeds the CPU, avoid disabling it */	\
++		.flags = CLK_IS_CRITICAL,				\
++	},								\
++}
++
++#define T7_SYS_PLL_OD(_name, _reg, _secid, _parent)			\
++static struct t7_pll_od_data _name##_data = {				\
++	.div = {							\
++		.offset = (_reg),					\
++		.shift = 12,						\
++		.width = 3,						\
++		.flags = CLK_DIVIDER_POWER_OF_TWO,			\
++	},								\
++	.secid = (_secid),						\
++};									\
++static struct clk_regmap _name = {					\
++	.data = &_name##_data.div,					\
++	.hw.init = &(struct clk_init_data){				\
++		.name = #_name,						\
++		.ops = &t7_pll_od_ops,					\
++		.parent_hws = (const struct clk_hw *[]) { &(_parent).hw }, \
++		.num_parents = 1,					\
++		.flags = CLK_SET_RATE_PARENT,				\
++	},								\
++}
++
++#define T7_CPU_DYN(_name, _secid)					\
++static struct t7_cpu_hw _name = {					\
++	.secid = (_secid),						\
++	.hw.init = &(struct clk_init_data){				\
++		.name = #_name,						\
++		.ops = &t7_cpu_dyn_ops,					\
++		.parent_data = t7_cpu_dyn_parents,			\
++		.num_parents = ARRAY_SIZE(t7_cpu_dyn_parents),		\
++	},								\
++}
++
++#define T7_CPU_CLK(_name, _secid, _dyn, _pll)				\
++static struct t7_cpu_hw _name = {					\
++	.secid = (_secid),						\
++	.hw.init = &(struct clk_init_data){				\
++		.name = #_name,						\
++		.ops = &t7_cpu_clk_ops,					\
++		.parent_hws = (const struct clk_hw *[]) {		\
++			&(_dyn).hw, &(_pll).hw,				\
++		},							\
++		.num_parents = 2,					\
++		.flags = CLK_SET_RATE_PARENT,				\
++	},								\
++}
++
++T7_SYS_PLL_DCO(t7_a73_pll_dco, SYS0PLL_CTRL0, &t7_a73_secid);
++T7_SYS_PLL_OD(t7_a73_pll, SYS0PLL_CTRL0, &t7_a73_secid, t7_a73_pll_dco);
++T7_CPU_DYN(t7_a73_dyn, &t7_a73_secid);
++T7_CPU_CLK(t7_a73_cpu, &t7_a73_secid, t7_a73_dyn, t7_a73_pll);
++
++T7_SYS_PLL_DCO(t7_a53_pll_dco, SYS1PLL_CTRL0, &t7_a53_secid);
++T7_SYS_PLL_OD(t7_a53_pll, SYS1PLL_CTRL0, &t7_a53_secid, t7_a53_pll_dco);
++T7_CPU_DYN(t7_a53_dyn, &t7_a53_secid);
++T7_CPU_CLK(t7_a53_cpu, &t7_a53_secid, t7_a53_dyn, t7_a53_pll);
++
++static struct clk_hw *t7_cpu_hw_clks[] = {
++	[CLKID_A73_PLL_DCO]	= &t7_a73_pll_dco.hw,
++	[CLKID_A73_PLL]		= &t7_a73_pll.hw,
++	[CLKID_A73_DYN]		= &t7_a73_dyn.hw,
++	[CLKID_A73_CPU]		= &t7_a73_cpu.hw,
++	[CLKID_A53_PLL_DCO]	= &t7_a53_pll_dco.hw,
++	[CLKID_A53_PLL]		= &t7_a53_pll.hw,
++	[CLKID_A53_DYN]		= &t7_a53_dyn.hw,
++	[CLKID_A53_CPU]		= &t7_a53_cpu.hw,
++};
++
++static const struct meson_clkc_data t7_cpu_clkc_data = {
++	.hw_clks = {
++		.hws = t7_cpu_hw_clks,
++		.num = ARRAY_SIZE(t7_cpu_hw_clks),
++	},
++};
++
++struct t7_cpu_cluster {
++	struct notifier_block nb;
++	struct clk_hw *cpu;
++	struct clk_hw *dyn;
++	struct clk_hw *pll;
++};
++
++static int t7_cpu_pll_notifier_cb(struct notifier_block *nb,
++				  unsigned long event, void *data)
++{
++	struct t7_cpu_cluster *cl = container_of(nb, struct t7_cpu_cluster, nb);
++
++	switch (event) {
++	case PRE_RATE_CHANGE:
++		/* Run the cluster from the dynamic clock while the PLL relocks */
++		clk_hw_set_parent(cl->cpu, cl->dyn);
++		udelay(100);
++		return NOTIFY_OK;
++
++	case POST_RATE_CHANGE:
++		clk_hw_set_parent(cl->cpu, cl->pll);
++		udelay(100);
++		return NOTIFY_OK;
++
++	default:
++		return NOTIFY_DONE;
++	}
++}
++
++static struct t7_cpu_cluster t7_cpu_clusters[] = {
++	{
++		.nb.notifier_call = t7_cpu_pll_notifier_cb,
++		.cpu = &t7_a73_cpu.hw,
++		.dyn = &t7_a73_dyn.hw,
++		.pll = &t7_a73_pll.hw,
++	}, {
++		.nb.notifier_call = t7_cpu_pll_notifier_cb,
++		.cpu = &t7_a53_cpu.hw,
++		.dyn = &t7_a53_dyn.hw,
++		.pll = &t7_a53_pll.hw,
++	},
++};
++
++static int t7_cpu_clkc_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *sm_np;
++	struct clk *clk;
++	int i, ret;
++
++	sm_np = of_parse_phandle(dev->of_node, "amlogic,secure-monitor", 0);
++	if (!sm_np)
++		return dev_err_probe(dev, -ENODEV, "no secure monitor\n");
++
++	t7_sm_fw = meson_sm_get(sm_np);
++	of_node_put(sm_np);
++	if (!t7_sm_fw)
++		return dev_err_probe(dev, -EPROBE_DEFER,
++				     "secure monitor not ready\n");
++
++	ret = meson_clkc_mmio_probe(pdev);
++	if (ret)
++		return ret;
++
++	for (i = 0; i < ARRAY_SIZE(t7_cpu_clusters); i++) {
++		struct t7_cpu_cluster *cl = &t7_cpu_clusters[i];
++
++		clk = devm_clk_hw_get_clk(dev, cl->pll, "dvfs");
++		if (IS_ERR(clk))
++			return PTR_ERR(clk);
++
++		ret = devm_clk_notifier_register(dev, clk, &cl->nb);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "failed to register a PLL notifier\n");
++
++		/* Park the cluster at 1 GHz, not xtal, while its PLL relocks */
++		clk = devm_clk_hw_get_clk(dev, cl->dyn, "dvfs");
++		if (IS_ERR(clk))
++			return PTR_ERR(clk);
++
++		ret = clk_set_rate(clk, 1000000000);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "failed to set a dynamic clock\n");
++	}
++
++	return 0;
++}
++
++static const struct of_device_id t7_cpu_clkc_match_table[] = {
++	{ .compatible = "amlogic,t7-cpu-clkc", .data = &t7_cpu_clkc_data },
++	{}
++};
++MODULE_DEVICE_TABLE(of, t7_cpu_clkc_match_table);
++
++static struct platform_driver t7_cpu_clkc_driver = {
++	.probe = t7_cpu_clkc_probe,
++	.driver = {
++		.name = "t7-cpu-clkc",
++		.of_match_table = t7_cpu_clkc_match_table,
++	},
++};
++module_platform_driver(t7_cpu_clkc_driver);
++
++MODULE_DESCRIPTION("Amlogic T7 CPU Clock Controller driver");
++MODULE_LICENSE("GPL");
++MODULE_IMPORT_NS("CLK_MESON");

@@ -64,6 +64,13 @@ else
 	fi
 fi
 
+# Khadas U-Boot reads the board MAC address from eFuse into eth_mac.
+# Mainline kernels take the MAC address only from the DT.
+if test -n "${eth_mac}"; then
+	setexpr eth_mac_dt gsub : " " "${eth_mac}"
+	fdt set /ethernet@fdc00000 local-mac-address "[${eth_mac_dt}]" || fdt set /soc/ethernet@fdc00000 local-mac-address "[${eth_mac_dt}]"
+fi
+
 # The symlinks for kernel and initrd.img are at different locations in debian and ubuntu
 # Check and load from a location that exists
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image

@@ -17,7 +17,6 @@ setenv console "both"
 setenv docker_optimizations "on"
 setenv earlycon "off"
 setenv emmc_fix "off"
-setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
 setenv ethaddr "00:50:43:84:fb:2f"
@@ -26,6 +25,7 @@ setenv fdt_extrasize "0x00010000"
 setenv kver
 setenv load_addr_calc
 setenv overlay_error "false"
+setenv preset_eth1addr "${eth1addr}"
 setenv preset_fdtdir "${fdtdir}"
 setenv preset_fdtfile "${fdtfile}"
 setenv preset_kernel_comp_addr_r "${kernel_comp_addr_r}"
@@ -85,6 +85,11 @@ if test -e ${devtype} ${devnum}:${distro_bootpart} ${l_file} ; then
 		setenv l_message "Could not load environment ${l_file} - using default environment!"
 		run func_warn
 	fi
+fi
+
+# the shared placeholder address must not replace the one U-Boot assigned
+if test "${eth1addr}" = "00:50:43:25:fb:84" ; then
+	setenv eth1addr "${preset_eth1addr}"
 fi
 
 # compose kernel commandline options (bootargs)

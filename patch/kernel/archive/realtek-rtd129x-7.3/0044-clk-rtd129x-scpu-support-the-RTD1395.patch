@@ -1,0 +1,294 @@
+From 3ce1159db368a1513a661f4c40a2c0a890282b67 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Wed, 21 Oct 2026 16:02:10 +0000
+Subject: [PATCH 44/46] clk: rtd129x-scpu: support the RTD1395
+
+The RTD1395 CPU divider field is bits 13:6, and /1 is 0. Its 1.6 GHz
+N/F differs, and it needs no divider-change workaround. The RTD129x
+values stay as they were.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/clk/clk-rtd129x-scpu.c | 138 ++++++++++++++++++++++++---------
+ 1 file changed, 103 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/clk/clk-rtd129x-scpu.c b/drivers/clk/clk-rtd129x-scpu.c
+index a8ca3bd82..bfde96dda 100644
+--- a/drivers/clk/clk-rtd129x-scpu.c
++++ b/drivers/clk/clk-rtd129x-scpu.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ /*
+- * Realtek RTD129x CPU clock: PLL_SCPU and its output divider
++ * Realtek RTD129x/RTD1395 CPU clock: PLL_SCPU and its output divider
+  *
+  * The four Cortex-A53s run from PLL_SCPU, an N/F PLL off the 27 MHz crystal,
+  *
+@@ -14,6 +14,7 @@
+  * Registers, in the CRT block (reached through the crt syscon):
+  *
+  *   0x030  bits 8:7   output divider: 1 -> /1, 2 -> /2, 3 -> /4 (0 -> /1)
++ *          RTD1395: bits 13:6, 0 -> /1, 2 -> /2, 3 -> /4 (cc-rtd139x.c)
+  *   0x500  bits 2:0   oc_en: 4 while the PLL is being changed, 5 to apply
+  *   0x504  bits 18:0  N (18:11), F (10:0)
+  *   0x508  bits 25:17 frequency step while slewing (the BSP sets it to max)
+@@ -29,8 +30,6 @@
+ #include <linux/regmap.h>
+ 
+ #define SCPU_DIV	0x030
+-#define  SCPU_DIV_SHIFT	7
+-#define  SCPU_DIV_MASK	(0x3 << SCPU_DIV_SHIFT)
+ #define SCPU_SSC	0x500
+ #define  SSC_OC_MASK	0x7
+ #define  SSC_OC_HOLD	0x4
+@@ -45,12 +44,15 @@
+ #define OSC_RATE	27000000UL
+ #define MHZ		1000000UL
+ 
+-/* N/F values for the PLL rates, from the BSP's scpu_tbl */
+-static const struct {
++struct scpu_nf {
+ 	unsigned long rate;
+ 	u32 nf;
+-} scpu_pll_tbl[] = {
++};
++
+ #define NF(_mhz, _n, _f) { (_mhz) * MHZ, ((_n) << 11) | (_f) }
++
++/* N/F values for the PLL rates, from the BSP's scpu_tbl */
++static const struct scpu_nf rtd1295_pll_tbl[] = {
+ 	NF(1000, 34,   75),
+ 	NF(1100, 37, 1517),
+ 	NF(1200, 41,  910),
+@@ -59,16 +61,56 @@ static const struct {
+ 	NF(1500, 52, 1137),
+ 	NF(1600, 56,  531),
+ 	NF(1800, 63, 1365),
++	{ }
++};
++
++/* As cc-rtd139x.c: 1.6 GHz is F 530; the boot firmware sets N 64, F 0 */
++static const struct scpu_nf rtd1395_pll_tbl[] = {
++	NF(1000, 34,   75),
++	NF(1100, 37, 1517),
++	NF(1200, 41,  910),
++	NF(1300, 45,  303),
++	NF(1400, 48, 1745),
++	NF(1500, 52, 1137),
++	NF(1600, 56,  530),
++	NF(1800, 63, 1365),
++	NF(1800, 64,    0),
++	{ }
++};
++
+ #undef NF
++
++struct scpu_soc {
++	const struct scpu_nf *pll_tbl;
++	u32 div_shift;
++	u32 div_mask;		/* before the shift */
++	u32 div1_val;		/* the field value for /1; /2 and /4 are 2 and 3 */
++	bool park_1ghz;		/* the RTD129x divider-change workaround */
+ };
+ 
+-/* Divider register value -> division ratio */
+-static const unsigned int scpu_div_ratio[4] = { 1, 1, 2, 4 };
++static const struct scpu_soc rtd1295_scpu = {
++	.pll_tbl	= rtd1295_pll_tbl,
++	.div_shift	= 7,
++	.div_mask	= 0x3,
++	.div1_val	= 1,
++	.park_1ghz	= true,
++};
++
++static const struct scpu_soc rtd1395_scpu = {
++	.pll_tbl	= rtd1395_pll_tbl,
++	.div_shift	= 6,
++	.div_mask	= 0xff,
++	.div1_val	= 0,
++};
++
++/* RTD1395: bit 7 selects a divider of (field >> 2) & 0x1f */
++#define SCPU_DIV_SEL7	BIT(7)
+ 
+ struct rtd129x_scpu {
+ 	struct clk_hw hw;
+ 	struct regmap *crt;
+ 	struct device *dev;
++	const struct scpu_soc *soc;
+ };
+ 
+ #define to_scpu(_hw) container_of(_hw, struct rtd129x_scpu, hw)
+@@ -83,55 +125,79 @@ static unsigned int scpu_div_for(unsigned long rate)
+ 	return 4;
+ }
+ 
+-static unsigned int scpu_div_val(unsigned int div)
++static unsigned int scpu_div_val(struct rtd129x_scpu *s, unsigned int div)
+ {
+-	return div == 1 ? 1 : div == 2 ? 2 : 3;
++	return div == 1 ? s->soc->div1_val : div == 2 ? 2 : 3;
+ }
+ 
+-static int scpu_pll_lookup(unsigned long pll_rate)
++/* Divider field -> division ratio. This driver sets /1, /2 and /4 only. */
++static unsigned int scpu_div_ratio(u32 field)
++{
++	if (field & SCPU_DIV_SEL7)
++		return max((field >> 2) & 0x1f, 1U);
++
++	switch (field) {
++	case 2:
++		return 2;
++	case 3:
++		return 4;
++	default:
++		return 1;
++	}
++}
++
++static int scpu_pll_lookup(struct rtd129x_scpu *s, unsigned long pll_rate)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(scpu_pll_tbl); i++)
+-		if (scpu_pll_tbl[i].rate == pll_rate)
++	for (i = 0; s->soc->pll_tbl[i].rate; i++)
++		if (s->soc->pll_tbl[i].rate == pll_rate)
+ 			return i;
+ 	return -EINVAL;
+ }
+ 
+-static unsigned long scpu_pll_rate(u32 nf)
++static unsigned long scpu_pll_rate(struct rtd129x_scpu *s, u32 nf)
+ {
+ 	u32 n = (nf >> 11) & 0xff, f = nf & 0x7ff;
+ 	unsigned long rate = OSC_RATE * (n + 3) + OSC_RATE / 2048 * f;
+ 	int i;
+ 
+ 	/* report the nominal rate where the N/F is one of ours */
+-	for (i = 0; i < ARRAY_SIZE(scpu_pll_tbl); i++)
+-		if (scpu_pll_tbl[i].nf == (nf & NF_MASK))
+-			return scpu_pll_tbl[i].rate;
++	for (i = 0; s->soc->pll_tbl[i].rate; i++)
++		if (s->soc->pll_tbl[i].nf == (nf & NF_MASK))
++			return s->soc->pll_tbl[i].rate;
+ 	return rate;
+ }
+ 
++static u32 scpu_div_field(struct rtd129x_scpu *s)
++{
++	u32 div;
++
++	regmap_read(s->crt, SCPU_DIV, &div);
++	return (div >> s->soc->div_shift) & s->soc->div_mask;
++}
++
+ static unsigned long scpu_recalc_rate(struct clk_hw *hw, unsigned long parent)
+ {
+ 	struct rtd129x_scpu *s = to_scpu(hw);
+-	u32 nf, div;
++	u32 nf;
+ 
+ 	regmap_read(s->crt, SCPU_NF, &nf);
+-	regmap_read(s->crt, SCPU_DIV, &div);
+-	div = (div & SCPU_DIV_MASK) >> SCPU_DIV_SHIFT;
+ 
+-	return scpu_pll_rate(nf) / scpu_div_ratio[div];
++	return scpu_pll_rate(s, nf) / scpu_div_ratio(scpu_div_field(s));
+ }
+ 
+ static int scpu_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+ {
++	struct rtd129x_scpu *s = to_scpu(hw);
++	const struct scpu_nf *tbl = s->soc->pll_tbl;
+ 	unsigned long best = 0;
+ 	int i, d;
+ 
+ 	/* the highest rate we can make that does not exceed the request */
+ 	for (d = 1; d <= 4; d <<= 1) {
+-		for (i = 0; i < ARRAY_SIZE(scpu_pll_tbl); i++) {
+-			unsigned long r = scpu_pll_tbl[i].rate / d;
++		for (i = 0; tbl[i].rate; i++) {
++			unsigned long r = tbl[i].rate / d;
+ 
+ 			if (scpu_div_for(r) != d)
+ 				continue;
+@@ -149,13 +215,13 @@ static int scpu_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+ static int scpu_set_pll(struct rtd129x_scpu *s, unsigned long pll_rate)
+ {
+ 	u32 st;
+-	int i = scpu_pll_lookup(pll_rate);
++	int i = scpu_pll_lookup(s, pll_rate);
+ 
+ 	if (i < 0)
+ 		return i;
+ 
+ 	regmap_update_bits(s->crt, SCPU_SSC, SSC_OC_MASK, SSC_OC_HOLD);
+-	regmap_update_bits(s->crt, SCPU_NF, NF_MASK, scpu_pll_tbl[i].nf);
++	regmap_update_bits(s->crt, SCPU_NF, NF_MASK, s->soc->pll_tbl[i].nf);
+ 	regmap_update_bits(s->crt, SCPU_SSC, SSC_OC_MASK, SSC_OC_APPLY);
+ 
+ 	return regmap_read_poll_timeout(s->crt, SCPU_STATUS, st,
+@@ -164,8 +230,9 @@ static int scpu_set_pll(struct rtd129x_scpu *s, unsigned long pll_rate)
+ 
+ static void scpu_set_div(struct rtd129x_scpu *s, unsigned int div)
+ {
+-	regmap_update_bits(s->crt, SCPU_DIV, SCPU_DIV_MASK,
+-			   scpu_div_val(div) << SCPU_DIV_SHIFT);
++	regmap_update_bits(s->crt, SCPU_DIV,
++			   s->soc->div_mask << s->soc->div_shift,
++			   scpu_div_val(s, div) << s->soc->div_shift);
+ }
+ 
+ static int scpu_set_rate(struct clk_hw *hw, unsigned long rate,
+@@ -173,21 +240,20 @@ static int scpu_set_rate(struct clk_hw *hw, unsigned long rate,
+ {
+ 	struct rtd129x_scpu *s = to_scpu(hw);
+ 	unsigned int new_div = scpu_div_for(rate), cur_div;
+-	u32 val;
+ 	int ret;
+ 
+-	if (scpu_pll_lookup(rate * new_div) < 0)
++	if (scpu_pll_lookup(s, rate * new_div) < 0)
+ 		return -EINVAL;
+ 
+ 	/* the clk core serialises set_rate under its prepare lock */
+-	regmap_read(s->crt, SCPU_DIV, &val);
+-	cur_div = scpu_div_ratio[(val & SCPU_DIV_MASK) >> SCPU_DIV_SHIFT];
++	cur_div = scpu_div_ratio(scpu_div_field(s));
+ 
+ 	/*
+-	 * The BSP's glitch workaround: a change to or from /1 is made with
+-	 * the PLL parked at 1 GHz.
++	 * The RTD129x BSP's glitch workaround: a change to or from /1 is made
++	 * with the PLL parked at 1 GHz.
+ 	 */
+-	if (new_div != cur_div && (new_div == 1 || cur_div == 1)) {
++	if (s->soc->park_1ghz && new_div != cur_div &&
++	    (new_div == 1 || cur_div == 1)) {
+ 		ret = scpu_set_pll(s, 1000 * MHZ);
+ 		if (ret)
+ 			goto out;
+@@ -224,6 +290,7 @@ static int rtd129x_scpu_probe(struct platform_device *pdev)
+ 	if (!s)
+ 		return -ENOMEM;
+ 	s->dev = dev;
++	s->soc = of_device_get_match_data(dev);
+ 
+ 	s->crt = syscon_node_to_regmap(dev->parent->of_node);
+ 	if (IS_ERR(s->crt))
+@@ -246,7 +313,8 @@ static int rtd129x_scpu_probe(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id rtd129x_scpu_match[] = {
+-	{ .compatible = "realtek,rtd1295-scpu-clk" },
++	{ .compatible = "realtek,rtd1295-scpu-clk", .data = &rtd1295_scpu },
++	{ .compatible = "realtek,rtd1395-scpu-clk", .data = &rtd1395_scpu },
+ 	{ }
+ };
+ 
+-- 
+2.53.0
+

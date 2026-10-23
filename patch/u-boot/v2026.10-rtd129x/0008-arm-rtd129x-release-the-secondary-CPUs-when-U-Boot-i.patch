@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Tue, 13 Oct 2026 11:45:31 +0200
+Subject: [PATCH 08/13] arm: rtd129x: release the secondary CPUs when U-Boot is
+ first stage
+
+Started from the SD card by the Realtek loader, the secondary cores
+start at 0x20000 once powered, not at the release address. They ran
+U-Boot again, never reached Linux and slowed the system down.
+
+Do what the vendor U-Boot does: hold the cores in the U-Boot copy at
+0x20000, set them up there and drop them to EL2. Use the boot ROM
+release register as cpu-release-addr, and keep Linux off 0x20000.
+Also set SMPEN on the boot CPU. "setenv smp no" leaves the cores off.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/Kconfig            |  1 +
+ arch/arm/mach-rtd129x/smp.S | 58 ++++++++++++++++++++++---------------
+ arch/arm/mach-rtd129x/soc.c | 36 +++++++++--------------
+ 3 files changed, 49 insertions(+), 46 deletions(-)
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index add69616ec..7035a00a7f 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -1100,6 +1100,7 @@ config ARCH_RTD129X
+ 	bool "Realtek RTD1295/RTD1296 SoCs"
+ 	select ARCH_CPU_INIT
+ 	select ARM64
++	select ARMV8_SET_SMPEN
+ 	select GICV2
+ 	select OF_SYSTEM_SETUP
+ 	select DM
+diff --git a/arch/arm/mach-rtd129x/smp.S b/arch/arm/mach-rtd129x/smp.S
+index 4053a0b0c6..6a74064d35 100644
+--- a/arch/arm/mach-rtd129x/smp.S
++++ b/arch/arm/mach-rtd129x/smp.S
+@@ -2,40 +2,52 @@
+ /*
+  * Secondary CPUs on the Realtek RTD129x.
+  *
+- * The boot ROM parks the secondary cores at EL3 until 0x9801aa44 holds an
+- * address. Linux cannot run at EL3, so U-Boot releases them here first:
+- * each core sets up its banked GIC registers for the non-secure side,
+- * drops to EL2 and waits on rtd129x_release_addr, the cpu-release-addr
+- * of the standard spin-table method.
++ * Once powered, the secondary cores always start at 0x20000, where the
++ * Realtek loader puts U-Boot. Linux cannot run at EL3, so each core sets
++ * itself up here, drops to EL2 and waits until the boot ROM's release
++ * register holds an address. Linux writes it there: the register is the
++ * cpu-release-addr of the spin-table method. This code stays at 0x20000,
++ * which Linux does not use.
+  */
+ 
+ #include <config.h>
+ #include <linux/linkage.h>
+ 
+-ENTRY(rtd129x_secondary_entry)
++#define CPU_RELEASE_ADDR	0x9801aa44
++
++ENTRY(save_boot_params)
++	mrs	x0, mpidr_el1
++	tst	x0, #0xff
++	b.ne	1f
++	/* CPU 0 runs U-Boot; no core may leave the loop below until Linux */
++	ldr	x1, =CPU_RELEASE_ADDR
++	str	wzr, [x1]
++	b	save_boot_params_ret
++
++	/* the per-core setup that U-Boot's start code does for CPU 0 */
++1:	ldr	x0, =CONFIG_COUNTER_FREQUENCY
++	msr	cntfrq_el0, x0
++	mrs	x0, S3_1_c15_c2_1		/* CPUECTLR_EL1 */
++	orr	x0, x0, #0x40			/* SMPEN: coherency */
++	msr	S3_1_c15_c2_1, x0
++	mrs	x0, actlr_el3			/* CPUECTLR access from EL2/EL1 */
++	orr	x0, x0, #0x2
++	msr	actlr_el3, x0
++	mrs	x0, actlr_el2
++	orr	x0, x0, #0x2
++	msr	actlr_el2, x0
++	isb
+ 	ldr	x0, =GICD_BASE
+ 	ldr	x1, =GICC_BASE
+ 	bl	gic_init_secure_percpu
+ 	adr	x4, rtd129x_secondary_el2
+ 	mov	x5, #1				/* ES_TO_AARCH64 */
+ 	bl	armv8_switch_to_el2
+-ENDPROC(rtd129x_secondary_entry)
++ENDPROC(save_boot_params)
+ 
+-	/* Only this part runs once Linux owns the memory; it is reserved. */
+-	.align	12
+-.globl rtd129x_spin_begin
+-rtd129x_spin_begin:
+ rtd129x_secondary_el2:
+-	wfe
+-	ldr	x0, rtd129x_release_addr
+-	cbz	x0, rtd129x_secondary_el2
++	ldr	x1, =CPU_RELEASE_ADDR
++2:	wfe
++	ldr	w0, [x1]
++	cbz	w0, 2b
+ 	br	x0
+-
+-	.align	3
+-.globl rtd129x_release_addr
+-rtd129x_release_addr:
+-	.quad	0
+-
+-	.align	12
+-.globl rtd129x_spin_end
+-rtd129x_spin_end:
+diff --git a/arch/arm/mach-rtd129x/soc.c b/arch/arm/mach-rtd129x/soc.c
+index a0f822b5a9..4ef51b65c5 100644
+--- a/arch/arm/mach-rtd129x/soc.c
++++ b/arch/arm/mach-rtd129x/soc.c
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <cpu_func.h>
++#include <env.h>
+ #include <fdt_support.h>
+ #include <fdtdec.h>
+ #include <init.h>
+@@ -112,41 +113,31 @@ void reset_cpu(void)
+ }
+ 
+ /*
+- * Secondary CPUs. The boot ROM parks them at EL3 until CPU_RELEASE_ADDR holds
+- * an address; smp.S takes them to EL2 and parks them on a spin-table release
+- * address in RAM, which is what Linux is told to use.
++ * Secondary CPUs: smp.S holds them at EL2 until CPU_RELEASE_ADDR holds an
++ * address, and Linux writes it there.
+  */
+ #define CPU_RELEASE_ADDR	0x9801aa44
+-
+-extern char rtd129x_secondary_entry[];
+-extern char rtd129x_spin_begin[], rtd129x_spin_end[];
+-extern u64 rtd129x_release_addr;
++/* the U-Boot image the secondary cores run from; Linux must keep off it */
++#define SECONDARY_CODE		0x20000
++#define SECONDARY_CODE_SIZE	0xe0000
+ 
+ static void rtd129x_release_secondaries(void)
+ {
+ 	static bool released;
+ 
+-	if (released)
++	if (released || !env_get_yesno("smp"))
+ 		return;
+ 
+-	rtd129x_release_addr = 0;
+-	/* the cores run with caches off */
+-	flush_dcache_range((ulong)rtd129x_secondary_entry,
+-			   (ulong)rtd129x_spin_end);
+-
+ 	/*
+-	 * Power the secondary cores up, as the BSP's bootup_slave_cpu() does.
+-	 * They start in the boot ROM, which jumps to CPU_RELEASE_ADDR once it
+-	 * holds an address. The BSP clears it again so they wait for the
+-	 * kernel; here they go straight to rtd129x_secondary_entry.
++	 * Power the secondary cores up, as the BSP's bootup_slave_cpu() does
++	 * on revision B00 and later.
+ 	 */
+-	writel((ulong)rtd129x_secondary_entry, CPU_RELEASE_ADDR);
+-	asm volatile("dsb sy" : : : "memory");
++	writel(SECONDARY_CODE, CPU_RELEASE_ADDR);
+ 	writel(0x00010000, 0x9801d104);
+ 	writel(0x03ffff00, 0x9801d530);
+ 	writel(0x011f3bff, 0x9801d100);
+ 	writel(0x0f1f3bff, 0x9801d100);
+-	asm volatile("dsb sy\n\tsev" : : : "memory");
++	writel(0, CPU_RELEASE_ADDR);
+ 	released = true;
+ }
+ 
+@@ -167,13 +158,12 @@ int ft_system_setup(void *blob, struct bd_info *bd)
+ 					 "spin-table");
+ 		if (!ret)
+ 			ret = fdt_setprop_u64(blob, node, "cpu-release-addr",
+-					      (ulong)&rtd129x_release_addr);
++					      CPU_RELEASE_ADDR);
+ 		if (ret)
+ 			return ret;
+ 	}
+ 
+-	ret = fdt_add_mem_rsv(blob, (ulong)rtd129x_spin_begin,
+-			      rtd129x_spin_end - rtd129x_spin_begin);
++	ret = fdt_add_mem_rsv(blob, SECONDARY_CODE, SECONDARY_CODE_SIZE);
+ 	if (ret)
+ 		return ret;
+ 

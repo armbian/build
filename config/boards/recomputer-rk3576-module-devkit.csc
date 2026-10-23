@@ -1,6 +1,6 @@
 # Rockchip RK3576 octa core 4/8GB RAM SoC
 BOARD_NAME="reComputer RK3576 Module Dev Kit"
-BOARDFAMILY="seeed-rk3576"
+BOARDFAMILY="rk35xx"
 BOOT_SOC="rk3576"
 BOARD_MAINTAINER="Pillar1989"
 BOARD_VENDOR="seeed-studio"
@@ -62,6 +62,20 @@ function pre_install_distribution_specific__recomputer_rk3576_install_camera_eng
 # WQ9201S WiFi/BT driver: DKMS deb from Seeed APT, built in chroot against the image kernel.
 function post_family_config__recomputer_rk3576_wq9201s_kernel_headers() {
 	declare -g INSTALL_HEADERS="yes"
+}
+
+# Install fixed btattach (bluez-btattach) from Seeed APT; drop when Ubuntu ships the fix
+function post_install_kernel_debs__recomputer_rk3576_install_bluez_btattach() {
+	if [[ "${SEEED_BLUEZ_BTATTACH_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
+		display_alert "Skipping bluez-btattach workaround" "SEEED_BLUEZ_BTATTACH_ENABLE=no" "info"
+		return 0
+	fi
+
+	display_alert "Installing bluez-btattach (workaround for btattach baud bug)" "bluez-btattach" "info"
+
+	seeed_recomputer_install_from_apt bluez-btattach
+
+	display_alert "bluez-btattach installed" "bluez-btattach" "info"
 }
 
 function post_install_kernel_debs__recomputer_rk3576_install_wq9201s() {

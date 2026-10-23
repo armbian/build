@@ -1,0 +1,189 @@
+From 0310f859e4a91c2d5cc145f875b16f51377f8bac Mon Sep 17 00:00:00 2001
+From: Christian Hewitt <christianshewitt@gmail.com>
+Date: Sun, 4 Oct 2026 17:23:43 +0000
+Subject: [PATCH 134/135] mmc: meson-gx: add the S4 interface 3 tuning
+
+The S4 controllers sample the bus through a second interface, enabled
+with SD_EMMC_INTF3, whose receive clock delay line has to be tuned for
+UHS and HS200 timings. Resampling tuning, as used for AXG, does not
+give a reliable sampling point: the BCM43456 WiFi module on the Khadas
+VIM1S intermittently returns corrupt data in SDR104 mode, and tuning
+the SD card in SDR50 mode fails.
+
+Port the Amlogic tuning algorithm. For both response sampling
+selections, sweep the 64 steps of the receive delay line, count a step
+as good when a run of tuning transfers succeeds, and use the middle of
+the widest good window. Skip tuning when the bus clock is low enough
+not to need it, and reset the interface when the bus leaves the tuned
+timings.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Christian Hewitt <christianshewitt@gmail.com>
+---
+ drivers/mmc/host/meson-gx-mmc.c | 108 +++++++++++++++++++++++++++++++-
+ 1 file changed, 107 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/meson-gx-mmc.c b/drivers/mmc/host/meson-gx-mmc.c
+index c0f1e929fc13..d5a57ee14aae 100644
+--- a/drivers/mmc/host/meson-gx-mmc.c
++++ b/drivers/mmc/host/meson-gx-mmc.c
+@@ -64,6 +64,9 @@
+ #define SD_EMMC_V3_ADJUST 0xc
+ 
+ #define SD_EMMC_CALOUT 0x10
++#define SD_EMMC_INTF3 0x38
++#define   INTF3_SD_INTF3 BIT(22)
++#define   INTF3_RESP_SEL BIT(27)
+ #define SD_EMMC_START 0x40
+ #define   START_DESC_INIT BIT(0)
+ #define   START_DESC_BUSY BIT(1)
+@@ -140,6 +143,7 @@ struct meson_mmc_data {
+ 	unsigned int adjust;
+ 	unsigned int irq_sdio_sleep;
+ 	bool has_pipeline_clk;
++	bool intf3_tuning;
+ };
+ 
+ struct sd_emmc_desc {
+@@ -560,6 +564,96 @@ static int meson_mmc_resampling_tuning(struct mmc_host *mmc, u32 opcode)
+ 	return -EIO;
+ }
+ 
++#define SD_EMMC_INTF3_TUNING_TRIES	40
++#define SD_EMMC_INTF3_MAX_CLK_DIV	16
++
++static bool meson_mmc_intf3_point_ok(struct mmc_host *mmc, u32 opcode)
++{
++	int i;
++
++	for (i = 0; i < SD_EMMC_INTF3_TUNING_TRIES; i++)
++		if (mmc_send_tuning(mmc, opcode, NULL))
++			return false;
++
++	return true;
++}
++
++static void meson_mmc_reset_intf3(struct meson_host *host)
++{
++	u32 clk = readl(host->regs + SD_EMMC_CLOCK);
++
++	writel(0, host->regs + SD_EMMC_INTF3);
++	writel(clk & ~CLK_V3_RX_DELAY_MASK, host->regs + SD_EMMC_CLOCK);
++}
++
++static int meson_mmc_intf3_tuning(struct mmc_host *mmc, u32 opcode)
++{
++	struct meson_host *host = mmc_priv(mmc);
++	unsigned int best_start[2] = {}, best_len[2] = {};
++	unsigned int sel, dly, start = 0, len;
++	u32 clk, intf3;
++
++	clk = readl(host->regs + SD_EMMC_CLOCK);
++	if (FIELD_GET(CLK_DIV_MASK, clk) > SD_EMMC_INTF3_MAX_CLK_DIV)
++		return 0;
++
++	meson_mmc_reset_resampling(host);
++	writel(0, host->regs + SD_EMMC_DELAY1);
++	writel(0, host->regs + SD_EMMC_DELAY2);
++
++	for (sel = 0; sel < 2; sel++) {
++		intf3 = INTF3_SD_INTF3 | (sel ? INTF3_RESP_SEL : 0);
++		writel(intf3, host->regs + SD_EMMC_INTF3);
++
++		for (dly = 0, len = 0; dly <= FIELD_MAX(CLK_V3_RX_DELAY_MASK); dly++) {
++			clk &= ~CLK_V3_RX_DELAY_MASK;
++			clk |= FIELD_PREP(CLK_V3_RX_DELAY_MASK, dly);
++			writel(clk, host->regs + SD_EMMC_CLOCK);
++
++			if (!meson_mmc_intf3_point_ok(mmc, opcode)) {
++				len = 0;
++				continue;
++			}
++
++			if (!len++)
++				start = dly;
++
++			if (len > best_len[sel]) {
++				best_start[sel] = start;
++				best_len[sel] = len;
++			}
++		}
++	}
++
++	sel = best_len[1] > best_len[0];
++	if (!best_len[sel]) {
++		meson_mmc_reset_intf3(host);
++		return -EIO;
++	}
++
++	dly = best_start[sel] + best_len[sel] / 2;
++	clk &= ~CLK_V3_RX_DELAY_MASK;
++	clk |= FIELD_PREP(CLK_V3_RX_DELAY_MASK, dly);
++	writel(clk, host->regs + SD_EMMC_CLOCK);
++	writel(INTF3_SD_INTF3 | (sel ? INTF3_RESP_SEL : 0),
++	       host->regs + SD_EMMC_INTF3);
++
++	dev_dbg(mmc_dev(mmc), "intf3 rx delay %u (window %u-%u), resp sel %u\n",
++		dly, best_start[sel], best_start[sel] + best_len[sel] - 1, sel);
++
++	return 0;
++}
++
++static int meson_mmc_execute_tuning(struct mmc_host *mmc, u32 opcode)
++{
++	struct meson_host *host = mmc_priv(mmc);
++
++	if (host->data->intf3_tuning)
++		return meson_mmc_intf3_tuning(mmc, opcode);
++
++	return meson_mmc_resampling_tuning(mmc, opcode);
++}
++
+ static int meson_mmc_prepare_ios_clock(struct meson_host *host,
+ 				       struct mmc_ios *ios)
+ {
+@@ -588,6 +682,8 @@ static void meson_mmc_check_resampling(struct meson_host *host,
+ 	case MMC_TIMING_SD_HS:
+ 	case MMC_TIMING_MMC_DDR52:
+ 		meson_mmc_disable_resampling(host);
++		if (host->data->intf3_tuning)
++			meson_mmc_reset_intf3(host);
+ 		break;
+ 	}
+ }
+@@ -1129,7 +1225,7 @@ static const struct mmc_host_ops meson_mmc_ops = {
+ 	.get_cd         = mmc_gpio_get_cd,
+ 	.pre_req	= meson_mmc_pre_req,
+ 	.post_req	= meson_mmc_post_req,
+-	.execute_tuning = meson_mmc_resampling_tuning,
++	.execute_tuning = meson_mmc_execute_tuning,
+ 	.card_busy	= meson_mmc_card_busy,
+ 	.start_signal_voltage_switch = meson_mmc_voltage_switch,
+ 	.enable_sdio_irq = meson_mmc_enable_sdio_irq,
+@@ -1332,6 +1428,15 @@ static const struct meson_mmc_data meson_axg_data = {
+ 	.irq_sdio_sleep	= CLK_V3_IRQ_SDIO_SLEEP,
+ };
+ 
++static const struct meson_mmc_data meson_s4_data = {
++	.tx_delay_mask	= CLK_V3_TX_DELAY_MASK,
++	.rx_delay_mask	= CLK_V3_RX_DELAY_MASK,
++	.always_on	= CLK_V3_ALWAYS_ON,
++	.adjust		= SD_EMMC_V3_ADJUST,
++	.irq_sdio_sleep	= CLK_V3_IRQ_SDIO_SLEEP,
++	.intf3_tuning	= true,
++};
++
+ static const struct meson_mmc_data meson_t7_data = {
+ 	.tx_delay_mask	= CLK_V3_TX_DELAY_MASK,
+ 	.rx_delay_mask	= CLK_V3_RX_DELAY_MASK,
+@@ -1347,6 +1452,7 @@ static const struct of_device_id meson_mmc_of_match[] = {
+ 	{ .compatible = "amlogic,meson-gxl-mmc",	.data = &meson_gx_data },
+ 	{ .compatible = "amlogic,meson-gxm-mmc",	.data = &meson_gx_data },
+ 	{ .compatible = "amlogic,meson-axg-mmc",	.data = &meson_axg_data },
++	{ .compatible = "amlogic,s4-mmc",		.data = &meson_s4_data },
+ 	{ .compatible = "amlogic,t7-mmc",		.data = &meson_t7_data },
+ 	{}
+ };
+-- 
+2.55.0
+

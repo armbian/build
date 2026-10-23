@@ -1,0 +1,412 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Thu, 8 Oct 2026 07:28:37 +0900
+Subject: drm/sun4i: add D1 HDMI controller and PHY support
+
+Drive the D1 HDMI PHY with the register sequence from the D1 port.
+Use regmap access and bounded calibration, PLL and transmitter waits.
+Keep the existing variants on their clock and PHY paths.
+Group the static PHY and PLL field writes. Keep the power sequence one step per write.
+Drop unused register definitions.
+
+Link: https://github.com/smaeul/linux/commit/90e546a5e7d05b8b014e2bbe085207f6565f6559
+Link: https://github.com/smaeul/linux/commit/9935c98040663f00f0bb1c73c6293306bdc1fc54
+Link: https://github.com/smaeul/linux/commit/511fe66b9b5a868d1f3573ada5a044a561272181
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c  |  14 +-
+ drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h  |  83 ++++
+ drivers/gpu/drm/sun4i/sun8i_hdmi_phy.c | 188 ++++++++++
+ 3 files changed, 284 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
++++ b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.c
+@@ -138,7 +138,8 @@ static int sun8i_dw_hdmi_bind(struct device *dev, struct device *master,
+ 		return dev_err_probe(dev, PTR_ERR(hdmi->rst_ctrl),
+ 				     "Could not get ctrl reset control\n");
+ 
+-	hdmi->clk_tmds = devm_clk_get(dev, "tmds");
++	if (hdmi->quirks->has_tmds_clk)
++		hdmi->clk_tmds = devm_clk_get(dev, "tmds");
+ 	if (IS_ERR(hdmi->clk_tmds))
+ 		return dev_err_probe(dev, PTR_ERR(hdmi->clk_tmds),
+ 				     "Couldn't get the tmds clock\n");
+@@ -247,10 +248,17 @@ static void sun8i_dw_hdmi_remove(struct platform_device *pdev)
+ }
+ 
+ static const struct sun8i_dw_hdmi_quirks sun8i_a83t_quirks = {
++	.has_tmds_clk = true,
+ 	.mode_valid = sun8i_dw_hdmi_mode_valid_a83t,
+ };
+ 
++static const struct sun8i_dw_hdmi_quirks sun20i_d1_quirks = {
++	.mode_valid = sun8i_dw_hdmi_mode_valid_a83t,
++	.use_drm_infoframe = true,
++};
++
+ static const struct sun8i_dw_hdmi_quirks sun50i_h6_quirks = {
++	.has_tmds_clk = true,
+ 	.mode_valid = sun8i_dw_hdmi_mode_valid_h6,
+ 	.use_drm_infoframe = true,
+ };
+@@ -260,6 +268,10 @@ static const struct of_device_id sun8i_dw_hdmi_dt_ids[] = {
+ 		.compatible = "allwinner,sun8i-a83t-dw-hdmi",
+ 		.data = &sun8i_a83t_quirks,
+ 	},
++	{
++		.compatible = "allwinner,sun20i-d1-dw-hdmi",
++		.data = &sun20i_d1_quirks,
++	},
+ 	{
+ 		.compatible = "allwinner,sun50i-h6-dw-hdmi",
+ 		.data = &sun50i_h6_quirks,
+diff --git a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
++++ b/drivers/gpu/drm/sun4i/sun8i_dw_hdmi.h
+@@ -145,9 +145,91 @@
+ 
+ #define SUN8I_HDMI_PHY_CEC_REG		0x003c
+ 
++#define SUN20I_HDMI_PHY_CTL0_REG	0x0040
++#define SUN20I_HDMI_PHY_CTL0_ENTX		GENMASK(27, 24)
++#define SUN20I_HDMI_PHY_CTL0_ENBI		GENMASK(23, 20)
++#define SUN20I_HDMI_PHY_CTL0_ENLDO		BIT(18)
++#define SUN20I_HDMI_PHY_CTL0_ENLDO_FS		BIT(17)
++#define SUN20I_HDMI_PHY_CTL0_ENCK		BIT(16)
++#define SUN20I_HDMI_PHY_CTL0_REG_DEN		GENMASK(11, 8)
++#define SUN20I_HDMI_PHY_CTL0_REG_CSMPS		GENMASK(7, 6)
++#define SUN20I_HDMI_PHY_CTL0_REG_CK_TEST_SEL	BIT(5)
++#define SUN20I_HDMI_PHY_CTL0_REG_CK_SEL		BIT(4)
++#define SUN20I_HDMI_PHY_CTL0_HPD_EN		BIT(2)
++#define SUN20I_HDMI_PHY_CTL0_SCL_EN		BIT(1)
++#define SUN20I_HDMI_PHY_CTL0_SDA_EN		BIT(0)
++
++#define SUN20I_HDMI_PHY_CTL1_REG	0x0044
++#define SUN20I_HDMI_PHY_CTL1_RES_SCKTMDS	BIT(27)
++
++#define SUN20I_HDMI_PHY_CTL2_REG	0x0048
++
++#define SUN20I_HDMI_PHY_CTL3_REG	0x004c
++
++#define SUN20I_HDMI_PHY_CTL4_REG	0x0050
++#define SUN20I_HDMI_PHY_CTL4_REG_SLV		GENMASK(31, 29)
++
++#define SUN20I_HDMI_PHY_CTL5_REG	0x0054
++#define SUN20I_HDMI_PHY_CTL5_REG_P1OPT		GENMASK(19, 16)
++#define SUN20I_HDMI_PHY_CTL5_ENRESCK		BIT(10)
++#define SUN20I_HDMI_PHY_CTL5_ENRES		BIT(9)
++#define SUN20I_HDMI_PHY_CTL5_ENRCAL		BIT(8)
++#define SUN20I_HDMI_PHY_CTL5_ENP2S		GENMASK(7, 4)
++#define SUN20I_HDMI_PHY_CTL5_ENIB		BIT(1)
++#define SUN20I_HDMI_PHY_CTL5_ENCALOG		BIT(0)
++
++#define SUN20I_HDMI_PLL_CTL0_REG	0x0058
++#define SUN20I_HDMI_PLL_CTL0_CKO_SEL		GENMASK(31, 30)
++#define SUN20I_HDMI_PLL_CTL0_BYPASS_PPLL	BIT(29)
++#define SUN20I_HDMI_PLL_CTL0_ENVBS		BIT(28)
++#define SUN20I_HDMI_PLL_CTL0_SLV		GENMASK(26, 24)
++#define SUN20I_HDMI_PLL_CTL0_BCR		BIT(23)
++#define SUN20I_HDMI_PLL_CTL0_BYPASS_CLRDPTH	BIT(22)
++#define SUN20I_HDMI_PLL_CTL0_CLR_DPTH		GENMASK(21, 20)
++#define SUN20I_HDMI_PLL_CTL0_DIV2_CKBIT		BIT(17)
++#define SUN20I_HDMI_PLL_CTL0_DIV2_CKTMDS	BIT(16)
++#define SUN20I_HDMI_PLL_CTL0_DIV_PRE		GENMASK(15, 12)
++#define SUN20I_HDMI_PLL_CTL0_VCORANGE		BIT(8)
++#define SUN20I_HDMI_PLL_CTL0_N_CNTRL		GENMASK(7, 6)
++#define SUN20I_HDMI_PLL_CTL0_GMP_CNTRL		GENMASK(5, 4)
++#define SUN20I_HDMI_PLL_CTL0_PROP_CNTRL		GENMASK(2, 0)
++
++#define SUN20I_HDMI_PLL_CTL1_REG	0x005c
++#define SUN20I_HDMI_PLL_CTL1_CTRL_MODLE_CLKSRC	BIT(31)
++#define SUN20I_HDMI_PLL_CTL1_PCNT_N		GENMASK(27, 20)
++#define SUN20I_HDMI_PLL_CTL1_PCNT_EN		BIT(19)
++#define SUN20I_HDMI_PLL_CTL1_SDM_EN		BIT(18)
++#define SUN20I_HDMI_PLL_CTL1_PIXEL_REP		GENMASK(17, 16)
++#define SUN20I_HDMI_PLL_CTL1_PWRON		BIT(12)
++#define SUN20I_HDMI_PLL_CTL1_RESET		BIT(11)
++#define SUN20I_HDMI_PLL_CTL1_SCKREF		BIT(10)
++#define SUN20I_HDMI_PLL_CTL1_DRV_ANA		BIT(8)
++#define SUN20I_HDMI_PLL_CTL1_REF_CNTRL		GENMASK(5, 4)
++
++#define SUN20I_HDMI_INDEB_CTRL_REG	0x006c
++#define SUN20I_HDMI_INDEB_CTRL_TXDATA_DEBUGMODE	GENMASK(1, 0)
++
++#define SUN20I_HDMI_PLL_STS_REG		0x0080
++#define SUN20I_HDMI_PLL_STS_PHY_RCALEND2D_STS	BIT(16)
++#define SUN20I_HDMI_PLL_STS_PLL_LOCK_STATUS	BIT(4)
++#define SUN20I_HDMI_PLL_STS_TX_READY_DLY_STATUS	BIT(0)
++
++#define SUN20I_HDMI_PHY_CTL6_REG	0x009c
++#define SUN20I_HDMI_PHY_CTL6_SWITCH_CLKCH_DATA	BIT(31)
++#define SUN20I_HDMI_PHY_CTL6_EN_CKDAT		BIT(30)
++#define SUN20I_HDMI_PHY_CTL6_CLK_GREATE2_340M	GENMASK(29, 20)
++#define SUN20I_HDMI_PHY_CTL6_CLK_GREATE1_340M	GENMASK(19, 10)
++#define SUN20I_HDMI_PHY_CTL6_CLK_GREATE0_340M	GENMASK(9, 0)
++
++#define SUN20I_HDMI_PHY_CTL7_REG	0x00a0
++#define SUN20I_HDMI_PHY_CTL7_CLK_LOW_340M	GENMASK(21, 12)
++#define SUN20I_HDMI_PHY_CTL7_CLK_GREATE3_340M	GENMASK(9, 0)
++
+ struct sun8i_hdmi_phy;
+ 
+ struct sun8i_hdmi_phy_variant {
++	bool force_vendor_phy;
++	const struct regmap_config *regmap_config;
+ 	bool has_phy_clk;
+ 	bool has_second_pll;
+ 	const struct dw_hdmi_curr_ctrl *cur_ctr;
+@@ -175,6 +257,7 @@ struct sun8i_dw_hdmi_quirks {
+ 					   const struct drm_display_info *info,
+ 					   const struct drm_display_mode *mode);
+ 	unsigned int use_drm_infoframe : 1;
++	unsigned int has_tmds_clk : 1;
+ };
+ 
+ struct sun8i_dw_hdmi {
+diff --git a/drivers/gpu/drm/sun4i/sun8i_hdmi_phy.c b/drivers/gpu/drm/sun4i/sun8i_hdmi_phy.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_hdmi_phy.c
++++ b/drivers/gpu/drm/sun4i/sun8i_hdmi_phy.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2018 Jernej Skrabec <jernej.skrabec@siol.net>
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/delay.h>
+ #include <linux/of.h>
+ #include <linux/of_platform.h>
+@@ -399,6 +400,172 @@ static const struct dw_hdmi_phy_ops sun8i_h3_hdmi_phy_ops = {
+ 	.setup_hpd	= dw_hdmi_phy_setup_hpd,
+ };
+ 
++static void sun20i_d1_hdmi_phy_power_off(struct sun8i_hdmi_phy *phy)
++{
++	struct regmap *regs = phy->regs;
++
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENTX);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRESCK);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRES);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENP2S);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENCK);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENBI);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENCALOG);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRCAL);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENLDO_FS);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENLDO);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENIB);
++	regmap_set_bits(regs, SUN20I_HDMI_PLL_CTL1_REG, SUN20I_HDMI_PLL_CTL1_RESET);
++	regmap_clear_bits(regs, SUN20I_HDMI_PLL_CTL1_REG, SUN20I_HDMI_PLL_CTL1_PWRON);
++	regmap_clear_bits(regs, SUN20I_HDMI_PLL_CTL0_REG, SUN20I_HDMI_PLL_CTL0_ENVBS);
++}
++
++static int sun20i_d1_hdmi_phy_wait(struct sun8i_hdmi_phy *phy, u32 bit,
++				   const char *what)
++{
++	unsigned int value;
++	int ret;
++
++	ret = regmap_read_poll_timeout(phy->regs, SUN20I_HDMI_PLL_STS_REG,
++				       value, value & bit, 5, 5000);
++	if (ret)
++		dev_err(phy->dev, "D1 PHY %s timed out\n", what);
++
++	return ret;
++}
++
++static int sun20i_d1_hdmi_phy_config(struct dw_hdmi *hdmi, void *data,
++				     const struct drm_display_info *display,
++				     const struct drm_display_mode *mode)
++{
++	struct sun8i_hdmi_phy *phy = data;
++	struct regmap *regs = phy->regs;
++	int ret;
++
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL5_REG,
++			   SUN20I_HDMI_PHY_CTL5_REG_P1OPT,
++			   SUN20I_HDMI_PHY_CTL5_REG_P1OPT);
++	sun20i_d1_hdmi_phy_power_off(phy);
++
++	/* The PLL is in reset and powered off, so the field order does not matter. */
++	regmap_update_bits(regs, SUN20I_HDMI_PLL_CTL0_REG,
++			   SUN20I_HDMI_PLL_CTL0_CKO_SEL |
++			   SUN20I_HDMI_PLL_CTL0_BYPASS_PPLL |
++			   SUN20I_HDMI_PLL_CTL0_SLV |
++			   SUN20I_HDMI_PLL_CTL0_PROP_CNTRL |
++			   SUN20I_HDMI_PLL_CTL0_GMP_CNTRL |
++			   SUN20I_HDMI_PLL_CTL0_VCORANGE |
++			   SUN20I_HDMI_PLL_CTL0_DIV_PRE |
++			   SUN20I_HDMI_PLL_CTL0_BYPASS_CLRDPTH |
++			   SUN20I_HDMI_PLL_CTL0_CLR_DPTH |
++			   SUN20I_HDMI_PLL_CTL0_N_CNTRL |
++			   SUN20I_HDMI_PLL_CTL0_DIV2_CKBIT |
++			   SUN20I_HDMI_PLL_CTL0_DIV2_CKTMDS |
++			   SUN20I_HDMI_PLL_CTL0_BCR,
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL0_CKO_SEL, 3) |
++			   SUN20I_HDMI_PLL_CTL0_BYPASS_PPLL |
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL0_SLV, 4) |
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL0_PROP_CNTRL, 7) |
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL0_GMP_CNTRL, 3) |
++			   SUN20I_HDMI_PLL_CTL0_VCORANGE |
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL0_N_CNTRL, 1));
++	regmap_update_bits(regs, SUN20I_HDMI_PLL_CTL1_REG,
++			   SUN20I_HDMI_PLL_CTL1_DRV_ANA |
++			   SUN20I_HDMI_PLL_CTL1_CTRL_MODLE_CLKSRC |
++			   SUN20I_HDMI_PLL_CTL1_SDM_EN |
++			   SUN20I_HDMI_PLL_CTL1_SCKREF |
++			   SUN20I_HDMI_PLL_CTL1_REF_CNTRL |
++			   SUN20I_HDMI_PLL_CTL1_PCNT_EN |
++			   SUN20I_HDMI_PLL_CTL1_PCNT_N |
++			   SUN20I_HDMI_PLL_CTL1_PIXEL_REP,
++			   SUN20I_HDMI_PLL_CTL1_DRV_ANA |
++			   FIELD_PREP(SUN20I_HDMI_PLL_CTL1_PCNT_N, 1));
++	regmap_set_bits(regs, SUN20I_HDMI_PLL_CTL1_REG, SUN20I_HDMI_PLL_CTL1_PWRON);
++	regmap_clear_bits(regs, SUN20I_HDMI_PLL_CTL1_REG, SUN20I_HDMI_PLL_CTL1_RESET);
++
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL1_REG, 0x003f0000, 0);
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL2_REG, 0x00ffffff, 0);
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL3_REG, 0x0000ffff, 0xffff);
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL4_REG, 0x1fffffff, 0x0c0d0d0d);
++
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL6_REG,
++			   SUN20I_HDMI_PHY_CTL6_SWITCH_CLKCH_DATA |
++			   SUN20I_HDMI_PHY_CTL6_CLK_GREATE0_340M |
++			   SUN20I_HDMI_PHY_CTL6_CLK_GREATE1_340M |
++			   SUN20I_HDMI_PHY_CTL6_CLK_GREATE2_340M,
++			   SUN20I_HDMI_PHY_CTL6_CLK_GREATE0_340M |
++			   SUN20I_HDMI_PHY_CTL6_CLK_GREATE1_340M);
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL7_REG,
++			   SUN20I_HDMI_PHY_CTL7_CLK_GREATE3_340M |
++			   SUN20I_HDMI_PHY_CTL7_CLK_LOW_340M,
++			   FIELD_PREP(SUN20I_HDMI_PHY_CTL7_CLK_LOW_340M, 0x3e0));
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL6_REG, SUN20I_HDMI_PHY_CTL6_EN_CKDAT);
++	regmap_clear_bits(regs, SUN20I_HDMI_PHY_CTL1_REG, SUN20I_HDMI_PHY_CTL1_RES_SCKTMDS);
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL0_REG,
++			   SUN20I_HDMI_PHY_CTL0_REG_CSMPS |
++			   SUN20I_HDMI_PHY_CTL0_REG_CK_TEST_SEL |
++			   SUN20I_HDMI_PHY_CTL0_REG_CK_SEL,
++			   FIELD_PREP(SUN20I_HDMI_PHY_CTL0_REG_CSMPS, 2) |
++			   SUN20I_HDMI_PHY_CTL0_REG_CK_SEL);
++	regmap_clear_bits(regs, SUN20I_HDMI_INDEB_CTRL_REG,
++			  SUN20I_HDMI_INDEB_CTRL_TXDATA_DEBUGMODE);
++
++	/* Power-up sequence: keep one step per write. */
++	regmap_update_bits(regs, SUN20I_HDMI_PHY_CTL4_REG,
++			   SUN20I_HDMI_PHY_CTL4_REG_SLV,
++			   FIELD_PREP(SUN20I_HDMI_PHY_CTL4_REG_SLV, 4));
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENIB);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENLDO);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENLDO_FS);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRCAL);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENCALOG);
++	ret = sun20i_d1_hdmi_phy_wait(phy, SUN20I_HDMI_PLL_STS_PHY_RCALEND2D_STS,
++				      "calibration");
++	if (ret)
++		goto err_power_off;
++
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENBI);
++	ret = sun20i_d1_hdmi_phy_wait(phy, SUN20I_HDMI_PLL_STS_PLL_LOCK_STATUS,
++				      "PLL lock");
++	if (ret)
++		goto err_power_off;
++
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENCK);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENP2S);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRES);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL5_REG, SUN20I_HDMI_PHY_CTL5_ENRESCK);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_ENTX);
++	ret = sun20i_d1_hdmi_phy_wait(phy, SUN20I_HDMI_PLL_STS_TX_READY_DLY_STATUS,
++				      "transmitter");
++	if (ret)
++		goto err_power_off;
++
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_SDA_EN);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_SCL_EN);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_HPD_EN);
++	regmap_set_bits(regs, SUN20I_HDMI_PHY_CTL0_REG, SUN20I_HDMI_PHY_CTL0_REG_DEN);
++	regmap_set_bits(regs, SUN20I_HDMI_PLL_CTL0_REG, SUN20I_HDMI_PLL_CTL0_ENVBS);
++
++	return 0;
++
++err_power_off:
++	sun20i_d1_hdmi_phy_power_off(phy);
++	return ret;
++}
++
++static void sun20i_d1_hdmi_phy_disable(struct dw_hdmi *hdmi, void *data)
++{
++	sun20i_d1_hdmi_phy_power_off(data);
++}
++
++static const struct dw_hdmi_phy_ops sun20i_d1_hdmi_phy_ops = {
++	.init		= sun20i_d1_hdmi_phy_config,
++	.disable	= sun20i_d1_hdmi_phy_disable,
++	.read_hpd	= dw_hdmi_phy_read_hpd,
++	.update_hpd	= dw_hdmi_phy_update_hpd,
++	.setup_hpd	= dw_hdmi_phy_setup_hpd,
++};
++
+ static void sun8i_hdmi_phy_unlock(struct sun8i_hdmi_phy *phy)
+ {
+ 	/* enable read access to HDMI controller */
+@@ -577,6 +744,7 @@ void sun8i_hdmi_phy_set_ops(struct sun8i_hdmi_phy *phy,
+ 	const struct sun8i_hdmi_phy_variant *variant = phy->variant;
+ 
+ 	if (variant->phy_ops) {
++		plat_data->phy_force_vendor = variant->force_vendor_phy;
+ 		plat_data->phy_ops = variant->phy_ops;
+ 		plat_data->phy_name = "sun8i_dw_hdmi_phy";
+ 		plat_data->phy_data = phy;
+@@ -595,6 +763,14 @@ static const struct regmap_config sun8i_hdmi_phy_regmap_config = {
+ 	.name		= "phy"
+ };
+ 
++static const struct regmap_config sun20i_hdmi_phy_regmap_config = {
++	.reg_bits	= 32,
++	.val_bits	= 32,
++	.reg_stride	= 4,
++	.max_register	= SUN20I_HDMI_PHY_CTL7_REG,
++	.name		= "phy",
++};
++
+ static const struct sun8i_hdmi_phy_variant sun8i_a83t_hdmi_phy = {
+ 	.phy_ops = &sun8i_a83t_hdmi_phy_ops,
+ 	.phy_init = &sun8i_hdmi_phy_init_a83t,
+@@ -613,6 +789,13 @@ static const struct sun8i_hdmi_phy_variant sun8i_r40_hdmi_phy = {
+ 	.phy_init = &sun8i_hdmi_phy_init_h3,
+ };
+ 
++static const struct sun8i_hdmi_phy_variant sun20i_d1_hdmi_phy = {
++	.force_vendor_phy = true,
++	.regmap_config = &sun20i_hdmi_phy_regmap_config,
++	.phy_ops = &sun20i_d1_hdmi_phy_ops,
++	.phy_init = &sun50i_hdmi_phy_init_h6,
++};
++
+ static const struct sun8i_hdmi_phy_variant sun50i_a64_hdmi_phy = {
+ 	.has_phy_clk = true,
+ 	.phy_ops = &sun8i_h3_hdmi_phy_ops,
+@@ -639,6 +822,10 @@ static const struct of_device_id sun8i_hdmi_phy_of_table[] = {
+ 		.compatible = "allwinner,sun8i-r40-hdmi-phy",
+ 		.data = &sun8i_r40_hdmi_phy,
+ 	},
++	{
++		.compatible = "allwinner,sun20i-d1-hdmi-phy",
++		.data = &sun20i_d1_hdmi_phy,
++	},
+ 	{
+ 		.compatible = "allwinner,sun50i-a64-hdmi-phy",
+ 		.data = &sun50i_a64_hdmi_phy,
+@@ -690,6 +877,7 @@ static int sun8i_hdmi_phy_probe(struct platform_device *pdev)
+ 				     "Couldn't map the HDMI PHY registers\n");
+ 
+ 	phy->regs = devm_regmap_init_mmio(dev, regs,
++					  phy->variant->regmap_config ?:
+ 					  &sun8i_hdmi_phy_regmap_config);
+ 	if (IS_ERR(phy->regs))
+ 		return dev_err_probe(dev, PTR_ERR(phy->regs),
+-- 
+Armbian
+

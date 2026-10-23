@@ -1,0 +1,2064 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Subject: [PATCH v8 00/11] riscv: hwprobe: Expose RVA23U64 base behavior
+Date: Sun, 20 Sep 2026 03:18:20 -0400
+
+This series builds on Andrew Jones's earlier RFC [1]. It lets userspace
+check for RVA23U64 conformance in one call, instead of walking hwprobe +
+prctl across every mandatory extension.
+
+The series adds a small framework that resolves profile-class bases (IMA
+and RVA23U64) from the kernel's ISA extension bitmap at init time, and
+surfaces the result through both /proc/cpuinfo and hwprobe. Later patches
+can add RVA23S64, and backward RVA22 / RVA20 detection, to
+riscv_set_isa_bases() without changes to the surrounding code.
+
+v8 corrects the authorship trailers on patches 9-11 after Conor's review
+of v7, and is rebased onto riscv/for-next. The only code change is one
+line in patch 11 made redundant by commit d0fc6fab2046 ("riscv: hwprobe:
+initialize pair->value in hwprobe_one_pair()"), now in for-next. Patch
+11's commit message also explains that the BASE_BEHAVIOR_IMA bit is
+derived from the cached bases instead of being hardcoded.
+
+Series outline (v8):
+
+  Per-extension cpufeature parsing + hwprobe export:
+   1.  B (the Zba/Zbb/Zbs set).
+
+  Zic64b (new first-class extension):
+   2.  dt-bindings: require a cbom/cbop/cboz block-size property whenever
+       the matching Zicbom/Zicbop/Zicboz is present.
+   3.  Zic64b dt-binding, with a schema check.
+   4.  Zic64b cpufeature parsing + hwprobe export.
+   5-7. dts: declare zic64b in the SpacemiT K3, SpacemiT K1, and Sophgo
+        SG2044 device trees.
+
+  RVA23U64 base detection and exposure:
+   8.  riscv_have_user_pmlen(): accessor for user pointer-masking PMLEN
+       support.
+   9.  cpufeature: per-hart and host-wide isa_bases bitmaps; IMA and
+       RVA23U64 detection lives here.
+  10.  /proc/cpuinfo: print "isa bases:" and "hart isa bases:", e.g.
+       rva23u64.
+  11.  hwprobe: expose RVA23U64. The IMA bit is derived from the same
+       cached bases instead of being hardcoded, so it agrees with
+       AT_HWCAP and the cpuinfo lines; on any system this kernel can run
+       on it stays set.
+
+A follow-up series exposing these extensions to KVM guests (extending
+the KVM ISA extension ONE_REG interface) will be prepared on top of
+this one and will be posted separately.
+
+Tested on QEMU with '-cpu rva23s64,sv39=on':
+1) /proc/cpuinfo reports
+     "isa bases : rv64ima rva23u64"
+   on both the aggregated and per-hart lines.
+2) hwprobe RISCV_HWPROBE_KEY_BASE_BEHAVIOR returns
+     BASE_BEHAVIOR_IMA | BASE_BEHAVIOR_RVA23U64
+   through both the vDSO and the raw syscall (v6 returned 0 through the
+   vDSO, see [3]).
+3) With '-cpu rva22s64', /proc/cpuinfo reports "isa bases : rv64ima"
+   and both hwprobe paths return BASE_BEHAVIOR_IMA only, as expected.
+
+A branch is available for all patches in the series: [2].
+
+Link: https://lore.kernel.org/linux-riscv/20260206002349.96740-1-andrew.jones@oss.qualcomm.com/ [1]
+Link: https://github.com/docularxu/linux/commits/b4/rva23u64-hwprobe-v8/ [2]
+Link: https://lore.kernel.org/all/c24e720e279fed0296f1f78630b6a471.guodong.xu@oss.qualcomm.com/ [3]
+
+Changes in v8:
+- Patch 10: Andrew Jones is the author; most of the code is still his
+  from the RFC. Added my Co-developed-by (Conor).
+- Patches 09 and 11: added Co-developed-by for Andrew Jones ahead of
+  his Signed-off-by; the RVA23U64 bit, the hwprobe.rst text and the
+  mandate list came from his RFC (Conor).
+- Rebased onto riscv/for-next at e11160948333. Patch 11 drops its own
+  pair->value = 0 in the BASE_BEHAVIOR case, since commit d0fc6fab2046
+  ("riscv: hwprobe: initialize pair->value in hwprobe_one_pair()") now
+  zeroes it for every key. No other code change since v7.
+- Link to v7: https://patch.msgid.link/20260915-rva23u64-hwprobe-v2-v7-0-aa35ebd9ae96@oss.qualcomm.com
+
+Changes in v7:
+- Patch 09: register riscv_init_isa_bases() at arch_initcall so the vDSO
+  hwprobe snapshot (arch_initcall_sync) sees the ISA bases; v6 returned 0
+  for RISCV_HWPROBE_KEY_BASE_BEHAVIOR through the vDSO, IMA bit included,
+  while the syscall path was correct [3].
+- Patch 09: keep riscv_isa_bases static and add riscv_isa_base_available(),
+  mirroring the extension accessor; patches 10 and 11 use it.
+- Collected Acked-by from Conor Dooley on patches 02 and 03.
+- Rebased onto riscv/for-next at 77ae27fd98f3 (post 7.3 merge window);
+  no code adaptation needed.
+- Link to v6: https://patch.msgid.link/20260812-rva23u64-hwprobe-v2-v6-0-c985af3256b8@oss.qualcomm.com
+
+Changes in v6:
+- Rebased onto riscv/for-next; dropped patches 1-6 of v5, which have been
+  applied by Paul.
+- dt-bindings block-size: only match nodes that have
+  riscv,isa-extensions (fix suggested by Conor, breakage reported by
+  Rob's bot).
+- Zic64b dt-binding: guard the zic64b rule the same way (same defect
+  class, found while fixing the above).
+- Follow the _BITULL() style of commit 8da45c93dfa9 ("RISC-V: hwprobe:
+  Use BIT macro to avoid warnings") for the new hwprobe bits (EXT_B,
+  EXT_ZIC64B, BASE_BEHAVIOR_RVA23U64).
+- Zic64b: RISCV_ISA_EXT_ZIC64B renumbered 110 to 116 after upstream
+  additions took 106-111.
+- Link to v5: https://patch.msgid.link/20260701-rva23u64-hwprobe-v2-v5-0-2c61f94a695a@gmail.com
+
+Changes in v5:
+- Rebased onto v7.2-rc1.
+- New patch: make riscv,cbom/cbop/cboz-block-size required whenever the
+  matching Zicbom/Zicbop/Zicboz extension is present (Conor).
+- Ziccamoa/Za64rs: drop the Zaamo/Zalrsc validate callbacks (Conor).
+- Zic64b dt-binding: fix a double space in the commit message (Conor).
+- Collected Reviewed-by and Acked-by tags in v4.
+- Link to v4: https://patch.msgid.link/20260611-rva23u64-hwprobe-v2-v4-0-3f01a2449488@gmail.com
+
+Changes in v4:
+- New patch: sort the multi-letter Z extensions alphanumerically in the
+  dt-binding (Conor), and place zic64b at its sorted position.
+- Zic64b cpufeature: validate only the CBO block sizes that are present;
+  overlaps Qingwei Hu's earlier patch, so it is now authored by Qingwei.
+- Document EXT_ZICFISS / EXT_ZICFILP: cite the riscv-cfi v1.0 tag commit.
+- Picked up Inochi Amaoto's Acked-by (SG2044 dts) and Andrew Jones's
+  Reviewed-by (documentation patch).
+- Link to v3: https://patch.msgid.link/20260603-rva23u64-hwprobe-v2-v3-0-5529a7b28384@gmail.com
+
+Changes in v3:
+- Add Zic64b as a first-class ISA extension: dt-binding, cpufeature
+  parsing with a validate check, hwprobe export, and device-tree
+  declarations for K3/K1/SG2044.
+- Patch 1 is now a clean up of hwprobe.rst indentation.
+- Document RISCV_HWPROBE_EXT_ZICFILP alongside ZICFISS.
+- Move the Zicclsm hwprobe.rst entry to the IMA_EXT_1 section to match
+  its bit allocation.
+- Collect Anup Patel's Acked-by/Reviewed-by on Patch 3, the capitalization.
+- In cpufeature.c, set the local ext_mask with __set_bit().
+- Update Guodong Xu's email to docular.xu@gmail.com.
+- Link to v2: https://patch.msgid.link/20260511-rva23u64-hwprobe-v2-v2-0-21c5a544f1dc@riscstar.com
+
+Changes in v2 (since Andrew's RFC v1):
+- Rebased onto v7.1-rc2.
+- Reworked rva23u64 detection into per-hart and host isa_bases bitmaps,
+  shared by /proc/cpuinfo and hwprobe.
+- Scoped to IMA and RVA23U64 (RVA23S64, RVA20/RVA22 cpuinfo output deferred).
+- Link to v1:  https://lore.kernel.org/linux-riscv/20260206002349.96740-1-andrew.jones@oss.qualcomm.com
+
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+Andrew Jones (3):
+      riscv: Add B to hwcap and hwprobe
+      riscv: Add a getter for user PMLEN support
+      riscv: cpu: Output isa bases lines in cpuinfo
+
+Guodong Xu (7):
+      dt-bindings: riscv: Require block-size for Zicbom, Zicbop, and Zicboz
+      dt-bindings: riscv: Add Zic64b extension description
+      riscv: dts: spacemit: k3: Add Zic64b ISA extension
+      riscv: dts: spacemit: k1: Add Zic64b ISA extension
+      riscv: dts: sophgo: sg2044: Add Zic64b ISA extension
+      riscv: cpufeature: Introduce ISA bases bitmap and rva23u64 detection
+      riscv: hwprobe: Introduce rva23u64 base behavior
+
+Qingwei Hu (1):
+      riscv: Add Zic64b to cpufeature and hwprobe
+
+ Documentation/arch/riscv/hwprobe.rst               |  16 +++
+ .../devicetree/bindings/riscv/extensions.yaml      |  54 ++++++++
+ arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi        | 128 +++++++++----------
+ arch/riscv/boot/dts/spacemit/k1.dtsi               |  80 ++++++------
+ arch/riscv/boot/dts/spacemit/k3.dtsi               |  48 +++----
+ arch/riscv/include/asm/cpufeature.h                |  13 ++
+ arch/riscv/include/asm/hwcap.h                     |   2 +
+ arch/riscv/include/asm/processor.h                 |   4 +
+ arch/riscv/include/uapi/asm/hwcap.h                |   1 +
+ arch/riscv/include/uapi/asm/hwprobe.h              |   5 +-
+ arch/riscv/kernel/cpu.c                            |  26 ++++
+ arch/riscv/kernel/cpufeature.c                     | 140 +++++++++++++++++++++
+ arch/riscv/kernel/process.c                        |  12 ++
+ arch/riscv/kernel/sys_hwprobe.c                    |  24 ++--
+ tools/testing/selftests/riscv/hwprobe/which-cpus.c |   2 +-
+ 15 files changed, 418 insertions(+), 137 deletions(-)
+---
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:21 -0400
+Subject: [PATCH v8 01/11] riscv: Add B to hwcap and hwprobe
+
+From: Andrew Jones <andrew.jones@oss.qualcomm.com>
+
+Add B to hwcap and ensure when B is present that Zba, Zbb, and Zbs
+are all set. Also expose B via hwprobe (RISCV_HWPROBE_EXT_B in
+RISCV_HWPROBE_KEY_IMA_EXT_1) so that userspace can probe B directly,
+mirroring the F/D/C/V pattern where each is reported via both hwcap
+and hwprobe.
+
+Reviewed-by: Conor Dooley <conor.dooley@microchip.com>
+Signed-off-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+[Add B to hwprobe]
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: Rebase onto riscv/for-next: define RISCV_HWPROBE_EXT_B in the
+    _BITULL() style of commit 8da45c93dfa9.
+v5: Collected Reviewed-by from Conor Dooley.
+v4: No change.
+v3:
+- Indent the added hwprobe.rst entry to match the normalized style.
+- Rebased onto v7.1-rc6: index isa2hwcap[] via RISCV_ISA_EXT_B to match the
+  macro-ization in commit 41337097f2823.
+v2:
+- Rebased to v7.1-rc2
+- Add B to hwprobe (RISCV_HWPROBE_EXT_B at IMA_EXT_1 bit 6) and
+  document it in hwprobe.rst, so userspace can probe B directly.
+---
+ Documentation/arch/riscv/hwprobe.rst  | 4 ++++
+ arch/riscv/include/asm/hwcap.h        | 1 +
+ arch/riscv/include/uapi/asm/hwcap.h   | 1 +
+ arch/riscv/include/uapi/asm/hwprobe.h | 1 +
+ arch/riscv/kernel/cpufeature.c        | 8 ++++++++
+ arch/riscv/kernel/sys_hwprobe.c       | 1 +
+ 6 files changed, 16 insertions(+)
+
+diff --git a/Documentation/arch/riscv/hwprobe.rst b/Documentation/arch/riscv/hwprobe.rst
+index bb1e0cbab36f0..69a3fc0a29b71 100644
+--- a/Documentation/arch/riscv/hwprobe.rst
++++ b/Documentation/arch/riscv/hwprobe.rst
+@@ -423,3 +423,7 @@ * :c:macro:`RISCV_HWPROBE_KEY_IMA_EXT_1`: A bitmask containing additional
+   * :c:macro:`RISCV_HWPROBE_EXT_ZA64RS`: The Za64rs extension is supported,
+     as defined in the RISC-V Profiles specification starting from commit
+     b1d80660 ("Updated to ratified state.")
++
++  * :c:macro:`RISCV_HWPROBE_EXT_B`: The B extension is supported, as defined
++    in version 1.0 of the Bit-Manipulation ISA extensions, and implies the
++    presence of the Zba, Zbb, and Zbs sub-extensions.
+diff --git a/arch/riscv/include/asm/hwcap.h b/arch/riscv/include/asm/hwcap.h
+index f8db798b2654b..6a693210b2519 100644
+--- a/arch/riscv/include/asm/hwcap.h
++++ b/arch/riscv/include/asm/hwcap.h
+@@ -11,6 +11,7 @@
+ #include <uapi/asm/hwcap.h>
+ 
+ #define RISCV_ISA_EXT_A		('a' - 'a')
++#define RISCV_ISA_EXT_B		('b' - 'a')
+ #define RISCV_ISA_EXT_C		('c' - 'a')
+ #define RISCV_ISA_EXT_D		('d' - 'a')
+ #define RISCV_ISA_EXT_F		('f' - 'a')
+diff --git a/arch/riscv/include/uapi/asm/hwcap.h b/arch/riscv/include/uapi/asm/hwcap.h
+index c52bb7bbbabe9..96b7cf854e090 100644
+--- a/arch/riscv/include/uapi/asm/hwcap.h
++++ b/arch/riscv/include/uapi/asm/hwcap.h
+@@ -21,6 +21,7 @@
+ #define COMPAT_HWCAP_ISA_F	(1 << ('F' - 'A'))
+ #define COMPAT_HWCAP_ISA_D	(1 << ('D' - 'A'))
+ #define COMPAT_HWCAP_ISA_C	(1 << ('C' - 'A'))
++#define COMPAT_HWCAP_ISA_B	(1 << ('B' - 'A'))
+ #define COMPAT_HWCAP_ISA_V	(1 << ('V' - 'A'))
+ 
+ #endif /* _UAPI_ASM_RISCV_HWCAP_H */
+diff --git a/arch/riscv/include/uapi/asm/hwprobe.h b/arch/riscv/include/uapi/asm/hwprobe.h
+index e6a394fbe7fce..9323feb7c3c81 100644
+--- a/arch/riscv/include/uapi/asm/hwprobe.h
++++ b/arch/riscv/include/uapi/asm/hwprobe.h
+@@ -122,6 +122,7 @@ struct riscv_hwprobe {
+ #define		RISCV_HWPROBE_EXT_ZICCIF	_BITULL(3)
+ #define		RISCV_HWPROBE_EXT_ZICCRSE	_BITULL(4)
+ #define		RISCV_HWPROBE_EXT_ZA64RS	_BITULL(5)
++#define		RISCV_HWPROBE_EXT_B		_BITULL(6)
+ 
+ /* Increase RISCV_HWPROBE_MAX_KEY when adding items. */
+ 
+diff --git a/arch/riscv/kernel/cpufeature.c b/arch/riscv/kernel/cpufeature.c
+index 61d21f7148305..beb766420b5bc 100644
+--- a/arch/riscv/kernel/cpufeature.c
++++ b/arch/riscv/kernel/cpufeature.c
+@@ -484,6 +484,12 @@ static const unsigned int riscv_c_exts[] = {
+ 	RISCV_ISA_EXT_ZCD,
+ };
+ 
++static const unsigned int riscv_b_exts[] = {
++	RISCV_ISA_EXT_ZBA,
++	RISCV_ISA_EXT_ZBB,
++	RISCV_ISA_EXT_ZBS,
++};
++
+ /*
+  * The canonical order of ISA extension names in the ISA string is defined in
+  * Chapter 27 of the RISC-V Instruction Set Manual Volume I Unprivileged ISA
+@@ -532,6 +538,7 @@ const struct riscv_isa_ext_data riscv_isa_ext[] = {
+ 	__RISCV_ISA_EXT_DATA_VALIDATE(d, RISCV_ISA_EXT_D, riscv_ext_d_validate),
+ 	__RISCV_ISA_EXT_DATA(q, RISCV_ISA_EXT_Q),
+ 	__RISCV_ISA_EXT_SUPERSET(c, RISCV_ISA_EXT_C, riscv_c_exts),
++	__RISCV_ISA_EXT_SUPERSET(b, RISCV_ISA_EXT_B, riscv_b_exts),
+ 	__RISCV_ISA_EXT_SUPERSET_VALIDATE(v, RISCV_ISA_EXT_V, riscv_v_exts,
+ 					  riscv_ext_vector_float_validate),
+ 	__RISCV_ISA_EXT_DATA(h, RISCV_ISA_EXT_H),
+@@ -1161,6 +1168,7 @@ void __init riscv_fill_hwcap(void)
+ 	isa2hwcap[RISCV_ISA_EXT_F] = COMPAT_HWCAP_ISA_F;
+ 	isa2hwcap[RISCV_ISA_EXT_D] = COMPAT_HWCAP_ISA_D;
+ 	isa2hwcap[RISCV_ISA_EXT_C] = COMPAT_HWCAP_ISA_C;
++	isa2hwcap[RISCV_ISA_EXT_B] = COMPAT_HWCAP_ISA_B;
+ 	isa2hwcap[RISCV_ISA_EXT_V] = COMPAT_HWCAP_ISA_V;
+ 
+ 	if (!acpi_disabled) {
+diff --git a/arch/riscv/kernel/sys_hwprobe.c b/arch/riscv/kernel/sys_hwprobe.c
+index 7818e1d32622d..c03c6e08dd4d0 100644
+--- a/arch/riscv/kernel/sys_hwprobe.c
++++ b/arch/riscv/kernel/sys_hwprobe.c
+@@ -207,6 +207,7 @@ static void hwprobe_isa_ext1(struct riscv_hwprobe *pair,
+ 		EXT_KEY(isainfo->isa, ZICCIF, pair->value, missing);
+ 		EXT_KEY(isainfo->isa, ZICCRSE, pair->value, missing);
+ 		EXT_KEY(isainfo->isa, ZA64RS, pair->value, missing);
++		EXT_KEY(isainfo->isa, B, pair->value, missing);
+ 	}
+ 
+ 	/* Now turn off reporting features if any CPU is missing it. */
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:22 -0400
+Subject: [PATCH v8 02/11] dt-bindings: riscv: Require block-size for
+ Zicbom, Zicbop, and Zicboz
+
+Zicbom, Zicbop, and Zicboz have no default cache block size, so a
+devicetree that declares one must also provide the matching
+riscv,cbom/cbop/cboz-block-size property. Make it required so a
+missing block-size property can be caught by dtbs_check.
+
+Match only nodes that use riscv,isa-extensions, so nodes carrying just
+the deprecated riscv,isa string are not affected.
+
+Suggested-by: Conor Dooley <conor.dooley@microchip.com>
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: Collected Acked-by from Conor Dooley.
+v6: Only match nodes that have riscv,isa-extensions, fixing
+    dt_binding_check errors on legacy riscv,isa-only nodes (fix
+    suggested by Conor, breakage reported by Rob's bot).
+v5: New patch.
+---
+ .../devicetree/bindings/riscv/extensions.yaml      | 32 ++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/riscv/extensions.yaml b/Documentation/devicetree/bindings/riscv/extensions.yaml
+index 577d7ae5576b..d4cde2a7b8b2 100644
+--- a/Documentation/devicetree/bindings/riscv/extensions.yaml
++++ b/Documentation/devicetree/bindings/riscv/extensions.yaml
+@@ -1211,6 +1211,38 @@   - if:
+           not:
+             contains:
+               const: zilsd
++  # All three Zicbo* extensions require their block size property as there's no
++  # default.
++  - if:
++      properties:
++        riscv,isa-extensions:
++          contains:
++            const: zicbom
++      required:
++        - riscv,isa-extensions
++    then:
++      required:
++        - riscv,cbom-block-size
++  - if:
++      properties:
++        riscv,isa-extensions:
++          contains:
++            const: zicbop
++      required:
++        - riscv,isa-extensions
++    then:
++      required:
++        - riscv,cbop-block-size
++  - if:
++      properties:
++        riscv,isa-extensions:
++          contains:
++            const: zicboz
++      required:
++        - riscv,isa-extensions
++    then:
++      required:
++        - riscv,cboz-block-size
+ 
+ additionalProperties: true
+ ...
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:23 -0400
+Subject: [PATCH v8 03/11] dt-bindings: riscv: Add Zic64b extension
+ description
+
+Zic64b mandates that cache blocks are 64 bytes in size and naturally
+aligned in the address space. It is a mandatory extension of both the
+RVA22 (U64/S64) and RVA23 (U64/S64) profiles, ratified with RISC-V
+Profiles Version 1.0.
+
+Document it so it can be described in the riscv,isa-extensions property,
+alongside the related Zicbom/Zicbop/Zicboz cache-block extensions. Since
+Zic64b fixes the cache block size at 64 bytes, also add a schema check
+requiring any present cbom/cbop/cboz block size to be 64. The check
+matches only nodes that use riscv,isa-extensions, so nodes carrying
+just the deprecated riscv,isa string are not affected.
+
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: Collected Acked-by from Conor Dooley.
+v6: Guard the zic64b rule with required: riscv,isa-extensions so it
+    cannot match nodes using only the deprecated riscv,isa string
+    (same defect class as Rob's bot reported against the Zicbo*
+    block-size patch).
+v5: Commit message clean up, fix a double space (Conor).
+v4: Insert zic64b at its sorted position (before zicbom).
+    Update the commit message.
+v3: New patch.
+---
+ .../devicetree/bindings/riscv/extensions.yaml      | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/riscv/extensions.yaml b/Documentation/devicetree/bindings/riscv/extensions.yaml
+index d4cde2a7b8b2..79491ef8f86a 100644
+--- a/Documentation/devicetree/bindings/riscv/extensions.yaml
++++ b/Documentation/devicetree/bindings/riscv/extensions.yaml
+@@ -537,6 +537,12 @@   riscv,isa-extensions:
+             in commit 64074bc ("Update version numbers for Zfh/Zfinx") of
+             riscv-isa-manual.
+ 
++        - const: zic64b
++          description:
++            The standard Zic64b extension for 64-byte naturally aligned cache
++            blocks, as ratified in RISC-V Profiles Version 1.0, with commit
++            b1d806605f87 ("Updated to ratified state.")
++
+         - const: zicbom
+           description:
+             The standard Zicbom extension for base cache management operations as
+@@ -1211,6 +1217,22 @@   - if:
+           not:
+             contains:
+               const: zilsd
++  # Zic64b mandates 64-byte naturally aligned cache blocks
++  - if:
++      properties:
++        riscv,isa-extensions:
++          contains:
++            const: zic64b
++      required:
++        - riscv,isa-extensions
++    then:
++      properties:
++        riscv,cbom-block-size:
++          const: 64
++        riscv,cbop-block-size:
++          const: 64
++        riscv,cboz-block-size:
++          const: 64
+   # All three Zicbo* extensions require their block size property as there's no
+   # default.
+   - if:
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:24 -0400
+Subject: [PATCH v8 04/11] riscv: Add Zic64b to cpufeature and hwprobe
+
+From: Qingwei Hu <qingwei.hu@bytedance.com>
+
+Zic64b mandates 64-byte naturally aligned cache blocks and is a
+mandatory extension of the RVA22 and RVA23 profiles.  Allocate a
+RISCV_ISA_EXT_ZIC64B id, parse "zic64b" from the ISA string with a
+validate callback that requires each cbom/cbop/cboz cache block size to
+be 64 bytes when it is present, and export it through hwprobe.
+
+Link: https://lists.riscv.org/g/tech-unprivileged/topic/question_about_zic64b_and/119631059
+Reviewed-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Reviewed-by: Conor Dooley <conor.dooley@microchip.com>
+Signed-off-by: Qingwei Hu <qingwei.hu@bytedance.com>
+Co-developed-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: Rebase onto riscv/for-next: RISCV_ISA_EXT_ZIC64B renumbered 110
+    to 116; RISCV_HWPROBE_EXT_ZIC64B now uses the _BITULL() style of
+    commit 8da45c93dfa9.
+v5:
+- Collected Reviewed-by from Andrew Jones and Conor Dooley.
+v4:
+- Credit Qingwei Hu's earlier Zic64b cpufeature patch: set him as
+  author, with Co-developed-by (Guodong Xu).
+- Validate only the cbom/cbop/cboz block sizes that are present; Zic64b
+  does not imply the CMO extensions (Conor, Qingwei, Greg).
+- Add a Link: to Greg's confirmation on the tech-unprivileged list.
+- Add the missing blank line before the ZIC64B hwprobe.rst entry
+  (Andrew).
+- Did not carry Andrew Jones's v3 Reviewed-by: the validation was
+  rewritten (present block sizes only) and the patch is now authored by
+  Qingwei, so it warrants a fresh review.
+v3: New patch.
+---
+ Documentation/arch/riscv/hwprobe.rst  |  4 ++++
+ arch/riscv/include/asm/hwcap.h        |  1 +
+ arch/riscv/include/uapi/asm/hwprobe.h |  1 +
+ arch/riscv/kernel/cpufeature.c        | 19 +++++++++++++++++++
+ arch/riscv/kernel/sys_hwprobe.c       |  1 +
+ 5 files changed, 26 insertions(+)
+
+diff --git a/Documentation/arch/riscv/hwprobe.rst b/Documentation/arch/riscv/hwprobe.rst
+index 69a3fc0a29b7..8454a6ae6fd1 100644
+--- a/Documentation/arch/riscv/hwprobe.rst
++++ b/Documentation/arch/riscv/hwprobe.rst
+@@ -427,3 +427,7 @@ * :c:macro:`RISCV_HWPROBE_KEY_IMA_EXT_1`: A bitmask containing additional
+   * :c:macro:`RISCV_HWPROBE_EXT_B`: The B extension is supported, as defined
+     in version 1.0 of the Bit-Manipulation ISA extensions, and implies the
+     presence of the Zba, Zbb, and Zbs sub-extensions.
++
++  * :c:macro:`RISCV_HWPROBE_EXT_ZIC64B`: The Zic64b extension is supported,
++    as defined in the RISC-V Profiles specification starting from commit
++    b1d80660 ("Updated to ratified state.")
+diff --git a/arch/riscv/include/asm/hwcap.h b/arch/riscv/include/asm/hwcap.h
+index 6a693210b251..b103aaeafa47 100644
+--- a/arch/riscv/include/asm/hwcap.h
++++ b/arch/riscv/include/asm/hwcap.h
+@@ -123,6 +123,7 @@
+ #define RISCV_ISA_EXT_ZICCAMOA		113
+ #define RISCV_ISA_EXT_ZICCIF		114
+ #define RISCV_ISA_EXT_ZA64RS		115
++#define RISCV_ISA_EXT_ZIC64B		116
+ 
+ #define RISCV_ISA_EXT_XLINUXENVCFG	127
+ 
+diff --git a/arch/riscv/include/uapi/asm/hwprobe.h b/arch/riscv/include/uapi/asm/hwprobe.h
+index 9323feb7c3c8..9a121ee3b436 100644
+--- a/arch/riscv/include/uapi/asm/hwprobe.h
++++ b/arch/riscv/include/uapi/asm/hwprobe.h
+@@ -123,6 +123,7 @@ struct riscv_hwprobe {
+ #define		RISCV_HWPROBE_EXT_ZICCRSE	_BITULL(4)
+ #define		RISCV_HWPROBE_EXT_ZA64RS	_BITULL(5)
+ #define		RISCV_HWPROBE_EXT_B		_BITULL(6)
++#define		RISCV_HWPROBE_EXT_ZIC64B	_BITULL(7)
+ 
+ /* Increase RISCV_HWPROBE_MAX_KEY when adding items. */
+ 
+diff --git a/arch/riscv/kernel/cpufeature.c b/arch/riscv/kernel/cpufeature.c
+index beb766420b5b..ef3133a52c0e 100644
+--- a/arch/riscv/kernel/cpufeature.c
++++ b/arch/riscv/kernel/cpufeature.c
+@@ -136,6 +136,24 @@ static int riscv_ext_zicbop_validate(const struct riscv_isa_ext_data *data,
+ 	return 0;
+ }
+ 
++static int riscv_ext_zic64b_validate(const struct riscv_isa_ext_data *data,
++				     const unsigned long *isa_bitmap)
++{
++	/*
++	 * Zic64b mandates 64-byte naturally aligned cache blocks; cross-check the
++	 * cbom/cbop/cboz block-size (when declared) device-tree properties to
++	 * avoid inconsistency.
++	 */
++	if ((riscv_cbom_block_size && riscv_cbom_block_size != 64) ||
++	    (riscv_cbop_block_size && riscv_cbop_block_size != 64) ||
++	    (riscv_cboz_block_size && riscv_cboz_block_size != 64)) {
++		pr_err("Zic64b detected in ISA string, disabling as a CBO block size is not 64 bytes\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
+ static int riscv_ext_f_validate(const struct riscv_isa_ext_data *data,
+ 				const unsigned long *isa_bitmap)
+ {
+@@ -542,6 +560,7 @@ const struct riscv_isa_ext_data riscv_isa_ext[] = {
+ 	__RISCV_ISA_EXT_SUPERSET_VALIDATE(v, RISCV_ISA_EXT_V, riscv_v_exts,
+ 					  riscv_ext_vector_float_validate),
+ 	__RISCV_ISA_EXT_DATA(h, RISCV_ISA_EXT_H),
++	__RISCV_ISA_EXT_DATA_VALIDATE(zic64b, RISCV_ISA_EXT_ZIC64B, riscv_ext_zic64b_validate),
+ 	__RISCV_ISA_EXT_SUPERSET_VALIDATE(zicbom, RISCV_ISA_EXT_ZICBOM, riscv_xlinuxenvcfg_exts, riscv_ext_zicbom_validate),
+ 	__RISCV_ISA_EXT_DATA_VALIDATE(zicbop, RISCV_ISA_EXT_ZICBOP, riscv_ext_zicbop_validate),
+ 	__RISCV_ISA_EXT_SUPERSET_VALIDATE(zicboz, RISCV_ISA_EXT_ZICBOZ, riscv_xlinuxenvcfg_exts, riscv_ext_zicboz_validate),
+diff --git a/arch/riscv/kernel/sys_hwprobe.c b/arch/riscv/kernel/sys_hwprobe.c
+index c03c6e08dd4d..8a38a4d37806 100644
+--- a/arch/riscv/kernel/sys_hwprobe.c
++++ b/arch/riscv/kernel/sys_hwprobe.c
+@@ -208,6 +208,7 @@ static void hwprobe_isa_ext1(struct riscv_hwprobe *pair,
+ 		EXT_KEY(isainfo->isa, ZICCRSE, pair->value, missing);
+ 		EXT_KEY(isainfo->isa, ZA64RS, pair->value, missing);
+ 		EXT_KEY(isainfo->isa, B, pair->value, missing);
++		EXT_KEY(isainfo->isa, ZIC64B, pair->value, missing);
+ 	}
+ 
+ 	/* Now turn off reporting features if any CPU is missing it. */
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:25 -0400
+Subject: [PATCH v8 05/11] riscv: dts: spacemit: k3: Add Zic64b ISA
+ extension
+
+The K3 X100 cores have 64-byte cache blocks, already described by their
+cbom/cbop/cboz-block-size of 64, so they implement Zic64b, a mandatory
+RVA23 extension.  Declare it in each core's riscv,isa-extensions.
+
+Reviewed-by: Yixun Lan <dlan@kernel.org>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: No change.
+v5: Collected Reviewed-by from Yixun Lan.
+v4: No change.
+v3: New patch.
+---
+ arch/riscv/boot/dts/spacemit/k3.dtsi | 48 ++++++++++++++++++------------------
+ 1 file changed, 24 insertions(+), 24 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/spacemit/k3.dtsi b/arch/riscv/boot/dts/spacemit/k3.dtsi
+index c3f2dce0969c..799f0f00288c 100644
+--- a/arch/riscv/boot/dts/spacemit/k3.dtsi
++++ b/arch/riscv/boot/dts/spacemit/k3.dtsi
+@@ -38,9 +38,9 @@ cpu_0: cpu@0 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -79,9 +79,9 @@ cpu_1: cpu@1 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -120,9 +120,9 @@ cpu_2: cpu@2 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -161,9 +161,9 @@ cpu_3: cpu@3 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -202,9 +202,9 @@ cpu_4: cpu@4 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -243,9 +243,9 @@ cpu_5: cpu@5 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -284,9 +284,9 @@ cpu_6: cpu@6 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+@@ -325,9 +325,9 @@ cpu_7: cpu@7 {
+ 					       "svinval", "svnapot", "svpbmt", "za64rs",
+ 					       "zawrs", "zba", "zbb", "zbc", "zbs", "zca",
+ 					       "zcb", "zcd", "zcmop", "zfa", "zfbfmin",
+-					       "zfh", "zfhmin", "zicbom", "zicbop", "zicboz",
+-					       "ziccamoa", "ziccif", "zicclsm", "ziccrse", "zicntr",
+-					       "zicond", "zicsr", "zifencei", "zihintntl",
++					       "zfh", "zfhmin", "zic64b", "zicbom", "zicbop",
++					       "zicboz", "ziccamoa", "ziccif", "zicclsm", "ziccrse",
++					       "zicntr", "zicond", "zicsr", "zifencei", "zihintntl",
+ 					       "zihintpause", "zihpm", "zimop", "zkt", "zvbb",
+ 					       "zvbc", "zvfbfmin", "zvfbfwma", "zvfh",
+ 					       "zvfhmin", "zvkb", "zvkg", "zvkn", "zvknc",
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:26 -0400
+Subject: [PATCH v8 06/11] riscv: dts: spacemit: k1: Add Zic64b ISA
+ extension
+
+The K1 X60 cores have 64-byte cache blocks, described by their
+cbom/cbop/cboz-block-size of 64, so they implement Zic64b.  Declare it in
+each core's riscv,isa-extensions and in the deprecated riscv,isa string.
+
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: No change.
+v5: No change.
+v4: No change.
+v3: New patch.
+---
+ arch/riscv/boot/dts/spacemit/k1.dtsi | 80 ++++++++++++++++++------------------
+ 1 file changed, 40 insertions(+), 40 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/spacemit/k1.dtsi b/arch/riscv/boot/dts/spacemit/k1.dtsi
+index 3fabfd34114b..542bfc0d19f5 100644
+--- a/arch/riscv/boot/dts/spacemit/k1.dtsi
++++ b/arch/riscv/boot/dts/spacemit/k1.dtsi
+@@ -57,12 +57,12 @@ cpu_0: cpu@0 {
+ 			device_type = "cpu";
+ 			reg = <0>;
+ 			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -88,12 +88,12 @@ cpu_1: cpu@1 {
+ 			device_type = "cpu";
+ 			reg = <1>;
+ 			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -119,12 +119,12 @@ cpu_2: cpu@2 {
+ 			device_type = "cpu";
+ 			reg = <2>;
+ 			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -150,12 +150,12 @@ cpu_3: cpu@3 {
+ 			device_type = "cpu";
+ 			reg = <3>;
+ 			clocks = <&syscon_apmu CLK_CPU_C0_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -181,12 +181,12 @@ cpu_4: cpu@4 {
+ 			device_type = "cpu";
+ 			reg = <4>;
+ 			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -212,12 +212,12 @@ cpu_5: cpu@5 {
+ 			device_type = "cpu";
+ 			reg = <5>;
+ 			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -243,12 +243,12 @@ cpu_6: cpu@6 {
+ 			device_type = "cpu";
+ 			reg = <6>;
+ 			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+@@ -274,12 +274,12 @@ cpu_7: cpu@7 {
+ 			device_type = "cpu";
+ 			reg = <7>;
+ 			clocks = <&syscon_apmu CLK_CPU_C1_CORE>;
+-			riscv,isa = "rv64imafdcbv_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
++			riscv,isa = "rv64imafdcbv_zic64b_zicbom_zicbop_zicboz_zicntr_zicond_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zkt_zvfh_zvkt_sscofpmf_sstc_svinval_svnapot_svpbmt";
+ 			riscv,isa-base = "rv64i";
+-			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zicbom",
+-					       "zicbop", "zicboz", "zicntr", "zicond", "zicsr",
+-					       "zifencei", "zihintpause", "zihpm", "zfh", "zba",
+-					       "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
++			riscv,isa-extensions = "i", "m", "a", "f", "d", "c", "b", "v", "zic64b",
++					       "zicbom", "zicbop", "zicboz", "zicntr", "zicond",
++					       "zicsr", "zifencei", "zihintpause", "zihpm", "zfh",
++					       "zba", "zbb", "zbc", "zbs", "zkt", "zvfh", "zvkt",
+ 					       "sscofpmf", "sstc", "svinval", "svnapot", "svpbmt";
+ 			riscv,cbom-block-size = <64>;
+ 			riscv,cbop-block-size = <64>;
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:27 -0400
+Subject: [PATCH v8 07/11] riscv: dts: sophgo: sg2044: Add Zic64b ISA
+ extension
+
+The SG2044 cores have 64-byte cache blocks, described by their
+cbom/cbop/cboz-block-size of 64, so they implement Zic64b.  Declare it in
+each core's riscv,isa-extensions.
+
+Acked-by: Inochi Amaoto <inochiama@gmail.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: No change.
+v5: No change.
+v4: Add Inochi Amaoto's Acked-by.
+v3: New patch.
+---
+ arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi | 128 ++++++++++++++--------------
+ 1 file changed, 64 insertions(+), 64 deletions(-)
+
+diff --git a/arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi b/arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi
+index f66a382c95bd9..5943407020e32 100644
+--- a/arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi
++++ b/arch/riscv/boot/dts/sophgo/sg2044-cpus.dtsi
+@@ -31,7 +31,7 @@ cpu0: cpu@0 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -67,7 +67,7 @@ cpu1: cpu@1 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -103,7 +103,7 @@ cpu2: cpu@2 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -139,7 +139,7 @@ cpu3: cpu@3 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -175,7 +175,7 @@ cpu4: cpu@4 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -211,7 +211,7 @@ cpu5: cpu@5 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -247,7 +247,7 @@ cpu6: cpu@6 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -283,7 +283,7 @@ cpu7: cpu@7 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -319,7 +319,7 @@ cpu8: cpu@8 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -355,7 +355,7 @@ cpu9: cpu@9 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -391,7 +391,7 @@ cpu10: cpu@a {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -427,7 +427,7 @@ cpu11: cpu@b {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -463,7 +463,7 @@ cpu12: cpu@c {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -499,7 +499,7 @@ cpu13: cpu@d {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -535,7 +535,7 @@ cpu14: cpu@e {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -571,7 +571,7 @@ cpu15: cpu@f {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -607,7 +607,7 @@ cpu16: cpu@10 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -643,7 +643,7 @@ cpu17: cpu@11 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -679,7 +679,7 @@ cpu18: cpu@12 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -715,7 +715,7 @@ cpu19: cpu@13 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -751,7 +751,7 @@ cpu20: cpu@14 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -787,7 +787,7 @@ cpu21: cpu@15 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -823,7 +823,7 @@ cpu22: cpu@16 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -859,7 +859,7 @@ cpu23: cpu@17 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -895,7 +895,7 @@ cpu24: cpu@18 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -931,7 +931,7 @@ cpu25: cpu@19 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -967,7 +967,7 @@ cpu26: cpu@1a {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1003,7 +1003,7 @@ cpu27: cpu@1b {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1039,7 +1039,7 @@ cpu28: cpu@1c {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1075,7 +1075,7 @@ cpu29: cpu@1d {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1111,7 +1111,7 @@ cpu30: cpu@1e {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1147,7 +1147,7 @@ cpu31: cpu@1f {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1183,7 +1183,7 @@ cpu32: cpu@20 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1219,7 +1219,7 @@ cpu33: cpu@21 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1255,7 +1255,7 @@ cpu34: cpu@22 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1291,7 +1291,7 @@ cpu35: cpu@23 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1327,7 +1327,7 @@ cpu36: cpu@24 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1363,7 +1363,7 @@ cpu37: cpu@25 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1399,7 +1399,7 @@ cpu38: cpu@26 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1435,7 +1435,7 @@ cpu39: cpu@27 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1471,7 +1471,7 @@ cpu40: cpu@28 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1507,7 +1507,7 @@ cpu41: cpu@29 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1543,7 +1543,7 @@ cpu42: cpu@2a {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1579,7 +1579,7 @@ cpu43: cpu@2b {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1615,7 +1615,7 @@ cpu44: cpu@2c {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1651,7 +1651,7 @@ cpu45: cpu@2d {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1687,7 +1687,7 @@ cpu46: cpu@2e {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1723,7 +1723,7 @@ cpu47: cpu@2f {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1759,7 +1759,7 @@ cpu48: cpu@30 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1795,7 +1795,7 @@ cpu49: cpu@31 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1831,7 +1831,7 @@ cpu50: cpu@32 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1867,7 +1867,7 @@ cpu51: cpu@33 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1903,7 +1903,7 @@ cpu52: cpu@34 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1939,7 +1939,7 @@ cpu53: cpu@35 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -1975,7 +1975,7 @@ cpu54: cpu@36 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2011,7 +2011,7 @@ cpu55: cpu@37 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2047,7 +2047,7 @@ cpu56: cpu@38 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2083,7 +2083,7 @@ cpu57: cpu@39 {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2119,7 +2119,7 @@ cpu58: cpu@3a {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2155,7 +2155,7 @@ cpu59: cpu@3b {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2191,7 +2191,7 @@ cpu60: cpu@3c {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2227,7 +2227,7 @@ cpu61: cpu@3d {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2263,7 +2263,7 @@ cpu62: cpu@3e {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+@@ -2299,7 +2299,7 @@ cpu63: cpu@3f {
+ 					       "svinval", "svnapot", "svpbmt",
+ 					       "zawrs", "zba", "zbb", "zbc",
+ 					       "zbs", "zca", "zcb", "zcd",
+-					       "zfa", "zfbfmin", "zfh", "zfhmin",
++					       "zfa", "zfbfmin", "zfh", "zfhmin", "zic64b",
+ 					       "zicbom", "zicbop", "zicboz", "ziccrse",
+ 					       "zicntr", "zicond","zicsr", "zifencei",
+ 					       "zihintntl", "zihintpause", "zihpm",
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:28 -0400
+Subject: [PATCH v8 08/11] riscv: Add a getter for user PMLEN support
+
+From: Andrew Jones <andrew.jones@oss.qualcomm.com>
+
+Querying whether a given user PMLEN is supported is needed for
+RVA23U64 base detection from outside arch/riscv/kernel/process.c.
+Add riscv_have_user_pmlen() to expose this.
+
+Link: https://lore.kernel.org/linux-riscv/rfuwa7a3ebe76udmnwyrssjy7shkkgxntvhwzn6oquysj4tuyp@xzvpylcfhz53/
+Signed-off-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+[Guodong: replace exported booleans with getter per Andrew's suggestion]
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: No change.
+v7: No change.
+v6: No change.
+v5: No change.
+v4: No change.
+v3: No change.
+v2: Add a getter for user PMLEN.
+---
+ arch/riscv/include/asm/processor.h |  4 ++++
+ arch/riscv/kernel/process.c        | 12 ++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/arch/riscv/include/asm/processor.h b/arch/riscv/include/asm/processor.h
+index 815715c67f94..fafc8f88c69a 100644
+--- a/arch/riscv/include/asm/processor.h
++++ b/arch/riscv/include/asm/processor.h
+@@ -225,6 +225,10 @@ long set_tagged_addr_ctrl(struct task_struct *task, unsigned long arg);
+ long get_tagged_addr_ctrl(struct task_struct *task);
+ #define SET_TAGGED_ADDR_CTRL(arg)	set_tagged_addr_ctrl(current, arg)
+ #define GET_TAGGED_ADDR_CTRL()		get_tagged_addr_ctrl(current)
++
++bool riscv_have_user_pmlen(u8 len);
++#else
++static inline bool riscv_have_user_pmlen(u8 len) { return false; }
+ #endif
+ 
+ #endif /* __ASSEMBLER__ */
+diff --git a/arch/riscv/kernel/process.c b/arch/riscv/kernel/process.c
+index 7cc5a6a5c020..34c1d498d1ca 100644
+--- a/arch/riscv/kernel/process.c
++++ b/arch/riscv/kernel/process.c
+@@ -302,6 +302,18 @@ enum {
+ static bool have_user_pmlen_7;
+ static bool have_user_pmlen_16;
+ 
++bool riscv_have_user_pmlen(u8 len)
++{
++	switch (len) {
++	case PMLEN_7:
++		return have_user_pmlen_7;
++	case PMLEN_16:
++		return have_user_pmlen_16;
++	default:
++		return false;
++	}
++}
++
+ /*
+  * Control the relaxed ABI allowing tagged user addresses into the kernel.
+  */
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:29 -0400
+Subject: [PATCH v8 09/11] riscv: cpufeature: Introduce ISA bases bitmap and
+ rva23u64 detection
+
+Introduce a per-hart and host-wide bitmap of conformant ISA "bases"
+(named profile-class sets such as IMA and RVA23U64), computed at init
+time by riscv_init_isa_bases().
+
+Register riscv_init_isa_bases() as an arch_initcall. That is late
+enough that core_initcall(tagged_addr_init) has probed senvcfg.PMM and
+populated have_user_pmlen_*; without that ordering,
+riscv_have_user_pmlen(7) would still return its default false and the
+RVA23U64 detection path would always bail. It is also early enough that
+arch_initcall_sync(init_hwprobe_vdso_data) finds the bases populated
+when it snapshots the hwprobe values into the vDSO data page.
+
+Consider this as the cache that subsequent consumers (hwprobe's
+RVA23U64 base behavior bit, /proc/cpuinfo's "isa bases" lines, etc.)
+can read without recomputing, which keeps them consistent with
+each other.
+
+Co-developed-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Signed-off-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: Add Co-developed-by for Andrew Jones (Conor).
+v7:
+- Register riscv_init_isa_bases() at arch_initcall, ahead of the vDSO
+  hwprobe snapshot at arch_initcall_sync; v6 returned 0 for
+  RISCV_HWPROBE_KEY_BASE_BEHAVIOR through the vDSO.
+- Keep riscv_isa_bases static; add riscv_isa_base_available().
+v6: No change.
+v5: No change.
+v4:
+- In riscv_set_isa_base(), reorder those __setbit(RISCV_ISA_EXT_X,m)
+  lines to make them conform to the order they appear in the RVA23 1.0
+  Profile.
+v3:
+- Add a blank line before the subsys_initcall() registration (Andrew).
+- Set the local ext_mask with __set_bit() and test the mandate set with
+  !bitmap_subset() (Sashiko).
+- Require the Zic64b ISA extension in the RVA23U64 mask,
+  instead of open-coded cache block-size check. (New, thoughts from Andrew)
+v2:
+- Implement riscv_init_isa_bases() that runs at system init time,
+  after tagged_addr_init() populates have_user_pmlen_*.
+- Split RVA23S64 placeholder into a future patch.
+---
+ arch/riscv/include/asm/cpufeature.h |  13 +++++
+ arch/riscv/kernel/cpufeature.c      | 113 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 126 insertions(+)
+
+diff --git a/arch/riscv/include/asm/cpufeature.h b/arch/riscv/include/asm/cpufeature.h
+index 739fcc84bf7b2..89c64d42ee745 100644
+--- a/arch/riscv/include/asm/cpufeature.h
++++ b/arch/riscv/include/asm/cpufeature.h
+@@ -25,8 +25,20 @@ struct riscv_cpuinfo {
+ 	unsigned long mimpid;
+ };
+ 
++enum {
++	RISCV_ISA_BASE_IMA,
++	RISCV_ISA_BASE_RVA23U64,
++	RISCV_NR_ISA_BASES,
++};
++
++/**
++ * struct riscv_isainfo - per-hart ISA state
++ * @isa: bitmap of ISA extensions this hart implements
++ * @isa_bases: bitmap of profile bases this hart conforms to
++ */
+ struct riscv_isainfo {
+ 	DECLARE_BITMAP(isa, RISCV_ISA_EXT_MAX);
++	DECLARE_BITMAP(isa_bases, RISCV_NR_ISA_BASES);
+ };
+ 
+ DECLARE_PER_CPU(struct riscv_cpuinfo, riscv_cpuinfo);
+@@ -130,6 +142,7 @@ extern const size_t riscv_isa_ext_count;
+ extern bool riscv_isa_fallback;
+ 
+ unsigned long riscv_isa_extension_base(const unsigned long *isa_bitmap);
++bool riscv_isa_base_available(const unsigned long *isa_bases, unsigned int base);
+ static __always_inline bool riscv_cpu_has_extension_likely(int cpu, const unsigned long ext)
+ {
+ 	compiletime_assert(ext < RISCV_ISA_EXT_MAX, "ext must be < RISCV_ISA_EXT_MAX");
+diff --git a/arch/riscv/kernel/cpufeature.c b/arch/riscv/kernel/cpufeature.c
+index ef3133a52c0ea..126d5466a6f4c 100644
+--- a/arch/riscv/kernel/cpufeature.c
++++ b/arch/riscv/kernel/cpufeature.c
+@@ -41,6 +41,9 @@ unsigned long elf_hwcap __read_mostly;
+ /* Host ISA bitmap */
+ static DECLARE_BITMAP(riscv_isa, RISCV_ISA_EXT_MAX) __read_mostly;
+ 
++/* Host ISA bases bitmap */
++static DECLARE_BITMAP(riscv_isa_bases, RISCV_NR_ISA_BASES) __read_mostly;
++
+ /* Per-cpu ISA extensions. */
+ struct riscv_isainfo hart_isa[NR_CPUS];
+ 
+@@ -81,6 +84,26 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, unsigned i
+ }
+ EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
+ 
++/**
++ * riscv_isa_base_available() - Check whether a given ISA base is
++ * available or not
++ *
++ * @isa_bases: ISA bases bitmap to use
++ * @base: bit position of the desired ISA base
++ * Return: true or false
++ *
++ * NOTE: If isa_bases is NULL then the host ISA bases bitmap will be used.
++ */
++bool riscv_isa_base_available(const unsigned long *isa_bases, unsigned int base)
++{
++	const unsigned long *bmap = isa_bases ? isa_bases : riscv_isa_bases;
++
++	if (base >= RISCV_NR_ISA_BASES)
++		return false;
++
++	return test_bit(base, bmap);
++}
++
+ static int riscv_ext_f_depends(const struct riscv_isa_ext_data *data,
+ 			       const unsigned long *isa_bitmap)
+ {
+@@ -1350,3 +1373,93 @@ void __init_or_module riscv_cpufeature_patch_func(struct alt_entry *begin,
+ 	}
+ }
+ #endif
++
++/*
++ * Compute the set of profile bases (IMA, RVA23U64, ...) a hart
++ * conforms to, given its resolved ISA bitmap.
++ *
++ * If @isa_bitmap is NULL, the host ISA bitmap (the AND across all harts) is
++ * used.
++ */
++static void riscv_set_isa_bases(unsigned long *bases, const unsigned long *isa_bitmap)
++{
++	const unsigned long *isa = isa_bitmap ? isa_bitmap : riscv_isa;
++	DECLARE_BITMAP(ext_mask, RISCV_ISA_EXT_MAX) = { 0 };
++
++	/* IMA */
++	__set_bit(RISCV_ISA_EXT_I, ext_mask);
++	__set_bit(RISCV_ISA_EXT_M, ext_mask);
++	__set_bit(RISCV_ISA_EXT_A, ext_mask);
++
++	if (!bitmap_subset(ext_mask, isa, RISCV_ISA_EXT_MAX))
++		return;
++
++	set_bit(RISCV_ISA_BASE_IMA, bases);
++
++	/* RVA23U64 */
++
++	/* Supm with PMLEN=7 */
++	if (!riscv_have_user_pmlen(7))
++		return;
++
++	__set_bit(RISCV_ISA_EXT_F, ext_mask);
++	__set_bit(RISCV_ISA_EXT_D, ext_mask);
++	__set_bit(RISCV_ISA_EXT_C, ext_mask);
++	__set_bit(RISCV_ISA_EXT_B, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICSR, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICNTR, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZIHPM, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICCIF, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICCRSE, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICCAMOA, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICCLSM, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZA64RS, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZIHINTPAUSE, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZIC64B, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICBOM, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICBOP, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICBOZ, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZFHMIN, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZKT, ext_mask);
++	__set_bit(RISCV_ISA_EXT_V, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZVFHMIN, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZVBB, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZVKT, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZIHINTNTL, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZICOND, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZIMOP, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZCMOP, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZCB, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZFA, ext_mask);
++	__set_bit(RISCV_ISA_EXT_ZAWRS, ext_mask);
++	__set_bit(RISCV_ISA_EXT_SUPM, ext_mask);
++
++	if (!bitmap_subset(ext_mask, isa, RISCV_ISA_EXT_MAX))
++		return;
++
++	set_bit(RISCV_ISA_BASE_RVA23U64, bases);
++}
++
++/*
++ * Populate the host ISA bases bitmap (riscv_isa_bases) and each
++ * hart's per-cpu isa_bases.
++ */
++static int __init riscv_init_isa_bases(void)
++{
++	int cpu;
++
++	for_each_possible_cpu(cpu)
++		riscv_set_isa_bases(hart_isa[cpu].isa_bases, hart_isa[cpu].isa);
++
++	riscv_set_isa_bases(riscv_isa_bases, NULL);
++	return 0;
++}
++
++/*
++ * Registered as arch_initcall: late enough that
++ * core_initcall(tagged_addr_init) has populated have_user_pmlen_*,
++ * and early enough that arch_initcall_sync(init_hwprobe_vdso_data)
++ * finds the ISA bases populated when it snapshots the hwprobe
++ * values into the vDSO data page.
++ */
++arch_initcall(riscv_init_isa_bases);
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:30 -0400
+Subject: [PATCH v8 10/11] riscv: cpu: Output isa bases lines in cpuinfo
+
+From: Andrew Jones <andrew.jones@oss.qualcomm.com>
+
+The "isa" line in /proc/cpuinfo lists a hart's extensions as
+concatenated string, but not which profile base it satisfies. Add two
+lines that report them directly:
+
+  isa bases       : <bases that all harts conform to>
+  hart isa bases  : <bases that this specific hart conforms to>
+
+Example output on qemu booted with -cpu rva23s64,sv39=on,pmp=on:
+
+  processor       : 0
+  hart            : 4
+  isa bases       : rv64ima rva23u64
+  isa             : rv64imafdcbvh_zicbom_zicbop_...
+  ...
+  hart isa bases  : rv64ima rva23u64
+  hart isa        : rv64imafdcbvh_zicbom_zicbop_...
+
+Signed-off-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Co-developed-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8: Andrew is the author; add my Co-developed-by (Conor).
+v7: Use riscv_isa_base_available().
+v6: No change.
+v5: Simplified the commit message.
+v4: No change.
+v3: No change.
+v2:
+- Read from the cached riscv_isa_bases and hart_isa[cpu_id].isa_bases
+  bitmaps populated by riscv_init_isa_bases() at init time.
+---
+ arch/riscv/kernel/cpu.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/arch/riscv/kernel/cpu.c b/arch/riscv/kernel/cpu.c
+index 3dbc8cc557dd1..d06824048aa25 100644
+--- a/arch/riscv/kernel/cpu.c
++++ b/arch/riscv/kernel/cpu.c
+@@ -305,6 +305,26 @@ static void print_mmu(struct seq_file *f)
+ 	seq_printf(f, "mmu\t\t: %s\n", sv_type);
+ }
+ 
++static const char * const riscv_isa_base_names[] = {
++#ifdef CONFIG_32BIT
++	[RISCV_ISA_BASE_IMA] = "rv32ima",
++#else
++	[RISCV_ISA_BASE_IMA] = "rv64ima",
++#endif
++	[RISCV_ISA_BASE_RVA23U64] = "rva23u64",
++};
++
++static void print_isa_bases(struct seq_file *m, const unsigned long *isa_bases)
++{
++	unsigned int i;
++
++	for (i = 0; i < RISCV_NR_ISA_BASES; i++) {
++		if (riscv_isa_base_available(isa_bases, i))
++			seq_printf(m, " %s", riscv_isa_base_names[i]);
++	}
++	seq_puts(m, "\n");
++}
++
+ static void *c_start(struct seq_file *m, loff_t *pos)
+ {
+ 	if (*pos == nr_cpu_ids)
+@@ -336,6 +356,9 @@ static int c_show(struct seq_file *m, void *v)
+ 	seq_printf(m, "processor\t: %lu\n", cpu_id);
+ 	seq_printf(m, "hart\t\t: %lu\n", cpuid_to_hartid_map(cpu_id));
+ 
++	seq_puts(m, "isa bases\t:");
++	print_isa_bases(m, NULL);
++
+ 	/*
+ 	 * For historical raisins, the isa: line is limited to the lowest common
+ 	 * denominator of extensions supported across all harts. A true list of
+@@ -360,6 +383,9 @@ static int c_show(struct seq_file *m, void *v)
+ 	seq_printf(m, "marchid\t\t: 0x%lx\n", ci->marchid);
+ 	seq_printf(m, "mimpid\t\t: 0x%lx\n", ci->mimpid);
+ 
++	seq_puts(m, "hart isa bases\t:");
++	print_isa_bases(m, hart_isa[cpu_id].isa_bases);
++
+ 	/*
+ 	 * Print the ISA extensions specific to this hart, which may show
+ 	 * additional extensions not present across all harts.
+
+-- 
+2.43.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Guodong Xu <guodong.xu@oss.qualcomm.com>
+Date: Sun, 20 Sep 2026 03:18:31 -0400
+Subject: [PATCH v8 11/11] riscv: hwprobe: Introduce rva23u64 base behavior
+
+Provide a hwprobe base-behavior bit so userspace can check RVA23U64
+support in one call.  Without it, a consumer needs five hwprobe
+calls and four prctl calls, which is error-prone to require of every
+caller.  Most software treats RVA23U64 as a new base anyway, so
+expose it directly.
+
+The IMA bit is now derived from the same cached bases instead of being
+hardcoded, so it agrees with AT_HWCAP and the "isa bases" cpuinfo lines;
+on any system this kernel can run on it stays set.
+
+Co-developed-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Signed-off-by: Andrew Jones <andrew.jones@oss.qualcomm.com>
+Signed-off-by: Guodong Xu <guodong.xu@oss.qualcomm.com>
+---
+v8:
+- Add Co-developed-by for Andrew Jones (Conor).
+- Say in the body that the IMA bit is now computed, not hardcoded.
+- Rebase onto riscv/for-next: drop the BASE_BEHAVIOR case's own
+  pair->value = 0; hwprobe_one_pair() zeroes it since commit
+  d0fc6fab2046 ("riscv: hwprobe: initialize pair->value in
+  hwprobe_one_pair()").
+v7: Use riscv_isa_base_available().
+v6: Rebase onto riscv/for-next: define
+    RISCV_HWPROBE_BASE_BEHAVIOR_RVA23U64 in the _BITULL() style of
+    commit 8da45c93dfa9.
+v5: No change.
+v4: No change.
+v3: No change.
+v2:
+- Detect RVA23U64 by reading from the cached hart_isa[].isa_bases
+  bitmap populated by riscv_init_isa_bases() at init time, sharing
+  one source of truth with /proc/cpuinfo.
+---
+ Documentation/arch/riscv/hwprobe.rst               |  8 ++++++++
+ arch/riscv/include/uapi/asm/hwprobe.h              |  3 ++-
+ arch/riscv/kernel/sys_hwprobe.c                    | 22 +++++++++++++++-------
+ tools/testing/selftests/riscv/hwprobe/which-cpus.c |  2 +-
+ 4 files changed, 26 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/arch/riscv/hwprobe.rst b/Documentation/arch/riscv/hwprobe.rst
+index 8454a6ae6fd15..0392a8f41d86d 100644
+--- a/Documentation/arch/riscv/hwprobe.rst
++++ b/Documentation/arch/riscv/hwprobe.rst
+@@ -67,6 +67,14 @@ * :c:macro:`RISCV_HWPROBE_KEY_BASE_BEHAVIOR`: A bitmask containing the base
+       programs (it may still be executed in userspace via a
+       kernel-controlled mechanism such as the vDSO).
+ 
++  * :c:macro:`RISCV_HWPROBE_BASE_BEHAVIOR_RVA23U64`: Support for all mandatory
++    extensions of RVA23U64, as defined in the RISC-V Profiles specification
++    starting from commit 0273f3c921b6 ("rva23/rvb23 ratified").
++
++    The RVA23U64 base is based upon the IMA base and therefore IMA extension
++    keys (e.g. :c:macro:`RISCV_HWPROBE_KEY_IMA_EXT_0`:) may be used to probe
++    optional extensions.
++
+ * :c:macro:`RISCV_HWPROBE_KEY_IMA_EXT_0`: A bitmask containing extensions
+   that are compatible with the :c:macro:`RISCV_HWPROBE_BASE_BEHAVIOR_IMA`:
+   base system behavior.
+diff --git a/arch/riscv/include/uapi/asm/hwprobe.h b/arch/riscv/include/uapi/asm/hwprobe.h
+index 9a121ee3b4369..4f5d51788c416 100644
+--- a/arch/riscv/include/uapi/asm/hwprobe.h
++++ b/arch/riscv/include/uapi/asm/hwprobe.h
+@@ -22,7 +22,8 @@ struct riscv_hwprobe {
+ #define RISCV_HWPROBE_KEY_MARCHID	1
+ #define RISCV_HWPROBE_KEY_MIMPID	2
+ #define RISCV_HWPROBE_KEY_BASE_BEHAVIOR	3
+-#define		RISCV_HWPROBE_BASE_BEHAVIOR_IMA	_BITULL(0)
++#define		RISCV_HWPROBE_BASE_BEHAVIOR_IMA		_BITULL(0)
++#define		RISCV_HWPROBE_BASE_BEHAVIOR_RVA23U64	_BITULL(1)
+ #define RISCV_HWPROBE_KEY_IMA_EXT_0	4
+ #define		RISCV_HWPROBE_IMA_FD		_BITULL(0)
+ #define		RISCV_HWPROBE_IMA_C		_BITULL(1)
+diff --git a/arch/riscv/kernel/sys_hwprobe.c b/arch/riscv/kernel/sys_hwprobe.c
+index 8a38a4d37806f..2290126792797 100644
+--- a/arch/riscv/kernel/sys_hwprobe.c
++++ b/arch/riscv/kernel/sys_hwprobe.c
+@@ -223,6 +223,17 @@ static bool hwprobe_ext0_has(const struct cpumask *cpus, u64 ext)
+ 	return (pair.value & ext);
+ }
+ 
++static bool hwprobe_has_isa_base(const struct cpumask *cpus, unsigned int base)
++{
++	int cpu;
++
++	for_each_cpu(cpu, cpus) {
++		if (!riscv_isa_base_available(hart_isa[cpu].isa_bases, base))
++			return false;
++	}
++	return true;
++}
++
+ #if defined(CONFIG_RISCV_PROBE_UNALIGNED_ACCESS)
+ static u64 hwprobe_misaligned(const struct cpumask *cpus)
+ {
+@@ -307,14 +318,11 @@ static void hwprobe_one_pair(struct riscv_hwprobe *pair,
+ 	case RISCV_HWPROBE_KEY_MIMPID:
+ 		hwprobe_arch_id(pair, cpus);
+ 		break;
+-	/*
+-	 * The kernel already assumes that the base single-letter ISA
+-	 * extensions are supported on all harts, and only supports the
+-	 * IMA base, so just cheat a bit here and tell that to
+-	 * userspace.
+-	 */
+ 	case RISCV_HWPROBE_KEY_BASE_BEHAVIOR:
+-		pair->value = RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
++		if (hwprobe_has_isa_base(cpus, RISCV_ISA_BASE_IMA))
++			pair->value |= RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
++		if (hwprobe_has_isa_base(cpus, RISCV_ISA_BASE_RVA23U64))
++			pair->value |= RISCV_HWPROBE_BASE_BEHAVIOR_RVA23U64;
+ 		break;
+ 
+ 	case RISCV_HWPROBE_KEY_IMA_EXT_0:
+diff --git a/tools/testing/selftests/riscv/hwprobe/which-cpus.c b/tools/testing/selftests/riscv/hwprobe/which-cpus.c
+index 587feb198c049..f8c797b1d0fd9 100644
+--- a/tools/testing/selftests/riscv/hwprobe/which-cpus.c
++++ b/tools/testing/selftests/riscv/hwprobe/which-cpus.c
+@@ -105,7 +105,7 @@ int main(int argc, char **argv)
+ 	pairs[0] = (struct riscv_hwprobe){ .key = RISCV_HWPROBE_KEY_BASE_BEHAVIOR, };
+ 	rc = riscv_hwprobe(pairs, 1, 0, NULL, 0);
+ 	assert(rc == 0 && pairs[0].key == RISCV_HWPROBE_KEY_BASE_BEHAVIOR &&
+-	       pairs[0].value == RISCV_HWPROBE_BASE_BEHAVIOR_IMA);
++	       (pairs[0].value & RISCV_HWPROBE_BASE_BEHAVIOR_IMA));
+ 
+ 	pairs[0] = (struct riscv_hwprobe){ .key = RISCV_HWPROBE_KEY_IMA_EXT_0, };
+ 	rc = riscv_hwprobe(pairs, 1, 0, NULL, 0);
+
+-- 
+2.43.0
+

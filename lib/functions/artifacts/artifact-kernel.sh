@@ -153,6 +153,14 @@ function artifact_kernel_prepare_version() {
 	# Extra stubble DTBs change the packaged UKI. Appended ONLY when set, so
 	# families that don't use them keep their exact previous -V hash (no churn).
 	[[ ${#EXTRA_STUBBLE_DEVICETREES[@]} -gt 0 ]] && vars_to_hash+=("${EXTRA_STUBBLE_DEVICETREES[*]}")
+	# Stubble builds the UKI: its machdb picks the DTBs, and finddtbs.py embeds
+	# them. Both Armbian's machdb and the upstream revision change the output, so
+	# both belong in the version. STUBBLE_GIT_BRANCH defaults to a branch, which
+	# moves; without the resolved commit a stale artifact is reused.
+	if [[ "${KERNEL_DO_STUBBLE}" == "yes" ]]; then
+		vars_to_hash+=("$(sha256sum < "${SRC}"/packages/blobs/stubble/machdb.txt | cut -d' ' -f1)")
+		vars_to_hash+=("$(obtain_stubble_git_sha1)")
+	fi
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
@@ -269,6 +277,14 @@ function artifact_kernel_prepare_version() {
 
 	artifact_map_packages+=(["linux-libc-dev"]="linux-libc-dev-${BRANCH}-${LINUXFAMILY}")
 
+	# Allow extensions to add more packages to the kernel artifact
+	call_extension_method "artifact_kernel_extra_packages" <<- 'ARTIFACT_KERNEL_EXTRA_PACKAGES'
+		*add extra .deb packages to the kernel artifact*
+		Add with: artifact_map_packages+=(["my-deb-id"]="my-package-${BRANCH}-${LINUXFAMILY}")
+		Each id _must_ be built via `create_kernel_deb` during kernel packaging, and _must_ change the artifact version:
+		build it from a hashed hook (eg `pre_package_kernel_image`) or add a part via `artifact_kernel_version_parts`.
+	ARTIFACT_KERNEL_EXTRA_PACKAGES
+
 	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}" # default name of regular artifact
 
 	# Separate artifact name if we're in DTB-only mode, so stuff doesn't get mixed up later
@@ -281,6 +297,18 @@ function artifact_kernel_prepare_version() {
 	artifact_deb_arch="${ARCH}"
 
 	return 0
+}
+
+# Resolves the stubble ref to a commit, so the kernel artifact version changes
+# when upstream stubble does. ls-remote only; nothing is cloned here.
+function obtain_stubble_git_sha1() {
+	stubble_declare_git_source
+	declare -A GIT_INFO_STUBBLE=([GIT_SOURCE]="${STUBBLE_GIT_URL}" [GIT_REF]="${STUBBLE_GIT_BRANCH}")
+	declare -i stubble_git_cache_ttl_seconds="${KERNEL_GIT_CACHE_TTL:-3600}"
+	memoize_cache_ttl=$stubble_git_cache_ttl_seconds run_memoized GIT_INFO_STUBBLE "git2info" memoized_git_ref_to_info
+	[[ "${GIT_INFO_STUBBLE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] ||
+		exit_with_error "stubble SHA1 is not sane: '${GIT_INFO_STUBBLE[SHA1]}'"
+	echo -n "${GIT_INFO_STUBBLE[SHA1]}"
 }
 
 # Input: associative array GIT_INFO_KERNEL, with GIT_SOURCE and GIT_REF members

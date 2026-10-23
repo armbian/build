@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 19 Oct 2026 14:35:01 +0200
+Subject: [PATCH] sunxi: gmac: support the A80
+
+The A80 TX clock register sits outside the CCU. The GMAC pins also
+need the AXP809 GPIO1 LDO, and the PHY needs a power cycle after it.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+Assisted-by: Claude Opus 5.5
+---
+ board/sunxi/gmac.c | 63 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+diff --git a/board/sunxi/gmac.c b/board/sunxi/gmac.c
+index 710e821e3f..beb267bedd 100644
+--- a/board/sunxi/gmac.c
++++ b/board/sunxi/gmac.c
+@@ -2,7 +2,69 @@
+ #include <miiphy.h>
+ #include <asm/io.h>
+ #include <asm/arch/clock.h>
++#include <dm.h>
++#include <linux/delay.h>
++#include <power/pmic.h>
++#include <power/regulator.h>
++
++#ifdef CONFIG_MACH_SUN9I
++/* A80: the GMAC TX clock register uses the A20 layout, outside the CCU */
++#define SUN9I_GMAC_CLK_CFG	0x00800030
++#define CCM_GMAC_CTRL_TX_CLK_SRC_MII		0x0
++#define CCM_GMAC_CTRL_TX_CLK_SRC_INT_RGMII	0x2
++#define CCM_GMAC_CTRL_GPIT_MII			(0x0 << 2)
++#define CCM_GMAC_CTRL_GPIT_RGMII		(0x1 << 2)
++#define CCM_GMAC_CTRL_TX_CLK_DELAY(x)		((x) << 10)
++
++#define AXP809_GPIO1_CTRL		0x92
++#define AXP809_GPIO1_CTRL_LDO_ON	0x03
++#define AXP809_GPIO1_LDO_VOLT		0x93
++
++/*
++ * The GMAC pins (port A) get their I/O supply from the AXP809 GPIO1 LDO
++ * ("vcc-pa-supply"), which is off at reset. The PHY supply is already on,
++ * and the PHY does not answer on MDIO when it powers up without I/O
++ * supply. Enable the port A LDO, then power-cycle the PHY.
++ */
++static void sun9i_gmac_power_init(void)
++{
++	struct udevice *dev;
++	int uv;
++
++	if (!uclass_get_device_by_name(UCLASS_PMIC, "pmic@3a3", &dev)) {
++		/* 2.5 V: 700 mV + 18 * 100 mV */
++		pmic_reg_write(dev, AXP809_GPIO1_LDO_VOLT, 18);
++		pmic_reg_write(dev, AXP809_GPIO1_CTRL, AXP809_GPIO1_CTRL_LDO_ON);
++	}
++
++	if (regulator_get_by_platname("vcc-gmac-phy", &dev))
++		return;
++
++	uv = regulator_get_value(dev);
++	regulator_set_enable(dev, false);
++	mdelay(20);
++	if (uv > 0)
++		regulator_set_value(dev, uv);
++	regulator_set_enable(dev, true);
++	/* PHY core logic needs 20 ms after power-up, 100 ms with margin */
++	mdelay(100);
++}
+ 
++void eth_init_board(void)
++{
++	if (IS_ENABLED(CONFIG_DM_REGULATOR) && IS_ENABLED(CONFIG_PMIC_AXP))
++		sun9i_gmac_power_init();
++
++#ifdef CONFIG_RGMII
++	writel(CCM_GMAC_CTRL_TX_CLK_SRC_INT_RGMII | CCM_GMAC_CTRL_GPIT_RGMII |
++	       CCM_GMAC_CTRL_TX_CLK_DELAY(CONFIG_GMAC_TX_DELAY),
++	       SUN9I_GMAC_CLK_CFG);
++#else
++	writel(CCM_GMAC_CTRL_TX_CLK_SRC_MII | CCM_GMAC_CTRL_GPIT_MII,
++	       SUN9I_GMAC_CLK_CFG);
++#endif
++}
++#else
+ void eth_init_board(void)
+ {
+ 	struct sunxi_ccm_reg *const ccm =
+@@ -19,3 +81,4 @@ void eth_init_board(void)
+ 		CCM_GMAC_CTRL_GPIT_MII);
+ #endif
+ }
++#endif
+-- 
+2.53.0
+

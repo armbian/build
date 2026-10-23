@@ -12,10 +12,6 @@ function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
 
 function post_install_kernel_debs__install_aic8800_dkms_package() {
 
-	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 7.3; then
-		display_alert "Kernel version is too recent" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
-		return 0
-	fi
 	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
 	[[ -z $AIC8800_TYPE ]] && return 0
 	latest_version="$(github_latest_release_tag "radxa-pkg/aic8800")" || return 1

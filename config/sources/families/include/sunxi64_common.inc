@@ -9,10 +9,10 @@
 enable_extension "sunxi-tools"
 declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
-declare -g ATFBRANCH="tag:lts-v2.12.9"
+declare -g ATFBRANCH="tag:lts-v2.14.11"
 declare -g BOOTDELAY=1
-declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"v2026.07-sunxi64"}"
-declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2026.07"}"
+declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"v2026.10-sunxi64"}"
+declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2026.10"}"
 declare -g BOOTENV_FILE="${BOOTENV_FILE:-"sunxi.txt"}"
 declare -g UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="7.2" # Major and minor versions of this kernel.
+		declare -g KERNEL_MAJOR_MINOR="7.3" # Major and minor versions of this kernel.
 		;;
 esac
 

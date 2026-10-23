@@ -10,7 +10,6 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-cyber-aib.dtb"
 BOOT_SCENARIO="spl-blobs"
-BOOT_SOC="rk3588"
 IMAGE_PARTITION_TABLE="gpt"
 
 function post_family_tweaks__cyberaib_naming_audios() {

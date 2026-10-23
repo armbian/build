@@ -192,10 +192,6 @@ function compile_armbian-bsp-cli() {
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
-	cat <<- EOF > "${destination}"/DEBIAN/conffiles
-		/usr/lib/armbian/armbian-apt-updates
-		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
-	EOF
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -225,6 +221,28 @@ function compile_armbian-bsp-cli() {
 		You can also append to the `preinst_functions`, `postinst_functions` and `postrm` array, and the _content_
 		of those functions will be added to the preinst, postinst and postrm scripts respectively.
 	POST_FAMILY_TWEAKS_BSP
+
+	# Conffiles, after the hooks: family_tweaks_bsp, post_family_tweaks_bsp and the
+	# extensions all write to $destination, so the tree is only final here.
+	#
+	# List a path only when the package really contains it. Extensions strip BSP
+	# files on purpose -- a cloud image has no use for the apt periodic config, for
+	# instance -- and the framework cannot know which. A listed path that is not in
+	# the tree makes dpkg-deb refuse: "does not appear in package".
+	declare -a bsp_conffile_candidates=(
+		"/usr/lib/armbian/armbian-apt-updates"
+		"/etc/X11/xorg.conf.d/01-armbian-defaults.conf"
+		"/etc/apt/apt.conf.d/02-armbian-periodic"
+	)
+	declare bsp_conffile
+	: > "${destination}"/DEBIAN/conffiles
+	for bsp_conffile in "${bsp_conffile_candidates[@]}"; do
+		if [[ -f "${destination}${bsp_conffile}" ]]; then
+			echo "${bsp_conffile}" >> "${destination}"/DEBIAN/conffiles
+		else
+			display_alert "Not shipping conffile, removed from the BSP" "${bsp_conffile}" "debug"
+		fi
+	done
 
 	# Render the postinst/postrm/etc
 	# set up pre install script; use inline functions
@@ -280,15 +298,12 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
 		depends_base_files=""
 	fi
-	# Provides/Conflicts/Replaces linux-sysctl-defaults: the BSP ships
-	# /usr/lib/sysctl.d/50-default.conf itself (armbian's copy of the distro
-	# defaults), so it satisfies that dependency without pulling the external
-	# package, and cleanly takes over its file if it was ever installed.
+	# The BSP ships 55-bsp-default.conf after the distro defaults.
+	# It provides linux-sysctl-defaults without replacing the distro package.
 	cat <<- EOF >> "${control_file_new}"
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}${EXTRA_BSPDEPS:+, ${EXTRA_BSPDEPS}}
-		Replaces: zram-config, linux-sysctl-defaults, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
-		Conflicts: linux-sysctl-defaults
 		Provides: armbian-bsp-cli, linux-sysctl-defaults
 	EOF
 
@@ -399,7 +414,7 @@ function board_side_bsp_cli_preinst() {
 			;;
 	esac
 	# --system (not -p) so the change to /etc/sysctl.conf above *and* the
-	# drop-ins under /usr/lib/sysctl.d (our 50-default.conf) are applied on
+	# drop-ins under /usr/lib/sysctl.d (our 55-bsp-default.conf) are applied on
 	# upgrade; -p reads only /etc/sysctl.conf and would leave them to next boot.
 	sysctl --system > /dev/null 2>&1
 	# replace canonical advertisement

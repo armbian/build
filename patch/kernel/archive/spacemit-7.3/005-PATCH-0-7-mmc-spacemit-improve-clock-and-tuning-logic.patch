@@ -1,0 +1,399 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Subject: [PATCH 0/7] mmc: spacemit: improve clock and tuning logic
+Date: Wed, 02 Sep 2026 08:04:21 +0000
+
+This series includes some bug fixes and improvement to
+SpacemiT SDHCI driver, which relate to pinctrl, PHY,
+clock, tuning logic. Most of them are quite independent,
+but put them together here for people to easy review.
+
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+Long Wan (6):
+      mmc: sdhci-of-k1: no pinctrl state switching
+      mmc: sdhci-of-k1: configure PHY mode
+      mmc: sdhci-of-k1: Improve power control
+      mmc: sdhci-of-k1: Use finest delay granularity for RX tuning
+      mmc: sdhci-of-k1: Improve RX tuning window
+      mmc: sdhci-of-k1: Implement SD clock gating for voltage switch
+
+Yixun Lan (1):
+      mmc: sdhci-of-k1: drop duplicated voltage settings
+
+ drivers/mmc/host/sdhci-of-k1.c | 80 ++++++++++++++++++++++++++++++++----------
+ 1 file changed, 61 insertions(+), 19 deletions(-)
+---
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:22 +0000
+Subject: [PATCH 1/7] mmc: sdhci-of-k1: no pinctrl state switching
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+No need to switch pinctrl state if the SDHCI controller only support 1.8v
+IO voltage which DT will only provide a "default" pinctrl state, otherwise
+function pinctrl_select_state() will trigger a NULL pointer error.
+
+Fixes: 00a97fc57c09 ("mmc: sdhci-of-k1: add regulator and pinctrl voltage switching support")
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index 37b0911e7cf2..0916340d3265 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -407,7 +407,8 @@ static int spacemit_sdhci_start_signal_voltage_switch(struct mmc_host *mmc,
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!sdhst->pinctrl)
++	/* No pinctrl or no "uhs" state */
++	if (!sdhst->pinctrl || !sdhst->pinctrl_uhs)
+ 		return 0;
+ 
+ 	/* Select appropriate pinctrl state based on signal voltage */
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:23 +0000
+Subject: [PATCH 2/7] mmc: sdhci-of-k1: drop duplicated voltage settings
+
+No need to set 1.8V Signal for non-SDIO hosts, it will duplicate
+what sdhci_start_signal_voltage_switch() already handled there.
+
+Fixes: e5502d15b0f3 ("mmc: sdhci-of-k1: add support for SpacemiT K1 SoC")
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index 0916340d3265..afd9536f2368 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -195,9 +195,6 @@ static void spacemit_sdhci_set_uhs_signaling(struct sdhci_host *host, unsigned i
+ 		spacemit_sdhci_setbits(host, SDHC_MMC_HS400, SPACEMIT_SDHC_MMC_CTRL_REG);
+ 
+ 	sdhci_set_uhs_signaling(host, timing);
+-
+-	if (!(host->mmc->caps2 & MMC_CAP2_NO_SDIO))
+-		spacemit_sdhci_setbits(host, SDHCI_CTRL_VDD_180, SDHCI_HOST_CONTROL2);
+ }
+ 
+ static void spacemit_sdhci_set_clock(struct sdhci_host *host, unsigned int clock)
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:24 +0000
+Subject: [PATCH 3/7] mmc: sdhci-of-k1: configure PHY mode
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+Apply PHY configuration only for eMMC hosts which enable PHY function mode,
+and configure drive strength and bias. While for SD/SDIO hosts mode, bypass
+the PHY mode and select TX internal clock instead.
+
+Fixes: f87b273e4b6d ("mmc: sdhci-of-k1: enable essential clock infrastructure for SD operation")
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 26 ++++++++++++++------------
+ 1 file changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index afd9536f2368..5dccdd4b217d 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -169,21 +169,23 @@ static void spacemit_sdhci_reset(struct sdhci_host *host, u8 mask)
+ 	if (mask != SDHCI_RESET_ALL)
+ 		return;
+ 
+-	spacemit_sdhci_setbits(host, SDHC_PHY_FUNC_EN | SDHC_PHY_PLL_LOCK,
+-			       SPACEMIT_SDHC_PHY_CTRL_REG);
+-
+-	spacemit_sdhci_clrsetbits(host, SDHC_PHY_DRIVE_SEL,
+-				  SDHC_RX_BIAS_CTRL | FIELD_PREP(SDHC_PHY_DRIVE_SEL, 4),
+-				  SPACEMIT_SDHC_PHY_PADCFG_REG);
+-
+-	if (!(host->mmc->caps2 & MMC_CAP2_NO_MMC))
+-		spacemit_sdhci_setbits(host, SDHC_MMC_CARD_MODE, SPACEMIT_SDHC_MMC_CTRL_REG);
+-
+-	spacemit_sdhci_setbits(host, SDHC_GEN_PAD_CLK_ON, SPACEMIT_SDHC_LEGACY_CTRL_REG);
++	if (host->mmc->caps2 & MMC_CAP2_NO_MMC) {
++		/* SD/SDIO: bypass PHY, use TX internal clock */
++		spacemit_sdhci_setbits(host, SDHC_TX_INT_CLK_SEL, SPACEMIT_SDHC_TX_CFG_REG);
+ 
+-	if (host->mmc->caps2 & MMC_CAP2_NO_MMC)
+ 		spacemit_sdhci_setbits(host, SDHC_OVRRD_CLK_OEN | SDHC_FORCE_CLK_ON,
+ 				       SPACEMIT_SDHC_OP_EXT_REG);
++	} else {
++		/* eMMC: use PHY function mode */
++		spacemit_sdhci_setbits(host, SDHC_PHY_FUNC_EN | SDHC_PHY_PLL_LOCK,
++				       SPACEMIT_SDHC_PHY_CTRL_REG);
++
++		spacemit_sdhci_clrsetbits(host, SDHC_PHY_DRIVE_SEL,
++					  SDHC_RX_BIAS_CTRL | FIELD_PREP(SDHC_PHY_DRIVE_SEL, 4),
++					  SPACEMIT_SDHC_PHY_PADCFG_REG);
++
++		spacemit_sdhci_setbits(host, SDHC_MMC_CARD_MODE, SPACEMIT_SDHC_MMC_CTRL_REG);
++	}
+ }
+ 
+ static void spacemit_sdhci_set_uhs_signaling(struct sdhci_host *host, unsigned int timing)
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:25 +0000
+Subject: [PATCH 4/7] mmc: sdhci-of-k1: Improve power control
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+The default sdhci_set_power() skips the SD bus voltage select field
+entirely when a vmmc regulator is present, leaving SD Bus Power in off
+state of the power control register. To fix this, configure the bus
+voltage explicitly.
+
+Fixes: e5502d15b0f3 ("mmc: sdhci-of-k1: add support for SpacemiT K1 SoC")
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index 5dccdd4b217d..be770e8a9884 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -496,6 +496,7 @@ static const struct sdhci_ops spacemit_sdhci_ops = {
+ 	.reset			= spacemit_sdhci_reset,
+ 	.set_bus_width		= sdhci_set_bus_width,
+ 	.set_clock		= spacemit_sdhci_set_clock,
++	.set_power		= sdhci_set_power_and_bus_voltage,
+ 	.set_uhs_signaling	= spacemit_sdhci_set_uhs_signaling,
+ 	.platform_execute_tuning = spacemit_sdhci_execute_tuning,
+ };
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:26 +0000
+Subject: [PATCH 5/7] mmc: sdhci-of-k1: Use finest delay granularity for RX
+ tuning
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+Initialize the RX delay line to 0 (finest step size) instead of 9.
+This improves tuning precision by allowing smaller delay increments
+when searching for the optimal sampling point.
+
+Fixes: e9cb83c10071 ("mmc: sdhci-of-k1: add comprehensive SDR tuning support")
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index be770e8a9884..257c954ce587 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -84,7 +84,7 @@
+ #define  SDHC_RX_DLINE_GAIN             BIT(8)
+ #define  SDHC_TX_DLINE_REG_MASK         GENMASK(23, 16)
+ 
+-#define SPACEMIT_RX_DLINE_REG		9
++#define SPACEMIT_RX_DLINE_REG		0
+ #define SPACEMIT_RX_TUNE_DELAY_MIN	0x0
+ #define SPACEMIT_RX_TUNE_DELAY_MAX	0xFF
+ 
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:27 +0000
+Subject: [PATCH 6/7] mmc: sdhci-of-k1: Improve RX tuning window
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+Raise the minimum delay codes of RX tuning window from 3 to 50, to more
+accurately retrieve a valid configuration.
+
+A window of 3 codes wide leaves no sampling margin, which will result
+tuning tests reporting success on a configuration that drifts out of the
+window under thermal or power variation.
+
+Fixes: e9cb83c10071 ("mmc: sdhci-of-k1: add comprehensive SDR tuning support")
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index 257c954ce587..a07e7db0853e 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -314,7 +314,7 @@ static int spacemit_sdhci_execute_tuning(struct sdhci_host *host, u32 opcode)
+ 		max_pass_start = current_start;
+ 	}
+ 
+-	if (max_pass_len < 3) {
++	if (max_pass_len < 50) {
+ 		dev_err(mmc_dev(host->mmc), "Tuning failed: no stable window found\n");
+ 		return -EIO;
+ 	}
+
+-- 
+2.55.0
+
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yixun Lan <dlan@kernel.org>
+Date: Wed, 02 Sep 2026 08:04:28 +0000
+Subject: [PATCH 7/7] mmc: sdhci-of-k1: Implement SD clock gating for
+ voltage switch
+
+From: Long Wan <long.wan@linux.spacemit.com>
+
+reset() permanently set OVRRD_CLK_OEN and FORCE_CLK_ON for SD/SDIO hosts
+and never cleared them, so the SD clock was forced on for the lifetime of
+the controller and hardware auto gating never took effect.
+
+These bits are only needed during the CMD11 1.8V voltage switch, where
+the clock has to keep running so DAT[3:0] can be sampled after the
+switch. Add a set_clk_gate() helper, force the clock on from set_clock()
+when CMD11 is in flight, and restore auto gating from card_busy() once
+the switch completes.
+
+card_busy() is registered for all card types since the CMD11 sequence is
+an SD/SDIO path and the DAT[0] level check is generic.
+
+Signed-off-by: Long Wan <long.wan@linux.spacemit.com>
+Signed-off-by: Yixun Lan <dlan@kernel.org>
+---
+ drivers/mmc/host/sdhci-of-k1.c | 49 ++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 45 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-k1.c b/drivers/mmc/host/sdhci-of-k1.c
+index a07e7db0853e..5260421d394c 100644
+--- a/drivers/mmc/host/sdhci-of-k1.c
++++ b/drivers/mmc/host/sdhci-of-k1.c
+@@ -12,6 +12,7 @@
+ #include <linux/mmc/card.h>
+ #include <linux/mmc/host.h>
+ #include <linux/mmc/mmc.h>
++#include <linux/mmc/sd.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+@@ -162,6 +163,16 @@ static void spacemit_sdhci_prepare_tuning(struct sdhci_host *host)
+ 		spacemit_sdhci_setbits(host, SDHC_HS200_USE_RFIFO, SPACEMIT_SDHC_PHY_FUNC_REG);
+ }
+ 
++static void spacemit_sdhci_set_clk_gate(struct sdhci_host *host, unsigned int auto_gate)
++{
++	if (auto_gate)
++		spacemit_sdhci_clrbits(host, SDHC_OVRRD_CLK_OEN | SDHC_FORCE_CLK_ON,
++				       SPACEMIT_SDHC_OP_EXT_REG);
++	else
++		spacemit_sdhci_setbits(host, SDHC_OVRRD_CLK_OEN | SDHC_FORCE_CLK_ON,
++				       SPACEMIT_SDHC_OP_EXT_REG);
++}
++
+ static void spacemit_sdhci_reset(struct sdhci_host *host, u8 mask)
+ {
+ 	sdhci_reset(host, mask);
+@@ -172,9 +183,6 @@ static void spacemit_sdhci_reset(struct sdhci_host *host, u8 mask)
+ 	if (host->mmc->caps2 & MMC_CAP2_NO_MMC) {
+ 		/* SD/SDIO: bypass PHY, use TX internal clock */
+ 		spacemit_sdhci_setbits(host, SDHC_TX_INT_CLK_SEL, SPACEMIT_SDHC_TX_CFG_REG);
+-
+-		spacemit_sdhci_setbits(host, SDHC_OVRRD_CLK_OEN | SDHC_FORCE_CLK_ON,
+-				       SPACEMIT_SDHC_OP_EXT_REG);
+ 	} else {
+ 		/* eMMC: use PHY function mode */
+ 		spacemit_sdhci_setbits(host, SDHC_PHY_FUNC_EN | SDHC_PHY_PLL_LOCK,
+@@ -209,6 +217,20 @@ static void spacemit_sdhci_set_clock(struct sdhci_host *host, unsigned int clock
+ 		spacemit_sdhci_clrbits(host, SDHC_TX_INT_CLK_SEL, SPACEMIT_SDHC_TX_CFG_REG);
+ 
+ 	sdhci_set_clock(host, clock);
++
++	if (host->mmc->caps2 & MMC_CAP2_NO_MMC) {
++		/*
++		 * During CMD11 voltage switch to 1.8V, temporarily force the
++		 * clock on to ensure DAT[3:0] can be sampled correctly after
++		 * the switch. Auto gating is restored in card_busy() once the
++		 * switch completes.
++		 */
++		if ((SDHCI_GET_CMD(sdhci_readw(host, SDHCI_COMMAND)) == SD_SWITCH_VOLTAGE) &&
++		    host->mmc->ios.signal_voltage == MMC_SIGNAL_VOLTAGE_180) {
++			if (clock)
++				spacemit_sdhci_set_clk_gate(host, 0);
++		}
++	}
+ };
+ 
+ static void spacemit_sdhci_phy_dll_init(struct sdhci_host *host)
+@@ -491,6 +513,23 @@ static inline void spacemit_sdhci_get_pins(struct device *dev,
+ 		sdhst->pinctrl_default, sdhst->pinctrl_uhs);
+ }
+ 
++static int spacemit_sdhci_card_busy(struct mmc_host *mmc)
++{
++	struct sdhci_host *host = mmc_priv(mmc);
++	u32 present_state;
++
++	present_state = sdhci_readl(host, SDHCI_PRESENT_STATE);
++
++	if (host->mmc->caps2 & MMC_CAP2_NO_MMC) {
++		if ((SDHCI_GET_CMD(sdhci_readw(host, SDHCI_COMMAND)) == SD_SWITCH_VOLTAGE) &&
++		    host->mmc->ios.signal_voltage == MMC_SIGNAL_VOLTAGE_180)
++			/* Recover auto clock after voltage switch */
++			spacemit_sdhci_set_clk_gate(host, 1);
++	}
++
++	return !(present_state & SDHCI_DATA_0_LVL_MASK);
++}
++
+ static const struct sdhci_ops spacemit_sdhci_ops = {
+ 	.get_max_clock		= spacemit_sdhci_clk_get_max_clock,
+ 	.reset			= spacemit_sdhci_reset,
+@@ -555,8 +594,10 @@ static int spacemit_sdhci_probe(struct platform_device *pdev)
+ 
+ 	sdhci_get_of_property(pdev);
+ 
++	mops = &host->mmc_host_ops;
++	mops->card_busy = spacemit_sdhci_card_busy;
++
+ 	if (!(host->mmc->caps2 & MMC_CAP2_NO_MMC)) {
+-		mops = &host->mmc_host_ops;
+ 		mops->hs400_prepare_ddr	= spacemit_sdhci_pre_select_hs400;
+ 		mops->hs400_complete	= spacemit_sdhci_post_select_hs400;
+ 		mops->hs400_downgrade	= spacemit_sdhci_pre_hs400_to_hs200;
+
+-- 
+2.55.0
+

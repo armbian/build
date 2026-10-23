@@ -172,7 +172,8 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
 # Go, Copilot!
 log.info(
 	f"OCI cache stats 1:  lookups={stats['lookups']} skipped={stats['skipped']} hits={stats['hits']}  misses={stats['misses']}  hits_positive={stats['hits_positive']}  hits_negative={stats['hits_negative']}  late_misses={stats['late_misses']}  miss_positive={stats['miss_positive']}  miss_negative={stats['miss_negative']}")
-log.info(
-	f"OCI cache stats 2:  hit_pct={stats['hits'] / stats['lookups'] * 100:.2f}%  miss_pct={stats['misses'] / stats['lookups'] * 100:.2f}%  late_miss_pct={stats['late_misses'] / stats['lookups'] * 100:.2f}%")
+if stats['lookups'] > 0:  # zero when every target was filtered out or failed
+	log.info(
+		f"OCI cache stats 2:  hit_pct={stats['hits'] / stats['lookups'] * 100:.2f}%  miss_pct={stats['misses'] / stats['lookups'] * 100:.2f}%  late_miss_pct={stats['late_misses'] / stats['lookups'] * 100:.2f}%")
 
 print(json.dumps(oci_infos, indent=4, sort_keys=True))

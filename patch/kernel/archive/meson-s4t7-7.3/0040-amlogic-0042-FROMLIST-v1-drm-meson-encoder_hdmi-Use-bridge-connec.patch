@@ -1,0 +1,159 @@
+From 23065c6cf77ee5d4f9db21b97f3b68900804dfbd Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 18 May 2026 07:47:00 +0000
+Subject: [PATCH 042/210] FROMLIST(v1): drm/meson: encoder_hdmi: Use bridge
+ connector CEC notifier
+
+The dw-hdmi bridge detect() func now updates EDID and CEC phys addr for
+the connector and any registered generic CEC notifier.
+
+Replace the open-coded CEC notifier handling with use of the bridge CEC
+notifier op.
+
+Acked-by: Hans Verkuil <hverkuil+cisco@kernel.org>
+Reviewed-by: Neil Armstrong <neil.armstrong@linaro.org>
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/gpu/drm/meson/Kconfig              |  1 +
+ drivers/gpu/drm/meson/meson_encoder_hdmi.c | 63 ++++------------------
+ 2 files changed, 11 insertions(+), 53 deletions(-)
+
+diff --git a/drivers/gpu/drm/meson/Kconfig b/drivers/gpu/drm/meson/Kconfig
+index 417f79829cf8..0dc5ca21e4fc 100644
+--- a/drivers/gpu/drm/meson/Kconfig
++++ b/drivers/gpu/drm/meson/Kconfig
+@@ -13,6 +13,7 @@ config DRM_MESON
+ 	select REGMAP_MMIO
+ 	select MESON_CANVAS
+ 	select CEC_CORE if CEC_NOTIFIER
++	select DRM_DISPLAY_HDMI_CEC_NOTIFIER_HELPER if CEC_NOTIFIER
+ 
+ config DRM_MESON_DW_HDMI
+ 	tristate "HDMI Synopsys Controller support for Amlogic Meson Display"
+diff --git a/drivers/gpu/drm/meson/meson_encoder_hdmi.c b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+index 7843ff7aeedf..0dcfee5f2c3f 100644
+--- a/drivers/gpu/drm/meson/meson_encoder_hdmi.c
++++ b/drivers/gpu/drm/meson/meson_encoder_hdmi.c
+@@ -16,8 +16,6 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/reset.h>
+ 
+-#include <media/cec-notifier.h>
+-
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_bridge_connector.h>
+@@ -41,7 +39,6 @@ struct meson_encoder_hdmi {
+ 	struct drm_connector *connector;
+ 	struct meson_drm *priv;
+ 	unsigned long output_bus_fmt;
+-	struct cec_notifier *cec_notifier;
+ };
+ 
+ #define bridge_to_meson_encoder_hdmi(x) \
+@@ -57,14 +54,6 @@ static int meson_encoder_hdmi_attach(struct drm_bridge *bridge,
+ 				 &encoder_hdmi->bridge, flags);
+ }
+ 
+-static void meson_encoder_hdmi_detach(struct drm_bridge *bridge)
+-{
+-	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
+-
+-	cec_notifier_conn_unregister(encoder_hdmi->cec_notifier);
+-	encoder_hdmi->cec_notifier = NULL;
+-}
+-
+ static void meson_encoder_hdmi_set_vclk(struct meson_encoder_hdmi *encoder_hdmi,
+ 					const struct drm_display_mode *mode)
+ {
+@@ -321,27 +310,9 @@ static int meson_encoder_hdmi_atomic_check(struct drm_bridge *bridge,
+ 	return 0;
+ }
+ 
+-static void meson_encoder_hdmi_hpd_notify(struct drm_bridge *bridge,
+-					  struct drm_connector *connector,
+-					  enum drm_connector_status status)
+-{
+-	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
+-
+-	if (!encoder_hdmi->cec_notifier)
+-		return;
+-
+-	if (status == connector_status_connected)
+-		cec_notifier_set_phys_addr(encoder_hdmi->cec_notifier,
+-					   connector->display_info.source_physical_address);
+-	else
+-		cec_notifier_phys_addr_invalidate(encoder_hdmi->cec_notifier);
+-}
+-
+ static const struct drm_bridge_funcs meson_encoder_hdmi_bridge_funcs = {
+ 	.attach = meson_encoder_hdmi_attach,
+-	.detach = meson_encoder_hdmi_detach,
+ 	.mode_valid = meson_encoder_hdmi_mode_valid,
+-	.hpd_notify = meson_encoder_hdmi_hpd_notify,
+ 	.atomic_enable = meson_encoder_hdmi_atomic_enable,
+ 	.atomic_disable = meson_encoder_hdmi_atomic_disable,
+ 	.atomic_get_input_bus_fmts = meson_encoder_hdmi_get_inp_bus_fmts,
+@@ -374,9 +345,9 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
+ 
+ 	meson_encoder_hdmi->bridge.next_bridge = of_drm_find_and_get_bridge(remote);
+ 	if (!meson_encoder_hdmi->bridge.next_bridge) {
+-		ret = dev_err_probe(priv->dev, -EPROBE_DEFER,
+-				    "Failed to find HDMI transceiver bridge\n");
+-		goto err_put_node;
++		of_node_put(remote);
++		return dev_err_probe(priv->dev, -EPROBE_DEFER,
++				     "Failed to find HDMI transceiver bridge\n");
+ 	}
+ 
+ 	/* HDMI Encoder Bridge */
+@@ -384,6 +355,13 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
+ 	meson_encoder_hdmi->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
+ 	meson_encoder_hdmi->bridge.interlace_allowed = true;
+ 
++	pdev = of_find_device_by_node(remote);
++	of_node_put(remote);
++	if (pdev) {
++		meson_encoder_hdmi->bridge.ops |= DRM_BRIDGE_OP_HDMI_CEC_NOTIFIER;
++		meson_encoder_hdmi->bridge.hdmi_cec_dev = &pdev->dev;
++	}
++
+ 	drm_bridge_add(&meson_encoder_hdmi->bridge);
+ 
+ 	meson_encoder_hdmi->priv = priv;
+@@ -437,32 +415,11 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
+ 	/* Handle this here until handled by drm_bridge_connector_init() */
+ 	meson_encoder_hdmi->connector->ycbcr_420_allowed = true;
+ 
+-	pdev = of_find_device_by_node(remote);
+-	of_node_put(remote);
+-	if (pdev) {
+-		struct cec_connector_info conn_info;
+-		struct cec_notifier *notifier;
+-
+-		cec_fill_conn_info_from_drm(&conn_info, meson_encoder_hdmi->connector);
+-
+-		notifier = cec_notifier_conn_register(&pdev->dev, NULL, &conn_info);
+-		if (!notifier) {
+-			put_device(&pdev->dev);
+-			return -ENOMEM;
+-		}
+-
+-		meson_encoder_hdmi->cec_notifier = notifier;
+-	}
+-
+ 	priv->encoders[MESON_ENC_HDMI] = meson_encoder_hdmi;
+ 
+ 	dev_dbg(priv->dev, "HDMI encoder initialized\n");
+ 
+ 	return 0;
+-
+-err_put_node:
+-	of_node_put(remote);
+-	return ret;
+ }
+ 
+ void meson_encoder_hdmi_remove(struct meson_drm *priv)
+-- 
+2.43.0
+

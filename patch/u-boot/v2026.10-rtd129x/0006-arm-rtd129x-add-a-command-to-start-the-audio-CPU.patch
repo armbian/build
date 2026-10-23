@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 12 Oct 2026 21:07:45 +0200
+Subject: [PATCH 06/13] arm: rtd129x: add a command to start the audio CPU
+
+Linux needs the audio firmware to run before it boots. Add "acpu",
+which starts the audio CPU on a loaded firmware the way the vendor
+U-Boot "go a" does.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/mach-rtd129x/Makefile |  1 +
+ arch/arm/mach-rtd129x/acpu.c   | 79 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 80 insertions(+)
+ create mode 100644 arch/arm/mach-rtd129x/acpu.c
+
+diff --git a/arch/arm/mach-rtd129x/Makefile b/arch/arm/mach-rtd129x/Makefile
+index 1f80edfe0c..0e0dfa992c 100644
+--- a/arch/arm/mach-rtd129x/Makefile
++++ b/arch/arm/mach-rtd129x/Makefile
+@@ -2,3 +2,4 @@
+ 
+ obj-y += soc.o
+ obj-y += smp.o
++obj-$(CONFIG_CMDLINE) += acpu.o
+diff --git a/arch/arm/mach-rtd129x/acpu.c b/arch/arm/mach-rtd129x/acpu.c
+new file mode 100644
+index 0000000000..ef223c9e17
+--- /dev/null
++++ b/arch/arm/mach-rtd129x/acpu.c
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Start the RTD1295/RTD1296 audio CPU (ACPU) on its firmware, as the
++ * Realtek BSP u-boot's "go a" does. The firmware owns the audio and video
++ * output hardware; Linux talks to it over RPC and needs it running.
++ *
++ * The firmware finds its settings in an IPC block at 0x1f000, in big
++ * endian. The block holds garbage at power-on.
++ */
++
++#include <command.h>
++#include <cpu_func.h>
++#include <string.h>
++#include <vsprintf.h>
++#include <asm/byteorder.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
++#include <linux/delay.h>
++
++#define IPC_BASE		0x1f000
++#define IPC_SIZE		0x1000
++#define IPC_MAGIC		0x000	/* 0x16803001 once set up */
++#define IPC_OFFSET		0x004	/* where the block is */
++#define IPC_UART		0x0c4	/* the UART the firmware prints to */
++#define IPC_VO_STD		0x0c8	/* where the video format is */
++#define IPC_FW_ENTRY		0x0e0
++#define IPC_UBOOT_MAGIC		0x130
++#define IPC_VO_RESOLUTION	0x800
++
++#define ISO_RESERVED_USE_3	0x9800701c	/* the ACPU boot address */
++#define CRT_CLOCK_ENABLE2	0x98000010
++#define  CLK_EN_ACPU		BIT(4)
++
++#define UART0_BASE		0x98007800
++#define ACPU_BOOT		0x00002000
++#define KSEG0			0x80000000	/* cached, on the ACPU */
++#define KSEG1			0xa0000000	/* uncached */
++
++static void ipc_write(unsigned int off, u32 val)
++{
++	writel(cpu_to_be32(val), (void *)(uintptr_t)(IPC_BASE + off));
++}
++
++static int do_acpu(struct cmd_tbl *cmdtp, int flag, int argc,
++		   char *const argv[])
++{
++	ulong fw;
++
++	if (argc != 2)
++		return CMD_RET_USAGE;
++	fw = hextoul(argv[1], NULL);
++
++	if (readl((void *)CRT_CLOCK_ENABLE2) & CLK_EN_ACPU) {
++		printf("ACPU already running\n");
++		return CMD_RET_FAILURE;
++	}
++
++	memset((void *)IPC_BASE, 0, IPC_SIZE);
++	ipc_write(IPC_UART, UART0_BASE | 0xc0000000);
++	ipc_write(IPC_VO_STD, IPC_BASE + IPC_VO_RESOLUTION);
++	ipc_write(IPC_FW_ENTRY, fw | KSEG0);
++	ipc_write(IPC_UBOOT_MAGIC, 0x73766e00);		/* "svn" */
++	ipc_write(IPC_OFFSET, IPC_BASE);
++	ipc_write(IPC_MAGIC, 0x16803001);
++
++	/* The ACPU reads DDR, not our cache */
++	flush_dcache_all();
++
++	writel(ACPU_BOOT | KSEG1, (void *)ISO_RESERVED_USE_3);
++	setbits_le32((void *)CRT_CLOCK_ENABLE2, CLK_EN_ACPU);
++	printf("ACPU started on firmware at 0x%lx\n", fw);
++
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(acpu, 2, 0, do_acpu,
++	   "start the audio CPU",
++	   "<firmware address> - start the audio CPU on the firmware loaded there"
++);

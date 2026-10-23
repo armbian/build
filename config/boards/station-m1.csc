@@ -2,7 +2,6 @@
 BOARD_NAME="Station M1"
 BOARD_VENDOR="firefly"
 BOARDFAMILY="rockchip64"
-BOOT_SOC="rk3328"
 BOARD_MAINTAINER="150balbes"
 INTRODUCED="2020"
 BOOTCONFIG="roc-cc-rk3328_defconfig"

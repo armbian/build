@@ -1,0 +1,453 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 12 Oct 2026 20:12:10 +0200
+Subject: [PATCH 04/13] mmc: rtd129x: add eMMC host for RTD1295/RTD1296
+
+Read the eMMC on the Banana Pi BPI-W2 at 52 MHz, 8 bits.
+
+The DesignWare IDMAC on this SoC needs a bus-bridge sync, a DMAC reset
+per transfer, and a wait for the last read data. Add optional dw_mmc
+hooks for this. End each descriptor chain on a descriptor the IDMAC
+does not own.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ arch/arm/dts/rtd1296-bananapi-w2.dts |  16 ++
+ board/bananapi/bpi-w2/MAINTAINERS    |   1 +
+ configs/bananapi-w2_defconfig        |   1 +
+ drivers/mmc/Kconfig                  |   8 +
+ drivers/mmc/Makefile                 |   1 +
+ drivers/mmc/dw_mmc.c                 |  28 +++-
+ drivers/mmc/rtd129x_dw_mmc.c         | 231 +++++++++++++++++++++++++++
+ include/dwmmc.h                      |   6 +
+ 8 files changed, 285 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/mmc/rtd129x_dw_mmc.c
+
+diff --git a/arch/arm/dts/rtd1296-bananapi-w2.dts b/arch/arm/dts/rtd1296-bananapi-w2.dts
+index b2caa80a72..0db317385b 100644
+--- a/arch/arm/dts/rtd1296-bananapi-w2.dts
++++ b/arch/arm/dts/rtd1296-bananapi-w2.dts
+@@ -14,6 +14,7 @@
+ 	aliases {
+ 		serial0 = &uart0;
+ 		mmc0 = &sdmmc;
++		mmc1 = &emmc;
+ 	};
+ 
+ 	chosen {
+@@ -53,6 +54,12 @@
+ 			bootph-all;
+ 		};
+ 
++		/* the bus bridge */
++		sb2: syscon@9801a000 {
++			compatible = "syscon";
++			reg = <0x9801a000 0x1000>;
++		};
++
+ 		sdmmc: mmc@98010400 {
+ 			compatible = "realtek,rtd1295-sdmmc";
+ 			/* the card reader core, then its pads */
+@@ -61,6 +68,15 @@
+ 			bus-width = <4>;
+ 		};
+ 
++		emmc: mmc@98012000 {
++			compatible = "realtek,rtd1295-emmc";
++			reg = <0x98012000 0x600>;
++			realtek,crt = <&crt>;
++			realtek,sb2 = <&sb2>;
++			bus-width = <8>;
++			non-removable;
++		};
++
+ 		uart0: serial@98007800 {
+ 			compatible = "snps,dw-apb-uart";
+ 			reg = <0x98007800 0x400>;
+diff --git a/board/bananapi/bpi-w2/MAINTAINERS b/board/bananapi/bpi-w2/MAINTAINERS
+index 12517b3759..2f6cb2a7ab 100644
+--- a/board/bananapi/bpi-w2/MAINTAINERS
++++ b/board/bananapi/bpi-w2/MAINTAINERS
+@@ -5,4 +5,5 @@ F:	arch/arm/dts/rtd1296-bananapi-w2.dts
+ F:	arch/arm/mach-rtd129x/
+ F:	board/bananapi/bpi-w2/
+ F:	configs/bananapi-w2_defconfig
++F:	drivers/mmc/rtd129x_*
+ F:	include/configs/rtd129x.h
+diff --git a/configs/bananapi-w2_defconfig b/configs/bananapi-w2_defconfig
+index a552280dd6..1dc85f83e2 100644
+--- a/configs/bananapi-w2_defconfig
++++ b/configs/bananapi-w2_defconfig
+@@ -21,3 +21,4 @@ CONFIG_DEBUG_UART_SHIFT=2
+ CONFIG_DEBUG_UART_ANNOUNCE=y
+ CONFIG_DEBUG_UART_SKIP_INIT=y
+ CONFIG_SYS_NS16550=y
++CONFIG_MMC_RTD129X_DW=y
+diff --git a/drivers/mmc/Kconfig b/drivers/mmc/Kconfig
+index 65cc1c9015..d2e508c059 100644
+--- a/drivers/mmc/Kconfig
++++ b/drivers/mmc/Kconfig
+@@ -470,6 +470,14 @@ config MMC_SANDBOX
+ 	  improves build coverage for sandbox and makes it easier to detect
+ 	  MMC build errors with sandbox.
+ 
++config MMC_RTD129X_DW
++	bool "Realtek RTD129x eMMC host"
++	depends on DM_MMC && ARCH_RTD129X
++	select MMC_DW
++	help
++	  Support for the eMMC host on the Realtek RTD1295/RTD1296, a
++	  DesignWare MSHC with a Realtek wrapper, used in FIFO mode.
++
+ config MMC_RTD129X
+ 	bool "Realtek RTD129x SD host"
+ 	depends on DM_MMC && ARCH_RTD129X
+diff --git a/drivers/mmc/Makefile b/drivers/mmc/Makefile
+index 28194cf39a..70f03e4e9a 100644
+--- a/drivers/mmc/Makefile
++++ b/drivers/mmc/Makefile
+@@ -54,6 +54,7 @@ obj-$(CONFIG_NEXELL_DWMMC) += nexell_dw_mmc.o
+ 
+ # SDHCI
+ obj-$(CONFIG_MMC_RTD129X)		+= rtd129x_sdmmc.o
++obj-$(CONFIG_MMC_RTD129X_DW)		+= rtd129x_dw_mmc.o
+ obj-$(CONFIG_MMC_SDHCI)			+= sdhci.o
+ obj-$(CONFIG_MMC_SDHCI_ASPEED)		+= aspeed_sdhci.o
+ obj-$(CONFIG_MMC_SDHCI_ATMEL)		+= atmel_sdhci.o
+diff --git a/drivers/mmc/dw_mmc.c b/drivers/mmc/dw_mmc.c
+index c2424d7875..553fa0ccad 100644
+--- a/drivers/mmc/dw_mmc.c
++++ b/drivers/mmc/dw_mmc.c
+@@ -144,10 +144,17 @@ static void dwmci_prepare_desc(struct dwmci_host *host, struct mmc_data *data,
+ 		blk_cnt -= 8;
+ 	}
+ 
+-	if (host->dma_64bit_address)
+-		data_end = (ulong)desc64;
+-	else
+-		data_end = (ulong)desc32;
++	/* End the chain on a descriptor the IDMAC does not own */
++	if (host->dma_64bit_address) {
++		dwmci_set_idma_desc64(desc64, 0, 0, 0);
++		desc64->des6 = virt_to_phys(desc64) & 0xffffffff;
++		desc64->des7 = (u64)virt_to_phys(desc64) >> 32;
++		data_end = (ulong)(desc64 + 1);
++	} else {
++		dwmci_set_idma_desc32(desc32, 0, 0, 0);
++		desc32->des3 = virt_to_phys(desc32);
++		data_end = (ulong)(desc32 + 1);
++	}
+ 	flush_dcache_range(data_start, roundup(data_end, ARCH_DMA_MINALIGN));
+ }
+ 
+@@ -168,6 +175,8 @@ static void dwmci_prepare_data(struct dwmci_host *host, struct mmc_data *data,
+ 		dwmci_writel(host, host->regs->dbaddru, idmacu);
+ 
+ 	dwmci_prepare_desc(host, data, cur_idmac, bounce_buffer);
++	if (host->idmac_start)
++		host->idmac_start(host, cur_idmac);
+ 
+ 	ctrl = dwmci_readl(host, DWMCI_CTRL);
+ 	ctrl |= DWMCI_IDMAC_EN | DWMCI_DMA_EN;
+@@ -305,9 +314,11 @@ static int dwmci_data_transfer(struct dwmci_host *host, struct mmc_data *data)
+ 	return ret;
+ }
+ 
+-static int dwmci_dma_transfer(struct dwmci_host *host, uint flags,
++static int dwmci_dma_transfer(struct dwmci_host *host,
++			      struct mmc_data *data,
+ 			      struct bounce_buffer *bbstate)
+ {
++	uint flags = data->flags;
+ 	int ret;
+ 	u32 mask, ctrl;
+ 
+@@ -320,6 +331,8 @@ static int dwmci_dma_transfer(struct dwmci_host *host, uint flags,
+ 				1000, false);
+ 	if (ret)
+ 		debug("%s: DWMCI_IDINTEN mask 0x%x timeout\n", __func__, mask);
++	if (!ret && host->idmac_wait)
++		ret = host->idmac_wait(host, data);
+ 
+ 	/* Clear interrupts */
+ 	dwmci_writel(host, host->regs->idsts, DWMCI_IDINTEN_MASK);
+@@ -481,7 +494,7 @@ static int dwmci_send_cmd_common(struct dwmci_host *host, struct mmc_cmd *cmd,
+ 	if (data) {
+ 		ret = dwmci_data_transfer(host, data);
+ 		if (!host->fifo_mode)
+-			ret = dwmci_dma_transfer(host, data->flags, &bbstate);
++			ret = dwmci_dma_transfer(host, data, &bbstate);
+ 	}
+ 
+ 	udelay(100);
+@@ -500,7 +513,8 @@ static int dwmci_send_cmd(struct mmc *mmc, struct mmc_cmd *cmd,
+ {
+ #endif
+ 	struct dwmci_host *host = mmc->priv;
+-	const size_t buf_size = data ? DIV_ROUND_UP(data->blocks, 8) : 0;
++	/* and one to end the chain */
++	const size_t buf_size = data ? DIV_ROUND_UP(data->blocks, 8) + 1 : 0;
+ 
+ 	if (host->dma_64bit_address) {
+ 		ALLOC_CACHE_ALIGN_BUFFER(struct dwmci_idmac64, idmac, buf_size);
+diff --git a/drivers/mmc/rtd129x_dw_mmc.c b/drivers/mmc/rtd129x_dw_mmc.c
+new file mode 100644
+index 0000000000..b3cf3bd56a
+--- /dev/null
++++ b/drivers/mmc/rtd129x_dw_mmc.c
+@@ -0,0 +1,231 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Realtek RTD1295/RTD1296 eMMC host
++ *
++ * A Synopsys DesignWare MSHC with a Realtek wrapper at +0x400. The CPU
++ * cannot empty the FIFO fast enough, so the data goes by the internal DMAC.
++ * Around the DMAC this SoC needs:
++ *  - a sync of the bus bridge (SB2), else the DMAC reads stale descriptors;
++ *  - a DMAC reset before each transfer: it stays parked on the descriptor
++ *    that ended the previous chain, and DBADDR does not move it;
++ *  - on a read, a wait until the DMAC has moved every byte to DDR.
++ *
++ * The boot loader has set up the pins, pad drive and the 1.8 V I/O.
++ *
++ * Based on the Linux driver emmc-rtd129x.c by JalenLin
++ * (https://github.com/JalenLin/BPI-W2-linux), which follows the BSP's
++ * rtkemmc.c.
++ */
++
++#include <dm.h>
++#include <dwmmc.h>
++#include <mmc.h>
++#include <asm/io.h>
++#include <linux/iopoll.h>
++#include <dm/ofnode.h>
++#include <linux/bitops.h>
++#include <linux/delay.h>
++
++/* DesignWare core, beyond dwmmc.h */
++#define EM_DDR_REG		0x10c
++
++/* SB2: writing SYNC drains the CPU's posted writes to DDR */
++#define SB2_SYNC		0x020
++
++/* Realtek wrapper */
++#define EM_CP			0x41c
++#define EM_ISR			0x424
++#define  ISR_WRITE_DATA		BIT(0)	/* 1: set the bits given, 0: clear */
++#define  ISR_DMA_DONE		BIT(1)
++#define  ISR_DMA_INT_MASK	BIT(2)
++#define  ISR_DESC_INT_MASK	BIT(3)
++#define  ISR_IP_INT_MASK	BIT(4)
++#define EM_DUMMY_SYS		0x42c
++#define EM_DQS_CTRL1		0x498
++#define EM_SWC_SEL		0x4d4
++
++/* UHS_REG: 1.8 V signalling */
++#define UHS_18V			BIT(0)
++
++/* CRT: the EMMC PLL */
++#define CRT_PLL_EMMC1		0x1f0
++#define  PLL_RSTB		BIT(1)
++#define CRT_PLL_EMMC3		0x1f8	/* bits 31:16 frequency code */
++#define CRT_PLL_EMMC4		0x1fc	/* bit 0 output enable */
++#define EM_PLL_100MHZ		0x57
++#define EM_PLL_HZ		100000000
++
++/*
++ * The power-on FIFOTH gives the FIFO depth, but the boot loader has
++ * rewritten it. 128 words gives watermarks valid for a 128 or 256 FIFO.
++ */
++#define EM_FIFO_DEPTH		128
++
++struct rtd129x_dwmmc_plat {
++	struct mmc_config cfg;
++	struct mmc mmc;
++};
++
++struct rtd129x_dwmmc_priv {
++	struct dwmci_host host;
++	void __iomem *crt;
++	void __iomem *sb2;
++};
++
++/*
++ * The PLL to 100 MHz with the phases at 0, as the BSP does before it starts
++ * on the card; the boot loader leaves it at 200 MHz with HS200 phases. The
++ * core divides 100 MHz for the modes used here.
++ */
++static void rtd129x_dwmmc_pll_set(struct rtd129x_dwmmc_priv *priv)
++{
++	void __iomem *base = priv->host.ioaddr;
++	u32 val;
++
++	writel(0, base + EM_DDR_REG);
++	writel(0, base + EM_DQS_CTRL1);
++
++	writel(PLL_RSTB | BIT(0), priv->crt + CRT_PLL_EMMC1);
++	val = readl(priv->crt + CRT_PLL_EMMC4);
++	writel(val & 0x6, priv->crt + CRT_PLL_EMMC4);
++	val = readl(priv->crt + CRT_PLL_EMMC3);
++	writel((val & 0xffff) | EM_PLL_100MHZ << 16, priv->crt + CRT_PLL_EMMC3);
++	val = readl(priv->crt + CRT_PLL_EMMC4);
++	writel(val | 1, priv->crt + CRT_PLL_EMMC4);
++	/* the A01 ECO: toggled whenever the frequency code changes */
++	writel(readl(base + EM_DUMMY_SYS) ^ BIT(30), base + EM_DUMMY_SYS);
++	udelay(400);
++}
++
++static void rtd129x_dwmmc_wrapper_init(struct dwmci_host *host)
++{
++	void __iomem *base = host->ioaddr;
++
++	/* the wrapper: no DMA interrupts, the core's is unused (polled) */
++	writel(ISR_WRITE_DATA | ISR_DMA_INT_MASK | ISR_DESC_INT_MASK,
++	       base + EM_ISR);
++	writel(ISR_DMA_DONE, base + EM_ISR);
++	writel(ISR_IP_INT_MASK, base + EM_ISR);
++	writel(0, base + EM_SWC_SEL);
++	writel(0, base + EM_CP);
++
++	dwmci_writel(host, DWMCI_UHS_REG, UHS_18V);
++}
++
++static void rtd129x_dwmmc_idmac_start(struct dwmci_host *host, void *desc)
++{
++	struct rtd129x_dwmmc_priv *priv = host->priv;
++	u32 val;
++
++	writel(0, priv->sb2 + SB2_SYNC);
++	dmb();
++
++	dwmci_writel(host, DWMCI_CTRL,
++		     dwmci_readl(host, DWMCI_CTRL) | DWMCI_CTRL_DMA_RESET);
++	readl_poll_timeout(host->ioaddr + DWMCI_CTRL, val,
++			   !(val & DWMCI_CTRL_DMA_RESET), 1000);
++	dwmci_writel(host, DWMCI_BMOD, DWMCI_BMOD_IDMAC_RESET);
++	readl_poll_timeout(host->ioaddr + DWMCI_BMOD, val,
++			   !(val & DWMCI_BMOD_IDMAC_RESET), 1000);
++	dwmci_writel(host, DWMCI_DBADDR, virt_to_phys(desc));
++
++	writel(ISR_DMA_DONE, host->ioaddr + EM_ISR);
++	writel(0, host->ioaddr + EM_SWC_SEL);
++	writel(0, host->ioaddr + EM_CP);
++}
++
++/*
++ * Data-transfer-over and the IDMAC's receive interrupt come before the
++ * DMAC has put the last of a read into DDR. Wait for the byte count and
++ * the wrapper's DMA_DONE too.
++ */
++static int rtd129x_dwmmc_idmac_wait(struct dwmci_host *host,
++				    struct mmc_data *data)
++{
++	u32 total = data->blocksize * data->blocks, isr;
++	int ret;
++
++	if (data->flags & MMC_DATA_WRITE)
++		return 0;
++
++	ret = readl_poll_timeout(host->ioaddr + EM_ISR, isr,
++				 (isr & ISR_DMA_DONE) &&
++				 dwmci_readl(host, DWMCI_TBBCNT) == total,
++				 100000);
++	writel(ISR_DMA_DONE, host->ioaddr + EM_ISR);
++	if (ret)
++		printf("%s: read DMA not done: %u of %u bytes, ISR %08x\n",
++		       host->name, dwmci_readl(host, DWMCI_TBBCNT), total, isr);
++
++	return ret;
++}
++
++static int rtd129x_dwmmc_probe(struct udevice *dev)
++{
++	struct rtd129x_dwmmc_plat *plat = dev_get_plat(dev);
++	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
++	struct rtd129x_dwmmc_priv *priv = dev_get_priv(dev);
++	struct dwmci_host *host = &priv->host;
++	ofnode node;
++
++	host->ioaddr = dev_read_addr_ptr(dev);
++	if (!host->ioaddr)
++		return -EINVAL;
++
++	node = ofnode_parse_phandle(dev_ofnode(dev), "realtek,crt", 0);
++	if (!ofnode_valid(node))
++		return -EINVAL;
++	priv->crt = (void __iomem *)ofnode_get_addr(node);
++
++	node = ofnode_parse_phandle(dev_ofnode(dev), "realtek,sb2", 0);
++	if (!ofnode_valid(node))
++		return -EINVAL;
++	priv->sb2 = (void __iomem *)ofnode_get_addr(node);
++
++	rtd129x_dwmmc_pll_set(priv);
++	rtd129x_dwmmc_wrapper_init(host);
++
++	host->name = dev->name;
++	host->buswidth = dev_read_u32_default(dev, "bus-width", 8);
++	host->bus_hz = EM_PLL_HZ;
++	host->dev_index = 0;
++	host->priv = priv;
++	host->fifo_depth = EM_FIFO_DEPTH;
++	host->idmac_start = rtd129x_dwmmc_idmac_start;
++	host->idmac_wait = rtd129x_dwmmc_idmac_wait;
++
++	dwmci_setup_cfg(&plat->cfg, host, 52000000, 400000);
++	/* Hosts capable of 8-bit can also do 4 bits */
++	if (host->buswidth == 8)
++		plat->cfg.host_caps |= MMC_MODE_4BIT;
++
++	host->mmc = &plat->mmc;
++	host->mmc->priv = host;
++	host->mmc->dev = dev;
++	upriv->mmc = host->mmc;
++
++	return dwmci_probe(dev);
++}
++
++static int rtd129x_dwmmc_bind(struct udevice *dev)
++{
++	struct rtd129x_dwmmc_plat *plat = dev_get_plat(dev);
++
++	return dwmci_bind(dev, &plat->mmc, &plat->cfg);
++}
++
++static const struct udevice_id rtd129x_dwmmc_ids[] = {
++	{ .compatible = "realtek,rtd1295-emmc" },
++	{ }
++};
++
++U_BOOT_DRIVER(rtd129x_dwmmc) = {
++	.name		= "rtd129x_dwmmc",
++	.id		= UCLASS_MMC,
++	.of_match	= rtd129x_dwmmc_ids,
++	.bind		= rtd129x_dwmmc_bind,
++	.probe		= rtd129x_dwmmc_probe,
++	.ops		= &dm_dwmci_ops,
++	.priv_auto	= sizeof(struct rtd129x_dwmmc_priv),
++	.plat_auto	= sizeof(struct rtd129x_dwmmc_plat),
++};
+diff --git a/include/dwmmc.h b/include/dwmmc.h
+index 7e1a664651..0bcb09720d 100644
+--- a/include/dwmmc.h
++++ b/include/dwmmc.h
+@@ -191,6 +191,10 @@ struct dwmci_idmac_regs {
+  * @board_init:	(Optional) Platform function to run on init
+  * @cfg:	Internal MMC configuration, for !CONFIG_BLK cases
+  * @fifo_mode:	Use FIFO mode (not DMA) to read and write data
++ * @idmac_start: (Optional) Platform function to run once the descriptors
++ *		are written, before the IDMAC starts
++ * @idmac_wait:	(Optional) Platform function to wait until the IDMAC has
++ *		finished with the data
+  * @dma_64bit_address: Whether DMA supports 64-bit address mode or not
+  * @volt_switching: Whether SD voltage switching is in process or not
+  * @regs:	Registers that can vary for different DW MMC block versions
+@@ -225,6 +229,8 @@ struct dwmci_host {
+ 	 * return that value too. Then DWMMC will put itself in bypass mode.
+ 	 */
+ 	unsigned int (*get_mmc_clk)(struct dwmci_host *host, uint freq);
++	void (*idmac_start)(struct dwmci_host *host, void *desc);
++	int (*idmac_wait)(struct dwmci_host *host, struct mmc_data *data);
+ 
+ #ifndef CONFIG_BLK
+ 	struct mmc_config cfg;

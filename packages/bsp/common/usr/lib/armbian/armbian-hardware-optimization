@@ -388,17 +388,15 @@ add_usb_storage_quirks() {
 	# check for /boot/armbianEnv.txt existence
 	[ -f /boot/armbianEnv.txt ] || return
 
-	# cleanup. add LF. This prevents adding parameters to the same line
-	echo "" >> /boot/armbianEnv.txt
-	sed -i '/^$/d;$G' /boot/armbianEnv.txt
-	sed -i '/^$/d;$G' /boot/armbianEnv.txt
-
-	# cleanup. remove empty lines in the middle
-	sed -i '/^$/d' /boot/armbianEnv.txt
+	# Build the new file next to the old one and replace it only if it changed.
+	# Rewriting it on every boot (sed -i writes a new file each time) let a
+	# power loss mid-write leave a torn copy that U-Boot -- which reads ext4
+	# without replaying the journal -- then booted with, losing rootdev.
+	NEWENV=$(mktemp /boot/.armbianEnv.txt.XXXXXX) || return
+	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
+	trap "sleep 1 ; rm -f \"${TMPFILE}\" \"${NEWENV}\" ; exit 0" 0 1 2 3 15
 
 	# preserve old contents if existent
-	TMPFILE=$(mktemp /tmp/${0##*/}.XXXXXX)
-	trap "sleep 1 ; rm \"${TMPFILE}\" ; exit 0" 0 1 2 3 15
 	awk -F"=" '/^usbstoragequirks/ {print $2}' < /boot/armbianEnv.txt | tr -d -c '[:graph:]' > ${TMPFILE}
 
 	# UAS blacklist Norelsys NS1068X and NS1066X since broken. Can be removed once
@@ -415,9 +413,20 @@ add_usb_storage_quirks() {
 	done
 
 	read USBQUIRKS < ${TMPFILE}
-	sed -i '/^usbstoragequirks/d' /boot/armbianEnv.txt
-	echo "usbstoragequirks=${USBQUIRKS}" >> /boot/armbianEnv.txt
-	sync &
+
+	# same result as before: no empty lines, the quirks line last. If a write
+	# fails (e.g. /boot is full), keep the current file.
+	sed -e '/^[[:space:]]*$/d' -e '/^usbstoragequirks/d' /boot/armbianEnv.txt > "${NEWENV}" || return
+	echo "usbstoragequirks=${USBQUIRKS}" >> "${NEWENV}" || return
+	if ! cmp -s "${NEWENV}" /boot/armbianEnv.txt; then
+		# replace only once the new file is complete on disk; then sync the
+		# filesystem, which also persists the rename itself
+		chmod --reference=/boot/armbianEnv.txt "${NEWENV}" &&
+			sync "${NEWENV}" &&
+			mv -f "${NEWENV}" /boot/armbianEnv.txt &&
+			sync -f /boot/armbianEnv.txt
+	fi
+
 	if [ -f /sys/module/usb_storage/parameters/quirks ]; then
 		echo ${USBQUIRKS} > /sys/module/usb_storage/parameters/quirks
 	fi

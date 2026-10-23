@@ -1,0 +1,100 @@
+Subject: [PATCH] clk: qcom: Preserve MDSS hardware control on Lenovo Y700 Gen4
+
+On Lenovo Y700 Gen4, the normal MDSS runtime power-off sequence results
+in DSI panel initialization and DPU frame completion timeouts after
+display off/on. Keeping MDSS under hardware control avoids these timeouts.
+
+Keep MDSS under hardware control when disabling the domain, instead of
+switching to software control and forcing collapse. Supply and interconnect
+votes are still released and restored. Leave the enable path unchanged,
+including its collapse-bit update and status polling; display off/on tests
+on this board do not require a separate enable-path workaround.
+
+Limit the opt-in to Lenovo Elden's MDSS domain: other boards and GDSCs
+retain the existing software-collapse behavior.
+
+This addresses the power-domain side of resume. The separate bonded DPU
+timing-enable workaround is also required to restore visible output on
+the tested Lenovo Y700 Gen4; absence of timeouts alone is not sufficient.
+
+diff --git a/drivers/clk/qcom/gdsc.h b/drivers/clk/qcom/gdsc.h
+--- a/drivers/clk/qcom/gdsc.h
++++ b/drivers/clk/qcom/gdsc.h
+@@ -69,6 +69,7 @@
+ #define RETAIN_FF_ENABLE	BIT(7)
+ #define NO_RET_PERIPH	BIT(8)
+ #define HW_CTRL_TRIGGER	BIT(9)
++#define HW_CTRL_SKIP_DIS	BIT(10)
+ 	struct reset_controller_dev	*rcdev;
+ 	unsigned int			*resets;
+ 	unsigned int			reset_count;
+diff --git a/drivers/clk/qcom/gdsc.c b/drivers/clk/qcom/gdsc.c
+--- a/drivers/clk/qcom/gdsc.c
++++ b/drivers/clk/qcom/gdsc.c
+@@ -350,6 +350,17 @@
+ 
+ 	/* Turn off HW trigger mode if supported */
+ 	if (sc->flags & HW_CTRL) {
++		if (sc->flags & HW_CTRL_SKIP_DIS) {
++			/*
++			 * Keep hardware ownership without forcing SW collapse,
++			 * but balance the supply and bandwidth votes from enable.
++			 */
++			ret = icc_set_bw(sc->icc_path, 0, 0);
++			if (ret)
++				return ret;
++			return sc->rsupply ? regulator_disable(sc->rsupply) : 0;
++		}
++
+ 		ret = gdsc_hwctrl(sc, false);
+ 		if (ret < 0)
+ 			return ret;
+diff --git a/drivers/clk/qcom/dispcc-sm8750.c b/drivers/clk/qcom/dispcc-sm8750.c
+--- a/drivers/clk/qcom/dispcc-sm8750.c
++++ b/drivers/clk/qcom/dispcc-sm8750.c
+@@ -9,6 +9,7 @@
+ #include <linux/err.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ #include <linux/pm_runtime.h>
+@@ -1761,6 +1762,19 @@
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | HW_CTRL | RETAIN_FF_ENABLE,
++};
++
++/* Keep the board quirk separate from the default domain's constant flags. */
++static struct gdsc mdss_gdsc_elden = {
++	.gdscr = 0x9000,
++	.en_rest_wait_val = 0x2,
++	.en_few_wait_val = 0x2,
++	.clk_dis_wait_val = 0xf,
++	.pd = {
++		.name = "mdss_gdsc",
++	},
++	.pwrsts = PWRSTS_OFF_ON,
++	.flags = POLL_CFG_GDSCR | HW_CTRL | RETAIN_FF_ENABLE | HW_CTRL_SKIP_DIS,
+ };
+ 
+ static struct gdsc mdss_int2_gdsc = {
+@@ -1906,6 +1920,15 @@
+ 	struct regmap *regmap;
+ 	int ret;
+ 
++	/*
++	 * Lenovo Y700 Gen4 times out during panel initialization after the
++	 * normal MDSS power-off sequence. Keep hardware control on this
++	 * board without changing MDSS behavior for other SM8750 devices.
++	 */
++	if (of_machine_is_compatible("lenovo,elden")) {
++		disp_cc_sm8750_gdscs[MDSS_GDSC] = &mdss_gdsc_elden;
++	}
++
+ 	ret = devm_pm_runtime_enable(&pdev->dev);
+ 	if (ret)
+ 		return ret;
+-- 
+2.51.0

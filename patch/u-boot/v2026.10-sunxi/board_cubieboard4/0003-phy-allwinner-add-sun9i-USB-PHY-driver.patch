@@ -1,0 +1,228 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 19 Oct 2026 14:35:01 +0200
+Subject: [PATCH] phy: allwinner: add sun9i USB PHY driver
+
+Port the Linux A80 USB PHY driver, so that EHCI and OHCI work on A80.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+Assisted-by: Claude Opus 5.5
+---
+ drivers/phy/allwinner/Kconfig         |   8 ++
+ drivers/phy/allwinner/Makefile        |   1 +
+ drivers/phy/allwinner/phy-sun9i-usb.c | 174 ++++++++++++++++++++++++++
+ 3 files changed, 183 insertions(+)
+ create mode 100644 drivers/phy/allwinner/phy-sun9i-usb.c
+
+diff --git a/drivers/phy/allwinner/Kconfig b/drivers/phy/allwinner/Kconfig
+index bb0bd8d5f8..3a8196e4cd 100644
+--- a/drivers/phy/allwinner/Kconfig
++++ b/drivers/phy/allwinner/Kconfig
+@@ -26,6 +26,14 @@ config INITIAL_USB_SCAN_DELAY
+ 	  this option to a nonzero value to add an extra delay before
+ 	  the first USB bus scan.
+ 
++config PHY_SUN9I_USB
++	bool "Allwinner sun9i USB PHY driver"
++	depends on MACH_SUN9I
++	default y
++	select PHY
++	help
++	  Enable this to support the USB host PHYs of the Allwinner A80.
++
+ config PHY_SUN50I_USB3
+ 	bool "Allwinner sun50i USB3 PHY driver"
+ 	depends on ARCH_SUNXI
+diff --git a/drivers/phy/allwinner/Makefile b/drivers/phy/allwinner/Makefile
+index f2b60ce1a6..2b9cc7afc3 100644
+--- a/drivers/phy/allwinner/Makefile
++++ b/drivers/phy/allwinner/Makefile
+@@ -4,4 +4,5 @@
+ #
+ 
+ obj-$(CONFIG_PHY_SUN4I_USB)		+= phy-sun4i-usb.o
++obj-$(CONFIG_PHY_SUN9I_USB)		+= phy-sun9i-usb.o
+ obj-$(CONFIG_PHY_SUN50I_USB3)		+= phy-sun50i-usb3.o
+diff --git a/drivers/phy/allwinner/phy-sun9i-usb.c b/drivers/phy/allwinner/phy-sun9i-usb.c
+new file mode 100644
+index 0000000000..849cd028b1
+--- /dev/null
++++ b/drivers/phy/allwinner/phy-sun9i-usb.c
+@@ -0,0 +1,174 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Allwinner sun9i USB PHY driver
++ *
++ * Based on the Linux phy-sun9i-usb.c driver:
++ * Copyright (C) 2014-2015 Chen-Yu Tsai <wens@csie.org>
++ */
++
++#include <clk.h>
++#include <dm.h>
++#include <generic-phy.h>
++#include <reset.h>
++#include <asm/io.h>
++#include <dm/device_compat.h>
++#include <linux/bitops.h>
++#include <power/regulator.h>
++
++#define SUNXI_AHB_INCR16_BURST_EN	BIT(11)
++#define SUNXI_AHB_INCR8_BURST_EN	BIT(10)
++#define SUNXI_AHB_INCR4_BURST_EN	BIT(9)
++#define SUNXI_AHB_INCRX_ALIGN_EN	BIT(8)
++#define SUNXI_ULPI_BYPASS_EN		BIT(0)
++
++/* usb1 HSIC specific bits */
++#define SUNXI_EHCI_HS_FORCE		BIT(20)
++#define SUNXI_HSIC_CONNECT_DET		BIT(17)
++#define SUNXI_HSIC_CONNECT_INT		BIT(16)
++#define SUNXI_HSIC			BIT(1)
++
++struct sun9i_usb_phy {
++	void __iomem *pmu;
++	struct clk clk;
++	struct clk hsic_clk;
++	struct reset_ctl reset;
++	struct udevice *vbus;
++	bool hsic;
++};
++
++static void sun9i_usb_phy_passby(struct sun9i_usb_phy *phy, bool enable)
++{
++	u32 bits;
++
++	bits = SUNXI_AHB_INCR16_BURST_EN | SUNXI_AHB_INCR8_BURST_EN |
++		SUNXI_AHB_INCR4_BURST_EN | SUNXI_AHB_INCRX_ALIGN_EN |
++		SUNXI_ULPI_BYPASS_EN;
++
++	if (phy->hsic)
++		bits |= SUNXI_HSIC | SUNXI_EHCI_HS_FORCE |
++			SUNXI_HSIC_CONNECT_DET | SUNXI_HSIC_CONNECT_INT;
++
++	if (enable)
++		setbits_le32(phy->pmu, bits);
++	else
++		clrbits_le32(phy->pmu, bits);
++}
++
++static int sun9i_usb_phy_init(struct phy *_phy)
++{
++	struct sun9i_usb_phy *phy = dev_get_priv(_phy->dev);
++	int ret;
++
++	ret = clk_enable(&phy->clk);
++	if (ret)
++		return ret;
++
++	if (phy->hsic) {
++		ret = clk_enable(&phy->hsic_clk);
++		if (ret)
++			return ret;
++	}
++
++	ret = reset_deassert(&phy->reset);
++	if (ret)
++		return ret;
++
++	sun9i_usb_phy_passby(phy, true);
++
++	return 0;
++}
++
++static int sun9i_usb_phy_exit(struct phy *_phy)
++{
++	struct sun9i_usb_phy *phy = dev_get_priv(_phy->dev);
++
++	sun9i_usb_phy_passby(phy, false);
++	reset_assert(&phy->reset);
++	if (phy->hsic)
++		clk_disable(&phy->hsic_clk);
++	clk_disable(&phy->clk);
++
++	return 0;
++}
++
++static int sun9i_usb_phy_power_on(struct phy *_phy)
++{
++	struct sun9i_usb_phy *phy = dev_get_priv(_phy->dev);
++
++	if (!phy->vbus)
++		return 0;
++
++	return regulator_set_enable_if_allowed(phy->vbus, true);
++}
++
++static int sun9i_usb_phy_power_off(struct phy *_phy)
++{
++	struct sun9i_usb_phy *phy = dev_get_priv(_phy->dev);
++
++	if (!phy->vbus)
++		return 0;
++
++	return regulator_set_enable_if_allowed(phy->vbus, false);
++}
++
++static const struct phy_ops sun9i_usb_phy_ops = {
++	.init		= sun9i_usb_phy_init,
++	.exit		= sun9i_usb_phy_exit,
++	.power_on	= sun9i_usb_phy_power_on,
++	.power_off	= sun9i_usb_phy_power_off,
++};
++
++static int sun9i_usb_phy_probe(struct udevice *dev)
++{
++	struct sun9i_usb_phy *phy = dev_get_priv(dev);
++	const char *type;
++	int ret;
++
++	phy->pmu = dev_read_addr_ptr(dev);
++	if (!phy->pmu)
++		return -EINVAL;
++
++	type = dev_read_string(dev, "phy_type");
++	phy->hsic = type && !strcmp(type, "hsic");
++
++	if (phy->hsic) {
++		ret = clk_get_by_name(dev, "hsic_480M", &phy->clk);
++		if (!ret)
++			ret = clk_get_by_name(dev, "hsic_12M", &phy->hsic_clk);
++		if (!ret)
++			ret = reset_get_by_name(dev, "hsic", &phy->reset);
++	} else {
++		ret = clk_get_by_name(dev, "phy", &phy->clk);
++		if (!ret)
++			ret = reset_get_by_name(dev, "phy", &phy->reset);
++	}
++	if (ret) {
++		dev_err(dev, "failed to get clocks or reset: %d\n", ret);
++		return ret;
++	}
++
++	if (CONFIG_IS_ENABLED(DM_REGULATOR)) {
++		ret = device_get_supply_regulator(dev, "phy-supply",
++						  &phy->vbus);
++		if (ret && ret != -ENOENT && ret != -ENOSYS)
++			return ret;
++		if (ret)
++			phy->vbus = NULL;
++	}
++
++	return 0;
++}
++
++static const struct udevice_id sun9i_usb_phy_ids[] = {
++	{ .compatible = "allwinner,sun9i-a80-usb-phy" },
++	{ }
++};
++
++U_BOOT_DRIVER(sun9i_usb_phy) = {
++	.name		= "sun9i_usb_phy",
++	.id		= UCLASS_PHY,
++	.of_match	= sun9i_usb_phy_ids,
++	.ops		= &sun9i_usb_phy_ops,
++	.probe		= sun9i_usb_phy_probe,
++	.priv_auto	= sizeof(struct sun9i_usb_phy),
++};
+-- 
+2.53.0
+

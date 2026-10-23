@@ -21,11 +21,30 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g BOOTCONFIG="none"               # To try and convince lib/ to not build or install u-boot.
 		unset BOOTSOURCE                           # To try and convince lib/ to not build or install u-boot.
 		declare -g IMAGE_PARTITION_TABLE="gpt"     # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		declare -g UEFISIZE=260                    # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-		declare -g BOOTSIZE=0                      # No separate /boot when using UEFI.
+		# in MiB. GRUB's own EFI payload is tiny, but with BOOTPART_REQUIRED=yes
+		# this partition is also /boot. FAT32 has no symlinks, so the kernel
+		# package copies the image in rather than linking it, and /boot holds a
+		# full copy per installed branch. 260 MiB does not fit two on arm64; the
+		# upgrade then dies with "No space left on device" and leaves the kernel
+		# package in iF. Same number and reasoning as DEFAULT_BOOTSIZE_FAT in
+		# partitioning.sh.
+		declare -g UEFISIZE="${UEFISIZE:-512}" # user config wins
+		# A zero or non-numeric size gives no EFI partition, but GRUB is still
+		# installed: the image would not boot. Fail here, not at first boot.
+		# The pattern carries the whole check, so no arithmetic runs on the value:
+		# bash reads a leading zero as octal, where "010" is 8 and "08" is an error.
+		if [[ ! "${UEFISIZE}" =~ ^[1-9][0-9]*$ ]]; then
+			exit_with_error "UEFISIZE must be a positive size in MiB when GRUB is used" "got '${UEFISIZE}'"
+		fi
 		if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
 			declare -g UEFI_MOUNT_POINT=/boot
 		fi
+		# GRUB images have no separate /boot partition: /boot is either on the
+		# root filesystem, or on the EFI partition when BOOTPART_REQUIRED=yes.
+		if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
+			display_alert "BOOTSIZE is ignored with GRUB" "there is no separate /boot partition; use UEFISIZE=${BOOTSIZE} to size the EFI partition" "wrn"
+		fi
+		declare -g BOOTSIZE=0
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 

@@ -10,3 +10,4 @@ BOOT_FDT_FILE="sophgo/sg2000-milkv-duo-s.dtb"
 HAS_VIDEO_OUTPUT="no"
 
 enable_extension "sophgo-sg200x-aic8800"
+enable_extension "sophgo-sg200x-camera"

@@ -11,7 +11,6 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-roc-pc.dtb"
 BOOT_SCENARIO="spl-blobs"
-BOOT_SOC="rk3588"
 IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="station-m3" # This _only_ used for uefi-edk2-rk3588 extension
 

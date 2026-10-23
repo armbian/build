@@ -1,0 +1,2799 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: JalenLin <jalen.lin@gmail.com>
+Date: Mon, 12 Oct 2026 18:04:58 +0200
+Subject: [PATCH 13/22] sound: add the RTD129x audio CPU and the HDMI receiver
+ audio
+
+The drivers are kept outside the kernel tree, in kernel/src/acpu, and
+copied in by scripts/build-kernel.sh; they carry their own Kconfig
+and Makefile. These lines hook that directory in.
+
+Source: https://github.com/JalenLin/BPI-W2-linux
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ sound/Kconfig                             |   2 +
+ sound/Makefile                            |   1 +
+ sound/realtek-rtd129x-acpu/Kconfig        |  34 +
+ sound/realtek-rtd129x-acpu/Makefile       |   9 +
+ sound/realtek-rtd129x-acpu/acpu-dp.c      | 636 +++++++++++++++++
+ sound/realtek-rtd129x-acpu/acpu-pcm.c     | 497 +++++++++++++
+ sound/realtek-rtd129x-acpu/acpu-rpc.c     | 830 ++++++++++++++++++++++
+ sound/realtek-rtd129x-acpu/acpu-vo.c      | 567 +++++++++++++++
+ sound/realtek-rtd129x-acpu/acpu-vo.h      |  51 ++
+ sound/realtek-rtd129x-acpu/rtd129x-acpu.h |  68 ++
+ 10 files changed, 2695 insertions(+)
+ create mode 100644 sound/realtek-rtd129x-acpu/Kconfig
+ create mode 100644 sound/realtek-rtd129x-acpu/Makefile
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-dp.c
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-pcm.c
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-rpc.c
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-vo.c
+ create mode 100644 sound/realtek-rtd129x-acpu/acpu-vo.h
+ create mode 100644 sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+
+diff --git a/sound/Kconfig b/sound/Kconfig
+index 8b40205394fe..ddcceaf65e0c 100644
+--- a/sound/Kconfig
++++ b/sound/Kconfig
+@@ -67,6 +67,8 @@ source "sound/aoa/Kconfig"
+ 
+ source "sound/arm/Kconfig"
+ 
++source "sound/realtek-rtd129x-acpu/Kconfig"
++
+ source "sound/atmel/Kconfig"
+ 
+ source "sound/spi/Kconfig"
+diff --git a/sound/Makefile b/sound/Makefile
+index 5942311a4232..fe9db38ca932 100644
+--- a/sound/Makefile
++++ b/sound/Makefile
+@@ -8,6 +8,7 @@ obj-$(CONFIG_SND) += core/ i2c/ drivers/ isa/ pci/ ppc/ arm/ sh/ synth/ usb/ \
+ 	firewire/ sparc/ spi/ parisc/ pcmcia/ mips/ soc/ atmel/ hda/ x86/ xen/ \
+ 	virtio/
+ obj-$(CONFIG_SND_AOA) += aoa/
++obj-y += realtek-rtd129x-acpu/
+ 
+ # This one must be compilable even if sound is configured out
+ obj-$(CONFIG_AC97_BUS) += ac97_bus.o
+diff --git a/sound/realtek-rtd129x-acpu/Kconfig b/sound/realtek-rtd129x-acpu/Kconfig
+new file mode 100644
+index 000000000000..a2cea41b6c14
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/Kconfig
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++config RTD129X_ACPU
++	tristate "Realtek RTD129x audio CPU RPC"
++	depends on ARCH_REALTEK || COMPILE_TEST
++	depends on OF
++	select GENERIC_ALLOCATOR
++	select AUXILIARY_BUS
++	help
++	  The RPC to the audio firmware that the BSP u-boot starts on the
++	  RTD1295/RTD1296 audio CPU. The firmware owns the audio hardware,
++	  including the HDMI receiver's audio input.
++
++config SND_RTD129X_HDMIRX
++	tristate "Realtek RTD129x HDMI receiver audio"
++	depends on RTD129X_ACPU && SND
++	select SND_PCM
++	help
++	  The audio of the RTD1295/RTD1296 HDMI input, captured by the audio
++	  firmware, as an ALSA capture device.
++
++config RTD129X_VO
++	tristate "Realtek RTD129x video output"
++	depends on RTD129X_ACPU && DRM && OF_RESERVED_MEM
++	select DRM_CLIENT_SELECTION
++	select DRM_DISPLAY_DP_HELPER
++	select DRM_DISPLAY_HELPER
++	select DRM_GEM_DMA_HELPER
++	select DRM_KMS_HELPER
++	help
++	  The RTD1295/RTD1296 video output, which the audio firmware runs,
++	  as a DRM device with one plane, at the mode the boot loader set
++	  (1080p60 on the BPI-W2). Gives a console on HDMI through DRM's
++	  fbdev emulation; the DisplayPort output, when something is
++	  plugged into it, shows the same.
+diff --git a/sound/realtek-rtd129x-acpu/Makefile b/sound/realtek-rtd129x-acpu/Makefile
+new file mode 100644
+index 000000000000..4e6a91e21477
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/Makefile
+@@ -0,0 +1,9 @@
++# SPDX-License-Identifier: GPL-2.0-or-later
++obj-$(CONFIG_RTD129X_ACPU) += rtd129x-acpu.o
++rtd129x-acpu-y := acpu-rpc.o
++
++obj-$(CONFIG_SND_RTD129X_HDMIRX) += snd-rtd129x-hdmirx.o
++snd-rtd129x-hdmirx-y := acpu-pcm.o
++
++obj-$(CONFIG_RTD129X_VO) += rtd129x-vo.o
++rtd129x-vo-y := acpu-vo.o acpu-dp.o
+diff --git a/sound/realtek-rtd129x-acpu/acpu-dp.c b/sound/realtek-rtd129x-acpu/acpu-dp.c
+new file mode 100644
+index 000000000000..5afca9b0a308
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-dp.c
+@@ -0,0 +1,636 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD129x DisplayPort output (the BPI-W2's mini DP)
++ *
++ * The audio firmware's video output feeds the DP transmitter as well, but
++ * the transmitter is the ARM side's to set up: its PLLs, the timing it
++ * expects from VO, the main stream attributes, and link training over
++ * AUX. Then the firmware is told, with the TV system it already runs, to
++ * send the same picture to DP too.
++ *
++ * Everything here follows Realtek's BSP driver (rtk_dptx: dptx_hwapi.c,
++ * dptx_core.c, dptx_rpc.c), for the one mode the HDMI side runs: 1080p60,
++ * two lanes at 2.7 Gb/s. Link training uses the DRM DP helpers instead of
++ * the BSP's own state machine, with the BSP's limits.
++ *
++ * Hot plug: the HPD line is ISO GPIO 7, which is polled.
++ */
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/iopoll.h>
++#include <linux/mfd/syscon.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++#include <linux/workqueue.h>
++
++#include <drm/display/drm_dp_helper.h>
++
++#include "acpu-vo.h"
++
++/* DPTX registers: page B, C and D of Realtek's map */
++#define PBB(x)			((x) * 4)
++#define PBC(x)			(0x400 + (x) * 4)
++#define PBD(x)			(0x800 + (x) * 4)
++
++#define DP_PHY_CTRL		PBB(0x00)
++#define DPTX_ML_PAT_SEL		PBB(0x01)
++#define DPTX_PHY_CTRL		PBB(0x0d)
++#define HDCP_ECF_BYTE0		PBB(0x64)
++#define HPD_IRQ_EN		PBB(0x72)
++#define DP_MAC_CTRL		PBB(0xa0)
++#define DP_RESET_CTRL		PBB(0xa1)
++#define DPTX_IRQ_CTRL		PBB(0xa3)
++#define PG_FIFO_CTRL		PBB(0xa4)
++#define MN_VID_AUTO_EN_1	PBB(0xa8)
++#define MN_M_VID_H		PBB(0xa9)	/* M, N: high, middle, low */
++#define MN_N_VID_H		PBB(0xac)
++#define MVID_AUTO_H		PBB(0xaf)
++#define MSA_CTRL		PBB(0xb4)
++#define MSA_MISC0		PBB(0xb5)
++#define MN_STRM_ATTR_HTT_M	PBB(0xb7)	/* ... through VSW_L, 0xc6 */
++#define VBID			PBB(0xc7)
++#define VBID_FW_CTL		PBB(0xc8)
++#define ARBITER_CTRL		PBB(0xc9)
++#define V_DATA_PER_LINE0	PBB(0xca)
++#define V_DATA_PER_LINE1	PBB(0xcb)
++#define TU_DATA_SIZE0		PBB(0xcd)
++#define TU_DATA_SIZE1		PBB(0xce)
++#define LFIFO_WL_SET		PBB(0xd3)
++#define ARBITER_SEC_END_CNT_HB	PBB(0xd4)
++#define DPTX_SFIFO_CTRL0	PBC(0xa7)
++#define AUX_TX_CTRL		PBD(0xa0)
++#define AUXTX_TRAN_CTRL		PBD(0xa3)
++#define AUXTX_REQ_CMD		PBD(0xa4)
++#define AUXTX_REQ_ADDR_M	PBD(0xa5)
++#define AUXTX_REQ_ADDR_L	PBD(0xa6)
++#define AUXTX_REQ_LEN		PBD(0xa7)
++#define AUXTX_REQ_DATA		PBD(0xa8)
++#define AUX_REPLY_CMD		PBD(0xa9)
++#define AUX_REPLY_DATA		PBD(0xaa)
++#define AUX_FIFO_CTRL		PBD(0xab)
++#define AUX_IRQ_EVENT		PBD(0xb1)
++#define  AUX_IRQ_SENT		BIT(0)	/* the request is out; not the end */
++#define  AUX_IRQ_ERROR		BIT(1)
++#define  AUX_IRQ_REPLY		BIT(5)
++#define AUX_IRQ_EN		PBD(0xb2)
++#define AUX_DIG_PHY8		PBD(0xf6)
++
++/* The LVDS/AIF block: the timing generator in front of the transmitter */
++#define AIF_MISC		0x000
++#define AIF_EDP1		0x040
++#define AIF_EDP2		0x044	/* drive: emphasis per lane */
++#define AIF_EDP3		0x048	/* drive: swing per lane */
++#define CT_CTRL			0x100
++#define DH_WIDTH		0x404
++#define DH_TOTAL		0x408
++#define DH_DEN_START_END	0x40c
++#define DV_DEN_START_END_F1	0x410
++#define DV_TOTAL		0x418
++#define DV_VS_START_END_F1	0x41c
++#define DV_SYNC_INT		0x42c
++
++/* CRT */
++#define DISP_PLL_DIV2		0x024
++#define PLL_EDP1		0x248
++#define PLL_EDP2		0x24c
++#define PLL_PIXEL1		0x250
++#define PLL_PIXEL2		0x254
++#define PLL_SSC_DIG_EDP0	0x5e0
++#define PLL_SSC_DIG_EDP1	0x5e4
++#define PLL_SSC_DIG_EDP2	0x5e8
++#define PLL_SSC_DIG_EDP3	0x5ec
++#define PLL_SSC_DIG_EDP4	0x5f0
++#define PLL_SSC_DIG_PIXEL0	0x600
++#define PLL_SSC_DIG_PIXEL1	0x604
++#define PLL_SSC_DIG_PIXEL2	0x608
++
++/* VO: its DisplayPort output */
++#define VO_DP_OUT		0xe78
++
++/* ISO: GPIO data in, bit 7 is the DP connector's HPD */
++#define ISO_GPDATI		0x108
++#define DP_HPD			BIT(7)
++
++#define DP_LANES		2
++#define DP_PIXEL_MHZ		148
++
++/*
++ * The PHY's drive per (swing, pre-emphasis), three values each, from the
++ * BSP's tDPTX_DRV_TABLE.
++ */
++static const u8 dp_drive[4][4][3] = {
++	{ { 0x00, 0x00, 0x03 }, { 0x00, 0x07, 0x05 }, { 0x00, 0x0c, 0x05 }, { 0x01, 0x09, 0x06 } },
++	{ { 0x00, 0x00, 0x05 }, { 0x00, 0x07, 0x05 }, { 0x00, 0x0c, 0x05 }, { 0x00, 0x0c, 0x05 } },
++	{ { 0x00, 0x00, 0x09 }, { 0x00, 0x0c, 0x09 }, { 0x00, 0x0c, 0x09 }, { 0x00, 0x0c, 0x09 } },
++	{ { 0x00, 0x00, 0x0e }, { 0x00, 0x00, 0x0e }, { 0x00, 0x00, 0x0e }, { 0x00, 0x00, 0x0e } },
++};
++
++struct vo_dp {
++	struct rtd_vo *vo;
++	struct device_node *np;
++	void __iomem *base;
++	void __iomem *aif;
++	void __iomem *vo_regs;
++	struct regmap *crt;
++	struct regmap *iso;
++	struct clk *clk_tve, *clk_lvds;
++	struct reset_control *rst_tve, *rst_lvds;
++	struct drm_dp_aux aux;
++	struct delayed_work hpd_work;
++	bool connected;
++	bool on;
++	unsigned int tries, polls;
++};
++
++static void dp_update(void __iomem *reg, u32 clear, u32 set)
++{
++	writel((readl(reg) & ~clear) | set, reg);
++}
++
++static void crt_write(struct vo_dp *dp, u32 reg, u32 val)
++{
++	regmap_write(dp->crt, reg, val);
++	usleep_range(1000, 1200);
++}
++
++static void crt_update(struct vo_dp *dp, u32 reg, u32 clear, u32 set)
++{
++	regmap_update_bits(dp->crt, reg, clear | set, set);
++	usleep_range(1000, 1200);
++}
++
++/* AUX: one request, up to 16 bytes, polled */
++static ssize_t dp_aux_transfer(struct drm_dp_aux *aux, struct drm_dp_aux_msg *msg)
++{
++	struct vo_dp *dp = container_of(aux, struct vo_dp, aux);
++	void __iomem *b = dp->base;
++	u8 *buf = msg->buffer;
++	u32 ev, reply;
++	int i, ret;
++
++	if (msg->size > 16)
++		return -E2BIG;
++	/* the BSP never sends an address-only request; neither does this */
++	if (!msg->size)
++		return -EOPNOTSUPP;
++
++	writel(0x3f, b + AUX_IRQ_EVENT);
++	dp_update(b + AUX_FIFO_CTRL, 0, BIT(1) | BIT(0));
++	writel((msg->request & 0xf) << 4 | ((msg->address >> 16) & 0xf),
++	       b + AUXTX_REQ_CMD);
++	writel((msg->address >> 8) & 0xff, b + AUXTX_REQ_ADDR_M);
++	writel(msg->address & 0xff, b + AUXTX_REQ_ADDR_L);
++	writel(msg->size - 1, b + AUXTX_REQ_LEN);
++	if (!(msg->request & DP_AUX_I2C_READ))	/* both writes have bit 0 clear */
++		for (i = 0; i < msg->size; i++)
++			writel(buf[i], b + AUXTX_REQ_DATA);
++	dp_update(b + AUXTX_TRAN_CTRL, 0, BIT(0));
++
++	/* as u-boot: done on a reply or an error, not on "sent" */
++	ret = readl_poll_timeout(b + AUX_IRQ_EVENT, ev,
++				 ev & (AUX_IRQ_REPLY | AUX_IRQ_ERROR), 50, 20000);
++	reply = readl(b + AUX_REPLY_CMD);
++	writel(0x3f, b + AUX_IRQ_EVENT);
++	dev_dbg(dp->vo->dev, "aux req %#x addr %#x len %zu: ret %d event %#x reply %#x\n",
++		msg->request, msg->address, msg->size, ret, ev, reply);
++	if (ret || !(ev & AUX_IRQ_REPLY)) {
++		dev_dbg(dp->vo->dev, "aux %#x@%#x: event %#x\n", msg->request,
++			msg->address, ev);
++		writel(0x20, b + DP_RESET_CTRL);	/* AUX reset */
++		writel(0, b + DP_RESET_CTRL);
++		return -ETIMEDOUT;
++	}
++	/* the reply's command nibble, as on the wire */
++	msg->reply = reply & 0xf;
++	if (msg->request & DP_AUX_I2C_READ)
++		for (i = 0; i < msg->size; i++)
++			buf[i] = readl(b + AUX_REPLY_DATA);
++	return msg->size;
++}
++
++static void dp_phy_drive(struct vo_dp *dp, const u8 *set)
++{
++	int lane;
++
++	for (lane = 0; lane < DP_LANES; lane++) {
++		u8 sw = set[lane] & DP_TRAIN_VOLTAGE_SWING_MASK;
++		u8 pe = (set[lane] & DP_TRAIN_PRE_EMPHASIS_MASK) >>
++			DP_TRAIN_PRE_EMPHASIS_SHIFT;
++		const u8 *d = dp_drive[sw][min_t(u8, pe, 3 - sw)];
++
++		dp_update(dp->aif + AIF_EDP2, BIT(20) | 0xf << (lane * 4),
++			  d[0] << 16 | d[1] << (lane * 4) | 0x00f00000);
++		dp_update(dp->aif + AIF_EDP3, 0xff000000 | 0xf << (lane * 4),
++			  d[2] << (lane * 4) | 0x1f000000);
++	}
++}
++
++/* The next drive from the sink's adjust request, within the BSP's limits */
++static void dp_adjust(const u8 *status, u8 *set)
++{
++	int lane;
++
++	for (lane = 0; lane < DP_LANES; lane++) {
++		u8 sw = drm_dp_get_adjust_request_voltage(status, lane);
++		u8 pe = drm_dp_get_adjust_request_pre_emphasis(status, lane) >>
++			DP_TRAIN_PRE_EMPHASIS_SHIFT;
++
++		if (sw + pe > 3)
++			pe = 3 - sw;
++		set[lane] = sw | pe << DP_TRAIN_PRE_EMPHASIS_SHIFT;
++		if (sw == 3)
++			set[lane] |= DP_TRAIN_MAX_SWING_REACHED;
++		if (pe == 3)
++			set[lane] |= DP_TRAIN_MAX_PRE_EMPHASIS_REACHED;
++	}
++}
++
++static int dp_train_phase(struct vo_dp *dp, u8 pattern, u8 *set)
++{
++	u8 status[DP_LINK_STATUS_SIZE], buf[1 + DP_LANES];
++	int tries;
++
++	writel(pattern << 4, dp->base + DPTX_ML_PAT_SEL);
++	writel(pattern << 4 | 1, dp->base + DPTX_ML_PAT_SEL);
++	buf[0] = pattern | DP_LINK_SCRAMBLING_DISABLE;
++	memcpy(buf + 1, set, DP_LANES);
++	if (drm_dp_dpcd_write(&dp->aux, DP_TRAINING_PATTERN_SET, buf,
++			      sizeof(buf)) != sizeof(buf))
++		return -EIO;
++
++	for (tries = 0; tries < 6; tries++) {
++		usleep_range(5000, 6000);
++		if (drm_dp_dpcd_read_link_status(&dp->aux, status) < 0)
++			return -EIO;
++		dev_dbg(dp->vo->dev, "TP%u: %*ph\n", pattern, 6, status);
++		if (pattern == DP_TRAINING_PATTERN_1 ?
++		    drm_dp_clock_recovery_ok(status, DP_LANES) :
++		    drm_dp_channel_eq_ok(status, DP_LANES))
++			return 0;
++		if (pattern == DP_TRAINING_PATTERN_2 &&
++		    !drm_dp_clock_recovery_ok(status, DP_LANES))
++			break;
++		dp_adjust(status, set);
++		dp_phy_drive(dp, set);
++		if (drm_dp_dpcd_write(&dp->aux, DP_TRAINING_LANE0_SET, set,
++				      DP_LANES) != DP_LANES)
++			return -EIO;
++	}
++	return -ETIMEDOUT;
++}
++
++static int dp_link_train(struct vo_dp *dp)
++{
++	u8 dpcd[16], set[DP_LANES] = { }, lanes;
++	int ret;
++
++	drm_dp_dpcd_writeb(&dp->aux, DP_SET_POWER, DP_SET_POWER_D0);
++	/* the source OUI, Realtek's, as the BSP writes it */
++	drm_dp_dpcd_write(&dp->aux, DP_SOURCE_OUI, (u8[]){ 0x4c, 0xe0, 0x00 }, 3);
++	if (drm_dp_dpcd_read(&dp->aux, DP_DPCD_REV, dpcd, sizeof(dpcd)) !=
++	    sizeof(dpcd))
++		return -EIO;
++	dev_info(dp->vo->dev, "DP sink: DPCD %x.%x, %u lanes, link rate %#x\n",
++		 dpcd[0] >> 4, dpcd[0] & 0xf,
++		 dpcd[DP_MAX_LANE_COUNT] & DP_MAX_LANE_COUNT_MASK,
++		 dpcd[DP_MAX_LINK_RATE]);
++	if ((dpcd[DP_MAX_LANE_COUNT] & DP_MAX_LANE_COUNT_MASK) < DP_LANES)
++		return -EINVAL;
++	/*
++	 * The transmitter's link PLL runs at 2.7 Gb/s and the stream's M/N
++	 * are worked out for it, so that is the rate, as with the BSP.
++	 */
++	if (dpcd[DP_MAX_LINK_RATE] < DP_LINK_BW_2_7)
++		dev_warn(dp->vo->dev, "sink below 2.7 Gb/s; trying anyway\n");
++
++	dp_phy_drive(dp, set);
++	lanes = DP_LANES;
++	if (dpcd[DP_MAX_LANE_COUNT] & DP_ENHANCED_FRAME_CAP)
++		lanes |= DP_LANE_COUNT_ENHANCED_FRAME_EN;
++	drm_dp_dpcd_writeb(&dp->aux, DP_LINK_BW_SET, DP_LINK_BW_2_7);
++	drm_dp_dpcd_writeb(&dp->aux, DP_LANE_COUNT_SET, lanes);
++
++	ret = dp_train_phase(dp, DP_TRAINING_PATTERN_1, set);
++	if (!ret)
++		ret = dp_train_phase(dp, DP_TRAINING_PATTERN_2, set);
++	drm_dp_dpcd_writeb(&dp->aux, DP_TRAINING_PATTERN_SET,
++			   DP_TRAINING_PATTERN_DISABLE);
++	if (ret)
++		return ret;
++	/* the main link to video */
++	writel(0x40, dp->base + DPTX_ML_PAT_SEL);
++	writel(0x41, dp->base + DPTX_ML_PAT_SEL);
++	return 0;
++}
++
++/* dptx_close_phy(), dptx_close_pll() */
++static void dp_off(struct vo_dp *dp)
++{
++	writel(1, dp->base + DP_PHY_CTRL);
++	writel(0, dp->aif + AIF_EDP1);
++	crt_write(dp, PLL_EDP2, 0);
++	crt_update(dp, PLL_EDP1, BIT(31), 0);
++	crt_write(dp, PLL_SSC_DIG_PIXEL0, 0x8);
++	crt_update(dp, PLL_PIXEL2, BIT(0), 0);
++	crt_update(dp, PLL_PIXEL1, BIT(31), 0);
++}
++
++/* rtk_dptx_hw_init(): PLLs, then the AUX side */
++static void dp_hw_init(struct vo_dp *dp)
++{
++	void __iomem *b = dp->base;
++	u32 v;
++
++	dp_off(dp);
++
++	/* the pixel PLL, for 1080p60, with the timing generator in reset */
++	reset_control_assert(dp->rst_lvds);
++	crt_write(dp, PLL_PIXEL1, 0x93470192);
++	crt_write(dp, PLL_PIXEL1, 0x93474192);
++	crt_write(dp, PLL_SSC_DIG_PIXEL1, 0xf000);
++	crt_write(dp, PLL_PIXEL2, 0x1e01);
++	crt_write(dp, PLL_SSC_DIG_PIXEL2, 0x501008);
++	crt_write(dp, PLL_SSC_DIG_PIXEL0, 0xd);
++	reset_control_deassert(dp->rst_lvds);
++
++	/*
++	 * "Disable iso control", then the link PLL. The BSP writes
++	 * DISP_PLL_DIV2 whole; the bits below 16 are left as they are here,
++	 * since the HDMI side runs off this register too.
++	 */
++	regmap_read(dp->crt, DISP_PLL_DIV2, &v);
++	crt_write(dp, DISP_PLL_DIV2, (v & 0xffff) | 0x440000);
++	writel(0x1003301, dp->aif + AIF_MISC);
++	usleep_range(1000, 1200);
++	crt_write(dp, DISP_PLL_DIV2, (v & 0xffff) | 0x420000);
++	crt_write(dp, PLL_EDP1, 0x9a356007);
++	crt_write(dp, PLL_EDP2, 0x3);
++	crt_write(dp, PLL_SSC_DIG_EDP0, 0xc);
++	crt_write(dp, PLL_SSC_DIG_EDP1, 0x30800);
++	crt_write(dp, PLL_SSC_DIG_EDP3, 0x30480);
++	crt_write(dp, PLL_SSC_DIG_EDP4, 0x1100);
++	crt_write(dp, PLL_SSC_DIG_EDP2, 0x501068);
++	crt_write(dp, PLL_SSC_DIG_EDP0, 0xd);
++
++	/* dptx_initial() */
++	dp_update(b + HDCP_ECF_BYTE0, BIT(7), 0);	/* ECF by firmware */
++	dp_update(b + AUX_TX_CTRL, 0, BIT(0));		/* AUX channel on */
++	dp_update(b + AUX_DIG_PHY8, 0, BIT(1));
++	dp_update(b + HPD_IRQ_EN, BIT(6) | BIT(5), BIT(6));
++	writel(0x80, b + DPTX_IRQ_CTRL);		/* TX clock divider */
++	dp_update(b + ARBITER_CTRL, 0, BIT(0));
++	writel(0xff, b + AUX_IRQ_EN);			/* events latch; polled */
++	dp_update(b + VBID, 0, BIT(1));
++}
++
++/* dptx_sst_setting(): M/N, measured as the BSP measures it */
++static void dp_mn(struct vo_dp *dp)
++{
++	void __iomem *b = dp->base;
++	u32 n = 0x8000, m = DP_PIXEL_MHZ * n / 270, sum = 0, cnt = 0;
++	u32 lo = U32_MAX, hi = 0, got;
++	int i;
++
++	for (i = 0; i < 10; i++) {
++		dp_update(b + MN_VID_AUTO_EN_1, 0, BIT(7));
++		/* one measurement period: N link symbols at 270 MHz, twice */
++		usleep_range(2 * n / 27, 2 * n / 27 + 100);
++		dp_update(b + MN_VID_AUTO_EN_1, BIT(7), 0);
++		got = readl(b + MVID_AUTO_H) << 16 |
++		      readl(b + MVID_AUTO_H + 4) << 8 | readl(b + MVID_AUTO_H + 8);
++		if (!got) {
++			sum = 0;
++			cnt = 0;
++			break;
++		}
++		if (abs((int)(m - got)) > m >> 2)
++			continue;
++		if (cnt && abs((int)(sum / cnt - got)) >= 0x50)
++			continue;
++		lo = min(lo, got);
++		hi = max(hi, got);
++		sum += got;
++		cnt++;
++	}
++	if (cnt > 2) {
++		got = (sum - lo - hi + (cnt - 2) / 2) / (cnt - 2);
++		if (abs((int)(m - got)) <= m >> 1)
++			m = got;
++	}
++	dev_dbg(dp->vo->dev, "M %u (%u measured), N %u\n", m, cnt, n);
++	writel((m >> 16) & 0xff, b + MN_M_VID_H);
++	writel((m >> 8) & 0xff, b + MN_M_VID_H + 4);
++	writel(m & 0xff, b + MN_M_VID_H + 8);
++	writel((n >> 16) & 0xff, b + MN_N_VID_H);
++	writel((n >> 8) & 0xff, b + MN_N_VID_H + 4);
++	writel(n & 0xff, b + MN_N_VID_H + 8);
++	dp_update(b + MSA_CTRL, BIT(6), 0);
++	dp_update(b + MN_VID_AUTO_EN_1, BIT(7) | BIT(6), BIT(6));
++}
++
++/* dptx_set_1080p_2lane(), with the firmware setting up VO itself */
++static void dp_set_1080p(struct vo_dp *dp)
++{
++	/* the main stream attributes, HTT_M through VSW_L (no VST_M) */
++	static const u8 msa[16] = {
++		0x08, 0x98, 0x00, 0xc1, 0x07, 0x80, 0x00, 0x2c,
++		0x04, 0x65, 0x00, 0x2a, 0x04, 0x38, 0x00, 0x05,
++	};
++	void __iomem *b = dp->base, *a = dp->aif;
++	int i;
++
++	writel(1, b + VBID_FW_CTL);
++	writel(0, a + CT_CTRL);
++	writel(0x2c, a + DH_WIDTH);
++	writel(0x8980898, a + DH_TOTAL);
++	writel(0xb70837, a + DH_DEN_START_END);
++	writel(0x2a0462, a + DV_DEN_START_END_F1);
++	writel(0x465, a + DV_TOTAL);
++	writel(0x10006, a + DV_VS_START_END_F1);
++	writel(0x463, a + DV_SYNC_INT);
++
++	dp_mn(dp);
++
++	/* dptx_sstmsa_setting() */
++	dp_update(b + DP_RESET_CTRL, 0, BIT(6));
++	dp_update(b + DP_RESET_CTRL, BIT(6), 0);
++	for (i = 0; i < ARRAY_SIZE(msa); i++)
++		if (i != 10)	/* 0xc1, VST_M, is not written */
++			writel(msa[i], b + MN_STRM_ATTR_HTT_M + 4 * i);
++	writel(0x20, b + MSA_MISC0);
++	dp_update(b + MSA_CTRL, 0, BIT(7));
++
++	/* dptx_sst_displayformat_setting() */
++	dp_update(b + LFIFO_WL_SET, BIT(7), 0);
++	dp_update(b + DP_RESET_CTRL, 0, BIT(7));
++	dp_update(b + DP_RESET_CTRL, BIT(7), 0);
++	writel(0x35, b + TU_DATA_SIZE0);
++	writel(0x00, b + TU_DATA_SIZE1);
++	writel(0x0b, b + V_DATA_PER_LINE0);
++	writel(0x40, b + V_DATA_PER_LINE1);
++	writel(0xc0, b + LFIFO_WL_SET);
++
++	writel(0xff, b + PG_FIFO_CTRL);
++	writel(0x4, b + VBID);			/* no audio */
++	writel(0, b + ARBITER_SEC_END_CNT_HB);
++
++	writel(0x38, b + DP_PHY_CTRL);
++	writel(0x6, b + DP_MAC_CTRL);
++	writel(0x3, a + AIF_EDP1);
++	writel(0x80, b + DPTX_SFIFO_CTRL0);
++	writel(0x15, b + DPTX_PHY_CTRL);
++	writel(0x3, dp->vo_regs + VO_DP_OUT);
++}
++
++static int dp_enable(struct vo_dp *dp)
++{
++	struct rtd_vo *vo = dp->vo;
++	u8 tv[VO_TV_SYSTEM_SIZE];
++	int ret, tries;
++
++	dp_hw_init(dp);
++	dp_set_1080p(dp);
++	for (tries = 0; tries < 3; tries++) {
++		ret = dp_link_train(dp);
++		if (!ret)
++			break;
++		msleep(100);
++	}
++	if (ret) {
++		dev_err(vo->dev, "DP link training failed: %d\n", ret);
++		return ret;
++	}
++
++	/* the TV system the firmware runs, with DP added to it */
++	ret = vo_query_tv_system(vo, tv);
++	if (ret)
++		return ret;
++	dev_dbg(vo->dev, "TV system %*ph\n", VO_TV_SYSTEM_SIZE, tv);
++	*(__be32 *)(tv + VO_TV_INTERFACE_TYPE) =
++		cpu_to_be32(VO_INTERFACE_HDMI_AND_DP_SAME_SOURCE);
++	*(__be32 *)(tv + VO_TV_PED_TYPE) =
++		cpu_to_be32(VO_STANDARD_DP_FORMAT_1920_1080P_60);
++	ret = vo_config_tv_system(vo, tv);
++	if (ret)
++		return ret;
++	dev_info(vo->dev, "DisplayPort on, 1920x1080, %u lanes\n", DP_LANES);
++	return 0;
++}
++
++static bool dp_hpd(struct vo_dp *dp)
++{
++	u32 v = 0;
++
++	regmap_read(dp->iso, ISO_GPDATI, &v);
++	return v & DP_HPD;
++}
++
++static void dp_hpd_work(struct work_struct *work)
++{
++	struct vo_dp *dp = container_of(work, struct vo_dp, hpd_work.work);
++	bool hpd = dp_hpd(dp);
++
++	if (hpd != dp->connected) {
++		dp->connected = hpd;
++		dp->tries = 0;
++		dp->polls = 0;		/* the first try right away */
++		dev_info(dp->vo->dev, "DP %s\n", hpd ? "connected" : "disconnected");
++		if (!hpd && dp->on) {
++			dp_off(dp);
++			dp->on = false;
++		}
++		if (hpd)
++			msleep(200);	/* let the sink come up */
++	}
++	/*
++	 * A sink may take its time: three tries, 10 s apart, then nothing
++	 * until it is plugged in again. A passive DP++ (HDMI) adapter never
++	 * answers on AUX: this board cannot drive one.
++	 */
++	if (hpd && !dp->on && dp->tries < 3 && !(dp->polls++ % 10)) {
++		dp->tries++;
++		dp->on = !dp_enable(dp);
++	}
++	schedule_delayed_work(&dp->hpd_work, HZ);
++}
++
++int vo_dp_init(struct rtd_vo *vo)
++{
++	struct device_node *np;
++	struct vo_dp *dp;
++	int ret;
++
++	np = of_find_compatible_node(NULL, NULL, "realtek,rtd1295-dptx");
++	if (!np || !of_device_is_available(np)) {
++		of_node_put(np);
++		return 0;
++	}
++	dp = devm_kzalloc(vo->dev, sizeof(*dp), GFP_KERNEL);
++	if (!dp) {
++		ret = -ENOMEM;
++		goto err_np;
++	}
++	dp->vo = vo;
++	dp->np = np;
++
++	dp->base = of_iomap(np, 0);
++	dp->aif = of_iomap(np, 1);
++	dp->vo_regs = of_iomap(np, 2);
++	dp->crt = syscon_regmap_lookup_by_phandle(np, "realtek,crt");
++	dp->iso = syscon_regmap_lookup_by_phandle(np, "realtek,iso");
++	if (!dp->base || !dp->aif || !dp->vo_regs || IS_ERR(dp->crt) ||
++	    IS_ERR(dp->iso)) {
++		ret = -ENODEV;
++		goto err_map;
++	}
++
++	dp->clk_tve = of_clk_get_by_name(np, "tve");
++	dp->clk_lvds = of_clk_get_by_name(np, "lvds");
++	dp->rst_tve = of_reset_control_get_exclusive(np, "tve");
++	dp->rst_lvds = of_reset_control_get_exclusive(np, "lvds");
++	if (IS_ERR(dp->clk_tve) || IS_ERR(dp->clk_lvds) ||
++	    IS_ERR(dp->rst_tve) || IS_ERR(dp->rst_lvds)) {
++		ret = -ENODEV;
++		goto err_map;
++	}
++	ret = clk_prepare_enable(dp->clk_tve);
++	if (ret)
++		goto err_map;
++	ret = clk_prepare_enable(dp->clk_lvds);
++	if (ret)
++		goto err_tve;
++	reset_control_deassert(dp->rst_tve);
++	reset_control_deassert(dp->rst_lvds);
++
++	dp->aux.name = "rtd129x-dp";
++	dp->aux.dev = vo->dev;
++	dp->aux.drm_dev = &vo->drm;
++	dp->aux.transfer = dp_aux_transfer;
++	drm_dp_aux_init(&dp->aux);
++
++	vo->dp = dp;
++	INIT_DELAYED_WORK(&dp->hpd_work, dp_hpd_work);
++	schedule_delayed_work(&dp->hpd_work, 0);
++	return 0;
++
++err_tve:
++	clk_disable_unprepare(dp->clk_tve);
++err_map:
++	if (dp->base)
++		iounmap(dp->base);
++	if (dp->aif)
++		iounmap(dp->aif);
++	if (dp->vo_regs)
++		iounmap(dp->vo_regs);
++err_np:
++	of_node_put(np);
++	return ret;
++}
++
++void vo_dp_fini(struct rtd_vo *vo)
++{
++	if (vo->dp)
++		cancel_delayed_work_sync(&vo->dp->hpd_work);
++}
+diff --git a/sound/realtek-rtd129x-acpu/acpu-pcm.c b/sound/realtek-rtd129x-acpu/acpu-pcm.c
+new file mode 100644
+index 000000000000..023cb7b4d034
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-pcm.c
+@@ -0,0 +1,497 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD129x HDMI receiver audio, through the audio CPU
++ *
++ * The HDMI receiver hands its audio to the audio input (AI) block, which
++ * belongs to the audio firmware. Capture is the BSP's sequence
++ * (sound/arm/snd-realtek.c, snd_card_capture_prepare_LPCM()): create an AI
++ * agent, give it ring buffers, tell it to deliver interleaved little-endian
++ * PCM for ALSA, configure the input and run it. The firmware then writes
++ * into the LPCM ring and moves its write pointer; a timer here copies whole
++ * periods into the ALSA buffer and moves the read pointer.
++ *
++ * With no audio from the source -- none playing, or a DVI one -- the
++ * firmware writes nothing. The stream then carries on with silence, in
++ * real time, so that a reader such as Janus sees a quiet input rather than
++ * a stalled one.
++ *
++ * The AI agent's default source is the HDMI receiver; the BSP selects I2S
++ * with an extra call that is not made here.
++ */
++#include <linux/auxiliary_bus.h>
++#include <linux/hrtimer.h>
++#include <linux/module.h>
++#include <sound/core.h>
++#include <sound/initval.h>
++#include <sound/pcm.h>
++
++#include "rtd129x-acpu.h"
++
++/* enum AUDIO_IO_PIN */
++#define PIN_BASE_BS_OUT		3
++#define PIN_PCM_OUT		5
++
++#define AGENT_AUDIO_IN		8	/* enum AUDIO_MODULE_TYPE */
++#define INFO_AI_CONNECT_ALSA	18	/* enum AUDIO_ENUM_PRIVAETINFO */
++#define AIO_DESTROY_AI_FLOW	2	/* enum AUDIO_ENUM_AIO_PRIVAETINFO */
++#define ALSA_FORMAT_S16LE	1	/* AUDIO_ALSA_FORMAT_16BITS_LE_LPCM */
++
++#define AI_RING_SIZE		SZ_32K	/* per channel, the AI's own output */
++#define LPCM_RING_SIZE		SZ_32K	/* what we read */
++#define CHANNELS		2
++
++/* RINGBUFFER_HEADER, big-endian, 64 bytes */
++struct ring_hdr {
++	__be32 magic;
++	__be32 begin;
++	__be32 size;
++	__be32 buffer_id;
++	__be32 write;
++	__be32 num_read;
++	__be32 reserved[2];
++	__be32 read[4];
++	__be32 file[4];
++};
++
++/* What the firmware reads and writes, in one block of the audio heap */
++struct ai_shared {
++	struct ring_hdr ai[CHANNELS];
++	struct ring_hdr lpcm;
++};
++
++struct hdmi_audio {
++	struct rtd_acpu *acpu;
++	struct snd_card *card;
++	struct snd_pcm_substream *substream;
++
++	struct rtd_acpu_buf param;	/* call arguments */
++	struct rtd_acpu_buf shared;	/* struct ai_shared */
++	struct rtd_acpu_buf ai[CHANNELS];
++	struct rtd_acpu_buf lpcm;
++	u32 agent;
++	bool running;			/* the AI flow is set up */
++	bool active;			/* between trigger start and stop */
++
++	struct hrtimer timer;
++	ktime_t period;
++	u32 lpcm_read;			/* our copy of lpcm.read[0], LE */
++	snd_pcm_uframes_t hw_ptr;
++	ktime_t last;			/* when the last period went up */
++	bool silent;			/* making up periods of silence */
++};
++
++/* How long the firmware may go quiet before we fill in */
++#define SILENCE_AFTER_MS	100
++
++static u32 param_addr(struct hdmi_audio *ha, size_t offset)
++{
++	return rtd_acpu_addr(ha->param.phys + offset);
++}
++
++static __be32 *param_word(struct hdmi_audio *ha, size_t offset)
++{
++	return ha->param.vaddr + offset;
++}
++
++/* Check both the call's HRESULT and, when given, the result's */
++static int ha_call(struct hdmi_audio *ha, u32 cmd, size_t arg, size_t res,
++		   bool check_res)
++{
++	u32 ret;
++	int err;
++
++	/* the firmware reads it uncached; make sure it has all landed */
++	wmb();
++	err = rtd_acpu_call(ha->acpu, cmd, param_addr(ha, arg),
++			    param_addr(ha, res), &ret);
++	if (err)
++		return err;
++	if (ret != RTD_ACPU_S_OK ||
++	    (check_res && be32_to_cpu(*param_word(ha, res)) != RTD_ACPU_S_OK)) {
++		dev_err(ha->card->dev, "command %u: %#x/%#x\n", cmd, ret,
++			be32_to_cpu(*param_word(ha, res)));
++		return -EIO;
++	}
++	return 0;
++}
++
++static int ha_check_ready(struct hdmi_audio *ha)
++{
++	/* RPC_DEFAULT_INPUT_T: info, retval { result, data }, ret */
++	memset(ha->param.vaddr, 0, 64);
++	return ha_call(ha, RTD_ACPU_CHECK_READY, 0, 4, false);
++}
++
++static int ha_create_agent(struct hdmi_audio *ha)
++{
++	/* AUDIO_RPC_INSTANCE { instanceID, type }, RPCRES_LONG { result, data } */
++	memset(ha->param.vaddr, 0, 64);
++	*param_word(ha, 0) = cpu_to_be32(-1);
++	*param_word(ha, 4) = cpu_to_be32(AGENT_AUDIO_IN);
++	if (ha_call(ha, RTD_ACPU_CREATE_AGENT, 0, 8, true))
++		return -EIO;
++	ha->agent = be32_to_cpu(*param_word(ha, 12));
++	return 0;
++}
++
++static void ring_hdr_init(struct ring_hdr *h, phys_addr_t begin, u32 size)
++{
++	memset(h, 0, sizeof(*h));
++	h->begin = cpu_to_be32(begin);
++	h->size = cpu_to_be32(size);
++	h->write = h->begin;
++	h->read[0] = h->begin;
++	h->num_read = cpu_to_be32(1);
++}
++
++/* INIT_RINGBUF: RPCRES_LONG ret, HRESULT res, AUDIO_RPC_RINGBUFFER_HEADER */
++static int ha_init_ring(struct hdmi_audio *ha, u32 pin, struct ring_hdr *hdrs,
++			int count)
++{
++	struct ai_shared *sh = ha->shared.vaddr;
++	int i;
++
++	memset(ha->param.vaddr, 0, 64);
++	*param_word(ha, 12) = cpu_to_be32(ha->agent);
++	*param_word(ha, 16) = cpu_to_be32(pin);
++	for (i = 0; i < count; i++)
++		*param_word(ha, 20 + 4 * i) = cpu_to_be32(ha->shared.phys +
++						((void *)&hdrs[i] - (void *)sh));
++	*param_word(ha, 52) = cpu_to_be32(-1);		/* readIdx */
++	*param_word(ha, 56) = cpu_to_be32(count);	/* listSize */
++	return ha_call(ha, RTD_ACPU_INIT_RINGBUF, 12, 0, true);
++}
++
++static int ha_agent_cmd(struct hdmi_audio *ha, u32 cmd)
++{
++	/* RPC_TOAGENT_T: inst_id, retval { result, data }, res */
++	memset(ha->param.vaddr, 0, 64);
++	*param_word(ha, 0) = cpu_to_be32(ha->agent);
++	return ha_call(ha, cmd, 0, 4, cmd == RTD_ACPU_RUN);
++}
++
++static int ha_setup(struct hdmi_audio *ha, unsigned int rate)
++{
++	struct ai_shared *sh = ha->shared.vaddr;
++	int i, ret;
++
++	for (i = 0; i < CHANNELS; i++)
++		ring_hdr_init(&sh->ai[i], ha->ai[i].phys, AI_RING_SIZE);
++	ring_hdr_init(&sh->lpcm, ha->lpcm.phys, LPCM_RING_SIZE);
++	ha->lpcm_read = ha->lpcm.phys;
++
++	ret = ha_init_ring(ha, PIN_PCM_OUT, sh->ai, CHANNELS) ?:
++	      ha_init_ring(ha, PIN_BASE_BS_OUT, &sh->lpcm, 1);
++	if (ret)
++		return ret;
++
++	/* AUDIO_RPC_PRIVATEINFO_PARAMETERS, then the return value at 72 */
++	memset(ha->param.vaddr, 0, 160);
++	*param_word(ha, 0) = cpu_to_be32(ha->agent);
++	*param_word(ha, 4) = cpu_to_be32(INFO_AI_CONNECT_ALSA);
++	*param_word(ha, 8) = cpu_to_be32(ALSA_FORMAT_S16LE);
++	ret = ha_call(ha, RTD_ACPU_PRIVATEINFO, 0, 72, false);
++	if (ret)
++		return ret;
++
++	/*
++	 * AUDIO_CONFIG_ADC: instanceID; AUDIO_GENERAL_CONFIG { char
++	 * interface_en, channel_in, count_down_rec_en; int cyc };
++	 * AUDIO_SAMPLE_INFO { sampling_rate, PCM_bitnum }. The BSP does not
++	 * look at the result of this one.
++	 */
++	memset(ha->param.vaddr, 0, 64);
++	*param_word(ha, 0) = cpu_to_be32(ha->agent);
++	*(u8 *)(ha->param.vaddr + 4) = 1;
++	*(u8 *)(ha->param.vaddr + 5) = 3;
++	*param_word(ha, 12) = cpu_to_be32(rate);
++	*param_word(ha, 16) = cpu_to_be32(24);
++	wmb();
++	ret = rtd_acpu_call(ha->acpu, RTD_ACPU_ADC0_CONFIG, param_addr(ha, 0),
++			    param_addr(ha, 20), NULL);
++	if (ret)
++		return ret;
++
++	return ha_agent_cmd(ha, RTD_ACPU_PAUSE) ?:
++	       ha_agent_cmd(ha, RTD_ACPU_RUN);
++}
++
++static void ha_destroy(struct hdmi_audio *ha)
++{
++	/* AUDIO_RPC_AIO_PRIVATEINFO_PARAMETERS, then the result at 72 */
++	memset(ha->param.vaddr, 0, 160);
++	*param_word(ha, 0) = cpu_to_be32(ha->agent);
++	*param_word(ha, 4) = cpu_to_be32(AIO_DESTROY_AI_FLOW);
++	wmb();
++	rtd_acpu_call(ha->acpu, RTD_ACPU_AIO_PRIVATEINFO, param_addr(ha, 0),
++		      param_addr(ha, 72), NULL);
++}
++
++static void ha_free_rings(struct hdmi_audio *ha)
++{
++	int i;
++
++	for (i = 0; i < CHANNELS; i++)
++		rtd_acpu_free(ha->acpu, &ha->ai[i]);
++	rtd_acpu_free(ha->acpu, &ha->lpcm);
++	rtd_acpu_free(ha->acpu, &ha->shared);
++}
++
++static int ha_alloc_rings(struct hdmi_audio *ha)
++{
++	int i, ret;
++
++	ret = rtd_acpu_alloc(ha->acpu, sizeof(struct ai_shared), &ha->shared) ?:
++	      rtd_acpu_alloc(ha->acpu, LPCM_RING_SIZE, &ha->lpcm);
++	for (i = 0; !ret && i < CHANNELS; i++)
++		ret = rtd_acpu_alloc(ha->acpu, AI_RING_SIZE, &ha->ai[i]);
++	if (ret)
++		ha_free_rings(ha);
++	return ret;
++}
++
++static void ha_put_period(struct hdmi_audio *ha, const void *src, u32 src_off)
++{
++	struct snd_pcm_runtime *rt = ha->substream->runtime;
++	u32 period = frames_to_bytes(rt, rt->period_size);
++	u32 buffer = frames_to_bytes(rt, rt->buffer_size);
++	u32 dst = frames_to_bytes(rt, ha->hw_ptr);
++	u32 done = 0;
++
++	while (done < period) {
++		u32 n = min(period - done, buffer - dst);
++
++		if (src) {
++			n = min(n, LPCM_RING_SIZE - src_off);
++			memcpy(rt->dma_area + dst, src + src_off, n);
++			src_off = (src_off + n) % LPCM_RING_SIZE;
++		} else {
++			memset(rt->dma_area + dst, 0, n);
++		}
++		done += n;
++		dst = (dst + n) % buffer;
++	}
++	ha->hw_ptr = (ha->hw_ptr + rt->period_size) % rt->buffer_size;
++}
++
++/* Move whole periods from the LPCM ring, or silence, to the ALSA buffer */
++static enum hrtimer_restart ha_timer(struct hrtimer *t)
++{
++	struct hdmi_audio *ha = container_of(t, struct hdmi_audio, timer);
++	struct snd_pcm_runtime *rt = ha->substream->runtime;
++	struct ai_shared *sh = ha->shared.vaddr;
++	u32 period = frames_to_bytes(rt, rt->period_size);
++	ktime_t period_ns = ns_to_ktime(div_u64((u64)rt->period_size *
++						NSEC_PER_SEC, rt->rate));
++	u32 write = be32_to_cpu(READ_ONCE(sh->lpcm.write));
++	u32 avail = (write - ha->lpcm_read + LPCM_RING_SIZE) % LPCM_RING_SIZE;
++	ktime_t now = ktime_get();
++	bool elapsed = false;
++
++	if (!READ_ONCE(ha->active))
++		return HRTIMER_NORESTART;
++
++	if (avail >= period) {
++		ha->silent = false;
++		while (avail >= period) {
++			ha_put_period(ha, ha->lpcm.vaddr,
++				      ha->lpcm_read - ha->lpcm.phys);
++			ha->lpcm_read = ha->lpcm.phys +
++				(ha->lpcm_read - ha->lpcm.phys + period) %
++				LPCM_RING_SIZE;
++			avail -= period;
++			elapsed = true;
++		}
++		WRITE_ONCE(sh->lpcm.read[0], cpu_to_be32(ha->lpcm_read));
++		ha->last = now;
++	} else if (ha->silent ||
++		   ktime_ms_delta(now, ha->last) > SILENCE_AFTER_MS) {
++		if (!ha->silent)
++			ha->last = now;
++		ha->silent = true;
++		while (ktime_compare(ktime_sub(now, ha->last), period_ns) >= 0) {
++			ha_put_period(ha, NULL, 0);
++			ha->last = ktime_add(ha->last, period_ns);
++			elapsed = true;
++		}
++	}
++	if (elapsed)
++		snd_pcm_period_elapsed(ha->substream);
++	hrtimer_forward_now(t, ha->period);
++	return HRTIMER_RESTART;
++}
++
++static const struct snd_pcm_hardware ha_hw = {
++	.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_MMAP_VALID |
++		SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_BLOCK_TRANSFER,
++	.formats = SNDRV_PCM_FMTBIT_S16_LE,
++	.rates = SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000,
++	.rate_min = 44100,
++	.rate_max = 48000,
++	.channels_min = CHANNELS,
++	.channels_max = CHANNELS,
++	.buffer_bytes_max = SZ_64K,
++	.period_bytes_min = SZ_1K,
++	/* a period has to fit the LPCM ring with room to spare */
++	.period_bytes_max = SZ_8K,
++	.periods_min = 2,
++	.periods_max = 32,
++};
++
++static int ha_open(struct snd_pcm_substream *ss)
++{
++	struct hdmi_audio *ha = snd_pcm_substream_chip(ss);
++	int ret;
++
++	ss->runtime->hw = ha_hw;
++	ret = ha_check_ready(ha) ?: ha_create_agent(ha);
++	if (ret)
++		return ret;
++	ret = ha_alloc_rings(ha);
++	if (ret)
++		return ret;
++	ha->substream = ss;
++	ha->running = false;
++	return 0;
++}
++
++static int ha_close(struct snd_pcm_substream *ss)
++{
++	struct hdmi_audio *ha = snd_pcm_substream_chip(ss);
++
++	hrtimer_cancel(&ha->timer);
++	ha_destroy(ha);
++	ha_free_rings(ha);
++	ha->substream = NULL;
++	return 0;
++}
++
++static int ha_prepare(struct snd_pcm_substream *ss)
++{
++	struct hdmi_audio *ha = snd_pcm_substream_chip(ss);
++	struct snd_pcm_runtime *rt = ss->runtime;
++	int ret;
++
++	ha->hw_ptr = 0;
++	ha->period = ns_to_ktime(div_u64((u64)rt->period_size * NSEC_PER_SEC,
++					 rt->rate) / 2);
++	if (ha->running)
++		return 0;
++	ret = ha_setup(ha, rt->rate);
++	if (ret)
++		return ret;
++	ha->running = true;
++	return 0;
++}
++
++static int ha_trigger(struct snd_pcm_substream *ss, int cmd)
++{
++	struct hdmi_audio *ha = snd_pcm_substream_chip(ss);
++	struct ai_shared *sh = ha->shared.vaddr;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++		/* start from what arrives now, not from what piled up */
++		ha->lpcm_read = be32_to_cpu(READ_ONCE(sh->lpcm.write));
++		WRITE_ONCE(sh->lpcm.read[0], cpu_to_be32(ha->lpcm_read));
++		ha->last = ktime_get();
++		ha->silent = false;
++		WRITE_ONCE(ha->active, true);
++		hrtimer_start(&ha->timer, ha->period, HRTIMER_MODE_REL_SOFT);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++		/* the timer may be what is calling us, through an xrun */
++		WRITE_ONCE(ha->active, false);
++		hrtimer_try_to_cancel(&ha->timer);
++		return 0;
++	}
++	return -EINVAL;
++}
++
++static snd_pcm_uframes_t ha_pointer(struct snd_pcm_substream *ss)
++{
++	struct hdmi_audio *ha = snd_pcm_substream_chip(ss);
++
++	return ha->hw_ptr;
++}
++
++static const struct snd_pcm_ops ha_ops = {
++	.open = ha_open,
++	.close = ha_close,
++	.prepare = ha_prepare,
++	.trigger = ha_trigger,
++	.pointer = ha_pointer,
++};
++
++static void ha_free_param(void *data)
++{
++	struct hdmi_audio *ha = data;
++
++	rtd_acpu_free(ha->acpu, &ha->param);
++}
++
++static int ha_probe(struct auxiliary_device *adev,
++		    const struct auxiliary_device_id *id)
++{
++	struct rtd_acpu_adev *radev = container_of(adev, struct rtd_acpu_adev,
++						   adev);
++	struct device *dev = &adev->dev;
++	struct hdmi_audio *ha;
++	struct snd_card *card;
++	struct snd_pcm *pcm;
++	int ret;
++
++	ha = devm_kzalloc(dev, sizeof(*ha), GFP_KERNEL);
++	if (!ha)
++		return -ENOMEM;
++	ha->acpu = radev->acpu;
++	hrtimer_setup(&ha->timer, ha_timer, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL_SOFT);
++	ret = rtd_acpu_alloc(ha->acpu, SZ_4K, &ha->param);
++	if (ret)
++		return ret;
++	/*
++	 * Before the card, so that it is freed after it: a stream still open
++	 * at removal calls into the firmware when it closes.
++	 */
++	ret = devm_add_action_or_reset(dev, ha_free_param, ha);
++	if (ret)
++		return ret;
++
++	ret = snd_devm_card_new(dev, SNDRV_DEFAULT_IDX1, "hdmirx", THIS_MODULE,
++				0, &card);
++	if (ret)
++		return ret;
++	ha->card = card;
++
++	strscpy(card->driver, "rtd129x-hdmirx", sizeof(card->driver));
++	strscpy(card->shortname, "HDMI-RX", sizeof(card->shortname));
++	strscpy(card->longname, "RTD129x HDMI receiver audio",
++		sizeof(card->longname));
++
++	ret = snd_pcm_new(card, "HDMI-RX", 0, 0, 1, &pcm);
++	if (ret)
++		return ret;
++	pcm->private_data = ha;
++	strscpy(pcm->name, "HDMI-RX", sizeof(pcm->name));
++	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &ha_ops);
++	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL,
++				       0, SZ_64K);
++
++	return snd_card_register(card);
++}
++
++static const struct auxiliary_device_id ha_ids[] = {
++	{ .name = "rtd129x_acpu." RTD_ACPU_PCM_NAME },
++	{ }
++};
++MODULE_DEVICE_TABLE(auxiliary, ha_ids);
++
++static struct auxiliary_driver ha_driver = {
++	.probe = ha_probe,
++	.id_table = ha_ids,
++};
++module_auxiliary_driver(ha_driver);
++
++MODULE_DESCRIPTION("Realtek RTD129x HDMI receiver audio capture");
++MODULE_LICENSE("GPL");
+diff --git a/sound/realtek-rtd129x-acpu/acpu-rpc.c b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+new file mode 100644
+index 000000000000..1f4fb538e3ae
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+@@ -0,0 +1,830 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD129x audio CPU (ACPU) RPC
++ *
++ * The BSP u-boot loads the audio firmware and starts the ACPU on it ("go
++ * a"). The firmware brings up the audio hardware, then waits for the
++ * system CPU to set audio_rpc_flag in the IPC block before it opens its
++ * end of the RPC rings and finishes starting up. On the way it asks the
++ * system CPU for memory, over the same RPC, and does not go on until it
++ * gets an answer. This driver does what the BSP's rtk_rpc driver does for
++ * that: it sets up the rings, answers the firmware's memory requests out
++ * of a reserved region, and lets other drivers call into the firmware.
++ *
++ * The rings live in a 16 KiB area whose layout the firmware hardcodes.
++ * Each ring has a record of five words -- buffer, start, end, in, out --
++ * in the CPU's byte order, holding ACPU addresses. There are three kinds,
++ * and of each a pair per remote CPU, one per direction:
++ *   poll  -- user space RPC in the BSP, not used here
++ *   intr  -- the firmware's own requests (memory) and their replies
++ *   kern  -- kernel calls into the firmware and their replies
++ * Pair 0 is the audio firmware, pair 1 the video one. In each pair, ring 0
++ * goes system to audio (SA) and ring 1 audio to system (AS).
++ *
++ * The two CPUs interrupt each other through SB2's CPU_INT register, and
++ * mark an interrupt as an RPC one with a bit in the IPC block's
++ * vo_int_sync word; the same interrupt also carries display sync events.
++ *
++ * The firmware prints to the UART the system console is on, and with its
++ * debug flag set (as it starts up) it prints "[AO][_AO_if_video_HDMI_mode]
++ * HDMI not enabled" every three seconds, about the board's HDMI output.
++ * There is no call to change the flag, so once the firmware has set it,
++ * it is cleared in the firmware's data, for the one firmware build whose
++ * layout is known.
++ */
++#include <linux/auxiliary_bus.h>
++#include <linux/delay.h>
++#include <linux/genalloc.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
++
++#include "rtd129x-acpu.h"
++
++/* SB2 CPU_INT and CPU_INT_EN */
++#define RPC_INT			0x0
++#define RPC_INT_EN		0x4
++#define RPC_INT_W1		BIT(0)	/* write 1 to the bits given, else 0 */
++#define RPC_INT_SA		BIT(1)	/* system to audio */
++#define RPC_INT_AS		BIT(3)	/* audio to system */
++
++/* The IPC block (struct rtk_ipc_shm) in the RPC common page; big-endian */
++#define IPC			0xc4
++#define IPC_AUDIO_RPC_FLAG	(IPC + 0x0c)
++#define IPC_VO_INT_SYNC		(IPC + 0x40)
++#define SYNC_RPC_NOTIFY		cpu_to_be32(BIT(8))	/* RPC interrupts on */
++#define SYNC_RPC_FEEDBACK	cpu_to_be32(BIT(9))	/* this one is RPC */
++#define SYNC_VO_NOTIFY		cpu_to_be32(BIT(16))	/* VO interrupts on */
++#define SYNC_VO_FEEDBACK	cpu_to_be32(BIT(17))	/* this one is VO */
++
++/* Offsets in the ring area */
++#define RING_SIZE		512
++#define POLL_RING(i)		(0x0000 + (i) * 0x400)
++#define INTR_RING(i)		(0x0200 + (i) * 0x400)
++#define POLL_REC(i)		(0x1000 + (i) * 64)
++#define INTR_REC(i)		(0x1100 + (i) * 64)
++#define KERN_RING(i)		(0x1200 + (i) * 0x200)
++#define KERN_REC(i)		(0x1a00 + (i) * 64)
++#define NR_RINGS		4	/* SA, AS, and the video CPU's pair */
++
++#define REC_BUF			0
++#define REC_START		4
++#define REC_END			8
++#define REC_IN			12
++#define REC_OUT			16
++
++/* RPC_STRUCT, all big-endian */
++struct rpc_hdr {
++	__be32 program;
++	__be32 version;
++	__be32 procedure;
++	__be32 task;
++	__be32 sys_tid;
++	__be32 sys_pid;
++	__be32 param_size;
++	__be32 context;
++};
++
++#define PROG_KERNEL		98	/* kernel call; also R_PROGRAM */
++#define PROG_REPLY		99
++#define PROG_AUDIO_SYSTEM	201	/* the firmware's own program, version 0 */
++#define RPC_MAX_WORDS		16
++
++/* R_PROGRAM procedures: the firmware's requests for memory */
++#define REMOTE_ALLOC		1
++#define REMOTE_FREE		2
++#define REMOTE_ALLOC_SECURE	3
++/* ...and the address it gets back is in KSEG0 */
++#define REMOTE_KSEG0		0x80000000
++
++#define CALL_TIMEOUT		msecs_to_jiffies(1000)
++
++/*
++ * The debug flag, in bluecore.audio "Audio Version = 166265 (Kylin)",
++ * compiled Sep 21 2017: _AO_if_video_HDMI_mode() prints when bit 0 of
++ * *ptrDebugFlag is set. Offsets are from the load address, 0x0f900000.
++ */
++#define FW_PTR_DEBUG_FLAG	0x0035daa4
++#define FW_HDMI_MSG		0x003bd230
++static const char fw_hdmi_msg[] = "[AO][_AO_if_video_HDMI_mode]HDMI not enabled\n";
++
++static bool fw_debug;
++module_param(fw_debug, bool, 0444);
++MODULE_PARM_DESC(fw_debug, "Leave the audio firmware's debug output on");
++
++struct remote_alloc {
++	struct list_head list;
++	phys_addr_t phys;
++	size_t size;
++};
++
++struct rtd_acpu {
++	struct device *dev;
++	void __iomem *sb2;
++	void __iomem *comm;
++	void __iomem *ring;
++	u32 ring_acpu;			/* ACPU address of the ring area */
++
++	struct gen_pool *audio;		/* buffers we share with it */
++	struct gen_pool *media;		/* what it asks us for */
++	struct list_head remote;
++
++	void __iomem *fw;		/* the firmware image and data */
++	resource_size_t fw_size;
++	bool quiet;
++
++	spinlock_t sa_lock;		/* the SA rings and the interrupt */
++	struct work_struct work;
++
++	struct mutex call_lock;
++	struct completion call_done;
++	u32 call_task;
++	u32 call_ret;
++
++	struct mutex rpc_lock;		/* AUDIO_SYSTEM calls, one at a time */
++	struct completion rpc_done;
++	u32 rpc_context;
++	__be32 rpc_res[RPC_MAX_WORDS];
++	u32 rpc_nres;
++
++	struct rtd_acpu_adev *pcm;
++	struct rtd_acpu_adev *vo;
++};
++
++static void __iomem *ring_ptr(struct rtd_acpu *acpu, u32 addr)
++{
++	return acpu->ring + (addr - acpu->ring_acpu);
++}
++
++static u32 rec_get(struct rtd_acpu *acpu, u32 rec, u32 field)
++{
++	return readl(acpu->ring + rec + field);
++}
++
++static u32 ring_used(struct rtd_acpu *acpu, u32 rec)
++{
++	u32 start = rec_get(acpu, rec, REC_START);
++	u32 size = rec_get(acpu, rec, REC_END) - start;
++
++	return (rec_get(acpu, rec, REC_IN) - rec_get(acpu, rec, REC_OUT) +
++		size) % size;
++}
++
++/* Words go in and out at a 4-byte granule, as the BSP does it */
++static int ring_read(struct rtd_acpu *acpu, u32 rec, void *buf, u32 len)
++{
++	u32 start = rec_get(acpu, rec, REC_START);
++	u32 end = rec_get(acpu, rec, REC_END);
++	u32 out = rec_get(acpu, rec, REC_OUT);
++	u32 tail = end - out;
++
++	if (ring_used(acpu, rec) < len)
++		return -EAGAIN;
++	if (tail >= len) {
++		memcpy_fromio(buf, ring_ptr(acpu, out), len);
++		out += ALIGN(len, 4);
++	} else {
++		memcpy_fromio(buf, ring_ptr(acpu, out), tail);
++		memcpy_fromio(buf + tail, ring_ptr(acpu, start), len - tail);
++		out = start + ALIGN(len - tail, 4);
++	}
++	if (out >= end)
++		out = start + (out - end);
++	writel(out, acpu->ring + rec + REC_OUT);
++	return 0;
++}
++
++static int ring_write(struct rtd_acpu *acpu, u32 rec, const void *buf, u32 len)
++{
++	u32 start = rec_get(acpu, rec, REC_START);
++	u32 end = rec_get(acpu, rec, REC_END);
++	u32 in = rec_get(acpu, rec, REC_IN);
++	u32 tail = end - in;
++
++	if (len > end - start - ring_used(acpu, rec) - 1)
++		return -ENOSPC;
++	if (tail >= len) {
++		memcpy_toio(ring_ptr(acpu, in), buf, len);
++		in += ALIGN(len, 4);
++	} else {
++		memcpy_toio(ring_ptr(acpu, in), buf, tail);
++		memcpy_toio(ring_ptr(acpu, start), buf + tail, len - tail);
++		in = start + ALIGN(len - tail, 4);
++	}
++	if (in >= end)
++		in = start + (in - end);
++	/* the data before the pointer that hands it over */
++	wmb();
++	writel(in, acpu->ring + rec + REC_IN);
++	return 0;
++}
++
++static void ring_init(struct rtd_acpu *acpu, u32 rec, u32 ring, u32 size)
++{
++	u32 buf = acpu->ring_acpu + ring;
++
++	writel(buf, acpu->ring + rec + REC_BUF);
++	writel(buf, acpu->ring + rec + REC_START);
++	writel(buf + size, acpu->ring + rec + REC_END);
++	writel(buf, acpu->ring + rec + REC_IN);
++	writel(buf, acpu->ring + rec + REC_OUT);
++}
++
++/* As rpc_send_interrupt(): flag it as RPC, then raise it */
++static void acpu_kick(struct rtd_acpu *acpu)
++{
++	u32 sync = readl(acpu->comm + IPC_VO_INT_SYNC);
++
++	if (sync & SYNC_RPC_NOTIFY)
++		writel(sync | SYNC_RPC_FEEDBACK, acpu->comm + IPC_VO_INT_SYNC);
++	writel(RPC_INT_SA | RPC_INT_W1, acpu->sb2 + RPC_INT);
++}
++
++static int acpu_send(struct rtd_acpu *acpu, u32 rec, const void *msg, u32 len)
++{
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&acpu->sa_lock, flags);
++	ret = ring_write(acpu, rec, msg, len);
++	if (!ret)
++		acpu_kick(acpu);
++	spin_unlock_irqrestore(&acpu->sa_lock, flags);
++	return ret;
++}
++
++static void acpu_reply(struct rtd_acpu *acpu, u32 rec, struct rpc_hdr *req,
++		       u32 value)
++{
++	struct {
++		struct rpc_hdr hdr;
++		__be32 task;
++		__be32 value;
++	} msg = {
++		.hdr.program = cpu_to_be32(PROG_REPLY),
++		.hdr.version = cpu_to_be32(PROG_REPLY),
++		.hdr.param_size = cpu_to_be32(8),
++		.hdr.context = req->context,
++		.task = req->task,
++		.value = cpu_to_be32(value),
++	};
++
++	if (acpu_send(acpu, rec, &msg, sizeof(msg)))
++		dev_err(acpu->dev, "no room for a reply\n");
++}
++
++/* The firmware's memory requests, out of the media region */
++static u32 acpu_remote_alloc(struct rtd_acpu *acpu, u32 size, bool page_align)
++{
++	struct genpool_data_align align = {
++		.align = page_align ? PAGE_SIZE : SZ_16K,
++	};
++	struct remote_alloc *ra;
++	unsigned long phys;
++
++	size = PAGE_ALIGN(size);
++	ra = kzalloc(sizeof(*ra), GFP_KERNEL);
++	if (!ra)
++		return 0;
++	phys = gen_pool_alloc_algo(acpu->media, size, gen_pool_first_fit_align,
++				   &align);
++	if (!phys) {
++		dev_err(acpu->dev, "out of memory for the firmware (%u)\n", size);
++		kfree(ra);
++		return 0;
++	}
++	ra->phys = phys;
++	ra->size = size;
++	list_add(&ra->list, &acpu->remote);
++	dev_dbg(acpu->dev, "remote alloc %#x at %#lx\n", size, phys);
++	return phys + REMOTE_KSEG0;
++}
++
++static void acpu_remote_free(struct rtd_acpu *acpu, u32 addr)
++{
++	phys_addr_t phys = addr - REMOTE_KSEG0;
++	struct remote_alloc *ra;
++
++	list_for_each_entry(ra, &acpu->remote, list)
++		if (ra->phys == phys) {
++			gen_pool_free(acpu->media, ra->phys, ra->size);
++			list_del(&ra->list);
++			kfree(ra);
++			return;
++		}
++	dev_warn(acpu->dev, "remote free of unknown %#x\n", addr);
++}
++
++/* Turn the firmware's debug output off; see the top of the file */
++static void acpu_quiet(struct rtd_acpu *acpu)
++{
++	char msg[sizeof(fw_hdmi_msg)];
++	u32 ptr, off;
++
++	if (acpu->quiet || fw_debug)
++		return;
++	acpu->quiet = true;
++
++	memcpy_fromio(msg, acpu->fw + FW_HDMI_MSG, sizeof(msg));
++	if (memcmp(msg, fw_hdmi_msg, sizeof(msg))) {
++		dev_info(acpu->dev, "unknown firmware build, debug output left on\n");
++		return;
++	}
++	ptr = be32_to_cpu(readl(acpu->fw + FW_PTR_DEBUG_FLAG));
++	off = (ptr & 0x1fffffff) - 0x0f900000;
++	if (!ptr || off >= acpu->fw_size - 4) {
++		dev_info(acpu->dev, "debug flag not set up (%#x)\n", ptr);
++		return;
++	}
++	writel(readl(acpu->fw + off) & ~cpu_to_be32(BIT(0)), acpu->fw + off);
++	dev_dbg(acpu->dev, "firmware debug output off\n");
++}
++
++static void acpu_skip(struct rtd_acpu *acpu, u32 rec, u32 len)
++{
++	u8 buf[64];
++
++	while (len) {
++		u32 n = min_t(u32, len, sizeof(buf));
++
++		if (ring_read(acpu, rec, buf, n))
++			return;
++		len -= n;
++	}
++}
++
++/*
++ * A reply to one of our AUDIO_SYSTEM calls: the caller's task ID, then the
++ * result in XDR, i.e. big-endian words.
++ */
++static void acpu_rpc_reply(struct rtd_acpu *acpu, struct rpc_hdr *hdr, u32 size)
++{
++	__be32 buf[RPC_MAX_WORDS + 1];
++	u32 n = min_t(u32, ALIGN(size, 4), sizeof(buf));
++
++	if (ring_read(acpu, INTR_REC(1), buf, n))
++		return;
++	acpu_skip(acpu, INTR_REC(1), ALIGN(size, 4) - n);
++	if (!acpu->rpc_context ||
++	    be32_to_cpu(hdr->context) != acpu->rpc_context) {
++		dev_warn(acpu->dev, "stray reply, context %#x\n",
++			 be32_to_cpu(hdr->context));
++		return;
++	}
++	dev_dbg(acpu->dev, "reply, %u bytes: %*ph\n", size, n, buf);
++	acpu->rpc_nres = n >= 4 ? n / 4 - 1 : 0;
++	memcpy(acpu->rpc_res, buf + 1, acpu->rpc_nres * 4);
++	acpu->rpc_context = 0;
++	complete(&acpu->rpc_done);
++}
++
++/* The firmware's own requests, on the intr AS ring */
++static void acpu_do_intr(struct rtd_acpu *acpu)
++{
++	struct rpc_hdr hdr;
++	__be32 arg;
++	u32 value;
++
++	while (!ring_read(acpu, INTR_REC(1), &hdr, sizeof(hdr))) {
++		u32 size = be32_to_cpu(hdr.param_size);
++
++		if (be32_to_cpu(hdr.program) == PROG_REPLY) {
++			acpu_rpc_reply(acpu, &hdr, size);
++			continue;
++		}
++		if (be32_to_cpu(hdr.program) != PROG_KERNEL ||
++		    size < sizeof(arg)) {
++			dev_dbg(acpu->dev, "dropped program %u procedure %u\n",
++				be32_to_cpu(hdr.program),
++				be32_to_cpu(hdr.procedure));
++			acpu_skip(acpu, INTR_REC(1), ALIGN(size, 4));
++			continue;
++		}
++		if (ring_read(acpu, INTR_REC(1), &arg, sizeof(arg)))
++			return;
++		acpu_skip(acpu, INTR_REC(1), ALIGN(size, 4) - sizeof(arg));
++
++		switch (be32_to_cpu(hdr.procedure)) {
++		case REMOTE_ALLOC:
++		case REMOTE_ALLOC_SECURE:
++			/* context bit 0: page alignment is enough */
++			value = acpu_remote_alloc(acpu, be32_to_cpu(arg),
++						  be32_to_cpu(hdr.context) & 1);
++			break;
++		case REMOTE_FREE:
++			acpu_remote_free(acpu, be32_to_cpu(arg));
++			value = 0;
++			break;
++		default:
++			dev_warn(acpu->dev, "unknown request %u\n",
++				 be32_to_cpu(hdr.procedure));
++			value = 0;
++		}
++		hdr.context &= ~cpu_to_be32(3);
++		acpu_reply(acpu, INTR_REC(0), &hdr, value);
++		/* the firmware has set its debug flag by its first request */
++		acpu_quiet(acpu);
++	}
++}
++
++/* Replies to our calls, and the firmware's calls into the kernel */
++static void acpu_do_kern(struct rtd_acpu *acpu)
++{
++	struct rpc_hdr hdr;
++	__be32 arg[3];
++
++	while (!ring_read(acpu, KERN_REC(1), &hdr, sizeof(hdr))) {
++		if (hdr.task) {
++			/* nothing is registered for these in this port */
++			if (ring_read(acpu, KERN_REC(1), arg, sizeof(arg)))
++				return;
++			dev_dbg(acpu->dev, "firmware called %u (%#x, %#x)\n",
++				be32_to_cpu(arg[0]), be32_to_cpu(arg[1]),
++				be32_to_cpu(arg[2]));
++			acpu_reply(acpu, KERN_REC(0), &hdr, 0);
++			continue;
++		}
++		if (ring_read(acpu, KERN_REC(1), arg, 2 * sizeof(arg[0])))
++			return;
++		if (be32_to_cpu(arg[0]) != acpu->call_task) {
++			dev_warn(acpu->dev, "stray reply for %u\n",
++				 be32_to_cpu(arg[0]));
++			continue;
++		}
++		acpu->call_ret = be32_to_cpu(arg[1]);
++		complete(&acpu->call_done);
++	}
++}
++
++static void acpu_work(struct work_struct *work)
++{
++	struct rtd_acpu *acpu = container_of(work, struct rtd_acpu, work);
++
++	acpu_do_intr(acpu);
++	acpu_do_kern(acpu);
++}
++
++static irqreturn_t acpu_irq(int irq, void *data)
++{
++	struct rtd_acpu *acpu = data;
++	u32 sync;
++
++	if (!(readl(acpu->sb2 + RPC_INT) & RPC_INT_AS))
++		return IRQ_NONE;
++	/* writing the bit with RPC_INT_W1 clear clears it */
++	writel(RPC_INT_AS, acpu->sb2 + RPC_INT);
++
++	sync = readl(acpu->comm + IPC_VO_INT_SYNC);
++	if (sync & SYNC_RPC_FEEDBACK)
++		writel(sync & ~SYNC_RPC_FEEDBACK, acpu->comm + IPC_VO_INT_SYNC);
++	/* the rings are cheap to look at, so look whatever the flag says */
++	queue_work(system_highpri_wq, &acpu->work);
++	return IRQ_HANDLED;
++}
++
++/**
++ * rtd_acpu_call() - call into the audio firmware
++ * @acpu: the audio CPU
++ * @cmd: RTD_ACPU_* command
++ * @param: ACPU address of the command's argument structure
++ * @result: ACPU address of where the command writes its result
++ * @ret: the HRESULT the call returns, RTD_ACPU_S_OK on success
++ */
++int rtd_acpu_call(struct rtd_acpu *acpu, u32 cmd, u32 param, u32 result,
++		  u32 *ret)
++{
++	struct {
++		struct rpc_hdr hdr;
++		__be32 arg[3];
++	} msg = {
++		.hdr.program = cpu_to_be32(PROG_KERNEL),
++		.hdr.version = cpu_to_be32(PROG_KERNEL),
++		.hdr.param_size = cpu_to_be32(sizeof(msg.arg)),
++		.arg = { cpu_to_be32(cmd), cpu_to_be32(param),
++			 cpu_to_be32(result) },
++	};
++	int err;
++
++	mutex_lock(&acpu->call_lock);
++	acpu->call_task = task_pid_nr(current);
++	msg.hdr.task = cpu_to_be32(acpu->call_task);
++	reinit_completion(&acpu->call_done);
++	err = acpu_send(acpu, KERN_REC(0), &msg, sizeof(msg));
++	if (!err && !wait_for_completion_timeout(&acpu->call_done,
++						 CALL_TIMEOUT))
++		err = -ETIMEDOUT;
++	if (!err && ret)
++		*ret = acpu->call_ret;
++	acpu->call_task = 0;
++	mutex_unlock(&acpu->call_lock);
++	if (err)
++		dev_err(acpu->dev, "call %u failed: %d\n", cmd, err);
++	return err;
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_call);
++
++/**
++ * rtd_acpu_vo_kick() - tell the video output there is a new command in its
++ * ring, as the BSP's dc2vo_send_interrupt()
++ * @acpu: the audio CPU
++ */
++void rtd_acpu_vo_kick(struct rtd_acpu *acpu)
++{
++	unsigned long flags;
++	u32 sync;
++
++	spin_lock_irqsave(&acpu->sa_lock, flags);
++	sync = readl(acpu->comm + IPC_VO_INT_SYNC);
++	if (sync & SYNC_VO_NOTIFY) {
++		writel(sync | SYNC_VO_FEEDBACK, acpu->comm + IPC_VO_INT_SYNC);
++		writel(RPC_INT_SA | RPC_INT_W1, acpu->sb2 + RPC_INT);
++	}
++	spin_unlock_irqrestore(&acpu->sa_lock, flags);
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_vo_kick);
++
++/**
++ * rtd_acpu_rpc() - call one of the firmware's AUDIO_SYSTEM procedures
++ * @acpu: the audio CPU
++ * @procedure: the procedure number (AudioRPC_System.h in Realtek's SDK)
++ * @args: the arguments, XDR-encoded: one big-endian word per member
++ * @nargs: number of words in @args
++ * @res: where the result goes, XDR-encoded as well
++ * @nres: number of words @res has room for
++ *
++ * These go over the intr rings, as Realtek's user-space RPC library sends
++ * them; the video output procedures are among them on this SoC.
++ *
++ * Return: the number of result words received, or a negative error.
++ */
++int rtd_acpu_rpc(struct rtd_acpu *acpu, u32 procedure, const __be32 *args,
++		 u32 nargs, __be32 *res, u32 nres)
++{
++	static u32 context;
++	struct {
++		struct rpc_hdr hdr;
++		__be32 arg[RPC_MAX_WORDS];
++	} msg = {
++		.hdr.program = cpu_to_be32(PROG_AUDIO_SYSTEM),
++		.hdr.procedure = cpu_to_be32(procedure),
++		.hdr.param_size = cpu_to_be32(nargs * 4),
++	};
++	int err;
++
++	if (nargs > RPC_MAX_WORDS)
++		return -EINVAL;
++	memcpy(msg.arg, args, nargs * 4);
++
++	mutex_lock(&acpu->rpc_lock);
++	msg.hdr.task = cpu_to_be32(task_pid_nr(current));
++	msg.hdr.sys_tid = msg.hdr.task;
++	/* never 0, which means "no call in flight" */
++	context = (context + 1) & 0x7fffffff ?: 1;
++	msg.hdr.context = cpu_to_be32(context);
++	reinit_completion(&acpu->rpc_done);
++	WRITE_ONCE(acpu->rpc_context, context);
++	err = acpu_send(acpu, INTR_REC(0), &msg, sizeof(msg.hdr) + nargs * 4);
++	if (!err && !wait_for_completion_timeout(&acpu->rpc_done,
++						 CALL_TIMEOUT))
++		err = -ETIMEDOUT;
++	WRITE_ONCE(acpu->rpc_context, 0);
++	if (!err) {
++		err = min(acpu->rpc_nres, nres);
++		memcpy(res, acpu->rpc_res, err * 4);
++	}
++	mutex_unlock(&acpu->rpc_lock);
++	if (err < 0)
++		dev_err(acpu->dev, "procedure %u failed: %d\n", procedure, err);
++	return err;
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_rpc);
++
++/*
++ * Memory out of the region the firmware gets its own buffers from, which
++ * it can reach (below 512 MiB). Physical; the caller maps it.
++ */
++phys_addr_t rtd_acpu_media_alloc(struct rtd_acpu *acpu, size_t size)
++{
++	return gen_pool_alloc(acpu->media, PAGE_ALIGN(size));
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_media_alloc);
++
++void rtd_acpu_media_free(struct rtd_acpu *acpu, phys_addr_t phys, size_t size)
++{
++	gen_pool_free(acpu->media, phys, PAGE_ALIGN(size));
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_media_free);
++
++int rtd_acpu_alloc(struct rtd_acpu *acpu, size_t size, struct rtd_acpu_buf *buf)
++{
++	dma_addr_t phys;
++
++	buf->size = ALIGN(size, 64);
++	buf->vaddr = gen_pool_dma_zalloc(acpu->audio, buf->size, &phys);
++	if (!buf->vaddr)
++		return -ENOMEM;
++	buf->phys = phys;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_alloc);
++
++void rtd_acpu_free(struct rtd_acpu *acpu, struct rtd_acpu_buf *buf)
++{
++	if (buf->vaddr)
++		gen_pool_free(acpu->audio, (unsigned long)buf->vaddr, buf->size);
++	buf->vaddr = NULL;
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_free);
++
++static int acpu_region(struct rtd_acpu *acpu, const char *name,
++		       struct resource *res)
++{
++	struct device_node *np = acpu->dev->of_node, *rmem;
++	int idx, ret;
++
++	idx = of_property_match_string(np, "memory-region-names", name);
++	if (idx < 0)
++		return dev_err_probe(acpu->dev, idx, "no %s region\n", name);
++	rmem = of_parse_phandle(np, "memory-region", idx);
++	if (!rmem)
++		return -ENODEV;
++	ret = of_address_to_resource(rmem, 0, res);
++	of_node_put(rmem);
++	return ret;
++}
++
++/* As rtk_rpc_probe(): rings, then interrupts on, then the flag */
++static void acpu_start(struct rtd_acpu *acpu)
++{
++	int i;
++
++	for (i = 0; i < NR_RINGS; i++) {
++		ring_init(acpu, POLL_REC(i), POLL_RING(i), RING_SIZE);
++		ring_init(acpu, INTR_REC(i), INTR_RING(i), RING_SIZE);
++		ring_init(acpu, KERN_REC(i), KERN_RING(i), RING_SIZE);
++	}
++	writel(readl(acpu->comm + IPC_VO_INT_SYNC) | SYNC_RPC_NOTIFY,
++	       acpu->comm + IPC_VO_INT_SYNC);
++	acpu_kick(acpu);
++	writel(0xffffffff, acpu->comm + IPC_AUDIO_RPC_FLAG);
++}
++
++static void acpu_unregister_adev(void *data)
++{
++	struct rtd_acpu_adev *adev = data;
++
++	auxiliary_device_delete(&adev->adev);
++	auxiliary_device_uninit(&adev->adev);
++}
++
++static void acpu_release_adev(struct device *dev)
++{
++	kfree(container_of(dev, struct rtd_acpu_adev, adev.dev));
++}
++
++static int acpu_add_adev(struct rtd_acpu *acpu, const char *name,
++			 struct rtd_acpu_adev **slot)
++{
++	struct rtd_acpu_adev *adev;
++	int ret;
++
++	adev = kzalloc(sizeof(*adev), GFP_KERNEL);
++	if (!adev)
++		return -ENOMEM;
++	adev->acpu = acpu;
++	adev->adev.name = name;
++	adev->adev.dev.parent = acpu->dev;
++	adev->adev.dev.release = acpu_release_adev;
++	ret = auxiliary_device_init(&adev->adev);
++	if (ret) {
++		kfree(adev);
++		return ret;
++	}
++	ret = auxiliary_device_add(&adev->adev);
++	if (ret) {
++		auxiliary_device_uninit(&adev->adev);
++		return ret;
++	}
++	*slot = adev;
++	return devm_add_action_or_reset(acpu->dev, acpu_unregister_adev, adev);
++}
++
++static int acpu_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct resource comm, ring, audio, media, fw;
++	struct rtd_acpu *acpu;
++	void *audio_virt;
++	int irq, ret;
++
++	acpu = devm_kzalloc(dev, sizeof(*acpu), GFP_KERNEL);
++	if (!acpu)
++		return -ENOMEM;
++	acpu->dev = dev;
++	INIT_LIST_HEAD(&acpu->remote);
++	spin_lock_init(&acpu->sa_lock);
++	INIT_WORK(&acpu->work, acpu_work);
++	mutex_init(&acpu->call_lock);
++	init_completion(&acpu->call_done);
++	mutex_init(&acpu->rpc_lock);
++	init_completion(&acpu->rpc_done);
++
++	/* SB2 belongs to a syscon as a whole, so do not claim the range */
++	acpu->sb2 = devm_ioremap(dev, platform_get_resource(pdev,
++				 IORESOURCE_MEM, 0)->start, 0xc);
++	if (!acpu->sb2)
++		return -ENOMEM;
++
++	ret = acpu_region(acpu, "comm", &comm) ?:
++	      acpu_region(acpu, "ring", &ring) ?:
++	      acpu_region(acpu, "audio", &audio) ?:
++	      acpu_region(acpu, "media", &media) ?:
++	      acpu_region(acpu, "firmware", &fw);
++	if (ret)
++		return ret;
++	acpu->comm = devm_ioremap(dev, comm.start, resource_size(&comm));
++	acpu->ring = devm_ioremap(dev, ring.start, resource_size(&ring));
++	audio_virt = devm_memremap(dev, audio.start, resource_size(&audio),
++				   MEMREMAP_WC);
++	if (!acpu->comm || !acpu->ring || IS_ERR(audio_virt))
++		return -ENOMEM;
++	acpu->ring_acpu = rtd_acpu_addr(ring.start);
++	acpu->fw_size = resource_size(&fw);
++	acpu->fw = devm_ioremap(dev, fw.start, acpu->fw_size);
++	if (!acpu->fw)
++		return -ENOMEM;
++	/* the firmware is linked to run here; its pointers say so */
++	if (fw.start != 0x0f900000)
++		return dev_err_probe(dev, -EINVAL, "firmware not at 0x0f900000\n");
++
++	acpu->audio = devm_gen_pool_create(dev, 6, -1, "acpu-audio");
++	acpu->media = devm_gen_pool_create(dev, PAGE_SHIFT, -1, "acpu-media");
++	if (IS_ERR(acpu->audio) || IS_ERR(acpu->media))
++		return -ENOMEM;
++	ret = gen_pool_add_virt(acpu->audio, (unsigned long)audio_virt,
++				audio.start, resource_size(&audio), -1) ?:
++	      gen_pool_add(acpu->media, media.start, resource_size(&media), -1);
++	if (ret)
++		return ret;
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++	ret = devm_request_irq(dev, irq, acpu_irq, 0, dev_name(dev), acpu);
++	if (ret)
++		return ret;
++
++	/*
++	 * The firmware enables its RPC interrupts once it has opened the
++	 * rings. If it already has, it is running from an earlier start, and
++	 * new rings would lose track of whatever it has in flight.
++	 */
++	if (readl(acpu->sb2 + RPC_INT_EN) & RPC_INT_SA) {
++		dev_warn(dev, "audio firmware already running\n");
++		acpu_quiet(acpu);
++	} else if (be32_to_cpu(readl(acpu->comm)) != 0x16803001) {
++		/* u-boot's "go a" writes this magic for the firmware */
++		return dev_err_probe(dev, -ENODEV, "audio firmware not started\n");
++	} else {
++		acpu_start(acpu);
++	}
++
++	platform_set_drvdata(pdev, acpu);
++	return acpu_add_adev(acpu, RTD_ACPU_PCM_NAME, &acpu->pcm) ?:
++	       acpu_add_adev(acpu, RTD_ACPU_VO_NAME, &acpu->vo);
++}
++
++static const struct of_device_id acpu_of_match[] = {
++	{ .compatible = "realtek,rtd1295-acpu" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, acpu_of_match);
++
++static struct platform_driver acpu_driver = {
++	.probe = acpu_probe,
++	.driver = {
++		.name = "rtd129x-acpu",
++		.of_match_table = acpu_of_match,
++		/*
++		 * The firmware keeps the memory it got from us; a new probe
++		 * would hand it out again.
++		 */
++		.suppress_bind_attrs = true,
++	},
++};
++
++static int __init acpu_init(void)
++{
++	return platform_driver_register(&acpu_driver);
++}
++module_init(acpu_init);
++
++MODULE_DESCRIPTION("Realtek RTD129x audio CPU RPC");
++MODULE_LICENSE("GPL");
+diff --git a/sound/realtek-rtd129x-acpu/acpu-vo.c b/sound/realtek-rtd129x-acpu/acpu-vo.c
+new file mode 100644
+index 000000000000..263cbcf5050b
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-vo.c
+@@ -0,0 +1,567 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Realtek RTD129x video output, through the audio firmware
++ *
++ * On this SoC the audio CPU's firmware (bluecore.audio) also runs the video
++ * output: the VO mixer and its planes, and the HDMI transmitter behind it.
++ * The boot loader leaves it a TV system (VO_RESOLUTION, "one step"), which
++ * the firmware applies when it starts -- 1080p60 HDMI on the BPI-W2 -- but
++ * nothing is shown on any plane.
++ *
++ * This puts one plane, OSD1, on screen the way Realtek's own kernel
++ * framebuffer does it (rtk_fb_RPC.c, RTK_FB_RPC_OSD_init(), in Realtek's
++ * 4.9 kernel for this SoC): create a video-out instance, display it on
++ * OSD1, size the window, give it a reference clock and a ring buffer, and
++ * run it. Pictures are then handed over as in-band commands in that ring
++ * (VIDEO_GRAPHIC_PICTURE_OBJECT, as dc2vo.c does it).
++ *
++ * That kernel used RPC numbers this firmware does not have (its kernel RPC
++ * table stops at 39), so the calls go as the firmware's AUDIO_SYSTEM
++ * procedures instead, the way Realtek's user-space libraries make them; the
++ * numbers are from AudioRPC_System.h in Realtek's Android SDK and match the
++ * firmware's dispatcher.
++ *
++ * On top of that sits a minimal DRM driver: one CRTC, one plane, one HDMI
++ * connector with the one mode the firmware runs. Changing the TV system is
++ * left to the boot loader. Scanout buffers come from a reserved pool below
++ * 512 MiB (the "vo" region of the audio CPU node), which is what the audio
++ * CPU can reach.
++ */
++#include <linux/auxiliary_bus.h>
++#include <linux/dma-mapping.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of_reserved_mem.h>
++
++#include <drm/clients/drm_client_setup.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_drv.h>
++#include <drm/drm_fb_dma_helper.h>
++#include <drm/drm_fbdev_dma.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_framebuffer.h>
++#include <drm/drm_gem_atomic_helper.h>
++#include <drm/drm_gem_dma_helper.h>
++#include <drm/drm_gem_framebuffer_helper.h>
++#include <drm/drm_probe_helper.h>
++#include <drm/drm_simple_kms_helper.h>
++
++#include "acpu-vo.h"
++
++/* AUDIO_SYSTEM procedures (AudioRPC_System.h) */
++#define VIDEO_RPC_ToAgent_Create			1010
++#define VIDEO_RPC_ToAgent_InitRingBuffer		1030
++#define VIDEO_RPC_ToAgent_Run				1040
++#define VIDEO_RPC_ToAgent_SetRefClock			1090
++#define VIDEO_RPC_VOUT_ToAgent_ConfigureDisplayWindow	2080
++#define VIDEO_RPC_VO_FILTER_ToAgent_Display		2260
++
++#define VF_TYPE_VIDEO_OUT	10
++#define VO_VIDEO_PLANE_OSD1	3
++
++/* In-band commands (dc2vo.h, InbandAPI.h) */
++#define INBAND_CMD_TYPE_PICTURE_OBJECT	32
++#define GRAPHIC_FORMAT_ARGB8888_LITTLE	39
++
++/* What the boot loader has the firmware run: CEA-861 VIC 16, 1080p60 */
++static const struct drm_display_mode vo_mode = {
++	DRM_MODE("1920x1080", DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
++		 148500, 1920, 2008, 2052, 2200, 0, 1080, 1084, 1089, 1125, 0,
++		 DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC),
++	.picture_aspect_ratio = HDMI_PICTURE_ASPECT_16_9,
++};
++
++/* The shared block: ring, its header, the reference clock */
++#define VO_RING_SIZE		SZ_64K
++#define VO_RING_HDR		VO_RING_SIZE
++#define VO_REFCLOCK		(VO_RING_SIZE + SZ_1K)
++#define VO_SHARED_SIZE		(VO_RING_SIZE + SZ_2K)
++
++/* RINGBUFFER_HEADER, all big-endian */
++struct vo_ring_hdr {
++	__be32 magic;
++	__be32 begin;
++	__be32 size;
++	__be32 buffer_id;
++	__be32 write;
++	__be32 num_read;
++	__be32 reserved[2];
++	__be32 read[4];
++	__be32 file_offset;
++	__be32 requested_file_offset;
++	__be32 file_size;
++	__be32 seekable;
++};
++
++/* REFCLOCK (dc_rpc.h), big-endian, laid out as the MIPS side has it */
++struct vo_refclock {
++	__be64 rcd;
++	__be32 rcd_ext;
++	__be64 gpts_timeout;
++	__be64 video_system_pts;
++	__be64 audio_system_pts;
++	__be64 video_rpts;
++	__be64 audio_rpts;
++	__be32 video_context;
++	__be32 audio_context;
++	u8 system_mode, video_mode, audio_mode, master_state;
++	__be32 video_free_run_threshold;
++	__be32 audio_free_run_threshold;
++	__be64 master_gpts;
++	__be32 audio_fullness;
++	__be32 audio_pause_flag;
++	__be32 vo_underflow;
++	__be32 ao_underflow;
++	__be32 video_end_of_segment;
++	__be32 audio_end_of_segment;
++	u8 reserved[16];
++};
++
++#define AVSYNC_FORCED_SLAVE	0
++#define AVSYNC_FORCED_MASTER	1
++
++
++/*
++ * The arguments go as the firmware's C structures, big-endian, laid out as
++ * on the MIPS side: shorts and chars are not widened to words, as real XDR
++ * would have them. (A window sent as four words came out as 0x0.)
++ */
++static int vo_rpc_raw(struct rtd_vo *vo, u32 procedure, const void *args,
++		      u32 len, u32 *res, u32 nres)
++{
++	__be32 r[8];
++	int i, got;
++
++	got = rtd_acpu_rpc(vo->acpu, procedure, args, DIV_ROUND_UP(len, 4), r,
++			   ARRAY_SIZE(r));
++	if (got < 0)
++		return got;
++	dev_dbg(vo->dev, "procedure %u: %d words, %*ph\n", procedure, got,
++		got * 4, r);
++	for (i = 0; i < min_t(int, got, nres); i++)
++		res[i] = be32_to_cpu(r[i]);
++	return got;
++}
++
++/* A call whose arguments are all words */
++static int vo_rpc(struct rtd_vo *vo, u32 procedure, const u32 *args, u32 n,
++		  u32 *res, u32 nres)
++{
++	__be32 a[16];
++	int i;
++
++	for (i = 0; i < n; i++)
++		a[i] = cpu_to_be32(args[i]);
++	return vo_rpc_raw(vo, procedure, a, n * 4, res, nres);
++}
++
++static int vo_check(struct rtd_vo *vo, u32 procedure, int got, u32 res)
++{
++	if (got < 0)
++		return got;
++	if (got < 1 || res != RTD_ACPU_S_OK) {
++		dev_err(vo->dev, "procedure %u: result %#x\n", procedure,
++			got ? res : 0);
++		return -EIO;
++	}
++	return 0;
++}
++
++/* Calls whose result is just an HRESULT */
++static int vo_call_raw(struct rtd_vo *vo, u32 procedure, const void *args,
++		       u32 len)
++{
++	u32 res;
++
++	return vo_check(vo, procedure,
++			vo_rpc_raw(vo, procedure, args, len, &res, 1), res);
++}
++
++static int vo_call(struct rtd_vo *vo, u32 procedure, const u32 *args, u32 n)
++{
++	u32 res;
++	int got = vo_rpc(vo, procedure, args, n, &res, 1);
++
++	return vo_check(vo, procedure, got, res);
++}
++
++/* A kernel RPC with a TV system as its argument and as its result */
++static int vo_tv_system_call(struct rtd_vo *vo, u32 cmd, u8 *tv)
++{
++	u32 param = rtd_acpu_addr(vo->param.phys), ret;
++	int err;
++
++	memcpy(vo->param.vaddr, tv, VO_TV_SYSTEM_SIZE);
++	wmb();
++	err = rtd_acpu_call(vo->acpu, cmd, param, param + VO_TV_SYSTEM_SIZE,
++			    &ret);
++	if (err)
++		return err;
++	if (ret != RTD_ACPU_S_OK) {
++		dev_err(vo->dev, "kernel RPC %u: %#x\n", cmd, ret);
++		return -EIO;
++	}
++	memcpy(tv, vo->param.vaddr + VO_TV_SYSTEM_SIZE, VO_TV_SYSTEM_SIZE);
++	return 0;
++}
++
++/* The TV system the firmware runs, VO_TV_SYSTEM_SIZE bytes */
++int vo_query_tv_system(struct rtd_vo *vo, u8 *tv)
++{
++	memset(tv, 0, VO_TV_SYSTEM_SIZE);
++	return vo_tv_system_call(vo, VO_KRPC_QUERY_TV_SYSTEM, tv);
++}
++
++int vo_config_tv_system(struct rtd_vo *vo, const u8 *tv)
++{
++	u8 buf[VO_TV_SYSTEM_SIZE];
++
++	memcpy(buf, tv, sizeof(buf));
++	return vo_tv_system_call(vo, VO_KRPC_CONFIG_TV_SYSTEM, buf);
++}
++
++/* VIDEO_RPC_VO_FILTER_DISPLAY */
++static int vo_display(struct rtd_vo *vo, bool zero_buffer)
++{
++	struct {
++		__be32 instance;
++		__be32 plane;
++		u8 zero_buffer;
++		u8 real_time_src;
++		u8 pad[2];
++	} arg = {
++		.instance = cpu_to_be32(vo->instance),
++		.plane = cpu_to_be32(VO_VIDEO_PLANE_OSD1),
++		.zero_buffer = zero_buffer,
++	};
++
++	return vo_call_raw(vo, VIDEO_RPC_VO_FILTER_ToAgent_Display, &arg,
++			   sizeof(arg));
++}
++
++struct vo_rect {
++	__be16 x, y, w, h;
++};
++
++/* VIDEO_RPC_VOUT_CONFIG_DISP_WIN: the plane's window, no border */
++static int vo_window(struct rtd_vo *vo)
++{
++	struct {
++		__be32 plane;
++		struct vo_rect video;
++		struct vo_rect border;
++		u8 c1, c2, c3, is_rgb;
++		u8 en_border;
++		u8 pad[3];
++	} arg = {
++		.plane = cpu_to_be32(VO_VIDEO_PLANE_OSD1),
++		.video = { 0, 0, cpu_to_be16(1920), cpu_to_be16(1080) },
++		.border = { 0, 0, cpu_to_be16(1920), cpu_to_be16(1080) },
++		.c3 = 255, .is_rgb = 1,
++	};
++
++	return vo_call_raw(vo, VIDEO_RPC_VOUT_ToAgent_ConfigureDisplayWindow,
++			   &arg, sizeof(arg));
++}
++
++static void vo_write_cmd(struct rtd_vo *vo, const u32 *cmd, u32 len)
++{
++	struct vo_ring_hdr __iomem *hdr = vo->shared.vaddr + VO_RING_HDR;
++	u32 begin = be32_to_cpu(readl(&hdr->begin));
++	u32 size = be32_to_cpu(readl(&hdr->size));
++	u32 write = be32_to_cpu(readl(&hdr->write));
++	u32 read = be32_to_cpu(readl(&hdr->read[0]));
++	u32 i, off;
++
++	if ((read + (read > write ? 0 : size) - write) <= len) {
++		dev_warn(vo->dev, "ring full\n");
++		return;
++	}
++	for (i = 0; i < len / 4; i++) {
++		off = (write - begin + i * 4) % size;
++		writel(cpu_to_be32(cmd[i]), vo->shared.vaddr + off);
++	}
++	write = begin + (write - begin + len) % size;
++	wmb();
++	writel(cpu_to_be32(write), &hdr->write);
++	rtd_acpu_vo_kick(vo->acpu);
++}
++
++/*
++ * VIDEO_GRAPHIC_PICTURE_OBJECT: the plane shows this buffer from now on, and
++ * keeps reading it. The alpha byte of XRGB8888 is not to be trusted (fbcon
++ * leaves it 0), so the plane gets a constant alpha of 0xff instead.
++ */
++static void vo_show(struct rtd_vo *vo, u32 addr, u32 width, u32 height,
++		    u32 pitch)
++{
++	u32 obj[21] = {
++		INBAND_CMD_TYPE_PICTURE_OBJECT, sizeof(obj),
++		GRAPHIC_FORMAT_ARGB8888_LITTLE,
++		0, 0,			/* PTS */
++		vo->context++,
++		0xffffffff,		/* no colour key */
++		0xff,			/* constant alpha */
++		0, 0, width, height,
++		addr, pitch,
++		0, 0,			/* right eye */
++		0,			/* 2D */
++		0, 0, 0,		/* no AFBC */
++	};
++
++	vo_write_cmd(vo, obj, sizeof(obj));
++}
++
++static int vo_start(struct rtd_vo *vo)
++{
++	struct vo_ring_hdr __iomem *hdr = vo->shared.vaddr + VO_RING_HDR;
++	struct vo_refclock *clk = vo->shared.vaddr + VO_REFCLOCK;
++	u32 ring = vo->shared.phys, res[2];
++	int ret;
++
++	ret = vo_rpc(vo, VIDEO_RPC_ToAgent_Create,
++		     (u32[]){ VF_TYPE_VIDEO_OUT }, 1, res, 2);
++	if (ret < 0)
++		return ret;
++	if (ret < 2 || res[0] != RTD_ACPU_S_OK) {
++		dev_err(vo->dev, "no video-out instance (%d, %#x)\n", ret, res[0]);
++		return -EIO;
++	}
++	vo->instance = res[1];
++	dev_info(vo->dev, "video-out instance %#x\n", vo->instance);
++
++	ret = vo_display(vo, false) ?: vo_window(vo);
++	if (ret)
++		return ret;
++
++	memset(clk, 0, sizeof(*clk));
++	clk->rcd = cpu_to_be64(-1LL);
++	clk->rcd_ext = cpu_to_be32(-1);
++	clk->master_gpts = cpu_to_be64(-1LL);
++	clk->video_system_pts = cpu_to_be64(-1LL);
++	clk->audio_system_pts = cpu_to_be64(-1LL);
++	clk->video_rpts = cpu_to_be64(-1LL);
++	clk->audio_rpts = cpu_to_be64(-1LL);
++	clk->video_context = cpu_to_be32(-1);
++	clk->audio_context = cpu_to_be32(-1);
++	clk->video_end_of_segment = cpu_to_be32(-1);
++	clk->video_free_run_threshold = cpu_to_be32(0x7fffffff);
++	clk->audio_free_run_threshold = cpu_to_be32(0x7fffffff);
++	clk->system_mode = AVSYNC_FORCED_SLAVE;
++	clk->video_mode = AVSYNC_FORCED_MASTER;
++	clk->audio_mode = AVSYNC_FORCED_MASTER;
++	ret = vo_call(vo, VIDEO_RPC_ToAgent_SetRefClock,
++		      (u32[]){ vo->instance, ring + VO_REFCLOCK }, 2);
++	if (ret)
++		return ret;
++
++	ret = vo_call(vo, VIDEO_RPC_ToAgent_Run, (u32[]){ vo->instance }, 1);
++	if (ret)
++		return ret;
++
++	writel(cpu_to_be32(ring), &hdr->begin);
++	writel(cpu_to_be32(VO_RING_SIZE), &hdr->size);
++	writel(cpu_to_be32(ring), &hdr->write);
++	writel(cpu_to_be32(ring), &hdr->read[0]);
++	writel(cpu_to_be32(1), &hdr->buffer_id);
++	ret = vo_call(vo, VIDEO_RPC_ToAgent_InitRingBuffer,
++		      (u32[]){ vo->instance, 0, 0, ring + VO_RING_HDR }, 4);
++	if (ret)
++		return ret;
++
++	return vo_display(vo, true);
++}
++
++static struct rtd_vo *pipe_to_vo(struct drm_simple_display_pipe *pipe)
++{
++	return container_of(pipe, struct rtd_vo, pipe);
++}
++
++static void vo_post(struct rtd_vo *vo, struct drm_plane_state *state)
++{
++	struct drm_framebuffer *fb = state->fb;
++
++	if (!fb)
++		return;
++	vo_show(vo, drm_fb_dma_get_gem_addr(fb, state, 0), fb->width,
++		fb->height, fb->pitches[0]);
++}
++
++static void vo_pipe_enable(struct drm_simple_display_pipe *pipe,
++			   struct drm_crtc_state *crtc_state,
++			   struct drm_plane_state *plane_state)
++{
++	vo_post(pipe_to_vo(pipe), plane_state);
++}
++
++static void vo_pipe_update(struct drm_simple_display_pipe *pipe,
++			   struct drm_plane_state *old_state)
++{
++	struct drm_plane_state *state = pipe->plane.state;
++
++	if (state->fb && state->fb != old_state->fb)
++		vo_post(pipe_to_vo(pipe), state);
++}
++
++static enum drm_mode_status vo_pipe_mode_valid(struct drm_simple_display_pipe *pipe,
++					       const struct drm_display_mode *mode)
++{
++	return drm_mode_match(mode, &vo_mode, DRM_MODE_MATCH_TIMINGS) ?
++	       MODE_OK : MODE_BAD;
++}
++
++static const struct drm_simple_display_pipe_funcs vo_pipe_funcs = {
++	.mode_valid = vo_pipe_mode_valid,
++	.enable = vo_pipe_enable,
++	.update = vo_pipe_update,
++};
++
++static int vo_get_modes(struct drm_connector *connector)
++{
++	struct drm_display_mode *mode;
++
++	mode = drm_mode_duplicate(connector->dev, &vo_mode);
++	if (!mode)
++		return 0;
++	drm_mode_probed_add(connector, mode);
++	connector->display_info.width_mm = 0;
++	connector->display_info.height_mm = 0;
++	return 1;
++}
++
++static const struct drm_connector_helper_funcs vo_connector_helper_funcs = {
++	.get_modes = vo_get_modes,
++};
++
++static const struct drm_connector_funcs vo_connector_funcs = {
++	.fill_modes = drm_helper_probe_single_connector_modes,
++	.destroy = drm_connector_cleanup,
++	.reset = drm_atomic_helper_connector_reset,
++	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
++};
++
++static const struct drm_mode_config_funcs vo_mode_config_funcs = {
++	.fb_create = drm_gem_fb_create,
++	.atomic_check = drm_atomic_helper_check,
++	.atomic_commit = drm_atomic_helper_commit,
++};
++
++static const u32 vo_formats[] = {
++	DRM_FORMAT_XRGB8888,
++};
++
++DEFINE_DRM_GEM_DMA_FOPS(vo_fops);
++
++static const struct drm_driver vo_drm_driver = {
++	.driver_features = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
++	.fops = &vo_fops,
++	DRM_GEM_DMA_DRIVER_OPS,
++	DRM_FBDEV_DMA_DRIVER_OPS,
++	.name = "rtd129x-vo",
++	.desc = "Realtek RTD129x video output",
++	.major = 1,
++	.minor = 0,
++};
++
++static int vo_kms_init(struct rtd_vo *vo)
++{
++	struct drm_device *drm = &vo->drm;
++	int ret;
++
++	ret = drmm_mode_config_init(drm);
++	if (ret)
++		return ret;
++	drm->mode_config.min_width = vo_mode.hdisplay;
++	drm->mode_config.max_width = vo_mode.hdisplay;
++	drm->mode_config.min_height = vo_mode.vdisplay;
++	drm->mode_config.max_height = vo_mode.vdisplay;
++	drm->mode_config.funcs = &vo_mode_config_funcs;
++
++	drm_connector_helper_add(&vo->connector, &vo_connector_helper_funcs);
++	ret = drm_connector_init(drm, &vo->connector, &vo_connector_funcs,
++				 DRM_MODE_CONNECTOR_HDMIA);
++	if (ret)
++		return ret;
++
++	ret = drm_simple_display_pipe_init(drm, &vo->pipe, &vo_pipe_funcs,
++					   vo_formats, ARRAY_SIZE(vo_formats),
++					   NULL, &vo->connector);
++	if (ret)
++		return ret;
++	drm_mode_config_reset(drm);
++	return 0;
++}
++
++static int vo_probe(struct auxiliary_device *adev,
++		    const struct auxiliary_device_id *id)
++{
++	struct rtd_acpu_adev *aadev = container_of(adev, struct rtd_acpu_adev, adev);
++	struct device *dev = &adev->dev;
++	struct rtd_vo *vo;
++	int ret;
++
++	ret = dma_coerce_mask_and_coherent(dev, DMA_BIT_MASK(32));
++	if (ret)
++		return ret;
++	ret = of_reserved_mem_device_init_by_name(dev, dev->parent->of_node, "vo");
++	if (ret)
++		return dev_err_probe(dev, ret, "no vo memory region\n");
++
++	vo = devm_drm_dev_alloc(dev, &vo_drm_driver, struct rtd_vo, drm);
++	if (IS_ERR(vo)) {
++		ret = PTR_ERR(vo);
++		goto err_rmem;
++	}
++	vo->dev = dev;
++	vo->acpu = aadev->acpu;
++
++	ret = rtd_acpu_alloc(vo->acpu, VO_SHARED_SIZE, &vo->shared) ?:
++	      rtd_acpu_alloc(vo->acpu, 2 * VO_TV_SYSTEM_SIZE, &vo->param);
++	if (ret)
++		goto err_rmem;
++	ret = vo_start(vo);
++	if (ret)
++		goto err_shared;
++
++	ret = vo_kms_init(vo);
++	if (ret)
++		goto err_shared;
++	ret = drm_dev_register(&vo->drm, 0);
++	if (ret)
++		goto err_shared;
++	auxiliary_set_drvdata(adev, vo);
++	drm_client_setup(&vo->drm, NULL);
++
++	/* the DisplayPort output shows the same picture, if there is one */
++	ret = vo_dp_init(vo);
++	if (ret)
++		dev_warn(dev, "no DisplayPort output: %d\n", ret);
++	return 0;
++
++err_shared:
++	/* the firmware may still hold on to it; leave it be */
++	dev_err(dev, "video output not started: %d\n", ret);
++err_rmem:
++	of_reserved_mem_device_release(dev);
++	return ret;
++}
++
++static const struct auxiliary_device_id vo_id_table[] = {
++	{ .name = "rtd129x_acpu." RTD_ACPU_VO_NAME },
++	{ }
++};
++MODULE_DEVICE_TABLE(auxiliary, vo_id_table);
++
++static struct auxiliary_driver vo_driver = {
++	.probe = vo_probe,
++	.id_table = vo_id_table,
++	.driver = {
++		/* the firmware keeps what it was given */
++		.suppress_bind_attrs = true,
++	},
++};
++module_auxiliary_driver(vo_driver);
++
++MODULE_DESCRIPTION("Realtek RTD129x video output");
++MODULE_LICENSE("GPL");
+diff --git a/sound/realtek-rtd129x-acpu/acpu-vo.h b/sound/realtek-rtd129x-acpu/acpu-vo.h
+new file mode 100644
+index 000000000000..f235d5df99cf
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/acpu-vo.h
+@@ -0,0 +1,51 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Realtek RTD129x video output: what acpu-vo.c (the plane, DRM) and
++ * acpu-dp.c (the DisplayPort transmitter) share.
++ */
++#ifndef _RTD129X_ACPU_VO_H
++#define _RTD129X_ACPU_VO_H
++
++#include <drm/drm_connector.h>
++#include <drm/drm_device.h>
++#include <drm/drm_simple_kms_helper.h>
++
++#include "rtd129x-acpu.h"
++
++struct vo_dp;
++
++struct rtd_vo {
++	struct drm_device drm;
++	struct drm_simple_display_pipe pipe;
++	struct drm_connector connector;
++
++	struct device *dev;
++	struct rtd_acpu *acpu;
++	struct rtd_acpu_buf shared;	/* ring, header, refclock */
++	struct rtd_acpu_buf param;	/* kernel RPC arguments and results */
++	u32 instance;
++	u32 context;
++
++	struct vo_dp *dp;
++};
++
++/* Kernel RPCs (ENUM_VIDEO_KERNEL_RPC_* in the BSP) this firmware has */
++#define VO_KRPC_CONFIG_TV_SYSTEM	27
++#define VO_KRPC_QUERY_TV_SYSTEM		35
++
++/* VIDEO_RPC_VOUT_CONFIG_TV_SYSTEM, big-endian, as the MIPS side lays it out */
++#define VO_TV_SYSTEM_SIZE		56
++#define VO_TV_INTERFACE_TYPE		0	/* enum VO_INTERFACE_TYPE */
++#define VO_TV_STANDARD			4	/* videoInfo.standard */
++#define VO_TV_PED_TYPE			12	/* videoInfo.pedType: the DP standard */
++
++#define VO_INTERFACE_HDMI_AND_DP_SAME_SOURCE	4
++#define VO_STANDARD_DP_FORMAT_1920_1080P_60	60
++
++int vo_query_tv_system(struct rtd_vo *vo, u8 *tv);
++int vo_config_tv_system(struct rtd_vo *vo, const u8 *tv);
++
++int vo_dp_init(struct rtd_vo *vo);
++void vo_dp_fini(struct rtd_vo *vo);
++
++#endif
+diff --git a/sound/realtek-rtd129x-acpu/rtd129x-acpu.h b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+new file mode 100644
+index 000000000000..ca591b4d8eb1
+--- /dev/null
++++ b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+@@ -0,0 +1,68 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Realtek RTD129x audio CPU: the RPC used to talk to its firmware
++ * (bluecore.audio), and the parts of the firmware's interface the HDMI
++ * receiver's audio capture uses. Layouts and numbers are from Realtek's BSP
++ * (drivers/soc/realtek/common/rpc, sound/arm/snd-realtek*), which talks to
++ * the same firmware.
++ *
++ * The firmware is big-endian MIPS: everything it reads in a message or in
++ * a ring buffer header is big-endian. It addresses memory through KSEG1,
++ * so a physical address is passed to it as phys | 0xa0000000.
++ */
++#ifndef _RTD129X_ACPU_H
++#define _RTD129X_ACPU_H
++
++#include <linux/auxiliary_bus.h>
++#include <linux/types.h>
++
++struct rtd_acpu;
++
++/* Memory both CPUs can reach: the audio heap, mapped uncached. */
++struct rtd_acpu_buf {
++	void *vaddr;
++	phys_addr_t phys;
++	size_t size;
++};
++
++static inline u32 rtd_acpu_addr(phys_addr_t phys)
++{
++	return (u32)phys | 0xa0000000;
++}
++
++/* The firmware's success code, in the reply and in its result structures */
++#define RTD_ACPU_S_OK		0x10000000
++
++/* "Kernel RPC" commands (ENUM_AUDIO_KERNEL_RPC_CMD in the BSP) */
++enum {
++	RTD_ACPU_CREATE_AGENT	= 0,
++	RTD_ACPU_INIT_RINGBUF	= 1,
++	RTD_ACPU_PRIVATEINFO	= 2,
++	RTD_ACPU_RUN		= 3,
++	RTD_ACPU_PAUSE		= 4,
++	RTD_ACPU_STOP		= 19,
++	RTD_ACPU_CHECK_READY	= 20,
++	RTD_ACPU_ADC0_CONFIG	= 23,
++	RTD_ACPU_AIO_PRIVATEINFO = 37,
++};
++
++int rtd_acpu_call(struct rtd_acpu *acpu, u32 cmd, u32 param, u32 result,
++		  u32 *ret);
++int rtd_acpu_rpc(struct rtd_acpu *acpu, u32 procedure, const __be32 *args,
++		 u32 nargs, __be32 *res, u32 nres);
++void rtd_acpu_vo_kick(struct rtd_acpu *acpu);
++phys_addr_t rtd_acpu_media_alloc(struct rtd_acpu *acpu, size_t size);
++void rtd_acpu_media_free(struct rtd_acpu *acpu, phys_addr_t phys, size_t size);
++int rtd_acpu_alloc(struct rtd_acpu *acpu, size_t size, struct rtd_acpu_buf *buf);
++void rtd_acpu_free(struct rtd_acpu *acpu, struct rtd_acpu_buf *buf);
++
++/* The auxiliary device the core creates for the HDMI audio capture */
++struct rtd_acpu_adev {
++	struct auxiliary_device adev;
++	struct rtd_acpu *acpu;
++};
++
++#define RTD_ACPU_PCM_NAME	"pcm"
++#define RTD_ACPU_VO_NAME	"vo"	/* the video output */
++
++#endif

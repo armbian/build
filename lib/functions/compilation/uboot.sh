@@ -552,6 +552,7 @@ function compile_uboot() {
 		# Armbian u-boot install script for linux-u-boot-${BOARD}-${BRANCH} ${artifact_version}
 		# This file provides functions for deploying u-boot to a block device.
 		DIR=/usr/lib/$uboot_name
+		${BOOTLOADER_BOOTS_FROM:+BOOTLOADER_BOOTS_FROM=\"${BOOTLOADER_BOOTS_FROM}\"}
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
 		$(declare -f write_uboot_platform_ufs || true)

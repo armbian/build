@@ -1,0 +1,92 @@
+From 3e10d855cd57805494f5c370e3539777029c79e6 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Thu, 22 Oct 2026 05:47:21 +0000
+Subject: [PATCH 49/51] sound: rtd129x-acpu: take the video output interrupts
+
+Set DC_VO_SET_NOTIFY when the video output starts, as the BSP does when
+it activates vsync, and clear the VO feedback flag in the interrupt
+handler.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ sound/realtek-rtd129x-acpu/acpu-rpc.c     | 23 +++++++++++++++++++++--
+ sound/realtek-rtd129x-acpu/acpu-vo.c      |  1 +
+ sound/realtek-rtd129x-acpu/rtd129x-acpu.h |  1 +
+ 3 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/sound/realtek-rtd129x-acpu/acpu-rpc.c b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+index 72974188a..ff5f981b6 100644
+--- a/sound/realtek-rtd129x-acpu/acpu-rpc.c
++++ b/sound/realtek-rtd129x-acpu/acpu-rpc.c
+@@ -59,6 +59,8 @@
+ #define IPC			0xc4
+ #define IPC_AUDIO_RPC_FLAG	(IPC + 0x0c)
+ #define IPC_VO_INT_SYNC		(IPC + 0x40)
++#define SYNC_DC_NOTIFY		cpu_to_be32(BIT(0))	/* we take VO interrupts */
++#define SYNC_DC_FEEDBACK	cpu_to_be32(BIT(1))	/* this one is from VO */
+ #define SYNC_RPC_NOTIFY		cpu_to_be32(BIT(8))	/* RPC interrupts on */
+ #define SYNC_RPC_FEEDBACK	cpu_to_be32(BIT(9))	/* this one is RPC */
+ #define SYNC_VO_NOTIFY		cpu_to_be32(BIT(16))	/* VO interrupts on */
+@@ -484,8 +486,9 @@ static irqreturn_t acpu_irq(int irq, void *data)
+ 	writel(RPC_INT_AS, acpu->sb2 + RPC_INT);
+ 
+ 	sync = readl(acpu->comm + IPC_VO_INT_SYNC);
+-	if (sync & SYNC_RPC_FEEDBACK)
+-		writel(sync & ~SYNC_RPC_FEEDBACK, acpu->comm + IPC_VO_INT_SYNC);
++	if (sync & (SYNC_RPC_FEEDBACK | SYNC_DC_FEEDBACK))
++		writel(sync & ~(SYNC_RPC_FEEDBACK | SYNC_DC_FEEDBACK),
++		       acpu->comm + IPC_VO_INT_SYNC);
+ 	/* the rings are cheap to look at, so look whatever the flag says */
+ 	queue_work(system_highpri_wq, &acpu->work);
+ 	return IRQ_HANDLED;
+@@ -532,6 +535,22 @@ int rtd_acpu_call(struct rtd_acpu *acpu, u32 cmd, u32 param, u32 result,
+ }
+ EXPORT_SYMBOL_GPL(rtd_acpu_call);
+ 
++/**
++ * rtd_acpu_vo_enable() - take the video output's interrupts, as the BSP's
++ * Activate_vSync(). The RTD1395 firmware does not take pictures before it.
++ * @acpu: the audio CPU
++ */
++void rtd_acpu_vo_enable(struct rtd_acpu *acpu)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&acpu->sa_lock, flags);
++	writel(readl(acpu->comm + IPC_VO_INT_SYNC) | SYNC_DC_NOTIFY,
++	       acpu->comm + IPC_VO_INT_SYNC);
++	spin_unlock_irqrestore(&acpu->sa_lock, flags);
++}
++EXPORT_SYMBOL_GPL(rtd_acpu_vo_enable);
++
+ /**
+  * rtd_acpu_vo_kick() - tell the video output there is a new command in its
+  * ring, as the BSP's dc2vo_send_interrupt()
+diff --git a/sound/realtek-rtd129x-acpu/acpu-vo.c b/sound/realtek-rtd129x-acpu/acpu-vo.c
+index bbcd9320d..cce9ce697 100644
+--- a/sound/realtek-rtd129x-acpu/acpu-vo.c
++++ b/sound/realtek-rtd129x-acpu/acpu-vo.c
+@@ -368,6 +368,7 @@ static int vo_start(struct rtd_vo *vo)
+ 		      (u32[]){ vo->instance, 0, 0, ring + VO_RING_HDR }, 4);
+ 	if (ret)
+ 		return ret;
++	rtd_acpu_vo_enable(vo->acpu);
+ 
+ 	return vo_display(vo, true);
+ }
+diff --git a/sound/realtek-rtd129x-acpu/rtd129x-acpu.h b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+index 2733f8b80..79be27548 100644
+--- a/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
++++ b/sound/realtek-rtd129x-acpu/rtd129x-acpu.h
+@@ -48,6 +48,7 @@ int rtd_acpu_call(struct rtd_acpu *acpu, u32 cmd, u32 param, u32 result,
+ 		  u32 *ret);
+ int rtd_acpu_rpc(struct rtd_acpu *acpu, u32 procedure, const __be32 *args,
+ 		 u32 nargs, __be32 *res, u32 nres);
++void rtd_acpu_vo_enable(struct rtd_acpu *acpu);
+ void rtd_acpu_vo_kick(struct rtd_acpu *acpu);
+ phys_addr_t rtd_acpu_media_alloc(struct rtd_acpu *acpu, size_t size);
+ void rtd_acpu_media_free(struct rtd_acpu *acpu, phys_addr_t phys, size_t size);
+-- 
+2.53.0
+

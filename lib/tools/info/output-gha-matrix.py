@@ -20,6 +20,9 @@ from common import gha
 armbian_utils.setup_logging()
 log: logging.Logger = logging.getLogger("output-gha-matrix")
 
+# Global per name-arch job counter for 'by-name-and-arch-overflow-max'; spans all targets and chunks.
+overflow_max_counts: dict[str, int] = {}
+
 
 def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: str, artifact_arch: str):
 	log.debug(f"Resolving GHA runner tags for artifact/image '{artifact_name}' '{artifact_arch}'")
@@ -63,6 +66,22 @@ def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: 
 		if artifact_name_and_arch in by_names_and_archs:
 			ret = by_names_and_archs[artifact_name_and_arch]
 			log.debug(f"Found 'by-name-and-arch' value '{artifact_name_and_arch}' config in input.pipeline.gha.runners, using '{ret}'")
+
+	# Now, 'by-name-and-arch-overflow-max' last: first 'max' jobs get 'runs-on', the rest get 'runs-on-over-max'.
+	if "by-name-and-arch-overflow-max" in runners:
+		overflow_maxes = runners["by-name-and-arch-overflow-max"]
+		if artifact_name_and_arch in overflow_maxes:
+			overflow_max = overflow_maxes[artifact_name_and_arch]
+			for field in ["max", "runs-on", "runs-on-over-max"]:
+				if field not in overflow_max:
+					log.error(f"Missing '{field}' in input.pipeline.gha.runners.by-name-and-arch-overflow-max.{artifact_name_and_arch}")
+					sys.exit(1)
+			overflow_max_counts[artifact_name_and_arch] = overflow_max_counts.get(artifact_name_and_arch, 0) + 1
+			if overflow_max_counts[artifact_name_and_arch] <= overflow_max["max"]:
+				ret = overflow_max["runs-on"]
+			else:
+				ret = overflow_max["runs-on-over-max"]
+				log.debug(f"'{artifact_name_and_arch}' over max {overflow_max['max']}, using '{ret}'")
 
 	log.debug(f"Resolved GHA runs_on for name:'{artifact_name}' arch:'{artifact_arch}' to runs_on:'{ret}'")
 
@@ -143,6 +162,87 @@ type_gen = sys.argv[1]
 with open(sys.argv[2]) as f:
 	info = json.load(f)
 
+# GitHub limits the outputs of one job to 1 MB, measured in UTF-16.
+# Count the bytes, not the jobs: a fixed job count dropped valid images.
+job_outputs_max_bytes = 1_000_000 - 16 * 1024  # margin for the other outputs of the job
+
+# MATRIX_IMAGE_OUTPUT_JOBS=N: N separate jobs set the images outputs, each for a contiguous range of chunks.
+# They read the chunks from the gha-all-images-matrix.json file. Each job has its own limit.
+# Not set: the images matrix shares the job with the artifacts matrix; the artifacts matrix comes first.
+image_output_jobs = int(armbian_utils.get_from_env("MATRIX_IMAGE_OUTPUT_JOBS") or "0")
+
+
+def add_job_fields(item):
+	item["really"] = "yes"
+	# For each item, check if it is going to run in a GH-hosted runner or self-hosted, and set some matrix variables
+	# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
+	# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
+	# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
+	if not (isinstance(item["runs_on"], list) and "self-hosted" in item["runs_on"]):
+		item["shost"] = "no"
+		item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
+	else:
+		item["shost"] = "yes"
+		item["fdepth"] = "0"  # use a string; 1 is shallow, 0 is full
+	return item
+
+
+def utf16_bytes(text):
+	return len(text.encode("utf-16-le"))
+
+
+# A chunk can't be empty; it gets this fake item instead.
+fake_chunk_item = {"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none",
+                   "really": "no", "shost": "no", "fdepth": "1"}
+
+
+def limit_matrix_bytes(matrix, max_bytes, type_name, chunk_count, output_jobs=1):
+	# Each item is serialized with a ", " separator; each chunk adds its wrapper and three outputs.
+	chunk_outputs = f'{type_name}-chunk-json-{chunk_count}={{"include": []}}\n{type_name}-chunk-not-empty-{chunk_count}=yes\n{type_name}-chunk-size-{chunk_count}={max_chunk_size}\n'
+	fake_bytes = utf16_bytes(json.dumps(fake_chunk_item))
+	max_items = chunk_count * max_chunk_size
+	chunks_per_job = -(-chunk_count // output_jobs)
+	totals = [0] * output_jobs
+	for chunk in range(chunk_count):
+		totals[chunk // chunks_per_job] += utf16_bytes(chunk_outputs)
+
+	def with_fakes(kept):  # chunks that stay empty get a fake item
+		job_totals = list(totals)
+		for chunk in range(kept, chunk_count):
+			job_totals[chunk // chunks_per_job] += fake_bytes
+		return job_totals
+
+	for index, item in enumerate(matrix):
+		if index >= max_items:
+			log.warning(f"Matrix '{type_name}' is over {chunk_count} chunks of {max_chunk_size}, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
+			return matrix[:index], sum(with_fakes(index))
+		job = (index % chunk_count) // chunks_per_job  # the same distribution as the chunks below
+		item_bytes = utf16_bytes(json.dumps(item) + ", ")
+		totals[job] += item_bytes
+		if max(with_fakes(index + 1)) > max_bytes:
+			totals[job] -= item_bytes
+			log.warning(f"Matrix '{type_name}' is over {max_bytes} bytes in output job {job + 1}, slicing to {index} of {len(matrix)} jobs. Matrix is incomplete.")
+			return matrix[:index], sum(with_fakes(index))
+	return matrix, sum(with_fakes(len(matrix)))
+
+
+# third argument is the number of chunks wanted.
+ideal_chunk_size = 150
+max_chunk_size = 250
+
+matrix_max_bytes = job_outputs_max_bytes
+if type_gen == "images" and image_output_jobs == 0:
+	# Generate the artifacts matrix again, only to measure it. Hide its log; the artifacts run shows it.
+	logging.disable(logging.WARNING)
+	artifacts_matrix = [add_job_fields(item) for item in generate_matrix_artifacts(info)]
+	# MATRIX_ARTIFACT_CHUNKS: the chunk count of the artifacts run; the same automatic count when not set.
+	artifact_chunks = int(armbian_utils.get_from_env("MATRIX_ARTIFACT_CHUNKS") or int(len(artifacts_matrix) / ideal_chunk_size) + 1)
+	_, artifacts_bytes = limit_matrix_bytes(artifacts_matrix, job_outputs_max_bytes, "artifacts", artifact_chunks)
+	logging.disable(logging.NOTSET)
+	overflow_max_counts.clear()
+	matrix_max_bytes -= artifacts_bytes
+	log.info(f"Artifacts matrix uses {artifacts_bytes} bytes; images matrix gets {matrix_max_bytes} bytes.")
+
 matrix = None
 if type_gen == "artifacts":
 	matrix = generate_matrix_artifacts(info)
@@ -151,10 +251,10 @@ elif type_gen == "images":
 else:
 	log.error(f"Unknown type: {type_gen}")
 	sys.exit(1)
+matrix = [add_job_fields(item) for item in matrix]
 
-# third argument is the number of chunks wanted.
-ideal_chunk_size = 150
-max_chunk_size = 250
+for name_and_arch, count in overflow_max_counts.items():
+	log.info(f"by-name-and-arch-overflow-max '{name_and_arch}': {count} jobs total")
 
 # check is sys.argv[3] exists...
 if len(sys.argv) >= 4:
@@ -165,11 +265,13 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
-matrix_hard_limit = 17 * 30  # @TODO: maybe 17*50 later
-# if over the limit, just slice to the limit, add warning about lost jobs
-if len(matrix) > matrix_hard_limit:
-	log.warning(f"Matrix size is over the hard limit of {matrix_hard_limit}, slicing to that limit. Matrix is incomplete.")
-	matrix = matrix[:matrix_hard_limit]
+if type_gen == "images" and image_output_jobs > 0:
+	if image_output_jobs > num_chunks:
+		log.error(f"MATRIX_IMAGE_OUTPUT_JOBS={image_output_jobs} is more than the {num_chunks} chunks.")
+		sys.exit(1)
+	matrix, matrix_bytes = limit_matrix_bytes(matrix, matrix_max_bytes, type_gen, num_chunks, image_output_jobs)
+else:
+	matrix, matrix_bytes = limit_matrix_bytes(matrix, matrix_max_bytes, type_gen, num_chunks)
 
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
@@ -190,23 +292,11 @@ for i, chunk in enumerate(chunks):
 	# For the full matrix, we can't have empty chunks; use a "really" field to indicate a fake entry added to make it non-empty.
 	if len(chunk) == 0:
 		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
-		chunks[i] = [
-			{"desc": "Fake matrix element so matrix is not empty", "name": "Empty chunk", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
-			 "shost": "no", "fdepth": "1"}
-		]
-	else:
-		for item in chunk:
-			item["really"] = "yes"
-			# For each item in chunk, check if it is going to run in a GH-hosted runner or self-hosted, and set some matrix variables
-			# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
-			# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
-			# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
-			if item["runs_on"] == "ubuntu-latest":
-				item["shost"] = "no"
-				item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
-			else:
-				item["shost"] = "yes"
-				item["fdepth"] = "0"  # use a string; 1 is shallow, 0 is full
+		chunks[i] = [fake_chunk_item]
+
+	# The image output jobs set the images outputs from the matrix file.
+	if type_gen == "images" and image_output_jobs > 0:
+		continue
 
 	# Directly set outputs for _each_ GHA chunk here.
 	gha.set_gha_output(f"{type_gen}-chunk-json-{i + 1}", json.dumps({"include": chunk}))

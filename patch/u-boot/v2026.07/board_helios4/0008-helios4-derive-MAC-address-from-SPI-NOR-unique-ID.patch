@@ -1,0 +1,121 @@
+From 60c7464449c5ab2faf98971fc78363b390137d30 Mon Sep 17 00:00:00 2001
+From: Igor Velkov <iav@iav.lv>
+Date: Sun, 11 Oct 2026 03:07:03 +0000
+Subject: [PATCH] arm: mvebu: helios4: derive MAC address from SPI NOR unique
+ ID
+
+Helios4 has no factory MAC address, so without a saved eth1addr it
+gets a random one on every boot. Derive a stable, locally administered
+address from the SHA-256 of the 64-bit unique ID of the SPI NOR on the
+SoM, as Rockchip boards do with the CPU ID. A saved eth1addr still
+takes precedence.
+
+Signed-off-by: Igor Velkov <iav@iav.lv>
+---
+ board/kobol/helios4/helios4.c | 58 +++++++++++++++++++++++++++++++++++
+ configs/helios4_defconfig     |  3 ++
+ 2 files changed, 61 insertions(+)
+
+diff --git a/board/kobol/helios4/helios4.c b/board/kobol/helios4/helios4.c
+index 7714076edf1..342a3cb3c73 100644
+--- a/board/kobol/helios4/helios4.c
++++ b/board/kobol/helios4/helios4.c
+@@ -5,15 +5,21 @@
+  */
+ 
+ #include <config.h>
++#include <env.h>
+ #include <i2c.h>
+ #include <init.h>
+ #include <miiphy.h>
+ #include <net.h>
+ #include <netdev.h>
++#include <spi-mem.h>
++#include <spi_flash.h>
+ #include <asm/global_data.h>
+ #include <asm/io.h>
+ #include <asm/arch/cpu.h>
+ #include <asm/arch/soc.h>
++#include <dm/device.h>
++#include <linux/string.h>
++#include <u-boot/sha256.h>
+ 
+ #include "../drivers/ddr/marvell/a38x/ddr3_init.h"
+ #include <../serdes/a38x/high_speed_env_spec.h>
+@@ -133,3 +139,55 @@ int board_eth_init(struct bd_info *bis)
+ 	cpu_eth_init(bis); /* Built in controller(s) come first */
+ 	return pci_eth_init(bis);
+ }
++
++#define SPINOR_OP_RDUID		0x4b
++#define SPINOR_UID_LEN		8
++
++static int helios4_read_flash_uid(u8 *uid)
++{
++	struct spi_mem_op op =
++		SPI_MEM_OP(SPI_MEM_OP_CMD(SPINOR_OP_RDUID, 1),
++			   SPI_MEM_OP_NO_ADDR,
++			   SPI_MEM_OP_DUMMY(4, 1),
++			   SPI_MEM_OP_DATA_IN(SPINOR_UID_LEN, uid, 1));
++	struct spi_flash *flash;
++	struct udevice *dev;
++	int ret;
++
++	ret = spi_flash_probe_bus_cs(CONFIG_SF_DEFAULT_BUS,
++				     CONFIG_SF_DEFAULT_CS, &dev);
++	if (ret)
++		return ret;
++
++	flash = dev_get_uclass_priv(dev);
++	ret = spi_mem_exec_op(flash->spi, &op);
++	if (ret)
++		return ret;
++
++	if (!memchr_inv(uid, 0x00, SPINOR_UID_LEN) ||
++	    !memchr_inv(uid, 0xff, SPINOR_UID_LEN))
++		return -ENODATA;
++
++	return 0;
++}
++
++/*
++ * The board has no factory MAC address, so derive a stable one from the
++ * unique ID of the SPI NOR on the SoM.
++ */
++int misc_init_r(void)
++{
++	u8 uid[SPINOR_UID_LEN];
++	u8 mac[SHA256_SUM_LEN];
++
++	/* ethernet@70000 is aliased as ethernet1 */
++	if (env_get("eth1addr") || helios4_read_flash_uid(uid))
++		return 0;
++
++	sha256_csum_wd(uid, sizeof(uid), mac, CHUNKSZ_SHA256);
++	mac[0] &= 0xfe;	/* unicast */
++	mac[0] |= 0x02;	/* locally administered */
++	eth_env_set_enetaddr("eth1addr", mac);
++
++	return 0;
++}
+diff --git a/configs/helios4_defconfig b/configs/helios4_defconfig
+index f9574cbeaa7..bdf725228a7 100644
+--- a/configs/helios4_defconfig
++++ b/configs/helios4_defconfig
+@@ -30,6 +30,7 @@ CONFIG_USE_PREBOOT=y
+ CONFIG_SYS_CONSOLE_INFO_QUIET=y
+ # CONFIG_DISPLAY_BOARDINFO is not set
+ CONFIG_DISPLAY_BOARDINFO_LATE=y
++CONFIG_MISC_INIT_R=y
+ CONFIG_SPL_MAX_SIZE=0x22fd0
+ CONFIG_SPL_SYS_MALLOC_SIMPLE=y
+ # CONFIG_SPL_SHARES_INIT_SP_ADDR is not set
+@@ -80,3 +81,5 @@ CONFIG_SYS_NS16550=y
+ CONFIG_KIRKWOOD_SPI=y
+ CONFIG_USB=y
+ CONFIG_USB_XHCI_HCD=y
++CONFIG_SHA256=y
++# CONFIG_SPL_SHA256 is not set
+-- 
+2.43.0
+
