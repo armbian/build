@@ -11,43 +11,10 @@
 
 # Stuff involving dialog
 
-# Return 0 when path is a dialogrc that sets at least one value.
-function dialog_rc_has_assignment() {
-	[[ -n "${1:-}" && -f "${1}" ]] || return 1
-	grep -q '=' "${1}"
-}
-
-function dialog_terminal_is_ghostty() {
-	[[ "${ARMBIAN_TERMINAL_EMULATOR:-}" == "ghostty" || "${TERM_PROGRAM:-}" == "ghostty" ]] && return 0
-	case "${TERM:-}" in
-		xterm-ghostty | ghostty) return 0 ;;
-	esac
-	return 1
-}
-
-function dialog_cleanup_ghostty_rc() {
-	if [[ -n "${ARMBIAN_DIALOG_DARK_RC:-}" && -f "${ARMBIAN_DIALOG_DARK_RC}" ]]; then
-		rm -f "${ARMBIAN_DIALOG_DARK_RC}"
-	fi
-}
-
-# Ghostty themes paint ANSI blue and white as light colors.
-# Dialog's default screen is that blue. Use a black screen instead.
-# A dialogrc with assignments replaces this theme.
-function dialog_ensure_ghostty_dark_rc() {
-	dialog_terminal_is_ghostty || return 0
-	dialog_rc_has_assignment "${DIALOGRC:-}" && return 0
-	if [[ -n "${ARMBIAN_DIALOG_DARK_RC:-}" && -s "${ARMBIAN_DIALOG_DARK_RC}" ]]; then
-		return 0
-	fi
-
-	declare -g ARMBIAN_DIALOG_DARK_RC
-	ARMBIAN_DIALOG_DARK_RC="$(mktemp)"
-	if [[ "${ARMBIAN_DIALOG_DARK_RC_CLEANUP:-}" != "yes" && $(type -t add_cleanup_handler || true) == function ]]; then
-		declare -g ARMBIAN_DIALOG_DARK_RC_CLEANUP="yes"
-		add_cleanup_handler dialog_cleanup_ghostty_rc
-	fi
-	cat <<- 'EOF' > "${ARMBIAN_DIALOG_DARK_RC}"
+# Ghostty themes paint ANSI blue and white as light colors. Dialog's default screen is that blue.
+# Print a dark theme for dialog.
+function dialog_ghostty_rc() {
+	cat <<- 'EOF'
 		use_shadow = OFF
 		use_colors = ON
 		screen_color = (WHITE,BLACK,OFF)
@@ -110,26 +77,21 @@ function dialog_if_terminal_set_vars() {
 
 	[[ ! -f /usr/bin/dialog ]] && exit_with_error "Dialog is not installed at /usr/bin/dialog" "dialog_if_terminal_set_vars ${*}" "err"
 
-	# Draw borders with Unicode box characters rather than the VT100 alternate charset:
-	# PuTTY and other emulators that report TERM=xterm but ignore that charset switch in UTF-8 mode show letters.
-	dialog_ensure_ghostty_dark_rc
-	declare dialog_rc="${DIALOGRC:-}"
-	if dialog_terminal_is_ghostty && ! dialog_rc_has_assignment "${dialog_rc}"; then
-		dialog_rc="${ARMBIAN_DIALOG_DARK_RC:-}"
-	fi
-
 	set +e          # allow errors through
 	set +o errtrace # do not trap errors inside a subshell/function
 	set +o errexit  # disable
 
+	# Draw borders with Unicode box characters rather than the VT100 alternate charset:
+	# PuTTY and other emulators that report TERM=xterm but ignore that charset switch in UTF-8 mode show letters.
 	exec 3>&1 # open fd 3...
-	if [[ -n "${dialog_rc}" ]]; then
-		DIALOG_RESULT=$(DIALOGRC="${dialog_rc}" NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
+	# On Ghostty, use the dark theme. A dialogrc of the user wins.
+	if [[ "${ARMBIAN_TERMINAL_EMULATOR:-}" == "ghostty" && ! -f "${DIALOGRC:-${HOME}/.dialogrc}" ]]; then
+		DIALOG_RESULT=$(DIALOGRC=<(dialog_ghostty_rc) NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
 	else
 		DIALOG_RESULT=$(NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
 	fi
-	DIALOG_EXIT_CODE=$?                                          # get the exit code.
-	exec 3>&-                                                    # close fd 3...
+	DIALOG_EXIT_CODE=$? # get the exit code.
+	exec 3>&-           # close fd 3...
 
 	set -e          # back to normal
 	set -o errtrace # back to normal

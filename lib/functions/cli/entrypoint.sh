@@ -7,43 +7,18 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# Some terminals set TERM to a name this ncurses does not ship.
-# Ghostty uses xterm-ghostty. dialog and clear then fail.
-# Pick a terminfo entry this system has.
+# Ghostty sets TERM=xterm-ghostty. ncurses ships that entry as "ghostty", or not at all.
+# dialog and clear fail on an unknown TERM. Pick an entry this system has.
 function ensure_known_terminal() {
-	# Remember Ghostty before a fallback replaces TERM. menu.sh reads this.
-	case "${TERM_PROGRAM:-}" in
-		ghostty) declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty" ;;
-	esac
-	case "${TERM:-}" in
-		xterm-ghostty | ghostty) declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty" ;;
-	esac
-
-	[[ -z "${TERM:-}" || "${TERM}" == "dumb" ]] && return 0
-	if ! command -v tput > /dev/null 2>&1; then
-		return 0
-	fi
-	if tput -T "${TERM}" longname > /dev/null 2>&1; then
-		return 0
-	fi
-
-	declare original_term="${TERM}"
-	declare fallback="" candidate
-	declare -a candidates=()
-	# Old name of the Ghostty entry, before ncurses renamed it.
-	[[ "${original_term}" == "xterm-ghostty" ]] && candidates+=("ghostty")
-	candidates+=("xterm-256color" "xterm" "ansi" "dumb")
-
-	for candidate in "${candidates[@]}"; do
-		if tput -T "${candidate}" longname > /dev/null 2>&1; then
-			fallback="${candidate}"
-			break
-		fi
+	[[ "${TERM_PROGRAM:-}" == "ghostty" || "${TERM:-}" == *ghostty ]] && declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty"
+	[[ -z "${TERM:-}" ]] && return 0
+	tput -T "${TERM}" longname &> /dev/null && return 0
+	declare term
+	for term in ghostty xterm-256color xterm dumb; do
+		tput -T "${term}" longname &> /dev/null && break
 	done
-	[[ -z "${fallback}" ]] && fallback="dumb"
-
-	export TERM="${fallback}"
-	display_alert "Unknown terminal type '${original_term}'" "using '${fallback}'" "debug"
+	display_alert "Unknown terminal type '${TERM}'" "using '${term}'" "debug"
+	export TERM="${term}"
 }
 
 function cli_entrypoint() {
