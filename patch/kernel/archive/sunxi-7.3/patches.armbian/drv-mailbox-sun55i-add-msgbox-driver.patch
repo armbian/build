@@ -146,7 +146,7 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/mailbox/sun55i-msgbox.c
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,486 @@
 +// SPDX-License-Identifier: GPL-2.0
 +//
 +// Allwinner sun55i (T527/A523) Message Box driver.
@@ -468,6 +468,20 @@ index 000000000000..111111111111
 +			   msecs_to_jiffies(2));
 +}
 +
++static void sun55i_msgbox_disable_clk(void *data)
++{
++	struct sun55i_msgbox *mbox = data;
++
++	clk_disable_unprepare(mbox->clk);
++}
++
++static void sun55i_msgbox_assert_reset(void *data)
++{
++	struct sun55i_msgbox *mbox = data;
++
++	reset_control_assert(mbox->rst);
++}
++
 +static int sun55i_msgbox_probe(struct platform_device *pdev)
 +{
 +	static const char * const proc_regs[NUM_PROC] = {
@@ -505,26 +519,51 @@ index 000000000000..111111111111
 +	if (ret)
 +		return ret;
 +
++	/*
++	 * Register teardown actions now, so devres runs them after the
++	 * IRQ and controller teardown. devres unwinds in reverse order:
++	 * the reset action runs before the clk action because it is
++	 * added second.
++	 */
++	ret = devm_add_action_or_reset(dev, sun55i_msgbox_disable_clk, mbox);
++	if (ret)
++		return ret;
++
 +	ret = reset_control_deassert(mbox->rst);
 +	if (ret)
-+		goto err_clk;
++		return ret;
 +
++	ret = devm_add_action_or_reset(dev, sun55i_msgbox_assert_reset, mbox);
++	if (ret)
++		return ret;
++
++	/*
++	 * Clear the local block's receive IRQ state only. The remote
++	 * blocks belong to other cores; clearing their registers would
++	 * disable RX interrupts for running firmware. Peers that share a
++	 * receive coefficient are cleared twice, which is harmless.
++	 */
 +	for (i = 0; i < NUM_PROC; i++) {
-+		writel(0, mbox->base[i] + READ_IRQ_EN(i));
-+		writel(0, mbox->base[i] + WRITE_IRQ_EN(i));
-+		writel(0xffff, mbox->base[i] + READ_IRQ_STAT(i));
-+		writel(0xffff, mbox->base[i] + WRITE_IRQ_STAT(i));
++		int coef;
++
++		if (i == LOCAL_PROC)
++			continue;
++
++		coef = msgbox_coef(i, LOCAL_PROC);
++		if (coef < 0)
++			continue;
++
++		writel(0, mbox->base[LOCAL_PROC] + READ_IRQ_EN(coef));
++		writel(0xffff, mbox->base[LOCAL_PROC] + READ_IRQ_STAT(coef));
 +	}
 +
 +	ret = sun55i_msgbox_build_maps(mbox);
 +	if (ret)
-+		goto err_rst;
++		return ret;
 +
 +	chans = devm_kcalloc(dev, NUM_CHANS, sizeof(*chans), GFP_KERNEL);
-+	if (!chans) {
-+		ret = -ENOMEM;
-+		goto err_rst;
-+	}
++	if (!chans)
++		return -ENOMEM;
 +
 +	for (i = 0; i < NUM_CHANS; i++)
 +		chans[i].con_priv = mbox;
@@ -552,7 +591,7 @@ index 000000000000..111111111111
 +
 +	ret = devm_mbox_controller_register(dev, &mbox->controller);
 +	if (ret)
-+		goto err_rst;
++		return ret;
 +
 +	if (mbox->irq < 0)
 +		sun55i_msgbox_start_rx_poll(mbox);
@@ -560,22 +599,19 @@ index 000000000000..111111111111
 +	dev_info(dev, "msgbox ready (%d channels, irq=%d)\n",
 +		 NUM_CHANS, mbox->irq);
 +	return 0;
-+
-+err_rst:
-+	reset_control_assert(mbox->rst);
-+err_clk:
-+	clk_disable_unprepare(mbox->clk);
-+	return ret;
 +}
 +
 +static void sun55i_msgbox_remove(struct platform_device *pdev)
 +{
 +	struct sun55i_msgbox *mbox = platform_get_drvdata(pdev);
 +
++	/*
++	 * Stop the poller before devres unwinds. remove() runs first, so
++	 * the clock and reset teardown in the devm actions stays after
++	 * the IRQ free and controller unregister.
++	 */
 +	if (mbox->irq < 0)
 +		cancel_delayed_work_sync(&mbox->rx_poll);
-+	reset_control_assert(mbox->rst);
-+	clk_disable_unprepare(mbox->clk);
 +}
 +
 +static const struct of_device_id sun55i_msgbox_of_match[] = {

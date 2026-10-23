@@ -19,12 +19,12 @@ Subject: [ARCHEOLOGY] sunxi-7.1: add E906 RISC-V remoteproc support
  Documentation/devicetree/bindings/remoteproc/allwinner,sun55i-a523-rproc.yaml | 110 ++
  drivers/remoteproc/Kconfig                                                    |  11 +
  drivers/remoteproc/Makefile                                                   |   1 +
- drivers/remoteproc/sun55i_e906_rproc.c                                        | 646 ++++++++++
- 4 files changed, 768 insertions(+)
+ drivers/remoteproc/sun55i_e906_rproc.c                                        | 659 ++++++++++
+ 4 files changed, 781 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/remoteproc/allwinner,sun55i-a523-rproc.yaml b/Documentation/devicetree/bindings/remoteproc/allwinner,sun55i-a523-rproc.yaml
 new file mode 100644
-index 000000000000..111111111111
+index 000000000000..17ae467dfbff
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/remoteproc/allwinner,sun55i-a523-rproc.yaml
 @@ -0,0 +1,110 @@
@@ -140,7 +140,7 @@ index 000000000000..111111111111
 +...
 \ No newline at end of file
 diff --git a/drivers/remoteproc/Kconfig b/drivers/remoteproc/Kconfig
-index 111111111111..222222222222 100644
+index c521c744e7db..8bd0440a2bb9 100644
 --- a/drivers/remoteproc/Kconfig
 +++ b/drivers/remoteproc/Kconfig
 @@ -390,6 +390,17 @@ config XLNX_R5_REMOTEPROC
@@ -162,7 +162,7 @@ index 111111111111..222222222222 100644
  
  endmenu
 diff --git a/drivers/remoteproc/Makefile b/drivers/remoteproc/Makefile
-index 111111111111..222222222222 100644
+index 1c7598b8475d..3d1fd410690f 100644
 --- a/drivers/remoteproc/Makefile
 +++ b/drivers/remoteproc/Makefile
 @@ -41,3 +41,4 @@ obj-$(CONFIG_TI_K3_DSP_REMOTEPROC)	+= ti_k3_dsp_remoteproc.o ti_k3_common.o
@@ -172,10 +172,10 @@ index 111111111111..222222222222 100644
 +obj-$(CONFIG_SUN55I_E906_REMOTEPROC)	+= sun55i_e906_rproc.o
 diff --git a/drivers/remoteproc/sun55i_e906_rproc.c b/drivers/remoteproc/sun55i_e906_rproc.c
 new file mode 100644
-index 000000000000..111111111111
+index 000000000000..1c1e9a8787dd
 --- /dev/null
 +++ b/drivers/remoteproc/sun55i_e906_rproc.c
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,659 @@
 +// SPDX-License-Identifier: GPL-2.0
 +#include <linux/clk.h>
 +#include <linux/dma-mapping.h>
@@ -342,6 +342,12 @@ index 000000000000..111111111111
 +	priv->mb.client.tx_block = false;
 +	priv->mb.client.dev = dev;
 +
++	/* mbox_request_channel() enables the RX IRQ before it returns,
++	 * so the callback state must be ready before the request. */
++	INIT_WORK(&priv->mb.vq_work, sun55i_mb_vq_work);
++	spin_lock_init(&priv->mb.vq_lock);
++	priv->mb.vq_id = -1;
++
 +	priv->mb.chan = mbox_request_channel(&priv->mb.client, 0);
 +	if (IS_ERR(priv->mb.chan)) {
 +		int ret = PTR_ERR(priv->mb.chan);
@@ -349,11 +355,7 @@ index 000000000000..111111111111
 +		if (ret == -EPROBE_DEFER)
 +			return ret;
 +		priv->mb.chan = NULL;
-+		return 0;
 +	}
-+	INIT_WORK(&priv->mb.vq_work, sun55i_mb_vq_work);
-+	spin_lock_init(&priv->mb.vq_lock);
-+	priv->mb.vq_id = -1;
 +	return 0;
 +}
 +
@@ -416,17 +418,17 @@ index 000000000000..111111111111
 +
 +	ret = sun55i_e906_assert(priv);
 +	if (ret)
-+		return ret;
++		goto disable_sram;
 +
 +	ret = sun55i_e906_deassert(priv);
 +	if (ret)
-+		return ret;
++		goto disable_sram;
 +
 +	ret = clk_prepare_enable(priv->bus_clk);
 +	if (ret) {
 +		dev_err(dev, "bus clk enable failed\n");
 +		sun55i_e906_assert(priv);
-+		return ret;
++		goto disable_sram;
 +	}
 +
 +	/* set start vector */
@@ -437,10 +439,14 @@ index 000000000000..111111111111
 +		dev_err(dev, "core clk enable failed\n");
 +		clk_disable_unprepare(priv->bus_clk);
 +		sun55i_e906_assert(priv);
-+		return ret;
++		goto disable_sram;
 +	}
 +
 +	return 0;
++
++disable_sram:
++	clk_disable_unprepare(priv->sram_clk);
++	return ret;
 +}
 +
 +static int sun55i_e906_stop(struct rproc *rproc)
@@ -538,7 +544,11 @@ index 000000000000..111111111111
 +	if (ret)
 +		return ret;
 +
-+	return rproc_elf_load_segments(rproc, fw);
++	ret = rproc_elf_load_segments(rproc, fw);
++	if (ret)
++		clk_disable_unprepare(priv->sram_clk);
++
++	return ret;
 +}
 +
 +static int sun55i_e906_prepare(struct rproc *rproc)
@@ -631,7 +641,7 @@ index 000000000000..111111111111
 +		return ERR_PTR(ret);
 +	}
 +
-+	table = rproc_elf_find_loaded_rsc_table(rproc, fw);
++	table = rproc_elf_find_loaded_rsc_table(rproc, fw, NULL);
 +	release_firmware(fw);
 +
 +	if (!table)
@@ -757,17 +767,22 @@ index 000000000000..111111111111
 +	rproc->has_iommu = false;
 +	rproc->auto_boot = false;
 +
-+	ret = sun55i_request_mbox(rproc);
-+	if (ret)
-+		goto err_free_rproc;
++	/* The RX callback runs in hard IRQ: it reads drvdata and queues
++	 * work, so both must be ready before the mailbox request enables
++	 * the RX IRQ. */
++	platform_set_drvdata(pdev, rproc);
 +
 +	priv->workqueue = alloc_workqueue(dev_name(dev), WQ_UNBOUND, 1);
 +	if (!priv->workqueue) {
 +		ret = -ENOMEM;
-+		goto err_free_mbox;
++		goto err_free_rproc;
 +	}
 +
-+	platform_set_drvdata(pdev, rproc);
++	ret = sun55i_request_mbox(rproc);
++	if (ret) {
++		destroy_workqueue(priv->workqueue);
++		goto err_free_rproc;
++	}
 +
 +	pm_runtime_enable(dev);
 +
@@ -784,8 +799,6 @@ index 000000000000..111111111111
 +		 fw_name ? fw_name : "none");
 +	return 0;
 +
-+err_free_mbox:
-+	sun55i_free_mbox(rproc);
 +err_free_rproc:
 +	rproc_free(rproc);
 +	return ret;
