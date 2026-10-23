@@ -9,15 +9,8 @@ KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 
-BOOTBRANCH_BOARD="tag:v2025.04"
-BOOTPATCHDIR="v2025.04"
 BOOTCONFIG="rock-4c-plus-rk3399_defconfig"
-BOOT_SCENARIO="binman-atf-mainline"
 BOOT_SUPPORT_SPI=yes
 
 DDR_BLOB="rk33/rk3399_ddr_933MHz_v1.30.bin"
-BL31_BLOB="rk33/rk3399_bl31_v1.36.elf"
-
-function post_family_config___mainline_uboot() {
-	declare -g UBOOT_TARGET_MAP="ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB} BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl u-boot.bin flash.bin;;idbloader.img u-boot.itb"
-}
+source "${SRC}/config/sources/vendors/radxa/rk3399-uboot.conf.sh"
