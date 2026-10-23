@@ -1,147 +1,280 @@
 #!/bin/bash
 
-declare -g GPIOS
-declare -g LEDS
-
 set -e
 
-RP=$(realpath "${0}")
-SCRIPTPATH=$(dirname "${RP}")
-
 # shellcheck source=/dev/null
-source "${SCRIPTPATH}/libjethubconfig.sh"
+source /etc/armbian-release
 
-# Include jethub-init defaults if available
-if [ -f /etc/default/jethub ] ; then
-    . /etc/default/jethub
-fi
-
-# Enable legacy sysfs gpio export. Will be disabled in future releases
-
-ENABLESYSFS=${JETHUB_SYSFS_ENABLE:-true}
-
-GPIOSET=${GPIOSET:-/usr/bin/gpioset}
-
-### define functions
+status=0
+GPIO_DIRECTION_OUTPUT=0
+GPIO_DIRECTION_INPUT=1
+GPIO_ACTIVE_LOW=0
+GPIO_ACTIVE_HIGH=1
 
 configure_gpiobase()
 {
-    declare -g GPIOBASE
-    declare -g GPIOCHIP
-    declare -g -A GPIOCHIPBASE
-    for gpiochipsys in /sys/class/gpio/gpiochip*/; do
-        gpiochipsys=${gpiochipsys%*/}
-        gpiochiptemp=$(find "${gpiochipsys}"/device/gpiochip* -type d | head -n 1)
-        GPIOCHIP=${gpiochiptemp##*/}
-        GPIOBASE=$(cat "${gpiochipsys}/base")
-        GPIOCHIPBASE["$(echo "${GPIOCHIP}" | tr -d -c 0-9)"]=${GPIOBASE}
-    done
-    if [[ -z "${GPIOBASE}" ]]; then
-        echo Can not find gpiochip and base number
-        exit 1
-    fi
+	declare -g GPIOBASE
+	declare -g GPIOCHIP
+	declare -g -A GPIOCHIPBASE
+	for gpiochipsys in /sys/class/gpio/gpiochip*/; do
+		gpiochipsys=${gpiochipsys%*/}
+		gpiochiptemp=$(find "${gpiochipsys}"/device/gpiochip* -type d | head -n 1)
+		GPIOCHIP=${gpiochiptemp##*/}
+		GPIOBASE=$(cat "${gpiochipsys}/base")
+		GPIOCHIPBASE["$(echo "${GPIOCHIP}" | tr -d -c 0-9)"]=${GPIOBASE}
+	done
+	if [[ -z "${GPIOBASE}" ]]; then
+		echo Can not find gpiochip and base number
+		exit 1
+	fi
 }
 
 gpio_set()
 {
-    gpiochip="${1}"
-    GPIOL=${2}
-    VALUE=${3}
-    LOW=${4}
-    echo "${0}: GPIOSET: gpiochip=${gpiochip} line=${GPIOL} val=${VALUE} low=${LOW} base=$((GPIOCHIPBASE[${gpiochip}]))"
-    if [[ "${ENABLESYSFS}" == "true" ]]; then
-        GPIOLINE=$((GPIOCHIPBASE[${gpiochip}]+GPIOL))
-        echo "${VALUE}" > /sys/class/gpio/gpio${GPIOLINE}/value
-    else
-        if [ "${LOW}" == "${GPIO_ACTIVE_LOW}" ]; then
-            LOW="-l"
-        else
-            LOW=""
-        fi
-        ${GPIOSET} "${LOW}" "${gpiochip}" "${GPIOL}=${VALUE}"
-    fi
-
+	gpiochip="${1}"
+	GPIOL=${2}
+	VALUE=${3}
+	LOW=${4}
+	echo "${0}: GPIOSET: gpiochip=${gpiochip} line=${GPIOL} val=${VALUE} low=${LOW}"
+	if [[ "${ENABLESYSFS}" == "true" ]]; then
+		GPIOLINE=$((GPIOCHIPBASE[${gpiochip}]+GPIOL))
+		echo "${VALUE}" > /sys/class/gpio/gpio${GPIOLINE}/value
+	else
+		local -a args=()
+		if [[ "${LOW}" == "${GPIO_ACTIVE_LOW}" ]]; then
+			args=(--active-low)
+		fi
+		"${GPIOSET}" "${args[@]}" --toggle 0 -c "${gpiochip}" "${GPIOL}=${VALUE}"
+	fi
 }
-
 
 unexport_sysfs()
 {
-    for i in /sys/class/gpio/gpio* ; do
-        if ! echo "$i" | grep -q chip ; then
-                ii=$(echo "${i##*/}"| tr -d -c 0-9)
-                echo "$ii" > /sys/class/gpio/unexport
-        fi
-    done
+	for i in /sys/class/gpio/gpio* ; do
+		if ! echo "$i" | grep -q chip ; then
+			ii=$(echo "${i##*/}"| tr -d -c 0-9)
+			echo "$ii" > /sys/class/gpio/unexport
+		fi
+	done
 }
 
-
 configure_gpio() {
-  # Get base
-  GPIOCHIP=${1}
-  GPIOL=${2}
-  GPIOLINE=$((GPIOCHIPBASE[${GPIOCHIP}]+GPIOL))
-  DIRECTION=${3}
-  ACTIVELEVEL=${4}
-  echo "${0}: Export GPIO to sysfs: gpio=${GPIOLINE} (${GPIOL}), direction=${DIRECTION}, active_level=${ACTIVELEVEL}"
-  if [ ! -d /sys/class/gpio/gpio${GPIOLINE} ]; then
-    echo ${GPIOLINE} > /sys/class/gpio/export
-    if [ ! -d /sys/class/gpio/gpio${GPIOLINE} ]; then
-      echo "${0}: *** Error: Failed to configure GPIO ${GPIOLINE}"
-      exit 1
-    fi
-  fi
+	# Get base
+	GPIOCHIP=${1}
+	GPIOL=${2}
+	GPIOLINE=$((GPIOCHIPBASE[${GPIOCHIP}]+GPIOL))
+	DIRECTION=${3}
+	ACTIVELEVEL=${4}
+	echo "${0}: Export GPIO to sysfs: gpio=${GPIOLINE} (${GPIOL}), direction=${DIRECTION}, active_level=${ACTIVELEVEL}"
+	if [ ! -d /sys/class/gpio/gpio${GPIOLINE} ]; then
+		echo ${GPIOLINE} > /sys/class/gpio/export
+		if [ ! -d /sys/class/gpio/gpio${GPIOLINE} ]; then
+			echo "${0}: *** Error: Failed to configure GPIO ${GPIOLINE}"
+			exit 1
+		fi
+	fi
 
-  if [ "${DIRECTION}" == "${GPIO_DIRECTION_OUTPUT}" ]; then
-    echo "out" > /sys/class/gpio/gpio${GPIOLINE}/direction
-  else
-    echo "in" > /sys/class/gpio/gpio${GPIOLINE}/direction
-  fi
+	if [ "${DIRECTION}" == "${GPIO_DIRECTION_OUTPUT}" ]; then
+		echo "out" > /sys/class/gpio/gpio${GPIOLINE}/direction
+	else
+		echo "in" > /sys/class/gpio/gpio${GPIOLINE}/direction
+	fi
 
-  if [ "${ACTIVELEVEL}" == "${GPIO_ACTIVE_LOW}" ]; then
-    echo 1 > /sys/class/gpio/gpio${GPIOLINE}/active_low
-  fi
+	if [ "${ACTIVELEVEL}" == "${GPIO_ACTIVE_LOW}" ]; then
+		echo 1 > /sys/class/gpio/gpio${GPIOLINE}/active_low
+	fi
 }
 
 configure_led() {
-  echo "${0}: Configure: gpiochip=${1} led=${2}, state=${3}, active_level=${4}"
-  gpio_set "${1}" "${2}" "${3}" "${4}"
+	echo "${0}: Configure: gpiochip=${1} led=${2}, state=${3}, active_level=${4}"
+	gpio_set "${1}" "${2}" "${3}" "${4}"
 }
 
-### end define functions
+load_gpio_config() {
+	if [[ -f /etc/default/jethub ]]; then
+		# shellcheck source=/dev/null
+		source /etc/default/jethub
+	fi
+	ENABLESYSFS=${JETHUB_SYSFS_ENABLE:-true}
+	GPIOSET=${GPIOSET:-/usr/bin/gpioset}
+}
 
-### begin
+init_gpio() {
+	load_gpio_config
 
-echo "${0}: Unexport gpio from sysfs"
-unexport_sysfs
+	echo "${0}: Unexport gpio from sysfs"
+	unexport_sysfs
 
-if [[ "${ENABLESYSFS}" = "true" ]]; then
-    echo "${0}: Configure GPIOs as sysfs ..."
+	if [[ "${ENABLESYSFS}" == "true" ]]; then
+		echo "${0}: Configure GPIOs as sysfs ..."
+		configure_gpiobase
+		for gpio_parameters in "${GPIOS[@]}"; do
+			# shellcheck disable=SC2086
+			configure_gpio ${gpio_parameters}
+		done
+	else
+		echo "${0}: Configure GPIOs with gpioset ..."
+	fi
 
-    configure_gpiobase
+	echo "${0}: Configure LEDs ..."
+	for leds_parameters in "${LEDS[@]}"; do
+		# shellcheck disable=SC2086
+		configure_led ${leds_parameters}
+	done
 
-    for gpio_parameters in "${GPIOS[@]}"
-    do
-        # shellcheck disable=SC2086
-        configure_gpio ${gpio_parameters}
-    done
-else
-    echo "${0}: Configure GPIOs for gpiod"
-fi
+	for func in ${ADDITIONALFUNC}; do
+		echo "${0}: Start additional init function ${func}"
+		"${func}"
+	done
+}
 
-echo "${0}: Configure LEDs ..."
-for leds_parameters in "${LEDS[@]}"
-do
-    # shellcheck disable=SC2086
-    configure_led ${leds_parameters}
-done
+case "${BOARD}" in
+	jethubj80)
+		GPIOS=(
+			# Zigbee module: RESET, BOOT
+			"0 6 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			"0 9 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			# Z-Wave module: RESET, SUSPEND
+			"1 89 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			"1 90 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			# LED
+			"1 73 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+		)
 
-if [[ -n "${ADDITIONALFUNC}" ]]; then
-    for func in ${ADDITIONALFUNC}; do
-        echo "${0}: Start additional init function ${func}"
-        ${func}
-    done
-fi
+		# Set LED states
+		LEDS=(
+			# LED
+			"1 73 0 ${GPIO_ACTIVE_HIGH}"
+		)
+
+		reset_zigbee() {
+			echo "${0}: Reset Zigbee module ..."
+			gpio_set 0 9 1 "${GPIO_ACTIVE_HIGH}"
+			gpio_set 0 6 1 "${GPIO_ACTIVE_HIGH}"
+			sleep 1
+			gpio_set 0 6 0 "${GPIO_ACTIVE_HIGH}"
+		}
+
+		reset_zwave() {
+			echo "${0}: Reset Z-Wave module ..."
+			# Optional SUSPEND pin
+			# gpio_set 1 90 1 ${GPIO_ACTIVE_HIGH}
+			gpio_set 1 89 1 "${GPIO_ACTIVE_HIGH}"
+			sleep 1
+			gpio_set 1 89 0 "${GPIO_ACTIVE_HIGH}"
+		}
+
+		eth_leds() {
+			echo "${0}: Configure Ethernet leds ..."
+			/usr/sbin/jethub_set-eth_leds
+		}
+
+		ADDITIONALFUNC="eth_leds reset_zigbee"
+
+		init_gpio
+		;;
+	jethubj100)
+		GPIOCHIPNUMBER=0
+
+		GPIOS=(
+			# Discrete inputs: 1, 2, 3, 4
+			"${GPIOCHIPNUMBER} 46 ${GPIO_DIRECTION_INPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 45 ${GPIO_DIRECTION_INPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 44 ${GPIO_DIRECTION_INPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 43 ${GPIO_DIRECTION_INPUT} ${GPIO_ACTIVE_HIGH}"
+			# Relays: 1, 2, 3
+			"${GPIOCHIPNUMBER} 30 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 29 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 28 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			# Zigbee module: RESET, BOOT
+			"${GPIOCHIPNUMBER} 41 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			"${GPIOCHIPNUMBER} 36 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_HIGH}"
+			# LEDs: RED, GREEN
+			"${GPIOCHIPNUMBER} 26 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_LOW}"
+			"${GPIOCHIPNUMBER} 27 ${GPIO_DIRECTION_OUTPUT} ${GPIO_ACTIVE_LOW}"
+			# Button
+			"${GPIOCHIPNUMBER} 10 ${GPIO_DIRECTION_INPUT} ${GPIO_ACTIVE_LOW}"
+		)
+
+		# Set LED states
+		LEDS=(
+			# LED RED
+			"${GPIOCHIPNUMBER} 26 0 ${GPIO_ACTIVE_LOW}"
+			# LED GREEN
+			"${GPIOCHIPNUMBER} 27 0 ${GPIO_ACTIVE_LOW}"
+		)
+
+		reset_zigbee() {
+			echo "${0}: Reset Zigbee module ..."
+			gpio_set "${GPIOCHIPNUMBER}" 36 1 "${GPIO_ACTIVE_HIGH}"
+			gpio_set "${GPIOCHIPNUMBER}" 41 1 "${GPIO_ACTIVE_HIGH}"
+			sleep 1
+			gpio_set "${GPIOCHIPNUMBER}" 41 0 "${GPIO_ACTIVE_HIGH}"
+		}
+
+		config_1wire() {
+			echo "${0}: Configure 1-Wire ..."
+			if ! modprobe ds2482; then
+				echo "${0}: *** Error: Failed to load DS2482 kernel module"
+				exit 1
+			fi
+
+			sh -c "echo ds2482 0x18 > /sys/bus/i2c/devices/i2c-0/new_device" || true
+		}
+
+		ADDITIONALFUNC="reset_zigbee config_1wire"
+
+		init_gpio
+		;;
+	jethubj200)
+		modprobe gpio-pca953x || {
+			echo "${0}: *** Error: Failed to load gpio-pca953x kernel module"
+			status=1
+		}
+
+		echo "${0}: Configure relays ..."
+		gpioset --toggle 0 RELAY_1=0 RELAY_2=0 || {
+			echo "${0}: *** Error: Failed to configure relays"
+			status=1
+		}
+
+		# BOOT: 1 - application, 0 - bootloader
+		echo "${0}: Set UXM modules to application mode, reset them ..."
+		if gpioset --toggle 0 UXM1_BOOT=1 UXM2_BOOT=1; then
+			gpioset --toggle 500ms,0 UXM1_RESET=1 UXM2_RESET=1 || {
+				echo "${0}: *** Error: UXM reset pulse failed"
+				status=1
+			}
+		else
+			echo "${0}: *** Error: Failed to set UXM modules to application mode, reset skipped"
+			status=1
+		fi
+
+		echo "${0}: Configure 1-Wire ..."
+		modprobe ds2482 || {
+			echo "${0}: *** Error: Failed to load DS2482 kernel module"
+			status=1
+		}
+		;;
+	jethubj310)
+		# MODE: 0 - application, 1 - bootloader
+		# RESET: 1 - held in reset
+		echo "${0}: Set UXM modules to application mode, reset them ..."
+		if gpioset --toggle 0 UXM1_MODE=0 UXM2_MODE=0 UXM3_MODE=0 UXM4_MODE=0; then
+			gpioset --toggle 500ms,0 UXM1_RESET=1 UXM2_RESET=1 UXM3_RESET=1 UXM4_RESET=1 || {
+				echo "${0}: *** Error: UXM reset pulse failed"
+				status=1
+			}
+		else
+			echo "${0}: *** Error: Failed to set UXM modules to application mode, reset skipped"
+			status=1
+		fi
+		;;
+	*)
+		echo "${0}: Unsupported JetHub board: ${BOARD}" >&2
+		exit 1
+		;;
+esac
 
 echo "${0}: Initialization done"
-
-exit 0
+exit "$status"
