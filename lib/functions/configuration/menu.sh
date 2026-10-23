@@ -85,7 +85,7 @@ function dialog_if_terminal_set_vars() {
 	# PuTTY and other emulators that report TERM=xterm but ignore that charset switch in UTF-8 mode show letters.
 	exec 3>&1 # open fd 3...
 	# On Ghostty, use the dark theme. A dialogrc of the user wins.
-	if [[ "${ARMBIAN_TERMINAL_EMULATOR:-}" == "ghostty" && ! -f "${DIALOGRC:-${HOME}/.dialogrc}" ]]; then
+	if [[ "${ARMBIAN_TERMINAL_EMULATOR:-}" == "ghostty" && ! -f "${DIALOGRC:-}" && ! -f "${HOME}/.dialogrc" ]]; then
 		DIALOG_RESULT=$(DIALOGRC=<(dialog_ghostty_rc) NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
 	else
 		DIALOG_RESULT=$(NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.

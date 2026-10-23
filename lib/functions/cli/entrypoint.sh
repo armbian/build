@@ -14,7 +14,7 @@ function ensure_known_terminal() {
 	[[ -z "${TERM:-}" ]] && return 0
 	tput -T "${TERM}" longname &> /dev/null && return 0
 	declare term
-	for term in ghostty xterm-256color xterm dumb; do
+	for term in ${ARMBIAN_TERMINAL_EMULATOR:+ghostty} xterm-256color xterm dumb; do
 		tput -T "${term}" longname &> /dev/null && break
 	done
 	display_alert "Unknown terminal type '${TERM}'" "using '${term}'" "debug"
