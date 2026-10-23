@@ -11,7 +11,6 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399-rock-pi-4b.dtb"
 BOOT_SUPPORT_SPI=yes
-DDR_BLOB="rk33/rk3399_ddr_933MHz_v1.20.bin"
 source "${SRC}/config/sources/vendors/radxa/rk3399-uboot.conf.sh"
 
 function post_family_tweaks_bsp__rockpi-4b_BSP() {

@@ -8,6 +8,8 @@
 declare -g BOOTBRANCH_BOARD="tag:v2026.10"
 declare -g BOOTPATCHDIR="v2026.10"
 declare -g BOOT_SCENARIO="binman-atf-mainline"
+# Newest Rockchip DDR blob (2023-04-17). A board file can set its own before sourcing this file.
+declare -g DDR_BLOB="${DDR_BLOB:-"rk33/rk3399_ddr_933MHz_v1.30.bin"}"
 enable_extension "uboot-btrfs"
 
 function post_family_config__radxa_rk3399_uboot() {
