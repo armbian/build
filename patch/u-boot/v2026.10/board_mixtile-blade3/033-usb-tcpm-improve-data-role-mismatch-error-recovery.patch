@@ -1,0 +1,83 @@
+From 1ee6443a60fe163e76c64136aa1a9a68401cb065 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Wed, 26 Feb 2025 19:44:47 +0100
+Subject: [PATCH] usb: tcpm: improve data role mismatch error recovery
+
+On Radxa ROCK 5B I managed to get U-Boot into an endless loop of
+printing
+
+fusb302 usb-typec@22: TCPM: data role mismatch, initiating error recovery
+
+messages by changing the data role in Linux and then rebooting the
+system. This is happening because the external device (A cheap USB-C hub
+powered through a USB-C PD power-supply) kept its state and the error
+recovery path for non self-powered devices is not enough to change it.
+
+Avoid this by swapping our own data role when the error recovery stage
+is reached for a port, which is not self-powered. Right now data support
+is limited anyways and once proper support is added we can use the data
+role swap request to get the desired data direction after the initial
+negotiation completed.
+
+Fixes: 1db4c0ac77e3 ("usb: tcpm: add core framework")
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Nicolas Frattaroli <nicolas.frattaroli@collabora.com>
+Tested-by: Marcel Ziswiler <marcel.ziswiler@codethink.co.uk> # rock5b
+Reviewed-by: Anand Moon <linux.amoon@gmail.com>
+Tested-by: Anand Moon <linux.amoon@gmail.com>
+Tested-by: Soeren Moch <smoch@web.de>
+---
+ drivers/usb/tcpm/tcpm.c | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/tcpm/tcpm.c b/drivers/usb/tcpm/tcpm.c
+index 0ca778c947f..436c45755e5 100644
+--- a/drivers/usb/tcpm/tcpm.c
++++ b/drivers/usb/tcpm/tcpm.c
+@@ -831,6 +831,28 @@ static void tcpm_pd_ctrl_request(struct udevice *dev,
+ 	}
+ }
+ 
++static void tcpm_recover_data_role_mismatch(struct udevice *dev)
++{
++	struct tcpm_port *port = dev_get_uclass_plat(dev);
++
++	dev_err(dev, "TCPM: data role mismatch, initiating error recovery\n");
++	if (port->self_powered) {
++		tcpm_set_state(dev, ERROR_RECOVERY, 0);
++		return;
++	}
++
++	/*
++	 * The error recovery will not help for devices, which are not
++	 * self-powered because the error recovery avoids killing the board
++	 * power. Since this can happen early on sending
++	 * a DR_SWAP request is not sensible. Instead let's change our own
++	 * data role. It can be swapped back once USB-PD reached the ready
++	 * state.
++	 */
++	tcpm_set_roles(dev, true, port->pwr_role,
++		       port->data_role == TYPEC_HOST ? TYPEC_DEVICE : TYPEC_HOST);
++}
++
+ static void tcpm_pd_rx_handler(struct udevice *dev,
+ 			       const struct pd_message *msg)
+ {
+@@ -865,9 +887,11 @@ static void tcpm_pd_rx_handler(struct udevice *dev,
+ 		remote_is_host = !!(le16_to_cpu(msg->header) & PD_HEADER_DATA_ROLE);
+ 		local_is_host = port->data_role == TYPEC_HOST;
+ 		if (remote_is_host == local_is_host) {
+-			dev_err(dev, "TCPM: data role mismatch, initiating error recovery\n");
+-			tcpm_set_state(dev, ERROR_RECOVERY, 0);
+-		} else {
++			tcpm_recover_data_role_mismatch(dev);
++			local_is_host = port->data_role == TYPEC_HOST;
++		}
++
++		if (remote_is_host != local_is_host) {
+ 			if (cnt)
+ 				tcpm_pd_data_request(dev, msg);
+ 			else
+-- 
+2.56.0
+
