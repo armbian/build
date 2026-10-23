@@ -382,8 +382,14 @@ write_uboot_platform_ufs() {
 	fi
 }
 
+# $5: the image to write. armbian-install selects it from BOOTLOADER_MTD_IMAGE(_SATA).
+# Without $5, write the only image, or ask in a dialog.
 write_uboot_platform_mtd() {
-	FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
+	if [[ -n "${5:-}" ]]; then
+		FILES="$5"
+	else
+		FILES=$(find "$1" -maxdepth 1 -type f \( -name "rkspi_loader*.img" -o -name "u-boot-rockchip-spi*.bin" \))
+	fi
 	if [ -z "$FILES" ]; then
 		echo "No SPI image found."
 		exit 1

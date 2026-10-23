@@ -553,6 +553,8 @@ function compile_uboot() {
 		# This file provides functions for deploying u-boot to a block device.
 		DIR=/usr/lib/$uboot_name
 		${BOOTLOADER_BOOTS_FROM:+BOOTLOADER_BOOTS_FROM=\"${BOOTLOADER_BOOTS_FROM}\"}
+		${BOOTLOADER_MTD_IMAGE:+BOOTLOADER_MTD_IMAGE=\"${BOOTLOADER_MTD_IMAGE}\"}
+		${BOOTLOADER_MTD_IMAGE_SATA:+BOOTLOADER_MTD_IMAGE_SATA=\"${BOOTLOADER_MTD_IMAGE_SATA}\"}
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
 		$(declare -f write_uboot_platform_ufs || true)
