@@ -1,5 +1,5 @@
 # Rockchip RK3328 quad core 1GB 2 x GBE USB2
-BOARD_NAME="Nanopi R2C"
+BOARD_NAME="NanoPi R2C"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""

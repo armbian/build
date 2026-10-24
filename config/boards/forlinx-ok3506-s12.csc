@@ -1,5 +1,5 @@
 # Rockchip RK3506B/J triple core 512MB SoC 1x100MBe NAND SD USB2
-BOARD_NAME="ForLinx OK3506-S12"
+BOARD_NAME="OK3506-S12"
 BOARD_VENDOR="forlinx"
 BOARDFAMILY="rockchip"
 BOOTCONFIG="forlinx-ok3506-s12-rk3506j_defconfig"
