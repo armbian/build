@@ -10,6 +10,7 @@ KERNEL_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-hinlink-h88k.dtb"
+OVERLAY_PREFIX_BOARD="hinlink-h88k"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="h88k" # This _only_ used for uefi-edk2-rk3588 extension
