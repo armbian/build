@@ -117,6 +117,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 	- Examples: `sun8i-h3`, `rockchip-rk3566 rockchip-rk3568`
 - **OVERLAY_PREFIX_BOARD** ( space-separated list of prefixes ): Board prefixes, put before the family prefixes. One value serves all branches: a prefix with no match in that kernel does nothing.
 	- At the moment, only the `rockchip64`, `rk35xx` and `rockchip-rk3588` families use it. Other families ignore it.
+	- extlinux images add **DEFAULT_OVERLAYS** with the first prefix only. On an extlinux board, each default overlay must exist with the first board prefix.
 	- Example: `rock-5b`
 
 ## Device tree overlay names
