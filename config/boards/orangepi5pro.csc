@@ -31,6 +31,8 @@ function post_family_config__orangepi5pro_uboot_add_sata_target() {
 	# Note: whitespace/newlines are significant; BOOT_SUPPORT_SPI & BOOT_SPI_RKSPI_LOADER influence the postprocess step that runs for _every_ target and produces rkspi_loader.img
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb rkspi_loader.img
 	BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG_SATA spl/u-boot-spl.bin u-boot.dtb u-boot.itb;; rkspi_loader_sata.img"
+	# armbian-install writes the SATA image only for a SATA install target.
+	declare -g BOOTLOADER_MTD_IMAGE="rkspi_loader.img" BOOTLOADER_MTD_IMAGE_SATA="rkspi_loader_sata.img"
 }
 
 function post_uboot_custom_postprocess__create_sata_spi_image() {
