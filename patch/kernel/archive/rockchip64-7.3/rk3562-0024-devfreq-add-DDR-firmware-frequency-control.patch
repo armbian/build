@@ -1,0 +1,423 @@
+From: retro98boy <retro98boy@qq.com>
+Subject: [PATCH] devfreq: add RK3562 DDR firmware frequency control
+
+Use the BSP firmware protocol with per-device state and checked completion.
+Reject failed transitions and retain the raised voltage after uncertain outcomes.
+Filter operating points against the frequencies trained by the DDR firmware.
+Read the actual frequency through SCMI after each transition.
+Defer probing until the enabled DFI provider registers its event device.
+Keep other Rockchip memory controllers unchanged.
+
+diff --git a/drivers/devfreq/Kconfig b/drivers/devfreq/Kconfig
+--- a/drivers/devfreq/Kconfig
++++ b/drivers/devfreq/Kconfig
+@@ -152,6 +152,18 @@
+ 	  It sets the frequency for the memory controller and reads the usage counts
+ 	  from hardware.
+ 
++config ARM_RK3562_DMC_DEVFREQ
++	tristate "Rockchip RK3562 DMC frequency scaling"
++	depends on (ARCH_ROCKCHIP || COMPILE_TEST) && HAVE_ARM_SMCCC
++	depends on REGULATOR
++	select DEVFREQ_EVENT_ROCKCHIP_DFI
++	select DEVFREQ_GOV_SIMPLE_ONDEMAND
++	select PM_DEVFREQ_EVENT
++	select PM_OPP
++	help
++	  Scale the RK3562 memory frequency through the Rockchip DDR firmware.
++	  Use DFI counters to measure memory utilization.
++
+ config ARM_RK3399_DMC_DEVFREQ
+ 	tristate "ARM RK3399 DMC DEVFREQ Driver"
+ 	depends on (ARCH_ROCKCHIP && HAVE_ARM_SMCCC) || \
+diff --git a/drivers/devfreq/Makefile b/drivers/devfreq/Makefile
+--- a/drivers/devfreq/Makefile
++++ b/drivers/devfreq/Makefile
+@@ -15,6 +15,7 @@
+ obj-$(CONFIG_ARM_MEDIATEK_CCI_DEVFREQ)	+= mtk-cci-devfreq.o
+ obj-$(CONFIG_ARM_RK3399_DMC_DEVFREQ)	+= rk3399_dmc.o
+ obj-$(CONFIG_ARM_RK3328_DMC_DEVFREQ)	+= rk3328_dmc.o
++obj-$(CONFIG_ARM_RK3562_DMC_DEVFREQ)	+= rk3562-dmc.o
+ obj-$(CONFIG_ARM_SUN8I_A33_MBUS_DEVFREQ)	+= sun8i-a33-mbus.o
+ obj-$(CONFIG_ARM_TEGRA_DEVFREQ)		+= tegra30-devfreq.o
+ 
+diff --git a/drivers/devfreq/rk3562-dmc.c b/drivers/devfreq/rk3562-dmc.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/devfreq/rk3562-dmc.c
+@@ -0,0 +1,375 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* RK3562 DDR firmware interface. */
++#include <linux/arm-smccc.h>
++#include <linux/clk.h>
++#include <linux/completion.h>
++#include <linux/devfreq.h>
++#include <linux/devfreq-event.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_qos.h>
++#include <linux/regulator/consumer.h>
++#include <soc/rockchip/rockchip_sip.h>
++
++#define DDR_INIT		0
++#define DDR_SET_RATE	1
++#define DDR_VERSION	8
++#define DDR_POST_SET_RATE	9
++#define DDR_MCU_START	12
++#define DDR_FREQ_INFO	14
++#define DDR_PAGE_TYPE	2
++#define DDR_SHARED_SIZE	8192
++#define DDR_MAX_FREQS	6
++
++struct rk3562_ddr_params {
++	u32 hz;
++	u32 lcdc_type;
++	u32 vop;
++	u32 vop_dclk_mode;
++	u32 sr_idle_en;
++	u32 addr_mcu_el3;
++	u32 wait_flag1;
++	u32 wait_flag0;
++	u32 complt_hwirq;
++	u32 update_drv_odt_cfg;
++	u32 update_deskew_cfg;
++	u32 freq_count;
++	u32 freq_info_mhz[DDR_MAX_FREQS];
++	u32 wait_mode;
++	u32 vop_scan_line_time_ns;
++};
++
++struct rk3562_dmc {
++	struct device *dev;
++	struct clk *clk;
++	struct regulator *supply;
++	struct devfreq_event_dev *event;
++	struct devfreq *devfreq;
++	struct devfreq_dev_profile profile;
++	struct devfreq_simple_ondemand_data governor;
++	struct rk3562_ddr_params __iomem *params;
++	struct completion complete;
++	struct pm_qos_request latency;
++	int irq;
++	int irq_error;
++	bool failed;
++};
++
++static struct arm_smccc_res rk3562_ddr_call(unsigned long arg, unsigned int cmd)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(ROCKCHIP_SIP_DRAM_FREQ, arg, 0, cmd, 0, 0, 0, 0, &res);
++	return res;
++}
++
++static irqreturn_t rk3562_dmc_irq(int irq, void *data)
++{
++	struct rk3562_dmc *dmc = data;
++	struct arm_smccc_res res;
++
++	res = rk3562_ddr_call(DDR_PAGE_TYPE, DDR_POST_SET_RATE);
++	dmc->irq_error = res.a0 ? -EIO : 0;
++	complete(&dmc->complete);
++	return IRQ_HANDLED;
++}
++
++static int rk3562_dmc_set_rate(struct rk3562_dmc *dmc, unsigned long rate)
++{
++	struct arm_smccc_res res;
++	int ret = 0;
++
++	writel(rate, &dmc->params->hz);
++	writel(1, &dmc->params->wait_flag0);
++	writel(1, &dmc->params->wait_flag1);
++	/* Publish parameters before entering firmware. */
++	wmb();
++	res = rk3562_ddr_call(DDR_PAGE_TYPE, DDR_SET_RATE);
++	if (res.a0)
++		return -EIO;
++	if ((int)res.a1 != -6)
++		return 0;
++
++	reinit_completion(&dmc->complete);
++	dmc->irq_error = 0;
++	cpu_latency_qos_update_request(&dmc->latency, 0);
++	enable_irq(dmc->irq);
++	res = rk3562_ddr_call(0, DDR_MCU_START);
++	if (res.a0)
++		ret = -EIO;
++	else if (!wait_for_completion_timeout(&dmc->complete, msecs_to_jiffies(85)))
++		ret = -ETIMEDOUT;
++
++	disable_irq(dmc->irq);
++	if (ret) {
++		/* Stop the MCU before releasing the latency constraint. */
++		res = rk3562_ddr_call(DDR_PAGE_TYPE, DDR_POST_SET_RATE);
++		if (res.a0)
++			dev_err(dmc->dev, "DDR completion cleanup failed: %lx\n", res.a0);
++	} else {
++		ret = dmc->irq_error;
++	}
++	cpu_latency_qos_update_request(&dmc->latency, PM_QOS_DEFAULT_VALUE);
++	return ret;
++}
++
++static int rk3562_dmc_target(struct device *dev, unsigned long *freq, u32 flags)
++{
++	struct rk3562_dmc *dmc = dev_get_drvdata(dev);
++	struct dev_pm_opp *opp;
++	unsigned long actual, target, uv;
++	int old_uv;
++	int ret;
++
++	if (dmc->failed)
++		return -EIO;
++	opp = devfreq_recommended_opp(dev, freq, flags);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++	target = dev_pm_opp_get_freq(opp);
++	uv = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++	actual = clk_get_rate(dmc->clk);
++	if (actual == target) {
++		*freq = actual;
++		return regulator_set_voltage(dmc->supply, uv, INT_MAX);
++	}
++
++	old_uv = regulator_get_voltage(dmc->supply);
++	if (old_uv < 0)
++		return old_uv;
++	if (uv > old_uv) {
++		ret = regulator_set_voltage(dmc->supply, uv, INT_MAX);
++		if (ret)
++			return ret;
++	}
++	ret = rk3562_dmc_set_rate(dmc, target);
++	actual = clk_get_rate(dmc->clk);
++	*freq = actual;
++	if (ret || actual != target) {
++		/* Do not retry a firmware transaction with an uncertain outcome. */
++		dmc->failed = true;
++		dev_err(dev, "DDR transition failed: target=%lu actual=%lu error=%d\n",
++			target, actual, ret);
++		return ret ?: -EIO;
++	}
++	ret = regulator_set_voltage(dmc->supply, uv, INT_MAX);
++	if (ret)
++		return ret;
++	return devfreq_event_set_event(dmc->event);
++}
++
++static int rk3562_dmc_status(struct device *dev, struct devfreq_dev_status *stat)
++{
++	struct rk3562_dmc *dmc = dev_get_drvdata(dev);
++	struct devfreq_event_data event;
++	int ret;
++
++	ret = devfreq_event_get_event(dmc->event, &event);
++	if (ret)
++		return ret;
++	stat->current_frequency = clk_get_rate(dmc->clk);
++	stat->busy_time = event.load_count;
++	stat->total_time = event.total_count;
++	return devfreq_event_set_event(dmc->event);
++}
++
++static int rk3562_dmc_current(struct device *dev, unsigned long *freq)
++{
++	struct rk3562_dmc *dmc = dev_get_drvdata(dev);
++
++	*freq = clk_get_rate(dmc->clk);
++	return *freq ? 0 : -EIO;
++}
++
++static void rk3562_dmc_disable_event(void *data)
++{
++	devfreq_event_disable_edev(data);
++}
++
++static void rk3562_dmc_remove_qos(void *data)
++{
++	cpu_latency_qos_remove_request(data);
++}
++
++static int rk3562_dmc_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *dfi_node;
++	struct rk3562_dmc *dmc;
++	struct arm_smccc_res res;
++	struct dev_pm_opp *opp;
++	unsigned long rate, uv, boot_rate;
++	u32 count, mhz[DDR_MAX_FREQS];
++	bool dfi_available;
++	int i, j, ret, num_opps;
++
++	dmc = devm_kzalloc(dev, sizeof(*dmc), GFP_KERNEL);
++	if (!dmc)
++		return -ENOMEM;
++	dmc->dev = dev;
++	platform_set_drvdata(pdev, dmc);
++	dmc->clk = devm_clk_get(dev, "dmc_clk");
++	if (IS_ERR(dmc->clk))
++		return dev_err_probe(dev, PTR_ERR(dmc->clk), "Cannot get DDR clock\n");
++	dmc->supply = devm_regulator_get(dev, "center");
++	if (IS_ERR(dmc->supply))
++		return dev_err_probe(dev, PTR_ERR(dmc->supply), "Cannot get logic supply\n");
++	dfi_node = of_parse_phandle(dev->of_node, "devfreq-events", 0);
++	if (!dfi_node)
++		return dev_err_probe(dev, -EINVAL, "Missing DFI phandle\n");
++	dfi_available = of_device_is_available(dfi_node);
++	of_node_put(dfi_node);
++	if (!dfi_available)
++		return dev_err_probe(dev, -ENODEV, "DFI is disabled\n");
++	dmc->event = devfreq_event_get_edev_by_phandle(dev, "devfreq-events", 0);
++	if (IS_ERR(dmc->event)) {
++		ret = PTR_ERR(dmc->event);
++		if (ret == -ENODEV)
++			ret = -EPROBE_DEFER;
++		return dev_err_probe(dev, ret, "Cannot get DFI\n");
++	}
++	dmc->irq = platform_get_irq_byname(pdev, "complete");
++	if (dmc->irq < 0)
++		return dmc->irq;
++	init_completion(&dmc->complete);
++	ret = devm_request_irq(dev, dmc->irq, rk3562_dmc_irq, IRQF_NO_AUTOEN,
++			       dev_name(dev), dmc);
++	if (ret)
++		return ret;
++	ret = devm_pm_opp_of_add_table(dev);
++	if (ret)
++		return ret;
++	boot_rate = clk_get_rate(dmc->clk);
++	opp = dev_pm_opp_find_freq_exact(dev, boot_rate, true);
++	if (IS_ERR(opp))
++		return dev_err_probe(dev, PTR_ERR(opp), "Boot DDR rate has no OPP\n");
++	uv = dev_pm_opp_get_voltage(opp);
++	dev_pm_opp_put(opp);
++	num_opps = dev_pm_opp_get_opp_count(dev);
++	if (!uv)
++		return -EINVAL;
++	ret = regulator_set_voltage(dmc->supply, uv, INT_MAX);
++	if (ret)
++		return ret;
++	res = rk3562_ddr_call(0, DDR_VERSION);
++	if (res.a0 || res.a1 < 0x101)
++		return dev_err_probe(dev, -EOPNOTSUPP, "DDR firmware v1.01 is required\n");
++	arm_smccc_smc(ROCKCHIP_SIP_SHARE_MEM, 2, DDR_PAGE_TYPE, 0, 0, 0, 0, 0, &res);
++	if (res.a0 || !res.a1 || !IS_ALIGNED(res.a1, 4096))
++		return -ENOMEM;
++	dmc->params = devm_ioremap(dev, res.a1, DDR_SHARED_SIZE);
++	if (!dmc->params)
++		return -ENOMEM;
++	memset_io(dmc->params, 0, DDR_SHARED_SIZE);
++	/* Publish the cleared interface and timing pages before initialization. */
++	wmb();
++	res = rk3562_ddr_call(DDR_PAGE_TYPE, DDR_INIT);
++	if (res.a0)
++		return dev_err_probe(dev, -EIO, "DDR firmware initialization failed\n");
++	res = rk3562_ddr_call(DDR_PAGE_TYPE, DDR_FREQ_INFO);
++	if (res.a0)
++		return -EIO;
++	count = readl(&dmc->params->freq_count);
++	if (!count || count > DDR_MAX_FREQS)
++		return -EINVAL;
++	for (i = 0; i < count; i++) {
++		mhz[i] = readl(&dmc->params->freq_info_mhz[i]);
++		if (!mhz[i] || mhz[i] > U32_MAX / 1000000)
++			return -EINVAL;
++		dev_info(dev, "Firmware DDR rate: %u MHz\n", mhz[i]);
++	}
++	for (i = 0, rate = 0; i < num_opps; i++, rate++) {
++		opp = dev_pm_opp_find_freq_ceil(dev, &rate);
++		if (IS_ERR(opp))
++			return PTR_ERR(opp);
++		dev_pm_opp_put(opp);
++		for (j = 0; j < count; j++)
++			if (rate == mhz[j] * 1000000UL)
++				break;
++		if (j == count)
++			dev_pm_opp_disable(dev, rate);
++	}
++	opp = dev_pm_opp_find_freq_exact(dev, boot_rate, true);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++	dev_pm_opp_put(opp);
++	cpu_latency_qos_add_request(&dmc->latency, PM_QOS_DEFAULT_VALUE);
++	ret = devm_add_action_or_reset(dev, rk3562_dmc_remove_qos, &dmc->latency);
++	if (ret)
++		return ret;
++	ret = devfreq_event_enable_edev(dmc->event);
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(dev, rk3562_dmc_disable_event, dmc->event);
++	if (ret)
++		return ret;
++	ret = devfreq_event_set_event(dmc->event);
++	if (ret)
++		return ret;
++	dmc->profile.initial_freq = boot_rate;
++	dmc->profile.polling_ms = 200;
++	dmc->profile.target = rk3562_dmc_target;
++	dmc->profile.get_dev_status = rk3562_dmc_status;
++	dmc->profile.get_cur_freq = rk3562_dmc_current;
++	dmc->governor.upthreshold = 40;
++	dmc->governor.downdifferential = 20;
++	dmc->devfreq = devm_devfreq_add_device(dev, &dmc->profile,
++					     DEVFREQ_GOV_SIMPLE_ONDEMAND, &dmc->governor);
++	return PTR_ERR_OR_ZERO(dmc->devfreq);
++}
++
++static int rk3562_dmc_suspend(struct device *dev)
++{
++	struct rk3562_dmc *dmc = dev_get_drvdata(dev);
++	int ret;
++
++	ret = devfreq_suspend_device(dmc->devfreq);
++	if (ret)
++		return ret;
++	ret = devfreq_event_disable_edev(dmc->event);
++	if (ret)
++		devfreq_resume_device(dmc->devfreq);
++	return ret;
++}
++
++static int rk3562_dmc_resume(struct device *dev)
++{
++	struct rk3562_dmc *dmc = dev_get_drvdata(dev);
++	int ret;
++
++	ret = devfreq_event_enable_edev(dmc->event);
++	if (ret)
++		return ret;
++	ret = devfreq_event_set_event(dmc->event);
++	if (!ret)
++		ret = devfreq_resume_device(dmc->devfreq);
++	if (ret)
++		devfreq_event_disable_edev(dmc->event);
++	return ret;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(rk3562_dmc_pm_ops,
++			      rk3562_dmc_suspend, rk3562_dmc_resume);
++
++static const struct of_device_id rk3562_dmc_match[] = {
++	{ .compatible = "rockchip,rk3562-dmc" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, rk3562_dmc_match);
++
++static struct platform_driver rk3562_dmc_driver = {
++	.probe = rk3562_dmc_probe,
++	.driver = {
++		.name = "rk3562-dmc",
++		.of_match_table = rk3562_dmc_match,
++		.pm = pm_sleep_ptr(&rk3562_dmc_pm_ops),
++	},
++};
++module_platform_driver(rk3562_dmc_driver);
++MODULE_DESCRIPTION("RK3562 DDR frequency control");
++MODULE_LICENSE("GPL");
