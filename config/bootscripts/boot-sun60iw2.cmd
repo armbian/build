@@ -6,12 +6,12 @@
 # Loads Image via booti (vendor U-Boot 2018 arm64). If booti is unavailable
 # in your U-Boot build, see README-PORT.md for the uImage/bootm fallback.
 
-# OPi U-Boot's default load addresses are cramped and break on a
-# kernel >= ~30MB. Re-layout the addresses to allow for larger kernels (i.e. BTF)
+# Layout memory addresses to prevent collisions with BL31 (0x48000000) and U-Boot text (0x4a000000)
 setenv kernel_addr_r "0x41000000"   # kernel zone 0x41000000..0x48000000 (~112 MB, below BL31)
-setenv fdt_addr_r "0x4a000000"      # device tree (small), above BL31
-setenv ramdisk_addr_r "0x4b000000"  # uInitrd staging, above the FDT
-setenv load_addr "0x4d000000"       # armbianEnv + overlay scratch, above the ramdisk
+setenv fdt_addr_r "0x4fa00000"      # device tree (small), above BL31 & U-Boot
+setenv ramdisk_addr_r "0x50000000"  # uInitrd staging, above the FDT
+setenv load_addr "0x58000000"       # armbianEnv + overlay scratch, above the ramdisk
+
 
 setenv overlay_error "false"
 # default values
@@ -32,8 +32,17 @@ fi
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 ${consoleargs}"; fi
-if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 initcall_debug=0 ${consoleargs}"; fi
+if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "${consoleargs} console=ttyS0,115200"; fi
+
+if test "${earlycon}" = "on"; then
+	if test "${branch}" = "vendor"; then
+		setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 initcall_debug=0 ${consoleargs}"
+	elif test "${branch}" = "edge" || test "${cpu}" = "armv8"; then
+		setenv consoleargs "earlycon=uart8250,mmio32,0x02500000 ${consoleargs}"
+	else
+		setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 initcall_debug=0 ${consoleargs}"
+	fi
+fi
 
 part uuid ${devtype} ${devnum}:1 partuuid
 

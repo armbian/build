@@ -1,0 +1,83 @@
+From 549d515f49359fab9a8813877c924eb47731c662 Mon Sep 17 00:00:00 2001
+From: Vinicius Pedrosa <vinicius.eduardo.pedrosa@gmail.com>
+Date: Mon, 5 Oct 2026 14:25:36 -0300
+Subject: [PATCH 29/58] serial: 8250_dw: Keep the BUSY-safe divisor hook when
+ DLF is present
+
+dw8250_probe() installs dw8250_set_divisor(), which brackets the
+DLAB/DLL/DLH sequence with dw8250_idle_enter()/dw8250_idle_exit() so that
+a BUSY UART cannot drop the divisor LCR write. dw8250_setup_port() runs
+afterwards and replaces that hook with the dwlib one whenever it detects
+a DLF register. The dwlib hook programs the divisor through
+serial8250_do_set_divisor() without entering idle.
+
+When termios changes while the UART is transmitting, the LCR|DLAB write
+is ignored and dw8250_check_lcr() retries it between
+dw8250_idle_enter() and dw8250_idle_exit(). dw8250_idle_exit() restores
+IER while DLAB is still set, so the value lands in DLH. The real IER
+keeps the zero written by dw8250_idle_enter(), and the port gets no
+further TX or RX interrupts while up->ier says they're enabled.
+
+Program DLF from dw8250_set_divisor() inside the idle section and keep
+that hook after dw8250_setup_port().
+
+Observed on an Allwinner A733 (Radxa Cubie A7Z): the first interactive
+tcsetattr() during console output left hardware IER at 0 and up->ier at
+0x07. The shell never printed its prompt or read input. With this change
+alone the same boot reached the prompt and echoed input, and hardware
+IER matched up->ier afterwards.
+
+Fixes: a7b9ce39fbe4 ("serial: 8250_dw: Ensure BUSY is deasserted")
+Cc: stable@vger.kernel.org
+Signed-off-by: Vinicius Pedrosa <vinicius.eduardo.pedrosa@gmail.com>
+---
+ drivers/tty/serial/8250/8250_dw.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/tty/serial/8250/8250_dw.c b/drivers/tty/serial/8250/8250_dw.c
+index 5fba913f3301..a3d006673ade 100644
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -188,6 +188,7 @@ static int dw8250_idle_enter(struct uart_port *p)
+ static void dw8250_set_divisor(struct uart_port *p, unsigned int baud,
+ 			       unsigned int quot, unsigned int quot_frac)
+ {
++	struct dw8250_data *d = to_dw8250_data(p->private_data);
+ 	struct uart_8250_port *up = up_to_u8250p(p);
+ 	int ret;
+ 
+@@ -195,6 +196,9 @@ static void dw8250_set_divisor(struct uart_port *p, unsigned int baud,
+ 	if (ret < 0)
+ 		return;
+ 
++	if (d->data.dlf_size)
++		dw8250_writel_ext(p, DW_UART_DLF, quot_frac);
++
+ 	serial_port_out(p, UART_LCR, up->lcr | UART_LCR_DLAB);
+ 	if (!(serial_port_in(p, UART_LCR) & UART_LCR_DLAB))
+ 		goto idle_failed;
+@@ -642,7 +646,6 @@ static int dw8250_probe(struct platform_device *pdev)
+ 
+ 	p->set_ldisc	= dw8250_set_ldisc;
+ 	p->set_termios	= dw8250_set_termios;
+-	p->set_divisor	= dw8250_set_divisor;
+ 
+ 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+@@ -759,6 +762,13 @@ static int dw8250_probe(struct platform_device *pdev)
+ 	if (!data->skip_autocfg)
+ 		dw8250_setup_port(p);
+ 
++	/*
++	 * dw8250_setup_port() installs the library divisor hook when it finds
++	 * DLF. Keep the BUSY-safe hook instead: it also programs DLF, and it
++	 * must own DLAB so that a BUSY UART never drops the divisor LCR write.
++	 */
++	p->set_divisor = dw8250_set_divisor;
++
+ 	/* If we have a valid fifosize, try hooking up DMA */
+ 	if (p->fifosize) {
+ 		data->data.dma.rxconf.src_maxburst = p->fifosize / 4;
+-- 
+2.53.0
+
