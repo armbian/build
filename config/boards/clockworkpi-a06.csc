@@ -1,5 +1,5 @@
 # Rockchip RK3399 hexa core 4GB RAM SoC WiFi/BT
-BOARD_NAME="Clockworkpi A06"
+BOARD_NAME="DevTerm A06"
 BOARD_VENDOR="clockwork"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""

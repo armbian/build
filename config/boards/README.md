@@ -4,8 +4,13 @@ These options are used to declare variables used by the armbian build system to 
 
 If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_OPTION_HERE" /path/to/local/armbian/build/repository` to get context to the option from the source code.
 
-- **BOARD_NAME** ( company product version ): defines the board name used in welcome text, hostname and others relevant usage.The general convention is `COMPANY PRODUCT VERSION` - Often used as part of the scripting logic (namely for hacks) so follow the name declared in the board configuration.
-	- Example: `OLIMEX Teres A64`
+- **BOARD_NAME** ( product version ): defines the board name used in welcome text and system metadata.
+	- Keep the product name and version. Omit the manufacturer stored in `BOARD_VENDOR`.
+	- Keep official product names when removing the manufacturer leaves a generic name.
+	- Check runtime scripts that match board names before changing this value.
+	- Example: `Teres A64`
+- **BOARD_VENDOR** ( manufacturer ): defines the manufacturer identifier used in board metadata and vendor assets.
+	- Example: `olimex`
 - **BOARDFAMILY** ( board-family ): defines the family of the board to apply board-specific configuration during build time such as adjustments for the temperature, LED behavior, etc..
 	- Refer to [sources table](https://github.com/armbian/build/blob/master/config/sources/README.md)
 	- Example: `sun50iw1`

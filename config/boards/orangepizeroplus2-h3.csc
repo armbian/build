@@ -6,7 +6,7 @@
 # Builds on the stock upstream defconfig (no Armbian DRAM override). Needs a deeper
 # look (serial-console/FDT handoff or a board DT/cpufreq quirk) before it can be
 # considered working again.
-BOARD_NAME="Orange Pi Zero Plus 2"
+BOARD_NAME="Orange Pi Zero+ 2 H3"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
