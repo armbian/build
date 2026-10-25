@@ -275,6 +275,8 @@ def main():
         if pwrkey:
             break
         time.sleep(0.5)
+    if not pwrkey:
+        return 0          # no way to leave the screen except unplugging: boot
 
     console_quiet(True)
     saved = enter_lowpower()
@@ -309,28 +311,32 @@ def main():
     lit_at = time.monotonic()
     last_draw = 0.0
     down_at = None
-    while True:
-        now = time.monotonic()
+    offline = 0
+    try:
+        while True:
+            now = time.monotonic()
 
-        if logfile and now - last_log >= log_every:
-            cpu_pct, cpu_prev = cpu_busy(cpu_prev)
-            log_sample(logfile, cpu_pct)
-            last_log = now
+            if logfile and now - last_log >= log_every:
+                cpu_pct, cpu_prev = cpu_busy(cpu_prev)
+                log_sample(logfile, cpu_pct)
+                last_log = now
 
-        if screen_on:
-            if now - last_draw >= 5:
-                draw(*battery())
-                last_draw = now
-            if now - lit_at >= screen_timeout and down_at is None:
-                backlight(False)
-                screen_on = False
-        if not charger_online():
-            backlight(True)
-            subprocess.run(['systemctl', 'poweroff', '--no-wall'])
-            time.sleep(60)
-            return 0
-        # long-press POWER boots; a short press (re)lights the screen
-        if pwrkey:
+            if screen_on:
+                if now - last_draw >= 5:
+                    draw(*battery())
+                    last_draw = now
+                if now - lit_at >= screen_timeout and down_at is None:
+                    backlight(False)
+                    screen_on = False
+            # power off only after ~3 s of offline readings, so one failed
+            # sysfs read does not shut down a unit that is still charging
+            offline = 0 if charger_online() else offline + 1
+            if offline >= 3:
+                backlight(True)
+                subprocess.run(['systemctl', 'poweroff', '--no-wall'])
+                time.sleep(60)
+                return 0
+            # long-press POWER boots; a short press (re)lights the screen
             r, _, _ = select.select([pwrkey.fd], [], [], 1.0)
             if r:
                 for ev in pwrkey.read():
@@ -349,8 +355,8 @@ def main():
                         backlight(True)
             if down_at is not None and time.monotonic() - down_at >= boot_hold:
                 return boot_on()        # boot without waiting for release
-        else:
-            time.sleep(1)
+    except OSError:
+        return boot_on()    # power key gone or unreadable: never strand the unit
 
 
 if __name__ == '__main__':
