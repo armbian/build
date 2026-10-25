@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: crackerjacques <jack@supremeoverlordjabs.co>
+Date: Mon, 26 Oct 2026 01:30:00 +0900
+Subject: power: supply: sgm41542: enable charging when VBUS is attached
+
+The driver only sets CHRG_EN when userspace writes 1 to "online". The
+bit is kept across reboots for as long as the battery powers the chip,
+so once it has been cleared the unit never charges again: with a
+charger attached "online" reads 1 but the status stays "Not charging".
+
+The input current limit is only written on the VBUS rising edge. Input
+source detection finishes after that and resets IINDPM, e.g. to 500 mA
+for a non-standard adapter, and nothing writes it back.
+
+Set the input current limit for the detected source and enable charging
+whenever VBUS comes up or the detected source type changes, and once at
+probe when VBUS is already present (a unit powered on by plugging in a
+charger gets no attach interrupt). The limits follow the BSP driver: a
+standard USB port (SDP) keeps 500 mA, CDP gets 1.5 A, anything else the
+configured input-current-limit-microamp.
+
+Seen on the Anbernic RG Vita Pro: 500 mA and no charge current until
+"online" was written by hand, then +2.2 A into the battery.
+
+Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
+---
+ drivers/power/supply/sgm41542_charger.c | 58 +++++++++++++++++++------
+ 1 file changed, 46 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/power/supply/sgm41542_charger.c b/drivers/power/supply/sgm41542_charger.c
+index 8880962..fc2e5b2 100644
+--- a/drivers/power/supply/sgm41542_charger.c
++++ b/drivers/power/supply/sgm41542_charger.c
+@@ -712,6 +712,39 @@ static int sgm4154x_charger_get_property(struct power_supply *psy,
+ 	return ret;
+ }
+ 
++/*
++ * Nothing else enables charging: CHRG_EN keeps whatever was last written,
++ * across reboots too, as long as the battery powers the chip. Set the
++ * input current limit for the detected source and enable charging.
++ */
++static void sgm4154x_vbus_attached(struct sgm4154x_device *sgm,
++				   const struct sgm4154x_state *state)
++{
++	int ilim;
++
++	switch (state->chrg_type) {
++	case SGM4154X_OTG_MODE:
++		return;
++	case SGM4154X_USB_SDP:
++		ilim = SGM4154X_DEFAULT_INPUT_CUR;
++		break;
++	case SGM4154X_USB_CDP:
++		ilim = min(1500000, sgm->init_data.ilim);
++		break;
++	default:
++		/* DCP, USB PD or another non-BC1.2 source */
++		ilim = sgm->init_data.ilim;
++		break;
++	}
++
++	/*
++	 * Reading IRQ clears interrupt, so carry on even if a write fails.
++	 */
++	if (sgm4154x_set_input_curr_lim(sgm, ilim))
++		dev_err(sgm->dev, "set input current error!\n");
++	sgm4154x_enable_charger(sgm);
++}
++
+ static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
+ {
+ 	struct sgm4154x_device *sgm = private;
+@@ -730,18 +763,13 @@ static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
+ 
+ 	sgm->state = state;
+ 
+-	if (state.vbus_gd && !oldstate.vbus_gd) {
+-		if (sgm->init_data.ilim >= SGM4154X_DEFAULT_INPUT_CUR) {
+-			ret = sgm4154x_set_input_curr_lim(sgm, sgm->init_data.ilim);
+-			if (ret) {
+-				dev_err(sgm->dev, "set input current error!\n");
+-				/*
+-				 * Reading IRQ clears interrupt, so return handled
+-				 * even if error.
+-				 */
+-			}
+-		}
+-	}
++	/*
++	 * Re-apply once input detection has finished as well: it changes
++	 * chrg_type and resets IINDPM to its own (often 500 mA) value.
++	 */
++	if (state.vbus_gd && (!oldstate.vbus_gd ||
++			      state.chrg_type != oldstate.chrg_type))
++		sgm4154x_vbus_attached(sgm, &state);
+ 
+ 	power_supply_changed(sgm->charger);
+ 
+@@ -1031,6 +1059,12 @@ static int sgm4154x_probe(struct i2c_client *client)
+ 		return dev_err_probe(dev, PTR_ERR(sgm->charger),
+ 				     "Failed to register power supply\n");
+ 
++	/* VBUS already present at probe: no attach interrupt will come */
++	scoped_guard(mutex, &sgm->lock) {
++		if (!sgm4154x_get_state(sgm, &sgm->state) && sgm->state.vbus_gd)
++			sgm4154x_vbus_attached(sgm, &sgm->state);
++	}
++
+ 	if (client->irq) {
+ 		ret = devm_request_threaded_irq(dev, client->irq, NULL,
+ 						sgm4154x_irq_handler_thread,
+-- 
+Armbian
+
