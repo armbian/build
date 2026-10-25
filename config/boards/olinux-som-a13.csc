@@ -1,5 +1,5 @@
-# Allwinner A13 single core 512Mb SoM
-BOARD_NAME="A13 SOM"
+# Allwinner A13 single core 256/512MB RAM SoM
+BOARD_NAME="A13-SOM"
 BOARD_VENDOR="olimex"
 BOARDFAMILY="sun5i"
 BOARD_MAINTAINER=""
@@ -8,3 +8,6 @@ HAS_VIDEO_OUTPUT="no"
 BOOTCONFIG="A13-OLinuXino_defconfig"
 KERNEL_TARGET="current,edge,legacy"
 KERNEL_TEST_TARGET="current"
+FULL_DESKTOP="no"
+BOOT_FDT_FILE="sun5i-a13-olinuxino-micro.dtb"
+BOOT_EXTRA_ARGS="console=ttyS0,115200 earlycon earlyprintk clk_ignore_unused cpufreq.default_governor=powersave net.ifnames=0 biosdevname=0"
