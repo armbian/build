@@ -17,6 +17,11 @@ declare -g BOARD_FIRMWARE_INSTALL="-full"
 declare -g WITH_GRUB="${WITH_GRUB:-yes}"
 
 if [[ "${WITH_GRUB}" == "yes" ]]; then
+	# On Lenovo Y700 Gen4, EFI/BOOT/BOOTAA64.EFI is tiny, so the 512 MiB EFI
+	# partition previously added manually on UFS LUN0 should be sufficient.
+	# Pin its size independently of upstream defaults to avoid having to
+	# repartition the existing UFS LUN when those defaults change.
+	declare -g UEFISIZE=512
 	declare -g UEFI_GRUB_TERMINAL="gfxterm"
 	declare -g GRUB_CMDLINE_LINUX_DEFAULT="rootwait quiet video=efifb:off efi=noruntime clk_ignore_unused regulator_ignore_unused pd_ignore_unused"
 	declare -g SERIALCON="${SERIALCON:-tty0}"
