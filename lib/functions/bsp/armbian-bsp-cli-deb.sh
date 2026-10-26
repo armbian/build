@@ -232,7 +232,6 @@ function compile_armbian-bsp-cli() {
 	declare -a bsp_conffile_candidates=(
 		"/usr/lib/armbian/armbian-apt-updates"
 		"/etc/X11/xorg.conf.d/01-armbian-defaults.conf"
-		"/etc/apt/apt.conf.d/02-armbian-periodic"
 	)
 	declare bsp_conffile
 	: > "${destination}"/DEBIAN/conffiles
@@ -439,6 +438,9 @@ function board_side_bsp_cli_preinst() {
 	[[ -f "/etc/update-motd.d/80-livepatch" ]] && rm /etc/update-motd.d/80-livepatch
 	[[ -f "/etc/apt/apt.conf.d/02compress-indexes" ]] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[[ -f "/etc/apt/apt.conf.d/02periodic" ]] && rm /etc/apt/apt.conf.d/02periodic
+	# automatic-update policy now lives only in armbian-config; drop the BSP's
+	# periodic config (removed as a shipped conffile) from upgraded systems too.
+	[[ -f "/etc/apt/apt.conf.d/02-armbian-periodic" ]] && rm /etc/apt/apt.conf.d/02-armbian-periodic
 	[[ -f "/etc/apt/apt.conf.d/no-languages" ]] && rm /etc/apt/apt.conf.d/no-languages
 	[[ -f "/etc/init.d/armhwinfo" ]] && rm /etc/init.d/armhwinfo
 	[[ -f "/etc/logrotate.d/armhwinfo" ]] && rm /etc/logrotate.d/armhwinfo
