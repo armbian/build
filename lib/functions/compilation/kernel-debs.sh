@@ -344,7 +344,8 @@ function kernel_package_callback_linux_image() {
 						?[UF]*) skip_hook="dkms" ;;
 					esac
 					if [ -d ${debian_kernel_hook_dir}/${script}.d ]; then
-						for hook in \$(run-parts --test ${debian_kernel_hook_dir}/${script}.d); do
+						hooks="\$(run-parts --test ${debian_kernel_hook_dir}/${script}.d)" || hook_rc=\$?
+						for hook in \${hooks}; do
 							if [ "\${hook##*/}" = "\${skip_hook}" ]; then
 								echo "Armbian: linux-headers-${BRANCH}-${LINUXFAMILY} not configured yet, its postinst builds DKMS modules. Skipping \${hook}."
 								continue
