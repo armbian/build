@@ -334,9 +334,24 @@ function kernel_package_callback_linux_image() {
 				# hook exit status, always do the relink, and re-surface the failure at the
 				# very end (see HOOK_FOR_PROPAGATE_HOOK_RC) so apt/dpkg still reports it and
 				# retries -- it self-heals once linux-headers is configured.
+				# In one apt run, dpkg can configure linux-image before linux-headers.
+				# The unpacked headers tree has no compiled scripts yet, so DKMS fails.
+				# Skip the dkms hook then: the headers postinst builds DKMS.
 				cat <<- KERNEL_HOOK_DELEGATION_POSTINST
 					hook_rc=0
-					test -d ${debian_kernel_hook_dir}/${script}.d && { run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d || hook_rc=\$?; }
+					skip_hook=""
+					case "\$(dpkg-query -W -f='\${db:Status-Abbrev}' linux-headers-${BRANCH}-${LINUXFAMILY} 2>/dev/null || true)" in
+						?[UF]*) skip_hook="dkms" ;;
+					esac
+					if [ -d ${debian_kernel_hook_dir}/${script}.d ]; then
+						for hook in \$(run-parts --test ${debian_kernel_hook_dir}/${script}.d); do
+							if [ "\${hook##*/}" = "\${skip_hook}" ]; then
+								echo "Armbian: linux-headers-${BRANCH}-${LINUXFAMILY} not configured yet, its postinst builds DKMS modules. Skipping \${hook}."
+								continue
+							fi
+							"\${hook}" "${kernel_version_family}" "/${installed_image_path}" || hook_rc=\$?
+						done
+					fi
 				KERNEL_HOOK_DELEGATION_POSTINST
 			else
 				cat <<- KERNEL_HOOK_DELEGATION
