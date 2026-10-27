@@ -1,5 +1,5 @@
 # Rockchip RK3528A quad core 1/2GB RAM SoC GBe eMMC USB3 GPIO header
-BOARD_NAME="NanoPi NEO3 Plus"
+BOARD_NAME="NanoPi NEO3+"
 BOARD_VENDOR="friendlyelec"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"

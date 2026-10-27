@@ -26,9 +26,9 @@ function extension_prepare_config__config_uefi_edk2_rk3588() {
 		declare -g IMAGE_PARTITION_TABLE="gpt"
 	fi
 
-	# If BOOTFS_TYPE is set, warn and unset it.
-	if [[ -n "${BOOTFS_TYPE}" ]]; then
-		display_alert "Unsetting BOOTFS_TYPE" "UEFI EDK2 requires BOOTFS_TYPE to be unset, but is set to '${BOOTFS_TYPE}'" "warn"
+	# If BOOTFS_TYPE is set, warn and unset it. GRUB reads an ext2/ext4 /boot, so keep that.
+	if [[ -n "${BOOTFS_TYPE}" && "${BOOTFS_TYPE}" != ext[24] ]]; then
+		display_alert "Unsetting BOOTFS_TYPE" "UEFI EDK2 supports only an ext2/ext4 BOOTFS_TYPE, but it is set to '${BOOTFS_TYPE}'" "warn"
 		unset BOOTFS_TYPE
 	fi
 

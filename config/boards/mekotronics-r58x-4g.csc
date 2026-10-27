@@ -1,5 +1,5 @@
 # Rockchip RK3588 SoC octa core 4-16GB SoC 2x1GBe eMMC USB3 NVMe SATA 4G WiFi/BT HDMI DP HDMI-In RS232 RS485
-declare -g BOARD_NAME="Mekotronics R58X-4G"
+declare -g BOARD_NAME="R58X-4G"
 declare -g BOARD_VENDOR="mekotronics"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOARD_MAINTAINER=""

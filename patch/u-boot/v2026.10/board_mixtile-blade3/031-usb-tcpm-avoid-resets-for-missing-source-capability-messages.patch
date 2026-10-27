@@ -1,0 +1,129 @@
+From 874fd9d3ffd422129b56e2a7c750e615e031139d Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Wed, 26 Feb 2025 19:44:45 +0100
+Subject: [PATCH] usb: tcpm: avoid resets for missing source capability
+ messages
+
+The current TCPM code implements source capability message handling
+according to the USB-PD specification. Unfortunately some USB PD
+sources do not properly follow the specification and do not send
+source capability messages after a soft reset when they already
+negotiated a specific contract before. The currently implemented way
+(and what is described in the specificiation) to resolve this problem
+is triggering a hard reset.
+
+But a hard reset is fatal on batteryless platforms powered via USB-C PD,
+since that removes VBUS for some time. Since this is triggered at boot
+time, the system may get stuck in a boot loop.
+
+For example I noticed the following behaviour on a Radxa Rock 5B
+combined with an affected power-supply:
+
+1. The system is booted up with current code
+2. A reboot is requested
+3. U-Boot TCPM / fusb302 driver sends soft reset and waits for the
+   source capability message
+4. No new source capability message is send by the power-supply
+   after the soft reset
+5. U-Boot sends a hard reset
+6. The board resets, but the fusb302 registers are not reset. This
+   is because of a hardware glitch. The serial pins are high when
+   no data is exchanged. Apparently the RK3588 has protection diodes,
+   which leak some voltage into the power-domain. The Rock 5B serial
+   pins and the fusb302 are using the same 3.3V power domain and the
+   leaked voltage is enough to keep the fusb302 registers alive.
+7. After the hard reset the power-supply sends another source capability
+   message, which is auto-acked by fusb302 (because the register state
+   is kept) even though the U-Boot driver has not yet probed. Once the
+   U-Boot driver probes it sends another soft reset and waits for a new
+   source capability message, which never arrives.
+
+Fortunately the affected power-supplies (I have two setups showing this
+behaviour) support sending a source capability message when explicitly
+being asked. Thus an easy workaround to handle this is deviating from
+the USB-PD specification and sending a Get_Source_Cap message and
+waiting some time longer before doing the hard reset.
+
+Note, that I recently added the same workaround to the Linux kernel
+with a slightly different rationale (since it needs to take over from
+U-Boot).
+
+Fixes: 1db4c0ac77e3 ("usb: tcpm: add core framework")
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Tested-by: Nicolas Frattaroli <nicolas.frattaroli@collabora.com>
+Tested-by: Marcel Ziswiler <marcel.ziswiler@codethink.co.uk> # rock5b
+Reviewed-by: Anand Moon <linux.amoon@gmail.com>
+Tested-by: Anand Moon <linux.amoon@gmail.com>
+Tested-by: Soeren Moch <smoch@web.de>
+---
+ drivers/usb/tcpm/tcpm-internal.h |  1 +
+ drivers/usb/tcpm/tcpm.c          | 32 +++++++++++++++++++++++++++++---
+ 2 files changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/tcpm/tcpm-internal.h b/drivers/usb/tcpm/tcpm-internal.h
+index 56144209002..4861f4d1386 100644
+--- a/drivers/usb/tcpm/tcpm-internal.h
++++ b/drivers/usb/tcpm/tcpm-internal.h
+@@ -30,6 +30,7 @@
+ 	S(SNK_DISCOVERY_DEBOUNCE),		\
+ 	S(SNK_DISCOVERY_DEBOUNCE_DONE),		\
+ 	S(SNK_WAIT_CAPABILITIES),		\
++	S(SNK_WAIT_CAPABILITIES_TIMEOUT),	\
+ 	S(SNK_NEGOTIATE_CAPABILITIES),		\
+ 	S(SNK_TRANSITION_SINK),			\
+ 	S(SNK_TRANSITION_SINK_VBUS),		\
+diff --git a/drivers/usb/tcpm/tcpm.c b/drivers/usb/tcpm/tcpm.c
+index 7093f95a977..84d806d8a96 100644
+--- a/drivers/usb/tcpm/tcpm.c
++++ b/drivers/usb/tcpm/tcpm.c
+@@ -1422,7 +1422,8 @@ static inline enum tcpm_state hard_reset_state(struct tcpm_port *port)
+ 		return ERROR_RECOVERY;
+ 	if (port->pwr_role == TYPEC_SOURCE)
+ 		return SRC_UNATTACHED;
+-	if (port->state == SNK_WAIT_CAPABILITIES)
++	if (port->state == SNK_WAIT_CAPABILITIES ||
++	    port->state == SNK_WAIT_CAPABILITIES_TIMEOUT)
+ 		return SNK_READY;
+ 	return SNK_UNATTACHED;
+ }
+@@ -1648,10 +1649,35 @@ static void run_state_machine(struct udevice *dev)
+ 			tcpm_set_state(dev, SOFT_RESET_SEND,
+ 				       PD_T_SINK_WAIT_CAP);
+ 		} else {
+-			tcpm_set_state(dev, hard_reset_state(port),
+-				       PD_T_SINK_WAIT_CAP);
++			if (!port->self_powered)
++				tcpm_set_state(dev, SNK_WAIT_CAPABILITIES_TIMEOUT,
++					       PD_T_SINK_WAIT_CAP);
++			else
++				tcpm_set_state(dev, hard_reset_state(port),
++					       PD_T_SINK_WAIT_CAP);
+ 		}
+ 		break;
++	case SNK_WAIT_CAPABILITIES_TIMEOUT:
++		/*
++		 * There are some USB PD sources in the field, which do not
++		 * properly implement the specification and fail to start
++		 * sending Source Capability messages after a soft reset. The
++		 * specification suggests to do a hard reset when no Source
++		 * capability message is received within PD_T_SINK_WAIT_CAP,
++		 * but that might effectively kil the machine's power source.
++		 *
++		 * This slightly diverges from the specification and tries to
++		 * recover from this by explicitly asking for the capabilities
++		 * using the Get_Source_Cap control message before falling back
++		 * to a hard reset. The control message should also be supported
++		 * and handled by all USB PD source and dual role devices
++		 * according to the specification.
++		 */
++		if (tcpm_pd_send_control(dev, PD_CTRL_GET_SOURCE_CAP))
++			tcpm_set_state_cond(dev, hard_reset_state(port), 0);
++		else
++			tcpm_set_state(dev, hard_reset_state(port), PD_T_SINK_WAIT_CAP);
++		break;
+ 	case SNK_NEGOTIATE_CAPABILITIES:
+ 		port->pd_capable = true;
+ 		port->hard_reset_count = 0;
+-- 
+2.56.0
+

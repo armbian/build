@@ -1,5 +1,5 @@
 # NXP i.MX8ULP A2 dual-core 2GB RAM 32GB eMMC
-BOARD_NAME="Avnet MaaXBoard 8ULP"
+BOARD_NAME="MaaXBoard 8ULP"
 BOARD_VENDOR="avnet"
 BOARDFAMILY="imx8ulp"
 BOARD_MAINTAINER="govindsi"

@@ -236,8 +236,9 @@ function do_main_configuration() {
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		github)
-			# Greg Kroah-Hartman's mirror of the stable tree; firmware stays on kernel.org
-			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/gregkh/linux.git'
+			# Armbian's own mirror of the kernel.org stable tree (all branches + tags,
+			# synced every 30 min). Firmware stays on kernel.org.
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/armbian/linux.git'
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 		gitverse)
@@ -249,6 +250,14 @@ function do_main_configuration() {
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 	esac
+
+	# Mainline firmware git ref. Empty: use the newest linux-firmware release tag (mainline_firmware_resolve_git_ref).
+	# Set it to pin a version, for example "tag:20260916" or "commit:<sha1>"; "branch:main" follows upstream daily.
+	declare -g MAINLINE_FIRMWARE_BRANCH="${MAINLINE_FIRMWARE_BRANCH:-}"
+
+	# Armbian firmware. Also read the old names ARMBIAN_FIRMWARE_GIT_SOURCE and ARMBIAN_FIRMWARE_GIT_BRANCH (plain branch name).
+	declare -g -r ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_SOURCE:-${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}}"
+	declare -g -r ARMBIAN_FIRMWARE_BRANCH="${ARMBIAN_FIRMWARE_BRANCH:-"branch:${ARMBIAN_FIRMWARE_GIT_BRANCH:-master}"}"
 
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 

@@ -1,5 +1,5 @@
 # Rockchip RK3506G2 triple core 128MB SoC 2x100MBe NAND SD USB2
-BOARD_NAME="EByte ECB41-PGE"
+BOARD_NAME="ECB41-PGE"
 BOARD_VENDOR="ebyte"
 BOARDFAMILY="rockchip"
 BOOTCONFIG="ebyte-ecb41-pge_defconfig"
