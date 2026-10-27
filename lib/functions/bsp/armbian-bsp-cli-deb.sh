@@ -448,6 +448,10 @@ function board_side_bsp_cli_preinst() {
 	# is preserved. Gating on the file means a later dpkg-reconfigure is left untouched.
 	if [[ -f "/etc/apt/apt.conf.d/02-armbian-periodic" ]]; then
 		if [[ "$(apt-config dump --format '%v%n' APT::Periodic::Enable 2>/dev/null)" != "1" ]]; then
+			# clear the debconf answer too, so a later unattended-upgrades postinst
+			# cannot recreate 20auto-upgrades with updates on
+			command -v debconf-set-selections >/dev/null 2>&1 && \
+				echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean false" | debconf-set-selections
 			rm -f /etc/apt/apt.conf.d/20auto-upgrades
 		fi
 		rm /etc/apt/apt.conf.d/02-armbian-periodic
