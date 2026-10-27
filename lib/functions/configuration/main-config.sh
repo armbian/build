@@ -237,8 +237,7 @@ function do_main_configuration() {
 			;;
 		github)
 			# Armbian's own mirror of the kernel.org stable tree (all branches + tags,
-			# synced every 30 min). Replaces the gregkh mirror, whose linux-*.y branches
-			# lagged upstream. Firmware stays on kernel.org.
+			# synced every 30 min). Firmware stays on kernel.org.
 			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/armbian/linux.git'
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
