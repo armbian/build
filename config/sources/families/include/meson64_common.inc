@@ -15,7 +15,14 @@ SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
 BOOTBRANCH="${BOOTBRANCH_BOARD:-"tag:v2022.07"}"
 BOOTPATCHDIR="${BOOTPATCHDIR:-"v2022.07"}"
-OVERLAY_PREFIX='meson'
+# OVERLAY_PREFIX is a space-separated list of SoC prefixes, if not set by board; see config/boards/README.md.
+# G12A, G12B and SM1 share the meson-g12 prefix. Only GX keeps the generic meson prefix:
+# the old meson-* overlays without a SoC part (i2cA, uartA, w1-gpio...) work on GX only.
+case "${BOARDFAMILY}" in
+	meson-gxbb | meson-gxl) OVERLAY_PREFIX="${OVERLAY_PREFIX:-"${BOARDFAMILY} meson"}" ;;
+	meson-g12a | meson-g12b | meson-sm1) OVERLAY_PREFIX="${OVERLAY_PREFIX:-"${BOARDFAMILY} meson-g12"}" ;;
+	meson-axg) OVERLAY_PREFIX="${OVERLAY_PREFIX:-"meson-axg"}" ;;
+esac
 OVERLAY_DIR="/boot/dtb/amlogic/overlay"
 
 # This is an extension method, put directly in meson64_common. A "built-in" extension if you will.

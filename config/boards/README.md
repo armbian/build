@@ -112,11 +112,10 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- yes: Enable
 		- no: Disable
 - **OVERLAY_PREFIX** ( space-separated list of prefixes ): Prefixes of the overlay file names. The image gets them as `overlay_prefix=` in `armbianEnv.txt`. The boot script tries each prefix in order. The first match wins. Full overlay names also load.
-	- At the moment, only the Rockchip boot scripts support lists. Other boot scripts take one prefix.
-	- Rockchip families set SoC prefixes. In a Rockchip board file, use **OVERLAY_PREFIX_BOARD**. The `rockchip64` family keeps a board value of **OVERLAY_PREFIX** instead of the SoC prefixes. The `rk35xx` and `rockchip-rk3588` families overwrite it; replace it there only in a `post_family_config` hook.
+	- At the moment, the Rockchip, Allwinner, 64-bit Amlogic Meson, Sophgo and SpacemiT boot scripts support lists. Other boot scripts take one prefix.
+	- Families set SoC prefixes. To add board prefixes, use **OVERLAY_PREFIX_BOARD** in the board file. A board value of **OVERLAY_PREFIX** replaces the SoC prefixes. The `rk35xx` and `rockchip-rk3588` families overwrite it; replace it there only in a `post_family_config` hook.
 	- Examples: `sun8i-h3`, `rockchip-rk3566 rockchip-rk3568`
 - **OVERLAY_PREFIX_BOARD** ( space-separated list of prefixes ): Board prefixes, put before the family prefixes. One value serves all branches: a prefix with no match in that kernel does nothing.
-	- At the moment, only the `rockchip64`, `rk35xx` and `rockchip-rk3588` families use it. Other families ignore it.
 	- extlinux images add **DEFAULT_OVERLAYS** with the first prefix only. On an extlinux board, each default overlay must exist with the first board prefix.
 	- Example: `rock-5b`
 
@@ -131,7 +130,13 @@ Follow these rules for new overlays. Then each **OVERLAY_PREFIX** list matches r
 - Mainline board overlays: use `rockchip-<soc>-<board>-<name>`, for example `rockchip-rk3588-nanopi-m6-display-dsi1-yx35`. The SoC prefix then covers it. The board needs no **OVERLAY_PREFIX_BOARD**. All boards with that SoC see the overlay; the `<board>` part tells users which board it is for.
 - Vendor kernel overlays (armbian/linux-rockchip): use `<soc>-<name>` and `<soc>-<board>-<name>`, for example `rk3588-rock-5b-sata`.
 	- Exception: the 32-bit vendor kernel names SoC overlays `rockchip-<soc>-<name>`. The `rockchip-rv1106` and `rockchip-rv1126` families use the prefixes `rockchip-rv1106` and `rockchip-rv1126`.
-- Do not use a prefix that covers several SoCs, for example `rk35xx-` or `rockchip-` alone. Do not add an overlay without a prefix.
+- Allwinner overlays: use `sun<N>i-<soc>-<name>`, for example `sun50i-h616-uart5`. H2+ boards use the `sun8i-h3` prefix. H618 and H313 boards use `sun50i-h616`.
+	- A527 and T527 boards get both SoC prefixes. Use `sun55i-t527-` for an overlay that works on both.
+- Amlogic Meson overlays: use `meson-<soc>-<name>`, for example `meson-sm1-odroid-c4-i2c0`.
+	- G12A, G12B and SM1 boards also get `meson-g12`. Use `meson-g12-` for an overlay that works on all three.
+	- GXBB and GXL boards also get `meson`, for old overlays without a SoC part, for example `meson-i2cA`. Do not add new overlays with the `meson-` prefix alone.
+- Sophgo and SpacemiT overlays: use `<soc>-<name>`, for example `sg2000-uart1` or `k1-uart5`.
+- Apart from `meson-g12`, do not use a prefix that covers several SoCs, for example `rk35xx-`, `rockchip-` or `meson-` alone. Do not add an overlay without a prefix.
 - Do not rename an existing overlay, even if its name does not follow these guidelines. Installed systems keep the old name in `armbianEnv.txt`, so a rename breaks them after a kernel upgrade. If an old name does not fit the rules, you can add its prefix to **OVERLAY_PREFIX_BOARD** of the boards that use it.
 - Use **OVERLAY_PREFIX_BOARD** only for such old names. A board prefix also matches longer board names: `rock-5b` also matches `rock-5b-plus-*`.
 - A fixup script for parameters is named `<prefix>-fixup.scr`. The boot script loads it for each prefix in the list.

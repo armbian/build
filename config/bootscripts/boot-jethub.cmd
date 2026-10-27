@@ -71,9 +71,18 @@ fdt addr ${fdt_addr_r}
 fdt resize 65536
 
 
+# overlay_prefix holds one or more prefixes. The first match wins. Full overlay names also work.
 for overlay_file in ${overlays}; do
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
-		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
+	setenv overlay_found "false"
+	for overlay_prefix_item in ${overlay_prefix}; do
+		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/amlogic/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+			setenv overlay_found "true"
+			echo "Applying kernel provided DT overlay ${overlay_prefix_item}-${overlay_file}.dtbo"
+			fdt apply ${scriptaddr} || setenv overlay_error "true"
+		fi
+	done
+	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum} ${prefix}dtb/amlogic/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_file}.dtbo; then
+		echo "Applying kernel provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
 done
@@ -89,10 +98,12 @@ if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
-		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
-		source ${scriptaddr}
-	fi
+	for overlay_prefix_item in ${overlay_prefix}; do
+		if test -e ${devtype} ${devnum} ${prefix}dtb/amlogic/overlay/${overlay_prefix_item}-fixup.scr && load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix_item}-fixup.scr; then
+			echo "Applying kernel provided DT fixup script (${overlay_prefix_item}-fixup.scr)"
+			source ${scriptaddr}
+		fi
+	done
 	if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
 		load ${devtype} ${devnum} ${scriptaddr} ${prefix}fixup.scr
 		echo "Applying user provided fixup script (fixup.scr)"

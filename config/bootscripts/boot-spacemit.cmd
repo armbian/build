@@ -17,6 +17,7 @@ setenv console "both"
 setenv fdtdir "${prefix}/dtb"
 setenv fk_kvers "${prefix}/Image"
 setenv initrd "${prefix}/uInitrd"
+setenv overlay_error "false"
 setenv verbosity "1"
 
 echo "Loading ${bootlabel} environment (${devtype} ${devnum}:${distro_bootpart})"
@@ -44,20 +45,32 @@ load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${fdtdir}/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 
+# overlay_prefix holds one or more prefixes. The first match wins. Full overlay names also work.
 for overlay_file in ${overlays}; do
-	if test -e ${devtype} ${devnum}:${distro_bootpart} ${fdtdir}/spacemit/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
-		echo "Applying ${overlay_prefix}-${overlay_file}.dtbo"
-		load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${fdtdir}/spacemit/overlay/${overlay_prefix}-${overlay_file}.dtbo
-		fdt apply ${scriptaddr}
+	setenv overlay_found "false"
+	for overlay_prefix_item in ${overlay_prefix}; do
+		if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${fdtdir}/spacemit/overlay/${overlay_prefix_item}-${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${fdtdir}/spacemit/overlay/${overlay_prefix_item}-${overlay_file}.dtbo; then
+			setenv overlay_found "true"
+			echo "Applying ${overlay_prefix_item}-${overlay_file}.dtbo"
+			fdt apply ${scriptaddr} || setenv overlay_error "true"
+		fi
+	done
+	if test "${overlay_found}" = "false" && test -e ${devtype} ${devnum}:${distro_bootpart} ${fdtdir}/spacemit/overlay/${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${fdtdir}/spacemit/overlay/${overlay_file}.dtbo; then
+		echo "Applying ${overlay_file}.dtbo"
+		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
 done
 for overlay_file in ${user_overlays}; do
-	if test -e ${devtype} ${devnum}:${distro_bootpart} ${fdtdir}/overlay-user/${overlay_file}.dtbo; then
+	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}/overlay-user/${overlay_file}.dtbo; then
 		echo "Applying ${overlay_file}.dtbo"
-		load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${fdtdir}/overlay-user/${overlay_file}.dtbo
-		fdt apply ${scriptaddr}
+		load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}/overlay-user/${overlay_file}.dtbo
+		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
 done
+if test "${overlay_error}" = "true"; then
+	echo "Error applying DT overlays, restoring original DT"
+	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${fdtdir}/${fdtfile}
+fi
 
 load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${initrd}
 load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${fk_kvers}
