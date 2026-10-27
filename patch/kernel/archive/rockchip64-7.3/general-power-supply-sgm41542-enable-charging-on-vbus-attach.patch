@@ -19,19 +19,32 @@ charger gets no attach interrupt). The limits follow the BSP driver: a
 standard USB port (SDP) keeps 500 mA, CDP gets 1.5 A, anything else the
 configured input-current-limit-microamp.
 
+Detect those transitions against the state the IRQ handler saw last,
+not sgm->state: property reads refresh that too, so a read between the
+change and the interrupt would hide the transition.
+
 Seen on the Anbernic RG Vita Pro: 500 mA and no charge current until
 "online" was written by hand, then +2.2 A into the battery.
 
 Signed-off-by: crackerjacques <jack@supremeoverlordjabs.co>
 ---
- drivers/power/supply/sgm41542_charger.c | 58 +++++++++++++++++++------
- 1 file changed, 46 insertions(+), 12 deletions(-)
+ drivers/power/supply/sgm41542_charger.c | 66 ++++++++++++++++++++++++++++-------
+ 1 file changed, 53 insertions(+), 13 deletions(-)
 
 diff --git a/drivers/power/supply/sgm41542_charger.c b/drivers/power/supply/sgm41542_charger.c
-index 8880962..fc2e5b2 100644
+index 8880962..1a7a949 100644
 --- a/drivers/power/supply/sgm41542_charger.c
 +++ b/drivers/power/supply/sgm41542_charger.c
-@@ -712,6 +712,39 @@ static int sgm4154x_charger_get_property(struct power_supply *psy,
+@@ -163,6 +163,8 @@ struct sgm4154x_device {
+ 	struct regmap *regmap;
+ 	struct sgm4154x_init_data init_data;
+ 	struct sgm4154x_state state;
++	/* last state seen by the IRQ handler; property reads update ->state */
++	struct sgm4154x_state irq_state;
+ 	struct regulator_dev *otg_rdev;
+ 	struct mutex lock;
+ 	bool watchdog_enable;
+@@ -712,6 +714,39 @@ static int sgm4154x_charger_get_property(struct power_supply *psy,
  	return ret;
  }
  
@@ -71,9 +84,20 @@ index 8880962..fc2e5b2 100644
  static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
  {
  	struct sgm4154x_device *sgm = private;
-@@ -730,18 +763,13 @@ static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
+@@ -720,7 +755,7 @@ static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
+ 
+ 	guard(mutex)(&sgm->lock);
+ 
+-	oldstate = sgm->state;
++	oldstate = sgm->irq_state;
+ 
+ 	ret = sgm4154x_get_state(sgm, &state);
+ 	if (ret) {
+@@ -729,19 +764,15 @@ static irqreturn_t sgm4154x_irq_handler_thread(int irq, void *private)
+ 	}
  
  	sgm->state = state;
++	sgm->irq_state = state;
  
 -	if (state.vbus_gd && !oldstate.vbus_gd) {
 -		if (sgm->init_data.ilim >= SGM4154X_DEFAULT_INPUT_CUR) {
@@ -97,14 +121,17 @@ index 8880962..fc2e5b2 100644
  
  	power_supply_changed(sgm->charger);
  
-@@ -1031,6 +1059,12 @@ static int sgm4154x_probe(struct i2c_client *client)
+@@ -1031,6 +1062,15 @@ static int sgm4154x_probe(struct i2c_client *client)
  		return dev_err_probe(dev, PTR_ERR(sgm->charger),
  				     "Failed to register power supply\n");
  
 +	/* VBUS already present at probe: no attach interrupt will come */
 +	scoped_guard(mutex, &sgm->lock) {
-+		if (!sgm4154x_get_state(sgm, &sgm->state) && sgm->state.vbus_gd)
-+			sgm4154x_vbus_attached(sgm, &sgm->state);
++		if (!sgm4154x_get_state(sgm, &sgm->state)) {
++			sgm->irq_state = sgm->state;
++			if (sgm->state.vbus_gd)
++				sgm4154x_vbus_attached(sgm, &sgm->state);
++		}
 +	}
 +
  	if (client->irq) {
