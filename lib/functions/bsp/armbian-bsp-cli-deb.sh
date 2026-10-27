@@ -442,12 +442,13 @@ function board_side_bsp_cli_preinst() {
 	# periodic config (removed as a shipped conffile) from upgraded systems too.
 	[[ -f "/etc/apt/apt.conf.d/02-armbian-periodic" ]] && rm /etc/apt/apt.conf.d/02-armbian-periodic
 	# 02-armbian-periodic set APT::Periodic::Enable "0", the master off-switch.
-	# With it gone, apt.systemd.daily defaults Enable to 1. Drop the stock
-	# unattended-upgrades trigger so upgrades stay off, unless it was opted in
-	# with APT::Periodic::Enable "1". armbian-config keeps its own opt-in in
-	# 20-armbian-auto-upgrades, which is never touched here.
+	# With it gone (removed just above), apt.systemd.daily defaults Enable to 1.
+	# Drop the stock unattended-upgrades trigger so upgrades stay off, unless the
+	# effective APT config enables them. Read the merged value with apt-config, not
+	# the file text, so a commented-out setting cannot count as an opt-in.
+	# armbian-config keeps its own opt-in in 20-armbian-auto-upgrades.
 	if [[ -f "/etc/apt/apt.conf.d/20auto-upgrades" ]] && \
-		! grep -Eq '^[[:space:]]*APT::Periodic::Enable[[:space:]]*"1"' /etc/apt/apt.conf.d/20auto-upgrades; then
+		[[ "$(apt-config dump --format '%v%n' APT::Periodic::Enable 2>/dev/null)" != "1" ]]; then
 		rm /etc/apt/apt.conf.d/20auto-upgrades
 	fi
 	[[ -f "/etc/apt/apt.conf.d/no-languages" ]] && rm /etc/apt/apt.conf.d/no-languages
