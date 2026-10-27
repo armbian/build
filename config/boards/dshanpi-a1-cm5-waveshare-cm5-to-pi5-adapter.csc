@@ -2,7 +2,7 @@
 BOARD_NAME="100ASK DshanPi A1 CM5 on Waveshare CM5-to-Pi5-Adapter"
 BOARDFAMILY="rk35xx"
 BOOT_SOC="rk3576"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="sckiyo"
 BOARD_VENDOR="dongshanpi"
 INTRODUCED="2026"
 BOOTCONFIG="dshanpi-a1-cm5-rk3576_defconfig"
