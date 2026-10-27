@@ -60,7 +60,7 @@ function generate_for_board() {
 				cat <<-EOF
 					config/boards/${board_config}			${maintainers}
 					config/kernel/${LINUXCONFIG%-*}-*.config	${maintainers}
-					sources/families/${BOARDFAMILY}.conf		${maintainers}
+					config/sources/families/${BOARDFAMILY}.conf		${maintainers}
 				EOF
 
 				# KERNELPATCHDIR may list several patch dirs (space-separated) - e.g.
