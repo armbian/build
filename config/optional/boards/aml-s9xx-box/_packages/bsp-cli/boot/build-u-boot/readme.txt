@@ -16,7 +16,7 @@ Instructions for building u-boot-s905x-s912 from source
 (This is based on the work of @hexdump that can be found here:
 https://github.com/hexdump0815/u-boot-misc/blob/master/readme.gxl)
 
-git clone https://gitlab.denx.de/u-boot/u-boot.git/
+git clone https://git.u-boot-project.org/u-boot/u-boot.git
 cd u-boot
 git checkout v2020.07
 patch -p1 < /path/to/u-boot-s905x-s912.patch
@@ -30,7 +30,7 @@ Instructions for building u-boot-s905x2-s922 from source
 (This is based on the work of @hexdump that can be found here:
 https://github.com/hexdump0815/u-boot-misc/blob/master/readme.gxy)
 
-git clone https://gitlab.denx.de/u-boot/u-boot.git/
+git clone https://git.u-boot-project.org/u-boot/u-boot.git
 cd u-boot
 git checkout v2024.01
 patch -p1 < /path/to/u-boot-s905x2-s922.patch
@@ -44,7 +44,7 @@ Instructions for building u-boot-s905x3 from source
 (This is based on the work of @hexdump that can be found here:
 https://github.com/hexdump0815/u-boot-misc/blob/master/readme.gxy)
 
-git clone https://gitlab.denx.de/u-boot/u-boot.git/
+git clone https://git.u-boot-project.org/u-boot/u-boot.git
 cd u-boot
 git checkout v2023.10
 patch -p1 < /path/to/u-boot-s905x3.patch

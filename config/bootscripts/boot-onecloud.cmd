@@ -3,7 +3,7 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# We can't use `test -z` due to the bug: https://lists.denx.de/pipermail/u-boot/2005-August/011447.html
+# We can't use `test -z` due to the bug: https://lists.u-boot-project.org/pipermail/u-boot/2005-August/011447.html
 if test -n "${bootdev}"; test $? != 0; then
 	echo '=============================================================='
 	echo 'Please set "bootdev" before calling this script.'
