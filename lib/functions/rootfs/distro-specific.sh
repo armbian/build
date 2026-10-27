@@ -41,7 +41,7 @@ function install_distribution_specific() {
 	fi
 
 	# Automatic (unattended) updates: Armbian ships them DISABLED. armbian-config owns
-	# the opt-in; it writes its own 20-armbian-auto-upgrades / 50-armbian-unattended-upgrades.
+	# the opt-in; it writes its own apt.conf.d files when a user enables updates.
 	# The unattended-upgrades package (from packages.additional) otherwise drops the
 	# Debian/Ubuntu config that turns automatic upgrades back on, so clean it out here and
 	# make it stick across a later `apt upgrade` of the package:
@@ -49,13 +49,16 @@ function install_distribution_specific() {
 	#     enable_auto_updates (default true). Seed it false, then remove the file, so the
 	#     postinst never recreates it.
 	#   - 50unattended-upgrades is managed by ucf, not dpkg; a plain rm is restored on
-	#     package upgrade. ucf honours a local diversion, so divert it: package writes land
-	#     on the .distrib path, the real path stays gone.
+	#     package upgrade. ucf honours a local diversion, so divert it to a .disabled name.
+	#     .disabled is in apt Dir::Ignore-Files-Silently, so apt stays quiet; a .distrib
+	#     name would make apt warn on every run.
 	chroot_sdcard 'echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean false" | debconf-set-selections'
 	run_host_command_logged rm -f "${SDCARD}"/etc/apt/apt.conf.d/20auto-upgrades
 	if [[ -f "${SDCARD}"/etc/apt/apt.conf.d/50unattended-upgrades ]]; then
-		chroot_sdcard LC_ALL=C LANG=C dpkg-divert --quiet --local --rename --add /etc/apt/apt.conf.d/50unattended-upgrades
-		run_host_command_logged rm -f "${SDCARD}"/etc/apt/apt.conf.d/50unattended-upgrades.distrib
+		chroot_sdcard LC_ALL=C LANG=C dpkg-divert --quiet --local --rename \
+			--divert /etc/apt/apt.conf.d/50unattended-upgrades.disabled \
+			--add /etc/apt/apt.conf.d/50unattended-upgrades
+		run_host_command_logged rm -f "${SDCARD}"/etc/apt/apt.conf.d/50unattended-upgrades.disabled
 	fi
 
 	# Add power-management override.
