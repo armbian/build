@@ -165,8 +165,18 @@ video=HDMI-A-1:2560x1440@60e
 ### 8.2 开机 logo 与花屏
 
 启动初期的 logo 来自 vendor u-boot，通常是安卓系统遗留的 logo，不是
-`/boot/boot.bmp`。内核 `meson-drm` 接管显示时会有约 2 秒花屏，然后显示
-启动 log。这是 u-boot framebuffer 到 DRM 的交接，不是故障。
+`/boot/boot.bmp`。内核 `meson-drm` 接管显示时会复位 HDMI PHY，画面中断约
+1 秒。
+
+启动脚本做了两件事消除花屏：
+
+1. `video=HDMI-A-1:1920x1080@60e`：内核保持与 u-boot logo 相同的模式。
+   简写 `1080p60e` 会被 meson-drm 忽略，必须写显式时序。
+2. `osd close`：引导内核前关闭 u-boot 显示输出，logo 后先黑屏，
+   不再出现条状噪点。
+
+换用其他分辨率的显示器时，在 `/boot/armbianEnv.txt` 中用
+`extraboardargs=video=...` 覆盖。
 
 ## 9. WiFi 与蓝牙
 
