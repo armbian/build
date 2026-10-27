@@ -53,7 +53,7 @@ The entrypoint `compile.sh` dispatches into the framework in `lib/`. Build-time 
 | `compile.sh` | Build entrypoint; sources `lib/single.sh` and invokes the CLI |
 | `lib/` | Core build framework (Bash functions, Python helpers in `lib/tools/`) |
 | `config/` | Board, family, distribution, kernel and CLI configuration |
-| `config/boards/` | One file per supported board (see extensions below) |
+| `config/boards/` | One file per board; the extension marks its support status (see below) |
 | `config/distributions/` | Supported Debian/Ubuntu release metadata |
 | `config/cli/` | CLI package selections per release |
 | `patch/` | Kernel, U-Boot and ATF patch sets organized by family/version |
