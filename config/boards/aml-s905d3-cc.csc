@@ -1,5 +1,5 @@
 # Amlogic s905d3 2/4GB RAM eMMC GBE USB3
-BOARD_NAME="Libre Computer Solitude"
+BOARD_NAME="Solitude"
 BOARD_VENDOR="libre-computer"
 BOARDFAMILY="meson-sm1"
 BOARD_MAINTAINER="Tonymac32"

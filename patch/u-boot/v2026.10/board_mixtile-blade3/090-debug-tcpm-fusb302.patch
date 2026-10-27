@@ -1,0 +1,623 @@
+From 1ccfa28aab01071545bc7345a3e99a2ebedfac40 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Thu, 22 Oct 2026 17:27:41 +0200
+Subject: [PATCH] DEBUG: tcpm/fusb302: USB-PD bring-up tracing for Blade 3
+
+- print all tcpm/fusb302 dev_*() to console, prefixed with ms since
+  power-on and the parent I2C bus (both FUSB302s are usb-typec@22)
+- log auto-probe decision with connector label, own/partner PDOs, init
+  state, PD TX status, hard resets sent/received, polling summary
+- fusb302: dump registers before sw reset, after init and before low
+  power; decode PD messages left in the RX FIFO by a previous session
+- TYPEC_TCPM_DEBUG_VERBOSE (default off): register write trace and full
+  PD message/PDO dumps; slow enough to miss tSenderResponse
+- rockchip SPL: timestamp console-up and jump to next stage
+- rock5b board: print CRU GLB_RST_ST (0 = power-on reset)
+- tcpm: add missing newline to "probing Type-C port manager..."
+
+Armbian only, not for upstream.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ arch/arm/mach-rockchip/spl.c              |   5 +
+ board/radxa/rock5b-rk3588/rock5b-rk3588.c |  15 ++-
+ drivers/usb/tcpm/Kconfig                  |   9 ++
+ drivers/usb/tcpm/fusb302.c                | 131 +++++++++++++++++++++-
+ drivers/usb/tcpm/tcpm-debug.h             |  91 +++++++++++++++
+ drivers/usb/tcpm/tcpm-uclass.c            |  22 +++-
+ drivers/usb/tcpm/tcpm.c                   |  57 +++++++++-
+ 7 files changed, 316 insertions(+), 14 deletions(-)
+ create mode 100644 drivers/usb/tcpm/tcpm-debug.h
+
+diff --git a/arch/arm/mach-rockchip/spl.c b/arch/arm/mach-rockchip/spl.c
+index e989c148079..212a81a767f 100644
+--- a/arch/arm/mach-rockchip/spl.c
++++ b/arch/arm/mach-rockchip/spl.c
+@@ -14,6 +14,7 @@
+ #include <mapmem.h>
+ #include <ram.h>
+ #include <spl.h>
++#include <time.h>
+ #include <asm/arch-rockchip/bootrom.h>
+ #include <asm/arch-rockchip/timer.h>
+ #include <asm/global_data.h>
+@@ -143,10 +144,14 @@ void board_init_f(ulong dummy)
+ 	}
+ #endif
+ 	preloader_console_init();
++	/* DEBUG (DO NOT UPSTREAM): USB PD timeline, ms since power-on */
++	printf("[%7lu] DEBUG: SPL console up\n", get_timer(0));
+ }
+ 
+ void spl_board_prepare_for_boot(void)
+ {
++	printf("[%7lu] DEBUG: SPL jumping to next stage\n", get_timer(0));
++
+ 	if (!IS_ENABLED(CONFIG_ARM64) || CONFIG_IS_ENABLED(SYS_DCACHE_OFF))
+ 		return;
+ 
+diff --git a/board/radxa/rock5b-rk3588/rock5b-rk3588.c b/board/radxa/rock5b-rk3588/rock5b-rk3588.c
+index 2c172d04499..eaa8edc1fd7 100644
+--- a/board/radxa/rock5b-rk3588/rock5b-rk3588.c
++++ b/board/radxa/rock5b-rk3588/rock5b-rk3588.c
+@@ -5,6 +5,9 @@
+ 
+ #include <adc.h>
+ #include <env.h>
++#include <time.h>
++#include <asm/io.h>
++#include <asm/arch-rockchip/cru_rk3588.h>
+ #include <fdtdec.h>
+ #include <fdt_support.h>
+ #include <asm/arch-rockchip/sdram.h>
+@@ -52,7 +55,17 @@ static const struct board_model *get_board_model(void)
+ 
+ int rk_board_late_init(void)
+ {
+-	const struct board_model *model = get_board_model();
++	const struct board_model *model;
++
++	/*
++	 * DEBUG (DO NOT UPSTREAM): 0 means power-on reset (i.e. the board lost
++	 * power, e.g. a USB PD hard reset or brown-out); non-zero bits point
++	 * to a watchdog / thermal / software global reset.
++	 */
++	printf("[%7lu] DEBUG: CRU GLB_RST_ST = 0x%08x\n", get_timer(0),
++	       readl(CRU_BASE + RK3588_GLB_RST_ST));
++
++	model = get_board_model();
+ 
+ 	if (model)
+ 		env_set("fdtfile", model->fdtfile);
+diff --git a/drivers/usb/tcpm/Kconfig b/drivers/usb/tcpm/Kconfig
+index b1ea7253720..2fb466671e3 100644
+--- a/drivers/usb/tcpm/Kconfig
++++ b/drivers/usb/tcpm/Kconfig
+@@ -14,3 +14,12 @@ config TYPEC_FUSB302
+ 	  The Fairchild FUSB302 Type-C chip driver that works with
+ 	  Type-C Port Controller Manager to provide USB PD and USB
+ 	  Type-C functionalities.
++
++config TYPEC_TCPM_DEBUG_VERBOSE
++	bool "Verbose TCPM/FUSB302 tracing (DEBUG, breaks PD timing)"
++	depends on TYPEC_TCPM
++	help
++	  Trace every FUSB302 register write and dump all PD messages and
++	  PDOs on the console. Printing at 1.5 Mbaud makes the sink miss
++	  the ~25 ms tSenderResponse window for its Request, causing the
++	  source to issue a Hard Reset. Only enable for offline analysis.
+diff --git a/drivers/usb/tcpm/fusb302.c b/drivers/usb/tcpm/fusb302.c
+index 28370340573..7f14467ca18 100644
+--- a/drivers/usb/tcpm/fusb302.c
++++ b/drivers/usb/tcpm/fusb302.c
+@@ -14,6 +14,7 @@
+ #include <dm/device_compat.h>
+ #include <usb/tcpm.h>
+ #include "fusb302_reg.h"
++#include "tcpm-debug.h"
+ 
+ #define FUSB302_MAX_MSG_LEN 0x1F
+ #define T_BC_LVL_DEBOUNCE_DELAY_MS 30
+@@ -67,6 +68,8 @@ static int fusb302_i2c_write(struct udevice *dev, u8 address, u8 data)
+ {
+ 	int ret;
+ 
++	if (IS_ENABLED(CONFIG_TYPEC_TCPM_DEBUG_VERBOSE))
++		dev_dbg(dev, "REG W [0x%02x] <= 0x%02x\n", address, data);
+ 	ret = dm_i2c_write(dev, address, &data, 1);
+ 	if (ret)
+ 		dev_err(dev, "cannot write 0x%02x to 0x%02x, ret=%d\n",
+@@ -148,6 +151,115 @@ static int fusb302_i2c_clear_bits(struct udevice *dev, u8 address, u8 clear_bits
+ 	return fusb302_i2c_mask_write(dev, address, clear_bits, 0x00);
+ }
+ 
++/*
++ * Dump the FUSB302 register file. The INTERRUPT* registers are clear-on-read,
++ * so they are only dumped when @irqs is set.
++ */
++static void fusb302_dump_regs(struct udevice *dev, const char *tag, bool irqs)
++{
++	static const u8 regs[] = {
++		FUSB_REG_DEVICE_ID, FUSB_REG_SWITCHES0, FUSB_REG_SWITCHES1,
++		FUSB_REG_MEASURE, FUSB_REG_CONTROL0, FUSB_REG_CONTROL1,
++		FUSB_REG_CONTROL2, FUSB_REG_CONTROL3, FUSB_REG_MASK,
++		FUSB_REG_POWER, FUSB_REG_MASKA, FUSB_REG_MASKB,
++		FUSB_REG_STATUS0A, FUSB_REG_STATUS1A, FUSB_REG_STATUS0,
++		FUSB_REG_STATUS1,
++	};
++	static const u8 irq_regs[] = {
++		FUSB_REG_INTERRUPT, FUSB_REG_INTERRUPTA, FUSB_REG_INTERRUPTB,
++	};
++	unsigned int i;
++	u8 data;
++
++	dev_info(dev, "register dump (%s):\n", tag);
++	for (i = 0; i < ARRAY_SIZE(regs); i++) {
++		if (dm_i2c_read(dev, regs[i], &data, 1))
++			dev_info(dev, "  [0x%02x] = <read error>\n", regs[i]);
++		else
++			dev_info(dev, "  [0x%02x] = 0x%02x\n", regs[i], data);
++	}
++	if (!irqs)
++		return;
++	for (i = 0; i < ARRAY_SIZE(irq_regs); i++) {
++		if (dm_i2c_read(dev, irq_regs[i], &data, 1))
++			dev_info(dev, "  [0x%02x] = <read error>\n", irq_regs[i]);
++		else
++			dev_info(dev, "  [0x%02x] = 0x%02x (irq)\n", irq_regs[i], data);
++	}
++}
++
++static const char * const pd_ctrl_name[] = {
++	[1] = "GoodCRC", [2] = "GotoMin", [3] = "Accept", [4] = "Reject",
++	[5] = "Ping", [6] = "PS_RDY", [7] = "Get_Source_Cap",
++	[8] = "Get_Sink_Cap", [9] = "DR_Swap", [10] = "PR_Swap",
++	[11] = "VCONN_Swap", [12] = "Wait", [13] = "Soft_Reset",
++	[14] = "Data_Reset", [15] = "Data_Reset_Complete",
++	[16] = "Not_Supported", [17] = "Get_Source_Cap_Extended",
++	[18] = "Get_Status", [19] = "FR_Swap", [20] = "Get_PPS_Status",
++	[21] = "Get_Country_Codes", [22] = "Get_Sink_Cap_Extended",
++	[23] = "Get_Source_Info", [24] = "Get_Revision",
++};
++
++static const char * const pd_data_name[] = {
++	[1] = "Source_Cap", [2] = "Request", [3] = "BIST", [4] = "Sink_Cap",
++	[5] = "Battery_Status", [6] = "Alert", [7] = "Get_Country_Info",
++	[8] = "Enter_USB", [9] = "EPR_Request", [10] = "EPR_Mode",
++	[11] = "Source_Info", [12] = "Revision", [15] = "Vendor_Defined",
++};
++
++/*
++ * Read out and decode any PD messages left in the RX FIFO by a previous
++ * boot stage, i.e. messages the partner sent that nobody processed.
++ */
++static void fusb302_dump_stale_rx(struct udevice *dev)
++{
++	unsigned int i, n, cnt, type;
++	u8 status1, token, crc[4];
++	const char *name;
++	__le32 payload[PD_MAX_PAYLOAD];
++	__le16 hdr_le;
++	u16 hdr;
++
++	for (n = 0; n < 8; n++) {
++		if (dm_i2c_read(dev, FUSB_REG_STATUS1, &status1, 1))
++			return;
++		if (status1 & FUSB_REG_STATUS1_RX_EMPTY) {
++			if (!n)
++				dev_info(dev, "stale RX FIFO: empty\n");
++			return;
++		}
++
++		if (dm_i2c_read(dev, FUSB_REG_FIFOS, &token, 1) ||
++		    dm_i2c_read(dev, FUSB_REG_FIFOS, (u8 *)&hdr_le, 2))
++			return;
++		hdr = le16_to_cpu(hdr_le);
++		cnt = pd_header_cnt(hdr);
++		type = pd_header_type(hdr);
++		if (cnt && dm_i2c_read(dev, FUSB_REG_FIFOS, (u8 *)payload, cnt * 4))
++			return;
++		if (dm_i2c_read(dev, FUSB_REG_FIFOS, crc, 4))
++			return;
++
++		if (hdr & PD_HEADER_EXT_HDR)
++			name = "(extended)";
++		else if (cnt)
++			name = type < ARRAY_SIZE(pd_data_name) ? pd_data_name[type] : NULL;
++		else
++			name = type < ARRAY_SIZE(pd_ctrl_name) ? pd_ctrl_name[type] : NULL;
++
++		dev_info(dev, "stale RX FIFO msg %u: sop=0x%02x hdr=0x%04x %s %s type=%u cnt=%u id=%u rev=%u pwr=%s data=%s crc=%02x%02x%02x%02x\n",
++			 n, token, hdr, cnt ? "DATA" : "CTRL", name ? name : "?",
++			 type, cnt, pd_header_msgid(hdr), pd_header_rev(hdr) + 1,
++			 hdr & PD_HEADER_PWR_ROLE ? "src" : "snk",
++			 hdr & PD_HEADER_DATA_ROLE ? "dfp" : "ufp",
++			 crc[3], crc[2], crc[1], crc[0]);
++		for (i = 0; i < cnt; i++)
++			dev_info(dev, "stale RX FIFO msg %u:   obj[%u]=0x%08x\n",
++				 n, i, le32_to_cpu(payload[i]));
++	}
++	dev_info(dev, "stale RX FIFO: giving up after %u messages\n", n);
++}
++
+ static int fusb302_sw_reset(struct udevice *dev)
+ {
+ 	int ret = fusb302_i2c_write(dev, FUSB_REG_RESET, FUSB_REG_RESET_SW_RESET);
+@@ -227,6 +339,10 @@ static int fusb302_init(struct udevice *dev)
+ 	int ret;
+ 	u8 data;
+ 
++	/* what did the previous stage (BootROM/SPL/Linux before reboot) leave? */
++	fusb302_dump_regs(dev, "before sw reset", true);
++	fusb302_dump_stale_rx(dev);
++
+ 	ret = fusb302_sw_reset(dev);
+ 	if (ret)
+ 		return ret;
+@@ -247,6 +363,9 @@ static int fusb302_init(struct udevice *dev)
+ 	if (ret)
+ 		return ret;
+ 	dev_info(dev, "fusb302 device ID: 0x%02x\n", data);
++	dev_info(dev, "fusb302 VBUS %s after init\n",
++		 chip->vbus_present ? "present" : "NOT present");
++	fusb302_dump_regs(dev, "after init", false);
+ 
+ 	return ret;
+ }
+@@ -695,12 +814,14 @@ static int fusb302_pd_send_message(struct udevice *dev,
+ 	if (ret)
+ 		return ret;
+ 	dev_dbg(dev, "Send PD message (header=0x%x len=%d)\n", msg->header, len);
++	tcpm_dbg_dump_msg(dev, "FIFO TX", msg);
+ 
+ 	return ret;
+ }
+ 
+ static int fusb302_pd_send_hardreset(struct udevice *dev)
+ {
++	dev_warn(dev, "sending HARD RESET on the wire\n");
+ 	return fusb302_i2c_set_bits(dev, FUSB_REG_CONTROL3,
+ 				    FUSB_REG_CONTROL3_SEND_HARDRESET);
+ }
+@@ -822,6 +943,10 @@ static int fusb302_enter_low_power_mode(struct udevice *dev,
+ 	else
+ 		reg = 0;
+ 
++	dev_info(dev, "entering low power: attached %d pd_capable %d -> POWER=0x%02x\n",
++		 attached, pd_capable, reg);
++	fusb302_dump_regs(dev, "before low power", false);
++
+ 	return fusb302_set_power_mode(dev, reg);
+ }
+ 
+@@ -1144,7 +1269,9 @@ static int fusb302_pd_read_message(struct udevice *dev,
+ 	ret = fusb302_i2c_block_read(dev, FUSB_REG_FIFOS, 4, crc);
+ 	if (ret)
+ 		return ret;
+-	dev_dbg(dev, "Received PD message (header=0x%x len=%d)\n", msg->header, len);
++	dev_dbg(dev, "Received PD message (sop=0x%02x header=0x%x len=%d crc=%02x%02x%02x%02x)\n",
++		token, msg->header, len, crc[3], crc[2], crc[1], crc[0]);
++	tcpm_dbg_dump_msg(dev, "FIFO RX", msg);
+ 
+ 	/*
+ 	 * Check if we've read off a GoodCRC message. If so then indicate to
+@@ -1301,7 +1428,7 @@ static void fusb302_interrupt_handle(struct udevice *dev)
+ 	}
+ 
+ 	if (interrupta & FUSB_REG_INTERRUPTA_HARDRESET) {
+-		dev_dbg(dev, "IRQ: PD received hardreset\n");
++		dev_warn(dev, "IRQ: PD received HARD RESET from partner\n");
+ 		ret = fusb302_pd_reset(dev);
+ 		if (ret) {
+ 			dev_err(dev, "cannot PD reset, ret=%d\n", ret);
+diff --git a/drivers/usb/tcpm/tcpm-debug.h b/drivers/usb/tcpm/tcpm-debug.h
+new file mode 100644
+index 00000000000..cb059298155
+--- /dev/null
++++ b/drivers/usb/tcpm/tcpm-debug.h
+@@ -0,0 +1,91 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * DEBUG (DO NOT UPSTREAM): force all TCPM / FUSB302 dev_*() output to the
++ * console, regardless of CONFIG_LOG / CONFIG_LOGLEVEL, and prefix every line
++ * with the milliseconds since SoC power-on (arch timer), so the USB PD
++ * timeline can be correlated with the ~5 s source capability deadline.
++ *
++ * Register write tracing and PD message / PDO dumps are only printed with
++ * CONFIG_TYPEC_TCPM_DEBUG_VERBOSE, as they are slow enough to break PD timing.
++ *
++ * Must be included after <dm/device_compat.h>.
++ */
++
++#ifndef __TCPM_DEBUG_H
++#define __TCPM_DEBUG_H
++
++#include <dm/device.h>
++#include <dm/device_compat.h>
++#include <time.h>
++#include <usb/tcpm.h>
++
++/* Both FUSB302s are usb-typec@22, so also print the I2C bus they sit on */
++#define __tcpm_dbg_printk(lvl, dev, fmt, ...)				\
++	printf("[%7lu] " lvl " %s %s/%s: " fmt, get_timer(0),		\
++	       (dev)->driver->name, (dev)->parent->name, (dev)->name,	\
++	       ##__VA_ARGS__)
++
++#undef dev_err
++#undef dev_warn
++#undef dev_info
++#undef dev_dbg
++#define dev_err(dev, fmt, ...)	__tcpm_dbg_printk("E", dev, fmt, ##__VA_ARGS__)
++#define dev_warn(dev, fmt, ...)	__tcpm_dbg_printk("W", dev, fmt, ##__VA_ARGS__)
++#define dev_info(dev, fmt, ...)	__tcpm_dbg_printk("I", dev, fmt, ##__VA_ARGS__)
++#define dev_dbg(dev, fmt, ...)	__tcpm_dbg_printk("D", dev, fmt, ##__VA_ARGS__)
++
++/* Decode a PD message header and dump its data objects */
++static inline void tcpm_dbg_dump_msg(struct udevice *dev, const char *dir,
++				     const struct pd_message *msg)
++{
++	u16 header = le16_to_cpu(msg->header);
++	unsigned int cnt = pd_header_cnt(header);
++	unsigned int i;
++
++	if (!IS_ENABLED(CONFIG_TYPEC_TCPM_DEBUG_VERBOSE))
++		return;
++
++	dev_dbg(dev, "PD %s hdr=0x%04x %s type=%u cnt=%u id=%u rev=%u pwr=%s data=%s\n",
++		dir, header, cnt ? "DATA" : "CTRL", pd_header_type(header),
++		cnt, pd_header_msgid(header), pd_header_rev(header) + 1,
++		header & PD_HEADER_PWR_ROLE ? "src" : "snk",
++		header & PD_HEADER_DATA_ROLE ? "dfp" : "ufp");
++	for (i = 0; i < cnt; i++)
++		dev_dbg(dev, "PD %s   obj[%u]=0x%08x\n", dir, i,
++			le32_to_cpu(msg->payload[i]));
++}
++
++/* Human readable dump of a PDO */
++static inline void tcpm_dbg_dump_pdo(struct udevice *dev, const char *what,
++				     unsigned int idx, u32 pdo)
++{
++	if (!IS_ENABLED(CONFIG_TYPEC_TCPM_DEBUG_VERBOSE))
++		return;
++
++	switch (pdo_type(pdo)) {
++	case PDO_TYPE_FIXED:
++		dev_dbg(dev, "%s PDO %u: 0x%08x FIXED %u mV %u mA%s%s%s%s\n",
++			what, idx, pdo, pdo_fixed_voltage(pdo),
++			pdo_max_current(pdo),
++			pdo & PDO_FIXED_DUAL_ROLE ? " DRP" : "",
++			pdo & PDO_FIXED_EXTPOWER ? " EXTPWR" : "",
++			pdo & PDO_FIXED_USB_COMM ? " USBCOMM" : "",
++			pdo & PDO_FIXED_DATA_SWAP ? " DRSWAP" : "");
++		break;
++	case PDO_TYPE_VAR:
++		dev_dbg(dev, "%s PDO %u: 0x%08x VAR %u-%u mV %u mA\n",
++			what, idx, pdo, pdo_min_voltage(pdo),
++			pdo_max_voltage(pdo), pdo_max_current(pdo));
++		break;
++	case PDO_TYPE_BATT:
++		dev_dbg(dev, "%s PDO %u: 0x%08x BATT %u-%u mV %u mW\n",
++			what, idx, pdo, pdo_min_voltage(pdo),
++			pdo_max_voltage(pdo), pdo_max_power(pdo));
++		break;
++	default:
++		dev_dbg(dev, "%s PDO %u: 0x%08x APDO\n", what, idx, pdo);
++		break;
++	}
++}
++
++#endif /* __TCPM_DEBUG_H */
+diff --git a/drivers/usb/tcpm/tcpm-uclass.c b/drivers/usb/tcpm/tcpm-uclass.c
+index d4fe260e0db..afdc0398124 100644
+--- a/drivers/usb/tcpm/tcpm-uclass.c
++++ b/drivers/usb/tcpm/tcpm-uclass.c
+@@ -11,6 +11,7 @@
+ #include <linux/err.h>
+ #include <usb/tcpm.h>
+ #include "tcpm-internal.h"
++#include "tcpm-debug.h"
+ 
+ int tcpm_get_voltage(struct udevice *dev)
+ {
+@@ -83,7 +84,7 @@ int tcpm_get(int index, struct udevice **devp)
+ static int tcpm_post_bind(struct udevice *dev)
+ {
+ 	const struct dm_tcpm_ops *drvops = dev_get_driver_ops(dev);
+-	const char *cap_str;
++	const char *cap_str, *label;
+ 	ofnode node;
+ 	int ret;
+ 
+@@ -119,21 +120,32 @@ static int tcpm_post_bind(struct udevice *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (ofnode_read_bool(node, "self-powered"))
++	label = ofnode_read_string(node, "label");
++
++	if (ofnode_read_bool(node, "self-powered")) {
++		dev_info(dev, "[%s] NOT auto-probing TCPM: connector is 'self-powered'\n",
++			 label);
+ 		return 0;
++	}
+ 
+ 	cap_str = ofnode_read_string(node, "power-role");
+ 	if (!cap_str)
+ 		return -EINVAL;
+ 
+-	if (strcmp("sink", cap_str))
++	if (strcmp("sink", cap_str)) {
++		dev_info(dev, "[%s] NOT auto-probing TCPM: power-role is '%s' (only 'sink' is auto-probed)\n",
++			 label, cap_str);
+ 		return 0;
++	}
+ 
+ 	/* Do not auto-probe PD controller when PD is disabled */
+-	if (ofnode_read_bool(node, "pd-disable"))
++	if (ofnode_read_bool(node, "pd-disable")) {
++		dev_info(dev, "[%s] NOT auto-probing TCPM: connector has 'pd-disable'\n",
++			 label);
+ 		return 0;
++	}
+ 
+-	dev_info(dev, "probing Type-C port manager...");
++	dev_info(dev, "[%s] probing Type-C port manager...\n", label);
+ 
+ 	dev_or_flags(dev, DM_FLAG_PROBE_AFTER_BIND);
+ 
+diff --git a/drivers/usb/tcpm/tcpm.c b/drivers/usb/tcpm/tcpm.c
+index 436c45755e5..de9bc31a17f 100644
+--- a/drivers/usb/tcpm/tcpm.c
++++ b/drivers/usb/tcpm/tcpm.c
+@@ -18,6 +18,7 @@
+ #include <time.h>
+ #include <usb/tcpm.h>
+ #include "tcpm-internal.h"
++#include "tcpm-debug.h"
+ 
+ const char * const tcpm_states[] = {
+ 	FOREACH_TCPM_STATE(GENERATE_TCPM_STRING)
+@@ -186,11 +187,13 @@ static int tcpm_pd_transmit(struct udevice *dev,
+ 	bool tx_complete;
+ 	int ret;
+ 
+-	if (msg)
++	if (msg) {
+ 		dev_dbg(dev, "TCPM: PD TX, header: %#x\n",
+ 			le16_to_cpu(msg->header));
+-	else
++		tcpm_dbg_dump_msg(dev, "TX", msg);
++	} else {
+ 		dev_dbg(dev, "TCPM: PD TX, type: %#x\n", type);
++	}
+ 
+ 	port->tx_complete = false;
+ 	ret = drvops->pd_transmit(dev, type, msg, port->negotiated_rev);
+@@ -213,6 +216,9 @@ static int tcpm_pd_transmit(struct udevice *dev,
+ 		return ret;
+ 	}
+ 
++	dev_dbg(dev, "TCPM: PD TX done, tx_status=%u (0=ok 1=discarded 2=failed)\n",
++		port->tx_status);
++
+ 	switch (port->tx_status) {
+ 	case TCPC_TX_SUCCESS:
+ 		port->message_id = (port->message_id + 1) & PD_HEADER_ID_MASK;
+@@ -631,6 +637,10 @@ static void tcpm_pd_data_request(struct udevice *dev,
+ 
+ 		port->nr_source_caps = cnt;
+ 
++		for (i = 0; i < cnt; i++)
++			tcpm_dbg_dump_pdo(dev, "TCPM: partner source", i,
++					  port->source_caps[i]);
++
+ 		tcpm_validate_caps(dev, port->source_caps,
+ 				   port->nr_source_caps);
+ 
+@@ -707,6 +717,9 @@ static void tcpm_pd_ctrl_request(struct udevice *dev,
+ 	struct tcpm_port *port = dev_get_uclass_plat(dev);
+ 	enum tcpm_state next_state;
+ 
++	dev_dbg(dev, "TCPM: ctrl msg type %u in state %s\n", type,
++		tcpm_states[port->state]);
++
+ 	switch (type) {
+ 	case PD_CTRL_GOOD_CRC:
+ 	case PD_CTRL_PING:
+@@ -860,8 +873,13 @@ static void tcpm_pd_rx_handler(struct udevice *dev,
+ 	unsigned int cnt = pd_header_cnt_le(msg->header);
+ 	bool remote_is_host, local_is_host;
+ 
+-	dev_dbg(dev, "TCPM: PD RX, header: %#x [%d]\n",
+-		le16_to_cpu(msg->header), port->attached);
++	dev_dbg(dev, "TCPM: PD RX, header: %#x [%d] state %s\n",
++		le16_to_cpu(msg->header), port->attached,
++		tcpm_states[port->state]);
++	tcpm_dbg_dump_msg(dev, "RX", msg);
++
++	if (!port->attached)
++		dev_warn(dev, "TCPM: PD RX while not attached, message DROPPED\n");
+ 
+ 	if (port->attached) {
+ 		enum pd_ctrl_msg_type type = pd_header_type_le(msg->header);
+@@ -1735,6 +1753,8 @@ static void run_state_machine(struct udevice *dev)
+ 	case HARD_RESET_SEND:
+ 		if (!port->self_powered && port->port_type == TYPEC_PORT_SNK)
+ 			dev_err(dev, "Initiating hard-reset, which might result in machine power-loss.\n");
++		dev_warn(dev, "TCPM: SENDING HARD RESET (prev state %s) - source will drop VBUS!\n",
++			 tcpm_states[port->prev_state]);
+ 		tcpm_pd_transmit(dev, TCPC_TX_HARD_RESET, NULL);
+ 		tcpm_set_state(dev, HARD_RESET_START, 0);
+ 		port->wait_dr_swap_message = false;
+@@ -2119,7 +2139,8 @@ void tcpm_pd_hard_reset(struct udevice *dev)
+ 	struct tcpm_port *port = dev_get_uclass_plat(dev);
+ 
+ 	tcpm_reset_event_cnt(dev);
+-	dev_dbg(dev, "TCPM: Received hard reset\n");
++	dev_warn(dev, "TCPM: Received HARD RESET in state %s (count %u)\n",
++		 tcpm_states[port->state], port->hard_reset_count);
+ 
+ 	/* If a hard reset message is received during the port reset process,
+ 	 * we should ignore it, that is, do not set port->state to HARD_RESET_START.
+@@ -2156,6 +2177,10 @@ static void tcpm_init(struct udevice *dev)
+ 	if (port->vbus_present)
+ 		port->vbus_never_low = true;
+ 
++	dev_info(dev, "TCPM: init: vbus_present=%d port_type=%d try_role=%d default state %s\n",
++		 port->vbus_present, port->port_type, port->try_role,
++		 tcpm_states[tcpm_default_state(port)]);
++
+ 	/*
+ 	 * 1. When vbus_present is true, voltage on VBUS is already at VSAFE5V.
+ 	 * So implicitly vbus_vsafe0v = false.
+@@ -2255,6 +2280,12 @@ sink:
+ 
+ 	port->self_powered = ofnode_read_bool(node, "self-powered");
+ 
++	for (ret = 0; ret < port->nr_snk_pdo; ret++)
++		tcpm_dbg_dump_pdo(dev, "TCPM: own sink", ret,
++				  port->snk_pdo[ret]);
++	dev_info(dev, "TCPM: operating sink power %u mW, self-powered %d\n",
++		 port->operating_snk_mw, port->self_powered);
++
+ 	return 0;
+ }
+ 
+@@ -2294,11 +2325,20 @@ static void tcpm_poll_event(struct udevice *dev)
+ {
+ 	const struct dm_tcpm_ops *drvops = dev_get_driver_ops(dev);
+ 	struct tcpm_port *port = dev_get_uclass_plat(dev);
++	ulong start = get_timer(0);
++	unsigned long loops = 0;
+ 
+-	if (!drvops->get_vbus(dev))
++	if (!drvops->get_vbus(dev)) {
++		dev_warn(dev, "TCPM: no VBUS at probe, skipping PD polling (state %s)\n",
++			 tcpm_states[port->state]);
+ 		return;
++	}
++
++	dev_info(dev, "TCPM: polling for PD events, state %s\n",
++		 tcpm_states[port->state]);
+ 
+ 	while (port->poll_event_cnt < TCPM_POLL_EVENT_TIME_OUT) {
++		loops++;
+ 		if (!port->wait_dr_swap_message &&
+ 		    (port->state == SNK_READY || port->state == SRC_READY))
+ 			break;
+@@ -2323,6 +2363,11 @@ static void tcpm_poll_event(struct udevice *dev)
+ 			 tcpm_states[port->state]);
+ 	}
+ 
++	dev_info(dev, "TCPM: polling done after %lu ms / %lu loops, state %s, attached %d, pd_capable %d, explicit_contract %d, %u mV %u mA\n",
++		 get_timer(start), loops, tcpm_states[port->state],
++		 port->attached, port->pd_capable, port->explicit_contract,
++		 port->supply_voltage, port->current_limit);
++
+ 	/*
+ 	 * At this time, call the callback function of the respective pd chip
+ 	 * to enter the low-power mode. In order to reduce the time spent on
+-- 
+2.56.0
+

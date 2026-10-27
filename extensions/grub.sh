@@ -36,15 +36,21 @@ function extension_prepare_config__prepare_grub_standard() {
 		if [[ ! "${UEFISIZE}" =~ ^[1-9][0-9]*$ ]]; then
 			exit_with_error "UEFISIZE must be a positive size in MiB when GRUB is used" "got '${UEFISIZE}'"
 		fi
-		if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
-			declare -g UEFI_MOUNT_POINT=/boot
+		if [[ "${BOOTFS_TYPE:-}" == ext[24] ]]; then
+			# A separate /boot partition (BOOTFS_TYPE, BOOTSIZE). GRUB reads it,
+			# and the EFI partition stays at /boot/efi. Also with cryptroot or LVM.
+			display_alert "GRUB with a separate /boot" "${BOOTFS_TYPE}, BOOTSIZE=${BOOTSIZE:-default}; EFI at ${UEFI_MOUNT_POINT:-/boot/efi}" "info"
+		else
+			if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
+				declare -g UEFI_MOUNT_POINT=/boot
+			fi
+			# No separate /boot partition: /boot is either on the root
+			# filesystem, or on the EFI partition when BOOTPART_REQUIRED=yes.
+			if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
+				display_alert "BOOTSIZE is ignored with GRUB" "use UEFISIZE=${BOOTSIZE} to size the EFI partition, or BOOTFS_TYPE=ext4 for a separate /boot" "wrn"
+			fi
+			declare -g BOOTSIZE=0
 		fi
-		# GRUB images have no separate /boot partition: /boot is either on the
-		# root filesystem, or on the EFI partition when BOOTPART_REQUIRED=yes.
-		if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
-			display_alert "BOOTSIZE is ignored with GRUB" "there is no separate /boot partition; use UEFISIZE=${BOOTSIZE} to size the EFI partition" "wrn"
-		fi
-		declare -g BOOTSIZE=0
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
