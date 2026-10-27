@@ -438,18 +438,19 @@ function board_side_bsp_cli_preinst() {
 	[[ -f "/etc/update-motd.d/80-livepatch" ]] && rm /etc/update-motd.d/80-livepatch
 	[[ -f "/etc/apt/apt.conf.d/02compress-indexes" ]] && rm /etc/apt/apt.conf.d/02compress-indexes
 	[[ -f "/etc/apt/apt.conf.d/02periodic" ]] && rm /etc/apt/apt.conf.d/02periodic
-	# automatic-update policy now lives only in armbian-config; drop the BSP's
-	# periodic config (removed as a shipped conffile) from upgraded systems too.
-	[[ -f "/etc/apt/apt.conf.d/02-armbian-periodic" ]] && rm /etc/apt/apt.conf.d/02-armbian-periodic
-	# 02-armbian-periodic set APT::Periodic::Enable "0", the master off-switch.
-	# With it gone (removed just above), apt.systemd.daily defaults Enable to 1.
-	# Drop the stock unattended-upgrades trigger so upgrades stay off, unless the
-	# effective APT config enables them. Read the merged value with apt-config, not
-	# the file text, so a commented-out setting cannot count as an opt-in.
-	# armbian-config keeps its own opt-in in 20-armbian-auto-upgrades.
-	if [[ -f "/etc/apt/apt.conf.d/20auto-upgrades" ]] && \
-		[[ "$(apt-config dump --format '%v%n' APT::Periodic::Enable 2>/dev/null)" != "1" ]]; then
-		rm /etc/apt/apt.conf.d/20auto-upgrades
+	# automatic-update policy now lives only in armbian-config. Migrate systems off
+	# the BSP's periodic config, once: only while 02-armbian-periodic is still present.
+	# It set APT::Periodic::Enable "0", the master off-switch; with it gone,
+	# apt.systemd.daily defaults Enable to 1. So read the effective value BEFORE
+	# removing it (apt-config reads merged config, so a commented setting cannot count),
+	# then drop the stock unattended-upgrades trigger unless updates are enabled.
+	# armbian-config writes APT::Periodic::Enable "1" when a user opts in, so that case
+	# is preserved. Gating on the file means a later dpkg-reconfigure is left untouched.
+	if [[ -f "/etc/apt/apt.conf.d/02-armbian-periodic" ]]; then
+		if [[ "$(apt-config dump --format '%v%n' APT::Periodic::Enable 2>/dev/null)" != "1" ]]; then
+			rm -f /etc/apt/apt.conf.d/20auto-upgrades
+		fi
+		rm /etc/apt/apt.conf.d/02-armbian-periodic
 	fi
 	[[ -f "/etc/apt/apt.conf.d/no-languages" ]] && rm /etc/apt/apt.conf.d/no-languages
 	[[ -f "/etc/init.d/armhwinfo" ]] && rm /etc/init.d/armhwinfo
