@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ohayoyogi <77435669+ohayoyogi@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 10:19:03 +0900
+Subject: mfd: rk8xx: power off in SYS_OFF_MODE_POWER_OFF on I2C
+
+The rk8xx power-off handler is registered as SYS_OFF_MODE_POWER_OFF_PREPARE
+only. kernel_can_power_off() looks at the power-off handlers, not the
+prepare ones, so on a board without another power-off handler the reboot
+syscall turns a power off into a halt and the prepare handler never runs:
+
+  reboot: Power off not available: System halted instead
+
+This is the case on RK3288 (32-bit, no PSCI SYSTEM_OFF), e.g. the ASUS
+Tinker Board with an RK808: after "shutdown -h" every rail stays on.
+ARM64 boards do not notice because PSCI registers a power-off handler.
+
+Cutting the PMIC power is the last step of a power off, so register the
+handler as SYS_OFF_MODE_POWER_OFF. That stage runs with interrupts
+disabled; the I2C core then uses the adapter's atomic transfer, which
+i2c-rk3x has. SPI transfers sleep, so keep the prepare stage for the
+SPI-attached RK806, as before.
+
+Same idea as Sebastian Reichel's "mfd: rk8xx: Fix shutdown handler"
+(linux-rockchip, July 2024), which was not merged.
+
+Fixes: 4fec8a5a85c4 ("mfd: rk808: Convert to device managed resources")
+---
+ drivers/mfd/rk8xx-core.c | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/mfd/rk8xx-core.c b/drivers/mfd/rk8xx-core.c
+index def4587..a9d9b49 100644
+--- a/drivers/mfd/rk8xx-core.c
++++ b/drivers/mfd/rk8xx-core.c
+@@ -18,6 +18,7 @@
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/reboot.h>
++#include <linux/string.h>
+ 
+ struct rk808_reg_data {
+ 	int addr;
+@@ -799,9 +800,20 @@ int rk8xx_probe(struct device *dev, int variant, unsigned int irq, struct regmap
+ 
+ 	if (device_property_read_bool(dev, "system-power-controller") ||
+ 	    device_property_read_bool(dev, "rockchip,system-power-controller")) {
+-		ret = devm_register_sys_off_handler(dev,
+-				    SYS_OFF_MODE_POWER_OFF_PREPARE, SYS_OFF_PRIO_HIGH,
+-				    &rk808_power_off, rk808);
++		/*
++		 * Cutting the PMIC power is the last step of a power off, after
++		 * syscore_shutdown(), so it belongs in SYS_OFF_MODE_POWER_OFF.
++		 * A prepare handler alone also does not count as a way to power
++		 * off: on boards without another power-off handler (RK3288, no
++		 * PSCI) the kernel halts instead and the board stays powered.
++		 * SPI transfers sleep, which that stage does not allow, so the
++		 * PMIC stays in the prepare stage on SPI.
++		 */
++		enum sys_off_mode mode = strcmp(dev_bus_name(dev), "spi") ?
++			SYS_OFF_MODE_POWER_OFF : SYS_OFF_MODE_POWER_OFF_PREPARE;
++
++		ret = devm_register_sys_off_handler(dev, mode, SYS_OFF_PRIO_HIGH,
++						    &rk808_power_off, rk808);
+ 		if (ret)
+ 			return dev_err_probe(dev, ret,
+ 					     "failed to register poweroff handler\n");

@@ -236,8 +236,9 @@ function do_main_configuration() {
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		github)
-			# Greg Kroah-Hartman's mirror of the stable tree; firmware stays on kernel.org
-			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/gregkh/linux.git'
+			# Armbian's own mirror of the kernel.org stable tree (all branches + tags,
+			# synced every 30 min). Firmware stays on kernel.org.
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://github.com/armbian/linux.git'
 			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 		gitverse)

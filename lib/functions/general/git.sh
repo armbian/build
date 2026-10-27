@@ -115,7 +115,7 @@ function git_remote_candidates() {
 		"${MAINLINE_KERNEL_SOURCE}"
 		"https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
 		"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git"
-		"https://github.com/gregkh/linux.git"
+		"https://github.com/armbian/linux.git"
 	)
 	# GitLab is the upstream of linux-firmware; the others mirror it.
 	declare -a firmware=(

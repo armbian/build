@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+# Android-style off-charge mode: when the device powered on because a charger
+# was plugged in (the RK817 treats plug-in as a power-on event), show a battery
+# screen instead of booting to the desktop; power off again when unplugged,
+# continue normal boot if the power button is held.
+#
+# Runs as a oneshot before the display manager / getty. Exit 0 = boot goes on.
+# Config in /etc/default/rgds-offcharge:
+#   CHARGER_MASK=0x40   bit(s) set in ON_SOURCE when a charger plug-in caused boot
+#   DISABLE=1
+import fcntl
+import glob
+import os
+import select
+import signal
+import subprocess
+import sys
+import time
+
+I2C_BUS = '/dev/i2c-0'
+PMIC_ADDR = 0x20
+ONSOURCE_REG = 0xf5
+I2C_SLAVE_FORCE = 0x0706
+
+CONF = '/etc/default/rgds-offcharge'
+TTY = '/dev/tty1'
+
+
+def read_conf():
+    conf = {}
+    try:
+        with open(CONF) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    conf[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+def read_on_source():
+    fd = os.open(I2C_BUS, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, I2C_SLAVE_FORCE, PMIC_ADDR)
+        os.write(fd, bytes([ONSOURCE_REG]))
+        return os.read(fd, 1)[0]
+    finally:
+        os.close(fd)
+
+
+def read_str(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def battery():
+    cap, status = None, ''
+    for d in glob.glob('/sys/class/power_supply/*'):
+        if read_str(d + '/type') != 'Battery':
+            continue
+        try:
+            cap = int(read_str(d + '/capacity'))
+        except ValueError:
+            continue
+        status = read_str(d + '/status')
+    return cap, status
+
+
+def charger_online():
+    return any(read_str(p) == '1'
+               for p in glob.glob('/sys/class/power_supply/*/online'))
+
+
+def find_pwrkey():
+    import evdev
+    from evdev import ecodes
+    for p in evdev.list_devices():
+        try:
+            dev = evdev.InputDevice(p)
+        except OSError:
+            continue
+        if ecodes.KEY_POWER in dev.capabilities().get(ecodes.EV_KEY, []):
+            return dev
+        dev.close()
+    return None
+
+
+def draw(cap, status):
+    bar_len = 20
+    filled = 0 if cap is None else round(bar_len * cap / 100)
+    fill = '=' * filled
+    empty = ' ' * (bar_len - filled)
+    pct = '??' if cap is None else str(cap)
+    # Linux VT is 16-colour only: green brackets, amber bar, yellow percentage.
+    GRN, ORG, YEL, RST = '\033[32m', '\033[33m', '\033[93m', '\033[0m'
+    try:
+        with open(TTY, 'w') as t:
+            t.write('\033[2J\033[H\033[?25l\n\n\n')
+            t.write('        CHARGING\n\n')
+            t.write(f'        {GRN}[{RST}{ORG}{fill}{RST}{empty}{GRN}]{RST}'
+                    f'  {YEL}{pct}%{RST}  {status}\n\n')
+            t.write('        hold POWER to boot, unplug to stay off\n')
+    except OSError:
+        pass
+
+
+def sysfs_write(path, value):
+    try:
+        with open(path, 'w') as f:
+            f.write(value)
+    except OSError:
+        pass
+
+
+def backlight(on):
+    # both panels
+    for p in glob.glob('/sys/class/backlight/*/bl_power'):
+        sysfs_write(p, '0' if on else '4')
+
+
+def console_quiet(quiet):
+    # keep parallel boot units and kernel messages off our tty
+    sysfs_write('/proc/sys/kernel/printk', '1 4 1 7\n' if quiet else '4 4 1 7\n')
+    try:
+        os.kill(1, signal.SIGRTMIN + (21 if quiet else 20))
+    except OSError:
+        pass
+
+
+def enter_lowpower():
+    saved = {}
+    for p in glob.glob('/sys/devices/system/cpu/cpufreq/policy*/scaling_governor'):
+        saved[p] = read_str(p)
+        sysfs_write(p, 'powersave')
+    for d in glob.glob('/sys/class/backlight/*'):
+        try:
+            dim = max(1, int(read_str(d + '/max_brightness')) // 5)
+        except ValueError:
+            continue
+        saved[d + '/brightness'] = read_str(d + '/brightness')
+        sysfs_write(d + '/brightness', str(dim))
+    return saved
+
+
+def leave_lowpower(saved):
+    for p, v in saved.items():
+        if v:
+            sysfs_write(p, v)
+
+
+def main():
+    conf = read_conf()
+    if conf.get('DISABLE') == '1':
+        return 0
+    try:
+        charger_mask = int(conf['CHARGER_MASK'], 0)
+    except (KeyError, ValueError):
+        return 0          # not calibrated: never block boot
+
+    # wait for the PMIC i2c node
+    for _ in range(20):
+        if os.path.exists(I2C_BUS):
+            break
+        time.sleep(0.5)
+    try:
+        on_source = read_on_source()
+    except OSError:
+        return 0
+    # The RK817 also latches power button (0x80) and reboot (0x02), so only a
+    # boot caused by plug-in alone gets the charge screen.
+    if not on_source & charger_mask:
+        return 0
+
+    # Only show the charge screen if a charger is actually supplying power. We
+    # must NOT power off on a non-charging plug-in (USB data cable / dead
+    # charger): the PMIC re-powers-on from the plug-in event as long as it stays
+    # attached, so that would loop. Poll briefly so a charger whose
+    # power_supply node has not enumerated yet is not missed.
+    online = False
+    for _ in range(10):
+        if charger_online():
+            online = True
+            break
+        time.sleep(0.5)
+    if not online:
+        return 0
+
+    from evdev import ecodes
+    pwrkey = None
+    for _ in range(20):
+        pwrkey = find_pwrkey()
+        if pwrkey:
+            break
+        time.sleep(0.5)
+    if not pwrkey:
+        return 0          # no way to leave the screen except unplugging: boot
+
+    console_quiet(True)
+    saved = enter_lowpower()
+
+    def boot_on():
+        console_quiet(False)
+        leave_lowpower(saved)
+        backlight(True)
+        try:
+            with open(TTY, 'w') as t:
+                t.write('\033[2J\033[H\033[?25h')
+        except OSError:
+            pass
+        return 0
+
+    def conf_float(key, default):
+        try:
+            return float(conf.get(key, default))
+        except ValueError:
+            return float(default)
+
+    screen_timeout = conf_float('SCREEN_TIMEOUT', '10')
+    boot_hold = conf_float('BOOT_HOLD', '2')
+
+    screen_on = True
+    lit_at = time.monotonic()
+    last_draw = 0.0
+    down_at = None
+    offline = 0
+    try:
+        while True:
+            now = time.monotonic()
+            if screen_on:
+                if now - last_draw >= 5:
+                    draw(*battery())
+                    last_draw = now
+                if now - lit_at >= screen_timeout and down_at is None:
+                    backlight(False)
+                    screen_on = False
+            # power off only after ~3 s of offline readings, so one failed
+            # sysfs read does not shut down a unit that is still charging
+            offline = 0 if charger_online() else offline + 1
+            if offline >= 3:
+                backlight(True)
+                # queue poweroff.target with PID 1 directly: "systemctl
+                # poweroff" asks logind, which is ordered after this unit.
+                # --no-block still fails if the job cannot be queued; once
+                # it is, shutdown stops this unit, so just wait for that.
+                r = subprocess.run(['systemctl', 'start', '--no-block',
+                                    '--job-mode=replace-irreversibly',
+                                    'poweroff.target'])
+                if r.returncode != 0:
+                    return boot_on()
+                time.sleep(60)
+                return 0
+            # long-press POWER boots; a short press (re)lights the screen
+            r, _, _ = select.select([pwrkey.fd], [], [], 1.0)
+            if r:
+                for ev in pwrkey.read():
+                    if ev.type != ecodes.EV_KEY or ev.code != ecodes.KEY_POWER:
+                        continue
+                    if ev.value == 1:
+                        down_at = time.monotonic()
+                    elif ev.value == 0 and down_at is not None:
+                        held = time.monotonic() - down_at
+                        down_at = None
+                        if held >= boot_hold:
+                            return boot_on()
+                        screen_on = True
+                        lit_at = time.monotonic()
+                        last_draw = 0.0
+                        backlight(True)
+            if down_at is not None and time.monotonic() - down_at >= boot_hold:
+                return boot_on()        # boot without waiting for release
+    except OSError:
+        return boot_on()    # power key gone or unreadable: never strand the unit
+
+
+if __name__ == '__main__':
+    sys.exit(main())
