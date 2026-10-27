@@ -253,7 +253,7 @@ DHCPv4/v6。接口只有 IPv6 链路本地地址、没有 IPv4，说明对端网
 DHCP 服务器。
 
 ### 10.1 静态 IPv4
-
+方法一：
 以 MAC 匹配，避免重启后 eth0/eth1 互换。MAC 用 `ip link show eth1` 查看。
 
 ```bash
@@ -273,6 +273,18 @@ network:
 EOF
 sudo chmod 600 /etc/netplan/30-ethernets-static.yaml
 sudo netplan apply
+```
+方法二：
+创建编辑 /etc/systemd/network/05-wired.network 内容如下：
+
+```bash
+[Match]
+Name=eth1
+
+[Network]
+Address=192.168.137.2/24
+Gateway=192.168.137.1
+DNS=223.5.5.5 8.8.8.8
 ```
 
 wlan0 已有默认路由时，不要给 eth1 再配 `routes: default`，避免抢默认路由。
