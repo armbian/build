@@ -18,7 +18,7 @@ setenv usb_autosuspend "0"
 # Find the bootdev
 # Same order is followed as in factory U-BOOT, when searching for this script,
 # so same device should be found.
-# We can't use `test -z` due to the bug: https://lists.denx.de/pipermail/u-boot/2005-August/011447.html
+# We can't use `test -z` due to the bug: https://lists.u-boot-project.org/pipermail/u-boot/2005-August/011447.html
 env set bootdev ""
 if test -n "${bootdev}"; test $? != 0; then if fatload usb 0 11000000 s805_autoscript; then env set bootdev "usb 0"; fi; fi;
 if test -n "${bootdev}"; test $? != 0; then if fatload usb 1 11000000 s805_autoscript; then env set bootdev "usb 1"; fi; fi;
