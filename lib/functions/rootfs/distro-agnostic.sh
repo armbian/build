@@ -176,10 +176,22 @@ function install_distribution_agnostic() {
 		cat <<- EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
 			[Service]
 			ExecStart=
+			ExecStart=-/usr/lib/armbian/armbian-autologin-agetty %I \$TERM
+			Type=idle
+			# agetty opens the tty by name; systemd must not reset/probe it first
+			TTYPath=
+			TTYReset=no
+			TTYVHangup=no
+			StandardInput=null
+			StandardOutput=journal
+			StandardError=journal
+		EOF
+		cat <<- EOF > "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+			[Service]
+			ExecStart=
 			ExecStart=-/sbin/agetty --noissue --autologin root %I \$TERM
 			Type=idle
 		EOF
-		cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
 	fi
 
 	# force change root password at first login
