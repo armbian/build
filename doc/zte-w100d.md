@@ -366,3 +366,62 @@ ss -ltnp | grep :22
 - 构建报 binfmt 错误：WSL2 环境需先注册 qemu binfmt。
 - USB Burning Tool 提示“解析烧录固件失败”：工具不支持 Armbian 镜像，
   请改用 SD 卡或 U 盘刷写（见第 5 节）。
+
+## 12. wfb-ng 无线链路（MT7663 + RTL8812AU）
+
+wfb-ng 工作在 monitor 模式，一发一收，不关联 AP。板载 MT7663S
+（SDIO，mt76 驱动）与外置 RTL8812AU（USB）都验证过可作 wfb 收发。
+
+### 12.1 驱动选择
+
+| 卡 | 驱动 | monitor TX | monitor RX |
+| --- | --- | --- | --- |
+| MT7663S | 内核 mt7663s | 可用 | 可用 |
+| RTL8812AU | 内核 rtw88（≤6.18.58） | 不可用：注入被静默丢弃（mac80211 非-chanctx 注入回归，修复 d594cc6 未进该树） | 可用 |
+| RTL8812AU | aircrack-ng 出树 88XXau | 可用 | 可用 |
+
+出树 88XXau 在板上（arm64）持续注入时，若同机还有第二个 monitor
+接口在线，会硬锁死（需看门狗复位）。因此推荐拓扑：8812AU 放
+宿主机作发射端，MT7663S 留板上作接收端，两卡不同机，互不干扰。
+
+### 12.2 88XXau 编译补丁（针对 6.18 内核）
+
+源码 aircrack-ng/rtl8812au（master），改动四处：
+
+1. `Makefile`：`EXTRA_CFLAGS` 全部改为 `ccflags-y`，首行加
+   `ccflags-y += -Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration -Wno-error`。
+2. `include/osdep_service_linux.h`：`del_timer_sync` 改
+   `timer_delete_sync`；加 `from_timer` 宏转调 `timer_container_of`。
+3. `os_dep/linux/ioctl_cfg80211.c`：`set_wiphy_params`、`set_txpower`、
+   `get_txpower` 三个回调在 6.18 起多了 `int radio_idx` 参数，用
+   `LINUX_VERSION_CODE >= 6.18` 条件补齐。
+4. 交叉编译时传 `KSRC=<匹配的kernel树> ARCH=<arm64或x86> CROSS_COMPILE=<前缀>`。
+
+WSL2 用 `microsoft/WSL2-Linux-Kernel` 对应 tag（如
+`linux-msft-wsl-6.18.40.1`）以 `KCONFIG_CONFIG=Microsoft/config-wsl`
+执行 `make modules` 生成 Module.symvers 后作 KSRC。注意 WSL2 内核
+in-tree rtw88 无法从 `/lib/firmware` 加载固件（全路径 ENOENT，
+WSL2 已知问题），必须用出树驱动。
+
+### 12.3 使用限制与参数
+
+- 88XXau 只支持主接口转 monitor：`iw dev wlan0 set type monitor`，
+  再建 monitor VIF 会失败。
+- 88XXau radio MTU 上限 2312，业务数据切片需 ≤2000 字节，否则注入
+  报 EMSGSIZE。mt76 侧可到 4045。
+- `wfb_tx` 的业务数据来自 UDP 端口（`-u`），不是 stdin。
+- MT7663 锁 5GHz 雷达信道前需先 `ip link set wlanX down`。
+- 收发两端 key 成对：TX 用 drone.key 时 RX 用 gs.key。
+- 实测参数：`-p 100 -M 7 -B 20`，FEC 8/12。RS 冗余包默认也转发到
+  `-u` 输出，接收侧收到的 UDP 约为业务量的 1.5 倍，属正常。
+
+### 12.4 已验证结果（host 8812AU TX → board MT7663 RX）
+
+- 单向：2MB 随机数据，2144 帧注入，板端收到 3.03MB（含 FEC 冗余）。
+- 双向隧道：`wfb_tun` + 同信道 `wfb_tx`/`wfb_rx`，host(10.5.0.1) ↔
+  board(10.5.0.2)，ping 0% 丢包，RTT 最低约 3ms；5MB scp 通过。
+- 板端 RSSI 约 -44dBm（近距离）。
+
+隧道单流吞吐受 FEC 冗余、`-M 7` 低速率和同信道自干扰限制。
+需要更高带宽时增大 MCS、关闭 FEC（`-k 1 -n 1`）或分信道收发。
+
