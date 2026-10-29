@@ -2,7 +2,7 @@
 BOARD_NAME="Pine A64 / A64+"
 BOARD_VENDOR="pine64"
 BOARDFAMILY="sun50iw1"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="janprunk"
 INTRODUCED="2016"
 BOOTCONFIG="pine64_plus_defconfig"
 KERNEL_TARGET="current,edge,legacy"
