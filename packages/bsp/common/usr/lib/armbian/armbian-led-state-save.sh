@@ -50,6 +50,9 @@ function store_led() {
 		PARAM_PATH="$PATH/$PARAM"
 		VALUE=$(<$PARAM_PATH)
 
+		# Skip an empty value, for example the brightness of a hardware controlled led
+		[[ -z "$VALUE" ]] && continue
+
 		# If the variable contains non-printable characters
 		# suppose it contains binary and skip it
 		[[ "$VALUE" =~ [[:cntrl:]] ]] && continue

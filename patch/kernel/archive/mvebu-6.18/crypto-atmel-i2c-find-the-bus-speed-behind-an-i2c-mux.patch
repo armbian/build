@@ -1,0 +1,84 @@
+From 66e3d52113da0b0f0148f3e6da98eb2ab11206ad Mon Sep 17 00:00:00 2001
+From: Josef Schlehofer <pepe.schlehofer@gmail.com>
+Date: Thu, 29 Oct 2026 02:10:31 +0100
+Subject: [PATCH] crypto: atmel-i2c - find the bus speed behind an I2C mux
+
+On the Turris Omnia, the ATSHA204A sits behind a PCA9547 I2C mux. The
+driver reads "clock-frequency" from the mux channel, which has no such
+property, so the probe fails with -EINVAL:
+
+  atmel-sha204a 6-0064: failed to read clock-frequency property
+
+A device tree patch in 2024 added the property to the mux channel. The
+review rejected it, because the I2C core ignores the property there. The
+driver would then compute the wake token for a wrong bus speed. The
+review asked for a fix in the driver, but none was sent.
+
+Keep reading the property of the client's adapter first, as before. If
+it has none, look at the parent adapters. If no adapter has it, use
+100 kHz, the default of most I2C controller drivers.
+
+Fixes: 11105693fa05 ("crypto: atmel-ecc - introduce Microchip / Atmel ECC driver")
+Cc: stable@vger.kernel.org # v5.19+
+Reported-by: Marius Dinu <m95d@psihoexpert.ro>
+Closes: https://lore.kernel.org/all/46ea55652f8bcdef51d5c552902fd0cc@psihoexpert.ro/
+Link: https://lore.kernel.org/all/20240515104149.2ce3566e@dellmb/
+Signed-off-by: Josef Schlehofer <pepe.schlehofer@gmail.com>
+---
+ drivers/crypto/atmel-i2c.c | 29 ++++++++++++++++++++---------
+ 1 file changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/crypto/atmel-i2c.c b/drivers/crypto/atmel-i2c.c
+index a85dfdc..25c8492 100644
+--- a/drivers/crypto/atmel-i2c.c
++++ b/drivers/crypto/atmel-i2c.c
+@@ -348,11 +348,28 @@ free_cmd:
+ 	return ret;
+ }
+ 
++/*
++ * A device behind an I2C mux sits on a channel adapter. Try the adapter of
++ * the client first, as before, then its parents. Without the property,
++ * assume 100 kHz, the default of most I2C controller drivers.
++ */
++static u32 atmel_i2c_bus_speed(struct i2c_adapter *adap)
++{
++	u32 bus_clk_rate;
++
++	for (; adap; adap = i2c_parent_is_i2c_adapter(adap)) {
++		if (!device_property_read_u32(&adap->dev, "clock-frequency",
++					      &bus_clk_rate) && bus_clk_rate)
++			return bus_clk_rate;
++	}
++
++	return I2C_MAX_STANDARD_MODE_FREQ;
++}
++
+ int atmel_i2c_probe(struct i2c_client *client)
+ {
+ 	struct atmel_i2c_client_priv *i2c_priv;
+ 	struct device *dev = &client->dev;
+-	int ret;
+ 	u32 bus_clk_rate;
+ 
+ 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+@@ -361,14 +378,8 @@ int atmel_i2c_probe(struct i2c_client *client)
+ 	}
+ 
+ 	bus_clk_rate = i2c_acpi_find_bus_speed(&client->adapter->dev);
+-	if (!bus_clk_rate) {
+-		ret = device_property_read_u32(&client->adapter->dev,
+-					       "clock-frequency", &bus_clk_rate);
+-		if (ret) {
+-			dev_err(dev, "failed to read clock-frequency property\n");
+-			return ret;
+-		}
+-	}
++	if (!bus_clk_rate)
++		bus_clk_rate = atmel_i2c_bus_speed(client->adapter);
+ 
+ 	if (bus_clk_rate > 1000000L) {
+ 		dev_err(dev, "%u exceeds maximum supported clock frequency (1MHz)\n",
+-- 
+2.54.0 (Apple Git-157)
+
