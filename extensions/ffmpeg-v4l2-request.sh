@@ -3,8 +3,8 @@
 # ENABLE_EXTENSIONS. Follow-up to #10902/#10915: the ~40 MB pack is a GitHub Release asset on
 # the contributor fork and never enters git; the primary download source follows the
 # framework's ${GITHUB_SOURCE} mirror (with two hardcoded fallbacks for proxy-less builders)
-# and the sha256 is pinned. Guards: dpkg status present, glibc >= 2.38 (the prebuilt pack
-# needs no symbol newer than GLIBC_2.38, so it serves bookworm/trixie and noble alike),
+# and the sha256 is pinned. Guards: dpkg status present, glibc >= 2.38 and libva >= 2.21
+# (the pack calls vaMapBuffer2, so noble with libva 2.20 is skipped),
 # Ubuntu "resolute" skipped (x264 ABI rename). Failure semantics (per PR #10915
 # discussion): configuration-class conditions (unsupported release, missing or old glibc,
 # foreign binaries in /usr/local/bin, already installed) warn and skip; download, checksum,
@@ -120,11 +120,21 @@ function post_family_tweaks__ffmpeg_v4l2_request() {
 		return 0
 	fi
 
-	# One pack serves every supported release: its newest required symbol is
-	# GLIBC_2.38, so trixie (2.41) and noble (2.39) both run it; bookworm (2.36)
-	# and older stay unsupported and are skipped here.
+	# The pack needs GLIBC_2.38 at most. Bookworm (2.36) and older are skipped.
 	if ! dpkg --compare-versions "${libc6_version}" ge 2.38; then
 		display_alert "ffmpeg-v4l2" "glibc ${libc6_version} < 2.38 (no compatible prebuilt), skipping" "warn"
+		return 0
+	fi
+
+	# The pack calls vaMapBuffer2 (libva >= 2.21). ldd does not catch a missing
+	# symbol, so skip older libva, e.g. noble (2.20).
+	local libva_version=""
+	libva_version="$(awk -v RS='' '$1 == "Package:" && $2 == "libva2" {
+		for (i = 1; i <= NF; i++) if ($i == "Version:") { print $(i + 1); exit }
+	}' "${SDCARD}/var/lib/dpkg/status")" || true
+
+	if ! dpkg --compare-versions "${libva_version:-0}" ge 2.21; then
+		display_alert "ffmpeg-v4l2" "libva ${libva_version:-none} < 2.21 (no compatible prebuilt), skipping" "warn"
 		return 0
 	fi
 
