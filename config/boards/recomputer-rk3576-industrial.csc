@@ -1,6 +1,4 @@
-# Rockchip RK3576 SoM on an industrial carrier: dual GbE (GMAC1 PHY Maxio
-# MAE0621A), CAN1, RS485x2/RS232, DI/DO, M.2 NVMe, mini-PCIe (4G/LoRa), HDMI,
-# ES8311 audio; eMMC boot only (no SD slot, no SPI NOR)
+# Rockchip RK3576 SoC octa core 4GB SoC 2xGBe eMMC USB3 NvME CAN RS485 mini-PCIe
 BOARD_NAME="reComputer RK3576 Industrial"
 BOARDFAMILY="rk35xx"
 BOOT_SOC="rk3576"
