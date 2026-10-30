@@ -76,7 +76,7 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 	# morse-halow metapackage pins the whole version-locked stack: driver,
 	# firmware (MorseMicro/morse-firmware 974c7744), hostapd/wpa_supplicant
 	# builds and morsectrl.
-	[[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(morse-halow)
+	[[ "${SEEED_MORSE_ENABLE:-no}" == "yes" ]] && pkgs+=(morse-halow)
 
 	seeed_recomputer_install_from_apt "${pkgs[@]}" # this does nothing if array is empty
 
