@@ -15,12 +15,12 @@
 #     ENABLE_SEEED_RK_EXTENSION=yes; the board family config bridges to
 #     this wrapper.
 #
-# The external repo is pinned to a fixed tag (not a moving branch) so build
-# hashing stays deterministic: a given armbian/build revision always resolves
-# to the same extension content. Bump the pin via a regular PR when Seeed
-# cuts a new release tag.
+# Tracks main; the resolved revision is recorded in /etc/armbian-release
+# (SEEED_EXTENSION_COMMIT). Override with SEEED_EXTENSION_REF=tag:vN to pin.
+# declare -g: this wrapper is sourced inside enable_extension(), where plain
+# assignments are function-local and would not reach the rootfs hooks.
 SEEED_EXTENSION_REPO="https://github.com/Seeed-Studio/seeed_armbian_extension"
-SEEED_EXTENSION_REF="tag:v1.1"
+declare -g SEEED_EXTENSION_REF="${SEEED_EXTENSION_REF:-branch:main}"
 
 # Board-family hooks (post_family_config__recomputer_stage_kernel_patches
 # and friends) check this variable to gate Seeed-specific behavior; export
@@ -56,6 +56,10 @@ if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
 else
 	fetch_from_repo "${SEEED_EXTENSION_REPO}" "seeed_armbian_extension" "${SEEED_EXTENSION_REF}"
 fi
+
+# Resolved revision of the checkout; written into /etc/armbian-release.
+declare -g SEEED_EXTENSION_COMMIT
+SEEED_EXTENSION_COMMIT="$(git -C "${SRC}/cache/sources/seeed_armbian_extension" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 if [[ "${seeed_ext_enable}" == "yes" ]]; then
 	SEEED_EXT_DIR="${SRC}/cache/sources/seeed_armbian_extension"
