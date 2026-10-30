@@ -10,7 +10,7 @@ BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3576-armsom-cm5-io.dtb"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="gahingwoo"
 INTRODUCED="2024"
 
 function post_family_tweaks__armsom-cm5-io_naming_audios() {
