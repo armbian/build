@@ -16,9 +16,10 @@ IMAGE_PARTITION_TABLE="gpt"
 OTA_ENABLE="yes"
 SERIALCON="ttyFIQ0,ttyGS0"
 BT_UART="/dev/ttyS4"
-# No AIC8800 / Morse silicon on this board: WiFi/BT is WQ9201S (DKMS below).
+# No AIC8800 on this board: WiFi/BT is WQ9201S (DKMS below).
 SEEED_AIC_BLUEZ_ENABLE="no"
-SEEED_MORSE_ENABLE="no"
+SEEED_MORSE_ENABLE="yes"
+SEEED_WIRELESS_REGDOM="${SEEED_WIRELESS_REGDOM:-US}"
 # Open-source panfrost driver + Mesa userspace for the Mali-G52. "mali"
 # (closed blob) would need MALI_USE_SYSTEM_GBM=yes.
 RECOMPUTER_GPU_STACK="panfrost"
@@ -115,6 +116,32 @@ function post_family_tweaks__recomputer_rk3576_industrial_disable_suspend() {
 function post_family_tweaks__recomputer_rk3576_industrial_gdm_gpu_groups() {
 	chroot_sdcard usermod -aG render,video gdm 2> /dev/null || true
 	chroot_sdcard usermod -aG render,video Debian-gdm 2> /dev/null || true
+}
+
+# Wireless regulatory domain (SEEED_WIRELESS_REGDOM, default US). The
+# board's Wio-WM6108 HaLow module needs US for the 902-928 MHz S1G band
+# (morse defaults to AU, wq_wlan hints CN); waiting for wlan0 lets the CN
+# hint land first, then this overrides it. US drops 2.4G ch12/13. Runtime
+# switch: systemctl edit set-regdom.service -> Environment=REGDOMAIN=AU.
+function post_family_tweaks__recomputer_rk3576_industrial_wireless_regdom() {
+	display_alert "$BOARD" "Setting wireless regulatory domain: ${SEEED_WIRELESS_REGDOM}" "info"
+
+	mkdir -p "${SDCARD}"/lib/systemd/system
+	cat > "${SDCARD}/lib/systemd/system/set-regdom.service" <<-EOF
+		[Unit]
+		Description=Set wireless regulatory domain
+		After=systemd-modules-load.service
+
+		[Service]
+		Type=oneshot
+		RemainAfterExit=yes
+		Environment=REGDOMAIN=${SEEED_WIRELESS_REGDOM}
+		ExecStart=/bin/sh -c '( for i in \$(seq 1 60); do [ -e /sys/class/net/wlan0 ] && break; sleep 1; done; sleep 2; /usr/sbin/iw reg set \${REGDOMAIN}; /usr/sbin/iw reg set \${REGDOMAIN} ) &'
+
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+	chroot_sdcard systemctl enable set-regdom.service
 }
 
 # Serial console login: cap plymouth-quit-wait at 2s (headless login fix).
