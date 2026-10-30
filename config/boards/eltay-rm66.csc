@@ -16,10 +16,10 @@ BOOT_SUPPORT_SPI="no"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
 function post_family_config__eltay_rm66_uboot() {
-	display_alert "$BOARD" "Mainline U-Boot v2026.07 (ELTAY BB CM4 reference)" "info"
+	display_alert "$BOARD" "Mainline U-Boot v2026.10 (ELTAY BB CM4 reference)" "info"
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2026.07"
-	declare -g BOOTPATCHDIR="v2026.07"
+	declare -g BOOTBRANCH="tag:v2026.10"
+	declare -g BOOTPATCHDIR="v2026.10"
 	declare -g BOOTDELAY=0
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 }

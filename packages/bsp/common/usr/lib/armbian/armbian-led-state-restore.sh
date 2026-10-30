@@ -53,9 +53,15 @@ while read LINE; do
 	PARAM=${BASH_REMATCH[1]}
 	VALUE=${BASH_REMATCH[2]}
 
-	if [[ -z $PARAM || -z $VALUE ]]; then
+	if [[ -z $PARAM ]]; then
 		echo "Invalid state file, syntax error in configuration file "
 		exit 1
+	fi
+
+	# Older versions saved a parameter they could not read without a value
+	if [[ -z $VALUE ]]; then
+		echo "warning: $LED/$PARAM has no value, skipped"
+		continue
 	fi
 
 	# Ignore brightness=0 param, this will reset trigger to none
