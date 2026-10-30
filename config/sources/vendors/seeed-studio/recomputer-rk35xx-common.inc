@@ -73,7 +73,10 @@ function pre_install_distribution_specific__recomputer_install_seeed_packages() 
 
 	declare -a pkgs=()
 	[[ "${SEEED_USB_GADGET_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(usbdevice-gadget-rk)
-	[[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(wpa-supplicant-morse-tools morsectrl-tools hostapd-morse-tools morse-fgh100m-dkms)
+	# morse-halow metapackage pins the whole version-locked stack: driver,
+	# firmware (MorseMicro/morse-firmware 974c7744), hostapd/wpa_supplicant
+	# builds and morsectrl.
+	[[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "yes" ]] && pkgs+=(morse-halow)
 
 	seeed_recomputer_install_from_apt "${pkgs[@]}" # this does nothing if array is empty
 
@@ -189,30 +192,6 @@ function post_family_tweaks__recomputer_enable_aic8800_bluetooth_service() {
 			"${SDCARD}"/etc/systemd/system/aic-bluetooth.service 2> /dev/null || true
 	else
 		display_alert "$BOARD" "aic-bluetooth.service not found in image; skipping enable" "warn"
-	fi
-}
-
-# Morse FGH100M firmware
-function post_family_tweaks_bsp__recomputer_fgh100m_morse_firmware() {
-	if [[ "${SEEED_MORSE_ENABLE:-"${SEEED_DEFAULT_ENABLE:-"yes"}"}" == "no" ]]; then
-		display_alert "$BOARD" "Skipping Seeed Morse FGH100M firmware (SEEED_MORSE_ENABLE=no)" "info"
-		return 0
-	fi
-
-	display_alert "$BOARD" "Installing Morse FGH100M firmware" "info"
-
-	local morse_fw_rev="commit:974c7744263ffb56a1c8678962e740fdcb3428f7"
-
-	fetch_from_repo "https://github.com/MorseMicro/morse-firmware.git" "morse-firmware" "${morse_fw_rev}" "yes"
-
-	local morse_fw_dir="${SRC}/cache/sources/morse-firmware/${morse_fw_rev#*:}"
-
-	if [[ -d "${morse_fw_dir}" ]]; then
-		install -d -m 0755 "${destination}/lib/firmware/morse"
-		install -m 0644 "${morse_fw_dir}/bcf/quectel/bcf_fgh100mhaamd.bin" "${destination}/lib/firmware/morse/bcf_default.bin"
-		install -m 0644 "${morse_fw_dir}/firmware/mm6108.bin" "${destination}/lib/firmware/morse/mm6108.bin"
-	else
-		display_alert "$BOARD" "morse-firmware not found at ${morse_fw_dir}" "warn"
 	fi
 }
 
