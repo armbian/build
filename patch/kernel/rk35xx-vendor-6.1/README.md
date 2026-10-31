@@ -1,0 +1,1 @@
+Do not put patches here. Send them directly to armbian/linux-rockchip.
