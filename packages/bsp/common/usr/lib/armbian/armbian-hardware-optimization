@@ -70,21 +70,33 @@ prepare_board() {
 	sed -i "s/#compress/compress/" /etc/logrotate.conf
 
 	# Replaces the EOL cpufrequtils package; the file keeps its format.
-	# armbian-config (module_tuning_profile cpu) edits it and applies POLICY<n>_* keys.
+	# POLICY<n>_GOVERNOR, POLICY<n>_MIN_SPEED and POLICY<n>_MAX_SPEED override the
+	# global keys for policy<n> (big.LITTLE). The build and armbian-config write them.
+	local ondemand=no
 	if [ -r /etc/default/cpufrequtils ] ; then
 		. /etc/default/cpufrequtils
 		# turbo OPPs stay hidden until boost is set, so scaling_max_freq below would clamp
 		[ "X${BOOST}" = "Xtrue" ] && [ -w /sys/devices/system/cpu/cpufreq/boost ] && echo 1 > /sys/devices/system/cpu/cpufreq/boost
+		[ "X${BOOST}" = "Xoff" ] && [ -w /sys/devices/system/cpu/cpufreq/boost ] && echo 0 > /sys/devices/system/cpu/cpufreq/boost
 		for Cluster in /sys/devices/system/cpu/cpufreq/policy* ; do
 			[[ -e "${Cluster}" ]] || break
-			grep -q "${GOVERNOR}" "${Cluster}/scaling_available_governors" && [ -w "${Cluster}/scaling_governor" ] && echo "${GOVERNOR}" >"${Cluster}/scaling_governor"
-			[ "X${MIN_SPEED}" != "X" ] && [ -w "${Cluster}/scaling_min_freq" ] && echo "${MIN_SPEED}" >"${Cluster}/scaling_min_freq"
-			[ "X${MAX_SPEED}" != "X" ] && [ -w "${Cluster}/scaling_max_freq" ] && echo "${MAX_SPEED}" >"${Cluster}/scaling_max_freq"
+			local n="${Cluster##*policy}" gov min max
+			gov="POLICY${n}_GOVERNOR"; gov="${!gov:-${GOVERNOR}}"
+			min="POLICY${n}_MIN_SPEED"; min="${!min:-${MIN_SPEED}}"
+			max="POLICY${n}_MAX_SPEED"; max="${!max:-${MAX_SPEED}}"
+			if [ -n "${gov}" ] && grep -qw "${gov}" "${Cluster}/scaling_available_governors" && [ -w "${Cluster}/scaling_governor" ]; then
+				echo "${gov}" >"${Cluster}/scaling_governor"
+				[ "${gov}" = "ondemand" ] && ondemand=yes
+			fi
+			# max, min, max: old kernels refuse a min above the current max and a max below the current min
+			[ -n "${max}" ] && [ -w "${Cluster}/scaling_max_freq" ] && echo "${max}" >"${Cluster}/scaling_max_freq" 2>/dev/null
+			[ -n "${min}" ] && [ -w "${Cluster}/scaling_min_freq" ] && echo "${min}" >"${Cluster}/scaling_min_freq" 2>/dev/null
+			[ -n "${max}" ] && [ -w "${Cluster}/scaling_max_freq" ] && echo "${max}" >"${Cluster}/scaling_max_freq" 2>/dev/null
 		done
 	fi
 
 	# Tweak ondemand cpufreq governor settings to increase cpufreq with IO load.
-	if [ "X${GOVERNOR}" = "Xondemand" ]; then
+	if [ "${ondemand}" = "yes" ]; then
 		cd /sys/devices/system/cpu
 		# FIXME - arbitrary globbing range left as a breadcrumb to encourage socratic learning
 		# and take on the task of understanding the performance optimizations in general

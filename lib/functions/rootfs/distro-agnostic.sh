@@ -109,6 +109,26 @@ function install_distribution_agnostic() {
 		GOVERNOR=$GOVERNOR
 		BOOST=${CPUBOOST:-false}
 	EOF
+	# Per-cluster values (big.LITTLE): CPUMIN_POLICY<n>, CPUMAX_POLICY<n>, GOVERNOR_POLICY<n>,
+	# where <n> is the first CPU of the cluster (/sys/devices/system/cpu/cpufreq/policy<n>).
+	declare cpufreq_var cpufreq_key
+	for cpufreq_var in $(compgen -v | grep -E '^(CPUMIN|CPUMAX|GOVERNOR)_POLICY[0-9]+$' | sort -V); do
+		case "${cpufreq_var%_POLICY*}" in
+			CPUMIN) cpufreq_key=MIN_SPEED ;;
+			CPUMAX) cpufreq_key=MAX_SPEED ;;
+			GOVERNOR) cpufreq_key=GOVERNOR ;;
+		esac
+		[[ "${!cpufreq_var}" =~ ^[a-z0-9_]+$ ]] || exit_with_error "Invalid ${cpufreq_var}" "${!cpufreq_var}"
+		echo "POLICY${cpufreq_var##*_POLICY}_${cpufreq_key}=${!cpufreq_var}" >> "${SDCARD}"/etc/default/cpufrequtils
+	done
+
+	# armbian-config applies this tuning profile on first boot (armbian-firstrun).
+	declare tuning_profile="${TUNING_PROFILE:-$([[ "${BUILD_DESKTOP}" == yes ]] && echo desktop || echo sbc)}"
+	case "${tuning_profile}" in
+		sbc | balanced | desktop | builder | nas) echo "PENDING=${tuning_profile}" > "${SDCARD}"/etc/default/armbian-tuning-profile ;;
+		none) ;;
+		*) exit_with_error "Invalid TUNING_PROFILE" "${tuning_profile}" ;;
+	esac
 
 	# disable selinux by default
 	mkdir -p "${SDCARD}"/selinux

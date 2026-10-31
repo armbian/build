@@ -103,10 +103,22 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- [family]/[file.dtb]: Replace device tree with the one specified
 		- none: Do not use device tree configuration
 	- Example: `rockchip/rk3568-rock-3-a.dtb`
-- **CPUMIN** ( minimum CPU frequency to scale in Hz ): Set minimal CPU frequency of the system
+- **CPUMIN** ( minimum CPU frequency in kHz ): Set minimal CPU frequency of the system
 	- Default: Differs per family `480000` for sunxi8 boards
-- **CPUMAX**  ( minimum CPU frequency to scale in Hz ): Set maximal CPU frequency of the system
+- **CPUMAX** ( maximum CPU frequency in kHz ): Set maximal CPU frequency of the system
 	- Default: Differs per family `1400000` for sunxi8 boards
+- **GOVERNOR** ( cpufreq governor ): Set the CPU frequency governor
+	- Example: `ondemand`, `schedutil`, `performance`
+- **CPUMIN_POLICY\<n\>**, **CPUMAX_POLICY\<n\>**, **GOVERNOR_POLICY\<n\>**: Override CPUMIN, CPUMAX and GOVERNOR for one CPU cluster (big.LITTLE). `<n>` is the first CPU of the cluster, as in `/sys/devices/system/cpu/cpufreq/policy<n>`
+	- Example: `GOVERNOR_POLICY4=performance` sets the Cortex-A72 cluster of RK3399
+- **CPUBOOST** ( cpufreq boost ): Set CPU boost at boot
+	- Values:
+		- true: Enable
+		- off: Disable
+		- false: Keep the kernel default (default)
+- **TUNING_PROFILE** ( armbian-config tuning profile ): Profile that armbian-config applies on first boot. It sets swappiness, writeback and the ext4 commit interval
+	- Values: `sbc`, `balanced`, `desktop`, `builder`, `nas`, `none`
+	- Default: `desktop` for desktop images, else `sbc`
 - **FORCE_BOOTSCRIPT_UPDATE** ( boolean ): Force bootscript installation if they are not present
 	- Values:
 		- yes: Enable
