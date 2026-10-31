@@ -1,0 +1,117 @@
+From 5a2d4d41d62f68d43e1d2ee29dd0150e650a5514 Mon Sep 17 00:00:00 2001
+From: Vinicius Pedrosa <vinicius.eduardo.pedrosa@gmail.com>
+Date: Mon, 5 Oct 2026 14:25:38 -0300
+Subject: [PATCH 31/58] serial: 8250_dw: Add Allwinner A733 UART
+
+The A733 UART is clocked from its bus clock gate, which can't change
+rate. dw8250_set_termios() still gates it around a no-op clk_set_rate()
+on every termios change. That stalls the character being shifted out
+and corrupts it on the wire. Use the existing SKIP_SET_RATE quirk, as
+other SoCs with a fixed UART clock do.
+
+Offset 0xc0 is the RS485 control register on this SoC (A733 User
+Manual, UART_485_CTL), not DLF. dw8250_setup_port() writes all ones
+there, reads back a nonzero 9-bit value and takes it for a 9-bit DLF.
+Every later divisor change then writes the fractional divisor into the
+RS485 control register. Add a NO_DLF quirk so dwlib skips that probe.
+
+Signed-off-by: Vinicius Pedrosa <vinicius.eduardo.pedrosa@gmail.com>
+---
+ drivers/tty/serial/8250/8250_dw.c    | 13 +++++++++++++
+ drivers/tty/serial/8250/8250_dwlib.c | 22 ++++++++++++----------
+ drivers/tty/serial/8250/8250_dwlib.h |  1 +
+ 3 files changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/tty/serial/8250/8250_dw.c b/drivers/tty/serial/8250/8250_dw.c
+index a3d006673ade..c52a98a8817c 100644
+--- a/drivers/tty/serial/8250/8250_dw.c
++++ b/drivers/tty/serial/8250/8250_dw.c
+@@ -51,6 +51,7 @@
+ #define DW_UART_QUIRK_APMC0D08		BIT(4)
+ #define DW_UART_QUIRK_CPR_VALUE		BIT(5)
+ #define DW_UART_QUIRK_IER_KICK		BIT(6)
++#define DW_UART_QUIRK_NO_DLF		BIT(7)
+ 
+ /*
+  * Number of consecutive IIR_NO_INT interrupts required to trigger interrupt
+@@ -598,6 +599,8 @@ static void dw8250_quirks(struct uart_port *p, struct dw8250_data *data)
+ 		p->serial_out = dw8250_serial_out38x;
+ 	if (quirks & DW_UART_QUIRK_SKIP_SET_RATE)
+ 		p->set_termios = dw8250_do_set_termios;
++	if (quirks & DW_UART_QUIRK_NO_DLF)
++		data->data.no_dlf = true;
+ 	if (quirks & DW_UART_QUIRK_IS_DMA_FC) {
+ 		data->data.dma.txconf.device_fc = 1;
+ 		data->data.dma.rxconf.device_fc = 1;
+@@ -884,6 +887,15 @@ static const struct dw8250_platform_data dw8250_skip_set_rate_data = {
+ 	.quirks = DW_UART_QUIRK_SKIP_SET_RATE,
+ };
+ 
++/*
++ * The baud clock is the bus clock gate, whose rate cannot change, and offset
++ * 0xc0 is the RS485 control register rather than DLF.
++ */
++static const struct dw8250_platform_data dw8250_sun60i_a733_data = {
++	.usr_reg = DW_UART_USR,
++	.quirks = DW_UART_QUIRK_SKIP_SET_RATE | DW_UART_QUIRK_NO_DLF,
++};
++
+ static const struct dw8250_platform_data dw8250_intc10ee = {
+ 	.usr_reg = DW_UART_USR,
+ 	.quirks = DW_UART_QUIRK_IER_KICK,
+@@ -900,6 +912,7 @@ static const struct dw8250_platform_data dw8250_ultrarisc_dp1000_data = {
+ 
+ static const struct of_device_id dw8250_of_match[] = {
+ 	{ .compatible = "snps,dw-apb-uart", .data = &dw8250_dw_apb },
++	{ .compatible = "allwinner,sun60i-a733-uart", .data = &dw8250_sun60i_a733_data },
+ 	{ .compatible = "cavium,octeon-3860-uart", .data = &dw8250_octeon_3860_data },
+ 	{ .compatible = "marvell,armada-38x-uart", .data = &dw8250_armada_38x_data },
+ 	{ .compatible = "renesas,rzn1-uart", .data = &dw8250_renesas_rzn1_data },
+diff --git a/drivers/tty/serial/8250/8250_dwlib.c b/drivers/tty/serial/8250/8250_dwlib.c
+index 8859e66d2d71..0b36bdc97007 100644
+--- a/drivers/tty/serial/8250/8250_dwlib.c
++++ b/drivers/tty/serial/8250/8250_dwlib.c
+@@ -209,16 +209,18 @@ void dw8250_setup_port(struct uart_port *p)
+ 	}
+ 	up->capabilities |= UART_CAP_NOTEMT;
+ 
+-	/* Preserve value written by firmware or bootloader  */
+-	old_dlf = dw8250_readl_ext(p, DW_UART_DLF);
+-	dw8250_writel_ext(p, DW_UART_DLF, ~0U);
+-	reg = dw8250_readl_ext(p, DW_UART_DLF);
+-	dw8250_writel_ext(p, DW_UART_DLF, old_dlf);
+-
+-	if (reg) {
+-		pd->dlf_size = fls(reg);
+-		p->get_divisor = dw8250_get_divisor;
+-		p->set_divisor = dw8250_set_divisor;
++	if (!pd->no_dlf) {
++		/* Preserve value written by firmware or bootloader  */
++		old_dlf = dw8250_readl_ext(p, DW_UART_DLF);
++		dw8250_writel_ext(p, DW_UART_DLF, ~0U);
++		reg = dw8250_readl_ext(p, DW_UART_DLF);
++		dw8250_writel_ext(p, DW_UART_DLF, old_dlf);
++
++		if (reg) {
++			pd->dlf_size = fls(reg);
++			p->get_divisor = dw8250_get_divisor;
++			p->set_divisor = dw8250_set_divisor;
++		}
+ 	}
+ 
+ 	reg = dw8250_readl_ext(p, DW_UART_UCV);
+diff --git a/drivers/tty/serial/8250/8250_dwlib.h b/drivers/tty/serial/8250/8250_dwlib.h
+index 1fe52332e774..902e4946423b 100644
+--- a/drivers/tty/serial/8250/8250_dwlib.h
++++ b/drivers/tty/serial/8250/8250_dwlib.h
+@@ -87,6 +87,7 @@ struct dw8250_port_data {
+ 	/* Hardware configuration */
+ 	u32			cpr_value;
+ 	u8			dlf_size;
++	bool			no_dlf;		/* Offset 0xc0 is not DLF */
+ 
+ 	/* RS485 variables */
+ 	bool			hw_rs485_support;
+-- 
+2.53.0
+
