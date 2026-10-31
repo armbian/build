@@ -61,9 +61,8 @@ for overlay_file in ${overlays}; do
 	fi
 done
 for overlay_file in ${user_overlays}; do
-	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}/overlay-user/${overlay_file}.dtbo; then
+	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}/overlay-user/${overlay_file}.dtbo && load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}/overlay-user/${overlay_file}.dtbo; then
 		echo "Applying ${overlay_file}.dtbo"
-		load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}/overlay-user/${overlay_file}.dtbo
 		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
 done
