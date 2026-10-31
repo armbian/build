@@ -25,6 +25,13 @@ function post_debootstrap_tweaks() {
 	chroot_sdcard dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon
 	run_host_command_logged rm -fv "${SDCARD}"/usr/sbin/policy-rc.d
 
+	# armbian-firstrun applies the tuning profile with armbian-config. Without it, the profile never applies.
+	if [[ -f "${SDCARD}"/etc/default/armbian-tuning-profile && ! -x "${SDCARD}"/usr/bin/armbian-config ]]; then
+		[[ -n "${TUNING_PROFILE}" ]] && exit_with_error "TUNING_PROFILE needs armbian-config in the image" "${TUNING_PROFILE}"
+		display_alert "No armbian-config in the image" "skipping the tuning profile" "warn"
+		run_host_command_logged rm -fv "${SDCARD}"/etc/default/armbian-tuning-profile
+	fi
+
 	call_extension_method "post_post_debootstrap_tweaks" "config_post_debootstrap_tweaks" <<- 'POST_POST_DEBOOTSTRAP_TWEAKS'
 		*run after removing diversions and qemu with chroot unmounted*
 		Last chance to touch the `${SDCARD}` filesystem before it is copied to the final media.
