@@ -402,16 +402,9 @@ function board_side_bsp_cli_preinst() {
 	# fixing ramdisk corruption when using lz4 compression method
 	sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" /etc/initramfs-tools/initramfs.conf
 
-	# swap
-	grep -q vm.swappiness /etc/sysctl.conf
-	case $? in
-		0)
-			sed -i 's/vm\.swappiness.*/vm.swappiness=100/' /etc/sysctl.conf
-			;;
-		*)
-			echo vm.swappiness=100 >> /etc/sysctl.conf
-			;;
-	esac
+	# Older BSP versions forced swappiness here. /etc/sysctl.conf is applied last and
+	# overrides the tuning profile, so remove that line. 55-bsp-default.conf has the fallback.
+	sed -i '/^[[:space:]]*vm\.swappiness[[:space:]]*=[[:space:]]*100[[:space:]]*$/d' /etc/sysctl.conf
 	# --system (not -p) so the change to /etc/sysctl.conf above *and* the
 	# drop-ins under /usr/lib/sysctl.d (our 55-bsp-default.conf) are applied on
 	# upgrade; -p reads only /etc/sysctl.conf and would leave them to next boot.
