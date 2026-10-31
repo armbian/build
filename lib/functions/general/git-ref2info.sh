@@ -246,7 +246,10 @@ function memoized_git_ref_to_info() {
 						org_and_repo="${org_and_repo%.git}" # remove .git if present
 						url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 					else
-						exit_with_error "Unknown git source '${git_source}'"
+						# The SHA1 still identifies the sources; the artifact version goes without the Makefile version.
+						display_alert "No Makefile URL known for git host" "${git_source}: version left out of the artifact version" "warn"
+						makefile_url="" makefile_version="" makefile_full_version="" makefile_codename=""
+						return 0
 					fi
 					;;
 			esac
