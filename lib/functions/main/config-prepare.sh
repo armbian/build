@@ -375,9 +375,6 @@ function check_config_userspace_release_and_desktop() {
 function fix_userspace_packages_release_and_distro() {
 	display_alert "fix_userspace_packages_release_and_distro" "For distro '${DISTRIBUTION}' release '${RELEASE}'" "debug"
 
-	# Some old hack from the past, not sure if it's still needed. Originally from https://github.com/armbian/build/pull/5881
-	if [[ $RELEASE == trixie || $ARCH == riscv64 ]]; then remove_packages "cpufrequtils"; fi # this will remove from rootfs as well
-
 	# Debian: no need for this package in the rootfs, as it provides add-apt-repository which is not used on our Debian builds
 	if [[ "${DISTRIBUTION}" == "Debian" ]]; then
 		display_alert "Not-installing software-properties-common" "For distro '${DISTRIBUTION}' release '${RELEASE}'" "warn"
