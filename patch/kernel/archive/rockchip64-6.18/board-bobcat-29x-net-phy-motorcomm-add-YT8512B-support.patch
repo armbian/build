@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sicxnull <sicnull@gmail.com>
+Date: Fri, 9 Jan 2026 19:01:20 -0500
+Subject: net: phy: motorcomm: add support for YT8512B
+
+The Motorcomm YT8512B is a 10/100 Mbit/s Ethernet PHY (PHY ID 0x00000128)
+used in RMII mode on the Bobcat 29X (RK3566). It is not handled by the
+mainline motorcomm driver, so the generic PHY driver binds and the link
+does not come up.
+
+Add a driver entry that, on config_init, selects the PLL reference clock,
+enables RMII mode, soft-resets the PHY, disables the sleep mode and sets
+up the link/activity LEDs, and reads speed/duplex from the PHY-specific
+status register.
+---
+ drivers/net/phy/motorcomm.c | 130 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 130 insertions(+)
+
+diff --git a/drivers/net/phy/motorcomm.c b/drivers/net/phy/motorcomm.c
+index b76011b22..b46f81a4a 100644
+--- a/drivers/net/phy/motorcomm.c
++++ b/drivers/net/phy/motorcomm.c
+@@ -13,6 +13,7 @@
+ #include <linux/property.h>
+ 
+ #define PHY_ID_YT8511		0x0000010a
++#define PHY_ID_YT8512B		0x00000128
+ #define PHY_ID_YT8521		0x0000011a
+ #define PHY_ID_YT8531		0x4f51e91b
+ #define PHY_ID_YT8531S		0x4f51e91a
+@@ -132,6 +133,31 @@
+ #define YT8511_DELAY_FE_TX_EN	(0xf << 12)
+ #define YT8511_DELAY_FE_TX_DIS	(0x2 << 12)
+ 
++/* YT8512B specific registers */
++#define YT8512_EXTREG_AFE_PLL		0x50
++#define YT8512_EXTREG_EXTEND_COMBO	0x4000
++#define YT8512_EXTREG_LED0		0x40c0
++#define YT8512_EXTREG_LED1		0x40c3
++#define YT8512_EXTREG_SLEEP_CONTROL1	0x2027
++
++#define YT8512_CONFIG_PLL_REFCLK_SEL_EN	0x0040
++#define YT8512_CONTROL1_RMII_EN		0x0001
++#define YT8512_LED0_ACT_BLK_IND		0x1000
++#define YT8512_LED0_DIS_LED_AN_TRY	0x0001
++#define YT8512_LED0_BT_BLK_EN		0x0002
++#define YT8512_LED0_HT_BLK_EN		0x0004
++#define YT8512_LED0_COL_BLK_EN		0x0008
++#define YT8512_LED0_BT_ON_EN		0x0010
++#define YT8512_LED1_BT_ON_EN		0x0010
++#define YT8512_LED1_TXACT_BLK_EN	0x0100
++#define YT8512_LED1_RXACT_BLK_EN	0x0200
++
++#define YT8512_SPEED_MODE		0xc000
++#define YT8512_DUPLEX			0x2000
++#define YT8512_SPEED_MODE_BIT		14
++#define YT8512_DUPLEX_BIT		13
++#define YT8512_EN_SLEEP_SW_BIT		15
++
+ /* Extended register is different from MMD Register and MII Register.
+  * We can use ytphy_read_ext/ytphy_write_ext/ytphy_modify_ext function to
+  * operate extended register.
+@@ -1039,6 +1065,100 @@ static int yt8531_set_ds(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
++static int yt8512_config_init(struct phy_device *phydev)
++{
++	int ret, val;
++
++	val = ytphy_read_ext(phydev, YT8512_EXTREG_AFE_PLL);
++	if (val < 0)
++		return val;
++
++	val |= YT8512_CONFIG_PLL_REFCLK_SEL_EN;
++	ret = ytphy_write_ext(phydev, YT8512_EXTREG_AFE_PLL, val);
++	if (ret < 0)
++		return ret;
++
++	val = ytphy_read_ext(phydev, YT8512_EXTREG_EXTEND_COMBO);
++	if (val < 0)
++		return val;
++
++	val |= YT8512_CONTROL1_RMII_EN;
++	ret = ytphy_write_ext(phydev, YT8512_EXTREG_EXTEND_COMBO, val);
++	if (ret < 0)
++		return ret;
++
++	ret = phy_write(phydev, MII_BMCR, BMCR_RESET);
++	if (ret < 0)
++		return ret;
++
++	msleep(100);
++
++	val = ytphy_read_ext(phydev, YT8512_EXTREG_SLEEP_CONTROL1);
++	if (val < 0)
++		return val;
++
++	val &= ~BIT(YT8512_EN_SLEEP_SW_BIT);
++	ret = ytphy_write_ext(phydev, YT8512_EXTREG_SLEEP_CONTROL1, val);
++	if (ret < 0)
++		return ret;
++
++	val = ytphy_read_ext(phydev, YT8512_EXTREG_LED0);
++	if (val < 0)
++		return val;
++
++	val |= YT8512_LED0_ACT_BLK_IND;
++	val &= ~(YT8512_LED0_DIS_LED_AN_TRY | YT8512_LED0_BT_BLK_EN |
++		 YT8512_LED0_HT_BLK_EN | YT8512_LED0_COL_BLK_EN |
++		 YT8512_LED0_BT_ON_EN);
++
++	ret = ytphy_write_ext(phydev, YT8512_EXTREG_LED0, val);
++	if (ret < 0)
++		return ret;
++
++	val = ytphy_read_ext(phydev, YT8512_EXTREG_LED1);
++	if (val < 0)
++		return val;
++
++	val |= YT8512_LED1_BT_ON_EN;
++	val &= ~(YT8512_LED1_TXACT_BLK_EN | YT8512_LED1_RXACT_BLK_EN);
++
++	ret = ytphy_write_ext(phydev, YT8512_EXTREG_LED1, val);
++	if (ret < 0)
++		return ret;
++
++	return 0;
++}
++
++static int yt8512_read_status(struct phy_device *phydev)
++{
++	int ret, val, speed_mode;
++
++	ret = genphy_update_link(phydev);
++	if (ret)
++		return ret;
++
++	val = phy_read(phydev, YTPHY_SPECIFIC_STATUS_REG);
++	if (val < 0)
++		return val;
++
++	phydev->duplex = (val & YT8512_DUPLEX) ? DUPLEX_FULL : DUPLEX_HALF;
++
++	speed_mode = (val & YT8512_SPEED_MODE) >> YT8512_SPEED_MODE_BIT;
++	switch (speed_mode) {
++	case 0:
++		phydev->speed = SPEED_10;
++		break;
++	case 1:
++		phydev->speed = SPEED_100;
++		break;
++	default:
++		phydev->speed = SPEED_UNKNOWN;
++		break;
++	}
++
++	return 0;
++}
++
+ /**
+  * yt8521_probe() - read chip config then set suitable polling_mode
+  * @phydev: a pointer to a &struct phy_device
+@@ -3017,6 +3137,15 @@ static struct phy_driver motorcomm_phy_drvs[] = {
+ 		.read_page	= yt8511_read_page,
+ 		.write_page	= yt8511_write_page,
+ 	},
++	{
++		PHY_ID_MATCH_EXACT(PHY_ID_YT8512B),
++		.name		= "YT8512B Fast Ethernet",
++		.config_init	= yt8512_config_init,
++		.config_aneg	= genphy_config_aneg,
++		.read_status	= yt8512_read_status,
++		.suspend	= genphy_suspend,
++		.resume		= genphy_resume,
++	},
+ 	{
+ 		PHY_ID_MATCH_EXACT(PHY_ID_YT8521),
+ 		.name		= "YT8521 Gigabit Ethernet",
+@@ -3093,6 +3222,7 @@ MODULE_LICENSE("GPL");
+ 
+ static const struct mdio_device_id __maybe_unused motorcomm_tbl[] = {
+ 	{ PHY_ID_MATCH_EXACT(PHY_ID_YT8511) },
++	{ PHY_ID_MATCH_EXACT(PHY_ID_YT8512B) },
+ 	{ PHY_ID_MATCH_EXACT(PHY_ID_YT8521) },
+ 	{ PHY_ID_MATCH_EXACT(PHY_ID_YT8531) },
+ 	{ PHY_ID_MATCH_EXACT(PHY_ID_YT8531S) },
