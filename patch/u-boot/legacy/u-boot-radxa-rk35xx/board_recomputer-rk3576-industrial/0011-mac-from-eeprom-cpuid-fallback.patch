@@ -1,0 +1,124 @@
+From: Seeed Studio <techsupport@seeed.cc>
+Subject: [PATCH] rockchip: misc: read MACs from on-module EEPROM, fall back to cpuid
+
+The on-module EEPROM (I2C2, 0x50) holds per-port unit MACs as ASCII
+"xx:xx:xx:xx:xx:xx": ethaddr at 0x20, eth1addr at 0x40. ethaddr
+anchors the pair: EEPROM data is used only when the ethaddr record is
+valid — a missing eth1addr is then derived from ethaddr (last byte
+XOR 1, the same convention the cpuid path uses). An eth1addr record
+duplicating the ethaddr address is rejected the same way, so the two
+ports never share one MAC. Without a valid ethaddr (including an
+erased, all-0xff chip) the EEPROM is ignored entirely and both MACs
+come from the cpuid fallback, which itself only runs while ethaddr is
+unset.
+
+diff --git a/arch/arm/mach-rockchip/misc.c b/arch/arm/mach-rockchip/misc.c
+index 9415701f987..39821c2e5f9 100644
+--- a/arch/arm/mach-rockchip/misc.c
++++ b/arch/arm/mach-rockchip/misc.c
+@@ -12,7 +12,10 @@
+ #include <common.h>
+ #include <dm.h>
+ #include <hash.h>
++#include <env_flags.h>
++#include <i2c.h>
+ #include <log.h>
++#include <net.h>
+ #include <dm/uclass-internal.h>
+ #include <misc.h>
+ #include <u-boot/crc.h>
+@@ -40,6 +43,94 @@ int rockchip_setup_macaddr(void)
+ 	if (env_get("ethaddr"))
+ 		return 0;
+ 
++	/* Module EEPROM (bus 2, 0x50): per-port MACs as ASCII
++	 * "xx:xx:xx:xx:xx:xx", ethaddr at 0x20, eth1addr at 0x40.
++	 * ethaddr anchors the pair: records are used only when the
++	 * ethaddr record is valid; a missing eth1addr is derived from
++	 * ethaddr (last byte XOR 1, same convention as the cpuid path
++	 * below). Without a valid ethaddr the EEPROM is ignored and
++	 * both MACs come from the cpuid fallback.
++	 */
++	{
++		static const char * const names[] = { "ethaddr", "eth1addr" };
++		struct udevice *eeprom;
++		u8 eemac[2][6];
++		bool have[2] = { false, false };
++		char buf[18];
++		int i;
++
++		if (i2c_get_chip_for_busnum(2, 0x50, 2, &eeprom)) {
++			printf("Module EEPROM not readable, fallback to cpuid\n");
++		} else {
++			for (i = 0; i < 2; i++) {
++				if (dm_i2c_read(eeprom, 0x20 + 0x20 * i,
++						(u8 *)buf, 17)) {
++					printf("EEPROM %s read failed\n",
++					       names[i]);
++					break;
++				}
++				buf[17] = '\0';
++				/* Erased (all 0xff) or zeroed (all 0x00)
++				 * record: the chip was never programmed.
++				 * Skip to the cpuid fallback instead of
++				 * dumping raw bytes below.
++				 */
++				{
++					int j, ff = 1, zz = 1;
++					for (j = 0; j < 17; j++) {
++						if (buf[j] != 0xff)
++							ff = 0;
++						if (buf[j] != 0x00)
++							zz = 0;
++					}
++					if (ff || zz) {
++						printf("EEPROM %s not programmed\n",
++						       names[i]);
++						continue;
++					}
++				}
++				eth_parse_enetaddr(buf, eemac[i]);
++				if (eth_validate_ethaddr_str(buf) ||
++				    !is_valid_ethaddr(eemac[i])) {
++					printf("EEPROM %s invalid, ignored\n",
++					       names[i]);
++					continue;
++				}
++				have[i] = true;
++			}
++			/* ethaddr anchors the pair: only EEPROM data with
++			 * a valid ethaddr is used. The cpuid fallback
++			 * below runs only while ethaddr is unset, so with
++			 * a valid ethaddr and no eth1addr record the
++			 * second port is derived here (last byte XOR 1).
++			 */
++			if (have[0]) {
++				eth_env_set_enetaddr(names[0], eemac[0]);
++				/* A duplicate eth1addr record (same MAC as
++				 * ethaddr) would put both ports on one
++				 * address — reject it and derive instead.
++				 */
++				if (have[1] &&
++				    memcmp(eemac[0], eemac[1], 6)) {
++					eth_env_set_enetaddr(names[1],
++							     eemac[1]);
++					printf("ethaddr/eth1addr from EEPROM\n");
++				} else {
++					if (have[1])
++						printf("EEPROM eth1addr duplicates ethaddr, deriving\n");
++					memcpy(eemac[1], eemac[0], 6);
++					eemac[1][5] ^= 0x01;
++					eth_env_set_enetaddr(names[1],
++							     eemac[1]);
++					printf("eth1addr derived from ethaddr\n");
++				}
++				return 0;
++			}
++			if (have[1])
++				printf("EEPROM eth1addr without ethaddr, using cpuid MACs\n");
++		}
++	}
++
+ 	if (!cpuid) {
+ 		debug("%s: could not retrieve 'cpuid#'\n", __func__);
+ 		return -1;
