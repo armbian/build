@@ -102,9 +102,8 @@ function install_distribution_agnostic() {
 		tr ' ' '\n' <<< "${MODULES_BLACKLIST}" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
 	fi
 
-	# configure MIN / MAX speed for cpufrequtils
+	# CPU frequency defaults: armbian-hardware-optimization applies them, armbian-config edits them
 	cat <<- EOF > "${SDCARD}"/etc/default/cpufrequtils
-		ENABLE=${CPUFREQUTILS_ENABLE:-false}
 		MIN_SPEED=$CPUMIN
 		MAX_SPEED=$CPUMAX
 		GOVERNOR=$GOVERNOR
