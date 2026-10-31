@@ -33,8 +33,33 @@ set_new_hostname() {
 		/etc/hosts
 }
 
+# Apply the tuning profile that the build selected (TUNING_PROFILE). armbian-config
+# replaces PENDING= with PROFILE= on success. Returns 1 only when the apply fails.
+apply_tuning_profile() {
+	local profile
+	profile=$(sed -n 's/^PENDING=//p' /etc/default/armbian-tuning-profile 2>/dev/null)
+	[[ -n "${profile}" ]] && command -v armbian-config > /dev/null 2>&1 || return 0
+	if armbian-config --api module_tuning_profile apply "${profile}" >> ${Log} 2>&1; then
+		echo -e "\n### [firstrun] Applied tuning profile ${profile}" >>${Log}
+	else
+		echo -e "\n### [firstrun] Tuning profile ${profile} failed" >>${Log}
+		return 1
+	fi
+}
+
+# Marks a completed first run whose tuning profile failed.
+PROFILE_RETRY=/var/lib/armbian/firstrun-profile-retry
+
 case "$1" in
 	start)
+
+	# The first run is done except the tuning profile. Retry only the profile.
+	if [[ -f "${PROFILE_RETRY}" ]]; then
+		apply_tuning_profile || exit 0
+		rm -f "${PROFILE_RETRY}"
+		systemctl disable armbian-firstrun
+		exit 0
+	fi
 
 	# Run a q&d benchmark to be able to identify cards way too slow easily
 	if command -v "iozone" > /dev/null 2>&1; then
@@ -81,15 +106,8 @@ case "$1" in
 		echo -e "\n### [firstrun] SSH host keys unchanged" >>${Log}
 	fi
 
-	# Apply the tuning profile that the build selected (TUNING_PROFILE).
-	_profile=$(sed -n 's/^PENDING=//p' /etc/default/armbian-tuning-profile 2>/dev/null)
-	if [[ -n "${_profile}" ]] && command -v armbian-config > /dev/null 2>&1; then
-		if armbian-config --api module_tuning_profile apply "${_profile}" >> ${Log} 2>&1; then
-			echo -e "\n### [firstrun] Applied tuning profile ${_profile}" >>${Log}
-		else
-			echo -e "\n### [firstrun] Tuning profile ${_profile} failed" >>${Log}
-		fi
-	fi
+	_profile_failed=
+	apply_tuning_profile || _profile_failed=yes
 
 	# get rid of purple background color in newt apps whiptail, partimage, debconf ... Reverting to Debian look.
 	[[ -f /etc/newt/palette ]] && sed -e 's/magenta/blue/g' -i /etc/newt/palette
@@ -241,6 +259,12 @@ case "$1" in
 
 	# Remove KDE Neon base files upgrade pin
 	[[ -f /etc/apt/preferences.d/99-neon-base-files ]] && rm -f /etc/apt/preferences.d/99-neon-base-files
+
+	# Keep the service enabled after a failed tuning profile. The next boot retries only the profile.
+	if [[ -n "${_profile_failed}" ]]; then
+		mkdir -p "${PROFILE_RETRY%/*}" && touch "${PROFILE_RETRY}"
+		exit 0
+	fi
 
 	systemctl disable armbian-firstrun
 	exit 0

@@ -118,7 +118,12 @@ function install_distribution_agnostic() {
 			CPUMAX) cpufreq_key=MAX_SPEED ;;
 			GOVERNOR) cpufreq_key=GOVERNOR ;;
 		esac
-		[[ "${!cpufreq_var}" =~ ^[a-z0-9_]+$ ]] || exit_with_error "Invalid ${cpufreq_var}" "${!cpufreq_var}"
+		# Frequencies are integers in kHz. Governor names are words.
+		if [[ "${cpufreq_key}" == GOVERNOR ]]; then
+			[[ "${!cpufreq_var}" =~ ^[a-z0-9_]+$ ]] || exit_with_error "Invalid ${cpufreq_var}" "${!cpufreq_var}"
+		else
+			[[ "${!cpufreq_var}" =~ ^[0-9]+$ ]] || exit_with_error "Invalid ${cpufreq_var}" "${!cpufreq_var}"
+		fi
 		echo "POLICY${cpufreq_var##*_POLICY}_${cpufreq_key}=${!cpufreq_var}" >> "${SDCARD}"/etc/default/cpufrequtils
 	done
 
