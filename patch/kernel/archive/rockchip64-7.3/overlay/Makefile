@@ -130,6 +130,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-odroidm2-weather-board-zero.dtbo \
 	rockchip-rk3588-odroidm2-display-vu8s.dtbo \
 	rockchip-rk3588-orangepi-5-ap6275p.dtbo \
+	rockchip-rk3588-orangepi-5-max-ap6611s.dtbo \
 	rockchip-rk3588-orangepi5-pro-restore-fan-param.dtbo\
 	rockchip-rk3588-orangepi-cm5-cam1.dtbo \
 
