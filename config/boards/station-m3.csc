@@ -10,6 +10,7 @@ BOOTCONFIG="roc-pc-rk3588s_defconfig"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-roc-pc.dtb"
+OVERLAY_PREFIX_BOARD="rk3588s-roc-pc"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="station-m3" # This _only_ used for uefi-edk2-rk3588 extension
