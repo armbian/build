@@ -304,7 +304,8 @@ function create_sources_list_and_deploy_repo_key() {
 
 	# lets link to the old file as armbian-config uses it and we can't set there to new file
 	# we user force linking as some old caches still exists
-	LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
+	# Run on the host: uutils ln -f (Ubuntu 25.10+) needs /dev/urandom, which is absent in the chroot here.
+	ln -fs armbian-archive-keyring.gpg "${basedir}/usr/share/keyrings/armbian.gpg"
 
 	# lets keep old way for old distributions
 	if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
