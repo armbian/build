@@ -16,16 +16,6 @@ SRC_CMDLINE="console=ttyS0,115200n8 rootwait loglevel=8 swiotlb=512 cgroup_enabl
 HAS_VIDEO_OUTPUT="no"
 PACKAGE_LIST_BOARD="mtd-utils nvme-cli" # SPI-NAND recovery medium and the M.2 M-key slot
 
-function post_family_config_branch_current__bananapir3mini_kernel() {
-	declare -g LINUXFAMILY="filogic-mt7986"
-	declare -g KERNEL_MAJOR_MINOR="6.18"
-	declare -g KERNELSOURCE=""
-	declare -g KERNELBRANCH=""
-	declare -g KERNEL_PATCH_ARCHIVE_BASE="filogic-mt7986"
-	declare -g KERNELPATCHDIR="archive/filogic-mt7986-6.18"
-	declare -g LINUXCONFIG="linux-filogic-mt7986-current"
-}
-
 # BL2 lives in the eMMC boot0 hardware partition, which a disk image cannot carry
 function post_family_config__bananapir3mini_uboot_platform() {
 	# mtk-gpt.bin ships in the package because write_uboot_platform also runs board-side
