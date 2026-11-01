@@ -1,0 +1,205 @@
+From 33392343c74e417375b87032c66078a3bbc1dc91 Mon Sep 17 00:00:00 2001
+From: Mayank Rungta <mrungta@google.com>
+Date: Wed, 9 Sep 2026 15:48:18 -0700
+Subject: [PATCH] PM: sleep: Add DPM watchdog to
+ prepare/late/early/noirq/complete phases
+
+Extend the DPM watchdog to wrap device_prepare, device_suspend_late,
+device_suspend_noirq, device_resume_noirq, device_resume_early, and
+device_complete callbacks. If a driver hangs during these transitions,
+the watchdog will fire and dump a stack trace to help identify the
+offending driver.
+
+To prevent false-positive timeouts, the watchdog is set only after
+waiting for subordinate (during suspend) and superior (during resume)
+devices. With this change, DPM watchdog coverage is extended across all
+phases of system sleep transitions.
+
+Signed-off-by: Mayank Rungta <mrungta@google.com>
+Reviewed-by: Douglas Anderson <dianders@chromium.org>
+Reviewed-by: Tzung-Bi Shih <tzungbi@kernel.org>
+Link: https://patch.msgid.link/20260909224818.2177311-1-mrungta@google.com
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+(cherry picked from commit 33392343c74e417375b87032c66078a3bbc1dc91, Linux 7.4-rc; backported to Armbian sunxi-7.3)
+---
+ drivers/base/power/main.c | 31 ++++++++++++++++++++++++++++---
+ 1 file changed, 28 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/base/power/main.c b/drivers/base/power/main.c
+index e130da42814106..4e0d6357a37cb7 100644
+--- a/drivers/base/power/main.c
++++ b/drivers/base/power/main.c
+@@ -802,6 +802,7 @@ static void device_resume_noirq(struct device *dev, pm_message_t state, bool asy
+ 	const char *info = NULL;
+ 	bool skip_resume;
+ 	int error = 0;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	TRACE_DEVICE(dev);
+ 	TRACE_RESUME(0);
+@@ -827,6 +828,7 @@ static void device_resume_noirq(struct device *dev, pm_message_t state, bool asy
+ 	if (!dpm_wait_for_superior(dev, async))
+ 		goto Out;
+ 
++	dpm_watchdog_set(&wd, dev);
+ 	skip_resume = dev_pm_skip_resume(dev);
+ 	/*
+ 	 * If the driver callback is skipped below or by the middle layer
+@@ -871,6 +873,7 @@ static void device_resume_noirq(struct device *dev, pm_message_t state, bool asy
+ 	error = dpm_run_callback(callback, dev, state, info);
+ 
+ Skip:
++	dpm_watchdog_clear(&wd);
+ 	dev->power.is_noirq_suspended = false;
+ 
+ Out:
+@@ -971,6 +974,7 @@ static void device_resume_early(struct device *dev, pm_message_t state, bool asy
+ 	pm_callback_t callback = NULL;
+ 	const char *info = NULL;
+ 	int error = 0;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	TRACE_DEVICE(dev);
+ 	TRACE_RESUME(0);
+@@ -987,6 +991,7 @@ static void device_resume_early(struct device *dev, pm_message_t state, bool asy
+ 	if (!dpm_wait_for_superior(dev, async))
+ 		goto Out;
+ 
++	dpm_watchdog_set(&wd, dev);
+ 	if (dev->pm_domain) {
+ 		info = "early power domain ";
+ 		callback = pm_late_early_op(&dev->pm_domain->ops, state);
+@@ -1004,7 +1009,7 @@ static void device_resume_early(struct device *dev, pm_message_t state, bool asy
+ 		goto Run;
+ 
+ 	if (dev_pm_skip_resume(dev))
+-		goto Skip;
++		goto End;
+ 
+ 	if (dev->driver && dev->driver->pm) {
+ 		info = "early driver ";
+@@ -1014,6 +1019,9 @@ static void device_resume_early(struct device *dev, pm_message_t state, bool asy
+ Run:
+ 	error = dpm_run_callback(callback, dev, state, info);
+ 
++End:
++	dpm_watchdog_clear(&wd);
++
+ Skip:
+ 	dev->power.is_late_suspended = false;
+ 	pm_runtime_enable(dev);
+@@ -1281,10 +1289,12 @@ static void device_complete(struct device *dev, pm_message_t state)
+ {
+ 	void (*callback)(struct device *) = NULL;
+ 	const char *info = NULL;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	if (dev->power.syscore)
+ 		goto out;
+ 
++	dpm_watchdog_set(&wd, dev);
+ 	device_lock(dev);
+ 
+ 	if (dev->pm_domain) {
+@@ -1312,6 +1322,7 @@ static void device_complete(struct device *dev, pm_message_t state)
+ 	}
+ 
+ 	device_unlock(dev);
++	dpm_watchdog_clear(&wd);
+ 
+ out:
+ 	/* If enabling runtime PM for the device is blocked, unblock it. */
+@@ -1508,6 +1519,7 @@ static void device_suspend_noirq(struct device *dev, pm_message_t state, bool as
+ 	pm_callback_t callback = NULL;
+ 	const char *info = NULL;
+ 	int error = 0;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	TRACE_DEVICE(dev);
+ 	TRACE_SUSPEND(0);
+@@ -1520,6 +1532,7 @@ static void device_suspend_noirq(struct device *dev, pm_message_t state, bool as
+ 	if (dev->power.syscore || dev->power.direct_complete)
+ 		goto Complete;
+ 
++	dpm_watchdog_set(&wd, dev);
+ 	if (dev->pm_domain) {
+ 		info = "noirq power domain ";
+ 		callback = pm_noirq_op(&dev->pm_domain->ops, state);
+@@ -1550,7 +1563,7 @@ static void device_suspend_noirq(struct device *dev, pm_message_t state, bool as
+ 		WRITE_ONCE(async_error, error);
+ 		dpm_save_failed_dev(dev_name(dev));
+ 		pm_dev_err(dev, state, async ? " async noirq" : " noirq", error);
+-		goto Complete;
++		goto End;
+ 	}
+ 
+ Skip:
+@@ -1569,6 +1582,9 @@ static void device_suspend_noirq(struct device *dev, pm_message_t state, bool as
+ 	if (dev->power.must_resume)
+ 		dpm_superior_set_must_resume(dev);
+ 
++End:
++	dpm_watchdog_clear(&wd);
++
+ Complete:
+ 	complete_all(&dev->power.completion);
+ 	TRACE_SUSPEND(error);
+@@ -1703,6 +1719,7 @@ static void device_suspend_late(struct device *dev, pm_message_t state, bool asy
+ 	pm_callback_t callback = NULL;
+ 	const char *info = NULL;
+ 	int error = 0;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	TRACE_DEVICE(dev);
+ 	TRACE_SUSPEND(0);
+@@ -1720,6 +1737,8 @@ static void device_suspend_late(struct device *dev, pm_message_t state, bool asy
+ 	if (dev->power.direct_complete)
+ 		goto Complete;
+ 
++	dpm_watchdog_set(&wd, dev);
++
+ 	/*
+ 	 * After this point, any runtime PM operations targeting the device
+ 	 * will fail until the corresponding pm_runtime_enable() call in
+@@ -1761,13 +1780,16 @@ static void device_suspend_late(struct device *dev, pm_message_t state, bool asy
+ 		dpm_save_failed_dev(dev_name(dev));
+ 		pm_dev_err(dev, state, async ? " async late" : " late", error);
+ 		pm_runtime_enable(dev);
+-		goto Complete;
++		goto End;
+ 	}
+ 	dpm_propagate_wakeup_to_parent(dev);
+ 
+ Skip:
+ 	dev->power.is_late_suspended = true;
+ 
++End:
++	dpm_watchdog_clear(&wd);
++
+ Complete:
+ 	TRACE_SUSPEND(error);
+ 	complete_all(&dev->power.completion);
+@@ -2201,6 +2223,7 @@ static int device_prepare(struct device *dev, pm_message_t state)
+ 	int (*callback)(struct device *) = NULL;
+ 	bool smart_suspend;
+ 	int ret = 0;
++	DECLARE_DPM_WATCHDOG_ON_STACK(wd);
+ 
+ 	/*
+ 	 * If a device's parent goes into runtime suspend at the wrong time,
+@@ -2220,6 +2243,7 @@ static int device_prepare(struct device *dev, pm_message_t state)
+ 	if (dev->power.syscore)
+ 		return 0;
+ 
++	dpm_watchdog_set(&wd, dev);
+ 	device_lock(dev);
+ 
+ 	dev->power.wakeup_path = false;
+@@ -2245,6 +2269,7 @@ static int device_prepare(struct device *dev, pm_message_t state)
+ 
+ unlock:
+ 	device_unlock(dev);
++	dpm_watchdog_clear(&wd);
+ 
+ 	if (ret < 0) {
+ 		suspend_report_result(dev, callback, ret);
