@@ -37,3 +37,13 @@ the BL2 partition, `0034` adds an unused CPU-frequency calibration cell, and
 
 Only entries listed in the top-level `series.conf` are stored and applied during
 a build.
+
+## BPI-R4 SFP+ fixes from 6.18-main
+
+`0042` and `0043` come from Frank-W's `6.18-main` branch. Without `0042`,
+phylink rejects a 10GBASE-R SFP+ module with "autoneg setting not compatible
+with PCS". `0043` stops the USXGMII link flapping.
+
+`0016` now matches Frank-W's commit in the TDMA hang check. The earlier port
+inverted the RX and TX FSM compares. On an idle MT7988 the check then fired
+every poll, and the frame engine reset every 3 seconds.
