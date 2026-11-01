@@ -78,6 +78,16 @@ function apt_find_upstream_package_version_and_download_url() {
 		)
 	fi
 
+	# Fallback: release not in the GHA json yet (new release). Read the distro Packages index.
+	if [[ "${found_package_filename}" != "${sought_package_name}_"* ]]; then
+		display_alert "Package not in json, trying distro Packages index" "${package_download_release}/${ARCH}" "wrn"
+		found_package_filename=$(
+			curl --silent --fail --max-time 60 "http://${mirror_with_slash}dists/${package_download_release}/main/binary-${ARCH}/Packages.xz" |
+				xz -dc 2> /dev/null |
+				awk -v p="${sought_package_name}" '$1 == "Package:" { f = ($2 == p) } f && $1 == "Filename:" { n = split($2, a, "/"); print a[n]; exit }'
+		)
+	fi
+
 	if [[ "${found_package_filename}" == "${sought_package_name}_"* ]]; then
 		display_alert "Found upstream base-files package filename" "${found_package_filename}" "info"
 	else
