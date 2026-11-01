@@ -1,0 +1,80 @@
+From 4785d5faa935a828a04743c5a7d279baf454c723 Mon Sep 17 00:00:00 2001
+From: Ovidiu Panait <ovidiu.panait.rb@renesas.com>
+Date: Mon, 5 Oct 2026 11:11:57 +0000
+Subject: [PATCH] PM: suspend: Do not call suspend_ops->begin()/end() for
+ s2idle
+
+Commit 7602c0ec0bbf ("firmware: psci: Set
+pm_set_resume/suspend_via_firmware() for SYSTEM_SUSPEND") made
+psci_system_suspend_begin() call pm_set_suspend_via_firmware(), so that
+device drivers can prepare for the possible removal of the power before
+PSCI SYSTEM_SUSPEND.
+
+Since then, on platforms where PSCI firmware supports SYSTEM_SUSPEND,
+pm_suspend_via_firmware() returns true during both s2ram and s2idle.
+This is inconsistent, since SYSTEM_SUSPEND is only invoked for s2ram.
+
+This was observed while investigating PCI-related suspend/resume issues
+on Renesas platforms (RZ/G3S, RZ/V2H), and was traced to
+platform_suspend_begin() falling back to suspend_ops->begin() (PSCI in
+this case) when there is no s2idle_ops->begin() callback:
+
+  platform_suspend_begin(PM_SUSPEND_TO_IDLE)
+    suspend_ops->begin()
+      psci_system_suspend_begin()
+        pm_set_suspend_via_firmware()
+
+platform_resume_end() falls back to suspend_ops->end() in the same way.
+
+Since s2idle has its own set of callbacks in s2idle_ops, make
+platform_suspend_begin() and platform_resume_end() only invoke those for
+s2idle, like the other platform_*() helpers do.
+
+Fixes: 7602c0ec0bbf ("firmware: psci: Set pm_set_resume/suspend_via_firmware() for SYSTEM_SUSPEND")
+Signed-off-by: Ovidiu Panait <ovidiu.panait.rb@renesas.com>
+Tested-by: Claudiu Beznea <claudiu.beznea.uj@bp.renesas.com>
+Link: https://patch.msgid.link/20261005111157.17256-1-ovidiu.panait.rb@renesas.com
+[ rjw: Added Fixes: tag ]
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+(cherry picked from commit 4785d5faa935a828a04743c5a7d279baf454c723, Linux 7.4-rc; backported to Armbian sunxi-7.3)
+---
+ kernel/power/suspend.c | 20 ++++++++++++--------
+ 1 file changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/kernel/power/suspend.c b/kernel/power/suspend.c
+index 57c44268698f7f..32c055df02da7d 100644
+--- a/kernel/power/suspend.c
++++ b/kernel/power/suspend.c
+@@ -306,20 +306,24 @@ static void platform_resume_finish(suspend_state_t state)
+ 
+ static int platform_suspend_begin(suspend_state_t state)
+ {
+-	if (state == PM_SUSPEND_TO_IDLE && s2idle_ops && s2idle_ops->begin)
+-		return s2idle_ops->begin();
+-	else if (suspend_ops && suspend_ops->begin)
++	if (state == PM_SUSPEND_TO_IDLE) {
++		if (s2idle_ops && s2idle_ops->begin)
++			return s2idle_ops->begin();
++	} else if (suspend_ops && suspend_ops->begin) {
+ 		return suspend_ops->begin(state);
+-	else
+-		return 0;
++	}
++
++	return 0;
+ }
+ 
+ static void platform_resume_end(suspend_state_t state)
+ {
+-	if (state == PM_SUSPEND_TO_IDLE && s2idle_ops && s2idle_ops->end)
+-		s2idle_ops->end();
+-	else if (suspend_ops && suspend_ops->end)
++	if (state == PM_SUSPEND_TO_IDLE) {
++		if (s2idle_ops && s2idle_ops->end)
++			s2idle_ops->end();
++	} else if (suspend_ops && suspend_ops->end) {
+ 		suspend_ops->end();
++	}
+ }
+ 
+ static void platform_recover(suspend_state_t state)
