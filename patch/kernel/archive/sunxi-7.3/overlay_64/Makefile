@@ -90,6 +90,7 @@ dtb-$(CONFIG_ARCH_SUNXI) += \
 	sun50i-h616-uart4-pi.dtbo \
 	sun50i-h616-uart4-pi-rts-cts.dtbo \
 	sun50i-h616-uart5.dtbo \
+	sun50i-h616-usb-otg-host.dtbo \
 	sun50i-h616-spi-spidev.dtbo \
 	sun50i-h616-spidev0_0.dtbo \
 	sun50i-h616-spidev1_0.dtbo \
