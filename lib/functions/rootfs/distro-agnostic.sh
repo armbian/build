@@ -522,7 +522,8 @@ function install_distribution_agnostic() {
 	disable_systemd_service_sdcard nmbd
 
 	# disable low-level kernel messages for non betas
-	if [[ -z $BETA ]]; then
+	# trixie and newer do not ship /etc/sysctl.conf
+	if [[ -z $BETA && -f "${SDCARD}"/etc/sysctl.conf ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" "${SDCARD}"/etc/sysctl.conf
 	fi
 
