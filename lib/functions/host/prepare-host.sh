@@ -228,7 +228,7 @@ function adaptative_prepare_host_dependencies() {
 	# refuses to auto-pick a provider, so install the non-HWE concrete
 	# name explicitly there.
 	case "${host_release}" in
-		resolute) host_dependencies+=("qemu::qemu-user-binfmt") ;;
+		resolute | stonking) host_dependencies+=("qemu::qemu-user-binfmt") ;;
 		*) host_dependencies+=("qemu::qemu-user-static") ;;
 	esac
 

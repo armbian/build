@@ -124,7 +124,7 @@ function fetch_distro_keyring() {
 		buster | bullseye | bookworm | trixie | forky | sid)
 			distro="debian"
 			;;
-		focal | jammy | noble | oracular | plucky | questing | resolute)
+		focal | jammy | noble | oracular | plucky | questing | resolute | stonking)
 			distro="ubuntu"
 			;;
 		*)
@@ -194,7 +194,7 @@ function fetch_distro_keyring() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bullseye|bookworm|trixie|forky|sid|focal|jammy|noble|oracular|plucky|questing|resolute
+# <release>: bullseye|bookworm|trixie|forky|sid|focal|jammy|noble|oracular|plucky|questing|resolute|stonking
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -273,7 +273,7 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 			;;
 
-		focal | jammy | noble | oracular | plucky | questing | resolute)
+		focal | jammy | noble | oracular | plucky | questing | resolute | stonking)
 			distro="ubuntu"
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
