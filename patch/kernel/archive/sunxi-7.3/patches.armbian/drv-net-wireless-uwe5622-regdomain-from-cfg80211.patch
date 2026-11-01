@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SUPE4COOKIE <supe4cookie@supe4cookie>
+Date: Wed, 16 Sep 2026 19:36:45 +0200
+Subject: wireless: uwe5622: take the regulatory domain from cfg80211, fix the firmware rule payload
+
+Two defects in sprdwl_reg_notify() and sprdwl_setup_wiphy().
+
+CONFIG_CFG80211_INTERNAL_REGDB went away in Linux 4.15, so on every kernel
+this driver still supports it compiles its "custom regdomain" path. That path
+flags the wiphy REGULATORY_CUSTOM_REG, applies the driver's own world table at
+setup, and resolves country hints through the seven-entry table in
+reg_domain.c (00/US/CN/NL/CZ/JP/TR). Any other alpha2 (FR, DE, GB, ...) logs
+"wrong country", falls back to the world table, and the notifier never applies
+anything back to the wiphy. So `iw reg get` reports "phy#0 country 00:
+DFS-UNSET" forever, whatever the user or the AP's country IE says. Let
+cfg80211 own the domain, it loads regulatory.db itself, and only relay the
+resulting per-channel rules to the firmware. That is what the old
+INTERNAL_REGDB code path already did.
+
+The WIFI_CMD_SET_REGDOM payload is declared as an array of struct
+unisoc_reg_rule (freq_range, power_rule, flags, dfs_cac_ms) on kernels 4.18
+and later, but both notifiers memcpy() the kernel's struct ieee80211_reg_rule
+into it and size the buffer by that struct. Since 4.18 the kernel struct also
+carries wmm_rule, and later psd, so the firmware read WMM parameters where it
+expected flags and dfs_cac_ms, and every rule after the first was misaligned.
+Copy the four fields explicitly and mask flags to the bits that existed when
+this ABI was defined.
+
+Seen on an Orange Pi Zero 2W (UWE5622, DietPi with Armbian's 6.18.45) behind an
+SFR router. After the AP moved its 5 GHz radio to DFS channel 52 the station
+associated, the 4-way handshake timed out on every attempt, and the device fell
+back to 2.4 GHz. With this change the phy follows the global domain (DE, from
+the AP's country IE), the handshake completes on channel 52, and the link runs
+VHT80 with no loss over a ten-minute soak.
+
+Origin: https://github.com/SUPE4COOKIE/uwe5622-5ghz-fix
+        0001-unisocwifi-regdomain-from-cfg80211.patch (GPL-2.0), rebased
+        unchanged onto armbian/uwe5622 f88cd0d25ff6 and re-rooted at
+        drivers/net/wireless/uwe5622/ for the Armbian kernel tree.
+Upstream: to be submitted as a PR to https://github.com/armbian/uwe5622;
+        this copy is the interim carrier until it is merged and the pin bumped.
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c | 69 +++++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 50 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+index a13dec4..fd9f463 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+@@ -45,7 +45,20 @@
+ #include "qos.h"
+ #endif
+ 
+-#if !defined(CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN)
++/*
++ * Regulatory source. CONFIG_CFG80211_INTERNAL_REGDB was removed in Linux
++ * 4.15: cfg80211 now loads regulatory.db itself, so the vendor's seven-entry
++ * country table in reg_domain.c (which silently maps every other alpha2,
++ * e.g. FR/DE/GB, onto the "00" world domain and never reflects the result
++ * back to the wiphy) is neither needed nor correct. Let cfg80211 own the
++ * domain and just relay the resulting rules to the firmware.
++ */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0) && !defined(CUSTOM_REGDOMAIN)
++#define SPRDWL_CFG80211_REGDB 1
++#endif
++
++#if !defined(SPRDWL_CFG80211_REGDB) && \
++	(!defined(CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN))
+ #include "reg_domain.h"
+ #endif
+ 
+@@ -3766,12 +3779,39 @@ static void sprdwl_save_ch_info(struct sprdwl_priv *priv, u32 band, u32 flags, i
+ 
+ }
+ 
+-#if defined(CONFIG_CFG80211_INTERNAL_REGDB) && !defined(CUSTOM_REGDOMAIN)
++/*
++ * The firmware's WIFI_CMD_SET_REGDOM payload is an array of
++ * struct unisoc_reg_rule (freq_range, power_rule, flags, dfs_cac_ms).
++ * Since Linux 4.18 struct ieee80211_reg_rule also carries wmm_rule (and,
++ * later, psd), so memcpy()ing the kernel struct both over-sizes the payload
++ * and lands WMM parameters where the firmware reads flags/dfs_cac_ms. Copy
++ * the four fields explicitly, and mask flags to the bits that existed when
++ * this firmware ABI was defined (NL80211_RRF_NO_160MHZ is bit 16).
++ */
++#define SPRDWL_FW_REG_RULE_FLAGS	GENMASK(16, 0)
++
++static void sprdwl_fill_reg_rule(struct sprdwl_ieee80211_regdomain *rd, u32 i,
++				 const struct ieee80211_reg_rule *reg_rule)
++{
++	rd->reg_rules[i].freq_range = reg_rule->freq_range;
++	rd->reg_rules[i].power_rule = reg_rule->power_rule;
++	rd->reg_rules[i].flags = reg_rule->flags & SPRDWL_FW_REG_RULE_FLAGS;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
++	rd->reg_rules[i].dfs_cac_ms = reg_rule->dfs_cac_ms;
++#else
++	rd->reg_rules[i].dfs_cac_ms = 0;
++#endif
++}
++
++#if defined(SPRDWL_CFG80211_REGDB) || \
++	(defined(CONFIG_CFG80211_INTERNAL_REGDB) && !defined(CUSTOM_REGDOMAIN))
+ static void sprdwl_reg_notify(struct wiphy *wiphy,
+ 			      struct regulatory_request *request)
+ {
+ 	struct sprdwl_priv *priv = wiphy_priv(wiphy);
++#ifdef STA_SOFTAP_SCC_MODE
+ 	struct sprdwl_intf *intf = (struct sprdwl_intf *)priv->hw_priv;
++#endif
+ 	struct ieee80211_supported_band *sband;
+ 	struct ieee80211_channel *chan;
+ 	const struct ieee80211_freq_range *freq_range;
+@@ -3820,8 +3860,7 @@ static void sprdwl_reg_notify(struct wiphy *wiphy,
+ 		}
+ 	}
+ 
+-	rd_size = sizeof(struct sprdwl_ieee80211_regdomain) +
+-	    n_rules * sizeof(struct ieee80211_reg_rule);
++	rd_size = sizeof(*rd) + n_rules * sizeof(rd->reg_rules[0]);
+ 
+ 	rd = kzalloc(rd_size, GFP_KERNEL);
+ 	if (!rd) {
+@@ -3863,8 +3902,7 @@ static void sprdwl_reg_notify(struct wiphy *wiphy,
+ 			    i < n_rules) {
+ 				last_start_freq = freq_range->start_freq_khz;
+ 
+-				memcpy(&rd->reg_rules[i], reg_rule,
+-				       sizeof(struct ieee80211_reg_rule));
++				sprdwl_fill_reg_rule(rd, i, reg_rule);
+ 				i++;
+ 
+ 				wl_info(
+@@ -3963,12 +4001,7 @@ static void sprdwl_reg_notify(struct wiphy *wiphy,
+ 		}
+ 	}
+ 
+-	rd_size = sizeof(struct sprdwl_ieee80211_regdomain) +
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0))
+-	    n_rules * sizeof(struct ieee80211_reg_rule);
+-#else
+-	    n_rules * sizeof(struct unisoc_reg_rule);
+-#endif
++	rd_size = sizeof(*rd) + n_rules * sizeof(rd->reg_rules[0]);
+ 
+ 	rd = kzalloc(rd_size, GFP_KERNEL);
+ 	if (!rd) {
+@@ -4011,11 +4044,7 @@ static void sprdwl_reg_notify(struct wiphy *wiphy,
+ 			    i < n_rules) {
+ 				last_start_freq = freq_range->start_freq_khz;
+ 
+-				memcpy(&rd->reg_rules[i], reg_rule,
+-				       sizeof(struct ieee80211_reg_rule));
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 15, 0))
+-				rd->reg_rules[i].dfs_cac_ms = 0;
+-#endif
++				sprdwl_fill_reg_rule(rd, i, reg_rule);
+ 				i++;
+ 
+ 				wiphy_dbg(wiphy,
+@@ -4077,7 +4106,8 @@ void sprdwl_setup_wiphy(struct wiphy *wiphy, struct sprdwl_priv *priv)
+ 	struct wiphy_sec2_t *sec2 = NULL;
+ 	struct ieee80211_sta_vht_cap *vht_info = NULL;
+ 	struct ieee80211_sta_ht_cap *ht_info = NULL;
+-#if !defined (CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN)
++#if !defined(SPRDWL_CFG80211_REGDB) && \
++	(!defined(CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN))
+ 	const struct ieee80211_regdomain *pRegdom;
+ 	char alpha2[2];
+ #endif
+@@ -4228,7 +4258,8 @@ void sprdwl_setup_wiphy(struct wiphy *wiphy, struct sprdwl_priv *priv)
+ 		wl_info("\tIEEE802.11d supported\n");
+ 		wiphy->reg_notifier = sprdwl_reg_notify;
+ 
+-#if !defined (CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN)
++#if !defined(SPRDWL_CFG80211_REGDB) && \
++	(!defined(CONFIG_CFG80211_INTERNAL_REGDB) || defined(CUSTOM_REGDOMAIN))
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ 		wiphy->regulatory_flags |= REGULATORY_CUSTOM_REG;
+ #else
+-- 
+Armbian
