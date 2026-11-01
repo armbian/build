@@ -514,8 +514,11 @@ function install_distribution_agnostic() {
 	fi
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?
-	chroot_sdcard chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper
-	chroot_sdcard chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+	# Ubuntu 26.10 no longer ships this file at this path; skip if absent.
+	if [[ -e "${SDCARD}/usr/lib/dbus-1.0/dbus-daemon-launch-helper" ]]; then
+		chroot_sdcard chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+		chroot_sdcard chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+	fi
 
 	# disable samba NetBIOS over IP name service requests since it hangs when no network is present at boot
 	# @TODO: rpardini: still needed? people might want working Samba
