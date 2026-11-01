@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Sun, 1 Nov 2026 22:30:00 +0000
+Subject: wireless: uwe5622: do not report a missing bt_hostwake DT node as an error
+
+The Allwinner build of the WCN core (CONFIG_AW_BOARD + CONFIG_BT_WAKE_HOST_EN,
+unisocwcn/Makefile) registers the BT_WAKE_AP pin as a wake-up IRQ from a DT
+node with compatible "allwinner,sunxi-btlpm" (vendor BSP style). Mainline
+device trees of the Orange Pi Zero2/Zero2W/Zero3 and WalnutPi boards do not
+have that node, so every boot logs
+
+  WCN_ERR: dts node for bt_wake not found
+
+although nothing is wrong: marlin_probe() continues ("marlin2 parse_dt some
+para not config"), WiFi and Bluetooth work, only the host cannot be woken by
+Bluetooth from suspend.
+
+Log it once at info level and return -ENODEV, and guard the suspend/resume
+hooks so they do not call enable_irq()/disable_irq() on IRQ 0 when no pin was
+registered. Behaviour is otherwise unchanged (the BT_WAKE_HOST bit sent to the
+firmware stays as before).
+
+To actually use the pin on the Orange Pi Zero2 (vendor DT: bt_hostwake PG16,
+bt_wake PG17, bt_rst_n PG19, wlan_hostwake PG15) a node like
+
+  bt-lpm { compatible = "allwinner,sunxi-btlpm";
+           bt_hostwake-gpios = <&pio 6 16 GPIO_ACTIVE_HIGH>; };
+
+would be needed; the >= 7.1 code path looks the GPIO up with
+fwnode_gpiod_get_index(..., "bt_hostwake", ...), i.e. a -gpios suffix.
+
+Upstream: to be submitted to https://github.com/armbian/uwe5622
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/wireless/uwe5622/unisocwcn/platform/wcn_boot.c | 26 ++++++++++++++++++++------
+ 1 file changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/uwe5622/unisocwcn/platform/wcn_boot.c b/drivers/net/wireless/uwe5622/unisocwcn/platform/wcn_boot.c
+index c6eeb84..5cdb5c3 100644
+--- a/drivers/net/wireless/uwe5622/unisocwcn/platform/wcn_boot.c
++++ b/drivers/net/wireless/uwe5622/unisocwcn/platform/wcn_boot.c
+@@ -1432,12 +1432,14 @@ OUT:
+ #ifdef CONFIG_AW_BOARD
+ static void marlin_bt_wake_int_en(void)
+ {
+-	enable_irq(marlin_dev->bt_wake_host_int_num);
++	if (marlin_dev->bt_wake_host_int_num)
++		enable_irq(marlin_dev->bt_wake_host_int_num);
+ }
+ 
+ static void marlin_bt_wake_int_dis(void)
+ {
+-	disable_irq(marlin_dev->bt_wake_host_int_num);
++	if (marlin_dev->bt_wake_host_int_num)
++		disable_irq(marlin_dev->bt_wake_host_int_num);
+ }
+ 
+ static irqreturn_t marlin_bt_wake_int_isr(int irq, void *para)
+@@ -1458,8 +1460,14 @@ static int __maybe_unused marlin_registsr_bt_wake(struct device *dev)
+ 
+ 	np = of_find_compatible_node(NULL, NULL, "allwinner,sunxi-btlpm");
+ 	if (!np) {
+-		WCN_ERR("dts node for bt_wake not found");
+-		return -EINVAL;
++		/*
++		 * Optional: mainline device trees (Orange Pi Zero2/Zero3,
++		 * WalnutPi, ...) do not describe the BT_WAKE_AP pin. The chip
++		 * works without it, only Bluetooth cannot wake the host from
++		 * suspend. Not an error.
++		 */
++		WCN_INFO("no allwinner,sunxi-btlpm node, bt_hostwake irq not used\n");
++		return -ENODEV;
+ 	}
+ 	bt_wake_host_gpio = fwnode_gpiod_get_index(of_fwnode_handle(np),
+ 				"bt_hostwake", 0, GPIOD_IN, "bt-wake-host-gpio");
+@@ -1506,8 +1514,14 @@ static int __maybe_unused marlin_registsr_bt_wake(struct device *dev)
+ 
+ 	np = of_find_compatible_node(NULL, NULL, "allwinner,sunxi-btlpm");
+ 	if (!np) {
+-		WCN_ERR("dts node for bt_wake not found");
+-		return -EINVAL;
++		/*
++		 * Optional: mainline device trees (Orange Pi Zero2/Zero3,
++		 * WalnutPi, ...) do not describe the BT_WAKE_AP pin. The chip
++		 * works without it, only Bluetooth cannot wake the host from
++		 * suspend. Not an error.
++		 */
++		WCN_INFO("no allwinner,sunxi-btlpm node, bt_hostwake irq not used\n");
++		return -ENODEV;
+ 	}
+ 	bt_wake_host_gpio = of_get_named_gpio(np, "bt_hostwake", 0);
+ 	if (!gpio_is_valid(bt_wake_host_gpio)) {
+-- 
+Armbian
