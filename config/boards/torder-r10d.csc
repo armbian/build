@@ -23,8 +23,8 @@ function post_family_config__torder_r10d() {
 	declare -g BOOTPATCHDIR="v2026.10/board_torder-r10d"
 	declare -g BOOTDELAY=1
 	declare -g BOOTENV_FILE="torder-r10d.txt"
-	declare -g DDR_BLOB="rk35/rk3568_ddr_1056MHz_v1.10.bin"
-	declare -g UBOOT_TARGET_MAP="BL31=${SRC}/cache/sources/rkbin-r10d/3e288fe814e059dd06833495f845cab04ac20a5c/bin/rk35/rk3568_bl31_v1.46.elf ROCKCHIP_TPL=ddr-r10d.bin;;u-boot-rockchip.bin"
+	declare -g DDR_BLOB="rk35/rk3568_ddr_780MHz_v1.10.bin"
+	declare -g UBOOT_TARGET_MAP="BL31=${SRC}/cache/sources/rkbin-r10d/3e288fe814e059dd06833495f845cab04ac20a5c/bin/rk35/rk3568_bl31_v1.46.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 }
 
 function post_family_tweaks_bsp__torder_r10d() {
@@ -48,15 +48,6 @@ function post_family_tweaks__torder_r10d() {
 	chroot_sdcard systemctl --no-reload enable torder-r10d-bluetooth.service torder-r10d-bluetooth-sleep.service
 }
 
-function fetch_sources_tools__torder_r10d_ddr() {
+function fetch_sources_tools__torder_r10d_bl31() {
 	fetch_from_repo "https://github.com/rockchip-linux/rkbin" "rkbin-r10d" "commit:3e288fe814e059dd06833495f845cab04ac20a5c" "yes"
-}
-
-function post_config_uboot_target__torder_r10d_ddr() {
-	local rkbin="${SRC}/cache/sources/rkbin-r10d/3e288fe814e059dd06833495f845cab04ac20a5c"
-	cp "${RKBIN_DIR}/${DDR_BLOB}" ddr-r10d.bin
-	cp "${rkbin}/tools/ddrbin_param.txt" ddr-r10d-param.txt
-	sed -i 's/^lp3_freq=.*/lp3_freq=780/' ddr-r10d-param.txt
-	run_host_command_logged python3 "${rkbin}/tools/ddrbin_tool.py" rk356x ddr-r10d-param.txt ddr-r10d.bin "--ver_edit= "
-	echo "703a40bf8ae66fa4a733e4f61e6fde2c1a59a3be10ad960626bb6befa635b881  ddr-r10d.bin" | sha256sum -c -
 }
