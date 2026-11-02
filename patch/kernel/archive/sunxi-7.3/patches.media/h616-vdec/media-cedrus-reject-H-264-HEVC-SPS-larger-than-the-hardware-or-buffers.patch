@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Tue, 6 Oct 2026 22:27:49 +0200
+Subject: media: cedrus: reject H.264/HEVC SPS larger than the
+ hardware or buffers
+
+The VE decodes whatever picture size the SPS describes. An SPS beyond
+CEDRUS_MAX_WIDTH/HEIGHT (or beyond the capture buffers once allocated)
+makes the engine overrun memory and hang; on H616 the JCT-VC PICSIZE_A..D
+streams (1056x8440, 8440x1056, 528x4216, 4216x528) leave the VE wedged so
+that every following job times out until reboot.
+
+Validate the SPS picture size in try_ctrl.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.c   | 32 +++++++++++++++++++
+ .../staging/media/sunxi/cedrus/cedrus_video.c |  5 ---
+ .../staging/media/sunxi/cedrus/cedrus_video.h |  5 +++
+ 3 files changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -28,6 +28,28 @@
+ #include "cedrus_dec.h"
+ #include "cedrus_hw.h"
+ 
++/*
++ * The engine writes whatever picture size the bitstream headers describe:
++ * reject sizes beyond the hardware limits, or beyond the buffers once the
++ * capture queue is allocated, instead of letting the VE overrun memory and
++ * hang (seen with JCT-VC PICSIZE_A..D, 8440 and 4216 pixel dimensions).
++ */
++static int cedrus_check_pic_size(struct cedrus_ctx *ctx, u32 width, u32 height)
++{
++	struct vb2_queue *vq;
++
++	if (width > CEDRUS_MAX_WIDTH || height > CEDRUS_MAX_HEIGHT)
++		return -EINVAL;
++
++	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
++	if (vb2_is_busy(vq) &&
++	    (width > ALIGN(ctx->src_fmt.width, 16) ||
++	     height > ALIGN(ctx->src_fmt.height, 16)))
++		return -EINVAL;
++
++	return 0;
++}
++
+ static int cedrus_try_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	if (ctrl->id == V4L2_CID_STATELESS_H264_SPS) {
+@@ -42,6 +64,12 @@ static int cedrus_try_ctrl(struct v4l2_ctrl *ctrl)
+ 		if (sps->bit_depth_luma_minus8 != 0)
+ 			/* Only 8-bit is supported */
+ 			return -EINVAL;
++		if (cedrus_check_pic_size(container_of(ctrl->handler,
++						       struct cedrus_ctx, hdl),
++				(sps->pic_width_in_mbs_minus1 + 1) * 16,
++				(sps->pic_height_in_map_units_minus1 + 1) * 16 *
++				((sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY) ? 1 : 2)))
++			return -EINVAL;
+ 	} else if (ctrl->id == V4L2_CID_STATELESS_HEVC_SPS) {
+ 		const struct v4l2_ctrl_hevc_sps *sps = ctrl->p_new.p_hevc_sps;
+ 		struct cedrus_ctx *ctx = container_of(ctrl->handler, struct cedrus_ctx, hdl);
+@@ -52,6 +80,10 @@ static int cedrus_try_ctrl(struct v4l2_ctrl *ctrl)
+ 			/* Only 4:2:0 is supported */
+ 			return -EINVAL;
+ 
++		if (cedrus_check_pic_size(ctx, sps->pic_width_in_luma_samples,
++					  sps->pic_height_in_luma_samples))
++			return -EINVAL;
++
+ 		bit_depth = max(sps->bit_depth_luma_minus8,
+ 				sps->bit_depth_chroma_minus8) + 8;
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -29,11 +29,6 @@
+ #define CEDRUS_DECODE_SRC	BIT(0)
+ #define CEDRUS_DECODE_DST	BIT(1)
+ 
+-#define CEDRUS_MIN_WIDTH	16U
+-#define CEDRUS_MIN_HEIGHT	16U
+-#define CEDRUS_MAX_WIDTH	4096U
+-#define CEDRUS_MAX_HEIGHT	2304U
+-
+ static struct cedrus_format cedrus_formats[] = {
+ 	{
+ 		.pixelformat	= V4L2_PIX_FMT_MPEG2_SLICE,
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.h b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+@@ -24,6 +24,11 @@ struct cedrus_format {
+ 	u32		src_format;
+ };
+ 
++#define CEDRUS_MIN_WIDTH	16U
++#define CEDRUS_MIN_HEIGHT	16U
++#define CEDRUS_MAX_WIDTH	4096U
++#define CEDRUS_MAX_HEIGHT	2304U
++
+ extern const struct v4l2_ioctl_ops cedrus_ioctl_ops;
+ 
+ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+-- 
+Armbian
+

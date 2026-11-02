@@ -1,0 +1,1447 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 9 Oct 2026 03:44:05 +0200
+Subject: media: cedrus: add MPEG-4 Part 2, H.263 and Sorenson
+ Spark decoding support
+
+The MPEG engine of the Allwinner video engine decodes MPEG-4 Part 2
+(Simple and Advanced Simple profiles: B-VOPs, quarter sample motion
+compensation, interlaced coding, global motion compensation with up to
+three warping points, quantisation matrices), H.263 and Sorenson Spark,
+whose picture headers it is configured with by the stateless controls.
+
+It does not parse video packet, GOB or slice headers: it decodes a given
+number of macroblocks from a given bit position, with a given quantiser,
+and stops. The driver programs one hardware run per segment of the
+picture which starts with a header, from the slice parameter controls,
+which it therefore requires unless the VOL disables the resync markers.
+
+Each capture buffer gets a buffer for the macroblock information and the
+not coded flags the engine writes while decoding a P-VOP, and reads back
+when it decodes the B-VOPs which use that picture as backward reference
+for their direct mode. They are allocated with the first picture decoded
+to the buffer and kept until the buffer is freed.
+
+The global motion compensation registers take the affine transform of
+ISO/IEC 14496-2 rather than the trajectories of the warping points; the
+driver derives it, in the reduced form the engine expects. A warp is
+programmed as a translation only when it is one.
+
+Of the MPEG-4 encoder deviations, the engine reproduces the edge
+extension from the exact picture size, the two chroma vector derivations
+of the DivX quarter sample motion compensation, the DivX chroma field
+vector derivation (which the vendor library uses for every bitstream,
+although it does not match the standard) and the DivX 5.00 global motion
+compensation, which the quirks control advertises.
+
+Only the H.263 modes which the engine supports are accepted: the
+version 1 unrestricted motion vectors, the slice structured mode with
+ordered, non-rectangular slices and the extended picture type with
+custom picture sizes and the rounding type. The engine mis-decodes inter
+macroblocks of P pictures in the advanced intra coding mode, which is
+therefore rejected along with the modified quantisation mode it comes
+with in practice.
+
+Tested on H616 against the ISO/IEC 14496-5 reference decoder with the
+ISO/IEC 14496-4 conformance bitstreams of the Simple and Advanced Simple
+profiles, the ITU-T H.263 test bitstreams and real world DivX, Xvid,
+H.263 and Sorenson Spark files. The output is within the IDCT accuracy
+of the reference, with two engine limitations: field motion vectors
+whose vertical component exceeds half of the f_code range are wrapped as
+if they were in frame units, which shows in about 1% of the field
+predicted macroblocks of the 1080i conformance bitstream, and the chroma
+prediction of B-VOP direct mode macroblocks differs from the reference
+in some bitstreams, luma being exact, as does the chroma prediction of
+some quarter sample field motion vectors, for which the engine has no
+derivation of the standard; the driver uses the derivation of the vendor
+library.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/Makefile   |   3 +-
+ drivers/staging/media/sunxi/cedrus/cedrus.c   |  98 ++
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |  34 +
+ .../staging/media/sunxi/cedrus/cedrus_dec.c   |  31 +
+ .../staging/media/sunxi/cedrus/cedrus_hw.c    |   3 +
+ .../staging/media/sunxi/cedrus/cedrus_mpeg4.c | 912 ++++++++++++++++++
+ .../staging/media/sunxi/cedrus/cedrus_regs.h  |  79 ++
+ .../staging/media/sunxi/cedrus/cedrus_video.c |  23 +
+ 8 files changed, 1182 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+
+diff --git a/drivers/staging/media/sunxi/cedrus/Makefile b/drivers/staging/media/sunxi/cedrus/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/Makefile
++++ b/drivers/staging/media/sunxi/cedrus/Makefile
+@@ -3,4 +3,5 @@ obj-$(CONFIG_VIDEO_SUNXI_CEDRUS) += sunxi-cedrus.o
+ 
+ sunxi-cedrus-y = cedrus.o cedrus_video.o cedrus_hw.o cedrus_dec.o \
+ 		 cedrus_mpeg2.o cedrus_h264.o cedrus_h265.o \
+-		 cedrus_vp8.o cedrus_vp9.o cedrus_vc1.o
++		 cedrus_vp8.o cedrus_vp9.o cedrus_vc1.o \
++		 cedrus_mpeg4.o
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -189,6 +189,47 @@ static int cedrus_try_ctrl(struct v4l2_ctrl *ctrl)
+ 		if (pic->pqindex > 31)
+ 			/* PQINDEX is a 5-bit field */
+ 			return -EINVAL;
++	} else if (ctrl->id == V4L2_CID_STATELESS_MPEG4_VOL) {
++		const struct v4l2_ctrl_mpeg4_vol *vol = ctrl->p_new.p_mpeg4_vol;
++		struct cedrus_ctx *ctx = container_of(ctrl->handler,
++						      struct cedrus_ctx, hdl);
++
++		/* The engine has no data partitioning (nor RVLC) mode. */
++		if (vol->flags & V4L2_MPEG4_VOL_FLAG_DATA_PARTITIONED)
++			return -EINVAL;
++
++		if (vol->video_object_layer_width > CEDRUS_MPEG4_MAX_WIDTH ||
++		    cedrus_check_pic_size(ctx, vol->video_object_layer_width,
++					  vol->video_object_layer_height))
++			return -EINVAL;
++	} else if (ctrl->id == V4L2_CID_STATELESS_MPEG4_VOP) {
++		const struct v4l2_ctrl_mpeg4_vop *vop = ctrl->p_new.p_mpeg4_vop;
++
++		/* Widths of the temporal distance registers. */
++		if (vop->trd > 0xffff || vop->trd_field > 0xff ||
++		    vop->trb_field > 0xff)
++			return -EINVAL;
++	} else if (ctrl->id == V4L2_CID_STATELESS_H263_PICTURE) {
++		const struct v4l2_ctrl_h263_picture *pic =
++			ctrl->p_new.p_h263_picture;
++		struct cedrus_ctx *ctx = container_of(ctrl->handler,
++						      struct cedrus_ctx, hdl);
++
++		if (pic->flags & ~CEDRUS_H263_SUPPORTED_FLAGS)
++			return -EINVAL;
++
++		/* Only the motion vector coding of the H.263 version 1 UMV. */
++		if ((pic->flags & V4L2_H263_PICTURE_FLAG_PLUSPTYPE) &&
++		    (pic->flags & V4L2_H263_PICTURE_FLAG_UMV))
++			return -EINVAL;
++
++		if (pic->spk_version &&
++		    ctx->src_fmt.pixelformat != V4L2_PIX_FMT_SPK_SLICE)
++			return -EINVAL;
++
++		if (pic->width > CEDRUS_MPEG4_MAX_WIDTH ||
++		    cedrus_check_pic_size(ctx, pic->width, pic->height))
++			return -EINVAL;
+ 	}
+ 
+ 	return 0;
+@@ -410,6 +451,63 @@ static const struct cedrus_control cedrus_controls[] = {
+ 		},
+ 		.capabilities	= CEDRUS_CAPABILITY_VC1_DEC,
+ 	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_MPEG4_VOL,
++			.ops	= &cedrus_ctrl_ops,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_MPEG4_VOP,
++			.ops	= &cedrus_ctrl_ops,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_MPEG4_QUANTISATION,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS,
++			.dims	= { CEDRUS_MPEG4_MAX_SLICES },
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_MPEG4_QUIRKS,
++			.max	= CEDRUS_MPEG4_SUPPORTED_QUIRKS,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_MPEG_VIDEO_MPEG4_PROFILE,
++			.min	= V4L2_MPEG_VIDEO_MPEG4_PROFILE_SIMPLE,
++			.max	= V4L2_MPEG_VIDEO_MPEG4_PROFILE_ADVANCED_SIMPLE,
++			.def	= V4L2_MPEG_VIDEO_MPEG4_PROFILE_ADVANCED_SIMPLE,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_H263_PICTURE,
++			.ops	= &cedrus_ctrl_ops,
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.cfg = {
++			.id	= V4L2_CID_STATELESS_H263_SLICE_PARAMS,
++			.dims	= { CEDRUS_MPEG4_MAX_SLICES },
++		},
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
+ };
+ 
+ #define CEDRUS_CONTROLS_COUNT	ARRAY_SIZE(cedrus_controls)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -36,9 +36,23 @@
+ #define CEDRUS_CAPABILITY_H265_10_DEC	BIT(5)
+ #define CEDRUS_CAPABILITY_VP9_DEC	BIT(6)
+ #define CEDRUS_CAPABILITY_VC1_DEC	BIT(7)
++#define CEDRUS_CAPABILITY_MPEG4_DEC	BIT(8)
+ 
+ #define CEDRUS_VC1_MIN_WIDTH		128
+ 
++/* The engine counts macroblock columns in 8 bits. */
++#define CEDRUS_MPEG4_MAX_WIDTH		4080
++/* One segment per macroblock of a 1080p picture, at worst. */
++#define CEDRUS_MPEG4_MAX_SLICES		8192
++#define CEDRUS_MPEG4_SUPPORTED_QUIRKS \
++	(V4L2_MPEG4_QUIRK_EDGE_EXACT_SIZE | V4L2_MPEG4_QUIRK_QPEL_CHROMA | \
++	 V4L2_MPEG4_QUIRK_QPEL_CHROMA2 | V4L2_MPEG4_QUIRK_FIELD_HPEL_CHROMA | \
++	 V4L2_MPEG4_QUIRK_GMC_UNSCALED_REF)
++#define CEDRUS_H263_SUPPORTED_FLAGS \
++	(V4L2_H263_PICTURE_FLAG_ROUNDING_TYPE | \
++	 V4L2_H263_PICTURE_FLAG_PLUSPTYPE | V4L2_H263_PICTURE_FLAG_UMV | \
++	 V4L2_H263_PICTURE_FLAG_SS)
++
+ /*
+  * The VP9 decoder takes its reconstruction addresses in 1 KiB units, so
+  * the chroma plane, at bytesperline * height, must be 1 KiB aligned. A
+@@ -107,6 +121,17 @@ struct cedrus_vc1_run {
+ 	unsigned int					num_slices;
+ };
+ 
++struct cedrus_mpeg4_run {
++	const struct v4l2_ctrl_mpeg4_vol		*vol;
++	const struct v4l2_ctrl_mpeg4_vop		*vop;
++	const struct v4l2_ctrl_mpeg4_quantisation	*quantisation;
++	const struct v4l2_ctrl_mpeg4_slice_params	*slices;
++	const struct v4l2_ctrl_h263_picture		*h263_picture;
++	const struct v4l2_ctrl_h263_slice_params	*h263_slices;
++	unsigned int					num_slices;
++	u32						quirks;
++};
++
+ struct cedrus_run {
+ 	struct vb2_v4l2_buffer	*src;
+ 	struct vb2_v4l2_buffer	*dst;
+@@ -118,10 +143,12 @@ struct cedrus_run {
+ 		struct cedrus_vp8_run	vp8;
+ 		struct cedrus_vp9_run	vp9;
+ 		struct cedrus_vc1_run	vc1;
++		struct cedrus_mpeg4_run	mpeg4;
+ 	};
+ };
+ 
+ struct cedrus_vp9_ctx;
++struct cedrus_mpeg4_ctx;
+ 
+ struct cedrus_buffer {
+ 	struct v4l2_m2m_buffer          m2m_buf;
+@@ -144,6 +171,11 @@ struct cedrus_buffer {
+ 			u32		height;
+ 			u8		bit_depth;
+ 		} vp9;
++		struct {
++			void		*aux_buf;
++			dma_addr_t	aux_buf_dma;
++			size_t		aux_buf_size;
++		} mpeg4;
+ 	} codec;
+ };
+ 
+@@ -200,6 +232,7 @@ struct cedrus_ctx {
+ 			ssize_t		intra_pred_buf_size;
+ 		} vp8;
+ 		struct cedrus_vp9_ctx	*vp9;
++		struct cedrus_mpeg4_ctx	*mpeg4;
+ 		struct {
+ 			void		*aux_buf;
+ 			dma_addr_t	aux_buf_addr;
+@@ -280,6 +313,7 @@ extern struct cedrus_dec_ops cedrus_dec_ops_h265;
+ extern struct cedrus_dec_ops cedrus_dec_ops_vp8;
+ extern struct cedrus_dec_ops cedrus_dec_ops_vp9;
+ extern struct cedrus_dec_ops cedrus_dec_ops_vc1;
++extern struct cedrus_dec_ops cedrus_dec_ops_mpeg4;
+ 
+ static inline void cedrus_write(struct cedrus_dev *dev, u32 reg, u32 val)
+ {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+@@ -115,6 +115,37 @@ void cedrus_device_run(void *priv)
+ 		}
+ 		break;
+ 
++	case V4L2_PIX_FMT_MPEG4_SLICE:
++		run.mpeg4.vol = cedrus_find_control_data(ctx,
++			V4L2_CID_STATELESS_MPEG4_VOL);
++		run.mpeg4.vop = cedrus_find_control_data(ctx,
++			V4L2_CID_STATELESS_MPEG4_VOP);
++		run.mpeg4.quantisation = cedrus_find_control_data(ctx,
++			V4L2_CID_STATELESS_MPEG4_QUANTISATION);
++		run.mpeg4.quirks = *(u32 *)cedrus_find_control_data(ctx,
++			V4L2_CID_STATELESS_MPEG4_QUIRKS);
++		if (cedrus_ctrl_in_request(ctx, src_req,
++					   V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS)) {
++			run.mpeg4.slices = cedrus_find_control_data(ctx,
++				V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS);
++			run.mpeg4.num_slices = cedrus_get_num_of_controls(ctx,
++				V4L2_CID_STATELESS_MPEG4_SLICE_PARAMS);
++		}
++		break;
++
++	case V4L2_PIX_FMT_H263_SLICE:
++	case V4L2_PIX_FMT_SPK_SLICE:
++		run.mpeg4.h263_picture = cedrus_find_control_data(ctx,
++			V4L2_CID_STATELESS_H263_PICTURE);
++		if (cedrus_ctrl_in_request(ctx, src_req,
++					   V4L2_CID_STATELESS_H263_SLICE_PARAMS)) {
++			run.mpeg4.h263_slices = cedrus_find_control_data(ctx,
++				V4L2_CID_STATELESS_H263_SLICE_PARAMS);
++			run.mpeg4.num_slices = cedrus_get_num_of_controls(ctx,
++				V4L2_CID_STATELESS_H263_SLICE_PARAMS);
++		}
++		break;
++
+ 	default:
+ 		break;
+ 	}
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -48,6 +48,9 @@ int cedrus_engine_enable(struct cedrus_ctx *ctx)
+ 
+ 	switch (ctx->src_fmt.pixelformat) {
+ 	case V4L2_PIX_FMT_MPEG2_SLICE:
++	case V4L2_PIX_FMT_MPEG4_SLICE:
++	case V4L2_PIX_FMT_H263_SLICE:
++	case V4L2_PIX_FMT_SPK_SLICE:
+ 		reg |= VE_MODE_DEC_MPEG;
+ 		break;
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+new file mode 100644
+index 111111111111..222222222222
+--- /dev/null
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_mpeg4.c
+@@ -0,0 +1,912 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Cedrus VPU driver
++ *
++ * MPEG-4 Part 2, H.263 and Sorenson Spark decoding with the MPEG engine.
++ *
++ * Copyright (C) 2026 Jernej Skrabec <jernej.skrabec@gmail.com>
++ */
++
++#include <linux/log2.h>
++#include <linux/math64.h>
++#include <linux/slab.h>
++
++#include <media/videobuf2-dma-contig.h>
++
++#include "cedrus.h"
++#include "cedrus_hw.h"
++#include "cedrus_regs.h"
++
++/*
++ * The engine doesn't parse video packet (MPEG-4) and GOB or slice (H.263)
++ * headers: it decodes a given number of macroblocks from a given bit
++ * position and stops. A picture is decoded in one run per segment that
++ * starts with a header.
++ */
++struct cedrus_mpeg4_segment {
++	u32	bit_offset;
++	u16	macroblock_number;
++	u16	num_macroblocks;
++	u8	quant_scale;
++};
++
++struct cedrus_mpeg4_ctx {
++	void				*dcac_buf;
++	dma_addr_t			dcac_buf_dma;
++	size_t				dcac_buf_size;
++
++	struct cedrus_mpeg4_segment	*segments;
++	unsigned int			num_segments;
++	unsigned int			cur_segment;
++	unsigned int			mb_width;
++
++	dma_addr_t			src_addr;
++	dma_addr_t			src_end;
++	u32				src_bits;
++	bool				error;
++};
++
++/* Same as the dimensions of the slice parameter arrays. */
++#define CEDRUS_MPEG4_MAX_SEGMENTS	8192
++
++static struct cedrus_mpeg4_ctx *cedrus_mpeg4_ctx(struct cedrus_ctx *ctx)
++{
++	return ctx->codec.mpeg4;
++}
++
++static bool cedrus_mpeg4_is_h263(struct cedrus_ctx *ctx)
++{
++	return ctx->src_fmt.pixelformat != V4L2_PIX_FMT_MPEG4_SLICE;
++}
++
++static enum cedrus_irq_status cedrus_mpeg4_irq_status(struct cedrus_ctx *ctx)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	u32 reg;
++
++	reg = cedrus_read(dev, VE_DEC_MPEG_STATUS);
++	reg &= VE_DEC_MPEG_STATUS_CHECK_MASK;
++
++	if (!reg)
++		return CEDRUS_IRQ_NONE;
++
++	if (reg & VE_DEC_MPEG_STATUS_CHECK_ERROR ||
++	    !(reg & VE_DEC_MPEG_STATUS_SUCCESS))
++		return CEDRUS_IRQ_ERROR;
++
++	return CEDRUS_IRQ_OK;
++}
++
++static void cedrus_mpeg4_irq_clear(struct cedrus_ctx *ctx)
++{
++	cedrus_write(ctx->dev, VE_DEC_MPEG_STATUS,
++		     VE_DEC_MPEG_STATUS_CHECK_MASK);
++}
++
++static void cedrus_mpeg4_irq_disable(struct cedrus_ctx *ctx)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	u32 reg = cedrus_read(dev, VE_DEC_MPEG_CTRL);
++
++	cedrus_write(dev, VE_DEC_MPEG_CTRL, reg & ~VE_DEC_MPEG_CTRL_IRQ_MASK);
++}
++
++/*
++ * Per picture buffer state of the engine, kept with each capture buffer:
++ * the macroblock information (MBH) and the not coded flags (NCF) of a P
++ * or S picture are read by the B pictures which use it as backward
++ * reference, for the direct mode.
++ */
++static unsigned int cedrus_mpeg4_mbh_size(unsigned int width,
++					  unsigned int height)
++{
++	unsigned int mb_height = ALIGN(DIV_ROUND_UP(height, 16), 2);
++
++	return mb_height << (width > 2048 ? 12 : 11);
++}
++
++static unsigned int cedrus_mpeg4_ncf_size(unsigned int width,
++					  unsigned int height)
++{
++	unsigned int mb_height = ALIGN(DIV_ROUND_UP(height, 16), 2);
++
++	return mb_height << (width > 2048 ? 5 : 4);
++}
++
++static int cedrus_mpeg4_alloc_aux(struct cedrus_ctx *ctx,
++				  struct cedrus_buffer *buf)
++{
++	unsigned int width = ctx->src_fmt.width;
++	unsigned int height = ctx->src_fmt.height;
++	size_t size;
++
++	size = ALIGN(cedrus_mpeg4_mbh_size(width, height), SZ_1K) +
++	       cedrus_mpeg4_ncf_size(width, height);
++
++	if (buf->codec.mpeg4.aux_buf && buf->codec.mpeg4.aux_buf_size >= size)
++		return 0;
++
++	if (buf->codec.mpeg4.aux_buf)
++		dma_free_attrs(ctx->dev->dev, buf->codec.mpeg4.aux_buf_size,
++			       buf->codec.mpeg4.aux_buf,
++			       buf->codec.mpeg4.aux_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++
++	buf->codec.mpeg4.aux_buf =
++		dma_alloc_attrs(ctx->dev->dev, size,
++				&buf->codec.mpeg4.aux_buf_dma, GFP_KERNEL,
++				DMA_ATTR_NO_KERNEL_MAPPING);
++	if (!buf->codec.mpeg4.aux_buf) {
++		buf->codec.mpeg4.aux_buf_size = 0;
++		return -ENOMEM;
++	}
++
++	buf->codec.mpeg4.aux_buf_size = size;
++
++	return 0;
++}
++
++static void cedrus_mpeg4_buf_cleanup(struct cedrus_ctx *ctx,
++				     struct cedrus_buffer *buf)
++{
++	if (!buf->codec.mpeg4.aux_buf)
++		return;
++
++	dma_free_attrs(ctx->dev->dev, buf->codec.mpeg4.aux_buf_size,
++		       buf->codec.mpeg4.aux_buf, buf->codec.mpeg4.aux_buf_dma,
++		       DMA_ATTR_NO_KERNEL_MAPPING);
++	buf->codec.mpeg4.aux_buf = NULL;
++	buf->codec.mpeg4.aux_buf_size = 0;
++}
++
++static void cedrus_mpeg4_write_aux(struct cedrus_ctx *ctx,
++				   struct cedrus_buffer *buf)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	dma_addr_t addr = buf->codec.mpeg4.aux_buf_dma;
++	unsigned int mbh_size = cedrus_mpeg4_mbh_size(ctx->src_fmt.width,
++						      ctx->src_fmt.height);
++
++	cedrus_write(dev, VE_DEC_MPEG_MBH_ADDR, VE_DEC_MPEG_AUX_ADDR(addr));
++	cedrus_write(dev, VE_DEC_MPEG_NCF_ADDR,
++		     VE_DEC_MPEG_AUX_ADDR(addr + ALIGN(mbh_size, SZ_1K)));
++}
++
++/*
++ * Global motion compensation of ISO/IEC 14496-2: the warping of the
++ * reference picture is an affine transform derived from the trajectories
++ * of up to three points. The engine takes, for luma and chroma, the
++ * transform offset, its four coefficients and the shift of the final
++ * division.
++ */
++struct cedrus_mpeg4_affine {
++	s64	x0;
++	s64	y0;
++	s32	xx;
++	s32	yx;
++	s32	xy;
++	s32	yy;
++	u32	shift;
++};
++
++/* '//' of the standard: rounding to nearest, half away from zero. */
++static s32 cedrus_mpeg4_div_round(s64 a, s32 b)
++{
++	return div_s64(a >= 0 ? a + b / 2 : a - b / 2, b);
++}
++
++/* Reduces the coefficients and the shift by their common power of two. */
++static void cedrus_mpeg4_affine_reduce(struct cedrus_mpeg4_affine *t,
++				       bool offsets)
++{
++	s64 rounder = t->shift ? 1LL << (t->shift - 1) : 0;
++
++	while (t->shift &&
++	       !((t->xx | t->yx | t->xy | t->yy | rounder |
++		  (offsets ? (t->x0 | t->y0) : 0)) & 1)) {
++		t->xx >>= 1;
++		t->yx >>= 1;
++		t->xy >>= 1;
++		t->yy >>= 1;
++		if (offsets) {
++			t->x0 >>= 1;
++			t->y0 >>= 1;
++		}
++		rounder >>= 1;
++		t->shift--;
++	}
++}
++
++static unsigned int cedrus_mpeg4_gmc_points(const struct v4l2_ctrl_mpeg4_vol *vol,
++					    const struct v4l2_ctrl_mpeg4_vop *vop)
++{
++	unsigned int n = vol->no_of_sprite_warping_points;
++	unsigned int i;
++
++	/*
++	 * A warp is a translation when only the first point moves, whatever
++	 * the number of points: the simpler transform is then exact. Other
++	 * points which don't move still shape the affine transform.
++	 */
++	for (i = 1; i < n; i++)
++		if (vop->sprite_trajectory_du[i] || vop->sprite_trajectory_dv[i])
++			return n;
++
++	if (!n ||
++	    (!vop->sprite_trajectory_du[0] && !vop->sprite_trajectory_dv[0]))
++		return 0;
++
++	return 1;
++}
++
++static void cedrus_mpeg4_gmc_transforms(const struct v4l2_ctrl_mpeg4_vol *vol,
++					const struct v4l2_ctrl_mpeg4_vop *vop,
++					bool unscaled_ref,
++					struct cedrus_mpeg4_affine *lum,
++					struct cedrus_mpeg4_affine *chrom)
++{
++	s32 s = 2 << vol->sprite_warping_accuracy;
++	s32 r = 16 / s;
++	s32 w = vol->video_object_layer_width;
++	s32 h = vol->video_object_layer_height;
++	s32 w_ = roundup_pow_of_two(w), h_ = roundup_pow_of_two(h);
++	const s16 *du = vop->sprite_trajectory_du;
++	const s16 *dv = vop->sprite_trajectory_dv;
++	s32 i0, j0, i1, j1, i2, j2, i1_, j1_, i2_, j2_;
++	s32 shift;
++
++	/* Warping point positions in 1/s pel units. */
++	if (unscaled_ref) {
++		i0 = du[0];
++		j0 = dv[0];
++	} else {
++		i0 = (s / 2) * du[0];
++		j0 = (s / 2) * dv[0];
++	}
++	i1 = s * w + i0 + (unscaled_ref ? du[1] : (s / 2) * du[1]);
++	j1 = j0 + (unscaled_ref ? dv[1] : (s / 2) * dv[1]);
++	i2 = i0 + (unscaled_ref ? du[2] : (s / 2) * du[2]);
++	j2 = s * h + j0 + (unscaled_ref ? dv[2] : (s / 2) * dv[2]);
++
++	memset(lum, 0, sizeof(*lum));
++	memset(chrom, 0, sizeof(*chrom));
++
++	switch (cedrus_mpeg4_gmc_points(vol, vop)) {
++	case 0:
++	case 1:
++		lum->x0 = i0;
++		lum->y0 = j0;
++		lum->xx = s;
++		lum->yy = s;
++
++		chrom->x0 = (i0 >> 1) | (i0 & 1);
++		chrom->y0 = (j0 >> 1) | (j0 & 1);
++		chrom->xx = s;
++		chrom->yy = s;
++		break;
++	case 2:
++		/* Second point in 1/16 pel units. */
++		i1_ = 16 * w_ +
++		      cedrus_mpeg4_div_round((s64)(w - w_) * r * i0 +
++					     (s64)w_ * (r * i1 - 16 * w), w);
++		j1_ = cedrus_mpeg4_div_round((s64)(w - w_) * r * j0 +
++					     (s64)w_ * r * j1, w);
++
++		lum->x0 = i0;
++		lum->y0 = j0;
++		lum->xx = -r * i0 + i1_;
++		lum->yx = r * j0 - j1_;
++		lum->xy = -r * j0 + j1_;
++		lum->yy = -r * i0 + i1_;
++		lum->shift = ilog2(w_ * r);
++		cedrus_mpeg4_affine_reduce(lum, false);
++
++		chrom->xx = -r * i0 + i1_;
++		chrom->yx = r * j0 - j1_;
++		chrom->xy = -r * j0 + j1_;
++		chrom->yy = -r * i0 + i1_;
++		chrom->shift = ilog2(4 * w_ * r);
++		chrom->x0 = 2LL * w_ * r * i0 - 16 * w_ +
++			    (1LL << (chrom->shift - 1));
++		chrom->y0 = 2LL * w_ * r * j0 - 16 * w_ +
++			    (1LL << (chrom->shift - 1));
++		cedrus_mpeg4_affine_reduce(chrom, true);
++		break;
++	default:
++		i1_ = 16 * w_ +
++		      cedrus_mpeg4_div_round((s64)(w - w_) * r * i0 +
++					     (s64)w_ * (r * i1 - 16 * w), w);
++		j1_ = cedrus_mpeg4_div_round((s64)(w - w_) * r * j0 +
++					     (s64)w_ * r * j1, w);
++		i2_ = cedrus_mpeg4_div_round((s64)(h - h_) * r * i0 +
++					     (s64)h_ * r * i2, h);
++		j2_ = 16 * h_ +
++		      cedrus_mpeg4_div_round((s64)(h - h_) * r * j0 +
++					     (s64)h_ * (r * j2 - 16 * h), h);
++
++		lum->x0 = i0;
++		lum->y0 = j0;
++		lum->xx = (-r * i0 + i1_) * h_;
++		lum->yx = (-r * i0 + i2_) * w_;
++		lum->xy = (-r * j0 + j1_) * h_;
++		lum->yy = (-r * j0 + j2_) * w_;
++		lum->shift = ilog2(w_ * h_ * r);
++		cedrus_mpeg4_affine_reduce(lum, false);
++
++		*chrom = (struct cedrus_mpeg4_affine) {
++			.xx = (-r * i0 + i1_) * h_,
++			.yx = (-r * i0 + i2_) * w_,
++			.xy = (-r * j0 + j1_) * h_,
++			.yy = (-r * j0 + j2_) * w_,
++		};
++		shift = ilog2(4 * w_ * h_ * r);
++		chrom->shift = shift;
++		chrom->x0 = (s64)i0 * 2 * w_ * h_ * r - 16LL * w_ * h_ +
++			    (1LL << (shift - 1));
++		chrom->y0 = (s64)j0 * 2 * w_ * h_ * r - 16LL * w_ * h_ +
++			    (1LL << (shift - 1));
++		cedrus_mpeg4_affine_reduce(chrom, true);
++		break;
++	}
++}
++
++static void cedrus_mpeg4_write_gmc(struct cedrus_ctx *ctx,
++				   const struct v4l2_ctrl_mpeg4_vol *vol,
++				   const struct v4l2_ctrl_mpeg4_vop *vop,
++				   u32 quirks)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	struct cedrus_mpeg4_affine lum, chrom;
++	unsigned int acc_shift = 3 - vol->sprite_warping_accuracy;
++	s32 deltas[8], mv_x, mv_y;
++	bool wide = false;
++	u32 ssr;
++	int i;
++
++	cedrus_mpeg4_gmc_transforms(vol, vop,
++				    quirks & V4L2_MPEG4_QUIRK_GMC_UNSCALED_REF,
++				    &lum, &chrom);
++
++	/* SDLX/SDCX hold the x coefficients, SDLY/SDCY the y ones. */
++	deltas[0] = lum.xx;
++	deltas[1] = lum.xy;
++	deltas[2] = lum.yx;
++	deltas[3] = lum.yy;
++	deltas[4] = chrom.xx;
++	deltas[5] = chrom.xy;
++	deltas[6] = chrom.yx;
++	deltas[7] = chrom.yy;
++
++	for (i = 0; i < ARRAY_SIZE(deltas); i++)
++		if (deltas[i] < S16_MIN || deltas[i] > S16_MAX)
++			wide = true;
++
++	ssr = VE_DEC_MPEG_GMC_SSR_LUMA_SHIFT(lum.shift) |
++	      VE_DEC_MPEG_GMC_SSR_CHROMA_SHIFT(chrom.shift);
++
++	/*
++	 * 17-bit coefficients are written halved, with their least
++	 * significant bits in the shift register.
++	 */
++	if (wide) {
++		ssr |= VE_DEC_MPEG_GMC_SSR_DELTA_DATA_MODE;
++		for (i = 0; i < ARRAY_SIZE(deltas); i++) {
++			if (deltas[i] & 1)
++				ssr |= VE_DEC_MPEG_GMC_SSR_DELTA_LSB(i);
++			deltas[i] >>= 1;
++		}
++	}
++
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SOL,
++		     VE_DEC_MPEG_GMC_PAIR(lum.x0, lum.y0));
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SDLX,
++		     VE_DEC_MPEG_GMC_PAIR(deltas[0], deltas[1]));
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SDLY,
++		     VE_DEC_MPEG_GMC_PAIR(deltas[2], deltas[3]));
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SSR, ssr);
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SOCX, (u32)chrom.x0);
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SOCY, (u32)chrom.y0);
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SDCX,
++		     VE_DEC_MPEG_GMC_PAIR(deltas[4], deltas[5]));
++	cedrus_write(dev, VE_DEC_MPEG_GMC_SDCY,
++		     VE_DEC_MPEG_GMC_PAIR(deltas[6], deltas[7]));
++
++	/*
++	 * Global motion vector, the motion vector of GMC macroblocks for the
++	 * prediction of the following vectors, in 1/16 pel units. The
++	 * hardware rounds it to the vector resolution; the DivX 5.00 encoder
++	 * truncated a single point translation instead.
++	 */
++	mv_x = lum.x0 << acc_shift;
++	mv_y = lum.y0 << acc_shift;
++	if ((quirks & V4L2_MPEG4_QUIRK_GMC_UNSCALED_REF) &&
++	    cedrus_mpeg4_gmc_points(vol, vop) <= 1) {
++		unsigned int mv_shift =
++			(vol->flags & V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE) ? 2 : 3;
++
++		mv_x = (mv_x / (1 << mv_shift)) * (1 << mv_shift);
++		mv_y = (mv_y / (1 << mv_shift)) * (1 << mv_shift);
++	}
++	cedrus_write(dev, VE_DEC_MPEG_GMC_MV_LUMA,
++		     VE_DEC_MPEG_GMC_MV(mv_x, mv_y));
++
++	if (cedrus_mpeg4_gmc_points(vol, vop) >= 2) {
++		mv_x = (chrom.x0 + chrom.xx + chrom.yx) >> chrom.shift;
++		mv_y = (chrom.y0 + chrom.xy + chrom.yy) >> chrom.shift;
++	} else {
++		mv_x = chrom.x0;
++		mv_y = chrom.y0;
++	}
++
++	cedrus_write(dev, VE_DEC_MPEG_GMC_MV_CHROMA,
++		     VE_DEC_MPEG_GMC_MV(mv_x << acc_shift, mv_y << acc_shift));
++}
++
++/*
++ * Derivation of the chroma vectors of quarter sample macroblocks: mode 0
++ * is the one of ISO/IEC 14496-2, the modes 1 and 2 reproduce the
++ * derivations of encoders which deviate from the standard.
++ */
++static u32 cedrus_mpeg4_qpel_ctrl(u8 coding_type, u32 quirks)
++{
++	unsigned int mv1 = 0, mv4 = 0, fld = 1;
++
++	if (coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B) {
++		if (quirks & (V4L2_MPEG4_QUIRK_QPEL_CHROMA |
++			      V4L2_MPEG4_QUIRK_QPEL_CHROMA2)) {
++			mv1 = 1;
++			mv4 = 2;
++		}
++	} else {
++		if (quirks & V4L2_MPEG4_QUIRK_QPEL_CHROMA2) {
++			mv1 = 2;
++			mv4 = 1;
++			fld = 2;
++		} else if (quirks & V4L2_MPEG4_QUIRK_QPEL_CHROMA) {
++			mv1 = 1;
++			mv4 = 1;
++			fld = 2;
++		}
++	}
++
++	return VE_DEC_MPEG_CTRL_MVCS_MV1_QM(mv1) |
++	       VE_DEC_MPEG_CTRL_MVCS_MV4_QM(mv4) |
++	       VE_DEC_MPEG_CTRL_MVCS_FLD_QM(fld);
++}
++
++static int cedrus_mpeg4_segments(struct cedrus_ctx *ctx,
++				 struct cedrus_run *run,
++				 unsigned int total_mb,
++				 u32 first_bit_offset, u8 first_quant)
++{
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++	unsigned int n = run->mpeg4.num_slices;
++	u32 payload = vb2_get_plane_payload(&run->src->vb2_buf, 0);
++	unsigned int i;
++
++	if (!n) {
++		mpeg4->segments[0] = (struct cedrus_mpeg4_segment) {
++			.bit_offset = first_bit_offset,
++			.num_macroblocks = total_mb,
++			.quant_scale = first_quant,
++		};
++		mpeg4->num_segments = 1;
++		return 0;
++	}
++
++	if (n > CEDRUS_MPEG4_MAX_SEGMENTS)
++		return -EINVAL;
++
++	for (i = 0; i < n; i++) {
++		u32 offset, size, bit_offset;
++		unsigned int mbn, next;
++		u8 quant;
++
++		if (run->mpeg4.slices) {
++			const struct v4l2_ctrl_mpeg4_slice_params *s =
++				&run->mpeg4.slices[i];
++
++			offset = s->offset;
++			size = s->size;
++			bit_offset = s->data_bit_offset;
++			mbn = s->macroblock_number;
++			quant = s->quant_scale;
++			next = i + 1 < n ?
++			       run->mpeg4.slices[i + 1].macroblock_number :
++			       total_mb;
++		} else {
++			const struct v4l2_ctrl_h263_slice_params *s =
++				&run->mpeg4.h263_slices[i];
++
++			offset = s->offset;
++			size = s->size;
++			bit_offset = s->data_bit_offset;
++			mbn = s->macroblock_number;
++			quant = s->quant_scale;
++			next = i + 1 < n ?
++			       run->mpeg4.h263_slices[i + 1].macroblock_number :
++			       total_mb;
++		}
++
++		if (offset >= payload || size > payload - offset ||
++		    bit_offset >= size * 8 || mbn >= next || next > total_mb ||
++		    (!i && mbn))
++			return -EINVAL;
++
++		mpeg4->segments[i] = (struct cedrus_mpeg4_segment) {
++			.bit_offset = offset * 8 + bit_offset,
++			.macroblock_number = mbn,
++			.num_macroblocks = next - mbn,
++			.quant_scale = quant,
++		};
++	}
++
++	mpeg4->num_segments = n;
++
++	return 0;
++}
++
++static int cedrus_mpeg4_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
++{
++	const struct v4l2_ctrl_mpeg4_vol *vol = run->mpeg4.vol;
++	const struct v4l2_ctrl_mpeg4_vop *vop = run->mpeg4.vop;
++	const struct v4l2_ctrl_h263_picture *pic = run->mpeg4.h263_picture;
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++	struct cedrus_buffer *dst = vb2_to_cedrus_buffer(&run->dst->vb2_buf);
++	struct vb2_buffer *fwd, *bwd, *dst_vb = &run->dst->vb2_buf;
++	struct vb2_buffer *src_vb = &run->src->vb2_buf;
++	struct cedrus_dev *dev = ctx->dev;
++	unsigned int width, height, total_mb, i;
++	u32 quirks = run->mpeg4.quirks;
++	u8 coding_type, first_quant;
++	bool h263 = cedrus_mpeg4_is_h263(ctx);
++	u32 hdr, ctrl, first_bit_offset;
++	struct vb2_queue *vq;
++	int ret;
++
++	if (h263) {
++		if (!pic)
++			return -EINVAL;
++
++		width = pic->width;
++		height = pic->height;
++		coding_type = pic->picture_coding_type;
++		first_bit_offset = pic->data_bit_offset;
++		first_quant = pic->pquant;
++	} else {
++		if (!vol || !vop)
++			return -EINVAL;
++
++		width = vol->video_object_layer_width;
++		height = vol->video_object_layer_height;
++		coding_type = vop->vop_coding_type;
++		first_bit_offset = vop->data_bit_offset;
++		first_quant = vop->vop_quant;
++
++		if (coding_type == V4L2_MPEG4_VOP_CODING_TYPE_S &&
++		    vol->sprite_enable != V4L2_MPEG4_SPRITE_ENABLE_GMC)
++			return -EINVAL;
++
++		/* Without the video packet positions, resync markers stop it. */
++		if (!run->mpeg4.num_slices &&
++		    !(vol->flags & V4L2_MPEG4_VOL_FLAG_RESYNC_MARKER_DISABLE))
++			return -EINVAL;
++	}
++
++	if (width > ctx->src_fmt.width || height > ctx->src_fmt.height)
++		return -EINVAL;
++
++	mpeg4->mb_width = DIV_ROUND_UP(width, 16);
++	total_mb = mpeg4->mb_width * DIV_ROUND_UP(height, 16);
++
++	ret = cedrus_mpeg4_segments(ctx, run, total_mb, first_bit_offset,
++				    first_quant);
++	if (ret)
++		return ret;
++
++	ret = cedrus_mpeg4_alloc_aux(ctx, dst);
++	if (ret)
++		return ret;
++
++	cedrus_engine_enable(ctx);
++
++	/* Quantisation matrices. */
++	if (!h263 && (vol->flags & V4L2_MPEG4_VOL_FLAG_QUANT_TYPE)) {
++		const u8 *matrix = run->mpeg4.quantisation->intra_quantiser_matrix;
++
++		for (i = 0; i < 64; i++)
++			cedrus_write(dev, VE_DEC_MPEG_IQMINPUT,
++				     VE_DEC_MPEG_IQMINPUT_WEIGHT(i, matrix[i]) |
++				     VE_DEC_MPEG_IQMINPUT_FLAG_INTRA);
++
++		matrix = run->mpeg4.quantisation->non_intra_quantiser_matrix;
++		for (i = 0; i < 64; i++)
++			cedrus_write(dev, VE_DEC_MPEG_IQMINPUT,
++				     VE_DEC_MPEG_IQMINPUT_WEIGHT(i, matrix[i]) |
++				     VE_DEC_MPEG_IQMINPUT_FLAG_NON_INTRA);
++	}
++
++	/* Picture header. */
++	hdr = VE_DEC_MPEG_MP4VOPHDR_CODING_TYPE(coding_type);
++
++	if (h263) {
++		hdr |= VE_DEC_MPEG_MP4VOPHDR_SHORT_VIDEO_HEADER |
++		       VE_DEC_MPEG_MP4VOPHDR_RESYNC_MARKER_DISABLE |
++		       VE_DEC_MPEG_MP4VOPHDR_H263_ESCAPE |
++		       VE_DEC_MPEG_MP4VOPHDR_H263_PMV |
++		       VE_DEC_MPEG_MP4VOPHDR_H263_UMV |
++		       VE_DEC_MPEG_MP4VOPHDR_FCODE_FWD(1);
++
++		if (pic->flags & V4L2_H263_PICTURE_FLAG_ROUNDING_TYPE)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_ROUNDING_TYPE;
++		if (pic->spk_version)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_SORENSON_V1;
++	} else {
++		hdr |= VE_DEC_MPEG_MP4VOPHDR_INTRA_DC_VLC_THR(vop->intra_dc_vlc_thr) |
++		       VE_DEC_MPEG_MP4VOPHDR_FCODE_FWD(vop->vop_fcode_forward);
++
++		if (coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B) {
++			u8 colocated = vop->backward_ref_vop_coding_type;
++
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_CO_LOCATED_TYPE(colocated) |
++			       VE_DEC_MPEG_MP4VOPHDR_FCODE_BWD(vop->vop_fcode_backward);
++		}
++
++		if (vol->flags & V4L2_MPEG4_VOL_FLAG_INTERLACED)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_INTERLACED;
++		if (vol->flags & V4L2_MPEG4_VOL_FLAG_QUANT_TYPE)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_QUANT_TYPE;
++		if (vol->flags & V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_QUARTER_SAMPLE;
++		if (vol->flags & V4L2_MPEG4_VOL_FLAG_RESYNC_MARKER_DISABLE)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_RESYNC_MARKER_DISABLE;
++		if (vop->flags & V4L2_MPEG4_VOP_FLAG_ROUNDING_TYPE)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_ROUNDING_TYPE;
++		if (vop->flags & V4L2_MPEG4_VOP_FLAG_TOP_FIELD_FIRST)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_TOP_FIELD_FIRST;
++		if (vop->flags & V4L2_MPEG4_VOP_FLAG_ALTERNATE_VERTICAL_SCAN)
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_ALT_VERTICAL_SCAN;
++
++		if (coding_type == V4L2_MPEG4_VOP_CODING_TYPE_S) {
++			u8 accuracy = vol->sprite_warping_accuracy;
++			u8 points = cedrus_mpeg4_gmc_points(vol, vop);
++
++			hdr |= VE_DEC_MPEG_MP4VOPHDR_SPRITE_ACCURACY(accuracy) |
++			       VE_DEC_MPEG_MP4VOPHDR_WARPING_POINTS(points);
++		}
++	}
++
++	cedrus_write(dev, VE_DEC_MPEG_MP4VOPHDR, hdr);
++
++	/* Picture size. */
++	cedrus_write(dev, VE_DEC_MPEG_PICCODEDSIZE,
++		     VE_DEC_MPEG_PICCODEDSIZE_STRIDE(width) |
++		     VE_DEC_MPEG_PICCODEDSIZE_WIDTH(width) |
++		     VE_DEC_MPEG_PICCODEDSIZE_HEIGHT(height));
++
++	/*
++	 * Motion compensation pads the references from the picture boundary,
++	 * which is the macroblock aligned size, except for encoders which
++	 * padded from the picture size.
++	 */
++	if (!(quirks & V4L2_MPEG4_QUIRK_EDGE_EXACT_SIZE)) {
++		width = ALIGN(width, 16);
++		height = ALIGN(height, 16);
++	}
++
++	cedrus_write(dev, VE_DEC_MPEG_PICBOUNDSIZE,
++		     VE_DEC_MPEG_PICBOUNDSIZE_WIDTH(width) |
++		     VE_DEC_MPEG_PICBOUNDSIZE_HEIGHT(height));
++
++	/* Temporal distances of the direct mode. */
++	if (!h263 && coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B) {
++		cedrus_write(dev, VE_DEC_MPEG_TRBTRD_FRAME,
++			     VE_DEC_MPEG_TRBTRD_FRAME_TRB(vop->trb) |
++			     VE_DEC_MPEG_TRBTRD_FRAME_TRD(vop->trd));
++		cedrus_write(dev, VE_DEC_MPEG_TRBTRD_FIELD,
++			     VE_DEC_MPEG_TRBTRD_FIELD_TRB(vop->trb_field) |
++			     VE_DEC_MPEG_TRBTRD_FIELD_TRD(vop->trd_field));
++	}
++
++	if (!h263 && coding_type == V4L2_MPEG4_VOP_CODING_TYPE_S)
++		cedrus_mpeg4_write_gmc(ctx, vol, vop, quirks);
++
++	/* References; a missing one falls back to the current picture. */
++	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
++
++	fwd = vb2_find_buffer(vq, h263 ? pic->forward_ref_ts :
++				  vop->forward_ref_ts) ?: dst_vb;
++	bwd = dst_vb;
++	if (!h263 && coding_type == V4L2_MPEG4_VOP_CODING_TYPE_B)
++		bwd = vb2_find_buffer(vq, vop->backward_ref_ts) ?: dst_vb;
++
++	cedrus_write(dev, VE_DEC_MPEG_FWD_REF_LUMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, fwd, 0));
++	cedrus_write(dev, VE_DEC_MPEG_FWD_REF_CHROMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, fwd, 1));
++	cedrus_write(dev, VE_DEC_MPEG_BWD_REF_LUMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, bwd, 0));
++	cedrus_write(dev, VE_DEC_MPEG_BWD_REF_CHROMA_ADDR,
++		     cedrus_dst_buf_addr(ctx, bwd, 1));
++
++	cedrus_write(dev, VE_DEC_MPEG_REC_LUMA,
++		     cedrus_dst_buf_addr(ctx, dst_vb, 0));
++	cedrus_write(dev, VE_DEC_MPEG_REC_CHROMA,
++		     cedrus_dst_buf_addr(ctx, dst_vb, 1));
++
++	/*
++	 * A B picture reads the macroblock information and not coded flags
++	 * which its backward reference wrote; the other pictures write their
++	 * own.
++	 */
++	if (bwd != dst_vb) {
++		struct cedrus_buffer *ref = vb2_to_cedrus_buffer(bwd);
++
++		if (!ref->codec.mpeg4.aux_buf)
++			return -EINVAL;
++
++		cedrus_mpeg4_write_aux(ctx, ref);
++	} else {
++		cedrus_mpeg4_write_aux(ctx, dst);
++	}
++
++	cedrus_write(dev, VE_DEC_MPEG_DCAC_ADDR,
++		     VE_DEC_MPEG_AUX_ADDR(mpeg4->dcac_buf_dma));
++
++	/* Engine control. */
++	ctrl = VE_DEC_MPEG_CTRL_IRQ_MASK | VE_DEC_MPEG_CTRL_MC_NO_WRITEBACK |
++	       VE_DEC_MPEG_CTRL_MC_CACHE_EN | VE_DEC_MPEG_CTRL_QP_AC_DC_OUT_EN;
++
++	/*
++	 * Chroma vectors of field predictions derived DivX style, as
++	 * the vendor library always does: ISO/IEC 14496-2 needs it off.
++	 */
++	if (!h263 && (quirks & V4L2_MPEG4_QUIRK_FIELD_HPEL_CHROMA))
++		ctrl |= VE_DEC_MPEG_CTRL_MVCS_FLD_HM;
++
++	if (coding_type == V4L2_MPEG4_VOP_CODING_TYPE_P)
++		ctrl |= VE_DEC_MPEG_CTRL_NC_FLAG_OUT_EN;
++
++	if (!h263 && (vol->flags & V4L2_MPEG4_VOL_FLAG_QUARTER_SAMPLE))
++		ctrl |= cedrus_mpeg4_qpel_ctrl(coding_type, quirks);
++
++	cedrus_write(dev, VE_DEC_MPEG_CTRL, ctrl);
++
++	/* Bitstream. */
++	mpeg4->src_addr = vb2_dma_contig_plane_dma_addr(src_vb, 0);
++	mpeg4->src_end = mpeg4->src_addr + vb2_plane_size(src_vb, 0);
++	mpeg4->src_bits = vb2_get_plane_payload(src_vb, 0) * 8;
++	mpeg4->cur_segment = 0;
++	mpeg4->error = false;
++
++	return 0;
++}
++
++static void cedrus_mpeg4_run_segment(struct cedrus_ctx *ctx)
++{
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++	const struct cedrus_mpeg4_segment *seg =
++		&mpeg4->segments[mpeg4->cur_segment];
++	struct cedrus_dev *dev = ctx->dev;
++	u32 reg;
++
++	cedrus_write(dev, VE_DEC_MPEG_STATUS, VE_DEC_MPEG_STATUS_CHECK_MASK);
++	cedrus_write(dev, VE_DEC_MPEG_ERROR, 0);
++	cedrus_write(dev, VE_DEC_MPEG_CRTMBADDR, 0);
++
++	cedrus_write(dev, VE_DEC_MPEG_MBADDR,
++		     VE_DEC_MPEG_MBADDR_X(seg->macroblock_number % mpeg4->mb_width) |
++		     VE_DEC_MPEG_MBADDR_Y(seg->macroblock_number / mpeg4->mb_width));
++	cedrus_write(dev, VE_DEC_MPEG_QCINPUT,
++		     VE_DEC_MPEG_QCINPUT_QUANT_SCALE(seg->quant_scale));
++
++	/* The engine reads the bitstream in 32 bit words. */
++	cedrus_write(dev, VE_DEC_MPEG_VLD_OFFSET, seg->bit_offset);
++	cedrus_write(dev, VE_DEC_MPEG_VLD_LEN,
++		     ALIGN(mpeg4->src_bits - seg->bit_offset, 32));
++	cedrus_write(dev, VE_DEC_MPEG_VLD_END_ADDR, mpeg4->src_end);
++
++	reg = VE_DEC_MPEG_VLD_ADDR_BASE(mpeg4->src_addr) |
++	      VE_DEC_MPEG_VLD_ADDR_VALID_PIC_DATA |
++	      VE_DEC_MPEG_VLD_ADDR_LAST_PIC_DATA |
++	      VE_DEC_MPEG_VLD_ADDR_FIRST_PIC_DATA;
++	cedrus_write(dev, VE_DEC_MPEG_VLD_ADDR, reg);
++
++	reg = VE_DEC_MPEG_TRIGGER_MB_BOUNDARY | VE_DEC_MPEG_TRIGGER_MPEG4 |
++	      VE_DEC_MPEG_TRIGGER_NUM_MB(seg->num_macroblocks) |
++	      VE_DEC_MPEG_TRIGGER_HW_MB;
++	cedrus_write(dev, VE_DEC_MPEG_TRIGGER, reg);
++}
++
++static void cedrus_mpeg4_trigger(struct cedrus_ctx *ctx)
++{
++	cedrus_mpeg4_run_segment(ctx);
++}
++
++static bool cedrus_mpeg4_trigger_next(struct cedrus_ctx *ctx,
++				      enum cedrus_irq_status *status)
++{
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++
++	if (*status == CEDRUS_IRQ_ERROR)
++		mpeg4->error = true;
++
++	/* Decode the remaining segments, even after an error in one. */
++	if (++mpeg4->cur_segment < mpeg4->num_segments) {
++		cedrus_mpeg4_run_segment(ctx);
++		return true;
++	}
++
++	if (mpeg4->error)
++		*status = CEDRUS_IRQ_ERROR;
++
++	return false;
++}
++
++static int cedrus_mpeg4_start(struct cedrus_ctx *ctx)
++{
++	struct cedrus_dev *dev = ctx->dev;
++	struct cedrus_mpeg4_ctx *mpeg4;
++	unsigned int mb_width = ALIGN(DIV_ROUND_UP(ctx->src_fmt.width, 16), 2);
++
++	mpeg4 = kzalloc_obj(*mpeg4);
++	if (!mpeg4)
++		return -ENOMEM;
++
++	mpeg4->segments = kvcalloc(CEDRUS_MPEG4_MAX_SEGMENTS,
++				   sizeof(*mpeg4->segments), GFP_KERNEL);
++	if (!mpeg4->segments)
++		goto err_free_ctx;
++
++	/* DC and AC coefficients of the macroblock row above, for prediction. */
++	mpeg4->dcac_buf_size = ALIGN(mb_width * 64, SZ_1K);
++	mpeg4->dcac_buf = dma_alloc_attrs(dev->dev, mpeg4->dcac_buf_size,
++					  &mpeg4->dcac_buf_dma, GFP_KERNEL,
++					  DMA_ATTR_NO_KERNEL_MAPPING);
++	if (!mpeg4->dcac_buf)
++		goto err_free_segments;
++
++	ctx->codec.mpeg4 = mpeg4;
++
++	return 0;
++
++err_free_segments:
++	kvfree(mpeg4->segments);
++err_free_ctx:
++	kfree(mpeg4);
++	return -ENOMEM;
++}
++
++static void cedrus_mpeg4_stop(struct cedrus_ctx *ctx)
++{
++	struct cedrus_mpeg4_ctx *mpeg4 = cedrus_mpeg4_ctx(ctx);
++	struct cedrus_dev *dev = ctx->dev;
++	struct vb2_queue *vq;
++	unsigned int i;
++
++	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
++	for (i = 0; i < vb2_get_num_buffers(vq); i++) {
++		struct vb2_buffer *vb = vb2_get_buffer(vq, i);
++
++		if (vb)
++			cedrus_mpeg4_buf_cleanup(ctx, vb2_to_cedrus_buffer(vb));
++	}
++
++	dma_free_attrs(dev->dev, mpeg4->dcac_buf_size, mpeg4->dcac_buf,
++		       mpeg4->dcac_buf_dma, DMA_ATTR_NO_KERNEL_MAPPING);
++	kvfree(mpeg4->segments);
++	kfree(mpeg4);
++	ctx->codec.mpeg4 = NULL;
++}
++
++struct cedrus_dec_ops cedrus_dec_ops_mpeg4 = {
++	.irq_clear	= cedrus_mpeg4_irq_clear,
++	.irq_disable	= cedrus_mpeg4_irq_disable,
++	.irq_status	= cedrus_mpeg4_irq_status,
++	.setup		= cedrus_mpeg4_setup,
++	.start		= cedrus_mpeg4_start,
++	.stop		= cedrus_mpeg4_stop,
++	.buf_cleanup	= cedrus_mpeg4_buf_cleanup,
++	.trigger	= cedrus_mpeg4_trigger,
++	.trigger_next	= cedrus_mpeg4_trigger_next,
++};
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+@@ -138,8 +138,35 @@
+ #define VE_DEC_MPEG_MP12HDR_FULL_PEL_BACKWARD_VECTOR(v) \
+ 	((v) ? BIT(0) : 0)
+ 
++#define VE_DEC_MPEG_MP4VOPHDR			(VE_ENGINE_DEC_MPEG + 0x04)
++
++#define VE_DEC_MPEG_MP4VOPHDR_SHORT_VIDEO_HEADER	BIT(31)
++#define VE_DEC_MPEG_MP4VOPHDR_INTERLACED		BIT(30)
++#define VE_DEC_MPEG_MP4VOPHDR_CO_LOCATED_TYPE(t)	SHIFT_AND_MASK_BITS(t, 29, 28)
++#define VE_DEC_MPEG_MP4VOPHDR_SPRITE_ACCURACY(a)	SHIFT_AND_MASK_BITS(a, 26, 25)
++#define VE_DEC_MPEG_MP4VOPHDR_QUANT_TYPE		BIT(24)
++#define VE_DEC_MPEG_MP4VOPHDR_QUARTER_SAMPLE		BIT(23)
++#define VE_DEC_MPEG_MP4VOPHDR_RESYNC_MARKER_DISABLE	BIT(22)
++#define VE_DEC_MPEG_MP4VOPHDR_WARPING_POINTS(n)		SHIFT_AND_MASK_BITS(n, 21, 20)
++#define VE_DEC_MPEG_MP4VOPHDR_CODING_TYPE(t)		SHIFT_AND_MASK_BITS(t, 19, 18)
++#define VE_DEC_MPEG_MP4VOPHDR_ROUNDING_TYPE		BIT(17)
++#define VE_DEC_MPEG_MP4VOPHDR_H263_ESCAPE		BIT(16)
++#define VE_DEC_MPEG_MP4VOPHDR_H263_PMV			BIT(15)
++#define VE_DEC_MPEG_MP4VOPHDR_MODIFIED_QUANT		BIT(14)
++#define VE_DEC_MPEG_MP4VOPHDR_ADV_INTRA_PRED		BIT(13)
++#define VE_DEC_MPEG_MP4VOPHDR_H263_UMV			BIT(12)
++#define VE_DEC_MPEG_MP4VOPHDR_SORENSON_V1		BIT(11)
++#define VE_DEC_MPEG_MP4VOPHDR_INTRA_DC_VLC_THR(t)	SHIFT_AND_MASK_BITS(t, 10, 8)
++#define VE_DEC_MPEG_MP4VOPHDR_TOP_FIELD_FIRST		BIT(7)
++#define VE_DEC_MPEG_MP4VOPHDR_ALT_VERTICAL_SCAN		BIT(6)
++#define VE_DEC_MPEG_MP4VOPHDR_FCODE_FWD(f)		SHIFT_AND_MASK_BITS(f, 5, 3)
++#define VE_DEC_MPEG_MP4VOPHDR_FCODE_BWD(f)		SHIFT_AND_MASK_BITS(f, 2, 0)
++
+ #define VE_DEC_MPEG_PICCODEDSIZE		(VE_ENGINE_DEC_MPEG + 0x08)
+ 
++#define VE_DEC_MPEG_PICCODEDSIZE_STRIDE(w) \
++	SHIFT_AND_MASK_BITS(ALIGN(DIV_ROUND_UP(w, 16), 2), 23, 16)
++
+ #define VE_DEC_MPEG_PICCODEDSIZE_WIDTH(w) \
+ 	SHIFT_AND_MASK_BITS(DIV_ROUND_UP(w, 16), 15, 8)
+ #define VE_DEC_MPEG_PICCODEDSIZE_HEIGHT(h) \
+@@ -158,9 +185,15 @@
+ #define VE_DEC_MPEG_CTRL			(VE_ENGINE_DEC_MPEG + 0x14)
+ 
+ #define VE_DEC_MPEG_CTRL_MC_CACHE_EN		BIT(31)
++#define VE_DEC_MPEG_CTRL_FDC_QAC_IN_DRAM	BIT(30)
++#define VE_DEC_MPEG_CTRL_MVCS_MV4_QM(m)		SHIFT_AND_MASK_BITS(m, 25, 24)
++#define VE_DEC_MPEG_CTRL_MVCS_MV1_QM(m)		SHIFT_AND_MASK_BITS(m, 23, 22)
++#define VE_DEC_MPEG_CTRL_MVCS_FLD_QM(m)		SHIFT_AND_MASK_BITS(m, 21, 20)
++#define VE_DEC_MPEG_CTRL_MVCS_FLD_HM		BIT(19)
+ #define VE_DEC_MPEG_CTRL_SW_VLD			BIT(27)
+ #define VE_DEC_MPEG_CTRL_SW_IQ_IS		BIT(17)
+ #define VE_DEC_MPEG_CTRL_QP_AC_DC_OUT_EN	BIT(14)
++#define VE_DEC_MPEG_CTRL_NC_FLAG_OUT_EN		BIT(12)
+ #define VE_DEC_MPEG_CTRL_ROTATE_SCALE_OUT_EN	BIT(8)
+ #define VE_DEC_MPEG_CTRL_MC_NO_WRITEBACK	BIT(7)
+ #define VE_DEC_MPEG_CTRL_ROTATE_IRQ_EN		BIT(6)
+@@ -187,6 +220,8 @@
+ #define VE_DEC_MPEG_TRIGGER_MPEG4		(0x04 << 24)
+ #define VE_DEC_MPEG_TRIGGER_VP62		(0x05 << 24)
+ 
++#define VE_DEC_MPEG_TRIGGER_NUM_MB(n)		SHIFT_AND_MASK_BITS(n, 22, 8)
++
+ #define VE_DEC_MPEG_TRIGGER_VP62_AC_GET_BITS	BIT(7)
+ 
+ #define VE_DEC_MPEG_TRIGGER_STCD_VC1		(0x02 << 4)
+@@ -239,6 +274,16 @@
+ #define VE_DEC_MPEG_STATUS_CHECK_ERROR \
+ 	(VE_DEC_MPEG_STATUS_ERROR | VE_DEC_MPEG_STATUS_VLD_DATA_REQ)
+ 
++#define VE_DEC_MPEG_TRBTRD_FIELD		(VE_ENGINE_DEC_MPEG + 0x20)
++
++#define VE_DEC_MPEG_TRBTRD_FIELD_TRB(t)		SHIFT_AND_MASK_BITS(t, 15, 8)
++#define VE_DEC_MPEG_TRBTRD_FIELD_TRD(t)		SHIFT_AND_MASK_BITS(t, 7, 0)
++
++#define VE_DEC_MPEG_TRBTRD_FRAME		(VE_ENGINE_DEC_MPEG + 0x24)
++
++#define VE_DEC_MPEG_TRBTRD_FRAME_TRB(t)		SHIFT_AND_MASK_BITS(t, 31, 16)
++#define VE_DEC_MPEG_TRBTRD_FRAME_TRD(t)		SHIFT_AND_MASK_BITS(t, 15, 0)
++
+ #define VE_DEC_MPEG_VLD_ADDR			(VE_ENGINE_DEC_MPEG + 0x28)
+ 
+ #define VE_DEC_MPEG_VLD_ADDR_FIRST_PIC_DATA	BIT(30)
+@@ -256,6 +301,13 @@
+ #define VE_DEC_MPEG_VLD_LEN			(VE_ENGINE_DEC_MPEG + 0x30)
+ #define VE_DEC_MPEG_VLD_END_ADDR		(VE_ENGINE_DEC_MPEG + 0x34)
+ 
++#define VE_DEC_MPEG_MBH_ADDR			(VE_ENGINE_DEC_MPEG + 0x38)
++#define VE_DEC_MPEG_DCAC_ADDR			(VE_ENGINE_DEC_MPEG + 0x3c)
++#define VE_DEC_MPEG_NCF_ADDR			(VE_ENGINE_DEC_MPEG + 0x44)
++
++/* The MBH, DCAC and NCF buffers are 1 KiB aligned: bits 9:0 are ignored. */
++#define VE_DEC_MPEG_AUX_ADDR(a)			((a) & GENMASK(31, 10))
++
+ #define VE_DEC_MPEG_REC_LUMA			(VE_ENGINE_DEC_MPEG + 0x48)
+ #define VE_DEC_MPEG_REC_CHROMA			(VE_ENGINE_DEC_MPEG + 0x4c)
+ #define VE_DEC_MPEG_FWD_REF_LUMA_ADDR		(VE_ENGINE_DEC_MPEG + 0x50)
+@@ -263,6 +315,23 @@
+ #define VE_DEC_MPEG_BWD_REF_LUMA_ADDR		(VE_ENGINE_DEC_MPEG + 0x58)
+ #define VE_DEC_MPEG_BWD_REF_CHROMA_ADDR		(VE_ENGINE_DEC_MPEG + 0x5c)
+ 
++#define VE_DEC_MPEG_GMC_SOCX			(VE_ENGINE_DEC_MPEG + 0x60)
++#define VE_DEC_MPEG_GMC_SOCY			(VE_ENGINE_DEC_MPEG + 0x64)
++#define VE_DEC_MPEG_GMC_SOL			(VE_ENGINE_DEC_MPEG + 0x68)
++#define VE_DEC_MPEG_GMC_SDLX			(VE_ENGINE_DEC_MPEG + 0x6c)
++#define VE_DEC_MPEG_GMC_SDLY			(VE_ENGINE_DEC_MPEG + 0x70)
++#define VE_DEC_MPEG_GMC_SSR			(VE_ENGINE_DEC_MPEG + 0x74)
++#define VE_DEC_MPEG_GMC_SDCX			(VE_ENGINE_DEC_MPEG + 0x78)
++#define VE_DEC_MPEG_GMC_SDCY			(VE_ENGINE_DEC_MPEG + 0x7c)
++
++#define VE_DEC_MPEG_GMC_PAIR(hi, lo) \
++	(SHIFT_AND_MASK_BITS(hi, 31, 16) | SHIFT_AND_MASK_BITS(lo, 15, 0))
++
++#define VE_DEC_MPEG_GMC_SSR_DELTA_DATA_MODE	BIT(31)
++#define VE_DEC_MPEG_GMC_SSR_DELTA_LSB(i)	BIT(16 + (i))
++#define VE_DEC_MPEG_GMC_SSR_CHROMA_SHIFT(s)	SHIFT_AND_MASK_BITS(s, 12, 8)
++#define VE_DEC_MPEG_GMC_SSR_LUMA_SHIFT(s)	SHIFT_AND_MASK_BITS(s, 4, 0)
++
+ #define VE_DEC_MPEG_IQMINPUT			(VE_ENGINE_DEC_MPEG + 0x80)
+ 
+ #define VE_DEC_MPEG_IQMINPUT_FLAG_INTRA		(0x01 << 14)
+@@ -270,6 +339,16 @@
+ #define VE_DEC_MPEG_IQMINPUT_WEIGHT(i, v) \
+ 	(SHIFT_AND_MASK_BITS(i, 13, 8) | SHIFT_AND_MASK_BITS(v, 7, 0))
+ 
++#define VE_DEC_MPEG_QCINPUT			(VE_ENGINE_DEC_MPEG + 0x84)
++
++#define VE_DEC_MPEG_QCINPUT_QUANT_SCALE(q)	SHIFT_AND_MASK_BITS(q, 5, 0)
++
++#define VE_DEC_MPEG_GMC_MV_LUMA			(VE_ENGINE_DEC_MPEG + 0xa8)
++#define VE_DEC_MPEG_GMC_MV_CHROMA		(VE_ENGINE_DEC_MPEG + 0xac)
++
++#define VE_DEC_MPEG_GMC_MV(x, y) \
++	(SHIFT_AND_MASK_BITS(x, 30, 16) | SHIFT_AND_MASK_BITS(y, 14, 0))
++
+ #define VE_DEC_MPEG_ERROR			(VE_ENGINE_DEC_MPEG + 0xc4)
+ #define VE_DEC_MPEG_CRTMBADDR			(VE_ENGINE_DEC_MPEG + 0xc8)
+ #define VE_DEC_MPEG_ROT_LUMA			(VE_ENGINE_DEC_MPEG + 0xcc)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -67,6 +67,21 @@ static struct cedrus_format cedrus_formats[] = {
+ 		.directions	= CEDRUS_DECODE_SRC,
+ 		.capabilities	= CEDRUS_CAPABILITY_VC1_DEC,
+ 	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_MPEG4_SLICE,
++		.directions	= CEDRUS_DECODE_SRC,
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_H263_SLICE,
++		.directions	= CEDRUS_DECODE_SRC,
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_SPK_SLICE,
++		.directions	= CEDRUS_DECODE_SRC,
++		.capabilities	= CEDRUS_CAPABILITY_MPEG4_DEC,
++	},
+ 	{
+ 		.pixelformat	= V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
+ 		.directions	= CEDRUS_DECODE_DST,
+@@ -184,6 +199,9 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
+ 	case V4L2_PIX_FMT_VP8_FRAME:
+ 	case V4L2_PIX_FMT_VP9_FRAME:
+ 	case V4L2_PIX_FMT_VC1_SLICE:
++	case V4L2_PIX_FMT_MPEG4_SLICE:
++	case V4L2_PIX_FMT_H263_SLICE:
++	case V4L2_PIX_FMT_SPK_SLICE:
+ 		/* Zero bytes per line for encoded source. */
+ 		bytesperline = 0;
+ 		/* Choose some minimum size since this can't be 0 */
+@@ -483,6 +501,11 @@ static int cedrus_s_fmt_vid_out_p(struct cedrus_ctx *ctx,
+ 	case V4L2_PIX_FMT_VC1_SLICE:
+ 		ctx->current_codec = &cedrus_dec_ops_vc1;
+ 		break;
++	case V4L2_PIX_FMT_MPEG4_SLICE:
++	case V4L2_PIX_FMT_H263_SLICE:
++	case V4L2_PIX_FMT_SPK_SLICE:
++		ctx->current_codec = &cedrus_dec_ops_mpeg4;
++		break;
+ 	}
+ 
+ 	/* Propagate format information to capture. */
+-- 
+Armbian
+

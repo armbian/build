@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sat, 11 Jul 2026 17:39:58 +0200
+Subject: media: cedrus: Implement AFBC YUV420 output for VP9
+
+The H616 video engine can emit its primary reconstruction output as an
+ARM Frame Buffer Compression (AFBC) surface instead of plain NV12/P010,
+which is more memory-bandwidth efficient. Wire this up for VP9:
+
+- Add the VE mode-register compression bits (COMPRESS_EN, MIN_VAL_WRAP_EN,
+  RGB_DEF_COLOR_EN, BODYBUF_1K_ALIGNED, COMPRESS_MODE_AFBC), confirmed
+  against the Allwinner Decoder Engine Registers Guide.
+- Add cedrus_is_afbc_format()/cedrus_dst_is_afbc() helpers and enable the
+  AFBC mode bits in cedrus_engine_enable() when the capture format is one
+  of the AFBC fourccs.
+- Add the 8- and 10-bit AFBC capture formats, scoped to VP9 via
+  src_format and placed after the plain formats so P010/NV12 remain the
+  default (AFBC is opt-in via S_FMT).
+- Size AFBC buffers in cedrus_prepare_format() and skip the 8-bit + 2-bit
+  10-bit split for AFBC, which carries full 10-bit samples in its body.
+
+AFBC is a single interleaved buffer, so the existing per-plane address
+helper already points both luma and chroma registers at the buffer base
+(zero line stride).
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+[aiyengar: rebased onto Armbian's "Implement AFBC YUV420 formats for H265",
+ which already adds the VE_MODE compression bits, the AFBC mode setup in
+ cedrus_engine_enable(), the cedrus_dst_format_set() case and the AFBC
+ sizing in cedrus_prepare_format(); only the VP9 parts are left]
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   | 24 +++++++++++++++++++
+ .../staging/media/sunxi/cedrus/cedrus_video.c | 19 +++++++++++++++
+ .../staging/media/sunxi/cedrus/cedrus_vp9.c   | 11 ++++++---
+ 3 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -305,6 +305,22 @@ static inline bool cedrus_dst_is_p010(struct cedrus_ctx *ctx)
+ 	return ctx->dst_fmt.pixelformat == V4L2_PIX_FMT_P010;
+ }
+ 
++static inline bool cedrus_is_afbc_format(u32 format)
++{
++	switch (format) {
++	case V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT:
++	case V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT:
++		return true;
++	default:
++		return false;
++	}
++}
++
++static inline bool cedrus_dst_is_afbc(struct cedrus_ctx *ctx)
++{
++	return cedrus_is_afbc_format(ctx->dst_fmt.pixelformat);
++}
++
+ /*
+  * Offset of the hidden reconstruction surface, which follows the
+  * userspace-visible P010 surface at the start of the buffer.
+@@ -369,6 +385,14 @@ cedrus_dst_10bit_extra_size(struct cedrus_ctx *ctx,
+ 	if (ctx->bit_depth <= 8)
+ 		return 0;
+ 
++	/*
++	 * AFBC buffers are sized in full by cedrus_prepare_format(); the
++	 * compressed body already carries the 10-bit samples, so no extra
++	 * low-2-bit plane is appended.
++	 */
++	if (cedrus_is_afbc_format(pix_fmt->pixelformat))
++		return 0;
++
+ 	extra = cedrus_dst_2bit_size(pix_fmt->width, pix_fmt->height);
+ 
+ 	if (pix_fmt->pixelformat == V4L2_PIX_FMT_P010) {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -102,6 +102,25 @@ static struct cedrus_format cedrus_formats[] = {
+ 		.directions	= CEDRUS_DECODE_DST,
+ 		.capabilities	= CEDRUS_CAPABILITY_UNTILED,
+ 	},
++	/*
++	 * AFBC-compressed output. Only wired up for VP9 (H616) so far and
++	 * opt-in: placed after the plain formats so P010/NV12 stay the
++	 * default capture format. Selected explicitly via S_FMT.
++	 */
++	{
++		.pixelformat	= V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT,
++		.directions	= CEDRUS_DECODE_DST,
++		.capabilities	= CEDRUS_CAPABILITY_UNTILED,
++		.depth		= 10,
++		.src_format	= V4L2_PIX_FMT_VP9_FRAME,
++	},
++	{
++		.pixelformat	= V4L2_PIX_FMT_YUV420_8_AFBC_16X16_SPLIT,
++		.directions	= CEDRUS_DECODE_DST,
++		.capabilities	= CEDRUS_CAPABILITY_UNTILED,
++		.depth		= 8,
++		.src_format	= V4L2_PIX_FMT_VP9_FRAME,
++	},
+ };
+ 
+ #define CEDRUS_FORMATS_COUNT	ARRAY_SIZE(cedrus_formats)
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+@@ -842,7 +842,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	dma_addr_t src_dma, src_end, luma, chroma;
+ 	u32 src_len, hdr_off, cur_w, cur_h, mi_cols, mi_rows;
+ 	u32 hdr_syn, fc, reg;
+-	bool intra_only, p010, resolution_change, use_temporal_mv;
++	bool intra_only, p010, afbc, resolution_change, use_temporal_mv;
+ 	int ret;
+ 
+ 	if (!dec || !prob)
+@@ -857,6 +857,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	mi_cols = DIV_ROUND_UP(cur_w, 8);
+ 	mi_rows = DIV_ROUND_UP(cur_h, 8);
+ 	p010 = cedrus_dst_is_p010(ctx);
++	afbc = cedrus_dst_is_afbc(ctx);
+ 
+ 	intra_only = !!(dec->flags & (V4L2_VP9_FRAME_FLAG_KEY_FRAME |
+ 				      V4L2_VP9_FRAME_FLAG_INTRA_ONLY));
+@@ -1099,8 +1100,12 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		cedrus_write(dev, VE_DEC_VP9_SDRT_CHROMA_ADDR, 0);
+ 	}
+ 
+-	/* 10-bit output: lower-2-bit plane offset and stride. */
+-	if (dec->bit_depth > 8) {
++	/*
++	 * 10-bit output: lower-2-bit plane offset and stride. AFBC output is
++	 * self-contained (the compressed body already carries the full 10-bit
++	 * samples), so the 8-bit + 2-bit split does not apply there.
++	 */
++	if (dec->bit_depth > 8 && !afbc) {
+ 		/*
+ 		 * The hardware expects the 2-bit plane right after the chroma
+ 		 * rows of the frame, rounded up to whole 8x8 blocks, and not
+-- 
+Armbian
+
