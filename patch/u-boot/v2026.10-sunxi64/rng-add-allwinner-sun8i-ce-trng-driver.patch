@@ -1,0 +1,346 @@
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Subject: [PATCH] rng: add Allwinner Crypto Engine (sun8i-ce) TRNG driver
+
+The Crypto Engine of the H6/H616/H618 contains a true random number
+generator, exposed like the engine's other algorithms through a task
+descriptor (Linux drivers/crypto/allwinner/sun8i-ce/sun8i-ce-trng.c:
+algorithm 0x1c on these "V2" engines, length in bytes, 8-bit error field
+per flow). U-Boot has no RNG driver for sunxi, so DM_RNG cannot be
+enabled, fdt_chosen() cannot add /chosen/kaslr-seed and Linux boots with
+"KASLR disabled due to lack of seed".
+
+Add a minimal DM_RNG driver bound to the crypto node: takes the bus/mod/
+ram/trng clocks and the reset, programs the H616 module clock to
+PLL_PERI0(2X)/4 = 300 MHz (the rate Linux uses; the sunxi CCU driver has
+no set_rate) exactly like the pending sun8i-ce AES/hash series, then for
+each read queues a TRNG task on flow 3 and polls the flow's completion
+bit. Addresses are word addresses on the H616. With DM_RNG enabled the
+generic booti/bootm path injects kaslr-seed (and rng-seed with
+BOARD_RNG_SEED through the weak board_rng_seed()) automatically.
+
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+diff -ruN a/drivers/rng/Kconfig b/drivers/rng/Kconfig
+--- a/drivers/rng/Kconfig
++++ b/drivers/rng/Kconfig
+@@ -140,4 +140,14 @@
+ 	  case the LDFW (Loadable Firmware) has to be loaded first, as it
+ 	  actually implements TRNG SMC calls.
+ 
++config RNG_SUN8I_CE
++	bool "Allwinner Crypto Engine (sun8i-ce) TRNG"
++	depends on DM_RNG && ARCH_SUNXI
++	default y
++	help
++	  Enable the true random number generator of the Allwinner Crypto
++	  Engine found in the H6 and H616/H618 SoCs. The TRNG is driven
++	  through a task descriptor like the other engine algorithms; the
++	  driver uses it to provide /chosen/kaslr-seed and rng-seed to Linux.
++
+ endif
+diff -ruN a/drivers/rng/Makefile b/drivers/rng/Makefile
+--- a/drivers/rng/Makefile
++++ b/drivers/rng/Makefile
+@@ -20,3 +20,4 @@
+ obj-$(CONFIG_RNG_JH7110) += jh7110_rng.o
+ obj-$(CONFIG_RNG_TURRIS_RWTM) += turris_rwtm_rng.o
+ obj-$(CONFIG_RNG_EXYNOS) += exynos-trng.o
++obj-$(CONFIG_RNG_SUN8I_CE) += sun8i_ce_rng.o
+diff -ruN a/drivers/rng/sun8i_ce_rng.c b/drivers/rng/sun8i_ce_rng.c
+--- /dev/null
++++ b/drivers/rng/sun8i_ce_rng.c
+@@ -0,0 +1,294 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Allwinner Crypto Engine (sun8i-ce) true random number generator
++ *
++ * Copyright (C) 2026 Arun Iyengar <aiyengar1990@gmail.com>
++ *
++ * The TRNG is one more algorithm of the Crypto Engine: a task descriptor
++ * is queued on one of the four flows and the engine fills the destination
++ * buffer with random bytes. Register and descriptor layout follow Linux
++ * drivers/crypto/allwinner/sun8i-ce (sun8i-ce-trng.c) for the "V2" TRNG
++ * found in the H6 and later SoCs (algorithm 0x1c, lengths in bytes,
++ * per-flow 8-bit error fields). The H616 wants word (>> 2) addresses in
++ * the descriptor and its module clock has no CCU driver support for rate
++ * setting, so it is programmed to PLL_PERI0(2X)/4 = 300 MHz here, as the
++ * pending sun8i-ce AES/hash series for U-Boot does.
++ */
++
++#include <clk.h>
++#include <cpu_func.h>
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <malloc.h>
++#include <memalign.h>
++#include <reset.h>
++#include <rng.h>
++#include <time.h>
++#include <u-boot/schedule.h>
++#include <asm/arch/cpu.h>
++#include <asm/cache.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/string.h>
++
++#define CE_TDQ			0x00	/* task descriptor queue address */
++#define CE_ICR			0x08	/* interrupt control, bit per flow */
++#define CE_ISR			0x0c	/* interrupt status, bit per flow */
++#define CE_TLR			0x10	/* task load */
++#define CE_ESR			0x18	/* error status, 8 bits per flow */
++
++#define CE_TASK_START		BIT(0)
++#define CE_TLR_METHOD_SHIFT	8
++#define CE_METHOD_MASK		GENMASK(6, 0)
++#define CE_COMM_INT		BIT(31)
++#define CE_ALG_TRNG_V2		0x1c
++
++#define CE_ERR_ALGO_NOTSUP	BIT(0)
++#define CE_ERR_DATALEN		BIT(1)
++#define CE_ERR_ADDR_INVALID	BIT(5)
++
++#define CE_MAX_SG		8
++/* Linux uses flow 3 for the TRNG, keeping 0-2 for the cipher/hash work */
++#define CE_TRNG_FLOW		3
++#define CE_FLOW_ERR_MASK(f)	GENMASK((f) * 8 + 7, (f) * 8)
++/* The TRNG produces data in 32 byte granules */
++#define CE_TRNG_GRANULE		32
++#define CE_TIMEOUT_US		3000000
++
++/* H6/H616 CCU: CE module clock */
++#define SUN50I_H6_CCU_CE_CLK		0x680
++#define SUN50I_H6_CCU_CE_CLK_GATE	BIT(31)
++#define SUN50I_H6_CCU_CE_CLK_SRC_PERI0_2X BIT(24)
++#define SUN50I_H6_CCU_CE_CLK_N_MASK	GENMASK(9, 8)
++#define SUN50I_H6_CCU_CE_CLK_M_MASK	GENMASK(3, 0)
++#define SUN50I_H6_CCU_CE_CLK_MASK	(SUN50I_H6_CCU_CE_CLK_GATE | \
++					 SUN50I_H6_CCU_CE_CLK_SRC_PERI0_2X | \
++					 SUN50I_H6_CCU_CE_CLK_N_MASK | \
++					 SUN50I_H6_CCU_CE_CLK_M_MASK)
++/* PLL_PERI0(2X) = 1.2 GHz, M = 3 -> /4 = 300 MHz, the rate Linux uses */
++#define SUN50I_H616_CCU_CE_CLK_CFG	(SUN50I_H6_CCU_CE_CLK_SRC_PERI0_2X | 3)
++
++struct sun8i_ce_sginfo {
++	u32 addr;
++	u32 len;
++} __packed;
++
++struct sun8i_ce_task {
++	u32 t_id;
++	u32 t_common_ctl;
++	u32 t_sym_ctl;
++	u32 t_asym_ctl;
++	u32 t_key;
++	u32 t_iv;
++	u32 t_ctr;
++	u32 t_dlen;
++	struct sun8i_ce_sginfo t_src[CE_MAX_SG];
++	struct sun8i_ce_sginfo t_dst[CE_MAX_SG];
++	u32 next;
++	u32 reserved[3];
++} __packed __aligned(8);
++
++struct sun8i_ce_rng_variant {
++	bool word_addresses;
++	u32 mod_clk_cfg;	/* 0: leave the CCU mod clock register alone */
++};
++
++struct sun8i_ce_rng_priv {
++	void __iomem *base;
++	const struct sun8i_ce_rng_variant *variant;
++	struct clk_bulk clks;
++	struct reset_ctl_bulk resets;
++	struct sun8i_ce_task *task;
++};
++
++static u32 sun8i_ce_desc_addr(struct sun8i_ce_rng_priv *priv, void *ptr)
++{
++	phys_addr_t addr = virt_to_phys(ptr);
++
++	if (priv->variant->word_addresses)
++		addr >>= 2;
++
++	return (u32)addr;
++}
++
++static int sun8i_ce_wait(void __iomem *reg, u32 mask, u32 expect)
++{
++	ulong timeout = timer_get_us() + CE_TIMEOUT_US;
++
++	do {
++		if ((readl(reg) & mask) == expect)
++			return 0;
++		schedule();
++	} while (!time_after(timer_get_us(), timeout));
++
++	return (readl(reg) & mask) == expect ? 0 : -ETIMEDOUT;
++}
++
++static int sun8i_ce_rng_run(struct sun8i_ce_rng_priv *priv, void *buf,
++			    size_t len)
++{
++	struct sun8i_ce_task *task = priv->task;
++	u32 flow_bit = BIT(CE_TRNG_FLOW);
++	u32 err_mask = CE_FLOW_ERR_MASK(CE_TRNG_FLOW);
++	u32 err;
++	int ret;
++
++	memset(task, 0, sizeof(*task));
++	task->t_id = CE_TRNG_FLOW;
++	task->t_common_ctl = CE_ALG_TRNG_V2 | CE_COMM_INT;
++	task->t_dlen = len;			/* bytes on the V2 engines */
++	task->t_dst[0].addr = sun8i_ce_desc_addr(priv, buf);
++	task->t_dst[0].len = len / sizeof(u32);	/* words */
++
++	flush_dcache_range((ulong)task, (ulong)task + sizeof(*task));
++	/* drop any dirty lines so they cannot overwrite the DMA result */
++	flush_dcache_range((ulong)buf, (ulong)buf + len);
++
++	/* arm the flow, clear stale completion and error status */
++	setbits_le32(priv->base + CE_ICR, flow_bit);
++	writel(flow_bit, priv->base + CE_ISR);
++	writel(err_mask, priv->base + CE_ESR);
++
++	ret = sun8i_ce_wait(priv->base + CE_TLR, CE_TASK_START, 0);
++	if (ret)
++		goto out;
++
++	writel(sun8i_ce_desc_addr(priv, task), priv->base + CE_TDQ);
++	/* Be sure all data is written before enabling the task */
++	wmb();
++	writel(CE_TASK_START | ((CE_ALG_TRNG_V2 & CE_METHOD_MASK) <<
++				CE_TLR_METHOD_SHIFT), priv->base + CE_TLR);
++
++	ret = sun8i_ce_wait(priv->base + CE_ISR, flow_bit, flow_bit);
++	writel(flow_bit, priv->base + CE_ISR);
++	err = readl(priv->base + CE_ESR) & err_mask;
++	writel(err_mask, priv->base + CE_ESR);
++	if (err) {
++		err >>= CE_TRNG_FLOW * 8;
++		printf("sun8i-ce TRNG: engine error %#x%s%s%s\n", err,
++		       err & CE_ERR_ALGO_NOTSUP ? " (algorithm not supported)" : "",
++		       err & CE_ERR_DATALEN ? " (data length)" : "",
++		       err & CE_ERR_ADDR_INVALID ? " (invalid address)" : "");
++		ret = -EIO;
++	} else if (ret) {
++		printf("sun8i-ce TRNG: timeout waiting for the engine\n");
++	}
++
++out:
++	clrbits_le32(priv->base + CE_ICR, flow_bit);
++	invalidate_dcache_range((ulong)buf, (ulong)buf + len);
++
++	return ret;
++}
++
++static int sun8i_ce_rng_read(struct udevice *dev, void *data, size_t len)
++{
++	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
++	size_t todo = ALIGN(len, CE_TRNG_GRANULE);
++	u8 *buf;
++	int ret;
++
++	if (!len)
++		return 0;
++
++	buf = memalign(ARCH_DMA_MINALIGN, ALIGN(todo, ARCH_DMA_MINALIGN));
++	if (!buf)
++		return -ENOMEM;
++
++	ret = sun8i_ce_rng_run(priv, buf, todo);
++	if (!ret)
++		memcpy(data, buf, len);
++
++	memset(buf, 0, todo);
++	free(buf);
++
++	return ret;
++}
++
++static int sun8i_ce_rng_probe(struct udevice *dev)
++{
++	struct sun8i_ce_rng_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	priv->base = dev_read_addr_ptr(dev);
++	if (!priv->base)
++		return -EINVAL;
++	priv->variant = (const void *)dev_get_driver_data(dev);
++
++	priv->task = malloc_cache_aligned(sizeof(*priv->task));
++	if (!priv->task)
++		return -ENOMEM;
++
++	ret = reset_get_bulk(dev, &priv->resets);
++	if (ret) {
++		dev_err(dev, "failed to get resets: %d\n", ret);
++		goto err_free;
++	}
++
++	/* "bus", "mod", "ram" from the CCU, "trng" (IOSC) from the RTC */
++	ret = clk_get_bulk(dev, &priv->clks);
++	if (ret) {
++		dev_err(dev, "failed to get clocks: %d\n", ret);
++		goto err_resets;
++	}
++
++	if (priv->variant->mod_clk_cfg)
++		clrsetbits_le32((void __iomem *)SUNXI_CCM_BASE +
++				SUN50I_H6_CCU_CE_CLK,
++				SUN50I_H6_CCU_CE_CLK_MASK,
++				priv->variant->mod_clk_cfg);
++
++	ret = clk_enable_bulk(&priv->clks);
++	if (ret) {
++		dev_err(dev, "failed to enable clocks: %d\n", ret);
++		goto err_clks;
++	}
++
++	ret = reset_deassert_bulk(&priv->resets);
++	if (ret) {
++		dev_err(dev, "failed to deassert resets: %d\n", ret);
++		goto err_clk_disable;
++	}
++
++	return 0;
++
++err_clk_disable:
++	clk_disable_bulk(&priv->clks);
++err_clks:
++	clk_release_bulk(&priv->clks);
++err_resets:
++	reset_release_bulk(&priv->resets);
++err_free:
++	free(priv->task);
++	return ret;
++}
++
++static const struct dm_rng_ops sun8i_ce_rng_ops = {
++	.read = sun8i_ce_rng_read,
++};
++
++static const struct sun8i_ce_rng_variant sun50i_h6_variant = {
++};
++
++static const struct sun8i_ce_rng_variant sun50i_h616_variant = {
++	.word_addresses = true,
++	.mod_clk_cfg = SUN50I_H616_CCU_CE_CLK_CFG,
++};
++
++static const struct udevice_id sun8i_ce_rng_ids[] = {
++	{ .compatible = "allwinner,sun50i-h6-crypto",
++	  .data = (ulong)&sun50i_h6_variant },
++	{ .compatible = "allwinner,sun50i-h616-crypto",
++	  .data = (ulong)&sun50i_h616_variant },
++	{ }
++};
++
++U_BOOT_DRIVER(sun8i_ce_rng) = {
++	.name = "sun8i-ce-rng",
++	.id = UCLASS_RNG,
++	.of_match = sun8i_ce_rng_ids,
++	.probe = sun8i_ce_rng_probe,
++	.priv_auto = sizeof(struct sun8i_ce_rng_priv),
++	.ops = &sun8i_ce_rng_ops,
++};
