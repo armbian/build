@@ -1,0 +1,54 @@
+From eef1d74bf88f120f4f63a83a5201fcda67bf3b52 Mon Sep 17 00:00:00 2001
+From: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Date: Mon, 6 Jul 2026 14:23:09 +0530
+Subject: [PATCH] PM: runtime: Only set runtime_error on suspend callback
+ failures
+
+When a runtime resume callback returns an error, rpm_callback() sets
+power.runtime_error on the device.  This causes all subsequent calls to
+rpm_resume() to return -EINVAL immediately at the top of the function
+without invoking the callback again, making the failure permanent until
+runtime PM is explicitly re-initialized.
+
+Unlike suspend failures, resume failures should be retryable.  If a
+device's resume callback fails, there is no reason to permanently block
+future resume attempts on that device and all of its consumers.
+
+Fix this by moving the power.runtime_error assignment out of the generic
+rpm_callback() and into rpm_suspend() at its fail label, where suspend
+callback failures are handled.  Resume callback failures now return the
+error to the caller but leave power.runtime_error clear, allowing the
+next resume attempt to invoke the callback normally.
+
+Signed-off-by: Praveen Talari <praveen.talari@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260706-fix_sticky_-einval_after_pm_runtime_api_failure-v3-1-92feb5a7b926@oss.qualcomm.com
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+Link: https://git.kernel.org/torvalds/c/eef1d74bf88f120f4f63a83a5201fcda67bf3b52
+---
+ drivers/base/power/runtime.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/base/power/runtime.c b/drivers/base/power/runtime.c
+index 335288e8b5b31..fab38bc981139 100644
+--- a/drivers/base/power/runtime.c
++++ b/drivers/base/power/runtime.c
+@@ -469,9 +469,6 @@ static int rpm_callback(int (*cb)(struct device *), struct device *dev)
+ 	if (retval == -EACCES)
+ 		retval = -EAGAIN;
+ 
+-	if (retval != -EAGAIN && retval != -EBUSY)
+-		dev->power.runtime_error = retval;
+-
+ 	return retval;
+ }
+ 
+@@ -751,6 +748,9 @@ static int rpm_suspend(struct device *dev, int rpmflags)
+ 	dev->power.deferred_resume = false;
+ 	wake_up_all(&dev->power.wait_queue);
+ 
++	if (retval != -EAGAIN && retval != -EBUSY)
++		dev->power.runtime_error = retval;
++
+ 	/*
+ 	 * On transient errors, if the callback routine failed an autosuspend,
+ 	 * and if the last_busy time has been updated so that there is a new
