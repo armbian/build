@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 2 Nov 2026 11:14:31 +0100
+Subject: [PATCH 36/41] net: ethernet: mtk_eth_soc: free the LRO slot of a
+ replaced rule
+
+ethtool can insert a rule at an occupied location. The driver then
+allocates a new DIP slot and keeps the old slot valid. A later delete
+frees only the new slot, so the old slot leaks.
+
+Free the old slot before the allocation. Restore it when the allocation
+fails.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index b9d30ecb0baa..b1aa172da45a 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -3204,8 +3204,8 @@ static int mtk_hwlro_add_ipaddr(struct net_device *dev,
+ 		(struct ethtool_rx_flow_spec *)&cmd->fs;
+ 	struct mtk_mac *mac = netdev_priv(dev);
+ 	struct mtk_eth *eth = mac->hw;
+-	int hwlro_idx;
+-	u32 ip4dst;
++	int hwlro_idx, old_idx = -1;
++	u32 ip4dst, old_ip;
+ 
+ 	if ((fsp->flow_type != TCP_V4_FLOW) ||
+ 	    (!fsp->h_u.tcp_ip4_spec.ip4dst) ||
+@@ -3213,9 +3213,21 @@ static int mtk_hwlro_add_ipaddr(struct net_device *dev,
+ 		return -EINVAL;
+ 
+ 	ip4dst = htonl(fsp->h_u.tcp_ip4_spec.ip4dst);
++
++	/* A rule at an occupied location replaces the old rule: free its slot. */
++	old_ip = mac->hwlro_ip[fsp->location];
++	if (old_ip) {
++		old_idx = mtk_hwlro_get_ipaddr_idx(dev, old_ip);
++		if (old_idx >= 0)
++			mtk_hwlro_inval_ipaddr(eth, old_idx);
++	}
++
+ 	hwlro_idx = mtk_hwlro_add_ipaddr_idx(dev, ip4dst);
+-	if (hwlro_idx < 0)
++	if (hwlro_idx < 0) {
++		if (old_idx >= 0)
++			mtk_hwlro_val_ipaddr(eth, old_idx, old_ip);
+ 		return hwlro_idx;
++	}
+ 
+ 	mac->hwlro_ip[fsp->location] = ip4dst;
+ 	mac->hwlro_ip_cnt = mtk_hwlro_get_ip_cnt(mac);
