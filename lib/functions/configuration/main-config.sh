@@ -349,6 +349,21 @@ function do_main_configuration() {
 		[[ $BUILD_DESKTOP != "no" ]] && exit_with_error "HAS_VIDEO_OUTPUT is set to no. So we shouldn't build desktop environment"
 	fi
 
+	# Kernel security fixes that stable does not carry yet, from armbian/cve. Off until proven reliable; KERNEL_CVE_PATCHES=yes enables them.
+	# Only for stable kernels of the series that armbian/cve publishes. Vendor trees (KERNELSOURCE set by the family) do not match.
+	# Other kernels do not load the extension, so their version does not change.
+	declare -g KERNEL_CVE_PATCHES="${KERNEL_CVE_PATCHES:-"no"}"
+	declare -g KERNEL_CVE_SERIES="${KERNEL_CVE_SERIES:-"6.18 7.3"}"
+	if [[ "${KERNEL_CVE_PATCHES}" == "yes" ]]; then
+		if [[ " ${KERNEL_CVE_SERIES} " != *" ${KERNEL_MAJOR_MINOR} "* ]]; then
+			display_alert "Kernel CVE fixes" "no CVE patches for kernel ${KERNEL_MAJOR_MINOR:-"unknown"}, only for ${KERNEL_CVE_SERIES}" "wrn"
+		elif [[ -n "${KERNELSOURCE}" && "${KERNELSOURCE}" != "${MAINLINE_KERNEL_SOURCE}" ]]; then
+			display_alert "Kernel CVE fixes" "no CVE patches for vendor kernel ${KERNELSOURCE}" "wrn"
+		else
+			enable_extension "kernel-cve-patches"
+		fi
+	fi
+
 	# Make NETWORKING_STACK read-only, as further changes would make the whole thing inconsistent.
 	# But only after family config to allow family to change it (post-family hooks CANNOT change NETWORKING_STACK since the hook is running after this).
 	# Individual networking extensions should _check_ this to make there's no spurious enablement.
