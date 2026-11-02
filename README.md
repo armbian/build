@@ -21,7 +21,7 @@ cd build
 
 <a href="#armbian-linux-build-framework"><img src=".github/README.gif" alt="Build demonstration" width="100%"></a>
 
-The entrypoint `compile.sh` dispatches into the framework in `lib/`. Build-time options can be passed on the command line, e.g.:
+The entrypoint `compile.sh` sources `lib/single.sh` and dispatches into the framework in `lib/`. Build-time options can be passed on the command line, e.g.:
 
 ```bash
 ./compile.sh BOARD=orangepi5 BRANCH=current RELEASE=trixie BUILD_MINIMAL=yes KERNEL_CONFIGURE=no
@@ -51,11 +51,12 @@ The entrypoint `compile.sh` dispatches into the framework in `lib/`. Build-time 
 | Path | Contents |
 |:--|:--|
 | `compile.sh` | Build entrypoint; sources `lib/single.sh` and invokes the CLI |
-| `lib/` | Core build framework (Bash functions, Python helpers in `lib/tools/`) |
+| `lib/` | Core build framework (Bash functions, Python helpers under `lib/tools/`) |
 | `config/` | Board, family, distribution, kernel and CLI configuration |
 | `config/boards/` | One file per board; the extension marks its support status (see below) |
 | `config/distributions/` | Supported Debian/Ubuntu release metadata |
 | `config/cli/` | CLI package selections per release |
+| `config/its/` | Image Tree Source files for device tree builder |
 | `patch/` | Kernel, U-Boot and ATF patch sets organized by family/version |
 | `packages/` | In-tree package sources, blobs and BSP material |
 | `extensions/` | Optional build extensions enabled via `ENABLE_EXTENSIONS=` |
@@ -74,16 +75,16 @@ Files under `config/boards/` use an extension that signals support status:
 | `.eos` | End of life |
 | `.tvb` | TV box, community supported (no Armbian maintainer) |
 
-See [`config/boards/README.md`](config/boards/README.md) for the full list of per-board variables (e.g. `BOARD_NAME`, `BOARDFAMILY`, `BOOTCONFIG`, `KERNEL_TARGET`, `SERIALCON`, `MODULES`, `DEFAULT_OVERLAYS`).
+See [`config/boards/README.md`](config/boards/README.md) for the full list of per-board variables (e.g. `BOARD_NAME`, `BOARD_VENDOR`, `BOARDFAMILY`, `BOOTCONFIG`, `KERNEL_TARGET`, `SERIALCON`, `MODULES`, `DEFAULT_OVERLAYS`).
 
 Release/package base statuses used under `config/distributions/` are defined separately in [`config/distributions/README.md`](config/distributions/README.md).
 
 ## Built With
 
-- **Bash** — build framework in `lib/`, entrypoint `compile.sh`, most of `extensions/` and the shell portions of board/family configs
-- **Python** — developer and build helpers under `lib/tools/` (e.g. `patching.py`, `aggregation.py`, `lib/tools/info/`)
+- **Bash** — build framework in `lib/`, entrypoint `compile.sh`, most of `extensions/`, and the shell portions of board/family configs
+- **Python** — developer and build helpers under `lib/tools/`
 - **Make / Kbuild** — kernel and U-Boot build systems invoked by the framework; overlay `Makefile`s under `patch/kernel/archive/*/overlay/`
-- **Device Tree Source** (`.dts` / `.dtsi` / `.dtso`) — board/overlay sources carried under `patch/`
+- **Device Tree Source** (`.dts` / `.dtsi` / `.dtso`) — board and overlay sources carried under `patch/`
 - **GitHub Actions** (YAML) — repository automation under `.github/workflows/`
 - **Patch series** — thousands of `*.patch` files under `patch/` applied to kernel, U-Boot and ATF trees
 
