@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 22:32:00 +0000
+Subject: wireless: uwe5622: re-send the IPv4 address to the firmware after (re)association
+
+In station mode the firmware handles broadcast ARP itself. It passes only
+requests for the IPv4 address given in WIFI_CMD_NOTIFY_IP_ACQUIRED and
+forgets that address on every (re)association. The driver sends it only
+from the inetaddr notifier, which fires when an address is added. An
+address that already exists when the link comes up never reaches the
+firmware: a static address, or one DHCP keeps across a reconnect, an AP
+restart or a roam. Peers then cannot resolve the board until the board
+sends traffic itself. Unicast to a cached neighbour entry still works,
+so the fault looks intermittent.
+
+Reproduced on an Orange Pi Zero2 against a WPA2 AP and an open AP. After
+the AP restarted, the board reassociated in about 1 s, but pings from the
+AP side failed with "Destination Host Unreachable" and wlan0 rx_packets
+stayed at zero, until the address was deleted and re-added.
+
+After each successful connect or roam in station or P2P-client mode,
+send the interface's IPv4 address again through the driver workqueue.
+The command blocks, and the connection event runs in the event path.
+With this change the board answered ARP after a fresh association with a
+preset address, after two AP restarts, and after rtcwake -m mem.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ .../wireless/uwe5622/unisocwifi/cfg80211.c    | 42 +++++++++++++++++++
+ .../net/wireless/uwe5622/unisocwifi/work.c    |  4 ++
+ .../net/wireless/uwe5622/unisocwifi/work.h    |  1 +
+ 3 files changed, 47 insertions(+)
+
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+index ecd0214..3c998aa 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include <linux/string.h>
++#include <linux/inetdevice.h>
+ #include "sprdwl.h"
+ #include "cfg80211.h"
+ #include "cmdevt.h"
+@@ -2696,6 +2697,44 @@ void sprdwl_report_scan_result(struct sprdwl_vif *vif, u16 chan, s16 rssi,
+ 	}
+ }
+ 
++/*
++ * The firmware filters broadcast ARP itself (ARP offload) and only passes
++ * requests for the address given in WIFI_CMD_NOTIFY_IP_ACQUIRED, which it
++ * forgets on every (re)association. The inetaddr notifier sends it only
++ * when an address is added in station mode, so an address configured
++ * before the association (static address, or one DHCP keeps across a
++ * reconnect, AP restart, roam or resume) never reached the firmware and
++ * peers could not resolve the board until it sent traffic itself. Send
++ * the current IPv4 address again after each successful (re)association.
++ */
++static void sprdwl_renotify_ipv4(struct sprdwl_vif *vif)
++{
++	const struct in_ifaddr *ifa;
++	struct in_device *in_dev;
++	struct sprdwl_work *work;
++	__be32 addr = 0;
++
++	rcu_read_lock();
++	in_dev = __in_dev_get_rcu(vif->ndev);
++	if (in_dev) {
++		ifa = rcu_dereference(in_dev->ifa_list);
++		if (ifa)
++			addr = ifa->ifa_address;
++	}
++	rcu_read_unlock();
++
++	if (!addr)
++		return;
++
++	work = sprdwl_alloc_work(sizeof(addr));
++	if (!work)
++		return;
++	work->vif = vif;
++	work->id = SPRDWL_WORK_NOTIFY_IPV4;
++	memcpy(work->data, &addr, sizeof(addr));
++	sprdwl_queue_work(vif->priv, work);
++}
++
+ void sprdwl_report_connection(struct sprdwl_vif *vif,
+ 					struct sprdwl_connect_info *conn_info,
+ 					u8 status_code)
+@@ -2956,6 +2995,9 @@ lookup_bss:
+ 	wl_ndev_log(L_DBG, vif->ndev, "%s %s to %s (%pM)\n", __func__,
+ 		    state == SPRDWL_CONNECTING ?
+ 			"connect" : "roam", vif->ssid, vif->bssid);
++	if (vif->wdev.iftype == NL80211_IFTYPE_STATION ||
++	    vif->wdev.iftype == NL80211_IFTYPE_P2P_CLIENT)
++		sprdwl_renotify_ipv4(vif);
+ 	return;
+ err:
+ 	if (bss)
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/work.c b/drivers/net/wireless/uwe5622/unisocwifi/work.c
+index b7c0c8b..3ba4e89 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/work.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/work.c
+@@ -96,6 +96,10 @@ static void sprdwl_do_work(struct work_struct *work)
+ 			sprdwl_notify_ip(priv, vif->ctx_id, SPRDWL_IPV6,
+ 					 sprdwl_work->data);
+ 			break;
++		case SPRDWL_WORK_NOTIFY_IPV4:
++			sprdwl_notify_ip(priv, vif->ctx_id, SPRDWL_IPV4,
++					 sprdwl_work->data);
++			break;
+ 		case SPRDWL_WORK_BA_MGMT:
+ 			ba_data = (struct sprdwl_ba_event_data *)sprdwl_work->data;
+ 			sprdwl_send_ba_mgmt(priv, vif->ctx_id,
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/work.h b/drivers/net/wireless/uwe5622/unisocwifi/work.h
+index 10647f1..b8c591c 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/work.h
++++ b/drivers/net/wireless/uwe5622/unisocwifi/work.h
+@@ -48,6 +48,7 @@ struct sprdwl_work {
+ #define SPRDWL_WORK_FW_PWR_DOWN 16
+ #define SPRDWL_WORK_HOST_WAKEUP_FW 17
+ #define SPRDWL_WORK_VOWIFI_DATA_PROTECTION 18
++#define SPRDWL_WORK_NOTIFY_IPV4 19
+ 	u8 id;
+ 	u32 len;
+ 	DECLARE_FLEX_ARRAY(u8, data);

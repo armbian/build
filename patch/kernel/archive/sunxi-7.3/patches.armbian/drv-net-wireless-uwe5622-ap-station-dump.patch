@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 22:31:00 +0000
+Subject: wireless: uwe5622: list associated stations in AP mode
+
+`iw dev wlan0 station dump` was empty in every mode because the driver
+has no .dump_station. hostapd's per-station query (get_station) "worked"
+for any MAC, including stations that are not associated, because
+WIFI_CMD_GET_STATION takes no peer address. In AP mode it returns
+signal 0 and no rate.
+
+In AP and P2P-GO mode, answer get_station and dump_station from the
+peer table that the firmware's STA LUT events maintain. Return -ENOENT
+for unknown MACs, and report the connected time from a timestamp taken
+when the firmware adds the peer. In station mode, dump_station returns
+the associated AP through the existing get_station path.
+
+Also log the empty ACL list that hostapd sets on every AP start at debug
+level, not error level.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ .../wireless/uwe5622/unisocwifi/cfg80211.c    | 78 ++++++++++++++++++-
+ .../net/wireless/uwe5622/unisocwifi/wl_core.h |  2 +
+ .../net/wireless/uwe5622/unisocwifi/wl_intf.c |  3 +
+ 3 files changed, 82 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+index ed6b8c9..ecd0214 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+@@ -1291,6 +1291,47 @@ sprdwl_cfg80211_change_station(struct wiphy *wiphy,
+ #endif
+ 
+ 
++static bool sprdwl_vif_is_ap(struct sprdwl_vif *vif)
++{
++	return vif->mode == SPRDWL_MODE_AP || vif->mode == SPRDWL_MODE_P2P_GO;
++}
++
++/*
++ * WIFI_CMD_GET_STATION has no peer address and reports the link of a
++ * station interface only; in AP mode it returns signal 0 and no rate
++ * for whatever MAC is asked. Associated stations are known from the
++ * firmware's LUT events (sprdwl_event_sta_lut), so answer AP-mode
++ * queries from that table instead.
++ */
++static struct sprdwl_peer_entry *sprdwl_ap_peer(struct sprdwl_vif *vif,
++						const u8 *mac, int idx)
++{
++	struct sprdwl_intf *intf = (struct sprdwl_intf *)vif->priv->hw_priv;
++	struct sprdwl_peer_entry *peer;
++	int i;
++
++	for (i = 0; i < MAX_LUT_NUM; i++) {
++		peer = &intf->peer_entry[i];
++		if (peer->ctx_id != vif->ctx_id ||
++		    !is_valid_ether_addr(peer->tx.da) ||
++		    ether_addr_equal(peer->tx.da, vif->ndev->dev_addr))
++			continue;
++		if (mac ? ether_addr_equal(peer->tx.da, mac) : idx-- == 0)
++			return peer;
++	}
++	return NULL;
++}
++
++static void sprdwl_ap_fill_sinfo(struct sprdwl_peer_entry *peer,
++				 struct station_info *sinfo)
++{
++	if (peer->assoc_time) {
++		sinfo->connected_time = ktime_get_boottime_seconds() -
++					peer->assoc_time;
++		sinfo->filled |= BIT_ULL(NL80211_STA_INFO_CONNECTED_TIME);
++	}
++}
++
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
+ static int sprdwl_cfg80211_get_station(struct wiphy *wiphy,
+ 					   struct wireless_dev *wdev, const u8 *mac,
+@@ -1301,6 +1342,15 @@ static int sprdwl_cfg80211_get_station(struct wiphy *wiphy,
+ 	struct sprdwl_rate_info *rate;
+ 	int ret;
+ 
++	if (sprdwl_vif_is_ap(vif)) {
++		struct sprdwl_peer_entry *peer = sprdwl_ap_peer(vif, mac, 0);
++
++		if (!peer)
++			return -ENOENT;
++		sprdwl_ap_fill_sinfo(peer, sinfo);
++		return 0;
++	}
++
+ 	sinfo->filled |= BIT(NL80211_STA_INFO_TX_BYTES) |
+ 			 BIT(NL80211_STA_INFO_TX_PACKETS) |
+ 			 BIT(NL80211_STA_INFO_RX_BYTES) |
+@@ -1363,6 +1413,29 @@ out:
+ 	return ret;
+ }
+ 
++static int sprdwl_cfg80211_dump_station(struct wiphy *wiphy,
++					struct wireless_dev *wdev, int idx,
++					u8 *mac, struct station_info *sinfo)
++{
++	struct sprdwl_vif *vif = netdev_priv(wdev->netdev);
++	struct sprdwl_peer_entry *peer;
++
++	if (!sprdwl_vif_is_ap(vif)) {
++		/* station mode: the one peer is the AP we are associated to */
++		if (idx != 0 || vif->sm_state != SPRDWL_CONNECTED)
++			return -ENOENT;
++		ether_addr_copy(mac, vif->bssid);
++		return sprdwl_cfg80211_get_station(wiphy, wdev, mac, sinfo);
++	}
++
++	peer = sprdwl_ap_peer(vif, NULL, idx);
++	if (!peer)
++		return -ENOENT;
++	ether_addr_copy(mac, peer->tx.da);
++	sprdwl_ap_fill_sinfo(peer, sinfo);
++	return 0;
++}
++
+ #else
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 83)
+ static int sprdwl_cfg80211_get_station(struct wiphy *wiphy,
+@@ -3575,7 +3648,7 @@ static int sprdwl_cfg80211_set_mac_acl(struct wiphy *wiphy,
+ 	unsigned char *mac_addr = NULL;
+ 
+ 	if (!acl || !acl->n_acl_entries) {
+-		wl_ndev_log(L_ERR, ndev, "%s no ACL data\n", __func__);
++		wl_ndev_log(L_DBG, ndev, "%s no ACL data\n", __func__);
+ 		return 0;
+ 	}
+ 
+@@ -3732,6 +3805,9 @@ static struct cfg80211_ops sprdwl_cfg80211_ops = {
+ 	.del_station = sprdwl_cfg80211_del_station,
+ 	.change_station = sprdwl_cfg80211_change_station,
+ 	.get_station = sprdwl_cfg80211_get_station,
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
++	.dump_station = sprdwl_cfg80211_dump_station,
++#endif
+ 	.libertas_set_mesh_channel = sprdwl_cfg80211_set_channel,
+ 	.scan = sprdwl_cfg80211_scan,
+ 	.connect = sprdwl_cfg80211_connect,
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/wl_core.h b/drivers/net/wireless/uwe5622/unisocwifi/wl_core.h
+index a5ce589..4a49a2f 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/wl_core.h
++++ b/drivers/net/wireless/uwe5622/unisocwifi/wl_core.h
+@@ -78,6 +78,8 @@ struct sprdwl_peer_entry {
+ 	u8 vowifi_enabled;
+ 	u8 vowifi_pkt_cnt;
+ 	struct timespec time[6 + 1];
++	/* boottime seconds when the firmware added this peer (AP mode) */
++	time64_t assoc_time;
+ };
+ 
+ #if defined(MORE_DEBUG)
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/wl_intf.c b/drivers/net/wireless/uwe5622/unisocwifi/wl_intf.c
+index 2badbc4..c569097 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/wl_intf.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/wl_intf.c
+@@ -1523,6 +1523,9 @@ void sprdwl_event_sta_lut(struct sprdwl_vif *vif, u8 *data, u16 len)
+ 			sta_lut->ra[0], sta_lut->ra[1], sta_lut->ra[2],
+ 			sta_lut->ra[3], sta_lut->ra[4], sta_lut->ra[5]);
+ 		ether_addr_copy(intf->peer_entry[i].tx.da, sta_lut->ra);
++		if (sta_lut->action == ADD_LUT_INDEX)
++			intf->peer_entry[i].assoc_time =
++				ktime_get_boottime_seconds();
+ 		break;
+ 	default:
+ 		break;

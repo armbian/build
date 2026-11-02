@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 22:30:00 +0000
+Subject: wireless: uwe5622: give the firmware the SoftAP channel on 5 GHz
+
+The firmware takes a SoftAP's operating channel from the DS Parameter Set
+element of the beacon template passed in WIFI_CMD_START_AP. The driver
+sends no channel command on this path: sprdwl_cfg80211_start_ap() never
+reads settings->chandef, and the only channel hook is wired to
+.libertas_set_mesh_channel. hostapd and wpa_supplicant include the DS
+element only on 2.4 GHz, so a 5 GHz AP reported AP-ENABLED but the
+firmware never beaconed.
+
+Insert the element after SSID and Supported Rates when the head lacks it.
+It carries the softap_channel override from wifi_dbg.ini if that is
+valid, otherwise the primary channel from the chandef. It has to be the
+chandef channel, not the configured one, because hostapd may swap
+primary and secondary for HT40/VHT80. The firmware strips the element
+from the beacons it sends on 5 GHz.
+
+Tested on an Orange Pi Zero2 (7.3.1, hostapd 2.11, wpa_supplicant 2.11),
+Intel AX client:
+- hostapd ch36 and VHT80 ch36/42 (primary moved to 40): beacons seen at
+  -52 dBm, association in about 1 s, 80 MHz VHT MCS 7-9. iperf3 20 s:
+  125 Mbit/s host->board, 118 Mbit/s board->host.
+- wpa_supplicant AP mode (mode=2) on 5180 MHz: beacons and association.
+- 2.4 GHz unchanged (the DS element is already present).
+The firmware still picks the AP bandwidth itself, the widest 20/40/80
+block that holds the primary channel; there is no width field in
+START_AP.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ .../wireless/uwe5622/unisocwifi/cfg80211.c    | 41 +++++++++++++++++++
+ .../uwe5622/unisocwifi/sprdwl_ng.mod.c        | 21 ++++++++++
+ 2 files changed, 62 insertions(+)
+
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+index fd9f463..ed6b8c9 100644
+--- a/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
++++ b/drivers/net/wireless/uwe5622/unisocwifi/cfg80211.c
+@@ -906,6 +906,42 @@ static int sprdwl_cfg80211_set_rekey(struct wiphy *wiphy,
+ }
+ 
+ /* SoftAP related stuff */
++
++/*
++ * The firmware takes the AP operating channel from the DS Parameter Set
++ * element of the beacon passed in WIFI_CMD_START_AP; there is no separate
++ * channel command on this path. hostapd and wpa_supplicant only emit that
++ * element on 2.4 GHz, so on 5 GHz the firmware never started beaconing.
++ * Insert it (after SSID/Supported Rates, where 802.11 orders it) when the
++ * head lacks it. @head must have room for 3 more bytes.
++ */
++static int sprdwl_beacon_add_ds_params(u8 *head, int head_len, u8 chan)
++{
++	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)head;
++	u8 *end = head + head_len;
++	u8 *pos = mgmt->u.beacon.variable;
++	u8 *insert;
++
++	if (head_len < offsetof(struct ieee80211_mgmt, u.beacon.variable))
++		return head_len;
++
++	insert = pos;
++	while (pos + 2 <= end && pos + 2 + pos[1] <= end) {
++		if (pos[0] == WLAN_EID_DS_PARAMS)
++			return head_len;
++		if (pos[0] == WLAN_EID_SSID || pos[0] == WLAN_EID_SUPP_RATES)
++			insert = pos + 2 + pos[1];
++		pos += 2 + pos[1];
++	}
++
++	memmove(insert + 3, insert, end - insert);
++	insert[0] = WLAN_EID_DS_PARAMS;
++	insert[1] = 1;
++	insert[2] = chan;
++
++	return head_len + 3;
++}
++
+ int sprdwl_change_beacon(struct sprdwl_vif *vif,
+ 		struct cfg80211_beacon_data *beacon)
+ {
+@@ -1019,6 +1055,11 @@ static int sprdwl_cfg80211_start_ap(struct wiphy *wiphy,
+ 		tail_len = beacon->tail_len;
+ 	}
+ 
++	if (settings->chandef.chan)
++		head_len = sprdwl_beacon_add_ds_params(head, head_len,
++			is_valid_channel(wiphy, chn) ? chn :
++			settings->chandef.chan->hw_value);
++
+ 	sprdwl_change_beacon(vif, beacon);
+ 
+ 	if (!beacon->head) {
+diff --git a/drivers/net/wireless/uwe5622/unisocwifi/sprdwl_ng.mod.c b/drivers/net/wireless/uwe5622/unisocwifi/sprdwl_ng.mod.c
+new file mode 100644
+index 0000000..4d40160
+--- /dev/null
++++ b/drivers/net/wireless/uwe5622/unisocwifi/sprdwl_ng.mod.c
+@@ -0,0 +1,21 @@
++#include <linux/module.h>
++#include <linux/export-internal.h>
++#include <linux/compiler.h>
++
++MODULE_INFO(name, KBUILD_MODNAME);
++
++__visible struct module __this_module
++__section(".gnu.linkonce.this_module") = {
++	.name = KBUILD_MODNAME,
++	.init = init_module,
++#ifdef CONFIG_MODULE_UNLOAD
++	.exit = cleanup_module,
++#endif
++	.arch = MODULE_ARCH_INIT,
++};
++
++
++MODULE_INFO(depends, "cfg80211,sunxi_addr,uwe5622_bsp_sdio");
++
++MODULE_ALIAS("of:N*T*Csprd,unisoc-wifi");
++MODULE_ALIAS("of:N*T*Csprd,unisoc-wifiC*");
