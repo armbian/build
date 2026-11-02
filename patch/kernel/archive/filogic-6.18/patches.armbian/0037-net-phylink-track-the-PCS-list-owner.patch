@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Mon, 2 Nov 2026 11:14:57 +0100
+Subject: [PATCH 37/41] net: phylink: track the PCS list owner
+
+phylink_release_pcs() finds the phylink instance through pcs->phylink.
+That pointer is set only while the link is started. When a PCS provider
+goes away with the link stopped, the PCS stays on pl->pcs_list after
+devm frees it. A later list walk then reads freed memory.
+
+Record the list owner when the PCS joins the list. Use it in
+phylink_release_pcs(). Do not add a PCS that is already on a list.
+
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/net/phy/phylink.c | 16 ++++++++++++++--
+ include/linux/phylink.h   |  1 +
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 2f737477e537..22ea4dee6e5d 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -936,11 +936,13 @@ void phylink_release_pcs(struct phylink_pcs *pcs)
+ 
+ 	ASSERT_RTNL();
+ 
+-	pl = pcs->phylink;
++	/* pcs->phylink is set only while started: use the list owner. */
++	pl = pcs->owner;
+ 	if (!pl)
+ 		return;
+ 
+ 	list_del(&pcs->list);
++	pcs->owner = NULL;
+ 	pcs->phylink = NULL;
+ 
+ 	/* Check if we are removing the PCS currently
+@@ -1974,7 +1976,14 @@ static int pcs_provider_notify(struct notifier_block *self,
+ 	/* Add the PCS */
+ 	rtnl_lock();
+ 
++	/* A PCS can be on one list only */
++	if (pcs->owner) {
++		rtnl_unlock();
++		return NOTIFY_DONE;
++	}
++
+ 	list_add(&pcs->list, &pl->pcs_list);
++	pcs->owner = pl;
+ 
+ 	/* Link phylink if we are started */
+ 	if (!pl->phylink_disable_state)
+@@ -2047,6 +2056,7 @@ struct phylink *phylink_create(struct phylink_config *config,
+ 		pcs = config->available_pcs[i];
+ 
+ 		list_add(&pcs->list, &pl->pcs_list);
++		pcs->owner = pl;
+ 	}
+ 
+ 	phy_interface_copy(pl->supported_interfaces,
+@@ -2146,8 +2156,10 @@ void phylink_destroy(struct phylink *pl)
+ 		gpiod_put(pl->link_gpio);
+ 
+ 	/* Remove every PCS from phylink PCS list */
+-	list_for_each_entry_safe(pcs, tmp, &pl->pcs_list, list)
++	list_for_each_entry_safe(pcs, tmp, &pl->pcs_list, list) {
+ 		list_del(&pcs->list);
++		pcs->owner = NULL;
++	}
+ 
+ 	cancel_work_sync(&pl->resolve);
+ 	kfree(pl);
+diff --git a/include/linux/phylink.h b/include/linux/phylink.h
+index 6beb750a0948..124242541db2 100644
+--- a/include/linux/phylink.h
++++ b/include/linux/phylink.h
+@@ -478,6 +478,7 @@ struct phylink_pcs {
+ 
+ 	/* private: */
+ 	struct list_head list;
++	struct phylink *owner;
+ };
+ 
+ /**

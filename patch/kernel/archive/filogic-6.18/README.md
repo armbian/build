@@ -39,3 +39,6 @@ These patches conflicted with stable and were resolved by hand:
 `patches.armbian/` holds the BPI-R3 Mini device tree patches, the xHCI
 shutdown fix and the BPI-R4 part of the upstream commit that builds full SD
 and eMMC dtbs.
+
+Patches 0035 to 0041 fix review findings in the BPI patches and in the
+xHCI shutdown fix. They keep the BPI patches unchanged.
