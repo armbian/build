@@ -1,0 +1,80 @@
+From 6c780f5ffd31f4b02208102c553fce625b50c307 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 18:30:50 +0000
+Subject: media: cedrus: reset the VE when switching to or from VP9
+
+VP9 runs in the H.265 engine with extra VE_MODE bits (RAMPD and a
+reserved bit on the H616) and programs registers of the H.265 bank that
+the H.265 decoder never writes. When two contexts decode at the same
+time, an H.265 job that runs after a VP9 job reads a zero byte where the
+slice header padding is expected and fails with -EINVAL ("Failed to
+setup decoding job: -22"). On the Orange Pi Zero2 (H616) every one of
+600 H.265 jobs failed while a VP9 stream was decoded in parallel; H.265
+together with H.264 is unaffected.
+
+Reset the VE when the engine is switched to or from VP9, as the vendor
+library does whenever it sets up a decoder. Every job programs all the
+registers and SRAM it uses, and the watchdog already resets the VE the
+same way.
+
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h    |  3 +++
+ .../staging/media/sunxi/cedrus/cedrus_dec.c    | 18 ++++++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -307,6 +307,9 @@ struct cedrus_dev {
+ 
+ 	struct reset_control	*rstc;
+ 
++	/* Source format of the last job run on the VE, for cedrus_device_run(). */
++	u32			last_src_pixelformat;
++
+ 	unsigned int		capabilities;
+ 	u32			ve_mode_ddr;
+ 	unsigned int		h265_max_width;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+@@ -13,6 +13,8 @@
+  * Marek Szyprowski, <m.szyprowski@samsung.com>
+  */
+ 
++#include <linux/reset.h>
++
+ #include <media/v4l2-device.h>
+ #include <media/v4l2-ioctl.h>
+ #include <media/v4l2-event.h>
+@@ -152,6 +154,22 @@ void cedrus_device_run(void *priv)
+ 
+ 	v4l2_m2m_buf_copy_metadata(run.src, run.dst);
+ 
++	/*
++	 * VP9 runs in the H.265 engine with extra VE_MODE bits and leaves
++	 * engine state behind that the other decoders do not reprogram: an
++	 * H.265 job that follows a VP9 job of another context reads a zero
++	 * byte from the bitstream engine and fails to set up. Reset the VE
++	 * whenever the engine is switched to or from VP9, as the vendor
++	 * library does whenever it sets up a decoder; every job programs all
++	 * the registers and SRAM it uses.
++	 */
++	if (dev->last_src_pixelformat &&
++	    dev->last_src_pixelformat != ctx->src_fmt.pixelformat &&
++	    (dev->last_src_pixelformat == V4L2_PIX_FMT_VP9_FRAME ||
++	     ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME))
++		reset_control_reset(dev->rstc);
++	dev->last_src_pixelformat = ctx->src_fmt.pixelformat;
++
+ 	cedrus_dst_format_set(dev, &ctx->dst_fmt);
+ 
+ 	error = ctx->current_codec->setup(ctx, &run);
+-- 
+2.55.0
+-- 
+Armbian
+
