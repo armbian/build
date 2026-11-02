@@ -1,0 +1,1409 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Paunovic <royalnet026@gmail.com>
+Date: Thu, 24 Sep 2026 22:21:21 +1200
+Subject: accel/rocket: request the core clocks by name
+
+rocket_core_init() hands core->clks to devm_clk_bulk_get() without ever
+setting the .id members. The rocket_core array is allocated with
+devm_kcalloc() in rocket_device_init(), and rocket_probe() only fills in
+.rdev, .dev and .index, so all four clk_bulk_data entries are requested
+with a NULL con_id (unlike core->resets, whose ids are set a few lines
+above).
+
+clk_get(dev, NULL) ends up in of_clk_get_hw(np, 0, NULL), and
+of_parse_clkspec() only consults "clock-names" when a name was passed, so
+the index stays 0 for all four entries. Every entry therefore ends up
+holding a handle to the *first* clock of the DT "clocks" property, i.e.
+ACLK_NPUn. Nothing fails: probe succeeds and the driver believes it owns
+four different clocks.
+
+The consequence is that rocket_device_runtime_resume() prepares and enables
+the AXI clock four times, while hclk, pclk and - most importantly - the NPU
+compute clock ("npu", SCMI_CLK_NPU on RK3588) are never prepared or enabled
+by this driver at all. The NPU still works only because the Rockchip
+power-domain driver sets GENPD_FLAG_PM_CLK and its attach_dev() callback
+walks the device node with of_clk_get() and adds every clock to the pm_clk
+list, so genpd happens to keep the remaining clocks running. The bug is
+therefore latent today, but it means the driver holds no reference to the
+clock that actually feeds the NPU, which stands in the way of any future
+frequency scaling (OPP/devfreq) work.
+
+Found on an Orange Pi 5 Plus (RK3588) by reading the live clock tree:
+/sys/kernel/debug/clk/clk_summary shows four "fdab0000.npu" consumer
+handles on aclk_npu0 (and likewise on aclk_npu1/aclk_npu2 for the other two
+cores), while hclk_npu0, pclk_npu_root and scmi_clk_npu have no
+"fdab0000.npu" consumer at all - their only consumers are the
+"npu@fdab0000" handles created by the power-domain driver via of_clk_get().
+
+Set the ids explicitly, in the order mandated by the binding
+(Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml):
+aclk, hclk, npu, pclk. After the change the driver holds one handle per
+distinct clock and clk_bulk_prepare_enable() covers all four.
+
+Note that this is a user-visible tightening for out-of-tree DTs: the old
+NULL-id requests resolved by index and succeeded no matter what
+"clock-names" contained, while the named requests fail probe with -ENOENT
+when one of the four names is missing. That is the right outcome for
+in-tree users - the binding requires exactly these four clock-names and
+rk3588-base.dtsi carries them on all three cores - but a DT that relied on
+the permissive lookup goes from silently running on the wrong clock handles
+to not probing at all, so record the change here where git log will find
+it.
+
+Fixes: ed98261b4168 ("accel/rocket: Add a new driver for Rockchip's NPU")
+Signed-off-by: Igor Paunovic <royalnet026@gmail.com>
+Tested-by: Sidong Yang <sidong.yang@furiosa.ai>
+Tested-by: Diederik de Haas <diederik@cknow-tech.com>  # NanoPC-T6 LTS, NanoPC-T6 Plus
+Reviewed-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Reviewed-by: Jiaxing Hu <gahing@gahingwoo.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Link: https://patch.msgid.link/20260924102135.92217-2-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_core.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -28,6 +28,10 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+ 
++	core->clks[0].id = "aclk";
++	core->clks[1].id = "hclk";
++	core->clks[2].id = "npu";
++	core->clks[3].id = "pclk";
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:22 +1200
+Subject: accel/rocket: take the completion register writes under job_lock
+
+rocket_job_handle_irq() writes OPERATION_ENABLE and INTERRUPT_CLEAR before
+taking job_lock, while rocket_job_hw_submit() writes OPERATION_ENABLE under
+it, so a completion can write its zero after a submit has written its one
+and stop a task that has just started. Move both writes inside the existing
+scoped_guard().
+
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+Link: https://patch.msgid.link/20260924102135.92217-3-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_job.c | 12 +++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -345,10 +345,15 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ {
+ 	pm_runtime_mark_last_busy(core->dev);
+ 
+-	rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+-	rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
++	scoped_guard(mutex, &core->job_lock) {
++		/*
++		 * Stopping the block belongs under the lock. hw_submit() writes
++		 * OPERATION_ENABLE too, and outside the lock this zero can land
++		 * after that one and stop a task that has only just started.
++		 */
++		rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
++		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
+ 
+-	scoped_guard(mutex, &core->job_lock)
+ 		if (core->in_flight_job) {
+ 			if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
+ 				rocket_job_hw_submit(core, core->in_flight_job);
+@@ -360,6 +365,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 			pm_runtime_put_autosuspend(core->dev);
+ 			core->in_flight_job = NULL;
+ 		}
++	}
+ }
+ 
+ static void
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:23 +1200
+Subject: accel/rocket: wait for a running IRQ handler before resetting a core
+
+drm_sched_stop() does not wait for a threaded handler that is already
+running. Call synchronize_irq() after it, outside job_lock, which the
+handler takes.
+
+Before the sync, mask the block's interrupt and clear its raw status, so
+that an active core cannot signal a completion after it. Do that under
+job_lock, since rocket_job_hw_submit() arms the same mask under that lock,
+and only when pm_runtime_get_if_active() returns a positive count: the
+reset holds no runtime PM reference, and with the domain down a register
+access takes an async SError.
+
+Igor Paunovic's induced-reset runs on RK3588, including a two-task job that
+puts hw_submit() on the IRQ thread, found no fault; as he put it, "this
+does not show the race is closed".
+
+Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/CAEWPSH5mxTbUkNouxm6yecMZYvDowquhvYvhaXQ8HoMtHD5U1g@mail.gmail.com/
+Link: https://lore.kernel.org/all/20260912113717.6819-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/20260916132824.13527-1-royalnet026@gmail.com/
+Link: https://lore.kernel.org/all/20260919103422.148834-1-royalnet026@gmail.com/
+Suggested-by: Igor Paunovic <royalnet026@gmail.com>
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+Link: https://patch.msgid.link/20260924102135.92217-4-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_job.c | 71 +++++++++-
+ 1 file changed, 68 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -377,9 +377,74 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 	drm_sched_stop(&core->sched, bad);
+ 
+ 	/*
+-	 * Remaining interrupts have been handled, but we might still have
+-	 * stuck jobs. Let's make sure the PM counters stay balanced by
+-	 * manually calling pm_runtime_put_noidle().
++	 * Mask the block before waiting. hw_submit() arms INTERRUPT_MASK on
++	 * every submit and only the hardirq clears it, so on an ordinary
++	 * timeout it is still live and a completion can arrive after the sync
++	 * returns. The next submit re-arms it, so nothing is lost here.
++	 *
++	 * Only when the device is already awake, though. This function holds no
++	 * runtime PM reference of its own: the only one in the window belongs to
++	 * in_flight_job, and the completion path may have put it and cleared the
++	 * pointer before the timeout worker got here. drm_sched_stop() above can
++	 * block for a long time, and it drops every pending job's credits, so
++	 * rocket_job_is_idle() is true and nothing keeps the core resumed. On
++	 * this hardware a register access with the domain down takes an async
++	 * SError, so a reset must not be the thing that causes one.
++	 *
++	 * Only a positive answer will do. pm_runtime_get_if_active() tests
++	 * power.disable_depth before power.runtime_status, so -EINVAL MASKS a
++	 * suspended device rather than excluding one: pm_runtime_force_suspend(),
++	 * which is this driver's own system suspend callback, disables runtime PM
++	 * first and turns the clocks off second, and rocket_core_fini() suspends
++	 * the core and disables before it cancels the timeout worker. Both leave
++	 * the domain down with -EINVAL on offer.
++	 *
++	 * The cost is the other half of that ambiguity. A core that is still up
++	 * with runtime PM disabled (pm_runtime_force_suspend() before its
++	 * callback has run, or CONFIG_PM=n under COMPILE_TEST) is left unmasked,
++	 * because writing to it would mean writing to the half that is down as
++	 * well.
++	 *
++	 * Clear the raw status along with the mask, the way the completion path
++	 * does. Masking alone leaves the DPU bit latched until
++	 * rocket_core_reset(), and the hardirq decides on raw status alone, so a
++	 * fault from the IOMMU that shares this line would wake the thread again
++	 * and what the comment below asserts would stop being true.
++	 *
++	 * UNDER job_lock, because rocket_job_hw_submit() arms this same
++	 * register and always runs under that lock. reset.pending is set here
++	 * without the lock and read there with it, so a submit that has already
++	 * passed its check can re-arm the mask after this clears it, and then
++	 * the synchronize_irq() below fences a handler that is no longer the
++	 * one that matters: the block is left running a task with its
++	 * interrupt live. rocket_job_handle_irq() avoids the same race on
++	 * OPERATION_ENABLE by making its completion writes under this lock.
++	 *
++	 * pm_runtime_get_if_active() does not invoke a callback -- it only
++	 * takes a reference on an already-active device -- and
++	 * pm_runtime_put_autosuspend() is asynchronous, so neither can re-enter
++	 * this driver's runtime PM callbacks while the lock is held.
++	 */
++	scoped_guard(mutex, &core->job_lock) {
++		if (pm_runtime_get_if_active(core->dev) > 0) {
++			rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
++			rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
++			pm_runtime_put_autosuspend(core->dev);
++		}
++	}
++
++	/*
++	 * drm_sched_stop() returns without waiting for a threaded handler that
++	 * is already running, so wait for one here. This has to stay outside
++	 * job_lock: the handler takes that lock, so waiting for it while
++	 * holding it would deadlock instead of fencing anything.
++	 */
++	synchronize_irq(core->irq);
++
++	/*
++	 * No handler is running now, but we might still have stuck jobs. Let's
++	 * make sure the PM counters stay balanced by manually calling
++	 * pm_runtime_put_noidle().
+ 	 */
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		if (core->in_flight_job)
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:24 +1200
+Subject: accel/rocket: let the core suspend after a reset
+
+rocket_reset() drops the in-flight job's runtime PM reference with
+pm_runtime_put_noidle(), which requests nothing, so the core does not
+suspend until something else asks and its power domain does not cycle. On
+RK3576 the domain's power-on resets the NPU bus interface; without it the
+IOMMU stops answering and the job after a timeout fails.
+
+Use pm_runtime_put_autosuspend(), as the completion path does. On a ROCK 4D
+the job after a timeout goes from 0 to 128 of 128 channels correct.
+
+Link: https://lore.kernel.org/all/20260819073530.6087-1-royalnet026@gmail.com/
+Fixes: 0810d5ad88a1 ("accel/rocket: Add job submission IOCTL")
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Tested-by: Igor Paunovic <royalnet026@gmail.com> # RK3588, three cores, induced reset, JOB_TIMEOUT_MS=2
+Link: https://patch.msgid.link/20260924102135.92217-5-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_job.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -443,12 +443,12 @@ rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
+ 
+ 	/*
+ 	 * No handler is running now, but we might still have stuck jobs. Let's
+-	 * make sure the PM counters stay balanced by manually calling
+-	 * pm_runtime_put_noidle().
++	 * make sure the PM counters stay balanced by putting the reference the
++	 * job took, and request idle while doing it so the core can suspend.
+ 	 */
+ 	scoped_guard(mutex, &core->job_lock) {
+ 		if (core->in_flight_job)
+-			pm_runtime_put_noidle(core->dev);
++			pm_runtime_put_autosuspend(core->dev);
+ 
+ 		iommu_detach_group(NULL, core->iommu_group);
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:25 +1200
+Subject: accel/rocket: factor the completion tail out of the IRQ handler
+
+Move the part of rocket_job_handle_irq() that starts the next task or
+retires the job into rocket_job_next_locked(). No functional change.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Igor Paunovic <royalnet026@gmail.com>
+Link: https://patch.msgid.link/20260924102135.92217-6-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_job.c | 31 ++++++----
+ 1 file changed, 20 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -341,6 +341,25 @@ static struct dma_fence *rocket_job_run(struct drm_sched_job *sched_job)
+ 	return ERR_PTR(ret);
+ }
+ 
++/* Start the job's next task, or retire it. Caller holds job_lock. */
++static void rocket_job_next_locked(struct rocket_core *core)
++{
++	lockdep_assert_held(&core->job_lock);
++
++	if (!core->in_flight_job)
++		return;
++
++	if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
++		rocket_job_hw_submit(core, core->in_flight_job);
++		return;
++	}
++
++	iommu_detach_group(NULL, iommu_group_get(core->dev));
++	dma_fence_signal(core->in_flight_job->done_fence);
++	pm_runtime_put_autosuspend(core->dev);
++	core->in_flight_job = NULL;
++}
++
+ static void rocket_job_handle_irq(struct rocket_core *core)
+ {
+ 	pm_runtime_mark_last_busy(core->dev);
+@@ -354,17 +373,7 @@ static void rocket_job_handle_irq(struct rocket_core *core)
+ 		rocket_pc_writel(core, OPERATION_ENABLE, 0x0);
+ 		rocket_pc_writel(core, INTERRUPT_CLEAR, 0x1ffff);
+ 
+-		if (core->in_flight_job) {
+-			if (core->in_flight_job->next_task_idx < core->in_flight_job->task_count) {
+-				rocket_job_hw_submit(core, core->in_flight_job);
+-				return;
+-			}
+-
+-			iommu_detach_group(NULL, iommu_group_get(core->dev));
+-			dma_fence_signal(core->in_flight_job->done_fence);
+-			pm_runtime_put_autosuspend(core->dev);
+-			core->in_flight_job = NULL;
+-		}
++		rocket_job_next_locked(core);
+ 	}
+ }
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:26 +1200
+Subject: dt-bindings: npu: rockchip: add rockchip,rk3576-rknn-core
+
+The RK3576 NPU has two cores of the RKNN block this binding describes, with
+two extra CBUF clocks, two power domains per core, one reset instead of
+two, and no SRAM supply. Widen the properties and pin each SoC to its own
+shape in allOf; sram-supply stays required for RK3588.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260924102135.92217-7-gahing@gahingwoo.com
+---
+ Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml | 47 +++++++++-
+ 1 file changed, 44 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
++++ b/Documentation/devicetree/bindings/npu/rockchip,rk3588-rknn-core.yaml
+@@ -21,6 +21,7 @@ properties:
+ 
+   compatible:
+     enum:
++      - rockchip,rk3576-rknn-core
+       - rockchip,rk3588-rknn-core
+ 
+   reg:
+@@ -33,14 +34,18 @@ properties:
+       - const: core # Main NPU core processing unit registers
+ 
+   clocks:
+-    maxItems: 4
++    minItems: 4
++    maxItems: 6
+ 
+   clock-names:
++    minItems: 4
+     items:
+       - const: aclk
+       - const: hclk
+       - const: npu
+       - const: pclk
++      - const: aclk_cbuf
++      - const: hclk_cbuf
+ 
+   interrupts:
+     maxItems: 1
+@@ -51,12 +56,15 @@ properties:
+   npu-supply: true
+ 
+   power-domains:
+-    maxItems: 1
++    minItems: 1
++    maxItems: 2
+ 
+   resets:
++    minItems: 1
+     maxItems: 2
+ 
+   reset-names:
++    minItems: 1
+     items:
+       - const: srst_a
+       - const: srst_h
+@@ -75,7 +83,40 @@ required:
+   - resets
+   - reset-names
+   - npu-supply
+-  - sram-supply
++
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: rockchip,rk3588-rknn-core
++    then:
++      properties:
++        clocks:
++          maxItems: 4
++        clock-names:
++          maxItems: 4
++        power-domains:
++          maxItems: 1
++        resets:
++          minItems: 2
++        reset-names:
++          minItems: 2
++      required:
++        - sram-supply
++    else:
++      properties:
++        clocks:
++          minItems: 6
++        clock-names:
++          minItems: 6
++        power-domains:
++          minItems: 2
++        resets:
++          maxItems: 1
++        reset-names:
++          maxItems: 1
++        sram-supply: false
+ 
+ additionalProperties: false
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:27 +1200
+Subject: dt-bindings: power: rockchip: allow resets in a power domain node
+
+Some domains need a reset cycled once power is on. The RK3576 NPU domains
+are one: without it the first access after power-on takes an async SError.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+Link: https://patch.msgid.link/20260924102135.92217-8-gahing@gahingwoo.com
+---
+ Documentation/devicetree/bindings/power/rockchip,power-controller.yaml | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml b/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
++++ b/Documentation/devicetree/bindings/power/rockchip,power-controller.yaml
+@@ -136,6 +136,13 @@ $defs:
+           A number of phandles to clocks that need to be enabled
+           while power domain switches state.
+ 
++      resets:
++        maxItems: 1
++        description:
++          A phandle to a reset that needs to be cycled once the power domain has
++          been switched on, for domains whose logic does not come up in a usable
++          state by itself.
++
+       domain-supply:
+         description: domain regulator supply.
+ 
+@@ -216,6 +223,7 @@ examples:
+                     reg = <RK3399_PD_IEP>;
+                     clocks = <&cru ACLK_IEP>,
+                              <&cru HCLK_IEP>;
++                    resets = <&cru SRST_A_IEP>;
+                     pm_qos = <&qos_iep>;
+                     #power-domain-cells = <0>;
+                 };
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:28 +1200
+Subject: dt-bindings: iommu: rockchip: describe the RK3576 NPU MMU
+
+The RK3576 NPU MMUs are rk3568-iommu compatible but take five clocks
+instead of two. Give them their own compatible and pin both clock counts in
+allOf.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Acked-by: Conor Dooley <conor.dooley@microchip.com>
+Link: https://patch.msgid.link/20260924102135.92217-9-gahing@gahingwoo.com
+---
+ Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml | 28 ++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
++++ b/Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml
+@@ -26,6 +26,7 @@ properties:
+       - items:
+           - enum:
+               - rockchip,rk3576-iommu
++              - rockchip,rk3576-npu-iommu
+               - rockchip,rk3588-iommu
+           - const: rockchip,rk3568-iommu
+ 
+@@ -42,14 +43,22 @@ properties:
+     minItems: 1
+ 
+   clocks:
++    minItems: 2
+     items:
+       - description: Core clock
+       - description: Interface clock
++      - description: Compute clock
++      - description: Convolution buffer core clock
++      - description: Convolution buffer interface clock
+ 
+   clock-names:
++    minItems: 2
+     items:
+       - const: aclk
+       - const: iface
++      - const: npu
++      - const: aclk_cbuf
++      - const: hclk_cbuf
+ 
+   "#iommu-cells":
+     const: 0
+@@ -72,6 +81,25 @@ required:
+   - clock-names
+   - "#iommu-cells"
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: rockchip,rk3576-npu-iommu
++    then:
++      properties:
++        clocks:
++          minItems: 5
++        clock-names:
++          minItems: 5
++    else:
++      properties:
++        clocks:
++          maxItems: 2
++        clock-names:
++          maxItems: 2
++
+ additionalProperties: false
+ 
+ examples:
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:29 +1200
+Subject: pmdomain: rockchip: add optional per-domain power-on settle delay
+
+The RK3576 NPU domains need a short settle time after the idle request is
+released before the registers behind the domain answer. Without it the QoS
+writes that rockchip_pmu_restore_qos() issues land while the domain is
+still coming up, and the NPU throws an async SError on the first cold
+power-on.
+
+Give rockchip_domain_info an optional delay_us and wait for it between
+releasing idle and restoring QoS. Rename DOMAIN_M_O_R_G to
+DOMAIN_M_O_R_G_W for the settle delay it now carries; RK3576 is its only
+user, so the old spelling is not kept around.
+
+The macro also takes the regulator argument DOMAIN_M_O_R and DOMAIN_M_R
+already have, and RK3576_PD_NPU passes true, so
+rockchip_pm_add_one_domain() powers that domain off at probe and the delay
+runs on the first power-on even when a bootloader left the NPU up.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260924102135.92217-10-gahing@gahingwoo.com
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 56 ++++++----
+ 1 file changed, 34 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -18,6 +18,7 @@
+ #include <linux/of_address.h>
+ #include <linux/of_clk.h>
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/mfd/syscon.h>
+@@ -59,6 +60,7 @@ struct rockchip_domain_info {
+ 	u32 pwr_offset;
+ 	u32 mem_offset;
+ 	u32 req_offset;
++	u32 delay_us;
+ };
+ 
+ struct rockchip_pmu_info {
+@@ -185,7 +187,7 @@ struct rockchip_pmu {
+ 	.need_regulator = regulator,			\
+ }
+ 
+-#define DOMAIN_M_O_R_G(_name, p_offset, pwr, status, m_offset, m_status, r_status, r_offset, req, idle, ack, g_mask, wakeup)	\
++#define DOMAIN_M_O_R_G_W(_name, p_offset, pwr, status, m_offset, m_status, r_status, r_offset, req, idle, ack, g_mask, delay, wakeup, regulator)	\
+ {							\
+ 	.name = _name,					\
+ 	.pwr_offset = p_offset,				\
+@@ -200,8 +202,10 @@ struct rockchip_pmu {
+ 	.req_mask = (req),				\
+ 	.idle_mask = (idle),				\
+ 	.clk_ungate_mask = (g_mask),			\
++	.delay_us = (delay),				\
+ 	.ack_mask = (ack),				\
+ 	.active_wakeup = wakeup,			\
++	.need_regulator = regulator,			\
+ }
+ 
+ #define DOMAIN_M_R(_name, pwr, status, req, idle, ack, wakeup, regulator)	\
+@@ -258,8 +262,11 @@ struct rockchip_pmu {
+ #define DOMAIN_RK3568(name, pwr, req, wakeup, regulator)		\
+ 	DOMAIN_M_R(name, pwr, pwr, req, req, req, wakeup, regulator)
+ 
+-#define DOMAIN_RK3576(name, p_offset, pwr, status, r_status, r_offset, req, idle, g_mask, wakeup)	\
+-	DOMAIN_M_O_R_G(name, p_offset, pwr, status, 0, r_status, r_status, r_offset, req, idle, idle, g_mask, wakeup)
++#define DOMAIN_RK3576(name, p_offset, pwr, status, r_status, r_offset, req, idle, g_mask, delay, wakeup)	\
++	DOMAIN_M_O_R_G_W(name, p_offset, pwr, status, 0, r_status, r_status, r_offset, req, idle, idle, g_mask, delay, wakeup, false)
++
++#define DOMAIN_RK3576_R(name, p_offset, pwr, status, r_status, r_offset, req, idle, g_mask, delay, wakeup)	\
++	DOMAIN_M_O_R_G_W(name, p_offset, pwr, status, 0, r_status, r_status, r_offset, req, idle, idle, g_mask, delay, wakeup, true)
+ 
+ /*
+  * Dynamic Memory Controller may need to coordinate with us -- see
+@@ -686,6 +693,10 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ 		if (ret < 0)
+ 			goto out;
+ 
++		/* Some domains need to settle before the QoS registers answer. */
++		if (pd->info->delay_us)
++			udelay(pd->info->delay_us);
++
+ 		rockchip_pmu_restore_qos(pd);
+ 	}
+ 
+@@ -1344,25 +1355,26 @@ static const struct rockchip_domain_info rk3568_pm_domains[] = {
+ };
+ 
+ static const struct rockchip_domain_info rk3576_pm_domains[] = {
+-	[RK3576_PD_NPU]		= DOMAIN_RK3576("npu",    0x0, BIT(0),  BIT(0), 0,       0x0, 0,       0,       0,       false),
+-	[RK3576_PD_NVM]		= DOMAIN_RK3576("nvm",    0x0, BIT(6),  0,      BIT(6),  0x4, BIT(2),  BIT(18), BIT(2),  false),
+-	[RK3576_PD_SDGMAC]	= DOMAIN_RK3576("sdgmac", 0x0, BIT(7),  0,      BIT(7),  0x4, BIT(1),  BIT(17), 0x6,     false),
+-	[RK3576_PD_AUDIO]	= DOMAIN_RK3576("audio",  0x0, BIT(8),  0,      BIT(8),  0x4, BIT(0),  BIT(16), BIT(0),  false),
+-	[RK3576_PD_PHP]		= DOMAIN_RK3576("php",    0x0, BIT(9),  0,      BIT(9),  0x0, BIT(15), BIT(15), BIT(15), false),
+-	[RK3576_PD_SUBPHP]	= DOMAIN_RK3576("subphp", 0x0, BIT(10), 0,      BIT(10), 0x0, 0,       0,       0,       false),
+-	[RK3576_PD_VOP]		= DOMAIN_RK3576("vop",    0x0, BIT(11), 0,      BIT(11), 0x0, 0x6000,  0x6000,  0x6000,  false),
+-	[RK3576_PD_VO1]		= DOMAIN_RK3576("vo1",    0x0, BIT(14), 0,      BIT(14), 0x0, BIT(12), BIT(12), 0x7000,  false),
+-	[RK3576_PD_VO0]		= DOMAIN_RK3576("vo0",    0x0, BIT(15), 0,      BIT(15), 0x0, BIT(11), BIT(11), 0x6800,  false),
+-	[RK3576_PD_USB]		= DOMAIN_RK3576("usb",    0x4, BIT(0),  0,      BIT(16), 0x0, BIT(10), BIT(10), 0x6400,  true),
+-	[RK3576_PD_VI]		= DOMAIN_RK3576("vi",     0x4, BIT(1),  0,      BIT(17), 0x0, BIT(9),  BIT(9),  BIT(9),  false),
+-	[RK3576_PD_VEPU0]	= DOMAIN_RK3576("vepu0",  0x4, BIT(2),  0,      BIT(18), 0x0, BIT(7),  BIT(7),  0x280,   false),
+-	[RK3576_PD_VEPU1]	= DOMAIN_RK3576("vepu1",  0x4, BIT(3),  0,      BIT(19), 0x0, BIT(8),  BIT(8),  BIT(8),  false),
+-	[RK3576_PD_VDEC]	= DOMAIN_RK3576("vdec",   0x4, BIT(4),  0,      BIT(20), 0x0, BIT(6),  BIT(6),  BIT(6),  false),
+-	[RK3576_PD_VPU]		= DOMAIN_RK3576("vpu",    0x4, BIT(5),  0,      BIT(21), 0x0, BIT(5),  BIT(5),  BIT(5),  false),
+-	[RK3576_PD_NPUTOP]	= DOMAIN_RK3576("nputop", 0x4, BIT(6),  0,      BIT(22), 0x0, 0x18,    0x18,    0x18,    false),
+-	[RK3576_PD_NPU0]	= DOMAIN_RK3576("npu0",   0x4, BIT(7),  0,      BIT(23), 0x0, BIT(1),  BIT(1),  0x1a,    false),
+-	[RK3576_PD_NPU1]	= DOMAIN_RK3576("npu1",   0x4, BIT(8),  0,      BIT(24), 0x0, BIT(2),  BIT(2),  0x1c,    false),
+-	[RK3576_PD_GPU]		= DOMAIN_RK3576("gpu",    0x4, BIT(9),  0,      BIT(25), 0x0, BIT(0),  BIT(0),  BIT(0),  false),
++	/*                                            name    p_offset pwr      status  r_status r_offset req      idle     g_mask   delay wakeup */
++	[RK3576_PD_NPU]		= DOMAIN_RK3576_R("npu",  0x0, BIT(0),  BIT(0), 0,       0x0, 0,       0,       0,       0,    false),
++	[RK3576_PD_NVM]		= DOMAIN_RK3576("nvm",    0x0, BIT(6),  0,      BIT(6),  0x4, BIT(2),  BIT(18), BIT(2),  0,    false),
++	[RK3576_PD_SDGMAC]	= DOMAIN_RK3576("sdgmac", 0x0, BIT(7),  0,      BIT(7),  0x4, BIT(1),  BIT(17), 0x6,     0,    false),
++	[RK3576_PD_AUDIO]	= DOMAIN_RK3576("audio",  0x0, BIT(8),  0,      BIT(8),  0x4, BIT(0),  BIT(16), BIT(0),  0,    false),
++	[RK3576_PD_PHP]		= DOMAIN_RK3576("php",    0x0, BIT(9),  0,      BIT(9),  0x0, BIT(15), BIT(15), BIT(15), 0,    false),
++	[RK3576_PD_SUBPHP]	= DOMAIN_RK3576("subphp", 0x0, BIT(10), 0,      BIT(10), 0x0, 0,       0,       0,       0,    false),
++	[RK3576_PD_VOP]		= DOMAIN_RK3576("vop",    0x0, BIT(11), 0,      BIT(11), 0x0, 0x6000,  0x6000,  0x6000,  0,    false),
++	[RK3576_PD_VO1]		= DOMAIN_RK3576("vo1",    0x0, BIT(14), 0,      BIT(14), 0x0, BIT(12), BIT(12), 0x7000,  0,    false),
++	[RK3576_PD_VO0]		= DOMAIN_RK3576("vo0",    0x0, BIT(15), 0,      BIT(15), 0x0, BIT(11), BIT(11), 0x6800,  0,    false),
++	[RK3576_PD_USB]		= DOMAIN_RK3576("usb",    0x4, BIT(0),  0,      BIT(16), 0x0, BIT(10), BIT(10), 0x6400,  0,    true),
++	[RK3576_PD_VI]		= DOMAIN_RK3576("vi",     0x4, BIT(1),  0,      BIT(17), 0x0, BIT(9),  BIT(9),  BIT(9),  0,    false),
++	[RK3576_PD_VEPU0]	= DOMAIN_RK3576("vepu0",  0x4, BIT(2),  0,      BIT(18), 0x0, BIT(7),  BIT(7),  0x280,   0,    false),
++	[RK3576_PD_VEPU1]	= DOMAIN_RK3576("vepu1",  0x4, BIT(3),  0,      BIT(19), 0x0, BIT(8),  BIT(8),  BIT(8),  0,    false),
++	[RK3576_PD_VDEC]	= DOMAIN_RK3576("vdec",   0x4, BIT(4),  0,      BIT(20), 0x0, BIT(6),  BIT(6),  BIT(6),  0,    false),
++	[RK3576_PD_VPU]		= DOMAIN_RK3576("vpu",    0x4, BIT(5),  0,      BIT(21), 0x0, BIT(5),  BIT(5),  BIT(5),  0,    false),
++	[RK3576_PD_NPUTOP]	= DOMAIN_RK3576("nputop", 0x4, BIT(6),  0,      BIT(22), 0x0, 0x18,    0x18,    0x18,    15,   false),
++	[RK3576_PD_NPU0]	= DOMAIN_RK3576("npu0",   0x4, BIT(7),  0,      BIT(23), 0x0, BIT(1),  BIT(1),  0x1a,    15,   false),
++	[RK3576_PD_NPU1]	= DOMAIN_RK3576("npu1",   0x4, BIT(8),  0,      BIT(24), 0x0, BIT(2),  BIT(2),  0x1c,    15,   false),
++	[RK3576_PD_GPU]		= DOMAIN_RK3576("gpu",    0x4, BIT(9),  0,      BIT(25), 0x0, BIT(0),  BIT(0),  BIT(0),  0,    false),
+ };
+ 
+ static const struct rockchip_domain_info rk3588_pm_domains[] = {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:30 +1200
+Subject: pmdomain: rockchip: cycle an optional power-domain reset on power-on
+
+Some Rockchip domains come out of power-on with their bus interface in an
+undefined state. On the RK3576 NPU this shows up as a hang on the first
+register access after the domain is switched on, and pulsing the domain's
+reset at this point clears it.
+
+Take the domain node's reset if it has one, and pulse it between
+releasing idle and restoring QoS. The reset is optional, so domains that
+do not list one are unaffected.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Reviewed-by: Abel Vesa <abel.vesa@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260924102135.92217-11-gahing@gahingwoo.com
+---
+ drivers/pmdomain/rockchip/pm-domains.c | 33 +++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pmdomain/rockchip/pm-domains.c b/drivers/pmdomain/rockchip/pm-domains.c
+index 111111111111..222222222222 100644
+--- a/drivers/pmdomain/rockchip/pm-domains.c
++++ b/drivers/pmdomain/rockchip/pm-domains.c
+@@ -19,6 +19,7 @@
+ #include <linux/of_clk.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
++#include <linux/reset.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/mfd/syscon.h>
+@@ -103,6 +104,7 @@ struct rockchip_pm_domain {
+ 	struct clk_bulk_data *clks;
+ 	struct device_node *node;
+ 	struct regulator *supply;
++	struct reset_control *reset;
+ };
+ 
+ struct rockchip_pmu {
+@@ -693,6 +695,21 @@ static int rockchip_pd_power(struct rockchip_pm_domain *pd, bool power_on)
+ 		if (ret < 0)
+ 			goto out;
+ 
++		/*
++		 * Optional: some domains need their reset cycled once power
++		 * is on. This goes BEFORE the settle delay, not after: a
++		 * domain that asks for both is asking to settle before the
++		 * QoS registers answer, and a reset deasserted after the
++		 * delay would leave nothing between it and the QoS writes.
++		 * On RK3576 the reset being cycled is the NPU core's bus
++		 * interface, which is what those writes go through.
++		 */
++		if (pd->reset) {
++			reset_control_assert(pd->reset);
++			usleep_range(10, 20);
++			reset_control_deassert(pd->reset);
++		}
++
+ 		/* Some domains need to settle before the QoS registers answer. */
+ 		if (pd->info->delay_us)
+ 			udelay(pd->info->delay_us);
+@@ -898,6 +915,14 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	if (error)
+ 		goto err_put_clocks;
+ 
++	pd->reset = of_reset_control_get_optional_exclusive(node, NULL);
++	if (IS_ERR(pd->reset)) {
++		error = dev_err_probe(pmu->dev, PTR_ERR(pd->reset),
++				      "%pOFn: failed to get reset\n", node);
++		pd->reset = NULL;
++		goto err_unprepare_clocks;
++	}
++
+ 	pd->num_qos = of_count_phandle_with_args(node, "pm_qos",
+ 						 NULL);
+ 
+@@ -973,11 +998,13 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	clk_bulk_unprepare(pd->num_clks, pd->clks);
+ err_put_clocks:
+ 	clk_bulk_put(pd->num_clks, pd->clks);
++	reset_control_put(pd->reset);
+ 	return error;
+ }
+ 
+ static void rockchip_pm_remove_one_domain(struct rockchip_pm_domain *pd)
+ {
++	struct reset_control *reset;
+ 	int ret;
+ 
+ 	/*
+@@ -992,11 +1019,15 @@ static void rockchip_pm_remove_one_domain(struct rockchip_pm_domain *pd)
+ 	clk_bulk_unprepare(pd->num_clks, pd->clks);
+ 	clk_bulk_put(pd->num_clks, pd->clks);
+ 
+-	/* protect the zeroing of pm->num_clks */
++	/* protect the zeroing of pd->num_clks and pd->reset */
+ 	mutex_lock(&pd->pmu->mutex);
+ 	pd->num_clks = 0;
++	reset = pd->reset;
++	pd->reset = NULL;
+ 	mutex_unlock(&pd->pmu->mutex);
+ 
++	reset_control_put(reset);
++
+ 	/* devm will free our memory */
+ }
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:31 +1200
+Subject: accel/rocket: select the per-core clock and reset counts from match
+ data
+
+The RK3576 has the same RKNN block with a different number of clocks and
+resets. Take the counts from soc_data in the match data; RK3588 keeps four
+and two. Check soc before anything is allocated, since a device bound by
+name has no match data.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Link: https://patch.msgid.link/20260924102135.92217-12-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_core.c |  8 +--
+ drivers/accel/rocket/rocket_core.h |  7 +++
+ drivers/accel/rocket/rocket_drv.c  | 26 ++++++++--
+ 3 files changed, 34 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -23,7 +23,7 @@ int rocket_core_init(struct rocket_core *core)
+ 
+ 	core->resets[0].id = "srst_a";
+ 	core->resets[1].id = "srst_h";
+-	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, ARRAY_SIZE(core->resets),
++	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, core->soc->num_resets,
+ 						    core->resets);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
+@@ -32,7 +32,7 @@ int rocket_core_init(struct rocket_core *core)
+ 	core->clks[1].id = "hclk";
+ 	core->clks[2].id = "npu";
+ 	core->clks[3].id = "pclk";
+-	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
++	err = devm_clk_bulk_get(dev, core->soc->num_clks, core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+ 
+@@ -109,9 +109,9 @@ void rocket_core_fini(struct rocket_core *core)
+ 
+ void rocket_core_reset(struct rocket_core *core)
+ {
+-	reset_control_bulk_assert(ARRAY_SIZE(core->resets), core->resets);
++	reset_control_bulk_assert(core->soc->num_resets, core->resets);
+ 
+ 	udelay(10);
+ 
+-	reset_control_bulk_deassert(ARRAY_SIZE(core->resets), core->resets);
++	reset_control_bulk_deassert(core->soc->num_resets, core->resets);
+ }
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -27,9 +27,16 @@
+ #define rocket_core_writel(core, reg, value) \
+ 	writel(value, (core)->core_iomem + (REG_CORE_##reg) - REG_CORE_S_STATUS)
+ 
++/* Per-SoC differences, selected by the of_device_id match data. */
++struct rocket_soc_data {
++	unsigned int num_clks;		/* clk_bulk count */
++	unsigned int num_resets;	/* reset_bulk count */
++};
++
+ struct rocket_core {
+ 	struct device *dev;
+ 	struct rocket_device *rdev;
++	const struct rocket_soc_data *soc;
+ 	unsigned int index;
+ 
+ 	int irq;
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -159,8 +159,22 @@ static const struct drm_driver rocket_drm_driver = {
+ 
+ static int rocket_probe(struct platform_device *pdev)
+ {
++	const struct rocket_soc_data *soc = of_device_get_match_data(&pdev->dev);
+ 	int ret;
+ 
++	/*
++	 * soc is dereferenced without a check by every one of its users, and
++	 * rocket_core_init() below is the first of them. A device that bound
++	 * by name rather than by compatible has no match data, so fail before
++	 * anything is allocated rather than at the first dereference: the
++	 * number of cores comes from a walk of matching DT nodes, and a device
++	 * with no of_node was never counted by it.
++	 */
++	if (!soc) {
++		dev_err(&pdev->dev, "no match data for this device\n");
++		return -ENODEV;
++	}
++
+ 	if (rdev == NULL) {
+ 		/* First core probing, initialize DRM device. */
+ 		rdev = rocket_device_init(drm_dev, &rocket_drm_driver);
+@@ -179,6 +193,7 @@ static int rocket_probe(struct platform_device *pdev)
+ 
+ 	rdev->cores[core].rdev = rdev;
+ 	rdev->cores[core].dev = &pdev->dev;
++	rdev->cores[core].soc = soc;
+ 	rdev->cores[core].index = core;
+ 
+ 	rdev->num_cores++;
+@@ -216,8 +231,13 @@ static void rocket_remove(struct platform_device *pdev)
+ 	}
+ }
+ 
++static const struct rocket_soc_data rk3588_soc_data = {
++	.num_clks = 4,
++	.num_resets = 2,
++};
++
+ static const struct of_device_id dt_match[] = {
+-	{ .compatible = "rockchip,rk3588-rknn-core" },
++	{ .compatible = "rockchip,rk3588-rknn-core", .data = &rk3588_soc_data },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+@@ -243,7 +263,7 @@ static int rocket_device_runtime_resume(struct device *dev)
+ 	if (core < 0)
+ 		return -ENODEV;
+ 
+-	err = clk_bulk_prepare_enable(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
++	err = clk_bulk_prepare_enable(rdev->cores[core].soc->num_clks, rdev->cores[core].clks);
+ 	if (err) {
+ 		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
+ 		return err;
+@@ -263,7 +283,7 @@ static int rocket_device_runtime_suspend(struct device *dev)
+ 	if (!rocket_job_is_idle(&rdev->cores[core]))
+ 		return -EBUSY;
+ 
+-	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
++	clk_bulk_disable_unprepare(rdev->cores[core].soc->num_clks, rdev->cores[core].clks);
+ 
+ 	return 0;
+ }
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:32 +1200
+Subject: accel/rocket: add RK3576 NPU (RKNN) support
+
+The RK3576 has two cores of the RKNN block, with six clocks per core (the
+CBUF has its own), one reset instead of two, two power domains attached
+explicitly, and a PC_TASK_CON that packs the task number into sixteen bits
+instead of twelve. Chaoyi Chen of Rockchip confirmed that layout:
+
+  https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
+
+Count the cores from the driver's own match table, now in rocket_drv.h, so
+the count and the array it sizes cannot disagree.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Link: https://patch.msgid.link/20260924102135.92217-13-gahing@gahingwoo.com
+---
+ drivers/accel/rocket/rocket_core.c   | 20 +++++
+ drivers/accel/rocket/rocket_core.h   |  8 +-
+ drivers/accel/rocket/rocket_device.c |  7 +-
+ drivers/accel/rocket/rocket_drv.c    | 16 +++-
+ drivers/accel/rocket/rocket_drv.h    |  2 +
+ drivers/accel/rocket/rocket_job.c    | 39 +++++++++-
+ 6 files changed, 81 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -8,6 +8,7 @@
+ #include <linux/err.h>
+ #include <linux/iommu.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ 
+@@ -21,6 +22,7 @@ int rocket_core_init(struct rocket_core *core)
+ 	u32 version;
+ 	int err = 0;
+ 
++	/* RK3576 has no per-core hclk reset, so it takes srst_a alone. */
+ 	core->resets[0].id = "srst_a";
+ 	core->resets[1].id = "srst_h";
+ 	err = devm_reset_control_bulk_get_exclusive(&pdev->dev, core->soc->num_resets,
+@@ -32,6 +34,9 @@ int rocket_core_init(struct rocket_core *core)
+ 	core->clks[1].id = "hclk";
+ 	core->clks[2].id = "npu";
+ 	core->clks[3].id = "pclk";
++	/* RK3576 clocks the CBUF separately; the compute path stalls without these. */
++	core->clks[4].id = "aclk_cbuf";
++	core->clks[5].id = "hclk_cbuf";
+ 	err = devm_clk_bulk_get(dev, core->soc->num_clks, core->clks);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get clocks for core %d\n", core->index);
+@@ -60,6 +65,21 @@ int rocket_core_init(struct rocket_core *core)
+ 	if (err)
+ 		return err;
+ 
++	/*
++	 * RK3576 spans two power domains, and a multi-domain device is skipped
++	 * by the driver-core single-domain auto-attach, so attach the list here.
++	 * This goes before the first thing that would have to be unwound, so a
++	 * failure can simply return.
++	 */
++	if (core->soc->multi_power_domain) {
++		struct dev_pm_domain_list *pd_list;
++
++		err = devm_pm_domain_attach_list(dev, NULL, &pd_list);
++		if (err < 0)
++			return dev_err_probe(dev, err,
++					     "failed to attach NPU power domains\n");
++	}
++
+ 	core->iommu_group = iommu_group_get(dev);
+ 
+ 	err = rocket_job_init(core);
+diff --git a/drivers/accel/rocket/rocket_core.h b/drivers/accel/rocket/rocket_core.h
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -29,8 +29,10 @@
+ 
+ /* Per-SoC differences, selected by the of_device_id match data. */
+ struct rocket_soc_data {
+-	unsigned int num_clks;		/* clk_bulk count */
+-	unsigned int num_resets;	/* reset_bulk count */
++	unsigned int num_clks;		/* clk_bulk count: 4 base, 6 with CBUF */
++	unsigned int num_resets;	/* reset_bulk count: 2 base, 1 on RK3576 */
++	bool multi_power_domain;	/* device spans more than one PM domain */
++	bool task_con_16bit;		/* PC_TASK_CON uses the 16-bit task number */
+ };
+ 
+ struct rocket_core {
+@@ -43,7 +45,7 @@ struct rocket_core {
+ 	void __iomem *pc_iomem;
+ 	void __iomem *cna_iomem;
+ 	void __iomem *core_iomem;
+-	struct clk_bulk_data clks[4];
++	struct clk_bulk_data clks[6];
+ 	struct reset_control_bulk_data resets[2];
+ 
+ 	struct iommu_group *iommu_group;
+diff --git a/drivers/accel/rocket/rocket_device.c b/drivers/accel/rocket/rocket_device.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -9,6 +9,7 @@
+ #include <linux/of.h>
+ 
+ #include "rocket_device.h"
++#include "rocket_drv.h"
+ 
+ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 					 const struct drm_driver *rocket_drm_driver)
+@@ -27,7 +28,11 @@ struct rocket_device *rocket_device_init(struct platform_device *pdev,
+ 	ddev = &rdev->ddev;
+ 	dev_set_drvdata(dev, rdev);
+ 
+-	for_each_compatible_node(core_node, NULL, "rockchip,rk3588-rknn-core")
++	/*
++	 * Count over the same match table the platform driver binds with, so
++	 * that a core added there is counted here without a second edit.
++	 */
++	for_each_matching_node(core_node, rocket_dt_match)
+ 		if (of_device_is_available(core_node))
+ 			num_cores++;
+ 
+diff --git a/drivers/accel/rocket/rocket_drv.c b/drivers/accel/rocket/rocket_drv.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -234,13 +234,23 @@ static void rocket_remove(struct platform_device *pdev)
+ static const struct rocket_soc_data rk3588_soc_data = {
+ 	.num_clks = 4,
+ 	.num_resets = 2,
++	.multi_power_domain = false,
++	.task_con_16bit = false,
+ };
+ 
+-static const struct of_device_id dt_match[] = {
++static const struct rocket_soc_data rk3576_soc_data = {
++	.num_clks = 6,
++	.num_resets = 1,
++	.multi_power_domain = true,
++	.task_con_16bit = true,
++};
++
++const struct of_device_id rocket_dt_match[] = {
+ 	{ .compatible = "rockchip,rk3588-rknn-core", .data = &rk3588_soc_data },
++	{ .compatible = "rockchip,rk3576-rknn-core", .data = &rk3576_soc_data },
+ 	{}
+ };
+-MODULE_DEVICE_TABLE(of, dt_match);
++MODULE_DEVICE_TABLE(of, rocket_dt_match);
+ 
+ static int find_core_for_dev(struct device *dev)
+ {
+@@ -299,7 +309,7 @@ static struct platform_driver rocket_driver = {
+ 	.driver	 = {
+ 		.name = "rocket",
+ 		.pm = pm_ptr(&rocket_pm_ops),
+-		.of_match_table = dt_match,
++		.of_match_table = rocket_dt_match,
+ 	},
+ };
+ 
+diff --git a/drivers/accel/rocket/rocket_drv.h b/drivers/accel/rocket/rocket_drv.h
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_drv.h
++++ b/drivers/accel/rocket/rocket_drv.h
+@@ -6,10 +6,12 @@
+ 
+ #include <drm/drm_mm.h>
+ #include <drm/gpu_scheduler.h>
++#include <linux/device-id/of.h>
+ 
+ #include "rocket_device.h"
+ 
+ extern const struct dev_pm_ops rocket_pm_ops;
++extern const struct of_device_id rocket_dt_match[];
+ 
+ struct rocket_iommu_domain {
+ 	struct iommu_domain *domain;
+diff --git a/drivers/accel/rocket/rocket_job.c b/drivers/accel/rocket/rocket_job.c
+index 111111111111..222222222222 100644
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -21,6 +21,30 @@
+ 
+ #define JOB_TIMEOUT_MS 500
+ 
++/*
++ * PC_TASK_CON packs the task number with control bits above it, and neither
++ * the width of the number nor the count of the controls is the same on every
++ * SoC. rocket_registers.h is generated from the RK3588 description, where the
++ * task number is twelve bits and there are two:
++ *
++ *   RK3588   BIT[11:0] task_number, BIT[12] pp_en, BIT[13] count_clear
++ *   RK3576   BIT[15:0] task_number, BIT[16] pp_en, BIT[17] count_clear,
++ *            BIT[18] last_layer_clear
++ *
++ * The RK3576 layout was confirmed by Chaoyi Chen of Rockchip:
++ * https://lore.kernel.org/all/4f300b78-d96d-4d98-8819-dc292b0c9b97@rock-chips.com/
++ *
++ * Writing the RK3588 layout to an RK3576 therefore asks for task_number
++ * 0x7001, that is 28673 tasks: the count clear at BIT(13) lands inside the
++ * sixteen-bit task number and inflates the count instead of clearing it.
++ * The task counter is then only ever cleared by a reset, so the block runs
++ * one task per reset.
++ */
++#define RK3576_PC_TASK_CON_TASK_NUMBER(n)	((n) & 0xffff)
++#define RK3576_PC_TASK_CON_PP_EN		BIT(16)
++#define RK3576_PC_TASK_CON_COUNT_CLEAR		BIT(17)
++#define RK3576_PC_TASK_CON_LAST_LAYER_CLEAR	BIT(18)
++
+ static struct rocket_job *
+ to_rocket_job(struct drm_sched_job *sched_job)
+ {
+@@ -142,10 +166,17 @@ static void rocket_job_hw_submit(struct rocket_core *core, struct rocket_job *jo
+ 	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
+ 	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
+ 
+-	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+-					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+-					 PC_TASK_CON_TASK_NUMBER(1) |
+-					 PC_TASK_CON_TASK_PP_EN(1));
++	if (core->soc->task_con_16bit)
++		rocket_pc_writel(core, TASK_CON,
++				 RK3576_PC_TASK_CON_LAST_LAYER_CLEAR |
++				 RK3576_PC_TASK_CON_COUNT_CLEAR |
++				 RK3576_PC_TASK_CON_PP_EN |
++				 RK3576_PC_TASK_CON_TASK_NUMBER(1));
++	else
++		rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
++						 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
++						 PC_TASK_CON_TASK_NUMBER(1) |
++						 PC_TASK_CON_TASK_PP_EN(1));
+ 
+ 	rocket_pc_writel(core, TASK_DMA_BASE_ADDR, PC_TASK_DMA_BASE_ADDR_DMA_BASE_ADDR(0x0));
+ 
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:33 +1200
+Subject: arm64: dts: rockchip: add NPU core domain clocks and resets to rk3576
+
+Both NPU cores share the convolution buffer and the DSU, so give PD_NPU0
+and PD_NPU1 the three clocks PD_NPUTOP already lists, and give each the BIU
+reset the pmdomain driver cycles on power-on.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Link: https://patch.msgid.link/20260924102135.92217-14-gahing@gahingwoo.com
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 12 ++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1070,14 +1070,22 @@ power-domain@RK3576_PD_NPUTOP {
+ 						power-domain@RK3576_PD_NPU0 {
+ 							reg = <RK3576_PD_NPU0>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+-								 <&cru ACLK_RKNN0>;
++								 <&cru ACLK_RKNN0>,
++								 <&cru CLK_RKNN_DSU0>,
++								 <&cru ACLK_RKNN_CBUF>,
++								 <&cru HCLK_RKNN_CBUF>;
++							resets = <&cru SRST_A_RKNN0_BIU>;
+ 							pm_qos = <&qos_npu_m0>;
+ 							#power-domain-cells = <0>;
+ 						};
+ 						power-domain@RK3576_PD_NPU1 {
+ 							reg = <RK3576_PD_NPU1>;
+ 							clocks = <&cru HCLK_RKNN_ROOT>,
+-								 <&cru ACLK_RKNN1>;
++								 <&cru ACLK_RKNN1>,
++								 <&cru CLK_RKNN_DSU0>,
++								 <&cru ACLK_RKNN_CBUF>,
++								 <&cru HCLK_RKNN_CBUF>;
++							resets = <&cru SRST_A_RKNN1_BIU>;
+ 							pm_qos = <&qos_npu_m1>;
+ 							#power-domain-cells = <0>;
+ 						};
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jiaxing Hu <gahing@gahingwoo.com>
+Date: Thu, 24 Sep 2026 22:21:34 +1200
+Subject: arm64: dts: rockchip: add NPU (RKNN) nodes to rk3576
+
+Add the two RKNN cores and their IOMMUs, disabled, and label PD_NPU so a
+board can give it the NPU rail. Each core lists both core domains, its own
+first, as tested.
+
+Assign CLK_RKNN_DSU0 594 MHz. Nothing in mainline sets its rate or the NPU
+rail, and at the 786 MHz it comes up at, on the 750 mV a ROCK 4D boots
+with, two cores running together write wrong words, 11 to 25 in each pass
+of 5400 rows. 594 MHz is clean, and Rockchip's OPP table asks only 725 mV
+of its 500 and 600 MHz steps.
+
+Signed-off-by: Jiaxing Hu <gahing@gahingwoo.com>
+Link: https://patch.msgid.link/20260924102135.92217-15-gahing@gahingwoo.com
+---
+ arch/arm64/boot/dts/rockchip/rk3576.dtsi | 74 +++++++++-
+ 1 file changed, 73 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3576.dtsi b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3576.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3576.dtsi
+@@ -1042,7 +1042,7 @@ power: power-controller {
+ 				#address-cells = <1>;
+ 				#size-cells = <0>;
+ 
+-				power-domain@RK3576_PD_NPU {
++				pd_npu: power-domain@RK3576_PD_NPU {
+ 					reg = <RK3576_PD_NPU>;
+ 					#power-domain-cells = <1>;
+ 					#address-cells = <1>;
+@@ -1269,6 +1269,78 @@ power-domain@RK3576_PD_VO1 {
+ 			};
+ 		};
+ 
++		rknn_core_0: npu@27700000 {
++			compatible = "rockchip,rk3576-rknn-core";
++			reg = <0x0 0x27700000 0x0 0x1000>,
++			      <0x0 0x27701000 0x0 0x1000>,
++			      <0x0 0x27703000 0x0 0x1000>;
++			reg-names = "pc", "cna", "core";
++			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
++				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
++				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
++			clock-names = "aclk", "hclk", "npu", "pclk",
++				      "aclk_cbuf", "hclk_cbuf";
++			assigned-clocks = <&cru CLK_RKNN_DSU0>;
++			assigned-clock-rates = <594000000>;
++			resets = <&cru SRST_A_RKNN0>;
++			reset-names = "srst_a";
++			power-domains = <&power RK3576_PD_NPU0>, <&power RK3576_PD_NPU1>;
++			iommus = <&rknn_mmu_0>;
++			status = "disabled";
++		};
++
++		rknn_mmu_0: iommu@27702000 {
++			compatible = "rockchip,rk3576-npu-iommu", "rockchip,rk3568-iommu";
++			reg = <0x0 0x27702000 0x0 0x100>,
++			      <0x0 0x27702100 0x0 0x100>;
++			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&cru ACLK_RKNN0>, <&cru HCLK_RKNN_ROOT>,
++				 <&cru CLK_RKNN_DSU0>, <&cru ACLK_RKNN_CBUF>,
++				 <&cru HCLK_RKNN_CBUF>;
++			clock-names = "aclk", "iface", "npu",
++				      "aclk_cbuf", "hclk_cbuf";
++			#iommu-cells = <0>;
++			power-domains = <&power RK3576_PD_NPU0>;
++			status = "disabled";
++		};
++
++		rknn_core_1: npu@27708000 {
++			compatible = "rockchip,rk3576-rknn-core";
++			reg = <0x0 0x27708000 0x0 0x1000>,
++			      <0x0 0x27709000 0x0 0x1000>,
++			      <0x0 0x2770b000 0x0 0x1000>;
++			reg-names = "pc", "cna", "core";
++			interrupts = <GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>,
++				 <&cru CLK_RKNN_DSU0>, <&cru PCLK_NPUTOP_ROOT>,
++				 <&cru ACLK_RKNN_CBUF>, <&cru HCLK_RKNN_CBUF>;
++			clock-names = "aclk", "hclk", "npu", "pclk",
++				      "aclk_cbuf", "hclk_cbuf";
++			assigned-clocks = <&cru CLK_RKNN_DSU0>;
++			assigned-clock-rates = <594000000>;
++			resets = <&cru SRST_A_RKNN1>;
++			reset-names = "srst_a";
++			power-domains = <&power RK3576_PD_NPU1>, <&power RK3576_PD_NPU0>;
++			iommus = <&rknn_mmu_1>;
++			status = "disabled";
++		};
++
++		rknn_mmu_1: iommu@2770a000 {
++			compatible = "rockchip,rk3576-npu-iommu", "rockchip,rk3568-iommu";
++			reg = <0x0 0x2770a000 0x0 0x100>,
++			      <0x0 0x2770a100 0x0 0x100>;
++			interrupts = <GIC_SPI 248 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&cru ACLK_RKNN1>, <&cru HCLK_RKNN_ROOT>,
++				 <&cru CLK_RKNN_DSU0>, <&cru ACLK_RKNN_CBUF>,
++				 <&cru HCLK_RKNN_CBUF>;
++			clock-names = "aclk", "iface", "npu",
++				      "aclk_cbuf", "hclk_cbuf";
++			#iommu-cells = <0>;
++			power-domains = <&power RK3576_PD_NPU1>;
++			status = "disabled";
++		};
++
+ 		gpu: gpu@27800000 {
+ 			compatible = "rockchip,rk3576-mali", "arm,mali-bifrost";
+ 			reg = <0x0 0x27800000 0x0 0x20000>;
+-- 
+Armbian
+
