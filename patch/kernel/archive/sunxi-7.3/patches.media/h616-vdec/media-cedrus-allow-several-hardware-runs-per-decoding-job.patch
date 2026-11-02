@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Thu, 8 Oct 2026 22:29:02 +0200
+Subject: media: cedrus: allow several hardware runs per decoding
+ job
+
+The MPEG engine doesn't parse the video packet headers of MPEG-4 and the
+GOB headers of H.263: it decodes a given number of macroblocks from a
+given bit position and stops, so the driver has to start it once per
+packet or GOB of a picture.
+
+Add an optional trigger_next() codec op, called from the interrupt
+handler after a run. When it starts another run of the same job, the
+handler re-arms the watchdog and returns without finishing the job.
+Codecs without the op are unchanged.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h    |  4 ++++
+ .../staging/media/sunxi/cedrus/cedrus_dec.c    |  2 +-
+ drivers/staging/media/sunxi/cedrus/cedrus_hw.c | 18 ++++++++++++++++--
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -227,10 +227,14 @@ struct cedrus_dec_ops {
+ 	void (*stop)(struct cedrus_ctx *ctx);
+ 	void (*buf_cleanup)(struct cedrus_ctx *ctx, struct cedrus_buffer *buf);
+ 	void (*trigger)(struct cedrus_ctx *ctx);
++	bool (*trigger_next)(struct cedrus_ctx *ctx,
++			     enum cedrus_irq_status *status);
+ 	unsigned int (*extra_cap_size)(struct cedrus_ctx *ctx,
+ 				       struct v4l2_pix_format *pix_fmt);
+ };
+ 
++#define CEDRUS_WATCHDOG_TIMEOUT_MS	2000
++
+ struct cedrus_variant {
+ 	unsigned int	capabilities;
+ 	unsigned int	mod_rate;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+@@ -137,7 +137,7 @@ void cedrus_device_run(void *priv)
+ 	if (!error) {
+ 		/* Start the watchdog timer. */
+ 		schedule_delayed_work(&dev->watchdog_work,
+-				      msecs_to_jiffies(2000));
++				      msecs_to_jiffies(CEDRUS_WATCHDOG_TIMEOUT_MS));
+ 
+ 		ctx->current_codec->trigger(ctx);
+ 	} else {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -220,8 +220,22 @@ static irqreturn_t cedrus_irq(int irq, void *data)
+ 	if (status == CEDRUS_IRQ_NONE)
+ 		return IRQ_NONE;
+ 
+-	ctx->current_codec->irq_disable(ctx);
+-	ctx->current_codec->irq_clear(ctx);
++	/*
++	 * Codecs whose hardware decodes a picture in several runs, like the
++	 * video packets of MPEG-4, start the next run of the same job here.
++	 */
++	if (ctx->current_codec->trigger_next) {
++		ctx->current_codec->irq_clear(ctx);
++		if (ctx->current_codec->trigger_next(ctx, &status)) {
++			schedule_delayed_work(&dev->watchdog_work,
++					      msecs_to_jiffies(CEDRUS_WATCHDOG_TIMEOUT_MS));
++			return IRQ_HANDLED;
++		}
++		ctx->current_codec->irq_disable(ctx);
++	} else {
++		ctx->current_codec->irq_disable(ctx);
++		ctx->current_codec->irq_clear(ctx);
++	}
+ 
+ 	if (status == CEDRUS_IRQ_ERROR)
+ 		state = VB2_BUF_STATE_ERROR;
+-- 
+Armbian
+

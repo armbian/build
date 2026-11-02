@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Fri, 14 Oct 2022 20:15:43 +0200
+Subject: iommu/sun50i: Allow page sizes multiple of 4096
+
+While peripheral supports only 4K page sizes, we can easily emulate
+support for bigger page sizes, up to 1M. This is done by making multiple
+entries in map function or clearing multiple entries in unmap.
+
+This considerably lowers overhead.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/iommu/sun50i-iommu.c | 43 ++++++++++++++++++++++--------------
+ 1 file changed, 26 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/iommu/sun50i-iommu.c b/drivers/iommu/sun50i-iommu.c
+index 111111111111..222222222222 100644
+--- a/drivers/iommu/sun50i-iommu.c
++++ b/drivers/iommu/sun50i-iommu.c
+@@ -623,7 +623,7 @@ static int sun50i_iommu_map(struct iommu_domain *domain, unsigned long iova,
+ {
+ 	struct sun50i_iommu_domain *sun50i_domain = to_sun50i_domain(domain);
+ 	struct sun50i_iommu *iommu = sun50i_domain->iommu;
+-	u32 pte_index;
++	u32 pte_index, pages, i;
+ 	u32 *page_table, *pte_addr;
+ 	int ret = 0;
+ 
+@@ -635,6 +635,8 @@ static int sun50i_iommu_map(struct iommu_domain *domain, unsigned long iova,
+ 		goto out;
+ 	}
+ 
++	pages = size / SPAGE_SIZE;
++
+ 	page_table = sun50i_dte_get_page_table(sun50i_domain, iova, gfp);
+ 	if (IS_ERR(page_table)) {
+ 		ret = PTR_ERR(page_table);
+@@ -642,18 +644,22 @@ static int sun50i_iommu_map(struct iommu_domain *domain, unsigned long iova,
+ 	}
+ 
+ 	pte_index = sun50i_iova_get_pte_index(iova);
+-	pte_addr = &page_table[pte_index];
+-	if (unlikely(sun50i_pte_is_page_valid(*pte_addr))) {
+-		phys_addr_t page_phys = sun50i_pte_get_page_address(*pte_addr);
+-		dev_err(iommu->dev,
+-			"iova %pad already mapped to %pa cannot remap to %pa prot: %#x\n",
+-			&iova, &page_phys, &paddr, prot);
+-		ret = -EBUSY;
+-		goto out;
++	for (i = 0; i < pages; i++) {
++		pte_addr = &page_table[pte_index + i];
++		if (unlikely(sun50i_pte_is_page_valid(*pte_addr))) {
++			phys_addr_t page_phys = sun50i_pte_get_page_address(*pte_addr);
++
++			dev_err(iommu->dev,
++				"iova %pad already mapped to %pa cannot remap to %pa prot: %#x\n",
++				&iova, &page_phys, &paddr, prot);
++			ret = -EBUSY;
++			goto out;
++		}
++		*pte_addr = sun50i_mk_pte(paddr, prot);
++		paddr += SPAGE_SIZE;
+ 	}
+ 
+-	*pte_addr = sun50i_mk_pte(paddr, prot);
+-	sun50i_table_flush(sun50i_domain, pte_addr, 1);
++	sun50i_table_flush(sun50i_domain, &page_table[pte_index], pages);
+ 	*mapped = size;
+ 
+ out:
+@@ -665,8 +671,10 @@ static size_t sun50i_iommu_unmap(struct iommu_domain *domain, unsigned long iova
+ {
+ 	struct sun50i_iommu_domain *sun50i_domain = to_sun50i_domain(domain);
+ 	phys_addr_t pt_phys;
++	u32 dte, pages, i;
+ 	u32 *pte_addr;
+-	u32 dte;
++
++	pages = size / SPAGE_SIZE;
+ 
+ 	dte = sun50i_domain->dt[sun50i_iova_get_dte_index(iova)];
+ 	if (!sun50i_dte_is_pt_valid(dte))
+@@ -675,13 +683,14 @@ static size_t sun50i_iommu_unmap(struct iommu_domain *domain, unsigned long iova
+ 	pt_phys = sun50i_dte_get_pt_address(dte);
+ 	pte_addr = (u32 *)phys_to_virt(pt_phys) + sun50i_iova_get_pte_index(iova);
+ 
+-	if (!sun50i_pte_is_page_valid(*pte_addr))
+-		return 0;
++	for (i = 0; i < pages; i++)
++		if (!sun50i_pte_is_page_valid(pte_addr[i]))
++			return 0;
+ 
+-	memset(pte_addr, 0, sizeof(*pte_addr));
+-	sun50i_table_flush(sun50i_domain, pte_addr, 1);
++	memset(pte_addr, 0, sizeof(*pte_addr) * pages);
++	sun50i_table_flush(sun50i_domain, pte_addr, pages);
+ 
+-	return SZ_4K;
++	return size;
+ }
+ 
+ static phys_addr_t sun50i_iommu_iova_to_phys(struct iommu_domain *domain,
+-- 
+Armbian
+
