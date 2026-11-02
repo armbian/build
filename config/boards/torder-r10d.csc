@@ -15,7 +15,7 @@ IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="binman"
 SERIALCON="ttyFIQ0:1500000"
 PACKAGE_LIST_BOARD="bluez rfkill iproute2"
-MODULES_VENDOR="sprdwl_ng sprdbt_tty sc7a20 gsl3673-800x1280"
+MODULES_VENDOR="sprdwl_ng sprdbt_tty sc7a20 gsl3673-800x1280 panel_simple pwm_bl"
 
 function post_family_config__torder_r10d() {
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
@@ -25,12 +25,6 @@ function post_family_config__torder_r10d() {
 	declare -g BOOTENV_FILE="torder-r10d.txt"
 	declare -g DDR_BLOB="rk35/rk3568_ddr_1056MHz_v1.10.bin"
 	declare -g UBOOT_TARGET_MAP="BL31=${SRC}/cache/sources/rkbin-r10d/3e288fe814e059dd06833495f845cab04ac20a5c/bin/rk35/rk3568_bl31_v1.46.elf ROCKCHIP_TPL=ddr-r10d.bin;;u-boot-rockchip.bin"
-}
-
-function custom_kernel_config__torder_r10d() {
-	opts_y+=(SPARD_WLAN_SUPPORT WCN_BSP_DRIVER_BUILDIN VIDEO_GC02M0 DRM_PANEL_SIMPLE BACKLIGHT_PWM FB DRM_FBDEV_EMULATION FRAMEBUFFER_CONSOLE FRAMEBUFFER_CONSOLE_DETECT_PRIMARY)
-	opts_m+=(WLAN_UWE5622 TTY_OVERY_SDIO GS_SC7A20 TOUCHSCREEN_GSL3673_800X1280 DRM_PANFROST)
-	opts_n+=(MALI400 MALI_MIDGARD MALI_BIFROST)
 }
 
 function post_family_tweaks_bsp__torder_r10d() {
