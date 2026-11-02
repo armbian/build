@@ -13,7 +13,9 @@ BOOTSCRIPT='boot-rockchip64.cmd:boot.cmd'
 BOOTENV_FILE='rockchip64.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
-OVERLAY_PREFIX="${OVERLAY_PREFIX:-"rockchip"}" # default to 'rockchip' if not set by board
+# OVERLAY_PREFIX is a space-separated list. The boot script tries each prefix in order.
+# It defaults to the SoC prefixes (see rockchip_soc_overlay_prefixes below) if not set by board.
+# Boards add their own prefixes in OVERLAY_PREFIX_BOARD; see post_family_config__910_overlay_prefix_board.
 OVERLAY_DIR="/boot/dtb/rockchip/overlay"
 # SERIALCON is handled/defaulted in hook post_family_config__900_late_default_serial_console_by_branch at end of this file
 GOVERNOR="ondemand"
@@ -81,6 +83,22 @@ if [[ "a${BOOT_SOC}a" == "aa" ]]; then
 else
 	display_alert "Determined BOOT_SOC from BOOTCONFIG" "BOOT_SOC: '${BOOT_SOC}'; BOOTCONFIG: '${BOOTCONFIG}'" "info"
 fi
+
+# Print the overlay prefixes of a SoC: "<base><soc>". RK3566 and RK3568 share most overlays, so each gets both.
+# $1: base ("rockchip-" for mainline overlays, "" for vendor overlays); $2: SoC, default BOOT_SOC or the BOOT_FDT_FILE SoC.
+function rockchip_soc_overlay_prefixes() {
+	declare base="${1}" soc="${2:-${BOOT_SOC:-$(basename "${BOOT_FDT_FILE:-none}" | cut -d- -f1)}}"
+	case "${soc}" in
+		rk3566) echo "${base}rk3566 ${base}rk3568" ;;
+		rk3568) echo "${base}rk3568 ${base}rk3566" ;;
+		rk3399pro) echo "${base}rk3399" ;;
+		rk3588s) echo "${base}rk3588" ;;
+		rk[0-9]*) echo "${base}${soc}" ;;
+		*) echo "rockchip" ;;
+	esac
+}
+
+OVERLAY_PREFIX="${OVERLAY_PREFIX:-"$(rockchip_soc_overlay_prefixes "rockchip-")"}"
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -513,4 +531,12 @@ function post_family_config__900_late_default_serial_console_by_branch() {
 	esac
 
 	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}' SOC='${BOOT_SOC}'" "debug"
+}
+
+# A late hook to put the board prefixes (OVERLAY_PREFIX_BOARD) before the family prefixes.
+# A prefix that matches no overlay in the kernel of the current BRANCH does no harm.
+function post_family_config__910_overlay_prefix_board() {
+	[[ -n "${OVERLAY_PREFIX_BOARD}" ]] || return 0
+	declare -g OVERLAY_PREFIX="${OVERLAY_PREFIX_BOARD} ${OVERLAY_PREFIX}"
+	display_alert "rockchip64_common: overlay prefixes" "OVERLAY_PREFIX='${OVERLAY_PREFIX}'" "debug"
 }

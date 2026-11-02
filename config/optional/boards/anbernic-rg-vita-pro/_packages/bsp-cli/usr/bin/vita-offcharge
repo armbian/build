@@ -70,14 +70,18 @@ def battery():
 
 
 def charger_online():
+    """True if a power_supply reads online=1, False if all read 0, None if
+    none read 1 and some could not be read or none exist."""
+    seen = unreadable = False
     for d in glob.glob('/sys/class/power_supply/*/online'):
         try:
             with open(d) as f:
                 if f.read().strip() == '1':
                     return True
+            seen = True
         except OSError:
-            continue
-    return False
+            unreadable = True
+    return False if seen and not unreadable else None
 
 
 def read_str(path):
@@ -275,6 +279,8 @@ def main():
         if pwrkey:
             break
         time.sleep(0.5)
+    if not pwrkey:
+        return 0          # no way to leave the screen except unplugging: boot
 
     console_quiet(True)
     saved = enter_lowpower()
@@ -309,28 +315,45 @@ def main():
     lit_at = time.monotonic()
     last_draw = 0.0
     down_at = None
-    while True:
-        now = time.monotonic()
+    offline_since = None
+    try:
+        while True:
+            now = time.monotonic()
 
-        if logfile and now - last_log >= log_every:
-            cpu_pct, cpu_prev = cpu_busy(cpu_prev)
-            log_sample(logfile, cpu_pct)
-            last_log = now
+            if logfile and now - last_log >= log_every:
+                cpu_pct, cpu_prev = cpu_busy(cpu_prev)
+                log_sample(logfile, cpu_pct)
+                last_log = now
 
-        if screen_on:
-            if now - last_draw >= 5:
-                draw(*battery())
-                last_draw = now
-            if now - lit_at >= screen_timeout and down_at is None:
-                backlight(False)
-                screen_on = False
-        if not charger_online():
-            backlight(True)
-            subprocess.run(['systemctl', 'poweroff', '--no-wall'])
-            time.sleep(60)
-            return 0
-        # long-press POWER boots; a short press (re)lights the screen
-        if pwrkey:
+            if screen_on:
+                if now - last_draw >= 5:
+                    draw(*battery())
+                    last_draw = now
+                if now - lit_at >= screen_timeout and down_at is None:
+                    backlight(False)
+                    screen_on = False
+            # power off only after 3 s of explicit offline readings, so a
+            # failed sysfs read does not shut down a unit still charging
+            online = charger_online()
+            if online is not False:
+                offline_since = None
+            elif offline_since is None:
+                offline_since = time.monotonic()    # after the read
+            if (offline_since is not None
+                    and time.monotonic() - offline_since >= 3):
+                backlight(True)
+                # queue poweroff.target with PID 1 directly: "systemctl
+                # poweroff" asks logind, which is ordered after this unit.
+                # --no-block still fails if the job cannot be queued; once
+                # it is, shutdown stops this unit, so just wait for that.
+                r = subprocess.run(['systemctl', 'start', '--no-block',
+                                    '--job-mode=replace-irreversibly',
+                                    'poweroff.target'])
+                if r.returncode != 0:
+                    return boot_on()
+                time.sleep(60)
+                return 0
+            # long-press POWER boots; a short press (re)lights the screen
             r, _, _ = select.select([pwrkey.fd], [], [], 1.0)
             if r:
                 for ev in pwrkey.read():
@@ -349,8 +372,8 @@ def main():
                         backlight(True)
             if down_at is not None and time.monotonic() - down_at >= boot_hold:
                 return boot_on()        # boot without waiting for release
-        else:
-            time.sleep(1)
+    except OSError:
+        return boot_on()    # power key gone or unreadable: never strand the unit
 
 
 if __name__ == '__main__':

@@ -17,7 +17,6 @@ BOOTBRANCH_BOARD="tag:v2026.07"
 BOOTPATCHDIR="v2026.07"
 BOOTCONFIG="nanopi-r5s-rk3568_defconfig"
 
-OVERLAY_PREFIX="rockchip-rk3568"
 DEFAULT_OVERLAYS="nanopi-r5s-leds"
 
 function post_family_config__uboot_config() {

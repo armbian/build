@@ -236,7 +236,7 @@ function artifact_kernel_prepare_version() {
 	common_version_suffix="${common_version_suffix%-}" # Remove trailing dash
 
 	# outer scope; only append suffix if non-empty (extensions may clear all parts)
-	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
+	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" || -z "${GIT_INFO_KERNEL[MAKEFILE_VERSION]}" ]]; then
 		artifact_version="1" # must start with a digit
 		[[ -n "${common_version_suffix}" ]] && artifact_version+="-${common_version_suffix}"
 	else
