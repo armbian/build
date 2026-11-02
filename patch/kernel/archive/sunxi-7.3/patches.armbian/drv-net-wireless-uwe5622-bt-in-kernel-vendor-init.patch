@@ -1,0 +1,922 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 02:40:00 +0000
+Subject: wireless: uwe5622: tty-sdio: configure the Bluetooth core from the kernel (PSKEY/RF/enable)
+
+The UWE5622 BT core comes up unconfigured and disabled. Until now the
+closed-source hciattach_opi read bt_configure_pskey.ini and
+bt_configure_rf.ini, sent the vendor commands 0xFCA0 (PSKEY, 176 B), 0xFCA2
+(RF parameters, 252 B) and 0xFCA1 (enable) over /dev/ttyBT0 and then set the
+HCI line discipline.
+
+Do the vendor part in the driver when rfkill powers the core on
+(bluetooth_set_power -> start_marlin -> sprd_bt_init), so that stock BlueZ
+"btattach -B /dev/ttyBT0 -P h4" is all userspace needs:
+
+- bt_init.c (new): load the two ini files with request_firmware() (root of
+  /lib/firmware, fallback uwe5622/), parse "key = v1, v2, ..." lines,
+  serialise the PSKEY/RF tables exactly as the vendor tool does and send them
+  with hci_cmd_send_sync(). Derived from Reinerost's OpenWrt port
+  (https://github.com/Reinerost/UWE5622-OpenWrt-Driver, tested on a WalnutPi
+  1B with the same firmware).
+- BD address: bdaddr= module parameter, else the Allwinner addr_mgt "bt"
+  address (CONFIG_SUNXI_ADDR_MGT, the same source hciattach_opi reads via
+  /sys/class/addr_mgt/addr_bt, same call unisocwifi uses for the WLAN MAC),
+  else the ini default. Stored LSB first in the PSKEY (HCI order).
+- hci_cmd_send_sync(): report transport errors, timeouts and non-zero HCI
+  status to the caller (it returned 0 unconditionally), pad the frame to the
+  SDIO 4-byte alignment like the tty write path does.
+- Idempotent: "rfkill unblock" is repeated by systemd-rfkill and the attach
+  service; the firmware is configured once per power-up, the latch is cleared
+  on block and on the firmware reset notifier.
+- On init failure the core is powered down again and the error is returned,
+  so the rfkill switch stays blocked and userspace can retry.
+- New CONFIG_TTY_OVERY_SDIO_BT_VENDOR_INIT (default y) and module parameter
+  vendor_init (default Y): vendor_init=0 restores the previous behaviour for
+  people who want to keep the vendor hciattach.
+- The "mtty bt is closed abnormally" error for events that arrive while the
+  tty is closed is now expected (they are consumed by woble_data_recv) and
+  demoted to pr_debug.
+- rfkill registered last in mtty_probe(): an early "rfkill unblock" (systemd-rfkill)
+  must find the SDIO channels and TX semaphore initialised.
+
+The HCI park-mode quirk is not needed here: armbian/firmware already clears
+the park bit in feature_set (PR #154).
+
+(dkms.conf gets the same CONFIG_TTY_OVERY_SDIO_BT_VENDOR_INIT=y in the upstream
+copy; it is not part of the tree Armbian injects.)
+Upstream: to be submitted to https://github.com/armbian/uwe5622 (git-am
+copy: harness/research/uwe5622-upstream/0004-*.patch). Applies on top of
+the f88cd0d pin.
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/net/wireless/uwe5622/tty-sdio/Kconfig   |  13 ++
+ drivers/net/wireless/uwe5622/tty-sdio/Makefile  |   1 +
+ drivers/net/wireless/uwe5622/tty-sdio/bt_init.c | 581 ++++++++++++++++++++++++
+ drivers/net/wireless/uwe5622/tty-sdio/bt_init.h |  21 +
+ drivers/net/wireless/uwe5622/tty-sdio/rfkill.c  |  34 +-
+ drivers/net/wireless/uwe5622/tty-sdio/tty.c     |  18 +-
+ drivers/net/wireless/uwe5622/tty-sdio/woble.c   |  37 +-
+ drivers/net/wireless/uwe5622/tty-sdio/woble.h   |   1 +
+ 8 files changed, 693 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/Kconfig b/drivers/net/wireless/uwe5622/tty-sdio/Kconfig
+index df2027b..af00238 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/Kconfig
++++ b/drivers/net/wireless/uwe5622/tty-sdio/Kconfig
+@@ -2,3 +2,16 @@ config TTY_OVERY_SDIO
+ 	tristate "Spard TTY Overy SDIO Driver"
+ 	help
+ 	  Spard tty overy sdio driver.
++
++config TTY_OVERY_SDIO_BT_VENDOR_INIT
++	bool "In-kernel Bluetooth vendor initialisation (PSKEY/RF)"
++	depends on TTY_OVERY_SDIO
++	default y
++	help
++	  Configure the UWE5622 Bluetooth core from the kernel when rfkill
++	  powers it on: load bt_configure_pskey.ini / bt_configure_rf.ini
++	  through the firmware loader and send the vendor PSKEY, RF and
++	  enable commands. Stock BlueZ (btattach -B /dev/ttyBT0 -P h4) is
++	  then enough to bring up hci0; the closed-source hciattach_opi is
++	  not needed. Can be turned off at runtime with the sprdbt_tty
++	  module parameter vendor_init=0 to keep using the vendor tool.
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/Makefile b/drivers/net/wireless/uwe5622/tty-sdio/Makefile
+index 37925d8..f920208 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/Makefile
++++ b/drivers/net/wireless/uwe5622/tty-sdio/Makefile
+@@ -15,6 +15,7 @@ sprdbt_tty-objs := \
+ 	woble.o\
+ 	alignment/sitm.o \
+ 	dump.o
++sprdbt_tty-$(CONFIG_TTY_OVERY_SDIO_BT_VENDOR_INIT) += bt_init.o
+ 
+ obj-$(CONFIG_TTY_OVERY_SDIO) += sprdbt_tty.o
+ 
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/bt_init.c b/drivers/net/wireless/uwe5622/tty-sdio/bt_init.c
+new file mode 100644
+index 0000000..4f0bf8c
+--- /dev/null
++++ b/drivers/net/wireless/uwe5622/tty-sdio/bt_init.c
+@@ -0,0 +1,581 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * In-kernel Bluetooth vendor initialisation for the Unisoc UWE5622.
++ *
++ * The BT core of the UWE5622 comes up with no PSKEY/RF configuration and
++ * disabled. The vendor tool (hciattach_opi, closed source) reads
++ * bt_configure_pskey.ini and bt_configure_rf.ini, serialises them and sends
++ * three vendor HCI commands before handing the tty to the HCI line
++ * discipline:
++ *
++ *   0xFCA0  PSKEY          (176 bytes)
++ *   0xFCA2  RF parameters  (252 bytes)
++ *   0xFCA1  core enable    (00 00 01)
++ *
++ * Do the same here when the rfkill switch powers the BT core on, so that
++ * stock BlueZ (btattach -B /dev/ttyBT0 -P h4) is all userspace needs.
++ *
++ * Based on the OpenWrt port by Reinerost
++ * (https://github.com/Reinerost/UWE5622-OpenWrt-Driver, tty-sdio/bt_init.c,
++ * GPL-2.0), tested on a WalnutPi 1B (H618 + UWE5622). Changes for
++ * armbian/uwe5622: BD address from the bdaddr= module parameter or the
++ * Allwinner addr_mgt driver (as unisocwifi does for the WLAN MAC), with the
++ * ini value as last resort; vendor_init= switch to keep the blob usable;
++ * one-shot latch cleared when the core is powered down or the firmware
++ * resets.
++ */
++
++#include <linux/device.h>
++#include <linux/errno.h>
++#include <linux/firmware.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/types.h>
++
++#include "bt_init.h"
++#include "woble.h"
++
++#define HCI_PSKEY		0xFCA0
++#define HCI_CORE_ENABLE		0xFCA1
++#define HCI_RF_PARA		0xFCA2
++
++#define BT_PSKEY_FILE		"bt_configure_pskey.ini"
++#define BT_RF_FILE		"bt_configure_rf.ini"
++/* armbian-firmware ships them in the root and under uwe5622/ */
++#define BT_FW_SUBDIR		"uwe5622/"
++
++#define BT_PSKEY_LEN		176
++#define BT_RF_LEN		252
++#define BD_ADDR_LEN		6
++
++#define MAX_INI_ENTRIES		64
++#define MAX_INI_VALUES		16
++
++static bool vendor_init = true;
++module_param(vendor_init, bool, 0444);
++MODULE_PARM_DESC(vendor_init,
++	"Send PSKEY/RF/enable to the BT core when rfkill powers it on (default Y); N keeps the controller raw for the vendor hciattach");
++
++static char *bdaddr;
++module_param(bdaddr, charp, 0444);
++MODULE_PARM_DESC(bdaddr,
++	"Bluetooth device address XX:XX:XX:XX:XX:XX (default: Allwinner addr_mgt \"bt\" address, else the one in bt_configure_pskey.ini)");
++
++#if IS_ENABLED(CONFIG_SUNXI_ADDR_MGT)
++extern int get_custom_mac_address(int fmt, char *name, char *addr);
++#endif
++
++struct ini_entry {
++	char key[64];
++	u32 value[MAX_INI_VALUES];
++	size_t count;
++};
++
++struct ini_config {
++	struct ini_entry entry[MAX_INI_ENTRIES];
++	size_t count;
++};
++
++/* Serialised state: init runs from the rfkill set_block callback. */
++static DEFINE_MUTEX(sprd_bt_init_lock);
++static bool sprd_bt_initialized;
++
++bool sprd_bt_vendor_init_enabled(void)
++{
++	return vendor_init;
++}
++
++void sprd_bt_init_invalidate(void)
++{
++	mutex_lock(&sprd_bt_init_lock);
++	sprd_bt_initialized = false;
++	mutex_unlock(&sprd_bt_init_lock);
++}
++
++static char *trim(char *s)
++{
++	char *e;
++
++	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
++		s++;
++
++	if (!*s)
++		return s;
++
++	e = s + strlen(s) - 1;
++	while (e >= s && (*e == ' ' || *e == '\t' || *e == '\r' || *e == '\n'))
++		*e-- = '\0';
++
++	return s;
++}
++
++/*
++ * The ini files are "key = v1, v2, ..." lines, '#' comments, decimal or
++ * 0x-prefixed values. Unknown keys are kept and simply never looked up.
++ */
++static int parse_ini(const struct firmware *fw, struct ini_config *cfg)
++{
++	char *buf, *cur, *line;
++	int ret = 0;
++
++	buf = kmemdup_nul(fw->data, fw->size, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	cur = buf;
++	while ((line = strsep(&cur, "\n")) != NULL) {
++		struct ini_entry *entry;
++		char *s, *eq, *values;
++
++		s = trim(line);
++		if (!*s || *s == '#')
++			continue;
++
++		eq = strchr(s, '=');
++		if (!eq) {
++			ret = -EINVAL;
++			goto out;
++		}
++		*eq++ = '\0';
++
++		s = trim(s);
++		values = trim(eq);
++		if (!*s || !*values || cfg->count >= MAX_INI_ENTRIES ||
++		    strlen(s) >= sizeof(cfg->entry[0].key)) {
++			ret = -EINVAL;
++			goto out;
++		}
++
++		entry = &cfg->entry[cfg->count++];
++		strscpy(entry->key, s, sizeof(entry->key));
++
++		while (*values) {
++			char *comma, *value;
++			u32 v;
++
++			if (entry->count >= MAX_INI_VALUES) {
++				ret = -E2BIG;
++				goto out;
++			}
++
++			comma = strchr(values, ',');
++			if (comma)
++				*comma = '\0';
++
++			value = trim(values);
++			ret = kstrtou32(value, 0, &v);
++			if (ret)
++				goto out;
++
++			entry->value[entry->count++] = v;
++
++			if (!comma)
++				break;
++			values = trim(comma + 1);
++		}
++
++		if (!entry->count) {
++			ret = -EINVAL;
++			goto out;
++		}
++	}
++
++out:
++	kfree(buf);
++	return ret;
++}
++
++static const struct ini_entry *ini_get(const struct ini_config *cfg,
++				       const char *key, size_t min_count,
++				       size_t max_count)
++{
++	size_t i;
++
++	for (i = 0; i < cfg->count; i++) {
++		const struct ini_entry *entry = &cfg->entry[i];
++
++		if (strcmp(entry->key, key))
++			continue;
++		if (entry->count < min_count || entry->count > max_count)
++			return NULL;
++		return entry;
++	}
++
++	return NULL;
++}
++
++static void put_u8(u8 **p, u8 v)
++{
++	*(*p)++ = v;
++}
++
++static void put_u16(u8 **p, u16 v)
++{
++	*(*p)++ = v & 0xff;
++	*(*p)++ = (v >> 8) & 0xff;
++}
++
++static void put_u32(u8 **p, u32 v)
++{
++	*(*p)++ = v & 0xff;
++	*(*p)++ = (v >> 8) & 0xff;
++	*(*p)++ = (v >> 16) & 0xff;
++	*(*p)++ = (v >> 24) & 0xff;
++}
++
++static int put_ini8(u8 **p, const struct ini_config *cfg, const char *key,
++		    size_t n)
++{
++	const struct ini_entry *entry = ini_get(cfg, key, n, n);
++	size_t i;
++
++	if (!entry)
++		return -EINVAL;
++	for (i = 0; i < n; i++) {
++		if (entry->value[i] > U8_MAX)
++			return -ERANGE;
++		put_u8(p, entry->value[i]);
++	}
++	return 0;
++}
++
++static int put_ini16(u8 **p, const struct ini_config *cfg, const char *key,
++		     size_t n)
++{
++	const struct ini_entry *entry = ini_get(cfg, key, n, n);
++	size_t i;
++
++	if (!entry)
++		return -EINVAL;
++	for (i = 0; i < n; i++) {
++		if (entry->value[i] > U16_MAX)
++			return -ERANGE;
++		put_u16(p, entry->value[i]);
++	}
++	return 0;
++}
++
++static int put_ini32(u8 **p, const struct ini_config *cfg, const char *key,
++		     size_t min_n, size_t max_n)
++{
++	const struct ini_entry *entry = ini_get(cfg, key, min_n, max_n);
++	size_t i;
++
++	if (!entry)
++		return -EINVAL;
++	for (i = 0; i < entry->count; i++)
++		put_u32(p, entry->value[i]);
++	return entry->count;
++}
++
++/*
++ * Pick the BD address, in the human (most significant byte first) order:
++ * 1. bdaddr= module parameter
++ * 2. Allwinner addr_mgt "bt" address (derived from the SoC chip id, the
++ *    same source hciattach_opi reads through /sys/class/addr_mgt/addr_bt)
++ * 3. device_addr from the ini (a fixed per-image default, last resort)
++ */
++static int sprd_bt_get_bdaddr(struct device *dev, const struct ini_config *cfg,
++			      u8 addr[BD_ADDR_LEN])
++{
++	const struct ini_entry *entry;
++	size_t i;
++
++	if (bdaddr && *bdaddr) {
++		if (sscanf(bdaddr, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
++			   &addr[0], &addr[1], &addr[2],
++			   &addr[3], &addr[4], &addr[5]) == BD_ADDR_LEN) {
++			dev_info(dev, "BD address %pM from bdaddr=\n", addr);
++			return 0;
++		}
++		dev_warn(dev, "ignoring malformed bdaddr=\"%s\"\n", bdaddr);
++	}
++
++#if IS_ENABLED(CONFIG_SUNXI_ADDR_MGT)
++	/* fmt 1 = raw bytes; returns the address type (>= 0) on success */
++	if (get_custom_mac_address(1, "bt", (char *)addr) >= 0) {
++		dev_info(dev, "BD address %pM from addr_mgt\n", addr);
++		return 0;
++	}
++	dev_warn(dev, "addr_mgt has no bt address, using the ini default\n");
++#endif
++
++	entry = ini_get(cfg, "device_addr", BD_ADDR_LEN, BD_ADDR_LEN);
++	if (!entry)
++		return -EINVAL;
++	for (i = 0; i < BD_ADDR_LEN; i++) {
++		if (entry->value[i] > U8_MAX)
++			return -ERANGE;
++		addr[i] = entry->value[i];
++	}
++	dev_info(dev, "BD address %pM from %s\n", addr, BT_PSKEY_FILE);
++	return 0;
++}
++
++static size_t build_pskey(struct device *dev, u8 *buf,
++			  const struct ini_config *cfg)
++{
++	u8 addr[BD_ADDR_LEN];
++	u8 *p = buf;
++	int n, i;
++
++#define P8(k, n)	do { if (put_ini8(&p, cfg, k, n) < 0) goto bad; } while (0)
++#define P16(k, n)	do { if (put_ini16(&p, cfg, k, n) < 0) goto bad; } while (0)
++#define P32(k, n)	do { if (put_ini32(&p, cfg, k, n, n) < 0) goto bad; } while (0)
++
++	P32("device_class", 1);
++	P8("feature_set", 16);
++
++	/*
++	 * device_addr: BD_ADDR as the controller stores it, least significant
++	 * byte first (HCI order), i.e. the reverse of the printed form.
++	 */
++	if (sprd_bt_get_bdaddr(dev, cfg, addr))
++		goto bad;
++	for (i = BD_ADDR_LEN - 1; i >= 0; i--)
++		put_u8(&p, addr[i]);
++
++	P16("comp_id", 1);
++	P8("g_sys_uart0_communication_supported", 1);
++	P8("cp2_log_mode", 1);
++	P8("LogLevel", 1);
++	P8("g_central_or_perpheral", 1);
++	P16("Log_BitMask", 1);
++	P8("super_ssp_enable", 1);
++	P8("common_rfu_b3", 1);
++	P32("common_rfu_w", 2);
++	P32("le_rfu_w", 2);
++	P32("lmp_rfu_w", 2);
++	P32("lc_rfu_w", 2);
++	P16("g_wbs_nv_117", 1);
++	P16("g_wbs_nv_118", 1);
++	P16("g_nbv_nv_117", 1);
++	P16("g_nbv_nv_118", 1);
++	P8("g_sys_sco_transmit_mode", 1);
++	P8("audio_rfu_b1", 1);
++	P8("audio_rfu_b2", 1);
++	P8("audio_rfu_b3", 1);
++	P32("audio_rfu_w", 2);
++	P8("g_sys_sleep_in_standby_supported", 1);
++	P8("g_sys_sleep_master_supported", 1);
++	P8("g_sys_sleep_slave_supported", 1);
++	P8("power_rfu_b1", 1);
++	P32("power_rfu_w", 2);
++	P32("win_ext", 1);
++	P8("edr_tx_edr_delay", 1);
++	P8("edr_rx_edr_delay", 1);
++	P8("tx_delay", 1);
++	P8("rx_delay", 1);
++	P32("bb_rfu_w", 2);
++	P8("agc_mode", 1);
++	P8("diff_or_eq", 1);
++	P8("ramp_mode", 1);
++	P8("modem_rfu_b1", 1);
++	P32("modem_rfu_w", 2);
++	P32("BQB_BitMask_1", 1);
++	P32("BQB_BitMask_2", 1);
++	P16("bt_coex_threshold", 8);
++
++	/*
++	 * The ini carries 2 other_rfu_w words (160-byte table); the vendor
++	 * tool sends a 176-byte PSKEY, zero-filling up to 6 words.
++	 */
++	n = put_ini32(&p, cfg, "other_rfu_w", 2, 6);
++	if (n < 0)
++		goto bad;
++	while (n++ < 6)
++		put_u32(&p, 0);
++
++#undef P8
++#undef P16
++#undef P32
++	return p - buf;
++bad:
++	return 0;
++}
++
++static size_t build_rf(u8 *buf, const struct ini_config *cfg)
++{
++	u8 *p = buf;
++
++#define R8(k, n)	do { if (put_ini8(&p, cfg, k, n) < 0) return 0; } while (0)
++#define R16(k, n)	do { if (put_ini16(&p, cfg, k, n) < 0) return 0; } while (0)
++#define R32(k, n)	do { if (put_ini32(&p, cfg, k, n, n) < 0) return 0; } while (0)
++
++	R16("g_GainValue_A", 6);
++	R16("g_ClassicPowerValue_A", 10);
++	R16("g_LEPowerValue_A", 16);
++	R16("g_BRChannelpwrvalue_A", 8);
++	R16("g_EDRChannelpwrvalue_A", 8);
++	R16("g_LEChannelpwrvalue_A", 8);
++
++	R16("g_GainValue_B", 6);
++	R16("g_ClassicPowerValue_B", 10);
++	R16("g_LEPowerValue_B", 16);
++	R16("g_BRChannelpwrvalue_B", 8);
++	R16("g_EDRChannelpwrvalue_B", 8);
++	R16("g_LEChannelpwrvalue_B", 8);
++
++	R16("LE_fix_powerword", 1);
++	R8("Classic_pc_by_channel", 1);
++	R8("LE_pc_by_channel", 1);
++	R8("RF_switch_mode", 1);
++	R8("Data_Capture_Mode", 1);
++	R8("Analog_IQ_Debug_Mode", 1);
++	R8("RF_common_rfu_b3", 1);
++	R32("RF_common_rfu_w", 5);
++
++#undef R8
++#undef R16
++#undef R32
++	return p - buf;
++}
++
++static int send_vendor_cmd(u16 opcode, const u8 *data, size_t len)
++{
++	struct HC_BT_HDR *payload;
++	int ret;
++
++	if (len > U8_MAX)
++		return -EINVAL;
++
++	payload = kzalloc(sizeof(*payload) + len, GFP_KERNEL);
++	if (!payload)
++		return -ENOMEM;
++
++	payload->len = len;
++	memcpy(payload->data, data, len);
++
++	ret = hci_cmd_send_sync(opcode, payload, NULL);
++
++	kfree(payload);
++	return ret;
++}
++
++static int load_config(struct device *dev, const char *name,
++		       struct ini_config *cfg)
++{
++	const struct firmware *fw;
++	char subdir_name[64];
++	int ret;
++
++	ret = request_firmware(&fw, name, dev);
++	if (ret) {
++		snprintf(subdir_name, sizeof(subdir_name), "%s%s",
++			 BT_FW_SUBDIR, name);
++		ret = request_firmware(&fw, subdir_name, dev);
++	}
++	if (ret) {
++		dev_err(dev, "failed to load %s: %d\n", name, ret);
++		return ret;
++	}
++
++	memset(cfg, 0, sizeof(*cfg));
++	ret = parse_ini(fw, cfg);
++	release_firmware(fw);
++	if (ret)
++		dev_err(dev, "failed to parse %s: %d\n", name, ret);
++
++	return ret;
++}
++
++static int __sprd_bt_init(struct device *dev)
++{
++	struct ini_config *cfg;
++	u8 *payload;
++	size_t len;
++	int ret;
++
++	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
++	if (!cfg)
++		return -ENOMEM;
++
++	payload = kzalloc(BT_RF_LEN, GFP_KERNEL);
++	if (!payload) {
++		ret = -ENOMEM;
++		goto out_cfg;
++	}
++
++	ret = load_config(dev, BT_PSKEY_FILE, cfg);
++	if (ret)
++		goto out;
++
++	len = build_pskey(dev, payload, cfg);
++	if (len != BT_PSKEY_LEN) {
++		dev_err(dev, "%s: incomplete or malformed, PSKEY length %zu\n",
++			BT_PSKEY_FILE, len);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	ret = send_vendor_cmd(HCI_PSKEY, payload, len);
++	if (ret) {
++		dev_err(dev, "PSKEY (0x%04x) failed: %d\n", HCI_PSKEY, ret);
++		goto out;
++	}
++
++	memset(payload, 0, BT_RF_LEN);
++	ret = load_config(dev, BT_RF_FILE, cfg);
++	if (ret)
++		goto out;
++
++	len = build_rf(payload, cfg);
++	if (len != BT_RF_LEN) {
++		dev_err(dev, "%s: incomplete or malformed, RF length %zu\n",
++			BT_RF_FILE, len);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	ret = send_vendor_cmd(HCI_RF_PARA, payload, len);
++	if (ret) {
++		dev_err(dev, "RF parameters (0x%04x) failed: %d\n",
++			HCI_RF_PARA, ret);
++		goto out;
++	}
++
++	payload[0] = 0x00;
++	payload[1] = 0x00;
++	payload[2] = 0x01;
++	ret = send_vendor_cmd(HCI_CORE_ENABLE, payload, 3);
++	if (ret) {
++		dev_err(dev, "core enable (0x%04x) failed: %d\n",
++			HCI_CORE_ENABLE, ret);
++		goto out;
++	}
++
++	dev_info(dev, "Bluetooth vendor init done (PSKEY %u B, RF %u B)\n",
++		 BT_PSKEY_LEN, BT_RF_LEN);
++out:
++	kfree(payload);
++out_cfg:
++	kfree(cfg);
++	return ret;
++}
++
++/*
++ * Called from the rfkill set_block(unblocked) path after start_marlin()
++ * powered the BT core. Idempotent: "rfkill unblock" may be repeated
++ * (systemd-rfkill restore, then the attach service) and the firmware
++ * must only be configured once per power-up.
++ */
++int sprd_bt_init(struct device *dev)
++{
++	int ret = 0;
++
++	if (!vendor_init)
++		return 0;
++
++	mutex_lock(&sprd_bt_init_lock);
++	if (!sprd_bt_initialized) {
++		ret = __sprd_bt_init(dev);
++		if (!ret)
++			sprd_bt_initialized = true;
++	}
++	mutex_unlock(&sprd_bt_init_lock);
++
++	return ret;
++}
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/bt_init.h b/drivers/net/wireless/uwe5622/tty-sdio/bt_init.h
+new file mode 100644
+index 0000000..78abebd
+--- /dev/null
++++ b/drivers/net/wireless/uwe5622/tty-sdio/bt_init.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * In-kernel Bluetooth vendor initialisation for the Unisoc UWE5622
++ * (PSKEY / RF parameters / core enable), replacing the closed hciattach_opi.
++ */
++#ifndef _SPRD_BT_INIT_H_
++#define _SPRD_BT_INIT_H_
++
++#include <linux/device.h>
++
++#if IS_ENABLED(CONFIG_TTY_OVERY_SDIO_BT_VENDOR_INIT)
++bool sprd_bt_vendor_init_enabled(void);
++int sprd_bt_init(struct device *dev);
++void sprd_bt_init_invalidate(void);
++#else
++static inline bool sprd_bt_vendor_init_enabled(void) { return false; }
++static inline int sprd_bt_init(struct device *dev) { return 0; }
++static inline void sprd_bt_init_invalidate(void) { }
++#endif
++
++#endif
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/rfkill.c b/drivers/net/wireless/uwe5622/tty-sdio/rfkill.c
+index 0aed151..3bbd13f 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/rfkill.c
++++ b/drivers/net/wireless/uwe5622/tty-sdio/rfkill.c
+@@ -28,18 +28,43 @@
+ #endif
+ #include <marlin_platform.h>
+ #include "rfkill.h"
++#include "bt_init.h"
+ 
+ 
+ static struct rfkill *bt_rfk;
++static struct device *bt_dev;
+ static const char bt_name[] = "bluetooth";
+ 
+ static int bluetooth_set_power(void *data, bool blocked)
+ {
++	int ret;
++
+ 	pr_info("%s: start_block=%d\n", __func__, blocked);
+-	if (!blocked)
+-		start_marlin(MARLIN_BLUETOOTH);
+-	else
+-		stop_marlin(MARLIN_BLUETOOTH);
++	if (!blocked) {
++		ret = start_marlin(MARLIN_BLUETOOTH);
++		if (ret) {
++			pr_err("%s: start_marlin failed: %d\n", __func__, ret);
++			return ret;
++		}
++		/*
++		 * The core is powered but unconfigured; send PSKEY/RF/enable
++		 * so that a plain HCI line discipline can drive it. On failure
++		 * power it down again and report the error, so the rfkill
++		 * switch stays blocked and userspace can retry.
++		 */
++		ret = sprd_bt_init(bt_dev);
++		if (ret) {
++			pr_err("%s: Bluetooth vendor init failed: %d\n",
++				__func__, ret);
++			stop_marlin(MARLIN_BLUETOOTH);
++			return ret;
++		}
++	} else {
++		sprd_bt_init_invalidate();
++		ret = stop_marlin(MARLIN_BLUETOOTH);
++		if (ret)
++			pr_err("%s: stop_marlin failed: %d\n", __func__, ret);
++	}
+ 
+ 	pr_info("%s: end_block=%d\n", __func__, blocked);
+ 	return 0;
+@@ -55,6 +80,7 @@ int rfkill_bluetooth_init(struct platform_device *pdev)
+ 	int rc = 0;
+ 
+ 	pr_info("-->%s\n", __func__);
++	bt_dev = &pdev->dev;
+ 	bt_rfk = rfkill_alloc(bt_name, &pdev->dev, RFKILL_TYPE_BLUETOOTH,
+ 			&rfkill_bluetooth_ops, NULL);
+ 	if (!bt_rfk) {
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/tty.c b/drivers/net/wireless/uwe5622/tty-sdio/tty.c
+index f69cd66..91e6bc5 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/tty.c
++++ b/drivers/net/wireless/uwe5622/tty-sdio/tty.c
+@@ -43,6 +43,7 @@
+ #include "rfkill.h"
+ #include "dump.h"
+ #include "woble.h"
++#include "bt_init.h"
+ #include "alignment/sitm.h"
+ 
+ static unsigned int log_level = MTTY_LOG_LEVEL_NONE;
+@@ -279,7 +280,13 @@ static int mtty_rx_cb(int chn, struct mbuf_t *head, struct mbuf_t *tail, int num
+ 	woble_data_recv((unsigned char *)head->buf + BT_SDIO_HEAD_LEN, block_size);
+ 
+ 	if (atomic_read(&mtty_dev->state) == MTTY_STATE_CLOSE) {
+-		pr_err("%s mtty bt is closed abnormally\n", __func__);
++		/*
++		 * Expected while the in-kernel vendor init talks to the
++		 * controller before userspace opens the tty: the events
++		 * were consumed by woble_data_recv() above.
++		 */
++		pr_debug("%s mtty bt is closed, %d bytes dropped\n", __func__,
++			block_size);
+ 		sprdwcn_bus_push_list(chn, head, tail, num);
+ 		return -1;
+ 	}
+@@ -647,6 +654,8 @@ static int bluetooth_reset(struct notifier_block *this, unsigned long ev, void *
+ 
+ 	if (!ev) {
+ 		pr_info("%s:reset callback coming\n", __func__);
++		/* the firmware restarted: PSKEY/RF must be sent again */
++		sprd_bt_init_invalidate();
+ 		if (mtty_dev != NULL) {
+ 			if (!work_pending(&mtty_dev->bt_rx_work)) {
+ 				pr_info("%s tty_insert_flip_string", __func__);
+@@ -737,7 +746,6 @@ static int  mtty_probe(struct platform_device *pdev)
+ 	}
+ //#endif
+ 
+-	rfkill_bluetooth_init(pdev);
+ 	bluesleep_init();
+ 	woble_init();
+ 
+@@ -747,6 +755,13 @@ static int  mtty_probe(struct platform_device *pdev)
+ 	sprdwcn_bus_chn_init(&bt_tx_ops);
+ 	sema_init(&sem_id, BT_TX_POOL_SIZE - 1);
+ 
++	/*
++	 * Last: unblocking the switch powers the core and runs the vendor
++	 * init over the channels and semaphore set up above, and userspace
++	 * (systemd-rfkill) may unblock as soon as the rfkill device appears.
++	 */
++	rfkill_bluetooth_init(pdev);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/woble.c b/drivers/net/wireless/uwe5622/tty-sdio/woble.c
+index 973d8f1..b7f8f2f 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/woble.c
++++ b/drivers/net/wireless/uwe5622/tty-sdio/woble.c
+@@ -23,6 +23,7 @@
+ #include <wcn_fs.h>
+ #include "woble.h"
+ #include "tty.h"
++#include "alignment/sitm.h"
+ 
+ #define CMD_TIMEOUT 5000
+ #define MAX_WAKE_DEVICE_MAX_NUM 36
+@@ -216,17 +217,28 @@ int woble_data_recv(const unsigned char *buf, int count)
+ 
+ 	if (hci_cmd.opcode == opcode && hci_cmd.opcode) {
+ 		pr_info("%s opcode: 0x%04X, status: %d\n", __func__, opcode, status);
++		hci_cmd.status = status;
+ 		up(&hci_cmd.wait);
+ 		ret = 0;
+ 	}
+ 	return ret;
+ }
+ 
++/*
++ * Send one HCI command and wait for its Command Complete/Status.
++ * Returns 0 on success, -EIO on a transport error or a non-zero HCI
++ * status, -ETIME when the controller does not answer within CMD_TIMEOUT.
++ * Like the tty write path (sitm), the frame is zero-padded to the SDIO
++ * 4-byte alignment.
++ */
+ int hci_cmd_send_sync(unsigned short opcode, struct HC_BT_HDR *py,
+ 		struct HC_BT_HDR *rsp)
+ {
+-	unsigned char msg_req[HCI_CMD_MAX_LEN], *p;
+-	int ret = 0;
++	unsigned char msg_req[HCI_CMD_MAX_LEN + BYTE_ALIGNMENT] = {0}, *p;
++	int len, ret = 0;
++
++	if (py && py->len > HCI_CMD_MAX_LEN - 4)
++		return -EINVAL;
+ 
+ 	p = msg_req;
+ 	UINT8_TO_STREAM(p, HCI_CMD);
+@@ -238,20 +250,31 @@ int hci_cmd_send_sync(unsigned short opcode, struct HC_BT_HDR *py,
+ 		UINT8_TO_STREAM(p, py->len);
+ 		ARRAY_TO_STREAM(p, py->data, py->len);
+ 	}
++	len = p - msg_req;
++	len += BYTE_ALIGNMENT - (len % BYTE_ALIGNMENT);
+ 
+ 	hci_cmd.opcode = opcode;
+-	ret = marlin_sdio_write(msg_req, p - msg_req);
+-	if (!ret) {
++	hci_cmd.status = 0xff;
++	ret = marlin_sdio_write(msg_req, len);
++	if (ret <= 0) {
+ 		hci_cmd.opcode = 0;
+-		pr_err("%s marlin_sdio_write fail", __func__);
+-		return 0;
++		pr_err("%s marlin_sdio_write fail (%d)\n", __func__, ret);
++		return -EIO;
+ 	}
+ 
+ 	if (down_timeout(&hci_cmd.wait, msecs_to_jiffies(CMD_TIMEOUT))) {
+-		pr_err("%s CMD_TIMEOUT for CMD: 0x%04X", __func__, opcode);
++		pr_err("%s CMD_TIMEOUT for CMD: 0x%04X\n", __func__, opcode);
++		hci_cmd.opcode = 0;
++		return -ETIME;
+ 	}
+ 	hci_cmd.opcode = 0;
+ 
++	if (hci_cmd.status) {
++		pr_err("%s CMD 0x%04X failed, status 0x%02X\n",
++			__func__, opcode, hci_cmd.status);
++		return -EIO;
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/wireless/uwe5622/tty-sdio/woble.h b/drivers/net/wireless/uwe5622/tty-sdio/woble.h
+index e477529..7918cad 100644
+--- a/drivers/net/wireless/uwe5622/tty-sdio/woble.h
++++ b/drivers/net/wireless/uwe5622/tty-sdio/woble.h
+@@ -59,6 +59,7 @@ struct HC_BT_HDR {
+ 
+ struct hci_cmd_t {
+ 	unsigned short opcode;
++	unsigned char status;
+ 	struct semaphore wait;
+ 	struct HC_BT_HDR response;
+ };
+-- 
+Armbian
