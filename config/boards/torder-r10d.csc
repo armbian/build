@@ -19,8 +19,8 @@ MODULES_VENDOR="sprdwl_ng sprdbt_tty sc7a20 gsl3673-800x1280"
 
 function post_family_config__torder_r10d() {
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
-	declare -g BOOTBRANCH="tag:v2025.10"
-	declare -g BOOTPATCHDIR="v2025.10/board_torder-r10d"
+	declare -g BOOTBRANCH="tag:v2026.10"
+	declare -g BOOTPATCHDIR="v2026.10/board_torder-r10d"
 	declare -g BOOTDELAY=1
 	declare -g BOOTENV_FILE="torder-r10d.txt"
 	declare -g DDR_BLOB="rk35/rk3568_ddr_1056MHz_v1.10.bin"
