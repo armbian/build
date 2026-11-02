@@ -1,5 +1,5 @@
 # Rockchip RK3566 quad core 2GB RAM eMMC 100M Ethernet WiFi/BT (ex-Helium miner)
-BOARD_NAME="Bobcat 29X"
+BOARD_NAME="29X"
 BOARD_VENDOR="bobcat"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
