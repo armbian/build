@@ -1,0 +1,45 @@
+#!/bin/sh
+# Power on and attach the Unisoc UWE5622 (AW859A) Bluetooth controller behind
+# /dev/ttyBT0. Run from aw859a-bluetooth.service; stays in the foreground.
+#
+# "rfkill unblock" powers the BT core; with the driver's in-kernel vendor
+# initialisation (sprdbt_tty vendor_init=1, the default) it also sends the
+# PSKEY/RF/enable sequence and *fails* (switch stays soft-blocked) when the
+# firmware did not answer, so check the switch really is unblocked before
+# attaching and let systemd retry otherwise. Then stock BlueZ btattach is all
+# that is needed. With vendor_init=0 ("options sprdbt_tty vendor_init=0" in
+# /etc/modprobe.d) the controller is left raw and the vendor hciattach_opi
+# does the init as before.
+set -u
+dev=/dev/ttyBT0
+param=/sys/module/sprdbt_tty/parameters/vendor_init
+
+rfkill unblock all
+
+unblocked=0
+for r in /sys/class/rfkill/rfkill*; do
+	[ -r "$r/type" ] || continue
+	[ "$(cat "$r/type")" = "bluetooth" ] || continue
+	if [ "$(cat "$r/soft")" = "0" ] && [ "$(cat "$r/hard")" = "0" ]; then
+		unblocked=1
+	fi
+done
+if [ "$unblocked" = "0" ]; then
+	echo "aw859a-bt-attach: Bluetooth rfkill still blocked (vendor init failed?), see dmesg" >&2
+	exit 1
+fi
+
+vendor_init=N
+[ -r "$param" ] && vendor_init="$(cat "$param")"
+
+if [ "$vendor_init" = "Y" ] && command -v btattach > /dev/null 2>&1; then
+	exec btattach -B "$dev" -P h4
+fi
+
+if [ -x /usr/bin/hciattach_opi ]; then
+	[ "$vendor_init" = "Y" ] && echo "aw859a-bt-attach: btattach missing, falling back to hciattach_opi" >&2
+	exec /usr/bin/hciattach_opi -n -s 1500000 "$dev" sprd
+fi
+
+echo "aw859a-bt-attach: neither btattach nor hciattach_opi available" >&2
+exit 1

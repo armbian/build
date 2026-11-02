@@ -1,4 +1,4 @@
-# @description Enables the Spreadtrum UWE5622 (AW859A) WiFi/Bluetooth combo on Allwinner boards. Adds the `sprdbt_tty` module and `bluez`/`rfkill` packages, installs the `aw859a-wifi` and `aw859a-bluetooth` systemd services, ships `/etc/modprobe.d/sprdwl_ng.conf` (`disable_powersave=1`), and deploys the `hciattach_opi` blob for BT attach. Enable on sunxi boards carrying this chip.
+# @description Enables the Spreadtrum UWE5622 (AW859A) WiFi/Bluetooth combo on Allwinner boards. Adds the `sprdbt_tty` module and `bluez`/`rfkill` packages, installs the `aw859a-wifi` and `aw859a-bluetooth` systemd services, ships `/etc/modprobe.d/sprdwl_ng.conf` (`disable_powersave=1`), and installs the `aw859a-bt-attach` helper (stock BlueZ `btattach` with the driver's in-kernel PSKEY/RF init, or the `hciattach_opi` blob when `sprdbt_tty vendor_init=0`). Enable on sunxi boards carrying this chip.
 
 #
 # SPDX-License-Identifier: GPL-2.0
@@ -21,6 +21,10 @@ function post_family_tweaks_bsp__add_uwe5622_services() {
 	run_host_command_logged mkdir -p "${destination}/lib/systemd/system/"
 	run_host_command_logged cp "${SRC}/packages/bsp/sunxi/aw859a-bluetooth.service" "${destination}/lib/systemd/system/"
 	run_host_command_logged cp "${SRC}/packages/bsp/sunxi/aw859a-wifi.service" "${destination}/lib/systemd/system/"
+	# Attach helper: stock BlueZ btattach with the in-kernel vendor init (default),
+	# or the vendor hciattach_opi when sprdbt_tty is loaded with vendor_init=0.
+	# The blob stays installed until the in-kernel path is verified on every board.
+	run_host_command_logged install -m 755 "${SRC}/packages/bsp/sunxi/aw859a-bt-attach" "${destination}/usr/sbin/aw859a-bt-attach"
 	run_host_command_logged install -m 755 "${SRC}/packages/blobs/bt/hciattach/hciattach_opi_${ARCH}" "${destination}/usr/bin/hciattach_opi"
 
 	# The WCN firmware acknowledges its own power-down request while frames are
