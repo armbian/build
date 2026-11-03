@@ -14,8 +14,8 @@ SRC_CMDLINE="console=ttymxc1,115200 earlycon cma=640M"
 BOOT_FDT_FILE="freescale/imx8mp-debix-model-a.dtb"
 OVERLAY_PREFIX="imx8mp-debix-model-a"
 
-BOOTBRANCH="tag:v2026.07"
-BOOTPATCHDIR="v2026.07"
+BOOTBRANCH="tag:v2026.10"
+BOOTPATCHDIR="v2026.10"
 BOOTCONFIG="imx8mp_debix_model_a_defconfig"
 
 ATFBRANCH="tag:lts-v2.14.9"
