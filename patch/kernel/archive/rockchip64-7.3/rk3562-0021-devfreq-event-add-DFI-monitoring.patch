@@ -1,0 +1,117 @@
+From: retro98boy <retro98boy@qq.com>
+Subject: [PATCH] devfreq: event: rockchip-dfi: add RK3562 monitoring
+
+diff --git a/include/soc/rockchip/rockchip_grf.h b/include/soc/rockchip/rockchip_grf.h
+--- a/include/soc/rockchip/rockchip_grf.h
++++ b/include/soc/rockchip/rockchip_grf.h
+@@ -8,6 +8,7 @@
+ 
+ /* Rockchip DDRTYPE defines */
+ enum {
++	ROCKCHIP_DDRTYPE_DDR4	= 0,
+ 	ROCKCHIP_DDRTYPE_DDR3	= 3,
+ 	ROCKCHIP_DDRTYPE_LPDDR2	= 5,
+ 	ROCKCHIP_DDRTYPE_LPDDR3	= 6,
+diff --git a/drivers/devfreq/event/rockchip-dfi.c b/drivers/devfreq/event/rockchip-dfi.c
+--- a/drivers/devfreq/event/rockchip-dfi.c
++++ b/drivers/devfreq/event/rockchip-dfi.c
+@@ -35,6 +35,7 @@
+ 
+ /* DDRMON_CTRL */
+ #define DDRMON_CTRL	0x04
++#define DDRMON_CTRL_DDR3		BIT(15)
+ #define DDRMON_CTRL_LPDDR5		BIT(6)
+ #define DDRMON_CTRL_DDR4		BIT(5)
+ #define DDRMON_CTRL_LPDDR4		BIT(4)
+@@ -117,6 +118,7 @@
+ 	int buswidth[DMC_MAX_CHANNELS];
+ 	int ddrmon_stride;
+ 	bool ddrmon_ctrl_single;
++	u32 ddrmon_ctrl_extra;
+ 	u32 lp5_bank_mode;
+ 	bool lp5_ckr;	/* true if in 4:1 command-to-data clock ratio mode */
+ 	unsigned int count_multiplier;	/* number of data clocks per count */
+@@ -201,7 +203,8 @@
+ 			       FIELD_PREP_WM16(DDRMON_CTRL_HARDWARE_EN, 0),
+ 			       dfi_regs + i * dfi->ddrmon_stride + DDRMON_CTRL);
+ 
+-		writel_relaxed(ctrl, dfi_regs + i * dfi->ddrmon_stride +
++		writel_relaxed(ctrl | dfi->ddrmon_ctrl_extra,
++			       dfi_regs + i * dfi->ddrmon_stride +
+ 			       DDRMON_CTRL);
+ 
+ 		/* enable count, use software mode */
+@@ -808,6 +811,57 @@
+ 	return 0;
+ };
+ 
++static int rk3562_dfi_get_event(struct devfreq_event_dev *edev,
++			      struct devfreq_event_data *edata)
++{
++	struct rockchip_dfi *dfi = devfreq_event_get_drvdata(edev);
++	struct dmc_count count;
++	struct dmc_count *last = &dfi->last_event_count;
++	u32 access, cycles;
++
++	rockchip_dfi_read_counters(dfi, &count);
++	access = count.c[0].access - last->c[0].access;
++	cycles = count.c[0].clock_cycles - last->c[0].clock_cycles;
++	dfi->last_event_count = count;
++
++	/* The counter runs at half the DDR clock rate. */
++	edata->total_count = (unsigned long)cycles * 2;
++	edata->load_count = (unsigned long)access * 4;
++	if (dfi->ddr_type == ROCKCHIP_DDRTYPE_LPDDR4 ||
++	    dfi->ddr_type == ROCKCHIP_DDRTYPE_LPDDR4X)
++		edata->load_count *= 2;
++
++	return 0;
++}
++
++static const struct devfreq_event_ops rk3562_dfi_ops = {
++	.disable = rockchip_dfi_event_disable,
++	.enable = rockchip_dfi_event_enable,
++	.get_event = rk3562_dfi_get_event,
++	.set_event = rockchip_dfi_set_event,
++};
++
++static int rk3562_dfi_init(struct rockchip_dfi *dfi)
++{
++	int ret;
++
++	/* RK3562 shares the PMU OS register layout with RK3568. */
++	ret = rk3568_dfi_init(dfi);
++	if (ret)
++		return ret;
++
++	dfi->count_multiplier = 2;
++	dfi->desc.ops = &rk3562_dfi_ops;
++	dfi->burst_len = 8;
++	dfi->ddrmon_ctrl_extra =
++		FIELD_PREP_WM16(DDRMON_CTRL_DDR3,
++			       dfi->ddr_type == ROCKCHIP_DDRTYPE_DDR3) |
++		FIELD_PREP_WM16(DDRMON_CTRL_DDR4,
++			       dfi->ddr_type == ROCKCHIP_DDRTYPE_DDR4);
++
++	return 0;
++}
++
+ static int rk3588_dfi_init(struct rockchip_dfi *dfi)
+ {
+ 	struct regmap *regmap_pmu = dfi->regmap_pmu;
+@@ -854,6 +908,7 @@
+ 	{ .compatible = "rockchip,rk3328-dfi", .data = rk3328_dfi_init },
+ 	{ .compatible = "rockchip,rk3399-dfi", .data = rk3399_dfi_init },
+ 	{ .compatible = "rockchip,rk3568-dfi", .data = rk3568_dfi_init },
++	{ .compatible = "rockchip,rk3562-dfi", .data = rk3562_dfi_init },
+ 	{ .compatible = "rockchip,rk3588-dfi", .data = rk3588_dfi_init },
+ 	{ },
+ };
+@@ -894,6 +949,7 @@
+ 	}
+ 
+ 	if (soc_init == rk3399_dfi_init ||
++	    soc_init == rk3562_dfi_init ||
+ 	    soc_init == rk3568_dfi_init ||
+ 	    soc_init == rk3588_dfi_init) {
+ 		node = of_parse_phandle(np, "rockchip,pmu", 0);

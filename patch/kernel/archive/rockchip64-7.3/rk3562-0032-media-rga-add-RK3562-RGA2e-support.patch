@@ -1,0 +1,504 @@
+From: retro98boy <retro98boy@qq.com>
+Subject: [PATCH] media: rga: add RK3562 RGA2e support
+
+Add an RK3562-only RGA2e variant using slave command mode.
+Use the external IOMMU and reset command state between jobs.
+Support RGB and NV12/NV21 copies, scaling, conversion, rotation and mirroring.
+Map RGA2e mirror axes without changing older variants.
+
+---
+diff --git a/drivers/media/platform/rockchip/rga/rga-hw.c b/drivers/media/platform/rockchip/rga/rga-hw.c
+index be1bc8d..8405a09 100644
+--- a/drivers/media/platform/rockchip/rga/rga-hw.c
++++ b/drivers/media/platform/rockchip/rga/rga-hw.c
+@@ -63,7 +63,7 @@ rga_get_corner_addrs(struct rga_frame *frm, struct rga_addrs *addrs,
+ 	y_div = format_info->vdiv;
+ 	y_stride = frm->pix.plane_fmt[0].bytesperline;
+ 	uv_stride = y_stride / x_div;
+-	pixel_width = y_stride / frm->pix.width;
++	pixel_width = format_info->bpp[0] / format_info->bpp_div[0];
+ 
+ 	lt->y_addr = addrs->y_addr + y * y_stride + x * pixel_width;
+ 	lt->u_addr = addrs->u_addr + (y / y_div) * uv_stride + x / x_div;
+@@ -156,6 +156,20 @@ static void rga_cmd_set_dst_addr(struct rga_ctx *ctx, dma_addr_t dma_addr)
+ 	dest[reg >> 2] |= 0x7 << 8;
+ }
+ 
++static unsigned int rga_mirror_mode(struct rga_ctx *ctx)
++{
++	/* RGA2e mirror axes differ from the older command layout. */
++	bool rga2e = ctx->rga->hw == &rga2e_hw;
++	unsigned int mode = 0;
++
++	if (rga2e ? ctx->hflip : ctx->vflip)
++		mode |= RGA_SRC_MIRR_MODE_X;
++	if (rga2e ? ctx->vflip : ctx->hflip)
++		mode |= RGA_SRC_MIRR_MODE_Y;
++
++	return mode;
++}
++
+ static void rga_cmd_set_trans_info(struct rga_ctx *ctx)
+ {
+ 	struct rockchip_rga *rga = ctx->rga;
+@@ -222,11 +236,7 @@ static void rga_cmd_set_trans_info(struct rga_ctx *ctx)
+ 		}
+ 	}
+ 
+-	if (ctx->vflip)
+-		src_info.data.mir_mode |= RGA_SRC_MIRR_MODE_X;
+-
+-	if (ctx->hflip)
+-		src_info.data.mir_mode |= RGA_SRC_MIRR_MODE_Y;
++	src_info.data.mir_mode = rga_mirror_mode(ctx);
+ 
+ 	switch (ctx->rotate) {
+ 	case 90:
+@@ -361,10 +371,7 @@ static void rga_cmd_set_dst_info(struct rga_ctx *ctx,
+ 	dst_x = ctx->out.crop.left;
+ 	dst_y = ctx->out.crop.top;
+ 
+-	if (ctx->vflip)
+-		mir_mode |= RGA_SRC_MIRR_MODE_X;
+-	if (ctx->hflip)
+-		mir_mode |= RGA_SRC_MIRR_MODE_Y;
++	mir_mode = rga_mirror_mode(ctx);
+ 
+ 	switch (ctx->rotate) {
+ 	case 90:
+@@ -613,3 +620,124 @@ const struct rga_hw rga2_hw = {
+ 	.adjust_and_map_format = rga_adjust_and_map_format,
+ 	.enum_format = rga_enum_format,
+ };
++
++static void rga2e_start(struct rockchip_rga *rga,
++		      struct rga_vb_buffer *src, struct rga_vb_buffer *dst)
++{
++	struct rga_ctx *ctx = rga->curr;
++	u32 *cmd = ctx->cmdbuf_virt;
++	unsigned int offset;
++
++	rga_cmd_set_src_info(ctx, &src->dma_addrs);
++	rga_cmd_set_dst_info(ctx, &dst->dma_addrs);
++
++	/* RGA2e uses the external IOMMU and slave command mode. */
++	rga_write(rga, RGA_SYS_CTRL, BIT(2));
++	rga_write(rga, RGA_CMD_BASE, 0);
++	rga_write(rga, RGA_CMD_CTRL, GENMASK(19, 14));
++	for (offset = RGA_MODE_BASE_REG; offset < RGA_MMU_CTRL1; offset += 4)
++		rga_write(rga, offset, cmd[(offset - RGA_MODE_BASE_REG) / 4]);
++
++	/* Set the output Y and UV clipping ranges to 0..255. */
++	rga_write(rga, 0x60, 0xff << 16);
++	rga_write(rga, 0x64, 0xff << 16);
++	rga_write(rga, RGA_INT, GENMASK(10, 8) | GENMASK(7, 4));
++	rga_write(rga, RGA_SYS_CTRL, BIT(2) | BIT(0));
++}
++
++static const unsigned int rga2e_format_indices[] = { 0, 1, 2, 7, 8, 10 };
++
++static void rga2e_setup_cmdbuf(struct rga_ctx *ctx)
++{
++	struct rga_fmt *src = ctx->in.fmt, *dst = ctx->out.fmt;
++	u32 *cmd = ctx->cmdbuf_virt;
++	u32 mode;
++	u32 enc = ctx->in.pix.ycbcr_enc;
++	u32 quant = ctx->in.pix.quantization;
++
++	rga_hw_setup_cmdbuf(ctx);
++	if (enc == V4L2_YCBCR_ENC_DEFAULT)
++		enc = V4L2_MAP_YCBCR_ENC_DEFAULT(ctx->in.pix.colorspace);
++	if (quant == V4L2_QUANTIZATION_DEFAULT)
++		quant = V4L2_MAP_QUANTIZATION_DEFAULT(false, ctx->in.pix.colorspace, enc);
++	if (RGA_COLOR_FMT_IS_RGB(src->hw_format) && RGA_COLOR_FMT_IS_YUV(dst->hw_format)) {
++		mode = ctx->out.pix.ycbcr_enc == V4L2_YCBCR_ENC_709 ? 3 :
++			ctx->out.pix.quantization == V4L2_QUANTIZATION_FULL_RANGE ? 1 : 2;
++		cmd[(RGA_DST_INFO - RGA_MODE_BASE_REG) / 4] &= ~GENMASK(17, 16);
++		cmd[(RGA_DST_INFO - RGA_MODE_BASE_REG) / 4] |= mode << 16;
++	} else if (RGA_COLOR_FMT_IS_YUV(src->hw_format) && RGA_COLOR_FMT_IS_RGB(dst->hw_format)) {
++		mode = enc == V4L2_YCBCR_ENC_709 ? 3 :
++			quant == V4L2_QUANTIZATION_FULL_RANGE ? 2 : 1;
++		cmd[(RGA_SRC_INFO - RGA_MODE_BASE_REG) / 4] &= ~GENMASK(9, 8);
++		cmd[(RGA_SRC_INFO - RGA_MODE_BASE_REG) / 4] |= mode << 8;
++	}
++}
++
++static int rga2e_enum_format(struct v4l2_fmtdesc *f)
++{
++	if (f->index >= ARRAY_SIZE(rga2e_format_indices))
++		return -EINVAL;
++	f->pixelformat = formats[rga2e_format_indices[f->index]].fourcc;
++	return 0;
++}
++
++static void *rga2e_adjust_and_map_format(struct rga_ctx *ctx,
++				       struct v4l2_pix_format_mplane *format,
++				       bool is_output)
++{
++	unsigned int i;
++
++	if (!format)
++		return &formats[0];
++	/* Input colorimetry describes supplied pixels and must not be changed. */
++	if (is_output)
++		goto map_format;
++	if (format->pixelformat == V4L2_PIX_FMT_NV12 ||
++	    format->pixelformat == V4L2_PIX_FMT_NV21) {
++		if (format->ycbcr_enc == V4L2_YCBCR_ENC_DEFAULT)
++			format->ycbcr_enc = V4L2_MAP_YCBCR_ENC_DEFAULT(format->colorspace);
++		if (format->ycbcr_enc != V4L2_YCBCR_ENC_709)
++			format->ycbcr_enc = V4L2_YCBCR_ENC_601;
++		if (format->quantization != V4L2_QUANTIZATION_FULL_RANGE ||
++		    format->ycbcr_enc == V4L2_YCBCR_ENC_709)
++			format->quantization = V4L2_QUANTIZATION_LIM_RANGE;
++		if (ctx->in.pix.pixelformat == V4L2_PIX_FMT_NV12 ||
++		    ctx->in.pix.pixelformat == V4L2_PIX_FMT_NV21) {
++			format->ycbcr_enc = ctx->in.pix.ycbcr_enc;
++			format->quantization = ctx->in.pix.quantization;
++		}
++	} else {
++		if (ctx->in.pix.pixelformat == V4L2_PIX_FMT_NV12 ||
++		    ctx->in.pix.pixelformat == V4L2_PIX_FMT_NV21)
++			format->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++		else
++			format->quantization = ctx->in.pix.quantization;
++	}
++map_format:
++	for (i = 0; i < ARRAY_SIZE(rga2e_format_indices); i++) {
++		struct rga_fmt *fmt = &formats[rga2e_format_indices[i]];
++
++		if (fmt->fourcc == format->pixelformat)
++			return fmt;
++	}
++	format->pixelformat = formats[0].fourcc;
++	return &formats[0];
++}
++
++const struct rga_hw rga2e_hw = {
++	.card_type = "rga2e",
++	.features = RGA_FEATURE_FLIP | RGA_FEATURE_ROTATE,
++	.has_internal_iommu = false,
++	.cmdbuf_size = RGA_CMDBUF_SIZE,
++	.min_width = MIN_WIDTH,
++	.min_height = MIN_HEIGHT,
++	.max_width = 1920,
++	.max_height = 1920,
++	.max_scaling_factor = MAX_SCALING_FACTOR,
++	.stride_alignment = 8,
++	.setup_cmdbuf = rga2e_setup_cmdbuf,
++	.start = rga2e_start,
++	.get_version = rga_get_version,
++	.adjust_and_map_format = rga2e_adjust_and_map_format,
++	.enum_format = rga2e_enum_format,
++};
+diff --git a/drivers/media/platform/rockchip/rga/rga.c b/drivers/media/platform/rockchip/rga/rga.c
+index b3cb6bf..f76c2be 100644
+--- a/drivers/media/platform/rockchip/rga/rga.c
++++ b/drivers/media/platform/rockchip/rga/rga.c
+@@ -13,6 +13,8 @@
+ #include <linux/of.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
++#include <linux/iommu.h>
++#include <linux/iopoll.h>
+ #include <linux/sched.h>
+ #include <linux/slab.h>
+ #include <linux/timer.h>
+@@ -27,10 +29,134 @@
+ #include <media/videobuf2-v4l2.h>
+ 
+ #include "rga.h"
++#include "rga-hw.h"
++
++static void rga2e_finish(struct rga_ctx *ctx, enum vb2_buffer_state state)
++{
++	struct vb2_v4l2_buffer *src, *dst;
++
++	src = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
++	dst = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
++	if (src && dst) {
++		v4l2_m2m_buf_copy_metadata(src, dst);
++		dst->sequence = ctx->csequence++;
++	}
++	if (src)
++		v4l2_m2m_buf_done(src, state);
++	if (dst)
++		v4l2_m2m_buf_done(dst, state);
++	v4l2_m2m_job_finish(ctx->rga->m2m_dev, ctx->fh.m2m_ctx);
++}
++
++static int rga2e_reset(struct rockchip_rga *rga)
++{
++	u32 value;
++	int ret;
++
++	rga_write(rga, RGA_INT, GENMASK(7, 4));
++	/* Protect outstanding bus transactions during the soft reset. */
++	rga_write(rga, RGA_SYS_CTRL, BIT(6) | BIT(4) | BIT(3));
++	ret = readl_poll_timeout(rga->regs + RGA_SYS_CTRL, value,
++				 !(value & BIT(0)), 1, 1000);
++	if (ret)
++		goto fail;
++
++	/* The soft reset also clears the external IOMMU registers. */
++	ret = iommu_attach_device(rga->empty_domain, rga->dev);
++	if (ret)
++		goto fail;
++	iommu_detach_device(rga->empty_domain, rga->dev);
++	rga->needs_reset = false;
++	return 0;
++
++fail:
++	reset_control_assert(rga->resets);
++	rga->broken = true;
++	dev_err(rga->dev, "RGA2e reset failed: %d\n", ret);
++	return ret;
++}
++
++static void rga2e_watchdog(struct work_struct *work)
++{
++	struct rockchip_rga *rga = container_of(to_delayed_work(work),
++					      struct rockchip_rga, watchdog);
++	struct rga_ctx *ctx = xchg(&rga->curr, NULL);
++
++	if (!ctx)
++		return;
++	dev_err(rga->dev, "RGA2e task failed: interrupt=%#x status=%#x\n",
++		rga_read(rga, RGA_INT), rga_read(rga, 0x1c));
++	rga2e_reset(rga);
++	rga2e_finish(ctx, VB2_BUF_STATE_ERROR);
++}
++
++static void rga2e_abort(void *priv)
++{
++	struct rga_ctx *ctx = priv;
++	struct rockchip_rga *rga = ctx->rga;
++
++	cancel_delayed_work_sync(&rga->watchdog);
++	if (cmpxchg(&rga->curr, ctx, NULL) != ctx)
++		return;
++	rga2e_reset(rga);
++	rga2e_finish(ctx, VB2_BUF_STATE_ERROR);
++}
++
++static irqreturn_t rga2e_isr(int irq, void *priv)
++{
++	struct rockchip_rga *rga = priv;
++	struct rga_ctx *ctx;
++	u32 status;
++
++	if (!pm_runtime_active(rga->dev))
++		return IRQ_NONE;
++	status = rga_read(rga, RGA_INT) & GENMASK(3, 0);
++	if (!status)
++		return IRQ_NONE;
++	rga_write(rga, RGA_INT, status << 4);
++	if (status & GENMASK(1, 0)) {
++		mod_delayed_work(system_dfl_wq, &rga->watchdog, 0);
++		return IRQ_HANDLED;
++	}
++	if (!(status & BIT(2)))
++		return IRQ_HANDLED;
++	ctx = xchg(&rga->curr, NULL);
++	if (!ctx)
++		return IRQ_HANDLED;
++	cancel_delayed_work(&rga->watchdog);
++	/* Discard command state before the next slave-mode job. */
++	rga->needs_reset = true;
++	rga2e_finish(ctx, VB2_BUF_STATE_DONE);
++	return IRQ_HANDLED;
++}
++
++static void rga2e_free_domain(void *data)
++{
++	iommu_domain_free(data);
++}
+ 
+ static int debug;
+ module_param(debug, int, 0644);
+ 
++static bool rga2e_colorimetry_supported(struct rga_ctx *ctx)
++{
++	bool src_yuv = v4l2_is_format_yuv(v4l2_format_info(ctx->in.pix.pixelformat));
++	bool dst_yuv = v4l2_is_format_yuv(v4l2_format_info(ctx->out.pix.pixelformat));
++	u32 enc = ctx->in.pix.ycbcr_enc;
++	u32 quant = ctx->in.pix.quantization;
++
++	if (src_yuv == dst_yuv)
++		return true;
++	if (enc == V4L2_YCBCR_ENC_DEFAULT)
++		enc = V4L2_MAP_YCBCR_ENC_DEFAULT(ctx->in.pix.colorspace);
++	if (quant == V4L2_QUANTIZATION_DEFAULT)
++		quant = V4L2_MAP_QUANTIZATION_DEFAULT(!src_yuv, ctx->in.pix.colorspace, enc);
++	if (!src_yuv)
++		return quant == V4L2_QUANTIZATION_FULL_RANGE;
++	return enc == V4L2_YCBCR_ENC_601 ||
++	       (enc == V4L2_YCBCR_ENC_709 && quant == V4L2_QUANTIZATION_LIM_RANGE);
++}
++
+ static void device_run(void *prv)
+ {
+ 	struct rga_ctx *ctx = prv;
+@@ -45,6 +171,10 @@ static void device_run(void *prv)
+ 	}
+ 	spin_unlock_irqrestore(&rga->ctrl_lock, flags);
+ 
++	/* Drain the previous watchdog before publishing another RGA2e job. */
++	if (rga->hw == &rga2e_hw)
++		cancel_delayed_work_sync(&rga->watchdog);
++
+ 	rga->curr = ctx;
+ 
+ 	src = v4l2_m2m_next_src_buf(ctx->fh.m2m_ctx);
+@@ -52,6 +182,16 @@ static void device_run(void *prv)
+ 
+ 	dst = v4l2_m2m_next_dst_buf(ctx->fh.m2m_ctx);
+ 
++	if (rga->hw == &rga2e_hw) {
++		if (!rga2e_colorimetry_supported(ctx) || rga->broken ||
++		    (rga->needs_reset && rga2e_reset(rga))) {
++			rga->curr = NULL;
++			rga2e_finish(ctx, VB2_BUF_STATE_ERROR);
++			return;
++		}
++		mod_delayed_work(system_dfl_wq, &rga->watchdog,
++				 msecs_to_jiffies(RGA_TIMEOUT));
++	}
+ 	rga->hw->start(rga, vb_to_rga(src), vb_to_rga(dst));
+ }
+ 
+@@ -89,6 +229,11 @@ static const struct v4l2_m2m_ops rga_m2m_ops = {
+ 	.device_run = device_run,
+ };
+ 
++static const struct v4l2_m2m_ops rga2e_m2m_ops = {
++	.device_run = device_run,
++	.job_abort = rga2e_abort,
++};
++
+ static int
+ queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_vq)
+ {
+@@ -671,6 +816,14 @@ static int rga_parse_dt(struct rockchip_rga *rga)
+ 	struct reset_control *core_rst, *axi_rst, *ahb_rst;
+ 	int ret;
+ 
++	if (rga->hw == &rga2e_hw) {
++		rga->resets = devm_reset_control_array_get_exclusive(rga->dev);
++		if (IS_ERR(rga->resets))
++			return PTR_ERR(rga->resets);
++		rga->needs_reset = true;
++		goto get_clocks;
++	}
++
+ 	core_rst = devm_reset_control_get(rga->dev, "core");
+ 	if (IS_ERR(core_rst)) {
+ 		dev_err(rga->dev, "failed to get core reset controller\n");
+@@ -701,6 +854,7 @@ static int rga_parse_dt(struct rockchip_rga *rga)
+ 	udelay(1);
+ 	reset_control_deassert(ahb_rst);
+ 
++get_clocks:
+ 	ret = devm_clk_bulk_get_all(rga->dev, &rga->clks);
+ 	if (ret < 0) {
+ 		dev_err(rga->dev, "failed to get clocks\n");
+@@ -779,6 +933,18 @@ static int rga_probe(struct platform_device *pdev)
+ 	rga->dev = &pdev->dev;
+ 	spin_lock_init(&rga->ctrl_lock);
+ 	mutex_init(&rga->mutex);
++	if (rga->hw == &rga2e_hw) {
++		INIT_DELAYED_WORK(&rga->watchdog, rga2e_watchdog);
++		if (!iommu_get_domain_for_dev(rga->dev))
++			return -ENODEV;
++		rga->empty_domain = iommu_paging_domain_alloc(rga->dev);
++		if (IS_ERR(rga->empty_domain))
++			return PTR_ERR(rga->empty_domain);
++		ret = devm_add_action_or_reset(rga->dev, rga2e_free_domain,
++					      rga->empty_domain);
++		if (ret)
++			return ret;
++	}
+ 
+ 	ret = rga_parse_dt(rga);
+ 	if (ret)
+@@ -798,7 +964,8 @@ static int rga_probe(struct platform_device *pdev)
+ 		goto err_put_clk;
+ 	}
+ 
+-	ret = devm_request_irq(rga->dev, irq, rga_isr,
++	ret = devm_request_irq(rga->dev, irq,
++			       rga->hw == &rga2e_hw ? rga2e_isr : rga_isr,
+ 			       rga_has_internal_iommu(rga) ? 0 : IRQF_SHARED,
+ 			       dev_name(rga->dev), rga);
+ 	if (ret < 0) {
+@@ -829,7 +996,8 @@ static int rga_probe(struct platform_device *pdev)
+ 	rga->vfd = vfd;
+ 
+ 	platform_set_drvdata(pdev, rga);
+-	rga->m2m_dev = v4l2_m2m_init(&rga_m2m_ops);
++	rga->m2m_dev = v4l2_m2m_init(rga->hw == &rga2e_hw ?
++				    &rga2e_m2m_ops : &rga_m2m_ops);
+ 	if (IS_ERR(rga->m2m_dev)) {
+ 		v4l2_err(&rga->v4l2_dev, "Failed to init mem2mem device\n");
+ 		ret = PTR_ERR(rga->m2m_dev);
+@@ -876,6 +1044,8 @@ static void rga_remove(struct platform_device *pdev)
+ 
+ 	v4l2_info(&rga->v4l2_dev, "Removing\n");
+ 
++	if (rga->hw == &rga2e_hw)
++		cancel_delayed_work_sync(&rga->watchdog);
+ 	v4l2_m2m_release(rga->m2m_dev);
+ 	video_unregister_device(rga->vfd);
+ 	v4l2_device_unregister(&rga->v4l2_dev);
+@@ -887,6 +1057,8 @@ static int __maybe_unused rga_runtime_suspend(struct device *dev)
+ {
+ 	struct rockchip_rga *rga = dev_get_drvdata(dev);
+ 
++	if (rga->hw == &rga2e_hw)
++		rga->needs_reset = true;
+ 	clk_bulk_disable_unprepare(rga->num_clks, rga->clks);
+ 
+ 	return 0;
+@@ -905,6 +1077,10 @@ static const struct dev_pm_ops rga_pm = {
+ };
+ 
+ static const struct of_device_id rockchip_rga_match[] = {
++	{
++		.compatible = "rockchip,rk3562-rga",
++		.data = &rga2e_hw,
++	},
+ 	{
+ 		.compatible = "rockchip,rk3288-rga",
+ 		.data = &rga2_hw,
+diff --git a/drivers/media/platform/rockchip/rga/rga.h b/drivers/media/platform/rockchip/rga/rga.h
+index bd43153..c42edd3 100644
+--- a/drivers/media/platform/rockchip/rga/rga.h
++++ b/drivers/media/platform/rockchip/rga/rga.h
+@@ -9,6 +9,7 @@
+ #include <linux/bits.h>
+ #include <linux/clk.h>
+ #include <linux/platform_device.h>
++#include <linux/workqueue.h>
+ #include <media/videobuf2-v4l2.h>
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+@@ -85,6 +86,11 @@ struct rockchip_rga {
+ 	struct rga_ctx *curr;
+ 
+ 	const struct rga_hw *hw;
++	struct delayed_work watchdog;
++	struct iommu_domain *empty_domain;
++	struct reset_control *resets;
++	bool needs_reset;
++	bool broken;
+ };
+ 
+ struct rga_addrs {
+@@ -169,6 +175,7 @@ static inline bool rga_has_internal_iommu(const struct rockchip_rga *rga)
+ }
+ 
+ extern const struct rga_hw rga2_hw;
++extern const struct rga_hw rga2e_hw;
+ extern const struct rga_hw rga3_hw;
+ 
+ #endif
