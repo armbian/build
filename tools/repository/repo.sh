@@ -6,7 +6,8 @@ KEEP_SOURCES=true          # Keep source packages when adding to repo (don't del
 FORCE_ADD=false            # Force re-adding packages even if they already exist in repo
 FORCE_PUBLISH=true         # Force publishing even when no packages to add
 GPG_PARAMS=()              # Global GPG parameters array (set by get_gpg_signing_params)
-KEEP_MULTIPLE_VERSIONS=true # Keep multiple versions for kernel/dtb/u-boot packages
+KEEP_MULTIPLE_VERSIONS=true # Keep several versions of kernel, dtb and headers packages
+KERNEL_VERSIONS_TO_KEEP=5   # How many: the newest ones
 
 # Log message to syslog (view with: journalctl -t repo-management -f)
 log() {
@@ -97,24 +98,23 @@ showall() {
 
 
 # Add .deb packages to repository component
-# Packages that keep several versions in one component (boot and libc packages)
+# Packages that keep several versions in one component: kernel, dtb and
+# headers, so a user can boot an earlier kernel.
 # Arguments:
 #   $1 - Package name
 keeps_multiple_versions() {
 	[[ "$KEEP_MULTIPLE_VERSIONS" == true ]] || return 1
-	[[ "$1" =~ ^linux-image- || "$1" =~ ^linux-dtb- || "$1" =~ ^linux-headers- || \
-		"$1" =~ ^u-boot- || "$1" =~ ^libc6 || "$1" =~ ^libc-dev ]]
+	[[ "$1" =~ ^linux-image- || "$1" =~ ^linux-dtb- || "$1" =~ ^linux-headers- ]]
 }
 
-# Remove older versions: keep only the newest version of each name and
-# architecture in a component (Debian version order). Packages that keep
-# several versions are left as they are.
+# Remove older versions of each name and architecture in a component, in
+# Debian version order. Keep the newest one, or the newest
+# KERNEL_VERSIONS_TO_KEEP for kernel, dtb and headers packages.
 # Arguments:
 #   $1 - Component name (e.g., "common", "jammy-utils")
 remove_older_versions() {
 	local component="$1"
-	local -A newest=()
-	local -a entries=()
+	local -A versions=()
 	local line name version arch key
 	while IFS= read -r line; do
 		line="${line#"${line%%[![:space:]]*}"}"
@@ -126,22 +126,42 @@ remove_older_versions() {
 		version="${line#*_}"
 		version="${version%_*}"
 		[[ -z "$name" || -z "$version" || -z "$arch" ]] && continue
-		keeps_multiple_versions "$name" && continue
-		entries+=("${name}|${version}|${arch}")
 		key="${name}|${arch}"
-		if [[ -z "${newest[$key]:-}" ]] || dpkg --compare-versions "$version" gt "${newest[$key]}"; then
-			newest[$key]="$version"
-		fi
+		versions[$key]+="${version}"$'\n'
 	done < <(aptly repo show -with-packages -config="${CONFIG}" "$component" 2>/dev/null | tail -n +7)
 
-	local entry
-	for entry in "${entries[@]}"; do
-		IFS='|' read -r name version arch <<< "$entry"
-		[[ "$version" == "${newest[${name}|${arch}]}" ]] && continue
-		echo "[-] REMOVE older: ${name}_${version}_${arch} (newest ${newest[${name}|${arch}]})"
-		log "Removing older ${name}_${version}_${arch} from $component"
-		run_aptly repo remove -config="${CONFIG}" "${component}" "${name}_${version}_${arch}"
+	local keep old
+	for key in "${!versions[@]}"; do
+		IFS='|' read -r name arch <<< "$key"
+		keep=1
+		keeps_multiple_versions "$name" && keep="$KERNEL_VERSIONS_TO_KEEP"
+		# Newest first, in Debian order; everything after the first $keep goes
+		while IFS= read -r old; do
+			[[ -z "$old" ]] && continue
+			echo "[-] REMOVE older: ${name}_${old}_${arch}"
+			log "Removing older ${name}_${old}_${arch} from $component (keep $keep)"
+			run_aptly repo remove -config="${CONFIG}" "${component}" "${name}_${old}_${arch}"
+		done < <(printf '%s' "${versions[$key]}" | sort -u | sort_debian_versions | tail -n "+$((keep + 1))")
 	done
+}
+
+# Sort versions from stdin, newest first, in Debian version order
+sort_debian_versions() {
+	local -a list=()
+	local v i j
+	mapfile -t list
+	# Insertion sort with dpkg: a component holds few versions of one package
+	for ((i = 1; i < ${#list[@]}; i++)); do
+		v="${list[i]}"
+		j=$((i - 1))
+		while ((j >= 0)) && dpkg --compare-versions "$v" gt "${list[j]}"; do
+			list[j + 1]="${list[j]}"
+			j=$((j - 1))
+		done
+		list[j + 1]="$v"
+	done
+	((${#list[@]})) && printf '%s\n' "${list[@]}"
+	return 0
 }
 
 # Arguments:
