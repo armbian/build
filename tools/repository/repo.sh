@@ -97,6 +97,53 @@ showall() {
 
 
 # Add .deb packages to repository component
+# Packages that keep several versions in one component (boot and libc packages)
+# Arguments:
+#   $1 - Package name
+keeps_multiple_versions() {
+	[[ "$KEEP_MULTIPLE_VERSIONS" == true ]] || return 1
+	[[ "$1" =~ ^linux-image- || "$1" =~ ^linux-dtb- || "$1" =~ ^linux-headers- || \
+		"$1" =~ ^u-boot- || "$1" =~ ^libc6 || "$1" =~ ^libc-dev ]]
+}
+
+# Remove older versions: keep only the newest version of each name and
+# architecture in a component (Debian version order). Packages that keep
+# several versions are left as they are.
+# Arguments:
+#   $1 - Component name (e.g., "common", "jammy-utils")
+remove_older_versions() {
+	local component="$1"
+	local -A newest=()
+	local -a entries=()
+	local line name version arch key
+	while IFS= read -r line; do
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+		[[ -z "$line" ]] && continue
+		# name_version_arch: Debian names and versions have no underscore
+		arch="${line##*_}"
+		name="${line%%_*}"
+		version="${line#*_}"
+		version="${version%_*}"
+		[[ -z "$name" || -z "$version" || -z "$arch" ]] && continue
+		keeps_multiple_versions "$name" && continue
+		entries+=("${name}|${version}|${arch}")
+		key="${name}|${arch}"
+		if [[ -z "${newest[$key]:-}" ]] || dpkg --compare-versions "$version" gt "${newest[$key]}"; then
+			newest[$key]="$version"
+		fi
+	done < <(aptly repo show -with-packages -config="${CONFIG}" "$component" 2>/dev/null | tail -n +7)
+
+	local entry
+	for entry in "${entries[@]}"; do
+		IFS='|' read -r name version arch <<< "$entry"
+		[[ "$version" == "${newest[${name}|${arch}]}" ]] && continue
+		echo "[-] REMOVE older: ${name}_${version}_${arch} (newest ${newest[${name}|${arch}]})"
+		log "Removing older ${name}_${version}_${arch} from $component"
+		run_aptly repo remove -config="${CONFIG}" "${component}" "${name}_${version}_${arch}"
+	done
+}
+
 # Arguments:
 #   $1 - Component name (e.g., "common", "jammy-utils")
 #   $2 - Subdirectory path (e.g., "", "/extra/jammy-utils")
@@ -174,17 +221,9 @@ adding_packages() {
 				if [[ "$existing_name" == "$deb_name" && "$existing_arch" == "$deb_arch" && "$existing_version" != "$deb_version" ]]; then
 					# Check if this package should keep multiple versions
 					local keep_multiple=false
-					if [[ "$KEEP_MULTIPLE_VERSIONS" == true ]]; then
-						# Keep multiple versions for critical boot/low-level packages
-						if [[ "$deb_name" =~ ^linux-image- ]] || \
-						   [[ "$deb_name" =~ ^linux-dtb- ]] || \
-						   [[ "$deb_name" =~ ^linux-headers- ]] || \
-						   [[ "$deb_name" =~ ^u-boot- ]] || \
-						   [[ "$deb_name" =~ ^libc6 ]] || \
-						   [[ "$deb_name" =~ ^libc-dev ]]; then
-							keep_multiple=true
-							log "Keeping multiple versions for ${existing_name}_${existing_version}_${existing_arch}"
-						fi
+					if keeps_multiple_versions "$deb_name"; then
+						keep_multiple=true
+						log "Keeping multiple versions for ${existing_name}_${existing_version}_${existing_arch}"
 					fi
 
 					if [[ "$keep_multiple" == false ]]; then
@@ -248,7 +287,14 @@ adding_packages() {
 		# Add package to repository
 		log "Adding $deb_name to $component"
 		run_aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
+		# Record it: a newer version later in this batch must replace it, and
+		# an older one must be skipped as a downgrade.
+		repo_packages_map["$deb_key"]=1
 	done
+
+	# Keep only the newest version of each package (also removes older
+	# versions that earlier runs left in the repository).
+	remove_older_versions "$component"
 }
 
 
