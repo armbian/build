@@ -132,6 +132,8 @@ remove_older_versions() {
 
 	local keep old
 	for key in "${!versions[@]}"; do
+		# One version: nothing to remove (most packages; saves a sort per package)
+		[[ "${versions[$key]}" == *$'\n'*$'\n'* ]] || continue
 		IFS='|' read -r name arch <<< "$key"
 		keep=1
 		keeps_multiple_versions "$name" && keep="$KERNEL_VERSIONS_TO_KEEP"
@@ -182,7 +184,8 @@ adding_packages() {
 
 	# Get list of packages already in repo for deduplication check
 	# Use associative array for O(1) lookup performance
-	local -A repo_packages_map
+	# repo_versions: name|arch -> its versions, one per line
+	local -A repo_packages_map repo_versions
 	if [[ "$FORCE_ADD" != true ]]; then
 		log "Building package list from $component for deduplication check..."
 		# Read aptly output line by line and parse properly
@@ -208,72 +211,70 @@ adding_packages() {
 			version="${temp#*_}"
 			[[ -z "$name" || -z "$version" || -z "$arch" ]] && continue
 			repo_packages_map["${name}|${version}|${arch}"]=1
+			repo_versions["${name}|${arch}"]+="${version}"$'\n'
 		done < <(aptly repo show -with-packages -config="${CONFIG}" "$component" 2>/dev/null | tail -n +7)
 		log "Built lookup map with ${#repo_packages_map[@]} unique packages in $component"
 	fi
 
-	# Process each .deb file
+	# Process each .deb file. Collect the removals and additions: one aptly
+	# call per batch, not per file (each call opens the database).
+	local -a to_remove=() to_add=()
+	local -A pending_add=() # name|version|arch -> index in to_add
+	local add_n=0
 	for deb_file in "${package_dir}"/*.deb; do
-		# Get package info using dpkg-deb -f to get reliable format
-		# Single call to get all fields at once (faster than 3 separate calls)
-		local deb_info deb_name deb_version deb_arch
-		deb_info=$(dpkg-deb -f "$deb_file" Package Version Architecture 2>/dev/null)
-		deb_name=$(echo "$deb_info" | sed -n '1s/Package: //p')
-		deb_version=$(echo "$deb_info" | sed -n '2s/Version: //p')
-		deb_arch=$(echo "$deb_info" | sed -n '3s/Architecture: //p')
+		local deb_name="" deb_version="" deb_arch="" field value
+		while IFS=': ' read -r field value; do
+			case "$field" in
+				Package) deb_name="$value" ;;
+				Version) deb_version="$value" ;;
+				Architecture) deb_arch="$value" ;;
+			esac
+		done < <(dpkg-deb -f "$deb_file" Package Version Architecture 2>/dev/null)
 
 		# Create full identifier using pipe as separator (won't appear in package names)
 		local deb_key="${deb_name}|${deb_version}|${deb_arch}"
 		local deb_display="${deb_name}_${deb_version}_${deb_arch}"
 
-		log "Checking package: $deb_display"
+		# Skip if exact package (name+version+arch) already exists in repo (unless FORCE_ADD is true)
+		if [[ "$FORCE_ADD" != true && -n "${repo_packages_map[$deb_key]}" ]]; then
+			echo "[-] SKIP: $deb_display"
+			continue
+		fi
 
 		# If package with same name+arch but different version exists in repo, remove it first
 		# This prevents "file already exists and is different" errors during publish
-		# Skip removal for kernel, dtb, u-boot, headers, and libc packages if KEEP_MULTIPLE_VERSIONS is enabled
-		local skip_downgrade=false
-		if [[ "$FORCE_ADD" != true ]]; then
-			for existing_key in "${!repo_packages_map[@]}"; do
-				# existing_key format: name|version|arch
-				local existing_name existing_version existing_arch
-				IFS='|' read -r existing_name existing_version existing_arch <<< "$existing_key"
-				# Check if same name and arch but different version
-				if [[ "$existing_name" == "$deb_name" && "$existing_arch" == "$deb_arch" && "$existing_version" != "$deb_version" ]]; then
-					# Check if this package should keep multiple versions
-					local keep_multiple=false
-					if keeps_multiple_versions "$deb_name"; then
-						keep_multiple=true
-						log "Keeping multiple versions for ${existing_name}_${existing_version}_${existing_arch}"
+		# Kernel, dtb and headers keep several versions (remove_older_versions trims them)
+		local skip_downgrade=false existing_version
+		if [[ "$FORCE_ADD" != true ]] && ! keeps_multiple_versions "$deb_name"; then
+			local kept=""
+			while IFS= read -r existing_version; do
+				[[ -z "$existing_version" ]] && continue
+				# Only replace when the incoming .deb is strictly newer. Removing an
+				# existing NEWER version to add an older one would silently downgrade
+				# the published repo (apt clients would see a downgrade); guard against it.
+				if dpkg --compare-versions "$deb_version" gt "$existing_version"; then
+					log "Removing old version ${deb_name}_${existing_version}_${deb_arch} before adding newer ${deb_version}"
+					local old_key="${deb_name}|${existing_version}|${deb_arch}"
+					if [[ -n "${pending_add[$old_key]}" ]]; then
+						# Not in aptly yet: an earlier file of this batch
+						unset "to_add[${pending_add[$old_key]}]"
+						unset "pending_add[$old_key]"
+					else
+						to_remove+=("${deb_name}_${existing_version}_${deb_arch}")
 					fi
-
-					if [[ "$keep_multiple" == false ]]; then
-						# Only replace when the incoming .deb is strictly newer. Removing an
-						# existing NEWER version to add an older one would silently downgrade
-						# the published repo (apt clients would see a downgrade); guard against it.
-						if dpkg --compare-versions "$deb_version" gt "$existing_version"; then
-							log "Removing old version ${existing_name}_${existing_version}_${existing_arch} before adding newer ${deb_version}"
-							run_aptly repo remove -config="${CONFIG}" "${component}" "${existing_name}_${existing_version}_${existing_arch}"
-							# Remove from map so we don't try to remove it again
-							unset "repo_packages_map[$existing_key]"
-						else
-							log "Skipping downgrade: repo already has newer ${existing_name}_${existing_version}_${existing_arch} (incoming ${deb_version})"
-							skip_downgrade=true
-						fi
-					fi
+					unset "repo_packages_map[$old_key]"
+				else
+					log "Skipping downgrade: repo already has newer ${deb_name}_${existing_version}_${deb_arch} (incoming ${deb_version})"
+					skip_downgrade=true
+					kept+="${existing_version}"$'\n'
 				fi
-			done
+			done <<< "${repo_versions["${deb_name}|${deb_arch}"]}"
+			repo_versions["${deb_name}|${deb_arch}"]="$kept"
 		fi
 
 		# Do not publish a downgrade: repo holds a newer version of this package
 		if [[ "$skip_downgrade" == true ]]; then
 			echo "[-] SKIP (downgrade): $deb_display"
-			continue
-		fi
-
-		# Skip if exact package (name+version+arch) already exists in repo (unless FORCE_ADD is true)
-		if [[ "$FORCE_ADD" != true && -n "${repo_packages_map[$deb_key]}" ]]; then
-			echo "[-] SKIP: $deb_display"
-			log "SKIP: $deb_display already in $component"
 			continue
 		fi
 
@@ -296,20 +297,32 @@ adding_packages() {
 			done < userpatches/last-known-good-kernel-pkg.map
 		fi
 
-		# Determine whether to remove source files after adding to repo
-		# KEEP_SOURCES mode preserves source packages
-		# DRY_RUN mode also preserves sources (and skips all repo modifications)
-		local remove_flag="-remove-files"
-		if [[ "$KEEP_SOURCES" == true ]] || [[ "$DRY_RUN" == true ]]; then
-			remove_flag=""
-		fi
-
-		# Add package to repository
-		log "Adding $deb_name to $component"
-		run_aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${deb_file}"
+		echo "[+] ADD: $deb_display"
+		pending_add["$deb_key"]=$add_n
+		to_add[add_n++]="$deb_file"
 		# Record it: a newer version later in this batch must replace it, and
 		# an older one must be skipped as a downgrade.
 		repo_packages_map["$deb_key"]=1
+		repo_versions["${deb_name}|${deb_arch}"]+="${deb_version}"$'\n'
+	done
+
+	# Determine whether to remove source files after adding to repo
+	# KEEP_SOURCES mode preserves source packages
+	# DRY_RUN mode also preserves sources (and skips all repo modifications)
+	local remove_flag="-remove-files"
+	if [[ "$KEEP_SOURCES" == true ]] || [[ "$DRY_RUN" == true ]]; then
+		remove_flag=""
+	fi
+
+	# Batches of 500 keep the command line short
+	local i
+	to_add=("${to_add[@]}")
+	for ((i = 0; i < ${#to_remove[@]}; i += 500)); do
+		run_aptly repo remove -config="${CONFIG}" "${component}" "${to_remove[@]:i:500}"
+	done
+	log "Adding ${#to_add[@]} packages to $component"
+	for ((i = 0; i < ${#to_add[@]}; i += 500)); do
+		run_aptly repo add $remove_flag -force-replace -config="${CONFIG}" "${component}" "${to_add[@]:i:500}"
 	done
 
 	# Keep only the newest version of each package (also removes older
