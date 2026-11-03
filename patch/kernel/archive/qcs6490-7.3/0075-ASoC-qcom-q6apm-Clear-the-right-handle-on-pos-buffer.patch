@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Wed, 21 Oct 2026 12:10:43 +0800
+Subject: ASoC: qcom: q6apm: Clear the right handle on pos buffer unmap
+
+Push/pull graphs map two shared-memory regions per graph, the circular
+buffer and the position buffer, and keep a separate DSP handle for
+each. The map path tags its token with APM_MMAP_TOKEN_MAP_TYPE_POS_BUF
+so the response lands in the right handle, but the unmap path sends a
+bare graph ID and the response handler always clears mem_map_handle.
+
+Unmapping the position buffer therefore wipes the circular buffer's
+handle and leaves pos_buf_mem_map_handle set. A subsequent unmap of the
+circular buffer is skipped, leaking that DSP mapping, and a remap of
+the position buffer is skipped because the stale handle looks valid.
+
+Tag the unmap token the same way as the map token and decode it in the
+response handler to clear the matching handle.
+
+Fixes: 7c1ac23b178a ("ASoC: qcom: audioreach: Add support for shared memory push/pull modules")
+Cc: stable@vger.kernel.org
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261021041044.2080369-3-shengchao.guo@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 43c69604271d8b54c494fde70bd4a9eaab7a974d)
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 16 +++++++---
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -326,8 +326,9 @@ static int __q6apm_unmap_memory_fixed_region(struct device *dev, unsigned int gr
+ 	struct q6apm *apm = dev_get_drvdata(dev->parent);
+ 	struct audioreach_graph_info *info;
+ 	uint32_t mem_map_handle;
++	uint32_t pos_mask = is_pos_buf ? APM_MMAP_TOKEN_MAP_TYPE_POS_BUF : 0;
+ 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(sizeof(*cmd),
+-						APM_CMD_SHARED_MEM_UNMAP_REGIONS, graph_id);
++					APM_CMD_SHARED_MEM_UNMAP_REGIONS, (graph_id | pos_mask));
+ 	if (IS_ERR(pkt))
+ 		return PTR_ERR(pkt);
+ 
+@@ -958,9 +959,16 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 				dev_err(dev, "Error (%d) Processing 0x%08x cmd\n", result->status,
+ 					result->opcode);
+ 
+-			info = idr_find(&apm->graph_info_idr, hdr->token);
+-			if (info && !result->status)
+-				info->mem_map_handle = 0;
++			graph_id = hdr->token & APM_MMAP_TOKEN_GID_MASK;
++			is_pos_buf = hdr->token & APM_MMAP_TOKEN_MAP_TYPE_POS_BUF;
++
++			info = idr_find(&apm->graph_info_idr, graph_id);
++			if (info && !result->status) {
++				if (is_pos_buf)
++					info->pos_buf_mem_map_handle = 0;
++				else
++					info->mem_map_handle = 0;
++			}
+ 
+ 			wake_up(&apm->wait);
+ 			break;
+-- 
+Armbian
+

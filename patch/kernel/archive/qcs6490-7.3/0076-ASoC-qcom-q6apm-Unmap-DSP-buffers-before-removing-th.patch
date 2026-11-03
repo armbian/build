@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Wed, 21 Oct 2026 12:10:44 +0800
+Subject: ASoC: qcom: q6apm: Unmap DSP buffers before removing the topology
+
+Since buffers are mapped once in pcm_new() and unmapped in pcm_free(),
+the unmap relies on the graph info still being registered. During card
+teardown, however, soc_cleanup_card_resources() removes the components
+before it frees the PCM runtimes. q6apm-audio's remove callback unloads
+the topology, which frees every audioreach_graph_info, so by the time
+q6apm_dai_pcm_free() runs the idr lookup fails and the unmap silently
+returns -ENODEV. The DSP keeps the old mapping.
+
+When the card is bound again, for example after unbinding and binding
+any codec on it, pcm_new() maps the same buffer once more, the DSP
+rejects it and the front-end PCM is not created:
+
+  qcom-apm gprsvc:service:2:1: Error (1) Processing 0x0100100c cmd
+  qcom-apm gprsvc:service:2:1: DSP returned error[100100c] 1
+  q6apm-dai ...: Audio Start: Buffer Allocation failed rc = -22
+  snd-sc8280xp sound: ASoC: can't create pcm MultiMedia1 Playback :-22
+
+Release the circular and position buffer mappings of all graphs in
+q6apm_audio_remove() while the graph info still exists. The unmap
+helper now takes the q6apm instance directly, since it is called from
+the APM component rather than from a q6apm-dai child device.
+
+Fixes: 8ea6e25c8536 ("ASoC: qcom: q6apm: Add support for early buffer mapping on DSP")
+Cc: stable@vger.kernel.org
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261021041044.2080369-4-shengchao.guo@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit a51c5dd7f7fc7cdf4ae28fec4a013d8418d1cb53)
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 24 ++++++++--
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -319,11 +319,10 @@ int q6apm_alloc_fragments(struct q6apm_graph *graph, unsigned int dir, phys_addr
+ }
+ EXPORT_SYMBOL_GPL(q6apm_alloc_fragments);
+ 
+-static int __q6apm_unmap_memory_fixed_region(struct device *dev, unsigned int graph_id,
++static int __q6apm_unmap_memory_fixed_region(struct q6apm *apm, unsigned int graph_id,
+ 					     bool is_pos_buf)
+ {
+ 	struct apm_cmd_shared_mem_unmap_regions *cmd;
+-	struct q6apm *apm = dev_get_drvdata(dev->parent);
+ 	struct audioreach_graph_info *info;
+ 	uint32_t mem_map_handle;
+ 	uint32_t pos_mask = is_pos_buf ? APM_MMAP_TOKEN_MAP_TYPE_POS_BUF : 0;
+@@ -355,13 +354,15 @@ static int __q6apm_unmap_memory_fixed_region(struct device *dev, unsigned int gr
+ 
+ int q6apm_unmap_memory_fixed_region(struct device *dev, unsigned int graph_id)
+ {
+-	return __q6apm_unmap_memory_fixed_region(dev, graph_id, false);
++	return __q6apm_unmap_memory_fixed_region(dev_get_drvdata(dev->parent),
++						 graph_id, false);
+ }
+ EXPORT_SYMBOL_GPL(q6apm_unmap_memory_fixed_region);
+ 
+ int q6apm_unmap_pos_buffer(struct device *dev, unsigned int graph_id)
+ {
+-	return __q6apm_unmap_memory_fixed_region(dev, graph_id, true);
++	return __q6apm_unmap_memory_fixed_region(dev_get_drvdata(dev->parent),
++						 graph_id, true);
+ }
+ EXPORT_SYMBOL_GPL(q6apm_unmap_pos_buffer);
+ 
+@@ -844,6 +845,21 @@ static int q6apm_audio_probe(struct snd_soc_component *component)
+ 
+ static void q6apm_audio_remove(struct snd_soc_component *component)
+ {
++	struct q6apm *apm = dev_get_drvdata(component->dev);
++	struct audioreach_graph_info *info;
++	int id;
++
++	/*
++	 * The card core removes components before freeing the PCMs, so
++	 * q6apm-dai's pcm_free() runs after the topology (and graph_info)
++	 * is gone and can no longer unmap. Release the DSP mappings here,
++	 * otherwise the next pcm_new() fails to map the same buffer again.
++	 */
++	idr_for_each_entry(&apm->graph_info_idr, info, id) {
++		__q6apm_unmap_memory_fixed_region(apm, id, false);
++		__q6apm_unmap_memory_fixed_region(apm, id, true);
++	}
++
+ 	/* remove topology */
+ 	snd_soc_tplg_component_remove(component);
+ }
+-- 
+Armbian
+
