@@ -1,0 +1,153 @@
+From aaac85e7e1db272cc8aa1072026d2c9b5ed481b1 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Wed, 23 Sep 2026 22:47:32 +0200
+Subject: [PATCH 25/58] net: stmmac: sun55i: Add per-compatible match data
+
+The A733 GMAC210 glue registers are in a dedicated MMIO region of the
+controller rather than in a syscon, at a different offset.
+
+Add per-compatible match data holding the glue resource init callback, the
+stmmac flags and the glue register offset to prepare the support for the
+A733.
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ .../ethernet/stmicro/stmmac/dwmac-sun55i.c    | 68 +++++++++++++++----
+ 1 file changed, 54 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+index 862df173d963..c4df53285007 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+@@ -16,6 +16,7 @@
+ #include <linux/of.h>
+ #include <linux/phy.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/stmmac.h>
+@@ -23,8 +24,6 @@
+ #include "stmmac.h"
+ #include "stmmac_platform.h"
+ 
+-#define SYSCON_REG		0x34
+-
+ /* RMII specific bits */
+ #define SYSCON_RMII_EN		BIT(13) /* 1: enable RMII (overrides EPIT) */
+ /* Generic system control EMAC_CLK bits */
+@@ -37,18 +36,40 @@
+ #define SYSCON_ETCS_EXT_GMII	0x1
+ #define SYSCON_ETCS_INT_GMII	0x2
+ 
+-static int sun55i_gmac200_set_syscon(struct device *dev,
+-				     struct plat_stmmacenet_data *plat)
++struct sun55i_gmac;
++
++struct sun55i_gmac_data {
++	int (*init_resources)(struct platform_device *pdev,
++			      struct sun55i_gmac *gmac);
++	unsigned int flags;
++	u32 offset;
++};
++
++struct sun55i_gmac {
++	const struct sun55i_gmac_data *data;
++	struct regmap *regmap;
++};
++
++static int sun55i_gmac200_init_resources(struct platform_device *pdev,
++					 struct sun55i_gmac *gmac)
++{
++	gmac->regmap = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
++						       "syscon");
++	if (IS_ERR(gmac->regmap))
++		return dev_err_probe(&pdev->dev, PTR_ERR(gmac->regmap),
++				     "Unable to map syscon\n");
++
++	return 0;
++}
++
++static int sun55i_gmac200_setup(struct device *dev,
++				struct plat_stmmacenet_data *plat,
++				const struct sun55i_gmac *gmac)
+ {
+ 	struct device_node *node = dev->of_node;
+-	struct regmap *regmap;
+ 	u32 val, reg = 0;
+ 	int ret;
+ 
+-	regmap = syscon_regmap_lookup_by_phandle(node, "syscon");
+-	if (IS_ERR(regmap))
+-		return dev_err_probe(dev, PTR_ERR(regmap), "Unable to map syscon\n");
+-
+ 	if (!of_property_read_u32(node, "tx-internal-delay-ps", &val)) {
+ 		if (val % 100)
+ 			return dev_err_probe(dev, -EINVAL,
+@@ -95,7 +116,7 @@ static int sun55i_gmac200_set_syscon(struct device *dev,
+ 				     phy_modes(plat->phy_interface));
+ 	}
+ 
+-	ret = regmap_write(regmap, SYSCON_REG, reg);
++	ret = regmap_write(gmac->regmap, gmac->data->offset, reg);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "Failed to write to syscon\n");
+ 
+@@ -107,22 +128,34 @@ static int sun55i_gmac200_probe(struct platform_device *pdev)
+ 	struct plat_stmmacenet_data *plat_dat;
+ 	struct stmmac_resources stmmac_res;
+ 	struct device *dev = &pdev->dev;
++	struct sun55i_gmac *gmac;
+ 	struct clk *clk;
+ 	int ret;
+ 
++	gmac = devm_kzalloc(dev, sizeof(*gmac), GFP_KERNEL);
++	if (!gmac)
++		return -ENOMEM;
++
++	gmac->data = device_get_match_data(dev);
++	if (!gmac->data)
++		return -EINVAL;
++
+ 	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
+ 	if (ret)
+ 		return ret;
+ 
++	ret = gmac->data->init_resources(pdev, gmac);
++	if (ret)
++		return ret;
++
+ 	plat_dat = devm_stmmac_probe_config_dt(pdev, stmmac_res.mac);
+ 	if (IS_ERR(plat_dat))
+ 		return PTR_ERR(plat_dat);
+ 
+-	/* BSP disables it */
+-	plat_dat->flags |= STMMAC_FLAG_SPH_DISABLE;
++	plat_dat->flags |= gmac->data->flags;
+ 	plat_dat->host_dma_width = 32;
+ 
+-	ret = sun55i_gmac200_set_syscon(dev, plat_dat);
++	ret = sun55i_gmac200_setup(dev, plat_dat, gmac);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -138,8 +171,15 @@ static int sun55i_gmac200_probe(struct platform_device *pdev)
+ 	return devm_stmmac_pltfr_probe(pdev, plat_dat, &stmmac_res);
+ }
+ 
++static const struct sun55i_gmac_data sun55i_a523_gmac200_data = {
++	.init_resources = sun55i_gmac200_init_resources,
++	.flags = STMMAC_FLAG_SPH_DISABLE,
++	.offset = 0x34,
++};
++
+ static const struct of_device_id sun55i_gmac200_match[] = {
+-	{ .compatible = "allwinner,sun55i-a523-gmac200" },
++	{ .compatible = "allwinner,sun55i-a523-gmac200",
++	  .data = &sun55i_a523_gmac200_data },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun55i_gmac200_match);
+-- 
+2.53.0
+

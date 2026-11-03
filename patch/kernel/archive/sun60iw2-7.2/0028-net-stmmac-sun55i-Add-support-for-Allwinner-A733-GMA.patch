@@ -1,0 +1,121 @@
+From fbf05d370c79306ff5b9d84f75bf47fb0456ae92 Mon Sep 17 00:00:00 2001
+From: Jerome Brunet <jbrunet@baylibre.com>
+Date: Wed, 23 Sep 2026 22:47:35 +0200
+Subject: [PATCH 28/58] net: stmmac: sun55i: Add support for Allwinner A733
+ GMAC210
+
+The A733 GMAC210 is a DesignWare MAC 5.20 using an Allwinner glue close to
+the A523 GMAC200 already supported by this driver, with the following
+differences to handle:
+
+* The glue configuration registers are a dedicated MMIO region of the
+  controller instead of a syscon register. This region is in the AHB
+  reset domain, so the glue driver releases the shared AHB reset before
+  writing the configuration.
+* The TX clock delay value is 5 bits wide, split over 2 register fields.
+  Both TX and RX delays use a 180ps step.
+* The DMA channels have their own interrupt lines, so the per-DMA-channel
+  interrupt mode is enabled, as the vendor SDK does.
+* TX LPI clock gating is supported, as the vendor SDK indicates. Follow
+  the PHY capability with STMMAC_FLAG_EN_TX_LPI_CLK_PHY_CAP rather than
+  forcing it on with the deprecated 'snps,en-tx-lpi-clockgating' DT
+  property.
+
+Signed-off-by: Jerome Brunet <jbrunet@baylibre.com>
+---
+ .../ethernet/stmicro/stmmac/dwmac-sun55i.c    | 53 ++++++++++++++++++-
+ 1 file changed, 52 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+index 49abbb248b61..675b83cd52c8 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sun55i.c
+@@ -19,6 +19,7 @@
+ #include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/reset.h>
+ #include <linux/stmmac.h>
+ 
+ #include "stmmac.h"
+@@ -65,6 +66,41 @@ static int sun55i_gmac200_init_resources(struct platform_device *pdev,
+ 	return 0;
+ }
+ 
++static const struct regmap_config sun60i_a733_regmap_cfg = {
++	.reg_bits = 32,
++	.val_bits = 32,
++	.reg_stride = 4,
++};
++
++static int sun60i_gmac210_init_resources(struct platform_device *pdev,
++					 struct sun55i_gmac *gmac)
++{
++	struct device *dev = &pdev->dev;
++	struct reset_control *ahb_reset;
++	void __iomem *base;
++
++	/*
++	 * Get the configuration region out of reset before changing it.
++	 * stmmac core holds the same shared reset but only deasserts it later.
++	 */
++	ahb_reset = devm_reset_control_get_shared_deasserted(dev, "ahb");
++	if (IS_ERR(ahb_reset))
++		return dev_err_probe(dev, PTR_ERR(ahb_reset),
++				     "Failed to get ahb reset\n");
++
++	base = devm_platform_ioremap_resource(pdev, 1);
++	if (IS_ERR(base))
++		return dev_err_probe(dev, PTR_ERR(base),
++				     "Unable to get config memory region\n");
++
++	gmac->regmap = devm_regmap_init_mmio(dev, base, &sun60i_a733_regmap_cfg);
++	if (IS_ERR(gmac->regmap))
++		return dev_err_probe(dev, PTR_ERR(gmac->regmap),
++				     "Unable to get regmap for config memory region\n");
++
++	return 0;
++}
++
+ static int sun55i_gmac200_validate_delay(struct device *dev, const char *dir,
+ 					 u32 *val, u32 step, u32 max)
+ {
+@@ -132,9 +168,11 @@ static int sun55i_gmac200_setup(struct device *dev,
+ 				     phy_modes(plat->phy_interface));
+ 	}
+ 
++	/* The dwmac will sample this when stmmaceth reset is deasserted */
+ 	ret = regmap_write(gmac->regmap, gmac->data->offset, reg);
+ 	if (ret < 0)
+-		return dev_err_probe(dev, ret, "Failed to write to syscon\n");
++		return dev_err_probe(dev, ret,
++				     "Failed to write glue configuration\n");
+ 
+ 	return 0;
+ }
+@@ -202,9 +240,22 @@ static const struct sun55i_gmac_data sun55i_a523_gmac200_data = {
+ 	.rxdly_step_ps = 100,
+ };
+ 
++static const struct sun55i_gmac_data sun60i_a733_gmac210_data = {
++	.init_resources = sun60i_gmac210_init_resources,
++	.flags = (STMMAC_FLAG_SPH_DISABLE |
++		  STMMAC_FLAG_MULTI_MSI_EN |
++		  STMMAC_FLAG_EN_TX_LPI_CLK_PHY_CAP),
++	.offset = 0x0,
++	.etxdc_ext_mask = GENMASK(17, 16),
++	.txdly_step_ps = 180,
++	.rxdly_step_ps = 180,
++};
++
+ static const struct of_device_id sun55i_gmac200_match[] = {
+ 	{ .compatible = "allwinner,sun55i-a523-gmac200",
+ 	  .data = &sun55i_a523_gmac200_data },
++	{ .compatible = "allwinner,sun60i-a733-gmac210",
++	  .data = &sun60i_a733_gmac210_data },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun55i_gmac200_match);
+-- 
+2.53.0
+
