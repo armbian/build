@@ -7,7 +7,7 @@ FORCE_ADD=false            # Force re-adding packages even if they already exist
 FORCE_PUBLISH=true         # Force publishing even when no packages to add
 GPG_PARAMS=()              # Global GPG parameters array (set by get_gpg_signing_params)
 KEEP_MULTIPLE_VERSIONS=true # Keep several versions of kernel, dtb and headers packages
-KERNEL_VERSIONS_TO_KEEP=5   # How many: the newest ones
+KERNEL_VERSIONS_TO_KEEP=10  # How many: the newest ones (-K)
 
 # Log message to syslog (view with: journalctl -t repo-management -f)
 log() {
@@ -865,14 +865,15 @@ Usage: $0 [ -short | --long ]
                              (by default, skips packages that are already in the repo)
 -P --force-publish           force publishing even when there are no packages to add
                              (by default, skips publishing empty releases)
--m --multiple-versions       keep multiple versions of critical packages (kernel, dtb, u-boot, headers, libc)
+-m --multiple-versions       keep multiple versions of kernel, dtb and headers packages
                              (enabled by default)
+-K --kernels N               how many kernel, dtb and headers versions to keep (default 10)
 	"
     exit 2
 }
 
-SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F,P,m
-LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add,force-publish,multiple-versions
+SHORT=i:,l:,o:,c:,p:,r:,h,d,k,F,P,m,K:
+LONG=input:,list:,output:,command:,password:,releases:,help,dry-run,keep-sources,force-add,force-publish,multiple-versions,kernels:
 if ! OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@"); then
 	help
 	exit 1
@@ -927,6 +928,14 @@ do
       KEEP_MULTIPLE_VERSIONS=true
       shift
       ;;
+    -K | --kernels )
+      if [[ ! "$2" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Error: --kernels needs a number of 1 or more" >&2
+        exit 1
+      fi
+      KERNEL_VERSIONS_TO_KEEP="$2"
+      shift 2
+      ;;
     -d | --dry-run )
       DRY_RUN=true
       # Dry-run implies keep-sources
@@ -960,6 +969,7 @@ echo "  KEEP-SOURCES:       $([ "$KEEP_SOURCES" == true ] && echo 'ENABLED' || e
 echo "  FORCE-ADD:          $([ "$FORCE_ADD" == true ] && echo 'ENABLED' || echo 'disabled')"
 echo "  FORCE-PUBLISH:      $([ "$FORCE_PUBLISH" == true ] && echo 'ENABLED' || echo 'disabled')"
 echo "  KEEP-MULTI-VERSION: $([ "$KEEP_MULTIPLE_VERSIONS" == true ] && echo 'ENABLED' || echo 'disabled')"
+echo "  KERNELS-TO-KEEP:    ${KERNEL_VERSIONS_TO_KEEP}"
 echo "=========================================="
 
 log "Configuration: DRY_RUN=$DRY_RUN, KEEP_SOURCES=$KEEP_SOURCES, FORCE_ADD=$FORCE_ADD, FORCE_PUBLISH=$FORCE_PUBLISH, KEEP_MULTIPLE_VERSIONS=$KEEP_MULTIPLE_VERSIONS"
