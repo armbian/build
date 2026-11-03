@@ -7,7 +7,7 @@ FORCE_ADD=false            # Force re-adding packages even if they already exist
 FORCE_PUBLISH=true         # Force publishing even when no packages to add
 GPG_PARAMS=()              # Global GPG parameters array (set by get_gpg_signing_params)
 KEEP_MULTIPLE_VERSIONS=true # Keep several versions of kernel, dtb and headers packages
-KERNEL_VERSIONS_TO_KEEP=10  # How many: the newest ones (-K)
+KERNEL_VERSIONS_TO_KEEP="${KERNEL_VERSIONS_TO_KEEP:-10}" # How many: the newest ones (-K or environment)
 
 # Log message to syslog (view with: journalctl -t repo-management -f)
 log() {
