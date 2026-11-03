@@ -1011,7 +1011,7 @@ fi
 if [[ "$KEEP_MULTIPLE_VERSIONS" == true ]]; then
     echo "=========================================="
     echo "KEEP-MULTIPLE-VERSIONS MODE ENABLED"
-    echo "Multiple versions of kernel, dtb, u-boot, headers, and libc packages will be preserved"
+    echo "Kernel, dtb and headers packages keep the newest ${KERNEL_VERSIONS_TO_KEEP} versions"
     echo "Note: armbian-bsp packages will still use single version (old versions removed)"
     echo "=========================================="
 fi
