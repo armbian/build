@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Chufleco <80735658+chufleco@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 05:09:52 +0000
+Subject: phy: sunxi-cadence-combophy: enable CMN PLL1 clock on the DP+USB path
+
+USB-C DisplayPort sinks that also use USB (Type-C pin assignment D,
+STATE_D/STATE_F, i.e. either cable orientation: 2-lane DP + USB, e.g. USB-C to HDMI/DP adapters and USB-C
+touch monitors) stay black on the Orange Pi Zero 3W. HPD, EDID and DPCD
+are fine, but every boot logs:
+
+  combophy0 dp wait pll enable timeout line:827
+  combophy0 dp wait pll enable timeout line:845
+  [EDP_ERR]: swing voltage reach max level, training1(clock recovery training) fail!
+
+combo0_configure_usb_dp() never sets PHY_PMA_ISO_PLL_CTRL0
+cmn_pll1_clk_en (0xe003 = 0x0003), so the DP PLL never locks. The
+4-lane DP-only path (combo0_dp_set_rate()) performs this write for every
+link rate, and the USB-only path sets PLL0 only (0x0001). Add the same
+write to the DP+USB path, before the existing 0xe005/0xe006 writes.
+
+One register write, DP+USB path only; DP-only and USB-only paths are
+untouched. Tested on an Orange Pi Zero 3W (6.6.98-sun60iw2): the PLL
+timeouts and the clock-recovery failure are gone, DP-1 trains at
+5.4G / 2-lane, and a USB-C DP+touch monitor and a plain USB-C to HDMI
+adapter both display (both were black before).
+
+Upstream: https://github.com/orangepi-xunlong/linux-orangepi/pull/139
+(issue #133), open since Sep 2026 with no response.
+---
+ bsp/drivers/phy/sunxi-cadence-combophy.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/bsp/drivers/phy/sunxi-cadence-combophy.c b/bsp/drivers/phy/sunxi-cadence-combophy.c
+index 94c651e..9ebc5e6 100644
+--- a/bsp/drivers/phy/sunxi-cadence-combophy.c
++++ b/bsp/drivers/phy/sunxi-cadence-combophy.c
+@@ -2270,6 +2270,11 @@ static int combo0_configure_usb_dp(struct sunxi_cadence_combophy *combo0)
+ 		phy_writew(combo0->phy_reg + (0x42EA << 1), 0x00F0);
+ 	}
+ 
++	/* Enable CMN PLL1 clock. The DP-only path (combo0_dp_set_rate) writes this
++	 * before the PLL-enable poll; it is missing on the 2-lane DP+USB (STATE_D/F)
++	 * path, so the DP main-link PLL never locks for USB-C DP-alt sinks that
++	 * also request USB (combo0_dp_phy_reset bit4/lane-ready time out). */
++	phy_writew(combo0->phy_reg + (0xE003 << 1), 0x0003);
+ 	phy_writew(combo0->phy_reg + (0xE005 << 1), 0x000B);
+ 	phy_writew(combo0->phy_reg + (0xE006 << 1), 0x2224);
+ 	if (combo0->orientation == TYPEC_ORIENTATION_REVERSE) {
+-- 
+Armbian
+
