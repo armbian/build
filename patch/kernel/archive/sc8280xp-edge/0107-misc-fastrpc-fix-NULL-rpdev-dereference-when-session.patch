@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vinayak Katoch <vinayak.katoch@oss.qualcomm.com>
+Date: Thu, 22 Oct 2026 14:38:47 +0530
+Subject: misc: fastrpc: fix NULL rpdev dereference when session alloc fails
+
+When a fastrpc client process dies abnormally without closing its file
+descriptor, fastrpc_device_release() is never called and the compute-cb
+session slot is never freed. The abnormal client death on the DSP side
+triggers a glink channel teardown which propagates up through the rpmsg
+bus and calls fastrpc_rpmsg_remove().
+
+fastrpc_rpmsg_remove() nulls cctx->rpdev before calling
+misc_deregister(). If a concurrent open() enters fastrpc_device_open()
+in this window and fastrpc_session_alloc() returns NULL (sessions
+exhausted by the leaked slot), the error path dereferences
+cctx->rpdev->dev causing a NULL pointer dereference:
+
+  Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000
+  pc : fastrpc_device_open+0x1b8/0x258 [fastrpc]
+  Call trace:
+   fastrpc_device_open+0x1b8/0x258 [fastrpc] (P)
+   misc_open+0xd8/0x1a0
+
+Fix by moving misc_deregister() before rpdev = NULL. misc_open() and
+misc_deregister() both take misc_mtx, so misc_deregister() will either
+block until fastrpc_device_open() completes or prevent new opens from
+entering it entirely.
+
+Fixes: 7c11df42d0c7 ("misc: fastrpc: Fix device_open when no session is available")
+Cc: stable@vger.kernel.org
+Reviewed-by: Ekansh Gupta <ekansh.gupta@oss.qualcomm.com>
+Signed-off-by: Vinayak Katoch <vinayak.katoch@oss.qualcomm.com>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261022-fastrpc-probe-fixes-v2-1-a6b3f6f62571@oss.qualcomm.com]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/misc/fastrpc.c | 12 +++++-----
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 111111111111..222222222222 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -2682,6 +2682,12 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ 	struct fastrpc_user *user;
+ 	unsigned long flags;
+ 
++	if (cctx->fdevice)
++		misc_deregister(&cctx->fdevice->miscdev);
++
++	if (cctx->secure_fdevice)
++		misc_deregister(&cctx->secure_fdevice->miscdev);
++
+ 	/* No invocations past this point */
+ 	spin_lock_irqsave(&cctx->lock, flags);
+ 	cctx->rpdev = NULL;
+@@ -2689,12 +2695,6 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+ 		fastrpc_notify_users(user);
+ 	spin_unlock_irqrestore(&cctx->lock, flags);
+ 
+-	if (cctx->fdevice)
+-		misc_deregister(&cctx->fdevice->miscdev);
+-
+-	if (cctx->secure_fdevice)
+-		misc_deregister(&cctx->secure_fdevice->miscdev);
+-
+ 	list_for_each_entry_safe(buf, b, &cctx->invoke_interrupted_mmaps, node)
+ 		list_del(&buf->node);
+ 
+-- 
+Armbian
+

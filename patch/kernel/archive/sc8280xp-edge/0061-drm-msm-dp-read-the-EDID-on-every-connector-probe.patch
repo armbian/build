@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 4 Nov 2026 09:53:49 +0100
+Subject: drm/msm/dp: read the EDID on every connector probe
+
+The bridge advertises DRM_BRIDGE_OP_MODES and answers .get_modes from the
+EDID stored on the connector when the sink was plugged, so a sink that
+changes its EDID while it stays connected keeps being described by the
+modes it first reported, and a probe forced from userspace returns the
+same stale list. Advertise DRM_BRIDGE_OP_EDID and read the EDID over DDC
+from .edid_read instead, which is what the bridge connector helper calls
+on every probe and what the other bridges already do. A read that fails
+hands out a copy of the EDID taken at plug time, kept under plugged_lock,
+so a transient DDC error cannot empty the mode list of a display that is
+still lit.
+
+That leaves msm_dp_display_get_modes() without a caller, so drop it.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 39 ++++++++--
+ drivers/gpu/drm/msm/dp/dp_display.h |  3 +-
+ drivers/gpu/drm/msm/dp/dp_drm.c     | 30 ++-----
+ 3 files changed, 40 insertions(+), 32 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -55,6 +55,8 @@ struct msm_dp_display_private {
+ 
+ 	struct mutex plugged_lock;
+ 	bool plugged;
++	/* EDID read at plug time, protected by plugged_lock */
++	const struct drm_edid *drm_edid;
+ 
+ 	struct drm_device *drm_dev;
+ 
+@@ -312,7 +314,10 @@ static int msm_dp_display_process_hpd_high(struct msm_dp_display_private *dp)
+ 	msm_dp_link_reset_phy_params_vx_px(dp->link);
+ 
+ end:
+-	drm_edid_free(drm_edid);
++	if (drm_edid) {
++		drm_edid_free(dp->drm_edid);
++		dp->drm_edid = drm_edid;
++	}
+ 	return rc;
+ }
+ 
+@@ -480,6 +485,9 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
+ 	if (!dp->msm_dp_display.is_edp)
+ 		drm_edid_connector_update(dp->msm_dp_display.connector, NULL);
+ 
++	drm_edid_free(dp->drm_edid);
++	dp->drm_edid = NULL;
++
+ 	/* triggered by irq_hdp with sink_count = 0 */
+ 	if (dp->link->sink_count == 0)
+ 		msm_dp_display_host_phy_exit(dp);
+@@ -541,6 +549,8 @@ static int msm_dp_irq_hpd_handle(struct msm_dp_display_private *dp)
+ 
+ static void msm_dp_display_deinit_sub_modules(struct msm_dp_display_private *dp)
+ {
++	drm_edid_free(dp->drm_edid);
++	dp->drm_edid = NULL;
+ 	msm_dp_audio_put(dp->audio);
+ 	msm_dp_aux_put(dp->aux);
+ }
+@@ -816,18 +826,31 @@ enum drm_mode_status msm_dp_display_mode_valid(struct msm_dp *dp,
+ 	return MODE_OK;
+ }
+ 
+-int msm_dp_display_get_modes(struct msm_dp *dp)
++const struct drm_edid *msm_dp_display_edid_read(struct msm_dp *dp,
++						struct drm_connector *connector)
+ {
+-	struct msm_dp_display_private *msm_dp_display;
++	struct msm_dp_display_private *priv =
++		container_of(dp, struct msm_dp_display_private, msm_dp_display);
++	const struct drm_edid *drm_edid;
++	int ret;
+ 
+-	if (!dp) {
+-		DRM_ERROR("invalid params\n");
+-		return 0;
++	ret = pm_runtime_resume_and_get(&dp->pdev->dev);
++	if (ret) {
++		DRM_ERROR("failed to pm_runtime_resume\n");
++		goto cached;
+ 	}
+ 
+-	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
++	drm_edid = drm_edid_read_ddc(connector, &priv->aux->ddc);
+ 
+-	return drm_edid_connector_add_modes(msm_dp_display->panel->connector);
++	pm_runtime_put_sync(&dp->pdev->dev);
++
++	if (drm_edid)
++		return drm_edid;
++
++cached:
++	/* Keep a lit display's modes across a transient DDC failure */
++	guard(mutex)(&priv->plugged_lock);
++	return priv->drm_edid ? drm_edid_dup(priv->drm_edid) : NULL;
+ }
+ 
+ bool msm_dp_display_check_video_test(struct msm_dp *dp)
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.h b/drivers/gpu/drm/msm/dp/dp_display.h
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.h
++++ b/drivers/gpu/drm/msm/dp/dp_display.h
+@@ -26,7 +26,8 @@ struct msm_dp {
+ 	bool psr_supported;
+ };
+ 
+-int msm_dp_display_get_modes(struct msm_dp *msm_dp_display);
++const struct drm_edid *msm_dp_display_edid_read(struct msm_dp *msm_dp_display,
++						struct drm_connector *connector);
+ bool msm_dp_display_check_video_test(struct msm_dp *msm_dp_display);
+ int msm_dp_display_get_test_bpp(struct msm_dp *msm_dp_display);
+ void msm_dp_display_signal_audio_start(struct msm_dp *msm_dp_display);
+diff --git a/drivers/gpu/drm/msm/dp/dp_drm.c b/drivers/gpu/drm/msm/dp/dp_drm.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_drm.c
++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
+@@ -15,31 +15,15 @@
+ #include "dp_audio.h"
+ #include "dp_drm.h"
+ 
+-/**
+- * msm_dp_bridge_get_modes - callback to add drm modes via drm_mode_probed_add()
+- * @bridge: Poiner to drm bridge
+- * @connector: Pointer to drm connector structure
+- * Returns: Number of modes added
+- */
+-static int msm_dp_bridge_get_modes(struct drm_bridge *bridge, struct drm_connector *connector)
++static const struct drm_edid *msm_dp_bridge_edid_read(struct drm_bridge *bridge,
++						      struct drm_connector *connector)
+ {
+-	int rc = 0;
+-	struct msm_dp *dp;
++	struct msm_dp *dp = to_dp_bridge(bridge)->msm_dp_display;
+ 
+ 	if (!connector)
+-		return 0;
++		return NULL;
+ 
+-	dp = to_dp_bridge(bridge)->msm_dp_display;
+-
+-	/* pluggable case assumes EDID is read when HPD */
+-	rc = msm_dp_display_get_modes(dp);
+-	if (rc <= 0) {
+-		DRM_ERROR("failed to get DP sink modes, rc=%d\n", rc);
+-		return rc;
+-	} else {
+-		drm_dbg_dp(connector->dev, "No sink connected\n");
+-	}
+-	return rc;
++	return msm_dp_display_edid_read(dp, connector);
+ }
+ 
+ static void msm_dp_bridge_debugfs_init(struct drm_bridge *bridge, struct dentry *root)
+@@ -104,7 +88,7 @@ static const struct drm_bridge_funcs msm_dp_bridge_ops = {
+ 	.atomic_disable         = msm_dp_bridge_atomic_disable,
+ 	.atomic_post_disable    = msm_dp_bridge_atomic_post_disable,
+ 	.mode_valid   = msm_dp_bridge_mode_valid,
+-	.get_modes    = msm_dp_bridge_get_modes,
++	.edid_read    = msm_dp_bridge_edid_read,
+ 	.detect       = msm_dp_bridge_detect,
+ 	.hpd_enable   = msm_dp_bridge_hpd_enable,
+ 	.hpd_disable  = msm_dp_bridge_hpd_disable,
+@@ -323,7 +307,7 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 			DRM_BRIDGE_OP_DP_AUDIO |
+ 			DRM_BRIDGE_OP_DETECT |
+ 			DRM_BRIDGE_OP_HPD |
+-			DRM_BRIDGE_OP_MODES;
++			DRM_BRIDGE_OP_EDID;
+ 		bridge->hdmi_audio_dev = &msm_dp_display->pdev->dev;
+ 		bridge->hdmi_audio_max_i2s_playback_channels = 8;
+ 		bridge->hdmi_audio_dai_port = -1;
+-- 
+Armbian
+

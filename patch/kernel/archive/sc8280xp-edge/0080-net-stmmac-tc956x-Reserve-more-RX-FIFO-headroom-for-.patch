@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xilin Wu <sophon@radxa.com>
+Date: Mon, 12 Oct 2026 16:02:51 +0800
+Subject: net: stmmac: tc956x: Reserve more RX FIFO headroom for ASPM
+
+On the Q8B with a TC956x and a 2.5 Gb/s PHY, enabling PCIe ASPM L1
+substates causes receive FIFO overflows and TCP retransmissions. The
+8 KiB RX queues assert PAUSE with only 3 KiB of free space. This leaves
+insufficient room for in-flight frames while the receive DMA resumes
+after a low-power state.
+
+Add a platform-specific RX flow-control headroom setting and request
+4 KiB for TC956x. Apply it when programming the XGMAC RX queue thresholds,
+keeping a positive deactivation threshold and at least 512 bytes of
+hysteresis. Leave the existing defaults unchanged for other platforms.
+For the TC956x 8 KiB queues, raise RFA from 4 to 6 and keep RFD at 7.
+
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+Link: https://vamrs.feishu.cn/docx/L4zydgTkvor8xlxUInlcrEhFnRg
+(cherry picked from commit b0a5929032174ae0ead5d6a2876ef71754f63461)
+[SuperKali: adapted to Linux 7.3]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c |  2 ++
+ drivers/net/ethernet/stmicro/stmmac/dwxgmac2_dma.c | 10 ++++++++++
+ include/linux/stmmac.h                             |  2 ++
+ 3 files changed, 14 insertions(+)
+
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-tc956x.c
+@@ -662,6 +662,8 @@ static int tc956x_plat_dat_init(struct tc956x_data *td)
+ 		min(TC956X_TX_FIFO_KB, 8 * plat->tx_queues_to_use) * SZ_1K;
+ 	plat->rx_fifo_size =
+ 		min(TC956X_RX_FIFO_KB, 8 * plat->rx_queues_to_use) * SZ_1K;
++	/* Cover in-flight frames while PCIe exits an ASPM low-power state. */
++	plat->rx_fifo_flow_ctrl_headroom = SZ_4K;
+ 	plat->host_dma_width = 36;
+ 
+ 	plat->rx_sched_algorithm = MTL_RX_ALGORITHM_SP;
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwxgmac2_dma.c b/drivers/net/ethernet/stmicro/stmmac/dwxgmac2_dma.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwxgmac2_dma.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwxgmac2_dma.c
+@@ -160,6 +160,7 @@ static void dwxgmac2_dma_rx_mode(struct stmmac_priv *priv, void __iomem *ioaddr,
+ 	if ((fifosz >= 4096) && (qmode != MTL_QUEUE_AVB)) {
+ 		u32 flow = readl(ioaddr + XGMAC_MTL_RXQ_FLOW_CONTROL(channel));
+ 		unsigned int rfd, rfa;
++		unsigned int headroom = priv->plat->rx_fifo_flow_ctrl_headroom;
+ 
+ 		value |= XGMAC_EHFC;
+ 
+@@ -184,6 +185,15 @@ static void dwxgmac2_dma_rx_mode(struct stmmac_priv *priv, void __iomem *ioaddr,
+ 			break;
+ 		}
+ 
++		/* Leave room for packets arriving while the receive DMA wakes up.
++		 * Keep a positive deactivation threshold and at least 512 bytes
++		 * of hysteresis. Platforms without an override keep the defaults.
++		 */
++		if (headroom >= 1024 && headroom <= fifosz - 1024) {
++			rfa = max(rfa, DIV_ROUND_UP(headroom, 512) - 2);
++			rfd = max(rfd, rfa + 1);
++		}
++
+ 		flow = u32_replace_bits(flow, rfd, XGMAC_RFD);
+ 		flow = u32_replace_bits(flow, rfa, XGMAC_RFA);
+ 
+diff --git a/include/linux/stmmac.h b/include/linux/stmmac.h
+index 111111111111..222222222222 100644
+--- a/include/linux/stmmac.h
++++ b/include/linux/stmmac.h
+@@ -264,6 +264,8 @@ struct plat_stmmacenet_data {
+ 	int unicast_filter_entries;
+ 	int tx_fifo_size;
+ 	int rx_fifo_size;
++	/* Minimum free RX FIFO space when hardware flow control is asserted. */
++	unsigned int rx_fifo_flow_ctrl_headroom;
+ 	u8 host_dma_width;
+ 	u8 rx_queues_to_use;
+ 	u8 tx_queues_to_use;
+-- 
+Armbian
+

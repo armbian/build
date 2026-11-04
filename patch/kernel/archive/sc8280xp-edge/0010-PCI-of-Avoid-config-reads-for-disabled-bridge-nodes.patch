@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xilin Wu <sophon@radxa.com>
+Date: Fri, 9 Oct 2026 15:25:18 +0800
+Subject: PCI: of: Avoid config reads for disabled bridge nodes
+
+The TC9563 PCI power-control driver powers off external downstream ports
+whose device tree nodes have status = "disabled". On the Radxa Dragon Q8B,
+reading the Vendor ID of one of these powered-off port functions during
+PCI enumeration raises an Arm SError and prevents the board from booting.
+
+A Configuration Read request to an unavailable port receives no
+completion and results in a Completion Timeout. The PCIe Root Complex
+reports that timeout as an AXI bus error, which triggers an SError on the
+CPU. The link between the Root Port and the switch upstream port remains
+up, so blocking config accesses only when the Root Port link is down
+does not prevent these accesses.
+
+Commit 1a8c251cff20 ("PCI: move OF status = "disabled" detection to
+dev->match_driver") kept disabled PCI functions discoverable so that PCI
+fixups could still run, while suppressing driver binding later. Preserve
+that behavior for endpoint functions.
+
+For an unavailable device tree node with device_type = "pci", skip the
+Vendor ID read and return a PCI error response without accessing config
+space. This prevents enumeration of the disabled bridge and its
+subordinate bus. Perform the check in the generic PCI enumeration path
+because probing unavailable bridges is not specific to Qualcomm hosts.
+
+Functions without a device tree node and disabled endpoint functions
+remain discoverable.
+
+Link: https://lore.kernel.org/all/fsrr5xg4plfknfcvv5co4ciklz5pywa5bbfxbthwsnjevysr5v@myghuxblnend/
+Link: https://lore.kernel.org/all/r22to3joold7ugzwolni4qahyumcekbyugrl2bms3xmiysqtgo@hu5s3dnyqwsj/
+Acked-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Tested-by: Daniele Briguglio <hello@superkali.me>
+Signed-off-by: Xilin Wu <sophon@radxa.com>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261009-pci-of-disabled-bridges-v1-2-08708f9e1802@radxa.com]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/pci/of.c    | 23 ++++++++++
+ drivers/pci/pci.h   |  5 ++
+ drivers/pci/probe.c |  5 ++
+ 3 files changed, 33 insertions(+)
+
+diff --git a/drivers/pci/of.c b/drivers/pci/of.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/of.c
++++ b/drivers/pci/of.c
+@@ -46,6 +46,29 @@ int pci_set_of_node(struct pci_dev *dev)
+ 	return 0;
+ }
+ 
++/**
++ * pci_of_device_skip_config_read - check whether to skip probing a PCI device
++ * @bus: PCI bus to scan
++ * @devfn: device/function number to check
++ *
++ * Return: true only when firmware explicitly describes an unavailable PCI
++ * bridge/port node. Disabled endpoints remain discoverable so fixups still run,
++ * while driver binding is suppressed later in pci_bus_add_device().
++ */
++bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn)
++{
++	if (!bus->dev.of_node)
++		return false;
++
++	struct device_node *node __free(device_node) =
++		of_pci_find_child_device(bus->dev.of_node, devfn);
++
++	if (!node || of_device_is_available(node))
++		return false;
++
++	return of_node_is_type(node, "pci");
++}
++
+ void pci_release_of_node(struct pci_dev *dev)
+ {
+ 	of_node_put(dev->dev.of_node);
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 111111111111..222222222222 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -1244,6 +1244,7 @@ u32 of_pci_get_slot_power_limit(struct device_node *node,
+ 				u8 *slot_power_limit_scale);
+ bool of_pci_preserve_config(struct device_node *node);
+ int pci_set_of_node(struct pci_dev *dev);
++bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn);
+ void pci_release_of_node(struct pci_dev *dev);
+ void pci_set_bus_of_node(struct pci_bus *bus);
+ void pci_release_bus_of_node(struct pci_bus *bus);
+@@ -1284,6 +1285,10 @@ static inline bool of_pci_preserve_config(struct device_node *node)
+ }
+ 
+ static inline int pci_set_of_node(struct pci_dev *dev) { return 0; }
++static inline bool pci_of_device_skip_config_read(struct pci_bus *bus, unsigned int devfn)
++{
++	return false;
++}
+ static inline void pci_release_of_node(struct pci_dev *dev) { }
+ static inline void pci_set_bus_of_node(struct pci_bus *bus) { }
+ static inline void pci_release_bus_of_node(struct pci_bus *bus) { }
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -2586,6 +2586,11 @@ bool pci_bus_generic_read_dev_vendor_id(struct pci_bus *bus, int devfn, u32 *l,
+ bool pci_bus_read_dev_vendor_id(struct pci_bus *bus, int devfn, u32 *l,
+ 				int timeout)
+ {
++	if (pci_of_device_skip_config_read(bus, devfn)) {
++		PCI_SET_ERROR_RESPONSE(l);
++		return false;
++	}
++
+ 	return pci_bus_generic_read_dev_vendor_id(bus, devfn, l, timeout);
+ }
+ EXPORT_SYMBOL(pci_bus_read_dev_vendor_id);
+-- 
+Armbian
+

@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Wed, 21 Oct 2026 12:10:42 +0800
+Subject: ASoC: qcom: q6apm: Fix unmap regions response handling
+
+The DSP acknowledges APM_CMD_SHARED_MEM_UNMAP_REGIONS with a
+GPR_BASIC_RSP_RESULT packet whose payload carries the acknowledged
+opcode and the status. apm_callback() stores hdr->opcode, i.e.
+GPR_BASIC_RSP_RESULT itself, as the result opcode, so
+audioreach_send_cmd_sync(), which waits for 0x0100100d, never sees a
+match and gives up after five seconds even though the DSP has already
+processed the command:
+
+  qcom-apm gprsvc:service:2:1: CMD timeout for [100100d] opcode
+
+Each mapped graph costs a five second stall on unmap, and the forced
+status of 0 also hides real DSP failures from the caller.
+
+Record the opcode and status from the response payload, like the other
+basic-result commands do, and only drop the cached mapping handle when
+the DSP reports success.
+
+Fixes: 8ea6e25c8536 ("ASoC: qcom: q6apm: Add support for early buffer mapping on DSP")
+Cc: stable@vger.kernel.org
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://patch.msgid.link/20261021041044.2080369-2-shengchao.guo@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+(cherry picked from commit 4b832a2af523cbf857a977414c0f07d7f90a4c9d)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ sound/soc/qcom/qdsp6/q6apm.c | 13 +++++-----
+ 1 file changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/q6apm.c b/sound/soc/qcom/qdsp6/q6apm.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -954,16 +954,15 @@ static int apm_callback(const struct gpr_resp_pkt *data, void *priv, int op)
+ 			wake_up(&apm->wait);
+ 			break;
+ 		case APM_CMD_SHARED_MEM_UNMAP_REGIONS:
+-			apm->result.opcode = hdr->opcode;
+-			apm->result.status = 0;
+-			rsp = data->payload;
++			apm->result.opcode = result->opcode;
++			apm->result.status = result->status;
++			if (result->status)
++				dev_err(dev, "Error (%d) Processing 0x%08x cmd\n", result->status,
++					result->opcode);
+ 
+ 			info = idr_find(&apm->graph_info_idr, hdr->token);
+-			if (info)
++			if (info && !result->status)
+ 				info->mem_map_handle = 0;
+-			else
+-				dev_err(dev, "Error (%d) Processing 0x%08x cmd\n", result->status,
+-					result->opcode);
+ 
+ 			wake_up(&apm->wait);
+ 			break;
+-- 
+Armbian
+

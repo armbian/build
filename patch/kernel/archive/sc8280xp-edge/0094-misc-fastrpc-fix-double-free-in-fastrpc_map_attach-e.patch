@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yifei Gao <gyf161023@gmail.com>
+Date: Fri, 2 Oct 2026 11:12:19 +0100
+Subject: misc: fastrpc: fix double-free in fastrpc_map_attach() error path
+
+map->table is assigned right after dma_buf_map_attachment_unlocked()
+succeeds. The two failure checks that follow, the len > map->size test
+and, where subsystem VMIDs are configured, a failed qcom_scm_assign_mem(),
+jump to map_err with map->table already set.
+
+map_err manually calls dma_buf_detach() and dma_buf_put() and then falls
+through to fastrpc_map_put(). Since that change the error path tail is
+fastrpc_map_put() -> fastrpc_free_map(), and fastrpc_free_map() already
+unmaps, detaches and puts the dma-buf whenever map->table is set.
+The two operations therefore run twice: the second dma_buf_put() drops an
+extra reference on map->buf, and dma_buf_unmap_attachment_unlocked()
+dereferences the map->attach already freed by the manual dma_buf_detach().
+kref_init() sets the refcount to 1 with no intervening get, so the final
+fastrpc_map_put() frees the map synchronously and the redundant cleanup is
+deterministic.
+
+The len > map->size branch is reachable by an unprivileged process via
+FASTRPC_IOCTL_MEM_MAP with an fd whose dma-buf is smaller than the
+requested length, before any DSP invocation.
+
+Route both map->table-is-set failure branches to get_err instead of
+map_err, so fastrpc_free_map() is the single owner of the
+unmap/detach/put sequence. map_err is retained for the
+dma_buf_map_attachment_unlocked() failure, which is reached with
+map->table still NULL and an attachment that fastrpc_free_map() will not
+clean up, so its dma_buf_detach()/dma_buf_put() must still run manually.
+
+Fixes: 334f1a1cbe03 ("misc: fastrpc: Use fastrpc_map_put in fastrpc_map_create on fail")
+Cc: stable@vger.kernel.org
+Assisted-by: Claude:claude-opus-4-8
+Signed-off-by: Yifei Gao <gyf161023@gmail.com>
+Reviewed-by: Ekansh Gupta <ekansh.gupta@oss.qualcomm.com>
+Signed-off-by: Srinivas Kandagatla <srini@kernel.org>
+Link: https://patch.msgid.link/20261002101220.1084101-2-srinivas.kandagatla@oss.qualcomm.com
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit 09fa66ec1b4896ab841da085ca58b6433f28f07f)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/misc/fastrpc.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 111111111111..222222222222 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -927,7 +927,7 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
+ 		dev_dbg(sess->dev, "Bad size passed len 0x%llx map size 0x%llx\n",
+ 				len, map->size);
+ 		err = -EINVAL;
+-		goto map_err;
++		goto get_err;
+ 	}
+ 	map->va = sg_virt(map->table->sgl);
+ 	map->len = len;
+@@ -950,7 +950,7 @@ static int fastrpc_map_attach(struct fastrpc_user *fl, int fd,
+ 			dev_err(sess->dev,
+ 				"Failed to assign memory with dma_addr %pad size 0x%llx err %d\n",
+ 				&map->dma_addr, map->len, err);
+-			goto map_err;
++			goto get_err;
+ 		}
+ 	}
+ 	spin_lock(&fl->lock);
+-- 
+Armbian
+

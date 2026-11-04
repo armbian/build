@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stanley Jhu <stanleyjhu@google.com>
+Date: Thu, 22 Oct 2026 11:44:41 +0800
+Subject: scsi: ufs: core: Fix double release in ufshcd_eh_timed_out()
+
+In SDB mode, a command that times out during a power management operation
+can be released twice:
+
+ 1. The command times out while its normal completion is running.
+
+ 2. The completion path clears BIT(rq->tag) in hba->outstanding_reqs and
+    releases the command. It has not called scsi_done() yet, so
+    SCMD_STATE_COMPLETE is still clear.
+
+ 3. ufshcd_eh_timed_out() recovers the link, sees SCMD_STATE_COMPLETE
+    clear, clears BIT(rq->tag) in hba->outstanding_reqs without checking
+    whether it was still set, and releases the same command a second time.
+
+Return SCSI_EH_DONE when ufshcd_clear_outstanding_reqs() returns 0, as
+another path has already claimed the command.
+
+Fixes: 01d5e237b339 ("scsi: ufs: core: Handle PM commands timeout before SCSI EH")
+Cc: stable@vger.kernel.org
+Reviewed-by: Peter Wang <peter.wang@mediatek.com>
+Signed-off-by: Stanley Jhu <stanleyjhu@google.com>
+Reviewed-by: Bean Huo <beanhuo@micron.cmo>
+Reviewed-by: Bart Van Assche <bvanassche@acm.org>
+Link: https://patch.msgid.link/20261022034443.3034432-5-stanleyjhu@google.com
+Signed-off-by: Martin K. Petersen (Oracle) <mkp@kernel.org>
+(cherry picked from commit 3a7e551ae4bcc53f271fc15ab8e930598e28dad8)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/ufs/core/ufshcd.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index 111111111111..222222222222 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -9601,12 +9601,10 @@ static enum scsi_timeout_action ufshcd_eh_timed_out(struct scsi_cmnd *scmd)
+ 	 */
+ 	if (!test_bit(SCMD_STATE_COMPLETE, &scmd->state)) {
+ 		if (!hba->mcq_enabled) {
+-			unsigned long flags;
+ 			struct request *rq = scsi_cmd_to_rq(scmd);
+ 
+-			spin_lock_irqsave(&hba->outstanding_lock, flags);
+-			__clear_bit(rq->tag, &hba->outstanding_reqs);
+-			spin_unlock_irqrestore(&hba->outstanding_lock, flags);
++			if (!ufshcd_clear_outstanding_reqs(hba, BIT(rq->tag)))
++				return SCSI_EH_DONE;
+ 		}
+ 
+ 		if (ufshcd_is_scsi_cmd(scmd)) {
+-- 
+Armbian
+

@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Tue, 27 Oct 2026 14:42:13 +0100
+Subject: misc: fastrpc: fix use-after-free of fastrpc_user in dma_buf release
+
+When a process closes its fastrpc device file descriptor, the release
+function drops the fl refcount via fastrpc_user_put(). If that was the
+last reference, fastrpc_user_free() runs immediately and frees fl.
+
+However, any dma_buf exported via fastrpc_dmabuf_alloc() stores a raw
+buf->fl pointer without holding a reference on fl. If the dma_buf
+outlives the device fd (e.g. passed to another process, or simply
+released later via delayed_fput), the dma_buf .release callback fires
+after fl is already freed.
+
+Then accessing the now invalid buf->fl triggers a kernel oops:
+
+Unable to handle kernel paging request at virtual address 000103f6a9025bf5
+  Mem abort info:
+    ESR = 0x0000000096000004
+    EC = 0x25: DABT (current EL), IL = 32 bits
+    FSC = 0x04: level 0 translation fault
+  [000103f6a9025bf5] address between user and kernel address ranges
+  Internal error: Oops: 0000000096000004 [#1] SMP
+  CPU: 0 PID: 74 Comm: kworker/0:3
+  Workqueue: events delayed_fput
+  pc : fastrpc_buf_free+0x34/0x6c [fastrpc]
+  lr : fastrpc_release+0x14/0x20 [fastrpc]
+  x1 : aa0103f6a9025bf5  <- corrupted buf->fl pointer
+
+Fix this by taking a reference to the fastrpc user via fastrpc_user_get(fl)
+before calling dma_buf_export(), and releasing it with fastrpc_user_put(fl)
+in fastrpc_release() once the dma_buf is freed. This mirrors the reference
+management already used by fastrpc_context_alloc/fastrpc_context_free.
+
+Fixes: 35a82b87135d ("misc: fastrpc: Add dma handle implementation")
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261027-fastrpc-fix-v1-1-4610a10a2901@oss.qualcomm.com]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/misc/fastrpc.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+index 111111111111..222222222222 100644
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -794,8 +794,10 @@ static void fastrpc_unmap_dma_buf(struct dma_buf_attachment *attach,
+ static void fastrpc_release(struct dma_buf *dmabuf)
+ {
+ 	struct fastrpc_buf *buffer = dmabuf->priv;
++	struct fastrpc_user *fl = buffer->fl;
+ 
+ 	fastrpc_buf_free(buffer);
++	fastrpc_user_put(fl);
+ }
+ 
+ static int fastrpc_dma_buf_attach(struct dma_buf *dmabuf,
+@@ -1815,10 +1817,12 @@ static int fastrpc_dmabuf_alloc(struct fastrpc_user *fl, char __user *argp)
+ 	exp_info.size = bp.size;
+ 	exp_info.flags = O_RDWR;
+ 	exp_info.priv = buf;
++	fastrpc_user_get(fl);
+ 	buf->dmabuf = dma_buf_export(&exp_info);
+ 	if (IS_ERR(buf->dmabuf)) {
+ 		err = PTR_ERR(buf->dmabuf);
+ 		fastrpc_buf_free(buf);
++		fastrpc_user_put(fl);
+ 		return err;
+ 	}
+ 
+-- 
+Armbian
+
