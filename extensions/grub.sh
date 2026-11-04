@@ -337,6 +337,11 @@ configure_grub() {
 	fi
 
 	display_alert "Extension: ${EXTENSION}: GRUB EFI kernel cmdline" "cmdline '${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	# Menu font of the image, before update-grub sees the screen of the machine.
+	# Desktop images mostly boot on laptops, often HiDPI: start with the 32 px font.
+	declare grub_font="/usr/share/grub/unicode.pf2"
+	[[ "${BUILD_DESKTOP}" == "yes" ]] && grub_font="/usr/share/grub/armbian-hidpi.pf2"
+
 	cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...
@@ -345,7 +350,7 @@ configure_grub() {
 		GRUB_BACKGROUND="/usr/share/images/grub/wallpaper.png"   # Armbian GRUB wallpaper. 05_debian_theme gives GRUB_BACKGROUND precedence over the WALLPAPER sourced from /usr/share/desktop-base/grub_background.sh, so the Armbian image wins even on Debian desktop images where desktop-base ships (and overwrites) that file to point at its own theme wallpaper (Trixie: ceratopsian). Ubuntu already showed the Armbian image; this makes it deterministic on both.
 		GRUB_DISABLE_SUBMENU=y                                   # Do not put all kernel options into a submenu, instead, list them all on the main menu.
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
-		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
+		GRUB_FONT="${grub_font}"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
 		GRUB_GFXPAYLOAD_LINUX=text                               # Note the correct var name is GRUB_GFXPAYLOAD_LINUX, not GRUB_GFXPAYLOAD (the latter is silently ignored). The 'text' value disables Ubuntu's vt.handoff=7 injection: Ubuntu's grub2 10_linux only expands 'vt.handoff=7' inside grub.cfg's gfxmode function when the gfxpayload arg is exactly 'keep'. Setting it to 'text' makes the runtime check fail and the framebuffer console stays bound to fbcon for the entire userspace lifetime — which is what we want, otherwise after Plymouth quits on a CLI install (or after the user uninstalls the desktop), the kernel hands the framebuffer to VT7 waiting for an X server, nothing ever claims it, and the local console goes black even though getty@tty1 is running.
 		GRUB_DISABLE_UUID=false                 # Be explicit about wanting UUID
 		GRUB_DISABLE_LINUX_UUID=false          # Be explicit about wanting UUID
@@ -363,16 +368,23 @@ configure_grub() {
 		grubCfgFragTerminal
 	fi
 
-	# HiDPI panel (2560 px wide or more): use the 32 px font, the default 16 px font is too small.
-	# update-grub decides on each run. The image build skips it: the chroot sees the host's displays.
+	# Menu font by panel: 32 px on a HiDPI panel (2560 px wide or more), else 16 px.
+	# update-grub decides on each run. Without a connected display, the image font stays.
+	# The image build skips it: the chroot sees the host's displays.
 	cat <<- 'grubCfgFragHiDPI' >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		if [ ! -f /etc/default/grub.d/99-armbian-host-side.cfg ] && [ -f /usr/share/grub/armbian-hidpi.pf2 ]; then
+		  _font=
 		  for _status in /sys/class/drm/card*-*/status; do
 		    [ "$(cat "$_status" 2> /dev/null)" = connected ] || continue
 		    read -r _mode < "${_status%/status}/modes" 2> /dev/null || continue
-		    [ "${_mode%%x*}" -ge 2560 ] 2> /dev/null && GRUB_FONT=/usr/share/grub/armbian-hidpi.pf2
+		    if [ "${_mode%%x*}" -ge 2560 ] 2> /dev/null; then
+		      _font=/usr/share/grub/armbian-hidpi.pf2
+		      break
+		    fi
+		    _font=/usr/share/grub/unicode.pf2
 		  done
-		  unset _status _mode
+		  [ -n "$_font" ] && GRUB_FONT="$_font"
+		  unset _status _mode _font
 		fi
 	grubCfgFragHiDPI
 }
