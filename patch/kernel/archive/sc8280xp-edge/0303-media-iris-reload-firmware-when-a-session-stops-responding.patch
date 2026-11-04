@@ -1,0 +1,93 @@
+From 2f1f6ab852f6966227005b23ef0a6b9b0253ec70 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Wed, 4 Nov 2026 21:46:40 +0100
+Subject: [PATCH 303/303] media: iris: reload firmware when a session stops
+ responding
+
+- A session command timing out (e.g. flush at teardown after a client exits at EOS without draining) left the core INIT with a hung firmware: every later open timed out and runtime PM looped on "skip power collapse" until reboot
+- Add iris_core_recover(): mark core and instances ERROR and schedule sys_error_handler (deinit + reinit), as done for HFI_EVENT_SYS_ERROR
+- Trigger it from iris_wait_for_session_response() on the first timeout of a healthy instance; skip if the instance was already in error, so a stale session's close cannot reset the fresh firmware
+- Seen on X13s (Gen1 firmware) after ffmpeg's hevc_v4l2m2m aborts at EOS without DEC_CMD_STOP
+- GStreamer (v4l2h264dec/v4l2h265dec/v4l2vp9dec) drains correctly and decodes full H.264/HEVC/VP9 clips bit-exact vs software; only the ffmpeg client bug triggers the hang
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/media/platform/qcom/iris/iris_core.c  | 24 +++++++++++++++++++
+ drivers/media/platform/qcom/iris/iris_core.h  |  1 +
+ drivers/media/platform/qcom/iris/iris_utils.c |  5 ++++
+ 3 files changed, 30 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_core.c b/drivers/media/platform/qcom/iris/iris_core.c
+index 8c335dbfce166..b2a32628c0f2a 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.c
++++ b/drivers/media/platform/qcom/iris/iris_core.c
+@@ -7,6 +7,7 @@
+ 
+ #include "iris_core.h"
+ #include "iris_firmware.h"
++#include "iris_instance.h"
+ #include "iris_state.h"
+ #include "iris_vpu_common.h"
+ 
+@@ -32,6 +33,29 @@ void iris_core_deinit(struct iris_core *core)
+ 		pm_runtime_put_sync(core->dev);
+ }
+ 
++/*
++ * Recover from a firmware that stopped responding without raising a system
++ * error: fail all instances and reload the firmware, as for HFI_EVENT_SYS_ERROR.
++ */
++void iris_core_recover(struct iris_core *core)
++{
++	struct iris_inst *instance;
++
++	mutex_lock(&core->lock);
++	if (core->state != IRIS_CORE_INIT) {
++		mutex_unlock(&core->lock);
++		return;
++	}
++
++	dev_err(core->dev, "firmware not responding, reloading\n");
++	core->state = IRIS_CORE_ERROR;
++	list_for_each_entry(instance, &core->instances, list)
++		iris_inst_change_state(instance, IRIS_INST_ERROR);
++	mutex_unlock(&core->lock);
++
++	schedule_delayed_work(&core->sys_error_handler, msecs_to_jiffies(10));
++}
++
+ static int iris_wait_for_system_response(struct iris_core *core)
+ {
+ 	int ret;
+diff --git a/drivers/media/platform/qcom/iris/iris_core.h b/drivers/media/platform/qcom/iris/iris_core.h
+index 24da60448cf24..71a8c19409daf 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.h
++++ b/drivers/media/platform/qcom/iris/iris_core.h
+@@ -127,5 +127,6 @@ struct iris_core {
+ 
+ int iris_core_init(struct iris_core *core);
+ void iris_core_deinit(struct iris_core *core);
++void iris_core_recover(struct iris_core *core);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.c b/drivers/media/platform/qcom/iris/iris_utils.c
+index ba5c8dc1280c2..2746b6b2da53a 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.c
++++ b/drivers/media/platform/qcom/iris/iris_utils.c
+@@ -78,7 +78,12 @@ int iris_wait_for_session_response(struct iris_inst *inst, bool is_flush)
+ 	ret = wait_for_completion_timeout(done, msecs_to_jiffies(HW_RESPONSE_TIMEOUT_VALUE));
+ 	mutex_lock(&inst->lock);
+ 	if (!ret) {
++		/* a session already in error may legitimately get no response */
++		bool recover = inst->state != IRIS_INST_ERROR;
++
+ 		iris_inst_change_state(inst, IRIS_INST_ERROR);
++		if (recover)
++			iris_core_recover(inst->core);
+ 		return -ETIMEDOUT;
+ 	}
+ 
+-- 
+2.56.0
+
