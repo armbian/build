@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 4 Nov 2026 11:05:57 +0100
+Subject: drm/msm/dp: filter HPD transitions against the last reported state
+
+The IRQ thread drops a plug or unplug that matches dp->plugged, but that
+flag only changes once the bridge chain has run the plug or unplug
+handler, which happens later from a work item. An unplug followed by a
+plug before that work runs is therefore reported as an unplug only, and
+an unplug and plug folded into one interrupt lose the reconnect. Keep the
+state last sent to the bridge in the IRQ thread, compare the final HPD
+level against it, and force a disconnect first on a replug or a folded
+unplug and plug.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 68 ++++++----
+ 1 file changed, 41 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -56,6 +56,9 @@ struct msm_dp_display_private {
+ 
+ 	struct mutex plugged_lock;
+ 	bool plugged;
++	/* last HPD state sent to the bridge, owned by the IRQ thread */
++	bool hpd_reported;
++	bool hpd_reported_valid;
+ 	/* EDID read at plug time, protected by plugged_lock */
+ 	const struct drm_edid *drm_edid;
+ 	struct work_struct link_bad_work;
+@@ -1060,6 +1063,38 @@ static irqreturn_t msm_dp_display_irq_handler(int irq, void *dev_id)
+ 	return ret;
+ }
+ 
++static void msm_dp_display_report_hpd(struct msm_dp_display_private *dp,
++				      u32 hpd_isr_status)
++{
++	struct drm_bridge *bridge = dp->msm_dp_display.bridge;
++	bool high = msm_dp_aux_is_link_connected(dp->aux) >= ISR_CONNECTED;
++	bool reported;
++
++	if (dp->hpd_reported_valid) {
++		reported = dp->hpd_reported;
++	} else {
++		mutex_lock(&dp->plugged_lock);
++		reported = dp->plugged;
++		mutex_unlock(&dp->plugged_lock);
++	}
++
++	/* A replug, or an unplug and plug folded together, needs a fresh connect */
++	if ((hpd_isr_status & DP_DP_HPD_REPLUG_INT_MASK) ||
++	    ((hpd_isr_status & DP_DP_HPD_UNPLUG_INT_MASK) &&
++	     (hpd_isr_status & DP_DP_HPD_PLUG_INT_MASK))) {
++		if (reported)
++			drm_bridge_hpd_notify(bridge, connector_status_disconnected);
++		reported = false;
++	}
++
++	if (high != reported)
++		drm_bridge_hpd_notify(bridge, high ? connector_status_connected :
++						     connector_status_disconnected);
++
++	dp->hpd_reported = high;
++	dp->hpd_reported_valid = true;
++}
++
+ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ {
+ 	struct msm_dp_display_private *dp = dev_id;
+@@ -1067,39 +1102,15 @@ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ 	irqreturn_t ret = IRQ_NONE;
+ 	unsigned long flags;
+ 	u32 hpd_isr_status;
+-	bool was_plugged;
+ 
+ 	spin_lock_irqsave(&dp->irq_thread_lock, flags);
+ 	hpd_isr_status = dp->hpd_isr_status;
+ 	dp->hpd_isr_status = 0;
+ 	spin_unlock_irqrestore(&dp->irq_thread_lock, flags);
+ 
+-	mutex_lock(&dp->plugged_lock);
+-	was_plugged = dp->plugged;
+-	mutex_unlock(&dp->plugged_lock);
+-
+-	/* notify only on actual state transitions */
+-	if (hpd_isr_status & DP_DP_HPD_UNPLUG_INT_MASK && was_plugged)
+-		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+-				      connector_status_disconnected);
+-
+-	if (hpd_isr_status & DP_DP_HPD_PLUG_INT_MASK && !was_plugged)
+-		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+-				      connector_status_connected);
+-
+-	/*
+-	 * A replug means the sink went away and came back while the controller
+-	 * was left enabled, so its capabilities and its EDID may both differ
+-	 * now. Drive a full disconnect and reconnect to reread them; a bare
+-	 * connected notification would be swallowed as a repeat of the state
+-	 * the connector is already in.
+-	 */
+-	if (hpd_isr_status & DP_DP_HPD_REPLUG_INT_MASK) {
+-		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+-				      connector_status_disconnected);
+-		drm_bridge_hpd_notify(dp->msm_dp_display.bridge,
+-				      connector_status_connected);
+-	}
++	if (hpd_isr_status & (DP_DP_HPD_PLUG_INT_MASK | DP_DP_HPD_UNPLUG_INT_MASK |
++			      DP_DP_HPD_REPLUG_INT_MASK))
++		msm_dp_display_report_hpd(dp, hpd_isr_status);
+ 
+ 	if (hpd_isr_status & DP_DP_IRQ_HPD_INT_MASK) {
+ 		bool port_changed = false;
+@@ -1625,6 +1636,7 @@ void msm_dp_bridge_hpd_enable(struct drm_bridge *bridge)
+ 		return;
+ 	}
+ 
++	dp->hpd_reported_valid = false;
+ 	msm_dp_aux_hpd_enable(dp->aux);
+ 	msm_dp_aux_hpd_intr_enable(dp->aux);
+ }
+@@ -1637,6 +1649,8 @@ void msm_dp_bridge_hpd_disable(struct drm_bridge *bridge)
+ 
+ 	msm_dp_aux_hpd_intr_disable(dp->aux);
+ 	msm_dp_aux_hpd_disable(dp->aux);
++	synchronize_irq(dp->irq);
++	dp->hpd_reported_valid = false;
+ 
+ 	pm_runtime_put_sync(&msm_dp_display->pdev->dev);
+ }
+-- 
+Armbian
+

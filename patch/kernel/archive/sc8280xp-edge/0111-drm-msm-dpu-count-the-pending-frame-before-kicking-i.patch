@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Burch <me@michaelburch.net>
+Date: Tue, 13 Oct 2026 12:27:00 -0500
+Subject: drm/msm/dpu: count the pending frame before kicking it off
+
+dpu_crtc_commit_kickoff() increments frame_pending only after
+dpu_encoder_kickoff() has sent the frame to the hardware. If the frame
+completes before the increment, dpu_crtc_frame_event_work() sees
+frame_pending == 0 and ignores the frame-done event. The increment that
+follows is never matched, so the count stays one too high until
+dpu_crtc_disable() resets it.
+
+With frame_pending stuck at 1 or more:
+
+- dpu_encoder_resource_control(FRAME_DONE) sees a pending count above 1
+  on every frame and never queues delayed_off_work. A video-mode encoder
+  therefore never reaches ENTER_IDLE and keeps its vsync interrupt
+  registered for as long as the display is on.
+- dpu_crtc_frame_event_work() never sees the count drop to zero, so
+  dpu_core_perf_crtc_release_bw() is never called.
+
+On an X1E80100 laptop with a 120 Hz eDP panel this left the vsync
+interrupt firing 120 times a second on an idle desktop: 14,407 vblank
+callbacks against 21 commits in 120 s, with no vblank events requested
+by userspace. Every frame-done took the frame_event_more_pending path
+(591 of 591 in one trace) and the encoder never entered idle. After a
+suspend cycle reset the count, the same desktop showed 3 commits, 3
+frame_event_done, 3 encoder idle transitions and 25 MDSS interrupts in
+60 s.
+
+Until commit ad06972d5365 ("drm/msm/dpu: Reorder encoder kickoff for
+CWB") the increment came before the kickoff. Move it back: count the
+frame in each kickoff path just before its encoders are kicked off. A
+clone-mode commit that fails its encoder lookup is then never counted.
+
+Fixes: ad06972d5365 ("drm/msm/dpu: Reorder encoder kickoff for CWB")
+Cc: stable@vger.kernel.org
+Assisted-by: Copilot:claude-opus-5.5
+Signed-off-by: Michael Burch <me@michaelburch.net>
+[SuperKali: picked from the list, not merged yet, https://lore.kernel.org/r/20261013172703.12273-1-me@michaelburch.net]
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c | 23 +++++++---
+ 1 file changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -1037,6 +1037,19 @@ static int _dpu_crtc_wait_for_frame_done(struct drm_crtc *crtc)
+ 	return rc;
+ }
+ 
++/* Must precede the kickoff: the frame-done can be handled before it returns. */
++static void dpu_crtc_count_pending_frame(struct drm_crtc *crtc)
++{
++	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
++
++	if (atomic_inc_return(&dpu_crtc->frame_pending) == 1) {
++		/* acquire bandwidth and other resources */
++		DRM_DEBUG_ATOMIC("crtc%d first commit\n", crtc->base.id);
++	} else {
++		DRM_DEBUG_ATOMIC("crtc%d commit\n", crtc->base.id);
++	}
++}
++
+ static int dpu_crtc_kickoff_clone_mode(struct drm_crtc *crtc)
+ {
+ 	struct drm_encoder *encoder;
+@@ -1062,6 +1075,8 @@ static int dpu_crtc_kickoff_clone_mode(struct drm_crtc *crtc)
+ 
+ 	dpu_vbif_clear_errors(dpu_kms);
+ 
++	dpu_crtc_count_pending_frame(crtc);
++
+ 	/*
+ 	 * Kickoff real time encoder last as it's the encoder that
+ 	 * will do the flush
+@@ -1119,6 +1134,8 @@ void dpu_crtc_commit_kickoff(struct drm_crtc *crtc)
+ 
+ 		dpu_vbif_clear_errors(dpu_kms);
+ 
++		dpu_crtc_count_pending_frame(crtc);
++
+ 		drm_for_each_encoder_mask(encoder, crtc->dev,
+ 				crtc->state->encoder_mask) {
+ 			dpu_encoder_kickoff(encoder);
+@@ -1126,12 +1143,6 @@ void dpu_crtc_commit_kickoff(struct drm_crtc *crtc)
+ 		}
+ 	}
+ 
+-	if (atomic_inc_return(&dpu_crtc->frame_pending) == 1) {
+-		/* acquire bandwidth and other resources */
+-		DRM_DEBUG_ATOMIC("crtc%d first commit\n", crtc->base.id);
+-	} else
+-		DRM_DEBUG_ATOMIC("crtc%d commit\n", crtc->base.id);
+-
+ 	dpu_crtc->play_count++;
+ 
+ 	reinit_completion(&dpu_crtc->frame_done_comp);
+-- 
+Armbian
+

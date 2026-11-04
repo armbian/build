@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stanley Jhu <stanleyjhu@google.com>
+Date: Thu, 22 Oct 2026 11:44:39 +0800
+Subject: scsi: ufs: core: Add a helper for clearing hba->outstanding_reqs
+
+ufshcd_poll() and ufshcd_abort() each have their own copy of the code that
+clears bits in hba->outstanding_reqs under hba->outstanding_lock.
+
+Move that code into ufshcd_clear_outstanding_reqs() and its locked variant
+__ufshcd_clear_outstanding_reqs(), and use them in both functions. No
+functional change.
+
+Cc: stable@vger.kernel.org
+Link: https://lore.kernel.org/r/3779e125-9acc-42c8-9489-51b9e3c6716d@acm.org
+Suggested-by: Bart Van Assche <bvanassche@acm.org>
+Reviewed-by: Bean Huo <beanhuo@micron.com>
+Reviewed-by: Peter Wang <peter.wang@mediatek.com>
+Signed-off-by: Stanley Jhu <stanleyjhu@google.com>
+Reviewed-by: Bart Van Assche <bvanassche@acm.org>
+Link: https://patch.msgid.link/20261022034443.3034432-3-stanleyjhu@google.com
+Signed-off-by: Martin K. Petersen (Oracle) <mkp@kernel.org>
+(cherry picked from commit 22d14117ec1845a81acb3a5c4be325f7e8332f70)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/ufs/core/ufshcd.c | 48 +++++++---
+ 1 file changed, 36 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index 111111111111..222222222222 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -5997,6 +5997,37 @@ static void ufshcd_clear_polled(struct ufs_hba *hba,
+ 	}
+ }
+ 
++/*
++ * Return a bitmask of the transfer requests cleared from
++ * @hba->outstanding_reqs.
++ */
++static unsigned long __ufshcd_clear_outstanding_reqs(struct ufs_hba *hba,
++						     unsigned long mask,
++						     bool from_irq)
++	__must_hold(&hba->outstanding_lock)
++{
++	unsigned long completed_reqs = mask & hba->outstanding_reqs;
++
++	if (from_irq) {
++		/* Do not complete polled requests from interrupt context. */
++		ufshcd_clear_polled(hba, &completed_reqs);
++	}
++	hba->outstanding_reqs &= ~completed_reqs;
++
++	return completed_reqs;
++}
++
++/*
++ * Return a bitmask of the transfer requests cleared from
++ * @hba->outstanding_reqs.
++ */
++static unsigned long ufshcd_clear_outstanding_reqs(struct ufs_hba *hba,
++						   unsigned long mask)
++{
++	guard(spinlock_irqsave)(&hba->outstanding_lock);
++	return __ufshcd_clear_outstanding_reqs(hba, mask, false);
++}
++
+ /*
+  * Return: > 0 if one or more commands have been completed or 0 if no
+  * requests have been completed.
+@@ -6007,6 +6038,7 @@ static int ufshcd_poll(struct Scsi_Host *shost, unsigned int queue_num)
+ 	unsigned long completed_reqs, flags;
+ 	u32 tr_doorbell;
+ 	struct ufs_hw_queue *hwq;
++	bool from_irq;
+ 
+ 	if (hba->mcq_enabled) {
+ 		hwq = &hba->uhq[queue_num];
+@@ -6016,12 +6048,9 @@ static int ufshcd_poll(struct Scsi_Host *shost, unsigned int queue_num)
+ 
+ 	spin_lock_irqsave(&hba->outstanding_lock, flags);
+ 	tr_doorbell = ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL);
+-	completed_reqs = ~tr_doorbell & hba->outstanding_reqs;
+-	if (queue_num == UFSHCD_POLL_FROM_INTERRUPT_CONTEXT) {
+-		/* Do not complete polled requests from interrupt context. */
+-		ufshcd_clear_polled(hba, &completed_reqs);
+-	}
+-	hba->outstanding_reqs &= ~completed_reqs;
++	from_irq = queue_num == UFSHCD_POLL_FROM_INTERRUPT_CONTEXT;
++	completed_reqs = __ufshcd_clear_outstanding_reqs(hba, ~tr_doorbell,
++							 from_irq);
+ 	spin_unlock_irqrestore(&hba->outstanding_lock, flags);
+ 
+ 	if (completed_reqs)
+@@ -8055,7 +8084,6 @@ static int ufshcd_abort(struct scsi_cmnd *cmd)
+ 	struct ufshcd_lrb *lrbp = scsi_cmd_priv(cmd);
+ 	unsigned long flags;
+ 	int err = FAILED;
+-	bool outstanding;
+ 	u32 reg;
+ 
+ 	ufshcd_hold(hba);
+@@ -8150,11 +8178,7 @@ static int ufshcd_abort(struct scsi_cmnd *cmd)
+ 	 * Clear the corresponding bit from outstanding_reqs since the command
+ 	 * has been aborted successfully.
+ 	 */
+-	spin_lock_irqsave(&hba->outstanding_lock, flags);
+-	outstanding = __test_and_clear_bit(tag, &hba->outstanding_reqs);
+-	spin_unlock_irqrestore(&hba->outstanding_lock, flags);
+-
+-	if (outstanding)
++	if (ufshcd_clear_outstanding_reqs(hba, BIT(tag)))
+ 		ufshcd_release_scsi_cmd(hba, cmd);
+ 
+ 	err = SUCCESS;
+-- 
+Armbian
+

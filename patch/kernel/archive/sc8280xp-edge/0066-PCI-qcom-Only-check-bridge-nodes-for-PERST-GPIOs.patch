@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Christopher Obbard <chris.obbard@oss.qualcomm.com>
+Date: Sat, 29 Aug 2026 11:36:00 +0100
+Subject: PCI: qcom: Only check bridge nodes for PERST# GPIOs
+
+qcom_pcie_parse_perst() walks the PCIe hierarchy described in the device
+tree below its Root Port and collects the PERST# GPIOs from each bridge
+node so all PERST# lines can be driven in unison during controller
+bring-up, reset and power sequencing.
+
+However, the recursive device tree walk currently visits every available
+child node without checking that it is a PCI bridge. This allows the walk
+to leave the PCI hierarchy and collect reset lines from children of PCI
+Endpoint nodes, where those reset lines belong to other drivers.
+
+This is reproducible on the Qualcomm RB3Gen2, where a Renesas uPD720201
+USB host controller sits behind a PCIe switch downstream port. A Genesys
+GL3590 USB hub connected to that controller is described as a child of
+the PCI endpoint:
+
+	pcie@2,0 {
+		device_type = "pci";
+
+		usb-controller@0,0 {
+			compatible = "pci1912,0014";
+
+			hub@1 {
+				compatible = "usb5e3,610";
+				reset-gpios = <&tlmm 162 GPIO_ACTIVE_HIGH>;
+			};
+		};
+	};
+
+The USB controller is a PCI Endpoint, and not a bridge, but the PERST#
+walk descends through it and incorrectly claims the hub's reset GPIO:
+
+	$ gpioinfo
+	line 162: unnamed output consumer=PERST#
+
+As a result, the onboard-usb-dev driver cannot acquire its reset GPIO
+during probe:
+
+	onboard-usb-dev 1c08000.pcie:...:usb-controller@0,0:hub@1: \
+	  error -EBUSY: failed to get reset GPIO
+	onboard-usb-dev 1c08000.pcie:...:usb-controller@0,0:hub@1: \
+	  probe with driver onboard-usb-dev failed with error -16
+
+The GPIO is also added to the root port's PERST# list and is asserted
+and deasserted as part of PCIe reset sequencing. On the RB3Gen2 this
+causes the USB hub to repeatedly re-enumerate:
+
+	[  116.479598] hub 2-1:1.0: USB hub found
+	[  116.488601] hub 2-1:1.0: USB hub found
+	[  116.496971] hub 2-1:1.0: USB hub found
+	...
+
+This disrupts the hub and devices connected to it.
+
+Restrict the recursive walk to children with device_type "pci", so
+PERST# GPIOs are collected only from PCI bridge nodes and the walk
+does not descend through endpoints.
+
+qocm_pcie_parse_ports() has made the same distinction since
+commit 45df22935bdc ("PCI: qcom: Restrict port parsing only to PCIe
+bridge child nodes"), but the PERST# walk added later did not carry over
+that check.
+
+This bug is distinct from commit 3edb3a038d42 ("PCI: qcom: Skip PERST#
+GPIOs provided by downstream PCIe devices"), which filters PERST# GPIOs
+based on their provider. Here the GPIO is provided by the SoC TLMM; the
+bug is that reset-gpios is consumed from a non-bridge node at all.
+
+Fixes: 2fd60a2edb83 ("PCI: qcom: Parse PERST# from all PCIe bridge nodes")
+Signed-off-by: Christopher Obbard <chris.obbard@oss.qualcomm.com>
+Signed-off-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Reviewed-by: Krishna Chaitanya Chundru <krishna.chundru@oss.qualcomm.com>
+Cc: stable@vger.kernel.org
+Link: https://patch.msgid.link/20260829-wip-obbardc-drivers-pcie-qcom-rb3gen2-usb-fix-v1-1-337821131a99@oss.qualcomm.com
+(cherry picked from commit 1b3b0bc2b3672e928e06997444528f8797579eb2)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-qcom.c b/drivers/pci/controller/dwc/pcie-qcom.c
+index 111111111111..222222222222 100644
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -1954,7 +1954,7 @@ static bool qcom_pcie_is_child_node(struct device *dev,
+ 	return false;
+ }
+ 
+-/* Parse PERST# from all nodes in depth first manner starting from @np */
++/* Collect PERST# GPIOs from PCI bridge nodes depth-first, starting at @np */
+ static int qcom_pcie_parse_perst(struct qcom_pcie *pcie,
+ 				 struct qcom_pcie_port *port,
+ 				 struct device_node *np)
+@@ -2020,6 +2020,9 @@ static int qcom_pcie_parse_perst(struct qcom_pcie *pcie,
+ 
+ parse_child_node:
+ 	for_each_available_child_of_node_scoped(np, child) {
++		if (!of_node_is_type(child, "pci"))
++			continue;
++
+ 		ret = qcom_pcie_parse_perst(pcie, port, child);
+ 		if (ret)
+ 			return ret;
+-- 
+Armbian
+

@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Fri, 16 Oct 2026 21:46:08 +0900
+Subject: scsi: ufs: core: Fix a deadlock between clock scaling and device
+ commands
+
+Since commit 08b12cda6c44 ("scsi: ufs: core: Switch to
+scsi_get_internal_cmd()"), device management commands go through
+blk_execute_rq() on the pseudo SCSI device, which shares the tagset with
+the logical units, while ufshcd_dev_man_lock() holds clk_scaling_lock for
+reading.
+
+ufshcd_clock_scaling_prepare() and ufshcd_pause_command_processing()
+quiesce the tagset before taking clk_scaling_lock for writing. A device
+management command holding the lock for reading at that point is never
+dispatched and never times out, so the writer waits forever with all
+logical units quiesced. On a Lenovo Legion Tab Y700 Gen 5 this ended in a
+hung task panic.
+
+Take clk_scaling_lock before quiescing the tagset, and in
+ufshcd_clock_scaling_prepare() also wb_mutex, which is always taken before
+clk_scaling_lock. Release them in the reverse order. Commit b52d695d0620
+("scsi: ufs: core: Keep internal commands dispatchable during error
+handling") fixed the same problem in the error handler.
+
+Fixes: 08b12cda6c44 ("scsi: ufs: core: Switch to scsi_get_internal_cmd()")
+Fixes: dc5dcac53278 ("scsi: ufs: core: Add helpers to pause and resume command processing")
+Cc: stable@vger.kernel.org
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+Reviewed-by: Peter Wang <peter.wang@mediatek.com>
+Link: https://patch.msgid.link/20261016124608.46-1-26rote@gmail.com
+Signed-off-by: Martin K. Petersen (Oracle) <mkp@kernel.org>
+(cherry picked from commit 2327df6d2a290af62a6da21b2ad301848bb86002)
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/ufs/core/ufshcd.c | 12 +++++-----
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/ufs/core/ufshcd.c b/drivers/ufs/core/ufshcd.c
+index 111111111111..222222222222 100644
+--- a/drivers/ufs/core/ufshcd.c
++++ b/drivers/ufs/core/ufshcd.c
+@@ -1360,13 +1360,13 @@ int ufshcd_pause_command_processing(struct ufs_hba *hba, u64 timeout_us)
+ 	int ret = 0;
+ 
+ 	mutex_lock(&hba->host->scan_mutex);
+-	blk_mq_quiesce_tagset(&hba->host->tag_set);
+ 	down_write(&hba->clk_scaling_lock);
++	blk_mq_quiesce_tagset(&hba->host->tag_set);
+ 
+ 	if (ufshcd_wait_for_pending_cmds(hba, timeout_us)) {
+ 		ret = -EBUSY;
+-		up_write(&hba->clk_scaling_lock);
+ 		blk_mq_unquiesce_tagset(&hba->host->tag_set);
++		up_write(&hba->clk_scaling_lock);
+ 		mutex_unlock(&hba->host->scan_mutex);
+ 	}
+ 
+@@ -1383,8 +1383,8 @@ void ufshcd_resume_command_processing(struct ufs_hba *hba)
+ 	__releases(&hba->clk_scaling_lock)
+ 	__releases(&hba->host->scan_mutex)
+ {
+-	up_write(&hba->clk_scaling_lock);
+ 	blk_mq_unquiesce_tagset(&hba->host->tag_set);
++	up_write(&hba->clk_scaling_lock);
+ 	mutex_unlock(&hba->host->scan_mutex);
+ }
+ 
+@@ -1461,16 +1461,16 @@ static int ufshcd_clock_scaling_prepare(struct ufs_hba *hba, u64 timeout_us)
+ 	 * clock scaling is in progress
+ 	 */
+ 	mutex_lock(&hba->host->scan_mutex);
+-	blk_mq_quiesce_tagset(&hba->host->tag_set);
+ 	mutex_lock(&hba->wb_mutex);
+ 	down_write(&hba->clk_scaling_lock);
++	blk_mq_quiesce_tagset(&hba->host->tag_set);
+ 
+ 	if (!hba->clk_scaling.is_allowed ||
+ 	    ufshcd_wait_for_pending_cmds(hba, timeout_us)) {
+ 		ret = -EBUSY;
++		blk_mq_unquiesce_tagset(&hba->host->tag_set);
+ 		up_write(&hba->clk_scaling_lock);
+ 		mutex_unlock(&hba->wb_mutex);
+-		blk_mq_unquiesce_tagset(&hba->host->tag_set);
+ 		mutex_unlock(&hba->host->scan_mutex);
+ 		goto out;
+ 	}
+@@ -1487,9 +1487,9 @@ static void ufshcd_clock_scaling_unprepare(struct ufs_hba *hba, int err)
+ 	__releases(&hba->wb_mutex)
+ 	__releases(&hba->host->scan_mutex)
+ {
++	blk_mq_unquiesce_tagset(&hba->host->tag_set);
+ 	up_write(&hba->clk_scaling_lock);
+ 	mutex_unlock(&hba->wb_mutex);
+-	blk_mq_unquiesce_tagset(&hba->host->tag_set);
+ 	mutex_unlock(&hba->host->scan_mutex);
+ 
+ 	/* Enable Write Booster if current gear requires it else disable it */
+-- 
+Armbian
+
