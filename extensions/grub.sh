@@ -309,12 +309,17 @@ configure_grub() {
 	#      verbose/text theme", so a desktop installed later still
 	#      booted to a black/text screen.
 	#
-	# Deliberately NO 'quiet' and NO 'loglevel=3' here. Plymouth
-	# still draws the splash on top of the kernel boot messages,
-	# but the messages remain visible underneath so users can see
-	# what their system is doing. Press Esc during boot to drop
-	# the splash and read the messages directly.
+	# CLI images: NO 'quiet' and NO 'loglevel=3'. Plymouth still
+	# draws the splash on top of the kernel boot messages, but the
+	# messages remain visible underneath so users can see what their
+	# system is doing. Press Esc during boot to drop the splash and
+	# read the messages directly.
+	# Desktop images: a clean splash from GRUB to the desktop. No
+	# messages and no cursor; Esc still shows the boot log.
 	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles"
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet loglevel=3 vt.global_cursor_default=0"
+	fi
 	if [[ "${ARCH}" == "amd64" ]]; then
 		GRUB_CMDLINE_LINUX_DEFAULT+=" i915.force_probe=*"
 	fi
