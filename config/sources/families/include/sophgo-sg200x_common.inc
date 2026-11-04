@@ -43,7 +43,7 @@ declare -g KERNELPATCHDIR="archive/sophgo-sg200x-${KERNEL_MAJOR_MINOR}" # Don't 
 # Wi-Fi comes from the sophgo-sg200x-aic8800 extension.
 declare -g EXTRAWIFI="no"
 
-declare -g OVERLAY_PREFIX="sg2000"
+declare -g OVERLAY_PREFIX="${OVERLAY_PREFIX:-"sg2000"}"
 
 # ---------------------------------------------------------------------------
 # Bootloader sources

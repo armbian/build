@@ -399,6 +399,13 @@ function do_main_configuration() {
 	POST_FAMILY_CONFIG_PER_BRANCH
 	track_general_config_variables "after post_family_config_branch hooks"
 
+	# Put the board overlay prefixes (OVERLAY_PREFIX_BOARD) before the family prefixes.
+	# A prefix that matches no overlay in the kernel of the current BRANCH does no harm.
+	if [[ -n "${OVERLAY_PREFIX_BOARD}" ]]; then
+		declare -g OVERLAY_PREFIX="${OVERLAY_PREFIX_BOARD}${OVERLAY_PREFIX:+ ${OVERLAY_PREFIX}}"
+		display_alert "Overlay prefixes" "OVERLAY_PREFIX='${OVERLAY_PREFIX}'" "debug"
+	fi
+
 	# Lets make some variables readonly.
 	# We don't want anything changing them, it's exclusively for family config.
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
