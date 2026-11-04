@@ -131,6 +131,7 @@ remove_older_versions() {
 	done < <(aptly repo show -with-packages -config="${CONFIG}" "$component" 2>/dev/null | tail -n +7)
 
 	local keep old
+	local -a to_remove=()
 	for key in "${!versions[@]}"; do
 		# One version: nothing to remove (most packages; saves a sort per package)
 		[[ "${versions[$key]}" == *$'\n'*$'\n'* ]] || continue
@@ -142,8 +143,14 @@ remove_older_versions() {
 			[[ -z "$old" ]] && continue
 			echo "[-] REMOVE older: ${name}_${old}_${arch}"
 			log "Removing older ${name}_${old}_${arch} from $component (keep $keep)"
-			run_aptly repo remove -config="${CONFIG}" "${component}" "${name}_${old}_${arch}"
+			to_remove+=("${name}_${old}_${arch}")
 		done < <(printf '%s' "${versions[$key]}" | sort -u | sort_debian_versions | tail -n "+$((keep + 1))")
+	done
+
+	# Batches of 500 keep the command line short
+	local i
+	for ((i = 0; i < ${#to_remove[@]}; i += 500)); do
+		run_aptly repo remove -config="${CONFIG}" "${component}" "${to_remove[@]:i:500}"
 	done
 }
 
@@ -942,10 +949,6 @@ do
       shift
       ;;
     -K | --kernels )
-      if [[ ! "$2" =~ ^[1-9][0-9]*$ ]]; then
-        echo "Error: --kernels needs a number of 1 or more" >&2
-        exit 1
-      fi
       KERNEL_VERSIONS_TO_KEEP="$2"
       shift 2
       ;;
@@ -968,6 +971,12 @@ do
       ;;
   esac
 done
+
+# 0 or a non-number would remove every kernel version
+if [[ ! "$KERNEL_VERSIONS_TO_KEEP" =~ ^[1-9][0-9]{0,3}$ ]]; then
+	echo "Error: --kernels or KERNEL_VERSIONS_TO_KEEP needs a number from 1 to 9999 (got '${KERNEL_VERSIONS_TO_KEEP}')" >&2
+	exit 1
+fi
 
 # redefine output folder in Aptly
 TempDir="$(mktemp -d || exit 1)"
