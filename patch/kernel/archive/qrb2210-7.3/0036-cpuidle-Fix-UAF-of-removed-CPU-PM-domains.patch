@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Tue, 20 Oct 2026 16:22:18 +0200
+Subject: cpuidle: Fix UAF of removed CPU PM domains
+
+psci_pd_remove() and sbi_pd_remove() release the generic_pm_domain as
+soon as of_genpd_remove_last() hands it back. That object embeds a
+struct device, and other code may still hold a reference to it at
+that point.
+
+of_genpd_add_provider_simple() publishes &genpd->dev as the owner of
+the provider DT node, so fw_devlink turns every "power-domains"
+phandle pointing at that node into a device link and takes a
+reference on the supplier. of_genpd_del_provider() drops those links,
+but devlink_dev_release() only queues the final put_device() on
+device_link_wq, because tearing a link down needs an SRCU grace
+period. The genpd kfree() therefore runs while that reference is
+still outstanding, and the queued kobject_put() later reads the
+kobject out of freed memory.
+
+On a Arduino Uno-Q board the PSCI domain probe defers once, which runs
+the cleanup path on every boot:
+
+  CPUidle PSCI: failed to create CPU PM domains ret=-517
+
+  BUG: KASAN: slab-use-after-free in kobject_put+0x3ec/0x484
+  Read of size 1 at addr ffff0000c152603c by task kworker/0:1/11
+  Workqueue: device_link_wq device_link_release_fn
+  Call trace:
+   kobject_put+0x3ec/0x484
+   device_link_release_fn+0xa4/0x1bc
+   process_one_work+0x7d8/0x1be4
+  Allocated by task 1:
+   dt_idle_pd_alloc+0xbc/0x4d8
+   psci_cpuidle_domain_probe+0xb0/0x574
+  Freed by task 1:
+   kfree+0x250/0x5cc
+   psci_cpuidle_domain_probe+0x2a8/0x574
+
+Flush device_link_wq with device_link_wait_removal() before the
+kfree(), so that the outstanding references are dropped while the
+domain is still alive.
+
+Fixes: 3b7b8acacf37 ("pmdomain: core: Add common ->sync_state() support for genpd providers")
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+(cherry picked from commit 8c6a4002075f4caa4b4d1c97dedbce668d04ff8e)
+---
+ drivers/cpuidle/cpuidle-psci-domain.c | 13 +++++++++-
+ drivers/cpuidle/cpuidle-riscv-sbi.c   | 13 +++++++++-
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/cpuidle/cpuidle-psci-domain.c b/drivers/cpuidle/cpuidle-psci-domain.c
+index 111111111111..222222222222 100644
+--- a/drivers/cpuidle/cpuidle-psci-domain.c
++++ b/drivers/cpuidle/cpuidle-psci-domain.c
+@@ -113,8 +113,19 @@ static void psci_pd_remove(void)
+ 		of_genpd_del_provider(pd_provider->node);
+ 
+ 		genpd = of_genpd_remove_last(pd_provider->node);
+-		if (!IS_ERR(genpd))
++		if (!IS_ERR(genpd)) {
++			/*
++			 * The lifetime of @genpd is under our control.
++			 * However, it embeds a refcounted struct device that
++			 * may still be referenced by consumers. fw_devlink
++			 * consumers release their references asynchronously
++			 * via device_link_wq, so flush that work before
++			 * freeing the domain. Otherwise, a pending
++			 * kobject_put() may access freed memory.
++			 */
++			device_link_wait_removal();
+ 			kfree(genpd);
++		}
+ 
+ 		of_node_put(pd_provider->node);
+ 		list_del(&pd_provider->link);
+diff --git a/drivers/cpuidle/cpuidle-riscv-sbi.c b/drivers/cpuidle/cpuidle-riscv-sbi.c
+index 111111111111..222222222222 100644
+--- a/drivers/cpuidle/cpuidle-riscv-sbi.c
++++ b/drivers/cpuidle/cpuidle-riscv-sbi.c
+@@ -429,8 +429,19 @@ static void sbi_pd_remove(void)
+ 		of_genpd_del_provider(pd_provider->node);
+ 
+ 		genpd = of_genpd_remove_last(pd_provider->node);
+-		if (!IS_ERR(genpd))
++		if (!IS_ERR(genpd)) {
++			/*
++			 * The lifetime of @genpd is under our control.
++			 * However, it embeds a refcounted struct device that
++			 * may still be referenced by consumers. fw_devlink
++			 * consumers release their references asynchronously
++			 * via device_link_wq, so flush that work before
++			 * freeing the domain. Otherwise, a pending
++			 * kobject_put() may access freed memory.
++			 */
++			device_link_wait_removal();
+ 			kfree(genpd);
++		}
+ 
+ 		of_node_put(pd_provider->node);
+ 		list_del(&pd_provider->link);
+-- 
+Armbian
+

@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Thu, 15 Oct 2026 16:26:02 +0200
+Subject: block: implement NVMEM provider
+
+On embedded devices using an eMMC it is common that one or more partitions
+on the eMMC are used to store MAC addresses and Wi-Fi calibration EEPROM
+data. Allow referencing the partition in device tree for the kernel and
+Wi-Fi drivers accessing it via the NVMEM layer.
+
+NVMEM is registered for a block device whose OF node describes an NVMEM
+layout, either via an "nvmem-layout" child or by being a "fixed-layout"
+node itself (e.g. an eMMC boot partition associated through its mmc-card
+node).
+
+The NVMEM device is a read-only side channel onto a block device.
+Each read opens the block device with BLK_OPEN_EXCL to keep other
+exclusive openers away for the duration of the access.
+
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+(cherry picked from commit 5ddbf2cd8a125cef07c27da18b97c69200a253b4)
+---
+ block/Kconfig             |  11 +
+ block/Makefile            |   1 +
+ block/blk-nvmem.c         | 112 ++++++++++
+ block/blk.h               |   8 +
+ block/genhd.c             |   4 +
+ block/partitions/core.c   |   5 +
+ include/linux/blk_types.h |   4 +
+ 7 files changed, 145 insertions(+)
+
+diff --git a/block/Kconfig b/block/Kconfig
+index 111111111111..222222222222 100644
+--- a/block/Kconfig
++++ b/block/Kconfig
+@@ -209,6 +209,17 @@ config BLK_INLINE_ENCRYPTION_FALLBACK
+ 	  by falling back to the kernel crypto API when inline
+ 	  encryption hardware is not present.
+ 
++config BLK_NVMEM
++	bool "Block device NVMEM provider"
++	depends on OF
++	depends on NVMEM
++	help
++	  Allow block devices (or partitions) to act as NVMEM providers,
++	  exposing factory-provisioned data such as MAC addresses or Wi-Fi
++	  calibration blobs to the drivers that consume them. This is
++	  typically used on embedded devices where such data is stored in a
++	  dedicated area of an eMMC, instead of a separate EEPROM or OTP.
++
+ source "block/partitions/Kconfig"
+ 
+ config BLK_PM
+diff --git a/block/Makefile b/block/Makefile
+index 111111111111..222222222222 100644
+--- a/block/Makefile
++++ b/block/Makefile
+@@ -39,3 +39,4 @@ obj-$(CONFIG_BLK_INLINE_ENCRYPTION)	+= blk-crypto.o blk-crypto-profile.o \
+ 					   blk-crypto-sysfs.o
+ obj-$(CONFIG_BLK_INLINE_ENCRYPTION_FALLBACK)	+= blk-crypto-fallback.o
+ obj-$(CONFIG_BLOCK_HOLDER_DEPRECATED)	+= holder.o
++obj-$(CONFIG_BLK_NVMEM)                += blk-nvmem.o
+diff --git a/block/blk-nvmem.c b/block/blk-nvmem.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/block/blk-nvmem.c
+@@ -0,0 +1,112 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * block device NVMEM provider
++ *
++ * Copyright (c) 2024 Daniel Golle <daniel@makrotopia.org>
++ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++ *
++ * Useful on devices using a whole disk or a partition (e.g. an eMMC boot
++ * partition) to store MAC addresses, Bluetooth addresses or Wi-Fi
++ * calibration EEPROM data.
++ *
++ * The NVMEM device is a side channel onto a block device that stays fully
++ * usable. This is somewhat mitigated by opening the device exclusively.
++ */
++
++#include <linux/device.h>
++#include <linux/file.h>
++#include <linux/fs.h>
++#include <linux/nvmem-provider.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/of.h>
++#include <linux/property.h>
++
++#include "blk.h"
++
++static int blk_nvmem_reg_read(void *priv, unsigned int from,
++			      void *val, size_t bytes)
++{
++	struct block_device *bdev = priv;
++	struct file *bdev_file;
++	loff_t pos = from;
++	ssize_t ret;
++
++	/* open and prevent other exclusive openers */
++	bdev_file = bdev_file_open_by_dev(bdev->bd_dev,
++					  BLK_OPEN_READ | BLK_OPEN_EXCL,
++					  blk_nvmem_reg_read, NULL);
++	if (IS_ERR(bdev_file))
++		return PTR_ERR(bdev_file);
++
++	if (file_bdev(bdev_file) != bdev) {
++		fput(bdev_file);
++		return -ENODEV;
++	}
++
++	ret = kernel_read(bdev_file, val, bytes, &pos);
++	fput(bdev_file);
++
++	if (ret < 0)
++		return ret;
++	if (ret != bytes)
++		return -EIO;
++	return 0;
++}
++
++int blk_nvmem_add(struct block_device *bdev)
++{
++	struct device *dev = &bdev->bd_device;
++	struct device_node *np = dev_of_node(dev);
++	struct nvmem_config config = {
++		.id		= NVMEM_DEVID_NONE,
++		.owner		= THIS_MODULE,
++		.word_size	= 1,
++		.stride		= 1,
++		.read_only	= true,
++		.root_only	= true,
++		.ignore_wp	= true,
++	};
++	struct nvmem_device *nvmem;
++	struct device_node *child;
++
++	/* skip devices which do not have a device tree node */
++	if (!np)
++		return 0;
++
++	/*
++	 * The layout is described either by an "nvmem-layout" child node or
++	 * by the device node itself being a "fixed-layout" container.
++	 */
++	child = of_get_child_by_name(np, "nvmem-layout");
++	if (child)
++		of_node_put(child);
++	else if (!of_device_is_compatible(np, "fixed-layout"))
++		return 0;
++
++	if (bdev_nr_bytes(bdev) > INT_MAX) {
++		dev_warn(dev, "block device too large to be an NVMEM\n");
++		return 0;
++	}
++
++	config.dev = dev;
++	config.name = dev_name(dev);
++	config.priv = bdev;
++	config.reg_read = blk_nvmem_reg_read;
++	config.size = bdev_nr_bytes(bdev);
++	config.of_node = np;
++
++	nvmem = nvmem_register(&config);
++	if (IS_ERR(nvmem))
++		return dev_err_probe(dev, PTR_ERR(nvmem),
++				     "Failed to register NVMEM device\n");
++
++	bdev->bd_nvmem = nvmem;
++
++	return 0;
++}
++
++void blk_nvmem_del(struct block_device *bdev)
++{
++	nvmem_unregister(bdev->bd_nvmem);
++	bdev->bd_nvmem = NULL;
++}
+diff --git a/block/blk.h b/block/blk.h
+index 111111111111..222222222222 100644
+--- a/block/blk.h
++++ b/block/blk.h
+@@ -817,4 +817,12 @@ static inline void blk_debugfs_unlock(struct request_queue *q,
+ 	memalloc_noio_restore(memflags);
+ }
+ 
++#ifdef CONFIG_BLK_NVMEM
++int blk_nvmem_add(struct block_device *bdev);
++void blk_nvmem_del(struct block_device *bdev);
++#else
++static inline int blk_nvmem_add(struct block_device *bdev) { return 0; }
++static inline void blk_nvmem_del(struct block_device *bdev) {}
++#endif
++
+ #endif /* BLK_INTERNAL_H */
+diff --git a/block/genhd.c b/block/genhd.c
+index 111111111111..222222222222 100644
+--- a/block/genhd.c
++++ b/block/genhd.c
+@@ -417,6 +417,8 @@ static void add_disk_final(struct gendisk *disk)
+ 		 */
+ 		dev_set_uevent_suppress(ddev, 0);
+ 		disk_uevent(disk, KOBJ_ADD);
++
++		blk_nvmem_add(disk->part0);
+ 	}
+ 
+ 	blk_apply_bdi_limits(disk->bdi, &disk->queue->limits);
+@@ -708,6 +710,8 @@ static void __del_gendisk(struct gendisk *disk)
+ 
+ 	disk_del_events(disk);
+ 
++	blk_nvmem_del(disk->part0);
++
+ 	/*
+ 	 * Prevent new openers by unlinked the bdev inode.
+ 	 */
+diff --git a/block/partitions/core.c b/block/partitions/core.c
+index 111111111111..222222222222 100644
+--- a/block/partitions/core.c
++++ b/block/partitions/core.c
+@@ -289,6 +289,8 @@ void drop_partition(struct block_device *part)
+ 	xa_erase(&part->bd_disk->part_tbl, bdev_partno(part));
+ 	kobject_put(part->bd_holder_dir);
+ 
++	blk_nvmem_del(part);
++
+ 	device_del(&part->bd_device);
+ 	put_device(&part->bd_device);
+ }
+@@ -406,6 +408,9 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
+ 	/* suppress uevent if the disk suppresses it */
+ 	if (!dev_get_uevent_suppress(ddev))
+ 		kobject_uevent(&pdev->kobj, KOBJ_ADD);
++
++	blk_nvmem_add(bdev);
++
+ 	return bdev;
+ 
+ out_del:
+diff --git a/include/linux/blk_types.h b/include/linux/blk_types.h
+index 111111111111..222222222222 100644
+--- a/include/linux/blk_types.h
++++ b/include/linux/blk_types.h
+@@ -15,6 +15,7 @@
+ struct bio_set;
+ struct bio;
+ struct bio_integrity_payload;
++struct nvmem_device;
+ struct page;
+ struct io_context;
+ struct cgroup_subsys_state;
+@@ -73,6 +74,9 @@ struct block_device {
+ 	int			bd_writers;
+ #ifdef CONFIG_SECURITY
+ 	void			*bd_security;
++#endif
++#ifdef CONFIG_BLK_NVMEM
++	struct nvmem_device	*bd_nvmem;
+ #endif
+ 	/*
+ 	 * keep this out-of-line as it's both big and not needed in the fast
+-- 
+Armbian
+
