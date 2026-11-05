@@ -123,6 +123,8 @@ function artifact_uboot_prepare_version() {
 	[[ -n "${BOOTLOADER_BOOTS_FROM:-}" ]] && vars_to_hash+=("${BOOTLOADER_BOOTS_FROM}")
 	# SPI images for armbian-install: default, and for a SATA install target.
 	[[ -n "${BOOTLOADER_MTD_IMAGE:-}" ]] && vars_to_hash+=("${BOOTLOADER_MTD_IMAGE}" "${BOOTLOADER_MTD_IMAGE_SATA:-}")
+	# Space reserved before the first partition, shipped as BOOTLOADER_RESERVED_MIB in platform_install.sh.
+	[[ -n "${OFFSET:-}" ]] && vars_to_hash+=("${OFFSET}")
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
 	declare vars_config_hash="${hash_variables}"
