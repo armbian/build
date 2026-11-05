@@ -33,6 +33,19 @@ function write_build_resolv_conf() {
 }
 
 # called by artifact-rootfs::artifact_rootfs_prepare_version()
+# Set CONFIGNG_DESKTOPS_HASH to the commit of configng main on the remote.
+# Desktop builds install armbian-config from this commit
+# (overlay_armbian_config_from_git), so the rootfs cache key and the
+# content always match. A remote lookup gives the same key in every build
+# path; the local clone is not fetched in all of them.
+function calculate_configng_desktops_hash() {
+	[[ -n "${CONFIGNG_DESKTOPS_HASH:-}" ]] && return 0
+	declare -A GIT_INFO_CONFIGNG=([GIT_SOURCE]="https://github.com/armbian/configng" [GIT_REF]="branch:main")
+	run_memoized GIT_INFO_CONFIGNG "git2info" memoized_git_ref_to_info
+	[[ "${GIT_INFO_CONFIGNG[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_CONFIGNG[SHA1]}'"
+	declare -g CONFIGNG_DESKTOPS_HASH="${GIT_INFO_CONFIGNG[SHA1]}"
+}
+
 function calculate_rootfs_cache_id() {
 	# Validate that AGGREGATED_ROOTFS_HASH is set
 	[[ -z "${AGGREGATED_ROOTFS_HASH}" ]] && exit_with_error "AGGREGATED_ROOTFS_HASH is not set at calculate_rootfs_cache_id()"
@@ -86,19 +99,14 @@ function calculate_rootfs_cache_id() {
 	# armbian-config at build time, so configng content doesn't
 	# affect their rootfs.
 	#
-	# CONFIGNG_DESKTOPS_HASH is set by artifact_rootfs_config_dump
-	# above from `git log -1 -- tools/modules/desktops/` in the
-	# cache/sources/armbian-configng clone. 8-char prefix keeps
+	# CONFIGNG_DESKTOPS_HASH is the commit of configng main.
+	# 8-char prefix keeps
 	# the filename readable while still giving us ~2^32 of
 	# collision resistance — same truncation style the rest of
 	# this file uses for the hash_hooks/bash_hash components.
 	if [[ ${BUILD_DESKTOP} == yes ]]; then
-		declare _configng_fp="${artifact_input_variables[CONFIGNG_DESKTOPS_HASH]:-}"
-		if [[ -n "${_configng_fp}" &&
-			"${_configng_fp}" != "undetermined" &&
-			"${_configng_fp}" != "unknown" ]]; then
-			cache_type="${cache_type}-${_configng_fp:0:8}"
-		fi
+		calculate_configng_desktops_hash
+		cache_type="${cache_type}-${CONFIGNG_DESKTOPS_HASH:0:8}"
 	fi
 
 	# allow extensions to modify cache_type, since they may have used add_packages_to_rootfs() or remove_packages()

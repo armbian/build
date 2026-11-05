@@ -7,6 +7,30 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# The apt armbian-config can lag behind configng git. The rootfs cache key
+# (CONFIGNG_DESKTOPS_HASH) names a git commit, so install that commit.
+# Same file layout as the .deb: config-assemble.sh -p, then debian.conf.
+function overlay_armbian_config_from_git() {
+	calculate_configng_desktops_hash
+	fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "commit:${CONFIGNG_DESKTOPS_HASH}"
+
+	declare configng_dir="${SRC}/cache/sources/armbian-configng"
+	declare configng_tmp src dest
+	configng_tmp="$(mktemp -d)"
+
+	display_alert "Overlaying armbian-config from configng git" "${CONFIGNG_DESKTOPS_HASH:0:8}" "info"
+	run_host_command_logged git -C "${configng_dir}" archive "${CONFIGNG_DESKTOPS_HASH}" "|" tar -x -C "${configng_tmp}"
+	run_host_command_logged bash "${configng_tmp}/tools/config-assemble.sh" -p
+
+	while IFS=: read -r src dest; do
+		[[ -n "${src}" && -n "${dest}" ]] || continue
+		run_host_command_logged mkdir -p "${SDCARD}/${dest}"
+		run_host_command_logged cp -R "${configng_tmp}/${src}" "${SDCARD}/${dest}"
+	done < "${configng_tmp}/debian.conf"
+
+	rm -rf "${configng_tmp}"
+}
+
 function create_new_rootfs_cache_tarball() {
 	# validate cache_fname is set
 	[[ -n "${cache_fname}" ]] || exit_with_error "create_new_rootfs_cache_tarball: cache_fname is not set"
@@ -244,6 +268,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		display_alert "Installing desktop via armbian-config" "${DESKTOP_ENVIRONMENT} tier=${DESKTOP_TIER:-mid}" "info"
 		chroot_sdcard_apt_get_install armbian-config
+		overlay_armbian_config_from_git
 		chroot_sdcard "SUDO_USER= DEBIAN_FRONTEND=noninteractive DIALOG=read armbian-config --api module_desktops install de=${DESKTOP_ENVIRONMENT} tier=${DESKTOP_TIER:-mid} mode=build"
 	fi
 
