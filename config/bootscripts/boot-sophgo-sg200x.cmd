@@ -71,6 +71,25 @@ if test "${overlay_error}" = "true"; then
 	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fi
 
+# The vendor U-Boot sets no serial#. Use the SoC efuse serial (FTSN) instead.
+# booti copies serial# into the DT root serial-number property.
+# The Wi-Fi driver derives a stable MAC address from serial-number.
+if env exists serial#; then
+	echo "serial# already set"
+else
+	setexpr.l sn0 *0x03050104
+	setexpr.l sn1 *0x03050108
+	setexpr.l sn2 *0x0305010c
+	setexpr.l sn3 *0x03050110
+	if test "${sn0}${sn1}${sn2}${sn3}" != "0000"; then
+		setenv serial# "${sn0}-${sn1}-${sn2}-${sn3}"
+	fi
+	setenv sn0
+	setenv sn1
+	setenv sn2
+	setenv sn3
+fi
+
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
