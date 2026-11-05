@@ -242,30 +242,18 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 		dhcp-option=option:dns-server
 	EOF
 
-	# serial-getty@ttyGS0: clear BindsTo=dev-ttyGS0.device from base unit
-	# (ttyGS0 is a USB gadget, not present at boot → BindsTo causes dependency failure).
-	# Keep Restart=always from base unit (not on-failure, else normal logout kills the getty).
-	#
-	# PrivateDevices=yes stays: it keeps getty restarts reliable across USB
-	# gadget re-bind cycles (#10313). But the private /dev it installs is a
-	# tmpfs with only systemd's minimal node set — DeviceAllow= filters cgroup
-	# device access, it does not create the ttyGS0 node. systemd opens
-	# TTYPath=/dev/ttyGS0 before entering the namespace, so agetty inherits
-	# working fds and prints the prompt; util-linux login however cannot map
-	# stdin back to /dev/ttyGS0 via ttyname(), dies with "FATAL: bad tty",
-	# and Restart=always turns that into an endless login loop. Run login in
-	# PID 1's mount namespace so it sees the real /dev again: setns does not
-	# change cgroup membership, so device filtering and the re-bind hang
-	# protection from #10313 are unaffected.
+	# serial-getty@ttyGS0: drop the boot-time BindsTo and keep Restart=always.
+	# PrivateDevices=no plus an explicit ttyGS0 argument avoids Noble's fatal
+	# ttyname(STDIN) failure. Keep systemd-executor off the gadget TTY: without
+	# a USB host, its pre-exec reset/probe blocks in n_tty_write. agetty opens
+	# ttyGS0 itself, and -w waits for CR. Fresh images keep the stock serial
+	# autologin helper, which firstlogin removes after setup.
 	mkdir -p "${SDCARD}/usr/local/bin"
 	cat > "${SDCARD}/usr/local/bin/login-ns.sh" <<- 'WRAPPER_EOF'
-	#!/bin/sh
-	# Run login in PID 1's mount namespace so /dev/ttyGS0 resolves again
-	# (the private /dev from PrivateDevices= has no such node). Required by
-	# serial-getty@ttyGS0. `exec` is mandatory: a non-exec nsenter keeps the
-	# wrapper shell alive sharing the tty fds with login, which wedges the
-	# password prompt.
-	exec nsenter -t 1 -m -- /bin/login "$@"
+#!/bin/sh
+# Run login in PID 1's mount namespace if a private /dev is ever restored;
+# no-op under PrivateDevices=no. `exec` avoids sharing tty fds with login.
+exec nsenter -t 1 -m -- /bin/login "$@"
 	WRAPPER_EOF
 	chmod 0755 "${SDCARD}/usr/local/bin/login-ns.sh"
 
@@ -278,12 +266,16 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 
 		[Service]
 		RestartSec=3
-		PrivateDevices=yes
-		DeviceAllow=/dev/ttyGS0 rw
+		PrivateDevices=no
+		TTYPath=
+		TTYReset=no
+		TTYVHangup=no
+		StandardInput=null
+		StandardOutput=journal
+		StandardError=journal
 		ExecStart=
-		# -w: print nothing until the terminal sends CR, so boot-time output
-		# is not buffered and flushed as garbage on first connect
-		ExecStart=-/sbin/agetty -w -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh - linux
+		# -w: no output until CR (avoids buffered boot garbage on first connect)
+		ExecStart=-/sbin/agetty -w -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh ttyGS0 linux
 	EOF
 
 	chroot_sdcard systemctl --no-reload enable usbdevice.service

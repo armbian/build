@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 4 Nov 2026 10:18:18 +0100
+Subject: drm/msm/dp: defer the replug link status update
+
+msm_dp_hpd_plug_handle() marks the link bad with
+drm_connector_set_link_status_property(), which takes connection_mutex.
+It runs under plugged_lock, which probe takes after connection_mutex in
+msm_dp_bridge_detect() and .edid_read, and it also runs from the probe
+itself through drm_bridge_connector_detect() and hpd_notify, where
+connection_mutex is already held. Set the property and send the hotplug
+event from a work item instead.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 40 ++++++++--
+ 1 file changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -15,6 +15,7 @@
+ #include <drm/display/drm_dp_aux_bus.h>
+ #include <drm/display/drm_hdmi_audio_helper.h>
+ #include <drm/drm_edid.h>
++#include <drm/drm_probe_helper.h>
+ 
+ #include "msm_drv.h"
+ #include "msm_kms.h"
+@@ -57,6 +58,7 @@ struct msm_dp_display_private {
+ 	bool plugged;
+ 	/* EDID read at plug time, protected by plugged_lock */
+ 	const struct drm_edid *drm_edid;
++	struct work_struct link_bad_work;
+ 
+ 	struct drm_device *drm_dev;
+ 
+@@ -234,6 +236,8 @@ static void msm_dp_display_unbind(struct device *dev, struct device *master,
+ 	struct msm_dp_display_private *dp = dev_get_dp_display_private(dev);
+ 	struct msm_drm_private *priv = dev_get_drvdata(master);
+ 
++	cancel_work_sync(&dp->link_bad_work);
++
+ 	of_dp_aux_depopulate_bus(dp->aux);
+ 
+ 	msm_dp_aux_unregister(dp->aux);
+@@ -408,17 +412,19 @@ static int msm_dp_display_handle_irq_hpd(struct msm_dp_display_private *dp)
+ static void msm_dp_display_handle_plugged_change(struct msm_dp *msm_dp_display,
+ 		bool plugged);
+ 
+-static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
++static int msm_dp_hpd_plug_handle_locked(struct msm_dp_display_private *dp,
++					 bool *link_bad)
+ {
+ 	int ret;
+ 	struct platform_device *pdev = dp->msm_dp_display.pdev;
+ 	bool was_plugged;
+ 
++	lockdep_assert_held(&dp->plugged_lock);
++
+ 	drm_dbg_dp(dp->drm_dev, "Before, type=%d sink_count=%d\n",
+ 			dp->msm_dp_display.connector_type,
+ 			dp->link->sink_count);
+ 
+-	guard(mutex)(&dp->plugged_lock);
+ 	was_plugged = dp->plugged;
+ 
+ 	ret = pm_runtime_resume_and_get(&pdev->dev);
+@@ -433,9 +439,7 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ 	ret = msm_dp_display_process_hpd_high(dp);
+ 
+-	if (!ret && dp->msm_dp_display.power_on && !was_plugged)
+-		drm_connector_set_link_status_property(dp->msm_dp_display.connector,
+-						       DRM_MODE_LINK_STATUS_BAD);
++	*link_bad = !ret && dp->msm_dp_display.power_on && !was_plugged;
+ 
+ 	drm_dbg_dp(dp->drm_dev, "After, type=%d sink_count=%d\n",
+ 			dp->msm_dp_display.connector_type,
+@@ -450,6 +454,31 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 	return ret;
+ };
+ 
++static void msm_dp_display_link_bad_work(struct work_struct *work)
++{
++	struct msm_dp_display_private *dp =
++		container_of(work, struct msm_dp_display_private, link_bad_work);
++	struct drm_connector *connector = dp->msm_dp_display.connector;
++
++	drm_connector_set_link_status_property(connector, DRM_MODE_LINK_STATUS_BAD);
++	drm_kms_helper_connector_hotplug_event(connector);
++}
++
++static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
++{
++	bool link_bad = false;
++	int ret;
++
++	scoped_guard(mutex, &dp->plugged_lock)
++		ret = msm_dp_hpd_plug_handle_locked(dp, &link_bad);
++
++	/* A probe may hold connection_mutex here, so defer the update */
++	if (link_bad)
++		schedule_work(&dp->link_bad_work);
++
++	return ret;
++}
++
+ static void msm_dp_display_handle_plugged_change(struct msm_dp *msm_dp_display,
+ 		bool plugged)
+ {
+@@ -1285,6 +1314,7 @@ static int msm_dp_display_probe(struct platform_device *pdev)
+ 	dp->hpd_isr_status = 0;
+ 
+ 	mutex_init(&dp->plugged_lock);
++	INIT_WORK(&dp->link_bad_work, msm_dp_display_link_bad_work);
+ 
+ 	rc = msm_dp_display_get_io(dp);
+ 	if (rc)
+-- 
+Armbian
+

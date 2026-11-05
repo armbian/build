@@ -13,3 +13,8 @@ dtb-$(CONFIG_ARCH_MXC) += imx8mp-tqma8mpql-mba8mp-ras314-lvds-tm070jvhg33.dtbo
 
 # Toradex Verdin iMX8M Mini overlays
 dtb-$(CONFIG_ARCH_MXC) += verdin-imx8mm-dsi-to-hdmi.dtbo
+
+# DEBIX Model A overlays
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-lvds-td070a.dtbo
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-ov5640.dtbo
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-pcie.dtbo

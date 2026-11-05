@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 5 Nov 2026 00:47:10 +0100
+Subject: [PATCH 10/10] PCI: dw-rockchip: Add system PM support
+
+Add system PM support for Rockchip PCIe Designware Controllers.
+
+I've tested this on the Rockchip RK3576 EVB1, the Radxa ROCK 4D
+and the ArmSom Sige5 boards.
+
+While I haven't experienced any issues, most of my tests have been done
+without any devices attached (i.e. default board without any extras), so
+there _might_ still be some problems. As system suspend does not work at
+all right now, I think it makes sense to get at least the basic
+configurations working as soon as possible as it will allow us to catch
+regressions by enabling system suspend in CI systems like KernelCI.
+
+Co-developed-by: Shawn Lin <shawn.lin@rock-chips.com>
+Signed-off-by: Shawn Lin <shawn.lin@rock-chips.com>
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+Link: https://lore.kernel.org/r/20261105-rockchip-pcie-system-suspend-v8-9-0434b4f373bc@collabora.com
+---
+ drivers/pci/controller/dwc/pcie-dw-rockchip.c | 105 ++++++++++++++++++
+ 1 file changed, 105 insertions(+)
+
+diff --git a/drivers/pci/controller/dwc/pcie-dw-rockchip.c b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+index ceaed95..e253862 100644
+--- a/drivers/pci/controller/dwc/pcie-dw-rockchip.c
++++ b/drivers/pci/controller/dwc/pcie-dw-rockchip.c
+@@ -123,6 +123,7 @@ struct rockchip_pcie {
+ 	struct gpio_desc *rst_gpio;
+ 	struct regulator *vpcie3v3;
+ 	struct irq_domain *irq_domain;
++	u32 intx;
+ 	const struct rockchip_pcie_of_data *data;
+ 	bool supports_clkreq;
+ 	struct delayed_work trace_work;
+@@ -814,6 +815,7 @@ static int rockchip_pcie_configure_rc(struct platform_device *pdev,
+ 
+ 	pp = &rockchip->pci.pp;
+ 	pp->ops = &rockchip_pcie_host_ops;
++	pp->suspend_poweroff = true;
+ 
+ 	ret = dw_pcie_host_init(pp);
+ 	if (ret) {
+@@ -1045,6 +1047,103 @@ deinit_phy:
+ 	return ret;
+ }
+ 
++static int rockchip_pcie_suspend(struct device *dev)
++{
++	struct rockchip_pcie *rockchip = dev_get_drvdata(dev);
++	struct dw_pcie *pci = &rockchip->pci;
++	int ret;
++
++	if (rockchip->data->mode == DW_PCIE_EP_TYPE)
++		return 0;
++
++	if (pci->suspended)
++		return 0;
++
++	rockchip->intx = rockchip_pcie_readl_apb(rockchip, PCIE_CLIENT_INTR_MASK_LEGACY);
++	rockchip->intx &= PCIE_INTR_MASK;
++
++	ret = dw_pcie_suspend_noirq(pci);
++	if (ret)
++		return ret;
++
++	gpiod_set_value_cansleep(rockchip->rst_gpio, 0);
++	rockchip_pcie_phy_deinit(rockchip);
++	clk_bulk_disable_unprepare(rockchip->clk_cnt, rockchip->clks);
++	reset_control_assert(rockchip->rst);
++	if (rockchip->vpcie3v3)
++		regulator_disable(rockchip->vpcie3v3);
++
++	return 0;
++}
++
++static int rockchip_pcie_resume(struct device *dev)
++{
++	struct rockchip_pcie *rockchip = dev_get_drvdata(dev);
++	struct dw_pcie *pci = &rockchip->pci;
++	int ret;
++	u32 val;
++
++	if (rockchip->data->mode == DW_PCIE_EP_TYPE)
++		return 0;
++
++	if (rockchip->vpcie3v3) {
++		ret = regulator_enable(rockchip->vpcie3v3);
++		if (ret) {
++			dev_err(dev, "regulator enable failed: %d\n", ret);
++			return ret;
++		}
++	}
++
++	ret = rockchip_pcie_phy_init(rockchip);
++	if (ret) {
++		dev_err(dev, "phy init failed: %d\n", ret);
++		goto err_disable_regulator;
++	}
++
++	ret = reset_control_deassert(rockchip->rst);
++	if (ret) {
++		dev_err(dev, "reset deassert failed: %d\n", ret);
++		goto err_deinit_phy;
++	}
++
++	ret = clk_bulk_prepare_enable(rockchip->clk_cnt, rockchip->clks);
++	if (ret) {
++		dev_err(dev, "clock init failed: %d\n", ret);
++		goto err_assert_reset;
++	}
++
++	rockchip_pcie_writel_apb(rockchip, FIELD_PREP_WM16(PCIE_INTR_MASK, rockchip->intx),
++				 PCIE_CLIENT_INTR_MASK_LEGACY);
++
++	rockchip_pcie_enable_enhanced_ltssm_control_mode(rockchip, 0);
++	rockchip_pcie_set_controller_mode(rockchip, PCIE_CLIENT_MODE_RC);
++
++	ret = dw_pcie_resume_noirq(pci);
++	if (ret) {
++		dev_err(dev, "failed to resume: %d\n", ret);
++		goto err_reassert_rst;
++	}
++
++	/* unmask hot reset/link-down reset */
++	val = FIELD_PREP_WM16(PCIE_LINK_REQ_RST_NOT_INT, 0);
++	rockchip_pcie_writel_apb(rockchip, val, PCIE_CLIENT_INTR_MASK_MISC);
++
++	return 0;
++
++err_reassert_rst:
++	gpiod_set_value_cansleep(rockchip->rst_gpio, 0);
++	clk_bulk_disable_unprepare(rockchip->clk_cnt, rockchip->clks);
++err_assert_reset:
++	reset_control_assert(rockchip->rst);
++err_deinit_phy:
++	rockchip_pcie_phy_deinit(rockchip);
++err_disable_regulator:
++	if (rockchip->vpcie3v3)
++		regulator_disable(rockchip->vpcie3v3);
++
++	return ret;
++}
++
+ static const struct rockchip_pcie_of_data rockchip_pcie_rc_of_data_rk3568 = {
+ 	.mode = DW_PCIE_RC_TYPE,
+ };
+@@ -1075,11 +1174,17 @@ static const struct of_device_id rockchip_pcie_of_match[] = {
+ 	{},
+ };
+ 
++static const struct dev_pm_ops rockchip_pcie_pm_ops = {
++	NOIRQ_SYSTEM_SLEEP_PM_OPS(rockchip_pcie_suspend,
++				  rockchip_pcie_resume)
++};
++
+ static struct platform_driver rockchip_pcie_driver = {
+ 	.driver = {
+ 		.name	= "rockchip-dw-pcie",
+ 		.of_match_table = rockchip_pcie_of_match,
+ 		.suppress_bind_attrs = true,
++		.pm = &rockchip_pcie_pm_ops,
+ 	},
+ 	.probe = rockchip_pcie_probe,
+ };

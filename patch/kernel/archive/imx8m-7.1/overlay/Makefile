@@ -10,3 +10,8 @@ dtb-$(CONFIG_ARCH_MXC) += imx8mp-tqma8mpql-mba8mpxl-lvds-g133han01.dtbo
 # TQ MBa8MP-RAS314 overlays
 dtb-$(CONFIG_ARCH_MXC) += imx8mp-tqma8mpql-mba8mp-ras314-imx219.dtbo
 dtb-$(CONFIG_ARCH_MXC) += imx8mp-tqma8mpql-mba8mp-ras314-lvds-tm070jvhg33.dtbo
+
+# DEBIX Model A overlays
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-lvds-td070a.dtbo
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-ov5640.dtbo
+dtb-$(CONFIG_ARCH_MXC) += imx8mp-debix-model-a-pcie.dtbo

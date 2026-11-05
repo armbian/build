@@ -682,6 +682,16 @@ function kernel_package_callback_linux_headers() {
 				tar -C . -xzf include/generated/.armbian-build.tar.gz
 				rm -f include/generated/.armbian-build.tar.gz
 			fi
+
+			# The build host gcc may know -fmin-function-alignment (gcc 14+) while the target gcc does not.
+			# Drop the probe results then, so out-of-tree modules fall back to -falign-functions and no __cold.
+			if [[ -f include/config/auto.conf ]] && grep -q '^CONFIG_CC_HAS_MIN_FUNCTION_ALIGNMENT=y' include/config/auto.conf; then
+				if ! echo 'int x;' | gcc -fmin-function-alignment=4 -x c -c -o /dev/null - 2> /dev/null; then
+					echo "Target gcc lacks -fmin-function-alignment; disabling CONFIG_CC_HAS_MIN_FUNCTION_ALIGNMENT."
+					sed -i -E '/^CONFIG_CC_HAS_(MIN|SANE)_FUNCTION_ALIGNMENT=/d' include/config/auto.conf
+					sed -i -E '/define CONFIG_CC_HAS_(MIN|SANE)_FUNCTION_ALIGNMENT /d' include/generated/autoconf.h
+				fi
+			fi
 		EOT_POSTINST_FINISH
 
 		# Now that the header tree is compiled, run the same header hooks Debian runs

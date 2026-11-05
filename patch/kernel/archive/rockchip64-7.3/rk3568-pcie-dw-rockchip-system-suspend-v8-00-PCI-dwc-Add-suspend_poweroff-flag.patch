@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Richard Zhu <hongxing.zhu@nxp.com>
+Date: Thu, 17 Sep 2026 14:33:22 +0800
+Subject: [PATCH 01/10] PCI: dwc: Add suspend_poweroff flag for platforms with
+ RC power loss
+
+Some platforms like i.MX power off their PCIe RC controllers during
+system suspend, requiring full re-initialization on resume. These
+platforms need to enter L2 state to properly notify endpoints before
+power loss.
+
+According to PCIe r7.0, sec 5.2, system software should transition the
+device into D3hot before broadcasting the PME_Turn_Off message to initiate
+L2 entry. In practice, endpoint drivers properly put their devices into
+D3hot during the suspend flow. However, some wakeup-capable endpoint
+devices that don't support PME from D3cold fail the D3cold capability check
+in pci_host_common_d3cold_possible(), which currently prevents L2 entry
+even though the devices are already in the required D3hot state.
+
+For platforms where the RC loses power during suspend, L2 entry is
+essential regardless of D3cold support, as the link will be lost anyway
+when the RC powers off. Without L2 entry, endpoints are not properly
+notified before power loss, which can cause issues during resume and
+reinitialization.
+
+Add a suspend_poweroff flag to allow L2 entry for devices that are in
+D3hot but fail the D3cold capability check, and enable it for i.MX PCIe
+controllers that lose power during suspend.
+
+Signed-off-by: Richard Zhu <hongxing.zhu@nxp.com>
+[mani: removed redundant comment]
+Signed-off-by: Manivannan Sadhasivam <manivannan.sadhasivam@oss.qualcomm.com>
+Signed-off-by: Bjorn Helgaas <bhelgaas@google.com>
+Link: https://patch.msgid.link/20260917063322.4102035-1-hongxing.zhu@oss.nxp.com
+[iav: backport to 7.3 for dw-rockchip system suspend v7; i.MX hunk dropped]
+---
+ drivers/pci/controller/dwc/pcie-designware-host.c | 11 +++++++++--
+ drivers/pci/controller/dwc/pcie-designware.h      |  2 ++
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/pci/controller/dwc/pcie-designware-host.c b/drivers/pci/controller/dwc/pcie-designware-host.c
+index f5a38e6..b28e096 100644
+--- a/drivers/pci/controller/dwc/pcie-designware-host.c
++++ b/drivers/pci/controller/dwc/pcie-designware-host.c
+@@ -1224,14 +1224,21 @@ static int dw_pcie_pme_turn_off(struct dw_pcie *pci)
+ 
+ int dw_pcie_suspend_noirq(struct dw_pcie *pci)
+ {
+-	bool pme_capable = false;
++	bool d3cold, pme_capable = false;
+ 	int ret = 0;
+ 	u32 val;
+ 
+ 	if (!dw_pcie_link_up(pci))
+ 		goto stop_link;
+ 
+-	if (!pci_host_common_d3cold_possible(pci->pp.bridge, &pme_capable))
++	d3cold = pci_host_common_d3cold_possible(pci->pp.bridge, &pme_capable);
++
++	/*
++	 * Enter L2 if D3cold is possible, or if the platform loses RC power
++	 * during suspend (in which case L2 entry is required to notify
++	 * endpoints before power loss, regardless of D3cold support).
++	 */
++	if (!d3cold && !pci->pp.suspend_poweroff)
+ 		return 0;
+ 
+ 	if (pci->pp.ops->pme_turn_off) {
+diff --git a/drivers/pci/controller/dwc/pcie-designware.h b/drivers/pci/controller/dwc/pcie-designware.h
+index 0735ae9..aff1acc 100644
+--- a/drivers/pci/controller/dwc/pcie-designware.h
++++ b/drivers/pci/controller/dwc/pcie-designware.h
+@@ -471,6 +471,8 @@ struct dw_pcie_rp {
+ 	bool			native_ecam;
+ 	bool                    skip_l23_ready;
+ 	bool			skip_pwrctrl_off;
++	/* Set if the RC loses power during suspend */
++	bool                    suspend_poweroff;
+ };
+ 
+ struct dw_pcie_ep_ops {

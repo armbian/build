@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Wed, 4 Nov 2026 11:03:46 +0100
+Subject: drm/msm/dp: fix the IRQ HPD path run from the IRQ thread
+
+Handling IRQ HPD in the IRQ thread left two gaps. The thread drops its
+runtime PM reference with pm_runtime_put_sync(), and when that is the
+last one msm_dp_pm_runtime_suspend() calls disable_irq() on the IRQ the
+thread is serving, which waits on itself. A DS_PORT_STATUS_CHANGED
+request also stopped reaching userspace, since nothing sends the hotplug
+event the bridge connector used to emit. Drop the reference
+asynchronously and send the event after a port status change.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 29 ++++++----
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -546,7 +546,8 @@ static int msm_dp_hpd_unplug_handle(struct msm_dp_display_private *dp)
+ 	return 0;
+ }
+ 
+-static int msm_dp_irq_hpd_handle(struct msm_dp_display_private *dp)
++static int msm_dp_irq_hpd_handle(struct msm_dp_display_private *dp,
++				 bool *port_changed)
+ {
+ 	u32 sink_request;
+ 	int rc = 0;
+@@ -563,9 +564,11 @@ static int msm_dp_irq_hpd_handle(struct msm_dp_display_private *dp)
+ 	if (!rc) {
+ 		sink_request = dp->link->sink_request;
+ 		drm_dbg_dp(dp->drm_dev, "sink_request=%d\n", sink_request);
+-		if (sink_request & DS_PORT_STATUS_CHANGED)
++		if (sink_request & DS_PORT_STATUS_CHANGED) {
+ 			rc = msm_dp_display_process_hpd_high(dp);
+-		else
++			if (port_changed)
++				*port_changed = true;
++		} else
+ 			rc = msm_dp_display_handle_irq_hpd(dp);
+ 	}
+ 
+@@ -1064,7 +1067,6 @@ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ 	irqreturn_t ret = IRQ_NONE;
+ 	unsigned long flags;
+ 	u32 hpd_isr_status;
+-	int rc;
+ 	bool was_plugged;
+ 
+ 	spin_lock_irqsave(&dp->irq_thread_lock, flags);
+@@ -1100,13 +1102,18 @@ static irqreturn_t msm_dp_display_irq_thread(int irq, void *dev_id)
+ 	}
+ 
+ 	if (hpd_isr_status & DP_DP_IRQ_HPD_INT_MASK) {
+-		rc = pm_runtime_resume_and_get(&pdev->dev);
+-		if (rc)
++		bool port_changed = false;
++
++		if (!pm_runtime_resume_and_get(&pdev->dev)) {
++			msm_dp_irq_hpd_handle(dp, &port_changed);
++			/* A sync put could reach disable_irq() on this very IRQ */
++			pm_runtime_put(&pdev->dev);
++		} else {
+ 			DRM_ERROR("failed to pm_runtime_resume\n");
+-		else
+-			msm_dp_irq_hpd_handle(dp);
+-		if (!rc)
+-			pm_runtime_put_sync(&pdev->dev);
++		}
++
++		if (port_changed)
++			drm_kms_helper_connector_hotplug_event(dp->msm_dp_display.connector);
+ 	}
+ 
+ 	ret = IRQ_HANDLED;
+@@ -1658,7 +1665,7 @@ void msm_dp_bridge_hpd_notify(struct drm_bridge *bridge,
+ 			msm_dp_hpd_unplug_handle(dp);
+ 			msm_dp_hpd_plug_handle(dp);
+ 		} else if (hpd_link_status == ISR_IRQ_HPD_PULSE_COUNT) {
+-			msm_dp_irq_hpd_handle(dp);
++			msm_dp_irq_hpd_handle(dp, NULL);
+ 		} else {
+ 			msm_dp_hpd_plug_handle(dp);
+ 		}
+-- 
+Armbian
+
