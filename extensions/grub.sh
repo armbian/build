@@ -314,10 +314,11 @@ configure_grub() {
 	# messages remain visible underneath so users can see what their
 	# system is doing. Press Esc during boot to drop the splash and
 	# read the messages directly.
-	# Desktop images: a clean splash from GRUB to the desktop. No
-	# messages and no cursor; Esc still shows the boot log.
+	# Desktop images with Plymouth: a clean splash from GRUB to the
+	# desktop. No messages and no cursor; Esc still shows the boot log.
+	# Without Plymouth (PLYMOUTH=no) the messages stay: else the screen is blank.
 	GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles"
-	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+	if [[ "${BUILD_DESKTOP}" == "yes" && "${PLYMOUTH}" == "yes" ]]; then
 		GRUB_CMDLINE_LINUX_DEFAULT+=" quiet loglevel=3 vt.global_cursor_default=0"
 	fi
 	if [[ "${ARCH}" == "amd64" ]]; then
