@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Thu, 15 Oct 2026 16:26:01 +0200
+Subject: block: partitions: of: Attach partition fwnode to the block device
+
+The OF partition parser reads offset, size and label from each
+"fixed-partitions" child node but does not associate that node with the
+resulting partition block device. As a result a partition has no
+of_node, unlike the whole-disk device which gets its firmware node via
+add_disk_fwnode().
+
+Carry the partition's device tree node through the parser and attach it
+to the partition's block device with device_set_node(), mirroring the
+whole-disk case. This lets consumers describe per-partition properties
+in the device tree (for example an NVMEM layout on a partition node) and
+look them up through the partition device.
+
+No functional change for existing users, partitions without a matching
+device tree node simply get a NULL fwnode.
+
+Reviewed-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+(cherry picked from commit f817bf68e1241da9bb568d8e8df3a02bc96031c2)
+---
+ block/partitions/check.h |  1 +
+ block/partitions/core.c  | 20 ++++++++--
+ block/partitions/of.c    |  3 ++
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/block/partitions/check.h b/block/partitions/check.h
+index 111111111111..222222222222 100644
+--- a/block/partitions/check.h
++++ b/block/partitions/check.h
+@@ -17,6 +17,7 @@ struct parsed_partitions {
+ 		int flags;
+ 		bool has_info;
+ 		struct partition_meta_info info;
++		struct fwnode_handle *fwnode;
+ 	} *parts;
+ 	int next;
+ 	int limit;
+diff --git a/block/partitions/core.c b/block/partitions/core.c
+index 111111111111..222222222222 100644
+--- a/block/partitions/core.c
++++ b/block/partitions/core.c
+@@ -11,6 +11,7 @@
+ #include <linux/sysfs.h>
+ #include <linux/ctype.h>
+ #include <linux/vmalloc.h>
++#include <linux/property.h>
+ #include <linux/raid/detect.h>
+ #include "check.h"
+ 
+@@ -110,8 +111,17 @@ static struct parsed_partitions *allocate_partitions(struct gendisk *hd)
+ 	return state;
+ }
+ 
++static void drop_partitions_fwnodes(struct parsed_partitions *state)
++{
++	for (int i = 0; i < state->limit; i++) {
++		fwnode_handle_put(state->parts[i].fwnode);
++		state->parts[i].fwnode = NULL;
++	}
++}
++
+ static void free_partitions(struct parsed_partitions *state)
+ {
++	drop_partitions_fwnodes(state);
+ 	vfree(state->parts);
+ 	kfree(state);
+ }
+@@ -139,6 +149,7 @@ static struct parsed_partitions *check_partition(struct gendisk *hd)
+ 
+ 	i = res = err = 0;
+ 	while (!res && check_part[i]) {
++		drop_partitions_fwnodes(state);
+ 		memset(state->parts, 0, state->limit * sizeof(state->parts[0]));
+ 		res = check_part[i++](state);
+ 		if (res < 0) {
+@@ -247,6 +258,7 @@ static const struct attribute_group *part_attr_groups[] = {
+ 
+ static void part_release(struct device *dev)
+ {
++	fwnode_handle_put(dev_fwnode(dev));
+ 	put_disk(dev_to_bdev(dev)->bd_disk);
+ 	bdev_drop(dev_to_bdev(dev));
+ }
+@@ -294,7 +306,8 @@ static const DEVICE_ATTR(whole_disk, 0444, whole_disk_show, NULL);
+  */
+ static struct block_device *add_partition(struct gendisk *disk, int partno,
+ 				sector_t start, sector_t len, int flags,
+-				struct partition_meta_info *info)
++				struct partition_meta_info *info,
++				struct fwnode_handle *fwnode)
+ {
+ 	dev_t devt = MKDEV(0, 0);
+ 	struct device *ddev = disk_to_dev(disk);
+@@ -343,6 +356,7 @@ static struct block_device *add_partition(struct gendisk *disk, int partno,
+ 	pdev->class = &block_class;
+ 	pdev->type = &part_type;
+ 	pdev->parent = ddev;
++	device_set_node(pdev, fwnode_handle_get(fwnode));
+ 
+ 	/* in consecutive minor range? */
+ 	if (bdev_partno(bdev) < disk->minors) {
+@@ -449,7 +463,7 @@ int bdev_add_partition(struct gendisk *disk, int partno, sector_t start,
+ 	}
+ 
+ 	part = add_partition(disk, partno, start, length,
+-			ADDPART_FLAG_NONE, NULL);
++			ADDPART_FLAG_NONE, NULL, NULL);
+ 	ret = PTR_ERR_OR_ZERO(part);
+ out:
+ 	mutex_unlock(&disk->open_mutex);
+@@ -564,7 +578,7 @@ static bool blk_add_partition(struct gendisk *disk,
+ 	}
+ 
+ 	part = add_partition(disk, p, from, size, state->parts[p].flags,
+-			     &state->parts[p].info);
++			     &state->parts[p].info, state->parts[p].fwnode);
+ 	if (IS_ERR(part)) {
+ 		if (PTR_ERR(part) != -ENXIO) {
+ 			printk(KERN_ERR " %s: p%d could not be added: %pe\n",
+diff --git a/block/partitions/of.c b/block/partitions/of.c
+index 111111111111..222222222222 100644
+--- a/block/partitions/of.c
++++ b/block/partitions/of.c
+@@ -3,6 +3,7 @@
+ #include <linux/blkdev.h>
+ #include <linux/major.h>
+ #include <linux/of.h>
++#include <linux/property.h>
+ #include <linux/string.h>
+ #include "check.h"
+ 
+@@ -62,6 +63,8 @@ static void add_of_partition(struct parsed_partitions *state, int slot,
+ 		partname = of_get_property(np, "name", &len);
+ 	strscpy(info->volname, partname, sizeof(info->volname));
+ 
++	state->parts[slot].fwnode = fwnode_handle_get(of_fwnode_handle(np));
++
+ 	seq_buf_printf(&state->pp_buf, "(%s)", info->volname);
+ }
+ 
+-- 
+Armbian
+
