@@ -34,13 +34,16 @@ function dshanpi_r1_serial_console_last() {
 	# SRC_EXTLINUX=yes ships no boot.cmd.
 	[[ $SRC_EXTLINUX == yes ]] && return 0
 	local boot_cmd="$1"
-	local serial_console="ttyS2,1500000"
-	[[ $BRANCH == vendor ]] && serial_console="ttyFIQ0,1500000"
-	display_alert "$BOARD" "Putting console=${serial_console%%,*} last in ${boot_cmd}" "info"
-	if ! grep -qF 'setenv consoleargs "console=ttyS2,1500000 ${consoleargs}"' "${boot_cmd}"; then
+	local serialcon="ttyS2"
+	[[ $BRANCH == vendor ]] && serialcon="ttyFIQ0"
+	display_alert "$BOARD" "Putting console=${serialcon} last in ${boot_cmd}" "info"
+	if ! grep -qxF 'setenv serialcon "ttyS2"' "${boot_cmd}" ||
+		! grep -qF 'setenv consoleargs "console=${serialcon},1500000 ${consoleargs}"' "${boot_cmd}"; then
 		exit_with_error "dshanpi-r1: boot.cmd console template changed; update the sed in dshanpi_r1_serial_console_last"
 	fi
-	sed -i "s/setenv consoleargs \"console=ttyS2,1500000 \${consoleargs}\"/setenv consoleargs \"\${consoleargs} console=${serial_console}\"/" \
+	sed -i \
+		-e "s/^setenv serialcon \"ttyS2\"$/setenv serialcon \"${serialcon}\"/" \
+		-e 's/setenv consoleargs "console=${serialcon},1500000 ${consoleargs}"/setenv consoleargs "${consoleargs} console=${serialcon},1500000"/' \
 		"${boot_cmd}"
 }
 
