@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SuperKali <hello@superkali.me>
+Date: Thu, 5 Nov 2026 12:53:42 +0100
+Subject: ASoC: codecs: pm4125: fix stream reuse and compander lookup
+
+hw_free() cleared sruntime, but the stream is only set at startup, so a
+second hw_params() on the same open passed NULL to
+sdw_stream_add_slave() and oopsed. Keep the pointer and track the slave
+with a flag instead. The compander controls also indexed the two-entry
+RX ch_info table with COMP_L/COMP_R, so skip the port lookup for them.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+---
+ sound/soc/codecs/pm4125-sdw.c | 10 +++++---
+ sound/soc/codecs/pm4125.c     | 12 ++++++----
+ sound/soc/codecs/pm4125.h     |  1 +
+ 3 files changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/sound/soc/codecs/pm4125-sdw.c b/sound/soc/codecs/pm4125-sdw.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/pm4125-sdw.c
++++ b/sound/soc/codecs/pm4125-sdw.c
+@@ -51,7 +51,7 @@ int pm4125_sdw_hw_params(struct pm4125_sdw_priv *priv, struct snd_pcm_substream
+ {
+ 	struct sdw_port_config port_config[PM4125_MAX_SWR_PORTS];
+ 	unsigned long ch_mask;
+-	int i, j;
++	int i, j, ret;
+ 
+ 	priv->sconfig.ch_count = 1;
+ 	priv->active_ports = 0;
+@@ -72,8 +72,12 @@ int pm4125_sdw_hw_params(struct pm4125_sdw_priv *priv, struct snd_pcm_substream
+ 	priv->sconfig.direction = priv->is_tx ? SDW_DATA_DIR_TX : SDW_DATA_DIR_RX;
+ 	priv->sconfig.type = SDW_STREAM_PCM;
+ 
+-	return sdw_stream_add_slave(priv->sdev, &priv->sconfig, &port_config[0], priv->active_ports,
+-				    priv->sruntime);
++	ret = sdw_stream_add_slave(priv->sdev, &priv->sconfig, &port_config[0], priv->active_ports,
++				   priv->sruntime);
++	if (!ret)
++		priv->slave_added = true;
++
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(pm4125_sdw_hw_params);
+ 
+diff --git a/sound/soc/codecs/pm4125.c b/sound/soc/codecs/pm4125.c
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/pm4125.c
++++ b/sound/soc/codecs/pm4125.c
+@@ -856,7 +856,7 @@ static int pm4125_connect_port(struct pm4125_sdw_priv *sdw_priv, u8 port_idx, u8
+ 		if (ch_id > PM4125_ADC2)
+ 			return -EINVAL;
+ 	} else {
+-		if (ch_id > PM4125_COMP_R)
++		if (ch_id > PM4125_HPH_R)
+ 			return -EINVAL;
+ 	}
+ 
+@@ -932,6 +932,10 @@ static int pm4125_set_compander(struct snd_kcontrol *kcontrol, struct snd_ctl_el
+ 		pm4125->comp1_enable = value;
+ 	}
+ 
++	/* The compander has no SoundWire port of its own on PM4125 */
++	if (ch_idx > PM4125_HPH_R)
++		return 1;
++
+ 	portidx = sdw_priv->ch_info[ch_idx].port_num;
+ 	if (!portidx)
+ 		return 0;
+@@ -1469,12 +1473,12 @@ static int pm4125_codec_free(struct snd_pcm_substream *substream, struct snd_soc
+ 	struct pm4125_sdw_priv *sdw_priv = pm4125->sdw_priv[dai->id];
+ 	int ret;
+ 
+-	/* hw_free() can be invoked again on a DAPM-driven route change; avoid a stale stream UAF */
+-	if (!sdw_priv->sruntime)
++	/* hw_free() can run more than once per stream, remove the slave only once */
++	if (!sdw_priv->slave_added)
+ 		return 0;
+ 
+ 	ret = sdw_stream_remove_slave(sdw_priv->sdev, sdw_priv->sruntime);
+-	sdw_priv->sruntime = NULL;
++	sdw_priv->slave_added = false;
+ 
+ 	return ret;
+ }
+diff --git a/sound/soc/codecs/pm4125.h b/sound/soc/codecs/pm4125.h
+index 111111111111..222222222222 100644
+--- a/sound/soc/codecs/pm4125.h
++++ b/sound/soc/codecs/pm4125.h
+@@ -208,6 +208,7 @@ struct pm4125_sdw_priv {
+ 	struct sdw_slave *sdev;
+ 	struct sdw_stream_config sconfig;
+ 	struct sdw_stream_runtime *sruntime;
++	bool slave_added;
+ 	struct sdw_port_config port_config[PM4125_MAX_SWR_PORTS];
+ 	struct wcd_sdw_ch_info *ch_info;
+ 	bool port_enable[PM4125_MAX_SWR_CH_IDS];
+-- 
+Armbian
+
