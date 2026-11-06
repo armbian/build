@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: serg987 <50438876+serg987@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 00:00:00 +0000
+Subject: media: cedrus: Allow cache hints on the CAPTURE queue
+
+Cedrus never sets allow_cache_hints on its vb2 queues, so
+vb2_set_flags_and_caps() always clears V4L2_MEMORY_FLAG_NON_COHERENT
+and never reports V4L2_BUF_CAP_SUPPORTS_MMAP_CACHE_HINTS. On a
+non-dma-coherent SoC this forces vb2_dc_alloc() down the coherent
+path, i.e. CAPTURE buffers (the decoded frames) are always mapped
+write-combined, both for mmap() and for the exported dmabuf.
+
+Measured on a sun55i-a523 (Cedrus at 432 MHz, 4K H.264): CPU readback
+of a decoded frame (hwdownload in FFmpeg, as used by any userspace
+consumer that needs the picture in regular memory, e.g. object
+detection in an NVR) runs at ~190 ms/frame over write-combined memory,
+i.e. slower than decoding the same stream in software on the CPU.
+Allowing cache hints on the CAPTURE queue lets userspace opt in to
+V4L2_MEMORY_FLAG_NON_COHERENT (vb2_dc_alloc_non_coherent(), backed by
+dma_alloc_noncontiguous()), after which the CPU reads a normal cached
+mapping and only the DQBUF-time invalidate (vb2_dc_finish()) touches
+the cache. This drops the same readback below 15 ms/frame.
+
+This is opt-in: userspace that does not request the flag keeps the
+existing coherent buffers and existing behaviour is unchanged.
+Precedent for CAPTURE queues setting allow_cache_hints on a similarly
+non-coherent ARM SoC: mtk_vcodec_dec.c (CEDRUS_CAPABILITY comment
+aside, see mtk_vcodec_dec_queue_init()).
+
+Signed-off-by: serg987 <50438876+serg987@users.noreply.github.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -610,6 +610,7 @@ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+
+ 	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+ 	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
++	dst_vq->allow_cache_hints = 1;
+ 	dst_vq->drv_priv = ctx;
+ 	dst_vq->buf_struct_size = sizeof(struct cedrus_buffer);
+ 	dst_vq->ops = &cedrus_qops;
+--
+Armbian
