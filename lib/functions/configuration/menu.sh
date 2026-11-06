@@ -11,6 +11,53 @@
 
 # Stuff involving dialog
 
+# Ghostty themes paint ANSI blue and white as light colors. Dialog's default screen is that blue.
+# Print a dark theme for dialog.
+function dialog_ghostty_rc() {
+	cat <<- 'EOF'
+		use_shadow = OFF
+		use_colors = ON
+		screen_color = (WHITE,BLACK,OFF)
+		shadow_color = (BLACK,BLACK,OFF)
+		dialog_color = (WHITE,BLACK,OFF)
+		title_color = (CYAN,BLACK,ON)
+		border_color = (CYAN,BLACK,ON)
+		button_active_color = (BLACK,WHITE,ON)
+		button_inactive_color = (WHITE,BLACK,OFF)
+		button_key_active_color = (BLACK,WHITE,ON)
+		button_key_inactive_color = (RED,BLACK,OFF)
+		button_label_active_color = (BLACK,WHITE,ON)
+		button_label_inactive_color = (WHITE,BLACK,OFF)
+		inputbox_color = (WHITE,BLACK,OFF)
+		inputbox_border_color = (CYAN,BLACK,ON)
+		searchbox_color = (WHITE,BLACK,OFF)
+		searchbox_title_color = (CYAN,BLACK,ON)
+		searchbox_border_color = (CYAN,BLACK,ON)
+		position_indicator_color = (CYAN,BLACK,ON)
+		menubox_color = (WHITE,BLACK,OFF)
+		menubox_border_color = (CYAN,BLACK,ON)
+		item_color = (WHITE,BLACK,OFF)
+		item_selected_color = (BLACK,WHITE,ON)
+		tag_color = (CYAN,BLACK,ON)
+		tag_selected_color = (BLACK,WHITE,ON)
+		tag_key_color = (RED,BLACK,OFF)
+		tag_key_selected_color = (BLACK,WHITE,ON)
+		check_color = (WHITE,BLACK,OFF)
+		check_selected_color = (BLACK,WHITE,ON)
+		uarrow_color = (GREEN,BLACK,ON)
+		darrow_color = (GREEN,BLACK,ON)
+		itemhelp_color = (WHITE,BLACK,OFF)
+		form_active_text_color = (BLACK,WHITE,ON)
+		form_text_color = (WHITE,BLACK,OFF)
+		form_item_readonly_color = (CYAN,BLACK,ON)
+		gauge_color = (CYAN,BLACK,ON)
+		border2_color = (WHITE,BLACK,OFF)
+		inputbox_border2_color = (WHITE,BLACK,OFF)
+		searchbox_border2_color = (WHITE,BLACK,OFF)
+		menubox_border2_color = (WHITE,BLACK,OFF)
+	EOF
+}
+
 # rpardini: dialog reports what happened via nonzero exit codes.
 # we also want to capture the stdout of dialog.
 # this is a helper function that handles the error logging on/off and does the capturing
@@ -36,10 +83,15 @@ function dialog_if_terminal_set_vars() {
 
 	# Draw borders with Unicode box characters rather than the VT100 alternate charset:
 	# PuTTY and other emulators that report TERM=xterm but ignore that charset switch in UTF-8 mode show letters.
-	exec 3>&1                                                    # open fd 3...
-	DIALOG_RESULT=$(NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
-	DIALOG_EXIT_CODE=$?                                          # get the exit code.
-	exec 3>&-                                                    # close fd 3...
+	exec 3>&1 # open fd 3...
+	# On Ghostty, use the dark theme. A dialogrc of the user wins.
+	if [[ "${ARMBIAN_TERMINAL_EMULATOR:-}" == "ghostty" && ! -f "${DIALOGRC:-}" && ! -f "${HOME}/.dialogrc" ]]; then
+		DIALOG_RESULT=$(DIALOGRC=<(dialog_ghostty_rc) NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
+	else
+		DIALOG_RESULT=$(NCURSES_NO_UTF8_ACS=1 dialog "$@" 2>&1 1>&3) # juggle fds and capture.
+	fi
+	DIALOG_EXIT_CODE=$? # get the exit code.
+	exec 3>&-           # close fd 3...
 
 	set -e          # back to normal
 	set -o errtrace # back to normal

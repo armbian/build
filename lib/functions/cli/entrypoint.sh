@@ -7,7 +7,24 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+# Ghostty sets TERM=xterm-ghostty. ncurses ships that entry as "ghostty", or not at all.
+# dialog and clear fail on an unknown TERM. Pick an entry this system has.
+function ensure_known_terminal() {
+	[[ "${TERM_PROGRAM:-}" == "ghostty" || "${TERM:-}" == *ghostty ]] && declare -g -x ARMBIAN_TERMINAL_EMULATOR="ghostty"
+	[[ -z "${TERM:-}" ]] && return 0
+	tput -T "${TERM}" longname &> /dev/null && return 0
+	declare term
+	for term in ${ARMBIAN_TERMINAL_EMULATOR:+ghostty} xterm-256color xterm dumb; do
+		tput -T "${term}" longname &> /dev/null && break
+	done
+	display_alert "Unknown terminal type '${TERM}'" "using '${term}'" "debug"
+	export TERM="${term}"
+}
+
 function cli_entrypoint() {
+	# Fix TERM before tput reads the terminal width.
+	ensure_known_terminal
+
 	# array, readonly, global, for future reference, "exported" to shutup shellcheck
 	declare -rg -x -a ARMBIAN_ORIGINAL_ARGV=("${@}")
 
@@ -224,6 +241,9 @@ function cli_entrypoint() {
 	# Early check for deprecations
 	apply_deprecated_switch_aliases # forward renamed switches to their new names, with a warning (backward compat)
 	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
+
+	# Cmdline and config can replace TERM. Validate the final value before dialog.
+	ensure_known_terminal
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command
