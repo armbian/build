@@ -1,0 +1,103 @@
+#!/bin/bash
+#
+# Copyright (c) Authors: https://www.armbian.com/authors
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# An image with LUKS autounlock (CRYPTROOT_AUTOUNLOCK=yes) ships one keyfile
+# and one volume key. All copies of the image share them. On first boot, give
+# this installation its own keyfile and re-encrypt the root with a new volume
+# key. Each step can be interrupted: the next boot continues it.
+#
+# The keyfile stays in the initramfs on the unencrypted /boot. After this,
+# the image no longer unlocks the disk, but the disk still unlocks itself.
+
+Log=/var/log/armbian-luks-rekey.log
+KEY=/etc/rootfs.key
+NEW=/etc/rootfs.key.new
+OLD=/etc/rootfs.key.old
+# As the build (CRYPTROOT_PARAMETERS): argon2 can run out of memory in the
+# initramfs on small boards. The keyfile is random, so pbkdf2 is enough.
+PBKDF="--pbkdf pbkdf2"
+
+opens() { cryptsetup open --test-passphrase --key-file "$2" "$1" 2> /dev/null; }
+
+main() {
+	echo "$(date) | start"
+
+	# The LUKS device that /etc/crypttab unlocks with the keyfile.
+	local uuid dev
+	uuid=$(awk -v k="$KEY" '$3 == k { sub(/^UUID=/, "", $2); print $2; exit }' /etc/crypttab)
+	dev=$(blkid -U "$uuid" 2> /dev/null)
+	if [[ -z "$dev" ]]; then
+		echo "No LUKS device unlocks with $KEY. Nothing to do."
+		systemctl disable armbian-luks-rekey
+		return 0
+	fi
+	if [[ $(cryptsetup luksDump "$dev" | awk '/^Version:/ { print $2 }') != 2 ]]; then
+		echo "$dev is not LUKS2. Online re-encryption needs LUKS2. Skipped."
+		systemctl disable armbian-luks-rekey
+		return 0
+	fi
+
+	# 1. New keyfile. Keep the old key valid until the initramfs has the new one.
+	umask 077
+	if [[ ! -f "$OLD" ]]; then
+		[[ -s "$NEW" ]] || head -c 64 /dev/urandom > "$NEW"
+		sync "$NEW"
+		if ! opens "$dev" "$NEW"; then
+			echo "Adding the new keyfile to $dev"
+			cryptsetup luksAddKey $PBKDF --key-file "$KEY" "$dev" "$NEW" || return 1
+		fi
+		cp -p "$KEY" "$OLD"
+		sync "$OLD"
+		mv "$NEW" "$KEY"
+		sync /etc
+	fi
+
+	# 2. Put the new keyfile into the initramfs, then remove the old key.
+	if [[ -f "$OLD" ]]; then
+		[[ -f "$NEW" ]] && mv "$NEW" "$KEY" && sync /etc
+		# Never remove the only key that opens the device.
+		if cmp -s "$KEY" "$OLD" || ! opens "$dev" "$KEY"; then
+			echo "$KEY does not open $dev or equals the old key. Stopped."
+			return 1
+		fi
+		echo "Updating the initramfs"
+		update-initramfs -u -k all || return 1
+		sync
+		if opens "$dev" "$OLD"; then
+			echo "Removing the old key from $dev"
+			cryptsetup luksRemoveKey "$dev" "$OLD" || return 1
+		fi
+		shred -u "$OLD" 2> /dev/null || rm -f "$OLD"
+	fi
+
+	# 3. New volume key. Online: the root stays mounted. An interrupted run
+	# continues from its checkpoint.
+	if cryptsetup luksDump "$dev" | grep -q 'online-reencrypt'; then
+		echo "Resuming the re-encryption of $dev"
+		cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
+	else
+		echo "Re-encrypting $dev with a new volume key"
+		cryptsetup reencrypt $PBKDF --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
+	fi
+
+	systemctl disable armbian-luks-rekey
+	echo "$(date) | done"
+}
+
+case "$1" in
+	start)
+		touch "$Log"
+		chmod 600 "$Log"
+		main |& tee -a "$Log"
+		exit "${PIPESTATUS[0]}"
+		;;
+	*)
+		echo "Usage: $0 start"
+		exit 0
+		;;
+esac
