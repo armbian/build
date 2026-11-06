@@ -13,8 +13,17 @@ function extension_prepare_config__install_network_manager() {
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
 
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		display_alert "Extension: ${EXTENSION}: Adding extra packages for desktop to image" "network-manager-gnome network-manager-ssh network-manager-vpnc" "info"
-		add_packages_to_image network-manager-gnome network-manager-ssh network-manager-vpnc
+		# network-manager-gnome is split into network-manager-applet and nm-connection-editor
+		# since trixie and resolute. forky and sid have only the new names.
+		local -a desktop_packages=(network-manager-ssh)
+		case "${RELEASE}" in
+			bookworm | jammy | noble) desktop_packages+=(network-manager-gnome) ;;
+			*) desktop_packages+=(network-manager-applet nm-connection-editor) ;;
+		esac
+		# network-manager-vpnc is removed from forky (testing). sid still has it.
+		[[ "${RELEASE}" != "forky" ]] && desktop_packages+=(network-manager-vpnc)
+		display_alert "Extension: ${EXTENSION}: Adding extra packages for desktop to image" "${desktop_packages[*]}" "info"
+		add_packages_to_image "${desktop_packages[@]}"
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
