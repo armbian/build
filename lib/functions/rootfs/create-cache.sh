@@ -32,31 +32,6 @@ function write_build_resolv_conf() {
 	display_alert "Wrote build-time resolv.conf" "${ns[*]}" "debug"
 }
 
-# Set CONFIGNG_DESKTOPS_HASH to the last commit that changed
-# tools/modules/desktops/ on configng main. Desktop builds install
-# armbian-config from this commit (overlay_armbian_config_from_git), so
-# the rootfs cache key and the content always match. The remote lookup
-# gives the same key in every build path.
-function calculate_configng_desktops_hash() {
-	[[ -n "${CONFIGNG_DESKTOPS_HASH:-}" ]] && return 0
-	declare -A GIT_INFO_CONFIGNG=([GIT_SOURCE]="https://github.com/armbian/configng" [GIT_REF]="branch:main")
-	run_memoized GIT_INFO_CONFIGNG "git2info" memoized_git_ref_to_info
-	[[ "${GIT_INFO_CONFIGNG[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_CONFIGNG[SHA1]}'"
-
-	# A main commit never changes, so its desktops commit can stay cached.
-	declare -A CONFIGNG_DESKTOPS=([MAIN_SHA1]="${GIT_INFO_CONFIGNG[SHA1]}")
-	memoize_cache_ttl=$((30 * 24 * 3600)) run_memoized CONFIGNG_DESKTOPS "configng-desktops" memoized_configng_desktops_commit
-	[[ "${CONFIGNG_DESKTOPS[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "configng desktops SHA1 is not sane: '${CONFIGNG_DESKTOPS[SHA1]}'"
-	declare -g CONFIGNG_DESKTOPS_HASH="${CONFIGNG_DESKTOPS[SHA1]}"
-}
-
-function memoized_configng_desktops_commit() {
-	# shellcheck disable=SC2178 # nope, that's a nameref.
-	declare -n MEMO_DICT="${1}" # nameref
-	fetch_from_repo "https://github.com/armbian/configng" "armbian-configng" "commit:${MEMO_DICT[MAIN_SHA1]}"
-	MEMO_DICT+=(["SHA1"]="$(git -C "${SRC}/cache/sources/armbian-configng" log -1 --format=%H "${MEMO_DICT[MAIN_SHA1]}" -- tools/modules/desktops/)")
-}
-
 # called by artifact-rootfs::artifact_rootfs_prepare_version()
 function calculate_rootfs_cache_id() {
 	# Validate that AGGREGATED_ROOTFS_HASH is set
@@ -111,15 +86,19 @@ function calculate_rootfs_cache_id() {
 	# armbian-config at build time, so configng content doesn't
 	# affect their rootfs.
 	#
-	# CONFIGNG_DESKTOPS_HASH is the last configng commit that
-	# changed tools/modules/desktops/.
-	# 8-char prefix keeps
+	# CONFIGNG_DESKTOPS_HASH is set by artifact_rootfs_config_dump
+	# above from `git log -1 -- tools/modules/desktops/` in the
+	# cache/sources/armbian-configng clone. 8-char prefix keeps
 	# the filename readable while still giving us ~2^32 of
 	# collision resistance — same truncation style the rest of
 	# this file uses for the hash_hooks/bash_hash components.
 	if [[ ${BUILD_DESKTOP} == yes ]]; then
-		calculate_configng_desktops_hash
-		cache_type="${cache_type}-${CONFIGNG_DESKTOPS_HASH:0:8}"
+		declare _configng_fp="${artifact_input_variables[CONFIGNG_DESKTOPS_HASH]:-}"
+		if [[ -n "${_configng_fp}" &&
+			"${_configng_fp}" != "undetermined" &&
+			"${_configng_fp}" != "unknown" ]]; then
+			cache_type="${cache_type}-${_configng_fp:0:8}"
+		fi
 	fi
 
 	# allow extensions to modify cache_type, since they may have used add_packages_to_rootfs() or remove_packages()
