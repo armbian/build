@@ -1,0 +1,12 @@
+# Allwinner A31s quad core 1GB RAM GBE Wi-Fi NAND
+BOARD_NAME="Orange Pi A31s"
+BOARD_VENDOR="xunlong"
+BOARDFAMILY="sun6i"
+BOARD_MAINTAINER="igorpecovnik"
+INTRODUCED="2015"
+BOOTCONFIG="orangepi_a31s_defconfig"
+BOOTBRANCH="tag:v2026.10"
+BOOTPATCHDIR="v2026.10-sunxi"
+OVERLAY_PREFIX="sun6i-a31s"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
