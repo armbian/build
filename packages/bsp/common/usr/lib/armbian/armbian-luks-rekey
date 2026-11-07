@@ -24,6 +24,52 @@ PBKDF="--pbkdf pbkdf2"
 
 opens() { cryptsetup open --test-passphrase --key-file "$2" "$1" 2> /dev/null; }
 
+# Desktop notices. The motd (97-armbian-luks-rekey) covers console logins.
+NOTICES=/run/armbian-luks-rekey.notices
+progress() { grep -o 'Progress: *[0-9]*' "$Log" 2> /dev/null | tail -n 1 | grep -o '[0-9]*$'; }
+notify() { # <all|new> <message>: all updates the notice of each session, new tells new sessions only
+	command -v notify-send > /dev/null || return 0
+	local id type user uid old nid
+	for id in $(loginctl list-sessions --no-legend 2> /dev/null | awk '{ print $1 }'); do
+		type=$(loginctl show-session "$id" -p Type --value 2> /dev/null)
+		[[ $type == wayland || $type == x11 ]] || continue
+		old=$(awk -v s="$id" '$1 == s { print $2 }' "$NOTICES" 2> /dev/null)
+		[[ $1 == new && -n $old ]] && continue
+		user=$(loginctl show-session "$id" -p Name --value)
+		uid=$(id -u "$user") || continue
+		nid=$(runuser -u "$user" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+			notify-send -p ${old:+-r "$old"} -a Armbian -i drive-harddisk "Disk encryption" "$2" 2> /dev/null) || continue
+		sed -i "/^$id /d" "$NOTICES" 2> /dev/null
+		echo "$id $nid" >> "$NOTICES"
+	done
+}
+
+# Run the re-encryption. Show its progress on the desktop at every 10%.
+reencrypt() {
+	local watcher rc
+	(
+		shown=-1
+		while :; do
+			pct=$(progress)
+			pct=${pct:-0}
+			if ((pct / 10 != shown)); then
+				notify all "Re-encrypting: $pct% done. Please wait."
+				shown=$((pct / 10))
+			else
+				notify new "Re-encrypting: $pct% done. Please wait."
+			fi
+			sleep 30
+		done
+	) &
+	watcher=$!
+	cryptsetup reencrypt "$@" --key-file "$KEY" --progress-frequency 60 "$dev"
+	rc=$?
+	kill "$watcher" 2> /dev/null
+	[[ $rc == 0 ]] && notify all "Re-encryption done."
+	rm -f "$NOTICES"
+	return $rc
+}
+
 main() {
 	echo "$(date) | start"
 
@@ -46,12 +92,13 @@ main() {
 	# keyfile now would rebuild the initramfs for nothing.
 	if cryptsetup luksDump "$dev" | grep -q 'online-reencrypt'; then
 		echo "Resuming the re-encryption of $dev"
-		if ! cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev"; then
+		if ! reencrypt --resume-only; then
 			# A power loss can leave the metadata to recover first. Unlocking
 			# the root usually does it; repair covers the rest.
 			echo "Repairing the re-encryption metadata of $dev"
+			udevadm settle
 			cryptsetup repair --key-file "$KEY" "$dev" || return 1
-			cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
+			reencrypt --resume-only || return 1
 		fi
 		systemctl disable armbian-luks-rekey
 		echo "$(date) | done"
@@ -94,7 +141,7 @@ main() {
 	# 3. New volume key. Online: the root stays mounted. An interrupted run
 	# continues from its checkpoint (see above).
 	echo "Re-encrypting $dev with a new volume key"
-	cryptsetup reencrypt $PBKDF --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
+	reencrypt $PBKDF || return 1
 
 	systemctl disable armbian-luks-rekey
 	echo "$(date) | done"
