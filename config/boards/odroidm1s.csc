@@ -105,7 +105,6 @@ function post_config_uboot_target__extra_configs_for_odroidm1s() {
 
 # Set u-boot load address to 0xC000000
 function odroidm1s_uboot_load_addr() {
-	local boot_cmd="$1"
 	sed -i -e 's,^\(setenv load_addr \)"0x9000000"$,\1"0xC000000",' "$1"
 }
 
