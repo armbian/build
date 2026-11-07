@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Novice-PG <novice-pg@users.noreply.github.com>
+Date: Fri, 16 Oct 2026 09:12:13 +0200
+Subject: [ARCHEOLOGY] kickpi-k2b-v2: fix 1G Ethernet packet loss (RGMII
+ delays)
+
+> X-Git-Archeology: > recovered message: > The MAE0621A PHY driver clears the PHY-side RGMII delay bits at
+> X-Git-Archeology: > recovered message: > probe. Plain "rgmii" mode then keeps only the 700 ps MAC TX delay of
+> X-Git-Archeology: > recovered message: > the H618 GMAC. That is below the RGMII setup window. The 1G link
+> X-Git-Archeology: > recovered message: > comes up but drops 30-100% of packets. 100M is not affected.
+> X-Git-Archeology: > recovered message: > Touch the delay bits only when the phy-mode assigns them
+> X-Git-Archeology: > recovered message: > (rgmii-txid/rgmii-rxid/rgmii-id). Plain "rgmii" keeps the strapped
+> X-Git-Archeology: > recovered message: > PHY delay. The board DTS keeps the vendor values: rgmii,
+> X-Git-Archeology: > recovered message: > tx-delay-ps 700, rx-delay-ps 2000.
+> X-Git-Archeology: > recovered message: > Tested on KickPi K2B V2 (H618 + MAE0621A-Q2C), kernel 6.18.57:
+> X-Git-Archeology: > recovered message: > link at 1G, DHCP lease, ping 0% loss over 200 packets both ways,
+> X-Git-Archeology: > recovered message: > iperf3 TCP 310/225 Mbps, UDP 260 Mbps at 0.49% loss, jitter
+> X-Git-Archeology: > recovered message: > 0.016 ms. All MAC error counters stay zero.
+> X-Git-Archeology: - Revision fd2ec1ffeee4137c0aa5a8c77d9ed6a935381388: https://github.com/armbian/build/commit/fd2ec1ffeee4137c0aa5a8c77d9ed6a935381388
+> X-Git-Archeology:   Date: Fri, 16 Oct 2026 09:12:13 +0200
+> X-Git-Archeology:   From: Novice-PG <novice-pg@users.noreply.github.com>
+> X-Git-Archeology:   Subject: kickpi-k2b-v2: fix 1G Ethernet packet loss (RGMII delays)
+> X-Git-Archeology:
+---
+ drivers/net/phy/maxio.c | 67 +++++++---
+ 1 file changed, 48 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/phy/maxio.c b/drivers/net/phy/maxio.c
+index 111111111111..222222222222 100644
+--- a/drivers/net/phy/maxio.c
++++ b/drivers/net/phy/maxio.c
+@@ -303,31 +303,60 @@ static int maxio_mae0621a_config_init(struct phy_device *phydev)
+ 	PHY_WRITE(phydev, MAXIO_PAGE_SELECT, 0x0);
+ 
+ 	/*
+-	 * MAE0621A is RTL8211F-compatible. phy-mode = "rgmii" means all
+-	 * RGMII delay belongs to the MAC (allwinner,tx/rx-delay-ps).
+-	 * Clear PHY-side 2ns TX/RX delays if enabled by strapping, else
+-	 * double delay corrupts large frames at 1G.
+-	 * Same layout as RTL8211F: page 0xd08, TXCR 0x11 bit8, RXCR 0x15 bit3.
++	 * MAE0621A is RTL8211F-compatible. Page 0xd08, TXCR 0x11 bit8
++	 * and RXCR 0x15 bit3 enable a 2ns PHY-side delay each.
++	 *
++	 * Do not clear these bits when the DT does not assign delays:
++	 * the reset straps are the board's choice. The KickPi K2B V2
++	 * (H618) relies on the strapped PHY TX delay together with the
++	 * 700ps MAC delay; clearing it leaves only 700ps, below the
++	 * RGMII setup window, and the 1G link drops 30-100% of packets.
++	 * Only the RGMII_*ID phy-modes assign the delays explicitly,
++	 * so only then is each bit forced to match.
+ 	 */
+ 	{
+ 		int v, w;
++		bool set_delays = false;
++		u16 want_tx = 0, want_rx = 0;
+ 
+-		v = maxio_read_paged(phydev, 0xd08, 0x11);
+-		if (v < 0)
+-			ret |= v;
+-		else if (v & BIT(8)) {
+-			w = maxio_write_paged(phydev, 0xd08, 0x11, v & ~BIT(8));
+-			if (w < 0)
+-				ret |= w;
++		switch (phydev->interface) {
++		case PHY_INTERFACE_MODE_RGMII_TXID:
++			want_tx = BIT(8);
++			set_delays = true;
++			break;
++		case PHY_INTERFACE_MODE_RGMII_RXID:
++			want_rx = BIT(3);
++			set_delays = true;
++			break;
++		case PHY_INTERFACE_MODE_RGMII_ID:
++			want_tx = BIT(8);
++			want_rx = BIT(3);
++			set_delays = true;
++			break;
++		default:
++			break;
+ 		}
+ 
+-		v = maxio_read_paged(phydev, 0xd08, 0x15);
+-		if (v < 0)
+-			ret |= v;
+-		else if (v & BIT(3)) {
+-			w = maxio_write_paged(phydev, 0xd08, 0x15, v & ~BIT(3));
+-			if (w < 0)
+-				ret |= w;
++		if (set_delays) {
++			v = maxio_read_paged(phydev, 0xd08, 0x11);
++			if (v < 0)
++				ret |= v;
++			else if ((v & BIT(8)) != want_tx) {
++				w = maxio_write_paged(phydev, 0xd08, 0x11,
++						       (v & ~BIT(8)) | want_tx);
++				if (w < 0)
++					ret |= w;
++			}
++
++			v = maxio_read_paged(phydev, 0xd08, 0x15);
++			if (v < 0)
++				ret |= v;
++			else if ((v & BIT(3)) != want_rx) {
++				w = maxio_write_paged(phydev, 0xd08, 0x15,
++						       (v & ~BIT(3)) | want_rx);
++				if (w < 0)
++					ret |= w;
++			}
+ 		}
+ 	}
+ 
+-- 
+Armbian
+
