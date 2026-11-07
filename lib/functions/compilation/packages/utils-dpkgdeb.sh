@@ -105,6 +105,9 @@ function dpkg_deb_build() {
 		run_tool_batcat --file-name "${artifact_name}/DEBIAN/md5sums" "${package_directory}/DEBIAN/md5sums"
 	fi
 
+	# The build-wide umask 002 makes directories group-writable. Installed files must not be.
+	run_host_command_logged chmod -R go-w "${package_directory}"
+
 	declare deb_final_filename="${PACKAGES_HASHED_STORAGE}/${artifact_deb_rel_path}"
 	declare deb_final_dir
 	deb_final_dir=$(dirname "${deb_final_filename}")
