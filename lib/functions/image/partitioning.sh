@@ -530,7 +530,18 @@ function prepare_partitions() {
 
 	# complement extlinux config if it exists; remove armbianEnv in this case.
 	if [[ -f "${SDCARD}/boot/extlinux/extlinux.conf" ]]; then
-		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> "${SDCARD}/boot/extlinux/extlinux.conf"
+		local extlinux_cmdline="${MAIN_CMDLINE}"
+		# no splash without Plymouth (minimal images, no video output)
+		if [[ "${PLYMOUTH}" != "yes" ]]; then
+			local -a cmdline_words kept_words=()
+			local word
+			read -r -a cmdline_words <<< "${MAIN_CMDLINE}"
+			for word in "${cmdline_words[@]}"; do
+				[[ "${word}" == "splash" || "${word}" == plymouth.* ]] || kept_words+=("${word}")
+			done
+			extlinux_cmdline="${kept_words[*]}"
+		fi
+		echo "  append root=$rootfs $SRC_CMDLINE $extlinux_cmdline" >> "${SDCARD}/boot/extlinux/extlinux.conf"
 		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
 		[[ -f "${SDCARD}/boot/armbianEnv.txt" ]] && run_host_command_logged rm -v "${SDCARD}/boot/armbianEnv.txt"
 	fi
