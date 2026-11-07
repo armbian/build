@@ -28,14 +28,7 @@ function extension_prepare_config__prepare_grub_standard() {
 		# upgrade then dies with "No space left on device" and leaves the kernel
 		# package in iF. Same number and reasoning as DEFAULT_BOOTSIZE_FAT in
 		# partitioning.sh.
-		declare -g UEFISIZE="${UEFISIZE:-512}" # user config wins
-		# A zero or non-numeric size gives no EFI partition, but GRUB is still
-		# installed: the image would not boot. Fail here, not at first boot.
-		# The pattern carries the whole check, so no arithmetic runs on the value:
-		# bash reads a leading zero as octal, where "010" is 8 and "08" is an error.
-		if [[ ! "${UEFISIZE}" =~ ^[1-9][0-9]*$ ]]; then
-			exit_with_error "UEFISIZE must be a positive size in MiB when GRUB is used" "got '${UEFISIZE}'"
-		fi
+		local default_uefisize=512 # user config wins
 		if [[ "${BOOTFS_TYPE:-}" == ext[24] ]]; then
 			# A separate /boot partition (BOOTFS_TYPE, BOOTSIZE). GRUB reads it,
 			# and the EFI partition stays at /boot/efi. Also with cryptroot or LVM.
@@ -47,9 +40,23 @@ function extension_prepare_config__prepare_grub_standard() {
 			# No separate /boot partition: /boot is either on the root
 			# filesystem, or on the EFI partition when BOOTPART_REQUIRED=yes.
 			if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
-				display_alert "BOOTSIZE is ignored with GRUB" "use UEFISIZE=${BOOTSIZE} to size the EFI partition, or BOOTFS_TYPE=ext4 for a separate /boot" "wrn"
+				if [[ "${UEFI_MOUNT_POINT:-}" == "/boot" ]]; then
+					# /boot is the EFI partition: BOOTSIZE sizes it, unless UEFISIZE is set.
+					default_uefisize="${BOOTSIZE}"
+					display_alert "GRUB: /boot is the EFI partition" "size ${UEFISIZE:-${BOOTSIZE}} MiB" "info"
+				else
+					display_alert "BOOTSIZE is ignored with GRUB" "/boot is on the root filesystem; use BOOTFS_TYPE=ext4 for a separate /boot" "wrn"
+				fi
 			fi
 			declare -g BOOTSIZE=0
+		fi
+		declare -g UEFISIZE="${UEFISIZE:-${default_uefisize}}"
+		# A zero or non-numeric size gives no EFI partition, but GRUB is still
+		# installed: the image would not boot. Fail here, not at first boot.
+		# The pattern carries the whole check, so no arithmetic runs on the value:
+		# bash reads a leading zero as octal, where "010" is 8 and "08" is an error.
+		if [[ ! "${UEFISIZE}" =~ ^[1-9][0-9]*$ ]]; then
+			exit_with_error "UEFISIZE must be a positive size in MiB when GRUB is used" "got '${UEFISIZE}'"
 		fi
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub" # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
