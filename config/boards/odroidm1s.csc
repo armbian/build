@@ -102,3 +102,18 @@ function post_config_uboot_target__extra_configs_for_odroidm1s() {
 	# Auto-enabled by the above, force off...
 	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
 }
+
+# Set u-boot load address to 0xC000000
+function odroidm1s_uboot_load_addr() {
+	local boot_cmd="$1"
+	sed -i -e 's,^\(setenv load_addr \)"0x9000000"$,\1"0xC000000",' "$1"
+}
+
+function post_family_tweaks__odroidm1s_uboot_load_addr() {
+	odroidm1s_uboot_load_addr "${SDCARD}/boot/boot.cmd"
+}
+
+# The BSP postinst copies this boot.cmd to /boot.
+function post_family_tweaks_bsp__odroidm1s_uboot_load_addr() {
+	odroidm1s_uboot_load_addr "${destination}/usr/share/armbian/boot.cmd"
+}
