@@ -1,0 +1,591 @@
+From 23602a8d62588d8b5f630b62a8da2eca043f8f0c Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 18 Jul 2026 17:05:29 +0200
+Subject: [PATCH 1/4] pxe: support fetching PXE/extlinux files over HTTP(S)
+
+The PXE/extlinux boot flow so far only supported fetching the
+configuration and boot files over TFTP. TFTP is slow, has no transport
+security and is increasingly firewalled, while every relevant deployment
+already has an HTTP(S) server available.
+
+The pxe_utils engine is already transport-agnostic: every file is read
+through the pxe_context::getfile callback. Add a second getfile
+implementation, do_get_http(), which fetches a file with wget()
+(wget_request()), and select it automatically in pxe_get() and
+'pxe boot'.
+
+The transport is chosen based on the boot file location: the "pxe_url"
+environment variable if it is an "http://" or "https://" URL, otherwise
+the DHCP-provided "bootfile" (DHCP option 67), which may itself be a URL.
+Conveying a full URL in DHCP option 67 matches the UEFI HTTP Boot
+convention, so a DHCP server set up for UEFI HTTP Boot also drives this
+path. When the location is not a URL, TFTP is used exactly as before.
+
+When the URL points directly at a config file (it does not end in '/')
+it is fetched as-is; when it ends in '/' the usual pxelinux.cfg/ name
+probing is performed underneath it.
+
+HTTPS works when CONFIG_WGET_HTTPS is enabled (lwIP + mbedTLS).
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ boot/Kconfig |  18 ++++++++
+ cmd/pxe.c    | 113 ++++++++++++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 126 insertions(+), 5 deletions(-)
+
+diff --git a/boot/Kconfig b/boot/Kconfig
+index ae6f09a6ede..59679523039 100644
+--- a/boot/Kconfig
++++ b/boot/Kconfig
+@@ -414,6 +414,24 @@ config PXE_UTILS
+ 	help
+ 	  Utilities for parsing PXE file formats.
+ 
++config PXE_HTTP
++	bool "Support PXE/extlinux network boot over HTTP(S)"
++	depends on PXE_UTILS && CMD_WGET
++	default y
++	help
++	  Allow the "pxe" command and the extlinux-pxe bootflow to fetch the
++	  PXE/extlinux configuration and the boot files (kernel, initrd, device
++	  tree, ...) over HTTP or HTTPS using wget, instead of TFTP.
++
++	  The transport is selected automatically: if the boot file location
++	  (the "pxe_url" environment variable, or otherwise the DHCP-provided
++	  "bootfile", i.e. DHCP option 67) starts with "http://" or "https://",
++	  the files are downloaded with wget. This matches the UEFI HTTP Boot
++	  convention of passing a full URL in DHCP option 67. Otherwise TFTP is
++	  used as before.
++
++	  HTTPS additionally requires CONFIG_WGET_HTTPS.
++
+ config BOOT_DEFAULTS_FEATURES
+ 	bool
+ 	select SUPPORT_RAW_INITRD
+diff --git a/cmd/pxe.c b/cmd/pxe.c
+index 3deae5e6d47..78e50670376 100644
+--- a/cmd/pxe.c
++++ b/cmd/pxe.c
+@@ -53,6 +53,82 @@ static int do_get_tftp(struct pxe_context *ctx, const char *file_path,
+ 	return 1;
+ }
+ 
++#if defined(CONFIG_PXE_HTTP)
++static int do_get_http(struct pxe_context *ctx, const char *file_path,
++		       char *file_addr, enum bootflow_img_t type, ulong *sizep)
++{
++	struct wget_http_info info = {
++		.method = WGET_HTTP_METHOD_GET,
++		.set_bootdev = false,
++	};
++	ulong addr;
++	int ret;
++
++	if (!wget_validate_uri((char *)file_path))
++		return -EINVAL;
++
++	addr = hextoul(file_addr, NULL);
++	ret = wget_request(addr, (char *)file_path, &info);
++	if (ret)
++		return log_msg_ret("http", ret);
++
++	*sizep = info.file_size;
++	ctx->pxe_file_size = info.file_size;
++
++	return 1;
++}
++
++static bool pxe_is_url(const char *s)
++{
++	return s && (!strncmp(s, "http://", 7) || !strncmp(s, "https://", 8));
++}
++#else
++static inline bool pxe_is_url(const char *s)
++{
++	return false;
++}
++#endif
++
++/*
++ * Determine the base location that PXE/extlinux files are fetched relative to.
++ *
++ * If the "pxe_url" environment variable is an "http://" or "https://" URL it is
++ * used; otherwise the DHCP-provided "bootfile" (DHCP option 67) is used, which
++ * may itself be an HTTP(S) URL. Conveying a full URL in "bootfile" follows the
++ * UEFI HTTP Boot convention (DHCP option 67).
++ *
++ * The value is re-derived from the environment on each call rather than cached,
++ * because fetching files can update environment variables (e.g. wget sets
++ * "filesize"), which may relocate the returned string.
++ */
++static const char *pxe_get_base(void)
++{
++	const char *base = env_get("pxe_url");
++
++	if (pxe_is_url(base))
++		return base;
++
++	return env_get("bootfile");
++}
++
++/*
++ * Select the getfile callback (HTTP or TFTP) for the current base location.
++ * @basep is set to the base location returned by pxe_get_base().
++ */
++static pxe_getfile_func select_getfile(const char **basep)
++{
++	const char *base = pxe_get_base();
++
++	*basep = base;
++
++#if defined(CONFIG_PXE_HTTP)
++	if (pxe_is_url(base))
++		return do_get_http;
++#endif
++
++	return do_get_tftp;
++}
++
+ /*
+  * Looks for a pxe file with specified config file name,
+  * which is received from DHCPv4 option 209 or
+@@ -136,13 +212,34 @@ static int pxe_ipaddr_paths(struct pxe_context *ctx, unsigned long pxefile_addr_
+ int pxe_get(ulong pxefile_addr_r, char **bootdirp, ulong *sizep, bool use_ipv6)
+ {
+ 	struct cmd_tbl cmdtp[] = {};	/* dummy */
++	pxe_getfile_func getfile;
+ 	struct pxe_context ctx;
++	const char *base;
+ 	int i;
+ 
+-	if (pxe_setup_ctx(&ctx, cmdtp, do_get_tftp, NULL, false,
+-			  env_get("bootfile"), use_ipv6, false))
++	getfile = select_getfile(&base);
++
++	if (pxe_setup_ctx(&ctx, cmdtp, getfile, NULL, false, base, use_ipv6,
++			  false))
+ 		return -ENOMEM;
+ 
++#if defined(CONFIG_PXE_HTTP)
++	/*
++	 * If the base is a full HTTP(S) URL to a config file (i.e. it does not
++	 * end in '/'), fetch it directly rather than probing pxelinux.cfg/
++	 * style names underneath it.
++	 */
++	if (getfile == do_get_http && *base && base[strlen(base) - 1] != '/') {
++		const char *fname = strrchr(base, '/');
++
++		fname = fname ? fname + 1 : base;
++		if (get_pxe_file(&ctx, fname, pxefile_addr_r) > 0)
++			goto done;
++
++		goto error_exit;
++	}
++#endif
++
+ 	if (IS_ENABLED(CONFIG_BOOTP_PXE_DHCP_OPTION) &&
+ 	    pxelinux_configfile && !use_ipv6) {
+ 		if (pxe_dhcp_option_path(&ctx, pxefile_addr_r) > 0)
+@@ -181,7 +278,7 @@ error_exit:
+ 
+ 	return -ENOENT;
+ done:
+-	*bootdirp = env_get("bootfile");
++	*bootdirp = (char *)pxe_get_base();
+ 
+ 	/*
+ 	 * The PXE file size is returned but not the name. It is probably not
+@@ -264,7 +361,9 @@ do_pxe_boot(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+ {
+ 	unsigned long pxefile_addr_r;
+ 	char *pxefile_addr_str;
++	pxe_getfile_func getfile;
+ 	struct pxe_context ctx;
++	const char *base;
+ 	int ret;
+ 	bool use_ipv6 = false;
+ 
+@@ -289,8 +388,9 @@ do_pxe_boot(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+ 		return 1;
+ 	}
+ 
+-	if (pxe_setup_ctx(&ctx, cmdtp, do_get_tftp, NULL, false,
+-			  env_get("bootfile"), use_ipv6, false)) {
++	getfile = select_getfile(&base);
++	if (pxe_setup_ctx(&ctx, cmdtp, getfile, NULL, false, base, use_ipv6,
++			  false)) {
+ 		printf("Out of memory\n");
+ 		return CMD_RET_FAILURE;
+ 	}
+@@ -331,5 +431,8 @@ static int do_pxe(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+ U_BOOT_CMD(pxe, 4, 1, do_pxe,
+ 	   "get and boot from pxe files",
+ 	   "get [" USE_IP6_CMD_PARAM "] - try to retrieve a pxe file using tftp\n"
++#if defined(CONFIG_PXE_HTTP)
++	   "                  (or http/https when 'pxe_url' or 'bootfile' is a URL)\n"
++#endif
+ 	   "pxe boot [pxefile_addr_r] [-ipv6] - boot from the pxe file at pxefile_addr_r\n"
+ );
+-- 
+2.55.0
+
+
+From 55ea3698959d2c8d07e85478e37795cbe48704ba Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 18 Jul 2026 17:07:26 +0200
+Subject: [PATCH 2/4] bootstd: extlinux-pxe: fetch files over HTTP(S) when
+ URL-based
+
+With PXE-over-HTTP support in pxe_utils/cmd, the extlinux-pxe bootmeth's
+read_bootflow() already fetches the configuration over HTTP(S) when the
+boot file location is a URL (via pxe_get()), and passes the URL base down
+as the bootflow subdir.
+
+Make the matching read_file() op, used during boot to load the kernel,
+initrd, device tree and overlays, honour the same transport: when the
+resolved path is an "http://" or "https://" URL, download it with wget()
+instead of TFTP. Non-URL paths continue to use TFTP unchanged.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ boot/bootmeth_pxe.c | 35 +++++++++++++++++++++++++----------
+ 1 file changed, 25 insertions(+), 10 deletions(-)
+
+diff --git a/boot/bootmeth_pxe.c b/boot/bootmeth_pxe.c
+index faa8d729b15..9c2e869daa6 100644
+--- a/boot/bootmeth_pxe.c
++++ b/boot/bootmeth_pxe.c
+@@ -121,21 +121,36 @@ static int extlinux_pxe_read_file(struct udevice *dev, struct bootflow *bflow,
+ 				  const char *file_path, ulong addr,
+ 				  enum bootflow_img_t type, ulong *sizep)
+ {
+-	char *tftp_argv[] = {"tftp", NULL, NULL, NULL};
+ 	struct pxe_context *ctx = dev_get_priv(dev);
+-	char file_addr[17];
+ 	ulong size;
+ 	int ret;
+ 
+-	sprintf(file_addr, "%lx", addr);
+-	tftp_argv[1] = file_addr;
+-	tftp_argv[2] = (void *)file_path;
++	if (IS_ENABLED(CONFIG_PXE_HTTP) &&
++	    (!strncmp(file_path, "http://", 7) ||
++	     !strncmp(file_path, "https://", 8))) {
++		struct wget_http_info info = {
++			.method = WGET_HTTP_METHOD_GET,
++			.set_bootdev = false,
++		};
++
++		if (wget_request(addr, (char *)file_path, &info))
++			return log_msg_ret("http", -ENOENT);
++		size = info.file_size;
++	} else {
++		char *tftp_argv[] = {"tftp", NULL, NULL, NULL};
++		char file_addr[17];
++
++		sprintf(file_addr, "%lx", addr);
++		tftp_argv[1] = file_addr;
++		tftp_argv[2] = (void *)file_path;
++
++		if (do_tftpb(ctx->cmdtp, 0, 3, tftp_argv))
++			return -ENOENT;
++		ret = pxe_get_file_size(&size);
++		if (ret)
++			return log_msg_ret("tftp", ret);
++	}
+ 
+-	if (do_tftpb(ctx->cmdtp, 0, 3, tftp_argv))
+-		return -ENOENT;
+-	ret = pxe_get_file_size(&size);
+-	if (ret)
+-		return log_msg_ret("tftp", ret);
+ 	if (size > *sizep)
+ 		return log_msg_ret("spc", -ENOSPC);
+ 	*sizep = size;
+-- 
+2.55.0
+
+
+From 8e868e03d8babdb94a7516f1143bbfe4cb5f9a3e Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 18 Jul 2026 17:19:19 +0200
+Subject: [PATCH 3/4] doc: pxe: document booting over HTTP(S)
+
+Describe CONFIG_PXE_HTTP: how the HTTP(S) transport is selected (the
+"pxe_url" environment variable or a URL in the DHCP-provided "bootfile",
+following the UEFI HTTP Boot convention of DHCP option 67), the base-URL
+vs direct-config-URL behaviour, and HTTPS certificate handling. Document
+the new "pxe_url" environment variable and add a pointer from the pxelinux
+bootmeth documentation.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ doc/develop/bootstd/pxelinux.rst |  4 ++-
+ doc/usage/pxe.rst                | 53 ++++++++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/doc/develop/bootstd/pxelinux.rst b/doc/develop/bootstd/pxelinux.rst
+index c4b7fbb4c9c..94c36473445 100644
+--- a/doc/develop/bootstd/pxelinux.rst
++++ b/doc/develop/bootstd/pxelinux.rst
+@@ -11,7 +11,9 @@ U-Boot includes a parser for the `extlinux.conf` file described
+ `here <https://uapi-group.org/specifications/specs/boot_loader_specification>`_.
+ It consists primarily of a list of named operating systems along with the
+ kernel, initial ramdisk and other settings. The file is retrieved from a network
+-server using the TFTP protocol.
++server using the TFTP protocol, or over HTTP(S) when `CONFIG_PXE_HTTP` is
++enabled and the boot file location is an ``http://`` or ``https://`` URL (for
++example provided in DHCP option 67). See :doc:`../../usage/pxe` for details.
+ 
+ When invoked on a bootdev, this bootmeth searches for the file and creates a
+ bootflow if found. See
+diff --git a/doc/usage/pxe.rst b/doc/usage/pxe.rst
+index 18532f182d5..388be65876e 100644
+--- a/doc/usage/pxe.rst
++++ b/doc/usage/pxe.rst
+@@ -55,6 +55,52 @@ Commands
+ 
+ 	``sysboot mmc 0.0:2 any ${pxefile_addr_r} /boot/extlinux.conf``
+ 
++Boot over HTTP(S)
++-----------------
++
++When ``CONFIG_PXE_HTTP`` is enabled, ``pxe get`` and ``pxe boot`` (as well
++as the ``pxe`` bootflow used by bootstd) can retrieve the configuration and
++all boot files (kernel, initrd, device tree and overlays) over HTTP or HTTPS
++using :doc:`cmd/wget`, instead of TFTP. HTTPS additionally requires
++``CONFIG_WGET_HTTPS``.
++
++The transport is selected automatically based on the boot file location:
++
++- if the ``pxe_url`` environment variable is set to an ``http://`` or
++  ``https://`` URL, it is used;
++- otherwise the DHCP-provided ``bootfile`` (DHCP option 67) is used, which
++  may itself be an ``http://`` or ``https://`` URL.
++
++Conveying a full URL in DHCP option 67 matches the UEFI HTTP Boot convention,
++so a DHCP server already configured for UEFI HTTP Boot drives this path as
++well. When the location is not a URL, TFTP is used exactly as before.
++
++If the URL ends in ``/`` it is treated as a base directory and the usual
++``pxelinux.cfg/`` name probing is performed underneath it (by UUID, MAC
++address, IP address and finally ``default``). If instead the URL points
++directly at a file, that file is fetched as-is and used as the configuration;
++paths inside it are then resolved relative to its directory.
++
++Examples::
++
++    # Explicit base URL, probe pxelinux.cfg/ underneath it
++    setenv pxe_url http://192.168.0.1/boot/
++    pxe get
++    pxe boot
++
++    # Direct URL to an extlinux.conf
++    setenv pxe_url https://example.com/images/extlinux/extlinux.conf
++    pxe get
++    pxe boot
++
++    # Zero-config: DHCP option 67 provides the URL
++    dhcp
++    pxe get
++
++For HTTPS, server certificates are verified according to the ``wget cacert``
++configuration; see :doc:`cmd/wget` and ``CONFIG_WGET_CACERT`` /
++``CONFIG_WGET_BUILTIN_CACERT``.
++
+ Environment
+ -----------
+ 
+@@ -79,6 +125,13 @@ Environment
+         address of the tftp server from which other files will be
+         retrieved. Required for ``pxe get``.
+ 
++``pxe_url``
++        Optional. When ``CONFIG_PXE_HTTP`` is enabled and this is set to an
++        ``http://`` or ``https://`` URL, files are retrieved over HTTP(S)
++        using wget instead of TFTP, and this URL is used as the base
++        location (taking precedence over ``bootfile``). See the
++        "Boot over HTTP(S)" section above.
++
+ ``kernel_addr_r``, ``initrd_addr_r``
+         Locations in RAM to store the kernel (or FIT image) and
+         initrd. These locations will be passed to the ``bootm``
+-- 
+2.55.0
+
+
+From 3dcad6320e15e3df0656533f53a497a41f01c10f Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 18 Jul 2026 18:50:04 +0200
+Subject: [PATCH 4/4] DEBUG: pxe-http: trace boot path (DO NOT UPSTREAM)
+
+Temporary, verbose printf() tracing across the PXE/extlinux HTTP(S) boot
+path to ease bring-up on real hardware. All lines are prefixed with
+"PXEHTTP-DBG:" so they are easy to grep and this commit is easy to drop.
+
+Covers: transport/base-URL selection (pxe_get_base, select_getfile),
+each HTTP fetch (do_get_http / read_file: URL, status code, size),
+pxe_get success/failure, and the bootstd read_bootflow flow (DHCP
+bootfile, pxe_get result, resulting subdir/fname).
+
+Drop this commit before submitting upstream.
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ boot/bootmeth_pxe.c | 20 ++++++++++++++++++--
+ cmd/pxe.c           | 28 +++++++++++++++++++++++++---
+ 2 files changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/boot/bootmeth_pxe.c b/boot/bootmeth_pxe.c
+index 9c2e869daa6..a837988b383 100644
+--- a/boot/bootmeth_pxe.c
++++ b/boot/bootmeth_pxe.c
+@@ -74,13 +74,19 @@ static int extlinux_pxe_read_bootflow(struct udevice *dev,
+ 		return log_msg_ret("pxeb", -EPERM);
+ 	addr = simple_strtoul(addr_str, NULL, 16);
+ 
++	printf("PXEHTTP-DBG: read_bootflow dev=%s pxefile_addr_r=0x%lx\n",
++	       dev->name, addr);
++
+ 	ret = dhcp_run(addr, NULL, false);
++	printf("PXEHTTP-DBG: dhcp_run ret=%d bootfile='%s'\n", ret,
++	       env_get("bootfile") ? env_get("bootfile") : "(unset)");
+ 	if (ret)
+ 		return log_msg_ret("dhc", ret);
+ 
+ 	log_debug("calling pxe_get()\n");
+ 	ret = pxe_get(addr, &bootdir, &size, false);
+-	log_debug("pxe_get() returned %d\n", ret);
++	printf("PXEHTTP-DBG: pxe_get ret=%d bootdir='%s' size=%lu\n", ret,
++	       bootdir ? bootdir : "(none)", size);
+ 	if (ret)
+ 		return log_msg_ret("pxeb", ret);
+ 	bflow->size = size;
+@@ -105,6 +111,9 @@ static int extlinux_pxe_read_bootflow(struct udevice *dev,
+ 	if (!bflow->fname)
+ 		return log_msg_ret("name", -ENOMEM);
+ 
++	printf("PXEHTTP-DBG: read_bootflow ready subdir='%s' fname='%s'\n",
++	       bflow->subdir ? bflow->subdir : "(none)", bflow->fname);
++
+ 	bflow->state = BOOTFLOWST_READY;
+ 
+ 	/* Allocate the buffer, including the \0 byte added by get_pxe_file() */
+@@ -133,13 +142,20 @@ static int extlinux_pxe_read_file(struct udevice *dev, struct bootflow *bflow,
+ 			.set_bootdev = false,
+ 		};
+ 
+-		if (wget_request(addr, (char *)file_path, &info))
++		printf("PXEHTTP-DBG: read_file HTTP url='%s' addr=0x%lx type=%d\n",
++		       file_path, addr, type);
++		ret = wget_request(addr, (char *)file_path, &info);
++		printf("PXEHTTP-DBG: read_file wget ret=%d status=%u size=%lu\n",
++		       ret, info.status_code, info.file_size);
++		if (ret)
+ 			return log_msg_ret("http", -ENOENT);
+ 		size = info.file_size;
+ 	} else {
+ 		char *tftp_argv[] = {"tftp", NULL, NULL, NULL};
+ 		char file_addr[17];
+ 
++		printf("PXEHTTP-DBG: read_file TFTP path='%s' addr=0x%lx type=%d\n",
++		       file_path, addr, type);
+ 		sprintf(file_addr, "%lx", addr);
+ 		tftp_argv[1] = file_addr;
+ 		tftp_argv[2] = (void *)file_path;
+diff --git a/cmd/pxe.c b/cmd/pxe.c
+index 78e50670376..804696f2ccd 100644
+--- a/cmd/pxe.c
++++ b/cmd/pxe.c
+@@ -64,11 +64,18 @@ static int do_get_http(struct pxe_context *ctx, const char *file_path,
+ 	ulong addr;
+ 	int ret;
+ 
+-	if (!wget_validate_uri((char *)file_path))
++	printf("PXEHTTP-DBG: do_get_http url='%s' addr=%s type=%d\n",
++	       file_path, file_addr, type);
++
++	if (!wget_validate_uri((char *)file_path)) {
++		printf("PXEHTTP-DBG: do_get_http invalid URI '%s'\n", file_path);
+ 		return -EINVAL;
++	}
+ 
+ 	addr = hextoul(file_addr, NULL);
+ 	ret = wget_request(addr, (char *)file_path, &info);
++	printf("PXEHTTP-DBG: wget_request ret=%d status=%u file_size=%lu\n",
++	       ret, info.status_code, info.file_size);
+ 	if (ret)
+ 		return log_msg_ret("http", ret);
+ 
+@@ -104,11 +111,15 @@ static inline bool pxe_is_url(const char *s)
+ static const char *pxe_get_base(void)
+ {
+ 	const char *base = env_get("pxe_url");
++	const char *bootfile = env_get("bootfile");
++
++	printf("PXEHTTP-DBG: pxe_get_base pxe_url='%s' bootfile='%s'\n",
++	       base ? base : "(unset)", bootfile ? bootfile : "(unset)");
+ 
+ 	if (pxe_is_url(base))
+ 		return base;
+ 
+-	return env_get("bootfile");
++	return bootfile;
+ }
+ 
+ /*
+@@ -122,10 +133,14 @@ static pxe_getfile_func select_getfile(const char **basep)
+ 	*basep = base;
+ 
+ #if defined(CONFIG_PXE_HTTP)
+-	if (pxe_is_url(base))
++	if (pxe_is_url(base)) {
++		printf("PXEHTTP-DBG: transport=HTTP base='%s'\n", base);
+ 		return do_get_http;
++	}
+ #endif
+ 
++	printf("PXEHTTP-DBG: transport=TFTP base='%s'\n", base ? base : "(none)");
++
+ 	return do_get_tftp;
+ }
+ 
+@@ -233,11 +248,14 @@ int pxe_get(ulong pxefile_addr_r, char **bootdirp, ulong *sizep, bool use_ipv6)
+ 		const char *fname = strrchr(base, '/');
+ 
+ 		fname = fname ? fname + 1 : base;
++		printf("PXEHTTP-DBG: direct config URL, fetching '%s'\n", fname);
+ 		if (get_pxe_file(&ctx, fname, pxefile_addr_r) > 0)
+ 			goto done;
+ 
+ 		goto error_exit;
+ 	}
++	if (getfile == do_get_http)
++		printf("PXEHTTP-DBG: base URL ends in '/', probing pxelinux.cfg/\n");
+ #endif
+ 
+ 	if (IS_ENABLED(CONFIG_BOOTP_PXE_DHCP_OPTION) &&
+@@ -274,12 +292,16 @@ int pxe_get(ulong pxefile_addr_r, char **bootdirp, ulong *sizep, bool use_ipv6)
+ 	}
+ 
+ error_exit:
++	printf("PXEHTTP-DBG: pxe_get FAILED (no config found)\n");
+ 	pxe_destroy_ctx(&ctx);
+ 
+ 	return -ENOENT;
+ done:
+ 	*bootdirp = (char *)pxe_get_base();
+ 
++	printf("PXEHTTP-DBG: pxe_get OK bootdir='%s' size=%lu\n",
++	       *bootdirp ? *bootdirp : "(none)", ctx.pxe_file_size);
++
+ 	/*
+ 	 * The PXE file size is returned but not the name. It is probably not
+ 	 * that useful.
+-- 
+2.55.0
+
