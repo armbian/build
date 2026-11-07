@@ -42,6 +42,22 @@ main() {
 		return 0
 	fi
 
+	# A reboot during step 3: steps 1 and 2 are done. Resume at once. A new
+	# keyfile now would rebuild the initramfs for nothing.
+	if cryptsetup luksDump "$dev" | grep -q 'online-reencrypt'; then
+		echo "Resuming the re-encryption of $dev"
+		if ! cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev"; then
+			# A power loss can leave the metadata to recover first. Unlocking
+			# the root usually does it; repair covers the rest.
+			echo "Repairing the re-encryption metadata of $dev"
+			cryptsetup repair --key-file "$KEY" "$dev" || return 1
+			cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
+		fi
+		systemctl disable armbian-luks-rekey
+		echo "$(date) | done"
+		return 0
+	fi
+
 	# 1. New keyfile. Keep the old key valid until the initramfs has the new one.
 	umask 077
 	if [[ ! -f "$OLD" ]]; then
@@ -76,14 +92,9 @@ main() {
 	fi
 
 	# 3. New volume key. Online: the root stays mounted. An interrupted run
-	# continues from its checkpoint.
-	if cryptsetup luksDump "$dev" | grep -q 'online-reencrypt'; then
-		echo "Resuming the re-encryption of $dev"
-		cryptsetup reencrypt --resume-only --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
-	else
-		echo "Re-encrypting $dev with a new volume key"
-		cryptsetup reencrypt $PBKDF --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
-	fi
+	# continues from its checkpoint (see above).
+	echo "Re-encrypting $dev with a new volume key"
+	cryptsetup reencrypt $PBKDF --key-file "$KEY" --progress-frequency 60 "$dev" || return 1
 
 	systemctl disable armbian-luks-rekey
 	echo "$(date) | done"
