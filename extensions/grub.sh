@@ -42,8 +42,10 @@ function extension_prepare_config__prepare_grub_standard() {
 			if [[ -n "${BOOTSIZE:-}" && "${BOOTSIZE:-0}" != "0" ]]; then
 				if [[ "${UEFI_MOUNT_POINT:-}" == "/boot" ]]; then
 					# /boot is the EFI partition: BOOTSIZE sizes it, unless UEFISIZE is set.
+					# BOOTSIZE 1-8 means the default size, as in prepare_partitions.
 					default_uefisize="${BOOTSIZE}"
-					display_alert "GRUB: /boot is the EFI partition" "size ${UEFISIZE:-${BOOTSIZE}} MiB" "info"
+					[[ "${BOOTSIZE}" =~ ^[0-9]+$ ]] && ((BOOTSIZE <= 8)) && default_uefisize=512
+					display_alert "GRUB: /boot is the EFI partition" "size ${UEFISIZE:-${default_uefisize}} MiB" "info"
 				else
 					display_alert "BOOTSIZE is ignored with GRUB" "/boot is on the root filesystem; use BOOTFS_TYPE=ext4 for a separate /boot" "wrn"
 				fi
