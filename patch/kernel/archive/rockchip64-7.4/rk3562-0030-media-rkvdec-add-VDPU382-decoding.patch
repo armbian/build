@@ -1,0 +1,512 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retro98boy <retro98boy@qq.com>
+Date: Sat, 24 Oct 2026 09:25:08 +0800
+Subject: [PATCH] media: rkvdec: add RK3562 VDPU382 decoding support
+
+Reuse the VDPU381 backends for H.264, HEVC Main and VP9 Profile 0.
+Support HEVC and VP9 frames up to 4096x2304 with 8-bit output.
+Add VDPU382 cache setup, reset recovery and external IOMMU handling.
+Handle VP9 segment maps, stream offsets and stale frame registers.
+Limit HEVC profile and level controls to the supported capabilities.
+Limit H.264 profile reporting to High for VDPU382's 8-bit 4:2:0 output.
+Preserve other decoder variants.
+
+---
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-h264.c b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-h264.c
+index b961fdd..6f0444a 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-h264.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-h264.c
+@@ -15,6 +15,9 @@
+ #include "rkvdec-h264-common.h"
+ #include "rkvdec-vdpu381-regs.h"
+ 
++#define VDPU382_REG_MODE			0x034
++#define VDPU382_H264_STREAM_REMOVE	BIT(8)
++
+ struct rkvdec_sps {
+ 	u16 seq_parameter_set_id:			4;
+ 	u16 profile_idc:				8;
+@@ -203,6 +206,12 @@ static void rkvdec_write_regs(struct rkvdec_ctx *ctx)
+ 	rkvdec_memcpy_toio(rkvdec->regs + OFFSET_POC_HIGHBIT_REGS,
+ 			   &h264_ctx->regs.h264_highpoc,
+ 			   sizeof(h264_ctx->regs.h264_highpoc));
++	if (rkvdec->variant->is_vdpu382) {
++		u32 mode = readl(rkvdec->regs + VDPU382_REG_MODE);
++
++		/* VDPU382 removes H.264 emulation-prevention bytes in hardware. */
++		writel(mode | VDPU382_H264_STREAM_REMOVE, rkvdec->regs + VDPU382_REG_MODE);
++	}
+ }
+ 
+ static void config_registers(struct rkvdec_ctx *ctx,
+@@ -453,6 +462,14 @@ static int rkvdec_h264_run(struct rkvdec_ctx *ctx)
+ 
+ static int rkvdec_h264_try_ctrl(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
+ {
++	if (ctx->dev->variant->is_vdpu382 &&
++	    ctrl->id == V4L2_CID_STATELESS_H264_SPS) {
++		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
++
++		if (sps->chroma_format_idc != 1 || sps->bit_depth_luma_minus8 ||
++		    sps->bit_depth_chroma_minus8)
++			return -EINVAL;
++	}
+ 	if (ctrl->id == V4L2_CID_STATELESS_H264_SPS)
+ 		return rkvdec_h264_validate_sps(ctx, ctrl->p_new.p_h264_sps);
+ 
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-hevc.c b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-hevc.c
+index e1936e8..767409b 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-hevc.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-hevc.c
+@@ -625,6 +625,14 @@ static int rkvdec_hevc_run(struct rkvdec_ctx *ctx)
+ 
+ static int rkvdec_hevc_try_ctrl(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
+ {
++	if (ctx->dev->variant->is_vdpu382 &&
++	    ctrl->id == V4L2_CID_STATELESS_HEVC_SPS) {
++		const struct v4l2_ctrl_hevc_sps *sps = ctrl->p_new.p_hevc_sps;
++
++		if (sps->chroma_format_idc != 1 || sps->bit_depth_luma_minus8 ||
++		    sps->bit_depth_chroma_minus8)
++			return -EINVAL;
++	}
+ 	if (ctrl->id == V4L2_CID_STATELESS_HEVC_SPS)
+ 		return rkvdec_hevc_validate_sps(ctx, ctrl->p_new.p_hevc_sps);
+ 
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-regs.h b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-regs.h
+index 7b92ac3..45fc524 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-regs.h
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-regs.h
+@@ -410,7 +410,8 @@ struct rkvdec_vdpu381_regs_vp9_params {
+ 
+ 	struct rkvdec_vdpu381_vp9_info_lastframe {
+ 		u32 vp9_mode_deltas_lastframe : 14;
+-		u32 reserved0 : 2;
++		u32 reserved0 : 1;
++		u32 vp9_segment_id_update : 1;
+ 		u32 segmentation_enable_lstframe : 1;
+ 		u32 vp9_last_showframe : 1;
+ 		u32 vp9_last_intra_only : 1;
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-vp9.c b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-vp9.c
+index 9aa75a5..c8a5435 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-vp9.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec-vdpu381-vp9.c
+@@ -444,6 +444,8 @@ static void config_registers(struct rkvdec_ctx *ctx,
+ 	unsigned int i;
+ 
+ 	dec_params = run->decode_params;
++	if (ctx->dev->variant->is_vdpu382)
++		memset(regs, 0, sizeof(*regs));
+ 	dst = vb2_to_rkvdec_decoded_buf(&run->base.bufs.dst->vb2_buf);
+ 	ref_bufs[0] = get_ref_buf_vp9(ctx, &dst->base.vb, dec_params->last_frame_ts);
+ 	ref_bufs[1] = get_ref_buf_vp9(ctx, &dst->base.vb, dec_params->golden_frame_ts);
+@@ -571,6 +573,10 @@ static void config_registers(struct rkvdec_ctx *ctx,
+ 		last->vp9.height == dst->vp9.height;
+ 
+ 	regs->vp9_param.reg78_vp9_stream_size = stream_len;
++	if (ctx->dev->variant->is_vdpu382)
++		regs->vp9_param.reg78_vp9_stream_size -=
++			dec_params->compressed_header_size +
++			dec_params->uncompressed_header_size;
+ 
+ 	for (i = 0; !intra_only && i < ARRAY_SIZE(ref_bufs); i++) {
+ 		unsigned int refw = ref_bufs[i]->vp9.width;
+@@ -626,6 +632,31 @@ static void config_registers(struct rkvdec_ctx *ctx,
+ 		offsetof(struct rkvdec_vp9_priv_tbl, segmap) +
+ 		(RKVDEC_VP9_MAX_SEGMAP_SIZE * vp9_ctx->cur.segmapid);
+ 
++	if (ctx->dev->variant->is_vdpu382) {
++		bool update = intra_only || !vp9_ctx->last.valid ||
++			(dec_params->flags & V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT) ||
++			((seg->flags & V4L2_VP9_SEGMENTATION_FLAG_ENABLED) &&
++			 (seg->flags & V4L2_VP9_SEGMENTATION_FLAG_UPDATE_MAP)) ||
++			last->vp9.width != dst->vp9.width ||
++			last->vp9.height != dst->vp9.height;
++		dma_addr_t base = vp9_ctx->priv_tbl.dma +
++			offsetof(struct rkvdec_vp9_priv_tbl, segmap);
++
++		/* Retain the last map until hardware writes its replacement. */
++		regs->vp9_param.reg75.vp9_segment_id_update = update;
++		if (dec_params->flags & V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT) {
++			/* setup_past_independence() resets segment features. */
++			memset(regs->vp9_param.reg67_74, 0,
++			       sizeof(regs->vp9_param.reg67_74));
++			regs->vp9_param.reg75.segmentation_enable_lstframe = 0;
++		}
++		regs->vp9_addr.vp9_segidlast_base = base +
++			RKVDEC_VP9_MAX_SEGMAP_SIZE * vp9_ctx->last.segmapid;
++		regs->vp9_addr.avp9_segidcur_base = base +
++			RKVDEC_VP9_MAX_SEGMAP_SIZE * !vp9_ctx->last.segmapid;
++		vp9_ctx->cur.segmapid = vp9_ctx->last.segmapid ^ update;
++	}
++
+ 	if (!intra_only &&
+ 	    !(dec_params->flags & V4L2_VP9_FRAME_FLAG_ERROR_RESILIENT) &&
+ 	    vp9_ctx->last.valid)
+@@ -685,6 +716,11 @@ static int rkvdec_vp9_run_preamble(struct rkvdec_ctx *ctx,
+ 	if (ret)
+ 		return ret;
+ 
++	if (ctx->dev->variant->is_vdpu382 &&
++	    dec_params->compressed_header_size + dec_params->uncompressed_header_size >
++	    vb2_get_plane_payload(&run->base.bufs.src->vb2_buf, 0))
++		return -EINVAL;
++
+ 	run->decode_params = dec_params;
+ 
+ 	ctrl = v4l2_ctrl_find(&ctx->ctrl_hdl, V4L2_CID_STATELESS_VP9_COMPRESSED_HDR);
+@@ -937,8 +973,13 @@ static void rkvdec_init_v4l2_vp9_count_tbl(struct rkvdec_ctx *ctx)
+ #undef INNERMOST_LOOP
+ }
+ 
+-static int rkvdec_vp9_validate_frame(const struct v4l2_ctrl_vp9_frame *frame)
++static int rkvdec_vp9_validate_frame(struct rkvdec_ctx *ctx,
++				     const struct v4l2_ctrl_vp9_frame *frame)
+ {
++	if (ctx->dev->variant->is_vdpu382 &&
++	    (frame->profile != 0 || frame->bit_depth != 8))
++		return -EINVAL;
++
+ 	if (frame->profile == 1 || frame->profile == 3)
+ 		return -EINVAL;
+ 
+@@ -951,7 +992,7 @@ static int rkvdec_vp9_validate_frame(const struct v4l2_ctrl_vp9_frame *frame)
+ static int rkvdec_vp9_try_ctrl(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
+ {
+ 	if (ctrl->id == V4L2_CID_STATELESS_VP9_FRAME)
+-		return rkvdec_vp9_validate_frame(ctrl->p_new.p_vp9_frame);
++		return rkvdec_vp9_validate_frame(ctx, ctrl->p_new.p_vp9_frame);
+ 
+ 	return 0;
+ }
+@@ -970,7 +1011,7 @@ static int rkvdec_vp9_start(struct rkvdec_ctx *ctx)
+ 	if (!ctrl)
+ 		return -EINVAL;
+ 
+-	ret = rkvdec_vp9_validate_frame(ctrl->p_new.p_vp9_frame);
++	ret = rkvdec_vp9_validate_frame(ctx, ctrl->p_new.p_vp9_frame);
+ 	if (ret)
+ 		return ret;
+ 
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec.c b/drivers/media/platform/rockchip/rkvdec/rkvdec.c
+index 1afae73..17bc016 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec.c
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec.c
+@@ -11,6 +11,7 @@
+ 
+ #include <linux/hw_bitfield.h>
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/genalloc.h>
+ #include <linux/interrupt.h>
+ #include <linux/iommu.h>
+@@ -20,6 +21,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
++#include <linux/reset.h>
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ #include <linux/workqueue.h>
+@@ -34,6 +36,68 @@
+ #include "rkvdec-vdpu383-regs.h"
+ #include "rkvdec-rcb.h"
+ 
++#define VDPU382_CACHE_STRIDE	0x40
++#define VDPU382_CACHE_CLEAR	0x00
++#define VDPU382_CACHE_CONFIG	0x0c
++#define VDPU382_CACHE_ENABLE	(BIT(0) | BIT(1) | BIT(4))
++#define VDPU382_REG_RESET_CTRL	0x334
++#define VDPU382_DISABLE_ERROR_RESET	BIT(4)
++
++/* The decoder and its IOMMUs share reset state on RK3562. */
++static int vdpu382_reset(struct rkvdec_dev *rkvdec)
++{
++	int ret;
++
++	ret = iommu_attach_device(rkvdec->empty_domain, rkvdec->dev);
++	if (ret)
++		goto fail;
++
++	ret = reset_control_assert(rkvdec->resets);
++	if (!ret) {
++		udelay(5);
++		ret = reset_control_deassert(rkvdec->resets);
++	}
++
++	iommu_detach_device(rkvdec->empty_domain, rkvdec->dev);
++	if (ret)
++		goto fail;
++
++	writel(0, rkvdec->regs + VDPU381_REG_STA_INT);
++	rkvdec->needs_reset = false;
++	return 0;
++
++fail:
++	/* Do not submit another job with unknown translation or reset state. */
++	reset_control_assert(rkvdec->resets);
++	rkvdec->broken = true;
++	dev_err(rkvdec->dev, "VDPU382 reset failed: %d\n", ret);
++	return ret;
++}
++
++static int vdpu382_prepare(struct rkvdec_dev *rkvdec)
++{
++	unsigned int i;
++	int ret;
++
++	if (rkvdec->broken)
++		return -EIO;
++	if (rkvdec->needs_reset) {
++		ret = vdpu382_reset(rkvdec);
++		if (ret)
++			return ret;
++	}
++
++	for (i = 0; i < 3; i++) {
++		/* Cacheable reads, read allocation, and 64-byte cache lines. */
++		writel(VDPU382_CACHE_ENABLE,
++		       rkvdec->cache + i * VDPU382_CACHE_STRIDE + VDPU382_CACHE_CONFIG);
++		writel(1, rkvdec->cache + i * VDPU382_CACHE_STRIDE + VDPU382_CACHE_CLEAR);
++	}
++	/* Preserve success resets; recover errors with the IOMMU attached. */
++	writel(VDPU382_DISABLE_ERROR_RESET, rkvdec->regs + VDPU382_REG_RESET_CTRL);
++	return 0;
++}
++
+ static bool rkvdec_image_fmt_match(enum rkvdec_image_fmt fmt1,
+ 				   enum rkvdec_image_fmt fmt2)
+ {
+@@ -601,6 +665,71 @@ static const struct rkvdec_coded_fmt_desc vdpu381_coded_fmts[] = {
+ 	}
+ };
+ 
++static const struct rkvdec_decoded_fmt_desc vdpu382_decoded_fmts[] = {
++	{ .fourcc = V4L2_PIX_FMT_NV12, .image_fmt = RKVDEC_IMG_FMT_420_8BIT },
++};
++
++static const struct rkvdec_ctrl_desc vdpu382_vp9_ctrl_descs[] = {
++	{
++		.cfg.id = V4L2_CID_STATELESS_VP9_FRAME,
++		.cfg.ops = &rkvdec_ctrl_ops,
++	}, {
++		.cfg.id = V4L2_CID_STATELESS_VP9_COMPRESSED_HDR,
++	}, {
++		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_PROFILE,
++		.cfg.min = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++		.cfg.max = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++		.cfg.def = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++	}, {
++		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_LEVEL,
++		.cfg.min = V4L2_MPEG_VIDEO_VP9_LEVEL_1_0,
++		.cfg.max = V4L2_MPEG_VIDEO_VP9_LEVEL_5_0,
++	},
++};
++
++static const struct rkvdec_ctrls vdpu382_vp9_ctrls = {
++	.ctrls = vdpu382_vp9_ctrl_descs,
++	.num_ctrls = ARRAY_SIZE(vdpu382_vp9_ctrl_descs),
++};
++
++static const struct rkvdec_coded_fmt_desc vdpu382_coded_fmts[] = {
++	{
++		.fourcc = V4L2_PIX_FMT_VP9_FRAME,
++		.frmsize = {
++			.min_width = 64, .max_width = 4096, .step_width = 64,
++			.min_height = 64, .max_height = 2304, .step_height = 64,
++		},
++		.ctrls = &vdpu382_vp9_ctrls,
++		.ops = &rkvdec_vdpu381_vp9_fmt_ops,
++		.num_decoded_fmts = ARRAY_SIZE(vdpu382_decoded_fmts),
++		.decoded_fmts = vdpu382_decoded_fmts,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_HEVC_SLICE,
++		.frmsize = {
++			.min_width = 64, .max_width = 4096, .step_width = 64,
++			.min_height = 64, .max_height = 2304, .step_height = 16,
++		},
++		.ctrls = &vdpu38x_hevc_ctrls,
++		.ops = &rkvdec_vdpu381_hevc_fmt_ops,
++		.num_decoded_fmts = ARRAY_SIZE(vdpu382_decoded_fmts),
++		.decoded_fmts = vdpu382_decoded_fmts,
++		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
++	},
++	{
++		.fourcc = V4L2_PIX_FMT_H264_SLICE,
++		.frmsize = {
++			.min_width = 64, .max_width = 1920, .step_width = 64,
++			.min_height = 64, .max_height = 1088, .step_height = 16,
++		},
++		.ctrls = &vdpu38x_h264_ctrls,
++		.ops = &rkvdec_vdpu381_h264_fmt_ops,
++		.num_decoded_fmts = ARRAY_SIZE(vdpu382_decoded_fmts),
++		.decoded_fmts = vdpu382_decoded_fmts,
++		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
++	},
++};
++
+ static const struct rkvdec_coded_fmt_desc vdpu383_coded_fmts[] = {
+ 	{
+ 		.fourcc = V4L2_PIX_FMT_HEVC_SLICE,
+@@ -1237,6 +1366,13 @@ static void rkvdec_device_run(void *priv)
+ 		return;
+ 	}
+ 
++	if (rkvdec->variant->is_vdpu382) {
++		ret = vdpu382_prepare(rkvdec);
++		if (ret) {
++			rkvdec_job_finish(ctx, VB2_BUF_STATE_ERROR);
++			return;
++		}
++	}
+ 	ret = desc->ops->run(ctx);
+ 	if (ret)
+ 		rkvdec_job_finish(ctx, VB2_BUF_STATE_ERROR);
+@@ -1300,9 +1436,20 @@ static int rkvdec_add_ctrls(struct rkvdec_ctx *ctx,
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < ctrls->num_ctrls; i++) {
+-		const struct v4l2_ctrl_config *cfg = &ctrls->ctrls[i].cfg;
++		struct v4l2_ctrl_config cfg = ctrls->ctrls[i].cfg;
++
++		if (ctx->dev->variant->is_vdpu382) {
++			if (cfg.id == V4L2_CID_MPEG_VIDEO_HEVC_PROFILE) {
++				cfg.max = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN;
++				cfg.menu_skip_mask = 0;
++			} else if (cfg.id == V4L2_CID_MPEG_VIDEO_HEVC_LEVEL) {
++				cfg.max = V4L2_MPEG_VIDEO_HEVC_LEVEL_5;
++			} else if (cfg.id == V4L2_CID_MPEG_VIDEO_H264_PROFILE) {
++				cfg.max = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH;
++			}
++		}
+ 
+-		v4l2_ctrl_new_custom(&ctx->ctrl_hdl, cfg, ctx);
++		v4l2_ctrl_new_custom(&ctx->ctrl_hdl, &cfg, ctx);
+ 		if (ctx->ctrl_hdl.error)
+ 			return ctx->ctrl_hdl.error;
+ 	}
+@@ -1584,6 +1731,22 @@ static irqreturn_t rkvdec_irq_handler(int irq, void *priv)
+ 	struct rkvdec_ctx *ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 	const struct rkvdec_variant *variant = rkvdec->variant;
+ 
++	if (variant->is_vdpu382) {
++		u32 status = readl(rkvdec->regs + VDPU381_REG_STA_INT);
++		enum vb2_buffer_state state = VB2_BUF_STATE_ERROR;
++
++		writel(0, rkvdec->regs + VDPU381_REG_STA_INT);
++		if (!ctx || !cancel_delayed_work(&rkvdec->watchdog_work))
++			return IRQ_HANDLED;
++		if ((status & VDPU381_STA_INT_DEC_RDY_STA) &&
++		    !(status & GENMASK(7, 3)))
++			state = VB2_BUF_STATE_DONE;
++		else
++			vdpu382_reset(rkvdec);
++		rkvdec_job_finish(ctx, state);
++		return IRQ_HANDLED;
++	}
++
+ 	return variant->ops->irq_handler(ctx);
+ }
+ 
+@@ -1669,7 +1832,10 @@ static void rkvdec_watchdog_func(struct work_struct *work)
+ 	ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 	if (ctx) {
+ 		dev_err(rkvdec->dev, "Frame processing timed out!\n");
+-		writel(RKVDEC_IRQ_DIS, rkvdec->regs + RKVDEC_REG_INTERRUPT);
++		if (rkvdec->variant->is_vdpu382)
++			vdpu382_reset(rkvdec);
++		else
++			writel(RKVDEC_IRQ_DIS, rkvdec->regs + RKVDEC_REG_INTERRUPT);
+ 		rkvdec_job_finish(ctx, VB2_BUF_STATE_ERROR);
+ 	}
+ }
+@@ -1775,6 +1941,15 @@ static const struct rkvdec_variant vdpu381_variant = {
+ 	.ops = &vdpu381_variant_ops,
+ };
+ 
++static const struct rkvdec_variant vdpu382_variant = {
++	.coded_fmts = vdpu382_coded_fmts,
++	.num_coded_fmts = ARRAY_SIZE(vdpu382_coded_fmts),
++	.rcb_sizes = vdpu381_rcb_sizes,
++	.num_rcb_sizes = ARRAY_SIZE(vdpu381_rcb_sizes),
++	.ops = &vdpu381_variant_ops,
++	.is_vdpu382 = true,
++};
++
+ static const struct rcb_size_info vdpu383_rcb_sizes[] = {
+ 	{6,	PIC_WIDTH},	// streamd
+ 	{6,	PIC_WIDTH},	// streamd_tile
+@@ -1803,6 +1978,10 @@ static const struct rkvdec_variant vdpu383_variant = {
+ };
+ 
+ static const struct of_device_id of_rkvdec_match[] = {
++	{
++		.compatible = "rockchip,rk3562-vdec",
++		.data = &vdpu382_variant,
++	},
+ 	{
+ 		.compatible = "rockchip,rk3288-vdec",
+ 		.data = &rk3288_rkvdec_variant,
+@@ -1857,6 +2036,17 @@ static int rkvdec_probe(struct platform_device *pdev)
+ 
+ 	rkvdec->num_clocks = ret;
+ 	rkvdec->axi_clk = devm_clk_get(&pdev->dev, "axi");
++	if (variant->is_vdpu382) {
++		if (IS_ERR(rkvdec->axi_clk))
++			return PTR_ERR(rkvdec->axi_clk);
++		rkvdec->resets = devm_reset_control_array_get_exclusive(&pdev->dev);
++		if (IS_ERR(rkvdec->resets))
++			return PTR_ERR(rkvdec->resets);
++		rkvdec->cache = devm_platform_ioremap_resource_byname(pdev, "cache");
++		if (IS_ERR(rkvdec->cache))
++			return PTR_ERR(rkvdec->cache);
++		rkvdec->needs_reset = true;
++	}
+ 
+ 	if (rkvdec->variant->has_single_reg_region) {
+ 		rkvdec->regs = devm_platform_ioremap_resource(pdev, 0);
+@@ -1914,6 +2104,11 @@ static int rkvdec_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	if (variant->is_vdpu382 && !rkvdec->empty_domain) {
++		ret = -ENODEV;
++		rkvdec_v4l2_cleanup(rkvdec);
++		goto err_disable_runtime_pm;
++	}
+ 	return 0;
+ 
+ err_disable_runtime_pm:
+@@ -1952,6 +2147,8 @@ static int rkvdec_runtime_suspend(struct device *dev)
+ {
+ 	struct rkvdec_dev *rkvdec = dev_get_drvdata(dev);
+ 
++	if (rkvdec->variant->is_vdpu382)
++		rkvdec->needs_reset = true;
+ 	clk_bulk_disable_unprepare(rkvdec->num_clocks, rkvdec->clocks);
+ 	return 0;
+ }
+diff --git a/drivers/media/platform/rockchip/rkvdec/rkvdec.h b/drivers/media/platform/rockchip/rkvdec/rkvdec.h
+index d73ec94..e60b102 100644
+--- a/drivers/media/platform/rockchip/rkvdec/rkvdec.h
++++ b/drivers/media/platform/rockchip/rkvdec/rkvdec.h
+@@ -85,6 +85,7 @@ struct rkvdec_variant {
+ 	size_t num_rcb_sizes;
+ 	const struct rkvdec_variant_ops *ops;
+ 	bool has_single_reg_region;
++	bool is_vdpu382;
+ 	unsigned int quirks;
+ };
+ 
+@@ -136,6 +137,10 @@ struct rkvdec_dev {
+ 	struct clk *axi_clk;
+ 	void __iomem *regs;
+ 	void __iomem *link;
++	void __iomem *cache;
++	struct reset_control *resets;
++	bool needs_reset;
++	bool broken;
+ 	struct mutex vdev_lock; /* serializes ioctls */
+ 	struct delayed_work watchdog_work;
+ 	struct gen_pool *sram_pool;
