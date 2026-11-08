@@ -1,0 +1,771 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sun, 8 Nov 2026 15:52:58 +0100
+Subject: media: cec: add MediaTek MT8195 HDMI CEC driver
+
+Add a driver for the HDMI CEC controller of the MediaTek MT8195. It is
+a separate block from the HDMI transmitter, with its own registers,
+interrupt and clocks. The driver registers a standalone CEC adapter and
+gets the physical address from the HDMI transmitter through the CEC
+notifier.
+
+The hardware ACKs messages addressed to its logical address by itself.
+It has three logical address slots; the driver uses one.
+
+The hardware does not wait for the signal free time before it starts a
+new message on an idle bus. The driver therefore delays the start of a
+transmit until the bus has been free for the signal free time given by
+the CEC core. Hardware retransmissions are disabled, and the CEC core
+does the retries.
+
+The CEC block does not depend on the hotplug detect signal of the HDMI
+transmitter, so CEC_CAP_NEEDS_HPD is not set.
+
+The hardware programming is based on the MediaTek vendor driver by
+Tommy Chen.
+
+Co-developed-by: Tommy Chen <tommyyl.chen@mediatek.com>
+Signed-off-by: Tommy Chen <tommyyl.chen@mediatek.com>
+---
+ MAINTAINERS                                        |   7 +
+ drivers/media/cec/platform/Kconfig                 |  16 +
+ drivers/media/cec/platform/Makefile                |   1 +
+ drivers/media/cec/platform/mediatek/Makefile       |   2 +
+ drivers/media/cec/platform/mediatek/mtk-hdmi-cec.c | 661 ++++++++++
+ 5 files changed, 687 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 111111111111..222222222222 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -16645,6 +16645,13 @@ F:	drivers/net/phy/mediatek/mtk-ge.c
+ F:	drivers/net/phy/mediatek/mtk.h
+ F:	drivers/phy/mediatek/phy-mtk-xfi-tphy.c
+ 
++MEDIATEK HDMI CEC DRIVER
++M:	Ricardo Pardini <ricardo@pardini.net>
++L:	linux-media@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/media/cec/mediatek,mt8195-cec.yaml
++F:	drivers/media/cec/platform/mediatek/
++
+ MEDIATEK I2C CONTROLLER DRIVER
+ M:	Qii Wang <qii.wang@mediatek.com>
+ L:	linux-i2c@vger.kernel.org
+diff --git a/drivers/media/cec/platform/Kconfig b/drivers/media/cec/platform/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/media/cec/platform/Kconfig
++++ b/drivers/media/cec/platform/Kconfig
+@@ -52,6 +52,22 @@ config CEC_GPIO
+ 	  The CEC bus is present in the HDMI connector and enables communication
+ 	  between compatible devices.
+ 
++config CEC_MTK
++	tristate "MediaTek MT8195 HDMI CEC driver"
++	depends on ARCH_MEDIATEK || COMPILE_TEST
++	depends on COMMON_CLK && OF
++	select CEC_CORE
++	select CEC_NOTIFIER
++	help
++	  This is a driver for the HDMI CEC controller of the MediaTek
++	  MT8195 and compatible SoCs. It uses the generic CEC framework
++	  interface.
++	  CEC bus is present in the HDMI connector and enables communication
++	  between compatible devices.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called mtk-hdmi-cec.
++
+ config CEC_SAMSUNG_S5P
+ 	tristate "Samsung S5P CEC driver"
+ 	depends on ARCH_EXYNOS || COMPILE_TEST
+diff --git a/drivers/media/cec/platform/Makefile b/drivers/media/cec/platform/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/media/cec/platform/Makefile
++++ b/drivers/media/cec/platform/Makefile
+@@ -7,6 +7,7 @@
+ obj-$(CONFIG_CEC_CROS_EC) += cros-ec/
+ obj-$(CONFIG_CEC_GPIO) += cec-gpio/
+ obj-y += meson/
++obj-$(CONFIG_CEC_MTK) += mediatek/
+ obj-$(CONFIG_CEC_SAMSUNG_S5P) += s5p/
+ obj-$(CONFIG_CEC_SECO) += seco/
+ obj-$(CONFIG_CEC_STI) += sti/
+diff --git a/drivers/media/cec/platform/mediatek/Makefile b/drivers/media/cec/platform/mediatek/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/cec/platform/mediatek/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_CEC_MTK) += mtk-hdmi-cec.o
+diff --git a/drivers/media/cec/platform/mediatek/mtk-hdmi-cec.c b/drivers/media/cec/platform/mediatek/mtk-hdmi-cec.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/media/cec/platform/mediatek/mtk-hdmi-cec.c
+@@ -0,0 +1,661 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MediaTek MT8195 HDMI CEC driver
++ *
++ * Copyright (c) 2024 MediaTek Inc.
++ * Copyright (c) 2026 Ricardo Pardini <ricardo@pardini.net>
++ *
++ * Based on the MediaTek vendor driver by Tommy Chen <tommyyl.chen@mediatek.com>.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/hrtimer.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/ktime.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/platform_device.h>
++#include <linux/spinlock.h>
++
++#include <media/cec.h>
++#include <media/cec-notifier.h>
++
++#define CEC_TR_CONFIG			0x00
++#define  CEC_RX_CHK_DST			BIT(29)
++#define  CEC_BYPASS			BIT(28)
++#define  CEC_DEVICE_ADDR1		GENMASK(27, 24)
++#define  CEC_DEVICE_ADDR2		GENMASK(23, 20)
++#define  CEC_DEVICE_ADDR3		GENMASK(19, 16)
++#define  CEC_DEVICE_ADDR_NONE		0xf
++#define  CEC_RX_ACK_ERROR_BYPASS	BIT(13)
++#define  CEC_TX_RESET			BIT(1)
++#define  CEC_RX_RESET			BIT(0)
++
++#define CEC_CKGEN			0x04
++#define  CEC_CLK_TX_EN			BIT(20)
++#define  CEC_CLK_27M_EN			BIT(18)
++#define  CEC_CLK_SEL_DIV		BIT(17)
++#define  CEC_CLK_PDN			BIT(16)
++#define  CEC_CLK_DIV			GENMASK(15, 0)
++
++/*
++ * Bit timing registers: two 11-bit fields (high and low half), in units of
++ * the 10 us timer tick.
++ */
++#define CEC_RX_TIMER_START_R		0x08
++#define CEC_RX_TIMER_START_F		0x0c
++#define CEC_RX_TIMER_DATA		0x10
++#define CEC_RX_TIMER_ACK		0x14
++#define CEC_RX_TIMER_ERROR		0x18
++#define CEC_TX_TIMER_START		0x1c
++#define CEC_TX_TIMER_DATA_R		0x20
++#define CEC_TX_TIMER_DATA_F		0x24
++#define CEC_TX_TIMER_DATA_S		0x28
++
++#define CEC_TX_ARB			0x2c
++#define  CEC_TX_MAX_RETRANSMIT_ARB	GENMASK(29, 24)
++#define  CEC_TX_MAX_RETRANSMIT_COL	GENMASK(23, 20)
++#define  CEC_TX_MAX_RETRANSMIT_NAK	GENMASK(19, 16)
++#define  CEC_TX_BCNT_RETRANSMIT		GENMASK(11, 8)
++#define  CEC_TX_BCNT_NEW_MSG		GENMASK(7, 4)
++#define  CEC_TX_BCNT_NEW_INIT		GENMASK(3, 0)
++
++#define CEC_TX_HEADER			0x30
++#define  CEC_TX_READY			BIT(16)
++#define  CEC_TX_SEND_CNT		GENMASK(15, 12)
++#define  CEC_TX_HEADER_EOM		BIT(8)
++#define  CEC_TX_HEADER_ADDR		GENMASK(7, 0)
++
++#define CEC_TX_DATA(n)			(0x34 + 4 * (n))
++
++#define CEC_TX_TIMER_ACK		0x44
++#define CEC_LINE_DET			0x48
++
++#define CEC_RX_BUF_HEADER		0x4c
++#define  CEC_RX_BUF_RISC_ACK		BIT(16)
++#define  CEC_RX_BUF_CNT			GENMASK(15, 12)
++#define  CEC_RX_HEADER_EOM		BIT(8)
++#define  CEC_RX_HEADER_ADDR		GENMASK(7, 0)
++
++#define CEC_RX_DATA(n)			(0x50 + 4 * (n))
++
++#define CEC_TX_STATUS			0x64
++#define  CEC_TX_FSM			GENMASK(24, 16)
++#define  CEC_TX_FSM_IDLE		0x01
++#define  CEC_TX_FSM_FAIL		0x10
++
++/* Interrupt clear, enable and status registers share the bit layout */
++#define CEC_INT_CLR			0x74
++#define CEC_INT_EN			0x78
++#define CEC_INT_STA			0x7c
++#define  CEC_RX_FSM_CHG			BIT(23)
++#define  CEC_RX_ACK_FAIL		BIT(22)
++#define  CEC_RX_ERROR_HANDLING		BIT(21)
++#define  CEC_RX_BUF_FULL		BIT(20)
++#define  CEC_RX_STAGE_READY		BIT(19)
++#define  CEC_RX_DATA_RCVD		BIT(18)
++#define  CEC_RX_HEADER_RCVD		BIT(17)
++#define  CEC_RX_BUF_READY		BIT(16)
++#define  CEC_TX_FSM_CHG			BIT(15)
++#define  CEC_TX_FAIL_DATA_ACK		BIT(14)
++#define  CEC_TX_FAIL_HEADER_ACK		BIT(13)
++#define  CEC_TX_FAIL_RETRANSMIT		BIT(12)
++#define  CEC_TX_FAIL_DATA		BIT(11)
++#define  CEC_TX_FAIL_HEADER		BIT(10)
++#define  CEC_TX_FAIL_SRC		BIT(9)
++#define  CEC_TX_DATA_FINISH		BIT(8)
++#define  CEC_LINE_LOW_LONG		BIT(7)
++
++#define CEC_RX_INT_ALL			GENMASK(23, 16)
++#define CEC_TX_INT_ALL			(GENMASK(15, 8) | CEC_LINE_LOW_LONG)
++#define CEC_RX_INT_USED			(CEC_RX_INT_ALL & ~CEC_RX_FSM_CHG)
++#define CEC_TX_INT_USED			(CEC_TX_DATA_FINISH | \
++					 CEC_TX_FAIL_RETRANSMIT | \
++					 CEC_LINE_LOW_LONG)
++
++#define CEC_TIMER(hi, lo)		(((hi) << 16) | (lo))
++
++/* Divider for the 10 us timer tick */
++#define CEC_CLK_DIV_10US		0x82
++
++/* Nominal CEC data bit period, the unit of the signal free time */
++#define CEC_BIT_PERIOD_US		2400
++
++struct mtk_cec {
++	struct device *dev;
++	void __iomem *regs;
++	struct clk_bulk_data *clks;
++	int num_clks;
++	int irq;
++	struct cec_adapter *adap;
++	struct cec_notifier *notifier;
++	/* Serializes adapter enable/disable against system suspend/resume */
++	struct mutex pm_lock;
++	bool adap_enabled;	/* adapter enabled by the CEC core */
++	bool suspended;
++	/* Protects the registers and the TX state below */
++	spinlock_t lock;
++	bool enabled;		/* hardware powered and initialized */
++	bool tx_busy;
++	bool tx_bcast;
++	u32 tx_sft;		/* signal free time of the pending transmit */
++	ktime_t bus_free;	/* end of the last message on the bus */
++	u8 log_addr;
++	struct cec_msg rx_msg;
++	struct hrtimer tx_timer;
++};
++
++static void mtk_cec_update(struct mtk_cec *cec, u32 reg, u32 mask, u32 val)
++{
++	u32 tmp = readl(cec->regs + reg);
++
++	writel((tmp & ~mask) | (val & mask), cec->regs + reg);
++}
++
++/* The clear register is level triggered: write the bits, then release them */
++static void mtk_cec_int_clear(struct mtk_cec *cec, u32 bits)
++{
++	writel(bits, cec->regs + CEC_INT_CLR);
++	writel(0, cec->regs + CEC_INT_CLR);
++}
++
++/* The reset bits are active low */
++static void mtk_cec_reset(struct mtk_cec *cec, u32 bits)
++{
++	mtk_cec_update(cec, CEC_TR_CONFIG, bits, 0);
++	udelay(1);
++	mtk_cec_update(cec, CEC_TR_CONFIG, CEC_TX_RESET | CEC_RX_RESET,
++		       CEC_TX_RESET | CEC_RX_RESET);
++}
++
++static u32 mtk_cec_tx_fsm(struct mtk_cec *cec)
++{
++	return FIELD_GET(CEC_TX_FSM, readl(cec->regs + CEC_TX_STATUS));
++}
++
++static void mtk_cec_set_log_addr(struct mtk_cec *cec, u8 log_addr)
++{
++	if (log_addr == CEC_LOG_ADDR_INVALID)
++		log_addr = CEC_DEVICE_ADDR_NONE;
++
++	mtk_cec_update(cec, CEC_TR_CONFIG, CEC_DEVICE_ADDR1,
++		       FIELD_PREP(CEC_DEVICE_ADDR1, log_addr));
++}
++
++static void mtk_cec_hw_init(struct mtk_cec *cec)
++{
++	/* 10 us timer tick from the 27 MHz path */
++	mtk_cec_update(cec, CEC_CKGEN,
++		       CEC_CLK_27M_EN | CEC_CLK_SEL_DIV | CEC_CLK_DIV,
++		       CEC_CLK_27M_EN | FIELD_PREP(CEC_CLK_DIV, CEC_CLK_DIV_10US));
++
++	/* Only accept messages for our logical address and broadcasts */
++	mtk_cec_update(cec, CEC_TR_CONFIG,
++		       CEC_RX_CHK_DST | CEC_BYPASS |
++		       CEC_DEVICE_ADDR2 | CEC_DEVICE_ADDR3,
++		       CEC_RX_CHK_DST |
++		       FIELD_PREP(CEC_DEVICE_ADDR2, CEC_DEVICE_ADDR_NONE) |
++		       FIELD_PREP(CEC_DEVICE_ADDR3, CEC_DEVICE_ADDR_NONE));
++	mtk_cec_set_log_addr(cec, cec->log_addr);
++
++	/* RX: start bit low 3.5-3.9 ms, total 4.3-4.7 ms; data bit 2.05-2.75 ms */
++	writel(CEC_TIMER(390, 350), cec->regs + CEC_RX_TIMER_START_R);
++	writel(CEC_TIMER(470, 430), cec->regs + CEC_RX_TIMER_START_F);
++	writel(CEC_TIMER(275, 205), cec->regs + CEC_RX_TIMER_DATA);
++	writel(CEC_TIMER(105, 130), cec->regs + CEC_RX_TIMER_ACK);
++	writel(CEC_TIMER(360, 0), cec->regs + CEC_RX_TIMER_ERROR);
++	mtk_cec_update(cec, CEC_TR_CONFIG, CEC_RX_ACK_ERROR_BYPASS,
++		       CEC_RX_ACK_ERROR_BYPASS);
++	mtk_cec_reset(cec, CEC_RX_RESET);
++
++	/* TX: start bit 3.7/4.5 ms; data bit 0.6/1.5 ms low, 2.4 ms total */
++	writel(CEC_TIMER(450, 370), cec->regs + CEC_TX_TIMER_START);
++	writel(CEC_TIMER(60, 150), cec->regs + CEC_TX_TIMER_DATA_R);
++	writel(CEC_TIMER(240, 240), cec->regs + CEC_TX_TIMER_DATA_F);
++	writel(CEC_TIMER(4, 105), cec->regs + CEC_TX_TIMER_DATA_S);
++	/* Line stuck low: 5 ms; stuck high: 12 ms */
++	writel(CEC_TIMER(500, 1200), cec->regs + CEC_LINE_DET);
++	mtk_cec_update(cec, CEC_TX_TIMER_ACK, GENMASK(26, 0),
++		       CEC_TIMER(170, 40));
++
++	/*
++	 * No hardware retries: the CEC core retries. The hardware does not
++	 * wait for the signal free time before a new message on an idle bus,
++	 * so the driver does that (see mtk_cec_tx_kick()).
++	 */
++	writel(FIELD_PREP(CEC_TX_MAX_RETRANSMIT_ARB, 0) |
++	       FIELD_PREP(CEC_TX_MAX_RETRANSMIT_COL, 0) |
++	       FIELD_PREP(CEC_TX_MAX_RETRANSMIT_NAK, 0) |
++	       FIELD_PREP(CEC_TX_BCNT_RETRANSMIT, 4) |
++	       FIELD_PREP(CEC_TX_BCNT_NEW_MSG, 7) |
++	       FIELD_PREP(CEC_TX_BCNT_NEW_INIT, 5),
++	       cec->regs + CEC_TX_ARB);
++	mtk_cec_update(cec, CEC_CKGEN, CEC_CLK_TX_EN, CEC_CLK_TX_EN);
++	mtk_cec_reset(cec, CEC_TX_RESET);
++
++	mtk_cec_int_clear(cec, ~0U);
++	writel(CEC_RX_INT_USED, cec->regs + CEC_INT_EN);
++}
++
++static int mtk_cec_power_on(struct mtk_cec *cec)
++{
++	unsigned long flags;
++	int ret;
++
++	ret = clk_bulk_prepare_enable(cec->num_clks, cec->clks);
++	if (ret)
++		return ret;
++
++	spin_lock_irqsave(&cec->lock, flags);
++	mtk_cec_update(cec, CEC_CKGEN, CEC_CLK_PDN, 0);
++	mtk_cec_hw_init(cec);
++	cec->tx_busy = false;
++	cec->bus_free = ktime_get();
++	cec->enabled = true;
++	spin_unlock_irqrestore(&cec->lock, flags);
++
++	enable_irq(cec->irq);
++	return 0;
++}
++
++static void mtk_cec_power_off(struct mtk_cec *cec)
++{
++	unsigned long flags;
++
++	/*
++	 * This runs with adap->lock held, and the IRQ thread takes that lock
++	 * to report messages, so don't wait for it: once cec->enabled is
++	 * cleared, the thread no longer touches the registers.
++	 */
++	disable_irq_nosync(cec->irq);
++	hrtimer_cancel(&cec->tx_timer);
++
++	spin_lock_irqsave(&cec->lock, flags);
++	writel(0, cec->regs + CEC_INT_EN);
++	mtk_cec_update(cec, CEC_CKGEN, CEC_CLK_PDN, CEC_CLK_PDN);
++	cec->enabled = false;
++	spin_unlock_irqrestore(&cec->lock, flags);
++
++	clk_bulk_disable_unprepare(cec->num_clks, cec->clks);
++}
++
++static int mtk_cec_adap_enable(struct cec_adapter *adap, bool enable)
++{
++	struct mtk_cec *cec = cec_get_drvdata(adap);
++	int ret = 0;
++
++	mutex_lock(&cec->pm_lock);
++
++	/* While suspended, only record the state; resume applies it */
++	if (!cec->suspended) {
++		if (enable && !cec->enabled)
++			ret = mtk_cec_power_on(cec);
++		else if (!enable && cec->enabled)
++			mtk_cec_power_off(cec);
++	}
++
++	if (!ret)
++		cec->adap_enabled = enable;
++
++	mutex_unlock(&cec->pm_lock);
++
++	return ret;
++}
++
++static int mtk_cec_adap_log_addr(struct cec_adapter *adap, u8 log_addr)
++{
++	struct mtk_cec *cec = cec_get_drvdata(adap);
++	unsigned long flags;
++
++	spin_lock_irqsave(&cec->lock, flags);
++	cec->log_addr = log_addr;
++	/* mtk_cec_hw_init() programs it at the next power on */
++	if (cec->enabled)
++		mtk_cec_set_log_addr(cec, log_addr);
++	spin_unlock_irqrestore(&cec->lock, flags);
++
++	return 0;
++}
++
++/*
++ * Start the pending transmit once the bus has been free for the signal free
++ * time, or arm the timer for it. Called with cec->lock held.
++ */
++static void mtk_cec_tx_kick(struct mtk_cec *cec)
++{
++	ktime_t start;
++
++	/*
++	 * A message that just ended may not be handled by the IRQ thread yet,
++	 * so bus_free would be stale: count from now instead.
++	 */
++	if (readl(cec->regs + CEC_INT_STA) & CEC_RX_BUF_READY)
++		cec->bus_free = ktime_get();
++
++	start = ktime_add_us(cec->bus_free, cec->tx_sft * CEC_BIT_PERIOD_US);
++	if (ktime_before(ktime_get(), start)) {
++		hrtimer_start(&cec->tx_timer, start, HRTIMER_MODE_ABS);
++		return;
++	}
++
++	mtk_cec_update(cec, CEC_TX_HEADER, CEC_TX_READY, CEC_TX_READY);
++}
++
++static enum hrtimer_restart mtk_cec_tx_timer(struct hrtimer *timer)
++{
++	struct mtk_cec *cec = container_of(timer, struct mtk_cec, tx_timer);
++	unsigned long flags;
++
++	spin_lock_irqsave(&cec->lock, flags);
++	if (cec->enabled && cec->tx_busy)
++		mtk_cec_tx_kick(cec);
++	spin_unlock_irqrestore(&cec->lock, flags);
++
++	return HRTIMER_NORESTART;
++}
++
++static int mtk_cec_adap_transmit(struct cec_adapter *adap, u8 attempts,
++				 u32 signal_free_time, struct cec_msg *msg)
++{
++	struct mtk_cec *cec = cec_get_drvdata(adap);
++	unsigned int len = msg->len - 1;
++	unsigned long flags;
++	unsigned int i;
++	u32 data[4] = { };
++
++	for (i = 0; i < len; i++)
++		data[i / 4] |= msg->msg[i + 1] << (8 * (i % 4));
++
++	spin_lock_irqsave(&cec->lock, flags);
++
++	/* Powered off by system suspend, the adapter is still enabled */
++	if (!cec->enabled) {
++		spin_unlock_irqrestore(&cec->lock, flags);
++		return -EIO;
++	}
++
++	if (mtk_cec_tx_fsm(cec) != CEC_TX_FSM_IDLE)
++		mtk_cec_reset(cec, CEC_TX_RESET);
++
++	mtk_cec_update(cec, CEC_INT_EN, CEC_TX_INT_ALL, 0);
++	mtk_cec_int_clear(cec, CEC_TX_INT_ALL);
++
++	for (i = 0; i < ARRAY_SIZE(data); i++)
++		writel(data[i], cec->regs + CEC_TX_DATA(i));
++
++	mtk_cec_update(cec, CEC_TX_HEADER,
++		       CEC_TX_SEND_CNT | CEC_TX_HEADER_EOM | CEC_TX_HEADER_ADDR,
++		       FIELD_PREP(CEC_TX_SEND_CNT, len) |
++		       (len ? 0 : CEC_TX_HEADER_EOM) |
++		       FIELD_PREP(CEC_TX_HEADER_ADDR, msg->msg[0]));
++
++	cec->tx_busy = true;
++	cec->tx_bcast = cec_msg_is_broadcast(msg);
++	cec->tx_sft = signal_free_time;
++	mtk_cec_update(cec, CEC_INT_EN, CEC_TX_INT_USED, CEC_TX_INT_USED);
++	mtk_cec_tx_kick(cec);
++
++	spin_unlock_irqrestore(&cec->lock, flags);
++
++	return 0;
++}
++
++/* Returns the CEC_TX_STATUS_* of a finished transmit, or 0 if still busy */
++static u8 mtk_cec_tx_status(struct mtk_cec *cec, u32 sta)
++{
++	if (sta & CEC_TX_DATA_FINISH)
++		return CEC_TX_STATUS_OK;
++
++	if (sta & CEC_LINE_LOW_LONG) {
++		mtk_cec_reset(cec, CEC_TX_RESET);
++		return CEC_TX_STATUS_ERROR;
++	}
++
++	if (!(sta & CEC_TX_FAIL_RETRANSMIT))
++		return 0;
++
++	/* A NACK on a broadcast message means nobody rejected it */
++	if (cec->tx_bcast)
++		return sta & (CEC_TX_FAIL_HEADER_ACK | CEC_TX_FAIL_DATA_ACK) ?
++		       CEC_TX_STATUS_OK : CEC_TX_STATUS_ERROR;
++
++	if (sta & CEC_TX_FAIL_SRC)
++		return CEC_TX_STATUS_ARB_LOST;
++	if (sta & (CEC_TX_FAIL_HEADER | CEC_TX_FAIL_DATA))
++		return CEC_TX_STATUS_ERROR;
++	if (sta & (CEC_TX_FAIL_HEADER_ACK | CEC_TX_FAIL_DATA_ACK))
++		return CEC_TX_STATUS_NACK;
++
++	return CEC_TX_STATUS_ERROR;
++}
++
++/* Returns true if a message was read into cec->rx_msg */
++static bool mtk_cec_rx(struct mtk_cec *cec, u32 sta)
++{
++	struct cec_msg *msg = &cec->rx_msg;
++	unsigned int len, i;
++	u32 hdr, data = 0;
++
++	if (!(sta & CEC_RX_BUF_READY))
++		return false;
++
++	hdr = readl(cec->regs + CEC_RX_BUF_HEADER);
++	len = hdr & CEC_RX_HEADER_EOM ? 0 : FIELD_GET(CEC_RX_BUF_CNT, hdr);
++
++	memset(msg, 0, sizeof(*msg));
++	msg->len = len + 1;
++	msg->msg[0] = FIELD_GET(CEC_RX_HEADER_ADDR, hdr);
++	for (i = 0; i < len; i++) {
++		if (i % 4 == 0)
++			data = readl(cec->regs + CEC_RX_DATA(i / 4));
++		msg->msg[i + 1] = data >> (8 * (i % 4));
++	}
++
++	mtk_cec_update(cec, CEC_RX_BUF_HEADER, CEC_RX_BUF_RISC_ACK,
++		       CEC_RX_BUF_RISC_ACK);
++
++	if (sta & CEC_RX_BUF_FULL)
++		dev_dbg(cec->dev, "RX buffer overflow\n");
++
++	/* The core does not need polling messages */
++	return len > 0;
++}
++
++static irqreturn_t mtk_cec_irq_thread(int irq, void *data)
++{
++	struct mtk_cec *cec = data;
++	u8 tx_status = 0;
++	bool rx = false;
++	u32 sta;
++
++	spin_lock_irq(&cec->lock);
++
++	/* Powered off while this thread was pending (see mtk_cec_power_off()) */
++	if (!cec->enabled) {
++		spin_unlock_irq(&cec->lock);
++		return IRQ_NONE;
++	}
++
++	sta = readl(cec->regs + CEC_INT_STA) &
++	      (CEC_RX_INT_ALL | CEC_TX_INT_ALL);
++	if (!sta) {
++		spin_unlock_irq(&cec->lock);
++		return IRQ_NONE;
++	}
++
++	if (sta & CEC_RX_INT_ALL) {
++		rx = mtk_cec_rx(cec, sta);
++		mtk_cec_int_clear(cec, sta & CEC_RX_INT_ALL);
++		/* Any received message ends a bus transaction, polls included */
++		if (sta & CEC_RX_BUF_READY)
++			cec->bus_free = ktime_get();
++	}
++
++	if (cec->tx_busy && (sta & CEC_TX_INT_ALL)) {
++		tx_status = mtk_cec_tx_status(cec, sta);
++		if (tx_status) {
++			mtk_cec_update(cec, CEC_INT_EN, CEC_TX_INT_ALL, 0);
++			cec->tx_busy = false;
++			cec->bus_free = ktime_get();
++		}
++	}
++	if (sta & CEC_TX_INT_ALL)
++		mtk_cec_int_clear(cec, sta & CEC_TX_INT_ALL);
++
++	spin_unlock_irq(&cec->lock);
++
++	/*
++	 * Report outside the lock: the CEC core calls back into the driver.
++	 * TX first: the received message can be the reply to it.
++	 */
++	if (tx_status)
++		cec_transmit_attempt_done(cec->adap, tx_status);
++	if (rx)
++		cec_received_msg(cec->adap, &cec->rx_msg);
++
++	return IRQ_HANDLED;
++}
++
++static const struct cec_adap_ops mtk_cec_adap_ops = {
++	.adap_enable = mtk_cec_adap_enable,
++	.adap_log_addr = mtk_cec_adap_log_addr,
++	.adap_transmit = mtk_cec_adap_transmit,
++};
++
++static int mtk_cec_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device *hdmi_dev;
++	struct mtk_cec *cec;
++	int ret;
++
++	hdmi_dev = cec_notifier_parse_hdmi_phandle(dev);
++	if (IS_ERR(hdmi_dev))
++		return PTR_ERR(hdmi_dev);
++
++	cec = devm_kzalloc(dev, sizeof(*cec), GFP_KERNEL);
++	if (!cec)
++		return -ENOMEM;
++
++	cec->dev = dev;
++	cec->log_addr = CEC_LOG_ADDR_INVALID;
++	spin_lock_init(&cec->lock);
++	ret = devm_mutex_init(dev, &cec->pm_lock);
++	if (ret)
++		return ret;
++	hrtimer_setup(&cec->tx_timer, mtk_cec_tx_timer, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_ABS);
++	platform_set_drvdata(pdev, cec);
++
++	cec->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(cec->regs))
++		return PTR_ERR(cec->regs);
++
++	cec->num_clks = devm_clk_bulk_get_all(dev, &cec->clks);
++	if (cec->num_clks < 0)
++		return dev_err_probe(dev, cec->num_clks, "Failed to get clocks\n");
++
++	cec->irq = platform_get_irq(pdev, 0);
++	if (cec->irq < 0)
++		return cec->irq;
++
++	ret = devm_request_threaded_irq(dev, cec->irq, NULL, mtk_cec_irq_thread,
++					IRQF_ONESHOT | IRQF_NO_AUTOEN,
++					dev_name(dev), cec);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to request IRQ\n");
++
++	cec->adap = cec_allocate_adapter(&mtk_cec_adap_ops, cec, dev_name(dev),
++					 CEC_CAP_DEFAULTS |
++					 CEC_CAP_CONNECTOR_INFO, 1);
++	if (IS_ERR(cec->adap))
++		return PTR_ERR(cec->adap);
++
++	cec->notifier = cec_notifier_cec_adap_register(hdmi_dev, NULL,
++						       cec->adap);
++	if (!cec->notifier) {
++		ret = -ENOMEM;
++		goto err_delete_adapter;
++	}
++
++	ret = cec_register_adapter(cec->adap, dev);
++	if (ret)
++		goto err_unregister_notifier;
++
++	return 0;
++
++err_unregister_notifier:
++	cec_notifier_cec_adap_unregister(cec->notifier, cec->adap);
++err_delete_adapter:
++	cec_delete_adapter(cec->adap);
++	return ret;
++}
++
++static void mtk_cec_remove(struct platform_device *pdev)
++{
++	struct mtk_cec *cec = platform_get_drvdata(pdev);
++
++	/*
++	 * The adapter can be freed by cec_unregister_adapter(), and adapter
++	 * disable doesn't wait for the IRQ thread: let it finish first.
++	 */
++	disable_irq(cec->irq);
++
++	cec_notifier_cec_adap_unregister(cec->notifier, cec->adap);
++	cec_unregister_adapter(cec->adap);
++}
++
++static int mtk_cec_suspend(struct device *dev)
++{
++	struct mtk_cec *cec = dev_get_drvdata(dev);
++
++	mutex_lock(&cec->pm_lock);
++	if (cec->enabled)
++		mtk_cec_power_off(cec);
++	cec->suspended = true;
++	mutex_unlock(&cec->pm_lock);
++
++	return 0;
++}
++
++static int mtk_cec_resume(struct device *dev)
++{
++	struct mtk_cec *cec = dev_get_drvdata(dev);
++	int ret = 0;
++
++	mutex_lock(&cec->pm_lock);
++	cec->suspended = false;
++	if (cec->adap_enabled)
++		ret = mtk_cec_power_on(cec);
++	mutex_unlock(&cec->pm_lock);
++
++	return ret;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(mtk_cec_pm_ops, mtk_cec_suspend,
++				mtk_cec_resume);
++
++static const struct of_device_id mtk_cec_of_match[] = {
++	{ .compatible = "mediatek,mt8195-cec" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, mtk_cec_of_match);
++
++static struct platform_driver mtk_cec_driver = {
++	.probe = mtk_cec_probe,
++	.remove = mtk_cec_remove,
++	.driver = {
++		.name = "mtk-hdmi-cec",
++		.of_match_table = mtk_cec_of_match,
++		.pm = pm_sleep_ptr(&mtk_cec_pm_ops),
++	},
++};
++module_platform_driver(mtk_cec_driver);
++
++MODULE_DESCRIPTION("MediaTek MT8195 HDMI CEC driver");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+
