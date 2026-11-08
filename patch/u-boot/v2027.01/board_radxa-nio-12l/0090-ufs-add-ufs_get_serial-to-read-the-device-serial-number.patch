@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sat, 7 Nov 2026 23:38:58 +0100
+Subject: [PATCH] ufs: add ufs_get_serial() to read the device serial number
+
+Boards without other unique storage can use the UFS serial number as a
+board identity, eg. for serial# and a stable MAC address.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/ufs/ufs-uclass.c | 54 ++++++++++++++++++++++++++++++++++++++++
+ include/ufs.h            | 16 ++++++++++++
+ 2 files changed, 70 insertions(+)
+
+diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
+index 2ca4fb2a020..db3de9a8dac 100644
+--- a/drivers/ufs/ufs-uclass.c
++++ b/drivers/ufs/ufs-uclass.c
+@@ -23,6 +23,7 @@
+ #include <scsi.h>
+ #include <ufs.h>
+ #include <asm/io.h>
++#include <asm/unaligned.h>
+ #include <asm/dma-mapping.h>
+ #include <linux/bitops.h>
+ #include <linux/delay.h>
+@@ -2330,6 +2331,59 @@ int ufs_probe_dev(int index)
+ 	return uclass_get_device(UCLASS_UFS, index, &dev);
+ }
+ 
++int ufs_get_serial(int index, char *buf, size_t size)
++{
++	u8 dev_desc[QUERY_DESC_DEVICE_DEF_SIZE] = { };
++	u8 raw[QUERY_DESC_MAX_SIZE] = { };
++	struct ufs_hba *hba;
++	struct udevice *dev;
++	bool printable = true;
++	int i, len, ret;
++
++	ret = uclass_get_device(UCLASS_UFS, index, &dev);
++	if (ret)
++		return ret;
++	hba = dev_get_uclass_priv(dev);
++
++	ret = ufshcd_read_desc_param(hba, QUERY_DESC_IDN_DEVICE, 0, 0,
++				     dev_desc, sizeof(dev_desc));
++	if (ret)
++		return ret;
++
++	ret = ufshcd_read_desc_param(hba, QUERY_DESC_IDN_STRING,
++				     dev_desc[DEVICE_DESC_PARAM_SN], 0,
++				     raw, sizeof(raw));
++	if (ret)
++		return ret;
++
++	/* UTF-16BE characters after the descriptor header */
++	len = (raw[QUERY_DESC_LENGTH_OFFSET] - QUERY_DESC_HDR_SIZE) / 2;
++	if (len <= 0)
++		return -ENODATA;
++
++	for (i = 0; i < len; i++) {
++		u16 c = get_unaligned_be16(raw + QUERY_DESC_HDR_SIZE + i * 2);
++
++		if (c < 0x20 || c > 0x7e)
++			printable = false;
++	}
++
++	if (printable) {
++		if (len >= size)
++			return -ENOSPC;
++		for (i = 0; i < len; i++)
++			buf[i] = get_unaligned_be16(raw + QUERY_DESC_HDR_SIZE + i * 2);
++		buf[len] = '\0';
++	} else {
++		if (len * 4 >= size)
++			return -ENOSPC;
++		bin2hex(buf, raw + QUERY_DESC_HDR_SIZE, len * 2);
++		buf[len * 4] = '\0';
++	}
++
++	return 0;
++}
++
+ int ufs_probe(void)
+ {
+ 	struct udevice *dev;
+diff --git a/include/ufs.h b/include/ufs.h
+index a8b7d370f78..59520cbd0fe 100644
+--- a/include/ufs.h
++++ b/include/ufs.h
+@@ -2,6 +2,8 @@
+ #ifndef _UFS_H
+ #define _UFS_H
+ 
++#include <linux/types.h>
++
+ struct udevice;
+ 
+ /**
+@@ -20,6 +22,20 @@ int ufs_probe(void);
+  */
+ int ufs_probe_dev(int index);
+ 
++/**
++ * ufs_get_serial() - get the serial number of a UFS device
++ *
++ * The serial number is returned as printable ASCII, or hex-encoded if the
++ * device reports non-printable characters.
++ *
++ * @index: index in the uclass sequence
++ * @buf: buffer for the NUL-terminated serial number
++ * @size: size of @buf
++ *
++ * Return: 0 if Ok, -ve on error
++ */
++int ufs_get_serial(int index, char *buf, size_t size);
++
+ #define UFS_RPMB_CID_SIZE	16
+ #define UFS_RPMB_NUM_REGIONS	4
+ 
