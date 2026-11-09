@@ -10,7 +10,7 @@ function extension_prepare_config__home_assistant() {
 
 	display_alert "Target image will be a Home Assistant Supervised deploy" "${EXTENSION}" "info"
         case "${RELEASE}" in
-                bullseye | bookworm | trixie)
+                bookworm | trixie)
                         display_alert "Setting up Home Assistant Supervised on Debian ${RELEASE}" "${EXTENSION}" "info"
                         ;;
                 *)
