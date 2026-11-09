@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ricardo Pardini <ricardo@pardini.net>
+Date: Sun, 8 Nov 2026 01:14:37 +0100
+Subject: [PATCH] pci: mediatek: gen3: enable all clocks with the bulk API
+
+The driver got four clocks by index, in the MT8192/MT7988 order. MT8195
+lists six, in another order, so some were never enabled.
+
+Enable all of them with the clk bulk API, as Linux does. Also power the
+PHY off again if enabling the clocks fails.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+ drivers/pci/pcie_mediatek_gen3.c | 51 +++++++-------------------------
+ 1 file changed, 10 insertions(+), 41 deletions(-)
+
+diff --git a/drivers/pci/pcie_mediatek_gen3.c b/drivers/pci/pcie_mediatek_gen3.c
+index 1818d4c1e30..2249a6f5285 100644
+--- a/drivers/pci/pcie_mediatek_gen3.c
++++ b/drivers/pci/pcie_mediatek_gen3.c
+@@ -74,10 +74,7 @@
+ struct mtk_pcie {
+ 	void __iomem *base;
+ 	void *priv;
+-	struct clk pl_250m_ck;
+-	struct clk tl_26m_ck;
+-	struct clk peri_26m_ck;
+-	struct clk top_133m_ck;
++	struct clk_bulk clks;
+ 	struct reset_ctl reset_phy;
+ 	struct reset_ctl reset_mac;
+ 	struct phy phy;
+@@ -312,22 +309,10 @@ static int mtk_pcie_power_on(struct udevice *dev)
+ 	generic_phy_get_by_name(dev, "pcie-phy", &pcie->phy);
+ 
+ 	/*
+-	 * Upstream linux kernel devine these clock without clock-names
+-	 * and use clk bulk API to enable them all.
++	 * The number and order of the clocks differ between SoCs; like the
++	 * Linux driver, enable all of them with the clk bulk API.
+ 	 */
+-	err = clk_get_by_index(dev, 0, &pcie->pl_250m_ck);
+-	if (err)
+-		return err;
+-
+-	err = clk_get_by_index(dev, 1, &pcie->tl_26m_ck);
+-	if (err)
+-		return err;
+-
+-	err = clk_get_by_index(dev, 2, &pcie->peri_26m_ck);
+-	if (err)
+-		return err;
+-
+-	err = clk_get_by_index(dev, 3, &pcie->top_133m_ck);
++	err = clk_get_bulk(dev, &pcie->clks);
+ 	if (err)
+ 		return err;
+ 
+@@ -341,21 +326,9 @@ static int mtk_pcie_power_on(struct udevice *dev)
+ 			goto err_phy_on;
+ 	}
+ 
+-	err = clk_enable(&pcie->pl_250m_ck);
+-	if (err)
+-		goto err_clk_pl_250m;
+-
+-	err = clk_enable(&pcie->tl_26m_ck);
+-	if (err)
+-		goto err_clk_tl_26m;
+-
+-	err = clk_enable(&pcie->peri_26m_ck);
+-	if (err)
+-		goto err_clk_peri_26m;
+-
+-	err = clk_enable(&pcie->top_133m_ck);
++	err = clk_enable_bulk(&pcie->clks);
+ 	if (err)
+-		goto err_clk_top_133m;
++		goto err_clk;
+ 
+ 	err = mtk_pcie_startup_port(dev);
+ 	if (err)
+@@ -364,14 +337,10 @@ static int mtk_pcie_power_on(struct udevice *dev)
+ 	return 0;
+ 
+ err_startup:
+-err_clk_top_133m:
+-	clk_disable(&pcie->top_133m_ck);
+-err_clk_peri_26m:
+-	clk_disable(&pcie->peri_26m_ck);
+-err_clk_tl_26m:
+-	clk_disable(&pcie->tl_26m_ck);
+-err_clk_pl_250m:
+-	clk_disable(&pcie->pl_250m_ck);
++	clk_disable_bulk(&pcie->clks);
++err_clk:
++	if (pcie->phy.dev)
++		generic_phy_power_off(&pcie->phy);
+ err_phy_on:
+ 	if (pcie->phy.dev)
+ 		generic_phy_exit(&pcie->phy);

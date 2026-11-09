@@ -2,7 +2,7 @@
 BOARD_NAME="Orange Pi A31s"
 BOARD_VENDOR="xunlong"
 BOARDFAMILY="sun6i"
-BOARD_MAINTAINER="igorpecovnik"
+BOARD_MAINTAINER=""
 INTRODUCED="2015"
 BOOTCONFIG="orangepi_a31s_defconfig"
 BOOTBRANCH="tag:v2026.10"

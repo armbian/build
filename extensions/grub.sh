@@ -169,8 +169,9 @@ pre_umount_final_image__install_grub() {
 
 	# 32 px menu font for HiDPI panels; 98-armbian.cfg picks it per machine
 	# Made with: grub-mkfont -s 32 --range=0x20-0x7E,0xA0-0x17F,0x2190-0x21FF,0x2500-0x259F DejaVuSansMono.ttf
-	mkdir -p "${MOUNT}"/usr/share/grub/
-	cp "${SRC}"/packages/blobs/grub/armbian-hidpi.pf2 "${MOUNT}"/usr/share/grub/armbian-hidpi.pf2
+	# In /boot: GRUB cannot read an encrypted root. grub-install adds unicode.pf2 there.
+	mkdir -p "${MOUNT}"/boot/grub/fonts/
+	cp "${SRC}"/packages/blobs/grub/armbian-hidpi.pf2 "${MOUNT}"/boot/grub/fonts/armbian-hidpi.pf2
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
 		display_alert "Extension: ${EXTENSION}: Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with IMAGE_INSTALLED_KERNEL_VERSION: ${DISTRO_KERNEL_VER}" "debug"
@@ -345,8 +346,8 @@ configure_grub() {
 	display_alert "Extension: ${EXTENSION}: GRUB EFI kernel cmdline" "cmdline '${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
 	# Menu font of the image, before update-grub sees the screen of the machine.
 	# Desktop images mostly boot on laptops, often HiDPI: start with the 32 px font.
-	declare grub_font="/usr/share/grub/unicode.pf2"
-	[[ "${BUILD_DESKTOP}" == "yes" ]] && grub_font="/usr/share/grub/armbian-hidpi.pf2"
+	declare grub_font="/boot/grub/fonts/unicode.pf2"
+	[[ "${BUILD_DESKTOP}" == "yes" ]] && grub_font="/boot/grub/fonts/armbian-hidpi.pf2"
 
 	cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
@@ -378,19 +379,22 @@ configure_grub() {
 	# update-grub decides on each run. Without a connected display, the image font stays.
 	# The image build skips it: the chroot sees the host's displays.
 	cat <<- 'grubCfgFragHiDPI' >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
-		if [ ! -f /etc/default/grub.d/99-armbian-host-side.cfg ] && [ -f /usr/share/grub/armbian-hidpi.pf2 ]; then
+		if [ ! -f /etc/default/grub.d/99-armbian-host-side.cfg ] && [ -f /boot/grub/fonts/armbian-hidpi.pf2 ]; then
 		  _font=
 		  for _status in /sys/class/drm/card*-*/status; do
 		    [ "$(cat "$_status" 2> /dev/null)" = connected ] || continue
 		    read -r _mode < "${_status%/status}/modes" 2> /dev/null || continue
 		    if [ "${_mode%%x*}" -ge 2560 ] 2> /dev/null; then
-		      _font=/usr/share/grub/armbian-hidpi.pf2
+		      _font=/boot/grub/fonts/armbian-hidpi.pf2
 		      break
 		    fi
-		    _font=/usr/share/grub/unicode.pf2
+		    _font=/boot/grub/fonts/unicode.pf2
 		  done
 		  [ -n "$_font" ] && GRUB_FONT="$_font"
 		  unset _status _mode _font
 		fi
+		# update-grub fails on a missing font file. GRUB cannot read an encrypted root.
+		[ -f "$GRUB_FONT" ] || GRUB_FONT=/boot/grub/fonts/unicode.pf2
+		[ -f "$GRUB_FONT" ] || GRUB_FONT=/usr/share/grub/unicode.pf2
 	grubCfgFragHiDPI
 }
