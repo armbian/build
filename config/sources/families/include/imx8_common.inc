@@ -27,8 +27,8 @@ case $BRANCH in
 		KERNEL_MAJOR_MINOR="6.18"
 		;;
 
-	edge) # Linux 7.1 RC
-		KERNEL_MAJOR_MINOR="7.1"
+	edge) # mainline latest stable kernel
+		KERNEL_MAJOR_MINOR="7.3"
 		;;
 
 esac
