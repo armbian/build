@@ -1,4 +1,4 @@
-# Allwinner H313 quad core 1/2GB RAM 8/16GB eMMC 100M Ethernet WiFi TV box
+# Allwinner H313 quad core 1/1.5/2GB RAM 8/16GB eMMC 100M Ethernet WiFi TV box
 BOARD_NAME="X96Q TV Box"
 BOARD_VENDOR="allwinner"
 BOARDFAMILY="sun50iw9"
@@ -11,3 +11,106 @@ KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 OVERLAY_PREFIX="sun50i-h616"
 enable_extension "uwe5622-allwinner"
+
+# Optional U-Boot variants for X96Q clones. All unset = the default build.
+# Set them on the compile.sh command line, e.g.:
+#   ./compile.sh uboot BOARD=x96q BRANCH=current X96Q_SECURE_BOOT=yes X96Q_DRAM_PROFILE=ba301-627
+#
+#   X96Q_SECURE_BOOT=yes         Box has the secure-boot eFuse burned (stock
+#                                Android with burn_secure_mode=1): build a
+#                                TOC0-signed SPL. See the key notes below.
+#   X96Q_DRAM_PROFILE=ba301-627  DRAM parameters of the stock firmware
+#                                ([dram_para] of sys_config.fex, 648 MHz) of
+#                                the BA301_627 board with the SK hynix
+#                                H9TQ64AAETACURKUM eMCP (1.5 GiB LPDDR3).
+#                                Implies 1200 mV and 1.5 GiB support and adds
+#                                the "mtest" command.
+#   X96Q_DRAM_VOLTAGE=<mV>       Override the DRAM supply (AXP313 DCDC3).
+#   X96Q_RAM_SHRINK=yes|no       Override dual-rank 3/4-size (1.5 GiB) support.
+#
+# TOC0 signing key (only used with X96Q_SECURE_BOOT=yes), first match wins:
+#   1. TOC0_ROOT_KEY=/path/to/key.pem (PEM RSA private key; use a path the
+#      build can see, e.g. below userpatches/ when building in Docker)
+#   2. userpatches/u-boot/toc0/root_key.pem
+#   3. otherwise an RSA-2048 key is generated once at 2. and reused later.
+# No key is shipped. As long as the ROTPK_HASH eFuse is not programmed the
+# BROM accepts any root key; devices whose ROTPK hash IS programmed only boot
+# with the matching key.
+if [[ -n "${X96Q_SECURE_BOOT}${X96Q_DRAM_PROFILE}${X96Q_DRAM_VOLTAGE}${X96Q_RAM_SHRINK}" ]]; then
+	# fold the variant (and the identity of the signing key) into the u-boot artifact version
+	declare x96q_key_id=""
+	for x96q_key in "${TOC0_ROOT_KEY}" "${USERPATCHES_PATH}/u-boot/toc0/root_key.pem"; do
+		[[ -n "${x96q_key}" && -f "${x96q_key}" ]] && x96q_key_id="$(sha256sum < "${x96q_key}" | cut -c1-16)" && break
+	done
+	UBOOT_HASH_EXTRA="x96q:sb=${X96Q_SECURE_BOOT}:dram=${X96Q_DRAM_PROFILE}:mv=${X96Q_DRAM_VOLTAGE}:shrink=${X96Q_RAM_SHRINK}:key=${x96q_key_id}"
+	unset x96q_key x96q_key_id
+
+	function post_config_uboot_target__x96q_variant() {
+		case "${X96Q_DRAM_PROFILE}" in
+			"") ;;
+			ba301-627)
+				display_alert "${BOARD}: DRAM profile" "${X96Q_DRAM_PROFILE}: vendor dram_para, 648 MHz, 1200 mV, 1.5 GiB" "info"
+				run_host_command_logged scripts/config --set-val CONFIG_DRAM_CLK 648 \
+					--set-val CONFIG_DRAM_SUNXI_CA_DRI 0x1919 \
+					--set-val CONFIG_DRAM_SUNXI_ODT_EN 0x9988eeee \
+					--set-val CONFIG_DRAM_SUNXI_TPR6 0x2fc08080 \
+					--set-val CONFIG_DRAM_SUNXI_TPR10 0x402f3379 \
+					--set-val CONFIG_DRAM_SUNXI_TPR11 0x0d100b0f \
+					--set-val CONFIG_DRAM_SUNXI_TPR12 0x11131113 \
+					--set-val CONFIG_AXP_DCDC3_VOLT 1200 \
+					--enable CONFIG_DRAM_SUN50I_H616_SHRINK \
+					--enable CONFIG_CMD_MEMTEST
+				;;
+			*) exit_with_error "${BOARD}: unknown X96Q_DRAM_PROFILE" "${X96Q_DRAM_PROFILE} (known: ba301-627)" ;;
+		esac
+
+		if [[ -n "${X96Q_DRAM_VOLTAGE}" ]]; then
+			[[ "${X96Q_DRAM_VOLTAGE}" =~ ^1[0-5][0-9][0-9]$ ]] || exit_with_error "${BOARD}: X96Q_DRAM_VOLTAGE must be in mV (1000-1599)" "${X96Q_DRAM_VOLTAGE}"
+			display_alert "${BOARD}: DRAM voltage" "${X96Q_DRAM_VOLTAGE} mV" "info"
+			run_host_command_logged scripts/config --set-val CONFIG_AXP_DCDC3_VOLT "${X96Q_DRAM_VOLTAGE}"
+		fi
+
+		case "${X96Q_RAM_SHRINK}" in
+			"") ;;
+			yes) run_host_command_logged scripts/config --enable CONFIG_DRAM_SUN50I_H616_SHRINK ;;
+			no) run_host_command_logged scripts/config --disable CONFIG_DRAM_SUN50I_H616_SHRINK ;;
+			*) exit_with_error "${BOARD}: X96Q_RAM_SHRINK must be yes or no" "${X96Q_RAM_SHRINK}" ;;
+		esac
+
+		case "${X96Q_SECURE_BOOT}" in
+			"" | no) ;;
+			yes)
+				display_alert "${BOARD}: secure boot" "TOC0-signed SPL" "info"
+				run_host_command_logged scripts/config --disable CONFIG_SPL_IMAGE_TYPE_SUNXI_EGON --enable CONFIG_SPL_IMAGE_TYPE_SUNXI_TOC0
+				;;
+			*) exit_with_error "${BOARD}: X96Q_SECURE_BOOT must be yes or no" "${X96Q_SECURE_BOOT}" ;;
+		esac
+	}
+fi
+
+if [[ "${X96Q_SECURE_BOOT}" == "yes" ]]; then
+	function add_host_dependencies__x96q_toc0_openssl() {
+		display_alert "Adding openssl" "for ${BOARD} TOC0 key generation" "debug"
+		EXTRA_BUILD_DEPS+=("openssl")
+	}
+
+	function uboot_make_config__x96q_toc0_key() {
+		declare keydir="${USERPATCHES_PATH}/u-boot/toc0"
+
+		if [[ -n "${TOC0_ROOT_KEY}" ]]; then
+			[[ -f "${TOC0_ROOT_KEY}" ]] || exit_with_error "TOC0_ROOT_KEY does not exist" "${TOC0_ROOT_KEY}"
+			keydir="$(mktemp -d)" # below WORKDIR (TMPDIR), removed at the end of the build
+			install -m 0600 "${TOC0_ROOT_KEY}" "${keydir}/root_key.pem"
+			display_alert "TOC0: signing with TOC0_ROOT_KEY" "${TOC0_ROOT_KEY}" "info"
+		elif [[ -f "${keydir}/root_key.pem" ]]; then
+			display_alert "TOC0: signing with user key" "${keydir}/root_key.pem" "info"
+		else
+			display_alert "TOC0: no root key found, generating a new RSA-2048 key" "${keydir}/root_key.pem" "warn"
+			run_host_command_logged mkdir -p "${keydir@Q}"
+			run_host_command_logged "umask 077 && openssl genrsa -out ${keydir@Q}/root_key.pem 2048"
+			display_alert "TOC0: keep this key" "devices with a programmed ROTPK hash eFuse need their own matching key (TOC0_ROOT_KEY)" "warn"
+		fi
+
+		uboot_make_envs+=("KEYDIR=${keydir@Q}")
+	}
+fi
