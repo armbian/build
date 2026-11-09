@@ -106,7 +106,8 @@ function dpkg_deb_build() {
 	fi
 
 	# The build-wide umask 002 makes directories group-writable. Installed files must not be.
-	run_host_command_logged chmod -R go-w "${package_directory}"
+	# Keep intended modes: world-writable (/tmp 1777) and setgid (/var/local 2775).
+	run_host_command_logged find "${package_directory}" -perm -g=w ! -perm -o=w ! -perm -g=s -exec chmod g-w {} +
 
 	declare deb_final_filename="${PACKAGES_HASHED_STORAGE}/${artifact_deb_rel_path}"
 	declare deb_final_dir
