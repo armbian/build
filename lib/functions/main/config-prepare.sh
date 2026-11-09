@@ -347,6 +347,10 @@ function check_config_userspace_release_and_desktop() {
 			exit_with_target_not_supported_error "RELEASE '${RELEASE}' is not supported; there is no '${release_distro_dir}' directory."
 		fi
 
+		if [[ "$(cat "${release_distro_dir}/support" 2> /dev/null)" == "eos" ]]; then
+			exit_with_target_not_supported_error "RELEASE '${RELEASE}' is end of life (eos); the build framework no longer builds it."
+		fi
+
 		if [[ ! -f "${release_distro_arches_file}" ]]; then
 			exit_with_target_not_supported_error "RELEASE '${RELEASE}' does not have file ${release_distro_arches_file}"
 		fi

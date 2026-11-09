@@ -105,7 +105,8 @@ function distro_menu() {
 	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
 		local support_level
 		support_level="$(cat "${distrib_dir}/support")"
-		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+		# eos: the framework no longer builds these releases
+		if [[ "${support_level}" == "eos" ]] || [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
 			:
 		else
 			local distro_codename distro_fullname
