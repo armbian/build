@@ -13,6 +13,12 @@ function extension_prepare_config__prepare_cryptroot() {
 	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "cryptsetup cryptsetup-initramfs" "info"
 	add_packages_to_image cryptsetup cryptsetup-initramfs
 
+	# Unlocks other /etc/crypttab entries at boot. Older releases have it in systemd.
+	case "${RELEASE}" in
+		buster | bullseye | bookworm | focal | jammy | noble) ;;
+		*) add_packages_to_image systemd-cryptsetup ;;
+	esac
+
 	# Config for cryptroot, a boot partition is required.
 	declare -g BOOTPART_REQUIRED=yes
 	EXTRA_IMAGE_SUFFIXES+=("-crypt")
