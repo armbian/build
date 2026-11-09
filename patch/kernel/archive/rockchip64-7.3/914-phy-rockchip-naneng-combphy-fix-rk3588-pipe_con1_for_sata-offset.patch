@@ -1,25 +1,72 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH] phy: rockchip: naneng-combphy: fix RK3588 SATA pipe_con1
+ register offset
 From: Ricardo Pardini <ricardo@pardini.net>
-Date: Sat, 24 Oct 2026 00:55:51 +0200
-Subject: phy: rockchip: naneng-combphy: fix rk3588 pipe_con1_for_sata offset
+Date: Mon, 09 Nov 2026 02:12:47 +0100
+Message-Id: <20261109-rk3588-combphy-sata2-6g-v1-1-e9135c91de6a@pardini.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
 
-- pipe_con1_for_sata (pipe-grf CON1[2:0] = 2) is at 0x0004, not 0x0000
-  - same fix as Rockchip vendor kernel 2f5fe2c0bbd4 ("phy: rockchip: naneng-combophy: config sata2 rate to 6G for rk3588")
-- without it, sata2 (combphy2_psu) links at 1.5 Gbps only
-- tested on Mixtile Blade 3 mSATA: PxSSTS 0x113 -> 0x133 (6.0 Gbps), via U-Boot with the same fix
+On RK3588, the sata2 PHY speed is selected by sata2_phy_spdmode in
+PHP_GRF_PHP_CON1[1:0] (offset 0x0004), with sata2_phy_rx_err in bit 2.
+rk3588_combphy_grfcfgs has pipe_con1_for_sata at offset 0x0000 though,
+so the value 0x2 (6.0 Gb/s, rx_err cleared) ends up in PHP_GRF_PHP_CON0
+and CON1 is never written.
+
+This leaves sata2 at its 1.5 Gb/s reset value, so the link only trains
+at 1.5 Gb/s, even with a 6 Gb/s capable disk and no SControl speed
+limit. sata0 and sata1 are not affected: their speed fields are in
+PHP_GRF_PHP_CON0 and are set by pipe_con0_for_sata.
+
+The register layout is described in the RK3588 TRM V1.0 Part1, section
+6.17 "PHP_GRF Register Description". Rockchip fixed this in their BSP
+kernel in 2022 by moving pipe_con1_for_sata to offset 0x0004.
+
+Tested with an mSATA SSD on sata2 (combphy2_psu). Before:
+
+  ata2: SATA link up 1.5 Gbps (SStatus 113 SControl 300)
+  Timing O_DIRECT disk reads: 374 MB in 3.01 seconds = 124.45 MB/sec
+
+After:
+
+  ata2: SATA link up 6.0 Gbps (SStatus 133 SControl 300)
+  Timing O_DIRECT disk reads: 1266 MB in 3.00 seconds = 421.78 MB/sec
 
 Fixes: a03c44277253 ("phy: rockchip: Add naneng combo phy support for RK3588")
-Assisted-by: Claude Opus 5.5
+Cc: stable@vger.kernel.org
+Link: https://github.com/rockchip-linux/kernel/commit/2f5fe2c0bbd4fa95102aadd60da1100989103aa0
+Cc: Yifeng Zhao <yifeng.zhao@rock-chips.com>
+Link: https://patch.msgid.link/20261109-rk3588-combphy-sata2-6g-v1-1-e9135c91de6a@pardini.net
 Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+---
+This fixes the pipe_con1 GRF offset for SATA in the RK3588 combphy
+table, so sata2 links train at 6 Gb/s instead of being stuck at
+1.5 Gb/s.
+
+I found it when an mSATA SSD on sata2 would only link at 1.5 Gb/s,
+and traced it to Rockchip's BSP kernel, which fixed the same offset in
+2022 in a commit titled "config sata2 rate to 6G for rk3588" (linked
+in the patch). The RK3588 TRM V1.0 Part1 (section 6.17) agrees:
+sata2_phy_spdmode is in PHP_GRF_PHP_CON1, while the sata0/sata1 speed
+fields are in PHP_GRF_PHP_CON0 and already set correctly.
+
+The misplaced write lands in PHP_GRF_PHP_CON0[2:0], which are the PCIe
+link reset grant bits, and turns on the one for pcie3x2 whenever a
+combphy is put in SATA mode. I don't know of any effect from that, but
+this patch stops it too.
+
+Only sata2 was tested. U-Boot has the same table and the same problem;
+a fix is being sent there separately.
 ---
  drivers/phy/rockchip/phy-rockchip-naneng-combphy.c | 2 +-
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c b/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
-index 111111111111..222222222222 100644
+index 3102a99128f6..c469222dba8b 100644
 --- a/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
 +++ b/drivers/phy/rockchip/phy-rockchip-naneng-combphy.c
-@@ -1377,7 +1377,7 @@ static const struct rockchip_combphy_grfcfg rk3588_combphy_grfcfgs = {
+@@ -1395,7 +1395,7 @@ static const struct rockchip_combphy_grfcfg rk3588_combphy_grfcfgs = {
  	.con3_for_sata		= { 0x000c, 15, 0, 0x00, 0x0407 },
  	/* pipe-grf */
  	.pipe_con0_for_sata	= { 0x0000, 11, 5, 0x00, 0x22 },
@@ -28,6 +75,12 @@ index 111111111111..222222222222 100644
  	.pipe_pcie1l0_sel	= { 0x0100, 0, 0, 0x01, 0x0 },
  	.pipe_pcie1l1_sel	= { 0x0100, 1, 1, 0x01, 0x0 },
  };
--- 
-Armbian
+
+---
+base-commit: 6628e7d4c6b25c8d18f1345e3a20d21829aae7e4
+change-id: 20261024-rk3588-combphy-sata2-6g-03bb30151552
+
+Best regards,
+--  
+Ricardo Pardini <ricardo@pardini.net>
 
