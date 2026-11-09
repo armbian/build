@@ -7,7 +7,7 @@
 
 ## Purpose of This Repository
 
-The **Armbian Linux Build Framework** builds customizable OS images based on **Debian** or **Ubuntu** for **single-board computers (SBCs)** and other embedded devices. It assembles the kernel, bootloader, firmware, device trees and root filesystem into a reproducible image, with per-board and per-family configuration.
+The **Armbian Linux build framework** builds customizable OS images based on **Debian** or **Ubuntu** for **single-board computers (SBCs)** and other embedded devices. It assembles the kernel, bootloader, firmware, device trees and root filesystem into a reproducible image, with per-board and per-family configuration.
 
 > **Looking for prebuilt images?** Use [Armbian Imager](https://github.com/armbian/imager/releases) — the easiest way to download and flash Armbian to an SD card or USB drive. Available for Linux, macOS and Windows.
 
@@ -54,7 +54,6 @@ The entrypoint `compile.sh` sources `lib/single.sh` and dispatches into the fram
 | `lib/` | Core build framework (Bash functions, Python helpers under `lib/tools/`) |
 | `config/` | Board, family, distribution, kernel and CLI configuration |
 | `config/boards/` | One file per board; the extension marks its support status (see below) |
-| `config/distributions/` | Supported Debian/Ubuntu release metadata |
 | `config/cli/` | CLI package selections per release |
 | `config/its/` | Image Tree Source files for device tree builder |
 | `patch/` | Kernel, U-Boot and ATF patch sets organized by family/version |
@@ -76,8 +75,6 @@ Files under `config/boards/` use an extension that signals support status:
 | `.tvb` | TV box, community supported (no Armbian maintainer) |
 
 See [`config/boards/README.md`](config/boards/README.md) for the full list of per-board variables (e.g. `BOARD_NAME`, `BOARD_VENDOR`, `BOARDFAMILY`, `BOOTCONFIG`, `KERNEL_TARGET`, `SERIALCON`, `MODULES`, `DEFAULT_OVERLAYS`).
-
-Release/package base statuses used under `config/distributions/` are defined separately in [`config/distributions/README.md`](config/distributions/README.md).
 
 ## Built With
 
