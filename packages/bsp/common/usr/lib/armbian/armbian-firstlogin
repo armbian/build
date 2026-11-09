@@ -783,9 +783,14 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	. /root/.not_logged_in_yet
 
-	# most autologin consoles have nobody at them, so wait for Enter;
-	# a preset run has nobody to wait for, an ssh login already has a user
-	if [[ -z "${PRESET_ROOT_PASSWORD}${PRESET_USER_NAME}${PRESET_CONFIGURATION}${SSH_CONNECTION}" ]]; then
+	# A complete preset has nobody at the console. Resolve a remote preset
+	# before deciding, so a partial preset still waits for its missing input;
+	# an ssh login already has a user.
+	armbian_firstlogin_prepare_preset
+	if [[ -s /run/armbian-firstlogin-preset.conf ]]; then
+		. /run/armbian-firstlogin-preset.conf
+	fi
+	if ! armbian_firstlogin_preset_unattended && [[ -z "${SSH_CONNECTION}" ]]; then
 		echo -e "\nPress Enter to start the first login setup on this console."
 		until read -r -t 1 _; do
 			(($? > 128)) || exit 0 # not a timeout: the terminal is gone
@@ -801,6 +806,7 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 		exit 0
 	fi
 	tty > /run/armbian-firstlogin.lock
+	firstlogin_tty=$(< /run/armbian-firstlogin.lock)
 	# done elsewhere meanwhile: log a console out, keep an ssh shell
 	if [[ ! -f /root/.not_logged_in_yet ]]; then
 		[[ -z "${SSH_CONNECTION}" ]] && kill -HUP "$PPID"
@@ -809,16 +815,21 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 
 	. /root/.not_logged_in_yet
 
-	# override configuration from URL
+	# override configuration from URL; reuse the gadget helper's validated
+	# download when available so both stages evaluate the same configuration.
 	if [[ -n "${PRESET_CONFIGURATION}" ]]; then
 		_f="/root/.not_logged_in_yet"
-		if curl --retry 5 --connect-timeout 3 "${PRESET_CONFIGURATION}" > "${_f}.tmp" 2> /dev/null && bash -n "${_f}.tmp"; then
+		if [[ "${firstlogin_tty#/dev/}" == ttyGS* &&
+			-s /run/armbian-firstlogin-preset.conf && -s /run/armbian-firstlogin-preset.url &&
+			"$(< /run/armbian-firstlogin-preset.url)" == "${PRESET_CONFIGURATION}" ]]; then
+			atomic_write /run/armbian-firstlogin-preset.conf "${_f}" 600 || exit 1
+		elif curl --fail --location --retry 5 --connect-timeout 3 --max-time 60 "${PRESET_CONFIGURATION}" > "${_f}.tmp" 2> /dev/null && bash -n "${_f}.tmp"; then
 			atomic_write "${_f}.tmp" "${_f}" 600 || exit 1
-			. "${_f}"
 		else
 			rm -f "${_f}.tmp"
 			exit 1
 		fi
+		. "${_f}"
 	fi
 
 	# A preset (e.g. written by Armbian Imager) drives an unattended run: on a
@@ -843,7 +854,6 @@ if [[ -f /root/.not_logged_in_yet ]] && tty -s; then
 	# gettys, but not this console: its login session belongs to the same running
 	# service even after agetty has exec'ed login. Once this session logs out, its
 	# next agetty uses the reloaded non-autologin configuration.
-	firstlogin_tty=$(< /run/armbian-firstlogin.lock)
 	systemctl list-units 'serial-getty@ttyGS*.service' --state=running --no-legend --plain 2>/dev/null |
 		while read -r unit _; do
 			[[ $unit == "serial-getty@${firstlogin_tty#/dev/}.service" ]] && continue || true
