@@ -15,7 +15,7 @@ function apt_find_upstream_package_version_and_download_url() {
 	case "${DISTRIBUTION}" in
 		Ubuntu)
 			# Only LTS releases have an "-updates" repo that is worth looking into
-			if [[ "${RELEASE}" == "focal" || "${RELEASE}" == "jammy" ]]; then # @TODO: release info information, is_ubuntu_release_lts() or similar
+			if [[ "${RELEASE}" == "jammy" ]]; then # @TODO: release info information, is_ubuntu_release_lts() or similar
 				package_download_release=${RELEASE}-updates
 			else
 				package_download_release=${RELEASE}

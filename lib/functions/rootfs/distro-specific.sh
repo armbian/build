@@ -121,10 +121,10 @@ function fetch_distro_keyring() {
 	declare distro=""
 
 	case $release in
-		buster | bullseye | bookworm | trixie | forky | sid)
+		bookworm | trixie | forky | sid)
 			distro="debian"
 			;;
-		focal | jammy | noble | oracular | plucky | questing | resolute)
+		jammy | noble | resolute)
 			distro="ubuntu"
 			;;
 		*)
@@ -194,7 +194,7 @@ function fetch_distro_keyring() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bullseye|bookworm|trixie|forky|sid|focal|jammy|noble|oracular|plucky|questing|resolute
+# <release>: bookworm|trixie|forky|sid|jammy|noble|resolute
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -210,18 +210,12 @@ function create_sources_list_and_deploy_repo_key() {
 
 	# Add upstream (Debian/Ubuntu) APT repository
 	case $release in
-		buster | bullseye | bookworm | trixie | forky)
+		bookworm | trixie | forky)
 			distro="debian"
 
-			declare -a suites=("${release}" "${release}-updates")
-			declare -a components=(main contrib non-free)
-
-			if [[ "$release" != "buster" && "$release" != "bullseye" ]]; then
-				# EOS releases doesn't get security updates
-				declare -a security_suites=("${release}-security")
-				suites+=("${release}-backports")
-				components+=("non-free-firmware")
-			fi
+			declare -a suites=("${release}" "${release}-updates" "${release}-backports")
+			declare -a security_suites=("${release}-security")
+			declare -a components=(main contrib non-free non-free-firmware)
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
 				Types: deb
@@ -231,16 +225,14 @@ function create_sources_list_and_deploy_repo_key() {
 				Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 			EOF
 
-			if [[ ${#security_suites[@]} -gt 0 ]]; then
-				echo "" >> "${basedir}/etc/apt/sources.list.d/${distro}.sources" # it breaks if there is no line space in between
-				cat <<- EOF >> "${basedir}/etc/apt/sources.list.d/${distro}.sources"
-					Types: deb
-					URIs: http://${DEBIAN_SECURITY}
-					Suites: ${security_suites[@]}
-					Components: ${components[@]}
-					Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-				EOF
-			fi
+			echo "" >> "${basedir}/etc/apt/sources.list.d/${distro}.sources" # it breaks if there is no line space in between
+			cat <<- EOF >> "${basedir}/etc/apt/sources.list.d/${distro}.sources"
+				Types: deb
+				URIs: http://${DEBIAN_SECURITY}
+				Suites: ${security_suites[@]}
+				Components: ${components[@]}
+				Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+			EOF
 			;;
 
 		sid | unstable)
@@ -273,7 +265,7 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 			;;
 
-		focal | jammy | noble | oracular | plucky | questing | resolute)
+		jammy | noble | resolute)
 			distro="ubuntu"
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
@@ -305,12 +297,6 @@ function create_sources_list_and_deploy_repo_key() {
 	# lets link to the old file as armbian-config uses it and we can't set there to new file
 	# we user force linking as some old caches still exists
 	LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
-
-	# lets keep old way for old distributions
-	if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
-		cp "${SRC}"/config/armbian.key "${basedir}"
-		LC_ALL="C" LANG="C" LANGUAGE="" SUDO_USER="" chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
-	fi
 
 	# undeploy the qemu binary from the image; we don't want to ship the host's qemu in the target image
 	undeploy_qemu_binary_from_chroot "${basedir}" "${when}"
