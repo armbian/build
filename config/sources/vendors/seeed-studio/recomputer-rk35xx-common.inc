@@ -246,8 +246,9 @@ function post_family_tweaks__recomputer_enable_usb_gadget_defaults() {
 	# PrivateDevices=no plus an explicit ttyGS0 argument avoids Noble's fatal
 	# ttyname(STDIN) failure. Keep systemd-executor off the gadget TTY: without
 	# a USB host, its pre-exec reset/probe blocks in n_tty_write. agetty opens
-	# ttyGS0 itself, and -w waits for CR. Fresh images keep the stock serial
-	# autologin helper, which firstlogin removes after setup.
+	# ttyGS0 itself, and -w waits for CR. Fresh images need an instance-specific
+	# autologin override: this normal-login ExecStart would otherwise take
+	# precedence over the generic serial-getty template override.
 	mkdir -p "${SDCARD}/usr/local/bin"
 	cat > "${SDCARD}/usr/local/bin/login-ns.sh" <<- 'WRAPPER_EOF'
 #!/bin/sh
@@ -278,10 +279,19 @@ exec nsenter -t 1 -m -- /bin/login "$@"
 		ExecStart=-/sbin/agetty -w -o '-- \\u' --noreset --noclear --keep-baud 115200,57600,38400,9600 -l /usr/local/bin/login-ns.sh ttyGS0 linux
 	EOF
 
+	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
+		# firstlogin removes this instance override along with the generic one;
+		# after-usbdevice.conf then supplies ordinary username/password login.
+		cat > "${SDCARD}/etc/systemd/system/serial-getty@ttyGS0.service.d/override.conf" <<- EOF
+			[Service]
+			ExecStart=
+			ExecStart=-/usr/lib/armbian/armbian-autologin-agetty ttyGS0 \$TERM
+		EOF
+	fi
+
 	chroot_sdcard systemctl --no-reload enable usbdevice.service
 	chroot_sdcard systemctl --no-reload enable dnsmasq.service
-	# The gadget getty ships configured but disabled: enable it or the ACM console stays dead
-	chroot_sdcard systemctl --no-reload enable serial-getty@ttyGS0.service
+	# The SERIALCON udev rule starts the gadget getty once ttyGS0 appears.
 
 	# usbdevice.service: retry on failure + tell NM to manage usb0 + bring link up
 	mkdir -p "${SDCARD}/etc/systemd/system/usbdevice.service.d"
