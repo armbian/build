@@ -393,7 +393,8 @@ configure_grub() {
 		  [ -n "$_font" ] && GRUB_FONT="$_font"
 		  unset _status _mode _font
 		fi
-		# update-grub fails on a missing font file.
+		# update-grub fails on a missing font file. GRUB cannot read an encrypted root.
+		[ -f "$GRUB_FONT" ] || GRUB_FONT=/boot/grub/fonts/unicode.pf2
 		[ -f "$GRUB_FONT" ] || GRUB_FONT=/usr/share/grub/unicode.pf2
 	grubCfgFragHiDPI
 }
