@@ -80,8 +80,9 @@ function compile_firmware() {
 	# Armbian firmware; this overwrites anything in the mainline firmware repo (if that was included, in the full version only)
 	run_host_command_logged git -C "${SRC}/cache/sources/armbian-firmware-git" archive --format=tar "${armbian_firmware_git_sha1}" "|" tar -C "${fw_temp_dir}/${fw_dir}/lib/firmware/" -xf -
 
-	# CPU microcode comes from amd64-microcode and intel-microcode. They also load it early.
-	run_host_command_logged rm -rf "${fw_temp_dir}/${fw_dir}/lib/firmware/amd-ucode" "${fw_temp_dir}/${fw_dir}/lib/firmware/intel-ucode"
+	# amd64-microcode and intel-microcode own these files. They also load the microcode early.
+	# amd_sev and amdtee: amd64-microcode ships them too (except jammy). Check its file list on updates.
+	run_host_command_logged rm -rf "${fw_temp_dir}/${fw_dir}/lib/firmware/"{amd-ucode,intel-ucode,amdtee} "${fw_temp_dir}/${fw_dir}/lib/firmware/amd/amd_sev_"*.sbin
 
 	# Show the size of the firmware directory in a tree if debugging
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
