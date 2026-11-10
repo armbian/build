@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 09 Nov 2026 23:00:00 +0000
+Subject: media: cedrus: decode H.264 4:0:0 monochrome pictures
+
+High profile allows monochrome (chroma_format_idc 0) streams, which the
+driver refused. The H.264 engine takes chroma_format_idc in its SPS
+register, which the driver already programs from the control, so let
+4:0:0 through.
+
+A 4:0:0 picture has no chroma samples for the hardware to reconstruct.
+Fill the chroma plane of the capture buffer with the value which H.264
+gives the chroma of a monochrome picture (128 for 8 bits) before
+decoding, so that the NV12 output is the picture's grey image.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.c      |  4 ++--
+ drivers/staging/media/sunxi/cedrus/cedrus_h264.c | 22 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 21f2ea4..338aaf0 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -60,8 +60,8 @@ static int cedrus_try_ctrl(struct v4l2_ctrl *ctrl)
+ 	if (ctrl->id == V4L2_CID_STATELESS_H264_SPS) {
+ 		const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
+ 
+-		if (sps->chroma_format_idc != 1)
+-			/* Only 4:2:0 is supported */
++		if (sps->chroma_format_idc > 1)
++			/* Only 4:2:0 and 4:0:0 (monochrome) are supported */
+ 			return -EINVAL;
+ 		if (sps->bit_depth_luma_minus8 != sps->bit_depth_chroma_minus8)
+ 			/* Luma and chroma bit depth mismatch */
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+index 9b75d92..a37e677 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h264.c
+@@ -525,11 +525,33 @@ static void cedrus_h264_irq_disable(struct cedrus_ctx *ctx)
+ 		     reg & ~VE_H264_CTRL_INT_MASK);
+ }
+ 
++/*
++ * A monochrome (4:0:0) picture has no chroma samples for the hardware to
++ * reconstruct. Output them with the value which H.264 gives the chroma of
++ * a 4:0:0 picture, 1 << (BitDepthC - 1).
++ */
++static void cedrus_h264_fill_mono_chroma(struct cedrus_ctx *ctx,
++					 struct cedrus_run *run)
++{
++	struct vb2_buffer *buf = &run->dst->vb2_buf;
++	size_t luma = (size_t)ctx->dst_fmt.bytesperline * ctx->dst_fmt.height;
++	size_t size = vb2_plane_size(buf, 0);
++	u8 *vaddr = vb2_plane_vaddr(buf, 0);
++
++	if (!vaddr || size <= luma)
++		return;
++
++	memset(vaddr + luma, 0x80, min_t(size_t, ctx->dst_fmt.sizeimage, size) - luma);
++}
++
+ static int cedrus_h264_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 	int ret;
+ 
++	if (!run->h264.sps->chroma_format_idc)
++		cedrus_h264_fill_mono_chroma(ctx, run);
++
+ 	cedrus_engine_enable(ctx);
+ 
+ 	cedrus_write(dev, VE_H264_SDROT_CTRL, 0);
+-- 
+2.47.3
+

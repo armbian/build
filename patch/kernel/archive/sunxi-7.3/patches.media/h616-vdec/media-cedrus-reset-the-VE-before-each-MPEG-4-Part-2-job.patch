@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Wed, 04 Nov 2026 08:40:00 +0000
+Subject: media: cedrus: reset the VE before each MPEG-4 Part 2 job
+
+The MPEG engine keeps some state from one MPEG-4 Part 2 picture to the
+next that no register clears. Depending on the pictures decoded before,
+the first coded macroblocks of a P or S(GMC) picture are then predicted
+from the far right of the reference picture instead of from their own
+position. The error spreads until the next I picture. In an Xvid GMC
+stream this hit frame 24, and the same frames decoded correctly with a
+different decode history (another stream before, a fresh process).
+
+Neither the sprite registers, the motion vector registers, the MC cache
+enable nor the reference addresses change it. The bitstream does not
+matter either: rewriting the sprite trajectory of the frame, or of the
+S-VOPs before it, leaves the corruption in place. A VE reset before each
+job removes it everywhere: 0 bad macroblocks in four Xvid GMC/P streams,
+and no change in the ISO/IEC 14496-4 results. It costs no measurable
+decoding time (1080p60 Xvid, B + qpel + GMC: 6.41 s against 6.45 s for
+300 frames).
+
+Do it for H.263 and Sorenson Spark too, which run in the same engine
+through the same setup.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus_dec.c | 23 +++++++++++++++++++----
+ 1 file changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+index 266d98702..639c337ab 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_dec.c
+@@ -24,6 +24,13 @@
+ #include "cedrus_dec.h"
+ #include "cedrus_hw.h"
+ 
++static bool cedrus_is_mpeg4_part2(u32 pixelformat)
++{
++	return pixelformat == V4L2_PIX_FMT_MPEG4_SLICE ||
++	       pixelformat == V4L2_PIX_FMT_H263_SLICE ||
++	       pixelformat == V4L2_PIX_FMT_SPK_SLICE;
++}
++
+ void cedrus_device_run(void *priv)
+ {
+ 	struct cedrus_ctx *ctx = priv;
+@@ -162,11 +169,19 @@ void cedrus_device_run(void *priv)
+ 	 * whenever the engine is switched to or from VP9, as the vendor
+ 	 * library does whenever it sets up a decoder; every job programs all
+ 	 * the registers and SRAM it uses.
++	 *
++	 * The MPEG-4 Part 2 engine keeps state from one picture to the next
++	 * that no register clears: the first macroblocks of a P or S picture
++	 * then predict from the far right of the reference picture instead
++	 * of their own position, depending on the pictures decoded before.
++	 * Reset the VE before each of its jobs; the reset takes a few
++	 * microseconds.
+ 	 */
+-	if (dev->last_src_pixelformat &&
+-	    dev->last_src_pixelformat != ctx->src_fmt.pixelformat &&
+-	    (dev->last_src_pixelformat == V4L2_PIX_FMT_VP9_FRAME ||
+-	     ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME))
++	if ((dev->last_src_pixelformat &&
++	     dev->last_src_pixelformat != ctx->src_fmt.pixelformat &&
++	     (dev->last_src_pixelformat == V4L2_PIX_FMT_VP9_FRAME ||
++	      ctx->src_fmt.pixelformat == V4L2_PIX_FMT_VP9_FRAME)) ||
++	    cedrus_is_mpeg4_part2(ctx->src_fmt.pixelformat))
+ 		reset_control_reset(dev->rstc);
+ 	dev->last_src_pixelformat = ctx->src_fmt.pixelformat;
+ 
+-- 
+2.43.0
+

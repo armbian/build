@@ -1,0 +1,286 @@
+From aa2de7fe3d20a20b6d247e1705fb9f8b44b239cb Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 2 Nov 2026 23:32:03 +0000
+Subject: media: cedrus: reconstruct 10-bit pictures into AFBC for P010
+ output
+
+With P010 capture the decoder writes the userspace picture through the
+secondary output engine and keeps its reconstruction, which later
+pictures use as reference, in a hidden surface behind it. That surface
+was linear NV12 plus the appended low-2-bit plane.
+
+Linear references are slow on the H616. Measured on an Orange Pi
+Zero2 (DDR3-1440, VE 600 MHz) with 4K HEVC Main10, the reference-read
+port (MBUS VE1, IOMMU master 2) moves 3.2 times the data of an AFBC
+reconstruction and 1.7 times that of a tiled one, and its IOMMU TLB hit
+rate drops from ~90 % to 50 % (average translation latency per access
+171 cycles instead of 3.5). Decoding runs at 24 fps. With the IOMMU out
+of the way (iommu.passthrough=1), 8-bit linear references still only
+reach 40 instead of 34 fps against 78 fps tiled, so the access pattern
+costs more than the TLB misses.
+
+Reconstruct into a 10-bit AFBC surface instead, as the vendor library
+does for big pictures, and keep the P010 secondary output. AFBC is
+lossless, and the references are read back compressed. The same 4K
+stream now decodes at 60 fps (VE-bound) instead of 24, and 4K VP9
+Profile 2 at 57 fps instead of 36, both with bit-exact P010 output
+(whole-stream md5 against a software decode). A 32x32 tiled NV12
+reconstruction would also work (49 fps) but AFBC is faster and its
+size is about the same (17.3 MB vs 15.5 MB at 4K).
+
+Native AFBC capture is unchanged.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   | 55 +++++++++++++------
+ .../staging/media/sunxi/cedrus/cedrus_h265.c  | 11 ++--
+ .../staging/media/sunxi/cedrus/cedrus_hw.c    | 22 ++++----
+ .../staging/media/sunxi/cedrus/cedrus_video.c |  6 +-
+ .../staging/media/sunxi/cedrus/cedrus_vp9.c   |  7 ++-
+ 5 files changed, 63 insertions(+), 38 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -396,28 +396,49 @@ static inline bool cedrus_dst_is_afbc(struct cedrus_ctx *ctx)
+ 	return cedrus_is_afbc_format(ctx->dst_fmt.pixelformat);
+ }
+ 
++/*
++ * The reconstruction/reference surface is AFBC compressed: either it is
++ * the capture buffer itself (AFBC capture formats), or it is the hidden
++ * surface behind the visible P010 picture.
++ */
++static inline bool cedrus_recon_is_afbc(struct cedrus_ctx *ctx)
++{
++	return cedrus_dst_is_afbc(ctx) || cedrus_dst_is_p010(ctx);
++}
++
++/* Size of a 10-bit YUV 4:2:0 AFBC 16x16 split surface. */
++static inline u32 cedrus_afbc_10_size(unsigned int width, unsigned int height)
++{
++	return DIV_ROUND_UP(width, 16) * DIV_ROUND_UP(height + 4, 16) *
++	       (512 + 16) + 32 + SZ_1K;
++}
++
+ /*
+  * Offset of the hidden reconstruction surface, which follows the
+  * userspace-visible P010 surface at the start of the buffer.
+  */
+ static inline u32 cedrus_p010_recon_offset(const struct v4l2_pix_format *fmt)
+ {
+-	return ALIGN(fmt->bytesperline * fmt->height * 3 / 2, SZ_1K);
++	return ALIGN(fmt->bytesperline * fmt->height * 3 / 2, SZ_4K);
+ }
+ 
+ /*
+- * Format describing the 8-bit NV12 reconstruction/reference surface.
+- * For P010 output this is a hidden surface (NV12 planes plus an appended
+- * 2-bit plane) that follows the visible P010 data; otherwise it is the
+- * capture format itself.
++ * Format describing the reconstruction/reference surface.  For P010
++ * output this is a hidden 10-bit AFBC surface that follows the visible
++ * P010 data; otherwise it is the capture format itself.
++ *
++ * A linear 8-bit NV12 + 2-bit reconstruction would also work, but motion
++ * compensation from linear references is slow (several times the read
++ * traffic and many IOMMU TLB misses): 4K Main10 drops from 60 to 24 fps
++ * on the H616. AFBC references are read compressed.
+  */
+ static inline struct v4l2_pix_format cedrus_dst_frame_fmt(struct cedrus_ctx *ctx)
+ {
+ 	struct v4l2_pix_format fmt = ctx->dst_fmt;
+ 
+ 	if (cedrus_dst_is_p010(ctx)) {
+-		fmt.pixelformat = V4L2_PIX_FMT_NV12;
+-		fmt.bytesperline = ALIGN(fmt.width, CEDRUS_RECON_STRIDE_ALIGN);
++		fmt.pixelformat = V4L2_PIX_FMT_YUV420_10_AFBC_16X16_SPLIT;
++		fmt.bytesperline = 0;
+ 	}
+ 
+ 	return fmt;
+@@ -426,7 +447,8 @@ static inline struct v4l2_pix_format cedrus_dst_frame_fmt(struct cedrus_ctx *ctx
+ /*
+  * Address of a plane of the reconstruction/reference surface.  Identical
+  * to cedrus_dst_buf_addr() for non-P010 output; for P010 it points past
+- * the visible P010 data to the hidden NV12 surface.
++ * the visible P010 data to the hidden AFBC surface (which has a single
++ * plane).
+  */
+ static inline dma_addr_t cedrus_dst_frame_addr(struct cedrus_ctx *ctx,
+ 					       struct vb2_buffer *buf,
+@@ -447,9 +469,9 @@ static inline dma_addr_t cedrus_dst_frame_addr(struct cedrus_ctx *ctx,
+ 
+ /*
+  * Extra capture-buffer space needed for 10-bit decoding beyond the
+- * visible plane: the appended low-2-bit reconstruction plane, plus (for
+- * P010) the hidden 8-bit NV12 reconstruction surface.  Shared by the
+- * VP9 and H.265 decoders as the extra_cap_size op.
++ * visible plane: the appended low-2-bit reconstruction plane for the
++ * linear formats, or (for P010) the hidden AFBC reconstruction surface.
++ * Shared by the VP9 and H.265 decoders as the extra_cap_size op.
+  */
+ static inline unsigned int
+ cedrus_dst_10bit_extra_size(struct cedrus_ctx *ctx,
+@@ -468,17 +490,16 @@ cedrus_dst_10bit_extra_size(struct cedrus_ctx *ctx,
+ 	if (cedrus_is_afbc_format(pix_fmt->pixelformat))
+ 		return 0;
+ 
+-	extra = cedrus_dst_2bit_size(pix_fmt->width, pix_fmt->height);
+-
+ 	if (pix_fmt->pixelformat == V4L2_PIX_FMT_P010) {
+ 		u32 visible = pix_fmt->bytesperline * pix_fmt->height * 3 / 2;
+ 
+-		/* Hidden NV12 reconstruction surface, 1 KiB aligned. */
+-		extra += cedrus_p010_recon_offset(pix_fmt) - visible +
+-			 ALIGN(pix_fmt->width, CEDRUS_RECON_STRIDE_ALIGN) *
+-			 pix_fmt->height * 3 / 2;
++		/* Hidden AFBC reconstruction surface, 4 KiB aligned. */
++		return cedrus_p010_recon_offset(pix_fmt) - visible +
++		       cedrus_afbc_10_size(pix_fmt->width, pix_fmt->height);
+ 	}
+ 
++	extra = cedrus_dst_2bit_size(pix_fmt->width, pix_fmt->height);
++
+ 	return extra;
+ }
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -107,7 +107,7 @@ static void cedrus_h265_frame_info_write_single(struct cedrus_ctx *ctx,
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 	dma_addr_t dst_luma_addr = cedrus_dst_frame_addr(ctx, buf, 0);
+-	dma_addr_t dst_chroma_addr = is_afbc_format(ctx->dst_fmt.pixelformat) ?
++	dma_addr_t dst_chroma_addr = cedrus_recon_is_afbc(ctx) ?
+ 				     0 : cedrus_dst_frame_addr(ctx, buf, 1);
+ 	dma_addr_t mv_col_buf_addr[2] = {
+ 		cedrus_h265_frame_info_mv_col_buf_addr(buf, 0),
+@@ -807,7 +807,8 @@ static int cedrus_h265_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 
+ 		/*
+ 		 * Offset of the appended low-2-bit reconstruction plane from
+-		 * the reconstruction luma base.
++		 * the reconstruction luma base (zero for an AFBC
++		 * reconstruction, which carries the full 10-bit samples).
+ 		 */
+ 		reg = recon.bytesperline * recon.height * 3 / 2;
+ 		cedrus_write(dev, VE_DEC_H265_OFFSET_ADDR_FIRST_OUT, reg);
+@@ -819,9 +820,9 @@ static int cedrus_h265_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	}
+ 
+ 	/*
+-	 * P010 capture: the primary output holds the hidden 8-bit NV12
+-	 * reconstruction surface, the secondary output converts it to the
+-	 * visible P010 surface.
++	 * P010 capture: the primary output writes the hidden AFBC
++	 * reconstruction surface, the secondary output the visible P010
++	 * surface.
+ 	 */
+ 	if (cedrus_dst_is_p010(ctx)) {
+ 		struct v4l2_pix_format recon = cedrus_dst_frame_fmt(ctx);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_hw.c
+@@ -96,7 +96,7 @@ int cedrus_engine_enable(struct cedrus_ctx *ctx)
+ 	 * in order to render it properly with display engine, default color
+ 	 * has to be set to white there.
+ 	 */
+-	if (is_afbc_format(ctx->dst_fmt.pixelformat))
++	if (cedrus_recon_is_afbc(ctx))
+ 		reg |= VE_MODE_COMPRESS_EN |
+ 		       VE_MODE_MIN_VAL_WRAP_EN |
+ 		       VE_MODE_RGB_DEF_COLOR_EN |
+@@ -170,14 +170,14 @@ void cedrus_dst_format_set(struct cedrus_dev *dev,
+ }
+ 
+ /*
+- * Program the secondary ("scale-down/rotate") output engine to convert
+- * the 8-bit NV12 reconstruction into the userspace-visible P010 surface
+- * at the start of the capture buffer.  The caller must already have
+- * configured the primary output (which writes the hidden NV12
+- * reconstruction/reference surface after the P010 data) and must still
+- * set the per-codec 10-bit configuration and the second-output enable
+- * bit in the function control register.  Shared by the VP9 and H.265
+- * decoders, which drive the same video engine.
++ * Program the secondary ("scale-down/rotate") output engine to write the
++ * userspace-visible P010 surface at the start of the capture buffer.  The
++ * primary output writes the hidden AFBC reconstruction/reference surface
++ * after the P010 data (AFBC is enabled in VE_MODE by
++ * cedrus_engine_enable()).  The caller must still set the per-codec
++ * 10-bit configuration and the second-output enable bit in the function
++ * control register.  Shared by the VP9 and H.265 decoders, which drive
++ * the same video engine.
+  */
+ void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
+ 				struct vb2_buffer *dst_buf)
+@@ -195,8 +195,8 @@ void cedrus_dst_p010_output_set(struct cedrus_ctx *ctx,
+ 	cedrus_write(dev, VE_CHROMA_BUF_LEN,
+ 		     VE_SECONDARY_OUT_FMT_EXT |
+ 		     VE_CHROMA_BUF_LEN_SDRT(chroma_size));
+-	cedrus_write(dev, VE_PRIMARY_OUT_FMT,
+-		     VE_PRIMARY_OUT_FMT_NV12 | VE_SECONDARY_OUT_FMT_EXT_NV12);
++	/* The primary format field is unused with AFBC compression. */
++	cedrus_write(dev, VE_PRIMARY_OUT_FMT, VE_SECONDARY_OUT_FMT_EXT_NV12);
+ 	cedrus_write(dev, VE_DEC_SECOND_OUT_CTRL, 0);
+ 	cedrus_write(dev, VE_DEC_SECOND_OUT_LUMA_ADDR, luma >> 8);
+ 	cedrus_write(dev, VE_DEC_SECOND_OUT_CHROMA_ADDR, chroma >> 8);
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -289,9 +289,7 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt,
+ 		/* Zero bytes per line for compressed destination. */
+ 		bytesperline = 0;
+ 
+-		sizeimage = DIV_ROUND_UP(width, 16) *
+-			    DIV_ROUND_UP(height + 4, 16) * (512 + 16) +
+-			    32 + SZ_1K;
++		sizeimage = cedrus_afbc_10_size(width, height);
+ 
+ 		break;
+ 
+@@ -681,7 +679,7 @@ static int cedrus_buf_prepare(struct vb2_buffer *vb)
+ 	 * Buffer's bytesused must be written by driver for CAPTURE buffers.
+ 	 * (for OUTPUT buffers, if userspace passes 0 bytesused, v4l2-core sets
+ 	 * it to buffer length). The private space the decoder appends to a
+-	 * capture buffer (the 10-bit reconstruction planes) is not part of
++	 * capture buffer (the 10-bit reconstruction surface) is not part of
+ 	 * the picture, so it is not reported as payload.
+ 	 */
+ 	if (V4L2_TYPE_IS_CAPTURE(vq->type)) {
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+index 111111111111..222222222222 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_vp9.c
+@@ -857,7 +857,7 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 	mi_cols = DIV_ROUND_UP(cur_w, 8);
+ 	mi_rows = DIV_ROUND_UP(cur_h, 8);
+ 	p010 = cedrus_dst_is_p010(ctx);
+-	afbc = cedrus_dst_is_afbc(ctx);
++	afbc = cedrus_recon_is_afbc(ctx);
+ 
+ 	intra_only = !!(dec->flags & (V4L2_VP9_FRAME_FLAG_KEY_FRAME |
+ 				      V4L2_VP9_FRAME_FLAG_INTRA_ONLY));
+@@ -1121,6 +1121,11 @@ static int cedrus_vp9_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 		if (p010)
+ 			reg |= VE_DEC_10BIT_CFG_P010;
+ 		cedrus_write(dev, VE_DEC_VP9_10BIT_CFG, reg);
++	} else if (p010) {
++		/* AFBC reconstruction, P010 written by the secondary output. */
++		cedrus_write(dev, VE_DEC_VP9_10BIT_CFG,
++			     VE_DEC_VP9_10BIT_CFG_STRIDE(cedrus_dst_2bit_stride(recon.width)) |
++			     VE_DEC_10BIT_CFG_P010);
+ 	}
+ 
+ 	/* Side buffers and segment feature register. */
+-- 
+2.55.0
+-- 
+Armbian
+
