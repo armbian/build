@@ -9,9 +9,15 @@ function extension_prepare_config__install_network_manager() {
 		exit_with_error "Extension: ${EXTENSION}: requires NETWORKING_STACK='network-manager', currently set to '${NETWORKING_STACK}'"
 	fi
 
-	# The connectivity check finds captive portals. One Armbian config for Debian and Ubuntu (armbian/external).
-	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io network-manager-config-connectivity-armbian" "info"
-	add_packages_to_image network-manager network-manager-openvpn netplan.io network-manager-config-connectivity-armbian
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io" "info"
+	add_packages_to_image network-manager network-manager-openvpn netplan.io
+}
+
+# The connectivity check finds captive portals. One Armbian config for Debian and Ubuntu,
+# from the Armbian repo. This hook runs only with the Armbian repo (not with SKIP_ARMBIAN_REPO=yes).
+function post_armbian_repo_customize_image__install_connectivity_check() {
+	display_alert "Extension: ${EXTENSION}: Installing connectivity check" "network-manager-config-connectivity-armbian" "info"
+	chroot_sdcard_apt_get_install network-manager-config-connectivity-armbian
 }
 
 function pre_install_kernel_debs__configure_network_manager() {
