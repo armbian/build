@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Tue, 10 Nov 2026 04:34:36 +0000
+Subject: [PATCH] lib: rsa: build the engine code only when OpenSSL supports
+ engines
+
+OpenSSL 4.0 removed the ENGINE API: <openssl/engine.h> only has
+deprecated declarations left and the functions are gone from libcrypto,
+so building the host tools with it fails:
+
+  rsa-sign.c: undefined reference to `ENGINE_load_builtin_engines'
+  rsa-sign.c: undefined reference to `ENGINE_by_id'
+  ...
+
+OpenSSL 3.x can also be built without engines (OPENSSL_NO_ENGINE), or
+hide them behind OPENSSL_NO_DEPRECATED_3_0.
+
+Compile the bodies of the engine helpers only when OpenSSL is older than
+4.0 and has engine support. Otherwise rsa_engine_init() reports that the
+engine is not available and returns -ENOTSUP, so "mkimage -N <engine>"
+fails instead of quietly signing with a key file of the same name. Keys
+from files work as before; with an OpenSSL that has engines nothing
+changes.
+
+This is the "unbreak the build on OpenSSL 4" part that Quentin Schulz
+asked to be split out of Eddie Kovsky's "Add support for OpenSSL
+Provider API" series (v5) in his review on 2026-11-05, following the
+design he spelled out there (the condition, the OSSL_ENGINE_SUPPORTED
+name and failing with -ENOTSUP inside the engine helpers). Eddie did the
+groundwork for this; I'm happy to drop this patch in favour of his v6.
+
+This only fixes the build. The binman engine tests
+(tools/binman/test/fit/dummy-rsa-engine.c) still need an OpenSSL with
+engine support, and OpenSSL provider support is a separate topic.
+
+Tested by building tools-only_defconfig against OpenSSL 4.0.3 (link
+failure before, clean after, no ENGINE_* symbols left in mkimage) and
+against OpenSSL 3.5.9 with engine support (unchanged, ENGINE code still
+built); with both, mkimage signs a FIT with a key file, and
+"mkimage -N <engine>" fails with an error.
+
+Suggested-by: Quentin Schulz <quentin.schulz@cherry.de>
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ lib/rsa/rsa-sign.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/lib/rsa/rsa-sign.c b/lib/rsa/rsa-sign.c
+index 0e38c9e802f..aedf68cf966 100644
+--- a/lib/rsa/rsa-sign.c
++++ b/lib/rsa/rsa-sign.c
+@@ -19,7 +19,17 @@
+ #include <openssl/err.h>
+ #include <openssl/ssl.h>
+ #include <openssl/evp.h>
++
++/*
++ * OpenSSL 4.0 removed the ENGINE API, and OpenSSL 3.x can be built without it
++ * (OPENSSL_NO_ENGINE). Keys can then only be read from files; asking for an
++ * engine (mkimage -N) fails instead of silently using a key file.
++ */
++#if OPENSSL_VERSION_NUMBER < 0x40000000L && !defined(OPENSSL_NO_ENGINE) && \
++	!defined(OPENSSL_NO_DEPRECATED_3_0)
++#define OSSL_ENGINE_SUPPORTED
+ #include <openssl/engine.h>
++#endif
+ 
+ static int rsa_err(const char *msg)
+ {
+@@ -101,6 +111,7 @@ err_cert:
+ static int rsa_engine_get_pub_key(const char *keydir, const char *name,
+ 				  ENGINE *engine, EVP_PKEY **evpp)
+ {
++#ifdef OSSL_ENGINE_SUPPORTED
+ 	const char *engine_id;
+ 	char key_id[1024];
+ 	EVP_PKEY *key = NULL;
+@@ -156,6 +167,11 @@ static int rsa_engine_get_pub_key(const char *keydir, const char *name,
+ 	*evpp = key;
+ 
+ 	return 0;
++#else
++	fprintf(stderr, "Built without OpenSSL engine support\n");
++
++	return -ENOTSUP;
++#endif
+ }
+ 
+ /**
+@@ -230,6 +246,7 @@ static int rsa_engine_get_priv_key(const char *keydir, const char *name,
+ 				   const char *keyfile,
+ 				   ENGINE *engine, EVP_PKEY **evpp)
+ {
++#ifdef OSSL_ENGINE_SUPPORTED
+ 	const char *engine_id;
+ 	char key_id[1024];
+ 	EVP_PKEY *key = NULL;
+@@ -292,6 +309,11 @@ static int rsa_engine_get_priv_key(const char *keydir, const char *name,
+ 	*evpp = key;
+ 
+ 	return 0;
++#else
++	fprintf(stderr, "Built without OpenSSL engine support\n");
++
++	return -ENOTSUP;
++#endif
+ }
+ 
+ /**
+@@ -327,6 +349,7 @@ static int rsa_init(void)
+ 
+ static int rsa_engine_init(const char *engine_id, ENGINE **pe)
+ {
++#ifdef OSSL_ENGINE_SUPPORTED
+ 	const char *key_pass;
+ 	ENGINE *e;
+ 	int ret;
+@@ -371,14 +394,22 @@ err_set_rsa:
+ err_engine_init:
+ 	ENGINE_free(e);
+ 	return ret;
++#else
++	fprintf(stderr, "Engine '%s' isn't available: built without OpenSSL engine support\n",
++		engine_id);
++
++	return -ENOTSUP;
++#endif
+ }
+ 
+ static void rsa_engine_remove(ENGINE *e)
+ {
++#ifdef OSSL_ENGINE_SUPPORTED
+ 	if (e) {
+ 		ENGINE_finish(e);
+ 		ENGINE_free(e);
+ 	}
++#endif
+ }
+ 
+ static int rsa_sign_with_key(EVP_PKEY *pkey, struct padding_algo *padding_algo,
