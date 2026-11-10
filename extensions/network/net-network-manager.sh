@@ -1,4 +1,4 @@
-# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn`, `netplan.io` and the Armbian connectivity check config (desktop packages come from configng), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
+# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn`, and `netplan.io` (desktop packages, with the connectivity check, come from configng), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
 
 #
 # Extension to manage network interfaces with NetworkManager + Netplan
@@ -11,13 +11,6 @@ function extension_prepare_config__install_network_manager() {
 
 	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io" "info"
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
-}
-
-# The connectivity check finds captive portals. One Armbian config for Debian and Ubuntu,
-# from the Armbian repo. This hook runs only with the Armbian repo (not with SKIP_ARMBIAN_REPO=yes).
-function post_armbian_repo_customize_image__install_connectivity_check() {
-	display_alert "Extension: ${EXTENSION}: Installing connectivity check" "network-manager-config-connectivity-armbian" "info"
-	chroot_sdcard_apt_get_install network-manager-config-connectivity-armbian
 }
 
 function pre_install_kernel_debs__configure_network_manager() {
