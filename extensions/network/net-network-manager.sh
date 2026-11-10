@@ -1,4 +1,4 @@
-# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn` and `netplan.io` (plus Ubuntu extras; desktop packages come from configng), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
+# @description Manages network interfaces with NetworkManager backed by Netplan. Installs `network-manager`, `network-manager-openvpn`, `netplan.io` and the Debian connectivity check config (desktop packages come from configng), enables `systemd-resolved`, disables `NetworkManager-wait-online`, and deploys the extension's Netplan/NM config files. Requires `NETWORKING_STACK=network-manager`, which selects this stack.
 
 #
 # Extension to manage network interfaces with NetworkManager + Netplan
@@ -9,13 +9,9 @@ function extension_prepare_config__install_network_manager() {
 		exit_with_error "Extension: ${EXTENSION}: requires NETWORKING_STACK='network-manager', currently set to '${NETWORKING_STACK}'"
 	fi
 
-	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io" "info"
-	add_packages_to_image network-manager network-manager-openvpn netplan.io
-
-	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-		display_alert "Extension: ${EXTENSION}: Adding extra packages for Ubuntu to image" "network-manager-config-connectivity-ubuntu" "info"
-		add_packages_to_image network-manager-config-connectivity-ubuntu
-	fi
+	# The connectivity check finds captive portals. Debian and Ubuntu both ship the Debian config.
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io network-manager-config-connectivity-debian" "info"
+	add_packages_to_image network-manager network-manager-openvpn netplan.io network-manager-config-connectivity-debian
 }
 
 function pre_install_kernel_debs__configure_network_manager() {
