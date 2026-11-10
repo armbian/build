@@ -32,7 +32,10 @@ function extension_prepare_config__prepare_grub_standard() {
 		if [[ "${BOOTFS_TYPE:-}" == ext[24] ]]; then
 			# A separate /boot partition (BOOTFS_TYPE, BOOTSIZE). GRUB reads it,
 			# and the EFI partition stays at /boot/efi. Also with cryptroot or LVM.
-			display_alert "GRUB with a separate /boot" "${BOOTFS_TYPE}, BOOTSIZE=${BOOTSIZE:-default}; EFI at ${UEFI_MOUNT_POINT:-/boot/efi}" "info"
+			# The initrd holds firmware, about 100 MiB on x86. A kernel upgrade
+			# keeps two kernels in /boot: the 256 MiB default does not fit them.
+			[[ -z "${BOOTSIZE:-}" ]] && declare -g BOOTSIZE=1024
+			display_alert "GRUB with a separate /boot" "${BOOTFS_TYPE}, BOOTSIZE=${BOOTSIZE} MiB; EFI at ${UEFI_MOUNT_POINT:-/boot/efi}" "info"
 		else
 			if [[ $BOOTPART_REQUIRED == "yes" ]]; then # It is important to place this into /boot to have unified boot partition, especially when CRYPTROOT is used
 				declare -g UEFI_MOUNT_POINT=/boot
