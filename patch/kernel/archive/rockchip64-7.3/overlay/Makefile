@@ -2,6 +2,9 @@
 # Overlay names: see "Device tree overlay names" in config/boards/README.md of armbian/build.
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	hinlink-h88k-240x135-lcd.dtbo \
+	lckfb-tspi-3m-dsi-1200x1920-10-1inch.dtbo \
+	lckfb-tspi-3m-dsi-c41409463.dtbo \
+	lckfb-tspi-3m-dsi-c42388916.dtbo \
 	rk35xx-radxa-zero-3w-ext-ant.dtbo \
 	rk3308-uart1.dtbo rk3308-uart2.dtbo rk3308-uart3.dtbo \
 	rk3308-otg-host.dtbo \
