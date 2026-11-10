@@ -6,8 +6,8 @@ BOARD_MAINTAINER="HeyMeco"
 INTRODUCED="2023"
 HAS_VIDEO_OUTPUT="no" # LVDS only, no panel described yet
 
-KERNEL_TARGET="current"
-KERNEL_TEST_TARGET="current"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="edge"
 DEFAULT_CONSOLE="serial"
 SERIALCON="ttyLP0"
 BOOT_FDT_FILE="freescale/imx93-debix-model-c.dtb"
