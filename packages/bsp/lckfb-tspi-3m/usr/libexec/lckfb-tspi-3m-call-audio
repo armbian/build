@@ -1,0 +1,77 @@
+#!/usr/bin/python3 -u
+# Connect the 4G module's call audio to the default speaker and microphone
+# while a phone call is active, and disconnect it afterwards.
+#
+# ModemManager reports calls on D-Bus; the module's audio is a USB sound
+# card (see lckfb-tspi-3m-modem-voice). Two pw-loopback processes carry
+# downlink (module -> speaker) and uplink (microphone -> module) only
+# during a call, so the microphone is not held open the rest of the time.
+import json, signal, subprocess
+from gi.repository import Gio, GLib
+
+MM = 'org.freedesktop.ModemManager1'
+CALL_STATE_ACTIVE = 4
+active, loops = set(), []
+
+def modem_nodes():
+    src = sink = None
+    try:
+        objs = json.loads(subprocess.run(['pw-dump'], capture_output=True, text=True, timeout=5).stdout)
+    except Exception:
+        return None, None
+    for o in objs:
+        p = (o.get('info') or {}).get('props') or {}
+        n, c = p.get('node.name', ''), p.get('media.class', '')
+        if 'usb-Quectel' in n and c == 'Audio/Source':
+            src = n
+        elif 'usb-Quectel' in n and c == 'Audio/Sink':
+            sink = n
+    return src, sink
+
+def start():
+    if loops:
+        return
+    src, sink = modem_nodes()
+    if not src or not sink:
+        print('call active, but no modem audio device found')
+        return
+    loops.append(subprocess.Popen(['pw-loopback', '-n', 'call-downlink',
+        '--capture-props', 'target.object=%s node.passive=true' % src]))
+    loops.append(subprocess.Popen(['pw-loopback', '-n', 'call-uplink',
+        '--playback-props', 'target.object=%s' % sink]))
+    print('call audio connected')
+
+def stop():
+    while loops:
+        p = loops.pop()
+        p.terminate()
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    print('call audio disconnected')
+
+def update(path, state):
+    if state == CALL_STATE_ACTIVE:
+        active.add(path)
+    else:
+        active.discard(path)
+    start() if active else (stop() if loops else None)
+
+def on_signal(conn, sender, path, iface, name, params):
+    if name == 'PropertiesChanged':
+        ifc, changed, _ = params.unpack()
+        if ifc == MM + '.Call' and 'State' in changed:
+            update(path, changed['State'])
+    elif name == 'StateChanged' and iface == MM + '.Call':
+        update(path, params.unpack()[1])
+    elif name == 'InterfacesRemoved':
+        update(params.unpack()[0], 0)
+
+bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+for sig in ('PropertiesChanged', 'StateChanged', 'InterfacesRemoved'):
+    bus.signal_subscribe(MM, None, sig, None, None, Gio.DBusSignalFlags.NONE, on_signal)
+loop = GLib.MainLoop()
+for s in (signal.SIGTERM, signal.SIGINT):
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, s, lambda: (stop(), loop.quit()))
+loop.run()
