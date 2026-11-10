@@ -47,6 +47,46 @@ function patch_uboot_target() {
 	fi
 }
 
+# OpenSSL 4.0 removed the ENGINE API. lib/rsa/rsa-sign.c (mkimage/FIT signing, in every
+# U-Boot since 2016) still calls ENGINE_*, so the host tools stop linking on hosts with
+# OpenSSL >= 4 (e.g. Ubuntu 26.10). Not fixed in U-Boot master as of 2026-11: Heinrich
+# Schuchardt's "tools: fix building with OpenSSL 4.0" (-DOPENSSL_ENGINE_STUBS, u-boot list
+# 2026-06) was objected to in review, and the OpenSSL Provider API series (Eddie Kovsky,
+# v3 2026-01) is still under review.
+# Sets the outer-scope variable uboot_host_openssl_hostcflags, and may disable
+# CONFIG_TOOLS_LIBCRYPTO in .config; call after configuring, before olddefconfig.
+# No-op on hosts with OpenSSL < 4 or without OpenSSL headers.
+function uboot_host_openssl_engine_workaround() {
+	declare host_cc="${HOSTCC:-cc}" openssl_major=""
+	openssl_major="$(printf '#include <openssl/opensslv.h>\nOPENSSL_VERSION_MAJOR\n' | "${host_cc}" -E -P -x c - 2> /dev/null | tail -n 1 | tr -dc '0-9')" || true
+	if [[ -z "${openssl_major}" || "${openssl_major}" -lt 4 ]]; then
+		display_alert "${uboot_prefix}Host OpenSSL major '${openssl_major:-none}'" "no ENGINE workaround needed" "debug"
+		return 0
+	fi
+
+	# Preferred: OpenSSL's own compatibility stubs (keeps FIT signing; only ENGINE/pkcs11 keys
+	# become unavailable). Needs a tree whose top Makefile appends the HOSTCFLAGS env var
+	# (U-Boot >= v2020.01 Kbuild); probe that the stubs exist and link on this host.
+	if grep -qF 'KBUILD_HOSTCFLAGS' Makefile 2> /dev/null && grep -qF '$(HOSTCFLAGS)' Makefile 2> /dev/null &&
+		printf '#define OPENSSL_ENGINE_STUBS\n#include <openssl/engine.h>\nint main(void) { ENGINE *e = ENGINE_by_id("x"); ENGINE_free(e); return 0; }\n' |
+		"${host_cc}" -x c - -o /dev/null -lcrypto > /dev/null 2>&1; then
+		display_alert "${uboot_prefix}Host OpenSSL ${openssl_major}: no ENGINE API" "building host tools with -DOPENSSL_ENGINE_STUBS" "info"
+		uboot_host_openssl_hostcflags="-DOPENSSL_ENGINE_STUBS"
+		return 0
+	fi
+
+	# Fallback: build the host tools without libcrypto (no FIT signing/encryption in mkimage).
+	# TOOLS_KWBIMAGE (Marvell image format, default y everywhere) selects TOOLS_LIBCRYPTO, so it
+	# goes too; on mvebu the SoC Kconfig selects it back and olddefconfig restores both.
+	if [[ -f scripts/config ]] && grep -q '^CONFIG_TOOLS_LIBCRYPTO=y' .config 2> /dev/null; then
+		display_alert "${uboot_prefix}Host OpenSSL ${openssl_major}: no ENGINE API, stubs unusable" "disabling CONFIG_TOOLS_LIBCRYPTO (no FIT signing in mkimage)" "warn"
+		run_host_command_logged ./scripts/config --disable TOOLS_KWBIMAGE --disable TOOLS_LIBCRYPTO
+		return 0
+	fi
+	display_alert "${uboot_prefix}Host OpenSSL ${openssl_major}: no ENGINE API" "no workaround applies to this u-boot; host tools may fail to link" "warn"
+	return 0
+}
+
 # this receives version  target uboot_name uboottempdir uboot_target_counter as variables.
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
@@ -202,6 +242,10 @@ function compile_uboot_target() {
 		)
 	fi
 
+	# Host OpenSSL >= 4 has no ENGINE API; see the function. Before the hook so extensions can override.
+	declare uboot_host_openssl_hostcflags=""
+	uboot_host_openssl_engine_workaround
+
 	# Hook time, for extra post-processing
 	call_extension_method "post_config_uboot_target" <<- 'POST_CONFIG_UBOOT_TARGET'
 		*allow extensions prepare after configuring but before compiling an u-boot target*
@@ -248,6 +292,7 @@ function compile_uboot_target() {
 		"CFLAGS='${uboot_cflags}'"
 		"KCFLAGS='${uboot_cflags}'"
 		"CCACHE_BASEDIR=$(pwd)"
+		"HOSTCFLAGS='${uboot_host_openssl_hostcflags}'" # appended to KBUILD_HOSTCFLAGS by u-boot's Makefile; empty unless host OpenSSL >= 4
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
 	)
 
