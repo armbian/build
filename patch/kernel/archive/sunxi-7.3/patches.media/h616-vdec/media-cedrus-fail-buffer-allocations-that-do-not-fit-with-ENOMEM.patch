@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Mon, 9 Nov 2026 21:00:00 +0000
+Subject: [PATCH] media: cedrus: fail buffer allocations that do not fit with
+ -ENOMEM
+
+A CAPTURE buffer of a 6144x3456 10-bit H.265 picture in P010 takes
+111 MB with its reference surface, so a pool of seven or eight of them
+does not fit on a 1 GB board. The allocation does not fail, though:
+vb2-dma-contig allocates with GFP_KERNEL through the IOMMU DMA
+allocator, whose final order-0 page allocations may invoke the OOM
+killer. The decoding process maps none of these buffers (they are
+exported as dma-bufs), so the victim is another process: the desktop
+shell or the login shell, while the decoder carries on allocating.
+
+Allocate the buffers of both queues and the H.265 per-buffer motion
+vector buffers with __GFP_RETRY_MAYFAIL: the page allocator reclaims as
+hard as before, then fails the allocation instead of killing a process,
+and VIDIOC_REQBUFS/VIDIOC_CREATE_BUFS (or the decode job) return
+-ENOMEM, which userspace can act on. The flag reaches the page
+allocator unchanged: vb2_dc_alloc_coherent() passes
+GFP_KERNEL | q->gfp_flags to dma_alloc_attrs(), and
+__iommu_dma_alloc_pages() adds only __GFP_NOWARN, __GFP_HIGHMEM and,
+for the optional higher orders, __GFP_NORETRY.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus_h265.c  | 3 ++-
+ drivers/staging/media/sunxi/cedrus/cedrus_video.c | 8 ++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index bd5563ac6..9cca1007a 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -465,7 +465,8 @@ static int cedrus_h265_setup(struct cedrus_ctx *ctx, struct cedrus_run *run)
+ 			dma_alloc_attrs(dev->dev,
+ 					cedrus_buf->codec.h265.mv_col_buf_size,
+ 					&cedrus_buf->codec.h265.mv_col_buf_dma,
+-					GFP_KERNEL, DMA_ATTR_NO_KERNEL_MAPPING);
++					GFP_KERNEL | __GFP_RETRY_MAYFAIL,
++					DMA_ATTR_NO_KERNEL_MAPPING);
+ 		if (!cedrus_buf->codec.h265.mv_col_buf) {
+ 			cedrus_buf->codec.h265.mv_col_buf_size = 0;
+ 			return -ENOMEM;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index c54adf35d..7363d1e26 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -1001,6 +1001,13 @@ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+ 	src_vq->lock = &ctx->dev->dev_mutex;
+ 	src_vq->dev = ctx->dev->dev;
+ 	src_vq->supports_requests = true;
++	/*
++	 * Fail an allocation that does not fit with -ENOMEM instead of
++	 * invoking the OOM killer: a 6K 10-bit CAPTURE buffer takes over
++	 * 100 MB, and the decoder's own process, whose buffers are not mapped,
++	 * would not be the one killed.
++	 */
++	src_vq->gfp_flags = __GFP_RETRY_MAYFAIL;
+ 	src_vq->requires_requests = true;
+ 
+ 	ret = vb2_queue_init(src_vq);
+@@ -1017,6 +1024,7 @@ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+ 	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
+ 	dst_vq->lock = &ctx->dev->dev_mutex;
+ 	dst_vq->dev = ctx->dev->dev;
++	dst_vq->gfp_flags = __GFP_RETRY_MAYFAIL;
+ 
+ 	return vb2_queue_init(dst_vq);
+ }
+-- 
+2.43.0
+

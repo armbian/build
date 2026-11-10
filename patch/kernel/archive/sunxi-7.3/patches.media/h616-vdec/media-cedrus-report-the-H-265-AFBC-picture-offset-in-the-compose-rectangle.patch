@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arun Iyengar <aiyengar1990@gmail.com>
+Date: Fri, 6 Nov 2026 18:00:00 +0000
+Subject: media: cedrus: report the H.265 AFBC picture offset in the compose
+ rectangle
+
+The H.265 decoder writes its AFBC output 4 lines down: picture row 0 is
+row 4 of the first superblock row, and the surface is 4 lines taller
+than the picture (which is why the AFBC buffer sizes already use
+"height + 4"). VP9 AFBC output starts at row 0. Shown as is, an H.265
+AFBC buffer is 4 lines too low, with 4 lines of padding at the top and
+the last 4 picture lines cut off; otherwise it is bit-exact.
+
+Found with the DE33 writeback: an H.265 AFBC capture of a lossless
+1024x768 stream equals the linear (NV12/P010) capture moved 4 rows
+down, bit for bit (8- and 10-bit), while VP9 AFBC equals it unshifted.
+The vendor library says the same: HevcInitAfbcInfo() fills the AFBC
+header it hands to its display driver with top_crop = 4 and
+block_height = (height + 4 + 15) / 16.
+
+V4L2 has no format field for this, but the compose rectangle of the
+CAPTURE queue describes where the picture lies in the buffer. Report it
+there: top 4 for the H.265 AFBC formats, 0 otherwise; the bounds cover
+the padded surface. Userspace that creates a DRM framebuffer from the
+buffer uses a framebuffer height of top + height and a source rectangle
+starting at the top. Nothing changes for userspace that does not ask.
+
+Assisted-by: LLM
+Signed-off-by: Arun Iyengar <aiyengar1990@gmail.com>
+---
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -758,6 +758,69 @@
+ 	return cedrus_s_fmt_vid_out_p(cedrus_file2ctx(file), &f->fmt.pix);
+ }
+ 
++/*
++ * Rows above the picture in a CAPTURE buffer. The H.265 decoder writes its
++ * AFBC output 4 lines down: the first superblock row starts 4 lines above
++ * picture row 0 and the surface is 4 lines taller than the picture (hence
++ * the "height + 4" in the AFBC buffer sizes). The vendor library describes
++ * this to its display driver as an AFBC header top_crop of 4 for H.265
++ * (HevcInitAfbcInfo()). VP9 AFBC output starts at row 0.
++ */
++static unsigned int cedrus_dst_picture_top(struct cedrus_ctx *ctx)
++{
++	if (cedrus_dst_is_afbc(ctx) &&
++	    ctx->src_fmt.pixelformat == V4L2_PIX_FMT_HEVC_SLICE)
++		return 4;
++
++	return 0;
++}
++
++/*
++ * The compose rectangle tells userspace where the decoded picture lies in
++ * a CAPTURE buffer, so that a consumer of an H.265 AFBC buffer (e.g. a DRM
++ * plane) can skip the rows above it. It is fixed by the format.
++ */
++static int cedrus_g_selection(struct file *file, void *priv,
++			      struct v4l2_selection *s)
++{
++	struct cedrus_ctx *ctx = cedrus_file2ctx(file);
++	unsigned int top;
++
++	if (s->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
++		return -EINVAL;
++
++	top = cedrus_dst_picture_top(ctx);
++	s->r.left = 0;
++	s->r.width = ctx->dst_fmt.width;
++
++	switch (s->target) {
++	case V4L2_SEL_TGT_COMPOSE:
++	case V4L2_SEL_TGT_COMPOSE_DEFAULT:
++		s->r.top = top;
++		s->r.height = ctx->dst_fmt.height;
++		break;
++	case V4L2_SEL_TGT_COMPOSE_BOUNDS:
++	case V4L2_SEL_TGT_COMPOSE_PADDED:
++		s->r.top = 0;
++		s->r.height = ctx->dst_fmt.height + top;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int cedrus_s_selection(struct file *file, void *priv,
++			      struct v4l2_selection *s)
++{
++	if (s->target != V4L2_SEL_TGT_COMPOSE)
++		return -EINVAL;
++
++	/* Only the fixed rectangle is supported. */
++	return cedrus_g_selection(file, priv, s);
++}
++
+ const struct v4l2_ioctl_ops cedrus_ioctl_ops = {
+ 	.vidioc_querycap		= cedrus_querycap,
+ 
+@@ -772,6 +835,9 @@
+ 	.vidioc_try_fmt_vid_out		= cedrus_try_fmt_vid_out,
+ 	.vidioc_s_fmt_vid_out		= cedrus_s_fmt_vid_out,
+ 
++	.vidioc_g_selection		= cedrus_g_selection,
++	.vidioc_s_selection		= cedrus_s_selection,
++
+ 	.vidioc_reqbufs			= v4l2_m2m_ioctl_reqbufs,
+ 	.vidioc_querybuf		= v4l2_m2m_ioctl_querybuf,
+ 	.vidioc_qbuf			= v4l2_m2m_ioctl_qbuf,
+-- 
+Armbian
+
