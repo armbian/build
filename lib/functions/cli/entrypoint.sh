@@ -16,9 +16,12 @@ function ensure_known_terminal() {
 	tput -T "${TERM}" longname &> /dev/null && return 0
 	declare term
 	for term in "${TERM#xterm-}" xterm-256color xterm dumb; do
-		tput -T "${term}" longname &> /dev/null && break
+		if tput -T "${term}" longname &> /dev/null; then
+			export TERM="${term}"
+			return 0
+		fi
 	done
-	export TERM="${term}"
+	return 0 # no tput or no entry: keep TERM, the Docker image may know it
 }
 
 function cli_entrypoint() {
@@ -59,6 +62,7 @@ function cli_entrypoint() {
 	# Now load the key=value pairs from cmdline into environment, before loading config or executing commands.
 	# This will be done _again_ later, to make sure cmdline params override config et al.
 	apply_cmdline_params_to_env "early" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
+	ensure_known_terminal              # the command line can set TERM
 	# From here on, no more ${1} or stuff. We've parsed it all into ARMBIAN_PARSED_CMDLINE_PARAMS or ARMBIAN_NON_PARAM_ARGS and ARMBIAN_COMMAND.
 
 	# Normalize renamed switches now, while the command line is all we have.
@@ -235,13 +239,12 @@ function cli_entrypoint() {
 		# Apply the params received from the command line _again_ after running the config.
 		# This ensures that params take precedence over stuff possibly defined in the config.
 		apply_cmdline_params_to_env "after config '${config_filename}'" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
+		ensure_known_terminal                                           # the config can set TERM
 	done
 
 	# Early check for deprecations
 	apply_deprecated_switch_aliases # forward renamed switches to their new names, with a warning (backward compat)
 	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
-
-	ensure_known_terminal # command line and config can set TERM
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command
