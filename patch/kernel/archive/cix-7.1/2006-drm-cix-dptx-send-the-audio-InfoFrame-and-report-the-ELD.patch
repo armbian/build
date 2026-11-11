@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Sun, 1 Nov 2026 11:58:01 +0100
+Subject: [PATCH] drm/cix: dptx: send the audio InfoFrame and report the ELD
+
+The 7.1 DP audio path played silence. Port the audio rework from the
+6.18 driver:
+
+- Send the Audio InfoFrame SDP after hw_params and on reconnect.
+- Report the connector ELD through get_eld. Without a sink, return an
+  empty ELD, so the PCM still opens.
+- Notify hdmi-codec when the ELD is populated from EDID.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c | 48 ++++++++++++++++++++
+ drivers/gpu/drm/cix/dptx/trilin_drm.c        |  4 ++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+index 060cf89..3811d24 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+@@ -1,9 +1,12 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /* Copyright 2024 Cix Technology Group Co., Ltd. */
+ #include <linux/kernel.h>
++#include <linux/hdmi.h>
+ #include <linux/version.h>
++#include <drm/drm_eld.h>
+ #include "trilin_dptx_reg.h"
+ #include "trilin_dptx.h"
++#include "dptx_infoframe.h"
+ 
+ /* dp audio */
+ void dptx_audio_handle_plugged_change(struct dptx_audio *dp_audio, bool plugged)
+@@ -80,6 +83,47 @@ static void dptx_audio_setup(struct trilin_dp *dp, int source, int freq,
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_INPUT_SELECT + offset, source);
+ }
+ 
++/*
++ * Send an Audio InfoFrame SDP. The sink needs it to play the stream and
++ * to know the channel layout.
++ */
++static void dptx_audio_send_infoframe(struct trilin_dp *dp, int source,
++				      const struct hdmi_audio_infoframe *cea)
++{
++	struct dp_sdp sdp;
++	ssize_t len;
++
++	len = hdmi_audio_infoframe_pack_for_dp(cea, &sdp, dp->dpcd[DP_DPCD_REV]);
++	if (len < 0) {
++		dev_warn(dp->dev, "failed to pack audio infoframe: %zd\n", len);
++		return;
++	}
++
++	cix_infoframe_write_packet(dp, source, CIX_AUDIO_INFO_SDP, &sdp, 1);
++}
++
++static int dptx_audio_get_eld(struct device *dev, void *data,
++			      uint8_t *buf, size_t len)
++{
++	struct trilin_dp *dp = data;
++
++	/* Copy the ELD only when the sink is connected and the ELD is
++	 * populated from EDID. Otherwise return an empty ELD, not an error:
++	 * an error fails the PCM open, and PipeWire then drops the whole
++	 * card. With an empty ELD, hdmi-codec allows stereo at 32-48 kHz.
++	 */
++	if (!trilin_dp_plugged_status(dp) ||
++	    !dp->connector.base.eld[DRM_ELD_BASELINE_ELD_LEN]) {
++		memset(buf, 0, len);
++		return 0;
++	}
++
++	memcpy(buf, dp->connector.base.eld,
++	       min(sizeof(dp->connector.base.eld), len));
++
++	return 0;
++}
++
+ static int dptx_audio_startup(struct device *dev, void *data)
+ {
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+@@ -117,6 +161,7 @@ static int dptx_audio_hw_params(struct device *dev, void *data,
+ 	dp_audio->params.sample_width = params->sample_width;
+ 	dp_audio->params.sample_rate = params->sample_rate;
+ 	dp_audio->params.channels = params->channels;
++	dp_audio->params.cea = params->cea;
+ 
+ 	if (!trilin_dp_plugged_status(dp))
+ 		return 0;
+@@ -130,6 +175,7 @@ static int dptx_audio_hw_params(struct device *dev, void *data,
+ 
+ 	dptx_audio_setup(dp, 0, params->sample_rate, params->sample_width,
+ 			 params->channels);
++	dptx_audio_send_infoframe(dp, 0, &params->cea);
+ 
+ 	return 0;
+ }
+@@ -171,6 +217,7 @@ void dptx_audio_reconfig_and_enable(void *data)
+ 	dptx_audio_setup(dp, 0, dp_audio->params.sample_rate,
+ 			 dp_audio->params.sample_width,
+ 			 dp_audio->params.channels);
++	dptx_audio_send_infoframe(dp, 0, &dp_audio->params.cea);
+ 
+ 	/* enable dptx audio */
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 1);
+@@ -180,6 +227,7 @@ const struct hdmi_codec_ops dptx_audio_codec_ops = {
+ 	.hw_params = dptx_audio_hw_params,
+ 	.audio_startup = dptx_audio_startup,
+ 	.audio_shutdown = dptx_audio_shutdown,
++	.get_eld = dptx_audio_get_eld,
+ 	.get_dai_id = dptx_audio_get_dai_id,
+ 	.hook_plugged_cb = dptx_audio_hook_plugged_cb
+ };
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_drm.c b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+index 779bc6f..5038e4e 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_drm.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_drm.c
+@@ -257,6 +257,10 @@ int trilin_connector_update_modes(struct drm_connector *connector,
+ 	drm_connector_update_edid_property(connector, edid);
+ 	ret = drm_add_edid_modes(connector, edid);
+ 
++	/* The ELD is now populated from EDID: let hdmi-codec read it */
++	dptx_audio_handle_plugged_change(&dp->dp_audio,
++					 trilin_dp_plugged_status(dp));
++
+ 	return ret;
+ }
+ 

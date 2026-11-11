@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor@armbian.com>
+Date: Sun, 1 Nov 2026 11:09:36 +0100
+Subject: [PATCH] drm/cix: dptx: name the audio codec by ACPI _UID, keep stream
+ state
+
+The sky1 sound card looks up "hdmi-audio-codec.<N>". The codec was
+registered with PLATFORM_DEVID_AUTO ("hdmi-audio-codec.<N>.auto"), so
+the card probe deferred forever and HDMI/DP audio was missing. Use the
+ACPI _UID as the device id, as the 6.18 driver does. The DP port has
+no capture.
+
+A stream can open without a sink. Record the running state and stream
+parameters before the plugin check, so a sink connected later gets
+audio. Clear the running state on every shutdown.
+
+Assisted-by: Claude Opus 5.5
+Signed-off-by: Igor Pecovnik <igor@armbian.com>
+---
+ drivers/gpu/drm/cix/dptx/trilin_dptx.c       | 12 +++++++++++-
+ drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c | 17 +++++++++--------
+ 2 files changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx.c b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+index b0f2984..64b8976 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx.c
+@@ -32,6 +32,7 @@
+ #include <drm/drm_drv.h>
+ #include <drm/drm_atomic_uapi.h>
+ 
++#include <linux/acpi.h>
+ #include <linux/arm-smccc.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+@@ -3473,12 +3474,21 @@ static int dptx_register_audio_device(struct trilin_dp *dp)
+ 		.ops = &dptx_audio_codec_ops,
+ 		.spdif = 0,
+ 		.i2s = 1,
++		.no_i2s_capture = 1,
+ 		.max_i2s_channels = 8,
+ 		.data = dp,
+ 	};
++	int id = PLATFORM_DEVID_AUTO;
++	u64 uid;
++
++	/* The sky1 sound card looks up "hdmi-audio-codec.<_UID>" */
++	if (ACPI_COMPANION(dp->dev) &&
++	    !acpi_dev_uid_to_integer(ACPI_COMPANION(dp->dev), &uid))
++		id = uid;
++
+ 	dptx_aud->running = false;
+ 	dptx_aud->pdev = platform_device_register_data(
+-		dp->dev, HDMI_CODEC_DRV_NAME, PLATFORM_DEVID_AUTO, &codec_data,
++		dp->dev, HDMI_CODEC_DRV_NAME, id, &codec_data,
+ 		sizeof(codec_data));
+ 
+ 	return PTR_ERR_OR_ZERO(dptx_aud->pdev);
+diff --git a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+index ae35f92..060cf89 100644
+--- a/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
++++ b/drivers/gpu/drm/cix/dptx/trilin_dptx_audio.c
+@@ -85,13 +85,16 @@ static int dptx_audio_startup(struct device *dev, void *data)
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
++	/* The stream can open without a sink. Mark it running, so that a
++	 * sink connected later gets audio from dptx_audio_reconfig_and_enable().
++	 */
++	dp_audio->running = true;
++
+ 	if (!trilin_dp_plugged_status(dp))
+ 		return 0;
+ 
+ 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 1);
+ 
+-	dp_audio->running = true;
+-
+ 	return 0;
+ }
+ 
+@@ -100,9 +103,6 @@ static void dptx_audio_shutdown(struct device *dev, void *data)
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
+-	if (!trilin_dp_plugged_status(dp))
+-		return;
+-
+ 	dp_audio->running = false;
+ }
+ 
+@@ -113,13 +113,14 @@ static int dptx_audio_hw_params(struct device *dev, void *data,
+ 	struct trilin_dp *dp = (struct trilin_dp *)data;
+ 	struct dptx_audio *dp_audio = &dp->dp_audio;
+ 
+-	if (!trilin_dp_plugged_status(dp))
+-		return 0;
+-
++	/* Keep the parameters for a sink connected later */
+ 	dp_audio->params.sample_width = params->sample_width;
+ 	dp_audio->params.sample_rate = params->sample_rate;
+ 	dp_audio->params.channels = params->channels;
+ 
++	if (!trilin_dp_plugged_status(dp))
++		return 0;
++
+ 	dev_dbg(dev,
+ 		"%s, daifmt fmt:%d, bit_clk_inv:%d, frame_clk_inv:%d, bit_clk_master:%d, frame_clk_master:%d, params sample_rate:%d, sample_width:%d, channels:%d\n",
+ 		__func__, daifmt->fmt, daifmt->bit_clk_inv,
