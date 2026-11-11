@@ -17,7 +17,7 @@ function rockchip_vendor_kernel_config() {
 			;;
 		vendor-next)
 			declare -g KERNEL_MAJOR_MINOR="6.12" # Major and minor versions of this kernel.
-			declare -g KERNELBRANCH='branch:rk-6.12-rkr1'
+			declare -g KERNELBRANCH='branch:rk-6.12-rkr1.1'
 			;;
 		*)
 			exit_with_error "rockchip_vendor_kernel_config: unknown vendor BRANCH '${BRANCH}'"
