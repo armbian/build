@@ -79,7 +79,7 @@ function artifact_uboot_prepare_version() {
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=(
-		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
+		"post_uboot_custom_postprocess" "fetch_sources_tools" "fetch_custom_uboot" "build_custom_uboot"
 		"pre_config_uboot_target" "post_config_uboot_target" "pre_package_uboot_image"
 		"check_uboot_produced_binary_file"
 	)
