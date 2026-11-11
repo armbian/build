@@ -160,10 +160,18 @@ function prepare_partitions() {
 		# basic sanity check: the partitions must fit. With nfs, /boot takes the
 		# rest of the image. btrfs compresses the rootfs.
 		local needed=$((OFFSET + UEFISIZE))
+		[[ -n $biospart ]] && needed=$((needed + BIOSSIZE))
 		[[ $ROOTFS_TYPE != nfs ]] && needed=$((needed + BOOTSIZE))
-		[[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs ]] && needed=$((needed + rootfs_size))
+		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs ]]; then
+			# The files of a separate /boot partition are not on root.
+			local root_size=$rootfs_size
+			if [[ -n $bootpart || ${UEFI_MOUNT_POINT:-} == /boot ]]; then
+				root_size=$((rootfs_size - $(du --apparent-size -sm "${SDCARD}"/boot | cut -f1)))
+			fi
+			needed=$((needed + root_size))
+		fi
 		if [[ $sdsize -lt $needed ]]; then
-			exit_with_error "User defined image size is too small" "FIXED_IMAGE_SIZE=$sdsize MiB, needs at least $needed MiB (OFFSET=$OFFSET BOOTSIZE=$BOOTSIZE UEFISIZE=$UEFISIZE)"
+			exit_with_error "User defined image size is too small" "FIXED_IMAGE_SIZE=$sdsize MiB, needs at least $needed MiB (OFFSET=$OFFSET BIOSSIZE=$BIOSSIZE UEFISIZE=$UEFISIZE BOOTSIZE=$BOOTSIZE)"
 		fi
 	else
 		local imagesize=$(($rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
