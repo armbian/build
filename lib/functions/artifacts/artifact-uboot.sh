@@ -139,6 +139,8 @@ function artifact_uboot_prepare_version() {
 	# to force a repackage — no filesystem read here (the blob may not exist yet at
 	# matrix-prep, and may not live in this repo at all).
 	artifact_version="${GIT_INFO_UBOOT[MAKEFILE_VERSION]:-1}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	# Set by extensions whose builds must never share a cache entry, e.g. per signing key.
+	[[ -n "${UBOOT_ARTIFACT_VERSION_SUFFIX:-}" ]] && artifact_version+="-${UBOOT_ARTIFACT_VERSION_SUFFIX}"
 
 	declare -a reasons=(
 		"version \"${GIT_INFO_UBOOT[MAKEFILE_FULL_VERSION]}\""
