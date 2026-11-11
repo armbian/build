@@ -522,7 +522,27 @@ function do_extra_configuration() {
 		APT_PROXY_ADDR="$(echo "${http_proxy:-${https_proxy:-${HTTP_PROXY:-${HTTPS_PROXY:-}}}}" | sed -E 's|https?://([^/]+).*|\1|')"
 		display_alert "Derived APT proxy address from proxy env vars" "${APT_PROXY_ADDR##*@}" "info"
 	fi
-	[[ -n "${APT_PROXY_ADDR}" ]] && display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${APT_PROXY_ADDR##*@}" "info"
+	# Unreachable proxy: download direct instead of failing every apt call.
+	# Not with MANAGE_ACNG=yes: that cache starts later, in prepare_host.
+	if [[ -n "${APT_PROXY_ADDR}" && "${MANAGE_ACNG}" != "yes" ]]; then
+		# apt gets http://${APT_PROXY_ADDR}: no port means 80. Probe the same port.
+		declare apt_proxy="${APT_PROXY_ADDR##*@}" apt_proxy_host="${APT_PROXY_ADDR##*@}" apt_proxy_port=80
+		if [[ "${apt_proxy}" =~ ^(.+):([0-9]+)$ ]]; then
+			apt_proxy_host="${BASH_REMATCH[1]}" apt_proxy_port="${BASH_REMATCH[2]}"
+		fi
+		apt_proxy_host="${apt_proxy_host#[}" apt_proxy_host="${apt_proxy_host%]}" # IPv6 [addr]
+		if timeout 2 bash -c "exec 3<>/dev/tcp/${apt_proxy_host}/${apt_proxy_port}" 2> /dev/null; then
+			display_alert "Using custom apt proxy address" "APT_PROXY_ADDR=${apt_proxy}" "info"
+		else
+			display_alert "Apt proxy unreachable, downloading direct" "${apt_proxy}" "wrn"
+			APT_PROXY_ADDR=""
+			# apt also reads these. Drop the ones that point to this proxy.
+			declare v
+			for v in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; do
+				[[ "${!v:-}" =~ [/@]"${apt_proxy}"([:/]|$) ]] && unset "${v}"
+			done
+		fi
+	fi
 
 	# @TODO: allow to run aggregation, for CONFIG_DEFS_ONLY? rootfs_aggregate_packages
 
