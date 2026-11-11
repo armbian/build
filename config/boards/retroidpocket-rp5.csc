@@ -25,7 +25,6 @@ declare -g BOARD_FIRMWARE_INSTALL="-full"
 
 function retroidpocket-rp5_is_userspace_supported() {
 	[[ "${RELEASE}" == "bookworm" ]] && return 0
-	[[ "${RELEASE}" == "jammy" ]] && return 0
 	[[ "${RELEASE}" == "noble" ]] && return 0
 	[[ "${RELEASE}" == "trixie" ]] && return 0
 	return 1

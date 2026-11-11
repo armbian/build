@@ -52,8 +52,6 @@ function ffmpeg_v4l2_request_is_complete() {
 # libc/libm/libz/libudev come from the minimal baseline (libc6, zlib1g, systemd);
 # the entries below are the ones a minimal image does not get for free.
 # Package names verified against packages.ubuntu.com / packages.debian.org:
-# - Ubuntu jammy ships libx264-163 only (no -164): a -164 request would fail the
-#   build at package-install time, which runs before any guard in the install hook
 # - Ubuntu resolute renamed the ABI to libx264-165 (no -164); the install hook
 #   skips that release entirely (the prebuilt links libx264.so.164)
 # Debian bookworm/trixie and Ubuntu noble all provide libx264-164 and keep it.
@@ -78,7 +76,7 @@ function extension_prepare_config__ffmpeg_v4l2_request() {
 		display_alert "${EXTENSION}" "SKIP_FFMPEG_V4L2=yes — not adding ffmpeg runtime packages" "info"
 		return 0
 	fi
-	if [[ "${RELEASE}" != "resolute" && "${RELEASE}" != "jammy" ]]; then
+	if [[ "${RELEASE}" != "resolute" ]]; then
 		# PACKAGE_LIST_BOARD is published read-only by config_source_board_file()
 		# before extension_prepare_config() runs, so appending to it aborts the
 		# build during configuration. add_packages_to_image() is the supported

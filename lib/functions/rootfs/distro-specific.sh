@@ -124,7 +124,7 @@ function fetch_distro_keyring() {
 		bookworm | trixie | forky | sid)
 			distro="debian"
 			;;
-		jammy | noble | resolute)
+		noble | resolute)
 			distro="ubuntu"
 			;;
 		*)
@@ -194,7 +194,7 @@ function fetch_distro_keyring() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bookworm|trixie|forky|sid|jammy|noble|resolute
+# <release>: bookworm|trixie|forky|sid|noble|resolute
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -265,7 +265,7 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 			;;
 
-		jammy | noble | resolute)
+		noble | resolute)
 			distro="ubuntu"
 
 			cat <<- EOF > "${basedir}/etc/apt/sources.list.d/${distro}.sources"
