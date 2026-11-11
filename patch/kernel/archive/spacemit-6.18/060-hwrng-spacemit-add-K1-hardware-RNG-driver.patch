@@ -6,14 +6,17 @@ Subject: [PATCH] hwrng: spacemit: add K1 hardware random number generator
 
 Port the vendor driver from the SpacemiT 6.6 BSP (linux-bianbu).
 Return -EIO when the hardware fails, instead of unset data.
+Drop the unused DMA path and the lock: the hwrng core serializes reads.
+Sleep in the status polls, honor wait, and bound the repeated-value
+retries.
 Use devm_clk_get_enabled() and add module metadata.
 
 Signed-off-by: Igor Pecovnik <igor@armbian.com>
 ---
  drivers/char/hw_random/Kconfig         |  12 +
  drivers/char/hw_random/Makefile        |   1 +
- drivers/char/hw_random/spacemit-crng.c | 453 +++++++++++++++++++++++++
- 3 files changed, 466 insertions(+)
+ drivers/char/hw_random/spacemit-crng.c | 324 +++++++++++++++++++++++++
+ 3 files changed, 337 insertions(+)
  create mode 100644 drivers/char/hw_random/spacemit-crng.c
 
 diff --git a/drivers/char/hw_random/Kconfig b/drivers/char/hw_random/Kconfig
@@ -53,7 +56,7 @@ new file mode 100644
 index 0000000..90d53cf
 --- /dev/null
 +++ b/drivers/char/hw_random/spacemit-crng.c
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,324 @@
 +// SPDX-License-Identifier: GPL-2.0
 +// Copyright (c) 2024 Spacemit corporation.
 +
@@ -68,7 +71,6 @@ index 0000000..90d53cf
 +#include <linux/platform_device.h>
 +#include <linux/hw_random.h>
 +#include <linux/delay.h>
-+#include <linux/dma-mapping.h>
 +#include <linux/pm_runtime.h>
 +#include <linux/ktime.h>
 +#include <linux/clk.h>
@@ -98,10 +100,10 @@ index 0000000..90d53cf
 +#define CTRL_RNG_SEED_EN	BIT(1)
 +#define RNG_REG_SEL			BIT(4)
 +#define RNG_REG_LDO_PU		BIT(6)
-+#define RNG_SUCCESS			0x55
-+#define RNG_FAIL			0xaa
-+
-+#define DMA_MAX_SIZE 0xfff0
++#define RNG_POLL_US		200
++#define RNG_TIMEOUT_US		100000
++/* Reads of a value equal to the previous one, before -EIO. */
++#define RNG_DUP_RETRIES		16
 +
 +#define to_spacemit_crng(p)	container_of(p, struct spacemit_crng, rng)
 +
@@ -110,7 +112,6 @@ index 0000000..90d53cf
 +	struct hwrng rng;
 +	struct clk *clk;
 +	struct reset_control *reset;
-+	spinlock_t lock;
 +};
 +
 +static void _hw_rng_dump_reg(struct spacemit_crng *priv)
@@ -176,136 +177,6 @@ index 0000000..90d53cf
 +	writel(val, priv->base + RNG_CTRL);
 +}
 +
-+static int hw_rng_dma_setup(struct spacemit_crng *priv, uint32_t pa, size_t size)
-+{
-+	uint32_t val;
-+
-+	/* dma setup */
-+	val = readl(priv->base + RNG_INT_MASK);
-+	val |= (0x1 << 0);
-+	writel(val, priv->base + RNG_INT_MASK);
-+
-+	val = readl(priv->base + RNG_BYTE_CNT);
-+	val = size;
-+	writel(val, priv->base + RNG_BYTE_CNT);
-+
-+	val = readl(priv->base + RNG_SRC_ADDR);
-+	val = 0x0;
-+	writel(val, priv->base + RNG_SRC_ADDR);
-+
-+	val = readl(priv->base + RNG_DEST_ADDR);
-+	val = pa;
-+	writel(val, priv->base + RNG_DEST_ADDR);
-+
-+	val = readl(priv->base + RNG_REST_SEL);
-+	val |= 0x1;
-+	writel(val, priv->base + RNG_REST_SEL);
-+
-+	/* enable dma  */
-+	val = readl(priv->base + RNG_SQU_CTRL);
-+	val = SQU_CTRL_ENABLE_DMA;
-+	writel(val, priv->base + RNG_SQU_CTRL);
-+
-+	return RNG_SUCCESS;
-+}
-+
-+static int get_rng_seed(struct spacemit_crng *priv)
-+{
-+	uint32_t seed = 0;
-+	uint8_t rng_seed_retry = 0;
-+	s64 timeout = 100000, mytime = 0;
-+	ktime_t base_time, delta_time;
-+	uint32_t val;
-+
-+retry:
-+	seed = (u32)ktime_to_us(ktime_get());
-+
-+	/* generate software seed */
-+	writel(seed, priv->base + RNG_SEED_VAL);
-+
-+	val = readl(priv->base + RNG_CTRL);
-+	val |= CTRL_RNG_SEED_EN;
-+	writel(val, priv->base + RNG_CTRL);
-+
-+	base_time = ktime_get();
-+
-+	do {
-+		val = readl(priv->base + RNG_CTRL);
-+		if (val & CTRL_RNG_SEED_VALID)
-+			break;
-+
-+		delta_time = ktime_sub(ktime_get(), base_time);
-+		mytime = ktime_to_us(delta_time);
-+		if (mytime >= timeout) {
-+			if (rng_seed_retry == 0) {
-+				_hw_rng_reset_status(priv);
-+				rng_seed_retry = 1;
-+				pr_err("generate rng seed timeout and retry! \n");
-+				goto retry;
-+			} else {
-+				_hw_rng_dump_reg(priv);
-+				pr_err("fail to generate rng seed, time out! \n");
-+				return RNG_FAIL;
-+			}
-+		}
-+	} while (1);
-+
-+	return RNG_SUCCESS;
-+}
-+
-+__maybe_unused static int hw_get_random_dma(struct spacemit_crng *priv, uint64_t pa, size_t size, void *buf)
-+{
-+	uint32_t val;
-+	int ret = 0;
-+	uint32_t dest_addr;
-+	uint32_t timeout = 50 * 1000;
-+
-+	spin_lock(&priv->lock);
-+
-+	ret = get_rng_seed(priv);
-+	if (ret != RNG_SUCCESS) {
-+		pr_err("fail to generate rng seed!\n");
-+		goto exit;
-+	}
-+
-+	/* enable rng */
-+	val = readl(priv->base + RNG_CTRL_EXT);
-+	val &= ~(RNG_REG_SEL | RNG_REG_LDO_PU);
-+	writel(val, priv->base + RNG_CTRL_EXT);
-+
-+	val = readl(priv->base + RNG_CTRL);
-+	val |= CTRL_RNG_EN;
-+	writel(val, priv->base + RNG_CTRL);
-+	dest_addr = (uint32_t)(pa & 0xFFFFFFFF);
-+
-+	/* hw rng dma setup and enable */
-+	ret = hw_rng_dma_setup(priv, pa, size);
-+	if (ret != RNG_SUCCESS) {
-+		pr_err("Fail to setup and enable dma mode, dest_addr=0x%lx, size=0x%x! \n",
-+				(unsigned long)pa, (uint32_t)size);
-+		goto exit;
-+	}
-+
-+	while (timeout) {
-+		val = readl(priv->base + RNG_INT_STATUS);
-+		if ((val & 0x1) == 0x1)
-+			break;
-+		timeout -= 2000;
-+		udelay(2000);
-+
-+		if (timeout == 0) {
-+			pr_err("rng wait dma timeout !!! timeout = %d , paddr=0x%lx, size=0x%x\n",
-+				timeout, (unsigned long)pa, (uint32_t)size);
-+			ret = -1;
-+			goto exit;
-+		}
-+	}
-+
-+exit:
-+	spin_unlock(&priv->lock);
-+	return ret;
-+}
-+
 +static uint32_t _hw_get_random(struct spacemit_crng *priv)
 +{
 +	uint32_t random = 0;
@@ -316,109 +187,110 @@ index 0000000..90d53cf
 +	return random;
 +}
 +
-+static uint8_t hw_get_random_byte(struct spacemit_crng *priv)
-+{
-+	return (uint8_t)_hw_get_random(priv);
-+}
-+
 +static uint32_t hw_get_random_32(struct spacemit_crng *priv)
 +{
 +	return (uint32_t)_hw_get_random(priv);
 +}
 +
-+static int hw_get_random_cpu(struct spacemit_crng *priv, void *buf, size_t size)
++/*
++ * Wait for a RNG_CTRL status bit. The hwrng core serializes the read
++ * callback and calls it in process context, so the wait can sleep.
++ * Without wait, check once: -EAGAIN when the bit is not set yet.
++ */
++static int hw_rng_wait_ctrl(struct spacemit_crng *priv, u32 mask, bool wait)
 +{
-+	uint8_t *b = buf;
-+	size_t n;
-+	uint32_t update_len = 0, finish_len = 0;
-+	uint32_t val, val_old = 0;
-+	s64 timeout = 100000, mytime = 0;
-+	ktime_t base_time, delta_time;
-+	int ret = 0;
-+	uint8_t rng_val_retry = 0;
++	u32 val;
 +
-+	spin_lock(&priv->lock);
-+retry:
-+	/* generate hw-rng seed */
-+	ret = get_rng_seed(priv);
-+	if (ret != RNG_SUCCESS) {
-+		pr_err("Fail to generate rng seed ! \n");
-+		ret = -EINVAL;
-+		goto exit;
-+	}
-+	/* generate random value */
++	if (!wait)
++		return (readl(priv->base + RNG_CTRL) & mask) ? 0 : -EAGAIN;
++
++	return readl_poll_timeout(priv->base + RNG_CTRL, val, val & mask,
++				  RNG_POLL_US, RNG_TIMEOUT_US);
++}
++
++/* Load a software seed, then start the generator. */
++static int hw_rng_start(struct spacemit_crng *priv, bool wait)
++{
++	u32 val;
++	int ret;
++
++	writel((u32)ktime_to_us(ktime_get()), priv->base + RNG_SEED_VAL);
++
++	val = readl(priv->base + RNG_CTRL);
++	val |= CTRL_RNG_SEED_EN;
++	writel(val, priv->base + RNG_CTRL);
++
++	ret = hw_rng_wait_ctrl(priv, CTRL_RNG_SEED_VALID, wait);
++	if (ret)
++		return ret;
++
 +	val = readl(priv->base + RNG_CTRL);
 +	val |= CTRL_RNG_EN;
 +	writel(val, priv->base + RNG_CTRL);
-+	base_time = ktime_get();
-+	do {
-+		val = readl(priv->base + RNG_CTRL);
-+		if (val & CTRL_RNG_VALID)
-+			break;
 +
-+		delta_time = ktime_sub(ktime_get(), base_time);
-+		mytime = ktime_to_us(delta_time);
-+		udelay(200);
-+		if (mytime >= timeout) {
-+			if (rng_val_retry == 0) {
-+				_hw_rng_reset_status(priv);
-+				rng_val_retry = 1;
-+				pr_err("generate rng value timeout and retry! \n");
-+				goto retry;
-+			} else {
-+				_hw_rng_dump_reg(priv);
-+				pr_err("fail to generate rng value, time out! \n");
-+				ret = RNG_FAIL;
-+				goto exit;
-+			}
++	return hw_rng_wait_ctrl(priv, CTRL_RNG_VALID, wait);
++}
++
++/* Read a value that differs from the previous one. */
++static int hw_rng_read_new(struct spacemit_crng *priv, u32 *val, u32 old)
++{
++	int tries;
++
++	for (tries = 0; tries < RNG_DUP_RETRIES; tries++) {
++		/* clr squ fifo */
++		_hw_rng_clr_fifo(priv);
++		*val = hw_get_random_32(priv);
++		if (*val != old)
++			return 0;
++	}
++
++	return -EIO;
++}
++
++static int hw_get_random_cpu(struct spacemit_crng *priv, void *buf, size_t size, bool wait)
++{
++	uint8_t *b = buf;
++	size_t n;
++	uint32_t update_len, finish_len;
++	uint32_t val, val_old = 0;
++	int ret;
++
++	ret = hw_rng_start(priv, wait);
++	if (ret == -ETIMEDOUT) {
++		pr_err("rng timeout, retry\n");
++		_hw_rng_reset_status(priv);
++		ret = hw_rng_start(priv, wait);
++		if (ret == -ETIMEDOUT) {
++			_hw_rng_dump_reg(priv);
++			pr_err("fail to generate rng value, time out\n");
 +		}
-+	} while (1);
++	}
++	if (ret)
++		return ret;
++
 +	update_len = (size / 4) * 4;
 +	finish_len = size % 4;
 +
-+	/* get random value */
-+	if (update_len) {
-+		for (n = 0; n < update_len; n += 4) {
-+readval32:
-+			/* clr squ fifo */
-+			_hw_rng_clr_fifo(priv);
-+			val = hw_get_random_32(priv);
-+
-+			if (val != val_old) {
-+				b[n] = val & 0xFF;
-+				b[n + 1] = (val >> 8) & 0xFF;
-+				b[n + 2] = (val >> 16) & 0xFF;
-+				b[n + 3] = (val >> 24) & 0xFF;
-+			} else {
-+				goto readval32;
-+			}
-+
-+			val_old = val;
-+		}
++	for (n = 0; n < update_len; n += 4) {
++		ret = hw_rng_read_new(priv, &val, val_old);
++		if (ret)
++			return ret;
++		b[n] = val & 0xFF;
++		b[n + 1] = (val >> 8) & 0xFF;
++		b[n + 2] = (val >> 16) & 0xFF;
++		b[n + 3] = (val >> 24) & 0xFF;
++		val_old = val;
 +	}
 +
-+	if (finish_len) {
-+		for (n = 0; n < finish_len; n++) {
-+readvalbyte:
-+			/* clr squ fifo */
-+			_hw_rng_clr_fifo(priv);
-+
-+			val = hw_get_random_byte(priv);
-+
-+			if (val != val_old)
-+				b[update_len + n] = val;
-+			else
-+				goto readvalbyte;
-+
-+			val_old = val;
-+		}
++	for (n = 0; n < finish_len; n++) {
++		ret = hw_rng_read_new(priv, &val, val_old);
++		if (ret)
++			return ret;
++		b[update_len + n] = val & 0xFF;
++		val_old = val;
 +	}
 +
-+	ret = RNG_SUCCESS;
-+
-+exit:
-+	spin_unlock(&priv->lock);
-+	return ret;
++	return 0;
 +}
 +
 +static int spacemit_crng_init(struct hwrng *rng)
@@ -429,24 +301,27 @@ index 0000000..90d53cf
 +static int spacemit_crng_read(struct hwrng *rng, void *buf, size_t max, bool wait)
 +{
 +	struct spacemit_crng *priv = to_spacemit_crng(rng);
-+	int ret = 0;
-+	size_t left_bytes = 0, process_sz;
++	int ret, done = 0;
++	size_t left_bytes, process_sz;
 +
 +	/* use cpu mode */
 +	left_bytes = max;
 +	while (left_bytes > 0) {
 +		process_sz = left_bytes > 0x10 ? 0x10 : left_bytes;
-+		if (hw_get_random_cpu(priv, buf, process_sz) != RNG_SUCCESS) {
-+			_hw_rng_reset_status(priv);
-+			return ret ? ret : -EIO;
-+		}
++		ret = hw_get_random_cpu(priv, buf, process_sz, wait);
 +		_hw_rng_reset_status(priv);
++		if (ret) {
++			if (done)
++				return done;
++			/* hwrng core: 0 means no data yet */
++			return ret == -EAGAIN ? 0 : -EIO;
++		}
 +		buf = buf + process_sz;
 +		left_bytes -= process_sz;
-+		ret += process_sz;
++		done += process_sz;
 +	}
 +
-+	return ret;
++	return done;
 +}
 +
 +
@@ -473,7 +348,6 @@ index 0000000..90d53cf
 +	if (IS_ERR(priv->reset))
 +		return PTR_ERR(priv->reset);
 +	reset_control_deassert(priv->reset);
-+	spin_lock_init(&priv->lock);
 +	priv->base = devm_platform_ioremap_resource(pdev, 0);
 +	if (IS_ERR(priv->base))
 +		return PTR_ERR(priv->base);
